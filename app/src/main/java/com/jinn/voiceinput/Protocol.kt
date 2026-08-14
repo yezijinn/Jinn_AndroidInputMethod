@@ -1,9 +1,9 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import org.json.JSONObject
 
 /**
- * CapsWriter Offline 通信协议。
+ * Jinn Offline 通信协议。
  *
  * 字段名与服务端 core/protocol.py 一一对应，多一个少一个都会被
  * AudioMessage.from_dict 拒掉，所以这里手写 JSON 而不是靠反射序列化。

@@ -74,7 +74,7 @@
         android:background="@drawable/mic_area_bg"
         android:paddingTop="10dp">
 
-        <com.capswriter.ime.MicButton
+        <com.jinn.voiceinput.MicButton
             android:id="@+id/mic_button"
             android:layout_width="132dp"
             android:layout_height="132dp"
@@ -114,7 +114,7 @@
             android:layout_marginEnd="3dp"
             android:layout_weight="1"
             android:background="@drawable/key_bg"
-            android:contentDescription="@string/cd_switch"
+            android:contentDescription="@string/cd_keyboard"
             android:padding="13dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_keyboard" />

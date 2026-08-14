@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.content.BroadcastReceiver
 import android.content.Context

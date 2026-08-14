@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.annotation.SuppressLint
 import android.media.AudioFormat
@@ -72,7 +72,7 @@ class MicRecorder(
 
         record = audioRecord
         running = true
-        thread = Thread({ loop(audioRecord) }, "capswriter-mic").apply { start() }
+        thread = Thread({ loop(audioRecord) }, "jinn-mic").apply { start() }
         Diagnostics.i(
             TAG,
             "start: 采集已启动, minBuffer=$minBuffer bufferSize=$bufferSize, " +

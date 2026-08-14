@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -16,13 +16,13 @@ import androidx.core.app.ServiceCompat
  * 前台保活服务：常驻通知把进程优先级抬到前台，降低被系统回收的概率，
  * 让输入法到飞牛服务端的 WebSocket 连接更稳定（防掉后台）。
  *
- * 配合 [CapsWriterAccessibilityService] 使用：无障碍服务被系统托管，
+ * 配合 [JinnAccessibilityService] 使用：无障碍服务被系统托管，
  * 在其 onServiceConnected 里拉起本服务，服务被杀时由无障碍服务再次拉起。
  */
 class KeepAliveService : android.app.Service() {
 
     companion object {
-        private const val CHANNEL_ID = "capswriter_keepalive"
+        private const val CHANNEL_ID = "jinn_keepalive"
         private const val NOTIFY_ID = 1001
         private const val TAG = "KeepAliveService"
 

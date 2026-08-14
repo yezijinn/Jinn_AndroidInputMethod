@@ -18,5 +18,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CapsWriterIME"
+rootProject.name = "JinnVoiceIME"
 include(":app")

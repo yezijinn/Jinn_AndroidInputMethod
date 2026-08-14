@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.content.Context
 import androidx.core.content.edit
@@ -9,7 +9,7 @@ import androidx.core.content.edit
 class Prefs(context: Context) {
 
     private val sp = context.applicationContext
-        .getSharedPreferences("capswriter_ime", Context.MODE_PRIVATE)
+        .getSharedPreferences("jinn_voiceinput", Context.MODE_PRIVATE)
 
     /** 飞牛 NAS 的局域网地址 */
     var host: String
@@ -64,6 +64,18 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_NOTIFY_HIGH, true)
         set(value) = sp.edit { putBoolean(KEY_NOTIFY_HIGH, value) }
 
+    /**
+     * 键盘输入方案：true 用自然码双拼，false 用 26 键全拼。
+     */
+    var useShuangpin: Boolean
+        get() = sp.getBoolean(KEY_SHUANGPIN, false)
+        set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
+
+    /** 键盘是否默认英文模式（字母直通，不查候选） */
+    var keyboardEnglish: Boolean
+        get() = sp.getBoolean(KEY_KB_ENGLISH, false)
+        set(value) = sp.edit { putBoolean(KEY_KB_ENGLISH, value) }
+
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
@@ -80,5 +92,7 @@ class Prefs(context: Context) {
         private const val KEY_KEEP_ALIVE = "keep_alive"
         private const val KEY_ROOT_SHIZUKU = "root_shizuku"
         private const val KEY_NOTIFY_HIGH = "notify_high"
+        private const val KEY_SHUANGPIN = "shuangpin"
+        private const val KEY_KB_ENGLISH = "kb_english"
     }
 }

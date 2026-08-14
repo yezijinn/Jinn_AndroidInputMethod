@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.content.Context
 import android.graphics.Canvas
@@ -13,7 +13,7 @@ import kotlin.math.min
  * 麦克风按钮：一个实心圆，录音时外面套一层随音量呼吸的光圈。
  *
  * 只负责画。手势判定（短按切换 / 长按说话 / 上滑取消）放在
- * [CapsWriterIme] 里，避免视图和输入逻辑互相纠缠。
+ * [JinnIme] 里，避免视图和输入逻辑互相纠缠。
  */
 class MicButton @JvmOverloads constructor(
     context: Context,
