@@ -221,24 +221,6 @@ class JinnIme : InputMethodService() {
         if (mode != Mode.NONE) stopRecording(commit = false)
         keyboardMode = KeyboardMode.PINYIN
         applyKeyboardMode()
-        // 调试：记录字母键实际屏幕坐标
-        pinyinKeyboard?.post {
-            val sb = StringBuilder("键位: ")
-            for (c in "qwertyuiopasdfghjklzxcvbnm") {
-                val k = pinyinKeyboard?.keyView(c) ?: continue
-                val loc = IntArray(2)
-                k.getLocationOnScreen(loc)
-                sb.append("$c(${loc[0]},${loc[1]}) ")
-            }
-            Diagnostics.i(TAG, sb.toString())
-            // 功能键位置
-            pinyinKeyboard?.getFunctionKeyPositions()?.let { pos ->
-                Diagnostics.i(TAG, "功能键: $pos")
-            }
-            pinyinKeyboard?.getCandidateBarPosition()?.let { pos ->
-                Diagnostics.i(TAG, "候选栏: $pos")
-            }
-        }
     }
 
     private fun switchToVoiceKeyboard() {
