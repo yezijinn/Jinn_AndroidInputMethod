@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 键盘 -->
+    <color name="kb_bg">#15171C</color>
+    <color name="kb_divider">#24272E</color>
+    <color name="key_bg">#242831</color>
+    <color name="key_bg_pressed">#2E323C</color>
+    <color name="key_ripple">#4DFFFFFF</color>
+    <color name="surface_hi">#1C1F26</color>
+
+    <!-- 文字 -->
+    <color name="text_primary">#ECEEF2</color>
+    <color name="text_secondary">#9CA3AF</color>
+
+    <!-- 麦克风按钮 -->
+    <color name="mic_idle">#2B313C</color>
+    <color name="mic_idle_center">#3A4150</color>
+    <color name="mic_active">#E5484D</color>
+    <color name="mic_active_center">#FF6B6F</color>
+    <color name="mic_ring">#E5484D</color>
+    <color name="mic_glow">#E5484D</color>
+    <color name="mic_glyph">#FFFFFF</color>
+
+    <!-- 连接状态指示点 -->
+    <color name="dot_online">#34D399</color>
+    <color name="dot_connecting">#F5A623</color>
+    <color name="dot_offline">#E5484D</color>
+
+    <!-- 强调与状态 -->
+    <color name="accent">#4C8DFF</color>
+    <color name="accent_pressed">#3A78E0</color>
+    <color name="text_on_accent">#FFFFFF</color>
+    <color name="success">#34D399</color>
+    <color name="warn">#F5A623</color>
+
+    <!-- 设置页 -->
+    <color name="app_bg">#0F1115</color>
+    <color name="card_bg">#191C22</color>
+    <color name="card_stroke">#262A32</color>
+    <color name="launcher_bg">#15171C</color>
+</resources>

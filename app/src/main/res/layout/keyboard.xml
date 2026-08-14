@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  键盘只有三层：状态条 / 麦克风 / 最小编辑键。
+  高度固定，避免不同宿主应用里跳动。深色面板 + 圆角，观感更统一。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/kb_bg"
+    android:orientation="vertical"
+    android:paddingTop="6dp">
+
+    <!-- 顶部把手，提示这是一个可上滑收起的面板 -->
+    <View
+        android:layout_width="36dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/grip"
+        android:contentDescription="@null" />
+
+    <!-- 状态条：整条可点，进设置页 -->
+    <LinearLayout
+        android:id="@+id/status_bar"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="@color/kb_bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <View
+            android:id="@+id/status_dot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/status_dot"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:id="@+id/status_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/status_offline"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/status_settings"
+            android:textColor="@color/accent"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/kb_divider" />
+
+    <!-- 麦克风区：浅色面板衬托，麦克风更突出 -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="176dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/mic_area_bg"
+        android:paddingTop="10dp">
+
+        <com.capswriter.ime.MicButton
+            android:id="@+id/mic_button"
+            android:layout_width="132dp"
+            android:layout_height="132dp"
+            android:layout_gravity="center_horizontal|top"
+            android:layout_marginTop="6dp"
+            android:contentDescription="@string/cd_mic" />
+
+        <TextView
+            android:id="@+id/hint_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="14dp"
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="@string/hint_idle"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+    </FrameLayout>
+
+    <!-- 最小编辑键：纯语音改不了错字，这一行是可用性底线 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="6dp">
+
+        <ImageButton
+            android:id="@+id/key_switch"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/key_bg"
+            android:contentDescription="@string/cd_switch"
+            android:padding="13dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_keyboard" />
+
+        <TextView
+            android:id="@+id/key_comma"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/key_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/key_comma"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/key_period"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/key_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/key_period"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/key_space"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="2.2"
+            android:background="@drawable/key_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/key_space"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <ImageButton
+            android:id="@+id/key_backspace"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1.4"
+            android:background="@drawable/key_bg"
+            android:contentDescription="@string/cd_backspace"
+            android:padding="13dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_backspace" />
+
+        <ImageButton
+            android:id="@+id/key_enter"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_weight="1.4"
+            android:background="@drawable/key_bg"
+            android:contentDescription="@string/cd_enter"
+            android:padding="13dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_enter" />
+    </LinearLayout>
+</LinearLayout>
