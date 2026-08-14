@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.Manifest
 import android.content.Intent
@@ -21,7 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 
 /**
- * 设置页：配置飞牛 NAS 上的 CapsWriter 服务端地址、识别语言、提示词，
+ * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
  * 引导授权麦克风、启用并切换到本输入法，并提供后台保活 / 防杀后台能力。
  * 同时作为应用入口从桌面启动。
  */
@@ -35,12 +35,18 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
+    private lateinit var checkShuangpin: CheckBox
     private lateinit var btnGrant: Button
     private lateinit var btnEnable: Button
     private lateinit var btnPick: Button
     private lateinit var btnSave: Button
     private lateinit var textTest: TextView
     private lateinit var textMicState: TextView
+
+    // 输入法测试
+    private lateinit var editImeTest: EditText
+    private lateinit var btnImeSend: Button
+    private lateinit var textImeReceived: TextView
 
     // 保活 / 防杀后台
     private lateinit var switchKeepAlive: Switch
@@ -78,12 +84,17 @@ class SettingsActivity : ComponentActivity() {
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
+        checkShuangpin = findViewById(R.id.check_shuangpin)
         btnGrant = findViewById(R.id.btn_grant)
         btnEnable = findViewById(R.id.btn_enable)
         btnPick = findViewById(R.id.btn_pick)
         btnSave = findViewById(R.id.btn_save)
         textTest = findViewById(R.id.text_test)
         textMicState = findViewById(R.id.text_mic_state)
+
+        editImeTest = findViewById(R.id.edit_ime_test)
+        btnImeSend = findViewById(R.id.btn_ime_send)
+        textImeReceived = findViewById(R.id.text_ime_received)
 
         switchKeepAlive = findViewById(R.id.switch_keepalive)
         switchRoot = findViewById(R.id.switch_root)
@@ -107,6 +118,17 @@ class SettingsActivity : ComponentActivity() {
             manager?.showInputMethodPicker()
         }
         btnSave.setOnClickListener { saveAndTest() }
+
+        // 输入法测试：发送按钮 + 回车发送，文本回显到接收区并写诊断日志
+        btnImeSend.setOnClickListener { sendImeTest() }
+        editImeTest.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
+                sendImeTest()
+                true
+            } else {
+                false
+            }
+        }
 
         switchKeepAlive.setOnCheckedChangeListener { _, checked -> toggleKeepAlive(checked) }
         switchRoot.setOnCheckedChangeListener { _, checked -> prefs.useRootShizuku = checked }
@@ -136,6 +158,7 @@ class SettingsActivity : ComponentActivity() {
         editPrompt.setText(prefs.prompt)
         checkStrip.isChecked = prefs.stripTrailingPunc
         checkComposing.isChecked = prefs.useComposing
+        checkShuangpin.isChecked = prefs.useShuangpin
         switchKeepAlive.isChecked = prefs.keepAlive
         switchRoot.isChecked = prefs.useRootShizuku
         switchNotifyHigh.isChecked = prefs.notifyHighPriority
@@ -224,6 +247,21 @@ class SettingsActivity : ComponentActivity() {
         btnGrant.isEnabled = !granted
     }
 
+    // ── 输入法测试 ──────────────────────────────────────────
+
+    private fun sendImeTest() {
+        val text = editImeTest.text?.toString().orEmpty()
+        Diagnostics.i(TAG, "imeTest: 发送文本 \"${text.take(80)}\" (共${text.length}字)")
+        if (text.isBlank()) {
+            textImeReceived.setText(R.string.settings_ime_received_empty)
+            return
+        }
+        // 回显到接收区，作为"内部接收"的可见结果
+        textImeReceived.text = getString(R.string.settings_ime_received, text)
+        // 发送后清空输入框，方便连续测试；接收区展示最近一次发送
+        editImeTest.setText("")
+    }
+
     // ── 保存并测试连接 ──────────────────────────────────────────
 
     private fun saveAndTest() {
@@ -247,6 +285,7 @@ class SettingsActivity : ComponentActivity() {
         prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
+        prefs.useShuangpin = checkShuangpin.isChecked
 
         Diagnostics.i(TAG, "saveAndTest: host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()

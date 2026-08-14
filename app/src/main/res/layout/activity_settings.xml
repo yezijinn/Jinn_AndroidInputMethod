@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  设置页：配置飞牛 NAS 上的 CapsWriter 服务端并引导启用输入法。
+  设置页：配置飞牛 NAS 上的 Jinn 服务端并引导启用输入法。
   用卡片背景模拟分组，避免引入 Material / CardView 额外依赖。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
@@ -30,6 +30,51 @@
             android:text="@string/settings_subtitle"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
+
+        <!-- 输入法测试：点输入框唤起键盘，发送后回显到下方，供内部调试 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_ime_test" />
+
+            <EditText
+                android:id="@+id/edit_ime_test"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/field_bg"
+                android:hint="@string/settings_ime_test_hint"
+                android:imeOptions="actionSend"
+                android:inputType="text"
+                android:minLines="1"
+                android:maxLines="3"
+                android:padding="12dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_ime_send"
+                style="@style/SettingsButtonPrimary"
+                android:text="@string/settings_ime_send" />
+
+            <TextView
+                android:id="@+id/text_ime_received"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minLines="2"
+                android:text="@string/settings_ime_received_empty"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+        </LinearLayout>
 
         <!-- 服务端 -->
         <LinearLayout
@@ -135,6 +180,15 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="@string/settings_composing"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <CheckBox
+                android:id="@+id/check_shuangpin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/settings_shuangpin"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
         </LinearLayout>

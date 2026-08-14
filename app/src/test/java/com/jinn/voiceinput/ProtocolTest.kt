@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

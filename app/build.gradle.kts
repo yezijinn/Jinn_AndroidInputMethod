@@ -1,19 +1,24 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
 android {
-    namespace = "com.capswriter.ime"
+    namespace = "com.jinn.voiceinput"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.capswriter.ime"
+        applicationId = "com.jinn.voiceinput"
         // 26 起可只提供自适应图标，且 AudioRecord / VectorDrawable 行为稳定
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // versionCode 取编译日期（yyyyMMdd，如 20260814），随每次编译递增，天然单调
+        versionCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()).toInt()
+        versionName = "jinn"
         resourceConfigurations += setOf("zh-rCN")
     }
 

@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.content.Context
 import android.os.Environment
@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit
  * 诊断日志系统。
  *
  * 把应用全链路运行信息写入手机内部存储，便于在真机上直接读取排查问题：
- *   - 默认目录：`/storage/emulated/0/CapsWriterIME/logs/`
- *   - 按天滚动一个文件 `capswriter-YYYY-MM-dd.log`，线程安全追加写
+ *   - 默认目录：`/storage/emulated/0/JinnIme/logs/`
+ *   - 按天滚动一个文件 `jinn-YYYY-MM-dd.log`，线程安全追加写
  *   - 崩溃时把 stack trace 写入日志并抓取 logcat 快照
  *   - 有 root（KernelSU / Magisk）时用 chown 让应用获得共享存储写权限；
  *     无 root 则退回应用专属目录（getExternalFilesDir），日志不丢
@@ -28,12 +28,12 @@ import java.util.concurrent.TimeUnit
  */
 object Diagnostics {
 
-    const val TAG = "CapsWriterDiag"
+    const val TAG = "JinnDiag"
 
-    private const val DIR_NAME = "CapsWriterIME"
+    private const val DIR_NAME = "JinnIme"
     private const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
-    private const val LOG_FILE_PREFIX = "capswriter-"
+    private const val LOG_FILE_PREFIX = "jinn-"
     private const val LOGCAT_FILE_PREFIX = "logcat-"
 
     @Volatile

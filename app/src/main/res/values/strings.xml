@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CapsWriter 语音</string>
-    <string name="ime_label">CapsWriter 语音输入</string>
+    <string name="app_name">Jinn语音输入法</string>
+    <string name="ime_label">Jinn 语音输入</string>
     <string name="subtype_label">语音听写</string>
 
     <!-- 键盘状态条 -->
@@ -33,10 +33,17 @@
     <string name="cd_backspace">退格</string>
     <string name="cd_enter">换行</string>
     <string name="cd_switch">切换输入法</string>
+    <string name="cd_keyboard">切换到拼音键盘</string>
+
+    <!-- 拼音键盘 -->
+    <string name="key_cn">中</string>
+    <string name="key_en">EN</string>
+    <string name="key_abc">ABC</string>
+    <string name="key_voice">语音</string>
 
     <!-- 设置页 -->
-    <string name="settings_title">CapsWriter 语音输入</string>
-    <string name="settings_subtitle">把语音发给飞牛 NAS 上的 CapsWriter 服务端识别</string>
+    <string name="settings_title">Jinn语音输入</string>
+    <string name="settings_subtitle">把语音发给飞牛 NAS 上的 Jinn 服务端识别</string>
     <string name="settings_server">服务端</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
@@ -45,6 +52,7 @@
     <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
     <string name="settings_strip_punc">去掉句尾的逗号句号</string>
     <string name="settings_composing">识别过程中实时回显（兼容性差时关闭）</string>
+    <string name="settings_shuangpin">键盘使用自然码双拼（关闭为 26 键全拼）</string>
     <string name="settings_permission">权限与启用</string>
     <string name="settings_save">保存并测试连接</string>
     <string name="settings_grant_mic">授权麦克风</string>
@@ -78,9 +86,9 @@
     </string-array>
 
     <!-- 保活 / 防杀后台 -->
-    <string name="keepalive_channel">CapsWriter 保活</string>
+    <string name="keepalive_channel">Jinn 保活</string>
     <string name="keepalive_notice">后台保活中，识别连接更稳定</string>
-    <string name="accessibility_desc">在文本输入场景（聊天、记事、搜索）下维持 CapsWriter 语音输入服务常驻，确保语音听写随时可用；被系统回收时自动重建并拉起前台保活服务。本服务仅依据控件类型判断是否进入输入框，不读取任何屏幕内容或文字。</string>
+    <string name="accessibility_desc">在文本输入场景（聊天、记事、搜索）下维持 Jinn 语音输入服务常驻，确保语音听写随时可用；被系统回收时自动重建并拉起前台保活服务。本服务仅依据控件类型判断是否进入输入框，不读取任何屏幕内容或文字。</string>
     <string name="accessibility_summary">输入场景下维持语音听写常驻</string>
     <string name="settings_keepalive">保活与防杀后台</string>
     <string name="settings_keepalive_desc">开启后常驻后台，识别连接更稳；部分机型仍需手动加入电池白名单。</string>
@@ -90,11 +98,18 @@
     <string name="btn_accessibility">开启无障碍保活</string>
     <string name="btn_battery">加入电池白名单（免优化）</string>
     <string name="btn_root">运行 Root / Shizuku 防杀后台</string>
-    <string name="accessibility_open">请在系统“无障碍”里启用 CapsWriter 语音</string>
+    <string name="accessibility_open">请在系统“无障碍”里启用 Jinn 语音</string>
     <string name="battery_open">请在电池设置里选择“不限制”</string>
     <string name="root_done">已加入系统白名单，后台更稳</string>
     <string name="root_fail">执行失败：未授权 Root/Shizuku，或命令被拒绝</string>
     <string name="root_need">请先开启上方“用 Root / Shizuku 加白名单”</string>
     <string name="keepalive_on">后台保活已开启</string>
     <string name="keepalive_off">后台保活已关闭</string>
+
+    <!-- 输入法测试 -->
+    <string name="settings_ime_test">输入法测试</string>
+    <string name="settings_ime_test_hint">点这里唤起键盘打字，或粘贴文本</string>
+    <string name="settings_ime_send">发送到内部接收区</string>
+    <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
+    <string name="settings_ime_received">收到：%1$s</string>
 </resources>

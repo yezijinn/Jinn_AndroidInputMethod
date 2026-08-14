@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.Manifest
 import android.content.Context
@@ -18,22 +18,27 @@ import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.FrameLayout
 import android.widget.TextView
 
 /**
- * CapsWriter 语音输入法。
+ * Jinn 语音输入法。
  *
- * 键盘上只有一个麦克风加一排最小编辑键：
- *  - 长按麦克风：按住说话，松手识别，按住时上滑再松手取消
- *  - 短按麦克风：进入连续录音，再点一下结束
+ * 双模式：
+ *  - 语音模式：麦克风 + 最小编辑键（长按说话 / 短按连续录音，实时推给服务端识别）
+ *  - 键盘模式：26 键拼音键盘（全拼 / 自然码双拼），候选上屏
  *
- * 音频不在本机识别，实时推给飞牛 NAS 上的 CapsWriter 服务端。
+ * 两种模式通过键盘上的「键盘 / 语音」键互相切换，互不干扰。
  */
-class CapsWriterIme : InputMethodService() {
+class JinnIme : InputMethodService() {
 
     private enum class Mode { NONE, HOLD, TOGGLE }
+
+    /** 当前键盘模式 */
+    private enum class KeyboardMode { VOICE, PINYIN }
 
     private val ui = Handler(Looper.getMainLooper())
 
@@ -45,6 +50,10 @@ class CapsWriterIme : InputMethodService() {
     private var statusDot: View? = null
     private var statusLabel: TextView? = null
     private var hintLabel: TextView? = null
+
+    private var pinyinKeyboard: PinyinKeyboardView? = null
+    private var keyboardMode = KeyboardMode.VOICE
+    private var keyboardContainer: FrameLayout? = null
 
     /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -120,6 +129,14 @@ class CapsWriterIme : InputMethodService() {
         // 不加这一步用户第一次点麦克风会因 beginTask() 返回 null 而"没反应"，得再点一次
         asr.connect()
 
+        // 预加载拼音词库（约 1MB 文本，后台线程避免主线程卡顿）
+        Thread {
+            Diagnostics.i(TAG, "onCreate: 开始预加载拼音词库")
+            val start = System.currentTimeMillis()
+            PinyinEngine.load(this)
+            Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
+        }.start()
+
         // 后台保活：用户开启后，输入法常驻期间保持前台服务，连接更稳
         if (prefs.keepAlive) {
             Diagnostics.i(TAG, "onCreate: keepAlive 已开启，启动前台保活服务")
@@ -131,25 +148,104 @@ class CapsWriterIme : InputMethodService() {
     }
 
     override fun onCreateInputView(): View {
-        val root = LayoutInflater.from(this).inflate(R.layout.keyboard, null)
         Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
 
-        micButton = root.findViewById(R.id.mic_button)
-        statusDot = root.findViewById(R.id.status_dot)
-        statusLabel = root.findViewById(R.id.status_label)
-        hintLabel = root.findViewById(R.id.hint_label)
-
+        // 语音键盘
+        val voice = LayoutInflater.from(this).inflate(R.layout.keyboard, null)
+        micButton = voice.findViewById(R.id.mic_button)
+        statusDot = voice.findViewById(R.id.status_dot)
+        statusLabel = voice.findViewById(R.id.status_label)
+        hintLabel = voice.findViewById(R.id.hint_label)
         micButton?.setOnTouchListener { _, event -> onMicTouch(event) }
+        voice.findViewById<View>(R.id.status_bar).setOnClickListener { openSettings() }
+        voice.findViewById<View>(R.id.key_comma).setOnClickListener { commit("，") }
+        voice.findViewById<View>(R.id.key_period).setOnClickListener { commit("。") }
+        voice.findViewById<View>(R.id.key_space).setOnClickListener { commit(" ") }
+        voice.findViewById<View>(R.id.key_enter).setOnClickListener { performEnter() }
+        // 语音键盘的「键盘」键：切到拼音键盘；长按仍切输入法
+        voice.findViewById<View>(R.id.key_switch).setOnClickListener { switchToPinyinKeyboard() }
+        voice.findViewById<View>(R.id.key_switch).setOnLongClickListener {
+            showImePicker()
+            true
+        }
+        bindBackspace(voice.findViewById(R.id.key_backspace))
 
-        root.findViewById<View>(R.id.status_bar).setOnClickListener { openSettings() }
-        root.findViewById<View>(R.id.key_comma).setOnClickListener { commit("，") }
-        root.findViewById<View>(R.id.key_period).setOnClickListener { commit("。") }
-        root.findViewById<View>(R.id.key_space).setOnClickListener { commit(" ") }
-        root.findViewById<View>(R.id.key_enter).setOnClickListener { performEnter() }
-        root.findViewById<View>(R.id.key_switch).setOnClickListener { showImePicker() }
-        bindBackspace(root.findViewById(R.id.key_backspace))
+        // 拼音键盘
+        val pinyin = PinyinKeyboardView(this).apply {
+            listener = object : PinyinKeyboardView.Listener {
+                override fun onCommitText(text: String) = commit(text)
+                override fun onCommitSpace() = commit(" ")
+                override fun onEnter() = performEnter()
+                override fun onBackspace() {
+                    sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                }
+                override fun onVoiceRequested() = switchToVoiceKeyboard()
+            }
+            configure(
+                shuangpin = prefs.useShuangpin,
+                english = prefs.keyboardEnglish,
+            )
+            updateImeOptions(currentInputEditorInfo?.imeOptions ?: 0)
+        }
+        pinyinKeyboard = pinyin
 
-        return root
+        // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
+        val container = FrameLayout(this)
+        keyboardContainer = container
+        container.addView(voice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        container.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        applyKeyboardMode()
+        return container
+    }
+
+    private fun applyKeyboardMode() {
+        val container = keyboardContainer ?: return
+        if (container.childCount < 2) return
+        val voiceView = container.getChildAt(0)
+        val pinyinView = container.getChildAt(1)
+        when (keyboardMode) {
+            KeyboardMode.VOICE -> {
+                voiceView.visibility = View.VISIBLE
+                pinyinView.visibility = View.GONE
+            }
+            KeyboardMode.PINYIN -> {
+                voiceView.visibility = View.GONE
+                pinyinView.visibility = View.VISIBLE
+            }
+        }
+        Diagnostics.i(TAG, "applyKeyboardMode: $keyboardMode")
+    }
+
+    private fun switchToPinyinKeyboard() {
+        // 从语音切走时若还在录音，直接丢弃（防止结果落到别的输入框）
+        if (mode != Mode.NONE) stopRecording(commit = false)
+        keyboardMode = KeyboardMode.PINYIN
+        applyKeyboardMode()
+        // 调试：记录字母键实际屏幕坐标
+        pinyinKeyboard?.post {
+            val sb = StringBuilder("键位: ")
+            for (c in "qwertyuiopasdfghjklzxcvbnm") {
+                val k = pinyinKeyboard?.keyView(c) ?: continue
+                val loc = IntArray(2)
+                k.getLocationOnScreen(loc)
+                sb.append("$c(${loc[0]},${loc[1]}) ")
+            }
+            Diagnostics.i(TAG, sb.toString())
+            // 功能键位置
+            pinyinKeyboard?.getFunctionKeyPositions()?.let { pos ->
+                Diagnostics.i(TAG, "功能键: $pos")
+            }
+            pinyinKeyboard?.getCandidateBarPosition()?.let { pos ->
+                Diagnostics.i(TAG, "候选栏: $pos")
+            }
+        }
+    }
+
+    private fun switchToVoiceKeyboard() {
+        // 从拼音切走时若有未上屏内容，先提交首候选
+        pinyinKeyboard?.commitComposing()
+        keyboardMode = KeyboardMode.VOICE
+        applyKeyboardMode()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -160,12 +256,15 @@ class CapsWriterIme : InputMethodService() {
         micButton?.recording = false
         micButton?.cancelArmed = false
         setHint(getString(R.string.hint_idle))
+        pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         Diagnostics.i(TAG, "onFinishInputView: finishingInput=$finishingInput mode=$mode")
         // 键盘收起时还在录音，直接丢弃：否则文本可能落到别的输入框里
         if (mode != Mode.NONE) stopRecording(commit = false)
+        // 拼音键盘若有未上屏内容，提交首候选
+        pinyinKeyboard?.commitComposing()
         ui.removeCallbacks(backspaceRunnable)
         // 不在这里关闭连接：输入法是常驻服务，WebSocket 应跨输入会话复用。
         // 松手后服务端 final 结果往往还要 1~3 秒才回来，此刻关连接会把在途
@@ -547,7 +646,7 @@ class CapsWriterIme : InputMethodService() {
         checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
-        const val TAG = "CapsWriterIme"
+        const val TAG = "JinnIme"
 
         /** 超过这个时长判定为"按住说话" */
         const val HOLD_THRESHOLD_MS = 260L

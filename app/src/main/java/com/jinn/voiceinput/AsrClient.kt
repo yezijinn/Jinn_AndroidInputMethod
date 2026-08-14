@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.os.Handler
 import android.os.Looper
@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
 
 /**
- * CapsWriter 服务端的 WebSocket 客户端。
+ * Jinn 服务端的 WebSocket 客户端。
  *
  * 一次听写的生命周期：[beginTask] -> 若干次 [sendChunk] -> [endTask]。
  * 上滑取消走 [cancelTask]：它同样会发 is_final 收尾包，因为服务端

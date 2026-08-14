@@ -1,4 +1,4 @@
-package com.capswriter.ime
+package com.jinn.voiceinput
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -14,7 +14,7 @@ import android.view.accessibility.AccessibilityEvent
  * 输入框（聊天 / 记事 / 搜索）时，确保语音输入服务常驻，让语音听写在输入
  * 场景下始终可用。仅依据控件类型做判断，不读取任何输入内容。
  */
-class CapsWriterAccessibilityService : AccessibilityService() {
+class JinnAccessibilityService : AccessibilityService() {
 
     /** 保活拉起节流，避免每次文本变化都触发 startService */
     private var lastKeepAliveStart = 0L
@@ -74,6 +74,6 @@ class CapsWriterAccessibilityService : AccessibilityService() {
 
     private companion object {
         const val KEEPALIVE_THROTTLE_MS = 5_000L
-        const val TAG = "CapsWriterAcc"
+        const val TAG = "JinnAcc"
     }
 }

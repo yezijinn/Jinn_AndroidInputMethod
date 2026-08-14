@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 局域网直连飞牛 NAS 上的 CapsWriter 服务端 -->
+    <!-- 局域网直连飞牛 NAS 上的 Jinn 服务端 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 监听网络恢复（WiFi↔热点切换时主动重连）；缺失会导致 registerNetwork 抛 SecurityException 被吞 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -18,7 +18,7 @@
     <!-- 跳转电池白名单 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 诊断日志：经 KernelSU root 预授权 MANAGE_EXTERNAL_STORAGE 后，可直接写入
-         /storage/emulated/0/CapsWriterIME/logs/（scoped storage 下唯一直写共享存储的方式）。
+         /storage/emulated/0/JinnIME/logs/（scoped storage 下唯一直写共享存储的方式）。
          未授权时自动退回应用专属目录，不影响功能。 -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
@@ -35,7 +35,7 @@
 
         <!-- 语音输入法服务：持有 BIND_INPUT_METHOD 权限的只有系统，可安全导出 -->
         <service
-            android:name=".CapsWriterIme"
+            android:name=".JinnIme"
             android:exported="true"
             android:permission="android.permission.BIND_INPUT_METHOD">
             <intent-filter>
@@ -58,7 +58,7 @@
 
         <!-- 无障碍保活：被系统托管，互保前台服务 -->
         <service
-            android:name=".CapsWriterAccessibilityService"
+            android:name=".JinnAccessibilityService"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>

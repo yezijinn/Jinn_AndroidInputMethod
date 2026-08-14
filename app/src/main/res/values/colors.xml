@@ -8,6 +8,14 @@
     <color name="key_ripple">#4DFFFFFF</color>
     <color name="surface_hi">#1C1F26</color>
 
+    <!-- 拼音键盘 -->
+    <color name="kb_candidate_bg">#1A1D24</color>
+    <color name="kb_key">#242831</color>
+    <color name="kb_key_pressed">#3A4150</color>
+    <color name="kb_key_text">#ECEEF2</color>
+    <color name="kb_candidate_sel">#2E323C</color>
+    <color name="kb_candidate_sel_text">#4C8DFF</color>
+
     <!-- 文字 -->
     <color name="text_primary">#ECEEF2</color>
     <color name="text_secondary">#9CA3AF</color>
