@@ -110,18 +110,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         bindFunctionKeys()
         refreshKeyLabels()
         refreshCandidateBar()
-        // 调试：字母区在 onLayout 后记录实际屏幕坐标，便于真机定位按键
-        viewLetters.post {
-            val loc = IntArray(2)
-            viewLetters.getLocationOnScreen(loc)
-            Diagnostics.i(TAG, "字母区位置: x=${loc[0]} y=${loc[1]} w=${viewLetters.width} h=${viewLetters.height}")
-            for (c in "nihao") {
-                val k = keyViews[c] ?: continue
-                val kl = IntArray(2)
-                k.getLocationOnScreen(kl)
-                Diagnostics.i(TAG, "键 $c: x=${kl[0]} y=${kl[1]} w=${k.width} h=${k.height}")
-            }
-        }
         Log.i(TAG, "PinyinKeyboardView 初始化完成")
     }
 
