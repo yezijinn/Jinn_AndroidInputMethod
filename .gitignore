@@ -1,0 +1,25 @@
+# Gradle 构建产物
+.gradle/
+build/
+*/build/
+
+# 本机 SDK 路径（每人路径不同，不入库）
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 代码图谱索引（AI 工具生成，可随时重建）
+.codegraph/
+
+# AI 工具会话状态
+.omo/
+
+# 签名密钥与敏感配置
+*.keystore
+*.jks

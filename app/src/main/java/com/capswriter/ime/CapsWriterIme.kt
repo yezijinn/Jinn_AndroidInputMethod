@@ -1,0 +1,567 @@
+package com.capswriter.ime
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.inputmethodservice.InputMethodService
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.TextView
+
+/**
+ * CapsWriter 语音输入法。
+ *
+ * 键盘上只有一个麦克风加一排最小编辑键：
+ *  - 长按麦克风：按住说话，松手识别，按住时上滑再松手取消
+ *  - 短按麦克风：进入连续录音，再点一下结束
+ *
+ * 音频不在本机识别，实时推给飞牛 NAS 上的 CapsWriter 服务端。
+ */
+class CapsWriterIme : InputMethodService() {
+
+    private enum class Mode { NONE, HOLD, TOGGLE }
+
+    private val ui = Handler(Looper.getMainLooper())
+
+    private lateinit var prefs: Prefs
+    private lateinit var asr: AsrClient
+    private lateinit var recorder: MicRecorder
+
+    private var micButton: MicButton? = null
+    private var statusDot: View? = null
+    private var statusLabel: TextView? = null
+    private var hintLabel: TextView? = null
+
+    /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
+    private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private var focusRequest: AudioFocusRequest? = null
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        ui.post {
+            // 焦点被抢占（来电/其他应用播音）：停止当前录音，避免冲突与串音
+            if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+            ) {
+                if (mode != Mode.NONE) stopRecording(commit = false)
+            }
+        }
+    }
+
+    /** 网络恢复时主动重连，覆盖 WiFi↔热点切换导致 IP 变化的场景 */
+    private val connectivity by lazy {
+        getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private var mode = Mode.NONE
+
+    /** 连续录音中再次按下：抬手即结束 */
+    private var stopOnUp = false
+
+    /** 长按已触发过（可能因未连接而没真正录起来），抬手就不要再当短按处理 */
+    private var holdAttempted = false
+
+    private var cancelArmed = false
+    private var downY = 0f
+    private var cancelSlidePx = 0f
+
+    private val startHoldRunnable = Runnable {
+        holdAttempted = true
+        startRecording(Mode.HOLD)
+    }
+
+    /** 连续录音兜底，防止用户忘了关 */
+    private val autoStopRunnable = Runnable {
+        if (mode == Mode.TOGGLE) stopRecording(commit = true)
+    }
+
+    private val backspaceRunnable = object : Runnable {
+        override fun run() {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            ui.postDelayed(this, BACKSPACE_REPEAT_MS)
+        }
+    }
+
+    // ── 生命周期 ──────────────────────────────────────────────
+
+    override fun onCreate() {
+        super.onCreate()
+        Diagnostics.init(this)
+        prefs = Prefs(this)
+        cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
+        Diagnostics.i(TAG, "onCreate: IME 服务创建")
+
+        asr = AsrClient(
+            prefs = prefs,
+            onState = { state, detail -> ui.post { renderLink(state, detail) } },
+            onResult = { message -> ui.post { handleResult(message) } },
+        )
+        recorder = MicRecorder(
+            onChunk = { chunk -> asr.sendChunk(chunk) },
+            onLevel = { level -> ui.post { micButton?.updateLevel(level) } },
+            onError = { message -> ui.post { onRecorderError(message) } },
+            onSilence = { ui.post { onSilenceDetected() } },
+        )
+
+        // 预热连接：首次弹键盘时 WebSocket 往往还没建好，
+        // 不加这一步用户第一次点麦克风会因 beginTask() 返回 null 而"没反应"，得再点一次
+        asr.connect()
+
+        // 后台保活：用户开启后，输入法常驻期间保持前台服务，连接更稳
+        if (prefs.keepAlive) {
+            Diagnostics.i(TAG, "onCreate: keepAlive 已开启，启动前台保活服务")
+            KeepAliveService.start(this)
+        }
+
+        // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
+        registerNetwork()
+    }
+
+    override fun onCreateInputView(): View {
+        val root = LayoutInflater.from(this).inflate(R.layout.keyboard, null)
+        Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
+
+        micButton = root.findViewById(R.id.mic_button)
+        statusDot = root.findViewById(R.id.status_dot)
+        statusLabel = root.findViewById(R.id.status_label)
+        hintLabel = root.findViewById(R.id.hint_label)
+
+        micButton?.setOnTouchListener { _, event -> onMicTouch(event) }
+
+        root.findViewById<View>(R.id.status_bar).setOnClickListener { openSettings() }
+        root.findViewById<View>(R.id.key_comma).setOnClickListener { commit("，") }
+        root.findViewById<View>(R.id.key_period).setOnClickListener { commit("。") }
+        root.findViewById<View>(R.id.key_space).setOnClickListener { commit(" ") }
+        root.findViewById<View>(R.id.key_enter).setOnClickListener { performEnter() }
+        root.findViewById<View>(R.id.key_switch).setOnClickListener { showImePicker() }
+        bindBackspace(root.findViewById(R.id.key_backspace))
+
+        return root
+    }
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
+        asr.connect()
+        renderLink(asr.state, null)
+        micButton?.recording = false
+        micButton?.cancelArmed = false
+        setHint(getString(R.string.hint_idle))
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        Diagnostics.i(TAG, "onFinishInputView: finishingInput=$finishingInput mode=$mode")
+        // 键盘收起时还在录音，直接丢弃：否则文本可能落到别的输入框里
+        if (mode != Mode.NONE) stopRecording(commit = false)
+        ui.removeCallbacks(backspaceRunnable)
+        // 不在这里关闭连接：输入法是常驻服务，WebSocket 应跨输入会话复用。
+        // 松手后服务端 final 结果往往还要 1~3 秒才回来，此刻关连接会把在途
+        // 结果丢掉，识别文本无法落地；连接统一在 onDestroy 里释放。
+        super.onFinishInputView(finishingInput)
+    }
+
+    override fun onDestroy() {
+        Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
+        ui.removeCallbacksAndMessages(null)
+        unregisterNetwork()
+        abandonAudioFocus()
+        // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
+        // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
+        Thread {
+            recorder.stop()
+            asr.close()
+            Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
+        }.start()
+        super.onDestroy()
+    }
+
+    /** 横屏时不要进全屏抽取模式，这个键盘很矮，没必要遮住宿主界面 */
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
+    // ── 麦克风手势 ────────────────────────────────────────────
+
+    private fun onMicTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downY = event.rawY
+                holdAttempted = false
+                setCancelArmed(false)
+                if (mode == Mode.TOGGLE) {
+                    stopOnUp = true
+                    Diagnostics.i(TAG, "onMicTouch: DOWN 连续录音中，抬手即停")
+                } else {
+                    stopOnUp = false
+                    ui.postDelayed(startHoldRunnable, HOLD_THRESHOLD_MS)
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (mode == Mode.HOLD) {
+                    setCancelArmed(downY - event.rawY > cancelSlidePx)
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                ui.removeCallbacks(startHoldRunnable)
+                when {
+                    mode == Mode.HOLD -> {
+                        Diagnostics.i(TAG, "onMicTouch: UP 长按结束 cancelArmed=$cancelArmed")
+                        stopRecording(commit = !cancelArmed)
+                    }
+                    stopOnUp -> {
+                        Diagnostics.i(TAG, "onMicTouch: UP 连续录音停止")
+                        stopRecording(commit = true)
+                    }
+                    holdAttempted -> Unit // 长按没起来（未连接 / 无权限），别再当短按重试
+                    else -> {
+                        Diagnostics.i(TAG, "onMicTouch: UP 判定为短按 → 连续录音")
+                        startRecording(Mode.TOGGLE)
+                    }
+                }
+                stopOnUp = false
+                setCancelArmed(false)
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                Diagnostics.i(TAG, "onMicTouch: CANCEL mode=$mode")
+                ui.removeCallbacks(startHoldRunnable)
+                if (mode == Mode.HOLD) stopRecording(commit = false)
+                stopOnUp = false
+                setCancelArmed(false)
+            }
+        }
+        return true
+    }
+
+    private fun setCancelArmed(armed: Boolean) {
+        if (cancelArmed == armed) return
+        cancelArmed = armed
+        micButton?.cancelArmed = armed
+        if (mode == Mode.HOLD) {
+            setHint(
+                getString(
+                    if (armed) R.string.hint_release_cancel else R.string.hint_release_send
+                )
+            )
+        }
+    }
+
+    // ── 录音控制 ──────────────────────────────────────────────
+
+    private fun startRecording(target: Mode) {
+        if (mode != Mode.NONE) {
+            Diagnostics.w(TAG, "startRecording: 已在录音中 mode=$mode，忽略")
+            return
+        }
+
+        if (!hasMicPermission()) {
+            Log.w(TAG, "startRecording: 缺少 RECORD_AUDIO 权限")
+            Diagnostics.w(TAG, "startRecording: 缺少 RECORD_AUDIO 权限")
+            setStatusText(getString(R.string.status_no_permission))
+            setHint(getString(R.string.hint_grant_permission))
+            return
+        }
+
+        // 请求音频焦点：被抢占时自动停止录音，避免与其他音频源冲突
+        requestAudioFocus()
+
+        if (asr.beginTask() == null) {
+            // 未连接：已请求的焦点要释放，避免占用却不录音
+            Diagnostics.w(TAG, "startRecording: beginTask 返回 null（未连接）")
+            abandonAudioFocus()
+            setHint(getString(R.string.hint_not_connected))
+            return
+        }
+
+        if (!recorder.start()) {
+            Diagnostics.e(TAG, "startRecording: recorder.start 失败，取消任务")
+            asr.cancelTask()
+            // 录音启动失败：同样释放焦点
+            abandonAudioFocus()
+            return
+        }
+
+        // 上一段还挂着预编辑文本的话先落地，避免被新结果覆盖掉
+        if (prefs.useComposing) currentInputConnection?.finishComposingText()
+
+        mode = target
+        micButton?.recording = true
+        Diagnostics.i(TAG, "startRecording: 开始录音 target=$target")
+        setHint(
+            getString(
+                if (target == Mode.HOLD) R.string.hint_release_send else R.string.hint_tap_stop
+            )
+        )
+        if (target == Mode.TOGGLE) ui.postDelayed(autoStopRunnable, MAX_TOGGLE_MS)
+    }
+
+    private fun stopRecording(commit: Boolean) {
+        if (mode == Mode.NONE) return
+        mode = Mode.NONE
+        ui.removeCallbacks(autoStopRunnable)
+
+        recorder.stop()
+        abandonAudioFocus()
+        micButton?.recording = false
+        micButton?.cancelArmed = false
+
+        if (commit) {
+            asr.endTask()
+            Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
+            setHint(getString(R.string.hint_recognizing))
+        } else {
+            asr.cancelTask()
+            Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
+            // 取消时把已经回显的预编辑文本一起撤掉
+            if (prefs.useComposing) {
+                currentInputConnection?.setComposingText("", 1)
+                currentInputConnection?.finishComposingText()
+            }
+            setHint(getString(R.string.hint_cancelled))
+        }
+    }
+
+    private fun onRecorderError(message: String) {
+        Diagnostics.e(TAG, "onRecorderError: $message")
+        stopRecording(commit = false)
+        setHint(message)
+    }
+
+    // ── 音频焦点 / 网络 / VAD ───────────────────────────────
+
+    /** 本地 VAD：连续录音模式静音过久自动收尾出结果，长按模式只提示 */
+    private fun onSilenceDetected() {
+        Diagnostics.i(TAG, "onSilenceDetected: mode=$mode")
+        if (mode == Mode.TOGGLE) {
+            stopRecording(commit = true)
+        } else {
+            setHint(getString(R.string.hint_silence))
+        }
+    }
+
+    private fun requestAudioFocus() {
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setOnAudioFocusChangeListener(audioFocusListener)
+            .build()
+        focusRequest = req
+        val result = runCatching { audioManager.requestAudioFocus(req) }
+        result.onFailure {
+            Log.w(TAG, "requestAudioFocus: ${it.message}")
+            Diagnostics.w(TAG, "requestAudioFocus: ${it.message}")
+        }.onSuccess {
+            Diagnostics.i(TAG, "requestAudioFocus: result=$it")
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        focusRequest?.let {
+            runCatching { audioManager.abandonAudioFocusRequest(it) }
+                .onFailure {
+                    Log.w(TAG, "abandonAudioFocus: ${it.message}")
+                    Diagnostics.w(TAG, "abandonAudioFocus: ${it.message}")
+                }
+        }
+        focusRequest = null
+    }
+
+    private fun registerNetwork() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Diagnostics.i(TAG, "network: 网络恢复可用")
+                ui.post { if (asr.state == LinkState.OFFLINE) asr.connect() }
+            }
+
+            override fun onLost(network: Network) {
+                Diagnostics.w(TAG, "network: 网络断开")
+            }
+        }
+        networkCallback = cb
+        runCatching { connectivity.registerDefaultNetworkCallback(cb) }
+            .onFailure {
+                Log.w(TAG, "registerNetwork: ${it.message}")
+                Diagnostics.w(TAG, "registerNetwork: ${it.message}")
+            }
+    }
+
+    private fun unregisterNetwork() {
+        networkCallback?.let {
+            runCatching { connectivity.unregisterNetworkCallback(it) }
+                .onFailure {
+                    Log.w(TAG, "unregisterNetwork: ${it.message}")
+                    Diagnostics.w(TAG, "unregisterNetwork: ${it.message}")
+                }
+        }
+        networkCallback = null
+    }
+
+    // ── 识别结果 ──────────────────────────────────────────────
+
+    private fun handleResult(message: RecognitionMessage) {
+        val connection = currentInputConnection
+        if (connection == null) {
+            Log.w(TAG, "handleResult: InputConnection 已失效")
+            Diagnostics.w(TAG, "handleResult: InputConnection 已失效 taskId=${message.taskId}")
+            return
+        }
+
+        // 服务端给的是整段累积文本，直接整体覆盖，不要自己再拼
+        val text = if (prefs.stripTrailingPunc) stripTrailingPunc(message.text) else message.text
+
+        if (!message.isFinal) {
+            if (prefs.useComposing) connection.setComposingText(text, 1)
+            Diagnostics.v(TAG, "handleResult: 预编辑回显 ${message.duration.toInt()}s \"${text.take(40)}\"")
+            setHint(getString(R.string.hint_progress, message.duration.toInt()))
+            return
+        }
+
+        Diagnostics.i(TAG, "handleResult: 最终结果 \"${text.take(60)}\" (共${message.text.length}字)")
+        if (prefs.useComposing) {
+            connection.setComposingText(text, 1)
+            connection.finishComposingText()
+        } else {
+            connection.commitText(text, 1)
+        }
+        setHint(getString(if (text.isBlank()) R.string.hint_empty else R.string.hint_done))
+    }
+
+    /** 对齐桌面端 trash_punc：句尾的逗号句号在聊天场景里更像噪音 */
+    private fun stripTrailingPunc(text: String): String =
+        text.trimEnd().trimEnd(*TRAILING_PUNC)
+
+    // ── 编辑键 ────────────────────────────────────────────────
+
+    private fun commit(text: String) {
+        currentInputConnection?.commitText(text, 1)
+    }
+
+    /** 退格支持长按连删，纯语音输入改错字全靠它 */
+    private fun bindBackspace(key: View) {
+        key.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.isPressed = true
+                    sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                    ui.postDelayed(backspaceRunnable, BACKSPACE_DELAY_MS)
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.isPressed = false
+                    ui.removeCallbacks(backspaceRunnable)
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    /**
+     * 回车键：输入框声明了发送/搜索等动作就执行动作，否则老实换行。
+     */
+    private fun performEnter() {
+        val connection = currentInputConnection ?: return
+        val editorInfo = currentInputEditorInfo
+        val imeOptions = editorInfo?.imeOptions ?: 0
+        val action = imeOptions and EditorInfo.IME_MASK_ACTION
+        val actionDisabled = (imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+
+        val hasAction = !actionDisabled &&
+            action != EditorInfo.IME_ACTION_NONE &&
+            action != EditorInfo.IME_ACTION_UNSPECIFIED
+
+        if (hasAction) {
+            connection.performEditorAction(action)
+        } else {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+        }
+    }
+
+    private fun showImePicker() {
+        val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        manager?.showInputMethodPicker()
+    }
+
+    private fun openSettings() {
+        val intent = Intent(this, SettingsActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
+            .onFailure { Log.e(TAG, "openSettings: ${it.message}") }
+    }
+
+    // ── 状态渲染 ──────────────────────────────────────────────
+
+    private fun renderLink(state: LinkState, detail: String?) {
+        Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
+        val colorRes: Int
+        val label: String
+        when (state) {
+            LinkState.ONLINE -> {
+                colorRes = R.color.dot_online
+                label = getString(R.string.status_online, prefs.host, prefs.port)
+            }
+
+            LinkState.CONNECTING -> {
+                colorRes = R.color.dot_connecting
+                label = getString(R.string.status_connecting)
+            }
+
+            else -> {
+                colorRes = R.color.dot_offline
+                label = detail ?: getString(R.string.status_offline)
+                // 录音中突然掉线：服务端永远收不到收尾包，主动放弃本次听写
+                // 避免用户白白说话等不到结果，优于让 VAD 或松手自欺"识别中…"
+                if (mode != Mode.NONE) {
+                    stopRecording(commit = false)
+                    setHint(getString(R.string.hint_not_connected))
+                }
+            }
+        }
+        statusDot?.backgroundTintList = ColorStateList.valueOf(getColor(colorRes))
+        statusLabel?.text = label
+    }
+
+    private fun setStatusText(text: String) {
+        statusLabel?.text = text
+    }
+
+    private fun setHint(text: String) {
+        hintLabel?.text = text
+    }
+
+    private fun hasMicPermission(): Boolean =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private companion object {
+        const val TAG = "CapsWriterIme"
+
+        /** 超过这个时长判定为"按住说话" */
+        const val HOLD_THRESHOLD_MS = 260L
+
+        /** 按住时上滑超过这个距离即进入取消状态 */
+        const val CANCEL_SLIDE_DP = 64f
+
+        /** 连续录音的最长时长，3 分钟 */
+        const val MAX_TOGGLE_MS = 180_000L
+
+        const val BACKSPACE_DELAY_MS = 400L
+        const val BACKSPACE_REPEAT_MS = 55L
+
+        /** 对齐 config_client.py 的 trash_punc */
+        val TRAILING_PUNC = charArrayOf('，', '。', ',', '.')
+    }
+}

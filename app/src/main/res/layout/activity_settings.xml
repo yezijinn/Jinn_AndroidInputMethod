@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置页：配置飞牛 NAS 上的 CapsWriter 服务端并引导启用输入法。
+  用卡片背景模拟分组，避免引入 Material / CardView 额外依赖。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/app_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="16dp"
+            android:text="@string/settings_subtitle"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <!-- 服务端 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_server" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="@string/settings_host" />
+
+            <EditText
+                android:id="@+id/edit_host"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@null"
+                android:hint="@string/settings_host"
+                android:inputType="textUri"
+                android:singleLine="true"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="15sp" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="@string/settings_port" />
+
+            <EditText
+                android:id="@+id/edit_port"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@null"
+                android:hint="@string/settings_port"
+                android:inputType="number"
+                android:singleLine="true"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <!-- 识别 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_recognize" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="@string/settings_language" />
+
+            <Spinner
+                android:id="@+id/spinner_language"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:spinnerMode="dropdown" />
+
+            <TextView
+                style="@style/SettingsLabel"
+                android:text="@string/settings_prompt" />
+
+            <EditText
+                android:id="@+id/edit_prompt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@null"
+                android:gravity="top"
+                android:hint="@string/settings_prompt"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="15sp" />
+
+            <CheckBox
+                android:id="@+id/check_strip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/settings_strip_punc"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <CheckBox
+                android:id="@+id/check_composing"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/settings_composing"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <!-- 权限与启用 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_permission" />
+
+            <TextView
+                android:id="@+id/text_mic_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:text="@string/settings_grant_mic"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_grant"
+                style="@style/SettingsButton"
+                android:text="@string/settings_grant_mic" />
+
+            <Button
+                android:id="@+id/btn_enable"
+                style="@style/SettingsButton"
+                android:layout_marginTop="8dp"
+                android:text="@string/settings_enable_ime" />
+
+            <Button
+                android:id="@+id/btn_pick"
+                style="@style/SettingsButton"
+                android:layout_marginTop="8dp"
+                android:text="@string/settings_pick_ime" />
+        </LinearLayout>
+
+        <!-- 保活 / 防杀后台 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_keepalive" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:text="@string/settings_keepalive_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/switch_keepalive"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/switch_keepalive"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/switch_root"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/switch_root"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/switch_notify_high"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/switch_notify_high"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btn_accessibility"
+                style="@style/SettingsButton"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_accessibility" />
+
+            <Button
+                android:id="@+id/btn_battery"
+                style="@style/SettingsButton"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_battery" />
+
+            <Button
+                android:id="@+id/btn_root"
+                style="@style/SettingsButton"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_root" />
+
+            <TextView
+                android:id="@+id/text_keepalive"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_save"
+            style="@style/SettingsButtonPrimary"
+            android:text="@string/settings_save" />
+
+        <TextView
+            android:id="@+id/text_test"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="24dp"
+            android:text="@string/settings_usage"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+    </LinearLayout>
+</ScrollView>

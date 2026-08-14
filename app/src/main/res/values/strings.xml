@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CapsWriter 语音</string>
+    <string name="ime_label">CapsWriter 语音输入</string>
+    <string name="subtype_label">语音听写</string>
+
+    <!-- 键盘状态条 -->
+    <string name="status_online">已连接 %1$s:%2$d</string>
+    <string name="status_connecting">正在连接服务端…</string>
+    <string name="status_offline">未连接服务端</string>
+    <string name="status_no_permission">缺少麦克风权限</string>
+    <string name="status_settings">设置</string>
+
+    <!-- 麦克风提示 -->
+    <string name="hint_idle">按住说话 · 点一下连续录音</string>
+    <string name="hint_release_send">松手发送 · 上滑取消</string>
+    <string name="hint_release_cancel">松手即取消</string>
+    <string name="hint_tap_stop">正在录音 · 点一下结束</string>
+    <string name="hint_recognizing">识别中…</string>
+    <string name="hint_progress">识别中… 已收 %1$d 秒</string>
+    <string name="hint_cancelled">已取消</string>
+    <string name="hint_done">完成</string>
+    <string name="hint_empty">没听到内容</string>
+    <string name="hint_not_connected">服务端未连接，点上方状态栏检查设置</string>
+    <string name="hint_grant_permission">点上方状态栏去授权麦克风</string>
+    <string name="hint_silence">没听到声音</string>
+
+    <!-- 按键 -->
+    <string name="key_space">空格</string>
+    <string name="key_comma">，</string>
+    <string name="key_period">。</string>
+    <string name="cd_mic">按住说话</string>
+    <string name="cd_backspace">退格</string>
+    <string name="cd_enter">换行</string>
+    <string name="cd_switch">切换输入法</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">CapsWriter 语音输入</string>
+    <string name="settings_subtitle">把语音发给飞牛 NAS 上的 CapsWriter 服务端识别</string>
+    <string name="settings_server">服务端</string>
+    <string name="settings_host">NAS 地址</string>
+    <string name="settings_port">端口</string>
+    <string name="settings_recognize">识别</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
+    <string name="settings_strip_punc">去掉句尾的逗号句号</string>
+    <string name="settings_composing">识别过程中实时回显（兼容性差时关闭）</string>
+    <string name="settings_permission">权限与启用</string>
+    <string name="settings_save">保存并测试连接</string>
+    <string name="settings_grant_mic">授权麦克风</string>
+    <string name="settings_mic_granted">麦克风已授权</string>
+    <string name="settings_enable_ime">在系统设置中启用本输入法</string>
+    <string name="settings_pick_ime">切换到本输入法</string>
+    <string name="settings_saved">已保存</string>
+    <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
+    <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
+    <string name="test_running">正在连接 %1$s …</string>
+    <string name="test_ok">连接成功，服务端在线</string>
+    <string name="test_fail">连接失败：%1$s</string>
+    <string name="settings_usage">用法：按住麦克风说话，松手即识别；上滑再松手可取消。点一下麦克风进入连续录音，再点一下结束。</string>
+
+    <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
+    <string-array name="language_entries">
+        <item>自动</item>
+        <item>中文</item>
+        <item>英文</item>
+        <item>粤语</item>
+        <item>日语</item>
+        <item>韩语</item>
+    </string-array>
+    <string-array name="language_values">
+        <item>auto</item>
+        <item>chinese</item>
+        <item>english</item>
+        <item>cantonese</item>
+        <item>japanese</item>
+        <item>korean</item>
+    </string-array>
+
+    <!-- 保活 / 防杀后台 -->
+    <string name="keepalive_channel">CapsWriter 保活</string>
+    <string name="keepalive_notice">后台保活中，识别连接更稳定</string>
+    <string name="accessibility_desc">在文本输入场景（聊天、记事、搜索）下维持 CapsWriter 语音输入服务常驻，确保语音听写随时可用；被系统回收时自动重建并拉起前台保活服务。本服务仅依据控件类型判断是否进入输入框，不读取任何屏幕内容或文字。</string>
+    <string name="accessibility_summary">输入场景下维持语音听写常驻</string>
+    <string name="settings_keepalive">保活与防杀后台</string>
+    <string name="settings_keepalive_desc">开启后常驻后台，识别连接更稳；部分机型仍需手动加入电池白名单。</string>
+    <string name="switch_keepalive">后台保活（前台服务）</string>
+    <string name="switch_root">用 Root / Shizuku 加白名单</string>
+    <string name="switch_notify_high">高通知优先级（保活更稳）</string>
+    <string name="btn_accessibility">开启无障碍保活</string>
+    <string name="btn_battery">加入电池白名单（免优化）</string>
+    <string name="btn_root">运行 Root / Shizuku 防杀后台</string>
+    <string name="accessibility_open">请在系统“无障碍”里启用 CapsWriter 语音</string>
+    <string name="battery_open">请在电池设置里选择“不限制”</string>
+    <string name="root_done">已加入系统白名单，后台更稳</string>
+    <string name="root_fail">执行失败：未授权 Root/Shizuku，或命令被拒绝</string>
+    <string name="root_need">请先开启上方“用 Root / Shizuku 加白名单”</string>
+    <string name="keepalive_on">后台保活已开启</string>
+    <string name="keepalive_off">后台保活已关闭</string>
+</resources>
