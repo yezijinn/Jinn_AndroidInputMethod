@@ -97,8 +97,15 @@ class KeepAliveService : android.app.Service() {
             val wantHigh = Prefs(applicationContext).notifyHighPriority
             val existing = manager.getNotificationChannel(CHANNEL_ID)
             if (existing != null && existing.importance != expectedImportance(wantHigh)) {
-                // 用户切换了优先级，删旧通道重建以生效
-                manager.deleteNotificationChannel(CHANNEL_ID)
+                // 用户切换了优先级，删旧通道重建以生效。
+                // Android 12+ 不允许删除「仍被前台服务使用」的通道，删除会抛
+                // SecurityException（Not allowed to delete channel with a foreground service），
+                // 必须捕获——删除失败时通道保留旧优先级，保活功能不受影响。
+                runCatching {
+                    manager.deleteNotificationChannel(CHANNEL_ID)
+                }.onFailure {
+                    Diagnostics.w(TAG, "删除通知通道失败（通道使用中，忽略）: ${it.message}")
+                }
             }
             if (manager.getNotificationChannel(CHANNEL_ID) == null) {
                 val channel = NotificationChannel(

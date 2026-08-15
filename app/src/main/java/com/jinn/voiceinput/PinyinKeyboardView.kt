@@ -55,6 +55,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onDirectionAction(action: DirectionAction)
         /** 方向面板：拖选模式状态变化通知（IME 侧切换后同步 UI） */
         fun onSelectionModeChanged(active: Boolean)
+        /** 功能面板：粘贴剪贴板最新内容（剪贴板为空则无反应） */
+        fun onPasteClipboard()
         /** 功能面板：收起键盘（隐藏面板，非停止服务） */
         fun onHideKeyboard()
     }
@@ -663,11 +665,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
             },
         ))
         viewCandidateList.addView(buildFunctionButton(
+            label = "粘贴",
+            hint = "剪贴板",
+            onClick = { listener?.onPasteClipboard() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
             label = "收起",
             hint = "键盘",
             onClick = { listener?.onHideKeyboard() },
         ))
-        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/剪贴板/方向/收起")
+        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/剪贴板/方向/粘贴/收起")
     }
 
     /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
