@@ -133,6 +133,15 @@ object ClipboardStore {
         val sensitive = match != null
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
 
+        // Root 增强模式联动：敏感内容命中且开启了「自动清空系统剪贴板」时，
+        // 用 root 立即清空系统剪贴板（普通模式做不到，root 模式才做）。
+        if (sensitive) {
+            val prefs = ClipboardPrefs.of(context)
+            if (prefs.rootEnhanceEnabled && prefs.rootClearOnSensitive) {
+                ClipboardFirewall.onSensitiveClipboardDetected(context)
+            }
+        }
+
         when {
             sensitive && policy == SensitivePolicy.NEVER_SAVE -> {
                 Diagnostics.i(TAG, "save: 敏感内容(${match?.type})，策略=不保存，跳过")
