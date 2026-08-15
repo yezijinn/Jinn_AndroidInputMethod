@@ -160,9 +160,4 @@
     <string name="clipboard_root_status">Root 状态：%1$s</string>
     <string name="clipboard_root_available">可用</string>
     <string name="clipboard_root_unavailable">不可用</string>
-
-    <!-- 方向控制面板 -->
-    <string name="direction_pad_title">方向控制</string>
-    <string name="direction_pad_desc">控制输入框光标与按键（配合上方键盘使用）</string>
-    <string name="direction_pad_close_hint">使用后点击输入框可继续唤起键盘</string>
 </resources>
