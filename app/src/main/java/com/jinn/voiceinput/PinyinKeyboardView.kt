@@ -51,14 +51,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onVoiceRequested()
         /** 功能面板：打开剪贴板历史页 */
         fun onOpenClipboard()
-        /** 方向面板：执行方向控制动作（上下左右/行首/行末/空格/回车） */
+        /** 方向面板：执行方向控制动作（光标移动/拖选/复制/粘贴） */
         fun onDirectionAction(action: DirectionAction)
+        /** 方向面板：拖选模式状态变化通知（IME 侧切换后同步 UI） */
+        fun onSelectionModeChanged(active: Boolean)
         /** 功能面板：收起键盘（隐藏面板，非停止服务） */
         fun onHideKeyboard()
     }
 
-    /** 方向控制动作（对齐 IME 侧执行逻辑） */
-    enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, SPACE, ENTER }
+    /**
+     * 方向控制动作（对齐 IME 侧执行逻辑）。
+     * 底部栏已有的空格/回车不在此列（不重复），由 IME 内部处理拖选状态。
+     */
+    enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, TOGGLE_SELECTION, COPY, PASTE }
 
     var listener: Listener? = null
 
@@ -651,9 +656,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onClick = { listener?.onOpenClipboard() },
         ))
         viewCandidateList.addView(buildFunctionButton(
-            label = "方向",
-            hint = "控制",
-            onClick = { showDirectionPanel() },
+            label = if (directionPanelVisible) "键盘" else "方向",
+            hint = if (directionPanelVisible) "返回" else "控制",
+            onClick = {
+                if (directionPanelVisible) hideDirectionPanel() else showDirectionPanel()
+            },
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "收起",
@@ -708,30 +715,52 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(TAG, "输入方案切换: ${if (shuangpinMode) "自然码双拼" else "全拼"}")
     }
 
-    // ── 键盘内方向面板（占 26 键的三行区域）────────────────
+    // ── 键盘内方向面板（占 26 键的字母区域）────────────────
 
     /** 方向面板根视图（懒加载）；null 表示未构建 */
     private var directionPanel: LinearLayout? = null
 
-    /** 是否处于方向面板模式（字母三行被替换） */
+    /** 是否处于方向面板模式（字母区被替换） */
     private var directionPanelVisible = false
 
+    /** 中心拖选开关按钮（●/◉）与当前状态 */
+    private var centerSelectionKey: TextView? = null
+    private var selectionActive = false
+
+    /** 拖选模式是否激活（由 IME 侧状态机驱动） */
+    fun isSelectionActive(): Boolean = selectionActive
+
     /**
-     * 显示方向控制面板：复用 26 键字母的三行区域，候选栏与空格行保持不变。
-     * 面板含：返回、上、下、左、右、行首、行末、空格、回车。
+     * IME 侧拖选状态变化时同步中心按钮视觉：
+     * ●（普通）→ ◉（激活，加边框高亮），不依赖颜色作为唯一标识。
+     */
+    fun setSelectionActive(active: Boolean) {
+        selectionActive = active
+        val key = centerSelectionKey
+        key?.text = if (active) "◉" else "●"
+        key?.setBackgroundResource(if (active) R.drawable.key_bg_active else R.drawable.key_bg)
+        // 激活态下副文字提示（放在按钮文字下方）
+        key?.contentDescription = if (active) "文字拖选模式开启" else "文字拖选模式关闭"
+    }
+
+    /**
+     * 显示方向控制面板：复用 26 键字母区域，候选栏与底部栏保持不变。
+     * 面板含：行首/上/行末、左/●拖选开关/右、下、复制/粘贴。
      */
     private fun showDirectionPanel() {
         if (directionPanelVisible) return
         ensureDirectionPanel()
         val panel = directionPanel ?: return
-        // 字母三行隐藏，方向面板显示
+        // 字母区隐藏，方向面板显示
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.GONE
         }
         viewLetters.addView(panel)
         panel.visibility = View.VISIBLE
         directionPanelVisible = true
-        Diagnostics.i(TAG, "方向面板: 显示（候选栏/空格行保持）")
+        // 进入方向面板时重置拖选状态
+        selectionActive = false
+        Diagnostics.i(TAG, "方向面板: 显示（候选栏/底部栏保持）")
     }
 
     /** 恢复 26 键字母布局 */
@@ -742,55 +771,52 @@ class PinyinKeyboardView @JvmOverloads constructor(
             viewLetters.getChildAt(i).visibility = View.VISIBLE
         }
         directionPanelVisible = false
+        selectionActive = false
         Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
     }
 
-    /** 构建方向面板（三行，与字母区同高） */
+    /** 构建方向面板（四行，与字母区总高一致） */
     private fun ensureDirectionPanel() {
         if (directionPanel != null) return
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
+        val rowH = (resources.displayMetrics.density * 40).toInt() // 4 行均分 ~162dp
 
-        // 行1：返回 + 上
-        panel.addView(
-            directionRow(
-                listOf(directionKey("返回", back = true) to 1f, directionKey("上", DirectionAction.UP) to 3f)
-            )
-        )
-        // 行2：左 下 右
-        panel.addView(
-            directionRow(
-                listOf(
-                    directionKey("左", DirectionAction.LEFT) to 1f,
-                    directionKey("下", DirectionAction.DOWN) to 1f,
-                    directionKey("右", DirectionAction.RIGHT) to 1f,
-                )
-            )
-        )
-        // 行3：行首 空格 回车 行末
-        panel.addView(
-            directionRow(
-                listOf(
-                    directionKey("行首", DirectionAction.LINE_START) to 1.2f,
-                    directionKey("空格", DirectionAction.SPACE) to 1.6f,
-                    directionKey("回车", DirectionAction.ENTER) to 1.6f,
-                    directionKey("行末", DirectionAction.LINE_END) to 1.2f,
-                )
-            )
-        )
+        // 行1：行首 上 行末
+        panel.addView(directionRow(rowH, listOf(
+            directionKey("│←", DirectionAction.LINE_START) to 1f,
+            directionKey("↑", DirectionAction.UP) to 1f,
+            directionKey("→│", DirectionAction.LINE_END) to 1f,
+        )))
+        // 行2：左 ●(拖选开关) 右
+        val center = directionKey("●", DirectionAction.TOGGLE_SELECTION, selectionKey = true)
+        centerSelectionKey = center
+        panel.addView(directionRow(rowH, listOf(
+            directionKey("←", DirectionAction.LEFT) to 1f,
+            center to 1f,
+            directionKey("→", DirectionAction.RIGHT) to 1f,
+        )))
+        // 行3：下
+        panel.addView(directionRow(rowH, listOf(
+            directionKey("↓", DirectionAction.DOWN) to 1f,
+        )))
+        // 行4：复制 粘贴
+        panel.addView(directionRow(rowH, listOf(
+            directionKey("复制", DirectionAction.COPY) to 1f,
+            directionKey("粘贴", DirectionAction.PASTE) to 1f,
+        )))
         directionPanel = panel
     }
 
     /** 构建一行方向键 */
-    private fun directionRow(items: List<Pair<View, Float>>): LinearLayout {
+    private fun directionRow(rowH: Int, items: List<Pair<View, Float>>): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(3), 0, dp(3))
         }
-        val rowH = (resources.displayMetrics.density * 54).toInt() - dp(6) // 与字母行等高
         for ((key, weight) in items) {
-            row.addView(key, LinearLayout.LayoutParams(0, rowH, weight).apply {
+            row.addView(key, LinearLayout.LayoutParams(0, rowH - dp(6), weight).apply {
                 marginStart = dp(3)
                 marginEnd = dp(3)
             })
@@ -798,8 +824,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return row
     }
 
-    /** 构建单个方向键：深色圆角，居中文字 */
-    private fun directionKey(label: String, action: DirectionAction? = null, back: Boolean = false): View {
+    /**
+     * 构建单个方向键：深色圆角，居中文字。
+     * [selectionKey] 为中心拖选开关（●/◉ 双状态），由 [setSelectionActive] 驱动。
+     */
+    private fun directionKey(
+        label: String,
+        action: DirectionAction,
+        selectionKey: Boolean = false,
+    ): TextView {
         val key = TextView(context).apply {
             text = label
             textSize = 16f
@@ -809,14 +842,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                if (back) {
-                    hideDirectionPanel()
-                } else if (action != null) {
-                    Diagnostics.i(TAG, "方向按键: $action")
-                    listener?.onDirectionAction(action)
-                }
+                Diagnostics.i(TAG, "方向按键: $action")
+                listener?.onDirectionAction(action)
             }
         }
+        if (selectionKey) key.text = if (selectionActive) "◉" else "●"
         return key
     }
 
