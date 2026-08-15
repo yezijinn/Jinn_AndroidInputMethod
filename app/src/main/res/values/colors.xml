@@ -13,6 +13,7 @@
     <color name="kb_key">#242831</color>
     <color name="kb_key_pressed">#3A4150</color>
     <color name="kb_key_text">#ECEEF2</color>
+    <color name="kb_key_hint_red">#FF5A5F</color>
     <color name="kb_candidate_sel">#2E323C</color>
     <color name="kb_candidate_sel_text">#4C8DFF</color>
 

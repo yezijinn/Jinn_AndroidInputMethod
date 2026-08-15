@@ -492,12 +492,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 else ->
                     if (showUpper) c.uppercaseChar().toString() else c.toString()
             }
-            // 双拼模式下显示自然码键位小字提示（字母层）
-            key.subLabel = if (layer == LAYER_LETTER && !englishMode && shuangpinMode) {
-                shuangpinHint(c)
-            } else {
-                ""
-            }
+            // 双拼模式下显示自然码键位提示（字母层）
+            val showHint = layer == LAYER_LETTER && !englishMode && shuangpinMode
+            key.subLabel = if (showHint) shuangpinHint(c) else ""
+            // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
+            key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
         }
         btnLang.text = context.getString(if (englishMode) R.string.key_en else R.string.key_cn)
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
@@ -516,19 +515,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 自然码双拼键位提示：键面下方显示该键对应的韵母（或声母）。
-     * 布局对齐用户指定映射：e/u/i/a/v 五个键不显示提示。
+     * 自然码双拼键位提示：键面下方显示该键对应的韵母。
+     *  - Y/S/D 双韵母分行（`\n` 分隔，一行一个）
+     *  - u/i/v 键下方韵母（v 键的 ui 在这里，zh 走红色 [shuangpinRedHint]）
+     *  - e/a/u/i 键不显示韵母提示
      */
     private fun shuangpinHint(c: Char): String = when (c) {
         'q' -> "iu"
         'w' -> "ia ua"
         'r' -> "uan"
         't' -> "ue"
-        'y' -> "uai ing"
+        'y' -> "uai\ning"
         'o' -> "ou"
         'p' -> "un"
-        's' -> "ong iong"
-        'd' -> "iang uang"
+        's' -> "ong\niong"
+        'd' -> "iang\nuang"
         'f' -> "en"
         'g' -> "eng"
         'h' -> "ang"
@@ -538,11 +539,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         'z' -> "ei"
         'x' -> "ie"
         'c' -> "iao"
-        'v' -> "ui zh"
+        'v' -> "ui"
         'b' -> "ou"
         'n' -> "in"
         'm' -> "ian"
-        // e/u/i/a/v 不显示提示
+        // e/a/u/i 不显示韵母提示
+        else -> ""
+    }
+
+    /** 红色提示（键下方，追加在韵母之后）：u/i/v 键的 sh/ch/zh */
+    private fun shuangpinRedHint(c: Char): String = when (c) {
+        'u' -> "sh"
+        'i' -> "ch"
+        'v' -> "zh"
         else -> ""
     }
 
