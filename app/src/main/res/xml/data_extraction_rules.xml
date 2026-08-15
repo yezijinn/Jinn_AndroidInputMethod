@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  剪贴板历史数据提取规则（Android 12+，方案第二十一节）：
+  云端备份（cloud-backup）排除剪贴板数据库；设备间迁移（device-transfer）
+  同样排除，防止加密正文与新设备的密钥不匹配造成不可解数据。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard_perm.db" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard_perm.db" />
+    </device-transfer>
+</data-extraction-rules>

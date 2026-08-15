@@ -122,4 +122,33 @@
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
     <string name="settings_diag_dir_hint">日志目录：%1$s</string>
+
+    <!-- 剪贴板历史 -->
+    <string name="settings_clipboard">剪贴板</string>
+    <string name="settings_clipboard_desc">复制内容加密保存在本机，仅本输入法可读；敏感内容默认不保存。</string>
+    <string name="switch_clipboard_enabled">剪贴板历史</string>
+    <string name="clipboard_history_title">剪贴板历史</string>
+    <string name="clipboard_open_history">查看剪贴板历史</string>
+    <string name="clipboard_search_hint">搜索剪贴板内容</string>
+    <string name="clipboard_search">搜索</string>
+    <string name="clipboard_delete_all">删除全部</string>
+    <string name="clipboard_empty">暂无剪贴板历史\n复制内容后将自动保存（敏感内容除外）</string>
+    <string name="clipboard_copied">已复制到系统剪贴板</string>
+    <string name="clipboard_deleted">已删除该条</string>
+    <string name="clipboard_deleted_all">已清空全部历史</string>
+    <string name="clipboard_max_items_hint">历史数量（1~9999，默认 200）</string>
+    <string name="clipboard_sensitive_policy">敏感内容</string>
+    <string name="clipboard_sensitive_never">不保存</string>
+    <string name="clipboard_sensitive_temp">临时保存</string>
+    <string name="clipboard_sensitive_normal">按普通内容保存</string>
+    <string name="clipboard_sensitive_temp_30s">30 秒</string>
+    <string name="clipboard_sensitive_temp_5m">5 分钟</string>
+    <string name="clipboard_sensitive_temp_30m">30 分钟</string>
+    <string name="clipboard_sensitive_temp_1h">1 小时</string>
+    <string name="clipboard_perm_manage">第三方 APP 访问权限</string>
+    <string name="clipboard_perm_desc">默认所有 APP 禁止读取本输入法剪贴板历史；授权后每次最多读取最新 3 条。</string>
+    <string name="clipboard_perm_add_hint">授权只针对具体包名（如 com.example.app），不能只按应用名判断。授权后该 APP 每次最多读取最新 3 条，分页/偏移均无法绕过。</string>
+    <string name="clipboard_perm_input_pkg">输入要授权的包名（如 com.example.app）</string>
+    <string name="clipboard_perm_add">授权</string>
+    <string name="clipboard_perm_added">已授权该 APP 读取最新 3 条历史</string>
 </resources>

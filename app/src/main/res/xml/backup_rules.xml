@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  剪贴板历史备份规则（方案第二十一节）：
+  剪贴板数据库含加密正文，密钥由 Keystore 托管（Keystore 本身不可备份），
+  因此数据库被恢复也无密钥可解；但仍按最小权限原则排除，防止任何泄露面。
+-->
+<full-backup-content>
+    <!-- 排除剪贴板历史数据库（含加密正文） -->
+    <exclude
+        domain="database"
+        path="jinn_clipboard.db" />
+    <exclude
+        domain="database"
+        path="jinn_clipboard.db-journal" />
+    <exclude
+        domain="database"
+        path="jinn_clipboard.db-wal" />
+    <exclude
+        domain="database"
+        path="jinn_clipboard.db-shm" />
+    <!-- 排除剪贴板权限库（含授权关系） -->
+    <exclude
+        domain="database"
+        path="jinn_clipboard_perm.db" />
+</full-backup-content>

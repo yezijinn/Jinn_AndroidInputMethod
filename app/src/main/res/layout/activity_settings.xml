@@ -375,6 +375,88 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 剪贴板：加密历史 + 敏感策略 + 第三方访问权限 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_clipboard"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/settings_clipboard_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <Switch
+                android:id="@+id/switch_clipboard_enabled"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/switch_clipboard_enabled"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_clipboard_history"
+                style="@style/SettingsButton"
+                android:layout_marginTop="6dp"
+                android:text="@string/clipboard_open_history" />
+
+            <EditText
+                android:id="@+id/edit_clipboard_max"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/field_aurora"
+                android:hint="@string/clipboard_max_items_hint"
+                android:inputType="number"
+                android:maxLines="1"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Spinner
+                android:id="@+id/spinner_sensitive_policy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp" />
+
+            <Spinner
+                android:id="@+id/spinner_sensitive_temp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/clipboard_perm_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_clipboard_perms"
+                style="@style/SettingsButton"
+                android:layout_marginTop="4dp"
+                android:text="@string/clipboard_perm_manage" />
+        </LinearLayout>
+
         <!-- 保存 -->
         <Button
             android:id="@+id/btn_save"

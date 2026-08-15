@@ -31,7 +31,9 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
 
         <!-- 语音输入法服务：持有 BIND_INPUT_METHOD 权限的只有系统，可安全导出 -->
         <service
@@ -79,6 +81,25 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- 剪贴板历史页：FLAG_SECURE 隐私保护（禁止截图/最近任务预览） -->
+        <activity
+            android:name=".ClipboardHistoryActivity"
+            android:exported="false"
+            android:label="@string/clipboard_history_title" />
+
+        <!-- 第三方 APP 剪贴板历史访问权限管理（同样 FLAG_SECURE） -->
+        <activity
+            android:name=".ClipboardPermissionActivity"
+            android:exported="false"
+            android:label="@string/clipboard_perm_manage" />
+
+        <!-- 第三方 APP 访问剪贴板历史的安全 IPC 入口（UID 校验，默认拒绝） -->
+        <provider
+            android:name=".ClipboardHistoryProvider"
+            android:authorities="com.jinn.voiceinput.clipboard"
+            android:exported="true"
+            android:grantUriPermissions="false" />
 
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity

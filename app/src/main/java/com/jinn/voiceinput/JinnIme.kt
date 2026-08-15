@@ -47,6 +47,9 @@ class JinnIme : InputMethodService() {
     private lateinit var asr: AsrClient
     private lateinit var recorder: MicRecorder
 
+    /** 剪贴板控制器：监听系统剪贴板 → 按策略加密保存历史（普通模式核心） */
+    private var clipboardController: ClipboardController? = null
+
     private var micButton: MicButton? = null
     private var statusDot: View? = null
     private var statusLabel: TextView? = null
@@ -137,6 +140,13 @@ class JinnIme : InputMethodService() {
             PinyinEngine.load(this)
             Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
         }.start()
+
+        // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
+        if (ClipboardPrefs.of(this).enabled) {
+            clipboardController = ClipboardController(this).also { it.start() }
+            // 清理已过期的敏感内容临时历史
+            Thread { ClipboardStore.cleanupExpired(ClipboardDb.get(this)) }.start()
+        }
 
         // 后台保活：用户开启后，输入法常驻期间保持前台服务，连接更稳
         if (prefs.keepAlive) {
@@ -538,6 +548,8 @@ class JinnIme : InputMethodService() {
     private fun commit(text: String) {
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
         Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
+        // 标记剪贴板变化来自自身上屏，避免被当作外部剪贴板存进历史
+        clipboardController?.onOwnCommit()
         currentInputConnection?.commitText(text, 1)
     }
 

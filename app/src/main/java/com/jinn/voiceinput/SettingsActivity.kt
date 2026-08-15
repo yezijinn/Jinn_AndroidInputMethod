@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -61,6 +62,15 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnExportDiag: Button
     private lateinit var textDiagDir: TextView
 
+    // 剪贴板
+    private lateinit var clipboardPrefs: ClipboardPrefs
+    private lateinit var switchClipboard: Switch
+    private lateinit var btnClipboardHistory: Button
+    private lateinit var editClipboardMax: EditText
+    private lateinit var spinnerSensitivePolicy: Spinner
+    private lateinit var spinnerSensitiveTemp: Spinner
+    private lateinit var btnClipboardPerms: Button
+
     /** 仅用于"保存并测试连接"，用完即关，不干扰输入法自身的连接 */
     private var tester: AsrClient? = null
 
@@ -109,6 +119,15 @@ class SettingsActivity : ComponentActivity() {
         textKeepalive = findViewById(R.id.text_keepalive)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
+
+        // 剪贴板卡片
+        clipboardPrefs = ClipboardPrefs.of(this)
+        switchClipboard = findViewById(R.id.switch_clipboard_enabled)
+        btnClipboardHistory = findViewById(R.id.btn_clipboard_history)
+        editClipboardMax = findViewById(R.id.edit_clipboard_max)
+        spinnerSensitivePolicy = findViewById(R.id.spinner_sensitive_policy)
+        spinnerSensitiveTemp = findViewById(R.id.spinner_sensitive_temp)
+        btnClipboardPerms = findViewById(R.id.btn_clipboard_perms)
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -162,6 +181,95 @@ class SettingsActivity : ComponentActivity() {
         Diagnostics.currentLogDir?.let {
             textDiagDir.text = getString(R.string.settings_diag_dir_hint, it.absolutePath)
         }
+
+        // ── 剪贴板卡片 ──────────────────────────────────────────
+        initClipboardCard()
+    }
+
+    /** 初始化剪贴板卡片：开关 / 历史数量 / 敏感策略 / 权限管理 */
+    private fun initClipboardCard() {
+        switchClipboard.isChecked = clipboardPrefs.enabled
+        switchClipboard.setOnCheckedChangeListener { _, checked ->
+            clipboardPrefs.enabled = checked
+            Diagnostics.i(TAG, "剪贴板历史: ${if (checked) "开启" else "关闭"}")
+        }
+
+        btnClipboardHistory.setOnClickListener {
+            startActivity(Intent(this, ClipboardHistoryActivity::class.java))
+        }
+
+        editClipboardMax.setText(clipboardPrefs.maxItems.toString())
+        editClipboardMax.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) saveMaxItems()
+        }
+
+        // 敏感内容策略：不保存 / 临时保存 / 按普通内容保存
+        val policies = arrayOf(
+            getString(R.string.clipboard_sensitive_never),
+            getString(R.string.clipboard_sensitive_temp),
+            getString(R.string.clipboard_sensitive_normal),
+        )
+        spinnerSensitivePolicy.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, policies
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerSensitivePolicy.setSelection(clipboardPrefs.sensitivePolicy)
+        spinnerSensitivePolicy.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                if (position != clipboardPrefs.sensitivePolicy) {
+                    clipboardPrefs.sensitivePolicy = position
+                    Diagnostics.i(TAG, "敏感内容策略: $position")
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        // 临时保存时长（敏感内容策略 = 临时保存时有效）
+        val durations = arrayOf(
+            getString(R.string.clipboard_sensitive_temp_30s),
+            getString(R.string.clipboard_sensitive_temp_5m),
+            getString(R.string.clipboard_sensitive_temp_30m),
+            getString(R.string.clipboard_sensitive_temp_1h),
+        )
+        spinnerSensitiveTemp.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, durations
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerSensitiveTemp.setSelection(clipboardPrefs.sensitiveTempSeconds)
+        spinnerSensitiveTemp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                if (position != clipboardPrefs.sensitiveTempSeconds) {
+                    clipboardPrefs.sensitiveTempSeconds = position
+                    Diagnostics.i(TAG, "敏感临时时长: $position")
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        // 第三方 APP 访问权限管理（跳转系统应用信息或简单列表页）
+        btnClipboardPerms.setOnClickListener { openPermissionManager() }
+    }
+
+    private fun saveMaxItems() {
+        val v = editClipboardMax.text.toString().toIntOrNull()
+        if (v != null) {
+            clipboardPrefs.maxItems = v
+            Diagnostics.i(TAG, "剪贴板历史数量上限: ${clipboardPrefs.maxItems}")
+            // 立即裁剪数据库
+            Thread { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }.start()
+        } else {
+            editClipboardMax.setText(clipboardPrefs.maxItems.toString())
+        }
+    }
+
+    /** 第三方 APP 访问权限管理：进入权限列表页 */
+    private fun openPermissionManager() {
+        Diagnostics.i(TAG, "openPermissionManager: 打开剪贴板权限管理")
+        startActivity(Intent(this, ClipboardPermissionActivity::class.java))
     }
 
     /** 导出诊断包：zip 到 /storage/emulated/0/JinnIme/ 并提示路径 */
