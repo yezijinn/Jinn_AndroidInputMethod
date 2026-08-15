@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  拼音键盘：候选栏 + 26 键字母区 + 底部功能键。
-  候选栏实时显示拼音串与候选词，字母区支持全拼/自然码双拼，
-  底部一行：符号层 / 中英切换 / 语音切换 / 空格 / 退格 / 回车。
+  拼音键盘：候选栏 + 26 键字母区 + 底部功能行。
+  布局对齐主流输入法：
+   - 第一行 10 个字母（qwertyuiop）
+   - 第二行 9 个字母（asdfghjkl）
+   - 第三行 = 切换大写 + 7 个字母（zxcvbnm）+ 删除键
+   - 第四行 = 符号、数字、逗号、空格（长按语音）、句号、中英切换、回车确定
   手势与输入逻辑全部放在 PinyinKeyboardView，本布局只做静态骨架。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -60,7 +63,7 @@
         android:paddingEnd="4dp"
         android:paddingTop="4dp">
 
-        <!-- 每行：6 个键，等宽 -->
+        <!-- 第一行：10 个字母 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="54dp"
@@ -127,6 +130,7 @@
                 android:layout_weight="1" />
         </LinearLayout>
 
+        <!-- 第二行：9 个字母 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="54dp"
@@ -187,10 +191,23 @@
                 android:layout_weight="1" />
         </LinearLayout>
 
+        <!-- 第三行：切换大写 + 7 个字母 + 删除键 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="54dp"
             android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/key_shift"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.4"
+                android:background="@drawable/key_bg"
+                android:contentDescription="@string/cd_shift"
+                android:minWidth="0dp"
+                android:padding="13dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_shift" />
 
             <com.jinn.voiceinput.PinyinKey
                 android:id="@+id/key_z"
@@ -233,10 +250,22 @@
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1" />
+
+            <ImageButton
+                android:id="@+id/key_backspace"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.4"
+                android:background="@drawable/key_bg"
+                android:contentDescription="@string/cd_backspace"
+                android:minWidth="0dp"
+                android:padding="13dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_backspace" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 底部功能行 -->
+    <!-- 第四行：符号 / 数字 / 逗号 / 空格(长按语音) / 句号 / 中英切换 / 回车确定 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="56dp"
@@ -252,29 +281,29 @@
             style="@style/SettingsButton"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1"
+            android:layout_weight="1.3"
             android:minWidth="0dp"
-            android:text="123" />
+            android:text="@string/key_symbol" />
 
         <Button
-            android:id="@+id/key_lang"
+            android:id="@+id/key_digit"
             style="@style/SettingsButton"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginStart="3dp"
-            android:layout_weight="1"
+            android:layout_weight="1.3"
             android:minWidth="0dp"
-            android:text="@string/key_cn" />
+            android:text="@string/key_digit" />
 
         <Button
-            android:id="@+id/key_voice"
+            android:id="@+id/key_comma"
             style="@style/SettingsButton"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginStart="3dp"
-            android:layout_weight="1"
+            android:layout_weight="1.1"
             android:minWidth="0dp"
-            android:text="@string/key_voice" />
+            android:text="@string/key_comma" />
 
         <Button
             android:id="@+id/key_space"
@@ -282,22 +311,29 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginStart="3dp"
-            android:layout_weight="2.2"
+            android:layout_weight="2.4"
             android:minWidth="0dp"
             android:text="@string/key_space" />
 
-        <ImageButton
-            android:id="@+id/key_backspace"
+        <Button
+            android:id="@+id/key_period"
+            style="@style/SettingsButton"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginStart="3dp"
-            android:layout_weight="1.4"
-            android:background="@drawable/key_bg"
-            android:contentDescription="@string/cd_backspace"
+            android:layout_weight="1.1"
             android:minWidth="0dp"
-            android:padding="13dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_backspace" />
+            android:text="@string/key_period" />
+
+        <Button
+            android:id="@+id/key_lang"
+            style="@style/SettingsButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="3dp"
+            android:layout_weight="1.3"
+            android:minWidth="0dp"
+            android:text="@string/key_cn" />
 
         <ImageButton
             android:id="@+id/key_enter"

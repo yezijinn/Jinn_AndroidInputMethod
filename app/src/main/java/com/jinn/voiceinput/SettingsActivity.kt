@@ -57,6 +57,10 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnRoot: Button
     private lateinit var textKeepalive: TextView
 
+    // 诊断
+    private lateinit var btnExportDiag: Button
+    private lateinit var textDiagDir: TextView
+
     /** 仅用于"保存并测试连接"，用完即关，不干扰输入法自身的连接 */
     private var tester: AsrClient? = null
 
@@ -103,6 +107,8 @@ class SettingsActivity : ComponentActivity() {
         btnBattery = findViewById(R.id.btn_battery)
         btnRoot = findViewById(R.id.btn_root)
         textKeepalive = findViewById(R.id.text_keepalive)
+        btnExportDiag = findViewById(R.id.btn_export_diag)
+        textDiagDir = findViewById(R.id.text_diag_dir)
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -150,6 +156,31 @@ class SettingsActivity : ComponentActivity() {
             toast(R.string.battery_open)
         }
         btnRoot.setOnClickListener { runRootKeepAlive() }
+
+        // 诊断导出：把日志目录打包到共享存储，方便取出排查
+        btnExportDiag.setOnClickListener { exportDiagnostics() }
+        Diagnostics.currentLogDir?.let {
+            textDiagDir.text = getString(R.string.settings_diag_dir_hint, it.absolutePath)
+        }
+    }
+
+    /** 导出诊断包：zip 到 /storage/emulated/0/JinnIme/ 并提示路径 */
+    private fun exportDiagnostics() {
+        btnExportDiag.isEnabled = false
+        Diagnostics.i(TAG, "exportDiagnostics: 开始导出诊断包")
+        Thread {
+            val file = Diagnostics.exportBundle(this)
+            runOnUiThread {
+                btnExportDiag.isEnabled = true
+                if (file != null) {
+                    Diagnostics.i(TAG, "exportDiagnostics: 导出完成 ${file.absolutePath}")
+                    textDiagDir.text = getString(R.string.settings_diag_exported, file.absolutePath)
+                } else {
+                    Diagnostics.w(TAG, "exportDiagnostics: 导出失败")
+                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可写")
+                }
+            }
+        }.start()
     }
 
     private fun loadPrefs() {
