@@ -1,210 +1,236 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  设置页：配置飞牛 NAS 上的 Jinn 服务端并引导启用输入法。
-  用卡片背景模拟分组，避免引入 Material / CardView 额外依赖。
+  设置页（极光紧凑风格）：配置服务端并引导启用输入法。
+  能同排的控件一律同排；删掉冗余分组标题，减少卡片数量；
+  深蓝极光渐变背景 + 大圆角卡片，视觉更圆润。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/app_bg">
+    android:background="@drawable/bg_aurora"
+    android:overScrollMode="never">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="14dp">
 
+        <!-- 标题 -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:gravity="center"
             android:text="@string/settings_title"
             android:textColor="@color/text_primary"
-            android:textSize="20sp"
+            android:textSize="22sp"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="14dp"
+            android:gravity="center"
             android:text="@string/settings_subtitle"
             android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
 
-        <!-- 输入法测试：点输入框唤起键盘，发送后回显到下方，供内部调试 -->
+        <!-- 连接设置：地址 + 端口同一行，无分组标题 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="14dp">
 
-            <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_ime_test" />
-
-            <EditText
-                android:id="@+id/edit_ime_test"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:background="@drawable/field_bg"
-                android:hint="@string/settings_ime_test_hint"
-                android:imeOptions="actionSend"
-                android:inputType="text"
-                android:minLines="1"
-                android:maxLines="3"
-                android:padding="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="16sp" />
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btn_ime_send"
-                style="@style/SettingsButtonPrimary"
-                android:text="@string/settings_ime_send" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="3"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:text="@string/settings_host" />
+
+                    <EditText
+                        android:id="@+id/edit_host"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/field_aurora"
+                        android:hint="@string/settings_host"
+                        android:inputType="textUri"
+                        android:minHeight="44dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:singleLine="true"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:text="@string/settings_port" />
+
+                    <EditText
+                        android:id="@+id/edit_port"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/field_aurora"
+                        android:hint="@string/settings_port"
+                        android:inputType="number"
+                        android:minHeight="44dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:singleLine="true"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <TextView
-                android:id="@+id/text_ime_received"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                style="@style/SettingsLabel"
                 android:layout_marginTop="10dp"
-                android:minLines="2"
-                android:text="@string/settings_ime_received_empty"
-                android:textColor="@color/text_secondary"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- 服务端 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_server" />
-
-            <TextView
-                style="@style/SettingsLabel"
-                android:text="@string/settings_host" />
-
-            <EditText
-                android:id="@+id/edit_host"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:background="@null"
-                android:hint="@string/settings_host"
-                android:inputType="textUri"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="15sp" />
-
-            <TextView
-                style="@style/SettingsLabel"
-                android:text="@string/settings_port" />
-
-            <EditText
-                android:id="@+id/edit_port"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@null"
-                android:hint="@string/settings_port"
-                android:inputType="number"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="15sp" />
-        </LinearLayout>
-
-        <!-- 识别 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_recognize" />
-
-            <TextView
-                style="@style/SettingsLabel"
                 android:text="@string/settings_language" />
 
             <Spinner
                 android:id="@+id/spinner_language"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
+                android:layout_height="44dp"
+                android:background="@drawable/field_aurora"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:spinnerMode="dropdown" />
 
             <TextView
                 style="@style/SettingsLabel"
+                android:layout_marginTop="10dp"
                 android:text="@string/settings_prompt" />
 
             <EditText
                 android:id="@+id/edit_prompt"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:background="@null"
+                android:background="@drawable/field_aurora"
                 android:gravity="top"
                 android:hint="@string/settings_prompt"
                 android:inputType="textMultiLine"
-                android:minLines="2"
+                android:minHeight="64dp"
+                android:padding="12dp"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_secondary"
-                android:textSize="15sp" />
-
-            <CheckBox
-                android:id="@+id/check_strip"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/settings_strip_punc"
-                android:textColor="@color/text_primary"
                 android:textSize="14sp" />
 
-            <CheckBox
-                android:id="@+id/check_composing"
+            <!-- 识别选项：三个开关一行 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/settings_composing"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
 
-            <CheckBox
-                android:id="@+id/check_shuangpin"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/settings_shuangpin"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                <CheckBox
+                    android:id="@+id/check_strip"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_strip_punc"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+
+                <CheckBox
+                    android:id="@+id/check_composing"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_composing"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+
+                <CheckBox
+                    android:id="@+id/check_shuangpin"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_shuangpin"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
         </LinearLayout>
 
-        <!-- 权限与启用 -->
+        <!-- 输入法测试：输入框 + 发送按钮一行 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/edit_ime_test"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/settings_ime_test_hint"
+                    android:imeOptions="actionSend"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btn_ime_send"
+                    style="@style/SettingsButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:minWidth="88dp"
+                    android:text="@string/settings_ime_send" />
+            </LinearLayout>
 
             <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_permission" />
+                android:id="@+id/text_ime_received"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minLines="1"
+                android:text="@string/settings_ime_received_empty"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 权限与启用：三个按钮一行 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
 
             <TextView
                 android:id="@+id/text_mic_state"
@@ -213,119 +239,125 @@
                 android:layout_marginBottom="8dp"
                 android:text="@string/settings_grant_mic"
                 android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
 
-            <Button
-                android:id="@+id/btn_grant"
-                style="@style/SettingsButton"
-                android:text="@string/settings_grant_mic" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btn_enable"
-                style="@style/SettingsButton"
-                android:layout_marginTop="8dp"
-                android:text="@string/settings_enable_ime" />
+                <Button
+                    android:id="@+id/btn_grant"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_grant_mic" />
 
-            <Button
-                android:id="@+id/btn_pick"
-                style="@style/SettingsButton"
-                android:layout_marginTop="8dp"
-                android:text="@string/settings_pick_ime" />
+                <Button
+                    android:id="@+id/btn_enable"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_enable_ime" />
+
+                <Button
+                    android:id="@+id/btn_pick"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_pick_ime" />
+            </LinearLayout>
         </LinearLayout>
 
-        <!-- 保活 / 防杀后台 -->
+        <!-- 保活：开关行 + 三个按钮一行 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_keepalive" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:text="@string/settings_keepalive_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+            android:padding="12dp">
 
             <Switch
                 android:id="@+id/switch_keepalive"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="40dp"
                 android:text="@string/switch_keepalive"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
             <Switch
                 android:id="@+id/switch_root"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="40dp"
                 android:text="@string/switch_root"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
             <Switch
                 android:id="@+id/switch_notify_high"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="40dp"
                 android:text="@string/switch_notify_high"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
-            <Button
-                android:id="@+id/btn_accessibility"
-                style="@style/SettingsButton"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_accessibility" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btn_battery"
-                style="@style/SettingsButton"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_battery" />
+                <Button
+                    android:id="@+id/btn_accessibility"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_accessibility" />
 
-            <Button
-                android:id="@+id/btn_root"
-                style="@style/SettingsButton"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_root" />
+                <Button
+                    android:id="@+id/btn_battery"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_battery" />
+
+                <Button
+                    android:id="@+id/btn_root"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_root" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/text_keepalive"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="6dp"
                 android:gravity="center"
                 android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- 诊断 -->
+        <!-- 诊断：导出按钮一行 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/card_bg"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView
-                style="@style/SettingsSectionTitle"
-                android:text="@string/settings_diagnostics" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:text="@string/settings_diagnostics_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+            android:padding="12dp">
 
             <Button
                 android:id="@+id/btn_export_diag"
@@ -336,11 +368,14 @@
                 android:id="@+id/text_diag_dir"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="6dp"
+                android:singleLine="true"
+                android:ellipsize="middle"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 保存 -->
         <Button
             android:id="@+id/btn_save"
             style="@style/SettingsButtonPrimary"
@@ -350,18 +385,19 @@
             android:id="@+id/text_test"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:gravity="center"
             android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="14dp"
             android:layout_marginBottom="24dp"
+            android:gravity="center"
             android:text="@string/settings_usage"
             android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>
