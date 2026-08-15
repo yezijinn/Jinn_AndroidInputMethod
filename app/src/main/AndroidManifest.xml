@@ -94,12 +94,6 @@
             android:exported="false"
             android:label="@string/clipboard_perm_manage" />
 
-        <!-- 方向控制面板：功能面板「方向」按钮打开 -->
-        <activity
-            android:name=".DirectionPadActivity"
-            android:exported="false"
-            android:label="@string/direction_pad_title" />
-
         <!-- 第三方 APP 访问剪贴板历史的安全 IPC 入口（UID 校验，默认拒绝） -->
         <provider
             android:name=".ClipboardHistoryProvider"

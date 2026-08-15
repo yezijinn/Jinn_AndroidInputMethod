@@ -51,11 +51,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onVoiceRequested()
         /** 功能面板：打开剪贴板历史页 */
         fun onOpenClipboard()
-        /** 功能面板：打开方向控制面板 */
-        fun onOpenDirectionPad()
+        /** 方向面板：执行方向控制动作（上下左右/行首/行末/空格/回车） */
+        fun onDirectionAction(action: DirectionAction)
         /** 功能面板：收起键盘（隐藏面板，非停止服务） */
         fun onHideKeyboard()
     }
+
+    /** 方向控制动作（对齐 IME 侧执行逻辑） */
+    enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, SPACE, ENTER }
 
     var listener: Listener? = null
 
@@ -650,7 +653,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidateList.addView(buildFunctionButton(
             label = "方向",
             hint = "控制",
-            onClick = { listener?.onOpenDirectionPad() },
+            onClick = { showDirectionPanel() },
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "收起",
@@ -703,6 +706,118 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshKeyLabels()
         refreshCandidateBar()
         Diagnostics.i(TAG, "输入方案切换: ${if (shuangpinMode) "自然码双拼" else "全拼"}")
+    }
+
+    // ── 键盘内方向面板（占 26 键的三行区域）────────────────
+
+    /** 方向面板根视图（懒加载）；null 表示未构建 */
+    private var directionPanel: LinearLayout? = null
+
+    /** 是否处于方向面板模式（字母三行被替换） */
+    private var directionPanelVisible = false
+
+    /**
+     * 显示方向控制面板：复用 26 键字母的三行区域，候选栏与空格行保持不变。
+     * 面板含：返回、上、下、左、右、行首、行末、空格、回车。
+     */
+    private fun showDirectionPanel() {
+        if (directionPanelVisible) return
+        ensureDirectionPanel()
+        val panel = directionPanel ?: return
+        // 字母三行隐藏，方向面板显示
+        for (i in 0 until viewLetters.childCount) {
+            viewLetters.getChildAt(i).visibility = View.GONE
+        }
+        viewLetters.addView(panel)
+        panel.visibility = View.VISIBLE
+        directionPanelVisible = true
+        Diagnostics.i(TAG, "方向面板: 显示（候选栏/空格行保持）")
+    }
+
+    /** 恢复 26 键字母布局 */
+    fun hideDirectionPanel() {
+        if (!directionPanelVisible) return
+        directionPanel?.let { viewLetters.removeView(it) }
+        for (i in 0 until viewLetters.childCount) {
+            viewLetters.getChildAt(i).visibility = View.VISIBLE
+        }
+        directionPanelVisible = false
+        Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
+    }
+
+    /** 构建方向面板（三行，与字母区同高） */
+    private fun ensureDirectionPanel() {
+        if (directionPanel != null) return
+        val panel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // 行1：返回 + 上
+        panel.addView(
+            directionRow(
+                listOf(directionKey("返回", back = true) to 1f, directionKey("上", DirectionAction.UP) to 3f)
+            )
+        )
+        // 行2：左 下 右
+        panel.addView(
+            directionRow(
+                listOf(
+                    directionKey("左", DirectionAction.LEFT) to 1f,
+                    directionKey("下", DirectionAction.DOWN) to 1f,
+                    directionKey("右", DirectionAction.RIGHT) to 1f,
+                )
+            )
+        )
+        // 行3：行首 空格 回车 行末
+        panel.addView(
+            directionRow(
+                listOf(
+                    directionKey("行首", DirectionAction.LINE_START) to 1.2f,
+                    directionKey("空格", DirectionAction.SPACE) to 1.6f,
+                    directionKey("回车", DirectionAction.ENTER) to 1.6f,
+                    directionKey("行末", DirectionAction.LINE_END) to 1.2f,
+                )
+            )
+        )
+        directionPanel = panel
+    }
+
+    /** 构建一行方向键 */
+    private fun directionRow(items: List<Pair<View, Float>>): LinearLayout {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(3), 0, dp(3))
+        }
+        val rowH = (resources.displayMetrics.density * 54).toInt() - dp(6) // 与字母行等高
+        for ((key, weight) in items) {
+            row.addView(key, LinearLayout.LayoutParams(0, rowH, weight).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            })
+        }
+        return row
+    }
+
+    /** 构建单个方向键：深色圆角，居中文字 */
+    private fun directionKey(label: String, action: DirectionAction? = null, back: Boolean = false): View {
+        val key = TextView(context).apply {
+            text = label
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(resources.getColor(R.color.text_primary, context.theme))
+            setBackgroundResource(R.drawable.key_bg)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                if (back) {
+                    hideDirectionPanel()
+                } else if (action != null) {
+                    Diagnostics.i(TAG, "方向按键: $action")
+                    listener?.onDirectionAction(action)
+                }
+            }
+        }
+        return key
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()

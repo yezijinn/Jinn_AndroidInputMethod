@@ -170,18 +170,6 @@ class JinnIme : InputMethodService() {
         }.onFailure {
             Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
         }
-
-        // 监听方向控制面板的按键广播：独立 Activity 无法直接拿 InputConnection，
-        // 通过广播转发由本服务用当前连接执行
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(directionReceiver, directionFilter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(directionReceiver, directionFilter)
-            }
-        }.onFailure {
-            Diagnostics.e(TAG, "onCreate: 注册方向广播失败", it)
-        }
     }
 
     /**
@@ -197,36 +185,20 @@ class JinnIme : InputMethodService() {
 
     private val configFilter = IntentFilter().apply { addAction(ACTION_CONFIG_UPDATED) }
 
-    /** 方向控制面板按键广播接收器 */
-    private val directionReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val ordinal = intent.getIntExtra(DirectionPadActivity.EXTRA_ACTION, -1)
-            val action = DirectionPadActivity.DirectionAction.entries.getOrNull(ordinal)
-            if (action != null) {
-                Diagnostics.i(TAG, "onReceive: 方向按键 $action")
-                executeDirection(action)
-            } else {
-                Diagnostics.w(TAG, "onReceive: 未知方向动作 ordinal=$ordinal")
-            }
-        }
-    }
-
-    private val directionFilter = IntentFilter().apply { addAction(DirectionPadActivity.ACTION_DIRECTION) }
-
     /** 执行方向控制动作：通过当前 InputConnection 发送按键/文本 */
-    private fun executeDirection(action: DirectionPadActivity.DirectionAction) {
+    private fun executeDirection(action: PinyinKeyboardView.DirectionAction) {
         val connection = currentInputConnection ?: return
         when (action) {
-            DirectionPadActivity.DirectionAction.UP -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_UP)
-            DirectionPadActivity.DirectionAction.DOWN -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_DOWN)
-            DirectionPadActivity.DirectionAction.LEFT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_LEFT)
-            DirectionPadActivity.DirectionAction.RIGHT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_RIGHT)
-            DirectionPadActivity.DirectionAction.LINE_START -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
+            PinyinKeyboardView.DirectionAction.UP -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_UP)
+            PinyinKeyboardView.DirectionAction.DOWN -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_DOWN)
+            PinyinKeyboardView.DirectionAction.LEFT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_LEFT)
+            PinyinKeyboardView.DirectionAction.RIGHT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            PinyinKeyboardView.DirectionAction.LINE_START -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
                 .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-            DirectionPadActivity.DirectionAction.LINE_END -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
+            PinyinKeyboardView.DirectionAction.LINE_END -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
                 .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-            DirectionPadActivity.DirectionAction.SPACE -> connection.commitText(" ", 1)
-            DirectionPadActivity.DirectionAction.ENTER -> connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            PinyinKeyboardView.DirectionAction.SPACE -> connection.commitText(" ", 1)
+            PinyinKeyboardView.DirectionAction.ENTER -> connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
                 .also { connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER)) }
         }
     }
@@ -302,12 +274,9 @@ class JinnIme : InputMethodService() {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }.onFailure { Diagnostics.w(TAG, "打开剪贴板失败: ${it.message}") }
                 }
-                override fun onOpenDirectionPad() {
-                    Diagnostics.i(TAG, "功能面板: 打开方向控制")
-                    runCatching {
-                        startActivity(Intent(this@JinnIme, DirectionPadActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    }.onFailure { Diagnostics.w(TAG, "打开方向控制失败: ${it.message}") }
+                override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
+                    Diagnostics.i(TAG, "方向按键: $action")
+                    executeDirection(action)
                 }
                 override fun onHideKeyboard() {
                     Diagnostics.i(TAG, "功能面板: 收起键盘")
@@ -407,7 +376,6 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacksAndMessages(null)
         unregisterNetwork()
         runCatching { unregisterReceiver(configReceiver) }
-        runCatching { unregisterReceiver(directionReceiver) }
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
