@@ -455,6 +455,40 @@
                 style="@style/SettingsButton"
                 android:layout_marginTop="4dp"
                 android:text="@string/clipboard_perm_manage" />
+
+            <!-- Root 增强模式：可选扩展，默认关闭，失败自动回退普通模式 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/clipboard_root_enhance"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/text_root_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <Switch
+                android:id="@+id/switch_root_enhance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/switch_root_enhance"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/switch_root_clear_sensitive"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/switch_root_clear_sensitive"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <!-- 保存 -->

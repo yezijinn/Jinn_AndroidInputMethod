@@ -151,4 +151,13 @@
     <string name="clipboard_perm_input_pkg">输入要授权的包名（如 com.example.app）</string>
     <string name="clipboard_perm_add">授权</string>
     <string name="clipboard_perm_added">已授权该 APP 读取最新 3 条历史</string>
+
+    <!-- Root 增强模式 -->
+    <string name="clipboard_root_enhance">Root 增强模式</string>
+    <string name="clipboard_root_enhance_desc">可选扩展：检测到敏感剪贴板时自动清空系统剪贴板。Root 不可用或失败时自动退回普通模式，不影响输入法使用。</string>
+    <string name="switch_root_enhance">开启 Root 增强模式</string>
+    <string name="switch_root_clear_sensitive">敏感内容自动清空系统剪贴板</string>
+    <string name="clipboard_root_status">Root 状态：%1$s</string>
+    <string name="clipboard_root_available">可用</string>
+    <string name="clipboard_root_unavailable">不可用</string>
 </resources>
