@@ -41,9 +41,15 @@
     <color name="success">#34D399</color>
     <color name="warn">#F5A623</color>
 
-    <!-- 设置页 -->
-    <color name="app_bg">#0F1115</color>
-    <color name="card_bg">#191C22</color>
-    <color name="card_stroke">#262A32</color>
+    <!-- 设置页：极光风格 -->
+    <color name="app_bg">#0B1020</color>
+    <color name="aurora_bg_top">#1A2340</color>
+    <color name="aurora_bg_mid">#101830</color>
+    <color name="aurora_bg_bottom">#0B1020</color>
+    <color name="card_bg">#141C33</color>
+    <color name="card_stroke">#26314F</color>
+    <color name="aurora_cyan">#38D5E8</color>
+    <color name="aurora_blue">#4C8DFF</color>
+    <color name="aurora_purple">#8B5CF6</color>
     <color name="launcher_bg">#15171C</color>
 </resources>
