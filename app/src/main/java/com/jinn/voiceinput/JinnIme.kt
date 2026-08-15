@@ -1,8 +1,10 @@
 package com.jinn.voiceinput
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.inputmethodservice.InputMethodService
@@ -156,6 +158,51 @@ class JinnIme : InputMethodService() {
 
         // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
         registerNetwork()
+
+        // 监听设置页「保存配置」广播：参数改动立即生效，无需重启输入法进程。
+        // Android 13+ 动态注册必须显式声明导出标志：同进程应用内广播用 NOT_EXPORTED。
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(configReceiver, configFilter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(configReceiver, configFilter)
+            }
+        }.onFailure {
+            Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
+        }
+    }
+
+    /**
+     * 设置页保存后广播：强制刷新连接与键盘配置。
+     * 广播由 [SettingsActivity.saveAndTest] 发出，同进程内即时送达。
+     */
+    private val configReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            Diagnostics.i(TAG, "onReceive: 收到配置更新广播")
+            refreshConfig()
+        }
+    }
+
+    private val configFilter = IntentFilter().apply { addAction(ACTION_CONFIG_UPDATED) }
+
+    /** 立即生效：强制按新地址重连 WebSocket + 重新同步键盘输入方案 */
+    fun refreshConfig() {
+        // 地址/端口变化：旧连接指向旧服务器，强制断开重连
+        Diagnostics.i(TAG, "refreshConfig: 强制重连 ${prefs.wsUrl}")
+        asr.connect(force = true)
+        // 双拼/中英文方案变化：立即重新套用，键盘无需重建
+        pinyinKeyboard?.configure(
+            shuangpin = prefs.useShuangpin,
+            english = prefs.keyboardEnglish,
+        )
+        // 剪贴板历史开关变化：按最新偏好启停监听
+        val cpEnabled = ClipboardPrefs.of(this).enabled
+        if (cpEnabled && clipboardController == null) {
+            clipboardController = ClipboardController(this).also { it.start() }
+        } else if (!cpEnabled) {
+            clipboardController?.stop()
+            clipboardController = null
+        }
     }
 
     override fun onCreateInputView(): View {
@@ -259,6 +306,12 @@ class JinnIme : InputMethodService() {
         micButton?.cancelArmed = false
         setHint(getString(R.string.hint_idle))
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
+        // 每次输入框聚焦时重新同步输入方案（全拼/双拼、中英文）：
+        // 设置页改动后无需重启输入法，下次弹键盘即生效
+        pinyinKeyboard?.configure(
+            shuangpin = prefs.useShuangpin,
+            english = prefs.keyboardEnglish,
+        )
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -278,6 +331,7 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         ui.removeCallbacksAndMessages(null)
         unregisterNetwork()
+        runCatching { unregisterReceiver(configReceiver) }
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
@@ -673,8 +727,11 @@ class JinnIme : InputMethodService() {
     private fun hasMicPermission(): Boolean =
         checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    private companion object {
+    companion object {
         const val TAG = "JinnIme"
+
+        /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
+        const val ACTION_CONFIG_UPDATED = "com.jinn.voiceinput.action.CONFIG_UPDATED"
 
         /** 超过这个时长判定为"按住说话" */
         const val HOLD_THRESHOLD_MS = 260L
