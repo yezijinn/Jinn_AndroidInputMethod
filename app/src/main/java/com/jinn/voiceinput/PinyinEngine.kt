@@ -41,9 +41,6 @@ object PinyinEngine {
     /** 有序音节（字典序）：保证单字候选输出顺序稳定 */
     private val sortedSyllables = ArrayList<String>()
 
-    /** 有序短语键（字典序）：前缀匹配用二分 */
-    private val sortedPhraseKeys = ArrayList<String>()
-
     /** 加载词库；幂等，可在后台线程调用 */
     fun load(context: Context) {
         if (loaded) return
@@ -73,8 +70,6 @@ object PinyinEngine {
     private fun finalizeLoad() {
         sortedSyllables.clear()
         sortedSyllables.addAll(charsBySyllable.keys.sorted())
-        sortedPhraseKeys.clear()
-        sortedPhraseKeys.addAll(phrasesByPinyin.keys.sorted())
     }
 
     private fun loadChars(context: Context) {
@@ -141,10 +136,12 @@ object PinyinEngine {
      * 查询拼音串对应的候选。
      * @param input 全拼或双拼转换后的拼音串（小写字母，无空格）
      *
-     * 候选来源（按优先级合并去重）：
-     *  1. 整串精确匹配的词语（如 `nihao` → 你好）
-     *  2. 以整串为前缀的词语（如 `nih` → 你好、你好啊），即「未打完也联想」
-     *  3. 最后音节的单字（如 `ni` → 你/尼/泥），前缀音节按字典序稳定输出
+     * 候选按「音节数逐级递减」组织（对齐 AOSP PinyinIME prepare_candidates）：
+     *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后 1 字单字。
+     *  如输入 nihao（[ni,hao]）→ 2 字词「你好」+ 单字「你/尼/泥」「好/号/毫」；
+     *  输入 nihaoma（[ni,hao,ma]）→ 3 字「你好吗」+ 2 字「你好」+ 各音节单字。
+     *
+     * 不做「整串前缀联想」（那会产生 nihaoa/nihaoma 等超出拼音数量的词）。
      */
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
@@ -153,28 +150,29 @@ object PinyinEngine {
 
         val result = LinkedHashSet<String>()
 
-        // 1. 词语候选：整串精确匹配（含 lue/ve 变体，兼容词库两种 üe 写法）
-        for (key in phraseKeysOf(raw)) {
-            phrasesByPinyin[key]?.let { result.addAll(it.take(MAX_PHRASES)) }
+        // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
+        val (syllables, partial) = segment(raw)
+
+        // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
+        for (k in syllables.size downTo 1) {
+            val key = syllables.take(k).joinToString("")
+            for (k2 in phraseKeysOf(key)) {
+                phrasesByPinyin[k2]?.let { result.addAll(it.take(MAX_PHRASES)) }
+            }
+            // 逐级递减：k>1 时只取整词；k==1 时再补该音节的单字
+            if (k == 1) {
+                for (syl in syllables) {
+                    result.addAll(charsFor(syl).take(MAX_CHARS))
+                }
+            }
         }
 
-        // 2. 前缀联想：以整串为前缀的词语（跳过已精确匹配的键）
-        result.addAll(phrasesByPrefix(raw, MAX_PHRASES))
-
-        // 3. 单字候选：切分音节，对最后一个音节前缀匹配
-        val (syllables, partial) = segment(raw)
-        val lastKey = partial.ifEmpty { syllables.lastOrNull() }.orEmpty()
-        if (lastKey.isNotEmpty()) {
-            // 有未完成音节时，先补上一个完整音节的单字（如 nih → 你），再补前缀字
-            if (partial.isNotEmpty() && syllables.isNotEmpty()) {
+        // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
+        if (partial.isNotEmpty()) {
+            if (syllables.isNotEmpty()) {
                 result.addAll(charsFor(syllables.last()).take(MAX_CHARS))
             }
-            // 完整音节只给该音节的字；未完成音节才做前缀联想
-            if (validSyllables.contains(lastKey)) {
-                result.addAll(charsFor(lastKey).take(MAX_CHARS))
-            } else {
-                result.addAll(matchCharsByPrefix(lastKey).take(MAX_CHARS))
-            }
+            result.addAll(matchCharsByPrefix(partial).take(MAX_CHARS))
         }
 
         return Result(result.toList(), syllables, partial)
@@ -191,50 +189,6 @@ object PinyinEngine {
             return if (alt != raw) setOf(raw, alt) else setOf(raw)
         }
         return setOf(raw)
-    }
-
-    /** 二分查找以 prefix 开头的短语键，合并其候选词；短键优先（常见词通常更短） */
-    private fun phrasesByPrefix(prefix: String, limit: Int): List<String> {
-        if (prefix.isEmpty()) return emptyList()
-        // 收集所有以 prefix 开头的键，只保留「音节边界合法」的联想（见 [isValidPrefixSuggestion]）
-        val matchedKeys = ArrayList<String>()
-        var lo = lowerBound(sortedPhraseKeys, prefix)
-        while (lo < sortedPhraseKeys.size) {
-            val key = sortedPhraseKeys[lo]
-            if (!key.startsWith(prefix)) break
-            if (key != prefix && isValidPrefixSuggestion(prefix, key)) matchedKeys.add(key)
-            lo++
-        }
-        // 短键优先：同一前缀下更短说明更常用（nihao → 你好，优于 nihaoma → 你好吗）
-        matchedKeys.sortBy { it.length }
-        val out = ArrayList<String>()
-        for (key in matchedKeys) {
-            if (out.size >= limit) break
-            for (cand in phrasesByPinyin[key].orEmpty()) {
-                if (out.size >= limit) break
-                if (!out.contains(cand)) out.add(cand)
-            }
-        }
-        return out
-    }
-
-    /**
-     * 前缀联想必须落在音节边界上，避免输入 ni 时联想出 nian（年）这类「输入只是
-     * 某个更长音节的前缀」的错误联想：
-     *  - 输入恰好是完整音节串（如 nih）→ 候选键的音节序列必须 = 完整音节 + 以未完成部分开头的音节
-     *  - 输入是完整音节（如 ni）  → 候选键必须包含「ni 之后的完整音节」，即键音节数 > 输入音节数
-     */
-    private fun isValidPrefixSuggestion(input: String, key: String): Boolean {
-        val (inSyl, inPartial) = segmentForPhrase(input)
-        if (inSyl.isEmpty()) return false
-        val (keySyl, keyPartial) = segmentForPhrase(key)
-        // 候选键必须能完整切分（简拼键如 aadb 不参与前缀联想）
-        if (keyPartial.isNotEmpty()) return false
-        // 候选键的音节前缀必须与输入的完整音节完全一致
-        if (keySyl.size <= inSyl.size) return false
-        if (keySyl.subList(0, inSyl.size) != inSyl) return false
-        // 有未完成音节时（如 nih → [ni] + "h"），下一个音节必须以它开头
-        return inPartial.isEmpty() || keySyl[inSyl.size].startsWith(inPartial)
     }
 
     /** 第一个 >= target 的下标（标准二分下界） */
@@ -255,46 +209,20 @@ object PinyinEngine {
      * 若是（如 nia 是 nian/niang/niao 的前缀、ha 是 hai/han/hang 的前缀），
      * 说明用户还没打完这个音节，直接把它整体作为未完成部分返回，
      * 避免把 nia 误切为 ni|a 而丢掉「年」的联想。
+     *
+     * 注意：剩余串本身是完整音节时（如 xuexi 的末尾 xi）不触发，照常切出。
      */
     private fun segment(input: String): Pair<List<String>, String> {
         val syllables = ArrayList<String>()
         var i = 0
         while (i < input.length) {
             val rest = input.substring(i)
-            // 剩余整体是某个更长音节的真前缀 → 未完成音节，返回
-            if (isTruePrefixOfSyllable(rest)) {
+            // 剩余整体不是完整音节、但又是某个更长音节的真前缀 → 未完成音节，返回
+            if (!validSyllables.contains(rest) && isTruePrefixOfSyllable(rest)) {
                 return Pair(syllables, rest)
             }
             var matched: String? = null
             var end = (i + 6).coerceAtMost(input.length) // 最长音节 6 字符（zhuang）
-            while (end > i) {
-                val candidate = input.substring(i, end)
-                if (validSyllables.contains(candidate)) {
-                    matched = candidate
-                    break
-                }
-                end--
-            }
-            if (matched != null) {
-                syllables.add(matched)
-                i += matched.length
-            } else {
-                break
-            }
-        }
-        return Pair(syllables, input.substring(i))
-    }
-
-    /**
-     * 短语前缀联想专用切分：纯贪心完整音节（不做 isTruePrefix 提前返回），
-     * 保证输入 ni 得到 [ni]（可联想 nihao→你好），而不是被当作 nian 的前缀。
-     */
-    private fun segmentForPhrase(input: String): Pair<List<String>, String> {
-        val syllables = ArrayList<String>()
-        var i = 0
-        while (i < input.length) {
-            var matched: String? = null
-            var end = (i + 6).coerceAtMost(input.length)
             while (end > i) {
                 val candidate = input.substring(i, end)
                 if (validSyllables.contains(candidate)) {
