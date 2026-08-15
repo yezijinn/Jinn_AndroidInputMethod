@@ -107,8 +107,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 连续删除的间隔 */
     private val backspaceRepeatIntervalMs = 55L
 
-    /** 三击窗口：从第一次按下算起 250ms 内完成 3 次才触发（快速三击，超时不算） */
-    private val tripleTapWindowMs = 250L
+    /** 三击窗口：从第一次按下算起 400ms 内完成 3 次才触发（快速三击，超时不算） */
+    private val tripleTapWindowMs = 400L
 
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
@@ -429,7 +429,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 记录一次退格点击；三击（第一次按下起 250ms 内共 3 次）触发全部清空。
+     * 记录一次退格点击；三击（第一次按下起 400ms 内共 3 次）触发全部清空。
      * 以第一次按下为窗口起点：任一次点击距第一次超过窗口即重置计数，
      * 保证「慢慢点」按多少次都不会触发清空。
      */
