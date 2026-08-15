@@ -21,6 +21,11 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_PORT, DEFAULT_PORT)
         set(value) = sp.edit { putInt(KEY_PORT, value) }
 
+    /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改 */
+    var lockServer: Boolean
+        get() = sp.getBoolean(KEY_LOCK_SERVER, false)
+        set(value) = sp.edit { putBoolean(KEY_LOCK_SERVER, value) }
+
     /** 统一语言代码，取值见服务端 engines/language.py */
     var language: String
         get() = sp.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
@@ -85,6 +90,7 @@ class Prefs(context: Context) {
 
         private const val KEY_HOST = "host"
         private const val KEY_PORT = "port"
+        private const val KEY_LOCK_SERVER = "lock_server"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_PROMPT = "prompt"
         private const val KEY_STRIP_PUNC = "strip_punc"
