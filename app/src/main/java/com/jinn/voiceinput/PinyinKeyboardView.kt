@@ -656,8 +656,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onClick = { listener?.onOpenClipboard() },
         ))
         viewCandidateList.addView(buildFunctionButton(
-            label = if (directionPanelVisible) "键盘" else "方向",
-            hint = if (directionPanelVisible) "返回" else "控制",
+            label = if (directionPanelVisible) "◼ 收起" else "方向",
+            hint = if (directionPanelVisible) "返回键盘" else "控制",
             onClick = {
                 if (directionPanelVisible) hideDirectionPanel() else showDirectionPanel()
             },
@@ -748,14 +748,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 面板含：行首/上/行末、左/●拖选开关/右、下、复制/粘贴。
      */
     private fun showDirectionPanel() {
-        if (directionPanelVisible) return
+        if (directionPanelVisible) {
+            Diagnostics.v(TAG, "showDirectionPanel: 已显示，跳过")
+            return
+        }
         ensureDirectionPanel()
-        val panel = directionPanel ?: return
+        val panel = directionPanel ?: run {
+            Diagnostics.e(TAG, "showDirectionPanel: panel 构建失败")
+            return
+        }
         // 字母区隐藏，方向面板显示
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.GONE
         }
-        viewLetters.addView(panel)
+        viewLetters.addView(panel, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         panel.visibility = View.VISIBLE
         directionPanelVisible = true
         // 进入方向面板时重置拖选状态
@@ -767,6 +776,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun hideDirectionPanel() {
         if (!directionPanelVisible) return
         directionPanel?.let { viewLetters.removeView(it) }
+        directionPanel = null
+        centerSelectionKey = null
+        // 明确恢复全部子 view（前 3 个是字母行）
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.VISIBLE
         }
@@ -775,13 +787,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
     }
 
-    /** 构建方向面板（四行，与字母区总高一致） */
+    /** 构建方向面板（3×3 九宫格，与字母区总高一致） */
     private fun ensureDirectionPanel() {
-        if (directionPanel != null) return
+        if (directionPanel != null) {
+            Diagnostics.v(TAG, "ensureDirectionPanel: 已存在，跳过")
+            return
+        }
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        val rowH = (resources.displayMetrics.density * 40).toInt() // 4 行均分 ~162dp
+        // 3 行均分字母区总高（原 3 行字母 54dp×3=162dp）
+        // 每行按钮高 = (162dp - 行间距)/3，行间距 2dp×2
+        val totalDp = 162
+        val gapDp = 2
+        val rowH = (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
+        Diagnostics.v(TAG, "ensureDirectionPanel: rowH=$rowH")
 
         // 行1：行首 上 行末
         panel.addView(directionRow(rowH, listOf(
@@ -797,26 +817,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
             center to 1f,
             directionKey("→", DirectionAction.RIGHT) to 1f,
         )))
-        // 行3：下
-        panel.addView(directionRow(rowH, listOf(
-            directionKey("↓", DirectionAction.DOWN) to 1f,
-        )))
-        // 行4：复制 粘贴
+        // 行3：复制 下 粘贴
         panel.addView(directionRow(rowH, listOf(
             directionKey("复制", DirectionAction.COPY) to 1f,
+            directionKey("↓", DirectionAction.DOWN) to 1f,
             directionKey("粘贴", DirectionAction.PASTE) to 1f,
         )))
         directionPanel = panel
+        Diagnostics.v(TAG, "ensureDirectionPanel: 构建完成 childCount=${panel.childCount}")
     }
 
     /** 构建一行方向键 */
     private fun directionRow(rowH: Int, items: List<Pair<View, Float>>): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(3), 0, dp(3))
+            setPadding(0, dp(2), 0, dp(2))
         }
         for ((key, weight) in items) {
-            row.addView(key, LinearLayout.LayoutParams(0, rowH - dp(6), weight).apply {
+            row.addView(key, LinearLayout.LayoutParams(0, rowH, weight).apply {
                 marginStart = dp(3)
                 marginEnd = dp(3)
             })
