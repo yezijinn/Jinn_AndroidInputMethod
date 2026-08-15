@@ -436,6 +436,10 @@ class JinnIme : InputMethodService() {
                     }
                     pinyinKeyboard?.setSelectionActive(active)
                 }
+                override fun onPasteClipboard() {
+                    Diagnostics.i(TAG, "功能面板: 粘贴剪贴板")
+                    pasteClipboard()
+                }
                 override fun onHideKeyboard() {
                     Diagnostics.i(TAG, "功能面板: 收起键盘")
                     // 只隐藏输入面板，服务保持运行，点击输入框再次唤醒
