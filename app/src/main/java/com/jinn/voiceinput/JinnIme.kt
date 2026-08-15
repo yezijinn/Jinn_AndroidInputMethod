@@ -191,16 +191,20 @@ class JinnIme : InputMethodService() {
     @Volatile
     private var selectionActive = false
 
-    /** 拖选起始锚点（固定不变），-1 表示未设置 */
+    /** 拖选起始锚点（进入拖选时固定，绝不变），-1 表示未设置 */
     private var selectionAnchor = -1
+
+    /** 拖选焦点（方向键控制的对象，独立于 Android 的 selectionStart/End） */
+    private var selectionFocus = -1
 
     /**
      * 执行方向控制动作（通过当前 InputConnection）。
      *
      * 拖选状态机（NORMAL_CURSOR ↔ TEXT_SELECTION_ACTIVE）：
-     *  - 点击中心 ●：未激活 → 固定当前光标为起点并激活；已激活 → 清除选区、
-     *    退出拖选、光标停在选区结束位置（不跳回起点）
-     *  - 激活时方向键/行首/行末：移动选区**结束点**（起点固定）
+     *  - 点击中心 ●：未激活 → 固定当前光标为 Anchor 并激活；已激活 → 清除选区、
+     *    退出拖选、光标停在 Focus 位置（不跳回 Anchor）
+     *  - 激活时方向键/行首/行末：只移动 **Focus**，Anchor 固定不变，
+     *    选区 = setSelection(min(Anchor,Focus), max(Anchor,Focus))
      *  - 复制：复制选中文字，保持选区与拖选模式
      *  - 粘贴：有选区 → 替换；无选区 → 光标处粘贴
      */
@@ -222,62 +226,79 @@ class JinnIme : InputMethodService() {
     private fun toggleSelection() {
         val connection = currentInputConnection ?: return
         if (!selectionActive) {
-            // 激活：读取当前光标位置作为拖选起点
+            // 激活：固定当前光标位置为 Anchor，Focus 初始等于 Anchor
             val sel = currentSelectionRange(connection) ?: return
             selectionActive = true
             selectionAnchor = sel.start
-            Diagnostics.i(TAG, "拖选激活: 锚点=${sel.start}")
+            selectionFocus = sel.end
+            Diagnostics.i(TAG, "拖选激活: Anchor=$selectionAnchor Focus=$selectionFocus")
         } else {
-            // 取消：清除选区 + 退出拖选 + 光标停在当前选区结束位置
-            val end = currentSelectionRange(connection)?.end ?: selectionAnchor
+            // 取消：清除选区 + 退出拖选 + 光标停在当前 Focus（不跳回 Anchor）
+            val end = selectionFocus.coerceAtLeast(0)
             selectionActive = false
             selectionAnchor = -1
+            selectionFocus = -1
             connection.setSelection(end, end)
-            Diagnostics.i(TAG, "拖选取消: 光标停在结束点=$end")
+            Diagnostics.i(TAG, "拖选取消: 光标停在 Focus=$end")
         }
         pinyinKeyboard?.setSelectionActive(selectionActive)
     }
 
-    /** 方向键 / 行首 / 行末：拖选激活时移动结束点，否则普通光标移动 */
+    /** 方向键 / 行首 / 行末：拖选激活时移动 Focus，否则普通光标移动 */
     private fun moveOrExtend(action: PinyinKeyboardView.DirectionAction) {
         val connection = currentInputConnection ?: return
         if (selectionActive) {
             extendSelection(connection, action)
         } else {
-            when (action) {
-                PinyinKeyboardView.DirectionAction.UP -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_UP)
-                PinyinKeyboardView.DirectionAction.DOWN -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_DOWN)
-                PinyinKeyboardView.DirectionAction.LEFT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_LEFT)
-                PinyinKeyboardView.DirectionAction.RIGHT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_RIGHT)
-                PinyinKeyboardView.DirectionAction.LINE_START -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
-                    .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-                PinyinKeyboardView.DirectionAction.LINE_END -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
-                    .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-                else -> Unit
-            }
+            moveCursor(connection, action)
         }
     }
 
     /**
-     * 拖选扩展：起点固定为 [selectionAnchor]，移动结束点。
-     * 方向键移动结束点一字符；行首/行末把结束点跳到行首/行末。
+     * 普通光标模式：只通过 InputConnection.setSelection 移动文本光标。
+     *
+     * **绝不发送 DPAD / MOVE_HOME / MOVE_END KeyEvent**——那些会触发
+     * 目标 APP 的 View Focus Navigation（按钮/输入框/控件获得焦点）。
+     * 正确行为：读取当前光标位置，计算新位置，setSelection 更新光标，
+     * View Focus 保持不变。
+     */
+    private fun moveCursor(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
+        val range = currentSelectionRange(connection) ?: return
+        val cursor = range.start
+        val newPos = when (action) {
+            PinyinKeyboardView.DirectionAction.LEFT -> (cursor - 1).coerceAtLeast(0)
+            PinyinKeyboardView.DirectionAction.RIGHT -> (cursor + 1).coerceAtMost(range.textLength)
+            PinyinKeyboardView.DirectionAction.UP -> TextSelection.moveLine(range.text, cursor, up = true)
+            PinyinKeyboardView.DirectionAction.DOWN -> TextSelection.moveLine(range.text, cursor, up = false)
+            PinyinKeyboardView.DirectionAction.LINE_START -> TextSelection.lineStart(range.text, cursor)
+            PinyinKeyboardView.DirectionAction.LINE_END -> TextSelection.lineEnd(range.text, cursor)
+            else -> cursor
+        }
+        if (newPos != cursor) {
+            connection.setSelection(newPos, newPos)
+            Diagnostics.i(TAG, "光标移动: $cursor → $newPos")
+        }
+    }
+
+    /**
+     * 拖选扩展：**只移动 Focus**，Anchor 固定不变。
+     * 选区始终 = setSelection(min(Anchor,Focus), max(Anchor,Focus))，
+     * 不依赖 Android 当前的 selectionStart/End（避免归一化导致 Anchor/Focus 漂移）。
+     * 行首/行末把 Focus 跳到行首/行末；上/下按行移动并保持列位置。
      */
     private fun extendSelection(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
         val range = currentSelectionRange(connection) ?: return
-        val end = range.end
-        var newEnd = end
-        when (action) {
-            PinyinKeyboardView.DirectionAction.LEFT -> newEnd = (end - 1).coerceAtLeast(0)
-            PinyinKeyboardView.DirectionAction.RIGHT -> newEnd = (end + 1).coerceAtMost(range.textLength)
-            PinyinKeyboardView.DirectionAction.UP -> newEnd = (end - 1).coerceAtLeast(0)
-            PinyinKeyboardView.DirectionAction.DOWN -> newEnd = (end + 1).coerceAtMost(range.textLength)
-            PinyinKeyboardView.DirectionAction.LINE_START -> newEnd = 0
-            PinyinKeyboardView.DirectionAction.LINE_END -> newEnd = range.textLength
-            else -> return
-        }
-        // 起点固定，终点变化：start 恒为锚点，end 为新结束点
-        connection.setSelection(selectionAnchor, newEnd)
-        Diagnostics.i(TAG, "拖选扩展: 锚点=${selectionAnchor} → 结束点=$newEnd")
+        val textRange = TextSelection.Range(range.start, range.end, range.textLength, range.text)
+        val focus = TextSelection.nextFocus(
+            textRange,
+            selectionFocus,
+            action,
+        )
+        selectionFocus = focus
+        // Anchor 固定，Focus 可移动：选区两端取 min/max
+        val (start, end) = TextSelection.normalizedSelection(selectionAnchor, selectionFocus)
+        connection.setSelection(start, end)
+        Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$focus → 选区[$start,$end]")
     }
 
     /** 读取当前选区范围（未选中时 start == end == 光标位置） */
@@ -288,7 +309,8 @@ class JinnIme : InputMethodService() {
         if (extracted.selectionStart < 0 || extracted.selectionEnd < 0) return null
         val start = extracted.selectionStart.coerceAtLeast(0)
         val end = extracted.selectionEnd.coerceAtLeast(start)
-        return SelectionRange(start, end, extracted.text?.length ?: end)
+        val text = extracted.text?.toString().orEmpty()
+        return SelectionRange(start, end, text.length, text)
     }
 
     /** 复制选中文字到系统剪贴板（保持选区与拖选模式） */
@@ -330,22 +352,13 @@ class JinnIme : InputMethodService() {
         clipboardController?.onOwnCommit()
     }
 
-    /** 选区信息（start/end/textLength） */
-    private data class SelectionRange(val start: Int, val end: Int, val textLength: Int)
+    /** 选区信息（start/end/textLength/text 全文，text 用于行级移动计算） */
+    private data class SelectionRange(val start: Int, val end: Int, val textLength: Int, val text: String)
 
     /** 系统剪贴板 */
     private val clipboardManager by lazy {
         getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
-
-    /** 发送导航键（上下左右）：DOWN + UP 事件序列 */
-    private fun sendNavigationKey(keyCode: Int) {
-        currentInputConnection?.let { conn ->
-            conn.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-            conn.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
-        }
-    }
-
 
     /** 立即生效：强制按新地址重连 WebSocket + 重新同步键盘输入方案 */
     fun refreshConfig() {
@@ -415,6 +428,12 @@ class JinnIme : InputMethodService() {
                 }
                 override fun onSelectionModeChanged(active: Boolean) {
                     Diagnostics.i(TAG, "拖选模式变化: $active")
+                    // 面板关闭/键盘重置时同步清除拖选状态，避免 anchor/focus 残留
+                    if (!active) {
+                        selectionActive = false
+                        selectionAnchor = -1
+                        selectionFocus = -1
+                    }
                     pinyinKeyboard?.setSelectionActive(active)
                 }
                 override fun onHideKeyboard() {
