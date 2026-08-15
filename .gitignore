@@ -23,3 +23,9 @@ captures/
 # 签名密钥与敏感配置
 *.keystore
 *.jks
+
+# 真机 QA 临时产物（截图/UI dump/调试脚本）
+artifacts/
+
+# 词库构建中间产物（由 tools/dict_builder 重新生成）
+tools/dict_builder/out/

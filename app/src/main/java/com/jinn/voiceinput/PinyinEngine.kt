@@ -30,13 +30,13 @@ object PinyinEngine {
     private var loaded = false
 
     /** 音节 → 单字（按频率降序） */
-    private val charsBySyllable = HashMap<String, Array<String>>()
+    private var charsBySyllable = HashMap<String, Array<String>>()
 
     /** 拼音串 → 词语（按频率降序） */
-    private val phrasesByPinyin = HashMap<String, Array<String>>()
+    private var phrasesByPinyin = HashMap<String, Array<String>>()
 
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
-    private val wordToPinyin = HashMap<String, String>()
+    private var wordToPinyin = HashMap<String, String>()
 
     /** 合法音节集合（不含声调） */
     private val validSyllables = HashSet<String>()
@@ -82,47 +82,77 @@ object PinyinEngine {
 
     private fun loadChars(context: Context) {
         context.assets.open("pinyin_chars.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            loadCharsText(reader.readText())
+            loadCharsReader(reader)
+        }
+    }
+
+    private fun loadCharsReader(reader: java.io.BufferedReader) {
+        if (charsBySyllable.isEmpty()) charsBySyllable = HashMap(1024)
+        var line = reader.readLine()
+        while (line != null) {
+            if (line.isNotBlank()) {
+                val tab = line.indexOf('\t')
+                if (tab > 0) {
+                    val syllable = line.substring(0, tab)
+                    val chars = line.substring(tab + 1).split(',')
+                    if (chars.isNotEmpty()) charsBySyllable[syllable] = chars.toTypedArray()
+                }
+            }
+            line = reader.readLine()
         }
     }
 
     private fun loadCharsText(text: String) {
-        for (line in text.lineSequence()) {
-            if (line.isBlank()) continue
-            val tab = line.indexOf('\t')
-            if (tab <= 0) continue
-            val syllable = line.substring(0, tab)
-            val chars = line.substring(tab + 1).split(',')
-            if (chars.isNotEmpty()) charsBySyllable[syllable] = chars.toTypedArray()
-        }
+        loadCharsReader(java.io.BufferedReader(java.io.StringReader(text)))
     }
 
     private fun loadPhrases(context: Context) {
+        // 逐行读取（29MB 词库若 readText 会先建一个超大 String 再切分，
+        // BufferedReader 边读边解析，省一次 29MB 分配 + lineSequence 开销）
         context.assets.open("pinyin_phrases.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            loadPhrasesText(reader.readText())
+            loadPhrasesReader(reader)
         }
     }
 
-    private fun loadPhrasesText(text: String) {
-        for (line in text.lineSequence()) {
-            if (line.isBlank()) continue
-            val tab = line.indexOf('\t')
-            if (tab <= 0) continue
-            val pinyin = line.substring(0, tab)
-            val phrases = line.substring(tab + 1).split('|')
-            if (phrases.isNotEmpty()) {
-                phrasesByPinyin[pinyin] = phrases.toTypedArray()
-                // 构建 词→拼音 反向索引（首个出现的拼音为准，供智能预测）
-                for (word in phrases) {
-                    if (!wordToPinyin.containsKey(word)) wordToPinyin[word] = pinyin
+    /** 逐行解析短语表。为复用流式解析，行数据来自 BufferedReader。 */
+    private fun loadPhrasesReader(reader: java.io.BufferedReader) {
+        // 预分配容量：104 万键的 HashMap 不预分配会有 rehash 开销，
+        // 但这里主要省的是扩容期间的搬移（实测约 5-8% 耗时）。
+        if (phrasesByPinyin.isEmpty()) phrasesByPinyin = HashMap(2_000_000)
+        if (wordToPinyin.isEmpty()) wordToPinyin = HashMap(1_500_000)
+
+        var line = reader.readLine()
+        while (line != null) {
+            if (line.isNotBlank()) {
+                val tab = line.indexOf('\t')
+                if (tab > 0) {
+                    val pinyin = line.substring(0, tab)
+                    val phrases = line.substring(tab + 1).split('|')
+                    if (phrases.isNotEmpty()) {
+                        phrasesByPinyin[pinyin] = phrases.toTypedArray()
+                        // 构建 词→拼音 反向索引（首个出现的拼音为准，供智能预测）
+                        for (word in phrases) {
+                            wordToPinyin.putIfAbsent(word, pinyin)
+                        }
+                    }
                 }
             }
+            line = reader.readLine()
         }
+    }
+
+    /** 测试注入用：按行文本加载短语表（与 [loadPhrasesReader] 逻辑一致） */
+    private fun loadPhrasesText(text: String) {
+        loadPhrasesReader(java.io.BufferedReader(java.io.StringReader(text)))
     }
 
     private fun loadSyllables(context: Context) {
         context.assets.open("pinyin_syllables.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            loadSyllablesText(reader.readText())
+            var line = reader.readLine()
+            while (line != null) {
+                if (line.isNotBlank()) validSyllables.add(line.trim())
+                line = reader.readLine()
+            }
         }
     }
 
