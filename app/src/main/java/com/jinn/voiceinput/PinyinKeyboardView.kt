@@ -515,11 +515,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift.alpha = 1f
     }
 
-    /** 自然码双拼键位小字提示：zh/ch/sh 标在 v/i/u 上 */
+    /**
+     * 自然码双拼键位提示：键面下方显示该键对应的韵母（或声母）。
+     * 布局对齐用户指定映射：e/u/i/a/v 五个键不显示提示。
+     */
     private fun shuangpinHint(c: Char): String = when (c) {
-        'v' -> "zh"
-        'i' -> "ch"
-        'u' -> "sh"
+        'q' -> "iu"
+        'w' -> "ia ua"
+        'r' -> "uan"
+        't' -> "ue"
+        'y' -> "uai ing"
+        'o' -> "ou"
+        'p' -> "un"
+        's' -> "ong iong"
+        'd' -> "iang uang"
+        'f' -> "en"
+        'g' -> "eng"
+        'h' -> "ang"
+        'j' -> "an"
+        'k' -> "ao"
+        'l' -> "ai"
+        'z' -> "ei"
+        'x' -> "ie"
+        'c' -> "iao"
+        'v' -> "ui zh"
+        'b' -> "ou"
+        'n' -> "in"
+        'm' -> "ian"
+        // e/u/i/a/v 不显示提示
         else -> ""
     }
 
