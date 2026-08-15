@@ -1,25 +1,31 @@
 package com.jinn.voiceinput
 
 import android.content.Context
-import android.text.TextUtils
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 
 /**
  * 拼音键盘视图：候选栏 + 26 键 + 底部功能行。
  *
+ * 布局（对齐主流输入法）：
+ *  - 26 键：第一行 10 字母、第二行 9 字母、第三行「切换大写 + 7 字母 + 删除键」
+ *  - 第四行：符号、数字、逗号、空格（长按语音）、句号、中英切换、回车确定
+ *
  * 职责：
  *  - 收集字母输入（全拼或自然码双拼），实时查询 [PinyinEngine] 显示候选
  *  - 候选点选 / 空格取首候选 / 退格回删拼音
- *  - 中文候选上屏、英文直通上屏、符号层
- *  - 「语音」键切回语音模式（通过 [OnVoiceRequested] 回调给 IME）
+ *  - 中英文切换（大写状态影响英文字母大小写）
+ *  - 符号层 / 数字层
+ *  - 空格长按请求切回语音模式（通过 [OnVoiceRequested] 回调给 IME）
  *
  * 输入法层调用 [commitComposing] 主动结束当前拼音串。
  */
@@ -38,6 +44,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onEnter()
         /** 退格（无拼音串时删除已上屏文本） */
         fun onBackspace()
+        /** 删除键三击：清空已上屏的全部文本 */
+        fun onDeleteAll()
         /** 请求切回语音模式 */
         fun onVoiceRequested()
     }
@@ -53,8 +61,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否处于英文模式（字母直接上屏，不查候选） */
     private var englishMode = false
 
-    /** 是否处于符号层 */
-    private var symbolMode = false
+    /** 是否大写锁定（影响英文模式字母大小写与键面显示） */
+    private var capsMode = false
+
+    /** 符号层 / 数字层 / 字母层 */
+    private var layer = LAYER_LETTER
 
     /** 全拼还是双拼（来自设置） */
     private var shuangpinMode = false
@@ -63,16 +74,43 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private lateinit var viewCandidateList: LinearLayout
     private lateinit var viewLetters: LinearLayout
     private lateinit var btnSymbol: TextView
+    private lateinit var btnDigit: TextView
     private lateinit var btnLang: TextView
-    private lateinit var btnVoice: TextView
     private lateinit var btnSpace: View
     private lateinit var btnBackspace: View
     private lateinit var btnEnter: View
+    private lateinit var btnShift: ImageButton
+    private lateinit var btnComma: View
+    private lateinit var btnPeriod: View
 
     private val keyViews = HashMap<Char, PinyinKey>()
 
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
+
+    // ── 删除键三态：单击删一个 / 按住连续删 / 快速三击全删 ──
+    private val backspaceHandler = Handler(Looper.getMainLooper())
+    private var backspaceHeld = false
+    private var backspacePressStart = 0L
+    private val backspaceTapTimes = LongArray(3)
+    private var backspaceTapCount = 0
+
+    /** 按住退格超过该时长进入连续删除 */
+    private val backspaceRepeatDelayMs = 380L
+
+    /** 连续删除的间隔 */
+    private val backspaceRepeatIntervalMs = 55L
+
+    /** 三击判定的最大间隔（从第一次按下到第三次按下） */
+    private val tripleTapWindowMs = 700L
+
+    private val backspaceRepeatRunnable = object : Runnable {
+        override fun run() {
+            if (!backspaceHeld) return
+            deleteOne()
+            backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
+        }
+    }
 
     // ── 字母行定义（标准 QWERTY） ──────────────────────────
     private val rows = arrayOf(
@@ -81,14 +119,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
         "zxcvbnm",
     )
 
-    /** 符号层定义：键位 → 主符号 / 长按符号（简化只给主符号） */
+    /** 符号层定义：键位 → 符号 */
     private val symbolMap = mapOf(
+        'q' to "！", 'w' to "？", 'e' to "、", 'r' to "。", 't' to "；",
+        'y' to "：", 'u' to "“", 'i' to "”", 'o' to "…", 'p' to "（",
+        'a' to "）", 's' to "【", 'd' to "】", 'f' to "《", 'g' to "》",
+        'h' to "·", 'j' to "—", 'k' to "~", 'l' to "`",
+        'z' to "@", 'x' to "#", 'c' to "$", 'v' to "%", 'b' to "^",
+        'n' to "&", 'm' to "*",
+    )
+
+    /** 数字层定义：键位 → 数字/符号 */
+    private val digitMap = mapOf(
         'q' to "1", 'w' to "2", 'e' to "3", 'r' to "4", 't' to "5",
         'y' to "6", 'u' to "7", 'i' to "8", 'o' to "9", 'p' to "0",
-        'a' to "!", 's' to "@", 'd' to "#", 'f' to "$", 'g' to "%",
-        'h' to "^", 'j' to "&", 'k' to "*", 'l' to "(",
-        'z' to ")", 'x' to "-", 'c' to "_", 'v' to "=", 'b' to "+",
-        'n' to "[", 'm' to "]",
+        'a' to "-", 's' to "/", 'd' to ":", 'f' to ";", 'g' to "(",
+        'h' to ")", 'j' to "¥", 'k' to "@", 'l' to "&",
+        'z' to ".", 'x' to ",", 'c' to "?", 'v' to "!", 'b' to "'",
+        'n' to "\"", 'm' to "%",
     )
 
     init {
@@ -100,11 +148,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewLetters = root.findViewById(R.id.keyboard_letters)
 
         btnSymbol = root.findViewById(R.id.key_symbol)
+        btnDigit = root.findViewById(R.id.key_digit)
         btnLang = root.findViewById(R.id.key_lang)
-        btnVoice = root.findViewById(R.id.key_voice)
         btnSpace = root.findViewById(R.id.key_space)
         btnBackspace = root.findViewById(R.id.key_backspace)
         btnEnter = root.findViewById(R.id.key_enter)
+        btnShift = root.findViewById(R.id.key_shift)
+        btnComma = root.findViewById(R.id.key_comma)
+        btnPeriod = root.findViewById(R.id.key_period)
 
         bindLetterKeys(root)
         bindFunctionKeys()
@@ -158,9 +209,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
-            symbolMode = !symbolMode
+            layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
             refreshKeyLabels()
-            Diagnostics.i(TAG, "symbol 层: $symbolMode")
+            Diagnostics.i(TAG, "符号层: ${layer == LAYER_SYMBOL}")
+        }
+        btnDigit.setOnClickListener {
+            layer = if (layer == LAYER_DIGIT) LAYER_LETTER else LAYER_DIGIT
+            refreshKeyLabels()
+            Diagnostics.i(TAG, "数字层: ${layer == LAYER_DIGIT}")
         }
         btnLang.setOnClickListener {
             englishMode = !englishMode
@@ -171,20 +227,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshKeyLabels()
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
-        btnVoice.setOnClickListener { listener?.onVoiceRequested() }
+        btnShift.setOnClickListener {
+            capsMode = !capsMode
+            refreshKeyLabels()
+            Diagnostics.i(TAG, "大写锁定: $capsMode")
+        }
         btnSpace.setOnClickListener { onSpacePressed() }
-        btnBackspace.setOnClickListener { onBackspacePressed() }
-        btnBackspace.setOnLongClickListener {
-            // 长按退格：清空整个拼音串
-            if (composing.isNotEmpty()) {
-                composing.clear()
-                refreshCandidateBar()
-            } else {
-                listener?.onBackspace()
-            }
+        btnSpace.setOnLongClickListener {
+            // 空格长按：切回语音模式（不触发短按）
+            listener?.onVoiceRequested()
             true
         }
+        btnBackspace.setOnTouchListener { _, event ->
+            handleBackspaceTouch(event)
+        }
         btnEnter.setOnClickListener { listener?.onEnter() }
+        // 逗号/句号：英文模式上 ASCII，中文模式上全角
+        btnComma.setOnClickListener {
+            listener?.onCommitText(if (englishMode) "," else "，")
+        }
+        btnPeriod.setOnClickListener {
+            listener?.onCommitText(if (englishMode) "." else "。")
+        }
     }
 
     // ── 对外控制 ───────────────────────────────────────────
@@ -210,8 +274,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun getFunctionKeyPositions(): String {
         val sb = StringBuilder()
         for ((name, v) in listOf(
-            "symbol" to btnSymbol, "lang" to btnLang, "voice" to btnVoice,
+            "symbol" to btnSymbol, "digit" to btnDigit, "lang" to btnLang,
             "space" to btnSpace, "backspace" to btnBackspace, "enter" to btnEnter,
+            "shift" to btnShift, "comma" to btnComma, "period" to btnPeriod,
         )) {
             val loc = IntArray(2)
             v.getLocationOnScreen(loc)
@@ -244,15 +309,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 按键处理 ───────────────────────────────────────────
 
     private fun onLetterPressed(c: Char) {
-        if (symbolMode) {
-            // 符号层：数字/符号直接上屏
-            val symbol = symbolMap[c] ?: return
-            listener?.onCommitText(symbol)
-            return
+        // 符号层 / 数字层：直接上屏对应字符
+        when (layer) {
+            LAYER_SYMBOL -> {
+                val symbol = symbolMap[c] ?: return
+                listener?.onCommitText(symbol)
+                return
+            }
+
+            LAYER_DIGIT -> {
+                val digit = digitMap[c] ?: return
+                listener?.onCommitText(digit)
+                return
+            }
+
+            else -> Unit
         }
         if (englishMode) {
-            // 英文模式：字母直通
-            listener?.onCommitText(c.toString())
+            // 英文模式：按大写状态上屏
+            listener?.onCommitText(if (capsMode) c.uppercaseChar().toString() else c.toString())
+            return
+        }
+        // 中文模式 + 大写锁定：直接上屏大写字母（等价于临时英文）
+        if (capsMode) {
+            listener?.onCommitText(c.uppercaseChar().toString())
             return
         }
         // 中文模式：追加到拼音串并查候选
@@ -262,7 +342,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onSpacePressed() {
-        if (symbolMode) {
+        if (layer != LAYER_LETTER) {
             listener?.onCommitSpace()
             return
         }
@@ -293,6 +373,74 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 删除键三态触摸：
+     *  - 按下即删一个字符；按住超过 [backspaceRepeatDelayMs] 进入连续删除，松开停止
+     *  - 快速三击（[tripleTapWindowMs] 内）触发 [onTripleBackspace] 全部清空
+     */
+    private fun handleBackspaceTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                backspaceHeld = true
+                backspacePressStart = System.currentTimeMillis()
+                deleteOne()
+                backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
+                backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
+                btnBackspace.isPressed = true
+                return true
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                btnBackspace.isPressed = false
+                if (!backspaceHeld) return true
+                backspaceHeld = false
+                val held = System.currentTimeMillis() - backspacePressStart
+                backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
+                // 短按（未进入连续删除）才算一次点击，用于三击判定
+                if (held < backspaceRepeatDelayMs) {
+                    recordBackspaceTap()
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    /** 记录一次退格点击；三击（窗口内）触发全部清空 */
+    private fun recordBackspaceTap() {
+        val now = System.currentTimeMillis()
+        if (backspaceTapCount > 0 && now - backspaceTapTimes[backspaceTapCount - 1] > tripleTapWindowMs) {
+            backspaceTapCount = 0
+        }
+        backspaceTapTimes[backspaceTapCount] = now
+        backspaceTapCount++
+        if (backspaceTapCount >= 3) {
+            backspaceTapCount = 0
+            Diagnostics.i(TAG, "退格三击：清空全部")
+            onTripleBackspace()
+        }
+    }
+
+    /** 三击清空：先清拼音串，再通知 IME 删除已上屏文本 */
+    private fun onTripleBackspace() {
+        if (composing.isNotEmpty()) {
+            composing.clear()
+            refreshCandidateBar()
+        }
+        listener?.onDeleteAll()
+    }
+
+    /** 删除一个字符（有拼音串删拼音，否则删已上屏） */
+    private fun deleteOne() {
+        if (composing.isNotEmpty()) {
+            composing.deleteCharAt(composing.length - 1)
+            refreshCandidateBar()
+            Diagnostics.v(TAG, "退格删拼音: ${composing}")
+        } else {
+            listener?.onBackspace()
+        }
+    }
+
     // ── 候选渲染 ───────────────────────────────────────────
 
     private fun refreshCandidateBar() {
@@ -309,7 +457,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val result = PinyinEngine.query(queryInput)
         lastCandidates = result.candidates
         viewCandidatePinyin.text = queryInput
-        Diagnostics.v(TAG, "候选: $queryInput → ${result.candidates.take(3)}")
+        Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         viewCandidateList.removeAllViews()
         for ((index, candidate) in result.candidates.withIndex()) {
@@ -326,6 +474,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onCandidateSelected(candidate: String) {
+        Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         listener?.onCommitText(candidate)
         composing.clear()
         refreshCandidateBar()
@@ -334,22 +483,36 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 键面显示 ───────────────────────────────────────────
 
     private fun refreshKeyLabels() {
+        val showUpper = capsMode && !englishMode && layer == LAYER_LETTER
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
-            key.label = if (symbolMode) {
-                symbolMap[c] ?: c.toString()
-            } else {
-                c.toString()
+            key.label = when (layer) {
+                LAYER_SYMBOL -> symbolMap[c] ?: c.toString()
+                LAYER_DIGIT -> digitMap[c] ?: c.toString()
+                else ->
+                    if (showUpper) c.uppercaseChar().toString() else c.toString()
             }
-            // 中文模式下显示自然码双拼的键位小字提示（可选）
-            key.subLabel = if (!symbolMode && !englishMode && shuangpinMode) {
+            // 双拼模式下显示自然码键位小字提示（字母层）
+            key.subLabel = if (layer == LAYER_LETTER && !englishMode && shuangpinMode) {
                 shuangpinHint(c)
             } else {
                 ""
             }
         }
         btnLang.text = context.getString(if (englishMode) R.string.key_en else R.string.key_cn)
-        btnSymbol.text = if (symbolMode) context.getString(R.string.key_abc) else "123"
+        btnSymbol.text = if (layer == LAYER_SYMBOL) {
+            context.getString(R.string.key_abc)
+        } else {
+            context.getString(R.string.key_symbol)
+        }
+        btnDigit.text = if (layer == LAYER_DIGIT) {
+            context.getString(R.string.key_abc)
+        } else {
+            context.getString(R.string.key_digit)
+        }
+        // 大写锁定：shift 键高亮
+        btnShift.setBackgroundResource(if (capsMode) R.drawable.key_bg_active else R.drawable.key_bg)
+        btnShift.alpha = 1f
     }
 
     /** 自然码双拼键位小字提示：zh/ch/sh 标在 v/i/u 上 */
@@ -364,5 +527,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+        const val LAYER_LETTER = 0
+        const val LAYER_SYMBOL = 1
+        const val LAYER_DIGIT = 2
     }
 }

@@ -202,4 +202,44 @@ object Diagnostics {
 
     /** 今天的日志文件（可能尚未创建） */
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${dayFormat.format(Date())}.log") }
+
+    // ── 导出诊断包 ─────────────────────────────────────────
+
+    /**
+     * 把日志目录打包成一个 zip 导出到共享存储（/storage/emulated/0/JinnIme/），
+     * 供用户用文件管理器直接取出。返回导出文件路径；失败返回 null。
+     * 包含：全部日志、最近的 logcat 快照、设备信息文本。
+     */
+    fun exportBundle(context: Context): File? {
+        val srcDir = logDir ?: return null
+        return runCatching {
+            // 先补一个最新的 logcat 快照和设备信息
+            val meta = File(srcDir, "device-info.txt")
+            meta.writeText(
+                buildString {
+                    appendLine("时间: ${timeFormat.format(Date())}")
+                    appendLine("设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                    appendLine("系统: Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+                    appendLine("版本: ${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
+                    appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
+                }
+            )
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            val outDir = File(Environment.getExternalStorageDirectory(), DIR_NAME)
+            outDir.mkdirs()
+            val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
+            val files = srcDir.listFiles()?.toList().orEmpty()
+            if (files.isEmpty()) return null
+            java.util.zip.ZipOutputStream(FileOutputStream(dest)).use { zos ->
+                for (f in files) {
+                    if (!f.isFile) continue
+                    zos.putNextEntry(java.util.zip.ZipEntry(f.name))
+                    f.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+            i(TAG, "导出诊断包: ${dest.absolutePath} (${files.size} 个文件)")
+            dest
+        }.getOrNull()
+    }
 }

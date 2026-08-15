@@ -39,7 +39,9 @@
     <string name="key_cn">中</string>
     <string name="key_en">EN</string>
     <string name="key_abc">ABC</string>
-    <string name="key_voice">语音</string>
+    <string name="key_symbol">符号</string>
+    <string name="key_digit">数字</string>
+    <string name="cd_shift">切换大写</string>
 
     <!-- 设置页 -->
     <string name="settings_title">Jinn语音输入</string>
@@ -112,4 +114,12 @@
     <string name="settings_ime_send">发送到内部接收区</string>
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
     <string name="settings_ime_received">收到：%1$s</string>
+
+    <!-- 诊断 -->
+    <string name="settings_diagnostics">诊断</string>
+    <string name="settings_diagnostics_desc">应用运行信息自动写入手机内部存储，崩溃时自动抓取日志快照。可导出为压缩包发给开发者排查。</string>
+    <string name="settings_export_diag">导出诊断包到内部存储</string>
+    <string name="settings_diag_exported">已导出：%1$s</string>
+    <string name="settings_diag_export_fail">导出失败：%1$s</string>
+    <string name="settings_diag_dir_hint">日志目录：%1$s</string>
 </resources>
