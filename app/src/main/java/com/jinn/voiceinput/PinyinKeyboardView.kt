@@ -784,6 +784,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         directionPanelVisible = false
         selectionActive = false
+        // 通知 IME 清除拖选状态（JinnIme 的 anchor/focus 同步重置）
+        listener?.onSelectionModeChanged(false)
         Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
     }
 
