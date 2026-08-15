@@ -35,11 +35,17 @@ object PinyinEngine {
     /** 拼音串 → 词语（按频率降序） */
     private val phrasesByPinyin = HashMap<String, Array<String>>()
 
+    /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
+    private val wordToPinyin = HashMap<String, String>()
+
     /** 合法音节集合（不含声调） */
     private val validSyllables = HashSet<String>()
 
     /** 有序音节（字典序）：保证单字候选输出顺序稳定 */
     private val sortedSyllables = ArrayList<String>()
+
+    /** 有序拼音键（字典序）：智能预测的二分查找前缀用 */
+    private val sortedPhraseKeys = ArrayList<String>()
 
     /** 加载词库；幂等，可在后台线程调用 */
     fun load(context: Context) {
@@ -70,6 +76,8 @@ object PinyinEngine {
     private fun finalizeLoad() {
         sortedSyllables.clear()
         sortedSyllables.addAll(charsBySyllable.keys.sorted())
+        sortedPhraseKeys.clear()
+        sortedPhraseKeys.addAll(phrasesByPinyin.keys.sorted())
     }
 
     private fun loadChars(context: Context) {
@@ -102,7 +110,13 @@ object PinyinEngine {
             if (tab <= 0) continue
             val pinyin = line.substring(0, tab)
             val phrases = line.substring(tab + 1).split('|')
-            if (phrases.isNotEmpty()) phrasesByPinyin[pinyin] = phrases.toTypedArray()
+            if (phrases.isNotEmpty()) {
+                phrasesByPinyin[pinyin] = phrases.toTypedArray()
+                // 构建 词→拼音 反向索引（首个出现的拼音为准，供智能预测）
+                for (word in phrases) {
+                    if (!wordToPinyin.containsKey(word)) wordToPinyin[word] = pinyin
+                }
+            }
         }
     }
 
@@ -200,6 +214,40 @@ object PinyinEngine {
             if (list[mid] < target) lo = mid + 1 else hi = mid
         }
         return lo
+    }
+
+    // ── 智能预测 ──────────────────────────────────────────
+
+    private const val MAX_PREDICTIONS = 6
+
+    /**
+     * 智能预测：用户选完一个词后，预测下一个要输入的字/词。
+     *
+     * 算法（对齐 libime `PinyinPredictionSource::Dictionary` 的 matchWordsPrefix 拆词法）：
+     *  1. 取已选词 [lastWord] 的拼音作前缀（如 你好 → nihao）
+     *  2. 在词库中二分查找所有「拼音以该前缀开头且更长」的短语键（如 nihaoma、nihaoa）
+     *  3. 若短语文本以 [lastWord] 开头，截掉已选部分得到预测词（你好吗 → 吗、你好像 → 像）
+     *
+     * 示例：选「你好」→ 预测「吗」「像」「不好」等；选「谢谢」→ 预测「你」「大家」等。
+     */
+    fun predict(lastWord: String): List<String> {
+        if (!loaded || lastWord.isEmpty()) return emptyList()
+        val lastPinyin = wordToPinyin[lastWord] ?: return emptyList()
+        val out = LinkedHashSet<String>()
+        var lo = lowerBound(sortedPhraseKeys, lastPinyin)
+        while (lo < sortedPhraseKeys.size) {
+            val key = sortedPhraseKeys[lo]
+            if (!key.startsWith(lastPinyin)) break
+            if (key.length > lastPinyin.length) {
+                for (phrase in phrasesByPinyin[key].orEmpty()) {
+                    if (phrase.length > lastWord.length && phrase.startsWith(lastWord)) {
+                        out.add(phrase.substring(lastWord.length))
+                    }
+                }
+            }
+            lo++
+        }
+        return out.take(MAX_PREDICTIONS)
     }
 
     /**

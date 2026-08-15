@@ -88,6 +88,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
 
+    /** 智能预测缓存：选中词后 PinyinEngine.predict 的结果 */
+    private var lastPredictions: List<String> = emptyList()
+
+    /** 上次上屏的词：退格回到预测态时用它重新查询预测 */
+    private var lastCommittedWord: String = ""
+
     // ── 删除键三态：单击删一个 / 按住连续删 / 快速三击全删 ──
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceHeld = false
@@ -101,8 +107,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 连续删除的间隔 */
     private val backspaceRepeatIntervalMs = 55L
 
-    /** 三击判定的最大间隔（从第一次按下到第三次按下） */
-    private val tripleTapWindowMs = 700L
+    /** 三击窗口：从第一次按下算起 1000ms 内完成 3 次才触发（1 秒按一次不会触发） */
+    private val tripleTapWindowMs = 1000L
 
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
@@ -223,6 +229,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (englishMode) {
                 // 切英文时清掉未上屏的拼音
                 commitComposing()
+            } else {
+                // 切回中文时清掉英文态残留的预测
+                lastPredictions = emptyList()
             }
             refreshKeyLabels()
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
@@ -257,7 +266,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun configure(shuangpin: Boolean, english: Boolean) {
         shuangpinMode = shuangpin
         englishMode = english
+        // 方案切换时清掉残留的拼音与预测
+        composing.clear()
+        lastPredictions = emptyList()
         refreshKeyLabels()
+        refreshCandidateBar()
     }
 
     fun updateImeOptions(options: Int) {
@@ -294,15 +307,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 提交当前拼音串的首候选（IME 收起键盘等场景调用） */
     fun commitComposing() {
-        if (composing.isEmpty()) return
-        val candidates = lastCandidates
-        if (candidates.isNotEmpty()) {
-            listener?.onCommitText(candidates[0])
-        } else if (!englishMode) {
-            // 无候选（如未加载词库），直接丢拼音串
-            Diagnostics.w(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
+        if (composing.isNotEmpty()) {
+            val candidates = lastCandidates
+            if (candidates.isNotEmpty()) {
+                listener?.onCommitText(candidates[0])
+            } else if (!englishMode) {
+                // 无候选（如未加载词库），直接丢拼音串
+                Diagnostics.w(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
+            }
+            composing.clear()
         }
-        composing.clear()
+        // 收起键盘时预测态不自动上屏，仅清空回到拼音态
+        lastPredictions = emptyList()
         refreshCandidateBar()
     }
 
@@ -358,7 +374,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onCommitSpace()
             }
             composing.clear()
+            // 空格上屏同样触发智能预测（与点选候选一致）
+            lastCommittedWord = lastCandidates.firstOrNull().orEmpty()
+            lastPredictions = PinyinEngine.predict(lastCommittedWord)
             refreshCandidateBar()
+        } else if (lastPredictions.isNotEmpty()) {
+            // 预测态：空格取第一个预测词
+            onPredictionSelected(lastPredictions[0])
         } else {
             listener?.onCommitSpace()
         }
@@ -406,10 +428,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return false
     }
 
-    /** 记录一次退格点击；三击（窗口内）触发全部清空 */
+    /**
+     * 记录一次退格点击；三击（第一次按下起 1000ms 内共 3 次）触发全部清空。
+     * 以第一次按下为窗口起点：任一次点击距第一次超过窗口即重置计数，
+     * 保证「1 秒按一次」按多少次都不会触发。
+     */
     private fun recordBackspaceTap() {
         val now = System.currentTimeMillis()
-        if (backspaceTapCount > 0 && now - backspaceTapTimes[backspaceTapCount - 1] > tripleTapWindowMs) {
+        if (backspaceTapCount > 0 && now - backspaceTapTimes[0] >= tripleTapWindowMs) {
             backspaceTapCount = 0
         }
         backspaceTapTimes[backspaceTapCount] = now
@@ -421,12 +447,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** 三击清空：先清拼音串，再通知 IME 删除已上屏文本 */
+    /** 三击清空：先清拼音串与预测，再通知 IME 删除已上屏文本 */
     private fun onTripleBackspace() {
         if (composing.isNotEmpty()) {
             composing.clear()
-            refreshCandidateBar()
         }
+        lastPredictions = emptyList()
+        refreshCandidateBar()
         listener?.onDeleteAll()
     }
 
@@ -436,6 +463,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
             Diagnostics.v(TAG, "退格删拼音: ${composing}")
+        } else if (lastPredictions.isNotEmpty()) {
+            // 预测态退格：清除预测，回到拼音态
+            lastPredictions = emptyList()
+            refreshCandidateBar()
         } else {
             listener?.onBackspace()
         }
@@ -445,10 +476,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun refreshCandidateBar() {
         val input = composing.toString()
-        if (input.isEmpty()) {
+        if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             viewCandidatePinyin.text = ""
             viewCandidateList.removeAllViews()
+            return
+        }
+
+        if (input.isEmpty()) {
+            // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）
+            viewCandidatePinyin.text = ""
+            viewCandidateList.removeAllViews()
+            for (pred in lastPredictions) {
+                val item = TextView(context).apply {
+                    text = pred
+                    textSize = 16f
+                    setTextColor(resources.getColor(R.color.kb_candidate_sel_text, context.theme))
+                    setPadding(dp(10), 0, dp(10), 0)
+                    isClickable = true
+                    setOnClickListener { onPredictionSelected(pred) }
+                }
+                viewCandidateList.addView(item)
+            }
+            Diagnostics.v(TAG, "智能预测: ${lastPredictions.take(4)}")
             return
         }
 
@@ -477,6 +527,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         listener?.onCommitText(candidate)
         composing.clear()
+        // 智能预测：基于已上屏词预测下一个词（libime matchWordsPrefix 思路）
+        lastCommittedWord = candidate
+        lastPredictions = PinyinEngine.predict(candidate)
+        refreshCandidateBar()
+    }
+    private fun onPredictionSelected(pred: String) {
+        Diagnostics.i(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
+        listener?.onCommitText(pred)
+        lastPredictions = emptyList()
         refreshCandidateBar()
     }
 

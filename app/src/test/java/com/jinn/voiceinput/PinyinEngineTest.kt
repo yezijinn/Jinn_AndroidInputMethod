@@ -40,6 +40,7 @@ class PinyinEngineTest {
         val phrases = """
             nihao	你好
             nihaoma	你好吗
+            nihaoa	你好啊
             nihai	你害
             nian	年
             nianji	年纪
@@ -55,6 +56,7 @@ class PinyinEngineTest {
             jundui	军队
         """.trimIndent()
         val syllables = """
+            a
             ni
             hao
             ma
@@ -231,5 +233,23 @@ class PinyinEngineTest {
         val chars = PinyinEngine.charsFor("an")
         // charsFor 不应崩（an 未注入 chars 时返回空）
         assertTrue(chars.isEmpty())
+    }
+
+    @Test
+    fun 智能预测_选你好预测吗和啊() {
+        // 词库有 nihaoma→你好吗、nihaoa→你好啊，选「你好」应预测「吗」「啊」
+        val preds = PinyinEngine.predict("你好")
+        assertTrue("应预测 吗: $preds", preds.contains("吗"))
+        assertTrue("应预测 啊: $preds", preds.contains("啊"))
+    }
+
+    @Test
+    fun 智能预测_未知词返回空() {
+        assertTrue(PinyinEngine.predict("不存在的词xyz").isEmpty())
+    }
+
+    @Test
+    fun 智能预测_空输入返回空() {
+        assertTrue(PinyinEngine.predict("").isEmpty())
     }
 }
