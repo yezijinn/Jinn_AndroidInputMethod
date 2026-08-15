@@ -13,6 +13,7 @@ ben
 beng
 bi
 bian
+biang
 biao
 bie
 bin
@@ -25,6 +26,7 @@ can
 cang
 cao
 ce
+cei
 cen
 ceng
 cha
@@ -146,6 +148,7 @@ ju
 juan
 jue
 jun
+junding
 ka
 kai
 kan
@@ -191,6 +194,7 @@ lue
 lun
 luo
 lv
+lve
 m
 ma
 mai
@@ -237,6 +241,7 @@ nuan
 nue
 nuo
 nv
+nve
 o
 ou
 pa
@@ -280,6 +285,7 @@ ri
 rong
 rou
 ru
+rua
 ruan
 rui
 run
