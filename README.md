@@ -35,7 +35,7 @@
 为此提供三层保活，按需开启（均在设置页「保活与防杀后台」卡片）：
 
 1. **前台保活服务**（`KeepAliveService`）：开启后常驻一条低优先级通知，把进程优先级抬到前台，降低被杀概率；服务用 `START_STICKY` + `onTaskRemoved` 自愈。
-2. **无障碍互保**（`CapsWriterAccessibilityService`）：在系统「无障碍」里启用后，服务被系统托管常驻，其 `onServiceConnected` 会拉起前台服务；前台服务被杀时由无障碍再次拉起，互保。
+2. **无障碍互保**（`JinnAccessibilityService`）：在系统「无障碍」里启用后，服务被系统托管常驻，其 `onServiceConnected` 会拉起前台服务；前台服务被杀时由无障碍再次拉起，互保。
 3. **Root / Shizuku 加白名单**（`RootShizuku`）：开启「用 Root / Shizuku 加白名单」后点「运行 Root / Shizuku 防杀后台」，把本包加入 Doze 白名单并允许后台运行。优先走 Shizuku（免 root），未授权则退回 `su`。
 
 此外「加入电池白名单（免优化）」可一键跳转系统电池设置，把本应用设为「不限制」。
@@ -51,7 +51,7 @@
 - **网络切换重连**：注册 `ConnectivityManager` 网络回调，WiFi↔热点切换导致 IP 变化、网络恢复可用时主动重连。
 - **本地静音抑制（VAD）**（`MicRecorder`）：实时检测音量，连续静音超过 3 秒时——连续录音模式自动收尾出结果、长按说话模式仅提示「没听到声音」，减少无效上传。
 - **权限请求现代化**：设置页改用 Activity Result API（`registerForActivityResult`）替代已弃用的 `requestPermissions`，`SettingsActivity` 继承 `ComponentActivity`。
-- **无障碍真实用途**（`CapsWriterAccessibilityService`）：监测用户进入文本输入框（聊天 / 记事 / 搜索）时维持语音服务常驻，给出无障碍服务存在的合理依据，并以 5s 节流避免频繁拉起，降低被系统判定「滥用无障碍」而受限的风险。
+- **无障碍真实用途**（`JinnAccessibilityService`）：监测用户进入文本输入框（聊天 / 记事 / 搜索）时维持语音服务常驻，给出无障碍服务存在的合理依据，并以 5s 节流避免频繁拉起，降低被系统判定「滥用无障碍」而受限的风险。
 
 ## 工程结构
 
@@ -64,15 +64,17 @@ CapsWriterIME/
     ├── proguard-rules.pro
     └── src/main/
         ├── AndroidManifest.xml
-        ├── java/com/capswriter/ime/
+        ├── java/com/jinn/voiceinput/
         │   ├── Protocol.kt        # 协议常量与报文序列化
         │   ├── Prefs.kt           # SharedPreferences 配置（含保活开关）
         │   ├── MicRecorder.kt     # 16kHz PCM16 采集 + float32 转换
         │   ├── AsrClient.kt       # OkHttp WebSocket 客户端
         │   ├── MicButton.kt       # 麦克风按钮（径向渐变 + 随音量呼吸的光圈）
-        │   ├── CapsWriterIme.kt   # 输入法服务（手势 / 结果回显 / 编辑键 / 保活拉起）
+        │   ├── JinnIme.kt         # 输入法服务（手势 / 结果回显 / 编辑键 / 保活拉起 + 拼音键盘）
+        │   ├── PinyinEngine.kt    # 拼音引擎（词库加载 / 候选查询 / 自然码双拼）
+        │   ├── PinyinKeyboardView.kt / PinyinKey.kt # 拼音键盘（26 键 + 候选栏 + 智能预测）
         │   ├── KeepAliveService.kt# 前台保活服务（常驻通知，防掉后台）
-        │   ├── CapsWriterAccessibilityService.kt # 无障碍保活（与前台服务互保）
+        │   ├── JinnAccessibilityService.kt # 无障碍保活（与前台服务互保）
         │   ├── BootReceiver.kt    # 开机 / 更新后拉起保活
         │   ├── RootShizuku.kt     # Root / Shizuku 加白名单工具
         │   └── SettingsActivity.kt# 设置页（服务端 / 语言 / 提示词 / 授权 / 保活）

@@ -34,22 +34,25 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 
 - Debug：`gradle.bat assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
 - Release：`gradle.bat assembleRelease` → `app/build/outputs/apk/release/app-release-unsigned.apk`（未签名）
-- 真机安装：`adb install -r app-debug.apk`，设备 `192.168.1.33:38367`（KernelSU root）
-- 真机输入法：`adb shell ime set com.capswriter.ime/.CapsWriterIme`
+- 真机安装：`adb install -r app-debug.apk`，设备 `192.168.1.33:5555`（KernelSU root）
+- 真机输入法：`adb shell ime set com.jinn.voiceinput/.JinnIme`（实际包名是 `com.jinn.voiceinput`，非 `com.capswriter.ime`）
 - 本机 SDK：`C:\Android\sdk`（local.properties 已写 sdk.dir），JDK17 在 PATH
 
 ## 项目结构
 
 ```
-app/src/main/java/com/capswriter/ime/
+app/src/main/java/com/jinn/voiceinput/
 ├── Protocol.kt         # 协议常量 + AudioMessage(发) / RecognitionMessage(收) 序列化
 ├── Prefs.kt            # SharedPreferences 配置（host/port/language/prompt/保活开关）
 ├── MicRecorder.kt      # 16kHz PCM16 采集 → float32 小端；本地 VAD 静音检测
 ├── AsrClient.kt        # OkHttp WebSocket：beginTask/sendChunk/endTask + 断线指数退避重连
 ├── MicButton.kt        # 麦克风按钮（纯绘制，手势判定在 IME）
-├── CapsWriterIme.kt    # 输入法服务：长按/短按手势、结果回显、编辑键、保活拉起
+├── JinnIme.kt          # 输入法服务：语音键盘 + 拼音键盘双模式、长按/短按手势、结果回显、保活拉起
+├── PinyinEngine.kt     # 拼音引擎：词库加载（HashMap 预分配 + BufferedReader 流式）、候选查询、自然码双拼
+├── PinyinKeyboardView.kt # 拼音键盘视图：26 键 QWERTY + 候选栏 + 智能预测（自然码键位提示）
+├── PinyinKey.kt        # 拼音键盘单键（纯绘制：字母 + 双拼韵母/声母提示）
 ├── KeepAliveService.kt # 前台保活服务（常驻通知，防掉后台）
-├── CapsWriterAccessibilityService.kt # 无障碍互保 + 输入场景监测（5s 节流）
+├── JinnAccessibilityService.kt # 无障碍互保 + 输入场景监测（5s 节流）
 ├── BootReceiver.kt     # 开机/更新后拉起保活
 ├── RootShizuku.kt      # Root(su)/Shizuku 加白名单（Shizuku.newProcess 用反射，13.x 已私有）
 ├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/保活）+ 保存并测试连接
@@ -58,13 +61,15 @@ app/src/main/java/com/capswriter/ime/
 
 ## 诊断日志（重要）
 
-- 输出目录：`/storage/emulated/0/CapsWriterIME/logs/capswriter-YYYY-MM-dd.log`（按天滚动，保留 7 天）
+- 输出目录：`/storage/emulated/0/JinnIme/logs/jinn-YYYY-MM-dd.log`（按天滚动，保留 7 天）
 - 无共享存储写权限时自动退回 `Android/data/<pkg>/files/logs/`
 - 真机 root 环境（KernelSU）下先 `su -c 'appops set <pkg> MANAGE_EXTERNAL_STORAGE allow'`
   使应用可直写共享目录；应用侧 `Diagnostics.init()` 也会尝试 appops+chown，兜底 app 专属目录
 - 崩溃自动写入 stack trace 并 dump `logcat-<ts>.log` 快照到同目录
 - 所有关键路径已埋点（连接/重连/收发/录音/VAD/保活/权限），排查先用 `cat` 日志文件
-- 排查命令：`adb shell cat /storage/emulated/0/CapsWriterIME/logs/capswriter-*.log`
+- 排查命令：`adb shell cat /storage/emulated/0/JinnIme/logs/jinn-*.log`
+- `Diagnostics.i/v/w/e` 同时写 logcat 与日志文件；`PinyinEngine` 加载完成会打
+  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程，约 7s，不阻塞 UI）
 
 ## 约定
 
