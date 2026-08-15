@@ -279,6 +279,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     // ── 对外控制 ───────────────────────────────────────────
 
+    /** 当前是否英文模式（供 IME 每次聚焦时同步，避免覆盖用户手动切换） */
+    fun isEnglishMode(): Boolean = englishMode
+
     /** 设置输入方案（全拼/双拼）与初始中英文状态 */
     fun configure(shuangpin: Boolean, english: Boolean) {
         shuangpinMode = shuangpin

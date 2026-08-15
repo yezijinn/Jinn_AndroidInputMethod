@@ -53,10 +53,10 @@
     <string name="settings_lock_short">固定</string>
     <string name="settings_recognize">识别</string>
     <string name="settings_language">语言</string>
+    <string name="settings_default_mode">默认键盘模式</string>
     <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
     <string name="settings_strip_punc">去句尾标点</string>
     <string name="settings_composing">实时回显</string>
-    <string name="settings_shuangpin">自然码双拼</string>
     <string name="settings_permission">权限与启用</string>
     <string name="settings_save">保存配置并立即生效</string>
     <string name="settings_grant_mic">授权麦克风</string>
@@ -87,6 +87,18 @@
         <item>cantonese</item>
         <item>japanese</item>
         <item>korean</item>
+    </string-array>
+
+    <!-- 默认键盘模式：entries 显示，values 写入 prefs，顺序必须一一对应 -->
+    <string-array name="default_mode_entries">
+        <item>语音键盘</item>
+        <item>26 键中文</item>
+        <item>26 键英文</item>
+    </string-array>
+    <string-array name="default_mode_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
     </string-array>
 
     <!-- 保活 / 防杀后台 -->

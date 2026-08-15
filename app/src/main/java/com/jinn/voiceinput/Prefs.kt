@@ -4,6 +4,15 @@ import android.content.Context
 import androidx.core.content.edit
 
 /**
+ * 输入法默认启动模式（对齐 Prefs.defaultKeyboardMode 的取值）。
+ */
+object DefaultKeyboardMode {
+    const val VOICE = 0
+    const val PINYIN_CN = 1
+    const val PINYIN_EN = 2
+}
+
+/**
  * 配置存储。只暴露真正需要用户改的项，其余走协议默认值。
  */
 class Prefs(context: Context) {
@@ -44,9 +53,10 @@ class Prefs(context: Context) {
     /**
      * 用预编辑（composing）文本实时回显。
      * 少数输入框对长预编辑串兼容不好，关掉后改为识别完成一次性提交。
+     * 默认关闭：识别完成一次性提交更稳，避免长串兼容问题。
      */
     var useComposing: Boolean
-        get() = sp.getBoolean(KEY_COMPOSING, true)
+        get() = sp.getBoolean(KEY_COMPOSING, false)
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
@@ -81,6 +91,16 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_KB_ENGLISH, false)
         set(value) = sp.edit { putBoolean(KEY_KB_ENGLISH, value) }
 
+    /**
+     * 输入法启动时的默认键盘模式：
+     *  - [DefaultKeyboardMode.VOICE] 语音键盘
+     *  - [DefaultKeyboardMode.PINYIN_CN] 26 键中文
+     *  - [DefaultKeyboardMode.PINYIN_EN] 26 键英文
+     */
+    var defaultKeyboardMode: Int
+        get() = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.VOICE)
+        set(value) = sp.edit { putInt(KEY_DEFAULT_MODE, value) }
+
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
@@ -100,5 +120,6 @@ class Prefs(context: Context) {
         private const val KEY_NOTIFY_HIGH = "notify_high"
         private const val KEY_SHUANGPIN = "shuangpin"
         private const val KEY_KB_ENGLISH = "kb_english"
+        private const val KEY_DEFAULT_MODE = "default_mode"
     }
 }
