@@ -32,6 +32,7 @@ class SettingsActivity : ComponentActivity() {
 
     private lateinit var editHost: EditText
     private lateinit var editPort: EditText
+    private lateinit var checkLockServer: CheckBox
     private lateinit var spinnerLanguage: Spinner
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
@@ -99,6 +100,7 @@ class SettingsActivity : ComponentActivity() {
 
         editHost = findViewById(R.id.edit_host)
         editPort = findViewById(R.id.edit_port)
+        checkLockServer = findViewById(R.id.check_lock_server)
         spinnerLanguage = findViewById(R.id.spinner_language)
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
@@ -156,6 +158,11 @@ class SettingsActivity : ComponentActivity() {
         }
         checkComposing.setOnCheckedChangeListener { _, checked ->
             prefs.useComposing = checked
+        }
+        // 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑
+        checkLockServer.setOnCheckedChangeListener { _, checked ->
+            prefs.lockServer = checked
+            applyServerLock()
         }
 
         btnGrant.setOnClickListener { requestMic() }
@@ -368,8 +375,25 @@ class SettingsActivity : ComponentActivity() {
         switchKeepAlive.isChecked = prefs.keepAlive
         switchRoot.isChecked = prefs.useRootShizuku
         switchNotifyHigh.isChecked = prefs.notifyHighPriority
+        checkLockServer.isChecked = prefs.lockServer
+        applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
         spinnerLanguage.setSelection(values.indexOf(prefs.language).coerceAtLeast(0))
+    }
+
+    /**
+     * 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑，防误触乱改。
+     * 解锁（取消勾选）后可正常编辑。
+     */
+    private fun applyServerLock() {
+        val locked = checkLockServer.isChecked
+        editHost.isEnabled = !locked
+        editPort.isEnabled = !locked
+        // 置灰效果：enabled=false 时系统自动降低文字/背景透明度，
+        // 再配合降低背景 alpha 让灰色更明显
+        editHost.alpha = if (locked) 0.5f else 1f
+        editPort.alpha = if (locked) 0.5f else 1f
+        Diagnostics.i(TAG, "服务器配置固定: $locked")
     }
 
     private fun readLanguage(): String {

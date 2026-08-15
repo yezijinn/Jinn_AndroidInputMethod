@@ -49,6 +49,8 @@
     <string name="settings_server">服务端</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
+    <string name="settings_lock">固定</string>
+    <string name="settings_lock_short">固定</string>
     <string name="settings_recognize">识别</string>
     <string name="settings_language">语言</string>
     <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
