@@ -145,6 +145,19 @@ class SettingsActivity : ComponentActivity() {
         loadPrefs()
         refreshMicState()
 
+        // 输入方案（全拼/双拼）与识别选项即时保存：勾选即写入，
+        // 下次唤起键盘立即生效（onStartInputView 会重新同步给 IME）
+        checkShuangpin.setOnCheckedChangeListener { _, checked ->
+            prefs.useShuangpin = checked
+            Diagnostics.i(TAG, "双拼方案: ${if (checked) "双拼" else "全拼"}")
+        }
+        checkStrip.setOnCheckedChangeListener { _, checked ->
+            prefs.stripTrailingPunc = checked
+        }
+        checkComposing.setOnCheckedChangeListener { _, checked ->
+            prefs.useComposing = checked
+        }
+
         btnGrant.setOnClickListener { requestMic() }
         btnEnable.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         btnPick.setOnClickListener {
@@ -482,6 +495,16 @@ class SettingsActivity : ComponentActivity() {
 
         Diagnostics.i(TAG, "saveAndTest: host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
+
+        // 通知常驻输入法立即刷新（强制重连 + 键盘方案重载），无需重启进程。
+        // prefs 写入是同步的，广播在同进程即时送达。
+        runCatching {
+            sendBroadcast(Intent(JinnIme.ACTION_CONFIG_UPDATED).setPackage(packageName))
+            Diagnostics.i(TAG, "saveAndTest: 已发送配置更新广播")
+        }.onFailure {
+            Diagnostics.w(TAG, "saveAndTest: 发送配置广播失败 ${it.message}")
+        }
+
         testConnection()
     }
 
