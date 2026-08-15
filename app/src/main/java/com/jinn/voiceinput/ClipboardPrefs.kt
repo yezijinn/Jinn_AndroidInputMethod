@@ -32,6 +32,23 @@ class ClipboardPrefs(context: Context) {
         get() = sp.getInt(KEY_SENSITIVE_TEMP, ClipboardStore.TempDuration.S30.ordinal)
         set(value) = sp.edit { putInt(KEY_SENSITIVE_TEMP, value) }
 
+    // ── Root 增强模式 ──────────────────────────────────────
+
+    /** Root 增强模式总开关（默认关，需用户主动开启） */
+    var rootEnhanceEnabled: Boolean
+        get() = sp.getBoolean(KEY_ROOT_ENHANCE, false)
+        set(value) = sp.edit { putBoolean(KEY_ROOT_ENHANCE, value) }
+
+    /** 敏感内容时自动清空系统剪贴板（root 下生效） */
+    var rootClearOnSensitive: Boolean
+        get() = sp.getBoolean(KEY_ROOT_CLEAR_SENSITIVE, true)
+        set(value) = sp.edit { putBoolean(KEY_ROOT_CLEAR_SENSITIVE, value) }
+
+    /** 定时清空系统剪贴板间隔分钟（0 = 不启用） */
+    var rootClearIntervalMin: Int
+        get() = sp.getInt(KEY_ROOT_CLEAR_INTERVAL, 0)
+        set(value) = sp.edit { putInt(KEY_ROOT_CLEAR_INTERVAL, value.coerceIn(0, 60)) }
+
     companion object {
         const val DEFAULT_MAX_ITEMS = 200
 
@@ -39,6 +56,9 @@ class ClipboardPrefs(context: Context) {
         private const val KEY_MAX_ITEMS = "max_items"
         private const val KEY_SENSITIVE_POLICY = "sensitive_policy"
         private const val KEY_SENSITIVE_TEMP = "sensitive_temp"
+        private const val KEY_ROOT_ENHANCE = "root_enhance"
+        private const val KEY_ROOT_CLEAR_SENSITIVE = "root_clear_sensitive"
+        private const val KEY_ROOT_CLEAR_INTERVAL = "root_clear_interval"
 
         @Volatile
         private var instance: ClipboardPrefs? = null

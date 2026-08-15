@@ -71,6 +71,11 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerSensitiveTemp: Spinner
     private lateinit var btnClipboardPerms: Button
 
+    // Root 增强模式
+    private lateinit var textRootStatus: TextView
+    private lateinit var switchRootEnhance: Switch
+    private lateinit var switchRootClearSensitive: Switch
+
     /** 仅用于"保存并测试连接"，用完即关，不干扰输入法自身的连接 */
     private var tester: AsrClient? = null
 
@@ -128,6 +133,10 @@ class SettingsActivity : ComponentActivity() {
         spinnerSensitivePolicy = findViewById(R.id.spinner_sensitive_policy)
         spinnerSensitiveTemp = findViewById(R.id.spinner_sensitive_temp)
         btnClipboardPerms = findViewById(R.id.btn_clipboard_perms)
+
+        textRootStatus = findViewById(R.id.text_root_status)
+        switchRootEnhance = findViewById(R.id.switch_root_enhance)
+        switchRootClearSensitive = findViewById(R.id.switch_root_clear_sensitive)
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -252,6 +261,51 @@ class SettingsActivity : ComponentActivity() {
 
         // 第三方 APP 访问权限管理（跳转系统应用信息或简单列表页）
         btnClipboardPerms.setOnClickListener { openPermissionManager() }
+
+        // ── Root 增强模式 ──────────────────────────────────────
+        refreshRootStatus()
+        switchRootEnhance.isChecked = clipboardPrefs.rootEnhanceEnabled
+        switchRootEnhance.setOnCheckedChangeListener { _, checked ->
+            clipboardPrefs.rootEnhanceEnabled = checked
+            Diagnostics.i(TAG, "Root 增强模式: ${if (checked) "开启" else "关闭"}")
+            if (checked) {
+                // 后台线程检测 root；不可用则回退并提示
+                Thread {
+                    val ok = ClipboardFirewall.start(this)
+                    runOnUiThread {
+                        if (!ok) {
+                            clipboardPrefs.rootEnhanceEnabled = false
+                            switchRootEnhance.isChecked = false
+                            toast(R.string.clipboard_root_unavailable)
+                        }
+                        refreshRootStatus()
+                    }
+                }.start()
+            } else {
+                ClipboardFirewall.stop()
+                refreshRootStatus()
+            }
+        }
+        switchRootClearSensitive.isChecked = clipboardPrefs.rootClearOnSensitive
+        switchRootClearSensitive.setOnCheckedChangeListener { _, checked ->
+            clipboardPrefs.rootClearOnSensitive = checked
+            ClipboardFirewall.clearOnSensitive = checked
+            Diagnostics.i(TAG, "敏感内容清空系统剪贴板: ${if (checked) "开" else "关"}")
+        }
+    }
+
+    /** 刷新 Root 状态显示（后台线程检测，避免阻塞 UI） */
+    private fun refreshRootStatus() {
+        textRootStatus.text = getString(R.string.clipboard_root_status, getString(R.string.clipboard_root_unavailable))
+        Thread {
+            val ok = ClipboardFirewall.isRootAvailable()
+            runOnUiThread {
+                textRootStatus.text = getString(
+                    R.string.clipboard_root_status,
+                    getString(if (ok) R.string.clipboard_root_available else R.string.clipboard_root_unavailable),
+                )
+            }
+        }.start()
     }
 
     private fun saveMaxItems() {
