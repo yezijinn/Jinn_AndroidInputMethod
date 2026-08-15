@@ -117,7 +117,13 @@ class JinnIme : InputMethodService() {
         Diagnostics.init(this)
         prefs = Prefs(this)
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
-        Diagnostics.i(TAG, "onCreate: IME 服务创建")
+        // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
+        keyboardMode = when (prefs.defaultKeyboardMode) {
+            DefaultKeyboardMode.PINYIN_CN,
+            DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
+            else -> KeyboardMode.VOICE
+        }
+        Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
 
         asr = AsrClient(
             prefs = prefs,
@@ -449,7 +455,12 @@ class JinnIme : InputMethodService() {
             }
             configure(
                 shuangpin = prefs.useShuangpin,
-                english = prefs.keyboardEnglish,
+                // 26键英文模式：启动时强制英文；其余模式沿用键盘英文偏好
+                english = if (prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN) {
+                    true
+                } else {
+                    prefs.keyboardEnglish
+                },
             )
             updateImeOptions(currentInputEditorInfo?.imeOptions ?: 0)
         }
@@ -460,6 +471,13 @@ class JinnIme : InputMethodService() {
         keyboardContainer = container
         container.addView(voice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         container.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // 键盘视图每次创建都重新套用默认模式（InputMethodService 可能复用实例，
+        // 仅靠 onCreate 设置 keyboardMode 在复用场景下不生效）
+        keyboardMode = when (prefs.defaultKeyboardMode) {
+            DefaultKeyboardMode.PINYIN_CN,
+            DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
+            else -> KeyboardMode.VOICE
+        }
         applyKeyboardMode()
         return container
     }
@@ -513,10 +531,11 @@ class JinnIme : InputMethodService() {
         setHint(getString(R.string.hint_idle))
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
         // 每次输入框聚焦时重新同步输入方案（全拼/双拼、中英文）：
-        // 设置页改动后无需重启输入法，下次弹键盘即生效
+        // 设置页改动后无需重启输入法，下次弹键盘即生效。
+        // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
         pinyinKeyboard?.configure(
             shuangpin = prefs.useShuangpin,
-            english = prefs.keyboardEnglish,
+            english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
         )
     }
 

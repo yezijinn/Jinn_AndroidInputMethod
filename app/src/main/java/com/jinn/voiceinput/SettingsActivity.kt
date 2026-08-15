@@ -34,10 +34,10 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var editPort: EditText
     private lateinit var checkLockServer: CheckBox
     private lateinit var spinnerLanguage: Spinner
+    private lateinit var spinnerDefaultMode: Spinner
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
-    private lateinit var checkShuangpin: CheckBox
     private lateinit var btnGrant: Button
     private lateinit var btnEnable: Button
     private lateinit var btnPick: Button
@@ -102,10 +102,10 @@ class SettingsActivity : ComponentActivity() {
         editPort = findViewById(R.id.edit_port)
         checkLockServer = findViewById(R.id.check_lock_server)
         spinnerLanguage = findViewById(R.id.spinner_language)
+        spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
-        checkShuangpin = findViewById(R.id.check_shuangpin)
         btnGrant = findViewById(R.id.btn_grant)
         btnEnable = findViewById(R.id.btn_enable)
         btnPick = findViewById(R.id.btn_pick)
@@ -144,15 +144,29 @@ class SettingsActivity : ComponentActivity() {
             this, R.array.language_entries, android.R.layout.simple_spinner_item
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
 
+        spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
+            this, R.array.default_mode_entries, android.R.layout.simple_spinner_item
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerDefaultMode.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                val values = resources.getStringArray(R.array.default_mode_values)
+                val mode = values.getOrNull(position)?.toIntOrNull()
+                    ?: DefaultKeyboardMode.VOICE
+                if (mode != prefs.defaultKeyboardMode) {
+                    prefs.defaultKeyboardMode = mode
+                    Diagnostics.i(TAG, "默认键盘模式: $mode")
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         loadPrefs()
         refreshMicState()
 
-        // 输入方案（全拼/双拼）与识别选项即时保存：勾选即写入，
-        // 下次唤起键盘立即生效（onStartInputView 会重新同步给 IME）
-        checkShuangpin.setOnCheckedChangeListener { _, checked ->
-            prefs.useShuangpin = checked
-            Diagnostics.i(TAG, "双拼方案: ${if (checked) "双拼" else "全拼"}")
-        }
+        // 识别选项即时保存：勾选即写入，下次识别立即生效
         checkStrip.setOnCheckedChangeListener { _, checked ->
             prefs.stripTrailingPunc = checked
         }
@@ -371,7 +385,6 @@ class SettingsActivity : ComponentActivity() {
         editPrompt.setText(prefs.prompt)
         checkStrip.isChecked = prefs.stripTrailingPunc
         checkComposing.isChecked = prefs.useComposing
-        checkShuangpin.isChecked = prefs.useShuangpin
         switchKeepAlive.isChecked = prefs.keepAlive
         switchRoot.isChecked = prefs.useRootShizuku
         switchNotifyHigh.isChecked = prefs.notifyHighPriority
@@ -379,6 +392,10 @@ class SettingsActivity : ComponentActivity() {
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
         spinnerLanguage.setSelection(values.indexOf(prefs.language).coerceAtLeast(0))
+        val modeValues = resources.getStringArray(R.array.default_mode_values)
+        spinnerDefaultMode.setSelection(
+            modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
+        )
     }
 
     /**
@@ -515,7 +532,6 @@ class SettingsActivity : ComponentActivity() {
         prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
-        prefs.useShuangpin = checkShuangpin.isChecked
 
         Diagnostics.i(TAG, "saveAndTest: host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
