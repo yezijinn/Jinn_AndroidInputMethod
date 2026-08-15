@@ -656,8 +656,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onClick = { listener?.onOpenClipboard() },
         ))
         viewCandidateList.addView(buildFunctionButton(
-            label = if (directionPanelVisible) "◼ 收起" else "方向",
-            hint = if (directionPanelVisible) "返回键盘" else "控制",
+            label = "方向",
+            hint = "控制",
             onClick = {
                 if (directionPanelVisible) hideDirectionPanel() else showDirectionPanel()
             },
