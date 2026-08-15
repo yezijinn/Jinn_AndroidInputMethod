@@ -33,6 +33,7 @@ import kotlin.math.min
         private val colorKey = context.getColor(R.color.kb_key)
         private val colorKeyPressed = context.getColor(R.color.kb_key_pressed)
         private val colorText = context.getColor(R.color.kb_key_text)
+        private val colorCorner = context.getColor(R.color.kb_key_hint_red)
 
         private val corner = KEY_CORNER_DP * resources.displayMetrics.density
         private val rect = RectF()
@@ -44,8 +45,21 @@ import kotlin.math.min
                 invalidate()
             }
 
-        /** 双拼韵母提示（键下方），空则不画 */
+        /**
+         * 双拼韵母提示（键下方，普通色）。多行用 `\n` 分隔，每行垂直均分下半区
+         * （如 Y 键显示 uai/ing 两行）。
+         */
         var subLabel: String = ""
+            set(value) {
+                field = value
+                invalidate()
+            }
+
+        /**
+         * 双拼红色提示（键下方，追加在 [subLabel] 之后）。用于 u/i/v 键的 sh/ch/zh。
+         * 多行用 `\n` 分隔。
+         */
+        var subLabelRed: String = ""
             set(value) {
                 field = value
                 invalidate()
@@ -88,23 +102,46 @@ import kotlin.math.min
             keyPaint.color = if (pressed) colorKeyPressed else colorKey
             canvas.drawRoundRect(rect, corner, corner, keyPaint)
 
-            // 大写字母：置顶贴上边，占上方约 55%（避免和下方韵母重叠）
+            // 大写字母：置顶贴上边，占上方约 50%
             textPaint.color = colorText
             textPaint.textSize = height * TEXT_RATIO
             textPaint.textAlign = Paint.Align.CENTER
             val fm = textPaint.fontMetrics
-            val letterBaseline = (h * LETTER_TOP_RATIO - fm.ascent - fm.descent) / 2f + h * LETTER_TOP_RATIO * 0.15f
+            val letterBaseline = (h * LETTER_TOP_RATIO - fm.ascent - fm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
             canvas.drawText(label, w / 2f, letterBaseline, textPaint)
 
-            // 双拼韵母提示：下半区居中
-            if (subLabel.isNotEmpty()) {
-                subPaint.color = colorText
-                subPaint.alpha = 150
+            // 双拼提示：下半区，底部对齐（最后一行/单行贴按钮底边）。
+            // 普通行在前、红色行在后，多行紧凑排布。
+            val normalLines = subLabel.split('\n').filter { it.isNotBlank() }
+            val redLines = subLabelRed.split('\n').filter { it.isNotBlank() }
+            val total = normalLines.size + redLines.size
+            if (total > 0) {
                 subPaint.textSize = height * SUB_RATIO
                 subPaint.textAlign = Paint.Align.CENTER
                 val subFm = subPaint.fontMetrics
-                val subBaseline = h * SUB_TOP_RATIO - (subFm.ascent + subFm.descent) / 2f
-                canvas.drawText(subLabel, w / 2f, subBaseline, subPaint)
+                // 紧凑行距：略小于完整字高
+                val lineHeight = (subFm.bottom - subFm.top) * LINE_COMPACT_RATIO
+                // 最后一行基线：让文字底部贴 SUB_BOTTOM_RATIO 位置（近按钮底边）
+                val lastBaseline = h * SUB_BOTTOM_RATIO - subFm.descent
+                var i = 0
+                for (line in normalLines) {
+                    subPaint.color = colorText
+                    subPaint.alpha = 160
+                    canvas.drawText(
+                        line.trim(), w / 2f,
+                        lastBaseline - (total - 1 - i) * lineHeight, subPaint,
+                    )
+                    i++
+                }
+                for (line in redLines) {
+                    subPaint.color = colorCorner
+                    subPaint.alpha = 255
+                    canvas.drawText(
+                        line.trim(), w / 2f,
+                        lastBaseline - (total - 1 - i) * lineHeight, subPaint,
+                    )
+                    i++
+                }
             }
         }
 
@@ -117,7 +154,10 @@ import kotlin.math.min
             /** 大写字母顶部起始比例 */
             const val LETTER_TOP_RATIO = 0.42f
 
-            /** 韵母文本垂直中心比例 */
-            const val SUB_TOP_RATIO = 0.72f
+            /** 韵母文本底部对齐位置（近按钮底边，0~1 相对键高） */
+            const val SUB_BOTTOM_RATIO = 0.94f
+
+            /** 多行紧凑行距系数（<1 收窄行距，避免超出按键） */
+            const val LINE_COMPACT_RATIO = 0.8f
         }
     }
