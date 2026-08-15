@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -48,6 +49,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onDeleteAll()
         /** 请求切回语音模式 */
         fun onVoiceRequested()
+        /** 功能面板：打开剪贴板历史页 */
+        fun onOpenClipboard()
+        /** 功能面板：打开方向控制面板 */
+        fun onOpenDirectionPad()
+        /** 功能面板：收起键盘（隐藏面板，非停止服务） */
+        fun onHideKeyboard()
     }
 
     var listener: Listener? = null
@@ -480,6 +487,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             lastCandidates = emptyList()
             viewCandidatePinyin.text = ""
             viewCandidateList.removeAllViews()
+            // 无候选、无拼音串、无预测：候选栏展示功能面板按钮
+            renderFunctionPanel()
             return
         }
 
@@ -612,6 +621,88 @@ class PinyinKeyboardView @JvmOverloads constructor(
         'i' -> "ch"
         'v' -> "zh"
         else -> ""
+    }
+
+    // ── 功能面板（无候选时展示）──────────────────────────────
+
+    /**
+     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板：
+     *  - 剪贴板：打开安全剪贴板历史页
+     *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
+     *  - 双拼/全拼：切换输入方案（键盘内部状态翻转）
+     *  - 收起键盘：隐藏输入法面板（重新点击输入框再唤醒）
+     *
+     * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（48dp），
+     * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
+     */
+    private fun renderFunctionPanel() {
+        viewCandidateList.removeAllViews()
+        viewCandidateList.addView(buildFunctionButton(
+            label = if (shuangpinMode) "双拼" else "全拼",
+            hint = "输入方案",
+            onClick = { togglePinyinScheme() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
+            label = "剪贴板",
+            hint = "历史",
+            onClick = { listener?.onOpenClipboard() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
+            label = "方向",
+            hint = "控制",
+            onClick = { listener?.onOpenDirectionPad() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
+            label = "收起",
+            hint = "键盘",
+            onClick = { listener?.onHideKeyboard() },
+        ))
+        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/剪贴板/方向/收起")
+    }
+
+    /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
+    private fun buildFunctionButton(label: String, hint: String, onClick: () -> Unit): View {
+        val box = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setBackgroundResource(R.drawable.key_bg)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        val lp = LinearLayout.LayoutParams(
+            dp(72), ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply {
+            marginStart = dp(4)
+            marginEnd = dp(4)
+        }
+        box.addView(TextView(context).apply {
+            text = label
+            textSize = 14f
+            setTextColor(resources.getColor(R.color.text_primary, context.theme))
+            setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(TextView(context).apply {
+            text = hint
+            textSize = 10f
+            setTextColor(resources.getColor(R.color.text_secondary, context.theme))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.layoutParams = lp
+        return box
+    }
+
+    /** 双拼/全拼切换：翻转方案 + 刷新键面提示 + 更新偏好（下次唤起保持） */
+    private fun togglePinyinScheme() {
+        shuangpinMode = !shuangpinMode
+        // 持久化：切换结果写入设置，输入法重建后保持本次选择
+        runCatching { Prefs(context).useShuangpin = shuangpinMode }
+            .onFailure { Diagnostics.w(TAG, "切换方案时保存偏好失败: ${it.message}") }
+        refreshKeyLabels()
+        refreshCandidateBar()
+        Diagnostics.i(TAG, "输入方案切换: ${if (shuangpinMode) "自然码双拼" else "全拼"}")
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
