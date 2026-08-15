@@ -185,22 +185,157 @@ class JinnIme : InputMethodService() {
 
     private val configFilter = IntentFilter().apply { addAction(ACTION_CONFIG_UPDATED) }
 
-    /** 执行方向控制动作：通过当前 InputConnection 发送按键/文本 */
+    // ── 方向控制 + 文字拖选状态机 ──────────────────────────
+
+    /** 拖选模式是否激活 */
+    @Volatile
+    private var selectionActive = false
+
+    /** 拖选起始锚点（固定不变），-1 表示未设置 */
+    private var selectionAnchor = -1
+
+    /**
+     * 执行方向控制动作（通过当前 InputConnection）。
+     *
+     * 拖选状态机（NORMAL_CURSOR ↔ TEXT_SELECTION_ACTIVE）：
+     *  - 点击中心 ●：未激活 → 固定当前光标为起点并激活；已激活 → 清除选区、
+     *    退出拖选、光标停在选区结束位置（不跳回起点）
+     *  - 激活时方向键/行首/行末：移动选区**结束点**（起点固定）
+     *  - 复制：复制选中文字，保持选区与拖选模式
+     *  - 粘贴：有选区 → 替换；无选区 → 光标处粘贴
+     */
     private fun executeDirection(action: PinyinKeyboardView.DirectionAction) {
-        val connection = currentInputConnection ?: return
         when (action) {
-            PinyinKeyboardView.DirectionAction.UP -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_UP)
-            PinyinKeyboardView.DirectionAction.DOWN -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_DOWN)
-            PinyinKeyboardView.DirectionAction.LEFT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_LEFT)
-            PinyinKeyboardView.DirectionAction.RIGHT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_RIGHT)
-            PinyinKeyboardView.DirectionAction.LINE_START -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
-                .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-            PinyinKeyboardView.DirectionAction.LINE_END -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
-                .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
-            PinyinKeyboardView.DirectionAction.SPACE -> connection.commitText(" ", 1)
-            PinyinKeyboardView.DirectionAction.ENTER -> connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-                .also { connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER)) }
+            PinyinKeyboardView.DirectionAction.TOGGLE_SELECTION -> toggleSelection()
+            PinyinKeyboardView.DirectionAction.COPY -> copySelection()
+            PinyinKeyboardView.DirectionAction.PASTE -> pasteClipboard()
+            PinyinKeyboardView.DirectionAction.UP,
+            PinyinKeyboardView.DirectionAction.DOWN,
+            PinyinKeyboardView.DirectionAction.LEFT,
+            PinyinKeyboardView.DirectionAction.RIGHT,
+            PinyinKeyboardView.DirectionAction.LINE_START,
+            PinyinKeyboardView.DirectionAction.LINE_END -> moveOrExtend(action)
         }
+    }
+
+    /** 中心 ●/◉ 开关：切换拖选模式 */
+    private fun toggleSelection() {
+        val connection = currentInputConnection ?: return
+        if (!selectionActive) {
+            // 激活：读取当前光标位置作为拖选起点
+            val sel = currentSelectionRange(connection) ?: return
+            selectionActive = true
+            selectionAnchor = sel.start
+            Diagnostics.i(TAG, "拖选激活: 锚点=${sel.start}")
+        } else {
+            // 取消：清除选区 + 退出拖选 + 光标停在当前选区结束位置
+            val end = currentSelectionRange(connection)?.end ?: selectionAnchor
+            selectionActive = false
+            selectionAnchor = -1
+            connection.setSelection(end, end)
+            Diagnostics.i(TAG, "拖选取消: 光标停在结束点=$end")
+        }
+        pinyinKeyboard?.setSelectionActive(selectionActive)
+    }
+
+    /** 方向键 / 行首 / 行末：拖选激活时移动结束点，否则普通光标移动 */
+    private fun moveOrExtend(action: PinyinKeyboardView.DirectionAction) {
+        val connection = currentInputConnection ?: return
+        if (selectionActive) {
+            extendSelection(connection, action)
+        } else {
+            when (action) {
+                PinyinKeyboardView.DirectionAction.UP -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_UP)
+                PinyinKeyboardView.DirectionAction.DOWN -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_DOWN)
+                PinyinKeyboardView.DirectionAction.LEFT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_LEFT)
+                PinyinKeyboardView.DirectionAction.RIGHT -> sendNavigationKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+                PinyinKeyboardView.DirectionAction.LINE_START -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
+                    .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
+                PinyinKeyboardView.DirectionAction.LINE_END -> connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON))
+                    .also { connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)) }
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * 拖选扩展：起点固定为 [selectionAnchor]，移动结束点。
+     * 方向键移动结束点一字符；行首/行末把结束点跳到行首/行末。
+     */
+    private fun extendSelection(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
+        val range = currentSelectionRange(connection) ?: return
+        val end = range.end
+        var newEnd = end
+        when (action) {
+            PinyinKeyboardView.DirectionAction.LEFT -> newEnd = (end - 1).coerceAtLeast(0)
+            PinyinKeyboardView.DirectionAction.RIGHT -> newEnd = (end + 1).coerceAtMost(range.textLength)
+            PinyinKeyboardView.DirectionAction.UP -> newEnd = (end - 1).coerceAtLeast(0)
+            PinyinKeyboardView.DirectionAction.DOWN -> newEnd = (end + 1).coerceAtMost(range.textLength)
+            PinyinKeyboardView.DirectionAction.LINE_START -> newEnd = 0
+            PinyinKeyboardView.DirectionAction.LINE_END -> newEnd = range.textLength
+            else -> return
+        }
+        // 起点固定，终点变化：start 恒为锚点，end 为新结束点
+        connection.setSelection(selectionAnchor, newEnd)
+        Diagnostics.i(TAG, "拖选扩展: 锚点=${selectionAnchor} → 结束点=$newEnd")
+    }
+
+    /** 读取当前选区范围（未选中时 start == end == 光标位置） */
+    private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
+        val extracted = connection.getExtractedText(
+            android.view.inputmethod.ExtractedTextRequest(), 0
+        ) ?: return null
+        if (extracted.selectionStart < 0 || extracted.selectionEnd < 0) return null
+        val start = extracted.selectionStart.coerceAtLeast(0)
+        val end = extracted.selectionEnd.coerceAtLeast(start)
+        return SelectionRange(start, end, extracted.text?.length ?: end)
+    }
+
+    /** 复制选中文字到系统剪贴板（保持选区与拖选模式） */
+    private fun copySelection() {
+        val connection = currentInputConnection ?: return
+        val extracted = connection.getExtractedText(
+            android.view.inputmethod.ExtractedTextRequest(), 0
+        )
+        val text = extracted?.text?.toString().orEmpty()
+        if (extracted == null || extracted.selectionStart < 0 || extracted.selectionEnd <= extracted.selectionStart) {
+            Diagnostics.w(TAG, "复制: 无选中文字")
+            return
+        }
+        val sel = text.substring(extracted.selectionStart, extracted.selectionEnd)
+        val clip = android.content.ClipData.newPlainText("jinn_selection", sel)
+        clipboardManager.setPrimaryClip(clip)
+        // 同时写入安全剪贴板历史
+        val cpPrefs = ClipboardPrefs.of(this)
+        if (cpPrefs.enabled) {
+            Thread {
+                ClipboardStore.save(this, ClipboardDb.get(this), sel, packageName, "本输入法")
+            }.start()
+        }
+        Diagnostics.i(TAG, "复制: 选中 ${sel.length} 字（保持选区与拖选模式）")
+    }
+
+    /** 粘贴：有选区替换，无选区在光标处插入 */
+    private fun pasteClipboard() {
+        val connection = currentInputConnection ?: return
+        val clip = clipboardManager.primaryClip
+        val text = clip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        if (text.isEmpty()) {
+            Diagnostics.w(TAG, "粘贴: 剪贴板为空")
+            return
+        }
+        connection.commitText(text, 1)
+        Diagnostics.i(TAG, "粘贴: ${text.take(20)}…（${text.length} 字）")
+        // 自身粘贴产生剪贴板变化，标记避免被历史保存
+        clipboardController?.onOwnCommit()
+    }
+
+    /** 选区信息（start/end/textLength） */
+    private data class SelectionRange(val start: Int, val end: Int, val textLength: Int)
+
+    /** 系统剪贴板 */
+    private val clipboardManager by lazy {
+        getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
 
     /** 发送导航键（上下左右）：DOWN + UP 事件序列 */
@@ -277,6 +412,10 @@ class JinnIme : InputMethodService() {
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
                     Diagnostics.i(TAG, "方向按键: $action")
                     executeDirection(action)
+                }
+                override fun onSelectionModeChanged(active: Boolean) {
+                    Diagnostics.i(TAG, "拖选模式变化: $active")
+                    pinyinKeyboard?.setSelectionActive(active)
                 }
                 override fun onHideKeyboard() {
                     Diagnostics.i(TAG, "功能面板: 收起键盘")
