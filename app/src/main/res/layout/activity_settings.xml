@@ -306,6 +306,41 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
+        <!-- 诊断 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/SettingsSectionTitle"
+                android:text="@string/settings_diagnostics" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:text="@string/settings_diagnostics_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_export_diag"
+                style="@style/SettingsButton"
+                android:text="@string/settings_export_diag" />
+
+            <TextView
+                android:id="@+id/text_diag_dir"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/btn_save"
             style="@style/SettingsButtonPrimary"

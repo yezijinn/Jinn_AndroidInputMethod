@@ -13,6 +13,7 @@ import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.LayoutInflater
@@ -177,8 +178,10 @@ class JinnIme : InputMethodService() {
                 override fun onCommitSpace() = commit(" ")
                 override fun onEnter() = performEnter()
                 override fun onBackspace() {
+                    Diagnostics.v(TAG, "退格删已上屏文本")
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
+                override fun onDeleteAll() = deleteAllText()
                 override fun onVoiceRequested() = switchToVoiceKeyboard()
             }
             configure(
@@ -211,6 +214,13 @@ class JinnIme : InputMethodService() {
             KeyboardMode.PINYIN -> {
                 voiceView.visibility = View.GONE
                 pinyinView.visibility = View.VISIBLE
+                // 调试：拼音键盘刚变为可见，等一帧布局完成后输出按键坐标供自动化定位
+                ui.postDelayed({
+                    if (pinyinKeyboard?.width != 0) {
+                        Diagnostics.i(TAG, "拼音键盘坐标: ${pinyinKeyboard?.getFunctionKeyPositions()}")
+                        Diagnostics.i(TAG, "拼音键盘候选栏: ${pinyinKeyboard?.getCandidateBarPosition()}")
+                    }
+                }, 150L)
             }
         }
         Diagnostics.i(TAG, "applyKeyboardMode: $keyboardMode")
@@ -526,8 +536,32 @@ class JinnIme : InputMethodService() {
     // ── 编辑键 ────────────────────────────────────────────────
 
     private fun commit(text: String) {
+        // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
+        Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
         currentInputConnection?.commitText(text, 1)
     }
+
+    /**
+     * 删除键三击：清空输入框全部文本。
+     * 通过 Ctrl+A 全选 + 删除实现，兼容大多数输入框。
+     */
+    private fun deleteAllText() {
+        Diagnostics.i(TAG, "deleteAllText: 三击删除键，清空全部文本")
+        val connection = currentInputConnection ?: return
+        val meta = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        // Ctrl+A 全选（用 sendDownUpKeyEvents 的变体 + meta 不可行，改走 sendKeyEvent 手工构造）
+        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_DOWN, meta))
+        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_UP, meta))
+        // 删除选中内容（deleteSurroundingText 在 API 34 是 Int 签名）
+        connection.deleteSurroundingText(Int.MAX_VALUE, 0)
+        Diagnostics.i(TAG, "deleteAllText: 已发送全选删除")
+    }
+
+    private fun makeCtrlKeyEvent(keyCode: Int, action: Int, meta: Int): KeyEvent =
+        KeyEvent(
+            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+            action, keyCode, 0, meta,
+        )
 
     /** 退格支持长按连删，纯语音输入改错字全靠它 */
     private fun bindBackspace(key: View) {
