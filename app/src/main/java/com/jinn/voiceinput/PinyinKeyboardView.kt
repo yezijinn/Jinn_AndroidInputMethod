@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -51,6 +52,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onVoiceRequested()
         /** 功能面板：打开剪贴板历史页 */
         fun onOpenClipboard()
+        /** 剪贴板面板：点击记录请求粘贴（IME 用当前 InputConnection commitText）。返回是否成功。 */
+        fun onPasteText(text: String): Boolean
+        /** 剪贴板面板状态变化（开/关，IME 侧同步拖选等状态） */
+        fun onClipboardStateChanged(active: Boolean)
         /** 方向面板：执行方向控制动作（光标移动/拖选/复制/粘贴） */
         fun onDirectionAction(action: DirectionAction)
         /** 方向面板：拖选模式状态变化通知（IME 侧切换后同步 UI） */
@@ -90,6 +95,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private lateinit var viewCandidatePinyin: TextView
     private lateinit var viewCandidateList: LinearLayout
     private lateinit var viewLetters: LinearLayout
+    private lateinit var contentArea: FrameLayout
+
+    /** 剪贴板面板（与字母区互斥显示，见 init 挂载） */
+    private lateinit var clipboardPanel: ClipboardPanelView
+
+    /** 剪贴板面板是否激活 */
+    private var clipboardActive = false
     private lateinit var btnSymbol: TextView
     private lateinit var btnDigit: TextView
     private lateinit var btnLang: TextView
@@ -125,7 +137,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceRepeatIntervalMs = 55L
 
     /** 三击窗口：从第一次按下算起 400ms 内完成 3 次才触发（快速三击，超时不算） */
-    private val tripleTapWindowMs = 400L
+    private val tripleTapWindowMs = 320L
 
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
@@ -169,6 +181,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
         viewLetters = root.findViewById(R.id.keyboard_letters)
+        contentArea = root.findViewById(R.id.keyboard_content_area)
 
         btnSymbol = root.findViewById(R.id.key_symbol)
         btnDigit = root.findViewById(R.id.key_digit)
@@ -179,6 +192,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift = root.findViewById(R.id.key_shift)
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
+
+        // 剪贴板面板：预挂载到 contentArea（GONE），打开/关闭仅切 visibility。
+        // 高度 = MATCH_PARENT。关键：contentArea 是 FrameLayout，viewLetters 用
+        // INVISIBLE（保留布局空间）而非 GONE，因此 contentArea 高度始终由
+        // viewLetters 撑起、恒定不变 → 面板 MATCH_PARENT = contentArea 高度
+        // = 「候选栏与底部栏之间全部现有空间」，且全程零 layoutParams 修改，
+        // 绝不触发 MIUI IME relayout。
+        clipboardPanel = ClipboardPanelView(context).apply {
+            listener = object : ClipboardPanelView.Listener {
+                override fun onPaste(text: String): Boolean =
+                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
+                override fun onClose() {
+                    hideClipboardPanel()
+                }
+            }
+            visibility = View.GONE
+        }
+        contentArea.addView(
+            clipboardPanel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
 
         bindLetterKeys(root)
         bindFunctionKeys()
@@ -658,7 +695,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidateList.addView(buildFunctionButton(
             label = "剪贴板",
             hint = "历史",
-            onClick = { listener?.onOpenClipboard() },
+            onClick = {
+                Diagnostics.i(TAG, "功能面板: 点击剪贴板按钮")
+                listener?.onOpenClipboard()
+            },
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "方向",
@@ -685,28 +725,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val box = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
-            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             setBackgroundResource(R.drawable.key_bg)
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
+        // 宽度 56dp + margin 6dp（3+3）→ 5 个按钮共约 310dp，保证不超出候选栏宽度（约 380dp），
+        // 避免按钮挤压导致「剪贴板」点击误命中相邻「收起」按钮（触发键盘收起 = 误返回）
         val lp = LinearLayout.LayoutParams(
-            dp(72), ViewGroup.LayoutParams.MATCH_PARENT
+            dp(56), ViewGroup.LayoutParams.MATCH_PARENT
         ).apply {
-            marginStart = dp(4)
-            marginEnd = dp(4)
+            marginStart = dp(3)
+            marginEnd = dp(3)
         }
         box.addView(TextView(context).apply {
             text = label
-            textSize = 14f
+            textSize = 13f
             setTextColor(resources.getColor(R.color.text_primary, context.theme))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(TextView(context).apply {
             text = hint
-            textSize = 10f
+            textSize = 9f
             setTextColor(resources.getColor(R.color.text_secondary, context.theme))
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -797,6 +839,81 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 通知 IME 清除拖选状态（JinnIme 的 anchor/focus 同步重置）
         listener?.onSelectionModeChanged(false)
         Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
+    }
+
+    // ── 键盘内剪贴板面板（占内容区，候选栏/底部栏保持）────────────
+
+    /** 当前是否处于剪贴板面板模式（字母区被替换） */
+    fun isClipboardActive(): Boolean = clipboardActive
+
+    /**
+     * 显示剪贴板面板：候选栏与底部功能行固定不动，面板占用二者之间全部空间。
+     *
+     * 布局机制（关键，多轮真机验证结论）：
+     * - **IME 总高度恒定，零 layoutParams 修改，绝不 relayout**。
+     * - viewLetters 用 **INVISIBLE** 而非 GONE：INVISIBLE 保留布局空间，
+     *   contentArea（wrap_content FrameLayout）高度始终由 viewLetters 撑起、
+     *   恒定不变；若用 GONE 会塌缩 contentArea → 面板高度为 0。
+     * - 面板 MATCH_PARENT 预挂在 contentArea 内（覆盖在 INVISIBLE 的 viewLetters
+     *   之上）→ 高度 = contentArea 高度 = 「候选栏与底部栏之间全部现有空间」。
+     * - 打开/关闭只切 visibility，是纯 View 切换，不触发 MIUI IME relayout。
+     */
+    fun showClipboardPanel() {
+        Diagnostics.i(TAG, "showClipboardPanel called, clipboardActive=$clipboardActive")
+        if (clipboardActive) {
+            Diagnostics.v(TAG, "showClipboardPanel: 已显示，跳过")
+            return
+        }
+        try {
+            // 与方向面板互斥
+            if (directionPanelVisible) hideDirectionPanel()
+
+            // contentArea 高度 = 字母区 2 倍（用户验证过的 850px 方案）。
+            // 关键：contentArea 的父是 LinearLayout（PinyinKeyboardView 根），
+            // 必须用 LinearLayout.LayoutParams——早期用 FrameLayout.LayoutParams
+            // 导致 ClassCastException（键盘收起循环），本次是正确类型。
+            // 固定确定高度：面板不受 IME 窗口初始测量影响（冷启动稳定）。
+            val density = resources.displayMetrics.density
+            val panelH = (162 * 2 * density).toInt()   // 162dp × 2 ≈ 850px
+            contentArea.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                panelH,
+            )
+            // 面板 MATCH_PARENT 填满 contentArea 固定高度
+            clipboardPanel.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            // viewLetters GONE（contentArea 已是固定高度，不塌缩）
+            viewLetters.visibility = View.GONE
+            clipboardPanel.visibility = View.VISIBLE
+            clipboardPanel.onPanelShown()
+            clipboardActive = true
+            listener?.onClipboardStateChanged(true)
+            Diagnostics.i(
+                TAG,
+                "剪贴板面板: 显示 panelH=$panelH contentArea=${contentArea.height}",
+            )
+        } catch (t: Throwable) {
+            Diagnostics.e(TAG, "showClipboardPanel 异常: ${t.message}")
+            clipboardActive = false
+        }
+    }
+
+    /** 关闭剪贴板面板，恢复 26 键字母布局（contentArea 恢复字母区高度） */
+    fun hideClipboardPanel() {
+        if (!clipboardActive) return
+        // 恢复字母区，隐藏面板
+        viewLetters.visibility = View.VISIBLE
+        clipboardPanel.visibility = View.GONE
+        // contentArea 恢复 wrap_content（字母区自身高度）——父是 LinearLayout，用 LinearLayout.LayoutParams
+        contentArea.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        clipboardActive = false
+        listener?.onClipboardStateChanged(false)
+        Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
     }
 
     /** 构建方向面板（3×3 九宫格，与字母区总高一致） */
