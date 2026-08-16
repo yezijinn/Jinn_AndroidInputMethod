@@ -65,8 +65,6 @@ class SettingsActivity : ComponentActivity() {
 
     // 剪贴板
     private lateinit var clipboardPrefs: ClipboardPrefs
-    private lateinit var switchClipboard: Switch
-    private lateinit var btnClipboardHistory: Button
     private lateinit var editClipboardMax: EditText
     private lateinit var spinnerSensitivePolicy: Spinner
     private lateinit var spinnerSensitiveTemp: Spinner
@@ -129,8 +127,6 @@ class SettingsActivity : ComponentActivity() {
 
         // 剪贴板卡片
         clipboardPrefs = ClipboardPrefs.of(this)
-        switchClipboard = findViewById(R.id.switch_clipboard_enabled)
-        btnClipboardHistory = findViewById(R.id.btn_clipboard_history)
         editClipboardMax = findViewById(R.id.edit_clipboard_max)
         spinnerSensitivePolicy = findViewById(R.id.spinner_sensitive_policy)
         spinnerSensitiveTemp = findViewById(R.id.spinner_sensitive_temp)
@@ -229,16 +225,12 @@ class SettingsActivity : ComponentActivity() {
         initClipboardCard()
     }
 
-    /** 初始化剪贴板卡片：开关 / 历史数量 / 敏感策略 / 权限管理 */
+    /** 初始化剪贴板卡片：历史数量 / 敏感策略 / 权限管理（剪贴板历史强制启用，无开关） */
     private fun initClipboardCard() {
-        switchClipboard.isChecked = clipboardPrefs.enabled
-        switchClipboard.setOnCheckedChangeListener { _, checked ->
-            clipboardPrefs.enabled = checked
-            Diagnostics.i(TAG, "剪贴板历史: ${if (checked) "开启" else "关闭"}")
-        }
-
-        btnClipboardHistory.setOnClickListener {
-            startActivity(Intent(this, ClipboardHistoryActivity::class.java))
+        // 剪贴板历史强制启用：用户无需也无法关闭（核心功能，UI 不提供开关）
+        if (!clipboardPrefs.enabled) {
+            clipboardPrefs.enabled = true
+            Diagnostics.i(TAG, "剪贴板历史: 强制启用")
         }
 
         editClipboardMax.setText(clipboardPrefs.maxItems.toString())

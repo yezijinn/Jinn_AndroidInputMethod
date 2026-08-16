@@ -2,13 +2,18 @@ package com.jinn.voiceinput
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -18,12 +23,20 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 剪贴板历史页：列表 + 搜索 + 删除（方案第十八 / 二十 / 二十三节）。
+ * 剪贴板历史页（输入法内部功能页）。
+ *
+ * 功能（文档剪贴板优化）：
+ *  - 分类栏：全部 / 网址 / 隐私 / 数字 / 收藏（收藏为独立标签，可与分类并存）
+ *  - 每条记录显示**动态 UI 序号**（最新=最大，删除/去重后重新连续编号，非数据库 ID）
+ *  - 点击记录 → 广播回传 IME 粘贴 + 关闭本页返回输入法上一页面
+ *  - 实时搜索（输入即搜，删除原搜索按钮，大小写不敏感任意位置匹配，保留原始序号）
+ *  - 清理重复（严格字符串比较，只保留最新）
+ *  - 长按：收藏 / 取消收藏 / 加入隐私 / 移出隐私 / 删除
+ *  - 隐私内容默认隐藏明文，点击才显示
  *
  * 隐私设计：
- *  - 页面启用 [WindowManager.LayoutParams.FLAG_SECURE]，禁止截图与最近任务预览；
- *  - 内容按需解密：仅显示当前列表项时解密（[ClipboardDb.recent/search] 已按需解密）；
- *  - 删除单条/全部：真正删除数据库记录，不留缓存；
+ *  - FLAG_SECURE 禁止截图；
+ *  - 隐私分类只能用户主动标记，绝不自动；
  *  - 不输出任何剪贴板正文日志。
  */
 class ClipboardHistoryActivity : Activity() {
@@ -34,7 +47,26 @@ class ClipboardHistoryActivity : Activity() {
     private lateinit var listView: ListView
     private lateinit var editSearch: EditText
     private lateinit var textEmpty: TextView
+    private lateinit var categoryBar: HorizontalScrollView
+    private lateinit var btnCategoryAll: TextView
+    private lateinit var btnCategoryUrl: TextView
+    private lateinit var btnCategoryPrivate: TextView
+    private lateinit var btnCategoryNumber: TextView
+    private lateinit var btnCategoryFavorite: TextView
+    private lateinit var btnDedupe: TextView
+    private lateinit var btnDeleteAll: TextView
+
+    /** 当前分类（null=全部，其他=分类名） */
+    private var currentCategory: String? = null
+
+    /** 当前展示的记录（含原始序号映射用） */
     private var currentItems: List<ClipboardDb.Item> = emptyList()
+
+    /** 当前列表的「最新序号基准」：用于搜索结果保留原始序号 */
+    private var latestNumber: Int = 0
+
+    /** 当前是否处于搜索状态 */
+    private var searchQuery: String = ""
 
     private val adapter = object : BaseAdapter() {
         override fun getCount() = currentItems.size
@@ -44,52 +76,112 @@ class ClipboardHistoryActivity : Activity() {
             val item = currentItems[pos]
             val holder = convertView?.tag as? Holder
             val root = convertView ?: run {
-                val v = LinearLayout(this@ClipboardHistoryActivity).apply {
+                val v: LinearLayout = LinearLayout(this@ClipboardHistoryActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dp(16), dp(12), dp(16), dp(12))
                     background = android.graphics.drawable.ColorDrawable(Color.parseColor("#141C33"))
+                    // 点击/长按统一走 ListView 标准分发（onItemClick / onItemLongClick）：
+                    // item 不设 isClickable，避免干扰 ListView 的 item 触摸判定。
+                    // 数据身份在回调侧用 getOrNull(pos) 解析（防越界），
+                    // 渲染时把稳定 itemId 存进 Holder，供防御性校验。
                 }
-                val meta = TextView(this@ClipboardHistoryActivity).apply {
-                    textSize = 11f
-                    setTextColor(Color.parseColor("#9CA3AF"))
+                val row = LinearLayout(this@ClipboardHistoryActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                val num = TextView(this@ClipboardHistoryActivity).apply {
+                    textSize = 16f
+                    setTextColor(Color.parseColor("#4C8DFF"))
+                    setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                    setPadding(0, 0, dp(10), 0)
                 }
                 val content = TextView(this@ClipboardHistoryActivity).apply {
                     textSize = 16f
                     setTextColor(Color.parseColor("#ECEEF2"))
+                }
+                val meta = TextView(this@ClipboardHistoryActivity).apply {
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#9CA3AF"))
                     setPadding(0, dp(4), 0, 0)
                 }
+                row.addView(num, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                row.addView(content, LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                v.addView(row, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 v.addView(meta, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                v.addView(content, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                v.tag = Holder(meta, content)
+                v.tag = Holder(num, content, meta)
                 v
             }
             val h = holder ?: return root
+            // 身份绑定：每次渲染把当前 Item 的稳定 ID 写进 Holder，
+            // 复用 convertView 时旧 itemId 被覆盖，点击永远命中最新数据身份
+            h.itemId = item.id
+            // UI 序号：搜索时保留原始序号，否则按当前位置倒序
+            h.num.text = if (searchQuery.isNotEmpty()) {
+                // 搜索结果保留原始历史序号：列表按最新→旧排，序号 = latestNumber - 原始偏移
+                val originalIndex = itemPositionInAll(item.id)
+                if (originalIndex >= 0) (latestNumber - originalIndex).toString()
+                else "-"
+            } else {
+                (currentItems.size - pos).toString()
+            }
+            // 隐私内容默认隐藏明文
+            h.content.text = if (item.isPrivate) getString(R.string.clipboard_private_hidden) else item.content
             h.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.sourcePackage.isNotBlank()) append(" · ").append(item.sourceAppName.ifBlank { item.sourcePackage.substringAfterLast('.') })
-                if (item.isSensitive) append(" · 敏感")
+                if (item.category != "OTHER") append(" · ").append(item.category)
+                if (item.isFavorite) append(" · 收藏")
+                if (item.isPrivate) append(" · 隐私")
             }
-            h.content.text = item.content
             return root
         }
     }
 
-    private class Holder(val meta: TextView, val content: TextView)
+    private class Holder(val num: TextView, val content: TextView, val meta: TextView) {
+        /** 当前绑定的稳定 Item ID（每次渲染更新，点击据此查找，不依赖 position） */
+        var itemId: Long = -1L
+    }
+
+    /** 在全部记录中的位置（新→旧偏移），用于搜索结果保留原始序号 */
+    private var allItemsById: Map<Long, Int> = emptyMap()
+
+    private fun itemPositionInAll(id: Long): Int = allItemsById[id] ?: -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         Diagnostics.i(TAG, "onCreate: 剪贴板历史页启动")
 
-        // 垂直布局：搜索框 + 列表 + 底部操作栏
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0B1020"))
             setPadding(dp(12), dp(16), dp(12), dp(12))
         }
 
+        // ── 分类栏：全部 | 网址 | 隐私 | 数字 | 收藏 ──
+        categoryBar = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+        }
+        val catRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        btnCategoryAll = categoryTab(R.string.clipboard_cat_all, onClick = { selectCategory(null) })
+        btnCategoryUrl = categoryTab(R.string.clipboard_cat_url, onClick = { selectCategory(ClipboardClassifier.CATEGORY_URL) })
+        btnCategoryPrivate = categoryTab(R.string.clipboard_cat_private, onClick = { selectCategory(CATEGORY_PRIVATE) })
+        btnCategoryNumber = categoryTab(R.string.clipboard_cat_number, onClick = { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) })
+        btnCategoryFavorite = categoryTab(R.string.clipboard_cat_favorite, onClick = { selectCategory(CATEGORY_FAVORITE) })
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryPrivate, btnCategoryNumber, btnCategoryFavorite)) {
+            catRow.addView(tab, LinearLayout.LayoutParams(
+                dp(76), dp(40)).apply { marginEnd = dp(6) })
+        }
+        categoryBar.addView(catRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(categoryBar, lp())
+
+        // ── 搜索框（实时搜索，无搜索按钮） ──
         editSearch = EditText(this).apply {
             hint = getString(R.string.clipboard_search_hint)
             setTextColor(Color.parseColor("#ECEEF2"))
@@ -97,31 +189,41 @@ class ClipboardHistoryActivity : Activity() {
             setBackgroundColor(Color.parseColor("#1C1F26"))
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
-        editSearch.setOnEditorActionListener { _, _, _ ->
-            performSearch()
-            true
-        }
+        editSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val newQuery = s?.toString()?.trim() ?: ""
+                val hadSearch = searchQuery.isNotEmpty()
+                searchQuery = newQuery
+                // 清空搜索词时结果从「搜索子集」切回「当前分类全量」，滚回顶部；
+                // 输入过程中保持滚动位置不打断阅读
+                refresh(resetScroll = hadSearch && newQuery.isEmpty())
+            }
+        })
+        root.addView(editSearch, lp())
 
+        // ── 列表 ──
         listView = ListView(this).apply {
             divider = null
             setBackgroundColor(Color.parseColor("#0B1020"))
             adapter = this@ClipboardHistoryActivity.adapter
         }
         listView.setOnItemClickListener { _, _, pos, _ ->
-            val item = currentItems[pos]
-            // 点击复制回系统剪贴板
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("clipboard", item.content))
-            Toast.makeText(this, R.string.clipboard_copied, Toast.LENGTH_SHORT).show()
+            // 标准 ListView 分发：item 渲染时与 currentItems 对齐，pos 有效；
+            // getOrNull 防御异步刷新（onResume 分时刷新/去重）导致的越界。
+            val item = currentItems.getOrNull(pos)
+            if (item != null) handleItemClick(item)
         }
         listView.setOnItemLongClickListener { _, _, pos, _ ->
-            val item = currentItems[pos]
-            db.delete(item.id)
-            refresh()
-            Toast.makeText(this, R.string.clipboard_deleted, Toast.LENGTH_SHORT).show()
+            val item = currentItems.getOrNull(pos)
+            if (item != null) showItemMenu(item)
             true
         }
+        root.addView(listView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        // ── 空状态 ──
         textEmpty = TextView(this).apply {
             text = getString(R.string.clipboard_empty)
             gravity = android.view.Gravity.CENTER
@@ -129,68 +231,177 @@ class ClipboardHistoryActivity : Activity() {
             textSize = 14f
             visibility = View.GONE
         }
-
-        // 底部操作栏：搜索 / 删除全部
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val btnSearch = TextView(this).apply {
-            text = getString(R.string.clipboard_search)
-            gravity = android.view.Gravity.CENTER
-            setTextColor(Color.parseColor("#FFFFFF"))
-            textSize = 14f
-            setBackgroundColor(Color.parseColor("#4C8DFF"))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-        }
-        btnSearch.setOnClickListener { performSearch() }
-        val btnDeleteAll = TextView(this).apply {
-            text = getString(R.string.clipboard_delete_all)
-            gravity = android.view.Gravity.CENTER
-            setTextColor(Color.parseColor("#E5484D"))
-            textSize = 14f
-            setBackgroundColor(Color.parseColor("#1C1F26"))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-        }
-        btnDeleteAll.setOnClickListener {
-            db.deleteAll()
-            refresh()
-            Toast.makeText(this, R.string.clipboard_deleted_all, Toast.LENGTH_SHORT).show()
-        }
-
-        val lp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        val searchLp = LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f)
-        val delLp = LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        actionRow.addView(btnSearch, searchLp)
-        actionRow.addView(btnDeleteAll, delLp)
-
-        root.addView(editSearch, lp)
-        root.addView(listView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(textEmpty, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(actionRow, lp)
-        setContentView(root)
 
-        refresh()
+        // ── 底部操作栏：清理重复 | 删除全部 ──
+        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        btnDedupe = actionButton(R.string.clipboard_dedupe, Color.parseColor("#4C8DFF")) {
+            dedupe()
+        }
+        btnDeleteAll = actionButton(R.string.clipboard_delete_all, Color.parseColor("#E5484D")) {
+            confirmDeleteAll()
+        }
+        actionRow.addView(btnDedupe, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        actionRow.addView(btnDeleteAll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(actionRow, lp())
+
+        setContentView(root)
+        // 监听 IME 粘贴结果：成功才允许关闭页面（同进程 NOT_EXPORTED 广播）
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    pasteResultReceiver,
+                    android.content.IntentFilter().apply { addAction(JinnIme.ACTION_CLIPBOARD_PASTE_RESULT) },
+                    Context.RECEIVER_NOT_EXPORTED,
+                )
+            } else {
+                registerReceiver(
+                    pasteResultReceiver,
+                    android.content.IntentFilter().apply { addAction(JinnIme.ACTION_CLIPBOARD_PASTE_RESULT) },
+                )
+            }
+        }.onFailure {
+            Diagnostics.e(TAG, "注册粘贴结果接收器失败: ${it.message}")
+        }
+        selectCategory(null)
     }
 
-    private fun performSearch() {
-        val q = editSearch.text.toString().trim()
-        refresh()
-        if (q.isNotEmpty()) {
-            currentItems = db.search(q.split(Regex("\\s+")))
-            adapter.notifyDataSetChanged()
-            updateEmpty()
+    override fun onDestroy() {
+        super.onDestroy()
+        runCatching { unregisterReceiver(pasteResultReceiver) }.onFailure { }
+    }
+
+    /**
+     * 每次回到前台重新加载数据：用户复制后立即打开页面时，保存线程可能尚未完成，
+     * 首次 onCreate 的查询会读到旧状态。onResume + 分时延迟确保拿到最新数据。
+     */
+    override fun onResume() {
+        super.onResume()
+        // 延迟刷新（覆盖 ClipboardController 后台保存线程的写入窗口）：
+        // 单条保存通常在几百 ms 内完成，多条连续复制时保存线程可能排队，
+        // 分三档延迟覆盖最坏情况；重复调用 refresh 幂等（相同查询结果）。
+        for (delay in longArrayOf(300L, 1000L, 2500L)) {
+            uiHandler.postDelayed({
+                if (!isFinishing) refresh()
+            }, delay)
         }
     }
 
-    private fun refresh() {
-        currentItems = db.recent(prefs.maxItems)
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // ── 分类栏 ────────────────────────────────────────────
+
+    private fun categoryTab(labelRes: Int, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = getString(labelRes)
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Color.parseColor("#ECEEF2"))
+            textSize = 13f
+            setBackgroundResource(R.drawable.key_bg)
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun selectCategory(category: String?) {
+        currentCategory = category
+        refreshCategoryTabs()
+        // 数据源变化（分类切换）后滚回顶部，避免 ListView 停留在旧分类的滚动偏移
+        refresh(resetScroll = true)
+    }
+
+    private fun refreshCategoryTabs() {
+        val selected = currentCategory
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryPrivate, btnCategoryNumber, btnCategoryFavorite)) {
+            val isSelected = when (tab) {
+                btnCategoryAll -> selected == null
+                btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
+                btnCategoryPrivate -> selected == CATEGORY_PRIVATE
+                btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
+                else -> selected == CATEGORY_FAVORITE
+            }
+            tab.setBackgroundResource(if (isSelected) R.drawable.key_bg_active else R.drawable.key_bg)
+        }
+    }
+
+    // ── 刷新 / 搜索 / 序号 ────────────────────────────────
+
+    /**
+     * 重新加载当前分类 + 搜索关键词的列表。
+     * @param resetScroll true 时列表滚回顶部（分类切换 / 清理重复 / 清空删除后，
+     *        数据源变化应回到最新记录；纯搜索输入时不打断阅读，保持 false）。
+     */
+    private fun refresh(resetScroll: Boolean = false) {
+        // 诊断：记录数据流各环节的大小（不打印剪贴板文本，排查「全部分类数据污染」）
+        val allDiag = db.recent(prefs.maxItems)
+        val catDiag = currentCategory
+        val searchDiag = searchQuery.isNotEmpty()
+        Diagnostics.i(TAG, "refresh-begin: category=$catDiag allSize=${allDiag.size} search=$searchDiag resetScroll=$resetScroll")
+        // 记录「全部记录」的 id → 序号偏移，供搜索结果保留原始序号
+        val all = db.recent(prefs.maxItems)
+        latestNumber = all.size
+        allItemsById = all.mapIndexed { idx, it -> it.id to idx }.toMap()
+
+        currentItems = when {
+            currentCategory == CATEGORY_PRIVATE -> db.recentPrivate(prefs.maxItems)
+            currentCategory == CATEGORY_FAVORITE -> db.recentFavorites(prefs.maxItems)
+            currentCategory != null -> db.recent(prefs.maxItems, currentCategory)
+            else -> all
+        }
+
+        // 实时搜索：内存过滤（已加载列表基础上按 query 过滤，保留原始排序）
+        if (searchQuery.isNotEmpty()) {
+            val q = searchQuery.lowercase()
+            currentItems = currentItems.filter { it.content.lowercase().contains(q) }
+        }
+
+        Diagnostics.i(TAG, "refresh-end: category=$currentCategory allSize=${all.size} visibleSize=${currentItems.size} adapterCount=${adapter.count}")
         adapter.notifyDataSetChanged()
         updateEmpty()
+        // 清理已不存在的隐私揭示记录（被删除/去重后释放，防无限膨胀）
+        if (revealedPrivateIds.isNotEmpty()) {
+            val ids = all.mapTo(HashSet()) { it.id }
+            revealedPrivateIds.retainAll(ids)
+        }
+        if (resetScroll && currentItems.isNotEmpty()) {
+            // ListView 会保持上一次滚动位置（按像素）：数据源变化后必须滚回顶部，
+            // 否则从短列表（如网址 2 条）切回长列表（全部 8 条）时停留在旧偏移，
+            // 只看到底部几条（用户报告「只剩 7、8」）。
+            // 注意：setSelection 必须等 ListView 完成布局后调用才生效——数据变更后
+            // 立即调用会被随后的 layout 覆盖，因此 post 到下一帧再执行。
+            // 空列表（隐私/收藏无记录）时 ListView 已 GONE，setSelection 会抛
+            // IndexOutOfBoundsException，必须先判空。
+            listView.post { listView.setSelection(0) }
+        }
+    }
+
+    /** 清理重复：严格字符串比较，只保留最新；完成后重载当前分类和搜索 */
+    private fun dedupe() {
+        Thread {
+            val removed = db.deduplicate()
+            runOnUiThread {
+                Diagnostics.i(TAG, "清理重复: 删除 $removed 条")
+                Toast.makeText(this, getString(R.string.clipboard_dedupe_done, removed), Toast.LENGTH_SHORT).show()
+                refresh(resetScroll = true)
+            }
+        }.start()
+    }
+
+    /**
+     * 删除全部：确认对话框防误触。
+     * 收藏记录不受影响（bug 审查计划 §2：收藏是永久存储）。
+     */
+    private fun confirmDeleteAll() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.clipboard_delete_all)
+            .setMessage(R.string.clipboard_delete_all_confirm)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                db.deleteAll()
+                refresh(resetScroll = true)
+                Toast.makeText(this, R.string.clipboard_deleted_all, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun updateEmpty() {
@@ -199,10 +410,117 @@ class ClipboardHistoryActivity : Activity() {
         listView.visibility = if (empty) View.GONE else View.VISIBLE
     }
 
+    // ── 点击粘贴 / 长按菜单 ───────────────────────────────
+
+    /** 已揭示明文的隐私记录 ID（点击一次显示明文，再点才粘贴） */
+    private val revealedPrivateIds = HashSet<Long>()
+
+    /** 快速点击去重：一次粘贴操作完成前忽略后续点击（bug 审查计划 §9） */
+    private var pasting = false
+
+    /** 等待 IME 回传结果的剪贴板记录 id（防串线） */
+    private var pendingPasteItemId = -1L
+
+    /** IME 粘贴结果广播接收器：成功才关闭页面，失败保持页面等待 */
+    private val pasteResultReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+            val itemId = intent.getLongExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_ITEM_ID, -1L)
+            // 只处理本次点击对应记录的反馈（防串线）
+            if (itemId != pendingPasteItemId) return
+            val success = intent.getBooleanExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_SUCCESS, false)
+            Diagnostics.i(TAG, "粘贴结果: id=$itemId success=$success")
+            pasting = false
+            pendingPasteItemId = -1L
+            if (success) {
+                finish()
+            } else {
+                Toast.makeText(this@ClipboardHistoryActivity, R.string.clipboard_paste_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 处理 item 点击（隐私揭示 / 粘贴）。
+     * 导航不变量（bug 审查计划 §34）：只有「有效 Item + commitText 成功」才触发返回；
+     * 隐私首次揭示只是刷新 UI，绝不返回。
+     */
+    private fun handleItemClick(item: ClipboardDb.Item) {
+        // 快速点击去重：上次粘贴未完成时忽略新点击
+        if (pasting) return
+        // 隐私内容：先显示明文（点击一次），再点第二次才粘贴
+        if (item.isPrivate && !revealedPrivateIds.contains(item.id)) {
+            revealedPrivateIds.add(item.id)
+            adapter.notifyDataSetChanged()
+            Toast.makeText(this, R.string.clipboard_private_revealed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        requestPaste(item)
+    }
+
+    /**
+     * 请求 IME 粘贴：发广播携带稳定 itemId + 内容，等待 IME 回传结果。
+     * 成功（commitText=true）才关闭页面；失败/无连接则保持页面并提示。
+     */
+    private fun requestPaste(item: ClipboardDb.Item) {
+        Diagnostics.i(TAG, "点击记录粘贴: id=${item.id}")
+        pasting = true
+        pendingPasteItemId = item.id
+        val sent = runCatching {
+            sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_PASTE)
+                .setPackage(packageName)
+                .putExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_ITEM_ID, item.id)
+                .putExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_TEXT, item.content))
+            true
+        }.onFailure {
+            Diagnostics.w(TAG, "发送粘贴广播失败: ${it.message}")
+        }.getOrDefault(false)
+        if (!sent) {
+            // 广播都发不出：复位状态，停留本页，绝不误关
+            pasting = false
+            pendingPasteItemId = -1L
+            Toast.makeText(this, R.string.clipboard_paste_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 长按菜单：收藏 / 隐私 / 删除 */
+    private fun showItemMenu(item: ClipboardDb.Item) {
+        // 用简洁的自定义弹窗避免引入新依赖
+        val options = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+        options.add(getString(if (item.isFavorite) R.string.clipboard_unfavorite else R.string.clipboard_favorite))
+        actions.add { db.setFavorite(item.id, !item.isFavorite); refresh(resetScroll = true) }
+        options.add(getString(if (item.isPrivate) R.string.clipboard_unmark_private else R.string.clipboard_mark_private))
+        actions.add { db.setPrivate(item.id, !item.isPrivate); refresh(resetScroll = true) }
+        options.add(getString(R.string.clipboard_delete))
+        actions.add { db.delete(item.id); refresh(resetScroll = true) }
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.clipboard_item_menu)
+            .setItems(options.toTypedArray()) { _, which -> actions[which]() }
+            .show()
+    }
+
+    private fun actionButton(labelRes: Int, color: Int, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = getString(labelRes)
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Color.parseColor("#FFFFFF"))
+            textSize = 14f
+            setBackgroundColor(color)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun lp() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
         const val TAG = "ClipboardHistory"
+        const val CATEGORY_PRIVATE = "PRIVATE"
+        const val CATEGORY_FAVORITE = "FAVORITE"
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     }
 }

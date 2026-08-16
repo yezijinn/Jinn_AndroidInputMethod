@@ -36,6 +36,10 @@ class ClipboardController(context: Context) {
     @Volatile
     private var ownCommit = false
 
+    /** ownCommit 置位时间戳：超过 OWN_COMMIT_WINDOW_MS 的标记视为过期（打字后复制不应被误杀） */
+    @Volatile
+    private var ownCommitAt = 0L
+
     /** 启用：注册系统剪贴板监听。幂等。 */
     fun start() {
         if (listenerRegistered) return
@@ -55,14 +59,33 @@ class ClipboardController(context: Context) {
     /** IME 自身提交文本时调用，标记下一次剪贴板变化来自自身，不保存历史 */
     fun onOwnCommit() {
         ownCommit = true
+        ownCommitAt = System.currentTimeMillis()
     }
 
     private fun onClipboardChanged() {
-        if (ownCommit) {
+        // 只有「短时间内的自身粘贴」才跳过保存；过期的 ownCommit 标记（打字后
+        // 用户手动复制）必须正常保存，否则真实复制会被误杀。
+        if (ownCommit && System.currentTimeMillis() - ownCommitAt <= OWN_COMMIT_WINDOW_MS) {
             ownCommit = false
             return
         }
-        // 立即置位，避免自身提交产生的剪贴板变化被后续线程误判
+        // 过期标记直接清除，不拦截本次复制
+        ownCommit = false
+
+        // Android 10+ 后台进程读 primaryClip 可能拿到 null（时序/权限边界）：
+        // 监听回调触发时系统可能尚未完成写入，或本进程刚退到后台。
+        // 延迟 250ms 重试一次，避免把真实复制误判为空。
+        if (clipboard.primaryClip == null) {
+            Thread {
+                Thread.sleep(250)
+                val retryClip = clipboard.primaryClip ?: return@Thread
+                val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@Thread
+                if (retryText.isBlank()) return@Thread
+                val retrySource = resolveSourcePackage()
+                ClipboardStore.save(appContext, db, retryText, retrySource)
+            }.start()
+            return
+        }
         val clip = clipboard.primaryClip ?: return
         if (clip.itemCount == 0) return
         val text = clip.getItemAt(0).coerceToText(appContext)?.toString() ?: return
@@ -85,6 +108,9 @@ class ClipboardController(context: Context) {
 
     private companion object {
         const val TAG = "ClipboardController"
+
+        /** 自身写入剪贴板的标记有效期：粘贴写入后短时间内变化才可能是自身的 */
+        const val OWN_COMMIT_WINDOW_MS = 3_000L
     }
 }
 
@@ -132,6 +158,8 @@ object ClipboardStore {
         val match = SensitiveDetector.detect(text)
         val sensitive = match != null
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
+        // 自动分类（URL / NUMBER / OTHER）；隐私分类绝不自动判断
+        val category = ClipboardClassifier.classify(text)
 
         // Root 增强模式联动：敏感内容命中且开启了「自动清空系统剪贴板」时，
         // 用 root 立即清空系统剪贴板（普通模式做不到，root 模式才做）。
@@ -150,11 +178,18 @@ object ClipboardStore {
             sensitive && policy == SensitivePolicy.TEMPORARY -> {
                 val expireAt = System.currentTimeMillis() + tempDuration.millis
                 Diagnostics.i(TAG, "save: 敏感内容(${match?.type})，临时保存 ${tempDuration.millis / 1000}s")
-                return db.insert(text, "text", sourcePackage, appName, true, expireAt, maxItems)
+                return db.insert(
+                    text, "text", sourcePackage, appName, true, expireAt, maxItems,
+                    category = category,
+                )
             }
             else -> {
-                Diagnostics.i(TAG, "save: 已保存 ${text.take(20)}… (敏感=$sensitive)")
-                return db.insert(text, "text", sourcePackage, appName, sensitive, 0L, maxItems)
+                // 隐私：绝不输出正文（含前 N 位），只记录长度与分类
+                Diagnostics.i(TAG, "save: 已保存 len=${text.length} (分类=$category)")
+                return db.insert(
+                    text, "text", sourcePackage, appName, sensitive, 0L, maxItems,
+                    category = category,
+                )
             }
         }
     }

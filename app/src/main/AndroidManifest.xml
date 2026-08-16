@@ -82,16 +82,19 @@
             </intent-filter>
         </receiver>
 
-        <!-- 剪贴板历史页：FLAG_SECURE 隐私保护（禁止截图/最近任务预览） -->
+        <!-- 剪贴板历史页：FLAG_SECURE 隐私保护（禁止截图/最近任务预览），
+             excludeFromRecents 避免隐私页出现在最近任务列表 -->
         <activity
             android:name=".ClipboardHistoryActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
             android:label="@string/clipboard_history_title" />
 
-        <!-- 第三方 APP 剪贴板历史访问权限管理（同样 FLAG_SECURE） -->
+        <!-- 第三方 APP 剪贴板历史访问权限管理（同样 FLAG_SECURE + 隐藏最近任务） -->
         <activity
             android:name=".ClipboardPermissionActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
             android:label="@string/clipboard_perm_manage" />
 
         <!-- 第三方 APP 访问剪贴板历史的安全 IPC 入口（UID 校验，默认拒绝） -->
