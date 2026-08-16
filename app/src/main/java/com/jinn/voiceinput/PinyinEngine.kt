@@ -44,6 +44,9 @@ object PinyinEngine {
     /** 有序音节（字典序）：保证单字候选输出顺序稳定 */
     private val sortedSyllables = ArrayList<String>()
 
+    /** 有序合法音节全集（字典序）：前缀补全扫描用，finalizeLoad 时构建一次 */
+    private val sortedValidSyllables = ArrayList<String>()
+
     /** 有序拼音键（字典序）：智能预测的二分查找前缀用 */
     private val sortedPhraseKeys = ArrayList<String>()
 
@@ -78,6 +81,8 @@ object PinyinEngine {
         sortedSyllables.addAll(charsBySyllable.keys.sorted())
         sortedPhraseKeys.clear()
         sortedPhraseKeys.addAll(phrasesByPinyin.keys.sorted())
+        sortedValidSyllables.clear()
+        sortedValidSyllables.addAll(validSyllables.sorted())
     }
 
     private fun loadChars(context: Context) {
@@ -212,7 +217,24 @@ object PinyinEngine {
         }
 
         // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
-        if (partial.isNotEmpty()) {
+        //    partial 非空；或末尾音节是「伪完整音节」（如 nim 的 m，本身合法但也是
+        //    更长音节前缀，用户意图是 ni+m… 补全）时也触发补全
+        val lastIsFakeComplete = syllables.isNotEmpty() &&
+            partial.isEmpty() && isTruePrefixOfSyllable(syllables.last())
+        if (partial.isNotEmpty() || lastIsFakeComplete) {
+            // 3a. 词库短语补全召回（如 ni m → ni+men → 你们）：
+            //    补全词插入 result 头部（优先于第 2 步已加入的单字）
+            val completionWords = queryWithCompletion(raw)
+            Diagnostics.i(
+                TAG,
+                "query补全: input=$raw partial=$partial fake=$lastIsFakeComplete " +
+                    "syl=$syllables completionCount=${completionWords.size}",
+            )
+            val asList = ArrayList(result)
+            result.clear()
+            result.addAll(completionWords)
+            result.addAll(asList)
+            // 3b. 单字前缀联想（原有逻辑，保持）
             if (syllables.isNotEmpty()) {
                 result.addAll(charsFor(syllables.last()).take(MAX_CHARS))
             }
@@ -346,6 +368,85 @@ object PinyinEngine {
     /** 按完整拼音直接查单字（供候选栏显示补全） */
     fun charsFor(syllable: String): List<String> =
         charsBySyllable[syllable]?.toList() ?: emptyList()
+
+    // ── 不完整拼音补全（Pinyin Completion）──────────────────
+
+    /** 补全结果数量上限（防候选爆炸，文档建议 32） */
+    private const val MAX_COMPLETION_RESULTS = 32
+
+    /** 完整音节序列最大长度（防超长输入组合爆炸） */
+    private const val MAX_SYLLABLES = 8
+
+    /** 前缀 → 完整音节列表缓存（补全查询热路径，避免重复扫描音节表） */
+    private val completionCache = HashMap<String, List<String>>()
+
+    /**
+     * 返回以 [prefix] 开头的所有合法完整音节（字典序）。
+     * 例：m → [ma, mai, man, mang, mao, me, mei, men, meng, mi, ...]
+     * 遍历合法音节全集 [validSyllables]（完整音节表，非单字表）——
+     * 补全的目的是拼词库短语键，音节必须合法即可，不要求有单字。
+     * 带缓存：同一前缀只扫描一次。
+     */
+    fun completeSyllablePrefix(prefix: String): List<String> {
+        if (prefix.isEmpty() || !loaded) return emptyList()
+        val cached = completionCache[prefix]
+        if (cached != null) return cached
+        val out = ArrayList<String>()
+        // 遍历有序合法音节全集（finalizeLoad 已排序），前缀匹配 + 字典序稳定
+        for (syllable in sortedValidSyllables) {
+            if (syllable.startsWith(prefix)) {
+                out.add(syllable)
+                if (out.size >= MAX_COMPLETION_RESULTS) break
+            }
+        }
+        completionCache[prefix] = out
+        // 缓存防无限增长：超限清空（前缀数量有限，正常不会触发，纯防御）
+        if (completionCache.size > 512) completionCache.clear()
+        return out
+    }
+
+    /**
+     * 不完整拼音补全召回：把 [input] 切分为「完整音节 + 末尾不完整前缀」，
+     * 将末尾前缀补全为完整音节后拼接，查词库短语。
+     *
+     * 例：input="nim" → 切分 [ni] + 前缀"m" → 补全 men/ma/mei…
+     *    → 拼接 nimen/nima/nimei… → 查词库召回「你们/你妈/你没」
+     *
+     * 只返回词库中真实存在的短语；拼音补全只是内部召回机制，候选栏显示中文词。
+     * @return 候选短语（按词库原有频率序），去重保序
+     */
+    fun queryWithCompletion(input: String): List<String> {
+        if (!loaded || input.isEmpty()) return emptyList()
+        val (syllables, partial) = segment(input)
+        if (syllables.isEmpty()) return emptyList() // 首音节就不完整：只做单字前缀联想
+
+        // 末尾不完整前缀判定：
+        //  - partial 非空 → 直接用
+        //  - partial 空但最后一个音节是「伪完整音节」（本身合法、同时是更长音节前缀，
+        //    如 m/n/ng/a/e 等短音节）→ 把它从完整音节中剥出当作不完整前缀。
+        //    例：nim 的 segment 返回 [ni, m]（m 是合法音节），但用户意图是 ni+m… 补全
+        val last = syllables.last()
+        val effPartial = if (partial.isNotEmpty()) partial
+        else if (isTruePrefixOfSyllable(last)) last
+        else return emptyList()   // 末尾真完整（如 nimen 的 men），不进补全
+        val effSyllables = if (partial.isNotEmpty()) syllables else syllables.dropLast(1)
+        if (effSyllables.isEmpty()) return emptyList()
+        if (effSyllables.size + 1 > MAX_SYLLABLES) return emptyList()  // 防超长组合爆炸
+
+        // 补全末尾前缀为合法完整音节，逐音节拼接查词库
+        val base = effSyllables.joinToString("")
+        val completions = completeSyllablePrefix(effPartial)
+        if (completions.isEmpty()) return emptyList()
+
+        val result = LinkedHashSet<String>()
+        for (syl in completions) {
+            for (key in phraseKeysOf(base + syl)) {
+                phrasesByPinyin[key]?.let { result.addAll(it.take(MAX_PHRASES)) }
+            }
+            if (result.size >= MAX_COMPLETION_RESULTS) break
+        }
+        return result.toList()
+    }
 }
 
 /**

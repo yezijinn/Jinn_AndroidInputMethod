@@ -564,6 +564,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 双拼：先转全拼再查询；显示仍保留双拼原文
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input) else input
         val result = PinyinEngine.query(queryInput)
+        // 补全诊断：全拼且末尾不完整时，输出补全召回与直接查询对比
+        if (!shuangpinMode) {
+            val completion = PinyinEngine.queryWithCompletion(queryInput)
+            if (completion.isNotEmpty() || result.partialSyllable.isNotEmpty()) {
+                Diagnostics.i(
+                    TAG,
+                    "补全诊断: input=$queryInput syllables=${result.syllables} " +
+                        "partial=${result.partialSyllable} completion=$completion",
+                )
+            }
+        }
         lastCandidates = result.candidates
         viewCandidatePinyin.text = queryInput
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
