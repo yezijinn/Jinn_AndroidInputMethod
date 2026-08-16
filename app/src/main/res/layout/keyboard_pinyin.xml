@@ -53,15 +53,23 @@
         </HorizontalScrollView>
     </LinearLayout>
 
-    <!-- 26 键字母区 -->
-    <LinearLayout
-        android:id="@+id/keyboard_letters"
+    <!-- 26 键字母区 / 剪贴板面板共用容器：
+         - 字母模式：高度 wrap_content（字母区自身 3 行高度），键盘紧凑
+         - 剪贴板模式：代码中动态设置确定高度，撑满候选栏与底部栏之间空间 -->
+    <FrameLayout
+        android:id="@+id/keyboard_content_area"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:paddingTop="4dp">
+        android:layout_height="wrap_content">
+
+        <!-- 26 键字母区 -->
+        <LinearLayout
+            android:id="@+id/keyboard_letters"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="4dp">
 
         <!-- 第一行：10 个字母 -->
         <LinearLayout
@@ -264,6 +272,7 @@
                 android:src="@drawable/ic_backspace" />
         </LinearLayout>
     </LinearLayout>
+    </FrameLayout>
 
     <!-- 第四行：符号 / 数字 / 逗号 / 空格(长按语音) / 句号 / 中英切换 / 回车确定 -->
     <LinearLayout

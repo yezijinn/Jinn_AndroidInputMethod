@@ -1,15 +1,17 @@
 # CapsWriter 语音输入法（安卓）
 
-基于飞牛 NAS 上已运行的 **CapsWriter Offline** 服务端、极度精简的安卓语音输入法（IME）。
-本机只负责采集麦克风音频并通过 WebSocket 实时上传，识别完全在 NAS 服务端完成。
+基于飞牛 NAS 上已运行的 **CapsWriter Offline** 服务端、兼具语音听写与拼音键盘的安卓输入法（IME）。
+语音识别完全在 NAS 服务端完成（本机零模型）；拼音/剪贴板等键盘功能在本机实现。
 
 ## 核心特性
 
-- **只做语音听写**：键盘只有一个麦克风 + 一排最小编辑键（退格 / 回车 / 空格 / 逗号 / 句号 / 切换输入法）。
-- **两种触发方式**
+- **语音听写**：长按/短按麦克风说话，识别文本实时回显并上屏。
   - 长按麦克风：按住说话，松手即识别；按住时**上滑**再松手可取消。
   - 短按麦克风：进入连续录音，再点一下结束（最长 3 分钟兜底自动停止）。
-- **实时回显**：识别过程用预编辑文本（composing）即时显示，完成自动落地；兼容性差的输入框可关闭。
+- **拼音键盘（26 键）**：QWERTY 布局，支持**全拼 / 自然码双拼 / 英文**三种输入，候选栏带智能预测，
+  中英一键切换；功能面板含 全拼/双拼切换、剪贴板、方向（文字拖选）、粘贴、收起。
+- **剪贴板历史**：自动监听保存复制的文本（AES-256-GCM 加密入库），支持分类
+  （全部/网址/隐私/数字/收藏）、动态序号、实时搜索、清理重复、长按收藏/隐私/删除、点击即粘贴。
 - **零额外模型**：不打包任何语音模型，包体极小，仅依赖 `core-ktx`、`activity-ktx`、`okhttp3`，可选 `Shizuku`。
 - **后台保活 / 防杀后台**：前台常驻服务 + 无障碍互保 + 开机自启；可选 Root/Shizuku 把本包加入系统白名单，降低被回收概率，识别连接更稳。详见下文。
 
@@ -72,12 +74,25 @@ CapsWriterIME/
         │   ├── MicButton.kt       # 麦克风按钮（径向渐变 + 随音量呼吸的光圈）
         │   ├── JinnIme.kt         # 输入法服务（手势 / 结果回显 / 编辑键 / 保活拉起 + 拼音键盘）
         │   ├── PinyinEngine.kt    # 拼音引擎（词库加载 / 候选查询 / 自然码双拼）
-        │   ├── PinyinKeyboardView.kt / PinyinKey.kt # 拼音键盘（26 键 + 候选栏 + 智能预测）
+        │   ├── PinyinKeyboardView.kt / PinyinKey.kt # 拼音键盘（26 键 + 候选栏 + 功能面板 + 智能预测）
+        │   ├── TextSelection.kt   # 文字拖选核心逻辑（Anchor/Focus 模型，纯函数可单测）
         │   ├── KeepAliveService.kt# 前台保活服务（常驻通知，防掉后台）
         │   ├── JinnAccessibilityService.kt # 无障碍保活（与前台服务互保）
         │   ├── BootReceiver.kt    # 开机 / 更新后拉起保活
         │   ├── RootShizuku.kt     # Root / Shizuku 加白名单工具
-        │   └── SettingsActivity.kt# 设置页（服务端 / 语言 / 提示词 / 授权 / 保活）
+        │   ├── SettingsActivity.kt# 设置页（服务端 / 语言 / 提示词 / 授权 / 保活 / 剪贴板）
+        │   ├── Diagnostics.kt     # 诊断日志（文件 + 崩溃捕获 + logcat 快照）
+        │   ├── ClipboardController.kt # 剪贴板监听 + 敏感策略 + 保存到库
+        │   ├── ClipboardDb.kt     # 剪贴板历史 SQLite（AES-GCM 密文 + 分类/收藏/隐私 + 去重/搜索）
+        │   ├── ClipboardCrypto.kt # 加密工具（Android Keystore AES-256-GCM）
+        │   ├── ClipboardClassifier.kt # 自动分类（URL/NUMBER/OTHER；隐私绝不自动）
+        │   ├── ClipboardPrefs.kt  # 剪贴板配置（独立 SharedPreferences）
+        │   ├── ClipboardHistoryActivity.kt # 剪贴板历史页（分类/序号/搜索/去重/长按菜单/点击粘贴）
+        │   ├── ClipboardPermissionActivity.kt # 第三方 APP 读取授权管理页
+        │   ├── ClipboardPermissionStore.kt    # 授权表（默认全禁，按包名授权）
+        │   ├── ClipboardHistoryProvider.kt    # 第三方 APP 安全 IPC（ContentProvider）
+        │   ├── ClipboardFirewall.kt # Root 增强：敏感内容自动清空系统剪贴板
+        │   └── SensitiveDetector.kt # 敏感内容检测（密码/验证码/身份证/Token/私钥等）
         ├── res/
         │   ├── layout/  keyboard.xml, activity_settings.xml
         │   ├── xml/     method.xml, accessibility.xml
@@ -88,7 +103,7 @@ CapsWriterIME/
 ## 构建要求
 
 - Android Studio（或命令行 Gradle）
-- **Android SDK Platform 34** 与构建工具（本机当前未安装 SDK，故未做实际编译验证，代码已逐文件人工核对）
+- **Android SDK Platform 34** 与构建工具（本机 `C:\Android\sdk` 已配置，`assembleDebug` 实测通过）
 - JDK 17
 - 网络可访问 Maven 中央仓库（或 `settings.gradle.kts` 中已注释的阿里云镜像）
 
@@ -112,7 +127,13 @@ cd CapsWriterIME
 
 - **按住麦克风**说话，松手即识别；想反悔就**上滑**再松手取消。
 - **点一下麦克风**进入连续录音，再点一下结束；长时间不点会自动停止。
-- 纯语音改不了错字，用底部编辑键（退格支持长按连删；回车在聊天框会按输入框声明的动作发送）。
+- **拼音键盘**：默认/切到拼音键盘后 26 键输入，候选栏选词上屏；功能面板可切换**全拼/双拼**、
+  一键**中英文**切换（英文模式下字母直接上屏）。语音改不了错字时用拼音键盘或底部编辑键
+  （退格支持长按连删；回车在聊天框会按输入框声明的动作发送）。
+- **剪贴板**：拼音键盘里点「剪贴板」打开剪贴板历史页（全新页面），
+  分类栏（全部/网址/隐私/数字/收藏）+ 动态序号 + 实时搜索 + 清理重复 + 长按收藏/隐私/删除；
+  单击记录直接粘贴回当前输入框并自动返回。复制文本后自动保存进历史（可在设置页关闭）。
+- **文字拖选**：拼音键盘点「方向」进入拖选，方向键控制 Focus 光标移动（Anchor 固定），支持行首/行末/全选。
 
 ## 排错
 
@@ -123,8 +144,10 @@ cd CapsWriterIME
 | 录音无反应 | 在设置页点「授权麦克风」，或系统设置里给本应用麦克风权限 |
 | 识别乱码 / 语种不对 | 在设置页把语言从「自动」改为「中文」或对应语种 |
 | 预编辑文本不显示 / 跳变 | 关闭「识别过程中实时回显」，改为完成一次性提交 |
+| 复制的内容没进剪贴板历史 | 确认设置页「剪贴板历史」开关开启；MIUI 后台读取系统剪贴板受限，需在前台/键盘唤起时复制 |
+| 隐私/收藏分类空但点按钮崩溃 | 已修复（空列表越界保护）；如仍异常请提 issue 附诊断日志 |
 
 ## 环境说明
 
-本工程源码已按 Android 规范完成并人工逐文件核对，但因构建环境缺少 Android SDK，未能执行 `assembleRelease` 实测编译。
-首次在你本机打开时建议用 Android Studio 同步，按上方构建步骤产出 APK 后再安装。
+本工程源码已按 Android 规范完成并逐文件核对，且在当前开发环境（Windows + JDK17 + Android SDK 34）实测
+`assembleDebug` 编译通过、JVM 单测全绿，并在真机（KernelSU root）安装验证过语音/拼音键盘与剪贴板功能。
