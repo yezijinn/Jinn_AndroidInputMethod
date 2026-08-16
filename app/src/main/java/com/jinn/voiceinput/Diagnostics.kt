@@ -120,6 +120,69 @@ object Diagnostics {
         }
     }
 
+    // ── 事件序列 Ring Buffer（时序 BUG 定位核心）────────────────
+
+    /**
+     * 最近事件环形缓冲：保留最近 [EVENT_RING_SIZE] 个带时间戳的事件。
+     * 时序类 BUG（如 IME 收起/唤醒循环）发生后，即使没有实时看 logcat，
+     * 也能在日志里回溯 BUG 前几秒的完整事件序列。
+     * 线程安全：所有访问走 synchronized。
+     */
+    private const val EVENT_RING_SIZE = 500
+    private val eventRing = ArrayDeque<String>(EVENT_RING_SIZE)
+    private val eventSeq = IntArray(1)
+
+    /**
+     * 记录一个时序事件（同时写入文件日志与环形缓冲）。
+     * 与 [i] 的区别：带单调递增序号，回溯时能还原严格先后顺序。
+     * 格式：`[EV#序号] 模块:事件 参数`
+     */
+    fun event(module: String, event: String, params: String = "") {
+        val seq = synchronized(lock) {
+            val n = eventSeq[0] + 1
+            eventSeq[0] = n
+            val line = "${timeFormat.format(Date())} [EV#$n] $module:$event${if (params.isNotEmpty()) " $params" else ""}"
+            eventRing.addLast(line)
+            if (eventRing.size > EVENT_RING_SIZE) eventRing.removeFirst()
+            line
+        }
+        log('I', "EVENT", seq, null)
+    }
+
+    /** 返回最近的事件序列（新→旧或旧→新由 reversed 控制），用于崩溃/异常时落盘 */
+    fun eventSnapshot(reversed: Boolean = true): List<String> = synchronized(lock) {
+        val list = eventRing.toList()
+        if (reversed) list.asReversed() else list
+    }
+
+    /** 把事件序列写入日志文件（调试时手动触发，如诊断快照） */
+    fun dumpEventRing() {
+        val lines = eventSnapshot()
+        if (lines.isEmpty()) return
+        val sb = StringBuilder("── 最近事件序列（新→旧，共 ${lines.size} 条）──\n")
+        for (l in lines) sb.append(l).append('\n')
+        appendToFile(logDir ?: return, sb.toString())
+    }
+
+    // ── Trace ID（一次操作的完整调用链）──────────────────────
+
+    private val traceSeq = IntArray(1)
+
+    /**
+     * 生成一次操作的 Trace ID，例如 `CLIP-8F31`。
+     * 一次用户操作（打开剪贴板/开始听写/切换键盘）生成一个 ID，
+     * 后续所有相关日志携带同一 ID，从日志里搜 ID 即可还原完整调用链。
+     * @param module 模块前缀，如 CLIP / IME / ASR / PINYIN
+     */
+    fun traceId(module: String): String {
+        val n = synchronized(lock) {
+            traceSeq[0] += 1
+            traceSeq[0]
+        }
+        val rand = (0x1000 + kotlin.random.Random.nextInt(0xEFFF)).toString(16).uppercase()
+        return "$module-${(n % 0xFFFF).toString(16).uppercase().padStart(4, '0')}-$rand"
+    }
+
     // ── 写日志 ──────────────────────────────────────────────
 
     fun v(tag: String, msg: String) = log('V', tag, msg, null)

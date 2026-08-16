@@ -61,6 +61,12 @@ class JinnIme : InputMethodService() {
     private var keyboardMode = KeyboardMode.VOICE
     private var keyboardContainer: FrameLayout? = null
 
+    /** 剪贴板页点击记录时若连接无效，暂存待粘贴文本，编辑框聚焦后自动粘贴 */
+    private var pendingPasteText: String? = null
+
+    /** 剪贴板面板打开标记：跨键盘视图实例持久（IME relayout 重建视图后自动恢复） */
+    private var clipboardPanelOpen = false
+
     /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private var focusRequest: AudioFocusRequest? = null
@@ -176,7 +182,82 @@ class JinnIme : InputMethodService() {
         }.onFailure {
             Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
         }
+
+        // 监听剪贴板页面「点击记录 → 粘贴」广播：Activity 无法直接拿 InputConnection，
+        // 通过广播把内容交给本服务用当前连接插入编辑框。
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(clipboardPasteReceiver, clipboardPasteFilter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(clipboardPasteReceiver, clipboardPasteFilter)
+            }
+        }.onFailure {
+            Diagnostics.e(TAG, "onCreate: 注册剪贴板粘贴广播失败", it)
+        }
     }
+
+    /** 剪贴板页面「点击记录粘贴」广播接收器 */
+    private val clipboardPasteReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val text = intent.getStringExtra(EXTRA_CLIPBOARD_PASTE_TEXT).orEmpty()
+            val itemId = intent.getLongExtra(EXTRA_CLIPBOARD_PASTE_ITEM_ID, -1L)
+            if (text.isEmpty()) {
+                Diagnostics.w(TAG, "剪贴板粘贴广播: 内容为空")
+                notifyPasteResult(itemId, false)
+                return
+            }
+            Diagnostics.i(TAG, "剪贴板粘贴广播: len=${text.length}")
+            val ok = pasteClipboardText(text)
+            // 回传结果给剪贴板页：成功才允许它关闭，失败保持页面等待
+            notifyPasteResult(itemId, ok)
+        }
+    }
+
+    private val clipboardPasteFilter = IntentFilter().apply { addAction(ACTION_CLIPBOARD_PASTE) }
+
+    /**
+     * 把粘贴结果回传给剪贴板页（成功才允许自动关闭页面）。
+     * @param itemId 关联点击的剪贴板记录（用于防串线）
+     */
+    private fun notifyPasteResult(itemId: Long, success: Boolean) {
+        runCatching {
+            sendBroadcast(
+                Intent(ACTION_CLIPBOARD_PASTE_RESULT)
+                    .setPackage(packageName)
+                    .putExtra(EXTRA_CLIPBOARD_PASTE_ITEM_ID, itemId)
+                    .putExtra(EXTRA_CLIPBOARD_PASTE_SUCCESS, success)
+            )
+        }.onFailure {
+            Diagnostics.w(TAG, "回传粘贴结果广播失败: ${it.message}")
+        }
+    }
+
+    /** 通过当前 InputConnection 粘贴文本（无效连接不崩溃）。返回是否成功提交。 */
+    private fun pasteClipboardText(text: String): Boolean {
+        val connection = currentInputConnection
+        if (connection == null) {
+            // 剪贴板页在前台时 IME 可能无有效连接：暂存，并主动唤起键盘，
+            // 触发 onStartInputView → flushPendingPaste 自动提交。
+            // 此处未真正提交，返回 false（剪贴板页不关闭，用户可等待或返回）。
+            Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
+            pendingPasteText = text
+            runCatching { requestShowSelf(0) }.onFailure { }
+            return false
+        }
+        val ok = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
+        Diagnostics.i(TAG, "粘贴: len=${text.length} success=$ok")
+        if (ok) {
+            // 自身粘贴产生剪贴板变化，标记避免被历史保存
+            clipboardController?.onOwnCommit()
+        }
+        return ok
+    }
+
+    /**
+     * 内嵌剪贴板面板点击记录：直接用当前 InputConnection 粘贴。
+     * 与 [pasteClipboardText] 同逻辑；面板在 IME 内，连接必然有效。
+     */
+    private fun pasteClipboardTextInternal(text: String): Boolean = pasteClipboardText(text)
 
     /**
      * 设置页保存后广播：强制刷新连接与键盘配置。
@@ -353,7 +434,7 @@ class JinnIme : InputMethodService() {
             return
         }
         connection.commitText(text, 1)
-        Diagnostics.i(TAG, "粘贴: ${text.take(20)}…（${text.length} 字）")
+        Diagnostics.i(TAG, "粘贴: len=${text.length}")
         // 自身粘贴产生剪贴板变化，标记避免被历史保存
         clipboardController?.onOwnCommit()
     }
@@ -422,11 +503,24 @@ class JinnIme : InputMethodService() {
                 override fun onDeleteAll() = deleteAllText()
                 override fun onVoiceRequested() = switchToVoiceKeyboard()
                 override fun onOpenClipboard() {
-                    Diagnostics.i(TAG, "功能面板: 打开剪贴板历史")
-                    runCatching {
-                        startActivity(Intent(this@JinnIme, ClipboardHistoryActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    }.onFailure { Diagnostics.w(TAG, "打开剪贴板失败: ${it.message}") }
+                    Diagnostics.i(TAG, "功能面板: 打开剪贴板")
+                    // 内嵌面板：替换 26 键字母区（候选栏/底部栏/InputConnection 保持）
+                    clipboardPanelOpen = true
+                    pinyinKeyboard?.showClipboardPanel()
+                }
+                override fun onPasteText(text: String): Boolean {
+                    Diagnostics.i(TAG, "剪贴板面板: 请求粘贴 len=${text.length}")
+                    return pasteClipboardTextInternal(text)
+                }
+                override fun onClipboardStateChanged(active: Boolean) {
+                    Diagnostics.i(TAG, "剪贴板面板状态: active=$active")
+                    if (!active) {
+                        clipboardPanelOpen = false
+                        // 面板打开/关闭时清除拖选状态，避免 anchor/focus 残留
+                        selectionActive = false
+                        selectionAnchor = -1
+                        selectionFocus = -1
+                    }
                 }
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
                     Diagnostics.i(TAG, "方向按键: $action")
@@ -479,6 +573,8 @@ class JinnIme : InputMethodService() {
             else -> KeyboardMode.VOICE
         }
         applyKeyboardMode()
+        // 注意：不在这里恢复剪贴板面板（见 onStartInputView 注释——恢复会诱发
+        // IME 窗口反复 relayout 循环，反而导致面板抖动/空白）。
         return container
     }
 
@@ -524,6 +620,7 @@ class JinnIme : InputMethodService() {
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
+        Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
         asr.connect()
         renderLink(asr.state, null)
         micButton?.recording = false
@@ -537,10 +634,33 @@ class JinnIme : InputMethodService() {
             shuangpin = prefs.useShuangpin,
             english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
         )
+        // 剪贴板页粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
+        flushPendingPaste()
+        // 注意：不再在这里恢复剪贴板面板——恢复逻辑会触发 onPanelShown→refresh
+        // （主线程 DB 查询数百毫秒）→ 诱发 IME 窗口反复 relayout（12:20 循环日志实证），
+        // 反而让面板抖动/空白。INVISIBLE 方案下键盘视图实例不重建，面板状态天然保留。
+    }
+
+    /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
+    private fun flushPendingPaste() {
+        val text = pendingPasteText ?: return
+        pendingPasteText = null
+        val connection = currentInputConnection
+        if (connection == null) {
+            // 仍无有效连接：放回暂存，等待下次 onStartInputView
+            pendingPasteText = text
+            Diagnostics.w(TAG, "flushPendingPaste: 连接仍无效，继续暂存 len=${text.length}")
+            return
+        }
+        Diagnostics.i(TAG, "flushPendingPaste: 提交暂存粘贴 len=${text.length}")
+        connection.commitText(text, 1)
+        // 自身粘贴产生剪贴板变化，标记避免被历史保存
+        clipboardController?.onOwnCommit()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        Diagnostics.i(TAG, "onFinishInputView: finishingInput=$finishingInput mode=$mode")
+        Diagnostics.i(TAG, "onFinishInputView: finishingInput=$finishingInput mode=$mode clipboardPanelOpen=$clipboardPanelOpen")
+        Diagnostics.event("IME", "FinishInputView", "finish=$finishingInput clipboard=$clipboardPanelOpen")
         // 键盘收起时还在录音，直接丢弃：否则文本可能落到别的输入框里
         if (mode != Mode.NONE) stopRecording(commit = false)
         // 拼音键盘若有未上屏内容，提交首候选
@@ -552,11 +672,26 @@ class JinnIme : InputMethodService() {
         super.onFinishInputView(finishingInput)
     }
 
+    /** IME 窗口显示完成回调：用于确认面板打开后窗口状态 */
+    override fun onWindowShown() {
+        super.onWindowShown()
+        Diagnostics.i(TAG, "onWindowShown: 窗口显示 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
+        Diagnostics.event("IME", "WindowShown", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
+    }
+
+    /** IME 窗口隐藏回调：排查「面板打开后约 0.5 秒窗口被收起」的直接证据 */
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        Diagnostics.i(TAG, "onWindowHidden: 窗口隐藏 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
+        Diagnostics.event("IME", "WindowHidden", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
+    }
+
     override fun onDestroy() {
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         ui.removeCallbacksAndMessages(null)
         unregisterNetwork()
         runCatching { unregisterReceiver(configReceiver) }
+        runCatching { unregisterReceiver(clipboardPasteReceiver) }
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
@@ -827,8 +962,9 @@ class JinnIme : InputMethodService() {
     private fun commit(text: String) {
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
         Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
-        // 标记剪贴板变化来自自身上屏，避免被当作外部剪贴板存进历史
-        clipboardController?.onOwnCommit()
+        // 注意：打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
+        // 这里【不能】调用 onOwnCommit()——否则标记会残留到下一次真实复制，
+        // 导致用户复制的内容被误判为「自身操作」而跳过保存。
         currentInputConnection?.commitText(text, 1)
     }
 
@@ -957,6 +1093,15 @@ class JinnIme : InputMethodService() {
 
         /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
         const val ACTION_CONFIG_UPDATED = "com.jinn.voiceinput.action.CONFIG_UPDATED"
+
+        /** 剪贴板页面「点击记录粘贴」广播 action + extra */
+        const val ACTION_CLIPBOARD_PASTE = "com.jinn.voiceinput.action.CLIPBOARD_PASTE"
+        const val EXTRA_CLIPBOARD_PASTE_TEXT = "clipboard_paste_text"
+        const val EXTRA_CLIPBOARD_PASTE_ITEM_ID = "clipboard_paste_item_id"
+
+        /** IME 向剪贴板页回传粘贴结果：成功才允许关闭页面 */
+        const val ACTION_CLIPBOARD_PASTE_RESULT = "com.jinn.voiceinput.action.CLIPBOARD_PASTE_RESULT"
+        const val EXTRA_CLIPBOARD_PASTE_SUCCESS = "clipboard_paste_success"
 
         /** 超过这个时长判定为"按住说话" */
         const val HOLD_THRESHOLD_MS = 260L

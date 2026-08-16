@@ -127,33 +127,58 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <TextView
-                style="@style/SettingsLabel"
-                android:layout_marginTop="10dp"
-                android:text="@string/settings_language" />
-
-            <Spinner
-                android:id="@+id/spinner_language"
+            <!-- 语言 + 默认键盘模式：同行，各占一半 -->
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
-
-            <TextView
-                style="@style/SettingsLabel"
+                android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:text="@string/settings_default_mode" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Spinner
-                android:id="@+id/spinner_default_mode"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:text="@string/settings_language" />
+
+                    <Spinner
+                        android:id="@+id/spinner_language"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="@drawable/field_aurora"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:spinnerMode="dropdown" />
+                </LinearLayout>
+
+                <Space
+                    android:layout_width="8dp"
+                    android:layout_height="1dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:text="@string/settings_default_mode" />
+
+                    <Spinner
+                        android:id="@+id/spinner_default_mode"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="@drawable/field_aurora"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:spinnerMode="dropdown" />
+                </LinearLayout>
+            </LinearLayout>
 
             <TextView
                 style="@style/SettingsLabel"
@@ -428,52 +453,109 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
 
-            <Switch
-                android:id="@+id/switch_clipboard_enabled"
+            <!-- 历史数量上限：标题 + 输入框同行 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/switch_clipboard_enabled"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/btn_clipboard_history"
-                style="@style/SettingsButton"
-                android:layout_marginTop="6dp"
-                android:text="@string/clipboard_open_history" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/clipboard_max_items_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-            <EditText
-                android:id="@+id/edit_clipboard_max"
+                <EditText
+                    android:id="@+id/edit_clipboard_max"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/clipboard_max_items_hint"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- 敏感内容策略：标题 + 下拉框同行 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/field_aurora"
-                android:hint="@string/clipboard_max_items_hint"
-                android:inputType="number"
-                android:maxLines="1"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Spinner
-                android:id="@+id/spinner_sensitive_policy"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/clipboard_sensitive_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-            <Spinner
-                android:id="@+id/spinner_sensitive_temp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp" />
+                <Spinner
+                    android:id="@+id/spinner_sensitive_policy"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="1dp"
+                android:paddingStart="4dp"
+                android:text="@string/clipboard_sensitive_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <!-- 临时保存时长：标题 + 下拉框同行 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/clipboard_sensitive_temp_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Spinner
+                    android:id="@+id/spinner_sensitive_temp"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:paddingStart="4dp"
+                android:text="@string/clipboard_sensitive_temp_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 android:text="@string/clipboard_perm_desc"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
