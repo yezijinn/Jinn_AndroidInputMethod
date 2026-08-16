@@ -148,18 +148,26 @@ class ClipboardPermissionActivity : Activity() {
 
         val addRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
         }
+        // 输入框：占满剩余宽度，固定高度，与按钮统一；提示文本缩小（14sp → 9sp）
         val editPkg = android.widget.EditText(this).apply {
             hint = getString(R.string.clipboard_perm_input_pkg)
+            textSize = 9f
             setTextColor(Color.parseColor("#ECEEF2"))
             setHintTextColor(Color.parseColor("#9CA3AF"))
             setBackgroundColor(Color.parseColor("#1C1F26"))
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setPadding(dp(10), 0, dp(10), 0)
+            setSingleLine(true)
         }
+        // 授权按钮：右侧固定窄宽（两字），与输入框同高，圆角风格统一
         val btnAdd = Button(this).apply {
             text = getString(R.string.clipboard_perm_add)
             setTextColor(Color.parseColor("#FFFFFF"))
+            textSize = 13f
             setBackgroundColor(Color.parseColor("#4C8DFF"))
+            minWidth = 0
+            minHeight = 0
         }
         btnAdd.setOnClickListener {
             val pkg = editPkg.text.toString().trim()
@@ -182,10 +190,13 @@ class ClipboardPermissionActivity : Activity() {
             Diagnostics.i(TAG, "授权添加: $pkg")
         }
 
+        val rowH = dp(44)
+        // 输入框占满剩余（weight=1），按钮固定 64dp 两字宽
         val addLp = LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f)
+            0, rowH, 1f)
         val btnLp = LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            dp(64), rowH)
+        btnLp.marginStart = dp(6)
         addRow.addView(editPkg, addLp)
         addRow.addView(btnAdd, btnLp)
 

@@ -94,11 +94,13 @@ class Prefs(context: Context) {
     /**
      * 输入法启动时的默认键盘模式：
      *  - [DefaultKeyboardMode.VOICE] 语音键盘
-     *  - [DefaultKeyboardMode.PINYIN_CN] 26 键中文
+     *  - [DefaultKeyboardMode.PINYIN_CN] 26 键全拼中文
      *  - [DefaultKeyboardMode.PINYIN_EN] 26 键英文
+     *
+     * 默认 26 键全拼中文（用户诉求：初始布局为 26 键全拼）。
      */
     var defaultKeyboardMode: Int
-        get() = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.VOICE)
+        get() = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
         set(value) = sp.edit { putInt(KEY_DEFAULT_MODE, value) }
 
     val wsUrl: String get() = "ws://$host:$port"
