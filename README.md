@@ -1,153 +1,118 @@
 # CapsWriter 语音输入法（安卓）
 
-基于飞牛 NAS 上已运行的 **CapsWriter Offline** 服务端、兼具语音听写与拼音键盘的安卓输入法（IME）。
-语音识别完全在 NAS 服务端完成（本机零模型）；拼音/剪贴板等键盘功能在本机实现。
+<div align="center">
 
-## 核心特性
+基于飞牛 NAS 上 **CapsWriter Offline** 服务端的安卓语音 + 拼音输入法（IME）。
+
+语音识别完全在 NAS 服务端完成（本机零模型）；拼音 / 剪贴板等键盘功能在本机实现。
+
+</div>
+
+## ✨ 核心特性
 
 - **语音听写**：长按/短按麦克风说话，识别文本实时回显并上屏。
   - 长按麦克风：按住说话，松手即识别；按住时**上滑**再松手可取消。
   - 短按麦克风：进入连续录音，再点一下结束（最长 3 分钟兜底自动停止）。
-- **拼音键盘（26 键）**：QWERTY 布局，支持**全拼 / 自然码双拼 / 英文**三种输入，候选栏带智能预测，
-  中英一键切换；功能面板含 全拼/双拼切换、剪贴板、方向（文字拖选）、粘贴、收起。
-- **剪贴板历史**：自动监听保存复制的文本（AES-256-GCM 加密入库），支持分类
-  （全部/网址/隐私/数字/收藏）、动态序号、实时搜索、清理重复、长按收藏/隐私/删除、点击即粘贴。
-- **零额外模型**：不打包任何语音模型，包体极小，仅依赖 `core-ktx`、`activity-ktx`、`okhttp3`，可选 `Shizuku`。
-- **后台保活 / 防杀后台**：前台常驻服务 + 无障碍互保 + 开机自启；可选 Root/Shizuku 把本包加入系统白名单，降低被回收概率，识别连接更稳。详见下文。
+  - 本地 VAD 静音检测：连续静音自动收尾，减少无效上传。
+- **拼音键盘（26 键）**：QWERTY 布局，支持**全拼 / 自然码双拼 / 英文**三种输入。
+  - **不完整拼音补全**：输入 `ni m` 或 `nim` 自动补全为 `ni + men` 召回「你们」。
+  - **词库约束分词**：`xuni` 正确切分为 `xu + ni`（虚拟）而非 `xun + i`（寻）。
+  - 候选栏智能预测、中英一键切换、双击+长按删除键清空全部。
+- **剪贴板历史**（输入法内嵌面板）：复制内容自动保存（AES-256-GCM 加密入库），
+  支持分类（全部/网址/隐私/数字/收藏）、动态序号、点击即粘贴、长按收藏/隐私/删除。
+  - 隐私内容默认只显示前 3 字符，点击揭示后再粘贴。
+  - 第三方 APP 可通过 ContentProvider 安全 IPC 读取（按包名授权，每次限 3 条）。
+- **后台保活 / 防杀后台**：前台常驻服务 + 无障碍互保 + 开机自启；可选 Root/Shizuku 白名单。
+- **零额外模型**：不打包任何语音模型，APK 约 10MB，仅依赖 `core-ktx`、`activity-ktx`、`okhttp3`。
 
-## 对接飞牛服务端
+## 🏗️ 架构
 
-服务端即你已在飞牛 Docker 跑的 CapsWriter Offline，端口 `6016`。
+```
+麦克风 → MicRecorder(16kHz PCM16) → AsrClient(WebSocket) → 飞牛 NAS CapsWriter Offline
+                                                                        ↓
+拼音键盘 / 剪贴板面板（本机） ← 识别文本（整段累积，整体覆盖显示）
+```
+
+| 模块 | 职责 |
+|---|---|
+| `JinnIme` | 输入法服务：语音/拼音双模式、手势、结果回显、保活拉起 |
+| `PinyinEngine` | 拼音引擎：词库加载、候选查询、自然码双拼、不完整拼音补全、词库约束分词 |
+| `PinyinKeyboardView` | 26 键键盘 + 候选栏 + 功能面板（剪贴板/方向/粘贴/收起） |
+| `ClipboardPanelView` | 剪贴板内嵌面板（分类/搜索/收藏/隐私/清空） |
+| `ClipboardDb` | 剪贴板历史 SQLite（AES-256-GCM 加密） |
+| `AsrClient` | WebSocket 客户端：音频流式上传、断线指数退避重连 |
+| `Diagnostics` | 诊断日志：文件输出 + 崩溃捕获 + Trace ID + 事件序列 |
+
+## 🔌 对接服务端
+
+服务端为飞牛 NAS 上的 CapsWriter Offline（Docker），端口 `6016`。
 
 | 项 | 值 |
 | --- | --- |
 | 地址 | 飞牛 NAS 局域网地址，如 `192.168.1.3` |
 | 端口 | `6016` |
-| 协议 | `ws://<host>:6016` |
-| 子协议 | `binary`（请求头 `Sec-WebSocket-Protocol: binary`） |
+| 协议 | `ws://<host>:6016`，子协议 `binary` |
 | 音频格式 | 16kHz / 单声道 / float32 小端裸样本（Base64） |
-| 分段参数 | `seg_duration=60`、`seg_overlap=4`（对齐桌面端 `config_client.py`） |
+| 分段参数 | `seg_duration=60`、`seg_overlap=4` |
 
-通信严格对齐服务端 `core/protocol.py`：一次听写由若干 `is_final=false` 的音频包加一个 `data` 为空的 `is_final=true` 收尾包组成；
-服务端返回的 `text` 是**整段累积文本**，客户端直接整体覆盖显示，不自行拼接。取消也发收尾包以清空服务端按连接持有的音频缓冲，结果按 `taskId` 丢弃。
+通信严格对齐服务端 `core/protocol.py`：一次听写由若干 `is_final=false` 音频包 + 一个 `data=""` 的 `is_final=true` 收尾包组成；
+服务端返回**整段累积文本**，客户端整体覆盖显示，绝不自行拼接。
 
-## 后台保活与防杀后台
+## 🛠️ 构建
 
-语音识别依赖到飞牛服务端的常驻 WebSocket 连接，连接一旦被系统回收就得重连、可能丢掉在途结果。
-为此提供三层保活，按需开启（均在设置页「保活与防杀后台」卡片）：
+### 环境
+- JDK 17、Android SDK（compileSdk 34 / minSdk 26）
+- Gradle 8.9（项目内置 wrapper）
 
-1. **前台保活服务**（`KeepAliveService`）：开启后常驻一条低优先级通知，把进程优先级抬到前台，降低被杀概率；服务用 `START_STICKY` + `onTaskRemoved` 自愈。
-2. **无障碍互保**（`JinnAccessibilityService`）：在系统「无障碍」里启用后，服务被系统托管常驻，其 `onServiceConnected` 会拉起前台服务；前台服务被杀时由无障碍再次拉起，互保。
-3. **Root / Shizuku 加白名单**（`RootShizuku`）：开启「用 Root / Shizuku 加白名单」后点「运行 Root / Shizuku 防杀后台」，把本包加入 Doze 白名单并允许后台运行。优先走 Shizuku（免 root），未授权则退回 `su`。
-
-此外「加入电池白名单（免优化）」可一键跳转系统电池设置，把本应用设为「不限制」。
-
-> 说明：保活只能降低概率，无法 100% 阻止厂商激进杀进程；配合系统「允许自启动 / 锁定后台」开关效果最佳。
-
-## 连接稳健性增强
-
-除保活外，输入法还在连接与录音层面做了多重增强，进一步贴合用户预期：
-
-- **断线自动重连**（`AsrClient`）：连接进入离线后按指数退避（1s 起、上限 30s）在主线程调度重连，连上即重置；仅主动关闭连接（如退出输入法）才停止重连，避免空转。
-- **音频焦点管理**：录音前请求 `AUDIOFOCUS_GAIN`，来电或别的应用开始播音导致焦点被抢时自动停止当前录音，避免串音与麦克风冲突。
-- **网络切换重连**：注册 `ConnectivityManager` 网络回调，WiFi↔热点切换导致 IP 变化、网络恢复可用时主动重连。
-- **本地静音抑制（VAD）**（`MicRecorder`）：实时检测音量，连续静音超过 3 秒时——连续录音模式自动收尾出结果、长按说话模式仅提示「没听到声音」，减少无效上传。
-- **权限请求现代化**：设置页改用 Activity Result API（`registerForActivityResult`）替代已弃用的 `requestPermissions`，`SettingsActivity` 继承 `ComponentActivity`。
-- **无障碍真实用途**（`JinnAccessibilityService`）：监测用户进入文本输入框（聊天 / 记事 / 搜索）时维持语音服务常驻，给出无障碍服务存在的合理依据，并以 5s 节流避免频繁拉起，降低被系统判定「滥用无障碍」而受限的风险。
-
-## 工程结构
-
-```
-CapsWriterIME/
-├── settings.gradle.kts / build.gradle.kts / gradle.properties
-├── gradlew / gradlew.bat / gradle/wrapper/   # Gradle 8.9 Wrapper（已内置，开箱即用）
-└── app/
-    ├── build.gradle.kts
-    ├── proguard-rules.pro
-    └── src/main/
-        ├── AndroidManifest.xml
-        ├── java/com/jinn/voiceinput/
-        │   ├── Protocol.kt        # 协议常量与报文序列化
-        │   ├── Prefs.kt           # SharedPreferences 配置（含保活开关）
-        │   ├── MicRecorder.kt     # 16kHz PCM16 采集 + float32 转换
-        │   ├── AsrClient.kt       # OkHttp WebSocket 客户端
-        │   ├── MicButton.kt       # 麦克风按钮（径向渐变 + 随音量呼吸的光圈）
-        │   ├── JinnIme.kt         # 输入法服务（手势 / 结果回显 / 编辑键 / 保活拉起 + 拼音键盘）
-        │   ├── PinyinEngine.kt    # 拼音引擎（词库加载 / 候选查询 / 自然码双拼）
-        │   ├── PinyinKeyboardView.kt / PinyinKey.kt # 拼音键盘（26 键 + 候选栏 + 功能面板 + 智能预测）
-        │   ├── TextSelection.kt   # 文字拖选核心逻辑（Anchor/Focus 模型，纯函数可单测）
-        │   ├── KeepAliveService.kt# 前台保活服务（常驻通知，防掉后台）
-        │   ├── JinnAccessibilityService.kt # 无障碍保活（与前台服务互保）
-        │   ├── BootReceiver.kt    # 开机 / 更新后拉起保活
-        │   ├── RootShizuku.kt     # Root / Shizuku 加白名单工具
-        │   ├── SettingsActivity.kt# 设置页（服务端 / 语言 / 提示词 / 授权 / 保活 / 剪贴板）
-        │   ├── Diagnostics.kt     # 诊断日志（文件 + 崩溃捕获 + logcat 快照）
-        │   ├── ClipboardController.kt # 剪贴板监听 + 敏感策略 + 保存到库
-        │   ├── ClipboardDb.kt     # 剪贴板历史 SQLite（AES-GCM 密文 + 分类/收藏/隐私 + 去重/搜索）
-        │   ├── ClipboardCrypto.kt # 加密工具（Android Keystore AES-256-GCM）
-        │   ├── ClipboardClassifier.kt # 自动分类（URL/NUMBER/OTHER；隐私绝不自动）
-        │   ├── ClipboardPrefs.kt  # 剪贴板配置（独立 SharedPreferences）
-        │   ├── ClipboardHistoryActivity.kt # 剪贴板历史页（分类/序号/搜索/去重/长按菜单/点击粘贴）
-        │   ├── ClipboardPermissionActivity.kt # 第三方 APP 读取授权管理页
-        │   ├── ClipboardPermissionStore.kt    # 授权表（默认全禁，按包名授权）
-        │   ├── ClipboardHistoryProvider.kt    # 第三方 APP 安全 IPC（ContentProvider）
-        │   ├── ClipboardFirewall.kt # Root 增强：敏感内容自动清空系统剪贴板
-        │   └── SensitiveDetector.kt # 敏感内容检测（密码/验证码/身份证/Token/私钥等）
-        ├── res/
-        │   ├── layout/  keyboard.xml, activity_settings.xml
-        │   ├── xml/     method.xml, accessibility.xml
-        │   ├── drawable/, values/, mipmap-anydpi-v26/
-        └── res/values/  strings.xml, colors.xml, themes.xml, styles.xml
-```
-
-## 构建要求
-
-- Android Studio（或命令行 Gradle）
-- **Android SDK Platform 34** 与构建工具（本机 `C:\Android\sdk` 已配置，`assembleDebug` 实测通过）
-- JDK 17
-- 网络可访问 Maven 中央仓库（或 `settings.gradle.kts` 中已注释的阿里云镜像）
-
-### 构建步骤
+### 一键构建（推荐）
 
 ```bash
-# 方法一：Android Studio 直接打开 CapsWriterIME 目录，等待同步后 Build → Build Bundle(s) / APK(s)
-# 方法二：命令行（项目已内置 Gradle 8.9 Wrapper）
-cd CapsWriterIME
-./gradlew assembleRelease            # 产物在 app/build/outputs/apk/release/
+python build_apk.py              # 编译 release，产物 jinn-release.apk 到项目根目录
+python build_apk.py --install    # 编译并安装到已连接设备
+python build_apk.py --clean      # clean 后全新编译
 ```
 
-## 安装与启用
+### 手动构建
 
-1. 把 APK 装到手机：`adb install app/build/outputs/apk/release/app-release.apk`。
-2. 打开 App（或系统「设置 → 系统 → 语言与输入法 → 键盘/输入法」），点「在系统设置中启用本输入法」并把 CapsWriter 语音输入打开。
-3. 在任意输入框调出键盘，点状态栏右侧「设置」或在桌面打开 App，填好飞牛 NAS 地址与端口，点「保存并测试连接」。
-4. 点「切换到本输入法」或长按输入框选择 CapsWriter 语音输入。
+```bash
+./gradlew assembleDebug     # Debug（未签名）
+./gradlew assembleRelease   # Release（本地配置签名后自动签名）
+```
 
-## 使用
+### 签名说明
 
-- **按住麦克风**说话，松手即识别；想反悔就**上滑**再松手取消。
-- **点一下麦克风**进入连续录音，再点一下结束；长时间不点会自动停止。
-- **拼音键盘**：默认/切到拼音键盘后 26 键输入，候选栏选词上屏；功能面板可切换**全拼/双拼**、
-  一键**中英文**切换（英文模式下字母直接上屏）。语音改不了错字时用拼音键盘或底部编辑键
-  （退格支持长按连删；回车在聊天框会按输入框声明的动作发送）。
-- **剪贴板**：拼音键盘里点「剪贴板」打开剪贴板历史页（全新页面），
-  分类栏（全部/网址/隐私/数字/收藏）+ 动态序号 + 实时搜索 + 清理重复 + 长按收藏/隐私/删除；
-  单击记录直接粘贴回当前输入框并自动返回。复制文本后自动保存进历史（可在设置页关闭）。
-- **文字拖选**：拼音键盘点「方向」进入拖选，方向键控制 Focus 光标移动（Anchor 固定），支持行首/行末/全选。
+开源仓库**不包含签名密钥与密码**。如需签名构建：
 
-## 排错
+1. 生成密钥库：`keytool -genkeypair -keystore keystore/jinn-release.jks -alias jinn ...`
+2. 项目根目录创建 `keystore.properties`（已被 .gitignore 忽略）：
+   ```properties
+   storeFile=keystore/jinn-release.jks
+   storePassword=***
+   keyAlias=jinn
+   keyPassword=***
+   ```
+3. `./gradlew assembleRelease` 将自动签名。
 
-| 现象 | 排查 |
-| --- | --- |
-| 提示「服务端未连接」 | 手机与飞牛在同一局域网；NAS 的 `6016` 端口已映射且 CapsWriter Offline 正在运行；地址填对 |
-| 连不上 / 超时 | 检查飞牛容器端口转发；手机是否走了代理（`AsrClient` 已强制 `NO_PROXY` 直连） |
-| 录音无反应 | 在设置页点「授权麦克风」，或系统设置里给本应用麦克风权限 |
-| 识别乱码 / 语种不对 | 在设置页把语言从「自动」改为「中文」或对应语种 |
-| 预编辑文本不显示 / 跳变 | 关闭「识别过程中实时回显」，改为完成一次性提交 |
-| 复制的内容没进剪贴板历史 | 确认设置页「剪贴板历史」开关开启；MIUI 后台读取系统剪贴板受限，需在前台/键盘唤起时复制 |
-| 隐私/收藏分类空但点按钮崩溃 | 已修复（空列表越界保护）；如仍异常请提 issue 附诊断日志 |
+## 📚 词库
 
-## 环境说明
+内置词库（`app/src/main/assets/`）：
+- `pinyin_phrases.txt`：约 105 万键（拼音串 → 词语，按词频降序）
+- `pinyin_chars.txt`：416 音节（音节 → 单字）
+- `pinyin_syllables.txt`：合法音节全集
 
-本工程源码已按 Android 规范完成并逐文件核对，且在当前开发环境（Windows + JDK17 + Android SDK 34）实测
-`assembleDebug` 编译通过、JVM 单测全绿，并在真机（KernelSU root）安装验证过语音/拼音键盘与剪贴板功能。
+数据来源与许可证详见 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)。
+词库构建工具见 `tools/dict_builder/`（Rime 词库 → 项目格式；THUOCL 自动注音扩充）。
+
+## 📄 许可证
+
+本项目采用 **GNU GPL v3.0**（见 [LICENSE](LICENSE)）。
+
+> ⚠️ 内置词库含 GPL-3.0 来源（雾凇/白霜拼音），按 GPL 传染性要求，本项目整体以 GPL-3.0 分发。
+> 第三方数据源（THUOCL/MIT、pypinyin/MIT）兼容此许可。
+
+## 🙏 致谢
+
+- [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) — 语音识别服务端
+- [iDvel/rime-ice（雾凇拼音）](https://github.com/iDvel/rime-ice) — 词库
+- [thunlp/THUOCL](https://github.com/thunlp/THUOCL) — 清华开放中文词库
+- [mozillazg/pypinyin](https://github.com/mozillazg/pypinyin) — 注音工具
