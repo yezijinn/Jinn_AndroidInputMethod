@@ -617,6 +617,22 @@ class JinnIme : InputMethodService() {
         applyKeyboardMode()
     }
 
+    /**
+     * 输入会话结束（编辑器失焦/切换到别的输入框）：
+     * 停止候选计算、清理拼音缓冲、取消录音与延时任务，降到最低功耗。
+     * 不关闭 WebSocket（语音输入需要随时可用，且关闭会丢在途结果）。
+     */
+    override fun onFinishInput() {
+        super.onFinishInput()
+        Diagnostics.i(TAG, "onFinishInput: 会话结束 mode=$mode")
+        Diagnostics.event("IME", "FinishInput", "mode=$mode")
+        // 停掉可能仍在运行的录音/延时任务
+        if (mode != Mode.NONE) stopRecording(commit = false)
+        ui.removeCallbacks(backspaceRunnable)
+        ui.removeCallbacks(autoStopRunnable)
+        ui.removeCallbacks(startHoldRunnable)
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")

@@ -127,8 +127,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceHeld = false
     private var backspacePressStart = 0L
-    private val backspaceTapTimes = LongArray(3)
+    /** 双击计数（双击后长按触发清空） */
     private var backspaceTapCount = 0
+    private var backspaceLastTapAt = 0L
 
     /** 按住退格超过该时长进入连续删除 */
     private val backspaceRepeatDelayMs = 380L
@@ -136,8 +137,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 连续删除的间隔 */
     private val backspaceRepeatIntervalMs = 55L
 
-    /** 三击窗口：从第一次按下算起 400ms 内完成 3 次才触发（快速三击，超时不算） */
-    private val tripleTapWindowMs = 320L
+    /** 双击窗口：两次短按间隔小于该值视为双击（双击后长按触发清空） */
+    private val doubleTapWindowMs = 280L
+
+    /** 双击后第三次按住超过该时长触发全部清空（长按确认，杜绝误触） */
+    private val longPressClearMs = 800L
 
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
@@ -453,9 +457,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 删除键三态触摸：
+     * 删除键触摸：
      *  - 按下即删一个字符；按住超过 [backspaceRepeatDelayMs] 进入连续删除，松开停止
-     *  - 快速三击（[tripleTapWindowMs] 内）触发 [onTripleBackspace] 全部清空
+     *  - 「双击 + 长按」触发 [onTripleBackspace] 全部清空：
+     *    连续两次短按（间隔 < [doubleTapWindowMs]）后，第三次按住超过 [longPressClearMs]。
+     *    正常快速删除（点 3 下）第三次是短按即松，不会误触。
      */
     private fun handleBackspaceTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -465,6 +471,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 deleteOne()
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
+                // 已处于「双击后」状态：本次长按到阈值触发清空
+                if (backspaceTapCount == 2) {
+                    backspaceHandler.removeCallbacks(clearOnLongPressRunnable)
+                    backspaceHandler.postDelayed(clearOnLongPressRunnable, longPressClearMs)
+                }
                 btnBackspace.isPressed = true
                 return true
             }
@@ -475,9 +486,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 backspaceHeld = false
                 val held = System.currentTimeMillis() - backspacePressStart
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
-                // 短按（未进入连续删除）才算一次点击，用于三击判定
+                // 取消未触发的长按清空检测（第三次短按即松 → 不触发）
+                backspaceHandler.removeCallbacks(clearOnLongPressRunnable)
+                // 短按（未进入连续删除）才算一次点击，用于双击判定
                 if (held < backspaceRepeatDelayMs) {
                     recordBackspaceTap()
+                } else {
+                    // 长按（进入连删或触发清空）后重置双击计数
+                    backspaceTapCount = 0
                 }
                 return true
             }
@@ -486,25 +502,42 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 记录一次退格点击；三击（第一次按下起 400ms 内共 3 次）触发全部清空。
-     * 以第一次按下为窗口起点：任一次点击距第一次超过窗口即重置计数，
-     * 保证「慢慢点」按多少次都不会触发清空。
+     * 记录一次退格点击，维护双击状态：
+     *  - 连续两次短按间隔 < [doubleTapWindowMs] → 进入「双击后」状态（count=2）
+     *  - 双击后下一次长按 → 触发全部清空
+     *  - 双击间隔超时或第三击为短按 → 计数重置，永不误触
      */
     private fun recordBackspaceTap() {
         val now = System.currentTimeMillis()
-        if (backspaceTapCount > 0 && now - backspaceTapTimes[0] >= tripleTapWindowMs) {
+        if (backspaceTapCount == 0) {
+            // 第一击
+            backspaceTapCount = 1
+            backspaceLastTapAt = now
+        } else if (backspaceTapCount == 1) {
+            // 第二击：与第一击间隔在窗口内 → 进入双击状态
+            if (now - backspaceLastTapAt < doubleTapWindowMs) {
+                backspaceTapCount = 2
+                Diagnostics.v(TAG, "退格双击已就绪，长按触发清空")
+            } else {
+                backspaceTapCount = 1
+                backspaceLastTapAt = now
+            }
+        } else {
+            // 双击后第三击为短按（快速点 3 下）→ 不是长按，重置
             backspaceTapCount = 0
-        }
-        backspaceTapTimes[backspaceTapCount] = now
-        backspaceTapCount++
-        if (backspaceTapCount >= 3) {
-            backspaceTapCount = 0
-            Diagnostics.i(TAG, "退格三击：清空全部")
-            onTripleBackspace()
+            backspaceLastTapAt = now
         }
     }
 
-    /** 三击清空：先清拼音串与预测，再通知 IME 删除已上屏文本 */
+    /** 双击后长按达到阈值：全部清空 */
+    private val clearOnLongPressRunnable = Runnable {
+        if (!backspaceHeld) return@Runnable
+        backspaceTapCount = 0
+        Diagnostics.i(TAG, "退格双击+长按：清空全部")
+        onTripleBackspace()
+    }
+
+    /** 双击+长按清空：先清拼音串与预测，再通知 IME 删除已上屏文本 */
     private fun onTripleBackspace() {
         if (composing.isNotEmpty()) {
             composing.clear()
@@ -549,9 +582,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             for (pred in lastPredictions) {
                 val item = TextView(context).apply {
                     text = pred
-                    textSize = 16f
+                    textSize = 21f
                     setTextColor(resources.getColor(R.color.kb_candidate_sel_text, context.theme))
-                    setPadding(dp(10), 0, dp(10), 0)
+                    setPadding(dp(2), 0, dp(2), 0)
                     isClickable = true
                     setOnClickListener { onPredictionSelected(pred) }
                 }
@@ -583,9 +616,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for ((index, candidate) in result.candidates.withIndex()) {
             val item = TextView(context).apply {
                 text = candidate
-                textSize = 16f
+                textSize = 21f
                 setTextColor(resources.getColor(R.color.text_primary, context.theme))
-                setPadding(dp(10), 0, dp(10), 0)
+                setPadding(dp(2), 0, dp(2), 0)
                 isClickable = true
                 setOnClickListener { onCandidateSelected(candidate) }
             }
@@ -613,8 +646,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun refreshKeyLabels() {
         val showUpper = capsMode && !englishMode && layer == LAYER_LETTER
+        // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示
+        val fullPinyin = !shuangpinMode
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
+            key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
             key.label = when (layer) {
                 LAYER_SYMBOL -> symbolMap[c] ?: c.toString()
                 LAYER_DIGIT -> digitMap[c] ?: c.toString()
@@ -742,13 +778,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             setOnClickListener { onClick() }
         }
-        // 宽度 56dp + margin 6dp（3+3）→ 5 个按钮共约 310dp，保证不超出候选栏宽度（约 380dp），
-        // 避免按钮挤压导致「剪贴板」点击误命中相邻「收起」按钮（触发键盘收起 = 误返回）
+        // 五等分：每个按钮 weight=1，均分候选栏宽度（5 个按钮各占 1/5）
         val lp = LinearLayout.LayoutParams(
-            dp(56), ViewGroup.LayoutParams.MATCH_PARENT
+            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f
         ).apply {
-            marginStart = dp(3)
-            marginEnd = dp(3)
+            marginStart = dp(2)
+            marginEnd = dp(2)
         }
         box.addView(TextView(context).apply {
             text = label

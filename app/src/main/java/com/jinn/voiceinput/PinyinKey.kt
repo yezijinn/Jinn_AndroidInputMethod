@@ -65,6 +65,16 @@ import kotlin.math.min
                 invalidate()
             }
 
+        /**
+         * 全拼模式大字样式：true 时字母铺满按键居中（约 60% 键高），
+         * 不绘制双拼提示；false 保持双拼布局（字母顶置 42% + 下方韵母提示）。
+         */
+        var fullPinyinStyle: Boolean = false
+            set(value) {
+                field = value
+                invalidate()
+            }
+
         private var pressed = false
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -102,6 +112,18 @@ import kotlin.math.min
             keyPaint.color = if (pressed) colorKeyPressed else colorKey
             canvas.drawRoundRect(rect, corner, corner, keyPaint)
 
+            // ── 全拼模式：字母铺满按键居中（约 60% 键高），无双拼提示 ──
+            if (fullPinyinStyle) {
+                textPaint.color = colorText
+                textPaint.textSize = h * FULL_TEXT_RATIO
+                textPaint.textAlign = Paint.Align.CENTER
+                val fm = textPaint.fontMetrics
+                val baseline = (h - fm.ascent - fm.descent) / 2f
+                canvas.drawText(label, w / 2f, baseline, textPaint)
+                return
+            }
+
+            // ── 双拼模式：大写字母置顶 + 下方韵母提示 ──
             // 大写字母：置顶贴上边，占上方约 50%
             textPaint.color = colorText
             textPaint.textSize = height * TEXT_RATIO
@@ -150,6 +172,9 @@ import kotlin.math.min
             const val KEY_MARGIN_DP = 1.5f
             const val TEXT_RATIO = 0.4f
             const val SUB_RATIO = 0.2f
+
+            /** 全拼模式：字母高度占键高比例（铺满感，约 60%） */
+            const val FULL_TEXT_RATIO = 0.6f
 
             /** 大写字母顶部起始比例 */
             const val LETTER_TOP_RATIO = 0.42f

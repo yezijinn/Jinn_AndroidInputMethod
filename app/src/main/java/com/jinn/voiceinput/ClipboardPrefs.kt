@@ -22,14 +22,14 @@ class ClipboardPrefs(context: Context) {
         get() = sp.getInt(KEY_MAX_ITEMS, DEFAULT_MAX_ITEMS)
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, 9999)) }
 
-    /** 敏感内容策略：ClipboardStore.SensitivePolicy.value */
+    /** 敏感内容策略：临时保存（默认 5 分钟，超时自动删除） */
     var sensitivePolicy: Int
-        get() = sp.getInt(KEY_SENSITIVE_POLICY, ClipboardStore.SensitivePolicy.NEVER_SAVE.value)
+        get() = sp.getInt(KEY_SENSITIVE_POLICY, ClipboardStore.SensitivePolicy.TEMPORARY.value)
         set(value) = sp.edit { putInt(KEY_SENSITIVE_POLICY, value) }
 
-    /** 敏感内容临时保存时长（秒枚举下标 → ClipboardStore.TempDuration） */
+    /** 敏感内容临时保存时长：默认 5 分钟 */
     var sensitiveTempSeconds: Int
-        get() = sp.getInt(KEY_SENSITIVE_TEMP, ClipboardStore.TempDuration.S30.ordinal)
+        get() = sp.getInt(KEY_SENSITIVE_TEMP, ClipboardStore.TempDuration.M5.ordinal)
         set(value) = sp.edit { putInt(KEY_SENSITIVE_TEMP, value) }
 
     // ── Root 增强模式 ──────────────────────────────────────

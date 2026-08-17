@@ -11,6 +11,17 @@ android {
     namespace = "com.jinn.voiceinput"
     compileSdk = 34
 
+    // ── 正式签名 ──
+    // keystore 由 keytool 生成：keystore/jinn-release.jks（alias=jinn, 密码见下）
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("keystore/jinn-release.jks")
+            storePassword = "jinn123456"
+            keyAlias = "jinn"
+            keyPassword = "jinn123456"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.jinn.voiceinput"
         // 26 起可只提供自适应图标，且 AudioRecord / VectorDrawable 行为稳定
@@ -33,6 +44,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

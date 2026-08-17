@@ -29,3 +29,6 @@ artifacts/
 
 # 词库构建中间产物（由 tools/dict_builder 重新生成）
 tools/dict_builder/out/
+
+# APK 产物（安装包不入库）
+*.apk

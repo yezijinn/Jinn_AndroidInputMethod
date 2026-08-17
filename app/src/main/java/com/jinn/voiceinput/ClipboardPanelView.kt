@@ -79,6 +79,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 本次打开的 Trace ID（onPanelShown 生成，刷新链路共享） */
     private var currentTraceId: String = ""
 
+    /** 去重是否进行中：防止频繁打开剪贴板导致全库扫描叠加（功耗优化） */
+    @Volatile
+    private var dedupeRunning = false
+
     // ── 适配器（稳定 ID 绑定）──────────────────────────────
     // 重要：必须声明在 init 块之前！Kotlin 属性按声明顺序初始化，
     // init{ buildUi() } 里 listView.adapter = this.adapter 若 adapter 声明在后面，
@@ -318,12 +322,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     private fun dedupe() {
+        // 防并发：上次去重未完成时跳过（避免频繁打开剪贴板触发全库扫描叠加）
+        if (dedupeRunning) return
+        dedupeRunning = true
         Diagnostics.i(TAG, "[$currentTraceId] DEDUPE 开始（当前 category=${currentCategory} items=${currentItems.size}）")
         Thread {
-            val removed = db.deduplicate()  // 数据层已合并收藏/隐私标记
-            post {
-                Diagnostics.i(TAG, "[$currentTraceId] DEDUPE 完成 removed=$removed（静默，执行统一 refresh）")
-                refresh(resetScroll = true)
+            try {
+                val removed = db.deduplicate()  // 数据层已合并收藏/隐私标记
+                post {
+                    Diagnostics.i(TAG, "[$currentTraceId] DEDUPE 完成 removed=$removed（静默，执行统一 refresh）")
+                    refresh(resetScroll = true)
+                }
+            } finally {
+                dedupeRunning = false
             }
         }.start()
     }
