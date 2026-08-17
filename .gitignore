@@ -32,3 +32,9 @@ tools/dict_builder/out/
 
 # APK 产物（安装包不入库）
 *.apk
+
+# 签名密码（本地密钥，不入库）
+keystore.properties
+
+# 第三方源码（服务端，非本仓库）
+/CapsWriter-Offline-master/
