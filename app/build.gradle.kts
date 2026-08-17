@@ -1,24 +1,38 @@
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
+// ── 签名配置（密码从 keystore.properties 读取，该文件不入库）──
+// 本地新建 keystore.properties：
+//   storeFile=keystore/jinn-release.jks
+//   storePassword=***
+//   keyAlias=jinn
+//   keyPassword=***
+val keystoreProps = Properties()
+val ksFile = rootProject.file("keystore.properties")
+if (ksFile.exists()) {
+    keystoreProps.load(FileInputStream(ksFile))
+}
+
 android {
     namespace = "com.jinn.voiceinput"
     compileSdk = 34
 
-    // ── 正式签名 ──
-    // keystore 由 keytool 生成：keystore/jinn-release.jks（alias=jinn, 密码见下）
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file("keystore/jinn-release.jks")
-            storePassword = "jinn123456"
-            keyAlias = "jinn"
-            keyPassword = "jinn123456"
+            if (ksFile.exists()) {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile", "keystore/jinn-release.jks"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias", "jinn")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
         }
     }
 
@@ -44,7 +58,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = signingConfigs.getByName("release")
+            // 仅当本地有签名配置时才启用签名（开源仓库不含密码，构建为未签名）
+            if (ksFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

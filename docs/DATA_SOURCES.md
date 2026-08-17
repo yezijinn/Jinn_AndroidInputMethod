@@ -7,11 +7,22 @@
 ## 当前状态
 
 CapsWriterIME 当前内置词库（`app/src/main/assets/`）：
-- `pinyin_phrases.txt`：35.2 万键，9.5MB（拼音串 → 词语）
+- `pinyin_phrases.txt`：约 105 万键，29.4MB（拼音串 → 词语）
 - `pinyin_chars.txt`：416 键（音节 → 单字）
 - `pinyin_syllables.txt`：416 行（合法音节全集）
 
-> ⚠️ 现有词库来源未记录许可证，标注为「宽松开源许可」。**待核查**：若无法确认来源与许可，建议替换为下方有明确许可的数据源。
+> ⚠️ 现有基础词库源自雾凇/白霜拼音（GPL-3.0），本项目整体按 GPL-3.0 分发（见根目录 LICENSE）。
+
+## 已接入数据源
+
+| 数据源 | GitHub | License | 词条数 | 注音 | 说明 |
+|--------|--------|---------|-------:|------|------|
+| THUOCL | [thunlp/THUOCL](https://github.com/thunlp/THUOCL) | MIT | 11884 | pypinyin 自动注音 | 11 类：IT/地名/历史名人/食物/动物/财经/汽车/成语/法律/医学/诗词 |
+| pypinyin | [mozillazg/pypinyin](https://github.com/mozillazg/pypinyin) | MIT | - | 注音工具 | 词组模式多音字注音 |
+| 卡拉彼丘词库 | 用户提供 `docs/klbq_ime_dict.txt` | 自定义 | 165 新增 | 自带拼音 | 游戏角色名/地图/道具/技能（329 条源，165 条合并） |
+| 游戏通用词库 | 用户提供 `docs/games_ime_dict.txt` | 自定义 | 528 新增 | 自带拼音 | 热门游戏名/角色/术语（1361 条源，528 条合并） |
+
+> 词库扩充接入时间：2026-08-17，工具 `tools/dict_builder/extend_dict.py` 与 `merge_klbq.py` 流程。
 
 ## 候选数据源
 
