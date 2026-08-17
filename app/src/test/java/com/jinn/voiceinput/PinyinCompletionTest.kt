@@ -33,6 +33,10 @@ class PinyinCompletionTest {
             ming	明,名,命,鸣
             mo	摸,魔,磨,莫
             mi	米,密,谜,觅
+            xu	虚,须,需,许
+            ni	你,尼,泥,呢
+            xun	寻,巡,询,循
+            i	衣,以,意,一
         """.trimIndent()
         val phrases = """
             nima	你妈
@@ -47,10 +51,14 @@ class PinyinCompletionTest {
             xiangyao	想要
             niyao	你要
             shang	上
+            xuni	虚拟
+            xun   寻
         """.trimIndent()
         val syllables = """
             a
             m
+            xu
+            xun
             ni
             ma
             mei
@@ -173,6 +181,25 @@ class PinyinCompletionTest {
         val result = PinyinEngine.query("shanghai")
         assertEquals(listOf("shang", "hai"), result.syllables)
         assertTrue("shanghai 应出 上海: ${result.candidates}", result.candidates.contains("上海"))
+    }
+
+    @Test
+    fun xuni优先分词xu加ni出虚拟() {
+        // 贪心最长匹配会切成 [xun, i]（寻+衣），但词库有「虚拟」=xuni，
+        // 正确切分应为 [xu, ni] → 候选「虚拟」优先
+        val hasXun = PinyinEngine.completeSyllablePrefix("xun").contains("xun")
+        val hasXu = PinyinEngine.completeSyllablePrefix("xu").contains("xu")
+        println("xun完整=$hasXun xu完整=$hasXu")
+        val result = PinyinEngine.query("xuni")
+        val c = result.candidates
+        println("xuni syllables=${result.syllables} partial=${result.partialSyllable} candidates=$c")
+        assertTrue("xuni 应出 虚拟: $c", c.contains("虚拟"))
+        // 「虚拟」应排在「寻」之前（词优先于单字）
+        val xuNi = c.indexOf("虚拟")
+        val xun = c.indexOf("寻")
+        if (xun >= 0) {
+            assertTrue("虚拟 应在 寻 之前: $c", xuNi < xun)
+        }
     }
 
     // ── 3. 完整匹配优先 ──────────────────────────────────
