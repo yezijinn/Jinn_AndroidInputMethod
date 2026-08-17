@@ -305,14 +305,67 @@ object PinyinEngine {
     /**
      * 将拼音串切分为合法音节序列，最后一个音节可能不完整。
      *
-     * 单字候选专用：在每一步先检查「剩余整体是否某个更长音节的真前缀」——
-     * 若是（如 nia 是 nian/niang/niao 的前缀、ha 是 hai/han/hang 的前缀），
-     * 说明用户还没打完这个音节，直接把它整体作为未完成部分返回，
-     * 避免把 nia 误切为 ni|a 而丢掉「年」的联想。
-     *
-     * 注意：剩余串本身是完整音节时（如 xuexi 的末尾 xi）不触发，照常切出。
+     * 先尝试「词库约束分词」：枚举所有合法切分路径，优先选择能拼出词库短语的切分
+     * （如 xuni → [xu, ni] 拼「虚拟」，而非贪心的 [xun, i]）。
+     * 无词库命中时退回贪心最长匹配（原逻辑）。
      */
     private fun segment(input: String): Pair<List<String>, String> {
+        dictionarySegmentation(input)?.let { return Pair(it, "") }
+        return greedySegment(input)
+    }
+
+    /**
+     * 词库约束分词：枚举 [input] 的所有合法音节切分路径，用词库短语命中评分，
+     * 返回能拼出最多词库短语的切分；无命中返回 null（调用方退回贪心切分）。
+     *
+     * 例：xuni → 路径 [xun, i]（无词）、[xu, ni]（拼「虚拟」）→ 选 [xu, ni]。
+     *
+     * @param input 必须全部由合法音节组成（否则部分无法切分，返回 null）
+     */
+    private fun dictionarySegmentation(input: String): List<String>? {
+        if (input.isEmpty()) return null
+        // 候选切分路径（DFS 枚举，上限防爆炸）
+        val paths = ArrayList<List<String>>()
+        dfsSegment(input, 0, ArrayList(), paths)
+        if (paths.isEmpty()) return null
+        // 评分：整串拼词库短语数（词命中优先），其次音节数（多音节更自然）
+        var best: List<String>? = null
+        var bestScore = 0
+        for (path in paths) {
+            val key = path.joinToString("")
+            val hit = phrasesByPinyin[key]?.size ?: 0
+            val score = hit * 1000 - path.size  // 词命中为主，音节少略优
+            if (score > bestScore) {
+                bestScore = score
+                best = path
+            }
+        }
+        // 只有真实命中词库的切分才采用（否则贪心）
+        return best?.takeIf { phrasesByPinyin.containsKey(it.joinToString("")) }
+    }
+
+    /** DFS 枚举所有合法音节切分（最长音节 6 字符），路径上限 [MAX_SEGMENT_PATHS] 防爆炸 */
+    private fun dfsSegment(input: String, pos: Int, cur: MutableList<String>, out: MutableList<List<String>>) {
+        if (out.size >= MAX_SEGMENT_PATHS) return
+        if (pos == input.length) {
+            out.add(cur.toList())
+            return
+        }
+        val maxEnd = (pos + 6).coerceAtMost(input.length)
+        var end = maxEnd
+        while (end > pos) {
+            val candidate = input.substring(pos, end)
+            if (validSyllables.contains(candidate)) {
+                cur.add(candidate)
+                dfsSegment(input, end, cur, out)
+                cur.removeAt(cur.size - 1)
+            }
+            end--
+        }
+    }
+
+    /** 贪心最长匹配切分（原逻辑）：剩余整体是更长音节前缀时作不完整返回 */
+    private fun greedySegment(input: String): Pair<List<String>, String> {
         val syllables = ArrayList<String>()
         var i = 0
         while (i < input.length) {
@@ -373,6 +426,9 @@ object PinyinEngine {
 
     /** 补全结果数量上限（防候选爆炸，文档建议 32） */
     private const val MAX_COMPLETION_RESULTS = 32
+
+    /** 词库约束分词：DFS 枚举路径上限（防超长输入组合爆炸） */
+    private const val MAX_SEGMENT_PATHS = 16
 
     /** 完整音节序列最大长度（防超长输入组合爆炸） */
     private const val MAX_SYLLABLES = 8

@@ -69,7 +69,7 @@
     <string name="test_running">正在连接 %1$s …</string>
     <string name="test_ok">连接成功，服务端在线</string>
     <string name="test_fail">连接失败：%1$s</string>
-    <string name="settings_usage">按住麦克风说话，松手即识别；上滑取消。\n拼音键盘：26 键全拼 / 自然码双拼，空格选词。</string>
+    <string name="settings_usage">按住麦克风说话，松手即识别；上滑取消。\n拼音键盘：26 键全拼 / 自然码双拼，空格选词。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">

@@ -30,9 +30,9 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_PORT, DEFAULT_PORT)
         set(value) = sp.edit { putInt(KEY_PORT, value) }
 
-    /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改 */
+    /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改（默认勾选） */
     var lockServer: Boolean
-        get() = sp.getBoolean(KEY_LOCK_SERVER, false)
+        get() = sp.getBoolean(KEY_LOCK_SERVER, true)
         set(value) = sp.edit { putBoolean(KEY_LOCK_SERVER, value) }
 
     /** 统一语言代码，取值见服务端 engines/language.py */
@@ -74,9 +74,9 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_ROOT_SHIZUKU, false)
         set(value) = sp.edit { putBoolean(KEY_ROOT_SHIZUKU, value) }
 
-    /** 保活通知优先级：true 用 IMPORTANCE_LOW（可见但不响），false 用 IMPORTANCE_MIN（更省电但部分厂商易杀） */
+    /** 保活通知优先级：true 用 IMPORTANCE_LOW（可见但不响），false 用 IMPORTANCE_MIN（更省电但部分厂商易杀）。默认关。 */
     var notifyHighPriority: Boolean
-        get() = sp.getBoolean(KEY_NOTIFY_HIGH, true)
+        get() = sp.getBoolean(KEY_NOTIFY_HIGH, false)
         set(value) = sp.edit { putBoolean(KEY_NOTIFY_HIGH, value) }
 
     /**
