@@ -28,7 +28,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 - 运行：`& "$env:LOCALAPPDATA\Temp\opencode\gradle-8.10.2\bin\gradle.bat" testDebugUnitTest`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
 - 覆盖：协议序列化/解析（ProtocolTest.kt）、拼音引擎（PinyinEngineTest/ShuangpinTest）、
-  敏感内容检测（SensitiveDetectorTest）、文字拖选（TextSelectionTest）、剪贴板自动分类（ClipboardClassifierTest）
+  文字拖选（TextSelectionTest）、剪贴板自动分类（ClipboardClassifierTest）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
@@ -60,18 +60,14 @@ app/src/main/java/com/jinn/voiceinput/
 ├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/保活/剪贴板）+ 保存并测试连接
 ├── Diagnostics.kt      # 诊断日志：文件输出 + 崩溃捕获 + logcat 快照
 │
-├── ClipboardController.kt   # 剪贴板监听（PrimaryClipChangedListener）+ 敏感策略 + 保存到库
-├── ClipboardStore.kt(内)    # ClipboardController 内 object：敏感检测→分类→加密入库纯逻辑
+├── ClipboardController.kt   # 剪贴板监听（PrimaryClipChangedListener）+ 自动分类 + 保存到库
+├── ClipboardStore.kt(内)    # ClipboardController 内 object：自动分类→加密入库纯逻辑
 ├── ClipboardDb.kt           # 剪贴板历史 SQLite（AES-256-GCM 密文 + category/is_favorite/is_private + 去重/裁剪/搜索）
 ├── ClipboardCrypto.kt       # 加密工具（Android Keystore AES-256-GCM，base64(iv):base64(cipher)）
 ├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；隐私绝不自动）
-├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/敏感策略/root 增强）
+├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/root 增强）
 ├── ClipboardHistoryActivity.kt # 剪贴板历史页（全新 Activity：分类栏/动态序号/实时搜索/去重/长按菜单/点击粘贴广播回传）
-├── ClipboardPermissionActivity.kt # 第三方 APP 读取授权管理页
-├── ClipboardPermissionStore.kt    # 授权表（默认全禁，按包名授权，每次限 3 条）
-├── ClipboardHistoryProvider.kt    # 第三方 APP 安全 IPC（ContentProvider，Binder 校验调用方）
-├── ClipboardFirewall.kt    # Root 增强：敏感内容自动清空系统剪贴板 / 定时清空
-└── SensitiveDetector.kt    # 敏感内容检测（密码/验证码/身份证/银行卡/Token/JWT/Cookie/私钥，纯逻辑可单测）
+└── ClipboardFirewall.kt    # Root 增强：数据目录安全审计（不做任何清空系统剪贴板操作）
 ```
 
 ## 诊断日志（重要）
@@ -96,6 +92,11 @@ app/src/main/java/com/jinn/voiceinput/
 - 保活相关（前台服务/无障碍/白名单）改动需在真机验证，厂商杀进程行为不可模拟
 
 ### 剪贴板模块关键约束
+
+- **第三方 APP 不得读取 History**：JinnIme 不提供任何 History API（ClipboardHistoryProvider/PermissionStore/PermissionActivity 已全部移除）。第三方 APP 只能读取 Android System Clipboard 的最新内容，无法访问 JinnIme 私有历史库
+- **不干预 System Clipboard**：JinnIme 不阻断、篡改或周期性清空 Android System Clipboard；网盘、购物、分享类 APP 识别口令/链接的功能不受影响
+- **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏/隐私标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
+- **分类**：固定 全部/网址/隐私/数字/收藏；隐私**只能用户主动标记**，绝不自动；收藏是独立标签可与分类并存
 
 - **分类**：固定 全部/网址/隐私/数字/收藏；隐私**只能用户手动标记**，绝不自动；收藏是独立标签可与分类并存
 - **序号**：UI 序号非 DB ID，最新=最大，删除/去重后重新连续编号；搜索保留原始序号

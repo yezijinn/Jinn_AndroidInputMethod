@@ -23,7 +23,12 @@ object PinyinEngine {
 
     private const val TAG = "PinyinEngine"
 
-    private const val MAX_CHARS = 12
+    /**
+     * 单字候选上限（每个音节）。必须足够大以覆盖该音节的常用字——例如 ji 音的
+     * 「基/寄」按词库频率排在第 19/20 位，原 12 会截断导致候选缺失。
+     * 候选栏为横向滚动容器，可承载较多候选。
+     */
+    private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
 
     @Volatile

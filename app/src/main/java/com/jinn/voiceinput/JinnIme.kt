@@ -158,8 +158,6 @@ class JinnIme : InputMethodService() {
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
         if (ClipboardPrefs.of(this).enabled) {
             clipboardController = ClipboardController(this).also { it.start() }
-            // 清理已过期的敏感内容临时历史
-            Thread { ClipboardStore.cleanupExpired(ClipboardDb.get(this)) }.start()
         }
 
         // 后台保活：用户开启后，输入法常驻期间保持前台服务，连接更稳
@@ -241,6 +239,12 @@ class JinnIme : InputMethodService() {
             // 此处未真正提交，返回 false（剪贴板页不关闭，用户可等待或返回）。
             Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
             pendingPasteText = text
+            // 自动唤起键盘关闭时不主动 requestShowSelf（即使调用了也会被
+            // onShowInputRequested 拒绝并再次触发隐藏逻辑，这里直接不发起）。
+            if (!prefs.autoShowKeyboard) {
+                Diagnostics.i(TAG, "自动唤起键盘：关闭，暂存粘贴文本但不唤起 IME")
+                return false
+            }
             runCatching { requestShowSelf(0) }.onFailure { }
             return false
         }
@@ -540,6 +544,14 @@ class JinnIme : InputMethodService() {
                     Diagnostics.i(TAG, "功能面板: 粘贴剪贴板")
                     pasteClipboard()
                 }
+                override fun onSelectAll() {
+                    Diagnostics.i(TAG, "功能面板: 全选")
+                    selectAllText()
+                }
+                override fun onCopy() {
+                    Diagnostics.i(TAG, "功能面板: 复制")
+                    copySelection()
+                }
                 override fun onHideKeyboard() {
                     Diagnostics.i(TAG, "功能面板: 收起键盘")
                     // 只隐藏输入面板，服务保持运行，点击输入框再次唤醒
@@ -633,8 +645,31 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacks(startHoldRunnable)
     }
 
+    /**
+     * 系统每次请求显示 IME 窗口的闸门（InputMethodService 内部所有显示路径都经它判定：
+     * 编辑框聚焦自动唤起 / [requestShowSelf] / 配置变化后的自动恢复显示）。
+     *
+     * 「自动唤起键盘」关闭时返回 false，从源头拒绝一切显示请求，窗口永不显示，
+     * 系统端 mShowInputRequested 保持 false——不会形成「唤起 → 隐藏 → 系统重新唤起」循环。
+     */
+    override fun onShowInputRequested(flags: Int, configChange: Boolean): Boolean {
+        if (!prefs.autoShowKeyboard) {
+            Diagnostics.i(TAG, "自动唤起键盘：关闭，禁止主动显示 IME")
+            return false
+        }
+        return super.onShowInputRequested(flags, configChange)
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
+        // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
+        // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
+        if (!prefs.autoShowKeyboard) {
+            Diagnostics.i(TAG, "自动唤起键盘：关闭，收起当前显示的 IME 窗口")
+            runCatching { hideWindow() }.onFailure { }
+            return
+        }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
         asr.connect()
@@ -998,6 +1033,18 @@ class JinnIme : InputMethodService() {
         // 删除选中内容（deleteSurroundingText 在 API 34 是 Int 签名）
         connection.deleteSurroundingText(Int.MAX_VALUE, 0)
         Diagnostics.i(TAG, "deleteAllText: 已发送全选删除")
+    }
+
+    /**
+     * 全选：选中输入框全部文本（Ctrl+A）。
+     * 与 [deleteAllText] 不同，本方法只选中不删除，配合「复制」使用。
+     */
+    private fun selectAllText() {
+        Diagnostics.i(TAG, "selectAllText: 全选")
+        val connection = currentInputConnection ?: return
+        val meta = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_DOWN, meta))
+        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_UP, meta))
     }
 
     private fun makeCtrlKeyEvent(keyCode: Int, action: Int, meta: Int): KeyEvent =
