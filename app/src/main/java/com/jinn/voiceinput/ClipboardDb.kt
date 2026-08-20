@@ -216,12 +216,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
     }
 
-    /** 更新隐私标记（仅用户主动操作调用，绝不自动） */
-    fun setPrivate(id: Long, isPrivate: Boolean): Boolean {
-        val values = ContentValues().apply { put("is_private", if (isPrivate) 1 else 0) }
-        return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
-    }
-
     /**
      * 清理完全相同的重复记录：只保留每组中最新的一条。
      * 严格字符串比较（不 trim / 不转小写 / 不改换行）。
@@ -314,19 +308,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     // ── 查询 ──────────────────────────────────────────────
 
-    /** 按 id 读取单条（解密）。不存在或解密失败返回 null。 */
-    fun get(id: Long): Item? {
-        val c = readableDatabase.rawQuery(
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS WHERE id = ?",
-            arrayOf(id.toString())
-        )
-        return c.use { cur ->
-            if (!cur.moveToFirst()) null else readItem(cur)
-        }
-    }
-
     /** 读取最近 [limit] 条（新→旧）。逐条解密，解密失败跳过。 */
     fun recent(limit: Int, category: String? = null): List<Item> {
         if (limit <= 0) return emptyList()
@@ -363,49 +344,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         c.use { cur ->
             while (cur.moveToNext()) {
                 readItem(cur)?.let { out.add(it) }
-            }
-        }
-        return out
-    }
-
-    /** 读取最近 [limit] 条中标记为隐私的记录（新→旧） */
-    fun recentPrivate(limit: Int): List<Item> {
-        if (limit <= 0) return emptyList()
-        val out = ArrayList<Item>(limit)
-        val c = readableDatabase.rawQuery(
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS WHERE is_private = 1 ORDER BY created_at DESC LIMIT $limit",
-            null
-        )
-        c.use { cur ->
-            while (cur.moveToNext()) {
-                readItem(cur)?.let { out.add(it) }
-            }
-        }
-        return out
-    }
-
-    /**
-     * 搜索：遍历全部条目按需解密，过滤包含 [query] 的（大小写不敏感、任意位置匹配）。
-     * 支持分类过滤（category 非 null 时只在该分类内搜）。
-     * 返回保留原始排序（新→旧），调用方需自行映射原始序号。
-     */
-    fun search(query: String, category: String? = null, limit: Int = 9999): List<Item> {
-        val out = ArrayList<Item>()
-        val q = query.lowercase()
-        val c = readableDatabase.rawQuery(
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS ORDER BY created_at DESC",
-            null
-        )
-        c.use { cur ->
-            while (cur.moveToNext()) {
-                val item = readItem(cur) ?: continue
-                if (category != null && item.category != category) continue
-                if (item.content.lowercase().contains(q)) out.add(item)
-                if (out.size >= limit) break
             }
         }
         return out
