@@ -1,73 +1,25 @@
 package com.jinn.voiceinput
 
 import android.content.Context
-import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
 
 /**
- * Root 增强模式：Clipboard Firewall（方案第二十五 ~ 三十六节）。
+ * Root 增强模式：JinnIme 数据目录安全审计（方案第十一节）。
  *
- * 安全边界（方案第三十四节）：
- *  本模块只防御普通第三方 APP 通过标准 ClipboardManager 的访问路径，
- *  不保证防御内核级攻击 / 恶意 root 进程 / 被 Hook 的输入法进程。
- *  Android Framework 的 ClipboardService 层 getPrimaryClip 拦截需要
- *  LSPosed 等框架 Hook（普通 APK 无法稳定做到），因此本项目 Root 模式
- *  提供 root 下真正稳定、安全的子集：
+ * 职责：使用 root 权限检查 JinnIme 私有数据目录的安全状态，确保剪贴板历史
+ * 不被其他 APP 通过文件系统漏洞（错误权限/symlink/外部存储泄露等）读取。
  *
- *  1. **敏感内容自动清空**：检测到系统剪贴板为敏感内容时，用 root 调
- *     `service call clipboard` 立即清空系统剪贴板（普通模式只能选择不
- *     保存历史，root 模式额外清空系统剪贴板本身）；
- *  2. **定时清理**：开启后按固定间隔清空系统剪贴板（可选，默认关）。
+ * **不干预 Android System Clipboard**——网盘、购物、分享类 APP 正常读取
+ * 系统剪贴板口令不受影响。
  *
- * 失败保护（方案第三十六节）：root 不可用 / 命令失败时自动停用并记录，
- * 输入法本身永远不受影响（本模块独立运行，异常不外抛）。
+ * 安全边界：
+ *  - 普通 APP → 无法读取 JinnIme History（Android App Sandbox 保证）
+ *  - ROOT APP → Sandbox 保护不再是绝对边界
+ *  - Kernel / Hook / Root Malware → Android App 层无法保证绝对防护
  *
  * 线程模型：后台线程执行 su 命令，不阻塞主线程。
  */
 object ClipboardFirewall {
-
-    /** 是否处于运行状态 */
-    @Volatile
-    var running: Boolean = false
-        private set
-
-    /** 系统剪贴板敏感内容自动清空开关 */
-    @Volatile
-    var clearOnSensitive: Boolean = false
-
-    /** 定时清空间隔毫秒；<=0 表示不启用定时清空 */
-    @Volatile
-    var clearIntervalMs: Long = 0L
-
-    private val worker = AtomicBoolean(false)
-    private var timerThread: Thread? = null
-
-    /** 启动防火墙（幂等）。root 不可用则自动失败返回 false。 */
-    fun start(context: Context): Boolean {
-        if (running) return true
-        // 先确认 root 可用；不可用则直接失败（不启动任何东西）
-        if (!isRootAvailable()) {
-            Diagnostics.w(TAG, "start: root 不可用，防火墙未启动")
-            return false
-        }
-        synchronized(this) {
-            if (running) return true
-            running = true
-            Diagnostics.i(TAG, "start: Clipboard Firewall 已启动 (clearOnSensitive=$clearOnSensitive interval=${clearIntervalMs}ms)")
-            startTimerIfNeeded()
-        }
-        return true
-    }
-
-    /** 停止防火墙（幂等）。输入法立即恢复正常模式。 */
-    fun stop() {
-        synchronized(this) {
-            if (!running) return
-            running = false
-            timerThread?.interrupt()
-            timerThread = null
-            Diagnostics.i(TAG, "stop: Clipboard Firewall 已停止")
-        }
-    }
 
     /** root 是否可用（su 返回 0） */
     fun isRootAvailable(): Boolean = runCatching {
@@ -81,51 +33,92 @@ object ClipboardFirewall {
     }.getOrDefault(false)
 
     /**
-     * 敏感内容检测到系统剪贴板时调用：按开关决定是否清空系统剪贴板。
-     * @return 是否执行了清空
+     * 执行数据目录安全审计。每项审计返回「检查项名称 → 状态文本」。
+     * 所有检查在后台线程执行（su 命令同步阻塞）。
+     * @param context 用于获取包名与数据目录
      */
-    fun onSensitiveClipboardDetected(context: Context): Boolean {
-        if (!running || !clearOnSensitive) return false
-        val ok = clearSystemClipboard()
-        Diagnostics.i(TAG, "onSensitiveClipboardDetected: 清空系统剪贴板=$ok")
-        return ok
+    fun audit(context: Context): List<Pair<String, String>> {
+        val pkg = context.packageName
+        val dataDir = context.dataDir.absolutePath  // /data/user/0/<pkg>/
+        val dbPath = "$dataDir/databases/jinn_clipboard.db"
+        val results = mutableListOf<Pair<String, String>>()
+
+        // 1. 数据目录权限
+        results.add(checkDirPerm(dataDir))
+
+        // 2. 数据库文件权限
+        results.add(checkDbPerm(dbPath))
+
+        // 3. 数据目录 Owner
+        results.add(checkOwner(dataDir))
+
+        // 4. SELinux 状态
+        results.add(checkSelinux())
+
+        // 5. 符号链接检查
+        results.add(checkSymlink(dataDir))
+
+        // 6. 外部存储泄露
+        results.add(checkExternalLeak(pkg))
+
+        // 7. Backup 配置（静态已知，无需 su）
+        results.add(checkBackupConfig())
+
+        return results
     }
 
-    /** 清空系统剪贴板：root 下通过 `service call clipboard` 设置空内容 */
-    fun clearSystemClipboard(): Boolean {
-        // Android 12+ 的 IClipboard.setPrimaryClipWithSource 是 transact 7，但构造 Parcel
-        // 需要正确的 Parcelable 序列化（ClipData + ClipDescription）。不同厂商/版本
-        // transact code 可能不同，这里用 dumpsys clipboard 确认后走最保守路径：
-        // 先尝试 `am broadcast` 方式不可行，退化为直接执行 su 清空系统剪贴板
-        // 的通用命令（各家 ROM 通用性有限，失败即返回 false，不强制）。
-        return runCatching {
-            // 尝试用 service call 清空（构造空 ClipData 的 Parcel 太脆弱，
-            // 改走 Android 12+ 的 clipboard 服务广播；失败静默返回 false）
-            val process = Runtime.getRuntime().exec(
-                arrayOf("su", "-c", "service call clipboard 3 i32 0 2>/dev/null || true")
-            )
-            val exit = process.waitFor()
-            process.destroy()
-            exit == 0
-        }.getOrDefault(false)
+    private fun su(cmd: String): String? = runCatching {
+        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+        try {
+            val text = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            text
+        } finally {
+            runCatching { process.destroy() }
+        }
+    }.getOrNull()
+
+    private fun checkDirPerm(dataDir: String): Pair<String, String> {
+        val out = su("ls -ld $dataDir") ?: return "数据目录权限" to "无法访问（su 失败）"
+        val ok = out.startsWith("drwx------")
+        return "数据目录权限" to if (ok) "✓ $out" else "✗ 期望 drwx------，实际: $out"
     }
 
-    private fun startTimerIfNeeded() {
-        if (clearIntervalMs <= 0) return
-        timerThread?.interrupt()
-        timerThread = Thread {
-            while (running) {
-                try {
-                    Thread.sleep(clearIntervalMs)
-                    if (running && clearIntervalMs > 0) {
-                        clearSystemClipboard()
-                        Diagnostics.v(TAG, "timer: 定时清空系统剪贴板")
-                    }
-                } catch (_: InterruptedException) {
-                    break
-                }
-            }
-        }.also { it.isDaemon = true; it.start() }
+    private fun checkDbPerm(dbPath: String): Pair<String, String> {
+        if (!File(dbPath).exists()) return "数据库权限" to "✓ 数据库不存在（无历史记录，安全）"
+        val out = su("ls -l $dbPath") ?: return "数据库权限" to "无法访问（su 失败）"
+        val ok = out.startsWith("-rw-------")
+        return "数据库权限" to if (ok) "✓ $out" else "✗ 期望 -rw-------，实际: $out"
+    }
+
+    private fun checkOwner(dataDir: String): Pair<String, String> {
+        val out = su("stat -c '%U' $dataDir") ?: return "数据目录 Owner" to "无法访问（su 失败）"
+        val ok = out.startsWith("u0_a") || out.startsWith("app_")
+        return "数据目录 Owner" to if (ok) "✓ $out" else "✗ 非 App 用户: $out"
+    }
+
+    private fun checkSelinux(): Pair<String, String> {
+        val out = su("getenforce") ?: return "SELinux 状态" to "无法检查（su 失败）"
+        val ok = out.equals("Enforcing", ignoreCase = true)
+        return "SELinux 状态" to if (ok) "✓ $out" else "△ $out（非强制模式，Sandbox 保护减弱）"
+    }
+
+    private fun checkSymlink(dataDir: String): Pair<String, String> {
+        val out = su("find $dataDir -type l 2>/dev/null") ?: return "符号链接" to "无法检查（su 失败）"
+        return if (out.isBlank()) "符号链接" to "✓ 无危险符号链接"
+        else "符号链接" to "✗ 发现符号链接:\n$out"
+    }
+
+    private fun checkExternalLeak(pkg: String): Pair<String, String> {
+        val out = su("find /storage/emulated/0 -maxdepth 4 -name 'jinn_clipboard*' 2>/dev/null")
+            ?: return "外部存储泄露" to "无法检查（su 失败）"
+        return if (out.isBlank()) "外部存储泄露" to "✓ 未在共享存储发现剪贴板数据库"
+        else "外部存储泄露" to "✗ 共享存储发现剪贴板数据:\n$out"
+    }
+
+    private fun checkBackupConfig(): Pair<String, String> {
+        // 静态已知：backup_rules.xml 已排除 jinn_clipboard.db，data_extraction_rules.xml 也已排除
+        return "Backup 配置" to "✓ 已在 backup_rules 与 data_extraction_rules 中排除剪贴板数据库"
     }
 
     private const val TAG = "ClipboardFirewall"

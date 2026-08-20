@@ -90,20 +90,6 @@
             android:excludeFromRecents="true"
             android:label="@string/clipboard_history_title" />
 
-        <!-- 第三方 APP 剪贴板历史访问权限管理（同样 FLAG_SECURE + 隐藏最近任务） -->
-        <activity
-            android:name=".ClipboardPermissionActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:label="@string/clipboard_perm_manage" />
-
-        <!-- 第三方 APP 访问剪贴板历史的安全 IPC 入口（UID 校验，默认拒绝） -->
-        <provider
-            android:name=".ClipboardHistoryProvider"
-            android:authorities="com.jinn.voiceinput.clipboard"
-            android:exported="true"
-            android:grantUriPermissions="false" />
-
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"

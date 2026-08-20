@@ -92,6 +92,15 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_KB_ENGLISH, value) }
 
     /**
+     * 自动唤起键盘：true 编辑框聚焦时正常自动显示；false 永久禁止本输入法
+     * 主动唤起（不受编辑框焦点、APP 切换、IME 生命周期重启影响），
+     * 直到用户在设置页重新开启。拦截点在 [JinnIme.onShowInputRequested]。
+     */
+    var autoShowKeyboard: Boolean
+        get() = sp.getBoolean(KEY_AUTO_SHOW_KB, true)
+        set(value) = sp.edit { putBoolean(KEY_AUTO_SHOW_KB, value) }
+
+    /**
      * 输入法启动时的默认键盘模式：
      *  - [DefaultKeyboardMode.VOICE] 语音键盘
      *  - [DefaultKeyboardMode.PINYIN_CN] 26 键全拼中文
@@ -122,6 +131,7 @@ class Prefs(context: Context) {
         private const val KEY_NOTIFY_HIGH = "notify_high"
         private const val KEY_SHUANGPIN = "shuangpin"
         private const val KEY_KB_ENGLISH = "kb_english"
+        private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
     }
 }

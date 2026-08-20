@@ -62,6 +62,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onSelectionModeChanged(active: Boolean)
         /** 功能面板：粘贴剪贴板最新内容（剪贴板为空则无反应） */
         fun onPasteClipboard()
+        /** 功能面板：全选当前输入框全部文本 */
+        fun onSelectAll()
+        /** 功能面板：复制选中文本到系统剪贴板 */
+        fun onCopy()
         /** 功能面板：收起键盘（隐藏面板，非停止服务） */
         fun onHideKeyboard()
     }
@@ -106,6 +110,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private lateinit var btnDigit: TextView
     private lateinit var btnLang: TextView
     private lateinit var btnSpace: View
+    /** 空格键顶部的小字提示（当前输入类型：小写英文/大写英文/中文全拼/中文双拼） */
+    private lateinit var btnSpaceHint: TextView
     private lateinit var btnBackspace: View
     private lateinit var btnEnter: View
     private lateinit var btnShift: ImageButton
@@ -158,16 +164,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         "zxcvbnm",
     )
 
-    /** 符号层定义：键位 → 符号 */
-    private val symbolMap = mapOf(
-        'q' to "！", 'w' to "？", 'e' to "、", 'r' to "。", 't' to "；",
-        'y' to "：", 'u' to "“", 'i' to "”", 'o' to "…", 'p' to "（",
-        'a' to "）", 's' to "【", 'd' to "】", 'f' to "《", 'g' to "》",
-        'h' to "·", 'j' to "—", 'k' to "~", 'l' to "`",
-        'z' to "@", 'x' to "#", 'c' to "$", 'v' to "%", 'b' to "^",
-        'n' to "&", 'm' to "*",
-    )
-
     /** 数字层定义：键位 → 数字/符号 */
     private val digitMap = mapOf(
         'q' to "1", 'w' to "2", 'e' to "3", 'r' to "4", 't' to "5",
@@ -177,6 +173,319 @@ class PinyinKeyboardView @JvmOverloads constructor(
         'z' to ".", 'x' to ",", 'c' to "?", 'v' to "!", 'b' to "'",
         'n' to "\"", 'm' to "%",
     )
+
+/** 符号分组：label 为候选栏标签；pages 为该组内的符号页（键盘滑动在此组内翻页），可自由添加页数不限 */
+    private class SymbolGroup(val label: String, val pages: List<Map<Char, String>>)
+
+    private val symbolGroups: List<SymbolGroup> = listOf(
+        // 常用
+        SymbolGroup("常用", listOf(
+            mapOf(
+                'q' to "！", 'w' to "？", 'e' to "。", 'r' to "，", 't' to "；",
+                'y' to "：", 'u' to "“", 'i' to "”", 'o' to "（", 'p' to "）",
+                'a' to "【", 's' to "】", 'd' to "《", 'f' to "》", 'g' to "·",
+                'h' to "—", 'j' to "…", 'k' to "、", 'l' to "~",
+                'z' to "@", 'x' to "#", 'c' to "$", 'v' to "%", 'b' to "^",
+                'n' to "&", 'm' to "*",
+            ),
+            mapOf(
+                'q' to "1", 'w' to "2", 'e' to "3", 'r' to "4", 't' to "5",
+                'y' to "6", 'u' to "7", 'i' to "8", 'o' to "9", 'p' to "0",
+                'a' to "-", 's' to "/", 'd' to ":", 'f' to ";", 'g' to "(",
+                'h' to ")", 'j' to "'", 'k' to "\"", 'l' to "\\",
+                'z' to "=", 'x' to "+", 'c' to "_", 'v' to "|", 'b' to "`",
+                'n' to "[", 'm' to "]",
+            ),
+        )),
+        // 标点
+        SymbolGroup("标点", listOf(
+            mapOf(
+                'q' to "‘", 'w' to "’", 'e' to "「", 'r' to "」", 't' to "『",
+                'y' to "』", 'u' to "〔", 'i' to "〕", 'o' to "〈", 'p' to "〉",
+                'a' to "…", 's' to "……", 'd' to "—", 'f' to "——", 'g' to "·",
+                'h' to "、", 'j' to "，", 'k' to "､", 'l' to "｡",
+                'z' to "！", 'x' to "？", 'c' to "；", 'v' to "：", 'b' to "。",
+                'n' to "，", 'm' to "……",
+            ),
+            mapOf(
+                'q' to "※", 'w' to "々", 'e' to "〆", 'r' to "〇", 't' to "〈",
+                'y' to "〉", 'u' to "《", 'i' to "》", 'o' to "「", 'p' to "」",
+                'a' to "『", 's' to "』", 'd' to "〔", 'f' to "〕", 'g' to "〈~",
+                'h' to "＞", 'j' to "＜", 'k' to "＞", 'l' to "≪",
+                'z' to "≫", 'x' to "〈", 'c' to "〉", 'v' to "「", 'b' to "」",
+                'n' to "‖", 'm' to "……",
+            ),
+            // 排版/装饰符号
+            mapOf(
+                'q' to "＊", 'w' to "§", 'e' to "¶", 'r' to "†", 't' to "‡",
+                'y' to "«", 'u' to "»", 'i' to "‹", 'o' to "›", 'p' to "≈",
+                'a' to "「", 's' to "」", 'd' to "『", 'f' to "』", 'g' to "【",
+                'h' to "】", 'j' to "〈", 'k' to "〉", 'l' to "⌒",
+                'z' to "々", 'x' to "〆", 'c' to "△", 'v' to "◇", 'b' to "○",
+                'n' to "□", 'm' to "☆",
+            ),
+        )),
+        // 序号
+        SymbolGroup("序号", listOf(
+            mapOf(
+                'q' to "①", 'w' to "②", 'e' to "③", 'r' to "④", 't' to "⑤",
+                'y' to "⑥", 'u' to "⑦", 'i' to "⑧", 'o' to "⑨", 'p' to "⑩",
+                'a' to "❶", 's' to "❷", 'd' to "❸", 'f' to "❹", 'g' to "❺",
+                'h' to "❻", 'j' to "❼", 'k' to "❽", 'l' to "❾",
+                'z' to "Ⅰ", 'x' to "Ⅱ", 'c' to "Ⅲ", 'v' to "Ⅳ", 'b' to "Ⅴ",
+                'n' to "Ⅵ", 'm' to "Ⅶ",
+            ),
+            mapOf(
+                'q' to "⑪", 'w' to "⑫", 'e' to "⑬", 'r' to "⑭", 't' to "⑮",
+                'y' to "⑯", 'u' to "⑰", 'i' to "⑱", 'o' to "⑲", 'p' to "⑳",
+                'a' to "㈠", 's' to "㈡", 'd' to "㈢", 'f' to "㈣", 'g' to "㈤",
+                'h' to "⒈", 'j' to "⒉", 'k' to "3", 'l' to "⒋",
+                'z' to "Ⅷ", 'x' to "Ⅸ", 'c' to "Ⅹ", 'v' to "Ⅺ", 'b' to "Ⅻ",
+                'n' to "Ⅷ", 'm' to "Ⅻ",
+            ),
+            // 圈中文 + 字母序号
+            mapOf(
+                'q' to "㊀", 'w' to "㊁", 'e' to "㊂", 'r' to "㊃", 't' to "㊄",
+                'y' to "㊅", 'u' to "㊆", 'i' to "㊇", 'o' to "㊈", 'p' to "㊉",
+                'a' to "Ⓐ", 's' to "Ⓑ", 'd' to "Ⓒ", 'f' to "Ⓓ", 'g' to "Ⓔ",
+                'h' to "Ⓕ", 'j' to "Ⓖ", 'k' to "Ⓗ", 'l' to "Ⓘ",
+                'z' to "Ⓙ", 'x' to "Ⓚ", 'c' to "Ⓛ", 'v' to "Ⓜ", 'b' to "Ⓝ",
+                'n' to "Ⓞ", 'm' to "Ⓟ",
+            ),
+            mapOf(
+                'q' to "㈥", 'w' to "㈦", 'e' to "㈧", 'r' to "㈨", 't' to "㈩",
+                'y' to "⒌", 'u' to "⒍", 'i' to "⒎", 'o' to "⒏", 'p' to "⒐",
+                'a' to "⒑", 's' to "⒒", 'd' to "⒓", 'f' to "⒔", 'g' to "⒕",
+                'h' to "⒖", 'j' to "⒗", 'k' to "⒘", 'l' to "⒙",
+                'z' to "⒚", 'x' to "⒛", 'c' to "Ⓠ", 'v' to "Ⓡ", 'b' to "Ⓢ",
+                'n' to "Ⓣ", 'm' to "Ⓤ",
+            ),
+        )),
+        // 数学
+        SymbolGroup("数学", listOf(
+            mapOf(
+                'q' to "＋", 'w' to "－", 'e' to "×", 'r' to "÷", 't' to "＝",
+                'y' to "≠", 'u' to "≈", 'i' to "±", 'o' to "＜", 'p' to "＞",
+                'a' to "≤", 's' to "≥", 'd' to "√", 'f' to "∞", 'g' to "∝",
+                'h' to "∑", 'j' to "∏", 'k' to "∫", 'l' to "％",
+                'z' to "∠", 'x' to "π", 'c' to "⊥", 'v' to "‖", 'b' to "∈",
+                'n' to "∉", 'm' to "≈",
+            ),
+            mapOf(
+                'q' to "＋", 'w' to "−", 'e' to "×", 'r' to "÷", 't' to "=",
+                'y' to "≡", 'u' to "≠", 'i' to "≒", 'o' to "＜", 'p' to "＞",
+                'a' to "≤", 's' to "≥", 'd' to "√", 'f' to "∛", 'g' to "∜",
+                'h' to "∂", 'j' to "∇", 'k' to "∫∫∫", 'l' to "∭",
+                'z' to "∞", 'x' to "㏕", 'c' to "⋂", 'v' to "⋃", 'b' to "∣",
+                'n' to "∤", 'm' to "≈",
+            ),
+            // 希腊字母
+            mapOf(
+                'q' to "α", 'w' to "β", 'e' to "γ", 'r' to "δ", 't' to "ε",
+                'y' to "ζ", 'u' to "η", 'i' to "θ", 'o' to "λ", 'p' to "μ",
+                'a' to "ξ", 's' to "π", 'd' to "ρ", 'f' to "σ", 'g' to "τ",
+                'h' to "φ", 'j' to "χ", 'k' to "ψ", 'l' to "ω",
+                'z' to "Α", 'x' to "Β", 'c' to "Γ", 'v' to "Δ", 'b' to "Θ",
+                'n' to "Λ", 'm' to "Ω",
+            ),
+            mapOf(
+                'q' to "ι", 'w' to "κ", 'e' to "ν", 'r' to "ο", 't' to "υ",
+                'y' to "Ε", 'u' to "Ζ", 'i' to "Η", 'o' to "Ι", 'p' to "Κ",
+                'a' to "Μ", 's' to "Ν", 'd' to "Ξ", 'f' to "Ο", 'g' to "Π",
+                'h' to "Ρ", 'j' to "Σ", 'k' to "Τ", 'l' to "Υ",
+                'z' to "Φ", 'x' to "Χ", 'c' to "Ψ", 'v' to "Ω", 'b' to "Ϝ",
+                'n' to "Ϟ", 'm' to "Ϡ",
+            ),
+        )),
+        // 单位
+        SymbolGroup("单位", listOf(
+            mapOf(
+                'q' to "￥", 'w' to "＄", 'e' to "€", 'r' to "£", 't' to "￡",
+                'y' to "℃", 'u' to "℉", 'i' to "°", 'o' to "％", 'p' to "‰",
+                'a' to "㎝", 's' to "㎜", 'd' to "㎞", 'f' to "㎡", 'g' to "㎥",
+                'h' to "μ", 'j' to "Ω", 'k' to "Ｖ", 'l' to "Ａ",
+                'z' to "²", 'x' to "³", 'c' to "＃", 'v' to "＆", 'b' to "＠",
+                'n' to "¥", 'm' to "＄",
+            ),
+            mapOf(
+                'q' to "㎡", 'w' to "㎞", 'e' to "ｇ", 'r' to "ｍ", 't' to "Ｌ",
+                'y' to "℃", 'u' to "℉", 'i' to "°", 'o' to "％", 'p' to "‰",
+                'a' to "㎎", 's' to "㎏", 'd' to "㏄", 'f' to "㏗", 'g' to "㎒",
+                'h' to "㎓", 'j' to "㎑", 'k' to "ｋｍ", 'l' to "ｃｍ",
+                'z' to "②", 'x' to "③", 'c' to "④", 'v' to "⑤", 'b' to "⑥",
+                'n' to "⑦", 'm' to "⑧",
+            ),
+            mapOf(
+                'q' to "㏑", 'w' to "㏒", 'e' to "㏈", 'r' to "㏉", 't' to "㏊",
+                'y' to "㏋", 'u' to "㏌", 'i' to "㏍", 'o' to "㏎", 'p' to "㏏",
+                'a' to "㏐", 's' to "㏓", 'd' to "㏔", 'f' to "㏕", 'g' to "㏖",
+                'h' to "㏘", 'j' to "㏙", 'k' to "㏚", 'l' to "㏛",
+                'z' to "㏜", 'x' to "㏝", 'c' to "㎖", 'v' to "㎗", 'b' to "㎘",
+                'n' to "㎠", 'm' to "㎰",
+            ),
+        )),
+        // 平假名
+        SymbolGroup("平假名", listOf(
+            mapOf(
+                'q' to "あ", 'w' to "い", 'e' to "う", 'r' to "え", 't' to "お",
+                'y' to "か", 'u' to "き", 'i' to "く", 'o' to "け", 'p' to "こ",
+                'a' to "さ", 's' to "し", 'd' to "す", 'f' to "せ", 'g' to "そ",
+                'h' to "た", 'j' to "ち", 'k' to "つ", 'l' to "て",
+                'z' to "な", 'x' to "に", 'c' to "ぬ", 'v' to "ね", 'b' to "の",
+                'n' to "は", 'm' to "ひ",
+            ),
+            mapOf(
+                'q' to "ふ", 'w' to "へ", 'e' to "ほ", 'r' to "ま", 't' to "み",
+                'y' to "む", 'u' to "め", 'i' to "も", 'o' to "や", 'p' to "ゆ",
+                'a' to "よ", 's' to "ら", 'd' to "り", 'f' to "る", 'g' to "れ",
+                'h' to "ろ", 'j' to "わ", 'k' to "を", 'l' to "ん",
+                'z' to "が", 'x' to "ぎ", 'c' to "ぐ", 'v' to "げ", 'b' to "ご",
+                'n' to "ぱ", 'm' to "ぴ",
+            ),
+            // 浊音/半浊音/小写
+            mapOf(
+                'q' to "ざ", 'w' to "じ", 'e' to "ず", 'r' to "ぜ", 't' to "ぞ",
+                'y' to "だ", 'u' to "ぢ", 'i' to "づ", 'o' to "で", 'p' to "ど",
+                'a' to "ば", 's' to "び", 'd' to "ぶ", 'f' to "べ", 'g' to "ぼ",
+                'h' to "ぱ", 'j' to "ぴ", 'k' to "ぷ", 'l' to "ぺ",
+                'z' to "ぽ", 'x' to "ぁ", 'c' to "ぃ", 'v' to "ぅ", 'b' to "ぇ",
+                'n' to "ぉ", 'm' to "ゃ",
+            ),
+            mapOf(
+                'q' to "ゅ", 'w' to "ょ", 'e' to "っ", 'r' to "ゎ", 't' to "ゐ",
+                'y' to "ゑ", 'u' to "ゝ", 'i' to "ゞ", 'o' to "ゕ", 'p' to "ゖ",
+            ),
+        )),
+        // 片假名
+        SymbolGroup("片假名", listOf(
+            mapOf(
+                'q' to "ア", 'w' to "イ", 'e' to "ウ", 'r' to "エ", 't' to "オ",
+                'y' to "カ", 'u' to "キ", 'i' to "ク", 'o' to "ケ", 'p' to "コ",
+                'a' to "サ", 's' to "シ", 'd' to "ス", 'f' to "セ", 'g' to "ソ",
+                'h' to "タ", 'j' to "チ", 'k' to "ツ", 'l' to "テ",
+                'z' to "ナ", 'x' to "ニ", 'c' to "ヌ", 'v' to "ネ", 'b' to "ノ",
+                'n' to "ハ", 'm' to "ヒ",
+            ),
+            mapOf(
+                'q' to "フ", 'w' to "ヘ", 'e' to "ホ", 'r' to "マ", 't' to "ミ",
+                'y' to "ム", 'u' to "メ", 'i' to "モ", 'o' to "ヤ", 'p' to "ユ",
+                'a' to "ヨ", 's' to "ラ", 'd' to "リ", 'f' to "ル", 'g' to "レ",
+                'h' to "ロ", 'j' to "ワ", 'k' to "ヲ", 'l' to "ン",
+                'z' to "ガ", 'x' to "ギ", 'c' to "グ", 'v' to "ゲ", 'b' to "ゴ",
+                'n' to "パ", 'm' to "ピ",
+            ),
+            // 浊音/半浊音/小写
+            mapOf(
+                'q' to "ザ", 'w' to "ジ", 'e' to "ズ", 'r' to "ゼ", 't' to "ゾ",
+                'y' to "ダ", 'u' to "ヂ", 'i' to "ヅ", 'o' to "デ", 'p' to "ド",
+                'a' to "バ", 's' to "ビ", 'd' to "ブ", 'f' to "ベ", 'g' to "ボ",
+                'h' to "パ", 'j' to "ピ", 'k' to "プ", 'l' to "ペ",
+                'z' to "ポ", 'x' to "ァ", 'c' to "ィ", 'v' to "ゥ", 'b' to "ェ",
+                'n' to "ォ", 'm' to "ャ",
+            ),
+            mapOf(
+                'q' to "ュ", 'w' to "ョ", 'e' to "ッ", 'r' to "ヮ", 't' to "ヰ",
+                'y' to "ヱ", 'u' to "ヽ", 'i' to "ヾ", 'o' to "ヵ", 'p' to "ヶ",
+            ),
+        )),
+        // 拉丁
+        SymbolGroup("拉丁", listOf(
+            mapOf(
+                'q' to "á", 'w' to "à", 'e' to "ä", 'r' to "â", 't' to "é",
+                'y' to "è", 'u' to "ë", 'i' to "ê", 'o' to "í", 'p' to "ì",
+                'a' to "ï", 's' to "î", 'd' to "ó", 'f' to "ò", 'g' to "ö",
+                'h' to "ô", 'j' to "ú", 'k' to "ù", 'l' to "ü",
+                'z' to "û", 'x' to "ç", 'c' to "ñ", 'v' to "ß", 'b' to "œ",
+                'n' to "ÿ", 'm' to "æ",
+            ),
+            mapOf(
+                'q' to "Á", 'w' to "À", 'e' to "Ä", 'r' to "Â", 't' to "É",
+                'y' to "È", 'u' to "Ë", 'i' to "Ê", 'o' to "Í", 'p' to "Ì",
+                'a' to "Ï", 's' to "Î", 'd' to "Ó", 'f' to "Ò", 'g' to "Ö",
+                'h' to "Ô", 'j' to "Ú", 'k' to "Ù", 'l' to "Ü",
+                'z' to "Œ", 'x' to "Ÿ", 'c' to "Û", 'v' to "Ñ", 'b' to "Æ",
+                'n' to "©", 'm' to "®",
+            ),
+            mapOf(
+                'q' to "ø", 'w' to "å", 'e' to "Ø", 'r' to "Å", 't' to "þ",
+                'y' to "ð", 'u' to "Đ", 'i' to "đ", 'o' to "ħ", 'p' to "ŋ",
+                'a' to "ŧ", 's' to "Ŧ", 'd' to "ẞ", 'f' to "Š", 'g' to "š",
+                'h' to "Ž", 'j' to "ž", 'k' to "Ə", 'l' to "ə",
+                'z' to "Ɛ", 'x' to "ɛ", 'c' to "Ɔ", 'v' to "ɔ", 'b' to "ɐ",
+                'n' to "ɑ", 'm' to "ɒ",
+            ),
+        )),
+        // 特殊
+        SymbolGroup("特殊", listOf(
+            mapOf(
+                'q' to "♥", 'w' to "♦", 'e' to "♣", 'r' to "♠", 't' to "★",
+                'y' to "☆", 'u' to "♪", 'i' to "♫", 'o' to "☺", 'p' to "☹",
+                'a' to "♡", 's' to "♢", 'd' to "♧", 'f' to "♤", 'g' to "☞",
+                'h' to "☜", 'j' to "❀", 'k' to "☆", 'l' to "⚡",
+                'z' to "✓", 'x' to "✗", 'c' to "☑", 'v' to "☐", 'b' to "①②",
+                'n' to "③", 'm' to "④",
+            ),
+            mapOf(
+                'q' to "☀", 'w' to "☁", 'e' to "☂", 'r' to "❄", 't' to "☃",
+                'y' to "☎", 'u' to "✉", 'i' to "✈", 'o' to "⚓", 'p' to "⚑",
+                'a' to "❤", 's' to "☻", 'd' to "☼", 'f' to "☽", 'g' to "♨",
+                'h' to "☿", 'j' to "♄", 'k' to "由", 'l' to "白",
+                'z' to "☘", 'x' to "♁", 'c' to "☛", 'v' to "☚", 'b' to "➜",
+                'n' to "⏏", 'm' to "※",
+            ),
+            // 常用 emoji
+            mapOf(
+                'q' to "😀", 'w' to "😁", 'e' to "😂", 'r' to "🤣", 't' to "😊",
+                'y' to "😉", 'u' to "😍", 'i' to "😘", 'o' to "😎", 'p' to "🤔",
+                'a' to "😏", 's' to "😒", 'd' to "😢", 'f' to "😭", 'g' to "😅",
+                'h' to "😳", 'j' to "🤗", 'k' to "💪", 'l' to "👌",
+                'z' to "👍", 'x' to "👎", 'c' to "🙏", 'v' to "💯", 'b' to "❤️",
+                'n' to "🔥", 'm' to "🎉",
+            ),
+        )),
+        // 注音：第 1 页声调（带调拼音字母 + 声调符号），其后为完整注音符号
+        SymbolGroup("注音", listOf(
+            mapOf(
+                'q' to "ā", 'w' to "á", 'e' to "ǎ", 'r' to "à", 't' to "ō",
+                'y' to "ó", 'u' to "ǒ", 'i' to "ò", 'o' to "ē", 'p' to "é",
+                'a' to "ě", 's' to "è", 'd' to "ī", 'f' to "í", 'g' to "ǐ",
+                'h' to "ì", 'j' to "ū", 'k' to "ú", 'l' to "ǔ",
+                'z' to "ù", 'x' to "ǖ", 'c' to "ǘ", 'v' to "ǚ", 'b' to "ǜ",
+                'n' to "ˉ", 'm' to "ˊ",
+            ),
+            // 第 2 页：剩余声调符号 + 注音声母/介音
+            mapOf(
+                'q' to "ˇ", 'w' to "ˋ", 'e' to "˙", 'r' to "ㄅ", 't' to "ㄆ",
+                'y' to "ㄇ", 'u' to "ㄈ", 'i' to "ㄉ", 'o' to "ㄊ", 'p' to "ㄋ",
+                'a' to "ㄌ", 's' to "ㄍ", 'd' to "ㄎ", 'f' to "ㄏ", 'g' to "ㄐ",
+                'h' to "ㄑ", 'j' to "ㄒ", 'k' to "ㄓ", 'l' to "ㄔ",
+                'z' to "ㄕ", 'x' to "ㄖ", 'c' to "ㄗ", 'v' to "ㄘ", 'b' to "ㄙ",
+                'n' to "ㄧ", 'm' to "ㄨ",
+            ),
+            // 第 3 页：注音韵母（不满 26 键，剩余按键显示空文本）
+            mapOf(
+                'q' to "ㄩ", 'w' to "ㄚ", 'e' to "ㄛ", 'r' to "ㄜ", 't' to "ㄝ",
+                'y' to "ㄞ", 'u' to "ㄟ", 'i' to "ㄠ", 'o' to "ㄡ", 'p' to "ㄢ",
+                'a' to "ㄣ", 's' to "ㄤ", 'd' to "ㄥ", 'f' to "ㄦ", 'g' to "ㄭ",
+            ),
+        )),
+    )
+
+    /** 当前符号分组索引（候选栏标签，仅点击切换） */
+    private var symbolGroupIndex = 0
+
+    /** 当前组内的符号页偏移（左滑下一页/右滑上一页，不跨组） */
+    private var symbolPageInGroup = 0
+
+    /** 当前显示的分组（供标签高亮判断） */
+    private fun currentSymbolGroup(): SymbolGroup =
+        symbolGroups[symbolGroupIndex.coerceIn(0, symbolGroups.lastIndex)]
+
+    /** 当前符号分组当前页的键位映射 */
+    private fun currentSymbolMap(): Map<Char, String> {
+        val group = currentSymbolGroup()
+        return group.pages[symbolPageInGroup.coerceIn(0, group.pages.lastIndex)]
+    }
 
     init {
         orientation = VERTICAL
@@ -191,6 +500,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnDigit = root.findViewById(R.id.key_digit)
         btnLang = root.findViewById(R.id.key_lang)
         btnSpace = root.findViewById(R.id.key_space)
+        btnSpaceHint = root.findViewById(R.id.key_space_hint)
         btnBackspace = root.findViewById(R.id.key_backspace)
         btnEnter = root.findViewById(R.id.key_enter)
         btnShift = root.findViewById(R.id.key_shift)
@@ -236,9 +546,65 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 val key = root.findViewById<PinyinKey>(letterKeyId(c)) ?: continue
                 key.label = c.toString()
                 keyViews[c] = key
-                key.setOnClickListener { onLetterPressed(c) }
+                // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
+                key.setOnTouchListener { _, event -> handleKeyTouch(c, event) }
             }
         }
+    }
+
+    /** 字母键手势状态 */
+    private var keyTouchStartX = 0f
+    private var keyTouchConsumed = false
+
+    private fun dpFloat(v: Float): Float = v * resources.displayMetrics.density
+
+    /**
+     * 字母键触摸：正常点击上屏；符号层左右滑动切换符号页。
+     * 左滑（dx<0）下一页、右滑（dx>0）上一页，滑动后本次按下不再触发点击。
+     */
+    private fun handleKeyTouch(c: Char, event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                keyTouchStartX = event.rawX
+                keyTouchConsumed = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                // 符号层：水平滑动在「当前分组内」翻页（不切换分组）
+                if (layer == LAYER_SYMBOL && !keyTouchConsumed) {
+                    val group = currentSymbolGroup()
+                    if (group.pages.size > 1) {
+                        val dx = event.rawX - keyTouchStartX
+                        if (Math.abs(dx) >= dpFloat(24f)) {
+                            keyTouchConsumed = true
+                            if (dx < 0) {
+                                symbolPageInGroup = (symbolPageInGroup + 1) % group.pages.size
+                            } else {
+                                symbolPageInGroup = (symbolPageInGroup - 1 + group.pages.size) % group.pages.size
+                            }
+                            refreshKeyLabels()
+                            refreshCandidateBar() // 同步选中组右下角的页码小字
+                            Diagnostics.i(
+                                TAG,
+                                "符号组内翻页: ${group.label} 第 ${symbolPageInGroup + 1}/${group.pages.size} 页",
+                            )
+                        }
+                    }
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                // 未滑动（或非符号层）才当作点击输入
+                if (!keyTouchConsumed) onLetterPressed(c)
+                keyTouchConsumed = false
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                keyTouchConsumed = false
+                return true
+            }
+        }
+        return false
     }
 
     private fun letterKeyId(c: Char): Int = when (c) {
@@ -275,14 +641,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnSymbol.setOnClickListener {
             layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
             refreshKeyLabels()
+            // 符号层<->字母层切换：候选栏始终回到对应状态（进入显示分组 / 退出恢复正常）
+            refreshCandidateBar()
             Diagnostics.i(TAG, "符号层: ${layer == LAYER_SYMBOL}")
         }
         btnDigit.setOnClickListener {
             layer = if (layer == LAYER_DIGIT) LAYER_LETTER else LAYER_DIGIT
             refreshKeyLabels()
+            refreshCandidateBar()
             Diagnostics.i(TAG, "数字层: ${layer == LAYER_DIGIT}")
         }
         btnLang.setOnClickListener {
+            // 大写键激活：强制锁定大写英文，任何中英切换无效
+            if (capsMode) {
+                Diagnostics.i(TAG, "中英切换: 大写锁定激活，切换无效")
+                return@setOnClickListener
+            }
             englishMode = !englishMode
             if (englishMode) {
                 // 切英文时清掉未上屏的拼音
@@ -389,7 +763,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 符号层 / 数字层：直接上屏对应字符
         when (layer) {
             LAYER_SYMBOL -> {
-                val symbol = symbolMap[c] ?: return
+                val symbol = currentSymbolMap()[c]?.takeIf { it.isNotEmpty() } ?: return
                 listener?.onCommitText(symbol)
                 return
             }
@@ -565,6 +939,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 候选渲染 ───────────────────────────────────────────
 
     private fun refreshCandidateBar() {
+        // 符号层：候选栏显示符号分组标签（可横向滚动切换）
+        if (layer == LAYER_SYMBOL) {
+            renderSymbolGroups()
+            return
+        }
         val input = composing.toString()
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
@@ -626,6 +1005,60 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
+    private fun renderSymbolGroups() {
+        viewCandidatePinyin.text = ""
+        viewCandidateList.removeAllViews()
+        val labelSize = 13f // 分组主文本字号（sp）
+        for ((idx, group) in symbolGroups.withIndex()) {
+            val sel = idx == symbolGroupIndex
+            // 矩形按钮 + 主文本 + 选中组的右下角页码小字
+            val item = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setBackgroundResource(R.drawable.key_bg_rect)
+                setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
+                isClickable = true
+                setOnClickListener {
+                    if (symbolGroupIndex != idx) {
+                        // 分组仅点击切换，且回到该组第一页
+                        symbolGroupIndex = idx
+                        symbolPageInGroup = 0
+                        refreshKeyLabels()
+                        refreshCandidateBar()
+                        Diagnostics.i(TAG, "符号分组切换: ${group.label} (${idx + 1}/${symbolGroups.size})")
+                    }
+                }
+            }
+            // 主文本（矩形样式，字体放大 30%）
+            val label = TextView(context).apply {
+                text = group.label
+                textSize = labelSize
+                setTextColor(resources.getColor(
+                    if (sel) R.color.kb_key_hint_red else R.color.text_primary, context.theme))
+                gravity = android.view.Gravity.CENTER
+            }
+            item.addView(label, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // 选中组：右下角显示「当前页/总页数」小字
+            if (sel) {
+                val pageText = TextView(context).apply {
+                    text = "${symbolPageInGroup.coerceIn(0, group.pages.lastIndex) + 1}/${group.pages.size}"
+                    textSize = 9f // sp
+                    setTextColor(resources.getColor(R.color.text_secondary, context.theme))
+                    gravity = android.view.Gravity.RIGHT or android.view.Gravity.BOTTOM
+                }
+                item.addView(pageText, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            viewCandidateList.addView(item, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                marginStart = dpFloat(2f).toInt()
+                marginEnd = dpFloat(2f).toInt()
+            })
+        }
+    }
+
     private fun onCandidateSelected(candidate: String) {
         Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         listener?.onCommitText(candidate)
@@ -645,20 +1078,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 键面显示 ───────────────────────────────────────────
 
     private fun refreshKeyLabels() {
-        val showUpper = capsMode && !englishMode && layer == LAYER_LETTER
-        // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示
-        val fullPinyin = !shuangpinMode
+        // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高
+        val showUpper = capsMode && layer == LAYER_LETTER
+        // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示。
+        // 大写键激活：统一全拼大字铺满。
+        // 小写英文：统一「双拼切英文」的小字顶置样式（不随来源全拼/双拼变化）。
+        val fullPinyin = when {
+            capsMode -> true
+            englishMode -> false
+            else -> !shuangpinMode
+        }
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
             key.label = when (layer) {
-                LAYER_SYMBOL -> symbolMap[c] ?: c.toString()
+                LAYER_SYMBOL -> currentSymbolMap()[c] ?: "" // 未映射的键显示空文本
                 LAYER_DIGIT -> digitMap[c] ?: c.toString()
                 else ->
                     if (showUpper) c.uppercaseChar().toString() else c.toString()
             }
-            // 双拼模式下显示自然码键位提示（字母层）
-            val showHint = layer == LAYER_LETTER && !englishMode && shuangpinMode
+            // 双拼模式下显示自然码键位提示（字母层）；大写激活时隐藏，统一用全拼大写键盘
+            val showHint = layer == LAYER_LETTER && !englishMode && shuangpinMode && !capsMode
             key.subLabel = if (showHint) shuangpinHint(c) else ""
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
@@ -677,6 +1117,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 大写锁定：shift 键高亮
         btnShift.setBackgroundResource(if (capsMode) R.drawable.key_bg_active else R.drawable.key_bg)
         btnShift.alpha = 1f
+        // 空格键顶部小字：同步当前输入类型
+        updateSpaceHint()
+    }
+
+    /** 当前输入类型文案：大写锁定激活时强制「大写英文」，任何方案切换均无效 */
+    private fun currentInputTypeLabel(): String = when {
+        capsMode -> "大写英文"
+        englishMode -> "小写英文"
+        shuangpinMode -> "中文双拼"
+        else -> "中文全拼"
+    }
+
+    /** 刷新空格键顶部小字（输入类型） */
+    private fun updateSpaceHint() {
+        if (::btnSpaceHint.isInitialized) btnSpaceHint.text = currentInputTypeLabel()
     }
 
     /**
@@ -724,10 +1179,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /**
      * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板：
+     *  - 双拼/全拼：切换输入方案（键盘内部状态翻转）
      *  - 剪贴板：打开安全剪贴板历史页
      *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
-     *  - 双拼/全拼：切换输入方案（键盘内部状态翻转）
-     *  - 收起键盘：隐藏输入法面板（重新点击输入框再唤醒）
+     *  - 全选：选中输入框全部文本
+     *  - 复制：复制选中文本到系统剪贴板
+     *  - 粘贴：粘贴剪贴板最新内容
+     *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）
      *
      * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（48dp），
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
@@ -740,8 +1198,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onClick = { togglePinyinScheme() },
         ))
         viewCandidateList.addView(buildFunctionButton(
-            label = "剪贴板",
-            hint = "历史",
+            label = "历史",
+            hint = "剪贴板",
             onClick = {
                 Diagnostics.i(TAG, "功能面板: 点击剪贴板按钮")
                 listener?.onOpenClipboard()
@@ -755,16 +1213,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
             },
         ))
         viewCandidateList.addView(buildFunctionButton(
+            label = "全选",
+            hint = "文本",
+            onClick = { listener?.onSelectAll() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
+            label = "复制",
+            hint = "避免窃取",
+            onClick = { listener?.onCopy() },
+        ))
+        viewCandidateList.addView(buildFunctionButton(
             label = "粘贴",
-            hint = "剪贴板",
+            hint = "文本",
             onClick = { listener?.onPasteClipboard() },
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "收起",
-            hint = "键盘",
+            hint = "隐藏键盘",
             onClick = { listener?.onHideKeyboard() },
         ))
-        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/剪贴板/方向/粘贴/收起")
+        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/历史/方向/全选/复制/粘贴/收起")
     }
 
     /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
@@ -778,7 +1246,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             setOnClickListener { onClick() }
         }
-        // 五等分：每个按钮 weight=1，均分候选栏宽度（5 个按钮各占 1/5）
+        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（7 个按钮各占 1/7）
         val lp = LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.MATCH_PARENT, 1f
         ).apply {
@@ -804,6 +1272,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 双拼/全拼切换：翻转方案 + 刷新键面提示 + 更新偏好（下次唤起保持） */
     private fun togglePinyinScheme() {
+        // 大写键激活：强制锁定大写英文，任何方案切换无效
+        if (capsMode) {
+            Diagnostics.i(TAG, "输入方案切换: 大写锁定激活，切换无效")
+            return
+        }
         shuangpinMode = !shuangpinMode
         // 持久化：切换结果写入设置，输入法重建后保持本次选择
         runCatching { Prefs(context).useShuangpin = shuangpinMode }

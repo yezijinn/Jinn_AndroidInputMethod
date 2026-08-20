@@ -1,0 +1,730 @@
+# JinnIme 剪贴板访问隔离与防读取设计规范
+
+> **供 Agent 直接执行。**
+>
+> 核心目标：**保护 JinnIme 的剪贴板历史，不破坏 Android 系统 Clipboard 的正常生态。**
+
+---
+
+## 1. 核心设计原则
+
+必须严格区分两个数据域：
+
+```text
+A. Android System Clipboard
+B. JinnIme Clipboard History
+```
+
+两者不是同一个数据源，禁止混合设计。
+
+### A. Android System Clipboard
+
+保持 Android 原生行为。
+
+用途包括：
+
+- 网盘口令识别
+- 购物 APP 口令识别
+- 分享链接识别
+- URL 自动识别
+- 第三方 APP 的正常 Clipboard 功能
+
+**禁止 JinnIme 主动阻断、篡改或周期性清空。**
+
+### B. JinnIme Clipboard History
+
+这是 JinnIme 的私有数据。
+
+目标：
+
+> **任何第三方 APP 都不能读取 JinnIme 保存的历史记录。**
+
+---
+
+# 2. 最终数据架构
+
+```text
+用户复制
+    │
+    ▼
+Android System Clipboard
+    │
+    ├──────────────► 第三方 APP
+    │                 │
+    │                 └─ 读取最新 Clipboard
+    │                    识别口令 / URL / 分享码
+    │
+    ▼
+JinnIme ClipboardController
+    │
+    ▼
+ClipboardStore
+    │
+    ├─ 内容分类
+    ├─ 内容去重
+    ├─ AES-256-GCM 加密
+    │
+    ▼
+JinnIme Private Storage
+    │
+    └─ ClipboardDb
+             │
+             ▼
+       仅 JinnIme 读取
+```
+
+---
+
+# 3. 第三方 APP 不得读取 History
+
+## 3.1 删除第三方读取接口
+
+如果项目当前存在：
+
+```text
+ClipboardHistoryProvider
+ClipboardPermissionStore
+ClipboardPermissionActivity
+第三方 APP 授权读取
+```
+
+默认设计应当**全部移除**。
+
+不要设计成：
+
+```text
+APP A → 授权 → 可以读取历史
+```
+
+而应该：
+
+```text
+第三方 APP
+     │
+     ▼
+JinnIme Clipboard History
+     │
+     └── 永久拒绝
+```
+
+JinnIme 不提供 Clipboard History API。
+
+---
+
+# 4. Android App Sandbox
+
+历史数据只能位于 JinnIme 私有目录：
+
+```text
+/data/user/0/<package_name>/
+```
+
+禁止：
+
+```text
+/sdcard/
+/storage/emulated/0/
+/Download/
+/Documents/
+```
+
+禁止把历史数据库、JSON、缓存、导出文件放到公共存储。
+
+文件权限保持最小权限：
+
+```text
+Directory: 0700
+Database: 0600
+```
+
+---
+
+# 5. Clipboard History 数据加密
+
+采用：
+
+```text
+AES-256-GCM
+```
+
+密钥由：
+
+```text
+Android Keystore
+```
+
+管理。
+
+数据库只保存密文：
+
+```text
+ClipboardRecord
+├── id
+├── encrypted_content
+├── iv
+├── content_hash
+├── category
+├── is_favorite
+├── created_at
+└── updated_at
+```
+
+禁止：
+
+```text
+content TEXT
+plaintext_content
+```
+
+直接保存完整正文。
+
+---
+
+# 6. 去重机制必须在入库阶段完成
+
+此前项目存在：
+
+```text
+同一 Clipboard 事件
+       ↓
+OnPrimaryClipChangedListener 多次回调
+       ↓
+重复 save()
+       ↓
+数据库出现重复记录
+       ↓
+打开面板时 deduplicate()
+       ↓
+用户感觉“内容消失”
+```
+
+必须改成：
+
+```text
+Clipboard Event
+      ↓
+计算 content_hash
+      ↓
+数据库唯一约束 / 原子 Upsert
+      ↓
+已经存在 → 更新必要元数据
+不存在 → INSERT
+```
+
+**禁止依赖“打开剪贴板页面时全表 deduplicate()”维持数据正确性。**
+
+UI 打开只负责读取。
+
+---
+
+# 7. 分类机制
+
+分类与“敏感内容”完全解耦。
+
+JinnIme **不得主动识别敏感信息**。
+
+禁止：
+
+```text
+密码检测
+验证码检测
+银行卡检测
+身份证检测
+Token 检测
+Cookie 检测
+敏感内容自动分类
+敏感内容自动删除
+```
+
+可以保留正常的非安全分类：
+
+```text
+GENERAL
+URL
+NUMBER
+```
+
+如果保留“隐私”分类：
+
+> **只能由用户主动操作产生，不能由系统自动识别产生。**
+
+---
+
+# 8. 不存在敏感内容生命周期
+
+删除：
+
+```text
+is_sensitive
+sensitive_type
+sensitivePolicy
+NEVER_SAVE
+TEMPORARY
+SAVE_NORMALLY
+expire_at
+temporaryDuration
+deleteExpired()
+```
+
+不再存在：
+
+```text
+复制密码
+    ↓
+5 分钟
+    ↓
+自动删除
+```
+
+所有普通剪贴板记录遵循统一生命周期。
+
+删除来源只有：
+
+```text
+1. 用户主动删除
+2. 用户主动清理重复
+3. 非收藏记录超过最大容量后的正常淘汰
+```
+
+---
+
+# 9. 收藏数据必须独立保护
+
+收藏：
+
+```text
+is_favorite = true
+```
+
+具有最高生命周期优先级。
+
+### “删除全部”
+
+```text
+DELETE WHERE is_favorite = 0
+```
+
+不能删除收藏。
+
+### 容量淘汰
+
+```text
+超过 maxItems
+    ↓
+优先删除最旧的非收藏记录
+    ↓
+收藏永久保留
+```
+
+---
+
+# 10. System Clipboard 不进行 Firewall 清空
+
+这是本项目非常重要的设计调整。
+
+禁止默认执行：
+
+```text
+service call clipboard
+```
+
+或者：
+
+```text
+定时清空 Android System Clipboard
+```
+
+原因：
+
+```text
+用户复制网盘口令
+       ↓
+System Clipboard
+       ↓
+网盘 APP
+       ↓
+识别口令
+       ↓
+自动跳转
+```
+
+如果 JinnIme Root Firewall 主动清空：
+
+```text
+System Clipboard
+       ↓
+被 JinnIme 清空
+       ↓
+网盘无法识别
+```
+
+直接破坏正常功能。
+
+因此：
+
+> **JinnIme 不负责保护 Android System Clipboard。**
+
+---
+
+# 11. ROOT 模式的正确职责
+
+ROOT 模式只强化：
+
+```text
+JinnIme Clipboard History
+```
+
+而不是干预 System Clipboard。
+
+ROOT 增强功能：
+
+```text
+Root
+├── 数据目录权限检查
+├── 文件 Owner 检查
+├── SELinux 状态检查
+├── 数据库完整性检查
+├── Symbolic Link 检查
+├── 外部存储泄露检查
+└── Backup 配置检查
+```
+
+例如：
+
+```text
+/data/user/0/<package>/
+        │
+        ├── owner = JinnIme UID
+        ├── directory = 0700
+        └── database = 0600
+```
+
+---
+
+# 12. ROOT 安全边界必须明确
+
+不能声称：
+
+> ROOT 模式可以阻止所有 APP 读取 JinnIme 数据。
+
+因为：
+
+```text
+ROOT
+   ↓
+可以绕过 Android App Sandbox
+```
+
+因此正式定义：
+
+```text
+普通 APP
+→ 无法读取 JinnIme History
+
+ROOT APP
+→ Android Sandbox 保护不再是绝对边界
+
+Kernel / Hook / Root Malware
+→ Android App 层无法保证绝对防护
+```
+
+---
+
+# 13. Backup 防泄露
+
+必须审查：
+
+```text
+android:allowBackup
+android:dataExtractionRules
+android:fullBackupContent
+```
+
+确保：
+
+```text
+Clipboard DB
+Clipboard Cache
+Clipboard Export
+Clipboard Key Material
+```
+
+不会通过：
+
+- Android Backup
+- 云备份
+- 设备迁移
+- 自动恢复
+
+泄露到其他环境。
+
+---
+
+# 14. 日志安全
+
+这是开发阶段重点。
+
+允许：
+
+```text
+Clipboard:
+id=128
+len=57
+hash=xxxx
+category=URL
+save=success
+```
+
+禁止：
+
+```text
+Clipboard:
+content=https://xxxxx
+```
+
+尤其禁止输出：
+
+```text
+密码
+Token
+Cookie
+验证码
+URL 完整参数
+剪贴板全文
+```
+
+即使是：
+
+```text
+DEBUG
+VERBOSE
+TRACE
+```
+
+也不能输出。
+
+---
+
+# 15. UI 安全
+
+剪贴板历史页面：
+
+```text
+Window.FLAG_SECURE
+```
+
+用于防止：
+
+- 截图
+- 录屏
+- 最近任务缩略图泄露
+
+但注意：
+
+> `FLAG_SECURE` 只保护 UI，不等于数据库安全。
+
+两者必须分别实现。
+
+---
+
+# 16. 生命周期与并发
+
+Clipboard History 必须保证：
+
+```text
+Clipboard callback
+       ↓
+单线程/事务化 Store
+       ↓
+Database
+```
+
+禁止多个后台线程同时修改：
+
+```text
+currentItems
+adapter data
+database state
+```
+
+UI：
+
+```text
+DB Thread
+   ↓
+Immutable Snapshot
+   ↓
+Main Thread
+   ↓
+Adapter
+```
+
+避免此前出现的：
+
+```text
+DB=33
+adapter=33
+ListView=0 child
+```
+
+以及：
+
+```text
+refresh
+dedupe
+category filter
+```
+
+互相竞争。
+
+---
+
+# 17. 面板打开流程
+
+新的推荐流程：
+
+```text
+showClipboardPanel()
+        ↓
+currentCategory = ALL
+        ↓
+立即读取 DB
+        ↓
+生成 immutable snapshot
+        ↓
+adapter.submit(snapshot)
+        ↓
+UI 渲染
+        ↓
+后台执行非必要维护任务
+```
+
+禁止：
+
+```text
+打开面板
+    ↓
+先 deduplicate
+    ↓
+等待数据库
+    ↓
+再 refresh
+```
+
+因为这会造成：
+
+- 显示旧数据
+- 数据数量变化
+- UI 闪烁
+- 分类残留
+- 看起来“缺记录”
+
+---
+
+# 18. 第三方 APP 的正确行为
+
+### 网盘
+
+```text
+System Clipboard
+       ↓
+网盘读取最新内容
+       ↓
+识别口令
+```
+
+正常。
+
+### 购物 APP
+
+```text
+System Clipboard
+       ↓
+读取最新 Clipboard
+       ↓
+识别优惠码
+```
+
+正常。
+
+### 其他 APP 想读取 JinnIme 历史
+
+```text
+第三方 APP
+       ↓
+JinnIme Clipboard History
+       ↓
+拒绝
+```
+
+不提供 API。
+
+---
+
+# 19. 测试矩阵
+
+Agent 必须测试：
+
+| 测试 | 预期 |
+|---|---|
+| 复制普通文本 | 正常进入 History |
+| 复制 URL | 正常进入 URL |
+| 复制数字 | 正常进入 NUMBER |
+| 复制任意所谓“密码” | 不特殊处理 |
+| 连续复制相同内容 | 不产生重复记录 |
+| 打开面板 | 完整历史立即显示 |
+| 切换分类 | 数据正确 |
+| 删除全部 | 收藏保留 |
+| 清理重复 | 只删除真正重复项 |
+| 网盘读取最新 Clipboard | 正常 |
+| 购物 APP 读取最新 Clipboard | 正常 |
+| 第三方读取 History | 拒绝 |
+| 截图 History 页面 | 被阻止 |
+| logcat | 不出现正文 |
+| Backup | 不包含 History |
+| ROOT 权限审计 | 数据目录权限正确 |
+
+---
+
+# 20. 最终架构结论
+
+最终不要做：
+
+```text
+❌ 禁止所有 APP 读取 Clipboard
+❌ Root 定时清空 Clipboard
+❌ 自动识别敏感内容
+❌ 自动删除敏感内容
+❌ 第三方 APP 读取 JinnIme History
+❌ 打开页面自动 deduplicate
+```
+
+最终应该是：
+
+```text
+                         Android System Clipboard
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │                           │
+                第三方 APP                    JinnIme
+                    │                           │
+             正常读取最新内容                    ▼
+             识别口令/链接                ClipboardStore
+                                                │
+                                         去重 + 分类
+                                                │
+                                        AES-256-GCM
+                                                │
+                                       Android Keystore
+                                                │
+                                        App Private DB
+                                                │
+                                                ▼
+                                         JinnIme 自己读取
+```
+
+### 核心安全模型
+
+> **不保护“系统 Clipboard 不被读取”，而保护“JinnIme Clipboard History 不被读取”。**
+
+这样既保留网盘、购物、分享类 APP 的**口令识别能力**，又能让 JinnIme 自己保存的**完整剪贴板历史成为真正的私有数据**。
