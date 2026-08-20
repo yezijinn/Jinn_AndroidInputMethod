@@ -26,17 +26,15 @@ import java.util.Locale
  * 剪贴板历史页（输入法内部功能页）。
  *
  * 功能（文档剪贴板优化）：
- *  - 分类栏：全部 / 网址 / 隐私 / 数字 / 收藏（收藏为独立标签，可与分类并存）
- *  - 每条记录显示**动态 UI 序号**（最新=最大，删除/去重后重新连续编号，非数据库 ID）
+ *  - 分类栏：全部 / 网址 / 数字 / 收藏（收藏为独立标签，可与分类并存）
+ *  - 每条记录显示**动态 UI 序号**（最新=当前，删除去重后重新连续编号，非数据库 ID）
  *  - 点击记录 → 广播回传 IME 粘贴 + 关闭本页返回输入法上一页面
  *  - 实时搜索（输入即搜，删除原搜索按钮，大小写不敏感任意位置匹配，保留原始序号）
  *  - 清理重复（严格字符串比较，只保留最新）
- *  - 长按：收藏 / 取消收藏 / 加入隐私 / 移出隐私 / 删除
- *  - 隐私内容默认隐藏明文，点击才显示
+ *  - 长按：收藏 / 取消收藏 / 删除
  *
- * 隐私设计：
+ * 安全设计：
  *  - FLAG_SECURE 禁止截图；
- *  - 隐私分类只能用户主动标记，绝不自动；
  *  - 不输出任何剪贴板正文日志。
  */
 class ClipboardHistoryActivity : Activity() {
@@ -50,7 +48,6 @@ class ClipboardHistoryActivity : Activity() {
     private lateinit var categoryBar: HorizontalScrollView
     private lateinit var btnCategoryAll: TextView
     private lateinit var btnCategoryUrl: TextView
-    private lateinit var btnCategoryPrivate: TextView
     private lateinit var btnCategoryNumber: TextView
     private lateinit var btnCategoryFavorite: TextView
     private lateinit var btnDedupe: TextView
@@ -133,14 +130,12 @@ class ClipboardHistoryActivity : Activity() {
             } else {
                 (currentItems.size - pos).toString()
             }
-            // 隐私内容默认隐藏明文
-            h.content.text = if (item.isPrivate) getString(R.string.clipboard_private_hidden) else item.content
+            h.content.text = item.content
             h.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.sourcePackage.isNotBlank()) append(" · ").append(item.sourceAppName.ifBlank { item.sourcePackage.substringAfterLast('.') })
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
-                if (item.isPrivate) append(" · 隐私")
             }
             return root
         }
@@ -167,7 +162,7 @@ class ClipboardHistoryActivity : Activity() {
             setPadding(dp(12), dp(16), dp(12), dp(12))
         }
 
-        // ── 分类栏：全部 | 网址 | 隐私 | 数字 | 收藏 ──
+        // ── 分类栏：全部 | 网址 | 数字 | 收藏 ──
         categoryBar = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
         }
@@ -176,10 +171,9 @@ class ClipboardHistoryActivity : Activity() {
         }
         btnCategoryAll = categoryTab(R.string.clipboard_cat_all, onClick = { selectCategory(null) })
         btnCategoryUrl = categoryTab(R.string.clipboard_cat_url, onClick = { selectCategory(ClipboardClassifier.CATEGORY_URL) })
-        btnCategoryPrivate = categoryTab(R.string.clipboard_cat_private, onClick = { selectCategory(CATEGORY_PRIVATE) })
         btnCategoryNumber = categoryTab(R.string.clipboard_cat_number, onClick = { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) })
         btnCategoryFavorite = categoryTab(R.string.clipboard_cat_favorite, onClick = { selectCategory(CATEGORY_FAVORITE) })
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryPrivate, btnCategoryNumber, btnCategoryFavorite)) {
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
             catRow.addView(tab, LinearLayout.LayoutParams(
                 dp(76), dp(40)).apply { marginEnd = dp(6) })
         }
@@ -318,11 +312,10 @@ class ClipboardHistoryActivity : Activity() {
 
     private fun refreshCategoryTabs() {
         val selected = currentCategory
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryPrivate, btnCategoryNumber, btnCategoryFavorite)) {
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
             val isSelected = when (tab) {
                 btnCategoryAll -> selected == null
                 btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
-                btnCategoryPrivate -> selected == CATEGORY_PRIVATE
                 btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
                 else -> selected == CATEGORY_FAVORITE
             }
@@ -346,7 +339,6 @@ class ClipboardHistoryActivity : Activity() {
         BackgroundIo.run {
             val all = db.recent(max)
             val current = when {
-                category == CATEGORY_PRIVATE -> db.recentPrivate(max)
                 category == CATEGORY_FAVORITE -> db.recentFavorites(max)
                 category != null -> db.recent(max, category)
                 else -> all
@@ -361,9 +353,13 @@ class ClipboardHistoryActivity : Activity() {
                 Diagnostics.i(TAG, "refresh-end: category=$category allSize=${all.size} visibleSize=${currentItems.size}")
                 adapter.notifyDataSetChanged()
                 updateEmpty()
-                if (revealedPrivateIds.isNotEmpty()) {
-                    val ids = all.mapTo(HashSet()) { it.id }
-                    revealedPrivateIds.retainAll(ids)
+                // 首帧布局竞态兜底（与内嵌面板一致）：异步回填可能发生在 ListView
+                // 首次布局完成前，等布局稳定后二次通知重绘，确保 item 真正创建。
+                listView.post {
+                    if (reqToken != refreshToken) return@post
+                    adapter.notifyDataSetChanged()
+                    listView.requestLayout()
+                    listView.invalidate()
                 }
                 if (resetScroll && currentItems.isNotEmpty()) {
                     listView.post { listView.setSelection(0) }
@@ -410,12 +406,13 @@ class ClipboardHistoryActivity : Activity() {
         val empty = currentItems.isEmpty()
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
         listView.visibility = if (empty) View.GONE else View.VISIBLE
+        // 与内嵌面板一致的 G 类根因修复：GONE→VISIBLE 切换后强制重新布局，
+        // 否则 notifyDataSetChanged 在 GONE 期间调用，item 永不创建（有高有数但空白）。
+        listView.requestLayout()
+        listView.invalidate()
     }
 
     // ── 点击粘贴 / 长按菜单 ───────────────────────────────
-
-    /** 已揭示明文的隐私记录 ID（点击一次显示明文，再点才粘贴） */
-    private val revealedPrivateIds = HashSet<Long>()
 
     /** 快速点击去重：一次粘贴操作完成前忽略后续点击（bug 审查计划 §9） */
     private var pasting = false
@@ -442,20 +439,12 @@ class ClipboardHistoryActivity : Activity() {
     }
 
     /**
-     * 处理 item 点击（隐私揭示 / 粘贴）。
-     * 导航不变量（bug 审查计划 §34）：只有「有效 Item + commitText 成功」才触发返回；
-     * 隐私首次揭示只是刷新 UI，绝不返回。
+     * 处理 item 点击：请求 IME 粘贴。
+     * 导航不变量（bug 审查计划 §34）：只有「有效 Item + commitText 成功」才触发返回。
      */
     private fun handleItemClick(item: ClipboardDb.Item) {
         // 快速点击去重：上次粘贴未完成时忽略新点击
         if (pasting) return
-        // 隐私内容：先显示明文（点击一次），再点第二次才粘贴
-        if (item.isPrivate && !revealedPrivateIds.contains(item.id)) {
-            revealedPrivateIds.add(item.id)
-            adapter.notifyDataSetChanged()
-            Toast.makeText(this, R.string.clipboard_private_revealed, Toast.LENGTH_SHORT).show()
-            return
-        }
         requestPaste(item)
     }
 
@@ -484,15 +473,13 @@ class ClipboardHistoryActivity : Activity() {
         }
     }
 
-    /** 长按菜单：收藏 / 隐私 / 删除 */
+    /** 长按菜单：收藏 / 删除 */
     private fun showItemMenu(item: ClipboardDb.Item) {
         // 用简洁的自定义弹窗避免引入新依赖
         val options = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
         options.add(getString(if (item.isFavorite) R.string.clipboard_unfavorite else R.string.clipboard_favorite))
         actions.add { db.setFavorite(item.id, !item.isFavorite); refresh(resetScroll = true) }
-        options.add(getString(if (item.isPrivate) R.string.clipboard_unmark_private else R.string.clipboard_mark_private))
-        actions.add { db.setPrivate(item.id, !item.isPrivate); refresh(resetScroll = true) }
         options.add(getString(R.string.clipboard_delete))
         actions.add { db.delete(item.id); refresh(resetScroll = true) }
 
@@ -521,7 +508,6 @@ class ClipboardHistoryActivity : Activity() {
 
     private companion object {
         const val TAG = "ClipboardHistory"
-        const val CATEGORY_PRIVATE = "PRIVATE"
         const val CATEGORY_FAVORITE = "FAVORITE"
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     }

@@ -418,12 +418,12 @@ class JinnIme : InputMethodService() {
         val sel = text.substring(extracted.selectionStart, extracted.selectionEnd)
         val clip = android.content.ClipData.newPlainText("jinn_selection", sel)
         clipboardManager.setPrimaryClip(clip)
-        // 同时写入安全剪贴板历史
+        // 同时写入安全剪贴板历史（统一走 BackgroundIo 单线程，避免并发写库）
         val cpPrefs = ClipboardPrefs.of(this)
         if (cpPrefs.enabled) {
-            Thread {
+            BackgroundIo.run {
                 ClipboardStore.save(this, ClipboardDb.get(this), sel, packageName, "本输入法")
-            }.start()
+            }
         }
         Diagnostics.i(TAG, "复制: 选中 ${sel.length} 字（保持选区与拖选模式）")
     }

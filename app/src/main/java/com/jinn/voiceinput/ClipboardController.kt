@@ -1,10 +1,7 @@
 package com.jinn.voiceinput
 
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 
 /**
  * 剪贴板控制器（方案第二 + 第四阶段核心）。
@@ -92,7 +89,7 @@ class ClipboardController(context: Context) {
         if (text.isBlank()) return
 
         val sourcePkg = resolveSourcePackage()
-        // 复制事件只入队一次线程化保存；combine sbapsert 在库层去重，不会重复写入
+        // 复制事件只入队一次线程化保存；upsert 在库层按 content_hash 去重，不会重复写入
         BackgroundIo.run { ClipboardStore.save(appContext, db, text, sourcePkg) }
     }
 
