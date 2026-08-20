@@ -18,8 +18,4 @@
     <exclude
         domain="database"
         path="jinn_clipboard.db-shm" />
-    <!-- 排除剪贴板权限库（含授权关系） -->
-    <exclude
-        domain="database"
-        path="jinn_clipboard_perm.db" />
 </full-backup-content>

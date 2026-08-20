@@ -76,12 +76,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 防滚动残留：切分类/去重后 post 滚回顶部，旧 post 任务无效化 */
     private var scrollToken = 0
 
+    /** 刷新请求令牌：异步查询完成时若已过期（又有新请求）则丢弃，防止旧结果覆盖新状态 */
+    private var refreshToken = 0
+
     /** 本次打开的 Trace ID（onPanelShown 生成，刷新链路共享） */
     private var currentTraceId: String = ""
-
-    /** 去重是否进行中：防止频繁打开剪贴板导致全库扫描叠加（功耗优化） */
-    @Volatile
-    private var dedupeRunning = false
 
     // ── 适配器（稳定 ID 绑定）──────────────────────────────
     // 重要：必须声明在 init 块之前！Kotlin 属性按声明顺序初始化，
@@ -111,7 +110,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val content = TextView(context).apply {
                     textSize = 16f
                     setTextColor(Color.parseColor("#ECEEF2"))
-                    setMaxLines(3)          // 长文本限高，避免单条无限扩大
+                    setMaxLines(1)          // 统一单行显示，超出一行用省略号
                     setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 val meta = TextView(context).apply {
@@ -199,7 +198,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         // ── 空状态 ──
         textEmpty = TextView(context).apply {
-            text = "暂无剪贴板历史\n复制内容后将自动保存（敏感内容除外）"
+            text = "暂无剪贴板历史\n复制内容后将自动保存"
             gravity = android.view.Gravity.CENTER
             setTextColor(Color.parseColor("#9CA3AF"))
             textSize = 14f
@@ -223,26 +222,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         addView(actionBar, lp())
     }
 
-    /** 面板显示时刷新（每次打开自动清理重复 + 重新加载全部） */
+    /** 面板显示时刷新（每次打开立即读取 DB 生成快照，不做去重维护）。 */
     fun onPanelShown() {
         isPasting = false
-        hideActionBar()  // 重置长按操作条状态
+        hideActionBar()
         // 本次打开生成 Trace ID，整条刷新链路共享（日志搜 traceId 可还原全链路）
         currentTraceId = Diagnostics.traceId("CLIP")
         Diagnostics.i(
             TAG,
-            "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name} " +
-                "prevCategory=${currentCategory} prevItems=${currentItems.size}",
+            "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}",
         )
-        // 显式初始化分类为「全部」（null），绝不依赖上次状态
-        if (currentCategory != null) {
-            Diagnostics.w(TAG, "[$currentTraceId] OPEN 发现分类残留 ${currentCategory}，重置为 null")
-        }
-        // 每次打开自动触发清理重复（dedupe 内含后台 DB 清理 + post 延迟 refresh，
-        // 与用户手动点「清理重复」的路径一致，保证冷启动后完整历史正确显示）。
-        post {
-            dedupe()
-        }
+        // 规范：每次打开分类重置为「全部」，绝不残留上次分类；
+        // 立即读取 DB 生成快照并渲染，数据正确性由入库阶段 upsert 保证。
+        selectCategory(null)
     }
 
     // ── 分类 ──────────────────────────────────────────────
@@ -268,75 +260,49 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /**
      * 重新加载当前分类的列表。
      * 单一数据源：每次从 db 全量查询后按分类派生，绝不二次过滤。
+     * 查询与加解密在后台线程完成，主线程只提交不可变快照（性能规范：主线程零阻塞）。
+     * 旧请求通过 [refreshToken] 无效化，避免异步回调乱序覆盖。
      * @param resetScroll true 时滚回顶部（分类切换/去重/删除后）。
      */
     private fun refresh(resetScroll: Boolean = false) {
-        val t0 = System.currentTimeMillis()
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
         val category = currentCategory
         val maxItems = prefs.maxItems
-        // [DB] 全量查询（同步，主线程）
-        val all = db.recent(maxItems)
-        val t1 = System.currentTimeMillis()
-        Diagnostics.i(TAG, "[$tid] DB all=${all.size} db=${t1 - t0}ms thread=${Thread.currentThread().name}")
-
-        // [FILTER] 分类过滤（全部不经过任何条件）
-        val filtered = when {
-            category == CATEGORY_PRIVATE -> db.recentPrivate(maxItems)
-            category == CATEGORY_FAVORITE -> db.recentFavorites(maxItems)
-            category != null -> db.recent(maxItems, category)
-            else -> all
-        }
-        val t2 = System.currentTimeMillis()
-        currentItems = filtered
-        Diagnostics.i(
-            TAG,
-            "[$tid] FILTER category=${category ?: "ALL"} " +
-                "filtered=${filtered.size} final=${currentItems.size} " +
-                "filter=${t2 - t1}ms",
-        )
-
-        // [ADAPTER] 通知刷新
-        adapter.notifyDataSetChanged()
-        // 决定性验证：ListView 侧看到的 adapter 状态
-        Diagnostics.i(
-            TAG,
-            "[$tid] ADAPTER-SIDE count=${adapter.count} " +
-                "listView.adapter==classAdapter: ${listView.adapter === adapter} " +
-                "listViewAdapterCount=${listView.adapter?.count}",
-        )
-        updateEmpty()
-        val t3 = System.currentTimeMillis()
-        Diagnostics.i(
-            TAG,
-            "[$tid] ADAPTER count=${adapter.count} adapter=${t3 - t2}ms",
-        )
-        Diagnostics.event("Clipboard", "REFRESH", "trace=$tid cat=${category ?: "ALL"} all=${all.size} vis=${currentItems.size}")
-        if (resetScroll && currentItems.isNotEmpty()) {
-            // 防滚动残留：等 ListView 布局完成后滚回顶部；
-            // 旧 post 任务通过 token 失效，避免覆盖新状态。
-            val token = ++scrollToken
-            listView.post { if (token == scrollToken) listView.setSelection(0) }
-        }
-    }
-
-    private fun dedupe() {
-        // 防并发：上次去重未完成时跳过（避免频繁打开剪贴板触发全库扫描叠加）
-        if (dedupeRunning) return
-        dedupeRunning = true
-        Diagnostics.i(TAG, "[$currentTraceId] DEDUPE 开始（当前 category=${currentCategory} items=${currentItems.size}）")
-        Thread {
-            try {
-                val removed = db.deduplicate()  // 数据层已合并收藏/隐私标记
-                post {
-                    Diagnostics.i(TAG, "[$currentTraceId] DEDUPE 完成 removed=$removed（静默，执行统一 refresh）")
-                    refresh(resetScroll = true)
-                }
-            } finally {
-                dedupeRunning = false
+        val reqToken = ++refreshToken
+        BackgroundIo.run {
+            val t0 = System.currentTimeMillis()
+            val all = db.recent(maxItems)
+            val filtered = when {
+                category == CATEGORY_PRIVATE -> db.recentPrivate(maxItems)
+                category == CATEGORY_FAVORITE -> db.recentFavorites(maxItems)
+                category != null -> db.recent(maxItems, category)
+                else -> all
             }
-        }.start()
+            Diagnostics.i(
+                TAG,
+                "[$tid] DB category=${category ?: "ALL"} all=${all.size} vis=${filtered.size} db=${System.currentTimeMillis() - t0}ms thread=${Thread.currentThread().name}",
+            )
+            post {
+                if (reqToken != refreshToken) return@post
+                currentItems = filtered
+                adapter.notifyDataSetChanged()
+                updateEmpty()
+                // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
+                // 单次 notify 不足以让 item 创建（有高有数但空白/少量）。
+                // 无条件二次 notify + requestLayout + invalidate，等布局稳定后强制重绘。
+                listView.post {
+                    if (reqToken != refreshToken) return@post
+                    adapter.notifyDataSetChanged()
+                    listView.requestLayout()
+                    listView.invalidate()
+                }
+                if (resetScroll && currentItems.isNotEmpty()) {
+                    val token = ++scrollToken
+                    listView.post { if (token == scrollToken) listView.setSelection(0) }
+                }
+            }
+        }
     }
 
     private fun updateEmpty() {
@@ -347,6 +313,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 否则 notifyDataSetChanged 在 GONE 期间调用，item 永不创建（有高有数但空白）。
         // 实测证据：listView.height=301 / adapterCount=33 但 getView 从未调用。
         listView.requestLayout()
+        listView.invalidate()
         // 渲染层诊断：post 布局后确认 ListView 实际可见性与尺寸
         post {
             Diagnostics.i(

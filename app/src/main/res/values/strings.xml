@@ -27,6 +27,7 @@
 
     <!-- 按键 -->
     <string name="key_space">空格</string>
+    <string name="space_hint_placeholder">输入类型</string>
     <string name="key_comma">，</string>
     <string name="key_period">。</string>
     <string name="cd_mic">按住说话</string>
@@ -58,7 +59,8 @@
     <string name="settings_strip_punc">去句尾标点</string>
     <string name="settings_composing">语音文字实时回显</string>
     <string name="settings_permission">权限与启用</string>
-    <string name="settings_save">保存配置并立即生效</string>
+    <string name="settings_save">保存配置并立即重启生效</string>
+    <string name="settings_restarting">已保存，正在重启输入法进程…</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
     <string name="settings_enable_ime">启用输入法</string>
@@ -128,6 +130,8 @@
     <string name="settings_ime_send">发送</string>
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
     <string name="settings_ime_received">收到：%1$s</string>
+    <string name="switch_auto_show_keyboard">自动唤起键盘</string>
+    <string name="switch_auto_show_keyboard_desc">关闭后编辑框聚焦时永不自动显示键盘，需回到设置页重新开启</string>
 
     <!-- 诊断 -->
     <string name="settings_diagnostics">诊断</string>
@@ -139,7 +143,7 @@
 
     <!-- 剪贴板历史 -->
     <string name="settings_clipboard">剪贴板</string>
-    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读；敏感内容默认不保存。\n在键盘的候选栏点击「剪贴板」可查看历史。</string>
+    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘的候选栏点击「剪贴板」可查看历史。</string>
     <string name="switch_clipboard_enabled">启用剪贴板历史</string>
     <string name="clipboard_enabled_desc">开启后自动保存复制的文本，可在输入法面板中查看、粘贴、收藏。</string>
     <string name="clipboard_history_title">剪贴板历史</string>
@@ -148,36 +152,19 @@
     <string name="clipboard_search_hint">搜索剪贴板内容</string>
     <string name="clipboard_search">搜索</string>
     <string name="clipboard_delete_all">删除全部</string>
-    <string name="clipboard_empty">暂无剪贴板历史\n复制内容后将自动保存（敏感内容除外）</string>
+    <string name="clipboard_empty">暂无剪贴板历史\n复制内容后将自动保存</string>
     <string name="clipboard_copied">已复制到系统剪贴板</string>
     <string name="clipboard_deleted">已删除该条</string>
     <string name="clipboard_deleted_all">已清空全部历史</string>
     <string name="clipboard_delete_all_confirm">确定删除全部历史？收藏的内容将保留。</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 200）</string>
-    <string name="clipboard_sensitive_title">敏感内容策略</string>
-    <string name="clipboard_sensitive_desc">检测到密码、验证码、银行卡号等敏感内容时的处理方式↑</string>
-    <string name="clipboard_sensitive_never">不保存（推荐）</string>
-    <string name="clipboard_sensitive_temp">临时保存</string>
-    <string name="clipboard_sensitive_normal">按普通内容保存</string>
-    <string name="clipboard_sensitive_temp_title">临时保存时长</string>
-    <string name="clipboard_sensitive_temp_desc">敏感内容「临时保存」时，超过该时长自动删除↑</string>
-    <string name="clipboard_sensitive_temp_30s">30 秒</string>
-    <string name="clipboard_sensitive_temp_5m">5 分钟</string>
-    <string name="clipboard_sensitive_temp_30m">30 分钟</string>
-    <string name="clipboard_sensitive_temp_1h">1 小时</string>
-    <string name="clipboard_perm_manage">第三方 APP 访问权限</string>
-    <string name="clipboard_perm_desc">默认禁止APP读历史，给包名授权可读近期3条</string>
-    <string name="clipboard_perm_add_hint">授权只针对具体包名（如 com.jinn.app）\n授权后该 APP 最多读取最新 3 条，分页/偏移均无法绕过。</string>
-    <string name="clipboard_perm_input_pkg">输入要授权的包名\n例如 mark.via</string>
-    <string name="clipboard_perm_add">授权</string>
-    <string name="clipboard_perm_added">已授权该 APP 读取最新 3 条历史</string>
+    
 
     <!-- Root 增强模式 -->
     <string name="clipboard_root_enhance">Root 增强模式</string>
-    <string name="clipboard_root_enhance_desc">可选扩展：检测到敏感剪贴板时自动清空系统剪贴板。Root 不可用或失败时自动退回普通模式，不影响输入法使用。</string>
+    <string name="clipboard_root_enhance_desc">可选扩展：使用 Root 权限审计 JinnIme 数据目录安全。不干预系统剪贴板。</string>
     <string name="switch_root_enhance">开启 Root 增强模式</string>
-    <string name="switch_root_clear_sensitive">敏感内容自动清空系统剪贴板</string>
     <string name="clipboard_root_status">Root 状态：%1$s</string>
     <string name="clipboard_root_available">可用</string>
     <string name="clipboard_root_unavailable">不可用</string>
