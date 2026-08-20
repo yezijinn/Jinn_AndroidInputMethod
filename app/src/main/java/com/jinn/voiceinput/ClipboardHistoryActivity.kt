@@ -68,6 +68,9 @@ class ClipboardHistoryActivity : Activity() {
     /** 当前是否处于搜索状态 */
     private var searchQuery: String = ""
 
+    /** 刷新请求令牌：异步查询完成时若已过期则丢弃，防乱序覆盖 */
+    private var refreshToken = 0
+
     private val adapter = object : BaseAdapter() {
         override fun getCount() = currentItems.size
         override fun getItem(pos: Int) = currentItems[pos]
@@ -97,6 +100,9 @@ class ClipboardHistoryActivity : Activity() {
                 val content = TextView(this@ClipboardHistoryActivity).apply {
                     textSize = 16f
                     setTextColor(Color.parseColor("#ECEEF2"))
+                    // 统一单行显示，超出一行用省略号
+                    setMaxLines(1)
+                    setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 val meta = TextView(this@ClipboardHistoryActivity).apply {
                     textSize = 11f
@@ -332,59 +338,50 @@ class ClipboardHistoryActivity : Activity() {
      *        数据源变化应回到最新记录；纯搜索输入时不打断阅读，保持 false）。
      */
     private fun refresh(resetScroll: Boolean = false) {
-        // 诊断：记录数据流各环节的大小（不打印剪贴板文本，排查「全部分类数据污染」）
-        val allDiag = db.recent(prefs.maxItems)
-        val catDiag = currentCategory
-        val searchDiag = searchQuery.isNotEmpty()
-        Diagnostics.i(TAG, "refresh-begin: category=$catDiag allSize=${allDiag.size} search=$searchDiag resetScroll=$resetScroll")
-        // 记录「全部记录」的 id → 序号偏移，供搜索结果保留原始序号
-        val all = db.recent(prefs.maxItems)
-        latestNumber = all.size
-        allItemsById = all.mapIndexed { idx, it -> it.id to idx }.toMap()
-
-        currentItems = when {
-            currentCategory == CATEGORY_PRIVATE -> db.recentPrivate(prefs.maxItems)
-            currentCategory == CATEGORY_FAVORITE -> db.recentFavorites(prefs.maxItems)
-            currentCategory != null -> db.recent(prefs.maxItems, currentCategory)
-            else -> all
-        }
-
-        // 实时搜索：内存过滤（已加载列表基础上按 query 过滤，保留原始排序）
-        if (searchQuery.isNotEmpty()) {
-            val q = searchQuery.lowercase()
-            currentItems = currentItems.filter { it.content.lowercase().contains(q) }
-        }
-
-        Diagnostics.i(TAG, "refresh-end: category=$currentCategory allSize=${all.size} visibleSize=${currentItems.size} adapterCount=${adapter.count}")
-        adapter.notifyDataSetChanged()
-        updateEmpty()
-        // 清理已不存在的隐私揭示记录（被删除/去重后释放，防无限膨胀）
-        if (revealedPrivateIds.isNotEmpty()) {
-            val ids = all.mapTo(HashSet()) { it.id }
-            revealedPrivateIds.retainAll(ids)
-        }
-        if (resetScroll && currentItems.isNotEmpty()) {
-            // ListView 会保持上一次滚动位置（按像素）：数据源变化后必须滚回顶部，
-            // 否则从短列表（如网址 2 条）切回长列表（全部 8 条）时停留在旧偏移，
-            // 只看到底部几条（用户报告「只剩 7、8」）。
-            // 注意：setSelection 必须等 ListView 完成布局后调用才生效——数据变更后
-            // 立即调用会被随后的 layout 覆盖，因此 post 到下一帧再执行。
-            // 空列表（隐私/收藏无记录）时 ListView 已 GONE，setSelection 会抛
-            // IndexOutOfBoundsException，必须先判空。
-            listView.post { listView.setSelection(0) }
+        val category = currentCategory
+        val q = searchQuery
+        val max = prefs.maxItems
+        val reqToken = ++refreshToken
+        Diagnostics.i(TAG, "refresh-begin: category=$category search=${q.isNotEmpty()} resetScroll=$resetScroll")
+        BackgroundIo.run {
+            val all = db.recent(max)
+            val current = when {
+                category == CATEGORY_PRIVATE -> db.recentPrivate(max)
+                category == CATEGORY_FAVORITE -> db.recentFavorites(max)
+                category != null -> db.recent(max, category)
+                else -> all
+            }
+            val filtered = if (q.isEmpty()) current
+            else current.filter { it.content.lowercase().contains(q) }
+            runOnUiThread {
+                if (reqToken != refreshToken) return@runOnUiThread
+                latestNumber = all.size
+                allItemsById = all.mapIndexed { idx, it -> it.id to idx }.toMap()
+                currentItems = filtered
+                Diagnostics.i(TAG, "refresh-end: category=$category allSize=${all.size} visibleSize=${currentItems.size}")
+                adapter.notifyDataSetChanged()
+                updateEmpty()
+                if (revealedPrivateIds.isNotEmpty()) {
+                    val ids = all.mapTo(HashSet()) { it.id }
+                    revealedPrivateIds.retainAll(ids)
+                }
+                if (resetScroll && currentItems.isNotEmpty()) {
+                    listView.post { listView.setSelection(0) }
+                }
+            }
         }
     }
 
     /** 清理重复：严格字符串比较，只保留最新；完成后重载当前分类和搜索 */
     private fun dedupe() {
-        Thread {
+        BackgroundIo.run {
             val removed = db.deduplicate()
             runOnUiThread {
                 Diagnostics.i(TAG, "清理重复: 删除 $removed 条")
                 Toast.makeText(this, getString(R.string.clipboard_dedupe_done, removed), Toast.LENGTH_SHORT).show()
                 refresh(resetScroll = true)
             }
-        }.start()
+        }
     }
 
     /**
@@ -396,9 +393,14 @@ class ClipboardHistoryActivity : Activity() {
             .setTitle(R.string.clipboard_delete_all)
             .setMessage(R.string.clipboard_delete_all_confirm)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                db.deleteAll()
-                refresh(resetScroll = true)
-                Toast.makeText(this, R.string.clipboard_deleted_all, Toast.LENGTH_SHORT).show()
+                // 删除在后台执行，避免主线程阻塞；完成后刷新
+                BackgroundIo.run {
+                    db.deleteAll()
+                    runOnUiThread {
+                        refresh(resetScroll = true)
+                        Toast.makeText(this, R.string.clipboard_deleted_all, Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

@@ -11,7 +11,7 @@ import android.os.Build
  *
  * 职责：
  *  - 监听系统剪贴板变化（[addPrimaryClipChangedListener]）；
- *  - 前台 / 自身变化时捕获内容 → 敏感检测 → 按策略保存到 [ClipboardDb]；
+ *  - 前台 / 自身变化时捕获内容 → 自动分类 → 加密保存到 [ClipboardDb]；
  *  - 依据 Android 版本约束执行「普通模式」的读取边界（API 29+ 只有前台
  *    或本 IME 为前台输入法时才能读取系统剪贴板；API 33+ 系统会弹出
  *    剪贴板访问提示并可能自动清空，本类不绕过这些系统机制）。
@@ -76,14 +76,14 @@ class ClipboardController(context: Context) {
         // 监听回调触发时系统可能尚未完成写入，或本进程刚退到后台。
         // 延迟 250ms 重试一次，避免把真实复制误判为空。
         if (clipboard.primaryClip == null) {
-            Thread {
+            BackgroundIo.run {
                 Thread.sleep(250)
-                val retryClip = clipboard.primaryClip ?: return@Thread
-                val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@Thread
-                if (retryText.isBlank()) return@Thread
+                val retryClip = clipboard.primaryClip ?: return@run
+                val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@run
+                if (retryText.isBlank()) return@run
                 val retrySource = resolveSourcePackage()
                 ClipboardStore.save(appContext, db, retryText, retrySource)
-            }.start()
+            }
             return
         }
         val clip = clipboard.primaryClip ?: return
@@ -92,9 +92,8 @@ class ClipboardController(context: Context) {
         if (text.isBlank()) return
 
         val sourcePkg = resolveSourcePackage()
-        Thread {
-            ClipboardStore.save(appContext, db, text, sourcePkg)
-        }.start()
+        // 复制事件只入队一次线程化保存；combine sbapsert 在库层去重，不会重复写入
+        BackgroundIo.run { ClipboardStore.save(appContext, db, text, sourcePkg) }
     }
 
     /**
@@ -116,30 +115,13 @@ class ClipboardController(context: Context) {
 
 /**
  * 保存一条剪贴板到历史的纯逻辑（独立出来便于单测）：
- *  1. 敏感检测 → 按策略处理（不保存 / 临时保存 / 正常保存）
- *  2. 加密入库 → 裁剪数量上限 → 清理过期
+ *  1. 自动分类（URL / NUMBER / OTHER；隐私分类绝不自动判断）
+ *  2. 加密入库 → 裁剪数量上限
+ *
+ * 不做任何敏感检测 / 内容性质判断：不因内容特性跳过保存、加过期或删除记录。
+ * 删除仅来自用户主动删除、清理重复、容量上限裁剪最旧非收藏记录。
  */
 object ClipboardStore {
-
-    /** 敏感内容保存策略（对齐方案第十五节） */
-    enum class SensitivePolicy(val value: Int) {
-        NEVER_SAVE(0),       // 不保存（默认）
-        TEMPORARY(1),        // 临时保存（30s / 5min / 30min / 1h）
-        SAVE_NORMALLY(2);    // 按普通内容保存
-
-        companion object {
-            fun from(v: Int): SensitivePolicy = entries.firstOrNull { it.value == v } ?: NEVER_SAVE
-        }
-    }
-
-    /** 敏感临时保存时长（毫秒） */
-    enum class TempDuration(val millis: Long) {
-        S30(30_000L), M5(5 * 60_000L), M30(30 * 60_000L), H1(60 * 60_000L);
-
-        companion object {
-            fun from(v: Int): TempDuration = entries.getOrNull(v) ?: S30
-        }
-    }
 
     /**
      * 保存流程。返回保存的条目 id，未保存返回 null。
@@ -151,60 +133,17 @@ object ClipboardStore {
         text: String,
         sourcePackage: String,
         sourceAppName: String = "",
-        policy: SensitivePolicy = readPolicy(context),
-        tempDuration: TempDuration = readTempDuration(context),
         maxItems: Int = readMaxItems(context),
     ): Long? {
-        val match = SensitiveDetector.detect(text)
-        val sensitive = match != null
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
         // 自动分类（URL / NUMBER / OTHER）；隐私分类绝不自动判断
         val category = ClipboardClassifier.classify(text)
-
-        // Root 增强模式联动：敏感内容命中且开启了「自动清空系统剪贴板」时，
-        // 用 root 立即清空系统剪贴板（普通模式做不到，root 模式才做）。
-        if (sensitive) {
-            val prefs = ClipboardPrefs.of(context)
-            if (prefs.rootEnhanceEnabled && prefs.rootClearOnSensitive) {
-                ClipboardFirewall.onSensitiveClipboardDetected(context)
-            }
-        }
-
-        when {
-            sensitive && policy == SensitivePolicy.NEVER_SAVE -> {
-                Diagnostics.i(TAG, "save: 敏感内容(${match?.type})，策略=不保存，跳过")
-                return null
-            }
-            sensitive && policy == SensitivePolicy.TEMPORARY -> {
-                val expireAt = System.currentTimeMillis() + tempDuration.millis
-                Diagnostics.i(TAG, "save: 敏感内容(${match?.type})，临时保存 ${tempDuration.millis / 1000}s")
-                return db.insert(
-                    text, "text", sourcePackage, appName, true, expireAt, maxItems,
-                    category = category,
-                )
-            }
-            else -> {
-                // 隐私：绝不输出正文（含前 N 位），只记录长度与分类
-                Diagnostics.i(TAG, "save: 已保存 len=${text.length} (分类=$category)")
-                return db.insert(
-                    text, "text", sourcePackage, appName, sensitive, 0L, maxItems,
-                    category = category,
-                )
-            }
-        }
+        Diagnostics.i(TAG, "save: 已保存 len=${text.length} (分类=$category)")
+        return db.upsert(
+            text, "text", sourcePackage, appName, maxItems,
+            category = category,
+        )
     }
-
-    /** 从数据库清理已过期条目（供定时器/启动时调用） */
-    fun cleanupExpired(db: ClipboardDb) {
-        val removed = db.deleteExpired()
-        if (removed > 0) Diagnostics.i(TAG, "cleanupExpired: 清理 $removed 条过期历史")
-    }
-
-    private fun readPolicy(context: Context): SensitivePolicy =
-        SensitivePolicy.from(ClipboardPrefs.of(context).sensitivePolicy)
-
-    private fun readTempDuration(context: Context): TempDuration =
-        TempDuration.from(ClipboardPrefs.of(context).sensitiveTempSeconds)
 
     private fun readMaxItems(context: Context): Int =
         ClipboardPrefs.of(context).maxItems

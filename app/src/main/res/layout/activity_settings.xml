@@ -3,6 +3,10 @@
   设置页（极光紧凑风格）：配置服务端并引导启用输入法。
   能同排的控件一律同排；删掉冗余分组标题，减少卡片数量；
   深蓝极光渐变背景 + 大圆角卡片，视觉更圆润。
+
+  布局顺序（自上而下）：
+    标题 → 保存配置并立即重启生效 → 自动唤起键盘 → 输入法测试（点这里唤起键盘打字）→
+    后台保活 → 剪贴板 → 授权麦克风 → NAS 语音 → 导出诊断包 → 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -36,7 +40,312 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- 连接设置：地址 + 端口同一行，无分组标题 -->
+        <!-- 保存并重启：置顶，保存永久配置后重启输入法进程 -->
+        <Button
+            android:id="@+id/btn_save"
+            style="@style/SettingsButtonPrimary"
+            android:layout_marginBottom="10dp"
+            android:text="@string/settings_save" />
+
+        <TextView
+            android:id="@+id/text_test"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="-2dp"
+            android:layout_marginBottom="10dp"
+            android:gravity="center"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <!-- 自动唤起键盘 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <Switch
+                android:id="@+id/switch_auto_show_keyboard"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="@string/switch_auto_show_keyboard"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:text="@string/switch_auto_show_keyboard_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- 输入法测试：点这里唤起键盘打字（紧跟自动唤起键盘） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/edit_ime_test"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/settings_ime_test_hint"
+                    android:imeOptions="actionSend"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btn_ime_send"
+                    style="@style/SettingsButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:minWidth="88dp"
+                    android:text="@string/settings_ime_send" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_ime_received"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minLines="1"
+                android:text="@string/settings_ime_received_empty"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 后台保活：开关行 + 三个按钮一行 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <Switch
+                android:id="@+id/switch_keepalive"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="@string/switch_keepalive"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/switch_root"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="@string/switch_root"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/switch_notify_high"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="@string/switch_notify_high"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_accessibility"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_accessibility" />
+
+                <Button
+                    android:id="@+id/btn_battery"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_battery" />
+
+                <Button
+                    android:id="@+id/btn_root"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/btn_root" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_keepalive"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 剪贴板：加密历史 + 第三方访问权限 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_clipboard"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/settings_clipboard_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <!-- 历史数量上限：标题 + 输入框同行 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/clipboard_max_items_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/edit_clipboard_max"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/clipboard_max_items_hint"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- Root 增强模式：可选扩展，默认关闭，失败自动回退普通模式 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/clipboard_root_enhance"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/text_root_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <Switch
+                android:id="@+id/switch_root_enhance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/switch_root_enhance"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 授权麦克风：状态 + 三个按钮一行 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/text_mic_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:text="@string/settings_grant_mic"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_grant"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_grant_mic" />
+
+                <Button
+                    android:id="@+id/btn_enable"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_enable_ime" />
+
+                <Button
+                    android:id="@+id/btn_pick"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_pick_ime" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- NAS 语音：地址 + 端口 / 语言 + 默认键盘 / 提示词 / 识别选项 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -199,7 +508,7 @@
                 android:textColorHint="@color/text_secondary"
                 android:textSize="14sp" />
 
-            <!-- 识别选项：三个开关一行 -->
+            <!-- 识别选项：两个开关一行 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -226,184 +535,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 输入法测试：输入框 + 发送按钮一行 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/edit_ime_test"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/field_aurora"
-                    android:hint="@string/settings_ime_test_hint"
-                    android:imeOptions="actionSend"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
-
-                <Button
-                    android:id="@+id/btn_ime_send"
-                    style="@style/SettingsButton"
-                    android:layout_width="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="88dp"
-                    android:text="@string/settings_ime_send" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/text_ime_received"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:minLines="1"
-                android:text="@string/settings_ime_received_empty"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <!-- 权限与启用：三个按钮一行 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:id="@+id/text_mic_state"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:text="@string/settings_grant_mic"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btn_grant"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_grant_mic" />
-
-                <Button
-                    android:id="@+id/btn_enable"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_enable_ime" />
-
-                <Button
-                    android:id="@+id/btn_pick"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_pick_ime" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 保活：开关行 + 三个按钮一行 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <Switch
-                android:id="@+id/switch_keepalive"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_keepalive"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <Switch
-                android:id="@+id/switch_root"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_root"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <Switch
-                android:id="@+id/switch_notify_high"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_notify_high"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btn_accessibility"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/btn_accessibility" />
-
-                <Button
-                    android:id="@+id/btn_battery"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/btn_battery" />
-
-                <Button
-                    android:id="@+id/btn_root"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/btn_root" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/text_keepalive"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="center"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <!-- 诊断：导出按钮一行 -->
+        <!-- 导出诊断包 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -428,198 +560,11 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <!-- 剪贴板：加密历史 + 敏感策略 + 第三方访问权限 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_clipboard"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/settings_clipboard_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <!-- 历史数量上限：标题 + 输入框同行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/clipboard_max_items_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <EditText
-                    android:id="@+id/edit_clipboard_max"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:background="@drawable/field_aurora"
-                    android:hint="@string/clipboard_max_items_hint"
-                    android:inputType="number"
-                    android:maxLines="1"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="13sp" />
-            </LinearLayout>
-
-            <!-- 敏感内容策略：标题 + 下拉框同行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/clipboard_sensitive_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <Spinner
-                    android:id="@+id/spinner_sensitive_policy"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:paddingStart="4dp"
-                android:text="@string/clipboard_sensitive_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <!-- 临时保存时长：标题 + 下拉框同行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/clipboard_sensitive_temp_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <Spinner
-                    android:id="@+id/spinner_sensitive_temp"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:paddingStart="4dp"
-                android:text="@string/clipboard_sensitive_temp_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="@string/clipboard_perm_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <Button
-                android:id="@+id/btn_clipboard_perms"
-                style="@style/SettingsButton"
-                android:layout_marginTop="4dp"
-                android:text="@string/clipboard_perm_manage" />
-
-            <!-- Root 增强模式：可选扩展，默认关闭，失败自动回退普通模式 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="@string/clipboard_root_enhance"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/text_root_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <Switch
-                android:id="@+id/switch_root_enhance"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/switch_root_enhance"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <Switch
-                android:id="@+id/switch_root_clear_sensitive"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/switch_root_clear_sensitive"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <!-- 保存 -->
-        <Button
-            android:id="@+id/btn_save"
-            style="@style/SettingsButtonPrimary"
-            android:text="@string/settings_save" />
-
-        <TextView
-            android:id="@+id/text_test"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
-
+        <!-- 使用说明纯文本（最底部） -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="4dp"
             android:layout_marginBottom="24dp"
             android:gravity="center"
             android:text="@string/settings_usage"

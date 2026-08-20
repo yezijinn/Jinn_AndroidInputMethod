@@ -9,16 +9,10 @@
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
-        <exclude
-            domain="database"
-            path="jinn_clipboard_perm.db" />
     </cloud-backup>
     <device-transfer>
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
-        <exclude
-            domain="database"
-            path="jinn_clipboard_perm.db" />
     </device-transfer>
 </data-extraction-rules>

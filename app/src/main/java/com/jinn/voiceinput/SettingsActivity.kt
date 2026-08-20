@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -49,6 +51,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var editImeTest: EditText
     private lateinit var btnImeSend: Button
     private lateinit var textImeReceived: TextView
+    private lateinit var switchAutoShowKeyboard: Switch
 
     // 保活 / 防杀后台
     private lateinit var switchKeepAlive: Switch
@@ -66,17 +69,13 @@ class SettingsActivity : ComponentActivity() {
     // 剪贴板
     private lateinit var clipboardPrefs: ClipboardPrefs
     private lateinit var editClipboardMax: EditText
-    private lateinit var spinnerSensitivePolicy: Spinner
-    private lateinit var spinnerSensitiveTemp: Spinner
-    private lateinit var btnClipboardPerms: Button
 
     // Root 增强模式
     private lateinit var textRootStatus: TextView
     private lateinit var switchRootEnhance: Switch
-    private lateinit var switchRootClearSensitive: Switch
 
-    /** 仅用于"保存并测试连接"，用完即关，不干扰输入法自身的连接 */
-    private var tester: AsrClient? = null
+    /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
+    private val uiHandler = Handler(Looper.getMainLooper())
 
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
@@ -114,6 +113,7 @@ class SettingsActivity : ComponentActivity() {
         editImeTest = findViewById(R.id.edit_ime_test)
         btnImeSend = findViewById(R.id.btn_ime_send)
         textImeReceived = findViewById(R.id.text_ime_received)
+        switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
 
         switchKeepAlive = findViewById(R.id.switch_keepalive)
         switchRoot = findViewById(R.id.switch_root)
@@ -128,13 +128,9 @@ class SettingsActivity : ComponentActivity() {
         // 剪贴板卡片
         clipboardPrefs = ClipboardPrefs.of(this)
         editClipboardMax = findViewById(R.id.edit_clipboard_max)
-        spinnerSensitivePolicy = findViewById(R.id.spinner_sensitive_policy)
-        spinnerSensitiveTemp = findViewById(R.id.spinner_sensitive_temp)
-        btnClipboardPerms = findViewById(R.id.btn_clipboard_perms)
 
         textRootStatus = findViewById(R.id.text_root_status)
         switchRootEnhance = findViewById(R.id.switch_root_enhance)
-        switchRootClearSensitive = findViewById(R.id.switch_root_clear_sensitive)
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -181,10 +177,15 @@ class SettingsActivity : ComponentActivity() {
             val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
             manager?.showInputMethodPicker()
         }
-        btnSave.setOnClickListener { saveAndTest() }
+        btnSave.setOnClickListener { saveAndRestart() }
 
         // 输入法测试：发送按钮 + 回车发送，文本回显到接收区并写诊断日志
         btnImeSend.setOnClickListener { sendImeTest() }
+        // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
+        switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
+            prefs.autoShowKeyboard = checked
+            Diagnostics.i(TAG, "自动唤起键盘: ${if (checked) "开启" else "关闭"}")
+        }
         editImeTest.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
                 sendImeTest()
@@ -225,7 +226,7 @@ class SettingsActivity : ComponentActivity() {
         initClipboardCard()
     }
 
-    /** 初始化剪贴板卡片：历史数量 / 敏感策略 / 权限管理（剪贴板历史强制启用，无开关） */
+    /** 初始化剪贴板卡片：历史数量 / 权限管理（剪贴板历史强制启用，无开关） */
     private fun initClipboardCard() {
         // 剪贴板历史强制启用：用户无需也无法关闭（核心功能，UI 不提供开关）
         if (!clipboardPrefs.enabled) {
@@ -238,55 +239,8 @@ class SettingsActivity : ComponentActivity() {
             if (!hasFocus) saveMaxItems()
         }
 
-        // 敏感内容策略：不保存 / 临时保存 / 按普通内容保存
-        val policies = arrayOf(
-            getString(R.string.clipboard_sensitive_never),
-            getString(R.string.clipboard_sensitive_temp),
-            getString(R.string.clipboard_sensitive_normal),
-        )
-        spinnerSensitivePolicy.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item, policies
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        spinnerSensitivePolicy.setSelection(clipboardPrefs.sensitivePolicy)
-        spinnerSensitivePolicy.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-            ) {
-                if (position != clipboardPrefs.sensitivePolicy) {
-                    clipboardPrefs.sensitivePolicy = position
-                    Diagnostics.i(TAG, "敏感内容策略: $position")
-                }
-            }
-
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-
-        // 临时保存时长（敏感内容策略 = 临时保存时有效）
-        val durations = arrayOf(
-            getString(R.string.clipboard_sensitive_temp_30s),
-            getString(R.string.clipboard_sensitive_temp_5m),
-            getString(R.string.clipboard_sensitive_temp_30m),
-            getString(R.string.clipboard_sensitive_temp_1h),
-        )
-        spinnerSensitiveTemp.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item, durations
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        spinnerSensitiveTemp.setSelection(clipboardPrefs.sensitiveTempSeconds)
-        spinnerSensitiveTemp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-            ) {
-                if (position != clipboardPrefs.sensitiveTempSeconds) {
-                    clipboardPrefs.sensitiveTempSeconds = position
-                    Diagnostics.i(TAG, "敏感临时时长: $position")
-                }
-            }
-
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-
         // 第三方 APP 访问权限管理（跳转系统应用信息或简单列表页）
-        btnClipboardPerms.setOnClickListener { openPermissionManager() }
+        // 第三方 APP 访问权限管理：规范要求 JinnIme 不提供第三方读取 History API，此功能已移除。
 
         // ── Root 增强模式 ──────────────────────────────────────
         refreshRootStatus()
@@ -295,28 +249,24 @@ class SettingsActivity : ComponentActivity() {
             clipboardPrefs.rootEnhanceEnabled = checked
             Diagnostics.i(TAG, "Root 增强模式: ${if (checked) "开启" else "关闭"}")
             if (checked) {
-                // 后台线程检测 root；不可用则回退并提示
+                // 后台线程执行数据目录安全审计
                 Thread {
-                    val ok = ClipboardFirewall.start(this)
-                    runOnUiThread {
-                        if (!ok) {
+                    if (!ClipboardFirewall.isRootAvailable()) {
+                        runOnUiThread {
                             clipboardPrefs.rootEnhanceEnabled = false
                             switchRootEnhance.isChecked = false
-                            toast(R.string.clipboard_root_unavailable)
+                            textRootStatus.text = getString(R.string.clipboard_root_unavailable)
                         }
-                        refreshRootStatus()
+                        return@Thread
+                    }
+                    val auditResults = ClipboardFirewall.audit(this)
+                    runOnUiThread {
+                        textRootStatus.text = auditResults.joinToString("\n") { "${it.first}: ${it.second}" }
                     }
                 }.start()
             } else {
-                ClipboardFirewall.stop()
-                refreshRootStatus()
+                textRootStatus.setText(R.string.clipboard_root_enhance_desc)
             }
-        }
-        switchRootClearSensitive.isChecked = clipboardPrefs.rootClearOnSensitive
-        switchRootClearSensitive.setOnCheckedChangeListener { _, checked ->
-            clipboardPrefs.rootClearOnSensitive = checked
-            ClipboardFirewall.clearOnSensitive = checked
-            Diagnostics.i(TAG, "敏感内容清空系统剪贴板: ${if (checked) "开" else "关"}")
         }
     }
 
@@ -346,11 +296,8 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
-    /** 第三方 APP 访问权限管理：进入权限列表页 */
-    private fun openPermissionManager() {
-        Diagnostics.i(TAG, "openPermissionManager: 打开剪贴板权限管理")
-        startActivity(Intent(this, ClipboardPermissionActivity::class.java))
-    }
+    // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
+    // 对应 ClipboardPermissionActivity / PermissionStore / Provider 已删除。
 
     /** 导出诊断包：zip 到 /storage/emulated/0/JinnIme/ 并提示路径 */
     private fun exportDiagnostics() {
@@ -380,6 +327,7 @@ class SettingsActivity : ComponentActivity() {
         switchKeepAlive.isChecked = prefs.keepAlive
         switchRoot.isChecked = prefs.useRootShizuku
         switchNotifyHigh.isChecked = prefs.notifyHighPriority
+        switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
@@ -501,19 +449,24 @@ class SettingsActivity : ComponentActivity() {
         editImeTest.setText("")
     }
 
-    // ── 保存并测试连接 ──────────────────────────────────────────
+    // ── 保存并重启输入法进程 ──────────────────────────────────────────
 
-    private fun saveAndTest() {
+    /**
+     * 保存全部永久配置并重启输入法进程：写入 SharedPreferences 后杀掉本进程，
+     * 系统会自动重建 IME 服务按新配置初始化（连接、键盘方案、剪贴板、保活全部重载）。
+     * 比发广播刷新更彻底，等价于「设置保存 + 输入法进程重启」。
+     */
+    private fun saveAndRestart() {
         val host = editHost.text.toString().trim()
         val port = editPort.text.toString().trim().toIntOrNull()
 
         if (host.isBlank()) {
-            Diagnostics.w(TAG, "saveAndTest: host 为空")
+            Diagnostics.w(TAG, "saveAndRestart: host 为空")
             editHost.error = getString(R.string.settings_invalid_host)
             return
         }
         if (port == null || port !in 1..65535) {
-            Diagnostics.w(TAG, "saveAndTest: 端口非法 port=$port")
+            Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
             editPort.error = getString(R.string.settings_invalid_port)
             return
         }
@@ -525,43 +478,15 @@ class SettingsActivity : ComponentActivity() {
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
 
-        Diagnostics.i(TAG, "saveAndTest: host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
-        Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
+        Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
+        textTest.setText(R.string.settings_restarting)
 
-        // 通知常驻输入法立即刷新（强制重连 + 键盘方案重载），无需重启进程。
-        // prefs 写入是同步的，广播在同进程即时送达。
-        runCatching {
-            sendBroadcast(Intent(JinnIme.ACTION_CONFIG_UPDATED).setPackage(packageName))
-            Diagnostics.i(TAG, "saveAndTest: 已发送配置更新广播")
-        }.onFailure {
-            Diagnostics.w(TAG, "saveAndTest: 发送配置广播失败 ${it.message}")
-        }
-
-        testConnection()
-    }
-
-    private fun testConnection() {
-        textTest.text = getString(R.string.test_running, prefs.wsUrl)
-        tester?.close()
-        Diagnostics.i(TAG, "testConnection: 测试 ${prefs.wsUrl}")
-        tester = AsrClient(
-            prefs = prefs,
-            onState = { state, detail ->
-                // Activity 销毁后 IO 线程仍可能回调，避免 v 已 detach 时 view 操作抛异常
-                if (isFinishing || isDestroyed) return@AsrClient
-                Diagnostics.i(TAG, "testConnection: 状态变化 $state detail=$detail")
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    when (state) {
-                        LinkState.ONLINE -> textTest.setText(R.string.test_ok)
-                        LinkState.OFFLINE -> textTest.text = getString(R.string.test_fail, detail ?: "")
-                        else -> Unit
-                    }
-                }
-            },
-            onResult = {},
-        )
-        tester?.connect(force = true)
+        // SharedPreferences apply 异步落盘：延迟片刻等写盘完成再杀进程，
+        // 系统随后自动重启 IME 服务加载新配置，本 Activity 随进程一并结束。
+        uiHandler.postDelayed({
+            Diagnostics.i(TAG, "saveAndRestart: 重启输入法进程")
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }, 800L)
     }
 
     private fun toast(resId: Int) {
@@ -570,7 +495,6 @@ class SettingsActivity : ComponentActivity() {
 
     override fun onDestroy() {
         Diagnostics.i(TAG, "onDestroy: 设置页销毁")
-        tester?.close()
         super.onDestroy()
     }
 

@@ -218,8 +218,8 @@ class MicRecorder(
 
         /** 低于该 RMS 视为静音 */
         const val SILENCE_RMS = 0.012f
-        /** 连续静音超过该时长触发一次 onSilence（3 秒） */
-        const val SILENCE_TIMEOUT_MS = 3_000L
+        /** 连续静音超过该时长触发一次 onSilence（连续录音模式容忍 120 秒静音，避免说话停顿几秒就被自动停止） */
+        const val SILENCE_TIMEOUT_MS = 120_000L
 
         const val BYTES_PER_SHORT = 2
         const val BYTES_PER_FLOAT = 4
