@@ -289,8 +289,8 @@ class SettingsActivity : ComponentActivity() {
         if (v != null) {
             clipboardPrefs.maxItems = v
             Diagnostics.i(TAG, "剪贴板历史数量上限: ${clipboardPrefs.maxItems}")
-            // 立即裁剪数据库
-            Thread { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }.start()
+            // 立即裁剪数据库（统一走 BackgroundIo 单线程，避免并发写库）
+            BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }
         } else {
             editClipboardMax.setText(clipboardPrefs.maxItems.toString())
         }
