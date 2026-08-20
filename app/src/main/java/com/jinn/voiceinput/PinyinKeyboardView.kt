@@ -104,6 +104,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 剪贴板面板（与字母区互斥显示，见 init 挂载） */
     private lateinit var clipboardPanel: ClipboardPanelView
 
+    /** 顶部搜索面板（候选栏上方，见 init 挂载） */
+    private lateinit var searchPanel: SearchPanelView
+
     /** 剪贴板面板是否激活 */
     private var clipboardActive = false
     private lateinit var btnSymbol: TextView
@@ -520,6 +523,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 override fun onClose() {
                     hideClipboardPanel()
                 }
+                override fun onSearch() {
+                    // 请求搜索：退出剪贴板（恢复下方 26 键），顶部显示搜索面板
+                    hideClipboardPanel()
+                    showSearchPanel()
+                }
             }
             visibility = View.GONE
         }
@@ -529,6 +537,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
+        )
+
+        // 顶部搜索面板：挂在根布局候选栏上方（index 0 = 最顶部），
+        // 显示时 IME 整体高度增加；隐藏 GONE 后不占空间，不影响 IME relayout 流程。
+        searchPanel = SearchPanelView(context).apply {
+            listener = object : SearchPanelView.Listener {
+                override fun onPaste(text: String): Boolean =
+                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
+                override fun onClose() {
+                    hideSearchPanel()
+                }
+            }
+            visibility = View.GONE
+        }
+        addView(
+            searchPanel,
+            0,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
         bindLetterKeys(root)
@@ -759,7 +785,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     // ── 按键处理 ───────────────────────────────────────────
 
+    /** 是否处于顶部搜索模式（26 键输入需路由到搜索框，不 commit 宿主） */
+    private fun isPanelSearch() = searchPanel.isActive()
+
     private fun onLetterPressed(c: Char) {
+        // 搜索模式：符号/数字/英文/大写 → 直接追加到搜索词；中文进拼音，选词时路由
+        if (isPanelSearch()) {
+            when (layer) {
+                LAYER_SYMBOL -> {
+                    searchPanel.appendSearch(currentSymbolMap()[c]?.takeIf { it.isNotEmpty() } ?: return)
+                    return
+                }
+                LAYER_DIGIT -> {
+                    searchPanel.appendSearch(digitMap[c] ?: return)
+                    return
+                }
+                else -> Unit
+            }
+            if (englishMode) {
+                searchPanel.appendSearch(if (capsMode) c.uppercaseChar().toString() else c.toString())
+                return
+            }
+            if (capsMode) {
+                searchPanel.appendSearch(c.uppercaseChar().toString())
+                return
+            }
+            composing.append(c)
+            refreshCandidateBar()
+            return
+        }
         // 符号层 / 数字层：直接上屏对应字符
         when (layer) {
             LAYER_SYMBOL -> {
@@ -793,6 +847,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onSpacePressed() {
+        // 搜索模式：中文取首候选、英文追加空格，均路由到搜索词
+        if (isPanelSearch()) {
+            if (composing.isNotEmpty()) {
+                if (lastCandidates.isNotEmpty()) searchPanel.appendSearch(lastCandidates[0])
+                composing.clear()
+                refreshCandidateBar()
+            } else {
+                searchPanel.appendSearch(" ")
+            }
+            return
+        }
         if (layer != LAYER_LETTER) {
             listener?.onCommitSpace()
             return
@@ -822,6 +887,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onBackspacePressed() {
+        // 搜索模式：拼音串删末尾字符，否则删除搜索词
+        if (isPanelSearch()) {
+            if (composing.isNotEmpty()) {
+                composing.deleteCharAt(composing.length - 1)
+                refreshCandidateBar()
+            } else {
+                searchPanel.backspaceSearch()
+            }
+            return
+        }
         if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
@@ -923,6 +998,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 删除一个字符（有拼音串删拼音，否则删已上屏） */
     private fun deleteOne() {
+        // 搜索模式：优先删拼音串末尾，否则删搜索框文本
+        if (isPanelSearch()) {
+            if (composing.isNotEmpty()) {
+                composing.deleteCharAt(composing.length - 1)
+                refreshCandidateBar()
+            } else {
+                searchPanel.backspaceSearch()
+            }
+            return
+        }
         if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
@@ -1060,6 +1145,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onCandidateSelected(candidate: String) {
+        // 搜索模式：候选上屏路由到剪贴板搜索词（不 commit 宿主）
+        if (isPanelSearch()) {
+            Diagnostics.i(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
+            searchPanel.appendSearch(candidate)
+            composing.clear()
+            refreshCandidateBar()
+            return
+        }
         Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         listener?.onCommitText(candidate)
         composing.clear()
@@ -1433,6 +1526,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clipboardActive = false
         listener?.onClipboardStateChanged(false)
         Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
+    }
+
+    // ── 顶部搜索面板（挂在根布局候选栏上方）────────────────
+
+    /** 是否处于顶部搜索模式 */
+    fun isSearchActive(): Boolean = searchPanel.isActive()
+
+    /** 显示顶部搜索面板：候选栏上方整体高度增加，下方 26 键恢复为可用输入 */
+    fun showSearchPanel() {
+        if (searchPanel.isActive()) return
+        searchPanel.visibility = View.VISIBLE
+        searchPanel.onShown()
+        Diagnostics.i(TAG, "顶部搜索面板: 显示（IME 高度增高）")
+    }
+
+    /** 隐藏顶部搜索面板，恢复正常 26 键键盘 */
+    fun hideSearchPanel() {
+        if (!searchPanel.isActive()) return
+        searchPanel.visibility = View.GONE
+        searchPanel.onHidden()
+        Diagnostics.i(TAG, "顶部搜索面板: 隐藏")
     }
 
     /** 构建方向面板（3×3 九宫格，与字母区总高一致） */
