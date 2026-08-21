@@ -45,7 +45,7 @@
     <string name="cd_shift">切换大写</string>
 
     <!-- 设置页 -->
-    <string name="settings_title">Jinn语音输入法</string>
+    <string name="settings_title">Jinn安卓输入法</string>
     <string name="settings_subtitle">语音识别 + 26键全拼 + 26键双拼(自然码)</string>
     <string name="settings_server">服务端</string>
     <string name="settings_host">NAS 地址</string>
