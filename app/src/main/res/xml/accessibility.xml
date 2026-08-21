@@ -9,4 +9,4 @@
     android:summary="@string/accessibility_summary"
     android:notificationTimeout="250"
     android:packageNames=""
-    android:settingsActivity="com.jinn.voiceinput.SettingsActivity" />
+    android:settingsActivity="com.jinn.inputmethod.SettingsActivity" />

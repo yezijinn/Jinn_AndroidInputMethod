@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$pkg = "com.jinn.voiceinput"
+$pkg = "com.jinn.inputmethod"
 
 # Project root = parent of tools dir
 $proj = Split-Path $PSScriptRoot -Parent

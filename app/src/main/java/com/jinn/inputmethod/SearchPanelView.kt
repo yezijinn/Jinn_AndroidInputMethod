@@ -1,0 +1,292 @@
+package com.jinn.inputmethod
+
+import android.content.Context
+import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
+import android.widget.BaseAdapter
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
+import android.widget.TextView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * 顶部搜索面板（挂在候选栏上方，独立于剪贴板面板与 26 键区）。
+ *
+ * 进入搜索时：搜索面板显示在 IME 最顶部（整体高度增加），
+ * 剪贴板面板退出、下方恢复正常 26 键；26 键与候选输入经
+ * [appendSearch] 路由到搜索框，TextWatcher debounce 后在后台解密过滤剪贴板历史。
+ * 布局（自上而下）：命中结果列表 → 搜索输入框 → 候选栏（键盘自身） → 26 键 → 空格底栏。
+ *
+ * 性能：
+ *  - 输入只做 debounce 合并后的最终一次查询（[Debounce_MS]）；
+ *  - 查库与加密字段解密均在 [BackgroundIo] 线程，主线程零阻塞；
+ *  - 结果用 [ListView] 复用 item，支持独立滚动。
+ *
+ * 安全：不输出任何剪贴板正文日志。
+ */
+class SearchPanelView(context: Context) : LinearLayout(context) {
+
+    interface Listener {
+        /** 点击结果：IME 用当前 InputConnection commitText。返回是否成功提交。 */
+        fun onPaste(text: String): Boolean
+        /** 关闭搜索面板（恢复正常 26 键） */
+        fun onClose()
+    }
+
+    var listener: Listener? = null
+
+    private val db by lazy { ClipboardDb.get(context) }
+    private val prefs by lazy { ClipboardPrefs.of(context) }
+
+    private lateinit var editSearch: EditText
+    private lateinit var listView: ListView
+    private lateinit var textEmpty: TextView
+
+    private var currentItems: List<ClipboardDb.Item> = emptyList()
+
+    /** 快速点击去重：一次粘贴完成前忽略后续点击 */
+    private var isPasting = false
+
+    /** debounce + 刷新令牌：合并连续输入，丢弃过期回调 */
+    private val searchHandler = Handler(Looper.getMainLooper())
+    private var refreshToken = 0
+
+    private val adapter = object : BaseAdapter() {
+        override fun getCount() = currentItems.size
+        override fun getItem(pos: Int) = currentItems[pos]
+        override fun getItemId(pos: Int) = currentItems[pos].id
+        override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
+            val item = currentItems[pos]
+            val holder = convertView?.tag as? Holder
+            val root = convertView ?: run {
+                val v = LinearLayout(context).apply {
+                    orientation = VERTICAL
+                    setPadding(dp(16), dp(10), dp(16), dp(10))
+                    background = android.graphics.drawable.ColorDrawable(Color.parseColor("#141C33"))
+                }
+                val row = LinearLayout(context).apply { orientation = HORIZONTAL }
+                val content = TextView(context).apply {
+                    textSize = 15f
+                    setTextColor(Color.parseColor("#ECEEF2"))
+                    setMaxLines(1)
+                    setEllipsize(android.text.TextUtils.TruncateAt.END)
+                }
+                val meta = TextView(context).apply {
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#9CA3AF"))
+                    setPadding(0, dp(3), 0, 0)
+                }
+                row.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                v.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                v.addView(meta, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                v.tag = Holder(content, meta)
+                v
+            }
+            val h = holder ?: return root
+            h.itemId = item.id
+            h.content.text = item.content
+            h.meta.text = buildString {
+                append(SDF.format(Date(item.createdAt)))
+                if (item.category != "OTHER") append(" · ").append(item.category)
+                if (item.isFavorite) append(" · 收藏")
+            }
+            return root
+        }
+    }
+
+    private class Holder(val content: TextView, val meta: TextView) {
+        var itemId: Long = -1L
+    }
+
+    init {
+        orientation = VERTICAL
+        setBackgroundColor(Color.parseColor("#0B1020"))
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+
+        // 结果列表（可滚动，固定高度保证在 wrap_content 父下可滚动）
+        listView = ListView(context).apply {
+            divider = null
+            setBackgroundColor(Color.parseColor("#0B1020"))
+            adapter = this@SearchPanelView.adapter
+        }
+        listView.setOnItemClickListener { _, _, pos, _ ->
+            val item = currentItems.getOrNull(pos)
+            if (item != null) handleItemClick(item)
+        }
+        addView(listView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(RESULT_HEIGHT_DP)))
+
+        // 空态
+        textEmpty = TextView(context).apply {
+            text = "输入关键词搜索剪贴板历史"
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Color.parseColor("#9CA3AF"))
+            textSize = 13f
+        }
+        addView(textEmpty, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(RESULT_EMPTY_HEIGHT_DP)))
+
+        // 搜索输入框 + 退出搜索按钮（同一行；输入框 weight=1，退出按钮右侧固定）。
+        // 关键：baselineAligned 默认 true，会按文本 baseline 对齐（字体/padding 不同即偏移），
+        // 关闭后改按顶部对齐，各方 gravity 用 CENTER_VERTICAL + includeFontPadding=false
+        // 保证文字几何垂直居中，输入框与按钮外观严格对齐。
+        val searchRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            isBaselineAligned = false
+        }
+        editSearch = EditText(context).apply {
+            hint = "搜索剪贴板历史"
+            setSingleLine(true)
+            setIncludeFontPadding(false)
+            textSize = 13f
+            isFocusableInTouchMode = true
+            setTextColor(Color.parseColor("#ECEEF2"))
+            setHintTextColor(Color.parseColor("#9CA3AF"))
+            setBackgroundColor(Color.parseColor("#1C1F26"))
+            setPadding(dp(10), 0, dp(10), 0)
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    // debounce：取消未执行的上一次查询，合并连续输入只执行最终一次
+                    searchHandler.removeCallbacksAndMessages(null)
+                    searchHandler.postDelayed({ runSearch() }, DEBOUNCE_MS)
+                }
+            })
+        }
+        searchRow.addView(editSearch, LinearLayout.LayoutParams(0, dp(46), 1f))
+        // 退出搜索：矩形、与搜索框同高同色、水平居中对齐，视觉浑然一体
+        val btnExit = TextView(context).apply {
+            text = "退出搜索"
+            gravity = android.view.Gravity.CENTER
+            setIncludeFontPadding(false)
+            setTextColor(Color.parseColor("#ECEEF2"))
+            textSize = 13f
+            setBackgroundColor(Color.parseColor("#1C1F26"))
+            isClickable = true
+            setOnClickListener { listener?.onClose() }
+        }
+        searchRow.addView(btnExit, LinearLayout.LayoutParams(WRAP_EXIT_DP, dp(46)).apply { marginStart = dp(6) })
+        addView(searchRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    /** 显示搜索面板：清空输入 + aria50（结果列表）/空态可见性对齐 + 聚焦输入框 */
+    fun onShown() {
+        isPasting = false
+        searchHandler.removeCallbacksAndMessages(null)
+        editSearch.setText("")
+        textEmpty.visibility = View.VISIBLE
+        listView.visibility = View.GONE
+        currentItems = emptyList()
+        // 布局稳定后聚焦输入框；IME 内不强拨系统软键盘
+        post {
+            editSearch.requestFocus()
+            hideSystemSoftKeyboard()
+        }
+        Diagnostics.i(TAG, "搜索面板: 显示并聚焦")
+    }
+
+    fun onHidden() {
+        isPasting = false
+        searchHandler.removeCallbacksAndMessages(null)
+        editSearch.clearFocus()
+        editSearch.setText("")
+        currentItems = emptyList()
+        Diagnostics.i(TAG, "搜索面板: 隐藏")
+    }
+
+    /** 是否激活（PinyinKeyboardView 据此把 26 键输入路由到搜索框） */
+    fun isActive(): Boolean = visibility == View.VISIBLE
+
+    /** 键盘输入路由：向搜索框追加文本（走 TextWatcher → debounce 查询） */
+    fun appendSearch(text: String) {
+        val cur = editSearch.text ?: return
+        cur.append(text)
+        editSearch.setSelection(cur.length)
+    }
+
+    /** 键盘输入路由：删搜索框末尾一个字符 */
+    fun backspaceSearch() {
+        val cur = editSearch.text ?: return
+        if (cur.isNotEmpty()) {
+            cur.delete(cur.length - 1, cur.length)
+        }
+    }
+
+    private fun handleItemClick(item: ClipboardDb.Item) {
+        if (isPasting) return
+        isPasting = true
+        val ok = listener?.onPaste(item.content) ?: false
+        isPasting = false
+        if (ok) {
+            listener?.onClose()
+        } else {
+            Diagnostics.w(TAG, "搜索结果粘贴: id=${item.id} 失败")
+        }
+    }
+
+    /** 后台查询：解密全部 maxItems 后按关键词过滤（大小写不敏感、任意位置匹配） */
+    private fun runSearch() {
+        val q = editSearch.text?.toString()?.trim() ?: ""
+        val maxItems = prefs.maxItems
+        val reqToken = ++refreshToken
+        BackgroundIo.run {
+            val all = db.recent(maxItems)
+            val matches = if (q.isEmpty()) emptyList()
+            else all.filter { it.content.lowercase().contains(q.lowercase()) }
+            post {
+                if (reqToken != refreshToken) return@post
+                currentItems = matches
+                adapter.notifyDataSetChanged()
+                updateEmpty()
+                listView.post {
+                    if (reqToken != refreshToken) return@post
+                    adapter.notifyDataSetChanged()
+                    listView.requestLayout()
+                    listView.invalidate()
+                }
+            }
+        }
+    }
+
+    private fun updateEmpty() {
+        val empty = currentItems.isEmpty()
+        textEmpty.text = if (currentItems.isEmpty()) "未找到匹配内容\n换个关键词试试" else "找到 ${currentItems.size} 条"
+        textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+        listView.visibility = if (empty) View.GONE else View.VISIBLE
+        listView.requestLayout()
+        listView.invalidate()
+    }
+
+    private fun hideSystemSoftKeyboard() {
+        runCatching {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(editSearch.windowToken, 0)
+        }.onFailure { }
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val TAG = "SearchPanel"
+        const val DEBOUNCE_MS = 150L
+        /** 结果列表固定高度（wrap_content 父下保证可滚动） */
+        const val RESULT_HEIGHT_DP = 220
+        /** 空态占位高度 */
+        const val RESULT_EMPTY_HEIGHT_DP = 120
+        /** 退出搜索按钮宽度 */
+        const val WRAP_EXIT_DP = 88
+        val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    }
+}
