@@ -74,7 +74,7 @@
         android:background="@drawable/mic_area_bg"
         android:paddingTop="10dp">
 
-        <com.jinn.voiceinput.MicButton
+        <com.jinn.inputmethod.MicButton
             android:id="@+id/mic_button"
             android:layout_width="132dp"
             android:layout_height="132dp"
