@@ -7,7 +7,7 @@ param(
     [string]$Device = "192.168.1.33:5555"
 )
 
-$pkg = "com.jinn.voiceinput"
+$pkg = "com.jinn.inputmethod"
 $logDir = "/storage/emulated/0/JinnIme/logs"
 
 Write-Host "== Clear old logs (device=$Device) ==" -ForegroundColor Cyan
