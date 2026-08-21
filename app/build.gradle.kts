@@ -22,7 +22,7 @@ if (ksFile.exists()) {
 }
 
 android {
-    namespace = "com.jinn.voiceinput"
+    namespace = "com.jinn.inputmethod"
     compileSdk = 34
 
     signingConfigs {
@@ -37,7 +37,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.jinn.voiceinput"
+        applicationId = "com.jinn.inputmethod"
         // 26 起可只提供自适应图标，且 AudioRecord / VectorDrawable 行为稳定
         minSdk = 26
         targetSdk = 34
