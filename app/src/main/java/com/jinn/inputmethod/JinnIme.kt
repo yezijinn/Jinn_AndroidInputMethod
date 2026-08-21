@@ -28,7 +28,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 
 /**
- * Jinn 语音输入法。
+ * Jinn 安卓输入法。
  *
  * 双模式：
  *  - 语音模式：麦克风 + 最小编辑键（长按说话 / 短按连续录音，实时推给服务端识别）
