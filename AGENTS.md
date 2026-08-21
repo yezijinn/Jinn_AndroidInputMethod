@@ -36,13 +36,13 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 - Debug：`gradle.bat assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
 - Release：`gradle.bat assembleRelease` → `app/build/outputs/apk/release/app-release-unsigned.apk`（未签名）
 - 真机安装：`adb install -r app-debug.apk`，设备 `192.168.1.33:5555`（KernelSU root）
-- 真机输入法：`adb shell ime set com.jinn.inputmethod/.JinnIme`（实际包名是 `com.jinn.inputmethod`，非 `com.capswriter.ime`）
+- 真机输入法：`adb shell ime set com.jinn.inputmethod/.JinnIme`（实际包名是 `com.jinn.inputmethod`）
 - 本机 SDK：`C:\Android\sdk`（local.properties 已写 sdk.dir），JDK17 在 PATH
 
 ## 项目结构
 
 ```
-app/src/main/java/com/xxx/jinnime/
+app/src/main/java/com/jinn/inputmethod/
 ├── Protocol.kt         # 协议常量 + AudioMessage(发) / RecognitionMessage(收) 序列化
 ├── Prefs.kt            # SharedPreferences 配置（host/port/language/prompt/保活开关）
 ├── MicRecorder.kt      # 16kHz PCM16 采集 → float32 小端；本地 VAD 静音检测
