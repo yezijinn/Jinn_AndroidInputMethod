@@ -542,7 +542,7 @@ CandidateRanker
 
 首先阅读：
 
-app/src/main/java/com/jinn/voiceinput/PinyinEngine.kt
+app/src/main/java/com/jinn/inputmethod/PinyinEngine.kt
 
 重点确认：
 

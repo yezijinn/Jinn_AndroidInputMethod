@@ -18,7 +18,7 @@ object DefaultKeyboardMode {
 class Prefs(context: Context) {
 
     private val sp = context.applicationContext
-        .getSharedPreferences("jinn_voiceinput", Context.MODE_PRIVATE)
+        .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
 
     /** 飞牛 NAS 的局域网地址 */
     var host: String

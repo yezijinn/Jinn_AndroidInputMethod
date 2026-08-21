@@ -4,7 +4,7 @@
 
 基于飞牛 NAS 上 **CapsWriter Offline** 服务端的安卓语音 + 拼音输入法（IME）。
 
-An Android voice + pinyin input method (IME) powered by **CapsWriter Offline** on FeiNiu NAS.
+An Android voice + pinyin input method (IME) powered by **CapsWriter Offline** on fnOS NAS.
 
 语音识别完全在 NAS 服务端完成（本机零模型）；拼音 / 剪贴板等键盘功能在本机实现。
 
@@ -44,7 +44,7 @@ Speech recognition runs entirely on the NAS server (zero on-device models); piny
 
 ```
 麦克风 → MicRecorder(16kHz PCM16) → AsrClient(WebSocket) → 飞牛 NAS CapsWriter Offline
-Mic     →  MicRecorder (16kHz PCM16)  → AsrClient (WebSocket)  → FeiNiu NAS CapsWriter Offline
+Mic     →  MicRecorder (16kHz PCM16)  → AsrClient (WebSocket)  → fnOS NAS CapsWriter Offline
                                                                         ↓
 拼音键盘 / 剪贴板面板（本机） ← 识别文本（整段累积，整体覆盖显示）
 Pinyin keyboard / clipboard panels (local)  ← recognized text (accumulated, overwrite-displayed)
@@ -64,7 +64,7 @@ Pinyin keyboard / clipboard panels (local)  ← recognized text (accumulated, ov
 ## 🔌 对接服务端 / Server Setup
 
 服务端为飞牛 NAS 上的 CapsWriter Offline（Docker），端口 `6016`。
-The server is CapsWriter Offline (Docker) on the FeiNiu NAS, port `6016`.
+The server is CapsWriter Offline (Docker) on the fnOS NAS, port `6016`.
 
 | 项 / Item | 值 / Value |
 | --- | --- |

@@ -10,7 +10,7 @@ CapsWriterIME
 
 包名：
 
-com.jinn.voiceinput
+com.jinn.inputmethod
 
 本任务：
 
@@ -1821,7 +1821,7 @@ adb install -r app-debug.apk
 
 设置输入法：
 
-adb shell ime set com.jinn.voiceinput/.JinnIme
+adb shell ime set com.jinn.inputmethod/.JinnIme
 
 必须验证：
 

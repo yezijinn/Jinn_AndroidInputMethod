@@ -229,7 +229,7 @@ adb shell su -c "dumpsys activity"
 ```
 
 ```powershell
-adb shell su -c "dumpsys meminfo com.jinn.voiceinput"
+adb shell su -c "dumpsys meminfo com.jinn.inputmethod"
 ```
 
 ```powershell
@@ -237,11 +237,11 @@ adb shell su -c "dumpsys cpuinfo"
 ```
 
 ```powershell
-adb shell su -c "appops get com.jinn.voiceinput"
+adb shell su -c "appops get com.jinn.inputmethod"
 ```
 
 ```powershell
-adb shell su -c "dumpsys package com.jinn.voiceinput"
+adb shell su -c "dumpsys package com.jinn.inputmethod"
 ```
 
 这样你可以同时获得：
