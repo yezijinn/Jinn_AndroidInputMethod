@@ -1,4 +1,4 @@
-# 项目说明：CapsWriterIME
+# 项目说明：Jinn安卓输入法
 
 安卓极简语音输入法（IME）。采集麦克风音频经 WebSocket 实时上传到飞牛 NAS 上的
 CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别，本机零模型。
