@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Jinn语音输入法</string>
-    <string name="ime_label">Jinn 语音输入</string>
+    <string name="app_name">Jinn安卓输入法</string>
+    <string name="ime_label">Jinn 安卓输入</string>
     <string name="subtype_label">语音听写</string>
 
     <!-- 键盘状态条 -->

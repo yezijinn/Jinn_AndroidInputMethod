@@ -1,4 +1,4 @@
-# CapsWriter 语音输入法（安卓） / CapsWriter Voice IME (Android)
+# Jinn安卓输入法 / Jinn Android IME
 
 <div align="center">
 
