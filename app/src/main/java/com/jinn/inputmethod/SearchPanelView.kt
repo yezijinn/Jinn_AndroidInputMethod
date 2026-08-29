@@ -66,8 +66,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         override fun getItemId(pos: Int) = currentItems[pos].id
         override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
             val item = currentItems[pos]
-            val holder = convertView?.tag as? Holder
-            val root = convertView ?: run {
+            val recycledHolder = convertView?.tag as? Holder
+            val (root, holder) = if (convertView != null && recycledHolder != null) {
+                convertView to recycledHolder
+            } else {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(10), dp(16), dp(10))
@@ -88,13 +90,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 row.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 v.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 v.addView(meta, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                v.tag = Holder(content, meta)
-                v
+                val newHolder = Holder(content, meta)
+                v.tag = newHolder
+                v to newHolder
             }
-            val h = holder ?: return root
-            h.itemId = item.id
-            h.content.text = item.content
-            h.meta.text = buildString {
+            holder.itemId = item.id
+            holder.content.text = item.content
+            holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
@@ -185,7 +187,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun onShown() {
         isPasting = false
         searchHandler.removeCallbacksAndMessages(null)
+        // Invalidate a search that may still be decrypting after the previous session closed.
+        refreshToken++
         editSearch.setText("")
+        searchHandler.removeCallbacksAndMessages(null)
         textEmpty.visibility = View.VISIBLE
         listView.visibility = View.GONE
         currentItems = emptyList()
@@ -200,8 +205,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun onHidden() {
         isPasting = false
         searchHandler.removeCallbacksAndMessages(null)
+        // Prevent an old worker from repopulating the list after the panel is hidden.
+        refreshToken++
         editSearch.clearFocus()
         editSearch.setText("")
+        searchHandler.removeCallbacksAndMessages(null)
         currentItems = emptyList()
         Diagnostics.i(TAG, "搜索面板: 隐藏")
     }
@@ -236,27 +244,52 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 后台查询：解密全部 maxItems 后按关键词过滤（大小写不敏感、任意位置匹配） */
+    /**
+     * 分块渐进搜索：按块解密扫描（新→旧），每块命中立即发布到 UI。
+     * 首块结果即刻可见，大库下无需等全部解密完成；令牌失效即中止。
+     */
     private fun runSearch() {
         val q = editSearch.text?.toString()?.trim() ?: ""
-        val maxItems = prefs.maxItems
         val reqToken = ++refreshToken
         BackgroundIo.run {
-            val all = db.recent(maxItems)
-            val matches = if (q.isEmpty()) emptyList()
-            else all.filter { it.content.lowercase().contains(q.lowercase()) }
-            post {
-                if (reqToken != refreshToken) return@post
-                currentItems = matches
-                adapter.notifyDataSetChanged()
-                updateEmpty()
-                listView.post {
+            if (q.isEmpty()) {
+                post {
                     if (reqToken != refreshToken) return@post
+                    currentItems = emptyList()
                     adapter.notifyDataSetChanged()
-                    listView.requestLayout()
-                    listView.invalidate()
+                    updateEmpty()
+                }
+                return@run
+            }
+            val lower = q.lowercase()
+            val matches = ArrayList<ClipboardDb.Item>()
+            var offset = 0
+            while (offset < prefs.maxItems) {
+                val chunk = db.recentPage(offset, SEARCH_CHUNK)
+                if (chunk.isEmpty()) break
+                for (item in chunk) {
+                    if (item.content.lowercase().contains(lower)) matches.add(item)
+                }
+                offset += chunk.size
+                if (reqToken != refreshToken) return@run
+                val snapshot = matches.toList()
+                post {
+                    if (reqToken != refreshToken) return@post
+                    currentItems = snapshot
+                    adapter.notifyDataSetChanged()
+                    updateEmpty()
+                    if (offset <= SEARCH_CHUNK) {
+                        // 首帧布局竞态兜底（与历史页一致）
+                        listView.post {
+                            if (reqToken != refreshToken) return@post
+                            adapter.notifyDataSetChanged()
+                            listView.requestLayout()
+                            listView.invalidate()
+                        }
+                    }
                 }
             }
+            Diagnostics.i(TAG, "搜索完成: \"$q\" 命中=${matches.size}")
         }
     }
 
@@ -281,6 +314,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private companion object {
         const val TAG = "SearchPanel"
         const val DEBOUNCE_MS = 150L
+        /** 搜索分块大小（每块解密后立即发布） */
+        const val SEARCH_CHUNK = 300
         /** 结果列表固定高度（wrap_content 父下保证可滚动） */
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */

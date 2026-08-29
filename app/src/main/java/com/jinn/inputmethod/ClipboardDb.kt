@@ -308,52 +308,52 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     // ── 查询 ──────────────────────────────────────────────
 
-    /** 读取最近 [limit] 条（新→旧）。逐条解密，解密失败跳过。 */
-    fun recent(limit: Int, category: String? = null): List<Item> {
-        if (limit <= 0) return emptyList()
-        val out = ArrayList<Item>(limit)
-        val sql = if (category != null) {
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS WHERE category = ? ORDER BY created_at DESC LIMIT $limit"
-        } else {
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS ORDER BY created_at DESC LIMIT $limit"
+    /** SELECT 列清单（分页查询与历史接口共用） */
+    private val selectCols = "id, encrypted_content, content_type, created_at, source_package, " +
+        "source_app_name, content_hash, category, is_favorite, is_private"
+
+    /** 组装过滤条件（分类 / 仅收藏），返回 WHERE 片段与参数 */
+    private fun whereClause(category: String?, favoritesOnly: Boolean): Pair<String, Array<String>> {
+        val where = StringBuilder("1 = 1")
+        val args = ArrayList<String>(1)
+        if (favoritesOnly) where.append(" AND is_favorite = 1")
+        if (category != null) {
+            where.append(" AND category = ?")
+            args.add(category)
         }
-        val args = if (category != null) arrayOf(category) else null
-        val c = readableDatabase.rawQuery(sql, args)
-        c.use { cur ->
-            while (cur.moveToNext()) {
-                readItem(cur)?.let { out.add(it) }
-            }
-        }
-        return out
+        return where.toString() to args.toTypedArray()
     }
 
-    /** 读取最近 [limit] 条中收藏的记录（新→旧） */
-    fun recentFavorites(limit: Int): List<Item> {
-        if (limit <= 0) return emptyList()
-        val out = ArrayList<Item>(limit)
+    /**
+     * 分页读取记录（新→旧），只解密本页 [limit] 条。
+     * 大容量历史（数千条）的列表加载路径：解密只覆盖可见窗口。
+     */
+    fun recentPage(offset: Int, limit: Int, category: String? = null, favoritesOnly: Boolean = false): List<Item> {
+        if (limit <= 0 || offset < 0) return emptyList()
+        val (where, args) = whereClause(category, favoritesOnly)
         val c = readableDatabase.rawQuery(
-            "SELECT id, encrypted_content, content_type, created_at, source_package, " +
-                "source_app_name, content_hash, category, is_favorite, is_private " +
-                "FROM $TABLE_ITEMS WHERE is_favorite = 1 ORDER BY created_at DESC LIMIT $limit",
-            null
+            "SELECT $selectCols FROM $TABLE_ITEMS WHERE $where " +
+                "ORDER BY created_at DESC LIMIT $limit OFFSET $offset",
+            args
         )
         c.use { cur ->
-            while (cur.moveToNext()) {
-                readItem(cur)?.let { out.add(it) }
-            }
+            val out = ArrayList<Item>(limit)
+            while (cur.moveToNext()) readItem(cur)?.let { out.add(it) }
+            return out
         }
-        return out
     }
 
-    /** 总条数 */
-    fun count(): Int =
-        readableDatabase.rawQuery("SELECT COUNT(*) FROM $TABLE_ITEMS", null).use { c ->
-            if (c.moveToFirst()) c.getInt(0) else 0
-        }
+    /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏过滤） */
+    fun count(category: String? = null, favoritesOnly: Boolean = false): Int {
+        val (where, args) = whereClause(category, favoritesOnly)
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE $where",
+            args
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+
+    /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
+    fun count(): Int = count(null, false)
 
     // ── 内部 ──────────────────────────────────────────────
 
