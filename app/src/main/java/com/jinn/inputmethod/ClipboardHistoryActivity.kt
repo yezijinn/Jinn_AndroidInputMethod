@@ -56,8 +56,15 @@ class ClipboardHistoryActivity : Activity() {
     /** 当前分类（null=全部，其他=分类名） */
     private var currentCategory: String? = null
 
-    /** 当前展示的记录（含原始序号映射用） */
-    private var currentItems: List<ClipboardDb.Item> = emptyList()
+    /** 当前展示的记录 */
+    private var currentItems: MutableList<ClipboardDb.Item> = mutableListOf()
+
+    /** 当前分类总条数（编号用：序号 = 分类总数 − 位置） */
+    private var categoryTotal = 0
+
+    /** 分页状态：是否还有下一页 / 是否加载中 */
+    private var hasMorePages = false
+    private var loadingPage = false
 
     /** 当前列表的「最新序号基准」：用于搜索结果保留原始序号 */
     private var latestNumber: Int = 0
@@ -74,8 +81,10 @@ class ClipboardHistoryActivity : Activity() {
         override fun getItemId(pos: Int) = currentItems[pos].id
         override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
             val item = currentItems[pos]
-            val holder = convertView?.tag as? Holder
-            val root = convertView ?: run {
+            val recycledHolder = convertView?.tag as? Holder
+            val (root, holder) = if (convertView != null && recycledHolder != null) {
+                convertView to recycledHolder
+            } else {
                 val v: LinearLayout = LinearLayout(this@ClipboardHistoryActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dp(16), dp(12), dp(16), dp(12))
@@ -114,24 +123,24 @@ class ClipboardHistoryActivity : Activity() {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 v.addView(meta, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                v.tag = Holder(num, content, meta)
-                v
+                val newHolder = Holder(num, content, meta)
+                v.tag = newHolder
+                v to newHolder
             }
-            val h = holder ?: return root
             // 身份绑定：每次渲染把当前 Item 的稳定 ID 写进 Holder，
             // 复用 convertView 时旧 itemId 被覆盖，点击永远命中最新数据身份
-            h.itemId = item.id
+            holder.itemId = item.id
             // UI 序号：搜索时保留原始序号，否则按当前位置倒序
-            h.num.text = if (searchQuery.isNotEmpty()) {
-                // 搜索结果保留原始历史序号：列表按最新→旧排，序号 = latestNumber - 原始偏移
-                val originalIndex = itemPositionInAll(item.id)
-                if (originalIndex >= 0) (latestNumber - originalIndex).toString()
+            holder.num.text = if (searchQuery.isNotEmpty()) {
+                // 搜索结果保留原始序号（在全库「新→旧」序列中的动态编号）
+                val originalIndex = searchIndexById[item.id]
+                if (originalIndex != null) (latestNumber - originalIndex).toString()
                 else "-"
             } else {
-                (currentItems.size - pos).toString()
+                (categoryTotal - pos).toString()
             }
-            h.content.text = item.content
-            h.meta.text = buildString {
+            holder.content.text = item.content
+            holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.sourcePackage.isNotBlank()) append(" · ").append(item.sourceAppName.ifBlank { item.sourcePackage.substringAfterLast('.') })
                 if (item.category != "OTHER") append(" · ").append(item.category)
@@ -146,10 +155,8 @@ class ClipboardHistoryActivity : Activity() {
         var itemId: Long = -1L
     }
 
-    /** 在全部记录中的位置（新→旧偏移），用于搜索结果保留原始序号 */
-    private var allItemsById: Map<Long, Int> = emptyMap()
-
-    private fun itemPositionInAll(id: Long): Int = allItemsById[id] ?: -1
+    /** 搜索命中的记录在全库序列中的原始偏移（搜索时渐进构建，仅含命中项） */
+    private var searchIndexById: Map<Long, Int> = emptyMap()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -194,11 +201,14 @@ class ClipboardHistoryActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 val newQuery = s?.toString()?.trim() ?: ""
+                if (newQuery == searchQuery) return
                 val hadSearch = searchQuery.isNotEmpty()
                 searchQuery = newQuery
-                // 清空搜索词时结果从「搜索子集」切回「当前分类全量」，滚回顶部；
-                // 输入过程中保持滚动位置不打断阅读
-                refresh(resetScroll = hadSearch && newQuery.isEmpty())
+                debounceHadSearch = hadSearch
+                // 防抖 300ms：每次 refresh 都要查库+解密，逐字符触发会在
+                // 快速输入时排队刷屏。清空搜索词时滚回顶部，输入中保持位置。
+                uiHandler.removeCallbacks(searchDebouncer)
+                uiHandler.postDelayed(searchDebouncer, SEARCH_DEBOUNCE_MS)
             }
         })
         root.addView(editSearch, lp())
@@ -220,6 +230,16 @@ class ClipboardHistoryActivity : Activity() {
             if (item != null) showItemMenu(item)
             true
         }
+        listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(view: android.widget.AbsListView?, scrollState: Int) {}
+            override fun onScroll(view: android.widget.AbsListView?, firstVisibleItem: Int, visibleItemCount: Int, totalItemCount: Int) {
+                // 非搜索态：距底部不足 LOAD_AHEAD 条时预取下一页
+                if (searchQuery.isEmpty() && hasMorePages && totalItemCount > 0 &&
+                    firstVisibleItem + visibleItemCount >= totalItemCount - LOAD_AHEAD) {
+                    loadNextPage()
+                }
+            }
+        })
         root.addView(listView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -269,6 +289,7 @@ class ClipboardHistoryActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        uiHandler.removeCallbacks(searchDebouncer)
         runCatching { unregisterReceiver(pasteResultReceiver) }.onFailure { }
     }
 
@@ -289,6 +310,16 @@ class ClipboardHistoryActivity : Activity() {
     }
 
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** 搜索防抖 Runnable：执行时按当前 query 决定刷新与滚回策略 */
+    private val searchDebouncer = Runnable {
+        // 防抖窗口结束时 query 为空说明刚从搜索切回全量，滚回顶部；
+        // 非空则是输入过程，保持滚动位置不打断阅读
+        refresh(resetScroll = searchQuery.isEmpty() && debounceHadSearch)
+    }
+
+    /** 防抖窗口起始时是否处于搜索状态（用于空查询时决定是否滚回顶部） */
+    private var debounceHadSearch = false
 
     // ── 分类栏 ────────────────────────────────────────────
 
@@ -333,38 +364,125 @@ class ClipboardHistoryActivity : Activity() {
     private fun refresh(resetScroll: Boolean = false) {
         val category = currentCategory
         val q = searchQuery
-        val max = prefs.maxItems
         val reqToken = ++refreshToken
+        loadingPage = true
+        hasMorePages = false
         Diagnostics.i(TAG, "refresh-begin: category=$category search=${q.isNotEmpty()} resetScroll=$resetScroll")
         BackgroundIo.run {
-            val all = db.recent(max)
-            val current = when {
-                category == CATEGORY_FAVORITE -> db.recentFavorites(max)
-                category != null -> db.recent(max, category)
-                else -> all
+            if (q.isEmpty()) {
+                loadFirstPage(category, reqToken, resetScroll)
+            } else {
+                runChunkedSearch(category, q, reqToken)
             }
-            val filtered = if (q.isEmpty()) current
-            else current.filter { it.content.lowercase().contains(q) }
+        }
+    }
+
+    /** 非搜索路径：COUNT + 第一页，解密只覆盖 PAGE_SIZE 条 */
+    private fun loadFirstPage(category: String?, reqToken: Int, resetScroll: Boolean) {
+        val favoritesOnly = category == CATEGORY_FAVORITE
+        val scope = if (favoritesOnly) null else category
+        val total = db.count(scope, favoritesOnly)
+        val page = db.recentPage(0, PAGE_SIZE, scope, favoritesOnly)
+        runOnUiThread {
+            if (reqToken != refreshToken) return@runOnUiThread
+            loadingPage = false
+            categoryTotal = total
+            currentItems = page.toMutableList()
+            hasMorePages = page.size < total
+            Diagnostics.i(TAG, "refresh-end: category=$category total=$total page=${page.size}")
+            adapter.notifyDataSetChanged()
+            updateEmpty()
+            // 首帧布局竞态兜底（与内嵌面板一致）：异步回填可能发生在 ListView
+            // 首次布局完成前，等布局稳定后二次通知重绘，确保 item 真正创建。
+            listView.post {
+                if (reqToken != refreshToken) return@post
+                adapter.notifyDataSetChanged()
+                listView.requestLayout()
+                listView.invalidate()
+            }
+            if (resetScroll && currentItems.isNotEmpty()) {
+                listView.post { listView.setSelection(0) }
+            }
+        }
+    }
+
+    /** 滚动接近底部时加载下一页并追加（解密只覆盖本页） */
+    private fun loadNextPage() {
+        if (loadingPage || !hasMorePages || searchQuery.isNotEmpty()) return
+        val category = currentCategory
+        val offset = currentItems.size
+        val reqToken = refreshToken
+        loadingPage = true
+        val favoritesOnly = category == CATEGORY_FAVORITE
+        val scope = if (favoritesOnly) null else category
+        BackgroundIo.run {
+            val page = db.recentPage(offset, PAGE_SIZE, scope, favoritesOnly)
             runOnUiThread {
                 if (reqToken != refreshToken) return@runOnUiThread
-                latestNumber = all.size
-                allItemsById = all.mapIndexed { idx, it -> it.id to idx }.toMap()
-                currentItems = filtered
-                Diagnostics.i(TAG, "refresh-end: category=$category allSize=${all.size} visibleSize=${currentItems.size}")
+                loadingPage = false
+                if (page.isEmpty()) {
+                    hasMorePages = false
+                    return@runOnUiThread
+                }
+                currentItems.addAll(page)
+                hasMorePages = currentItems.size < categoryTotal
+                adapter.notifyDataSetChanged()
+                Diagnostics.i(TAG, "分页加载: offset=$offset +${page.size} hasMore=$hasMorePages")
+            }
+        }
+    }
+
+    /**
+     * 分块渐进搜索：按 SEARCH_CHUNK 分块扫描全库（新→旧），命中项携带其
+     * 在全库序列中的原始偏移（保持搜索序号语义）；每块扫描完立即发布到 UI，
+     * 首块结果即刻可见，无需等全量解密完成。
+     *
+     * 大库上限保护：扫描超过 maxItems 条即停（库裁剪上限即 maxItems，
+     * 正常不会超出；此判断覆盖手工删配置等边角情况）。
+     */
+    private fun runChunkedSearch(category: String?, q: String, reqToken: Int) {
+        val maxScan = prefs.maxItems
+        val matches = ArrayList<ClipboardDb.Item>()
+        val indexById = HashMap<Long, Int>()
+        val lower = q.lowercase()
+        var offset = 0
+        var globalIndex = 0
+        // latestNumber 语义：全库总数（搜索序号 = 总数 − 原始偏移）
+        val totalAll = db.count()
+        while (offset < maxScan) {
+            val chunk = db.recentPage(offset, SEARCH_CHUNK)
+            if (chunk.isEmpty()) break
+            for (item in chunk) {
+                val inCategory = when {
+                    category == CATEGORY_FAVORITE -> item.isFavorite
+                    category != null -> item.category == category
+                    else -> true
+                }
+                if (inCategory && item.content.lowercase().contains(lower)) {
+                    matches.add(item)
+                    indexById[item.id] = globalIndex
+                }
+                globalIndex++
+            }
+            offset += chunk.size
+            // 令牌失效（输入已变/页面重刷）立即中止，不再浪费时间解密
+            if (reqToken != refreshToken) return
+            // 渐进发布：首块及后续每块结束都刷新列表
+            val snapshot = matches.toList()
+            val indexSnapshot = HashMap(indexById)
+            runOnUiThread {
+                if (reqToken != refreshToken) return@runOnUiThread
+                latestNumber = totalAll
+                searchIndexById = indexSnapshot
+                currentItems = snapshot.toMutableList()
                 adapter.notifyDataSetChanged()
                 updateEmpty()
-                // 首帧布局竞态兜底（与内嵌面板一致）：异步回填可能发生在 ListView
-                // 首次布局完成前，等布局稳定后二次通知重绘，确保 item 真正创建。
-                listView.post {
-                    if (reqToken != refreshToken) return@post
-                    adapter.notifyDataSetChanged()
-                    listView.requestLayout()
-                    listView.invalidate()
-                }
-                if (resetScroll && currentItems.isNotEmpty()) {
-                    listView.post { listView.setSelection(0) }
-                }
             }
+        }
+        runOnUiThread {
+            if (reqToken != refreshToken) return@runOnUiThread
+            loadingPage = false
+            Diagnostics.i(TAG, "refresh-end: 搜索 \"$q\" 命中=${matches.size} 扫描=$globalIndex")
         }
     }
 
@@ -509,6 +627,13 @@ class ClipboardHistoryActivity : Activity() {
     private companion object {
         const val TAG = "ClipboardHistory"
         const val CATEGORY_FAVORITE = "FAVORITE"
+        const val SEARCH_DEBOUNCE_MS = 300L
+        /** 每页条数（解密只覆盖可见窗口） */
+        const val PAGE_SIZE = 50
+        /** 距底部还有多少条时预取下一页 */
+        const val LOAD_AHEAD = 10
+        /** 搜索分块大小（每块解密后立即渐进发布） */
+        const val SEARCH_CHUNK = 300
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     }
 }

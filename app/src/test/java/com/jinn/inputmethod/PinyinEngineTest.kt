@@ -36,6 +36,11 @@ class PinyinEngineTest {
             zhong	中,种,重,钟
             guo	国,过,果,锅
             dui	对,队,堆,兑
+            shuo	说,硕,烁,朔
+            de	的,得,地,德
+            shen	什,身,深,神
+            me	么,嘛
+            men	们,门
         """.trimIndent()
         val phrases = """
             nihao	你好
@@ -54,6 +59,9 @@ class PinyinEngineTest {
             jvece	决策
             xuexi	学习
             jundui	军队
+            shuode	说的
+            shenme	什么
+            nimen	你们
         """.trimIndent()
         val syllables = """
             a
@@ -86,6 +94,11 @@ class PinyinEngineTest {
             xun
             se
             lvse
+            shuo
+            de
+            shen
+            me
+            men
         """.trimIndent()
         PinyinEngine.loadFromTexts(chars, phrases, syllables)
     }
@@ -251,5 +264,58 @@ class PinyinEngineTest {
     @Test
     fun 智能预测_空输入返回空() {
         assertTrue(PinyinEngine.predict("").isEmpty())
+    }
+
+    // ── 候选消费区间（Residual Pinyin Rematching）──────────────
+
+    @Test
+    fun 消费区间_词语只消费自己的拼音Span() {
+        // shuodeshenme 选「说的」(shuode) → 消费 6 字符 / 2 音节，剩余 shenme
+        val c = PinyinEngine.consumption("shuodeshenme", "说的")
+        assertEquals(6, c.quanpinChars)
+        assertEquals(2, c.syllables)
+        assertEquals("shenme", "shuodeshenme".substring(c.quanpinChars))
+    }
+
+    @Test
+    fun 消费区间_其他同Span词语同样保留残码() {
+        // 不能只对「说的」做特殊处理：同区间任何词都应只消费 shuode
+        val c = PinyinEngine.consumption("shuodeshenme", "说的")
+        assertEquals(6, c.quanpinChars)
+    }
+
+    @Test
+    fun 消费区间_候选覆盖全部输入时无残码() {
+        // shuode 选「说的」→ 全部消费
+        val c = PinyinEngine.consumption("shuode", "说的")
+        assertEquals(6, c.quanpinChars)
+        assertEquals(6, "shuode".length)
+    }
+
+    @Test
+    fun 消费区间_单字消费所在音节() {
+        // shuodeshenme 选「说」→ 只消费 shuo（4 字符 / 1 音节），剩余 deshenme
+        val c = PinyinEngine.consumption("shuodeshenme", "说")
+        assertEquals(4, c.quanpinChars)
+        assertEquals(1, c.syllables)
+        assertEquals("deshenme", "shuodeshenme".substring(c.quanpinChars))
+    }
+
+    @Test
+    fun 消费区间_补全候选消费全部输入() {
+        // nim → 补全出 你们(nimen)：词拼音以输入为前缀，消费全部 3 字符
+        val c = PinyinEngine.consumption("nim", "你们")
+        assertEquals(3, c.quanpinChars)
+    }
+
+    @Test
+    fun 消费区间_连续部分消费() {
+        // shuodeshenme → 消费 shuode → 剩余 shenme；
+        // shenme 选「什么」→ 全部消费（连续部分消费链路）
+        val c1 = PinyinEngine.consumption("shuodeshenme", "说的")
+        val residual = "shuodeshenme".substring(c1.quanpinChars)
+        assertEquals("shenme", residual)
+        val c2 = PinyinEngine.consumption(residual, "什么")
+        assertEquals(residual, residual.substring(0, c2.quanpinChars))
     }
 }
