@@ -850,8 +850,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 搜索模式：中文取首候选、英文追加空格，均路由到搜索词
         if (isPanelSearch()) {
             if (composing.isNotEmpty()) {
-                if (lastCandidates.isNotEmpty()) searchPanel.appendSearch(lastCandidates[0])
-                composing.clear()
+                if (lastCandidates.isNotEmpty()) {
+                    searchPanel.appendSearch(lastCandidates[0])
+                    // 残码保留：只消费首候选的 Pinyin Span
+                    consumePinyin(lastCandidates[0])
+                } else {
+                    composing.clear()
+                }
                 refreshCandidateBar()
             } else {
                 searchPanel.appendSearch(" ")
@@ -867,16 +872,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         if (composing.isNotEmpty()) {
-            // 有候选取第一个，否则直接丢拼音上空格
+            // 有候选取第一个（只消费其 Pinyin Span，残码保留继续匹配），否则丢拼音上空格
             if (lastCandidates.isNotEmpty()) {
-                listener?.onCommitText(lastCandidates[0])
+                val first = lastCandidates[0]
+                Diagnostics.i(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
+                listener?.onCommitText(first)
+                if (consumePinyin(first)) {
+                    // 空格上屏同样触发智能预测（与点选候选一致）
+                    lastCommittedWord = first
+                    lastPredictions = PinyinEngine.predict(first)
+                } else {
+                    lastPredictions = emptyList()
+                }
             } else {
                 listener?.onCommitSpace()
+                composing.clear()
+                lastCommittedWord = ""
+                lastPredictions = emptyList()
             }
-            composing.clear()
-            // 空格上屏同样触发智能预测（与点选候选一致）
-            lastCommittedWord = lastCandidates.firstOrNull().orEmpty()
-            lastPredictions = PinyinEngine.predict(lastCommittedWord)
             refreshCandidateBar()
         } else if (lastPredictions.isNotEmpty()) {
             // 预测态：空格取第一个预测词
@@ -1149,17 +1162,49 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (isPanelSearch()) {
             Diagnostics.i(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
             searchPanel.appendSearch(candidate)
-            composing.clear()
+            consumePinyin(candidate)
             refreshCandidateBar()
             return
         }
         Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         listener?.onCommitText(candidate)
-        composing.clear()
-        // 智能预测：基于已上屏词预测下一个词（libime matchWordsPrefix 思路）
-        lastCommittedWord = candidate
-        lastPredictions = PinyinEngine.predict(candidate)
+        // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
+        if (consumePinyin(candidate)) {
+            lastCommittedWord = candidate
+            lastPredictions = PinyinEngine.predict(candidate)
+        } else {
+            lastPredictions = emptyList()
+        }
         refreshCandidateBar()
+    }
+
+    /**
+     * 只消费候选词实际对应的拼音区间（Pinyin Span），剩余拼音保留在
+     * [composing] 中继续参与候选匹配（Residual Pinyin Rematching）。
+     *
+     * 双拼按键换算：两键一音节，消费 k 个音节即删除前 2k 个按键。
+     *
+     * @return true 表示拼音已全部消费；false 表示存在残码，候选栏应立即重查
+     */
+    private fun consumePinyin(candidate: String): Boolean {
+        val fullInput = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString()) else composing.toString()
+        val consumption = PinyinEngine.consumption(fullInput, candidate)
+        if (consumption.quanpinChars >= fullInput.length) {
+            composing.clear()
+            return true
+        }
+        if (shuangpinMode) {
+            val keys = (consumption.syllables * 2).coerceAtMost(composing.length)
+            composing.delete(0, keys)
+        } else {
+            composing.delete(0, consumption.quanpinChars)
+        }
+        Diagnostics.i(
+            TAG,
+            "残码保留: 消费=\"${fullInput.take(consumption.quanpinChars)}\" " +
+                "剩余拼音=${if (shuangpinMode) Shuangpin.toQuanpin(composing.toString()) else composing}",
+        )
+        return false
     }
     private fun onPredictionSelected(pred: String) {
         Diagnostics.i(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")

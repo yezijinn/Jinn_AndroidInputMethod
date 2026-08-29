@@ -427,7 +427,76 @@ object PinyinEngine {
     fun charsFor(syllable: String): List<String> =
         charsBySyllable[syllable]?.toList() ?: emptyList()
 
+    // ── 候选拼音消费区间（Residual Pinyin Rematching）───────
+
+    /**
+     * 候选词在全拼输入串上消费的拼音区间（Pinyin Span）。
+     * @property quanpinChars 消费的全拼字符数；等于输入全长表示全部消费
+     * @property syllables    消费的完整音节数（双拼按键换算：两键一音节）
+     */
+    data class Consumption(val quanpinChars: Int, val syllables: Int)
+
+    /**
+     * 计算候选 [candidate] 在全拼输入串 [input] 上应消费的区间。
+     *
+     * 依据候选实际绑定的拼音确定消费范围，不按字符串长度猜测：
+     *  1. 词语候选：词→拼音反向索引 [wordToPinyin] 与输入做音节对齐前缀匹配
+     *     （ue/ve 变体兼容）；补全型候选（词拼音以整个输入为前缀，如 nim→你们）消费全部输入；
+     *  2. 单字候选：在音节切分中定位首个含该字的音节，消费到该音节结束；
+     *     来自末尾未完成音节前缀联想的单字消费全部输入；
+     *  3. 兜底（无法确定区间）：消费全部输入，等价旧的清空行为，不产生错误残码。
+     */
+    fun consumption(input: String, candidate: String): Consumption {
+        if (candidate.isEmpty()) return Consumption(input.length, 0)
+        if (!loaded || input.isEmpty()) return Consumption(input.length, 0)
+        val (syllables, partial) = segment(input)
+
+        /** 覆盖 [chars] 个全拼字符所需的音节数（前缀求和） */
+        fun syllablesCovering(chars: Int): Int {
+            var acc = 0
+            var k = 0
+            while (k < syllables.size && acc < chars) {
+                acc += syllables[k].length
+                k++
+            }
+            return k
+        }
+
+        // 1) 词语候选：词→拼音反查（ue/ve 双写法兼容）
+        if (candidate.length > 1) {
+            wordToPinyin[candidate]?.let { wp0 ->
+                for (wp in phraseKeysOf(wp0)) {
+                    // 常规：候选拼音是输入的音节对齐前缀 → 只消费该 Span，残码保留
+                    if (wp.length < input.length && input.startsWith(wp)) {
+                        return Consumption(wp.length, syllablesCovering(wp.length))
+                    }
+                    // 完整覆盖 或 补全型（词拼音以输入为前缀，如 nim→nimen→你们）→ 消费全部
+                    if (wp.startsWith(input)) {
+                        return Consumption(input.length, syllables.size)
+                    }
+                }
+            }
+        }
+
+        // 2) 单字候选：定位首个含该字的音节，消费到该音节结束
+        if (candidate.length == 1) {
+            var acc = 0
+            for ((i, syl) in syllables.withIndex()) {
+                acc += syl.length
+                if (charsBySyllable[syl]?.contains(candidate) == true) {
+                    return Consumption(acc, i + 1)
+                }
+            }
+            // 来自末尾未完成音节的前缀联想 → 消费全部输入
+            if (partial.isNotEmpty()) return Consumption(input.length, syllables.size)
+        }
+
+        // 3) 兜底：无法确定区间时消费全部（维持旧的清空行为）
+        return Consumption(input.length, syllables.size)
+    }
+
     // ── 不完整拼音补全（Pinyin Completion）──────────────────
+
 
     /** 补全结果数量上限（防候选爆炸，文档建议 32） */
     private const val MAX_COMPLETION_RESULTS = 32

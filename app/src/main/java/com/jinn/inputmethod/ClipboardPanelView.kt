@@ -49,7 +49,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     var listener: Listener? = null
 
     private val db by lazy { ClipboardDb.get(context) }
-    private val prefs by lazy { ClipboardPrefs.of(context) }
 
     private lateinit var listView: ListView
     private lateinit var textEmpty: TextView
@@ -71,7 +70,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var confirmBar: LinearLayout
 
     private var currentCategory: String? = null
-    private var currentItems: List<ClipboardDb.Item> = emptyList()
+    private var currentItems: MutableList<ClipboardDb.Item> = mutableListOf()
+
+    /** 当前分类的总条数（分页编号用：序号 = 分类总数 − 位置，与全局条目数无关） */
+    private var categoryTotal = 0
+
+    /** 已加载的偏移量（= currentItems.size）与是否还有下一页 */
+    private var hasMorePages = false
+
+    /** 分页加载是否进行中（滚动到底触发时防重入） */
+    private var loadingPage = false
 
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
@@ -94,8 +102,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         override fun getItemId(pos: Int) = currentItems[pos].id
         override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
             val item = currentItems[pos]
-            val holder = convertView?.tag as? Holder
-            val root = convertView ?: run {
+            val recycledHolder = convertView?.tag as? Holder
+            val (root, holder) = if (convertView != null && recycledHolder != null) {
+                convertView to recycledHolder
+            } else {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(12), dp(16), dp(12))
@@ -126,14 +136,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 v.addView(meta, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                v.tag = Holder(num, content, meta)
-                v
+                val newHolder = Holder(num, content, meta)
+                v.tag = newHolder
+                v to newHolder
             }
-            val h = holder ?: return root
-            h.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
-            h.num.text = (currentItems.size - pos).toString()
-            h.content.text = item.content
-            h.meta.text = buildString {
+            holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
+            holder.num.text = (categoryTotal - pos).toString()
+            holder.content.text = item.content
+            holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
@@ -186,6 +196,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             if (item != null) showItemMenu(item)
             true
         }
+        listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(view: android.widget.AbsListView?, scrollState: Int) {}
+            override fun onScroll(view: android.widget.AbsListView?, firstVisibleItem: Int, visibleItemCount: Int, totalItemCount: Int) {
+                // 距底部不足 LOAD_AHEAD 条时预取下一页
+                if (hasMorePages && totalItemCount > 0 &&
+                    firstVisibleItem + visibleItemCount >= totalItemCount - LOAD_AHEAD) {
+                    loadNextPage()
+                }
+            }
+        })
         addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         // ── 空状态 ──
@@ -262,30 +282,31 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         refresh(resetScroll = true)
     }
 
-    // ── 刷新 / 序号 ──────────────────────────────────────
+    // ── 分页加载 ─────────────────────────────────────────
 
-    /** 重新加载当前分类的列表。查询与加解密在后台线程，主线程只提交不可变快照。 */
+    /** 重新加载当前分类的列表（第一页）。查询与加解密在后台线程，主线程只提交快照。 */
     private fun refresh(resetScroll: Boolean = false) {
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
         val category = currentCategory
-        val maxItems = prefs.maxItems
         val reqToken = ++refreshToken
+        loadingPage = true
         BackgroundIo.run {
-            val all = db.recent(maxItems)
-            val filtered = when {
-                category == CATEGORY_FAVORITE -> db.recentFavorites(maxItems)
-                category != null -> db.recent(maxItems, category)
-                else -> all
-            }
+            // 分页加载：COUNT 不解密，解密只覆盖第一页（PAGE_SIZE）
+            val favoritesOnly = category == CATEGORY_FAVORITE
+            val total = db.count(if (favoritesOnly) null else category, favoritesOnly)
+            val page = db.recentPage(0, PAGE_SIZE, if (favoritesOnly) null else category, favoritesOnly)
             Diagnostics.i(
                 TAG,
-                "[$tid] DB category=${category ?: "ALL"} all=${all.size} vis=${filtered.size} " +
+                "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.size} " +
                     "thread=${Thread.currentThread().name}",
             )
             post {
                 if (reqToken != refreshToken) return@post
-                currentItems = filtered
+                loadingPage = false
+                categoryTotal = total
+                currentItems = page.toMutableList()
+                hasMorePages = page.size < total
                 adapter.notifyDataSetChanged()
                 updateEmpty()
                 // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
@@ -300,6 +321,31 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     val token = ++scrollToken
                     listView.post { if (token == scrollToken) listView.setSelection(0) }
                 }
+            }
+        }
+    }
+
+    /** 滚动接近底部时加载下一页并追加（解密只覆盖本页） */
+    private fun loadNextPage() {
+        if (loadingPage || !hasMorePages) return
+        val category = currentCategory
+        val offset = currentItems.size
+        val reqToken = refreshToken
+        loadingPage = true
+        BackgroundIo.run {
+            val favoritesOnly = category == CATEGORY_FAVORITE
+            val page = db.recentPage(offset, PAGE_SIZE, if (favoritesOnly) null else category, favoritesOnly)
+            post {
+                if (reqToken != refreshToken) return@post
+                loadingPage = false
+                if (page.isEmpty()) {
+                    hasMorePages = false
+                    return@post
+                }
+                currentItems.addAll(page)
+                hasMorePages = currentItems.size < categoryTotal
+                adapter.notifyDataSetChanged()
+                Diagnostics.i(TAG, "分页加载: offset=$offset +${page.size} hasMore=$hasMorePages")
             }
         }
     }
@@ -388,6 +434,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private companion object {
         const val TAG = "ClipboardPanel"
         const val CATEGORY_FAVORITE = "FAVORITE"
+        /** 每页条数（解密只覆盖可见窗口） */
+        const val PAGE_SIZE = 50
+        /** 距底部还有多少条时预取下一页 */
+        const val LOAD_AHEAD = 10
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     }
 }

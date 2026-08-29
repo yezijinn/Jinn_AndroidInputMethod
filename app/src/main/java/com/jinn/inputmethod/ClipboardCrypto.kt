@@ -31,7 +31,14 @@ object ClipboardCrypto {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     }
 
-    private fun getOrCreateKey(): SecretKey {
+    /**
+     * 密钥内存缓存：Keystore getKey 每次都要走 binder/TEE 调用（5-20ms），
+     * 200 条批量解密时占绝对耗时大头。SecretKey 仅是对 Keystore 托管密钥的
+     * 不透明句柄（私钥材料不离开安全硬件），缓存句柄不降低安全性。
+     */
+    private val cachedKey: SecretKey by lazy { createOrLoadKey() }
+
+    private fun createOrLoadKey(): SecretKey {
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
@@ -52,7 +59,7 @@ object ClipboardCrypto {
     fun encrypt(plaintext: String): String? = runCatching {
         if (plaintext.isEmpty()) return null
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
         val iv = cipher.iv
         val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
         val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
@@ -71,7 +78,7 @@ object ClipboardCrypto {
         val data = Base64.decode(stored.substring(sep + 1), Base64.NO_WRAP)
         if (iv.size < 12) return null // GCM 标准 IV 为 12 字节
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
         String(cipher.doFinal(data), Charsets.UTF_8)
     }.getOrElse {
         Diagnostics.e(TAG, "解密失败: ${it.message}")
