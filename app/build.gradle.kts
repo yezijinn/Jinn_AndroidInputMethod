@@ -3,23 +3,32 @@ import java.util.Date
 import java.util.Locale
 import java.util.Properties
 import java.io.FileInputStream
+import java.io.File
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
-// ── 签名配置（密码从 keystore.properties 读取，该文件不入库）──
-// 本地新建 keystore.properties：
-//   storeFile=keystore/jinn-release.jks
-//   storePassword=***
-//   keyAlias=jinn
-//   keyPassword=***
+// ── 签名配置 ─────────────────────────────────────────────
+// 一键打包脚本通过环境变量注入 E:\JinnKeyStores 中的统一密钥；
+// keystore.properties 仅作为手动构建的本地兼容回退，绝不入库。
 val keystoreProps = Properties()
 val ksFile = rootProject.file("keystore.properties")
 if (ksFile.exists()) {
     keystoreProps.load(FileInputStream(ksFile))
 }
+
+val externalStoreFile = System.getenv("JINN_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+val externalStorePassword = System.getenv("JINN_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val externalKeyAlias = System.getenv("JINN_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val externalKeyPassword = System.getenv("JINN_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val signingStoreFile = externalStoreFile?.let { File(it) }
+    ?: keystoreProps.getProperty("storeFile")?.let(rootProject::file)
+val signingStorePassword = externalStorePassword ?: keystoreProps.getProperty("storePassword")
+val signingKeyAlias = externalKeyAlias ?: keystoreProps.getProperty("keyAlias")
+val signingKeyPassword = externalKeyPassword ?: keystoreProps.getProperty("keyPassword")
+val apksignerOnly = System.getenv("JINN_APKSIGNER_ONLY") == "1"
 
 android {
     namespace = "com.jinn.inputmethod"
@@ -27,11 +36,16 @@ android {
 
     signingConfigs {
         create("release") {
-            if (ksFile.exists()) {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile", "keystore/jinn-release.jks"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias", "jinn")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+            if (!apksignerOnly && signingStoreFile != null && signingStorePassword != null &&
+                signingKeyAlias != null && signingKeyPassword != null) {
+                storeFile = signingStoreFile
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+                // Use modern APK Signature Schemes; V1 is intentionally disabled.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -58,8 +72,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // 仅当本地有签名配置时才启用签名（开源仓库不含密码，构建为未签名）
-            if (ksFile.exists()) {
+            // 外部统一密钥或本地兼容配置完整时启用签名，否则保留未签名构建能力。
+            if (!apksignerOnly && signingStoreFile != null && signingStorePassword != null &&
+                signingKeyAlias != null && signingKeyPassword != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
