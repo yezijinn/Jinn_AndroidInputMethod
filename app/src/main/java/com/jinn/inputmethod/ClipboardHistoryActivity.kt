@@ -287,20 +287,18 @@ class ClipboardHistoryActivity : Activity() {
         root.addView(actionRow, lp())
 
         setContentView(root)
-        // 监听 IME 粘贴结果：成功才允许关闭页面（同进程 NOT_EXPORTED 广播）
+        // 监听 IME 粘贴结果：成功才允许关闭页面（同进程 NOT_EXPORTED 广播）。
+        //
+        // 用 ContextCompat.registerReceiver 而不是手写 `if (SDK_INT >= TIRAMISU)` 分支：
+        // RECEIVER_NOT_EXPORTED 是 API 33 引入、API 34 起强制，手写分支容易被 Lint
+        // 判为「未声明导出标志」（静态无法证明完备），ContextCompat 会按版本自动适配。
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(
-                    pasteResultReceiver,
-                    android.content.IntentFilter().apply { addAction(JinnIme.ACTION_CLIPBOARD_PASTE_RESULT) },
-                    Context.RECEIVER_NOT_EXPORTED,
-                )
-            } else {
-                registerReceiver(
-                    pasteResultReceiver,
-                    android.content.IntentFilter().apply { addAction(JinnIme.ACTION_CLIPBOARD_PASTE_RESULT) },
-                )
-            }
+            androidx.core.content.ContextCompat.registerReceiver(
+                this,
+                pasteResultReceiver,
+                android.content.IntentFilter().apply { addAction(JinnIme.ACTION_CLIPBOARD_PASTE_RESULT) },
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
         }.onFailure {
             Diagnostics.e(TAG, "注册粘贴结果接收器失败: ${it.message}")
         }

@@ -248,7 +248,16 @@ class JinnIme : InputMethodService() {
                 Diagnostics.i(TAG, "自动唤起键盘：关闭，暂存粘贴文本但不唤起 IME")
                 return false
             }
-            runCatching { requestShowSelf(0) }.onFailure { }
+            // requestShowSelf 是 API 28 才有的方法（minSdk 26）：低版本直接跳过，
+            // 否则会抛 NoSuchMethodError——虽被 runCatching 兜住不崩溃，
+            // 但功能静默失效且空 onFailure 违反「绝不静默吞异常」的约定。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching { requestShowSelf(0) }.onFailure {
+                    Diagnostics.w(TAG, "requestShowSelf 失败: ${it.message}")
+                }
+            } else {
+                Diagnostics.i(TAG, "API < 28，不支持 requestShowSelf，跳过主动唤起")
+            }
             return false
         }
         val ok = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
@@ -955,7 +964,8 @@ class JinnIme : InputMethodService() {
     }
 
     private fun registerNetwork() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        // 无需再做 SDK_INT 判断：NetworkCallback 是 API 24 引入，而本应用 minSdk = 26，
+        // 原先的 `if (SDK_INT < N) return` 恒为 false（Lint ObsoleteSdkInt）。
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Diagnostics.i(TAG, "network: 网络恢复可用")
