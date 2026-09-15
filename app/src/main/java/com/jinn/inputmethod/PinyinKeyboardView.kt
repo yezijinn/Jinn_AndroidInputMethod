@@ -302,6 +302,61 @@ class PinyinKeyboardView @JvmOverloads constructor(
             ),
         )),
         // 序号
+        // 特殊：符号 / 天气 / emoji / 箭头 / 货币 / 数理几何，共 6 页
+        SymbolGroup("特殊", listOf(
+            mapOf(
+                'q' to "♥", 'w' to "♦", 'e' to "♣", 'r' to "♠", 't' to "★",
+                'y' to "☆", 'u' to "♪", 'i' to "♫", 'o' to "☺", 'p' to "☹",
+                'a' to "♡", 's' to "♢", 'd' to "♧", 'f' to "♤", 'g' to "☞",
+                'h' to "☜", 'j' to "❀", 'k' to "☆", 'l' to "⚡",
+                'z' to "✓", 'x' to "✗", 'c' to "☑", 'v' to "☐", 'b' to "①②",
+                'n' to "③", 'm' to "④",
+            ),
+            mapOf(
+                'q' to "☀", 'w' to "☁", 'e' to "☂", 'r' to "❄", 't' to "☃",
+                'y' to "☎", 'u' to "✉", 'i' to "✈", 'o' to "⚓", 'p' to "⚑",
+                'a' to "❤", 's' to "☻", 'd' to "☼", 'f' to "☽", 'g' to "♨",
+                'h' to "☿", 'j' to "♄", 'k' to "由", 'l' to "白",
+                'z' to "☘", 'x' to "♁", 'c' to "☛", 'v' to "☚", 'b' to "➜",
+                'n' to "⏏", 'm' to "※",
+            ),
+            // 常用 emoji
+            mapOf(
+                'q' to "😀", 'w' to "😁", 'e' to "😂", 'r' to "🤣", 't' to "😊",
+                'y' to "😉", 'u' to "😍", 'i' to "😘", 'o' to "😎", 'p' to "🤔",
+                'a' to "😏", 's' to "😒", 'd' to "😢", 'f' to "😭", 'g' to "😅",
+                'h' to "😳", 'j' to "🤗", 'k' to "💪", 'l' to "👌",
+                'z' to "👍", 'x' to "👎", 'c' to "🙏", 'v' to "💯", 'b' to "❤️",
+                'n' to "🔥", 'm' to "🎉",
+            ),
+            // 第 4 页：箭头
+            mapOf(
+                'q' to "→", 'w' to "←", 'e' to "↑", 'r' to "↓", 't' to "⇒",
+                'y' to "⇐", 'u' to "⇑", 'i' to "⇓", 'o' to "↔", 'p' to "↕",
+                'a' to "➤", 's' to "➔", 'd' to "↗", 'f' to "↘", 'g' to "↙",
+                'h' to "↖", 'j' to "⤴", 'k' to "⤵", 'l' to "↩",
+                'z' to "↪", 'x' to "⇄", 'c' to "⇅", 'v' to "⇆", 'b' to "⇧",
+                'n' to "⇩", 'm' to "⏎",
+            ),
+            // 第 5 页：货币与金融
+            mapOf(
+                'q' to "¥", 'w' to "$", 'e' to "€", 'r' to "£", 't' to "₩",
+                'y' to "₽", 'u' to "¢", 'i' to "₪", 'o' to "₹", 'p' to "₫",
+                'a' to "₴", 's' to "₦", 'd' to "₱", 'f' to "﷼", 'g' to "₨",
+                'h' to "₡", 'j' to "₭", 'k' to "₮", 'l' to "₲",
+                'z' to "₵", 'x' to "₸", 'c' to "₺", 'v' to "₼", 'b' to "₾",
+                'n' to "¤", 'm' to "₿",
+            ),
+            // 第 6 页：数理与几何
+            mapOf(
+                'q' to "≠", 'w' to "≈", 'e' to "≤", 'r' to "≥", 't' to "±",
+                'y' to "×", 'u' to "÷", 'i' to "∞", 'o' to "∵", 'p' to "∴",
+                'a' to "∠", 's' to "⊥", 'd' to "∥", 'f' to "△", 'g' to "▲",
+                'h' to "▽", 'j' to "▼", 'k' to "◇", 'l' to "◆",
+                'z' to "□", 'x' to "■", 'c' to "○", 'v' to "●", 'b' to "◎",
+                'n' to "⊙", 'm' to "⌒",
+            ),
+        )),
         SymbolGroup("序号", listOf(
             mapOf(
                 'q' to "①", 'w' to "②", 'e' to "③", 'r' to "④", 't' to "⑤",
@@ -401,7 +456,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             ),
         )),
         // 平假名
-        SymbolGroup("平假名", listOf(
+        // 日本：平假名 + 片假名合并（原为两个分组，内容二合一，共 8 页）
+        SymbolGroup("日本", listOf(
+            // ── 平假名 ──
             mapOf(
                 'q' to "あ", 'w' to "い", 'e' to "う", 'r' to "え", 't' to "お",
                 'y' to "か", 'u' to "き", 'i' to "く", 'o' to "け", 'p' to "こ",
@@ -418,7 +475,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'z' to "が", 'x' to "ぎ", 'c' to "ぐ", 'v' to "げ", 'b' to "ご",
                 'n' to "ぱ", 'm' to "ぴ",
             ),
-            // 浊音/半浊音/小写
             mapOf(
                 'q' to "ざ", 'w' to "じ", 'e' to "ず", 'r' to "ぜ", 't' to "ぞ",
                 'y' to "だ", 'u' to "ぢ", 'i' to "づ", 'o' to "で", 'p' to "ど",
@@ -431,9 +487,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'q' to "ゅ", 'w' to "ょ", 'e' to "っ", 'r' to "ゎ", 't' to "ゐ",
                 'y' to "ゑ", 'u' to "ゝ", 'i' to "ゞ", 'o' to "ゕ", 'p' to "ゖ",
             ),
-        )),
-        // 片假名
-        SymbolGroup("片假名", listOf(
+            // ── 片假名 ──
             mapOf(
                 'q' to "ア", 'w' to "イ", 'e' to "ウ", 'r' to "エ", 't' to "オ",
                 'y' to "カ", 'u' to "キ", 'i' to "ク", 'o' to "ケ", 'p' to "コ",
@@ -450,7 +504,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'z' to "ガ", 'x' to "ギ", 'c' to "グ", 'v' to "ゲ", 'b' to "ゴ",
                 'n' to "パ", 'm' to "ピ",
             ),
-            // 浊音/半浊音/小写
             mapOf(
                 'q' to "ザ", 'w' to "ジ", 'e' to "ズ", 'r' to "ゼ", 't' to "ゾ",
                 'y' to "ダ", 'u' to "ヂ", 'i' to "ヅ", 'o' to "デ", 'p' to "ド",
@@ -492,33 +545,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             ),
         )),
         // 特殊
-        SymbolGroup("特殊", listOf(
-            mapOf(
-                'q' to "♥", 'w' to "♦", 'e' to "♣", 'r' to "♠", 't' to "★",
-                'y' to "☆", 'u' to "♪", 'i' to "♫", 'o' to "☺", 'p' to "☹",
-                'a' to "♡", 's' to "♢", 'd' to "♧", 'f' to "♤", 'g' to "☞",
-                'h' to "☜", 'j' to "❀", 'k' to "☆", 'l' to "⚡",
-                'z' to "✓", 'x' to "✗", 'c' to "☑", 'v' to "☐", 'b' to "①②",
-                'n' to "③", 'm' to "④",
-            ),
-            mapOf(
-                'q' to "☀", 'w' to "☁", 'e' to "☂", 'r' to "❄", 't' to "☃",
-                'y' to "☎", 'u' to "✉", 'i' to "✈", 'o' to "⚓", 'p' to "⚑",
-                'a' to "❤", 's' to "☻", 'd' to "☼", 'f' to "☽", 'g' to "♨",
-                'h' to "☿", 'j' to "♄", 'k' to "由", 'l' to "白",
-                'z' to "☘", 'x' to "♁", 'c' to "☛", 'v' to "☚", 'b' to "➜",
-                'n' to "⏏", 'm' to "※",
-            ),
-            // 常用 emoji
-            mapOf(
-                'q' to "😀", 'w' to "😁", 'e' to "😂", 'r' to "🤣", 't' to "😊",
-                'y' to "😉", 'u' to "😍", 'i' to "😘", 'o' to "😎", 'p' to "🤔",
-                'a' to "😏", 's' to "😒", 'd' to "😢", 'f' to "😭", 'g' to "😅",
-                'h' to "😳", 'j' to "🤗", 'k' to "💪", 'l' to "👌",
-                'z' to "👍", 'x' to "👎", 'c' to "🙏", 'v' to "💯", 'b' to "❤️",
-                'n' to "🔥", 'm' to "🎉",
-            ),
-        )),
         // 注音：第 1 页声调（带调拼音字母 + 声调符号），其后为完整注音符号
         SymbolGroup("注音", listOf(
             mapOf(
