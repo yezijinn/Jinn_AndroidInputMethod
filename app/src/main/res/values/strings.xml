@@ -40,6 +40,7 @@
     <string name="key_cn">中</string>
     <string name="key_en">EN</string>
     <string name="key_abc">ABC</string>
+    <string name="key_back">返回</string>
     <string name="key_symbol">符号</string>
     <string name="key_digit">数字</string>
     <string name="cd_shift">切换大写</string>
