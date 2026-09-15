@@ -36,9 +36,11 @@ Speech recognition runs entirely on the NAS server (zero on-device models); piny
     A search panel above the candidate bar filters history in real time; results scroll and paste on tap; exit restores the normal keyboard.
   - 剪贴板内容 AES-256-GCM 加密保存在本机私有数据库，仅本输入法可读取。
     Entries are AES-256-GCM encrypted in a private local DB, readable only by this IME.
-- **后台保活 / Keep-alive**：前台常驻服务 + 无障碍互保 + 开机自启；可选 Root/Shizuku 白名单。
-  Foreground service + accessibility mutual keep-alive + boot auto-start; optional Root/Shizuku whitelist.
-- **零额外模型 / Zero bundled models**：不打包任何语音模型，APK 约 10MB，仅依赖 `core-ktx`、`activity-ktx`、`okhttp3`。
+- **分类词库 / Optional dictionaries**：长词包、腾讯大词库等可在设置页按需下载；
+  采用**延迟加载**，不拖慢「开机后首次输入」的候选就绪；增删后自动重启输入法生效。
+  Optional dictionaries (long-word pack, Tencent lexicon) downloadable on demand;
+  loaded **lazily** so first-input readiness is unaffected; auto-restart applies changes.
+- **零额外模型 / Zero bundled models**：不打包任何语音模型，APK 约 **4.5MB**，仅依赖 `core-ktx`、`activity-ktx`、`okhttp3`、`xz`。
 
 ## 🏗️ 架构 / Architecture
 
@@ -52,8 +54,8 @@ Pinyin keyboard / clipboard panels (local)  ← recognized text (accumulated, ov
 
 | 模块 / Module | 职责 / Responsibility |
 |---|---|
-| `JinnIme` | 输入法服务：语音/拼音双模式、手势、结果回显、保活拉起 / IME service: voice+pinyin modes, gestures, echo, keep-alive |
-| `PinyinEngine` | 拼音引擎：词库加载、候选查询、双拼、不完整补全、词库约束分词 / Pinyin engine: lexicon, candidates, shuangpin, completion, segmentation |
+| `JinnIme` | 输入法服务：语音/拼音双模式、手势、结果回显、剪贴板粘贴广播 / IME service: voice+pinyin modes, gestures, echo, clipboard paste broadcast |
+| `PinyinEngine` | 拼音引擎：词库加载（含可选包延迟加载）、候选查询、双拼、不完整补全、词库约束分词 / Pinyin engine: lexicon (lazy optional packs), candidates, shuangpin, completion, segmentation |
 | `PinyinKeyboardView` | 26 键键盘 + 候选栏 + 功能面板 / 26-key keyboard + candidate bar + function panels |
 | `ClipboardPanelView` | 剪贴板内嵌面板（分类/粘贴/收藏/删除/清空） / Embedded clipboard panel (categories/paste/favorite/delete/clear) |
 | `SearchPanelView` | 顶部搜索面板：结果列表 + 搜索框 + 退出搜索 / Top search panel: results + input + exit |
@@ -113,9 +115,12 @@ The repo does **not** ship signing keys. To sign locally:
 ## 📚 词库 / Dictionaries
 
 内置词库 / Built-in assets（`app/src/main/assets/`）：
-- `pinyin_phrases.txt`：约 105 万键（拼音串 → 词语，按词频降序）/ ~1.05M entries (pinyin → phrase, freq-desc)
-- `pinyin_chars.txt`：416 音节（音节 → 单字）/ 416 syllables (syllable → char)
+- `pinyin_phrases.txt.xz`：基础包约 **60 万键**（词长 ≤4 字，含四字成语）；xz 流式解压不落盘
+  ~600K entries (phrases up to 4 chars); streamed from xz, never written to disk
+- `pinyin_chars.txt`：**422 音节**（音节 → 单字）/ 422 syllables (syllable → char)
 - `pinyin_syllables.txt`：合法音节全集 / full valid-syllable set
+- **可选词库不进 APK**：用户在「分类词库」页按需下载，存于 `filesDir/dicts/`，引擎启动时自动扫描
+  Optional dictionaries are **not** bundled: downloaded on demand into `filesDir/dicts/`
 
 数据来源与许可证详见 / Sources & licenses: [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)。
 词库构建工具见 / Dictionary builder: `tools/dict_builder/`（Rime → 项目格式；THUOCL 自动注音）。
