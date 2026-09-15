@@ -47,6 +47,14 @@ object PinyinEngine {
     @Volatile
     private var loaded = false
 
+    /** 可选词库包是否已加载完成（延迟加载，见 loadOptionalAsync） */
+    @Volatile
+    private var optionalLoaded = false
+
+    /** 可选词库包是否正在后台加载（防重复触发） */
+    @Volatile
+    private var optionalLoading = false
+
     /** 音节 → 单字（按频率降序） */
     private var charsBySyllable = HashMap<String, Array<String>>()
 
@@ -111,8 +119,9 @@ object PinyinEngine {
             if (!showRareChars) loadCommonChars(context)
             loadChars(context)
             loadPhrases(context)
-            // 可选的长词包：未安装时基础词库照常可用，只是长词打不出来
-            loadExtensionDict(context)
+            // 可选词库包**不在这里加载** —— 见 loadOptionalAsync()。
+            // 它们可达 97 万词条、加载十几秒，若在此一并加载会拖慢
+            // 「开机后首次输入」的候选就绪时间；改为基础包就绪后在后台补齐。
             loadSyllables(context)
             finalizeLoad()
             loaded = true
@@ -127,7 +136,7 @@ object PinyinEngine {
             )
             Diagnostics.i(
                 TAG,
-                if (extensionLoaded) "扩展词库: 已加载（长词可用）" else "扩展词库: 未安装（长词不可用）",
+                "可选词库: 将在基础词库就绪后延迟加载（分类词库包，加载期间不影响既有输入）",
             )
             // 29MB 词库常驻 IME 进程，是低端机被 LMK 杀的最大嫌疑。
             // 这里留采样点：真机排查时直接从日志看词库到底吃多少内存。
@@ -276,6 +285,47 @@ object PinyinEngine {
         }
         return true
     }
+
+    /**
+     * 延迟加载可选词库包（分类词库页下载的那些）。
+     *
+     * **为什么与基础包分开**：可选包可达 97 万词条、单独加载耗时十几秒。
+     * 若在 `onCreate` 里与基础包一起加载，「开机后首次使用输入法」时
+     * 候选就绪时间会从 6 秒被拖到 25 秒。改为基础包就绪后调用本方法，
+     * 用户此时已能正常打字，可选包在后台悄悄补齐。
+     *
+     * @param delayMs 基础包就绪后再等多久开始加载，给首屏输入让路
+     * @param onReady 全部可选包加载完成后的回调（**不在主线程**，调用方自行切线程）
+     */
+    fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null) {
+        if (optionalLoaded || optionalLoading) return
+        optionalLoading = true
+        Thread {
+            runCatching {
+                // load() 幂等：若基础包已就绪会立即返回
+                load(context)
+                if (delayMs > 0) Thread.sleep(delayMs)
+                val t0 = System.currentTimeMillis()
+                loadExtensionDict(context)
+                // 可选包引入了新的拼音键，**必须重建有序键表**：
+                // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
+                synchronized(this) { finalizeLoad() }
+                optionalLoaded = true
+                Diagnostics.i(
+                    TAG,
+                    "可选词库延迟加载完成，耗时 ${System.currentTimeMillis() - t0}ms，" +
+                        "词语键=${phrasesByPinyin.size}",
+                )
+            }.onFailure {
+                Diagnostics.e(TAG, "可选词库延迟加载失败（基础词库不受影响）: ${it.message}")
+            }
+            optionalLoading = false
+            onReady?.invoke()
+        }.start()
+    }
+
+    /** 可选词库是否已就绪（供 UI 显示状态） */
+    fun isOptionalReady(): Boolean = optionalLoaded
 
     /**
      * 加载全部可选词库包。
