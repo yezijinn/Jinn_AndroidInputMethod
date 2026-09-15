@@ -1,7 +1,9 @@
 package com.jinn.inputmethod
 
 import android.content.Context
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Root 增强模式：JinnIme 数据目录安全审计（方案第十一节）。
@@ -21,12 +23,16 @@ import java.io.File
  */
 object ClipboardFirewall {
 
-    /** root 是否可用（su 返回 0） */
+    /** root 是否可用（su 返回 0；带超时，su 弹窗未响应时不会永久挂起） */
     fun isRootAvailable(): Boolean = runCatching {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id -u"))
         try {
-            val exit = process.waitFor()
-            exit == 0
+            // 用户未在 su 弹窗授权时进程可能一直挂着，必须限时
+            if (!process.waitFor(SU_TIMEOUT_SEC, TimeUnit.SECONDS)) {
+                process.destroy()
+                return@runCatching false
+            }
+            process.exitValue() == 0
         } finally {
             runCatching { process.destroy() }
         }
@@ -38,7 +44,6 @@ object ClipboardFirewall {
      * @param context 用于获取包名与数据目录
      */
     fun audit(context: Context): List<Pair<String, String>> {
-        val pkg = context.packageName
         val dataDir = context.dataDir.absolutePath  // /data/user/0/<pkg>/
         val dbPath = "$dataDir/databases/jinn_clipboard.db"
         val results = mutableListOf<Pair<String, String>>()
@@ -59,19 +64,34 @@ object ClipboardFirewall {
         results.add(checkSymlink(dataDir))
 
         // 6. 外部存储泄露
-        results.add(checkExternalLeak(pkg))
+        results.add(checkExternalLeak())
 
-        // 7. Backup 配置（静态已知，无需 su）
-        results.add(checkBackupConfig())
+        // 7. Backup 配置（读取实际生效的规则文件，非硬编码）
+        results.add(checkBackupConfig(context))
 
         return results
     }
 
+    /**
+     * 执行 su 命令并取回 stdout；失败或超时返回 null。
+     *
+     * 两处必要防护（原实现都没有）：
+     *  - **并发排空 stderr**：只读 stdout 时，一旦 stderr 管道写满子进程就会阻塞，
+     *    find 这类可能大量输出的命令会直接挂死；
+     *  - **超时销毁进程**：全盘 find 在极端情况下可达数十秒，不能无限等待。
+     */
     private fun su(cmd: String): String? = runCatching {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
         try {
+            val errDrain = Thread {
+                runCatching { process.errorStream.bufferedReader().forEachLine { } }
+            }.apply { isDaemon = true; start() }
             val text = process.inputStream.bufferedReader().readText().trim()
-            process.waitFor()
+            if (!process.waitFor(SU_TIMEOUT_SEC, TimeUnit.SECONDS)) {
+                Diagnostics.w(TAG, "su 超时（${SU_TIMEOUT_SEC}s），已销毁进程")
+                errDrain.join(200)
+                return@runCatching null
+            }
             text
         } finally {
             runCatching { process.destroy() }
@@ -109,17 +129,44 @@ object ClipboardFirewall {
         else "符号链接" to "✗ 发现符号链接:\n$out"
     }
 
-    private fun checkExternalLeak(pkg: String): Pair<String, String> {
+    private fun checkExternalLeak(): Pair<String, String> {
         val out = su("find /storage/emulated/0 -maxdepth 4 -name 'jinn_clipboard*' 2>/dev/null")
             ?: return "外部存储泄露" to "无法检查（su 失败）"
         return if (out.isBlank()) "外部存储泄露" to "✓ 未在共享存储发现剪贴板数据库"
         else "外部存储泄露" to "✗ 共享存储发现剪贴板数据:\n$out"
     }
 
-    private fun checkBackupConfig(): Pair<String, String> {
-        // 静态已知：backup_rules.xml 已排除 jinn_clipboard.db，data_extraction_rules.xml 也已排除
-        return "Backup 配置" to "✓ 已在 backup_rules 与 data_extraction_rules 中排除剪贴板数据库"
+    /**
+     * 真查 Backup 配置：解析 backup_rules.xml，确认剪贴板数据库被排除。
+     *
+     * 原实现硬编码返回 ✓ —— 无论规则文件被改成什么样都显示"安全"，属于假检查。
+     * 这里改为运行时读取实际生效的规则文件。
+     */
+    private fun checkBackupConfig(context: Context): Pair<String, String> {
+        val excluded = runCatching {
+            val parser = context.resources.getXml(R.xml.backup_rules)
+            var found = false
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                if (parser.eventType == XmlPullParser.START_TAG && parser.name == "exclude") {
+                    val path = parser.getAttributeValue(null, "path").orEmpty()
+                    if (path.contains(DB_NAME)) found = true
+                }
+                parser.next()
+            }
+            found
+        }.getOrDefault(false)
+        return "Backup 配置" to if (excluded) {
+            "✓ backup_rules 已排除剪贴板数据库"
+        } else {
+            "✗ backup_rules 未排除剪贴板数据库（备份存在泄露风险）"
+        }
     }
 
     private const val TAG = "ClipboardFirewall"
+
+    /** 剪贴板数据库文件名（Backup 规则检查用） */
+    private const val DB_NAME = "jinn_clipboard.db"
+
+    /** 单条 su 命令超时（秒）：全盘 find 可能很慢，不能无限等待 */
+    private const val SU_TIMEOUT_SEC = 10L
 }

@@ -55,50 +55,60 @@ object RootShizuku {
         )
         val useShizuku = shizukuReady()
         Diagnostics.i(TAG, "applyKeepAlive: pkg=$pkg 走${if (useShizuku) "Shizuku" else "su(root)"}")
-        return if (useShizuku) {
-            commands.all { runShizuku(it) }
-        } else {
-            commands.all { runSu(it) }
-        }
+        // 逐条执行完再汇总：原先写成 `commands.all { ... }`，会在第一条失败时短路，
+        // 后面几条白名单命令一条都不执行。这几条彼此独立（Doze 白名单 / 两个 appops /
+        // set-inactive），部分成功也比一条不做有价值。
+        val results = commands.map { if (useShizuku) runShizuku(it) else runSu(it) }
+        val okCount = results.count { it }
+        Diagnostics.i(TAG, "applyKeepAlive: 成功 $okCount/${results.size} 条")
+        return okCount == results.size
     }
 
-    /** 进程 waitFor 超时销毁并返回退出码；超时返回非 0 */
-    private fun waitForOrKill(process: Process, timeoutMs: Long): Int {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (true) {
-            try {
-                return process.exitValue()
-            } catch (_: IllegalThreadStateException) {
-                if (System.currentTimeMillis() > deadline) {
-                    runCatching { process.destroy() }
-                    return -1
-                }
-                Thread.sleep(50)
-            }
+    /**
+     * 等待子进程结束并返回退出码；超时返回 -1 并销毁进程。
+     *
+     * 两处必要防护：
+     *  - **排空 stdout / stderr**：只等退出码、不读输出时，子进程写满管道缓冲区就会
+     *    阻塞，永远结束不了。本次几条命令输出虽少，但与 ClipboardFirewall 保持同一标准，
+     *    避免将来加命令时踩坑。
+     *  - **超时销毁**：`dumpsys` 在系统繁忙时可能长时间不返回，不能无限等待。
+     *
+     * 用 `Process.waitFor(timeout, unit)` 替代原先的轮询 + sleep（minSdk 26 已支持）。
+     */
+    private fun execAndWait(process: Process): Int = try {
+        drainAsync(process)
+        if (process.waitFor(PROCESS_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            process.exitValue()
+        } else {
+            Diagnostics.w(TAG, "命令执行超时（${PROCESS_TIMEOUT_MS}ms），已销毁进程")
+            -1
+        }
+    } finally {
+        runCatching { process.destroy() }
+    }
+
+    /** 后台排空子进程输出流，避免管道写满导致子进程阻塞 */
+    private fun drainAsync(process: Process) {
+        for (stream in listOf(process.inputStream, process.errorStream)) {
+            Thread {
+                runCatching { stream.bufferedReader().forEachLine { } }
+            }.apply { isDaemon = true; start() }
         }
     }
 
     private fun runShizuku(command: String): Boolean = runCatching {
         val process = shizukuNewProcess(arrayOf("sh", "-c", command), null, null)
-        try {
-            val code = waitForOrKill(process, PROCESS_TIMEOUT_MS)
-            Diagnostics.i(TAG, "shizuku: `$command` → exit=$code")
-            code == 0
-        } finally {
-            runCatching { process.destroy() }
-        }
+        val code = execAndWait(process)   // 内部已保证最终 destroy
+        Diagnostics.i(TAG, "shizuku: `$command` → exit=$code")
+        code == 0
     }.onFailure { Diagnostics.e(TAG, "shizuku: `$command` 执行异常", it) }
         .getOrDefault(false)
 
     private fun runSu(command: String): Boolean = runCatching {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-        try {
-            val code = waitForOrKill(process, PROCESS_TIMEOUT_MS)
-            Diagnostics.i(TAG, "su: `$command` → exit=$code")
-            code == 0
-        } finally {
-            runCatching { process.destroy() }
-        }
+        val code = execAndWait(process)   // 内部已保证最终 destroy
+        Diagnostics.i(TAG, "su: `$command` → exit=$code")
+        code == 0
     }.onFailure { Diagnostics.e(TAG, "su: `$command` 执行异常", it) }
         .getOrDefault(false)
 

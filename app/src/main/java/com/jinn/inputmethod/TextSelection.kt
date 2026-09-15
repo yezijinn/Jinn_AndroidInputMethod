@@ -28,8 +28,11 @@ object TextSelection {
             PinyinKeyboardView.DirectionAction.RIGHT -> (focus + 1).coerceAtMost(textLength)
             PinyinKeyboardView.DirectionAction.UP -> moveLine(range.text, focus, up = true)
             PinyinKeyboardView.DirectionAction.DOWN -> moveLine(range.text, focus, up = false)
-            PinyinKeyboardView.DirectionAction.LINE_START -> 0
-            PinyinKeyboardView.DirectionAction.LINE_END -> textLength
+            // 行首 / 行末按**当前行**计算，与光标态（JinnIme 里用 lineStart/lineEnd）保持一致。
+            // 早前这里直接返回 0 / textLength，拖选时按「行首」会选到全文开头，
+            // 在多行文本里与用户预期（选到本行行首，对齐编辑器 Shift+Home）不符。
+            PinyinKeyboardView.DirectionAction.LINE_START -> lineStart(range.text, focus)
+            PinyinKeyboardView.DirectionAction.LINE_END -> lineEnd(range.text, focus)
             else -> focus
         }
     }
