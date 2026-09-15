@@ -384,10 +384,19 @@ object PinyinEngine {
                     filteredWordCount += phrases.size - kept.size
                     if (kept.isNotEmpty()) {
                         if (merge) {
-                            // 基础包在前、扩展包追加：同键词条共存，基础候选优先
+                            // 基础包在前、扩展包追加：同键词条共存，基础候选优先。
+                            //
+                            // **必须去重**：扩展包与基础包可能收录同一个词
+                            // （如「阿尔萨斯」两边都有），直接 `existing + kept`
+                            // 会让候选栏出现两个完全相同的候选项。
                             val existing = phrasesByPinyin[pinyin]
-                            phrasesByPinyin[pinyin] =
-                                if (existing != null) existing + kept else kept.toTypedArray()
+                            phrasesByPinyin[pinyin] = if (existing != null) {
+                                val seen = HashSet<String>(existing.size + kept.size)
+                                existing.forEach { seen.add(it) }
+                                existing + kept.filter { seen.add(it) }
+                            } else {
+                                kept.toTypedArray()
+                            }
                         } else {
                             phrasesByPinyin[pinyin] = kept.toTypedArray()
                         }
