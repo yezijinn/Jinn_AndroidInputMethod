@@ -38,7 +38,8 @@ object PinyinEngine {
     private const val PHRASES_ASSET_XZ = "pinyin_phrases.txt.xz"
 
     /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
-    private const val EXT_DICT_FILE = "dict_ext.xz"
+    /** 可选词库目录名（filesDir 下）：每类词库一个 xz 文件，供「分类词库」页按需下载 */
+    const val OPT_DICT_DIR = "dicts"
 
     /** 常用字位图大小：覆盖基本区汉字（0x4E00~0x9FFF） */
     private const val CHAR_TABLE_SIZE = 0x9FFF + 1
@@ -277,33 +278,50 @@ object PinyinEngine {
     }
 
     /**
-     * 加载可选的扩展词库（长词包）。
+     * 加载全部可选词库包。
      *
-     * 完整词库 xz 后仍有 8MB、占 APK 体积 95%，而其中 85.9% 的词条是 3 字以上的
-     * 长尾专有名词（动植物名、地名、人名、作品名、游戏道具名…），日常几乎用不到。
-     * 因此**基础包（≤3 字）随 APK 分发，长词包改为按需下载/导入**到 filesDir。
+     * 只认一个位置：`filesDir/dicts/` 目录下的全部 xz 文件
+     * （每类词库一个文件，由「分类词库」页按需下载写入）。
+     * 按文件名排序加载，保证候选顺序可复现。
      *
-     * 未安装扩展包不算错误：基础包已覆盖日常输入，只是四字成语、长专有名词打不出来，
-     * 这里只记一条日志说明。
+     * 全部用 **merge 模式**加载（基础包词条在前，可选包追加，并去重）。
+     * 未安装任何可选包不算错误：基础包已覆盖日常输入，仅记一条日志。
      */
     private fun loadExtensionDict(context: Context) {
-        val file = java.io.File(context.filesDir, EXT_DICT_FILE)
-        if (!file.isFile) {
-            Diagnostics.i(TAG, "扩展词库未安装：仅加载基础词库（长词不可用）")
-            return
+        val dir = java.io.File(context.filesDir, OPT_DICT_DIR)
+        val packs = dir.listFiles { f -> f.isFile && f.name.endsWith(".xz") }
+            ?.sortedBy { it.name }
+            .orEmpty()
+
+        var loadedCount = 0
+        var loadedBytes = 0L
+        for (f in packs) {
+            if (loadOneDict(f)) {
+                loadedCount++
+                loadedBytes += f.length()
+            }
         }
-        runCatching {
-            org.tukaani.xz.XZInputStream(file.inputStream())
-                .bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                    // 必须用合并模式：扩展包与基础包有相同的拼音键
-                    loadPhrasesReader(reader, merge = true)
-                }
-            extensionLoaded = true
-            Diagnostics.i(TAG, "扩展词库已加载: ${file.length() / 1024}KB")
-        }.onFailure {
-            Diagnostics.e(TAG, "扩展词库加载失败（忽略，基础词库仍可用）: ${it.message}")
+
+        extensionLoaded = loadedCount > 0
+        if (loadedCount == 0) {
+            Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
+        } else {
+            Diagnostics.i(TAG, "可选词库已加载 $loadedCount 个包，共 ${loadedBytes / 1024}KB")
         }
     }
+
+    /** 加载单个词库文件（merge 模式）。成功返回 true。 */
+    private fun loadOneDict(file: java.io.File): Boolean = runCatching {
+        org.tukaani.xz.XZInputStream(file.inputStream())
+            .bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                // 必须用合并模式：可选包与基础包、可选包彼此之间都可能有相同拼音键
+                loadPhrasesReader(reader, merge = true)
+            }
+        Diagnostics.i(TAG, "已加载词库包: ${file.name} (${file.length() / 1024}KB)")
+        true
+    }.onFailure {
+        Diagnostics.e(TAG, "词库包加载失败（忽略，其余词库仍可用）: ${file.name} - ${it.message}")
+    }.getOrDefault(false)
 
     /** 扩展词库（长词包）是否已加载（供设置页显示状态） */
     fun isExtensionLoaded(): Boolean = extensionLoaded
