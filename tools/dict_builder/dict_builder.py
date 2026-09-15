@@ -197,20 +197,39 @@ def write_outputs(result, out_dir, source, category="common"):
     char_buckets = OrderedDict()  # 音节 -> [(字, weight)]
     all_syllables = set()
 
+    # 关键：先去空格聚合成「compact 键 → {词: 权重}」，再统一输出。
+    #
+    # 不能像早期实现那样对每个带空格拼音各写一行（compact = pinyin.replace(" ", "")）：
+    # 不同音节切分可能连写成同一个键——「企鹅」(qi e) 与「切」(qie) 都是 qie，
+    # 各写一行会产生重复键，而 app 侧加载是
+    #     phrasesByPinyin[key] = phrases.toTypedArray()
+    # 后写的那行会把前一行**整体覆盖**，词条静默消失。
+    # 表现为：输入 qie（或双拼 qiee）只有「切/且/窃」，打不出「企鹅」；
+    # 同类还有 西安(xi an→xian)、饥饿(ji e→jie)、提案(ti an→tian) 等一整类词。
+    compact_buckets = OrderedDict()  # compact -> {word: weight}
     for pinyin, items in result.items():
-        # 去空格拼音作短语键
         compact = pinyin.replace(" ", "")
-        words = [w for w, _ in items]
+        bucket = compact_buckets.setdefault(compact, {})
+        for w, wt in items:
+            if w not in bucket or wt > bucket[w]:
+                bucket[w] = wt
+
+    for compact, word_weights in compact_buckets.items():
+        # 同键内按权重降序，保证高频词排前面（候选顺序）
+        words = [w for w, _ in sorted(word_weights.items(), key=lambda kv: -kv[1])]
         phrase_lines.append(f"{compact}\t{'|'.join(words)}")
-        # 单音节 → 单字表
+
+    # 单字表：仍以「带空格拼音只有一个音节」为准，避免把 2 音节词的字混进单字表
+    for pinyin, items in result.items():
         syls = pinyin.split()
         all_syllables.update(syls)
         if len(syls) == 1:
             syl = syls[0]
             char_buckets.setdefault(syl, {})
             for w, wt in items:
-                if w not in char_buckets[syl] or wt > char_buckets[syl][w]:
-                    char_buckets[syl][w] = wt
+                if len(w) == 1:
+                    if w not in char_buckets[syl] or wt > char_buckets[syl][w]:
+                        char_buckets[syl][w] = wt
 
     # 写短语
     with open(phrases_path, "w", encoding="utf-8") as f:

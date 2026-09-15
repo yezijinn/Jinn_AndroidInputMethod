@@ -31,6 +31,18 @@ object PinyinEngine {
     private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
 
+    /** 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字） */
+    private const val COMMON_CHARS_ASSET = "common_chars.txt"
+
+    /** 短语词库 asset 名（xz 压缩存放，加载时流式解压） */
+    private const val PHRASES_ASSET_XZ = "pinyin_phrases.txt.xz"
+
+    /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
+    private const val EXT_DICT_FILE = "dict_ext.xz"
+
+    /** 常用字位图大小：覆盖基本区汉字（0x4E00~0x9FFF） */
+    private const val CHAR_TABLE_SIZE = 0x9FFF + 1
+
     @Volatile
     private var loaded = false
 
@@ -46,6 +58,35 @@ object PinyinEngine {
     /** 合法音节集合（不含声调） */
     private val validSyllables = HashSet<String>()
 
+    /**
+     * 所有合法音节的「真前缀」集合（不含音节本身）。
+     *
+     * 供 [isTruePrefixOfSyllable] 做 O(1) 判断。原实现每调用一次就遍历整个音节表做
+     * startsWith，而该方法在每次按键的查询路径上会被调用若干次（分词、伪完整音节判定、
+     * 补全召回），累计是几百次字符串比较。预建集合后降为一次哈希查找。
+     */
+    private val syllablePrefixes = HashSet<String>()
+
+    /**
+     * 常用字位图（按 Char 码点直接索引，判定 O(1)）。
+     *
+     * null 表示**不过滤**（显示全部字，含生僻字）；非 null 时按位图过滤。
+     *
+     * 为什么用位图而不是 HashSet：词库加载要判定 123 万词条 / 450 万字符，
+     * 位图是纯数组下标访问，比哈希查找快得多；65536 位的 BooleanArray 约 64KB，
+     * 相比它省下的内存可以忽略。
+     *
+     * 判定标准：《通用规范汉字表》(2013) 一级(3500) + 二级(3000) = 6500 常用字；
+     * 三级(1605) 及表外字（扩展区）视为生僻。见 assets/common_chars.txt。
+     */
+    private var commonChars: BooleanArray? = null
+
+    /** 因生僻字被过滤掉的词条数（诊断用） */
+    private var filteredWordCount = 0
+
+    /** 扩展词库（长词包）是否已加载 */
+    private var extensionLoaded = false
+
     /** 有序音节（字典序）：保证单字候选输出顺序稳定 */
     private val sortedSyllables = ArrayList<String>()
 
@@ -60,19 +101,94 @@ object PinyinEngine {
         if (loaded) return
         synchronized(this) {
             if (loaded) return
+            logMemory("词库加载前")
+            val t0 = System.currentTimeMillis()
+            // 生僻字过滤：默认不加载（用户几乎用不到，平白占内存与加载时间）。
+            // 必须在读词库**之前**建立位图，否则过滤无从谈起——这也是它比
+            // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
+            val showRareChars = Prefs(context).showRareChars
+            if (!showRareChars) loadCommonChars(context)
             loadChars(context)
             loadPhrases(context)
+            // 可选的长词包：未安装时基础词库照常可用，只是长词打不出来
+            loadExtensionDict(context)
             loadSyllables(context)
             finalizeLoad()
             loaded = true
             Log.i(TAG, "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size} 合法音节=${validSyllables.size}")
-            Diagnostics.i(TAG, "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size}")
+            // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
+            // 评估内存优化前必须先有这个数，不能靠猜。
+            Diagnostics.i(
+                TAG,
+                "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size} " +
+                    "反向索引=${wordToPinyin.size} 合法音节=${validSyllables.size} " +
+                    if (showRareChars) "生僻字=显示" else "生僻字=隐藏(已过滤 $filteredWordCount 条)",
+            )
+            Diagnostics.i(
+                TAG,
+                if (extensionLoaded) "扩展词库: 已加载（长词可用）" else "扩展词库: 未安装（长词不可用）",
+            )
+            // 29MB 词库常驻 IME 进程，是低端机被 LMK 杀的最大嫌疑。
+            // 这里留采样点：真机排查时直接从日志看词库到底吃多少内存。
+            Diagnostics.i(TAG, "词库加载耗时: ${System.currentTimeMillis() - t0}ms")
+            logMemory("词库加载后")
         }
     }
 
-    /** 测试注入：直接用字符串字典加载（跳过 Android assets） */
-    internal fun loadFromTexts(chars: String, phrases: String, syllables: String) {
+    /**
+     * 采样进程内存并写入诊断日志。
+     *
+     * 只做一次 `Runtime` 读取（无 GC 触发、无阻塞），用于评估词库常驻内存开销。
+     * 「已用」= totalMemory − freeMemory，反映当前 Java 堆占用。
+     */
+    private fun logMemory(stage: String) {
+        val rt = Runtime.getRuntime()
+        val usedMb = (rt.totalMemory() - rt.freeMemory()) / 1024 / 1024
+        val maxMb = rt.maxMemory() / 1024 / 1024
+        Diagnostics.i(TAG, "内存采样[$stage]: 已用=${usedMb}MB 堆上限=${maxMb}MB")
+    }
+
+    /**
+     * 测试辅助：清空全部加载状态并复位生僻字过滤。
+     *
+     * PinyinEngine 是单例，且词库数据是累加的——同一 JVM 内多个测试类相继注入数据
+     * 会互相污染（尤其「生僻字过滤」是全局状态，一旦置位会影响后续所有查询）。
+     * 测试在 @Before 里调用本方法即可获得干净起点。
+     */
+    internal fun resetForTest() {
         synchronized(this) {
+            charsBySyllable.clear()
+            phrasesByPinyin.clear()
+            wordToPinyin.clear()
+            validSyllables.clear()
+            syllablePrefixes.clear()
+            sortedSyllables.clear()
+            sortedValidSyllables.clear()
+            sortedPhraseKeys.clear()
+            completionCache.clear()
+            commonChars = null
+            filteredWordCount = 0
+            loaded = false
+        }
+    }
+
+    /**
+     * 测试注入：直接用字符串字典加载（跳过 Android assets）。
+     *
+     * @param commonCharsText 常用字表文本；传 null 表示**不过滤**（加载全部字，
+     *        与「显示生僻字」开关开启一致）。传入即启用生僻字过滤，用于验证过滤行为。
+     */
+    internal fun loadFromTexts(
+        chars: String,
+        phrases: String,
+        syllables: String,
+        commonCharsText: String? = null,
+    ) {
+        synchronized(this) {
+            // 先复位过滤状态，避免同一个 JVM 内多次注入时相互污染
+            commonChars = null
+            filteredWordCount = 0
+            if (commonCharsText != null) setCommonCharsText(commonCharsText)
             loadCharsText(chars)
             loadPhrasesText(phrases)
             loadSyllablesText(syllables)
@@ -88,7 +204,109 @@ object PinyinEngine {
         sortedPhraseKeys.addAll(phrasesByPinyin.keys.sorted())
         sortedValidSyllables.clear()
         sortedValidSyllables.addAll(validSyllables.sorted())
+        buildSyllablePrefixes()
     }
+
+    /** 预建音节真前缀集合（加载时调用一次；合法音节最长 6 字符） */
+    private fun buildSyllablePrefixes() {
+        syllablePrefixes.clear()
+        for (syllable in validSyllables) {
+            for (len in 1 until syllable.length) {
+                syllablePrefixes.add(syllable.substring(0, len))
+            }
+        }
+    }
+
+    // ── 生僻字过滤 ───────────────────────────────────────────
+
+    /** 读取常用字表 asset 并建立过滤位图 */
+    private fun loadCommonChars(context: Context) {
+        context.assets.open(COMMON_CHARS_ASSET).bufferedReader(StandardCharsets.UTF_8).use { reader ->
+            setCommonCharsText(reader.readText())
+        }
+    }
+
+    /**
+     * 解析常用字表文本并建立位图。
+     *
+     * 格式：`#` 开头为注释行，其余行里的字全部计入常用字（便于人工维护）。
+     * assets 加载与单元测试注入共用本方法。
+     */
+    internal fun setCommonCharsText(text: String) {
+        val bits = BooleanArray(CHAR_TABLE_SIZE)
+        for (line in text.lineSequence()) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+            for (c in trimmed) {
+                val code = c.code
+                if (code < CHAR_TABLE_SIZE) bits[code] = true
+            }
+        }
+        commonChars = bits
+    }
+
+    /** 关闭过滤：加载全部字（含生僻字）。对应「显示生僻字」开关开启。 */
+    internal fun clearCommonCharsFilter() {
+        commonChars = null
+    }
+
+    /**
+     * 单个字符是否允许载入。
+     *
+     *  - ASCII / 数字 / 标点（< 0x4E00）：不参与判定，一律放行；
+     *  - 基本区汉字（0x4E00~0x9FFF）：查常用字位图；
+     *  - 其它（含 BMP 外扩展区汉字的代理对）：视为生僻。
+     */
+    private fun isLoadableChar(c: Char): Boolean {
+        val bits = commonChars ?: return true
+        val code = c.code
+        return when {
+            code < 0x4E00 -> true
+            code <= 0x9FFF -> bits[code]
+            else -> false
+        }
+    }
+
+    /** 整词是否允许载入：词中任一字符生僻即整条丢弃 */
+    private fun isLoadableWord(word: String): Boolean {
+        if (commonChars == null) return true
+        for (c in word) {
+            if (!isLoadableChar(c)) return false
+        }
+        return true
+    }
+
+    /**
+     * 加载可选的扩展词库（长词包）。
+     *
+     * 完整词库 xz 后仍有 8MB、占 APK 体积 95%，而其中 85.9% 的词条是 3 字以上的
+     * 长尾专有名词（动植物名、地名、人名、作品名、游戏道具名…），日常几乎用不到。
+     * 因此**基础包（≤3 字）随 APK 分发，长词包改为按需下载/导入**到 filesDir。
+     *
+     * 未安装扩展包不算错误：基础包已覆盖日常输入，只是四字成语、长专有名词打不出来，
+     * 这里只记一条日志说明。
+     */
+    private fun loadExtensionDict(context: Context) {
+        val file = java.io.File(context.filesDir, EXT_DICT_FILE)
+        if (!file.isFile) {
+            Diagnostics.i(TAG, "扩展词库未安装：仅加载基础词库（长词不可用）")
+            return
+        }
+        runCatching {
+            org.tukaani.xz.XZInputStream(file.inputStream())
+                .bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    // 必须用合并模式：扩展包与基础包有相同的拼音键
+                    loadPhrasesReader(reader, merge = true)
+                }
+            extensionLoaded = true
+            Diagnostics.i(TAG, "扩展词库已加载: ${file.length() / 1024}KB")
+        }.onFailure {
+            Diagnostics.e(TAG, "扩展词库加载失败（忽略，基础词库仍可用）: ${it.message}")
+        }
+    }
+
+    /** 扩展词库（长词包）是否已加载（供设置页显示状态） */
+    fun isExtensionLoaded(): Boolean = extensionLoaded
 
     private fun loadChars(context: Context) {
         context.assets.open("pinyin_chars.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
@@ -105,7 +323,14 @@ object PinyinEngine {
                 if (tab > 0) {
                     val syllable = line.substring(0, tab)
                     val chars = line.substring(tab + 1).split(',')
-                    if (chars.isNotEmpty()) charsBySyllable[syllable] = chars.toTypedArray()
+                    // 生僻字过滤：不载入（既不占内存，也不进候选）
+                    val kept = if (commonChars == null) {
+                        chars
+                    } else {
+                        chars.filter { it.length == 1 && isLoadableChar(it[0]) }
+                    }
+                    filteredWordCount += chars.size - kept.size
+                    if (kept.isNotEmpty()) charsBySyllable[syllable] = kept.toTypedArray()
                 }
             }
             line = reader.readLine()
@@ -117,19 +342,30 @@ object PinyinEngine {
     }
 
     private fun loadPhrases(context: Context) {
-        // 逐行读取（29MB 词库若 readText 会先建一个超大 String 再切分，
-        // BufferedReader 边读边解析，省一次 29MB 分配 + lineSequence 开销）
-        context.assets.open("pinyin_phrases.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            loadPhrasesReader(reader)
+        // 词库以 xz 存放：28.0MB → 8.0MB，比 deflate 再省 22%，APK 体积随之下降约 20%。
+        // 用流式解压直接读、不落地磁盘；仍逐行解析，避免一次性构造超大 String。
+        // 解压实测约 0.6s，发生在后台加载线程上，不阻塞 UI、也不影响键盘显示。
+        context.assets.open(PHRASES_ASSET_XZ).let { raw ->
+            org.tukaani.xz.XZInputStream(raw).bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                loadPhrasesReader(reader)
+            }
         }
     }
 
-    /** 逐行解析短语表。为复用流式解析，行数据来自 BufferedReader。 */
-    private fun loadPhrasesReader(reader: java.io.BufferedReader) {
-        // 预分配容量：104 万键的 HashMap 不预分配会有 rehash 开销，
-        // 但这里主要省的是扩容期间的搬移（实测约 5-8% 耗时）。
-        if (phrasesByPinyin.isEmpty()) phrasesByPinyin = HashMap(2_000_000)
-        if (wordToPinyin.isEmpty()) wordToPinyin = HashMap(1_500_000)
+    /**
+     * 逐行解析短语表。
+     *
+     * @param merge true = 并入已有数据（加载扩展包时用），false = 覆盖（首次加载基础包）。
+     *
+     * **扩展包必须用合并模式**：扩展包与基础包存在相同的拼音键（如 `qie` 两边都有词），
+     * 若直接赋值会把基础包的候选整体挤掉。合并时基础包词条在前（优先级更高），
+     * 扩展包长词追加在后。
+     */
+    private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
+        // 预分配按基础包规模（约 46 万键）：一次到位，避免反复扩容。
+        // 扩展包会突破该容量并自然扩容，但那时数据已基本齐了。
+        if (phrasesByPinyin.isEmpty()) phrasesByPinyin = HashMap(600_000)
+        if (wordToPinyin.isEmpty()) wordToPinyin = HashMap(700_000)
 
         var line = reader.readLine()
         while (line != null) {
@@ -138,10 +374,25 @@ object PinyinEngine {
                 if (tab > 0) {
                     val pinyin = line.substring(0, tab)
                     val phrases = line.substring(tab + 1).split('|')
-                    if (phrases.isNotEmpty()) {
-                        phrasesByPinyin[pinyin] = phrases.toTypedArray()
+                    // 生僻字过滤：含生僻字的词整条丢弃
+                    // （用户既然用不到生僻字，也就不会用到含生僻字的词）
+                    val kept = if (commonChars == null) {
+                        phrases
+                    } else {
+                        phrases.filter { isLoadableWord(it) }
+                    }
+                    filteredWordCount += phrases.size - kept.size
+                    if (kept.isNotEmpty()) {
+                        if (merge) {
+                            // 基础包在前、扩展包追加：同键词条共存，基础候选优先
+                            val existing = phrasesByPinyin[pinyin]
+                            phrasesByPinyin[pinyin] =
+                                if (existing != null) existing + kept else kept.toTypedArray()
+                        } else {
+                            phrasesByPinyin[pinyin] = kept.toTypedArray()
+                        }
                         // 构建 词→拼音 反向索引（首个出现的拼音为准，供智能预测）
-                        for (word in phrases) {
+                        for (word in kept) {
                             wordToPinyin.putIfAbsent(word, pinyin)
                         }
                     }
@@ -399,14 +650,15 @@ object PinyinEngine {
         return Pair(syllables, input.substring(i))
     }
 
-    /** 是否存在比 s 更长的合法音节以 s 开头（s 是未完成音节前缀） */
-    private fun isTruePrefixOfSyllable(s: String): Boolean {
-        if (s.isEmpty() || s.length >= 6) return false
-        for (syllable in validSyllables) {
-            if (syllable.length > s.length && syllable.startsWith(s)) return true
-        }
-        return false
-    }
+    /**
+     * 是否存在比 s 更长的合法音节以 s 开头（即 s 是某个音节的真前缀）。
+     *
+     * O(1)：查 [syllablePrefixes] 预建集合。原实现遍历整个音节表做 startsWith，
+     * 而本方法在每次按键的查询路径上会被调用若干次，是热路径上的无谓开销。
+     * 长度上限由集合天然保证（合法音节最长 6 字符，故最长真前缀为 5 字符）。
+     */
+    private fun isTruePrefixOfSyllable(s: String): Boolean =
+        s.isNotEmpty() && syllablePrefixes.contains(s)
 
     /** 以指定串为前缀匹配音节，返回合并后的单字候选；音节按字典序稳定输出 */
     private fun matchCharsByPrefix(prefix: String): List<String> {

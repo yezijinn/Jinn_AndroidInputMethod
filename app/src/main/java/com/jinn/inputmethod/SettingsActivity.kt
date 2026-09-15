@@ -22,6 +22,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
+import java.io.File
 
 /**
  * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
@@ -52,6 +53,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnImeSend: Button
     private lateinit var textImeReceived: TextView
     private lateinit var switchAutoShowKeyboard: Switch
+    private lateinit var switchShowRareChars: Switch
+
+    // 扩展词库（长词包）：不进 APK，按需下载
+    private lateinit var textExtDictStatus: TextView
+    private lateinit var editExtDictUrl: EditText
+    private lateinit var btnExtDictDownload: Button
+    private lateinit var btnExtDictRemove: Button
 
     // 保活 / 防杀后台
     private lateinit var switchKeepAlive: Switch
@@ -74,8 +82,20 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textRootStatus: TextView
     private lateinit var switchRootEnhance: Switch
 
+    /**
+     * 程序化修改 Root 开关时置位（避免触发回调）。
+     *
+     * 场景：Root 不可用时需要在回调里把开关拨回关闭，而改 `isChecked` 本身又会
+     * 触发同一个监听器 → 递归进入 else 分支，把刚设置的「Root 不可用」提示
+     * 覆盖成功能描述文案，用户等于什么提示都没看到。
+     */
+    private var suppressRootSwitchCallback = false
+
     /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    /** Spinner 是否已完成初始化（setSelection 会触发 onItemSelected，未就绪时不响应） */
+    private var defaultModeSpinnerReady = false
 
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
@@ -114,6 +134,11 @@ class SettingsActivity : ComponentActivity() {
         btnImeSend = findViewById(R.id.btn_ime_send)
         textImeReceived = findViewById(R.id.text_ime_received)
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
+        switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
+        textExtDictStatus = findViewById(R.id.text_ext_dict_status)
+        editExtDictUrl = findViewById(R.id.edit_ext_dict_url)
+        btnExtDictDownload = findViewById(R.id.btn_ext_dict_download)
+        btnExtDictRemove = findViewById(R.id.btn_ext_dict_remove)
 
         switchKeepAlive = findViewById(R.id.switch_keepalive)
         switchRoot = findViewById(R.id.switch_root)
@@ -143,6 +168,10 @@ class SettingsActivity : ComponentActivity() {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
+                // 初始化时的 setSelection 同样会回调这里。若此时 prefs 里的值不在
+                // values 中（如配置损坏或新增了模式），indexOf 会退回第 0 项，
+                // 未加保护就会把用户的默认键盘**静默改成第 0 项**。
+                if (!defaultModeSpinnerReady) return
                 val values = resources.getStringArray(R.array.default_mode_values)
                 val mode = values.getOrNull(position)?.toIntOrNull()
                     ?: DefaultKeyboardMode.VOICE
@@ -156,6 +185,8 @@ class SettingsActivity : ComponentActivity() {
         }
 
         loadPrefs()
+        // loadPrefs 内部的 setSelection 已回调过监听器，此后才是用户的真实选择
+        defaultModeSpinnerReady = true
         refreshMicState()
 
         // 识别选项即时保存：勾选即写入，下次识别立即生效
@@ -185,6 +216,12 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
             prefs.autoShowKeyboard = checked
             Diagnostics.i(TAG, "自动唤起键盘: ${if (checked) "开启" else "关闭"}")
+        }
+        // 生僻字开关：词库在 IME 进程启动时加载，这里只落盘，需重启输入法才生效
+        switchShowRareChars.setOnCheckedChangeListener { _, checked ->
+            prefs.showRareChars = checked
+            Diagnostics.i(TAG, "显示生僻字: ${if (checked) "开启" else "关闭"}（重启输入法后生效）")
+            toast(if (checked) R.string.rare_chars_on else R.string.rare_chars_off)
         }
         editImeTest.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
@@ -224,6 +261,115 @@ class SettingsActivity : ComponentActivity() {
 
         // ── 剪贴板卡片 ──────────────────────────────────────────
         initClipboardCard()
+
+        // ── 扩展词库（长词包）────────────────────────────────────
+        initExtDictCard()
+    }
+
+    // ── 扩展词库（长词包）──────────────────────────────────────
+    //
+    // 完整词库 xz 后仍有 8MB、占 APK 体积 95%，其中 85.9% 的词条是三字以上的长尾
+    // 专有名词。基础包（≤3 字）随 APK 分发，长词包放在这里按需下载，
+    // 换来安装包从 8.4MB 降到 4.2MB。
+
+    /** 扩展词库在私有目录下的路径（与 PinyinEngine.EXT_DICT_FILE 一致） */
+    private fun extDictFile(): File = File(filesDir, EXT_DICT_FILE)
+
+    private fun initExtDictCard() {
+        // 预填内置默认源：用户开箱即可点「下载并安装」，也可改成自己的地址
+        editExtDictUrl.setText(EXT_DICT_URLS.first())
+        refreshExtDictStatus()
+        btnExtDictDownload.setOnClickListener { downloadExtDict() }
+        btnExtDictRemove.setOnClickListener { removeExtDict() }
+    }
+
+    /** 把扩展词库下载到私有目录；失败抛异常由调用方处理 */
+    private fun fetchExtDict(url: String): Long {
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+        client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val body = resp.body ?: error("响应为空")
+            // 先写临时文件再改名：避免下载中断留下半个文件被引擎当成有效词库加载
+            val tmp = File(filesDir, "$EXT_DICT_FILE.tmp")
+            body.byteStream().use { input ->
+                tmp.outputStream().use { out -> input.copyTo(out) }
+            }
+            val dst = extDictFile()
+            if (dst.exists()) dst.delete()
+            if (!tmp.renameTo(dst)) error("写入失败")
+            return dst.length()
+        }
+    }
+
+    private fun refreshExtDictStatus() {
+        val f = extDictFile()
+        textExtDictStatus.text = if (f.isFile) {
+            getString(R.string.ext_dict_status_installed, formatSize(f.length()))
+        } else {
+            getString(R.string.ext_dict_status_absent)
+        }
+    }
+
+    private fun formatSize(bytes: Long): String = when {
+        bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0)
+        bytes >= 1024 -> "${bytes / 1024} KB"
+        else -> "$bytes B"
+    }
+
+    /**
+     * 下载并安装扩展词库。
+     *
+     * 地址按「用户填写 → 内置默认源」依次尝试，任一个成功即停：
+     * Gitee 源国内快，GitHub 源作备用（两个源都实测可访问）。
+     *
+     * 下载成功后**自动重启输入法进程**——词库只在 IME 启动时加载，重启才能合并生效。
+     * 这样用户点一次按钮就走完「下载 → 安装 → 生效」，不用再去点顶部的重启按钮。
+     */
+    private fun downloadExtDict() {
+        val typed = editExtDictUrl.text?.toString()?.trim().orEmpty()
+        val candidates = (listOf(typed) + EXT_DICT_URLS).filter { it.isNotBlank() }.distinct()
+        btnExtDictDownload.isEnabled = false
+        textExtDictStatus.setText(R.string.ext_dict_downloading)
+        Thread {
+            var lastError = "未知错误"
+            for (url in candidates) {
+                val attempt = runCatching { fetchExtDict(url) }
+                if (attempt.isSuccess) {
+                    val size = attempt.getOrDefault(0L)
+                    Diagnostics.i(TAG, "扩展词库下载完成: ${size / 1024}KB (源=$url)")
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        textExtDictStatus.setText(R.string.ext_dict_download_ok)
+                        uiHandler.postDelayed({
+                            Diagnostics.i(TAG, "扩展词库安装完成，重启输入法进程以加载")
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        }, 1500L)
+                    }
+                    return@Thread
+                }
+                lastError = attempt.exceptionOrNull()?.message ?: "未知错误"
+                Diagnostics.w(TAG, "扩展词库下载失败（$url）: $lastError，尝试下一个源")
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                btnExtDictDownload.isEnabled = true
+                Diagnostics.e(TAG, "扩展词库全部下载源均失败: $lastError")
+                textExtDictStatus.text = getString(R.string.ext_dict_download_fail, lastError)
+            }
+        }.start()
+    }
+
+    private fun removeExtDict() {
+        val f = extDictFile()
+        if (f.exists() && f.delete()) {
+            Diagnostics.i(TAG, "扩展词库已删除，重启输入法后长词不再可用")
+            toast(R.string.ext_dict_removed)
+        }
+        refreshExtDictStatus()
     }
 
     /** 初始化剪贴板卡片：历史数量 / 权限管理（剪贴板历史强制启用，无开关） */
@@ -246,6 +392,8 @@ class SettingsActivity : ComponentActivity() {
         refreshRootStatus()
         switchRootEnhance.isChecked = clipboardPrefs.rootEnhanceEnabled
         switchRootEnhance.setOnCheckedChangeListener { _, checked ->
+            // 程序化拨动开关（如 Root 不可用时自动关闭）不进入业务分支，避免递归
+            if (suppressRootSwitchCallback) return@setOnCheckedChangeListener
             clipboardPrefs.rootEnhanceEnabled = checked
             Diagnostics.i(TAG, "Root 增强模式: ${if (checked) "开启" else "关闭"}")
             if (checked) {
@@ -254,7 +402,10 @@ class SettingsActivity : ComponentActivity() {
                     if (!ClipboardFirewall.isRootAvailable()) {
                         runOnUiThread {
                             clipboardPrefs.rootEnhanceEnabled = false
+                            // 抑制期间改 isChecked，避免递归进入 else 分支覆盖下面的提示
+                            suppressRootSwitchCallback = true
                             switchRootEnhance.isChecked = false
+                            suppressRootSwitchCallback = false
                             textRootStatus.text = getString(R.string.clipboard_root_unavailable)
                         }
                         return@Thread
@@ -306,6 +457,8 @@ class SettingsActivity : ComponentActivity() {
         Thread {
             val file = Diagnostics.exportBundle(this)
             runOnUiThread {
+                // 导出是后台任务，回调时 Activity 可能已销毁（避免操作已 detach 的 view）
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 btnExportDiag.isEnabled = true
                 if (file != null) {
                     Diagnostics.i(TAG, "exportDiagnostics: 导出完成 ${file.absolutePath}")
@@ -328,6 +481,7 @@ class SettingsActivity : ComponentActivity() {
         switchRoot.isChecked = prefs.useRootShizuku
         switchNotifyHigh.isChecked = prefs.notifyHighPriority
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
+        switchShowRareChars.isChecked = prefs.showRareChars
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
@@ -477,6 +631,10 @@ class SettingsActivity : ComponentActivity() {
         prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
+        // 剪贴板上限平时靠输入框失焦保存，但点「保存并重启」时失焦回调的时序不保证
+        // 早于本次保存（输入框仍有焦点时可能压根没触发）。这里显式再存一次（幂等），
+        // 避免用户改完上限点保存却发现没生效。
+        saveMaxItems()
 
         Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
         textTest.setText(R.string.settings_restarting)
@@ -500,5 +658,21 @@ class SettingsActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "SettingsActivity"
+
+        /** 扩展词库文件名（需与 PinyinEngine.EXT_DICT_FILE 保持一致） */
+        const val EXT_DICT_FILE = "dict_ext.xz"
+
+        /**
+         * 扩展词库内置下载源，按顺序尝试（用户手动填写的地址优先于它们）。
+         *
+         * - Gitee：国内直连快（仓库 release/dict_ext.txt.xz）
+         * - GitHub：Releases 附件，已实测可访问（302 → 200，OkHttp 自动跟随重定向）
+         *
+         * 词库更新后，需要同步更新这两个位置的文件，并相应修改 GitHub 的 tag 名。
+         */
+        val EXT_DICT_URLS = listOf(
+            "https://gitee.com/yezijinn/com.jinn.inputmethod/raw/master/release/dict_ext.txt.xz",
+            "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download/dict-ext-20260915/dict_ext.txt.xz",
+        )
     }
 }

@@ -63,6 +63,14 @@ class JinnIme : InputMethodService() {
 
     /** 剪贴板页点击记录时若连接无效，暂存待粘贴文本，编辑框聚焦后自动粘贴 */
     private var pendingPasteText: String? = null
+    /**
+     * [pendingPasteText] 的暂存时刻。
+     *
+     * 暂存文本只在短时间内有效（[PENDING_PASTE_TTL_MS]）：用户点完剪贴板条目后
+     * 若很久才切回输入框，或中途换了别的输入框，过期的暂存文本会被静默丢弃——
+     * 否则一次 onStartInputView 就会把旧内容粘到完全无关的位置。
+     */
+    private var pendingPasteAt = 0L
 
     /** 剪贴板面板打开标记：跨键盘视图实例持久（IME relayout 重建视图后自动恢复） */
     private var clipboardPanelOpen = false
@@ -239,6 +247,7 @@ class JinnIme : InputMethodService() {
             // 此处未真正提交，返回 false（剪贴板页不关闭，用户可等待或返回）。
             Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
             pendingPasteText = text
+            pendingPasteAt = System.currentTimeMillis()
             // 自动唤起键盘关闭时不主动 requestShowSelf（即使调用了也会被
             // onShowInputRequested 拒绝并再次触发隐藏逻辑，这里直接不发起）。
             if (!prefs.autoShowKeyboard) {
@@ -695,10 +704,18 @@ class JinnIme : InputMethodService() {
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
     private fun flushPendingPaste() {
         val text = pendingPasteText ?: return
+        // 时效保护：暂存文本只在短时间窗口内有效，过期直接丢弃。
+        // 否则用户换输入框、或隔很久才回到键盘，旧文本会被粘到完全无关的位置。
+        val age = System.currentTimeMillis() - pendingPasteAt
+        if (age > PENDING_PASTE_TTL_MS) {
+            pendingPasteText = null
+            Diagnostics.w(TAG, "flushPendingPaste: 暂存已过期(${age}ms)，丢弃 len=${text.length}")
+            return
+        }
         pendingPasteText = null
         val connection = currentInputConnection
         if (connection == null) {
-            // 仍无有效连接：放回暂存，等待下次 onStartInputView
+            // 仍无有效连接：放回暂存（保留原时刻），等待下次 onStartInputView
             pendingPasteText = text
             Diagnostics.w(TAG, "flushPendingPaste: 连接仍无效，继续暂存 len=${text.length}")
             return
@@ -1156,6 +1173,13 @@ class JinnIme : InputMethodService() {
 
         /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
         const val ACTION_CONFIG_UPDATED = "com.jinn.inputmethod.action.CONFIG_UPDATED"
+
+        /**
+         * 暂存粘贴文本的有效期：剪贴板页点击粘贴但 IME 无连接时暂存，
+         * 编辑框重新聚焦（onStartInputView）时提交。超过该时长视为过期丢弃，
+         * 防止旧内容被粘到用户当前无关的其它输入框。
+         */
+        const val PENDING_PASTE_TTL_MS = 10_000L
 
         /** 剪贴板页面「点击记录粘贴」广播 action + extra */
         const val ACTION_CLIPBOARD_PASTE = "com.jinn.inputmethod.action.CLIPBOARD_PASTE"

@@ -108,6 +108,22 @@ class TextSelectionTest {
     private val multiLine = "第一行文字\n第二行文字\n第三行文字"
 
     @Test
+    fun lineStartEndInSelectionUseCurrentLine() {
+        // 行结构：第1行(0-4)+\n(5) | 第2行(6-10)+\n(11) | 第3行(12-16)
+        val r = TextSelection.Range(0, multiLine.length, multiLine.length, multiLine)
+        // 焦点在第 2 行中部（索引 8）：「行首」应到 6、「行末」应到 11，
+        // 而不是全文首尾 0 / 17（与光标态 lineStart/lineEnd 保持一致）
+        assertEquals(
+            6,
+            TextSelection.nextFocus(r, 8, PinyinKeyboardView.DirectionAction.LINE_START),
+        )
+        assertEquals(
+            11,
+            TextSelection.nextFocus(r, 8, PinyinKeyboardView.DirectionAction.LINE_END),
+        )
+    }
+
+    @Test
     fun moveDownKeepsColumn() {
         // 行结构：第1行(0-4)+\n(5) | 第2行(6-10)+\n(11) | 第3行(12-16)
         // 光标在第 1 行第 2 列（位置 2）

@@ -31,6 +31,9 @@ import java.util.Locale
  *  - 查库与加密字段解密均在 [BackgroundIo] 线程，主线程零阻塞；
  *  - 结果用 [ListView] 复用 item，支持独立滚动。
  *
+ * 隐私：命中结果若被标记为隐私，默认只显示掩码，点击一次展开明文、再点一次才粘贴；
+ *      展开状态为内存态，面板显示 / 隐藏时都会清空（与历史页、剪贴板面板一致）。
+ *
  * 安全：不输出任何剪贴板正文日志。
  */
 class SearchPanelView(context: Context) : LinearLayout(context) {
@@ -55,6 +58,15 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
+
+    /**
+     * 已「点击显示明文」的隐私条目 ID（仅内存态，面板隐藏即失效）。
+     *
+     * 与历史页、剪贴板面板保持一致：隐私条目默认只显示掩码，第一次点击展开明文，
+     * 第二次点击才真正粘贴。**本面板曾经漏掉这套逻辑**，导致被标记为隐私的内容
+     * 在这里明文直显、且点一次就粘贴出去，等于隐私标记形同虚设。
+     */
+    private val revealedIds = HashSet<Long>()
 
     /** debounce + 刷新令牌：合并连续输入，丢弃过期回调 */
     private val searchHandler = Handler(Looper.getMainLooper())
@@ -95,11 +107,17 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v to newHolder
             }
             holder.itemId = item.id
-            holder.content.text = item.content
+            // 隐私条目默认掩码：点一次显示明文，再点一次才粘贴（绝不默认明文可见）
+            holder.content.text = if (item.isPrivate && item.id !in revealedIds) {
+                "已隐藏 · 点击显示"
+            } else {
+                item.content
+            }
             holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
+                if (item.isPrivate) append(" · 隐私")
             }
             return root
         }
@@ -186,6 +204,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     /** 显示搜索面板：清空输入 + aria50（结果列表）/空态可见性对齐 + 聚焦输入框 */
     fun onShown() {
         isPasting = false
+        // 每次重新打开都清空「已展开明文」：隐私条目必须重新点一次才能看到内容，
+        // 否则上次展开的状态会残留，掩码形同虚设
+        revealedIds.clear()
         searchHandler.removeCallbacksAndMessages(null)
         // Invalidate a search that may still be decrypting after the previous session closed.
         refreshToken++
@@ -204,6 +225,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     fun onHidden() {
         isPasting = false
+        revealedIds.clear()
         searchHandler.removeCallbacksAndMessages(null)
         // Prevent an old worker from repopulating the list after the panel is hidden.
         refreshToken++
@@ -234,6 +256,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
+        // 隐私条目：第一次点击只展开明文，第二次点击才真正粘贴（与历史页一致）
+        if (item.isPrivate && item.id !in revealedIds) {
+            revealedIds.add(item.id)
+            adapter.notifyDataSetChanged()
+            return
+        }
         isPasting = true
         val ok = listener?.onPaste(item.content) ?: false
         isPasting = false
@@ -295,7 +323,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
-        textEmpty.text = if (currentItems.isEmpty()) "未找到匹配内容\n换个关键词试试" else "找到 ${currentItems.size} 条"
+        // 非空时列表可见、空态 GONE——「找到 N 条」根本无处显示，
+        // 原实现在这里给它赋了值却随即隐藏，属无效逻辑，只保留空态文案。
+        textEmpty.text = "未找到匹配内容\n换个关键词试试"
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()

@@ -152,6 +152,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 双击后第三次按住超过该时长触发全部清空（长按确认，杜绝误触） */
     private val longPressClearMs = 800L
 
+    /**
+     * 「双击 → 长按」清空手势的有效窗口：双击完成后，必须在该时长内**再次按下**
+     * 退格，才会挂上清空检测。
+     *
+     * 没有这个窗口时双击态会一直挂着：用户快速点两下退格（删两个字，高频操作）
+     * 之后，哪怕过了几分钟，任何一次长按退格都会在 [longPressClearMs] 后
+     * 清空整个输入框——且不可撤销。
+     */
+    private val clearGestureWindowMs = 500L
+
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
@@ -510,12 +520,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
 
-        // 剪贴板面板：预挂载到 contentArea（GONE），打开/关闭仅切 visibility。
-        // 高度 = MATCH_PARENT。关键：contentArea 是 FrameLayout，viewLetters 用
-        // INVISIBLE（保留布局空间）而非 GONE，因此 contentArea 高度始终由
-        // viewLetters 撑起、恒定不变 → 面板 MATCH_PARENT = contentArea 高度
-        // = 「候选栏与底部栏之间全部现有空间」，且全程零 layoutParams 修改，
-        // 绝不触发 MIUI IME relayout。
+        // 剪贴板面板：预挂载到 contentArea（GONE），打开/关闭切 visibility + 高度。
+        // 显示时 viewLetters 置 GONE、contentArea 改为固定 162dp×2 高度（详见
+        // showClipboardPanel）。contentArea 是 FrameLayout，其父是 LinearLayout，
+        // 改 layoutParams 时类型必须匹配，用错会 ClassCastException。
         clipboardPanel = ClipboardPanelView(context).apply {
             listener = object : ClipboardPanelView.Listener {
                 override fun onPaste(text: String): Boolean =
@@ -593,6 +601,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 keyTouchStartX = event.rawX
                 keyTouchConsumed = false
+                // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
+                // 必须显式驱动按压态，否则按键没有任何视觉反馈（按压高亮是死代码）
+                keyViews[c]?.setPressedVisual(true)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -620,17 +631,44 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                // 未滑动（或非符号层）才当作点击输入
-                if (!keyTouchConsumed) onLetterPressed(c)
+                keyViews[c]?.setPressedVisual(false)
+                // 未滑动（或非符号层）且抬起点仍落在本键内才输入。
+                // 命中判定不可省：手指从 Q 滑到 W 抬起时，UP 依然回调到 Q 的监听器，
+                // 不做判定就会把 Q 上屏（用户看到的是自己按了 W）。
+                if (!keyTouchConsumed && isInsideKey(keyViews[c], event)) {
+                    onLetterPressed(c)
+                }
                 keyTouchConsumed = false
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                keyViews[c]?.setPressedVisual(false)
                 keyTouchConsumed = false
                 return true
             }
         }
         return false
+    }
+
+    /**
+     * 抬起点是否仍落在该键范围内（防相邻键误触）。
+     *
+     * 用 raw 坐标比对，与 DOWN 时记录的 [MotionEvent.getRawX] 同源。
+     * 边界外扩 [KEY_HIT_PADDING_DP]：贴边点击时手指常有 1~2 像素抖动，
+     * 完全不放宽会让边缘键变得难点中。
+     *
+     * 取不到布局信息（未测量/已分离）时返回 true——保守退回「照常输入」，
+     * 宁可保留旧行为，也不能因为拿不到坐标而让用户按不出字。
+     */
+    private fun isInsideKey(key: View?, event: MotionEvent): Boolean {
+        if (key == null || key.width <= 0 || key.height <= 0) return true
+        val loc = IntArray(2)
+        key.getLocationOnScreen(loc)
+        val pad = dpFloat(KEY_HIT_PADDING_DP)
+        return event.rawX >= loc[0] - pad &&
+            event.rawX <= loc[0] + key.width + pad &&
+            event.rawY >= loc[1] - pad &&
+            event.rawY <= loc[1] + key.height + pad
     }
 
     private fun letterKeyId(c: Char): Int = when (c) {
@@ -696,6 +734,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         btnShift.setOnClickListener {
             capsMode = !capsMode
+            // 大写锁定切换的是「字母直通」模式，与切中英文同理：
+            // 不清残留拼音的话，切回小写后按退格会先删这些看不见的拼音，
+            // 而用户想删的是刚打出来的大写字母。
+            if (composing.isNotEmpty() || lastPredictions.isNotEmpty()) {
+                composing.clear()
+                lastPredictions = emptyList()
+                refreshCandidateBar()
+            }
             refreshKeyLabels()
             Diagnostics.i(TAG, "大写锁定: $capsMode")
         }
@@ -933,10 +979,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 deleteOne()
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
-                // 已处于「双击后」状态：本次长按到阈值触发清空
-                if (backspaceTapCount == 2) {
+                // 已处于「双击后」状态：本次长按到阈值触发清空。
+                // 必须校验双击是否刚发生——双击态会一直残留，不校验时间的话，
+                // 用户点两下退格（删两个字，高频操作）之后任何一次长按都会清空输入框。
+                if (backspaceTapCount == 2 &&
+                    System.currentTimeMillis() - backspaceLastTapAt <= clearGestureWindowMs
+                ) {
                     backspaceHandler.removeCallbacks(clearOnLongPressRunnable)
                     backspaceHandler.postDelayed(clearOnLongPressRunnable, longPressClearMs)
+                } else if (backspaceTapCount == 2) {
+                    // 双击态已过期（过了窗口才按下）：立即失效，杜绝后续误触
+                    backspaceTapCount = 0
                 }
                 btnBackspace.isPressed = true
                 return true
@@ -979,6 +1032,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 第二击：与第一击间隔在窗口内 → 进入双击状态
             if (now - backspaceLastTapAt < doubleTapWindowMs) {
                 backspaceTapCount = 2
+                // 记录第二击时刻：清空手势的时间窗口由此起算。
+                // 不更新的话双击态永远「新鲜」，长按清空会在很久以后被误触发。
+                backspaceLastTapAt = now
                 Diagnostics.v(TAG, "退格双击已就绪，长按触发清空")
             } else {
                 backspaceTapCount = 1
@@ -995,6 +1051,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val clearOnLongPressRunnable = Runnable {
         if (!backspaceHeld) return@Runnable
         backspaceTapCount = 0
+        // 内容已全部清空：停掉仍在跑的连续删除。否则会以 55ms 间隔继续发 DEL，
+        // 在部分宿主（如 WebView）里可能被解释成「返回」等其它动作。
+        backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
         Diagnostics.i(TAG, "退格双击+长按：清空全部")
         onTripleBackspace()
     }
@@ -1074,16 +1133,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 双拼：先转全拼再查询；显示仍保留双拼原文
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input) else input
         val result = PinyinEngine.query(queryInput)
-        // 补全诊断：全拼且末尾不完整时，输出补全召回与直接查询对比
-        if (!shuangpinMode) {
-            val completion = PinyinEngine.queryWithCompletion(queryInput)
-            if (completion.isNotEmpty() || result.partialSyllable.isNotEmpty()) {
-                Diagnostics.i(
-                    TAG,
-                    "补全诊断: input=$queryInput syllables=${result.syllables} " +
-                        "partial=${result.partialSyllable} completion=$completion",
-                )
-            }
+        // 补全诊断：只在末尾存在不完整音节时记录。
+        // 注意：绝不在这里再调一次 queryWithCompletion——PinyinEngine.query() 内部
+        // 已经跑过补全召回，重复调用等于每次按键双倍查询，纯粹为了打日志。
+        if (!shuangpinMode && result.partialSyllable.isNotEmpty()) {
+            Diagnostics.v(
+                TAG,
+                "补全诊断: input=$queryInput syllables=${result.syllables} " +
+                    "partial=${result.partialSyllable} candidates=${result.candidates.take(3)}",
+            )
         }
         lastCandidates = result.candidates
         viewCandidatePinyin.text = queryInput
@@ -1207,6 +1265,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return false
     }
     private fun onPredictionSelected(pred: String) {
+        // 与 onCandidateSelected 保持一致：搜索模式下路由到搜索框。
+        // 漏掉这个分支的话，搜索态里点预测词会把文本直接提交到宿主输入框（串到聊天内容里）
+        if (isPanelSearch()) {
+            Diagnostics.i(TAG, "搜索预测: \"$pred\"")
+            searchPanel.appendSearch(pred)
+            lastPredictions = emptyList()
+            refreshCandidateBar()
+            return
+        }
         Diagnostics.i(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
         listener?.onCommitText(pred)
         lastPredictions = emptyList()
@@ -1466,6 +1533,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.e(TAG, "showDirectionPanel: panel 构建失败")
             return
         }
+        // 与剪贴板面板互斥（反向也要做，showClipboardPanel 里已有对称处理）：
+        // 剪贴板打开时 viewLetters 整体是 GONE，方向面板加进去根本看不见，
+        // 而 directionPanelVisible 已置 true —— 用户点方向键毫无反应。
+        if (clipboardActive) hideClipboardPanel()
         // 字母区隐藏，方向面板显示
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.GONE
@@ -1506,14 +1577,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 显示剪贴板面板：候选栏与底部功能行固定不动，面板占用二者之间全部空间。
      *
-     * 布局机制（关键，多轮真机验证结论）：
-     * - **IME 总高度恒定，零 layoutParams 修改，绝不 relayout**。
-     * - viewLetters 用 **INVISIBLE** 而非 GONE：INVISIBLE 保留布局空间，
-     *   contentArea（wrap_content FrameLayout）高度始终由 viewLetters 撑起、
-     *   恒定不变；若用 GONE 会塌缩 contentArea → 面板高度为 0。
-     * - 面板 MATCH_PARENT 预挂在 contentArea 内（覆盖在 INVISIBLE 的 viewLetters
-     *   之上）→ 高度 = contentArea 高度 = 「候选栏与底部栏之间全部现有空间」。
-     * - 打开/关闭只切 visibility，是纯 View 切换，不触发 MIUI IME relayout。
+     * 布局机制（多轮真机验证结论；旧注释曾与实现完全相反，勿再照抄）：
+     * - **会修改 layoutParams**：contentArea 被改成固定高度 162dp×2（约 850px），
+     *   面板 MATCH_PARENT 填满它。固定高度让面板不受 IME 窗口初始测量影响（冷启动稳定）。
+     * - viewLetters 实际用 **GONE** 而非 INVISIBLE：contentArea 已是固定高度，
+     *   GONE 不会导致塌缩。（旧注释写的「INVISIBLE + 零 layoutParams 修改」
+     *   与实现相反，已更正。）
+     * - layoutParams 类型必须匹配父容器：contentArea 的父是 LinearLayout
+     *   （PinyinKeyboardView 根），面板的父 contentArea 是 FrameLayout。用错
+     *   FrameLayout.LayoutParams 会 ClassCastException，曾导致键盘收起循环。
      */
     fun showClipboardPanel() {
         Diagnostics.i(TAG, "showClipboardPanel called, clipboardActive=$clipboardActive")
@@ -1553,21 +1625,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
             )
         } catch (t: Throwable) {
             Diagnostics.e(TAG, "showClipboardPanel 异常: ${t.message}")
+            // 异常回滚：上面的代码可能已经隐藏了字母区、显示了面板。
+            // 不恢复的话，hideClipboardPanel 又会因 clipboardActive 仍为 false 直接 return，
+            // 26 键就永久消失了（只能重启 IME 才能恢复）。
+            runCatching { restoreLettersLayout() }
+                .onFailure { Diagnostics.e(TAG, "showClipboardPanel 回滚失败: ${it.message}") }
             clipboardActive = false
+            listener?.onClipboardStateChanged(false)
         }
+    }
+
+    /**
+     * 恢复 26 键字母区布局（关闭面板与异常回滚共用）。
+     *
+     * contentArea 的父容器是 LinearLayout，layoutParams 必须匹配，
+     * 用 FrameLayout.LayoutParams 会 ClassCastException。
+     */
+    private fun restoreLettersLayout() {
+        viewLetters.visibility = View.VISIBLE
+        clipboardPanel.visibility = View.GONE
+        contentArea.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
     }
 
     /** 关闭剪贴板面板，恢复 26 键字母布局（contentArea 恢复字母区高度） */
     fun hideClipboardPanel() {
         if (!clipboardActive) return
-        // 恢复字母区，隐藏面板
-        viewLetters.visibility = View.VISIBLE
-        clipboardPanel.visibility = View.GONE
-        // contentArea 恢复 wrap_content（字母区自身高度）——父是 LinearLayout，用 LinearLayout.LayoutParams
-        contentArea.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
+        restoreLettersLayout()
         clipboardActive = false
         listener?.onClipboardStateChanged(false)
         Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
@@ -1578,9 +1664,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否处于顶部搜索模式 */
     fun isSearchActive(): Boolean = searchPanel.isActive()
 
+    /**
+     * 清空拼音输入缓冲与候选 / 预测 / 已上屏词残留。
+     *
+     * 进入或退出搜索模式时必须调用：残留的拼音串**虽不可见却仍然生效**——
+     * 按退格会先删这些看不见的拼音（要按 N 次才轮到搜索框），
+     * 按空格则会把上一次的候选词直接塞进搜索框。
+     */
+    private fun clearComposingState() {
+        if (composing.isEmpty() && lastCandidates.isEmpty() &&
+            lastPredictions.isEmpty() && lastCommittedWord.isEmpty()
+        ) return
+        composing.clear()
+        lastCandidates = emptyList()
+        lastPredictions = emptyList()
+        lastCommittedWord = ""
+        refreshCandidateBar()
+    }
+
     /** 显示顶部搜索面板：候选栏上方整体高度增加，下方 26 键恢复为可用输入 */
     fun showSearchPanel() {
         if (searchPanel.isActive()) return
+        clearComposingState()
         searchPanel.visibility = View.VISIBLE
         searchPanel.onShown()
         Diagnostics.i(TAG, "顶部搜索面板: 显示（IME 高度增高）")
@@ -1589,6 +1694,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 隐藏顶部搜索面板，恢复正常 26 键键盘 */
     fun hideSearchPanel() {
         if (!searchPanel.isActive()) return
+        clearComposingState()
         searchPanel.visibility = View.GONE
         searchPanel.onHidden()
         Diagnostics.i(TAG, "顶部搜索面板: 隐藏")
@@ -1679,6 +1785,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
+        const val KEY_HIT_PADDING_DP = 8f
+
         const val LAYER_LETTER = 0
         const val LAYER_SYMBOL = 1
         const val LAYER_DIGIT = 2

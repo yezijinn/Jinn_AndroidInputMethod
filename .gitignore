@@ -38,3 +38,17 @@ keystore.properties
 
 # 第三方源码（服务端，非本仓库）
 /CapsWriter-Offline-master/
+
+# 云服务凭证 / 会话密钥（含真实凭据，绝不能入库）
+ses_*.json
+*service-account*.json
+*-credentials.json
+
+# AI 工具工作区状态（不入库）
+.workbuddy/
+
+# 参考字表原始压缩包（内容已提取为 assets/common_chars.txt）
+docs/*.zip
+
+# 词库源文件（28MB 未压缩，可由 assets 基础包 + release 扩展包还原，不入库）
+tools/dict_builder/source/

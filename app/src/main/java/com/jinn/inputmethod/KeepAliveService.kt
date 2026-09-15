@@ -55,11 +55,10 @@ class KeepAliveService : android.app.Service() {
         Diagnostics.i(TAG, "onCreate: 前台保活服务创建")
         createChannel()
         // Android 14 targetSdk 34 起推荐显式传入 foregroundServiceType；
-        // ServiceCompat 这种重载会按最低 API 选取合适的方式，且对老旧机型零影响
-        ServiceCompat.startForeground(
-            this, NOTIFY_ID, buildNotification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-        )
+        // ServiceCompat 这种重载会按最低 API 选取合适的方式，且对老旧机型零影响。
+        // 提升失败必须优雅退出：否则 5 秒内未进入前台，系统会杀掉服务甚至判 ANR。
+        // 宁可保活失效，也不能让应用崩溃。
+        if (!promoteToForeground()) stopSelf()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -70,12 +69,31 @@ class KeepAliveService : android.app.Service() {
         // 每次 onStartCommand 也补一次 startForeground：Android 14 文档要求
         // 在调用 startForegroundService 后的 5s 内必须 startForeground，
         // 有时系统会延迟回调 onStartCommand，重复调用是幂等的
+        if (!promoteToForeground()) {
+            stopSelf()
+            return android.app.Service.START_NOT_STICKY
+        }
+        // START_STICKY：进程被回收后系统会尝试重建并重新 onStartCommand
+        return android.app.Service.START_STICKY
+    }
+
+    /**
+     * 提升为前台服务；失败返回 false（不抛异常）。
+     *
+     * 部分 ROM 在通知权限被关闭、或后台启动前台服务受限时会抛
+     * SecurityException / ForegroundServiceStartNotAllowedException。
+     * 不捕获的话服务直接崩溃（等于应用崩溃）；调用方收到 false 后 stopSelf()
+     * 优雅退出——保活失效，但应用仍可正常使用。
+     */
+    private fun promoteToForeground(): Boolean = runCatching {
         ServiceCompat.startForeground(
             this, NOTIFY_ID, buildNotification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
-        // START_STICKY：进程被回收后系统会尝试重建并重新 onStartCommand
-        return android.app.Service.START_STICKY
+        true
+    }.getOrElse {
+        Diagnostics.w(TAG, "startForeground 失败: ${it.message}")
+        false
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

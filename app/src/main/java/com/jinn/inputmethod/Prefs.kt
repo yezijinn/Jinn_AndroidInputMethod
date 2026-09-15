@@ -112,6 +112,19 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
         set(value) = sp.edit { putInt(KEY_DEFAULT_MODE, value) }
 
+    /**
+     * 显示生僻字（默认关闭）。
+     *
+     * 关闭时**不加载**生僻字：单字表中《通用规范汉字表》三级及表外字（约占 60%）
+     * 与含生僻字的词条（约占 17%）都不会进入内存，直接降低词库常驻占用。
+     *
+     * 词库在 IME 进程启动时加载，因此修改此开关需要重启输入法才生效
+     * （设置页「保存配置并立即重启生效」按钮）。
+     */
+    var showRareChars: Boolean
+        get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
+        set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
+
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
@@ -133,5 +146,6 @@ class Prefs(context: Context) {
         private const val KEY_KB_ENGLISH = "kb_english"
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
+        private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
     }
 }
