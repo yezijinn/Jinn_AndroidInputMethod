@@ -669,14 +669,14 @@ class SettingsActivity : ComponentActivity() {
          * Gitee 对较大文件的 raw 访问会返回 404（实测 4.7MB 的文件 raw 取不到，
          * 小文件正常），必须用 releases/download 直链。
          *
-         * 均已实测：请求返回 302 重定向后 200，Content-Length = 4956768。
-         * OkHttp 默认跟随重定向，无需额外配置。
+         * v2 起基础包含四字成语，扩展包只补五字及以上（约 2.2MB）。
+         * 两个源均已实测 302→200，Content-Length = 2297184。
          *
          * 词库更新后需同步替换两个 Release 的附件，并相应修改 tag 名。
          */
         val EXT_DICT_URLS = listOf(
-            "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download/dict-ext-20260915/dict_ext.txt.xz",
-            "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download/dict-ext-20260915/dict_ext.txt.xz",
+            "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download/dict-ext-20260915-v2/dict_ext.txt.xz",
+            "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download/dict-ext-20260915-v2/dict_ext.txt.xz",
         )
     }
 }
