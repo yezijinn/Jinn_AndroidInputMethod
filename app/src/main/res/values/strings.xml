@@ -126,12 +126,12 @@
 
     <!-- 输入法测试 -->
     <string name="settings_ime_test">输入法测试</string>
-    <string name="settings_ime_test_hint">点这里唤起键盘打字，或粘贴文本</string>
+    <string name="settings_ime_test_hint">点这里 唤起键盘</string>
     <string name="settings_ime_send">发送</string>
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
     <string name="settings_ime_received">收到：%1$s</string>
     <string name="switch_auto_show_keyboard">自动唤起键盘</string>
-    <string name="switch_auto_show_keyboard_desc">关闭后编辑框聚焦时永不自动显示键盘，需回到设置页重新开启</string>
+    <string name="switch_auto_show_keyboard_desc">关闭时,禁止弹出键盘,只能回设置这里开启</string>
 
     <!-- 诊断 -->
     <string name="settings_diagnostics">诊断</string>
@@ -183,12 +183,11 @@
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
     <string name="ext_dict_title">扩展词库（长词包）</string>
-    <string name="ext_dict_desc">四字以上长词为扩展包,「下载并安装」会补充词库</string>
     <string name="ext_dict_status_installed">已安装：%1$s</string>
-    <string name="ext_dict_status_absent">未安装 —— 五字及以上长词暂时打不出来（四字成语已内置）</string>
+    <string name="ext_dict_status_absent">未安装时,五字及以上无词库</string>
     <string name="ext_dict_url_hint">扩展包下载地址（已预填，可直接使用）</string>
-    <string name="ext_dict_download">下载并安装</string>
-    <string name="ext_dict_remove">删除扩展词库</string>
+    <string name="ext_dict_download">下载长词库</string>
+    <string name="ext_dict_remove">删除长词库</string>
     <string name="ext_dict_need_url">请先填写扩展包下载地址</string>
     <string name="ext_dict_downloading">下载中…（失败会自动尝试备用源）</string>
     <string name="ext_dict_download_ok">下载完成，正在重启输入法以生效…</string>
