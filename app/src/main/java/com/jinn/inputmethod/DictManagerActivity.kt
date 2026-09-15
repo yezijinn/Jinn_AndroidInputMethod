@@ -281,7 +281,8 @@ class DictManagerActivity : Activity() {
     }
 
     /**
-     * 下载到临时文件再改名 —— 避免中途失败留下半个文件被引擎当作有效词库加载。
+     * 下载到临时文件再改名 —— 避免中途失败留下半个文件被引擎当作有效词库加载
+     * （引擎只认 `.xz` 结尾，`X.xz.tmp` 不会被扫到，但失败时仍会残留占空间，所以显式清理）。
      * 返回写入字节数。
      */
     private fun fetchToFile(url: String, fileName: String): Long {
@@ -289,21 +290,28 @@ class DictManagerActivity : Activity() {
         val tmp = File(dir, "$fileName.tmp")
         val dst = File(dir, fileName)
 
-        val client = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
-        client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
-            val body = resp.body ?: error("响应为空")
-            body.byteStream().use { input ->
-                tmp.outputStream().use { out -> input.copyTo(out) }
+        try {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+                .followRedirects(true)
+                .build()
+            client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                val body = resp.body ?: error("响应为空")
+                body.byteStream().use { input ->
+                    tmp.outputStream().use { out -> input.copyTo(out) }
+                }
             }
+            if (dst.exists()) dst.delete()
+            if (!tmp.renameTo(dst)) error("写入失败")
+            return dst.length()
+        } catch (t: Throwable) {
+            // 半截文件清掉：否则一次失败就在用户存储里留 6MB 垃圾
+            runCatching { if (tmp.exists()) tmp.delete() }
+                .onFailure { Diagnostics.w(TAG, "清理临时文件失败: ${it.message}") }
+            throw t
         }
-        if (dst.exists()) dst.delete()
-        if (!tmp.renameTo(dst)) error("写入失败")
-        return dst.length()
     }
 
     private fun remove(dict: OptionalDict) {
