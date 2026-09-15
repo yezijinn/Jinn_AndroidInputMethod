@@ -32,18 +32,18 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        系统 / 应用层                           │
-│   SettingsActivity（唯一桌面入口）  ClipboardHistoryActivity   │
-│            │ 改配置后杀进程重启                    │ 广播回传粘贴 │
+│   SettingsActivity（唯一桌面入口）  DictManagerActivity       │
+│            │ 改配置后杀进程重启                 │ 分类词库下载 │
 └────────────┼───────────────────────────────────────┼───────────┘
              │                                       │
 ┌────────────▼───────────────────────────────────────▼───────────┐
 │                    JinnIme : InputMethodService                 │
 │  （中枢：1184 行，持有全部模块，所有跨模块调用都经它转发）          │
 │  ┌─────────────┬──────────────┬───────────────┬──────────────┐ │
-│  │ 语音链路     │ 拼音键盘      │ 剪贴板         │ 保活          │ │
-│  │ MicRecorder │ PinyinKbdView│ Controller    │ KeepAlive    │ │
+│  │ 语音链路     │ 拼音键盘      │ 剪贴板         │ 词库          │ │
+│  │ MicRecorder │ PinyinKbdView│ Controller    │ PinyinEngine │ │
 │  │ AsrClient   │ PinyinEngine │ ClipboardDb   │ Accessibilty │ │
-│  │ Protocol    │ TextSelection│ Crypto        │ RootShizuku  │ │
+│  │ Protocol    │ TextSelection│ Crypto        │ OptionalDict │ │
 │  └─────────────┴──────────────┴───────────────┴──────────────┘ │
 │  横切：Diagnostics（文件日志+崩溃捕获） / Prefs / BackgroundIo    │
 └─────────────────────────────────────────────────────────────────┘
@@ -60,7 +60,7 @@
 | 语音链路 | `MicRecorder` `AsrClient` `Protocol` `MicButton` | 采集 → 编码 → 传输 → 结果解析 |
 | 拼音键盘 | `PinyinKeyboardView` `PinyinKey` `PinyinEngine` `TextSelection` | 键位、候选、双拼、拖选 |
 | 剪贴板 | `ClipboardController` `ClipboardDb` `ClipboardCrypto` `ClipboardClassifier` `ClipboardPrefs` + 三个 UI | 监听、加密、存储、检索、粘贴 |
-| 保活 | `KeepAliveService` `JinnAccessibilityService` `BootReceiver` `RootShizuku` | 前台通知 + 无障碍互保 + 开机拉起 + 白名单 |
+| 词库 | `PinyinEngine` `OptionalDicts` `DictManagerActivity` `KeyboardLayouts` | 基础包内置 + 可选包按需下载、延迟加载 |
 | 横切 | `Diagnostics` `Prefs` `BackgroundIo` `SettingsActivity` `ClipboardFirewall` | 日志、配置、线程、设置、审计 |
 
 **架构特点**：`JinnIme` 是事实上的上帝对象——它直接持有并串联所有模块，
@@ -73,32 +73,27 @@
 
 ```
 app/src/main/java/com/jinn/inputmethod/   28 个 Kotlin 文件，8293 行
-├── JinnIme.kt                1184  ⭐ 输入法服务，全部模块的持有者与调度中枢
-├── PinyinKeyboardView.kt     1686  ⭐ 拼音键盘（最大文件，LinearLayout + XML 键位）
-├── PinyinEngine.kt            710  ⭐ 词库加载 + 候选查询 + 智能预测 + 自然码双拼
-├── ClipboardHistoryActivity.kt 639  ⭐ 剪贴板独立页面（纯代码建 UI，无 XML）
-├── SettingsActivity.kt        504  设置页（桌面入口，改配置后杀进程重启 IME）
-├── ClipboardPanelView.kt      443  键盘内嵌剪贴板面板
-├── ClipboardDb.kt             420  SQLite（密文存储、去重、裁剪）
-├── SearchPanelView.kt         327  键盘内嵌搜索面板
-├── Diagnostics.kt             308  文件日志 + 崩溃捕获 + 事件环形缓冲
-├── AsrClient.kt               306  OkHttp WebSocket + 指数退避重连
-├── MicRecorder.kt             230  AudioRecord 采集 + PCM16→float32 + 本地 VAD
-├── PinyinKey.kt               188  单键自绘（圆角矩形 + 字母 + 双拼提示）
-├── ClipboardController.kt     155  系统剪贴板监听 + ClipboardStore 保存逻辑
-├── KeepAliveService.kt        149  前台保活服务
-├── Prefs.kt                   137  SharedPreferences 主配置
-├── MicButton.kt               130  麦克风按钮（纯绘制）
-├── RootShizuku.kt             127  Root/Shizuku 加白名单
-├── ClipboardFirewall.kt       124  Root 增强：只读安全审计（7 项）
-├── ClipboardClassifier.kt      93  自动分类（URL/NUMBER/OTHER）
-├── ClipboardCrypto.kt          89  Android Keystore AES-256-GCM
-├── TextSelection.kt            88  拖选纯函数（可单测）
-├── JinnAccessibilityService.kt 79  无障碍互保 + 输入场景监测
-├── Protocol.kt                 78  ⭐ 协议常量 + 收发消息序列化
-├── ClipboardPrefs.kt           47  剪贴板独立配置
-├── BootReceiver.kt             26  开机 / 更新后拉起
-├── BackgroundIo.kt             26  单线程后台 IO 调度器
+├── JinnIme.kt  ⭐ 输入法服务，全部模块的持有者与调度中枢
+├── PinyinKeyboardView.kt  ⭐ 拼音键盘（最大文件，LinearLayout + XML 键位）
+├── PinyinEngine.kt  ⭐ 词库加载 + 候选查询 + 智能预测 + 自然码双拼
+├── SettingsActivity.kt  设置页（桌面入口，改配置后杀进程重启 IME）
+├── ClipboardPanelView.kt          键盘内嵌剪贴板面板（剪贴板第一入口）
+├── ClipboardDb.kt  SQLite（密文存储、去重、裁剪）
+├── SearchPanelView.kt  键盘内嵌搜索面板
+├── Diagnostics.kt  文件日志 + 崩溃捕获 + 事件环形缓冲
+├── AsrClient.kt  OkHttp WebSocket + 指数退避重连
+├── MicRecorder.kt  AudioRecord 采集 + PCM16→float32 + 本地 VAD
+├── PinyinKey.kt  单键自绘（圆角矩形 + 字母 + 双拼提示）
+├── ClipboardController.kt  系统剪贴板监听 + ClipboardStore 保存逻辑
+├── Prefs.kt  SharedPreferences 主配置
+├── MicButton.kt  麦克风按钮（纯绘制）
+├── ClipboardFirewall.kt  Root 增强：只读安全审计（7 项）
+├── ClipboardClassifier.kt  自动分类（URL/NUMBER/OTHER）
+├── ClipboardCrypto.kt  Android Keystore AES-256-GCM
+├── TextSelection.kt  拖选纯函数（可单测）
+├── Protocol.kt  ⭐ 协议常量 + 收发消息序列化
+├── ClipboardPrefs.kt  剪贴板独立配置
+├── BackgroundIo.kt  单线程后台 IO 调度器
 
 app/src/main/assets/          29MB 词库（pinyin_phrases.txt 占 29MB）
 app/src/test/java/...           7 个测试类，~100 个用例（纯 JVM）
@@ -158,7 +153,6 @@ onCreate()  ← 只跑一次（进程级）
   ├─ asr.connect()                 预热 WebSocket（关键：避免首次点击"没反应"）
   ├─ Thread { PinyinEngine.load() } 后台加载 29MB 词库（约 7s，不阻塞 UI）
   ├─ ClipboardController.start()   注册系统剪贴板监听（若开启）
-  ├─ KeepAliveService.start()      前台保活（若开启）
   ├─ registerNetwork()             监听网络恢复 → 主动重连
   └─ registerReceiver × 2          配置广播 + 剪贴板粘贴广播
   ↓
@@ -248,7 +242,7 @@ KeyboardMode.VOICE  ←→  KeyboardMode.PINYIN
 ### 6.1 语音：连接与重连
 
 - OkHttp 单例（所有 `AsrClient` 共享），`proxy(Proxy.NO_PROXY)` 局域网直连，
-  `pingInterval=20s` 保活防 NAT 掐线，`readTimeout=0` 长连接不设读超时。
+  `pingInterval=20s` 心跳防 NAT 掐线，`readTimeout=0` 长连接不设读超时。
 - 断线指数退避：1s → 2s → 4s … 上限 30s（1 shl 8）。
 - **`closeSocket()` 先置 `socket = null` 再 close**：旧 listener 的回调因 `webSocket !== socket`
   提前 return，不会重复调度重连。这是防止重连风暴的关键写法。
@@ -306,116 +300,57 @@ Activity 点击记录 → 广播 ACTION_CLIPBOARD_PASTE（setPackage + 明文 + 
   → 回传 ACTION_CLIPBOARD_PASTE_RESULT（校验 itemId 防串线）→ 成功才 finish()
 ```
 
-### 6.4 保活（三重互保）
+### 6.4 可选词库（分类词库页）
 
-| 手段 | 实现 | 注意 |
+基础包（约 60 万键，词长 ≤4 字含四字成语）随 APK 内置；长词包、腾讯大词库等
+**不进 APK**，用户在设置页 →「分类词库」按需下载：
+
+| 环节 | 实现 | 注意 |
 |---|---|---|
-| 前台服务 | `KeepAliveService` + 常驻通知，`START_STICKY` | Android 12+ 后台启动受限，所有 `startForegroundService` 必须 try-catch |
-| 无障碍互保 | `JinnAccessibilityService` 被系统托管，服务被杀后重建时再拉起前台服务 | 5s 节流；`canRetrieveWindowContent=false` 不读内容 |
-| 开机/更新拉起 | `BootReceiver` 监听 BOOT_COMPLETED + MY_PACKAGE_REPLACED | |
-| Root/Shizuku 白名单 | 4 条命令（deviceidle whitelist + 2 个 appops + set-inactive） | Shizuku 13.x `newProcess` 已改 private，用反射调用，失败退回 su |
+| 清单 | `OptionalDicts.ALL` | 新增词库只需加一条记录 + 传 Release 附件 |
+| 下载 | `DictManagerActivity`，多源回退（Gitee 优先、GitHub 备用）| 写临时文件再 rename，避免半个文件被当成有效词库 |
+| 落地 | `filesDir/dicts/<fileName>` | 引擎启动时扫描整个目录并 merge |
+| 生效 | 下载/删除后自动重启 IME 进程 | 词库只在 IME 启动时加载 |
+| 加载 | **延迟加载**：`loadOptionalAsync(delayMs = 5000)` | 基础包就绪 5 秒后于后台补齐，不拖慢首次输入 |
 
-**厂商行为不可模拟**：任何保活相关改动都必须在真机验证。
+**关键**：可选包加载后**必须重新 `finalizeLoad()`** —— `sortedPhraseKeys` 是加载时快照，
+不重建则新词不参与前缀补全。
+
+**并发**：延迟加载在后台线程 merge，而用户此刻正在打字（主线程 `query()`），
+因此词库容器必须是 `ConcurrentHashMap`，有序表用 `@Volatile` 不可变快照整体替换。
 
 ---
 
-## 7. 已知问题（按严重程度排序）
+## 7. 问题状态（2026-09-15 复核）
 
-以下均为**通读代码后确认**的问题，不是猜测。
+原文列出 P1–P10 十个问题。**其中大半已在后续多轮修复中解决**，本节按当前实际状态重列，
+避免接手者按旧清单去修已经不存在的问题。
 
-### 🔴 P1. 隐私分类功能「只有数据库字段，没有 UI」
+### 7.1 已修复（历史记录，无需再处理）
 
-`is_private` 列在 `ClipboardDb` 中真实存在（建表、upsert、去重合并、deleteAll 保护），
-但全项目**没有任何写入入口**：
+| 原编号 | 问题 | 现状 | 证据 |
+|---|---|---|---|
+| **P1** | 隐私分类「只有字段没有 UI」 | ✅ **已可用** | `ClipboardPanelView` 分类栏含「隐私」Tab，长按菜单可标记；隐私内容默认掩码、点击展开 |
+| **P2** | 按键按压反馈失效 | ✅ **已修** | `PinyinKey.setPressedVisual(Boolean)` 已加，监听器调用它 |
+| **P4** | 29MB 词库内存压力 | ✅ **已大幅改善** | 词库整体换 rime-ice：xz 5.65MB → **4.5MB APK**，加载从 8550ms → 6602ms |
+| **P8** | 三份重复的列表 UI | ✅ **已减为两处** | 独立历史页（719 行，`ClipboardHistoryActivity`）已确认有意下线并删除 |
+| **P9** | 广播携带剪贴板明文 | ✅ **已修** | 粘贴广播**只传 itemId**，正文由 IME 按 id 从库读回（规避 Binder 1MB 事务上限）|
 
-- 分类栏只有 4 个 Tab（全部/网址/数字/收藏），无隐私 Tab；
-- 长按菜单只有收藏/删除，无「标记为隐私」；
-- 无隐私内容明文掩码逻辑。
+### 7.2 当前仍存在（接手后可关注）
 
-**而 `AGENTS.md` 明确写着**：「分类固定 全部/网址/隐私/数字/收藏」「隐私内容默认隐藏明文，
-点击一次才显示再点才粘贴」。**文档与代码严重不符**，接手时不要被文档误导——
-隐私功能当前**根本不可用**（commit `579bc88` 移除了隐私分类）。
+| 严重度 | 问题 | 说明 |
+|---|---|---|
+| 🟡 **中** | **粘贴状态机无超时保护** | `pendingPasteText` 暂存后等 `onStartInputView` 提交，若用户长时间不再唤起键盘，暂存内容会一直留着。当前无超时清理（已确认代码中无 `PENDING_TIMEOUT` 类机制）|
+| 🟡 **中** | **剪贴板搜索为 O(n) 全库解密** | 搜索需逐条解密比对（不建明文全文索引，是隐私换性能的有意取舍）。历史条目多时搜索会变慢 |
+| 🟢 **低** | **`ClipboardFirewall` 依赖 Root** | 7 项只读审计经 `su -c` 执行。**路径已加单引号**（不再依赖「路径恰好无特殊字符」），但本质上仍是 Root 能力面；无 Root 时整体降级不执行 |
 
-**建议**：要么补齐 UI，要么改文档说明这是预留字段。
+### 7.3 原始清单中的其他项（未逐一复核）
 
-### 🔴 P2. 拼音键盘按键**按压反馈失效**（真实 BUG）
+P3（`refreshConfig()` 死代码）、P6（搜索复杂度，见 7.2）、P10（其余小问题）
+未在本次复核中逐一验证，**保留原判断供参考**，需要时请以代码为准重新确认。
 
-`PinyinKeyboardView.bindLetterKeys()`（L576）给每个键设 `OnTouchListener { handleKeyTouch(c, event) }`，
-而 `handleKeyTouch` 所有分支一律 `return true`。
-
-Android 事件分发中，OnTouchListener 返回 true 即消费事件，**`PinyinKey.onTouchEvent()` 永不执行**
-→ `pressed` 恒为 false、按压高亮是死代码、`performClick()` 不触发。
-
-**影响**：用户按字母键看不到任何视觉反馈，手感很差；`PinyinKey` 里精心写的双套排版逻辑
-（`fullPinyinStyle` / 字母顶置 + 韵母底部对齐）中的 pressed 分支完全无效。
-
-**修法参考**：在 `handleKeyTouch` 的 DOWN/UP/CANCEL 里手动 `key.pressed = ...; key.invalidate()`，
-或让监听器在非符号层时返回 false 交还给 View。
-
-### 🟠 P3. `refreshConfig()` / `ACTION_CONFIG_UPDATED` 是**死代码**
-
-全项目 grep：`ACTION_CONFIG_UPDATED` 只在 `JinnIme` 中被**定义和监听**，
-**没有任何地方发送该广播**。`refreshConfig()` 的唯一调用者就是那个 receiver。
-
-实际生效的是另一条路：设置页 `saveAndRestart()` **延迟 800ms 后 `killProcess(myPid())`**，
-靠系统重建 IME 进程来加载新配置（注释里说"比发广播刷新更彻底"）。
-
-**影响**：设置页改了服务端地址后，IME 并不会热更新，而是要等进程被杀重启。
-若你期望"改完立即生效"，现有代码做不到。
-
-### 🟠 P4. 29MB 词库的内存压力
-
-`pinyin_phrases.txt` 29MB，`loadPhrasesReader()` 预分配 `HashMap(2_000_000)` +
-`wordToPinyin HashMap(1_500_000)`，加载耗时约 7 秒。
-
-**风险**：IME 是长期驻留进程，104 万条短语 + 反向索引常驻内存，
-在低端机上可能触发 LMK 被杀（保活做得再多也扛不住内存压力）。
-目前**没有**任何内存占用实测数据。
-
-**建议**：接手后第一件事是抓一次 `dumpsys meminfo`，确认 IME 进程实际占用。
-
-### 🟡 P5. `ClipboardFirewall` 的 Root 命令风险
-
-7 项只读审计全部经 `Runtime.exec(arrayOf("su","-c",cmd))`：
-
-- 命令字符串拼接路径（虽取自系统，仍是注入面）；
-- `su()` 先 `readText()` 后 `waitFor()`，**stderr 未消费**，大输出可能阻塞管道；
-- `checkSymlink` / `checkExternalLeak` 全盘 `find` 可达数十秒；
-- 其中 Backup 检查是**硬编码返回 "✓"，并不真查**（`ClipboardFirewall.kt:119`）。
-
-另：它**只展示审计结果，不做任何加固**，也不清空系统剪贴板（AGENTS.md 的说法正确）。
-
-### 🟡 P6. 剪贴板搜索是 O(n) 全库解密
-
-每次防抖触发都解密整个库（上限可被用户调到 9999 条），明文常驻内存与 ListView。
-`maxItems` 同时是搜索扫描上限。
-
-### 🟡 P7. 粘贴状态机无超时保护
-
-`pasting` / `pendingPasteItemId` 一旦 IME 未回广播（进程被杀、`autoShowKeyboard=false`）
-即**永久卡死**。另 `pendingPasteText` 无时效，`flushPendingPaste` 会在下次
-`onStartInputView` 无条件提交——**用户换输入框后可能误粘贴到别处**。
-
-### 🟡 P8. 三份重复的列表 UI 代码
-
-`ClipboardHistoryActivity` / `ClipboardPanelView` / `SearchPanelView` 的
-adapter + Holder + 分页 + 刷新 + 空态逻辑**几乎逐行雷同**，常量各自定义。
-**改一处必漏两处**，这是最容易引入回归的地方。
-
-### 🟡 P9. 广播携带剪贴板明文
-
-`ACTION_CLIPBOARD_PASTE` 把明文正文放进 Intent。靠 `setPackage` +
-`RECEIVER_NOT_EXPORTED` 保护，**任一处被改成都导出即泄露全库**。
-
-### 🟢 P10. 其余小问题
-
-- `PinyinKeyboardView` L513 注释说用 INVISIBLE，实际代码是 GONE（注释过期）。
-- `PinyinKeyboardView` L1078-1087 每次按键额外跑一遍 `queryWithCompletion`，
-  结果只为打日志，**等于双倍查询开销**。
-- 候选栏每次按键 `removeAllViews()` 重建全部 TextView；`refreshKeyLabels()` 遍历 26 键逐个 invalidate。
-- 硬编码高度耦合：`162dp×2`（L1534）、`totalDp=162`（L1608）与 XML 的 54dp×3 强绑定，改行高必崩。
-- 字母键 UP 无命中判定：手指从 Q 滑到 W 抬起仍上屏 Q。
-- 根目录 `ses_fb2d904cbffewGCRN4iuzDTDSg.json`（3.6MB）**未被 .gitignore 忽略**。
+**核对方法**：`grep -rn "关键词" app/src/main/java/com/jinn/inputmethod/` —— 本节的
+每一条结论都可用此方式复核。
 
 ---
 
@@ -426,7 +361,6 @@ adapter + Holder + 分页 + 刷新 + 空态逻辑**几乎逐行雷同**，常量
 | **服务端单点依赖** | 高 | NAS 宕机/换 IP/换 WiFi → 语音全线瘫痪。有网络监听重连，但服务端不可用时无降级方案 |
 | **协议强耦合** | 高 | 服务端 `from_dict` 严格校验，改字段名即断。**改协议必须同步改 `CapsWriter-Offline-master`** |
 | **IME 进程内存** | 高 | 29MB 词库常驻，无实测数据，低端机可能被 LMK 杀 |
-| **保活不可靠** | 中 | 厂商杀进程行为不可模拟，所有保活改动必须真机验证 |
 | **测试覆盖不足** | 中 | 7 个测试类只覆盖纯函数（协议/拼音/双拼/拖选/分类/去重）。**AsrClient、MicRecorder、JinnIme、ClipboardDb 真实 SQL、Crypto、全部 UI 零覆盖** |
 | **剪贴板明文暴露面** | 中 | 广播携带明文，依赖导出标志保护 |
 | **29MB APK 体积** | 中 | 发布包 11.1MB（压缩后），词库无法按需下载 |
@@ -481,7 +415,7 @@ adapter + Holder + 分页 + 刷新 + 空态逻辑**几乎逐行雷同**，常量
 | 分类切换/去重/删除后必须滚回顶部 | 否则切回长列表只见底部几条 |
 | IME 内禁用 `AlertDialog` | 无窗口 token，会崩 |
 | 改键盘 layoutParams 必须匹配父容器类型 | 曾因用错 `FrameLayout.LayoutParams` 导致 ClassCastException |
-| 保活改动必须真机验证 | 厂商行为不可模拟 |
+| 键盘布局 / 字体渲染改动必须真机截图确认 | 编译期无感 |
 | 测试 KDoc 注释里禁止出现 `*/` | 会提前终止块注释导致编译失败 |
 
 ### 10.3 建议的改进优先级
