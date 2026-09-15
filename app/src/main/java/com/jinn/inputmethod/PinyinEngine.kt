@@ -229,6 +229,23 @@ object PinyinEngine {
         }
     }
 
+    /**
+     * 测试注入：以**并入**语义追加短语表 —— 对应扩展包/可选包与基础包的合并加载。
+     *
+     * 为什么需要单独一个入口：[loadFromTexts] 内部固定用覆盖语义，
+     * 无法验证合并行为，而合并**必须去重**（基础包与扩展包会收录同一个词，
+     * 不去重则候选栏出现两个完全相同的候选项）。
+     *
+     * 用法：先用 [loadFromTexts] 注入基础包，再调用本方法注入扩展包。
+     */
+    internal fun mergePhrasesForTest(phrases: String) {
+        synchronized(this) {
+            loadPhrasesText(phrases, merge = true)
+            // 可选包引入了新的拼音键，必须重建有序键表，否则新词不参与前缀补全
+            finalizeLoad()
+        }
+    }
+
     private fun finalizeLoad() {
         // 整体替换引用，而不是原地 clear + addAll：
         // 本方法会在可选词库延迟加载时由后台线程**再次**调用，
@@ -501,9 +518,16 @@ object PinyinEngine {
         }
     }
 
-    /** 测试注入用：按行文本加载短语表（与 [loadPhrasesReader] 逻辑一致） */
-    private fun loadPhrasesText(text: String) {
-        loadPhrasesReader(java.io.BufferedReader(java.io.StringReader(text)))
+    /**
+     * 测试注入用：按行文本加载短语表（与 [loadPhrasesReader] 逻辑完全一致）。
+     *
+     * @param merge true 走**并入**语义 —— 用于验证扩展包/可选包与基础包合并时的
+     *              去重与顺序（合并必须去重，否则候选栏会出现两个相同的词）；
+     *               false 走**覆盖**语义 —— 对应基础包首次加载。
+     *               默认 false，保持既有调用方行为不变。
+     */
+    internal fun loadPhrasesText(text: String, merge: Boolean = false) {
+        loadPhrasesReader(java.io.BufferedReader(java.io.StringReader(text)), merge)
     }
 
     private fun loadSyllables(context: Context) {
