@@ -2,27 +2,39 @@
 
 <div align="center">
 
-An Android voice + pinyin input method (IME) powered by **CapsWriter Offline** on fnOS NAS.
+A lightweight Android pinyin input method (IME): **QWERTY full pinyin / Ziranma Shuangpin**,
+**clipboard history**, and **optional dictionaries**.
 
-Speech recognition runs entirely on the NAS server (zero on-device models); pinyin, clipboard and other keyboard features are implemented locally.
+Everything runs on-device — **no server required**.
 
 **English** ｜ [中文](README.md)
 
 </div>
 
+> ### About the optional voice dictation
+>
+> This project also ships an **optional** voice dictation feature — but it is **not** ready to use
+> out of the box:
+>
+> Speech recognition runs **entirely on a server**. No model is bundled in the Android app.
+> You must deploy [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline)
+> (a Docker image) on a **home NAS of your own**, and the app streams audio to it over WebSocket.
+>
+> In other words: **without a reachable, self-hosted NAS server, the voice feature cannot be used
+> at all.** It is not aimed at general users — only at those who already run that server.
+>
+> **The pinyin keyboard, clipboard, and dictionaries all run fully on-device and need no server.**
+
 ## ✨ Features
 
-- **Voice dictation**: press-and-hold or tap the mic to speak; recognized text streams back and is committed.
-  - Hold the mic to talk, release to recognize; swipe **up** while holding to cancel.
-  - Tap once for continuous recording, tap again to stop (auto-stop after 3 min).
-  - Local VAD silence detection trims idle audio and reduces useless uploads.
 - **Pinyin keyboard (QWERTY)**: full pinyin, Ziranma Shuangpin, and English modes.
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
-  - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟) rather than `xun + i` (寻).
+  - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
+    rather than `xun + i` (寻).
   - Candidate prediction, one-tap CN/EN switch, double-tap + long-press backspace to clear all.
 - **Clipboard history** (embedded panel): auto-saves copies (AES-256-GCM encrypted), with
-  categories (All / URL / Number / Favorites), dynamic numbering, tap-to-paste,
-  long-press favorite / delete, and clear confirmation.
+  categories (All / URL / Number / Favorites / Private), dynamic numbering, tap-to-paste,
+  long-press to favorite / delete / mark private, and clear confirmation.
   - **Top search panel**: a panel above the candidate bar filters history in real time;
     results scroll and paste on tap; exiting restores the normal keyboard.
   - Entries are AES-256-GCM encrypted in a private local DB, readable only by this IME.
@@ -31,35 +43,53 @@ Speech recognition runs entirely on the NAS server (zero on-device models); piny
   adding or removing a pack auto-restarts the IME to apply.
 - **Zero bundled models**: no speech models shipped; APK is about **4.5MB**, depending only on
   `core-ktx`, `activity-ktx`, `okhttp3`, and `xz`.
+- **(Optional) Voice dictation**: press-and-hold or tap the mic to speak; recognized text streams
+  back and is committed. **Requires a self-hosted NAS server — see the note above.**
+  - Hold the mic to talk, release to recognize; swipe **up** while holding to cancel.
+  - Tap once for continuous recording, tap again to stop (auto-stop after 3 min).
+  - Local VAD silence detection trims idle audio and reduces useless uploads.
 
 ## 🏗️ Architecture
 
+The pinyin keyboard, clipboard, and dictionaries all run on-device. Voice dictation is an
+optional side path that requires an external server:
+
 ```
-Mic → MicRecorder (16kHz PCM16) → AsrClient (WebSocket) → fnOS NAS CapsWriter Offline
-                                                                        ↓
-Pinyin keyboard / clipboard panels (local) ← recognized text (accumulated, overwrite-displayed)
+【On-device · no server needed】
+   Pinyin keyboard / clipboard panel / dictionary engine
+        ↑
+     IME service (JinnIme)
+
+【Optional · self-hosted server required】—————————————
+   Mic → MicRecorder (16kHz PCM16) → AsrClient (WebSocket)
+                                        ↓
+                        CapsWriter Offline on your home NAS
+                                        ↓
+                    recognized text (accumulated, overwrite-displayed)
 ```
 
 | Module | Responsibility |
 |---|---|
-| `JinnIme` | IME service: voice + pinyin modes, gestures, echo, clipboard paste broadcast |
+| `JinnIme` | IME service: pinyin + voice modes, gestures, echo, clipboard paste broadcast |
 | `PinyinEngine` | Pinyin engine: lexicon (lazy optional packs), candidates, shuangpin, completion, segmentation |
 | `KeyboardLayouts` | Static keyboard layout data (QWERTY rows / digit layer / symbol groups incl. kana) |
 | `PinyinKeyboardView` | 26-key keyboard + candidate bar + function panels |
-| `ClipboardPanelView` | Embedded clipboard panel (categories / paste / favorite / delete / clear) |
+| `ClipboardPanelView` | Embedded clipboard panel (categories / paste / favorite / private / delete / clear) |
 | `SearchPanelView` | Top search panel: results + input + exit |
 | `ClipboardDb` | Clipboard history SQLite (AES-256-GCM) |
 | `DictManagerActivity` | Optional-dictionary page: list + download / delete |
-| `AsrClient` | WebSocket client: streaming upload, exponential-backoff reconnect |
+| `AsrClient` ⚠️ | WebSocket client: streaming upload, exponential-backoff reconnect (**voice path only**) |
 | `Diagnostics` | Diagnostic logs, crash capture, trace ID |
 
-## 🔌 Server Setup
+## 🔌 Voice Server (optional, self-hosted)
 
-The server is CapsWriter Offline (Docker) on the fnOS NAS, port `6016`.
+> If you only use the pinyin keyboard / clipboard, **you can skip this section entirely.**
+
+The server is CapsWriter Offline (Docker) deployed on a **home NAS**, port `6016`.
 
 | Item | Value |
 | --- | --- |
-| Host | fnOS NAS LAN address, e.g. `192.168.1.3` |
+| Host | Home NAS LAN address, e.g. `192.168.1.3` |
 | Port | `6016` |
 | Protocol | `ws://<host>:6016`, subprotocol `binary` |
 | Audio | 16kHz / mono / float32 little-endian raw samples (Base64) |
@@ -126,7 +156,7 @@ This project is licensed under **GNU GPL v3.0** (see [LICENSE](LICENSE)).
 
 ## 🙏 Credits
 
-- [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) — ASR server
+- [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) — optional ASR server
 - [iDvel/rime-ice](https://github.com/iDvel/rime-ice) — lexicon
 - [thunlp/THUOCL](https://github.com/thunlp/THUOCL) — Tsinghua open Chinese lexicon
 - [mozillazg/pypinyin](https://github.com/mozillazg/pypinyin) — pinyin tool
