@@ -2,7 +2,7 @@
 
 安卓极简语音输入法（IME）。采集麦克风音频经 WebSocket 实时上传到飞牛 NAS 上的
 CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别，本机零模型。
-配套服务端源码在本仓库 `CapsWriter-Offline-master/`（协议对齐 `core/protocol.py`）。
+配套服务端源码在本地 `docs/CapsWriter-Offline-master/`（不入库；协议对齐其 `core/protocol.py`）。
 
 ## 技术栈
 
