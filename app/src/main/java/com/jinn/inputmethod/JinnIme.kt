@@ -162,6 +162,12 @@ class JinnIme : InputMethodService() {
             val start = System.currentTimeMillis()
             PinyinEngine.load(this)
             Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
+            // 可选词库包（分类词库页下载的那些）延迟加载：
+            // 基础包就绪后 5 秒再后台补齐，用户此刻已能正常打字，
+            // 不至于让「开机后首次输入」的候选就绪被大词库拖慢。
+            PinyinEngine.loadOptionalAsync(this, delayMs = 5000L) {
+                Diagnostics.i(TAG, "onCreate: 可选词库已在后台就绪")
+            }
         }.start()
 
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
