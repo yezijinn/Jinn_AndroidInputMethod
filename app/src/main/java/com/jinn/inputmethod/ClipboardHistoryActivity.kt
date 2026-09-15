@@ -634,10 +634,12 @@ class ClipboardHistoryActivity : Activity() {
         pasting = true
         pendingPasteItemId = item.id
         val sent = runCatching {
+            // 只传 id，**不传正文**：广播走 Binder，事务上限约 1MB，
+            // 长文本（长文章/日志/大段代码）会让 sendBroadcast 抛
+            // TransactionTooLargeException 导致崩溃。正文由 IME 按 id 从库里读。
             sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_PASTE)
                 .setPackage(packageName)
-                .putExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_ITEM_ID, item.id)
-                .putExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_TEXT, item.content))
+                .putExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_ITEM_ID, item.id))
             true
         }.onFailure {
             Diagnostics.w(TAG, "发送粘贴广播失败: ${it.message}")
