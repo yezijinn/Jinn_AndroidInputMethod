@@ -16,8 +16,13 @@ data class OptionalDict(
     val fileName: String,
     /** 页面显示名 */
     val name: String,
-    /** 一句话说明覆盖范围 */
-    val desc: String,
+    /**
+     * 说明文案，**每项是一句完整的话**（页面会逐句单独渲染成一行）。
+     *
+     * 刻意做成列表而不是一整段：长句自动换行会出现断句不良的折行，
+     * 这里按句主动分行，保证「一行就是一句话」。
+     */
+    val descLines: List<String>,
     /** 压缩后体积（MB），用于页面标注供用户权衡 */
     val sizeMb: Double,
     /**
@@ -48,7 +53,10 @@ object OptionalDicts {
         OptionalDict(
             fileName = "ext.xz",
             name = "长词包",
-            desc = "五字及以上的长词与专有名词：人名、地名、作品名、机构名等",
+            descLines = listOf(
+                "五字及以上的长词与专有名词。",
+                "含人名、地名、作品名、机构名等。",
+            ),
             sizeMb = 1.81,
             startupSec = 7,
             urls = listOf(
@@ -59,7 +67,11 @@ object OptionalDicts {
         OptionalDict(
             fileName = "opt_tencent.xz",
             name = "腾讯大词库",
-            desc = "约 97 万词条，覆盖大量专业术语与短语搭配；体积较大，按需安装",
+            descLines = listOf(
+                "约 97 万词条。",
+                "覆盖大量专业术语与短语搭配。",
+                "体积较大，建议按需安装。",
+            ),
             sizeMb = 6.36,
             startupSec = 19,
             urls = listOf(

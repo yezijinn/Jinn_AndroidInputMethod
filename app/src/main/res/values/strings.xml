@@ -17,13 +17,18 @@
     <!-- 可选词库的启动代价说明：只影响「IME 服务重建后首次输入」的候选就绪，日常打字无影响 -->
     <string name="dict_startup_cost">开机后首次使用输入法时，候选就绪需等待约 %1$d 秒（之后不影响）</string>
     <string name="dict_startup_cost_none">不影响日常输入速度</string>
+    <!-- 代价说明按句拆成三行：页面逐句单独渲染，避免长句被系统自动折行 -->
+    <string name="dict_startup_cost_line1">开机后首次使用输入法时，</string>
+    <string name="dict_startup_cost_line2">候选就绪需等待约 %1$d 秒。</string>
+    <string name="dict_startup_cost_line3">之后不影响日常输入。</string>
 
     <!-- 分类词库页 -->
     <string name="dict_manager_title">分类词库</string>
     <string name="dict_entry_title">分类词库</string>
     <string name="dict_entry_desc">按需下载长词包、专业词库等，扩充输入覆盖范围</string>
     <string name="dict_entry_open">打开分类词库</string>
-    <string name="dict_manager_hint">按需下载词库以扩充输入覆盖范围。下载后需重启输入法生效。</string>
+    <string name="dict_manager_hint_line1">按需下载词库，扩充输入覆盖范围。</string>
+    <string name="dict_manager_hint_line2">下载后需重启输入法生效。</string>
     <string name="dict_status_installed">已安装（%1$s）</string>
     <string name="dict_status_absent">未安装</string>
     <string name="dict_action_download">下载</string>

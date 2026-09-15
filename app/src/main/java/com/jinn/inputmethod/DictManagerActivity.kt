@@ -2,11 +2,11 @@ package com.jinn.inputmethod
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -16,11 +16,16 @@ import java.util.Locale
 /**
  * 分类词库页：列出可选词库，按需下载 / 删除。
  *
+ * 视觉对齐本项目既有页面（与剪贴板历史页同一套配色）：
+ *   背景 #0B1020 ｜ 顶栏 #141C33 ｜ 卡片 #1C1F26
+ *   主文字 #ECEEF2 ｜ 次文字 #9CA3AF ｜ 强调 #4C8DFF ｜ 危险 #E5484D
+ *
  * 下载落地到 `filesDir/dicts/<fileName>`（[PinyinEngine.OPT_DICT_DIR]），
  * 引擎启动时自动扫描加载。加载是延迟的——基础词库先就绪，可选包在后台补齐，
  * 所以页面标注的是「**开机后首次输入**候选就绪需等待约 N 秒」，而不是「启动耗时」。
  *
- * 下载完成后自动重启输入法进程：词库只在 IME 启动时加载，重启才会合并生效。
+ * 说明文案按句拆成多行渲染（[OptionalDict.descLines]），**一行就是一句话**：
+ * 交给系统自动折行会出现断句不良的折行，读起来别扭，所以主动分行。
  */
 class DictManagerActivity : Activity() {
 
@@ -32,25 +37,38 @@ class DictManagerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = getString(R.string.dict_manager_title)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            setBackgroundColor(Color.parseColor("#0F1115"))
+            setBackgroundColor(COLOR_BG)
         }
 
+        root.addView(buildTopBar())
+
+        // 提示：两句各占一行，避免被系统折行
+        root.addView(hint(getString(R.string.dict_manager_hint_line1)), matchWrap(top = 10))
+        root.addView(hint(getString(R.string.dict_manager_hint_line2)), matchWrap())
+
+        // 动态状态行：初始隐藏，下载/删除时才出现。单行 + 省略号，
+        // 内容是「正在下载 X…」这类变长文案，不适合按句拆分。
         textStatus = TextView(this).apply {
-            setTextColor(Color.parseColor("#ECEEF2"))
-            textSize = 14f
-            text = getString(R.string.dict_manager_hint)
+            setTextColor(COLOR_ACCENT)
+            textSize = 12f
+            setPadding(dp(16), dp(6), dp(16), 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            visibility = View.GONE
         }
-        root.addView(textStatus, lp(marginBottom = 10))
+        root.addView(textStatus, matchWrap())
 
-        listHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply { addView(listHost) }
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        listHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(16))
+        }
+        root.addView(
+            ScrollView(this).apply { addView(listHost) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
 
         setContentView(root)
         Diagnostics.i(TAG, "DictManagerActivity: 打开分类词库页")
@@ -62,89 +80,169 @@ class DictManagerActivity : Activity() {
         refreshList()
     }
 
+    /** 顶栏下方的静态提示行（每句一个 TextView，不折行） */
+    private fun hint(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(COLOR_TEXT_SECONDARY)
+        textSize = 12f
+        setPadding(dp(16), 0, dp(16), 0)
+    }
+
+    /** 更新动态状态行（自动显示出来） */
+    private fun setStatus(text: String) {
+        textStatus.text = text
+        textStatus.visibility = View.VISIBLE
+    }
+
+    /** 顶栏：左标题、右关闭（沿用本项目深蓝顶栏 #141C33） */
+    private fun buildTopBar(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(COLOR_TOPBAR)
+            setPadding(dp(16), dp(12), dp(8), dp(12))
+        }
+
+        bar.addView(TextView(this).apply {
+            text = getString(R.string.dict_manager_title)
+            setTextColor(COLOR_TEXT_PRIMARY)
+            textSize = 16f
+            setTypeface(Typeface.DEFAULT_BOLD)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // 右上角关闭：结束本页返回设置页
+        bar.addView(TextView(this).apply {
+            text = "✕"
+            setTextColor(COLOR_TEXT_SECONDARY)
+            textSize = 20f
+            gravity = Gravity.CENTER
+            isClickable = true
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+            setOnClickListener {
+                Diagnostics.i(TAG, "DictManagerActivity: 用户关闭页面")
+                finish()
+            }
+        }, wrapWrap())
+
+        return bar
+    }
+
     // ── 列表 ────────────────────────────────────────────────
 
     private fun refreshList() {
         listHost.removeAllViews()
         for (dict in OptionalDicts.ALL) {
-            listHost.addView(buildRow(dict), lp(marginBottom = 10))
+            listHost.addView(buildCard(dict), matchWrap(bottom = 10))
         }
     }
 
-    private fun buildRow(dict: OptionalDict): View {
+    private fun buildCard(dict: OptionalDict): View {
         val file = dictFile(dict.fileName)
         val installed = file.isFile
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1C1F26"))
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = rounded(COLOR_CARD, 10)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
         }
 
-        card.addView(TextView(this).apply {
-            text = dict.name
-            setTextColor(Color.parseColor("#ECEEF2"))
-            textSize = 16f
-        })
+        // 词库名
+        card.addView(line(dict.name, COLOR_TEXT_PRIMARY, 16f, bold = true))
 
-        card.addView(TextView(this).apply {
-            text = dict.desc
-            setTextColor(Color.parseColor("#9AA3B2"))
-            textSize = 13f
-            setPadding(0, dp(4), 0, 0)
-        })
+        // 说明：每句独立一行，不做自动折行
+        for (sentence in dict.descLines) {
+            card.addView(line(sentence, COLOR_TEXT_SECONDARY, 13f, top = 4))
+        }
 
-        // 体积 + 代价：两者都要给用户看，光看体积会低估成本
-        val cost = getString(R.string.dict_startup_cost, dict.startupSec)
-        card.addView(TextView(this).apply {
-            text = "体积 %.1f MB · %s".format(Locale.US, dict.sizeMb, cost)
-            setTextColor(Color.parseColor("#F0A020"))
-            textSize = 12f
-            setPadding(0, dp(6), 0, 0)
-        })
+        // 代价一行一句，避免长句被折
+        card.addView(line("体积 %.1f MB。".format(Locale.US, dict.sizeMb), COLOR_WARN, 13f, top = 8))
+        card.addView(line(getString(R.string.dict_startup_cost_line1), COLOR_WARN, 13f, top = 2))
+        card.addView(line(getString(R.string.dict_startup_cost_line2, dict.startupSec), COLOR_WARN, 13f, top = 2))
+        card.addView(line(getString(R.string.dict_startup_cost_line3), COLOR_WARN, 13f, top = 2))
 
-        card.addView(TextView(this).apply {
-            text = if (installed) {
-                getString(R.string.dict_status_installed, formatSize(file.length()))
-            } else {
-                getString(R.string.dict_status_absent)
-            }
-            setTextColor(if (installed) Color.parseColor("#4CC38A") else Color.parseColor("#9AA3B2"))
-            textSize = 13f
-            setPadding(0, dp(4), 0, 0)
-        })
+        // 安装状态
+        card.addView(
+            line(
+                text = if (installed) {
+                    getString(R.string.dict_status_installed, formatSize(file.length()))
+                } else {
+                    getString(R.string.dict_status_absent)
+                },
+                color = if (installed) COLOR_OK else COLOR_TEXT_SECONDARY,
+                size = 13f,
+                top = 10,
+            ),
+        )
 
+        // 操作按钮
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
         }
-        row.addView(actionButton(
-            text = if (installed) getString(R.string.dict_action_reinstall)
-            else getString(R.string.dict_action_download),
-            enabled = downloading == null,
-        ) { download(dict) }, buttonLp(right = 8))
-
-        if (installed) {
-            row.addView(actionButton(
-                text = getString(R.string.dict_action_remove),
+        row.addView(
+            actionButton(
+                text = if (installed) getString(R.string.dict_action_reinstall)
+                else getString(R.string.dict_action_download),
+                color = COLOR_ACCENT,
                 enabled = downloading == null,
-            ) { remove(dict) }, buttonLp())
+            ) { download(dict) },
+            buttonLp(right = 8),
+        )
+        if (installed) {
+            row.addView(
+                actionButton(
+                    text = getString(R.string.dict_action_remove),
+                    color = COLOR_DANGER,
+                    enabled = downloading == null,
+                ) { remove(dict) },
+                buttonLp(),
+            )
         }
-        card.addView(row, lp(top = 8))
+        card.addView(row, matchWrap(top = 12))
         return card
     }
 
-    /** 按钮用 WRAP_CONTENT：否则第一个按钮占满整行，把后面的按钮挤出屏幕 */
-    private fun buttonLp(right: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { rightMargin = dp(right) }
+    /**
+     * 单行文字。**每句话单独一个 TextView** —— 从根上避免长句被自动折行，
+     * 保证页面上「一行就是一句话」。
+     */
+    private fun line(
+        text: String,
+        color: Int,
+        size: Float,
+        top: Int = 0,
+        bold: Boolean = false,
+    ): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(color)
+        textSize = size
+        if (bold) setTypeface(Typeface.DEFAULT_BOLD)
+        setPadding(0, dp(top), 0, 0)
+    }
 
-    private fun actionButton(text: String, enabled: Boolean, onClick: () -> Unit): Button =
-        Button(this).apply {
-            this.text = text
-            isEnabled = enabled
-            setOnClickListener { onClick() }
+    /** 操作按钮：与剪贴板页 actionButton 同款（实心圆角色块 + 白字） */
+    private fun actionButton(
+        text: String,
+        color: Int,
+        enabled: Boolean,
+        onClick: () -> Unit,
+    ): TextView = TextView(this).apply {
+        this.text = text
+        gravity = Gravity.CENTER
+        setTextColor(Color.parseColor("#FFFFFF"))
+        textSize = 14f
+        background = rounded(if (enabled) color else Color.parseColor("#3A4150"), 8)
+        setPadding(dp(18), dp(9), dp(18), dp(9))
+        isClickable = true
+        isEnabled = enabled
+        alpha = if (enabled) 1f else 0.45f
+        setOnClickListener { onClick() }
+    }
+
+    private fun rounded(color: Int, radiusDp: Int) =
+        android.graphics.drawable.GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radiusDp).toFloat()
         }
 
     // ── 下载 / 删除 ─────────────────────────────────────────
@@ -152,7 +250,7 @@ class DictManagerActivity : Activity() {
     private fun download(dict: OptionalDict) {
         if (downloading != null) return
         downloading = dict.fileName
-        textStatus.text = getString(R.string.dict_downloading, dict.name)
+        setStatus(getString(R.string.dict_downloading, dict.name))
         refreshList()
 
         Thread {
@@ -171,11 +269,11 @@ class DictManagerActivity : Activity() {
             }
             runOnUiThread {
                 downloading = null
-                textStatus.text = if (ok) {
+                setStatus(if (ok) {
                     getString(R.string.dict_download_done, dict.name)
                 } else {
                     getString(R.string.dict_download_failed, lastError)
-                }
+                })
                 refreshList()
                 if (ok) promptRestart()
             }
@@ -212,11 +310,11 @@ class DictManagerActivity : Activity() {
         val f = dictFile(dict.fileName)
         val ok = runCatching { f.delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "分类词库删除: ${dict.fileName} ok=$ok")
-        textStatus.text = if (ok) {
+        setStatus(if (ok) {
             getString(R.string.dict_removed, dict.name)
         } else {
             getString(R.string.dict_remove_failed)
-        }
+        })
         refreshList()
         if (ok) promptRestart()
     }
@@ -228,7 +326,7 @@ class DictManagerActivity : Activity() {
      * 本 Activity 随进程一并结束（与设置页 saveAndRestart 同款做法）。
      */
     private fun promptRestart() {
-        textStatus.text = getString(R.string.dict_need_restart)
+        setStatus(getString(R.string.dict_need_restart))
         Diagnostics.i(TAG, "分类词库变更：1.5s 后重启输入法进程以加载")
         listHost.postDelayed({
             android.os.Process.killProcess(android.os.Process.myPid())
@@ -237,7 +335,8 @@ class DictManagerActivity : Activity() {
 
     // ── 工具 ────────────────────────────────────────────────
 
-    private fun dictFile(fileName: String) = File(File(filesDir, PinyinEngine.OPT_DICT_DIR), fileName)
+    private fun dictFile(fileName: String) =
+        File(File(filesDir, PinyinEngine.OPT_DICT_DIR), fileName)
 
     private fun formatSize(bytes: Long): String = when {
         bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1048576.0)
@@ -247,16 +346,33 @@ class DictManagerActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun lp(top: Int = 0, right: Int = 0, marginBottom: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            this.topMargin = dp(top)
-            this.rightMargin = dp(right)
-            this.bottomMargin = dp(marginBottom)
-        }
+    private fun matchWrap(top: Int = 0, bottom: Int = 0) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+    ).apply {
+        topMargin = dp(top)
+        bottomMargin = dp(bottom)
+    }
+
+    private fun wrapWrap() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun buttonLp(right: Int = 0) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+    ).apply { rightMargin = dp(right) }
 
     private companion object {
         const val TAG = "DictManager"
+
+        /** 与剪贴板历史页同一套配色，保证观感一致 */
+        val COLOR_BG = Color.parseColor("#0B1020")
+        val COLOR_TOPBAR = Color.parseColor("#141C33")
+        val COLOR_CARD = Color.parseColor("#1C1F26")
+        val COLOR_TEXT_PRIMARY = Color.parseColor("#ECEEF2")
+        val COLOR_TEXT_SECONDARY = Color.parseColor("#9CA3AF")
+        val COLOR_ACCENT = Color.parseColor("#4C8DFF")
+        val COLOR_DANGER = Color.parseColor("#E5484D")
+        val COLOR_OK = Color.parseColor("#4CC38A")
+        val COLOR_WARN = Color.parseColor("#F0A020")
     }
 }
