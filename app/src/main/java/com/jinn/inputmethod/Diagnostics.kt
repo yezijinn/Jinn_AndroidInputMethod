@@ -36,6 +36,18 @@ object Diagnostics {
     private const val LOG_FILE_PREFIX = "jinn-"
     private const val LOGCAT_FILE_PREFIX = "logcat-"
 
+    /**
+     * V 级（Verbose）日志是否写入文件，默认关闭。
+     *
+     * 背景：本类不持有持久输出流，每条日志都是「open → write → close」。
+     * V 级主要记录音频包收发这类**每秒可达 10 条**的高频噪音，全量落盘
+     * 等于持续做小文件 IO，对输入法毫无收益。
+     *
+     * V 级仍会输出到 logcat（`adb logcat -s PinyinKeyboard MicRecorder` 等随时可看），
+     * 需要完整落盘排查时把这里改成 true 即可，其它级别不受影响。
+     */
+    private const val VERBOSE_TO_FILE = false
+
     @Volatile
     private var logDir: File? = null
 
@@ -201,6 +213,9 @@ object Diagnostics {
             'W' -> Log.w(tag, msg)
             else -> if (tr != null) Log.e(tag, msg, tr) else Log.e(tag, msg)
         }
+        // V 级默认不落盘：音频包这类日志每秒可达 10 条，而本类不持有持久流，
+        // 每次写日志都要 open/write/close 一次文件，累积开销可观（见 VERBOSE_TO_FILE）。
+        if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
         val sb = StringBuilder(160)
         sb.append(timeFormat.format(Date()))

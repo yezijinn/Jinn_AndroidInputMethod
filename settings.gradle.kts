@@ -1,8 +1,10 @@
 pluginManagement {
     repositories {
-        // 国内网络慢时把下面两行阿里云镜像取消注释，放在 google() 之前
-        // maven("https://maven.aliyun.com/repository/gradle-plugin")
-        // maven("https://maven.aliyun.com/repository/google")
+        // 国内网络直连 dl.google.com / repo.maven.apache.org 常超时或解析不到，
+        // 阿里云镜像作为公共仓库代理放在前面（与下面 google()/mavenCentral() 内容一致）
+        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -11,8 +13,8 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        // maven("https://maven.aliyun.com/repository/google")
-        // maven("https://maven.aliyun.com/repository/public")
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
     }

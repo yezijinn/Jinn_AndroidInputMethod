@@ -25,10 +25,14 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 
 ## 测试
 
-- 运行：`& "$env:LOCALAPPDATA\Temp\opencode\gradle-8.10.2\bin\gradle.bat" testDebugUnitTest`
+- 运行：`.\gradlew.bat testDebugUnitTest`（纯 JVM，无需设备，几十秒出结果）
+- Gradle 8.9 已装在 Wrapper 缓存；若 Wrapper 首次下载失败（SSL 握手被拒），用腾讯云镜像
+  `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
+  `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖：协议序列化/解析（ProtocolTest.kt）、拼音引擎（PinyinEngineTest/ShuangpinTest）、
-  文字拖选（TextSelectionTest）、剪贴板自动分类（ClipboardClassifierTest）
+- 覆盖：协议序列化/解析（ProtocolTest）、拼音引擎（PinyinEngineTest / ShuangpinTest /
+  PinyinCompletionTest）、文字拖选（TextSelectionTest）、剪贴板自动分类
+  （ClipboardClassifierTest）、入库去重（ClipboardDedupeTest）、分类筛选（ClipboardFilterTest）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
@@ -57,8 +61,9 @@ app/src/main/java/com/jinn/inputmethod/
 ├── JinnAccessibilityService.kt # 无障碍互保 + 输入场景监测（5s 节流）
 ├── BootReceiver.kt     # 开机/更新后拉起保活
 ├── RootShizuku.kt      # Root(su)/Shizuku 加白名单（Shizuku.newProcess 用反射，13.x 已私有）
-├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/保活/剪贴板）+ 保存并测试连接
-├── Diagnostics.kt      # 诊断日志：文件输出 + 崩溃捕获 + logcat 快照
+├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/保活/剪贴板）；保存后杀进程重启 IME
+├── Diagnostics.kt      # 诊断日志：文件输出 + 崩溃捕获 + logcat 快照（V 级默认不落盘）
+├── BackgroundIo.kt     # 单线程后台 IO 调度器（所有 DB/解密走这里，主线程零阻塞）
 │
 ├── ClipboardController.kt   # 剪贴板监听（PrimaryClipChangedListener）+ 自动分类 + 保存到库
 ├── ClipboardStore.kt(内)    # ClipboardController 内 object：自动分类→加密入库纯逻辑
@@ -67,7 +72,13 @@ app/src/main/java/com/jinn/inputmethod/
 ├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；隐私绝不自动）
 ├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/root 增强）
 ├── ClipboardHistoryActivity.kt # 剪贴板历史页（全新 Activity：分类栏/动态序号/实时搜索/去重/长按菜单/点击粘贴广播回传）
-└── ClipboardFirewall.kt    # Root 增强：数据目录安全审计（不做任何清空系统剪贴板操作）
+├── ClipboardFirewall.kt    # Root 增强：数据目录安全审计（不做任何清空系统剪贴板操作）
+├── ClipboardPanelView.kt   # 键盘内嵌剪贴板面板（列表 UI 与历史页重复，改一处要同步三处）
+└── SearchPanelView.kt      # 顶部剪贴板搜索面板（剪贴板内容第三个展示入口，同上）
+
+> `ClipboardDb.kt` 内含顶层 `ClipboardFilter`：负责把分类栏的伪分类
+> （FAVORITE / PRIVATE，实为独立标签列）翻译成 SQL 参数。**收藏/隐私绝不能当
+> category 传给 SQL**，否则列表恒空；该规则由 `ClipboardFilterTest` 守卫。
 ```
 
 ## 诊断日志（重要）
@@ -85,11 +96,15 @@ app/src/main/java/com/jinn/inputmethod/
 
 ## 约定
 
+- **禁止修改语音部分**：`MicRecorder`、`AsrClient`、`Protocol`、`MicButton`，以及 `JinnIme`
+  中的录音、WebSocket 连接、识别结果处理链路，均为作者自用，**不得改动**——语音功能的
+  外部可用性不在考虑范围内。若某问题必须改语音才能修，只登记不修并说明原因。
 - 提交风格：中文短语，`动词 + 对象`（如「修复设置页布局崩溃」）
 - 单模块 `:app`，无多模块拆分；不改协议字段名（服务端 from_dict 严格校验）
 - 通信帧：一次听写 = 若干 `is_final=false` 音频包 + 一个 `data=""` 的 `is_final=true` 收尾包；
   服务端返回的是**整段累积文本**，客户端整体覆盖显示，绝不自行拼接；取消也发收尾包按 taskId 丢弃
 - 保活相关（前台服务/无障碍/白名单）改动需在真机验证，厂商杀进程行为不可模拟
+- CapsWriterIME\docs 这个目录的文档不推送github,不用处理/完善,保持只读.
 
 ### 剪贴板模块关键约束
 
