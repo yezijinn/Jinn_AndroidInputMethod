@@ -4,6 +4,8 @@ import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -269,13 +271,19 @@ class DictManagerActivity : Activity() {
             }
             runOnUiThread {
                 downloading = null
-                setStatus(if (ok) {
-                    getString(R.string.dict_download_done, dict.name)
-                } else {
-                    getString(R.string.dict_download_failed, lastError)
-                })
+                // 用户可能在下完前点了 ✕ 关闭页面：此时不能动 UI（View 已随页面销毁），
+                // 但下载确实完成了——他点下载就是想要词库生效，所以仍要重启 IME。
+                if (isFinishing || isDestroyed) {
+                    Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），仍重启输入法以加载")
+                    if (ok) restartImeForDict()
+                    return@runOnUiThread
+                }
+                setStatus(
+                    if (ok) getString(R.string.dict_download_done, dict.name)
+                    else getString(R.string.dict_download_failed, lastError),
+                )
                 refreshList()
-                if (ok) promptRestart()
+                if (ok) restartImeForDict()
             }
         }.start()
     }
@@ -329,14 +337,24 @@ class DictManagerActivity : Activity() {
 
     /**
      * 词库只在 IME 启动时加载，增删后必须重启输入法进程才会生效。
-     *
-     * 延迟片刻再杀进程：等文件写入落盘。系统会自动重建 IME 服务并加载新词库，
-     * 本 Activity 随进程一并结束（与设置页 saveAndRestart 同款做法）。
      */
     private fun promptRestart() {
         setStatus(getString(R.string.dict_need_restart))
+        restartImeForDict()
+    }
+
+    /**
+     * 重启输入法进程以加载新词库。
+     *
+     * 延迟 1.5 秒让文件写入落盘；系统会自动重建 IME 服务并加载 `dicts/` 下的词库，
+     * 本进程（含本 Activity）随之结束。与设置页 saveAndRestart 同款做法。
+     *
+     * 用 Handler 而不是 View 的 postDelayed：页面可能已被用户关闭，
+     * 挂在已销毁 View 上的延时任务不保证执行，而这里必须执行。
+     */
+    private fun restartImeForDict() {
         Diagnostics.i(TAG, "分类词库变更：1.5s 后重启输入法进程以加载")
-        listHost.postDelayed({
+        Handler(Looper.getMainLooper()).postDelayed({
             android.os.Process.killProcess(android.os.Process.myPid())
         }, 1500L)
     }
