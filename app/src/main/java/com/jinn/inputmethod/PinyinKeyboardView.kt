@@ -971,6 +971,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshCandidateBar()
     }
 
+    /**
+     * 取出当前拼音串的「原始按键序列」并清空输入状态（供回车键输出英文用）。
+     *
+     * 返回的是用户**实际按下的那些键**，绝不做双拼→全拼转换：
+     * 全拼按 `but` 返回 `"but"`；双拼按 `budv` 返回 `"budv"`（不是转换后的 `"budui"`）。
+     * 这正是「打了几个键就输出几个英文字母」的语义。
+     *
+     * 清空 `lastCandidates` / `lastPredictions`，避免下一轮输入出现陈旧候选。
+     */
+    fun takeRawComposing(): String {
+        if (composing.isEmpty()) return ""
+        val raw = composing.toString()
+        composing.clear()
+        lastCandidates = emptyList()
+        lastPredictions = emptyList()
+        refreshCandidateBar()
+        Diagnostics.i(TAG, "回车输出英文原文: $raw")
+        return raw
+    }
+
     // ── 按键处理 ───────────────────────────────────────────
 
     /** 是否处于顶部搜索模式（26 键输入需路由到搜索框，不 commit 宿主） */
