@@ -52,3 +52,16 @@ docs/*.zip
 
 # 词库源文件（28MB 未压缩，可由 assets 基础包 + release 扩展包还原，不入库）
 tools/dict_builder/source/
+
+# 项目文档（本地资料，按约定不推送）
+docs/
+
+# 词库包构建产物（已作为 Release 附件分发，不入库）
+release/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 交接/临时文档（本地保留）
+HANDOFF.md
