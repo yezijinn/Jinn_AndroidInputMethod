@@ -135,7 +135,7 @@
 
     <!-- 诊断 -->
     <string name="settings_diagnostics">诊断</string>
-    <string name="settings_diagnostics_desc">应用运行信息自动写入手机内部存储，崩溃时自动抓取日志快照。可导出为压缩包发给开发者排查。</string>
+    <string name="settings_diagnostics_desc">应用运行信息写入手机内部存储，崩溃自动抓日志快照。可导出为压缩包发给开发者排查。</string>
     <string name="settings_export_diag">导出诊断包到内部存储</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
@@ -163,7 +163,7 @@
 
     <!-- Root 增强模式 -->
     <string name="clipboard_root_enhance">Root 增强模式</string>
-    <string name="clipboard_root_enhance_desc">可选扩展：使用 Root 权限审计 JinnIme 数据目录安全。不干预系统剪贴板。</string>
+    <string name="clipboard_root_enhance_desc">可选扩展：使用 Root 权限审计 JinnIme 数据目录安全</string>
     <string name="switch_root_enhance">开启 Root 增强模式</string>
     <string name="clipboard_root_status">Root 状态：%1$s</string>
     <string name="clipboard_root_available">可用</string>
@@ -183,9 +183,9 @@
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
     <string name="ext_dict_title">扩展词库（长词包）</string>
-    <string name="ext_dict_desc">APK 只内置基础词库（三字及以内，覆盖日常输入）。四字成语、专有名词等长词（约占原词库 65%%）改为可下载的扩展包，这让安装包从 10.6MB 降到 3.6MB。下载地址已预填，点击「下载并安装」会自动完成下载与合并并重启输入法生效。</string>
+    <string name="ext_dict_desc">四字以上长词为扩展包,「下载并安装」会补充词库</string>
     <string name="ext_dict_status_installed">已安装：%1$s</string>
-    <string name="ext_dict_status_absent">未安装 —— 长词、四字成语暂时打不出来</string>
+    <string name="ext_dict_status_absent">未安装 —— 五字及以上长词暂时打不出来（四字成语已内置）</string>
     <string name="ext_dict_url_hint">扩展包下载地址（已预填，可直接使用）</string>
     <string name="ext_dict_download">下载并安装</string>
     <string name="ext_dict_remove">删除扩展词库</string>

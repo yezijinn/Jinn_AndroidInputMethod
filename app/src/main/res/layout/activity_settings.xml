@@ -57,6 +57,56 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
+        <!-- 输入法测试：点这里唤起键盘打字（紧跟保存按钮，便于保存后立刻验证）-->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/edit_ime_test"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/settings_ime_test_hint"
+                    android:imeOptions="actionSend"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btn_ime_send"
+                    style="@style/SettingsButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:minWidth="88dp"
+                    android:text="@string/settings_ime_send" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_ime_received"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minLines="1"
+                android:text="@string/settings_ime_received_empty"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <!-- 自动唤起键盘 -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -149,10 +199,14 @@
                 android:id="@+id/edit_ext_dict_url"
                 android:layout_width="match_parent"
                 android:layout_height="44dp"
+                android:background="@drawable/field_aurora"
                 android:hint="@string/ext_dict_url_hint"
                 android:inputType="textUri"
                 android:maxLines="1"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
                 android:textSize="12sp" />
 
             <LinearLayout
@@ -163,71 +217,21 @@
 
                 <Button
                     android:id="@+id/btn_ext_dict_download"
+                    style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="42dp"
                     android:layout_weight="1"
-                    android:text="@string/ext_dict_download"
-                    android:textSize="13sp" />
+                    android:minWidth="0dp"
+                    android:text="@string/ext_dict_download" />
 
                 <Button
                     android:id="@+id/btn_ext_dict_remove"
+                    style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="42dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:text="@string/ext_dict_remove"
-                    android:textSize="13sp" />
+                    android:minWidth="0dp"
+                    android:text="@string/ext_dict_remove" />
             </LinearLayout>
-        </LinearLayout>
-
-        <!-- 输入法测试：点这里唤起键盘打字（紧跟自动唤起键盘） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/edit_ime_test"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/field_aurora"
-                    android:hint="@string/settings_ime_test_hint"
-                    android:imeOptions="actionSend"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
-
-                <Button
-                    android:id="@+id/btn_ime_send"
-                    style="@style/SettingsButton"
-                    android:layout_width="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="88dp"
-                    android:text="@string/settings_ime_send" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/text_ime_received"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:minLines="1"
-                android:text="@string/settings_ime_received_empty"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
         </LinearLayout>
 
         <!-- 后台保活：开关行 + 三个按钮一行 -->
