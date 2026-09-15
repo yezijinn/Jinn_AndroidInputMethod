@@ -158,15 +158,30 @@ class JinnIme : InputMethodService() {
 
         // 预加载拼音词库（约 1MB 文本，后台线程避免主线程卡顿）
         Thread {
-            Diagnostics.i(TAG, "onCreate: 开始预加载拼音词库")
             val start = System.currentTimeMillis()
-            PinyinEngine.load(this)
-            Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
+            // 必须兜住异常：本线程是裸 Thread，load() 内部也没有 try/catch。
+            // 一旦基础包解压失败（APK 安装不完整、存储故障等），异常会直接穿透到线程外，
+            // 线程静默死亡：loaded 永远为 false -> 打字没有任何候选，
+            // 而且「加载完成」「内存采样」这些日志全都执行不到，排查时毫无线索。
+            runCatching {
+                Diagnostics.i(TAG, "onCreate: 开始预加载拼音词库")
+                PinyinEngine.load(this)
+            }.onSuccess {
+                Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
+            }.onFailure {
+                Diagnostics.e(TAG, "onCreate: 词库加载失败，候选将不可用: ${it.message}", it)
+            }
+
             // 可选词库包（分类词库页下载的那些）延迟加载：
             // 基础包就绪后 5 秒再后台补齐，用户此刻已能正常打字，
             // 不至于让「开机后首次输入」的候选就绪被大词库拖慢。
-            PinyinEngine.loadOptionalAsync(this, delayMs = 5000L) {
-                Diagnostics.i(TAG, "onCreate: 可选词库已在后台就绪")
+            // 基础包即便加载失败也照常尝试（loadOptionalAsync 内部自带 runCatching）。
+            runCatching {
+                PinyinEngine.loadOptionalAsync(this, delayMs = 5000L) {
+                    Diagnostics.i(TAG, "onCreate: 可选词库已在后台就绪")
+                }
+            }.onFailure {
+                Diagnostics.e(TAG, "onCreate: 启动可选词库加载失败: ${it.message}", it)
             }
         }.start()
 
