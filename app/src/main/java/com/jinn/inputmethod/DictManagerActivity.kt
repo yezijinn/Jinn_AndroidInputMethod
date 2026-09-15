@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.io.File
 import java.util.Locale
 
@@ -278,10 +279,15 @@ class DictManagerActivity : Activity() {
                     if (ok) restartImeForDict()
                     return@runOnUiThread
                 }
-                setStatus(
-                    if (ok) getString(R.string.dict_download_done, dict.name)
-                    else getString(R.string.dict_download_failed, lastError),
-                )
+                val msg = if (ok) getString(R.string.dict_download_done, dict.name)
+                else getString(R.string.dict_download_failed, lastError)
+                setStatus(msg)
+                // 失败必须用 Toast 再提示一次：状态行是 Activity 的 View，
+                // 若下载期间页面发生过重建，runOnUiThread 里拿到的仍是**旧实例**的
+                // textStatus —— 提示写进了已不在屏幕上的 View，用户什么也看不到
+                // （实测：断网点下载后页面毫无反应，只会以为按钮坏了）。
+                // Toast 挂在系统窗口上，不受 Activity 重建影响。
+                if (!ok) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 refreshList()
                 if (ok) restartImeForDict()
             }
