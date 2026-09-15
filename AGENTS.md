@@ -12,7 +12,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 | 构建 | AGP 8.5.2 + Kotlin 1.9.24，Gradle Wrapper 8.9（本机用本地 8.10.2 等效） |
 | JDK | 17（compileOptions 与 jvmTarget 均 17） |
 | SDK | compileSdk 34 / minSdk 26 / targetSdk 34（本机另有 android-36 可用） |
-| 依赖 | 仅 core-ktx、activity-ktx、okhttp 4.12、shizuku-api（可选）、junit+org.json（测试） |
+| 依赖 | 仅 core-ktx、activity-ktx、okhttp 4.12、xz（词库解压）、junit+org.json（测试） |
 
 ## 代码风格
 
@@ -37,9 +37,10 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 
 ## 构建与运行
 
-- Debug：`gradle.bat assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
-- Release：`gradle.bat assembleRelease` → `app/build/outputs/apk/release/app-release-unsigned.apk`（未签名）
-- 真机安装：`adb install -r app-debug.apk`，设备 `192.168.1.33:5555`（KernelSU root）
+- Debug：`gradlew.bat assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
+- Release：`gradlew.bat assembleRelease`，或用 `python build_apk.py` 走「构建→zipalign→apksigner 签名」
+  （**顺序不可调换**：apksigner 不负责对齐，写反会让 APK 未对齐、设备读资源需先解压）
+- 真机安装：`adb install -r jinn-release.apk`（覆盖安装签名一致，不丢数据）
 - 真机输入法：`adb shell ime set com.jinn.inputmethod/.JinnIme`（实际包名是 `com.jinn.inputmethod`）
 - 本机 SDK：`C:\Android\sdk`（local.properties 已写 sdk.dir），JDK17 在 PATH
 
@@ -48,20 +49,19 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
 ```
 app/src/main/java/com/jinn/inputmethod/
 ├── Protocol.kt         # 协议常量 + AudioMessage(发) / RecognitionMessage(收) 序列化
-├── Prefs.kt            # SharedPreferences 配置（host/port/language/prompt/保活开关）
+├── Prefs.kt            # SharedPreferences 配置（host/port/language/prompt/生僻字开关）
 ├── MicRecorder.kt      # 16kHz PCM16 采集 → float32 小端；本地 VAD 静音检测
 ├── AsrClient.kt        # OkHttp WebSocket：beginTask/sendChunk/endTask + 断线指数退避重连
 ├── MicButton.kt        # 麦克风按钮（纯绘制，手势判定在 IME）
-├── JinnIme.kt          # 输入法服务：语音键盘 + 拼音键盘双模式、长按/短按手势、结果回显、保活拉起
-├── PinyinEngine.kt     # 拼音引擎：词库加载（HashMap 预分配 + BufferedReader 流式）、候选查询、自然码双拼
+├── JinnIme.kt          # 输入法服务：语音键盘 + 拼音键盘双模式、长按/短按手势、结果回显、剪贴板粘贴广播
+├── PinyinEngine.kt     # 拼音引擎：词库加载（ConcurrentHashMap + 流式解压，可选包延迟加载）、候选查询、自然码双拼
+├── KeyboardLayouts.kt  # 键盘静态布局数据（QWERTY 行定义 / 数字层映射 / 符号分组含日文假名）
 ├── PinyinKeyboardView.kt # 拼音键盘视图：26 键 QWERTY + 候选栏 + 功能面板（全拼/剪贴板/方向/粘贴/收起）+ 智能预测
 ├── PinyinKey.kt        # 拼音键盘单键（纯绘制：字母 + 双拼韵母/声母提示）
 ├── TextSelection.kt    # 文字拖选核心逻辑（Anchor/Focus 模型，纯函数可单测）
-├── KeepAliveService.kt # 前台保活服务（常驻通知，防掉后台）
-├── JinnAccessibilityService.kt # 无障碍互保 + 输入场景监测（5s 节流）
-├── BootReceiver.kt     # 开机/更新后拉起保活
-├── RootShizuku.kt      # Root(su)/Shizuku 加白名单（Shizuku.newProcess 用反射，13.x 已私有）
-├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/保活/剪贴板）；保存后杀进程重启 IME
+├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/剪贴板/分类词库入口）；保存后杀进程重启 IME
+├── DictManagerActivity.kt # 分类词库页（可选词库列表 + 下载 / 删除）
+├── OptionalDicts.kt    # 可选词库清单（文件名 / 说明 / 体积 / 启动耗时 / 下载源）
 ├── Diagnostics.kt      # 诊断日志：文件输出 + 崩溃捕获 + logcat 快照（V 级默认不落盘）
 ├── BackgroundIo.kt     # 单线程后台 IO 调度器（所有 DB/解密走这里，主线程零阻塞）
 │
@@ -87,10 +87,12 @@ app/src/main/java/com/jinn/inputmethod/
 - 真机 root 环境（KernelSU）下先 `su -c 'appops set <pkg> MANAGE_EXTERNAL_STORAGE allow'`
   使应用可直写共享目录；应用侧 `Diagnostics.init()` 也会尝试 appops+chown，兜底 app 专属目录
 - 崩溃自动写入 stack trace 并 dump `logcat-<ts>.log` 快照到同目录
-- 所有关键路径已埋点（连接/重连/收发/录音/VAD/保活/权限/剪贴板保存），排查先用 `cat` 日志文件
+- 所有关键路径已埋点（连接/重连/收发/录音/VAD/权限/剪贴板保存/词库加载），排查先用 `cat` 日志文件
 - 排查命令：`adb shell cat /storage/emulated/0/JinnIme/logs/jinn-*.log`
 - `Diagnostics.i/v/w/e` 同时写 logcat 与日志文件；`PinyinEngine` 加载完成会打
-  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程，约 7s，不阻塞 UI）
+  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程，基础包约 6.4s，不阻塞 UI）
+- 可选词库为**延迟加载**：`loadOptionalAsync` 在基础包就绪 5 秒后于后台补齐，
+  因此「开机后首次输入的候选就绪」不被大词库拖慢（详见 `PinyinEngine` 注释）
 - 剪贴板保存打 `save: 已保存 … (分类=...)`；剪贴板页刷新打 `refresh: 全库=N 分类=... 查询=N`
 
 ## 约定
@@ -102,7 +104,7 @@ app/src/main/java/com/jinn/inputmethod/
 - 单模块 `:app`，无多模块拆分；不改协议字段名（服务端 from_dict 严格校验）
 - 通信帧：一次听写 = 若干 `is_final=false` 音频包 + 一个 `data=""` 的 `is_final=true` 收尾包；
   服务端返回的是**整段累积文本**，客户端整体覆盖显示，绝不自行拼接；取消也发收尾包按 taskId 丢弃
-- 保活相关（前台服务/无障碍/白名单）改动需在真机验证，厂商杀进程行为不可模拟
+- 字体渲染、键盘布局改动需在真机截图确认（编译期无感，只有真机才看得出）
 - CapsWriterIME\docs 这个目录的文档不推送github,不用处理/完善,保持只读.
 
 ### 剪贴板模块关键约束
