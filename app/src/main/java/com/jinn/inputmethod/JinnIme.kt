@@ -1087,10 +1087,20 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 回车键：输入框声明了发送/搜索等动作就执行动作，否则老实换行。
+     * 回车键：有拼音串时先按「原始按键」上屏英文，否则执行输入框声明的动作、再退化为换行。
      */
     private fun performEnter() {
         val connection = currentInputConnection ?: return
+
+        // 拼音串非空说明用户已经打了字、候选栏也在显示：
+        // 此时回车 = 把**实际按下的键**原样上屏（全拼 but→but；双拼 budv→budv，
+        // 不做双拼→全拼转换），而不是选中候选、也不是换行。
+        val rawComposing = pinyinKeyboard?.takeRawComposing().orEmpty()
+        if (rawComposing.isNotEmpty()) {
+            connection.commitText(rawComposing, 1)
+            return
+        }
+
         val editorInfo = currentInputEditorInfo
         val imeOptions = editorInfo?.imeOptions ?: 0
         val action = imeOptions and EditorInfo.IME_MASK_ACTION
