@@ -179,7 +179,7 @@
     <string name="clipboard_unmark_private">取消隐私标记</string>
     <string name="clipboard_private_masked">已隐藏 · 点击显示</string>
     <string name="switch_show_rare_chars">显示生僻字</string>
-    <string name="switch_show_rare_chars_desc">默认关闭。关闭时不加载生僻字（《通用规范汉字表》三级字表及表外字），单字表约减少 60%、词条约减少 17%，可显著降低词库内存占用。修改后需重启输入法生效。</string>
+    <string name="switch_show_rare_chars_desc">默认关闭,不加载生僻字.勾选后重启加载生僻字</string>
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
     <string name="ext_dict_title">扩展词库（长词包）</string>
