@@ -71,10 +71,9 @@ app/src/main/java/com/jinn/inputmethod/
 ├── ClipboardCrypto.kt       # 加密工具（Android Keystore AES-256-GCM，base64(iv):base64(cipher)）
 ├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；隐私绝不自动）
 ├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/root 增强）
-├── ClipboardHistoryActivity.kt # 剪贴板历史页（全新 Activity：分类栏/动态序号/实时搜索/去重/长按菜单/点击粘贴广播回传）
 ├── ClipboardFirewall.kt    # Root 增强：数据目录安全审计（不做任何清空系统剪贴板操作）
-├── ClipboardPanelView.kt   # 键盘内嵌剪贴板面板（列表 UI 与历史页重复，改一处要同步三处）
-└── SearchPanelView.kt      # 顶部剪贴板搜索面板（剪贴板内容第三个展示入口，同上）
+├── ClipboardPanelView.kt   # 键盘内嵌剪贴板面板（列表 UI 与搜索面板重复，改一处要同步两处）
+└── SearchPanelView.kt      # 顶部剪贴板搜索面板（剪贴板内容的第二个展示入口，同上）
 
 > `ClipboardDb.kt` 内含顶层 `ClipboardFilter`：负责把分类栏的伪分类
 > （FAVORITE / PRIVATE，实为独立标签列）翻译成 SQL 参数。**收藏/隐私绝不能当
@@ -111,18 +110,10 @@ app/src/main/java/com/jinn/inputmethod/
 - **第三方 APP 不得读取 History**：JinnIme 不提供任何 History API（ClipboardHistoryProvider/PermissionStore/PermissionActivity 已全部移除）。第三方 APP 只能读取 Android System Clipboard 的最新内容，无法访问 JinnIme 私有历史库
 - **不干预 System Clipboard**：JinnIme 不阻断、篡改或周期性清空 Android System Clipboard；网盘、购物、分享类 APP 识别口令/链接的功能不受影响
 - **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏/隐私标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
-- **分类**：固定 全部/网址/隐私/数字/收藏；隐私**只能用户主动标记**，绝不自动；收藏是独立标签可与分类并存
-
 - **分类**：固定 全部/网址/隐私/数字/收藏；隐私**只能用户手动标记**，绝不自动；收藏是独立标签可与分类并存
 - **序号**：UI 序号非 DB ID，最新=最大，删除/去重后重新连续编号；搜索保留原始序号
-- **点击粘贴**：Activity 无法直接拿 InputConnection → 广播（`ACTION_CLIPBOARD_PASTE`）回传 IME → `commitText`；
+- **点击粘贴**：面板点击条目 → 广播（`ACTION_CLIPBOARD_PASTE`）回传 IME → `commitText`；
   连接无效时暂存 `pendingPasteText`，`onStartInputView` 时自动提交；无效连接不崩溃
 - **ownCommit 陷阱**：`onOwnCommit()` 只在真正写系统剪贴板的粘贴路径调用；打字/语音上屏走 `commitText`
   不写系统剪贴板，**严禁**在 `commit()` 里调 `onOwnCommit()`——否则标记残留会把用户真实复制误杀
-- **保存竞态**：复制→保存是后台线程（AES 加密耗时），页面打开时可能读到旧状态；
-  剪贴板页 `onResume` 分时延迟刷新（300ms/1s/2.5s）兜底
-- **空列表越界**：空分类（如隐私/收藏无记录）时 ListView 已 GONE，`setSelection(0)` 会抛
-  `IndexOutOfBoundsException`；滚回顶部必须 `currentItems.isNotEmpty()` 判空
-- **滚动残留**：ListView 保持上次滚动位置，分类切换/去重/删除后必须滚回顶部，否则切回长列表只见底部几条
 - **加密**：正文 AES-256-GCM（Android Keystore），`base64(iv):base64(cipher)`；绝不落明文日志
-- **隐私安全**：剪贴板页 `FLAG_SECURE` 禁止截图；隐私内容默认隐藏明文，点击一次才显示再点才粘贴
