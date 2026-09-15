@@ -68,3 +68,8 @@ HANDOFF.md
 
 # 接手指南（一次性入手文档，已归档 docs/）
 ONBOARDING.md
+
+# 第三方词库源码（调研用，非本项目代码）
+tools/dict_builder/THUOCL-master/
+# 注音中间产物（可由脚本重新生成）
+tools/dict_builder/THUOCL注音输出/
