@@ -33,9 +33,14 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖：协议序列化/解析（ProtocolTest）、拼音引擎（PinyinEngineTest / ShuangpinTest /
-  PinyinCompletionTest）、文字拖选（TextSelectionTest）、剪贴板自动分类
-  （ClipboardClassifierTest）、入库去重（ClipboardDedupeTest）、分类筛选（ClipboardFilterTest）
+- 覆盖（13 个测试类 / 182 个用例）：
+  - 协议：`ProtocolTest`（序列化 / 解析）
+  - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
+  - 词库：`PhraseDictIntegrityTest`（词库完整性）、`RareCharsFilterTest`（生僻字过滤）、
+    `OptionalDictMergeTest`（可选包合并去重）、`CandidateCountBoundTest`（候选数量边界）
+  - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
+    含 CRLF / 长度边界 / 负例）、`ClipboardDedupeTest`、`ClipboardFilterTest`
+  - 文字拖选：`TextSelectionTest`
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
