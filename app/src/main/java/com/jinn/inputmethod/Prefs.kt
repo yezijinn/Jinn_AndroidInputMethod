@@ -60,26 +60,6 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
-     * 后台保活总开关：开启后启动前台服务与无障碍互保，并在开机后自动拉起。
-     */
-    var keepAlive: Boolean
-        get() = sp.getBoolean(KEY_KEEP_ALIVE, false)
-        set(value) = sp.edit { putBoolean(KEY_KEEP_ALIVE, value) }
-
-    /**
-     * 是否用 Root / Shizuku 把本包加入系统白名单（防杀后台的进阶手段）。
-     * 仅记录用户偏好，实际执行在设置页点按钮时触发。
-     */
-    var useRootShizuku: Boolean
-        get() = sp.getBoolean(KEY_ROOT_SHIZUKU, false)
-        set(value) = sp.edit { putBoolean(KEY_ROOT_SHIZUKU, value) }
-
-    /** 保活通知优先级：true 用 IMPORTANCE_LOW（可见但不响），false 用 IMPORTANCE_MIN（更省电但部分厂商易杀）。默认关。 */
-    var notifyHighPriority: Boolean
-        get() = sp.getBoolean(KEY_NOTIFY_HIGH, false)
-        set(value) = sp.edit { putBoolean(KEY_NOTIFY_HIGH, value) }
-
-    /**
      * 键盘输入方案：true 用自然码双拼，false 用 26 键全拼。
      */
     var useShuangpin: Boolean
@@ -139,9 +119,6 @@ class Prefs(context: Context) {
         private const val KEY_PROMPT = "prompt"
         private const val KEY_STRIP_PUNC = "strip_punc"
         private const val KEY_COMPOSING = "composing"
-        private const val KEY_KEEP_ALIVE = "keep_alive"
-        private const val KEY_ROOT_SHIZUKU = "root_shizuku"
-        private const val KEY_NOTIFY_HIGH = "notify_high"
         private const val KEY_SHUANGPIN = "shuangpin"
         private const val KEY_KB_ENGLISH = "kb_english"
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"

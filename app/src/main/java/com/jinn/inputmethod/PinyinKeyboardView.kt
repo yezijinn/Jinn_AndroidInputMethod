@@ -1399,7 +1399,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidateList.removeAllViews()
         viewCandidateList.addView(buildFunctionButton(
             label = if (shuangpinMode) "双拼" else "全拼",
-            hint = "输入方案",
+            hint = "换拼音",
             onClick = { togglePinyinScheme() },
         ))
         viewCandidateList.addView(buildFunctionButton(
@@ -1424,7 +1424,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "复制",
-            hint = "避免窃取",
+            hint = "编辑",
             onClick = { listener?.onCopy() },
         ))
         viewCandidateList.addView(buildFunctionButton(
@@ -1434,7 +1434,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         viewCandidateList.addView(buildFunctionButton(
             label = "收起",
-            hint = "隐藏键盘",
+            hint = "键盘",
             onClick = { listener?.onHideKeyboard() },
         ))
         Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/历史/方向/全选/复制/粘贴/收起")
