@@ -77,6 +77,22 @@ import kotlin.math.min
 
         private var pressed = false
 
+        /**
+         * 由外部触摸监听驱动按压视觉。
+         *
+         * 字母键的触摸由 [PinyinKeyboardView.handleKeyTouch] 通过 OnTouchListener 处理
+         * （要兼听符号层横滑翻页），OnTouchListener 返回 true 后本 View 的
+         * [onTouchEvent] 不再执行，[pressed] 也就永远不会变化 —— 按键看起来没有反应。
+         * 因此外层必须在 DOWN/UP/CANCEL 时显式调用本方法刷新按压态。
+         *
+         * 命名避开 [View.setPressed]，不复用系统按压态（系统态会被父容器重置）。
+         */
+        fun setPressedVisual(value: Boolean) {
+            if (pressed == value) return
+            pressed = value
+            invalidate()
+        }
+
         override fun onTouchEvent(event: MotionEvent): Boolean {
             // 触摸按下/抬起用于视觉反馈，抬手时通过 performClick 触发 OnClickListener
             when (event.actionMasked) {

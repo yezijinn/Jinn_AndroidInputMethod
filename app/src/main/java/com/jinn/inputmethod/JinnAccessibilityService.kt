@@ -19,25 +19,15 @@ class JinnAccessibilityService : AccessibilityService() {
     /** 保活拉起节流，避免每次文本变化都触发 startService */
     private var lastKeepAliveStart = 0L
 
-    /** 缓存保活开关：文本变化事件高频触发，避免每次都新建 Prefs 读 SharedPreferences */
-    private var keepAliveCached = false
-    private var prefsLoaded = false
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         Diagnostics.init(this)
         Diagnostics.i(TAG, "onServiceConnected: 无障碍服务已连接")
-        keepAliveCached = Prefs(this).keepAlive
-        prefsLoaded = true
-        if (keepAliveCached) KeepAliveService.start(this)
+        if (Prefs(this).keepAlive) KeepAliveService.start(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!prefsLoaded) {
-            keepAliveCached = Prefs(this).keepAlive
-            prefsLoaded = true
-        }
-        if (!keepAliveCached) return
+        // 先做廉价过滤：与输入框无关的事件直接丢弃，避免无谓地重读开关
         val type = event?.eventType ?: return
         if (type != AccessibilityEvent.TYPE_VIEW_FOCUSED &&
             type != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
@@ -51,13 +41,19 @@ class JinnAccessibilityService : AccessibilityService() {
         if (!isTextInput) return
 
         val now = System.currentTimeMillis()
-        if (now - lastKeepAliveStart > KEEPALIVE_THROTTLE_MS) {
-            lastKeepAliveStart = now
+        if (now - lastKeepAliveStart <= KEEPALIVE_THROTTLE_MS) return
+        lastKeepAliveStart = now
+
+        // 节流窗口外**双向**重读开关：
+        //  - 缓存为 true 而用户已关闭 → 不再错误拉起；
+        //  - 缓存为 false 而用户刚开启 → 必须能感知到。
+        // 后者是原先的缺陷：那时这里先 `if (!keepAliveCached) return` 提前退出，
+        // 缓存一旦为 false 就永远不会重读，用户在设置页开启保活后若前台服务被杀，
+        // 无障碍再也不会把它拉起来（互保失效）。
+        val enabled = Prefs(this).keepAlive
+        if (enabled) {
             Diagnostics.v(TAG, "onAccessibilityEvent: 检测到输入框 $cls，拉起保活")
-            // 节流窗口外重读开关：否则用户在设置页关闭保活后，
-            // 缓存值仍是 true，无障碍会一直错误地把保活拉起来
-            keepAliveCached = Prefs(this).keepAlive
-            if (keepAliveCached) KeepAliveService.start(this)
+            KeepAliveService.start(this)
         }
     }
 
@@ -65,10 +61,9 @@ class JinnAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         Diagnostics.i(TAG, "onUnbind: 无障碍服务解绑")
-        // 用户关闭无障碍 ≠ 关闭保活：KeepAliveService 用户在设置页开启，
-        // 其生命周期应由用户的 keepAlive 开关控制；reset 缓存避免下次重建后误拉起
-        keepAliveCached = Prefs(this).keepAlive
-        if (!keepAliveCached) KeepAliveService.stop(this)
+        // 用户关闭无障碍 ≠ 关闭保活：KeepAliveService 由设置页的 keepAlive 开关控制，
+        // 这里只在开关确实为关时才停掉它
+        if (!Prefs(this).keepAlive) KeepAliveService.stop(this)
         return super.onUnbind(intent)
     }
 

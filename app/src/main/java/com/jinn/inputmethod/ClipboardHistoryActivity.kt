@@ -26,12 +26,13 @@ import java.util.Locale
  * 剪贴板历史页（输入法内部功能页）。
  *
  * 功能（文档剪贴板优化）：
- *  - 分类栏：全部 / 网址 / 数字 / 收藏（收藏为独立标签，可与分类并存）
+ *  - 分类栏：全部 / 网址 / 数字 / 收藏 / 隐私（收藏、隐私为独立标签，可与分类并存）
+ *  - 隐私条目默认隐藏明文：点击一次展开，再点一次才粘贴；隐私只能用户长按主动标记
  *  - 每条记录显示**动态 UI 序号**（最新=当前，删除去重后重新连续编号，非数据库 ID）
- *  - 点击记录 → 广播回传 IME 粘贴 + 关闭本页返回输入法上一页面
+ *  - 点击记录 → 广播回传 IME 粘贴 + 关闭本页返回输入法上一页面（带超时兜底防卡死）
  *  - 实时搜索（输入即搜，删除原搜索按钮，大小写不敏感任意位置匹配，保留原始序号）
  *  - 清理重复（严格字符串比较，只保留最新）
- *  - 长按：收藏 / 取消收藏 / 删除
+ *  - 长按：收藏 / 取消收藏 / 隐私标记 / 删除
  *
  * 安全设计：
  *  - FLAG_SECURE 禁止截图；
@@ -50,8 +51,17 @@ class ClipboardHistoryActivity : Activity() {
     private lateinit var btnCategoryUrl: TextView
     private lateinit var btnCategoryNumber: TextView
     private lateinit var btnCategoryFavorite: TextView
+    private lateinit var btnCategoryPrivate: TextView
     private lateinit var btnDedupe: TextView
     private lateinit var btnDeleteAll: TextView
+
+    /**
+     * 已「点击显示明文」的隐私条目 ID。
+     *
+     * 隐私条目默认只显示掩码，第一次点击加入本集合并展开明文，第二次点击才真正粘贴
+     * （文档约定：隐私内容绝不默认明文可见）。仅内存态，页面关闭即失效。
+     */
+    private val revealedIds = HashSet<Long>()
 
     /** 当前分类（null=全部，其他=分类名） */
     private var currentCategory: String? = null
@@ -74,6 +84,9 @@ class ClipboardHistoryActivity : Activity() {
 
     /** 刷新请求令牌：异步查询完成时若已过期则丢弃，防乱序覆盖 */
     private var refreshToken = 0
+
+    /** 滚动令牌：失效化旧的「滚回顶部」post，防快速切分类/输入时的滚动残留 */
+    private var scrollToken = 0
 
     private val adapter = object : BaseAdapter() {
         override fun getCount() = currentItems.size
@@ -139,12 +152,18 @@ class ClipboardHistoryActivity : Activity() {
             } else {
                 (categoryTotal - pos).toString()
             }
-            holder.content.text = item.content
+            // 隐私条目默认掩码：点一次显示明文，再点一次才粘贴（绝不默认明文可见）
+            holder.content.text = if (item.isPrivate && item.id !in revealedIds) {
+                getString(R.string.clipboard_private_masked)
+            } else {
+                item.content
+            }
             holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.sourcePackage.isNotBlank()) append(" · ").append(item.sourceAppName.ifBlank { item.sourcePackage.substringAfterLast('.') })
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
+                if (item.isPrivate) append(" · 隐私")
             }
             return root
         }
@@ -180,7 +199,8 @@ class ClipboardHistoryActivity : Activity() {
         btnCategoryUrl = categoryTab(R.string.clipboard_cat_url, onClick = { selectCategory(ClipboardClassifier.CATEGORY_URL) })
         btnCategoryNumber = categoryTab(R.string.clipboard_cat_number, onClick = { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) })
         btnCategoryFavorite = categoryTab(R.string.clipboard_cat_favorite, onClick = { selectCategory(CATEGORY_FAVORITE) })
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
+        btnCategoryPrivate = categoryTab(R.string.clipboard_cat_private, onClick = { selectCategory(CATEGORY_PRIVATE) })
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite, btnCategoryPrivate)) {
             catRow.addView(tab, LinearLayout.LayoutParams(
                 dp(76), dp(40)).apply { marginEnd = dp(6) })
         }
@@ -290,6 +310,7 @@ class ClipboardHistoryActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         uiHandler.removeCallbacks(searchDebouncer)
+        uiHandler.removeCallbacks(pasteTimeoutRunnable)
         runCatching { unregisterReceiver(pasteResultReceiver) }.onFailure { }
     }
 
@@ -310,6 +331,25 @@ class ClipboardHistoryActivity : Activity() {
     }
 
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * 粘贴超时兜底：IME 可能因进程被杀、未处于输入态等原因永不回传结果，
+     * 若没有超时复位，[pasting] 会永久为 true 导致粘贴功能彻底卡死（点任何条目都无响应）。
+     */
+    private val pasteTimeoutRunnable = Runnable {
+        if (!pasting) return@Runnable
+        val id = pendingPasteItemId
+        Diagnostics.w(TAG, "粘贴超时: id=$id 未收到 IME 回执，复位状态")
+        resetPasteState()
+        Toast.makeText(this, R.string.clipboard_paste_failed, Toast.LENGTH_SHORT).show()
+    }
+
+    /** 复位粘贴状态并取消超时（成功/失败/广播发送失败三处共用） */
+    private fun resetPasteState() {
+        uiHandler.removeCallbacks(pasteTimeoutRunnable)
+        pasting = false
+        pendingPasteItemId = -1L
+    }
 
     /** 搜索防抖 Runnable：执行时按当前 query 决定刷新与滚回策略 */
     private val searchDebouncer = Runnable {
@@ -343,12 +383,13 @@ class ClipboardHistoryActivity : Activity() {
 
     private fun refreshCategoryTabs() {
         val selected = currentCategory
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite, btnCategoryPrivate)) {
             val isSelected = when (tab) {
                 btnCategoryAll -> selected == null
                 btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
                 btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
-                else -> selected == CATEGORY_FAVORITE
+                btnCategoryFavorite -> selected == CATEGORY_FAVORITE
+                else -> selected == CATEGORY_PRIVATE
             }
             tab.setBackgroundResource(if (isSelected) R.drawable.key_bg_active else R.drawable.key_bg)
         }
@@ -379,10 +420,11 @@ class ClipboardHistoryActivity : Activity() {
 
     /** 非搜索路径：COUNT + 第一页，解密只覆盖 PAGE_SIZE 条 */
     private fun loadFirstPage(category: String?, reqToken: Int, resetScroll: Boolean) {
-        val favoritesOnly = category == CATEGORY_FAVORITE
-        val scope = if (favoritesOnly) null else category
-        val total = db.count(scope, favoritesOnly)
-        val page = db.recentPage(0, PAGE_SIZE, scope, favoritesOnly)
+        // 伪分类（收藏/隐私）→ SQL 参数的翻译统一由 ClipboardFilter 负责，
+        // 这里不再各写一遍，避免漏改导致「隐私 Tab 永远空列表」这类问题
+        val filter = ClipboardFilter.of(category)
+        val total = db.count(filter.category, filter.favoritesOnly, filter.privateOnly)
+        val page = db.recentPage(0, PAGE_SIZE, filter.category, filter.favoritesOnly, filter.privateOnly)
         runOnUiThread {
             if (reqToken != refreshToken) return@runOnUiThread
             loadingPage = false
@@ -401,7 +443,10 @@ class ClipboardHistoryActivity : Activity() {
                 listView.invalidate()
             }
             if (resetScroll && currentItems.isNotEmpty()) {
-                listView.post { listView.setSelection(0) }
+                // token 失效化：快速输入/连续切分类时，旧的「滚回顶部」post
+                // 会在新数据回填后执行，把列表拽到错误位置（滚动残留）
+                val token = ++scrollToken
+                listView.post { if (token == scrollToken) listView.setSelection(0) }
             }
         }
     }
@@ -413,10 +458,9 @@ class ClipboardHistoryActivity : Activity() {
         val offset = currentItems.size
         val reqToken = refreshToken
         loadingPage = true
-        val favoritesOnly = category == CATEGORY_FAVORITE
-        val scope = if (favoritesOnly) null else category
+        val filter = ClipboardFilter.of(category)
         BackgroundIo.run {
-            val page = db.recentPage(offset, PAGE_SIZE, scope, favoritesOnly)
+            val page = db.recentPage(offset, PAGE_SIZE, filter.category, filter.favoritesOnly, filter.privateOnly)
             runOnUiThread {
                 if (reqToken != refreshToken) return@runOnUiThread
                 loadingPage = false
@@ -433,9 +477,12 @@ class ClipboardHistoryActivity : Activity() {
     }
 
     /**
-     * 分块渐进搜索：按 SEARCH_CHUNK 分块扫描全库（新→旧），命中项携带其
-     * 在全库序列中的原始偏移（保持搜索序号语义）；每块扫描完立即发布到 UI，
-     * 首块结果即刻可见，无需等全量解密完成。
+     * 分块渐进搜索：按 SEARCH_CHUNK 分块扫描（新→旧），命中项携带其原始偏移
+     * （保持搜索序号语义）；每块扫描完立即发布到 UI，首块结果即刻可见，
+     * 无需等全量解密完成。
+     *
+     * 分类/收藏/隐私会下推到 SQL 先过滤再解密，因此这里扫描的是**当前分类内**
+     * 的序列，序号基准同样是分类内总数（与非搜索态一致）。
      *
      * 大库上限保护：扫描超过 maxItems 条即停（库裁剪上限即 maxItems，
      * 正常不会超出；此判断覆盖手工删配置等边角情况）。
@@ -447,14 +494,23 @@ class ClipboardHistoryActivity : Activity() {
         val lower = q.lowercase()
         var offset = 0
         var globalIndex = 0
-        // latestNumber 语义：全库总数（搜索序号 = 总数 − 原始偏移）
-        val totalAll = db.count()
+        // 把分类/收藏/隐私下推到 SQL：先过滤再解密，避免在后台线程解密大量本就被
+        // 过滤掉的条目（解密是这条路径上最贵的操作）。
+        val filter = ClipboardFilter.of(category)
+        // 序号基准：SQL 已按分类过滤，globalIndex 是「分类内偏移」而非全库偏移，
+        // 所以这里必须用分类内总数——用全库总数会把序号整体算大，
+        // 也与非搜索态（categoryTotal 为分类内总数）的语义不一致。
+        val numberBase = db.count(filter.category, filter.favoritesOnly, filter.privateOnly)
         while (offset < maxScan) {
-            val chunk = db.recentPage(offset, SEARCH_CHUNK)
+            val chunk = db.recentPage(
+                offset, SEARCH_CHUNK,
+                filter.category, filter.favoritesOnly, filter.privateOnly,
+            )
             if (chunk.isEmpty()) break
             for (item in chunk) {
                 val inCategory = when {
                     category == CATEGORY_FAVORITE -> item.isFavorite
+                    category == CATEGORY_PRIVATE -> item.isPrivate
                     category != null -> item.category == category
                     else -> true
                 }
@@ -472,7 +528,7 @@ class ClipboardHistoryActivity : Activity() {
             val indexSnapshot = HashMap(indexById)
             runOnUiThread {
                 if (reqToken != refreshToken) return@runOnUiThread
-                latestNumber = totalAll
+                latestNumber = numberBase
                 searchIndexById = indexSnapshot
                 currentItems = snapshot.toMutableList()
                 adapter.notifyDataSetChanged()
@@ -546,8 +602,7 @@ class ClipboardHistoryActivity : Activity() {
             if (itemId != pendingPasteItemId) return
             val success = intent.getBooleanExtra(JinnIme.EXTRA_CLIPBOARD_PASTE_SUCCESS, false)
             Diagnostics.i(TAG, "粘贴结果: id=$itemId success=$success")
-            pasting = false
-            pendingPasteItemId = -1L
+            resetPasteState()
             if (success) {
                 finish()
             } else {
@@ -563,6 +618,12 @@ class ClipboardHistoryActivity : Activity() {
     private fun handleItemClick(item: ClipboardDb.Item) {
         // 快速点击去重：上次粘贴未完成时忽略新点击
         if (pasting) return
+        // 隐私条目：第一次点击只展开明文，第二次点击才真正粘贴
+        if (item.isPrivate && item.id !in revealedIds) {
+            revealedIds.add(item.id)
+            adapter.notifyDataSetChanged()
+            return
+        }
         requestPaste(item)
     }
 
@@ -585,10 +646,12 @@ class ClipboardHistoryActivity : Activity() {
         }.getOrDefault(false)
         if (!sent) {
             // 广播都发不出：复位状态，停留本页，绝不误关
-            pasting = false
-            pendingPasteItemId = -1L
+            resetPasteState()
             Toast.makeText(this, R.string.clipboard_paste_failed, Toast.LENGTH_SHORT).show()
+            return
         }
+        // 超时兜底：IME 不回执时复位，避免 pasting 永久为 true 导致粘贴功能卡死
+        uiHandler.postDelayed(pasteTimeoutRunnable, PASTE_TIMEOUT_MS)
     }
 
     /** 长按菜单：收藏 / 删除 */
@@ -598,6 +661,19 @@ class ClipboardHistoryActivity : Activity() {
         val actions = mutableListOf<() -> Unit>()
         options.add(getString(if (item.isFavorite) R.string.clipboard_unfavorite else R.string.clipboard_favorite))
         actions.add { db.setFavorite(item.id, !item.isFavorite); refresh(resetScroll = true) }
+        // 隐私只能由用户主动标记（分类器与入库链路绝不自动判定）
+        options.add(getString(if (item.isPrivate) R.string.clipboard_unmark_private else R.string.clipboard_mark_private))
+        actions.add {
+            val next = !item.isPrivate
+            BackgroundIo.run {
+                db.setPrivate(item.id, next)
+                runOnUiThread {
+                    // 取消隐私标记后同步移出「已展开」集合，重新标记后再次默认掩码
+                    if (!next) revealedIds.remove(item.id)
+                    refresh(resetScroll = true)
+                }
+            }
+        }
         options.add(getString(R.string.clipboard_delete))
         actions.add { db.delete(item.id); refresh(resetScroll = true) }
 
@@ -626,8 +702,12 @@ class ClipboardHistoryActivity : Activity() {
 
     private companion object {
         const val TAG = "ClipboardHistory"
-        const val CATEGORY_FAVORITE = "FAVORITE"
+        // 常量统一取自 ClipboardFilter，避免 UI 与数据层各定义一份而漂移
+        const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
+        const val CATEGORY_PRIVATE = ClipboardFilter.PSEUDO_PRIVATE
         const val SEARCH_DEBOUNCE_MS = 300L
+        /** 等待 IME 回传粘贴结果的超时：超时复位 [pasting]，避免粘贴功能永久卡死 */
+        const val PASTE_TIMEOUT_MS = 3_000L
         /** 每页条数（解密只覆盖可见窗口） */
         const val PAGE_SIZE = 50
         /** 距底部还有多少条时预取下一页 */

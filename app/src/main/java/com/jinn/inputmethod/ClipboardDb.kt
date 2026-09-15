@@ -195,16 +195,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             arrayOf(hash)
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
 
-    /** 删除单条；返回是否真正删除 */
+    /**
+     * 删除单条；返回是否真正删除。
+     * 用可写库：getReadableDatabase 在磁盘满等异常场景会退回只读句柄，删除会静默失败。
+     */
     fun delete(id: Long): Boolean =
-        readableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
+        writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
 
     /**
      * 删除全部历史：收藏与隐私是受保护条目，清空只删除普通记录。
      * @return 删除的条数
      */
     fun deleteAll(): Int =
-        readableDatabase.delete(
+        writableDatabase.delete(
             TABLE_ITEMS,
             "is_favorite = 0 AND is_private = 0",
             null,
@@ -213,6 +216,15 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 更新收藏状态 */
     fun setFavorite(id: Long, favorite: Boolean): Boolean {
         val values = ContentValues().apply { put("is_favorite", if (favorite) 1 else 0) }
+        return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
+    }
+
+    /**
+     * 更新隐私标记。**隐私只能由用户主动标记**，数据层不提供任何自动判定入口。
+     * 标记后该条：在列表中默认隐藏明文、被 [deleteAll] 豁免、可被「隐私」分类筛出。
+     */
+    fun setPrivate(id: Long, privateFlag: Boolean): Boolean {
+        val values = ContentValues().apply { put("is_private", if (privateFlag) 1 else 0) }
         return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
     }
 
@@ -312,11 +324,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     private val selectCols = "id, encrypted_content, content_type, created_at, source_package, " +
         "source_app_name, content_hash, category, is_favorite, is_private"
 
-    /** 组装过滤条件（分类 / 仅收藏），返回 WHERE 片段与参数 */
-    private fun whereClause(category: String?, favoritesOnly: Boolean): Pair<String, Array<String>> {
+    /**
+     * 组装过滤条件（分类 / 仅收藏 / 仅隐私），返回 WHERE 片段与参数。
+     *
+     * 收藏与隐私是**独立标签**，可与分类并存：
+     *  - [favoritesOnly] / [privateOnly] 为 true 时按对应标记列过滤；
+     *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE、PRIVATE 是
+     *    上层的伪分类，调用方需自行转成对应标记后传 null，见 ClipboardHistoryActivity）。
+     */
+    private fun whereClause(
+        category: String?,
+        favoritesOnly: Boolean = false,
+        privateOnly: Boolean = false,
+    ): Pair<String, Array<String>> {
         val where = StringBuilder("1 = 1")
         val args = ArrayList<String>(1)
         if (favoritesOnly) where.append(" AND is_favorite = 1")
+        if (privateOnly) where.append(" AND is_private = 1")
         if (category != null) {
             where.append(" AND category = ?")
             args.add(category)
@@ -328,9 +352,15 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 分页读取记录（新→旧），只解密本页 [limit] 条。
      * 大容量历史（数千条）的列表加载路径：解密只覆盖可见窗口。
      */
-    fun recentPage(offset: Int, limit: Int, category: String? = null, favoritesOnly: Boolean = false): List<Item> {
+    fun recentPage(
+        offset: Int,
+        limit: Int,
+        category: String? = null,
+        favoritesOnly: Boolean = false,
+        privateOnly: Boolean = false,
+    ): List<Item> {
         if (limit <= 0 || offset < 0) return emptyList()
-        val (where, args) = whereClause(category, favoritesOnly)
+        val (where, args) = whereClause(category, favoritesOnly, privateOnly)
         val c = readableDatabase.rawQuery(
             "SELECT $selectCols FROM $TABLE_ITEMS WHERE $where " +
                 "ORDER BY created_at DESC LIMIT $limit OFFSET $offset",
@@ -343,9 +373,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏过滤） */
-    fun count(category: String? = null, favoritesOnly: Boolean = false): Int {
-        val (where, args) = whereClause(category, favoritesOnly)
+    /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏/隐私过滤） */
+    fun count(
+        category: String? = null,
+        favoritesOnly: Boolean = false,
+        privateOnly: Boolean = false,
+    ): Int {
+        val (where, args) = whereClause(category, favoritesOnly, privateOnly)
         return readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE $where",
             args
@@ -415,6 +449,43 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 if (p) priv = true
             }
             return fav to priv
+        }
+    }
+}
+
+/**
+ * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
+ *
+ * 分类栏有 5 个 Tab：全部 / 网址 / 数字 / 收藏 / 隐私。其中网址、数字是真正的
+ * `category` 列取值，而**收藏和隐私是独立的标签列**（is_favorite / is_private），
+ * 绝不能当 category 传给 SQL——否则 `WHERE category = 'FAVORITE'` 恒不成立，
+ * 列表会永远是空的。这个翻译必须显式做，是本项目最容易踩的坑之一。
+ *
+ * 该翻译原先在 5 处（Activity 的首页 / 下一页 / 搜索，Panel 的刷新 / 下一页）
+ * 各写一遍，收敛到这里：① 消除重复 ② 纯函数、不依赖 Android，可 JVM 单测。
+ */
+data class ClipboardFilter(
+    /** 传给 SQL 的 category 值；收藏/隐私这类伪分类此处为 null */
+    val category: String?,
+    val favoritesOnly: Boolean,
+    val privateOnly: Boolean,
+) {
+    companion object {
+
+        /** 伪分类：收藏（独立标签列，非 category 取值） */
+        const val PSEUDO_FAVORITE = "FAVORITE"
+
+        /** 伪分类：隐私（独立标签列，非 category 取值） */
+        const val PSEUDO_PRIVATE = "PRIVATE"
+
+        /**
+         * 由分类栏选中的值解析筛选条件。
+         * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/PRIVATE=伪分类
+         */
+        fun of(raw: String?): ClipboardFilter = when (raw) {
+            PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true, privateOnly = false)
+            PSEUDO_PRIVATE -> ClipboardFilter(null, favoritesOnly = false, privateOnly = true)
+            else -> ClipboardFilter(raw, favoritesOnly = false, privateOnly = false)
         }
     }
 }
