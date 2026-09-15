@@ -210,6 +210,69 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'n' to "[", 'm' to "]",
             ),
         )),
+        // 编程：键面可为整个单词（关键字），键面一律居中、长文本自动收缩字号
+        SymbolGroup("编程", listOf(
+            // 第 1 页：编程常用英文符号
+            mapOf(
+                'q' to "(", 'w' to ")", 'e' to "{", 'r' to "}", 't' to "[", 'y' to "]",
+                'u' to "<", 'i' to ">", 'o' to "=", 'p' to "!",
+                'a' to ";", 's' to ":", 'd' to "'", 'f' to "\"", 'g' to "`", 'h' to "~",
+                'j' to "&", 'k' to "|", 'l' to "\\",
+                'z' to "+", 'x' to "-", 'c' to "*", 'v' to "/", 'b' to "%", 'n' to "^", 'm' to "_",
+            ),
+            // 第 2 页：各语言最常用的控制流与声明关键字
+            mapOf(
+                'q' to "return", 'w' to "print", 'e' to "main", 'r' to "if", 't' to "else",
+                'y' to "for", 'u' to "while", 'i' to "class", 'o' to "def", 'p' to "func",
+                'a' to "import", 's' to "from", 'd' to "const", 'f' to "let", 'g' to "var",
+                'h' to "new", 'j' to "public", 'k' to "private", 'l' to "void",
+                'z' to "true", 'x' to "false", 'c' to "null", 'v' to "None",
+                'b' to "this", 'n' to "static", 'm' to "async",
+            ),
+            // 第 3 页：类型、异常与常见调用写法
+            mapOf(
+                'q' to "int", 'w' to "float", 'e' to "double", 'r' to "string", 't' to "bool",
+                'y' to "char", 'u' to "long", 'i' to "struct", 'o' to "enum", 'p' to "interface",
+                'a' to "try", 's' to "catch", 'd' to "finally", 'f' to "throw", 'g' to "break",
+                'h' to "continue", 'j' to "switch", 'k' to "case", 'l' to "default",
+                'z' to "print()", 'x' to "main()", 'c' to "println", 'v' to "printf",
+                'b' to "scanf", 'n' to "lambda", 'm' to "yield",
+            ),
+            // 第 4 页：Python 常用
+            mapOf(
+                'q' to "self", 'w' to "None", 'e' to "elif", 'r' to "lambda", 't' to "yield",
+                'y' to "global", 'u' to "assert", 'i' to "raise", 'o' to "with", 'p' to "as",
+                'a' to "pass", 's' to "del", 'd' to "not", 'f' to "and", 'g' to "or",
+                'h' to "is", 'j' to "True", 'k' to "False", 'l' to "__init__",
+                'z' to "__name__", 'x' to "print(", 'c' to "input(", 'v' to "range(",
+                'b' to "len(", 'n' to "str(", 'm' to "dict(",
+            ),
+            // 第 5 页：Java / C# 常用
+            mapOf(
+                'q' to "System", 'w' to "String", 'e' to "Integer", 'r' to "Boolean", 't' to "List",
+                'y' to "Map", 'u' to "HashMap", 'i' to "ArrayList", 'o' to "package", 'p' to "extends",
+                'a' to "implements", 's' to "abstract", 'd' to "final", 'f' to "override", 'g' to "namespace",
+                'h' to "using", 'j' to "foreach", 'k' to "params", 'l' to "synchronized",
+                'z' to "new ", 'x' to "get;", 'c' to "set;", 'v' to "await", 'b' to "Task", 'n' to "var ", 'm' to "public static",
+            ),
+            // 第 6 页：JavaScript / TypeScript 常用
+            mapOf(
+                'q' to "function", 'w' to "=>", 'e' to "console.log", 'r' to "document", 't' to "window",
+                'y' to "export", 'u' to "default", 'i' to "interface", 'o' to "type", 'p' to "enum",
+                'a' to "undefined", 's' to "NaN", 'd' to "typeof", 'f' to "instanceof", 'g' to "Promise",
+                'h' to "async", 'j' to "await", 'k' to "require", 'l' to "module",
+                'z' to "forEach", 'x' to "map(", 'c' to "filter(", 'v' to "reduce(",
+                'b' to "JSON.", 'n' to "Object.", 'm' to "Array.",
+            ),
+            // 第 7 页：C / C++ 常用
+            mapOf(
+                'q' to "#include", 'w' to "#define", 'e' to "stdio.h", 'r' to "stdlib.h", 't' to "iostream",
+                'y' to "cout", 'u' to "cin", 'i' to "endl", 'o' to "std::", 'p' to "vector",
+                'a' to "template", 's' to "typename", 'd' to "nullptr", 'f' to "sizeof", 'g' to "malloc",
+                'h' to "free(", 'j' to "printf(", 'k' to "scanf(", 'l' to "struct ",
+                'z' to "->", 'x' to "::", 'c' to "int main", 'v' to "return 0", 'b' to "unsigned", 'n' to "const ", 'm' to "static ",
+            ),
+        )),
         // 标点
         SymbolGroup("标点", listOf(
             mapOf(
@@ -480,35 +543,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'q' to "ㄩ", 'w' to "ㄚ", 'e' to "ㄛ", 'r' to "ㄜ", 't' to "ㄝ",
                 'y' to "ㄞ", 'u' to "ㄟ", 'i' to "ㄠ", 'o' to "ㄡ", 'p' to "ㄢ",
                 'a' to "ㄣ", 's' to "ㄤ", 'd' to "ㄥ", 'f' to "ㄦ", 'g' to "ㄭ",
-            ),
-        )),
-        // 编程：键面可为整个单词（关键字），长文本会自动收缩字号并居中
-        SymbolGroup("编程", listOf(
-            // 第 1 页：编程常用英文符号
-            mapOf(
-                'q' to "(", 'w' to ")", 'e' to "{", 'r' to "}", 't' to "[", 'y' to "]",
-                'u' to "<", 'i' to ">", 'o' to "=", 'p' to "!",
-                'a' to ";", 's' to ":", 'd' to "'", 'f' to "\"", 'g' to "`", 'h' to "~",
-                'j' to "&", 'k' to "|", 'l' to "\\",
-                'z' to "+", 'x' to "-", 'c' to "*", 'v' to "/", 'b' to "%", 'n' to "^", 'm' to "_",
-            ),
-            // 第 2 页：各语言最常用的控制流与声明关键字
-            mapOf(
-                'q' to "return", 'w' to "print", 'e' to "main", 'r' to "if", 't' to "else",
-                'y' to "for", 'u' to "while", 'i' to "class", 'o' to "def", 'p' to "func",
-                'a' to "import", 's' to "from", 'd' to "const", 'f' to "let", 'g' to "var",
-                'h' to "new", 'j' to "public", 'k' to "private", 'l' to "void",
-                'z' to "true", 'x' to "false", 'c' to "null", 'v' to "None",
-                'b' to "this", 'n' to "static", 'm' to "async",
-            ),
-            // 第 3 页：类型、异常与常见调用写法
-            mapOf(
-                'q' to "int", 'w' to "float", 'e' to "double", 'r' to "string", 't' to "bool",
-                'y' to "char", 'u' to "long", 'i' to "struct", 'o' to "enum", 'p' to "interface",
-                'a' to "try", 's' to "catch", 'd' to "finally", 'f' to "throw", 'g' to "break",
-                'h' to "continue", 'j' to "switch", 'k' to "case", 'l' to "default",
-                'z' to "print()", 'x' to "main()", 'c' to "println", 'v' to "printf",
-                'b' to "scanf", 'n' to "lambda", 'm' to "yield",
             ),
         )),
     )
@@ -1325,6 +1359,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
+            // 符号层一律水平 + 垂直居中（不用字母层的小字顶置样式）
+            key.centeredStyle = layer == LAYER_SYMBOL
             key.label = when (layer) {
                 LAYER_SYMBOL -> currentSymbolMap()[c] ?: "" // 未映射的键显示空文本
                 LAYER_DIGIT -> digitMap[c] ?: c.toString()
@@ -1339,7 +1375,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         btnLang.text = context.getString(if (englishMode) R.string.key_en else R.string.key_cn)
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
-            context.getString(R.string.key_abc)
+            // 已进入符号层，此键的作用是回到字母页 —— 用「返回」比「ABC」更直白
+            context.getString(R.string.key_back)
         } else {
             context.getString(R.string.key_symbol)
         }
