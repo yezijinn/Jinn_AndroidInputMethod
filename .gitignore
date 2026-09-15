@@ -65,3 +65,6 @@ __pycache__/
 
 # 交接/临时文档（本地保留）
 HANDOFF.md
+
+# 接手指南（一次性入手文档，已归档 docs/）
+ONBOARDING.md
