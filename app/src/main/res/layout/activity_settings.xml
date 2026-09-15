@@ -185,16 +185,6 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="6dp"
-                android:text="@string/ext_dict_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
             <EditText
                 android:id="@+id/edit_ext_dict_url"
                 android:layout_width="match_parent"
