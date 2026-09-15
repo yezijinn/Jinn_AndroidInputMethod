@@ -99,20 +99,20 @@ object ClipboardFirewall {
     }.getOrNull()
 
     private fun checkDirPerm(dataDir: String): Pair<String, String> {
-        val out = su("ls -ld $dataDir") ?: return "数据目录权限" to "无法访问（su 失败）"
+        val out = su("ls -ld '$dataDir'") ?: return "数据目录权限" to "无法访问（su 失败）"
         val ok = out.startsWith("drwx------")
         return "数据目录权限" to if (ok) "✓ $out" else "✗ 期望 drwx------，实际: $out"
     }
 
     private fun checkDbPerm(dbPath: String): Pair<String, String> {
         if (!File(dbPath).exists()) return "数据库权限" to "✓ 数据库不存在（无历史记录，安全）"
-        val out = su("ls -l $dbPath") ?: return "数据库权限" to "无法访问（su 失败）"
+        val out = su("ls -l '$dbPath'") ?: return "数据库权限" to "无法访问（su 失败）"
         val ok = out.startsWith("-rw-------")
         return "数据库权限" to if (ok) "✓ $out" else "✗ 期望 -rw-------，实际: $out"
     }
 
     private fun checkOwner(dataDir: String): Pair<String, String> {
-        val out = su("stat -c '%U' $dataDir") ?: return "数据目录 Owner" to "无法访问（su 失败）"
+        val out = su("stat -c '%U' '$dataDir'") ?: return "数据目录 Owner" to "无法访问（su 失败）"
         val ok = out.startsWith("u0_a") || out.startsWith("app_")
         return "数据目录 Owner" to if (ok) "✓ $out" else "✗ 非 App 用户: $out"
     }
@@ -124,7 +124,7 @@ object ClipboardFirewall {
     }
 
     private fun checkSymlink(dataDir: String): Pair<String, String> {
-        val out = su("find $dataDir -type l 2>/dev/null") ?: return "符号链接" to "无法检查（su 失败）"
+        val out = su("find '$dataDir' -type l 2>/dev/null") ?: return "符号链接" to "无法检查（su 失败）"
         return if (out.isBlank()) "符号链接" to "✓ 无危险符号链接"
         else "符号链接" to "✗ 发现符号链接:\n$out"
     }
