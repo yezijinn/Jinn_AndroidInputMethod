@@ -1329,7 +1329,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         viewCandidateList.removeAllViews()
+        // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、
+        // 93 个音节超过 60 字），而这里是「每条一个 TextView」且每次按键全量重建，
+        // 一次按键创建 60 个 View 在低端机上会明显掉帧。用户实际只点最前面几个
+        // （单字候选按常用度排序），因此截断渲染量。
+        // 注意：这只影响渲染，[lastCandidates] 仍保存完整候选，空格/回车取首候选不受影响。
         for ((index, candidate) in result.candidates.withIndex()) {
+            if (index >= MAX_RENDERED_CANDIDATES) break
             val item = TextView(context).apply {
                 text = candidate
                 textSize = 21f
@@ -2001,6 +2007,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /**
+         * 候选栏最多渲染多少个候选条目。
+         *
+         * 候选数由引擎的 MAX_CHARS(60) 决定上限，而真实单字表里 `yi` 有 326 字、
+         * 93 个音节超过 60 字 —— 即常用音节经常给出满额候选。渲染是「每条一个
+         * TextView」且每次按键全量重建，60 个 View 的创建在低端机上会明显掉帧。
+         * 用户实际只点最前面几个（单字候选已按常用度排序），故截断渲染量。
+         * 仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
+         */
+        const val MAX_RENDERED_CANDIDATES = 24
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f
