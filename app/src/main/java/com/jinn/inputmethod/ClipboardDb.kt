@@ -389,6 +389,24 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
 
+    /**
+     * 按 id 读取单条记录的**正文**（解密后明文）。
+     *
+     * 供 IME 处理「点击记录粘贴」广播时使用：广播**不携带正文**——
+     * Binder 事务上限约 1MB，长文本（长文章/日志/大段代码）会让
+     * `sendBroadcast` 抛 `TransactionTooLargeException` 直接崩溃。
+     * 改由这里按 id 取回。
+     *
+     * 注意：本方法含读库 + AES 解密，**必须在 [BackgroundIo] 线程调用**。
+     */
+    fun contentById(id: Long): String? {
+        if (id <= 0) return null
+        return readableDatabase.rawQuery(
+            "SELECT $selectCols FROM $TABLE_ITEMS WHERE id = ? LIMIT 1",
+            arrayOf(id.toString())
+        ).use { c -> if (c.moveToNext()) readItem(c)?.content else null }
+    }
+
     // ── 内部 ──────────────────────────────────────────────
 
     private fun readItem(c: android.database.Cursor): Item? {
