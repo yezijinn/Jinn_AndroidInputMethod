@@ -187,11 +187,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         searchRow.addView(editSearch, LinearLayout.LayoutParams(0, dp(46), 1f))
         // 退出搜索：矩形、与搜索框同高同色、水平居中对齐，视觉浑然一体
         val btnExit = TextView(context).apply {
-            text = "退出搜索"
+            // 严格两行排版：退出 / 搜索（按钮窄，单行会挤压或省略）
+            text = "退出\n搜索"
             gravity = android.view.Gravity.CENTER
             setIncludeFontPadding(false)
+            setLineSpacing(0f, 0.95f)
             setTextColor(Color.parseColor("#ECEEF2"))
-            textSize = 13f
+            textSize = 12f
             setBackgroundColor(Color.parseColor("#1C1F26"))
             isClickable = true
             setOnClickListener { listener?.onClose() }
