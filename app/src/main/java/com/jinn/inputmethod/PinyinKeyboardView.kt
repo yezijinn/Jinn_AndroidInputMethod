@@ -370,9 +370,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'q' to "⑪", 'w' to "⑫", 'e' to "⑬", 'r' to "⑭", 't' to "⑮",
                 'y' to "⑯", 'u' to "⑰", 'i' to "⑱", 'o' to "⑲", 'p' to "⑳",
                 'a' to "㈠", 's' to "㈡", 'd' to "㈢", 'f' to "㈣", 'g' to "㈤",
-                'h' to "⒈", 'j' to "⒉", 'k' to "3", 'l' to "⒋",
+                'h' to "⒈", 'j' to "⒉", 'k' to "⒊", 'l' to "⒋",
                 'z' to "Ⅷ", 'x' to "Ⅸ", 'c' to "Ⅹ", 'v' to "Ⅺ", 'b' to "Ⅻ",
-                'n' to "Ⅷ", 'm' to "Ⅻ",
+                'n' to "ⅰ", 'm' to "ⅱ",
             ),
             // 圈中文 + 字母序号
             mapOf(
@@ -390,6 +390,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'h' to "⒖", 'j' to "⒗", 'k' to "⒘", 'l' to "⒙",
                 'z' to "⒚", 'x' to "⒛", 'c' to "Ⓠ", 'v' to "Ⓡ", 'b' to "Ⓢ",
                 'n' to "Ⓣ", 'm' to "Ⓤ",
+            ),
+            // 第 5 页：圈字母收尾 + 带括号数字
+            mapOf(
+                'q' to "Ⓥ", 'w' to "Ⓦ", 'e' to "Ⓧ", 'r' to "Ⓨ", 't' to "Ⓩ",
+                'y' to "⑴", 'u' to "⑵", 'i' to "⑶", 'o' to "⑷", 'p' to "⑸",
+                'a' to "⑹", 's' to "⑺", 'd' to "⑻", 'f' to "⑼", 'g' to "⑽",
+                'h' to "⑾", 'j' to "⑿", 'k' to "⒀", 'l' to "⒁",
+                'z' to "⒂", 'x' to "⒃", 'c' to "⒄", 'v' to "⒅", 'b' to "⒆",
+                'n' to "⒇", 'm' to "0.",
+            ),
+            // 第 6 页：带括号小写字母 + 大数圈号 + 汉字数字
+            mapOf(
+                'q' to "⒜", 'w' to "⒝", 'e' to "⒞", 'r' to "⒟", 't' to "⒠",
+                'y' to "⒡", 'u' to "⒢", 'i' to "⒣", 'o' to "⒤", 'p' to "⒥",
+                'a' to "⒦", 's' to "⒧", 'd' to "⒨", 'f' to "⒩", 'g' to "⒪",
+                'h' to "⒫", 'j' to "⒬", 'k' to "⒭", 'l' to "⒮",
+                'z' to "⒯", 'x' to "⒰", 'c' to "⒱", 'v' to "⒲", 'b' to "⒳",
+                'n' to "⒴", 'm' to "⒵",
+            ),
+            // 第 7 页：更大的圈号与中文数字
+            mapOf(
+                'q' to "㉑", 'w' to "㉒", 'e' to "㉓", 'r' to "㉔", 't' to "㉕",
+                'y' to "㉖", 'u' to "㉗", 'i' to "㉘", 'o' to "㉙", 'p' to "㉚",
+                'a' to "㉛", 's' to "㉜", 'd' to "㉝", 'f' to "㉞", 'g' to "㉟",
+                'h' to "〇", 'j' to "壹", 'k' to "贰", 'l' to "叁",
+                'z' to "肆", 'x' to "伍", 'c' to "陆", 'v' to "柒", 'b' to "捌",
+                'n' to "玖", 'm' to "拾",
             ),
         )),
         // 数学
@@ -486,6 +513,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
             mapOf(
                 'q' to "ゅ", 'w' to "ょ", 'e' to "っ", 'r' to "ゎ", 't' to "ゐ",
                 'y' to "ゑ", 'u' to "ゝ", 'i' to "ゞ", 'o' to "ゕ", 'p' to "ゖ",
+                'a' to "きゃ", 's' to "きゅ", 'd' to "きょ", 'f' to "しゃ", 'g' to "しゅ",
+                'h' to "しょ", 'j' to "ちゃ", 'k' to "ちゅ", 'l' to "ちょ",
+                'z' to "にゃ", 'x' to "にゅ", 'c' to "にょ", 'v' to "ひゃ", 'b' to "ひゅ",
+                'n' to "ひょ", 'm' to "みゃ",
+            ),
+            // 拗音（续）+ 长音符与浊点（补齐末页空位）
+            mapOf(
+                'q' to "みゅ", 'w' to "みょ", 'e' to "りゃ", 'r' to "りゅ", 't' to "りょ",
+                'y' to "ぎゃ", 'u' to "ぎゅ", 'i' to "ぎょ", 'o' to "じゃ", 'p' to "じゅ",
+                'a' to "じょ", 's' to "びゃ", 'd' to "びゅ", 'f' to "びょ", 'g' to "ぴゃ",
+                'h' to "ぴゅ", 'j' to "ぴょ", 'k' to "ー", 'l' to "゛",
+                'z' to "゜", 'x' to "・", 'c' to "〜", 'v' to "ゔ", 'b' to "゠",
+                'n' to "ゟ", 'm' to "ゝゞ",
             ),
             // ── 片假名 ──
             mapOf(
@@ -515,6 +555,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
             mapOf(
                 'q' to "ュ", 'w' to "ョ", 'e' to "ッ", 'r' to "ヮ", 't' to "ヰ",
                 'y' to "ヱ", 'u' to "ヽ", 'i' to "ヾ", 'o' to "ヵ", 'p' to "ヶ",
+                'a' to "キャ", 's' to "キュ", 'd' to "キョ", 'f' to "シャ", 'g' to "シュ",
+                'h' to "ショ", 'j' to "チャ", 'k' to "チュ", 'l' to "チョ",
+                'z' to "ニャ", 'x' to "ニュ", 'c' to "ニョ", 'v' to "ヒャ", 'b' to "ヒュ",
+                'n' to "ヒョ", 'm' to "ミャ",
+            ),
+            // 拗音（续）+ 长音符与浊点（补齐末页空位）
+            mapOf(
+                'q' to "ミュ", 'w' to "ミョ", 'e' to "リャ", 'r' to "リュ", 't' to "リョ",
+                'y' to "ギャ", 'u' to "ギュ", 'i' to "ギョ", 'o' to "ジャ", 'p' to "ジュ",
+                'a' to "ジョ", 's' to "ビャ", 'd' to "ビュ", 'f' to "ビョ", 'g' to "ピャ",
+                'h' to "ピュ", 'j' to "ピョ", 'k' to "ー", 'l' to "゛",
+                'z' to "゜", 'x' to "・", 'c' to "〜", 'v' to "ヷ", 'b' to "ヸ",
+                'n' to "ヹ", 'm' to "ヺ",
             ),
         )),
         // 拉丁
@@ -1399,7 +1452,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
         }
-        btnLang.text = context.getString(if (englishMode) R.string.key_en else R.string.key_cn)
+        // 中英切换键：上下两行「中文 / 英文」，把当前语言那一行染成主题紫并加粗。
+        // 必须用 SpannableString 做部分着色——拆成两个 TextView 会各自居中，看起来像两个按钮。
+        btnLang.textSize = 12f
+        btnLang.maxLines = 2
+        btnLang.setLineSpacing(0f, 0.9f)
+        btnLang.text = buildLangLabel()
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
             // 已进入符号层，此键的作用是回到字母页 —— 用「返回」比「ABC」更直白
             context.getString(R.string.key_back)
@@ -1416,6 +1474,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift.alpha = 1f
         // 空格键顶部小字：同步当前输入类型
         updateSpaceHint()
+    }
+
+    /**
+     * 中英切换键的富文本标签。
+     *
+     * 上下两行「中文 / 英文」，把**当前生效的那一行**染成主题紫并加粗，另一行保持普通样式
+     * ——一眼就能看出当前处于哪种输入状态。
+     */
+    private fun buildLangLabel(): CharSequence {
+        val cn = "中文"
+        val en = "英文"
+        val full = "$cn\n$en"
+        val active = if (englishMode) en else cn
+        val start = full.indexOf(active)
+        if (start < 0) return full
+        return android.text.SpannableString(full).apply {
+            val end = start + active.length
+            setSpan(
+                android.text.style.ForegroundColorSpan(
+                    resources.getColor(R.color.aurora_purple, context.theme)),
+                start, end, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                start, end, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
     }
 
     /** 当前输入类型文案：大写锁定激活时强制「大写英文」，任何方案切换均无效 */
