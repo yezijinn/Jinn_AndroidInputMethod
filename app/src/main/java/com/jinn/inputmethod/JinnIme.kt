@@ -25,6 +25,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import android.widget.Toast
 import android.widget.TextView
 
 /**
@@ -492,7 +493,13 @@ class JinnIme : InputMethodService() {
         statusDot = voice.findViewById(R.id.status_dot)
         statusLabel = voice.findViewById(R.id.status_label)
         hintLabel = voice.findViewById(R.id.hint_label)
-        micButton?.setOnTouchListener { _, event -> onMicTouch(event) }
+        micButton?.setOnTouchListener { view, event ->
+            val consumed = onMicTouch(event)
+            // 无障碍：抬手时补 performClick。麦克风按钮没有 OnClickListener，
+            // performClick 只向无障碍服务补发一次点击事件，不影响手势判定与录音逻辑。
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            consumed
+        }
         voice.findViewById<View>(R.id.status_bar).setOnClickListener { openSettings() }
         voice.findViewById<View>(R.id.key_comma).setOnClickListener { commit("，") }
         voice.findViewById<View>(R.id.key_period).setOnClickListener { commit("。") }
@@ -634,7 +641,26 @@ class JinnIme : InputMethodService() {
         applyKeyboardMode()
     }
 
+    /**
+     * 切到语音键盘。
+     *
+     * 进入语音前**先判断识别服务是否在线**，离线就直接拒绝并提示：
+     * 否则用户长按空格进了语音面板才发现连不上，白等一次 WebSocket 握手，
+     * 还会连带触发录音权限检查、录音器初始化等一整套语音链路负担。
+     * 语音是自用功能，宁可在这里提前拦掉，也不让用户进到一个用不了的面板。
+     */
     private fun switchToVoiceKeyboard() {
+        if (asr.state != LinkState.ONLINE) {
+            Diagnostics.i(TAG, "语音服务未连通(${asr.state})，拒绝进入语音功能")
+            runCatching {
+                Toast.makeText(
+                    this,
+                    getString(R.string.voice_offline_blocked, prefs.host, prefs.port),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }.onFailure { Diagnostics.w(TAG, "提示语音离线失败: ${it.message}") }
+            return
+        }
         // 从拼音切走时若有未上屏内容，先提交首候选
         pinyinKeyboard?.commitComposing()
         keyboardMode = KeyboardMode.VOICE
@@ -1088,6 +1114,8 @@ class JinnIme : InputMethodService() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     view.isPressed = false
                     ui.removeCallbacks(backspaceRunnable)
+                    // 无障碍：抬手时补 performClick（CANCEL 不算点击，不补）
+                    if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
                     true
                 }
 

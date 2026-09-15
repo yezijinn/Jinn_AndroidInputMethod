@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 
 /**
  * 拼音键盘视图：候选栏 + 26 键 + 底部功能行。
@@ -723,7 +724,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 key.label = c.toString()
                 keyViews[c] = key
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
-                key.setOnTouchListener { _, event -> handleKeyTouch(c, event) }
+                key.setOnTouchListener { view, event ->
+                    val consumed = handleKeyTouch(c, event)
+                    // 无障碍：仅在确认是「点击」而非滑动时补 performClick，
+                    // 否则滑动翻页结束时也会发出点击事件，反而误导 TalkBack。
+                    if (event.actionMasked == MotionEvent.ACTION_UP &&
+                        abs(event.x - keyTouchStartX) < touchSlop
+                    ) {
+                        view.performClick()
+                    }
+                    consumed
+                }
             }
         }
     }
@@ -731,6 +742,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 字母键手势状态 */
     private var keyTouchStartX = 0f
     private var keyTouchConsumed = false
+
+    /** 系统触摸斜率阈值：位移小于它才算「点击」而非滑动（用于无障碍 performClick 判定） */
+    private val touchSlop: Float =
+        android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     private fun dpFloat(v: Float): Float = v * resources.displayMetrics.density
 
@@ -893,8 +908,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             listener?.onVoiceRequested()
             true
         }
-        btnBackspace.setOnTouchListener { _, event ->
-            handleBackspaceTouch(event)
+        btnBackspace.setOnTouchListener { view, event ->
+            val consumed = handleBackspaceTouch(event)
+            // 无障碍：抬手时补 performClick——退格键只有「点击 / 长按连删」，
+            // 没有滑动手势，所以 ACTION_UP 必定对应一次真实操作结束。
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            consumed
         }
         btnEnter.setOnClickListener { listener?.onEnter() }
         // 逗号/句号：英文模式上 ASCII，中文模式上全角
