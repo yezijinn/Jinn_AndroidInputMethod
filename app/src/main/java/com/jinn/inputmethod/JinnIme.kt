@@ -168,12 +168,6 @@ class JinnIme : InputMethodService() {
             clipboardController = ClipboardController(this).also { it.start() }
         }
 
-        // 后台保活：用户开启后，输入法常驻期间保持前台服务，连接更稳
-        if (prefs.keepAlive) {
-            Diagnostics.i(TAG, "onCreate: keepAlive 已开启，启动前台保活服务")
-            KeepAliveService.start(this)
-        }
-
         // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
         registerNetwork()
 

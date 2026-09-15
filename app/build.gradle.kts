@@ -113,8 +113,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.0")
     // 唯一的第三方依赖：WebSocket 客户端
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // 可选：通过 Shizuku 免 root 获取 adb 级权限，用于防杀后台加白名单
-    implementation("dev.rikka.shizuku:api:13.1.5")
     // 词库解压：词库以 xz 存放（28.0MB → 8.0MB，比 deflate 再省 22%，APK 体积随之下降约 20%），
     // 加载时流式解压、无需落地磁盘，实测解压约 0.6s 且发生在后台加载线程。
     implementation("org.tukaani:xz:1.9")
