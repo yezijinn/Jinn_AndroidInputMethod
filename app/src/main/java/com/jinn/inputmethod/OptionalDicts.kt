@@ -1,0 +1,74 @@
+package com.jinn.inputmethod
+
+/**
+ * 可选词库清单 —— 「分类词库」页展示与下载的依据。
+ *
+ * 新增一类词库只需两步：
+ *  1. 在此加一条记录（fileName 必须与 Release 附件名一致）
+ *  2. 把文件传到 GitHub / Gitee 的 Release
+ *
+ * 下装后落在 `filesDir/dicts/<fileName>`，引擎启动时自动扫描加载
+ * （见 [PinyinEngine.OPT_DICT_DIR]）。加载是**延迟**的：基础词库就绪后
+ * 才在后台补齐，不影响日常打字。
+ */
+data class OptionalDict(
+    /** 落地文件名；必须与 Release 附件名、以及 urls 里的文件名一致 */
+    val fileName: String,
+    /** 页面显示名 */
+    val name: String,
+    /** 一句话说明覆盖范围 */
+    val desc: String,
+    /** 压缩后体积（MB），用于页面标注供用户权衡 */
+    val sizeMb: Double,
+    /**
+     * 预计增加的「开机后首次使用输入法」候选就绪时间（秒）。
+     *
+     * 注意口径：**只影响 IME 服务重建后的首次输入**，日常弹键盘不加载词库。
+     * 页面文案据此生成，不要写成「启动耗时」以免吓到用户。
+     */
+    val startupSec: Int,
+    /** 下载源，按顺序尝试（Gitee 国内快，GitHub 备用） */
+    val urls: List<String>,
+)
+
+object OptionalDicts {
+
+    private const val GITEE =
+        "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download"
+    private const val GITHUB =
+        "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download"
+
+    /** 长词包的 Release tag（基础包已含四字成语，此包补五字及以上长词） */
+    private const val TAG_EXT = "dict-ext-20260915-v2"
+
+    /** 腾讯大词库的 Release tag */
+    private const val TAG_TENCENT = "dict-opt-tencent-v1"
+
+    val ALL: List<OptionalDict> = listOf(
+        OptionalDict(
+            fileName = "ext.xz",
+            name = "长词包",
+            desc = "五字及以上的长词与专有名词：人名、地名、作品名、机构名等",
+            sizeMb = 1.81,
+            startupSec = 7,
+            urls = listOf(
+                "$GITEE/$TAG_EXT/dict_ext.txt.xz",
+                "$GITHUB/$TAG_EXT/dict_ext.txt.xz",
+            ),
+        ),
+        OptionalDict(
+            fileName = "opt_tencent.xz",
+            name = "腾讯大词库",
+            desc = "约 97 万词条，覆盖大量专业术语与短语搭配；体积较大，按需安装",
+            sizeMb = 6.36,
+            startupSec = 19,
+            urls = listOf(
+                "$GITEE/$TAG_TENCENT/opt_tencent.txt.xz",
+                "$GITHUB/$TAG_TENCENT/opt_tencent.txt.xz",
+            ),
+        ),
+    )
+
+    /** 按落地文件名查清单项（用于已装列表回显名称） */
+    fun byFileName(fileName: String): OptionalDict? = ALL.firstOrNull { it.fileName == fileName }
+}

@@ -56,10 +56,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchShowRareChars: Switch
 
     // 扩展词库（长词包）：不进 APK，按需下载
-    private lateinit var textExtDictStatus: TextView
-    private lateinit var editExtDictUrl: EditText
-    private lateinit var btnExtDictDownload: Button
-    private lateinit var btnExtDictRemove: Button
+    private lateinit var btnDictManager: Button
 
     // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
@@ -122,10 +119,7 @@ class SettingsActivity : ComponentActivity() {
         textImeReceived = findViewById(R.id.text_ime_received)
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
-        textExtDictStatus = findViewById(R.id.text_ext_dict_status)
-        editExtDictUrl = findViewById(R.id.edit_ext_dict_url)
-        btnExtDictDownload = findViewById(R.id.btn_ext_dict_download)
-        btnExtDictRemove = findViewById(R.id.btn_ext_dict_remove)
+        btnDictManager = findViewById(R.id.btn_dict_manager)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
@@ -224,7 +218,7 @@ class SettingsActivity : ComponentActivity() {
         initClipboardCard()
 
         // ── 扩展词库（长词包）────────────────────────────────────
-        initExtDictCard()
+        initDictEntry()
     }
 
     // ── 扩展词库（长词包）──────────────────────────────────────
@@ -233,48 +227,14 @@ class SettingsActivity : ComponentActivity() {
     // 专有名词。基础包（≤3 字）随 APK 分发，长词包放在这里按需下载，
     // 换来安装包从 8.4MB 降到 4.2MB。
 
-    /** 扩展词库在私有目录下的路径（与 PinyinEngine.EXT_DICT_FILE 一致） */
-    private fun extDictFile(): File = File(filesDir, EXT_DICT_FILE)
-
-    private fun initExtDictCard() {
-        // 预填内置默认源：用户开箱即可点「下载并安装」，也可改成自己的地址
-        editExtDictUrl.setText(EXT_DICT_URLS.first())
-        refreshExtDictStatus()
-        btnExtDictDownload.setOnClickListener { downloadExtDict() }
-        btnExtDictRemove.setOnClickListener { removeExtDict() }
-    }
-
-    /** 把扩展词库下载到私有目录；失败抛异常由调用方处理 */
-    private fun fetchExtDict(url: String): Long {
-        val client = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
-        client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
-            val body = resp.body ?: error("响应为空")
-            // 先写临时文件再改名：避免下载中断留下半个文件被引擎当成有效词库加载
-            val tmp = File(filesDir, "$EXT_DICT_FILE.tmp")
-            body.byteStream().use { input ->
-                tmp.outputStream().use { out -> input.copyTo(out) }
-            }
-            val dst = extDictFile()
-            if (dst.exists()) dst.delete()
-            if (!tmp.renameTo(dst)) error("写入失败")
-            return dst.length()
+    /** 分类词库入口：跳转到独立页面按需下载（长词包、专业词库等） */
+    private fun initDictEntry() {
+        btnDictManager.setOnClickListener {
+            Diagnostics.i(TAG, "设置页: 打开分类词库")
+            runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
+                .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
         }
     }
-
-    private fun refreshExtDictStatus() {
-        val f = extDictFile()
-        textExtDictStatus.text = if (f.isFile) {
-            getString(R.string.ext_dict_status_installed, formatSize(f.length()))
-        } else {
-            getString(R.string.ext_dict_status_absent)
-        }
-    }
-
     private fun formatSize(bytes: Long): String = when {
         bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0)
         bytes >= 1024 -> "${bytes / 1024} KB"
@@ -290,50 +250,6 @@ class SettingsActivity : ComponentActivity() {
      * 下载成功后**自动重启输入法进程**——词库只在 IME 启动时加载，重启才能合并生效。
      * 这样用户点一次按钮就走完「下载 → 安装 → 生效」，不用再去点顶部的重启按钮。
      */
-    private fun downloadExtDict() {
-        val typed = editExtDictUrl.text?.toString()?.trim().orEmpty()
-        val candidates = (listOf(typed) + EXT_DICT_URLS).filter { it.isNotBlank() }.distinct()
-        btnExtDictDownload.isEnabled = false
-        textExtDictStatus.setText(R.string.ext_dict_downloading)
-        Thread {
-            var lastError = "未知错误"
-            for (url in candidates) {
-                val attempt = runCatching { fetchExtDict(url) }
-                if (attempt.isSuccess) {
-                    val size = attempt.getOrDefault(0L)
-                    Diagnostics.i(TAG, "扩展词库下载完成: ${size / 1024}KB (源=$url)")
-                    runOnUiThread {
-                        if (isFinishing || isDestroyed) return@runOnUiThread
-                        textExtDictStatus.setText(R.string.ext_dict_download_ok)
-                        uiHandler.postDelayed({
-                            Diagnostics.i(TAG, "扩展词库安装完成，重启输入法进程以加载")
-                            android.os.Process.killProcess(android.os.Process.myPid())
-                        }, 1500L)
-                    }
-                    return@Thread
-                }
-                lastError = attempt.exceptionOrNull()?.message ?: "未知错误"
-                Diagnostics.w(TAG, "扩展词库下载失败（$url）: $lastError，尝试下一个源")
-            }
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                btnExtDictDownload.isEnabled = true
-                Diagnostics.e(TAG, "扩展词库全部下载源均失败: $lastError")
-                textExtDictStatus.text = getString(R.string.ext_dict_download_fail, lastError)
-            }
-        }.start()
-    }
-
-    private fun removeExtDict() {
-        val f = extDictFile()
-        if (f.exists() && f.delete()) {
-            Diagnostics.i(TAG, "扩展词库已删除，重启输入法后长词不再可用")
-            toast(R.string.ext_dict_removed)
-        }
-        refreshExtDictStatus()
-    }
-
-    /** 初始化剪贴板卡片：历史数量 / 权限管理（剪贴板历史强制启用，无开关） */
     private fun initClipboardCard() {
         // 剪贴板历史强制启用：用户无需也无法关闭（核心功能，UI 不提供开关）
         if (!clipboardPrefs.enabled) {
@@ -560,24 +476,7 @@ class SettingsActivity : ComponentActivity() {
     private companion object {
         const val TAG = "SettingsActivity"
 
-        /** 扩展词库文件名（需与 PinyinEngine.EXT_DICT_FILE 保持一致） */
-        const val EXT_DICT_FILE = "dict_ext.xz"
-
-        /**
-         * 扩展词库内置下载源，按顺序尝试（用户手动填写的地址优先于它们）。
-         *
-         * 两个源都必须走 **Releases 附件**，不能用仓库 raw 路径：
-         * Gitee 对较大文件的 raw 访问会返回 404（实测 4.7MB 的文件 raw 取不到，
-         * 小文件正常），必须用 releases/download 直链。
-         *
-         * v2 起基础包含四字成语，扩展包只补五字及以上（约 2.2MB）。
-         * 两个源均已实测 302→200，Content-Length = 2297184。
-         *
-         * 词库更新后需同步替换两个 Release 的附件，并相应修改 tag 名。
-         */
-        val EXT_DICT_URLS = listOf(
-            "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download/dict-ext-20260915-v2/dict_ext.txt.xz",
-            "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download/dict-ext-20260915-v2/dict_ext.txt.xz",
-        )
+        // 可选词库的文件名、下载源与体积/耗时说明已统一收敛到 OptionalDicts，
+        // 由「分类词库」页使用；设置页只保留一个跳转入口。
     }
 }

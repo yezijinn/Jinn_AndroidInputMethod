@@ -17,6 +17,24 @@
     <!-- 可选词库的启动代价说明：只影响「IME 服务重建后首次输入」的候选就绪，日常打字无影响 -->
     <string name="dict_startup_cost">开机后首次使用输入法时，候选就绪需等待约 %1$d 秒（之后不影响）</string>
     <string name="dict_startup_cost_none">不影响日常输入速度</string>
+
+    <!-- 分类词库页 -->
+    <string name="dict_manager_title">分类词库</string>
+    <string name="dict_entry_title">分类词库</string>
+    <string name="dict_entry_desc">按需下载长词包、专业词库等，扩充输入覆盖范围</string>
+    <string name="dict_entry_open">打开分类词库</string>
+    <string name="dict_manager_hint">按需下载词库以扩充输入覆盖范围。下载后需重启输入法生效。</string>
+    <string name="dict_status_installed">已安装（%1$s）</string>
+    <string name="dict_status_absent">未安装</string>
+    <string name="dict_action_download">下载</string>
+    <string name="dict_action_reinstall">重新下载</string>
+    <string name="dict_action_remove">删除</string>
+    <string name="dict_downloading">正在下载 %1$s…</string>
+    <string name="dict_download_done">%1$s 下载完成</string>
+    <string name="dict_download_failed">下载失败：%1$s</string>
+    <string name="dict_removed">已删除 %1$s</string>
+    <string name="dict_remove_failed">删除失败</string>
+    <string name="dict_need_restart">正在重启输入法以生效…</string>
     <string name="hint_release_send">松手发送 · 上滑取消</string>
     <string name="hint_release_cancel">松手即取消</string>
     <string name="hint_tap_stop">正在录音 · 点一下结束</string>

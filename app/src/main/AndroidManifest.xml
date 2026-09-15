@@ -47,6 +47,12 @@
             android:excludeFromRecents="true"
             android:label="@string/clipboard_history_title" />
 
+        <!-- 分类词库页：从设置页进入，按需下载/删除可选词库包 -->
+        <activity
+            android:name=".DictManagerActivity"
+            android:exported="false"
+            android:label="@string/dict_manager_title" />
+
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"
