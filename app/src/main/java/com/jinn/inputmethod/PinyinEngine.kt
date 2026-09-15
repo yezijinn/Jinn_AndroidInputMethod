@@ -3,6 +3,7 @@ package com.jinn.inputmethod
 import android.content.Context
 import android.util.Log
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 拼音输入引擎：词库加载、候选查询、自然码双拼转换。
@@ -55,17 +56,24 @@ object PinyinEngine {
     @Volatile
     private var optionalLoading = false
 
-    /** 音节 → 单字（按频率降序） */
-    private var charsBySyllable = HashMap<String, Array<String>>()
+    /**
+     * 以下容器**必须是并发安全的**。
+     *
+     * 原因：可选词库由后台线程延迟加载（[loadOptionalAsync]，基础包就绪 5 秒后开始），
+     * 而此刻用户通常正在打字——主线程在 [query] 等路径上并发读取同一批容器。
+     * 用普通 HashMap 时，并发写入触发的扩容可能让桶链表成环（读方死循环、IME 卡死），
+     * 或抛 ConcurrentModificationException。
+     */
+    private val charsBySyllable = ConcurrentHashMap<String, Array<String>>(1024)
 
     /** 拼音串 → 词语（按频率降序） */
-    private var phrasesByPinyin = HashMap<String, Array<String>>()
+    private val phrasesByPinyin = ConcurrentHashMap<String, Array<String>>(600_000)
 
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
-    private var wordToPinyin = HashMap<String, String>()
+    private val wordToPinyin = ConcurrentHashMap<String, String>(700_000)
 
     /** 合法音节集合（不含声调） */
-    private val validSyllables = HashSet<String>()
+    private val validSyllables = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * 所有合法音节的「真前缀」集合（不含音节本身）。
@@ -74,7 +82,7 @@ object PinyinEngine {
      * startsWith，而该方法在每次按键的查询路径上会被调用若干次（分词、伪完整音节判定、
      * 补全召回），累计是几百次字符串比较。预建集合后降为一次哈希查找。
      */
-    private val syllablePrefixes = HashSet<String>()
+    private val syllablePrefixes = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * 常用字位图（按 Char 码点直接索引，判定 O(1)）。
@@ -93,17 +101,27 @@ object PinyinEngine {
     /** 因生僻字被过滤掉的词条数（诊断用） */
     private var filteredWordCount = 0
 
-    /** 扩展词库（长词包）是否已加载 */
+    /** 扩展词库（长词包）是否已加载。后台线程写、UI 线程经 [isExtensionLoaded] 读，需 volatile */
+    @Volatile
     private var extensionLoaded = false
 
-    /** 有序音节（字典序）：保证单字候选输出顺序稳定 */
-    private val sortedSyllables = ArrayList<String>()
+    /**
+     * 以下有序表都是**不可变快照**：finalizeLoad 时整体替换引用，而不是原地 clear+addAll。
+     *
+     * 原地改动会让并发读取方看到「已清空但还没填回」的中间态（候选突然空一片），
+     * 或抛 ConcurrentModificationException；整体替换则读取方要么拿旧表、要么拿新表，
+     * 两种都是完整可用的。
+     */
+    @Volatile
+    private var sortedSyllables: List<String> = emptyList()
 
     /** 有序合法音节全集（字典序）：前缀补全扫描用，finalizeLoad 时构建一次 */
-    private val sortedValidSyllables = ArrayList<String>()
+    @Volatile
+    private var sortedValidSyllables: List<String> = emptyList()
 
     /** 有序拼音键（字典序）：智能预测的二分查找前缀用 */
-    private val sortedPhraseKeys = ArrayList<String>()
+    @Volatile
+    private var sortedPhraseKeys: List<String> = emptyList()
 
     /** 加载词库；幂等，可在后台线程调用 */
     fun load(context: Context) {
@@ -172,13 +190,17 @@ object PinyinEngine {
             wordToPinyin.clear()
             validSyllables.clear()
             syllablePrefixes.clear()
-            sortedSyllables.clear()
-            sortedValidSyllables.clear()
-            sortedPhraseKeys.clear()
+            // 有序表是不可变快照，置空引用即可（没有 clear 方法）
+            sortedSyllables = emptyList()
+            sortedValidSyllables = emptyList()
+            sortedPhraseKeys = emptyList()
             completionCache.clear()
             commonChars = null
             filteredWordCount = 0
             loaded = false
+            // 可选词库状态一并复位，否则下一个测试类会误以为可选包已加载
+            optionalLoaded = false
+            optionalLoading = false
         }
     }
 
@@ -208,12 +230,12 @@ object PinyinEngine {
     }
 
     private fun finalizeLoad() {
-        sortedSyllables.clear()
-        sortedSyllables.addAll(charsBySyllable.keys.sorted())
-        sortedPhraseKeys.clear()
-        sortedPhraseKeys.addAll(phrasesByPinyin.keys.sorted())
-        sortedValidSyllables.clear()
-        sortedValidSyllables.addAll(validSyllables.sorted())
+        // 整体替换引用，而不是原地 clear + addAll：
+        // 本方法会在可选词库延迟加载时由后台线程**再次**调用，
+        // 而主线程可能正在遍历这些表做前缀补全。
+        sortedSyllables = charsBySyllable.keys.sorted()
+        sortedPhraseKeys = phrasesByPinyin.keys.sorted()
+        sortedValidSyllables = validSyllables.sorted()
         buildSyllablePrefixes()
     }
 
@@ -298,8 +320,12 @@ object PinyinEngine {
      * @param onReady 全部可选包加载完成后的回调（**不在主线程**，调用方自行切线程）
      */
     fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null) {
-        if (optionalLoaded || optionalLoading) return
-        optionalLoading = true
+        // 检查-置位必须在同一把锁内：两个线程同时抵达时，
+        // 无锁写法会让两边都通过检查、各自启一个加载线程，重复把词库 merge 一遍。
+        synchronized(this) {
+            if (optionalLoaded || optionalLoading) return
+            optionalLoading = true
+        }
         Thread {
             runCatching {
                 // load() 幂等：若基础包已就绪会立即返回
@@ -383,7 +409,6 @@ object PinyinEngine {
     }
 
     private fun loadCharsReader(reader: java.io.BufferedReader) {
-        if (charsBySyllable.isEmpty()) charsBySyllable = HashMap(1024)
         var line = reader.readLine()
         while (line != null) {
             if (line.isNotBlank()) {
@@ -430,11 +455,8 @@ object PinyinEngine {
      * 扩展包长词追加在后。
      */
     private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
-        // 预分配按基础包规模（约 46 万键）：一次到位，避免反复扩容。
-        // 扩展包会突破该容量并自然扩容，但那时数据已基本齐了。
-        if (phrasesByPinyin.isEmpty()) phrasesByPinyin = HashMap(600_000)
-        if (wordToPinyin.isEmpty()) wordToPinyin = HashMap(700_000)
-
+        // 容量已在声明处预分配（ConcurrentHashMap(600_000)），此处不再重建容器——
+        // 重建会让并发读取方拿到另一个实例，正在遍历的旧表被丢弃。
         var line = reader.readLine()
         while (line != null) {
             if (line.isNotBlank()) {
