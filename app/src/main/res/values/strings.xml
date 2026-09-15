@@ -156,11 +156,6 @@
     <string name="settings_clipboard">剪贴板</string>
     <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘的候选栏点击「剪贴板」可查看历史。</string>
     <string name="switch_clipboard_enabled">启用剪贴板历史</string>
-    <string name="clipboard_enabled_desc">开启后自动保存复制的文本，可在输入法面板中查看、粘贴、收藏。</string>
-    <string name="clipboard_open_history">打开剪贴板历史</string>
-    <string name="clipboard_open_in_ime">请先切换到拼音键盘，再点功能面板中的「剪贴板」按钮</string>
-    <string name="clipboard_search">搜索</string>
-    <string name="clipboard_copied">已复制到系统剪贴板</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 200）</string>
     
