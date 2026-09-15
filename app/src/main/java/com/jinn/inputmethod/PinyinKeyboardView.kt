@@ -482,6 +482,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 'a' to "ㄣ", 's' to "ㄤ", 'd' to "ㄥ", 'f' to "ㄦ", 'g' to "ㄭ",
             ),
         )),
+        // 编程：键面可为整个单词（关键字），长文本会自动收缩字号并居中
+        SymbolGroup("编程", listOf(
+            // 第 1 页：编程常用英文符号
+            mapOf(
+                'q' to "(", 'w' to ")", 'e' to "{", 'r' to "}", 't' to "[", 'y' to "]",
+                'u' to "<", 'i' to ">", 'o' to "=", 'p' to "!",
+                'a' to ";", 's' to ":", 'd' to "'", 'f' to "\"", 'g' to "`", 'h' to "~",
+                'j' to "&", 'k' to "|", 'l' to "\\",
+                'z' to "+", 'x' to "-", 'c' to "*", 'v' to "/", 'b' to "%", 'n' to "^", 'm' to "_",
+            ),
+            // 第 2 页：各语言最常用的控制流与声明关键字
+            mapOf(
+                'q' to "return", 'w' to "print", 'e' to "main", 'r' to "if", 't' to "else",
+                'y' to "for", 'u' to "while", 'i' to "class", 'o' to "def", 'p' to "func",
+                'a' to "import", 's' to "from", 'd' to "const", 'f' to "let", 'g' to "var",
+                'h' to "new", 'j' to "public", 'k' to "private", 'l' to "void",
+                'z' to "true", 'x' to "false", 'c' to "null", 'v' to "None",
+                'b' to "this", 'n' to "static", 'm' to "async",
+            ),
+            // 第 3 页：类型、异常与常见调用写法
+            mapOf(
+                'q' to "int", 'w' to "float", 'e' to "double", 'r' to "string", 't' to "bool",
+                'y' to "char", 'u' to "long", 'i' to "struct", 'o' to "enum", 'p' to "interface",
+                'a' to "try", 's' to "catch", 'd' to "finally", 'f' to "throw", 'g' to "break",
+                'h' to "continue", 'j' to "switch", 'k' to "case", 'l' to "default",
+                'z' to "print()", 'x' to "main()", 'c' to "println", 'v' to "printf",
+                'b' to "scanf", 'n' to "lambda", 'm' to "yield",
+            ),
+        )),
     )
 
     /** 当前符号分组索引（候选栏标签，仅点击切换） */
@@ -1399,7 +1428,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidateList.removeAllViews()
         viewCandidateList.addView(buildFunctionButton(
             label = if (shuangpinMode) "双拼" else "全拼",
-            hint = "换拼音",
+            hint = if (shuangpinMode) "换全拼" else "换双拼",
             onClick = { togglePinyinScheme() },
         ))
         viewCandidateList.addView(buildFunctionButton(

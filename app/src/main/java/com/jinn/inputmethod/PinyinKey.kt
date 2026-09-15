@@ -119,6 +119,19 @@ import kotlin.math.min
             return true
         }
 
+        /**
+         * 按可用宽度收缩字号：文本超宽时等比缩小（下限 [MIN_LONG_TEXT_SIZE]）。
+         *
+         * 用于编程关键字这类长文本——固定字号会让 "return""static" 左右溢出、看不全。
+         */
+        private fun fitTextSize(text: String, desiredSize: Float, maxWidth: Float): Float {
+            if (text.isEmpty() || maxWidth <= 0f) return desiredSize
+            textPaint.textSize = desiredSize
+            val measured = textPaint.measureText(text)
+            if (measured <= maxWidth) return desiredSize
+            return (desiredSize * maxWidth / measured).coerceAtLeast(MIN_LONG_TEXT_SIZE)
+        }
+
         override fun onDraw(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
@@ -140,10 +153,18 @@ import kotlin.math.min
             }
 
             // ── 双拼模式：大写字母置顶 + 下方韵母提示 ──
-            // 大写字母：置顶贴上边，占上方约 50%
             textPaint.color = colorText
-            textPaint.textSize = height * TEXT_RATIO
             textPaint.textAlign = Paint.Align.CENTER
+            // 长文本（编程关键字 "return"、多字符符号等）按可用宽度收缩字号并垂直居中。
+            // 沿用小字顶置样式会左右溢出、内容显示不完整。
+            if (label.length > LONG_TEXT_THRESHOLD) {
+                textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - margin * 2f)
+                val longFm = textPaint.fontMetrics
+                canvas.drawText(label, w / 2f, (h - longFm.ascent - longFm.descent) / 2f, textPaint)
+                return
+            }
+            // 大写字母：置顶贴上边，占上方约 50%
+            textPaint.textSize = height * TEXT_RATIO
             val fm = textPaint.fontMetrics
             val letterBaseline = (h * LETTER_TOP_RATIO - fm.ascent - fm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
             canvas.drawText(label, w / 2f, letterBaseline, textPaint)
@@ -187,6 +208,15 @@ import kotlin.math.min
             const val KEY_CORNER_DP = 6f
             const val KEY_MARGIN_DP = 1.5f
             const val TEXT_RATIO = 0.4f
+
+            /** 超过该字符数按长文本处理：收缩字号并垂直居中（编程关键字、多字符符号） */
+            const val LONG_TEXT_THRESHOLD = 2
+
+            /** 长文本基准字号比例（比常规 TEXT_RATIO 小一号，长文本本身更长） */
+            const val LONG_TEXT_RATIO = 0.30f
+
+            /** 长文本收缩下限，避免极长字符串缩到无法辨认 */
+            const val MIN_LONG_TEXT_SIZE = 9f
             const val SUB_RATIO = 0.2f
 
             /** 全拼模式：字母高度占键高比例（铺满感，约 60%） */
