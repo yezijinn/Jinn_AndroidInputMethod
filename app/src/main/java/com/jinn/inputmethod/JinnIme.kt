@@ -575,6 +575,10 @@ class JinnIme : InputMethodService() {
                         selectionActive = false
                         selectionAnchor = -1
                         selectionFocus = -1
+                        // 必须同步到键盘侧：否则 PinyinKeyboardView.selectionActive 仍为 true，
+                        // 两个类的状态会不一致（与下方 onSelectionModeChanged 的处理对齐 ——
+                        // 此前这里漏了同步调用，是两处重复逻辑各自演化的结果）。
+                        pinyinKeyboard?.setSelectionActive(false)
                     }
                 }
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
