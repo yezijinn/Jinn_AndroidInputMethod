@@ -35,6 +35,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DOCS = os.path.join(ROOT, "docs")
 OUT_DIR = os.path.join(ROOT, "tools", "dict_builder", "out", "game_merge")
 EXT_XZ = os.path.join(ROOT, "release", "dict_ext.txt.xz")
+BASE_XZ = os.path.join(ROOT, "app", "src", "main", "assets", "pinyin_phrases.txt.xz")
 
 XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 7, "lc": 4, "pb": 0}]
 
@@ -98,6 +99,19 @@ def load_ext_dict(path):
     return d
 
 
+def load_base_words(path):
+    """读取基础包的全部词，用于合并时排除——避免同一词在两包重复导致重复候选。"""
+    if not os.path.isfile(path):
+        return set()
+    raw = lzma.decompress(open(path, "rb").read()).decode("utf-8")
+    words = set()
+    for line in raw.split("\n"):
+        if "\t" not in line:
+            continue
+        words.update(w for w in line.split("\t", 1)[1].split("|") if w)
+    return words
+
+
 def main():
     ap = argparse.ArgumentParser(description="清洗游戏词库并合并进扩展包")
     ap.add_argument("--dry-run", action="store_true")
@@ -136,19 +150,28 @@ def main():
 
     # 与现有扩展包合并
     ext = load_ext_dict(EXT_XZ)
+    base_words = load_base_words(BASE_XZ)
     say(f"现有扩展包: {len(ext)} 键")
+    say(f"基础包已有词: {len(base_words):,} 个（合并时排除，避免重复候选）")
+    skipped = 0
     added_keys = 0
     added_words = 0
     for key, words in by_key.items():
+        # 排除基础包已收录的词：否则 base + ext 合并后候选栏会出现两个相同的词
+        fresh = [w for w in words if w not in base_words]
+        skipped += len(words) - len(fresh)
+        if not fresh:
+            continue
         if key in ext:
-            for w in words:
+            for w in fresh:
                 if w not in ext[key]:
                     ext[key].append(w)
                     added_words += 1
         else:
-            ext[key] = words
+            ext[key] = fresh
             added_keys += 1
-            added_words += len(words)
+            added_words += len(fresh)
+    say(f"  因基础包已有而跳过: {skipped} 条")
     say(f"合并后: {len(ext)} 键（新增键 {added_keys} 个，追加词 {added_words} 条）")
     total_words = sum(len(v) for v in ext.values())
     say(f"扩展包词条总数: {total_words:,}")
