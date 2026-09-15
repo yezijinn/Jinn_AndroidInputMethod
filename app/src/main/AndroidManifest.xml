@@ -39,14 +39,6 @@
                 android:resource="@xml/method" />
         </service>
 
-        <!-- 剪贴板历史页：FLAG_SECURE 隐私保护（禁止截图/最近任务预览），
-             excludeFromRecents 避免隐私页出现在最近任务列表 -->
-        <activity
-            android:name=".ClipboardHistoryActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:label="@string/clipboard_history_title" />
-
         <!-- 分类词库页：从设置页进入，按需下载/删除可选词库包 -->
         <activity
             android:name=".DictManagerActivity"
