@@ -40,6 +40,15 @@ import kotlin.math.min
 
         /** 主显示：大写字母 */
         var label: String = ""
+
+        /**
+         * 符号层样式：一律水平 + 垂直居中。
+         *
+         * 符号层不再沿用字母层「小字顶置 + 下方提示」的排版——符号是独立内容，
+         * 顶置会显得偏上、且短符号（如 "if"）与长关键字看起来不一致。
+         * 长文本仍按可用宽度收缩字号（见 onDraw）。
+         */
+        var centeredStyle: Boolean = false
             set(value) {
                 field = value
                 invalidate()
@@ -152,10 +161,20 @@ import kotlin.math.min
                 return
             }
 
+            // ── 符号层：一律水平 + 垂直居中（长文本按宽度收缩字号）──
+            if (centeredStyle) {
+                textPaint.color = colorText
+                textPaint.textAlign = Paint.Align.CENTER
+                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - margin * 2f)
+                val centerFm = textPaint.fontMetrics
+                canvas.drawText(label, w / 2f, (h - centerFm.ascent - centerFm.descent) / 2f, textPaint)
+                return
+            }
+
             // ── 双拼模式：大写字母置顶 + 下方韵母提示 ──
             textPaint.color = colorText
             textPaint.textAlign = Paint.Align.CENTER
-            // 长文本（编程关键字 "return"、多字符符号等）按可用宽度收缩字号并垂直居中。
+            // 长文本（多字符符号等）按可用宽度收缩字号并垂直居中。
             // 沿用小字顶置样式会左右溢出、内容显示不完整。
             if (label.length > LONG_TEXT_THRESHOLD) {
                 textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - margin * 2f)
