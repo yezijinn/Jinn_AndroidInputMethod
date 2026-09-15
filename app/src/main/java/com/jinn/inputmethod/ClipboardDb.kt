@@ -11,10 +11,12 @@ import android.database.sqlite.SQLiteOpenHelper
  * 存储策略：
  *  - 正文以 AES-256-GCM 密文入库（[ClipboardCrypto]），绝不落明文；
  *  - 来源 APP、时间、分类、收藏、隐私标记等元数据明文存储；
- *  - 超出数量上限时删除最旧记录（收藏豁免），数据库 + 内存缓存同步清理；
+ *  - 超出数量上限时删除最旧记录（**收藏永不删；隐私最后才删**），
+ *    数据库 + 内存缓存同步清理；
  *  - 全部操作走单例 + 后台线程，避免主线程 IO 与并发写冲突。
  *
- * 删除来源仅限：用户主动删除 / 清理重复 / 容量限制删除最旧非收藏记录。
+ * 删除来源仅限：用户主动删除 / 清理重复 / 容量限制裁剪。
+ * 裁剪优先级见 [TRIM_PRIORITY]：非收藏非隐私 → 非收藏隐私 → 收藏永不删。
  * 不因内容性质（敏感与否）做任何判断或删除（v3 起已移除敏感字段）。
  *
  * 搜索：按需解密（查询所有条目 → 逐条解密过滤），不建明文全文索引，
@@ -290,25 +292,35 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪到最多 [maxItems] 条：删除最旧记录。
-     * 收藏记录豁免：优先删除非收藏的最旧记录；若全是收藏记录则不再裁剪。
+     * 裁剪到最多 [maxItems] 条。
+     *
+     * **裁剪优先级**（按顺序取证，凑够 overflow 即停）：
+     *   ① 非收藏且非隐私的最旧记录
+     *   ② 非收藏的**隐私**记录 —— 隐私是用户刻意主动标记的，语义上比普通记录
+     *      更该保留，因此排到最后才动
+     *   ③ **收藏永不删除**
+     *
+     * 若按 ①② 仍凑不够 overflow（剩余全是收藏），则不再裁剪 ——
+     * 宁可超出上限，也不删用户明确标记保留的内容。
      */
     fun trimTo(maxItems: Int) {
         if (maxItems <= 0) return
         val count = count()
         if (count <= maxItems) return
         val overflow = count - maxItems
-        // 优先删非收藏最旧记录；收藏永远保留
-        val ids = readableDatabase.rawQuery(
-            "SELECT id FROM $TABLE_ITEMS WHERE is_favorite = 0 " +
-                "ORDER BY created_at ASC LIMIT $overflow",
-            null
-        ).use { c ->
-            val list = ArrayList<Long>(overflow)
-            while (c.moveToNext()) list.add(c.getLong(0))
-            list
+
+        // 按优先级分轮取证：先最不敏感的，隐私留到最后
+        val ids = ArrayList<Long>(overflow)
+        for (where in TRIM_PRIORITY) {
+            if (ids.size >= overflow) break
+            val need = overflow - ids.size
+            readableDatabase.rawQuery(
+                "SELECT id FROM $TABLE_ITEMS WHERE $where " +
+                    "ORDER BY created_at ASC LIMIT $need",
+                null
+            ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
-        if (ids.isEmpty()) return // 全部是收藏，不裁剪
+        if (ids.isEmpty()) return // 剩余全是收藏，不裁剪
         writableDatabase.beginTransaction()
         try {
             for (id in ids) writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
@@ -435,6 +447,18 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         private const val DB_VERSION = 4
         private const val TABLE_ITEMS = "clipboard_items"
         private const val TAG = "ClipboardDb"
+
+        /**
+         * 容量裁剪的优先级：**越靠前越先被删除**。
+         *
+         * 收藏不在其列 —— 收藏永不参与裁剪。
+         * 隐私排在最后：它是用户刻意主动标记的（约定「隐私只能用户手动标记，
+         * 绝不自动」），语义上比普通记录更该保留。
+         */
+        private val TRIM_PRIORITY = listOf(
+            "is_favorite = 0 AND is_private = 0",   // ① 普通记录
+            "is_favorite = 0 AND is_private = 1",   // ② 隐私记录（最后才动）
+        )
 
         @Volatile
         private var instance: ClipboardDb? = null
