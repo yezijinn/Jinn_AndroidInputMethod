@@ -665,13 +665,17 @@ class SettingsActivity : ComponentActivity() {
         /**
          * 扩展词库内置下载源，按顺序尝试（用户手动填写的地址优先于它们）。
          *
-         * - Gitee：国内直连快（仓库 release/dict_ext.txt.xz）
-         * - GitHub：Releases 附件，已实测可访问（302 → 200，OkHttp 自动跟随重定向）
+         * 两个源都必须走 **Releases 附件**，不能用仓库 raw 路径：
+         * Gitee 对较大文件的 raw 访问会返回 404（实测 4.7MB 的文件 raw 取不到，
+         * 小文件正常），必须用 releases/download 直链。
          *
-         * 词库更新后，需要同步更新这两个位置的文件，并相应修改 GitHub 的 tag 名。
+         * 均已实测：请求返回 302 重定向后 200，Content-Length = 4956768。
+         * OkHttp 默认跟随重定向，无需额外配置。
+         *
+         * 词库更新后需同步替换两个 Release 的附件，并相应修改 tag 名。
          */
         val EXT_DICT_URLS = listOf(
-            "https://gitee.com/yezijinn/com.jinn.inputmethod/raw/master/release/dict_ext.txt.xz",
+            "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download/dict-ext-20260915/dict_ext.txt.xz",
             "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download/dict-ext-20260915/dict_ext.txt.xz",
         )
     }
