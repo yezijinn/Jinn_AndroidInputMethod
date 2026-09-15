@@ -61,14 +61,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnExtDictDownload: Button
     private lateinit var btnExtDictRemove: Button
 
-    // 保活 / 防杀后台
-    private lateinit var switchKeepAlive: Switch
-    private lateinit var switchRoot: Switch
-    private lateinit var switchNotifyHigh: Switch
-    private lateinit var btnAccessibility: Button
-    private lateinit var btnBattery: Button
-    private lateinit var btnRoot: Button
-    private lateinit var textKeepalive: TextView
+    // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
     // 诊断
     private lateinit var btnExportDiag: Button
@@ -102,12 +95,6 @@ class SettingsActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { refreshMicState() }
 
-    private val notifyPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {
-        // 通知权限结果不影响保活逻辑，仅作为常驻通知的前置授权
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Diagnostics.init(this)
@@ -139,14 +126,6 @@ class SettingsActivity : ComponentActivity() {
         editExtDictUrl = findViewById(R.id.edit_ext_dict_url)
         btnExtDictDownload = findViewById(R.id.btn_ext_dict_download)
         btnExtDictRemove = findViewById(R.id.btn_ext_dict_remove)
-
-        switchKeepAlive = findViewById(R.id.switch_keepalive)
-        switchRoot = findViewById(R.id.switch_root)
-        switchNotifyHigh = findViewById(R.id.switch_notify_high)
-        btnAccessibility = findViewById(R.id.btn_accessibility)
-        btnBattery = findViewById(R.id.btn_battery)
-        btnRoot = findViewById(R.id.btn_root)
-        textKeepalive = findViewById(R.id.text_keepalive)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
@@ -232,26 +211,8 @@ class SettingsActivity : ComponentActivity() {
             }
         }
 
-        switchKeepAlive.setOnCheckedChangeListener { _, checked -> toggleKeepAlive(checked) }
-        switchRoot.setOnCheckedChangeListener { _, checked -> prefs.useRootShizuku = checked }
-        switchNotifyHigh.setOnCheckedChangeListener { _, checked ->
-            prefs.notifyHighPriority = checked
-            // 重启保活服务以重建通知通道
-            if (prefs.keepAlive) {
-                runCatching { KeepAliveService.stop(this) }
-                runCatching { KeepAliveService.start(this) }
-            }
-        }
-        btnAccessibility.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            toast(R.string.accessibility_open)
-        }
-        btnBattery.setOnClickListener {
-            val uri = Uri.parse("package:$packageName")
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, uri))
-            toast(R.string.battery_open)
-        }
-        btnRoot.setOnClickListener { runRootKeepAlive() }
+        // 保活相关（前台服务 / 无障碍互保 / ROOT 白名单 / 电池白名单）已全部移除：
+        // 语音输入改为按需连接后，不再需要进程常驻，也就不需要这些保活手段。
 
         // 诊断导出：把日志目录打包到共享存储，方便取出排查
         btnExportDiag.setOnClickListener { exportDiagnostics() }
@@ -477,9 +438,6 @@ class SettingsActivity : ComponentActivity() {
         editPrompt.setText(prefs.prompt)
         checkStrip.isChecked = prefs.stripTrailingPunc
         checkComposing.isChecked = prefs.useComposing
-        switchKeepAlive.isChecked = prefs.keepAlive
-        switchRoot.isChecked = prefs.useRootShizuku
-        switchNotifyHigh.isChecked = prefs.notifyHighPriority
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
         switchShowRareChars.isChecked = prefs.showRareChars
         checkLockServer.isChecked = prefs.lockServer
@@ -511,63 +469,6 @@ class SettingsActivity : ComponentActivity() {
         val values = resources.getStringArray(R.array.language_values)
         val pos = spinnerLanguage.selectedItemPosition.coerceIn(0, values.lastIndex)
         return values[pos]
-    }
-
-    // ── 保活开关 ────────────────────────────────────────────────
-
-    private fun toggleKeepAlive(checked: Boolean) {
-        prefs.keepAlive = checked
-        if (checked) {
-            ensureNotifyPermission()
-            runCatching { KeepAliveService.start(this) }
-            toast(R.string.keepalive_on)
-        } else {
-            runCatching { KeepAliveService.stop(this) }
-            toast(R.string.keepalive_off)
-        }
-    }
-
-    /** Android 13+ 需通知权限才能弹出保活常驻通知 */
-    private fun ensureNotifyPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notifyPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
-    private fun runRootKeepAlive() {
-        if (!prefs.useRootShizuku) {
-            Diagnostics.w(TAG, "runRootKeepAlive: 未开启 Root/Shizuku 开关，直接提示")
-            textKeepalive.setText(R.string.root_need)
-            return
-        }
-        Diagnostics.i(TAG, "runRootKeepAlive: 开始执行防杀后台白名单命令")
-        // Root/Shizuku 的命令执行走子进程，waitFor 会阻塞：放后台线程避免主线程 ANR
-        val report: (Boolean) -> Unit = { ok ->
-            Diagnostics.i(TAG, "runRootKeepAlive: 执行完成 ok=$ok")
-            // 后台线程回调时 Activity 可能已销毁（超时 5s），避免操作已 detach 的 view
-            if (!isFinishing && !isDestroyed) {
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        textKeepalive.setText(if (ok) R.string.root_done else R.string.root_fail)
-                    }
-                }
-            }
-        }
-        Thread {
-            if (RootShizuku.shizukuReady()) {
-                Diagnostics.i(TAG, "runRootKeepAlive: Shizuku 已就绪，走 Shizuku")
-                report(RootShizuku.applyKeepAlive(this))
-            } else {
-                // 未授权 Shizuku：先申请，授权后执行；被拒则 applyKeepAlive 内部会退回 su
-                Diagnostics.i(TAG, "runRootKeepAlive: Shizuku 未就绪，先申请授权")
-                RootShizuku.requestShizukuPermission { granted ->
-                    Diagnostics.i(TAG, "runRootKeepAlive: Shizuku 授权结果 granted=$granted")
-                    report(RootShizuku.applyKeepAlive(this))
-                }
-            }
-        }.start()
     }
 
     // ── 麦克风授权 ──────────────────────────────────────────────
