@@ -13,6 +13,7 @@
 
     <!-- 麦克风提示 -->
     <string name="hint_idle">按住说话 / 点一次连续录音</string>
+    <string name="voice_offline_blocked">语音服务未连接（%1$s:%2$d），暂不能使用语音输入</string>
     <string name="hint_release_send">松手发送 · 上滑取消</string>
     <string name="hint_release_cancel">松手即取消</string>
     <string name="hint_tap_stop">正在录音 · 点一下结束</string>
@@ -104,26 +105,9 @@
         <item>2</item>
     </string-array>
 
-    <!-- 保活 / 防杀后台 -->
-    <string name="keepalive_channel">Jinn 保活</string>
-    <string name="keepalive_notice">后台保活中，识别连接更稳定</string>
-    <string name="accessibility_desc">在文本输入场景（聊天、记事、搜索）下维持 Jinn 语音输入服务常驻，确保语音听写随时可用；被系统回收时自动重建并拉起前台保活服务。本服务仅依据控件类型判断是否进入输入框，不读取任何屏幕内容或文字。</string>
-    <string name="accessibility_summary">输入场景下维持语音听写常驻</string>
-    <string name="settings_keepalive">保活与防杀后台</string>
-    <string name="settings_keepalive_desc">开启后常驻后台，识别连接更稳；部分机型仍需手动加入电池白名单。</string>
-    <string name="switch_keepalive">后台保活（前台服务）</string>
-    <string name="switch_root">用 Root / Shizuku 加白名单</string>
-    <string name="switch_notify_high">高通知优先级（保活更稳）</string>
-    <string name="btn_accessibility">无障碍保活</string>
-    <string name="btn_battery">电池白名单</string>
-    <string name="btn_root">Root 防杀</string>
-    <string name="accessibility_open">请在系统“无障碍”里启用 Jinn 语音</string>
-    <string name="battery_open">请在电池设置里选择“不限制”</string>
-    <string name="root_done">已加入系统白名单，后台更稳</string>
-    <string name="root_fail">执行失败：未授权 Root/Shizuku，或命令被拒绝</string>
-    <string name="root_need">请先开启上方“用 Root / Shizuku 加白名单”</string>
-    <string name="keepalive_on">后台保活已开启</string>
-    <string name="keepalive_off">后台保活已关闭</string>
+    <!-- 保活 / 防杀后台相关文案已随保活机制一并移除（第十八轮移除 KeepAliveService、
+         JinnAccessibilityService、RootShizuku、BootReceiver 及对应设置页卡片） -->
+
 
     <!-- 输入法测试 -->
     <string name="settings_ime_test">输入法测试</string>
