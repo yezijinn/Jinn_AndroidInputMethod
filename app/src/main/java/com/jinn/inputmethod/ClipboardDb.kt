@@ -330,7 +330,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 收藏与隐私是**独立标签**，可与分类并存：
      *  - [favoritesOnly] / [privateOnly] 为 true 时按对应标记列过滤；
      *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE、PRIVATE 是
-     *    上层的伪分类，调用方需自行转成对应标记后传 null，见 ClipboardHistoryActivity）。
+     *    上层的伪分类，调用方需自行转成对应标记后传 null）。
      */
     private fun whereClause(
         category: String?,
