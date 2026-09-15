@@ -200,17 +200,28 @@ class JinnIme : InputMethodService() {
     /** 剪贴板页面「点击记录粘贴」广播接收器 */
     private val clipboardPasteReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val text = intent.getStringExtra(EXTRA_CLIPBOARD_PASTE_TEXT).orEmpty()
             val itemId = intent.getLongExtra(EXTRA_CLIPBOARD_PASTE_ITEM_ID, -1L)
-            if (text.isEmpty()) {
-                Diagnostics.w(TAG, "剪贴板粘贴广播: 内容为空")
-                notifyPasteResult(itemId, false)
+            if (itemId <= 0) {
+                Diagnostics.w(TAG, "剪贴板粘贴广播: 缺少有效 id=$itemId")
                 return
             }
-            Diagnostics.i(TAG, "剪贴板粘贴广播: len=${text.length}")
-            val ok = pasteClipboardText(text)
-            // 回传结果给剪贴板页：成功才允许它关闭，失败保持页面等待
-            notifyPasteResult(itemId, ok)
+            // 正文**不随广播传递**：Binder 事务上限约 1MB，长文本（长文章/日志/大段代码）
+            // 会让 sendBroadcast 抛 TransactionTooLargeException 直接崩溃。
+            // 改为按 id 从库里读（读库 + AES 解密属 IO，走 BackgroundIo，完成后回主线程粘贴）。
+            BackgroundIo.run {
+                val text = runCatching { ClipboardDb.get(this@JinnIme).contentById(itemId) }
+                    .onFailure { Diagnostics.w(TAG, "按 id 读取粘贴内容失败: ${it.message}") }
+                    .getOrNull()
+                ui.post {
+                    if (text.isNullOrEmpty()) {
+                        Diagnostics.w(TAG, "剪贴板粘贴广播: id=$itemId 取不到内容")
+                        notifyPasteResult(itemId, false)
+                        return@post
+                    }
+                    Diagnostics.i(TAG, "剪贴板粘贴广播: id=$itemId len=${text.length}")
+                    notifyPasteResult(itemId, pasteClipboardText(text))
+                }
+            }
         }
     }
 
@@ -1225,7 +1236,8 @@ class JinnIme : InputMethodService() {
 
         /** 剪贴板页面「点击记录粘贴」广播 action + extra */
         const val ACTION_CLIPBOARD_PASTE = "com.jinn.inputmethod.action.CLIPBOARD_PASTE"
-        const val EXTRA_CLIPBOARD_PASTE_TEXT = "clipboard_paste_text"
+        // 粘贴广播只传 id：正文不随广播走（Binder 事务上限约 1MB，长文本会崩），
+        // 改由 IME 按 id 从数据库读回
         const val EXTRA_CLIPBOARD_PASTE_ITEM_ID = "clipboard_paste_item_id"
 
         /** IME 向剪贴板页回传粘贴结果：成功才允许关闭页面 */
