@@ -106,6 +106,29 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
     /**
+     * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。
+     *
+     * 定义域与默认值见 [KeyAppearance]（0~24dp，默认 0dp 直角）。getter 也做一次钳位：
+     * 历史配置或外部写入可能带越界值，读出来必须是合法值才允许进绘制流程。
+     */
+    var keyCornerDp: Float
+        get() = KeyAppearance.clampCornerDp(
+            sp.getFloat(KEY_KEY_CORNER_DP, KeyAppearance.DEFAULT_CORNER_DP)
+        )
+        set(value) = sp.edit { putFloat(KEY_KEY_CORNER_DP, KeyAppearance.clampCornerDp(value)) }
+
+    /**
+     * 26 键区（3 行 28 键）的统一按键间隙（dp）——相邻两键之间的空隙，左右与上下一致。
+     *
+     * 定义域与默认值见 [KeyAppearance]（0~8dp，默认 0dp 无缝，步进 0.5dp）。
+     */
+    var keyGapDp: Float
+        get() = KeyAppearance.clampGapDp(
+            sp.getFloat(KEY_KEY_GAP_DP, KeyAppearance.DEFAULT_GAP_DP)
+        )
+        set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
+
+    /**
      * 语音输入总开关，**默认禁用**。
      *
      * 禁用时语音功能完全沉寂：不创建 [AsrClient]/[MicRecorder]、不发起 WebSocket 连接，
@@ -136,5 +159,7 @@ class Prefs(context: Context) {
         private const val KEY_DEFAULT_MODE = "default_mode"
         private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
         private const val KEY_VOICE_INPUT = "voice_input"
+        private const val KEY_KEY_CORNER_DP = "key_corner_dp"
+        private const val KEY_KEY_GAP_DP = "key_gap_dp"
     }
 }

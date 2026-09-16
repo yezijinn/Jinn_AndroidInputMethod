@@ -1,6 +1,11 @@
 package com.jinn.inputmethod
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -15,6 +20,7 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * 拼音键盘视图：候选栏 + 26 键 + 底部功能行。
@@ -123,6 +129,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private lateinit var btnPeriod: View
 
     private val keyViews = HashMap<Char, PinyinKey>()
+
+    /**
+     * 26 键区（3 行 28 键）统一外观参数，单位为像素，由 [applyKeyAppearance] 刷新。
+     *
+     * [keyInsetPx] 是四边各自的内缩量，等于用户设置的「间隙」的一半——相邻两键
+     * 各缩一半，合起来正好是间隙宽度。大写键/删除键要用它做 LayoutParams 边距，
+     * 字母键则由 [PinyinKey.setKeyAppearance] 带进自绘流程。
+     */
+    private var keyCornerPx = KeyAppearance.DEFAULT_CORNER_DP * dpFloat(1f)
+    private var keyInsetPx = KeyAppearance.DEFAULT_GAP_DP * dpFloat(1f) / 2f
+
+    /** 上次打印的外观参数（仅在变化时打日志，避免每次弹键盘都刷屏） */
+    private var lastAppearanceDesc = ""
+
+    /**
+     * 大写键/删除键背景的构建缓存：记下上次用的（圆角, 大写锁定）与圆角。
+     *
+     * NaN 初值保证首次一定构建；之后参数不变就跳过，避免切层/翻页时反复分配 Drawable。
+     */
+    private var shiftBgCornerPx = Float.NaN
+    private var shiftBgCaps: Boolean? = null
+    private var backspaceBgCornerPx = Float.NaN
 
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
@@ -482,8 +510,107 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 方案切换时清掉残留的拼音与预测
         composing.clear()
         lastPredictions = emptyList()
+        // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
+        // 所以在设置页改完圆角/间隙，收起键盘再弹出即生效，不必重启进程。
+        // 必须先于 refreshKeyLabels——后者会重建 shift 键背景，用的是本次刷新的圆角值。
+        applyKeyAppearance()
         refreshKeyLabels()
         refreshCandidateBar()
+    }
+
+    // ── 26 键区统一外观（按键圆角 / 按键间隙）──────────────────────
+
+    /**
+     * 按设置页参数套用 26 键区（3 行 28 键：10 + 9 + 大写/7 字母/删除）的统一外观。
+     *
+     * 这 28 个键是一条连续的键区，但绘制路径分成两类，必须在这里对齐：
+     *  - 26 个字母键：[PinyinKey] 自绘圆角矩形 → 把圆角与内缩值推给它们
+     *  - 大写键 / 删除键：XML 里的 ImageButton，背景由 drawable 决定 → 动态生成
+     *    同圆角的背景，并把内缩等效成四周外边距
+     *
+     * 参数定义域与换算见 [KeyAppearance]；本方法不校验取值，[Prefs] 读取时已钳位。
+     */
+    private fun applyKeyAppearance() {
+        val p = Prefs(context)
+        val density = resources.displayMetrics.density
+        keyCornerPx = p.keyCornerDp * density
+        // 内缩 = 间隙的一半：相邻两键各缩一半，合起来正好是用户设置的间隙
+        keyInsetPx = p.keyGapDp * density / 2f
+        for (key in keyViews.values) key.setKeyAppearance(keyCornerPx, keyInsetPx)
+        refreshShiftBackground()
+        refreshBackspaceBackground()
+        applyKeyInsets(btnShift)
+        applyKeyInsets(btnBackspace)
+        val desc = "圆角=${KeyAppearance.formatDp(p.keyCornerDp)} 间隙=${KeyAppearance.formatDp(p.keyGapDp)}"
+        if (desc != lastAppearanceDesc) {
+            lastAppearanceDesc = desc
+            Diagnostics.i(TAG, "键盘外观: $desc")
+        }
+    }
+
+    /**
+     * 重建大写键背景：普通深色 / 大写锁定强调色二态，圆角跟设置页参数走。
+     *
+     * 原先直接引用 key_bg.xml / key_bg_active.xml，圆角固定 10dp，与字母键自绘的
+     * 圆角对不上（同一行两种圆角），故改为运行时按同一参数生成。
+     *
+     * 带缓存：本方法由 [refreshKeyLabels] 间接调用（切层、翻符号页、切大小写都会走到），
+     * 参数没变就不重建，避免无谓的 Drawable 分配。
+     */
+    private fun refreshShiftBackground() {
+        if (shiftBgCornerPx == keyCornerPx && shiftBgCaps == capsMode) return
+        shiftBgCornerPx = keyCornerPx
+        shiftBgCaps = capsMode
+        btnShift.background = buildKeyBackground(
+            if (capsMode) context.getColor(R.color.accent) else context.getColor(R.color.key_bg)
+        )
+    }
+
+    /** 重建删除键背景（无二态，始终深色）。同样带缓存，参数没变不重建 */
+    private fun refreshBackspaceBackground() {
+        if (backspaceBgCornerPx == keyCornerPx) return
+        backspaceBgCornerPx = keyCornerPx
+        btnBackspace.background = buildKeyBackground(context.getColor(R.color.key_bg))
+    }
+
+    /**
+     * 生成与 key_bg.xml 同款（实心圆角 + 水波纹按压反馈）但圆角可调的按键背景。
+     *
+     * mask 必须单独再造一个**不透明**的同圆角矩形：RippleDrawable 按 mask 的 alpha
+     * 裁剪波纹，拿一个无色 Drawable 当 mask 会把波纹整个裁掉（按压就没有反馈了）。
+     */
+    private fun buildKeyBackground(fillColor: Int): Drawable {
+        val content = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(fillColor)
+            cornerRadius = keyCornerPx
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.WHITE)
+            cornerRadius = keyCornerPx
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(context.getColor(R.color.key_ripple)), content, mask,
+        )
+    }
+
+    /**
+     * 把字母键的「四边内缩」等效成 ImageButton 的外边距。
+     *
+     * 字母键的内缩画在自己的 canvas 里，普通 View 只能改外边距。不跟着改的话，
+     * 大写键/删除键会贴满单元格——比字母键高一圈、左右也多出一截，一眼就错位。
+     */
+    private fun applyKeyInsets(view: View) {
+        val lp = view.layoutParams as? LinearLayout.LayoutParams ?: return
+        val inset = keyInsetPx.roundToInt()
+        if (lp.leftMargin == inset && lp.topMargin == inset &&
+            lp.rightMargin == inset && lp.bottomMargin == inset
+        ) {
+            return
+        }
+        lp.setMargins(inset, inset, inset, inset)
+        view.layoutParams = lp
     }
 
     fun updateImeOptions(options: Int) {
@@ -1059,8 +1186,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             context.getString(R.string.key_digit)
         }
-        // 大写锁定：shift 键高亮
-        btnShift.setBackgroundResource(if (capsMode) R.drawable.key_bg_active else R.drawable.key_bg)
+        // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）
+        refreshShiftBackground()
         btnShift.alpha = 1f
         // 空格键顶部小字：同步当前输入类型
         updateSpaceHint()
