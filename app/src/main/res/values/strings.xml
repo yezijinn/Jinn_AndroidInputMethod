@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Jinn安卓输入法</string>
-    <string name="ime_label">Jinn 安卓输入</string>
     <string name="subtype_label">语音听写</string>
 
     <!-- 键盘状态条 -->
@@ -15,8 +14,6 @@
     <string name="hint_idle">按住说话 / 点一次连续录音</string>
     <string name="voice_offline_blocked">语音服务未连接（%1$s:%2$d），暂不能使用语音输入</string>
     <!-- 可选词库的启动代价说明：只影响「IME 服务重建后首次输入」的候选就绪，日常打字无影响 -->
-    <string name="dict_startup_cost">开机后首次使用输入法时，候选就绪需等待约 %1$d 秒（之后不影响）</string>
-    <string name="dict_startup_cost_none">不影响日常输入速度</string>
     <!-- 代价说明按句拆成三行：页面逐句单独渲染，避免长句被系统自动折行 -->
     <string name="dict_startup_cost_line1">开机后首次使用输入法时，</string>
     <string name="dict_startup_cost_line2">候选就绪需等待约 %1$d 秒。</string>
@@ -60,12 +57,10 @@
     <string name="cd_mic">按住说话</string>
     <string name="cd_backspace">退格</string>
     <string name="cd_enter">换行</string>
-    <string name="cd_switch">切换输入法</string>
     <string name="cd_keyboard">切换到拼音键盘</string>
 
     <!-- 拼音键盘 -->
     <string name="key_cn">中</string>
-    <string name="key_en">EN</string>
     <string name="key_abc">ABC</string>
     <string name="key_back">返回</string>
     <string name="key_symbol">符号</string>
@@ -75,30 +70,23 @@
     <!-- 设置页 -->
     <string name="settings_title">Jinn安卓输入法</string>
     <string name="settings_subtitle">语音识别 + 26键全拼 + 26键双拼(自然码)</string>
-    <string name="settings_server">服务端</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
     <string name="settings_lock">固定</string>
     <string name="settings_lock_short">锁定</string>
-    <string name="settings_recognize">识别</string>
     <string name="settings_language">语言</string>
     <string name="settings_default_mode">默认键盘样式</string>
     <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
     <string name="settings_strip_punc">去句尾标点</string>
     <string name="settings_composing">语音文字实时回显</string>
-    <string name="settings_permission">权限与启用</string>
     <string name="settings_save">保存配置并立即重启生效</string>
     <string name="settings_restarting">已保存，正在重启输入法进程…</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
     <string name="settings_enable_ime">启用输入法</string>
     <string name="settings_pick_ime">切换输入法</string>
-    <string name="settings_saved">已保存</string>
     <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
     <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
-    <string name="test_running">正在连接 %1$s …</string>
-    <string name="test_ok">连接成功，服务端在线</string>
-    <string name="test_fail">连接失败：%1$s</string>
     <string name="settings_usage">按住麦克风说话，松手即识别；上滑取消。\n拼音键盘：26 键全拼 / 自然码双拼，空格选词。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
@@ -136,7 +124,6 @@
 
 
     <!-- 输入法测试 -->
-    <string name="settings_ime_test">输入法测试</string>
     <string name="settings_ime_test_hint">点这里 唤起键盘</string>
     <string name="settings_ime_send">发送</string>
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
@@ -145,8 +132,6 @@
     <string name="switch_auto_show_keyboard_desc">关闭时,禁止弹出键盘,只能回设置这里开启</string>
 
     <!-- 诊断 -->
-    <string name="settings_diagnostics">诊断</string>
-    <string name="settings_diagnostics_desc">应用运行信息写入手机内部存储，崩溃自动抓日志快照。可导出为压缩包发给开发者排查。</string>
     <string name="settings_export_diag">导出诊断包到内部存储</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
@@ -155,7 +140,6 @@
     <!-- 剪贴板历史 -->
     <string name="settings_clipboard">剪贴板</string>
     <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘的候选栏点击「剪贴板」可查看历史。</string>
-    <string name="switch_clipboard_enabled">启用剪贴板历史</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 200）</string>
     
@@ -173,15 +157,4 @@
     <string name="switch_show_rare_chars_desc">默认关闭,不加载生僻字.勾选后重启加载生僻字</string>
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
-    <string name="ext_dict_title">扩展词库（长词包）</string>
-    <string name="ext_dict_status_installed">已安装：%1$s</string>
-    <string name="ext_dict_status_absent">未安装时,五字及以上无词库</string>
-    <string name="ext_dict_url_hint">扩展包下载地址（已预填，可直接使用）</string>
-    <string name="ext_dict_download">下载长词库</string>
-    <string name="ext_dict_remove">删除长词库</string>
-    <string name="ext_dict_need_url">请先填写扩展包下载地址</string>
-    <string name="ext_dict_downloading">下载中…（失败会自动尝试备用源）</string>
-    <string name="ext_dict_download_ok">下载完成，正在重启输入法以生效…</string>
-    <string name="ext_dict_download_fail">下载失败：%1$s</string>
-    <string name="ext_dict_removed">扩展词库已删除，重启输入法后生效</string>
 </resources>
