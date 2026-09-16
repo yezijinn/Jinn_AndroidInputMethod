@@ -89,6 +89,7 @@ import kotlin.math.min
         var subLabel: String = ""
             set(value) {
                 field = value
+                cachedNormalLines = splitHintLines(value)
                 invalidate()
             }
 
@@ -99,7 +100,26 @@ import kotlin.math.min
         var subLabelRed: String = ""
             set(value) {
                 field = value
+                cachedRedLines = splitHintLines(value)
                 invalidate()
+            }
+
+        /**
+         * 提示文本的拆分缓存。
+         *
+         * 拆分（`split` + `filter` + `trim`）原先写在 [onDraw] 里，每次 invalidate 都要为每个
+         * 按键重新分配两个 List 与若干临时 String；按键只在设置提示时变化，所以把结果缓存在
+         * setter 里，绘制路径只读现成列表。行为与原地拆分完全一致（空行丢弃、去首尾空白）。
+         */
+        private var cachedNormalLines: List<String> = emptyList()
+        private var cachedRedLines: List<String> = emptyList()
+
+        /** 提示文本 → 非空行列表（已去首尾空白）；空串返回空列表，绘制端按「无提示」处理 */
+        private fun splitHintLines(text: String): List<String> =
+            if (text.isEmpty()) {
+                emptyList()
+            } else {
+                text.split('\n').filter { it.isNotBlank() }.map { it.trim() }
             }
 
         /**
@@ -157,16 +177,20 @@ import kotlin.math.min
         }
 
         /**
-         * 按可用宽度收缩字号：文本超宽时等比缩小（下限 [MIN_LONG_TEXT_SIZE]）。
+         * 按可用宽度收缩字号：文本超宽时等比缩小，下限为 [minSize]。
          *
          * 用于编程关键字这类长文本——固定字号会让 "return""static" 左右溢出、看不全。
+         *
+         * [minSize] 由调用方按**键高比例**给出（见 [MIN_LONG_TEXT_RATIO]），不用固定像素值：
+         * 固定值在低密度屏（mdpi 下 9px = 9dp）会大于按宽度算出的适配字号，反而把文字
+         * 顶出按键左右边界；按比例取值在任何密度下都与按键尺寸同步。
          */
-        private fun fitTextSize(text: String, desiredSize: Float, maxWidth: Float): Float {
+        private fun fitTextSize(text: String, desiredSize: Float, maxWidth: Float, minSize: Float): Float {
             if (text.isEmpty() || maxWidth <= 0f) return desiredSize
             textPaint.textSize = desiredSize
             val measured = textPaint.measureText(text)
             if (measured <= maxWidth) return desiredSize
-            return (desiredSize * maxWidth / measured).coerceAtLeast(MIN_LONG_TEXT_SIZE)
+            return (desiredSize * maxWidth / measured).coerceAtLeast(minSize)
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -195,7 +219,7 @@ import kotlin.math.min
             if (centeredStyle) {
                 textPaint.color = colorText
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - inset * 2f)
+                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - inset * 2f, h * MIN_LONG_TEXT_RATIO)
                 val centerFm = textPaint.fontMetrics
                 canvas.drawText(label, w / 2f, (h - centerFm.ascent - centerFm.descent) / 2f, textPaint)
                 return
@@ -207,7 +231,7 @@ import kotlin.math.min
             // 长文本（多字符符号等）按可用宽度收缩字号并垂直居中。
             // 沿用小字顶置样式会左右溢出、内容显示不完整。
             if (label.length > LONG_TEXT_THRESHOLD) {
-                textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - inset * 2f)
+                textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - inset * 2f, h * MIN_LONG_TEXT_RATIO)
                 val longFm = textPaint.fontMetrics
                 canvas.drawText(label, w / 2f, (h - longFm.ascent - longFm.descent) / 2f, textPaint)
                 return
@@ -220,8 +244,9 @@ import kotlin.math.min
 
             // 双拼提示：下半区，底部对齐（最后一行/单行贴按钮底边）。
             // 普通行在前、红色行在后，多行紧凑排布。
-            val normalLines = subLabel.split('\n').filter { it.isNotBlank() }
-            val redLines = subLabelRed.split('\n').filter { it.isNotBlank() }
+            // 行文本已在 setter 里拆分/去空白并缓存，绘制路径零分配（见 cachedNormalLines）
+            val normalLines = cachedNormalLines
+            val redLines = cachedRedLines
             val total = normalLines.size + redLines.size
             if (total > 0) {
                 subPaint.textSize = height * SUB_RATIO
@@ -236,7 +261,7 @@ import kotlin.math.min
                     subPaint.color = colorText
                     subPaint.alpha = 160
                     canvas.drawText(
-                        line.trim(), w / 2f,
+                        line, w / 2f,
                         lastBaseline - (total - 1 - i) * lineHeight, subPaint,
                     )
                     i++
@@ -245,7 +270,7 @@ import kotlin.math.min
                     subPaint.color = colorCorner
                     subPaint.alpha = 255
                     canvas.drawText(
-                        line.trim(), w / 2f,
+                        line, w / 2f,
                         lastBaseline - (total - 1 - i) * lineHeight, subPaint,
                     )
                     i++
@@ -265,7 +290,14 @@ import kotlin.math.min
             const val LONG_TEXT_RATIO = 0.30f
 
             /** 长文本收缩下限，避免极长字符串缩到无法辨认 */
-            const val MIN_LONG_TEXT_SIZE = 9f
+            /**
+             * 长文本收缩下限（占键高比例），避免极长字符串缩到无法辨认。
+             *
+             * 用比例而非固定像素：旧值 9f（像素）在 2.75x 屏上约 3.3dp 尚可，但在 mdpi 上
+             * 等于 9dp——比按宽度算出的适配字号还大，会把 synchronized 这类长标签顶出
+             * 按键左右边界。0.06 × 54dp 键高 ≈ 3.2dp，与旧观感等效且随密度自洽。
+             */
+            const val MIN_LONG_TEXT_RATIO = 0.06f
             const val SUB_RATIO = 0.2f
 
             /** 全拼模式：字母高度占键高比例（铺满感，约 70%） */

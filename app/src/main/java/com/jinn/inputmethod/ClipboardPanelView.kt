@@ -1,7 +1,6 @@
 package com.jinn.inputmethod
 
 import android.content.Context
-import android.graphics.Color
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -115,24 +114,24 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(12), dp(16), dp(12))
-                    background = android.graphics.drawable.ColorDrawable(Color.parseColor("#141C33"))
+                    background = android.graphics.drawable.ColorDrawable(context.getColor(R.color.card_bg))
                 }
                 val row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 val num = TextView(context).apply {
                     textSize = 16f
-                    setTextColor(Color.parseColor("#4C8DFF"))
+                    setTextColor(context.getColor(R.color.accent))
                     setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
                     setPadding(0, 0, dp(10), 0)
                 }
                 val content = TextView(context).apply {
                     textSize = 16f
-                    setTextColor(Color.parseColor("#ECEEF2"))
+                    setTextColor(context.getColor(R.color.text_primary))
                     setMaxLines(1)          // 统一单行显示，超出一行用省略号
                     setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 val meta = TextView(context).apply {
                     textSize = 11f
-                    setTextColor(Color.parseColor("#9CA3AF"))
+                    setTextColor(context.getColor(R.color.text_secondary))
                     setPadding(0, dp(4), 0, 0)
                 }
                 row.addView(num, LinearLayout.LayoutParams(
@@ -165,7 +164,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(Color.parseColor("#0B1020"))
+        setBackgroundColor(context.getColor(R.color.app_bg))
         setPadding(dp(12), dp(8), dp(12), dp(8))
         buildUi()
     }
@@ -180,7 +179,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnCategoryFavorite = tabButton("收藏") { selectCategory(CATEGORY_FAVORITE) }
         btnSearch = tabButton("搜索") { listener?.onSearch() }
         btnClear = tabButton("清空") { showClearConfirm() }
-            .apply { setTextColor(Color.parseColor("#E5484D")) }
+            .apply { setTextColor(context.getColor(R.color.danger)) }
         val cells = listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
             btnCategoryFavorite, btnSearch, btnClear)
         for (cell in cells) {
@@ -191,7 +190,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // ── 列表（占据面板主要空间，可滚动） ──
         listView = ListView(context).apply {
             divider = null
-            setBackgroundColor(Color.parseColor("#0B1020"))
+            setBackgroundColor(context.getColor(R.color.app_bg))
             adapter = this@ClipboardPanelView.adapter
         }
         listView.setOnItemClickListener { _, _, pos, _ ->
@@ -219,7 +218,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         textEmpty = TextView(context).apply {
             text = "暂无剪贴板历史\n复制内容后将自动保存"
             gravity = android.view.Gravity.CENTER
-            setTextColor(Color.parseColor("#9CA3AF"))
+            setTextColor(context.getColor(R.color.text_secondary))
             textSize = 14f
             visibility = GONE
         }
@@ -233,7 +232,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
         actionDelete = tabButton("删除") { deleteItem() }
-        actionDelete.setTextColor(Color.parseColor("#E5484D"))
+        actionDelete.setTextColor(context.getColor(R.color.danger))
         actionBar.addView(actionFavorite, LinearLayout.LayoutParams(0, dp(36), 1f))
         actionBar.addView(actionDelete, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
@@ -253,7 +252,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
                 post { refresh(resetScroll = true) }
             }
-        }.apply { setTextColor(Color.parseColor("#E5484D")) }
+        }.apply { setTextColor(context.getColor(R.color.danger)) }
         val confirmCancel = tabButton("取消") { hideConfirmBar() }
         confirmBar.addView(confirmText, LinearLayout.LayoutParams(0, dp(36), 2f))
         confirmBar.addView(confirmOk, LinearLayout.LayoutParams(0, dp(36), 1f))
@@ -430,7 +429,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         TextView(context).apply {
             text = label
             gravity = android.view.Gravity.CENTER
-            setTextColor(Color.parseColor("#ECEEF2"))
+            setTextColor(context.getColor(R.color.text_primary))
             textSize = 12f
             setBackgroundResource(R.drawable.key_bg)
             isClickable = true

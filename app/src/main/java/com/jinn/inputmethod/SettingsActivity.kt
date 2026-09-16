@@ -317,12 +317,6 @@ class SettingsActivity : ComponentActivity() {
         })
     }
 
-    private fun formatSize(bytes: Long): String = when {
-        bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0)
-        bytes >= 1024 -> "${bytes / 1024} KB"
-        else -> "$bytes B"
-    }
-
     /**
      * 下载并安装扩展词库。
      *
@@ -401,8 +395,12 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "剪贴板历史数量上限: ${clipboardPrefs.maxItems}")
             // 立即裁剪数据库（统一走 BackgroundIo 单线程，避免并发写库）
             BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }
-        } else {
-            editClipboardMax.setText(clipboardPrefs.maxItems.toString())
+        }
+        // 输入越界（0 / 99999）会被 Prefs 钳到 1..9999，非数字则完全忽略——
+        // 两种情况下输入框都回写为**真实生效值**，否则用户看到的和生效的不一致。
+        val effective = clipboardPrefs.maxItems.toString()
+        if (editClipboardMax.text.toString() != effective) {
+            editClipboardMax.setText(effective)
         }
     }
 

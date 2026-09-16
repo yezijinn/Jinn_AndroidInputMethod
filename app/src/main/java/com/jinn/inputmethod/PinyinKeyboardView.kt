@@ -798,25 +798,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    private fun onBackspacePressed() {
-        // 搜索模式：拼音串删末尾字符，否则删除搜索词
-        if (isPanelSearch()) {
-            if (composing.isNotEmpty()) {
-                composing.deleteCharAt(composing.length - 1)
-                refreshCandidateBar()
-            } else {
-                searchPanel.backspaceSearch()
-            }
-            return
-        }
-        if (composing.isNotEmpty()) {
-            composing.deleteCharAt(composing.length - 1)
-            refreshCandidateBar()
-        } else {
-            listener?.onBackspace()
-        }
-    }
-
     /**
      * 删除键触摸：
      *  - 按下即删一个字符；按住超过 [backspaceRepeatDelayMs] 进入连续删除，松开停止
