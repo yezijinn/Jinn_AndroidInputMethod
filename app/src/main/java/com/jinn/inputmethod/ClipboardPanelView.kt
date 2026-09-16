@@ -21,12 +21,12 @@ import java.util.Locale
  * 用当前连接 commitText，成功后才关闭面板。
  *
  * 功能：
- *  - 分类栏：全部 / 网址 / 数字 / 收藏 / 隐私（收藏、隐私为独立标签）
- *  - 隐私条目默认隐藏明文：点击一次展开，再点一次才粘贴；隐私只能用户长按主动标记
+ *  - 分类栏：全部 / 网址 / 数字 / 收藏（收藏为独立标签，可与分类并存）
+ *  - 隐私标记入口已移除（2026-09-16）；历史隐私条目仍默认掩码，点击一次展开、再点才粘贴
  *  - 动态 UI 序号（最新=最大，删除/去重后重排，非数据库 ID）
  *  - 点击记录粘贴 + 成功关闭面板（失败不关闭，快速点击去重）
  *  - 清理重复（严格字符串比较，只保留最新）
- *  - 长按：收藏 / 隐私标记 / 删除
+ *  - 长按：收藏 / 删除
  *  - 搜索按钮：回调 [Listener.onSearch]，由 PinyinKeyboardView 关闭本面板并
  *    显示顶部搜索面板（搜索面板独立于剪贴板面板，见 SearchPanelView）
  *  - 空分类显示空态，绝不触发返回
@@ -57,7 +57,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnCategoryUrl: TextView
     private lateinit var btnCategoryNumber: TextView
     private lateinit var btnCategoryFavorite: TextView
-    private lateinit var btnCategoryPrivate: TextView
     private lateinit var btnBack: TextView
 
     /**
@@ -71,7 +70,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 内联操作条（长按条目时显示，替代 AlertDialog——IME 内嵌面板无窗口 token） */
     private lateinit var actionBar: LinearLayout
     private lateinit var actionFavorite: TextView
-    private lateinit var actionPrivate: TextView
     private lateinit var actionDelete: TextView
     private var longPressItem: ClipboardDb.Item? = null
 
@@ -187,12 +185,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnCategoryUrl = tabButton("网址") { selectCategory(ClipboardClassifier.CATEGORY_URL) }
         btnCategoryNumber = tabButton("数字") { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) }
         btnCategoryFavorite = tabButton("收藏") { selectCategory(CATEGORY_FAVORITE) }
-        btnCategoryPrivate = tabButton("隐私") { selectCategory(CATEGORY_PRIVATE) }
         btnSearch = tabButton("搜索") { listener?.onSearch() }
         btnClear = tabButton("清空") { showClearConfirm() }
             .apply { setTextColor(Color.parseColor("#E5484D")) }
         val cells = listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
-            btnCategoryFavorite, btnCategoryPrivate, btnSearch, btnClear)
+            btnCategoryFavorite, btnSearch, btnClear)
         for (cell in cells) {
             topRow.addView(cell, LinearLayout.LayoutParams(0, dp(36), 1f))
         }
@@ -242,11 +239,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
-        actionPrivate = tabButton("隐私") { togglePrivate() }
         actionDelete = tabButton("删除") { deleteItem() }
         actionDelete.setTextColor(Color.parseColor("#E5484D"))
         actionBar.addView(actionFavorite, LinearLayout.LayoutParams(0, dp(36), 1f))
-        actionBar.addView(actionPrivate, LinearLayout.LayoutParams(0, dp(36), 1f))
         actionBar.addView(actionDelete, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
 
@@ -292,13 +287,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun selectCategory(category: String?) {
         currentCategory = category
         val selected = currentCategory
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite, btnCategoryPrivate)) {
+        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
             val isSel = when (tab) {
                 btnCategoryAll -> selected == null
                 btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
                 btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
                 btnCategoryFavorite -> selected == CATEGORY_FAVORITE
-                else -> selected == CATEGORY_PRIVATE
+                else -> false
             }
             tab.setBackgroundResource(if (isSel) R.drawable.key_bg_active else R.drawable.key_bg)
         }
@@ -407,7 +402,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun showItemMenu(item: ClipboardDb.Item) {
         longPressItem = item
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
-        actionPrivate.text = if (item.isPrivate) "取消隐私" else "隐私"
         actionBar.visibility = View.VISIBLE
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
     }
@@ -423,24 +417,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "[$currentTraceId] 长按操作: 收藏切换 id=${item.id}")
         hideActionBar()
         refresh()
-    }
-
-    /**
-     * 切换隐私标记。**隐私只能由用户主动标记**，入库与分类器绝不自动判定。
-     * 取消标记时同步移出「已展开」集合，重新标记后再次默认掩码。
-     */
-    private fun togglePrivate() {
-        val item = longPressItem ?: return
-        val next = !item.isPrivate
-        Diagnostics.i(TAG, "[$currentTraceId] 长按操作: 隐私标记切换 id=${item.id}")
-        hideActionBar()
-        BackgroundIo.run {
-            db.setPrivate(item.id, next)
-            post {
-                if (!next) revealedIds.remove(item.id)
-                refresh()
-            }
-        }
     }
 
     private fun deleteItem() {
@@ -483,7 +459,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val TAG = "ClipboardPanel"
         // 常量统一取自 ClipboardFilter，避免 UI 与数据层各定义一份而漂移
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
-        const val CATEGORY_PRIVATE = ClipboardFilter.PSEUDO_PRIVATE
         /** 每页条数（解密只覆盖可见窗口） */
         const val PAGE_SIZE = 50
         /** 距底部还有多少条时预取下一页 */

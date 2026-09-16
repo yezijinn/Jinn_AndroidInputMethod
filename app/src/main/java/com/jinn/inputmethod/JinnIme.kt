@@ -463,13 +463,10 @@ class JinnIme : InputMethodService() {
         val sel = text.substring(extracted.selectionStart, extracted.selectionEnd)
         val clip = android.content.ClipData.newPlainText("jinn_selection", sel)
         clipboardManager.setPrimaryClip(clip)
-        // 同时写入安全剪贴板历史（统一走 BackgroundIo 单线程，避免并发写库）
-        val cpPrefs = ClipboardPrefs.of(this)
-        if (cpPrefs.enabled) {
-            BackgroundIo.run {
-                ClipboardStore.save(this, ClipboardDb.get(this), sel, packageName, "本输入法")
-            }
-        }
+        // 不再手动入库：setPrimaryClip 会触发 ClipboardController 的剪贴板监听，
+        // 由它统一保存。此前这里也写一次库，导致同一条内容 upsert 两次，
+        // 且手动传入的 sourceAppName（"本输入法"）会被监听路径按包名推断的值覆盖。
+        // 统一入口后，分类逻辑只存在于 ClipboardStore.save 一处。
         Diagnostics.i(TAG, "复制: 选中 ${sel.length} 字（保持选区与拖选模式）")
     }
 
