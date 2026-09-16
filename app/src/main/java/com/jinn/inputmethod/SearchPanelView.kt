@@ -66,7 +66,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
      * 第二次点击才真正粘贴。**本面板曾经漏掉这套逻辑**，导致被标记为隐私的内容
      * 在这里明文直显、且点一次就粘贴出去，等于隐私标记形同虚设。
      */
-    private val revealedIds = HashSet<Long>()
 
     /** debounce + 刷新令牌：合并连续输入，丢弃过期回调 */
     private val searchHandler = Handler(Looper.getMainLooper())
@@ -107,17 +106,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v to newHolder
             }
             holder.itemId = item.id
-            // 隐私条目默认掩码：点一次显示明文，再点一次才粘贴（绝不默认明文可见）
-            holder.content.text = if (item.isPrivate && item.id !in revealedIds) {
-                "已隐藏 · 点击显示"
-            } else {
-                item.content
-            }
+            holder.content.text = item.content
             holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
-                if (item.isPrivate) append(" · 隐私")
             }
             return root
         }
@@ -208,7 +201,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         isPasting = false
         // 每次重新打开都清空「已展开明文」：隐私条目必须重新点一次才能看到内容，
         // 否则上次展开的状态会残留，掩码形同虚设
-        revealedIds.clear()
         searchHandler.removeCallbacksAndMessages(null)
         // Invalidate a search that may still be decrypting after the previous session closed.
         refreshToken++
@@ -227,7 +219,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     fun onHidden() {
         isPasting = false
-        revealedIds.clear()
         searchHandler.removeCallbacksAndMessages(null)
         // Prevent an old worker from repopulating the list after the panel is hidden.
         refreshToken++
@@ -258,12 +249,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
-        // 隐私条目：第一次点击只展开明文，第二次点击才真正粘贴（与历史页一致）
-        if (item.isPrivate && item.id !in revealedIds) {
-            revealedIds.add(item.id)
-            adapter.notifyDataSetChanged()
-            return
-        }
         isPasting = true
         val ok = listener?.onPaste(item.content) ?: false
         isPasting = false
