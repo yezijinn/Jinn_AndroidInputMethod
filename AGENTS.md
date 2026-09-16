@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（13 个测试类 / 182 个用例）：
+- 覆盖（14 个测试类 / 184 个用例）：
   - 协议：`ProtocolTest`（序列化 / 解析）
   - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
   - 词库：`PhraseDictIntegrityTest`（词库完整性）、`RareCharsFilterTest`（生僻字过滤）、
@@ -41,6 +41,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
     含 CRLF / 长度边界 / 负例）、`ClipboardDedupeTest`、`ClipboardFilterTest`
   - 文字拖选：`TextSelectionTest`
+  - 键盘外观：`KeyAppearanceTest`（圆角 / 间隙的定义域、步进、钳位与进度换算）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
@@ -113,6 +114,13 @@ app/src/main/java/com/jinn/inputmethod/
 - 通信帧：一次听写 = 若干 `is_final=false` 音频包 + 一个 `data=""` 的 `is_final=true` 收尾包；
   服务端返回的是**整段累积文本**，客户端整体覆盖显示，绝不自行拼接；取消也发收尾包按 taskId 丢弃
 - 字体渲染、键盘布局改动需在真机截图确认（编译期无感，只有真机才看得出）
+- **键盘外观参数**：26 键区（3 行 28 键）的圆角与间隙由设置页的 `Prefs.keyCornerDp` /
+  `Prefs.keyGapDp` 控制，定义域与换算**只允许**写在 `KeyAppearance.kt`
+  （圆角 0~24dp、间隙 0~8dp，默认 0dp/0dp；间隙 = 相邻两键之间的空隙，四边各内缩一半）。
+  26 个字母键走 `PinyinKey.setKeyAppearance` 自绘，大写/删除键由
+  `PinyinKeyboardView.applyKeyAppearance` 动态重建背景 + 设四周外边距 ——
+  **任何一处都不许再写死圆角/间距**，否则同一行会错位。
+  参数在 `onStartInputView → configure()` 时重套，改完收起再弹出键盘即生效。
 - `docs/` 是**本地历史资料目录**（调研、设计稿、排查记录、接手指南等 90+ 文件），
   **不推送 GitHub**、不需要处理/完善，保持只读。
   **新增这类资料请直接放 `docs/`，不要放根目录**（`.gitignore` 已忽略 docs/ 与 release/）。
