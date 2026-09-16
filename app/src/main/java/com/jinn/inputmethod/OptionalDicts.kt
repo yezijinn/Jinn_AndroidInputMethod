@@ -39,7 +39,7 @@ data class OptionalDict(
 object OptionalDicts {
 
     private const val GITEE =
-        "https://gitee.com/yezijinn/com.jinn.inputmethod/releases/download"
+        "https://gitee.com/yezijinn/Jinn_AndroidInputMethod/releases/download"
     private const val GITHUB =
         "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download"
 
