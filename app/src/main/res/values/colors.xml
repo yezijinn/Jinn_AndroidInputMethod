@@ -35,6 +35,12 @@
     <!-- 强调与状态 -->
     <color name="accent">#4C8DFF</color>
     <color name="text_on_accent">#FFFFFF</color>
+    <!-- 状态色：三处 Kotlin 动态 UI（剪贴板面板 / 搜索面板 / 分类词库页）共用，
+         原先各自 Color.parseColor 硬编码，见「硬编码颜色收敛」一轮 -->
+    <color name="danger">#E5484D</color>
+    <color name="ok">#4CC38A</color>
+    <color name="warn">#F0A020</color>
+    <color name="btn_disabled">#3A4150</color>
 
     <!-- 设置页：极光风格 -->
     <color name="app_bg">#0B1020</color>
