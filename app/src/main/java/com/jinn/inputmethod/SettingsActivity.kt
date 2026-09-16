@@ -16,6 +16,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -67,6 +68,12 @@ class SettingsActivity : ComponentActivity() {
 
     // 扩展词库（长词包）：不进 APK，按需下载
     private lateinit var btnDictManager: Button
+
+    // 键盘外观：26 键区（3 行 28 键）统一圆角 / 间隙
+    private lateinit var seekKeyCorner: SeekBar
+    private lateinit var textKeyCorner: TextView
+    private lateinit var seekKeyGap: SeekBar
+    private lateinit var textKeyGap: TextView
 
     // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
@@ -144,6 +151,11 @@ class SettingsActivity : ComponentActivity() {
 
         textRootStatus = findViewById(R.id.text_root_status)
         switchRootEnhance = findViewById(R.id.switch_root_enhance)
+
+        seekKeyCorner = findViewById(R.id.seek_key_corner)
+        textKeyCorner = findViewById(R.id.text_key_corner)
+        seekKeyGap = findViewById(R.id.seek_key_gap)
+        textKeyGap = findViewById(R.id.text_key_gap)
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -234,6 +246,9 @@ class SettingsActivity : ComponentActivity() {
 
         // ── 扩展词库（长词包）────────────────────────────────────
         initDictEntry()
+
+        // ── 键盘外观（26 键区 28 键统一圆角 / 间隙）──────────────
+        initKeyAppearanceCard()
     }
 
     // ── 扩展词库（长词包）──────────────────────────────────────
@@ -250,6 +265,58 @@ class SettingsActivity : ComponentActivity() {
                 .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
         }
     }
+
+    // ── 键盘外观（26 键区 28 键统一圆角 / 间隙）────────────────────
+
+    /**
+     * 两个滑杆：按键圆角 + 按键间隙，拖动即落盘并刷新数值文案。
+     *
+     * 键盘重绘在 IME 侧完成——[PinyinKeyboardView] 每次弹键盘（onStartInputView →
+     * configure）都会按最新配置重新套用外观，所以这里不必发广播或重启进程；
+     * 顶部「保存配置并立即重启生效」对这两项同样有效。
+     *
+     * 定义域与步进一律取自 [KeyAppearance]：界面与绘制逻辑共用一套边界，
+     * 不允许在布局或 Activity 里另写一份范围。
+     */
+    private fun initKeyAppearanceCard() {
+        seekKeyCorner.max = KeyAppearance.CORNER_PROGRESS_MAX
+        seekKeyGap.max = KeyAppearance.GAP_PROGRESS_MAX
+        // 先写初值再挂监听：否则初始化写入也会触发一次无意义的回调
+        seekKeyCorner.progress = KeyAppearance.cornerDpToProgress(prefs.keyCornerDp)
+        seekKeyGap.progress = KeyAppearance.gapDpToProgress(prefs.keyGapDp)
+        textKeyCorner.text = KeyAppearance.formatDp(prefs.keyCornerDp)
+        textKeyGap.text = KeyAppearance.formatDp(prefs.keyGapDp)
+
+        seekKeyCorner.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = KeyAppearance.cornerProgressToDp(progress)
+                prefs.keyCornerDp = dp
+                textKeyCorner.text = KeyAppearance.formatDp(dp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            // 只在松手时打一条日志：拖动过程每格都写日志会变成每秒几十次文件 IO
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "键盘圆角: ${KeyAppearance.formatDp(prefs.keyCornerDp)}")
+            }
+        })
+
+        seekKeyGap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = KeyAppearance.gapProgressToDp(progress)
+                prefs.keyGapDp = dp
+                textKeyGap.text = KeyAppearance.formatDp(dp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "键盘间隙: ${KeyAppearance.formatDp(prefs.keyGapDp)}")
+            }
+        })
+    }
+
     private fun formatSize(bytes: Long): String = when {
         bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1048576.0)
         bytes >= 1024 -> "${bytes / 1024} KB"
