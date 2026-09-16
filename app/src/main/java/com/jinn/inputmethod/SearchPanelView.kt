@@ -1,7 +1,6 @@
 package com.jinn.inputmethod
 
 import android.content.Context
-import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
@@ -84,18 +83,18 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(10), dp(16), dp(10))
-                    background = android.graphics.drawable.ColorDrawable(Color.parseColor("#141C33"))
+                    background = android.graphics.drawable.ColorDrawable(context.getColor(R.color.card_bg))
                 }
                 val row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 val content = TextView(context).apply {
                     textSize = 15f
-                    setTextColor(Color.parseColor("#ECEEF2"))
+                    setTextColor(context.getColor(R.color.text_primary))
                     setMaxLines(1)
                     setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 val meta = TextView(context).apply {
                     textSize = 11f
-                    setTextColor(Color.parseColor("#9CA3AF"))
+                    setTextColor(context.getColor(R.color.text_secondary))
                     setPadding(0, dp(3), 0, 0)
                 }
                 row.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -122,13 +121,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(Color.parseColor("#0B1020"))
+        setBackgroundColor(context.getColor(R.color.app_bg))
         setPadding(dp(10), dp(8), dp(10), dp(8))
 
         // 结果列表（可滚动，固定高度保证在 wrap_content 父下可滚动）
         listView = ListView(context).apply {
             divider = null
-            setBackgroundColor(Color.parseColor("#0B1020"))
+            setBackgroundColor(context.getColor(R.color.app_bg))
             adapter = this@SearchPanelView.adapter
         }
         listView.setOnItemClickListener { _, _, pos, _ ->
@@ -142,7 +141,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         textEmpty = TextView(context).apply {
             text = "输入关键词搜索剪贴板历史"
             gravity = android.view.Gravity.CENTER
-            setTextColor(Color.parseColor("#9CA3AF"))
+            setTextColor(context.getColor(R.color.text_secondary))
             textSize = 13f
         }
         addView(textEmpty, LinearLayout.LayoutParams(
@@ -162,9 +161,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             setIncludeFontPadding(false)
             textSize = 13f
             isFocusableInTouchMode = true
-            setTextColor(Color.parseColor("#ECEEF2"))
-            setHintTextColor(Color.parseColor("#9CA3AF"))
-            setBackgroundColor(Color.parseColor("#1C1F26"))
+            setTextColor(context.getColor(R.color.text_primary))
+            setHintTextColor(context.getColor(R.color.text_secondary))
+            setBackgroundColor(context.getColor(R.color.surface_hi))
             setPadding(dp(10), 0, dp(10), 0)
             gravity = android.view.Gravity.CENTER_VERTICAL
             addTextChangedListener(object : TextWatcher {
@@ -185,9 +184,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             gravity = android.view.Gravity.CENTER
             setIncludeFontPadding(false)
             setLineSpacing(0f, 0.95f)
-            setTextColor(Color.parseColor("#ECEEF2"))
+            setTextColor(context.getColor(R.color.text_primary))
             textSize = 12f
-            setBackgroundColor(Color.parseColor("#1C1F26"))
+            setBackgroundColor(context.getColor(R.color.surface_hi))
             isClickable = true
             setOnClickListener { listener?.onClose() }
         }
