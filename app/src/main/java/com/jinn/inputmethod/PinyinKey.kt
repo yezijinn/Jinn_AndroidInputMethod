@@ -20,6 +20,8 @@ import kotlin.math.min
      * 只负责画一个圆角矩形 + 字母 + 韵母提示，点击/触摸判定交给
      * [PinyinKeyboardView] 统一分发（本类把 press 状态画出来）。
      * 视觉风格对齐 [MicButton]：深色圆角键 + 按压缩放，不引入额外依赖。
+     * 圆角半径与四边内缩由设置页参数决定（见 [KeyAppearance] 与
+     * [setKeyAppearance]），确保与本行的大写键/删除键完全一致。
      */
     class PinyinKey @JvmOverloads constructor(
         context: Context,
@@ -35,8 +37,34 @@ import kotlin.math.min
         private val colorText = context.getColor(R.color.kb_key_text)
         private val colorCorner = context.getColor(R.color.kb_key_hint_red)
 
-        private val corner = KEY_CORNER_DP * resources.displayMetrics.density
+        /**
+         * 键面外观：圆角半径 + 四边内缩（像素）。
+         *
+         * 数值来自设置页的 [KeyAppearance] 参数（圆角 0~24dp / 间隙 0~8dp），
+         * 由 [PinyinKeyboardView] 在初始化与每次弹键盘时统一套用（见
+         * `applyKeyAppearance`）。这里刻意**不持有默认常量**：26 个字母键必须与
+         * 同一行的大写键、删除键用同一组数值，任何一处自己写死就会错位。
+         *
+         * 初值取 [KeyAppearance] 的默认值，保证未被套用时也能正常绘制。
+         */
+        private var cornerPx = KeyAppearance.DEFAULT_CORNER_DP * resources.displayMetrics.density
+        private var insetPx = KeyAppearance.DEFAULT_GAP_DP * resources.displayMetrics.density / 2f
+
         private val rect = RectF()
+
+        /**
+         * 套用键面外观（像素）。数值未变化时直接返回，避免每次弹键盘都无谓重绘。
+         *
+         * @param cornerPx 圆角半径（像素），0 为直角
+         * @param insetPx  四边内缩（像素），等于间隙的一半——相邻两键各缩一半，
+         *                 合起来正好是用户设置的间隙宽度
+         */
+        fun setKeyAppearance(cornerPx: Float, insetPx: Float) {
+            if (this.cornerPx == cornerPx && this.insetPx == insetPx) return
+            this.cornerPx = cornerPx
+            this.insetPx = insetPx
+            invalidate()
+        }
 
         /** 主显示：大写字母 */
         var label: String = ""
@@ -144,13 +172,15 @@ import kotlin.math.min
         override fun onDraw(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
-            val margin = KEY_MARGIN_DP * resources.displayMetrics.density
-            rect.set(margin, 0f, w - margin, h)
+            // 四边等量内缩：左右间隙与上下间隙由同一个参数决定（见 KeyAppearance）。
+            // 上限保护：内缩超过键尺寸一半会把矩形压没，此时退化到「不留缩进」。
+            val inset = insetPx.coerceIn(0f, (min(w, h) / 2f - 1f).coerceAtLeast(0f))
+            rect.set(inset, inset, w - inset, h - inset)
 
             keyPaint.color = if (pressed) colorKeyPressed else colorKey
-            canvas.drawRoundRect(rect, corner, corner, keyPaint)
+            canvas.drawRoundRect(rect, cornerPx, cornerPx, keyPaint)
 
-            // ── 全拼模式：字母铺满按键居中（约 60% 键高），无双拼提示 ──
+            // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──
             if (fullPinyinStyle) {
                 textPaint.color = colorText
                 textPaint.textSize = h * FULL_TEXT_RATIO
@@ -165,7 +195,7 @@ import kotlin.math.min
             if (centeredStyle) {
                 textPaint.color = colorText
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - margin * 2f)
+                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - inset * 2f)
                 val centerFm = textPaint.fontMetrics
                 canvas.drawText(label, w / 2f, (h - centerFm.ascent - centerFm.descent) / 2f, textPaint)
                 return
@@ -177,7 +207,7 @@ import kotlin.math.min
             // 长文本（多字符符号等）按可用宽度收缩字号并垂直居中。
             // 沿用小字顶置样式会左右溢出、内容显示不完整。
             if (label.length > LONG_TEXT_THRESHOLD) {
-                textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - margin * 2f)
+                textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - inset * 2f)
                 val longFm = textPaint.fontMetrics
                 canvas.drawText(label, w / 2f, (h - longFm.ascent - longFm.descent) / 2f, textPaint)
                 return
@@ -224,9 +254,9 @@ import kotlin.math.min
         }
 
         private companion object {
-            const val KEY_CORNER_DP = 6f
-            const val KEY_MARGIN_DP = 1.5f
-            const val TEXT_RATIO = 0.4f
+
+            /** 表示大写字母字号占按键高度的比例 （0.5f 即字母高度为键高的 50%）。值越大字母越大 */
+            const val TEXT_RATIO = 0.5f
 
             /** 超过该字符数按长文本处理：收缩字号并垂直居中（编程关键字、多字符符号） */
             const val LONG_TEXT_THRESHOLD = 2
@@ -238,8 +268,8 @@ import kotlin.math.min
             const val MIN_LONG_TEXT_SIZE = 9f
             const val SUB_RATIO = 0.2f
 
-            /** 全拼模式：字母高度占键高比例（铺满感，约 60%） */
-            const val FULL_TEXT_RATIO = 0.6f
+            /** 全拼模式：字母高度占键高比例（铺满感，约 70%） */
+            const val FULL_TEXT_RATIO = 0.7f
 
             /** 大写字母顶部起始比例 */
             const val LETTER_TOP_RATIO = 0.42f

@@ -169,4 +169,11 @@
     <string name="switch_show_rare_chars_desc">默认关闭,不加载生僻字.勾选后重启加载生僻字</string>
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
+
+    <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
+    <string name="key_appearance_title">键盘外观</string>
+    <string name="key_appearance_desc">统一作用于 26 键区整整三行的 28 个按键（26 字母 + 大写键 + 删除键）</string>
+    <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
+    <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
+    <string name="key_appearance_apply_hint">左右间隙与上下间隙由同一个「按键间隙」值控制。\n调完收起键盘再弹出即生效，也可点顶部「保存配置并立即重启生效」。</string>
 </resources>
