@@ -60,6 +60,10 @@ class ClipboardController(context: Context) {
     }
 
     private fun onClipboardChanged() {
+        // 功能关闭时不入库。此前只有 copySelection 那条路径检查了 enabled，
+        // 监听路径无条件保存 —— 用户关掉剪贴板功能后系统复制仍会被记录。
+        if (!ClipboardPrefs.of(appContext).enabled) return
+
         // 只有「短时间内的自身粘贴」才跳过保存；过期的 ownCommit 标记（打字后
         // 用户手动复制）必须正常保存，否则真实复制会被误杀。
         if (ownCommit && System.currentTimeMillis() - ownCommitAt <= OWN_COMMIT_WINDOW_MS) {

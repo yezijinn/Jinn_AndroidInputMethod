@@ -1177,13 +1177,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onOpenClipboard()
             },
         ))
-        viewCandidateList.addView(buildFunctionButton(
+        directionButtonBox = buildFunctionButton(
             label = "方向",
             hint = "控制",
             onClick = {
                 if (directionPanelVisible) hideDirectionPanel() else showDirectionPanel()
             },
-        ))
+        )
+        viewCandidateList.addView(directionButtonBox)
+        // 面板可能是重建的（候选栏刷新），而方向面板状态仍为激活 —— 立即同步一次文案
+        refreshDirectionButton()
         viewCandidateList.addView(buildFunctionButton(
             label = "全选",
             hint = "文本",
@@ -1208,7 +1211,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
-    private fun buildFunctionButton(label: String, hint: String, onClick: () -> Unit): View {
+    private fun buildFunctionButton(
+        label: String,
+        hint: String,
+        labelColorRes: Int = 0,
+        onClick: () -> Unit,
+    ): View {
         val box = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
@@ -1228,7 +1236,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         box.addView(TextView(context).apply {
             text = label
             textSize = 13f
-            setTextColor(resources.getColor(R.color.text_primary, context.theme))
+            setTextColor(
+                if (labelColorRes != 0) resources.getColor(labelColorRes, context.theme)
+                else resources.getColor(R.color.text_primary, context.theme)
+            )
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1240,6 +1251,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.layoutParams = lp
         return box
+    }
+
+    /**
+     * 就地更新「方向」按钮的文案与颜色。
+     *
+     * 未进入方向面板时显示「方向 / 控制」；进入后改为红色粗体「返回 / 退出控制」，
+     * 让用户一眼看到退出口（该按钮此时的作用就是关闭面板）。
+     * 只改两个 TextView 的文本与颜色，不重建整个功能面板。
+     */
+    private fun refreshDirectionButton() {
+        val box = directionButtonBox as? android.view.ViewGroup ?: return
+        val active = directionPanelVisible
+        val labelView = box.getChildAt(0) as? TextView ?: return
+        val hintView = box.getChildAt(1) as? TextView
+        labelView.text = if (active) "返回" else "方向"
+        labelView.setTextColor(
+            resources.getColor(
+                if (active) R.color.kb_key_hint_red else R.color.text_primary,
+                context.theme,
+            )
+        )
+        labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+        hintView?.text = if (active) "退出控制" else "控制"
     }
 
     /** 双拼/全拼切换：翻转方案 + 刷新键面提示 + 更新偏好（下次唤起保持） */
@@ -1265,6 +1299,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 是否处于方向面板模式（字母区被替换） */
     private var directionPanelVisible = false
+
+    /**
+     * 候选栏「方向」按钮的引用。
+     *
+     * 该按钮本身是开关（进入/退出方向面板），但用户进入后往往找不到退出口，
+     * 所以进入时把它改成红色粗体的「返回」提示。这里保存引用以便就地更新文案，
+     * 不必重建整个功能面板。
+     */
+    private var directionButtonBox: View? = null
 
     /** 中心拖选开关按钮（●/◉）与当前状态 */
     private var centerSelectionKey: TextView? = null
@@ -1316,6 +1359,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         directionPanelVisible = true
         // 进入方向面板时重置拖选状态
         selectionActive = false
+        refreshDirectionButton()
         Diagnostics.i(TAG, "方向面板: 显示（候选栏/底部栏保持）")
     }
 
@@ -1333,6 +1377,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         selectionActive = false
         // 通知 IME 清除拖选状态（JinnIme 的 anchor/focus 同步重置）
         listener?.onSelectionModeChanged(false)
+        refreshDirectionButton()
         Diagnostics.i(TAG, "方向面板: 隐藏，恢复字母键盘")
     }
 
