@@ -1,41 +1,42 @@
-方向按钮进入后变「返回」+ 移除隐私分类 + 修复内置复制不参与分类
+按用户要求调整：hint 改回「控制」+ 隐私功能彻底移除（不兼容旧数据）
 
-【需求 1】功能面板的「方向」按钮，进入方向面板后改为红色粗体「返回」
-- buildFunctionButton 增加 labelColorRes 参数，支持按需覆盖文字颜色
-- 新增 refreshDirectionButton()：激活时文案「返回」+ 颜色 kb_key_hint_red(#FF5A5F)，
-  副文字「退出控制」；未激活时恢复「方向 / 控制」
-- showDirectionPanel / hideDirectionPanel 末尾各调用一次；功能面板重建后也补调一次
-- 该按钮本身是开关，进入后用户往往找不到退出口，改文案即为此
+【调整 1】方向按钮的副文字改回「控制」
+按钮宽度不够，最多 3 个字。进入方向面板时只有主文字变红色粗体「返回」，副文字保持「控制」：
+  未进入：[ 方向 / 控制 ]
+  进入后：[ 返回 / 控制 ]   ← 红色 #FF5A5F + 粗体
 
-【需求 2】移除剪贴板面板的「隐私」分类
-- 删除分类栏的「隐私」Tab、长按菜单的「隐私」项，以及 togglePrivate() 与相关字段
-- 同步更新 tab 高亮列表、选中态分支
-- **保留** is_private 列与掩码逻辑：历史隐私条目仍默认隐藏明文、点击一次展开，
-  只是不再新增隐私标记。DB 层 privateOnly 能力保留（ClipboardFilter 未改）
+【调整 2】隐私功能彻底删除（用户明确：不再处理任何隐私、不兼容旧代码）
+此前只删了 UI 入口，保留了 is_private 列与掩码逻辑。现按用户要求全部移除：
 
-【需求 3】修复：内置「复制」按钮的内容不参与分类
-根因是 copySelection() 做了两件重复的事：
-  setPrimaryClip(clip)                    // ① 写剪贴板，会异步触发监听回调
-  ClipboardStore.save(...)                // ② 又手动保存一次
-两条路径都写库，导致同一条内容 upsert 两次；且手动传入的 sourceAppName("本输入法")
-会被监听路径按包名推断的值覆盖（DB 实测 source_app_name 全是 "Jinn安卓输入法"）。
-修复：copySelection 只写剪贴板，入库统一交给监听路径，分类逻辑收敛到一处。
+ClipboardDb：
+- 建表去掉 is_private 列；Item 去掉 isPrivate 字段
+- upsert 去掉 isPrivate 参数与写入；selectCols / readItem 同步
+- setPrivate() 删除
+- whereClause / recentPage / count 去掉 privateOnly 参数与条件
+- deleteAll 条件简化为 "is_favorite = 0"
+- TRIM_PRIORITY 简化为单项 "is_favorite = 0"
+- mergeDuplicates 去掉隐私合并逻辑
+- ClipboardFilter 去掉 privateOnly 字段与 PSEUDO_PRIVATE 常量
+- **删除 deduplicate() 方法与 mergeDedupeFlags() 纯函数** —— 二者已无调用者
+  （入库去重早已改由 upsert 的 content_hash 唯一约束承担），属废弃代码
 
-同时修复监听路径缺失的功能开关判断：
-onClipboardChanged 此前**无条件**入库，只有 copySelection 那条路径检查了 enabled，
-用户关掉剪贴板功能后系统复制仍会被记录。已补 ClipboardPrefs.enabled 判断。
+UI：
+- ClipboardPanelView / SearchPanelView：去掉内容掩码（改为直接显示）、
+  去掉「· 隐私」标签、去掉点击展开分支、删除 revealedIds 集合
 
-【文档同步】
-- AGENTS.md：分类约定改为「全部 / 网址 / 数字 / 收藏」，并说明隐私入口已移除、
-  掩码逻辑保留
-- ClipboardPanelView 类头注释同步
+数据库迁移：
+- DB_VERSION 4 -> 5，新增 v5 迁移：重建表去掉 is_private 列，其余内容原样保留
+  （隐私标记本身丢弃，不做兼容）。同时重建 created_at 与 content_hash 两个索引
+
+测试：
+- 删除 ClipboardDedupeTest（测的是已删的 mergeDedupeFlags）
+- 重写 ClipboardFilterTest：去掉 privateOnly 断言与两个隐私专属用例
 
 【验证】
 - compileDebugKotlin + testDebugUnitTest 通过
-- 真机截图验证需求 1：进入方向面板后该按钮显示为红色粗体「返回 / 退出控制」，
-  其余按钮不受影响
-- 真机截图验证需求 2：分类栏为 返回|全部|网址|数字|收藏|搜索|清空，无「隐私」；
-  列表分类正常（747540.com→URL、563630→NUMBER）
-- 需求 3 为代码层验证：已确认 copySelection 不再调用 ClipboardStore.save，
-  全项目仅 ClipboardController 两处写库（主路径与 250ms 重试路径），
-  且均有 enabled 判断。端到端实测受限于键盘按钮坐标驱动不稳定，未完成
+- 真机：v4 -> v5 数据库升级正常，无 SQLiteException / FATAL EXCEPTION
+- 真机截图确认：
+  · 功能面板显示「方向 / 控制」（hint 已修正）
+  · 分类栏为 返回|全部|网址|数字|收藏|搜索|清空，无「隐私」
+  · 列表条目分类正常（32174→NUMBER、747540.com→URL），无「· 隐私」标签
+  · 旧数据完整保留（13 条）

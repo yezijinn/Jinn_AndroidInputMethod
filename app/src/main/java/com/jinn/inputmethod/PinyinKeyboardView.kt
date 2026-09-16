@@ -1273,7 +1273,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             )
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
-        hintView?.text = if (active) "退出控制" else "控制"
+        hintView?.text = "控制"
     }
 
     /** 双拼/全拼切换：翻转方案 + 刷新键面提示 + 更新偏好（下次唤起保持） */

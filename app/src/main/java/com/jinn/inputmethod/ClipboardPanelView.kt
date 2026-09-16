@@ -63,7 +63,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 已「点击显示明文」的隐私条目 ID（仅内存态，面板关闭即失效）。
      * 隐私条目默认掩码，第一次点击展开明文，第二次点击才真正粘贴。
      */
-    private val revealedIds = HashSet<Long>()
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
 
@@ -149,17 +148,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             }
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
-            // 隐私条目默认掩码：点一次显示明文，再点一次才粘贴（绝不默认明文可见）
-            holder.content.text = if (item.isPrivate && item.id !in revealedIds) {
-                "已隐藏 · 点击显示"
-            } else {
-                item.content
-            }
+            holder.content.text = item.content
             holder.meta.text = buildString {
                 append(SDF.format(Date(item.createdAt)))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
-                if (item.isPrivate) append(" · 隐私")
             }
             return root
         }
@@ -275,7 +268,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         hideConfirmBar()
         // 每次重新打开都清空「已展开明文」：隐私条目必须重新点一次才能看到内容，
         // 否则上次展开的状态会跨会话残留，等于隐私掩码形同虚设
-        revealedIds.clear()
         currentTraceId = Diagnostics.traceId("CLIP")
         Diagnostics.i(TAG, "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}")
         // 规范：每次打开重置分类为「全部」，绝不残留上次状态
@@ -312,8 +304,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         BackgroundIo.run {
             // 分页加载：COUNT 不解密，解密只覆盖第一页（PAGE_SIZE）
             val filter = ClipboardFilter.of(category)
-            val total = db.count(filter.category, filter.favoritesOnly, filter.privateOnly)
-            val page = db.recentPage(0, PAGE_SIZE, filter.category, filter.favoritesOnly, filter.privateOnly)
+            val total = db.count(filter.category, filter.favoritesOnly)
+            val page = db.recentPage(0, PAGE_SIZE, filter.category, filter.favoritesOnly)
             Diagnostics.i(
                 TAG,
                 "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.size} " +
@@ -352,7 +344,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         loadingPage = true
         BackgroundIo.run {
             val filter = ClipboardFilter.of(category)
-            val page = db.recentPage(offset, PAGE_SIZE, filter.category, filter.favoritesOnly, filter.privateOnly)
+            val page = db.recentPage(offset, PAGE_SIZE, filter.category, filter.favoritesOnly)
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
@@ -381,12 +373,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
-        // 隐私条目：第一次点击只展开明文，第二次点击才真正粘贴
-        if (item.isPrivate && item.id !in revealedIds) {
-            revealedIds.add(item.id)
-            adapter.notifyDataSetChanged()
-            return
-        }
         isPasting = true
         val ok = listener?.onPaste(item.content) ?: false
         isPasting = false

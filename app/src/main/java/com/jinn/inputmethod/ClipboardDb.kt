@@ -40,9 +40,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             db.execSQL(createTableSql())
             db.execSQL(
                 "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite, is_private) " +
+                    "source_package, source_app_name, content_hash, category, is_favorite) " +
                     "SELECT id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite, is_private " +
+                    "source_package, source_app_name, content_hash, category, is_favorite " +
                     "FROM ${TABLE_ITEMS}_old"
             )
             db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
@@ -60,30 +60,47 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             mergeDuplicates(db)
             db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
         }
+        if (oldVersion < 5) {
+            // v5：移除隐私功能（2026-09-16）。重建表去掉 is_private 列，其余内容原样保留。
+            // 隐私标记本身被丢弃 —— 该功能已整体移除，不做兼容。
+            db.execSQL("ALTER TABLE $TABLE_ITEMS RENAME TO ${TABLE_ITEMS}_old")
+            db.execSQL(createTableSql())
+            db.execSQL(
+                "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
+                    "source_package, source_app_name, content_hash, category, is_favorite) " +
+                    "SELECT id, encrypted_content, content_type, created_at, " +
+                    "source_package, source_app_name, content_hash, category, is_favorite " +
+                    "FROM ${TABLE_ITEMS}_old"
+            )
+            db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
+            // 修正自增序列（显式插入 id 后 sqlite_sequence 不自动更新）
+            db.execSQL(
+                "UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM $TABLE_ITEMS) " +
+                    "WHERE name = '$TABLE_ITEMS'"
+            )
+            db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
+            db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
+        }
     }
 
-    /** 合并重复行：每组 content_hash 保留最新一条，收藏/隐私标记以「任一为 true」合并到保留行 */
+    /** 合并重复行：每组 content_hash 保留最新一条，收藏标记以「任一为 true」合并到保留行 */
     private fun mergeDuplicates(db: SQLiteDatabase) {
         val keepIds = HashMap<String, Long>()
         val favIds = HashMap<String, Boolean>()
-        val privIds = HashMap<String, Boolean>()
         val dupIds = ArrayList<Long>()
         db.rawQuery(
-            "SELECT id, content_hash, is_favorite, is_private FROM $TABLE_ITEMS ORDER BY created_at DESC",
+            "SELECT id, content_hash, is_favorite FROM $TABLE_ITEMS ORDER BY created_at DESC",
             null
         ).use { c ->
             while (c.moveToNext()) {
                 val id = c.getLong(0)
                 val hash = c.getString(1)
                 val fav = c.getInt(2) != 0
-                val priv = c.getInt(3) != 0
                 if (!keepIds.containsKey(hash)) {
                     keepIds[hash] = id
                     favIds[hash] = fav
-                    privIds[hash] = priv
                 } else {
                     if (fav) favIds[hash] = true
-                    if (priv) privIds[hash] = true
                     dupIds.add(id)
                 }
             }
@@ -93,12 +110,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         try {
             for ((hash, keepId) in keepIds) {
                 val fav = favIds[hash] == true
-                val priv = privIds[hash] == true
-                if (fav || priv) {
-                    val values = ContentValues().apply {
-                        if (fav) put("is_favorite", 1)
-                        if (priv) put("is_private", 1)
-                    }
+                if (fav) {
+                    val values = ContentValues().apply { put("is_favorite", 1) }
                     db.update(TABLE_ITEMS, values, "id = ?", arrayOf(keepId.toString()))
                 }
             }
@@ -120,8 +133,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             source_app_name TEXT NOT NULL DEFAULT '',
             content_hash TEXT NOT NULL DEFAULT '',
             category TEXT NOT NULL DEFAULT 'OTHER',
-            is_favorite INTEGER NOT NULL DEFAULT 0,
-            is_private INTEGER NOT NULL DEFAULT 0
+            is_favorite INTEGER NOT NULL DEFAULT 0
         )
         """.trimIndent()
 
@@ -136,7 +148,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val contentHash: String,
         val category: String = "OTHER",   // URL / NUMBER / OTHER
         val isFavorite: Boolean = false,
-        val isPrivate: Boolean = false,
     )
 
     // ── 写入 ──────────────────────────────────────────────
@@ -156,7 +167,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         maxItems: Int,
         category: String = "OTHER",
         isFavorite: Boolean = false,
-        isPrivate: Boolean = false,
     ): Long {
         if (content.isBlank()) return -1
         val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
@@ -183,7 +193,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             put("content_hash", hash)
             put("category", category)
             put("is_favorite", if (isFavorite) 1 else 0)
-            put("is_private", if (isPrivate) 1 else 0)
         }
         val id = writableDatabase.insert(TABLE_ITEMS, null, values)
         if (id > 0) trimTo(maxItems)
@@ -205,13 +214,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
 
     /**
-     * 删除全部历史：收藏与隐私是受保护条目，清空只删除普通记录。
+     * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
      * @return 删除的条数
      */
     fun deleteAll(): Int =
         writableDatabase.delete(
             TABLE_ITEMS,
-            "is_favorite = 0 AND is_private = 0",
+            "is_favorite = 0",
             null,
         )
 
@@ -219,76 +228,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun setFavorite(id: Long, favorite: Boolean): Boolean {
         val values = ContentValues().apply { put("is_favorite", if (favorite) 1 else 0) }
         return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
-    }
-
-    /**
-     * 更新隐私标记。**隐私只能由用户主动标记**，数据层不提供任何自动判定入口。
-     * 标记后该条：在列表中默认隐藏明文、被 [deleteAll] 豁免、可被「隐私」分类筛出。
-     */
-    fun setPrivate(id: Long, privateFlag: Boolean): Boolean {
-        val values = ContentValues().apply { put("is_private", if (privateFlag) 1 else 0) }
-        return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
-    }
-
-    /**
-     * 清理完全相同的重复记录：只保留每组中最新的一条。
-     * 严格字符串比较（不 trim / 不转小写 / 不改换行）。
-     *
-     * 用户状态合并：同一组重复记录中，收藏 / 隐私标记以「任一为 true」合并
-     * 到保留的最新记录上，避免用户主动标记被静默丢失。
-     *
-     * 原子性：查找 → 合并 → 删除全部在单事务内，失败整体回滚。
-     * @return 删除的条数
-     */
-    fun deduplicate(): Int {
-        // 新→旧遍历：首次出现的 hash 为保留组；后续同 hash 为待删除，
-        // 并累积该组的收藏/隐私标记（组内任一为 true 则最终为 true）。
-        data class Group(val keepId: Long, val keepRowId: Long) {
-            var fav = false
-            var priv = false
-        }
-        val keepHash = HashMap<String, Group>()
-        val deleteIds = ArrayList<Long>()
-        val c = readableDatabase.rawQuery(
-            "SELECT id, content_hash, is_favorite, is_private FROM $TABLE_ITEMS ORDER BY created_at DESC",
-            null
-        )
-        c.use { cur ->
-            while (cur.moveToNext()) {
-                val id = cur.getLong(0)
-                val hash = cur.getString(1)
-                val fav = cur.getInt(2) != 0
-                val priv = cur.getInt(3) != 0
-                val group = keepHash[hash]
-                if (group == null) {
-                    keepHash[hash] = Group(id, 0L).also { it.fav = fav; it.priv = priv }
-                } else {
-                    // 组内重复：合并用户标记 + 记入待删除
-                    if (fav) group.fav = true
-                    if (priv) group.priv = true
-                    deleteIds.add(id)
-                }
-            }
-        }
-        if (deleteIds.isEmpty()) return 0
-        writableDatabase.beginTransaction()
-        try {
-            // 先把合并后的用户标记写回保留记录（组内任一标记 true → 保留记录置 true）
-            for (group in keepHash.values) {
-                if (group.fav || group.priv) {
-                    val values = ContentValues().apply {
-                        if (group.fav) put("is_favorite", 1)
-                        if (group.priv) put("is_private", 1)
-                    }
-                    writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(group.keepId.toString()))
-                }
-            }
-            for (id in deleteIds) writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
-            writableDatabase.setTransactionSuccessful()
-        } finally {
-            writableDatabase.endTransaction()
-        }
-        return deleteIds.size
     }
 
     /**
@@ -334,25 +273,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     /** SELECT 列清单（分页查询与历史接口共用） */
     private val selectCols = "id, encrypted_content, content_type, created_at, source_package, " +
-        "source_app_name, content_hash, category, is_favorite, is_private"
+        "source_app_name, content_hash, category, is_favorite"
 
     /**
      * 组装过滤条件（分类 / 仅收藏 / 仅隐私），返回 WHERE 片段与参数。
      *
      * 收藏与隐私是**独立标签**，可与分类并存：
-     *  - [favoritesOnly] / [privateOnly] 为 true 时按对应标记列过滤；
+     *  - [favoritesOnly] 为 true 时按收藏标记列过滤；
      *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE、PRIVATE 是
      *    上层的伪分类，调用方需自行转成对应标记后传 null）。
      */
     private fun whereClause(
         category: String?,
         favoritesOnly: Boolean = false,
-        privateOnly: Boolean = false,
     ): Pair<String, Array<String>> {
         val where = StringBuilder("1 = 1")
         val args = ArrayList<String>(1)
         if (favoritesOnly) where.append(" AND is_favorite = 1")
-        if (privateOnly) where.append(" AND is_private = 1")
         if (category != null) {
             where.append(" AND category = ?")
             args.add(category)
@@ -369,10 +306,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         limit: Int,
         category: String? = null,
         favoritesOnly: Boolean = false,
-        privateOnly: Boolean = false,
     ): List<Item> {
         if (limit <= 0 || offset < 0) return emptyList()
-        val (where, args) = whereClause(category, favoritesOnly, privateOnly)
+        val (where, args) = whereClause(category, favoritesOnly)
         val c = readableDatabase.rawQuery(
             "SELECT $selectCols FROM $TABLE_ITEMS WHERE $where " +
                 "ORDER BY created_at DESC LIMIT $limit OFFSET $offset",
@@ -389,9 +325,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun count(
         category: String? = null,
         favoritesOnly: Boolean = false,
-        privateOnly: Boolean = false,
     ): Int {
-        val (where, args) = whereClause(category, favoritesOnly, privateOnly)
+        val (where, args) = whereClause(category, favoritesOnly)
         return readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE $where",
             args
@@ -438,13 +373,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             contentHash = c.getString(6),
             category = c.getString(7),
             isFavorite = c.getInt(8) != 0,
-            isPrivate = c.getInt(9) != 0,
         )
     }
 
     companion object {
         private const val DB_NAME = "jinn_clipboard.db"
-        private const val DB_VERSION = 4
+        private const val DB_VERSION = 5
         private const val TABLE_ITEMS = "clipboard_items"
         private const val TAG = "ClipboardDb"
 
@@ -456,8 +390,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 绝不自动」），语义上比普通记录更该保留。
          */
         private val TRIM_PRIORITY = listOf(
-            "is_favorite = 0 AND is_private = 0",   // ① 普通记录
-            "is_favorite = 0 AND is_private = 1",   // ② 隐私记录（最后才动）
+            "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
         )
 
         @Volatile
@@ -473,33 +406,14 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             val md = java.security.MessageDigest.getInstance("SHA-256")
             return md.digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         }
-
-        /**
-         * 去重用户状态合并规则（纯函数，可单测）：
-         * 同一内容重复组内，收藏 / 隐私以「任一为 true」合并到保留记录。
-         * @param kept 保留（最新）记录的用户标记
-         * @param dupes 待删除旧记录的标记序列（[favorite, private]）
-         */
-        fun mergeDedupeFlags(
-            kept: Pair<Boolean, Boolean>,
-            dupes: List<Pair<Boolean, Boolean>>,
-        ): Pair<Boolean, Boolean> {
-            var fav = kept.first
-            var priv = kept.second
-            for ((f, p) in dupes) {
-                if (f) fav = true
-                if (p) priv = true
-            }
-            return fav to priv
-        }
     }
 }
 
 /**
  * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
  *
- * 分类栏有 5 个 Tab：全部 / 网址 / 数字 / 收藏 / 隐私。其中网址、数字是真正的
- * `category` 列取值，而**收藏和隐私是独立的标签列**（is_favorite / is_private），
+ * 分类栏有 4 个 Tab：全部 / 网址 / 数字 / 收藏。其中网址、数字是真正的
+ * `category` 列取值，而**收藏是独立的标签列**（is_favorite），
  * 绝不能当 category 传给 SQL——否则 `WHERE category = 'FAVORITE'` 恒不成立，
  * 列表会永远是空的。这个翻译必须显式做，是本项目最容易踩的坑之一。
  *
@@ -510,24 +424,21 @@ data class ClipboardFilter(
     /** 传给 SQL 的 category 值；收藏/隐私这类伪分类此处为 null */
     val category: String?,
     val favoritesOnly: Boolean,
-    val privateOnly: Boolean,
+
 ) {
     companion object {
 
         /** 伪分类：收藏（独立标签列，非 category 取值） */
         const val PSEUDO_FAVORITE = "FAVORITE"
 
-        /** 伪分类：隐私（独立标签列，非 category 取值） */
-        const val PSEUDO_PRIVATE = "PRIVATE"
 
         /**
          * 由分类栏选中的值解析筛选条件。
          * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/PRIVATE=伪分类
          */
         fun of(raw: String?): ClipboardFilter = when (raw) {
-            PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true, privateOnly = false)
-            PSEUDO_PRIVATE -> ClipboardFilter(null, favoritesOnly = false, privateOnly = true)
-            else -> ClipboardFilter(raw, favoritesOnly = false, privateOnly = false)
+            PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true)
+            else -> ClipboardFilter(raw, favoritesOnly = false)
         }
     }
 }
