@@ -104,6 +104,19 @@ app/src/main/java/com/jinn/inputmethod/
   因此「开机后首次输入的候选就绪」不被大词库拖慢（详见 `PinyinEngine` 注释）
 - 剪贴板保存打 `save: 已保存 … (分类=...)`；剪贴板页刷新打 `refresh: 全库=N 分类=... 查询=N`
 
+## 词库来源与生成（重要）
+
+- **源**：`docs/rime-ice/cn_dicts/{base,ext,tencent}.dict.yaml`（雾凇拼音，本机 `docs/` 内，不入库）。
+- **生成**：`tools/dict_builder/`，细节见其 **`README.md`**（脚本一览 + 现行/历史划分）。
+  `convert_rime_ice.py` 出基础包与扩展包，`convert_rime_tencent.py` 出腾讯可选包。
+- **分层**：基础包（词长 ≤4 字含四字成语）随 APK；扩展包（>4 字）与可选包放 Release 附件，
+  设置页「分类词库」按需下载到 `filesDir/dicts/`。
+- **改完词库必做**：重生 xz（`app/build.gradle.kts` 的 `noCompress += "xz"` 不可删）→
+  真机验证加载与输入 → 扩展包/可选包重传两端 Release 并实测下载（比对 sha256）。
+- ⚠ **旧源文件 `tools/dict_builder/source/pinyin_phrases.txt` 已于 2026-09-17 删除**
+  （29.4MB、含 573 行 GBK 乱码、被 `.gitignore` 忽略、从未进版本库）。
+  **不要再把词库源文件放回这个目录**——现行源在 `docs/rime-ice/`，重跑旧文件只会把乱码带回词库。
+
 ## 约定
 
 - **禁止修改语音部分**：`MicRecorder`、`AsrClient`、`Protocol`、`MicButton`，以及 `JinnIme`
