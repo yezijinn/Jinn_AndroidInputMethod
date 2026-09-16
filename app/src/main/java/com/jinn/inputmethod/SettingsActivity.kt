@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -55,6 +56,11 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchShowRareChars: Switch
     private lateinit var switchVoiceInput: Switch
+
+    // 检查更新：版本号取构建日期，与远程 tag 比较
+    private lateinit var btnCheckUpdate: Button
+    /** 更新检查状态机：Idle / Checking / UpToDate / Available / NetworkError */
+    private var updateState: UpdateState = UpdateState.Idle
     /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
     private lateinit var cardMicPermission: View
     private lateinit var cardVoiceServer: View
@@ -124,6 +130,8 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
+        btnCheckUpdate = findViewById(R.id.btn_check_update)
+        bindCheckUpdate()
         cardMicPermission = findViewById(R.id.card_mic_permission)
         cardVoiceServer = findViewById(R.id.card_voice_server)
         btnDictManager = findViewById(R.id.btn_dict_manager)
@@ -386,6 +394,83 @@ class SettingsActivity : ComponentActivity() {
      * 完全沉寂（不建实例、不连 WebSocket），这些配置项没有意义，显示出来只会误导。
      * 开关变更后需重启输入法进程才生效（与设置页其他项一致，由「保存并重启」触发）。
      */
+    /** 更新检查五态（Idle / Checking / UpToDate / Available / NetworkError） */
+    private enum class UpdateState { Idle, Checking, UpToDate, Available, NetworkError }
+
+    /** Checking 高亮持续时长：到点自动熄灯，避免按钮常亮 */
+    private val updateDimRunnable = Runnable { setUpdateState(UpdateState.Idle) }
+
+    /**
+     * 「检查更新」绑定。点击进入 Checking：禁用重复点击并高亮；
+     * 结果由 [UpdateChecker] 回主线程后统一以对话框呈现。
+     */
+    private fun bindCheckUpdate() {
+        btnCheckUpdate.setOnClickListener {
+            if (updateState == UpdateState.Checking) return@setOnClickListener
+            setUpdateState(UpdateState.Checking)
+            UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { onUpdateChecked(it) }
+        }
+    }
+
+    private fun setUpdateState(state: UpdateState) {
+        updateState = state
+        val checking = state == UpdateState.Checking
+        btnCheckUpdate.isEnabled = !checking
+        btnCheckUpdate.alpha = if (checking) 0.6f else 1f
+        btnCheckUpdate.text = getString(
+            if (checking) R.string.update_checking else R.string.settings_check_update
+        )
+        if (checking) btnCheckUpdate.postDelayed(updateDimRunnable, UPDATE_HIGHLIGHT_MS)
+    }
+
+    private fun onUpdateChecked(result: UpdateChecker.Result) {
+        btnCheckUpdate.removeCallbacks(updateDimRunnable)
+        updateState = when (result) {
+            is UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
+            is UpdateChecker.Result.Available -> UpdateState.Available
+            UpdateChecker.Result.NetworkError -> UpdateState.NetworkError
+        }
+        setUpdateState(UpdateState.Idle)
+        showUpdateDialog(result)
+    }
+
+    /** 三类结果统一三套文案，措辞由 unified-update-check 约定，不得改写。 */
+    private fun showUpdateDialog(result: UpdateChecker.Result) {
+        val local = getString(R.string.update_local_version, BuildConfig.VERSION_CODE)
+        val builder = AlertDialog.Builder(this)
+        when (result) {
+            is UpdateChecker.Result.Available -> builder
+                .setTitle(R.string.update_title_available)
+                .setMessage(
+                    local + "\n" + getString(R.string.update_latest_version, result.latest)
+                )
+                .setNegativeButton(R.string.update_btn_later, null)
+                .setPositiveButton(R.string.update_btn_go) { _, _ ->
+                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
+                }
+
+            is UpdateChecker.Result.UpToDate -> builder
+                .setTitle(R.string.update_title_prompt)
+                .setMessage(
+                    local + "\n" +
+                        getString(R.string.update_latest_version, result.latest) + "\n" +
+                        getString(R.string.update_uptodate)
+                )
+                .setPositiveButton(R.string.update_btn_ok, null)
+
+            UpdateChecker.Result.NetworkError -> builder
+                .setTitle(R.string.update_title_prompt)
+                .setMessage(local + "\n" + getString(R.string.update_latest_unreachable))
+                .setPositiveButton(R.string.update_btn_ok, null)
+        }
+        builder.show()
+    }
+
+    private fun openUrl(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            .onFailure { Diagnostics.w(TAG, "打开更新页失败: ${it.message}") }
+    }
+
     private fun bindVoiceInputSwitch() {
         val enabled = prefs.voiceInputEnabled
         switchVoiceInput.isChecked = enabled
@@ -512,6 +597,9 @@ class SettingsActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "SettingsActivity"
+
+        /** 「检查更新」按钮高亮时长：到点自动熄灭，避免常亮 */
+        const val UPDATE_HIGHLIGHT_MS = 3_000L
 
         // 可选词库的文件名、下载源与体积/耗时说明已统一收敛到 OptionalDicts，
         // 由「分类词库」页使用；设置页只保留一个跳转入口。

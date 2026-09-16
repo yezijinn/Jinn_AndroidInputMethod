@@ -61,6 +61,11 @@ android {
         resourceConfigurations += setOf("zh-rCN")
     }
 
+    buildFeatures {
+        // 检查更新需要读取 BuildConfig.VERSION_CODE
+        buildConfig = true
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
