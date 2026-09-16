@@ -77,3 +77,5 @@ tools/dict_builder/THUOCL注音输出/
 # 提交信息临时文件
 .cm.txt
 .commitmsg.txt
+# Release 备注临时文件
+.relnotes.md
