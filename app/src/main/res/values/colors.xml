@@ -4,7 +4,6 @@
     <color name="kb_bg">#15171C</color>
     <color name="kb_divider">#24272E</color>
     <color name="key_bg">#242831</color>
-    <color name="key_bg_pressed">#2E323C</color>
     <color name="key_ripple">#4DFFFFFF</color>
     <color name="surface_hi">#1C1F26</color>
 
@@ -14,7 +13,6 @@
     <color name="kb_key_pressed">#3A4150</color>
     <color name="kb_key_text">#ECEEF2</color>
     <color name="kb_key_hint_red">#FF5A5F</color>
-    <color name="kb_candidate_sel">#2E323C</color>
     <color name="kb_candidate_sel_text">#4C8DFF</color>
 
     <!-- 文字 -->
@@ -27,7 +25,6 @@
     <color name="mic_active">#E5484D</color>
     <color name="mic_active_center">#FF6B6F</color>
     <color name="mic_ring">#E5484D</color>
-    <color name="mic_glow">#E5484D</color>
     <color name="mic_glyph">#FFFFFF</color>
 
     <!-- 连接状态指示点 -->
@@ -37,10 +34,7 @@
 
     <!-- 强调与状态 -->
     <color name="accent">#4C8DFF</color>
-    <color name="accent_pressed">#3A78E0</color>
     <color name="text_on_accent">#FFFFFF</color>
-    <color name="success">#34D399</color>
-    <color name="warn">#F5A623</color>
 
     <!-- 设置页：极光风格 -->
     <color name="app_bg">#0B1020</color>
