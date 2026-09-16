@@ -47,8 +47,13 @@ class JinnIme : InputMethodService() {
     private val ui = Handler(Looper.getMainLooper())
 
     private lateinit var prefs: Prefs
-    private lateinit var asr: AsrClient
-    private lateinit var recorder: MicRecorder
+    /**
+     * 语音组件。**仅在「语音输入」开关为开时才实例化**（见 [ensureVoiceReady]）。
+     * 开关关闭时两者恒为 null —— 语音功能完全沉寂，不占用任何语音相关内存，
+     * 因此所有使用点都必须走空安全（`?.`）。
+     */
+    private var asr: AsrClient? = null
+    private var recorder: MicRecorder? = null
 
     /** 剪贴板控制器：监听系统剪贴板 → 按策略加密保存历史（普通模式核心） */
     private var clipboardController: ClipboardController? = null
@@ -59,7 +64,8 @@ class JinnIme : InputMethodService() {
     private var hintLabel: TextView? = null
 
     private var pinyinKeyboard: PinyinKeyboardView? = null
-    private var keyboardMode = KeyboardMode.VOICE
+    /** 当前键盘模式。默认拼音——语音默认禁用，不能以语音键盘起步 */
+    private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
 
     /** 剪贴板页点击记录时若连接无效，暂存待粘贴文本，编辑框聚焦后自动粘贴 */
@@ -133,28 +139,17 @@ class JinnIme : InputMethodService() {
         prefs = Prefs(this)
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
         // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
-        keyboardMode = when (prefs.defaultKeyboardMode) {
-            DefaultKeyboardMode.PINYIN_CN,
-            DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
+        keyboardMode = when {
+            // 语音关闭时一律进拼音键盘，绝不进语音面板
+            !prefs.voiceInputEnabled -> KeyboardMode.PINYIN
+            prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_CN ||
+                prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
             else -> KeyboardMode.VOICE
         }
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
 
-        asr = AsrClient(
-            prefs = prefs,
-            onState = { state, detail -> ui.post { renderLink(state, detail) } },
-            onResult = { message -> ui.post { handleResult(message) } },
-        )
-        recorder = MicRecorder(
-            onChunk = { chunk -> asr.sendChunk(chunk) },
-            onLevel = { level -> ui.post { micButton?.updateLevel(level) } },
-            onError = { message -> ui.post { onRecorderError(message) } },
-            onSilence = { ui.post { onSilenceDetected() } },
-        )
-
-        // 预热连接：首次弹键盘时 WebSocket 往往还没建好，
-        // 不加这一步用户第一次点麦克风会因 beginTask() 返回 null 而"没反应"，得再点一次
-        asr.connect()
+        // 语音关闭时不创建任何语音组件：不 new AsrClient/MicRecorder，也不发起 WebSocket 连接。
+        ensureVoiceReady()
 
         // 预加载拼音词库（约 1MB 文本，后台线程避免主线程卡顿）
         Thread {
@@ -497,7 +492,7 @@ class JinnIme : InputMethodService() {
     fun refreshConfig() {
         // 地址/端口变化：旧连接指向旧服务器，强制断开重连
         Diagnostics.i(TAG, "refreshConfig: 强制重连 ${prefs.wsUrl}")
-        asr.connect(force = true)
+        asr?.connect(force = true)
         // 双拼/中英文方案变化：立即重新套用，键盘无需重建
         pinyinKeyboard?.configure(
             shuangpin = prefs.useShuangpin,
@@ -631,9 +626,10 @@ class JinnIme : InputMethodService() {
         container.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         // 键盘视图每次创建都重新套用默认模式（InputMethodService 可能复用实例，
         // 仅靠 onCreate 设置 keyboardMode 在复用场景下不生效）
-        keyboardMode = when (prefs.defaultKeyboardMode) {
-            DefaultKeyboardMode.PINYIN_CN,
-            DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
+        keyboardMode = when {
+            !prefs.voiceInputEnabled -> KeyboardMode.PINYIN
+            prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_CN ||
+                prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
             else -> KeyboardMode.VOICE
         }
         applyKeyboardMode()
@@ -682,9 +678,48 @@ class JinnIme : InputMethodService() {
      * 还会连带触发录音权限检查、录音器初始化等一整套语音链路负担。
      * 语音是自用功能，宁可在这里提前拦掉，也不让用户进到一个用不了的面板。
      */
+    /**
+     * 按需装配语音组件。**只有「语音输入」开关为开时才真正创建**。
+     *
+     * 幂等：已创建则直接返回。开关关闭时本方法不做任何事，
+     * 于是 AsrClient / MicRecorder 始终为 null —— 语音完全沉寂、零内存占用。
+     * 设置页保存会重启 IME 进程，所以开关变更后重新执行 onCreate 即自动生效。
+     */
+    private fun ensureVoiceReady() {
+        if (!prefs.voiceInputEnabled) {
+            Diagnostics.i(TAG, "语音输入已禁用：不创建语音组件、不连接服务端")
+            return
+        }
+        if (asr != null) return
+        asr = AsrClient(
+            prefs = prefs,
+            onState = { state, detail -> ui.post { renderLink(state, detail) } },
+            onResult = { message -> ui.post { handleResult(message) } },
+        )
+        recorder = MicRecorder(
+            onChunk = { chunk -> asr?.sendChunk(chunk) },
+            onLevel = { level -> ui.post { micButton?.updateLevel(level) } },
+            onError = { message -> ui.post { onRecorderError(message) } },
+            onSilence = { ui.post { onSilenceDetected() } },
+        )
+        // 预热连接：首次弹键盘时 WebSocket 往往还没建好，
+        // 不加这一步用户第一次点麦克风会因 beginTask() 返回 null 而"没反应"，得再点一次
+        asr?.connect()
+        Diagnostics.i(TAG, "语音输入已启用：语音组件已装配并开始预热连接")
+    }
+
     private fun switchToVoiceKeyboard() {
-        if (asr.state != LinkState.ONLINE) {
-            Diagnostics.i(TAG, "语音服务未连通(${asr.state})，拒绝进入语音功能")
+        // 总开关优先：语音关闭时静默拒绝（不提示、不建实例），入口彻底置空
+        if (!prefs.voiceInputEnabled) {
+            Diagnostics.i(TAG, "语音输入已禁用，忽略进入语音键盘的请求")
+            return
+        }
+        val client = asr ?: run {
+            Diagnostics.w(TAG, "语音输入已启用但语音组件未装配，拒绝进入语音功能")
+            return
+        }
+        if (client.state != LinkState.ONLINE) {
+            Diagnostics.i(TAG, "语音服务未连通(${client.state})，拒绝进入语音功能")
             runCatching {
                 Toast.makeText(
                     this,
@@ -743,8 +778,8 @@ class JinnIme : InputMethodService() {
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
-        asr.connect()
-        renderLink(asr.state, null)
+        asr?.connect()
+        renderLink(asr?.state ?: LinkState.OFFLINE, null)
         micButton?.recording = false
         micButton?.cancelArmed = false
         setHint(getString(R.string.hint_idle))
@@ -826,8 +861,8 @@ class JinnIme : InputMethodService() {
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
         Thread {
-            recorder.stop()
-            asr.close()
+            recorder?.stop()
+            asr?.close()
             Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
         }.start()
         super.onDestroy()
@@ -907,6 +942,11 @@ class JinnIme : InputMethodService() {
     // ── 录音控制 ──────────────────────────────────────────────
 
     private fun startRecording(target: Mode) {
+        // 语音输入关闭时 asr/recorder 为 null：入口直接置空，不做任何语音动作
+        if (asr == null || recorder == null) {
+            Diagnostics.i(TAG, "startRecording: 语音输入已禁用，忽略")
+            return
+        }
         if (mode != Mode.NONE) {
             Diagnostics.w(TAG, "startRecording: 已在录音中 mode=$mode，忽略")
             return
@@ -923,7 +963,7 @@ class JinnIme : InputMethodService() {
         // 请求音频焦点：被抢占时自动停止录音，避免与其他音频源冲突
         requestAudioFocus()
 
-        if (asr.beginTask() == null) {
+        if (asr?.beginTask() == null) {
             // 未连接：已请求的焦点要释放，避免占用却不录音
             Diagnostics.w(TAG, "startRecording: beginTask 返回 null（未连接）")
             abandonAudioFocus()
@@ -931,9 +971,9 @@ class JinnIme : InputMethodService() {
             return
         }
 
-        if (!recorder.start()) {
+        if (recorder?.start() != true) {
             Diagnostics.e(TAG, "startRecording: recorder.start 失败，取消任务")
-            asr.cancelTask()
+            asr?.cancelTask()
             // 录音启动失败：同样释放焦点
             abandonAudioFocus()
             return
@@ -958,17 +998,17 @@ class JinnIme : InputMethodService() {
         mode = Mode.NONE
         ui.removeCallbacks(autoStopRunnable)
 
-        recorder.stop()
+        recorder?.stop()
         abandonAudioFocus()
         micButton?.recording = false
         micButton?.cancelArmed = false
 
         if (commit) {
-            asr.endTask()
+            asr?.endTask()
             Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
             setHint(getString(R.string.hint_recognizing))
         } else {
-            asr.cancelTask()
+            asr?.cancelTask()
             Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
             // 取消时把已经回显的预编辑文本一起撤掉
             if (prefs.useComposing) {
@@ -1028,7 +1068,7 @@ class JinnIme : InputMethodService() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Diagnostics.i(TAG, "network: 网络恢复可用")
-                ui.post { if (asr.state == LinkState.OFFLINE) asr.connect() }
+                ui.post { if (asr?.state == LinkState.OFFLINE) asr?.connect() }
             }
 
             override fun onLost(network: Network) {

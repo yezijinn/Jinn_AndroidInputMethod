@@ -87,7 +87,7 @@
     <string name="settings_pick_ime">切换输入法</string>
     <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
     <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
-    <string name="settings_usage">按住麦克风说话，松手即识别；上滑取消。\n拼音键盘：26 键全拼 / 自然码双拼，空格选词。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 自然码双拼，空格选词。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -119,10 +119,6 @@
         <item>2</item>
     </string-array>
 
-    <!-- 保活 / 防杀后台相关文案已随保活机制一并移除（第十八轮移除 KeepAliveService、
-         JinnAccessibilityService、RootShizuku、BootReceiver 及对应设置页卡片） -->
-
-
     <!-- 输入法测试 -->
     <string name="settings_ime_test_hint">点这里 唤起键盘</string>
     <string name="settings_ime_send">发送</string>
@@ -132,6 +128,8 @@
     <string name="switch_auto_show_keyboard_desc">关闭时,禁止弹出键盘,只能回设置这里开启</string>
 
     <!-- 诊断 -->
+    <string name="settings_voice_input">语音输入</string>
+    <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
     <string name="settings_export_diag">导出诊断包到内部存储</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>

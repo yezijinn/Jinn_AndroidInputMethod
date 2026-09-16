@@ -54,6 +54,10 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textImeReceived: TextView
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchShowRareChars: Switch
+    private lateinit var switchVoiceInput: Switch
+    /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
+    private lateinit var cardMicPermission: View
+    private lateinit var cardVoiceServer: View
 
     // 扩展词库（长词包）：不进 APK，按需下载
     private lateinit var btnDictManager: Button
@@ -119,6 +123,9 @@ class SettingsActivity : ComponentActivity() {
         textImeReceived = findViewById(R.id.text_ime_received)
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
+        switchVoiceInput = findViewById(R.id.switch_voice_input)
+        cardMicPermission = findViewById(R.id.card_mic_permission)
+        cardVoiceServer = findViewById(R.id.card_voice_server)
         btnDictManager = findViewById(R.id.btn_dict_manager)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
@@ -355,6 +362,8 @@ class SettingsActivity : ComponentActivity() {
         checkStrip.isChecked = prefs.stripTrailingPunc
         checkComposing.isChecked = prefs.useComposing
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
+        bindVoiceInputSwitch()
+
         switchShowRareChars.isChecked = prefs.showRareChars
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
@@ -370,6 +379,28 @@ class SettingsActivity : ComponentActivity() {
      * 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑，防误触乱改。
      * 解锁（取消勾选）后可正常编辑。
      */
+    /**
+     * 绑定「语音输入」总开关。
+     *
+     * 关闭时语音相关区块（授权麦克风 + NAS 语音）一并隐藏 —— 此时语音在 IME 侧
+     * 完全沉寂（不建实例、不连 WebSocket），这些配置项没有意义，显示出来只会误导。
+     * 开关变更后需重启输入法进程才生效（与设置页其他项一致，由「保存并重启」触发）。
+     */
+    private fun bindVoiceInputSwitch() {
+        val enabled = prefs.voiceInputEnabled
+        switchVoiceInput.isChecked = enabled
+        applyVoiceBlocksVisibility(enabled)
+        switchVoiceInput.setOnCheckedChangeListener { _, checked ->
+            applyVoiceBlocksVisibility(checked)
+        }
+    }
+
+    private fun applyVoiceBlocksVisibility(voiceEnabled: Boolean) {
+        val visibility = if (voiceEnabled) View.VISIBLE else View.GONE
+        cardMicPermission.visibility = visibility
+        cardVoiceServer.visibility = visibility
+    }
+
     private fun applyServerLock() {
         val locked = checkLockServer.isChecked
         editHost.isEnabled = !locked
@@ -431,19 +462,25 @@ class SettingsActivity : ComponentActivity() {
         val host = editHost.text.toString().trim()
         val port = editPort.text.toString().trim().toIntOrNull()
 
-        if (host.isBlank()) {
-            Diagnostics.w(TAG, "saveAndRestart: host 为空")
-            editHost.error = getString(R.string.settings_invalid_host)
-            return
-        }
-        if (port == null || port !in 1..65535) {
-            Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
-            editPort.error = getString(R.string.settings_invalid_port)
-            return
+        // 语音关闭时 host/port 字段是隐藏的，校验没有意义且会阻塞保存
+        val voiceEnabled = switchVoiceInput.isChecked
+        if (voiceEnabled) {
+            if (host.isBlank()) {
+                Diagnostics.w(TAG, "saveAndRestart: host 为空")
+                editHost.error = getString(R.string.settings_invalid_host)
+                return
+            }
+            if (port == null || port !in 1..65535) {
+                Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
+                editPort.error = getString(R.string.settings_invalid_port)
+                return
+            }
         }
 
+        prefs.voiceInputEnabled = voiceEnabled
         prefs.host = host
-        prefs.port = port
+        // 语音关闭时上面的校验被跳过，port 可能为 null，退回默认端口
+        prefs.port = port ?: Prefs.DEFAULT_PORT
         prefs.language = readLanguage()
         prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
