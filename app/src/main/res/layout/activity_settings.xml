@@ -159,6 +159,35 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 输入法控制：启用 / 切换。与语音无关，不受语音开关影响 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <Button
+                android:id="@+id/btn_enable"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_enable_ime" />
+
+            <Button
+                android:id="@+id/btn_pick"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_pick_ime" />
+        </LinearLayout>
+
         <!-- 分类词库：单按钮入口，跳转到独立页面按需下载 -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -278,8 +307,9 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- 授权麦克风：状态 + 三个按钮一行 -->
+        <!-- 授权麦克风：状态 + 单个授权按钮（与下方 NAS 控件同组，随语音开关整体隐藏） -->
         <LinearLayout
+            android:id="@+id/card_mic_permission"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
@@ -296,41 +326,17 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
-            <LinearLayout
+            <Button
+                android:id="@+id/btn_grant"
+                style="@style/SettingsButton"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btn_grant"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_grant_mic" />
-
-                <Button
-                    android:id="@+id/btn_enable"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_enable_ime" />
-
-                <Button
-                    android:id="@+id/btn_pick"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_pick_ime" />
-            </LinearLayout>
+                android:layout_height="44dp"
+                android:text="@string/settings_grant_mic" />
         </LinearLayout>
 
         <!-- NAS 语音：地址 + 端口 / 语言 + 默认键盘 / 提示词 / 识别选项 -->
         <LinearLayout
+            android:id="@+id/card_voice_server"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
@@ -517,6 +523,45 @@
                     android:textColor="@color/text_primary"
                     android:textSize="12sp" />
             </LinearLayout>
+        </LinearLayout>
+
+        <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不占内存、长按空格无效） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_voice_input"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <Switch
+                    android:id="@+id/switch_voice_input"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:singleLine="false"
+                android:text="@string/settings_voice_input_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
         </LinearLayout>
 
         <!-- 导出诊断包 -->

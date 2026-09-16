@@ -105,6 +105,17 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
+    /**
+     * 语音输入总开关，**默认禁用**。
+     *
+     * 禁用时语音功能完全沉寂：不创建 [AsrClient]/[MicRecorder]、不发起 WebSocket 连接，
+     * 长按空格等入口一律置空，因此不占用任何语音相关内存。
+     * 启用后才在 IME 重建（设置页保存会重启进程）时装配语音组件。
+     */
+    var voiceInputEnabled: Boolean
+        get() = sp.getBoolean(KEY_VOICE_INPUT, false)
+        set(value) = sp.edit { putBoolean(KEY_VOICE_INPUT, value) }
+
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
@@ -124,5 +135,6 @@ class Prefs(context: Context) {
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
         private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
+        private const val KEY_VOICE_INPUT = "voice_input"
     }
 }
