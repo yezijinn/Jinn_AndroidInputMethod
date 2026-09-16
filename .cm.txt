@@ -1,42 +1,39 @@
-按用户要求调整：hint 改回「控制」+ 隐私功能彻底移除（不兼容旧数据）
+剪贴板模块废弃代码排查：模块本身已无废弃，顺带清掉 2 个废弃 drawable
 
-【调整 1】方向按钮的副文字改回「控制」
-按钮宽度不够，最多 3 个字。进入方向面板时只有主文字变红色粗体「返回」，副文字保持「控制」：
-  未进入：[ 方向 / 控制 ]
-  进入后：[ 返回 / 控制 ]   ← 红色 #FF5A5F + 粗体
+【排查方法】对剪贴板 8 个文件做全量引用统计
+按「函数 / 属性 / 常量 / 类 / 资源」五个层面逐一核对引用者：
+- 提取所有函数定义，全项目（含测试）统计调用次数
+- 提取所有 val / const val，统计字段级引用
+- 检查每个类的跨文件引用
+- 检查 drawable 与 string 资源的引用
 
-【调整 2】隐私功能彻底删除（用户明确：不再处理任何隐私、不兼容旧代码）
-此前只删了 UI 入口，保留了 is_private 列与掩码逻辑。现按用户要求全部移除：
+【结论一：剪贴板模块代码已无废弃】
+- 函数层面：非 override 函数零引用者 **0 个**
+- 属性/常量层面：零引用者 **0 个**
+- 类层面：8 个类全部有跨文件引用
+  （ClipboardController←JinnIme、ClipboardDb←5 处、ClipboardCrypto←ClipboardDb、
+   ClipboardClassifier←3 处、ClipboardPrefs←4 处、ClipboardFirewall←SettingsActivity、
+   ClipboardPanelView←PinyinKeyboardView、SearchPanelView←2 处）
+- 说明：上一轮删除 deduplicate() / mergeDedupeFlags() / 隐私代码后，模块已清理干净
 
-ClipboardDb：
-- 建表去掉 is_private 列；Item 去掉 isPrivate 字段
-- upsert 去掉 isPrivate 参数与写入；selectCols / readItem 同步
-- setPrivate() 删除
-- whereClause / recentPage / count 去掉 privateOnly 参数与条件
-- deleteAll 条件简化为 "is_favorite = 0"
-- TRIM_PRIORITY 简化为单项 "is_favorite = 0"
-- mergeDuplicates 去掉隐私合并逻辑
-- ClipboardFilter 去掉 privateOnly 字段与 PSEUDO_PRIVATE 常量
-- **删除 deduplicate() 方法与 mergeDedupeFlags() 纯函数** —— 二者已无调用者
-  （入库去重早已改由 upsert 的 content_hash 唯一约束承担），属废弃代码
+【排查中确认「不是废弃」的项（避免误删）】
+- BaseAdapter 的 getCount/getItem/getItemId/getView、OnScrollListener 的 onScroll/
+  onScrollStateChanged、TextWatcher 的三个回调 —— 均由框架调用，无显式调用者但必需
+- clipboard_max_items_title / _hint —— 被 activity_settings.xml 引用
+- rootEnhanceEnabled —— 被 SettingsActivity 读写（开关 + Root 不可用时自动关闭）
+- ClipboardFirewall 的 7 个 check* 方法 —— 全部被 audit() 调用（7:7）
+- btn_aurora_primary / btn_aurora_secondary —— **首次误判为废弃并删除，编译立即报错**，
+  实为被 values/styles.xml 的 SettingsButton / SettingsButtonPrimary 引用（12 处 / 1 处），
+  已 git checkout 恢复
 
-UI：
-- ClipboardPanelView / SearchPanelView：去掉内容掩码（改为直接显示）、
-  去掉「· 隐私」标签、去掉点击展开分支、删除 revealedIds 集合
+【结论二：顺带清理 2 个真正废弃的 drawable】
+- card_bg.xml、field_bg.xml：全 res 与 Kotlin 均无引用
+  （注意 @color/card_bg 是同名**颜色**，被 card_aurora.xml 使用，已保留）
+- 验证方式：删除后 assembleDebug + lintDebug 通过（仅 compileDebugKotlin 不足以验证资源引用）
+- 真机确认设置页完整渲染，无 Resources.NotFoundException
 
-数据库迁移：
-- DB_VERSION 4 -> 5，新增 v5 迁移：重建表去掉 is_private 列，其余内容原样保留
-  （隐私标记本身丢弃，不做兼容）。同时重建 created_at 与 content_hash 两个索引
-
-测试：
-- 删除 ClipboardDedupeTest（测的是已删的 mergeDedupeFlags）
-- 重写 ClipboardFilterTest：去掉 privateOnly 断言与两个隐私专属用例
-
-【验证】
-- compileDebugKotlin + testDebugUnitTest 通过
-- 真机：v4 -> v5 数据库升级正常，无 SQLiteException / FATAL EXCEPTION
-- 真机截图确认：
-  · 功能面板显示「方向 / 控制」（hint 已修正）
-  · 分类栏为 返回|全部|网址|数字|收藏|搜索|清空，无「隐私」
-  · 列表条目分类正常（32174→NUMBER、747540.com→URL），无「· 隐私」标签
-  · 旧数据完整保留（13 条）
+【方法教训】
+1. grep 检查资源引用时**必须覆盖 values/ 目录**（style/theme 也在那里引用 drawable），
+   只查 layout/ 会漏
+2. **字段名匹配要防 \b 边界误判**：rootEnhance 匹配不到 rootEnhanceEnabled
+3. **验证资源删除的最可靠手段是编译 + assembleDebug + lintDebug**，grep 只能做初筛
