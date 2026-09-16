@@ -73,3 +73,7 @@ ONBOARDING.md
 tools/dict_builder/THUOCL-master/
 # 注音中间产物（可由脚本重新生成）
 tools/dict_builder/THUOCL注音输出/
+
+# 提交信息临时文件
+.cm.txt
+.commitmsg.txt
