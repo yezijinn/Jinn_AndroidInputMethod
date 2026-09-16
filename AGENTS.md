@@ -124,7 +124,9 @@ app/src/main/java/com/jinn/inputmethod/
 - **第三方 APP 不得读取 History**：JinnIme 不提供任何 History API（ClipboardHistoryProvider/PermissionStore/PermissionActivity 已全部移除）。第三方 APP 只能读取 Android System Clipboard 的最新内容，无法访问 JinnIme 私有历史库
 - **不干预 System Clipboard**：JinnIme 不阻断、篡改或周期性清空 Android System Clipboard；网盘、购物、分享类 APP 识别口令/链接的功能不受影响
 - **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏/隐私标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
-- **分类**：固定 全部/网址/隐私/数字/收藏；隐私**只能用户手动标记**，绝不自动；收藏是独立标签可与分类并存
+- **分类**：固定 **全部 / 网址 / 数字 / 收藏**；收藏是独立标签，可与分类并存。
+  隐私分类与隐私标记入口已移除（2026-09-16）：有收藏即可满足置顶需求，隐私冗余。
+  `is_private` 列与掩码逻辑**保留** —— 历史数据的隐私条目仍默认隐藏明文，且不再新增隐私标记。
 - **序号**：UI 序号非 DB ID，最新=最大，删除/去重后重新连续编号；搜索保留原始序号
 - **点击粘贴**：面板点击条目 → 广播（`ACTION_CLIPBOARD_PASTE`）回传 IME → `commitText`；
   连接无效时暂存 `pendingPasteText`，`onStartInputView` 时自动提交；无效连接不崩溃
