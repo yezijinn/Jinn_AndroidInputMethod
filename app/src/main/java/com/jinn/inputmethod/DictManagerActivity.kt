@@ -1,7 +1,6 @@
 package com.jinn.inputmethod
 
 import android.app.Activity
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -43,7 +42,7 @@ class DictManagerActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(COLOR_BG)
+            setBackgroundColor(getColor(R.color.app_bg))
         }
 
         root.addView(buildTopBar())
@@ -55,7 +54,7 @@ class DictManagerActivity : Activity() {
         // 动态状态行：初始隐藏，下载/删除时才出现。单行 + 省略号，
         // 内容是「正在下载 X…」这类变长文案，不适合按句拆分。
         textStatus = TextView(this).apply {
-            setTextColor(COLOR_ACCENT)
+            setTextColor(getColor(R.color.accent))
             textSize = 12f
             setPadding(dp(16), dp(6), dp(16), 0)
             maxLines = 1
@@ -86,7 +85,7 @@ class DictManagerActivity : Activity() {
     /** 顶栏下方的静态提示行（每句一个 TextView，不折行） */
     private fun hint(text: String): TextView = TextView(this).apply {
         this.text = text
-        setTextColor(COLOR_TEXT_SECONDARY)
+        setTextColor(getColor(R.color.text_secondary))
         textSize = 12f
         setPadding(dp(16), 0, dp(16), 0)
     }
@@ -102,13 +101,13 @@ class DictManagerActivity : Activity() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(COLOR_TOPBAR)
+            setBackgroundColor(getColor(R.color.card_bg))
             setPadding(dp(16), dp(12), dp(8), dp(12))
         }
 
         bar.addView(TextView(this).apply {
             text = getString(R.string.dict_manager_title)
-            setTextColor(COLOR_TEXT_PRIMARY)
+            setTextColor(getColor(R.color.text_primary))
             textSize = 16f
             setTypeface(Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -116,7 +115,7 @@ class DictManagerActivity : Activity() {
         // 右上角关闭：结束本页返回设置页
         bar.addView(TextView(this).apply {
             text = "✕"
-            setTextColor(COLOR_TEXT_SECONDARY)
+            setTextColor(getColor(R.color.text_secondary))
             textSize = 20f
             gravity = Gravity.CENTER
             isClickable = true
@@ -145,23 +144,23 @@ class DictManagerActivity : Activity() {
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(COLOR_CARD, 10)
+            background = rounded(getColor(R.color.surface_hi), 10)
             setPadding(dp(14), dp(14), dp(14), dp(14))
         }
 
         // 词库名
-        card.addView(line(dict.name, COLOR_TEXT_PRIMARY, 16f, bold = true))
+        card.addView(line(dict.name, getColor(R.color.text_primary), 16f, bold = true))
 
         // 说明：每句独立一行，不做自动折行
         for (sentence in dict.descLines) {
-            card.addView(line(sentence, COLOR_TEXT_SECONDARY, 13f, top = 4))
+            card.addView(line(sentence, getColor(R.color.text_secondary), 13f, top = 4))
         }
 
         // 代价一行一句，避免长句被折
-        card.addView(line("体积 %.1f MB。".format(Locale.US, dict.sizeMb), COLOR_WARN, 13f, top = 8))
-        card.addView(line(getString(R.string.dict_startup_cost_line1), COLOR_WARN, 13f, top = 2))
-        card.addView(line(getString(R.string.dict_startup_cost_line2, dict.startupSec), COLOR_WARN, 13f, top = 2))
-        card.addView(line(getString(R.string.dict_startup_cost_line3), COLOR_WARN, 13f, top = 2))
+        card.addView(line("体积 %.1f MB。".format(Locale.US, dict.sizeMb), getColor(R.color.warn), 13f, top = 8))
+        card.addView(line(getString(R.string.dict_startup_cost_line1), getColor(R.color.warn), 13f, top = 2))
+        card.addView(line(getString(R.string.dict_startup_cost_line2, dict.startupSec), getColor(R.color.warn), 13f, top = 2))
+        card.addView(line(getString(R.string.dict_startup_cost_line3), getColor(R.color.warn), 13f, top = 2))
 
         // 安装状态
         card.addView(
@@ -171,7 +170,7 @@ class DictManagerActivity : Activity() {
                 } else {
                     getString(R.string.dict_status_absent)
                 },
-                color = if (installed) COLOR_OK else COLOR_TEXT_SECONDARY,
+                color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
                 size = 13f,
                 top = 10,
             ),
@@ -186,7 +185,7 @@ class DictManagerActivity : Activity() {
             actionButton(
                 text = if (installed) getString(R.string.dict_action_reinstall)
                 else getString(R.string.dict_action_download),
-                color = COLOR_ACCENT,
+                color = getColor(R.color.accent),
                 enabled = downloading == null,
             ) { download(dict) },
             buttonLp(right = 8),
@@ -195,7 +194,7 @@ class DictManagerActivity : Activity() {
             row.addView(
                 actionButton(
                     text = getString(R.string.dict_action_remove),
-                    color = COLOR_DANGER,
+                    color = getColor(R.color.danger),
                     enabled = downloading == null,
                 ) { remove(dict) },
                 buttonLp(),
@@ -232,9 +231,9 @@ class DictManagerActivity : Activity() {
     ): TextView = TextView(this).apply {
         this.text = text
         gravity = Gravity.CENTER
-        setTextColor(Color.parseColor("#FFFFFF"))
+        setTextColor(getColor(R.color.text_on_accent))
         textSize = 14f
-        background = rounded(if (enabled) color else Color.parseColor("#3A4150"), 8)
+        background = rounded(if (enabled) color else getColor(R.color.btn_disabled), 8)
         setPadding(dp(18), dp(9), dp(18), dp(9))
         isClickable = true
         isEnabled = enabled
@@ -395,16 +394,5 @@ class DictManagerActivity : Activity() {
 
     private companion object {
         const val TAG = "DictManager"
-
-        /** 与剪贴板历史页同一套配色，保证观感一致 */
-        val COLOR_BG = Color.parseColor("#0B1020")
-        val COLOR_TOPBAR = Color.parseColor("#141C33")
-        val COLOR_CARD = Color.parseColor("#1C1F26")
-        val COLOR_TEXT_PRIMARY = Color.parseColor("#ECEEF2")
-        val COLOR_TEXT_SECONDARY = Color.parseColor("#9CA3AF")
-        val COLOR_ACCENT = Color.parseColor("#4C8DFF")
-        val COLOR_DANGER = Color.parseColor("#E5484D")
-        val COLOR_OK = Color.parseColor("#4CC38A")
-        val COLOR_WARN = Color.parseColor("#F0A020")
     }
 }
