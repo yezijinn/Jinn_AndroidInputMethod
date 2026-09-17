@@ -147,6 +147,16 @@ class JinnIme : InputMethodService() {
             else -> KeyboardMode.VOICE
         }
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
+        // 双拼键位表预热：7 套表约 3,000 条目，一次全建有几十毫秒量级开销；而键盘视图是在
+        // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
+        // 故这里用独立守护线程预热（不占用 BackgroundIo——那是剪贴板 DB 的单线程队列，
+        // 不该被 CPU 预热阻塞）。失败也不影响功能：首次访问会按需同步构建。
+        Thread({
+            // 后台优先级：此刻词库正在加载、用户可能已在打字，预热不该与之抢 CPU
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            val costMs = runCatching { Shuangpin.warmUpAll() }.getOrDefault(-1L)
+            Diagnostics.i(TAG, "双拼键位表预热完成: ${SHUANGPIN_TABLES.size} 套 / ${costMs}ms")
+        }, "jinn-shuangpin-warmup").apply { isDaemon = true }.start()
 
         // 语音关闭时不创建任何语音组件：不 new AsrClient/MicRecorder，也不发起 WebSocket 连接。
         ensureVoiceReady()
