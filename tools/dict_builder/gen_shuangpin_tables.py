@@ -20,6 +20,35 @@ rime 的 `speller/algebra` 是权威定义：本脚本按 librime 的代数语�
     python tools/dict_builder/gen_shuangpin_tables.py
     再跑 tools/dict_builder/verify_shuangpin_migration.py 对拍（换表不许改行为）
 
+代数语义（对齐 librime，2026-09-17 逐条核对 C++ 实现）
+--------------------------------------------------------
+核对对象：`docs/librime-master/src/rime/algo/{calculus.h,calculus.cc,algebra.cc}`（librime 1.17.0）。
+逐条结论（左=C++ 权威语义，右=本脚本）：
+
+  xform    Transformation，**默认 addition=true + deletion=true ⇒ 替换**；
+           内部是 boost::regex_replace（**全局**替换，`$1` 反向引用）        → 本脚本 re.sub 替换 ✓
+  derive   Derivation : Transformation 且 deletion=false ⇒ **保留原拼写 + 追加派生** → 保留+条件追加 ✓
+  erase    Erasion：addition=false，且用 boost::regex_**match**（整串匹配）
+           命中才清空拼写 ⇒ **整串匹配才删除**（不是部分删除）              → re.fullmatch ✓
+  xlit     Transliteration：逐字符映射，Parse 要求两侧**字符数相等**，
+           否则整个 algebra 加载失败                                        → 等长校验（本次补）✓
+  fuzz/abbrev/correction
+           只是 Derivation 的子类，差异在 credibility/type，
+           **字符串集合与 derive 完全相同**                                 → 忽略 tag ✓（对码表无影响）
+  集合语义 Projection::Apply：**每个 op 作用于上一轮的整个拼写集合**，
+           派生出的新拼写成为下一轮的输入（链式组合）；map 键天然去重        → cur→nxt→去重 ✓
+  未匹配   原样保留（Transformation::Apply 返回 false 时 caller 直接沿用）   → re.sub 无匹配即原串 ✓
+  正则语义 boost::regex（Perl 语法），其 \w \d \b 默认按 **ASCII**             → 统一加 re.ASCII（本次补）✓
+  解析     分隔符取「首个非小写字母字符」；多余参数（tag）忽略                 → 严格 op/…/… + 未知 op 响亮失败（本次补）✓
+
+**本次修正的 4 处潜伏差异**（对当前 7 套 schema 判定为「零语义变更」——重生成后
+`ShuangpinSchemes.kt` 逐字节不变，且迁移闸门仍为「真回归 0」）：
+  1. xform 结果为空时 librime 会丢弃该拼写（`!s.str.empty()`），旧实现会把空串留在集合里；
+  2. derive 同样不追加空结果；
+  3. xlit 两侧不等长时 librime 直接拒绝，旧实现被 zip 静默截断；
+  4. \w 等的 ASCII/Unicode 语义差异（当前无规则受影响，属预防性对齐）。
+
+原说明如下（保留）：
 代数语义（对齐 librime）
 ------------------------
   xform/P/R/   替换（就地变换）      derive/P/R/  派生（追加，原拼写保留）
@@ -188,12 +217,22 @@ def parse_algebra(path):
             in_algebra = True
             continue
         if in_algebra:
-            if re.match(r'^\S', line):
+            # 段结束：下一行缩进回到 ≤2（新的 YAML 键）或顶格。
+            # 旧写法只判 ^\S，一旦上游把 algebra 挪到文件中部，就会把后面
+            # preedit_format/comment_format 的规则一起吃进来（实测当前 algebra 都在文件末尾，
+            # 所以尚未暴露——这里按 YAML 结构收紧，避免依赖文件顺序）。
+            if line.strip() and len(line) - len(line.lstrip()) <= 2:
                 break
             m = re.match(r'^\s*-\s*(xform|derive|erase|xlit)/(.*)/\s*(#.*)?$', line)
-            if not m:
+            if m:
+                rules.append((m.group(1), m.group(2).split('/')))
                 continue
-            rules.append((m.group(1), m.group(2).split('/')))
+            # 不认识的 op（librime 还有 fuzz/abbrev/reorder）或格式异常：**必须响亮失败**。
+            # 静默跳过会让键位表悄悄少一条规则，而所有测试仍然全绿（最危险的一类腐化）。
+            if line.strip().startswith('-') or re.match(r'^\s*-\s*[a-z]', line):
+                raise SystemExit(
+                    f'algebra 段出现本脚本不认识的规则，拒绝继续（否则会静默生成错误键位）: {line!r}'
+                )
     return rules
 
 
@@ -206,20 +245,36 @@ def apply_rules(rules, spelling):
     cur = [spelling]
     for kind, parts in rules:
         nxt = []
+        # 正则一律用 re.ASCII：librime 用的是 boost::regex，其 \w \d \b \s 默认按 ASCII，
+        # 而 Python 3 的 re 默认是 Unicode 宽字符。当前 7 套 schema 里没有「先产生特殊符号、
+        # 再用 \w 匹配」的规则（已核查），所以此改动不改变今天的任何键位；但一旦上游调整顺序，
+        # 不做这个对齐就会静默算错。
+        FLAGS = re.ASCII
         if kind in ('xform', 'derive'):
             pat = parts[0]
             rep = (parts[1] if len(parts) > 1 else '').replace('$', '\\')
             for s in cur:
                 if kind == 'derive':
-                    nxt.append(s)
-                    if re.search(pat, s):
-                        nxt.append(re.sub(pat, rep, s))
+                    nxt.append(s)                       # derive：deletion=false → 原拼写保留
+                    if re.search(pat, s, FLAGS):
+                        res = re.sub(pat, rep, s, flags=FLAGS)
+                        if res:                         # addition 且非空才追加（librime 有 !s.str.empty()）
+                            nxt.append(res)
                 else:
-                    nxt.append(re.sub(pat, rep, s))
+                    # xform：deletion=true（原拼写丢弃）+ addition=true；结果为空 ⇒ 该拼写消失
+                    res = re.sub(pat, rep, s, flags=FLAGS)
+                    if res:
+                        nxt.append(res)
         elif kind == 'erase':
-            nxt = [s for s in cur if not re.fullmatch(parts[0], s)]
+            # librime 用 boost::regex_match（**整串**匹配）才清空拼写；不是部分删除
+            nxt = [s for s in cur if not re.fullmatch(parts[0], s, FLAGS)]
         elif kind == 'xlit':
-            table = {ord(a): b for a, b in zip(parts[0], parts[1])}
+            left, right = parts[0], parts[1] if len(parts) > 1 else ''
+            if len(left) != len(right):
+                # librime 的 Transliteration::Parse 要求两侧字符数相等，否则整个 algebra 加载失败；
+                # Python 的 zip 会静默截断到较短一方 → 变成「悄悄少映射几个字符」，必须显式拒绝
+                raise SystemExit(f'xlit 两侧字符数不等（{len(left)} vs {len(right)}），librime 会拒绝该规则')
+            table = {ord(a): b for a, b in zip(left, right)}
             nxt = [s.translate(table) for s in cur]
         seen = set()
         cur = [x for x in nxt if not (x in seen or seen.add(x))]
