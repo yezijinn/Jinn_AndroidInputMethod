@@ -38,6 +38,15 @@ internal class PhraseIndex private constructor(
     /** 键数（诊断用） */
     val size: Int get() = keyCount
 
+    /**
+     * 头部记录的**来源摘要**（64 位）。
+     *
+     * · APK 内置索引：构建脚本写入的「源文本 FNV-1a」；
+     * · 设备端为可选包构建的索引：写入「源文件 length:mtime 的 FNV-1a」，
+     *   加载时与磁盘上源文件的实际值比对 —— 不一致就重建（见 [stampOfFile]）。
+     */
+    val sourceStamp: Long get() = stampOf(bytes, 22)
+
     /** 第 [i] 个键（字典序）；越界返回 null。仅诊断/测试用，热路径不要调用 */
     fun keyAt(i: Int): String? = if (i in 0 until keyCount) decode(keysStart + keyOffsets[i],
         keysStart + keyOffsets[i + 1]) else null
@@ -112,6 +121,111 @@ internal class PhraseIndex private constructor(
     internal companion object {
         /** 从索引字节构造；结构不自洽返回 null（调用方回退，不影响可用性） */
         fun of(bytes: ByteArray): PhraseIndex? = parse(bytes)
+
+        /** 源文本摘要（与构建脚本 `build_dict_index.py` 的 FNV-1a 64 同算法） */
+        fun stampOfText(text: String): Long = fnv1a64(text.toByteArray(Charsets.UTF_8))
+
+        /** 源文件摘要：把 length 与 lastModified 拼起来做 FNV，用于「文件是否变过」的复用校验 */
+        fun stampOfFile(length: Long, modified: Long): Long =
+            fnv1a64("$length:$modified".toByteArray(Charsets.UTF_8))
+
+        /**
+         * 从「键 → 词表行」构建索引字节（**设备端**首次加载可选包时使用）。
+         *
+         * 与构建脚本产出**完全同格式**（同一套 header/偏移布局），因此可以互相读取；
+         * 已由 `IndexBuilderParityTest` 对拍钉住。
+         *
+         * @param lines 形如 `拼音<TAB>词1|词2` 的行；**流水线已保证按键升序**，
+         *   这里做一次校验，万一乱序则退化为排序（正确性优先，正常不会触发）。
+         * @param stamp 写入头部的来源摘要（供复用校验）
+         */
+        fun build(lines: Sequence<String>, stamp: Long): ByteArray {
+            // 单趟流式构建：绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会直接顶爆堆）。
+            // 两个字节缓冲 + 两个自增偏移数组，峰值 ≈ 索引本身的体积。
+            val keyBlob = java.io.ByteArrayOutputStream(1 shl 20)
+            val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
+            var keyOff = IntArray(1024)
+            var wordOff = IntArray(1024)
+            var count = 0
+            var keyLen = 0
+            var wordLen = 0
+            var prev: String? = null
+            for (line in lines) {
+                val tab = line.indexOf('\t')
+                if (tab <= 0) continue
+                val key = line.substring(0, tab)
+                // 索引靠二分查找，**必须按键升序**；乱序时由调用方回退到旧路径（见 PinyinEngine）
+                check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
+                prev = key
+                val kb = key.toByteArray(Charsets.UTF_8)
+                val wb = line.substring(tab + 1).toByteArray(Charsets.UTF_8)
+                keyBlob.write(kb)
+                wordBlob.write(wb)
+                keyLen += kb.size
+                wordLen += wb.size
+                if (count + 2 > keyOff.size) {
+                    keyOff = keyOff.copyOf(keyOff.size * 2)
+                    wordOff = wordOff.copyOf(wordOff.size * 2)
+                }
+                keyOff[count + 1] = keyLen
+                wordOff[count + 1] = wordLen
+                count++
+            }
+
+            val keyBlobBytes = keyBlob.toByteArray()
+            val wordBlobBytes = wordBlob.toByteArray()
+            val keyOffBytes = intArrayToBytes(keyOff.copyOf(count + 1))
+            val wordOffBytes = intArrayToBytes(wordOff.copyOf(count + 1))
+            val out = ByteArray(HEADER_SIZE + keyBlobBytes.size + keyOffBytes.size +
+                wordBlobBytes.size + wordOffBytes.size)
+            out[0] = 'J'.code.toByte(); out[1] = 'N'.code.toByte()
+            out[2] = 'I'.code.toByte(); out[3] = 'H'.code.toByte()
+            writeU16(out, 4, 1)
+            writeI32(out, 6, count)
+            writeI32(out, 10, keyBlobBytes.size)
+            writeI32(out, 14, wordBlobBytes.size)
+            writeI32(out, 18, 0)
+            writeI64(out, 22, stamp)
+            var p = HEADER_SIZE
+            System.arraycopy(keyBlobBytes, 0, out, p, keyBlobBytes.size); p += keyBlobBytes.size
+            System.arraycopy(keyOffBytes, 0, out, p, keyOffBytes.size); p += keyOffBytes.size
+            System.arraycopy(wordBlobBytes, 0, out, p, wordBlobBytes.size); p += wordBlobBytes.size
+            System.arraycopy(wordOffBytes, 0, out, p, wordOffBytes.size)
+            return out
+        }
+
+        private fun intArrayToBytes(a: IntArray): ByteArray {
+            val out = ByteArray(a.size * 4)
+            for (i in a.indices) writeI32(out, i * 4, a[i])
+            return out
+        }
+
+        private fun stampOf(b: ByteArray, off: Int): Long {
+            var v = 0L
+            for (i in 0 until 8) v = v or ((b[off + i].toLong() and 0xFF) shl (8 * i))
+            return v
+        }
+
+        fun fnv1a64(data: ByteArray): Long {
+            var h = -3750763034362895579L          // 0xCBF29CE484222325
+            for (b in data) {
+                h = h xor (b.toLong() and 0xFF)
+                h *= 1099511628211L                // 0x100000001B3
+            }
+            return h
+        }
+
+        private fun writeU16(b: ByteArray, o: Int, v: Int) {
+            b[o] = (v and 0xFF).toByte(); b[o + 1] = ((v ushr 8) and 0xFF).toByte()
+        }
+
+        private fun writeI32(b: ByteArray, o: Int, v: Int) {
+            for (i in 0 until 4) b[o + i] = ((v ushr (8 * i)) and 0xFF).toByte()
+        }
+
+        private fun writeI64(b: ByteArray, o: Int, v: Long) {
+            for (i in 0 until 8) b[o + i] = ((v ushr (8 * i)) and 0xFF).toByte()
+        }
 
         /** 词分隔符：与文本词库一致 */
         const val SEP = '|'.code.toByte()
