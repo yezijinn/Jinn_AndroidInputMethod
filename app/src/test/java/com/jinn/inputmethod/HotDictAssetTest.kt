@@ -35,6 +35,17 @@ class HotDictAssetTest {
         throw AssertionError("未找到资产 $name")
     }
 
+    private fun openIndex(): PhraseIndex {
+        for (p in listOf("src/main/assets/pinyin_index.bin.xz", "app/src/main/assets/pinyin_index.bin.xz")) {
+            val f = File(p)
+            if (f.isFile) {
+                val bytes = XZInputStream(f.inputStream()).use { it.readBytes() }
+                return PhraseIndex.of(bytes) ?: throw AssertionError("索引结构异常: $p")
+            }
+        }
+        throw AssertionError("未找到词库索引")
+    }
+
     private fun readHot(): LinkedHashMap<String, List<String>> {
         val map = LinkedHashMap<String, List<String>>()
         openAsset("hot_phrases.txt.xz").bufferedReader(Charsets.UTF_8).use { r ->
@@ -75,29 +86,15 @@ class HotDictAssetTest {
         hot.entries.filterIndexed { i, _ -> i % 100 == 0 }.forEach { sample[it.key] = it.value }
         assertTrue("抽样为空，资产可能未生成", sample.isNotEmpty())
 
-        var checked = 0
+        // 全量词库现在是二进制索引：直接按键查，不必再流式扫 60 万行
+        val index = openIndex()
         val problems = mutableListOf<String>()
-        openAsset("pinyin_phrases.txt.xz").bufferedReader(Charsets.UTF_8).use { r ->
-            var line = r.readLine()
-            while (line != null && checked < sample.size) {
-                val tab = line.indexOf('\t')
-                if (tab > 0) {
-                    val key = line.substring(0, tab)
-                    val hotWords = sample[key]
-                    if (hotWords != null) {
-                        val fullWords = line.substring(tab + 1).split('|')
-                        if (fullWords.size < hotWords.size ||
-                            fullWords.subList(0, hotWords.size) != hotWords
-                        ) {
-                            problems += key
-                        }
-                        checked++
-                    }
-                }
-                line = r.readLine()
+        for ((key, hotWords) in sample) {
+            val full = index.wordsFor(key)?.toList()
+            if (full == null || full.size < hotWords.size || full.subList(0, hotWords.size) != hotWords) {
+                problems += key
             }
         }
-        assertEquals("抽样键未在全量词库中找到: $checked/${sample.size}", sample.size, checked)
         assertTrue("以下键的子集词表不是全量前缀（并入后顺序会漂移）: $problems", problems.isEmpty())
     }
 }

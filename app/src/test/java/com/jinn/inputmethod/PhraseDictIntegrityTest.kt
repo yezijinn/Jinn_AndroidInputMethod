@@ -31,30 +31,14 @@ class PhraseDictIntegrityTest {
 
     @Test
     fun ambiguousWordsExistInAssetDictionary() {
-        val found = HashMap<String, Boolean>()
-        val remain = requiredWords.keys.toHashSet()
-
-        openPackedPhraseDict().bufferedReader(Charsets.UTF_8).use { reader ->
-            var line = reader.readLine()
-            while (line != null && remain.isNotEmpty()) {
-                val tab = line.indexOf('\t')
-                if (tab > 0) {
-                    val key = line.substring(0, tab)
-                    val word = requiredWords[key]
-                    if (word != null && remain.contains(key)) {
-                        found[key] = line.substring(tab + 1).split('|').contains(word)
-                        remain.remove(key)
-                    }
-                }
-                line = reader.readLine()
-            }
-        }
-
+        // 直接查打包进 APK 的那份**二进制索引**（词库换成索引后，唯一权威载体就是它）
+        val index = openPhraseIndex()
         for ((key, word) in requiredWords) {
-            assertTrue("词库中缺少键「$key」", found.containsKey(key))
+            val words = index.wordsFor(key)
+            assertTrue("词库中缺少键「$key」", words != null)
             assertTrue(
                 "键「$key」下缺少词「$word」——连写歧义类漏词回归（排查见 tools/dict_builder/detect_ambiguous_keys.py）",
-                found[key] == true,
+                words!!.contains(word),
             )
         }
     }
@@ -63,15 +47,18 @@ class PhraseDictIntegrityTest {
      * 打开打包用的词库文件（xz 压缩），校验的就是真正进 APK 的那份内容。
      * 兼容 Gradle 测试从 app/ 或项目根启动两种工作目录。
      */
-    private fun openPackedPhraseDict(): java.io.InputStream {
+    private fun openPhraseIndex(): PhraseIndex {
         val candidates = listOf(
-            "src/main/assets/pinyin_phrases.txt.xz",
-            "app/src/main/assets/pinyin_phrases.txt.xz",
+            "src/main/assets/pinyin_index.bin.xz",
+            "app/src/main/assets/pinyin_index.bin.xz",
         )
         for (path in candidates) {
             val f = File(path)
-            if (f.isFile) return org.tukaani.xz.XZInputStream(f.inputStream())
+            if (f.isFile) {
+                val bytes = org.tukaani.xz.XZInputStream(f.inputStream()).use { it.readBytes() }
+                return PhraseIndex.of(bytes) ?: throw AssertionError("索引结构异常: $path")
+            }
         }
-        throw AssertionError("未找到词库文件，尝试过: $candidates")
+        throw AssertionError("未找到词库索引，尝试过: $candidates")
     }
 }

@@ -35,8 +35,13 @@ object PinyinEngine {
     /** 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字） */
     private const val COMMON_CHARS_ASSET = "common_chars.txt"
 
-    /** 短语词库 asset 名（xz 压缩存放，加载时流式解压） */
-    private const val PHRASES_ASSET_XZ = "pinyin_phrases.txt.xz"
+    /**
+     * 全量基础词库的**二进制索引** asset（`tools/dict_builder/build_dict_index.py` 构建期产出）。
+     *
+     * 取代原来的 `pinyin_phrases.txt.xz`：运行时只需解压 + 顺序读入偏移数组，查询二分查找，
+     * 不再逐行解析、不再建百万级 HashMap（真机 6~10.7s → 1s 内、内存 290MB → ~20MB）。
+     */
+    private const val INDEX_ASSET_XZ = "pinyin_index.bin.xz"
 
     /**
      * 高频子集词库（由 `tools/dict_builder/gen_hot_dict.py` 从同一份源按词频取前 4 万条生成）。
@@ -89,11 +94,38 @@ object PinyinEngine {
      */
     private val charsBySyllable = ConcurrentHashMap<String, Array<String>>(1024)
 
-    /** 拼音串 → 词语（按频率降序） */
-    private val phrasesByPinyin = ConcurrentHashMap<String, Array<String>>(600_000)
+    /**
+     * **运行时并入**的拼音串 → 词语（按频率降序）。
+     *
+     * 只装两样东西：① 高频子集（首屏秒级可用）；② 用户下载的可选词库包。
+     * 全量基础包**不在**这里，而是 [baseIndex]（二进制索引，只读）；两者由 [phrasesFor] 统一读取，
+     * 因此「基础在前、运行时词在后且去重」的候选顺序与旧实现完全一致。
+     */
+    private val phrasesByPinyin = ConcurrentHashMap<String, Array<String>>(64_000)
+
+    /**
+     * 全量基础词库索引（构建期解析好的二进制，见 [PhraseIndex]）。
+     *
+     * 不可变、可多线程并发读；加载失败时为 null（此时仅高频子集/可选包可用，不影响打字）。
+     */
+    @Volatile
+    private var baseIndex: PhraseIndex? = null
 
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
-    private val wordToPinyin = ConcurrentHashMap<String, String>(700_000)
+    private val wordToPinyin = ConcurrentHashMap<String, String>(8_192)
+
+    /**
+     * 「候选词 → 它的拼音键」的**短期**映射（只保留最近若干次查询）。
+     *
+     * 旧实现靠一张 69 万条的「词 → 拼音」全量反向索引来支撑两件事：
+     * ① 选中候选后计算「消费了多少拼音」（残码保留）；② 智能预测。
+     * 基础词库改为二进制索引后不再建全量反向索引（省约 50MB），改由**查询路径顺手记录**：
+     * 候选本来就是从某个键查出来的，记下来即可，语义还更准（记录的是真正产出该候选的键）。
+     * 上限 4096 条，超出即清空（预测/消费只关心最近一次查询）。
+     * **语义边界**：只对「最近查询里展示过的候选」有效——而真实交互中预测与消费计算
+     * 永远发生在用户刚选中的那个候选上，因此与实际需求一致（旧全量索引只是能力过剩）。
+     */
+    private val candidatePinyin = ConcurrentHashMap<String, String>(4_096)
 
     /** 合法音节集合（不含声调） */
     private val validSyllables = ConcurrentHashMap.newKeySet<String>()
@@ -175,30 +207,36 @@ object PinyinEngine {
                 )
             }
 
-            // ── 第二段：全量基础包，merge 进同一批容器（查询可并发进行）──
+            // ── 第二段：全量基础包（二进制索引）──
             if (charsBySyllable.isEmpty()) loadChars(context)
-            loadPhrases(context, merge = hotMs >= 0)
+            val indexMs = loadIndex(context)
             // 可选词库包**不在这里加载** —— 见 loadOptionalAsync()。
-            // 它们可达 97 万词条、加载十几秒，若在此一并加载会拖慢
-            // 「开机后首次输入」的候选就绪时间；改为基础包就绪后在后台补齐。
+            // 它们可达 114 万词条、解析十几秒，改为基础包就绪后在**空闲时**补齐。
             if (validSyllables.isEmpty()) loadSyllables(context)
+            if (indexMs >= 0) dropRedundantHotEntries()
             finalizeLoad()
             loaded = true
-            fullLoaded = true
-            Log.i(TAG, "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size} 合法音节=${validSyllables.size}")
+            fullLoaded = indexMs >= 0
+            Log.i(
+                TAG,
+                "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
+                    "运行时键=${phrasesByPinyin.size} 合法音节=${validSyllables.size}",
+            )
             if (hotMs >= 0) {
                 Diagnostics.i(
                     TAG,
-                    "全量基础包已并入（高频子集 ${hotMs}ms + 全量补全 ${System.currentTimeMillis() - t0 - hotMs}ms）",
+                    "两段式加载完成（高频子集 ${hotMs}ms + 索引 ${indexMs}ms，" +
+                        "总计 ${System.currentTimeMillis() - t0}ms）",
                 )
             }
             // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
             // 评估内存优化前必须先有这个数，不能靠猜。
             Diagnostics.i(
                 TAG,
-                "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size} " +
-                    "反向索引=${wordToPinyin.size} 合法音节=${validSyllables.size} " +
-                    if (showRareChars) "生僻字=显示" else "生僻字=隐藏(已过滤 $filteredWordCount 条)",
+                "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
+                    "运行时键=${phrasesByPinyin.size} 运行时反查=${wordToPinyin.size} " +
+                    "合法音节=${validSyllables.size} " +
+                    if (showRareChars) "生僻字=显示" else "生僻字=隐藏(查询期过滤)",
             )
             Diagnostics.i(
                 TAG,
@@ -236,7 +274,9 @@ object PinyinEngine {
         synchronized(this) {
             charsBySyllable.clear()
             phrasesByPinyin.clear()
+            baseIndex = null
             wordToPinyin.clear()
+            candidatePinyin.clear()
             validSyllables.clear()
             syllablePrefixes.clear()
             // 有序表是不可变快照，置空引用即可（没有 clear 方法）
@@ -259,6 +299,30 @@ object PinyinEngine {
      * @param commonCharsText 常用字表文本；传 null 表示**不过滤**（加载全部字，
      *        与「显示生僻字」开关开启一致）。传入即启用生僻字过滤，用于验证过滤行为。
      */
+    /**
+     * 测试注入：从**索引字节**加载短语表（与 [loadFromTexts] 的文本路径对拍用）。
+     *
+     * 与真实加载一致：基础词走 [baseIndex]，因此生僻字过滤发生在查询期。
+     */
+    internal fun loadFromIndexBytes(
+        indexBytes: ByteArray,
+        chars: String,
+        syllables: String,
+        commonCharsText: String? = null,
+    ) {
+        synchronized(this) {
+            commonChars = null
+            filteredWordCount = 0
+            if (commonCharsText != null) setCommonCharsText(commonCharsText)
+            loadCharsText(chars)
+            baseIndex = PhraseIndex.of(indexBytes) ?: throw AssertionError("测试索引结构异常")
+            loadSyllablesText(syllables)
+            finalizeLoad()
+            loaded = true
+            fullLoaded = true
+        }
+    }
+
     internal fun loadFromTexts(
         chars: String,
         phrases: String,
@@ -506,21 +570,46 @@ object PinyinEngine {
     }
 
     /**
-     * 加载全量基础词库。
+     * 加载全量基础词库的二进制索引；成功返回耗时（毫秒），失败返回 -1。
      *
-     * @param merge true 表示「高频子集已在表里」，走并入语义（先来先得 + 去重）。
-     *   因为子集取自同一份源、且是每个键的高频前缀，并入后的候选顺序与
-     *   「一次性全量加载」**完全一致**（已由单测 `HotDictMergeTest` 钉住）。
+     * 失败**不影响可用性**：此时高频子集（或可选包）仍然可用，只是候选少一些，
+     * 调用方据返回值决定 `isFullyLoaded`。异常只记日志、不抛出——绝不因为索引坏掉就让输入法打不出字。
      */
-    private fun loadPhrases(context: Context, merge: Boolean = false) {
-        // 词库以 xz 存放：28.0MB → 8.0MB，比 deflate 再省 22%，APK 体积随之下降约 20%。
-        // 用流式解压直接读、不落地磁盘；仍逐行解析，避免一次性构造超大 String。
-        // 解压实测约 0.6s，发生在后台加载线程上，不阻塞 UI、也不影响键盘显示。
-        context.assets.open(PHRASES_ASSET_XZ).let { raw ->
-            org.tukaani.xz.XZInputStream(raw).bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                loadPhrasesReader(reader, merge)
+    private fun loadIndex(context: Context): Long {
+        val t0 = System.currentTimeMillis()
+        return runCatching {
+            val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
+                org.tukaani.xz.XZInputStream(raw).use { it.readBytes() }
+            }
+            val idx = PhraseIndex.of(bytes) ?: error("索引结构异常（magic/版本/偏移不自洽）")
+            baseIndex = idx
+            // 索引里的词不参与生僻字过滤（过滤在查询期做），故反向索引需按需构建：
+            // 反向索引不再全量构建：改为查询时记录 recent 候选→键（见 candidatePinyin，省约 50MB）。
+            System.currentTimeMillis() - t0
+        }.getOrElse {
+            Diagnostics.e(TAG, "基础词库索引加载失败，退化为仅用高频子集/可选包: ${it.message}", it)
+            -1L
+        }
+    }
+
+    /**
+     * 索引就绪后，把「只是重复索引内容」的高频子集条目从运行时表里摘掉。
+     *
+     * 判据很直接：该键在索引里的词表以运行时词表开头（子集是全量的前缀）→ 运行时那份是冗余的。
+     * 可选包合并过的键不会是前缀，因此不受影响。
+     */
+    private fun dropRedundantHotEntries() {
+        val idx = baseIndex ?: return
+        var dropped = 0
+        for (key in phrasesByPinyin.keys.toList()) {
+            val mine = phrasesByPinyin[key] ?: continue
+            val full = idx.wordsFor(key) ?: continue
+            if (full.size >= mine.size && full.copyOfRange(0, mine.size).contentEquals(mine)) {
+                phrasesByPinyin.remove(key)
+                dropped++
             }
         }
+        if (dropped > 0) Diagnostics.i(TAG, "高频子集已并入索引，摘除冗余运行时条目 $dropped 条")
     }
 
     /**
@@ -562,14 +651,9 @@ object PinyinEngine {
                 if (tab > 0) {
                     val pinyin = line.substring(0, tab)
                     val phrases = line.substring(tab + 1).split('|')
-                    // 生僻字过滤：含生僻字的词整条丢弃
-                    // （用户既然用不到生僻字，也就不会用到含生僻字的词）
-                    val kept = if (commonChars == null) {
-                        phrases
-                    } else {
-                        phrases.filter { isLoadableWord(it) }
-                    }
-                    filteredWordCount += phrases.size - kept.size
+                    // 生僻字过滤不在这里做（改到查询期，见 phrasesFor）：
+                    // 索引与运行时表都保持原样，过滤只影响最终展示的候选。
+                    val kept = phrases
                     if (kept.isNotEmpty()) {
                         if (merge) {
                             // 基础包在前、扩展包追加：同键词条共存，基础候选优先。
@@ -577,7 +661,8 @@ object PinyinEngine {
                             // **必须去重**：扩展包与基础包可能收录同一个词
                             // （如「阿尔萨斯」两边都有），直接 `existing + kept`
                             // 会让候选栏出现两个完全相同的候选项。
-                            val existing = phrasesByPinyin[pinyin]
+                            // 基础包可能只在索引里（不在运行时表），故两者都要看
+                            val existing = phrasesByPinyin[pinyin] ?: baseIndex?.wordsFor(pinyin)
                             phrasesByPinyin[pinyin] = if (existing != null) {
                                 val seen = HashSet<String>(existing.size + kept.size)
                                 existing.forEach { seen.add(it) }
@@ -597,6 +682,51 @@ object PinyinEngine {
             }
             line = reader.readLine()
         }
+    }
+
+    /**
+     * 统一读取入口：运行时并入的词优先（高频子集/可选包已与基础包合并过），否则查基础索引。
+     *
+     * 生僻字过滤在这里做（查询期）而不是加载期：索引因此可以原样复用，
+     * 不像旧实现那样「隐藏生僻字」与「显示生僻字」需要两份数据/两次解析。
+     * 代价是每次命中多一次位图判断（微秒级）。
+     */
+    private fun phrasesFor(key: String): Array<String>? {
+        val raw = phrasesByPinyin[key] ?: baseIndex?.wordsFor(key) ?: return null
+        val filter = commonChars ?: return raw
+        var needFilter = false
+        for (w in raw) {
+            if (!isLoadableWord(w)) {
+                needFilter = true
+                break
+            }
+        }
+        if (!needFilter) return raw
+        return raw.filter { isLoadableWord(it) }.toTypedArray()
+    }
+
+    /**
+     * 记录「候选词 → 产出它的拼音键」，供选中后的消费计算与智能预测使用。
+     *
+     * 只在查询路径调用（每次按键、每个键 ≤ 若干词），开销可忽略；上限清空避免无限增长。
+     */
+    private fun noteCandidateKeys(words: Array<String>, key: String) {
+        if (candidatePinyin.size > 4_096) candidatePinyin.clear()
+        for (w in words) candidatePinyin.putIfAbsent(w, key)
+    }
+
+    /** 以 [prefix] 开头的全部拼音键（基础索引 + 运行时表，去重） */
+    private fun keysStartingWith(prefix: String): List<String> {
+        val out = LinkedHashSet<String>(16)
+        out.addAll(baseIndex?.keysWithPrefix(prefix) ?: emptyList())
+        var lo = lowerBound(sortedPhraseKeys, prefix)
+        while (lo < sortedPhraseKeys.size) {
+            val k = sortedPhraseKeys[lo]
+            if (!k.startsWith(prefix)) break
+            out.add(k)
+            lo++
+        }
+        return out.toList()
     }
 
     /**
@@ -666,7 +796,10 @@ object PinyinEngine {
         for (k in syllables.size downTo 1) {
             val key = syllables.take(k).joinToString("")
             for (k2 in phraseKeysOf(key)) {
-                phrasesByPinyin[k2]?.let { result.addAll(it.take(MAX_PHRASES)) }
+                phrasesFor(k2)?.let { words ->
+                    result.addAll(words.take(MAX_PHRASES))
+                    noteCandidateKeys(words, k2)
+                }
             }
             // 逐级递减：k>1 时只取整词；k==1 时再补该音节的单字
             if (k == 1) {
@@ -744,20 +877,17 @@ object PinyinEngine {
      */
     fun predict(lastWord: String): List<String> {
         if (!loaded || lastWord.isEmpty()) return emptyList()
-        val lastPinyin = wordToPinyin[lastWord] ?: return emptyList()
+        // 优先用查询时记录的「候选→键」（基础词走索引后没有全量反向索引）
+        val lastPinyin = candidatePinyin[lastWord] ?: wordToPinyin[lastWord] ?: return emptyList()
         val out = LinkedHashSet<String>()
-        var lo = lowerBound(sortedPhraseKeys, lastPinyin)
-        while (lo < sortedPhraseKeys.size) {
-            val key = sortedPhraseKeys[lo]
-            if (!key.startsWith(lastPinyin)) break
-            if (key.length > lastPinyin.length) {
-                for (phrase in phrasesByPinyin[key].orEmpty()) {
-                    if (phrase.length > lastWord.length && phrase.startsWith(lastWord)) {
-                        out.add(phrase.substring(lastWord.length))
-                    }
+        // 基础索引的前缀扫描 + 运行时表（可选包/子集）里的键，二者都按字典序，合并去重
+        for (key in keysStartingWith(lastPinyin)) {
+            if (key.length <= lastPinyin.length) continue      // 只要「更长」的键
+            for (phrase in phrasesFor(key).orEmpty()) {
+                if (phrase.length > lastWord.length && phrase.startsWith(lastWord)) {
+                    out.add(phrase.substring(lastWord.length))
                 }
             }
-            lo++
         }
         return out.take(MAX_PREDICTIONS)
     }
@@ -793,7 +923,7 @@ object PinyinEngine {
         var bestScore = 0
         for (path in paths) {
             val key = path.joinToString("")
-            val hit = phrasesByPinyin[key]?.size ?: 0
+            val hit = phrasesFor(key)?.size ?: 0
             val score = hit * 1000 - path.size  // 词命中为主，音节少略优
             if (score > bestScore) {
                 bestScore = score
@@ -801,7 +931,7 @@ object PinyinEngine {
             }
         }
         // 只有真实命中词库的切分才采用（否则贪心）
-        return best?.takeIf { phrasesByPinyin.containsKey(it.joinToString("")) }
+        return best?.takeIf { phrasesFor(it.joinToString("")) != null }
     }
 
     /** DFS 枚举所有合法音节切分（最长音节 6 字符），路径上限 [MAX_SEGMENT_PATHS] 防爆炸 */
@@ -918,9 +1048,9 @@ object PinyinEngine {
             return k
         }
 
-        // 1) 词语候选：词→拼音反查（ue/ve 双写法兼容）
+        // 1) 词语候选：候选→键（查询时记录）优先，兼容旧反向索引（运行时并入的词）
         if (candidate.length > 1) {
-            wordToPinyin[candidate]?.let { wp0 ->
+            (candidatePinyin[candidate] ?: wordToPinyin[candidate])?.let { wp0 ->
                 for (wp in phraseKeysOf(wp0)) {
                     // 常规：候选拼音是输入的音节对齐前缀 → 只消费该 Span，残码保留
                     if (wp.length < input.length && input.startsWith(wp)) {
@@ -1027,7 +1157,10 @@ object PinyinEngine {
         val result = LinkedHashSet<String>()
         for (syl in completions) {
             for (key in phraseKeysOf(base + syl)) {
-                phrasesByPinyin[key]?.let { result.addAll(it.take(MAX_PHRASES)) }
+                phrasesFor(key)?.let { words ->
+                    result.addAll(words.take(MAX_PHRASES))
+                    noteCandidateKeys(words, key)
+                }
             }
             if (result.size >= MAX_COMPLETION_RESULTS) break
         }
