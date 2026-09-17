@@ -57,6 +57,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textImeReceived: TextView
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchShowRareChars: Switch
+    private lateinit var switchUserLearning: Switch
     private lateinit var switchVoiceInput: Switch
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
@@ -146,6 +147,7 @@ class SettingsActivity : ComponentActivity() {
         textImeReceived = findViewById(R.id.text_ime_received)
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
+        switchUserLearning = findViewById(R.id.switch_user_learning)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
         btnCheckUpdate = findViewById(R.id.btn_check_update)
         bindCheckUpdate()
@@ -267,6 +269,12 @@ class SettingsActivity : ComponentActivity() {
             prefs.showRareChars = checked
             Diagnostics.i(TAG, "显示生僻字: ${if (checked) "开启" else "关闭"}（重启输入法后生效）")
             toast(if (checked) R.string.rare_chars_on else R.string.rare_chars_off)
+        }
+        // 用户词频学习：勾选即写入并**立即生效**（不需要重启输入法）
+        switchUserLearning.setOnCheckedChangeListener { _, checked ->
+            prefs.userLearning = checked
+            UserFrequency.setEnabled(checked)
+            Diagnostics.i(TAG, "用户词频学习: ${if (checked) "开启" else "关闭"}（立即生效）")
         }
         editImeTest.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
@@ -483,6 +491,7 @@ class SettingsActivity : ComponentActivity() {
         bindVoiceInputSwitch()
 
         switchShowRareChars.isChecked = prefs.showRareChars
+        switchUserLearning.isChecked = prefs.userLearning
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)

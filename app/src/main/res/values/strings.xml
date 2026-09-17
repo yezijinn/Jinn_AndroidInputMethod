@@ -167,6 +167,8 @@
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">显示生僻字</string>
     <string name="switch_show_rare_chars_desc">默认关闭,不加载生僻字.勾选后重启加载生僻字</string>
+    <string name="switch_user_learning">用户词频学习</string>
+    <string name="switch_user_learning_desc">记住你实际选过的词并排到前面；只存在本机，不上传。可随时关闭（关闭后既有记录不再参与排序）</string>
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
 
