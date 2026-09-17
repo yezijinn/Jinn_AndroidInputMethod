@@ -9,18 +9,23 @@
 （真机 6~10.7s，内存 290MB）。索引把这些一次性成本挪到**构建期**：运行时只需解压索引 +
 顺序读入几个数组，查询用二分查找，不再解析、不再建哈希表。
 
-格式（小端）
-------------
+格式（小端，**v2 = 长度数组版**）
+--------------------------------
     magic      : "JNIH"（4B）
-    version    : u16
+    version    : u16 = 2
     keyCount   : u32
     keysLen    : u32        # keysBlob 字节数
     wordsLen   : u32        # wordsBlob 字节数
-    srcDigest  : u64        # 源文本摘要（行数 + FNV-1a 64），用于失配时回退
+    reserved   : u32
+    srcDigest  : u64        # 源文本摘要（APK 索引）／源文件 length:mtime（设备端索引）
     keysBlob   : UTF-8，全部键按字典序串联
-    keyOffsets : u32 × (keyCount + 1)
+    keyLengths : u8  × keyCount        # 每键字节数（键都是拼音，≤255）
     wordsBlob  : UTF-8，每个键的词表（`词1|词2|...`，顺序即词频序）
-    wordOffsets: u32 × (keyCount + 1)
+    wordLengths: u16 × keyCount        # 每键词表字节数（≤65535）
+
+> v1 用的是 u32 偏移表（keyCount+1 条 × 2 张表 = 4.83MB）；改为长度数组后只需 0.60MB + 1.21MB，
+> **原始体积 17.3MB → 13.6MB（−3.7MB）**，xz 后与解压耗时同步下降。
+> 读取端在内存里把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
 
 词表顺序与 `build_dict` 完全一致（词频降序、同频保持源序），因此索引与文本资产**逐键等价**——
 脚本末尾自带抽样比对（若文本资产还在）。
@@ -48,7 +53,7 @@ OUT_TXT = os.path.join(ROOT, "tools", "dict_builder", "out", "rime_ice", "pinyin
 FIX_DIR = os.path.join(ROOT, "app", "src", "test", "resources")
 
 MAGIC = b"JNIH"
-VERSION = 1
+VERSION = 2
 
 
 def fnv1a64(data: bytes) -> int:
@@ -74,21 +79,22 @@ def build_index_bytes(text: str) -> bytes:
 
     keys_blob = b"".join(keys)
     words_blob = b"".join(words)
-    key_off = [0]
-    for k in keys:
-        key_off.append(key_off[-1] + len(k))
-    word_off = [0]
-    for w in words:
-        word_off.append(word_off[-1] + len(w))
+
+    # 边界自检：长度数组用 u8/u16，超界必须立刻失败（否则读取端会算出错误的切片）
+    for k, raw in zip(keys, keys):
+        if len(raw) > 255:
+            raise SystemExit(f"键过长（>255B），长度数组无法表示: {raw[:32]!r}")
+    too_long = [w for w in words if len(w) > 65535]
+    if too_long:
+        raise SystemExit(f"词表过长（>64KB），长度数组无法表示: {too_long[0][:32]!r}")
+
+    key_len = bytes(len(k) for k in keys)
+    word_len = b"".join(struct.pack("<H", len(w)) for w in words)
 
     digest = fnv1a64(text.encode("utf-8"))
     head = struct.pack("<4sHIIIIQ", MAGIC, VERSION, len(pairs),
                        len(keys_blob), len(words_blob), 0, digest)
-    body = (keys_blob
-            + struct.pack(f"<{len(key_off)}I", *key_off)
-            + words_blob
-            + struct.pack(f"<{len(word_off)}I", *word_off))
-    return head + body
+    return head + keys_blob + key_len + words_blob + word_len
 
 
 def collect_text() -> str:
