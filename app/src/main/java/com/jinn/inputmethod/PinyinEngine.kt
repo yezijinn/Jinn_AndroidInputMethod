@@ -181,10 +181,19 @@ object PinyinEngine {
      * 判定标准：《通用规范汉字表》(2013) 一级(3500) + 二级(3000) = 6500 常用字；
      * 三级(1605) 及表外字（扩展区）视为生僻。见 assets/common_chars.txt。
      */
+    /**
+     * 常用字位图（查询期生僻字过滤用）。
+     *
+     * ⚠ 必须 @Volatile：加载线程在 `load()` 里写它，主线程在 [phrasesFor] 里读它。
+     * 目前「碰巧安全」——`loadCommonChars()` 在 `loaded = true`（volatile 写）之前完成，
+     * 读方先在 `query()` 里读 `loaded`（volatile 读）建立了 happens-before。
+     * 但这个保证是**隐式**的：任何「在 loaded 之后再改 commonChars」的路径都会让它失效
+     * （读方拿到旧的 null → 生僻字/常用字过滤结果错乱）。这里显式声明，把不变量钉在字段上。
+     */
+    @Volatile
     private var commonChars: BooleanArray? = null
 
     /** 因生僻字被过滤掉的词条数（诊断用） */
-    private var filteredWordCount = 0
 
     /** 扩展词库（长词包）是否已加载。后台线程写、UI 线程经 [isExtensionLoaded] 读，需 volatile */
     @Volatile
@@ -317,7 +326,6 @@ object PinyinEngine {
             sortedPhraseKeys = emptyList()
             completionCache.clear()
             commonChars = null
-            filteredWordCount = 0
             loaded = false
             // 可选词库状态一并复位，否则下一个测试类会误以为可选包已加载
             optionalLoaded = false
@@ -344,7 +352,6 @@ object PinyinEngine {
     ) {
         synchronized(this) {
             commonChars = null
-            filteredWordCount = 0
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
             loadCharsText(chars)
             baseIndex = PhraseIndex.of(indexBytes) ?: throw AssertionError("测试索引结构异常")
@@ -372,7 +379,6 @@ object PinyinEngine {
         synchronized(this) {
             // 先复位过滤状态，避免同一个 JVM 内多次注入时相互污染
             commonChars = null
-            filteredWordCount = 0
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
             loadCharsText(chars)
             loadPhrasesText(phrases)
@@ -651,7 +657,6 @@ object PinyinEngine {
                     } else {
                         chars.filter { it.length == 1 && isLoadableChar(it[0]) }
                     }
-                    filteredWordCount += chars.size - kept.size
                     if (kept.isNotEmpty()) charsBySyllable[syllable] = kept.toTypedArray()
                 }
             }
