@@ -1227,7 +1227,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun currentInputTypeLabel(): String = when {
         capsMode -> "大写英文"
         englishMode -> "小写英文"
-        shuangpinMode -> "中文" + scheme.shortName
+        shuangpinMode -> "中文双拼"
         else -> "中文全拼"
     }
 
@@ -1320,10 +1320,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun renderFunctionPanel() {
         viewCandidateList.removeAllViews()
-        // 按钮文字随方案变化：主文本＝当前方案，副文本＝下一个方案（点一下循环切换）
+        // 按钮文案保持原有「全拼 / 双拼」二态（不得显示具体方案名——方案只在设置页选）
         viewCandidateList.addView(buildFunctionButton(
-            label = scheme.shortName,
-            hint = "换${ShuangpinScheme.cycle(scheme).shortName}",
+            label = if (shuangpinMode) "双拼" else "全拼",
+            hint = if (shuangpinMode) "换全拼" else "换双拼",
             onClick = { togglePinyinScheme() },
         ))
         viewCandidateList.addView(buildFunctionButton(
@@ -1440,9 +1440,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "输入方案切换: 大写锁定激活，切换无效")
             return
         }
-        scheme = ShuangpinScheme.cycle(scheme)
+        // 只切「用不用双拼」；具体方案由设置页决定，切回时取**设置里选定的那套**
+        // （注意不能读 effectiveShuangpinScheme——把双拼关掉后它就等于全拼，
+        //   那样切回来会丢用户选的方案，只能退回自然码）
+        scheme = ShuangpinScheme.toggle(scheme, ShuangpinScheme.of(Prefs(context).shuangpinScheme))
         // 持久化：切换结果写入设置，输入法重建后保持本次选择
-        runCatching { Prefs(context).shuangpinScheme = scheme.prefsValue }
+        runCatching { Prefs(context).useShuangpin = scheme.isShuangpin }
             .onFailure { Diagnostics.w(TAG, "切换方案时保存偏好失败: ${it.message}") }
         refreshKeyLabels()
         refreshCandidateBar()

@@ -87,7 +87,7 @@
     <string name="settings_pick_ime">切换输入法</string>
     <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
     <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
-    <string name="settings_check_update">检查更新</string>
+    <string name="settings_check_update">检查APP更新</string>
 
     <!-- 检查更新：三套输出文案由 unified-update-check 约定，禁止改写措辞/增删字段 -->
     <string name="update_title_available">发现新版本</string>
@@ -171,13 +171,13 @@
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
 
     <!-- 输入方案（全拼 + 七种双拼；方案名取自 ShuangpinScheme，故此处不写死列表） -->
-    <string name="settings_shuangpin_scheme">输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">双拼方案的键位提示会随方案的切换而更新（26 键键面显示当前方案的韵母）。搜狗 / 微软 / 紫光的 ing 在分号键上，选中这三套方案时第三行会出现分号键。</string>
+    <string name="settings_shuangpin_scheme">双拼的输入方案</string>
+    <string name="settings_shuangpin_scheme_desc">26 键按钮 会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_desc">统一作用于 26 键区整整三行的 28 个按键（26 字母 + 大写键 + 删除键）</string>
+    <string name="key_appearance_desc">统一作用于 26 键区 三行的 28 个按键</string>
     <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
     <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
-    <string name="key_appearance_apply_hint">左右间隙与上下间隙由同一个「按键间隙」值控制。\n调完收起键盘再弹出即生效，也可点顶部「保存配置并立即重启生效」。</string>
+    <string name="key_appearance_apply_hint">左右间隙与上下间隙全由「按键间隙」控制\n收起键盘再弹出即生效，或重启生效</string>
 </resources>
