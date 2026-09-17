@@ -28,6 +28,7 @@ release/opt_tencent.txt.xz                   腾讯大词库可选包
 **改完词库必须做的三件事**（少一件都算没改完）：
 
 1. **重新生成 xz**：`app/build.gradle.kts` 里的 `noCompress += "xz"` 不可删（否则 APK 二次压缩、设备要先解压）。
+   同时**重跑 `gen_hot_dict.py`** 生成高频子集（两段式加载的第一段，见 `AGENTS.md`）。
 2. **真机验证**：加载与输入（基础包加载约 6.4s，在后台线程，不阻塞 UI）。
 3. **扩展包 / 可选包改动要重传两端 Release 附件**（GitHub + Gitee），并实测下载（比对 sha256）。
    只改基础包则随 APK 一起发布。
@@ -38,6 +39,8 @@ release/opt_tencent.txt.xz                   腾讯大词库可选包
 |---|---|---|
 | `convert_rime_ice.py` | rime-ice → 本项目格式，输出 base/ext 与对比报告 | **在用（主流程）** |
 | `convert_rime_tencent.py` | 腾讯大词库 → 可选包（自动注音） | **在用** |
+| `gen_hot_dict.py` | 从 base+ext 源按**词频**取前 4 万条 → `assets/hot_phrases.txt.xz`
+  （冷启动秒级可用的高频子集；**改词库后必须重跑**，否则前缀性质被破坏） | **在用** |
 | `gen_shuangpin_tables.py` | 从 `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`
   生成 7 套双拼键位表 → `app/.../ShuangpinSchemes.kt`（**改双拼键位就改这里**） | **在用** |
 | `verify_shuangpin_migration.py` | 换表对拍：新旧实现逐码比对（676 码），换表不许改行为 | **在用** |
