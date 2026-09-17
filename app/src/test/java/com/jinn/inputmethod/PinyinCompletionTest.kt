@@ -271,7 +271,7 @@ class PinyinCompletionTest {
     @Test
     fun 双拼输入不进入补全() {
         // 双拼"你们" = nimf（ni→ni：n键+i键；men→mf：m键+f键）
-        val quanpin = Shuangpin.toQuanpin("nimf")
+        val quanpin = Shuangpin.toQuanpin("nimf", ShuangpinScheme.ZIRANMA)
         assertEquals("nimen", quanpin)
         // 转全拼后是完整音节，query 正常出词，不依赖补全
         val result = PinyinEngine.query(quanpin)
