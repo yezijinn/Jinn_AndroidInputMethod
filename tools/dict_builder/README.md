@@ -39,6 +39,8 @@ release/opt_tencent.txt.xz                   腾讯大词库可选包
 |---|---|---|
 | `convert_rime_ice.py` | rime-ice → 本项目格式，输出 base/ext 与对比报告 | **在用（主流程）** |
 | `convert_rime_tencent.py` | 腾讯大词库 → 可选包（自动注音） | **在用** |
+| `build_dict_index.py` | 全量基础包 → `assets/pinyin_index.bin.xz`（二进制索引：keysBlob + 偏移表；
+  `--fixture` 同时产出测试用小型 fixture 对） | **在用（改词库必跑）** |
 | `gen_hot_dict.py` | 从 base+ext 源按**词频**取前 4 万条 → `assets/hot_phrases.txt.xz`
   （冷启动秒级可用的高频子集；**改词库后必须重跑**，否则前缀性质被破坏） | **在用** |
 | `gen_shuangpin_tables.py` | 从 `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`
