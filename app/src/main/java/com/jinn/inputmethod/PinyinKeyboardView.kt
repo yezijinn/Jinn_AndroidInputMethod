@@ -796,6 +796,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (lastCandidates.isNotEmpty()) {
                 val first = lastCandidates[0]
                 Diagnostics.i(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
+                PinyinEngine.rememberChoice(first)      // 空格取首候选同样是明确选择
                 listener?.onCommitText(first)
                 if (consumePinyin(first)) {
                     // 空格上屏同样触发智能预测（与点选候选一致）
@@ -812,7 +813,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             refreshCandidateBar()
         } else if (lastPredictions.isNotEmpty()) {
-            // 预测态：空格取第一个预测词
+            // 预测态：空格取第一个预测词（onPredictionSelected 内部会学习「完整词」）
             onPredictionSelected(lastPredictions[0])
         } else {
             listener?.onCommitSpace()
@@ -1102,6 +1103,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
+        PinyinEngine.rememberChoice(candidate)          // 用户词频：这是**明确选择**，学习它
         listener?.onCommitText(candidate)
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
         if (consumePinyin(candidate)) {
@@ -1169,6 +1171,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         Diagnostics.i(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
+        // 用户词频：学习**完整词**（librime 的 UserDictionary 也是按整条 entry 记），
+        // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
+        val fullWord = lastCommittedWord + pred
+        PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
         listener?.onCommitText(pred)
         lastPredictions = emptyList()
         refreshCandidateBar()
