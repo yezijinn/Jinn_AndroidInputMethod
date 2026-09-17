@@ -96,7 +96,10 @@ app/src/main/java/com/jinn/inputmethod/
 
 ## 诊断日志（重要）
 
-- 输出目录：`/storage/emulated/0/JinnIme/logs/jinn-YYYY-MM-dd.log`（按天滚动，保留 7 天）
+- 输出目录（**首选**）：`/storage/emulated/0/JinnIme/logs/jinn-YYYY-MM-dd.log`（按天滚动，保留 7 天）
+  · **本机实测（2026-09-17，KernelSU）该目录为空**：`Diagnostics.init()` 的 appops+chown 尝试在本机未生效，
+    实际写入的是**降级目录** `Android/data/com.jinn.inputmethod/files/logs/`（或 `/sdcard/Android/data/...`）。
+    排查时**两个目录都要看**，不要只按首选路径找。
 - 无共享存储写权限时自动退回 `Android/data/<pkg>/files/logs/`
 - 真机 root 环境（KernelSU）下先 `su -c 'appops set <pkg> MANAGE_EXTERNAL_STORAGE allow'`
   使应用可直写共享目录；应用侧 `Diagnostics.init()` 也会尝试 appops+chown，兜底 app 专属目录
