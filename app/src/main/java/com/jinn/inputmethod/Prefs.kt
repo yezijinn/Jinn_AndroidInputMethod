@@ -78,8 +78,11 @@ class Prefs(context: Context) {
     var shuangpinScheme: Int
         get() {
             val v = sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.ZIRANMA.prefsValue)
-            // 历史/异常值（含 0 全拼）一律落到自然码：本键的语义就是「双拼用哪套」
-            return if (ShuangpinScheme.of(v).isShuangpin) v else ShuangpinScheme.ZIRANMA.prefsValue
+            // 历史/异常值（含 0 全拼、未知编号）一律落到自然码：本键的语义就是「双拼用哪套」。
+            // 回写的必须是 of() **规范化之后**的取值：of() 对未知编号会兜底成自然码，
+            // 此时原值 v 仍是个脏编号——判据成立却把脏值原样返回，与上面的约定不符。
+            val scheme = ShuangpinScheme.of(v)
+            return if (scheme.isShuangpin) scheme.prefsValue else ShuangpinScheme.ZIRANMA.prefsValue
         }
         set(value) = sp.edit { putInt(KEY_SHUANGPIN_SCHEME, value) }
 

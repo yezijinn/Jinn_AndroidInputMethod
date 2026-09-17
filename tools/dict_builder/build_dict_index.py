@@ -27,8 +27,10 @@
 > **原始体积 17.3MB → 13.6MB（−3.7MB）**，xz 后与解压耗时同步下降。
 > 读取端在内存里把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
 
-词表顺序与 `build_dict` 完全一致（词频降序、同频保持源序），因此索引与文本资产**逐键等价**——
-脚本末尾自带抽样比对（若文本资产还在）。
+词表顺序与 `build_dict` 完全一致（词频降序、同频保持源序）。
+「索引 vs 文本逐键等价」由 JVM 测试守住：`IndexParityTest`（拿 `--fixture` 产出的一对同源
+文本/索引逐条对拍）与 `PhraseDictIntegrityTest`（查 APK 内的真实索引）。本脚本不再自带比对
+——那份文本资产已不进 APK。
 
 用法
 ----
@@ -81,7 +83,7 @@ def build_index_bytes(text: str) -> bytes:
     words_blob = b"".join(words)
 
     # 边界自检：长度数组用 u8/u16，超界必须立刻失败（否则读取端会算出错误的切片）
-    for k, raw in zip(keys, keys):
+    for raw in keys:
         if len(raw) > 255:
             raise SystemExit(f"键过长（>255B），长度数组无法表示: {raw[:32]!r}")
     too_long = [w for w in words if len(w) > 65535]

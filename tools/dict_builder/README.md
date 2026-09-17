@@ -12,9 +12,15 @@ tools/dict_builder/out/rime_ice/pinyin_phrases.txt   本项目格式（拼音<TA
         │  切包：base = 词长 ≤4 字（含四字成语）／ ext = >4 字
         │  压 xz：preset=7, lc=4, pb=0
         ▼
-app/src/main/assets/pinyin_phrases.txt.xz    基础包，随 APK（约 4.3MB）
+        │  build_dict_index.py（按词频排序 → 二进制索引 v2：keysBlob + 长度数组）
+        ▼
+app/src/main/assets/pinyin_index.bin.xz      基础包**索引**，随 APK（4.48MB，原始 14.4MB）
+app/src/main/assets/hot_phrases.txt.xz       高频子集（4 万词 / 220KB，冷启动秒级可输入）
 release/dict_ext.txt.xz                      扩展包，Release 附件按需下载
 ```
+
+> 基础包的**文本**（`out/rime_ice/pinyin_phrases.txt`）只作留档与对比，不进 APK：
+> 运行时读的是上面的二进制索引（`PhraseIndex` 二分查找 + 按需解码）。
 
 可选包（同样走 Release 附件）：
 
