@@ -200,10 +200,12 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 输入方案下拉：列表直接取自 [ShuangpinScheme]（单一数据源，不会与枚举脱节）
+        // 双拼方案下拉：**只列双拼方案，不含「全拼」**（用户要求——全拼/双拼由键盘面板的按钮切，
+        // 这里只负责选「哪一套双拼」）。列表取自 [ShuangpinScheme.SHUANGPIN_ONLY]，
+        // 与引擎共用同一份数据，不会脱节。
         spinnerShuangpin.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_item,
-            ShuangpinScheme.entries.map { it.displayName },
+            ShuangpinScheme.SHUANGPIN_ONLY.map { it.displayName },
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         spinnerShuangpin.setOnTouchListener { view, event ->
             shuangpinSpinnerTouched = true
@@ -217,16 +219,12 @@ class SettingsActivity : ComponentActivity() {
                 // 与「默认键盘模式」同一个坑：初始化 setSelection 与恢复实例状态都会回调，
                 // 不挡住就会把用户已选的方案静默改掉（真机上实测被改写过）。
                 if (!shuangpinSpinnerTouched) return
-                val scheme = ShuangpinScheme.entries.getOrNull(position) ?: return
-                // 选「26 键全拼」＝关闭双拼；选任一「XX 双拼」＝启用双拼并记住该方案。
-                // 方案记忆只有这一处入口（键盘面板只切全拼/双拼二态，不改具体方案）。
-                if (scheme.isShuangpin) {
-                    prefs.shuangpinScheme = scheme.prefsValue
-                    prefs.useShuangpin = true
-                } else {
-                    prefs.useShuangpin = false
-                }
-                Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=${prefs.useShuangpin}）")
+                // 列表里只有双拼方案：选中即「记住这套 + 启用双拼」（若当前是全拼状态，选完即生效）。
+                // 方案记忆只有这一处入口；关闭双拼请用键盘面板的「全拼/双拼」按钮。
+                val scheme = ShuangpinScheme.SHUANGPIN_ONLY.getOrNull(position) ?: return
+                prefs.shuangpinScheme = scheme.prefsValue
+                prefs.useShuangpin = true
+                Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=true）")
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -493,11 +491,10 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
         )
-        // 输入方案：显示当前**生效**的方案（面板把双拼关掉时就是「26 键全拼」）
+        // 输入方案：显示**已记住的那套双拼**（列表只含双拼，故与「当前是否启用双拼」无关）
         spinnerShuangpin.setSelection(
-            prefs.effectiveShuangpinScheme.ordinal.coerceIn(
-                0, ShuangpinScheme.entries.lastIndex
-            )
+            ShuangpinScheme.SHUANGPIN_ONLY.indexOf(ShuangpinScheme.of(prefs.shuangpinScheme))
+                .coerceAtLeast(0)
         )
     }
 
