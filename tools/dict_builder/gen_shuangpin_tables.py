@@ -38,7 +38,7 @@ rime 的 `speller/algebra` 是权威定义：本脚本按 librime 的代数语�
   集合语义 Projection::Apply：**每个 op 作用于上一轮的整个拼写集合**，
            派生出的新拼写成为下一轮的输入（链式组合）；map 键天然去重        → cur→nxt→去重 ✓
   未匹配   原样保留（Transformation::Apply 返回 false 时 caller 直接沿用）   → re.sub 无匹配即原串 ✓
-  正则语义 boost::regex（Perl 语法），其 \w \d \b 默认按 **ASCII**             → 统一加 re.ASCII（本次补）✓
+  正则语义 boost::regex（Perl 语法），其 \\w \\d \\b 默认按 **ASCII**           → 统一加 re.ASCII（本次补）✓
   解析     分隔符取「首个非小写字母字符」；多余参数（tag）忽略                 → 严格 op/…/… + 未知 op 响亮失败（本次补）✓
 
 **本次修正的 4 处潜伏差异**（对当前 7 套 schema 判定为「零语义变更」——重生成后
