@@ -26,10 +26,18 @@ package com.jinn.inputmethod
  * 读取时把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
  * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标——**不额外复制数据**。
  *
+ * 读取路径支持两种承载（2026-09-17 吸收 librime `Prism : MappedFile` 的设计）
+ * --------------------------------------------------------------------------
+ * 读取一律走 [java.nio.ByteBuffer]：
+ *  · 堆内：`ByteBuffer.wrap(解压出来的 ByteArray)`（APK 内的索引只能这样，因为要先解 xz）；
+ *  · **内存映射**：`ofMapped(file)` —— 设备端 `.idx` 缓存直接 mmap，零拷贝、页可被内核回收，
+ *    不再需要把 34MB 读进私有堆（这是含可选包时 PSS 的主要构成之一）。
+ * 两种承载共用同一套偏移/二分/解码逻辑，保证行为一致（`IndexParityTest` 对拍）。
+ *
  * 线程安全：构造完成后完全不可变，可被多线程并发读取（IME 主线程查询 + 后台 merge 各读各的）。
  */
 internal class PhraseIndex private constructor(
-    private val bytes: ByteArray,
+    private val buf: java.nio.ByteBuffer,
     private val keyCount: Int,
     private val keysStart: Int,
     private val wordsStart: Int,
@@ -47,11 +55,13 @@ internal class PhraseIndex private constructor(
      * · 设备端为可选包构建的索引：写入「源文件 length:mtime 的 FNV-1a」，
      *   加载时与磁盘上源文件的实际值比对 —— 不一致就重建（见 [stampOfFile]）。
      */
-    val sourceStamp: Long get() = stampOf(bytes, 22)
+    val sourceStamp: Long get() = stampOf(buf, 22)
 
     /** 第 [i] 个键（字典序）；越界返回 null。仅诊断/测试用，热路径不要调用 */
-    fun keyAt(i: Int): String? = if (i in 0 until keyCount) decode(keysStart + keyOffsets[i],
-        keysStart + keyOffsets[i + 1]) else null
+    fun keyAt(i: Int): String? = if (i in 0 until keyCount) {
+        val from = keysStart + keyOffsets[i]
+        decode(from, keyOffsets[i + 1] - keyOffsets[i])
+    } else null
 
     /**
      * 精确查键，返回词表；键不存在返回 null。
@@ -65,12 +75,12 @@ internal class PhraseIndex private constructor(
         val out = ArrayList<String>(4)
         var segStart = from
         for (p in from until to) {
-            if (bytes[p] == SEP) {
-                out.add(String(bytes, segStart, p - segStart, Charsets.UTF_8))
+            if (buf.get(p) == SEP) {
+                out.add(decode(segStart, p - segStart))
                 segStart = p + 1
             }
         }
-        if (segStart < to) out.add(String(bytes, segStart, to - segStart, Charsets.UTF_8))
+        if (segStart < to) out.add(decode(segStart, to - segStart))
         return out.toTypedArray()
     }
 
@@ -92,11 +102,76 @@ internal class PhraseIndex private constructor(
         while (lo < keyCount) {
             val from = keysStart + keyOffsets[lo]
             val to = keysStart + keyOffsets[lo + 1]
-            if (!startsWith(bytes, from, to, p)) break
-            out.add(String(bytes, from, to - from, Charsets.UTF_8))
+            if (!startsWith(buf, from, to, p)) break
+            out.add(decode(from, to - from))
             lo++
         }
         return out
+    }
+
+    /**
+     * 前缀区间枚举（吸收 librime `Prism::ExpandSearch` 的 `Match(value, length)` 设计）：
+     * 只回调 `(键字节长度, 词区起止)`，**不实例化键字符串**。
+     *
+     * 与 [keysWithPrefix] 的差别在短前缀下非常明显：实测 `"ni"` 有 6185 个键，
+     * 旧写法会一次性建出 6185 个 String（2.18ms）；这里调用方可以直接用字节长度判断，
+     * 只在真正需要时才解码（见 [collectLongerSuffixes]，只解码命中的后缀）。
+     *
+     * @param action 返回 false 表示提前结束扫描（调用方自带上限）
+     */
+    fun forEachRangeWithPrefix(
+        prefix: String,
+        action: (keyByteLen: Int, wordsFrom: Int, wordsTo: Int) -> Boolean,
+    ) {
+        if (prefix.isEmpty() || keyCount == 0) return
+        val p = prefix.toByteArray(Charsets.UTF_8)
+        var lo = lowerBound(p)
+        while (lo < keyCount) {
+            val from = keysStart + keyOffsets[lo]
+            val to = keysStart + keyOffsets[lo + 1]
+            if (!startsWith(buf, from, to, p)) break
+            val cont = action(to - from, wordsStart + wordOffsets[lo], wordsStart + wordOffsets[lo + 1])
+            if (!cont) return
+            lo++
+        }
+    }
+
+    /**
+     * 在词区区间内，把「以 [wordBytes] 开头且更长」的词**后缀**追加进 [out]，返回新增个数。
+     *
+     * 前缀判断走**字节级**比较（`regionEquals`）：未命中零分配，命中者也只解码后缀，
+     * 不做 `substring` 之前的整词解码。
+     */
+    fun collectLongerSuffixes(
+        wordsFrom: Int,
+        wordsTo: Int,
+        wordBytes: ByteArray,
+        out: MutableCollection<String>,
+    ): Int {
+        var added = 0
+        var segStart = wordsFrom
+        for (p in wordsFrom until wordsTo) {
+            if (buf.get(p) == SEP) {
+                added += addSuffixIfLonger(segStart, p - segStart, wordBytes, out)
+                segStart = p + 1
+            }
+        }
+        if (segStart < wordsTo) {
+            added += addSuffixIfLonger(segStart, wordsTo - segStart, wordBytes, out)
+        }
+        return added
+    }
+
+    private fun addSuffixIfLonger(
+        from: Int,
+        len: Int,
+        wordBytes: ByteArray,
+        out: MutableCollection<String>,
+    ): Int {
+        if (len <= wordBytes.size) return 0
+        if (!regionEquals(buf, from, wordBytes)) return 0
+        out.add(decode(from + wordBytes.size, len - wordBytes.size))
+        return 1
     }
 
     private fun indexOf(key: String): Int? {
@@ -106,7 +181,7 @@ internal class PhraseIndex private constructor(
         if (i >= keyCount) return null
         val from = keysStart + keyOffsets[i]
         val to = keysStart + keyOffsets[i + 1]
-        return if (to - from == p.size && regionEquals(bytes, from, p)) i else null
+        return if (to - from == p.size && regionEquals(buf, from, p)) i else null
     }
 
     /** 二分：第一个 >= [p] 的键下标 */
@@ -117,16 +192,54 @@ internal class PhraseIndex private constructor(
             val mid = (lo + hi) ushr 1
             val from = keysStart + keyOffsets[mid]
             val to = keysStart + keyOffsets[mid + 1]
-            if (compare(bytes, from, to, p) < 0) lo = mid + 1 else hi = mid
+            if (compare(buf, from, to, p) < 0) lo = mid + 1 else hi = mid
         }
         return lo
     }
 
-    private fun decode(from: Int, to: Int): String = String(bytes, from, to - from, Charsets.UTF_8)
+    /**
+     * 按绝对下标解码 [len] 个字节为 String。
+     *
+     * 堆内承载走 `String(array, offset, len)`（零额外拷贝）；映射承载没有数组可借，
+     * 退化为逐字节拷进小数组——只有**命中后**才会调用，未命中路径零分配。
+     */
+    private fun decode(from: Int, len: Int): String {
+        val arr = heapArray
+        if (arr != null) return String(arr, from, len, Charsets.UTF_8)
+        val tmp = ByteArray(len)
+        for (i in 0 until len) tmp[i] = buf.get(from + i)
+        return String(tmp, Charsets.UTF_8)
+    }
+
+    /** 堆内承载时的底层数组（映射承载返回 null） */
+    private val heapArray: ByteArray? = if (buf.hasArray()) buf.array() else null
 
     internal companion object {
-        /** 从索引字节构造；结构不自洽返回 null（调用方回退，不影响可用性） */
-        fun of(bytes: ByteArray): PhraseIndex? = parse(bytes)
+        /** 从索引字节构造（堆内承载）；结构不自洽返回 null（调用方回退，不影响可用性） */
+        fun of(bytes: ByteArray): PhraseIndex? = parse(java.nio.ByteBuffer.wrap(bytes))
+
+        /**
+         * **内存映射**构造（吸收 librime `Prism : MappedFile`）：设备端 `.idx` 缓存首选。
+         *
+         * 失败（文件缺失/截断/平台不支持）返回 null → 调用方回退到 [of] + `readBytes()`。
+         * 映射的生命周期与本对象一致：只要索引还在用，缓冲区就不会被回收/关闭。
+         * 注意：**映射期间不要覆盖该文件**（截断会让映射读到空洞，Linux 上甚至 SIGBUS），
+         * 重写缓存必须「写临时文件 + 原子改名」（见 PinyinEngine.writeIndexCacheAtomically）。
+         */
+        fun ofMapped(file: java.io.File): PhraseIndex? = runCatching {
+            if (!file.isFile) return null
+            val raf = java.io.RandomAccessFile(file, "r")
+            try {
+                val ch = raf.channel
+                val size = ch.size()
+                if (size <= 0 || size > Int.MAX_VALUE) return null
+                val mapped = ch.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, size)
+                parse(mapped)
+            } finally {
+                // 关掉 fd 不影响已建立的映射（Linux/Android 语义），但必须关，避免 fd 泄漏
+                raf.close()
+            }
+        }.getOrNull()
 
         /** 源文本摘要（与构建脚本 `build_dict_index.py` 的 FNV-1a 64 同算法） */
         fun stampOfText(text: String): Long = fnv1a64(text.toByteArray(Charsets.UTF_8))
@@ -194,9 +307,9 @@ internal class PhraseIndex private constructor(
             return out
         }
 
-        private fun stampOf(b: ByteArray, off: Int): Long {
+        private fun stampOf(b: java.nio.ByteBuffer, off: Int): Long {
             var v = 0L
-            for (i in 0 until 8) v = v or ((b[off + i].toLong() and 0xFF) shl (8 * i))
+            for (i in 0 until 8) v = v or ((b.get(off + i).toLong() and 0xFF) shl (8 * i))
             return v
         }
 
@@ -230,11 +343,11 @@ internal class PhraseIndex private constructor(
          */
         const val HEADER_SIZE = 30
 
-        fun compare(a: ByteArray, from: Int, to: Int, b: ByteArray): Int {
+        fun compare(a: java.nio.ByteBuffer, from: Int, to: Int, b: ByteArray): Int {
             var i = from
             var j = 0
             while (i < to && j < b.size) {
-                val x = a[i].toInt() and 0xFF
+                val x = a.get(i).toInt() and 0xFF
                 val y = b[j].toInt() and 0xFF
                 if (x != y) return x - y
                 i++
@@ -243,14 +356,14 @@ internal class PhraseIndex private constructor(
             return (to - i) - (b.size - j)
         }
 
-        fun regionEquals(a: ByteArray, from: Int, b: ByteArray): Boolean {
-            for (k in b.indices) if (a[from + k] != b[k]) return false
+        fun regionEquals(a: java.nio.ByteBuffer, from: Int, b: ByteArray): Boolean {
+            for (k in b.indices) if (a.get(from + k) != b[k]) return false
             return true
         }
 
-        fun startsWith(a: ByteArray, from: Int, to: Int, prefix: ByteArray): Boolean {
+        fun startsWith(a: java.nio.ByteBuffer, from: Int, to: Int, prefix: ByteArray): Boolean {
             if (to - from < prefix.size) return false
-            for (k in prefix.indices) if (a[from + k] != prefix[k]) return false
+            for (k in prefix.indices) if (a.get(from + k) != prefix[k]) return false
             return true
         }
 
@@ -260,18 +373,18 @@ internal class PhraseIndex private constructor(
          * 这里只做**廉价的结构校验**（magic/版本/段长/偏移单调且首尾对齐）——
          * 足以挡住截断、版本错配、字节序问题这类真实故障。
          */
-        fun parse(bytes: ByteArray): PhraseIndex? {
-            if (bytes.size < HEADER_SIZE) return null
-            if (bytes[0] != 'J'.code.toByte() || bytes[1] != 'N'.code.toByte() ||
-                bytes[2] != 'I'.code.toByte() || bytes[3] != 'H'.code.toByte()
+        fun parse(buf: java.nio.ByteBuffer): PhraseIndex? {
+            if (buf.capacity() < HEADER_SIZE) return null
+            if (buf.get(0) != 'J'.code.toByte() || buf.get(1) != 'N'.code.toByte() ||
+                buf.get(2) != 'I'.code.toByte() || buf.get(3) != 'H'.code.toByte()
             ) {
                 return null
             }
-            val version = u16(bytes, 4)
+            val version = u16(buf, 4)
             if (version != 2) return null
-            val keyCount = i32(bytes, 6)
-            val keysLen = i32(bytes, 10)
-            val wordsLen = i32(bytes, 14)
+            val keyCount = i32(buf, 6)
+            val keysLen = i32(buf, 10)
+            val wordsLen = i32(buf, 14)
             if (keyCount <= 0 || keysLen <= 0 || wordsLen <= 0) return null
 
             // 段长校验必须用 Long 累加：keysLen / wordsLen / keyCount 都来自外部字节，
@@ -279,49 +392,49 @@ internal class PhraseIndex private constructor(
             // （本方法的契约是「结构不自洽就返回 null」，绝不抛异常——调用方靠它决定是否回退）。
             // 总长是精确可算的：header + keysLen + keyCount(u8) + wordsLen + keyCount(u16×2)。
             val need = HEADER_SIZE.toLong() + keysLen + wordsLen + keyCount.toLong() * 3
-            if (need != bytes.size.toLong()) return null
+            if (need != buf.capacity().toLong()) return null
 
             var p = HEADER_SIZE
             val keysStart = p
             p += keysLen
-            val keyOffsets = expandLengths(bytes, p, keyCount, 1)
+            val keyOffsets = expandLengths(buf, p, keyCount, 1)
             p += keyCount
             val wordsStart = p
             p += wordsLen
-            val wordOffsets = expandLengths(bytes, p, keyCount, 2)
+            val wordOffsets = expandLengths(buf, p, keyCount, 2)
             p += keyCount * 2
 
             // 自洽性：长度数组拼出的总长必须与头部声明一致
             if (keyOffsets[keyCount] != keysLen) return null
             if (wordOffsets[keyCount] != wordsLen) return null
 
-            return PhraseIndex(bytes, keyCount, keysStart, wordsStart, keyOffsets, wordOffsets)
+            return PhraseIndex(buf, keyCount, keysStart, wordsStart, keyOffsets, wordOffsets)
         }
 
-        fun u16(b: ByteArray, o: Int): Int =
-            (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
+        fun u16(b: java.nio.ByteBuffer, o: Int): Int =
+            (b.get(o).toInt() and 0xFF) or ((b.get(o + 1).toInt() and 0xFF) shl 8)
 
-        fun i32(b: ByteArray, o: Int): Int =
-            (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8) or
-                ((b[o + 2].toInt() and 0xFF) shl 16) or ((b[o + 3].toInt() and 0xFF) shl 24)
+        fun i32(b: java.nio.ByteBuffer, o: Int): Int =
+            (b.get(o).toInt() and 0xFF) or ((b.get(o + 1).toInt() and 0xFF) shl 8) or
+                ((b.get(o + 2).toInt() and 0xFF) shl 16) or ((b.get(o + 3).toInt() and 0xFF) shl 24)
 
         /**
          * 把长度数组展开成前缀和偏移数组（v2）。
          *
          * @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
          */
-        fun expandLengths(b: ByteArray, start: Int, count: Int, width: Int): IntArray {
+        fun expandLengths(b: java.nio.ByteBuffer, start: Int, count: Int, width: Int): IntArray {
             val out = IntArray(count + 1)
             var acc = 0
             if (width == 1) {
                 for (i in 0 until count) {
-                    acc += b[start + i].toInt() and 0xFF
+                    acc += b.get(start + i).toInt() and 0xFF
                     out[i + 1] = acc
                 }
             } else {
                 for (i in 0 until count) {
-                    acc += (b[start + i * 2].toInt() and 0xFF) or
-                        ((b[start + i * 2 + 1].toInt() and 0xFF) shl 8)
+                    acc += (b.get(start + i * 2).toInt() and 0xFF) or
+                        ((b.get(start + i * 2 + 1).toInt() and 0xFF) shl 8)
                     out[i + 1] = acc
                 }
             }
