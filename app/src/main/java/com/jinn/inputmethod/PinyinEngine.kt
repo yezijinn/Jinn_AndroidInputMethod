@@ -1003,7 +1003,14 @@ object PinyinEngine {
         // 优先用查询时记录的「候选→键」（基础词走索引后没有全量反向索引）
         val lastPinyin = candidatePinyin[lastWord] ?: wordToPinyin[lastWord] ?: return emptyList()
         val out = LinkedHashSet<String>()
-        // 基础索引的前缀扫描 + 运行时表（可选包/子集）里的键，二者都按字典序，合并去重
+        // 基础索引的前缀扫描 + 运行时表（可选包/子集）里的键，二者都按字典序，合并去重。
+        //
+        // ⚠ 这里有**成本悬崖**：前缀是「整词拼音」时通常只剩几十个键（如 nihao → 39 个）+
+        // 但如果将来允许对**单字候选**做预测（前缀会退化成单个音节，如 ni），键数会暴涨到
+        // 6 千以上（实测 keysWithPrefix("ni") = 6185 键 / 2.18ms，且逐个走 phrasesFor 的合并）。
+        // 因此这里在收满 MAX_PREDICTIONS 后立刻停止扫描 —— 结果与旧的「扫完再 take(N)」**完全一致**
+        // （旧实现同样按字典序累加进 LinkedHashSet 后取前 N 个），但把常见情况的开销压到最小。
+        // 若哪天要给单字候选开预测，请先把这里改成免分配的索引区间扫描（见 PhraseIndex.keysWithPrefix 备注）。
         for (key in keysStartingWith(lastPinyin)) {
             if (key.length <= lastPinyin.length) continue      // 只要「更长」的键
             for (phrase in phrasesFor(key).orEmpty()) {
@@ -1011,6 +1018,7 @@ object PinyinEngine {
                     out.add(phrase.substring(lastWord.length))
                 }
             }
+            if (out.size >= MAX_PREDICTIONS) break
         }
         return out.take(MAX_PREDICTIONS)
     }

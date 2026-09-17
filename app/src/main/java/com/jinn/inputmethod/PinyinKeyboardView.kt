@@ -1550,8 +1550,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         panel.visibility = View.VISIBLE
         directionPanelVisible = true
-        // 进入方向面板时重置拖选状态
+        // 进入方向面板时重置拖选状态。
+        // ⚠ 必须**同时回传 IME**：否则视图认为未拖选（中心键画 ●）、IME 仍以为在拖选，
+        // 用户点中心键会先「取消」再「激活」，出现"点一次没反应、要点两次"的错位。
+        // 当前只有 hideDirectionPanel 会回传，这条路径虽然暂时不可达（面板只能经它隐藏），
+        // 但两处不对称迟早会被将来的改动踩到 —— 这里补齐成对称实现。
         selectionActive = false
+        listener?.onSelectionModeChanged(false)
         refreshDirectionButton()
         Diagnostics.i(TAG, "方向面板: 显示（候选栏/底部栏保持）")
     }
