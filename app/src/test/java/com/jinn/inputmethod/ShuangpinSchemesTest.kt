@@ -122,6 +122,23 @@ class ShuangpinSchemesTest {
         )
     }
 
+    /** 设置页下拉只列双拼方案（不含全拼）——列表来自这个集合，故钉住它的内容 */
+    @Test
+    fun 双拼方案列表_共七套且不含全拼() {
+        val list = ShuangpinScheme.SHUANGPIN_ONLY
+        assertEquals(
+            listOf(
+                ShuangpinScheme.ZIRANMA, ShuangpinScheme.FLYPY, ShuangpinScheme.SOGOU,
+                ShuangpinScheme.MSPY, ShuangpinScheme.ZIGUANG, ShuangpinScheme.ABC,
+                ShuangpinScheme.JIAJIA,
+            ),
+            list,
+        )
+        assertTrue("列表不应含全拼", list.none { it == ShuangpinScheme.QUANPIN })
+        // 每套都必须有键位表，否则下拉里会出现选不了的空方案
+        assertTrue("存在缺键位表的方案", list.all { it.table != null })
+    }
+
     // ── 二、分号键：只有搜狗 / 微软 / 紫光需要 ──────────────────────────────
 
     @Test
