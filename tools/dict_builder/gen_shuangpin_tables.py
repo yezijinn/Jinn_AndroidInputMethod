@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+r"""
 从 rime-ice 的双拼 schema 生成 Kotlin 键位数据（app/.../ShuangpinSchemes.kt）。
 
 为什么要有这个脚本

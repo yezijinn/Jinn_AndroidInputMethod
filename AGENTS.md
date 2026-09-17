@@ -165,6 +165,11 @@ app/src/main/java/com/jinn/inputmethod/
 ## 双拼方案（键位数据是生成的，禁止手改）
 
 - 7 套方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加，键位数据在
+  **代数语义已与 librime C++ 逐条核对**（2026-09-17，核对源 `docs/librime-master/src/rime/algo/{calculus.h,calculus.cc,algebra.cc}`
+  —— 该目录**不入库、不影响构建**，纯参考）：xform=**替换**（默认 addition+deletion 均 true）、derive=**保留+追加**（deletion=false）、
+  erase=**整串匹配（boost::regex_match）才清除**、xlit 要求两侧**字符数相等**、每个 op 作用于**上一轮整个拼写集合**（链式组合）。
+  逐条对照与本次修正的 4 处潜伏差异见 `gen_shuangpin_tables.py` 头部注释；改代数实现须重跑生成器 +
+  `verify_shuangpin_migration.py` + `testDebugUnitTest`。
   `ShuangpinSchemes.kt`（**按方案惰性构建**，见 `Shuangpin.warmUpAll` 的后台预热），**由 `tools/dict_builder/gen_shuangpin_tables.py` 从
   `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成**（按 librime 代数语义
   施加到 422 个合法音节）。**要改键位就改 schema 或生成器里的 `SCHEMES`，不要改生成文件。**
