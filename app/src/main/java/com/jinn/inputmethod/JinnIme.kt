@@ -46,6 +46,15 @@ class JinnIme : InputMethodService() {
 
     private val ui = Handler(Looper.getMainLooper())
 
+    /** 可选词库包是否已触发加载（三种空闲信号只生效一次） */
+    private var optionalLoadTriggered = false
+
+    /** 息屏接收器：锁屏即视为空闲，可安全做 21~34s 的后台重活 */
+    private var screenOffReceiver: BroadcastReceiver? = null
+
+    /** 键盘收起后的空闲检查（见 [maybeLoadOptionalDict]） */
+    private val optionalIdleCheck = Runnable { maybeLoadOptionalDict("键盘收起后闲置") }
+
     private lateinit var prefs: Prefs
     /**
      * 语音组件。**仅在「语音输入」开关为开时才实例化**（见 [ensureVoiceReady]）。
@@ -147,6 +156,25 @@ class JinnIme : InputMethodService() {
             else -> KeyboardMode.VOICE
         }
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
+
+        // 可选词库包的三种「空闲」触发（见 maybeLoadOptionalDict）：
+        // ① 息屏（用户锁屏）——最可靠的空闲信号
+        screenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                    maybeLoadOptionalDict("息屏")
+                }
+            }
+        }.also {
+            runCatching {
+                registerReceiver(it, IntentFilter(Intent.ACTION_SCREEN_OFF))
+            }.onFailure { e ->
+                // 注册失败不影响功能：还有键盘收起与兜底两条路
+                Diagnostics.w(TAG, "息屏接收器注册失败: ${e.message}")
+            }
+        }
+        // ③ 兜底：万一用户一直开着键盘打字（既不息屏也不收起），也要保证最终加载
+        ui.postDelayed({ maybeLoadOptionalDict("兜底超时") }, OPTIONAL_FALLBACK_DELAY_MS)
         // 双拼键位表预热：7 套表约 3,000 条目，一次全建有几十毫秒量级开销；而键盘视图是在
         // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
         // 故这里用独立守护线程预热（不占用 BackgroundIo——那是剪贴板 DB 的单线程队列，
@@ -177,17 +205,10 @@ class JinnIme : InputMethodService() {
                 Diagnostics.e(TAG, "onCreate: 词库加载失败，候选将不可用: ${it.message}", it)
             }
 
-            // 可选词库包（分类词库页下载的那些）延迟加载：
-            // 基础包就绪后 5 秒再后台补齐，用户此刻已能正常打字，
-            // 不至于让「开机后首次输入」的候选就绪被大词库拖慢。
-            // 基础包即便加载失败也照常尝试（loadOptionalAsync 内部自带 runCatching）。
-            runCatching {
-                PinyinEngine.loadOptionalAsync(this, delayMs = 5000L) {
-                    Diagnostics.i(TAG, "onCreate: 可选词库已在后台就绪")
-                }
-            }.onFailure {
-                Diagnostics.e(TAG, "onCreate: 启动可选词库加载失败: ${it.message}", it)
-            }
+            // 可选词库包（分类词库页下载的那些，可达 1.14M 词条、实测解析 21~34s）**不再定时加载**：
+            // 原来固定「基础包就绪后 5 秒」开始，而那正是用户开始打字的时间点，重活抢 CPU/内存带宽
+            // → 冷启动后「很卡」。改为等**空闲信号**（见 maybeLoadOptionalDict）。
+            Diagnostics.i(TAG, "可选词库: 已改为空闲时加载（息屏 / 键盘收起后 / 兜底超时）")
         }.start()
 
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
@@ -841,6 +862,9 @@ class JinnIme : InputMethodService() {
         // 拼音键盘若有未上屏内容，提交首候选
         pinyinKeyboard?.commitComposing()
         ui.removeCallbacks(backspaceRunnable)
+        // 键盘收起 = 用户大概率停止输入了；再等一小段（避免只是切了个应用马上回来）后加载可选词库
+        ui.removeCallbacks(optionalIdleCheck)
+        ui.postDelayed(optionalIdleCheck, OPTIONAL_IDLE_DELAY_MS)
         // 不在这里关闭连接：输入法是常驻服务，WebSocket 应跨输入会话复用。
         // 松手后服务端 final 结果往往还要 1~3 秒才回来，此刻关连接会把在途
         // 结果丢掉，识别文本无法落地；连接统一在 onDestroy 里释放。
@@ -867,6 +891,8 @@ class JinnIme : InputMethodService() {
         unregisterNetwork()
         runCatching { unregisterReceiver(configReceiver) }
         runCatching { unregisterReceiver(clipboardPasteReceiver) }
+        screenOffReceiver?.let { runCatching { unregisterReceiver(it) } }
+        screenOffReceiver = null
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
@@ -876,6 +902,31 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
         }.start()
         super.onDestroy()
+    }
+
+    /**
+     * 触发可选词库包的后台加载（**单次**）。
+     *
+     * 为什么不用固定延迟：实测那 1.14M 词条的解析要 **21~34s**，而「基础包就绪后 5 秒」
+     * 恰好是用户开始打字的时刻 —— 后台重活与前台输入抢 CPU/内存带宽，主观感受就是
+     * 「刚开机很卡」。改为等**空闲信号**，三选一（先到先得）：
+     *  · 息屏：用户锁屏，最可靠的空闲信号；
+     *  · 键盘收起后再闲置 [OPTIONAL_IDLE_DELAY_MS]：用户停止输入；
+     *  · 兜底 [OPTIONAL_FALLBACK_DELAY_MS]：一直没出现上面两种情况时也必须加载。
+     *
+     * 加载线程本身已设 [android.os.Process.THREAD_PRIORITY_BACKGROUND]（见 PinyinEngine）。
+     */
+    private fun maybeLoadOptionalDict(reason: String) {
+        if (optionalLoadTriggered) return
+        optionalLoadTriggered = true
+        Diagnostics.i(TAG, "可选词库: 开始后台加载（触发: $reason）")
+        runCatching {
+            PinyinEngine.loadOptionalAsync(this, delayMs = 0L) {
+                Diagnostics.i(TAG, "可选词库已在后台就绪")
+            }
+        }.onFailure {
+            Diagnostics.e(TAG, "启动可选词库加载失败: ${it.message}", it)
+        }
     }
 
     /** 横屏时不要进全屏抽取模式，这个键盘很矮，没必要遮住宿主界面 */
@@ -1295,6 +1346,12 @@ class JinnIme : InputMethodService() {
 
     companion object {
         const val TAG = "JinnIme"
+
+        /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */
+        private const val OPTIONAL_IDLE_DELAY_MS = 20_000L
+
+        /** 兜底等待：既不息屏也不收键盘时的最晚加载时间 */
+        private const val OPTIONAL_FALLBACK_DELAY_MS = 180_000L
 
         /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
         const val ACTION_CONFIG_UPDATED = "com.jinn.inputmethod.action.CONFIG_UPDATED"
