@@ -60,11 +60,24 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
-     * 键盘输入方案：true 用自然码双拼，false 用 26 键全拼。
+     * 键盘输入方案，取值见 [ShuangpinScheme.prefsValue]：
+     * 0 全拼 / 1 自然码 / 2 小鹤 / 3 搜狗 / 4 微软 / 5 紫光 / 6 智能ABC / 7 加加。
+     *
+     * **迁移**：老版本只有布尔键 `shuangpin`（true = 自然码双拼）。新键不存在时读老键：
+     * true → 自然码、false → 全拼，保证老用户升级后方案不跳变。老键保留不删（利于回滚）。
      */
-    var useShuangpin: Boolean
-        get() = sp.getBoolean(KEY_SHUANGPIN, false)
-        set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
+    var shuangpinScheme: Int
+        get() {
+            if (sp.contains(KEY_SHUANGPIN_SCHEME)) {
+                return sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.QUANPIN.prefsValue)
+            }
+            return if (sp.getBoolean(KEY_SHUANGPIN, false)) {
+                ShuangpinScheme.ZIRANMA.prefsValue
+            } else {
+                ShuangpinScheme.QUANPIN.prefsValue
+            }
+        }
+        set(value) = sp.edit { putInt(KEY_SHUANGPIN_SCHEME, value) }
 
     /** 键盘是否默认英文模式（字母直通，不查候选） */
     var keyboardEnglish: Boolean
@@ -153,7 +166,9 @@ class Prefs(context: Context) {
         private const val KEY_PROMPT = "prompt"
         private const val KEY_STRIP_PUNC = "strip_punc"
         private const val KEY_COMPOSING = "composing"
+        /** 老键（布尔，只读不写）：供 [shuangpinScheme] 做一次性迁移 */
         private const val KEY_SHUANGPIN = "shuangpin"
+        private const val KEY_SHUANGPIN_SCHEME = "shuangpin_scheme"
         private const val KEY_KB_ENGLISH = "kb_english"
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"

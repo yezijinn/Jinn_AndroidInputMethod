@@ -259,6 +259,15 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1" />
 
+            <!-- 分号键：仅「ing 落在分号上」的方案（搜狗/微软/紫光）需要，
+                 其余方案与符号层/数字层一律 GONE（不占宽度，26 键布局零影响） -->
+            <com.jinn.inputmethod.PinyinKey
+                android:id="@+id/key_semicolon"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:visibility="gone" />
+
             <ImageButton
                 android:id="@+id/key_backspace"
                 android:layout_width="0dp"

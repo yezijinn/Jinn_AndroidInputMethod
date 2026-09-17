@@ -955,131 +955,93 @@ object PinyinEngine {
 }
 
 /**
- * 自然码双拼方案（对齐 libime `ShuangpinBuiltinProfile::Ziranma`）。
+ * 双拼输入方案。
+ *
+ * 键位数据见 [SHUANGPIN_TABLES]（由 `tools/dict_builder/gen_shuangpin_tables.py` 从
+ * `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成），本枚举只负责
+ * 「方案身份 + 持久化取值 + 展示名」，不含任何键位逻辑。
+ *
+ * [prefsValue] 写入 `Prefs.shuangpinScheme`：**只能追加，不能改动既有取值**（老配置靠它迁移）。
+ */
+enum class ShuangpinScheme(
+    val prefsValue: Int,
+    /** 设置页与日志用的全名 */
+    val displayName: String,
+    /** 键盘功能面板按钮上的短名（按钮文字随方案变化） */
+    val shortName: String,
+    private val tableKey: String?,
+) {
+    /** 26 键全拼（非双拼，输入即全拼） */
+    QUANPIN(0, "26 键全拼", "全拼", null),
+    ZIRANMA(1, "自然码双拼", "自然码", "ZIRANMA"),
+    FLYPY(2, "小鹤双拼", "小鹤", "FLYPY"),
+    SOGOU(3, "搜狗双拼", "搜狗", "SOGOU"),
+    MSPY(4, "微软双拼", "微软", "MSPY"),
+    ZIGUANG(5, "紫光双拼", "紫光", "ZIGUANG"),
+    ABC(6, "智能 ABC 双拼", "ABC", "ABC"),
+    JIAJIA(7, "拼音加加双拼", "加加", "JIAJIA"),
+    ;
+
+    /** 是否双拼方案（全拼无需转换） */
+    val isShuangpin: Boolean get() = tableKey != null
+
+    /** 该方案的键位数据；全拼方案为 null（[ShuangpinTable] 是 internal，故此处同样 internal） */
+    internal val table: ShuangpinTable? get() = tableKey?.let { SHUANGPIN_TABLES[it] }
+
+    companion object {
+        /** 全部双拼方案（设置页下拉与键盘循环都用它，保证顺序一致） */
+        val SHUANGPIN_ONLY: List<ShuangpinScheme> = entries.filter { it.isShuangpin }
+
+        /** 由持久化取值还原方案；未知取值一律回落到自然码（老配置即 `useShuangpin = true`） */
+        fun of(prefsValue: Int): ShuangpinScheme =
+            entries.firstOrNull { it.prefsValue == prefsValue } ?: ZIRANMA
+
+        /** 键盘功能面板的循环顺序：全拼 → 各双拼 → 回到全拼 */
+        fun cycle(current: ShuangpinScheme): ShuangpinScheme {
+            val order = listOf(QUANPIN) + SHUANGPIN_ONLY
+            return order[(order.indexOf(current) + 1) % order.size]
+        }
+    }
+}
+
+/**
+ * 双拼 ↔ 全拼转换（**纯查表**）。
+ *
+ * 键位数据来自 [SHUANGPIN_TABLES]（rime-ice schema 生成），本对象不再持有任何硬编码键位，
+ * 因此新增方案只是多一张表（见生成器脚本）。全拼方案（[ShuangpinScheme.QUANPIN]）原样返回输入。
  *
  * 规则：
- *  - 声母：zh→v、ch→i、sh→u，其余单字母声母不变
- *  - 韵母：两键一音节，第二键查 [FINAL_KEY] 表；同键多韵母时按声母消歧
- *  - 撮口呼归一化：**输出全部为 ASCII**（词库键即 ASCII）——
- *    j/q/x/y 后 ü 系列写作 u（ju/qu/xu/jue/que/xue/juan/jun/yue/yuan/yun），
- *    l/n 后单 ü 写作 v（lv/nv），l/n 后 üe 写作 ve（lve/nve）
- *  - 零声母：双字母韵母直写全拼（an/ai/ei/ao/ou/en/er），三字母用「首字母+韵母键」
- *    （ang→ah、eng→eg），单韵母 a/o/e 双写（aa/oo/ee）；另兼容 `o` 作零声母键
- *    （an→oj、ai→ol、ou→ob），与 libime 的 `zeroS_ = "o*"` 语义一致
+ *  - 每两键一个音节，查 [ShuangpinTable.codes]；
+ *  - 末尾只剩一键时按「声母键」处理（`v` → `zh`，与旧实现一致）；非声母键原样保留
+ *    （候选项预显行为不变），非字母键（如分号）忽略；
+ *  - 非法组合停止转换并返回已转换的前缀（容错，不抛异常）；
+ *  - 输出全部为 ASCII：撮口呼 ü 写作 u（jqxy 后）或 v（l/n 后），与词库键一致。
  *
- * 本类完全自包含（不依赖词库），转换规则确定，可脱离 Android 资源单测。
+ * 本类完全自包含（不依赖词库与 Android 资源），可脱离设备单测。
  */
 object Shuangpin {
 
-    /** 声母 j/q/x：s 键后取 iong（jiong/qiong/xiong）；yong 是 y+ong，不在内 */
-    private val JQX = setOf("j", "q", "x")
-
-    /** 声母 j/q/x/y：与其搭配的撮口呼韵母（ü 系写作 u） */
-    private val JQX_Y = setOf("j", "q", "x", "y")
-
-    /** 声母 l/n：单 ü 写作 v（lv/nv） */
-    private val L_N = setOf("l", "n")
-
-    /** 零声母两键输入 → 全拼（含双写、直写、首字符+键、o+键 四种形式） */
-    private val ZERO_TABLE = mapOf(
-        // 单韵母双写
-        "aa" to "a", "ee" to "e", "oo" to "o",
-        // 双字母零声母：直写全拼
-        "an" to "an", "ai" to "ai", "ao" to "ao",
-        "ei" to "ei", "en" to "en", "er" to "er", "ou" to "ou",
-        // 三字母零声母：首字母 + 韵母键（ang 的键是 h，eng 的键是 g）
-        "ah" to "ang", "eg" to "eng",
-        // 首字符 + 韵母键（libime 的 special handling 生成形式）
-        "aj" to "an", "al" to "ai", "ak" to "ao",
-        "ez" to "ei", "ef" to "en", "or" to "er",
-        // 兼容 o 作零声母键（libime zeroS_ 含 'o'）
-        "oj" to "an", "ol" to "ai", "ok" to "ao", "oh" to "ang",
-        "oz" to "ei", "of" to "en", "og" to "eng", "ob" to "ou",
-        "oa" to "a", "oe" to "e",
-    )
-
-    /**
-     * 把自然码双拼输入串转换成全拼音节串（纯 ASCII）。
-     * 每两键一个音节；末尾若只剩一个键，按声母键前缀处理（如 `v`→`zh`）。
-     * 非法组合返回 null 之前已转换的部分（尽量容错）。
-     */
-    fun toQuanpin(input: String): String {
+    /** 把 [input] 按 [scheme] 转换成全拼音节串（纯 ASCII，小写） */
+    fun toQuanpin(input: String, scheme: ShuangpinScheme): String {
+        val table = scheme.table ?: return input.lowercase()
         val raw = input.lowercase()
         if (raw.isEmpty()) return ""
         val sb = StringBuilder()
         var i = 0
         while (i + 1 < raw.length) {
-            val syl = syllableFor(raw[i], raw[i + 1]) ?: break
-            sb.append(syl)
+            val syllable = table.codes[raw.substring(i, i + 2)] ?: break
+            sb.append(syllable)
             i += 2
         }
         if (i < raw.length) {
-            sb.append(initialFor(raw[i]))
+            val key = raw[i]
+            sb.append(
+                table.initialOf(key) ?: if (key in 'a'..'z') key.toString() else ""
+            )
         }
         return sb.toString()
     }
 
-    /** 两键一音节；返回全拼音节，无法组合返回 null */
-    private fun syllableFor(k1: Char, k2: Char): String? {
-        // 零声母表优先（双写 / 直写 / o+键），命中即返回
-        ZERO_TABLE["$k1$k2"]?.let { return it }
-        val initial = initialFor(k1)
-        if (initial.isEmpty()) return null
-        val final_ = finalFor(initial, k2) ?: return null
-        return initial + final_
-    }
-
-    /**
-     * 根据声母消歧，返回该声母 + 韵母键对应的韵母（纯 ASCII）。
-     * 同键多韵母的键位及消歧规则：
-     *  - s → ong/iong：j/q/x 后 iong（jiong/qiong/xiong）；yong 是 y+ong
-     *  - r → uan（含 üan，j/q/x/y 后写作 uan：juan/quan/xuan/yuan）
-     *  - t → ue（含 üe，j/q/x/y 后 jue/que/xue/yue，l/n 后 lue/nue，与词库 chars/syllables 表一致）
-     *  - p → un（含 ün，j/q/x/y 后写作 un：jun/qun/xun/yun）
-     *  - v → ui/ü：j/q/x/y 后 u（ju/qu/xu/yu），l/n 后 v（lv/nv），其余 ui
-     *  - y → uai/ing：g/k/h/zh/ch/sh 后 uai（guai/kuai/huai/zhuai/chuai/shuai）
-     *  - w → ua/ia：g/k/h/zh/ch/sh 后 ua（gua/kua/hua/zhua/chua/shua）
-     *  - d → uang/iang：g/k/h/zh/ch/sh 后 uang（guang/kuang/huang/zhuang/chuang/shuang）
-     */
-    private fun finalFor(initial: String, key: Char): String? = when (key) {
-        's' -> if (initial in JQX) "iong" else "ong"
-        'r' -> "uan"
-        't' -> "ue"
-        'p' -> "un"
-        'v' -> when {
-            initial in L_N -> "v"
-            initial in JQX_Y -> "u"
-            else -> "ui"
-        }
-        // o 键：b/p/m/f/w 后是 o（bo/po/mo/fo/wo），其他声母是 uo（guo/cuo/zuo）
-        'o' -> if (initial in setOf("b", "p", "m", "f", "w")) "o" else "uo"
-        // y 键：uai/ing 消歧
-        'y' -> if (initial in UAI_INITIALS) "uai" else "ing"
-        // w 键：ua/ia 消歧
-        'w' -> if (initial in UA_INITIALS) "ua" else "ia"
-        // d 键：uang/iang 消歧
-        'd' -> if (initial in UA_INITIALS) "uang" else "iang"
-        else -> SINGLE_FINALS[key]
-    }
-
-    /** 可配 uai 的声母（guai/kuai/huai/zhuai/chuai/shuai） */
-    private val UAI_INITIALS = setOf("g", "k", "h", "zh", "ch", "sh")
-
-    /** 可配 ua/uang 的声母（gua/kua/hua/zhua/chua/shua …） */
-    private val UA_INITIALS = setOf("g", "k", "h", "zh", "ch", "sh")
-
-    /** 无歧义键：键 → 唯一韵母（s/r/t/p/v/o/y/w/d 已在 [finalFor] 特判） */
-    private val SINGLE_FINALS = mapOf(
-        'a' to "a", 'l' to "ai", 'j' to "an", 'h' to "ang", 'k' to "ao",
-        'e' to "e", 'z' to "ei", 'f' to "en", 'g' to "eng",
-        'i' to "i", 'm' to "ian", 'c' to "iao", 'x' to "ie",
-        'n' to "in", 'q' to "iu", 'b' to "ou", 'u' to "u",
-    )
-
-    private fun initialFor(key: Char): String = when (key) {
-        'v' -> "zh"
-        'i' -> "ch"
-        'u' -> "sh"
-        else -> if (key in 'a'..'z') key.toString() else ""
-    }
+    /** 该方案是否有键位落在分号键上（搜狗/微软/紫光的 `ing`），键面需要显示分号键 */
+    fun needsSemicolon(scheme: ShuangpinScheme): Boolean = scheme.table?.needsSemicolon == true
 }

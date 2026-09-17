@@ -134,6 +134,45 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 输入方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加。
+             必须位于「显示生僻字」上方（用户要求）；键盘功能面板也能循环切换，
+             这里用于显式选择、重启后仍生效 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_shuangpin_scheme"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/spinner_shuangpin"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/field_aurora"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:spinnerMode="dropdown" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:text="@string/settings_shuangpin_scheme_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <!-- 生僻字开关：默认关闭，不加载生僻字以降低词库内存占用 -->
         <LinearLayout
             android:layout_width="match_parent"

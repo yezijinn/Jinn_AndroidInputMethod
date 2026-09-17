@@ -191,7 +191,7 @@ class PinyinEngineTest {
     @Test
     fun 双拼转换后查询_中国() {
         // 双拼 vsgo → zhongguo
-        val quanpin = Shuangpin.toQuanpin("vsgo")
+        val quanpin = Shuangpin.toQuanpin("vsgo", ShuangpinScheme.ZIRANMA)
         assertEquals("zhongguo", quanpin)
         assertTrue(PinyinEngine.query(quanpin).candidates.contains("中国"))
     }
@@ -199,7 +199,7 @@ class PinyinEngineTest {
     @Test
     fun 双拼转换后查询_学习() {
         // xue(xt) + xi(xi) → xuexi
-        val quanpin = Shuangpin.toQuanpin("xtxi")
+        val quanpin = Shuangpin.toQuanpin("xtxi", ShuangpinScheme.ZIRANMA)
         assertEquals("xuexi", quanpin)
         assertTrue(PinyinEngine.query(quanpin).candidates.contains("学习"))
     }
@@ -207,7 +207,7 @@ class PinyinEngineTest {
     @Test
     fun 双拼转换后查询_绿色() {
         // lv(lv) + se(se) → lvse
-        val quanpin = Shuangpin.toQuanpin("lvse")
+        val quanpin = Shuangpin.toQuanpin("lvse", ShuangpinScheme.ZIRANMA)
         assertEquals("lvse", quanpin)
         assertTrue(PinyinEngine.query(quanpin).candidates.contains("绿色"))
     }
@@ -215,7 +215,7 @@ class PinyinEngineTest {
     @Test
     fun 双拼转换后查询_军队() {
         // jun(jp) + dui(dv) → jundui
-        val quanpin = Shuangpin.toQuanpin("jpdv")
+        val quanpin = Shuangpin.toQuanpin("jpdv", ShuangpinScheme.ZIRANMA)
         assertEquals("jundui", quanpin)
         assertTrue(PinyinEngine.query(quanpin).candidates.contains("军队"))
     }

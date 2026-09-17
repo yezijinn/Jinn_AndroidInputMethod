@@ -100,8 +100,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 符号层 / 数字层 / 字母层 */
     private var layer = LAYER_LETTER
 
-    /** 全拼还是双拼（来自设置） */
-    private var shuangpinMode = false
+    /** 当前输入方案（全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加），来自设置 */
+    private var scheme: ShuangpinScheme = ShuangpinScheme.QUANPIN
+
+    /** 是否双拼方案（派生值：键位/提示/文案都由 [scheme] 决定） */
+    private val shuangpinMode: Boolean get() = scheme.isShuangpin
 
     private lateinit var viewCandidatePinyin: TextView
     private lateinit var viewCandidateList: LinearLayout
@@ -127,6 +130,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private lateinit var btnShift: ImageButton
     private lateinit var btnComma: View
     private lateinit var btnPeriod: View
+
+    /**
+     * 分号键（第三行 m 右侧）。
+     *
+     * 键盘只有 26 个字母键，而搜狗/微软/紫光三套方案的 `ing` 落在分号上——没有它，
+     * 应/听/明/定 这类音节的字完全打不出来。**只在当前方案确实需要时才显示**，
+     * 其余方案与符号层/数字层一律 GONE，对现有 26 键布局零影响。
+     */
+    private lateinit var keySemicolon: PinyinKey
 
     private val keyViews = HashMap<Char, PinyinKey>()
 
@@ -235,6 +247,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift = root.findViewById(R.id.key_shift)
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
+        keySemicolon = root.findViewById(R.id.key_semicolon)
+        keySemicolon.label = SEMICOLON_KEY.toString()
+        keySemicolon.setOnTouchListener { view, event ->
+            val consumed = handleSemicolonTouch(event)
+            // 无障碍：抬手时补 performClick（与字母键同款处理）
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            consumed
+        }
 
         // 剪贴板面板：预挂载到 contentArea（GONE），打开/关闭切 visibility + 高度。
         // 显示时 viewLetters 置 GONE、contentArea 改为固定 162dp×2 高度（详见
@@ -503,9 +523,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前是否英文模式（供 IME 每次聚焦时同步，避免覆盖用户手动切换） */
     fun isEnglishMode(): Boolean = englishMode
 
-    /** 设置输入方案（全拼/双拼）与初始中英文状态 */
-    fun configure(shuangpin: Boolean, english: Boolean) {
-        shuangpinMode = shuangpin
+    /** 设置输入方案（全拼 / 七种双拼）与初始中英文状态 */
+    fun configure(scheme: ShuangpinScheme, english: Boolean) {
+        this.scheme = scheme
         englishMode = english
         // 方案切换时清掉残留的拼音与预测
         composing.clear()
@@ -537,6 +557,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内缩 = 间隙的一半：相邻两键各缩一半，合起来正好是用户设置的间隙
         keyInsetPx = p.keyGapDp * density / 2f
         for (key in keyViews.values) key.setKeyAppearance(keyCornerPx, keyInsetPx)
+        keySemicolon.setKeyAppearance(keyCornerPx, keyInsetPx)
         refreshShiftBackground()
         refreshBackspaceBackground()
         applyKeyInsets(btnShift)
@@ -965,7 +986,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
 
         // 双拼：先转全拼再查询；显示仍保留双拼原文
-        val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input) else input
+        val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val result = PinyinEngine.query(queryInput)
         // 补全诊断：只在末尾存在不完整音节时记录。
         // 注意：绝不在这里再调一次 queryWithCompletion——PinyinEngine.query() 内部
@@ -1085,7 +1106,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * @return true 表示拼音已全部消费；false 表示存在残码，候选栏应立即重查
      */
     private fun consumePinyin(candidate: String): Boolean {
-        val fullInput = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString()) else composing.toString()
+        val fullInput = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing.toString()
         val consumption = PinyinEngine.consumption(fullInput, candidate)
         if (consumption.quanpinChars >= fullInput.length) {
             composing.clear()
@@ -1100,7 +1121,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(
             TAG,
             "残码保留: 消费=\"${fullInput.take(consumption.quanpinChars)}\" " +
-                "剩余拼音=${if (shuangpinMode) Shuangpin.toQuanpin(composing.toString()) else composing}",
+                "剩余拼音=${if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing}",
         )
         return false
     }
@@ -1150,6 +1171,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
         }
+        refreshSemicolonKey()
         // 中英切换键：上下两行「中文 / 英文」，把当前语言那一行染成主题紫并加粗。
         // 必须用 SpannableString 做部分着色——拆成两个 TextView 会各自居中，看起来像两个按钮。
         btnLang.textSize = 12f
@@ -1205,7 +1227,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun currentInputTypeLabel(): String = when {
         capsMode -> "大写英文"
         englishMode -> "小写英文"
-        shuangpinMode -> "中文双拼"
+        shuangpinMode -> "中文" + scheme.shortName
         else -> "中文全拼"
     }
 
@@ -1220,40 +1242,66 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - u/i/v 键下方韵母（v 键的 ui 在这里，zh 走红色 [shuangpinRedHint]）
      *  - e/a/u/i 键不显示韵母提示
      */
-    private fun shuangpinHint(c: Char): String = when (c) {
-        'q' -> "iu"
-        'w' -> "ia ua"
-        'r' -> "uan"
-        't' -> "ue"
-        'y' -> "uai\ning"
-        'o' -> "ou"
-        'p' -> "un"
-        's' -> "ong\niong"
-        'd' -> "iang\nuang"
-        'f' -> "en"
-        'g' -> "eng"
-        'h' -> "ang"
-        'j' -> "an"
-        'k' -> "ao"
-        'l' -> "ai"
-        'z' -> "ei"
-        'x' -> "ie"
-        'c' -> "iao"
-        'v' -> "ui"
-        'b' -> "ou"
-        'n' -> "in"
-        'm' -> "ian"
-        // e/a/u/i 不显示韵母提示
-        else -> ""
+    /**
+     * 分号键触摸：按下即把一个分号补进拼音串（它是搜狗/微软/紫光方案里 `ing` 的韵母键）。
+     *
+     * 与字母键一样由外部触摸驱动按压态（OnTouchListener 返回 true 后 PinyinKey.onTouchEvent
+     * 不再执行），因此这里显式调 setPressedVisual。
+     */
+    private fun handleSemicolonTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                keySemicolon.setPressedVisual(true)
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                keySemicolon.setPressedVisual(false)
+                composing.append(SEMICOLON_KEY)
+                refreshCandidateBar()
+                Diagnostics.v(TAG, "分号键(ing): 拼音串=${composing}")
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                keySemicolon.setPressedVisual(false)
+                return true
+            }
+        }
+        return false
     }
 
-    /** 红色提示（键下方，追加在韵母之后）：u/i/v 键的 sh/ch/zh */
-    private fun shuangpinRedHint(c: Char): String = when (c) {
-        'u' -> "sh"
-        'i' -> "ch"
-        'v' -> "zh"
-        else -> ""
+    /**
+     * 刷新分号键：只在「当前方案用到分号键 + 字母层 + 非英文 + 非大写锁定」时显示。
+     *
+     * 键面与字母键同款：主文本 `;`、下方韵母提示（同样取自方案表，因此显示的就是该方案的
+     * 键位含义）。不需要它的方案与符号层/数字层一律 GONE——GONE 不参与测量，
+     * 26 键布局与已调好的圆角/间隙参数完全不受影响。
+     */
+    private fun refreshSemicolonKey() {
+        val visible = layer == LAYER_LETTER && !englishMode && !capsMode &&
+            Shuangpin.needsSemicolon(scheme)
+        keySemicolon.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+        keySemicolon.fullPinyinStyle = false
+        keySemicolon.centeredStyle = false
+        keySemicolon.label = SEMICOLON_KEY.toString()
+        keySemicolon.subLabel = scheme.table?.finalHint(SEMICOLON_KEY).orEmpty()
+        keySemicolon.subLabelRed = ""
     }
+
+    /**
+     * 键面韵母提示（字母键下方的小字）。
+     *
+     * 不手写键位表——直接从当前方案的码表反推（见 [ShuangpinTable.finalHint]），
+     * 因此**提示与引擎永远一致**，切换方案时自动跟着变。
+     * 旧实现是另手写一份 `when` 表，已经漂移出错（'o' 键写成 "ou"，实际应为 o / uo）。
+     */
+    private fun shuangpinHint(c: Char): String = scheme.table?.finalHint(c).orEmpty()
+
+    /** 键面红色提示：该键承担 zh/ch/sh 中的哪一个（各方案不同：ABC 是 a/e/v、加加是 v/u/i） */
+    private fun shuangpinRedHint(c: Char): String =
+        scheme.table?.initialOf(c)?.takeIf { it.length > 1 }.orEmpty()
 
     // ── 功能面板（无候选时展示）──────────────────────────────
 
@@ -1272,9 +1320,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun renderFunctionPanel() {
         viewCandidateList.removeAllViews()
+        // 按钮文字随方案变化：主文本＝当前方案，副文本＝下一个方案（点一下循环切换）
         viewCandidateList.addView(buildFunctionButton(
-            label = if (shuangpinMode) "双拼" else "全拼",
-            hint = if (shuangpinMode) "换全拼" else "换双拼",
+            label = scheme.shortName,
+            hint = "换${ShuangpinScheme.cycle(scheme).shortName}",
             onClick = { togglePinyinScheme() },
         ))
         viewCandidateList.addView(buildFunctionButton(
@@ -1391,13 +1440,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "输入方案切换: 大写锁定激活，切换无效")
             return
         }
-        shuangpinMode = !shuangpinMode
+        scheme = ShuangpinScheme.cycle(scheme)
         // 持久化：切换结果写入设置，输入法重建后保持本次选择
-        runCatching { Prefs(context).useShuangpin = shuangpinMode }
+        runCatching { Prefs(context).shuangpinScheme = scheme.prefsValue }
             .onFailure { Diagnostics.w(TAG, "切换方案时保存偏好失败: ${it.message}") }
         refreshKeyLabels()
         refreshCandidateBar()
-        Diagnostics.i(TAG, "输入方案切换: ${if (shuangpinMode) "自然码双拼" else "全拼"}")
+        Diagnostics.i(TAG, "输入方案切换: ${scheme.displayName}")
     }
 
     // ── 键盘内方向面板（占 26 键的字母区域）────────────────
@@ -1719,6 +1768,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f
+
+        /** 分号键：搜狗 / 微软 / 紫光 方案里 `ing` 的韵母键 */
+        const val SEMICOLON_KEY = ';'
 
         const val LAYER_LETTER = 0
         const val LAYER_SYMBOL = 1

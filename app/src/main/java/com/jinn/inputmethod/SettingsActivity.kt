@@ -40,6 +40,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var checkLockServer: CheckBox
     private lateinit var spinnerLanguage: Spinner
     private lateinit var spinnerDefaultMode: Spinner
+    private lateinit var spinnerShuangpin: Spinner
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
@@ -104,6 +105,9 @@ class SettingsActivity : ComponentActivity() {
     /** Spinner 是否已完成初始化（setSelection 会触发 onItemSelected，未就绪时不响应） */
     private var defaultModeSpinnerReady = false
 
+    /** 同上：输入方案 Spinner 的就绪标志（避免 loadPrefs 的 setSelection 把配置写坏） */
+    private var shuangpinSpinnerReady = false
+
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -121,6 +125,7 @@ class SettingsActivity : ComponentActivity() {
         checkLockServer = findViewById(R.id.check_lock_server)
         spinnerLanguage = findViewById(R.id.spinner_language)
         spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
+        spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
@@ -184,9 +189,32 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
+        // 输入方案下拉：列表直接取自 [ShuangpinScheme]（单一数据源，不会与枚举脱节）
+        spinnerShuangpin.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item,
+            ShuangpinScheme.entries.map { it.displayName },
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerShuangpin.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                // 与「默认键盘模式」同一个坑：初始化时的 setSelection 也会回调，
+                // 不挡住就会用第 0 项（全拼）把用户已选的方案静默改掉。
+                if (!shuangpinSpinnerReady) return
+                val scheme = ShuangpinScheme.entries.getOrNull(position) ?: return
+                if (scheme.prefsValue != prefs.shuangpinScheme) {
+                    prefs.shuangpinScheme = scheme.prefsValue
+                    Diagnostics.i(TAG, "输入方案: ${scheme.displayName}")
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         loadPrefs()
         // loadPrefs 内部的 setSelection 已回调过监听器，此后才是用户的真实选择
         defaultModeSpinnerReady = true
+        shuangpinSpinnerReady = true
         refreshMicState()
 
         // 识别选项即时保存：勾选即写入，下次识别立即生效
@@ -445,6 +473,12 @@ class SettingsActivity : ComponentActivity() {
         val modeValues = resources.getStringArray(R.array.default_mode_values)
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
+        )
+        // 输入方案：按当前配置定位（未知取值由 ShuangpinScheme.of 兜底为自然码）
+        spinnerShuangpin.setSelection(
+            ShuangpinScheme.of(prefs.shuangpinScheme).ordinal.coerceIn(
+                0, ShuangpinScheme.entries.lastIndex
+            )
         )
     }
 
