@@ -38,6 +38,9 @@ release/opt_tencent.txt.xz                   腾讯大词库可选包
 |---|---|---|
 | `convert_rime_ice.py` | rime-ice → 本项目格式，输出 base/ext 与对比报告 | **在用（主流程）** |
 | `convert_rime_tencent.py` | 腾讯大词库 → 可选包（自动注音） | **在用** |
+| `gen_shuangpin_tables.py` | 从 `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`
+  生成 7 套双拼键位表 → `app/.../ShuangpinSchemes.kt`（**改双拼键位就改这里**） | **在用** |
+| `verify_shuangpin_migration.py` | 换表对拍：新旧实现逐码比对（676 码），换表不许改行为 | **在用** |
 | `detect_ambiguous_keys.py` | 检测「连写歧义」漏词键（防回归，配合 `add_words.py`） | 在用（工具类） |
 | `add_words.py` | 向现有词库追加词条（如补连写歧义词、游戏词） | 在用（工具类） |
 | `merge_chars.py` | 合并单字表 / 音节表（换词库时用：新为主体 + 旧补覆盖） | 备用 |

@@ -117,6 +117,26 @@ app/src/main/java/com/jinn/inputmethod/
   （29.4MB、含 573 行 GBK 乱码、被 `.gitignore` 忽略、从未进版本库）。
   **不要再把词库源文件放回这个目录**——现行源在 `docs/rime-ice/`，重跑旧文件只会把乱码带回词库。
 
+## 双拼方案（键位数据是生成的，禁止手改）
+
+- 7 套方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加，键位数据在
+  `ShuangpinSchemes.kt`，**由 `tools/dict_builder/gen_shuangpin_tables.py` 从
+  `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成**（按 librime 代数语义
+  施加到 422 个合法音节）。**要改键位就改 schema 或生成器里的 `SCHEMES`，不要改生成文件。**
+- **键面提示（字母键下的韵母 + zh/ch/sh 红字）由码表在运行期反推**
+  （`ShuangpinTable.finalHint` / `initialOf`）——**不要再手写一份键位提示表**：
+  历史上那份手写表把 `o` 键写成 `ou`（实际 `o/uo`，`ou` 在 `b` 键），直接骗用户。
+- **分号键**：搜狗 / 微软 / 紫光的 `ing` 落在 `;` 上，`key_semicolon` 只在
+  `Shuangpin.needsSemicolon(scheme)` 为真时显示（其余方案 GONE，不参与测量，26 键布局零影响）。
+- **方案持久化**：`Prefs.shuangpinScheme`（Int，取值见 `ShuangpinScheme.prefsValue`，**只增不改**）；
+  老布尔键 `shuangpin` 只读不写，用于一次性迁移（true → 自然码）。
+- 改键位/加方案后必须：`.\gradlew.bat testDebugUnitTest`（`ShuangpinTest` 66 例是自然码回归基线，
+  `ShuangpinSchemesTest` 覆盖 7 套 + 全表往返自洽）＋ `tools/dict_builder/verify_shuangpin_migration.py`
+  对拍（换表不许改行为）。
+- 已知边界（不修，属模型固有取舍）：`hng/hm/m/n`（叹词）与 `junding`（音节表脏数据）无法编码；
+  同码写法让位（`lo`→`luo`、`lve/nve`→`lue/nue`、`ng`→`neng/nang/niang`），
+  其中 `lve/nve` 词条仍可命中（查询链路有 ue↔ve 变体回退）。
+
 ## 约定
 
 - **禁止修改语音部分**：`MicRecorder`、`AsrClient`、`Protocol`、`MicButton`，以及 `JinnIme`
