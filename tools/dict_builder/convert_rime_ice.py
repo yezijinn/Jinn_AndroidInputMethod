@@ -31,7 +31,9 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME_DIR = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts")
 OUT_DIR = os.path.join(ROOT, "tools", "dict_builder", "out", "rime_ice")
-CURRENT_XZ = os.path.join(ROOT, "app", "src", "main", "assets", "pinyin_phrases.txt.xz")
+# 文本资产不再直接进 APK（运行时改读 build_dict_index.py 产出的二进制索引）；
+# 这里只留一份「上一版文本」用于体积/差异对比。
+CURRENT_XZ = os.path.join(OUT_DIR, "pinyin_phrases.prev.txt.xz")
 
 # 与本项目词库一致的压缩参数（见项目笔记：preset=7 兼顾体积与解压内存）
 XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 7, "lc": 4, "pb": 0}]
