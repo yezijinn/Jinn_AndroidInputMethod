@@ -101,6 +101,27 @@ class ShuangpinSchemesTest {
         assertEquals("", q("", ShuangpinScheme.QUANPIN))
     }
 
+    // ── 一之二、面板「全拼 / 双拼」按钮：只二态，不选具体方案（用户要求）──────
+
+    @Test
+    fun 面板按钮_只切全拼与双拼二态() {
+        // 当前是双拼 → 切回全拼
+        assertEquals(
+            ShuangpinScheme.QUANPIN,
+            ShuangpinScheme.toggle(ShuangpinScheme.FLYPY, ShuangpinScheme.FLYPY),
+        )
+        // 当前是全拼 → 回到「设置页选定的那套」（不是固定自然码）
+        assertEquals(
+            ShuangpinScheme.SOGOU,
+            ShuangpinScheme.toggle(ShuangpinScheme.QUANPIN, ShuangpinScheme.SOGOU),
+        )
+        // 配置值异常（全拼）时兜底自然码，保证按钮一定切得过去
+        assertEquals(
+            ShuangpinScheme.ZIRANMA,
+            ShuangpinScheme.toggle(ShuangpinScheme.QUANPIN, ShuangpinScheme.QUANPIN),
+        )
+    }
+
     // ── 二、分号键：只有搜狗 / 微软 / 紫光需要 ──────────────────────────────
 
     @Test
