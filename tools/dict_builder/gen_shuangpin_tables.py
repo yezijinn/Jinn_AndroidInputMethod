@@ -36,7 +36,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME = os.path.join(ROOT, 'docs', 'rime-ice')
 SYLL = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_syllables.txt')
-DICT = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_phrases.txt.xz')
+# 词库文本已在 Stage 1 移出 assets（运行时改读二进制索引），这里改读流水线留档文本：
+# 由 convert_rime_ice.py / build_dict_index.py 写到 out/rime_ice/pinyin_phrases.txt。
+DICT = os.path.join(ROOT, 'tools', 'dict_builder', 'out', 'rime_ice', 'pinyin_phrases.txt')
 OUT_KT = os.path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'jinn', 'inputmethod',
                       'ShuangpinSchemes.kt')
 OUT_DIR = os.path.join(ROOT, 'tools', 'dict_builder', 'out', 'shuangpin')
@@ -110,6 +112,17 @@ internal class ShuangpinTable(
     /** 叹词音节（呣 / 嗯 / 哼），不作为韵母提示展示 */
     private val nasalExtras = setOf("m", "n", "ng", "hm", "hng")
 
+    /**
+     * 韵母表规范顺序：仅用于**同一行内**的提示排序（长者仍在前）。
+     * 目的：让「哪两个韵母同屏」有确定且符合直觉的次序，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
+     */
+    private val finalOrder = listOf(
+        "a", "o", "e", "ai", "ei", "ao", "ou", "an", "en", "ang", "eng", "ong",
+        "i", "ia", "ie", "iao", "iu", "ian", "in", "iang", "ing", "iong",
+        "u", "ua", "uo", "uai", "ui", "uan", "un", "uang", "ueng",
+        "v", "ve", "van", "vn",
+    )
+
     /** 该声母键对应的声母；非声母键返回 null */
     fun initialOf(key: Char): String? = initials[key]
 
@@ -128,9 +141,37 @@ internal class ShuangpinTable(
         }
     }
 
-    /** 该键的韵母提示（多韵母用换行分隔，长者在前）；无提示返回空串 */
-    fun finalHint(key: Char): String =
-        finalsByKey[key]?.sortedByDescending { it.length }?.joinToString("\\n") ?: ""
+    /**
+     * 该键的韵母提示（字母键下方的小字）。
+     *
+     * 规则（**用户明示，不得违反**）：
+     *  1. **绝不显示与该键字母相同的韵母**——e 键不显示 e、v 键不显示 v、a/i/u 同理，
+     *     属纯冗余；
+     *  2. ü 的两种写法同时出现时（u 对应 jqxy 后、v 对应 l/n 后）**只留 v**，
+     *     否则同一键上会出现两个表示同一读音的项；
+     *  3. **总显示行数强制 ≤ 2**（含红色 zh/ch/sh 那一行）：
+     *     · 该键承担 zh/ch/sh 时韵母挤成一行（红色占第 2 行）；
+     *     · 否则每个韵母各占一行（最多 2 个）。
+     *
+     * 例：自然码/小鹤/加加 v → `ui` + 红 `zh`；微软 v → 一行 `ui ue` + 红 `zh`；
+     * 搜狗/微软 y → `uai` / `v` 两行。
+     */
+    fun finalHint(key: Char): String {
+        val raw = finalsByKey[key] ?: return ""
+        // 注意顺序：先去重 ü 的两种写法（此时 v 还在，才能判断），再剔除与键位相同的韵母。
+        // 反过来做会漏掉「v 键的 u」（自然码/小鹤/加加的 v 键原始集合是 {ui, u, v}：
+        // 先去自身会得到 {ui, u}，u 便再无参照可去）。
+        var list = if ("v" in raw && "u" in raw) raw.filter { it != "u" } else raw.toList()
+        list = list.filter { it != key.toString() }
+        list = list.distinct().sortedWith(
+        compareByDescending<String> { it.length }
+            .thenBy { finalOrder.indexOf(it).let { i -> if (i < 0) Int.MAX_VALUE else i } },
+    ).take(2)
+        if (list.isEmpty()) return ""
+        if (list.size == 1) return list[0]
+        val hasRedInitial = (initials[key]?.length ?: 0) > 1
+        return if (hasRedInitial) list.joinToString(" ") else list.joinToString("\\n")
+    }
 }
 
 /** 内置双拼方案表（生成数据见文件末尾） */
@@ -186,8 +227,9 @@ def apply_rules(rules, spelling):
 
 
 def dict_key_counts():
+    """键 → 词条数（冲突裁决时的权重参考）；源为流水线留档文本。"""
     counts = {}
-    with lzma.open(DICT, 'rt', encoding='utf-8') as f:
+    with io.open(DICT, encoding='utf-8') as f:
         for line in f:
             k = line.split('\t')[0]
             counts[k] = counts.get(k, 0) + 1
