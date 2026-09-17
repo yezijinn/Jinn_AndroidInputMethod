@@ -92,6 +92,10 @@ KT_HEADER = '''package com.jinn.inputmethod
  *
  * 键面提示（字母键下方的韵母、zh/ch/sh 红字）**由本表在运行期反推**，不另存一份，
  * 以保证键面与引擎永不漂移。
+ *
+ * **每套方案惰性构建**（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的——若在该路径同步建表会拖慢首次弹出。
+ * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUp`）。
  */
 
 internal class ShuangpinTable(
@@ -130,7 +134,7 @@ internal class ShuangpinTable(
 }
 
 /** 内置双拼方案表（生成数据见文件末尾） */
-internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
+internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
 '''
 
 
@@ -260,7 +264,7 @@ def main():
 
         lines = [f'    /** {cn}（rime-ice `{schema}.schema.yaml`）：'
                  f'{len(per_syllable)} 个音节 / {len(code_map)} 个码 */',
-                 f'    "{key.upper()}" to ShuangpinTable(',
+                 f'    "{key.upper()}" to lazy {{ ShuangpinTable(',
                  '        initials = mapOf(']
         ini_items = [f"'{k}' to \"{v}\"" for k, v in sorted(initials.items())]
         for i in range(0, len(ini_items), 6):
@@ -271,7 +275,7 @@ def main():
         for i in range(0, len(code_items), 5):
             lines.append('            ' + ', '.join(code_items[i:i + 5]) + ',')
         lines.append('        ),')
-        lines.append('    ),')
+        lines.append('    ) },')
         kt_blocks.append('\n'.join(lines))
 
         io.open(os.path.join(OUT_DIR, key + '.json'), 'w', encoding='utf-8').write(
