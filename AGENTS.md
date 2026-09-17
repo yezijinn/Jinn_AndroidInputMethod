@@ -107,7 +107,7 @@ app/src/main/java/com/jinn/inputmethod/
 - 所有关键路径已埋点（连接/重连/收发/录音/VAD/权限/剪贴板保存/词库加载），排查先用 `cat` 日志文件
 - 排查命令：`adb shell cat /storage/emulated/0/JinnIme/logs/jinn-*.log`
 - `Diagnostics.i/v/w/e` 同时写 logcat 与日志文件；`PinyinEngine` 加载完成会打
-  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程，基础包约 6.4s，不阻塞 UI）
+  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程；高频子集 ~0.3s 即可打字，全量索引随后就绪——日常为**内存映射复用约 0.05s**，仅 App 更新后首次需解压重建约 1.8s）
 - 可选词库为**延迟加载**：由三种空闲信号之一触发（息屏 / 键盘收起后闲置 20s / 兜底 180s，
   见 `JinnIme.maybeLoadOptionalDict`），因此「开机后首次输入的候选就绪」不被大词库拖慢
 - 剪贴板保存打 `save: 已保存 … (分类=...)`；剪贴板页刷新打 `refresh: 全库=N 分类=... 查询=N`
@@ -121,10 +121,19 @@ app/src/main/java/com/jinn/inputmethod/
   设置页「分类词库」按需下载到 `filesDir/dicts/`。
 - **全量基础包以二进制索引发布**（`assets/pinyin_index.bin.xz`，由 `build_dict_index.py` 构建）：
   运行时只解压 + 读偏移数组 + 二分查找，不再解析文本、不再建 60 万级 HashMap
-  （真机：加载 6~10.7s → **2.9s**，基础包内存 145MB → **PSS 90MB**）。
+  （真机：基础索引日常 **0.05s**（内存映射）/ 首次 1.8s；进程 PSS 305MB → **77.7MB**（含可选包））。
   **生僻字过滤在查询期**（`phrasesFor`），因此索引可原样复用、与开关无关。
   ⚠ 反向索引（69 万条「词→拼音」）已移除，改由 `candidatePinyin`（查询时记录候选→键，上限 4096）
   支撑「残码保留」与「智能预测」——**改动这两处务必跑 `IndexFeatureRegressionTest`**。
+  ⚠ **索引读取一律走内存映射**（2026-09-17，吸收 librime `Prism : MappedFile`）：
+  `PhraseIndex` 内部持 `ByteBuffer`（堆内 `wrap` / 映射 `map`）。基础索引因资产是 xz，
+  改为「**解压一次 → 原子落盘 `filesDir/index/base.<APK mtime>.idx` → 映射**」；
+  可选包缓存 `filesDir/index/<包名>.idx` 同样映射。**缓存写入必须「临时文件 + 原子改名」**
+  （直接覆盖会截断正在使用的映射，Linux 上 SIGBUS）。
+  ⚠⚠ **清扫判据必须分成两类**：可选包的"清理失效缓存"只能删 `<包名>.idx`，
+  **绝不能碰 `base.` 前缀**（其源是 APK 内资产、不在包列表里）。判据已抽成纯函数
+  `PinyinEngine.staleOptionalCacheNames()`，由 `IndexCacheLifecycleTest` 守卫——
+  历史上这里出过一次严重缺陷：每次可选包加载都把基础缓存删掉，导致内存映射永远命中不了。
   ⚠ **索引格式 = v2（长度数组）**：`keysBlob + keyLengths(u8) + wordsBlob + wordLengths(u16)`。
   改格式必须**同时**改构建脚本与设备端构建器（`PhraseIndex.build`），并跑
   `IndexBuilderParityTest`（逐字节对拍）；版本号一升，设备上的旧缓存会自动重建，无需用户操作。
