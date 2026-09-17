@@ -117,10 +117,21 @@ app/src/main/java/com/jinn/inputmethod/
   （29.4MB、含 573 行 GBK 乱码、被 `.gitignore` 忽略、从未进版本库）。
   **不要再把词库源文件放回这个目录**——现行源在 `docs/rime-ice/`，重跑旧文件只会把乱码带回词库。
 
+## 冷启动与加载顺序（重要）
+
+- **基础词库就绪前不能输入中文**：`PinyinEngine.query()` 在 `loaded == false` 时静默返回空
+  （真机实测基础包 6~10.7s、装了可选包后再加 21~34s）。因此：
+  **任何新增的启动期任务都必须显式降优先级**（`Process.setThreadPriority(THREAD_PRIORITY_BACKGROUND)`），
+  不要与词库加载抢 CPU（双拼键位表预热、可选包加载都已按此处理）。
+- 冷启动阶段的耗时构成与逐条优化方案见 `docs/冷启动卡顿-诊断与优化方案.md`
+  （P0-1 高频子集先行 / P0-2 加载期提示 / P1 持久化二进制索引）。
+- 内存实测口径：`su -c 'cat /proc/<pid>/smaps_rollup'` 看 PSS 与 Private_Dirty
+  （`dumpsys meminfo` 在本机 ROM 上会 IoException 超时）。
+
 ## 双拼方案（键位数据是生成的，禁止手改）
 
 - 7 套方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加，键位数据在
-  `ShuangpinSchemes.kt`，**由 `tools/dict_builder/gen_shuangpin_tables.py` 从
+  `ShuangpinSchemes.kt`（**按方案惰性构建**，见 `Shuangpin.warmUpAll` 的后台预热），**由 `tools/dict_builder/gen_shuangpin_tables.py` 从
   `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成**（按 librime 代数语义
   施加到 422 个合法音节）。**要改键位就改 schema 或生成器里的 `SCHEMES`，不要改生成文件。**
 - **键面提示（字母键下的韵母 + zh/ch/sh 红字）由码表在运行期反推**
