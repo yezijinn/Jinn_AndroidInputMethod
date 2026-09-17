@@ -27,7 +27,7 @@
     <string name="dict_entry_desc">按需下载长词包、专业词库等，扩充输入覆盖范围</string>
     <string name="dict_entry_open">打开分类词库</string>
     <string name="dict_manager_hint_line1">按需下载词库，扩充输入覆盖范围。</string>
-    <string name="dict_manager_hint_line2">下载后需重启输入法生效。</string>
+    <string name="dict_manager_hint_line2">下载后会自动重启输入法以生效。</string>
     <string name="dict_status_installed">已安装（%1$s）</string>
     <string name="dict_status_absent">未安装</string>
     <string name="dict_action_download">下载</string>
@@ -71,7 +71,7 @@
 
     <!-- 设置页 -->
     <string name="settings_title">Jinn安卓输入法</string>
-    <string name="settings_subtitle">语音识别 + 26键全拼 + 26键双拼(自然码)</string>
+    <string name="settings_subtitle">语音识别 + 26 键全拼 + 7 套双拼方案</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
     <string name="settings_lock">固定</string>
@@ -103,7 +103,7 @@
     <string name="update_btn_ok">知道了</string>
     <string name="update_checking">检查中…</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 自然码双拼，空格选词。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -153,7 +153,7 @@
 
     <!-- 剪贴板历史 -->
     <string name="settings_clipboard">剪贴板</string>
-    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘的候选栏点击「剪贴板」可查看历史。</string>
+    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘候选栏（未输入任何拼音时）点「历史」即可查看。</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 200）</string>
     
@@ -168,11 +168,11 @@
 
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">显示生僻字</string>
-    <string name="switch_show_rare_chars_desc">默认关闭,不加载生僻字.勾选后重启加载生僻字</string>
+    <string name="switch_show_rare_chars_desc">默认关闭，候选里不出现生僻字（过滤在查询期做，词库与索引不裁剪）。勾选后重启输入法生效</string>
     <string name="switch_user_learning">用户词频学习</string>
     <string name="switch_user_learning_desc">记住你实际选过的词并排到前面；只存在本机，不上传。可随时关闭（关闭后既有记录不再参与排序）</string>
-    <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
-    <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
+    <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
+    <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
 
     <!-- 词库加载状态提示（出现在候选栏，不弹窗——IME 内禁用弹窗） -->
     <string name="engine_dict_loading">词库加载中…</string>
