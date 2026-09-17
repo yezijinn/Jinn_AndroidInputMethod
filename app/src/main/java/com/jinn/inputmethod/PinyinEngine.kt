@@ -1036,10 +1036,20 @@ object PinyinEngine {
     }
 
     /**
-     * 词库约束分词：枚举 [input] 的所有合法音节切分路径，用词库短语命中评分，
-     * 返回能拼出最多词库短语的切分；无命中返回 null（调用方退回贪心切分）。
+     * 词库约束分词：**整串必须是词库键**时，在合法切分里取**音节数最少**的那种；否则返回 null
+     * （调用方退回贪心切分）。
      *
-     * 例：xuni → 路径 [xun, i]（无词）、[xu, ni]（拼「虚拟」）→ 选 [xu, ni]。
+     * ⚠ 注意实现的实际语义（2026-09-17 复核，原 KDoc 描述与代码不符，已改正）：
+     *  - 打分里的 `key = path.joinToString("")` —— path 是输入的**一种划分**，join 后**恒等于输入本身**，
+     *    因此 `hit` 对所有路径相同，分数只差 `-path.size`；再加上末尾 `phrasesFor(整串) != null` 的门禁
+     *    对所有路径一致 ⇒ **实际只比音节数**（先枚举者胜；DFS 按最长音节优先，故多数情况下
+     *    第一条完整路径即最优）。
+     *  - 因此它**不是**「按词库短语数打分」的分词，也不要按那个思路去改：
+     *    实测把打分改成「Σ 各前缀命中数」会**退化**（每个音节边界都加分 → 切得越碎分越高），
+     *    真实词库下会切出 `tianqi → ti-a-n-qi`、`beijingdaxue → bei-ji-ng-da-xue` 这类坏结果。
+     *    详见 `docs/从 librime 可吸收的设计.md` 第二节。
+     *  - 原 KDoc 举的例子 `xuni → [xu, ni]` 本身不成立：`xun-i` 里的 `i` 不是合法音节，
+     *    实测 `xuni` **只有一种**合法切分（[xu, ni]）。
      *
      * @param input 必须全部由合法音节组成（否则部分无法切分，返回 null）
      */
@@ -1065,7 +1075,15 @@ object PinyinEngine {
         return best?.takeIf { phrasesFor(it.joinToString("")) != null }
     }
 
-    /** DFS 枚举所有合法音节切分（最长音节 6 字符），路径上限 [MAX_SEGMENT_PATHS] 防爆炸 */
+    /**
+     * DFS 枚举合法音节切分（最长音节 6 字符），路径上限 [MAX_SEGMENT_PATHS] 防爆炸。
+     *
+     * 上限的**真实作用**：因为 [dictionarySegmentation] 最终只比音节数、且这里按最长音节优先，
+     * 第一条完整路径通常即最优，上限只是防御措施，**不是**「截断路径导致选错」的隐患所在
+     * （实测 14 个常见语料里仅 `jintiantianqi`（18 种切分）超过上限）。
+     * 若将来真的要改成按词库分值的分词，必须同时换成「音节图 + 动态规划」（无限枚举路径），
+     * 并先解决上面提到的打分退化问题。
+     */
     private fun dfsSegment(input: String, pos: Int, cur: MutableList<String>, out: MutableList<List<String>>) {
         if (out.size >= MAX_SEGMENT_PATHS) return
         if (pos == input.length) {
