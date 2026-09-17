@@ -64,6 +64,9 @@ object PinyinEngine {
     /** 索引缓存文件后缀（源文件 `ext.xz` → 缓存 `ext.xz.idx`） */
     private const val INDEX_SUFFIX = ".idx"
 
+    /** 基础索引磁盘缓存前缀（文件名形如 `base.<APK mtime>.idx`） */
+    private const val BASE_CACHE_PREFIX = "base."
+
     /** 常用字位图大小：覆盖基本区汉字（0x4E00~0x9FFF） */
     private const val CHAR_TABLE_SIZE = 0x9FFF + 1
 
@@ -600,10 +603,10 @@ object PinyinEngine {
         val cache = java.io.File(indexDir, src.name + INDEX_SUFFIX)
 
         if (cache.isFile) {
-            runCatching {
-                val idx = PhraseIndex.of(cache.readBytes())
-                if (idx != null && idx.sourceStamp == stamp) {
-                    Diagnostics.i(TAG, "复用索引缓存: ${src.name}（${idx.size} 键）")
+            // 内存映射：不再把整块 .idx 读进堆（可选包两个缓存合计 34MB）
+            PhraseIndex.ofMapped(cache)?.let { idx ->
+                if (idx.sourceStamp == stamp) {
+                    Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
                     return idx
                 }
             }
@@ -615,8 +618,9 @@ object PinyinEngine {
                 .bufferedReader(StandardCharsets.UTF_8).use { reader ->
                     PhraseIndex.build(reader.lineSequence(), stamp)
                 }
-            runCatching { cache.writeBytes(bytes) }
-            val idx = PhraseIndex.of(bytes) ?: error("构建出的索引结构异常")
+            // 原子落盘（写临时文件 + 改名）：缓存可能正被本进程 mmap 使用，直接覆盖会截断映射
+            val mapped = if (writeIndexCacheAtomically(cache, bytes)) PhraseIndex.ofMapped(cache) else null
+            val idx = mapped ?: PhraseIndex.of(bytes) ?: error("构建出的索引结构异常")
             Diagnostics.i(
                 TAG,
                 "已构建词库包索引: ${src.name}（${idx.size} 键 / ${bytes.size / 1024}KB / " +
@@ -631,6 +635,57 @@ object PinyinEngine {
                 Diagnostics.i(TAG, "已按旧路径并入词库包: ${src.name}")
             }.onFailure { Diagnostics.e(TAG, "词库包加载失败（忽略）: ${src.name} - ${it.message}") }
             null
+        }
+    }
+
+    /** APK 文件 mtime 作为基础索引缓存的有效性键；取不到时退化用 lastUpdateTime / versionCode */
+    private fun baseCacheStamp(context: Context): String {
+        val apkMtime = runCatching { java.io.File(context.packageCodePath).lastModified() }
+            .getOrDefault(0L)
+        if (apkMtime > 0L) return apkMtime.toString()
+        val updated = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+        }.getOrDefault(0L)
+        return if (updated > 0L) updated.toString() else "0"
+    }
+
+    /**
+     * 原子写索引缓存：先写同目录临时文件再 `rename`。
+     *
+     * **不能直接覆盖**：缓存可能正被本进程 mmap 使用（可选包重建缓存时会走到这里），
+     * 截断已映射的文件会让读取方踩到空洞页，Linux 上直接 SIGBUS。rename 只替换目录项，
+     * 旧映射仍指向旧 inode，安全。
+     *
+     * @return 是否成功落盘（失败只是让本次退回堆内，不影响可用性）
+     */
+    private fun writeIndexCacheAtomically(file: java.io.File, bytes: ByteArray): Boolean = runCatching {
+        val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+        tmp.outputStream().use { out ->
+            out.write(bytes)
+            out.flush()
+        }
+        if (file.exists() && !file.delete()) {
+            tmp.delete()
+            return@runCatching false
+        }
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            return@runCatching false
+        }
+        true
+    }.getOrElse {
+        Diagnostics.w(TAG, "写入索引缓存失败（本次退回堆内，不影响可用性）: ${file.name} - ${it.message}")
+        false
+    }
+
+    /** 清掉旧版本（旧 APK mtime）留下的基础索引缓存，避免每更新一次留一份 14.4MB */
+    private fun sweepStaleBaseCache(dir: java.io.File, keepName: String) {
+        runCatching {
+            dir.listFiles()?.forEach { f ->
+                if (f.isFile && f.name.startsWith(BASE_CACHE_PREFIX) && f.name != keepName) {
+                    if (f.delete()) Diagnostics.i(TAG, "清理旧索引缓存: ${f.name}")
+                }
+            }
         }
     }
 
@@ -677,12 +732,41 @@ object PinyinEngine {
     private fun loadIndex(context: Context): Long {
         val t0 = System.currentTimeMillis()
         return runCatching {
-            val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
-                org.tukaani.xz.XZInputStream(raw).use { it.readBytes() }
+            val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR).apply { mkdirs() }
+            // 缓存以「APK 文件 mtime」为有效性键（App 一更新必变），故文件名即校验和
+            val cache = java.io.File(
+                indexDir,
+                BASE_CACHE_PREFIX + baseCacheStamp(context) + INDEX_SUFFIX,
+            )
+
+            // ① 命中磁盘缓存 → 直接内存映射：省掉 1.7s 的 xz 解压 + 14.4MB 私有堆
+            var idx = PhraseIndex.ofMapped(cache)
+            if (idx != null) {
+                Diagnostics.i(
+                    TAG,
+                    "基础索引: 复用磁盘缓存并内存映射（${idx.size} 键 / ${cache.length() / 1024}KB）",
+                )
+            } else {
+                // ② 首次（或 App 更新后）：解压资产 → 原子落盘 → 映射；映射失败退回堆内
+                val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
+                    org.tukaani.xz.XZInputStream(raw).use { it.readBytes() }
+                }
+                val mapped = if (writeIndexCacheAtomically(cache, bytes)) {
+                    PhraseIndex.ofMapped(cache)
+                } else {
+                    null
+                }
+                idx = mapped
+                    ?: PhraseIndex.of(bytes)
+                    ?: error("索引结构异常（magic/版本/偏移不自洽）")
+                Diagnostics.i(
+                    TAG,
+                    "基础索引: 已解压并写入磁盘缓存（${idx.size} 键 / ${bytes.size / 1024}KB / " +
+                        "${System.currentTimeMillis() - t0}ms）",
+                )
+                sweepStaleBaseCache(indexDir, cache.name)
             }
-            val idx = PhraseIndex.of(bytes) ?: error("索引结构异常（magic/版本/偏移不自洽）")
             baseIndex = idx
-            // 索引里的词不参与生僻字过滤（过滤在查询期做），故反向索引需按需构建：
             // 反向索引不再全量构建：改为查询时记录 recent 候选→键（见 candidatePinyin，省约 50MB）。
             System.currentTimeMillis() - t0
         }.getOrElse {
@@ -837,22 +921,7 @@ object PinyinEngine {
         for (w in words) candidatePinyin.putIfAbsent(w, key)
     }
 
-    /** 以 [prefix] 开头的全部拼音键（基础索引 + 运行时表，去重） */
-    private fun keysStartingWith(prefix: String): List<String> {
-        val out = LinkedHashSet<String>(16)
-        out.addAll(baseIndex?.keysWithPrefix(prefix) ?: emptyList())
-        for (idx in optionalIndexes) out.addAll(idx.keysWithPrefix(prefix))
-        var lo = lowerBound(sortedPhraseKeys, prefix)
-        while (lo < sortedPhraseKeys.size) {
-            val k = sortedPhraseKeys[lo]
-            if (!k.startsWith(prefix)) break
-            out.add(k)
-            lo++
-        }
-        return out.toList()
-    }
-
-    /**
+        /**
      * 测试注入用：按行文本加载短语表（与 [loadPhrasesReader] 逻辑完全一致）。
      *
      * @param merge true 走**并入**语义 —— 用于验证扩展包/可选包与基础包合并时的
@@ -1003,24 +1072,59 @@ object PinyinEngine {
         // 优先用查询时记录的「候选→键」（基础词走索引后没有全量反向索引）
         val lastPinyin = candidatePinyin[lastWord] ?: wordToPinyin[lastWord] ?: return emptyList()
         val out = LinkedHashSet<String>()
-        // 基础索引的前缀扫描 + 运行时表（可选包/子集）里的键，二者都按字典序，合并去重。
+        val wordBytes = lastWord.toByteArray(Charsets.UTF_8)
+        val pinyinBytes = lastPinyin.toByteArray(Charsets.UTF_8).size
+
+        // 扫描顺序与旧的 keysStartingWith 保持一致（影响 take(N) 的先后）：
+        // 基础索引 → 各可选索引 → 运行时表（高频子集 / 未摘除的合并键）。
         //
-        // ⚠ 这里有**成本悬崖**：前缀是「整词拼音」时通常只剩几十个键（如 nihao → 39 个）+
-        // 但如果将来允许对**单字候选**做预测（前缀会退化成单个音节，如 ni），键数会暴涨到
-        // 6 千以上（实测 keysWithPrefix("ni") = 6185 键 / 2.18ms，且逐个走 phrasesFor 的合并）。
-        // 因此这里在收满 MAX_PREDICTIONS 后立刻停止扫描 —— 结果与旧的「扫完再 take(N)」**完全一致**
-        // （旧实现同样按字典序累加进 LinkedHashSet 后取前 N 个），但把常见情况的开销压到最小。
-        // 若哪天要给单字候选开预测，请先把这里改成免分配的索引区间扫描（见 PhraseIndex.keysWithPrefix 备注）。
-        for (key in keysStartingWith(lastPinyin)) {
-            if (key.length <= lastPinyin.length) continue      // 只要「更长」的键
-            for (phrase in phrasesFor(key).orEmpty()) {
-                if (phrase.length > lastWord.length && phrase.startsWith(lastWord)) {
-                    out.add(phrase.substring(lastWord.length))
-                }
-            }
+        // 索引侧走「区间枚举 + 字节级后缀收集」（吸收 librime `Prism::ExpandSearch` 的 Match 思路）：
+        // **不实例化键字符串**，只对命中的词解码后缀。旧写法在短前缀下会一次性建出数千个 String
+        // （实测 keysWithPrefix("ni") = 6185 键 / 2.18ms）——这条路径将来若给单字候选开预测会直接踩到。
+        for (idx in baseAndOptionalIndexes()) {
             if (out.size >= MAX_PREDICTIONS) break
+            idx.forEachRangeWithPrefix(lastPinyin) { keyByteLen, wordsFrom, wordsTo ->
+                if (keyByteLen > pinyinBytes) {
+                    idx.collectLongerSuffixes(wordsFrom, wordsTo, wordBytes, out)
+                }
+                out.size < MAX_PREDICTIONS          // false = 提前结束扫描
+            }
+        }
+
+        // 运行时表：键数量小（高频子集 + 可选包并入项），沿用有序 List 二分定位前缀区
+        var lo = lowerBound(sortedPhraseKeys, lastPinyin)
+        while (lo < sortedPhraseKeys.size && out.size < MAX_PREDICTIONS) {
+            val key = sortedPhraseKeys[lo]
+            if (!key.startsWith(lastPinyin)) break
+            if (key.length > lastPinyin.length) {
+                addLongerSuffixes(phrasesFor(key), lastWord, out)
+            }
+            lo++
         }
         return out.take(MAX_PREDICTIONS)
+    }
+
+    /** 参与预测的索引：基础索引在前、可选索引在后（与旧 keysStartingWith 的顺序一致） */
+    private fun baseAndOptionalIndexes(): List<PhraseIndex> {
+        val base = baseIndex
+        if (optionalIndexes.isEmpty()) return if (base == null) emptyList() else listOf(base)
+        val out = ArrayList<PhraseIndex>(1 + optionalIndexes.size)
+        base?.let { out.add(it) }
+        out.addAll(optionalIndexes)
+        return out
+    }
+
+    /** 运行时表的「更长后缀」收集（与索引侧 collectLongerSuffixes 语义一致） */
+    private fun addLongerSuffixes(
+        words: Array<String>?,
+        lastWord: String,
+        out: MutableCollection<String>,
+    ) {
+        for (phrase in words.orEmpty()) {
+            if (phrase.length > lastWord.length && phrase.startsWith(lastWord)) {
+                out.add(phrase.substring(lastWord.length))
+            }
+        }
     }
 
     /**
