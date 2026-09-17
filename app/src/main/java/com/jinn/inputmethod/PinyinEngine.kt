@@ -569,12 +569,11 @@ object PinyinEngine {
         // 清理：源包已被删除的索引缓存（用户可能只删了词库文件）
         runCatching {
             val alive = packs.map { it.name }.toSet()
-            indexDir.listFiles()?.forEach { idx ->
-                if (!idx.isFile || !idx.name.endsWith(INDEX_SUFFIX)) return@forEach
-                val srcName = idx.name.removeSuffix(INDEX_SUFFIX)
-                if (srcName !in alive) {
-                    idx.delete()
-                    Diagnostics.i(TAG, "清理失效索引缓存: ${idx.name}")
+            val existing = indexDir.listFiles()?.filter { it.isFile }?.map { it.name }.orEmpty()
+            val stale = staleOptionalCacheNames(existing, alive)
+            existing.filter { it in stale }.forEach { name ->
+                if (java.io.File(indexDir, name).delete()) {
+                    Diagnostics.i(TAG, "清理失效索引缓存: $name")
                 }
             }
         }
@@ -644,6 +643,22 @@ object PinyinEngine {
         }
     }
 
+    /**
+     * 判定「源包已被删除」的索引缓存文件名（**纯函数**，便于单测）。
+     *
+     * ⚠ 必须排除基础索引缓存 `base.<APK mtime>.idx`：它的"源"是 APK 内的资产、不在词库包列表里，
+     * 一旦被这里当成失效缓存删掉，就会**每次可选包加载都删一次基础缓存** ——
+     * 症状是"内存映射永远命中不了、每次冷启动都要重新解压 1.8s"，而且日志上只看到一行
+     * 「清理失效索引缓存」，极难联想到根因（2026-09-17 真机日志实锤）。
+     */
+    internal fun staleOptionalCacheNames(existing: List<String>, alivePacks: Set<String>): List<String> {
+        return existing.filter { name ->
+            name.endsWith(INDEX_SUFFIX) &&
+                !name.startsWith(BASE_CACHE_PREFIX) &&
+                name.removeSuffix(INDEX_SUFFIX) !in alivePacks
+        }
+    }
+
     /** APK 文件 mtime 作为基础索引缓存的有效性键；取不到时退化用 lastUpdateTime / versionCode */
     private fun baseCacheStamp(context: Context): String {
         val apkMtime = runCatching { java.io.File(context.packageCodePath).lastModified() }
@@ -672,10 +687,12 @@ object PinyinEngine {
         }
         if (file.exists() && !file.delete()) {
             tmp.delete()
+            Diagnostics.w(TAG, "写索引缓存失败：无法删除旧文件 ${file.name}（本次退回堆内）")
             return@runCatching false
         }
         if (!tmp.renameTo(file)) {
             tmp.delete()
+            Diagnostics.w(TAG, "写索引缓存失败：改名失败 ${tmp.name} -> ${file.name}（本次退回堆内）")
             return@runCatching false
         }
         true
@@ -768,19 +785,26 @@ object PinyinEngine {
                 val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
                     org.tukaani.xz.XZInputStream(raw).use { it.readBytes() }
                 }
-                val mapped = if (writeIndexCacheAtomically(cache, bytes)) {
-                    PhraseIndex.ofMapped(cache)
-                } else {
-                    null
-                }
+                val written = writeIndexCacheAtomically(cache, bytes)
+                val mapped = if (written) PhraseIndex.ofMapped(cache) else null
                 idx = mapped
                     ?: PhraseIndex.of(bytes)
                     ?: error("索引结构异常（magic/版本/偏移不自洽）")
-                Diagnostics.i(
-                    TAG,
-                    "基础索引: 已解压并写入磁盘缓存（${idx.size} 键 / ${bytes.size / 1024}KB / " +
-                        "${System.currentTimeMillis() - t0}ms）",
-                )
+                // 日志必须反映**真实结果**：之前无论写盘成败都打「已写入磁盘缓存」，
+                // 排查时会被彻底误导（本次就是因为这条日志，掩盖了缓存被误删的真实原因）。
+                if (written && mapped != null) {
+                    Diagnostics.i(
+                        TAG,
+                        "基础索引: 已解压并写入磁盘缓存（${idx.size} 键 / ${bytes.size / 1024}KB / " +
+                            "${System.currentTimeMillis() - t0}ms）",
+                    )
+                } else {
+                    Diagnostics.w(
+                        TAG,
+                        "基础索引: 磁盘缓存不可用（written=$written），本次使用堆内索引" +
+                            "（${idx.size} 键 / ${System.currentTimeMillis() - t0}ms）",
+                    )
+                }
                 sweepStaleBaseCache(indexDir, cache.name)
             }
             baseIndex = idx
