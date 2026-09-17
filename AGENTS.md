@@ -111,7 +111,14 @@ app/src/main/java/com/jinn/inputmethod/
   `convert_rime_ice.py` 出基础包与扩展包，`convert_rime_tencent.py` 出腾讯可选包。
 - **分层**：基础包（词长 ≤4 字含四字成语）随 APK；扩展包（>4 字）与可选包放 Release 附件，
   设置页「分类词库」按需下载到 `filesDir/dicts/`。
-- **改完词库必做**：重生 xz（`app/build.gradle.kts` 的 `noCompress += "xz"` 不可删）→
+- **全量基础包以二进制索引发布**（`assets/pinyin_index.bin.xz`，由 `build_dict_index.py` 构建）：
+  运行时只解压 + 读偏移数组 + 二分查找，不再解析文本、不再建 60 万级 HashMap
+  （真机：加载 6~10.7s → **2.9s**，基础包内存 145MB → **PSS 90MB**）。
+  **生僻字过滤在查询期**（`phrasesFor`），因此索引可原样复用、与开关无关。
+  ⚠ 反向索引（69 万条「词→拼音」）已移除，改由 `candidatePinyin`（查询时记录候选→键，上限 4096）
+  支撑「残码保留」与「智能预测」——**改动这两处务必跑 `IndexFeatureRegressionTest`**。
+- **改完词库必做**：`convert_rime_ice.py` 出文本留档 → `build_dict_index.py` 出索引资产
+  （`noCompress += "xz"` 不可删）→
   真机验证加载与输入 → 扩展包/可选包重传两端 Release 并实测下载（比对 sha256）。
 - ⚠ **旧源文件 `tools/dict_builder/source/pinyin_phrases.txt` 已于 2026-09-17 删除**
   （29.4MB、含 573 行 GBK 乱码、被 `.gitignore` 忽略、从未进版本库）。
