@@ -495,7 +495,7 @@ class JinnIme : InputMethodService() {
         asr?.connect(force = true)
         // 双拼/中英文方案变化：立即重新套用，键盘无需重建
         pinyinKeyboard?.configure(
-            shuangpin = prefs.useShuangpin,
+            scheme = ShuangpinScheme.of(prefs.shuangpinScheme),
             english = prefs.keyboardEnglish,
         )
         // 剪贴板历史开关变化：按最新偏好启停监听
@@ -607,7 +607,7 @@ class JinnIme : InputMethodService() {
                 }
             }
             configure(
-                shuangpin = prefs.useShuangpin,
+                scheme = ShuangpinScheme.of(prefs.shuangpinScheme),
                 // 26键英文模式：启动时强制英文；其余模式沿用键盘英文偏好
                 english = if (prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN) {
                     true
@@ -788,7 +788,7 @@ class JinnIme : InputMethodService() {
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
         pinyinKeyboard?.configure(
-            shuangpin = prefs.useShuangpin,
+            scheme = ShuangpinScheme.of(prefs.shuangpinScheme),
             english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
         )
         // 剪贴板页粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
