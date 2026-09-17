@@ -33,11 +33,16 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（14 个测试类 / 184 个用例）：
+- 覆盖（20 个测试类 / 221 个用例）:
   - 协议：`ProtocolTest`（序列化 / 解析）
   - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
   - 词库：`PhraseDictIntegrityTest`（词库完整性）、`RareCharsFilterTest`（生僻字过滤）、
     `OptionalDictMergeTest`（可选包合并去重）、`CandidateCountBoundTest`（候选数量边界）
+  - 索引与两段式加载：`IndexParityTest`（索引 vs 文本逐键对拍 + 头部健壮性）、
+    `IndexBuilderParityTest`（设备端构建器与 Python 脚本逐字节一致 + 可选索引合并语义）、
+    `IndexFeatureRegressionTest`（残码消费 / 智能预测回归）、
+    `HotDictAssetTest`（子集必是全量前缀）、`HotDictMergeTest`（子集先行 + 全量并入一致性）
+  - 双拼方案：`ShuangpinSchemesTest`（7 套 + 全表往返自洽）、`HintRuleTest`（键面提示三规则）
   - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
     含 CRLF / 长度边界 / 负例）、`ClipboardDedupeTest`、`ClipboardFilterTest`
   - 文字拖选：`TextSelectionTest`
@@ -100,8 +105,8 @@ app/src/main/java/com/jinn/inputmethod/
 - 排查命令：`adb shell cat /storage/emulated/0/JinnIme/logs/jinn-*.log`
 - `Diagnostics.i/v/w/e` 同时写 logcat 与日志文件；`PinyinEngine` 加载完成会打
   「词库加载完成: 音节=N 词语键=N」与耗时（后台线程，基础包约 6.4s，不阻塞 UI）
-- 可选词库为**延迟加载**：`loadOptionalAsync` 在基础包就绪 5 秒后于后台补齐，
-  因此「开机后首次输入的候选就绪」不被大词库拖慢（详见 `PinyinEngine` 注释）
+- 可选词库为**延迟加载**：由三种空闲信号之一触发（息屏 / 键盘收起后闲置 20s / 兜底 180s，
+  见 `JinnIme.maybeLoadOptionalDict`），因此「开机后首次输入的候选就绪」不被大词库拖慢
 - 剪贴板保存打 `save: 已保存 … (分类=...)`；剪贴板页刷新打 `refresh: 全库=N 分类=... 查询=N`
 
 ## 词库来源与生成（重要）
@@ -131,7 +136,8 @@ app/src/main/java/com/jinn/inputmethod/
 
 - **词库是两段式加载**（2026-09-17 起）：
   1. `assets/hot_phrases.txt.xz`（高频子集，4 万词 / 220KB）→ **真机 ~0.25~0.31s 即可输入**；
-  2. `assets/pinyin_phrases.txt.xz`（全量基础包，60.4 万键）→ 后台 merge 进来（真机 ~7s）。
+  2. `assets/pinyin_index.bin.xz`（全量基础包**二进制索引 v2**，60.4 万键）→ 解压 + 读长度数组
+     + 二分查找（真机索引 1.70s / 两段式总计 2.31s；文本资产已不进 APK）。
   - `PinyinEngine.isLoaded` = 可以打字了（第一段完成）；`isFullyLoaded` = 候选已全量。
   - ⚠ **改词库必须同时重跑 `python tools/dict_builder/gen_hot_dict.py`**：子集必须是全量
     每个键的**前缀**，否则并入后候选顺序会与全量单载不一致（`HotDictAssetTest` 会直接失败）。
@@ -147,7 +153,7 @@ app/src/main/java/com/jinn/inputmethod/
     改这块必须跑 `IndexBuilderParityTest`（构建器字节级一致 + 合并语义）。
   - **可选词库包只在空闲时加载**，禁止改回定时加载：
     三种信号先到先得（息屏 / 键盘收起后闲置 20s / 兜底 180s），实现见 `JinnIme.maybeLoadOptionalDict`；
-    它仍是每次启动重新解析，Stage 2 的独立索引会消掉这部分。
+    首次加载会为每个包构建索引并落盘（见上一段），之后启动直接读缓存（真机 8.7s → 44ms）。
 - 冷启动阶段的耗时构成与逐条优化方案见 `docs/冷启动卡顿-诊断与优化方案.md`
   （P0-1 高频子集先行 / P0-2 加载期提示 / P1 持久化二进制索引）。
 - 内存实测口径：`su -c 'cat /proc/<pid>/smaps_rollup'` 看 PSS 与 Private_Dirty

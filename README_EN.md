@@ -138,8 +138,11 @@ The open-source repo does **not** ship signing keys or passwords. To sign locall
 ## 📚 Dictionaries
 
 Built-in assets (`app/src/main/assets/`):
-- `pinyin_phrases.txt.xz`: base pack, about **600K entries** (phrases up to 4 chars, incl. 4-char idioms);
-  streamed from xz, never written to disk
+- `pinyin_index.bin.xz`: the base pack as a **binary index**, about **600K entries** (phrases up
+  to 4 chars, incl. 4-char idioms); decompressed, then looked up by byte-wise binary search with
+  on-demand decoding — no line parsing, no hash table
+- `hot_phrases.txt.xz`: a high-frequency subset (40K words, ~220KB). It loads first so the
+  keyboard is usable as soon as it appears; the full index follows in the background
 - `pinyin_chars.txt`: **422 syllables** (syllable → char)
 - `pinyin_syllables.txt`: full valid-syllable set
 - **Optional dictionaries are not bundled**: downloaded on demand from the "Optional dictionaries"
