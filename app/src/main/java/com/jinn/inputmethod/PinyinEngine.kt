@@ -996,11 +996,18 @@ enum class ShuangpinScheme(
         fun of(prefsValue: Int): ShuangpinScheme =
             entries.firstOrNull { it.prefsValue == prefsValue } ?: ZIRANMA
 
-        /** 键盘功能面板的循环顺序：全拼 → 各双拼 → 回到全拼 */
-        fun cycle(current: ShuangpinScheme): ShuangpinScheme {
-            val order = listOf(QUANPIN) + SHUANGPIN_ONLY
-            return order[(order.indexOf(current) + 1) % order.size]
-        }
+        /**
+         * 键盘功能面板「全拼 / 双拼」按钮的二态切换。
+         *
+         * **面板只决定「用不用双拼」，不选具体方案**（用户要求：方案只能在设置页改）。
+         * 切回双拼时取设置页选定的 [configured]（若它也是全拼则退回自然码，保证一定切得过去）。
+         */
+        fun toggle(current: ShuangpinScheme, configured: ShuangpinScheme): ShuangpinScheme =
+            if (current.isShuangpin) {
+                QUANPIN
+            } else {
+                configured.takeIf { it.isShuangpin } ?: ZIRANMA
+            }
     }
 }
 
