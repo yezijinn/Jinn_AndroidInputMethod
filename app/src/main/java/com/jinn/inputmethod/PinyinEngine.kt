@@ -32,6 +32,9 @@ object PinyinEngine {
     private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
 
+    /** 合并缓存的「确实没有」哨兵（避免同一缺失键反复走逐段查找） */
+    private val EMPTY_WORDS = emptyArray<String>()
+
     /** 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字） */
     private const val COMMON_CHARS_ASSET = "common_chars.txt"
 
@@ -54,6 +57,12 @@ object PinyinEngine {
     /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
     /** 可选词库目录名（filesDir 下）：每类词库一个 xz 文件，供「分类词库」页按需下载 */
     const val OPT_DICT_DIR = "dicts"
+
+    /** 可选包的索引缓存目录（filesDir 下）：首次构建后落盘，后续启动直接读 */
+    private const val INDEX_CACHE_DIR = "index"
+
+    /** 索引缓存文件后缀（源文件 `ext.xz` → 缓存 `ext.xz.idx`） */
+    private const val INDEX_SUFFIX = ".idx"
 
     /** 常用字位图大小：覆盖基本区汉字（0x4E00~0x9FFF） */
     private const val CHAR_TABLE_SIZE = 0x9FFF + 1
@@ -110,6 +119,22 @@ object PinyinEngine {
      */
     @Volatile
     private var baseIndex: PhraseIndex? = null
+
+    /**
+     * 可选词库包的索引（按加载顺序；原子整体替换，供查询并发读取）。
+     *
+     * Stage 2：可选包不再并入 [phrasesByPinyin]（114 万条 HashMap 是内存大头），
+     * 改为各自建索引 —— 首次加载时流式构建并缓存到 `filesDir/index/`，之后直接读缓存。
+     */
+    @Volatile
+    private var optionalIndexes: List<PhraseIndex> = emptyList()
+
+    /**
+     * 合并结果小缓存：键 → 「运行时 ∪ 基础索引 ∪ 可选索引」去重后的词表（空数组表示确实没有）。
+     *
+     * 只在查询/补全/预测等主线程路径读写；超限清空（与 `completionCache` 同一套防膨胀写法）。
+     */
+    private val mergedCache = HashMap<String, Array<String>>(256)
 
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
     private val wordToPinyin = ConcurrentHashMap<String, String>(8_192)
@@ -275,6 +300,8 @@ object PinyinEngine {
             charsBySyllable.clear()
             phrasesByPinyin.clear()
             baseIndex = null
+            optionalIndexes = emptyList()
+            mergedCache.clear()
             wordToPinyin.clear()
             candidatePinyin.clear()
             validSyllables.clear()
@@ -321,6 +348,14 @@ object PinyinEngine {
             loaded = true
             fullLoaded = true
         }
+    }
+
+    /**
+     * 测试注入：设置「可选包索引」列表（模拟 Stage 2 的可选包索引，验证逐段合并语义）。
+     */
+    internal fun setOptionalIndexesForTest(indexes: List<PhraseIndex>) {
+        optionalIndexes = indexes
+        mergedCache.clear()
     }
 
     internal fun loadFromTexts(
@@ -504,35 +539,84 @@ object PinyinEngine {
             ?.sortedBy { it.name }
             .orEmpty()
 
-        var loadedCount = 0
+        val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR).apply { mkdirs() }
+
+        // 清理：源包已被删除的索引缓存（用户可能只删了词库文件）
+        runCatching {
+            val alive = packs.map { it.name }.toSet()
+            indexDir.listFiles()?.forEach { idx ->
+                if (!idx.isFile || !idx.name.endsWith(INDEX_SUFFIX)) return@forEach
+                val srcName = idx.name.removeSuffix(INDEX_SUFFIX)
+                if (srcName !in alive) {
+                    idx.delete()
+                    Diagnostics.i(TAG, "清理失效索引缓存: ${idx.name}")
+                }
+            }
+        }
+
+        val loaded = ArrayList<PhraseIndex>(packs.size)
         var loadedBytes = 0L
         for (f in packs) {
-            if (loadOneDict(f)) {
-                loadedCount++
+            loadOptionalIndex(f, indexDir)?.let {
+                loaded.add(it)
                 loadedBytes += f.length()
             }
         }
-
-        extensionLoaded = loadedCount > 0
-        if (loadedCount == 0) {
+        optionalIndexes = loaded            // 原子整体替换（查询侧并发读旧表安全）
+        mergedCache.clear()
+        extensionLoaded = loaded.isNotEmpty()
+        if (loaded.isEmpty()) {
             Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
         } else {
-            Diagnostics.i(TAG, "可选词库已加载 $loadedCount 个包，共 ${loadedBytes / 1024}KB")
+            Diagnostics.i(TAG, "可选词库已加载 ${loaded.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）")
         }
     }
 
-    /** 加载单个词库文件（merge 模式）。成功返回 true。 */
-    private fun loadOneDict(file: java.io.File): Boolean = runCatching {
-        org.tukaani.xz.XZInputStream(file.inputStream())
-            .bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                // 必须用合并模式：可选包与基础包、可选包彼此之间都可能有相同拼音键
-                loadPhrasesReader(reader, merge = true)
+    /**
+     * 单个可选包 → 索引。
+     *
+     * ① 优先复用缓存（比对源文件 `length:mtime` 摘要，不一致才重建）；
+     * ② 否则流式构建索引（单趟、不把百万行读进内存）并落盘缓存；
+     * ③ 构建失败（例如键序异常）→ 回退为旧的「运行时并入」路径，保证功能不丢。
+     */
+    private fun loadOptionalIndex(src: java.io.File, indexDir: java.io.File): PhraseIndex? {
+        val stamp = PhraseIndex.stampOfFile(src.length(), src.lastModified())
+        val cache = java.io.File(indexDir, src.name + INDEX_SUFFIX)
+
+        if (cache.isFile) {
+            runCatching {
+                val idx = PhraseIndex.of(cache.readBytes())
+                if (idx != null && idx.sourceStamp == stamp) {
+                    Diagnostics.i(TAG, "复用索引缓存: ${src.name}（${idx.size} 键）")
+                    return idx
+                }
             }
-        Diagnostics.i(TAG, "已加载词库包: ${file.name} (${file.length() / 1024}KB)")
-        true
-    }.onFailure {
-        Diagnostics.e(TAG, "词库包加载失败（忽略，其余词库仍可用）: ${file.name} - ${it.message}")
-    }.getOrDefault(false)
+        }
+
+        val t0 = System.currentTimeMillis()
+        return runCatching {
+            val bytes = org.tukaani.xz.XZInputStream(src.inputStream())
+                .bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    PhraseIndex.build(reader.lineSequence(), stamp)
+                }
+            runCatching { cache.writeBytes(bytes) }
+            val idx = PhraseIndex.of(bytes) ?: error("构建出的索引结构异常")
+            Diagnostics.i(
+                TAG,
+                "已构建词库包索引: ${src.name}（${idx.size} 键 / ${bytes.size / 1024}KB / " +
+                    "${System.currentTimeMillis() - t0}ms）",
+            )
+            idx
+        }.getOrElse { e ->
+            Diagnostics.w(TAG, "索引构建失败，回退为运行时并入: ${src.name} - ${e.message}")
+            runCatching {
+                org.tukaani.xz.XZInputStream(src.inputStream())
+                    .bufferedReader(StandardCharsets.UTF_8).use { loadPhrasesReader(it, merge = true) }
+                Diagnostics.i(TAG, "已按旧路径并入词库包: ${src.name}")
+            }.onFailure { Diagnostics.e(TAG, "词库包加载失败（忽略）: ${src.name} - ${it.message}") }
+            null
+        }
+    }
 
     /** 扩展词库（长词包）是否已加载（供设置页显示状态） */
     fun isExtensionLoaded(): Boolean = extensionLoaded
@@ -642,6 +726,8 @@ object PinyinEngine {
      * 扩展包长词追加在后。
      */
     private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
+        // 任何词库变更都必须让「合并结果缓存」失效，否则同一个进程内换词库后会读到旧候选
+        mergedCache.clear()
         // 容量已在声明处预分配（ConcurrentHashMap(600_000)），此处不再重建容器——
         // 重建会让并发读取方拿到另一个实例，正在遍历的旧表被丢弃。
         var line = reader.readLine()
@@ -692,7 +778,29 @@ object PinyinEngine {
      * 代价是每次命中多一次位图判断（微秒级）。
      */
     private fun phrasesFor(key: String): Array<String>? {
-        val raw = phrasesByPinyin[key] ?: baseIndex?.wordsFor(key) ?: return null
+        mergedCache[key]?.let { return it.ifEmpty { null } }
+
+        val optionals = optionalIndexes
+        val raw: Array<String>? = if (optionals.isEmpty()) {
+            phrasesByPinyin[key] ?: baseIndex?.wordsFor(key)
+        } else {
+            // 逐段查找并**按旧语义合并**：运行时（高频子集）→ 基础索引 → 各可选索引按加载顺序，
+            // 「先到先得 + 去重」，与上一版「基础在前、扩展追加」的合并结果完全一致。
+            val out = LinkedHashSet<String>(32)
+            phrasesByPinyin[key]?.let { out.addAll(it) }
+            baseIndex?.wordsFor(key)?.let { out.addAll(it) }
+            for (idx in optionals) idx.wordsFor(key)?.let { out.addAll(it) }
+            if (out.isEmpty()) null else out.toTypedArray()
+        }
+
+        val filtered = raw?.let { filterRareChars(it) }
+        if (mergedCache.size > 4096) mergedCache.clear()
+        mergedCache[key] = filtered ?: EMPTY_WORDS
+        return filtered
+    }
+
+    /** 查询期生僻字过滤（索引与运行时词一视同仁） */
+    private fun filterRareChars(raw: Array<String>): Array<String> {
         val filter = commonChars ?: return raw
         var needFilter = false
         for (w in raw) {
@@ -701,8 +809,7 @@ object PinyinEngine {
                 break
             }
         }
-        if (!needFilter) return raw
-        return raw.filter { isLoadableWord(it) }.toTypedArray()
+        return if (needFilter) raw.filter { isLoadableWord(it) }.toTypedArray() else raw
     }
 
     /**
@@ -719,6 +826,7 @@ object PinyinEngine {
     private fun keysStartingWith(prefix: String): List<String> {
         val out = LinkedHashSet<String>(16)
         out.addAll(baseIndex?.keysWithPrefix(prefix) ?: emptyList())
+        for (idx in optionalIndexes) out.addAll(idx.keysWithPrefix(prefix))
         var lo = lowerBound(sortedPhraseKeys, prefix)
         while (lo < sortedPhraseKeys.size) {
             val k = sortedPhraseKeys[lo]

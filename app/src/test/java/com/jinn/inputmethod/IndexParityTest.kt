@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,5 +106,14 @@ class IndexParityTest {
             val got = index.wordsFor(key)?.toList()
             assertEquals("键 $key 的词表不一致", words, got)
         }
+    }
+
+    /**
+     * 收尾复位：PinyinEngine 是单例，本文件会用真实 asset 注入词库；
+     * 不复位会把「真实单字表/音节表」留给后续测试类，破坏它们的既有假设。
+     */
+    @After
+    fun tearDown() {
+        PinyinEngine.resetForTest()
     }
 }

@@ -140,7 +140,9 @@ def main():
                         break
             if len(picked_keys) > 900:
                 break
-        picked = [by_key[k] for k in dict.fromkeys(picked_keys)]
+        # **必须按 key 排序输出**：设备端构建器是单趟流式实现（靠键序做二分查找，乱序即报错），
+        # 而索引内部的键区总是有序的 —— 文本 fixture 若乱序，两端就会看到不同顺序，对拍失去意义。
+        picked = [by_key[k] for k in sorted(dict.fromkeys(picked_keys))]
         fix_text = "\n".join(picked)
         io.open(os.path.join(FIX_DIR, "dict_index_fixture.txt"), "w",
                 encoding="utf-8", newline="\n").write(fix_text)
