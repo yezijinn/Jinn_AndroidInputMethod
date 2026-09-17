@@ -2,7 +2,7 @@
 
 <div align="center">
 
-A lightweight Android pinyin input method (IME): **QWERTY full pinyin / Ziranma Shuangpin**,
+A lightweight Android pinyin input method (IME): **QWERTY full pinyin / Shuangpin (7 schemes)**,
 **clipboard history**, and **optional dictionaries**.
 
 Everything runs on-device — **no server required**.
@@ -27,7 +27,7 @@ Everything runs on-device — **no server required**.
 
 ## ✨ Features
 
-- **Pinyin keyboard (QWERTY)**: full pinyin, Ziranma Shuangpin, and English modes.
+- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints.
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
   - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
