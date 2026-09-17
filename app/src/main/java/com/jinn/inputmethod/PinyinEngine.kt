@@ -230,9 +230,6 @@ object PinyinEngine {
             // 生僻字过滤：默认不加载（用户几乎用不到，平白占内存与加载时间）。
             // 必须在读词库**之前**建立位图，否则过滤无从谈起——这也是它比
             // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
-            // 用户词频：与词库同批在后台加载（自身已显式降优先级，不抢词库 CPU）
-            UserFrequency.load(context, Prefs(context).userLearning)
-
             val showRareChars = Prefs(context).showRareChars
             if (!showRareChars) loadCommonChars(context)
 
@@ -251,6 +248,12 @@ object PinyinEngine {
                     "高频子库就绪（可开始输入）: 词语键=${phrasesByPinyin.size} 耗时=${hotMs}ms",
                 )
             }
+
+            // 用户词频：放在高频子集就绪**之后**。
+            // 它是独立的文件 IO（几 ms），但混在"用户马上要打字"的关键路径里就会直接抬高
+            // 可输入时间（实测 254~332ms → 337ms 这类抖动）；挪到第二段之前既不影响排序生效时机
+            // （排序在查询期做，第一键之前一定已就绪），也不占用首字延迟预算。
+            UserFrequency.load(context, Prefs(context).userLearning)
 
             // ── 第二段：全量基础包（二进制索引）──
             if (charsBySyllable.isEmpty()) loadChars(context)

@@ -77,6 +77,30 @@ class UserFrequencyTest {
         assertTrue("应被丢弃: $parsed", parsed.isEmpty())
     }
 
+    @Test
+    fun 系统时钟回拨时权重不被放大() {
+        UserFrequency.resetForTest()
+        // 先记一次（day = 今天），再模拟「时钟回拨」：内存里塞一条来自"未来"的记录
+        UserFrequency.remember("虚拟")
+        val w0 = UserFrequency.weightForTest("虚拟")!!
+        UserFrequency.putForTest("虚拟", w0, 99_999)      // 未来 day
+        UserFrequency.remember("虚拟")
+        val w1 = UserFrequency.weightForTest("虚拟")!!
+        // 钳位后应只 +1（不衰减、也不放大）
+        assertEquals("回拨后应只加 1，不应被 exp(正数) 放大", w0 + 1.0, w1, 1e-6)
+    }
+
+    @Test
+    fun 含制表符或换行的词不学习() {
+        UserFrequency.resetForTest()
+        UserFrequency.remember("坏\t词")
+        UserFrequency.remember("坏\n词")
+        UserFrequency.remember("好词")
+        assertEquals(1, UserFrequency.sizeForTest())
+        assertEquals(null, UserFrequency.weightForTest("坏\t词"))
+        assertEquals(1.0, UserFrequency.weightForTest("好词")!!, 1e-9)
+    }
+
     // ── 序列化 ──────────────────────────────────────────────────────────────
 
     @Test
