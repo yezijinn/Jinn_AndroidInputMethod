@@ -53,6 +53,13 @@ internal object UserFrequency {
     private var dirty = false
 
     private var lastSaveAt = 0L
+
+    /**
+     * 存储文件（由加载线程在 [load] 里赋值，主线程在 [remember]/[flush] 里读）。
+     * **必须 @Volatile**：否则主线程可能一直看到 null，导致首批学习既不触发防抖落盘、
+     * 退出时的 flush 也直接 return（表现为"学了但重启就没了"，且完全无声）。
+     */
+    @Volatile
     private var file: File? = null
 
     private class Entry(var weight: Double, var day: Int)
@@ -129,10 +136,18 @@ internal object UserFrequency {
      */
     fun remember(word: String) {
         if (!enabled || word.isEmpty()) return
+        // 行格式是 `词<TAB>权重<TAB>天`，含制表符/换行的词无法表示：直接不学（否则会写坏一行，
+        // 下次 parse 会整行跳过 —— 静默丢失且难以察觉）。正常候选来自词库，不会命中这条。
+        if (word.indexOf('\t') >= 0 || word.indexOf('\n') >= 0 || word.indexOf('\r') >= 0) {
+            return
+        }
         val now = today()
         entries.compute(word) { _, old ->
             // librime formula_d：dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)
-            val decayed = (old?.weight ?: 0.0) * Math.exp(((old?.day ?: now) - now) / 200.0)
+            // 与 parse 一致地对「未来 day」钳位：用户系统时钟回拨时 old.day > now，
+            // 不钳的话 exp(正数) 会把权重放大成天文数字（回拨 2000 天 = 22 万倍），此后永久霸榜。
+            val elapsed = ((old?.day ?: now) - now).coerceAtMost(0)
+            val decayed = (old?.weight ?: 0.0) * Math.exp(elapsed / 200.0)
             Entry(decayed + 1.0, now)
         }
         trimIfNeeded()
@@ -166,7 +181,10 @@ internal object UserFrequency {
         if (!dirty) return
         val text = render()
         dirty = false
-        BackgroundIo.run { writeAtomically(f, text) }
+        // **同步写**：本方法只在 onDestroy / 切后台这类"一次性收尾"时调用，
+        // 此刻再丢给 BackgroundIo 是危险的——服务销毁后进程可能随即被杀，异步任务来不及跑，
+        // 用户最后几次学习就白记了（而且无声）。文件上限 3000 行（几十 KB），主线程写一次约 1~3ms，可接受。
+        writeAtomically(f, text)
     }
 
     // ── 排序 ────────────────────────────────────────────────────────────────
