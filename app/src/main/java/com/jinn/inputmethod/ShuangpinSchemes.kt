@@ -13,6 +13,10 @@ package com.jinn.inputmethod
  *
  * 键面提示（字母键下方的韵母、zh/ch/sh 红字）**由本表在运行期反推**，不另存一份，
  * 以保证键面与引擎永不漂移。
+ *
+ * **每套方案惰性构建**（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的——若在该路径同步建表会拖慢首次弹出。
+ * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUp`）。
  */
 
 internal class ShuangpinTable(
@@ -51,9 +55,9 @@ internal class ShuangpinTable(
 }
 
 /** 内置双拼方案表（生成数据见文件末尾） */
-internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
+internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
     /** 自然码双拼（rime-ice `double_pinyin.schema.yaml`）：418 个音节 / 434 个码 */
-    "ZIRANMA" to ShuangpinTable(
+    "ZIRANMA" to lazy { ShuangpinTable(
         initials = mapOf(
             'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g", 'h' to "h",
             'i' to "ch", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m", 'n' to "n",
@@ -149,9 +153,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zk" to "zao", "zl" to "zai", "zo" to "zuo", "zp" to "zun", "zr" to "zuan",
             "zs" to "zong", "zu" to "zu", "zv" to "zui", "zz" to "zei",
         ),
-    ),
+    ) },
     /** 小鹤双拼（rime-ice `double_pinyin_flypy.schema.yaml`）：418 个音节 / 424 个码 */
-    "FLYPY" to ShuangpinTable(
+    "FLYPY" to lazy { ShuangpinTable(
         initials = mapOf(
             'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g", 'h' to "h",
             'i' to "ch", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m", 'n' to "n",
@@ -245,9 +249,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zj" to "zan", "zo" to "zuo", "zr" to "zuan", "zs" to "zong", "zu" to "zu",
             "zv" to "zui", "zw" to "zei", "zy" to "zun", "zz" to "zou",
         ),
-    ),
+    ) },
     /** 搜狗双拼（rime-ice `double_pinyin_sogou.schema.yaml`）：418 个音节 / 429 个码 */
-    "SOGOU" to ShuangpinTable(
+    "SOGOU" to lazy { ShuangpinTable(
         initials = mapOf(
             'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g", 'h' to "h",
             'i' to "ch", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m", 'n' to "n",
@@ -342,9 +346,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zk" to "zao", "zl" to "zai", "zo" to "zuo", "zp" to "zun", "zr" to "zuan",
             "zs" to "zong", "zu" to "zu", "zv" to "zui", "zz" to "zei",
         ),
-    ),
+    ) },
     /** 微软双拼（rime-ice `double_pinyin_mspy.schema.yaml`）：418 个音节 / 435 个码 */
-    "MSPY" to ShuangpinTable(
+    "MSPY" to lazy { ShuangpinTable(
         initials = mapOf(
             'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g", 'h' to "h",
             'i' to "ch", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m", 'n' to "n",
@@ -440,9 +444,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zj" to "zan", "zk" to "zao", "zl" to "zai", "zo" to "zuo", "zp" to "zun",
             "zr" to "zuan", "zs" to "zong", "zu" to "zu", "zv" to "zui", "zz" to "zei",
         ),
-    ),
+    ) },
     /** 紫光双拼（rime-ice `double_pinyin_ziguang.schema.yaml`）：418 个音节 / 417 个码 */
-    "ZIGUANG" to ShuangpinTable(
+    "ZIGUANG" to lazy { ShuangpinTable(
         initials = mapOf(
             'a' to "ch", 'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g",
             'h' to "h", 'i' to "sh", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m",
@@ -535,9 +539,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zq" to "zao", "zr" to "zan", "zs" to "zang", "zt" to "zeng", "zu" to "zu",
             "zw" to "zen", "zz" to "zou",
         ),
-    ),
+    ) },
     /** 智能ABC双拼（rime-ice `double_pinyin_abc.schema.yaml`）：418 个音节 / 413 个码 */
-    "ABC" to ShuangpinTable(
+    "ABC" to lazy { ShuangpinTable(
         initials = mapOf(
             'a' to "zh", 'b' to "b", 'c' to "c", 'd' to "d", 'e' to "ch", 'f' to "f",
             'g' to "g", 'h' to "h", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m",
@@ -629,9 +633,9 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zl" to "zai", "zm" to "zui", "zn" to "zun", "zo" to "zuo", "zp" to "zuan",
             "zq" to "zei", "zs" to "zong", "zu" to "zu",
         ),
-    ),
+    ) },
     /** 拼音加加双拼（rime-ice `double_pinyin_jiajia.schema.yaml`）：418 个音节 / 429 个码 */
-    "JIAJIA" to ShuangpinTable(
+    "JIAJIA" to lazy { ShuangpinTable(
         initials = mapOf(
             'b' to "b", 'c' to "c", 'd' to "d", 'f' to "f", 'g' to "g", 'h' to "h",
             'i' to "sh", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m", 'n' to "n",
@@ -726,5 +730,5 @@ internal val SHUANGPIN_TABLES: Map<String, ShuangpinTable> = mapOf(
             "zp" to "zou", "zr" to "zen", "zs" to "zai", "zt" to "zeng", "zu" to "zu",
             "zv" to "zui", "zw" to "zei", "zy" to "zong", "zz" to "zun",
         ),
-    ),
+    ) },
 )

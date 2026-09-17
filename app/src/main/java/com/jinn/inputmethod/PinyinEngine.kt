@@ -344,6 +344,9 @@ object PinyinEngine {
             optionalLoading = true
         }
         Thread {
+            // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
+            // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             runCatching {
                 // load() 幂等：若基础包已就绪会立即返回
                 load(context)
@@ -985,8 +988,13 @@ enum class ShuangpinScheme(
     /** 是否双拼方案（全拼无需转换） */
     val isShuangpin: Boolean get() = tableKey != null
 
-    /** 该方案的键位数据；全拼方案为 null（[ShuangpinTable] 是 internal，故此处同样 internal） */
-    internal val table: ShuangpinTable? get() = tableKey?.let { SHUANGPIN_TABLES[it] }
+    /**
+     * 该方案的键位数据；全拼方案为 null（[ShuangpinTable] 是 internal，故此处同样 internal）。
+     *
+     * 表是**惰性构建**的（`Lazy.value`）：首次访问某方案时才建它那一张，避免键盘弹出路径
+     * 一次性建 7 张（详见 ShuangpinSchemes.kt 文件头与 [Shuangpin.warmUpAll]）。
+     */
+    internal val table: ShuangpinTable? get() = tableKey?.let { SHUANGPIN_TABLES[it]?.value }
 
     companion object {
         /** 全部双拼方案（设置页下拉与键盘循环都用它，保证顺序一致） */
@@ -1051,4 +1059,19 @@ object Shuangpin {
 
     /** 该方案是否有键位落在分号键上（搜狗/微软/紫光的 `ing`），键面需要显示分号键 */
     fun needsSemicolon(scheme: ShuangpinScheme): Boolean = scheme.table?.needsSemicolon == true
+
+    /**
+     * 预热：把全部方案的键位表构建出来，返回耗时（毫秒）。
+     *
+     * 供 IME 服务创建时在**后台线程**调用——表总共约 3,000 条目，一次全建有几十毫秒量级开销，
+     * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的，在那里同步建表会拖慢首次弹出。
+     *
+     * 不预热也能正常工作（首次访问会按需同步构建该方案的表），预热只是把这笔开销挪到后台：
+     * 最坏情况是预热还没跑完用户就弹出键盘，此时只构建**当前方案**那一张（约为全部开销的 1/7）。
+     */
+    fun warmUpAll(): Long {
+        val startNs = System.nanoTime()
+        SHUANGPIN_TABLES.values.forEach { it.value }
+        return (System.nanoTime() - startNs) / 1_000_000
+    }
 }
