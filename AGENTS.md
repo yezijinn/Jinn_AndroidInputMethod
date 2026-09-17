@@ -117,6 +117,9 @@ app/src/main/java/com/jinn/inputmethod/
   **生僻字过滤在查询期**（`phrasesFor`），因此索引可原样复用、与开关无关。
   ⚠ 反向索引（69 万条「词→拼音」）已移除，改由 `candidatePinyin`（查询时记录候选→键，上限 4096）
   支撑「残码保留」与「智能预测」——**改动这两处务必跑 `IndexFeatureRegressionTest`**。
+  ⚠ **索引格式 = v2（长度数组）**：`keysBlob + keyLengths(u8) + wordsBlob + wordLengths(u16)`。
+  改格式必须**同时**改构建脚本与设备端构建器（`PhraseIndex.build`），并跑
+  `IndexBuilderParityTest`（逐字节对拍）；版本号一升，设备上的旧缓存会自动重建，无需用户操作。
 - **改完词库必做**：`convert_rime_ice.py` 出文本留档 → `build_dict_index.py` 出索引资产
   （`noCompress += "xz"` 不可删）→
   真机验证加载与输入 → 扩展包/可选包重传两端 Release 并实测下载（比对 sha256）。
