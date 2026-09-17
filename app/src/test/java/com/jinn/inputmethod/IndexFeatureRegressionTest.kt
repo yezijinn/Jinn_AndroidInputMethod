@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -110,5 +111,14 @@ class IndexFeatureRegressionTest {
             emptyList<Int>(), diffs,
         )
         assertTrue("预测应至少有一个非空样本（否则对拍无意义）", byText.any { it.isNotEmpty() })
+    }
+
+    /**
+     * 收尾复位：PinyinEngine 是单例，本文件会用真实 asset 注入词库；
+     * 不复位会把「真实单字表/音节表」留给后续测试类，破坏它们的既有假设。
+     */
+    @After
+    fun tearDown() {
+        PinyinEngine.resetForTest()
     }
 }
