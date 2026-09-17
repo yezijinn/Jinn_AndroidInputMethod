@@ -13,11 +13,13 @@
     <!-- 麦克风提示 -->
     <string name="hint_idle">按住说话 / 点一次连续录音</string>
     <string name="voice_offline_blocked">语音服务未连接（%1$s:%2$d），暂不能使用语音输入</string>
-    <!-- 可选词库的启动代价说明：只影响「IME 服务重建后首次输入」的候选就绪，日常打字无影响 -->
-    <!-- 代价说明按句拆成三行：页面逐句单独渲染，避免长句被系统自动折行 -->
-    <string name="dict_startup_cost_line1">开机后首次使用输入法时，</string>
-    <string name="dict_startup_cost_line2">候选就绪需等待约 %1$d 秒。</string>
-    <string name="dict_startup_cost_line3">之后不影响日常输入。</string>
+    <!-- 可选词库的加载代价说明（2026-09-17 按实现校正）：
+         现状是「只在空闲时后台加载（息屏 / 键盘闲置 20s / 兜底 180s），加载期间照常打字」，
+         且首次构建索引后落盘缓存，之后启动直接内存映射复用（实测约 0.05s）。
+         旧文案「开机后首次使用输入法时，候选就绪需等待约 7 秒」早已不成立，属过期描述。 -->
+    <string name="dict_startup_cost_line1">本包在空闲时才后台加载（息屏 / 键盘闲置），</string>
+    <string name="dict_startup_cost_line2">首次构建索引约需 %1$d 秒，期间不影响打字。</string>
+    <string name="dict_startup_cost_line3">之后启动直接复用索引缓存（约 0.05 秒）。</string>
 
     <!-- 分类词库页 -->
     <string name="dict_manager_title">分类词库</string>
