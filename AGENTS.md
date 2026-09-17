@@ -151,6 +151,12 @@ app/src/main/java/com/jinn/inputmethod/
   `ShuangpinSchemes.kt`（**按方案惰性构建**，见 `Shuangpin.warmUpAll` 的后台预热），**由 `tools/dict_builder/gen_shuangpin_tables.py` 从
   `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成**（按 librime 代数语义
   施加到 422 个合法音节）。**要改键位就改 schema 或生成器里的 `SCHEMES`，不要改生成文件。**
+- **键面提示的硬性规则（用户明示，禁止违反）**：① **绝不显示与该键字母相同的韵母**
+  （e 键不显示 e、v 键不显示 v、a/i/u 同理）；② ü 的两种写法同时出现只留 `v`；
+  ③ **总行数强制 ≤ 2**（含红色 zh/ch/sh 那一行）：该键承担 zh/ch/sh 时韵母挤一行、
+  红色占第 2 行；④ 同一行内按「长者在前、同长按韵母表规范顺序」排序。
+  规则实现在生成器模板的 `ShuangpinTable.finalHint`，由 `HintRuleTest`（7 套 × 26 键全量扫描 +
+  用户点名项）守卫——**改提示逻辑必须同时改生成器并重跑该测试**。
 - **键面提示（字母键下的韵母 + zh/ch/sh 红字）由码表在运行期反推**
   （`ShuangpinTable.finalHint` / `initialOf`）——**不要再手写一份键位提示表**：
   历史上那份手写表把 `o` 键写成 `ou`（实际 `o/uo`，`ou` 在 `b` 键），直接骗用户。
