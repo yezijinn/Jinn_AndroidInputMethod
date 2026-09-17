@@ -170,6 +170,10 @@
     <string name="rare_chars_on">已开启：重启输入法后将加载生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后将不再加载生僻字（更省内存）</string>
 
+    <!-- 词库加载状态提示（出现在候选栏，不弹窗——IME 内禁用弹窗） -->
+    <string name="engine_dict_loading">词库加载中…</string>
+    <string name="engine_dict_filling">词库补全中…</string>
+
     <!-- 输入方案（全拼 + 七种双拼；方案名取自 ShuangpinScheme，故此处不写死列表） -->
     <string name="settings_shuangpin_scheme">双拼的输入方案</string>
     <string name="settings_shuangpin_scheme_desc">26 键按钮 会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上\n此处只选「哪套双拼」；全拼/双拼切换用键盘面板的按钮</string>

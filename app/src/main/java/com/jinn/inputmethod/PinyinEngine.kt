@@ -38,6 +38,14 @@ object PinyinEngine {
     /** 短语词库 asset 名（xz 压缩存放，加载时流式解压） */
     private const val PHRASES_ASSET_XZ = "pinyin_phrases.txt.xz"
 
+    /**
+     * 高频子集词库（由 `tools/dict_builder/gen_hot_dict.py` 从同一份源按词频取前 4 万条生成）。
+     *
+     * 存在的唯一目的：把「键盘一弹出就能打字」从 6~10.7s 压到 1s 以内
+     * （全量基础包解析完之前，[query] 因未就绪只能返回空）。
+     */
+    private const val HOT_PHRASES_ASSET_XZ = "hot_phrases.txt.xz"
+
     /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
     /** 可选词库目录名（filesDir 下）：每类词库一个 xz 文件，供「分类词库」页按需下载 */
     const val OPT_DICT_DIR = "dicts"
@@ -51,6 +59,21 @@ object PinyinEngine {
     /** 可选词库包是否已加载完成（延迟加载，见 loadOptionalAsync） */
     @Volatile
     private var optionalLoaded = false
+
+    /**
+     * 全量基础包是否已 merge 完成。
+     *
+     * [loaded] 只表示「可以用来打字了」（高频子集就绪即可为 true）；
+     * 本标志表示「候选已经全量」，供 UI 在补全窗口内给出提示。
+     */
+    @Volatile
+    private var fullLoaded = false
+
+    /** 是否已可输入（高频子集或全量基础包任一就绪即为 true） */
+    val isLoaded: Boolean get() = loaded
+
+    /** 是否已全量就绪（false 且 [isLoaded] 为 true 时，UI 可提示「词库补全中」） */
+    val isFullyLoaded: Boolean get() = fullLoaded
 
     /** 可选词库包是否正在后台加载（防重复触发） */
     @Volatile
@@ -135,15 +158,40 @@ object PinyinEngine {
             // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
             val showRareChars = Prefs(context).showRareChars
             if (!showRareChars) loadCommonChars(context)
-            loadChars(context)
-            loadPhrases(context)
+
+            // ── 第一段：高频子集，先让用户能打字（真机实测 ~0.4s vs 全量 6~10.7s）──
+            // 子集是同一份源里词频最高的那批词，且单字表/音节表都很小，一并先加载：
+            // 单字表保证任何合法音节至少出单字候选（不会「什么都没有」），
+            // 音节表是切分的前提（缺了它 query 直接不可用）。
+            val hotMs = loadHotPhrases(context)
+            if (hotMs >= 0) {
+                if (charsBySyllable.isEmpty()) loadChars(context)
+                if (validSyllables.isEmpty()) loadSyllables(context)
+                finalizeLoad()
+                loaded = true
+                Diagnostics.i(
+                    TAG,
+                    "高频子库就绪（可开始输入）: 词语键=${phrasesByPinyin.size} 耗时=${hotMs}ms",
+                )
+            }
+
+            // ── 第二段：全量基础包，merge 进同一批容器（查询可并发进行）──
+            if (charsBySyllable.isEmpty()) loadChars(context)
+            loadPhrases(context, merge = hotMs >= 0)
             // 可选词库包**不在这里加载** —— 见 loadOptionalAsync()。
             // 它们可达 97 万词条、加载十几秒，若在此一并加载会拖慢
             // 「开机后首次输入」的候选就绪时间；改为基础包就绪后在后台补齐。
-            loadSyllables(context)
+            if (validSyllables.isEmpty()) loadSyllables(context)
             finalizeLoad()
             loaded = true
+            fullLoaded = true
             Log.i(TAG, "词库加载完成: 音节=${charsBySyllable.size} 词语键=${phrasesByPinyin.size} 合法音节=${validSyllables.size}")
+            if (hotMs >= 0) {
+                Diagnostics.i(
+                    TAG,
+                    "全量基础包已并入（高频子集 ${hotMs}ms + 全量补全 ${System.currentTimeMillis() - t0 - hotMs}ms）",
+                )
+            }
             // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
             // 评估内存优化前必须先有这个数，不能靠猜。
             Diagnostics.i(
@@ -184,6 +232,7 @@ object PinyinEngine {
      * 测试在 @Before 里调用本方法即可获得干净起点。
      */
     internal fun resetForTest() {
+        fullLoaded = false
         synchronized(this) {
             charsBySyllable.clear()
             phrasesByPinyin.clear()
@@ -226,6 +275,8 @@ object PinyinEngine {
             loadSyllablesText(syllables)
             finalizeLoad()
             loaded = true
+            // 测试注入的是「全量」语义，故与真实全量加载保持同一状态（避免 UI 误判为补全中）
+            fullLoaded = true
         }
     }
 
@@ -454,14 +505,41 @@ object PinyinEngine {
         loadCharsReader(java.io.BufferedReader(java.io.StringReader(text)))
     }
 
-    private fun loadPhrases(context: Context) {
+    /**
+     * 加载全量基础词库。
+     *
+     * @param merge true 表示「高频子集已在表里」，走并入语义（先来先得 + 去重）。
+     *   因为子集取自同一份源、且是每个键的高频前缀，并入后的候选顺序与
+     *   「一次性全量加载」**完全一致**（已由单测 `HotDictMergeTest` 钉住）。
+     */
+    private fun loadPhrases(context: Context, merge: Boolean = false) {
         // 词库以 xz 存放：28.0MB → 8.0MB，比 deflate 再省 22%，APK 体积随之下降约 20%。
         // 用流式解压直接读、不落地磁盘；仍逐行解析，避免一次性构造超大 String。
         // 解压实测约 0.6s，发生在后台加载线程上，不阻塞 UI、也不影响键盘显示。
         context.assets.open(PHRASES_ASSET_XZ).let { raw ->
             org.tukaani.xz.XZInputStream(raw).bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                loadPhrasesReader(reader)
+                loadPhrasesReader(reader, merge)
             }
+        }
+    }
+
+    /**
+     * 加载高频子集词库；成功返回耗时（毫秒），资产缺失/损坏返回 -1（调用方退回原行为）。
+     *
+     * 注意：**不加锁、不校验 loaded**——它只由 [load] 在持有锁时调用一次。
+     */
+    private fun loadHotPhrases(context: Context): Long {
+        val t0 = System.currentTimeMillis()
+        return runCatching {
+            context.assets.open(HOT_PHRASES_ASSET_XZ).let { raw ->
+                org.tukaani.xz.XZInputStream(raw).bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    loadPhrasesReader(reader, merge = true)
+                }
+            }
+            System.currentTimeMillis() - t0
+        }.getOrElse {
+            Diagnostics.w(TAG, "高频子集词库加载失败，退回全量加载: ${it.message}")
+            -1L
         }
     }
 
