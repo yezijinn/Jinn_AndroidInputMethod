@@ -28,8 +28,9 @@ data class OptionalDict(
     /**
      * 预计增加的「开机后首次使用输入法」候选就绪时间（秒）。
      *
-     * 注意口径：**只影响 IME 服务重建后的首次输入**，日常弹键盘不加载词库。
-     * 页面文案据此生成，不要写成「启动耗时」以免吓到用户。
+     * 口径（2026-09-17 校正）：这是**首次构建索引**的耗时——加载只在空闲时进行
+     * （息屏 / 键盘闲置 20s / 兜底 180s），**期间不影响打字**；构建完成后索引落盘，
+     * 之后每次启动直接内存映射复用（实测约 0.05s）。页面文案据此生成。
      */
     val startupSec: Int,
     /** 下载源，按顺序尝试（Gitee 国内快，GitHub 备用） */
@@ -58,7 +59,7 @@ object OptionalDicts {
                 "含人名、地名、作品名、机构名等。",
             ),
             sizeMb = 1.81,
-            startupSec = 7,
+            startupSec = 2,          // 实测首次构建索引 1764ms
             urls = listOf(
                 "$GITEE/$TAG_EXT/dict_ext.txt.xz",
                 "$GITHUB/$TAG_EXT/dict_ext.txt.xz",
@@ -73,7 +74,7 @@ object OptionalDicts {
                 "体积较大，建议按需安装。",
             ),
             sizeMb = 6.36,
-            startupSec = 19,
+            startupSec = 7,          // 实测首次构建索引 6927ms
             urls = listOf(
                 "$GITEE/$TAG_TENCENT/opt_tencent.txt.xz",
                 "$GITHUB/$TAG_TENCENT/opt_tencent.txt.xz",
