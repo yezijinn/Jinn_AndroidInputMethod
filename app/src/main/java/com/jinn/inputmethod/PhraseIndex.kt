@@ -12,17 +12,19 @@ package com.jinn.inputmethod
  *  2. 把偏移表读成 `IntArray`（键区/词区共用一份字节数组，不复制）。
  * 查询用**二分查找**（按字节比较，命中后才解码成 String），因此不再需要任何哈希容器。
  *
- * 格式（小端，见构建脚本）
- * ------------------------
+ * 格式（小端，**v2：长度数组**，见构建脚本）
+ * ----------------------------------------
  * ```
- * magic "JNIH" | version u16 | keyCount u32 | keysLen u32 | wordsLen u32 | srcDigest u64
+ * magic "JNIH" | version u16=2 | keyCount u32 | keysLen u32 | wordsLen u32 | reserved | srcDigest u64
  * keysBlob    : 全部键按字典序串联的 UTF-8 字节
- * keyOffsets  : u32 × (keyCount + 1)
+ * keyLengths  : u8  × keyCount        （键都是拼音，≤255 字节）
  * wordsBlob   : 每个键的词表（`词1|词2|...`，顺序即词频序）
- * wordOffsets : u32 × (keyCount + 1)
+ * wordLengths : u16 × keyCount
  * ```
- * 键区与词区共用同一个 `bytes` 数组，偏移为绝对下标——**不额外复制数据**，
- * 因此常驻内存 ≈ 解压后的字节数（17.3MB），远小于旧形态的百万级 HashMap。
+ * v1 用 u32 偏移表（两张表共 4.83MB），v2 换成长度数组（0.60MB + 1.21MB）：
+ * **原始体积 17.3MB → 14.4MB、xz 5.04MB → 4.48MB**，解压耗时随之下降。
+ * 读取时把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
+ * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标——**不额外复制数据**。
  *
  * 线程安全：构造完成后完全不可变，可被多线程并发读取（IME 主线程查询 + 后台 merge 各读各的）。
  */
@@ -140,15 +142,13 @@ internal class PhraseIndex private constructor(
          * @param stamp 写入头部的来源摘要（供复用校验）
          */
         fun build(lines: Sequence<String>, stamp: Long): ByteArray {
-            // 单趟流式构建：绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会直接顶爆堆）。
-            // 两个字节缓冲 + 两个自增偏移数组，峰值 ≈ 索引本身的体积。
+            // 单趟流式：只累积「键区/键长/词区/词长」四个缓冲，不再维护偏移数组。
+            // 峰值 ≈ 索引体积，绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会顶爆堆）。
             val keyBlob = java.io.ByteArrayOutputStream(1 shl 20)
+            val keyLens = java.io.ByteArrayOutputStream(1 shl 16)
             val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
-            var keyOff = IntArray(1024)
-            var wordOff = IntArray(1024)
+            val wordLens = java.io.ByteArrayOutputStream(1 shl 17)
             var count = 0
-            var keyLen = 0
-            var wordLen = 0
             var prev: String? = null
             for (line in lines) {
                 val tab = line.indexOf('\t')
@@ -159,44 +159,34 @@ internal class PhraseIndex private constructor(
                 prev = key
                 val kb = key.toByteArray(Charsets.UTF_8)
                 val wb = line.substring(tab + 1).toByteArray(Charsets.UTF_8)
+                require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
+                require(wb.size <= 65535) { "词表过长（>64KB），长度数组无法表示" }
                 keyBlob.write(kb)
+                keyLens.write(kb.size)
                 wordBlob.write(wb)
-                keyLen += kb.size
-                wordLen += wb.size
-                if (count + 2 > keyOff.size) {
-                    keyOff = keyOff.copyOf(keyOff.size * 2)
-                    wordOff = wordOff.copyOf(wordOff.size * 2)
-                }
-                keyOff[count + 1] = keyLen
-                wordOff[count + 1] = wordLen
+                wordLens.write(wb.size and 0xFF)
+                wordLens.write((wb.size ushr 8) and 0xFF)
                 count++
             }
 
-            val keyBlobBytes = keyBlob.toByteArray()
-            val wordBlobBytes = wordBlob.toByteArray()
-            val keyOffBytes = intArrayToBytes(keyOff.copyOf(count + 1))
-            val wordOffBytes = intArrayToBytes(wordOff.copyOf(count + 1))
-            val out = ByteArray(HEADER_SIZE + keyBlobBytes.size + keyOffBytes.size +
-                wordBlobBytes.size + wordOffBytes.size)
+            val keys = keyBlob.toByteArray()
+            val kl = keyLens.toByteArray()
+            val words = wordBlob.toByteArray()
+            val wl = wordLens.toByteArray()
+            val out = ByteArray(HEADER_SIZE + keys.size + kl.size + words.size + wl.size)
             out[0] = 'J'.code.toByte(); out[1] = 'N'.code.toByte()
             out[2] = 'I'.code.toByte(); out[3] = 'H'.code.toByte()
-            writeU16(out, 4, 1)
+            writeU16(out, 4, 2)
             writeI32(out, 6, count)
-            writeI32(out, 10, keyBlobBytes.size)
-            writeI32(out, 14, wordBlobBytes.size)
+            writeI32(out, 10, keys.size)
+            writeI32(out, 14, words.size)
             writeI32(out, 18, 0)
             writeI64(out, 22, stamp)
             var p = HEADER_SIZE
-            System.arraycopy(keyBlobBytes, 0, out, p, keyBlobBytes.size); p += keyBlobBytes.size
-            System.arraycopy(keyOffBytes, 0, out, p, keyOffBytes.size); p += keyOffBytes.size
-            System.arraycopy(wordBlobBytes, 0, out, p, wordBlobBytes.size); p += wordBlobBytes.size
-            System.arraycopy(wordOffBytes, 0, out, p, wordOffBytes.size)
-            return out
-        }
-
-        private fun intArrayToBytes(a: IntArray): ByteArray {
-            val out = ByteArray(a.size * 4)
-            for (i in a.indices) writeI32(out, i * 4, a[i])
+            System.arraycopy(keys, 0, out, p, keys.size); p += keys.size
+            System.arraycopy(kl, 0, out, p, kl.size); p += kl.size
+            System.arraycopy(words, 0, out, p, words.size); p += words.size
+            System.arraycopy(wl, 0, out, p, wl.size)
             return out
         }
 
@@ -274,7 +264,7 @@ internal class PhraseIndex private constructor(
                 return null
             }
             val version = u16(bytes, 4)
-            if (version != 1) return null
+            if (version != 2) return null
             val keyCount = i32(bytes, 6)
             val keysLen = i32(bytes, 10)
             val wordsLen = i32(bytes, 14)
@@ -283,19 +273,18 @@ internal class PhraseIndex private constructor(
             var p = HEADER_SIZE
             val keysStart = p
             p += keysLen
-            val keyOffsets = readOffsets(bytes, p, keyCount)
-            p += (keyCount + 1) * 4
+            if (p + keyCount + wordsLen + keyCount * 2 > bytes.size) return null
+            val keyOffsets = expandLengths(bytes, p, keyCount, 1)
+            p += keyCount
             val wordsStart = p
             p += wordsLen
-            val wordOffsets = readOffsets(bytes, p, keyCount)
-            p += (keyCount + 1) * 4
+            val wordOffsets = expandLengths(bytes, p, keyCount, 2)
+            p += keyCount * 2
             if (p != bytes.size) return null
 
-            // 偏移自洽性：必须从 0 单调递增到各段长度
-            if (keyOffsets[0] != 0 || keyOffsets[keyCount] != keysLen) return null
-            if (wordOffsets[0] != 0 || wordOffsets[keyCount] != wordsLen) return null
-            for (i in 1..keyCount) if (keyOffsets[i] < keyOffsets[i - 1]) return null
-            for (i in 1..keyCount) if (wordOffsets[i] < wordOffsets[i - 1]) return null
+            // 自洽性：长度数组拼出的总长必须与头部声明一致
+            if (keyOffsets[keyCount] != keysLen) return null
+            if (wordOffsets[keyCount] != wordsLen) return null
 
             return PhraseIndex(bytes, keyCount, keysStart, wordsStart, keyOffsets, wordOffsets)
         }
@@ -307,9 +296,26 @@ internal class PhraseIndex private constructor(
             (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8) or
                 ((b[o + 2].toInt() and 0xFF) shl 16) or ((b[o + 3].toInt() and 0xFF) shl 24)
 
-        fun readOffsets(b: ByteArray, start: Int, count: Int): IntArray {
+        /**
+         * 把长度数组展开成前缀和偏移数组（v2）。
+         *
+         * @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
+         */
+        fun expandLengths(b: ByteArray, start: Int, count: Int, width: Int): IntArray {
             val out = IntArray(count + 1)
-            for (i in 0..count) out[i] = i32(b, start + i * 4)
+            var acc = 0
+            if (width == 1) {
+                for (i in 0 until count) {
+                    acc += b[start + i].toInt() and 0xFF
+                    out[i + 1] = acc
+                }
+            } else {
+                for (i in 0 until count) {
+                    acc += (b[start + i * 2].toInt() and 0xFF) or
+                        ((b[start + i * 2 + 1].toInt() and 0xFF) shl 8)
+                    out[i + 1] = acc
+                }
+            }
             return out
         }
     }
