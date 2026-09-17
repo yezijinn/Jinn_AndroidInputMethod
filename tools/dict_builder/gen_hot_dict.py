@@ -46,7 +46,6 @@ from convert_rime_ice import BASE_MAX_LEN, XZ_FILTERS, parse_rime_dict  # noqa: 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC_DIR = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts")
 OUT_XZ = os.path.join(ROOT, "app", "src", "main", "assets", "hot_phrases.txt.xz")
-FULL_XZ = os.path.join(ROOT, "app", "src", "main", "assets", "pinyin_phrases.txt.xz")
 
 # 冷启动必须能打出来的词（缺一即失败）
 MUST_HAVE = ["你好", "我们", "什么", "这个", "可以", "没有", "今天", "谢谢", "对不起", "因为"]
@@ -114,27 +113,39 @@ def main():
 
     io.open(OUT_XZ, "wb").write(xz)
     print(f"已写入 {OUT_XZ}")
-    return verify_prefix(by_key)
+    return verify_prefix(by_key, full_by_key(order, best))
 
 
-def verify_prefix(by_key):
-    """自校验：抽样确认「子集 = 全量每个键的前缀」。"""
-    sample = [k for i, k in enumerate(by_key) if i % 100 == 0]
-    want = set(sample)
-    problems, checked = [], 0
-    with lzma.open(FULL_XZ, "rt", encoding="utf-8") as f:
-        for line in f:
-            if checked >= len(want):
-                break
-            key, _, value = line.rstrip("\n").partition("\t")
-            if key in want:
-                sub = by_key[key]
-                if value.split("|")[: len(sub)] != sub:
-                    problems.append(key)
-                checked += 1
-    status = "全部为前缀 ✓" if not problems else f"异常 {problems[:5]}"
-    print(f"前缀自校验：抽样 {len(want)} 键、命中 {checked} 键 → {status}")
-    return 0 if (checked == len(want) and not problems) else 1
+def full_by_key(order, best):
+    """全量基础包的「键 → 词表」，顺序与 build_dict / render 完全一致（词频降序、同频保持源序）。"""
+    first_seen = {k: i for i, k in enumerate(order)}
+    by_key = {}
+    for key, word in sorted(order, key=lambda k: (-best[k], first_seen[k])):
+        by_key.setdefault(key, []).append(word)
+    return by_key
+
+
+def verify_prefix(by_key, full):
+    """自校验：逐键确认「子集 = 全量该键词表的前缀」。
+
+    以前这里读 `assets/pinyin_phrases.txt.xz`——该资产在「词库改二进制索引」（P1 Stage 1）
+    之后已从 APK 移除，于是脚本会在**写完资产之后**抛 FileNotFoundError，
+    自校验形同虚设（而它正是「改词库必跑」的护栏）。
+    现在改为用同一份源在进程内重算全量（`order`/`best` 刚算过，不额外解析 yaml），
+    既不依赖中间产物、也不会因为某个资产被删而失效。
+    """
+    problems, absent = [], []
+    for key, sub in by_key.items():
+        got = full.get(key)
+        if got is None:
+            absent.append(key)
+        elif got[: len(sub)] != sub:
+            problems.append(key)
+    ok = not problems and not absent
+    status = ("全部为前缀 ✓" if ok
+              else f"异常：键不存在 {absent[:5]} / 非前缀 {problems[:5]}")
+    print(f"前缀自校验：子集 {len(by_key)} 键 / 全量 {len(full)} 键 → {status}")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

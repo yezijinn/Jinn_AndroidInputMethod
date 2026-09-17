@@ -15,7 +15,10 @@
 
 产出
 ----
-    <输出>/base/pinyin_phrases.txt.xz   基础包（≤ base-max-len 字的词），进 APK
+    <输出>/base/pinyin_phrases.txt.xz   基础包（≤ base-max-len 字的词）
+                                        ⚠ 现行流程里**不进 APK**：基础包文本只作留档，
+                                        进 APK 的是 build_dict_index.py 产出的二进制索引
+                                        （assets/pinyin_index.bin.xz）
     <输出>/ext/dict_ext.txt.xz          扩展包（其余长词），按需下载
 
 两个包格式完全相同（`拼音<TAB>词1|词2`），运行时用同一套解析器加载、合并即可。

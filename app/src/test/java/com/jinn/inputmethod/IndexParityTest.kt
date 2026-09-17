@@ -2,6 +2,8 @@ package com.jinn.inputmethod
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.tukaani.xz.XZInputStream
@@ -106,6 +108,30 @@ class IndexParityTest {
             val got = index.wordsFor(key)?.toList()
             assertEquals("键 $key 的词表不一致", words, got)
         }
+    }
+
+    /**
+     * 头部声明「超长段」或版本不符时，解析必须**返回 null**（调用方据此回退），而不是抛异常。
+     *
+     * 回归点：段长校验若用 Int 累加，`p + keyCount + wordsLen + keyCount * 2` 会在超大声明值上
+     * 溢出成负数、绕过检查，随后在切片处抛 ArrayIndexOutOfBoundsException —— 这就破坏了
+     * [PhraseIndex.of] 的契约（设备端可选包索引缓存是外部文件，坏了只应回退重建，不该崩）。
+     */
+    @Test
+    fun 头部不自洽的索引_解析返回null而不是抛异常() {
+        val good = PhraseIndex.build("qie\t切|企鹅\n".lineSequence(), 7L)
+        assertNotNull("自建索引应可解析", PhraseIndex.of(good))
+
+        // keysLen（偏移 10，小端 u32）改成 0x7FFFFFFF：声明 2GB，实际只有几十字节
+        val huge = good.copyOf()
+        huge[10] = 0xFF.toByte(); huge[11] = 0xFF.toByte()
+        huge[12] = 0xFF.toByte(); huge[13] = 0x7F.toByte()
+        assertNull("段长与文件长度不符时必须返回 null", PhraseIndex.of(huge))
+
+        // 版本号不符（设备上遗留的 v1 缓存）同样返回 null → 由调用方自动重建
+        val oldVersion = good.copyOf()
+        oldVersion[4] = 1.toByte(); oldVersion[5] = 0.toByte()
+        assertNull("版本不符应返回 null（旧缓存自动重建）", PhraseIndex.of(oldVersion))
     }
 
     /**
