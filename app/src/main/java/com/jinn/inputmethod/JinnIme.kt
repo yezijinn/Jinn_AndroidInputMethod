@@ -384,6 +384,19 @@ class JinnIme : InputMethodService() {
         }
     }
 
+    /**
+     * 清空拖选状态（IME 侧 + 同步键盘侧），供「会话切换 / 面板关闭 / 面板重开」共用。
+     *
+     * 三个入口共用一份实现：此前它们是各自演化的重复逻辑，已经出现过「只改了视图、
+     * 忘了改 IME」的不一致（见 `onClipboardStateChanged` 的注释）。
+     */
+    private fun clearSelectionState() {
+        selectionActive = false
+        selectionAnchor = -1
+        selectionFocus = -1
+        pinyinKeyboard?.setSelectionActive(false)
+    }
+
     /** 中心 ●/◉ 开关：切换拖选模式 */
     private fun toggleSelection() {
         val connection = currentInputConnection ?: return
@@ -594,14 +607,8 @@ class JinnIme : InputMethodService() {
                     Diagnostics.i(TAG, "剪贴板面板状态: active=$active")
                     if (!active) {
                         clipboardPanelOpen = false
-                        // 面板打开/关闭时清除拖选状态，避免 anchor/focus 残留
-                        selectionActive = false
-                        selectionAnchor = -1
-                        selectionFocus = -1
-                        // 必须同步到键盘侧：否则 PinyinKeyboardView.selectionActive 仍为 true，
-                        // 两个类的状态会不一致（与下方 onSelectionModeChanged 的处理对齐 ——
-                        // 此前这里漏了同步调用，是两处重复逻辑各自演化的结果）。
-                        pinyinKeyboard?.setSelectionActive(false)
+                        // 面板打开/关闭时清除拖选状态（IME + 键盘两侧一起清，见 clearSelectionState）
+                        clearSelectionState()
                     }
                 }
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
@@ -612,11 +619,10 @@ class JinnIme : InputMethodService() {
                     Diagnostics.i(TAG, "拖选模式变化: $active")
                     // 面板关闭/键盘重置时同步清除拖选状态，避免 anchor/focus 残留
                     if (!active) {
-                        selectionActive = false
-                        selectionAnchor = -1
-                        selectionFocus = -1
+                        clearSelectionState()
+                    } else {
+                        pinyinKeyboard?.setSelectionActive(true)
                     }
-                    pinyinKeyboard?.setSelectionActive(active)
                 }
                 override fun onPasteClipboard() {
                     Diagnostics.i(TAG, "功能面板: 粘贴剪贴板")
@@ -831,6 +837,11 @@ class JinnIme : InputMethodService() {
 
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
     private fun flushPendingPaste() {
+        // 会话边界：拖选状态必须复位。anchor/focus 是**上一个输入框**的坐标，
+        // 跨字段残留会让后续 extendSelection 用旧下标去 setSelection（被系统钳位，
+        // 表现为选区莫名跳动），且中心键图标与 IME 状态可能不一致。
+        clearSelectionState()
+
         val text = pendingPasteText ?: return
         // 时效保护：暂存文本只在短时间窗口内有效，过期直接丢弃。
         // 否则用户换输入框、或隔很久才回到键盘，旧文本会被粘到完全无关的位置。

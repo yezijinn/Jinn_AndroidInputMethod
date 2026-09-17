@@ -79,6 +79,10 @@ internal class PhraseIndex private constructor(
      *
      * 供智能预测使用（旧实现遍历 `sortedPhraseKeys`，那是一份 60 万个 String 的快照，
      * 仅这一项就占几十 MB；索引版直接在键区字节上二分 + 顺序扫，不再持有键字符串）。
+     *
+     * ⚠ **会实例化全部命中键**：短前缀代价高（实测 `"ni"` → 6185 个 String / 2.18ms）。
+     * 调用方必须自带上限（见 [PinyinEngine.predict] 的提前退出）；若将来需要无条件全量扫描，
+     * 请改成本类内部的「区间回调」API（只给偏移与长度，不建 String）。
      */
     fun keysWithPrefix(prefix: String): List<String> {
         if (prefix.isEmpty() || keyCount == 0) return emptyList()
