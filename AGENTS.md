@@ -131,7 +131,9 @@ app/src/main/java/com/jinn/inputmethod/
 - **键盘功能面板的「全拼 / 双拼」按钮 = 原来的二态开关，禁止改文案与交互**
   （用户明示）：主文本 `全拼`/`双拼`、副文本 `换双拼`/`换全拼`，**不得显示具体方案名**；
   它只切「用不用双拼」（`ShuangpinScheme.toggle`），切回时取设置里选定的那套。
-  **具体方案只在设置页「双拼的输入方案」下拉里改**——禁止把方案选择放进输入法面板。
+  **具体方案只在设置页「双拼的输入方案」下拉里改**——禁止把方案选择放进输入法面板；
+  该下拉**只列 7 套双拼、不含「全拼」**（列表取自 `ShuangpinScheme.SHUANGPIN_ONLY`），
+  选中即「记住 + 启用双拼」；关闭双拼用面板按钮。
 - **方案持久化**：`Prefs.useShuangpin`（Boolean，面板按钮写）+ `Prefs.shuangpinScheme`
   （Int 1..7，设置页写，**只增不改**）+ `Prefs.effectiveShuangpinScheme`（生效方案，IME 读）。
   老键 `shuangpin` 语义不变（面板开关），无需迁移。
