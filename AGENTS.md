@@ -135,6 +135,21 @@ app/src/main/java/com/jinn/inputmethod/
   （29.4MB、含 573 行 GBK 乱码、被 `.gitignore` 忽略、从未进版本库）。
   **不要再把词库源文件放回这个目录**——现行源在 `docs/rime-ice/`，重跑旧文件只会把乱码带回词库。
 
+## 用户词频学习（UserFrequency）
+
+- 语义对齐 librime `UserDictionary`/`UserDb`：记录「用户**明确选过**的候选」，按权重稳定排序提到前面。
+  累加公式取自 `algo/dynamics.h` 的 `formula_d`：`dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)`
+  （tick = 天计数，半衰期 ≈ 139 天）；当天重复选择不加衰减。
+- **只在「点候选栏 / 空格取首候选 / 点预测词」时学习**；`commitComposing`（收起键盘自动上屏）、
+  语音结果、剪贴板粘贴**都不学**——那些不是用户选择。
+- 存储 `filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），**原子写**（临时文件 + 改名）且**防抖 2s**、
+  退出时 `PinyinEngine.flushUserFrequency()` 兜底；上限 3000 条、权重 < 0.15 丢弃。
+- 排序是**稳定排序**且未学习时直接返回原数组 ⇒ 对没学过的候选零影响（不打乱词库既有手感）。
+  调 `UserFrequency.rank()` 的位置在 `PinyinEngine.query` 的收尾处。
+- 开关：设置页「用户词频学习」（`Prefs.userLearning`，默认开，**立即生效**，本地存储不上传）。
+- 护栏：`UserFrequencyTest`（排序稳定性 / 衰减 / 序列化往返 / 脏数据容错 / 开关 / 原子写）。
+  ⚠ 改这块务必跑该测试 + `PinyinEngineTest`（排序相关）。
+
 ## 冷启动与加载顺序（重要）
 
 - **词库是两段式加载**（2026-09-17 起）：

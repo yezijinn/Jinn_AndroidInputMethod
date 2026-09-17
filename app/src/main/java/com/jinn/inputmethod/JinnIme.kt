@@ -897,6 +897,8 @@ class JinnIme : InputMethodService() {
     }
 
     override fun onDestroy() {
+        // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
+        runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         ui.removeCallbacksAndMessages(null)
         unregisterNetwork()

@@ -230,6 +230,9 @@ object PinyinEngine {
             // 生僻字过滤：默认不加载（用户几乎用不到，平白占内存与加载时间）。
             // 必须在读词库**之前**建立位图，否则过滤无从谈起——这也是它比
             // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
+            // 用户词频：与词库同批在后台加载（自身已显式降优先级，不抢词库 CPU）
+            UserFrequency.load(context, Prefs(context).userLearning)
+
             val showRareChars = Prefs(context).showRareChars
             if (!showRareChars) loadCommonChars(context)
 
@@ -689,6 +692,17 @@ object PinyinEngine {
         }
     }
 
+    /**
+     * 记一次用户选择（供键盘在「点候选 / 空格取首候选 / 点补全项」时调用）。
+     *
+     * 语义与 librime `UserDictionary::UpdateEntry` 对齐：累加 1 次并更新 tick；
+     * 具体存储、衰减与排序见 [UserFrequency]。
+     */
+    fun rememberChoice(word: String) = UserFrequency.remember(word)
+
+    /** 输入法退出/切后台时把未落盘的学习结果刷出去 */
+    fun flushUserFrequency() = UserFrequency.flush()
+
     /** 扩展词库（长词包）是否已加载（供设置页显示状态） */
     fun isExtensionLoaded(): Boolean = extensionLoaded
 
@@ -1026,7 +1040,9 @@ object PinyinEngine {
             result.addAll(matchCharsByPrefix(partial).take(MAX_CHARS))
         }
 
-        return Result(result.toList(), syllables, partial)
+        // 用户词频学习：把「用户实际选过」的词稳定提到前面（未学习时零开销、零行为变化）
+        val ordered = result.toList()
+        return Result(UserFrequency.rank(ordered.toTypedArray()).toList(), syllables, partial)
     }
 
     /** 精确匹配 + ue/ve 变体：词库同时存在 shenglue/shenglve 两种写法 */

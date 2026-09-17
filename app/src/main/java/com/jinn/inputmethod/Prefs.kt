@@ -129,6 +129,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
+    /** 用户词频学习：记录「实际选过」的候选并提到前面（默认开；本地存储，不上传） */
+    var userLearning: Boolean
+        get() = sp.getBoolean(KEY_USER_LEARNING, true)
+        set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
+
     /**
      * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。
      *
@@ -183,7 +188,9 @@ class Prefs(context: Context) {
         private const val KEY_KB_ENGLISH = "kb_english"
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
-        private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
+        private const val KEY_USER_LEARNING = "user_learning"
+
+    private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
         private const val KEY_VOICE_INPUT = "voice_input"
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
