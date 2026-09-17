@@ -102,11 +102,16 @@ class SettingsActivity : ComponentActivity() {
     /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
     private val uiHandler = Handler(Looper.getMainLooper())
 
-    /** Spinner 是否已完成初始化（setSelection 会触发 onItemSelected，未就绪时不响应） */
-    private var defaultModeSpinnerReady = false
-
-    /** 同上：输入方案 Spinner 的就绪标志（避免 loadPrefs 的 setSelection 把配置写坏） */
-    private var shuangpinSpinnerReady = false
+    /**
+     * 两个 Spinner 是否已被用户实际碰过。
+     *
+     * 不能只用「初始化是否完成」做闸门：`setSelection` 之外，Activity 恢复实例状态
+     * （`onRestoreInstanceState`）也会触发 `onItemSelected`，而且是在 `onCreate` 返回之后——
+     * 只靠 ready 标志挡不住，会把用户配置静默改成上次的临时选择。
+     * 因此改为**只有用户触摸过 Spinner 才允许写配置**。
+     */
+    private var defaultModeSpinnerTouched = false
+    private var shuangpinSpinnerTouched = false
 
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
@@ -169,14 +174,20 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
             this, R.array.default_mode_entries, android.R.layout.simple_spinner_item
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        // 用户触摸过才允许写配置（见字段说明）；ACTION_UP 补 performClick 供无障碍服务识别
+        spinnerDefaultMode.setOnTouchListener { view, event ->
+            defaultModeSpinnerTouched = true
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
         spinnerDefaultMode.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
-                // 初始化时的 setSelection 同样会回调这里。若此时 prefs 里的值不在
+                // 初始化 setSelection（以及恢复实例状态）都会回调这里。若此时 prefs 里的值不在
                 // values 中（如配置损坏或新增了模式），indexOf 会退回第 0 项，
                 // 未加保护就会把用户的默认键盘**静默改成第 0 项**。
-                if (!defaultModeSpinnerReady) return
+                if (!defaultModeSpinnerTouched) return
                 val values = resources.getStringArray(R.array.default_mode_values)
                 val mode = values.getOrNull(position)?.toIntOrNull()
                     ?: DefaultKeyboardMode.VOICE
@@ -194,27 +205,35 @@ class SettingsActivity : ComponentActivity() {
             this, android.R.layout.simple_spinner_item,
             ShuangpinScheme.entries.map { it.displayName },
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerShuangpin.setOnTouchListener { view, event ->
+            shuangpinSpinnerTouched = true
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
         spinnerShuangpin.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
-                // 与「默认键盘模式」同一个坑：初始化时的 setSelection 也会回调，
-                // 不挡住就会用第 0 项（全拼）把用户已选的方案静默改掉。
-                if (!shuangpinSpinnerReady) return
+                // 与「默认键盘模式」同一个坑：初始化 setSelection 与恢复实例状态都会回调，
+                // 不挡住就会把用户已选的方案静默改掉（真机上实测被改写过）。
+                if (!shuangpinSpinnerTouched) return
                 val scheme = ShuangpinScheme.entries.getOrNull(position) ?: return
-                if (scheme.prefsValue != prefs.shuangpinScheme) {
+                // 选「26 键全拼」＝关闭双拼；选任一「XX 双拼」＝启用双拼并记住该方案。
+                // 方案记忆只有这一处入口（键盘面板只切全拼/双拼二态，不改具体方案）。
+                if (scheme.isShuangpin) {
                     prefs.shuangpinScheme = scheme.prefsValue
-                    Diagnostics.i(TAG, "输入方案: ${scheme.displayName}")
+                    prefs.useShuangpin = true
+                } else {
+                    prefs.useShuangpin = false
                 }
+                Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=${prefs.useShuangpin}）")
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
         loadPrefs()
-        // loadPrefs 内部的 setSelection 已回调过监听器，此后才是用户的真实选择
-        defaultModeSpinnerReady = true
-        shuangpinSpinnerReady = true
+        // 之后 Spinner 若回调（含恢复实例状态），只有「用户触摸过」才会写配置
         refreshMicState()
 
         // 识别选项即时保存：勾选即写入，下次识别立即生效
@@ -474,9 +493,9 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
         )
-        // 输入方案：按当前配置定位（未知取值由 ShuangpinScheme.of 兜底为自然码）
+        // 输入方案：显示当前**生效**的方案（面板把双拼关掉时就是「26 键全拼」）
         spinnerShuangpin.setSelection(
-            ShuangpinScheme.of(prefs.shuangpinScheme).ordinal.coerceIn(
+            prefs.effectiveShuangpinScheme.ordinal.coerceIn(
                 0, ShuangpinScheme.entries.lastIndex
             )
         )

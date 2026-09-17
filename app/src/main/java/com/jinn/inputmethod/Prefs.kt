@@ -60,24 +60,32 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
-     * 键盘输入方案，取值见 [ShuangpinScheme.prefsValue]：
-     * 0 全拼 / 1 自然码 / 2 小鹤 / 3 搜狗 / 4 微软 / 5 紫光 / 6 智能ABC / 7 加加。
+     * 键盘是否启用双拼。
      *
-     * **迁移**：老版本只有布尔键 `shuangpin`（true = 自然码双拼）。新键不存在时读老键：
-     * true → 自然码、false → 全拼，保证老用户升级后方案不跳变。老键保留不删（利于回滚）。
+     * 由**键盘功能面板的「全拼 / 双拼」按钮**直接切换（保持原有交互与文案，不在面板里选具体方案）。
+     * 老版本即用此键，故无需迁移。
+     */
+    var useShuangpin: Boolean
+        get() = sp.getBoolean(KEY_SHUANGPIN, false)
+        set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
+
+    /**
+     * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加，**不存 0**）。
+     *
+     * **只在设置页「输入方案」下拉里改**（用户要求：面板不得改方案）。
+     * 面板把双拼关掉再打开时，会回到这里选定的那套方案，不会丢用户的选择。
      */
     var shuangpinScheme: Int
         get() {
-            if (sp.contains(KEY_SHUANGPIN_SCHEME)) {
-                return sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.QUANPIN.prefsValue)
-            }
-            return if (sp.getBoolean(KEY_SHUANGPIN, false)) {
-                ShuangpinScheme.ZIRANMA.prefsValue
-            } else {
-                ShuangpinScheme.QUANPIN.prefsValue
-            }
+            val v = sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.ZIRANMA.prefsValue)
+            // 历史/异常值（含 0 全拼）一律落到自然码：本键的语义就是「双拼用哪套」
+            return if (ShuangpinScheme.of(v).isShuangpin) v else ShuangpinScheme.ZIRANMA.prefsValue
         }
         set(value) = sp.edit { putInt(KEY_SHUANGPIN_SCHEME, value) }
+
+    /** 当前**生效**的输入方案：没启用双拼就是全拼，启用则取设置页选定的那套 */
+    val effectiveShuangpinScheme: ShuangpinScheme
+        get() = if (useShuangpin) ShuangpinScheme.of(shuangpinScheme) else ShuangpinScheme.QUANPIN
 
     /** 键盘是否默认英文模式（字母直通，不查候选） */
     var keyboardEnglish: Boolean
@@ -166,7 +174,7 @@ class Prefs(context: Context) {
         private const val KEY_PROMPT = "prompt"
         private const val KEY_STRIP_PUNC = "strip_punc"
         private const val KEY_COMPOSING = "composing"
-        /** 老键（布尔，只读不写）：供 [shuangpinScheme] 做一次性迁移 */
+        /** 面板「全拼 / 双拼」按钮的开关（老版本即此键） */
         private const val KEY_SHUANGPIN = "shuangpin"
         private const val KEY_SHUANGPIN_SCHEME = "shuangpin_scheme"
         private const val KEY_KB_ENGLISH = "kb_english"

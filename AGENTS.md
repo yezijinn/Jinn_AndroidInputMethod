@@ -128,8 +128,16 @@ app/src/main/java/com/jinn/inputmethod/
   历史上那份手写表把 `o` 键写成 `ou`（实际 `o/uo`，`ou` 在 `b` 键），直接骗用户。
 - **分号键**：搜狗 / 微软 / 紫光的 `ing` 落在 `;` 上，`key_semicolon` 只在
   `Shuangpin.needsSemicolon(scheme)` 为真时显示（其余方案 GONE，不参与测量，26 键布局零影响）。
-- **方案持久化**：`Prefs.shuangpinScheme`（Int，取值见 `ShuangpinScheme.prefsValue`，**只增不改**）；
-  老布尔键 `shuangpin` 只读不写，用于一次性迁移（true → 自然码）。
+- **键盘功能面板的「全拼 / 双拼」按钮 = 原来的二态开关，禁止改文案与交互**
+  （用户明示）：主文本 `全拼`/`双拼`、副文本 `换双拼`/`换全拼`，**不得显示具体方案名**；
+  它只切「用不用双拼」（`ShuangpinScheme.toggle`），切回时取设置里选定的那套。
+  **具体方案只在设置页「双拼的输入方案」下拉里改**——禁止把方案选择放进输入法面板。
+- **方案持久化**：`Prefs.useShuangpin`（Boolean，面板按钮写）+ `Prefs.shuangpinScheme`
+  （Int 1..7，设置页写，**只增不改**）+ `Prefs.effectiveShuangpinScheme`（生效方案，IME 读）。
+  老键 `shuangpin` 语义不变（面板开关），无需迁移。
+- **Spinner 写配置必须「用户触摸过」才允许**（`setOnTouchListener` 置位闸门，见
+  `SettingsActivity` 的两个下拉）：只用「初始化完成」标志挡不住 `onRestoreInstanceState`
+  触发的迟来 `onItemSelected`，会静默改写用户配置（真机实测踩到过）。
 - 改键位/加方案后必须：`.\gradlew.bat testDebugUnitTest`（`ShuangpinTest` 66 例是自然码回归基线，
   `ShuangpinSchemesTest` 覆盖 7 套 + 全表往返自洽）＋ `tools/dict_builder/verify_shuangpin_migration.py`
   对拍（换表不许改行为）。
