@@ -119,10 +119,17 @@ app/src/main/java/com/jinn/inputmethod/
 
 ## 冷启动与加载顺序（重要）
 
-- **基础词库就绪前不能输入中文**：`PinyinEngine.query()` 在 `loaded == false` 时静默返回空
-  （真机实测基础包 6~10.7s、装了可选包后再加 21~34s）。因此：
-  **任何新增的启动期任务都必须显式降优先级**（`Process.setThreadPriority(THREAD_PRIORITY_BACKGROUND)`），
-  不要与词库加载抢 CPU（双拼键位表预热、可选包加载都已按此处理）。
+- **词库是两段式加载**（2026-09-17 起）：
+  1. `assets/hot_phrases.txt.xz`（高频子集，4 万词 / 220KB）→ **真机 ~0.25~0.31s 即可输入**；
+  2. `assets/pinyin_phrases.txt.xz`（全量基础包，60.4 万键）→ 后台 merge 进来（真机 ~7s）。
+  - `PinyinEngine.isLoaded` = 可以打字了（第一段完成）；`isFullyLoaded` = 候选已全量。
+  - ⚠ **改词库必须同时重跑 `python tools/dict_builder/gen_hot_dict.py`**：子集必须是全量
+    每个键的**前缀**，否则并入后候选顺序会与全量单载不一致（`HotDictAssetTest` 会直接失败）。
+  - ⚠ **任何新增的启动期任务都必须显式降优先级**
+    （`Process.setThreadPriority(THREAD_PRIORITY_BACKGROUND)`），不要与词库加载抢 CPU
+    （双拼键位表预热、可选包加载都已按此处理）。
+  - 加载期反馈：候选栏会显示「词库加载中…」（未就绪）与「词库补全中…」（已有词库但查不到候选
+    且全量尚未并入），文案在 `strings.xml`（IME 内禁弹窗）。
 - 冷启动阶段的耗时构成与逐条优化方案见 `docs/冷启动卡顿-诊断与优化方案.md`
   （P0-1 高频子集先行 / P0-2 加载期提示 / P1 持久化二进制索引）。
 - 内存实测口径：`su -c 'cat /proc/<pid>/smaps_rollup'` 看 PSS 与 Private_Dirty

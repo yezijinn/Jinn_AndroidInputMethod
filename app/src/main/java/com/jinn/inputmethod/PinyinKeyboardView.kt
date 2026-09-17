@@ -985,6 +985,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
 
+        // 词库尚未就绪（冷启动时高频子集约 0.4s，无子集的旧包则要 6~10.7s）：
+        // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，故用工内联提示。
+        if (!PinyinEngine.isLoaded) {
+            viewCandidatePinyin.text = input
+            renderCandidateHint(context.getString(R.string.engine_dict_loading))
+            return
+        }
+
         // 双拼：先转全拼再查询；显示仍保留双拼原文
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val result = PinyinEngine.query(queryInput)
@@ -997,6 +1005,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 "补全诊断: input=$queryInput syllables=${result.syllables} " +
                     "partial=${result.partialSyllable} candidates=${result.candidates.take(3)}",
             )
+        }
+        // 全量基础包还在后台 merge：此刻查不到候选的词，几秒后就会出现 —— 明确告知，
+        // 否则用户会以为「这个字打不出来」。
+        if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
+            lastCandidates = emptyList()
+            viewCandidatePinyin.text = queryInput
+            renderCandidateHint(context.getString(R.string.engine_dict_filling))
+            return
         }
         lastCandidates = result.candidates
         viewCandidatePinyin.text = queryInput
@@ -1125,6 +1141,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         return false
     }
+    /**
+     * 候选栏内联提示（词库加载中 / 补全中）。
+     *
+     * 只是候选栏里的一条文本：不改键盘高度、不弹窗（IME 内禁用 AlertDialog）。
+     */
+    private fun renderCandidateHint(text: String) {
+        viewCandidateList.removeAllViews()
+        viewCandidateList.addView(
+            TextView(context).apply {
+                this.text = text
+                textSize = 15f
+                setTextColor(context.getColor(R.color.text_secondary))
+                setPadding(dp(6), 0, dp(6), 0)
+            },
+        )
+    }
+
     private fun onPredictionSelected(pred: String) {
         // 与 onCandidateSelected 保持一致：搜索模式下路由到搜索框。
         // 漏掉这个分支的话，搜索态里点预测词会把文本直接提交到宿主输入框（串到聊天内容里）
