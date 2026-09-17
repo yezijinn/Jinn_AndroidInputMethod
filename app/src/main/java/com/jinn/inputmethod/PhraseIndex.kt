@@ -270,17 +270,22 @@ internal class PhraseIndex private constructor(
             val wordsLen = i32(bytes, 14)
             if (keyCount <= 0 || keysLen <= 0 || wordsLen <= 0) return null
 
+            // 段长校验必须用 Long 累加：keysLen / wordsLen / keyCount 都来自外部字节，
+            // 直接 Int 相加会在「超大声明值」上溢出成负数、绕过校验，随后在切片时抛数组越界
+            // （本方法的契约是「结构不自洽就返回 null」，绝不抛异常——调用方靠它决定是否回退）。
+            // 总长是精确可算的：header + keysLen + keyCount(u8) + wordsLen + keyCount(u16×2)。
+            val need = HEADER_SIZE.toLong() + keysLen + wordsLen + keyCount.toLong() * 3
+            if (need != bytes.size.toLong()) return null
+
             var p = HEADER_SIZE
             val keysStart = p
             p += keysLen
-            if (p + keyCount + wordsLen + keyCount * 2 > bytes.size) return null
             val keyOffsets = expandLengths(bytes, p, keyCount, 1)
             p += keyCount
             val wordsStart = p
             p += wordsLen
             val wordOffsets = expandLengths(bytes, p, keyCount, 2)
             p += keyCount * 2
-            if (p != bytes.size) return null
 
             // 自洽性：长度数组拼出的总长必须与头部声明一致
             if (keyOffsets[keyCount] != keysLen) return null

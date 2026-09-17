@@ -67,4 +67,34 @@ class HotDictMergeTest {
         val list = PinyinEngine.query("nihao").candidates.toList()
         assertEquals("候选不应有重复项：$list", list.size, list.toSet().size)
     }
+
+    /**
+     * 全量基础包以**索引**形式到位后，子集窗口内查过的键必须能重新查到（合并缓存要失效）。
+     *
+     * 真机路径：高频子集先就绪（`loaded=true`），1~2 秒后 `loadIndex()` 才把 `baseIndex` 装上
+     * ——**它不经过 `loadPhrasesReader`**，因此必须自己让 `mergedCache` 失效。
+     * 否则这段时间查过的键会一直返回旧答案：查不到的继续查不到（缓存了「确实没有」），
+     * 查得到的停在截断列表上，直到可选包加载才被清掉（20~180s 之后）。
+     */
+    @Test
+    fun 全量索引到位后_子集窗口内查过的键必须重新查得到() {
+        val syl = "ni\nhao\nqie\n"
+        val ch = "ni\t你,尼\nhao\t好,号\nqie\t切,且\n"
+        val hot = "nihao\t你好|你号\n"                                  // 子集里没有 qie 键
+        val full = "nihao\t你好|你号|尼豪|泥毫\nqie\t切|企鹅\n"              // 全量（索引）
+
+        prepare()
+        // 第一段：子集就绪、全量仍在后台加载 —— 此刻用户打了 qie（子集没有这个键）
+        PinyinEngine.loadFromTexts(ch, hot, syl)
+        val early = PinyinEngine.query("qie").candidates.toList()
+        assertTrue("子集阶段 qie 只应有单字候选: $early", !early.contains("企鹅"))
+
+        // 第二段：全量以索引形式到位（与真机 loadIndex 同一条链路）
+        PinyinEngine.loadFromIndexBytes(PhraseIndex.build(full.lineSequence(), 1L), ch, syl, null)
+        val late = PinyinEngine.query("qie").candidates.toList()
+        assertTrue(
+            "索引到位后 qie 必须能查到「企鹅」（合并缓存未失效会一直沿用「没有」）: $late",
+            late.contains("企鹅"),
+        )
+    }
 }

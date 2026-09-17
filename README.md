@@ -132,8 +132,10 @@ python build_apk.py --clean      # clean 后全新编译
 ## 📚 词库
 
 内置词库（`app/src/main/assets/`）：
-- `pinyin_phrases.txt.xz`：基础包约 **60 万键**（词长 ≤4 字，含四字成语）；
-  xz 流式解压、不落盘
+- `pinyin_index.bin.xz`：基础包**二进制索引**，约 **60 万键**（词长 ≤4 字，含四字成语）；
+  解压后按字节二分查找、按需解码，不再逐行解析、不再建哈希表
+- `hot_phrases.txt.xz`：高频子集（4 万词，约 220KB）。先加载它，**键盘弹出即可打字**，
+  全量索引随后在后台就绪
 - `pinyin_chars.txt`：**422 音节**（音节 → 单字）
 - `pinyin_syllables.txt`：合法音节全集
 - **可选词库不进 APK**：用户在「分类词库」页按需下载，存于 `filesDir/dicts/`，

@@ -132,9 +132,14 @@ object PinyinEngine {
     /**
      * 合并结果小缓存：键 → 「运行时 ∪ 基础索引 ∪ 可选索引」去重后的词表（空数组表示确实没有）。
      *
-     * 只在查询/补全/预测等主线程路径读写；超限清空（与 `completionCache` 同一套防膨胀写法）。
+     * 超限清空（与 `completionCache` 同一套防膨胀写法）。
+     *
+     * ⚠ **必须是并发容器**：读取方是主线程（查询/补全/预测），而失效点在 [finalizeLoad] ——
+     * 词库加载线程（高频子集、基础索引、可选包索引）都会走到那里 `clear()`。
+     * 裸 HashMap 在「主线程 get 的同时后台 clear」下会出现丢更新、错值甚至桶链表成环卡死，
+     * 与项目里 `charsBySyllable` 当初的坑完全同类（见其 KDoc）。
      */
-    private val mergedCache = HashMap<String, Array<String>>(256)
+    private val mergedCache = java.util.concurrent.ConcurrentHashMap<String, Array<String>>(256)
 
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
     private val wordToPinyin = ConcurrentHashMap<String, String>(8_192)
@@ -404,6 +409,11 @@ object PinyinEngine {
         sortedPhraseKeys = phrasesByPinyin.keys.sorted()
         sortedValidSyllables = validSyllables.sorted()
         buildSyllablePrefixes()
+        // 合并结果缓存是「运行时 ∪ 基础索引 ∪ 可选索引」的**派生视图**，上述任一来源变了都必须失效。
+        // 放在这里而不是只写在各个写入点，是因为**基础索引不走 loadPhrasesReader**：
+        // 高频子集窗口（键盘弹出后 ~0.2~2.3s）内用户查过的键，其「只有子集」的答案会一直粘住，
+        // 直到可选包加载才被清掉——中间这几秒这些键的候选是**截断**的（少掉低频词）。
+        mergedCache.clear()
     }
 
     /** 预建音节真前缀集合（加载时调用一次；合法音节最长 6 字符） */

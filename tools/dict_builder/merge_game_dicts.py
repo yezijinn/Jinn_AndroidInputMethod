@@ -35,7 +35,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DOCS = os.path.join(ROOT, "docs")
 OUT_DIR = os.path.join(ROOT, "tools", "dict_builder", "out", "game_merge")
 EXT_XZ = os.path.join(ROOT, "release", "dict_ext.txt.xz")
-BASE_XZ = os.path.join(ROOT, "app", "src", "main", "assets", "pinyin_phrases.txt.xz")
+# 基础包的文本资产已不在 APK 里（P1 Stage 1 改二进制索引），改读流水线留档：
+# build_dict_index.py / convert_rime_ice.py 会写到 out/rime_ice/pinyin_phrases.txt。
+# ⚠ 本脚本是历史工具（见 README），原路径失效时会静默退化成「空集」——
+# 合并时就失去去重，产生重复候选，所以这里显式指向留档并让加载器兼容两种格式。
+BASE_XZ = os.path.join(ROOT, "tools", "dict_builder", "out", "rime_ice", "pinyin_phrases.txt")
 
 XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 7, "lc": 4, "pb": 0}]
 
@@ -102,8 +106,11 @@ def load_ext_dict(path):
 def load_base_words(path):
     """读取基础包的全部词，用于合并时排除——避免同一词在两包重复导致重复候选。"""
     if not os.path.isfile(path):
+        sys.stderr.write(f"警告：基础包文本不存在（{path}），将不做去重\n")
         return set()
-    raw = lzma.decompress(open(path, "rb").read()).decode("utf-8")
+    blob = open(path, "rb").read()
+    # 兼容两种留档形态：明文（build_dict_index.py 产出）与 xz（历史产物）
+    raw = lzma.decompress(blob).decode("utf-8") if blob[:6] == b"\xfd7zXZ" else blob.decode("utf-8")
     words = set()
     for line in raw.split("\n"):
         if "\t" not in line:
