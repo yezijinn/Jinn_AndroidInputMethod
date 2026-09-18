@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
  * 剪贴板历史加密：Android Keystore + AES-256-GCM。
  *
  * 密钥由 Keystore 生成并托管，私钥材料不离开安全硬件/系统，应用只拿得到
- * [Cipher] 句柄做加解密；禁止硬编码密钥或自研算法（方案第三阶段要求）。
+ * [Cipher] 句柄做加解密；禁止硬编码密钥或自研算法。
  *
  * 存储格式：`base64(iv) : base64(ciphertext)`，IV 与密文一起入库；
  * GCM 的 auth tag 已含在密文尾部（标准 128-bit），解密即校验完整性。

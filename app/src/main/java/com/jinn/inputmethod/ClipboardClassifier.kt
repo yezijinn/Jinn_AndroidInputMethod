@@ -3,7 +3,7 @@ package com.jinn.inputmethod
 import java.util.regex.Pattern
 
 /**
- * 剪贴板内容自动分类（文档第十五 / 十六节）。
+ * 剪贴板内容自动分类。
  *
  * 分类规则：
  *  - **URL**：http/https、常见 URL、深链接（myapp://）、IP 地址
@@ -12,7 +12,7 @@ import java.util.regex.Pattern
  *
  * 边界：
  *  - 不用「包含数字」作为数字分类的唯一条件（"我有123个苹果" 不应算数字）；
- *  - 隐私分类**绝不自动判断**（见文档第十七节，只能用户主动标记）。
+ *  - 隐私分类**绝不自动判断**（只能用户主动标记）。
  *
  * 纯 JVM 可测（不依赖 Android），正则常量收敛于此。
  */
