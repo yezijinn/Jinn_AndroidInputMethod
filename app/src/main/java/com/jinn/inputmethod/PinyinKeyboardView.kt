@@ -365,6 +365,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun handleKeyTouch(c: Char, event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // V 级埋点（不落盘）：排查"整块键失灵"时，用它区分
+                // 「触摸压根没送到键上（被上层吃掉）」与「送到了但抬起判定失败」
+                Diagnostics.v(TAG, "键触摸 DOWN: $c")
                 keyTouchStartX = event.rawX
                 keyTouchConsumed = false
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
@@ -1559,6 +1562,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 而 directionPanelVisible 已置 true —— 用户点方向键毫无反应。
         if (clipboardActive) hideClipboardPanel()
         // 字母区隐藏，方向面板显示
+        Diagnostics.i(TAG, "字母区: 隐藏三行（原因=方向面板显示）")
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.GONE
         }
@@ -1579,16 +1583,32 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(TAG, "方向面板: 显示（候选栏/底部栏保持）")
     }
 
-    /** 恢复 26 键字母布局 */
-    fun hideDirectionPanel() {
-        if (!directionPanelVisible) return
-        directionPanel?.let { viewLetters.removeView(it) }
-        directionPanel = null
-        centerSelectionKey = null
-        // 明确恢复全部子 view（前 3 个是字母行）
+    /**
+     * 恢复字母三行（把 viewLetters 的子视图全部设回 VISIBLE）。
+     *
+     * ⚠ 单独抽出来是**必须**的：原先这段恢复只写在 [hideDirectionPanel] 里，且被
+     * `if (!directionPanelVisible) return` 挡在前面 —— 也就是说"字母三行的可见性"完全被那个 flag 托管。
+     * 只要有任何路径把三行设成 GONE 而 flag 没置位（或 flag 被清掉却跳过恢复），
+     * 三行就会**永久失活**：键面看着还在，但整块不再响应触摸，而底栏是另一个容器照常可用。
+     * 所以这里改成"谁把子视图藏了，恢复时一律无条件恢复"。
+     */
+    private fun restoreLetterRows() {
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.VISIBLE
         }
+    }
+
+    /** 恢复 26 键字母布局 */
+    fun hideDirectionPanel() {
+        if (!directionPanelVisible) {
+            // flag 已为 false 时也要把子视图恢复一遍：不能再假设"flag 为 false ⇒ 字母区是好的"
+            restoreLetterRows()
+            return
+        }
+        directionPanel?.let { viewLetters.removeView(it) }
+        directionPanel = null
+        centerSelectionKey = null
+        restoreLetterRows()
         directionPanelVisible = false
         selectionActive = false
         // 通知 IME 清除拖选状态（JinnIme 的 anchor/focus 同步重置）
@@ -1671,6 +1691,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun restoreLettersLayout() {
         viewLetters.visibility = View.VISIBLE
+        restoreLetterRows()
         clipboardPanel.visibility = View.GONE
         contentArea.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
