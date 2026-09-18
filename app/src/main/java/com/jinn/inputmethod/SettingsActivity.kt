@@ -500,7 +500,7 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
         )
-        // 输入方案：显示**已记住的那套双拼**（列表只含双拼，故与「当前是否启用双拼」无关）
+        // 双拼方案：显示**已记住的那套双拼**（列表只含双拼，故与「当前是否启用双拼」无关）
         spinnerShuangpin.setSelection(
             ShuangpinScheme.SHUANGPIN_ONLY.indexOf(ShuangpinScheme.of(prefs.shuangpinScheme))
                 .coerceAtLeast(0)
@@ -702,7 +702,7 @@ class SettingsActivity : ComponentActivity() {
         Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
         textTest.setText(R.string.settings_restarting)
 
-        // SharedPreferences apply 异步落盘：延迟片刻等写盘完成再杀进程，
+        // SharedPreferences apply 异步落盘：延迟片刻等落盘完成再杀进程，
         // 系统随后自动重启 IME 服务加载新配置，本 Activity 随进程一并结束。
         uiHandler.postDelayed({
             Diagnostics.i(TAG, "saveAndRestart: 重启输入法进程")

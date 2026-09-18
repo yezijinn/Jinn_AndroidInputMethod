@@ -407,7 +407,7 @@ object PinyinEngine {
      *
      * 需要单独一个入口：[loadFromTexts] 内部固定用覆盖语义，
      * 无法验证合并行为，而合并**必须去重**（基础包与扩展包会收录同一个词，
-     * 不去重则候选栏出现两个完全相同的候选项）。
+     * 不去重则候选栏出现两个完全相同的候选）。
      *
      * 用法：先用 [loadFromTexts] 注入基础包，再调用本方法注入扩展包。
      */
@@ -626,7 +626,7 @@ object PinyinEngine {
                 .bufferedReader(StandardCharsets.UTF_8).use { reader ->
                     PhraseIndex.build(reader.lineSequence(), stamp)
                 }
-            // 原子落盘（写临时文件 + 改名）：缓存可能正被本进程 mmap 使用，直接覆盖会截断映射
+            // 原子落盘（写临时文件 + 改名）：缓存可能正被本进程 内存映射 使用，直接覆盖会截断映射
             val mapped = if (writeIndexCacheAtomically(cache, bytes)) PhraseIndex.ofMapped(cache) else null
             val idx = mapped ?: PhraseIndex.of(bytes) ?: error("构建出的索引结构异常")
             Diagnostics.i(
@@ -676,7 +676,7 @@ object PinyinEngine {
     /**
      * 原子写索引缓存：先写同目录临时文件再 `rename`。
      *
-     * **不能直接覆盖**：缓存可能正被本进程 mmap 使用（可选包重建缓存时会走到这里），
+     * **不能直接覆盖**：缓存可能正被本进程 内存映射 使用（可选包重建缓存时会走到这里），
      * 截断已映射的文件会让读取方踩到空洞页，Linux 上直接 SIGBUS。rename 只替换目录项，
      * 旧映射仍指向旧 inode，安全。
      *
@@ -793,7 +793,7 @@ object PinyinEngine {
                 idx = mapped
                     ?: PhraseIndex.of(bytes)
                     ?: error("索引结构异常（magic/版本/偏移不自洽）")
-                // 日志必须反映**真实结果**：之前无论写盘成败都打「已写入磁盘缓存」，
+                // 日志必须反映**真实结果**：之前无论落盘成败都打「已写入磁盘缓存」，
                 // 排查时会被彻底误导（本次就是因为这条日志，掩盖了缓存被误删的真实原因）。
                 if (written && mapped != null) {
                     Diagnostics.i(
@@ -889,7 +889,7 @@ object PinyinEngine {
                             //
                             // **必须去重**：扩展包与基础包可能收录同一个词
                             // （如「阿尔萨斯」两边都有），直接 `existing + kept`
-                            // 会让候选栏出现两个完全相同的候选项。
+                            // 会让候选栏出现两个完全相同的候选。
                             // 基础包可能只在索引里（不在运行时表），故两者都要看
                             val existing = phrasesByPinyin[pinyin] ?: baseIndex?.wordsFor(pinyin)
                             phrasesByPinyin[pinyin] = if (existing != null) {
@@ -1468,7 +1468,7 @@ object PinyinEngine {
 }
 
 /**
- * 双拼输入方案。
+ * 双拼双拼方案。
  *
  * 键位数据见 [SHUANGPIN_TABLES]（由 `tools/dict_builder/gen_shuangpin_tables.py` 从
  * `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成），本枚举只负责
@@ -1538,7 +1538,7 @@ enum class ShuangpinScheme(
  * 规则：
  *  - 每两键一个音节，查 [ShuangpinTable.codes]；
  *  - 末尾只剩一键时按「声母键」处理（`v` → `zh`，与旧实现一致）；非声母键原样保留
- *    （候选项预显行为不变），非字母键（如分号）忽略；
+ *    （候选预显行为不变），非字母键（如分号）忽略；
  *  - 非法组合停止转换并返回已转换的前缀（容错，不抛异常）；
  *  - 输出全部为 ASCII：撮口呼 ü 写作 u（jqxy 后）或 v（l/n 后），与词库键一致。
  *
