@@ -8,9 +8,11 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 拼音输入引擎：词库加载、候选查询、自然码双拼转换。
  *
- * 数据源（均为宽松开源许可，已预处理成紧凑文本 asset）：
+ * 数据源（均为宽松开源许可，已预处理成紧凑 asset）：
+ *  - `pinyin_index.bin.xz`：全量词库的二进制索引（原始文本与构建脚本见
+ *    `tools/dict_builder/build_dict_index.py`）
+ *  - `hot_phrases.txt.xz`：高频子集，先加载它保证键盘弹出即可打字
  *  - `pinyin_chars.txt`：音节 → 单字候选（按频率降序）
- *  - `pinyin_phrases.txt`：拼音串（去空格）→ 词语候选（按频率降序）
  *  - `pinyin_syllables.txt`：合法音节全集（用于全拼切分与双拼校验）
  *
  * 查询模型（刻意保持简单）：
