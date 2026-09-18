@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 
 /**
- * 剪贴板功能配置（方案第八 / 十五 / 三十七节）。
+ * 剪贴板功能配置。
  * 与主 [Prefs] 分离，独立 SharedPreferences 文件，避免互相污染。
  */
 class ClipboardPrefs(context: Context) {
