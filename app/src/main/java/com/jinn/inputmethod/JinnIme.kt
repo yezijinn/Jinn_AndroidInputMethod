@@ -158,7 +158,7 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
 
         // 可选词库包的三种「空闲」触发（见 maybeLoadOptionalDict）：
-        // ① 息屏（用户锁屏）——最可靠的空闲信号
+        // 息屏（用户锁屏）：最可靠的空闲信号
         screenOffReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_OFF) {
@@ -173,7 +173,7 @@ class JinnIme : InputMethodService() {
                 Diagnostics.w(TAG, "息屏接收器注册失败: ${e.message}")
             }
         }
-        // ③ 兜底：万一用户一直开着键盘打字（既不息屏也不收起），也要保证最终加载
+        // 兜底：用户一直开着键盘打字，既不息屏也不收起，也要保证最终加载
         ui.postDelayed({ maybeLoadOptionalDict("兜底超时") }, OPTIONAL_FALLBACK_DELAY_MS)
         // 双拼键位表预热：7 套表约 3,000 条目，一次全建有几十毫秒量级开销；而键盘视图是在
         // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
