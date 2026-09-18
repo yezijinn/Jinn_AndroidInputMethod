@@ -6,7 +6,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Root 增强模式：JinnIme 数据目录安全审计（方案第十一节）。
+ * Root 增强模式：JinnIme 数据目录安全审计。
  *
  * 职责：使用 root 权限检查 JinnIme 私有数据目录的安全状态，确保剪贴板历史
  * 不被其他 APP 通过文件系统漏洞（错误权限/symlink/外部存储泄露等）读取。

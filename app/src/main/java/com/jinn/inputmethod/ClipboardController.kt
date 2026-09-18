@@ -4,7 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 
 /**
- * 剪贴板控制器（方案第二 + 第四阶段核心）。
+ * 剪贴板控制器。
  *
  * 职责：
  *  - 监听系统剪贴板变化（[addPrimaryClipChangedListener]）；
@@ -13,7 +13,7 @@ import android.content.Context
  *    或本 IME 为前台输入法时才能读取系统剪贴板；API 33+ 系统会弹出
  *    剪贴板访问提示并可能自动清空，本类不绕过这些系统机制）。
  *
- * 普通模式不做任何系统级拦截（方案第六条）：读取与否完全遵循
+ * 普通模式不做任何系统级拦截：读取与否完全遵循
  * Android 官方行为，本控制器只管理「本输入法自己的历史数据库」。
  *
  * 线程模型：ClipboardManager 回调在主线程，入库等 IO 操作切后台线程。
