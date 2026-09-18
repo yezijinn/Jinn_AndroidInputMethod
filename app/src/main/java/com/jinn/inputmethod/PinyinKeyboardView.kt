@@ -1048,12 +1048,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 否则用户会以为「这个字打不出来」。
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
-            viewCandidatePinyin.text = queryInput
+            viewCandidatePinyin.text = input          // 显示原始按键，不是转换后的全拼
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
             return
         }
         lastCandidates = result.candidates
-        viewCandidatePinyin.text = queryInput
+        // 拼音行显示**用户实际按下的键**（input），不是转换后的全拼（queryInput）。
+        // 双拼下两者常常不同：`jg` 转全拼会被吞成 `j`，若显示 queryInput，
+        // 用户按下 g/h 后拼音行毫无变化，看起来就像"按键没反应/卡住了"（2026-09-18 用户报告）。
+        viewCandidatePinyin.text = input
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         viewCandidateList.removeAllViews()
