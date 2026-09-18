@@ -209,6 +209,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** "长拼音串"的判定门槛：短拼音按住退格仍按逐字删除，避免误清 */
     private val LONG_COMPOSING_TO_CLEAR = 12
 
+    /** 方向面板的识别标记：恢复字母区时按它清理残留面板（不依赖子视图下标） */
+    private val DIRECTION_PANEL_TAG = "jinn_direction_panel"
+
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
@@ -1573,6 +1576,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (i in 0 until viewLetters.childCount) {
             viewLetters.getChildAt(i).visibility = View.GONE
         }
+        panel.tag = DIRECTION_PANEL_TAG
         viewLetters.addView(panel, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1605,16 +1609,36 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 清掉残留在字母区里的方向面板。
+     *
+     * 按 **tag** 识别而不是按下标：字母行在 XML 里其实正好 3 个，但"按下标 ≥3 一律删"
+     * 这种写法一旦布局加了第 4 个子视图就会误删真键，属于没必要背的风险。
+     * 面板是运行时 addView 进去的，一旦出现"面板还挂着但 directionPanel 引用已丢"，
+     * 它就永远留在那儿盖住键区（它排在字母行之后，会先吃到触摸）。
+     */
+    private fun dropStaleDirectionPanel() {
+        for (i in viewLetters.childCount - 1 downTo 0) {
+            if (viewLetters.getChildAt(i).tag == DIRECTION_PANEL_TAG) {
+                viewLetters.removeViewAt(i)
+            }
+        }
+    }
+
     /** 恢复 26 键字母布局 */
     fun hideDirectionPanel() {
         if (!directionPanelVisible) {
-            // flag 已为 false 时也要把子视图恢复一遍：不能再假设"flag 为 false ⇒ 字母区是好的"
+            // flag 已为 false 时也要把子视图恢复一遍：不能再假设"flag 为 false ⇒ 字母区是好的"。
+            // 同时清掉可能残留的方向面板——它 addView 在字母行之后，会盖在键区上面吃触摸。
+            directionPanel = null
+            centerSelectionKey = null
+            dropStaleDirectionPanel()
             restoreLetterRows()
             return
         }
-        directionPanel?.let { viewLetters.removeView(it) }
         directionPanel = null
         centerSelectionKey = null
+        dropStaleDirectionPanel()
         restoreLetterRows()
         directionPanelVisible = false
         selectionActive = false
