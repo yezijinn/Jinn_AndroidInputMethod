@@ -175,7 +175,7 @@ class JinnIme : InputMethodService() {
         }
         // 兜底：用户一直开着键盘打字，既不息屏也不收起，也要保证最终加载
         ui.postDelayed({ maybeLoadOptionalDict("兜底超时") }, OPTIONAL_FALLBACK_DELAY_MS)
-        // 双拼键位表预热：7 套表约 3,000 条目，一次全建有几十毫秒量级开销；而键盘视图是在
+        // 双拼键位表预热：7 套表按需构建（实测单套首次使用约 1~1.7ms，7 套合计约 8ms）；而键盘视图是在
         // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
         // 故这里用独立守护线程预热（不占用 BackgroundIo——那是剪贴板 DB 的单线程队列，
         // 不该被 CPU 预热阻塞）。失败也不影响功能：首次访问会按需同步构建。
