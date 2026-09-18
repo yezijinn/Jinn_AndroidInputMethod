@@ -1207,7 +1207,7 @@ object PinyinEngine {
         if (input.isEmpty()) return null
         // 候选切分路径（DFS 枚举，上限防爆炸）
         val paths = ArrayList<List<String>>()
-        dfsSegment(input, 0, ArrayList(), paths)
+        dfsSegment(input, 0, ArrayList(), paths, suffixParseable(input))
         if (paths.isEmpty()) return null
         // 评分：整串拼词库短语数（词命中优先），其次音节数（多音节更自然）
         var best: List<String>? = null
@@ -1234,7 +1234,13 @@ object PinyinEngine {
      * 若将来真的要改成按词库分值的分词，必须同时换成「音节图 + 动态规划」（无限枚举路径），
      * 并先解决上面提到的打分退化问题。
      */
-    private fun dfsSegment(input: String, pos: Int, cur: MutableList<String>, out: MutableList<List<String>>) {
+    private fun dfsSegment(
+        input: String,
+        pos: Int,
+        cur: MutableList<String>,
+        out: MutableList<List<String>>,
+        parseable: BooleanArray,
+    ) {
         if (out.size >= MAX_SEGMENT_PATHS) return
         if (pos == input.length) {
             out.add(cur.toList())
@@ -1244,13 +1250,39 @@ object PinyinEngine {
         var end = maxEnd
         while (end > pos) {
             val candidate = input.substring(pos, end)
-            if (validSyllables.contains(candidate)) {
+            if (parseable[end] && validSyllables.contains(candidate)) {
                 cur.add(candidate)
-                dfsSegment(input, end, cur, out)
+                dfsSegment(input, end, cur, out, parseable)
                 cur.removeAt(cur.size - 1)
             }
             end--
         }
+    }
+
+    /**
+     * 后缀能否切成合法音节序列：第 i 位表示 input 从 i 起的后缀切得通。自后向前一趟 DP，O(n·6)。
+     *
+     * [dfsSegment] 用它在**进入分支前**剪枝。不剪的话，「16 条完整路径」的上限管不住这种输入：
+     * 前缀能切出很多合法音节、尾巴却切不通时，一条完整路径都找不到，上限永不触发，
+     * DFS 会把所有前缀分支走到底。实测（JVM）：25 字符 8.6ms、31 字符 36.8ms，每加 6 字符约 ×4~5，
+     * 真机上就是每按一键卡几百毫秒到几秒 —— 用户看到的就是「拼音打错了/打太长，字母键卡住」。
+     * 走不通的分支本来就到不了终点，剪掉它**不改变任何切分结果**，只是把代价压回 O(n·6)。
+     */
+    private fun suffixParseable(input: String): BooleanArray {
+        val n = input.length
+        val ok = BooleanArray(n + 1)
+        ok[n] = true
+        for (i in n - 1 downTo 0) {
+            var end = (i + 6).coerceAtMost(n)
+            while (end > i) {
+                if (ok[end] && validSyllables.contains(input.substring(i, end))) {
+                    ok[i] = true
+                    break
+                }
+                end--
+            }
+        }
+        return ok
     }
 
     /** 贪心最长匹配切分（原逻辑）：剩余整体是更长音节前缀时作不完整返回 */
