@@ -21,12 +21,9 @@ package com.jinn.inputmethod
  * 读取时把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
  * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标——**不额外复制数据**。
  *
- * 读取路径支持两种承载（2026-09-17 吸收 librime `Prism : MappedFile` 的设计）
- * 读取一律走 [java.nio.ByteBuffer]：
- *  · 堆内：`ByteBuffer.wrap(解压出来的 ByteArray)`（APK 内的索引只能这样，因为要先解 xz）；
- *  · **内存映射**：`ofMapped(file)` —— 设备端 `.idx` 缓存直接 mmap，零拷贝、页可被内核回收，
- *    不再需要把 34MB 读进私有堆（这是含可选包时 PSS 的主要构成之一）。
- * 两种承载共用同一套偏移/二分/解码逻辑，保证行为一致（`IndexParityTest` 对拍）。
+ * 读取一律走 [java.nio.ByteBuffer]，两种承载：APK 里的索引先解 xz 再 `wrap`；
+ * 设备端的 `.idx` 缓存用 [ofMapped] 直接映射（零拷贝，页可被内核回收，省下几十 MB 私有堆）。
+ * 两者共用同一套偏移/二分/解码逻辑，行为一致由 `IndexParityTest` 对拍。
  *
  * 线程安全：构造完成后完全不可变，可被多线程并发读取（IME 主线程查询 + 后台 merge 各读各的）。
  */
