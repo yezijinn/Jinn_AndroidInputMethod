@@ -7,7 +7,7 @@ import org.junit.Test
 /**
  * 候选数量的量级边界测试 —— 守护「渲染必须截断」这个前提。
  *
- * 背景：候选栏渲染是「每条一个 TextView」且每次按键全量重建。
+ * 候选栏渲染是「每条一个 TextView」且每次按键全量重建。
  * 引擎侧单字候选上限为 MAX_CHARS(60)，而真实单字表里 `yi` 有 326 字、
  * 93 个音节超过 60 字，即常用音节经常给出满额候选。
  * 因此 `PinyinKeyboardView` 只渲染前 `MAX_RENDERED_CANDIDATES` 条。

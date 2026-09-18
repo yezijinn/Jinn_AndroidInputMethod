@@ -418,7 +418,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
  * 列表会永远是空的。这个翻译必须显式做，是本项目最容易踩的坑之一。
  *
  * 该翻译原先在 5 处（Activity 的首页 / 下一页 / 搜索，Panel 的刷新 / 下一页）
- * 各写一遍，收敛到这里：① 消除重复 ② 纯函数、不依赖 Android，可 JVM 单测。
+ * 各写一遍，现在收敛到这里：一来不用重复，二来它是纯函数、不依赖 Android，能直接 JVM 单测。
  */
 data class ClipboardFilter(
     /** 传给 SQL 的 category 值；收藏/隐私这类伪分类此处为 null */

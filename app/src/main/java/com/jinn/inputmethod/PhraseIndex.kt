@@ -9,7 +9,6 @@ package com.jinn.inputmethod
  * 查询用二分查找按字节比较，命中才解码成 String，不再需要哈希容器。
  *
  * 格式（小端，**v2：长度数组**，见构建脚本）
- * ----------------------------------------
  * ```
  * magic "JNIH" | version u16=2 | keyCount u32 | keysLen u32 | wordsLen u32 | reserved | srcDigest u64
  * keysBlob    : 全部键按字典序串联的 UTF-8 字节
@@ -23,7 +22,6 @@ package com.jinn.inputmethod
  * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标——**不额外复制数据**。
  *
  * 读取路径支持两种承载（2026-09-17 吸收 librime `Prism : MappedFile` 的设计）
- * --------------------------------------------------------------------------
  * 读取一律走 [java.nio.ByteBuffer]：
  *  · 堆内：`ByteBuffer.wrap(解压出来的 ByteArray)`（APK 内的索引只能这样，因为要先解 xz）；
  *  · **内存映射**：`ofMapped(file)` —— 设备端 `.idx` 缓存直接 mmap，零拷贝、页可被内核回收，
