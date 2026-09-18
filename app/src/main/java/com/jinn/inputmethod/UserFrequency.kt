@@ -4,35 +4,18 @@ import android.content.Context
 import java.io.File
 
 /**
- * 用户词频学习（吸收 librime `UserDictionary` / `UserDb` 的设计）。
+ * 用户词频学习：记下用户实际选过的候选，下次把它们排到前面。
  *
- * 为什么需要
- * ----------
- * 词库的候选顺序是**构建期**按通用词频排好的，但每个人常用的词不同：你天天打「虚拟」「编译」，
- * 它们在通用词频里可能排在几十名开外。这里记录「用户**实际选过**的候选」，并把它们提到前面。
+ * 规则（对齐 librime `UserDictionary`，见 `docs/librime-master/src/rime/dict/user_dictionary.cc`）：
+ *  - 只在明确选择时记一次：点候选栏、空格取首候选、点补全项；
+ *    收起键盘的自动提交、语音结果、剪贴板粘贴都不算；
+ *  - 权重按 `algo::formula_d` 累加：`dee = commits + dee_old * exp((tick_old - tick_now) / 200)`，
+ *    tick 是天计数（`now / 86400000`），也就是旧值按天衰减、半衰期约 139 天，选中一次加 1；
+ *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
- * 语义（对齐 librime，见 `docs/librime-master/src/rime/dict/user_dictionary.cc`）
- * ---------------------------------------------------------------------------
- *  · 条目 = (词, 权重 dee, 最后更新日 tick)。tick 是**天计数**（`now / 86400000`）。
- *  · 累加公式取自 librime `algo::formula_d`（`algo/dynamics.h`）：
- *      `dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)`
- *    即**旧值按天指数衰减**（半衰期 ≈ 139 天），新选中一次加 1。这样很久不打的选择会自然让位，
- *    而持续使用的词会稳定排在前面。
- *  · 只在**明确选择候选**时记一次（点候选栏 / 空格取首候选 / 点补全项），
- *    自动提交（收起键盘时的 `commitComposing`）与语音/剪贴板粘贴**不计**——那些不是用户的选择。
- *
- * 排序规则
- * --------
- * [rank] 对候选做**稳定排序**：权重降序，权重相同时**保持原顺序**（即词库顺序）。
- * 因此它对没学过的候选零影响，不会打乱通用词频的既有手感。
- *
- * 存储与线程
- * ----------
- *  · 文件 `filesDir/user_freq.txt`，制表符分隔，**写盘走 `BackgroundIo`** 且做防抖（最多 2s 一次），
- *    **原子落盘**（临时文件 + 改名）——与索引缓存同一套写法。
- *  · 内存里只有一张 [java.util.concurrent.ConcurrentHashMap]：查询线程读、学习线程写；
- *    启动加载在后台线程且显式降优先级（不抢词库加载的 CPU）。
- *  · 上限 [MAX_ENTRIES]（超出淘汰权重最低者）、[MIN_WEIGHT] 以下丢弃，文件恒定在几十 KB 量级。
+ * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），写盘走 BackgroundIo + 防抖 2s，
+ * 原子落盘（临时文件 + 改名）；退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，
+ * 权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
  */
 internal object UserFrequency {
 
@@ -55,9 +38,9 @@ internal object UserFrequency {
     private var lastSaveAt = 0L
 
     /**
-     * 存储文件（由加载线程在 [load] 里赋值，主线程在 [remember]/[flush] 里读）。
-     * **必须 @Volatile**：否则主线程可能一直看到 null，导致首批学习既不触发防抖落盘、
-     * 退出时的 flush 也直接 return（表现为"学了但重启就没了"，且完全无声）。
+     * 存储文件（加载线程在 [load] 里赋值，主线程在 [remember]/[flush] 里读）。
+     * 必须 @Volatile：否则主线程可能一直看到 null，首批学习不落盘、退出时 flush 也直接返回，
+     * 结果就是白记，还不报错。
      */
     @Volatile
     private var file: File? = null
@@ -181,9 +164,9 @@ internal object UserFrequency {
         if (!dirty) return
         val text = render()
         dirty = false
-        // **同步写**：本方法只在 onDestroy / 切后台这类"一次性收尾"时调用，
-        // 此刻再丢给 BackgroundIo 是危险的——服务销毁后进程可能随即被杀，异步任务来不及跑，
-        // 用户最后几次学习就白记了（而且无声）。文件上限 3000 行（几十 KB），主线程写一次约 1~3ms，可接受。
+        // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
+        // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
+        // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。
         writeAtomically(f, text)
     }
 
