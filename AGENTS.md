@@ -162,7 +162,7 @@ app/src/main/java/com/jinn/inputmethod/
 ## 冷启动与加载顺序（重要）
 
 - **词库是两段式加载**（2026-09-17 起）：
-  1. `assets/hot_phrases.txt.xz`（高频子集，4 万词 / 220KB）→ **真机 ~0.25~0.31s 即可输入**；
+  1. `assets/hot_phrases.txt.xz`（高频子集，4 万词 / 220KB）→ **真机 ~0.28~0.44s 即可输入**（全新安装后首次启动偏慢，实测 442ms）；
   2. `assets/pinyin_index.bin.xz`（全量基础包**二进制索引 v2**，60.4 万键）→ 解压 + 读长度数组
      + 二分查找（真机索引 1.70s / 两段式总计 2.31s；文本资产已不进 APK）。
   - `PinyinEngine.isLoaded` = 可以打字了（第一段完成）；`isFullyLoaded` = 候选已全量。

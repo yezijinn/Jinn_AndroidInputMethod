@@ -231,7 +231,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
         }
 
-        // 监听剪贴板页面「点击记录 → 粘贴」广播：Activity 无法直接拿 InputConnection，
+        // 监听剪贴板面板面「点击记录 → 粘贴」广播：Activity 无法直接拿 InputConnection，
         // 通过广播把内容交给本服务用当前连接插入编辑框。
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -275,7 +275,7 @@ class JinnIme : InputMethodService() {
     private val clipboardPasteFilter = IntentFilter().apply { addAction(ACTION_CLIPBOARD_PASTE) }
 
     /**
-     * 把粘贴结果回传给剪贴板页（成功才允许自动关闭页面）。
+     * 把粘贴结果回传给剪贴板面板（成功才允许自动关闭页面）。
      * @param itemId 关联点击的剪贴板记录（用于防串线）
      */
     private fun notifyPasteResult(itemId: Long, success: Boolean) {
@@ -295,9 +295,9 @@ class JinnIme : InputMethodService() {
     private fun pasteClipboardText(text: String): Boolean {
         val connection = currentInputConnection
         if (connection == null) {
-            // 剪贴板页在前台时 IME 可能无有效连接：暂存，并主动唤起键盘，
+            // 剪贴板面板在前台时 IME 可能无有效连接：暂存，并主动唤起键盘，
             // 触发 onStartInputView → flushPendingPaste 自动提交。
-            // 此处未真正提交，返回 false（剪贴板页不关闭，用户可等待或返回）。
+            // 此处未真正提交，返回 false（剪贴板面板不关闭，用户可等待或返回）。
             Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
             pendingPasteText = text
             pendingPasteAt = System.currentTimeMillis()
@@ -821,14 +821,14 @@ class JinnIme : InputMethodService() {
         micButton?.cancelArmed = false
         setHint(getString(R.string.hint_idle))
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
-        // 每次输入框聚焦时重新同步输入方案（全拼/双拼、中英文）：
+        // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
         pinyinKeyboard?.configure(
             scheme = prefs.effectiveShuangpinScheme,
             english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
         )
-        // 剪贴板页粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
+        // 剪贴板面板粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
         flushPendingPaste()
         // 注意：不再在这里恢复剪贴板面板——恢复逻辑会触发 onPanelShown→refresh
         // （主线程 DB 查询数百毫秒）→ 诱发 IME 窗口反复 relayout（12:20 循环日志实证），
@@ -1370,7 +1370,7 @@ class JinnIme : InputMethodService() {
         const val ACTION_CONFIG_UPDATED = "com.jinn.inputmethod.action.CONFIG_UPDATED"
 
         /**
-         * 暂存粘贴文本的有效期：剪贴板页点击粘贴但 IME 无连接时暂存，
+         * 暂存粘贴文本的有效期：剪贴板面板点击粘贴但 IME 无连接时暂存，
          * 编辑框重新聚焦（onStartInputView）时提交。超过该时长视为过期丢弃，
          * 防止旧内容被粘到用户当前无关的其它输入框。
          */

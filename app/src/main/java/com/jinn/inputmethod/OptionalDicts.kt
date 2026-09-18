@@ -53,6 +53,7 @@ object OptionalDicts {
     val ALL: List<OptionalDict> = listOf(
         OptionalDict(
             fileName = "ext.xz",
+            // 界面上叫「长词包」，代码与文档里一般叫「扩展包」（dict_ext），指的是同一个包
             name = "长词包",
             descLines = listOf(
                 "五字及以上的长词与专有名词。",
