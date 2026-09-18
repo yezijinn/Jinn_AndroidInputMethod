@@ -30,7 +30,7 @@ class ClipboardPrefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_ROOT_ENHANCE, value) }
 
     companion object {
-        const val DEFAULT_MAX_ITEMS = 200
+        const val DEFAULT_MAX_ITEMS = 500
 
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MAX_ITEMS = "max_items"

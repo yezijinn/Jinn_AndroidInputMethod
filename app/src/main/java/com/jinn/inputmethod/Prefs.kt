@@ -134,11 +134,11 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
-     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认开）。
-     * 关掉后不再产生预测，因此"选完文字之后不会再冒出预测候选"。
+     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（**默认关**）。
+     * 打开后选完文字才会出现预测候选；关掉时完全不产生预测。
      */
     var predictEnabled: Boolean
-        get() = sp.getBoolean(KEY_PREDICT_ENABLED, true)
+        get() = sp.getBoolean(KEY_PREDICT_ENABLED, false)
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
 
     /**
