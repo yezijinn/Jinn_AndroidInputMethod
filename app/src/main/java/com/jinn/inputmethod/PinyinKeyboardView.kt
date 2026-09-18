@@ -38,6 +38,21 @@ import kotlin.math.roundToInt
  *
  * 输入法层调用 [commitComposing] 主动结束当前拼音串。
  */
+/** 按住退格多久后允许一次性清掉长拼音串 */
+internal const val HOLD_TO_CLEAR_COMPOSING_MS = 1200L
+
+/** "长拼音串"的判定门槛：短拼音按住退格仍按逐字删除，避免误清 */
+internal const val LONG_COMPOSING_TO_CLEAR = 12
+
+/**
+ * 长按退格是否应当"整串清掉拼音"。
+ *
+ * 抽成纯函数是为了能直接跑边界单测（1199/1200/1201ms × 11/12/13 字符这种），
+ * 视图里的手势代码在 JVM 单测里跑不起来。
+ */
+internal fun shouldClearComposingOnHold(heldMs: Long, composingLength: Int): Boolean =
+    heldMs >= HOLD_TO_CLEAR_COMPOSING_MS && composingLength >= LONG_COMPOSING_TO_CLEAR
+
 class PinyinKeyboardView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -203,11 +218,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private val clearGestureWindowMs = 500L
 
-    /** 按住退格多久后，允许"一次性清掉长拼音串"（此时若拼音串仍很长，说明用户就是想全清） */
-    private val holdToClearComposingMs = 1200L
-
-    /** "长拼音串"的判定门槛：短拼音按住退格仍按逐字删除，避免误清 */
-    private val LONG_COMPOSING_TO_CLEAR = 12
+    /** 按住退格多久后，允许"一次性清掉长拼音串"（判据见文件末尾的 shouldClearComposingOnHold） */
+    private val holdToClearComposingMs = HOLD_TO_CLEAR_COMPOSING_MS
 
     /** 方向面板的识别标记：恢复字母区时按它清理残留面板（不依赖子视图下标） */
     private val DIRECTION_PANEL_TAG = "jinn_direction_panel"
@@ -219,7 +231,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 而不是逐字退格（78 个字符逐字删要 6~8 秒）。清掉拼音串后停止连删，
             // **不动已上屏的文字** —— 要连输入框一起清是「双击 + 长按」那个手势。
             val held = System.currentTimeMillis() - backspacePressStart
-            if (held >= holdToClearComposingMs && composing.length >= LONG_COMPOSING_TO_CLEAR) {
+            if (shouldClearComposingOnHold(held, composing.length)) {
                 Diagnostics.i(TAG, "退格长按 ${held}ms：清空拼音串（${composing.length} 字符）")
                 clearComposingState()
                 backspaceHandler.removeCallbacks(this)
