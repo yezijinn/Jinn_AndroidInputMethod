@@ -203,9 +203,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private val clearGestureWindowMs = 500L
 
+    /** 按住退格多久后，允许"一次性清掉长拼音串"（此时若拼音串仍很长，说明用户就是想全清） */
+    private val holdToClearComposingMs = 1200L
+
+    /** "长拼音串"的判定门槛：短拼音按住退格仍按逐字删除，避免误清 */
+    private val LONG_COMPOSING_TO_CLEAR = 12
+
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
+            // 按住够久、且拼音串仍然很长：说明用户是想把这一大串打错的拼音整体丢掉，
+            // 而不是逐字退格（78 个字符逐字删要 6~8 秒）。清掉拼音串后停止连删，
+            // **不动已上屏的文字** —— 要连输入框一起清是「双击 + 长按」那个手势。
+            val held = System.currentTimeMillis() - backspacePressStart
+            if (held >= holdToClearComposingMs && composing.length >= LONG_COMPOSING_TO_CLEAR) {
+                Diagnostics.i(TAG, "退格长按 ${held}ms：清空拼音串（${composing.length} 字符）")
+                clearComposingState()
+                backspaceHandler.removeCallbacks(this)
+                return
+            }
             deleteOne()
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
         }
@@ -916,11 +932,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 双击+长按清空：先清拼音串与预测，再通知 IME 删除已上屏文本 */
     private fun onTripleBackspace() {
-        if (composing.isNotEmpty()) {
-            composing.clear()
-        }
-        lastPredictions = emptyList()
-        refreshCandidateBar()
+        clearComposingState()
         listener?.onDeleteAll()
     }
 
