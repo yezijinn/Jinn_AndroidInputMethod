@@ -12,7 +12,7 @@ import java.util.regex.Pattern
  *
  * 边界：
  *  - 不用「包含数字」作为数字分类的唯一条件（"我有123个苹果" 不应算数字）；
- *  - 隐私分类**绝不自动判断**（只能用户主动标记）。
+ *  - 只做 URL / NUMBER / OTHER 三类，其余一律 OTHER。
  *
  * 纯 JVM 可测（不依赖 Android），正则常量收敛于此。
  */

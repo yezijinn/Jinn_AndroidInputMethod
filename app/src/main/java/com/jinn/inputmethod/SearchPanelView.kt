@@ -198,8 +198,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     /** 显示搜索面板：清空输入 + aria50（结果列表）/空态可见性对齐 + 聚焦输入框 */
     fun onShown() {
         isPasting = false
-        // 每次重新打开都清空「已展开明文」：隐私条目必须重新点一次才能看到内容，
-        // 否则上次展开的状态会残留，掩码形同虚设
+        // 每次重新打开都清空「已展开」集合，避免上次的状态残留
         searchHandler.removeCallbacksAndMessages(null)
         // Invalidate a search that may still be decrypting after the previous session closed.
         refreshToken++
