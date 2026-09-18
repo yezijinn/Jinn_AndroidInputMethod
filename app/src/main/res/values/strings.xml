@@ -103,7 +103,8 @@
     <string name="update_btn_ok">知道了</string>
     <string name="update_checking">检查中…</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。
+打错的拼音不用一个个退：按住退格约 1 秒可整串清掉；双击再长按退格则清空整个输入框。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
