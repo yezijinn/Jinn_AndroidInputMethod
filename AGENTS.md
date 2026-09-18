@@ -126,7 +126,8 @@ app/src/main/java/com/jinn/inputmethod/
 - 所有关键路径已埋点（连接/重连/收发/录音/VAD/权限/剪贴板保存/词库加载），排查先用 `cat` 日志文件
 - 排查命令：`adb shell cat /storage/emulated/0/JinnIme/logs/jinn-*.log`
 - `Diagnostics.i/v/w/e` 同时写 logcat 与日志文件；`PinyinEngine` 加载完成会打
-  「词库加载完成: 音节=N 词语键=N」与耗时（后台线程；高频子集 ~0.3s 即可打字，全量索引随后就绪——日常为**内存映射复用约 0.05s**，仅 App 更新后首次需解压重建约 1.8s）
+  「词库加载完成: 音节=N 词语键=N」与耗时。耗时参考：高频子集 ~0.3s 即可打字，全量索引随后就绪；
+  日常为**内存映射复用约 0.05s**，仅 App 更新后首次需要解压重建（约 1.8s）
 - 可选词库为**延迟加载**：由三种空闲信号之一触发（息屏 / 键盘收起后闲置 20s / 兜底 180s，
   见 `JinnIme.maybeLoadOptionalDict`），因此「开机后首次输入的候选就绪」不被大词库拖慢
 - 剪贴板保存打 `save: 已保存 … (分类=...)`；剪贴板页刷新打 `refresh: 全库=N 分类=... 查询=N`
