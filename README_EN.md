@@ -13,12 +13,10 @@ Everything runs on-device — **no server required**.
 
 > ### About the optional voice dictation
 >
-> This project also ships an **optional** voice dictation feature — but it is **not** ready to use
-> out of the box:
->
-> Speech recognition runs **entirely on a server**. No model is bundled in the Android app.
-> You must deploy [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline)
-> (a Docker image) on a **home NAS of your own**, and the app streams audio to it over WebSocket.
+> Voice dictation is **optional** and does not work out of the box: recognition runs
+> **entirely on a server**, and no model is bundled in the Android app. You must deploy
+> [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (a Docker image)
+> on a **home NAS of your own**, and the app streams audio to it over WebSocket.
 >
 > **Without a reachable, self-hosted NAS server, the voice feature cannot be used at all.**
 > It targets users who already run that server, not general users.
@@ -31,17 +29,18 @@ Everything runs on-device — **no server required**.
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
   - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
     the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
-  - Holding backspace ~1s clears the whole pinyin string without touching committed text.
+  - One-tap CN/EN switch; **key corner radius and gap** are adjustable in Settings
+    (radius 0~24dp, gap 0~8dp) — collapse the keyboard and reopen it to see the change.
+  - Backspace gestures: tap to delete one character, hold to keep deleting; holding ~1s clears the
+    whole pinyin string and leaves committed text alone; double-tap then hold clears committed text too.
   - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
-  - One-tap CN/EN switch; double-tap + long-press backspace to clear all; **key corner radius and
-    gap** are adjustable in Settings (radius 0~24dp, gap 0~8dp).
-- **Clipboard history** (embedded panel): copies are auto-saved (AES-256-GCM encrypted), with
-  categories All / URL / Number / Favorites, dynamic numbering, tap-to-paste, and long-press to
-  favorite or delete. Clearing asks for confirmation and keeps favorites.
-  - **Top search panel**: a panel above the candidate bar filters history in real time;
-    results scroll and paste on tap; exiting restores the normal keyboard.
-  - Entries are AES-256-GCM encrypted in a private local DB, readable only by this IME.
+- **Clipboard history** (embedded panel): copies are auto-saved, **AES-256-GCM encrypted into a
+  private local DB that only this IME can read**; categories All / URL / Number / Favorites,
+  dynamic numbering, tap-to-paste, long-press to favorite or delete. Clearing asks for confirmation
+  and keeps favorites.
+  - **Top search panel**: above the candidate bar, filters history as you type; results scroll and
+    paste on tap; exiting restores the 26-key layout.
 - **Optional dictionaries**: the long-word pack (~185K entries) and Tencent lexicon (~955K entries)
   are downloadable on demand from the settings page; loaded **only when idle**, so typing is never
   blocked; adding or removing a pack auto-restarts the IME to apply.
@@ -87,7 +86,7 @@ optional side path that requires an external server:
 
 ## Voice Server (optional, self-hosted)
 
-> If you only use the pinyin keyboard / clipboard, **you can skip this section entirely.**
+> Skip this section if you are not using voice dictation.
 
 The server is CapsWriter Offline (Docker) deployed on a **home NAS**, port `6016`.
 
@@ -154,18 +153,17 @@ Built-in assets (`app/src/main/assets/`):
 
 Dictionary builder tools live in `tools/dict_builder/` (Rime → project format). The THUOCL
 auto-annotation route was evaluated and dropped: those entries ship without pinyin, so the
-annotation error rate is too high, and the current lexicon already covers that ground.
+annotation error rate is too high.
 
 ## License
 
 This project is licensed under **GNU GPL v3.0** (see [LICENSE](LICENSE)).
 
 > ⚠️ The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang); under GPL copyleft
-> the project is distributed as GPL-3.0. Third-party sources (THUOCL/MIT, pypinyin/MIT) are compatible.
+> the project is distributed as GPL-3.0.
 
 ## Credits
 
 - [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) — optional ASR server
 - [iDvel/rime-ice](https://github.com/iDvel/rime-ice) — lexicon
-- [thunlp/THUOCL](https://github.com/thunlp/THUOCL) — Tsinghua open Chinese lexicon
 - [mozillazg/pypinyin](https://github.com/mozillazg/pypinyin) — pinyin tool
