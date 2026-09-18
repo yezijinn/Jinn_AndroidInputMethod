@@ -87,7 +87,7 @@ app/src/main/java/com/jinn/inputmethod/
 ├── ClipboardStore.kt(内)    # ClipboardController 内 object：自动分类→加密入库纯逻辑
 ├── ClipboardDb.kt           # 剪贴板历史 SQLite（AES-256-GCM 密文 + category/is_favorite + 去重/裁剪/搜索）
 ├── ClipboardCrypto.kt       # 加密工具（Android Keystore AES-256-GCM，base64(iv):base64(cipher)）
-├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；隐私绝不自动）
+├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；收藏由用户长按产生，分类不起作用）
 ├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/root 增强）
 ├── ClipboardFirewall.kt    # Root 增强：数据目录安全审计（不做任何清空系统剪贴板操作）
 ├── ClipboardPanelView.kt   # 键盘内嵌剪贴板面板（列表 UI 与搜索面板重复，改一处要同步两处）
@@ -107,6 +107,11 @@ app/src/main/java/com/jinn/inputmethod/
 - **切换全拼/双拼**：功能面板只在**拼音串为空时**才渲染 → ① 先退格清空；② 点候选栏第 1 键；
   ③ 日志出现「输入方案切换: …」才算切成功。
 - **界面默认值**：用户词频学习 **开**、候选预测词 **关**、剪贴板历史上限 **500**（`ClipboardPrefs`）。
+- **退格手势**（`PinyinKeyboardView.onTripleBackspace` 等处，别靠猜）：
+  单击删 1 个字符；按住连删（先清拼音串再删已上屏，`backspaceRepeatDelayMs=380` 后每 55ms 一次）；
+  **按住 ≥1.2s 且拼音串 ≥12 字符 → 只整串清拼音、停止连删、不动已上屏**
+  （`HOLD_TO_CLEAR_COMPOSING_MS=1200` / `LONG_COMPOSING_TO_CLEAR=12`）；
+  **双击 + 长按 >800ms** 才连输入框已上屏的文字一起清。
 
 ## 诊断日志（重要）
 
@@ -268,7 +273,7 @@ app/src/main/java/com/jinn/inputmethod/
 
 - **第三方 APP 不得读取 History**：JinnIme 不提供任何 History API（ClipboardHistoryProvider/PermissionStore/PermissionActivity 已全部移除）。第三方 APP 只能读取 Android System Clipboard 的最新内容，无法访问 JinnIme 私有历史库
 - **不干预 System Clipboard**：JinnIme 不阻断、篡改或周期性清空 Android System Clipboard；网盘、购物、分享类 APP 识别口令/链接的功能不受影响
-- **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏/隐私标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
+- **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
 - **分类**：固定 **全部 / 网址 / 数字 / 收藏**；收藏是独立标签，可与分类并存。
   隐私分类与隐私标记入口已移除（2026-09-16）：有收藏即可满足置顶需求，隐私冗余。
   `is_private` 列**已在 v5 迁移中删除**，掩码逻辑随之失效（隐私功能整体移除，不做兼容）。
