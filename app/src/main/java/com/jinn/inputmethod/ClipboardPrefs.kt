@@ -17,7 +17,7 @@ class ClipboardPrefs(context: Context) {
         get() = sp.getBoolean(KEY_ENABLED, true)
         set(value) = sp.edit { putBoolean(KEY_ENABLED, value) }
 
-    /** 历史数量上限：1 ~ 9999，默认 200 */
+    /** 历史数量上限：1 ~ 9999，默认 500 */
     var maxItems: Int
         get() = sp.getInt(KEY_MAX_ITEMS, DEFAULT_MAX_ITEMS)
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, 9999)) }
