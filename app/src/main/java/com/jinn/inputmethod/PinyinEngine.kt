@@ -79,7 +79,7 @@ object PinyinEngine {
      * 真机实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 **300ms**（janky 12%）。
      * 让出 CPU 后总耗时只多几十毫秒（都在后台），但前台打字不再被挤。
      */
-    private fun readWithYields(stream: java.io.InputStream): ByteArray {
+    internal fun readWithYields(stream: java.io.InputStream): ByteArray {
         val out = java.io.ByteArrayOutputStream(16 * 1024 * 1024)
         val buf = ByteArray(CHUNK_BYTES)
         var sinceYield = 0
@@ -1240,7 +1240,7 @@ object PinyinEngine {
         if (input.isEmpty()) return null
         // 候选切分路径（DFS 枚举，上限防爆炸）
         val paths = ArrayList<List<String>>()
-        dfsSegment(input, 0, ArrayList(), paths, suffixParseable(input))
+        enumerateSegmentPaths(input, paths)
         if (paths.isEmpty()) return null
         // 评分：整串拼词库短语数（词命中优先），其次音节数（多音节更自然）
         var best: List<String>? = null
@@ -1290,6 +1290,17 @@ object PinyinEngine {
             }
             end--
         }
+    }
+
+    /**
+     * 枚举合法音节切分（含 [MAX_SEGMENT_PATHS] 上限）。
+     *
+     * 抽成 internal 是为了能和应用"未剪枝的参考实现"逐例对拍——剪枝只允许砍掉
+     * 到不了终点的分支，结果必须与不剪枝时**完全一致**，这一点用对拍比人工推演可靠。
+     */
+    internal fun enumerateSegmentPaths(input: String, out: MutableList<List<String>> = ArrayList()): List<List<String>> {
+        dfsSegment(input, 0, ArrayList(), out, suffixParseable(input))
+        return out
     }
 
     /**
