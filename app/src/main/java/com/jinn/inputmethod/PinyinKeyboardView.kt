@@ -820,7 +820,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 if (consumePinyin(first)) {
                     // 空格上屏同样触发智能预测（与点选候选一致）
                     lastCommittedWord = first
-                    lastPredictions = PinyinEngine.predict(first)
+                    lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(first) else emptyList()
                 } else {
                     lastPredictions = emptyList()
                 }
@@ -831,7 +831,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 lastPredictions = emptyList()
             }
             refreshCandidateBar()
-        } else if (lastPredictions.isNotEmpty()) {
+        } else if (lastPredictions.isNotEmpty() && predictionsEnabled()) {
             // 预测态：空格取第一个预测词（onPredictionSelected 内部会学习「完整词」）
             onPredictionSelected(lastPredictions[0])
         } else {
@@ -955,7 +955,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
             Diagnostics.v(TAG, "退格删拼音: ${composing}")
-        } else if (lastPredictions.isNotEmpty()) {
+        } else if (lastPredictions.isNotEmpty() && predictionsEnabled()) {
             // 预测态退格：清除预测，回到拼音态
             lastPredictions = emptyList()
             refreshCandidateBar()
@@ -966,7 +966,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     // ── 候选渲染 ───────────────────────────────────────────
 
+    /** 设置页开关：关掉后不再产生预测，已显示的也会在下次刷新时清掉 */
+    private fun predictionsEnabled(): Boolean = Prefs(context).predictEnabled
+
     private fun refreshCandidateBar() {
+        // 开关刚被关掉时，把上一次留下的预测清掉——否则已显示的预测会一直挂在候选栏
+        if (!predictionsEnabled() && lastPredictions.isNotEmpty()) {
+            lastPredictions = emptyList()
+        }
         // 符号层：候选栏显示符号分组标签（可横向滚动切换）
         if (layer == LAYER_SYMBOL) {
             renderSymbolGroups()
@@ -1123,7 +1130,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
         if (consumePinyin(candidate)) {
             lastCommittedWord = candidate
-            lastPredictions = PinyinEngine.predict(candidate)
+            lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(candidate) else emptyList()
         } else {
             lastPredictions = emptyList()
         }

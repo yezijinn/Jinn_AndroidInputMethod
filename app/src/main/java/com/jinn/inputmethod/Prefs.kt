@@ -134,6 +134,14 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
+     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认开）。
+     * 关掉后不再产生预测，因此"选完文字之后不会再冒出预测候选"。
+     */
+    var predictEnabled: Boolean
+        get() = sp.getBoolean(KEY_PREDICT_ENABLED, true)
+        set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
+
+    /**
      * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。
      *
      * 定义域与默认值见 [KeyAppearance]（0~24dp，默认 0dp 直角）。getter 也做一次钳位：
@@ -187,6 +195,7 @@ class Prefs(context: Context) {
         private const val KEY_KB_ENGLISH = "kb_english"
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
+        private const val KEY_PREDICT_ENABLED = "predict_enabled"
         private const val KEY_USER_LEARNING = "user_learning"
 
     private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
