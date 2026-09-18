@@ -155,7 +155,7 @@
     <string name="settings_clipboard">剪贴板</string>
     <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘候选栏（未输入任何拼音时）点「历史」即可查看。</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
-    <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 200）</string>
+    <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 500）</string>
     
 
     <!-- Root 增强模式 -->
