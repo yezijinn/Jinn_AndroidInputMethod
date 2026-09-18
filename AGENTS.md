@@ -1,6 +1,6 @@
 # 项目说明：Jinn 安卓输入法
 
-安卓拼音输入法（IME）：26 键全拼 / 自然码双拼 + 剪贴板历史 + 分类词库，**全部本机运行**。
+安卓拼音输入法（IME）：26 键全拼 / 双拼（7 套方案，默认自然码）+ 剪贴板历史 + 分类词库，**全部本机运行**。
 
 另有一项**可选**的语音听写：采集麦克风音频经 WebSocket 上传到**自建家用 NAS** 上的
 CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别，本机零模型。
@@ -33,7 +33,10 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（23 个测试类 / 239 个用例）:
+- 覆盖（26 个测试类 / 247 个用例）:
+  - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
+    逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
+    `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
   - 协议：`ProtocolTest`（序列化 / 解析）
   - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
   - 词库：`PhraseDictIntegrityTest`（词库完整性）、`RareCharsFilterTest`（生僻字过滤）、
@@ -81,7 +84,7 @@ app/src/main/java/com/jinn/inputmethod/
 │
 ├── ClipboardController.kt   # 剪贴板监听（PrimaryClipChangedListener）+ 自动分类 + 保存到库
 ├── ClipboardStore.kt(内)    # ClipboardController 内 object：自动分类→加密入库纯逻辑
-├── ClipboardDb.kt           # 剪贴板历史 SQLite（AES-256-GCM 密文 + category/is_favorite/is_private + 去重/裁剪/搜索）
+├── ClipboardDb.kt           # 剪贴板历史 SQLite（AES-256-GCM 密文 + category/is_favorite + 去重/裁剪/搜索）
 ├── ClipboardCrypto.kt       # 加密工具（Android Keystore AES-256-GCM，base64(iv):base64(cipher)）
 ├── ClipboardClassifier.kt   # 自动分类（URL/NUMBER/OTHER，纯逻辑可单测；隐私绝不自动）
 ├── ClipboardPrefs.kt        # 剪贴板配置（独立 SharedPreferences：enabled/maxItems/root 增强）
@@ -90,9 +93,19 @@ app/src/main/java/com/jinn/inputmethod/
 └── SearchPanelView.kt      # 顶部剪贴板搜索面板（剪贴板内容的第二个展示入口，同上）
 
 > `ClipboardDb.kt` 内含顶层 `ClipboardFilter`：负责把分类栏的伪分类
-> （FAVORITE / PRIVATE，实为独立标签列）翻译成 SQL 参数。**收藏/隐私绝不能当
+> （FAVORITE，实为独立标签列）翻译成 SQL 参数。**收藏绝不能当
 > category 传给 SQL**，否则列表恒空；该规则由 `ClipboardFilterTest` 守卫。
+> （隐私功能已在 v5 迁移整体移除。）
 ```
+
+## 按键/模式排查口径（重要）
+
+- **按键日志自带当前模式**：`拼音输入[双拼·自然码]: jgh` / `拼音输入[全拼]: nihao` / `拼音输入[英文]: abc`。
+  排查或做真机验证前，**先看这一条确定"现在是什么键盘"**——只看 composing 判不出模式，
+  历史上因此连续踩坑（拿全拼的截图去证明双拼修复、在拼音串非空时点方案切换键点到候选）。
+- **切换全拼/双拼**：功能面板只在**拼音串为空时**才渲染 → ① 先退格清空；② 点候选栏第 1 键；
+  ③ 日志出现「输入方案切换: …」才算切成功。
+- **界面默认值**：用户词频学习 **开**、候选预测词 **关**、剪贴板历史上限 **500**（`ClipboardPrefs`）。
 
 ## 诊断日志（重要）
 
@@ -257,7 +270,7 @@ app/src/main/java/com/jinn/inputmethod/
 - **入库去重**：每条内容写入时按 `content_hash` 唯一约束原子 upsert——同内容已存在则更新元数据并置顶（不动收藏/隐私标记），不存在则 INSERT。**禁止依赖「打开面板时全表 deduplicate」维持数据正确性**（面板打开只负责读取快照渲染）
 - **分类**：固定 **全部 / 网址 / 数字 / 收藏**；收藏是独立标签，可与分类并存。
   隐私分类与隐私标记入口已移除（2026-09-16）：有收藏即可满足置顶需求，隐私冗余。
-  `is_private` 列与掩码逻辑**保留** —— 历史数据的隐私条目仍默认隐藏明文，且不再新增隐私标记。
+  `is_private` 列**已在 v5 迁移中删除**，掩码逻辑随之失效（隐私功能整体移除，不做兼容）。
 - **序号**：UI 序号非 DB ID，最新=最大，删除/去重后重新连续编号；搜索保留原始序号
 - **点击粘贴**：面板点击条目 → 广播（`ACTION_CLIPBOARD_PASTE`）回传 IME → `commitText`；
   连接无效时暂存 `pendingPasteText`，`onStartInputView` 时自动提交；无效连接不崩溃
