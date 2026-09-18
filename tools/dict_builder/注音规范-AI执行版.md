@@ -47,7 +47,7 @@ shiwudiaodu	事务调度
 a  ai  an  ang  ao  ba  bai  ban  bang  bao  bei  ben  beng  bi  bian  biang  biao  bie  bin  bing  bo  bu  ...
 ```
 
-**三个必须记住的事实**：
+**三条必须记住的事实**：
 
 1. **单字母合法音节只有 `a` `e` `m` `n` `o`** —— 不存在 `y`/`w` 单独成音节
 2. **不存在 v 开头的音节**（v 只出现在 `nv` `lv` `nve` `lve` 这类韵母位）
