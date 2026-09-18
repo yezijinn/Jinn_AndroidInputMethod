@@ -29,6 +29,9 @@ Everything runs on-device — **no server required**.
 
 - **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints.
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
+  - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
+    the **keys you actually pressed**, so a 双拼 conversion that swallows letters never looks frozen.
+  - Typed pinyin wrong? **Hold backspace ~1s** to clear the whole pinyin string (committed text untouched).
   - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
   - Candidate prediction, one-tap CN/EN switch, double-tap + long-press backspace to clear all.
