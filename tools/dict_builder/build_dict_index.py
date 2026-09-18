@@ -130,7 +130,7 @@ def main():
     if args.fixture:
         os.makedirs(FIX_DIR, exist_ok=True)
         # 取一批键做小型 fixture：均匀抽样 + **为抽样键补上「以它开头的更长键」**。
-        # 原因：fixture 里若没有「某个键是另一个键的前缀」这种组合，智能预测的对拍会退化成
+        # fixture 里若没有「某个键是另一个键的前缀」这种组合，智能预测的对拍会退化成
         # 「两边都为空」——测试看着通过却毫无意义（真实词库里这种组合极常见：ni → nihao/nihaoma）。
         by_key = {}
         for line in text.split("\n"):
