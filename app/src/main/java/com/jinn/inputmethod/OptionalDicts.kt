@@ -70,7 +70,7 @@ object OptionalDicts {
             fileName = "opt_tencent.xz",
             name = "腾讯大词库",
             descLines = listOf(
-                "约 97 万词条。",
+                "约 95.5 万词条。",
                 "覆盖大量专业术语与短语搭配。",
                 "体积较大，建议按需安装。",
             ),

@@ -170,7 +170,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     private fun buildUi() {
-        // ── 顶栏：返回 + 全部/网址/数字/收藏/隐私 + 搜索 + 清空，均分（weight=1）──
+        // ── 顶栏：返回 + 全部/网址/数字/收藏 + 搜索 + 清空，均分（weight=1）──
         val topRow = LinearLayout(context).apply { orientation = HORIZONTAL }
         btnBack = tabButton("返回") { listener?.onClose() }
         btnCategoryAll = tabButton("全部") { selectCategory(null) }
