@@ -11,10 +11,9 @@ import org.tukaani.xz.XZInputStream
 import java.io.File
 
 /**
- * 吸收 librime `Prism : MappedFile` 之后的护栏：
- *  1. **内存映射读取与堆内读取必须完全等价**（同一份索引字节，两种承载）；
- *  2. `collectLongerSuffixes` 的**字节级后缀收集**与旧的「物化键再 startsWith」结果一致；
- *  3. 映射路径对损坏/缺失文件返回 null（调用方据此回退）。
+ * 索引改成内存映射（librime `Prism : MappedFile` 那套）之后的三条护栏：
+ * 映射和堆内读同一份字节必须结果一样；`collectLongerSuffixes` 和旧的「物化键再 startsWith」要一致；
+ * 文件缺失/截断/magic 不符时 `ofMapped` 返回 null 而不是抛异常。
  */
 class IndexMappedParityTest {
 

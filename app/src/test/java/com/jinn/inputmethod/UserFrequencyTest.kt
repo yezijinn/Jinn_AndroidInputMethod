@@ -8,11 +8,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 用户词频学习（吸收 librime `UserDictionary`/`UserDb`）的纯逻辑护栏：
- *  1. 排序是**稳定**的：学过且权重高的提前，其余保持词库原序（不学则零变化）；
- *  2. 衰减公式与 librime `algo::formula_d` 一致：`dee = commits + dee * exp((tick_old - tick_now) / 200)`；
- *  3. 文件读写往返一致，且对脏数据容错；
- *  4. 关闭开关后完全不学习、不改排序。
+ * 用户词频学习的纯逻辑护栏：排序稳定（学过的提前、其余保持词库原序、不学就零变化）、
+ * 衰减跟 `algo::formula_d` 一致、文件读写往返一致且能扛脏数据、关掉开关后不学也不改排序。
  */
 class UserFrequencyTest {
 
