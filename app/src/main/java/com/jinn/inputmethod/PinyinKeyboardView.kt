@@ -794,7 +794,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 中文模式：追加到拼音串并查候选
         composing.append(c)
         refreshCandidateBar()
-        Diagnostics.v(TAG, "拼音输入: ${composing}")
+        // 日志带上**当前模式**：排查时经常要先回答"这会儿到底是全拼还是双拼、哪一套"，
+        // 光看 composing 判不出来（2026-09-18 连续三次在错误模式下做验证后才补上）。
+        val modeTag = when {
+            englishMode -> "英文"
+            shuangpinMode -> "双拼·${scheme.shortName}"
+            else -> "全拼"
+        }
+        Diagnostics.v(TAG, "拼音输入[$modeTag]: ${composing}")
     }
 
     private fun onSpacePressed() {
