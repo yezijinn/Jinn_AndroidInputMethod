@@ -218,9 +218,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private val clearGestureWindowMs = 500L
 
-    /** 按住退格多久后，允许"一次性清掉长拼音串"（判据见文件末尾的 shouldClearComposingOnHold） */
-    private val holdToClearComposingMs = HOLD_TO_CLEAR_COMPOSING_MS
-
     /** 方向面板的识别标记：恢复字母区时按它清理残留面板（不依赖子视图下标） */
     private val DIRECTION_PANEL_TAG = "jinn_direction_panel"
 
