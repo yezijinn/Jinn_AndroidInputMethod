@@ -130,7 +130,7 @@ app/src/main/java/com/jinn/inputmethod/
   改为「**解压一次 → 原子落盘 `filesDir/index/base.<APK mtime>.idx` → 映射**」；
   可选包缓存 `filesDir/index/<包名>.idx` 同样映射。**缓存写入必须「临时文件 + 原子改名」**
   （直接覆盖会截断正在使用的映射，Linux 上 SIGBUS）。
-  ⚠⚠ **清扫判据必须分成两类**：可选包的"清理失效缓存"只能删 `<包名>.idx`，
+  ⚠ **两类缓存的清扫判据要分开**：可选包的"清理失效缓存"只能删 `<包名>.idx`，
   **绝不能碰 `base.` 前缀**（其源是 APK 内资产、不在包列表里）。判据已抽成纯函数
   `PinyinEngine.staleOptionalCacheNames()`，由 `IndexCacheLifecycleTest` 守卫——
   历史上这里出过一次严重缺陷：每次可选包加载都把基础缓存删掉，导致内存映射永远命中不了。
