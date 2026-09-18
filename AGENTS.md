@@ -44,10 +44,11 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   - 索引与两段式加载：`IndexParityTest`（索引 vs 文本逐键对拍 + 头部健壮性）、
     `IndexBuilderParityTest`（设备端构建器与 Python 脚本逐字节一致 + 可选索引合并语义）、
     `IndexFeatureRegressionTest`（残码消费 / 智能预测回归）、
-    `HotDictAssetTest`（子集必是全量前缀）、`HotDictMergeTest`（子集先行 + 全量并入一致性）
+    `HotDictAssetTest`（子集必是全量前缀）、`HotDictMergeTest`（子集先行 + 全量并入一致性）、
+    `IndexMappedParityTest`（内存映射与堆内读取等价、后缀收集与物化键一致、坏文件返回 null 不抛异常）
   - 双拼方案：`ShuangpinSchemesTest`（7 套 + 全表往返自洽）、`HintRuleTest`（键面提示三规则）
   - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
-    含 CRLF / 长度边界 / 负例）、`ClipboardDedupeTest`、`ClipboardFilterTest`
+    含 CRLF / 长度边界 / 负例）、`ClipboardFilterTest`
   - 文字拖选：`TextSelectionTest`
   - 键盘外观：`KeyAppearanceTest`（圆角 / 间隙的定义域、步进、钳位与进度换算）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
@@ -201,7 +202,7 @@ app/src/main/java/com/jinn/inputmethod/
 
 ## 双拼方案（键位数据是生成的，禁止手改）
 
-- 7 套方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加，键位数据在
+- 7 套双拼方案：自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加（**全拼不属于双拼方案**），键位数据在
   **代数语义已与 librime C++ 逐条核对**（2026-09-17，核对源 `docs/librime-master/src/rime/algo/{calculus.h,calculus.cc,algebra.cc}`
   —— 该目录**不入库、不影响构建**，纯参考）：xform=**替换**（默认 addition+deletion 均 true）、derive=**保留+追加**（deletion=false）、
   erase=**整串匹配（boost::regex_match）才清除**、xlit 要求两侧**字符数相等**、每个 op 作用于**上一轮整个拼写集合**（链式组合）。
