@@ -238,4 +238,59 @@ class KeyboardStressTest {
         }
         println("STRESS 最慢首次方案 = $worstName ${"%.2f".format(worst)}ms（含该方案键位表首次构建）")
     }
+    /** 乱序/超长拼音的模糊测试：固定种子，可复现；报最慢的 5 个输入 */
+    @Test
+    fun 乱序与超长拼音的模糊测试() {
+        loadEngine()
+
+        class Case(val tag: String, val input: String, var ms: Double, var cand: Int, var partial: String)
+
+        val rnd = kotlin.random.Random(20260918)
+        val letters = "abcdefghijklmnopqrstuvwxyz"
+        val cases = ArrayList<Case>()
+
+        // ① 纯随机字母：长度 1~40
+        repeat(400) {
+            val len = 1 + rnd.nextInt(40)
+            cases.add(Case("随机字母 len=$len", (1..len).map { letters[rnd.nextInt(26)] }.joinToString(""), 0.0, 0, ""))
+        }
+        // ② 真实拼音打乱顺序（乱序但不缺字母）
+        val real = "zhongguorenminzhengzhixieshanghuiyi"
+        repeat(60) {
+            cases.add(Case("真实拼音打乱", real.toList().shuffled(rnd).joinToString(""), 0.0, 0, ""))
+        }
+        // ③ 合法音节拼接 + 尾巴损坏（最容易制造"前缀能切、尾巴不通"）
+        val syls = listOf("ba", "na", "lan", "zhong", "guo", "ren", "min", "zhi", "xie", "shang", "hui", "yi", "nihao")
+        repeat(120) {
+            val n = 1 + rnd.nextInt(12)
+            cases.add(Case("音节拼接+坏尾", (1..n).map { syls[rnd.nextInt(syls.size)] }.joinToString("") + "z", 0.0, 0, ""))
+        }
+        // ④ 超长：把上面几种拉到 60 / 120 / 240 字符
+        for (len in listOf(60, 120, 240)) {
+            cases.add(Case("超长随机 len=$len", (1..len).map { letters[rnd.nextInt(26)] }.joinToString(""), 0.0, 0, ""))
+            cases.add(Case("超长音节流 len≈$len", real.repeat(10).substring(0, len), 0.0, 0, ""))
+            cases.add(Case("超长同键 len=$len", "a".repeat(len), 0.0, 0, ""))
+        }
+
+        for (c in cases) {
+            PinyinEngine.query(c.input)                       // 预热（缓存/缺页）
+            val t0 = System.nanoTime()
+            val r = PinyinEngine.query(c.input)
+            c.ms = (System.nanoTime() - t0) / 1e6
+            c.cand = r.candidates.size
+            c.partial = r.partialSyllable.take(12)
+        }
+
+        val sorted = cases.sortedByDescending { it.ms }
+        val times = cases.map { it.ms }.sorted()
+        println("FUZZ 用例=${cases.size}  p50=${"%.3f".format(times[times.size / 2])}ms  " +
+            "p99=${"%.3f".format(times[(times.size * 99) / 100])}ms  max=${"%.3f".format(times.last())}ms")
+        println("FUZZ 最慢 5 例：")
+        sorted.take(5).forEach {
+            println("FUZZ   ${"%.3f".format(it.ms)}ms  [${it.tag}] len=${it.input.length} 候选=${it.cand} 残码=\"${it.partial}\"")
+        }
+        val worst = sorted.first()
+        assertTrue("乱序/超长最坏一例 ${"%.1f".format(worst.ms)}ms（${worst.tag}）超过 200ms", worst.ms < 200.0)
+    }
+
 }
