@@ -226,6 +226,33 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 候选预测词：选完词后是否在候选栏预告下一个字词（可关闭） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <Switch
+                android:id="@+id/switch_predict"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="@string/switch_predict"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/switch_predict_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <!-- 键盘外观：26 键区（3 行 28 键：字母 + 大写 + 删除）统一圆角与间隙 -->
         <LinearLayout
             android:layout_width="match_parent"
