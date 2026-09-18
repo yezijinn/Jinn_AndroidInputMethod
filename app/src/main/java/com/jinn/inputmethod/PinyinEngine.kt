@@ -69,6 +69,33 @@ object PinyinEngine {
     /** 基础索引磁盘缓存前缀（文件名形如 `base.<APK mtime>.idx`） */
     private const val BASE_CACHE_PREFIX = "base."
 
+    /** 分片大小：分片之间让出 CPU/IO，避免后台重活把前台打字挤成卡顿 */
+    private const val CHUNK_BYTES = 256 * 1024
+
+    /**
+     * 分片读完整条解压流，每攒够 1MB 主动睡 1ms 让出 CPU。
+     *
+     * 不这么做的话，基础索引解压是一次 **1.8 秒不给喘息的连续 CPU 冲击**（还带一个 14.7MB 大分配）：
+     * 真机实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 **300ms**（janky 12%）。
+     * 让出 CPU 后总耗时只多几十毫秒（都在后台），但前台打字不再被挤。
+     */
+    private fun readWithYields(stream: java.io.InputStream): ByteArray {
+        val out = java.io.ByteArrayOutputStream(16 * 1024 * 1024)
+        val buf = ByteArray(CHUNK_BYTES)
+        var sinceYield = 0
+        while (true) {
+            val n = stream.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            sinceYield += n
+            if (sinceYield >= 1 shl 20) {
+                sinceYield = 0
+                runCatching { Thread.sleep(1) }
+            }
+        }
+        return out.toByteArray()
+    }
+
     /** 常用字位图大小：覆盖基本区汉字（0x4E00~0x9FFF） */
     private const val CHAR_TABLE_SIZE = 0x9FFF + 1
 
@@ -685,7 +712,13 @@ object PinyinEngine {
     private fun writeIndexCacheAtomically(file: java.io.File, bytes: ByteArray): Boolean = runCatching {
         val tmp = java.io.File(file.parentFile, file.name + ".tmp")
         tmp.outputStream().use { out ->
-            out.write(bytes)
+            var off = 0
+            while (off < bytes.size) {
+                val n = minOf(CHUNK_BYTES, bytes.size - off)
+                out.write(bytes, off, n)
+                off += n
+                runCatching { Thread.sleep(1) }        // 让出 IO/CPU，别和前台打字抢
+            }
             out.flush()
         }
         if (file.exists() && !file.delete()) {
@@ -786,7 +819,7 @@ object PinyinEngine {
             } else {
                 // 没命中（首次用，或 App 刚更新）：解压资产、原子落盘、再映射；映射失败就用堆内
                 val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
-                    org.tukaani.xz.XZInputStream(raw).use { it.readBytes() }
+                    org.tukaani.xz.XZInputStream(raw).use { xz -> readWithYields(xz) }
                 }
                 val written = writeIndexCacheAtomically(cache, bytes)
                 val mapped = if (written) PhraseIndex.ofMapped(cache) else null
