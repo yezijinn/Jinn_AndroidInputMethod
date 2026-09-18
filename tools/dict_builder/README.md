@@ -65,7 +65,7 @@ release/opt_tencent.txt.xz                   腾讯大词库可选包
 
 `tools/dict_builder/source/pinyin_phrases.txt`
 （29.4MB / 1,048,342 行 / sha256 `b3519a87176b22e45101fa418a9c859576834423e3efc7f77bd6c15a64500129`）
-已按作者要求**删除**，原因：
+已于 2026-09-17 删除，原因：
 
 - 第 28 轮起词库整体换成 rime-ice，**现行流水线读 `docs/rime-ice/`，不再读这个文件**；
 - 文件里含 **573 行 GBK 乱码词条**——UTF-8 字节被按 GBK 解码的产物，例如
