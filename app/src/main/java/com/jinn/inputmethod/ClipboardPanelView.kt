@@ -21,7 +21,7 @@ import java.util.Locale
  *
  * 功能：
  *  - 分类栏：全部 / 网址 / 数字 / 收藏（收藏为独立标签，可与分类并存）
- *  - 隐私标记入口已移除（2026-09-16）；历史隐私条目仍默认掩码，点击一次展开、再点才粘贴
+ *  - 隐私标记随 v5 迁移移除（2026-09-16），条目不再走掩码逻辑
  *  - 动态 UI 序号（最新=最大，删除/去重后重排，非数据库 ID）
  *  - 点击记录粘贴 + 成功关闭面板（失败不关闭，快速点击去重）
  *  - 清理重复（严格字符串比较，只保留最新）
@@ -59,8 +59,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnBack: TextView
 
     /**
-     * 已「点击显示明文」的隐私条目 ID（仅内存态，面板关闭即失效）。
-     * 隐私条目默认掩码，第一次点击展开明文，第二次点击才真正粘贴。
+     * 记录「已点击展开」的条目 ID（仅内存态，面板关闭即失效）。
+     * 隐私标记已移除，这里只留着历史结构，新条目不会再进这个集合。
      */
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
@@ -265,8 +265,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         isPasting = false
         hideActionBar()
         hideConfirmBar()
-        // 每次重新打开都清空「已展开明文」：隐私条目必须重新点一次才能看到内容，
-        // 否则上次展开的状态会跨会话残留，等于隐私掩码形同虚设
+        // 每次重新打开都清空「已展开」集合，避免上次的状态跨会话残留
         currentTraceId = Diagnostics.traceId("CLIP")
         Diagnostics.i(TAG, "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}")
         // 规范：每次打开重置分类为「全部」，绝不残留上次状态

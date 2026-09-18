@@ -10,13 +10,13 @@ import android.database.sqlite.SQLiteOpenHelper
  *
  * 存储策略：
  *  - 正文以 AES-256-GCM 密文入库（[ClipboardCrypto]），绝不落明文；
- *  - 来源 APP、时间、分类、收藏、隐私标记等元数据明文存储；
- *  - 超出数量上限时删除最旧记录（**收藏永不删；隐私最后才删**），
+ *  - 来源 APP、时间、分类、收藏标记等元数据明文存储；
+ *  - 超出数量上限时删除最旧的非收藏记录（**收藏永不删**），
  *    数据库 + 内存缓存同步清理；
  *  - 全部操作走单例 + 后台线程，避免主线程 IO 与并发写冲突。
  *
  * 删除来源仅限：用户主动删除 / 清理重复 / 容量限制裁剪。
- * 裁剪优先级见 [TRIM_PRIORITY]：非收藏非隐私 → 非收藏隐私 → 收藏永不删。
+ * 裁剪见 [TRIM_PRIORITY]：只动非收藏记录，收藏永不删。
  * 不因内容性质（敏感与否）做任何判断或删除（v3 起已移除敏感字段）。
  *
  * 搜索：按需解密（查询所有条目 → 逐条解密过滤），不建明文全文索引，
@@ -155,7 +155,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 入库去重写入（原子，@Synchronized 串行）：同一内容（content_hash 相同）已存在时
      * 只更新必要元数据并重新置顶（created_at=now），绝不产生重复记录；
-     * 收藏/隐私标记是用户主动状态，重复复制时**不覆盖**。
+     * 收藏标记是用户主动状态，重复复制时**不覆盖**。
      * 不存在则插入，超上限裁剪最旧非收藏。返回条目 id，失败返回 -1。
      */
     @Synchronized
@@ -173,7 +173,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val hash = stableHash(content)
         val existingId = findIdByHash(hash)
         if (existingId != null) {
-            // 已存在：只更新必要元数据 + 置顶，保留收藏/隐私标记
+            // 已存在：只更新必要元数据 + 置顶，保留收藏标记
             val values = ContentValues().apply {
                 put("content_type", contentType)
                 put("created_at", System.currentTimeMillis())
@@ -233,13 +233,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 裁剪到最多 [maxItems] 条。
      *
-     * **裁剪优先级**（按顺序取证，凑够 overflow 即停）：
-     *   ① 非收藏且非隐私的最旧记录
-     *   ② 非收藏的**隐私**记录 —— 隐私是用户刻意主动标记的，语义上比普通记录
-     *      更该保留，因此排到最后才动
-     *   ③ **收藏永不删除**
+     * **裁剪优先级**：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
-     * 若按 ①② 仍凑不够 overflow（剩余全是收藏），则不再裁剪 ——
+     * 若剩余全是收藏、凑不够 overflow，则不再裁剪 ——
      * 宁可超出上限，也不删用户明确标记保留的内容。
      */
     fun trimTo(maxItems: Int) {
@@ -248,7 +244,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (count <= maxItems) return
         val overflow = count - maxItems
 
-        // 按优先级分轮取证：先最不敏感的，隐私留到最后
+        // 按优先级分轮取证：先删最旧的非收藏记录
         val ids = ArrayList<Long>(overflow)
         for (where in TRIM_PRIORITY) {
             if (ids.size >= overflow) break
@@ -276,11 +272,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         "source_app_name, content_hash, category, is_favorite"
 
     /**
-     * 组装过滤条件（分类 / 仅收藏 / 仅隐私），返回 WHERE 片段与参数。
+     * 组装过滤条件（分类 / 仅收藏），返回 WHERE 片段与参数。
      *
-     * 收藏与隐私是**独立标签**，可与分类并存：
+     * 收藏是**独立标签**，可与分类并存：
      *  - [favoritesOnly] 为 true 时按收藏标记列过滤；
-     *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE、PRIVATE 是
+     *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE 是
      *    上层的伪分类，调用方需自行转成对应标记后传 null）。
      */
     private fun whereClause(
@@ -384,10 +380,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
         /**
          * 容量裁剪的优先级：**越靠前越先被删除**。
-         *
-         * 收藏不在其列 —— 收藏永不参与裁剪。
-         * 隐私排在最后：它是用户刻意主动标记的（约定「隐私只能用户手动标记，
-         * 绝不自动」），语义上比普通记录更该保留。
+         * 目前只有一档——非收藏的最旧记录；收藏永不参与裁剪。
          */
         private val TRIM_PRIORITY = listOf(
             "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
@@ -434,7 +427,7 @@ data class ClipboardFilter(
 
         /**
          * 由分类栏选中的值解析筛选条件。
-         * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/PRIVATE=伪分类
+         * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE=伪分类
          */
         fun of(raw: String?): ClipboardFilter = when (raw) {
             PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true)
