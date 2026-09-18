@@ -13,7 +13,7 @@ import java.io.File
  *    tick 是天计数（`now / 86400000`），也就是旧值按天衰减、半衰期约 139 天，选中一次加 1；
  *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
- * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），写盘走 BackgroundIo + 防抖 2s，
+ * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
  * 原子落盘（临时文件 + 改名）；退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，
  * 权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
  */

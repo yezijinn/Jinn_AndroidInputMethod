@@ -41,7 +41,7 @@ Everything runs on-device — **no server required**.
 - **Optional dictionaries**: long-word pack and Tencent lexicon are downloadable on demand
   from the settings page; loaded **lazily** so first-input readiness is unaffected;
   adding or removing a pack auto-restarts the IME to apply.
-- **Zero bundled models**: no speech models shipped; APK is about **4.5MB**, depending only on
+- **Zero bundled models**: no speech models shipped; APK is about **4.9MB**, depending only on
   `core-ktx`, `activity-ktx`, `okhttp3`, and `xz`.
 - **(Optional) Voice dictation**: press-and-hold or tap the mic to speak; recognized text streams
   back and is committed. **Requires a self-hosted NAS server — see the note above.**
