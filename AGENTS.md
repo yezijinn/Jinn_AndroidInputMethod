@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（20 个测试类 / 221 个用例）:
+- 覆盖（23 个测试类 / 239 个用例）:
   - 协议：`ProtocolTest`（序列化 / 解析）
   - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
   - 词库：`PhraseDictIntegrityTest`（词库完整性）、`RareCharsFilterTest`（生僻字过滤）、
