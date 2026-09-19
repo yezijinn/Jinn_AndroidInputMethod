@@ -228,7 +228,7 @@ def parse_algebra(path):
                 rules.append((m.group(1), m.group(2).split('/')))
                 continue
             # 不认识的 op（librime 还有 fuzz/abbrev/reorder）或格式异常：**必须响亮失败**。
-            # 静默跳过会让键位表悄悄少一条规则，而所有测试仍然全绿（最危险的一类腐化）。
+            # 静默跳过会让键位表悄悄少一条规则，而所有测试仍然全绿（最危险的就是这种静默错误）。
             if line.strip().startswith('-') or re.match(r'^\s*-\s*[a-z]', line):
                 raise SystemExit(
                     f'algebra 段出现本脚本不认识的规则，拒绝继续（否则会静默生成错误键位）: {line!r}'

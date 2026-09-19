@@ -157,7 +157,7 @@ def main():
     valid = valid_syllables()
     regress_diff = [(c, o, n) for c, o, n in diffs if o in valid]
     regress_missing = [(c, o) for c, o in only_old if o in valid]
-    # 反向洞察：旧实现给非法音节、新表给合法音节，属**修正**而非回归，单独列出便于核对
+    # 反向情况：旧实现给非法音节、新表给合法音节，属修正而非回归，单独列出便于核对
     fixed = [(c, o, n) for c, o, n in diffs if o not in valid]
 
     print('-' * 68)
