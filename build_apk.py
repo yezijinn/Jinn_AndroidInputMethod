@@ -8,10 +8,10 @@ CapsWriterIME 一键构建脚本：编译带正式签名的 release APK。
     python build_apk.py --install    # 编译后安装到已连接设备
     python build_apk.py --clean      # clean 后全新编译
 
-签名：E:\JinnKeyStores\<applicationId>\release.jks（按包名自动选择）
-      密钥不在默认位置时，用环境变量 JINN_KEYSTORE_ROOT 覆盖
+签名：用环境变量 JINN_KEYSTORE_ROOT 指向的目录（按包名自动选 <applicationId>/release.jks）
 产物：app/build/outputs/apk/release/app-release.apk
-复制到：./jinn-release.apk
+复制到：./release.apk
+最终命名：./com.jinn.inputmethod.YYYYMMDDHHMMSS.APK（运行时间戳 + 大写 APK 后缀）
 
 签名流程（顺序不可调换）：
     AGP 产物 → 去掉 META-INF → zipalign 4 字节对齐 → apksigner 签名 → 校验
@@ -25,6 +25,7 @@ import sys
 import os
 import re
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 # 控制台输出用 UTF-8（避免 Windows GBK 打印中文/符号崩溃）
@@ -292,10 +293,13 @@ def main():
         sys.exit(1)
     print("对齐校验: 4 字节对齐通过")
 
-    # 3. 复制到根目录
-    dest = ROOT / "jinn-release.apk"
-    shutil.copy2(apk, dest)
-    print(f"已生成: {dest} ({dest.stat().st_size / 1024 / 1024:.1f} MB)")
+    # 3. 复制到根目录，再按时间戳重命名为发布文件名
+    release_apk = ROOT / "release.apk"
+    shutil.copy2(apk, release_apk)
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    final_apk = ROOT / f"{APPLICATION_ID}.{ts}.APK"
+    release_apk.replace(final_apk)
+    print(f"已生成: {final_apk} ({final_apk.stat().st_size / 1024 / 1024:.1f} MB)")
 
     # 4. 可选安装
     if args.install:
@@ -306,7 +310,7 @@ def main():
             return
         dev = devices[0]
         print(f"安装到: {dev}")
-        run(f'adb -s {dev} install -r "{dest}"')
+        run(f'adb -s {dev} install -r "{final_apk}"')
         print("安装完成")
 
 if __name__ == "__main__":
