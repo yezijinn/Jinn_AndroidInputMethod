@@ -118,7 +118,7 @@ python build_apk.py --clean      # clean build
 ### Manual build
 ```bash
 ./gradlew assembleDebug     # Debug (unsigned)
-./gradlew assembleRelease   # Release (auto-signed with a local keystore)
+./gradlew assembleRelease   # Release (needs JINN_KEYSTORE_* env vars; unsigned without them)
 ```
 
 ### Signing

@@ -112,7 +112,7 @@ python build_apk.py --clean      # clean 后全新编译
 ### 手动构建
 ```bash
 ./gradlew assembleDebug     # Debug（未签名）
-./gradlew assembleRelease   # Release（本地配置签名后自动签名）
+./gradlew assembleRelease   # Release（需 JINN_KEYSTORE_* 环境变量，否则未签名）
 ```
 
 ### 签名说明
