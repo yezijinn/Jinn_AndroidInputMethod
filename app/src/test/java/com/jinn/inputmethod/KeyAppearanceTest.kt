@@ -45,7 +45,7 @@ class KeyAppearanceTest {
         assertEquals(KeyAppearance.DEFAULT_GAP_DP, KeyAppearance.clampGapDp(Float.NEGATIVE_INFINITY), 0f)
     }
 
-    /** 默认值落在定义域内，且保持加入参数之前的观感（直角 + 无缝） */
+    /** 默认值落在定义域内，观感与改动前一致（直角 + 无缝） */
     @Test
     fun defaults_areInsideDomainAndKeepHistoricalLook() {
         assertEquals(0f, KeyAppearance.DEFAULT_CORNER_DP, 0f)

@@ -211,7 +211,7 @@ class PinyinCompletionTest {
         val partial = PinyinEngine.query("nim").candidates
         assertTrue("完整 ni men 出 你们: $full", full.contains("你们"))
         assertTrue("不完整 ni m 也出 你们: $partial", partial.contains("你们"))
-        // 完整匹配的候选应排在补全之前（同样有 你们，完整查询 result 首位即整词）
+        // 完整匹配的候选应排在补全之前（两者都含 你们，但完整匹配排首位）
         assertTrue("完整 ni men 首位应为 你们: $full", full.first() == "你们")
     }
 
@@ -261,7 +261,7 @@ class PinyinCompletionTest {
 
     @Test
     fun 补全结果受MAX限制() {
-        // m 前缀的合法音节数有限（注入词库约 15 个），补全不超上限
+        // m 前缀的合法音节只有约 15 个，补全不会超出上限
         val completions = PinyinEngine.completeSyllablePrefix("m")
         assertTrue("补全数量应有限: ${completions.size}", completions.size <= 32)
     }

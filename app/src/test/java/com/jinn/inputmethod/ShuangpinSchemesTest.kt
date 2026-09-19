@@ -122,7 +122,7 @@ class ShuangpinSchemesTest {
         )
     }
 
-    /** 设置页下拉只列双拼方案（不含全拼）——列表来自这个集合，故钉住它的内容 */
+    /** 设置页下拉只列双拼方案（不含全拼）；下拉数据源即此集合，故钉住其内容 */
     @Test
     fun 双拼方案列表_共七套且不含全拼() {
         val list = ShuangpinScheme.SHUANGPIN_ONLY

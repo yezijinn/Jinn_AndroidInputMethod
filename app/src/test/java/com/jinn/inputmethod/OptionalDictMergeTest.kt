@@ -150,7 +150,7 @@ class OptionalDictMergeTest {
         }
     }
 
-    /** resetForTest 必须清干净，否则用例之间会相互污染（这是本文件其他用例成立的前提） */
+    /** resetForTest 必须清干净，否则用例相互污染（其他用例都依赖这一点） */
     @Test
     fun resetForTestClearsPreviousData() {
         loadBase("qie\t切|且")

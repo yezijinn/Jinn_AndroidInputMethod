@@ -31,7 +31,7 @@ class PhraseDictIntegrityTest {
 
     @Test
     fun ambiguousWordsExistInAssetDictionary() {
-        // 直接查打包进 APK 的那份**二进制索引**（词库换成索引后，唯一权威载体就是它）
+        // 直接查打包进 APK 的那份**二进制索引**（换成索引后它才是唯一权威载体）
         val index = openPhraseIndex()
         for ((key, word) in requiredWords) {
             val words = index.wordsFor(key)
