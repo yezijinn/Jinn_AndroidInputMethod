@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（27 个测试类 / 262 个用例）:
+- 覆盖（27 个测试类 / 266 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
