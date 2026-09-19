@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import androidx.core.content.edit
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 输入法默认启动模式（对齐 Prefs.defaultKeyboardMode 的取值）。
@@ -196,23 +197,45 @@ class Prefs(context: Context) {
         const val DEFAULT_PORT = 6016
         const val DEFAULT_LANGUAGE = "auto"
 
-        /** 会破坏 `ws://host:port` 结构的字符（`: / \ ? # @ [ ]`） */
+        /** 会破坏 `ws://host:port` 结构的字符（`: / \ ? # @ [ ]`；方括号 IPv6 走单独分支） */
         private val INVALID_HOST_CHARS = charArrayOf(':', '/', '\\', '?', '#', '@', '[', ']')
 
         /**
          * host 合法性校验（**纯函数**，可直接 JVM 单测）。
          *
-         * 拒绝空白、控制字符与 [INVALID_HOST_CHARS]；非 ASCII 主机名（中文）**放行** ——
-         * 实测 OkHttp 的 `HttpUrl` 接受中文主机（内部做 IDN 转换），拒绝它反而会误伤。
+         * 两道判据，缺一不可：
+         *  1. **结构规则**：挡掉语义明显不对的写法 —— 把 `host:port`、`http://…`、`h/path`、
+         *     `user@h` 当 host 填进来，或整串只有标点（`.` / `-` / `..`，这些不是主机名）；
+         *     IPv6 字面量按 URL 规则必须写成 `[::1]`，方括号内只放十六进制、冒号、点与 `%`（zone id）。
+         *  2. **终判交给真实消费者**：按 `http://$h:1` 解析一次。
+         *     只靠字符黑名单挡不住全部非法值 —— 实测 `..` 不含任何黑名单字符，
+         *     却会让 `HttpUrl` 抛 `IllegalArgumentException`（那就是主线程崩溃）。
+         *     用 `http` 而非 `ws` 起头：`Request.Builder.url()` 收到 `ws://` 时本身就是先改写成
+         *     `http://` 再解析的，而 `toHttpUrlOrNull()` **不接受** `ws:` 方案 ——
+         *     拿 `ws://` 去判会一律得到 null（把合法 host 全判成非法）。
+         *     端口用 1 而非实际端口：合法 host 下端口取值不影响能否解析。
          */
         fun isValidHost(raw: String): Boolean {
             val h = raw.trim()
             if (h.isEmpty()) return false
-            for (c in h) {
-                if (c.isWhitespace() || c.isISOControl()) return false
-                if (INVALID_HOST_CHARS.contains(c)) return false
+
+            if (h.startsWith("[") && h.endsWith("]")) {
+                val inner = h.substring(1, h.length - 1)
+                if (inner.isEmpty()) return false
+                val ok = inner.all {
+                    it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' || it == '%'
+                }
+                if (!ok) return false
+            } else {
+                // 至少含一个字母/数字：`.`, `-`, `..` 这类纯标点不是主机
+                if (h.none { it.isLetterOrDigit() }) return false
+                for (c in h) {
+                    if (c.isWhitespace() || c.isISOControl()) return false
+                    if (INVALID_HOST_CHARS.contains(c)) return false
+                }
             }
-            return true
+
+            return runCatching { ("http://$h:1").toHttpUrlOrNull() }.getOrNull() != null
         }
 
         private const val KEY_HOST = "host"
