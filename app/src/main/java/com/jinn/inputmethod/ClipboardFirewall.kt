@@ -139,7 +139,7 @@ object ClipboardFirewall {
     /**
      * 真查 Backup 配置：解析 backup_rules.xml，确认剪贴板数据库被排除。
      *
-     * 原实现硬编码返回 ✓ —— 无论规则文件被改成什么样都显示"安全"，属于假检查。
+     * 原实现硬编码返回 ✓ —— 无论规则文件怎么改都显示"安全"，其实是个假检查。
      * 这里改为运行时读取实际生效的规则文件。
      */
     private fun checkBackupConfig(context: Context): Pair<String, String> {

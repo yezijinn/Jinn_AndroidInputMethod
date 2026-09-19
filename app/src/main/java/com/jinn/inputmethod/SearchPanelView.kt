@@ -195,7 +195,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
-    /** 显示搜索面板：清空输入 + aria50（结果列表）/空态可见性对齐 + 聚焦输入框 */
+    /** 显示搜索面板：清空输入、对齐结果列表/空态可见性、聚焦输入框 */
     fun onShown() {
         isPasting = false
         // 每次重新打开都清空「已展开」集合，避免上次的状态残留

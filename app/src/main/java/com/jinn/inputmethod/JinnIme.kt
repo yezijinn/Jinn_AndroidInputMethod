@@ -387,8 +387,7 @@ class JinnIme : InputMethodService() {
     /**
      * 清空拖选状态（IME 侧 + 同步键盘侧），供「会话切换 / 面板关闭 / 面板重开」共用。
      *
-     * 三个入口共用一份实现：此前它们是各自演化的重复逻辑，已经出现过「只改了视图、
-     * 忘了改 IME」的不一致（见 `onClipboardStateChanged` 的注释）。
+ * 三个入口共用一份实现：原先三处各自实现、容易漏改（见 onClipboardStateChanged 的注释）。
      */
     private fun clearSelectionState() {
         selectionActive = false

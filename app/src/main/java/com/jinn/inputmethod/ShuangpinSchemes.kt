@@ -32,8 +32,8 @@ internal class ShuangpinTable(
     private val nasalExtras = setOf("m", "n", "ng", "hm", "hng")
 
     /**
-     * 韵母表规范顺序：仅用于**同一行内**的提示排序（长者仍在前）。
-     * 目的：让「哪两个韵母同屏」有确定且符合直觉的次序，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
+     * 韵母表的规范顺序：只用于**同一行内**给韵母排序（长者在前），
+     * 让同屏的两个韵母次序固定且符合直觉，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
      */
     private val finalOrder = listOf(
         "a", "o", "e", "ai", "ei", "ao", "ou", "an", "en", "ang", "eng", "ong",

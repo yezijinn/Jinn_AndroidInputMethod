@@ -171,8 +171,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var lastAppearanceDesc = ""
 
     /**
-     * 大写键/删除键背景的构建缓存：记下上次用的（圆角, 大写锁定）与圆角。
-     *
+     * 大写键/删除键背景的构建缓存：记下上次用过的（圆角, 大写锁定）组合。
      * NaN 初值保证首次一定构建；之后参数不变就跳过，避免切层/翻页时反复分配 Drawable。
      */
     private var shiftBgCornerPx = Float.NaN
@@ -1028,7 +1027,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
 
         // 词库尚未就绪（冷启动时高频子集约 0.4s，无子集的旧包则要 6~10.7s）：
-        // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，故用工内联提示。
+        // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，改用内联提示。
         if (!PinyinEngine.isLoaded) {
             viewCandidatePinyin.text = input
             renderCandidateHint(context.getString(R.string.engine_dict_loading))

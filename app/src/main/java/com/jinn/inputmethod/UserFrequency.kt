@@ -128,7 +128,7 @@ internal object UserFrequency {
         entries.compute(word) { _, old ->
             // librime formula_d：dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)
             // 与 parse 一致地对「未来 day」钳位：用户系统时钟回拨时 old.day > now，
-            // 不钳的话 exp(正数) 会把权重放大成天文数字（回拨 2000 天 = 22 万倍），此后永久霸榜。
+            // 不钳位的话 exp(正数) 会把权重放大到天文数字（回拨 2000 天 = 22 万倍），此后永久霸榜。
             val elapsed = ((old?.day ?: now) - now).coerceAtMost(0)
             val decayed = (old?.weight ?: 0.0) * Math.exp(elapsed / 200.0)
             Entry(decayed + 1.0, now)

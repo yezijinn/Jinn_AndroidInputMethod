@@ -214,7 +214,7 @@ object Diagnostics {
             else -> if (tr != null) Log.e(tag, msg, tr) else Log.e(tag, msg)
         }
         // V 级默认不落盘：音频包这类日志每秒可达 10 条，而本类不持有持久流，
-        // 每次写日志都要 open/write/close 一次文件，累积开销可观（见 VERBOSE_TO_FILE）。
+        // 每次写日志都要 open/write/close 一次文件，累积开销不小（见 VERBOSE_TO_FILE）。
         if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
         val sb = StringBuilder(160)
