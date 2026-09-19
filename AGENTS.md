@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（29 个测试类 / 283 个用例）:
+- 覆盖（29 个测试类 / 285 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
@@ -56,7 +56,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   - 配置校验：`PrefsHostValidationTest`（host 合法性 + **不变式护栏：校验放行的取值必须能被 OkHttp 接受**，
     含 IPv6 字面量、纯标点、`host:port` 误填等负例）
   - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 明文 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰 + **解密窗口预算护栏**：窗口条数 × 单条上限 × 放大系数(2.5，实测 2.33) ≤ 48MB）
-    ⚠ 三条容量口径**单位不同**：单条按**明文**字节、总量按**库内 base64 密文**体积（100MB ≈ 73MB 明文）、窗口按「条数×单条上限×3.5 放大」（放大计入 base64 密文与 UTF-16 String，只算明文会低估约 3.5 倍）；且单条上限**只在采集侧生效**，库里既有超限行只会被总量预算淘汰
+    ⚠ 三条容量口径**单位不同**：单条按**明文**字节、总量按**库内 base64 密文**体积（100MB ≈ 73MB 明文）、窗口按「条数×单条上限×2.5 放大」（实测 2.33 = 密文串 4/3 + 明文串 1.0；只算明文会低估约 2.3 倍。早先按「明文串在 UTF-16 下占 2×」估的 3.5 已作废 —— JVM/ART 都用紧凑字符串，ASCII 的 String 与 UTF-8 字节数相同）；且单条上限**只在采集侧生效**，库里既有超限行只会被总量预算淘汰
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
@@ -66,7 +66,10 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   **密钥库与口令文件禁止放在仓库目录内**（.jks / keystore.properties 均已移出，见 `GLOBAL/credentials/JinnKeyStores/legacy-in-repo/`），
   不给环境变量时 `gradlew.bat assembleRelease` 产出未签名包（保留无密钥构建能力）
   （**顺序不可调换**：apksigner 不负责对齐，写反会让 APK 未对齐、设备读资源需先解压）
-- 真机安装：`adb install -r jinn-release.apk`（覆盖安装签名一致，不丢数据）
+- 真机安装：`adb install -r` 只对**已装同签名包**有效（覆盖升级，不丢数据）。
+  ⚠ **新装或换签名**会被 ColorOS 拦：`Failure [-99]`；关 `package_verifier_*` 无效、root `pm install /sdcard/…` 抛 `OppoPackageManagerService` 异常、`am start -a VIEW -d file://…` 在 Android 10 因 file:// 暴露被拒（前台仍是 Launcher）。
+  **可用通道**：`adb push x.apk /data/local/tmp/ && adb shell "su -c 'pm install -r /data/local/tmp/x.apk'"`
+  ⚠ 卸载会销毁 Keystore 密钥 —— 剪贴板库即使有备份**也解不开**，重装前不要指望恢复它
 - 真机输入法：`adb shell ime set com.jinn.inputmethod/.JinnIme`（实际包名是 `com.jinn.inputmethod`）
 - 本机 SDK：`C:\Android\sdk`（local.properties 已写 sdk.dir），JDK17 在 PATH
 
