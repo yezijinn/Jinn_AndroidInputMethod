@@ -358,7 +358,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，杜绝有高有数但空白） */
+    /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，避免有高度有数据却显示空白） */
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE

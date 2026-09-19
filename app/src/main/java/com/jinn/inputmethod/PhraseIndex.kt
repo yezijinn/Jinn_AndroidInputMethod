@@ -362,7 +362,7 @@ internal class PhraseIndex private constructor(
          * 解析索引字节；头部/长度/偏移不自洽时返回 null（调用方回退，不影响可用性）。
          *
          * 这里只做**廉价的结构校验**（magic/版本/段长/偏移单调且首尾对齐）——
-         * 足以挡住截断、版本错配、字节序问题这类真实故障。
+         * 足以挡住截断、版本错配、字节序问题这些常见故障。
          */
         fun parse(buf: java.nio.ByteBuffer): PhraseIndex? {
             if (buf.capacity() < HEADER_SIZE) return null

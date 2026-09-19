@@ -1026,7 +1026,7 @@ object PinyinEngine {
         }
     }
 
-    /** 双拼校验用：某串是否为合法完整音节（词库未加载时返回 false） */
+    /** 双拼切分校验用：判断某串是否为合法完整音节（词库未加载时返回 false） */
     fun isValidSyllable(s: String): Boolean =
         loaded && validSyllables.contains(s)
 

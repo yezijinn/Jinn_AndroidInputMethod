@@ -5,16 +5,13 @@ import java.util.regex.Pattern
 /**
  * 剪贴板内容自动分类。
  *
- * 分类规则：
- *  - **URL**：http/https、常见 URL、深链接（myapp://）、IP 地址
- *  - **NUMBER**：电话号码、验证码、订单号、金额、纯数字串等
- *  - **OTHER**：其余内容
+ * - URL：http/https、常见网址、深链接（myapp://）、IP 地址
+ * - NUMBER：手机号、验证码、订单号、金额、纯数字串等
+ * - OTHER：其余内容，只分这三类，余者一律 OTHER
  *
- * 边界：
- *  - 不用「包含数字」作为数字分类的唯一条件（"我有123个苹果" 不应算数字）；
- *  - 只做 URL / NUMBER / OTHER 三类，其余一律 OTHER。
+ * 注意：数字分类不能只看「是否含数字」，否则 "我有123个苹果" 会误判成数字。
  *
- * 纯 JVM 可测（不依赖 Android），正则常量收敛于此。
+ * 纯 JVM 可测，不依赖 Android，正则常量都收在这里。
  */
 object ClipboardClassifier {
 

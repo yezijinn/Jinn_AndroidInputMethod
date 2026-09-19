@@ -5,11 +5,13 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * 剪贴板统一的后台 IO 调度器（性能规范：主线程零阻塞）。
+ * 剪贴板统一的后台 IO 调度器，所有 IO 跑在单个后台线程，主线程不阻塞。
  *
- * 单线程串行执行数据库查询 / AES-GCM 解密 / 剪贴板保存等任务，
- * 避免零散 `Thread{}.start()` 的调度与内存开销，也避免多线程并发写库。
- * 主线程只负责提交 IO 任务与在回调里更新 UI 快照。
+ * - 串行执行数据库查询 / AES-GCM 解密 / 剪贴板保存等任务，省去零散
+ *   `Thread{}.start()` 的调度与内存开销，也避免多线程并发写库
+ * - 主线程只负责提交任务，结果在回调里更新 UI 快照
+ *
+ * 注意：单线程串行，某个任务卡住会拖住后面所有 IO。
  */
 object BackgroundIo {
 
