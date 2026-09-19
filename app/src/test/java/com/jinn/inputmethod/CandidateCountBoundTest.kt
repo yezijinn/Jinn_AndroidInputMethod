@@ -12,8 +12,8 @@ import org.junit.Test
  * 93 个音节超过 60 字，即常用音节经常给出满额候选。
  * 因此 `PinyinKeyboardView` 只渲染前 `MAX_RENDERED_CANDIDATES` 条。
  *
- * 本测试锁定「候选可达数十条」这一事实：若将来有人以为候选总是个位数、
- * 把渲染截断当成多余代码删掉，这里会先失败。
+ * 这里锁定「候选可达数十条」：若将来有人以为候选总是个位数、
+ * 把渲染截断当冗余代码删掉，测试会先挂。
  */
 class CandidateCountBoundTest {
 
