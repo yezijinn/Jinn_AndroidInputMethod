@@ -147,22 +147,24 @@ object ClipboardStore {
     const val MAX_ITEM_BYTES = 256 * 1024
 
     /**
-     * 单条解密的**内存放大系数**（保守估算）。
+     * 单条解密的**内存放大系数**（实测值 + 余量）。
      *
-     * 常驻与瞬时开销不止明文本身：
-     *  - 库内密文是 base64（≈ 明文 4/3），以 String 读入，UTF-16 下再翻倍；
-     *  - 解出的明文 String 在纯 ASCII 场景下为明文字节的 2 倍。
-     * 两项合并按 3.5 倍取整，用于把「明文上限」折算成实际内存占用。
+     * 单条解密后常驻两份数据：库内密文串（base64 ≈ 明文 4/3）+ 解出的明文串。
+     * **实测（`TmpAmplificationProbeTest`，256KB 明文、ASCII/CJK/base64 样三种）**：
+     * 密文串 349,564 B + 明文串 262,144 B ÷ 明文 262,144 B = **2.33 倍**
+     * —— 与「4/3 + 1」吻合；明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，
+     * 早先"按 UTF-16 翻倍"的假设不成立）。取 2.5 留约 7% 余量覆盖对象头与瞬时解码缓冲。
      */
-    private const val DECRYPT_ITEM_AMPLIFICATION = 3.5
+    private const val DECRYPT_ITEM_AMPLIFICATION = 2.5
 
     /**
      * 一次批量解密窗口的内存预算（字节）。
      *
-     * 按当前参数：窗口 50 × 单条上限 256KB × 放大 3.5 ≈ **44MB**（最坏情形：整窗口都顶到单条上限）；
-     * 常规内容远低于此。若日后放宽单条上限或调大窗口，`ClipboardLimitsTest` 的护栏会先失败。
+     * 按当前参数：窗口 50 × 单条上限 256KB × 放大 2.5 ≈ **32.8MB**（最坏情形：整窗口都顶到单条上限，
+     * 实测常驻约 29.8MB）；常规内容远低于此。若日后放宽单条上限或调大窗口，
+     * `ClipboardLimitsTest` 的护栏会先失败（本预算约允许到 73 条窗口）。
      */
-    const val DECRYPT_WINDOW_BUDGET_BYTES = 64L * 1024 * 1024
+    const val DECRYPT_WINDOW_BUDGET_BYTES = 48L * 1024 * 1024
 
     /**
      * 批量解密窗口的最坏内存估算（字节，**纯函数**）。
