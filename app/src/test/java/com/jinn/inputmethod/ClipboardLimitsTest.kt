@@ -125,10 +125,10 @@ class ClipboardLimitsTest {
 
     @Test
     fun 峰值估算含密文与String放大而非只算明文() {
-        // 只算明文会低估：单条还要算 base64 密文（≈4/3）与 UTF-16 String（≤2×）
+        // 只算明文会低估：单条还要算 base64 密文串（≈4/3）与解出的明文串（1.0），实测合计 2.33 倍
         val plainOnly = 10L * ClipboardStore.MAX_ITEM_BYTES
         val estimate = ClipboardStore.decryptWindowPeakBytes(10)
-        assertTrue("估算应显著高于纯明文：plain=$plainOnly estimate=$estimate", estimate > plainOnly * 3)
+        assertTrue("估算应显著高于纯明文：plain=$plainOnly estimate=$estimate", estimate > plainOnly * 2)
     }
 
     @Test
