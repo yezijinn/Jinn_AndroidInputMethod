@@ -30,10 +30,12 @@ import java.util.Locale
  *  - 查库与加密字段解密均在 [BackgroundIo] 线程，主线程零阻塞；
  *  - 结果用 [ListView] 复用 item，支持独立滚动。
  *
- * 隐私：命中结果若被标记为隐私，默认只显示掩码，点击一次展开明文、再点一次才粘贴；
- *      展开状态为内存态，面板显示 / 隐藏时都会清空（与历史页、剪贴板面板一致）。
+ * 注意：[ClipboardPanelView] 是本类的**平行实现**（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
+ * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
  *
  * 安全：不输出任何剪贴板正文日志。
+ *       （隐私标记与「掩码 + 点击展开」那套展示逻辑已随 v5 迁移整体移除，
+ *       本类里不存在掩码分支——阅读时不要按「有掩码」假设。）
  */
 class SearchPanelView(context: Context) : LinearLayout(context) {
 
@@ -47,7 +49,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     var listener: Listener? = null
 
     private val db by lazy { ClipboardDb.get(context) }
-    private val prefs by lazy { ClipboardPrefs.of(context) }
 
     private lateinit var editSearch: EditText
     private lateinit var listView: ListView
@@ -57,14 +58,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
-
-    /**
-     * 已「点击显示明文」的隐私条目 ID（仅内存态，面板隐藏即失效）。
-     *
-     * 与历史页、剪贴板面板保持一致：隐私条目默认只显示掩码，第一次点击展开明文，
-     * 第二次点击才真正粘贴。**本面板曾经漏掉这套逻辑**，导致被标记为隐私的内容
-     * 在这里明文直显、且点一次就粘贴出去，等于隐私标记形同虚设。
-     */
 
     /** debounce + 刷新令牌：合并连续输入，丢弃过期回调 */
     private val searchHandler = Handler(Looper.getMainLooper())
@@ -276,8 +269,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             }
             val lower = q.lowercase()
             val matches = ArrayList<ClipboardDb.Item>()
+            // 扫描上限取**真实行数**：maxItems 只是配置项，而 trimTo 只裁非收藏，
+            // 收藏多时实际行数会超过它 —— 拿配置值当上限会漏搜尾部条目。
+            // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
+            val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
             var offset = 0
-            while (offset < prefs.maxItems) {
+            while (offset < total) {
                 val chunk = db.recentPage(offset, SEARCH_CHUNK)
                 if (chunk.isEmpty()) break
                 for (item in chunk) {
@@ -285,25 +282,29 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 }
                 offset += chunk.size
                 if (reqToken != refreshToken) return@run
+                // 首帧兜底的判据必须在 post 之前固化成**值**：lambda 捕获的是变量本身，
+                // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
+                val isFirstChunk = offset <= SEARCH_CHUNK
                 val snapshot = matches.toList()
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = snapshot
                     adapter.notifyDataSetChanged()
                     updateEmpty()
-                    if (offset <= SEARCH_CHUNK) {
-                        // 首帧布局竞态兜底（与历史页一致）
-                        listView.post {
-                            if (reqToken != refreshToken) return@post
-                            adapter.notifyDataSetChanged()
-                            listView.requestLayout()
-                            listView.invalidate()
-                        }
-                    }
+                    // 首帧布局竞态兜底（与历史页一致）
+                    if (isFirstChunk) listView.post { forceRelayout(reqToken) }
                 }
             }
             Diagnostics.i(TAG, "搜索完成: \"$q\" 命中=${matches.size}")
         }
+    }
+
+    /** 首帧兜底用的强制重绘：等布局稳定后再刷一次，令牌过期则跳过 */
+    private fun forceRelayout(reqToken: Int) {
+        if (reqToken != refreshToken) return
+        adapter.notifyDataSetChanged()
+        listView.requestLayout()
+        listView.invalidate()
     }
 
     private fun updateEmpty() {
@@ -331,6 +332,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val DEBOUNCE_MS = 150L
         /** 搜索分块大小（每块解密后立即发布） */
         const val SEARCH_CHUNK = 300
+        /** 单次搜索最多扫描的行数（硬保护，防超大库把搜索拖成秒级） */
+        const val SEARCH_SCAN_LIMIT = 20_000
         /** 结果列表固定高度（wrap_content 父下保证可滚动） */
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */

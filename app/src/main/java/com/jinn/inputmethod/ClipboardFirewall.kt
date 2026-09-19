@@ -75,24 +75,43 @@ object ClipboardFirewall {
     /**
      * 执行 su 命令并取回 stdout；失败或超时返回 null。
      *
-     * 两处必要防护（原实现都没有）：
-     *  - **并发排空 stderr**：只读 stdout 时，一旦 stderr 管道写满子进程就会阻塞，
-     *    find 这类可能大量输出的命令会直接挂死；
-     *  - **超时销毁进程**：全盘 find 在极端情况下可达数十秒，不能无限等待。
+     * 必要防护（原实现缺了前两项）：
+     *  - **两路都要后台排空**：只排 stderr、把 stdout 放在当前线程读，一旦 stdout 管道写满
+     *    子进程就会阻塞，而父进程正等着它退出 —— 直接死锁（`find` 这类大量输出的命令必踩）；
+     *  - **先 `waitFor(超时)` 再取文本**：读流若放在 `waitFor` 之前，命令不退出就会永久阻塞，
+     *    超时分支永远不可达 —— 超时形同虚设（原实现即如此，见 `isRootAvailable` 的正确写法）；
+     *  - 超时销毁进程，避免留下挂死的 su。
      */
     private fun su(cmd: String): String? = runCatching {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
         try {
+            // ByteArrayOutputStream 的写入/取字节都是 synchronized，跨线程累积安全
+            val outBuf = java.io.ByteArrayOutputStream()
+            val outDrain = Thread {
+                runCatching {
+                    process.inputStream.use { input ->
+                        val buf = ByteArray(4096)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            outBuf.write(buf, 0, n)
+                        }
+                    }
+                }
+            }.apply { isDaemon = true; start() }
             val errDrain = Thread {
                 runCatching { process.errorStream.bufferedReader().forEachLine { } }
             }.apply { isDaemon = true; start() }
-            val text = process.inputStream.bufferedReader().readText().trim()
+
             if (!process.waitFor(SU_TIMEOUT_SEC, TimeUnit.SECONDS)) {
                 Diagnostics.w(TAG, "su 超时（${SU_TIMEOUT_SEC}s），已销毁进程")
-                errDrain.join(200)
+                outDrain.join(DRAIN_JOIN_MS)
+                errDrain.join(DRAIN_JOIN_MS)
                 return@runCatching null
             }
-            text
+            outDrain.join(DRAIN_JOIN_MS)
+            errDrain.join(DRAIN_JOIN_MS)
+            String(outBuf.toByteArray(), Charsets.UTF_8).trim()
         } finally {
             runCatching { process.destroy() }
         }
@@ -169,4 +188,7 @@ object ClipboardFirewall {
 
     /** 单条 su 命令超时（秒）：全盘 find 可能很慢，不能无限等待 */
     private const val SU_TIMEOUT_SEC = 10L
+
+    /** 等待排空线程收尾的上限（毫秒）：进程已退出，排空线程随后即结束，不应久等 */
+    private const val DRAIN_JOIN_MS = 200L
 }

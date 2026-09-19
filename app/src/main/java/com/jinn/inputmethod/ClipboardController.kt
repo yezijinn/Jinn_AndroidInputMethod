@@ -2,6 +2,8 @@ package com.jinn.inputmethod
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 
 /**
  * 剪贴板控制器。
@@ -24,6 +26,9 @@ class ClipboardController(context: Context) {
     private val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     private val db = ClipboardDb.get(appContext)
 
+    /** 空剪贴板重试的延时载体：等待走主线程 Handler，不占用共享的 IO 单线程队列 */
+    private val retryHandler = Handler(Looper.getMainLooper())
+
     private var listenerRegistered = false
     private val listener = ClipboardManager.OnPrimaryClipChangedListener {
         onClipboardChanged()
@@ -45,11 +50,12 @@ class ClipboardController(context: Context) {
         Diagnostics.i(TAG, "start: 剪贴板监听已注册")
     }
 
-    /** 停用：注销监听。幂等。 */
+    /** 停用：注销监听（幂等）并丢弃待执行的重试，避免停用后仍落库 */
     fun stop() {
         if (!listenerRegistered) return
         clipboard.removePrimaryClipChangedListener(listener)
         listenerRegistered = false
+        retryHandler.removeCallbacksAndMessages(null)
         Diagnostics.i(TAG, "stop: 剪贴板监听已注销")
     }
 
@@ -77,14 +83,17 @@ class ClipboardController(context: Context) {
         // 监听回调触发时系统可能尚未完成写入，或本进程刚退到后台。
         // 延迟 250ms 重试一次，避免把真实复制误判为空。
         if (clipboard.primaryClip == null) {
-            BackgroundIo.run {
-                Thread.sleep(250)
-                val retryClip = clipboard.primaryClip ?: return@run
-                val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@run
-                if (retryText.isBlank()) return@run
-                val retrySource = resolveSourcePackage()
-                ClipboardStore.save(appContext, db, retryText, retrySource)
-            }
+            // 等待用主线程 Handler，**不能**在 BackgroundIo 里 sleep：那是单线程串行队列，
+            // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
+            retryHandler.postDelayed({
+                BackgroundIo.run {
+                    val retryClip = clipboard.primaryClip ?: return@run
+                    val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@run
+                    if (retryText.isBlank()) return@run
+                    val retrySource = resolveSourcePackage()
+                    ClipboardStore.save(appContext, db, retryText, retrySource)
+                }
+            }, RETRY_DELAY_MS)
             return
         }
         val clip = clipboard.primaryClip ?: return
@@ -111,6 +120,9 @@ class ClipboardController(context: Context) {
 
         /** 自身写入剪贴板的标记有效期：粘贴写入后短时间内变化才可能是自身的 */
         const val OWN_COMMIT_WINDOW_MS = 3_000L
+
+        /** 空剪贴板的重试延时：等系统把 primaryClip 写完 */
+        const val RETRY_DELAY_MS = 250L
     }
 }
 

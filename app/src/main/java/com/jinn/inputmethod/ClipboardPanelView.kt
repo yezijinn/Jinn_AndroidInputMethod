@@ -32,6 +32,10 @@ import java.util.Locale
  *
  * 身份不变量：点击用稳定 itemId 查找，不依赖 position；
  * 越界/已删除/已去重一律安全忽略。
+ *
+ * 注意：[SearchPanelView] 是本类的**平行实现**（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
+ * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
+ *
  * 安全：不输出任何剪贴板正文日志。
  */
 class ClipboardPanelView(context: Context) : LinearLayout(context) {
@@ -58,10 +62,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnCategoryFavorite: TextView
     private lateinit var btnBack: TextView
 
-    /**
-     * 记录「已点击展开」的条目 ID（仅内存态，面板关闭即失效）。
-     * 隐私标记已移除，这里只留着历史结构，新条目不会再进这个集合。
-     */
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
 
@@ -319,18 +319,21 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 updateEmpty()
                 // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
                 // 单次 notify 不足以让 item 创建；等布局稳定后二次强制重绘。
-                listView.post {
-                    if (reqToken != refreshToken) return@post
-                    adapter.notifyDataSetChanged()
-                    listView.requestLayout()
-                    listView.invalidate()
-                }
+                listView.post { forceRelayout(reqToken) }
                 if (resetScroll && currentItems.isNotEmpty()) {
                     val token = ++scrollToken
                     listView.post { if (token == scrollToken) listView.setSelection(0) }
                 }
             }
         }
+    }
+
+    /** 首帧兜底用的强制重绘：等布局稳定后再刷一次，令牌过期则跳过 */
+    private fun forceRelayout(reqToken: Int) {
+        if (reqToken != refreshToken) return
+        adapter.notifyDataSetChanged()
+        listView.requestLayout()
+        listView.invalidate()
     }
 
     /** 滚动接近底部时加载下一页并追加（解密只覆盖本页） */

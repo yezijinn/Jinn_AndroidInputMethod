@@ -124,7 +124,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
         mapOf(
             'q' to "※", 'w' to "々", 'e' to "〆", 'r' to "〇", 't' to "〈",
             'y' to "〉", 'u' to "《", 'i' to "》", 'o' to "「", 'p' to "」",
-            'a' to "『", 's' to "』", 'd' to "〔", 'f' to "〕", 'g' to "〈~",
+            'a' to "『", 's' to "』", 'd' to "〔", 'f' to "〕", 'g' to "〈",
             'h' to "＞", 'j' to "＜", 'k' to "＞", 'l' to "≪",
             'z' to "≫", 'x' to "〈", 'c' to "〉", 'v' to "「", 'b' to "」",
             'n' to "‖", 'm' to "……",
@@ -321,7 +321,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
         ),
     )),
     // 平假名
-    // 日本：平假名 + 片假名合并（原为两个分组，内容二合一，共 8 页）
+    // 日本：平假名 + 片假名合并（原为两个分组，内容二合一，共 10 页）
     SymbolGroup("日本", listOf(
         // ── 平假名 ──
         mapOf(

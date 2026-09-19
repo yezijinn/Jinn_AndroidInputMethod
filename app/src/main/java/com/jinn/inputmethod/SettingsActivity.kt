@@ -680,6 +680,13 @@ class SettingsActivity : ComponentActivity() {
                 editHost.error = getString(R.string.settings_invalid_host)
                 return
             }
+            // 非法 host 会被拼成 HttpUrl 拒绝的地址，进而在主线程抛异常把 IME 打崩；
+            // 这里拦在保存入口，配合 Prefs 的兜底形成两道防线（语音链路禁改，不能在那里兜）。
+            if (!Prefs.isValidHost(host)) {
+                Diagnostics.w(TAG, "saveAndRestart: host 含非法字符，已拒绝保存")
+                editHost.error = getString(R.string.settings_invalid_host)
+                return
+            }
             if (port == null || port !in 1..65535) {
                 Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
                 editPort.error = getString(R.string.settings_invalid_port)
