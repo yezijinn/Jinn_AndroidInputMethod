@@ -216,11 +216,18 @@ internal object UserFrequency {
     internal fun saveDelayMs(now: Long, lastSaveAt: Long, window: Long): Long =
         (lastSaveAt + window - now).coerceIn(0L, window)
 
-    /** 真正落盘：走 BackgroundIo，并对文件写入加锁，避免与 [flush] 并发写同一临时文件 */
+    /**
+     * 真正落盘：走 BackgroundIo。
+     *
+     * **渲染与写盘放在同一把锁内**：若先渲染再抢锁，会出现
+     * 「尾沿任务渲染旧快照 → `flush` 渲染新快照并写入 → 尾沿任务后拿到锁再写旧快照」
+     * 的交替，把较新的内容覆盖成旧的。锁内渲染则保证最后落盘的一定是最新快照。
+     */
     private fun saveNow(f: File) {
         BackgroundIo.run {
-            val text = render()
-            synchronized(saveLock) { if (writeAtomically(f, text)) dirty = false }
+            synchronized(saveLock) {
+                if (writeAtomically(f, render())) dirty = false
+            }
         }
     }
 
@@ -228,12 +235,11 @@ internal object UserFrequency {
     fun flush() {
         val f = file ?: return
         if (!dirty) return
-        val text = render()
         dirty = false
         // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
-        // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。
-        synchronized(saveLock) { writeAtomically(f, text) }
+        // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。渲染同样放在锁内（见 [saveNow]）。
+        synchronized(saveLock) { writeAtomically(f, render()) }
     }
 
     // ── 排序 ────────────────────────────────────────────────────────────────
