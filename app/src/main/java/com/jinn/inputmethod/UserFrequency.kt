@@ -2,6 +2,8 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 用户词频学习：记下用户实际选过的候选，下次把它们排到前面。
@@ -14,8 +16,9 @@ import java.io.File
  *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
  * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
- * 原子落盘（临时文件 + 改名）；退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，
- * 权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
+ * **窗口内会把「最后一次」排成尾沿任务补写**（只做前沿丢弃的话，进程被 LMK 直杀时
+ * 最近几次学习会丢，而 `flush` 只在服务收尾时才跑）；原子落盘（临时文件 + 改名）；
+ * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
  */
 internal object UserFrequency {
 
@@ -36,6 +39,18 @@ internal object UserFrequency {
     private var dirty = false
 
     private var lastSaveAt = 0L
+
+    /** 尾沿补写调度器：守护线程 + 纯 JVM 实现，不依赖 Android Looper（JVM 单测里也能跑） */
+    private val saveScheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "jinn-userfreq-save").apply { isDaemon = true }
+    }
+
+    /** 是否已排入一个尾沿补写：窗口内多次 remember 只排一次 */
+    @Volatile
+    private var savePending = false
+
+    /** 文件写入互斥：尾沿补写（后台线程）与 [flush]（主线程）可能同时到达 */
+    private val saveLock = Any()
 
     /**
      * 存储文件（加载线程在 [load] 里赋值，主线程在 [remember]/[flush] 里读）。
@@ -82,12 +97,32 @@ internal object UserFrequency {
 
     /**
      * 实时切换开关（设置页用）：只改标志位，不读盘。
-     * 关闭后不再学习、也不参与排序——既有记录留在文件里，重新打开即恢复。
+     * 关闭后不再学习、也不参与排序——既有记录留在文件里。
+     *
+     * 打开时若内存里还是空的（启动时学习为关，[load] 提前返回、历史没载入），
+     * 会异步补载一次；否则用户开了开关也要等进程重启才生效。
      */
     fun setEnabled(value: Boolean) {
         if (enabled == value) return
         enabled = value
         Diagnostics.i(TAG, "用户词频学习: ${if (value) "开启" else "关闭"}")
+        if (value && entries.isEmpty()) {
+            val f = file ?: return
+            BackgroundIo.run { reload(f) }
+        }
+    }
+
+    /** 从文件补载历史（开关从关切到开时用；[entries] 已有内容则不动） */
+    private fun reload(f: File) {
+        if (!f.isFile) return
+        runCatching {
+            val parsed = parse(f.readText(), today())
+            if (parsed.isEmpty()) return
+            for ((word, v) in parsed) entries.putIfAbsent(word, Entry(v.first, v.second))
+            Diagnostics.i(TAG, "用户词频: 开关打开后补载 ${parsed.size} 条")
+        }.onFailure {
+            Diagnostics.w(TAG, "用户词频补载失败（按未学习处理）: ${it.message}")
+        }
     }
 
     /** 测试/复位用：清空内存态（不删文件） */
@@ -96,6 +131,8 @@ internal object UserFrequency {
         dirty = false
         enabled = true
         file = null
+        lastSaveAt = 0L
+        savePending = false
     }
 
     /** 测试用：直接注入（绕过文件） */
@@ -147,14 +184,43 @@ internal object UserFrequency {
             .forEach { entries.remove(it.key) }
     }
 
+    /**
+     * 防抖落盘：距上次写盘不足窗口时**不丢**，改为排一个尾沿补写，
+     * 窗口到点后写一次（连续选择只在最后写一次，且进程被直杀时也只丢窗口内这一小段）。
+     */
     private fun scheduleSave() {
         val f = file ?: return
         val now = System.currentTimeMillis()
-        if (now - lastSaveAt < SAVE_DEBOUNCE_MS) return      // 防抖：连续选择只落盘一次
-        lastSaveAt = now
+        val wait = saveDelayMs(now, lastSaveAt, SAVE_DEBOUNCE_MS)
+        if (wait <= 0L) {
+            lastSaveAt = now
+            saveNow(f)
+            return
+        }
+        if (savePending) return
+        savePending = true
+        runCatching {
+            saveScheduler.schedule({ savePending = false; saveNow(f) }, wait, TimeUnit.MILLISECONDS)
+        }.onFailure {
+            savePending = false
+            Diagnostics.w(TAG, "用户词频尾沿落盘排程失败: ${it.message}")
+        }
+    }
+
+    /**
+     * 距下次允许落盘还需等多少毫秒（**纯函数**，便于单测）；0 表示当前即可写。
+     *
+     * 上限钳到 [window]：系统时钟回拨会让 `lastSaveAt` 落在「未来」，差值可达小时级 ——
+     * 不钳的话等于这段时间内完全不再落盘。
+     */
+    internal fun saveDelayMs(now: Long, lastSaveAt: Long, window: Long): Long =
+        (lastSaveAt + window - now).coerceIn(0L, window)
+
+    /** 真正落盘：走 BackgroundIo，并对文件写入加锁，避免与 [flush] 并发写同一临时文件 */
+    private fun saveNow(f: File) {
         BackgroundIo.run {
             val text = render()
-            if (writeAtomically(f, text)) dirty = false
+            synchronized(saveLock) { if (writeAtomically(f, text)) dirty = false }
         }
     }
 
@@ -167,7 +233,7 @@ internal object UserFrequency {
         // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
         // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。
-        writeAtomically(f, text)
+        synchronized(saveLock) { writeAtomically(f, text) }
     }
 
     // ── 排序 ────────────────────────────────────────────────────────────────

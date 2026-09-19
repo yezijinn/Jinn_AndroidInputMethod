@@ -212,4 +212,21 @@ class TextSelectionTest {
         assertEquals(0, TextSelection.lineStart("", 0))
         assertEquals(0, TextSelection.lineEnd("", 0))
     }
+
+    @Test
+    fun lineStartAtTextBeginWithLeadingNewline() {
+        // 回归：cursor == 0 时搜索起点不能写成 `(cursor - 1).coerceAtLeast(0)` ——
+        // 那会把**下标 0 本身**纳入搜索，文本以换行开头时就命中它并返回 1，光标反而前进。
+        assertEquals("光标在文首：行首就是 0", 0, TextSelection.lineStart("\nabc", 0))
+        // 光标落在换行符之后即第二行行首
+        assertEquals(1, TextSelection.lineStart("\nabc", 1))
+        assertEquals(1, TextSelection.lineStart("\nabc", 2))
+        assertEquals(1, TextSelection.lineStart("\nabc", 4))
+    }
+
+    @Test
+    fun lineStartAtCursorZeroWithoutLeadingNewline() {
+        assertEquals(0, TextSelection.lineStart("abc", 0))
+        assertEquals(0, TextSelection.lineStart("abc", 1))
+    }
 }
