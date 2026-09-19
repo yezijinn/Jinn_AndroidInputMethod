@@ -147,19 +147,33 @@ object ClipboardStore {
     const val MAX_ITEM_BYTES = 256 * 1024
 
     /**
-     * 一次批量解密窗口的内存预算（字节）。
+     * 单条解密的**内存放大系数**（保守估算）。
      *
-     * 分页/分块查询会对**整个窗口**逐条解密后才返回，故最坏内存 = 窗口条数 × [MAX_ITEM_BYTES]。
-     * 由 [decryptWindowPeakBytes] 与 `ClipboardLimitsTest` 共同守住这个上界。
+     * 常驻与瞬时开销不止明文本身：
+     *  - 库内密文是 base64（≈ 明文 4/3），以 String 读入，UTF-16 下再翻倍；
+     *  - 解出的明文 String 在纯 ASCII 场景下为明文字节的 2 倍。
+     * 两项合并按 3.5 倍取整，用于把「明文上限」折算成实际内存占用。
      */
-    const val DECRYPT_WINDOW_BUDGET_BYTES = 16L * 1024 * 1024
+    private const val DECRYPT_ITEM_AMPLIFICATION = 3.5
 
     /**
-     * 批量解密窗口的最坏内存占用（字节，**纯函数**）。
-     * 调用处用「窗口条数 × 单条上限 ≤ [DECRYPT_WINDOW_BUDGET_BYTES]」锁住参数，避免调大窗口时静默抬高内存峰值。
+     * 一次批量解密窗口的内存预算（字节）。
+     *
+     * 按当前参数：窗口 50 × 单条上限 256KB × 放大 3.5 ≈ **44MB**（最坏情形：整窗口都顶到单条上限）；
+     * 常规内容远低于此。若日后放宽单条上限或调大窗口，`ClipboardLimitsTest` 的护栏会先失败。
      */
-    fun decryptWindowPeakBytes(windowItems: Int, maxItemBytes: Int = MAX_ITEM_BYTES): Long =
-        windowItems.toLong() * maxItemBytes.toLong()
+    const val DECRYPT_WINDOW_BUDGET_BYTES = 64L * 1024 * 1024
+
+    /**
+     * 批量解密窗口的最坏内存估算（字节，**纯函数**）。
+     *
+     * 口径 = 窗口条数 × 单条上限 × [DECRYPT_ITEM_AMPLIFICATION]；
+     * 调用处用「≤ [DECRYPT_WINDOW_BUDGET_BYTES]」锁住参数，避免调大窗口时静默抬高内存峰值。
+     */
+    fun decryptWindowPeakBytes(windowItems: Int, maxItemBytes: Int = MAX_ITEM_BYTES): Long {
+        if (windowItems <= 0 || maxItemBytes <= 0) return 0L
+        return (windowItems.toLong() * maxItemBytes.toLong() * DECRYPT_ITEM_AMPLIFICATION).toLong()
+    }
 
     /**
      * 文本的 UTF-8 字节数是否超过 [limit]（**纯函数**，便于单测）。

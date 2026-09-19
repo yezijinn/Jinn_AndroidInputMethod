@@ -116,10 +116,25 @@ class ClipboardLimitsTest {
 
     @Test
     fun 护栏能拦下旧的300条窗口() {
-        // 证明护栏有效：旧值 300 × 256KB = 76.8MB，必然越界（若哪天有人调回去，这条会先失败）
+        // 证明护栏有效：旧值 300 × 256KB ≈ 262MB（含放大），必然越界（若哪天有人调回去，这条会先失败）
         assertTrue(
             "300 条窗口应被判超预算",
             ClipboardStore.decryptWindowPeakBytes(300) > ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
         )
+    }
+
+    @Test
+    fun 峰值估算含密文与String放大而非只算明文() {
+        // 只算明文会低估：单条还要算 base64 密文（≈4/3）与 UTF-16 String（≤2×）
+        val plainOnly = 10L * ClipboardStore.MAX_ITEM_BYTES
+        val estimate = ClipboardStore.decryptWindowPeakBytes(10)
+        assertTrue("估算应显著高于纯明文：plain=$plainOnly estimate=$estimate", estimate > plainOnly * 3)
+    }
+
+    @Test
+    fun 窗口峰值的边界取值() {
+        assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(0))
+        assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(-5))
+        assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(10, maxItemBytes = 0))
     }
 }

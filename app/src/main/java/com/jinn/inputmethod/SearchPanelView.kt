@@ -20,9 +20,9 @@ import java.util.Locale
 /**
  * 搜索的一次解密窗口条数。
  *
- * 分块查询会把**整个窗口**逐条解密后才返回，故单次明文峰值 = 窗口条数 ×
- * [ClipboardStore.MAX_ITEM_BYTES]（单条上限 256KB）。50 条 → 12.8MB，落在
- * [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（16MB）内；原值 300 会到 76.8MB。
+ * 分块查询会把**整个窗口**逐条解密后才返回，故单次内存峰值 ≈ 窗口条数 × 单条上限 × 放大系数
+ * （见 [ClipboardStore.decryptWindowPeakBytes]，放大是为了计入 base64 密文与 UTF-16 String）。
+ * 50 条 ≈ 44MB（最坏情形），原值 300 会到 ≈262MB。
  * 调整本值后必须让 `ClipboardLimitsTest` 的窗口预算护栏通过。
  */
 internal const val SEARCH_WINDOW_ITEMS = 50
@@ -283,6 +283,22 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
             val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
             var offset = 0
+            var lastPublishAt = 0L
+            var publishedCount = -1
+
+            /** 发布一次结果快照（主线程） */
+            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean) {
+                publishedCount = items.size
+                post {
+                    if (reqToken != refreshToken) return@post
+                    currentItems = items
+                    adapter.notifyDataSetChanged()
+                    updateEmpty()
+                    // 首帧布局竞态兜底（与历史页一致）
+                    if (relayout) listView.post { forceRelayout(reqToken) }
+                }
+            }
+
             while (offset < total) {
                 val chunk = db.recentPage(offset, SEARCH_WINDOW_ITEMS)
                 if (chunk.isEmpty()) break
@@ -294,16 +310,17 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 // 首帧兜底的判据必须在 post 之前固化成**值**：lambda 捕获的是变量本身，
                 // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
                 val isFirstChunk = offset <= SEARCH_WINDOW_ITEMS
-                val snapshot = matches.toList()
-                post {
-                    if (reqToken != refreshToken) return@post
-                    currentItems = snapshot
-                    adapter.notifyDataSetChanged()
-                    updateEmpty()
-                    // 首帧布局竞态兜底（与历史页一致）
-                    if (isFirstChunk) listView.post { forceRelayout(reqToken) }
+                val now = System.currentTimeMillis()
+                // 发布节流：窗口细化到 50 条后，逐块发布会让大库搜索产生数百次布局
+                //（每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。
+                if (isFirstChunk || now - lastPublishAt >= PUBLISH_MIN_INTERVAL_MS) {
+                    lastPublishAt = now
+                    publish(matches.toList(), relayout = isFirstChunk)
                 }
             }
+            // 收尾无条件补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，
+            // 否则用户会看到少于实际命中的结果（静默少给）。命中数没变时跳过，避免重复布局。
+            if (publishedCount != matches.size) publish(matches.toList(), relayout = false)
             Diagnostics.i(TAG, "搜索完成: \"$q\" 命中=${matches.size}")
         }
     }
@@ -341,6 +358,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val DEBOUNCE_MS = 150L
         /** 单次搜索最多扫描的行数（硬保护，防超大库把搜索拖成秒级） */
         const val SEARCH_SCAN_LIMIT = 20_000
+        /** 结果发布的最小间隔：窗口细化后逐块发布会产生数百次布局，按此间隔合并 */
+        const val PUBLISH_MIN_INTERVAL_MS = 120L
         /** 结果列表固定高度（wrap_content 父下保证可滚动） */
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */
