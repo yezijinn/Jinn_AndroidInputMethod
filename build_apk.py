@@ -245,7 +245,7 @@ def main():
         signed_apk.replace(final_apk)
         apk = final_apk
     finally:
-        # 无论成功失败都清掉中间产物，避免残留误导后续排查
+        # 无论成功失败都清掉中间产物，避免残留文件干扰排查
         for tmp in temp_apks:
             tmp.unlink(missing_ok=True)
 

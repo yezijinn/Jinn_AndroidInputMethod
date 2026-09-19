@@ -35,7 +35,7 @@ RIME = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts")
 OUT_DIR = os.path.join(ROOT, "tools", "dict_builder", "out", "tencent")
 OUT_XZ = os.path.join(ROOT, "release", "opt_tencent.txt.xz")
 # 注：基础包的文本资产在「词库改二进制索引」（P1 Stage 1）后已移出 APK，
-# 本脚本不再需要它（该常量原本也未被使用，属遗留腐化）。
+# 本脚本不再需要它（这个常量本来就没被使用，是历史遗留的死代码）。
 
 XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 7, "lc": 4, "pb": 0}]
 
