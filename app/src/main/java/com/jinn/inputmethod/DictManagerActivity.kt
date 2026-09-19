@@ -271,8 +271,8 @@ class DictManagerActivity : Activity() {
             }
             runOnUiThread {
                 downloading = null
-                // 用户可能在下完前点了 ✕ 关闭页面：此时不能动 UI（View 已随页面销毁），
-                // 但下载确实完成了——他点下载就是想要词库生效，所以仍要重启 IME。
+            // 用户可能在下载完成前点 ✕ 关闭页面：此时 View 已销毁、不能动 UI，
+            // 但词库已经下完、用户本就希望生效，所以仍要重启 IME。
                 if (isFinishing || isDestroyed) {
                     Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），仍重启输入法以加载")
                     if (ok) restartImeForDict()

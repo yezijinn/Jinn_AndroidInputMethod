@@ -32,9 +32,11 @@ object ClipboardCrypto {
     }
 
     /**
-     * 密钥内存缓存：Keystore getKey 每次都要走 binder/TEE 调用（5-20ms），
-     * 200 条批量解密时占绝对耗时大头。SecretKey 仅是对 Keystore 托管密钥的
-     * 不透明句柄（私钥材料不离开安全硬件），缓存句柄不降低安全性。
+     * 缓存 Keystore 里的密钥句柄。
+     *
+     * Keystore getKey 每次都要走 binder/TEE（5-20ms），200 条批量解密时
+     * 这块是主要耗时。SecretKey 只是对托管密钥的不透明句柄（私钥不出安全硬件），
+     * 缓存它不会削弱安全性。
      */
     private val cachedKey: SecretKey by lazy { createOrLoadKey() }
 

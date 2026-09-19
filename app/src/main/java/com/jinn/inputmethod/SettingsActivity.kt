@@ -28,8 +28,7 @@ import java.io.File
 
 /**
  * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
- * 引导授权麦克风、启用并切换到本输入法，并提供后台保活 / 防杀后台能力。
- * 同时作为应用入口从桌面启动。
+ * 引导授权麦克风、启用并切换到本输入法。同时作为应用入口从桌面启动。
  */
 class SettingsActivity : ComponentActivity() {
 
@@ -378,13 +377,8 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 下载并安装扩展词库。
-     *
-     * 地址按「用户填写 → 内置默认源」依次尝试，任一个成功即停：
-     * Gitee 源国内快，GitHub 源作备用（两个源都实测可访问）。
-     *
-     * 下载成功后**自动重启输入法进程**——词库只在 IME 启动时加载，重启才能合并生效。
-     * 这样用户点一次按钮就走完「下载 → 安装 → 生效」，不用再去点顶部的重启按钮。
+     * 剪贴板卡片初始化：强制启用历史、绑定数量上限、接 Root 增强开关。
+     * 历史功能无独立开关，这里直接强制 enabled=true；上限在失焦或「保存并重启」时落盘。
      */
     private fun initClipboardCard() {
         // 剪贴板历史强制启用：用户无需也无法关闭（核心功能，UI 不提供开关）
@@ -398,8 +392,7 @@ class SettingsActivity : ComponentActivity() {
             if (!hasFocus) saveMaxItems()
         }
 
-        // 第三方 APP 访问权限管理（跳转系统应用信息或简单列表页）
-        // 第三方 APP 访问权限管理：规范要求 JinnIme 不提供第三方读取 History API，此功能已移除。
+        // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
 
         // ── Root 增强模式 ──────────────────────────────────────
         refreshRootStatus()
