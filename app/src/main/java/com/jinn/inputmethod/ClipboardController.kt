@@ -137,6 +137,21 @@ class ClipboardController(context: Context) {
  */
 object ClipboardStore {
 
+    /** 单条上限（UTF-8 字节）：超过**直接不入库**，避免一条巨文本就把库撑到失控 */
+    const val MAX_ITEM_BYTES = 256 * 1024
+
+    /**
+     * 文本的 UTF-8 字节数是否超过 [limit]（**纯函数**，便于单测）。
+     *
+     * 先按**字符数**快筛：UTF-8 字节数恒 ≥ 字符数，字符数都超了就不必再编码 ——
+     * 否则一个 20MB 的串先被复制成 27MB 字节数组，检查本身就成了内存风险。
+     */
+    fun exceedsItemLimit(text: String, limit: Int = MAX_ITEM_BYTES): Boolean {
+        if (limit <= 0) return false
+        if (text.length > limit) return true
+        return text.toByteArray(Charsets.UTF_8).size > limit
+    }
+
     /**
      * 保存流程。返回保存的条目 id，未保存返回 null。
      * @param sourceAppName 来源应用名（显示用，为空则按包名推断）
@@ -149,6 +164,11 @@ object ClipboardStore {
         sourceAppName: String = "",
         maxItems: Int = readMaxItems(context),
     ): Long? {
+        // 单条体积上限：超出即丢弃（不截断——半截内容比不记更糟）
+        if (exceedsItemLimit(text)) {
+            Diagnostics.w(TAG, "超单条上限，不入库: len=${text.length} 上限=${MAX_ITEM_BYTES}B")
+            return null
+        }
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
         // 自动分类（URL / NUMBER / OTHER）；隐私分类绝不自动判断
         val category = ClipboardClassifier.classify(text)

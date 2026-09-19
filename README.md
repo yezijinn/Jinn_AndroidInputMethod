@@ -116,16 +116,16 @@ python build_apk.py --clean      # clean 后全新编译
 ```
 
 ### 签名说明
-开源仓库**不包含签名密钥与密码**。如需签名构建：
-1. 生成密钥库：`keytool -genkeypair -keystore keystore/jinn-release.jks -alias jinn ...`
-2. 项目根目录创建 `keystore.properties`（已被 `.gitignore` 忽略）：
-   ```properties
-   storeFile=keystore/jinn-release.jks
-   storePassword=***
-   keyAlias=jinn
-   keyPassword=***
+开源仓库**不包含签名密钥与密码**，且**禁止把密钥库或口令文件放进仓库目录**（否则一旦打包/备份整个项目即随之外泄）。如需签名构建：
+
+1. 在**仓库之外**生成密钥库，例如 `<凭据目录>/com.jinn.inputmethod/release.jks`：
+   `keytool -genkeypair -keystore <凭据目录>/com.jinn.inputmethod/release.jks -alias jinn ...`
+2. 用环境变量指向它（`build_apk.py` 的推荐路径）：
+   ```bash
+   JINN_KEYSTORE_ROOT='<凭据目录>' python build_apk.py
    ```
-3. `./gradlew assembleRelease` 将自动签名。
+   或直接给 Gradle 传 `JINN_KEYSTORE_FILE` / `JINN_KEYSTORE_PASSWORD` / `JINN_KEY_ALIAS` / `JINN_KEY_PASSWORD`。
+3. `./gradlew assembleRelease` 在**未提供上述配置时产出未签名包**（保留无密钥构建能力）。
 
 > ⚠️ 用 `build_apk.py` 时签名流程**顺序不可调换**：
 > 构建 → 去 META-INF → `zipalign -p 4` → `apksigner sign` → 校验。
