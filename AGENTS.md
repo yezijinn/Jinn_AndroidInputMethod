@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（28 个测试类 / 270 个用例）:
+- 覆盖（29 个测试类 / 280 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
@@ -55,12 +55,15 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
     ⚠ 别给取值加「长度 1~2」规则：编程组 149 条代码片段与数学组 `∫∫∫` 都是合法长值）
   - 配置校验：`PrefsHostValidationTest`（host 合法性 + **不变式护栏：校验放行的取值必须能被 OkHttp 接受**，
     含 IPv6 字面量、纯标点、`host:port` 误填等负例）
+  - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 的 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰的纯函数）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
 
 - Debug：`gradlew.bat assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
-- Release：`gradlew.bat assembleRelease`，或用 `python build_apk.py` 走「构建→zipalign→apksigner 签名」
+- Release：`JINN_KEYSTORE_ROOT=<凭据目录> python build_apk.py` 走「构建→zipalign→apksigner 签名」；
+  **密钥库与口令文件禁止放在仓库目录内**（.jks / keystore.properties 均已移出，见 `GLOBAL/credentials/JinnKeyStores/legacy-in-repo/`），
+  不给环境变量时 `gradlew.bat assembleRelease` 产出未签名包（保留无密钥构建能力）
   （**顺序不可调换**：apksigner 不负责对齐，写反会让 APK 未对齐、设备读资源需先解压）
 - 真机安装：`adb install -r jinn-release.apk`（覆盖安装签名一致，不丢数据）
 - 真机输入法：`adb shell ime set com.jinn.inputmethod/.JinnIme`（实际包名是 `com.jinn.inputmethod`）
