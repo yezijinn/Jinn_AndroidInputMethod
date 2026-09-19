@@ -34,6 +34,9 @@ object PinyinEngine {
     private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
 
+    /** 「子集不是索引前缀」告警的逐条明细上限（超过则只汇总一行，避免刷屏） */
+    private const val NOT_PREFIX_WARN_LIMIT = 10
+
     /** 合并缓存的「确实没有」哨兵（避免同一缺失键反复走逐段查找） */
     private val EMPTY_WORDS = emptyArray<String>()
 
@@ -857,17 +860,34 @@ object PinyinEngine {
      *
      * 判据很直接：该键在索引里的词表以运行时词表开头（子集是全量的前缀）→ 运行时那份是冗余的。
      * 可选包合并过的键不会是前缀，因此不受影响。
+     *
+     * 注意：判据**依赖一条生成期不变量**（`gen_hot_dict.py` 产出的子集必须是每键的前缀）。
+     * 一旦不成立，[phrasesFor] 在可选包未加载时会走「运行时表整体优先」的快路径，
+     * 索引里更长的候选就被静默遮蔽。这里对「不满足前缀」的键打告警——
+     * 加载期只跑一次，不在打字热路径上，把静默变成可见。
      */
     private fun dropRedundantHotEntries() {
         val idx = baseIndex ?: return
         var dropped = 0
+        var notPrefix = 0
         for (key in phrasesByPinyin.keys.toList()) {
             val mine = phrasesByPinyin[key] ?: continue
             val full = idx.wordsFor(key) ?: continue
             if (full.size >= mine.size && full.copyOfRange(0, mine.size).contentEquals(mine)) {
                 phrasesByPinyin.remove(key)
                 dropped++
+            } else {
+                notPrefix++
+                if (notPrefix <= NOT_PREFIX_WARN_LIMIT) {
+                    Diagnostics.w(
+                        TAG,
+                        "高频子集与索引不是前缀关系 key=$key 子集=${mine.size} 索引=${full.size}（候选可能被遮蔽）"
+                    )
+                }
             }
+        }
+        if (notPrefix > 0) {
+            Diagnostics.w(TAG, "高频子集非前缀条目共 $notPrefix 条，请检查 gen_hot_dict.py 的产出顺序")
         }
         if (dropped > 0) Diagnostics.i(TAG, "高频子集已并入索引，摘除冗余运行时条目 $dropped 条")
     }
@@ -977,7 +997,8 @@ object PinyinEngine {
 
     /** 查询期生僻字过滤（索引与运行时词一视同仁） */
     private fun filterRareChars(raw: Array<String>): Array<String> {
-        val filter = commonChars ?: return raw
+        // 常用字表未就绪时整体不过滤，与 isLoadableWord 的判据保持一致
+        if (commonChars == null) return raw
         var needFilter = false
         for (w in raw) {
             if (!isLoadableWord(w)) {

@@ -20,14 +20,27 @@ class Prefs(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
 
-    /** 飞牛 NAS 的局域网地址 */
+    /**
+     * 飞牛 NAS 的局域网地址。
+     *
+     * getter 做一次合法性兜底：存档里的非法值（旧版本写入、手动改 prefs）一律回落到默认地址。
+     * 这是**崩不崩的边界**——[wsUrl] 会被直接送进 OkHttp，而 `HttpUrl` 对含空格或重复端口的
+     * host 会抛 `IllegalArgumentException`，调用点又都在主线程（整个 IME 会崩）。
+     * 语音链路属禁改区，所以校验放在配置层，保证交出去的 URL 一定是合法形式。
+     */
     var host: String
-        get() = sp.getString(KEY_HOST, DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST }
+        get() {
+            val raw = sp.getString(KEY_HOST, DEFAULT_HOST).orEmpty()
+            return if (isValidHost(raw)) raw else DEFAULT_HOST
+        }
         set(value) = sp.edit { putString(KEY_HOST, value.trim()) }
 
-    /** 服务端口，对齐 config_server.py 的 6016 */
+    /**
+     * 服务端口，对齐 config_server.py 的 6016。
+     * getter 钳到合法端口区间：越界端口同样会让 `HttpUrl` 抛异常。
+     */
     var port: Int
-        get() = sp.getInt(KEY_PORT, DEFAULT_PORT)
+        get() = sp.getInt(KEY_PORT, DEFAULT_PORT).takeIf { it in 1..65535 } ?: DEFAULT_PORT
         set(value) = sp.edit { putInt(KEY_PORT, value) }
 
     /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改（默认勾选） */
@@ -175,12 +188,32 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_VOICE_INPUT, false)
         set(value) = sp.edit { putBoolean(KEY_VOICE_INPUT, value) }
 
+    /** 拼接后的 WebSocket 地址；[host] 与 [port] 的 getter 已保证取值合法 */
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
         const val DEFAULT_HOST = "192.168.1.3"
         const val DEFAULT_PORT = 6016
         const val DEFAULT_LANGUAGE = "auto"
+
+        /** 会破坏 `ws://host:port` 结构的字符（`: / \ ? # @ [ ]`） */
+        private val INVALID_HOST_CHARS = charArrayOf(':', '/', '\\', '?', '#', '@', '[', ']')
+
+        /**
+         * host 合法性校验（**纯函数**，可直接 JVM 单测）。
+         *
+         * 拒绝空白、控制字符与 [INVALID_HOST_CHARS]；非 ASCII 主机名（中文）**放行** ——
+         * 实测 OkHttp 的 `HttpUrl` 接受中文主机（内部做 IDN 转换），拒绝它反而会误伤。
+         */
+        fun isValidHost(raw: String): Boolean {
+            val h = raw.trim()
+            if (h.isEmpty()) return false
+            for (c in h) {
+                if (c.isWhitespace() || c.isISOControl()) return false
+                if (INVALID_HOST_CHARS.contains(c)) return false
+            }
+            return true
+        }
 
         private const val KEY_HOST = "host"
         private const val KEY_PORT = "port"

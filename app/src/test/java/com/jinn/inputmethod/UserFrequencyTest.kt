@@ -159,4 +159,40 @@ class UserFrequencyTest {
         assertEquals("world", f.readText())
         dir.deleteRecursively()
     }
+
+    // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
+
+    private val WINDOW = 2_000L
+
+    @Test
+    fun 距上次写盘足够久时立即可写() {
+        assertEquals(0L, UserFrequency.saveDelayMs(now = 10_000L, lastSaveAt = 7_000L, window = WINDOW))
+        assertEquals(0L, UserFrequency.saveDelayMs(now = 9_000L, lastSaveAt = 7_000L, window = WINDOW))
+    }
+
+    @Test
+    fun 窗口内返回剩余等待时间而非丢弃() {
+        // 关键回归：旧实现窗口内直接 return（只做前沿丢弃），这次学习要等 flush 才落盘，
+        // 进程被 LMK 直杀就丢了。现在改为返回剩余毫秒，由调度器补一次写。
+        assertEquals(500L, UserFrequency.saveDelayMs(now = 8_500L, lastSaveAt = 7_000L, window = WINDOW))
+        assertEquals(1_999L, UserFrequency.saveDelayMs(now = 7_001L, lastSaveAt = 7_000L, window = WINDOW))
+    }
+
+    @Test
+    fun 首次写盘前立即落盘() {
+        // lastSaveAt == 0 表示「从未写过」；真实调用传的是 epoch 毫秒，差值必然为负 → 0
+        val epochNow = 1_700_000_000_123L
+        assertEquals(0L, UserFrequency.saveDelayMs(now = epochNow, lastSaveAt = 0L, window = WINDOW))
+    }
+
+    @Test
+    fun 时钟回拨时等待被钳到一个窗口() {
+        // 回拨后 lastSaveAt 落在「未来」，原始差值是小时级；不钳就等于期间完全不再落盘
+        assertEquals(WINDOW, UserFrequency.saveDelayMs(now = 1L, lastSaveAt = 7_000L, window = WINDOW))
+        val epochNow = 1_600_000_000_000L
+        assertEquals(
+            WINDOW,
+            UserFrequency.saveDelayMs(now = epochNow, lastSaveAt = epochNow + 3_600_000L, window = WINDOW),
+        )
+    }
 }
