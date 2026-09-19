@@ -122,16 +122,18 @@ python build_apk.py --clean      # clean build
 ```
 
 ### Signing
-The open-source repo does **not** ship signing keys or passwords. To sign locally:
-1. Create a keystore: `keytool -genkeypair -keystore keystore/jinn-release.jks -alias jinn ...`
-2. Create `keystore.properties` in the project root (already git-ignored):
-   ```properties
-   storeFile=keystore/jinn-release.jks
-   storePassword=***
-   keyAlias=jinn
-   keyPassword=***
+The open-source repo does **not** ship signing keys or passwords, and keys must **not** be placed
+inside the repository directory (archiving or copying the project would leak them). To sign locally:
+
+1. Create the keystore **outside** the repo, e.g. `<credentials>/com.jinn.inputmethod/release.jks`:
+   `keytool -genkeypair -keystore <credentials>/com.jinn.inputmethod/release.jks -alias jinn ...`
+2. Point the build at it via environment variables (the `build_apk.py` path):
+   ```bash
+   JINN_KEYSTORE_ROOT='<credentials>' python build_apk.py
    ```
-3. `./gradlew assembleRelease` signs automatically.
+   or pass `JINN_KEYSTORE_FILE` / `JINN_KEYSTORE_PASSWORD` / `JINN_KEY_ALIAS` / `JINN_KEY_PASSWORD` to Gradle.
+3. Without any of the above, `./gradlew assembleRelease` produces an **unsigned** APK
+   (keyless builds stay supported).
 
 > ⚠️ When using `build_apk.py`, the signing pipeline order **must not be changed**:
 > build → strip META-INF → `zipalign -p 4` → `apksigner sign` → verify.

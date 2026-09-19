@@ -231,14 +231,20 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪到最多 [maxItems] 条。
+     * 裁剪历史：先按条数裁到 [maxItems]，再按**总体积**裁到 [maxTotalBytes]。
      *
      * **裁剪优先级**：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
-     * 若剩下的全是收藏、删不够 overflow 条，则不再裁剪 ——
+     * 任一维度剩的全是收藏、删不到目标时即停止 ——
      * 宁可超出上限，也不删用户明确标记保留的内容。
      */
-    fun trimTo(maxItems: Int) {
+    fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
+        trimByCount(maxItems)
+        trimByByteBudget(maxTotalBytes)
+    }
+
+    /** 按条数裁剪（原有行为：只删最旧的非收藏记录） */
+    private fun trimByCount(maxItems: Int) {
         if (maxItems <= 0) return
         val count = count()
         if (count <= maxItems) return
@@ -256,6 +262,33 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
         if (ids.isEmpty()) return // 剩余全是收藏，不裁剪
+        deleteByIds(ids)
+    }
+
+    /**
+     * 按总体积裁剪：密文总量超过 [maxTotalBytes] 时，从**最旧的非收藏**记录开始删，直到落回预算内。
+     *
+     * 体积口径用 `LENGTH(encrypted_content)` —— 该列是 base64（纯 ASCII），字符数即字节数，
+     * 单条 SQL 就能算出总量与逐条大小，无需解密、无需把正文读进内存。
+     * 收藏计入总量但**不参与淘汰**（与 [TRIM_PRIORITY] 同一条原则）：若收藏本身就超预算，只能停手。
+     */
+    private fun trimByByteBudget(maxTotalBytes: Long) {
+        if (maxTotalBytes <= 0) return
+        val rows = ArrayList<ClipboardRowSize>()
+        readableDatabase.rawQuery(
+            "SELECT id, LENGTH(encrypted_content), is_favorite FROM $TABLE_ITEMS " +
+                "ORDER BY created_at ASC",   // 最旧在前：淘汰顺序即此序
+            null
+        ).use { c -> while (c.moveToNext()) rows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), c.getInt(2) != 0)) }
+        val ids = overflowIdsForByteBudget(rows, maxTotalBytes)
+        if (ids.isEmpty()) return
+        deleteByIds(ids)
+        Diagnostics.i(TAG, "按体积裁剪: 删除 ${ids.size} 条非收藏记录（预算 ${maxTotalBytes / 1024 / 1024}MB）")
+    }
+
+    /** 批量删除（单事务） */
+    private fun deleteByIds(ids: List<Long>) {
+        if (ids.isEmpty()) return
         writableDatabase.beginTransaction()
         try {
             for (id in ids) writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
@@ -386,6 +419,33 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
         )
 
+        /** 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB） */
+        const val DEFAULT_MAX_TOTAL_BYTES = 100L * 1024 * 1024
+
+        /**
+         * 按字节预算挑选应删除的记录 id（**纯函数**）。
+         *
+         * @param rows **必须按最旧在前**传入（查询侧即 `ORDER BY created_at ASC`）
+         * @param maxBytes 总量预算；`<= 0` 视为不限制
+         * @return 应删除的 id；收藏**永不**出现在结果里
+         *
+         * 注意：收藏**计入总量**但不参与淘汰 —— 若收藏本身就超预算，可删的条目删完仍超限，
+         * 此时只能停手（与条数裁剪同一条原则：宁可超限，也不删用户明确标记保留的内容）。
+         */
+        fun overflowIdsForByteBudget(rows: List<ClipboardRowSize>, maxBytes: Long): List<Long> {
+            if (maxBytes <= 0) return emptyList()
+            var total = rows.sumOf { it.bytes }
+            if (total <= maxBytes) return emptyList()
+            val out = ArrayList<Long>()
+            for (row in rows) {
+                if (total <= maxBytes) break
+                if (row.favorite) continue
+                out.add(row.id)
+                total -= row.bytes
+            }
+            return out
+        }
+
         @Volatile
         private var instance: ClipboardDb? = null
 
@@ -401,6 +461,14 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 }
+
+/**
+ * 按体积淘汰时的一行信息：id、密文长度（base64 纯 ASCII，字符数即字节数）、是否收藏。
+ *
+ * 与 [ClipboardFilter] 一样做成顶层类：它同时是 [ClipboardDb.overflowIdsForByteBudget]
+ * 的入参类型，纯数据、可直接 JVM 单测。
+ */
+data class ClipboardRowSize(val id: Long, val bytes: Long, val favorite: Boolean)
 
 /**
  * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
