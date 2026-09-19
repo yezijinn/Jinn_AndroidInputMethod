@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（29 个测试类 / 280 个用例）:
+- 覆盖（29 个测试类 / 283 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
@@ -55,7 +55,8 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
     ⚠ 别给取值加「长度 1~2」规则：编程组 149 条代码片段与数学组 `∫∫∫` 都是合法长值）
   - 配置校验：`PrefsHostValidationTest`（host 合法性 + **不变式护栏：校验放行的取值必须能被 OkHttp 接受**，
     含 IPv6 字面量、纯标点、`host:port` 误填等负例）
-  - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 的 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰的纯函数）
+  - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 明文 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰 + **解密窗口预算护栏**：窗口条数 × 单条上限 ≤ 16MB）
+    ⚠ 三条容量口径**单位不同**：单条按**明文**字节、总量按**库内 base64 密文**体积（100MB ≈ 73MB 明文）、窗口按条数×单条上限；且单条上限**只在采集侧生效**，库里既有超限行只会被总量预算淘汰
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
