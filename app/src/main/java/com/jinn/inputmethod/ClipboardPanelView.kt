@@ -38,6 +38,15 @@ import java.util.Locale
  *
  * 安全：不输出任何剪贴板正文日志。
  */
+/**
+ * 剪贴板面板的一页条数。
+ *
+ * 与搜索窗口同理：一页会**整页解密**后才发布，单次明文峰值 = 本值 ×
+ * [ClipboardStore.MAX_ITEM_BYTES]。50 条 → 12.8MB，在
+ * [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（16MB）内，由 `ClipboardLimitsTest` 守卫。
+ */
+internal const val PANEL_PAGE_ITEMS = 50
+
 class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 面板回调（全部主线程） */
@@ -300,10 +309,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {
-            // 分页加载：COUNT 不解密，解密只覆盖第一页（PAGE_SIZE）
+            // 分页加载：COUNT 不解密，解密只覆盖第一页（PANEL_PAGE_ITEMS）
             val filter = ClipboardFilter.of(category)
             val total = db.count(filter.category, filter.favoritesOnly)
-            val page = db.recentPage(0, PAGE_SIZE, filter.category, filter.favoritesOnly)
+            val page = db.recentPage(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
             Diagnostics.i(
                 TAG,
                 "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.size} " +
@@ -345,7 +354,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         loadingPage = true
         BackgroundIo.run {
             val filter = ClipboardFilter.of(category)
-            val page = db.recentPage(offset, PAGE_SIZE, filter.category, filter.favoritesOnly)
+            val page = db.recentPage(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
@@ -446,8 +455,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val TAG = "ClipboardPanel"
         // 常量统一取自 ClipboardFilter，避免 UI 与数据层各定义一份而漂移
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
-        /** 每页条数（解密只覆盖可见窗口） */
-        const val PAGE_SIZE = 50
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
