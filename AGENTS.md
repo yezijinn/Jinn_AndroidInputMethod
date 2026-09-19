@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（27 个测试类 / 266 个用例）:
+- 覆盖（28 个测试类 / 270 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
@@ -51,6 +51,8 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
     含 CRLF / 长度边界 / 负例）、`ClipboardFilterTest`
   - 文字拖选：`TextSelectionTest`（Anchor/Focus 模型 + 行首/行末边界，含 cursor=0 且首字符为换行的回归用例）
   - 键盘外观：`KeyAppearanceTest`（圆角 / 间隙的定义域、步进、钳位与进度换算）
+  - 符号表：`SymbolLayoutTest`（分组非空、标签唯一、取值不含换行/制表符 + 标点组第 2 页 g 键的录入回归。
+    ⚠ 别给取值加「长度 1~2」规则：编程组 149 条代码片段与数学组 `∫∫∫` 都是合法长值）
   - 配置校验：`PrefsHostValidationTest`（host 合法性 + **不变式护栏：校验放行的取值必须能被 OkHttp 接受**，
     含 IPv6 字面量、纯标点、`host:port` 误填等负例）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
