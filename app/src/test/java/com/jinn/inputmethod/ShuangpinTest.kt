@@ -352,7 +352,7 @@ class ShuangpinTest {
 
     @Test
     fun 全拼模式不转换() {
-        // 供全拼路径直接使用：双拼转换只发生在双拼模式
+        // 全拼路径直接用原串：双拼转换只在双拼模式生效
         assertEquals("nihao", zr("nihao").ifEmpty { "nihao" })
     }
 
