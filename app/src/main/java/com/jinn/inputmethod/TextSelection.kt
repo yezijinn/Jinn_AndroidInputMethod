@@ -75,10 +75,16 @@ object TextSelection {
         return (targetStart + col).coerceAtMost(targetEnd)
     }
 
-    /** 当前行的行首（cursor 所在行的起点，非文本绝对起点） */
+    /**
+     * 当前行的行首（cursor 所在行的起点，非文本绝对起点）。
+     *
+     * 注意：cursor == 0 必须直接返回 0。搜索起点要用 `cursor - 1` 表达「严格在光标之前」，
+     * 而 `(cursor - 1).coerceAtLeast(0)` 在 cursor == 0 时会把起点钳回 0 —— 连**下标 0 本身**
+     * 一起纳入搜索；若文本以换行开头就会命中它并返回 1，光标反而前进一步。
+     */
     fun lineStart(text: String, cursor: Int): Int {
-        if (text.isEmpty()) return 0
-        val idx = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0))
+        if (text.isEmpty() || cursor <= 0) return 0
+        val idx = text.lastIndexOf('\n', cursor - 1)
         return if (idx < 0) 0 else idx + 1
     }
 

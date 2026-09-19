@@ -33,7 +33,7 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（26 个测试类 / 247 个用例）:
+- 覆盖（27 个测试类 / 259 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
     逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
@@ -49,8 +49,9 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   - 双拼方案：`ShuangpinSchemesTest`（7 套 + 全表往返自洽）、`HintRuleTest`（键面提示三规则）
   - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
     含 CRLF / 长度边界 / 负例）、`ClipboardFilterTest`
-  - 文字拖选：`TextSelectionTest`
+  - 文字拖选：`TextSelectionTest`（Anchor/Focus 模型 + 行首/行末边界，含 cursor=0 且首字符为换行的回归用例）
   - 键盘外观：`KeyAppearanceTest`（圆角 / 间隙的定义域、步进、钳位与进度换算）
+  - 配置校验：`PrefsHostValidationTest`（host 合法性：空白/控制字符/冒号等会让 HttpUrl 抛异常的写法一律拒绝）
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
 ## 构建与运行
@@ -176,7 +177,7 @@ app/src/main/java/com/jinn/inputmethod/
 - 排序是**稳定排序**且未学习时直接返回原数组 ⇒ 对没学过的候选零影响（不打乱词库既有手感）。
   调 `UserFrequency.rank()` 的位置在 `PinyinEngine.query` 的收尾处。
 - 开关：设置页「用户词频学习」（`Prefs.userLearning`，默认开，**立即生效**，本地存储不上传）。
-- 护栏：`UserFrequencyTest`（排序稳定性 / 衰减 / 序列化往返 / 脏数据容错 / 开关 / 原子写）。
+- 护栏：`UserFrequencyTest`（排序稳定性 / 衰减 / 序列化往返 / 脏数据容错 / 开关 / 原子写 / 防抖尾沿判据 `saveDelayMs`）。
   ⚠ 改这块务必跑该测试 + `PinyinEngineTest`（排序相关）。
 
 ## 冷启动与加载顺序（重要）
