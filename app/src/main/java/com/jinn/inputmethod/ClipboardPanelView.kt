@@ -41,9 +41,9 @@ import java.util.Locale
 /**
  * 剪贴板面板的一页条数。
  *
- * 与搜索窗口同理：一页会**整页解密**后才发布，单次明文峰值 = 本值 ×
- * [ClipboardStore.MAX_ITEM_BYTES]。50 条 → 12.8MB，在
- * [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（16MB）内，由 `ClipboardLimitsTest` 守卫。
+ * 与搜索窗口同理：一页会**整页解密**后才发布，单次内存峰值 ≈ 本值 × 单条上限 × 放大系数
+ * （见 [ClipboardStore.decryptWindowPeakBytes]）。50 条 ≈ 44MB（最坏情形），
+ * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（64MB）内，由 `ClipboardLimitsTest` 守卫。
  */
 internal const val PANEL_PAGE_ITEMS = 50
 
