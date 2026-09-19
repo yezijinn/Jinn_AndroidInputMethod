@@ -13,9 +13,9 @@ import java.net.URL
  * versionName 仅展示不参与比较。远程真源取仓库 tag 中的最大日期数字。
  *
  * 源策略：**GitHub 优先，Gitee 备选**；GitHub 失败自动回退 Gitee，两源皆失败才判网络异常。
- * 注意 Gitee 的网页版 /tags 路径会返回 405，因此备选源改走其开放 API，
- * 返回的 JSON 里同样含 tag 名，**标签解析规则与 GitHub 完全一致**
- * （去 v 前缀、仅保留 6..8 位纯数字、取最大）。
+ * Gitee 的网页 /tags 会返回 405，所以备选源改走它的开放 API，
+ * 返回的 JSON 里同样带 tag 名，**标签解析规则与 GitHub 完全一致**
+ * （去 v 前缀、只保留 6..8 位纯数字、取最大）。
  */
 object UpdateChecker {
 

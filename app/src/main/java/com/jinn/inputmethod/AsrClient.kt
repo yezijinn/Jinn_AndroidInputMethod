@@ -22,12 +22,13 @@ enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
 /**
  * Jinn 服务端的 WebSocket 客户端。
  *
- * 一次听写的生命周期：[beginTask] -> 若干次 [sendChunk] -> [endTask]。
- * 上滑取消走 [cancelTask]：它同样会发 is_final 收尾包，因为服务端
- * ws_recv.py 的音频缓冲是**按连接**而不是按任务持有的，不收尾会让
- * 残留音频串到下一次听写里去；结果则通过 taskId 比对直接丢弃。
+ * - 一次听写：[beginTask] -> 若干次 [sendChunk] -> [endTask]
+ * - 上滑取消走 [cancelTask]，同样发 is_final 收尾包：服务端 ws_recv.py 的
+ *   音频缓冲按连接持有而非按任务，不收尾会让残留音频串到下一段听写
+ * - 识别结果靠 taskId 比对，取消或过期的任务结果直接丢弃
+ * - 回调在 OkHttp 的 IO 线程触发，接收方需自行切回主线程
  *
- * 回调发生在 OkHttp 的 IO 线程，接收方需要自己切主线程。
+ * 注意：cancelTask 也要发收尾包，否则残留音频会污染下一次听写。
  */
 class AsrClient(
     private val prefs: Prefs,

@@ -180,7 +180,7 @@ class MicRecorder(
                 }
                 break
             }
-            // count == 0 极其罕见，多半是 AudioRecord 处于异常态；稍歇让 CPU 不烫并给系统时间恢复
+            // count == 0 极其罕见，多半是 AudioRecord 异常；稍歇避免 CPU 空转发热，也给系统恢复时间
             if (count == 0) {
                 Log.w(TAG, "loop: read 返回 0，短暂等待")
                 Thread.sleep(CHUNK_MS)

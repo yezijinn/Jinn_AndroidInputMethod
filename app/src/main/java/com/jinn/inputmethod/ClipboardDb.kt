@@ -235,7 +235,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * **裁剪优先级**：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
-     * 若剩余全是收藏、凑不够 overflow，则不再裁剪 ——
+     * 若剩下的全是收藏、删不够 overflow 条，则不再裁剪 ——
      * 宁可超出上限，也不删用户明确标记保留的内容。
      */
     fun trimTo(maxItems: Int) {

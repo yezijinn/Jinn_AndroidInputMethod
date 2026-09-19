@@ -286,7 +286,7 @@ import kotlin.math.min
             /** 超过该字符数按长文本处理：收缩字号并垂直居中（编程关键字、多字符符号） */
             const val LONG_TEXT_THRESHOLD = 2
 
-            /** 长文本基准字号比例（比常规 TEXT_RATIO 小一号，长文本本身更长） */
+            /** 长文本基准字号比例（比 TEXT_RATIO 小一号，因为长文本占的空间更多） */
             const val LONG_TEXT_RATIO = 0.30f
 
             /** 长文本收缩下限，避免极长字符串缩到无法辨认 */
