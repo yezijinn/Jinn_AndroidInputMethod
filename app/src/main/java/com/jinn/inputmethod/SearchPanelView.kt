@@ -18,6 +18,16 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * 搜索的一次解密窗口条数。
+ *
+ * 分块查询会把**整个窗口**逐条解密后才返回，故单次明文峰值 = 窗口条数 ×
+ * [ClipboardStore.MAX_ITEM_BYTES]（单条上限 256KB）。50 条 → 12.8MB，落在
+ * [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（16MB）内；原值 300 会到 76.8MB。
+ * 调整本值后必须让 `ClipboardLimitsTest` 的窗口预算护栏通过。
+ */
+internal const val SEARCH_WINDOW_ITEMS = 50
+
+/**
  * 顶部搜索面板（挂在候选栏上方，独立于剪贴板面板与 26 键区）。
  *
  * 进入搜索时：搜索面板显示在 IME 最顶部（整体高度增加），
@@ -38,7 +48,6 @@ import java.util.Locale
  *       本类里不存在掩码分支——阅读时不要按「有掩码」假设。）
  */
 class SearchPanelView(context: Context) : LinearLayout(context) {
-
     interface Listener {
         /** 点击结果：IME 用当前 InputConnection commitText。返回是否成功提交。 */
         fun onPaste(text: String): Boolean
@@ -275,7 +284,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
             var offset = 0
             while (offset < total) {
-                val chunk = db.recentPage(offset, SEARCH_CHUNK)
+                val chunk = db.recentPage(offset, SEARCH_WINDOW_ITEMS)
                 if (chunk.isEmpty()) break
                 for (item in chunk) {
                     if (item.content.lowercase().contains(lower)) matches.add(item)
@@ -284,7 +293,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 if (reqToken != refreshToken) return@run
                 // 首帧兜底的判据必须在 post 之前固化成**值**：lambda 捕获的是变量本身，
                 // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
-                val isFirstChunk = offset <= SEARCH_CHUNK
+                val isFirstChunk = offset <= SEARCH_WINDOW_ITEMS
                 val snapshot = matches.toList()
                 post {
                     if (reqToken != refreshToken) return@post
@@ -330,8 +339,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private companion object {
         const val TAG = "SearchPanel"
         const val DEBOUNCE_MS = 150L
-        /** 搜索分块大小（每块解密后立即发布） */
-        const val SEARCH_CHUNK = 300
         /** 单次搜索最多扫描的行数（硬保护，防超大库把搜索拖成秒级） */
         const val SEARCH_SCAN_LIMIT = 20_000
         /** 结果列表固定高度（wrap_content 父下保证可滚动） */

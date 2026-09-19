@@ -419,7 +419,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
         )
 
-        /** 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB） */
+        /**
+         * 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB）。
+         *
+         * 注意口径：按**库内密文（base64）体积**计（`LENGTH(encrypted_content)`），
+         * 不是明文字节 —— base64 膨胀约 4/3，故 100 MB 预算约对应 **73 MB 明文**。
+         */
         const val DEFAULT_MAX_TOTAL_BYTES = 100L * 1024 * 1024
 
         /**

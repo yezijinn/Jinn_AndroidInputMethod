@@ -93,4 +93,33 @@ class ClipboardLimitsTest {
     fun 默认总量预算为100MB() {
         assertEquals(100L * 1024 * 1024, ClipboardDb.DEFAULT_MAX_TOTAL_BYTES)
     }
+
+    // ── 解密窗口内存预算护栏 ────────────────────────────────────────────────
+    //
+    // 分页/分块查询会把**整个窗口**逐条解密后才返回，故单次明文峰值 = 窗口条数 × 单条上限。
+    // 这组护栏把「窗口 × 单条上限 ≤ 预算」钉住：调大任何一侧都会被拦下。
+
+    @Test
+    fun 搜索窗口的最坏内存不超过预算() {
+        val peak = ClipboardStore.decryptWindowPeakBytes(SEARCH_WINDOW_ITEMS)
+        assertTrue(
+            "搜索窗口峰值 ${peak / 1024 / 1024}MB 超预算 ${ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES / 1024 / 1024}MB",
+            peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
+        )
+    }
+
+    @Test
+    fun 面板分页窗口同样在预算内() {
+        val peak = ClipboardStore.decryptWindowPeakBytes(PANEL_PAGE_ITEMS)
+        assertTrue("面板分页峰值 $peak 超预算", peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES)
+    }
+
+    @Test
+    fun 护栏能拦下旧的300条窗口() {
+        // 证明护栏有效：旧值 300 × 256KB = 76.8MB，必然越界（若哪天有人调回去，这条会先失败）
+        assertTrue(
+            "300 条窗口应被判超预算",
+            ClipboardStore.decryptWindowPeakBytes(300) > ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
+        )
+    }
 }

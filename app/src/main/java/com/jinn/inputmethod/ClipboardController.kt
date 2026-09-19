@@ -137,8 +137,29 @@ class ClipboardController(context: Context) {
  */
 object ClipboardStore {
 
-    /** 单条上限（UTF-8 字节）：超过**直接不入库**，避免一条巨文本就把库撑到失控 */
+    /**
+     * 单条上限（UTF-8 **明文字节**）：超过**直接不入库**，避免一条巨文本就把库撑到失控。
+     *
+     * 注意口径：本条按**明文**字节算，而总量预算（[ClipboardDb.DEFAULT_MAX_TOTAL_BYTES]）
+     * 按**库内密文**体积算 —— 两者单位不同，不要互相换算成同一个数。
+     * 另：本条只拦**采集**（新复制的内容）；库里既有的超限行不会被它清理，只会被总量预算按最旧非收藏淘汰。
+     */
     const val MAX_ITEM_BYTES = 256 * 1024
+
+    /**
+     * 一次批量解密窗口的内存预算（字节）。
+     *
+     * 分页/分块查询会对**整个窗口**逐条解密后才返回，故最坏内存 = 窗口条数 × [MAX_ITEM_BYTES]。
+     * 由 [decryptWindowPeakBytes] 与 `ClipboardLimitsTest` 共同守住这个上界。
+     */
+    const val DECRYPT_WINDOW_BUDGET_BYTES = 16L * 1024 * 1024
+
+    /**
+     * 批量解密窗口的最坏内存占用（字节，**纯函数**）。
+     * 调用处用「窗口条数 × 单条上限 ≤ [DECRYPT_WINDOW_BUDGET_BYTES]」锁住参数，避免调大窗口时静默抬高内存峰值。
+     */
+    fun decryptWindowPeakBytes(windowItems: Int, maxItemBytes: Int = MAX_ITEM_BYTES): Long =
+        windowItems.toLong() * maxItemBytes.toLong()
 
     /**
      * 文本的 UTF-8 字节数是否超过 [limit]（**纯函数**，便于单测）。
