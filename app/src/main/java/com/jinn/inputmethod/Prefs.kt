@@ -30,10 +30,7 @@ class Prefs(context: Context) {
      * 语音链路属禁改区，所以校验放在配置层，保证交出去的 URL 一定是合法形式。
      */
     var host: String
-        get() {
-            val raw = sp.getString(KEY_HOST, DEFAULT_HOST).orEmpty()
-            return if (isValidHost(raw)) raw else DEFAULT_HOST
-        }
+        get() = normalizeHost(sp.getString(KEY_HOST, DEFAULT_HOST).orEmpty()) ?: DEFAULT_HOST
         set(value) = sp.edit { putString(KEY_HOST, value.trim()) }
 
     /**
@@ -189,7 +186,12 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_VOICE_INPUT, false)
         set(value) = sp.edit { putBoolean(KEY_VOICE_INPUT, value) }
 
-    /** 拼接后的 WebSocket 地址；[host] 与 [port] 的 getter 已保证取值合法 */
+    /**
+     * 拼接后的 WebSocket 地址。
+     *
+     * [host] 与 [port] 的 getter 已保证取值合法（host 经 [normalizeHost] 规范化、port 钳到有效区间），
+     * 因此这里的字面拼接不会再产出 OkHttp 会拒绝的地址。
+     */
     val wsUrl: String get() = "ws://$host:$port"
 
     companion object {
@@ -236,6 +238,18 @@ class Prefs(context: Context) {
             }
 
             return runCatching { ("http://$h:1").toHttpUrlOrNull() }.getOrNull() != null
+        }
+
+        /**
+         * 规范化 host：去首尾空白后校验，非法返回 null。
+         *
+         * 取值方**必须**用它、而不是拿 `isValidHost` 判完就把原串拼进 URL —— 校验内部会 trim，
+         * 但原串没变：存了 `" 192.168.1.3 "` 时会拼出 `ws:// 192.168.1.3 :6016`，
+         * OkHttp 照样抛异常（实测），等于绕过校验把主线程崩溃点留在原地。
+         */
+        fun normalizeHost(raw: String): String? {
+            val h = raw.trim()
+            return if (isValidHost(h)) h else null
         }
 
         private const val KEY_HOST = "host"
