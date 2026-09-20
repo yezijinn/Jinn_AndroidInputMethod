@@ -550,6 +550,12 @@ class SettingsActivity : ComponentActivity() {
 
     private fun onUpdateChecked(result: UpdateChecker.Result) {
         btnCheckUpdate.removeCallbacks(updateDimRunnable)
+        // 检查是后台线程 + 10s 网络超时：结果回来时页面可能已关闭或已重建。
+        // 拿已销毁的 Activity 去 show() 会抛 BadTokenException（主线程崩溃）。
+        if (isFinishing || isDestroyed) {
+            Diagnostics.i(TAG, "检查更新结果已到达，但页面已销毁，跳过弹窗")
+            return
+        }
         updateState = when (result) {
             is UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
             is UpdateChecker.Result.Available -> UpdateState.Available
@@ -650,7 +656,7 @@ class SettingsActivity : ComponentActivity() {
 
     private fun sendImeTest() {
         val text = editImeTest.text?.toString().orEmpty()
-        Diagnostics.i(TAG, "imeTest: 发送文本 \"${text.take(80)}\" (共${text.length}字)")
+        Diagnostics.v(TAG, "imeTest: 发送文本 \"${text.take(80)}\" (共${text.length}字)")
         if (text.isBlank()) {
             textImeReceived.setText(R.string.settings_ime_received_empty)
             return
@@ -707,7 +713,8 @@ class SettingsActivity : ComponentActivity() {
         // 避免用户改完上限点保存却发现没生效。
         saveMaxItems()
 
-        Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} prompt=${prefs.prompt.take(30)}")
+        // 提示词是用户自己写的正文（可能含个人信息），只记长度不记内容
+        Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} promptLen=${prefs.prompt.length}")
         textTest.setText(R.string.settings_restarting)
 
         // SharedPreferences apply 异步落盘：延迟片刻等落盘完成再杀进程，

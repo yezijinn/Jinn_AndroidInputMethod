@@ -41,6 +41,11 @@ class ClipboardClassifierTest {
     fun classifiesVerifyCodeAndOrder() {
         assertEquals(ClipboardClassifier.CATEGORY_NUMBER, ClipboardClassifier.classify("验证码 482913"))
         assertEquals(ClipboardClassifier.CATEGORY_NUMBER, ClipboardClassifier.classify("订单号 20260815001"))
+        // 4~5 位验证码带标签时同样属于数字（下界原先卡在 6 位，与「验证码 4-8 位」的口径不一致）
+        assertEquals(ClipboardClassifier.CATEGORY_NUMBER, ClipboardClassifier.classify("验证码：1234"))
+        assertEquals(ClipboardClassifier.CATEGORY_NUMBER, ClipboardClassifier.classify("验证码 12345"))
+        // 没有关键词的短数字仍归 OTHER：放宽下界不能把普通正文拉进数字分类
+        assertEquals(ClipboardClassifier.CATEGORY_OTHER, ClipboardClassifier.classify("第 1234 章"))
         assertEquals(ClipboardClassifier.CATEGORY_NUMBER, ClipboardClassifier.classify("888666"))
     }
 

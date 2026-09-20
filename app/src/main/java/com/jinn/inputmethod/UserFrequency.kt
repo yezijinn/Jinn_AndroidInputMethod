@@ -289,7 +289,12 @@ internal object UserFrequency {
             val word = parts[0]
             val weight = parts[1].toDoubleOrNull() ?: continue
             val day = parts[2].toIntOrNull() ?: continue
-            if (word.isEmpty() || weight <= 0.0) continue
+            // 非有限值必须挡掉：`"NaN".toDoubleOrNull()` 与 `"Infinity".toDoubleOrNull()` 都**不是**
+            // null（Kotlin 的筛选用正则显式放行了这两个字面量），而 NaN 与任何数比较恒为 false——
+            // 下面的 `weight <= 0.0` 与 `decayed < MIN_WEIGHT` 两条判据会同时失效。脏值进到
+            // [rank] 后更麻烦：`Double.compare` 把 NaN 当最大值，这条权重坏掉的词会永久霸占该
+            // 拼音的首候选（空格取首候选就等于一直上屏它），并被 [render] 原样写回文件、无法自愈。
+            if (word.isEmpty() || !weight.isFinite() || weight <= 0.0) continue
             val decayed = weight * Math.exp(((day - nowDay).coerceAtMost(0)) / 200.0)
             if (decayed < MIN_WEIGHT) continue
             val prev = out[word]

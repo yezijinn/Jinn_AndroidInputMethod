@@ -10,7 +10,7 @@ import android.os.Looper
  *
  * 职责：
  *  - 监听系统剪贴板变化（[addPrimaryClipChangedListener]）；
- *  - 前台 / 自身变化时捕获内容 → 自动分类 → 加密保存到 [ClipboardDb]；
+ *  - 系统剪贴板任何变化（含本 IME 功能面板的「复制选中」）→ 自动分类 → 加密保存到 [ClipboardDb]；
  *  - 依据 Android 版本约束执行「普通模式」的读取边界（API 29+ 只有前台
  *    或本 IME 为前台输入法时才能读取系统剪贴板；API 33+ 系统会弹出
  *    剪贴板访问提示并可能自动清空，本类不绕过这些系统机制）。
@@ -34,13 +34,11 @@ class ClipboardController(context: Context) {
         onClipboardChanged()
     }
 
-    /** 是否应保存到历史：来源为自身 IME 上屏的文本不算「外部剪贴板」，跳过 */
-    @Volatile
-    private var ownCommit = false
-
-    /** ownCommit 置位时间戳：超过 OWN_COMMIT_WINDOW_MS 的标记视为过期（打字后复制不应被误杀） */
-    @Volatile
-    private var ownCommitAt = 0L
+    // 这里**故意没有**「本次变化来自自身，跳过保存」的抑制标记。
+    // 本类是全应用唯一的入库入口，而 IME 侧唯一的 setPrimaryClip（功能面板「复制选中」）
+    // 本就希望被记进历史（见 JinnIme.copySelection）。早先的 ownCommit 标记却被三处
+    // 「粘贴」路径置位 —— 它们都不写系统剪贴板，标记只会被监听侧当成「下一次变化是自身的」
+    // 吞掉一次：粘贴后 3 秒内的**真实复制**会被静默丢弃，历史里根本查不到。
 
     /** 启用：注册系统剪贴板监听。幂等。 */
     fun start() {
@@ -59,25 +57,10 @@ class ClipboardController(context: Context) {
         Diagnostics.i(TAG, "stop: 剪贴板监听已注销")
     }
 
-    /** IME 自身提交文本时调用，标记下一次剪贴板变化来自自身，不保存历史 */
-    fun onOwnCommit() {
-        ownCommit = true
-        ownCommitAt = System.currentTimeMillis()
-    }
-
     private fun onClipboardChanged() {
         // 功能关闭时不入库。此前只有 copySelection 那条路径检查了 enabled，
         // 监听路径无条件保存 —— 用户关掉剪贴板功能后系统复制仍会被记录。
         if (!ClipboardPrefs.of(appContext).enabled) return
-
-        // 只有「短时间内的自身粘贴」才跳过保存；过期的 ownCommit 标记（打字后
-        // 用户手动复制）必须正常保存，否则真实复制会被误杀。
-        if (ownCommit && System.currentTimeMillis() - ownCommitAt <= OWN_COMMIT_WINDOW_MS) {
-            ownCommit = false
-            return
-        }
-        // 过期标记直接清除，不拦截本次复制
-        ownCommit = false
 
         // Android 10+ 后台进程读 primaryClip 可能拿到 null（时序/权限边界）：
         // 监听回调触发时系统可能尚未完成写入，或本进程刚退到后台。
@@ -117,9 +100,6 @@ class ClipboardController(context: Context) {
 
     private companion object {
         const val TAG = "ClipboardController"
-
-        /** 自身写入剪贴板的标记有效期：粘贴写入后短时间内变化才可能是自身的 */
-        const val OWN_COMMIT_WINDOW_MS = 3_000L
 
         /** 空剪贴板的重试延时：等系统把 primaryClip 写完 */
         const val RETRY_DELAY_MS = 250L
@@ -188,6 +168,46 @@ object ClipboardStore {
         if (text.length > limit) return true
         return text.toByteArray(Charsets.UTF_8).size > limit
     }
+
+    /**
+     * 搜索结果**驻留**上限（条数）。
+     *
+     * 搜索是「分块扫描 + 命中即累积」：`SEARCH_WINDOW_ITEMS` 只约束单次解密窗口，
+     * 命中集合却跨全表增长，且每次发布还要再复制一份列表。命中「a」「的」这类
+     * 高频词时集合会吃掉整库的明文字节，直接违背 [DECRYPT_WINDOW_BUDGET_BYTES]
+     * 那条内存护栏。给集合本身也设上限，超了就停止累积。
+     */
+    const val MAX_SEARCH_RESULTS = 200
+
+    /**
+     * 搜索结果驻留的明文字节预算。
+     *
+     * 取 [DECRYPT_WINDOW_BUDGET_BYTES] 的一半：解密窗口是瞬时的，命中集合要一直
+     * 活到用户改关键词，留一半给窗口与 UI 周转。
+     */
+    const val SEARCH_RETAIN_BUDGET_BYTES = DECRYPT_WINDOW_BUDGET_BYTES / 2
+
+    /**
+     * 文本的 UTF-8 字节数（**纯函数**）。
+     *
+     * 驻留/容量这类预算都按 UTF-8 字节算，而 `String.length` 是 **UTF-16 字符数**：
+     * 中文 1 字符在 UTF-8 下占 3 字节，拿长度当字节会把预算低估到 1/3，护栏形同虚设。
+     * 这里与 [exceedsItemLimit] 保持同一口径。
+     */
+    fun utf8ByteSize(text: String): Long = text.toByteArray(Charsets.UTF_8).size.toLong()
+
+    /**
+     * 搜索结果是否该停止累积（**纯函数**，便于单测）。
+     *
+     * 条数与累计明文字节任一触顶即停：只限条数挡不住 200 条 256KB 的巨文本，
+     * 只限字节又会让大量短条目把 UI 列表撑爆。
+     */
+    fun searchRetainLimitReached(
+        matches: Int,
+        retainedBytes: Long,
+        maxResults: Int = MAX_SEARCH_RESULTS,
+        maxBytes: Long = SEARCH_RETAIN_BUDGET_BYTES,
+    ): Boolean = matches >= maxResults || retainedBytes >= maxBytes
 
     /**
      * 保存流程。返回保存的条目 id，未保存返回 null。
