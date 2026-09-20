@@ -38,6 +38,7 @@
     <string name="dict_download_failed">下载失败：%1$s</string>
     <string name="dict_removed">已删除 %1$s</string>
     <string name="dict_remove_failed">删除失败</string>
+    <string name="dict_remove_busy">正在下载，无法删除</string>
     <string name="dict_need_restart">正在重启输入法以生效…</string>
     <string name="hint_release_send">松手发送 · 上滑取消</string>
     <string name="hint_release_cancel">松手即取消</string>

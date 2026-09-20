@@ -89,7 +89,15 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 当前分类的总条数（分页编号用：序号 = 分类总数 − 位置，与全局条目数无关） */
     private var categoryTotal = 0
 
-    /** 已加载的偏移量（= currentItems.size）与是否还有下一页 */
+    /**
+     * 下一页的 SQL OFFSET。
+     *
+     * 必须取查询回带的原始行游标，不能拿 [currentItems] 的条数顶替——解密失败的行
+     * 不进列表但仍占游标位，用条数当偏移会让下一页重复取到已显示的行、并把尾部行跳过。
+     */
+    private var nextPageOffset = 0
+
+    /** 是否还有下一页 */
     private var hasMorePages = false
 
     /** 分页加载是否进行中（滚动到底触发时防重入） */
@@ -202,13 +210,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setBackgroundColor(context.getColor(R.color.app_bg))
             adapter = this@ClipboardPanelView.adapter
         }
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            val item = currentItems.getOrNull(pos)
-            if (item != null) handleItemClick(item)
+        // 身份取值：优先用**被点中那一行渲染时写入的稳定 id**，取不到才退回当前列表下标。
+        // 只按下标取，会在「列表已被刷新整体替换、这一帧还没重绘」的窗口里粘错条目 ——
+        // 用户看到的仍是旧行的文字，取到的却是新列表同下标的条目（类头的身份不变量即此）。
+        fun itemAt(pos: Int, view: View?): ClipboardDb.Item? {
+            val renderedId = (view?.tag as? Holder)?.itemId ?: -1L
+            return currentItems.firstOrNull { it.id == renderedId } ?: currentItems.getOrNull(pos)
         }
-        listView.setOnItemLongClickListener { _, _, pos, _ ->
-            val item = currentItems.getOrNull(pos)
-            if (item != null) showItemMenu(item)
+        listView.setOnItemClickListener { _, view, pos, _ ->
+            itemAt(pos, view)?.let { handleItemClick(it) }
+        }
+        listView.setOnItemLongClickListener { _, view, pos, _ ->
+            itemAt(pos, view)?.let { showItemMenu(it) }
             true
         }
         listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
@@ -284,6 +297,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     // ── 分类 ──────────────────────────────────────────────
 
     private fun selectCategory(category: String?) {
+        // 切分类必须收起操作条：longPressItem 指向的条目可能不在新分类里（列表里再也看不到它），
+        // 此时点「删除 / 收藏」作用的是**看不见的条目** —— 删除后用户不知道丢的是哪一条。
+        hideActionBar()
         currentCategory = category
         val selected = currentCategory
         for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
@@ -312,18 +328,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 分页加载：COUNT 不解密，解密只覆盖第一页（PANEL_PAGE_ITEMS）
             val filter = ClipboardFilter.of(category)
             val total = db.count(filter.category, filter.favoritesOnly)
-            val page = db.recentPage(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+            val page = db.recentPageWithOffset(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
             Diagnostics.i(
                 TAG,
-                "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.size} " +
+                "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.items.size} " +
                     "thread=${Thread.currentThread().name}",
             )
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
                 categoryTotal = total
-                currentItems = page.toMutableList()
-                hasMorePages = page.size < total
+                currentItems = page.items.toMutableList()
+                nextPageOffset = page.nextOffset
+                hasMorePages = page.nextOffset < total
                 adapter.notifyDataSetChanged()
                 updateEmpty()
                 // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
@@ -349,23 +366,24 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun loadNextPage() {
         if (loadingPage || !hasMorePages) return
         val category = currentCategory
-        val offset = currentItems.size
+        val offset = nextPageOffset
         val reqToken = refreshToken
         loadingPage = true
         BackgroundIo.run {
             val filter = ClipboardFilter.of(category)
-            val page = db.recentPage(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+            val page = db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
-                if (page.isEmpty()) {
-                    hasMorePages = false
-                    return@post
+                // 判停用游标而非本页条数：整页解密失败时 items 为空但后面仍有内容，
+                // 以空页判停会让用户再也翻不到后面的条目。
+                if (page.nextOffset > offset) {
+                    currentItems.addAll(page.items)
+                    nextPageOffset = page.nextOffset
                 }
-                currentItems.addAll(page)
-                hasMorePages = currentItems.size < categoryTotal
+                hasMorePages = page.nextOffset > offset && page.nextOffset < categoryTotal
                 adapter.notifyDataSetChanged()
-                Diagnostics.i(TAG, "分页加载: offset=$offset +${page.size} hasMore=$hasMorePages")
+                Diagnostics.i(TAG, "分页加载: offset=$offset +${page.items.size} next=${page.nextOffset} hasMore=$hasMorePages")
             }
         }
     }
@@ -396,6 +414,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 长按条目：显示内联操作条（收藏/删除）。IME 内无窗口 token，不用 AlertDialog。 */
     private fun showItemMenu(item: ClipboardDb.Item) {
+        // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
+        hideConfirmBar()
         longPressItem = item
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
         actionBar.visibility = View.VISIBLE
@@ -407,20 +427,38 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         longPressItem = null
     }
 
+    /**
+     * 长按操作：写库一律走 [BackgroundIo]。
+     *
+     * `setFavorite`/`delete` 内部 `getWritableDatabase` 会做磁盘 IO 与锁竞争，
+     * 在大库或 checkpoint 触发时可达秒级——放在触摸回调里就是主线程 IO，
+     * 与同文件「清空」走后台的处理方式不一致（那是漏实现，不是有意）。
+     */
     private fun toggleFavorite() {
         val item = longPressItem ?: return
-        db.setFavorite(item.id, !item.isFavorite)
-        Diagnostics.i(TAG, "[$currentTraceId] 长按操作: 收藏切换 id=${item.id}")
-        hideActionBar()
-        refresh()
+        val favorite = !item.isFavorite
+        val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
+        BackgroundIo.run {
+            db.setFavorite(item.id, favorite)
+            Diagnostics.i(TAG, "[$tid] 长按操作: 收藏切换 id=${item.id}")
+            post {
+                hideActionBar()
+                refresh()
+            }
+        }
     }
 
     private fun deleteItem() {
         val item = longPressItem ?: return
-        db.delete(item.id)
-        Diagnostics.i(TAG, "[$currentTraceId] 长按操作: 删除 id=${item.id}")
-        hideActionBar()
-        refresh(resetScroll = true)
+        val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
+        BackgroundIo.run {
+            db.delete(item.id)
+            Diagnostics.i(TAG, "[$tid] 长按操作: 删除 id=${item.id}")
+            post {
+                hideActionBar()
+                refresh(resetScroll = true)
+            }
+        }
     }
 
     // ── 清空二次确认 ──────────────────────────────────────

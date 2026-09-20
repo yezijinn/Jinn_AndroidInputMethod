@@ -22,7 +22,9 @@ class CandidateCountBoundTest {
         PinyinEngine.resetForTest()
         // 模拟真实单字表的量级：常用音节下挂着大量单字
         // （真实数据：yi 326 字、ni 数十字，93 个音节超过引擎的 MAX_CHARS=60）
-        val manyChars = (1..70).joinToString(",") { "字$it" }
+        // ⚠ 条目必须是**单个字符**：这是单字表，加载期会丢掉多字符 token
+        // （早先用 `字1` 这类两字符串条目，与真实表不符，长度判据补齐后被挡下）。
+        val manyChars = (0x4E00..0x4E45).joinToString(",") { it.toChar().toString() }
         PinyinEngine.loadFromTexts(
             chars = """
                 ni	$manyChars

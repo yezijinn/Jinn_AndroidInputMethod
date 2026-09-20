@@ -104,13 +104,44 @@ object UpdateChecker {
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 Diagnostics.w(TAG, "HTTP ${conn.responseCode}: $url")
                 null
+            } else if (!conn.url.protocol.equals("https", ignoreCase = true)) {
+                // HttpURLConnection 默认跟随**跨协议**重定向，https 起点也可能被
+                // 带到 http 终点（内容可被中间人改写）。更新检查只认 https 终态。
+                Diagnostics.w(TAG, "重定向后非 HTTPS，拒绝: ${conn.url}")
+                null
             } else {
-                conn.inputStream.bufferedReader().use { it.readText() }
+                // 限长读取：响应体没有上限时，一个「一直有数据、永不结束」的响应
+                // 能在 readTimeout 内累积到几十 MB（/tags 页正常只有几百 KB）。
+                conn.inputStream.bufferedReader().use { readCapped(it) }
             }
         } finally {
             conn.disconnect()
         }
     }
 
+    /**
+     * 带上限的读取（**纯逻辑**，便于单测）。
+     *
+     * 超出 [MAX_BODY_CHARS] 的字符直接丢弃、停止读取：更新检查只需要 tag 名，
+     * 而 tag 一定出现在页面前部，截断不影响判定。
+     *
+     * 注意截断按**行**判定（整行超限就整行不要）：真遇到「单行就超过 1MB」的响应会返回空串，
+     * 结果是走「两个源都拉不到」分支报网络异常（不会误报成「已最新」），可以接受。
+     */
+    internal fun readCapped(reader: java.io.BufferedReader, maxChars: Int = MAX_BODY_CHARS): String {
+        val sb = StringBuilder(minOf(maxChars, 8192))
+        var total = 0
+        while (true) {
+            val line = reader.readLine() ?: break
+            total += line.length + 1
+            if (total > maxChars) break
+            sb.append(line).append('\n')
+        }
+        return sb.toString()
+    }
+
     private const val TAG = "UpdateChecker"
+
+    /** tags 页 / tags API 的响应上限（字符）：正常响应几百 KB，1MB 留足余量 */
+    private const val MAX_BODY_CHARS = 1_000_000
 }

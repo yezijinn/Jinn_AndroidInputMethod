@@ -54,4 +54,18 @@ class SymbolLayoutTest {
         assertTrue("标点组至少应有 2 页", punct.pages.size >= 2)
         assertEquals("〈", punct.pages[1]['g'])
     }
+
+    @Test
+    fun 特殊组天气页不得混入汉字() {
+        // 回归：「特殊」组第 2 页（天气 / 天文 / 行星符号）的 k、l 键曾被误录成汉字
+        // 「由」「白」—— 与本页其余条目（☀ ☁ ❄ ☿ ♄ ♁ ☛ …）完全不是一类。
+        // 字符集错位不会引发任何编译或运行错误，只有真机上屏才会暴露，故用护栏钉住。
+        val special = SYMBOL_GROUPS.first { it.label == "特殊" }
+        assertTrue("特殊组至少应有 2 页", special.pages.size >= 2)
+        val page = special.pages[1]
+        val cjk = page.filterValues { v -> v.any { it.code in 0x4E00..0x9FFF } }
+        assertEquals("特殊组第 2 页混入了汉字（应为本页同类的符号）: $cjk", emptyMap<Char, String>(), cjk)
+        assertEquals("♃", page['k'])
+        assertEquals("♅", page['l'])
+    }
 }

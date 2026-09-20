@@ -3,9 +3,10 @@ package com.jinn.inputmethod
 /**
  * 可选词库清单 —— 「分类词库」页展示与下载的依据。
  *
- * 新增一类词库只需两步：
+ * 新增一类词库只需三步：
  *  1. 在此加一条记录（fileName 必须与 Release 附件名一致）
- *  2. 把文件传到 GitHub / Gitee 的 Release
+ *  2. 把文件传到 GitHub / Gitee 的 Release（**两端必须是同一份字节**）
+ *  3. 填入该文件的 SHA-256（[checksum]），下载侧会逐字节校验后才收下
  *
  * 下装后落在 `filesDir/dicts/<fileName>`，引擎启动时自动扫描加载
  * （见 [PinyinEngine.OPT_DICT_DIR]）。加载是**延迟**的：基础词库就绪后
@@ -35,6 +36,15 @@ data class OptionalDict(
     val startupSec: Int,
     /** 下载源，按顺序尝试（Gitee 国内快，GitHub 备用） */
     val urls: List<String>,
+    /**
+     * 该包**未压缩文件**的 SHA-256（小写 64 位十六进制）。
+     *
+     * 下载完成后逐字节校验，不一致即丢弃：词库内容会直接变成候选词上屏到任意
+     * 输入框，没有完整性校验时，一次被替换的 Release 附件或被劫持的重定向
+     * 就等于拿到了「往用户每一次输入里塞词」的能力。
+     * 两个源必须落同一个摘要——否则换源下载必然校验失败（实测两端字节一致）。
+     */
+    val checksum: String,
 )
 
 object OptionalDicts {
@@ -65,6 +75,7 @@ object OptionalDicts {
                 "$GITEE/$TAG_EXT/dict_ext.txt.xz",
                 "$GITHUB/$TAG_EXT/dict_ext.txt.xz",
             ),
+            checksum = "f831f41101b555d2f7a54648b3cd3507b55333a7637914a65882c678cce8e5b1",
         ),
         OptionalDict(
             fileName = "opt_tencent.xz",
@@ -80,9 +91,39 @@ object OptionalDicts {
                 "$GITEE/$TAG_TENCENT/opt_tencent.txt.xz",
                 "$GITHUB/$TAG_TENCENT/opt_tencent.txt.xz",
             ),
+            checksum = "622b0ea87fb08afd87eadf72e055a8377e2f008da20e1c2a3d819599302146ea",
         ),
     )
 
     /** 按落地文件名查清单项（用于已装列表回显名称） */
     fun byFileName(fileName: String): OptionalDict? = ALL.firstOrNull { it.fileName == fileName }
+
+    /**
+     * 流式计算文件的 SHA-256（**纯 IO 逻辑**，便于 JVM 单测）。
+     *
+     * 边读边更新摘要，不把整个文件读进内存（现役最大包 6.36MB，往后可能更大）。
+     * 失败返回 null，由调用方决定重试还是拒收。
+     */
+    fun sha256Of(file: java.io.File): String? = runCatching {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val buf = ByteArray(DEFAULT_BUFFER_SIZE)
+        file.inputStream().use { input ->
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+
+    /**
+     * 校验文件摘要是否与 [expected] 一致（**纯函数**）。
+     *
+     * 判据不含「空串放行」：清单里每一条都必须带摘要，缺失即视为失败——
+     * 否则新增词库时漏填 checksum 会让整条校验链形同虚设。
+     */
+    fun matchesChecksum(actual: String?, expected: String): Boolean =
+        expected.length == 64 && expected.all { it.isDigit() || it in 'a'..'f' } &&
+            actual != null && actual.equals(expected, ignoreCase = true)
 }

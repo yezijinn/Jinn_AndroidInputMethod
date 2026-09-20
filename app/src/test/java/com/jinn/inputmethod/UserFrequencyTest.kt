@@ -131,6 +131,34 @@ class UserFrequencyTest {
         assertEquals(setOf("好词"), parsed.keys)
     }
 
+    /**
+     * 非有限权重必须当脏数据丢掉。
+     *
+     * 回归：`"NaN".toDoubleOrNull()` / `"Infinity".toDoubleOrNull()` 都**不是** null
+     * （Kotlin 的取值筛选用正则显式放行这两个字面量），而 NaN 与任何数比较恒为 false，
+     * 于是 `weight <= 0.0` 与 `decayed < MIN_WEIGHT` 两条判据同时失效、脏值一路进到
+     * [UserFrequency.rank]；`Double.compare` 又把 NaN 视为最大值 —— 这条坏词会永久
+     * 霸占该拼音的首候选（空格取首候选等于一直上屏它），并被 render 原样写回文件。
+     */
+    @Test
+    fun 非有限权重被当作脏数据丢弃() {
+        UserFrequency.resetForTest()
+        val text = buildString {
+            append("# jinn user_freq v1\n")
+            append("NaN词\tNaN\t100\n")
+            append("无穷词\tInfinity\t100\n")
+            append("负无穷词\t-Infinity\t100\n")
+            append("正常词\t2.0\t100\n")
+        }
+        val parsed = UserFrequency.parse(text, 100)
+        assertEquals(setOf("正常词"), parsed.keys)
+        // 排序侧同样不受影响：坏词根本没进来
+        assertArrayEquals(
+            arrayOf("NaN词", "正常词"),
+            UserFrequency.rank(arrayOf("NaN词", "正常词")),
+        )
+    }
+
     // ── 开关 ────────────────────────────────────────────────────────────────
 
     @Test

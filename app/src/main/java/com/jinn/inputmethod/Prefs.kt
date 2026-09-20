@@ -124,8 +124,16 @@ class Prefs(context: Context) {
      * 默认 26 键全拼中文（用户诉求：初始布局为 26 键全拼）。
      */
     var defaultKeyboardMode: Int
-        get() = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
-        set(value) = sp.edit { putInt(KEY_DEFAULT_MODE, value) }
+        get() {
+            // 越界值（旧版本/外部写入）会让 JinnIme 建视图时的 when 落到 else 分支，
+            // 默认键盘变成语音键盘 —— 与「默认 26 键全拼」的约定正好相反。
+            val v = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
+            return v.takeIf { it in DefaultKeyboardMode.VOICE..DefaultKeyboardMode.PINYIN_EN }
+                ?: DefaultKeyboardMode.PINYIN_CN
+        }
+        set(value) = sp.edit {
+            putInt(KEY_DEFAULT_MODE, value.coerceIn(DefaultKeyboardMode.VOICE, DefaultKeyboardMode.PINYIN_EN))
+        }
 
     /**
      * 显示生僻字（默认关闭）。

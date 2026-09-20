@@ -229,4 +229,42 @@ class TextSelectionTest {
         assertEquals(0, TextSelection.lineStart("abc", 0))
         assertEquals(0, TextSelection.lineStart("abc", 1))
     }
+
+    // ── 窗口文本：绝对下标 ↔ 窗口内下标 ────────────────────
+
+    @Test
+    fun windowOffsetIsIdentityWhenWholeTextReturned() {
+        // 整篇返回（大多少数输入框）：startOffset == 0，换算必须恒等 —— 这条保证本次
+        // 修复对常见路径**零行为变化**。
+        for (abs in 0..10) {
+            assertEquals(abs, TextSelection.toWindowOffset(abs, startOffset = 0, windowLength = 10))
+        }
+    }
+
+    @Test
+    fun windowOffsetMapsIntoWindowAndRejectsOutside() {
+        // 窗口 = 全文 [400, 800)
+        assertEquals(0, TextSelection.toWindowOffset(400, 400, 400))
+        assertEquals(200, TextSelection.toWindowOffset(600, 400, 400))
+        assertEquals("窗口末端也算窗口内", 400, TextSelection.toWindowOffset(800, 400, 400))
+        // 落在窗口之外：无从计算，必须返回 null（调用方据此放弃本次操作）
+        assertEquals("窗口之前", null, TextSelection.toWindowOffset(399, 400, 400))
+        assertEquals("窗口之后", null, TextSelection.toWindowOffset(801, 400, 400))
+        // 回归：长文档里光标在窗口外时，旧实现会拿绝对下标去索引窗口文本 ——
+        // 行末/行移动越界后返回「窗口长度」那个绝对下标，光标看起来是跳到别处
+        assertEquals(null, TextSelection.toWindowOffset(900, 400, 400))
+        assertEquals(null, TextSelection.toWindowOffset(5, startOffset = -1, windowLength = 10))
+        assertEquals(null, TextSelection.toWindowOffset(5, 0, windowLength = -1))
+    }
+
+    @Test
+    fun externalSelectionChangeOnlyWhenNotOurs() {
+        // 我们自己刚设的选区：回调值与我们记的一致 → 不算外部变化（拖选要继续）
+        assertEquals(false, TextSelection.isExternalSelectionChange(10, 20, 10 to 20))
+        // 宿主改的：值不一致 → 外部变化（拖选 Anchor/Focus 失效）
+        assertEquals(true, TextSelection.isExternalSelectionChange(30, 30, 10 to 20))
+        assertEquals(true, TextSelection.isExternalSelectionChange(10, 21, 10 to 20))
+        // 没有待放行的期望值 → 一律当外部变化
+        assertEquals(true, TextSelection.isExternalSelectionChange(10, 20, null))
+    }
 }

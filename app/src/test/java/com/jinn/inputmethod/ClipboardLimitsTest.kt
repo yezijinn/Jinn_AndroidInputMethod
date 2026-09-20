@@ -137,4 +137,34 @@ class ClipboardLimitsTest {
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(-5))
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(10, maxItemBytes = 0))
     }
+
+    // ── 搜索驻留预算的口径 ──────────────────────────────────────────────────
+    //
+    // 命中集合要一直活到用户改关键词，所以有独立的驻留预算。预算按 **UTF-8 字节** 算，
+    // 而 String.length 是 UTF-16 字符数 —— 中文下 1 字符 = 3 字节，字符数当字节用会把
+    // 预算低估到 1/3（200 条顶格中文实际能驻留 ~52MB 而账上只有 17MB）。
+
+    @Test
+    fun UTF8字节数与字符数在中英文下不同() {
+        assertEquals(3L, ClipboardStore.utf8ByteSize("汉"))
+        assertEquals(1L, ClipboardStore.utf8ByteSize("a"))
+        assertEquals(0L, ClipboardStore.utf8ByteSize(""))
+    }
+
+    @Test
+    fun 驻留预算按字节判定时中文不会低估() {
+        // 同一批中文内容：按字节判已经触顶，按字符判还差得远 —— 后者正是护栏失效的原因
+        val cjk = "汉".repeat(1000)          // 1000 字符 / 3000 字节
+        val byBytes = ClipboardStore.utf8ByteSize(cjk)
+        assertEquals(3000L, byBytes)
+        assertTrue("按字节应触顶", ClipboardStore.searchRetainLimitReached(1, byBytes, maxBytes = 3000))
+        assertFalse("按字符数会漏判", ClipboardStore.searchRetainLimitReached(1, cjk.length.toLong(), maxBytes = 3000))
+    }
+
+    @Test
+    fun 驻留预算条数与字节任一触顶即停() {
+        assertFalse(ClipboardStore.searchRetainLimitReached(0, 0))
+        assertTrue(ClipboardStore.searchRetainLimitReached(ClipboardStore.MAX_SEARCH_RESULTS, 0))
+        assertTrue(ClipboardStore.searchRetainLimitReached(0, ClipboardStore.SEARCH_RETAIN_BUDGET_BYTES))
+    }
 }
