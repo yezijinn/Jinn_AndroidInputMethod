@@ -29,6 +29,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(createTableSql())
         db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
+        // content_hash 唯一索引原先只在升级路径（v4 / v5）里建，全新安装拿不到它：
+        // 两条安装路径的 schema 必须一致 —— 少了它，「同一内容不重复」就只剩 upsert 里
+        // 的 findIdByHash 一处代码保证，库层本可以兜住；入库查找也会退化成全表扫描。
+        db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -274,6 +278,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      */
     private fun trimByByteBudget(maxTotalBytes: Long) {
         if (maxTotalBytes <= 0) return
+        // 先算总量再决定要不要细化：不超时直接返回，避免每次复制都把全表行拉到 Java 侧
+        // （本方法是每次入库都走的 hot path，行数是 O(n)）。
+        val total = readableDatabase.rawQuery(
+            "SELECT SUM(LENGTH(encrypted_content)) FROM $TABLE_ITEMS", null
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+        if (total <= maxTotalBytes) return
         val rows = ArrayList<ClipboardRowSize>()
         readableDatabase.rawQuery(
             "SELECT id, LENGTH(encrypted_content), is_favorite FROM $TABLE_ITEMS " +
@@ -335,8 +345,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         limit: Int,
         category: String? = null,
         favoritesOnly: Boolean = false,
-    ): List<Item> {
-        if (limit <= 0 || offset < 0) return emptyList()
+    ): List<Item> = recentPageWithOffset(offset, limit, category, favoritesOnly).items
+
+    /**
+     * 分页读取记录（新→旧），只解密本页 [limit] 条，并带回下一页的游标位置。
+     *
+     * **游标口径**：[Page.nextOffset] 是**实际扫描过的原始行数**，不是解密成功的条数。
+     * [readItem] 遇到解密失败的行会跳过，两者一旦混用就会错位——调用方普遍拿
+     * 「已加载条数」当 OFFSET，只要首页有 1 条解密失败，下一页就会重复取到已显示的行、
+     * 并把尾部行永久跳过。分页必须改用 [Page.nextOffset]。
+     */
+    fun recentPageWithOffset(
+        offset: Int,
+        limit: Int,
+        category: String? = null,
+        favoritesOnly: Boolean = false,
+    ): Page {
+        if (limit <= 0 || offset < 0) return Page(emptyList(), offset)
         val (where, args) = whereClause(category, favoritesOnly)
         val c = readableDatabase.rawQuery(
             "SELECT $selectCols FROM $TABLE_ITEMS WHERE $where " +
@@ -346,9 +371,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         c.use { cur ->
             val out = ArrayList<Item>(limit)
             while (cur.moveToNext()) readItem(cur)?.let { out.add(it) }
-            return out
+            return Page(out, offset + cur.count)
         }
     }
+
+    /** 一页查询结果：[items] 为解密成功的条目，[nextOffset] 为下一页的 SQL OFFSET */
+    data class Page(val items: List<Item>, val nextOffset: Int)
 
     /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏/隐私过滤） */
     fun count(
@@ -364,24 +392,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
-
-    /**
-     * 按 id 读取单条记录的**正文**（解密后明文）。
-     *
-     * 供 IME 处理「点击记录粘贴」广播时使用：广播**不携带正文**——
-     * Binder 事务上限约 1MB，长文本（长文章/日志/大段代码）会让
-     * `sendBroadcast` 抛 `TransactionTooLargeException` 直接崩溃。
-     * 改由这里按 id 取回。
-     *
-     * 注意：本方法含读库 + AES 解密，**必须在 [BackgroundIo] 线程调用**。
-     */
-    fun contentById(id: Long): String? {
-        if (id <= 0) return null
-        return readableDatabase.rawQuery(
-            "SELECT $selectCols FROM $TABLE_ITEMS WHERE id = ? LIMIT 1",
-            arrayOf(id.toString())
-        ).use { c -> if (c.moveToNext()) readItem(c)?.content else null }
-    }
 
     // ── 内部 ──────────────────────────────────────────────
 

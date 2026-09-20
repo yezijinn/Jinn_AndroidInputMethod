@@ -18,4 +18,20 @@
     <exclude
         domain="database"
         path="jinn_clipboard.db-shm" />
+    <!-- 用户词频：明文记录用户选过的词（含姓名、地址、账号等），必须排除。
+         它比剪贴板库更"可读"（后者有 Keystore 加密兜底），不能漏。 -->
+    <exclude
+        domain="file"
+        path="user_freq.txt" />
+    <exclude
+        domain="file"
+        path="user_freq.txt.tmp" />
+    <!-- 配置：含自建服务端地址/端口、提示词（用户自己写的正文）、双拼方案等，
+         与剪贴板库、词频一样不该随备份出炉。 -->
+    <exclude
+        domain="sharedpref"
+        path="jinn_inputmethod.xml" />
+    <exclude
+        domain="sharedpref"
+        path="jinn_clipboard.xml" />
 </full-backup-content>

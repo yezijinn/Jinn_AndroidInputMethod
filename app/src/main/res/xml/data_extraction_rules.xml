@@ -9,10 +9,54 @@
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
+        <!-- SQLite 在 WAL 模式下会把最近提交写在 -wal 里，-journal/-shm 同理：
+             只排除主库文件会漏掉这部分（backup_rules.xml 已排除这三项，这里必须同步）。 -->
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-journal" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-wal" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-shm" />
+        <exclude
+            domain="file"
+            path="user_freq.txt" />
+        <exclude
+            domain="file"
+            path="user_freq.txt.tmp" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_inputmethod.xml" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_clipboard.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-journal" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-wal" />
+        <exclude
+            domain="database"
+            path="jinn_clipboard.db-shm" />
+        <exclude
+            domain="file"
+            path="user_freq.txt" />
+        <exclude
+            domain="file"
+            path="user_freq.txt.tmp" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_inputmethod.xml" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_clipboard.xml" />
     </device-transfer>
 </data-extraction-rules>

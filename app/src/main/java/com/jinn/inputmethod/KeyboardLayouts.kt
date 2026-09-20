@@ -154,7 +154,9 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'q' to "☀", 'w' to "☁", 'e' to "☂", 'r' to "❄", 't' to "☃",
             'y' to "☎", 'u' to "✉", 'i' to "✈", 'o' to "⚓", 'p' to "⚑",
             'a' to "❤", 's' to "☻", 'd' to "☼", 'f' to "☽", 'g' to "♨",
-            'h' to "☿", 'j' to "♄", 'k' to "由", 'l' to "白",
+            // 行星符号：本页其余条目都是天气/天文/符号类，早前这里误录成汉字「由」「白」
+            // （见 SymbolLayoutTest 的回归用例）；k/l 补上同行序列缺的木星与天王星符号。
+            'h' to "☿", 'j' to "♄", 'k' to "♃", 'l' to "♅",
             'z' to "☘", 'x' to "♁", 'c' to "☛", 'v' to "☚", 'b' to "➜",
             'n' to "⏏", 'm' to "※",
         ),

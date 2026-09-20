@@ -388,11 +388,11 @@ internal class PhraseIndex private constructor(
             var p = HEADER_SIZE
             val keysStart = p
             p += keysLen
-            val keyOffsets = expandLengths(buf, p, keyCount, 1)
+            val keyOffsets = expandLengths(buf, p, keyCount, 1) ?: return null
             p += keyCount
             val wordsStart = p
             p += wordsLen
-            val wordOffsets = expandLengths(buf, p, keyCount, 2)
+            val wordOffsets = expandLengths(buf, p, keyCount, 2) ?: return null
             p += keyCount * 2
 
             // 自洽性：长度数组拼出的总长必须与头部声明一致
@@ -410,23 +410,29 @@ internal class PhraseIndex private constructor(
                 ((b.get(o + 2).toInt() and 0xFF) shl 16) or ((b.get(o + 3).toInt() and 0xFF) shl 24)
 
         /**
-         * 把长度数组展开成前缀和偏移数组（v2）。
+         * 把长度数组展开成前缀和偏移数组（v2）；累加越界返回 null（调用方据此拒绝该文件）。
          *
-         * @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
+         * - @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
+         *
+         * 注意：累加必须用 Long 判溢出。每项最大 255/65535，条目数又只被 `need == capacity`
+         * 松散约束（大索引可达千万级），Int 累加会静默回绕成负数 —— 负值随后被当成合法偏移，
+         * 既可能让 `keyOffsets[keyCount] != keysLen` 的自洽校验失效，也可能在切片时越界。
          */
-        fun expandLengths(b: java.nio.ByteBuffer, start: Int, count: Int, width: Int): IntArray {
+        fun expandLengths(b: java.nio.ByteBuffer, start: Int, count: Int, width: Int): IntArray? {
             val out = IntArray(count + 1)
-            var acc = 0
+            var acc = 0L
             if (width == 1) {
                 for (i in 0 until count) {
-                    acc += b.get(start + i).toInt() and 0xFF
-                    out[i + 1] = acc
+                    acc += b.get(start + i).toLong() and 0xFFL
+                    if (acc > Int.MAX_VALUE) return null
+                    out[i + 1] = acc.toInt()
                 }
             } else {
                 for (i in 0 until count) {
-                    acc += (b.get(start + i * 2).toInt() and 0xFF) or
-                        ((b.get(start + i * 2 + 1).toInt() and 0xFF) shl 8)
-                    out[i + 1] = acc
+                    acc += ((b.get(start + i * 2).toLong() and 0xFFL) or
+                        ((b.get(start + i * 2 + 1).toLong() and 0xFFL) shl 8))
+                    if (acc > Int.MAX_VALUE) return null
+                    out[i + 1] = acc.toInt()
                 }
             }
             return out

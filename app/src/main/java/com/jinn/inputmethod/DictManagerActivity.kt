@@ -34,8 +34,16 @@ class DictManagerActivity : Activity() {
     private lateinit var listHost: LinearLayout
     private lateinit var textStatus: TextView
 
-    /** 正在下载的文件名，用于禁用按钮与显示进度（null 表示空闲） */
-    private var downloading: String? = null
+    /**
+     * 正在下载的文件名，用于禁用按钮与显示进度（null 表示空闲）。
+     *
+     * 存在 companion 里：Activity 会因旋转/重建换成新实例，实例字段随即丢失，
+     * 新页面的「下载」按钮恢复可点 —— 再点一次就是第二个线程写同一个 `.tmp`，
+     * 字节交错后被 renameTo 成「有效」词库。跨线程写，故 @Volatile。
+     */
+    private var downloading: String?
+        get() = activeDownload
+        set(value) { activeDownload = value }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -260,7 +268,7 @@ class DictManagerActivity : Activity() {
             var ok = false
             for (url in dict.urls) {
                 runCatching {
-                    val len = fetchToFile(url, dict.fileName)
+                    val len = fetchToFile(url, dict.fileName, dict.checksum)
                     Diagnostics.i(TAG, "分类词库下载成功: ${dict.fileName} ($len B) url=$url")
                     ok = true
                 }.onFailure {
@@ -294,11 +302,16 @@ class DictManagerActivity : Activity() {
     }
 
     /**
-     * 下载到临时文件再改名 —— 避免中途失败留下半个文件被引擎当作有效词库加载
+     * 下载到临时文件、校验 SHA-256 后再改名 —— 避免中途失败留下半个文件被引擎当作有效词库加载
      * （引擎只认 `.xz` 结尾，`X.xz.tmp` 不会被扫到，但失败时仍会残留占空间，所以显式清理）。
      * 返回写入字节数。
+     *
+     * **摘要校验是收下的唯一判据**：词库内容会直接变成候选词上屏到任意输入框，
+     * 只要有一处环节能改字节（被替换的 Release 附件、被劫持的重定向、传输截断），
+     * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时**绝不改名**，
+     * 旧版本（若存在）保持不变，临时文件立即删除。
      */
-    private fun fetchToFile(url: String, fileName: String): Long {
+    private fun fetchToFile(url: String, fileName: String, checksum: String): Long {
         val dir = File(filesDir, PinyinEngine.OPT_DICT_DIR).apply { mkdirs() }
         val tmp = File(dir, "$fileName.tmp")
         val dst = File(dir, fileName)
@@ -308,13 +321,22 @@ class DictManagerActivity : Activity() {
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
                 .followRedirects(true)
+                // 禁止 https→http 降级：Manifest 全局开了 usesCleartextTraffic，
+                // OkHttp 默认 followSslRedirects=true 会跟随这种跳转，一次 302
+                // 就能把词库下载降到明文 HTTP（同网段 MITM 改内容即可注入任意候选词）。
+                .followSslRedirects(false)
                 .build()
             client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 val body = resp.body ?: error("响应为空")
                 body.byteStream().use { input ->
-                    tmp.outputStream().use { out -> input.copyTo(out) }
+                    tmp.outputStream().use { out -> copyCapped(input, out) }
                 }
+            }
+            // 校验必须在改名**之前**：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。
+            val actual = OptionalDicts.sha256Of(tmp)
+            if (!OptionalDicts.matchesChecksum(actual, checksum)) {
+                error("文件校验失败（期望 $checksum，实际 $actual），已丢弃")
             }
             if (dst.exists()) dst.delete()
             if (!tmp.renameTo(dst)) error("写入失败")
@@ -327,7 +349,39 @@ class DictManagerActivity : Activity() {
         }
     }
 
+    /**
+     * 带上限的流拷贝，超过 [MAX_DOWNLOAD_BYTES] 立即抛错（临时文件由调用方清理）。
+     *
+     * 下载 URL 是固定的 Release 附件，但 `followRedirects(true)` 会把请求交给目标主机
+     * 继续指路：没有上限时，一个「一直有数据、永不结束」的响应足以写满用户存储。
+     * 上限取现役最大包（6.36MB）的约 10 倍，正常包碰不到线。
+     */
+    private fun copyCapped(input: java.io.InputStream, out: java.io.OutputStream) {
+        val buf = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val n = input.read(buf)
+            if (n <= 0) break
+            total += n
+            if (total > MAX_DOWNLOAD_BYTES) {
+                error("响应超过上限 ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB，已中止")
+            }
+            out.write(buf, 0, n)
+        }
+    }
+
+    /**
+     * 删除已装词库。
+     *
+     * 下载进行中一律拒绝：下载线程是「写 `.xz.tmp` → 改名成 `.xz`」，
+     * 与删除并发时会出现「用户点了删除、删除成功后下载又把包改回来」——
+     * 界面上表现为删不掉，而用户以为已经卸载的那个包仍会被引擎加载。
+     */
     private fun remove(dict: OptionalDict) {
+        if (downloading != null) {
+            Toast.makeText(this, R.string.dict_remove_busy, Toast.LENGTH_SHORT).show()
+            return
+        }
         val f = dictFile(dict.fileName)
         val ok = runCatching { f.delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "分类词库删除: ${dict.fileName} ok=$ok")
@@ -394,5 +448,11 @@ class DictManagerActivity : Activity() {
 
     private companion object {
         const val TAG = "DictManager"
+
+        @Volatile
+        private var activeDownload: String? = null
+
+        /** 单个词库包的下载上限（字节）：现役最大包 6.36MB，取 64MB 留足余量 */
+        const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
     }
 }

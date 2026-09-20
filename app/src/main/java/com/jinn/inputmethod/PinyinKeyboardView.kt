@@ -53,6 +53,21 @@ internal const val LONG_COMPOSING_TO_CLEAR = 12
 internal fun shouldClearComposingOnHold(heldMs: Long, composingLength: Int): Boolean =
     heldMs >= HOLD_TO_CLEAR_COMPOSING_MS && composingLength >= LONG_COMPOSING_TO_CLEAR
 
+/**
+ * 连删循环是否应当停手：拼音串已被删空，而本次手势在**按下时**就注定要走
+ * 「只整串清拼音、不动已上屏」（按下长度 ≥ [LONG_COMPOSING_TO_CLEAR]）。
+ *
+ * 连删循环在门槛 [HOLD_TO_CLEAR_COMPOSING_MS] 到达前会先删掉 16 位（DOWN 1 位，
+ * 380ms 起每 55ms 一位，门槛 tick 落在 1205ms），所以按下长度 12~15 的串在门槛前
+ * 就被它自己删空了 —— 此时再走 `deleteOne()` 会落到 `listener.onBackspace()`，
+ * 把用户**已上屏的正文**删掉（按此模型算，12 字符串会删 4 个字符），
+ * 与该手势的约定正好相反。判据基准与 [shouldClearComposingOnHold] 保持一致。
+ */
+internal fun shouldStopRepeatOnExhaustedComposing(
+    composingIsEmpty: Boolean,
+    composingLenAtDown: Int,
+): Boolean = composingIsEmpty && composingLenAtDown >= LONG_COMPOSING_TO_CLEAR
+
 class PinyinKeyboardView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -111,6 +126,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 是否大写锁定（影响英文模式字母大小写与键面显示） */
     private var capsMode = false
+
+    /**
+     * 当前输入框是否应暂停用户词频学习（密码框 / 显式不联想的框）。
+     *
+     * 由 IME 在每次 [android.inputmethodservice.InputMethodService.onStartInputView]
+     * 时按 EditorInfo 重设；跨线程读写（主线程输入 + 后台无读取），故用 @Volatile。
+     * 判据见 [InputFieldPrivacy.suppressLearning]。
+     */
+    @Volatile
+    private var suppressLearning = false
 
     /** 符号层 / 数字层 / 字母层 */
     private var layer = LAYER_LETTER
@@ -195,6 +220,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var backspaceTapCount = 0
     private var backspaceLastTapAt = 0L
 
+    /**
+     * 本次按压开始时（ACTION_DOWN）的拼音串长度。
+     *
+     * [backspaceRepeatRunnable] 每个 tick 都先删一位再重排，等到 1200ms 门槛时拼音串
+     * 已被它自己删短了十几位 —— 拿**当时**的长度判「长拼音串」永远晚一步：12~27 字符的
+     * 串会被逐字删空，之后继续删已上屏正文，与该手势「只整串清拼音、不动已上屏」的约定
+     * 正好相反。判据必须钉在按下那一刻的取值上。
+     */
+    private var composingLenAtBackspaceDown = 0
+
     /** 按住退格超过该时长进入连续删除 */
     private val backspaceRepeatDelayMs = 380L
 
@@ -223,13 +258,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
-            // 按住够久、且拼音串仍然很长：说明用户是想把这一大串打错的拼音整体丢掉，
+            // 按住够久、且按下时拼音串很长：说明用户是想把这一大串打错的拼音整体丢掉，
             // 而不是逐字退格（78 个字符逐字删要 6~8 秒）。清掉拼音串后停止连删，
             // **不动已上屏的文字** —— 要连输入框一起清是「双击 + 长按」那个手势。
             val held = System.currentTimeMillis() - backspacePressStart
-            if (shouldClearComposingOnHold(held, composing.length)) {
+            // 判据用**按下时**的长度：本循环每 tick 先删一位，拿当前长度去判，
+            // 12~27 字符的串会先被逐字删空、再接着删已上屏正文（见字段 KDoc）。
+            if (shouldClearComposingOnHold(held, composingLenAtBackspaceDown)) {
                 Diagnostics.i(TAG, "退格长按 ${held}ms：清空拼音串（${composing.length} 字符）")
                 clearComposingState()
+                backspaceHandler.removeCallbacks(this)
+                return
+            }
+            // 拼音已被删空、且本次手势注定「只清拼音」：到此停手。
+            // 缺这道闸门时，按下长度 12~15 的串会在门槛到达前被连删自己删空，
+            // 紧接着的 tick 走 deleteOne() → listener.onBackspace()，把已上屏正文一起删掉。
+            if (shouldStopRepeatOnExhaustedComposing(composing.isEmpty(), composingLenAtBackspaceDown)) {
+                Diagnostics.i(TAG, "退格连删：拼音已删空且本次手势只清拼音，停手（不动已上屏）")
                 backspaceHandler.removeCallbacks(this)
                 return
             }
@@ -348,8 +393,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     val consumed = handleKeyTouch(c, event)
                     // 无障碍：仅在确认是「点击」而非滑动时补 performClick，
                     // 否则滑动翻页结束时也会发出点击事件，反而误导 TalkBack。
+                    // 必须同用 rawX：keyTouchStartX 记录的是 rawX，拿 event.x（键内坐标）
+                    // 相减值约等于该键的屏幕左偏移，恒大于 touchSlop，除最左一列外永不触发
                     if (event.actionMasked == MotionEvent.ACTION_UP &&
-                        abs(event.x - keyTouchStartX) < touchSlop
+                        abs(event.rawX - keyTouchStartX) < touchSlop
                     ) {
                         view.performClick()
                     }
@@ -408,6 +455,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
                         }
                     }
                 }
+                return true
+            }
+            // 多指：第二根手指按在同一键上是 POINTER_DOWN，先抬起的那根是 POINTER_UP。
+            // 两者都不处理的话——POINTER_UP 分支既不复位按压态也不上字，键会一直高亮
+            // 到下次被触摸，且该次输入被静默丢掉。
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                keyViews[c]?.setPressedVisual(true)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                keyViews[c]?.setPressedVisual(false)
+                // **不复位 keyTouchConsumed**：它是「本次手势已经做过事（在符号层翻了页）、
+                // 抬起时不许上字」的判据，而第二根手指抬起时手势还没结束 —— 复位后剩下的
+                // 那根手指一抬就会把新页上的符号上屏（用户只想翻页）。该标记在
+                // ACTION_DOWN / ACTION_UP / ACTION_CANCEL 处复位，生命周期足够。
                 return true
             }
             MotionEvent.ACTION_UP -> {
@@ -538,13 +600,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             consumed
         }
-        btnEnter.setOnClickListener { listener?.onEnter() }
+        // 搜索模式：这三个键**必须**只作用于搜索框 —— 否则回车会把原始拼音串或宿主动作
+        // （输入框声明的是「发送」时就直接把消息发出去）落到宿主，逗号句号把全角标点写进
+        // 用户正在编辑的正文里。搜索态下回车等价于面板自己的「退出搜索」按钮，不碰宿主。
+        btnEnter.setOnClickListener {
+            if (isPanelSearch()) {
+                hideSearchPanel()
+                return@setOnClickListener
+            }
+            listener?.onEnter()
+        }
         // 逗号/句号：英文模式上 ASCII，中文模式上全角
         btnComma.setOnClickListener {
-            listener?.onCommitText(if (englishMode) "," else "，")
+            val text = if (englishMode) "," else "，"
+            if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
         }
         btnPeriod.setOnClickListener {
-            listener?.onCommitText(if (englishMode) "." else "。")
+            val text = if (englishMode) "." else "。"
+            if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
         }
     }
 
@@ -552,6 +625,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 当前是否英文模式（供 IME 每次聚焦时同步，避免覆盖用户手动切换） */
     fun isEnglishMode(): Boolean = englishMode
+
+    /**
+     * 设置「敏感输入框」标记：为 true 时不再把用户选过的候选写进用户词频。
+     *
+     * 密码框 / 声明 NO_SUGGESTIONS 的框里敲进去的东西属于凭据片段，学进
+     * `user_freq.txt` 会变成长期明文，且在之后的普通输入框里被优先推荐出来。
+     */
+    fun setSuppressLearning(suppress: Boolean) {
+        suppressLearning = suppress
+    }
+
+    /**
+     * 学习「用户明确选过」的候选（点候选 / 空格首候选 / 预测词）。
+     *
+     * 敏感输入框直接跳过：输入行为与候选展示都不变，只是不落词频。
+     */
+    private fun learnChoice(word: String) {
+        if (suppressLearning) return
+        PinyinEngine.rememberChoice(word)
+    }
 
     /** 设置输入方案（全拼 / 七种双拼）与初始中英文状态 */
     fun configure(scheme: ShuangpinScheme, english: Boolean) {
@@ -696,15 +789,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return "候选栏(${loc[0]},${loc[1]} ${viewCandidateList.width}x${viewCandidateList.height}) 候选数=${viewCandidateList.childCount}"
     }
 
-    /** 提交当前拼音串的首候选（IME 收起键盘等场景调用） */
+    /**
+     * 提交当前拼音串的首候选（IME 收起键盘 / 切换中英文等场景调用）。
+     *
+     * 搜索模式只丢弃、**不上屏**：此时拼音串是搜索框的输入，宿主输入框不在用户的输入意图内。
+     * 语言键（切英文时会调它）与 IME 收起都会走到这里，紧接着的 listener.onCommitText
+     * 会把搜索词（或它的首候选）写进用户正在编辑的正文里。
+     */
     fun commitComposing() {
+        if (isPanelSearch()) {
+            clearComposingState()
+            return
+        }
         if (composing.isNotEmpty()) {
             val candidates = lastCandidates
             if (candidates.isNotEmpty()) {
                 listener?.onCommitText(candidates[0])
             } else if (!englishMode) {
                 // 无候选（如未加载词库），直接丢拼音串
-                Diagnostics.w(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
+                Diagnostics.v(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
             }
             composing.clear()
         }
@@ -729,7 +832,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastCandidates = emptyList()
         lastPredictions = emptyList()
         refreshCandidateBar()
-        Diagnostics.i(TAG, "回车输出英文原文: $raw")
+        // 原始按键串是用户输入正文：走 V 级（默认只进 logcat 不落盘）
+        Diagnostics.v(TAG, "回车输出英文原文: $raw")
         return raw
     }
 
@@ -832,8 +936,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 有候选取第一个（只消费其 Pinyin Span，残码保留继续匹配），否则丢拼音上空格
             if (lastCandidates.isNotEmpty()) {
                 val first = lastCandidates[0]
-                Diagnostics.i(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
-                PinyinEngine.rememberChoice(first)      // 空格取首候选同样是明确选择
+                Diagnostics.v(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
+                learnChoice(first)                      // 空格取首候选同样是明确选择
                 listener?.onCommitText(first)
                 if (consumePinyin(first)) {
                     // 空格上屏同样触发智能预测（与点选候选一致）
@@ -869,6 +973,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
                 backspacePressStart = System.currentTimeMillis()
+                composingLenAtBackspaceDown = composing.length
                 deleteOne()
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
@@ -951,9 +1056,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         onTripleBackspace()
     }
 
-    /** 双击+长按清空：先清拼音串与预测，再通知 IME 删除已上屏文本 */
+    /**
+     * 双击+长按清空：先清拼音串与预测，再通知 IME 删除已上屏文本。
+     *
+     * 搜索模式下只清搜索框：该手势清的是「输入框」，而此刻用户的输入意图在搜索框上；
+     * 落到 [Listener.onDeleteAll] 会把宿主（正在编辑的聊天 / 文档）内容整个删掉。
+     */
     private fun onTripleBackspace() {
         clearComposingState()
+        if (isPanelSearch()) {
+            searchPanel.clearSearch()
+            Diagnostics.i(TAG, "退格双击+长按：清空搜索框（不动宿主输入框）")
+            return
+        }
         listener?.onDeleteAll()
     }
 
@@ -1139,14 +1254,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun onCandidateSelected(candidate: String) {
         // 搜索模式：候选上屏路由到剪贴板搜索词（不 commit 宿主）
         if (isPanelSearch()) {
-            Diagnostics.i(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
+            Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
             searchPanel.appendSearch(candidate)
             consumePinyin(candidate)
             refreshCandidateBar()
             return
         }
-        Diagnostics.i(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
-        PinyinEngine.rememberChoice(candidate)          // 用户词频：这是**明确选择**，学习它
+        Diagnostics.v(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
+        learnChoice(candidate)          // 用户词频：这是**明确选择**，学习它
         listener?.onCommitText(candidate)
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
         if (consumePinyin(candidate)) {
@@ -1179,7 +1294,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             composing.delete(0, consumption.quanpinChars)
         }
-        Diagnostics.i(
+        Diagnostics.v(
             TAG,
             "残码保留: 消费=\"${fullInput.take(consumption.quanpinChars)}\" " +
                 "剩余拼音=${if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing}",
@@ -1207,17 +1322,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与 onCandidateSelected 保持一致：搜索模式下路由到搜索框。
         // 漏掉这个分支的话，搜索态里点预测词会把文本直接提交到宿主输入框（串到聊天内容里）
         if (isPanelSearch()) {
-            Diagnostics.i(TAG, "搜索预测: \"$pred\"")
+            Diagnostics.v(TAG, "搜索预测: \"$pred\"")
             searchPanel.appendSearch(pred)
             lastPredictions = emptyList()
             refreshCandidateBar()
             return
         }
-        Diagnostics.i(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
+        Diagnostics.v(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
         // 用户词频：学习**完整词**（librime 的 UserDictionary 也是按整条 entry 记），
         // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
         val fullWord = lastCommittedWord + pred
-        PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
+        learnChoice(fullWord.ifEmpty { pred })
         listener?.onCommitText(pred)
         lastPredictions = emptyList()
         refreshCandidateBar()
@@ -1342,6 +1457,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 composing.append(SEMICOLON_KEY)
                 refreshCandidateBar()
                 Diagnostics.v(TAG, "分号键(ing): 拼音串=${composing}")
+                return true
+            }
+
+            // 与字母键同口径：多指场景下不复位会让分号键卡在高亮态
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                keySemicolon.setPressedVisual(true)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                keySemicolon.setPressedVisual(false)
                 return true
             }
 
@@ -1691,8 +1817,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         try {
-            // 与方向面板互斥
+            // 与方向面板、顶部搜索面板互斥：搜索面板挂在根布局 index 0（显示时 IME 变高），
+            // 剪贴板面板替换字母区 —— 两者同屏时上下两个列表都在，而底栏的空格/退格/回车
+            // 仍会被 isPanelSearch() 路由到搜索框，按键实际作用的对象与用户看到的不一致。
             if (directionPanelVisible) hideDirectionPanel()
+            hideSearchPanel()
 
             // contentArea 高度 = 字母区 2 倍（用户验证过的 850px 方案）。
             // 关键：contentArea 的父是 LinearLayout（PinyinKeyboardView 根），
@@ -1880,6 +2009,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /**
+     * 视图被移除时的收尾。
+     *
+     * 必须做：连删是一个**自我重排**的 55ms 循环（[backspaceRepeatRunnable]），唯一的
+     * 停止条件是 ACTION_UP / ACTION_CANCEL 把 [backspaceHeld] 复位 —— 而视图被 detach 时
+     * Android **不保证**补发 ACTION_CANCEL（移除视图不派发取消事件是已知行为）。
+     * 一旦在按住删除键期间视图被销毁（IME 重建输入视图 / 服务销毁 / 宿主收起），循环就
+     * 再也停不下来：它永久持有已销毁的视图，并每 55ms 回调一次 [Listener.onBackspace]，
+     * 也就是持续给当前输入框发 DEL —— 用户没碰键盘，字却一直在被删。
+     */
+    override fun onDetachedFromWindow() {
+        backspaceHandler.removeCallbacksAndMessages(null)
+        backspaceHeld = false
+        backspaceTapCount = 0
+        super.onDetachedFromWindow()
+    }
 
     private companion object {
         const val TAG = "PinyinKeyboard"

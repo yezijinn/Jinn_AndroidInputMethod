@@ -176,6 +176,26 @@ object PinyinEngine {
      */
     private val mergedCache = java.util.concurrent.ConcurrentHashMap<String, Array<String>>(256)
 
+    /**
+     * 词库内容的世代号：任何改动词库内容 / 索引引用的路径都要 +1（统一走 [invalidateMergedCache]）。
+     *
+     * 查询线程（主线程）拿它判断「算这个键的过程中词库有没有变过」——变过就不能把结果写回缓存。
+     */
+    @Volatile
+    private var dataGeneration = 0
+
+    /**
+     * 词库内容变更后作废「合并结果缓存」：**所有失效路径的唯一入口**。
+     *
+     * 顺带推进 [dataGeneration]：查询线程可能正在用旧数据算某个键的结果，算完再回写就会把
+     * 变更前的旧结果**粘死**在缓存里 —— 失效点已经过去，之后没有任何东西会再清它
+     * （只有缓存超 4096 条整体清空或进程重启才能自愈）。[phrasesFor] 靠世代号识别并放弃回写。
+     */
+    private fun invalidateMergedCache() {
+        dataGeneration++
+        mergedCache.clear()
+    }
+
     /** 词 → 拼音键（智能预测用：取已选词的拼音作前缀查更长短语） */
     private val wordToPinyin = ConcurrentHashMap<String, String>(8_192)
 
@@ -203,7 +223,18 @@ object PinyinEngine {
      * startsWith，而该方法在每次按键的查询路径上会被调用若干次（分词、伪完整音节判定、
      * 补全召回），累计是几百次字符串比较。预建集合后降为一次哈希查找。
      */
-    private val syllablePrefixes = ConcurrentHashMap.newKeySet<String>()
+    /**
+     * ⚠ 必须**整体替换引用**的不可变快照，不能就地 `clear()` + 逐个 `add()`。
+     *
+     * 写方是加载线程（`load()` 与 `loadOptionalAsync()` 都会走 [finalizeLoad]），
+     * 而 `loaded = true` 在第一段加载后就已发布 —— 用户此时**正在打字**，读方
+     * [isTruePrefixOfSyllable] 在打字热路径上（分词 / 伪完整音节判定 / 补全召回）
+     * 读这个集合，且读路径不加锁。就地清空重建会让读方在窗口期内看到「已清空但还没
+     * 填回」的中间态：判据返回 false → 分词改走贪心分支、补全召回整段跳过 →
+     * 偶发候选变少/切分不同。与 [mergedCache] 的失效点同一类问题，处理方式也一致。
+     */
+    @Volatile
+    private var syllablePrefixes: Set<String> = emptySet()
 
     /**
      * 常用字位图（按 Char 码点直接索引，判定 O(1)）。
@@ -357,11 +388,11 @@ object PinyinEngine {
             phrasesByPinyin.clear()
             baseIndex = null
             optionalIndexes = emptyList()
-            mergedCache.clear()
+            invalidateMergedCache()
             wordToPinyin.clear()
             candidatePinyin.clear()
             validSyllables.clear()
-            syllablePrefixes.clear()
+            syllablePrefixes = emptySet()
             // 有序表是不可变快照，置空引用即可（没有 clear 方法）
             sortedSyllables = emptyList()
             sortedValidSyllables = emptyList()
@@ -409,7 +440,7 @@ object PinyinEngine {
      */
     internal fun setOptionalIndexesForTest(indexes: List<PhraseIndex>) {
         optionalIndexes = indexes
-        mergedCache.clear()
+        invalidateMergedCache()
     }
 
     internal fun loadFromTexts(
@@ -461,17 +492,20 @@ object PinyinEngine {
         // 放在这里而不是只写在各个写入点，是因为**基础索引不走 loadPhrasesReader**：
         // 高频子集窗口（键盘弹出后 ~0.2~2.3s）内用户查过的键，其「只有子集」的答案会一直粘住，
         // 直到可选包加载才被清掉——中间这几秒这些键的候选是**截断**的（少掉低频词）。
-        mergedCache.clear()
+        invalidateMergedCache()
     }
 
     /** 预建音节真前缀集合（加载时调用一次；合法音节最长 6 字符） */
     private fun buildSyllablePrefixes() {
-        syllablePrefixes.clear()
+        // 先建好再整体换引用：读方（主线程热路径）要么拿旧集合、要么拿新集合，
+        // 不会看到「已清空但没填回」的中间态（见字段 KDoc）。
+        val built = HashSet<String>(1024)
         for (syllable in validSyllables) {
             for (len in 1 until syllable.length) {
-                syllablePrefixes.add(syllable.substring(0, len))
+                built.add(syllable.substring(0, len))
             }
         }
+        syllablePrefixes = built
     }
 
     // ── 生僻字过滤 ───────────────────────────────────────────
@@ -620,7 +654,7 @@ object PinyinEngine {
             }
         }
         optionalIndexes = loaded            // 原子整体替换（查询侧并发读旧表安全）
-        mergedCache.clear()
+        invalidateMergedCache()
         extensionLoaded = loaded.isNotEmpty()
         if (loaded.isEmpty()) {
             Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
@@ -735,8 +769,14 @@ object PinyinEngine {
             return@runCatching false
         }
         true
-    }.getOrElse {
-        Diagnostics.w(TAG, "写入索引缓存失败（本次退回堆内，不影响可用性）: ${file.name} - ${it.message}")
+    }.getOrElse { e ->
+        // 写阶段抛异常时临时文件已经落地（可达十几 MB），必须清掉；
+        // 只有「删旧失败 / 改名失败」那两条路径自己清了 tmp，这里漏了就会长期占空间。
+        runCatching {
+            val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+            if (tmp.exists()) tmp.delete()
+        }
+        Diagnostics.w(TAG, "写入索引缓存失败（本次退回堆内，不影响可用性）: ${file.name} - ${e.message}")
         false
     }
 
@@ -779,11 +819,12 @@ object PinyinEngine {
                 if (tab > 0) {
                     val syllable = line.substring(0, tab)
                     val chars = line.substring(tab + 1).split(',')
-                    // 生僻字过滤：不载入（既不占内存，也不进候选）
-                    val kept = if (commonChars == null) {
-                        chars
-                    } else {
-                        chars.filter { it.length == 1 && isLoadableChar(it[0]) }
+                    // 生僻字过滤：不载入（既不占内存，也不进候选）。
+                    // 长度判据**无分支生效**：显示生僻字时（commonChars == null）同样要丢掉非单字符
+                    // token —— 否则表里混进的词条会进单字表，被当成单字候选上屏
+                    // （实测 pinyin_chars.txt 里唯一的非单字符就是 junding 行的「均订」）。
+                    val kept = chars.filter {
+                        it.length == 1 && (commonChars == null || isLoadableChar(it[0]))
                     }
                     if (kept.isNotEmpty()) charsBySyllable[syllable] = kept.toTypedArray()
                 }
@@ -923,7 +964,7 @@ object PinyinEngine {
      */
     private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
         // 任何词库变更都必须让「合并结果缓存」失效，否则同一个进程内换词库后会读到旧候选
-        mergedCache.clear()
+        invalidateMergedCache()
         // 容量已在声明处预分配（ConcurrentHashMap(600_000)），此处不再重建容器——
         // 重建会让并发读取方拿到另一个实例，正在遍历的旧表被丢弃。
         var line = reader.readLine()
@@ -976,6 +1017,8 @@ object PinyinEngine {
     private fun phrasesFor(key: String): Array<String>? {
         mergedCache[key]?.let { return it.ifEmpty { null } }
 
+        // 记下算这一份结果时的世代号：回写前要再比一次（见下）
+        val gen = dataGeneration
         val optionals = optionalIndexes
         val raw: Array<String>? = if (optionals.isEmpty()) {
             phrasesByPinyin[key] ?: baseIndex?.wordsFor(key)
@@ -991,7 +1034,9 @@ object PinyinEngine {
 
         val filtered = raw?.let { filterRareChars(it) }
         if (mergedCache.size > 4096) mergedCache.clear()
-        mergedCache[key] = filtered ?: EMPTY_WORDS
+        // 世代号没变才回写：算这个键的过程中词库可能已经被改（加载线程走了失效入口），
+        // 此时回写的是变更前的旧结果，而失效点已经过去 —— 这个键会一直返回错误的候选。
+        if (gen == dataGeneration) mergedCache[key] = filtered ?: EMPTY_WORDS
         return filtered
     }
 
@@ -1016,7 +1061,11 @@ object PinyinEngine {
      */
     private fun noteCandidateKeys(words: Array<String>, key: String) {
         if (candidatePinyin.size > 4_096) candidatePinyin.clear()
-        for (w in words) candidatePinyin.putIfAbsent(w, key)
+        // 最新写入者胜（原为 putIfAbsent）：同一个词可能挂在多个拼音键下 —— 实测**仅高频子集**
+        // 就有 79 个（如「朝阳」= chaoyang / zhaoyang、「不了」= bule / buliao）。putIfAbsent
+        // 让**第一次**记录的那个键粘住：用户换一种拼法打到同一个词时，消费区间与预测都按旧键算，
+        // 消费会落到「无法确定区间→消费全部」的兜底分支（残码被整段清掉），预测则去扫错的键区。
+        for (w in words) candidatePinyin[w] = key
     }
 
         /**
@@ -1108,7 +1157,9 @@ object PinyinEngine {
             // 3a. 词库短语补全召回（如 ni m → ni+men → 你们）：
             //    补全词插入 result 头部（优先于第 2 步已加入的单字）
             val completionWords = queryWithCompletion(raw)
-            Diagnostics.i(
+            // 拼音串是用户输入正文：走 V 级（默认只进 logcat 不落盘）。
+            // 用 i 级时每敲一键都要在主线程 open/write/close 一次日志文件，既泄露输入又掉帧。
+            Diagnostics.v(
                 TAG,
                 "query补全: input=$raw partial=$partial fake=$lastIsFakeComplete " +
                     "syl=$syllables completionCount=${completionWords.size}",
@@ -1489,15 +1540,26 @@ object PinyinEngine {
     /** 完整音节序列最大长度（防超长输入组合爆炸） */
     private const val MAX_SYLLABLES = 8
 
-    /** 前缀 → 完整音节列表缓存（补全查询热路径，避免重复扫描音节表） */
-    private val completionCache = HashMap<String, List<String>>()
+    /**
+     * 前缀 → 完整音节列表缓存（补全查询热路径，避免重复扫描音节表）。
+     *
+     * 用并发容器与 [mergedCache] / [candidatePinyin] 同口径：当前调用链只在主线程
+     * （[queryWithCompletion] ← [query] ← 键盘视图），普通 HashMap 还不会出事，
+     * 但本类的读方本就与加载线程并发，缓存一旦被后台路径复用就是「读 get 撞写扩容
+     * 成环卡死」那一类事故 —— 声明处对齐，别留这颗雷。
+     */
+    private val completionCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
     /**
-     * 返回以 [prefix] 开头的所有合法完整音节（字典序）。
+     * 返回以 [prefix] 开头的合法完整音节（字典序），**最多 [MAX_COMPLETION_RESULTS] 个**。
      * 例：m → [ma, mai, man, mang, mao, me, mei, men, meng, mi, ...]
      * 遍历合法音节全集 [validSyllables]（完整音节表，非单字表）——
      * 补全的目的是拼词库短语键，音节必须合法即可，不要求有单字。
      * 带缓存：同一前缀只扫描一次。
+     *
+     * 注意：截断是按**字典序**发生的，不是按相关性 —— 以 z / c / s 开头的音节各有 35~37 个，
+     * 超出的部分（zou / zuo / cuo / suo…）不会成为补全候选，末尾残码的短语召回因此少一截。
+     * 这是「防候选爆炸」的既有取舍，别把这里当成「所有音节都已返回」。
      */
     fun completeSyllablePrefix(prefix: String): List<String> {
         if (prefix.isEmpty() || !loaded) return emptyList()

@@ -88,6 +88,15 @@ class JinnIme : InputMethodService() {
      */
     private var pendingPasteAt = 0L
 
+    /**
+     * [pendingPasteText] 的目标输入框标识（[pendingPasteFieldKey] 的格式）。
+     *
+     * 时效窗口（10s）远长于「切到另一个 App 的输入框」所需时间，只靠时间约束
+     * 会把上一段剪贴板内容粘进无关的输入框甚至无关应用。暂存时锁定当时的输入框，
+     * 提交前比对 [onStartInputView] 传来的 EditorInfo，不一致即丢弃。
+     */
+    private var pendingPasteFieldKey: String? = null
+
     /** 剪贴板面板打开标记：跨键盘视图实例持久（IME relayout 重建视图后自动恢复） */
     private var clipboardPanelOpen = false
 
@@ -221,74 +230,18 @@ class JinnIme : InputMethodService() {
 
         // 监听设置页「保存配置」广播：参数改动立即生效，无需重启输入法进程。
         // Android 13+ 动态注册必须显式声明导出标志：同进程应用内广播用 NOT_EXPORTED。
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // ⚠ 只在 Android 13+ 注册：低版本没有 RECEIVER_NOT_EXPORTED 标志，
+        // 动态注册默认导出且无权限保护，任意第三方 App 都能发这条 action 触发
+        // refreshConfig（强制重连 + 反复启停剪贴板监听）。本 action 在应用内
+        // 没有发送方（设置页走 killProcess 重启生效），低版本不注册不损失任何功能。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
                 registerReceiver(configReceiver, configFilter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(configReceiver, configFilter)
-            }
-        }.onFailure {
-            Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
-        }
-
-        // 监听剪贴板面板面「点击记录 → 粘贴」广播：Activity 无法直接拿 InputConnection，
-        // 通过广播把内容交给本服务用当前连接插入编辑框。
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(clipboardPasteReceiver, clipboardPasteFilter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(clipboardPasteReceiver, clipboardPasteFilter)
-            }
-        }.onFailure {
-            Diagnostics.e(TAG, "onCreate: 注册剪贴板粘贴广播失败", it)
-        }
-    }
-
-    /** 剪贴板页面「点击记录粘贴」广播接收器 */
-    private val clipboardPasteReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val itemId = intent.getLongExtra(EXTRA_CLIPBOARD_PASTE_ITEM_ID, -1L)
-            if (itemId <= 0) {
-                Diagnostics.w(TAG, "剪贴板粘贴广播: 缺少有效 id=$itemId")
-                return
-            }
-            // 正文**不随广播传递**：Binder 事务上限约 1MB，长文本（长文章/日志/大段代码）
-            // 会让 sendBroadcast 抛 TransactionTooLargeException 直接崩溃。
-            // 改为按 id 从库里读（读库 + AES 解密属 IO，走 BackgroundIo，完成后回主线程粘贴）。
-            BackgroundIo.run {
-                val text = runCatching { ClipboardDb.get(this@JinnIme).contentById(itemId) }
-                    .onFailure { Diagnostics.w(TAG, "按 id 读取粘贴内容失败: ${it.message}") }
-                    .getOrNull()
-                ui.post {
-                    if (text.isNullOrEmpty()) {
-                        Diagnostics.w(TAG, "剪贴板粘贴广播: id=$itemId 取不到内容")
-                        notifyPasteResult(itemId, false)
-                        return@post
-                    }
-                    Diagnostics.i(TAG, "剪贴板粘贴广播: id=$itemId len=${text.length}")
-                    notifyPasteResult(itemId, pasteClipboardText(text))
-                }
+            }.onFailure {
+                Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
             }
         }
-    }
 
-    private val clipboardPasteFilter = IntentFilter().apply { addAction(ACTION_CLIPBOARD_PASTE) }
-
-    /**
-     * 把粘贴结果回传给剪贴板面板（成功才允许自动关闭页面）。
-     * @param itemId 关联点击的剪贴板记录（用于防串线）
-     */
-    private fun notifyPasteResult(itemId: Long, success: Boolean) {
-        runCatching {
-            sendBroadcast(
-                Intent(ACTION_CLIPBOARD_PASTE_RESULT)
-                    .setPackage(packageName)
-                    .putExtra(EXTRA_CLIPBOARD_PASTE_ITEM_ID, itemId)
-                    .putExtra(EXTRA_CLIPBOARD_PASTE_SUCCESS, success)
-            )
-        }.onFailure {
-            Diagnostics.w(TAG, "回传粘贴结果广播失败: ${it.message}")
-        }
     }
 
     /** 通过当前 InputConnection 粘贴文本（无效连接不崩溃）。返回是否成功提交。 */
@@ -301,6 +254,8 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
             pendingPasteText = text
             pendingPasteAt = System.currentTimeMillis()
+            // 锁定目标输入框：暂存只在「同一个输入框重新聚焦」时提交
+            pendingPasteFieldKey = pendingPasteFieldKey(getCurrentInputEditorInfo())
             // 自动唤起键盘关闭时不主动 requestShowSelf（即使调用了也会被
             // onShowInputRequested 拒绝并再次触发隐藏逻辑，这里直接不发起）。
             if (!prefs.autoShowKeyboard) {
@@ -321,10 +276,6 @@ class JinnIme : InputMethodService() {
         }
         val ok = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
         Diagnostics.i(TAG, "粘贴: len=${text.length} success=$ok")
-        if (ok) {
-            // 自身粘贴产生剪贴板变化，标记避免被历史保存
-            clipboardController?.onOwnCommit()
-        }
         return ok
     }
 
@@ -360,6 +311,14 @@ class JinnIme : InputMethodService() {
     private var selectionFocus = -1
 
     /**
+     * 我们最后一次请求设置的选区（`InputConnection.setSelection`）。
+     *
+     * 只用于在 [onUpdateSelection] 里区分「这次变化是我们自己造的」与「宿主改的」——
+     * 后者必须让拖选状态失效。只放行一次：回调重复或延迟到达时，陈旧期望不能一直挡着外部变化。
+     */
+    private var lastSetSelection: Pair<Int, Int>? = null
+
+    /**
      * 执行方向控制动作（通过当前 InputConnection）。
      *
      * 拖选状态机（NORMAL_CURSOR ↔ TEXT_SELECTION_ACTIVE）：
@@ -393,7 +352,18 @@ class JinnIme : InputMethodService() {
         selectionActive = false
         selectionAnchor = -1
         selectionFocus = -1
+        lastSetSelection = null
         pinyinKeyboard?.setSelectionActive(false)
+    }
+
+    /** 请求宿主设置选区，并记下这次期望值（供 [onUpdateSelection] 辨认自身动作） */
+    private fun applySelection(
+        connection: android.view.inputmethod.InputConnection,
+        start: Int,
+        end: Int,
+    ) {
+        lastSetSelection = start to end
+        connection.setSelection(start, end)
     }
 
     /** 中心 ●/◉ 开关：切换拖选模式 */
@@ -412,7 +382,7 @@ class JinnIme : InputMethodService() {
             selectionActive = false
             selectionAnchor = -1
             selectionFocus = -1
-            connection.setSelection(end, end)
+            applySelection(connection, end, end)
             Diagnostics.i(TAG, "拖选取消: 光标停在 Focus=$end")
         }
         pinyinKeyboard?.setSelectionActive(selectionActive)
@@ -438,8 +408,10 @@ class JinnIme : InputMethodService() {
      */
     private fun moveCursor(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
         val range = currentSelectionRange(connection) ?: return
-        val cursor = range.start
-        val newPos = when (action) {
+        // 全程按**窗口内下标**算，最后再加回 startOffset 交给宿主：selectionStart/End 是全文
+        // 绝对下标，而 range.text 可能只是光标附近的窗口（见 [currentSelectionRange]）。
+        val cursor = range.start - range.startOffset
+        val newRel = when (action) {
             PinyinKeyboardView.DirectionAction.LEFT -> (cursor - 1).coerceAtLeast(0)
             PinyinKeyboardView.DirectionAction.RIGHT -> (cursor + 1).coerceAtMost(range.textLength)
             PinyinKeyboardView.DirectionAction.UP -> TextSelection.moveLine(range.text, cursor, up = true)
@@ -448,9 +420,10 @@ class JinnIme : InputMethodService() {
             PinyinKeyboardView.DirectionAction.LINE_END -> TextSelection.lineEnd(range.text, cursor)
             else -> cursor
         }
-        if (newPos != cursor) {
-            connection.setSelection(newPos, newPos)
-            Diagnostics.i(TAG, "光标移动: $cursor → $newPos")
+        if (newRel != cursor) {
+            val newPos = newRel + range.startOffset
+            applySelection(connection, newPos, newPos)
+            Diagnostics.i(TAG, "光标移动: 窗口内 $cursor → $newRel（offset=${range.startOffset}）")
         }
     }
 
@@ -462,20 +435,38 @@ class JinnIme : InputMethodService() {
      */
     private fun extendSelection(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
         val range = currentSelectionRange(connection) ?: return
-        val textRange = TextSelection.Range(range.start, range.end, range.textLength, range.text)
-        val focus = TextSelection.nextFocus(
-            textRange,
-            selectionFocus,
-            action,
-        )
-        selectionFocus = focus
+        // Anchor/Focus 必须都已建立：任一为负（键盘侧在 IME 未记 Anchor 时置了拖选态）
+        // 会让下面的归一化算出负下标，而宿主 Editable 收到越界的 setSelection 会抛异常。
+        if (selectionAnchor < 0 || selectionFocus < 0) {
+            Diagnostics.w(TAG, "拖选扩展: Anchor/Focus 无效（$selectionAnchor/$selectionFocus），退出拖选")
+            clearSelectionState()
+            return
+        }
+        // 与 [moveCursor] 同一套坐标：端点先换算到窗口内，算完再加回 startOffset
+        val focusRel = TextSelection.toWindowOffset(selectionFocus, range.startOffset, range.textLength)
+        val anchorRel = TextSelection.toWindowOffset(selectionAnchor, range.startOffset, range.textLength)
+        if (focusRel == null || anchorRel == null) {
+            Diagnostics.w(TAG, "拖选端点不在当前文本窗口内（offset=${range.startOffset}），退出拖选")
+            clearSelectionState()
+            return
+        }
+        val textRange = TextSelection.Range(anchorRel, focusRel, range.textLength, range.text)
+        val newFocusRel = TextSelection.nextFocus(textRange, focusRel, action)
+        selectionFocus = newFocusRel + range.startOffset
         // Anchor 固定，Focus 可移动：选区两端取 min/max
         val (start, end) = TextSelection.normalizedSelection(selectionAnchor, selectionFocus)
-        connection.setSelection(start, end)
-        Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$focus → 选区[$start,$end]")
+        applySelection(connection, start, end)
+        Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$selectionFocus → 选区[$start,$end]")
     }
 
-    /** 读取当前选区范围（未选中时 start == end == 光标位置） */
+    /**
+     * 读取当前选区范围（未选中时 start == end == 光标位置）。
+     *
+     * **两类下标必须分清**：`selectionStart/End` 是全文**绝对**下标，而 `text` 在长文档下可能
+     * 只是光标附近的一段**窗口**（`startOffset` 是它在全文里的起点）。端点落在窗口之外时无从
+     * 计算 —— 返回 null 让调用方放弃本次操作。旧实现直接拿绝对下标去索引窗口文本，
+     * 行移动 / 行首行末会算出无关位置，甚至把光标挪到「窗口长度」那个绝对下标上。
+     */
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
         val extracted = connection.getExtractedText(
             android.view.inputmethod.ExtractedTextRequest(), 0
@@ -484,7 +475,17 @@ class JinnIme : InputMethodService() {
         val start = extracted.selectionStart.coerceAtLeast(0)
         val end = extracted.selectionEnd.coerceAtLeast(start)
         val text = extracted.text?.toString().orEmpty()
-        return SelectionRange(start, end, text.length, text)
+        val startOffset = extracted.startOffset.coerceAtLeast(0)
+        if (TextSelection.toWindowOffset(start, startOffset, text.length) == null ||
+            TextSelection.toWindowOffset(end, startOffset, text.length) == null
+        ) {
+            Diagnostics.w(
+                TAG,
+                "光标/选区不在当前文本窗口内（offset=$startOffset len=${text.length} sel=[$start,$end]），跳过本次操作",
+            )
+            return null
+        }
+        return SelectionRange(start, end, text.length, text, startOffset)
     }
 
     /** 复制选中文字到系统剪贴板（保持选区与拖选模式） */
@@ -498,7 +499,16 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "复制: 无选中文字")
             return
         }
-        val sel = text.substring(extracted.selectionStart, extracted.selectionEnd)
+        // selectionStart/End 是**全文绝对下标**，而 getExtractedText 在长文档下可能只给
+        // 一段窗口文本（长度远小于全文）。不钳位就 substring 会抛
+        // StringIndexOutOfBoundsException，直接把输入法打崩。
+        val from = extracted.selectionStart.coerceIn(0, text.length)
+        val to = extracted.selectionEnd.coerceIn(from, text.length)
+        if (to <= from) {
+            Diagnostics.w(TAG, "复制: 选区不在当前文本窗口内，跳过")
+            return
+        }
+        val sel = text.substring(from, to)
         val clip = android.content.ClipData.newPlainText("jinn_selection", sel)
         clipboardManager.setPrimaryClip(clip)
         // 不再手动入库：setPrimaryClip 会触发 ClipboardController 的剪贴板监听，
@@ -519,12 +529,23 @@ class JinnIme : InputMethodService() {
         }
         connection.commitText(text, 1)
         Diagnostics.i(TAG, "粘贴: len=${text.length}")
-        // 自身粘贴产生剪贴板变化，标记避免被历史保存
-        clipboardController?.onOwnCommit()
     }
 
-    /** 选区信息（start/end/textLength/text 全文，text 用于行级移动计算） */
-    private data class SelectionRange(val start: Int, val end: Int, val textLength: Int, val text: String)
+    /**
+     * `getExtractedText` 的结果。
+     *
+     * **两类下标**：`start`/`end` 是全文**绝对**下标（宿主给的就是这个），而 `text` 可能只是
+     * 光标附近的一段**窗口**、`startOffset` 是它在全文里的起点 —— 拿 `text` 算行移动前必须
+     * 先减 `startOffset`，算完再加回去（见 [moveCursor] / [extendSelection]）。
+     * `textLength` 是**窗口长度**（窗口内的上界），不是全文长度。
+     */
+    private data class SelectionRange(
+        val start: Int,
+        val end: Int,
+        val textLength: Int,
+        val text: String,
+        val startOffset: Int,
+    )
 
     /** 系统剪贴板 */
     private val clipboardManager by lazy {
@@ -776,6 +797,37 @@ class JinnIme : InputMethodService() {
      * 停止候选计算、清理拼音缓冲、取消录音与延时任务，降到最低功耗。
      * 不关闭 WebSocket（语音输入需要随时可用，且关闭会丢在途结果）。
      */
+    /**
+     * 宿主改了光标/选区时（用户点了别处、宿主程序自己改了）让拖选状态失效。
+     *
+     * [selectionAnchor]/[selectionFocus] 是**我们记下的绝对下标**，只在拖选会话内有意义；
+     * 宿主把光标移到别处后它们指向的区间与用户意图无关 —— 再按方向键会以旧 Anchor 重新
+     * `setSelection`，选区整个错位，接下来的复制 / 输入都作用在错误的位置上（原实现没有
+     * 实现本回调，平台提供的这个同步点被完全漏掉）。
+     *
+     * 采用「退出拖选」而不是「把 Anchor 挪到新位置」：后者要求回调与我们的 setSelection
+     * 严格配对，做不到时就会以错位的 Anchor 继续拖选；退出最坏只是用户再点一次 ◉。
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
+        )
+        val expected = lastSetSelection
+        // 只放行一次：回调重复或延迟到达时，陈旧期望不能继续挡着外部变化
+        lastSetSelection = null
+        if (!selectionActive) return
+        if (!TextSelection.isExternalSelectionChange(newSelStart, newSelEnd, expected)) return
+        Diagnostics.i(TAG, "宿主改动选区[$newSelStart,$newSelEnd]，退出拖选（Anchor/Focus 已失效）")
+        clearSelectionState()
+    }
+
     override fun onFinishInput() {
         super.onFinishInput()
         Diagnostics.i(TAG, "onFinishInput: 会话结束 mode=$mode")
@@ -814,12 +866,20 @@ class JinnIme : InputMethodService() {
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
+        // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
+        // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
+        ui.removeCallbacks(optionalIdleCheck)
         asr?.connect()
         renderLink(asr?.state ?: LinkState.OFFLINE, null)
         micButton?.recording = false
         micButton?.cancelArmed = false
         setHint(getString(R.string.hint_idle))
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
+        // 敏感输入框（密码框 / 声明 NO_SUGGESTIONS / imeOptions 声明不要个性化学习）
+        // 不学用户词频：否则口令片段会被写进本地词频文件，之后在普通输入框里被优先推荐出来。
+        pinyinKeyboard?.setSuppressLearning(
+            InputFieldPrivacy.suppressLearning(info?.inputType, info?.imeOptions ?: 0)
+        )
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
@@ -828,14 +888,23 @@ class JinnIme : InputMethodService() {
             english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
         )
         // 剪贴板面板粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
-        flushPendingPaste()
+        flushPendingPaste(info)
         // 注意：不再在这里恢复剪贴板面板——恢复逻辑会触发 onPanelShown→refresh
         // （主线程 DB 查询数百毫秒）→ 诱发 IME 窗口反复 relayout（12:20 循环日志实证），
         // 反而让面板抖动/空白。INVISIBLE 方案下键盘视图实例不重建，面板状态天然保留。
     }
 
+    /**
+     * 输入框身份键：包名 + fieldId。
+     *
+     * 用于把暂存粘贴绑定到**发起粘贴时的那个输入框**——只比对 fieldId 不够
+     * （不同 App 的 fieldId 会撞），必须带上包名。取不到 EditorInfo 时返回 null，
+     * 表示「身份未知」，此时由时效窗口与 [onFinishInputView] 的会话边界兜底。
+     */
+    private fun pendingPasteFieldKey(info: EditorInfo?): String? = fieldKeyOf(info?.packageName, info?.fieldId ?: 0)
+
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
-    private fun flushPendingPaste() {
+    private fun flushPendingPaste(info: EditorInfo? = null) {
         // 会话边界：拖选状态必须复位。anchor/focus 是**上一个输入框**的坐标，
         // 跨字段残留会让后续 extendSelection 用旧下标去 setSelection（被系统钳位，
         // 表现为选区莫名跳动），且中心键图标与 IME 状态可能不一致。
@@ -845,23 +914,38 @@ class JinnIme : InputMethodService() {
         // 时效保护：暂存文本只在短时间窗口内有效，过期直接丢弃。
         // 否则用户换输入框、或隔很久才回到键盘，旧文本会被粘到完全无关的位置。
         val age = System.currentTimeMillis() - pendingPasteAt
+        val target = pendingPasteFieldKey
+        val current = pendingPasteFieldKey(info)
+        // 身份保护：换到另一个输入框（哪怕同 App 的另一个 fieldId）就不再提交。
+        // 10s 的时效窗口远比「切到微信再切回来」长，没有这层比对，剪贴板正文会被
+        // 静默注入到用户当前正在输入的、完全无关的位置。
+        if (target != null && current != null && target != current) {
+            pendingPasteText = null
+            pendingPasteFieldKey = null
+            Diagnostics.w(TAG, "flushPendingPaste: 目标输入框已变更($target -> $current)，丢弃 len=${text.length}")
+            return
+        }
         if (age > PENDING_PASTE_TTL_MS) {
             pendingPasteText = null
+            pendingPasteFieldKey = null
             Diagnostics.w(TAG, "flushPendingPaste: 暂存已过期(${age}ms)，丢弃 len=${text.length}")
             return
         }
         pendingPasteText = null
+        pendingPasteFieldKey = null
         val connection = currentInputConnection
         if (connection == null) {
-            // 仍无有效连接：放回暂存（保留原时刻），等待下次 onStartInputView
+            // 仍无有效连接：放回暂存（保留原时刻），等待下次 onStartInputView。
+            // **输入框身份必须一并放回**：原先只恢复了正文、把 fieldKey 留在 null，
+            // 于是下一次进入时 target 为 null、上面的「目标已变更」判据直接短路，
+            // 这 10 秒里的暂存正文就可能被提交到一个完全无关的输入框里。
             pendingPasteText = text
+            pendingPasteFieldKey = target
             Diagnostics.w(TAG, "flushPendingPaste: 连接仍无效，继续暂存 len=${text.length}")
             return
         }
         Diagnostics.i(TAG, "flushPendingPaste: 提交暂存粘贴 len=${text.length}")
         connection.commitText(text, 1)
-        // 自身粘贴产生剪贴板变化，标记避免被历史保存
-        clipboardController?.onOwnCommit()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -872,6 +956,13 @@ class JinnIme : InputMethodService() {
         // 拼音键盘若有未上屏内容，提交首候选
         pinyinKeyboard?.commitComposing()
         ui.removeCallbacks(backspaceRunnable)
+        // 会话边界：暂存的剪贴板文本属于**上一个输入框**，新输入框聚焦时不得自动提交
+        // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
+        if (pendingPasteText != null) {
+            Diagnostics.i(TAG, "onFinishInputView: 输入会话结束，丢弃暂存粘贴")
+            pendingPasteText = null
+            pendingPasteFieldKey = null
+        }
         // 键盘收起 = 用户大概率停止输入了；再等一小段（避免只是切了个应用马上回来）后加载可选词库
         ui.removeCallbacks(optionalIdleCheck)
         ui.postDelayed(optionalIdleCheck, OPTIONAL_IDLE_DELAY_MS)
@@ -901,8 +992,10 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         ui.removeCallbacksAndMessages(null)
         unregisterNetwork()
+        // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
+        // 这里不置 null：后续 refreshConfig 仍可能重新 start（stop 幂等）。
+        runCatching { clipboardController?.stop() }
         runCatching { unregisterReceiver(configReceiver) }
-        runCatching { unregisterReceiver(clipboardPasteReceiver) }
         screenOffReceiver?.let { runCatching { unregisterReceiver(it) } }
         screenOffReceiver = null
         abandonAudioFocus()
@@ -1375,16 +1468,6 @@ class JinnIme : InputMethodService() {
          */
         const val PENDING_PASTE_TTL_MS = 10_000L
 
-        /** 剪贴板页面「点击记录粘贴」广播 action + extra */
-        const val ACTION_CLIPBOARD_PASTE = "com.jinn.inputmethod.action.CLIPBOARD_PASTE"
-        // 粘贴广播只传 id：正文不随广播走（Binder 事务上限约 1MB，长文本会崩），
-        // 改由 IME 按 id 从数据库读回
-        const val EXTRA_CLIPBOARD_PASTE_ITEM_ID = "clipboard_paste_item_id"
-
-        /** IME 向剪贴板页回传粘贴结果：成功才允许关闭页面 */
-        const val ACTION_CLIPBOARD_PASTE_RESULT = "com.jinn.inputmethod.action.CLIPBOARD_PASTE_RESULT"
-        const val EXTRA_CLIPBOARD_PASTE_SUCCESS = "clipboard_paste_success"
-
         /** 超过这个时长判定为"按住说话" */
         const val HOLD_THRESHOLD_MS = 260L
 
@@ -1401,3 +1484,16 @@ class JinnIme : InputMethodService() {
         val TRAILING_PUNC = charArrayOf('，', '。', ',', '.')
     }
 }
+
+/**
+ * 输入框身份键：包名 + `#` + fieldId（**纯函数**，便于单测）。
+ *
+ * 规则：
+ *  - 包名缺失/为空时返回 null —— 身份未知，调用方退回「时效窗口 + 会话边界」兜底；
+ *  - fieldId 必须带上包名：不同 App 的 fieldId 会撞号，只比对 fieldId 会放行跨应用粘贴。
+ *
+ * 注意：本函数是「暂存粘贴只允许提交回原输入框」这条安全约束的唯一判据，
+ * 改动会直接影响剪贴板正文是否会被注入到无关输入框。
+ */
+internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =
+    if (packageName.isNullOrEmpty()) null else "$packageName#$fieldId"

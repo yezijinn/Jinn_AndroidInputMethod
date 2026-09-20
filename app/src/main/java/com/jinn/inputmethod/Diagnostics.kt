@@ -8,8 +8,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -55,8 +53,24 @@ object Diagnostics {
     private var inited = false
 
     private val lock = Any()
-    private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /**
+     * 时间戳格式器。
+     *
+     * 必须用 `java.time` 而不是 `SimpleDateFormat`：后者**非线程安全**，而本类的
+     * 日志格式化在 `log()` 里是**锁外**执行的（锁只保护文件追加），采集线程、
+     * BackgroundIo 线程、下载线程与主线程会同时进来，共用实例会互相踩状态
+     * ——表现为时间戳串号/乱码，极端情况在 `format()` 内部抛异常，把业务路径一起带崩。
+     * `DateTimeFormatter` 不可变、天然线程安全（minSdk 26 已支持 java.time）。
+     */
+    private val dateFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+    private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /** 当前日期（文件名用） */
+    private fun today(): String = dateFormat.format(java.time.LocalDate.now())
+
+    /** 当前时刻（日志行首用） */
+    private fun now(): String = timeFormat.format(java.time.LocalDateTime.now())
 
     // ── 初始化 ──────────────────────────────────────────────
 
@@ -114,7 +128,14 @@ object Diagnostics {
             "mkdir -p '${dir.absolutePath}' && chown $uid:$uid '${dir.absolutePath}' && chmod 700 '${dir.absolutePath}'",
         )
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", commands.joinToString(" && ")))
-        val ok = process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0
+        val finished = process.waitFor(5, TimeUnit.SECONDS)
+        // 超时必须销毁：`su` 等用户点授权时 waitFor 会一直超时，不销毁就留下一个挂起进程
+        // 和它的三个管道句柄（同文件的 [dumpLogcat] 与 ClipboardFirewall.su 都是这么收尾的）。
+        if (!finished) {
+            process.destroy()
+            Diagnostics.w(TAG, "root 授权超时（5s），已销毁 su 进程")
+        }
+        val ok = finished && process.exitValue() == 0
         if (ok) makeWritable(dir) else false
     }.getOrDefault(false)
 
@@ -153,7 +174,7 @@ object Diagnostics {
         val seq = synchronized(lock) {
             val n = eventSeq[0] + 1
             eventSeq[0] = n
-            val line = "${timeFormat.format(Date())} [EV#$n] $module:$event${if (params.isNotEmpty()) " $params" else ""}"
+            val line = "${now()} [EV#$n] $module:$event${if (params.isNotEmpty()) " $params" else ""}"
             eventRing.addLast(line)
             if (eventRing.size > EVENT_RING_SIZE) eventRing.removeFirst()
             line
@@ -218,7 +239,7 @@ object Diagnostics {
         if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
         val sb = StringBuilder(160)
-        sb.append(timeFormat.format(Date()))
+        sb.append(now())
             .append(' ').append(level)
             .append('/').append(tag)
             .append(" [").append(Thread.currentThread().name).append("] ")
@@ -234,7 +255,7 @@ object Diagnostics {
     }
 
     private fun appendToFile(dir: File, text: String) {
-        val file = File(dir, "$LOG_FILE_PREFIX${dayFormat.format(Date())}.log")
+        val file = File(dir, "$LOG_FILE_PREFIX${today()}.log")
         synchronized(lock) {
             try {
                 FileOutputStream(file, true).use { it.write(text.toByteArray(Charsets.UTF_8)) }
@@ -244,21 +265,83 @@ object Diagnostics {
         }
     }
 
+    /**
+     * 剔除 logcat 快照里**本进程的 V 级行**（**纯函数**，便于单测）。
+     *
+     * 行格式（`-v threadtime`）：`MM-DD HH:MM:SS.mmm  PID  TID V Tag: msg`；
+     * 不含该前缀的行是上一条的续行（堆栈等），**跟随被剔除的那条一起剔**，
+     * 否则被丢掉的正文会在续行里露出来。
+     *
+     * 只剔本进程的 V：别的进程本来就没有我们的正文，删它们只会削弱排查能力；
+     * 崩溃本身是 E/F，一律保留。
+     *
+     * 注意：按 `'\n'` 切分再原样 join —— Kotlin 的 `split` **保留末尾空串**，
+     * 所以「一条都没剔」时输出与输入逐字节相同；换用 `lineSequence()` 会给
+     * 以换行结尾的输入多补一个换行，测试里就是这么栽的。
+     *
+     * @param raw logcat 原始输出
+     * @param ownPid 本进程 pid（`Process.myPid()`）；无法判定的行原样保留
+     */
+    internal fun filterOwnVerboseLines(raw: String, ownPid: Int): String {
+        val header = Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEF])\\s")
+        val lines = raw.split('\n')
+        val kept = ArrayList<String>(lines.size)
+        var drop = false
+        for (line in lines) {
+            val m = header.find(line)
+            if (m != null) {
+                drop = m.groupValues[3] == "V" && m.groupValues[1].toIntOrNull() == ownPid
+            }
+            if (!drop) kept.add(line)
+        }
+        return kept.joinToString("\n")
+    }
+
     // ── logcat 快照 / 清理 ─────────────────────────────────
 
     /**
      * 抓取当前 logcat 到日志目录，返回生成的文件；失败返回 null。
      * 无 root 时 logd 只会给出本应用进程的日志，有 root 时是系统全量。
+     *
+     * [suffix] 是本方法唯一的可变入参，两条路都要防：
+     *  - **文件名**：`File(dir, "$PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
+     *  - **命令**：原实现把整个目标路径拼进 `sh -c "logcat … > '…'"`，一个单引号即可改写命令。
+     * 前者用字符白名单过滤，后者改为**不经 shell** 的 [ProcessBuilder] + redirectOutput——
+     * 这样连白名单漏掉的字符也不可能被解释成命令。
+     *
+     * 另外：快照落盘前会剔掉**本进程的 V 级行**（见 [filterOwnVerboseLines]）。
+     * V 是用户正文通道（搜索关键词 / 拼音串 / 候选词 / 测试框文本），而 logcat 缓冲区里
+     * 什么级别都有 —— 不剔就等于崩溃路径绕过了「日志禁出正文」，导出诊断包还会把它带走。
      */
     fun dumpLogcat(suffix: String = ""): File? {
         val dir = logDir ?: return null
-        val name = "$LOGCAT_FILE_PREFIX$suffix.log"
+        val safeSuffix = suffix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+        val name = "$LOGCAT_FILE_PREFIX$safeSuffix.log"
         val dest = File(dir, name)
         return runCatching {
-            val cmd = "logcat -d -v threadtime -t 3000 > '${dest.absolutePath}' 2>&1"
-            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-            val ok = process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
-            if (ok && dest.exists() && dest.length() > 0) dest else null
+            val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
+                .redirectErrorStream(true)   // 等价原来的 2>&1
+                .redirectOutput(dest)
+                .start()
+            val finished = process.waitFor(10, TimeUnit.SECONDS)
+            if (!finished) process.destroy()
+            val ok = finished && process.exitValue() == 0
+            if (!ok) {
+                // 抓取失败的半截快照既不可用、也没过隐私过滤（里面可能仍有 V 级正文）：
+                // 直接删掉 —— 留着等 7 天再清、或被导出诊断包带走都不行。
+                dest.delete()
+                return@runCatching null
+            }
+            if (!dest.exists() || dest.length() == 0L) return@runCatching null
+            // 落盘后再过一遍：把本进程的 V 级行（用户正文通道）剔掉。
+            // 保留「先落盘、后处理」的顺序：读取管道再 waitFor 会在输出超过管道缓冲时互相等死。
+            val filtered = filterOwnVerboseLines(dest.readText(), Process.myPid())
+            if (filtered.isEmpty()) {
+                dest.delete()
+                return@runCatching null
+            }
+            dest.writeText(filtered)
+            dest
         }.getOrNull()
     }
 
@@ -279,7 +362,7 @@ object Diagnostics {
     val currentLogDir: File? get() = logDir
 
     /** 今天的日志文件（可能尚未创建） */
-    fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${dayFormat.format(Date())}.log") }
+    fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
     // ── 导出诊断包 ─────────────────────────────────────────
 
@@ -290,34 +373,52 @@ object Diagnostics {
      */
     fun exportBundle(context: Context): File? {
         val srcDir = logDir ?: return null
-        return runCatching {
-            // 先补一个最新的 logcat 快照和设备信息
-            val meta = File(srcDir, "device-info.txt")
-            meta.writeText(
-                buildString {
-                    appendLine("时间: ${timeFormat.format(Date())}")
-                    appendLine("设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                    appendLine("系统: Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
-                    appendLine("版本: ${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
-                    appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
+        // 设备信息是**临时**给本次导出用的：用完必须删 —— 它会永远留在日志目录里
+        // （[cleanupOldLogs] 只按 jinn- / logcat- 前缀清理），并混进之后每一次导出包。
+        val meta = File(srcDir, "device-info.txt")
+        var tmp: File? = null
+        try {
+            return runCatching {
+                // 先补一份最新的设备信息
+                meta.writeText(
+                    buildString {
+                        appendLine("时间: ${now()}")
+                        appendLine("设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                        appendLine("系统: Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+                        appendLine("版本: ${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
+                        appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
+                    }
+                )
+                val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.US)
+                    .format(java.time.LocalDateTime.now())
+                val outDir = File(Environment.getExternalStorageDirectory(), DIR_NAME)
+                outDir.mkdirs()
+                val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
+                val files = srcDir.listFiles()?.toList().orEmpty()
+                if (files.isEmpty()) return@runCatching null
+                // 原子写：先写临时文件再改名。导出包是要交给别人排查的，半截 zip（进程被杀 /
+                // 并发导出撞同一路径）等于白导；临时名带纳秒，两次导出各写各的、改名原子生效。
+                val t = File(outDir, "jinn-diagnostics-$stamp-${System.nanoTime()}.zip.tmp")
+                tmp = t
+                java.util.zip.ZipOutputStream(FileOutputStream(t)).use { zos ->
+                    for (f in files) {
+                        if (!f.isFile) continue
+                        zos.putNextEntry(java.util.zip.ZipEntry(f.name))
+                        f.inputStream().use { it.copyTo(zos) }
+                        zos.closeEntry()
+                    }
                 }
-            )
-            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-            val outDir = File(Environment.getExternalStorageDirectory(), DIR_NAME)
-            outDir.mkdirs()
-            val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
-            val files = srcDir.listFiles()?.toList().orEmpty()
-            if (files.isEmpty()) return null
-            java.util.zip.ZipOutputStream(FileOutputStream(dest)).use { zos ->
-                for (f in files) {
-                    if (!f.isFile) continue
-                    zos.putNextEntry(java.util.zip.ZipEntry(f.name))
-                    f.inputStream().use { it.copyTo(zos) }
-                    zos.closeEntry()
+                if (dest.exists()) dest.delete()
+                if (!t.renameTo(dest)) {
+                    Diagnostics.w(TAG, "导出诊断包: 改名失败 ${dest.absolutePath}")
+                    return@runCatching null
                 }
-            }
-            i(TAG, "导出诊断包: ${dest.absolutePath} (${files.size} 个文件)")
-            dest
-        }.getOrNull()
+                i(TAG, "导出诊断包: ${dest.absolutePath} (${files.size} 个文件)")
+                dest
+            }.getOrNull()
+        } finally {
+            meta.delete()
+            tmp?.delete()
+        }
     }
 }

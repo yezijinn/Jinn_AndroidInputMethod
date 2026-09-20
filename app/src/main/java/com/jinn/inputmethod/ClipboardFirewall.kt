@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.content.Context
+import android.os.Build
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -156,35 +157,96 @@ object ClipboardFirewall {
     }
 
     /**
-     * 真查 Backup 配置：解析 backup_rules.xml，确认剪贴板数据库被排除。
+     * 真查 Backup 配置：解析**当前系统实际生效**的规则文件，确认剪贴板数据库被排除。
      *
      * 原实现硬编码返回 ✓ —— 无论规则文件怎么改都显示"安全"，其实是个假检查。
-     * 这里改为运行时读取实际生效的规则文件。
+     * 这里改为运行时读取规则文件；且必须按版本挑文件：
+     *  - API ≥ 31 起 `fullBackupContent` 被 `dataExtractionRules` 取代，
+     *    再查 backup_rules.xml 等于查一个不生效的文件，会给出错误的安全保证；
+     *  - API < 31 才看 backup_rules.xml。
+     *
+     * 判据是「[REQUIRED_EXCLUDES] 里的每一条都被排除」，少一条都算不合格：
+     * 除了库本体与用户词频，还必须覆盖 SQLite 的 `-journal/-wal/-shm` 三个侧车文件
+     * （WAL 模式下最近的写入就在 `-wal` 里，只排除主库等于漏掉最新那批记录）。
+     *
+     * 分段文件（`cloud-backup` / `device-transfer`）要求**每一段**都排除齐：
+     * 只查「有没有出现过这条 path」会让「仅在其中一段排除」也算通过。
      */
     private fun checkBackupConfig(context: Context): Pair<String, String> {
-        val excluded = runCatching {
-            val parser = context.resources.getXml(R.xml.backup_rules)
-            var found = false
-            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
-                if (parser.eventType == XmlPullParser.START_TAG && parser.name == "exclude") {
-                    val path = parser.getAttributeValue(null, "path").orEmpty()
-                    if (path.contains(DB_NAME)) found = true
-                }
-                parser.next()
-            }
-            found
-        }.getOrDefault(false)
-        return "Backup 配置" to if (excluded) {
-            "✓ backup_rules 已排除剪贴板数据库"
-        } else {
-            "✗ backup_rules 未排除剪贴板数据库（备份存在泄露风险）"
+        val modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        val resId = if (modern) R.xml.data_extraction_rules else R.xml.backup_rules
+        val file = if (modern) "data_extraction_rules.xml" else "backup_rules.xml"
+        val missing = missingBackupExclusions(context, resId)
+        val detail = when {
+            missing.isEmpty() -> "✓ $file 已排除剪贴板数据库（含 WAL 侧车）与用户词频"
+            missing.none { it.startsWith(DB_NAME) } ->
+                "✗ $file 已排除剪贴板数据库，但**未排除用户词频**（明文词表会随备份出炉）"
+            else -> "✗ $file 未完整排除剪贴板数据（缺 ${missing.joinToString("、")}）"
         }
+        return "Backup 配置" to detail
     }
+
+    /**
+     * 返回规则文件里**没被排除**的必需路径（解析失败时视为全部缺失）。
+     *
+     * `backup_rules.xml` 的 `exclude` 直接挂在根下，退化成单一空名段；
+     * `data_extraction_rules.xml` 有两段，两段都得齐备才算排除成功。
+     */
+    private fun missingBackupExclusions(context: Context, resId: Int): List<String> = runCatching {
+        val parser = context.resources.getXml(resId)
+        val bySection = LinkedHashMap<String, MutableSet<String>>()
+        var section = ""
+        while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+            when (parser.eventType) {
+                XmlPullParser.START_TAG -> when (parser.name) {
+                    "cloud-backup", "device-transfer" -> {
+                        section = parser.name
+                        bySection.getOrPut(section) { HashSet() }
+                    }
+                    "exclude" -> bySection.getOrPut(section) { HashSet() }
+                        .add(parser.getAttributeValue(null, "path").orEmpty())
+                }
+                XmlPullParser.END_TAG -> if (parser.name == section) section = ""
+            }
+            parser.next()
+        }
+        // 段齐备性先判：按段写的规则文件（data_extraction_rules.xml）**两段都必须存在** ——
+        // 整段被删在 Android 里的语义是「该模式不做任何排除」，而只比对已存在的段会照样给 ✓
+        // （与类注释「每一段都排除齐」相反）。backup_rules.xml 是扁平结构（exclude 直接挂根下），
+        // 这时退化成单一空名段；bySection 整个为空（一条 exclude 都没有）也走这条分支。
+        val needSections = if (bySection.keys.any { it == "cloud-backup" || it == "device-transfer" }) {
+            listOf("cloud-backup", "device-transfer")
+        } else {
+            listOf("")
+        }
+        if (needSections.any { bySection[it] == null }) {
+            REQUIRED_EXCLUDES
+        } else {
+            REQUIRED_EXCLUDES.filter { req -> bySection.values.any { req !in it } }
+        }
+    }.getOrDefault(REQUIRED_EXCLUDES)
 
     private const val TAG = "ClipboardFirewall"
 
     /** 剪贴板数据库文件名（Backup 规则检查用） */
     private const val DB_NAME = "jinn_clipboard.db"
+
+    /** 用户词频文件名（明文，Backup 规则必须与库一起排除） */
+    private const val FREQ_FILE = "user_freq.txt"
+
+    /**
+     * Backup 规则必须排除的路径：库本体 + WAL 侧车三件套 + 用户词频。
+     *
+     * 侧车文件不是可选项：SQLite 在 WAL 模式下把最近提交留在 `-wal` 里，
+     * 只排除主库会让「刚复制的那批记录」随备份走。
+     */
+    private val REQUIRED_EXCLUDES = listOf(
+        DB_NAME,
+        "$DB_NAME-journal",
+        "$DB_NAME-wal",
+        "$DB_NAME-shm",
+        FREQ_FILE,
+    )
 
     /** 单条 su 命令超时（秒）：全盘 find 可能很慢，不能无限等待 */
     private const val SU_TIMEOUT_SEC = 10L

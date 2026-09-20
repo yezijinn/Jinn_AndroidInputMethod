@@ -132,9 +132,14 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             setBackgroundColor(context.getColor(R.color.app_bg))
             adapter = this@SearchPanelView.adapter
         }
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            val item = currentItems.getOrNull(pos)
-            if (item != null) handleItemClick(item)
+        // 与 ClipboardPanelView 同款身份取值：优先用被点中那行渲染时的稳定 id，
+        // 只按下标取会在「结果已被新一次搜索替换、这一帧还没重绘」的窗口里粘错条目。
+        fun itemAt(pos: Int, view: View?): ClipboardDb.Item? {
+            val renderedId = (view?.tag as? Holder)?.itemId ?: -1L
+            return currentItems.firstOrNull { it.id == renderedId } ?: currentItems.getOrNull(pos)
+        }
+        listView.setOnItemClickListener { _, view, pos, _ ->
+            itemAt(pos, view)?.let { handleItemClick(it) }
         }
         addView(listView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(RESULT_HEIGHT_DP)))
@@ -247,6 +252,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
+    /** 键盘输入路由：清空搜索框（顶部的清空手势落在搜索框上，绝不碰宿主输入框） */
+    fun clearSearch() {
+        val cur = editSearch.text ?: return
+        if (cur.isNotEmpty()) cur.clear()
+    }
+
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
         isPasting = true
@@ -299,13 +310,30 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 }
             }
 
+            var retainedBytes = 0L
+            var capped = false
             while (offset < total) {
-                val chunk = db.recentPage(offset, SEARCH_WINDOW_ITEMS)
-                if (chunk.isEmpty()) break
-                for (item in chunk) {
-                    if (item.content.lowercase().contains(lower)) matches.add(item)
+                // 游标必须取回带的 nextOffset：解密失败的行不进结果但仍占游标位，
+                // 用 chunk.size 推进会让下一块重复扫描已看过的行、并永久漏掉尾部行。
+                val page = db.recentPageWithOffset(offset, SEARCH_WINDOW_ITEMS)
+                for (item in page.items) {
+                    if (item.content.lowercase().contains(lower)) {
+                        if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes)) {
+                            capped = true
+                            break
+                        }
+                        matches.add(item)
+                        // 按 UTF-8 字节计（不是字符数）：中文 1 字符 = 3 字节，
+                        // 用 length 会让 24MB 驻留预算在中文下被低估到 1/3，护栏失效。
+                        retainedBytes += ClipboardStore.utf8ByteSize(item.content)
+                    }
                 }
-                offset += chunk.size
+                // 判停只看游标有没有前进：整窗解密失败时 items 为空、但游标仍在推进，
+                // 用 items.isEmpty() 判停会静默漏掉后面的有效条目。
+                val next = page.nextOffset
+                if (next <= offset) break
+                offset = next
+                if (capped) break
                 if (reqToken != refreshToken) return@run
                 // 首帧兜底的判据必须在 post 之前固化成**值**：lambda 捕获的是变量本身，
                 // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
@@ -321,7 +349,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             // 收尾无条件补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，
             // 否则用户会看到少于实际命中的结果（静默少给）。命中数没变时跳过，避免重复布局。
             if (publishedCount != matches.size) publish(matches.toList(), relayout = false)
-            Diagnostics.i(TAG, "搜索完成: \"$q\" 命中=${matches.size}")
+            // 关键词是用户输入正文：走 V 级（默认只进 logcat 不落盘），与「日志禁出正文」一致
+            Diagnostics.v(TAG, "搜索完成: \"$q\" 命中=${matches.size} capped=$capped")
         }
     }
 
