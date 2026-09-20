@@ -51,6 +51,20 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal" />
         </HorizontalScrollView>
+
+        <!-- 清空候选：仅在「候选/预测/拼音串展示中」出现（功能面板与符号层为 GONE，不占宽度）。
+             点击 = 完全清空候选词与拼音串，候选栏回到默认的 6 按钮功能面板。
+             2026-09-20 起取代「长按退格整串清空拼音」的隐式手势。 -->
+        <TextView
+            android:id="@+id/btn_clear_candidates"
+            android:layout_width="40dp"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/cd_clear_candidates"
+            android:gravity="center"
+            android:text="@string/key_clear_candidates"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- 26 键字母区 / 剪贴板面板共用容器：

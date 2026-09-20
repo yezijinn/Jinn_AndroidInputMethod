@@ -413,6 +413,7 @@ object PinyinEngine {
             // 可选词库状态一并复位，否则下一个测试类会误以为可选包已加载
             optionalLoaded = false
             optionalLoading = false
+            extensionLoaded = false
         }
     }
 
@@ -597,12 +598,12 @@ object PinyinEngine {
             if (optionalLoaded || optionalLoading) return
             optionalLoading = true
         }
-        Thread {
+        val thread = Thread {
             try {
                 // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
                 // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-                runCatching {
+                val ok = runCatching {
                     // load() 幂等：若基础包已就绪会立即返回
                     load(context)
                     if (delayMs > 0) Thread.sleep(delayMs)
@@ -619,17 +620,29 @@ object PinyinEngine {
                     )
                 }.onFailure {
                     Diagnostics.e(TAG, "可选词库延迟加载失败（基础词库不受影响）: ${it.message}")
+                }.isSuccess
+                // onReady 只在**成功**后回调：失败路径同样触发会让调用方打出
+                // 「可选词库已在后台就绪」，与同批的 E 级失败日志自相矛盾。
+                if (ok) {
+                    runCatching { onReady?.invoke() }.onFailure {
+                        Diagnostics.w(TAG, "可选词库就绪回调异常: ${it.message}")
+                    }
                 }
             } finally {
                 // 复位必须在 finally：`setThreadPriority` 在 runCatching 之外，一旦它（或将来
                 // 新增的语句）抛异常，optionalLoading 会永远停在 true——此后所有
                 // loadOptionalAsync 直接返回，可选词库静默地永不加载且没有任何重试入口。
                 optionalLoading = false
-                runCatching { onReady?.invoke() }.onFailure {
-                    Diagnostics.w(TAG, "可选词库就绪回调异常: ${it.message}")
-                }
             }
-        }.start()
+        }
+        try {
+            thread.start()
+        } catch (t: Throwable) {
+            // `start()` 也可能失败（OOM / 线程数受限），而它在子线程 finally 的保护范围之外：
+            // 不复位的话 optionalLoading 永久为 true，同样是「静默地永不加载」。
+            optionalLoading = false
+            Diagnostics.e(TAG, "可选词库加载线程启动失败: ${t.message}")
+        }
     }
 
     /** 可选词库是否已就绪（供 UI 显示状态） */
@@ -1674,7 +1687,7 @@ enum class ShuangpinScheme(
     val prefsValue: Int,
     /** 设置页与日志用的全名 */
     val displayName: String,
-    /** 键盘功能面板按钮上的短名（按钮文字随方案变化） */
+    /** 日志/排查用的短名（`拼音输入[双拼·自然码]` 的 modeTag；面板按钮已于 2026-09-20 移除） */
     val shortName: String,
     private val tableKey: String?,
 ) {

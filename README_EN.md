@@ -25,14 +25,16 @@ Everything runs on-device — **no server required**.
 
 ## Features
 
-- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints.
+- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints. Pick the input scheme in Settings (「输入方案」: full pinyin + 7 Shuangpin schemes; applies globally).
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
   - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
     the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
   - One-tap CN/EN switch; **key corner radius and gap** are adjustable in Settings
     (radius 0~24dp, gap 0~8dp) — collapse the keyboard and reopen it to see the change.
-  - Backspace gestures: tap to delete one character, hold to keep deleting; holding ~1.2s clears the
-    whole pinyin string and leaves committed text alone; double-tap then hold clears committed text too.
+  - Backspace gestures: tap to delete one character, hold to keep deleting (once the pinyin string is
+    empty it keeps deleting committed text); double-tap then hold clears committed text too.
+  - The **✕** at the right end of the candidate bar clears the current pinyin string and candidates
+    (only shown while candidates/predictions are present); the bar then returns to the 6-button panel.
   - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
 - **Clipboard history** (embedded panel): copies are auto-saved, **AES-256-GCM encrypted into a
@@ -78,7 +80,7 @@ optional side path that requires an external server:
 | `KeyboardLayouts` | Static keyboard layout data (QWERTY rows / digit layer / symbol groups incl. kana) |
 | `PinyinKeyboardView` | 26-key keyboard + candidate bar + function panels |
 | `ClipboardPanelView` | Embedded clipboard panel (categories / paste / favorite / delete / clear) |
-| `SearchPanelView` | Top search panel: results + input + exit |
+| `SearchPanelView` | Top search panel: results + input (exit via the candidate-bar button or Enter / hide the keyboard) |
 | `ClipboardDb` | Clipboard history SQLite (AES-256-GCM) |
 | `DictManagerActivity` | Optional-dictionary page: list + download / delete |
 | `AsrClient` ⚠️ | WebSocket client: streaming upload, exponential-backoff reconnect (**voice path only**) |

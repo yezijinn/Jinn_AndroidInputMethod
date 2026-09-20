@@ -38,36 +38,6 @@ import kotlin.math.roundToInt
  *
  * 输入法层调用 [commitComposing] 主动结束当前拼音串。
  */
-/** 按住退格多久后允许一次性清掉长拼音串 */
-internal const val HOLD_TO_CLEAR_COMPOSING_MS = 1200L
-
-/** "长拼音串"的判定门槛：短拼音按住退格仍按逐字删除，避免误清 */
-internal const val LONG_COMPOSING_TO_CLEAR = 12
-
-/**
- * 长按退格是否应当"整串清掉拼音"。
- *
- * 抽成纯函数是为了能直接跑边界单测（1199/1200/1201ms × 11/12/13 字符这种），
- * 视图里的手势代码在 JVM 单测里跑不起来。
- */
-internal fun shouldClearComposingOnHold(heldMs: Long, composingLength: Int): Boolean =
-    heldMs >= HOLD_TO_CLEAR_COMPOSING_MS && composingLength >= LONG_COMPOSING_TO_CLEAR
-
-/**
- * 连删循环是否应当停手：拼音串已被删空，而本次手势在**按下时**就注定要走
- * 「只整串清拼音、不动已上屏」（按下长度 ≥ [LONG_COMPOSING_TO_CLEAR]）。
- *
- * 连删循环在门槛 [HOLD_TO_CLEAR_COMPOSING_MS] 到达前会先删掉 16 位（DOWN 1 位，
- * 380ms 起每 55ms 一位，门槛 tick 落在 1205ms），所以按下长度 12~15 的串在门槛前
- * 就被它自己删空了 —— 此时再走 `deleteOne()` 会落到 `listener.onBackspace()`，
- * 把用户**已上屏的正文**删掉（按此模型算，12 字符串会删 4 个字符），
- * 与该手势的约定正好相反。判据基准与 [shouldClearComposingOnHold] 保持一致。
- */
-internal fun shouldStopRepeatOnExhaustedComposing(
-    composingIsEmpty: Boolean,
-    composingLenAtDown: Int,
-): Boolean = composingIsEmpty && composingLenAtDown >= LONG_COMPOSING_TO_CLEAR
-
 class PinyinKeyboardView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -148,6 +118,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private lateinit var viewCandidatePinyin: TextView
     private lateinit var viewCandidateList: LinearLayout
+
+    /** 候选栏最右侧的「✕」清空候选按钮（2026-09-20 起，绑定见 init） */
+    private lateinit var btnClearCandidates: TextView
+
     private lateinit var viewLetters: LinearLayout
     private lateinit var contentArea: FrameLayout
 
@@ -212,7 +186,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上次上屏的词：退格回到预测态时用它重新查询预测 */
     private var lastCommittedWord: String = ""
 
-    // ── 删除键三态：单击删一个 / 按住连续删 / 快速三击全删 ──
+    // ── 删除键三态：单击删一个 / 按住连续删 / 双击+长按清空输入框 ──
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceHeld = false
     private var backspacePressStart = 0L
@@ -220,23 +194,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var backspaceTapCount = 0
     private var backspaceLastTapAt = 0L
 
-    /**
-     * 本次按压开始时（ACTION_DOWN）的拼音串长度。
-     *
-     * [backspaceRepeatRunnable] 每个 tick 都先删一位再重排，等到 1200ms 门槛时拼音串
-     * 已被它自己删短了十几位 —— 拿**当时**的长度判「长拼音串」永远晚一步：12~27 字符的
-     * 串会被逐字删空，之后继续删已上屏正文，与该手势「只整串清拼音、不动已上屏」的约定
-     * 正好相反。判据必须钉在按下那一刻的取值上。
-     */
-    private var composingLenAtBackspaceDown = 0
-
     /** 按住退格超过该时长进入连续删除 */
     private val backspaceRepeatDelayMs = 380L
 
     /** 连续删除的间隔 */
     private val backspaceRepeatIntervalMs = 55L
 
-    /** 双击窗口：两次短按间隔小于该值视为双击（双击后长按触发清空） */
+    /** 双击窗口：两次短按间隔小于该值视为双击（双击后长按触发清空输入框） */
     private val doubleTapWindowMs = 280L
 
     /** 双击后第三次按住超过该时长触发全部清空（长按确认，杜绝误触） */
@@ -258,26 +222,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
-            // 按住够久、且按下时拼音串很长：说明用户是想把这一大串打错的拼音整体丢掉，
-            // 而不是逐字退格（78 个字符逐字删要 6~8 秒）。清掉拼音串后停止连删，
-            // **不动已上屏的文字** —— 要连输入框一起清是「双击 + 长按」那个手势。
-            val held = System.currentTimeMillis() - backspacePressStart
-            // 判据用**按下时**的长度：本循环每 tick 先删一位，拿当前长度去判，
-            // 12~27 字符的串会先被逐字删空、再接着删已上屏正文（见字段 KDoc）。
-            if (shouldClearComposingOnHold(held, composingLenAtBackspaceDown)) {
-                Diagnostics.i(TAG, "退格长按 ${held}ms：清空拼音串（${composing.length} 字符）")
-                clearComposingState()
-                backspaceHandler.removeCallbacks(this)
-                return
-            }
-            // 拼音已被删空、且本次手势注定「只清拼音」：到此停手。
-            // 缺这道闸门时，按下长度 12~15 的串会在门槛到达前被连删自己删空，
-            // 紧接着的 tick 走 deleteOne() → listener.onBackspace()，把已上屏正文一起删掉。
-            if (shouldStopRepeatOnExhaustedComposing(composing.isEmpty(), composingLenAtBackspaceDown)) {
-                Diagnostics.i(TAG, "退格连删：拼音已删空且本次手势只清拼音，停手（不动已上屏）")
-                backspaceHandler.removeCallbacks(this)
-                return
-            }
+            // 标准的逐字连删：拼音删空后继续删已上屏正文，直到松手。
+            // （2026-09-20 起原先「按住 ≥1.2s 且拼音 ≥12 字符就整串清空」的捷径已按用户要求
+            //  移除 —— 清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
+            //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
             deleteOne()
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
         }
@@ -306,6 +254,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
+        btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
+        // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
+        // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
+        //  展示时可见，功能面板与符号层为 GONE，见 refreshCandidateBar 与 renderFunctionPanel。）
+        btnClearCandidates.setOnClickListener {
+            Diagnostics.i(
+                TAG,
+                "候选栏 ✕：清空候选（拼音=${composing.length} 候选=${lastCandidates.size} " +
+                    "预测=${lastPredictions.size}）",
+            )
+            clearComposingState()
+        }
         viewLetters = root.findViewById(R.id.keyboard_letters)
         contentArea = root.findViewById(R.id.keyboard_content_area)
 
@@ -974,7 +934,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
                 backspacePressStart = System.currentTimeMillis()
-                composingLenAtBackspaceDown = composing.length
                 deleteOne()
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
@@ -1108,8 +1067,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (!predictionsEnabled() && lastPredictions.isNotEmpty()) {
             lastPredictions = emptyList()
         }
-        // 符号层：候选栏显示符号分组标签（可横向滚动切换）
+        // 符号层：候选栏显示符号分组标签（可横向滚动切换）；「✕ 清空候选」不适用 → 隐藏
         if (layer == LAYER_SYMBOL) {
+            btnClearCandidates.visibility = View.GONE
             renderSymbolGroups()
             return
         }
@@ -1118,10 +1078,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             lastCandidates = emptyList()
             viewCandidatePinyin.text = ""
             viewCandidateList.removeAllViews()
-            // 无候选、无拼音串、无预测：候选栏展示功能面板按钮
+            // 无候选、无拼音串、无预测：候选栏展示功能面板按钮（✕ 在 renderFunctionPanel 里隐藏）
             renderFunctionPanel()
             return
         }
+        // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮（用户要求）——
+        // 有内容可清时才出现，功能面板与符号层都不显示。
+        btnClearCandidates.visibility = View.VISIBLE
 
         if (input.isEmpty()) {
             // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）
@@ -1537,6 +1500,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun renderFunctionPanel() {
         viewCandidateList.removeAllViews()
+        // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
+        btnClearCandidates.visibility = View.GONE
         // 搜索态：功能面板只保留「退出搜索」。
         // 其余按钮都不能出现——历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
         // **作用于宿主输入框**的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
@@ -1602,7 +1567,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun buildFunctionButton(
         label: String,
         hint: String,
-        labelColorRes: Int = 0,
         onClick: () -> Unit,
     ): View {
         val box = LinearLayout(context).apply {
@@ -1614,7 +1578,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             setOnClickListener { onClick() }
         }
-        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（7 个按钮各占 1/7）
+        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 个按钮各占 1/6）
         val lp = LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.MATCH_PARENT, 1f
         ).apply {
@@ -1624,10 +1588,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         box.addView(TextView(context).apply {
             text = label
             textSize = 13f
-            setTextColor(
-                if (labelColorRes != 0) resources.getColor(labelColorRes, context.theme)
-                else resources.getColor(R.color.text_primary, context.theme)
-            )
+            setTextColor(resources.getColor(R.color.text_primary, context.theme))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))

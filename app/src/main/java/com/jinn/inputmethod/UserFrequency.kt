@@ -234,6 +234,10 @@ internal object UserFrequency {
     private fun saveNow(f: File) {
         BackgroundIo.run {
             synchronized(saveLock) {
+                // 陈旧任务校验：任务里捕获的是**排程当时**的 File。若此后目标文件已变
+                // （测试的 setFileForTest、未来可能的重新 load），旧任务既不该写到旧路径，
+                // 更不该把新文件的 `dirty` 清掉（那会让新内容白白跳过一轮落盘）。
+                if (file !== f) return@synchronized
                 if (writeAtomically(f, render())) dirty = false
             }
         }
