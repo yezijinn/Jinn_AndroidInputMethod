@@ -31,7 +31,7 @@ Everything runs on-device — **no server required**.
     the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
   - One-tap CN/EN switch; **key corner radius and gap** are adjustable in Settings
     (radius 0~24dp, gap 0~8dp) — collapse the keyboard and reopen it to see the change.
-  - Backspace gestures: tap to delete one character, hold to keep deleting; holding ~1s clears the
+  - Backspace gestures: tap to delete one character, hold to keep deleting; holding ~1.2s clears the
     whole pinyin string and leaves committed text alone; double-tap then hold clears committed text too.
   - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
