@@ -71,10 +71,10 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
-     * 键盘是否启用双拼。
+     * 是否启用双拼。
      *
-     * 由**键盘功能面板的「全拼 / 双拼」按钮**直接切换（保持原有交互与文案，不在面板里选具体方案）。
-     * 老版本即用此键，故无需迁移。
+     * 2026-09-20 起由设置页「输入方案」下拉写（选全拼 = false / 选某套双拼 = true；
+     * 按键面板的「全拼 / 双拼」按钮已按用户要求移除）。老版本即用此键，故无需迁移。
      */
     var useShuangpin: Boolean
         get() = sp.getBoolean(KEY_SHUANGPIN, false)
@@ -83,8 +83,8 @@ class Prefs(context: Context) {
     /**
      * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加，**不存 0**）。
      *
-     * **只在设置页「双拼方案」下拉里改**（用户要求：面板不得改方案）。
-     * 面板把双拼关掉再打开时，会回到这里选定的那套方案，不会丢用户的选择。
+     * **只在设置页「输入方案」下拉里改**（选双拼项时写入；面板已无方案切换入口）。
+     * 选全拼**不清除**本键：下次选回双拼时回到上次那套，不会丢用户的选择。
      */
     var shuangpinScheme: Int
         get() {

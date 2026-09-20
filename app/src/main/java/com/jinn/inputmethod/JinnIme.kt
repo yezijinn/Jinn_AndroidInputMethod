@@ -488,27 +488,41 @@ class JinnIme : InputMethodService() {
         return SelectionRange(start, end, text.length, text, startOffset)
     }
 
+    /**
+     * 搜索态的「作用于宿主」面板动作一律拒绝（**纵深防御**）。
+     *
+     * 主守卫在 `PinyinKeyboardView.renderFunctionPanel`：搜索态候选栏只渲染「退出搜索」，
+     * 全选/复制/方向/粘贴都不出现。这里再挡一道，保证任何将来新增的调用路径
+     * （无障碍、外部触发、新的面板入口）都不会让它们落到宿主输入框上 ——
+     * 搜索态下 26 键只作用于搜索框，面板动作必须同口径。
+     */
+    private fun rejectedBySearchPanel(action: String): Boolean {
+        if (pinyinKeyboard?.isSearchActive() != true) return false
+        Diagnostics.w(TAG, "搜索态下忽略「$action」（避免作用于宿主输入框）")
+        return true
+    }
+
     /** 复制选中文字到系统剪贴板（保持选区与拖选模式） */
     private fun copySelection() {
         val connection = currentInputConnection ?: return
-        val extracted = connection.getExtractedText(
-            android.view.inputmethod.ExtractedTextRequest(), 0
-        )
-        val text = extracted?.text?.toString().orEmpty()
-        if (extracted == null || extracted.selectionStart < 0 || extracted.selectionEnd <= extracted.selectionStart) {
+        // 与 moveCursor/extendSelection 同一套坐标：currentSelectionRange 已把
+        // 「绝对下标 vs 窗口文本」的错位挡在外面（端点不在窗口内时返回 null）。
+        // 旧实现只做 coerceIn 钳位——窗口化时会把绝对下标当窗口下标用，
+        // 复制到与选区无关的内容（静默错误）或截出半截选区。
+        val range = currentSelectionRange(connection) ?: return
+        if (range.end <= range.start) {
             Diagnostics.w(TAG, "复制: 无选中文字")
             return
         }
-        // selectionStart/End 是**全文绝对下标**，而 getExtractedText 在长文档下可能只给
-        // 一段窗口文本（长度远小于全文）。不钳位就 substring 会抛
-        // StringIndexOutOfBoundsException，直接把输入法打崩。
-        val from = extracted.selectionStart.coerceIn(0, text.length)
-        val to = extracted.selectionEnd.coerceIn(from, text.length)
-        if (to <= from) {
+        // 两个端点都已由 currentSelectionRange 校验过「在窗口内」，这里仍按可空处理，
+        // 防御两次读取之间窗口发生变化（null 即放弃本次操作）。
+        val from = TextSelection.toWindowOffset(range.start, range.startOffset, range.textLength)
+        val to = TextSelection.toWindowOffset(range.end, range.startOffset, range.textLength)
+        if (from == null || to == null || to <= from) {
             Diagnostics.w(TAG, "复制: 选区不在当前文本窗口内，跳过")
             return
         }
-        val sel = text.substring(from, to)
+        val sel = range.text.substring(from, to)
         val clip = android.content.ClipData.newPlainText("jinn_selection", sel)
         clipboardManager.setPrimaryClip(clip)
         // 不再手动入库：setPrimaryClip 会触发 ClipboardController 的剪贴板监听，
@@ -632,6 +646,7 @@ class JinnIme : InputMethodService() {
                     }
                 }
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
+                    if (rejectedBySearchPanel("方向")) return
                     Diagnostics.i(TAG, "方向按键: $action")
                     executeDirection(action)
                 }
@@ -645,14 +660,17 @@ class JinnIme : InputMethodService() {
                     }
                 }
                 override fun onPasteClipboard() {
+                    if (rejectedBySearchPanel("粘贴")) return
                     Diagnostics.i(TAG, "功能面板: 粘贴剪贴板")
                     pasteClipboard()
                 }
                 override fun onSelectAll() {
+                    if (rejectedBySearchPanel("全选")) return
                     Diagnostics.i(TAG, "功能面板: 全选")
                     selectAllText()
                 }
                 override fun onCopy() {
+                    if (rejectedBySearchPanel("复制")) return
                     Diagnostics.i(TAG, "功能面板: 复制")
                     copySelection()
                 }
@@ -788,6 +806,9 @@ class JinnIme : InputMethodService() {
         }
         // 从拼音切走时若有未上屏内容，先提交首候选
         pinyinKeyboard?.commitComposing()
+        // 搜索态必须一并退出：面板在语音键盘下不可见却仍处激活态，
+        // 切回拼音后 26 键输入会被「隐形路由」进搜索框（用户以为在打字）。
+        pinyinKeyboard?.hideSearchPanel()
         keyboardMode = KeyboardMode.VOICE
         applyKeyboardMode()
     }
@@ -955,6 +976,8 @@ class JinnIme : InputMethodService() {
         if (mode != Mode.NONE) stopRecording(commit = false)
         // 拼音键盘若有未上屏内容，提交首候选
         pinyinKeyboard?.commitComposing()
+        // 会话边界：搜索面板必须退出——跨输入框残留会让下一次输入被路由进搜索框
+        pinyinKeyboard?.hideSearchPanel()
         ui.removeCallbacks(backspaceRunnable)
         // 会话边界：暂存的剪贴板文本属于**上一个输入框**，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
@@ -1306,19 +1329,20 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 删除键三击：清空输入框全部文本。
-     * 通过 Ctrl+A 全选 + 删除实现，兼容大多数输入框。
+     * 删除键三击（双击+长按）：清空输入框全部文本。
+     *
+     * 实现：光标折叠到 0 后删「光标之后」的全部内容。**不再用 Ctrl+A + 删除**：
+     * 按 Android 的 `InputConnection.deleteSurroundingText` 契约，它只作用于**选区前后**、
+     * 无法影响选区内容 —— AOSP `BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
+     * 旧写法在标准宿主上一个字符都删不掉，只在「宿主不接受 Ctrl+A」时误删光标前的半截文本。
+     * 新写法不依赖宿主对快捷键的支持：`afterLength` 会被实现钳到文本末尾。
      */
     private fun deleteAllText() {
         Diagnostics.i(TAG, "deleteAllText: 三击删除键，清空全部文本")
         val connection = currentInputConnection ?: return
-        val meta = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
-        // Ctrl+A 全选（用 sendDownUpKeyEvents 的变体 + meta 不可行，改走 sendKeyEvent 手工构造）
-        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_DOWN, meta))
-        connection.sendKeyEvent(makeCtrlKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.ACTION_UP, meta))
-        // 删除选中内容（deleteSurroundingText 在 API 34 是 Int 签名）
-        connection.deleteSurroundingText(Int.MAX_VALUE, 0)
-        Diagnostics.i(TAG, "deleteAllText: 已发送全选删除")
+        connection.setSelection(0, 0)
+        connection.deleteSurroundingText(0, Int.MAX_VALUE)
+        Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾）")
     }
 
     /**
