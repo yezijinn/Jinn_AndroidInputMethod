@@ -16,7 +16,9 @@ plugins {
 val keystoreProps = Properties()
 val ksFile = rootProject.file("keystore.properties")
 if (ksFile.exists()) {
-    keystoreProps.load(FileInputStream(ksFile))
+    // 用 use 关闭流：Properties.load 不接管入参流的所有权。不关会在 Gradle 守护进程
+    // 整个会话里持有 fd，Windows 上还会锁住该文件（编辑/移动报占用）
+    ksFile.inputStream().use { keystoreProps.load(it) }
 }
 
 val externalStoreFile = System.getenv("JINN_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }

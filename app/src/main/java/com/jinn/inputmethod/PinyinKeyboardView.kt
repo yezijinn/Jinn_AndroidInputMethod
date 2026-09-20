@@ -496,21 +496,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 抬起点是否仍落在该键范围内（防相邻键误触）。
      *
      * 用 raw 坐标比对，与 DOWN 时记录的 [MotionEvent.getRawX] 同源。
-     * 边界外扩 [KEY_HIT_PADDING_DP]：贴边点击时手指常有 1~2 像素抖动，
-     * 完全不放宽会让边缘键变得难点中。
-     *
-     * 取不到布局信息（未测量/已分离）时返回 true——保守退回「照常输入」，
-     * 宁可保留旧行为，也不能因为拿不到坐标而让用户按不出字。
+     * 几何判定抽到文件级 [isInsideKeyBounds]（纯函数、可 JVM 单测）；
+     * 这里只负责取视图坐标与 dp 换算。
      */
     private fun isInsideKey(key: View?, event: MotionEvent): Boolean {
-        if (key == null || key.width <= 0 || key.height <= 0) return true
+        if (key == null) return true
         val loc = IntArray(2)
         key.getLocationOnScreen(loc)
-        val pad = dpFloat(KEY_HIT_PADDING_DP)
-        return event.rawX >= loc[0] - pad &&
-            event.rawX <= loc[0] + key.width + pad &&
-            event.rawY >= loc[1] - pad &&
-            event.rawY <= loc[1] + key.height + pad
+        return isInsideKeyBounds(
+            rawX = event.rawX,
+            rawY = event.rawY,
+            left = loc[0],
+            top = loc[1],
+            width = key.width,
+            height = key.height,
+            pad = dpFloat(KEY_HIT_PADDING_DP),
+        )
     }
 
     private fun letterKeyId(c: Char): Int = when (c) {
@@ -1454,6 +1455,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 keySemicolon.setPressedVisual(false)
+                // 命中判定不可省（与字母键同口径，见 isInsideKey 的 KDoc）：
+                // 手指从 `;` 滑到相邻字母键再抬起时，不应把用户并未按下的分号追加进拼音串。
+                if (!isInsideKey(keySemicolon, event)) {
+                    Diagnostics.v(TAG, "分号键: 抬起在键外，忽略")
+                    return true
+                }
                 composing.append(SEMICOLON_KEY)
                 refreshCandidateBar()
                 Diagnostics.v(TAG, "分号键(ing): 拼音串=${composing}")
@@ -1514,8 +1521,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 功能面板（无候选时展示）──────────────────────────────
 
     /**
-     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板：
-     *  - 双拼/全拼：切换双拼方案（键盘内部状态翻转）
+     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（共 **6 个按钮**）：
      *  - 剪贴板：打开安全剪贴板历史页
      *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
      *  - 全选：选中输入框全部文本
@@ -1523,17 +1529,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 粘贴：粘贴剪贴板最新内容
      *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）
      *
+     * 「全拼 / 双拼」切换按钮已于 2026-09-20 按用户要求移除：输入方案统一在设置页
+     * 「输入方案」下拉里改（全拼 + 7 套双拼，全局生效），面板不再承担方案切换。
+     *
      * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（48dp），
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
      */
     private fun renderFunctionPanel() {
         viewCandidateList.removeAllViews()
-        // 按钮文案保持原有「全拼 / 双拼」二态（不得显示具体方案名——方案只在设置页选）
-        viewCandidateList.addView(buildFunctionButton(
-            label = if (shuangpinMode) "双拼" else "全拼",
-            hint = if (shuangpinMode) "换全拼" else "换双拼",
-            onClick = { togglePinyinScheme() },
-        ))
+        // 搜索态：功能面板只保留「退出搜索」。
+        // 其余按钮都不能出现——历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
+        // **作用于宿主输入框**的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
+        // 面板动作必须同口径。「全选」会让退出搜索后的下一次输入替换整段正文，
+        // 「粘贴」会把剪贴板正文注入宿主，「方向」会移动宿主光标。
+        if (isPanelSearch()) {
+            viewCandidateList.addView(buildFunctionButton(
+                label = "退出",
+                hint = "搜索",
+                onClick = {
+                    Diagnostics.i(TAG, "功能面板: 退出搜索")
+                    hideSearchPanel()
+                },
+            ))
+            Diagnostics.v(TAG, "功能面板(搜索态): 退出")
+            return
+        }
         viewCandidateList.addView(buildFunctionButton(
             label = "历史",
             hint = "剪贴板",
@@ -1572,7 +1592,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             hint = "键盘",
             onClick = { listener?.onHideKeyboard() },
         ))
-        Diagnostics.v(TAG, "功能面板: ${if (shuangpinMode) "双拼" else "全拼"}/历史/方向/全选/复制/粘贴/收起")
+        Diagnostics.v(
+            TAG,
+            "功能面板(6 按钮): 历史/方向/全选/复制/粘贴/收起（当前方案=${scheme.displayName}）",
+        )
     }
 
     /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
@@ -1641,24 +1664,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         hintView?.text = "控制"
     }
 
-    /** 双拼/全拼切换：翻转方案 + 刷新键面提示 + 更新偏好（下次唤起保持） */
-    private fun togglePinyinScheme() {
-        // 大写键激活：强制锁定大写英文，任何方案切换无效
-        if (capsMode) {
-            Diagnostics.i(TAG, "输入方案切换: 大写锁定激活，切换无效")
-            return
-        }
-        // 只切「用不用双拼」；具体方案由设置页决定，切回时取**设置里选定的那套**
-        // （注意不能读 effectiveShuangpinScheme——把双拼关掉后它就等于全拼，
-        //   那样切回来会丢用户选的方案，只能退回自然码）
-        scheme = ShuangpinScheme.toggle(scheme, ShuangpinScheme.of(Prefs(context).shuangpinScheme))
-        // 持久化：切换结果写入设置，输入法重建后保持本次选择
-        runCatching { Prefs(context).useShuangpin = scheme.isShuangpin }
-            .onFailure { Diagnostics.w(TAG, "切换方案时保存偏好失败: ${it.message}") }
-        refreshKeyLabels()
-        refreshCandidateBar()
-        Diagnostics.i(TAG, "输入方案切换: ${scheme.displayName}")
-    }
+
 
     // ── 键盘内方向面板（占 26 键的字母区域）────────────────
 
@@ -1915,6 +1921,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clearComposingState()
         searchPanel.visibility = View.VISIBLE
         searchPanel.onShown()
+        // 与方向面板互斥：两者同屏时方向键（箭头/复制/粘贴）会落到宿主输入框上，
+        // 与「搜索态只作用于搜索框」的口径冲突（同 showClipboardPanel 的对称处理）。
+        if (directionPanelVisible) hideDirectionPanel()
+        // 必须**在面板可见之后**再刷一次候选栏：clearComposingState 内部那次刷新发生在
+        // visibility 置位之前，isPanelSearch() 仍为 false —— 会渲染出宿主功能面板并残留。
+        refreshCandidateBar()
         Diagnostics.i(TAG, "顶部搜索面板: 显示（IME 高度增高）")
     }
 
@@ -1924,6 +1936,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clearComposingState()
         searchPanel.visibility = View.GONE
         searchPanel.onHidden()
+        // 对称于显示：置 GONE 之后再刷一次，候选栏从「退出搜索」恢复为常规功能面板
+        refreshCandidateBar()
         Diagnostics.i(TAG, "顶部搜索面板: 隐藏")
     }
 
@@ -2051,4 +2065,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val LAYER_SYMBOL = 1
         const val LAYER_DIGIT = 2
     }
+}
+
+/**
+ * 按键命中判定的**几何部分**（文件级纯函数，便于 JVM 单测；调用方见 `PinyinKeyboardView.isInsideKey`）。
+ *
+ * - 边界外扩 [pad]（dp 换算后的像素）：贴边点击时手指常有 1~2 像素抖动，
+ *   完全不放宽会让边缘键变得难点中；
+ * - 取不到布局信息（未测量/已分离，width/height ≤ 0）时返回 true —— 保守退回
+ *   「照常输入」：宁可保留旧行为，也不能因为拿不到坐标而让用户按不出字。
+ *
+ * 字母键与分号键的 `ACTION_UP` 命中判定共用本函数（分号键曾漏掉该判定，
+ * 按下后滑到相邻键抬起仍会上 `;`）。
+ */
+internal fun isInsideKeyBounds(
+    rawX: Float,
+    rawY: Float,
+    left: Int,
+    top: Int,
+    width: Int,
+    height: Int,
+    pad: Float,
+): Boolean {
+    if (width <= 0 || height <= 0) return true
+    return rawX >= left - pad &&
+        rawX <= left + width + pad &&
+        rawY >= top - pad &&
+        rawY <= top + height + pad
 }

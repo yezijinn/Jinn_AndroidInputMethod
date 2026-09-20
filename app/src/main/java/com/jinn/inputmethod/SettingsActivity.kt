@@ -5,7 +5,6 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -23,8 +22,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.edit
-import java.io.File
 
 /**
  * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
@@ -62,7 +59,7 @@ class SettingsActivity : ComponentActivity() {
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
-    /** 更新检查状态机：Idle / Checking / UpToDate / Available / NetworkError */
+    /** 更新检查状态：只区分「空闲 / 进行中」，结果由对话框呈现（见 [UpdateState]） */
     private var updateState: UpdateState = UpdateState.Idle
     /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
     private lateinit var cardMicPermission: View
@@ -203,12 +200,13 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 双拼方案下拉：**只列双拼方案，不含「全拼」**（用户要求——全拼/双拼由键盘面板的按钮切，
-        // 这里只负责选「哪一套双拼」）。列表取自 [ShuangpinScheme.SHUANGPIN_ONLY]，
-        // 与引擎共用同一份数据，不会脱节。
+        // 输入方案下拉（**全局**，2026-09-20 起）：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
+        // 选中即全局生效：选全拼 = 关闭双拼；选某套双拼 = 记住该方案并启用。
+        // 按键面板不再提供「全拼 / 双拼」切换按钮，这里是唯一的输入方案入口。
+        // 列表取自 [ShuangpinScheme.ALL]，与引擎共用同一份数据，不会脱节。
         spinnerShuangpin.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_item,
-            ShuangpinScheme.SHUANGPIN_ONLY.map { it.displayName },
+            ShuangpinScheme.ALL.map { it.displayName },
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         spinnerShuangpin.setOnTouchListener { view, event ->
             shuangpinSpinnerTouched = true
@@ -222,12 +220,11 @@ class SettingsActivity : ComponentActivity() {
                 // 与「默认键盘模式」同一个坑：初始化 setSelection 与恢复实例状态都会回调，
                 // 不挡住就会把用户已选的方案静默改掉（真机上实测被改写过）。
                 if (!shuangpinSpinnerTouched) return
-                // 列表里只有双拼方案：选中即「记住这套 + 启用双拼」（若当前是全拼状态，选完即生效）。
-                // 方案记忆只有这一处入口；关闭双拼请用键盘面板的「全拼/双拼」按钮。
-                val scheme = ShuangpinScheme.SHUANGPIN_ONLY.getOrNull(position) ?: return
-                prefs.shuangpinScheme = scheme.prefsValue
-                prefs.useShuangpin = true
-                Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=true）")
+                val scheme = ShuangpinScheme.ALL.getOrNull(position) ?: return
+                prefs.useShuangpin = scheme.isShuangpin
+                // 双拼方案记忆：只在选双拼项时写（选全拼**不清记忆**——再选回双拼时回到上次那套）
+                if (scheme.isShuangpin) prefs.shuangpinScheme = scheme.prefsValue
+                Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=${scheme.isShuangpin}）")
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -501,10 +498,9 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
         )
-        // 双拼方案：显示**已记住的那套双拼**（列表只含双拼，故与「当前是否启用双拼」无关）
+        // 输入方案：按**当前生效方案**定位（全拼状态下选中「26 键全拼」，与全局语义一致）
         spinnerShuangpin.setSelection(
-            ShuangpinScheme.SHUANGPIN_ONLY.indexOf(ShuangpinScheme.of(prefs.shuangpinScheme))
-                .coerceAtLeast(0)
+            ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
         )
     }
 
@@ -519,11 +515,27 @@ class SettingsActivity : ComponentActivity() {
      * 完全沉寂（不建实例、不连 WebSocket），这些配置项没有意义，显示出来只会误导。
      * 开关变更后需重启输入法进程才生效（与设置页其他项一致，由「保存并重启」触发）。
      */
-    /** 更新检查五态（Idle / Checking / UpToDate / Available / NetworkError） */
-    private enum class UpdateState { Idle, Checking, UpToDate, Available, NetworkError }
+    /**
+     * 更新检查状态：只区分「空闲 / 进行中」。
+     *
+     * 结果（有更新 / 已最新 / 网络错误）由对话框呈现——早先预留的
+     * UpToDate / Available / NetworkError 三态从未被任何消费方读取（死状态），已移除。
+     */
+    private enum class UpdateState { Idle, Checking }
 
-    /** Checking 高亮持续时长：到点自动熄灯，避免按钮常亮 */
-    private val updateDimRunnable = Runnable { setUpdateState(UpdateState.Idle) }
+    /**
+     * 请求看门狗：网络侧超时 10s，留 5s 余量。
+     *
+     * **不能**像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
+     * `updateState == Checking` 的防重入判据随之失效 —— 用户可并发发起第二次检查并重复弹窗。
+     * 正常情况结果必达（[onUpdateChecked] 负责解锁），看门狗只在回调极端丢失时兜底。
+     */
+    private val updateWatchdogRunnable = Runnable {
+        if (updateState == UpdateState.Checking) {
+            Diagnostics.w(TAG, "检查更新超时未返回，看门狗解锁按钮")
+            setUpdateState(UpdateState.Idle)
+        }
+    }
 
     /**
      * 「检查更新」绑定。点击进入 Checking：禁用重复点击并高亮；
@@ -545,22 +557,20 @@ class SettingsActivity : ComponentActivity() {
         btnCheckUpdate.text = getString(
             if (checking) R.string.update_checking else R.string.settings_check_update
         )
-        if (checking) btnCheckUpdate.postDelayed(updateDimRunnable, UPDATE_HIGHLIGHT_MS)
+        btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
+        if (checking) btnCheckUpdate.postDelayed(updateWatchdogRunnable, UPDATE_WATCHDOG_MS)
     }
 
     private fun onUpdateChecked(result: UpdateChecker.Result) {
-        btnCheckUpdate.removeCallbacks(updateDimRunnable)
+        btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
         // 检查是后台线程 + 10s 网络超时：结果回来时页面可能已关闭或已重建。
         // 拿已销毁的 Activity 去 show() 会抛 BadTokenException（主线程崩溃）。
         if (isFinishing || isDestroyed) {
             Diagnostics.i(TAG, "检查更新结果已到达，但页面已销毁，跳过弹窗")
             return
         }
-        updateState = when (result) {
-            is UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
-            is UpdateChecker.Result.Available -> UpdateState.Available
-            UpdateChecker.Result.NetworkError -> UpdateState.NetworkError
-        }
+        // 结果本身由对话框呈现：这里只需解锁（早先先赋 UpToDate/Available/NetworkError、
+        // 紧接着又被 Idle 覆盖，是没有任何消费方的死代码，已随本次修复移除）。
         setUpdateState(UpdateState.Idle)
         showUpdateDialog(result)
     }
@@ -737,8 +747,8 @@ class SettingsActivity : ComponentActivity() {
     private companion object {
         const val TAG = "SettingsActivity"
 
-        /** 「检查更新」按钮高亮时长：到点自动熄灭，避免常亮 */
-        const val UPDATE_HIGHLIGHT_MS = 3_000L
+        /** 「检查更新」看门狗超时：网络超时 10s + 5s 余量，到点（仍处于 Checking 时）兜底解锁 */
+        const val UPDATE_WATCHDOG_MS = 15_000L
 
         // 可选词库的文件名、下载源与体积/耗时说明已统一收敛到 OptionalDicts，
         // 由「分类词库」页使用；设置页只保留一个跳转入口。

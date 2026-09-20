@@ -87,6 +87,27 @@ class IndexBuilderParityTest {
     }
 
     /**
+     * 回归：同键的连续多行必须**合并进同一个词表**（语义与文本路径的合并一致）。
+     *
+     * 旧实现按行写出，同键第二个词表会被二分查找永久跳过 —— 静默少词，无日志无异常。
+     * 注意「无重复键输入逐字节不变」已由上面的对拍用例钉住：本用例只覆盖合并语义。
+     */
+    @Test
+    fun 同键的连续多行被合并进同一个词表() {
+        // 字典序：ni < nihao（"ni" 是 "nihao" 的前缀），同键行必须相邻
+        val text = "ni\t你\nnihao\t你好\nnihao\t拟好|你号\n"
+        val parsed = PhraseIndex.of(PhraseIndex.build(text.lineSequence(), 7L))
+            ?: throw AssertionError("自建索引无法解析")
+        assertEquals("同键只应产生一个键", 2, parsed.size)
+        assertEquals(
+            "同键两行的词表应按出现顺序用 | 拼接",
+            listOf("你好", "拟好", "你号"),
+            parsed.wordsFor("nihao")?.toList(),
+        )
+        assertEquals(listOf("你"), parsed.wordsFor("ni")?.toList())
+    }
+
+    /**
      * 收尾复位：PinyinEngine 是单例，本文件会用真实 asset 注入词库；
      * 不复位会把「真实单字表/音节表」留给后续测试类，破坏它们的既有假设。
      */
