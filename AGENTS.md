@@ -90,11 +90,17 @@ app/src/main/java/com/jinn/inputmethod/
 ├── MicRecorder.kt      # 16kHz PCM16 采集 → float32 小端；本地 VAD 静音检测
 ├── AsrClient.kt        # OkHttp WebSocket：beginTask/sendChunk/endTask + 断线指数退避重连
 ├── MicButton.kt        # 麦克风按钮（纯绘制，手势判定在 IME）
-├── JinnIme.kt          # 输入法服务：语音键盘 + 拼音键盘双模式、长按/短按手势、结果回显、剪贴板粘贴广播
+├── JinnIme.kt          # 输入法服务：语音键盘 + 拼音键盘双模式、长按/短按手势、结果回显、剪贴板粘贴（同进程回调）
 ├── PinyinEngine.kt     # 拼音引擎：词库加载（ConcurrentHashMap + 流式解压，可选包延迟加载）、候选查询、自然码双拼
 ├── KeyboardLayouts.kt  # 键盘静态布局数据（QWERTY 行定义 / 数字层映射 / 符号分组含日文假名）
 ├── PinyinKeyboardView.kt # 拼音键盘视图：26 键 QWERTY + 候选栏 + 功能面板（全拼/剪贴板/方向/粘贴/收起）+ 智能预测
 ├── PinyinKey.kt        # 拼音键盘单键（纯绘制：字母 + 双拼韵母/声母提示）
+├── PhraseIndex.kt      # 词库二进制索引 v2：流式构建 + 内存映射读取 + 原子落盘
+├── UserFrequency.kt    # 用户词频学习（累加 / 稳定排序 / 序列化 / 脏值容错）
+├── ShuangpinSchemes.kt # 双拼键位表（由生成器产出，禁止手改）
+├── KeyAppearance.kt    # 键盘外观参数（圆角 / 间隙定义域、步进、钳位与换算）
+├── InputFieldPrivacy.kt# 输入框敏感度（SuppressLearning：密码 / NO_SUGGESTIONS / TYPE_NULL 不学词频）
+├── UpdateChecker.kt    # 检查更新（GitHub / Gitee 纯数字 tag 比对，非 https 一律拒绝）
 ├── TextSelection.kt    # 文字拖选核心逻辑（Anchor/Focus 模型，纯函数可单测）
 ├── SettingsActivity.kt # 设置页（服务端/语言/提示词/授权/剪贴板/分类词库入口）；保存后杀进程重启 IME
 ├── DictManagerActivity.kt # 分类词库页（可选词库列表 + 下载 / 删除）
