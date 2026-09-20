@@ -15,9 +15,11 @@ import java.io.StringReader
  * 每条断言对应一个已交叉验证过的真实缺陷，回归即复现：
  *  - [fieldKeyOf] 守住「暂存粘贴只回原输入框」（跨字段/跨应用注入）；
  *  - [searchRetainLimitReached] 守住「搜索命中集合有驻留上限」（内存护栏）；
- *  - [readCapped] 守住「更新检查响应体限长读取」。
+ *  - [readCapped] 守住「更新检查响应体限长读取」；
+ *  - [isInsideKeyBounds] 守住「按键抬起必须落在键内（含外扩）才算命中」——
+ *    分号键曾漏掉该判定，按下后滑到相邻键抬起仍会把 `;` 追加进拼音串。
  *
- * 注意：这三条都是**曾经没有、被补上的约束**——断言失败意味着缺陷回归，
+ * 注意：这些都是**曾经没有、被补上的约束**——断言失败意味着缺陷回归，
  * 不要通过放宽阈值让它们变绿。
  */
 class RecentFixesRegressionTest {
@@ -104,5 +106,33 @@ class RecentFixesRegressionTest {
     @Test
     fun `readCapped 空响应返回空串`() {
         assertEquals("", UpdateChecker.readCapped(reader(""), 100))
+    }
+
+    // ── 按键命中的几何判定（分号键滑出不得上字）────────────
+
+    @Test
+    fun `命中判定 键内与边界外扩内都算命中`() {
+        // 键 (100,200) 100x100，外扩 8px
+        assertTrue(isInsideKeyBounds(110f, 210f, 100, 200, 100, 100, 8f))   // 正中
+        assertTrue(isInsideKeyBounds(93f, 210f, 100, 200, 100, 100, 8f))    // 左边界外扩内
+        assertTrue(isInsideKeyBounds(207f, 210f, 100, 200, 100, 100, 8f))   // 右边界外扩内
+        assertTrue(isInsideKeyBounds(110f, 193f, 100, 200, 100, 100, 8f))   // 上边界外扩内
+        assertTrue(isInsideKeyBounds(110f, 307f, 100, 200, 100, 100, 8f))   // 下边界外扩内
+    }
+
+    @Test
+    fun `命中判定 滑出到相邻键必须算不命中`() {
+        // 分号键的缺陷场景：按下 `;` 后滑到相邻键再抬起 —— 不应把 `;` 追加进拼音串
+        assertFalse(isInsideKeyBounds(91f, 210f, 100, 200, 100, 100, 8f))
+        assertFalse(isInsideKeyBounds(209f, 210f, 100, 200, 100, 100, 8f))
+        assertFalse(isInsideKeyBounds(110f, 191f, 100, 200, 100, 100, 8f))
+        assertFalse(isInsideKeyBounds(110f, 309f, 100, 200, 100, 100, 8f))
+    }
+
+    @Test
+    fun `命中判定 取不到布局信息时保守算命中`() {
+        // width/height ≤ 0（未测量/已分离）：宁可保留旧行为，也不能让用户按不出字
+        assertTrue(isInsideKeyBounds(0f, 0f, 0, 0, 0, 0, 8f))
+        assertTrue(isInsideKeyBounds(9999f, 9999f, 100, 200, 0, 100, 8f))
     }
 }

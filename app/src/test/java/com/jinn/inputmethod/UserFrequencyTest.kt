@@ -188,6 +188,37 @@ class UserFrequencyTest {
         dir.deleteRecursively()
     }
 
+    // ── flush 的失败语义 ───────────────────────────────────────────────────
+
+    /**
+     * 回归：`flush` 曾**先清 dirty 再写盘** —— 写失败（磁盘满 / IO 错误）后这次学习
+     * 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），而 flush 的职责
+     * 正是「保证最后一次学习不丢」。现在与 `saveNow` 对齐：写盘成功才清 dirty。
+     */
+    @Test
+    fun 写盘失败时保留dirty以便下次重试() {
+        UserFrequency.resetForTest()
+        // file 为 null 时 remember 不会触发尾沿落盘（scheduleSave 直接返回），只置 dirty
+        UserFrequency.remember("词")
+        assertTrue("学习后应为脏", UserFrequency.isDirtyForTest())
+
+        // 目标父目录不存在 → writeAtomically 必然失败（不依赖平台的权限语义）
+        val missing = File(System.getProperty("java.io.tmpdir"), "jinn-uf-missing-${System.nanoTime()}")
+        UserFrequency.setFileForTest(File(missing, "user_freq.txt"))
+        UserFrequency.flush()
+        assertTrue("写盘失败后必须保留 dirty，否则这次学习永久丢失", UserFrequency.isDirtyForTest())
+
+        // 可写路径：flush 成功后 dirty 清除、文件写出
+        val dir = File(System.getProperty("java.io.tmpdir"), "jinn-uf-flush-ok")
+        dir.mkdirs()
+        val ok = File(dir, "user_freq.txt")
+        UserFrequency.setFileForTest(ok)
+        UserFrequency.flush()
+        assertTrue("写盘成功后 dirty 应清除", !UserFrequency.isDirtyForTest())
+        assertTrue("文件应已写出", ok.isFile)
+        dir.deleteRecursively()
+    }
+
     // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
 
     private val WINDOW = 2_000L

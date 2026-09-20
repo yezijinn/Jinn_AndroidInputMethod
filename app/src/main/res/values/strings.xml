@@ -181,9 +181,9 @@
     <string name="engine_dict_loading">词库加载中…</string>
     <string name="engine_dict_filling">词库补全中…</string>
 
-    <!-- 输入方案（全拼 + 七种双拼；方案名取自 ShuangpinScheme，故此处不写死列表） -->
-    <string name="settings_shuangpin_scheme">双拼的输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">26 键按钮 会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上\n此处只选「哪套双拼」；全拼/双拼切换用键盘面板的按钮</string>
+    <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
+    <string name="settings_shuangpin_scheme">输入方案</string>
+    <string name="settings_shuangpin_scheme_desc">全拼 + 7 套双拼；选中即全局生效（语音键盘除外）\n26 键按钮会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
     <string name="key_appearance_title">键盘外观</string>

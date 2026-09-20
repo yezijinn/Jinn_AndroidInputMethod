@@ -63,4 +63,24 @@ class DiagnosticsLogcatFilterTest {
         val raw = "随便一段没有行首的文本\n第二行\n"
         assertEquals(raw, Diagnostics.filterOwnVerboseLines(raw, pid))
     }
+
+    /**
+     * 回归：logcat 在条目时间戳与「当前年」不同年时会输出 `yyyy-` 前缀（跨年缓冲区）。
+     * 旧正则只认 `MM-DD`，这些行会失配并**沿用上一行的 drop 状态** ——
+     * 本进程的 V 行可能被原样保留（正文进快照），其它进程的保留行则可能被误剔。
+     */
+    @Test
+    fun 跨年的时间戳前缀同样能被识别() {
+        val raw = buildString {
+            appendLine("2025-12-31 23:59:59.123  $pid  ${pid + 1} V PinyinKeyboard: 拼音输入[全拼]: nihao")
+            appendLine("2025-12-31 23:59:59.124  ${pid + 9}  ${pid + 10} V OtherApp: 别人的日志")
+            appendLine("2026-01-01 00:00:01.000  $pid  ${pid + 1} E JinnDiag: Crash")
+        }
+
+        val out = Diagnostics.filterOwnVerboseLines(raw, pid)
+
+        assertFalse("跨年格式的本进程 V 行同样必须被剔除", out.contains("nihao"))
+        assertTrue("其它进程的 V 行不受影响", out.contains("别人的日志"))
+        assertTrue("E 级必须保留", out.contains("Crash"))
+    }
 }

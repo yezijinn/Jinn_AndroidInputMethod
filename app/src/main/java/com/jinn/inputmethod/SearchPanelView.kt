@@ -154,14 +154,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         addView(textEmpty, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(RESULT_EMPTY_HEIGHT_DP)))
 
-        // 搜索输入框 + 退出搜索按钮（同一行；输入框 weight=1，退出按钮右侧固定）。
-        // 关键：baselineAligned 默认 true，会按文本 baseline 对齐（字体/padding 不同即偏移），
-        // 关闭后改按顶部对齐，各方 gravity 用 CENTER_VERTICAL + includeFontPadding=false
-        // 保证文字几何垂直居中，输入框与按钮外观严格对齐。
-        val searchRow = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            isBaselineAligned = false
-        }
+        // 搜索输入框（**独占一行**）。
+        // 退出搜索的入口都在键盘侧，本面板内不放按钮：候选栏「退出」按钮 / 搜索态回车 /
+        // BACK 收起键盘；粘贴结果成功后由 [handleItemClick] 走 [Listener.onClose] 自动关闭。
         editSearch = EditText(context).apply {
             hint = "搜索剪贴板历史"
             setSingleLine(true)
@@ -183,23 +178,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 }
             })
         }
-        searchRow.addView(editSearch, LinearLayout.LayoutParams(0, dp(46), 1f))
-        // 退出搜索：矩形、与搜索框同高同色、水平居中对齐，视觉浑然一体
-        val btnExit = TextView(context).apply {
-            // 严格两行排版：退出 / 搜索（按钮窄，单行会挤压或省略）
-            text = "退出\n搜索"
-            gravity = android.view.Gravity.CENTER
-            setIncludeFontPadding(false)
-            setLineSpacing(0f, 0.95f)
-            setTextColor(context.getColor(R.color.text_primary))
-            textSize = 12f
-            setBackgroundColor(context.getColor(R.color.surface_hi))
-            isClickable = true
-            setOnClickListener { listener?.onClose() }
-        }
-        searchRow.addView(btnExit, LinearLayout.LayoutParams(WRAP_EXIT_DP, dp(46)).apply { marginStart = dp(6) })
-        addView(searchRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(editSearch, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
     }
 
     /** 显示搜索面板：清空输入、对齐结果列表/空态可见性、聚焦输入框 */
@@ -393,8 +373,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */
         const val RESULT_EMPTY_HEIGHT_DP = 120
-        /** 退出搜索按钮宽度 */
-        const val WRAP_EXIT_DP = 88
         val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     }
 }

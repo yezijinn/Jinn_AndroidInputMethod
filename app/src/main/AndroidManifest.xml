@@ -9,7 +9,7 @@
     <!-- 采集麦克风音频送服务端识别 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 诊断日志：经 KernelSU root 预授权 MANAGE_EXTERNAL_STORAGE 后，可直接写入
-         /storage/emulated/0/JinnIME/logs/（scoped storage 下唯一直写共享存储的方式）。
+         /storage/emulated/0/JinnIme/logs/（scoped storage 下唯一直写共享存储的方式）。
          未授权时自动退回应用专属目录，不影响功能。 -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"

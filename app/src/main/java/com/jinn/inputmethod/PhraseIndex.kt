@@ -245,8 +245,8 @@ internal class PhraseIndex private constructor(
          * 与构建脚本产出**完全同格式**（同一套 header/偏移布局），因此可以互相读取；
          * 已由 `IndexBuilderParityTest` 对拍钉住。
          *
-         * @param lines 形如 `拼音<TAB>词1|词2` 的行；**流水线已保证按键升序**，
-         *   这里做一次校验，万一乱序则退化为排序（正确性优先，正常不会触发）。
+         * @param lines 形如 `拼音<TAB>词1|词2` 的行；**流水线已保证按键升序**（乱序即抛错，
+         *   由调用方回退到文本路径）；同键的**连续多行会合并进同一个词表**（与文本路径一致）。
          * @param stamp 写入头部的来源摘要（供复用校验）
          */
         fun build(lines: Sequence<String>, stamp: Long): ByteArray {
@@ -257,25 +257,47 @@ internal class PhraseIndex private constructor(
             val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
             val wordLens = java.io.ByteArrayOutputStream(1 shl 17)
             var count = 0
-            var prev: String? = null
+            // 逐键写出：同键的连续多行**合并进同一个词表**（`词1|词2` 拼接）。
+            // 语义与文本路径（loadPhrasesReader 对同键合并）对齐——旧实现按行写出，
+            // 同键第二个词表会被二分查找永久跳过（静默少词，无日志无异常）。
+            // 只缓冲**单个键**的词表（受 64KB 上限约束），不是整份词库，流式性质不变。
+            var pendingKey: String? = null
+            var pendingWords: ByteArray? = null
+            fun flushPending() {
+                val key = pendingKey ?: return
+                val words = pendingWords ?: ByteArray(0)
+                val kb = key.toByteArray(Charsets.UTF_8)
+                require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
+                require(words.size <= 65535) { "词表过长（>64KB），长度数组无法表示（同键合并后超限）" }
+                keyBlob.write(kb)
+                keyLens.write(kb.size)
+                wordBlob.write(words)
+                wordLens.write(words.size and 0xFF)
+                wordLens.write((words.size ushr 8) and 0xFF)
+                count++
+            }
             for (line in lines) {
                 val tab = line.indexOf('\t')
                 if (tab <= 0) continue
                 val key = line.substring(0, tab)
                 // 索引靠二分查找，**必须按键升序**；乱序时由调用方回退到旧路径（见 PinyinEngine）
+                val prev = pendingKey
                 check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
-                prev = key
-                val kb = key.toByteArray(Charsets.UTF_8)
                 val wb = line.substring(tab + 1).toByteArray(Charsets.UTF_8)
-                require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
-                require(wb.size <= 65535) { "词表过长（>64KB），长度数组无法表示" }
-                keyBlob.write(kb)
-                keyLens.write(kb.size)
-                wordBlob.write(wb)
-                wordLens.write(wb.size and 0xFF)
-                wordLens.write((wb.size ushr 8) and 0xFF)
-                count++
+                if (prev != null && key == prev) {
+                    val old = pendingWords ?: ByteArray(0)
+                    val merged = ByteArray(old.size + 1 + wb.size)
+                    System.arraycopy(old, 0, merged, 0, old.size)
+                    merged[old.size] = SEP
+                    System.arraycopy(wb, 0, merged, old.size + 1, wb.size)
+                    pendingWords = merged
+                    continue
+                }
+                flushPending()
+                pendingKey = key
+                pendingWords = wb
             }
+            flushPending()
 
             val keys = keyBlob.toByteArray()
             val kl = keyLens.toByteArray()

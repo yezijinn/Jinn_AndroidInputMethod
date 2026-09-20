@@ -327,28 +327,37 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         BackgroundIo.run {
             // 分页加载：COUNT 不解密，解密只覆盖第一页（PANEL_PAGE_ITEMS）
             val filter = ClipboardFilter.of(category)
-            val total = db.count(filter.category, filter.favoritesOnly)
-            val page = db.recentPageWithOffset(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
-            Diagnostics.i(
-                TAG,
-                "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.items.size} " +
-                    "thread=${Thread.currentThread().name}",
-            )
+            // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
+            // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
+            val loaded = runCatching {
+                val total = db.count(filter.category, filter.favoritesOnly)
+                val page = db.recentPageWithOffset(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                Diagnostics.i(
+                    TAG,
+                    "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.items.size} " +
+                        "thread=${Thread.currentThread().name}",
+                )
+                total to page
+            }
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
-                categoryTotal = total
-                currentItems = page.items.toMutableList()
-                nextPageOffset = page.nextOffset
-                hasMorePages = page.nextOffset < total
-                adapter.notifyDataSetChanged()
-                updateEmpty()
-                // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
-                // 单次 notify 不足以让 item 创建；等布局稳定后二次强制重绘。
-                listView.post { forceRelayout(reqToken) }
-                if (resetScroll && currentItems.isNotEmpty()) {
-                    val token = ++scrollToken
-                    listView.post { if (token == scrollToken) listView.setSelection(0) }
+                loaded.onSuccess { (total, page) ->
+                    categoryTotal = total
+                    currentItems = page.items.toMutableList()
+                    nextPageOffset = page.nextOffset
+                    hasMorePages = page.nextOffset < total
+                    adapter.notifyDataSetChanged()
+                    updateEmpty()
+                    // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
+                    // 单次 notify 不足以让 item 创建；等布局稳定后二次强制重绘。
+                    listView.post { forceRelayout(reqToken) }
+                    if (resetScroll && currentItems.isNotEmpty()) {
+                        val token = ++scrollToken
+                        listView.post { if (token == scrollToken) listView.setSelection(0) }
+                    }
+                }.onFailure {
+                    Diagnostics.e(TAG, "[$tid] 列表刷新失败（loadingPage 已复位）: ${it.message}", it)
                 }
             }
         }
@@ -371,19 +380,26 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         loadingPage = true
         BackgroundIo.run {
             val filter = ClipboardFilter.of(category)
-            val page = db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+            // 与 refresh 同口径：查询异常也要复位 loadingPage（否则分页永久停摆）
+            val loaded = runCatching {
+                db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+            }
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
-                // 判停用游标而非本页条数：整页解密失败时 items 为空但后面仍有内容，
-                // 以空页判停会让用户再也翻不到后面的条目。
-                if (page.nextOffset > offset) {
-                    currentItems.addAll(page.items)
-                    nextPageOffset = page.nextOffset
+                loaded.onSuccess { page ->
+                    // 判停用游标而非本页条数：整页解密失败时 items 为空但后面仍有内容，
+                    // 以空页判停会让用户再也翻不到后面的条目。
+                    if (page.nextOffset > offset) {
+                        currentItems.addAll(page.items)
+                        nextPageOffset = page.nextOffset
+                    }
+                    hasMorePages = page.nextOffset > offset && page.nextOffset < categoryTotal
+                    adapter.notifyDataSetChanged()
+                    Diagnostics.i(TAG, "分页加载: offset=$offset +${page.items.size} next=${page.nextOffset} hasMore=$hasMorePages")
+                }.onFailure {
+                    Diagnostics.e(TAG, "分页加载失败（loadingPage 已复位）: ${it.message}", it)
                 }
-                hasMorePages = page.nextOffset > offset && page.nextOffset < categoryTotal
-                adapter.notifyDataSetChanged()
-                Diagnostics.i(TAG, "分页加载: offset=$offset +${page.items.size} next=${page.nextOffset} hasMore=$hasMorePages")
             }
         }
     }
@@ -443,7 +459,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             Diagnostics.i(TAG, "[$tid] 长按操作: 收藏切换 id=${item.id}")
             post {
                 hideActionBar()
-                refresh()
+                // 与删除一致走 resetScroll：refresh 只取第一页，不重置滚动的话已加载的多页被
+                // 整体截回、ListView 的 firstPosition 又被钳到末尾 —— 用户既不在原位置、
+                // 也找不到刚操作的那一条。回顶至少是明确、可预期的行为。
+                refresh(resetScroll = true)
             }
         }
     }

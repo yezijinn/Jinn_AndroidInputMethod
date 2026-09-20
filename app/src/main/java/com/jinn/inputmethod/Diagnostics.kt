@@ -128,13 +128,29 @@ object Diagnostics {
             "mkdir -p '${dir.absolutePath}' && chown $uid:$uid '${dir.absolutePath}' && chmod 700 '${dir.absolutePath}'",
         )
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", commands.joinToString(" && ")))
+        // 两路都必须后台排空：`chown`/`mkdir` 一旦输出写满管道（64KB），子进程会阻塞在写端，
+        // 而父进程正在 waitFor —— 只能等到 5s 超时（日志里表现为「root 授权超时」，
+        // root 直写共享目录的功能静默失效）。写法与 ClipboardFirewall.su 对齐。
+        val outDrain = Thread {
+            runCatching {
+                process.inputStream.use { input ->
+                    val buf = ByteArray(4096)
+                    while (input.read(buf) > 0) Unit
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        val errDrain = Thread {
+            runCatching { process.errorStream.bufferedReader().forEachLine { } }
+        }.apply { isDaemon = true; start() }
         val finished = process.waitFor(5, TimeUnit.SECONDS)
         // 超时必须销毁：`su` 等用户点授权时 waitFor 会一直超时，不销毁就留下一个挂起进程
-        // 和它的三个管道句柄（同文件的 [dumpLogcat] 与 ClipboardFirewall.su 都是这么收尾的）。
+        // 和它的三个管道句柄。
         if (!finished) {
             process.destroy()
             Diagnostics.w(TAG, "root 授权超时（5s），已销毁 su 进程")
         }
+        outDrain.join(200)
+        errDrain.join(200)
         val ok = finished && process.exitValue() == 0
         if (ok) makeWritable(dir) else false
     }.getOrDefault(false)
@@ -143,8 +159,25 @@ object Diagnostics {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                e("Crash", "未捕获异常 @ ${thread.name}", throwable)
-                dumpLogcat("crash-${System.currentTimeMillis()}")
+                // 崩溃处理自身**绝不能再抛**：Thread.start()/join() 在极端情况（OOM、
+                // 线程受限）会抛异常，一旦冒出 try 块就会取代原始崩溃异常继续传播，
+                // 还会把 finally 的收尾语义搅乱。整段包 runCatching，失败只记一笔。
+                runCatching {
+                    e("Crash", "未捕获异常 @ ${thread.name}", throwable)
+                    // 快照放独立线程、崩溃线程最多等 2.5s：崩溃线程（常是主线程）在
+                    // 「已崩溃但进程未死」状态下长时间阻塞，会把 ANR 弹窗与 tombstone 上报
+                    // 一并推迟 —— 原实现同步等 logcat 最长 10s。dumpLogcat 内部同步写盘，
+                    // 等它把文件写完（或自身 2s 超时）即可，崩溃收尾不依赖快照完成。
+                    val snapshot = Thread {
+                        runCatching { dumpLogcat("crash-${System.currentTimeMillis()}", waitMs = 2_000L) }
+                    }
+                    snapshot.isDaemon = true
+                    snapshot.start()
+                    snapshot.join(2_500L)
+                }.onFailure {
+                    // 用裸 Log 而不是 Diagnostics：此刻写日志的链路本身可能已不可靠
+                    runCatching { Log.e(TAG, "崩溃处理失败（已忽略，继续走原处理器）: ${it.message}") }
+                }
             } finally {
                 // 崩溃本身不再拦截，交给原处理器（或直接终止），保证行为与默认一致
                 if (prev != null) prev.uncaughtException(thread, throwable)
@@ -153,48 +186,31 @@ object Diagnostics {
         }
     }
 
-    // ── 事件序列 Ring Buffer（时序 BUG 定位核心）────────────────
+    // ── 时序事件（回溯用）─────────────────────────────────
 
-    /**
-     * 最近事件环形缓冲：保留最近 [EVENT_RING_SIZE] 个带时间戳的事件。
-     * 时序类 BUG（如 IME 收起/唤醒循环）发生后，即使没有实时看 logcat，
-     * 也能在日志里回溯 BUG 前几秒的完整事件序列。
-     * 线程安全：所有访问走 synchronized。
-     */
-    private const val EVENT_RING_SIZE = 500
-    private val eventRing = ArrayDeque<String>(EVENT_RING_SIZE)
     private val eventSeq = IntArray(1)
 
     /**
-     * 记录一个时序事件（同时写入文件日志与环形缓冲）。
+     * 记录一个时序事件（同时写入文件日志与 logcat）。
      * 与 [i] 的区别：带单调递增序号，回溯时能还原严格先后顺序。
      * 格式：`[EV#序号] 模块:事件 参数`
+     *
+     * ⚠ 正文里**不带时间戳**：`log()` 会自己补（含线程名与 tag）。此前把带时间戳的整行
+     * 传给 `log()`，落盘行出现双时间戳、模块名被挤进正文。
+     * 事件行随普通日志落盘，崩溃快照（[dumpLogcat]）也会带走 logcat 里的这部分。
+     *
+     * 注：早先还有一个 500 条的环形缓冲 + [eventSnapshot]/[dumpEventRing]，但两者除彼此外
+     * 没有任何调用方（KDoc 声称的「崩溃时落盘事件序列」从未实现）——已删除，事件回溯依赖
+     * 日常日志文件与 logcat 快照即可。
      */
     fun event(module: String, event: String, params: String = "") {
-        val seq = synchronized(lock) {
-            val n = eventSeq[0] + 1
-            eventSeq[0] = n
-            val line = "${now()} [EV#$n] $module:$event${if (params.isNotEmpty()) " $params" else ""}"
-            eventRing.addLast(line)
-            if (eventRing.size > EVENT_RING_SIZE) eventRing.removeFirst()
-            line
+        val suffix = if (params.isNotEmpty()) " $params" else ""
+        val n = synchronized(lock) {
+            val seq = eventSeq[0] + 1
+            eventSeq[0] = seq
+            seq
         }
-        log('I', "EVENT", seq, null)
-    }
-
-    /** 返回最近的事件序列（新→旧或旧→新由 reversed 控制），用于崩溃/异常时落盘 */
-    fun eventSnapshot(reversed: Boolean = true): List<String> = synchronized(lock) {
-        val list = eventRing.toList()
-        if (reversed) list.asReversed() else list
-    }
-
-    /** 把事件序列写入日志文件（调试时手动触发，如诊断快照） */
-    fun dumpEventRing() {
-        val lines = eventSnapshot()
-        if (lines.isEmpty()) return
-        val sb = StringBuilder("── 最近事件序列（新→旧，共 ${lines.size} 条）──\n")
-        for (l in lines) sb.append(l).append('\n')
-        appendToFile(logDir ?: return, sb.toString())
+        log('I', "EVENT", "[EV#$n] $module:$event$suffix", null)
     }
 
     // ── Trace ID（一次操作的完整调用链）──────────────────────
@@ -283,7 +299,13 @@ object Diagnostics {
      * @param ownPid 本进程 pid（`Process.myPid()`）；无法判定的行原样保留
      */
     internal fun filterOwnVerboseLines(raw: String, ownPid: Int): String {
-        val header = Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEF])\\s")
+        // 年份前缀可选：logcat 在条目时间戳与「当前年」不同年时会输出 `yyyy-` 前缀
+        // （跨年缓冲区 / `-v threadtime` 的两种形态）。不识别它，这些行会因正则失配而
+        // 沿用上一行的 drop 状态——本进程的 V 行可能被原样保留（正文进快照）。
+        // 用非捕获组 `(?:…)` 包裹，保持 pid/tid/level 三个捕获组编号不变。
+        val header = Regex(
+            "^(?:\\d{4}-)?\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEF])\\s",
+        )
         val lines = raw.split('\n')
         val kept = ArrayList<String>(lines.size)
         var drop = false
@@ -303,7 +325,7 @@ object Diagnostics {
      * 抓取当前 logcat 到日志目录，返回生成的文件；失败返回 null。
      * 无 root 时 logd 只会给出本应用进程的日志，有 root 时是系统全量。
      *
-     * [suffix] 是本方法唯一的可变入参，两条路都要防：
+     * [suffix] 要防文件名与命令两条路：
      *  - **文件名**：`File(dir, "$PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
      *  - **命令**：原实现把整个目标路径拼进 `sh -c "logcat … > '…'"`，一个单引号即可改写命令。
      * 前者用字符白名单过滤，后者改为**不经 shell** 的 [ProcessBuilder] + redirectOutput——
@@ -312,37 +334,43 @@ object Diagnostics {
      * 另外：快照落盘前会剔掉**本进程的 V 级行**（见 [filterOwnVerboseLines]）。
      * V 是用户正文通道（搜索关键词 / 拼音串 / 候选词 / 测试框文本），而 logcat 缓冲区里
      * 什么级别都有 —— 不剔就等于崩溃路径绕过了「日志禁出正文」，导出诊断包还会把它带走。
+     *
+     * [waitMs] 是子进程等待上限（默认 10s；崩溃路径传 2s，见 [installCrashHandler]）。
      */
-    fun dumpLogcat(suffix: String = ""): File? {
+    fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? {
         val dir = logDir ?: return null
         val safeSuffix = suffix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
         val name = "$LOGCAT_FILE_PREFIX$safeSuffix.log"
         val dest = File(dir, name)
-        return runCatching {
+        // 只有「过滤后的内容成功写回」才算产出：其它任何路径（进程失败、空文件、过滤为空、
+        // 读取/写入抛异常、进程被杀）都要把残留文件删掉 —— 半截快照既不可用、又**没经过滤**
+        // （里面可能仍有本进程 V 级正文），留着等 7 天再清、或被导出诊断包带走都不行。
+        // 统一收口在 finally：原实现的删除只覆盖"进程失败"一种路径，读取/过滤阶段抛异常时
+        // 会把**未过滤**的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
+        var produced = false
+        try {
             val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
                 .redirectErrorStream(true)   // 等价原来的 2>&1
                 .redirectOutput(dest)
                 .start()
-            val finished = process.waitFor(10, TimeUnit.SECONDS)
+            val finished = process.waitFor(waitMs, TimeUnit.MILLISECONDS)
             if (!finished) process.destroy()
             val ok = finished && process.exitValue() == 0
-            if (!ok) {
-                // 抓取失败的半截快照既不可用、也没过隐私过滤（里面可能仍有 V 级正文）：
-                // 直接删掉 —— 留着等 7 天再清、或被导出诊断包带走都不行。
-                dest.delete()
-                return@runCatching null
-            }
-            if (!dest.exists() || dest.length() == 0L) return@runCatching null
+            if (!ok) return null
+            if (!dest.exists() || dest.length() == 0L) return null
             // 落盘后再过一遍：把本进程的 V 级行（用户正文通道）剔掉。
             // 保留「先落盘、后处理」的顺序：读取管道再 waitFor 会在输出超过管道缓冲时互相等死。
             val filtered = filterOwnVerboseLines(dest.readText(), Process.myPid())
-            if (filtered.isEmpty()) {
-                dest.delete()
-                return@runCatching null
-            }
+            if (filtered.isEmpty()) return null
             dest.writeText(filtered)
-            dest
-        }.getOrNull()
+            produced = true
+            return dest
+        } catch (t: Throwable) {
+            Diagnostics.w(TAG, "logcat 快照失败: ${t.message}")
+            return null
+        } finally {
+            if (!produced) runCatching { dest.delete() }
+        }
     }
 
     /** 删除 KEEP_DAYS 天前的诊断日志（每日文件与 logcat 快照） */

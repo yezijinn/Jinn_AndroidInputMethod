@@ -147,6 +147,14 @@ internal object UserFrequency {
         this.enabled = enabled
     }
 
+    /** 测试用：指定存储文件（正常路径由 [load] 赋值；用于「写盘失败」路径） */
+    internal fun setFileForTest(f: File?) {
+        file = f
+    }
+
+    /** 测试用：dirty 状态（验证写失败后保留、写成功后清除） */
+    internal fun isDirtyForTest(): Boolean = dirty
+
     internal fun sizeForTest(): Int = entries.size
 
     // ── 学习 ────────────────────────────────────────────────────────────────
@@ -235,11 +243,16 @@ internal object UserFrequency {
     fun flush() {
         val f = file ?: return
         if (!dirty) return
-        dirty = false
         // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
         // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。渲染同样放在锁内（见 [saveNow]）。
-        synchronized(saveLock) { writeAtomically(f, render()) }
+        //
+        // ⚠ 只有写盘**成功**才清 dirty：若先清再写，写失败（磁盘满 / IO 错误）后这次学习
+        // 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），等于静默丢失——
+        // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
+        synchronized(saveLock) {
+            if (writeAtomically(f, render())) dirty = false
+        }
     }
 
     // ── 排序 ────────────────────────────────────────────────────────────────

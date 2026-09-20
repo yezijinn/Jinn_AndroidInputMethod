@@ -101,42 +101,29 @@ class ShuangpinSchemesTest {
         assertEquals("", q("", ShuangpinScheme.QUANPIN))
     }
 
-    // ── 一之二、面板「全拼 / 双拼」按钮：只二态，不选具体方案（用户要求）──────
+    // ── 一之二、设置页「输入方案」下拉：全拼 + 七套双拼（2026-09-20 起为全局方案选择）──
 
+    /**
+     * 下拉数据源 = [ShuangpinScheme.ALL]（全拼在最前 + 七套双拼，共 8 项）。
+     *
+     * 历史：该下拉原为「只选哪套双拼」（不含全拼）、全拼/双拼由键盘面板按钮切换；
+     * 2026-09-20 按用户要求改为**全局输入方案**并移除面板按钮 —— 本用例随之更新。
+     * 旧的「不含全拼」断言是当时的正确行为，不要照搬回来。
+     */
     @Test
-    fun 面板按钮_只切全拼与双拼二态() {
-        // 当前是双拼 → 切回全拼
+    fun 输入方案列表_全拼加七套双拼共八项() {
+        val all = ShuangpinScheme.ALL
+        assertEquals("应为全拼 + 7 套双拼", 8, all.size)
+        assertEquals("全拼必须排在最前（下拉首项）", ShuangpinScheme.QUANPIN, all.first())
         assertEquals(
-            ShuangpinScheme.QUANPIN,
-            ShuangpinScheme.toggle(ShuangpinScheme.FLYPY, ShuangpinScheme.FLYPY),
+            "其余七项即 SHUANGPIN_ONLY（顺序一致）",
+            ShuangpinScheme.SHUANGPIN_ONLY,
+            all.drop(1),
         )
-        // 当前是全拼 → 回到「设置页选定的那套」（不是固定自然码）
-        assertEquals(
-            ShuangpinScheme.SOGOU,
-            ShuangpinScheme.toggle(ShuangpinScheme.QUANPIN, ShuangpinScheme.SOGOU),
-        )
-        // 配置值异常（全拼）时兜底自然码，保证按钮一定切得过去
-        assertEquals(
-            ShuangpinScheme.ZIRANMA,
-            ShuangpinScheme.toggle(ShuangpinScheme.QUANPIN, ShuangpinScheme.QUANPIN),
-        )
-    }
-
-    /** 设置页下拉只列双拼方案（不含全拼）；下拉数据源即此集合，故钉住其内容 */
-    @Test
-    fun 双拼方案列表_共七套且不含全拼() {
-        val list = ShuangpinScheme.SHUANGPIN_ONLY
-        assertEquals(
-            listOf(
-                ShuangpinScheme.ZIRANMA, ShuangpinScheme.FLYPY, ShuangpinScheme.SOGOU,
-                ShuangpinScheme.MSPY, ShuangpinScheme.ZIGUANG, ShuangpinScheme.ABC,
-                ShuangpinScheme.JIAJIA,
-            ),
-            list,
-        )
-        assertTrue("列表不应含全拼", list.none { it == ShuangpinScheme.QUANPIN })
-        // 每套都必须有键位表，否则下拉里会出现选不了的空方案
-        assertTrue("存在缺键位表的方案", list.all { it.table != null })
+        // 每套双拼都必须有键位表，否则下拉里会出现选不了的空方案
+        assertTrue("存在缺键位表的方案", ShuangpinScheme.SHUANGPIN_ONLY.all { it.table != null })
+        // 双拼集合本身仍不含全拼（键位提示遍历等场景依赖这一点）
+        assertTrue("SHUANGPIN_ONLY 应全部是双拼方案", ShuangpinScheme.SHUANGPIN_ONLY.all { it.isShuangpin })
     }
 
     // ── 二、分号键：只有搜狗 / 微软 / 紫光需要 ──────────────────────────────

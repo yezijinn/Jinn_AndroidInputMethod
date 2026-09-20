@@ -129,6 +129,16 @@ object PinyinEngine {
     private var optionalLoading = false
 
     /**
+     * 可选词库的「检查-置位」专用锁。
+     *
+     * **不能用 `this`**：`load()` 全程持 `synchronized(this)`（含秒级的索引解压/落盘），
+     * 而本标志的调用点全在主线程（息屏广播 / 键盘收起后闲置 / 兜底超时）——
+     * 首次加载期间触发空闲信号会把主线程阻塞在锁上数秒。
+     * 专用锁只保护标志位的「检查-置位」原子性，两个标志仍是 @Volatile。
+     */
+    private val optionalLock = Any()
+
+    /**
      * 以下容器**必须是并发安全的**。
      *
      * 可选词库由后台线程延迟加载（[loadOptionalAsync]，基础包就绪 5 秒后开始），
@@ -581,34 +591,44 @@ object PinyinEngine {
     fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null) {
         // 检查-置位必须在同一把锁内：两个线程同时抵达时，
         // 无锁写法会让两边都通过检查、各自启一个加载线程，重复把词库 merge 一遍。
-        synchronized(this) {
+        // 锁用 [optionalLock] 而非 `this`：`load()` 全程持 `this`（含秒级索引解压），
+        // 本方法的调用点又全在主线程 —— 首次加载期间的空闲信号会把主线程阻塞数秒。
+        synchronized(optionalLock) {
             if (optionalLoaded || optionalLoading) return
             optionalLoading = true
         }
         Thread {
-            // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
-            // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            runCatching {
-                // load() 幂等：若基础包已就绪会立即返回
-                load(context)
-                if (delayMs > 0) Thread.sleep(delayMs)
-                val t0 = System.currentTimeMillis()
-                loadExtensionDict(context)
-                // 可选包引入了新的拼音键，**必须重建有序键表**：
-                // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
-                synchronized(this) { finalizeLoad() }
-                optionalLoaded = true
-                Diagnostics.i(
-                    TAG,
-                    "可选词库延迟加载完成，耗时 ${System.currentTimeMillis() - t0}ms，" +
-                        "词语键=${phrasesByPinyin.size}",
-                )
-            }.onFailure {
-                Diagnostics.e(TAG, "可选词库延迟加载失败（基础词库不受影响）: ${it.message}")
+            try {
+                // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
+                // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                runCatching {
+                    // load() 幂等：若基础包已就绪会立即返回
+                    load(context)
+                    if (delayMs > 0) Thread.sleep(delayMs)
+                    val t0 = System.currentTimeMillis()
+                    loadExtensionDict(context)
+                    // 可选包引入了新的拼音键，**必须重建有序键表**：
+                    // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
+                    synchronized(this) { finalizeLoad() }
+                    optionalLoaded = true
+                    Diagnostics.i(
+                        TAG,
+                        "可选词库延迟加载完成，耗时 ${System.currentTimeMillis() - t0}ms，" +
+                            "词语键=${phrasesByPinyin.size}",
+                    )
+                }.onFailure {
+                    Diagnostics.e(TAG, "可选词库延迟加载失败（基础词库不受影响）: ${it.message}")
+                }
+            } finally {
+                // 复位必须在 finally：`setThreadPriority` 在 runCatching 之外，一旦它（或将来
+                // 新增的语句）抛异常，optionalLoading 会永远停在 true——此后所有
+                // loadOptionalAsync 直接返回，可选词库静默地永不加载且没有任何重试入口。
+                optionalLoading = false
+                runCatching { onReady?.invoke() }.onFailure {
+                    Diagnostics.w(TAG, "可选词库就绪回调异常: ${it.message}")
+                }
             }
-            optionalLoading = false
-            onReady?.invoke()
         }.start()
     }
 
@@ -1209,6 +1229,16 @@ object PinyinEngine {
     private const val MAX_PREDICTIONS = 6
 
     /**
+     * 收集阶段的候选上限（**过滤前**）。
+     *
+     * 生僻字过滤发生在收集**之后**（出口统一 `filterRareChars`）：若收集时就卡在
+     * [MAX_PREDICTIONS]，一旦前几个后缀全被过滤，剩余名额无法由后续候选补上 ——
+     * 预测会无故变少甚至为空。放宽到 2 倍给过滤留出回填空间；
+     * 未启用过滤（显示生僻字）时只是多收集 ≤6 个后缀再被 take(MAX) 裁掉，开销可忽略。
+     */
+    private const val PREDICT_COLLECT_LIMIT = MAX_PREDICTIONS * 2
+
+    /**
      * 智能预测：用户选完一个词后，预测下一个要输入的字/词。
      *
      * 算法（对齐 libime `PinyinPredictionSource::Dictionary` 的 matchWordsPrefix 拆词法）：
@@ -1233,18 +1263,18 @@ object PinyinEngine {
         // **不实例化键字符串**，只对命中的词解码后缀。旧写法在短前缀下会一次性建出数千个 String
         // （实测 keysWithPrefix("ni") = 6185 键 / 2.18ms）——这条路径将来若给单字候选开预测会直接踩到。
         for (idx in baseAndOptionalIndexes()) {
-            if (out.size >= MAX_PREDICTIONS) break
+            if (out.size >= PREDICT_COLLECT_LIMIT) break
             idx.forEachRangeWithPrefix(lastPinyin) { keyByteLen, wordsFrom, wordsTo ->
                 if (keyByteLen > pinyinBytes) {
                     idx.collectLongerSuffixes(wordsFrom, wordsTo, wordBytes, out)
                 }
-                out.size < MAX_PREDICTIONS          // false = 提前结束扫描
+                out.size < PREDICT_COLLECT_LIMIT    // false = 提前结束扫描
             }
         }
 
         // 运行时表：键数量小（高频子集 + 可选包并入项），沿用有序 List 二分定位前缀区
         var lo = lowerBound(sortedPhraseKeys, lastPinyin)
-        while (lo < sortedPhraseKeys.size && out.size < MAX_PREDICTIONS) {
+        while (lo < sortedPhraseKeys.size && out.size < PREDICT_COLLECT_LIMIT) {
             val key = sortedPhraseKeys[lo]
             if (!key.startsWith(lastPinyin)) break
             if (key.length > lastPinyin.length) {
@@ -1252,7 +1282,12 @@ object PinyinEngine {
             }
             lo++
         }
-        return out.take(MAX_PREDICTIONS)
+        // 出口统一过一遍生僻字过滤：索引路径（collectLongerSuffixes）此前**绕过**了过滤，
+        // 与运行时路径（addLongerSuffixes → phrasesFor 内的 filterRareChars）以及 query 的
+        // 口径不一致 —— 开启「隐藏生僻字」（默认）时，预测候选仍可能带出生僻词并可上屏。
+        // 收集上限用 PREDICT_COLLECT_LIMIT（2 倍）正是为此：前几个候选被过滤后仍有后续候选
+        // 可回填，不会"无故变少/变空"；commonChars 为 null 时原样返回，零开销。
+        return filterRareChars(out.toTypedArray()).take(MAX_PREDICTIONS).toList()
     }
 
     /** 参与预测的索引：基础索引在前、可选索引在后（与旧 keysStartingWith 的顺序一致） */
@@ -1666,25 +1701,20 @@ enum class ShuangpinScheme(
     internal val table: ShuangpinTable? get() = tableKey?.let { SHUANGPIN_TABLES[it]?.value }
 
     companion object {
-        /** 全部双拼方案（设置页下拉与键盘循环都用它，保证顺序一致） */
+        /** 全部双拼方案（键位提示遍历、方案相关测试用它，保证顺序一致） */
         val SHUANGPIN_ONLY: List<ShuangpinScheme> = entries.filter { it.isShuangpin }
+
+        /**
+         * 设置页「输入方案」下拉的**全部可选项**：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
+         *
+         * 2026-09-20 起该下拉是**全局输入方案**（不再只选「哪套双拼」）：选全拼 = 关闭双拼，
+         * 选某套双拼 = 记住并启用；按键面板不再提供「全拼 / 双拼」切换按钮。
+         */
+        val ALL: List<ShuangpinScheme> = listOf(QUANPIN) + SHUANGPIN_ONLY
 
         /** 由持久化取值还原方案；未知取值一律回落到自然码（老配置即 `useShuangpin = true`） */
         fun of(prefsValue: Int): ShuangpinScheme =
             entries.firstOrNull { it.prefsValue == prefsValue } ?: ZIRANMA
-
-        /**
-         * 键盘功能面板「全拼 / 双拼」按钮的二态切换。
-         *
-         * **面板只决定「用不用双拼」，不选具体方案**（用户要求：方案只能在设置页改）。
-         * 切回双拼时取设置页选定的 [configured]（若它也是全拼则退回自然码，保证一定切得过去）。
-         */
-        fun toggle(current: ShuangpinScheme, configured: ShuangpinScheme): ShuangpinScheme =
-            if (current.isShuangpin) {
-                QUANPIN
-            } else {
-                configured.takeIf { it.isShuangpin } ?: ZIRANMA
-            }
     }
 }
 

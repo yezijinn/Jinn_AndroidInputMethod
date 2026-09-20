@@ -69,24 +69,30 @@ class ClipboardController(context: Context) {
             // 等待用主线程 Handler，**不能**在 BackgroundIo 里 sleep：那是单线程串行队列，
             // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
             retryHandler.postDelayed({
-                BackgroundIo.run {
-                    val retryClip = clipboard.primaryClip ?: return@run
-                    val retryText = retryClip.getItemAt(0).coerceToText(appContext)?.toString() ?: return@run
-                    if (retryText.isBlank()) return@run
-                    val retrySource = resolveSourcePackage()
-                    ClipboardStore.save(appContext, db, retryText, retrySource)
-                }
+                val retryClip = clipboard.primaryClip ?: return@postDelayed
+                BackgroundIo.run { extractAndSave(retryClip) }
             }, RETRY_DELAY_MS)
             return
         }
         val clip = clipboard.primaryClip ?: return
+        // 取文本（coerceToText）也放后台：URI 型条目会**同步读取整个 content:// 流**
+        // （AOSP 实现把流读进 StringBuilder，无长度上限），在主线程上就是一次文件读 ——
+        // 输入法键盘卡顿甚至 ANR 的来源。回调里只做开销极小的 ClipData 快照读取。
+        BackgroundIo.run { extractAndSave(clip) }
+    }
+
+    /**
+     * 提取文本并入库（**后台线程**）。
+     *
+     * `coerceToText` 可能打开 ContentResolver 流，绝不能放主线程；正常与重试两条路径
+     * 统一走它，口径一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
+     */
+    private fun extractAndSave(clip: android.content.ClipData) {
         if (clip.itemCount == 0) return
         val text = clip.getItemAt(0).coerceToText(appContext)?.toString() ?: return
         if (text.isBlank()) return
-
-        val sourcePkg = resolveSourcePackage()
-        // 复制事件只入队一次线程化保存；upsert 在库层按 content_hash 去重，不会重复写入
-        BackgroundIo.run { ClipboardStore.save(appContext, db, text, sourcePkg) }
+        // upsert 在库层按 content_hash 去重，不会重复写入
+        ClipboardStore.save(appContext, db, text, resolveSourcePackage())
     }
 
     /**
