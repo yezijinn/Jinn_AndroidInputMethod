@@ -33,9 +33,10 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
   `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 下载后解压到
   `~/.gradle/wrapper/dists/gradle-8.9-bin/<hash>/` 并建 `gradle-8.9-bin.zip.ok`
 - 模式：`app/src/test/java/...`，JVM 单测（JUnit 4），无需设备
-- 覆盖（29 个测试类 / 285 个用例）:
+- 覆盖（33 个测试类 / 323 个用例）:
   - 近期改动的对拍/压测：`RecentChangesParityTest`（分词剪枝 ≡ 未剪枝参考实现 534 例、分片解压 ≡ readBytes
-    逐字节一致、长按清拼音判据边界矩阵）、`SegmentCliffTest`（切不通的长拼音不再卡）、
+    逐字节一致、长按清拼音判据边界矩阵 + **判据基准必须是「按下时」的拼音串长度** +
+    连删循环在「拼音被自己删空」后必须停手（不得落到删已上屏那一步））、`SegmentCliffTest`（切不通的长拼音不再卡）、
     `KeyboardStressTest`（7 场景 1514 键逐键耗时 + 固定种子模糊测试 589 例）
   - 协议：`ProtocolTest`（序列化 / 解析）
   - 拼音引擎：`PinyinEngineTest` / `ShuangpinTest` / `PinyinCompletionTest`
@@ -48,14 +49,21 @@ CapsWriter Offline 服务端（`ws://<host>:6016`，子协议 `binary`）识别�
     `IndexMappedParityTest`（内存映射与堆内读取等价、后缀收集与物化键一致、坏文件返回 null 不抛异常）
   - 双拼方案：`ShuangpinSchemesTest`（7 套 + 全表往返自洽）、`HintRuleTest`（键面提示三规则）
   - 剪贴板：`ClipboardClassifierTest`、`ClipboardClassifierBoundaryTest`（分类边界，
-    含 CRLF / 长度边界 / 负例）、`ClipboardFilterTest`
-  - 文字拖选：`TextSelectionTest`（Anchor/Focus 模型 + 行首/行末边界，含 cursor=0 且首字符为换行的回归用例）
+    含 CRLF / 长度边界 / 负例 + **带标签的 4~5 位验证码也算数字**：上下文规则的下界必须与
+    单串的「4-8 位验证码」口径一致，否则同一串数字带不带标签会分到不同分类）、`ClipboardFilterTest`
+  - 文字拖选：`TextSelectionTest`（Anchor/Focus 模型 + 行首/行末边界，含 cursor=0 且首字符为换行的回归用例 +
+    **窗口文本的绝对/窗口下标换算**：整篇返回时恒等、窗口内映射正确、窗口外返回 null——`ExtractedText`
+    的 `selectionStart/End` 是全文绝对下标而 `text` 可能只是光标附近的窗口，两者混用会让光标/选区算错位置）
   - 键盘外观：`KeyAppearanceTest`（圆角 / 间隙的定义域、步进、钳位与进度换算）
-  - 符号表：`SymbolLayoutTest`（分组非空、标签唯一、取值不含换行/制表符 + 标点组第 2 页 g 键的录入回归。
+  - 符号表：`SymbolLayoutTest`（分组非空、标签唯一、取值不含换行/制表符 + 标点组第 2 页 g 键、
+    「特殊」组第 2 页混入汉字「由」「白」两处录入回归。
     ⚠ 别给取值加「长度 1~2」规则：编程组 149 条代码片段与数学组 `∫∫∫` 都是合法长值）
   - 配置校验：`PrefsHostValidationTest`（host 合法性 + **不变式护栏：校验放行的取值必须能被 OkHttp 接受**，
     含 IPv6 字面量、纯标点、`host:port` 误填等负例）
-  - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 明文 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰 + **解密窗口预算护栏**：窗口条数 × 单条上限 × 放大系数(2.5，实测 2.33) ≤ 48MB）
+  - 剪贴板容量：`ClipboardLimitsTest`（**单条 256KB** 明文 UTF-8 字节判定 + **总量 100MB** 按最旧非收藏淘汰 + **解密窗口预算护栏**：窗口条数 × 单条上限 × 放大系数(2.5，实测 2.33) ≤ 48MB + **搜索驻留预算按 UTF-8 字节判定**：`String.length` 是 UTF-16 字符数，中文下会把 24MB 预算低估到 1/3）
+  - 输入框敏感度：`InputFieldPrivacyTest`（密码变体 / `TYPE_TEXT_FLAG_NO_SUGGESTIONS` / `TYPE_NULL` / **`imeOptions` 的 `IME_FLAG_NO_PERSONALIZED_LEARNING`** 不学用户词频；⚠ `TYPE_NULL` 的值就是 0，缺省值必须用 `null` 而不是 0；⚠ imeOptions 侧**没有**公开的「不要联想」常量，`IME_FLAG_NO_SUGGESTIONS` 是 @hide，引用它会编译失败）
+  - 诊断日志：`DiagnosticsLogcatFilterTest`（崩溃快照必须剔掉**本进程的 V 级行**、续行跟随一并剔、其它进程的 V 行不受影响、无行首字段的文本不误删；⚠ `lineSequence()` 会给以换行结尾的输入多补一个换行，按 `'\n'` 切分再 `joinToString` 才能逐字节还原）
+  - 词库下载完整性：`OptionalDictChecksumTest`（每条 `OptionalDict` 必须带 64 位十六进制 `checksum`、`sha256Of` 与标准 SHA-256 对拍、改一字节即校验失败、空/非法摘要一律拒绝）
     ⚠ 三条容量口径**单位不同**：单条按**明文**字节、总量按**库内 base64 密文**体积（100MB ≈ 73MB 明文）、窗口按「条数×单条上限×2.5 放大」（实测 2.33 = 密文串 4/3 + 明文串 1.0；只算明文会低估约 2.3 倍。早先按「明文串在 UTF-16 下占 2×」估的 3.5 已作废 —— JVM/ART 都用紧凑字符串，ASCII 的 String 与 UTF-8 字节数相同）；且单条上限**只在采集侧生效**，库里既有超限行只会被总量预算淘汰
 - 注意：测试 KDoc 注释里禁止出现 `*/`（会提前终止块注释导致编译失败）
 
@@ -122,7 +130,21 @@ app/src/main/java/com/jinn/inputmethod/
   单击删 1 个字符；按住连删（先清拼音串再删已上屏，`backspaceRepeatDelayMs=380` 后每 55ms 一次）；
   **按住 ≥1.2s 且拼音串 ≥12 字符 → 只整串清拼音、停止连删、不动已上屏**
   （`HOLD_TO_CLEAR_COMPOSING_MS=1200` / `LONG_COMPOSING_TO_CLEAR=12`）；
+  ⚠ 判据里的「拼音串长度」必须是 **ACTION_DOWN 那一刻**的长度（`composingLenAtBackspaceDown`），
+  不能取当前长度——连删循环每 tick 都先删一位，用当前长度判会让 12~27 字符的串先被删空、
+  再继续删已上屏正文，与该手势的约定正好相反；
   **双击 + 长按 >800ms** 才连输入框已上屏的文字一起清。
+  视图被 detach 时必须 `removeCallbacks` 复位（见 `onDetachedFromWindow`），否则连删循环会自我重排停不下来。
+  ⚠ 另有一道「删空即停」闸门（`shouldStopRepeatOnExhaustedComposing`）：按下长度 12~15 的串会在门槛
+  tick（1205ms）之前被连删自己删空，不挡的话紧接着的 tick 会落到 `listener.onBackspace()` 删已上屏正文。
+- **方向面板 / 拖选**：Anchor 进入拖选时固定一次，Focus 由方向键移动，选区 = `setSelection(min, max)`。
+  ⚠ 光标与选区的计算一律走**窗口内下标**（`TextSelection.toWindowOffset` + `range.startOffset`）：
+  `getExtractedText` 的 `selectionStart/End` 是**全文绝对下标**，而 `text` 在长文档下可能只是光标附近的
+  一段窗口，两者混用会把光标挪到「窗口长度」那个绝对下标上；⚠ 宿主改动选区（`onUpdateSelection`）
+  必须让拖选退出，否则会以旧 Anchor 把选区拉回去，复制/输入就落在错误的位置上。
+- **符号层翻页（多指）**：`keyTouchConsumed` 是**手势级**标记，只在 `ACTION_DOWN` / `ACTION_UP` /
+  `ACTION_CANCEL` 复位；⚠ 别在 `ACTION_POINTER_UP` 复位它 —— 多指时手势还没结束，剩下那根手指一抬
+  就会把**新页**上的符号上屏（用户只想翻页）。
 
 ## 诊断日志（重要）
 
@@ -184,10 +206,13 @@ app/src/main/java/com/jinn/inputmethod/
   语音结果、剪贴板粘贴**都不学**——那些不是用户选择。
 - 存储 `filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），**原子写**（临时文件 + 改名）且**防抖 2s**、
   退出时 `PinyinEngine.flushUserFrequency()` 兜底；上限 3000 条、权重 < 0.15 丢弃。
+  ⚠ 解析必须挡掉**非有限权重**：`"NaN".toDoubleOrNull()` / `"Infinity".toDoubleOrNull()` 都不是 null
+  （Kotlin 的取值筛选用正则显式放行这两个字面量），而 NaN 与任何数比较恒为 false ⇒
+  `weight <= 0.0` 与 `decayed < MIN_WEIGHT` 会同时失效，脏值还会被 `Double.compare` 当成最大值霸榜首候选。
 - 排序是**稳定排序**且未学习时直接返回原数组 ⇒ 对没学过的候选零影响（不打乱词库既有手感）。
   调 `UserFrequency.rank()` 的位置在 `PinyinEngine.query` 的收尾处。
 - 开关：设置页「用户词频学习」（`Prefs.userLearning`，默认开，**立即生效**，本地存储不上传）。
-- 护栏：`UserFrequencyTest`（排序稳定性 / 衰减 / 序列化往返 / 脏数据容错 / 开关 / 原子写 / 防抖尾沿判据 `saveDelayMs`）。
+- 护栏：`UserFrequencyTest`（排序稳定性 / 衰减 / 序列化往返 / 脏数据容错（含 NaN 与 ±Infinity）/ 开关 / 原子写 / 防抖尾沿判据 `saveDelayMs`）。
   ⚠ 改这块务必跑该测试 + `PinyinEngineTest`（排序相关）。
 
 ## 冷启动与加载顺序（重要）
@@ -290,8 +315,12 @@ app/src/main/java/com/jinn/inputmethod/
   隐私分类与隐私标记入口已移除（2026-09-16）：有收藏即可满足置顶需求，隐私冗余。
   `is_private` 列**已在 v5 迁移中删除**，掩码逻辑随之失效（隐私功能整体移除，不做兼容）。
 - **序号**：UI 序号非 DB ID，最新=最大，删除/去重后重新连续编号；搜索保留原始序号
-- **点击粘贴**：面板点击条目 → 广播（`ACTION_CLIPBOARD_PASTE`）回传 IME → `commitText`；
-  连接无效时暂存 `pendingPasteText`，`onStartInputView` 时自动提交；无效连接不崩溃
+- **点击粘贴**：面板点击条目 → `listener.onPaste(text)` 直接回传 IME（同进程回调）→ `commitText`；
+  连接无效时暂存 `pendingPasteText`，`onStartInputView` 时自动提交；无效连接不崩溃。
+  ⚠ **不再走广播**：`ACTION_CLIPBOARD_PASTE` 接收器已于 2026-09-19 删除 —— 它是早期
+  「Activity → IME」设计的残留，应用内早已无发送方，却在 Android ≤12 上对外可达
+  （任意应用可指定 id 触发解密并注入当前输入框）。**禁止把粘贴链路改回全局广播**；
+  若确需跨进程，必须带 `protectionLevel="signature"` 的自定义权限注册
 - **ownCommit 陷阱**：`onOwnCommit()` 只在真正写系统剪贴板的粘贴路径调用；打字/语音上屏走 `commitText`
   不写系统剪贴板，**严禁**在 `commit()` 里调 `onOwnCommit()`——否则标记残留会把用户真实复制误杀
 - **加密**：正文 AES-256-GCM（Android Keystore），`base64(iv):base64(cipher)`；绝不落明文日志

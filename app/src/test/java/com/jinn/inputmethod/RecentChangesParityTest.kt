@@ -14,10 +14,11 @@ import java.io.File
 /**
  * 近期改动的模拟测试（针对"改完可能悄悄改变行为"的风险，用对拍/边界矩阵验证）。
  *
- * 三组：
+ * 四组：
  *  1. 分词剪枝 ≡ 未剪枝参考实现（逐例对拍切分结果与顺序）；
  *  2. 分片解压 ≡ readBytes()（含空/1 字节/跨分片边界/随机内容）；
- *  3. 长按退格清拼音的判据边界矩阵。
+ *  3. 长按退格清拼音的判据边界矩阵；
+ *  4. 长按连删在「拼音被自己删空」后必须停手，不得落到删已上屏正文那一步。
  */
 class RecentChangesParityTest {
 
@@ -164,5 +165,84 @@ class RecentChangesParityTest {
         assertFalse("按 0.8 秒删 6 个字的拼音：不该清", shouldClearComposingOnHold(800, 6))
         assertTrue("长按 1.5 秒、还剩 30 字符：该清", shouldClearComposingOnHold(1500, 30))
         println("PARITY 长按清拼音判据边界矩阵通过（阈值 1200ms / 12 字符）")
+    }
+
+    /**
+     * 判据的第二个参数必须是**按下时**的长度，不能是「当前」长度。
+     *
+     * 回归：连删循环每个 tick 都先删一位再重排（0.38s 起每 55ms 一次），等到 1200ms
+     * 门槛时拼音串已被它自己删短十几位。按「当前长度」判，12 字符的串永远清不掉——
+     * 它会先被逐字删空，之后继续删**已上屏正文**，与该手势「只整串清拼音、不动已上屏」
+     * 的约定相反；实测算下来初始串要 ≥28 字符才可能命中。
+     */
+    @Test
+    fun 长按清空必须以按下时的长度判据() {
+        // 模拟 12 字符拼音串：DOWN 删 1 位 → 380ms 起每 55ms 删 1 位
+        var currentLen = 12 - 1
+        var held = 380L
+        var cleared = false
+        while (!cleared && currentLen > 0 && held <= 3_000L) {
+            cleared = shouldClearComposingOnHold(held, currentLen)   // 旧口径：当前长度
+            if (!cleared) {
+                currentLen--
+                held += 55L
+            }
+        }
+        assertFalse("按当前长度判：12 字符的串清不掉（走到 len=$currentLen 仍为 false）", cleared)
+        // 新口径：传按下时的长度，同一时刻即可命中
+        assertTrue("传按下时长度应在 1200ms 命中", shouldClearComposingOnHold(1_200L, 12))
+        println("PARITY 长按清空判据基准（按下时长度）通过")
+    }
+
+    /**
+     * 连删循环必须在「拼音串被自己删空」时停手，不能接着删已上屏正文。
+     *
+     * 时序（与视图里的实现同参）：ACTION_DOWN 立即删 1 位并把循环排在 380ms 后，
+     * 之后每 55ms 一个 tick；门槛 tick 落在 1205ms，因此门槛到达前共 16 次删除。
+     * 按下长度 L 的串在第 L 次删除后即为空 ⇒ L ≤ 16 都会在门槛前被删空，
+     * 其中 12 ≤ L ≤ 15 正是「本该只清拼音」的区间：没有闸门时，剩余 16−L 个 tick
+     * 会落到 listener.onBackspace()，把用户已上屏的正文删掉 1~4 个字符。
+     */
+    @Test
+    fun 长按连删在拼音删空后不得继续删已上屏() {
+        /** 模拟一次完整长按：返回落到「已上屏正文」的删除次数 */
+        fun hostDeletes(composingLenAtDown: Int, withGuard: Boolean): Int {
+            var composing = composingLenAtDown - 1   // ACTION_DOWN 先删一位
+            var host = 0
+            var held = BACKSPACE_FIRST_DELAY_MS
+            repeat(200) {
+                if (shouldClearComposingOnHold(held, composingLenAtDown)) return host
+                if (withGuard &&
+                    shouldStopRepeatOnExhaustedComposing(composing == 0, composingLenAtDown)
+                ) {
+                    return host
+                }
+                if (composing > 0) composing-- else host++
+                held += BACKSPACE_INTERVAL_MS
+            }
+            return host
+        }
+
+        // 修复前：12~15 字符的串会把已上屏正文删掉 4/3/2/1 个字符
+        assertEquals(4, hostDeletes(12, withGuard = false))
+        assertEquals(1, hostDeletes(15, withGuard = false))
+        // 修复后：这四档一律不碰已上屏
+        for (len in 12..15) {
+            assertEquals("按下长度 $len 不得删已上屏", 0, hostDeletes(len, withGuard = true))
+        }
+        // ≥16 字符：门槛 tick 到达时拼音串还在，走的是「整串清拼音」，同样不碰已上屏
+        assertEquals(0, hostDeletes(16, withGuard = true))
+        assertEquals(0, hostDeletes(40, withGuard = true))
+        // <12 字符：语义本就是「先清拼音、再删已上屏」，闸门不得把它一起挡掉
+        assertTrue("11 字符的串仍应继续删已上屏", hostDeletes(11, withGuard = true) > 0)
+        println("PARITY 连删循环「拼音删空即停」通过")
+    }
+
+    private companion object {
+        /** 与视图里的 backspaceRepeatDelayMs 同参 */
+        const val BACKSPACE_FIRST_DELAY_MS = 380L
+
+        /** 与视图里的 backspaceRepeatIntervalMs 同参 */
+        const val BACKSPACE_INTERVAL_MS = 55L
     }
 }

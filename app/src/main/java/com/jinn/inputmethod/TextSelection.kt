@@ -94,4 +94,35 @@ object TextSelection {
         val idx = text.indexOf('\n', cursor)
         return if (idx < 0) text.length else idx
     }
+
+    /**
+     * 把 `getExtractedText` 的**全文绝对下标**换算成**窗口内下标**（**纯函数**，便于单测）。
+     *
+     * `ExtractedText.selectionStart/End` 是全文绝对下标，而 `text` 在长文档下可能只是光标
+     * 附近的一段**窗口**（`startOffset` 才是窗口在全文里的起点）。拿绝对下标直接索引窗口文本，
+     * 行移动 / 行首行末会算出完全无关的位置（越界时连窗口长度的那个绝对下标都会被当成结果，
+     * 光标表现为「跳」到别处）；而算出来的窗口内位置若直接交给 `setSelection`，宿主又会当成
+     * 绝对下标。
+     *
+     * @return 窗口内下标；落在窗口之外返回 null（此时无从计算，调用方应放弃本次操作）
+     */
+    internal fun toWindowOffset(absolute: Int, startOffset: Int, windowLength: Int): Int? {
+        if (startOffset < 0 || windowLength < 0) return null
+        val rel = absolute - startOffset
+        return if (rel in 0..windowLength) rel else null
+    }
+
+    /**
+     * 宿主侧的这次选区变化是不是**外部**发起的（**纯函数**，便于单测）。
+     *
+     * 我们自己发起的 `setSelection` 也会回调一次 `onUpdateSelection`，靠「最后一次期望值」
+     * 比对放行 —— 否则按一下方向键就会把拖选模式关掉。
+     */
+    internal fun isExternalSelectionChange(
+        newSelStart: Int,
+        newSelEnd: Int,
+        lastSetSelection: Pair<Int, Int>?,
+    ): Boolean = lastSetSelection == null ||
+        lastSetSelection.first != newSelStart ||
+        lastSetSelection.second != newSelEnd
 }
