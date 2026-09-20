@@ -257,24 +257,28 @@ internal class PhraseIndex private constructor(
             val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
             val wordLens = java.io.ByteArrayOutputStream(1 shl 17)
             var count = 0
-            // 逐键写出：同键的连续多行**合并进同一个词表**（`词1|词2` 拼接）。
-            // 语义与文本路径（loadPhrasesReader 对同键合并）对齐——旧实现按行写出，
+            // 逐键写出：同键的连续多行**合并进同一个词表**（`词1|词2` 拼接，重复词只保留首个）。
+            // 语义与文本路径对齐 —— `loadPhrasesReader(merge=true)` 对同键是
+            // `existing + kept.filter { seen.add(it) }`（去重）；旧实现按行写出，
             // 同键第二个词表会被二分查找永久跳过（静默少词，无日志无异常）。
-            // 只缓冲**单个键**的词表（受 64KB 上限约束），不是整份词库，流式性质不变。
+            // [pendingWords] 用 LinkedHashSet 而非「每行重建 ByteArray」：既保序去重，
+            // 又把合并期从 O(词汇量²) 的 arraycopy 降为 O(词汇量)。只缓冲**单个键**的词表
+            // （不是整份词库，流式性质不变）；超 64KB 在写出该键时 require 抛错。
             var pendingKey: String? = null
-            var pendingWords: ByteArray? = null
+            val pendingWords = LinkedHashSet<String>(8)
             fun flushPending() {
                 val key = pendingKey ?: return
-                val words = pendingWords ?: ByteArray(0)
                 val kb = key.toByteArray(Charsets.UTF_8)
+                val wb = pendingWords.joinToString("|").toByteArray(Charsets.UTF_8)
                 require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
-                require(words.size <= 65535) { "词表过长（>64KB），长度数组无法表示（同键合并后超限）" }
+                require(wb.size <= 65535) { "词表过长（>64KB），长度数组无法表示（同键合并后超限）" }
                 keyBlob.write(kb)
                 keyLens.write(kb.size)
-                wordBlob.write(words)
-                wordLens.write(words.size and 0xFF)
-                wordLens.write((words.size ushr 8) and 0xFF)
+                wordBlob.write(wb)
+                wordLens.write(wb.size and 0xFF)
+                wordLens.write((wb.size ushr 8) and 0xFF)
                 count++
+                pendingWords.clear()
             }
             for (line in lines) {
                 val tab = line.indexOf('\t')
@@ -283,19 +287,13 @@ internal class PhraseIndex private constructor(
                 // 索引靠二分查找，**必须按键升序**；乱序时由调用方回退到旧路径（见 PinyinEngine）
                 val prev = pendingKey
                 check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
-                val wb = line.substring(tab + 1).toByteArray(Charsets.UTF_8)
-                if (prev != null && key == prev) {
-                    val old = pendingWords ?: ByteArray(0)
-                    val merged = ByteArray(old.size + 1 + wb.size)
-                    System.arraycopy(old, 0, merged, 0, old.size)
-                    merged[old.size] = SEP
-                    System.arraycopy(wb, 0, merged, old.size + 1, wb.size)
-                    pendingWords = merged
-                    continue
-                }
-                flushPending()
+                if (prev != null && key != prev) flushPending()
                 pendingKey = key
-                pendingWords = wb
+                // 空词（`a||b`、行尾 `|` 等脏数据）直接丢弃：查询侧 wordsFor 也会解出空段，
+                // 空文本候选既无意义又占候选位。正常生成器产出的词库不会出现空词。
+                for (w in line.substring(tab + 1).split('|')) {
+                    if (w.isNotEmpty()) pendingWords.add(w)
+                }
             }
             flushPending()
 

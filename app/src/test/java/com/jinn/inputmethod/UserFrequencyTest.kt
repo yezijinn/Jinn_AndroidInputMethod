@@ -217,6 +217,8 @@ class UserFrequencyTest {
         assertTrue("写盘成功后 dirty 应清除", !UserFrequency.isDirtyForTest())
         assertTrue("文件应已写出", ok.isFile)
         dir.deleteRecursively()
+        // 收尾复位：本用例把 file 指到了临时目录，不复位会跨测试类残留（其它用例在 @Before 各自 reset）
+        UserFrequency.resetForTest()
     }
 
     // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────

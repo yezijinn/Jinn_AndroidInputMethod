@@ -349,6 +349,10 @@ object Diagnostics {
         // 会把**未过滤**的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
         var produced = false
         try {
+            // 先删同名旧快照，让「文件存在 ⇔ 本次产物」成为不变量：dest 是固定名，若下面在
+            // 「启动子进程」阶段就失败（logcat 不存在 / fork 失败 / OOM），文件里仍是**上一次**
+            // 的可用产物，会被 finally 的清理一并删掉（丢的是排查材料）。先删则至多删到自己的残留。
+            dest.delete()
             val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
                 .redirectErrorStream(true)   // 等价原来的 2>&1
                 .redirectOutput(dest)

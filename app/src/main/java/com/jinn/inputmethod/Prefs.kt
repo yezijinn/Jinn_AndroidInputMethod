@@ -267,7 +267,7 @@ class Prefs(context: Context) {
         private const val KEY_PROMPT = "prompt"
         private const val KEY_STRIP_PUNC = "strip_punc"
         private const val KEY_COMPOSING = "composing"
-        /** 面板「全拼 / 双拼」按钮的开关（老版本即此键） */
+        /** 是否启用双拼（2026-09-20 起由设置页「输入方案」下拉写；老版本由面板按钮写） */
         private const val KEY_SHUANGPIN = "shuangpin"
         private const val KEY_SHUANGPIN_SCHEME = "shuangpin_scheme"
         private const val KEY_KB_ENGLISH = "kb_english"

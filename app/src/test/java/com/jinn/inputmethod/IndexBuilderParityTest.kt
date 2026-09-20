@@ -108,6 +108,25 @@ class IndexBuilderParityTest {
     }
 
     /**
+     * 回归：同键合并按**出现顺序去重**（与文本路径 `existing + kept.filter { seen }` 同语义）。
+     *
+     * 裸拼接会让重复词在词表里出现两次 —— 虽被查询侧的 LinkedHashSet 掩盖，
+     * 但索引体积与 [PhraseIndex.wordsFor] 的原始口径都被放大。
+     */
+    @Test
+    fun 同键合并按出现顺序去重() {
+        val text = "nihao\t你好|拟好\nnihao\t拟好|你号\nnihao\t你好\n"
+        val parsed = PhraseIndex.of(PhraseIndex.build(text.lineSequence(), 9L))
+            ?: throw AssertionError("自建索引无法解析")
+        assertEquals("同键只应产生一个键", 1, parsed.size)
+        assertEquals(
+            "重复词只保留首次出现的位置",
+            listOf("你好", "拟好", "你号"),
+            parsed.wordsFor("nihao")?.toList(),
+        )
+    }
+
+    /**
      * 收尾复位：PinyinEngine 是单例，本文件会用真实 asset 注入词库；
      * 不复位会把「真实单字表/音节表」留给后续测试类，破坏它们的既有假设。
      */

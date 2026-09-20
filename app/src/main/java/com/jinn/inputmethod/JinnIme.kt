@@ -1338,7 +1338,7 @@ class JinnIme : InputMethodService() {
      * 新写法不依赖宿主对快捷键的支持：`afterLength` 会被实现钳到文本末尾。
      */
     private fun deleteAllText() {
-        Diagnostics.i(TAG, "deleteAllText: 三击删除键，清空全部文本")
+        Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，清空全部文本")
         val connection = currentInputConnection ?: return
         connection.setSelection(0, 0)
         connection.deleteSurroundingText(0, Int.MAX_VALUE)
