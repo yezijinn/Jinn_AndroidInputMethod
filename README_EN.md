@@ -73,7 +73,7 @@ optional side path that requires an external server:
 
 | Module | Responsibility |
 |---|---|
-| `JinnIme` | IME service: pinyin + voice modes, gestures, echo, clipboard paste broadcast |
+| `JinnIme` | IME service: pinyin + voice modes, gestures, echo, clipboard paste (in-process callback) |
 | `PinyinEngine` | Pinyin engine: lexicon (lazy optional packs), candidates, shuangpin, completion, segmentation |
 | `KeyboardLayouts` | Static keyboard layout data (QWERTY rows / digit layer / symbol groups incl. kana) |
 | `PinyinKeyboardView` | 26-key keyboard + candidate bar + function panels |
