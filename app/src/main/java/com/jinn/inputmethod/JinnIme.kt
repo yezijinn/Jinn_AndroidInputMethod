@@ -27,6 +27,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import android.widget.TextView
+import java.lang.ref.WeakReference
 
 /**
  * Jinn 安卓输入法。
@@ -64,6 +65,14 @@ class JinnIme : InputMethodService() {
      * 只有**决策结果变了**才重建键盘，常规弹出路径零额外开销。
      */
     private var appliedThemeDark: Boolean? = null
+
+    /**
+     * 键盘视图创建时用的**主题覆盖 Context**（见 [ThemeManager.themedContext]）。
+     *
+     * ⚠ 服务自身的 `getColor()` 走的是**系统**配置：强制亮白/暗黑时，服务里直接取色会拿到另一套色板
+     * （状态点曾因此用错主题的 dot 色）。凡在服务层取色的地方，一律用这个 Context，未创建时退回自身。
+     */
+    private var keyboardThemeCtx: Context? = null
     /**
      * 语音组件。**仅在「语音输入」开关为开时才实例化**（见 [ensureVoiceReady]）。
      * 开关关闭时两者恒为 null —— 语音功能完全沉寂，不占用任何语音相关内存，
@@ -163,7 +172,7 @@ class JinnIme : InputMethodService() {
         super.onCreate()
         Diagnostics.init(this)
         prefs = Prefs(this)
-        instance = this
+        instance = WeakReference(this)
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
         // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
         keyboardMode = when {
@@ -602,6 +611,7 @@ class JinnIme : InputMethodService() {
         // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
         // 系统深浅色变化由系统重建 IME 自动生效。
         val themeCtx = ThemeManager.themedContext(this, prefs)
+        keyboardThemeCtx = themeCtx
         appliedThemeDark = ThemeManager.isDark(this, prefs)
 
         // 语音键盘
@@ -1061,7 +1071,7 @@ class JinnIme : InputMethodService() {
     }
 
     override fun onDestroy() {
-        if (instance === this) instance = null
+        instance = null
         // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
@@ -1510,7 +1520,7 @@ class JinnIme : InputMethodService() {
                 }
             }
         }
-        statusDot?.backgroundTintList = ColorStateList.valueOf(getColor(colorRes))
+        statusDot?.backgroundTintList = ColorStateList.valueOf((keyboardThemeCtx ?: this).getColor(colorRes))
         statusLabel?.text = label
     }
 
@@ -1528,13 +1538,18 @@ class JinnIme : InputMethodService() {
     companion object {
         const val TAG = "JinnIme"
 
-        /** 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信） */
+        /**
+         * 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信）。
+         *
+         * 用**弱引用**持有：静态强引用 Service 会被 lint 判为 `StaticFieldLeak`，且语义上
+         * 不需要延长其生命周期 —— 服务存活期间系统自有强引用，`onDestroy` 亦会置空。
+         */
         @Volatile
-        private var instance: JinnIme? = null
+        private var instance: WeakReference<JinnIme>? = null
 
         /** 设置页改主题后调用（主线程）：键盘正显示时立即按新色板重建；尚未创建则等下次弹出自然读取 */
         fun notifyThemeChanged() {
-            val ime = instance ?: return
+            val ime = instance?.get() ?: return
             ime.ui.post { ime.applyThemeIfNeeded() }
         }
 

@@ -187,13 +187,18 @@ class Prefs(context: Context) {
     var themeLightAtMinutes: Int
         get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
-        set(value) = sp.edit { putInt(KEY_THEME_LIGHT_AT, value) }
+        set(value) = sp.edit {
+            // 写入即归一：读取端虽已兜底，但存进配置里的脏值（负数 / 超 24h）会坑到绕过 Prefs 的读方
+            putInt(KEY_THEME_LIGHT_AT, Math.floorMod(value, ThemeManager.MINUTES_PER_DAY))
+        }
 
     /** 定时模式：切到暗黑的时刻（当天第几分钟），默认 19:00 */
     var themeDarkAtMinutes: Int
         get() = sp.getInt(KEY_THEME_DARK_AT, DEFAULT_THEME_DARK_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_DARK_AT_MIN
-        set(value) = sp.edit { putInt(KEY_THEME_DARK_AT, value) }
+        set(value) = sp.edit {
+            putInt(KEY_THEME_DARK_AT, Math.floorMod(value, ThemeManager.MINUTES_PER_DAY))
+        }
 
     /**
      * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。

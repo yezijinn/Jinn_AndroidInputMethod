@@ -28,6 +28,24 @@ class ThemeColorParityTest {
         assertEquals(true, light.size > 30)
     }
 
+    /**
+     * 同一条 style 在两套主题里的 `<item name>` 必须一致。
+     *
+     * `values-night/themes.xml` 的同名 style 是**整条替换**（不是逐项合并）：少写一个 item，
+     * 那一项在暗色下就退回框架默认值（例如 `textColorPrimary` 丢失 → 文字用系统色），
+     * 编译、lint、运行都不报错，只能靠肉眼在深色下发现。
+     */
+    @Test
+    fun 两套主题定义的item逐名对齐() {
+        val light = itemNames(resFile("values/themes.xml"))
+        val dark = itemNames(resFile("values-night/themes.xml"))
+        assertEquals("暗色主题多出的 item: ${dark - light}", emptySet<String>(), dark - light)
+        assertEquals("暗色主题缺少的 item（会退回框架默认值）: ${light - dark}", emptySet<String>(), light - dark)
+    }
+
+    private fun itemNames(file: File): Set<String> =
+        Regex("<item name=\"([^\"]+)\"").findAll(file.readText()).map { it.groupValues[1] }.toSet()
+
     private fun colorNames(file: File): Set<String> =
         Regex("<color name=\"([^\"]+)\"").findAll(file.readText()).map { it.groupValues[1] }.toSet()
 
