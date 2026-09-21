@@ -163,6 +163,7 @@ class JinnIme : InputMethodService() {
         super.onCreate()
         Diagnostics.init(this)
         prefs = Prefs(this)
+        instance = this
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
         // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
         keyboardMode = when {
@@ -889,6 +890,38 @@ class JinnIme : InputMethodService() {
         return super.onShowInputRequested(flags, configChange)
     }
 
+    /**
+     * 主题决策变了就用新色板重建键盘。
+     *
+     * 两个触发源：① 设置页改主题 —— 同进程直接调 [notifyThemeChanged]（键盘正显示时立即换肤）；
+     * ② [onStartInputView] —— 覆盖「定时模式在键盘收起期间跨过了切换点」。
+     * 键盘视图尚未创建（appliedThemeDark 为 null）时无需处理：onCreateInputView 会读到新值。
+     */
+    private fun applyThemeIfNeeded() {
+        val wantDark = ThemeManager.isDark(this, prefs)
+        if (appliedThemeDark != null && appliedThemeDark != wantDark) {
+            Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
+            setInputView(onCreateInputView())
+        }
+    }
+
+    /** 定时模式的到点检查（键盘可见期间跨过切换点也换肤）；非定时模式无操作 */
+    private fun scheduleThemeTick() {
+        ui.removeCallbacks(themeTick)
+        if (prefs.themeMode != ThemeManager.MODE_SCHEDULED) return
+        val minutes = ThemeManager.minutesUntilSwitch(
+            prefs.themeMode, prefs.themeLightAtMinutes, prefs.themeDarkAtMinutes, ThemeManager.nowMinutes(),
+        )
+        if (minutes <= 0) return
+        // 多等 2 秒：避免恰好落在分钟边界上、判定仍读到上一分钟
+        ui.postDelayed(themeTick, minutes * 60_000L + 2_000L)
+    }
+
+    private val themeTick = Runnable {
+        applyThemeIfNeeded()
+        scheduleThemeTick()
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
@@ -901,13 +934,9 @@ class JinnIme : InputMethodService() {
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
-        // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘。
-        // 只在「决策结果变了」时重建，且键盘视图尚未创建时无需处理（onCreateInputView 会读到新值）。
-        val wantDark = ThemeManager.isDark(this, prefs)
-        if (appliedThemeDark != null && appliedThemeDark != wantDark) {
-            Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
-            setInputView(onCreateInputView())
-        }
+        // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘
+        applyThemeIfNeeded()
+        scheduleThemeTick() // 定时模式：键盘可见期间也准点换肤
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
         ui.removeCallbacks(optionalIdleCheck)
@@ -1000,6 +1029,7 @@ class JinnIme : InputMethodService() {
         // 会话边界：搜索面板必须退出——跨输入框残留会让下一次输入被路由进搜索框
         pinyinKeyboard?.hideSearchPanel()
         ui.removeCallbacks(backspaceRunnable)
+        ui.removeCallbacks(themeTick) // 键盘已收起：到点检查交给下次弹出时的 scheduleThemeTick
         // 会话边界：暂存的剪贴板文本属于**上一个输入框**，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
         if (pendingPasteText != null) {
@@ -1031,6 +1061,7 @@ class JinnIme : InputMethodService() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
@@ -1496,6 +1527,16 @@ class JinnIme : InputMethodService() {
 
     companion object {
         const val TAG = "JinnIme"
+
+        /** 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信） */
+        @Volatile
+        private var instance: JinnIme? = null
+
+        /** 设置页改主题后调用（主线程）：键盘正显示时立即按新色板重建；尚未创建则等下次弹出自然读取 */
+        fun notifyThemeChanged() {
+            val ime = instance ?: return
+            ime.ui.post { ime.applyThemeIfNeeded() }
+        }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */
         private const val OPTIONAL_IDLE_DELAY_MS = 20_000L
