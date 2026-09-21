@@ -762,6 +762,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 语言键（切英文时会调它）与 IME 收起都会走到这里，紧接着的 listener.onCommitText
      * 会把搜索词（或它的首候选）写进用户正在编辑的正文里。
      */
+    /**
+     * 是否有**未上屏**的内容（拼音串或预测词）。
+     *
+     * IME 换主题会整块重建键盘视图：若有未上屏内容，重建等同于**静默丢弃**它们
+     * （宿主输入框毫无变化，用户却看到候选栏被清空）—— 所以换肤前必须先问这里。
+     */
+    val hasPendingInput: Boolean
+        get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
+
     fun commitComposing() {
         if (isPanelSearch()) {
             clearComposingState()

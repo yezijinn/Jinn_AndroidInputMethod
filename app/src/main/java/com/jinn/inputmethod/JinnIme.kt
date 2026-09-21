@@ -910,6 +910,12 @@ class JinnIme : InputMethodService() {
     private fun applyThemeIfNeeded() {
         val wantDark = ThemeManager.isDark(this, prefs)
         if (appliedThemeDark != null && appliedThemeDark != wantDark) {
+            // 有未上屏内容（拼音串/预测词）时不动视图：重建会静默丢弃它们
+            // （宿主输入框毫无变化）。延后到下次弹出 —— onStartInputView 会再判一次。
+            if (pinyinKeyboard?.hasPendingInput == true) {
+                Diagnostics.i(TAG, "主题变更: 键盘有未上屏内容，延后到下次弹出换肤")
+                return
+            }
             Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
             setInputView(onCreateInputView())
         }
