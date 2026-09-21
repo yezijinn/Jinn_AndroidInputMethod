@@ -9,10 +9,12 @@
     自动唤起键盘 → 剪贴板 → 授权麦克风 → NAS 语音 → 导出诊断包 → 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/bg_aurora"
-    android:overScrollMode="never">
+    android:overScrollMode="never"
+    tools:ignore="TooManyViews">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -497,6 +499,15 @@
                 android:minWidth="0dp"
                 android:text="@string/settings_pick_ime" />
         </LinearLayout>
+
+        <!-- 符号分组顺序：单按钮入口，打开独立排序页 -->
+        <Button
+            android:id="@+id/btn_symbol_order"
+            style="@style/SettingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginBottom="10dp"
+            android:text="@string/symbol_order_title" />
 
         <!-- 分类词库：单按钮入口，跳转到独立页面按需下载 -->
         <LinearLayout

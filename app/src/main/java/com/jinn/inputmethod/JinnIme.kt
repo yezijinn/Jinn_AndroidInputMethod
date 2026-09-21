@@ -921,6 +921,14 @@ class JinnIme : InputMethodService() {
         }
     }
 
+    /** 排序页调整符号分组顺序后重建键盘视图（companion 的 [onSymbolOrderChanged] 转发到这里） */
+    fun rebuildInputViewForSymbolOrder() {
+        if (pinyinKeyboard != null) {
+            Diagnostics.i(TAG, "符号分组顺序变更: 重建键盘视图")
+            setInputView(onCreateInputView())
+        }
+    }
+
     /** 定时模式的到点检查（键盘可见期间跨过切换点也换肤）；非定时模式无操作 */
     private fun scheduleThemeTick() {
         ui.removeCallbacks(themeTick)
@@ -1557,6 +1565,16 @@ class JinnIme : InputMethodService() {
         fun notifyThemeChanged() {
             val ime = instance?.get() ?: return
             ime.ui.post { ime.applyThemeIfNeeded() }
+        }
+
+        /**
+         * 设置页调整符号分组顺序后调用（主线程）：键盘视图已创建则重建，让新顺序**立即生效** ——
+         * 分组顺序在视图创建时读取一次，不重建就只会等到下次键盘整体重建。
+         * 尚未创建（inputView == null）时不做事：下次创建自然读到新顺序。
+         */
+        fun onSymbolOrderChanged() {
+            val ime = instance?.get() ?: return
+            ime.ui.post { ime.rebuildInputViewForSymbolOrder() }
         }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */
