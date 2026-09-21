@@ -114,7 +114,7 @@ class JinnIme : InputMethodService() {
      */
     private var pendingPasteFieldKey: String? = null
 
-    /** 剪贴板面板打开标记：跨键盘视图实例持久（IME relayout 重建视图后自动恢复） */
+    /** 剪贴板面板打开标记：仅供诊断日志（视图侧的真实状态在 PinyinKeyboardView 内，重建后不恢复） */
     private var clipboardPanelOpen = false
 
     /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
@@ -910,10 +910,11 @@ class JinnIme : InputMethodService() {
     private fun applyThemeIfNeeded() {
         val wantDark = ThemeManager.isDark(this, prefs)
         if (appliedThemeDark != null && appliedThemeDark != wantDark) {
-            // 有未上屏内容（拼音串/预测词）时不动视图：重建会静默丢弃它们
-            // （宿主输入框毫无变化）。延后到下次弹出 —— onStartInputView 会再判一次。
-            if (pinyinKeyboard?.hasPendingInput == true) {
-                Diagnostics.i(TAG, "主题变更: 键盘有未上屏内容，延后到下次弹出换肤")
+            // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板面板、搜索面板）时不动视图：
+            // 重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。延后到下次弹出 ——
+            // onStartInputView 会再判一次。
+            if (pinyinKeyboard?.let { it.hasPendingInput || it.hasActiveOverlay } == true) {
+                Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入或面板），延后到下次弹出换肤")
                 return
             }
             Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
@@ -923,10 +924,16 @@ class JinnIme : InputMethodService() {
 
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
     fun rebuildInputViewForSymbolLayout() {
-        if (pinyinKeyboard != null) {
-            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 重建键盘视图")
-            setInputView(onCreateInputView())
+        val keyboard = pinyinKeyboard ?: return
+        // 与换肤同口径地不打断未上屏输入：重建会清空拼音串/预测词，用户以为输入被吞。
+        // 触发窗口极窄（需键盘可见时改符号），且数据已落盘 —— 延后到视图下次创建时自然生效。
+        // ⚠ 这里**不**看面板态：编辑页场景下面板不可能同时打开，而推迟会造成「改了符号不生效」。
+        if (keyboard.hasPendingInput) {
+            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入，延后到下次创建视图")
+            return
         }
+        Diagnostics.i(TAG, "符号分组顺序/收藏变更: 重建键盘视图")
+        setInputView(onCreateInputView())
     }
 
     /** 定时模式的到点检查（键盘可见期间跨过切换点也换肤）；非定时模式无操作 */

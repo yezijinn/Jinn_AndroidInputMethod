@@ -2,7 +2,6 @@ package com.jinn.inputmethod
 
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -14,7 +13,7 @@ import android.widget.TextView
  * 符号分组排序页：从设置页「符号分组顺序」按钮进入。
  *
  * 每行一个分组 + ↑↓ 调整，改动**即时落盘**（[Prefs.symbolGroupOrder]）；
- * 离开页面时（[onPause]）通知 IME 重建键盘视图，让新顺序立即生效 ——
+ * [onPause] 时**仅在真正调过顺序**的情况下通知 IME 重建键盘视图，让新顺序立即生效 ——
  * 键盘视图在创建时读取一次顺序，不通知就只会等到下次键盘整体重建。
  *
  * 顺序规则（归一 / 移动 / 兜底）全部在 [SymbolOrder]，本页只负责展示与写盘。
@@ -22,6 +21,9 @@ import android.widget.TextView
 class SymbolOrderActivity : Activity() {
 
     private lateinit var orderList: LinearLayout
+
+    /** 本次进入是否调过顺序（决定离开时要不要通知 IME 重建键盘视图） */
+    private var dirty = false
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -33,7 +35,9 @@ class SymbolOrderActivity : Activity() {
         orderList = findViewById(R.id.symbol_order_list)
         findViewById<Button>(R.id.btn_symbol_order_close).setOnClickListener { finish() }
         findViewById<Button>(R.id.btn_symbol_order_reset).setOnClickListener {
-            Prefs(this).symbolGroupOrder = "" // 空串 = 默认次序
+            // 「恢复默认」：写入空串，Prefs 的 setter 会归一为完整的默认序列串（见 [SymbolOrder]）
+            Prefs(this).symbolGroupOrder = ""
+            dirty = true
             renderRows()
         }
         renderRows()
@@ -41,14 +45,9 @@ class SymbolOrderActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        JinnIme.onSymbolLayoutChanged()
-    }
-
-    /** 兼容旧入口（如有外部组件直接拉起本页） */
-    companion object {
-        fun start(context: Context) {
-            context.startActivity(Intent(context, SymbolOrderActivity::class.java))
-        }
+        // 只有真正调过才通知（进来看看就退出的场景不必重建键盘视图）。
+        // 标记不复位：重建可能被「有未上屏输入」守卫延后，下次 onPause 再通知一次（重建幂等）。
+        if (dirty) JinnIme.onSymbolLayoutChanged()
     }
 
     private fun renderRows() {
@@ -80,6 +79,7 @@ class SymbolOrderActivity : Activity() {
 
     private fun applyOrder(labels: List<String>) {
         Prefs(this).symbolGroupOrder = SymbolOrder.serialize(labels)
+        dirty = true // ↑↓ 只在可移动时才启用，走到这里顺序一定变过
         renderRows()
     }
 

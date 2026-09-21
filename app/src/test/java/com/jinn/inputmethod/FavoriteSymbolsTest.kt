@@ -4,7 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 「收藏」分组纯函数护栏：预置 D I Y、null→预置、"[]"→空组不回退、去重、满 26 翻页、删除补位收页。 */
+/**
+ * 「收藏」分组纯函数护栏：预置 D I Y、null→预置、"[]"→空组不回退、去重、满 26 翻页、
+ * parse 归一（去重 / 重排 / 空页过滤）、删除补位收页。
+ */
 class FavoriteSymbolsTest {
 
     @Test
@@ -16,9 +19,37 @@ class FavoriteSymbolsTest {
     }
 
     @Test
-    fun 序列化往返稳定() {
-        val pages = listOf(listOf("，", "。", "℃"), listOf("★"))
-        assertEquals(pages, FavoriteSymbols.parse(FavoriteSymbols.serialize(pages)))
+    fun 序列化往返_内容顺序稳定_页结构归一() {
+        // 非规范结构（非末页不满 26）：归一会合并页，符号集合与顺序不变
+        val loose = listOf(listOf("，", "。", "℃"), listOf("★"))
+        assertEquals(listOf(loose.flatten()), FavoriteSymbols.parse(FavoriteSymbols.serialize(loose)))
+        // 规范结构（26 + 2）：往返恒等
+        val normal = listOf(List(26) { "a$it" }, listOf("x", "y"))
+        assertEquals(normal, FavoriteSymbols.parse(FavoriteSymbols.serialize(normal)))
+    }
+
+    @Test
+    fun 归一_超页重排不丢符号_重复与空页被清理() {
+        // 外部脏数据：一页 27 项 → 重排为 26 + 1，符号一个不少
+        val over = List(27) { "s$it" }
+        assertEquals(
+            listOf(over.take(26), over.drop(26)),
+            FavoriteSymbols.parse(FavoriteSymbols.serialize(listOf(over))),
+        )
+        // 全局去重保序 + 空页过滤
+        assertEquals(
+            listOf(listOf("a", "b", "c")),
+            FavoriteSymbols.parse("""[["a","a","b"],[],["b","c"]]"""),
+        )
+    }
+
+    @Test
+    fun 满页26项恰好铺满26键位() {
+        // PER_PAGE 与键盘键位数的耦合护栏：归一后每页 ≤26，favoriteGroup 不得静默丢符号
+        val page = List(FavoriteSymbols.PER_PAGE) { "s$it" }
+        val group = favoriteGroup(listOf(page))
+        assertEquals(FavoriteSymbols.PER_PAGE, group.pages[0].size)
+        assertEquals(page.toSet(), group.pages[0].values.toSet())
     }
 
     @Test
