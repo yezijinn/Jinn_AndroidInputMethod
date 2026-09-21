@@ -25,11 +25,11 @@ Everything runs on-device — **no server required**.
 
 ## Features
 
-- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints. Pick the input scheme in Settings (「输入方案」: full pinyin + 7 Shuangpin schemes; applies globally).
+- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints. Pick the input scheme in Settings (「拼音输入方案」: full pinyin + 7 Shuangpin schemes; applies globally).
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
   - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
     the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
-  - One-tap CN/EN switch; **key corner radius and gap** are adjustable in Settings
+  - One-tap CN/EN switch; **key corner radius and gap** live in Settings →「按钮圆角间隙」
     (radius 0~24dp, gap 0~8dp) — collapse the keyboard and reopen it to see the change.
   - Backspace gestures: tap to delete one character, hold to keep deleting (once the pinyin string is
     empty it keeps deleting committed text); double-tap then hold clears committed text too.
@@ -43,10 +43,10 @@ Everything runs on-device — **no server required**.
   and keeps favorites.
   - **Top search panel**: above the candidate bar, filters history as you type; results scroll and
     paste on tap; exiting restores the 26-key layout.
-- **Optional dictionaries**: the long-word pack (~185K entries) and Tencent lexicon (~955K entries)
-  are downloadable on demand from the settings page; loaded **only when idle**, so typing is never
-  blocked; adding or removing a pack auto-restarts the IME to apply.
-- **Zero bundled models**: no speech models shipped; APK is about **4.95MB**, depending only on
+- **Optional dictionaries** (Settings →「补充短语词库」): the long-word pack (~185K entries) and
+  Tencent lexicon (~955K entries) are downloadable on demand; loaded **only when idle**, so typing is
+  never blocked; adding or removing a pack auto-restarts the IME to apply.
+- **Zero bundled models**: no speech models shipped; APK is about **5.0MB**, depending only on
   `core-ktx`, `activity-ktx`, `okhttp3`, and `xz`.
 - **(Optional) Voice dictation**: press-and-hold or tap the mic to speak; recognized text streams
   back and is committed. **Requires a self-hosted NAS server — see the note above.**
@@ -83,6 +83,9 @@ optional side path that requires an external server:
 | `SearchPanelView` | Top search panel: results + input (exit via the candidate-bar button or Enter / hide the keyboard) |
 | `ClipboardDb` | Clipboard history SQLite (AES-256-GCM) |
 | `DictManagerActivity` | Optional-dictionary page: list + download / delete |
+| `KeyAppearanceActivity` | Keyboard appearance page: corner-radius / gap sliders |
+| `SymbolOrderActivity` | Symbol-group order page: ↑↓ reorder / reset |
+| `FavoriteSymbolsActivity` | "Favorites" symbol editor: add / remove per page |
 | `AsrClient` ⚠️ | WebSocket client: streaming upload, exponential-backoff reconnect (**voice path only**) |
 | `Diagnostics` | Diagnostic logs, crash capture, trace ID |
 
