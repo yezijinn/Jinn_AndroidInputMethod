@@ -45,6 +45,12 @@
             android:exported="false"
             android:label="@string/dict_manager_title" />
 
+        <!-- 符号分组排序页：从设置页「符号分组顺序」按钮进入 -->
+        <activity
+            android:name=".SymbolOrderActivity"
+            android:exported="false"
+            android:label="@string/symbol_order_title" />
+
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"
