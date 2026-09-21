@@ -198,6 +198,10 @@ class SettingsActivity : ComponentActivity() {
 
         // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
         initThemeCard()
+        // 收藏符号编辑：单按钮入口，打开独立编辑页
+        findViewById<Button>(R.id.btn_edit_favorites).setOnClickListener {
+            startActivity(Intent(this, FavoriteSymbolsActivity::class.java))
+        }
         // 符号分组顺序：单按钮入口，打开独立排序页（设置主页只留一个按钮，不再内嵌列表）
         findViewById<Button>(R.id.btn_symbol_order).setOnClickListener {
             startActivity(Intent(this, SymbolOrderActivity::class.java))

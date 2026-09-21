@@ -51,6 +51,12 @@
             android:exported="false"
             android:label="@string/symbol_order_title" />
 
+        <!-- 收藏符号编辑页：从设置页「编辑收藏符号」按钮进入 -->
+        <activity
+            android:name=".FavoriteSymbolsActivity"
+            android:exported="false"
+            android:label="@string/favorite_title" />
+
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"

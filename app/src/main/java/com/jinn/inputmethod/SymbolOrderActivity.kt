@@ -41,7 +41,7 @@ class SymbolOrderActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        JinnIme.onSymbolOrderChanged()
+        JinnIme.onSymbolLayoutChanged()
     }
 
     /** 兼容旧入口（如有外部组件直接拉起本页） */

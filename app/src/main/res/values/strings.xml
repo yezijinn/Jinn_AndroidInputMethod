@@ -206,6 +206,19 @@
     <string name="symbol_order_move_down">↓</string>
     <string name="symbol_order_reset">恢复默认顺序</string>
     <string name="symbol_order_close">✕</string>
+
+    <!-- 收藏分组：编辑页与设置页入口 -->
+    <string name="favorite_title">编辑收藏符号</string>
+    <string name="favorite_desc">自由增删「收藏」分组里的符号；每页最多 26 个，满页自动新增页。改动即时保存，返回键盘即生效。</string>
+    <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
+    <string name="favorite_add">＋ 添加符号</string>
+    <string name="favorite_close">✕</string>
+    <string name="favorite_delete">移除</string>
+    <string name="favorite_dialog_title">添加符号</string>
+    <string name="favorite_dialog_hint">输入或粘贴符号（1~8 个字符）</string>
+    <string name="favorite_exists">该符号已在收藏中</string>
+    <string name="favorite_invalid">请输入 1~8 个字符</string>
+    <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
     <string name="theme_card_title">主题</string>
     <string name="theme_card_desc">亮白/暗黑,跟随系统/定时切换</string>
     <string name="theme_mode_label">主题模式</string>

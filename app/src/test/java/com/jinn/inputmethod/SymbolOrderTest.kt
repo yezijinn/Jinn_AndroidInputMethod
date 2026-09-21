@@ -28,7 +28,8 @@ class SymbolOrderTest {
     @Test
     fun 缺失的分组补到末尾_未知的剔除() {
         val got = SymbolOrder.parse("半角,全角,不存在的组")
-        assertEquals(listOf("半角", "全角"), got.take(2))
+        // 旧串不含「收藏」→ 兼容逻辑插回「半角」之后（默认第三位），其余按默认次序补到末尾
+        assertEquals(listOf("半角", "收藏", "全角"), got.take(3))
         assertEquals(default.size, got.size)       // 一个不少
         assertEquals(default.toSet(), got.toSet()) // 一个不多
     }
@@ -36,7 +37,7 @@ class SymbolOrderTest {
     @Test
     fun 重复项去重且保留首次位置() {
         val got = SymbolOrder.parse("半角,半角,全角,半角")
-        assertEquals(listOf("半角", "全角"), got.take(2))
+        assertEquals(listOf("半角", "收藏", "全角"), got.take(3))
         assertEquals(default.size, got.size)
     }
 
@@ -52,9 +53,13 @@ class SymbolOrderTest {
     @Test
     fun 分组对象按用户顺序返回() {
         val raw = SymbolOrder.serialize(listOf("半角", "全角") + default.drop(2))
-        val groups = SymbolOrder.groupsInOrder(raw)
-        assertEquals(default.size, groups.size)
+        val fav = favoriteGroup(FavoriteSymbols.parse(null)) // 出厂预置 D I Y
+        val groups = SymbolOrder.groupsInOrder(raw, fav)
+        assertEquals(default.size, groups.size)              // 收藏组也在内
         assertEquals("半角", groups.first().label)
+        assertEquals("收藏", groups[2].label)
         assertEquals("全角", groups[1].label)
+        // 不带收藏（缺省）：收藏 label 被丢弃，其余照常
+        assertEquals(default.size - 1, SymbolOrder.groupsInOrder(raw).size)
     }
 }
