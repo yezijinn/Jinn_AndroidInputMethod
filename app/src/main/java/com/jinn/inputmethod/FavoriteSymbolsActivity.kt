@@ -3,7 +3,6 @@ package com.jinn.inputmethod
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -23,11 +22,15 @@ import android.widget.Toast
  * - 按页分节网格展示，每个符号右上角小 ✕ 移除（后续符号前移补位、删空的页自动收起）；
  * - 底部「＋ 添加符号」：**仅输入框**（自由键入/粘贴），末页满 26 自动开新页；
  * - **禁止重复**：添加已存在的符号提示「已存在」；
- * - 改动即时落盘（[Prefs.favoriteSymbols]）；离开页面（[onPause]）通知 IME 重建键盘视图生效。
+ * - 改动即时落盘（[Prefs.favoriteSymbols]）；[onPause] 时**仅在真正改过**的情况下通知
+ *   IME 重建键盘视图（进来看看就退出不触发整块重建）。
  */
 class FavoriteSymbolsActivity : Activity() {
 
     private lateinit var listContainer: LinearLayout
+
+    /** 本次进入是否改过收藏内容（决定离开时要不要通知 IME 重建键盘视图） */
+    private var dirty = false
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -44,13 +47,9 @@ class FavoriteSymbolsActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        JinnIme.onSymbolLayoutChanged()
-    }
-
-    companion object {
-        fun start(context: Context) {
-            context.startActivity(Intent(context, FavoriteSymbolsActivity::class.java))
-        }
+        // 只有真正改过才通知（进来看看就退出的场景不必重建键盘视图）。
+        // 标记不复位：重建可能被「有未上屏输入」守卫延后，下次 onPause 再通知一次（重建幂等）。
+        if (dirty) JinnIme.onSymbolLayoutChanged()
     }
 
     private fun currentPages(): List<List<String>> =
@@ -58,6 +57,7 @@ class FavoriteSymbolsActivity : Activity() {
 
     private fun save(pages: List<List<String>>) {
         Prefs(this).favoriteSymbols = FavoriteSymbols.serialize(pages)
+        dirty = true
     }
 
     private fun renderPages() {

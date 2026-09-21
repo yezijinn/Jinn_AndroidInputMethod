@@ -778,11 +778,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 是否有**未上屏**的内容（拼音串或预测词）。
      *
-     * IME 换主题会整块重建键盘视图：若有未上屏内容，重建等同于**静默丢弃**它们
-     * （宿主输入框毫无变化，用户却看到候选栏被清空）—— 所以换肤前必须先问这里。
+     * IME 换主题（含定时到点）与符号布局变更都会整块重建键盘视图：若有未上屏内容，
+     * 重建等同于**静默丢弃**它们（宿主输入框毫无变化，用户却看到候选栏被清空）
+     * —— 所以重建前必须先问这里。
      */
     val hasPendingInput: Boolean
         get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
+
+    /**
+     * 视图上是否有**正在使用的面板**（剪贴板面板 / 顶部搜索面板）。
+     *
+     * 面板状态挂在视图上，重建会把它们直接关掉：用户正翻剪贴板历史时到点换肤，
+     * 面板会毫无预告地消失（搜索态同）—— 换肤延后判据因此要带上这一项。
+     */
+    val hasActiveOverlay: Boolean
+        get() = clipboardActive || searchPanel.isActive()
 
     fun commitComposing() {
         if (isPanelSearch()) {

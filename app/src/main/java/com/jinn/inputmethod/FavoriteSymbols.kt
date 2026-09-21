@@ -17,6 +17,12 @@ import org.json.JSONArray
  * 序列化容错：`null`（从未编辑过）→ 出厂预置 [DEFAULT_ITEMS]；损坏 JSON → 回退预置；
  * `"[]"`（用户删光）→ 空组 —— 删光是用户的明确意愿，不回退预置。
  *
+ * [parse] 的输出**恒为规范结构**（每页 ≤ [PER_PAGE]、非末页满页、无重复、无空页）：
+ * 数据可能来自旧版本或被外部改写，不归一就会出现「编辑页看得到、键盘上看不到」
+ * （[KeyboardLayouts.favoriteGroup] 只铺 26 个键位，超出的部分静默丢弃）。
+ * 页边界属实现细节：归一可能**合并**非规范数据的页（如 `[[3 项],[1 项]]` → `[[4 项]]`），
+ * 但符号集合与顺序不变；规范结构（非末页恒 26）下重新分页是恒等变换，用户无感。
+ *
  * 全部为纯函数，可直接 JVM 单测（见 `FavoriteSymbolsTest`）。
  */
 object FavoriteSymbols {
@@ -33,15 +39,22 @@ object FavoriteSymbols {
     /** 出厂预置：D I Y 三个字符（用户可自由删改） */
     val DEFAULT_ITEMS = listOf("D", "I", "Y")
 
-    /** 持久化串 → 页结构；[raw] 为 null（从未编辑）或损坏 → 出厂预置；`"[]"` → 空组 */
+    /**
+     * 持久化串 → 页结构（恒为规范结构，见类注释）；[raw] 为 null（从未编辑）或损坏 → 出厂预置；
+     * `"[]"` → 空组。
+     */
     fun parse(raw: String?): List<List<String>> {
         if (raw == null) return listOf(DEFAULT_ITEMS)
         if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
-            (0 until arr.length())
-                .map { p -> val page = arr.getJSONArray(p); (0 until page.length()).map { page.getString(it) } }
-                .filter { it.isNotEmpty() }
+            // 一步完成「拉平 + 全局去重（保序）」；空页与超页在重新分页时自然消解
+            val flat = LinkedHashSet<String>()
+            for (p in 0 until arr.length()) {
+                val page = arr.getJSONArray(p)
+                for (i in 0 until page.length()) flat.add(page.getString(i))
+            }
+            flat.toList().chunked(PER_PAGE)
         } catch (_: Exception) {
             listOf(DEFAULT_ITEMS)
         }
