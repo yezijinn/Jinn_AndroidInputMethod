@@ -4,9 +4,12 @@
   能同排的控件一律同排；删掉冗余分组标题，减少卡片数量；
   深蓝极光渐变背景 + 大圆角卡片，视觉更圆润。
 
-  布局顺序（自上而下）：
-    标题 → 保存配置并立即重启生效 → 检查更新 → 输入法测试（点这里唤起键盘打字）→
-    自动唤起键盘 → 剪贴板 → 授权麦克风 → NAS 语音 → 导出诊断包 → 使用说明纯文本
+  布局顺序（自上而下，用户 2026-09-21 指定）：
+    标题 → 保存配置并立即重启生效 → 输入法测试（点这里唤起键盘）→ 检查软件更新 / 打开下载页面 →
+    启用本输入法 / 改默认输入法 → 符号分组顺序 / 收藏的自定义 →
+    拼音输入方案 / 键盘主题配色（定时行同卡片）→ 自动唤起键盘 / 加更多生僻字 →
+    用户词频学习 / 追加候选词语 → 键盘外观 → 分类词库 → 剪贴板 → 授权麦克风 →
+    NAS 语音 → 语音输入开关 → 导出诊断包 → 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
@@ -59,37 +62,7 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
-             同行右侧为 Gitee 下载页入口 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="12dp">
-
-            <Button
-                android:id="@+id/btn_check_update"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/settings_check_update" />
-
-            <Button
-                android:id="@+id/btn_update_download"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/update_download_page" />
-        </LinearLayout>
-
-        <!-- 输入法测试：点这里唤起键盘打字（位于检查更新卡片下方，保存后可直接验证）-->
+        <!-- 输入法测试：点这里唤起键盘打字（置顶第一位，保存后可直接验证）-->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -140,193 +113,179 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- 自动唤起键盘 -->
+        <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
+             同行右侧为 Gitee 下载页入口 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:background="@drawable/card_aurora"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:padding="12dp">
 
-            <Switch
-                android:id="@+id/switch_auto_show_keyboard"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_auto_show_keyboard"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="@string/switch_auto_show_keyboard_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 输入方案：全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加。
-             必须位于「显示生僻字」上方（用户要求）；键盘功能面板也能循环切换，
-             这里用于显式选择、重启后仍生效 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_shuangpin_scheme"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <Spinner
-                android:id="@+id/spinner_shuangpin"
-                android:layout_width="match_parent"
+            <Button
+                android:id="@+id/btn_check_update"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
                 android:layout_height="44dp"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_check_update" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:text="@string/settings_shuangpin_scheme_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 生僻字开关：默认关闭，不加载生僻字以降低词库内存占用 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <Switch
-                android:id="@+id/switch_show_rare_chars"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_show_rare_chars"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="@string/switch_show_rare_chars_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 用户词频学习：记住实际选过的候选并提到前面（本地存储，可关闭） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <Switch
-                android:id="@+id/switch_user_learning"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_user_learning"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:text="@string/switch_user_learning_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 候选预测词：选完词后是否在候选栏预告下一个字词（可关闭） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <Switch
-                android:id="@+id/switch_predict"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:text="@string/switch_predict"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:text="@string/switch_predict_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 主题：亮白 / 暗黑。模式切换后本页立即变色；键盘在下次弹出（或「保存并重启」）时生效 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/theme_card_title"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/theme_card_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/theme_mode_label"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <Spinner
-                android:id="@+id/spinner_theme"
-                android:layout_width="match_parent"
+            <Button
+                android:id="@+id/btn_update_download"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
                 android:layout_height="44dp"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/update_download_page" />
+        </LinearLayout>
+
+        <!-- 输入法控制：启用 / 切换。与语音无关，不受语音开关影响 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <Button
+                android:id="@+id/btn_enable"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_enable_ime" />
+
+            <Button
+                android:id="@+id/btn_pick"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_pick_ime" />
+        </LinearLayout>
+
+        <!-- 符号布局入口：分组顺序 + 收藏编辑，同一张卡片内并排 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <Button
+                android:id="@+id/btn_symbol_order"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/symbol_order_title" />
+
+            <Button
+                android:id="@+id/btn_edit_favorites"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/favorite_entry_title" />
+        </LinearLayout>
+
+        <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_shuangpin_scheme"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <Spinner
+                        android:id="@+id/spinner_shuangpin"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/field_aurora"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:spinnerMode="dropdown" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="@string/settings_shuangpin_scheme_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_card_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <Spinner
+                        android:id="@+id/spinner_theme"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/field_aurora"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:spinnerMode="dropdown" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="@string/theme_card_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <!-- 定时行：仅「定时」模式可见；两个按钮分别弹时间选择器 -->
             <LinearLayout
@@ -366,6 +325,130 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- 自动唤起键盘 / 加更多生僻字：两个开关并排（各带说明小字） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_auto_show_keyboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:maxLines="2"
+                    android:text="@string/switch_auto_show_keyboard"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:text="@string/switch_auto_show_keyboard_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_show_rare_chars"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:maxLines="2"
+                    android:text="@string/switch_show_rare_chars"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:text="@string/switch_show_rare_chars_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 用户词频学习 / 追加候选词语：两个开关并排（各带说明小字） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_user_learning"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:maxLines="2"
+                    android:text="@string/switch_user_learning"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:text="@string/switch_user_learning_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_predict"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:maxLines="2"
+                    android:text="@string/switch_predict"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:text="@string/switch_predict_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 键盘外观：26 键区（3 行 28 键：字母 + 大写 + 删除）统一圆角与间隙 -->
@@ -469,64 +552,6 @@
                 android:text="@string/key_appearance_apply_hint"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 输入法控制：启用 / 切换。与语音无关，不受语音开关影响 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="12dp">
-
-            <Button
-                android:id="@+id/btn_enable"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/settings_enable_ime" />
-
-            <Button
-                android:id="@+id/btn_pick"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/settings_pick_ime" />
-        </LinearLayout>
-
-        <!-- 符号布局入口：分组顺序 + 收藏编辑，同一张卡片内并排（仿「输入法控制」组） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="12dp">
-
-            <Button
-                android:id="@+id/btn_symbol_order"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/symbol_order_title" />
-
-            <Button
-                android:id="@+id/btn_edit_favorites"
-                style="@style/SettingsButton"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:minWidth="0dp"
-                android:text="@string/favorite_title" />
         </LinearLayout>
 
         <!-- 分类词库：单按钮入口，跳转到独立页面按需下载 -->
