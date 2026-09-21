@@ -88,11 +88,11 @@
     <string name="settings_restarting">已保存，正在重启输入法进程…</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
-    <string name="settings_enable_ime">启用输入法</string>
-    <string name="settings_pick_ime">切换输入法</string>
+    <string name="settings_enable_ime">启用本输入法</string>
+    <string name="settings_pick_ime">改默认输入法</string>
     <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
     <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
-    <string name="settings_check_update">检查APP更新</string>
+    <string name="settings_check_update">检查软件更新</string>
 
     <!-- 检查更新：三套输出文案由 unified-update-check 约定，禁止改写措辞/增删字段 -->
     <string name="update_title_available">发现新版本</string>
@@ -144,7 +144,7 @@
     </string-array>
 
     <!-- 输入法测试 -->
-    <string name="settings_ime_test_hint">点这里 唤起键盘</string>
+    <string name="settings_ime_test_hint">点这里唤起键盘</string>
     <string name="settings_ime_send">发送</string>
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
     <string name="settings_ime_received">收到：%1$s</string>
@@ -175,11 +175,11 @@
     <string name="clipboard_root_unavailable">不可用</string>
 
     <!-- 剪贴板分类 -->
-    <string name="switch_show_rare_chars">显示生僻字</string>
+    <string name="switch_show_rare_chars">加更多生僻字</string>
     <string name="switch_show_rare_chars_desc">勾选后重启输入法，候选里才会出现生僻字</string>
     <string name="switch_user_learning">用户词频学习</string>
     <string name="switch_user_learning_desc">记住你选过的词，下次排到前面</string>
-    <string name="switch_predict">候选预测词</string>
+    <string name="switch_predict">追加候选词语</string>
     <string name="switch_predict_desc">选完一个词后，候选栏追加显示匹配到的后续词</string>
     <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
@@ -189,7 +189,7 @@
     <string name="engine_dict_filling">词库补全中…</string>
 
     <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
-    <string name="settings_shuangpin_scheme">输入方案</string>
+    <string name="settings_shuangpin_scheme">拼音输入方案</string>
     <string name="settings_shuangpin_scheme_desc">双拼的 26 键会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
@@ -208,7 +208,8 @@
     <string name="symbol_order_close">✕</string>
 
     <!-- 收藏分组：编辑页与设置页入口 -->
-    <string name="favorite_title">编辑收藏符号</string>
+    <string name="favorite_title">符号收藏编辑</string>
+    <string name="favorite_entry_title">收藏的自定义</string>
     <string name="favorite_desc">自由增删「收藏」分组里的符号；每页最多 26 个，满页自动新增页。改动即时保存，返回键盘即生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
     <string name="favorite_add">＋ 添加符号</string>
@@ -219,7 +220,7 @@
     <string name="favorite_exists">该符号已在收藏中</string>
     <string name="favorite_invalid">请输入 1~8 个字符</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
-    <string name="theme_card_title">主题</string>
+    <string name="theme_card_title">键盘主题配色</string>
     <string name="theme_card_desc">亮白/暗黑,跟随系统/定时切换</string>
     <string name="theme_mode_label">主题模式</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
