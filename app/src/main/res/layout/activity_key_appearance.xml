@@ -143,6 +143,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
             android:paddingStart="4dp"
+            android:paddingEnd="4dp"
             android:text="@string/key_appearance_apply_hint"
             android:textColor="@color/text_secondary"
             android:textSize="11sp" />
