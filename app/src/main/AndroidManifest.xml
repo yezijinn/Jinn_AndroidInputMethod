@@ -57,6 +57,12 @@
             android:exported="false"
             android:label="@string/favorite_title" />
 
+        <!-- 键盘外观页：圆角与间隙，从设置页「按钮圆角间隙」进入 -->
+        <activity
+            android:name=".KeyAppearanceActivity"
+            android:exported="false"
+            android:label="@string/key_appearance_entry" />
+
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"
