@@ -500,23 +500,34 @@
                 android:text="@string/settings_pick_ime" />
         </LinearLayout>
 
-        <!-- 收藏符号编辑：单按钮入口，打开独立编辑页 -->
-        <Button
-            android:id="@+id/btn_edit_favorites"
-            style="@style/SettingsButton"
+        <!-- 符号布局入口：分组顺序 + 收藏编辑，同一张卡片内并排（仿「输入法控制」组） -->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="44dp"
+            android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
-            android:text="@string/favorite_title" />
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
 
-        <!-- 符号分组顺序：单按钮入口，打开独立排序页 -->
-        <Button
-            android:id="@+id/btn_symbol_order"
-            style="@style/SettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:layout_marginBottom="10dp"
-            android:text="@string/symbol_order_title" />
+            <Button
+                android:id="@+id/btn_symbol_order"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/symbol_order_title" />
+
+            <Button
+                android:id="@+id/btn_edit_favorites"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/favorite_title" />
+        </LinearLayout>
 
         <!-- 分类词库：单按钮入口，跳转到独立页面按需下载 -->
         <LinearLayout
