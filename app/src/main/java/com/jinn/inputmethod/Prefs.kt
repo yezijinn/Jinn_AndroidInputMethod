@@ -197,6 +197,15 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SYMBOL_ORDER, "").orEmpty()
         set(value) = sp.edit { putString(KEY_SYMBOL_ORDER, SymbolOrder.serialize(SymbolOrder.parse(value))) }
 
+    /**
+     * 「收藏」分组的内容（JSON 二维数组，见 [FavoriteSymbols]）。
+     *
+     * null（键不存在 = 从未编辑过）→ 上层按出厂预置（D I Y）处理；`"[]"` = 用户删光了，尊重之。
+     */
+    var favoriteSymbols: String?
+        get() = sp.getString(KEY_FAVORITE_SYMBOLS, null)
+        set(value) = sp.edit { putString(KEY_FAVORITE_SYMBOLS, value) }
+
     var themeLightAtMinutes: Int
         get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
@@ -340,6 +349,7 @@ class Prefs(context: Context) {
 
         /** 符号分组顺序（label 串；空 = 默认，见 [SymbolOrder]） */
         private const val KEY_SYMBOL_ORDER = "symbol_group_order"
+        private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
         private const val KEY_THEME_LIGHT_AT = "theme_light_at"
         private const val KEY_THEME_DARK_AT = "theme_dark_at"
 

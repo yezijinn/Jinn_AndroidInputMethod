@@ -236,12 +236,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var symbolGroupIndex = 0
 
     /**
-     * 分组顺序：用户可在符号层**长按 2 秒拖拽**自定义（持久化在 [Prefs.symbolGroupOrder]）。
+     * 分组顺序：用户在排序页调整（持久化在 [Prefs.symbolGroupOrder]），收藏内容在 [Prefs.favoriteSymbols]。
      *
-     * 视图里的所有分组索引都指这里的下标 —— 顺序变化只需刷新本字段并重绘，不碰 [SYMBOL_GROUPS]。
+     * 视图里的所有分组索引都指这里的下标 —— 顺序/内容变化通过重建键盘视图生效，不碰 [SYMBOL_GROUPS]。
      */
-    private var symbolGroups: List<SymbolGroup> =
-        SymbolOrder.groupsInOrder(Prefs(context).symbolGroupOrder)
+    private var symbolGroups: List<SymbolGroup> = run {
+        val prefs = Prefs(context)
+        SymbolOrder.groupsInOrder(
+            prefs.symbolGroupOrder,
+            favoriteGroup(FavoriteSymbols.parse(prefs.favoriteSymbols)),
+        )
+    }
 
     /** 当前组内的符号页偏移（左滑下一页/右滑上一页，不跨组） */
     private var symbolPageInGroup = 0

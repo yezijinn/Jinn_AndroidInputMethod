@@ -482,3 +482,17 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
         ),
     )),
 )
+
+/** 「收藏」组页内铺键用的键位序（与其它组一致的 QWERTY 行序，26 键） */
+private const val FAVORITE_KEYS = "qwertyuiopasdfghjklzxcvbnm"
+
+/**
+ * 「收藏」组：用户自由 DIY（数据在 [Prefs.favoriteSymbols]，规则见 [FavoriteSymbols]）。
+ * 页内符号按序铺 [FAVORITE_KEYS]，尾页可不满；删光后为单页全空键。
+ */
+internal fun favoriteGroup(pages: List<List<String>>): SymbolGroup =
+    SymbolGroup(FavoriteSymbols.LABEL, pages.map { page ->
+        buildMap {
+            page.forEachIndexed { i, s -> if (i < FAVORITE_KEYS.length) put(FAVORITE_KEYS[i], s) }
+        }
+    }.ifEmpty { listOf(emptyMap()) })

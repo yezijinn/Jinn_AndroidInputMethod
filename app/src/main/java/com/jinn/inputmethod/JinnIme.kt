@@ -921,10 +921,10 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    /** 排序页调整符号分组顺序后重建键盘视图（companion 的 [onSymbolOrderChanged] 转发到这里） */
-    fun rebuildInputViewForSymbolOrder() {
+    /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
+    fun rebuildInputViewForSymbolLayout() {
         if (pinyinKeyboard != null) {
-            Diagnostics.i(TAG, "符号分组顺序变更: 重建键盘视图")
+            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 重建键盘视图")
             setInputView(onCreateInputView())
         }
     }
@@ -1568,13 +1568,13 @@ class JinnIme : InputMethodService() {
         }
 
         /**
-         * 设置页调整符号分组顺序后调用（主线程）：键盘视图已创建则重建，让新顺序**立即生效** ——
-         * 分组顺序在视图创建时读取一次，不重建就只会等到下次键盘整体重建。
-         * 尚未创建（inputView == null）时不做事：下次创建自然读到新顺序。
+         * 设置页调整符号分组顺序 / 编辑收藏符号后调用（主线程）：键盘视图已创建则重建，**立即生效** ——
+         * 分组顺序与收藏内容都在视图创建时读取一次，不重建就只会等到下次键盘整体重建。
+         * 尚未创建（inputView == null）时不做事：下次创建自然读到新数据。
          */
-        fun onSymbolOrderChanged() {
+        fun onSymbolLayoutChanged() {
             val ime = instance?.get() ?: return
-            ime.ui.post { ime.rebuildInputViewForSymbolOrder() }
+            ime.ui.post { ime.rebuildInputViewForSymbolLayout() }
         }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */
