@@ -187,11 +187,11 @@ class Prefs(context: Context) {
             putInt(KEY_THEME_MODE, mode)
         }
 
-    /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
     /**
      * 符号分组顺序（label 的逗号分隔串；空串 = 默认次序，见 [SymbolOrder]）。
      *
-     * 由符号层的**长按拖拽排序**写入；只存顺序不存内容 —— 版本新增的分组自动落到末尾。
+     * 由排序页（[SymbolOrderActivity]）写入；只存顺序不存内容 —— 版本新增的分组自动落到末尾。
+     * ⚠ 写入即归一（[SymbolOrder.serialize]）：落盘的恒为完整序列串，不会是空串。
      */
     var symbolGroupOrder: String
         get() = sp.getString(KEY_SYMBOL_ORDER, "").orEmpty()
@@ -206,6 +206,7 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_FAVORITE_SYMBOLS, null)
         set(value) = sp.edit { putString(KEY_FAVORITE_SYMBOLS, value) }
 
+    /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
     var themeLightAtMinutes: Int
         get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
