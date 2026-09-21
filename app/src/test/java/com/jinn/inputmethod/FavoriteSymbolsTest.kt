@@ -77,4 +77,16 @@ class FavoriteSymbolsTest {
         assertEquals("收藏", ordered[2].label)
         assertTrue(ordered[2].pages[0].isNotEmpty())
     }
+
+    @Test
+    fun 删除下标按实际累计长度计算_不依赖每页满26() {
+        // 编辑页用「前面各页实际长度之和 + 页内偏移」算扁平下标：
+        // 即使数据被外部破坏（非末页不满 26），也应删到正确的符号。
+        val pages = listOf(listOf("a", "b", "c"), listOf("d", "e", "f", "g", "h"))
+        val flat = pages.take(1).sumOf { it.size } + 3 // 第 2 页第 4 个 = "g"
+        assertEquals(listOf("a", "b", "c", "d", "e", "f", "h"),
+            FavoriteSymbols.removeAt(pages, flat).flatten())
+        // 对照：旧写法 pageIndex*PER_PAGE+i = 1*26+3 = 29 在变长数据下越界 → 原样返回（删不中）
+        assertEquals(pages, FavoriteSymbols.removeAt(pages, 1 * FavoriteSymbols.PER_PAGE + 3))
+    }
 }

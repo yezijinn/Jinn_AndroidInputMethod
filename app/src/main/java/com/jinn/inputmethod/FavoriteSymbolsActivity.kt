@@ -117,9 +117,11 @@ class FavoriteSymbolsActivity : Activity() {
                 setTextColor(getColor(R.color.kb_key_hint_red))
                 contentDescription = getString(R.string.favorite_delete)
                 setOnClickListener {
-                    val pages = FavoriteSymbols.removeAt(
-                        currentPages(), pageIndex * FavoriteSymbols.PER_PAGE + i)
-                    save(pages)
+                    val pages = currentPages()
+                    // 扁平下标 = 「前面各页实际长度之和」+ 页内偏移：不依赖「非末页恒满 26 键」的
+                    // 隐式不变量 —— 数据一旦被外部破坏（非末页不满 26）也能删到正确的符号
+                    val flatIndex = pages.take(pageIndex).sumOf { it.size } + i
+                    save(FavoriteSymbols.removeAt(pages, flatIndex))
                     renderPages()
                 }
                 layoutParams = FrameLayout.LayoutParams(
