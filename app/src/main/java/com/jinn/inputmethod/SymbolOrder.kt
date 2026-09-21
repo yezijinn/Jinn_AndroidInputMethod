@@ -1,0 +1,50 @@
+package com.jinn.inputmethod
+
+/**
+ * 符号分组顺序：用户在符号层**长按分组按钮拖拽**后写入，下次进入符号层即生效。
+ *
+ * 持久化按 **label** 而不是下标：分组数据（[SYMBOL_GROUPS]）会随版本增删，
+ * 下标会把「第 3 个」指到另一个分组上，label 则天然跟随内容（只有改分组名才失效）。
+ *
+ * 归一规则（[normalize]）：去重 → 丢掉未知 label → 未提及的分组按**默认次序追加到末尾**
+ * —— 版本新增的分组因此总是落在「用户没动过的尾巴」上，不会打乱既有顺序。
+ *
+ * 全部为纯函数，可直接 JVM 单测（见 `SymbolOrderTest`）。
+ */
+object SymbolOrder {
+
+    /** 默认顺序 = 数据文件的定义次序（全角 / 半角 / 编程 / 标点 / 特殊 / 序号 / 数学 / …） */
+    val DEFAULT: List<String> = SYMBOL_GROUPS.map { it.label }
+
+    /** 持久化串 → 归一后的顺序（空串 = 默认） */
+    fun parse(raw: String): List<String> {
+        if (raw.isBlank()) return DEFAULT
+        return normalize(raw.split(','))
+    }
+
+    /** 顺序 → 持久化串 */
+    fun serialize(order: List<String>): String = normalize(order).joinToString(",")
+
+    /** 去重 + 过滤未知 + 追加缺失；结果恒为 [DEFAULT] 的一个排列 */
+    fun normalize(saved: List<String>): List<String> {
+        val known = saved.map { it.trim() }.filter { it in DEFAULT }.distinct()
+        return known + DEFAULT.filter { it !in known }
+    }
+
+    /** 把第 [from] 个分组移到第 [to] 位（越界自动钳位；同位置原样返回） */
+    fun move(order: List<String>, from: Int, to: Int): List<String> {
+        val list = normalize(order).toMutableList()
+        if (list.size < 2) return list
+        val f = from.coerceIn(0, list.lastIndex)
+        val t = to.coerceIn(0, list.lastIndex)
+        if (f == t) return list
+        list.add(t, list.removeAt(f))
+        return list
+    }
+
+    /** 按持久化串取分组对象（顺序即用户自定义顺序）。internal：返回 internal 类型的 [SymbolGroup] */
+    internal fun groupsInOrder(raw: String): List<SymbolGroup> {
+        val byLabel = SYMBOL_GROUPS.associateBy { it.label }
+        return parse(raw).mapNotNull { byLabel[it] }
+    }
+}

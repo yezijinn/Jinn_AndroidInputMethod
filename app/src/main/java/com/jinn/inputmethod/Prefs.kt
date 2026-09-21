@@ -188,6 +188,15 @@ class Prefs(context: Context) {
         }
 
     /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
+    /**
+     * 符号分组顺序（label 的逗号分隔串；空串 = 默认次序，见 [SymbolOrder]）。
+     *
+     * 由符号层的**长按拖拽排序**写入；只存顺序不存内容 —— 版本新增的分组自动落到末尾。
+     */
+    var symbolGroupOrder: String
+        get() = sp.getString(KEY_SYMBOL_ORDER, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_SYMBOL_ORDER, SymbolOrder.serialize(SymbolOrder.parse(value))) }
+
     var themeLightAtMinutes: Int
         get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
@@ -328,6 +337,9 @@ class Prefs(context: Context) {
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         /** 主题模式与定时切换时刻（见 [ThemeManager]） */
         private const val KEY_THEME_MODE = "theme_mode"
+
+        /** 符号分组顺序（label 串；空 = 默认，见 [SymbolOrder]） */
+        private const val KEY_SYMBOL_ORDER = "symbol_group_order"
         private const val KEY_THEME_LIGHT_AT = "theme_light_at"
         private const val KEY_THEME_DARK_AT = "theme_dark_at"
 
