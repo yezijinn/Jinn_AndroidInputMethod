@@ -31,6 +31,11 @@ import java.util.Locale
  */
 class DictManagerActivity : Activity() {
 
+    /** 主题应用点：与设置页同一套（早于 onCreate，避免先按系统配置渲染一帧再换色） */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
+    }
+
     private lateinit var listHost: LinearLayout
     private lateinit var textStatus: TextView
 

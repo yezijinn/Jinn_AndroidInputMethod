@@ -29,6 +29,15 @@ import androidx.activity.result.contract.ActivityResultContracts
  */
 class SettingsActivity : ComponentActivity() {
 
+    /**
+     * 主题应用点：**必须在这里**（早于 `onCreate` 与任何资源解析）。
+     * 若放到 `onCreate` 里再 `setTheme`，会先按系统配置解析一帧再换色 —— 那就是"打开页面闪一下"的来源。
+     * 跟随系统时 [ThemeManager.themedContext] 原样返回 base，行为与改造前一致。
+     */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
+    }
+
     private lateinit var prefs: Prefs
 
     private lateinit var editHost: EditText
@@ -37,6 +46,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerLanguage: Spinner
     private lateinit var spinnerDefaultMode: Spinner
     private lateinit var spinnerShuangpin: Spinner
+
+    // 主题：亮白 / 暗黑 / 跟随系统 / 定时
+    private lateinit var spinnerTheme: Spinner
+    private lateinit var btnThemeLightAt: Button
+    private lateinit var btnThemeDarkAt: Button
+    private lateinit var rowThemeSchedule: View
+    private lateinit var textThemeScheduleHint: TextView
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
@@ -59,6 +75,8 @@ class SettingsActivity : ComponentActivity() {
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
+    /** 「打开下载页面」：与检查结果无关，直接跳 Gitee 发行版列表 */
+    private lateinit var btnUpdateDownload: Button
     /** 更新检查状态：只区分「空闲 / 进行中」，结果由对话框呈现（见 [UpdateState]） */
     private var updateState: UpdateState = UpdateState.Idle
     /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
@@ -111,6 +129,12 @@ class SettingsActivity : ComponentActivity() {
     private var defaultModeSpinnerTouched = false
     private var shuangpinSpinnerTouched = false
 
+    /** 主题下拉：与上面两个 Spinner 共用「只认用户触摸」的闸门 */
+    private var themeSpinnerTouched = false
+
+    /** 本次进页面时生效的深浅色；定时到点后用它与重新解析的结果比较，变了才重建页面 */
+    private var appliedThemeDark = false
+
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -148,7 +172,10 @@ class SettingsActivity : ComponentActivity() {
         switchPredict = findViewById(R.id.switch_predict)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
         btnCheckUpdate = findViewById(R.id.btn_check_update)
+        btnUpdateDownload = findViewById(R.id.btn_update_download)
         bindCheckUpdate()
+        // 打开设置页时的自动检查：距上次成功检查 ≥7 天才执行（失败静默，见 maybeAutoCheckUpdate）
+        maybeAutoCheckUpdate()
         cardMicPermission = findViewById(R.id.card_mic_permission)
         cardVoiceServer = findViewById(R.id.card_voice_server)
         btnDictManager = findViewById(R.id.btn_dict_manager)
@@ -166,6 +193,11 @@ class SettingsActivity : ComponentActivity() {
         textKeyCorner = findViewById(R.id.text_key_corner)
         seekKeyGap = findViewById(R.id.seek_key_gap)
         textKeyGap = findViewById(R.id.text_key_gap)
+
+        // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
+        initThemeCard()
+        appliedThemeDark = ThemeManager.isDark(this)
+        scheduleThemeTick()
 
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
@@ -334,6 +366,123 @@ class SettingsActivity : ComponentActivity() {
      * 定义域与步进一律取自 [KeyAppearance]：界面与绘制逻辑共用一套边界，
      * 不允许在布局或 Activity 里另写一份范围。
      */
+    /**
+     * 主题卡片：模式下拉（跟随系统 / 亮白 / 暗黑 / 定时）+ 定时的两个切换时刻。
+     *
+     * 与另外两个下拉共用「只认用户触摸」的闸门（见 [themeSpinnerTouched]）：初始化 `setSelection`
+     * 与实例状态恢复都会回调 `onItemSelected`，不挡住就会把用户配置写花。
+     * 任一改动都**立即生效**：写盘后 `recreate()` —— `attachBaseContext` 会读到新主题重建整页颜色。
+     */
+    private fun initThemeCard() {
+        spinnerTheme = findViewById(R.id.spinner_theme)
+        btnThemeLightAt = findViewById(R.id.btn_theme_light_at)
+        btnThemeDarkAt = findViewById(R.id.btn_theme_dark_at)
+        rowThemeSchedule = findViewById(R.id.row_theme_schedule)
+        textThemeScheduleHint = findViewById(R.id.text_theme_schedule_hint)
+
+        spinnerTheme.adapter = ArrayAdapter.createFromResource(
+            this, R.array.theme_mode_entries, android.R.layout.simple_spinner_item
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerTheme.setOnTouchListener { view, event ->
+            themeSpinnerTouched = true
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
+        spinnerTheme.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                if (!themeSpinnerTouched) return
+                val values = resources.getStringArray(R.array.theme_mode_values)
+                val mode = values.getOrNull(position)?.toIntOrNull() ?: return
+                if (mode != prefs.themeMode) {
+                    prefs.themeMode = mode
+                    Diagnostics.i(TAG, "主题模式: $mode")
+                    recreate() // 写盘即生效：重建页面让 attachBaseContext 读到新主题
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        btnThemeLightAt.setOnClickListener {
+            pickThemeTime(prefs.themeLightAtMinutes) { minutes ->
+                prefs.themeLightAtMinutes = minutes
+                Diagnostics.i(TAG, "定时切换: 亮起 ${formatMinutes(minutes)}")
+                recreate()
+            }
+        }
+        btnThemeDarkAt.setOnClickListener {
+            pickThemeTime(prefs.themeDarkAtMinutes) { minutes ->
+                prefs.themeDarkAtMinutes = minutes
+                Diagnostics.i(TAG, "定时切换: 暗起 ${formatMinutes(minutes)}")
+                recreate()
+            }
+        }
+
+        // 回填当前值（recreate 之后走的也是这里）
+        val modeValues = resources.getStringArray(R.array.theme_mode_values)
+        spinnerTheme.setSelection(modeValues.indexOf(prefs.themeMode.toString()).coerceAtLeast(0))
+        refreshThemeScheduleRow()
+    }
+
+    /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
+    private fun refreshThemeScheduleRow() {
+        val scheduled = prefs.themeMode == ThemeManager.MODE_SCHEDULED
+        val visibility = if (scheduled) View.VISIBLE else View.GONE
+        rowThemeSchedule.visibility = visibility
+        textThemeScheduleHint.visibility = visibility
+        btnThemeLightAt.text = getString(R.string.theme_light_at_tpl, formatMinutes(prefs.themeLightAtMinutes))
+        btnThemeDarkAt.text = getString(R.string.theme_dark_at_tpl, formatMinutes(prefs.themeDarkAtMinutes))
+    }
+
+    /** 「当天第几分钟」→ `HH:mm`（脏值先 floorMod 归一，负值不会显示成 -1:-30） */
+    private fun formatMinutes(minutes: Int): String {
+        val m = Math.floorMod(minutes, ThemeManager.MINUTES_PER_DAY)
+        return String.format(java.util.Locale.US, "%02d:%02d", m / 60, m % 60)
+    }
+
+    /** 弹时间选择器；回调参数为「当天第几分钟」（0..1439） */
+    private fun pickThemeTime(initialMinutes: Int, onPicked: (Int) -> Unit) {
+        val m = Math.floorMod(initialMinutes, ThemeManager.MINUTES_PER_DAY)
+        android.app.TimePickerDialog(
+            this,
+            { _, hour, minute -> onPicked(hour * 60 + minute) },
+            m / 60,
+            m % 60,
+            true,
+        ).show()
+    }
+
+    /**
+     * 定时模式：停在设置页时到点自动换色（不必等下一次操作或重开页面）。
+     *
+     * 只在「定时」模式排一次延时任务；到点重新解析，**结果变了才 `recreate()`** ——
+     * 没变（例如刚过切换点）就继续排下一次，不会无谓地重建页面。
+     */
+    private val themeTickRunnable = Runnable {
+        val dark = ThemeManager.isDark(this)
+        if (dark != appliedThemeDark) {
+            Diagnostics.i(TAG, "定时切换到点: 主题转为 ${if (dark) "暗黑" else "亮白"}")
+            recreate()
+        } else {
+            scheduleThemeTick()
+        }
+    }
+
+    private fun scheduleThemeTick() {
+        uiHandler.removeCallbacks(themeTickRunnable)
+        val minutes = ThemeManager.minutesUntilSwitch(
+            prefs.themeMode,
+            prefs.themeLightAtMinutes,
+            prefs.themeDarkAtMinutes,
+            ThemeManager.nowMinutes(),
+        )
+        if (minutes <= 0) return // 非定时模式 / 无效配置
+        // +1s 余量：刚好卡在切换点上时避免边界抖动
+        uiHandler.postDelayed(themeTickRunnable, minutes * 60_000L + 1000L)
+    }
+
     private fun initKeyAppearanceCard() {
         seekKeyCorner.max = KeyAppearance.CORNER_PROGRESS_MAX
         seekKeyGap.max = KeyAppearance.GAP_PROGRESS_MAX
@@ -540,6 +689,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 「检查更新」绑定。点击进入 Checking：禁用重复点击并高亮；
      * 结果由 [UpdateChecker] 回主线程后统一以对话框呈现。
+     * 右侧「打开下载页面」与检查结果无关，直接跳 Gitee 发行版列表。
      */
     private fun bindCheckUpdate() {
         btnCheckUpdate.setOnClickListener {
@@ -547,6 +697,32 @@ class SettingsActivity : ComponentActivity() {
             setUpdateState(UpdateState.Checking)
             UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { onUpdateChecked(it) }
         }
+        btnUpdateDownload.setOnClickListener {
+            val url = UpdateChecker.downloadPageUrl()
+            Diagnostics.i(TAG, "打开下载页面: $url")
+            openUrl(url)
+        }
+    }
+
+    /**
+     * 打开设置页时的自动检查：距上次**成功**检查 ≥7 天才执行一次。
+     *
+     * 只有「检测到新版本」才弹确认框（见 [showAskUpdateDialog]）；失败一律静默
+     * （不弹「网络异常」），「已最新」也只复位按钮状态 —— 不打断用户操作。
+     */
+    private fun maybeAutoCheckUpdate() {
+        val now = System.currentTimeMillis()
+        val last = prefs.updateLastCheckAt
+        if (!UpdateChecker.shouldAutoCheck(last, now)) {
+            Diagnostics.i(TAG, "自动检查更新: 距上次 ${(now - last) / DAY_MS} 天，跳过")
+            return
+        }
+        // 与手动检查共用状态机：进行中不重入，避免并发请求与重复弹窗
+        if (updateState == UpdateState.Checking) return
+        val since = if (last <= 0L) "从未检查" else "${(now - last) / DAY_MS} 天前"
+        Diagnostics.i(TAG, "自动检查更新: 开始（上次=$since）")
+        setUpdateState(UpdateState.Checking)
+        UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { onAutoChecked(it) }
     }
 
     private fun setUpdateState(state: UpdateState) {
@@ -561,8 +737,10 @@ class SettingsActivity : ComponentActivity() {
         if (checking) btnCheckUpdate.postDelayed(updateWatchdogRunnable, UPDATE_WATCHDOG_MS)
     }
 
+    /** 手动检查：结果由三段式对话框呈现（措辞属 unified-update-check 约定，不得改写） */
     private fun onUpdateChecked(result: UpdateChecker.Result) {
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
+        recordUpdateCheckTime(result)
         // 检查是后台线程 + 10s 网络超时：结果回来时页面可能已关闭或已重建。
         // 拿已销毁的 Activity 去 show() 会抛 BadTokenException（主线程崩溃）。
         if (isFinishing || isDestroyed) {
@@ -573,6 +751,35 @@ class SettingsActivity : ComponentActivity() {
         // 紧接着又被 Idle 覆盖，是没有任何消费方的死代码，已随本次修复移除）。
         setUpdateState(UpdateState.Idle)
         showUpdateDialog(result)
+    }
+
+    /** 自动检查：失败/已最新一律静默，只有检测到新版本才弹「有新版本，要更新吗？」 */
+    private fun onAutoChecked(result: UpdateChecker.Result) {
+        btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
+        recordUpdateCheckTime(result)
+        if (isFinishing || isDestroyed) {
+            Diagnostics.i(TAG, "自动检查更新结果已到达，但页面已销毁，跳过弹窗")
+            return
+        }
+        setUpdateState(UpdateState.Idle)
+        when (result) {
+            is UpdateChecker.Result.Available -> showAskUpdateDialog(result)
+            is UpdateChecker.Result.UpToDate ->
+                Diagnostics.i(TAG, "自动检查更新: 已是最新 ${result.latest}（静默）")
+            UpdateChecker.Result.NetworkError ->
+                Diagnostics.w(TAG, "自动检查更新: 网络异常（静默）")
+        }
+    }
+
+    /**
+     * 记下本次检查时刻，供 7 天节流使用（判据见 [UpdateChecker.shouldAutoCheck]）。
+     *
+     * 只记**成功**（有更新 / 已最新）：失败不写，下次打开设置页仍会静默重试；成功则在
+     * 间隔内不再自动检查。写入的是 SharedPreferences（apply 异步落盘），不阻塞主线程。
+     */
+    private fun recordUpdateCheckTime(result: UpdateChecker.Result) {
+        if (result is UpdateChecker.Result.NetworkError) return
+        prefs.updateLastCheckAt = System.currentTimeMillis()
     }
 
     /** 三类结果统一三套文案，措辞由 unified-update-check 约定，不得改写。 */
@@ -605,6 +812,23 @@ class SettingsActivity : ComponentActivity() {
                 .setPositiveButton(R.string.update_btn_ok, null)
         }
         builder.show()
+    }
+
+    /**
+     * 自动检查发现新版本时的确认框：一个问句 + 「不要」/「去更新」。
+     *
+     * 与手动检查的三段式对话框**分开**：后者措辞属 unified-update-check 约定（不得改写），
+     * 本对话框只服务「打开设置页自动检查」这条路径。
+     */
+    private fun showAskUpdateDialog(result: UpdateChecker.Result.Available) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.update_title_prompt)
+            .setMessage(R.string.update_ask_message)
+            .setNegativeButton(R.string.update_btn_no, null)
+            .setPositiveButton(R.string.update_btn_go) { _, _ ->
+                openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
+            }
+            .show()
     }
 
     private fun openUrl(url: String) {
@@ -740,6 +964,8 @@ class SettingsActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // 定时刷新的延时任务必须随页面撤销，否则会持有已销毁的 Activity
+        uiHandler.removeCallbacks(themeTickRunnable)
         Diagnostics.i(TAG, "onDestroy: 设置页销毁")
         super.onDestroy()
     }
@@ -749,6 +975,9 @@ class SettingsActivity : ComponentActivity() {
 
         /** 「检查更新」看门狗超时：网络超时 10s + 5s 余量，到点（仍处于 Checking 时）兜底解锁 */
         const val UPDATE_WATCHDOG_MS = 15_000L
+
+        /** 自动检查的日志换算用（毫秒/天）；节流判据本体在 [UpdateChecker.shouldAutoCheck] */
+        const val DAY_MS = 24L * 60 * 60 * 1000
 
         // 可选词库的文件名、下载源与体积/耗时说明已统一收敛到 OptionalDicts，
         // 由「分类词库」页使用；设置页只保留一个跳转入口。

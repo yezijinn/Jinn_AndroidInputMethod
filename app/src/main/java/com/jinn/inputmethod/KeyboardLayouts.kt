@@ -29,36 +29,53 @@ internal val DIGIT_MAP = mapOf(
 internal class SymbolGroup(val label: String, val pages: List<Map<Char, String>>)
 
 internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
-    // 常用
-    SymbolGroup("常用", listOf(
+    // 全角：只放全角符号（中文全角标点 + 全角 ASCII 变体 + 无全/半角之分的通用符号），
+    // 不得混入 ASCII、数字或字母（由 SymbolLayoutTest 守卫）；68 项按序铺满三页（26 + 26 + 16）
+    SymbolGroup("全角", listOf(
         mapOf(
-            'q' to "！", 'w' to "？", 'e' to "。", 'r' to "，", 't' to "；",
-            'y' to "：", 'u' to "“", 'i' to "”", 'o' to "（", 'p' to "）",
-            'a' to "【", 's' to "】", 'd' to "《", 'f' to "》", 'g' to "·",
-            'h' to "—", 'j' to "…", 'k' to "、", 'l' to "~",
-            'z' to "@", 'x' to "#", 'c' to "$", 'v' to "%", 'b' to "^",
-            'n' to "&", 'm' to "*",
+            'q' to "，", 'w' to "。", 'e' to "、", 'r' to "；", 't' to "：",
+            'y' to "？", 'u' to "！", 'i' to "“", 'o' to "”", 'p' to "‘",
+            'a' to "’", 's' to "（", 'd' to "）", 'f' to "《", 'g' to "》",
+            'h' to "【", 'j' to "】", 'k' to "……", 'l' to "——",
+            'z' to "·", 'x' to "～", 'c' to "＋", 'v' to "－", 'b' to "＝",
+            'n' to "＜", 'm' to "＞",
         ),
         mapOf(
-            'q' to "1", 'w' to "2", 'e' to "3", 'r' to "4", 't' to "5",
-            'y' to "6", 'u' to "7", 'i' to "8", 'o' to "9", 'p' to "0",
-            'a' to "-", 's' to "/", 'd' to ":", 'f' to ";", 'g' to "(",
-            'h' to ")", 'j' to "'", 'k' to "\"", 'l' to "\\",
-            'z' to "=", 'x' to "+", 'c' to "_", 'v' to "|", 'b' to "`",
-            'n' to "[", 'm' to "]",
+            'q' to "％", 'w' to "＆", 'e' to "＊", 'r' to "＠", 't' to "＃",
+            'y' to "￥", 'u' to "．", 'i' to "／", 'o' to "＼", 'p' to "｜",
+            'a' to "｛", 's' to "｝", 'd' to "［", 'f' to "］", 'g' to "＂",
+            'h' to "＇", 'j' to "｀", 'k' to "＿", 'l' to "＾",
+            'z' to "￡", 'x' to "€", 'c' to "¢", 'v' to "°", 'b' to "±",
+            'n' to "×", 'm' to "÷",
+        ),
+        mapOf(
+            'q' to "℃", 'w' to "‰", 'e' to "§", 'r' to "¶", 't' to "©",
+            'y' to "®", 'u' to "〈", 'i' to "〉", 'o' to "『", 'p' to "』",
+            'a' to "「", 's' to "」", 'd' to "〖", 'f' to "〗", 'g' to "〔",
+            'h' to "〕",
         ),
     )),
-    // 编程：键面可为整个单词（关键字），键面一律居中、长文本自动收缩字号
-    SymbolGroup("编程", listOf(
-        // 第 1 页：编程常用英文符号
+    // 半角：只放半角符号（ASCII），且不得含数字（数字走数字层）。
+    // 32 个可打印 ASCII 符号中 31 个有全角对应，按「其全角对应在全角组中的出现顺序」排列
+    // （用户要求：半角顺序尽量与全角对应 —— 全角第 1 个是逗号，半角第 1 个也是逗号）；
+    // 没有全角对应的 $ 放末尾。26 键铺满第 1 页，余 6 个进末页。
+    SymbolGroup("半角", listOf(
         mapOf(
-            'q' to "(", 'w' to ")", 'e' to "{", 'r' to "}", 't' to "[", 'y' to "]",
-            'u' to "<", 'i' to ">", 'o' to "=", 'p' to "!",
-            'a' to ";", 's' to ":", 'd' to "'", 'f' to "\"", 'g' to "`", 'h' to "~",
-            'j' to "&", 'k' to "|", 'l' to "\\",
-            'z' to "+", 'x' to "-", 'c' to "*", 'v' to "/", 'b' to "%", 'n' to "^", 'm' to "_",
+            'q' to ",", 'w' to ".", 'e' to ";", 'r' to ":", 't' to "?", 'y' to "!",
+            'u' to "\"", 'i' to "'", 'o' to "(", 'p' to ")",
+            'a' to "<", 's' to ">", 'd' to "[", 'f' to "]", 'g' to "~", 'h' to "+",
+            'j' to "-", 'k' to "=", 'l' to "%",
+            'z' to "&", 'x' to "*", 'c' to "@", 'v' to "#", 'b' to "/", 'n' to "\\",
+            'm' to "|",
         ),
-        // 第 2 页：各语言最常用的控制流与声明关键字
+        mapOf(
+            'q' to "{", 'w' to "}", 'e' to "`", 'r' to "_", 't' to "^", 'y' to "$",
+        ),
+    )),
+    // 编程：从关键字页开始直接排列（原「编程常用英文符号」页已移除——符号请用「半角」组），
+    // 键面可为整个单词（关键字），键面一律居中、长文本自动收缩字号
+    SymbolGroup("编程", listOf(
+        // 第 1 页：各语言最常用的控制流与声明关键字
         mapOf(
             'q' to "return", 'w' to "print", 'e' to "main", 'r' to "if", 't' to "else",
             'y' to "for", 'u' to "while", 'i' to "class", 'o' to "def", 'p' to "func",
@@ -67,7 +84,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "true", 'x' to "false", 'c' to "null", 'v' to "None",
             'b' to "this", 'n' to "static", 'm' to "async",
         ),
-        // 第 3 页：类型、异常与常见调用写法
+        // 第 2 页：类型、异常与常见调用写法
         mapOf(
             'q' to "int", 'w' to "float", 'e' to "double", 'r' to "string", 't' to "bool",
             'y' to "char", 'u' to "long", 'i' to "struct", 'o' to "enum", 'p' to "interface",
@@ -76,7 +93,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "print()", 'x' to "main()", 'c' to "println", 'v' to "printf",
             'b' to "scanf", 'n' to "lambda", 'm' to "yield",
         ),
-        // 第 4 页：Python 常用
+        // 第 3 页：Python 常用
         mapOf(
             'q' to "self", 'w' to "None", 'e' to "elif", 'r' to "lambda", 't' to "yield",
             'y' to "global", 'u' to "assert", 'i' to "raise", 'o' to "with", 'p' to "as",
@@ -85,7 +102,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "__name__", 'x' to "print(", 'c' to "input(", 'v' to "range(",
             'b' to "len(", 'n' to "str(", 'm' to "dict(",
         ),
-        // 第 5 页：Java / C# 常用
+        // 第 4 页：Java / C# 常用
         mapOf(
             'q' to "System", 'w' to "String", 'e' to "Integer", 'r' to "Boolean", 't' to "List",
             'y' to "Map", 'u' to "HashMap", 'i' to "ArrayList", 'o' to "package", 'p' to "extends",
@@ -93,7 +110,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'h' to "using", 'j' to "foreach", 'k' to "params", 'l' to "synchronized",
             'z' to "new ", 'x' to "get;", 'c' to "set;", 'v' to "await", 'b' to "Task", 'n' to "var ", 'm' to "public static",
         ),
-        // 第 6 页：JavaScript / TypeScript 常用
+        // 第 5 页：JavaScript / TypeScript 常用
         mapOf(
             'q' to "function", 'w' to "=>", 'e' to "console.log", 'r' to "document", 't' to "window",
             'y' to "export", 'u' to "default", 'i' to "interface", 'o' to "type", 'p' to "enum",
@@ -102,7 +119,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "forEach", 'x' to "map(", 'c' to "filter(", 'v' to "reduce(",
             'b' to "JSON.", 'n' to "Object.", 'm' to "Array.",
         ),
-        // 第 7 页：C / C++ 常用
+        // 第 6 页：C / C++ 常用
         mapOf(
             'q' to "#include", 'w' to "#define", 'e' to "stdio.h", 'r' to "stdlib.h", 't' to "iostream",
             'y' to "cout", 'u' to "cin", 'i' to "endl", 'o' to "std::", 'p' to "vector",
