@@ -398,6 +398,7 @@ class SettingsActivity : ComponentActivity() {
                 if (mode != prefs.themeMode) {
                     prefs.themeMode = mode
                     Diagnostics.i(TAG, "主题模式: $mode")
+                    JinnIme.notifyThemeChanged() // 键盘正显示时同进程立即换肤（不必等下次弹出）
                     recreate() // 写盘即生效：重建页面让 attachBaseContext 读到新主题
                 }
             }
@@ -409,6 +410,7 @@ class SettingsActivity : ComponentActivity() {
             pickThemeTime(prefs.themeLightAtMinutes) { minutes ->
                 prefs.themeLightAtMinutes = minutes
                 Diagnostics.i(TAG, "定时切换: 亮起 ${formatMinutes(minutes)}")
+                JinnIme.notifyThemeChanged()
                 recreate()
             }
         }
@@ -416,6 +418,7 @@ class SettingsActivity : ComponentActivity() {
             pickThemeTime(prefs.themeDarkAtMinutes) { minutes ->
                 prefs.themeDarkAtMinutes = minutes
                 Diagnostics.i(TAG, "定时切换: 暗起 ${formatMinutes(minutes)}")
+                JinnIme.notifyThemeChanged()
                 recreate()
             }
         }
