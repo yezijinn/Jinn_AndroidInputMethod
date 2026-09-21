@@ -17,7 +17,6 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -84,15 +83,6 @@ class SettingsActivity : ComponentActivity() {
     /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
     private lateinit var cardMicPermission: View
     private lateinit var cardVoiceServer: View
-
-    // 扩展词库（长词包）：不进 APK，按需下载
-    private lateinit var btnDictManager: Button
-
-    // 键盘外观：26 键区（3 行 28 键）统一圆角 / 间隙
-    private lateinit var seekKeyCorner: SeekBar
-    private lateinit var textKeyCorner: TextView
-    private lateinit var seekKeyGap: SeekBar
-    private lateinit var textKeyGap: TextView
 
     // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
@@ -180,7 +170,6 @@ class SettingsActivity : ComponentActivity() {
         maybeAutoCheckUpdate()
         cardMicPermission = findViewById(R.id.card_mic_permission)
         cardVoiceServer = findViewById(R.id.card_voice_server)
-        btnDictManager = findViewById(R.id.btn_dict_manager)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
@@ -191,11 +180,6 @@ class SettingsActivity : ComponentActivity() {
         textRootStatus = findViewById(R.id.text_root_status)
         switchRootEnhance = findViewById(R.id.switch_root_enhance)
 
-        seekKeyCorner = findViewById(R.id.seek_key_corner)
-        textKeyCorner = findViewById(R.id.text_key_corner)
-        seekKeyGap = findViewById(R.id.seek_key_gap)
-        textKeyGap = findViewById(R.id.text_key_gap)
-
         // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
         initThemeCard()
         // 收藏符号编辑：单按钮入口，打开独立编辑页
@@ -205,6 +189,16 @@ class SettingsActivity : ComponentActivity() {
         // 符号分组顺序：单按钮入口，打开独立排序页（设置主页只留一个按钮，不再内嵌列表）
         findViewById<Button>(R.id.btn_symbol_order).setOnClickListener {
             startActivity(Intent(this, SymbolOrderActivity::class.java))
+        }
+        // 补充短语词库：独立页面按需下载长词包 / 专业词库
+        findViewById<Button>(R.id.btn_dict_expand).setOnClickListener {
+            Diagnostics.i(TAG, "设置页: 打开分类词库")
+            runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
+                .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
+        }
+        // 按钮圆角间隙（键盘外观）：独立页面
+        findViewById<Button>(R.id.btn_key_appearance).setOnClickListener {
+            startActivity(Intent(this, KeyAppearanceActivity::class.java))
         }
         appliedThemeDark = ThemeManager.isDark(this)
         scheduleThemeTick()
@@ -341,41 +335,8 @@ class SettingsActivity : ComponentActivity() {
 
         // ── 剪贴板卡片 ──────────────────────────────────────────
         initClipboardCard()
-
-        // ── 扩展词库（长词包）────────────────────────────────────
-        initDictEntry()
-
-        // ── 键盘外观（26 键区 28 键统一圆角 / 间隙）──────────────
-        initKeyAppearanceCard()
     }
 
-    // ── 扩展词库（长词包）──────────────────────────────────────
-    //
-    // 完整词库 xz 后仍有 8MB、占 APK 体积 95%，其中 85.9% 的词条是三字以上的长尾
-    // 专有名词。基础包（≤3 字）随 APK 分发，长词包放在这里按需下载，
-    // 换来安装包从 8.4MB 降到 4.2MB。
-
-    /** 分类词库入口：跳转到独立页面按需下载（长词包、专业词库等） */
-    private fun initDictEntry() {
-        btnDictManager.setOnClickListener {
-            Diagnostics.i(TAG, "设置页: 打开分类词库")
-            runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
-                .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
-        }
-    }
-
-    // ── 键盘外观（26 键区 28 键统一圆角 / 间隙）────────────────────
-
-    /**
-     * 两个滑杆：按键圆角 + 按键间隙，拖动即落盘并刷新数值文案。
-     *
-     * 键盘重绘在 IME 侧完成——[PinyinKeyboardView] 每次弹键盘（onStartInputView →
-     * configure）都会按最新配置重新套用外观，所以这里不必发广播或重启进程；
-     * 顶部「保存配置并立即重启生效」对这两项同样有效。
-     *
-     * 定义域与步进一律取自 [KeyAppearance]：界面与绘制逻辑共用一套边界，
-     * 不允许在布局或 Activity 里另写一份范围。
-     */
     /**
      * 主题卡片：模式下拉（跟随系统 / 亮白 / 暗黑 / 定时）+ 定时的两个切换时刻。
      *
@@ -494,45 +455,6 @@ class SettingsActivity : ComponentActivity() {
         if (minutes <= 0) return // 非定时模式 / 无效配置
         // +1s 余量：刚好卡在切换点上时避免边界抖动
         uiHandler.postDelayed(themeTickRunnable, minutes * 60_000L + 1000L)
-    }
-
-    private fun initKeyAppearanceCard() {
-        seekKeyCorner.max = KeyAppearance.CORNER_PROGRESS_MAX
-        seekKeyGap.max = KeyAppearance.GAP_PROGRESS_MAX
-        // 先写初值再挂监听：否则初始化写入也会触发一次无意义的回调
-        seekKeyCorner.progress = KeyAppearance.cornerDpToProgress(prefs.keyCornerDp)
-        seekKeyGap.progress = KeyAppearance.gapDpToProgress(prefs.keyGapDp)
-        textKeyCorner.text = KeyAppearance.formatDp(prefs.keyCornerDp)
-        textKeyGap.text = KeyAppearance.formatDp(prefs.keyGapDp)
-
-        seekKeyCorner.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val dp = KeyAppearance.cornerProgressToDp(progress)
-                prefs.keyCornerDp = dp
-                textKeyCorner.text = KeyAppearance.formatDp(dp)
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-
-            // 只在松手时打一条日志：拖动过程每格都写日志会变成每秒几十次文件 IO
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                Diagnostics.i(TAG, "键盘圆角: ${KeyAppearance.formatDp(prefs.keyCornerDp)}")
-            }
-        })
-
-        seekKeyGap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val dp = KeyAppearance.gapProgressToDp(progress)
-                prefs.keyGapDp = dp
-                textKeyGap.text = KeyAppearance.formatDp(dp)
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                Diagnostics.i(TAG, "键盘间隙: ${KeyAppearance.formatDp(prefs.keyGapDp)}")
-            }
-        })
     }
 
     /**

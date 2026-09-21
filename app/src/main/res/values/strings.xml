@@ -23,9 +23,7 @@
 
     <!-- 分类词库页 -->
     <string name="dict_manager_title">分类词库</string>
-    <string name="dict_entry_title">分类词库</string>
-    <string name="dict_entry_desc">按需下载长词包、专业词库等，扩充输入覆盖范围</string>
-    <string name="dict_entry_open">打开分类词库</string>
+    <string name="dict_entry_button">补充短语词库</string>
     <string name="dict_manager_hint_line1">按需下载词库，扩充输入覆盖范围。</string>
     <string name="dict_manager_hint_line2">下载后会自动重启输入法以生效。</string>
     <string name="dict_status_installed">已安装（%1$s）</string>
@@ -149,7 +147,7 @@
     <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
     <string name="settings_ime_received">收到：%1$s</string>
     <string name="switch_auto_show_keyboard">自动唤起键盘</string>
-    <string name="switch_auto_show_keyboard_desc">关闭时,禁止弹出键盘,只能回设置这里开启</string>
+    <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
 
     <!-- 诊断 -->
     <string name="settings_voice_input">语音输入</string>
@@ -176,11 +174,11 @@
 
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">加更多生僻字</string>
-    <string name="switch_show_rare_chars_desc">勾选后重启输入法，候选里才会出现生僻字</string>
+    <string name="switch_show_rare_chars_desc">一般不用开</string>
     <string name="switch_user_learning">用户词频学习</string>
-    <string name="switch_user_learning_desc">记住你选过的词，下次排到前面</string>
+    <string name="switch_user_learning_desc">记住常选词,自动放前排</string>
     <string name="switch_predict">追加候选词语</string>
-    <string name="switch_predict_desc">选完一个词后，候选栏追加显示匹配到的后续词</string>
+    <string name="switch_predict_desc">额外显示后续的词</string>
     <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
 
@@ -190,10 +188,11 @@
 
     <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
     <string name="settings_shuangpin_scheme">拼音输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">双拼的 26 键会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
+    <string name="settings_shuangpin_scheme_desc">双拼26键显示韵母</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
     <string name="key_appearance_title">键盘外观</string>
+    <string name="key_appearance_entry">按钮圆角间隙</string>
     <string name="key_appearance_desc">统一作用于 26 键区 三行的 28 个按键</string>
     <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
     <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
@@ -221,7 +220,7 @@
     <string name="favorite_invalid">请输入 1~8 个字符</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
     <string name="theme_card_title">键盘主题配色</string>
-    <string name="theme_card_desc">亮白/暗黑,跟随系统/定时切换</string>
+    <string name="theme_card_desc">明暗跟随 定时切换</string>
     <string name="theme_mode_label">主题模式</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
     <string name="theme_dark_at_tpl">暗起 %1$s</string>
