@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -25,7 +26,7 @@ class ThemeColorParityTest {
     fun 两套色板都非空() {
         // 防呆：路径写错时上面那条会因为「两边都是空集」而假绿
         val light = colorNames(resFile("values/colors.xml"))
-        assertEquals(true, light.size > 30)
+        assertTrue("亮白色板项数异常（路径可能写错）: ${light.size}", light.size > 30)
     }
 
     /**
@@ -41,6 +42,28 @@ class ThemeColorParityTest {
         val dark = itemNames(resFile("values-night/themes.xml"))
         assertEquals("暗色主题多出的 item: ${dark - light}", emptySet<String>(), dark - light)
         assertEquals("暗色主题缺少的 item（会退回框架默认值）: ${light - dark}", emptySet<String>(), light - dark)
+    }
+
+    /**
+     * 主题下拉的 values 数组必须与 [ThemeManager] 常量一一对应（entries 与它同序同长）。
+     *
+     * 数组是 XML 里的裸数字：改错一位（例如把「亮白」写成 2）就会存成另一个模式，
+     * 编译、lint 都不报错，只能在真机上发现「选了亮白却是暗黑」。
+     */
+    @Test
+    fun 主题下拉取值与常量一一对应() {
+        val xml = resFile("values/strings.xml").readText()
+        val values = Regex(
+            "<string-array name=\"theme_mode_values\">(.*?)</string-array>",
+            RegexOption.DOT_MATCHES_ALL,
+        ).find(xml)?.groupValues?.get(1)
+            ?.let { block -> Regex("<item>(.*?)</item>").findAll(block).map { it.groupValues[1].trim() }.toList() }
+            ?: emptyList()
+        val expected = listOf(
+            ThemeManager.MODE_SYSTEM, ThemeManager.MODE_LIGHT,
+            ThemeManager.MODE_DARK, ThemeManager.MODE_SCHEDULED,
+        ).map(Int::toString)
+        assertEquals("主题下拉 values 与 ThemeManager 常量不一致", expected, values)
     }
 
     private fun itemNames(file: File): Set<String> =

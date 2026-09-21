@@ -180,7 +180,11 @@ class Prefs(context: Context) {
             .takeIf { it in ThemeManager.MODE_SYSTEM..ThemeManager.MODE_SCHEDULED }
             ?: ThemeManager.MODE_SYSTEM
         set(value) = sp.edit {
-            putInt(KEY_THEME_MODE, value.coerceIn(ThemeManager.MODE_SYSTEM, ThemeManager.MODE_SCHEDULED))
+            // 与读取端口径一致：非法值一律落「跟随系统」。
+            // 用 coerceIn 会把 9 钳成「定时」（最接近的合法值），与 isDarkNow 的 else 分支语义相左。
+            val mode = value.takeIf { it in ThemeManager.MODE_SYSTEM..ThemeManager.MODE_SCHEDULED }
+                ?: ThemeManager.MODE_SYSTEM
+            putInt(KEY_THEME_MODE, mode)
         }
 
     /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
