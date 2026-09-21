@@ -56,6 +56,14 @@ class JinnIme : InputMethodService() {
     private val optionalIdleCheck = Runnable { maybeLoadOptionalDict("键盘收起后闲置") }
 
     private lateinit var prefs: Prefs
+
+    /**
+     * 上次创建键盘视图时生效的深浅色（null = 还没有键盘视图）。
+     *
+     * `onStartInputView` 用它判断主题是否被改过（设置页改了模式、或定时模式跨过切换点）：
+     * 只有**决策结果变了**才重建键盘，常规弹出路径零额外开销。
+     */
+    private var appliedThemeDark: Boolean? = null
     /**
      * 语音组件。**仅在「语音输入」开关为开时才实例化**（见 [ensureVoiceReady]）。
      * 开关关闭时两者恒为 null —— 语音功能完全沉寂，不占用任何语音相关内存，
@@ -589,8 +597,14 @@ class JinnIme : InputMethodService() {
     override fun onCreateInputView(): View {
         Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
 
+        // 主题：键盘视图一律用「按 Prefs 决策后的 Context」创建 —— 亮白 / 暗黑 / 定时模式下
+        // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
+        // 系统深浅色变化由系统重建 IME 自动生效。
+        val themeCtx = ThemeManager.themedContext(this, prefs)
+        appliedThemeDark = ThemeManager.isDark(this, prefs)
+
         // 语音键盘
-        val voice = LayoutInflater.from(this).inflate(R.layout.keyboard, null)
+        val voice = LayoutInflater.from(themeCtx).inflate(R.layout.keyboard, null)
         micButton = voice.findViewById(R.id.mic_button)
         statusDot = voice.findViewById(R.id.status_dot)
         statusLabel = voice.findViewById(R.id.status_label)
@@ -615,8 +629,8 @@ class JinnIme : InputMethodService() {
         }
         bindBackspace(voice.findViewById(R.id.key_backspace))
 
-        // 拼音键盘
-        val pinyin = PinyinKeyboardView(this).apply {
+        // 拼音键盘（同样用决策后的 Context，见上）
+        val pinyin = PinyinKeyboardView(themeCtx).apply {
             listener = object : PinyinKeyboardView.Listener {
                 override fun onCommitText(text: String) = commit(text)
                 override fun onCommitSpace() = commit(" ")
@@ -887,6 +901,13 @@ class JinnIme : InputMethodService() {
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
+        // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘。
+        // 只在「决策结果变了」时重建，且键盘视图尚未创建时无需处理（onCreateInputView 会读到新值）。
+        val wantDark = ThemeManager.isDark(this, prefs)
+        if (appliedThemeDark != null && appliedThemeDark != wantDark) {
+            Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
+            setInputView(onCreateInputView())
+        }
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
         ui.removeCallbacks(optionalIdleCheck)

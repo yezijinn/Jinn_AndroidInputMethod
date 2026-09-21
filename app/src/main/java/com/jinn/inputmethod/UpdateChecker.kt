@@ -63,6 +63,27 @@ object UpdateChecker {
         if (source == "gitee") "https://gitee.com/$OWNER/$REPO/releases/tag/$latest"
         else "https://github.com/$OWNER/$REPO/releases"
 
+    /** 「打开下载页面」跳转地址：Gitee 发行版列表（附件下载入口），与当前更新源无关。 */
+    fun downloadPageUrl(): String = "https://gitee.com/$OWNER/$REPO/releases"
+
+    /** 自动检查间隔：设置页每次打开最多触发一次，两次成功检查之间至少隔 7 天 */
+    internal const val AUTO_CHECK_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
+
+    /**
+     * 是否需要执行自动检查（**纯函数**，可直接 JVM 单测）。
+     *
+     * @param lastCheckAt 上次**成功**检查的时刻（epoch ms），从未成功检查为 0
+     * @param now 当前时刻（epoch ms）
+     *
+     * 两种脏数据都按「需要检查」处理，否则会把自动检查永久静默掉：
+     * 0/负数（老版本未写入）与**未来时间**（系统时钟回拨或被外部改写）。
+     */
+    internal fun shouldAutoCheck(lastCheckAt: Long, now: Long): Boolean {
+        if (lastCheckAt <= 0L) return true
+        if (lastCheckAt > now) return true
+        return now - lastCheckAt >= AUTO_CHECK_INTERVAL_MS
+    }
+
     /** 返回 (最大日期标签, 来源)；GitHub 失败自动回退 Gitee；两源皆败抛异常。 */
     private fun fetchLatestDateTag(): Pair<Int, String> {
         fetchFromGithub()?.let { return it to "github" }
