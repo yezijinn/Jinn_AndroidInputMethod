@@ -217,6 +217,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:baselineAligned="false"
                 android:orientation="horizontal">
 
                 <LinearLayout
@@ -337,6 +338,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:background="@drawable/card_aurora"
+            android:baselineAligned="false"
             android:orientation="horizontal"
             android:padding="12dp">
 
@@ -360,6 +362,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:text="@string/switch_auto_show_keyboard_desc"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
@@ -386,6 +389,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:text="@string/switch_show_rare_chars_desc"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
@@ -398,6 +402,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:background="@drawable/card_aurora"
+            android:baselineAligned="false"
             android:orientation="horizontal"
             android:padding="12dp">
 
@@ -581,6 +586,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:baselineAligned="false"
                 android:orientation="horizontal">
 
                 <LinearLayout

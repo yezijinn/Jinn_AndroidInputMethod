@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  * 这 28 个键的绘制路径并不相同：26 个字母键由 [PinyinKey] 自绘圆角矩形，
  * 大写键/删除键是 XML 里的 ImageButton（外观由 drawable 背景 + 布局边距决定）。
  * 本对象把两组参数的定义域、默认值与 SeekBar 进度换算收敛到一处，
- * 让 [Prefs]、[PinyinKey]、[PinyinKeyboardView] 与设置页共用同一套边界，
+ * 让 [Prefs]、[PinyinKey]、[PinyinKeyboardView] 与键盘外观页共用同一套边界，
  * 不允许任何一处再写死圆角或间距数值。
  *
  * 「间隙」的语义是**相邻两键之间的空隙**（左右与上下一致）：每个键四边各内缩
@@ -32,7 +32,7 @@ object KeyAppearance {
     /** 圆角上界：再大就会把按键削成胶囊形，失去按键辨识度 */
     const val MAX_CORNER_DP = 24f
 
-    /** 圆角步进：设置页 SeekBar 逐格 1dp */
+    /** 圆角步进：键盘外观页 SeekBar 逐格 1dp */
     const val CORNER_STEP_DP = 1f
 
     /** 默认圆角：1dp（用户 2026-09-21 指定的默认观感：微微圆角） */
@@ -81,7 +81,7 @@ object KeyAppearance {
         clampGapDp(MIN_GAP_DP + progress.coerceIn(0, GAP_PROGRESS_MAX) * GAP_STEP_DP)
 
     /**
-     * 设置页数值文案：整数值不带小数（"6 dp"），半格值保留一位（"1.5 dp"）。
+     * 键盘外观页数值文案：整数值不带小数（"6 dp"），半格值保留一位（"1.5 dp"）。
      *
      * 固定 Locale.US：与项目其他数值展示一致，避免某些区域设置把小数点渲染成逗号。
      */

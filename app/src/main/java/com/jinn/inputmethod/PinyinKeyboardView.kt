@@ -633,7 +633,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         composing.clear()
         lastPredictions = emptyList()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
-        // 所以在设置页改完圆角/间隙，收起键盘再弹出即生效，不必重启进程。
+        // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙，收起键盘再弹出即生效，不必重启进程。
         // 必须先于 refreshKeyLabels——后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
         refreshKeyLabels()
