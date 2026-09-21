@@ -8,13 +8,32 @@
     android:orientation="vertical"
     android:padding="12dp">
 
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/symbol_order_title"
-        android:textColor="@color/text_primary"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/symbol_order_title"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_symbol_order_close"
+            style="@style/SettingsButton"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:minWidth="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:text="@string/symbol_order_close"
+            android:textSize="14sp" />
+    </LinearLayout>
 
     <TextView
         android:layout_width="match_parent"

@@ -161,7 +161,7 @@
 
     <!-- 剪贴板历史 -->
     <string name="settings_clipboard">剪贴板</string>
-    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘候选栏（未输入任何拼音时）点「历史」即可查看。</string>
+    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘候选栏点「历史」即可查看。</string>
     <string name="clipboard_max_items_title">历史数量上限</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 500）</string>
     
@@ -176,11 +176,11 @@
 
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">显示生僻字</string>
-    <string name="switch_show_rare_chars_desc">默认关闭。勾选后重启输入法，候选里才会出现生僻字</string>
+    <string name="switch_show_rare_chars_desc">勾选后重启输入法，候选里才会出现生僻字</string>
     <string name="switch_user_learning">用户词频学习</string>
-    <string name="switch_user_learning_desc">记住你选过的词，下次排到前面。只存在本机、不上传；关掉后不再参与排序</string>
+    <string name="switch_user_learning_desc">记住你选过的词，下次排到前面</string>
     <string name="switch_predict">候选预测词</string>
-    <string name="switch_predict_desc">选完一个词后，候选栏只能匹配后续词组</string>
+    <string name="switch_predict_desc">选完一个词后，候选栏追加显示匹配到的后续词</string>
     <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
 
@@ -190,14 +190,14 @@
 
     <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
     <string name="settings_shuangpin_scheme">输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">全拼 + 7 套双拼；选中即全局生效（语音键盘除外）\n26 键按钮会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
+    <string name="settings_shuangpin_scheme_desc">双拼的 26 键会自动显示韵母\n搜狗/微软/紫光的 ing 在分号键上</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
     <string name="key_appearance_title">键盘外观</string>
     <string name="key_appearance_desc">统一作用于 26 键区 三行的 28 个按键</string>
     <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
     <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
-    <string name="key_appearance_apply_hint">左右间隙与上下间隙全由「按键间隙」控制\n收起键盘再弹出即生效，或重启生效</string>
+    <string name="key_appearance_apply_hint">收起键盘即时生效</string>
 
     <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
     <string name="symbol_order_title">符号分组顺序</string>
@@ -205,6 +205,7 @@
     <string name="symbol_order_move_up">↑</string>
     <string name="symbol_order_move_down">↓</string>
     <string name="symbol_order_reset">恢复默认顺序</string>
+    <string name="symbol_order_close">✕</string>
     <string name="theme_card_title">主题</string>
     <string name="theme_card_desc">亮白/暗黑,跟随系统/定时切换</string>
     <string name="theme_mode_label">主题模式</string>

@@ -31,6 +31,7 @@ class SymbolOrderActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_symbol_order)
         orderList = findViewById(R.id.symbol_order_list)
+        findViewById<Button>(R.id.btn_symbol_order_close).setOnClickListener { finish() }
         findViewById<Button>(R.id.btn_symbol_order_reset).setOnClickListener {
             Prefs(this).symbolGroupOrder = "" // 空串 = 默认次序
             renderRows()
@@ -82,7 +83,7 @@ class SymbolOrderActivity : Activity() {
         renderRows()
     }
 
-    /** ↑↓ 小按钮：首/末行相应方向禁用（半透明） */
+    /** ↑↓ 小按钮：主题同款（半透明蓝底圆角 + 白字），首/末行相应方向禁用（半透明） */
     private fun orderArrowButton(label: String, enabled: Boolean, onClick: () -> Unit): Button {
         val density = resources.displayMetrics.density
         return Button(this).apply {
@@ -90,11 +91,18 @@ class SymbolOrderActivity : Activity() {
             textSize = 16f
             isAllCaps = false
             minWidth = 0
+            minimumWidth = 0
+            setPadding(0, 0, 0, 0)
+            // 系统默认灰底与极光主题不符（用户反馈）：换主题次级按钮底 + 白字
+            background = getDrawable(R.drawable.btn_aurora_secondary)
+            setTextColor(getColor(R.color.text_primary))
             isEnabled = enabled
             alpha = if (enabled) 1f else 0.4f
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(
-                (44 * density).toInt(), (36 * density).toInt())
+                (44 * density).toInt(), (36 * density).toInt()).apply {
+                marginStart = (6 * density).toInt()
+            }
         }
     }
 }
