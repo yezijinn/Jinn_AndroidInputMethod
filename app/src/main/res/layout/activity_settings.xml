@@ -62,7 +62,7 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- 输入法测试：点这里唤起键盘打字（置顶第一位，保存后可直接验证）-->
+        <!-- 输入法测试：纯粹的编辑框，点这里唤起键盘打字（保存后可直接验证）-->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -71,46 +71,21 @@
             android:orientation="vertical"
             android:padding="14dp">
 
-            <LinearLayout
+            <EditText
+                android:id="@+id/edit_ime_test"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/edit_ime_test"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/field_aurora"
-                    android:hint="@string/settings_ime_test_hint"
-                    android:importantForAutofill="no"
-                    android:imeOptions="actionSend"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
-
-                <Button
-                    android:id="@+id/btn_ime_send"
-                    style="@style/SettingsButton"
-                    android:layout_width="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="88dp"
-                    android:text="@string/settings_ime_send" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/text_ime_received"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:minLines="1"
-                android:text="@string/settings_ime_received_empty"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+                android:layout_height="44dp"
+                android:background="@drawable/field_aurora"
+                android:hint="@string/settings_ime_test_hint"
+                android:importantForAutofill="no"
+                android:imeOptions="actionDone"
+                android:inputType="text"
+                android:maxLines="1"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
         </LinearLayout>
 
         <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），

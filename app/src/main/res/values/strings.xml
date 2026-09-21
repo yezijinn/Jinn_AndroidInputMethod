@@ -141,11 +141,8 @@
         <item>2</item>
     </string-array>
 
-    <!-- 输入法测试 -->
+    <!-- 输入法测试：点编辑框唤起键盘 -->
     <string name="settings_ime_test_hint">点这里唤起键盘</string>
-    <string name="settings_ime_send">发送</string>
-    <string name="settings_ime_received_empty">（尚未收到任何文本）</string>
-    <string name="settings_ime_received">收到：%1$s</string>
     <string name="switch_auto_show_keyboard">自动唤起键盘</string>
     <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
 
@@ -208,7 +205,7 @@
 
     <!-- 收藏分组：编辑页与设置页入口 -->
     <string name="favorite_title">符号收藏编辑</string>
-    <string name="favorite_entry_title">收藏的自定义</string>
+    <string name="favorite_entry_title">符号的自定义</string>
     <string name="favorite_desc">自由增删「收藏」分组里的符号；每页最多 26 个，满页自动新增页。改动即时保存，返回键盘即生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
     <string name="favorite_add">＋ 添加符号</string>

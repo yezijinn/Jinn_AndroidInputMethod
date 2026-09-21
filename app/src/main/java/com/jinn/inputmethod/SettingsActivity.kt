@@ -64,10 +64,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textTest: TextView
     private lateinit var textMicState: TextView
 
-    // 输入法测试
-    private lateinit var editImeTest: EditText
-    private lateinit var btnImeSend: Button
-    private lateinit var textImeReceived: TextView
+    // 功能开关（自动唤起键盘 / 生僻字 / 词频学习 / 预测 / 语音）
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchShowRareChars: Switch
     private lateinit var switchUserLearning: Switch
@@ -155,9 +152,6 @@ class SettingsActivity : ComponentActivity() {
         textTest = findViewById(R.id.text_test)
         textMicState = findViewById(R.id.text_mic_state)
 
-        editImeTest = findViewById(R.id.edit_ime_test)
-        btnImeSend = findViewById(R.id.btn_ime_send)
-        textImeReceived = findViewById(R.id.text_ime_received)
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
         switchUserLearning = findViewById(R.id.switch_user_learning)
@@ -291,8 +285,6 @@ class SettingsActivity : ComponentActivity() {
         }
         btnSave.setOnClickListener { saveAndRestart() }
 
-        // 输入法测试：发送按钮 + 回车发送，文本回显到接收区并写诊断日志
-        btnImeSend.setOnClickListener { sendImeTest() }
         // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
         switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
             prefs.autoShowKeyboard = checked
@@ -315,15 +307,6 @@ class SettingsActivity : ComponentActivity() {
             prefs.predictEnabled = checked
             Diagnostics.i(TAG, "候选预测词: ${if (checked) "开启" else "关闭"}（立即生效）")
         }
-        editImeTest.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
-                sendImeTest()
-                true
-            } else {
-                false
-            }
-        }
-
         // 保活相关（前台服务 / 无障碍互保 / ROOT 白名单 / 电池白名单）已全部移除：
         // 语音输入改为按需连接后，不再需要进程常驻，也就不需要这些保活手段。
 
@@ -819,21 +802,6 @@ class SettingsActivity : ComponentActivity() {
         textMicState.text = text
         btnGrant.text = text
         btnGrant.isEnabled = !granted
-    }
-
-    // ── 输入法测试 ──────────────────────────────────────────
-
-    private fun sendImeTest() {
-        val text = editImeTest.text?.toString().orEmpty()
-        Diagnostics.v(TAG, "imeTest: 发送文本 \"${text.take(80)}\" (共${text.length}字)")
-        if (text.isBlank()) {
-            textImeReceived.setText(R.string.settings_ime_received_empty)
-            return
-        }
-        // 回显到接收区，作为"内部接收"的可见结果
-        textImeReceived.text = getString(R.string.settings_ime_received, text)
-        // 发送后清空输入框，方便连续测试；接收区展示最近一次发送
-        editImeTest.setText("")
     }
 
     // ── 保存并重启输入法进程 ──────────────────────────────────────────
