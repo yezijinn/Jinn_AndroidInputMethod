@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 暗黑主题（夜间目录）。与 values/themes.xml 的 AppTheme **逐 item 对齐**：
+         同名 style 走资源限定符是整条替换，`values/` 里的 item 在这里不会被继承。 -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar" tools:targetApi="o_mr1">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorBackground">@color/app_bg</item>
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+        <!-- 深底状态栏/导航栏 → 图标保持浅色 -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

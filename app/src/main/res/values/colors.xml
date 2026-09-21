@@ -1,56 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 亮白主题色板（默认目录 = 跟随系统浅色时的取值）。
+         暗黑主题在 values-night/colors.xml —— 两套**逐名对齐**：少一个名字，该令牌在暗色下会静默退回亮色值。
+         对比度（WCAG 2.1）实测：正文 ≥4.5:1、大字与 UI 组件 ≥3:1，明细见 AGENTS.md「主题」章节。 -->
+
     <!-- 键盘 -->
-    <color name="kb_bg">#15171C</color>
-    <color name="kb_divider">#24272E</color>
-    <color name="key_bg">#242831</color>
-    <color name="key_ripple">#4DFFFFFF</color>
-    <color name="surface_hi">#1C1F26</color>
+    <color name="kb_bg">#EDF1F9</color>
+    <color name="kb_divider">#DCE3F0</color>
+    <color name="key_bg">#FFFFFF</color>
+    <!-- 浅色键面上的涟漪必须用「黑」：白色涟漪在近白键面上不可见 -->
+    <color name="key_ripple">#1A000000</color>
+    <color name="surface_hi">#FFFFFF</color>
 
     <!-- 拼音键盘 -->
-    <color name="kb_candidate_bg">#1A1D24</color>
-    <color name="kb_key">#242831</color>
-    <color name="kb_key_pressed">#3A4150</color>
-    <color name="kb_key_text">#ECEEF2</color>
-    <color name="kb_key_hint_red">#FF5A5F</color>
-    <color name="kb_candidate_sel_text">#4C8DFF</color>
+    <color name="kb_candidate_bg">#F7F9FD</color>
+    <color name="kb_key">#FFFFFF</color>
+    <color name="kb_key_pressed">#D9E2F2</color>
+    <color name="kb_key_text">#1A1F2B</color>
+    <color name="kb_key_hint_red">#C62828</color>
+    <color name="kb_candidate_sel_text">#2F6BE0</color>
 
     <!-- 文字 -->
-    <color name="text_primary">#ECEEF2</color>
-    <color name="text_secondary">#9CA3AF</color>
+    <color name="text_primary">#1A1F2B</color>
+    <color name="text_secondary">#5A6474</color>
 
     <!-- 麦克风按钮 -->
-    <color name="mic_idle">#2B313C</color>
-    <color name="mic_idle_center">#3A4150</color>
-    <color name="mic_active">#E5484D</color>
-    <color name="mic_active_center">#FF6B6F</color>
-    <color name="mic_ring">#E5484D</color>
+    <color name="mic_idle">#E3E9F5</color>
+    <color name="mic_idle_center">#CFD8EA</color>
+    <color name="mic_active">#D93036</color>
+    <color name="mic_active_center">#E5484D</color>
+    <color name="mic_ring">#D93036</color>
     <color name="mic_glyph">#FFFFFF</color>
 
     <!-- 连接状态指示点 -->
-    <color name="dot_online">#34D399</color>
-    <color name="dot_connecting">#F5A623</color>
-    <color name="dot_offline">#E5484D</color>
+    <color name="dot_online">#157347</color>
+    <color name="dot_connecting">#8A5200</color>
+    <color name="dot_offline">#C62828</color>
 
     <!-- 强调与状态 -->
-    <color name="accent">#4C8DFF</color>
+    <color name="accent">#2F6BE0</color>
+    <!-- 主按钮文字：亮色主题的按钮是**深**渐变 → 白字（实测 4.88~6.11:1）；暗色主题反之用深墨字 -->
     <color name="text_on_accent">#FFFFFF</color>
-    <!-- 状态色：三处 Kotlin 动态 UI（剪贴板面板 / 搜索面板 / 分类词库页）共用，
-         原先各自 Color.parseColor 硬编码，见「硬编码颜色收敛」一轮 -->
-    <color name="danger">#E5484D</color>
-    <color name="ok">#4CC38A</color>
-    <color name="warn">#F0A020</color>
-    <color name="btn_disabled">#3A4150</color>
+    <color name="danger">#C62828</color>
+    <color name="ok">#157347</color>
+    <color name="warn">#8A5200</color>
+    <color name="btn_disabled">#C9D2E0</color>
 
-    <!-- 设置页：极光风格 -->
-    <color name="app_bg">#0B1020</color>
-    <color name="aurora_bg_top">#1A2340</color>
-    <color name="aurora_bg_mid">#101830</color>
-    <color name="aurora_bg_bottom">#0B1020</color>
-    <color name="card_bg">#141C33</color>
-    <color name="card_stroke">#26314F</color>
-    <color name="aurora_cyan">#38D5E8</color>
-    <color name="aurora_blue">#4C8DFF</color>
-    <color name="aurora_purple">#8B5CF6</color>
-    <color name="launcher_bg">#15171C</color>
+    <!-- 设置页：极光风格（亮色版） -->
+    <color name="app_bg">#F5F7FB</color>
+    <color name="aurora_bg_top">#E7EDFA</color>
+    <color name="aurora_bg_mid">#F1F4FC</color>
+    <color name="aurora_bg_bottom">#FBFCFE</color>
+    <color name="card_bg">#FFFFFF</color>
+    <color name="card_stroke">#D9E1F2</color>
+    <color name="aurora_cyan">#0A7A90</color>
+    <color name="aurora_blue">#2F6BE0</color>
+    <color name="aurora_purple">#6D3FE0</color>
+    <color name="launcher_bg">#F5F7FB</color>
+
+    <!-- 按钮涟漪与次级底（2026-09-21 由 drawable 里的硬编码收敛而来，两套主题各给值） -->
+    <color name="ripple_on_accent">#33FFFFFF</color>
+    <color name="ripple_on_surface">#1A000000</color>
+    <color name="btn_secondary_bg">#FFFFFF</color>
+    <color name="field_bg">#F1F4FC</color>
+    <color name="grip">#B9C2D2</color>
 </resources>

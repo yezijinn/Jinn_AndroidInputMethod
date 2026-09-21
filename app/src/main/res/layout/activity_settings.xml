@@ -5,8 +5,8 @@
   深蓝极光渐变背景 + 大圆角卡片，视觉更圆润。
 
   布局顺序（自上而下）：
-    标题 → 保存配置并立即重启生效 → 自动唤起键盘 → 输入法测试（点这里唤起键盘打字）→
-    后台保活 → 剪贴板 → 授权麦克风 → NAS 语音 → 导出诊断包 → 使用说明纯文本
+    标题 → 保存配置并立即重启生效 → 检查更新 → 输入法测试（点这里唤起键盘打字）→
+    自动唤起键盘 → 剪贴板 → 授权麦克风 → NAS 语音 → 导出诊断包 → 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -57,7 +57,37 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- 输入法测试：点这里唤起键盘打字（紧跟保存按钮，便于保存后立刻验证）-->
+        <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
+             同行右侧为 Gitee 下载页入口 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <Button
+                android:id="@+id/btn_check_update"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/settings_check_update" />
+
+            <Button
+                android:id="@+id/btn_update_download"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="@string/update_download_page" />
+        </LinearLayout>
+
+        <!-- 输入法测试：点这里唤起键盘打字（位于检查更新卡片下方，保存后可直接验证）-->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -253,6 +283,89 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 主题：亮白 / 暗黑。模式切换后本页立即变色；键盘在下次弹出（或「保存并重启」）时生效 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/theme_card_title"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/theme_card_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/theme_mode_label"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <Spinner
+                android:id="@+id/spinner_theme"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/field_aurora"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:spinnerMode="dropdown" />
+
+            <!-- 定时行：仅「定时」模式可见；两个按钮分别弹时间选择器 -->
+            <LinearLayout
+                android:id="@+id/row_theme_schedule"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <Button
+                    android:id="@+id/btn_theme_light_at"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+
+                <Button
+                    android:id="@+id/btn_theme_dark_at"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_theme_schedule_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:text="@string/theme_schedule_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
         <!-- 键盘外观：26 键区（3 行 28 键：字母 + 大写 + 删除）统一圆角与间隙 -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -417,23 +530,6 @@
                 android:layout_height="44dp"
                 android:layout_marginTop="8dp"
                 android:text="@string/dict_entry_open" />
-        </LinearLayout>
-
-        <!-- 检查更新：版本号取构建日期（yyyyMMdd），与远程 tag 比较 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <Button
-                android:id="@+id/btn_check_update"
-                style="@style/SettingsButton"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:text="@string/settings_check_update" />
         </LinearLayout>
 
         <!-- 剪贴板：加密历史 + 第三方访问权限 -->

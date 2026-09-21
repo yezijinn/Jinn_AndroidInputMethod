@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 次级按钮：半透明蓝底，大圆角 -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="#26FFFFFF">
+    android:color="@color/ripple_on_surface">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#1E2A4A" />
+            <solid android:color="@color/btn_secondary_bg" />
             <corners android:radius="12dp" />
             <stroke
                 android:width="1dp"

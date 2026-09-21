@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 基于系统 Material 深色主题，不引入 AppCompat / Material Components，保持包体最小 -->
-    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 亮白主题（默认目录）。暗黑主题在 values-night/themes.xml —— 同名 style 是**整条替换**、
+         不做 item 合并，那边必须写完整定义。
+         基于系统 Material Light 框架主题，不引入 AppCompat / Material Components，保持包体最小。 -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar" tools:targetApi="o_mr1">
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:colorBackground">@color/app_bg</item>
         <item name="android:windowBackground">@color/app_bg</item>
@@ -10,5 +12,8 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_secondary</item>
+        <!-- 浅底状态栏/导航栏 → 图标需转深色（windowLightNavigationBar 为 API 27+，由 tools:targetApi 标注） -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

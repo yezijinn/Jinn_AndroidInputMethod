@@ -106,6 +106,11 @@
     <string name="update_btn_ok">知道了</string>
     <string name="update_checking">检查中…</string>
 
+    <!-- 自动检查（打开设置页触发）：只有「有新版本」提示，失败与已最新一律静默 -->
+    <string name="update_ask_message">有新版本，要更新吗？</string>
+    <string name="update_btn_no">不要</string>
+    <string name="update_download_page">打开下载页面</string>
+
     <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n打错的拼音不用一个个退：点候选栏右侧的 ✕ 可整串清掉；双击再长按退格则清空整个输入框。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
@@ -193,4 +198,24 @@
     <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
     <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
     <string name="key_appearance_apply_hint">左右间隙与上下间隙全由「按键间隙」控制\n收起键盘再弹出即生效，或重启生效</string>
+
+    <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
+    <string name="theme_card_title">主题</string>
+    <string name="theme_card_desc">亮白 / 暗黑两套配色；跟随系统时随系统深浅色自动切换</string>
+    <string name="theme_mode_label">主题模式</string>
+    <string name="theme_light_at_tpl">亮起 %1$s</string>
+    <string name="theme_dark_at_tpl">暗起 %1$s</string>
+    <string name="theme_schedule_hint">定时模式：到达设定时刻自动切换，停留在本页也会准点刷新</string>
+    <string-array name="theme_mode_entries">
+        <item>跟随系统</item>
+        <item>亮白</item>
+        <item>暗黑</item>
+        <item>定时</item>
+    </string-array>
+    <string-array name="theme_mode_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </string-array>
 </resources>

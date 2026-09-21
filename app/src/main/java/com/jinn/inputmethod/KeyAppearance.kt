@@ -35,8 +35,8 @@ object KeyAppearance {
     /** 圆角步进：设置页 SeekBar 逐格 1dp */
     const val CORNER_STEP_DP = 1f
 
-    /** 默认圆角：0dp（直角，与加入本参数之前的外观一致） */
-    const val DEFAULT_CORNER_DP = 0f
+    /** 默认圆角：1dp（用户 2026-09-21 指定的默认观感：微微圆角） */
+    const val DEFAULT_CORNER_DP = 1f
 
     // ── 按键间隙（dp）──────────────────────────────────────────
 
@@ -49,8 +49,8 @@ object KeyAppearance {
     /** 间隙步进：0.5dp（够细，且 0.5 在二进制里可精确表示，往返换算不会漂） */
     const val GAP_STEP_DP = 0.5f
 
-    /** 默认间隙：0dp（无缝，与加入本参数之前的外观一致） */
-    const val DEFAULT_GAP_DP = 0f
+    /** 默认间隙：0.5dp（用户 2026-09-21 指定的默认观感，恰好一个步进） */
+    const val DEFAULT_GAP_DP = 0.5f
 
     /** SeekBar 最大进度（圆角：0~24dp，每格 1dp）。由边界与步进推导，测试守卫一致性 */
     val CORNER_PROGRESS_MAX: Int = progressSteps(MIN_CORNER_DP, MAX_CORNER_DP, CORNER_STEP_DP)

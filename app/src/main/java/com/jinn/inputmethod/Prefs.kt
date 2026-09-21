@@ -147,9 +147,9 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
-    /** 用户词频学习：记录「实际选过」的候选并提到前面（默认开；本地存储，不上传） */
+    /** 用户词频学习：记录「实际选过」的候选并提到前面（**默认关**；本地存储，不上传） */
     var userLearning: Boolean
-        get() = sp.getBoolean(KEY_USER_LEARNING, true)
+        get() = sp.getBoolean(KEY_USER_LEARNING, false)
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
@@ -159,6 +159,41 @@ class Prefs(context: Context) {
     var predictEnabled: Boolean
         get() = sp.getBoolean(KEY_PREDICT_ENABLED, false)
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
+
+    /**
+     * 上次「检查更新」**成功**的时刻（epoch ms，0 = 从未成功检查过）。
+     *
+     * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
+     * 成功则 [UpdateChecker.AUTO_CHECK_INTERVAL_MS] 内不再自动检查，避免反复打扰。
+     */
+    var updateLastCheckAt: Long
+        get() = sp.getLong(KEY_UPDATE_LAST_CHECK_AT, 0L)
+        set(value) = sp.edit { putLong(KEY_UPDATE_LAST_CHECK_AT, value) }
+
+    /**
+     * 主题模式（见 [ThemeManager]）：0 跟随系统 / 1 亮白 / 2 暗黑 / 3 定时。
+     *
+     * **默认跟随系统**（用户 2026-09-21 指定）：系统深浅色即 App 主题；越界值同样退回该默认。
+     */
+    var themeMode: Int
+        get() = sp.getInt(KEY_THEME_MODE, ThemeManager.MODE_SYSTEM)
+            .takeIf { it in ThemeManager.MODE_SYSTEM..ThemeManager.MODE_SCHEDULED }
+            ?: ThemeManager.MODE_SYSTEM
+        set(value) = sp.edit {
+            putInt(KEY_THEME_MODE, value.coerceIn(ThemeManager.MODE_SYSTEM, ThemeManager.MODE_SCHEDULED))
+        }
+
+    /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
+    var themeLightAtMinutes: Int
+        get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
+            .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
+        set(value) = sp.edit { putInt(KEY_THEME_LIGHT_AT, value) }
+
+    /** 定时模式：切到暗黑的时刻（当天第几分钟），默认 19:00 */
+    var themeDarkAtMinutes: Int
+        get() = sp.getInt(KEY_THEME_DARK_AT, DEFAULT_THEME_DARK_AT_MIN)
+            .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_DARK_AT_MIN
+        set(value) = sp.edit { putInt(KEY_THEME_DARK_AT, value) }
 
     /**
      * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。
@@ -275,10 +310,20 @@ class Prefs(context: Context) {
         private const val KEY_DEFAULT_MODE = "default_mode"
         private const val KEY_PREDICT_ENABLED = "predict_enabled"
         private const val KEY_USER_LEARNING = "user_learning"
+        /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
+        private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
 
     private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
         private const val KEY_VOICE_INPUT = "voice_input"
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
+        /** 主题模式与定时切换时刻（见 [ThemeManager]） */
+        private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_THEME_LIGHT_AT = "theme_light_at"
+        private const val KEY_THEME_DARK_AT = "theme_dark_at"
+
+        /** 定时切换的默认时刻：07:00 亮起 / 19:00 暗起 */
+        const val DEFAULT_THEME_LIGHT_AT_MIN = 7 * 60
+        const val DEFAULT_THEME_DARK_AT_MIN = 19 * 60
     }
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 极光主按钮：青→蓝→紫横向渐变，大圆角 -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="#33FFFFFF">
+    android:color="@color/ripple_on_accent">
     <item>
         <shape android:shape="rectangle">
             <gradient

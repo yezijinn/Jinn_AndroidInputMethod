@@ -536,6 +536,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
         btnShift.setOnClickListener {
+            // 符号层键面全是符号，没有大小写概念：大写键在此层无效（用户要求）
+            if (layer == LAYER_SYMBOL) {
+                Diagnostics.i(TAG, "符号层: 大写键无操作")
+                return@setOnClickListener
+            }
             capsMode = !capsMode
             // 大写锁定切换的是「字母直通」模式，与切中英文同理：
             // 不清残留拼音的话，切回小写后按退格会先删这些看不见的拼音，
@@ -1340,8 +1345,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnLang.setLineSpacing(0f, 0.9f)
         btnLang.text = buildLangLabel()
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
-            // 已进入符号层，此键的作用是回到字母页 —— 用「返回」比「ABC」更直白
-            context.getString(R.string.key_back)
+            // 已进入符号层，此键的作用是回到字母页 —— 用「返回」比「ABC」更直白。
+            // 红色粗体（用户要求）：提示这一键现在切换的是整层（键面已全是符号），
+            // 用 SpannableString 而不是 setTextColor——退出符号层时文本换回普通串，样式自动还原。
+            android.text.SpannableString(context.getString(R.string.key_back)).apply {
+                setSpan(
+                    android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                    0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                setSpan(
+                    android.text.style.ForegroundColorSpan(context.getColor(R.color.kb_key_hint_red)),
+                    0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
         } else {
             context.getString(R.string.key_symbol)
         }
@@ -1350,9 +1366,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             context.getString(R.string.key_digit)
         }
-        // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）
+        // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）；
+        // 符号层大写键不参与操作：isEnabled=false（无障碍也报「不可用」）+ 置灰，
+        // 点击路径另有层守卫（见 bindFunctionKeys），二者互为兜底。
         refreshShiftBackground()
-        btnShift.alpha = 1f
+        btnShift.isEnabled = layer != LAYER_SYMBOL
+        btnShift.alpha = if (layer == LAYER_SYMBOL) 0.4f else 1f
         // 空格键顶部小字：同步当前输入类型
         updateSpaceHint()
     }
