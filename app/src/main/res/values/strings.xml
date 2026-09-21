@@ -180,7 +180,7 @@
     <string name="switch_user_learning">用户词频学习</string>
     <string name="switch_user_learning_desc">记住你选过的词，下次排到前面。只存在本机、不上传；关掉后不再参与排序</string>
     <string name="switch_predict">候选预测词</string>
-    <string name="switch_predict_desc">选完一个词后，候选栏预告下一个字词。关掉后选完文字不再出现预测候选</string>
+    <string name="switch_predict_desc">选完一个词后，候选栏只能匹配后续词组</string>
     <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
     <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
 
@@ -200,8 +200,13 @@
     <string name="key_appearance_apply_hint">左右间隙与上下间隙全由「按键间隙」控制\n收起键盘再弹出即生效，或重启生效</string>
 
     <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
+    <string name="symbol_order_title">符号分组顺序</string>
+    <string name="symbol_order_desc">改变符号面板分组的排序，收起键盘即生效</string>
+    <string name="symbol_order_move_up">↑</string>
+    <string name="symbol_order_move_down">↓</string>
+    <string name="symbol_order_reset">恢复默认顺序</string>
     <string name="theme_card_title">主题</string>
-    <string name="theme_card_desc">亮白 / 暗黑两套配色；跟随系统时随系统深浅色自动切换</string>
+    <string name="theme_card_desc">亮白/暗黑,跟随系统/定时切换</string>
     <string name="theme_mode_label">主题模式</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
     <string name="theme_dark_at_tpl">暗起 %1$s</string>

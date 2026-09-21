@@ -1198,9 +1198,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
                 isClickable = true
             }
-            // 触摸统一走 bindGroupTouch：短按切组、长按 2 秒进入拖拽排序
-            // （OnTouchListener 返回 true 会吞掉 OnClickListener，点击在那里手动派发）
-            bindGroupTouch(item, idx)
+            item.setOnClickListener { selectGroup(idx) }
             // 主文本（矩形样式，字体放大 30%）
             val label = TextView(context).apply {
                 text = group.label
@@ -1217,7 +1215,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     text = "${symbolPageInGroup.coerceIn(0, group.pages.lastIndex) + 1}/${group.pages.size}"
                     textSize = 9f // sp
                     setTextColor(resources.getColor(R.color.text_secondary, context.theme))
-                    gravity = android.view.Gravity.RIGHT or android.view.Gravity.BOTTOM
+                    gravity = android.view.Gravity.END or android.view.Gravity.BOTTOM
                 }
                 item.addView(pageText, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1230,19 +1228,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    // ── 符号分组：短按切组 / 长按 2 秒拖拽排序 ─────────────────────
-
-    /** 长按触发拖拽的阈值（用户要求约 2 秒；系统 OnLongClick 阈值固定约 500ms，只能自算） */
-    private val dragSortLongPressMs = 2000L
-
-    /** 拖拽起点在 [symbolGroups] 里的下标（-1 = 未拖拽） */
-    private var draggingFromIndex = -1
-
-    /** 按下时的手指横坐标（rawX）：拖拽位移与「算不算拖动」都以它为基准 */
-    private var dragDownRawX = 0f
-
-    /** 触摸滑动阈值：小于它视为抖动，取消长按计时 */
-    private val dragTouchSlop: Int by lazy { android.view.ViewConfiguration.get(context).scaledTouchSlop }
+    // ── 符号分组：点击切换（顺序在设置页「符号分组顺序」卡片调整，见 [SymbolOrder]） ─────
 
     /** 切换当前分组（并回到该组第一页） */
     private fun selectGroup(idx: Int) {
@@ -1252,111 +1238,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshKeyLabels()
         refreshCandidateBar()
         Diagnostics.i(TAG, "符号分组切换: ${symbolGroups[idx].label} (${idx + 1}/${symbolGroups.size})")
-    }
-
-    /**
-     * 分组按钮的触摸：**长按 [dragSortLongPressMs] 进入拖拽排序**，短按切组。
-     *
-     * 触摸返回 true 后 `OnClickListener` 不再触发，所以切组在 ACTION_UP 里手动派发；
-     * 进入拖拽后立即 `requestDisallowInterceptTouchEvent(true)` —— 否则候选栏的横向滚动
-     * 会在手指横移时抢走事件，拖拽「半路断线」。
-     */
-    private fun bindGroupTouch(item: View, idx: Int) {
-        var dragging = false
-        val enterDrag = Runnable {
-            dragging = true
-            draggingFromIndex = idx
-            // 强烈的视觉反馈：被拖项放大浮起、其余全部变暗 —— 否则用户看不出已进入拖拽模式
-            item.scaleX = 1.15f
-            item.scaleY = 1.15f
-            item.elevation = dpFloat(8f)
-            for (i in 0 until viewCandidateList.childCount) {
-                viewCandidateList.getChildAt(i)?.alpha = if (i == idx) 1f else 0.45f
-            }
-            (item.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
-            Diagnostics.i(TAG, "符号分组: 长按 ${dragSortLongPressMs}ms 进入拖拽排序（起点 ${idx + 1}）")
-        }
-        item.setOnTouchListener { v, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    dragging = false
-                    dragDownRawX = event.rawX
-                    v.postDelayed(enterDrag, dragSortLongPressMs)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (dragging) {
-                        v.translationX = event.rawX - dragDownRawX
-                        highlightDropSlot(v)
-                    } else if (kotlin.math.abs(event.rawX - dragDownRawX) > dragTouchSlop) {
-                        v.removeCallbacks(enterDrag) // 先滑动后长按：按普通触摸处理
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    v.removeCallbacks(enterDrag)
-                    if (dragging) {
-                        dropGroup(v)
-                    } else if (event.actionMasked == MotionEvent.ACTION_UP) {
-                        v.performClick() // 无障碍：补一次点击事件
-                        selectGroup(idx)
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-
-    /** 拖拽中：把「当前落点槽位」的按钮相对提亮（其余保持压暗），给用户明确的落点预期 */
-    private fun highlightDropSlot(dragged: View) {
-        val width = dragged.width.coerceAtLeast(1)
-        val target = (draggingFromIndex + Math.round(dragged.translationX / width))
-            .coerceIn(0, symbolGroups.lastIndex)
-        for (i in 0 until viewCandidateList.childCount) {
-            val child = viewCandidateList.getChildAt(i) ?: continue
-            child.alpha = when {
-                child === dragged -> 1f
-                i == target -> 0.85f
-                else -> 0.45f
-            }
-        }
-    }
-
-    /**
-     * 松手：按水平位移把被拖项落到目标槽位 —— **顺序即时生效并落盘**，重进符号层仍保持。
-     *
-     * 位移换算用「被拖项宽度」四舍五入（各分组按钮样式一致、宽度相近，无需逐项测量），
-     * 落点越界一律钳到两端；顺序没变时只复位视觉，不写盘。
-     */
-    private fun dropGroup(view: View) {
-        val from = draggingFromIndex
-        val labels = symbolGroups.map { it.label }
-        val width = view.width.coerceAtLeast(1)
-        val to = (from + Math.round(view.translationX / width)).coerceIn(0, symbolGroups.lastIndex)
-        val keepLabel = symbolGroups.getOrNull(symbolGroupIndex)?.label
-
-        view.translationX = 0f
-        view.scaleX = 1f
-        view.scaleY = 1f
-        view.elevation = 0f
-        for (i in 0 until viewCandidateList.childCount) {
-            viewCandidateList.getChildAt(i)?.alpha = 1f
-        }
-        draggingFromIndex = -1
-
-        val ordered = SymbolOrder.move(labels, from, to)
-        if (ordered == labels) {
-            refreshCandidateBar() // 顺序没变：仅复位视觉
-            return
-        }
-        Prefs(context).symbolGroupOrder = SymbolOrder.serialize(ordered)
-        symbolGroups = SymbolOrder.groupsInOrder(Prefs(context).symbolGroupOrder)
-        // 高亮跟着「原来选中的分组」走：顺序变了索引也变了，不修正就会跳到别的分组上
-        symbolGroupIndex = symbolGroups.indexOfFirst { it.label == keepLabel }.coerceAtLeast(0)
-        refreshKeyLabels()
-        refreshCandidateBar()
-        Diagnostics.i(TAG, "符号分组排序: 第 ${from + 1} → ${to + 1} 位（${ordered.joinToString("/")}）")
     }
 
     private fun onCandidateSelected(candidate: String) {

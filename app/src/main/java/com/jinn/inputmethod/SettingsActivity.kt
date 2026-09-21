@@ -10,11 +10,13 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
@@ -196,6 +198,10 @@ class SettingsActivity : ComponentActivity() {
 
         // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
         initThemeCard()
+        // 符号分组顺序：单按钮入口，打开独立排序页（设置主页只留一个按钮，不再内嵌列表）
+        findViewById<Button>(R.id.btn_symbol_order).setOnClickListener {
+            startActivity(Intent(this, SymbolOrderActivity::class.java))
+        }
         appliedThemeDark = ThemeManager.isDark(this)
         scheduleThemeTick()
 
