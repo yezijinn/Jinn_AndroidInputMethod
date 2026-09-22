@@ -67,7 +67,7 @@ object OptionalDicts {
             name = "长词包",
             descLines = listOf(
                 "五字及以上的长词与专有名词。",
-                "含人名、地名、作品名、机构名等。",
+                "人名、地名、作品名、机构名居多。",
             ),
             sizeMb = 1.81,
             startupSec = 2,          // 实测首次构建索引 1764ms
@@ -82,8 +82,8 @@ object OptionalDicts {
             name = "腾讯大词库",
             descLines = listOf(
                 "约 95.5 万词条。",
-                "覆盖大量专业术语与短语搭配。",
-                "体积较大，建议按需安装。",
+                "专业术语与短语搭配较多。",
+                "体积较大，按需安装。",
             ),
             sizeMb = 6.36,
             startupSec = 7,          // 实测首次构建索引 6927ms

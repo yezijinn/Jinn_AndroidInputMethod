@@ -180,7 +180,7 @@ object ClipboardFirewall {
         val detail = when {
             missing.isEmpty() -> "✓ $file 已排除剪贴板数据库（含 WAL 侧车）与用户词频"
             missing.none { it.startsWith(DB_NAME) } ->
-                "✗ $file 已排除剪贴板数据库，但**未排除用户词频**（明文词表会随备份出炉）"
+                "✗ $file 已排除剪贴板数据库，但未排除用户词频（明文词表会随备份出炉）"
             else -> "✗ $file 未完整排除剪贴板数据（缺 ${missing.joinToString("、")}）"
         }
         return "Backup 配置" to detail
