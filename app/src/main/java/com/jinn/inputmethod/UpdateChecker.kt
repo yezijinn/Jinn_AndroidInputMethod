@@ -12,9 +12,9 @@ import java.net.URL
  * 版本方案：versionCode 取构建当日日期（yyyyMMdd，纯整数），天然单调可比，
  * versionName 仅展示不参与比较。远程真源取仓库 tag 中的最大日期数字。
  *
- * 源策略：**GitHub 优先，Gitee 备选**；GitHub 失败自动回退 Gitee，两源皆失败才判网络异常。
+ * 源策略：GitHub 优先，Gitee 备选；GitHub 失败自动回退 Gitee，两源皆失败才判网络异常。
  * Gitee 的网页 /tags 会返回 405，所以备选源改走它的开放 API，
- * 返回的 JSON 里同样带 tag 名，**标签解析规则与 GitHub 完全一致**
+ * 返回的 JSON 里同样带 tag 名，标签解析规则与 GitHub 完全一致
  * （去 v 前缀、只保留 6..8 位纯数字、取最大）。
  */
 object UpdateChecker {
@@ -70,13 +70,13 @@ object UpdateChecker {
     internal const val AUTO_CHECK_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
 
     /**
-     * 是否需要执行自动检查（**纯函数**，可直接 JVM 单测）。
+     * 是否需要执行自动检查（纯函数，可直接 JVM 单测）。
      *
-     * @param lastCheckAt 上次**成功**检查的时刻（epoch ms），从未成功检查为 0
+     * @param lastCheckAt 上次成功检查的时刻（epoch ms），从未成功检查为 0
      * @param now 当前时刻（epoch ms）
      *
      * 两种脏数据都按「需要检查」处理，否则会把自动检查永久静默掉：
-     * 0/负数（老版本未写入）与**未来时间**（系统时钟回拨或被外部改写）。
+     * 0/负数（老版本未写入）与未来时间（系统时钟回拨或被外部改写）。
      */
     internal fun shouldAutoCheck(lastCheckAt: Long, now: Long): Boolean {
         if (lastCheckAt <= 0L) return true
@@ -126,7 +126,7 @@ object UpdateChecker {
                 Diagnostics.w(TAG, "HTTP ${conn.responseCode}: $url")
                 null
             } else if (!conn.url.protocol.equals("https", ignoreCase = true)) {
-                // HttpURLConnection 默认跟随**跨协议**重定向，https 起点也可能被
+                // HttpURLConnection 默认跟随跨协议重定向，https 起点也可能被
                 // 带到 http 终点（内容可被中间人改写）。更新检查只认 https 终态。
                 Diagnostics.w(TAG, "重定向后非 HTTPS，拒绝: ${conn.url}")
                 null
@@ -141,12 +141,12 @@ object UpdateChecker {
     }
 
     /**
-     * 带上限的读取（**纯逻辑**，便于单测）。
+     * 带上限的读取（纯逻辑，便于单测）。
      *
      * 超出 [MAX_BODY_CHARS] 的字符直接丢弃、停止读取：更新检查只需要 tag 名，
      * 而 tag 一定出现在页面前部，截断不影响判定。
      *
-     * 注意截断按**行**判定（整行超限就整行不要）：真遇到「单行就超过 1MB」的响应会返回空串，
+     * 注意截断按行判定（整行超限就整行不要）：真遇到「单行就超过 1MB」的响应会返回空串，
      * 结果是走「两个源都拉不到」分支报网络异常（不会误报成「已最新」），可以接受。
      */
     internal fun readCapped(reader: java.io.BufferedReader, maxChars: Int = MAX_BODY_CHARS): String {

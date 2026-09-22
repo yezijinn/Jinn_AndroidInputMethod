@@ -6,29 +6,29 @@ import kotlin.math.roundToInt
  * 「半透明键盘」的定义域与换算（纯 JVM 逻辑，见 KeyTransparencyTest）。
  *
  * 一个旋钮（[Prefs.keyTransparencyPercent]）控制整块键盘四层面板的透明度：
- *  - **背板**（键盘底色 `kb_bg`、面板底 `app_bg`）：[plateAlpha] —— 面上没有文字，可以做得最透；
- *  - **内容面**（键面、按钮，以及**有内容时的候选栏底**）：[surfaceAlpha] —— 必须比背板实，
+ *  - 背板（键盘底色 `kb_bg`、面板底 `app_bg`）：[plateAlpha]，面上没有文字，可以做得最透；
+ *  - 内容面（键面、按钮，以及有内容时的候选栏底）：[surfaceAlpha]，必须比背板实，
  *    最透时仍保留 [MIN_SURFACE_ALPHA] 的不透明度，否则文字会糊在应用内容上。
- *    候选栏底按**是否有内容**动态选档（有拼音/候选/预测 → surface；空白铺底 → plate），
- *    见 `PinyinKeyboardView.updateCandidateBarBackground` —— **别改回固定 plate**。
+ *    候选栏底按是否有内容动态选档（有拼音/候选/预测 → surface；空白铺底 → plate），
+ *    见 `PinyinKeyboardView.updateCandidateBarBackground`，别改回固定 plate。
  *
  * 0%（默认）= 完全不透明，与历史观感逐像素一致；[MAX_PERCENT] = 背板可全透（[MIN_PLATE_ALPHA] = 0），
- * 内容面（含有内容时的候选栏底）仍保留 [MIN_SURFACE_ALPHA] —— 再透文字就糊在应用内容上了。
+ * 内容面（含有内容时的候选栏底）仍保留 [MIN_SURFACE_ALPHA]，再透文字就糊在应用内容上了。
  *
- * 透明度只淡「面」不淡文字 —— 整键 `View.setAlpha` 会把文字一起变淡，
- * 因此**本功能的绘制路径**一律走 [withAlpha] 给面颜色套 alpha，文字/提示色原样保留
- * （例外：符号层禁用态的大写键用整键 alpha 置灰 —— 那是与透明度无关的既有视觉，
+ * 透明度只淡「面」不淡文字，整键 `View.setAlpha` 会把文字一起变淡，
+ * 因此本功能的绘制路径一律走 [withAlpha] 给面颜色套 alpha，文字/提示色原样保留
+ * （例外：符号层禁用态的大写键用整键 alpha 置灰，那是与透明度无关的既有视觉，
  * 见 `PinyinKeyboardView` 符号层分支）。
  *
  * 注：只做「透出」，不做背景模糊（跨窗口模糊要求 API 31+ 且系统开关允许，
- * 本机 Android 10 不支持）—— 这是与「毛玻璃」在观感上的差别。
+ * 本机 Android 10 不支持）， 这是与「毛玻璃」在观感上的差别。
  */
 object KeyTransparency {
 
     /** 下界：0% = 完全不透明 */
     const val MIN_PERCENT = 0
 
-    /** 上界：100% —— 背板全透，键面/候选栏在最透时仍保留 [MIN_SURFACE_ALPHA]（可读性下限） */
+    /** 上界：100%，背板全透，键面/候选栏在最透时仍保留 [MIN_SURFACE_ALPHA]（可读性下限） */
     const val MAX_PERCENT = 100
 
     /** 默认值：不透明（不改动历史观感） */

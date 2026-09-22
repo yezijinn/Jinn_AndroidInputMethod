@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
  * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
- * **窗口内会把「最后一次」排成尾沿任务补写**（只做前沿丢弃的话，进程被 LMK 直杀时
+ * 窗口内会把「最后一次」排成尾沿任务补写（只做前沿丢弃的话，进程被 LMK 直杀时
  * 最近几次学习会丢，而 `flush` 只在服务收尾时才跑）；原子落盘（临时文件 + 改名）；
  * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
  */
@@ -68,7 +68,7 @@ internal object UserFrequency {
     // ── 生命周期 ────────────────────────────────────────────────────────────
 
     /**
-     * 启动加载（**必须在后台线程、且显式降优先级**）：读文件 + 按天衰减。
+     * 启动加载（必须在后台线程、且显式降优先级）：读文件 + 按天衰减。
      * @param enabled 用户设置里的开关；关掉时不加载也不学习
      */
     fun load(context: Context, enabled: Boolean) {
@@ -97,7 +97,7 @@ internal object UserFrequency {
 
     /**
      * 实时切换开关（设置页用）：只改标志位，不读盘。
-     * 关闭后不再学习、也不参与排序——既有记录留在文件里。
+     * 关闭后不再学习、也不参与排序，既有记录留在文件里。
      *
      * 打开时若内存里还是空的（启动时学习为关，[load] 提前返回、历史没载入），
      * 会异步补载一次；否则用户开了开关也要等进程重启才生效。
@@ -165,7 +165,7 @@ internal object UserFrequency {
     fun remember(word: String) {
         if (!enabled || word.isEmpty()) return
         // 行格式是 `词<TAB>权重<TAB>天`，含制表符/换行的词无法表示：直接不学（否则会写坏一行，
-        // 下次 parse 会整行跳过 —— 静默丢失且难以察觉）。正常候选来自词库，不会命中这条。
+        // 下次 parse 会整行跳过，静默丢失且难以察觉）。正常候选来自词库，不会命中这条。
         if (word.indexOf('\t') >= 0 || word.indexOf('\n') >= 0 || word.indexOf('\r') >= 0) {
             return
         }
@@ -193,7 +193,7 @@ internal object UserFrequency {
     }
 
     /**
-     * 防抖落盘：距上次写盘不足窗口时**不丢**，改为排一个尾沿补写，
+     * 防抖落盘：距上次写盘不足窗口时不丢，改为排一个尾沿补写，
      * 窗口到点后写一次（连续选择只在最后写一次，且进程被直杀时也只丢窗口内这一小段）。
      */
     private fun scheduleSave() {
@@ -216,9 +216,9 @@ internal object UserFrequency {
     }
 
     /**
-     * 距下次允许落盘还需等多少毫秒（**纯函数**，便于单测）；0 表示当前即可写。
+     * 距下次允许落盘还需等多少毫秒（纯函数，便于单测）；0 表示当前即可写。
      *
-     * 上限钳到 [window]：系统时钟回拨会让 `lastSaveAt` 落在「未来」，差值可达小时级 ——
+     * 上限钳到 [window]：系统时钟回拨会让 `lastSaveAt` 落在「未来」，差值可达小时级 ，
      * 不钳的话等于这段时间内完全不再落盘。
      */
     internal fun saveDelayMs(now: Long, lastSaveAt: Long, window: Long): Long =
@@ -227,14 +227,14 @@ internal object UserFrequency {
     /**
      * 真正落盘：走 BackgroundIo。
      *
-     * **渲染与写盘放在同一把锁内**：若先渲染再抢锁，会出现
+     * 渲染与写盘放在同一把锁内：若先渲染再抢锁，会出现
      * 「尾沿任务渲染旧快照 → `flush` 渲染新快照并写入 → 尾沿任务后拿到锁再写旧快照」
      * 的交替，把较新的内容覆盖成旧的。锁内渲染则保证最后落盘的一定是最新快照。
      */
     private fun saveNow(f: File) {
         BackgroundIo.run {
             synchronized(saveLock) {
-                // 陈旧任务校验：任务里捕获的是**排程当时**的 File。若此后目标文件已变
+                // 陈旧任务校验：任务里捕获的是排程当时的 File。若此后目标文件已变
                 // （测试的 setFileForTest、未来可能的重新 load），旧任务既不该写到旧路径，
                 // 更不该把新文件的 `dirty` 清掉（那会让新内容白白跳过一轮落盘）。
                 if (file !== f) return@synchronized
@@ -251,8 +251,8 @@ internal object UserFrequency {
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
         // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。渲染同样放在锁内（见 [saveNow]）。
         //
-        // ⚠ 只有写盘**成功**才清 dirty：若先清再写，写失败（磁盘满 / IO 错误）后这次学习
-        // 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），等于静默丢失——
+        // 只有写盘成功才清 dirty：若先清再写，写失败（磁盘满 / IO 错误）后这次学习
+        // 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），等于静默丢失，
         // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
         synchronized(saveLock) {
             if (writeAtomically(f, render())) dirty = false
@@ -262,7 +262,7 @@ internal object UserFrequency {
     // ── 排序 ────────────────────────────────────────────────────────────────
 
     /**
-     * 按用户权重**稳定**重排候选：权重降序，未学过的按原顺序排在后面。
+     * 按用户权重稳定重排候选：权重降序，未学过的按原顺序排在后面。
      *
      * 未学习时（[entries] 为空）直接返回原数组，零开销、零行为变化。
      */
@@ -277,7 +277,7 @@ internal object UserFrequency {
     // ── 序列化（纯函数，便于单测）──────────────────────────────────────────
 
     /**
-     * 把内存态渲染成文件文本（**纯函数**）。权重降序，便于人肉排查。
+     * 把内存态渲染成文件文本（纯函数）。权重降序，便于人肉排查。
      */
     internal fun render(): String {
         val sb = StringBuilder(entries.size * 24 + 32)
@@ -293,7 +293,7 @@ internal object UserFrequency {
     }
 
     /**
-     * 解析文件文本并**按天衰减**（**纯函数**，便于单测）。
+     * 解析文件文本并按天衰减（纯函数，便于单测）。
      * 容错：跳过表头/空行/字段数不对/权重非法/当天权重低于 [MIN_WEIGHT] 的行。
      */
     internal fun parse(text: String, nowDay: Int): Map<String, Pair<Double, Int>> {
@@ -306,8 +306,8 @@ internal object UserFrequency {
             val word = parts[0]
             val weight = parts[1].toDoubleOrNull() ?: continue
             val day = parts[2].toIntOrNull() ?: continue
-            // 非有限值必须挡掉：`"NaN".toDoubleOrNull()` 与 `"Infinity".toDoubleOrNull()` 都**不是**
-            // null（Kotlin 的筛选用正则显式放行了这两个字面量），而 NaN 与任何数比较恒为 false——
+            // 非有限值必须挡掉：`"NaN".toDoubleOrNull()` 与 `"Infinity".toDoubleOrNull()` 都不是
+            // null（Kotlin 的筛选用正则显式放行了这两个字面量），而 NaN 与任何数比较恒为 false，
             // 下面的 `weight <= 0.0` 与 `decayed < MIN_WEIGHT` 两条判据会同时失效。脏值进到
             // [rank] 后更麻烦：`Double.compare` 把 NaN 当最大值，这条权重坏掉的词会永久霸占该
             // 拼音的首候选（空格取首候选就等于一直上屏它），并被 [render] 原样写回文件、无法自愈。

@@ -128,7 +128,7 @@ class RecentChangesParityTest {
         for (size in sizes) {
             val data = ByteArray(size).also { rnd.nextBytes(it) }
             val compressed = xz(data)
-            // 生产调用是 XZInputStream(raw).use { readWithYields(it) } —— XZ 包装在**外面**
+            // 生产调用是 XZInputStream(raw).use { readWithYields(it) }，XZ 包装在外面
             val viaChunks = XZInputStream(ByteArrayInputStream(compressed)).use {
                 PinyinEngine.readWithYields(it)
             }
@@ -137,7 +137,7 @@ class RecentChangesParityTest {
             assertTrue("内容不一致 size=$size", viaReadBytes.contentEquals(viaChunks))
         }
         // 真实索引字节也过一遍分片读取器（约 14.7MB，跨很多个 256KB 分片）。
-        // 注意 indexBytes() 返回的是**已解压**的索引，这里直接比"分片读出来的 == 原始字节"。
+        // 注意 indexBytes() 返回的是已解压的索引，这里直接比"分片读出来的 == 原始字节"。
         val real = indexBytes()
         val realChunks = PinyinEngine.readWithYields(ByteArrayInputStream(real))
         assertEquals("真实索引长度不一致", real.size, realChunks.size)

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
  * 职责：使用 root 权限检查 JinnIme 私有数据目录的安全状态，确保剪贴板历史
  * 不被其他 APP 通过文件系统漏洞（错误权限/symlink/外部存储泄露等）读取。
  *
- * **不干预 Android System Clipboard**——网盘、购物、分享类 APP 正常读取
+ * 不干预 Android System Clipboard，网盘、购物、分享类 APP 正常读取
  * 系统剪贴板口令不受影响。
  *
  * 安全边界：
@@ -77,10 +77,10 @@ object ClipboardFirewall {
      * 执行 su 命令并取回 stdout；失败或超时返回 null。
      *
      * 必要防护（原实现缺了前两项）：
-     *  - **两路都要后台排空**：只排 stderr、把 stdout 放在当前线程读，一旦 stdout 管道写满
-     *    子进程就会阻塞，而父进程正等着它退出 —— 直接死锁（`find` 这类大量输出的命令必踩）；
-     *  - **先 `waitFor(超时)` 再取文本**：读流若放在 `waitFor` 之前，命令不退出就会永久阻塞，
-     *    超时分支永远不可达 —— 超时形同虚设（原实现即如此，见 `isRootAvailable` 的正确写法）；
+     *  - 两路都要后台排空：只排 stderr、把 stdout 放在当前线程读，一旦 stdout 管道写满
+     *    子进程就会阻塞，而父进程正等着它退出，直接死锁（`find` 这类大量输出的命令必踩）；
+     *  - 先 `waitFor(超时)` 再取文本：读流若放在 `waitFor` 之前，命令不退出就会永久阻塞，
+     *    超时分支永远不可达，超时形同虚设（原实现即如此，见 `isRootAvailable` 的正确写法）；
      *  - 超时销毁进程，避免留下挂死的 su。
      */
     private fun su(cmd: String): String? = runCatching {
@@ -157,9 +157,9 @@ object ClipboardFirewall {
     }
 
     /**
-     * 真查 Backup 配置：解析**当前系统实际生效**的规则文件，确认剪贴板数据库被排除。
+     * 真查 Backup 配置：解析当前系统实际生效的规则文件，确认剪贴板数据库被排除。
      *
-     * 原实现硬编码返回 ✓ —— 无论规则文件怎么改都显示"安全"，其实是个假检查。
+     * 原实现硬编码返回 ✓，无论规则文件怎么改都显示"安全"，其实是个假检查。
      * 这里改为运行时读取规则文件；且必须按版本挑文件：
      *  - API ≥ 31 起 `fullBackupContent` 被 `dataExtractionRules` 取代，
      *    再查 backup_rules.xml 等于查一个不生效的文件，会给出错误的安全保证；
@@ -169,7 +169,7 @@ object ClipboardFirewall {
      * 除了库本体与用户词频，还必须覆盖 SQLite 的 `-journal/-wal/-shm` 三个侧车文件
      * （WAL 模式下最近的写入就在 `-wal` 里，只排除主库等于漏掉最新那批记录）。
      *
-     * 分段文件（`cloud-backup` / `device-transfer`）要求**每一段**都排除齐：
+     * 分段文件（`cloud-backup` / `device-transfer`）要求每一段都排除齐：
      * 只查「有没有出现过这条 path」会让「仅在其中一段排除」也算通过。
      */
     private fun checkBackupConfig(context: Context): Pair<String, String> {
@@ -187,7 +187,7 @@ object ClipboardFirewall {
     }
 
     /**
-     * 返回规则文件里**没被排除**的必需路径（解析失败时视为全部缺失）。
+     * 返回规则文件里没被排除的必需路径（解析失败时视为全部缺失）。
      *
      * `backup_rules.xml` 的 `exclude` 直接挂在根下，退化成单一空名段；
      * `data_extraction_rules.xml` 有两段，两段都得齐备才算排除成功。
@@ -210,7 +210,7 @@ object ClipboardFirewall {
             }
             parser.next()
         }
-        // 段齐备性先判：按段写的规则文件（data_extraction_rules.xml）**两段都必须存在** ——
+        // 段齐备性先判：按段写的规则文件（data_extraction_rules.xml）两段都必须存在 ，
         // 整段被删在 Android 里的语义是「该模式不做任何排除」，而只比对已存在的段会照样给 ✓
         // （与类注释「每一段都排除齐」相反）。backup_rules.xml 是扁平结构（exclude 直接挂根下），
         // 这时退化成单一空名段；bySection 整个为空（一条 exclude 都没有）也走这条分支。
