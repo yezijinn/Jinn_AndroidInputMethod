@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 键盘外观页专属背景：七彩极光渐变。
+     **固定不随主题变化** —— 颜色全部写死，且刻意不在 values-night 放同名资源。
+     深靛蓝夜空打底，叠 4 条半透明极光带（青绿 / 品红 / 金 / 紫）斜向扫过，
+     合起来是紫-蓝-青-绿-金-橙-品红七色的极光过渡。
+     直接压在该背景上的文字（页标题 / 说明）在布局里改用固定浅色，见 activity_key_appearance.xml。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 夜空底：靛蓝 → 紫 → 墨蓝（斜向） -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:centerColor="#2B1A63"
+                android:endColor="#0A0E2A"
+                android:startColor="#161240" />
+        </shape>
+    </item>
+
+    <!-- 极光带 1：青色 → 翠绿 → 青色 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:centerColor="#8A2ED8A8"
+                android:endColor="#0038D5E8"
+                android:startColor="#0022D3EE" />
+        </shape>
+    </item>
+
+    <!-- 极光带 2：品红 → 橙，反向斜扫 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="45"
+                android:centerColor="#8CF472B6"
+                android:endColor="#00FB8C3C"
+                android:startColor="#00F472B6" />
+        </shape>
+    </item>
+
+    <!-- 极光带 3：金色辉光，自上而下淡出 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="#1FFBBF24"
+                android:endColor="#00FBBF24"
+                android:startColor="#66FBBF24" />
+        </shape>
+    </item>
+
+    <!-- 极光带 4：紫色辉光，自左向右 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:centerColor="#6E8B5CF6"
+                android:endColor="#008B5CF6"
+                android:startColor="#008B5CF6" />
+        </shape>
+    </item>
+
+    <!-- 顶部压暗：极光本身是彩色的，而顶部要放固定浅色的标题/说明 —— 自上而下加一层夜色薄雾
+         （70% → 30% → 全透），保证文字对比度，同时不遮挡下方的七彩过渡 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:centerColor="#4D060A1E"
+                android:endColor="#00060A1E"
+                android:startColor="#C4060A1E" />
+        </shape>
+    </item>
+</layer-list>

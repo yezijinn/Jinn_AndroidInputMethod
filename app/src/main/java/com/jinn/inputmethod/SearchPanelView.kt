@@ -85,7 +85,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(10), dp(16), dp(10))
-                    background = android.graphics.drawable.ColorDrawable(context.getColor(R.color.card_bg))
                 }
                 val row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 val content = TextView(context).apply {
@@ -106,6 +105,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
+            // 条目卡按**当前**透明度档设色（ListView 复用 convertView，不每次重设会混新旧两档）
+            root.background = android.graphics.drawable.ColorDrawable(
+                KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
+            )
             holder.itemId = item.id
             holder.content.text = item.content
             holder.meta.text = buildString {
@@ -119,6 +122,20 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private class Holder(val content: TextView, val meta: TextView) {
         var itemId: Long = -1L
+    }
+
+    /** 半透明键盘：本面板内容面（条目卡）的当前档位（1f = 不透明） */
+    private var surfaceAlpha = 1f
+
+    /**
+     * 半透明键盘：本面板没有 drawable 键面按钮（根/列表 `app_bg`、搜索框 `surface_hi` 由键盘侧的
+     * 纯色面扫描统一套档）；条目卡在 [adapter] 的 getView 里按档设色，故这里只记录档位并通知
+     * 列表重建，与 [ClipboardPanelView.applySurfaceAlpha] 同款。
+     */
+    fun applySurfaceAlpha(alpha: Float) {
+        if (alpha == surfaceAlpha) return
+        surfaceAlpha = alpha
+        adapter.notifyDataSetChanged()
     }
 
     init {
