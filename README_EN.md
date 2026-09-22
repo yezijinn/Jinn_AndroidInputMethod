@@ -2,55 +2,55 @@
 
 <div align="center">
 
-A lightweight Android pinyin input method (IME): **QWERTY full pinyin / Shuangpin (7 schemes)**,
-**clipboard history**, and **optional dictionaries**.
+A lightweight Android pinyin input method (IME): QWERTY full pinyin / Shuangpin (7 schemes),
+clipboard history, and optional dictionaries.
 
-Everything runs on-device — **no server required**.
+Everything runs on-device, no server required.
 
-**English** ｜ [中文](README.md)
+English ｜ [中文](README.md)
 
 </div>
 
 > ### About the optional voice dictation
 >
-> Voice dictation is **optional** and does not work out of the box: recognition runs
-> **entirely on a server**, and no model is bundled in the Android app. You must deploy
+> Voice dictation is optional and does not work out of the box: recognition runs entirely
+> on a server, and no model is bundled in the Android app. You must deploy
 > [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (a Docker image)
-> on a **home NAS of your own**, and the app streams audio to it over WebSocket.
+> on a home NAS of your own, and the app streams audio to it over WebSocket.
 >
-> **Without a reachable, self-hosted NAS server, the voice feature cannot be used at all.**
+> Without a reachable, self-hosted NAS server, the voice feature cannot be used at all.
 > It targets users who already run that server, not general users.
 >
-> **The pinyin keyboard, clipboard, and dictionaries all run fully on-device and need no server.**
+> The pinyin keyboard, clipboard, and dictionaries all run fully on-device and need no server.
 
 ## Features
 
-- **Pinyin keyboard (QWERTY)**: full pinyin, Shuangpin (**7 schemes**: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints. Pick the input scheme in Settings (「拼音输入方案」: full pinyin + 7 Shuangpin schemes; applies globally).
-  - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
-  - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
-    the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
-  - One-tap CN/EN switch; **key corner radius, gap and keyboard transparency** live in Settings
-    →「键盘按钮调整」(radius 0~24dp, gap 0~8dp, transparency 0~100%) — applied instantly on release.
+- Pinyin keyboard (QWERTY): full pinyin, Shuangpin (7 schemes: Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) and English; key faces show the final/initial hints. Pick the input scheme in Settings (「拼音输入方案」: full pinyin + 7 Shuangpin schemes; applies globally).
+  - Incomplete-pinyin completion: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
+  - Smart prediction (off by default, switchable in Settings); the candidate bar always shows
+    the keys you actually pressed, so a Shuangpin conversion that swallows letters never looks frozen.
+  - One-tap CN/EN switch; key corner radius, gap and keyboard transparency live in Settings
+    →「键盘按钮调整」(radius 0~24dp, gap 0~8dp, transparency 0~100%), applied instantly on release.
   - Backspace gestures: tap to delete one character, hold to keep deleting (once the pinyin string is
     empty it keeps deleting committed text); double-tap then hold clears committed text too.
-  - The **✕** at the right end of the candidate bar clears the current pinyin string and candidates
+  - The ✕ at the right end of the candidate bar clears the current pinyin string and candidates
     (only shown while candidates/predictions are present); the bar then returns to the 6-button panel.
-  - **Dictionary-constrained segmentation**: `xuni` correctly segments as `xu + ni` (虚拟)
+  - Dictionary-constrained segmentation: `xuni` correctly segments as `xu + ni` (虚拟)
     rather than `xun + i` (寻).
-- **Clipboard history** (embedded panel): copies are auto-saved, **AES-256-GCM encrypted into a
-  private local DB that only this IME can read**; categories All / URL / Number / Favorites,
+- Clipboard history (embedded panel): copies are auto-saved, AES-256-GCM encrypted into a
+  private local DB that only this IME can read; categories All / URL / Number / Favorites,
   dynamic numbering, tap-to-paste, long-press to favorite or delete. Clearing asks for confirmation
   and keeps favorites.
-  - **Top search panel**: above the candidate bar, filters history as you type; results scroll and
+  - Top search panel: above the candidate bar, filters history as you type; results scroll and
     paste on tap; exiting restores the 26-key layout.
-- **Optional dictionaries** (Settings →「补充短语词库」): the long-word pack (~185K entries) and
-  Tencent lexicon (~955K entries) are downloadable on demand; loaded **only when idle**, so typing is
+- Optional dictionaries (Settings →「补充短语词库」): the long-word pack (~185K entries) and
+  Tencent lexicon (~955K entries) are downloadable on demand; loaded only when idle, so typing is
   never blocked; adding or removing a pack auto-restarts the IME to apply.
-- **Zero bundled models**: no speech models shipped; APK is about **5.0MB**, depending only on
+- No bundled models: APK is about 5.0MB, depending only on
   `core-ktx`, `activity-ktx`, `okhttp3`, and `xz`.
-- **(Optional) Voice dictation**: press-and-hold or tap the mic to speak; recognized text streams
-  back and is committed. **Requires a self-hosted NAS server — see the note above.**
-  - Hold the mic to talk, release to recognize; swipe **up** while holding to cancel.
+- (Optional) Voice dictation: press-and-hold or tap the mic to speak; recognized text streams
+  back and is committed. Requires a self-hosted NAS server, see the note above.
+  - Hold the mic to talk, release to recognize; swipe up while holding to cancel.
   - Tap once for continuous recording, tap again to stop (auto-stop after 3 min).
   - Local VAD silence detection trims idle audio and reduces useless uploads.
 
@@ -83,17 +83,17 @@ optional side path that requires an external server:
 | `SearchPanelView` | Top search panel: results + input (exit via the candidate-bar button or Enter / hide the keyboard) |
 | `ClipboardDb` | Clipboard history SQLite (AES-256-GCM) |
 | `DictManagerActivity` | Optional-dictionary page: list + download / delete |
-| `KeyAppearanceActivity` | Keyboard appearance page: corner-radius / gap sliders |
+| `KeyAppearanceActivity` | Keyboard appearance page: corner-radius / gap / transparency sliders |
 | `SymbolOrderActivity` | Symbol-group order page: ↑↓ reorder / reset |
 | `FavoriteSymbolsActivity` | "Favorites" symbol editor: add / remove per page |
-| `AsrClient` ⚠️ | WebSocket client: streaming upload, exponential-backoff reconnect (**voice path only**) |
+| `AsrClient` | WebSocket client: streaming upload, exponential-backoff reconnect (voice path only) |
 | `Diagnostics` | Diagnostic logs, crash capture, trace ID |
 
 ## Voice Server (optional, self-hosted)
 
 > Skip this section if you are not using voice dictation.
 
-The server is CapsWriter Offline (Docker) deployed on a **home NAS**, port `6016`.
+The server is CapsWriter Offline (Docker) deployed on a home NAS, port `6016`.
 
 | Item | Value |
 | --- | --- |
@@ -105,7 +105,7 @@ The server is CapsWriter Offline (Docker) deployed on a **home NAS**, port `6016
 
 The protocol strictly follows the server's `core/protocol.py`: one dictation consists of several
 `is_final=false` audio frames plus a trailing `is_final=true` frame with `data=""`.
-The server returns **cumulative text**, which the client overwrite-displays and never concatenates itself.
+The server returns cumulative text, which the client overwrite-displays and never concatenates itself.
 
 ## Build
 
@@ -127,20 +127,20 @@ python build_apk.py --clean      # clean build
 ```
 
 ### Signing
-The open-source repo does **not** ship signing keys or passwords, and keys must **not** be placed
+The open-source repo does not ship signing keys or passwords, and keys must not be placed
 inside the repository directory (archiving or copying the project would leak them). To sign locally:
 
-1. Create the keystore **outside** the repo, e.g. `<credentials>/com.jinn.inputmethod/release.jks`:
+1. Create the keystore outside the repo, e.g. `<credentials>/com.jinn.inputmethod/release.jks`:
    `keytool -genkeypair -keystore <credentials>/com.jinn.inputmethod/release.jks -alias jinn ...`
 2. Point the build at it via environment variables (the `build_apk.py` path):
    ```bash
    JINN_KEYSTORE_ROOT='<credentials>' python build_apk.py
    ```
    or pass `JINN_KEYSTORE_FILE` / `JINN_KEYSTORE_PASSWORD` / `JINN_KEY_ALIAS` / `JINN_KEY_PASSWORD` to Gradle.
-3. Without any of the above, `./gradlew assembleRelease` produces an **unsigned** APK
+3. Without any of the above, `./gradlew assembleRelease` produces an unsigned APK
    (keyless builds stay supported).
 
-> ⚠️ When using `build_apk.py`, the signing pipeline order **must not be changed**:
+> When using `build_apk.py`, the signing pipeline order must not be changed:
 > build → strip META-INF → `zipalign -p 4` → `apksigner sign` → verify.
 > apksigner does not align the APK; reversing the order leaves it unaligned, forcing the
 > device to decompress resources on read.
@@ -148,14 +148,14 @@ inside the repository directory (archiving or copying the project would leak the
 ## Dictionaries
 
 Built-in assets (`app/src/main/assets/`):
-- `pinyin_index.bin.xz`: the base pack as a **binary index**, about **600K entries** (phrases up
+- `pinyin_index.bin.xz`: the base pack as a binary index, about 600K entries (phrases up
   to 4 chars, incl. 4-char idioms); decompressed, then looked up by byte-wise binary search with
-  on-demand decoding — no line parsing, no hash table
+  on-demand decoding, no line parsing, no hash table
 - `hot_phrases.txt.xz`: a high-frequency subset (40K words, ~220KB). It loads first so the
   keyboard is usable as soon as it appears; the full index follows in the background
-- `pinyin_chars.txt`: **422 syllables** (syllable → char)
+- `pinyin_chars.txt`: 422 syllables (syllable → char)
 - `pinyin_syllables.txt`: full valid-syllable set
-- **Optional dictionaries are not bundled**: downloaded on demand from the "Optional dictionaries"
+- Optional dictionaries are not bundled: downloaded on demand from the "Optional dictionaries"
   page into `filesDir/dicts/`, scanned automatically at engine startup
 
 Dictionary builder tools live in `tools/dict_builder/` (Rime → project format). The THUOCL
@@ -164,9 +164,9 @@ annotation error rate is too high.
 
 ## License
 
-This project is licensed under **GNU GPL v3.0** (see [LICENSE](LICENSE)).
+This project is licensed under GNU GPL v3.0 (see [LICENSE](LICENSE)).
 
-> ⚠️ The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang); under GPL copyleft
+>  The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang); under GPL copyleft
 > the project is distributed as GPL-3.0.
 
 ## Credits
