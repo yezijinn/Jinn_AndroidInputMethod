@@ -20,9 +20,9 @@ import android.widget.Toast
  *
  * 交互（用户确认的方案）：
  * - 按页分节网格展示，每个符号右上角小 ✕ 移除（后续符号前移补位、删空的页自动收起）；
- * - 底部「＋ 添加符号」：**仅输入框**（自由键入/粘贴），末页满 26 自动开新页；
- * - **禁止重复**：添加已存在的符号提示「已存在」；
- * - 改动即时落盘（[Prefs.favoriteSymbols]）；[onPause] 时**仅在真正改过**的情况下通知
+ * - 底部「＋ 添加符号」：仅输入框（自由键入/粘贴），末页满 26 自动开新页；
+ * - 禁止重复：添加已存在的符号提示「已存在」；
+ * - 改动即时落盘（[Prefs.favoriteSymbols]）；[onPause] 时仅在真正改过的情况下通知
  *   IME 重建键盘视图（进来看看就退出不触发整块重建）。
  */
 class FavoriteSymbolsActivity : Activity() {
@@ -119,7 +119,7 @@ class FavoriteSymbolsActivity : Activity() {
                 setOnClickListener {
                     val pages = currentPages()
                     // 扁平下标 = 「前面各页实际长度之和」+ 页内偏移：不依赖「非末页恒满 26 键」的
-                    // 隐式不变量 —— 数据一旦被外部破坏（非末页不满 26）也能删到正确的符号
+                    // 隐式不变量，数据一旦被外部破坏（非末页不满 26）也能删到正确的符号
                     val flatIndex = pages.take(pageIndex).sumOf { it.size } + i
                     save(FavoriteSymbols.removeAt(pages, flatIndex))
                     renderPages()

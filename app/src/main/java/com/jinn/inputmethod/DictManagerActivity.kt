@@ -23,10 +23,10 @@ import java.util.Locale
  *   主文字 #ECEEF2 ｜ 次文字 #9CA3AF ｜ 强调 #4C8DFF ｜ 危险 #E5484D
  *
  * 下载落地到 `filesDir/dicts/<fileName>`（[PinyinEngine.OPT_DICT_DIR]），
- * 引擎启动时自动扫描加载。加载是延迟的——基础词库先就绪，可选包在后台补齐，
- * 所以页面标注的是「**开机后首次输入**候选就绪需等待约 N 秒」，而不是「启动耗时」。
+ * 引擎启动时自动扫描加载。加载是延迟的，基础词库先就绪，可选包在后台补齐，
+ * 所以页面标注的是「开机后首次输入候选就绪需等待约 N 秒」，而不是「启动耗时」。
  *
- * 说明文案按句拆成多行渲染（[OptionalDict.descLines]），**一行就是一句话**：
+ * 说明文案按句拆成多行渲染（[OptionalDict.descLines]），一行就是一句话：
  * 交给系统自动折行会出现断句不良的折行，读起来别扭，所以主动分行。
  */
 class DictManagerActivity : Activity() {
@@ -43,7 +43,7 @@ class DictManagerActivity : Activity() {
      * 正在下载的文件名，用于禁用按钮与显示进度（null 表示空闲）。
      *
      * 存在 companion 里：Activity 会因旋转/重建换成新实例，实例字段随即丢失，
-     * 新页面的「下载」按钮恢复可点 —— 再点一次就是第二个线程写同一个 `.tmp`，
+     * 新页面的「下载」按钮恢复可点，再点一次就是第二个线程写同一个 `.tmp`，
      * 字节交错后被 renameTo 成「有效」词库。跨线程写，故 @Volatile。
      */
     private var downloading: String?
@@ -218,7 +218,7 @@ class DictManagerActivity : Activity() {
     }
 
     /**
-     * 单行文字。**每句话单独一个 TextView** —— 从根上避免长句被自动折行，
+     * 单行文字。每句话单独一个 TextView，从根上避免长句被自动折行，
      * 保证页面上「一行就是一句话」。
      */
     private fun line(
@@ -295,8 +295,8 @@ class DictManagerActivity : Activity() {
                 else getString(R.string.dict_download_failed, lastError)
                 setStatus(msg)
                 // 失败必须用 Toast 再提示一次：状态行是 Activity 的 View，
-                // 若下载期间页面发生过重建，runOnUiThread 里拿到的仍是**旧实例**的
-                // textStatus —— 提示写进了已不在屏幕上的 View，用户什么也看不到
+                // 若下载期间页面发生过重建，runOnUiThread 里拿到的仍是旧实例的
+                // textStatus，提示写进了已不在屏幕上的 View，用户什么也看不到
                 // （实测：断网点下载后页面毫无反应，只会以为按钮坏了）。
                 // Toast 挂在系统窗口上，不受 Activity 重建影响。
                 if (!ok) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -307,13 +307,13 @@ class DictManagerActivity : Activity() {
     }
 
     /**
-     * 下载到临时文件、校验 SHA-256 后再改名 —— 避免中途失败留下半个文件被引擎当作有效词库加载
+     * 下载到临时文件、校验 SHA-256 后再改名，避免中途失败留下半个文件被引擎当作有效词库加载
      * （引擎只认 `.xz` 结尾，`X.xz.tmp` 不会被扫到，但失败时仍会残留占空间，所以显式清理）。
      * 返回写入字节数。
      *
-     * **摘要校验是收下的唯一判据**：词库内容会直接变成候选词上屏到任意输入框，
+     * 摘要校验是收下的唯一判据：词库内容会直接变成候选词上屏到任意输入框，
      * 只要有一处环节能改字节（被替换的 Release 附件、被劫持的重定向、传输截断），
-     * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时**绝不改名**，
+     * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时绝不改名，
      * 旧版本（若存在）保持不变，临时文件立即删除。
      */
     private fun fetchToFile(url: String, fileName: String, checksum: String): Long {
@@ -338,7 +338,7 @@ class DictManagerActivity : Activity() {
                     tmp.outputStream().use { out -> copyCapped(input, out) }
                 }
             }
-            // 校验必须在改名**之前**：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。
+            // 校验必须在改名之前：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。
             val actual = OptionalDicts.sha256Of(tmp)
             if (!OptionalDicts.matchesChecksum(actual, checksum)) {
                 error("文件校验失败（期望 $checksum，实际 $actual），已丢弃")
@@ -379,7 +379,7 @@ class DictManagerActivity : Activity() {
      * 删除已装词库。
      *
      * 下载进行中一律拒绝：下载线程是「写 `.xz.tmp` → 改名成 `.xz`」，
-     * 与删除并发时会出现「用户点了删除、删除成功后下载又把包改回来」——
+     * 与删除并发时会出现「用户点了删除、删除成功后下载又把包改回来」，
      * 界面上表现为删不掉，而用户以为已经卸载的那个包仍会被引擎加载。
      */
     private fun remove(dict: OptionalDict) {

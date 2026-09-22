@@ -134,10 +134,10 @@ class UserFrequencyTest {
     /**
      * 非有限权重必须当脏数据丢掉。
      *
-     * 回归：`"NaN".toDoubleOrNull()` / `"Infinity".toDoubleOrNull()` 都**不是** null
+     * 回归：`"NaN".toDoubleOrNull()` / `"Infinity".toDoubleOrNull()` 都不是 null
      * （Kotlin 的取值筛选用正则显式放行这两个字面量），而 NaN 与任何数比较恒为 false，
      * 于是 `weight <= 0.0` 与 `decayed < MIN_WEIGHT` 两条判据同时失效、脏值一路进到
-     * [UserFrequency.rank]；`Double.compare` 又把 NaN 视为最大值 —— 这条坏词会永久
+     * [UserFrequency.rank]；`Double.compare` 又把 NaN 视为最大值，这条坏词会永久
      * 霸占该拼音的首候选（空格取首候选等于一直上屏它），并被 render 原样写回文件。
      */
     @Test
@@ -191,7 +191,7 @@ class UserFrequencyTest {
     // ── flush 的失败语义 ───────────────────────────────────────────────────
 
     /**
-     * 回归：`flush` 曾**先清 dirty 再写盘** —— 写失败（磁盘满 / IO 错误）后这次学习
+     * 回归：`flush` 曾先清 dirty 再写盘，写失败（磁盘满 / IO 错误）后这次学习
      * 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），而 flush 的职责
      * 正是「保证最后一次学习不丢」。现在与 `saveNow` 对齐：写盘成功才清 dirty。
      */

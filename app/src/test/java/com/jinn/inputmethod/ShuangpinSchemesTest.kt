@@ -9,15 +9,15 @@ import java.io.File
 /**
  * 七套双拼方案（自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / 智能ABC / 加加）的键位测试。
  *
- * 这些键位**不是手抄的**：`ShuangpinSchemes.kt` 由
+ * 这些键位不是手抄的：`ShuangpinSchemes.kt` 由
  * `tools/dict_builder/gen_shuangpin_tables.py` 按 librime 的代数语义，从
  * `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成。
  * 本文件的职责是「钉住生成结果」：
  *
  *  1. 各方案的代表性键位与 rime 一致（含只有该方案才有的分号键）；
  *  2. 键面提示（韵母 / zh-ch-sh 红字）随方案变化，且与码表一致；
- *  3. **全表往返自洽**：码表里每一条「码 → 音节」都能被 [Shuangpin.toQuanpin] 还原；
- *  4. **覆盖完整**：`assets/pinyin_syllables.txt` 里每个可编码音节在七套方案下都有码。
+ *  3. 全表往返自洽：码表里每一条「码 → 音节」都能被 [Shuangpin.toQuanpin] 还原；
+ *  4. 覆盖完整：`assets/pinyin_syllables.txt` 里每个可编码音节在七套方案下都有码。
  *
  * 纯 JVM，不需要设备。
  */
@@ -107,7 +107,7 @@ class ShuangpinSchemesTest {
      * 下拉数据源 = [ShuangpinScheme.ALL]（全拼在最前 + 七套双拼，共 8 项）。
      *
      * 历史：该下拉原为「只选哪套双拼」（不含全拼）、全拼/双拼由键盘面板按钮切换；
-     * 2026-09-20 按用户要求改为**全局输入方案**并移除面板按钮 —— 本用例随之更新。
+     * 2026-09-20 按用户要求改为全局输入方案并移除面板按钮，本用例随之更新。
      * 旧的「不含全拼」断言是当时的正确行为，不要照搬回来。
      */
     @Test
@@ -236,7 +236,7 @@ class ShuangpinSchemesTest {
         /**
          * 「两键一音节」模型下同码让位的写法（一码只能映射一个音节，必须牺牲一个）：
          *  - `lo` 让给 `luo`（罗/落远比 咯/啰 常用；全拼下 lo 仍可输入）；
-         *  - `lve` / `nve` 让给 `lue` / `nue`：**词库里的 lve/nve 词条依旧能命中**，
+         *  - `lve` / `nve` 让给 `lue` / `nue`：词库里的 lve/nve 词条依旧能命中，
          *    因为查询链路有 ue↔ve 变体回退（见 PinyinEngine.variants），只是不走「码」这条入口；
          *  - `ng` 让给 `neng` / `nang` / `niang`（词库 0 条）。
          */

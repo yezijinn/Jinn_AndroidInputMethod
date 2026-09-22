@@ -6,8 +6,8 @@ import org.junit.Test
 /**
  * 符号分组自定义顺序（排序页 `SymbolOrderActivity` 的持久化层）。
  *
- * 关键不变量：结果恒为 [SymbolOrder.DEFAULT] 的一个排列 —— 缺项、脏 label、重复项
- * 都必须被修正，否则视图会**少一个分组**（用户只会看到「标签不见了」，排查不到原因）。
+ * 关键不变量：结果恒为 [SymbolOrder.DEFAULT] 的一个排列，缺项、脏 label、重复项
+ * 都必须被修正，否则视图会少一个分组（用户只会看到「标签不见了」，排查不到原因）。
  */
 class SymbolOrderTest {
 
