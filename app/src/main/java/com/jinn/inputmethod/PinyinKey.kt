@@ -67,7 +67,7 @@ import kotlin.math.min
          *
          * 数值来自设置页的 [KeyAppearance] 参数（圆角 0~24dp / 间隙 0~8dp），
          * 由 [PinyinKeyboardView] 在初始化与每次弹键盘时统一套用（见
-         * `applyKeyAppearance`）。这里刻意**不持有默认常量**：26 个字母键必须与
+         * `applyKeyAppearance`）。这里刻意不持有默认常量：26 个字母键必须与
          * 同一行的大写键、删除键用同一组数值，任何一处自己写死就会错位。
          *
          * 初值取 [KeyAppearance] 的默认值，保证未被套用时也能正常绘制。
@@ -81,7 +81,7 @@ import kotlin.math.min
          * 套用键面外观（像素）。数值未变化时直接返回，避免每次弹键盘都无谓重绘。
          *
          * @param cornerPx 圆角半径（像素），0 为直角
-         * @param insetPx  四边内缩（像素），等于间隙的一半——相邻两键各缩一半，
+         * @param insetPx  四边内缩（像素），等于间隙的一半，相邻两键各缩一半，
          *                 合起来正好是用户设置的间隙宽度
          */
         fun setKeyAppearance(cornerPx: Float, insetPx: Float) {
@@ -97,7 +97,7 @@ import kotlin.math.min
         /**
          * 符号层样式：一律水平 + 垂直居中。
          *
-         * 符号层不再沿用字母层「小字顶置 + 下方提示」的排版——符号是独立内容，
+         * 符号层不再沿用字母层「小字顶置 + 下方提示」的排版，符号是独立内容，
          * 顶置会显得偏上、且短符号（如 "if"）与长关键字看起来不一致。
          * 长文本仍按可用宽度收缩字号（见 onDraw）。
          */
@@ -164,7 +164,7 @@ import kotlin.math.min
          *
          * 字母键的触摸由 [PinyinKeyboardView.handleKeyTouch] 通过 OnTouchListener 处理
          * （要兼听符号层横滑翻页），OnTouchListener 返回 true 后本 View 的
-         * [onTouchEvent] 不再执行，[pressed] 也就永远不会变化 —— 按键看起来没有反应。
+         * [onTouchEvent] 不再执行，[pressed] 也就永远不会变化，按键看起来没有反应。
          * 因此外层必须在 DOWN/UP/CANCEL 时显式调用本方法刷新按压态。
          *
          * 命名避开 [View.setPressed]，不复用系统按压态（系统态会被父容器重置）。
@@ -204,9 +204,9 @@ import kotlin.math.min
         /**
          * 按可用宽度收缩字号：文本超宽时等比缩小，下限为 [minSize]。
          *
-         * 用于编程关键字这类长文本——固定字号会让 "return""static" 左右溢出、看不全。
+         * 用于编程关键字这类长文本，固定字号会让 "return""static" 左右溢出、看不全。
          *
-         * [minSize] 由调用方按**键高比例**给出（见 [MIN_LONG_TEXT_RATIO]），不用固定像素值：
+         * [minSize] 由调用方按键高比例给出（见 [MIN_LONG_TEXT_RATIO]），不用固定像素值：
          * 固定值在低密度屏（mdpi 下 9px = 9dp）会大于按宽度算出的适配字号，反而把文字
          * 顶出按键左右边界；按比例取值在任何密度下都与按键尺寸同步。
          */
@@ -319,7 +319,7 @@ import kotlin.math.min
              * 长文本收缩下限（占键高比例），避免极长字符串缩到无法辨认。
              *
              * 用比例而非固定像素：旧值 9f（像素）在 2.75x 屏上约 3.3dp 尚可，但在 mdpi 上
-             * 等于 9dp——比按宽度算出的适配字号还大，会把 synchronized 这类长标签顶出
+             * 等于 9dp，比按宽度算出的适配字号还大，会把 synchronized 这类长标签顶出
              * 按键左右边界。0.06 × 54dp 键高 ≈ 3.2dp，与旧观感等效且随密度自洽。
              */
             const val MIN_LONG_TEXT_RATIO = 0.06f

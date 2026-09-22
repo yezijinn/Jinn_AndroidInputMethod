@@ -17,7 +17,7 @@ import kotlin.math.roundToInt
  * 让 [Prefs]、[PinyinKey]、[PinyinKeyboardView] 与键盘外观页共用同一套边界，
  * 不允许任何一处再写死圆角或间距数值。
  *
- * 「间隙」的语义是**相邻两键之间的空隙**（左右与上下一致）：每个键四边各内缩
+ * 「间隙」的语义是相邻两键之间的空隙（左右与上下一致）：每个键四边各内缩
  * 半个间隙，两个相邻键的内缩量相加正好等于间隙值。0f 即无缝（键面连成一片）。
  *
  * 纯 JVM 逻辑，不依赖任何 Android API，可直接单测（见 KeyAppearanceTest）。

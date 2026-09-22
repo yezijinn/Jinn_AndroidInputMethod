@@ -148,8 +148,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 分号键（第三行 m 右侧）。
      *
-     * 键盘只有 26 个字母键，而搜狗/微软/紫光三套方案的 `ing` 落在分号上——没有它，
-     * 应/听/明/定 这类音节的字完全打不出来。**只在当前方案确实需要时才显示**，
+     * 键盘只有 26 个字母键，而搜狗/微软/紫光三套方案的 `ing` 落在分号上，没有它，
+     * 应/听/明/定 这类音节的字完全打不出来。只在当前方案确实需要时才显示，
      * 其余方案与符号层/数字层一律 GONE，对现有 26 键布局零影响。
      */
     private lateinit var keySemicolon: PinyinKey
@@ -159,7 +159,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 26 键区（3 行 28 键）统一外观参数，单位为像素，由 [applyKeyAppearance] 刷新。
      *
-     * [keyInsetPx] 是四边各自的内缩量，等于用户设置的「间隙」的一半——相邻两键
+     * [keyInsetPx] 是四边各自的内缩量，等于用户设置的「间隙」的一半，相邻两键
      * 各缩一半，合起来正好是间隙宽度。大写键/删除键要用它做 LayoutParams 边距，
      * 字母键则由 [PinyinKey.setKeyAppearance] 带进自绘流程。
      */
@@ -227,12 +227,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val longPressClearMs = 800L
 
     /**
-     * 「双击 → 长按」清空手势的有效窗口：双击完成后，必须在该时长内**再次按下**
+     * 「双击 → 长按」清空手势的有效窗口：双击完成后，必须在该时长内再次按下
      * 退格，才会挂上清空检测。
      *
      * 没有这个窗口时双击态会一直挂着：用户快速点两下退格（删两个字，高频操作）
      * 之后，哪怕过了几分钟，任何一次长按退格都会在 [longPressClearMs] 后
-     * 清空整个输入框——且不可撤销。
+     * 清空整个输入框，且不可撤销。
      */
     private val clearGestureWindowMs = 500L
 
@@ -244,7 +244,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (!backspaceHeld) return
             // 标准的逐字连删：拼音删空后继续删已上屏正文，直到松手。
             // （2026-09-20 起原先「按住 ≥1.2s 且拼音 ≥12 字符就整串清空」的捷径已按用户要求
-            //  移除 —— 清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
+            //  移除，清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
             //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
             deleteOne()
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
@@ -252,13 +252,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
 
-    /** 当前符号分组索引（候选栏标签，仅点击切换）—— 语义是**在 [symbolGroups] 中的位置** */
+    /** 当前符号分组索引（候选栏标签，仅点击切换）， 语义是在 [symbolGroups] 中的位置 */
     private var symbolGroupIndex = 0
 
     /**
      * 分组顺序：用户在排序页调整（持久化在 [Prefs.symbolGroupOrder]），收藏内容在 [Prefs.favoriteSymbols]。
      *
-     * 视图里的所有分组索引都指这里的下标 —— 顺序/内容变化通过重建键盘视图生效，不碰 [SYMBOL_GROUPS]。
+     * 视图里的所有分组索引都指这里的下标，顺序/内容变化通过重建键盘视图生效，不碰 [SYMBOL_GROUPS]。
      */
     private var symbolGroups: List<SymbolGroup> = run {
         val prefs = Prefs(context)
@@ -283,7 +283,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     init {
         orientation = VERTICAL
-        // ⚠ 必须显式 `attachToRoot = false`：attachToRoot=true 时 inflate 返回的是**调用方 this**
+        // 必须显式 `attachToRoot = false`：attachToRoot=true 时 inflate 返回的是调用方 this
         // （不是 XML 根），直接拿它当背板引用会把背板铺成两层：视图自身一层 + XML 根一层；
         // 两层同 alpha 叠加令背板等效不透明度翻倍（真机实测 85,86,90 = 0.2×237 + 0.8×(0.2×237)，
         // 单层应只有 47；屏幕最底那条没有按键覆盖的背板带最明显）。
@@ -461,7 +461,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
             // 多指：第二根手指按在同一键上是 POINTER_DOWN，先抬起的那根是 POINTER_UP。
-            // 两者都不处理的话——POINTER_UP 分支既不复位按压态也不上字，键会一直高亮
+            // 两者都不处理的话，POINTER_UP 分支既不复位按压态也不上字，键会一直高亮
             // 到下次被触摸，且该次输入被静默丢掉。
             MotionEvent.ACTION_POINTER_DOWN -> {
                 keyViews[c]?.setPressedVisual(true)
@@ -469,8 +469,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 keyViews[c]?.setPressedVisual(false)
-                // **不复位 keyTouchConsumed**：它是「本次手势已经做过事（在符号层翻了页）、
-                // 抬起时不许上字」的判据，而第二根手指抬起时手势还没结束 —— 复位后剩下的
+                // 不复位 keyTouchConsumed：它是「本次手势已经做过事（在符号层翻了页）、
+                // 抬起时不许上字」的判据，而第二根手指抬起时手势还没结束，复位后剩下的
                 // 那根手指一抬就会把新页上的符号上屏（用户只想翻页）。该标记在
                 // ACTION_DOWN / ACTION_UP / ACTION_CANCEL 处复位，生命周期足够。
                 return true
@@ -604,12 +604,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         btnBackspace.setOnTouchListener { view, event ->
             val consumed = handleBackspaceTouch(event)
-            // 无障碍：抬手时补 performClick——退格键只有「点击 / 长按连删」，
+            // 无障碍：抬手时补 performClick，退格键只有「点击 / 长按连删」，
             // 没有滑动手势，所以 ACTION_UP 必定对应一次真实操作结束。
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             consumed
         }
-        // 搜索模式：这三个键**必须**只作用于搜索框 —— 否则回车会把原始拼音串或宿主动作
+        // 搜索模式：这三个键必须只作用于搜索框，否则回车会把原始拼音串或宿主动作
         // （输入框声明的是「发送」时就直接把消息发出去）落到宿主，逗号句号把全角标点写进
         // 用户正在编辑的正文里。搜索态下回车等价于面板自己的「退出搜索」按钮，不碰宿主。
         btnEnter.setOnClickListener {
@@ -664,11 +664,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastPredictions = emptyList()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
-        // 键盘正显示时不走这里 —— 外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
+        // 键盘正显示时不走这里，外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
         // 先定面透明度、再套圆角/间隙：两者都会重建 shift/删除键背景，
         // 先写入 alpha 后，applyKeyAppearance 的那次调用会命中其缓存，不重复构建。
         applyKeyTransparency()
-        // 必须先于 refreshKeyLabels——后者会重建 shift 键背景，用的是本次刷新的圆角值。
+        // 必须先于 refreshKeyLabels，后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
         refreshKeyLabels()
         refreshCandidateBar()
@@ -677,15 +677,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 键盘外观页松手后即时重套外观（透明度 / 圆角 / 间隙）。
      *
-     * 与 [configure] 的区别：只重套外观，**不动**拼音串与候选/预测 ——
+     * 与 [configure] 的区别：只重套外观，不动拼音串与候选/预测 ，
      * 改外观不该把用户正在打的字吞掉（configure 会清 composing 与预测）。
      */
     fun refreshAppearance() {
         applyKeyTransparency()
         applyKeyAppearance()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
-        // alpha，不重建就保持旧值 —— 拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
-        // 6 个按钮仍是旧档）。方向面板**展开态**时跳过：重建会把它收回默认布局，
+        // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
+        // 6 个按钮仍是旧档）。方向面板展开态时跳过：重建会把它收回默认布局，
         // 其内部面的 alpha 由下次打开时取当前值。
         if (!directionPanelVisible) refreshCandidateBar()
     }
@@ -726,11 +726,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      *  - 背板类（键盘底色 kb_bg、面板底 app_bg）：面上没有文字，走 plate 档，可以做得最透；
      *  - 内容面类（条目卡 card_bg、搜索框底 surface_hi）：带文字/内容，走 surface 档；
-     *  - 候选栏底按**当前是否有内容**选档（见 [updateCandidateBarBackground]）；
+     *  - 候选栏底按当前是否有内容选档（见 [updateCandidateBarBackground]）；
      *  - 键面与面板里的按钮同上走 surface 档（键面走 [PinyinKey.setFaceAlpha]，面板按钮走各自
-     *    面板的 `applySurfaceAlpha` —— 它们的背景是 drawable，颜色识别扫不到）；
+     *    面板的 `applySurfaceAlpha`，它们的背景是 drawable，颜色识别扫不到）；
      *  - 文字一律不变：这里只给「面」的颜色套 alpha（[KeyTransparency.withAlpha]），本功能的
-     *    绘制路径不使用整键 `View.setAlpha` —— 那会把文字一起淡掉
+     *    绘制路径不使用整键 `View.setAlpha`，那会把文字一起淡掉
      *    （例外：符号层禁用态的大写键用整键 alpha 置灰，属与透明度无关的既有视觉，见 [refreshKeyLabels]）。
      *
      * 0%（默认）时两档 alpha 都是 1f，与历史观感逐像素一致。
@@ -741,14 +741,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val plateAlpha = KeyTransparency.plateAlpha(percent)
         plateFaceAlpha = plateAlpha
 
-        // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明 —— attachToRoot=true 时 inflate
+        // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明，attachToRoot=true 时 inflate
         // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
         // 没有按键覆盖的背板带最明显（真机实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
         keyboardRoot.setBackgroundColor(
             KeyTransparency.withAlpha(context.getColor(R.color.kb_bg), plateAlpha)
         )
         updateCandidateBarBackground()
-        // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha ——
+        // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha ，
         // 面可能有多份（XML 根 / 各层容器 / 面板底 / 条目卡 / 搜索框），逐个引用容易漏；
         // 旧版只认「RGB == kb_bg」一种色，导致两个面板整块实心（与透明键盘形成割裂）。
         alphaFaces(
@@ -768,7 +768,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clipboardPanel?.applySurfaceAlpha(keyFaceAlpha)
         searchPanel?.applySurfaceAlpha(keyFaceAlpha)
 
-        // 诊断（排查「透明度不生效」）：只在档位**真正变化**时打印一次并做树扫描 ——
+        // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描 ，
         // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
         val desc = KeyTransparency.formatPercent(percent)
         if (desc != lastTransparencyDesc) {
@@ -790,13 +790,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var plateFaceAlpha = 1f
 
     /**
-     * 候选栏底色按**当前是否有内容**选档：
+     * 候选栏底色按当前是否有内容选档：
      *  - 有拼音串 / 候选 / 预测时：面上叠着文字（候选词没有自己的面）→ 必须走 surface 档，
      *    否则文字会直接糊在宿主内容上（与 [KeyTransparency] 的可读性约定冲突）；
      *  - 空白铺底（功能面板 / 符号层 / 搜索态，文字都在按钮自己的面上）→ 走 plate 档，可做最透。
      *
      * 带缓存：档位没变就不重设，避免每次按键都白重绘一次候选栏；
-     * 档位取自 [plateFaceAlpha] / [keyFaceAlpha]，**不读 Prefs** —— 本函数挂在按键热路径上。
+     * 档位取自 [plateFaceAlpha] / [keyFaceAlpha]，不读 Prefs，本函数挂在按键热路径上。
      */
     private fun updateCandidateBarBackground() {
         val hasContent = composing.isNotEmpty() || lastCandidates.isNotEmpty() || lastPredictions.isNotEmpty()
@@ -813,7 +813,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - RGB ∈ [plateRgb]（背板类：无文字）→ [plateAlpha]；
      *  - RGB ∈ [surfaceRgb]（内容面类：带文字/内容）→ [surfaceAlpha]。
      *
-     * 其余背景（drawable / 渐变 / ripple）不动 —— 它们要么自带纹理，要么在别处按档重建
+     * 其余背景（drawable / 渐变 / ripple）不动，它们要么自带纹理，要么在别处按档重建
      * （键面走 [PinyinKey.setFaceAlpha]、面板按钮走各自面板的 `applySurfaceAlpha`）。
      */
     private fun alphaFaces(
@@ -841,7 +841,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 诊断（布局后调用）：找出**屏幕上实际在铺底**的视图 —— 屏幕下半部、可见、有面积、
+     * 诊断（布局后调用）：找出屏幕上实际在铺底的视图，屏幕下半部、可见、有面积、
      * 背景是实心色的，全部列出来并标出 alpha 与「RGB 是否等于 kb_bg」。
      * 用途：透明度不生效时，一眼看出是哪一份视图在不透明地画。
      */
@@ -876,7 +876,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 重建底部功能行（符号 / 数字 / 逗号 / 空格 / 句号 / 中英 / 回车）的背景。
      *
      * 这几个键的背景来自 XML（`key_bg.xml` / `btn_aurora_secondary.xml`），XML 里的颜色无法
-     * 动态带 alpha，所以在运行时按**同款几何**重建：圆角与描边宽度与 XML 保持一致
+     * 动态带 alpha，所以在运行时按同款几何重建：圆角与描边宽度与 XML 保持一致
      * （改 XML 时必须同步 [KEY_BG_CORNER_DP] / [BUTTON_CORNER_DP] / [BUTTON_STROKE_DP]），
      * 只把填充色与描边色换成带 alpha 的版本；水波纹颜色沿用原配色。
      *
@@ -930,7 +930,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 生成与 key_bg.xml 同款（实心圆角 + 水波纹按压反馈）但圆角可调的按键背景。
      *
-     * mask 必须单独再造一个**不透明**的同圆角矩形：RippleDrawable 按 mask 的 alpha
+     * mask 必须单独再造一个不透明的同圆角矩形：RippleDrawable 按 mask 的 alpha
      * 裁剪波纹，拿一个无色 Drawable 当 mask 会把波纹整个裁掉（按压就没有反馈了）。
      */
     private fun buildKeyBackground(fillColor: Int, cornerPx: Float = keyCornerPx): Drawable {
@@ -991,7 +991,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 把字母键的「四边内缩」等效成 ImageButton 的外边距。
      *
      * 字母键的内缩画在自己的 canvas 里，普通 View 只能改外边距。不跟着改的话，
-     * 大写键/删除键会贴满单元格——比字母键高一圈、左右也多出一截，一眼就错位。
+     * 大写键/删除键会贴满单元格，比字母键高一圈、左右也多出一截，一眼就错位。
      */
     private fun applyKeyInsets(view: View) {
         val lp = view.layoutParams as? LinearLayout.LayoutParams ?: return
@@ -1040,25 +1040,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 提交当前拼音串的首候选（IME 收起键盘 / 切换中英文等场景调用）。
      *
-     * 搜索模式只丢弃、**不上屏**：此时拼音串是搜索框的输入，宿主输入框不在用户的输入意图内。
+     * 搜索模式只丢弃、不上屏：此时拼音串是搜索框的输入，宿主输入框不在用户的输入意图内。
      * 语言键（切英文时会调它）与 IME 收起都会走到这里，紧接着的 listener.onCommitText
      * 会把搜索词（或它的首候选）写进用户正在编辑的正文里。
      */
     /**
-     * 是否有**未上屏**的内容（拼音串或预测词）。
+     * 是否有未上屏的内容（拼音串或预测词）。
      *
      * IME 换主题（含定时到点）与符号布局变更都会整块重建键盘视图：若有未上屏内容，
-     * 重建等同于**静默丢弃**它们（宿主输入框毫无变化，用户却看到候选栏被清空）
-     * —— 所以重建前必须先问这里。
+     * 重建等同于静默丢弃它们（宿主输入框毫无变化，用户却看到候选栏被清空）
+     *，所以重建前必须先问这里。
      */
     val hasPendingInput: Boolean
         get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
 
     /**
-     * 视图上是否有**正在使用的面板**（剪贴板面板 / 顶部搜索面板）。
+     * 视图上是否有正在使用的面板（剪贴板面板 / 顶部搜索面板）。
      *
      * 面板状态挂在视图上，重建会把它们直接关掉：用户正翻剪贴板历史时到点换肤，
-     * 面板会毫无预告地消失（搜索态同）—— 换肤延后判据因此要带上这一项。
+     * 面板会毫无预告地消失（搜索态同）， 换肤延后判据因此要带上这一项。
      */
     val hasActiveOverlay: Boolean
         get() = clipboardActive || searchPanel.isActive()
@@ -1086,7 +1086,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 取出当前拼音串的「原始按键序列」并清空输入状态（供回车键输出英文用）。
      *
-     * 返回的是用户**实际按下的那些键**，绝不做双拼→全拼转换：
+     * 返回的是用户实际按下的那些键，绝不做双拼→全拼转换：
      * 全拼按 `but` 返回 `"but"`；双拼按 `budv` 返回 `"budv"`（不是转换后的 `"budui"`）。
      * 这正是「打了几个键就输出几个英文字母」的语义。
      *
@@ -1164,7 +1164,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 中文模式：追加到拼音串并查候选
         composing.append(c)
         refreshCandidateBar()
-        // 日志带上**当前模式**：排查时经常要先回答"这会儿到底是全拼还是双拼、哪一套"，
+        // 日志带上当前模式：排查时经常要先回答"这会儿到底是全拼还是双拼、哪一套"，
         // 光看 composing 判不出来（2026-09-18 连续三次在错误模式下做验证后才补上）。
         val modeTag = when {
             englishMode -> "英文"
@@ -1244,7 +1244,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
                 // 已处于「双击后」状态：本次长按到阈值触发清空。
-                // 必须校验双击是否刚发生——双击态会一直残留，不校验时间的话，
+                // 必须校验双击是否刚发生，双击态会一直残留，不校验时间的话，
                 // 用户点两下退格（删两个字，高频操作）之后任何一次长按都会清空输入框。
                 if (backspaceTapCount == 2 &&
                     System.currentTimeMillis() - backspaceLastTapAt <= clearGestureWindowMs
@@ -1371,7 +1371,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun refreshCandidateBar() {
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
-        // 开关刚被关掉时，把上一次留下的预测清掉——否则已显示的预测会一直挂在候选栏
+        // 开关刚被关掉时，把上一次留下的预测清掉，否则已显示的预测会一直挂在候选栏
         if (!predictionsEnabled() && lastPredictions.isNotEmpty()) {
             lastPredictions = emptyList()
         }
@@ -1392,7 +1392,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderFunctionPanel()
             return
         }
-        // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮（用户要求）——
+        // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮（用户要求），
         // 有内容可清时才出现，功能面板与符号层都不显示。
         btnClearCandidates.visibility = View.VISIBLE
 
@@ -1427,7 +1427,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val result = PinyinEngine.query(queryInput)
         // 补全诊断：只在末尾存在不完整音节时记录。
-        // 注意：绝不在这里再调一次 queryWithCompletion——PinyinEngine.query() 内部
+        // 绝不在这里再调一次 queryWithCompletion，PinyinEngine.query() 内部
         // 已经跑过补全召回，重复调用等于每次按键双倍查询，纯粹为了打日志。
         if (!shuangpinMode && result.partialSyllable.isNotEmpty()) {
             Diagnostics.v(
@@ -1436,7 +1436,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     "partial=${result.partialSyllable} candidates=${result.candidates.take(3)}",
             )
         }
-        // 全量基础包还在后台 merge：此刻查不到候选的词，几秒后就会出现 —— 明确告知，
+        // 全量基础包还在后台 merge：此刻查不到候选的词，几秒后就会出现，明确告知，
         // 否则用户会以为「这个字打不出来」。
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
@@ -1445,7 +1445,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         lastCandidates = result.candidates
-        // 拼音行显示**用户实际按下的键**（input），不是转换后的全拼（queryInput）。
+        // 拼音行显示用户实际按下的键（input），不是转换后的全拼（queryInput）。
         // 双拼下两者常常不同：`jg` 转全拼会被吞成 `j`，若显示 queryInput，
         // 用户按下 g/h 后拼音行毫无变化，看起来就像"按键没反应/卡住了"（2026-09-18 用户报告）。
         viewCandidatePinyin.text = input
@@ -1456,7 +1456,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 93 个音节超过 60 字），而这里是「每条一个 TextView」且每次按键全量重建，
         // 一次按键创建 60 个 View 在低端机上会明显掉帧。用户实际只点最前面几个
         // （单字候选按常用度排序），因此截断渲染量。
-        // 注意：这只影响渲染，[lastCandidates] 仍保存完整候选，空格/回车取首候选不受影响。
+        // 这只影响渲染，[lastCandidates] 仍保存完整候选，空格/回车取首候选不受影响。
         for ((index, candidate) in result.candidates.withIndex()) {
             if (index >= MAX_RENDERED_CANDIDATES) break
             val item = TextView(context).apply {
@@ -1607,7 +1607,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         Diagnostics.v(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
-        // 用户词频：学习**完整词**（librime 的 UserDictionary 也是按整条 entry 记），
+        // 用户词频：学习完整词（librime 的 UserDictionary 也是按整条 entry 记），
         // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
         val fullWord = lastCommittedWord + pred
         learnChoice(fullWord.ifEmpty { pred })
@@ -1648,15 +1648,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         refreshSemicolonKey()
         // 中英切换键：上下两行「中文 / 英文」，把当前语言那一行染成主题紫并加粗。
-        // 必须用 SpannableString 做部分着色——拆成两个 TextView 会各自居中，看起来像两个按钮。
+        // 必须用 SpannableString 做部分着色，拆成两个 TextView 会各自居中，看起来像两个按钮。
         btnLang.textSize = 12f
         btnLang.maxLines = 2
         btnLang.setLineSpacing(0f, 0.9f)
         btnLang.text = buildLangLabel()
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
-            // 已进入符号层，此键的作用是回到字母页 —— 用「返回」比「ABC」更直白。
+            // 已进入符号层，此键的作用是回到字母页，用「返回」比「ABC」更直白。
             // 红色粗体（用户要求）：提示这一键现在切换的是整层（键面已全是符号），
-            // 用 SpannableString 而不是 setTextColor——退出符号层时文本换回普通串，样式自动还原。
+            // 用 SpannableString 而不是 setTextColor，退出符号层时文本换回普通串，样式自动还原。
             android.text.SpannableString(context.getString(R.string.key_back)).apply {
                 setSpan(
                     android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
@@ -1688,8 +1688,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 中英切换键的富文本标签。
      *
-     * 上下两行「中文 / 英文」，把**当前生效的那一行**染成主题紫并加粗，另一行保持普通样式
-     * ——一眼就能看出当前处于哪种输入状态。
+     * 上下两行「中文 / 英文」，把当前生效的那一行染成主题紫并加粗，另一行保持普通样式
+     * ，一眼就能看出当前处于哪种输入状态。
      */
     private fun buildLangLabel(): CharSequence {
         val cn = "中文"
@@ -1781,7 +1781,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 刷新分号键：只在「当前方案用到分号键 + 字母层 + 非英文 + 非大写锁定」时显示。
      *
      * 键面与字母键同款：主文本 `;`、下方韵母提示（同样取自方案表，因此显示的就是该方案的
-     * 键位含义）。不需要它的方案与符号层/数字层一律 GONE——GONE 不参与测量，
+     * 键位含义）。不需要它的方案与符号层/数字层一律 GONE，GONE 不参与测量，
      * 26 键布局与已调好的圆角/间隙参数完全不受影响。
      */
     private fun refreshSemicolonKey() {
@@ -1799,8 +1799,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 键面韵母提示（字母键下方的小字）。
      *
-     * 不手写键位表——直接从当前方案的码表反推（见 [ShuangpinTable.finalHint]），
-     * 因此**提示与引擎永远一致**，切换方案时自动跟着变。
+     * 不手写键位表，直接从当前方案的码表反推（见 [ShuangpinTable.finalHint]），
+     * 因此提示与引擎永远一致，切换方案时自动跟着变。
      * 旧实现是另手写一份 `when` 表，已经漂移出错（'o' 键写成 "ou"，实际应为 o / uo）。
      */
     private fun shuangpinHint(c: Char): String = scheme.table?.finalHint(c).orEmpty()
@@ -1812,7 +1812,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 功能面板（无候选时展示）──────────────────────────────
 
     /**
-     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（共 **6 个按钮**）：
+     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（共 6 个按钮）：
      *  - 剪贴板：打开安全剪贴板历史页
      *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
      *  - 全选：选中输入框全部文本
@@ -1831,8 +1831,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
         btnClearCandidates.visibility = View.GONE
         // 搜索态：功能面板只保留「退出搜索」。
-        // 其余按钮都不能出现——历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
-        // **作用于宿主输入框**的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
+        // 其余按钮都不能出现，历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
+        // 作用于宿主输入框的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
         // 面板动作必须同口径。「全选」会让退出搜索后的下一次输入替换整段正文，
         // 「粘贴」会把剪贴板正文注入宿主，「方向」会移动宿主光标。
         if (isPanelSearch()) {
@@ -1863,7 +1863,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             },
         )
         viewCandidateList.addView(directionButtonBox)
-        // 面板可能是重建的（候选栏刷新），而方向面板状态仍为激活 —— 立即同步一次文案
+        // 面板可能是重建的（候选栏刷新），而方向面板状态仍为激活，立即同步一次文案
         refreshDirectionButton()
         viewCandidateList.addView(buildFunctionButton(
             label = "全选",
@@ -1901,7 +1901,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
             setPadding(dp(8), dp(4), dp(8), dp(4))
-            // key_bg 同款（10dp 圆角），但填充色带面 alpha —— 这 6 个按钮占满候选栏
+            // key_bg 同款（10dp 圆角），但填充色带面 alpha，这 6 个按钮占满候选栏
             background = xmlKeyBackground()
             isClickable = true
             isFocusable = true
@@ -2010,7 +2010,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 与剪贴板面板互斥（反向也要做，showClipboardPanel 里已有对称处理）：
         // 剪贴板打开时 viewLetters 整体是 GONE，方向面板加进去根本看不见，
-        // 而 directionPanelVisible 已置 true —— 用户点方向键毫无反应。
+        // 而 directionPanelVisible 已置 true，用户点方向键毫无反应。
         if (clipboardActive) hideClipboardPanel()
         // 字母区隐藏，方向面板显示
         Diagnostics.i(TAG, "字母区: 隐藏三行（原因=方向面板显示）")
@@ -2025,10 +2025,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         panel.visibility = View.VISIBLE
         directionPanelVisible = true
         // 进入方向面板时重置拖选状态。
-        // ⚠ 必须**同时回传 IME**：否则视图认为未拖选（中心键画 ●）、IME 仍以为在拖选，
+        // 必须同时回传 IME：否则视图认为未拖选（中心键画 ●）、IME 仍以为在拖选，
         // 用户点中心键会先「取消」再「激活」，出现"点一次没反应、要点两次"的错位。
         // 当前只有 hideDirectionPanel 会回传，这条路径虽然暂时不可达（面板只能经它隐藏），
-        // 但两处不对称迟早会被将来的改动踩到 —— 这里补齐成对称实现。
+        // 但两处不对称迟早会被将来的改动踩到，这里补齐成对称实现。
         selectionActive = false
         listener?.onSelectionModeChanged(false)
         refreshDirectionButton()
@@ -2038,10 +2038,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 恢复字母三行（把 viewLetters 的子视图全部设回 VISIBLE）。
      *
-     * ⚠ 单独抽出来是**必须**的：原先这段恢复只写在 [hideDirectionPanel] 里，且被
-     * `if (!directionPanelVisible) return` 挡在前面 —— 也就是说"字母三行的可见性"完全被那个 flag 托管。
+     * 单独抽出来是必须的：原先这段恢复只写在 [hideDirectionPanel] 里，且被
+     * `if (!directionPanelVisible) return` 挡在前面，也就是说"字母三行的可见性"完全被那个 flag 托管。
      * 只要有任何路径把三行设成 GONE 而 flag 没置位（或 flag 被清掉却跳过恢复），
-     * 三行就会**永久失活**：键面看着还在，但整块不再响应触摸，而底栏是另一个容器照常可用。
+     * 三行就会永久失活：键面看着还在，但整块不再响应触摸，而底栏是另一个容器照常可用。
      * 所以这里改成"谁把子视图藏了，恢复时一律无条件恢复"。
      */
     private fun restoreLetterRows() {
@@ -2053,7 +2053,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 清掉残留在字母区里的方向面板。
      *
-     * 按 **tag** 识别而不是按下标：字母行在 XML 里其实正好 3 个，但"按下标 ≥3 一律删"
+     * 按 tag 识别而不是按下标：字母行在 XML 里其实正好 3 个，但"按下标 ≥3 一律删"
      * 这种写法一旦布局加了第 4 个子视图就会误删真键，属于没必要背的风险。
      * 面板是运行时 addView 进去的，一旦出现"面板还挂着但 directionPanel 引用已丢"，
      * 它就永远留在那儿盖住键区（它排在字母行之后，会先吃到触摸）。
@@ -2070,7 +2070,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun hideDirectionPanel() {
         if (!directionPanelVisible) {
             // flag 已为 false 时也要把子视图恢复一遍：不能再假设"flag 为 false ⇒ 字母区是好的"。
-            // 同时清掉可能残留的方向面板——它 addView 在字母行之后，会盖在键区上面吃触摸。
+            // 同时清掉可能残留的方向面板，它 addView 在字母行之后，会盖在键区上面吃触摸。
             directionPanel = null
             centerSelectionKey = null
             dropStaleDirectionPanel()
@@ -2098,9 +2098,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 显示剪贴板面板：候选栏与底部功能行固定不动，面板占用二者之间全部空间。
      *
      * 布局机制（多轮真机验证结论；旧注释曾与实现完全相反，勿再照抄）：
-     * - **会修改 layoutParams**：contentArea 被改成固定高度 162dp×2（约 850px），
+     * - 会修改 layoutParams：contentArea 被改成固定高度 162dp×2（约 850px），
      *   面板 MATCH_PARENT 填满它。固定高度让面板不受 IME 窗口初始测量影响（冷启动稳定）。
-     * - viewLetters 实际用 **GONE** 而非 INVISIBLE：contentArea 已是固定高度，
+     * - viewLetters 实际用 GONE 而非 INVISIBLE：contentArea 已是固定高度，
      *   GONE 不会导致塌缩。（旧注释写的「INVISIBLE + 零 layoutParams 修改」
      *   与实现相反，已更正。）
      * - layoutParams 类型必须匹配父容器：contentArea 的父是 LinearLayout
@@ -2115,14 +2115,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         try {
             // 与方向面板、顶部搜索面板互斥：搜索面板挂在根布局 index 0（显示时 IME 变高），
-            // 剪贴板面板替换字母区 —— 两者同屏时上下两个列表都在，而底栏的空格/退格/回车
+            // 剪贴板面板替换字母区，两者同屏时上下两个列表都在，而底栏的空格/退格/回车
             // 仍会被 isPanelSearch() 路由到搜索框，按键实际作用的对象与用户看到的不一致。
             if (directionPanelVisible) hideDirectionPanel()
             hideSearchPanel()
 
             // contentArea 高度 = 字母区 2 倍（用户验证过的 850px 方案）。
             // 关键：contentArea 的父是 LinearLayout（PinyinKeyboardView 根），
-            // 必须用 LinearLayout.LayoutParams——早期用 FrameLayout.LayoutParams
+            // 必须用 LinearLayout.LayoutParams，早期用 FrameLayout.LayoutParams
             // 导致 ClassCastException（键盘收起循环），本次是正确类型。
             // 固定确定高度：面板不受 IME 窗口初始测量影响（冷启动稳定）。
             val density = resources.displayMetrics.density
@@ -2191,7 +2191,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 清空拼音输入缓冲与候选 / 预测 / 已上屏词残留。
      *
-     * 进入或退出搜索模式时必须调用：残留的拼音串**虽不可见却仍然生效**——
+     * 进入或退出搜索模式时必须调用：残留的拼音串虽不可见却仍然生效，
      * 按退格会先删这些看不见的拼音（要按 N 次才轮到搜索框），
      * 按空格则会把上一次的候选词直接塞进搜索框。
      */
@@ -2215,8 +2215,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与方向面板互斥：两者同屏时方向键（箭头/复制/粘贴）会落到宿主输入框上，
         // 与「搜索态只作用于搜索框」的口径冲突（同 showClipboardPanel 的对称处理）。
         if (directionPanelVisible) hideDirectionPanel()
-        // 必须**在面板可见之后**再刷一次候选栏：clearComposingState 内部那次刷新发生在
-        // visibility 置位之前，isPanelSearch() 仍为 false —— 会渲染出宿主功能面板并残留。
+        // 必须在面板可见之后再刷一次候选栏：clearComposingState 内部那次刷新发生在
+        // visibility 置位之前，isPanelSearch() 仍为 false，会渲染出宿主功能面板并残留。
         refreshCandidateBar()
         Diagnostics.i(TAG, "顶部搜索面板: 显示（IME 高度增高）")
     }
@@ -2319,12 +2319,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 视图被移除时的收尾。
      *
-     * 必须做：连删是一个**自我重排**的 55ms 循环（[backspaceRepeatRunnable]），唯一的
-     * 停止条件是 ACTION_UP / ACTION_CANCEL 把 [backspaceHeld] 复位 —— 而视图被 detach 时
-     * Android **不保证**补发 ACTION_CANCEL（移除视图不派发取消事件是已知行为）。
+     * 必须做：连删是一个自我重排的 55ms 循环（[backspaceRepeatRunnable]），唯一的
+     * 停止条件是 ACTION_UP / ACTION_CANCEL 把 [backspaceHeld] 复位，而视图被 detach 时
+     * Android 不保证补发 ACTION_CANCEL（移除视图不派发取消事件是已知行为）。
      * 一旦在按住删除键期间视图被销毁（IME 重建输入视图 / 服务销毁 / 宿主收起），循环就
      * 再也停不下来：它永久持有已销毁的视图，并每 55ms 回调一次 [Listener.onBackspace]，
-     * 也就是持续给当前输入框发 DEL —— 用户没碰键盘，字却一直在被删。
+     * 也就是持续给当前输入框发 DEL，用户没碰键盘，字却一直在被删。
      */
     override fun onDetachedFromWindow() {
         backspaceHandler.removeCallbacksAndMessages(null)
@@ -2337,7 +2337,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val TAG = "PinyinKeyboard"
 
         /**
-         * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ——
+         * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ，
          * 空格/回车走 `key_bg.xml`（圆角 10dp）；
          * 其余五个走 `btn_aurora_secondary.xml`（12dp 圆角 + 1dp 描边）。
          * 半透明模式下这几个背景要在运行时重建（XML 颜色带不了动态 alpha）。
@@ -2350,7 +2350,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 候选栏最多渲染多少个候选条目。
          *
          * 候选数由引擎的 MAX_CHARS(60) 决定上限，而真实单字表里 `yi` 有 326 字、
-         * 93 个音节超过 60 字 —— 即常用音节经常给出满额候选。渲染是「每条一个
+         * 93 个音节超过 60 字，即常用音节经常给出满额候选。渲染是「每条一个
          * TextView」且每次按键全量重建，60 个 View 的创建在低端机上会明显掉帧。
          * 用户实际只点最前面几个（单字候选已按常用度排序），故截断渲染量。
          * 仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
@@ -2374,9 +2374,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
  * 涟漪）的键面背景；[alpha] 只作用于填充色，文字/图标不动（与 [KeyTransparency] 的
  * 「只淡面不淡文字」一致）。
  *
- * 用途：面板里的分类按钮用的是 `key_bg` drawable —— 带不了动态 alpha，键盘侧的「纯色面」
+ * 用途：面板里的分类按钮用的是 `key_bg` drawable，带不了动态 alpha，键盘侧的「纯色面」
  * 识别也扫不到它；透明度 > 0 时由面板按当前档重建（见 `ClipboardPanelView.applySurfaceAlpha`）。
- * ⚠ [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
+ * [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
  * `KEY_BG_CORNER_DP` 是同一口径）。
  */
 internal fun buildKeyFaceBackground(context: android.content.Context, alpha: Float, cornerDp: Float = 10f): android.graphics.drawable.Drawable {
@@ -2400,8 +2400,8 @@ internal fun buildKeyFaceBackground(context: android.content.Context, alpha: Flo
 
 /**
  * 圆角纯色面（如 `mic_area_bg`：16dp 圆角的 `surface_hi` 底盘）；[alpha] 只作用于填充色。
- * 与 [buildKeyFaceBackground] 同类，差别是没有涟漪 —— 对应 XML shape 的重建。
- * ⚠ [cornerDp] 必须与对应 XML 的圆角对齐（改 XML 时必须同步）。
+ * 与 [buildKeyFaceBackground] 同类，差别是没有涟漪，对应 XML shape 的重建。
+ * [cornerDp] 必须与对应 XML 的圆角对齐（改 XML 时必须同步）。
  */
 internal fun buildRoundedFaceBackground(context: android.content.Context, colorRes: Int, alpha: Float, cornerDp: Float): android.graphics.drawable.Drawable =
     android.graphics.drawable.GradientDrawable().apply {
@@ -2411,11 +2411,11 @@ internal fun buildRoundedFaceBackground(context: android.content.Context, colorR
     }
 
 /**
- * 按键命中判定的**几何部分**（文件级纯函数，便于 JVM 单测；调用方见 `PinyinKeyboardView.isInsideKey`）。
+ * 按键命中判定的几何部分（文件级纯函数，便于 JVM 单测；调用方见 `PinyinKeyboardView.isInsideKey`）。
  *
  * - 边界外扩 [pad]（dp 换算后的像素）：贴边点击时手指常有 1~2 像素抖动，
  *   完全不放宽会让边缘键变得难点中；
- * - 取不到布局信息（未测量/已分离，width/height ≤ 0）时返回 true —— 保守退回
+ * - 取不到布局信息（未测量/已分离，width/height ≤ 0）时返回 true，保守退回
  *   「照常输入」：宁可保留旧行为，也不能因为拿不到坐标而让用户按不出字。
  *
  * 字母键与分号键的 `ACTION_UP` 命中判定共用本函数（分号键曾漏掉该判定，

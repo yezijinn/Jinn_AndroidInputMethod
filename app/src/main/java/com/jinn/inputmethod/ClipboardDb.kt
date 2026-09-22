@@ -11,7 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * 存储策略：
  *  - 正文以 AES-256-GCM 密文入库（[ClipboardCrypto]），绝不落明文；
  *  - 来源 APP、时间、分类、收藏标记等元数据明文存储；
- *  - 超出数量上限时删除最旧的非收藏记录（**收藏永不删**），
+ *  - 超出数量上限时删除最旧的非收藏记录（收藏永不删），
  *    数据库 + 内存缓存同步清理；
  *  - 全部操作走单例 + 后台线程，避免主线程 IO 与并发写冲突。
  *
@@ -30,7 +30,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         db.execSQL(createTableSql())
         db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
         // content_hash 唯一索引原先只在升级路径（v4 / v5）里建，全新安装拿不到它：
-        // 两条安装路径的 schema 必须一致 —— 少了它，「同一内容不重复」就只剩 upsert 里
+        // 两条安装路径的 schema 必须一致，少了它，「同一内容不重复」就只剩 upsert 里
         // 的 findIdByHash 一处代码保证，库层本可以兜住；入库查找也会退化成全表扫描。
         db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
     }
@@ -66,7 +66,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
         if (oldVersion < 5) {
             // v5：移除隐私功能（2026-09-16）。重建表去掉 is_private 列，其余内容原样保留。
-            // 隐私标记本身被丢弃 —— 该功能已整体移除，不做兼容。
+            // 隐私标记本身被丢弃，该功能已整体移除，不做兼容。
             db.execSQL("ALTER TABLE $TABLE_ITEMS RENAME TO ${TABLE_ITEMS}_old")
             db.execSQL(createTableSql())
             db.execSQL(
@@ -159,7 +159,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 入库去重写入（原子，@Synchronized 串行）：同一内容（content_hash 相同）已存在时
      * 只更新必要元数据并重新置顶（created_at=now），绝不产生重复记录；
-     * 收藏标记是用户主动状态，重复复制时**不覆盖**。
+     * 收藏标记是用户主动状态，重复复制时不覆盖。
      * 不存在则插入，超上限裁剪最旧非收藏。返回条目 id，失败返回 -1。
      */
     @Synchronized
@@ -235,11 +235,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪历史：先按条数裁到 [maxItems]，再按**总体积**裁到 [maxTotalBytes]。
+     * 裁剪历史：先按条数裁到 [maxItems]，再按总体积裁到 [maxTotalBytes]。
      *
-     * **裁剪优先级**：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
+     * 裁剪优先级：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
-     * 任一维度剩的全是收藏、删不到目标时即停止 ——
+     * 任一维度剩的全是收藏、删不到目标时即停止 ，
      * 宁可超出上限，也不删用户明确标记保留的内容。
      */
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
@@ -270,11 +270,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 按总体积裁剪：密文总量超过 [maxTotalBytes] 时，从**最旧的非收藏**记录开始删，直到落回预算内。
+     * 按总体积裁剪：密文总量超过 [maxTotalBytes] 时，从最旧的非收藏记录开始删，直到落回预算内。
      *
-     * 体积口径用 `LENGTH(encrypted_content)` —— 该列是 base64（纯 ASCII），字符数即字节数，
+     * 体积口径用 `LENGTH(encrypted_content)`，该列是 base64（纯 ASCII），字符数即字节数，
      * 单条 SQL 就能算出总量与逐条大小，无需解密、无需把正文读进内存。
-     * 收藏计入总量但**不参与淘汰**（与 [TRIM_PRIORITY] 同一条原则）：若收藏本身就超预算，只能停手。
+     * 收藏计入总量但不参与淘汰（与 [TRIM_PRIORITY] 同一条原则）：若收藏本身就超预算，只能停手。
      */
     private fun trimByByteBudget(maxTotalBytes: Long) {
         if (maxTotalBytes <= 0) return
@@ -317,7 +317,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 组装过滤条件（分类 / 仅收藏），返回 WHERE 片段与参数。
      *
-     * 收藏是**独立标签**，可与分类并存：
+     * 收藏是独立标签，可与分类并存：
      *  - [favoritesOnly] 为 true 时按收藏标记列过滤；
      *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE 是
      *    上层的伪分类，调用方需自行转成对应标记后传 null）。
@@ -350,8 +350,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 分页读取记录（新→旧），只解密本页 [limit] 条，并带回下一页的游标位置。
      *
-     * **游标口径**：[Page.nextOffset] 是**实际扫描过的原始行数**，不是解密成功的条数。
-     * [readItem] 遇到解密失败的行会跳过，两者一旦混用就会错位——调用方普遍拿
+     * 游标口径：[Page.nextOffset] 是实际扫描过的原始行数，不是解密成功的条数。
+     * [readItem] 遇到解密失败的行会跳过，两者一旦混用就会错位，调用方普遍拿
      * 「已加载条数」当 OFFSET，只要首页有 1 条解密失败，下一页就会重复取到已显示的行、
      * 并把尾部行永久跳过。分页必须改用 [Page.nextOffset]。
      */
@@ -422,8 +422,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         private const val TAG = "ClipboardDb"
 
         /**
-         * 容量裁剪的优先级：**越靠前越先被删除**。
-         * 目前只有一档——非收藏的最旧记录；收藏永不参与裁剪。
+         * 容量裁剪的优先级：越靠前越先被删除。
+         * 目前只有一档，非收藏的最旧记录；收藏永不参与裁剪。
          */
         private val TRIM_PRIORITY = listOf(
             "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
@@ -432,19 +432,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /**
          * 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB）。
          *
-         * 注意口径：按**库内密文（base64）体积**计（`LENGTH(encrypted_content)`），
-         * 不是明文字节 —— base64 膨胀约 4/3，故 100 MB 预算约对应 **73 MB 明文**。
+         * 注意口径：按库内密文（base64）体积计（`LENGTH(encrypted_content)`），
+         * 不是明文字节，base64 膨胀约 4/3，故 100 MB 预算约对应 73 MB 明文。
          */
         const val DEFAULT_MAX_TOTAL_BYTES = 100L * 1024 * 1024
 
         /**
-         * 按字节预算挑选应删除的记录 id（**纯函数**）。
+         * 按字节预算挑选应删除的记录 id（纯函数）。
          *
-         * @param rows **必须按最旧在前**传入（查询侧即 `ORDER BY created_at ASC`）
+         * @param rows 必须按最旧在前传入（查询侧即 `ORDER BY created_at ASC`）
          * @param maxBytes 总量预算；`<= 0` 视为不限制
-         * @return 应删除的 id；收藏**永不**出现在结果里
+         * @return 应删除的 id；收藏永不出现在结果里
          *
-         * 注意：收藏**计入总量**但不参与淘汰 —— 若收藏本身就超预算，可删的条目删完仍超限，
+         * 收藏计入总量但不参与淘汰，若收藏本身就超预算，可删的条目删完仍超限，
          * 此时只能停手（与条数裁剪同一条原则：宁可超限，也不删用户明确标记保留的内容）。
          */
         fun overflowIdsForByteBudget(rows: List<ClipboardRowSize>, maxBytes: Long): List<Long> {
@@ -489,8 +489,8 @@ data class ClipboardRowSize(val id: Long, val bytes: Long, val favorite: Boolean
  * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
  *
  * 分类栏有 4 个 Tab：全部 / 网址 / 数字 / 收藏。其中网址、数字是真正的
- * `category` 列取值，而**收藏是独立的标签列**（is_favorite），
- * 绝不能当 category 传给 SQL——否则 `WHERE category = 'FAVORITE'` 恒不成立，
+ * `category` 列取值，而收藏是独立的标签列（is_favorite），
+ * 绝不能当 category 传给 SQL，否则 `WHERE category = 'FAVORITE'` 恒不成立，
  * 列表会永远是空的。这个翻译必须显式做，是本项目最容易踩的坑之一。
  *
  * 该翻译原先在 5 处（Activity 的首页 / 下一页 / 搜索，Panel 的刷新 / 下一页）

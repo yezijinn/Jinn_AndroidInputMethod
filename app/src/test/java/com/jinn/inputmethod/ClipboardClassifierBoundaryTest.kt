@@ -4,11 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 剪贴板自动分类的**边界回归测试**。
+ * 剪贴板自动分类的边界回归测试。
  *
- * 单独建这个文件：剪贴板正文常从网页/文档复制而来，**普遍带尾随换行**，
+ * 单独建这个文件：剪贴板正文常从网页/文档复制而来，普遍带尾随换行，
  * 而分类器里两条数字规则的处理方式并不统一：
- *  - `NUMBER_ONLY_PATTERN`（`^\d{6,20}$`）用 `matcher(text).find()`，**未 trim**；
+ *  - `NUMBER_ONLY_PATTERN`（`^\d{6,20}$`）用 `matcher(text).find()`，未 trim；
  *  - `VERIFY_CODE_PATTERN`（`\b\d{4,8}\b`）先 `trim()` 再用 `matches()`。
  *
  * 实测两者都能正确处理 `\n` / `\r\n`（Java 的 `$` 默认匹配多种行终止符，
@@ -41,7 +41,7 @@ class ClipboardClassifierBoundaryTest {
     }
 
     /**
-     * 长数字（超出验证码 4-8 位范围）只能靠 `^\d{6,20}$` 命中 ——
+     * 长数字（超出验证码 4-8 位范围）只能靠 `^\d{6,20}$` 命中 ，
      * 这条路径未做 trim，因此必须显式守护带换行的场景。
      */
     @Test
