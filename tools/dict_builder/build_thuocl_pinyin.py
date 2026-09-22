@@ -3,7 +3,7 @@
 import os, re, json
 from collections import defaultdict
 
-BASE = r"C:\AI_WORKSPACE\PROJECTS\CapsWriterIME"
+BASE = r"C:\AI_WORKSPACE\PROJECTS\com.jinn.inputmethod"
 RIME = os.path.join(BASE, "docs", "rime-ice", "cn_dicts")
 SYLL = os.path.join(BASE, "app", "src", "main", "assets", "pinyin_syllables.txt")
 THUOCL_DIR = os.path.join(BASE, "tools", "dict_builder", "THUOCL-master", "data")

@@ -3,4 +3,6 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/launcher_bg" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <!-- Android 13+ 主题化图标：前景是单色剪影（单 path），系统只取 alpha 通道着色，低版本忽略此标签 -->
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
