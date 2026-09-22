@@ -64,8 +64,9 @@
         android:layout_height="1dp"
         android:background="@color/kb_divider" />
 
-    <!-- 麦克风区：浅色面板衬托，麦克风更突出 -->
+    <!-- 麦克风区：浅色面板衬托，麦克风更突出（id 供半透明键盘按档重建其底盘背景） -->
     <FrameLayout
+        android:id="@+id/mic_area"
         android:layout_width="match_parent"
         android:layout_height="176dp"
         android:layout_marginStart="12dp"

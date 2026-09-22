@@ -38,6 +38,31 @@ import kotlin.math.min
         private val colorCorner = context.getColor(R.color.kb_key_hint_red)
 
         /**
+         * 键面填充色（普通 / 按压两态）。
+         *
+         * 半透明键盘只淡「面」不淡文字：由 [setFaceAlpha] 把 alpha 合进这两个颜色，
+         * 绘制路径只取用它们；不透明度 1f 时与 [colorKey] / [colorKeyPressed] 逐位相等。
+         */
+        private var faceColor = colorKey
+        private var faceColorPressed = colorKeyPressed
+
+        /** 当前键面不透明度（1f = 不透明），见 [setFaceAlpha] */
+        private var faceAlpha = 1f
+
+        /**
+         * 设置键面不透明度（1f = 不透明）：只降填充色，文字与提示色不动。
+         * 值没变时提前返回，避免每次弹键盘都触发一次 invalidate。
+         */
+        fun setFaceAlpha(alpha: Float) {
+            val a = alpha.coerceIn(0f, 1f)
+            if (a == faceAlpha) return
+            faceAlpha = a
+            faceColor = KeyTransparency.withAlpha(colorKey, a)
+            faceColorPressed = KeyTransparency.withAlpha(colorKeyPressed, a)
+            invalidate()
+        }
+
+        /**
          * 键面外观：圆角半径 + 四边内缩（像素）。
          *
          * 数值来自设置页的 [KeyAppearance] 参数（圆角 0~24dp / 间隙 0~8dp），
@@ -201,7 +226,7 @@ import kotlin.math.min
             val inset = insetPx.coerceIn(0f, (min(w, h) / 2f - 1f).coerceAtLeast(0f))
             rect.set(inset, inset, w - inset, h - inset)
 
-            keyPaint.color = if (pressed) colorKeyPressed else colorKey
+            keyPaint.color = if (pressed) faceColorPressed else faceColor
             canvas.drawRoundRect(rect, cornerPx, cornerPx, keyPaint)
 
             // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──

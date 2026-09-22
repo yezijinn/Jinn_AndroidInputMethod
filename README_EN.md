@@ -1,4 +1,4 @@
-# Jinn Android IME
+# Jinn Pinyin IME
 
 <div align="center">
 
@@ -29,8 +29,8 @@ Everything runs on-device — **no server required**.
   - **Incomplete-pinyin completion**: `ni m` or `nim` completes to `ni + men` and recalls 「你们」.
   - **Smart prediction** (off by default, switchable in Settings); the candidate bar always shows
     the **keys you actually pressed**, so a Shuangpin conversion that swallows letters never looks frozen.
-  - One-tap CN/EN switch; **key corner radius and gap** live in Settings →「按钮圆角间隙」
-    (radius 0~24dp, gap 0~8dp) — collapse the keyboard and reopen it to see the change.
+  - One-tap CN/EN switch; **key corner radius, gap and keyboard transparency** live in Settings
+    →「键盘按钮调整」(radius 0~24dp, gap 0~8dp, transparency 0~100%) — applied instantly on release.
   - Backspace gestures: tap to delete one character, hold to keep deleting (once the pinyin string is
     empty it keeps deleting committed text); double-tap then hold clears committed text too.
   - The **✕** at the right end of the candidate bar clears the current pinyin string and candidates

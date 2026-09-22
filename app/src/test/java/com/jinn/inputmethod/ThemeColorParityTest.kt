@@ -66,6 +66,50 @@ class ThemeColorParityTest {
         assertEquals("主题下拉 values 与 ThemeManager 常量不一致", expected, values)
     }
 
+    /**
+     * 键盘透明度的标题文案必须与定义域（[KeyTransparency]）一致。
+     *
+     * 文案是写死的字符串：改了定义域忘改文案，编译 / lint / 运行都不报错，
+     * 只有用户会看到「0% ~ 80%」这种过期描述（2026-09-22 就把上限从 80 提到 100）。
+     */
+    @Test
+    fun 透明度标题文案与定义域一致() {
+        val xml = resFile("values/strings.xml").readText()
+        val title = Regex("<string name=\"key_transparency_title\">(.*?)</string>")
+            .find(xml)?.groupValues?.get(1)
+            ?: error("找不到 key_transparency_title")
+        // ⚠ 断言「下界% ~ 上界%」连写形式，别写成 contains("0%")：
+        // 那是 "100%" 的子串，上界存在时下界断言恒真（守卫形同虚设）。
+        assertTrue(
+            "标题未按下界~上界连写（${KeyTransparency.MIN_PERCENT}% ~ ${KeyTransparency.MAX_PERCENT}%）: $title",
+            title.contains("${KeyTransparency.MIN_PERCENT}% ~ ${KeyTransparency.MAX_PERCENT}%"),
+        )
+    }
+
+    /**
+     * 参与透明度合成的色令牌**必须不透明**（6 位 `#RRGGBB`）。
+     *
+     * `KeyTransparency.withAlpha` 是「替换 alpha」语义：令牌若自带 alpha（如 `#33RRGGBB`），
+     * 0%（历史观感档）会被强制拉回不透明，且全树扫描按 RGB 匹配会把它当作面。
+     */
+    @Test
+    fun 参与合成的色令牌必须不透明() {
+        val mustOpaque = listOf(
+            "kb_bg", "kb_divider", "kb_candidate_bg", "kb_key", "kb_key_pressed",
+            "key_bg", "app_bg", "card_bg", "surface_hi",
+            "btn_secondary_bg", "card_stroke", "accent",
+        )
+        for (dir in listOf("values", "values-night")) {
+            val xml = resFile("$dir/colors.xml").readText()
+            for (name in mustOpaque) {
+                val hex = Regex("<color name=\"$name\">#([0-9A-Fa-f]+)</color>")
+                    .find(xml)?.groupValues?.get(1)
+                    ?: error("$dir/colors.xml 找不到 $name（或写法不是一行 #hex）")
+                assertEquals("$dir 的 $name 带 alpha（#${hex}）：withAlpha 会把它拉回不透明", 6, hex.length)
+            }
+        }
+    }
+
     private fun itemNames(file: File): Set<String> =
         Regex("<item name=\"([^\"]+)\"").findAll(file.readText()).map { it.groupValues[1] }.toSet()
 

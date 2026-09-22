@@ -131,7 +131,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val v = LinearLayout(context).apply {
                     orientation = VERTICAL
                     setPadding(dp(16), dp(12), dp(16), dp(12))
-                    background = android.graphics.drawable.ColorDrawable(context.getColor(R.color.card_bg))
                 }
                 val row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 val num = TextView(context).apply {
@@ -162,6 +161,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
+            // 条目卡按**当前**透明度档设色：ListView 会复用 convertView，不每次重设的话，
+            // 改档（拖滑杆）后再滚动列表会混着新旧两档的背景
+            root.background = android.graphics.drawable.ColorDrawable(
+                KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
+            )
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
             holder.content.text = item.content
@@ -493,13 +497,36 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     // ── UI 辅助 ───────────────────────────────────────────
 
+    /** 半透明键盘：本面板「键面」按钮的当前档位（1f = 不透明，与键盘键面同口径） */
+    private var surfaceAlpha = 1f
+
+    /**
+     * 半透明键盘：按当前档重建分类栏按钮的键面背景。
+     *
+     * 为什么需要：这些按钮的背景是 `R.drawable.key_bg`（drawable），键盘侧按「纯色底」
+     * 识别透明度的兜底扫描扫不到它们 —— 不重建的话透明度拉满时面板会「底已透、按钮仍实心」。
+     * 操作条 / 确认条里的按钮是**动态创建**的，它们经 [tabButton] 构建时直接取最新档位。
+     */
+    fun applySurfaceAlpha(alpha: Float) {
+        if (alpha == surfaceAlpha) return
+        surfaceAlpha = alpha
+        if (!::btnBack.isInitialized) return
+        for (b in listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
+            btnCategoryFavorite, btnSearch, btnClear)) {
+            b.background = buildKeyFaceBackground(context, surfaceAlpha)
+        }
+        // 列表条目卡在 getView 里按档设色：通知重建，让已渲染的行立即换到新档
+        adapter.notifyDataSetChanged()
+    }
+
     private fun tabButton(label: String, onClick: () -> Unit): TextView =
         TextView(context).apply {
             text = label
             gravity = android.view.Gravity.CENTER
             setTextColor(context.getColor(R.color.text_primary))
             textSize = 12f
-            setBackgroundResource(R.drawable.key_bg)
+            // 键面背景按当前透明度档运行时构建（XML 的 key_bg 带不了动态 alpha；几何与其一致）
+            background = buildKeyFaceBackground(context, surfaceAlpha)
             isClickable = true
             setOnClickListener { onClick() }
         }

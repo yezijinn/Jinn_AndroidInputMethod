@@ -7,6 +7,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -30,7 +33,7 @@ import android.widget.TextView
 import java.lang.ref.WeakReference
 
 /**
- * Jinn 安卓输入法。
+ * Jinn 拼音输入法。
  *
  * 双模式：
  *  - 语音模式：麦克风 + 最小编辑键（长按说话 / 短按连续录音，实时推给服务端识别）
@@ -65,6 +68,12 @@ class JinnIme : InputMethodService() {
      * 只有**决策结果变了**才重建键盘，常规弹出路径零额外开销。
      */
     private var appliedThemeDark: Boolean? = null
+
+    /**
+     * 符号布局变更被「未上屏输入」延后，等待下次弹键盘（onStartInputView）时补重建。
+     * 见 [rebuildInputViewForSymbolLayout]；换肤/符号重建共用的 [recreateKeyboardView] 会清掉它。
+     */
+    private var pendingSymbolLayoutRebuild = false
 
     /**
      * 键盘视图创建时用的**主题覆盖 Context**（见 [ThemeManager.themedContext]）。
@@ -171,6 +180,15 @@ class JinnIme : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         Diagnostics.init(this)
+        // 半透明键盘：IME 窗口的默认格式是 OPAQUE(-1)/TRANSPARENT(-2)，合成器按「不透明窗口」
+        // 处理，键面的 alpha 只会与窗口内部底色混合、透不出后面的应用（真机症状：改透明度毫无变化）。
+        // 必须在窗口首次显示前把它改成 TRANSLUCENT(-3)，窗口才具备真正的 alpha 通道。
+        runCatching {
+            val w = window?.window
+            Diagnostics.i(TAG, "IME 窗口: 初始 fmt=${w?.attributes?.format}")
+            w?.setFormat(PixelFormat.TRANSLUCENT)
+            Diagnostics.i(TAG, "IME 窗口: 已请求 TRANSLUCENT, fmt=${w?.attributes?.format}")
+        }.onFailure { Diagnostics.w(TAG, "IME 窗口格式设置失败: ${it.message}") }
         prefs = Prefs(this)
         instance = WeakReference(this)
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
@@ -604,8 +622,39 @@ class JinnIme : InputMethodService() {
         }
     }
 
+    /**
+     * 半透明键盘的最后一层：**系统导航栏**（SystemUI 的 NavigationBar0 铺在屏幕最底、盖在键盘之上）。
+     *
+     * 它不属于键盘视图树 —— 底色由「提供系统栏颜色的窗口」给出，键盘可见时这个窗口就是 IME 窗口。
+     * 真机实证：同一张纯黑页面上，键盘收起时屏幕最底纯黑，弹出后变成一条固定的浅色实心带，
+     * 且不随键盘透明度滑块变化（键盘里的铺底面早已全部带 alpha）。
+     * IME 窗口继承应用主题的 `android:navigationBarColor`（不透明 `app_bg`），键盘窗口本身铺满到屏幕底，
+     * 因此把它改透明后，透出的正是键盘背板。
+     *
+     * 每次 [onStartInputView] 都要设一遍：框架显示窗口时会用主题属性重写窗口参数。
+     */
+    private fun applyNavBarTransparency() {
+        val w = window?.window ?: return
+        w.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            w.navigationBarDividerColor = Color.TRANSPARENT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // 系统默认给非不透明导航栏叠一层对比度纱罩，会把透明底又压灰 —— 关掉
+            w.isNavigationBarContrastEnforced = false
+        }
+        Diagnostics.i(TAG, "导航栏: navigationBarColor=${String.format("#%08X", w.navigationBarColor)}")
+    }
+
     override fun onCreateInputView(): View {
         Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
+
+        // 半透明键盘：窗口背景（主题 windowBackground）与框架容器的不透明底色会把 alpha
+        // 全吃在窗口内部 —— 这里先清窗口背景；祖先链（含框架容器/DecorView）上的背景
+        // 等视图真正挂到窗口后再清（见 clearOpaqueAncestorBackgrounds）。
+        // 0% 透明度时键盘面完全不透明，观感与历史一致。
+        window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        applyNavBarTransparency()
 
         // 主题：键盘视图一律用「按 Prefs 决策后的 Context」创建 —— 亮白 / 暗黑 / 定时模式下
         // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
@@ -735,7 +784,118 @@ class JinnIme : InputMethodService() {
         applyKeyboardMode()
         // 注意：不在这里恢复剪贴板面板（见 onStartInputView 注释——恢复会诱发
         // IME 窗口反复 relayout 循环，反而导致面板抖动/空白）。
+        // 半透明键盘：语音面板同一套底色参数；此刻视图还没挂到窗口上，
+        // 等挂上后再清祖先的不透明底色
+        applyTransparencyToVoicePanel()
+        container.post { clearOpaqueAncestorBackgrounds(container) }
         return container
+    }
+
+    /** 语音面板最小编辑键的 id（半透明键盘按档重建它们的键面背景；改 keyboard.xml 时同步） */
+    private val voiceEditKeyIds = intArrayOf(
+        R.id.key_switch, R.id.key_comma, R.id.key_period,
+        R.id.key_space, R.id.key_backspace, R.id.key_enter,
+    )
+
+    /**
+     * 半透明键盘：语音面板与 26 键面板同属「键盘面」，底色与键面一起跟透明度走
+     * （面板底若是实心，切到语音面板就会跳色）。
+     *
+     *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档 —— 按色值识别；
+     *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ——
+     *    它们是 drawable，色值识别扫不到，按当前档重建；
+     *  - ⚠ `mic_button`（MicButton）属**禁改域**（自绘），不参与；其底盘已随 `mic_area` 一起处理。
+     */
+    private fun applyTransparencyToVoicePanel() {
+        val container = keyboardContainer ?: return
+        if (container.childCount < 1) return
+        val ctx = keyboardThemeCtx ?: this
+        val percent = prefs.keyTransparencyPercent
+        val plateAlpha = KeyTransparency.plateAlpha(percent)
+        val surfaceAlpha = KeyTransparency.surfaceAlpha(percent)
+        val voice = container.getChildAt(0)
+        // 纯色面按档统一淡（与 26 键面板同一套识别规则）
+        alphaFaces(
+            voice,
+            plateRgb = intArrayOf(ctx.getColor(R.color.kb_bg), ctx.getColor(R.color.kb_divider)),
+            surfaceRgb = intArrayOf(),
+            plateAlpha = plateAlpha,
+            surfaceAlpha = surfaceAlpha,
+        )
+        voice.findViewById<View>(R.id.status_bar)?.setBackgroundColor(
+            KeyTransparency.withAlpha(ctx.getColor(R.color.kb_bg), surfaceAlpha),
+        )
+        // drawable 面（颜色识别扫不到）：麦克风底盘与 6 个编辑键按档重建。
+        // ⚠ 底盘必须重建为**同款圆角 shape**（mic_area_bg 是 16dp 圆角）——
+        // 直接 setBackgroundColor 会丢掉圆角，0% 时也看得出来。
+        voice.findViewById<View>(R.id.mic_area)?.background =
+            buildRoundedFaceBackground(ctx, R.color.surface_hi, surfaceAlpha, 16f)
+        for (id in voiceEditKeyIds) {
+            voice.findViewById<View>(id)?.background = buildKeyFaceBackground(ctx, surfaceAlpha)
+        }
+    }
+
+    /**
+     * 把 [v] 及其整棵子树里所有「纯色面」按档位套 alpha
+     * （与 `PinyinKeyboardView.alphaFaces` 是同一套规则的两份实现 —— **改一处必须同步另一处**）：
+     *  - RGB ∈ [plateRgb]（背板类：无文字）→ [plateAlpha]；
+     *  - RGB ∈ [surfaceRgb]（内容面类：带文字/内容）→ [surfaceAlpha]。
+     */
+    private fun alphaFaces(
+        v: View,
+        plateRgb: IntArray,
+        surfaceRgb: IntArray,
+        plateAlpha: Float,
+        surfaceAlpha: Float,
+    ) {
+        val c = (v.background as? ColorDrawable)?.color
+        if (c != null) {
+            val rgb = c and 0x00FFFFFF
+            val target = when {
+                plateRgb.any { (it and 0x00FFFFFF) == rgb } -> plateAlpha
+                surfaceRgb.any { (it and 0x00FFFFFF) == rgb } -> surfaceAlpha
+                else -> -1f
+            }
+            if (target >= 0f) v.setBackgroundColor(KeyTransparency.withAlpha(c, target))
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                alphaFaces(v.getChildAt(i), plateRgb, surfaceRgb, plateAlpha, surfaceAlpha)
+            }
+        }
+    }
+
+    /**
+     * 半透明键盘：把键盘视图**上方**（窗口内）所有祖先的不透明背景清掉，并打印诊断。
+     *
+     * 为什么需要：窗口或框架容器可能自带不透明底色（主题 windowBackground、框架的输入视图
+     * 容器）——只要它们还在，键面/背板的 alpha 就只会与这层底色混合，永远透不出后面的应用
+     * （真机症状：透明度调了但毫无变化）。只清祖先，不动键盘自己的各层。
+     *
+     * 必须在视图真正挂到窗口之后调用（onCreateInputView 返回时还没有 parent），故走 post。
+     */
+    private fun clearOpaqueAncestorBackgrounds(view: View) {
+        var parent: ViewGroup? = view.parent as? ViewGroup
+        var depth = 0
+        while (parent != null && depth++ < 8) {
+            val bg = parent.background
+            if (bg != null) {
+                val color = (bg as? ColorDrawable)?.color
+                Diagnostics.i(
+                    TAG,
+                    "半透明: 清掉祖先背景 ${parent.javaClass.simpleName} " +
+                        (color?.let { String.format("#%08X", it) } ?: bg.javaClass.simpleName),
+                )
+                parent.background = null
+            }
+            parent = parent.parent as? ViewGroup
+        }
+        val decorBg = window?.window?.decorView?.background
+        Diagnostics.i(
+            TAG,
+            "半透明: 窗口 fmt=${window?.window?.attributes?.format} " +
+                "decorBg=${(decorBg as? ColorDrawable)?.let { String.format("#%08X", it.color) } ?: "无"}",
+        )
     }
 
     private fun applyKeyboardMode() {
@@ -918,22 +1078,35 @@ class JinnIme : InputMethodService() {
                 return
             }
             Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
-            setInputView(onCreateInputView())
+            recreateKeyboardView()
         }
+    }
+
+    /**
+     * 用最新配置重建键盘视图（换肤与符号布局变更共用）。
+     * 新视图创建时读取全部最新数据，所以顺手清掉「符号布局待重建」标记。
+     */
+    private fun recreateKeyboardView() {
+        pendingSymbolLayoutRebuild = false
+        setInputView(onCreateInputView())
     }
 
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
     fun rebuildInputViewForSymbolLayout() {
         val keyboard = pinyinKeyboard ?: return
         // 与换肤同口径地不打断未上屏输入：重建会清空拼音串/预测词，用户以为输入被吞。
-        // 触发窗口极窄（需键盘可见时改符号），且数据已落盘 —— 延后到视图下次创建时自然生效。
-        // ⚠ 这里**不**看面板态：编辑页场景下面板不可能同时打开，而推迟会造成「改了符号不生效」。
+        // 该路径真实可达：在编辑页「添加符号」对话框里打了一半拼音就按 Home / 锁屏，
+        // Activity.onPause 会先于 IME 提交触发（真机日志实证 2026-09-22）。
+        // ⚠ 这里**不**看面板态：编辑页场景下面板不可能正被使用，而推迟会造成「改了符号不生效」。
         if (keyboard.hasPendingInput) {
-            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入，延后到下次创建视图")
+            // 记下待重建：框架跨会话复用同一个键盘视图，「下次创建」不会自然到来 ——
+            // 靠 onStartInputView 的补重建兜底，否则用户会一直看到旧符号（真机已复现）。
+            pendingSymbolLayoutRebuild = true
+            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入，延后到下次弹键盘重建")
             return
         }
         Diagnostics.i(TAG, "符号分组顺序/收藏变更: 重建键盘视图")
-        setInputView(onCreateInputView())
+        recreateKeyboardView()
     }
 
     /** 定时模式的到点检查（键盘可见期间跨过切换点也换肤）；非定时模式无操作 */
@@ -967,6 +1140,17 @@ class JinnIme : InputMethodService() {
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
         // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘
         applyThemeIfNeeded()
+        // 系统导航栏透明：框架在显示窗口时可能已用主题属性重写过窗口参数，这里每会话补一次
+        applyNavBarTransparency()
+        // 上次因「未上屏输入」被延后的符号布局重建：新会话开始，补一次
+        // （真机实证：框架跨会话复用同一视图，不补则一直显示旧符号）。
+        // 此刻 composing 已由 onFinishInputView 提交清空；仍以防万一看一眼未上屏态。
+        if (pendingSymbolLayoutRebuild && pinyinKeyboard?.let { !it.hasPendingInput } == true) {
+            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 补重建（上次延后）")
+            recreateKeyboardView()
+        }
+        // 半透明键盘：语音面板底色的透明度也在这里刷新（用户可能在键盘外观页改过）
+        applyTransparencyToVoicePanel()
         scheduleThemeTick() // 定时模式：键盘可见期间也准点换肤
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
@@ -1575,13 +1759,32 @@ class JinnIme : InputMethodService() {
         }
 
         /**
-         * 设置页调整符号分组顺序 / 编辑收藏符号后调用（主线程）：键盘视图已创建则重建，**立即生效** ——
-         * 分组顺序与收藏内容都在视图创建时读取一次，不重建就只会等到下次键盘整体重建。
-         * 尚未创建（inputView == null）时不做事：下次创建自然读到新数据。
+         * 设置页调整符号分组顺序 / 编辑收藏符号后调用（主线程）：键盘视图已创建则重建，立即生效 ——
+         * 有未上屏输入时延后，由下次弹键盘（[onStartInputView]）补一次重建
+         * （见 [JinnIme.rebuildInputViewForSymbolLayout]）；尚未创建（inputView == null）时不做事：
+         * 下次创建自然读到新数据。
          */
         fun onSymbolLayoutChanged() {
             val ime = instance?.get() ?: return
             ime.ui.post { ime.rebuildInputViewForSymbolLayout() }
+        }
+
+        /**
+         * 键盘外观页拖动松手后调用（主线程）：键盘正显示时**即时**套用新的透明度/圆角/间隙。
+         *
+         * 为什么需要：外观参数原先只在 `PinyinKeyboardView.configure()`（每次输入框聚焦 / 弹键盘）时读取，
+         * 于是**在本应用的页面里边拖边看**时键盘毫无变化，看上去像「透明度不生效」，
+         * 而切到别的应用（键盘会重新走一次会话）就见效 —— 真机实证 2026-09-22：
+         * 同一次会话内改滑杆，键盘像素完全不变；收起键盘再弹出才变。
+         */
+        fun onKeyAppearanceChanged() {
+            val ime = instance?.get() ?: return
+            ime.ui.post {
+                ime.pinyinKeyboard?.refreshAppearance()
+                // 语音面板与 26 键面板同属「键盘面」：不同步刷新的话，
+                // 默认语音模式下拖滑杆将毫无反应（只能重弹键盘才生效）。
+                ime.applyTransparencyToVoicePanel()
+            }
         }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */

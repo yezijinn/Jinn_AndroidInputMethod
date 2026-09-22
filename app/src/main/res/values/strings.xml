@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Jinn安卓输入法</string>
+    <string name="app_name">Jinn拼音输入法</string>
     <string name="subtype_label">语音听写</string>
 
     <!-- 键盘状态条 -->
@@ -71,7 +71,7 @@
     <string name="cd_shift">切换大写</string>
 
     <!-- 设置页 -->
-    <string name="settings_title">Jinn安卓输入法</string>
+    <string name="settings_title">Jinn拼音输入法</string>
     <string name="settings_subtitle">语音识别 + 26 键全拼 + 7 套双拼方案</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
@@ -109,7 +109,7 @@
     <string name="update_btn_no">不要</string>
     <string name="update_download_page">打开下载页面</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n打错的拼音不用一个个退：点候选栏右侧的 ✕ 可整串清掉；双击再长按退格则清空整个输入框。\n拼音键盘按下的字母，按回车能输出英文字母。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n"删除键" 双击再长按,清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -164,7 +164,6 @@
     <!-- Root 增强模式 -->
     <string name="clipboard_root_enhance">Root 增强模式</string>
     <string name="clipboard_root_enhance_desc">可选扩展：使用 Root 权限审计 JinnIme 数据目录安全</string>
-    <string name="switch_root_enhance">开启 Root 增强模式</string>
     <string name="clipboard_root_status">Root 状态：%1$s</string>
     <string name="clipboard_root_available">可用</string>
     <string name="clipboard_root_unavailable">不可用</string>
@@ -187,13 +186,15 @@
     <string name="settings_shuangpin_scheme">拼音输入方案</string>
     <string name="settings_shuangpin_scheme_desc">双拼26键显示韵母</string>
 
-    <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙 -->
+    <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_entry">按钮圆角间隙</string>
-    <string name="key_appearance_desc">统一作用于 26 键区 三行的 28 个按键</string>
+    <string name="key_appearance_entry">键盘按钮调整</string>
+    <string name="key_appearance_desc">圆角与间隙作用于 26 键区 28 个按键\n透明度作用于整个键盘（含候选栏）</string>
     <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
     <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
-    <string name="key_appearance_apply_hint">收起键盘即时生效</string>
+    <string name="key_transparency_title">键盘透明度（0% ~ 100%，0% 为不透明）</string>
+    <string name="key_transparency_desc">只淡键面与底色，文字保持清晰</string>
+    <string name="key_appearance_apply_hint">松手即时生效 不用重启</string>
 
     <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
     <string name="symbol_order_title">符号分组顺序</string>
