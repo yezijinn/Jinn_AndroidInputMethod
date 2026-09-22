@@ -1,6 +1,5 @@
 package com.jinn.inputmethod
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.tukaani.xz.XZInputStream

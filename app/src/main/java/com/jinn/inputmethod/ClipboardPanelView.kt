@@ -170,7 +170,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.num.text = (categoryTotal - pos).toString()
             holder.content.text = item.content
             holder.meta.text = buildString {
-                append(SDF.format(Date(item.createdAt)))
+                append(formatTime(item.createdAt))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
             }
@@ -541,6 +541,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
-        val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        /**
+         * 条目时间格式。按当前 Locale 即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
+         * （lint ConstantLocale），而每条目构造一次的开销可忽略。
+         */
+        fun formatTime(ts: Long): String =
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts))
     }
 }

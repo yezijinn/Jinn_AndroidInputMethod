@@ -59,9 +59,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private val db by lazy { ClipboardDb.get(context) }
 
-    private lateinit var editSearch: EditText
-    private lateinit var listView: ListView
-    private lateinit var textEmpty: TextView
+    private val editSearch: EditText
+    private val listView: ListView
+    private val textEmpty: TextView
 
     private var currentItems: List<ClipboardDb.Item> = emptyList()
 
@@ -112,7 +112,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.itemId = item.id
             holder.content.text = item.content
             holder.meta.text = buildString {
-                append(SDF.format(Date(item.createdAt)))
+                append(formatTime(item.createdAt))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
             }
@@ -390,6 +390,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */
         const val RESULT_EMPTY_HEIGHT_DP = 120
-        val SDF = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        /**
+         * 条目时间格式。按当前 Locale 即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
+         * （lint ConstantLocale），而每条目构造一次的开销可忽略。
+         */
+        fun formatTime(ts: Long): String =
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts))
     }
 }

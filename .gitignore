@@ -14,10 +14,10 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# 代码图谱索引（AI 工具生成，可随时重建）
+# 代码图谱索引（助手工具生成，可随时重建）
 .codegraph/
 
-# AI 工具会话状态
+# 助手工具会话状态
 .omo/
 
 # 签名密钥与敏感配置
@@ -36,19 +36,13 @@ tools/dict_builder/out/
 # 签名密码（本地密钥，不入库）
 keystore.properties
 
-# 第三方源码（服务端，非本仓库）
-/CapsWriter-Offline-master/
-
 # 云服务凭证 / 会话密钥（含真实凭据，绝不能入库）
 ses_*.json
 *service-account*.json
 *-credentials.json
 
-# AI 工具工作区状态（不入库）
+# 助手工具工作区状态（不入库）
 .workbuddy/
-
-# 参考字表原始压缩包（内容已提取为 assets/common_chars.txt）
-docs/*.zip
 
 # 词库源文件（28MB 未压缩，可由 assets 基础包 + release 扩展包还原，不入库）
 tools/dict_builder/source/
@@ -62,12 +56,6 @@ release/
 # Python 缓存
 __pycache__/
 *.pyc
-
-# 交接/临时文档（本地保留）
-HANDOFF.md
-
-# 接手指南（一次性入手文档，已归档 docs/）
-ONBOARDING.md
 
 # 第三方词库源码（调研用，非本项目代码）
 tools/dict_builder/THUOCL-master/

@@ -2,7 +2,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.Properties
-import java.io.FileInputStream
 import java.io.File
 
 plugins {
@@ -11,7 +10,7 @@ plugins {
 }
 
 // ── 签名配置 ─────────────────────────────────────────────
-// 一键打包脚本通过环境变量注入 E:\JinnKeyStores 中的统一密钥；
+// 一键打包脚本经环境变量 JINN_KEYSTORE_ROOT 注入统一密钥库目录（GLOBAL/credentials/JinnKeyStores）；
 // keystore.properties 仅作为手动构建的本地兼容回退，绝不入库。
 val keystoreProps = Properties()
 val ksFile = rootProject.file("keystore.properties")

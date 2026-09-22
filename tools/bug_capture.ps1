@@ -1,5 +1,5 @@
 # ============================================================
-# bug_capture.ps1 - One-click diagnostic bundle for CapsWriterIME
+# bug_capture.ps1 - One-click diagnostic bundle for Jinn Pinyin IME
 #
 # Uses ADB + Root(KernelSU) to collect a complete diagnostic snapshot:
 #   - app logs (jinn-*.log)
