@@ -24,8 +24,8 @@
     <!-- 分类词库页 -->
     <string name="dict_manager_title">分类词库</string>
     <string name="dict_entry_button">补充短语词库</string>
-    <string name="dict_manager_hint_line1">按需下载词库，扩充输入覆盖范围。</string>
-    <string name="dict_manager_hint_line2">下载后会自动重启输入法以生效。</string>
+    <string name="dict_manager_hint_line1">需要哪个下哪个，能打的词更多。</string>
+    <string name="dict_manager_hint_line2">下载完会自动重启输入法。</string>
     <string name="dict_status_installed">已安装（%1$s）</string>
     <string name="dict_status_absent">未安装</string>
     <string name="dict_action_download">下载</string>
@@ -109,7 +109,7 @@
     <string name="update_btn_no">不要</string>
     <string name="update_download_page">打开下载页面</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n"删除键" 双击再长按,清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者：https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -163,7 +163,7 @@
 
     <!-- Root 增强模式 -->
     <string name="clipboard_root_enhance">Root 增强模式</string>
-    <string name="clipboard_root_enhance_desc">可选扩展：使用 Root 权限审计 JinnIme 数据目录安全</string>
+    <string name="clipboard_root_enhance_desc">用 Root 权限检查数据目录是否安全（可选）</string>
     <string name="clipboard_root_status">Root 状态：%1$s</string>
     <string name="clipboard_root_available">可用</string>
     <string name="clipboard_root_unavailable">不可用</string>
@@ -172,7 +172,7 @@
     <string name="switch_show_rare_chars">加更多生僻字</string>
     <string name="switch_show_rare_chars_desc">一般不用开</string>
     <string name="switch_user_learning">用户词频学习</string>
-    <string name="switch_user_learning_desc">记住常选词,自动放前排</string>
+    <string name="switch_user_learning_desc">记住常选的词，下次放前排</string>
     <string name="switch_predict">追加候选词语</string>
     <string name="switch_predict_desc">额外显示后续的词</string>
     <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
@@ -184,7 +184,7 @@
 
     <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
     <string name="settings_shuangpin_scheme">拼音输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">双拼26键显示韵母</string>
+    <string name="settings_shuangpin_scheme_desc">双拼时键面显示韵母</string>
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
     <string name="key_appearance_title">键盘外观</string>
@@ -207,7 +207,7 @@
     <!-- 收藏分组：编辑页与设置页入口 -->
     <string name="favorite_title">符号收藏编辑</string>
     <string name="favorite_entry_title">符号的自定义</string>
-    <string name="favorite_desc">自由增删「收藏」分组里的符号；每页最多 26 个，满页自动新增页。改动即时保存，返回键盘即生效。</string>
+    <string name="favorite_desc">增删「收藏」里的符号；每页最多 26 个，满了自动开新页。改完即时保存，返回键盘就生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
     <string name="favorite_add">＋ 添加符号</string>
     <string name="favorite_close">✕</string>

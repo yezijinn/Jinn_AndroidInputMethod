@@ -16,7 +16,7 @@
 > 服务端需要你自己在一台家用 NAS 上部署 [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline)
 > （Docker 镜像），Android 端再通过 WebSocket 把音频流上传给它。
 >
-> 没有可访问的自建 NAS 服务端，语音功能就用不了，它面向已经搭好该服务端的人，不适合普通用户。
+> 没有可访问的自建 NAS 服务端，语音功能就用不了。这个功能是给已经搭好服务端的人用的，不适合普通用户。
 >
 > 拼音键盘、剪贴板、分类词库等核心功能全部在本机实现，与语音无关，无需任何服务端。
 
@@ -132,7 +132,7 @@ python build_apk.py --clean      # clean 后全新编译
    或直接给 Gradle 传 `JINN_KEYSTORE_FILE` / `JINN_KEYSTORE_PASSWORD` / `JINN_KEY_ALIAS` / `JINN_KEY_PASSWORD`。
 3. `./gradlew assembleRelease` 在未提供上述配置时产出未签名包（保留无密钥构建能力）。
 
->  用 `build_apk.py` 时签名流程顺序不可调换：
+> 用 `build_apk.py` 时签名流程顺序不可调换：
 > 构建 → 去 META-INF → `zipalign -p 4` → `apksigner sign` → 校验。
 > apksigner 不负责对齐，顺序写反会让 APK 未对齐、设备读资源需先解压。
 
@@ -155,7 +155,7 @@ python build_apk.py --clean      # clean 后全新编译
 
 本项目采用 GNU GPL v3.0（见 [LICENSE](LICENSE)）。
 
->  内置词库含 GPL-3.0 来源（雾凇 / 白霜拼音），按 GPL 传染性要求，
+> 内置词库含 GPL-3.0 来源（雾凇 / 白霜拼音），按 GPL 传染性要求，
 > 本项目整体以 GPL-3.0 分发。
 
 ## 致谢

@@ -166,7 +166,7 @@ annotation error rate is too high.
 
 This project is licensed under GNU GPL v3.0 (see [LICENSE](LICENSE)).
 
->  The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang); under GPL copyleft
+> The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang); under GPL copyleft
 > the project is distributed as GPL-3.0.
 
 ## Credits
