@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CapsWriterIME 词库扩充：THUOCL → 自动注音 → 合并进现有词库。
+Jinn拼音输入法 词库扩充：THUOCL → 自动注音 → 合并进现有词库。
 
 用法：
     python extend_dict.py <现有 pinyin_phrases.txt> <THUOCL 目录> -o <输出目录>
