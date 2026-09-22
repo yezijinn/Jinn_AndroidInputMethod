@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 自然码双拼转换单元测试（**回归基线**）。
+ * 自然码双拼转换单元测试（回归基线）。
  *
  * 键位数据已改由 `docs/rime-ice/double_pinyin.schema.yaml` 生成（见 ShuangpinSchemes.kt），
  * 本文件 66 个用例是「换表不许改行为」的护栏。

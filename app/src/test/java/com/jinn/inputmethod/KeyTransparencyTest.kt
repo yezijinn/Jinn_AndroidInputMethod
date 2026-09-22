@@ -83,7 +83,7 @@ class KeyTransparencyTest {
         assertEquals(0x00, (KeyTransparency.withAlpha(base, 0f) ushr 24) and 0xFF)
         assertEquals(0xFF, (KeyTransparency.withAlpha(base, 5f) ushr 24) and 0xFF)
         assertEquals(0x00, (KeyTransparency.withAlpha(base, -1f) ushr 24) and 0xFF)
-        // 语义是「替换」alpha 而非「相乘」：带 alpha 的输入被**拉回**目标值 ——
+        // 语义是「替换」alpha 而非「相乘」：带 alpha 的输入被拉回目标值 ，
         // 全树扫描靠它幂等（重复套用结果相同），并保证回到 0% 时能把淡过的面恢复为不透明。
         // 若有人把它改回「保留输入 alpha」（看名字很像 bug），本断言会拦住。
         assertEquals(0xFF1A2B3C.toInt(), KeyTransparency.withAlpha(0x801A2B3C.toInt(), 1f))

@@ -1,21 +1,21 @@
 package com.jinn.inputmethod
 
 /**
- * 双拼键位数据（**由脚本生成，勿手改**）。
+ * 双拼键位数据（由脚本生成，勿手改）。
  *
  * 生成器：`tools/dict_builder/gen_shuangpin_tables.py`
- * 权威来源：`docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`——
+ * 权威来源：`docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`，
  * 脚本按 librime 的代数语义（xform 替换 / derive 追加 / erase / xlit）逐条施加到
  * `assets/pinyin_syllables.txt` 的 422 个合法音节上，算出每套方案的码表。
  *
  * 因此本文件的键位与 rime-ice 完全一致（含 rime 的 derive 容错码）；唯一的人工裁决是
  * 「一码多音节」的取舍（如 `lo` = lo/luo），规则见生成器里的 COLLISION_PREFER 注释。
  *
- * 键面提示（字母键下方的韵母、zh/ch/sh 红字）**由本表在运行期反推**，不另存一份，
+ * 键面提示（字母键下方的韵母、zh/ch/sh 红字）由本表在运行期反推，不另存一份，
  * 以保证键面与引擎永不漂移。
  *
- * **每套方案惰性构建**（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
- * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的——若在该路径同步建表会拖慢首次弹出。
+ * 每套方案惰性构建（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的，若在该路径同步建表会拖慢首次弹出。
  * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUp`）。
  */
 
@@ -32,7 +32,7 @@ internal class ShuangpinTable(
     private val nasalExtras = setOf("m", "n", "ng", "hm", "hng")
 
     /**
-     * 韵母表的规范顺序：只用于**同一行内**给韵母排序（长者在前），
+     * 韵母表的规范顺序：只用于同一行内给韵母排序（长者在前），
      * 让同屏的两个韵母次序固定且符合直觉，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
      */
     private val finalOrder = listOf(
@@ -63,12 +63,12 @@ internal class ShuangpinTable(
     /**
      * 该键的韵母提示（字母键下方的小字）。
      *
-     * 规则（**用户明示，不得违反**）：
-     *  1. **绝不显示与该键字母相同的韵母**——e 键不显示 e、v 键不显示 v、a/i/u 同理，
+     * 规则（用户明示，不得违反）：
+     *  1. 绝不显示与该键字母相同的韵母，e 键不显示 e、v 键不显示 v、a/i/u 同理，
      *     属纯冗余；
-     *  2. ü 的两种写法同时出现时（u 对应 jqxy 后、v 对应 l/n 后）**只留 v**，
+     *  2. ü 的两种写法同时出现时（u 对应 jqxy 后、v 对应 l/n 后）只留 v，
      *     否则同一键上会出现两个表示同一读音的项；
-     *  3. **总显示行数强制 ≤ 2**（含红色 zh/ch/sh 那一行）：
+     *  3. 总显示行数强制 ≤ 2（含红色 zh/ch/sh 那一行）：
      *     · 该键承担 zh/ch/sh 时韵母挤成一行（红色占第 2 行）；
      *     · 否则每个韵母各占一行（最多 2 个）。
      *

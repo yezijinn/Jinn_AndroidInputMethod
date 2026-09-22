@@ -16,7 +16,7 @@ import java.io.File
  *  - [OptionalDicts.sha256Of] 的取值与标准 SHA-256 一致（自己实现错就没有意义）；
  *  - [OptionalDicts.matchesChecksum] 对空摘要、错摘要都拒绝（不能「没校验」也算过）。
  *
- * 注意：断言失败意味着完整性校验被绕过，不要通过放宽判据让它变绿。
+ * 断言失败意味着完整性校验被绕过，不要通过放宽判据让它变绿。
  */
 class OptionalDictChecksumTest {
 

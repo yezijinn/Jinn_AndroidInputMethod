@@ -5,7 +5,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 候选数量的量级边界测试 —— 守护「渲染必须截断」这个前提。
+ * 候选数量的量级边界测试，守护「渲染必须截断」这个前提。
  *
  * 候选栏渲染是「每条一个 TextView」且每次按键全量重建。
  * 引擎侧单字候选上限为 MAX_CHARS(60)，而真实单字表里 `yi` 有 326 字、
@@ -22,7 +22,7 @@ class CandidateCountBoundTest {
         PinyinEngine.resetForTest()
         // 模拟真实单字表的量级：常用音节下挂着大量单字
         // （真实数据：yi 326 字、ni 数十字，93 个音节超过引擎的 MAX_CHARS=60）
-        // ⚠ 条目必须是**单个字符**：这是单字表，加载期会丢掉多字符 token
+        // 条目必须是单个字符：这是单字表，加载期会丢掉多字符 token
         // （早先用 `字1` 这类两字符串条目，与真实表不符，长度判据补齐后被挡下）。
         val manyChars = (0x4E00..0x4E45).joinToString(",") { it.toChar().toString() }
         PinyinEngine.loadFromTexts(

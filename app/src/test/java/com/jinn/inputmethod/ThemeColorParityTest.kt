@@ -6,9 +6,9 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 两套色板必须**逐名对齐**（`values/` 亮白 vs `values-night/` 暗黑）。
+ * 两套色板必须逐名对齐（`values/` 亮白 vs `values-night/` 暗黑）。
  *
- * 少写一个名字不会编译报错，也不会崩：该令牌在另一套主题下**静默退回**默认目录的值，
+ * 少写一个名字不会编译报错，也不会崩：该令牌在另一套主题下静默退回默认目录的值，
  * 表现为「亮色下某个部件还是深色」这类只有肉眼能发现的问题（配色与对比度双输）。
  * 本测试把两边的 `<color name>` 集合钉死相等。
  */
@@ -32,7 +32,7 @@ class ThemeColorParityTest {
     /**
      * 同一条 style 在两套主题里的 `<item name>` 必须一致。
      *
-     * `values-night/themes.xml` 的同名 style 是**整条替换**（不是逐项合并）：少写一个 item，
+     * `values-night/themes.xml` 的同名 style 是整条替换（不是逐项合并）：少写一个 item，
      * 那一项在暗色下就退回框架默认值（例如 `textColorPrimary` 丢失 → 文字用系统色），
      * 编译、lint、运行都不报错，只能靠肉眼在深色下发现。
      */
@@ -78,7 +78,7 @@ class ThemeColorParityTest {
         val title = Regex("<string name=\"key_transparency_title\">(.*?)</string>")
             .find(xml)?.groupValues?.get(1)
             ?: error("找不到 key_transparency_title")
-        // ⚠ 断言「下界% ~ 上界%」连写形式，别写成 contains("0%")：
+        // 断言「下界% ~ 上界%」连写形式，别写成 contains("0%")：
         // 那是 "100%" 的子串，上界存在时下界断言恒真（守卫形同虚设）。
         assertTrue(
             "标题未按下界~上界连写（${KeyTransparency.MIN_PERCENT}% ~ ${KeyTransparency.MAX_PERCENT}%）: $title",
@@ -87,7 +87,7 @@ class ThemeColorParityTest {
     }
 
     /**
-     * 参与透明度合成的色令牌**必须不透明**（6 位 `#RRGGBB`）。
+     * 参与透明度合成的色令牌必须不透明（6 位 `#RRGGBB`）。
      *
      * `KeyTransparency.withAlpha` 是「替换 alpha」语义：令牌若自带 alpha（如 `#33RRGGBB`），
      * 0%（历史观感档）会被强制拉回不透明，且全树扫描按 RGB 匹配会把它当作面。

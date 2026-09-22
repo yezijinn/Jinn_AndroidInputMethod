@@ -65,7 +65,7 @@ class JinnIme : InputMethodService() {
      * 上次创建键盘视图时生效的深浅色（null = 还没有键盘视图）。
      *
      * `onStartInputView` 用它判断主题是否被改过（设置页改了模式、或定时模式跨过切换点）：
-     * 只有**决策结果变了**才重建键盘，常规弹出路径零额外开销。
+     * 只有决策结果变了才重建键盘，常规弹出路径零额外开销。
      */
     private var appliedThemeDark: Boolean? = null
 
@@ -76,15 +76,15 @@ class JinnIme : InputMethodService() {
     private var pendingSymbolLayoutRebuild = false
 
     /**
-     * 键盘视图创建时用的**主题覆盖 Context**（见 [ThemeManager.themedContext]）。
+     * 键盘视图创建时用的主题覆盖 Context（见 [ThemeManager.themedContext]）。
      *
-     * ⚠ 服务自身的 `getColor()` 走的是**系统**配置：强制亮白/暗黑时，服务里直接取色会拿到另一套色板
+     * 服务自身的 `getColor()` 走的是系统配置：强制亮白/暗黑时，服务里直接取色会拿到另一套色板
      * （状态点曾因此用错主题的 dot 色）。凡在服务层取色的地方，一律用这个 Context，未创建时退回自身。
      */
     private var keyboardThemeCtx: Context? = null
     /**
-     * 语音组件。**仅在「语音输入」开关为开时才实例化**（见 [ensureVoiceReady]）。
-     * 开关关闭时两者恒为 null —— 语音功能完全沉寂，不占用任何语音相关内存，
+     * 语音组件。仅在「语音输入」开关为开时才实例化（见 [ensureVoiceReady]）。
+     * 开关关闭时两者恒为 null，语音功能完全沉寂，不占用任何语音相关内存，
      * 因此所有使用点都必须走空安全（`?.`）。
      */
     private var asr: AsrClient? = null
@@ -99,7 +99,7 @@ class JinnIme : InputMethodService() {
     private var hintLabel: TextView? = null
 
     private var pinyinKeyboard: PinyinKeyboardView? = null
-    /** 当前键盘模式。默认拼音——语音默认禁用，不能以语音键盘起步 */
+    /** 当前键盘模式。默认拼音，语音默认禁用，不能以语音键盘起步 */
     private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
 
@@ -109,7 +109,7 @@ class JinnIme : InputMethodService() {
      * [pendingPasteText] 的暂存时刻。
      *
      * 暂存文本只在短时间内有效（[PENDING_PASTE_TTL_MS]）：用户点完剪贴板条目后
-     * 若很久才切回输入框，或中途换了别的输入框，过期的暂存文本会被静默丢弃——
+     * 若很久才切回输入框，或中途换了别的输入框，过期的暂存文本会被静默丢弃，
      * 否则一次 onStartInputView 就会把旧内容粘到完全无关的位置。
      */
     private var pendingPasteAt = 0L
@@ -222,7 +222,7 @@ class JinnIme : InputMethodService() {
         ui.postDelayed({ maybeLoadOptionalDict("兜底超时") }, OPTIONAL_FALLBACK_DELAY_MS)
         // 双拼键位表预热：7 套表按需构建（实测单套首次使用约 1~1.7ms，7 套合计约 8ms）；而键盘视图是在
         // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
-        // 故这里用独立守护线程预热（不占用 BackgroundIo——那是剪贴板 DB 的单线程队列，
+        // 故这里用独立守护线程预热（不占用 BackgroundIo，那是剪贴板 DB 的单线程队列，
         // 不该被 CPU 预热阻塞）。失败也不影响功能：首次访问会按需同步构建。
         Thread({
             // 后台优先级：此刻词库正在加载、用户可能已在打字，预热不该与之抢 CPU
@@ -250,9 +250,9 @@ class JinnIme : InputMethodService() {
                 Diagnostics.e(TAG, "onCreate: 词库加载失败，候选将不可用: ${it.message}", it)
             }
 
-            // 可选词库包（分类词库页下载的那些，可达 1.14M 词条、实测解析 21~34s）**不再定时加载**：
+            // 可选词库包（分类词库页下载的那些，可达 1.14M 词条、实测解析 21~34s）不再定时加载：
             // 原来固定「基础包就绪后 5 秒」开始，而那正是用户开始打字的时间点，重活抢 CPU/内存带宽
-            // → 冷启动后「很卡」。改为等**空闲信号**（见 maybeLoadOptionalDict）。
+            // → 冷启动后「很卡」。改为等空闲信号（见 maybeLoadOptionalDict）。
             Diagnostics.i(TAG, "可选词库: 已改为空闲时加载（息屏 / 键盘收起后 / 兜底超时）")
         }.start()
 
@@ -266,7 +266,7 @@ class JinnIme : InputMethodService() {
 
         // 监听设置页「保存配置」广播：参数改动立即生效，无需重启输入法进程。
         // Android 13+ 动态注册必须显式声明导出标志：同进程应用内广播用 NOT_EXPORTED。
-        // ⚠ 只在 Android 13+ 注册：低版本没有 RECEIVER_NOT_EXPORTED 标志，
+        // 只在 Android 13+ 注册：低版本没有 RECEIVER_NOT_EXPORTED 标志，
         // 动态注册默认导出且无权限保护，任意第三方 App 都能发这条 action 触发
         // refreshConfig（强制重连 + 反复启停剪贴板监听）。本 action 在应用内
         // 没有发送方（设置页走 killProcess 重启生效），低版本不注册不损失任何功能。
@@ -299,7 +299,7 @@ class JinnIme : InputMethodService() {
                 return false
             }
             // requestShowSelf 是 API 28 才有的方法（minSdk 26）：低版本直接跳过，
-            // 否则会抛 NoSuchMethodError——虽被 runCatching 兜住不崩溃，
+            // 否则会抛 NoSuchMethodError，虽被 runCatching 兜住不崩溃，
             // 但功能静默失效且空 onFailure 违反「绝不静默吞异常」的约定。
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 runCatching { requestShowSelf(0) }.onFailure {
@@ -349,7 +349,7 @@ class JinnIme : InputMethodService() {
     /**
      * 我们最后一次请求设置的选区（`InputConnection.setSelection`）。
      *
-     * 只用于在 [onUpdateSelection] 里区分「这次变化是我们自己造的」与「宿主改的」——
+     * 只用于在 [onUpdateSelection] 里区分「这次变化是我们自己造的」与「宿主改的」，
      * 后者必须让拖选状态失效。只放行一次：回调重复或延迟到达时，陈旧期望不能一直挡着外部变化。
      */
     private var lastSetSelection: Pair<Int, Int>? = null
@@ -360,7 +360,7 @@ class JinnIme : InputMethodService() {
      * 拖选状态机（NORMAL_CURSOR ↔ TEXT_SELECTION_ACTIVE）：
      *  - 点击中心 ●：未激活 → 固定当前光标为 Anchor 并激活；已激活 → 清除选区、
      *    退出拖选、光标停在 Focus 位置（不跳回 Anchor）
-     *  - 激活时方向键/行首/行末：只移动 **Focus**，Anchor 固定不变，
+     *  - 激活时方向键/行首/行末：只移动 Focus，Anchor 固定不变，
      *    选区 = setSelection(min(Anchor,Focus), max(Anchor,Focus))
      *  - 复制：复制选中文字，保持选区与拖选模式
      *  - 粘贴：有选区 → 替换；无选区 → 光标处粘贴
@@ -437,14 +437,14 @@ class JinnIme : InputMethodService() {
     /**
      * 普通光标模式：只通过 InputConnection.setSelection 移动文本光标。
      *
-     * **绝不发送 DPAD / MOVE_HOME / MOVE_END KeyEvent**——那些会触发
+     * 绝不发送 DPAD / MOVE_HOME / MOVE_END KeyEvent，那些会触发
      * 目标 APP 的 View Focus Navigation（按钮/输入框/控件获得焦点）。
      * 正确行为：读取当前光标位置，计算新位置，setSelection 更新光标，
      * View Focus 保持不变。
      */
     private fun moveCursor(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
         val range = currentSelectionRange(connection) ?: return
-        // 全程按**窗口内下标**算，最后再加回 startOffset 交给宿主：selectionStart/End 是全文
+        // 全程按窗口内下标算，最后再加回 startOffset 交给宿主：selectionStart/End 是全文
         // 绝对下标，而 range.text 可能只是光标附近的窗口（见 [currentSelectionRange]）。
         val cursor = range.start - range.startOffset
         val newRel = when (action) {
@@ -464,7 +464,7 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 拖选扩展：**只移动 Focus**，Anchor 固定不变。
+     * 拖选扩展：只移动 Focus，Anchor 固定不变。
      * 选区始终 = setSelection(min(Anchor,Focus), max(Anchor,Focus))，
      * 不依赖 Android 当前的 selectionStart/End（避免归一化导致 Anchor/Focus 漂移）。
      * 行首/行末把 Focus 跳到行首/行末；上/下按行移动并保持列位置。
@@ -498,9 +498,9 @@ class JinnIme : InputMethodService() {
     /**
      * 读取当前选区范围（未选中时 start == end == 光标位置）。
      *
-     * **两类下标必须分清**：`selectionStart/End` 是全文**绝对**下标，而 `text` 在长文档下可能
-     * 只是光标附近的一段**窗口**（`startOffset` 是它在全文里的起点）。端点落在窗口之外时无从
-     * 计算 —— 返回 null 让调用方放弃本次操作。旧实现直接拿绝对下标去索引窗口文本，
+     * 两类下标必须分清：`selectionStart/End` 是全文绝对下标，而 `text` 在长文档下可能
+     * 只是光标附近的一段窗口（`startOffset` 是它在全文里的起点）。端点落在窗口之外时无从
+     * 计算，返回 null 让调用方放弃本次操作。旧实现直接拿绝对下标去索引窗口文本，
      * 行移动 / 行首行末会算出无关位置，甚至把光标挪到「窗口长度」那个绝对下标上。
      */
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
@@ -525,11 +525,11 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 搜索态的「作用于宿主」面板动作一律拒绝（**纵深防御**）。
+     * 搜索态的「作用于宿主」面板动作一律拒绝（纵深防御）。
      *
      * 主守卫在 `PinyinKeyboardView.renderFunctionPanel`：搜索态候选栏只渲染「退出搜索」，
      * 全选/复制/方向/粘贴都不出现。这里再挡一道，保证任何将来新增的调用路径
-     * （无障碍、外部触发、新的面板入口）都不会让它们落到宿主输入框上 ——
+     * （无障碍、外部触发、新的面板入口）都不会让它们落到宿主输入框上 ，
      * 搜索态下 26 键只作用于搜索框，面板动作必须同口径。
      */
     private fun rejectedBySearchPanel(action: String): Boolean {
@@ -543,7 +543,7 @@ class JinnIme : InputMethodService() {
         val connection = currentInputConnection ?: return
         // 与 moveCursor/extendSelection 同一套坐标：currentSelectionRange 已把
         // 「绝对下标 vs 窗口文本」的错位挡在外面（端点不在窗口内时返回 null）。
-        // 旧实现只做 coerceIn 钳位——窗口化时会把绝对下标当窗口下标用，
+        // 旧实现只做 coerceIn 钳位，窗口化时会把绝对下标当窗口下标用，
         // 复制到与选区无关的内容（静默错误）或截出半截选区。
         val range = currentSelectionRange(connection) ?: return
         if (range.end <= range.start) {
@@ -584,10 +584,10 @@ class JinnIme : InputMethodService() {
     /**
      * `getExtractedText` 的结果。
      *
-     * **两类下标**：`start`/`end` 是全文**绝对**下标（宿主给的就是这个），而 `text` 可能只是
-     * 光标附近的一段**窗口**、`startOffset` 是它在全文里的起点 —— 拿 `text` 算行移动前必须
+     * 两类下标：`start`/`end` 是全文绝对下标（宿主给的就是这个），而 `text` 可能只是
+     * 光标附近的一段窗口、`startOffset` 是它在全文里的起点，拿 `text` 算行移动前必须
      * 先减 `startOffset`，算完再加回去（见 [moveCursor] / [extendSelection]）。
-     * `textLength` 是**窗口长度**（窗口内的上界），不是全文长度。
+     * `textLength` 是窗口长度（窗口内的上界），不是全文长度。
      */
     private data class SelectionRange(
         val start: Int,
@@ -623,9 +623,9 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 半透明键盘的最后一层：**系统导航栏**（SystemUI 的 NavigationBar0 铺在屏幕最底、盖在键盘之上）。
+     * 半透明键盘的最后一层：系统导航栏（SystemUI 的 NavigationBar0 铺在屏幕最底、盖在键盘之上）。
      *
-     * 它不属于键盘视图树 —— 底色由「提供系统栏颜色的窗口」给出，键盘可见时这个窗口就是 IME 窗口。
+     * 它不属于键盘视图树，底色由「提供系统栏颜色的窗口」给出，键盘可见时这个窗口就是 IME 窗口。
      * 真机实证：同一张纯黑页面上，键盘收起时屏幕最底纯黑，弹出后变成一条固定的浅色实心带，
      * 且不随键盘透明度滑块变化（键盘里的铺底面早已全部带 alpha）。
      * IME 窗口继承应用主题的 `android:navigationBarColor`（不透明 `app_bg`），键盘窗口本身铺满到屏幕底，
@@ -640,7 +640,7 @@ class JinnIme : InputMethodService() {
             w.navigationBarDividerColor = Color.TRANSPARENT
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // 系统默认给非不透明导航栏叠一层对比度纱罩，会把透明底又压灰 —— 关掉
+            // 系统默认给非不透明导航栏叠一层对比度纱罩，会把透明底又压灰，关掉
             w.isNavigationBarContrastEnforced = false
         }
         Diagnostics.i(TAG, "导航栏: navigationBarColor=${String.format("#%08X", w.navigationBarColor)}")
@@ -650,13 +650,13 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
 
         // 半透明键盘：窗口背景（主题 windowBackground）与框架容器的不透明底色会把 alpha
-        // 全吃在窗口内部 —— 这里先清窗口背景；祖先链（含框架容器/DecorView）上的背景
+        // 全吃在窗口内部，这里先清窗口背景；祖先链（含框架容器/DecorView）上的背景
         // 等视图真正挂到窗口后再清（见 clearOpaqueAncestorBackgrounds）。
         // 0% 透明度时键盘面完全不透明，观感与历史一致。
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         applyNavBarTransparency()
 
-        // 主题：键盘视图一律用「按 Prefs 决策后的 Context」创建 —— 亮白 / 暗黑 / 定时模式下
+        // 主题：键盘视图一律用「按 Prefs 决策后的 Context」创建，亮白 / 暗黑 / 定时模式下
         // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
         // 系统深浅色变化由系统重建 IME 自动生效。
         val themeCtx = ThemeManager.themedContext(this, prefs)
@@ -782,7 +782,7 @@ class JinnIme : InputMethodService() {
             else -> KeyboardMode.VOICE
         }
         applyKeyboardMode()
-        // 注意：不在这里恢复剪贴板面板（见 onStartInputView 注释——恢复会诱发
+        // 不在这里恢复剪贴板面板（见 onStartInputView 注释，恢复会诱发
         // IME 窗口反复 relayout 循环，反而导致面板抖动/空白）。
         // 半透明键盘：语音面板同一套底色参数；此刻视图还没挂到窗口上，
         // 等挂上后再清祖先的不透明底色
@@ -801,10 +801,10 @@ class JinnIme : InputMethodService() {
      * 半透明键盘：语音面板与 26 键面板同属「键盘面」，底色与键面一起跟透明度走
      * （面板底若是实心，切到语音面板就会跳色）。
      *
-     *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档 —— 按色值识别；
-     *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ——
+     *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档，按色值识别；
+     *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ，
      *    它们是 drawable，色值识别扫不到，按当前档重建；
-     *  - ⚠ `mic_button`（MicButton）属**禁改域**（自绘），不参与；其底盘已随 `mic_area` 一起处理。
+     *  - `mic_button`（MicButton）属禁改域（自绘），不参与；其底盘已随 `mic_area` 一起处理。
      */
     private fun applyTransparencyToVoicePanel() {
         val container = keyboardContainer ?: return
@@ -826,7 +826,7 @@ class JinnIme : InputMethodService() {
             KeyTransparency.withAlpha(ctx.getColor(R.color.kb_bg), surfaceAlpha),
         )
         // drawable 面（颜色识别扫不到）：麦克风底盘与 6 个编辑键按档重建。
-        // ⚠ 底盘必须重建为**同款圆角 shape**（mic_area_bg 是 16dp 圆角）——
+        // 底盘必须重建为同款圆角 shape（mic_area_bg 是 16dp 圆角），
         // 直接 setBackgroundColor 会丢掉圆角，0% 时也看得出来。
         voice.findViewById<View>(R.id.mic_area)?.background =
             buildRoundedFaceBackground(ctx, R.color.surface_hi, surfaceAlpha, 16f)
@@ -837,7 +837,7 @@ class JinnIme : InputMethodService() {
 
     /**
      * 把 [v] 及其整棵子树里所有「纯色面」按档位套 alpha
-     * （与 `PinyinKeyboardView.alphaFaces` 是同一套规则的两份实现 —— **改一处必须同步另一处**）：
+     * （与 `PinyinKeyboardView.alphaFaces` 是同一套规则的两份实现，改一处必须同步另一处）：
      *  - RGB ∈ [plateRgb]（背板类：无文字）→ [plateAlpha]；
      *  - RGB ∈ [surfaceRgb]（内容面类：带文字/内容）→ [surfaceAlpha]。
      */
@@ -866,10 +866,10 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 半透明键盘：把键盘视图**上方**（窗口内）所有祖先的不透明背景清掉，并打印诊断。
+     * 半透明键盘：把键盘视图上方（窗口内）所有祖先的不透明背景清掉，并打印诊断。
      *
      * 为什么需要：窗口或框架容器可能自带不透明底色（主题 windowBackground、框架的输入视图
-     * 容器）——只要它们还在，键面/背板的 alpha 就只会与这层底色混合，永远透不出后面的应用
+     * 容器），只要它们还在，键面/背板的 alpha 就只会与这层底色混合，永远透不出后面的应用
      * （真机症状：透明度调了但毫无变化）。只清祖先，不动键盘自己的各层。
      *
      * 必须在视图真正挂到窗口之后调用（onCreateInputView 返回时还没有 parent），故走 post。
@@ -933,16 +933,16 @@ class JinnIme : InputMethodService() {
     /**
      * 切到语音键盘。
      *
-     * 进入语音前**先判断识别服务是否在线**，离线就直接拒绝并提示：
+     * 进入语音前先判断识别服务是否在线，离线就直接拒绝并提示：
      * 否则用户长按空格进了语音面板才发现连不上，白等一次 WebSocket 握手，
      * 还会连带触发录音权限检查、录音器初始化等一整套语音链路负担。
      * 语音是自用功能，宁可在这里提前拦掉，也不让用户进到一个用不了的面板。
      */
     /**
-     * 按需装配语音组件。**只有「语音输入」开关为开时才真正创建**。
+     * 按需装配语音组件。只有「语音输入」开关为开时才真正创建。
      *
      * 幂等：已创建则直接返回。开关关闭时本方法不做任何事，
-     * 于是 AsrClient / MicRecorder 始终为 null —— 语音完全沉寂、零内存占用。
+     * 于是 AsrClient / MicRecorder 始终为 null，语音完全沉寂、零内存占用。
      * 设置页保存会重启 IME 进程，所以开关变更后重新执行 onCreate 即自动生效。
      */
     private fun ensureVoiceReady() {
@@ -1006,8 +1006,8 @@ class JinnIme : InputMethodService() {
     /**
      * 宿主改了光标/选区时（用户点了别处、宿主程序自己改了）让拖选状态失效。
      *
-     * [selectionAnchor]/[selectionFocus] 是**我们记下的绝对下标**，只在拖选会话内有意义；
-     * 宿主把光标移到别处后它们指向的区间与用户意图无关 —— 再按方向键会以旧 Anchor 重新
+     * [selectionAnchor]/[selectionFocus] 是我们记下的绝对下标，只在拖选会话内有意义；
+     * 宿主把光标移到别处后它们指向的区间与用户意图无关，再按方向键会以旧 Anchor 重新
      * `setSelection`，选区整个错位，接下来的复制 / 输入都作用在错误的位置上（原实现没有
      * 实现本回调，平台提供的这个同步点被完全漏掉）。
      *
@@ -1050,7 +1050,7 @@ class JinnIme : InputMethodService() {
      * 编辑框聚焦自动唤起 / [requestShowSelf] / 配置变化后的自动恢复显示）。
      *
      * 「自动唤起键盘」关闭时返回 false，从源头拒绝一切显示请求，窗口永不显示，
-     * 系统端 mShowInputRequested 保持 false——不会形成「唤起 → 隐藏 → 系统重新唤起」循环。
+     * 系统端 mShowInputRequested 保持 false，不会形成「唤起 → 隐藏 → 系统重新唤起」循环。
      */
     override fun onShowInputRequested(flags: Int, configChange: Boolean): Boolean {
         if (!prefs.autoShowKeyboard) {
@@ -1063,15 +1063,15 @@ class JinnIme : InputMethodService() {
     /**
      * 主题决策变了就用新色板重建键盘。
      *
-     * 两个触发源：① 设置页改主题 —— 同进程直接调 [notifyThemeChanged]（键盘正显示时立即换肤）；
-     * ② [onStartInputView] —— 覆盖「定时模式在键盘收起期间跨过了切换点」。
+     * 两个触发源：① 设置页改主题，同进程直接调 [notifyThemeChanged]（键盘正显示时立即换肤）；
+     * ② [onStartInputView]，覆盖「定时模式在键盘收起期间跨过了切换点」。
      * 键盘视图尚未创建（appliedThemeDark 为 null）时无需处理：onCreateInputView 会读到新值。
      */
     private fun applyThemeIfNeeded() {
         val wantDark = ThemeManager.isDark(this, prefs)
         if (appliedThemeDark != null && appliedThemeDark != wantDark) {
             // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板面板、搜索面板）时不动视图：
-            // 重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。延后到下次弹出 ——
+            // 重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。延后到下次弹出 ，
             // onStartInputView 会再判一次。
             if (pinyinKeyboard?.let { it.hasPendingInput || it.hasActiveOverlay } == true) {
                 Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入或面板），延后到下次弹出换肤")
@@ -1097,9 +1097,9 @@ class JinnIme : InputMethodService() {
         // 与换肤同口径地不打断未上屏输入：重建会清空拼音串/预测词，用户以为输入被吞。
         // 该路径真实可达：在编辑页「添加符号」对话框里打了一半拼音就按 Home / 锁屏，
         // Activity.onPause 会先于 IME 提交触发（真机日志实证 2026-09-22）。
-        // ⚠ 这里**不**看面板态：编辑页场景下面板不可能正被使用，而推迟会造成「改了符号不生效」。
+        // 这里不看面板态：编辑页场景下面板不可能正被使用，而推迟会造成「改了符号不生效」。
         if (keyboard.hasPendingInput) {
-            // 记下待重建：框架跨会话复用同一个键盘视图，「下次创建」不会自然到来 ——
+            // 记下待重建：框架跨会话复用同一个键盘视图，「下次创建」不会自然到来 ，
             // 靠 onStartInputView 的补重建兜底，否则用户会一直看到旧符号（真机已复现）。
             pendingSymbolLayoutRebuild = true
             Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入，延后到下次弹键盘重建")
@@ -1175,7 +1175,7 @@ class JinnIme : InputMethodService() {
         )
         // 剪贴板面板粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
         flushPendingPaste(info)
-        // 注意：不再在这里恢复剪贴板面板——恢复逻辑会触发 onPanelShown→refresh
+        // 不再在这里恢复剪贴板面板，恢复逻辑会触发 onPanelShown→refresh
         // （主线程 DB 查询数百毫秒）→ 诱发 IME 窗口反复 relayout（12:20 循环日志实证），
         // 反而让面板抖动/空白。INVISIBLE 方案下键盘视图实例不重建，面板状态天然保留。
     }
@@ -1183,7 +1183,7 @@ class JinnIme : InputMethodService() {
     /**
      * 输入框身份键：包名 + fieldId。
      *
-     * 用于把暂存粘贴绑定到**发起粘贴时的那个输入框**——只比对 fieldId 不够
+     * 用于把暂存粘贴绑定到发起粘贴时的那个输入框，只比对 fieldId 不够
      * （不同 App 的 fieldId 会撞），必须带上包名。取不到 EditorInfo 时返回 null，
      * 表示「身份未知」，此时由时效窗口与 [onFinishInputView] 的会话边界兜底。
      */
@@ -1191,7 +1191,7 @@ class JinnIme : InputMethodService() {
 
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
     private fun flushPendingPaste(info: EditorInfo? = null) {
-        // 会话边界：拖选状态必须复位。anchor/focus 是**上一个输入框**的坐标，
+        // 会话边界：拖选状态必须复位。anchor/focus 是上一个输入框的坐标，
         // 跨字段残留会让后续 extendSelection 用旧下标去 setSelection（被系统钳位，
         // 表现为选区莫名跳动），且中心键图标与 IME 状态可能不一致。
         clearSelectionState()
@@ -1222,7 +1222,7 @@ class JinnIme : InputMethodService() {
         val connection = currentInputConnection
         if (connection == null) {
             // 仍无有效连接：放回暂存（保留原时刻），等待下次 onStartInputView。
-            // **输入框身份必须一并放回**：原先只恢复了正文、把 fieldKey 留在 null，
+            // 输入框身份必须一并放回：原先只恢复了正文、把 fieldKey 留在 null，
             // 于是下一次进入时 target 为 null、上面的「目标已变更」判据直接短路，
             // 这 10 秒里的暂存正文就可能被提交到一个完全无关的输入框里。
             pendingPasteText = text
@@ -1241,11 +1241,11 @@ class JinnIme : InputMethodService() {
         if (mode != Mode.NONE) stopRecording(commit = false)
         // 拼音键盘若有未上屏内容，提交首候选
         pinyinKeyboard?.commitComposing()
-        // 会话边界：搜索面板必须退出——跨输入框残留会让下一次输入被路由进搜索框
+        // 会话边界：搜索面板必须退出，跨输入框残留会让下一次输入被路由进搜索框
         pinyinKeyboard?.hideSearchPanel()
         ui.removeCallbacks(backspaceRunnable)
         ui.removeCallbacks(themeTick) // 键盘已收起：到点检查交给下次弹出时的 scheduleThemeTick
-        // 会话边界：暂存的剪贴板文本属于**上一个输入框**，新输入框聚焦时不得自动提交
+        // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
         if (pendingPasteText != null) {
             Diagnostics.i(TAG, "onFinishInputView: 输入会话结束，丢弃暂存粘贴")
@@ -1300,11 +1300,11 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 触发可选词库包的后台加载（**单次**）。
+     * 触发可选词库包的后台加载（单次）。
      *
-     * 不用固定延迟：实测那 1.14M 词条的解析要 **21~34s**，而「基础包就绪后 5 秒」
-     * 恰好是用户开始打字的时刻 —— 后台重活与前台输入抢 CPU/内存带宽，主观感受就是
-     * 「刚开机很卡」。改为等**空闲信号**，三选一（先到先得）：
+     * 不用固定延迟：实测那 1.14M 词条的解析要 21~34s，而「基础包就绪后 5 秒」
+     * 恰好是用户开始打字的时刻，后台重活与前台输入抢 CPU/内存带宽，主观感受就是
+     * 「刚开机很卡」。改为等空闲信号，三选一（先到先得）：
      *  · 息屏：用户锁屏，最可靠的空闲信号；
      *  · 键盘收起后再闲置 [OPTIONAL_IDLE_DELAY_MS]：用户停止输入；
      *  · 兜底 [OPTIONAL_FALLBACK_DELAY_MS]：一直没出现上面两种情况时也必须加载。
@@ -1589,8 +1589,8 @@ class JinnIme : InputMethodService() {
     private fun commit(text: String) {
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
         Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
-        // 注意：打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
-        // 这里【不能】调用 onOwnCommit()——否则标记会残留到下一次真实复制，
+        // 打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
+        // 这里【不能】调用 onOwnCommit()，否则标记会残留到下一次真实复制，
         // 导致用户复制的内容被误判为「自身操作」而跳过保存。
         currentInputConnection?.commitText(text, 1)
     }
@@ -1598,9 +1598,9 @@ class JinnIme : InputMethodService() {
     /**
      * 删除键三击（双击+长按）：清空输入框全部文本。
      *
-     * 实现：光标折叠到 0 后删「光标之后」的全部内容。**不再用 Ctrl+A + 删除**：
-     * 按 Android 的 `InputConnection.deleteSurroundingText` 契约，它只作用于**选区前后**、
-     * 无法影响选区内容 —— AOSP `BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
+     * 实现：光标折叠到 0 后删「光标之后」的全部内容。不再用 Ctrl+A + 删除：
+     * 按 Android 的 `InputConnection.deleteSurroundingText` 契约，它只作用于选区前后、
+     * 无法影响选区内容，AOSP `BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
      * 旧写法在标准宿主上一个字符都删不掉，只在「宿主不接受 Ctrl+A」时误删光标前的半截文本。
      * 新写法不依赖宿主对快捷键的支持：`afterLength` 会被实现钳到文本末尾。
      */
@@ -1661,7 +1661,7 @@ class JinnIme : InputMethodService() {
         val connection = currentInputConnection ?: return
 
         // 拼音串非空说明用户已经打了字、候选栏也在显示：
-        // 此时回车 = 把**实际按下的键**原样上屏（全拼 but→but；双拼 budv→budv，
+        // 此时回车 = 把实际按下的键原样上屏（全拼 but→but；双拼 budv→budv，
         // 不做双拼→全拼转换），而不是选中候选、也不是换行。
         val rawComposing = pinyinKeyboard?.takeRawComposing().orEmpty()
         if (rawComposing.isNotEmpty()) {
@@ -1746,8 +1746,8 @@ class JinnIme : InputMethodService() {
         /**
          * 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信）。
          *
-         * 用**弱引用**持有：静态强引用 Service 会被 lint 判为 `StaticFieldLeak`，且语义上
-         * 不需要延长其生命周期 —— 服务存活期间系统自有强引用，`onDestroy` 亦会置空。
+         * 用弱引用持有：静态强引用 Service 会被 lint 判为 `StaticFieldLeak`，且语义上
+         * 不需要延长其生命周期，服务存活期间系统自有强引用，`onDestroy` 亦会置空。
          */
         @Volatile
         private var instance: WeakReference<JinnIme>? = null
@@ -1759,7 +1759,7 @@ class JinnIme : InputMethodService() {
         }
 
         /**
-         * 设置页调整符号分组顺序 / 编辑收藏符号后调用（主线程）：键盘视图已创建则重建，立即生效 ——
+         * 设置页调整符号分组顺序 / 编辑收藏符号后调用（主线程）：键盘视图已创建则重建，立即生效 ，
          * 有未上屏输入时延后，由下次弹键盘（[onStartInputView]）补一次重建
          * （见 [JinnIme.rebuildInputViewForSymbolLayout]）；尚未创建（inputView == null）时不做事：
          * 下次创建自然读到新数据。
@@ -1770,11 +1770,11 @@ class JinnIme : InputMethodService() {
         }
 
         /**
-         * 键盘外观页拖动松手后调用（主线程）：键盘正显示时**即时**套用新的透明度/圆角/间隙。
+         * 键盘外观页拖动松手后调用（主线程）：键盘正显示时即时套用新的透明度/圆角/间隙。
          *
          * 为什么需要：外观参数原先只在 `PinyinKeyboardView.configure()`（每次输入框聚焦 / 弹键盘）时读取，
-         * 于是**在本应用的页面里边拖边看**时键盘毫无变化，看上去像「透明度不生效」，
-         * 而切到别的应用（键盘会重新走一次会话）就见效 —— 真机实证 2026-09-22：
+         * 于是在本应用的页面里边拖边看时键盘毫无变化，看上去像「透明度不生效」，
+         * 而切到别的应用（键盘会重新走一次会话）就见效，真机实证 2026-09-22：
          * 同一次会话内改滑杆，键盘像素完全不变；收起键盘再弹出才变。
          */
         fun onKeyAppearanceChanged() {
@@ -1821,13 +1821,13 @@ class JinnIme : InputMethodService() {
 }
 
 /**
- * 输入框身份键：包名 + `#` + fieldId（**纯函数**，便于单测）。
+ * 输入框身份键：包名 + `#` + fieldId（纯函数，便于单测）。
  *
  * 规则：
- *  - 包名缺失/为空时返回 null —— 身份未知，调用方退回「时效窗口 + 会话边界」兜底；
+ *  - 包名缺失/为空时返回 null，身份未知，调用方退回「时效窗口 + 会话边界」兜底；
  *  - fieldId 必须带上包名：不同 App 的 fieldId 会撞号，只比对 fieldId 会放行跨应用粘贴。
  *
- * 注意：本函数是「暂存粘贴只允许提交回原输入框」这条安全约束的唯一判据，
+ * 本函数是「暂存粘贴只允许提交回原输入框」这条安全约束的唯一判据，
  * 改动会直接影响剪贴板正文是否会被注入到无关输入框。
  */
 internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =

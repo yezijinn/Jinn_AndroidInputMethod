@@ -38,7 +38,7 @@ object Diagnostics {
      * V 级（Verbose）日志是否写入文件，默认关闭。
      *
      * 本类不持有持久输出流，每条日志都是「open → write → close」。
-     * V 级主要记录音频包收发这类**每秒可达 10 条**的高频噪音，全量落盘
+     * V 级主要记录音频包收发这类每秒可达 10 条的高频噪音，全量落盘
      * 等于持续做小文件 IO，对输入法毫无收益。
      *
      * V 级仍会输出到 logcat（`adb logcat -s PinyinKeyboard MicRecorder` 等随时可看），
@@ -57,10 +57,10 @@ object Diagnostics {
     /**
      * 时间戳格式器。
      *
-     * 必须用 `java.time` 而不是 `SimpleDateFormat`：后者**非线程安全**，而本类的
-     * 日志格式化在 `log()` 里是**锁外**执行的（锁只保护文件追加），采集线程、
+     * 必须用 `java.time` 而不是 `SimpleDateFormat`：后者非线程安全，而本类的
+     * 日志格式化在 `log()` 里是锁外执行的（锁只保护文件追加），采集线程、
      * BackgroundIo 线程、下载线程与主线程会同时进来，共用实例会互相踩状态
-     * ——表现为时间戳串号/乱码，极端情况在 `format()` 内部抛异常，把业务路径一起带崩。
+     * ，表现为时间戳串号/乱码，极端情况在 `format()` 内部抛异常，把业务路径一起带崩。
      * `DateTimeFormatter` 不可变、天然线程安全（minSdk 26 已支持 java.time）。
      */
     private val dateFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
@@ -115,7 +115,7 @@ object Diagnostics {
 
     /**
      * 用 root 授权本应用直写共享存储：
-     *  1. `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow` —— scoped storage 下
+     *  1. `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow`，scoped storage 下
      *     让应用获得"所有文件访问"能力，可直写 /storage/emulated/0/ 任意路径
      *     （需 Manifest 声明 MANAGE_EXTERNAL_STORAGE 权限）
      *  2. 兜底 chown 目标目录给本应用 uid（部分 ROM 的 FUSE 不认，仅作补充）
@@ -129,7 +129,7 @@ object Diagnostics {
         )
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", commands.joinToString(" && ")))
         // 两路都必须后台排空：`chown`/`mkdir` 一旦输出写满管道（64KB），子进程会阻塞在写端，
-        // 而父进程正在 waitFor —— 只能等到 5s 超时（日志里表现为「root 授权超时」，
+        // 而父进程正在 waitFor，只能等到 5s 超时（日志里表现为「root 授权超时」，
         // root 直写共享目录的功能静默失效）。写法与 ClipboardFirewall.su 对齐。
         val outDrain = Thread {
             runCatching {
@@ -159,14 +159,14 @@ object Diagnostics {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                // 崩溃处理自身**绝不能再抛**：Thread.start()/join() 在极端情况（OOM、
+                // 崩溃处理自身绝不能再抛：Thread.start()/join() 在极端情况（OOM、
                 // 线程受限）会抛异常，一旦冒出 try 块就会取代原始崩溃异常继续传播，
                 // 还会把 finally 的收尾语义搅乱。整段包 runCatching，失败只记一笔。
                 runCatching {
                     e("Crash", "未捕获异常 @ ${thread.name}", throwable)
                     // 快照放独立线程、崩溃线程最多等 2.5s：崩溃线程（常是主线程）在
                     // 「已崩溃但进程未死」状态下长时间阻塞，会把 ANR 弹窗与 tombstone 上报
-                    // 一并推迟 —— 原实现同步等 logcat 最长 10s。dumpLogcat 内部同步写盘，
+                    // 一并推迟，原实现同步等 logcat 最长 10s。dumpLogcat 内部同步写盘，
                     // 等它把文件写完（或自身 2s 超时）即可，崩溃收尾不依赖快照完成。
                     val snapshot = Thread {
                         runCatching { dumpLogcat("crash-${System.currentTimeMillis()}", waitMs = 2_000L) }
@@ -195,12 +195,12 @@ object Diagnostics {
      * 与 [i] 的区别：带单调递增序号，回溯时能还原严格先后顺序。
      * 格式：`[EV#序号] 模块:事件 参数`
      *
-     * ⚠ 正文里**不带时间戳**：`log()` 会自己补（含线程名与 tag）。此前把带时间戳的整行
+     * 正文里不带时间戳：`log()` 会自己补（含线程名与 tag）。此前把带时间戳的整行
      * 传给 `log()`，落盘行出现双时间戳、模块名被挤进正文。
      * 事件行随普通日志落盘，崩溃快照（[dumpLogcat]）也会带走 logcat 里的这部分。
      *
      * 注：早先还有一个 500 条的环形缓冲 + [eventSnapshot]/[dumpEventRing]，但两者除彼此外
-     * 没有任何调用方（KDoc 声称的「崩溃时落盘事件序列」从未实现）——已删除，事件回溯依赖
+     * 没有任何调用方（KDoc 声称的「崩溃时落盘事件序列」从未实现），已删除，事件回溯依赖
      * 日常日志文件与 logcat 快照即可。
      */
     fun event(module: String, event: String, params: String = "") {
@@ -282,16 +282,16 @@ object Diagnostics {
     }
 
     /**
-     * 剔除 logcat 快照里**本进程的 V 级行**（**纯函数**，便于单测）。
+     * 剔除 logcat 快照里本进程的 V 级行（纯函数，便于单测）。
      *
      * 行格式（`-v threadtime`）：`MM-DD HH:MM:SS.mmm  PID  TID V Tag: msg`；
-     * 不含该前缀的行是上一条的续行（堆栈等），**跟随被剔除的那条一起剔**，
+     * 不含该前缀的行是上一条的续行（堆栈等），跟随被剔除的那条一起剔，
      * 否则被丢掉的正文会在续行里露出来。
      *
      * 只剔本进程的 V：别的进程本来就没有我们的正文，删它们只会削弱排查能力；
      * 崩溃本身是 E/F，一律保留。
      *
-     * 注意：按 `'\n'` 切分再原样 join —— Kotlin 的 `split` **保留末尾空串**，
+     * 按 `'\n'` 切分再原样 join，Kotlin 的 `split` 保留末尾空串，
      * 所以「一条都没剔」时输出与输入逐字节相同；换用 `lineSequence()` 会给
      * 以换行结尾的输入多补一个换行，测试里就是这么栽的。
      *
@@ -301,7 +301,7 @@ object Diagnostics {
     internal fun filterOwnVerboseLines(raw: String, ownPid: Int): String {
         // 年份前缀可选：logcat 在条目时间戳与「当前年」不同年时会输出 `yyyy-` 前缀
         // （跨年缓冲区 / `-v threadtime` 的两种形态）。不识别它，这些行会因正则失配而
-        // 沿用上一行的 drop 状态——本进程的 V 行可能被原样保留（正文进快照）。
+        // 沿用上一行的 drop 状态，本进程的 V 行可能被原样保留（正文进快照）。
         // 用非捕获组 `(?:…)` 包裹，保持 pid/tid/level 三个捕获组编号不变。
         val header = Regex(
             "^(?:\\d{4}-)?\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEF])\\s",
@@ -326,14 +326,14 @@ object Diagnostics {
      * 无 root 时 logd 只会给出本应用进程的日志，有 root 时是系统全量。
      *
      * [suffix] 要防文件名与命令两条路：
-     *  - **文件名**：`File(dir, "$PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
-     *  - **命令**：原实现把整个目标路径拼进 `sh -c "logcat … > '…'"`，一个单引号即可改写命令。
-     * 前者用字符白名单过滤，后者改为**不经 shell** 的 [ProcessBuilder] + redirectOutput——
+     *  - 文件名：`File(dir, "$PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
+     *  - 命令：原实现把整个目标路径拼进 `sh -c "logcat … > '…'"`，一个单引号即可改写命令。
+     * 前者用字符白名单过滤，后者改为不经 shell 的 [ProcessBuilder] + redirectOutput，
      * 这样连白名单漏掉的字符也不可能被解释成命令。
      *
-     * 另外：快照落盘前会剔掉**本进程的 V 级行**（见 [filterOwnVerboseLines]）。
+     * 另外：快照落盘前会剔掉本进程的 V 级行（见 [filterOwnVerboseLines]）。
      * V 是用户正文通道（搜索关键词 / 拼音串 / 候选词 / 测试框文本），而 logcat 缓冲区里
-     * 什么级别都有 —— 不剔就等于崩溃路径绕过了「日志禁出正文」，导出诊断包还会把它带走。
+     * 什么级别都有，不剔就等于崩溃路径绕过了「日志禁出正文」，导出诊断包还会把它带走。
      *
      * [waitMs] 是子进程等待上限（默认 10s；崩溃路径传 2s，见 [installCrashHandler]）。
      */
@@ -343,14 +343,14 @@ object Diagnostics {
         val name = "$LOGCAT_FILE_PREFIX$safeSuffix.log"
         val dest = File(dir, name)
         // 只有「过滤后的内容成功写回」才算产出：其它任何路径（进程失败、空文件、过滤为空、
-        // 读取/写入抛异常、进程被杀）都要把残留文件删掉 —— 半截快照既不可用、又**没经过滤**
+        // 读取/写入抛异常、进程被杀）都要把残留文件删掉，半截快照既不可用、又没经过滤
         // （里面可能仍有本进程 V 级正文），留着等 7 天再清、或被导出诊断包带走都不行。
         // 统一收口在 finally：原实现的删除只覆盖"进程失败"一种路径，读取/过滤阶段抛异常时
-        // 会把**未过滤**的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
+        // 会把未过滤的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
         var produced = false
         try {
             // 先删同名旧快照，让「文件存在 ⇔ 本次产物」成为不变量：dest 是固定名，若下面在
-            // 「启动子进程」阶段就失败（logcat 不存在 / fork 失败 / OOM），文件里仍是**上一次**
+            // 「启动子进程」阶段就失败（logcat 不存在 / fork 失败 / OOM），文件里仍是上一次
             // 的可用产物，会被 finally 的清理一并删掉（丢的是排查材料）。先删则至多删到自己的残留。
             dest.delete()
             val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
@@ -405,7 +405,7 @@ object Diagnostics {
      */
     fun exportBundle(context: Context): File? {
         val srcDir = logDir ?: return null
-        // 设备信息是**临时**给本次导出用的：用完必须删 —— 它会永远留在日志目录里
+        // 设备信息是临时给本次导出用的：用完必须删，它会永远留在日志目录里
         // （[cleanupOldLogs] 只按 jinn- / logcat- 前缀清理），并混进之后每一次导出包。
         val meta = File(srcDir, "device-info.txt")
         var tmp: File? = null

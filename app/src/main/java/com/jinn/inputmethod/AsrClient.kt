@@ -28,7 +28,7 @@ enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
  * - 识别结果靠 taskId 比对，取消或过期的任务结果直接丢弃
  * - 回调在 OkHttp 的 IO 线程触发，接收方需自行切回主线程
  *
- * 注意：cancelTask 也要发收尾包，否则残留音频会污染下一次听写。
+ * cancelTask 也要发收尾包，否则残留音频会污染下一次听写。
  */
 class AsrClient(
     private val prefs: Prefs,

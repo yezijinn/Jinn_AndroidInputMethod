@@ -31,8 +31,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 class SettingsActivity : ComponentActivity() {
 
     /**
-     * 主题应用点：**必须在这里**（早于 `onCreate` 与任何资源解析）。
-     * 若放到 `onCreate` 里再 `setTheme`，会先按系统配置解析一帧再换色 —— 那就是"打开页面闪一下"的来源。
+     * 主题应用点：必须在这里（早于 `onCreate` 与任何资源解析）。
+     * 若放到 `onCreate` 里再 `setTheme`，会先按系统配置解析一帧再换色，那就是"打开页面闪一下"的来源。
      * 跟随系统时 [ThemeManager.themedContext] 原样返回 base，行为与改造前一致。
      */
     override fun attachBaseContext(newBase: android.content.Context) {
@@ -111,9 +111,9 @@ class SettingsActivity : ComponentActivity() {
      * 两个 Spinner 是否已被用户实际碰过。
      *
      * 不能只用「初始化是否完成」做闸门：`setSelection` 之外，Activity 恢复实例状态
-     * （`onRestoreInstanceState`）也会触发 `onItemSelected`，而且是在 `onCreate` 返回之后——
+     * （`onRestoreInstanceState`）也会触发 `onItemSelected`，而且是在 `onCreate` 返回之后，
      * 只靠 ready 标志挡不住，会把用户配置静默改成上次的临时选择。
-     * 因此改为**只有用户触摸过 Spinner 才允许写配置**。
+     * 因此改为只有用户触摸过 Spinner 才允许写配置。
      */
     private var defaultModeSpinnerTouched = false
     private var shuangpinSpinnerTouched = false
@@ -216,7 +216,7 @@ class SettingsActivity : ComponentActivity() {
             ) {
                 // 初始化 setSelection（以及恢复实例状态）都会回调这里。若此时 prefs 里的值不在
                 // values 中（如配置损坏或新增了模式），indexOf 会退回第 0 项，
-                // 未加保护就会把用户的默认键盘**静默改成第 0 项**。
+                // 未加保护就会把用户的默认键盘静默改成第 0 项。
                 if (!defaultModeSpinnerTouched) return
                 val values = resources.getStringArray(R.array.default_mode_values)
                 val mode = values.getOrNull(position)?.toIntOrNull()
@@ -230,7 +230,7 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 输入方案下拉（**全局**，2026-09-20 起）：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
+        // 输入方案下拉（全局，2026-09-20 起）：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
         // 选中即全局生效：选全拼 = 关闭双拼；选某套双拼 = 记住该方案并启用。
         // 按键面板不再提供「全拼 / 双拼」切换按钮，这里是唯一的输入方案入口。
         // 列表取自 [ShuangpinScheme.ALL]，与引擎共用同一份数据，不会脱节。
@@ -252,7 +252,7 @@ class SettingsActivity : ComponentActivity() {
                 if (!shuangpinSpinnerTouched) return
                 val scheme = ShuangpinScheme.ALL.getOrNull(position) ?: return
                 prefs.useShuangpin = scheme.isShuangpin
-                // 双拼方案记忆：只在选双拼项时写（选全拼**不清记忆**——再选回双拼时回到上次那套）
+                // 双拼方案记忆：只在选双拼项时写（选全拼不清记忆，再选回双拼时回到上次那套）
                 if (scheme.isShuangpin) prefs.shuangpinScheme = scheme.prefsValue
                 Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=${scheme.isShuangpin}）")
             }
@@ -296,7 +296,7 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "显示生僻字: ${if (checked) "开启" else "关闭"}（重启输入法后生效）")
             toast(if (checked) R.string.rare_chars_on else R.string.rare_chars_off)
         }
-        // 用户词频学习：勾选即写入并**立即生效**（不需要重启输入法）
+        // 用户词频学习：勾选即写入并立即生效（不需要重启输入法）
         switchUserLearning.setOnCheckedChangeListener { _, checked ->
             prefs.userLearning = checked
             UserFrequency.setEnabled(checked)
@@ -325,7 +325,7 @@ class SettingsActivity : ComponentActivity() {
      *
      * 与另外两个下拉共用「只认用户触摸」的闸门（见 [themeSpinnerTouched]）：初始化 `setSelection`
      * 与实例状态恢复都会回调 `onItemSelected`，不挡住就会把用户配置写花。
-     * 任一改动都**立即生效**：写盘后 `recreate()` —— `attachBaseContext` 会读到新主题重建整页颜色。
+     * 任一改动都立即生效：写盘后 `recreate()`，`attachBaseContext` 会读到新主题重建整页颜色。
      */
     private fun initThemeCard() {
         spinnerTheme = findViewById(R.id.spinner_theme)
@@ -414,7 +414,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 定时模式：停在设置页时到点自动换色（不必等下一次操作或重开页面）。
      *
-     * 只在「定时」模式排一次延时任务；到点重新解析，**结果变了才 `recreate()`** ——
+     * 只在「定时」模式排一次延时任务；到点重新解析，结果变了才 `recreate()` ，
      * 没变（例如刚过切换点）就继续排下一次，不会无谓地重建页面。
      */
     private val themeTickRunnable = Runnable {
@@ -513,8 +513,8 @@ class SettingsActivity : ComponentActivity() {
             // 立即裁剪数据库（统一走 BackgroundIo 单线程，避免并发写库）
             BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }
         }
-        // 输入越界（0 / 99999）会被 Prefs 钳到 1..9999，非数字则完全忽略——
-        // 两种情况下输入框都回写为**真实生效值**，否则用户看到的和生效的不一致。
+        // 输入越界（0 / 99999）会被 Prefs 钳到 1..9999，非数字则完全忽略，
+        // 两种情况下输入框都回写为真实生效值，否则用户看到的和生效的不一致。
         val effective = clipboardPrefs.maxItems.toString()
         if (editClipboardMax.text.toString() != effective) {
             editClipboardMax.setText(effective)
@@ -565,7 +565,7 @@ class SettingsActivity : ComponentActivity() {
         spinnerDefaultMode.setSelection(
             modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
         )
-        // 输入方案：按**当前生效方案**定位（全拼状态下选中「26 键全拼」，与全局语义一致）
+        // 输入方案：按当前生效方案定位（全拼状态下选中「26 键全拼」，与全局语义一致）
         spinnerShuangpin.setSelection(
             ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
         )
@@ -578,14 +578,14 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 绑定「语音输入」总开关。
      *
-     * 关闭时语音相关区块（授权麦克风 + NAS 语音）一并隐藏 —— 此时语音在 IME 侧
+     * 关闭时语音相关区块（授权麦克风 + NAS 语音）一并隐藏，此时语音在 IME 侧
      * 完全沉寂（不建实例、不连 WebSocket），这些配置项没有意义，显示出来只会误导。
      * 开关变更后需重启输入法进程才生效（与设置页其他项一致，由「保存并重启」触发）。
      */
     /**
      * 更新检查状态：只区分「空闲 / 进行中」。
      *
-     * 结果（有更新 / 已最新 / 网络错误）由对话框呈现——早先预留的
+     * 结果（有更新 / 已最新 / 网络错误）由对话框呈现，早先预留的
      * UpToDate / Available / NetworkError 三态从未被任何消费方读取（死状态），已移除。
      */
     private enum class UpdateState { Idle, Checking }
@@ -593,8 +593,8 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 请求看门狗：网络侧超时 10s，留 5s 余量。
      *
-     * **不能**像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
-     * `updateState == Checking` 的防重入判据随之失效 —— 用户可并发发起第二次检查并重复弹窗。
+     * 不能像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
+     * `updateState == Checking` 的防重入判据随之失效，用户可并发发起第二次检查并重复弹窗。
      * 正常情况结果必达（[onUpdateChecked] 负责解锁），看门狗只在回调极端丢失时兜底。
      */
     private val updateWatchdogRunnable = Runnable {
@@ -623,10 +623,10 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 打开设置页时的自动检查：距上次**成功**检查 ≥7 天才执行一次。
+     * 打开设置页时的自动检查：距上次成功检查 ≥7 天才执行一次。
      *
      * 只有「检测到新版本」才弹确认框（见 [showAskUpdateDialog]）；失败一律静默
-     * （不弹「网络异常」），「已最新」也只复位按钮状态 —— 不打断用户操作。
+     * （不弹「网络异常」），「已最新」也只复位按钮状态，不打断用户操作。
      */
     private fun maybeAutoCheckUpdate() {
         val now = System.currentTimeMillis()
@@ -692,7 +692,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 记下本次检查时刻，供 7 天节流使用（判据见 [UpdateChecker.shouldAutoCheck]）。
      *
-     * 只记**成功**（有更新 / 已最新）：失败不写，下次打开设置页仍会静默重试；成功则在
+     * 只记成功（有更新 / 已最新）：失败不写，下次打开设置页仍会静默重试；成功则在
      * 间隔内不再自动检查。写入的是 SharedPreferences（apply 异步落盘），不阻塞主线程。
      */
     private fun recordUpdateCheckTime(result: UpdateChecker.Result) {
@@ -735,7 +735,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 自动检查发现新版本时的确认框：一个问句 + 「不要」/「去更新」。
      *
-     * 与手动检查的三段式对话框**分开**：后者措辞属 unified-update-check 约定（不得改写），
+     * 与手动检查的三段式对话框分开：后者措辞属 unified-update-check 约定（不得改写），
      * 本对话框只服务「打开设置页自动检查」这条路径。
      */
     private fun showAskUpdateDialog(result: UpdateChecker.Result.Available) {

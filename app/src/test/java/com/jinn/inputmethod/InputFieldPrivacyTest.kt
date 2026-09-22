@@ -10,7 +10,7 @@ import org.junit.Test
  * 敏感输入框判定护栏。
  *
  * 背景：IME 此前完全不看 EditorInfo.inputType，密码框里敲的内容也会「明确选过即学习」
- * 写进本地词频文件 —— 口令片段变成长期明文，还会被推荐到之后的普通输入框。
+ * 写进本地词频文件，口令片段变成长期明文，还会被推荐到之后的普通输入框。
  * 这里把判据钉成纯函数测试，防止哪天简化判断又把密码框漏掉。
  */
 class InputFieldPrivacyTest {
@@ -77,7 +77,7 @@ class InputFieldPrivacyTest {
     @Test
     fun 取不到EditorInfo时按普通框处理() {
         // 信息缺失不应把正常输入全部降级：宁可继续学习。
-        // ⚠ 不能用 0 当缺省值 —— TYPE_NULL 的值就是 0，会被判成"无输入语义"。
+        // 不能用 0 当缺省值，TYPE_NULL 的值就是 0，会被判成"无输入语义"。
         assertFalse(InputFieldPrivacy.suppressLearning(null))
         assertEquals(0, EditorInfo.TYPE_NULL)
     }

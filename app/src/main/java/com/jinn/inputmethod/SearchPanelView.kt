@@ -20,7 +20,7 @@ import java.util.Locale
 /**
  * 搜索的一次解密窗口条数。
  *
- * 分块查询会把**整个窗口**逐条解密后才返回，故单次内存峰值 ≈ 窗口条数 × 单条上限 × 放大系数
+ * 分块查询会把整个窗口逐条解密后才返回，故单次内存峰值 ≈ 窗口条数 × 单条上限 × 放大系数
  * （见 [ClipboardStore.decryptWindowPeakBytes]，放大是为了计入 base64 密文与 UTF-16 String）。
  * 50 条 ≈ 32.8MB（最坏情形，实测常驻约 29.8MB），原值 300 会到 ≈196MB。
  * 调整本值后必须让 `ClipboardLimitsTest` 的窗口预算护栏通过。
@@ -40,12 +40,12 @@ internal const val SEARCH_WINDOW_ITEMS = 50
  *  - 查库与加密字段解密均在 [BackgroundIo] 线程，主线程零阻塞；
  *  - 结果用 [ListView] 复用 item，支持独立滚动。
  *
- * 注意：[ClipboardPanelView] 是本类的**平行实现**（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
+ * [ClipboardPanelView] 是本类的平行实现（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
  * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
  *
  * 安全：不输出任何剪贴板正文日志。
  *       （隐私标记与「掩码 + 点击展开」那套展示逻辑已随 v5 迁移整体移除，
- *       本类里不存在掩码分支——阅读时不要按「有掩码」假设。）
+ *       本类里不存在掩码分支，阅读时不要按「有掩码」假设。）
  */
 class SearchPanelView(context: Context) : LinearLayout(context) {
     interface Listener {
@@ -105,7 +105,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
-            // 条目卡按**当前**透明度档设色（ListView 复用 convertView，不每次重设会混新旧两档）
+            // 条目卡按当前透明度档设色（ListView 复用 convertView，不每次重设会混新旧两档）
             root.background = android.graphics.drawable.ColorDrawable(
                 KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
             )
@@ -171,7 +171,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         addView(textEmpty, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(RESULT_EMPTY_HEIGHT_DP)))
 
-        // 搜索输入框（**独占一行**）。
+        // 搜索输入框（独占一行）。
         // 退出搜索的入口都在键盘侧，本面板内不放按钮：候选栏「退出」按钮 / 搜索态回车 /
         // BACK 收起键盘；粘贴结果成功后由 [handleItemClick] 走 [Listener.onClose] 自动关闭。
         editSearch = EditText(context).apply {
@@ -286,8 +286,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             }
             val lower = q.lowercase()
             val matches = ArrayList<ClipboardDb.Item>()
-            // 扫描上限取**真实行数**：maxItems 只是配置项，而 trimTo 只裁非收藏，
-            // 收藏多时实际行数会超过它 —— 拿配置值当上限会漏搜尾部条目。
+            // 扫描上限取真实行数：maxItems 只是配置项，而 trimTo 只裁非收藏，
+            // 收藏多时实际行数会超过它，拿配置值当上限会漏搜尾部条目。
             // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
             val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
             var offset = 0
@@ -332,7 +332,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 offset = next
                 if (capped) break
                 if (reqToken != refreshToken) return@run
-                // 首帧兜底的判据必须在 post 之前固化成**值**：lambda 捕获的是变量本身，
+                // 首帧兜底的判据必须在 post 之前固化成值：lambda 捕获的是变量本身，
                 // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
                 val isFirstChunk = offset <= SEARCH_WINDOW_ITEMS
                 val now = System.currentTimeMillis()
@@ -361,7 +361,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
-        // 非空时列表可见、空态 GONE——「找到 N 条」根本无处显示，
+        // 非空时列表可见、空态 GONE，「找到 N 条」根本无处显示，
         // 原实现在这里给它赋了值却随即隐藏，属无效逻辑，只保留空态文案。
         textEmpty.text = "未找到匹配内容\n换个关键词试试"
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE

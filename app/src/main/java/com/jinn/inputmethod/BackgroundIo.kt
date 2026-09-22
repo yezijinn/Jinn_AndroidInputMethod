@@ -13,7 +13,7 @@ import java.util.concurrent.RejectedExecutionException
  * - 任务抛出的异常一律记录：静默吞掉会让「剪贴板没保存」「搜索没结果」
  *   这类问题在日志里完全不留痕迹，事后无从查起
  *
- * 注意：单线程串行，某个任务卡住会拖住后面所有 IO。
+ * 单线程串行，某个任务卡住会拖住后面所有 IO。
  */
 object BackgroundIo {
 

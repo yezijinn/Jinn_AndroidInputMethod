@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * 可选词库合并（merge）与清单数据的回归测试。
  *
- * 需要这个文件：合并**必须去重**——基础包与扩展包会收录同一个词
+ * 需要这个文件：合并必须去重，基础包与扩展包会收录同一个词
  * （rime-ice 自身的 base/ext 就有重叠），不去重则候选栏出现两个完全相同的候选。
  * 该行为此前只靠真机肉眼看，没有任何测试守着；测试注入入口当时也固定走覆盖语义，
  * 从设计上就测不到 merge。本文件补上这条防线。
@@ -41,7 +41,7 @@ class OptionalDictMergeTest {
     private fun candidates(key: String): List<String> = PinyinEngine.query(key).candidates
 
     /**
-     * 核心用例：同一拼音键下基础包与扩展包含有同一个词时，合并后**不得重复**。
+     * 核心用例：同一拼音键下基础包与扩展包含有同一个词时，合并后不得重复。
      *
      * 修复前 `existing + kept` 直接拼接，会得到 [且, 切, 且] 这类重复候选。
      */
@@ -99,7 +99,7 @@ class OptionalDictMergeTest {
     /**
      * 对照用例：覆盖语义（merge=false）确实替换而非合并。
      *
-     * 判据必须用**多字词**：单字候选来自单字表（charsBySyllable），
+     * 判据必须用多字词：单字候选来自单字表（charsBySyllable），
      * 和词候选在 query 结果里混在一起，用单字区分不了两种语义。
      */
     @Test
@@ -123,7 +123,7 @@ class OptionalDictMergeTest {
     }
 
     /**
-     * 清单元数据自洽性 —— 这几项错了会直接导致下载失败或页面信息误导用户：
+     * 清单元数据自洽性，这几项错了会直接导致下载失败或页面信息误导用户：
      *  ① fileName 唯一且以 .xz 结尾（引擎只扫 .xz，且重名会互相覆盖）
      *  ② 每个下载源都包含 fileName 对应的实际文件
      *  ③ 体积/耗时为正数（页面据此提示用户代价）

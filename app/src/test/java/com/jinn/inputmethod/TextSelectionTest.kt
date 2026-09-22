@@ -215,8 +215,8 @@ class TextSelectionTest {
 
     @Test
     fun lineStartAtTextBeginWithLeadingNewline() {
-        // 回归：cursor == 0 时搜索起点不能写成 `(cursor - 1).coerceAtLeast(0)` ——
-        // 那会把**下标 0 本身**纳入搜索，文本以换行开头时就命中它并返回 1，光标反而前进。
+        // 回归：cursor == 0 时搜索起点不能写成 `(cursor - 1).coerceAtLeast(0)` ，
+        // 那会把下标 0 本身纳入搜索，文本以换行开头时就命中它并返回 1，光标反而前进。
         assertEquals("光标在文首：行首就是 0", 0, TextSelection.lineStart("\nabc", 0))
         // 光标落在换行符之后即第二行行首
         assertEquals(1, TextSelection.lineStart("\nabc", 1))
@@ -234,8 +234,8 @@ class TextSelectionTest {
 
     @Test
     fun windowOffsetIsIdentityWhenWholeTextReturned() {
-        // 整篇返回（大多少数输入框）：startOffset == 0，换算必须恒等 —— 这条保证本次
-        // 修复对常见路径**零行为变化**。
+        // 整篇返回（大多少数输入框）：startOffset == 0，换算必须恒等，这条保证本次
+        // 修复对常见路径零行为变化。
         for (abs in 0..10) {
             assertEquals(abs, TextSelection.toWindowOffset(abs, startOffset = 0, windowLength = 10))
         }
@@ -250,7 +250,7 @@ class TextSelectionTest {
         // 落在窗口之外：无从计算，必须返回 null（调用方据此放弃本次操作）
         assertEquals("窗口之前", null, TextSelection.toWindowOffset(399, 400, 400))
         assertEquals("窗口之后", null, TextSelection.toWindowOffset(801, 400, 400))
-        // 回归：长文档里光标在窗口外时，旧实现会拿绝对下标去索引窗口文本 ——
+        // 回归：长文档里光标在窗口外时，旧实现会拿绝对下标去索引窗口文本 ，
         // 行末/行移动越界后返回「窗口长度」那个绝对下标，光标看起来是跳到别处
         assertEquals(null, TextSelection.toWindowOffset(900, 400, 400))
         assertEquals(null, TextSelection.toWindowOffset(5, startOffset = -1, windowLength = 10))

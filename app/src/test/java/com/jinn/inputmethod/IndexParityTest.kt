@@ -10,15 +10,15 @@ import org.tukaani.xz.XZInputStream
 import java.io.File
 
 /**
- * **索引加载与文本加载的逐条对拍**（P1 Stage 1 的核心护栏）。
+ * 索引加载与文本加载的逐条对拍（P1 Stage 1 的核心护栏）。
  *
  * 词库从「文本 + HashMap」改成「二进制索引 + 二分查找」后，最容易出的问题不是崩，
- * 而是**候选悄悄变了**（顺序、去重、变体回退、生僻字过滤）。因此这里用一对
+ * 而是候选悄悄变了（顺序、去重、变体回退、生僻字过滤）。因此这里用一对
  * 同源 fixture（`dict_index_fixture.txt` 与 `dict_index_fixture.bin.xz`，由
  * `tools/dict_builder/build_dict_index.py --fixture` 同时产出）分别喂给两条加载路径，
  * 对同一批输入逐条比对候选。
  *
- * 单字表/音节表用真实 asset（`src/main/assets/`）——它们不参与本次重构，两条路径共用，
+ * 单字表/音节表用真实 asset（`src/main/assets/`），它们不参与本次重构，两条路径共用，
  * 因此比对结果只反映「短语表」这条链路的差异。
  */
 class IndexParityTest {
@@ -111,10 +111,10 @@ class IndexParityTest {
     }
 
     /**
-     * 头部声明「超长段」或版本不符时，解析必须**返回 null**（调用方据此回退），而不是抛异常。
+     * 头部声明「超长段」或版本不符时，解析必须返回 null（调用方据此回退），而不是抛异常。
      *
      * 回归点：段长校验若用 Int 累加，`p + keyCount + wordsLen + keyCount * 2` 会在超大声明值上
-     * 溢出成负数、绕过检查，随后在切片处抛 ArrayIndexOutOfBoundsException —— 这就破坏了
+     * 溢出成负数、绕过检查，随后在切片处抛 ArrayIndexOutOfBoundsException，这就破坏了
      * [PhraseIndex.of] 的契约（设备端可选包索引缓存是外部文件，坏了只应回退重建，不该崩）。
      */
     @Test

@@ -10,9 +10,9 @@ import java.io.File
  * 拼音连写会吞掉音节边界。「企鹅」的拼音是 qi e，连写成 qie，
  * 与单音节「切」同键；「西安」xi an → xian 与「先」同键。
  * 源词表一旦漏收这类词，用户输入 qie（双拼 qiee）只能看到「切/且/窃」，
- * 永远打不出「企鹅」——这是真实发生过的缺陷。
+ * 永远打不出「企鹅」，这是真实发生过的缺陷。
  *
- * 本测试直接校验**打包进 APK 的那份词库**（`assets/pinyin_index.bin.xz`，词库改二进制索引后
+ * 本测试直接校验打包进 APK 的那份词库（`assets/pinyin_index.bin.xz`，词库改二进制索引后
  * 它才是唯一权威载体），任何一次词库重新生成/替换若丢掉这些词，测试立刻失败。
  *
  * 性能：只解析索引头部 + 二分查找目标键，不建任何哈希表。
@@ -31,7 +31,7 @@ class PhraseDictIntegrityTest {
 
     @Test
     fun ambiguousWordsExistInAssetDictionary() {
-        // 直接查打包进 APK 的那份**二进制索引**（换成索引后它才是唯一权威载体）
+        // 直接查打包进 APK 的那份二进制索引（换成索引后它才是唯一权威载体）
         val index = openPhraseIndex()
         for ((key, word) in requiredWords) {
             val words = index.wordsFor(key)

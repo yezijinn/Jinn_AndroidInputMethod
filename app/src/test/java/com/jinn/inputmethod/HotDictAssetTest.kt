@@ -7,13 +7,13 @@ import org.tukaani.xz.XZInputStream
 import java.io.File
 
 /**
- * 高频子集词库（`assets/hot_phrases.txt.xz`）的**资产守卫**。
+ * 高频子集词库（`assets/hot_phrases.txt.xz`）的资产守卫。
  *
  * 它决定「键盘弹出后多久能打字」，因此必须有测试钉住三件事：
  *  1. 规模：够小（加载才快）且够大（日常词要覆盖）；
  *  2. 内容：最高频的那批词必须在里面（否则冷启动第一印象就是「打不出来」）；
- *  3. **每个键的词表必须是全量词表的前缀** —— 这是「子集先行 + 全量并入」后
- *     候选顺序与全量单载一致的**根本保证**（见 `HotDictMergeTest`）。
+ *  3. 每个键的词表必须是全量词表的前缀，这是「子集先行 + 全量并入」后
+ *     候选顺序与全量单载一致的根本保证（见 `HotDictMergeTest`）。
  *
  * 生成脚本：`tools/dict_builder/gen_hot_dict.py`。
  */

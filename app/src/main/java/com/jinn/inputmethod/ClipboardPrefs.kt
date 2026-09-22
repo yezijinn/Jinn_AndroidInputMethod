@@ -22,7 +22,7 @@ class ClipboardPrefs(context: Context) {
         get() {
             // 读侧同样钳位：存档里的 0 / 负数（旧版本写入、手动改 prefs）会让
             // trimByCount 直接 return，条数上限形同虚设（只剩 100MB 字节预算兜底）。
-            // 写侧已经钳了，两侧口径必须一致 —— 否则「读取的一定合法」这个前提是假的。
+            // 写侧已经钳了，两侧口径必须一致，否则「读取的一定合法」这个前提是假的。
             val v = sp.getInt(KEY_MAX_ITEMS, DEFAULT_MAX_ITEMS)
             return v.coerceIn(1, 9999)
         }

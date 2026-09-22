@@ -16,7 +16,7 @@ import java.util.Locale
  * 输入法内剪贴板面板（重构版：替换 26 键字母区，候选栏/底部栏保持）。
  *
  * 作为 PinyinKeyboardView 内容区的一个子 view，激活时与字母区互斥显示，
- * IME 全程持有 InputConnection——点击记录经 [listener.onPaste] 回传 IME
+ * IME 全程持有 InputConnection，点击记录经 [listener.onPaste] 回传 IME
  * 用当前连接 commitText，成功后才关闭面板。
  *
  * 功能：
@@ -33,7 +33,7 @@ import java.util.Locale
  * 身份不变量：点击用稳定 itemId 查找，不依赖 position；
  * 越界/已删除/已去重一律安全忽略。
  *
- * 注意：[SearchPanelView] 是本类的**平行实现**（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
+ * [SearchPanelView] 是本类的平行实现（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
  * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
  *
  * 安全：不输出任何剪贴板正文日志。
@@ -41,7 +41,7 @@ import java.util.Locale
 /**
  * 剪贴板面板的一页条数。
  *
- * 与搜索窗口同理：一页会**整页解密**后才发布，单次内存峰值 ≈ 本值 × 单条上限 × 放大系数
+ * 与搜索窗口同理：一页会整页解密后才发布，单次内存峰值 ≈ 本值 × 单条上限 × 放大系数
  * （见 [ClipboardStore.decryptWindowPeakBytes]）。50 条 ≈ 32.8MB（最坏情形），
  * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）内，由 `ClipboardLimitsTest` 守卫。
  */
@@ -74,7 +74,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
 
-    /** 内联操作条（长按条目时显示，替代 AlertDialog——IME 内嵌面板无窗口 token） */
+    /** 内联操作条（长按条目时显示，替代 AlertDialog，IME 内嵌面板无窗口 token） */
     private lateinit var actionBar: LinearLayout
     private lateinit var actionFavorite: TextView
     private lateinit var actionDelete: TextView
@@ -92,7 +92,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /**
      * 下一页的 SQL OFFSET。
      *
-     * 必须取查询回带的原始行游标，不能拿 [currentItems] 的条数顶替——解密失败的行
+     * 必须取查询回带的原始行游标，不能拿 [currentItems] 的条数顶替，解密失败的行
      * 不进列表但仍占游标位，用条数当偏移会让下一页重复取到已显示的行、并把尾部行跳过。
      */
     private var nextPageOffset = 0
@@ -161,7 +161,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
-            // 条目卡按**当前**透明度档设色：ListView 会复用 convertView，不每次重设的话，
+            // 条目卡按当前透明度档设色：ListView 会复用 convertView，不每次重设的话，
             // 改档（拖滑杆）后再滚动列表会混着新旧两档的背景
             root.background = android.graphics.drawable.ColorDrawable(
                 KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
@@ -214,8 +214,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setBackgroundColor(context.getColor(R.color.app_bg))
             adapter = this@ClipboardPanelView.adapter
         }
-        // 身份取值：优先用**被点中那一行渲染时写入的稳定 id**，取不到才退回当前列表下标。
-        // 只按下标取，会在「列表已被刷新整体替换、这一帧还没重绘」的窗口里粘错条目 ——
+        // 身份取值：优先用被点中那一行渲染时写入的稳定 id，取不到才退回当前列表下标。
+        // 只按下标取，会在「列表已被刷新整体替换、这一帧还没重绘」的窗口里粘错条目 ，
         // 用户看到的仍是旧行的文字，取到的却是新列表同下标的条目（类头的身份不变量即此）。
         fun itemAt(pos: Int, view: View?): ClipboardDb.Item? {
             val renderedId = (view?.tag as? Holder)?.itemId ?: -1L
@@ -302,7 +302,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     private fun selectCategory(category: String?) {
         // 切分类必须收起操作条：longPressItem 指向的条目可能不在新分类里（列表里再也看不到它），
-        // 此时点「删除 / 收藏」作用的是**看不见的条目** —— 删除后用户不知道丢的是哪一条。
+        // 此时点「删除 / 收藏」作用的是看不见的条目，删除后用户不知道丢的是哪一条。
         hideActionBar()
         currentCategory = category
         val selected = currentCategory
@@ -451,7 +451,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 长按操作：写库一律走 [BackgroundIo]。
      *
      * `setFavorite`/`delete` 内部 `getWritableDatabase` 会做磁盘 IO 与锁竞争，
-     * 在大库或 checkpoint 触发时可达秒级——放在触摸回调里就是主线程 IO，
+     * 在大库或 checkpoint 触发时可达秒级，放在触摸回调里就是主线程 IO，
      * 与同文件「清空」走后台的处理方式不一致（那是漏实现，不是有意）。
      */
     private fun toggleFavorite() {
@@ -464,7 +464,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             post {
                 hideActionBar()
                 // 与删除一致走 resetScroll：refresh 只取第一页，不重置滚动的话已加载的多页被
-                // 整体截回、ListView 的 firstPosition 又被钳到末尾 —— 用户既不在原位置、
+                // 整体截回、ListView 的 firstPosition 又被钳到末尾，用户既不在原位置、
                 // 也找不到刚操作的那一条。回顶至少是明确、可预期的行为。
                 refresh(resetScroll = true)
             }
@@ -504,8 +504,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 半透明键盘：按当前档重建分类栏按钮的键面背景。
      *
      * 为什么需要：这些按钮的背景是 `R.drawable.key_bg`（drawable），键盘侧按「纯色底」
-     * 识别透明度的兜底扫描扫不到它们 —— 不重建的话透明度拉满时面板会「底已透、按钮仍实心」。
-     * 操作条 / 确认条里的按钮是**动态创建**的，它们经 [tabButton] 构建时直接取最新档位。
+     * 识别透明度的兜底扫描扫不到它们，不重建的话透明度拉满时面板会「底已透、按钮仍实心」。
+     * 操作条 / 确认条里的按钮是动态创建的，它们经 [tabButton] 构建时直接取最新档位。
      */
     fun applySurfaceAlpha(alpha: Float) {
         if (alpha == surfaceAlpha) return

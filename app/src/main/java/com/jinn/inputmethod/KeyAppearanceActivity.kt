@@ -13,7 +13,7 @@ import android.widget.TextView
  *
  * 从设置页「按钮圆角间隙」按钮进入；拖动即落盘（[Prefs.keyCornerDp] / [Prefs.keyGapDp] /
  * [Prefs.keyTransparencyPercent]），不广播、不重启进程：
- *  - 松手时调 [JinnIme.onKeyAppearanceChanged] → 键盘**正显示**就即时重套外观（只改外观，不动拼音串）；
+ *  - 松手时调 [JinnIme.onKeyAppearanceChanged] → 键盘正显示就即时重套外观（只改外观，不动拼音串）；
  *  - 键盘未显示时不用管：[PinyinKeyboardView] 每次弹键盘（onStartInputView → configure）都会读最新配置。
  *
  * 定义域与换算一律取自 [KeyAppearance] / [KeyTransparency]（与绘制逻辑共用一套边界），
@@ -27,8 +27,8 @@ class KeyAppearanceActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 极光画在**窗口底色**上（根布局不再自带背景）：键盘弹起时页面内容被顶到键盘上方，
-        // 键盘覆盖区背后只剩窗口底色 —— 画在窗口上才能连成一片，且让键盘的半透明有对比可透。
+        // 极光画在窗口底色上（根布局不再自带背景）：键盘弹起时页面内容被顶到键盘上方，
+        // 键盘覆盖区背后只剩窗口底色，画在窗口上才能连成一片，且让键盘的半透明有对比可透。
         window.setBackgroundDrawableResource(R.drawable.key_appearance_bg)
         setContentView(R.layout.activity_key_appearance)
         // 本页背景是固定的深色「七彩极光」：状态栏跟着用夜空色 + 浅色图标。

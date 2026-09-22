@@ -25,7 +25,7 @@ class Prefs(context: Context) {
      * 飞牛 NAS 的局域网地址。
      *
      * getter 做一次合法性兜底：存档里的非法值（旧版本写入、手动改 prefs）一律回落到默认地址。
-     * 这是**崩不崩的边界**——[wsUrl] 会被直接送进 OkHttp，而 `HttpUrl` 对含空格或重复端口的
+     * 这是崩不崩的边界，[wsUrl] 会被直接送进 OkHttp，而 `HttpUrl` 对含空格或重复端口的
      * host 会抛 `IllegalArgumentException`，调用点又都在主线程（整个 IME 会崩）。
      * 语音链路属禁改区，所以校验放在配置层，保证交出去的 URL 一定是合法形式。
      */
@@ -81,23 +81,23 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
 
     /**
-     * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加，**不存 0**）。
+     * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加，不存 0）。
      *
-     * **只在设置页「输入方案」下拉里改**（选双拼项时写入；面板已无方案切换入口）。
-     * 选全拼**不清除**本键：下次选回双拼时回到上次那套，不会丢用户的选择。
+     * 只在设置页「输入方案」下拉里改（选双拼项时写入；面板已无方案切换入口）。
+     * 选全拼不清除本键：下次选回双拼时回到上次那套，不会丢用户的选择。
      */
     var shuangpinScheme: Int
         get() {
             val v = sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.ZIRANMA.prefsValue)
             // 历史/异常值（含 0 全拼、未知编号）一律落到自然码：本键的语义就是「双拼用哪套」。
-            // 回写的必须是 of() **规范化之后**的取值：of() 对未知编号会兜底成自然码，
-            // 此时原值 v 仍是个脏编号——判据成立却把脏值原样返回，与上面的约定不符。
+            // 回写的必须是 of() 规范化之后的取值：of() 对未知编号会兜底成自然码，
+            // 此时原值 v 仍是个脏编号，判据成立却把脏值原样返回，与上面的约定不符。
             val scheme = ShuangpinScheme.of(v)
             return if (scheme.isShuangpin) scheme.prefsValue else ShuangpinScheme.ZIRANMA.prefsValue
         }
         set(value) = sp.edit { putInt(KEY_SHUANGPIN_SCHEME, value) }
 
-    /** 当前**生效**的输入方案：没启用双拼就是全拼，启用则取设置页选定的那套 */
+    /** 当前生效的输入方案：没启用双拼就是全拼，启用则取设置页选定的那套 */
     val effectiveShuangpinScheme: ShuangpinScheme
         get() = if (useShuangpin) ShuangpinScheme.of(shuangpinScheme) else ShuangpinScheme.QUANPIN
 
@@ -126,7 +126,7 @@ class Prefs(context: Context) {
     var defaultKeyboardMode: Int
         get() {
             // 越界值（旧版本/外部写入）会让 JinnIme 建视图时的 when 落到 else 分支，
-            // 默认键盘变成语音键盘 —— 与「默认 26 键全拼」的约定正好相反。
+            // 默认键盘变成语音键盘，与「默认 26 键全拼」的约定正好相反。
             val v = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
             return v.takeIf { it in DefaultKeyboardMode.VOICE..DefaultKeyboardMode.PINYIN_EN }
                 ?: DefaultKeyboardMode.PINYIN_CN
@@ -147,13 +147,13 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
-    /** 用户词频学习：记录「实际选过」的候选并提到前面（**默认关**；本地存储，不上传） */
+    /** 用户词频学习：记录「实际选过」的候选并提到前面（默认关；本地存储，不上传） */
     var userLearning: Boolean
         get() = sp.getBoolean(KEY_USER_LEARNING, false)
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
-     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（**默认关**）。
+     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认关）。
      * 打开后选完文字才会出现预测候选；关掉时完全不产生预测。
      */
     var predictEnabled: Boolean
@@ -161,7 +161,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
 
     /**
-     * 上次「检查更新」**成功**的时刻（epoch ms，0 = 从未成功检查过）。
+     * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
      * 成功则 [UpdateChecker.AUTO_CHECK_INTERVAL_MS] 内不再自动检查，避免反复打扰。
@@ -173,7 +173,7 @@ class Prefs(context: Context) {
     /**
      * 主题模式（见 [ThemeManager]）：0 跟随系统 / 1 亮白 / 2 暗黑 / 3 定时。
      *
-     * **默认跟随系统**（用户 2026-09-21 指定）：系统深浅色即 App 主题；越界值同样退回该默认。
+     * 默认跟随系统（用户 2026-09-21 指定）：系统深浅色即 App 主题；越界值同样退回该默认。
      */
     var themeMode: Int
         get() = sp.getInt(KEY_THEME_MODE, ThemeManager.MODE_SYSTEM)
@@ -190,8 +190,8 @@ class Prefs(context: Context) {
     /**
      * 符号分组顺序（label 的逗号分隔串；空串 = 默认次序，见 [SymbolOrder]）。
      *
-     * 由排序页（[SymbolOrderActivity]）写入；只存顺序不存内容 —— 版本新增的分组自动落到末尾。
-     * ⚠ 写入即归一（[SymbolOrder.serialize]）：落盘的恒为完整序列串，不会是空串。
+     * 由排序页（[SymbolOrderActivity]）写入；只存顺序不存内容，版本新增的分组自动落到末尾。
+     * 写入即归一（[SymbolOrder.serialize]）：落盘的恒为完整序列串，不会是空串。
      */
     var symbolGroupOrder: String
         get() = sp.getString(KEY_SYMBOL_ORDER, "").orEmpty()
@@ -236,7 +236,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_CORNER_DP, KeyAppearance.clampCornerDp(value)) }
 
     /**
-     * 26 键区（3 行 28 键）的统一按键间隙（dp）——相邻两键之间的空隙，左右与上下一致。
+     * 26 键区（3 行 28 键）的统一按键间隙（dp），相邻两键之间的空隙，左右与上下一致。
      *
      * 定义域与默认值见 [KeyAppearance]（0~8dp，默认 0.5dp，步进 0.5dp）。
      */
@@ -261,7 +261,7 @@ class Prefs(context: Context) {
         }
 
     /**
-     * 语音输入总开关，**默认禁用**。
+     * 语音输入总开关，默认禁用。
      *
      * 禁用时语音功能完全沉寂：不创建 [AsrClient]/[MicRecorder]、不发起 WebSocket 连接，
      * 长按空格等入口一律置空，因此不占用任何语音相关内存。
@@ -288,17 +288,17 @@ class Prefs(context: Context) {
         private val INVALID_HOST_CHARS = charArrayOf(':', '/', '\\', '?', '#', '@', '[', ']')
 
         /**
-         * host 合法性校验（**纯函数**，可直接 JVM 单测）。
+         * host 合法性校验（纯函数，可直接 JVM 单测）。
          *
          * 两道判据，缺一不可：
-         *  1. **结构规则**：挡掉语义明显不对的写法 —— 把 `host:port`、`http://…`、`h/path`、
+         *  1. 结构规则：挡掉语义明显不对的写法，把 `host:port`、`http://…`、`h/path`、
          *     `user@h` 当 host 填进来，或整串只有标点（`.` / `-` / `..`，这些不是主机名）；
          *     IPv6 字面量按 URL 规则必须写成 `[::1]`，方括号内只放十六进制、冒号、点与 `%`（zone id）。
-         *  2. **终判交给真实消费者**：按 `http://$h:1` 解析一次。
-         *     只靠字符黑名单挡不住全部非法值 —— 实测 `..` 不含任何黑名单字符，
+         *  2. 终判交给真实消费者：按 `http://$h:1` 解析一次。
+         *     只靠字符黑名单挡不住全部非法值，实测 `..` 不含任何黑名单字符，
          *     却会让 `HttpUrl` 抛 `IllegalArgumentException`（那就是主线程崩溃）。
          *     用 `http` 而非 `ws` 起头：`Request.Builder.url()` 收到 `ws://` 时本身就是先改写成
-         *     `http://` 再解析的，而 `toHttpUrlOrNull()` **不接受** `ws:` 方案 ——
+         *     `http://` 再解析的，而 `toHttpUrlOrNull()` 不接受 `ws:` 方案 ，
          *     拿 `ws://` 去判会一律得到 null（把合法 host 全判成非法）。
          *     端口用 1 而非实际端口：合法 host 下端口取值不影响能否解析。
          */
@@ -328,7 +328,7 @@ class Prefs(context: Context) {
         /**
          * 规范化 host：去首尾空白后校验，非法返回 null。
          *
-         * 取值方**必须**用它、而不是拿 `isValidHost` 判完就把原串拼进 URL —— 校验内部会 trim，
+         * 取值方必须用它、而不是拿 `isValidHost` 判完就把原串拼进 URL，校验内部会 trim，
          * 但原串没变：存了 `" 192.168.1.3 "` 时会拼出 `ws:// 192.168.1.3 :6016`，
          * OkHttp 照样抛异常（实测），等于绕过校验把主线程崩溃点留在原地。
          */

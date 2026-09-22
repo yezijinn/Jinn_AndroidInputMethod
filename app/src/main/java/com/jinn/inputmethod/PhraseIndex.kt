@@ -8,7 +8,7 @@ package com.jinn.inputmethod
  * （`tools/dict_builder/build_dict_index.py`），运行时只解压字节、把长度数组还原成偏移，
  * 查询用二分查找按字节比较，命中才解码成 String，不再需要哈希容器。
  *
- * 格式（小端，**v2：长度数组**，见构建脚本）
+ * 格式（小端，v2：长度数组，见构建脚本）
  * ```
  * magic "JNIH" | version u16=2 | keyCount u32 | keysLen u32 | wordsLen u32 | reserved | srcDigest u64
  * keysBlob    : 全部键按字典序串联的 UTF-8 字节
@@ -17,9 +17,9 @@ package com.jinn.inputmethod
  * wordLengths : u16 × keyCount
  * ```
  * v1 用 u32 偏移表（两张表共 4.83MB），v2 换成长度数组（0.60MB + 1.21MB）：
- * **原始体积 17.3MB → 14.4MB、xz 5.04MB → 4.48MB**，解压耗时随之下降。
+ * 原始体积 17.3MB → 14.4MB、xz 5.04MB → 4.48MB，解压耗时随之下降。
  * 读取时把长度数组还原成前缀和（IntArray），运行时结构与 v1 一致。
- * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标——**不额外复制数据**。
+ * 键区与词区共用同一个 `bytes` 数组，切片为绝对下标，不额外复制数据。
  *
  * 读取一律走 [java.nio.ByteBuffer]，两种承载：APK 里的索引先解 xz 再 `wrap`；
  * 设备端的 `.idx` 缓存用 [ofMapped] 直接映射（零拷贝，页可被内核回收，省下几十 MB 私有堆）。
@@ -40,11 +40,11 @@ internal class PhraseIndex private constructor(
     val size: Int get() = keyCount
 
     /**
-     * 头部记录的**来源摘要**（64 位）。
+     * 头部记录的来源摘要（64 位）。
      *
      * · APK 内置索引：构建脚本写入的「源文本 FNV-1a」；
      * · 设备端为可选包构建的索引：写入「源文件 length:mtime 的 FNV-1a」，
-     *   加载时与磁盘上源文件的实际值比对 —— 不一致就重建（见 [stampOfFile]）。
+     *   加载时与磁盘上源文件的实际值比对，不一致就重建（见 [stampOfFile]）。
      */
     val sourceStamp: Long get() = stampOf(buf, 22)
 
@@ -57,7 +57,7 @@ internal class PhraseIndex private constructor(
     /**
      * 精确查键，返回词表；键不存在返回 null。
      *
-     * 词表是**按需解码**的：命中后逐个切词，未命中零分配（二分只比较字节）。
+     * 词表是按需解码的：命中后逐个切词，未命中零分配（二分只比较字节）。
      */
     fun wordsFor(key: String): Array<String>? {
         val i = indexOf(key) ?: return null
@@ -81,7 +81,7 @@ internal class PhraseIndex private constructor(
      * 供智能预测使用（旧实现遍历 `sortedPhraseKeys`，那是一份 60 万个 String 的快照，
      * 仅这一项就占几十 MB；索引版直接在键区字节上二分 + 顺序扫，不再持有键字符串）。
      *
-     * 注意它会**把命中的键全部实例化**：短前缀代价不小（实测 `"ni"` → 6185 个 String / 2.18ms），
+     * 注意它会把命中的键全部实例化：短前缀代价不小（实测 `"ni"` → 6185 个 String / 2.18ms），
      * 调用方要自带上限（见 [PinyinEngine.predict] 的提前退出）。真要无条件全量扫描，
      * 用下面那个不建 String 的区间接口。
      */
@@ -102,7 +102,7 @@ internal class PhraseIndex private constructor(
 
     /**
      * 前缀区间枚举（吸收 librime `Prism::ExpandSearch` 的 `Match(value, length)` 设计）：
-     * 只回调 `(键字节长度, 词区起止)`，**不实例化键字符串**。
+     * 只回调 `(键字节长度, 词区起止)`，不实例化键字符串。
      *
      * 与 [keysWithPrefix] 的差别在短前缀下非常明显：实测 `"ni"` 有 6185 个键，
      * 旧写法会一次性建出 6185 个 String（2.18ms）；这里调用方可以直接用字节长度判断，
@@ -128,9 +128,9 @@ internal class PhraseIndex private constructor(
     }
 
     /**
-     * 在词区区间内，把「以 [wordBytes] 开头且更长」的词**后缀**追加进 [out]，返回新增个数。
+     * 在词区区间内，把「以 [wordBytes] 开头且更长」的词后缀追加进 [out]，返回新增个数。
      *
-     * 前缀判断走**字节级**比较（`regionEquals`）：未命中零分配，命中者也只解码后缀，
+     * 前缀判断走字节级比较（`regionEquals`）：未命中零分配，命中者也只解码后缀，
      * 不做 `substring` 之前的整词解码。
      */
     fun collectLongerSuffixes(
@@ -192,7 +192,7 @@ internal class PhraseIndex private constructor(
      * 按绝对下标解码 [len] 个字节为 String。
      *
      * 堆内承载走 `String(array, offset, len)`（零额外拷贝）；映射承载没有数组可借，
-     * 退化为逐字节拷进小数组——只有**命中后**才会调用，未命中路径零分配。
+     * 退化为逐字节拷进小数组，只有命中后才会调用，未命中路径零分配。
      */
     private fun decode(from: Int, len: Int): String {
         val arr = heapArray
@@ -210,11 +210,11 @@ internal class PhraseIndex private constructor(
         fun of(bytes: ByteArray): PhraseIndex? = parse(java.nio.ByteBuffer.wrap(bytes))
 
         /**
-         * **内存映射**构造（吸收 librime `Prism : MappedFile`）：设备端 `.idx` 缓存首选。
+         * 内存映射构造（吸收 librime `Prism : MappedFile`）：设备端 `.idx` 缓存首选。
          *
          * 失败（文件缺失/截断/平台不支持）返回 null → 调用方回退到 [of] + `readBytes()`。
          * 映射的生命周期与本对象一致：只要索引还在用，缓冲区就不会被回收/关闭。
-         * 注意：**映射期间不要覆盖该文件**（截断会让映射读到空洞，Linux 上甚至 SIGBUS），
+         * 映射期间不要覆盖该文件（截断会让映射读到空洞，Linux 上甚至 SIGBUS），
          * 重写缓存必须「写临时文件 + 原子改名」（见 PinyinEngine.writeIndexCacheAtomically）。
          */
         fun ofMapped(file: java.io.File): PhraseIndex? = runCatching {
@@ -240,13 +240,13 @@ internal class PhraseIndex private constructor(
             fnv1a64("$length:$modified".toByteArray(Charsets.UTF_8))
 
         /**
-         * 从「键 → 词表行」构建索引字节（**设备端**首次加载可选包时使用）。
+         * 从「键 → 词表行」构建索引字节（设备端首次加载可选包时使用）。
          *
-         * 与构建脚本产出**完全同格式**（同一套 header/偏移布局），因此可以互相读取；
+         * 与构建脚本产出完全同格式（同一套 header/偏移布局），因此可以互相读取；
          * 已由 `IndexBuilderParityTest` 对拍钉住。
          *
-         * @param lines 形如 `拼音<TAB>词1|词2` 的行；**流水线已保证按键升序**（乱序即抛错，
-         *   由调用方回退到文本路径）；同键的**连续多行会合并进同一个词表**（与文本路径一致）。
+         * @param lines 形如 `拼音<TAB>词1|词2` 的行；流水线已保证按键升序（乱序即抛错，
+         *   由调用方回退到文本路径）；同键的连续多行会合并进同一个词表（与文本路径一致）。
          * @param stamp 写入头部的来源摘要（供复用校验）
          */
         fun build(lines: Sequence<String>, stamp: Long): ByteArray {
@@ -257,12 +257,12 @@ internal class PhraseIndex private constructor(
             val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
             val wordLens = java.io.ByteArrayOutputStream(1 shl 17)
             var count = 0
-            // 逐键写出：同键的连续多行**合并进同一个词表**（`词1|词2` 拼接，重复词只保留首个）。
-            // 语义与文本路径对齐 —— `loadPhrasesReader(merge=true)` 对同键是
+            // 逐键写出：同键的连续多行合并进同一个词表（`词1|词2` 拼接，重复词只保留首个）。
+            // 语义与文本路径对齐，`loadPhrasesReader(merge=true)` 对同键是
             // `existing + kept.filter { seen.add(it) }`（去重）；旧实现按行写出，
             // 同键第二个词表会被二分查找永久跳过（静默少词，无日志无异常）。
             // [pendingWords] 用 LinkedHashSet 而非「每行重建 ByteArray」：既保序去重，
-            // 又把合并期从 O(词汇量²) 的 arraycopy 降为 O(词汇量)。只缓冲**单个键**的词表
+            // 又把合并期从 O(词汇量²) 的 arraycopy 降为 O(词汇量)。只缓冲单个键的词表
             // （不是整份词库，流式性质不变）；超 64KB 在写出该键时 require 抛错。
             var pendingKey: String? = null
             val pendingWords = LinkedHashSet<String>(8)
@@ -284,7 +284,7 @@ internal class PhraseIndex private constructor(
                 val tab = line.indexOf('\t')
                 if (tab <= 0) continue
                 val key = line.substring(0, tab)
-                // 索引靠二分查找，**必须按键升序**；乱序时由调用方回退到旧路径（见 PinyinEngine）
+                // 索引靠二分查找，必须按键升序；乱序时由调用方回退到旧路径（见 PinyinEngine）
                 val prev = pendingKey
                 check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
                 if (prev != null && key != prev) flushPending()
@@ -350,7 +350,7 @@ internal class PhraseIndex private constructor(
 
         /**
          * 头部长度：magic(4) + version(2) + keyCount(4) + keysLen(4) + wordsLen(4) +
-         * reserved(4) + srcDigest(8) —— 必须与构建脚本 `build_dict_index.py` 的 struct 完全一致。
+         * reserved(4) + srcDigest(8)，必须与构建脚本 `build_dict_index.py` 的 struct 完全一致。
          */
         const val HEADER_SIZE = 30
 
@@ -381,7 +381,7 @@ internal class PhraseIndex private constructor(
         /**
          * 解析索引字节；头部/长度/偏移不自洽时返回 null（调用方回退，不影响可用性）。
          *
-         * 这里只做**廉价的结构校验**（magic/版本/段长/偏移单调且首尾对齐）——
+         * 这里只做廉价的结构校验（magic/版本/段长/偏移单调且首尾对齐），
          * 足以挡住截断、版本错配、字节序问题这些常见故障。
          */
         fun parse(buf: java.nio.ByteBuffer): PhraseIndex? {
@@ -400,7 +400,7 @@ internal class PhraseIndex private constructor(
 
             // 段长校验必须用 Long 累加：keysLen / wordsLen / keyCount 都来自外部字节，
             // 直接 Int 相加会在「超大声明值」上溢出成负数、绕过校验，随后在切片时抛数组越界
-            // （本方法的契约是「结构不自洽就返回 null」，绝不抛异常——调用方靠它决定是否回退）。
+            // （本方法的契约是「结构不自洽就返回 null」，绝不抛异常，调用方靠它决定是否回退）。
             // 总长是精确可算的：header + keysLen + keyCount(u8) + wordsLen + keyCount(u16×2)。
             val need = HEADER_SIZE.toLong() + keysLen + wordsLen + keyCount.toLong() * 3
             if (need != buf.capacity().toLong()) return null
@@ -434,8 +434,8 @@ internal class PhraseIndex private constructor(
          *
          * - @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
          *
-         * 注意：累加必须用 Long 判溢出。每项最大 255/65535，条目数又只被 `need == capacity`
-         * 松散约束（大索引可达千万级），Int 累加会静默回绕成负数 —— 负值随后被当成合法偏移，
+         * 累加必须用 Long 判溢出。每项最大 255/65535，条目数又只被 `need == capacity`
+         * 松散约束（大索引可达千万级），Int 累加会静默回绕成负数，负值随后被当成合法偏移，
          * 既可能让 `keyOffsets[keyCount] != keysLen` 的自洽校验失效，也可能在切片时越界。
          */
         fun expandLengths(b: java.nio.ByteBuffer, start: Int, count: Int, width: Int): IntArray? {

@@ -9,8 +9,8 @@ import org.junit.Test
 /**
  * host 合法性校验单测（纯函数，不依赖 Android 运行时）。
  *
- * 这条判据是**崩不崩的边界**：`Prefs.wsUrl` 会被直接送进 OkHttp，而 `HttpUrl` 对含空白、
- * 重复端口、`..` 之类的取值会抛 `IllegalArgumentException`，调用点又都在主线程 —— 一旦命中
+ * 这条判据是崩不崩的边界：`Prefs.wsUrl` 会被直接送进 OkHttp，而 `HttpUrl` 对含空白、
+ * 重复端口、`..` 之类的取值会抛 `IllegalArgumentException`，调用点又都在主线程，一旦命中
  * 就是整个 IME 崩掉。语音链路属禁改区，所以校验只能放在配置层，这里锁住它的边界。
  */
 class PrefsHostValidationTest {
@@ -81,7 +81,7 @@ class PrefsHostValidationTest {
     @Test
     fun 规范化会去掉首尾空白() {
         // 取值方拼 URL 必须用 normalizeHost 的返回值：校验内部 trim，但原串带空白时
-        // `ws:// 192.168.1.3 :6016` 一样会被 OkHttp 拒绝（实测）—— 曾因此留下崩溃点。
+        // `ws:// 192.168.1.3 :6016` 一样会被 OkHttp 拒绝（实测）， 曾因此留下崩溃点。
         assertEquals("192.168.1.3", Prefs.normalizeHost("  192.168.1.3  "))
         assertEquals("192.168.1.3", Prefs.normalizeHost("192.168.1.3\n"))
         assertEquals("nas.local", Prefs.normalizeHost(" nas.local\t"))
@@ -106,13 +106,13 @@ class PrefsHostValidationTest {
         runCatching { Request.Builder().url("ws://$host:6016").build() }.isSuccess
 
     /**
-     * **校验/规范化与真实消费者的一致性**：凡是被规范化接受的取值，拼进 URL 后必须能被 OkHttp 解析。
+     * 校验/规范化与真实消费者的一致性：凡是被规范化接受的取值，拼进 URL 后必须能被 OkHttp 解析。
      *
      * 这条不变式至今抓到过三类实现缺陷：
      *  1. 只做字符黑名单时 `..` 漏过，却让 `HttpUrl` 抛异常（崩溃路径没堵死）；
-     *  2. 终判错用 `ws://` 解析 —— `toHttpUrlOrNull()` 不接受 `ws:` 方案，
-     *     会把**所有**合法 host 判成非法（用户配置被静默回落成默认值）；
-     *  3. 校验内部 trim 但取值方拿**原串**去拼 URL —— 存了带空白的值就绕过校验，
+     *  2. 终判错用 `ws://` 解析，`toHttpUrlOrNull()` 不接受 `ws:` 方案，
+     *     会把所有合法 host 判成非法（用户配置被静默回落成默认值）；
+     *  3. 校验内部 trim 但取值方拿原串去拼 URL，存了带空白的值就绕过校验，
      *     `ws:// 192.168.1.3 :6016` 仍然抛异常。
      */
     @Test
