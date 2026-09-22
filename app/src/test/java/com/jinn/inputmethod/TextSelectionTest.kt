@@ -16,7 +16,7 @@ import org.junit.Test
 class TextSelectionTest {
 
     private val text = "这是一个测试文本"
-    private fun range(focus: Int) = TextSelection.Range(4, 4, text.length, text)
+    private fun range() = TextSelection.Range(4, 4, text.length, text)
 
     // ── 核心：Anchor 固定，Focus 连续移动 ─────────────────
 
@@ -25,17 +25,17 @@ class TextSelectionTest {
         val anchor = 4
         var focus = 4
         // 第一次 →
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         assertEquals("第一次右移 Focus=5", 5, focus)
         var (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("这[一]个测试文本", 4 to 5, s to e)
         // 第二次 →（Anchor 必须不变）
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         assertEquals("第二次右移 Focus=6", 6, focus)
         val pair = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("这[一个]测试文本", 4 to 6, pair.first to pair.second)
         // 第三次 →
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         val p3 = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("这[一个测]试文本", 4 to 7, p3.first to p3.second)
     }
@@ -46,7 +46,7 @@ class TextSelectionTest {
         var focus = 6
         // 模拟 setSelection(4,6) 后 Android 归一化，若错误地重新取 selectionStart 会得 4
         // 正确做法：Focus 独立维护，从上次 focus=6 继续
-        focus = TextSelection.nextFocus(range(6), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         assertEquals("Focus 从 6 继续而非 4", 7, focus)
         val (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("这[一个测]试文本", 4 to 7, s to e)
@@ -59,9 +59,9 @@ class TextSelectionTest {
         val anchor = 4
         var focus = 4
         // ← ← ←
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.LEFT)
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.LEFT)
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.LEFT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.LEFT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.LEFT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.LEFT)
         assertEquals("三次左移 Focus=1", 1, focus)
         val (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("[是一个]测试文本", 1 to 4, s to e)
@@ -72,12 +72,12 @@ class TextSelectionTest {
         val anchor = 4
         var focus = 2
         // → 从 2 到 3
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         assertEquals(3, focus)
         val (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals(3 to 4, s to e)
         // 再 → 到 4（选区缩为 0）
-        focus = TextSelection.nextFocus(range(focus), focus, PinyinKeyboardView.DirectionAction.RIGHT)
+        focus = TextSelection.nextFocus(range(), focus, PinyinKeyboardView.DirectionAction.RIGHT)
         assertEquals(4, focus)
         val (s2, e2) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("Focus 回到 Anchor 时无选区", 4 to 4, s2 to e2)
@@ -88,7 +88,7 @@ class TextSelectionTest {
     @Test
     fun lineStartMovesFocusNotAnchor() {
         val anchor = 4
-        val focus = TextSelection.nextFocus(range(4), 4, PinyinKeyboardView.DirectionAction.LINE_START)
+        val focus = TextSelection.nextFocus(range(), 4, PinyinKeyboardView.DirectionAction.LINE_START)
         assertEquals("行首 Focus=0", 0, focus)
         val (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("[这是一个测试]文本", 0 to 4, s to e)
@@ -97,7 +97,7 @@ class TextSelectionTest {
     @Test
     fun lineEndMovesFocusToTextEnd() {
         val anchor = 4
-        val focus = TextSelection.nextFocus(range(4), 4, PinyinKeyboardView.DirectionAction.LINE_END)
+        val focus = TextSelection.nextFocus(range(), 4, PinyinKeyboardView.DirectionAction.LINE_END)
         assertEquals("行末 Focus=文本长", text.length, focus)
         val (s, e) = TextSelection.normalizedSelection(anchor, focus)
         assertEquals("[这是一个测试文本]", 4 to text.length, s to e)
@@ -170,7 +170,7 @@ class TextSelectionTest {
 
     @Test
     fun focusClampedToTextBounds() {
-        assertEquals(0, TextSelection.nextFocus(range(0), 0, PinyinKeyboardView.DirectionAction.LEFT))
+        assertEquals(0, TextSelection.nextFocus(range(), 0, PinyinKeyboardView.DirectionAction.LEFT))
         val r = TextSelection.Range(0, 0, text.length, text)
         assertEquals(text.length, TextSelection.nextFocus(r, text.length, PinyinKeyboardView.DirectionAction.RIGHT))
     }

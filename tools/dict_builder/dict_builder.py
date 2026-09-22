@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CapsWriterIME 词库构建工具（dict_builder）。
+Jinn拼音输入法 词库构建工具（dict_builder）。
 
 从 Rime dict.yaml / TXT / CSV 解析词库，经清洗/去重/拼音标准化/自然码转换，
 生成 app/src/main/assets/ 下的文本 asset。
@@ -253,7 +253,7 @@ def write_outputs(result, out_dir, source, category="common"):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Rime 词库 → CapsWriterIME asset")
+    ap = argparse.ArgumentParser(description="Rime 词库 → Jinn拼音输入法 asset")
     ap.add_argument("inputs", nargs="+", help="Rime dict.yaml 文件")
     ap.add_argument("-o", "--output", default="out", help="输出目录")
     ap.add_argument("-s", "--source", default="unknown", help="数据源标识（如 rime-ice）")

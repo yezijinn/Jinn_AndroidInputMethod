@@ -116,34 +116,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否双拼方案（派生值：键位/提示/文案都由 [scheme] 决定） */
     private val shuangpinMode: Boolean get() = scheme.isShuangpin
 
-    private lateinit var viewCandidatePinyin: TextView
-    private lateinit var viewCandidateList: LinearLayout
+    private val viewCandidatePinyin: TextView
+    private val viewCandidateList: LinearLayout
 
     /** 候选栏最右侧的「✕」清空候选按钮（2026-09-20 起，绑定见 init） */
-    private lateinit var btnClearCandidates: TextView
+    private val btnClearCandidates: TextView
 
-    private lateinit var viewLetters: LinearLayout
-    private lateinit var contentArea: FrameLayout
+    private val viewLetters: LinearLayout
+    private val contentArea: FrameLayout
 
     /** 剪贴板面板（与字母区互斥显示，见 init 挂载） */
-    private lateinit var clipboardPanel: ClipboardPanelView
+    private val clipboardPanel: ClipboardPanelView
 
     /** 顶部搜索面板（候选栏上方，见 init 挂载） */
-    private lateinit var searchPanel: SearchPanelView
+    private val searchPanel: SearchPanelView
 
     /** 剪贴板面板是否激活 */
     private var clipboardActive = false
-    private lateinit var btnSymbol: TextView
-    private lateinit var btnDigit: TextView
-    private lateinit var btnLang: TextView
-    private lateinit var btnSpace: View
+    private val btnSymbol: TextView
+    private val btnDigit: TextView
+    private val btnLang: TextView
+    private val btnSpace: View
     /** 空格键顶部的小字提示（当前输入类型：小写英文/大写英文/中文全拼/中文双拼） */
-    private lateinit var btnSpaceHint: TextView
-    private lateinit var btnBackspace: View
-    private lateinit var btnEnter: View
-    private lateinit var btnShift: ImageButton
-    private lateinit var btnComma: View
-    private lateinit var btnPeriod: View
+    private val btnSpaceHint: TextView
+    private val btnBackspace: View
+    private val btnEnter: View
+    private val btnShift: ImageButton
+    private val btnComma: View
+    private val btnPeriod: View
 
     /**
      * 分号键（第三行 m 右侧）。
@@ -152,7 +152,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 应/听/明/定 这类音节的字完全打不出来。只在当前方案确实需要时才显示，
      * 其余方案与符号层/数字层一律 GONE，对现有 26 键布局零影响。
      */
-    private lateinit var keySemicolon: PinyinKey
+    private val keySemicolon: PinyinKey
 
     private val keyViews = HashMap<Char, PinyinKey>()
 
@@ -170,10 +170,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var lastAppearanceDesc = ""
 
     /** 半透明键盘：键盘底色所在的根布局（keyboard_pinyin.xml 的根，背景 @color/kb_bg） */
-    private lateinit var keyboardRoot: View
+    private val keyboardRoot: View
 
     /** 半透明键盘：候选栏容器（背景 @color/kb_candidate_bg） */
-    private lateinit var candidateBar: View
+    private val candidateBar: View
 
     /** 当前键面不透明度（1f = 不透明），见 [applyKeyTransparency]；功能键背景的缓存判据也用它 */
     private var keyFaceAlpha = 1f
@@ -765,8 +765,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshBackspaceBackground()
         rebuildFunctionKeyBackgrounds()
         // 面板里的「键面」按钮（key_bg 是 drawable，颜色识别扫不到）：交给面板按当前档重建
-        clipboardPanel?.applySurfaceAlpha(keyFaceAlpha)
-        searchPanel?.applySurfaceAlpha(keyFaceAlpha)
+        clipboardPanel.applySurfaceAlpha(keyFaceAlpha)
+        searchPanel.applySurfaceAlpha(keyFaceAlpha)
 
         // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描 ，
         // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
@@ -972,11 +972,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 候选栏 / 面板里仍以 XML 静态背景（`key_bg.xml` / `key_bg_rect.xml` / `key_bg_active.xml`）
+     * 候选栏 / 面板里仍以 XML 静态背景（`key_bg.xml` / `key_bg_active.xml`）
      * 构建的按钮：按同款几何在运行时重建，只把填充色换成带「面不透明度」的版本，
      * 否则这些控件会一直是不透明的，把整条候选栏/面板压成实心（透明度拉满也看不出变化）。
      *
-     * [cornerDp] 与 XML 对齐：`key_bg` / `key_bg_active` 为 10dp，`key_bg_rect` 为 0（纯矩形）。
+     * [cornerDp] 与 XML 对齐：`key_bg` / `key_bg_active` 为 10dp；符号分组标签用 0（纯矩形，
+     * 原先由 `key_bg_rect.xml` 提供，随本次静态背景统一改造后该 drawable 已删除）。
      */
     private fun xmlKeyBackground(cornerDp: Float = KEY_BG_CORNER_DP, useAccent: Boolean = false): Drawable =
         buildKeyBackground(
@@ -1482,7 +1483,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val item = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = android.view.Gravity.CENTER
-                // key_bg_rect 同款（纯矩形，无圆角），但填充色带面 alpha
+                // 纯矩形（无圆角）+ 填充色带面 alpha（原 key_bg_rect.xml 的几何）
                 background = xmlKeyBackground(0f)
                 setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
                 isClickable = true
@@ -1720,9 +1721,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         else -> "中文全拼"
     }
 
-    /** 刷新空格键顶部小字（输入类型） */
+    /** 刷新空格键顶部小字（输入类型）。[btnSpaceHint] 是构造期赋值的非空 val，无需 isInitialized 守卫 */
     private fun updateSpaceHint() {
-        if (::btnSpaceHint.isInitialized) btnSpaceHint.text = currentInputTypeLabel()
+        btnSpaceHint.text = currentInputTypeLabel()
     }
 
     /**

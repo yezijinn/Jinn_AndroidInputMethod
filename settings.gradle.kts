@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "JinnVoiceIME"
+rootProject.name = "com.jinn.inputmethod"
 include(":app")

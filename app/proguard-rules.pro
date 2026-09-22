@@ -5,7 +5,7 @@
 -dontwarn org.openjsse.**
 
 # ── 清单按全限定名反射实例化的组件：保留类名与构造器 ──
--keep class com.jinn.inputmethod.JinnIme { <init>(); }
+# JinnIme 的构造器由下方 `-keep class com.jinn.inputmethod.JinnIme`（保留类与全部成员）覆盖，勿重复声明
 -keep class com.jinn.inputmethod.SettingsActivity { <init>(); }
 
 # 自定义 View 在 XML 中按全限定名实例化，保留两参构造器
