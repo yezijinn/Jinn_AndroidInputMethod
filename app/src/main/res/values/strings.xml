@@ -72,7 +72,7 @@
 
     <!-- 设置页 -->
     <string name="settings_title">Jinn拼音输入法</string>
-    <string name="settings_subtitle">语音识别 + 26 键全拼 + 7 套双拼方案</string>
+    <string name="settings_subtitle">26 键全拼 + 7 套双拼方案</string>
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
     <string name="settings_lock">固定</string>
