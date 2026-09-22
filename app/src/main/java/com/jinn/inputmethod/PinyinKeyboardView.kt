@@ -169,13 +169,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上次打印的外观参数（仅在变化时打日志，避免每次弹键盘都刷屏） */
     private var lastAppearanceDesc = ""
 
+    /** 半透明键盘：键盘底色所在的根布局（keyboard_pinyin.xml 的根，背景 @color/kb_bg） */
+    private lateinit var keyboardRoot: View
+
+    /** 半透明键盘：候选栏容器（背景 @color/kb_candidate_bg） */
+    private lateinit var candidateBar: View
+
+    /** 当前键面不透明度（1f = 不透明），见 [applyKeyTransparency]；功能键背景的缓存判据也用它 */
+    private var keyFaceAlpha = 1f
+
+    /** 上次打印的透明度（仅在变化时打日志，避免每次弹键盘都刷屏） */
+    private var lastTransparencyDesc = ""
+
+    /** 候选栏底当前生效的档位（NaN 保证首次一定设置），判据与更新见 [updateCandidateBarBackground] */
+    private var candidateBarAlpha = Float.NaN
+
+    /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
+    private var functionBgAlpha = Float.NaN
+
     /**
-     * 大写键/删除键背景的构建缓存：记下上次用过的（圆角, 大写锁定）组合。
+     * 大写键/删除键背景的构建缓存：记下上次用过的（圆角, 大写锁定, 面不透明度）组合。
      * NaN 初值保证首次一定构建；之后参数不变就跳过，避免切层/翻页时反复分配 Drawable。
      */
     private var shiftBgCornerPx = Float.NaN
     private var shiftBgCaps: Boolean? = null
+    private var shiftBgAlpha = Float.NaN
     private var backspaceBgCornerPx = Float.NaN
+    private var backspaceBgAlpha = Float.NaN
 
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
@@ -263,7 +283,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     init {
         orientation = VERTICAL
-        val root = LayoutInflater.from(context).inflate(R.layout.keyboard_pinyin, this, true)
+        // ⚠ 必须显式 `attachToRoot = false`：attachToRoot=true 时 inflate 返回的是**调用方 this**
+        // （不是 XML 根），直接拿它当背板引用会把背板铺成两层：视图自身一层 + XML 根一层；
+        // 两层同 alpha 叠加令背板等效不透明度翻倍（真机实测 85,86,90 = 0.2×237 + 0.8×(0.2×237)，
+        // 单层应只有 47；屏幕最底那条没有按键覆盖的背板带最明显）。
+        // 这里显式 addView 并保存返回的 XML 根：语义清晰，也不依赖「根布局不能改成 <merge>」这类隐含前提。
+        val root = LayoutInflater.from(context).inflate(R.layout.keyboard_pinyin, this, false)
+        addView(root)
+        keyboardRoot = root
+        candidateBar = root.findViewById(R.id.candidate_bar)
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
@@ -348,6 +376,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         bindLetterKeys(root)
         bindFunctionKeys()
+        // 半透明键盘：首帧就按用户设置的面透明度绘制（不必等到第一次 configure）
+        applyKeyTransparency()
         refreshKeyLabels()
         refreshCandidateBar()
         Log.i(TAG, "PinyinKeyboardView 初始化完成")
@@ -633,11 +663,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
         composing.clear()
         lastPredictions = emptyList()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
-        // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙，收起键盘再弹出即生效，不必重启进程。
+        // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
+        // 键盘正显示时不走这里 —— 外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
+        // 先定面透明度、再套圆角/间隙：两者都会重建 shift/删除键背景，
+        // 先写入 alpha 后，applyKeyAppearance 的那次调用会命中其缓存，不重复构建。
+        applyKeyTransparency()
         // 必须先于 refreshKeyLabels——后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
         refreshKeyLabels()
         refreshCandidateBar()
+    }
+
+    /**
+     * 键盘外观页松手后即时重套外观（透明度 / 圆角 / 间隙）。
+     *
+     * 与 [configure] 的区别：只重套外观，**不动**拼音串与候选/预测 ——
+     * 改外观不该把用户正在打的字吞掉（configure 会清 composing 与预测）。
+     */
+    fun refreshAppearance() {
+        applyKeyTransparency()
+        applyKeyAppearance()
+        // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
+        // alpha，不重建就保持旧值 —— 拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
+        // 6 个按钮仍是旧档）。方向面板**展开态**时跳过：重建会把它收回默认布局，
+        // 其内部面的 alpha 由下次打开时取当前值。
+        if (!directionPanelVisible) refreshCandidateBar()
     }
 
     // ── 26 键区统一外观（按键圆角 / 按键间隙）──────────────────────
@@ -672,6 +722,180 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 半透明键盘：把用户设置的透明度套到键盘与内嵌面板的各层「面」（定义域见 [KeyTransparency]）。
+     *
+     *  - 背板类（键盘底色 kb_bg、面板底 app_bg）：面上没有文字，走 plate 档，可以做得最透；
+     *  - 内容面类（条目卡 card_bg、搜索框底 surface_hi）：带文字/内容，走 surface 档；
+     *  - 候选栏底按**当前是否有内容**选档（见 [updateCandidateBarBackground]）；
+     *  - 键面与面板里的按钮同上走 surface 档（键面走 [PinyinKey.setFaceAlpha]，面板按钮走各自
+     *    面板的 `applySurfaceAlpha` —— 它们的背景是 drawable，颜色识别扫不到）；
+     *  - 文字一律不变：这里只给「面」的颜色套 alpha（[KeyTransparency.withAlpha]），本功能的
+     *    绘制路径不使用整键 `View.setAlpha` —— 那会把文字一起淡掉
+     *    （例外：符号层禁用态的大写键用整键 alpha 置灰，属与透明度无关的既有视觉，见 [refreshKeyLabels]）。
+     *
+     * 0%（默认）时两档 alpha 都是 1f，与历史观感逐像素一致。
+     */
+    private fun applyKeyTransparency() {
+        val percent = Prefs(context).keyTransparencyPercent
+        keyFaceAlpha = KeyTransparency.surfaceAlpha(percent)
+        val plateAlpha = KeyTransparency.plateAlpha(percent)
+        plateFaceAlpha = plateAlpha
+
+        // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明 —— attachToRoot=true 时 inflate
+        // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
+        // 没有按键覆盖的背板带最明显（真机实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
+        keyboardRoot.setBackgroundColor(
+            KeyTransparency.withAlpha(context.getColor(R.color.kb_bg), plateAlpha)
+        )
+        updateCandidateBarBackground()
+        // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha ——
+        // 面可能有多份（XML 根 / 各层容器 / 面板底 / 条目卡 / 搜索框），逐个引用容易漏；
+        // 旧版只认「RGB == kb_bg」一种色，导致两个面板整块实心（与透明键盘形成割裂）。
+        alphaFaces(
+            this,
+            plateRgb = intArrayOf(context.getColor(R.color.kb_bg), context.getColor(R.color.app_bg)),
+            surfaceRgb = intArrayOf(context.getColor(R.color.card_bg), context.getColor(R.color.surface_hi)),
+            plateAlpha = plateAlpha,
+            surfaceAlpha = keyFaceAlpha,
+        )
+        for (key in keyViews.values) key.setFaceAlpha(keyFaceAlpha)
+        keySemicolon.setFaceAlpha(keyFaceAlpha)
+        // 功能键面：shift/删除键走既有动态背景（alpha 已并进其构建缓存），其余六个重建一次
+        refreshShiftBackground()
+        refreshBackspaceBackground()
+        rebuildFunctionKeyBackgrounds()
+        // 面板里的「键面」按钮（key_bg 是 drawable，颜色识别扫不到）：交给面板按当前档重建
+        clipboardPanel?.applySurfaceAlpha(keyFaceAlpha)
+        searchPanel?.applySurfaceAlpha(keyFaceAlpha)
+
+        // 诊断（排查「透明度不生效」）：只在档位**真正变化**时打印一次并做树扫描 ——
+        // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
+        val desc = KeyTransparency.formatPercent(percent)
+        if (desc != lastTransparencyDesc) {
+            lastTransparencyDesc = desc
+            val kbBg = context.getColor(R.color.kb_bg)
+            val rootBg = (keyboardRoot.background as? android.graphics.drawable.ColorDrawable)?.color
+            Diagnostics.i(
+                TAG,
+                "键盘透明度: $desc plate=$plateAlpha surface=$keyFaceAlpha " +
+                    "kbBg=${String.format("#%08X", kbBg)} " +
+                    "rootBg=${rootBg?.let { String.format("#%08X", it) }}",
+            )
+            // 布局完成后再诊断（否则尺寸全是 0）
+            postDelayed({ logBackgrounds() }, 500L)
+        }
+    }
+
+    /** 背板当前档位（[applyKeyTransparency] 里随 keyFaceAlpha 一起更新；供候选栏选档复用） */
+    private var plateFaceAlpha = 1f
+
+    /**
+     * 候选栏底色按**当前是否有内容**选档：
+     *  - 有拼音串 / 候选 / 预测时：面上叠着文字（候选词没有自己的面）→ 必须走 surface 档，
+     *    否则文字会直接糊在宿主内容上（与 [KeyTransparency] 的可读性约定冲突）；
+     *  - 空白铺底（功能面板 / 符号层 / 搜索态，文字都在按钮自己的面上）→ 走 plate 档，可做最透。
+     *
+     * 带缓存：档位没变就不重设，避免每次按键都白重绘一次候选栏；
+     * 档位取自 [plateFaceAlpha] / [keyFaceAlpha]，**不读 Prefs** —— 本函数挂在按键热路径上。
+     */
+    private fun updateCandidateBarBackground() {
+        val hasContent = composing.isNotEmpty() || lastCandidates.isNotEmpty() || lastPredictions.isNotEmpty()
+        val alpha = if (hasContent) keyFaceAlpha else plateFaceAlpha
+        if (alpha == candidateBarAlpha) return
+        candidateBarAlpha = alpha
+        candidateBar.setBackgroundColor(
+            KeyTransparency.withAlpha(context.getColor(R.color.kb_candidate_bg), alpha)
+        )
+    }
+
+    /**
+     * 把 [v] 及其整棵子树里所有「纯色面」按档位套 alpha：
+     *  - RGB ∈ [plateRgb]（背板类：无文字）→ [plateAlpha]；
+     *  - RGB ∈ [surfaceRgb]（内容面类：带文字/内容）→ [surfaceAlpha]。
+     *
+     * 其余背景（drawable / 渐变 / ripple）不动 —— 它们要么自带纹理，要么在别处按档重建
+     * （键面走 [PinyinKey.setFaceAlpha]、面板按钮走各自面板的 `applySurfaceAlpha`）。
+     */
+    private fun alphaFaces(
+        v: View,
+        plateRgb: IntArray,
+        surfaceRgb: IntArray,
+        plateAlpha: Float,
+        surfaceAlpha: Float,
+    ) {
+        val c = (v.background as? android.graphics.drawable.ColorDrawable)?.color
+        if (c != null) {
+            val rgb = c and 0x00FFFFFF
+            val target = when {
+                plateRgb.any { (it and 0x00FFFFFF) == rgb } -> plateAlpha
+                surfaceRgb.any { (it and 0x00FFFFFF) == rgb } -> surfaceAlpha
+                else -> -1f
+            }
+            if (target >= 0f) v.setBackgroundColor(KeyTransparency.withAlpha(c, target))
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                alphaFaces(v.getChildAt(i), plateRgb, surfaceRgb, plateAlpha, surfaceAlpha)
+            }
+        }
+    }
+
+    /**
+     * 诊断（布局后调用）：找出**屏幕上实际在铺底**的视图 —— 屏幕下半部、可见、有面积、
+     * 背景是实心色的，全部列出来并标出 alpha 与「RGB 是否等于 kb_bg」。
+     * 用途：透明度不生效时，一眼看出是哪一份视图在不透明地画。
+     */
+    private fun logBackgrounds() {
+        val kbBg = context.getColor(R.color.kb_bg)
+        val sb = StringBuilder()
+        fun walk(v: View, depth: Int) {
+            if (depth > 9 || sb.length > 700) return
+            val c = (v.background as? android.graphics.drawable.ColorDrawable)?.color
+            if (c != null && v.visibility == View.VISIBLE && v.width > 0 && v.height > 40) {
+                val loc = IntArray(2)
+                v.getLocationOnScreen(loc)
+                if (loc[1] > 1000) {
+                    sb.append(' ').append(v.javaClass.simpleName)
+                    if (v.id != View.NO_ID) {
+                        sb.append('#').append(runCatching { resources.getResourceEntryName(v.id) }.getOrDefault("?"))
+                    }
+                    sb.append("=#").append(String.format("%08X", c))
+                        .append("(a=").append((c ushr 24) and 0xFF)
+                        .append(" kbBgRgb=").append(c and 0x00FFFFFF == kbBg and 0x00FFFFFF)
+                        .append(' ').append(v.width).append('x').append(v.height)
+                        .append('@').append(loc[1]).append(')')
+                }
+            }
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i), depth + 1)
+        }
+        walk(rootView ?: this, 0)
+        Diagnostics.i(TAG, "铺底诊断:$sb")
+    }
+
+    /**
+     * 重建底部功能行（符号 / 数字 / 逗号 / 空格 / 句号 / 中英 / 回车）的背景。
+     *
+     * 这几个键的背景来自 XML（`key_bg.xml` / `btn_aurora_secondary.xml`），XML 里的颜色无法
+     * 动态带 alpha，所以在运行时按**同款几何**重建：圆角与描边宽度与 XML 保持一致
+     * （改 XML 时必须同步 [KEY_BG_CORNER_DP] / [BUTTON_CORNER_DP] / [BUTTON_STROKE_DP]），
+     * 只把填充色与描边色换成带 alpha 的版本；水波纹颜色沿用原配色。
+     *
+     * 带缓存：透明度没变就不重建，避免每次弹键盘都分配 Drawable。
+     */
+    private fun rebuildFunctionKeyBackgrounds() {
+        if (functionBgAlpha == keyFaceAlpha) return
+        functionBgAlpha = keyFaceAlpha
+        val keyFill = KeyTransparency.withAlpha(context.getColor(R.color.key_bg), keyFaceAlpha)
+        btnSpace.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
+        btnEnter.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
+        val fill = KeyTransparency.withAlpha(context.getColor(R.color.btn_secondary_bg), keyFaceAlpha)
+        val stroke = KeyTransparency.withAlpha(context.getColor(R.color.card_stroke), keyFaceAlpha)
+        for (v in listOf<View>(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
+            v.background = buildButtonBackground(fill, stroke)
+        }
+    }
+
+    /**
      * 重建大写键背景：普通深色 / 大写锁定强调色二态，圆角跟设置页参数走。
      *
      * 原先直接引用 key_bg.xml / key_bg_active.xml，圆角固定 10dp，与字母键自绘的
@@ -681,19 +905,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 参数没变就不重建，避免无谓的 Drawable 分配。
      */
     private fun refreshShiftBackground() {
-        if (shiftBgCornerPx == keyCornerPx && shiftBgCaps == capsMode) return
+        if (shiftBgCornerPx == keyCornerPx && shiftBgCaps == capsMode && shiftBgAlpha == keyFaceAlpha) return
         shiftBgCornerPx = keyCornerPx
         shiftBgCaps = capsMode
+        shiftBgAlpha = keyFaceAlpha
         btnShift.background = buildKeyBackground(
-            if (capsMode) context.getColor(R.color.accent) else context.getColor(R.color.key_bg)
+            KeyTransparency.withAlpha(
+                if (capsMode) context.getColor(R.color.accent) else context.getColor(R.color.key_bg),
+                keyFaceAlpha,
+            )
         )
     }
 
     /** 重建删除键背景（无二态，始终深色）。同样带缓存，参数没变不重建 */
     private fun refreshBackspaceBackground() {
-        if (backspaceBgCornerPx == keyCornerPx) return
+        if (backspaceBgCornerPx == keyCornerPx && backspaceBgAlpha == keyFaceAlpha) return
         backspaceBgCornerPx = keyCornerPx
-        btnBackspace.background = buildKeyBackground(context.getColor(R.color.key_bg))
+        backspaceBgAlpha = keyFaceAlpha
+        btnBackspace.background = buildKeyBackground(
+            KeyTransparency.withAlpha(context.getColor(R.color.key_bg), keyFaceAlpha)
+        )
     }
 
     /**
@@ -702,21 +933,59 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * mask 必须单独再造一个**不透明**的同圆角矩形：RippleDrawable 按 mask 的 alpha
      * 裁剪波纹，拿一个无色 Drawable 当 mask 会把波纹整个裁掉（按压就没有反馈了）。
      */
-    private fun buildKeyBackground(fillColor: Int): Drawable {
+    private fun buildKeyBackground(fillColor: Int, cornerPx: Float = keyCornerPx): Drawable {
         val content = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(fillColor)
-            cornerRadius = keyCornerPx
+            cornerRadius = cornerPx
         }
         val mask = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(Color.WHITE)
-            cornerRadius = keyCornerPx
+            cornerRadius = cornerPx
         }
         return RippleDrawable(
             ColorStateList.valueOf(context.getColor(R.color.key_ripple)), content, mask,
         )
     }
+
+    /**
+     * 生成与 `btn_aurora_secondary.xml` 同款（实心 + 1dp 描边 + 水波纹）的按钮背景。
+     * 几何与 XML 对齐（圆角 [BUTTON_CORNER_DP] / 描边 [BUTTON_STROKE_DP]），颜色由调用方带 alpha 传入。
+     */
+    private fun buildButtonBackground(fillColor: Int, strokeColor: Int): Drawable {
+        val corner = dpFloat(BUTTON_CORNER_DP)
+        val content = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(fillColor)
+            cornerRadius = corner
+            setStroke(dpFloat(BUTTON_STROKE_DP).toInt().coerceAtLeast(1), strokeColor)
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.WHITE)
+            cornerRadius = corner
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(context.getColor(R.color.ripple_on_surface)), content, mask,
+        )
+    }
+
+    /**
+     * 候选栏 / 面板里仍以 XML 静态背景（`key_bg.xml` / `key_bg_rect.xml` / `key_bg_active.xml`）
+     * 构建的按钮：按同款几何在运行时重建，只把填充色换成带「面不透明度」的版本，
+     * 否则这些控件会一直是不透明的，把整条候选栏/面板压成实心（透明度拉满也看不出变化）。
+     *
+     * [cornerDp] 与 XML 对齐：`key_bg` / `key_bg_active` 为 10dp，`key_bg_rect` 为 0（纯矩形）。
+     */
+    private fun xmlKeyBackground(cornerDp: Float = KEY_BG_CORNER_DP, useAccent: Boolean = false): Drawable =
+        buildKeyBackground(
+            KeyTransparency.withAlpha(
+                context.getColor(if (useAccent) R.color.accent else R.color.key_bg),
+                keyFaceAlpha,
+            ),
+            dpFloat(cornerDp),
+        )
 
     /**
      * 把字母键的「四边内缩」等效成 ImageButton 的外边距。
@@ -1100,6 +1369,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun predictionsEnabled(): Boolean = Prefs(context).predictEnabled
 
     private fun refreshCandidateBar() {
+        // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
+        updateCandidateBarBackground()
         // 开关刚被关掉时，把上一次留下的预测清掉——否则已显示的预测会一直挂在候选栏
         if (!predictionsEnabled() && lastPredictions.isNotEmpty()) {
             lastPredictions = emptyList()
@@ -1115,6 +1386,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             lastCandidates = emptyList()
             viewCandidatePinyin.text = ""
             viewCandidateList.removeAllViews()
+            // 内容刚全部清空：上面那次选档读到的 lastCandidates 还是旧值，这里清空后再判一次
+            updateCandidateBarBackground()
             // 无候选、无拼音串、无预测：候选栏展示功能面板按钮（✕ 在 renderFunctionPanel 里隐藏）
             renderFunctionPanel()
             return
@@ -1209,7 +1482,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val item = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = android.view.Gravity.CENTER
-                setBackgroundResource(R.drawable.key_bg_rect)
+                // key_bg_rect 同款（纯矩形，无圆角），但填充色带面 alpha
+                background = xmlKeyBackground(0f)
                 setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
                 isClickable = true
             }
@@ -1627,7 +1901,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
             setPadding(dp(8), dp(4), dp(8), dp(4))
-            setBackgroundResource(R.drawable.key_bg)
+            // key_bg 同款（10dp 圆角），但填充色带面 alpha —— 这 6 个按钮占满候选栏
+            background = xmlKeyBackground()
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
@@ -1713,7 +1988,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         selectionActive = active
         val key = centerSelectionKey
         key?.text = if (active) "◉" else "●"
-        key?.setBackgroundResource(if (active) R.drawable.key_bg_active else R.drawable.key_bg)
+        // key_bg_active / key_bg 同款（10dp 圆角），填充色带面 alpha（激活态用强调色）
+        key?.background = xmlKeyBackground(useAccent = active)
         // 激活态下副文字提示（放在按钮文字下方）
         key?.contentDescription = if (active) "文字拖选模式开启" else "文字拖选模式关闭"
     }
@@ -2025,7 +2301,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             textSize = 16f
             gravity = android.view.Gravity.CENTER
             setTextColor(resources.getColor(R.color.text_primary, context.theme))
-            setBackgroundResource(R.drawable.key_bg)
+            // key_bg 同款（10dp 圆角），填充色带面 alpha
+            background = xmlKeyBackground()
             isClickable = true
             isFocusable = true
             setOnClickListener {
@@ -2060,6 +2337,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val TAG = "PinyinKeyboard"
 
         /**
+         * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ——
+         * 空格/回车走 `key_bg.xml`（圆角 10dp）；
+         * 其余五个走 `btn_aurora_secondary.xml`（12dp 圆角 + 1dp 描边）。
+         * 半透明模式下这几个背景要在运行时重建（XML 颜色带不了动态 alpha）。
+         */
+        const val KEY_BG_CORNER_DP = 10f
+        const val BUTTON_CORNER_DP = 12f
+        const val BUTTON_STROKE_DP = 1f
+
+        /**
          * 候选栏最多渲染多少个候选条目。
          *
          * 候选数由引擎的 MAX_CHARS(60) 决定上限，而真实单字表里 `yi` 有 326 字、
@@ -2081,6 +2368,47 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val LAYER_DIGIT = 2
     }
 }
+
+/**
+ * 构建与 `R.drawable.key_bg` 同款（圆角 [cornerDp] + `R.color.key_bg` 填充 + `R.color.key_ripple`
+ * 涟漪）的键面背景；[alpha] 只作用于填充色，文字/图标不动（与 [KeyTransparency] 的
+ * 「只淡面不淡文字」一致）。
+ *
+ * 用途：面板里的分类按钮用的是 `key_bg` drawable —— 带不了动态 alpha，键盘侧的「纯色面」
+ * 识别也扫不到它；透明度 > 0 时由面板按当前档重建（见 `ClipboardPanelView.applySurfaceAlpha`）。
+ * ⚠ [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
+ * `KEY_BG_CORNER_DP` 是同一口径）。
+ */
+internal fun buildKeyFaceBackground(context: android.content.Context, alpha: Float, cornerDp: Float = 10f): android.graphics.drawable.Drawable {
+    val corner = cornerDp * context.resources.displayMetrics.density
+    val content = android.graphics.drawable.GradientDrawable().apply {
+        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+        setColor(KeyTransparency.withAlpha(context.getColor(R.color.key_bg), alpha))
+        cornerRadius = corner
+    }
+    val mask = android.graphics.drawable.GradientDrawable().apply {
+        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+        setColor(android.graphics.Color.WHITE)
+        cornerRadius = corner
+    }
+    return android.graphics.drawable.RippleDrawable(
+        android.content.res.ColorStateList.valueOf(context.getColor(R.color.key_ripple)),
+        content,
+        mask,
+    )
+}
+
+/**
+ * 圆角纯色面（如 `mic_area_bg`：16dp 圆角的 `surface_hi` 底盘）；[alpha] 只作用于填充色。
+ * 与 [buildKeyFaceBackground] 同类，差别是没有涟漪 —— 对应 XML shape 的重建。
+ * ⚠ [cornerDp] 必须与对应 XML 的圆角对齐（改 XML 时必须同步）。
+ */
+internal fun buildRoundedFaceBackground(context: android.content.Context, colorRes: Int, alpha: Float, cornerDp: Float): android.graphics.drawable.Drawable =
+    android.graphics.drawable.GradientDrawable().apply {
+        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+        cornerRadius = cornerDp * context.resources.displayMetrics.density
+        setColor(KeyTransparency.withAlpha(context.getColor(colorRes), alpha))
+    }
 
 /**
  * 按键命中判定的**几何部分**（文件级纯函数，便于 JVM 单测；调用方见 `PinyinKeyboardView.isInsideKey`）。

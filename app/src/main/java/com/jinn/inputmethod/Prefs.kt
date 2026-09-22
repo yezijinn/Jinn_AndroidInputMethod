@@ -247,6 +247,20 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
 
     /**
+     * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
+     *
+     * 只影响「面」（背板 / 键面 / 候选栏），文字始终不透明。getter 也做一次钳位：
+     * 历史配置或外部写入可能带越界值，读出来必须是合法值才允许进绘制流程。
+     */
+    var keyTransparencyPercent: Int
+        get() = KeyTransparency.clampPercent(
+            sp.getInt(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.DEFAULT_PERCENT)
+        )
+        set(value) = sp.edit {
+            putInt(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.clampPercent(value))
+        }
+
+    /**
      * 语音输入总开关，**默认禁用**。
      *
      * 禁用时语音功能完全沉寂：不创建 [AsrClient]/[MicRecorder]、不发起 WebSocket 连接，
@@ -345,6 +359,7 @@ class Prefs(context: Context) {
         private const val KEY_VOICE_INPUT = "voice_input"
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
+        private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
         /** 主题模式与定时切换时刻（见 [ThemeManager]） */
         private const val KEY_THEME_MODE = "theme_mode"
 
