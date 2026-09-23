@@ -76,6 +76,15 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 危险语义按钮（清空 / 删除 / 确定）：文字保持 danger 红，不随皮肤换色 */
     private val dangerButtons = mutableListOf<TextView>()
 
+    /**
+     * 半透明键盘：本面板「键面」按钮的当前档位（1f = 不透明，与键盘键面同口径）。
+     *
+     * 必须声明在 [init] 之前：`buildUi()` → `tabButton()` 会在构造期读它建面，
+     * 声明晚了会读到 JVM 默认 `0f`，把按钮的面设成全透明（2026-09-23 审查发现的存量缺陷，
+     * 表现为长按操作条 / 清空确认条的按钮没有键面）。
+     */
+    private var surfaceAlpha = 1f
+
     private lateinit var listView: ListView
     private lateinit var textEmpty: TextView
     private lateinit var btnCategoryAll: TextView
@@ -509,9 +518,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     // ── UI 辅助 ───────────────────────────────────────────
 
-    /** 半透明键盘：本面板「键面」按钮的当前档位（1f = 不透明，与键盘键面同口径） */
-    private var surfaceAlpha = 1f
-
     /**
      * 半透明键盘：按当前档重建分类栏按钮的键面背景。
      *
@@ -564,7 +570,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 其余按当前透明度档用皮肤面色。换皮肤或改透明度后都要重跑，选中态才不会丢。
      */
     private fun applyTabFaces() {
-        for (b in topButtons()) {
+        // 遍历全部 tabButton（顶栏 + 长按操作条 + 清空确认条）：先前只覆盖顶栏，导致操作条 /
+        // 确认条的按钮永远没有键面（2026-09-23 审查发现的存量缺陷，真机截图确认）
+        for (b in tabButtons) {
             b.background = if (isSelectedCategoryButton(b)) {
                 buildKeyFaceBackground(
                     context, 1f, KEY_FACE_CORNER_DP,
@@ -578,12 +586,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             }
         }
     }
-
-    /** 顶栏的 7 个按钮（返回 / 全部 / 网址 / 数字 / 收藏 / 搜索 / 清空），顺序与 [buildUi] 一致 */
-    private fun topButtons() = listOf(
-        btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
-        btnCategoryFavorite, btnSearch, btnClear,
-    )
 
     /** [b] 是否为「当前选中分类」的按钮（返回 / 搜索 / 清空等非分类按钮恒为 false） */
     private fun isSelectedCategoryButton(b: TextView): Boolean {

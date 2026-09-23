@@ -178,6 +178,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前键面不透明度（1f = 不透明），见 [applyKeyTransparency]；功能键背景的缓存判据也用它 */
     private var keyFaceAlpha = 1f
 
+    /**
+     * 背板当前档位（[applyKeyTransparency] 里随 [keyFaceAlpha] 一起更新；供候选栏选档复用）。
+     *
+     * 必须声明在 `init` 之前：Kotlin 属性按声明顺序初始化，而 `init` 里会调用
+     * [applyKeyTransparency] 写入该值；声明在 `init` 之后会被属性初始化器重置回 `1f`，
+     * 只靠当次会话再跑一遍 `configure()` 掩盖（2026-09-23 审查发现的隐患写法）。
+     */
+    private var plateFaceAlpha = 1f
+
     /** 上次打印的透明度（仅在变化时打日志，避免每次弹键盘都刷屏） */
     private var lastTransparencyDesc = ""
 
@@ -767,9 +776,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 皮肤会改背板/键面的色值：皮肤色一并并入识别色集，否则这些面匹配不到、透明度对它们失效。
         alphaFaces(
             this,
+            // 候选栏色（skin.candidateBar）**不并入**背板集：它的档位随内容切换（有候选走 surface、
+            // 空白走 plate），由 updateCandidateBarBackground 专管；并进来会被统一压到 plate 档
+            // （100% 时候选词直接叠在宿主内容上），且其档位缓存会因此不再更新、要清空一次内容才自愈。
             plateRgb = faceRgb(
                 context.getColor(R.color.kb_bg), context.getColor(R.color.app_bg),
-                skin.plate, skin.candidateBar,
+                skin.plate,
             ),
             surfaceRgb = faceRgb(
                 context.getColor(R.color.card_bg), context.getColor(R.color.surface_hi),
@@ -886,17 +898,37 @@ class PinyinKeyboardView @JvmOverloads constructor(
             (space.getChildAt(1) as? TextView)?.setTextColor(glyph)
         }
         btnSpaceHint.setTextColor(hint)
-        // 图标键：回车 / 大写 / 删除（布局里是 ImageButton，字段声明为 View，故用 as?）
-        for (v in listOf(btnEnter, btnBackspace, btnShift)) {
+        // 候选栏里的拼音回显与「✕ 清空候选」：候选栏底已随皮肤变深 / 变浅，这两处必须同源
+        // （2026-09-23 审查发现的遗漏：二者在布局里写死 text_secondary，深色皮肤下几乎看不见）
+        viewCandidatePinyin.setTextColor(hint)
+        btnClearCandidates.setTextColor(hint)
+        // 图标键：回车 / 删除（布局里是 ImageButton，字段声明为 View，故用 as?）；
+        // 大写键单独处理 —— 锁定态底色会换成强调色，图标色需随之切换（见 [refreshShiftTint]）
+        for (v in listOf(btnEnter, btnBackspace)) {
             (v as? ImageButton)?.imageTintList = ColorStateList.valueOf(glyph)
         }
+        refreshShiftTint()
         // 底部次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）：面随皮肤变深 / 变浅（见
         // rebuildFunctionKeyBackgrounds），文字必须同源，否则默认的深色字会落在皮肤的深色面上
         for (v in listOf(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
             (v as? TextView)?.setTextColor(glyph)
         }
-        // 方向按钮：未激活态用皮肤主文字色；激活态的红色语义由 refreshDirectionButton 保留
+        // 方向按钮：未激活态用皮肤主文字色；激活态用皮肤的红色提示色（见 refreshDirectionButton）
         refreshDirectionButton()
+    }
+
+    /**
+     * 大写键图标色：普通态用皮肤主文字色；大写锁定态底是皮肤的强调色（各皮肤从深蓝到浅银都有），
+     * 图标改用由强调色亮度推出的对比色 —— 否则浅色 accent 上的近白图标几乎看不见
+     * （2026-09-23 审查实测：钛金约 1.5:1、极光约 2.3:1）。
+     */
+    private fun refreshShiftTint() {
+        val tint = if (capsMode) {
+            KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
+        } else {
+            skinToken(skin.functionGlyph, R.color.text_primary)
+        }
+        btnShift.imageTintList = ColorStateList.valueOf(tint)
     }
 
     /**
@@ -913,9 +945,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (c in colors) c?.let { out += it }
         return out.toIntArray()
     }
-
-    /** 背板当前档位（[applyKeyTransparency] 里随 keyFaceAlpha 一起更新；供候选栏选档复用） */
-    private var plateFaceAlpha = 1f
 
     /**
      * 候选栏底色按当前是否有内容选档：
@@ -1049,6 +1078,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 keyFaceAlpha,
             )
         )
+        // 底色在锁定态换成了强调色，图标色必须同步切换（普通态回皮肤主文字色）
+        refreshShiftTint()
     }
 
     /** 重建删除键背景（无二态，始终深色）。同样带缓存，参数没变不重建 */
@@ -1631,7 +1662,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 text = group.label
                 textSize = labelSize
                 setTextColor(
-                    if (sel) context.getColor(R.color.kb_key_hint_red)
+                    if (sel) skinToken(skin.hintRed, R.color.kb_key_hint_red)
                     else skinToken(skin.functionGlyph, R.color.text_primary)
                 )
                 gravity = android.view.Gravity.CENTER
@@ -1803,7 +1834,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
                 setSpan(
-                    android.text.style.ForegroundColorSpan(context.getColor(R.color.kb_key_hint_red)),
+                    android.text.style.ForegroundColorSpan(
+                        skinToken(skin.hintRed, R.color.kb_key_hint_red)
+                    ),
                     0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }
@@ -1842,7 +1875,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val end = start + active.length
             setSpan(
                 android.text.style.ForegroundColorSpan(
-                    resources.getColor(R.color.aurora_purple, context.theme)),
+                    skinToken(skin.accent, R.color.aurora_purple)),
                 start, end, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
             setSpan(
@@ -2085,7 +2118,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val hintView = box.getChildAt(1) as? TextView
         labelView.text = if (active) "返回" else "方向"
         labelView.setTextColor(
-            if (active) context.getColor(R.color.kb_key_hint_red)
+            if (active) skinToken(skin.hintRed, R.color.kb_key_hint_red)
             else skinToken(skin.functionGlyph, R.color.text_primary)
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
@@ -2128,6 +2161,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         key?.text = if (active) "◉" else "●"
         // key_bg 同款（10dp 圆角；原 key_bg_active 同值、已删除），填充色带面 alpha（激活态用强调色）
         key?.background = xmlKeyBackground(useAccent = active)
+        // 激活态底色是各皮肤 accent（浅到钛金 #B8C4D6、深到雪原 #3A6EA5）：字色按该色亮度取深/浅，
+        // 与 shift 键同口径；否则近白字压浅 accent 仅约 1.5:1，等于看不见（与 D4 同类）
+        key?.setTextColor(
+            if (active) KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
+            else skinToken(skin.functionGlyph, R.color.text_primary),
+        )
         // 激活态下副文字提示（放在按钮文字下方）
         key?.contentDescription = if (active) "文字拖选模式开启" else "文字拖选模式关闭"
     }
