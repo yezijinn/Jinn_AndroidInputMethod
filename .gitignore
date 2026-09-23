@@ -68,8 +68,7 @@ tools/dict_builder/THUOCL注音输出/
 # Release 备注临时文件
 .relnotes.md
 
-# 助手工具临时导出（检索结果等，不入库）
-.codebuddy/*.json
-
-# 助手工作区规则（本地协作配置，不入库）
-.codebuddy/rules/
+# 助手工具工作区数据（会话导出 / 项目记忆 / 本地规则，全部留在本机，不入库）
+# 2026-09-23：一次 `git add -A` 把检索导出 json 带进提交，其中含真实 PAT，
+# 被 GitHub 密钥扫描拦下 → 该类文件一律排除
+.codebuddy/
