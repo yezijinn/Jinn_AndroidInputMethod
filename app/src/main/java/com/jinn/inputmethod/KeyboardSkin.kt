@@ -626,7 +626,8 @@ object KeyboardSkins {
     /**
      * 全部皮肤（顺序即外观页展示顺序：深色 / 中性系 → 深色彩色系 → 浅色 / 暖色系）。
      *
-     * 二十四套排成三行八个（见 `KeyAppearanceActivity.initSkinSelector`，超出自动换行）；
+     * 这里是**定义清单**，顺序不是展示顺序：外观页用 [orderedForDisplay] 按键面亮度重排
+     * （用户 2026-09-23 要求从亮到暗排，不许按分组直觉乱排）。
      * 标签一律两字（守卫见 `KeyboardSkinTest.皮肤标签一律两字`）。
      */
     val ALL: List<KeyboardSkin> = listOf(
@@ -637,6 +638,40 @@ object KeyboardSkins {
 
     /** 按 id 取皮肤：未知 / 空值一律回退默认（脏配置不抛异常、不改变观感） */
     fun byId(id: String?): KeyboardSkin = ALL.firstOrNull { it.id == id } ?: DEFAULT
+
+    /**
+     * 外观页的展示顺序：按「键面亮度」从亮到暗（用户 2026-09-23 指定，不允许按分组直觉乱排）。
+     *
+     * 排序键是纯函数（[faceBrightness]），新增皮肤不必手工找位置；亮度相同时保持 [ALL] 的
+     * 定义顺序（`sortedByDescending` 是稳定排序）。
+     *
+     * [fallbackKeyFill] 由调用方传当前主题的 `R.color.kb_key`：默认皮肤不覆盖键面色，
+     * 亮度只能由主题令牌算出来。
+     */
+    fun orderedForDisplay(fallbackKeyFill: Int): List<KeyboardSkin> =
+        ALL.sortedByDescending { faceBrightness(it, fallbackKeyFill) }
+
+    /**
+     * 键面感知亮度（0~1）：取键面首色与次色的均值。
+     *
+     * 彩虹皮肤没有 `keyFill`（键面按色相逐键生成），按其起始色相的实际生成色计算 ——
+     * 否则会被当成「未覆盖」而拿主题色，排到最亮的位置上。
+     */
+    fun faceBrightness(skin: KeyboardSkin, fallbackKeyFill: Int): Double {
+        val hue = skin.rainbowHue
+        if (hue != null) return perceivedBrightness(rainbowColor(hue, 0))
+        val first = skin.keyFill ?: fallbackKeyFill
+        val second = skin.keyFill2 ?: first
+        return (perceivedBrightness(first) + perceivedBrightness(second)) / 2.0
+    }
+
+    /** 感知亮度（BT.601 加权，与人眼对「深浅」的直觉一致，比 RGB 算术平均更接近观感） */
+    private fun perceivedBrightness(color: Int): Double {
+        val r = (color shr 16) and 0xFF
+        val g = (color shr 8) and 0xFF
+        val b = color and 0xFF
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+    }
 
     /**
      * 键面首色：彩虹皮肤按 [keyIndex] 取色相，其余皮肤用 [keyFill]，未覆盖时回退 [fallback]。

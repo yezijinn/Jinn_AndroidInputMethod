@@ -198,6 +198,23 @@ class KeyboardSkinTest {
     }
 
     @Test
+    fun 展示顺序按键面亮度从亮到暗() {
+        // 亮白主题的键面令牌（默认皮肤不覆盖键面色，亮度由它兜底）
+        val fallback = 0xFFFFFFFF.toInt()
+        val ordered = KeyboardSkins.orderedForDisplay(fallback)
+        assertEquals("展示清单必须与定义清单同量", KeyboardSkins.ALL.size, ordered.size)
+        for (i in 0 until ordered.size - 1) {
+            val cur = KeyboardSkins.faceBrightness(ordered[i], fallback)
+            val next = KeyboardSkins.faceBrightness(ordered[i + 1], fallback)
+            assertTrue(
+                "展示顺序必须从亮到暗：第 ${i + 1} 位「${ordered[i].label}」($cur) 比第 ${i + 2} 位" +
+                    "「${ordered[i + 1].label}」($next) 更暗",
+                cur >= next - 1e-9,
+            )
+        }
+    }
+
+    @Test
     fun 皮肤标签一律两字() {
         for (s in KeyboardSkins.ALL) {
             assertEquals(

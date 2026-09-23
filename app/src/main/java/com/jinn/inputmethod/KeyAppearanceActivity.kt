@@ -132,8 +132,10 @@ class KeyAppearanceActivity : Activity() {
         val grid = findViewById<LinearLayout>(R.id.skin_row)
         val density = resources.displayMetrics.density
         val items = mutableListOf<Pair<KeyboardSkin, View>>()
+        // 展示顺序按「键面亮度」从亮到暗（用户指定）：传当前主题的键面令牌，供默认皮肤兜底
+        val skins = KeyboardSkins.orderedForDisplay(getColor(R.color.kb_key))
         var line: LinearLayout? = null
-        for ((index, skin) in KeyboardSkins.ALL.withIndex()) {
+        for ((index, skin) in skins.withIndex()) {
             if (index % SKINS_PER_ROW == 0) {
                 line = newSkinLine()
                 grid.addView(line)
@@ -174,7 +176,7 @@ class KeyAppearanceActivity : Activity() {
             currentLine.addView(cell, LinearLayout.LayoutParams(0, dp(SKIN_CELL_HEIGHT_DP), 1f))
         }
         // 末行不足一行时补空占位：等分权重下，缺位会把剩下的项拉伸变宽
-        val remainder = KeyboardSkins.ALL.size % SKINS_PER_ROW
+        val remainder = skins.size % SKINS_PER_ROW
         if (remainder != 0) {
             repeat(SKINS_PER_ROW - remainder) {
                 line?.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
