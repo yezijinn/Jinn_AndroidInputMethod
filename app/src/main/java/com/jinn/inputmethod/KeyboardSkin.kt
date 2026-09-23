@@ -321,14 +321,126 @@ object KeyboardSkins {
         accent = 0xFF2E9E6B.toInt(),
     )
 
+    /** 石墨：中性深灰 + 银灰蓝强调（商务风，低饱和、不挑背景） */
+    val GRAPHITE = KeyboardSkin(
+        id = "graphite",
+        label = "石墨",
+        keyFill = 0xFF2A2D33.toInt(),
+        keyFill2 = 0xFF383C44.toInt(),
+        keyPressed = 0xFF22252A.toInt(),
+        strokeWidthDp = 0.5f,
+        strokeColor = 0x1FFFFFFF,
+        glyph = 0xFFE6E8EC.toInt(),
+        hint = 0x99E6E8EC.toInt(),
+        hintRed = 0xFFFF7A6B.toInt(),
+        functionGlyph = 0xFFE6E8EC.toInt(),
+        functionHint = 0x99E6E8EC.toInt(),
+        functionFill = 0xFF23262B.toInt(),
+        functionStroke = 0x1FFFFFFF,
+        candidateBar = 0xFF1E2126.toInt(),
+        plate = 0xFF131519.toInt(),
+        accent = 0xFF9AA7B8.toInt(),
+    )
+
+    /** 日落：深紫→暖橙渐变 + 暖白字（黄昏色调） */
+    val SUNSET = KeyboardSkin(
+        id = "sunset",
+        label = "日落",
+        keyFill = 0xFF4A2148.toInt(),
+        keyFill2 = 0xFF8A4A2A.toInt(),
+        gradientAngle = 45f,
+        keyPressed = 0xFF361A3E.toInt(),
+        strokeWidthDp = 0.6f,
+        strokeColor = 0x66FFA45C,
+        glyph = 0xFFFFF4EB.toInt(),
+        hint = 0x99FFF4EB.toInt(),
+        hintRed = 0xFFFF6B8A.toInt(),
+        functionGlyph = 0xFFFFF4EB.toInt(),
+        functionHint = 0x99FFF4EB.toInt(),
+        functionFill = 0xFF341A42.toInt(),
+        functionStroke = 0x4DFFA45C,
+        candidateBar = 0xFF2C1638.toInt(),
+        plate = 0xFF1E0F27.toInt(),
+        accent = 0xFFFFA45C.toInt(),
+    )
+
+    /** 岩浆：深红渐变 + 暖黄字，橙色底边厚度（熔岩感）；卷舌提示用亮黄而非红，红底上才看得清 */
+    val MAGMA = KeyboardSkin(
+        id = "magma",
+        label = "岩浆",
+        keyFill = 0xFF3B1210.toInt(),
+        keyFill2 = 0xFF6A1F12.toInt(),
+        keyPressed = 0xFF2E0D0B.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x66FF7043,
+        bottomThicknessDp = 1f,
+        bottomThicknessColor = 0xFFFF7043.toInt(),
+        glyph = 0xFFFFE9D6.toInt(),
+        hint = 0x99FFE9D6.toInt(),
+        hintRed = 0xFFFFD54F.toInt(),
+        functionGlyph = 0xFFFFE9D6.toInt(),
+        functionHint = 0x99FFE9D6.toInt(),
+        functionFill = 0xFF2E0F0C.toInt(),
+        functionStroke = 0x4DFF7043,
+        candidateBar = 0xFF260B09.toInt(),
+        plate = 0xFF170605.toInt(),
+        accent = 0xFFFF7043.toInt(),
+    )
+
+    /** 墨玉：墨绿渐变 + 玉白字 + 玉色微光描边（低亮度绿，久看不刺眼） */
+    val JADE = KeyboardSkin(
+        id = "jade",
+        label = "墨玉",
+        keyFill = 0xFF12241E.toInt(),
+        keyFill2 = 0xFF1B3A2E.toInt(),
+        keyPressed = 0xFF0E1D18.toInt(),
+        strokeWidthDp = 0.6f,
+        strokeColor = 0x4D7FD1A8,
+        glyph = 0xFFE4F5EC.toInt(),
+        hint = 0x99E4F5EC.toInt(),
+        hintRed = 0xFFFF9E80.toInt(),
+        functionGlyph = 0xFFE4F5EC.toInt(),
+        functionHint = 0x99E4F5EC.toInt(),
+        functionFill = 0xFF0F1F1A.toInt(),
+        functionStroke = 0x337FD1A8,
+        candidateBar = 0xFF0D1B16.toInt(),
+        plate = 0xFF071210.toInt(),
+        accent = 0xFF7FD1A8.toInt(),
+    )
+
+    /** 皮革：棕调键帽 + 暖色缝线描边 + 2dp 底边厚度 + 米白字（仿皮面按键） */
+    val LEATHER = KeyboardSkin(
+        id = "leather",
+        label = "皮革",
+        keyFill = 0xFF4A3428.toInt(),
+        keyFill2 = 0xFF5C4232.toInt(),
+        keyPressed = 0xFF3C2A20.toInt(),
+        strokeWidthDp = 1f,
+        strokeColor = 0x66D9B08C,
+        bottomThicknessDp = 2f,
+        bottomThicknessColor = 0xFF7A5C3E.toInt(),
+        glyph = 0xFFF3E4D3.toInt(),
+        hint = 0x99F3E4D3.toInt(),
+        hintRed = 0xFFFFAB91.toInt(),
+        functionGlyph = 0xFFF3E4D3.toInt(),
+        functionHint = 0x99F3E4D3.toInt(),
+        functionFill = 0xFF3E2C22.toInt(),
+        functionStroke = 0x66D9B08C,
+        candidateBar = 0xFF33241C.toInt(),
+        plate = 0xFF241A14.toInt(),
+        accent = 0xFFD9A05B.toInt(),
+    )
+
     /**
-     * 全部皮肤（顺序即外观页展示顺序：深色系 → 彩色系 → 浅色系）。
+     * 全部皮肤（顺序即外观页展示顺序：深色 / 中性系 → 深色彩色系 → 浅色 / 暖色系）。
      *
-     * 十套正好排成两行五个（见 `KeyAppearanceActivity.initSkinSelector`）；标签一律两字
-     * （守卫见 `KeyboardSkinTest.皮肤标签一律两字`）。
+     * 十五套排成三行五个（见 `KeyAppearanceActivity.initSkinSelector`，超出自动换行）；
+     * 标签一律两字（守卫见 `KeyboardSkinTest.皮肤标签一律两字`）。
      */
     val ALL: List<KeyboardSkin> = listOf(
-        DEFAULT, FROST, DARK, NEON, AURORA, OCEAN, RAINBOW, SAKURA, MINT, RETRO,
+        DEFAULT, FROST, DARK, GRAPHITE, OCEAN,
+        NEON, MAGMA, SUNSET, JADE, AURORA,
+        RAINBOW, SAKURA, MINT, LEATHER, RETRO,
     )
 
     /** 按 id 取皮肤：未知 / 空值一律回退默认（脏配置不抛异常、不改变观感） */
