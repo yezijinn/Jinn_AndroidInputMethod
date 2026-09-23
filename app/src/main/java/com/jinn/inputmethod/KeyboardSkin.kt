@@ -674,6 +674,22 @@ object KeyboardSkins {
     }
 
     /**
+     * 压在强调色（[KeyboardSkin.accent]）上的图标 / 文字色：按该色的感知亮度自动取深或浅。
+     *
+     * 用途是大写锁定态的大写键 —— 它的底色是各皮肤的 accent，从深蓝（雪原 `#3A6EA5`）到浅银
+     * （钛金 `#B8C4D6`）都有，单一固定色无法在 24 套皮肤上都保住对比（浅 accent 配近白图标
+     * 实测约 1.5:1，等于看不见）。阈值 0.55 与 [faceBrightness] 同一套 BT.601 口径，即
+     * 「这块颜色在人眼里算亮还是暗」的分界。
+     */
+    internal fun accentOnColor(accent: Int): Int {
+        val r = (accent shr 16) and 0xFF
+        val g = (accent shr 8) and 0xFF
+        val b = accent and 0xFF
+        val lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        return if (lum > 0.55) 0xFF1A1F2B.toInt() else 0xFFF2F5FA.toInt()
+    }
+
+    /**
      * 键面首色：彩虹皮肤按 [keyIndex] 取色相，其余皮肤用 [keyFill]，未覆盖时回退 [fallback]。
      *
      * [keyIndex] 为 26 键字母序（0 = a），负数表示无索引（如分号键），此时取起始色相。
@@ -763,9 +779,11 @@ object KeyboardSkins {
     ): KeyVisual {
         val first = keyFill(skin, keyIndex, fallbackFace)
         val second = keyFill2(skin, keyIndex, first)
-        // 未覆盖按压/提示色时：默认皮肤沿用历史令牌色，皮肤路径由首色/字色推导
+        // 未覆盖按压/提示色时：默认皮肤沿用历史令牌色，皮肤路径由首色/字色推导。
+        // 判据必须用 isDefault 而非 keyFill == null：彩虹皮肤同样没有 keyFill，
+        // 用后者会把按压态取成主题深灰（按键一按就从彩色闪成暗块）。
         val pressed = skin.keyPressed
-            ?: if (skin.keyFill == null) fallbackPressed else darken(first, 0.88f)
+            ?: if (skin.isDefault) fallbackPressed else darken(first, 0.88f)
         val glyph = skin.glyph ?: fallbackGlyph
         val hint = skin.hint
             ?: if (skin.glyph == null) fallbackHint else withAlpha(glyph, 160f / 255f)
