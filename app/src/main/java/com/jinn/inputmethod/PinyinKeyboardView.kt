@@ -197,6 +197,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var backspaceBgCornerPx = Float.NaN
     private var backspaceBgAlpha = Float.NaN
 
+    /**
+     * 当前键盘皮肤（见 [KeyboardSkins]；默认皮肤 = 全空覆盖，走历史 `R.color` 路径）。
+     *
+     * 皮肤只决定键面 / 功能键 / 候选栏 / 背板的基色与质感参数，面 alpha 仍由
+     * [applyKeyTransparency] 统一注入；两者在 [applySkinToKeys] 里合成到每个键。
+     */
+    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
 
@@ -665,9 +673,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
         // 键盘正显示时不走这里，外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
-        // 先定面透明度、再套圆角/间隙：两者都会重建 shift/删除键背景，
-        // 先写入 alpha 后，applyKeyAppearance 的那次调用会命中其缓存，不重复构建。
+        // 顺序固定：① 同步皮肤（换皮肤时复位各「面」缓存）→ ② 定面透明度（用皮肤色重建各面）
+        // → ③ 逐键下发皮肤视觉（依赖 ② 算出的面 alpha）→ ④ 套圆角/间隙。
+        // ④ 会重建 shift/删除键背景，放在 ② 之后可命中其 alpha 缓存，不重复构建。
+        syncKeyboardSkin()
         applyKeyTransparency()
+        applySkinToKeys()
         // 必须先于 refreshKeyLabels，后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
         refreshKeyLabels()
@@ -681,7 +692,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 改外观不该把用户正在打的字吞掉（configure 会清 composing 与预测）。
      */
     fun refreshAppearance() {
+        syncKeyboardSkin()
         applyKeyTransparency()
+        applySkinToKeys()
         applyKeyAppearance()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
         // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
@@ -745,16 +758,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
         // 没有按键覆盖的背板带最明显（真机实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
         keyboardRoot.setBackgroundColor(
-            KeyTransparency.withAlpha(context.getColor(R.color.kb_bg), plateAlpha)
+            KeyTransparency.withAlpha(skinToken(skin.plate, R.color.kb_bg), plateAlpha)
         )
         updateCandidateBarBackground()
         // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha ，
         // 面可能有多份（XML 根 / 各层容器 / 面板底 / 条目卡 / 搜索框），逐个引用容易漏；
         // 旧版只认「RGB == kb_bg」一种色，导致两个面板整块实心（与透明键盘形成割裂）。
+        // 皮肤会改背板/键面的色值：皮肤色一并并入识别色集，否则这些面匹配不到、透明度对它们失效。
         alphaFaces(
             this,
-            plateRgb = intArrayOf(context.getColor(R.color.kb_bg), context.getColor(R.color.app_bg)),
-            surfaceRgb = intArrayOf(context.getColor(R.color.card_bg), context.getColor(R.color.surface_hi)),
+            plateRgb = faceRgb(
+                context.getColor(R.color.kb_bg), context.getColor(R.color.app_bg),
+                skin.plate, skin.candidateBar,
+            ),
+            surfaceRgb = faceRgb(
+                context.getColor(R.color.card_bg), context.getColor(R.color.surface_hi),
+                skin.functionFill,
+            ),
             plateAlpha = plateAlpha,
             surfaceAlpha = keyFaceAlpha,
         )
@@ -786,6 +806,75 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * ① 同步键盘皮肤并在皮肤变化时复位各「面」的构建缓存。
+     *
+     * 必须在 [applyKeyTransparency] **之前**调用：功能键 / 大写键 / 删除键 / 候选栏底的背景
+     * 都是带缓存的（参数不变就跳过重建），缓存判据只含 alpha 与圆角，不含皮肤；
+     * 皮肤换色时先复位缓存，随后的 [applyKeyTransparency] 才会用新皮肤色重建它们。
+     */
+    private fun syncKeyboardSkin() {
+        val s = KeyboardSkins.byId(Prefs(context).keyboardSkinId)
+        if (s.id == skin.id) return
+        val from = skin.id
+        skin = s
+        functionBgAlpha = Float.NaN
+        shiftBgAlpha = Float.NaN
+        backspaceBgAlpha = Float.NaN
+        candidateBarAlpha = Float.NaN
+        Diagnostics.i(TAG, "键盘皮肤: $from -> ${s.id}（${s.label}）")
+    }
+
+    /**
+     * ③ 把皮肤视觉逐键下发（必须在 [applyKeyTransparency] **之后**：最终色 = 皮肤基色 × 面不透明度）。
+     *
+     * 默认皮肤下发 null，键面回到历史路径（`R.color.kb_key` + [PinyinKey.setFaceAlpha]），
+     * 与半透明键盘的既有实测观感逐像素一致。
+     */
+    private fun applySkinToKeys() {
+        // 26 键按字母序取索引：彩虹皮肤按序取色相，而 keyViews 是 HashMap，遍历顺序不稳定
+        val ordered = ('a'..'z').mapNotNull { keyViews[it] }
+        if (skin.isDefault) {
+            for (k in ordered) k.applySkin(null)
+            keySemicolon.applySkin(null)
+            return
+        }
+        val density = resources.displayMetrics.density
+        val face = context.getColor(R.color.kb_key)
+        val pressed = context.getColor(R.color.kb_key_pressed)
+        val glyph = context.getColor(R.color.kb_key_text)
+        val hintDefault = KeyTransparency.withAlpha(glyph, 160f / 255f)
+        val hintRed = context.getColor(R.color.kb_key_hint_red)
+        for ((i, k) in ordered.withIndex()) {
+            k.applySkin(
+                KeyboardSkins.visualFor(
+                    skin, i, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
+                )
+            )
+        }
+        // 分号键（搜狗 / 微软 / 紫光的 ing）不参与彩虹色序，取起始色相
+        keySemicolon.applySkin(
+            KeyboardSkins.visualFor(
+                skin, -1, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
+            )
+        )
+    }
+
+    /**
+     * 皮肤色令牌：皮肤未覆盖（null）时回退到 `R.color` 令牌色。
+     *
+     * 默认皮肤与「未覆盖项」都走这个回退，保证皮肤机制不改变历史配色。
+     */
+    private fun skinToken(override: Int?, tokenRes: Int): Int =
+        override ?: context.getColor(tokenRes)
+
+    /** 组装「面」的 RGB 识别色集（默认令牌 + 可选皮肤覆盖色，null 项跳过），供 [alphaFaces] 匹配用 */
+    private fun faceRgb(vararg colors: Int?): IntArray {
+        val out = LinkedHashSet<Int>()
+        for (c in colors) c?.let { out += it }
+        return out.toIntArray()
+    }
+
     /** 背板当前档位（[applyKeyTransparency] 里随 keyFaceAlpha 一起更新；供候选栏选档复用） */
     private var plateFaceAlpha = 1f
 
@@ -804,7 +893,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (alpha == candidateBarAlpha) return
         candidateBarAlpha = alpha
         candidateBar.setBackgroundColor(
-            KeyTransparency.withAlpha(context.getColor(R.color.kb_candidate_bg), alpha)
+            KeyTransparency.withAlpha(skinToken(skin.candidateBar, R.color.kb_candidate_bg), alpha)
         )
     }
 
@@ -885,11 +974,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun rebuildFunctionKeyBackgrounds() {
         if (functionBgAlpha == keyFaceAlpha) return
         functionBgAlpha = keyFaceAlpha
-        val keyFill = KeyTransparency.withAlpha(context.getColor(R.color.key_bg), keyFaceAlpha)
+        val keyFill = KeyTransparency.withAlpha(skinToken(skin.functionFill, R.color.key_bg), keyFaceAlpha)
         btnSpace.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
         btnEnter.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
         val fill = KeyTransparency.withAlpha(context.getColor(R.color.btn_secondary_bg), keyFaceAlpha)
-        val stroke = KeyTransparency.withAlpha(context.getColor(R.color.card_stroke), keyFaceAlpha)
+        val stroke = KeyTransparency.withAlpha(skinToken(skin.functionStroke, R.color.card_stroke), keyFaceAlpha)
         for (v in listOf<View>(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
             v.background = buildButtonBackground(fill, stroke)
         }
@@ -911,7 +1000,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         shiftBgAlpha = keyFaceAlpha
         btnShift.background = buildKeyBackground(
             KeyTransparency.withAlpha(
-                if (capsMode) context.getColor(R.color.accent) else context.getColor(R.color.key_bg),
+                if (capsMode) skinToken(skin.accent, R.color.accent)
+                else skinToken(skin.functionFill, R.color.key_bg),
                 keyFaceAlpha,
             )
         )
@@ -923,7 +1013,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         backspaceBgCornerPx = keyCornerPx
         backspaceBgAlpha = keyFaceAlpha
         btnBackspace.background = buildKeyBackground(
-            KeyTransparency.withAlpha(context.getColor(R.color.key_bg), keyFaceAlpha)
+            KeyTransparency.withAlpha(skinToken(skin.functionFill, R.color.key_bg), keyFaceAlpha)
         )
     }
 
@@ -982,7 +1072,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun xmlKeyBackground(cornerDp: Float = KEY_BG_CORNER_DP, useAccent: Boolean = false): Drawable =
         buildKeyBackground(
             KeyTransparency.withAlpha(
-                context.getColor(if (useAccent) R.color.accent else R.color.key_bg),
+                skinToken(
+                    if (useAccent) skin.accent else skin.functionFill,
+                    if (useAccent) R.color.accent else R.color.key_bg,
+                ),
                 keyFaceAlpha,
             ),
             dpFloat(cornerDp),

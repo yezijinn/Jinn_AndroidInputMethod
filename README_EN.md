@@ -31,6 +31,9 @@ English ｜ [中文](README.md)
     the keys you actually pressed, so a Shuangpin conversion that swallows letters never looks frozen.
   - One-tap CN/EN switch; key corner radius, gap and keyboard transparency live in Settings
     →「键盘按钮调整」(radius 0~24dp, gap 0~8dp, transparency 0~100%), applied instantly on release.
+  - The same page offers **keyboard skins**: Default / Frosted / Rainbow / Aurora / Retro mechanical —
+    they only change key colours and texture (gradient, stroke, keycap depth) and stay independent from
+    radius, gap and transparency; applied instantly on tap, drawn entirely in code (no image assets).
   - Backspace gestures: tap to delete one character, hold to keep deleting (once the pinyin string is
     empty it keeps deleting committed text); double-tap then hold clears committed text too.
   - The ✕ at the right end of the candidate bar clears the current pinyin string and candidates
