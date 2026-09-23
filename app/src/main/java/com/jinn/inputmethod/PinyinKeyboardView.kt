@@ -1113,9 +1113,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             cornerRadius = cornerPx
         }
         return RippleDrawable(
-            ColorStateList.valueOf(context.getColor(R.color.key_ripple)), content, mask,
+            ColorStateList.valueOf(rippleColor(fillColor, R.color.key_ripple)), content, mask,
         )
     }
+
+    /**
+     * 涟漪色：默认皮肤走令牌（随主题明暗），其余皮肤按 [fillColor] 的明暗推导 ——
+     * 亮面用 10% 黑、暗面用 30% 白（与两套主题令牌同值）。
+     *
+     * 皮肤只覆盖面色与文字，涟漪若继续读令牌，「亮白主题 + 深色皮肤」会给深键面压 10% 黑
+     * （几乎看不见按压反馈）、「暗黑主题 + 浅色皮肤」则在浅键面上泛白，与皮肤观感割裂
+     * （2026-09-23 审查确认的唯一可见不搭配）。
+     */
+    private fun rippleColor(fillColor: Int, fallbackRes: Int): Int =
+        if (skin.isDefault) context.getColor(fallbackRes) else KeyboardSkins.rippleOn(fillColor)
 
     /**
      * 生成与 `btn_aurora_secondary.xml` 同款（实心 + 1dp 描边 + 水波纹）的按钮背景。
@@ -1135,7 +1146,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             cornerRadius = corner
         }
         return RippleDrawable(
-            ColorStateList.valueOf(context.getColor(R.color.ripple_on_surface)), content, mask,
+            ColorStateList.valueOf(rippleColor(fillColor, R.color.ripple_on_surface)), content, mask,
         )
     }
 
@@ -2597,6 +2608,7 @@ internal fun buildKeyFaceBackground(
     alpha: Float,
     cornerDp: Float = 10f,
     fillColor: Int = context.getColor(R.color.key_bg),
+    rippleColor: Int = context.getColor(R.color.key_ripple),
 ): android.graphics.drawable.Drawable {
     val corner = cornerDp * context.resources.displayMetrics.density
     val content = android.graphics.drawable.GradientDrawable().apply {
@@ -2610,7 +2622,7 @@ internal fun buildKeyFaceBackground(
         cornerRadius = corner
     }
     return android.graphics.drawable.RippleDrawable(
-        android.content.res.ColorStateList.valueOf(context.getColor(R.color.key_ripple)),
+        android.content.res.ColorStateList.valueOf(rippleColor),
         content,
         mask,
     )

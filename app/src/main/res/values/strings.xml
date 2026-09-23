@@ -188,7 +188,7 @@
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_entry">键盘主题皮肤</string>
+    <string name="key_appearance_entry">键盘配色皮肤</string>
     <string name="key_corner_title">圆角</string>
     <string name="key_gap_title">间隙</string>
     <string name="key_transparency_title">透明</string>
@@ -214,7 +214,7 @@
     <string name="favorite_exists">该符号已在收藏中</string>
     <string name="favorite_invalid">请输入 1~8 个字符</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
-    <string name="theme_card_title">键盘主题配色</string>
+    <string name="theme_card_title">界面明暗切换</string>
     <string name="theme_card_desc">明暗跟随 定时切换</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
     <string name="theme_dark_at_tpl">暗起 %1$s</string>

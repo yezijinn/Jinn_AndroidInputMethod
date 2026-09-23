@@ -573,19 +573,24 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 遍历全部 tabButton（顶栏 + 长按操作条 + 清空确认条）：先前只覆盖顶栏，导致操作条 /
         // 确认条的按钮永远没有键面（2026-09-23 审查发现的存量缺陷，真机截图确认）
         for (b in tabButtons) {
-            b.background = if (isSelectedCategoryButton(b)) {
-                buildKeyFaceBackground(
-                    context, 1f, KEY_FACE_CORNER_DP,
-                    skinColor(context, skin.accent, R.color.accent),
-                )
+            val selected = isSelectedCategoryButton(b)
+            val base = if (selected) {
+                skinColor(context, skin.accent, R.color.accent)
             } else {
-                buildKeyFaceBackground(
-                    context, surfaceAlpha, KEY_FACE_CORNER_DP,
-                    skinColor(context, skin.functionFill, R.color.key_bg),
-                )
+                skinColor(context, skin.functionFill, R.color.key_bg)
             }
+            b.background = buildKeyFaceBackground(
+                context, if (selected) 1f else surfaceAlpha, KEY_FACE_CORNER_DP, base, faceRipple(base),
+            )
         }
     }
+
+    /**
+     * 面板按钮的涟漪：默认皮肤走令牌（随主题明暗），其余皮肤按按钮底色明暗推导 ——
+     * 与键盘侧 `rippleColor` 同口径（亮底 10% 黑 / 暗底 30% 白）。
+     */
+    private fun faceRipple(base: Int): Int =
+        if (skin.isDefault) context.getColor(R.color.key_ripple) else KeyboardSkins.rippleOn(base)
 
     /** [b] 是否为「当前选中分类」的按钮（返回 / 搜索 / 清空等非分类按钮恒为 false） */
     private fun isSelectedCategoryButton(b: TextView): Boolean {
@@ -606,9 +611,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             textSize = 12f
             // 键面背景按当前透明度档 + 皮肤面色运行时构建（XML 的 key_bg 带不了动态 alpha；几何与其一致）
+            val fill = skinColor(context, skin.functionFill, R.color.key_bg)
             background = buildKeyFaceBackground(
-                context, surfaceAlpha, KEY_FACE_CORNER_DP,
-                skinColor(context, skin.functionFill, R.color.key_bg),
+                context, surfaceAlpha, KEY_FACE_CORNER_DP, fill, faceRipple(fill),
             )
             isClickable = true
             setOnClickListener { onClick() }

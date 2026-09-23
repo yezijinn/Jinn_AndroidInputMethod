@@ -228,19 +228,29 @@ class KeyboardSkinTest {
     }
 
     @Test
-    fun 展示顺序按键面亮度从亮到暗() {
+    fun 展示顺序默认固定首位_其余按键面亮度从亮到暗() {
         // 亮白主题的键面令牌（默认皮肤不覆盖键面色，亮度由它兜底）
         val fallback = 0xFFFFFFFF.toInt()
         val ordered = KeyboardSkins.orderedForDisplay(fallback)
         assertEquals("展示清单必须与定义清单同量", KeyboardSkins.ALL.size, ordered.size)
-        for (i in 0 until ordered.size - 1) {
-            val cur = KeyboardSkins.faceBrightness(ordered[i], fallback)
-            val next = KeyboardSkins.faceBrightness(ordered[i + 1], fallback)
-            assertTrue(
-                "展示顺序必须从亮到暗：第 ${i + 1} 位「${ordered[i].label}」($cur) 比第 ${i + 2} 位" +
-                    "「${ordered[i + 1].label}」($next) 更暗",
-                cur >= next - 1e-9,
-            )
+        assertEquals(
+            "默认必须固定在第一位且不参与排序（它的亮度随主题变化，排进去名次会漂）",
+            KeyboardSkins.DEFAULT_ID,
+            ordered.first().id,
+        )
+        // 其余按亮度从亮到暗；跑两套主题令牌，证明默认之外的名次不受主题影响
+        for (base in listOf(0xFFFFFFFF.toInt(), 0xFF242831.toInt())) {
+            val rest = KeyboardSkins.orderedForDisplay(base).drop(1)
+            assertEquals("除默认外不得重复", rest.size, rest.map { it.id }.toSet().size)
+            for (i in 0 until rest.size - 1) {
+                val cur = KeyboardSkins.faceBrightness(rest[i], base)
+                val next = KeyboardSkins.faceBrightness(rest[i + 1], base)
+                assertTrue(
+                    "展示顺序必须从亮到暗：第 ${i + 1} 位「${rest[i].label}」($cur) 比第 ${i + 2} 位" +
+                        "「${rest[i + 1].label}」($next) 更暗",
+                    cur >= next - 1e-9,
+                )
+            }
         }
     }
 
@@ -302,5 +312,19 @@ class KeyboardSkinTest {
         val r = visual(rainbow)
         assertNotEquals("未声明 keyPressed 的皮肤不得回落主题深灰", fallbackPressed, r.pressed)
         assertEquals("按压色应由首色推导（darken 12%）", KeyboardSkins.darken(r.face, 0.88f), r.pressed)
+    }
+
+    @Test
+    fun 涟漪色按底面明暗取相反侧() {
+        // 亮面（如雪原 #EDF3FC）→ 10% 黑；暗面 → 30% 白：取值与两套主题令牌 `key_ripple` 同值，
+        // 皮肤下的按压反馈才与键面明暗一致
+        assertEquals(0x1A000000, KeyboardSkins.rippleOn(0xFFEDF3FC.toInt()))
+        assertEquals(0x4DFFFFFF.toInt(), KeyboardSkins.rippleOn(0xFF14171E.toInt()))
+        // 两个极端必须落在相反两侧，避免阈值失效后「两边都取同一侧」
+        assertNotEquals(
+            "纯白与纯黑的涟漪必须相反",
+            KeyboardSkins.rippleOn(0xFFFFFFFF.toInt()),
+            KeyboardSkins.rippleOn(0xFF000000.toInt()),
+        )
     }
 }

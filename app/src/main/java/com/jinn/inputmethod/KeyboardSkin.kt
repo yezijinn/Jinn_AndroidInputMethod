@@ -640,7 +640,11 @@ object KeyboardSkins {
     fun byId(id: String?): KeyboardSkin = ALL.firstOrNull { it.id == id } ?: DEFAULT
 
     /**
-     * 外观页的展示顺序：按「键面亮度」从亮到暗（用户 2026-09-23 指定，不允许按分组直觉乱排）。
+     * 外观页的展示顺序：**默认固定第一位且不参与排序**，其余按键面亮度从亮到暗
+     * （两点均为用户 2026-09-23 指定，不允许按分组直觉乱排）。
+     *
+     * 默认皮肤不参与排序是必须的：它不覆盖键面色，亮度由当前主题令牌算出 —— 主题一换名次就变
+     * （亮白主题下排最前、暗黑主题下跌到末尾），位置不稳定。
      *
      * 排序键是纯函数（[faceBrightness]），新增皮肤不必手工找位置；亮度相同时保持 [ALL] 的
      * 定义顺序（`sortedByDescending` 是稳定排序）。
@@ -649,7 +653,8 @@ object KeyboardSkins {
      * 亮度只能由主题令牌算出来。
      */
     fun orderedForDisplay(fallbackKeyFill: Int): List<KeyboardSkin> =
-        ALL.sortedByDescending { faceBrightness(it, fallbackKeyFill) }
+        listOf(DEFAULT) +
+            ALL.filterNot { it.isDefault }.sortedByDescending { faceBrightness(it, fallbackKeyFill) }
 
     /**
      * 键面感知亮度（0~1）：取键面首色与次色的均值。
@@ -681,13 +686,28 @@ object KeyboardSkins {
      * 实测约 1.5:1，等于看不见）。阈值 0.55 与 [faceBrightness] 同一套 BT.601 口径，即
      * 「这块颜色在人眼里算亮还是暗」的分界。
      */
-    internal fun accentOnColor(accent: Int): Int {
-        val r = (accent shr 16) and 0xFF
-        val g = (accent shr 8) and 0xFF
-        val b = accent and 0xFF
-        val lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-        return if (lum > 0.55) 0xFF1A1F2B.toInt() else 0xFFF2F5FA.toInt()
-    }
+    internal fun accentOnColor(accent: Int): Int =
+        if (perceivedBrightness(accent) > BRIGHT_THRESHOLD) ON_LIGHT_FG else ON_DARK_FG
+
+    /**
+     * 涟漪色：亮底 → 10% 黑、暗底 → 30% 白（与两套主题令牌 `key_ripple` 同值）。
+     *
+     * 皮肤只覆盖面色与文字，涟漪若仍读主题令牌：「亮白主题 + 深色皮肤」会给深键面压 10% 黑
+     * （几乎看不见按压反馈）、「暗黑主题 + 浅色皮肤」则在浅键面上泛白 —— 与皮肤观感割裂
+     * （2026-09-23 审查确认的唯一可见不搭配）。这里按 [baseColor] 的明暗取相反侧。
+     */
+    internal fun rippleOn(baseColor: Int): Int =
+        if (perceivedBrightness(baseColor) > BRIGHT_THRESHOLD) withAlpha(0xFF000000.toInt(), 0.10f)
+        else withAlpha(0xFFFFFFFF.toInt(), 0.30f)
+
+    /** 亮底上的前景色（深墨），见 [accentOnColor] 与 [rippleOn] */
+    val ON_LIGHT_FG = 0xFF1A1F2B.toInt()
+
+    /** 暗底上的前景色（近白），见 [accentOnColor] 与 [rippleOn] */
+    val ON_DARK_FG = 0xFFF2F5FA.toInt()
+
+    /** 「亮底」分界（BT.601 感知亮度，与 [faceBrightness] 同一口径） */
+    private const val BRIGHT_THRESHOLD = 0.55
 
     /**
      * 键面首色：彩虹皮肤按 [keyIndex] 取色相，其余皮肤用 [keyFill]，未覆盖时回退 [fallback]。
