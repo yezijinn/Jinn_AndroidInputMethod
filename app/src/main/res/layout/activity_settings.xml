@@ -518,39 +518,6 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
-            <!-- Root 增强模式：可选扩展，默认关闭，失败自动回退普通模式。
-                 行内是「标签 + 裸开关（居右）」——与「语音输入」等同款，开关不再自带文字
-                 （原先标题「Root 增强模式」与开关文案「开启 Root 增强模式」语义重复）。 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/clipboard_root_enhance"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <Switch
-                    android:id="@+id/switch_root_enhance"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/text_root_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
         </LinearLayout>
 
         <!-- 授权麦克风：状态 + 单个授权按钮（与下方 NAS 控件同组，随语音开关整体隐藏） -->

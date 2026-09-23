@@ -130,7 +130,7 @@ object Diagnostics {
         val process = Runtime.getRuntime().exec(arrayOf("su", "-c", commands.joinToString(" && ")))
         // 两路都必须后台排空：`chown`/`mkdir` 一旦输出写满管道（64KB），子进程会阻塞在写端，
         // 而父进程正在 waitFor，只能等到 5s 超时（日志里表现为「root 授权超时」，
-        // root 直写共享目录的功能静默失效）。写法与 ClipboardFirewall.su 对齐。
+        // root 直写共享目录的功能静默失效）。
         val outDrain = Thread {
             runCatching {
                 process.inputStream.use { input ->

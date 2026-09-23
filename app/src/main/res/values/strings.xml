@@ -162,11 +162,6 @@
     
 
     <!-- Root 增强模式 -->
-    <string name="clipboard_root_enhance">Root 增强模式</string>
-    <string name="clipboard_root_enhance_desc">用 Root 权限检查数据目录是否安全（可选）</string>
-    <string name="clipboard_root_status">Root 状态：%1$s</string>
-    <string name="clipboard_root_available">可用</string>
-    <string name="clipboard_root_unavailable">不可用</string>
 
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">加更多生僻字</string>

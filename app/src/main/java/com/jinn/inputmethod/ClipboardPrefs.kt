@@ -28,19 +28,11 @@ class ClipboardPrefs(context: Context) {
         }
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, 9999)) }
 
-    // ── Root 增强模式 ──────────────────────────────────────
-
-    /** Root 增强模式总开关（默认关，需用户主动开启） */
-    var rootEnhanceEnabled: Boolean
-        get() = sp.getBoolean(KEY_ROOT_ENHANCE, false)
-        set(value) = sp.edit { putBoolean(KEY_ROOT_ENHANCE, value) }
-
     companion object {
         const val DEFAULT_MAX_ITEMS = 500
 
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MAX_ITEMS = "max_items"
-        private const val KEY_ROOT_ENHANCE = "root_enhance"
 
         @Volatile
         private var instance: ClipboardPrefs? = null

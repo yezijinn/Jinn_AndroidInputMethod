@@ -89,19 +89,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var clipboardPrefs: ClipboardPrefs
     private lateinit var editClipboardMax: EditText
 
-    // Root 增强模式
-    private lateinit var textRootStatus: TextView
-    private lateinit var switchRootEnhance: Switch
-
-    /**
-     * 程序化修改 Root 开关时置位（避免触发回调）。
-     *
-     * 场景：Root 不可用时需要在回调里把开关拨回关闭，而改 `isChecked` 本身又会
-     * 触发同一个监听器 → 递归进入 else 分支，把刚设置的「Root 不可用」提示
-     * 覆盖成功能描述文案，用户等于什么提示都没看到。
-     */
-    private var suppressRootSwitchCallback = false
-
     /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
     private val uiHandler = Handler(Looper.getMainLooper())
 
@@ -168,9 +155,6 @@ class SettingsActivity : ComponentActivity() {
         // 剪贴板卡片
         clipboardPrefs = ClipboardPrefs.of(this)
         editClipboardMax = findViewById(R.id.edit_clipboard_max)
-
-        textRootStatus = findViewById(R.id.text_root_status)
-        switchRootEnhance = findViewById(R.id.switch_root_enhance)
 
         // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
         initThemeCard()
@@ -455,52 +439,6 @@ class SettingsActivity : ComponentActivity() {
         }
 
         // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
-
-        // ── Root 增强模式 ──────────────────────────────────────
-        refreshRootStatus()
-        switchRootEnhance.isChecked = clipboardPrefs.rootEnhanceEnabled
-        switchRootEnhance.setOnCheckedChangeListener { _, checked ->
-            // 程序化拨动开关（如 Root 不可用时自动关闭）不进入业务分支，避免递归
-            if (suppressRootSwitchCallback) return@setOnCheckedChangeListener
-            clipboardPrefs.rootEnhanceEnabled = checked
-            Diagnostics.i(TAG, "Root 增强模式: ${if (checked) "开启" else "关闭"}")
-            if (checked) {
-                // 后台线程执行数据目录安全审计
-                Thread {
-                    if (!ClipboardFirewall.isRootAvailable()) {
-                        runOnUiThread {
-                            clipboardPrefs.rootEnhanceEnabled = false
-                            // 抑制期间改 isChecked，避免递归进入 else 分支覆盖下面的提示
-                            suppressRootSwitchCallback = true
-                            switchRootEnhance.isChecked = false
-                            suppressRootSwitchCallback = false
-                            textRootStatus.text = getString(R.string.clipboard_root_unavailable)
-                        }
-                        return@Thread
-                    }
-                    val auditResults = ClipboardFirewall.audit(this)
-                    runOnUiThread {
-                        textRootStatus.text = auditResults.joinToString("\n") { "${it.first}: ${it.second}" }
-                    }
-                }.start()
-            } else {
-                textRootStatus.setText(R.string.clipboard_root_enhance_desc)
-            }
-        }
-    }
-
-    /** 刷新 Root 状态显示（后台线程检测，避免阻塞 UI） */
-    private fun refreshRootStatus() {
-        textRootStatus.text = getString(R.string.clipboard_root_status, getString(R.string.clipboard_root_unavailable))
-        Thread {
-            val ok = ClipboardFirewall.isRootAvailable()
-            runOnUiThread {
-                textRootStatus.text = getString(
-                    R.string.clipboard_root_status,
-                    getString(if (ok) R.string.clipboard_root_available else R.string.clipboard_root_unavailable),
-                )
-            }
-        }.start()
     }
 
     private fun saveMaxItems() {
