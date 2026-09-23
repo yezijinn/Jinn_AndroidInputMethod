@@ -293,13 +293,15 @@ def main():
         sys.exit(1)
     print("对齐校验: 4 字节对齐通过")
 
-    # 3. 复制到根目录，再按时间戳重命名为发布文件名
-    release_apk = ROOT / "release.apk"
-    shutil.copy2(apk, release_apk)
+    # 3. 复制到根目录：时间戳包（留档）+ 固定发布名 jinn-release.apk（发布直接用这一份，
+    #    与本次构建同源，避免误用根目录遗留的历史发布包）
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     final_apk = ROOT / f"{APPLICATION_ID}.{ts}.APK"
-    release_apk.replace(final_apk)
+    shutil.copy2(apk, final_apk)
+    release_apk = ROOT / "jinn-release.apk"
+    shutil.copy2(apk, release_apk)
     print(f"已生成: {final_apk} ({final_apk.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"发布包: {release_apk} ({release_apk.stat().st_size / 1024 / 1024:.1f} MB)")
 
     # 4. 可选安装
     if args.install:
