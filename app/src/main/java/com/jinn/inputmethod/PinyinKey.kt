@@ -60,9 +60,20 @@ import kotlin.math.min
          */
         private var visual: KeyVisual? = null
 
-        /** 皮肤渐变 shader 缓存：键 = 色值 + 角度 + 键面尺寸（尺寸或皮肤变化时重建） */
+        /**
+         * 皮肤渐变 shader 缓存：按「首色 / 次色 / 角度 / 键面尺寸」四个数值字段判据复用。
+         *
+         * 原来用拼接字符串做 key（每次绘制都分配一个临时字符串），与绘制路径「零分配」的约定相悖。
+         */
         private var skinShader: LinearGradient? = null
-        private var skinShaderKey = ""
+        private var shaderFace = 0
+        private var shaderFace2 = 0
+        private var shaderAngle = -1f
+        private var shaderW = -1
+        private var shaderH = -1
+
+        /** 键帽面矩形：复用一个实例（原实现每次绘制都 new RectF，见 [drawKeyFace]） */
+        private val faceRect = RectF()
 
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -78,7 +89,6 @@ import kotlin.math.min
             if (visual == value) return
             visual = value
             skinShader = null
-            skinShaderKey = ""
             invalidate()
         }
 
@@ -364,7 +374,7 @@ import kotlin.math.min
                 keyPaint.color = v.thicknessColor
                 canvas.drawRoundRect(r, cornerPx, cornerPx, keyPaint)
             }
-            val faceRect = RectF(r.left, r.top, r.right, r.bottom - thickness)
+            faceRect.set(r.left, r.top, r.right, r.bottom - thickness)
             if (pressed) {
                 keyPaint.shader = null
                 keyPaint.color = v.pressed
@@ -384,10 +394,17 @@ import kotlin.math.min
             }
         }
 
-        /** 皮肤渐变（缓存：色值 / 角度 / 键面尺寸不变时复用同一实例，绘制路径零分配） */
+        /** 皮肤渐变（缓存：首色 / 次色 / 角度 / 键面尺寸不变时复用同一实例，绘制路径零分配） */
         private fun gradientShader(v: KeyVisual, r: RectF): LinearGradient {
-            val key = "${v.face}|${v.face2}|${v.gradientAngle}|${r.width().toInt()}x${r.height().toInt()}"
-            skinShader?.let { if (key == skinShaderKey) return it }
+            val w = r.width().toInt()
+            val h = r.height().toInt()
+            skinShader?.let {
+                if (v.face == shaderFace && v.face2 == shaderFace2 &&
+                    v.gradientAngle == shaderAngle && w == shaderW && h == shaderH
+                ) {
+                    return it
+                }
+            }
             val rad = Math.toRadians(v.gradientAngle.toDouble())
             val dx = (Math.cos(rad) * r.width() / 2.0).toFloat()
             val dy = (Math.sin(rad) * r.height() / 2.0).toFloat()
@@ -397,7 +414,11 @@ import kotlin.math.min
                 v.face, v.face2, Shader.TileMode.CLAMP,
             )
             skinShader = shader
-            skinShaderKey = key
+            shaderFace = v.face
+            shaderFace2 = v.face2
+            shaderAngle = v.gradientAngle
+            shaderW = w
+            shaderH = h
             return shader
         }
 

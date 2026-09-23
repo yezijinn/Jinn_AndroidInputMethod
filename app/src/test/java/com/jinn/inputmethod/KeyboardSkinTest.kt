@@ -128,6 +128,36 @@ class KeyboardSkinTest {
     }
 
     @Test
+    fun 按压色分支不因缺keyFill而回落主题色() {
+        val fallbackPressed = 0xFFD5D8E0.toInt()
+        // 彩虹皮肤：既无 keyFill 也无 keyPressed → 必须由首色压暗，不得取主题的 fallbackPressed
+        // （否则按键一按就从彩色闪成主题深块）
+        val rainbow = KeyboardSkins.byId("rainbow")
+        val rv = KeyboardSkins.visualFor(
+            rainbow, 0, 1f, 2.75f, 0xFFEFF1F5.toInt(), fallbackPressed,
+            0xFF1A1F2B.toInt(), 0xFF5A6474.toInt(), 0xFFC62828.toInt(),
+        )
+        assertNotEquals("彩虹按压态不得回落为主题按压色", fallbackPressed, rv.pressed)
+        assertEquals("彩虹按压态 = 首色压暗", KeyboardSkins.keyPressed(rainbow, rv.face), rv.pressed)
+        // 默认皮肤：同样无 keyFill / 无 keyPressed，但必须沿用历史令牌色（与上方互补，防判据写反）
+        val dv = KeyboardSkins.visualFor(
+            KeyboardSkins.DEFAULT, 0, 1f, 2.75f, 0xFFEFF1F5.toInt(), fallbackPressed,
+            0xFF1A1F2B.toInt(), 0xFF5A6474.toInt(), 0xFFC62828.toInt(),
+        )
+        assertEquals("默认皮肤沿用令牌按压色", fallbackPressed, dv.pressed)
+        // 皮肤显式声明 keyPressed 时直接使用，不推导
+        val frost = KeyboardSkins.byId("frost")
+        val explicit = frost.keyPressed
+        if (explicit != null) {
+            val fv = KeyboardSkins.visualFor(
+                frost, 0, 1f, 2.75f, 0xFFEFF1F5.toInt(), fallbackPressed,
+                0xFF1A1F2B.toInt(), 0xFF5A6474.toInt(), 0xFFC62828.toInt(),
+            )
+            assertEquals("皮肤显式按压色优先", explicit, fv.pressed)
+        }
+    }
+
+    @Test
     fun withAlpha_只改alpha通道() {
         val c = 0xFF3366CC.toInt()
         assertEquals(0x003366CC, KeyboardSkins.withAlpha(c, 0f))
@@ -212,6 +242,21 @@ class KeyboardSkinTest {
                 cur >= next - 1e-9,
             )
         }
+    }
+
+    @Test
+    fun 强调色上的图标按亮度取深或浅() {
+        // 浅色 accent（钛金 / 极光）→ 深色图标；深色 accent（雪原 / 樱花）→ 近白图标
+        assertEquals("浅银 accent", 0xFF1A1F2B.toInt(), KeyboardSkins.accentOnColor(0xFFB8C4D6.toInt()))
+        assertEquals("亮青 accent", 0xFF1A1F2B.toInt(), KeyboardSkins.accentOnColor(0xFF22D3EE.toInt()))
+        assertEquals("深蓝 accent", 0xFFF2F5FA.toInt(), KeyboardSkins.accentOnColor(0xFF3A6EA5.toInt()))
+        assertEquals("玫红 accent", 0xFFF2F5FA.toInt(), KeyboardSkins.accentOnColor(0xFFE04A78.toInt()))
+        // 两个极端必须落在相反两侧，避免阈值失效后"两边都取中间色"
+        assertNotEquals(
+            "纯白与纯黑的取值必须相反",
+            KeyboardSkins.accentOnColor(0xFFFFFFFF.toInt()),
+            KeyboardSkins.accentOnColor(0xFF000000.toInt()),
+        )
     }
 
     @Test
