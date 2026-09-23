@@ -2221,8 +2221,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             viewLetters.getChildAt(i).visibility = View.GONE
         }
         panel.tag = DIRECTION_PANEL_TAG
-        // 面板对象复用：换皮肤 / 改透明度后必须重刷键面与字色，否则仍是上一套配色
-        applySkinToDirectionPanel(panel)
         viewLetters.addView(panel, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2237,6 +2235,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         selectionActive = false
         listener?.onSelectionModeChanged(false)
         refreshDirectionButton()
+        // 面板对象复用：换皮肤 / 改透明度后必须重刷键面与字色（否则仍是上一套配色）。
+        // 放在 selectionActive 归零之后：中心键的 ◉/● 底色与字色要和刷新时的状态一致
+        applySkinToDirectionPanel(panel)
         Diagnostics.i(TAG, "方向面板: 显示（候选栏/底部栏保持）")
     }
 
