@@ -270,4 +270,37 @@ class KeyboardSkinTest {
             )
         }
     }
+
+    @Test
+    fun 候选栏色不得与背板或功能键面撞色() {
+        // 候选栏档位由 updateCandidateBarBackground 专管（有内容走 surface、空白走 plate）。
+        // 一旦某个皮肤的 candidateBar 与 alphaFaces 的识别色集（plate / functionFill）同值，
+        // 候选栏就会被统一压到 plate 档：透明度 100% 时候选词直接叠在宿主内容上，
+        // 且档位缓存不再更新（要清空一次内容才自愈）。新增皮肤必须避开这两个取值。
+        for (s in KeyboardSkins.ALL) {
+            val cb = s.candidateBar ?: continue
+            assertNotEquals("皮肤 ${s.id}: candidateBar 与 plate 撞色", s.plate, cb)
+            assertNotEquals("皮肤 ${s.id}: candidateBar 与 functionFill 撞色", s.functionFill, cb)
+        }
+    }
+
+    @Test
+    fun 未声明按压色时默认皮肤走令牌_皮肤按首色推导() {
+        // 判据必须是 isDefault：彩虹皮肤同样没有 keyFill，用「keyFill == null」判会把它的按压态
+        // 取成主题深灰，按键一按就从彩色闪成暗块。
+        val fallbackFace = 0xFFF2F4F8.toInt()
+        val fallbackPressed = 0xFFD0D5E0.toInt()
+        fun visual(s: KeyboardSkin) = KeyboardSkins.visualFor(
+            s, 0, 1f, 1f, fallbackFace, fallbackPressed,
+            0xFF101010.toInt(), 0xFF666666.toInt(), 0xFFFF0000.toInt(),
+        )
+
+        assertEquals("默认皮肤必须沿用历史令牌按压色", fallbackPressed, visual(KeyboardSkins.DEFAULT).pressed)
+
+        val rainbow = KeyboardSkins.byId("rainbow")
+        assertTrue("取到的应是彩虹皮肤", !rainbow.isDefault && rainbow.keyPressed == null)
+        val r = visual(rainbow)
+        assertNotEquals("未声明 keyPressed 的皮肤不得回落主题深灰", fallbackPressed, r.pressed)
+        assertEquals("按压色应由首色推导（darken 12%）", KeyboardSkins.darken(r.face, 0.88f), r.pressed)
+    }
 }
