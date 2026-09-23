@@ -1,10 +1,13 @@
 package com.jinn.inputmethod
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 
@@ -110,7 +113,82 @@ class KeyAppearanceActivity : Activity() {
                 JinnIme.onKeyAppearanceChanged()
             }
         })
+
+        initSkinSelector(prefs)
     }
+
+    /**
+     * 键盘皮肤选择器：横向排列「预览块 + 名称」，点选即落盘并即时生效。
+     *
+     * 预览块直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
+     * 文案（标题 / 说明 / 选项名）取代码常量与 [KeyboardSkins.label]：既不改 `strings.xml`
+     * （默认禁改），也不在 XML 里硬编码文本（避免 HardcodedText）。选项文本为字面量，
+     * 按项目既有做法就地抑制 lint 的 SetTextI18n。
+     */
+    @SuppressLint("SetTextI18n")
+    private fun initSkinSelector(prefs: Prefs) {
+        findViewById<TextView>(R.id.text_skin_title).text = "键盘皮肤"
+        findViewById<TextView>(R.id.text_skin_hint).text =
+            "只改键盘配色与质感；圆角 / 间隙 / 透明度仍由上面的滑杆控制"
+        val row = findViewById<LinearLayout>(R.id.skin_row)
+        val density = resources.displayMetrics.density
+        val items = mutableListOf<Pair<KeyboardSkin, View>>()
+        for (skin in KeyboardSkins.ALL) {
+            val preview = PinyinKey(this).apply {
+                label = "A"
+                centeredStyle = true
+                setKeyAppearance(dp(8).toFloat(), dp(2).toFloat())
+                applySkin(
+                    if (skin.isDefault) {
+                        null
+                    } else {
+                        KeyboardSkins.visualFor(
+                            skin, 0, 1f, density,
+                            getColor(R.color.kb_key),
+                            getColor(R.color.kb_key_pressed),
+                            getColor(R.color.kb_key_text),
+                            KeyTransparency.withAlpha(getColor(R.color.kb_key_text), 160f / 255f),
+                            getColor(R.color.kb_key_hint_red),
+                        )
+                    }
+                )
+                layoutParams = LinearLayout.LayoutParams(dp(56), dp(44))
+            }
+            val name = TextView(this).apply {
+                text = skin.label
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(getColor(R.color.text_secondary))
+            }
+            val column = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(6), dp(4), dp(6), dp(4))
+                isClickable = true
+                addView(preview)
+                addView(name)
+                setOnClickListener {
+                    prefs.keyboardSkinId = skin.id
+                    Diagnostics.i(TAG, "键盘皮肤: ${skin.id}（${skin.label}）")
+                    JinnIme.onKeyAppearanceChanged()
+                    refreshSkinSelection(items, prefs.keyboardSkinId)
+                }
+            }
+            // 预览块是 PinyinKey：它自身的 onTouchEvent 恒返回 true（键位手势需要），
+            // 会把触摸吃掉、外层选项收不到点击 —— 这里把点击转回选项容器。
+            preview.setOnClickListener { column.performClick() }
+            items += skin to column
+            row.addView(column)
+        }
+        refreshSkinSelection(items, prefs.keyboardSkinId)
+    }
+
+    /** 刷新皮肤选择器选中态：选中项全亮，其余降透明度（预览块自身即对应皮肤样式） */
+    private fun refreshSkinSelection(items: List<Pair<KeyboardSkin, View>>, selectedId: String) {
+        for ((skin, view) in items) view.alpha = if (skin.id == selectedId) 1f else 0.55f
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
         const val TAG = "KeyAppearance"
