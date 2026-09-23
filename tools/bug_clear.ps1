@@ -8,7 +8,12 @@ param(
 )
 
 $pkg = "com.jinn.inputmethod"
-$logDir = "/storage/emulated/0/JinnIme/logs"
+# 日志目录随版本变化：现版本写「应用专属外部目录」，旧版本可能写共享存储 —— 一起清
+$logDirs = @(
+    "/sdcard/Android/data/$pkg/files/logs",
+    "/storage/emulated/0/Android/data/$pkg/files/logs",
+    "/storage/emulated/0/JinnIme/logs"
+)
 
 Write-Host "== Clear old logs (device=$Device) ==" -ForegroundColor Cyan
 
@@ -16,8 +21,10 @@ Write-Host "== Clear old logs (device=$Device) ==" -ForegroundColor Cyan
 & adb -s $Device logcat -c 2>$null
 Write-Host "[1/3] logcat cleared" -ForegroundColor Yellow
 
-# Delete app log files
-& adb -s $Device shell "rm -f $logDir/jinn-*.log $logDir/logcat-*.log" 2>$null
+# Delete app log files（三个候选目录都清，幂等）
+foreach ($d in $logDirs) {
+    & adb -s $Device shell "rm -f $d/jinn-*.log $d/logcat-*.log" 2>$null
+}
 Write-Host "[2/3] app logs deleted" -ForegroundColor Yellow
 
 # Baseline: time + version + git commit

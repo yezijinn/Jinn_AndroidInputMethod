@@ -41,11 +41,26 @@ Write-Host "== Capture start: $stamp device=$Device ==" -ForegroundColor Cyan
 
 # 1. App logs
 Write-Host "[1/9] app logs..." -ForegroundColor Yellow
-$logDir = "/storage/emulated/0/JinnIme/logs"
-$files = Adb-Shell "ls $logDir/jinn-*.log"
-foreach ($f in $files) {
-    $n = $f.Trim()
-    if ($n) { & adb -s $Device pull $n $captureDir 2>$null | Out-Null }
+# 日志目录随版本变化：现版本写「应用专属外部目录」（零权限）；
+# 旧版本可能写共享存储 —— 逐个探测，避免抓不到日志却当作「没问题」。
+$logDirCandidates = @(
+    "/sdcard/Android/data/$pkg/files/logs",
+    "/storage/emulated/0/Android/data/$pkg/files/logs",
+    "/storage/emulated/0/JinnIme/logs"
+)
+$logDir = $null
+foreach ($cand in $logDirCandidates) {
+    if (Adb-Shell "ls $cand/jinn-*.log 2>/dev/null | head -1") { $logDir = $cand; break }
+}
+if ($logDir) {
+    Write-Host "    log dir: $logDir" -ForegroundColor DarkGray
+    $files = Adb-Shell "ls $logDir/jinn-*.log 2>/dev/null"
+    foreach ($f in $files) {
+        $n = $f.Trim()
+        if ($n) { & adb -s $Device pull $n $captureDir 2>$null | Out-Null }
+    }
+} else {
+    Write-Host "    ! app logs not found (device installed & launched?)" -ForegroundColor Red
 }
 
 # 2. logcat (system-wide under root)
