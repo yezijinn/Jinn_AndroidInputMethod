@@ -105,10 +105,15 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
-            // 条目卡按当前透明度档设色（ListView 复用 convertView，不每次重设会混新旧两档）
+            // 条目卡按当前透明度档 + 皮肤面色设色（ListView 复用 convertView，不每次重设会混新旧两档）
             root.background = android.graphics.drawable.ColorDrawable(
-                KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
+                KeyTransparency.withAlpha(
+                    skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
+                )
             )
+            // 条目文字同理：换皮肤后已渲染的行必须跟着变
+            holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
+            holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id
             holder.content.text = item.content
             holder.meta.text = buildString {
@@ -124,6 +129,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         var itemId: Long = -1L
     }
 
+    /** 当前键盘皮肤（默认皮肤 ⇒ 全部走 `R.color` 令牌，配色与历史一致）。必须在 [init] 之前声明 */
+    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+
+    /** [init] 建完 UI 后置 true：本视图控件是 val，未建完就套皮肤色会碰到未初始化字段 */
+    private var uiReady = false
+
     /** 半透明键盘：本面板内容面（条目卡）的当前档位（1f = 不透明） */
     private var surfaceAlpha = 1f
 
@@ -138,15 +149,35 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         adapter.notifyDataSetChanged()
     }
 
+    /** 切换键盘皮肤：面板底、空态、搜索框与条目卡一并换色（默认皮肤回落 `R.color` 令牌） */
+    fun applySkin(newSkin: KeyboardSkin) {
+        if (newSkin.id == skin.id) return
+        skin = newSkin
+        applyPanelColors()
+    }
+
+    /** 按当前皮肤重设面板静态配色（条目卡 / 条目文字在 [adapter] 的 getView 里逐次读取） */
+    private fun applyPanelColors() {
+        if (!uiReady) return
+        val plate = skinColor(context, skin.plate, R.color.app_bg)
+        setBackgroundColor(plate)
+        listView.setBackgroundColor(plate)
+        textEmpty.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+        editSearch.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
+        editSearch.setHintTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+        editSearch.setBackgroundColor(skinColor(context, skin.functionFill, R.color.surface_hi))
+        adapter.notifyDataSetChanged()
+    }
+
     init {
         orientation = VERTICAL
-        setBackgroundColor(context.getColor(R.color.app_bg))
+        setBackgroundColor(skinColor(context, skin.plate, R.color.app_bg))
         setPadding(dp(10), dp(8), dp(10), dp(8))
 
         // 结果列表（可滚动，固定高度保证在 wrap_content 父下可滚动）
         listView = ListView(context).apply {
             divider = null
-            setBackgroundColor(context.getColor(R.color.app_bg))
+            setBackgroundColor(skinColor(context, skin.plate, R.color.app_bg))
             adapter = this@SearchPanelView.adapter
         }
         // 与 ClipboardPanelView 同款身份取值：优先用被点中那行渲染时的稳定 id，
@@ -165,7 +196,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         textEmpty = TextView(context).apply {
             text = "输入关键词搜索剪贴板历史"
             gravity = android.view.Gravity.CENTER
-            setTextColor(context.getColor(R.color.text_secondary))
+            setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 13f
         }
         addView(textEmpty, LinearLayout.LayoutParams(
@@ -180,9 +211,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             setIncludeFontPadding(false)
             textSize = 13f
             isFocusableInTouchMode = true
-            setTextColor(context.getColor(R.color.text_primary))
-            setHintTextColor(context.getColor(R.color.text_secondary))
-            setBackgroundColor(context.getColor(R.color.surface_hi))
+            setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
+            setHintTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+            setBackgroundColor(skinColor(context, skin.functionFill, R.color.surface_hi))
             setPadding(dp(10), 0, dp(10), 0)
             gravity = android.view.Gravity.CENTER_VERTICAL
             addTextChangedListener(object : TextWatcher {
@@ -197,6 +228,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         }
         addView(editSearch, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        uiReady = true
     }
 
     /** 显示搜索面板：清空输入、对齐结果列表/空态可见性、聚焦输入框 */

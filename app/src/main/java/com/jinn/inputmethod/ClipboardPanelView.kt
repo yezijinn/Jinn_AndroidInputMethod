@@ -63,6 +63,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     private val db by lazy { ClipboardDb.get(context) }
 
+    /**
+     * 当前键盘皮肤（默认皮肤 ⇒ 全部走 `R.color` 令牌，配色与历史一致）。
+     *
+     * 必须在 [init] 之前声明：`buildUi()` 会读它取面板配色。
+     */
+    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+
+    /** [tabButton] 创建的全部按钮（顶栏 / 操作条 / 确认条）：换皮肤时统一重设文字与面 */
+    private val tabButtons = mutableListOf<TextView>()
+
+    /** 危险语义按钮（清空 / 删除 / 确定）：文字保持 danger 红，不随皮肤换色 */
+    private val dangerButtons = mutableListOf<TextView>()
+
     private lateinit var listView: ListView
     private lateinit var textEmpty: TextView
     private lateinit var btnCategoryAll: TextView
@@ -161,11 +174,17 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 v.tag = newHolder
                 v to newHolder
             }
-            // 条目卡按当前透明度档设色：ListView 会复用 convertView，不每次重设的话，
-            // 改档（拖滑杆）后再滚动列表会混着新旧两档的背景
+            // 条目卡按当前透明度档 + 皮肤面色设色：ListView 会复用 convertView，不每次重设的话，
+            // 改档（拖滑杆）或换皮肤后再滚动列表会混着新旧两档的配色
             root.background = android.graphics.drawable.ColorDrawable(
-                KeyTransparency.withAlpha(context.getColor(R.color.card_bg), surfaceAlpha)
+                KeyTransparency.withAlpha(
+                    skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
+                )
             )
+            // 条目内文字同理：换皮肤后已渲染的行必须跟着变，不能只在首次构建时设一次
+            holder.num.setTextColor(skinColor(context, skin.accent, R.color.accent))
+            holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
+            holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
             holder.content.text = item.content
@@ -185,7 +204,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(context.getColor(R.color.app_bg))
+        setBackgroundColor(skinColor(context, skin.plate, R.color.app_bg))
         setPadding(dp(12), dp(8), dp(12), dp(8))
         buildUi()
     }
@@ -201,6 +220,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnSearch = tabButton("搜索") { listener?.onSearch() }
         btnClear = tabButton("清空") { showClearConfirm() }
             .apply { setTextColor(context.getColor(R.color.danger)) }
+            .also { dangerButtons += it }
         val cells = listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
             btnCategoryFavorite, btnSearch, btnClear)
         for (cell in cells) {
@@ -211,7 +231,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // ── 列表（占据面板主要空间，可滚动） ──
         listView = ListView(context).apply {
             divider = null
-            setBackgroundColor(context.getColor(R.color.app_bg))
+            setBackgroundColor(skinColor(context, skin.plate, R.color.app_bg))
             adapter = this@ClipboardPanelView.adapter
         }
         // 身份取值：优先用被点中那一行渲染时写入的稳定 id，取不到才退回当前列表下标。
@@ -244,7 +264,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         textEmpty = TextView(context).apply {
             text = "暂无剪贴板历史\n复制内容后将自动保存"
             gravity = android.view.Gravity.CENTER
-            setTextColor(context.getColor(R.color.text_secondary))
+            setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 14f
             visibility = GONE
         }
@@ -259,6 +279,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         actionFavorite = tabButton("收藏") { toggleFavorite() }
         actionDelete = tabButton("删除") { deleteItem() }
         actionDelete.setTextColor(context.getColor(R.color.danger))
+        dangerButtons += actionDelete
         actionBar.addView(actionFavorite, LinearLayout.LayoutParams(0, dp(36), 1f))
         actionBar.addView(actionDelete, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
@@ -279,6 +300,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 post { refresh(resetScroll = true) }
             }
         }.apply { setTextColor(context.getColor(R.color.danger)) }
+            .also { dangerButtons += it }
         val confirmCancel = tabButton("取消") { hideConfirmBar() }
         confirmBar.addView(confirmText, LinearLayout.LayoutParams(0, dp(36), 2f))
         confirmBar.addView(confirmOk, LinearLayout.LayoutParams(0, dp(36), 1f))
@@ -305,17 +327,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 此时点「删除 / 收藏」作用的是看不见的条目，删除后用户不知道丢的是哪一条。
         hideActionBar()
         currentCategory = category
-        val selected = currentCategory
-        for (tab in listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber, btnCategoryFavorite)) {
-            val isSel = when (tab) {
-                btnCategoryAll -> selected == null
-                btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
-                btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
-                btnCategoryFavorite -> selected == CATEGORY_FAVORITE
-                else -> false
-            }
-            tab.setBackgroundResource(if (isSel) R.drawable.key_bg_active else R.drawable.key_bg)
-        }
+        applyTabFaces()
         refresh(resetScroll = true)
     }
 
@@ -511,24 +523,95 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (alpha == surfaceAlpha) return
         surfaceAlpha = alpha
         if (!::btnBack.isInitialized) return
-        for (b in listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
-            btnCategoryFavorite, btnSearch, btnClear)) {
-            b.background = buildKeyFaceBackground(context, surfaceAlpha)
-        }
+        // 按当前分类重设「面」：原先一律按未选中面重建，会让选中分类的强调底在拖过
+        // 透明度滑杆后丢失（视觉上「当前分类」没了标记）
+        applyTabFaces()
         // 列表条目卡在 getView 里按档设色：通知重建，让已渲染的行立即换到新档
         adapter.notifyDataSetChanged()
+    }
+
+    /**
+     * 切换键盘皮肤：面板底、分类栏 / 操作条按钮、条目卡与文字一并换色。
+     *
+     * 默认皮肤（覆盖项全为 null）回落 `R.color` 令牌，配色与历史一致；危险色按钮保持语义红。
+     * 条目卡与条目文字在 [adapter] 的 getView 里逐次读皮肤色，这里只需通知重建。
+     */
+    fun applySkin(newSkin: KeyboardSkin) {
+        if (newSkin.id == skin.id) return
+        skin = newSkin
+        applyPanelColors()
+    }
+
+    /** 按当前皮肤重设面板内的静态配色 */
+    private fun applyPanelColors() {
+        if (!::listView.isInitialized) return
+        val plate = skinColor(context, skin.plate, R.color.app_bg)
+        setBackgroundColor(plate)
+        listView.setBackgroundColor(plate)
+        textEmpty.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+        for (b in tabButtons) {
+            b.setTextColor(
+                if (b in dangerButtons) context.getColor(R.color.danger)
+                else skinColor(context, skin.functionGlyph, R.color.text_primary)
+            )
+        }
+        applyTabFaces()
+        adapter.notifyDataSetChanged()
+    }
+
+    /**
+     * 给面板按钮铺「面」：当前选中分类用 accent 实心（原 `key_bg_active` 的同款几何，该 drawable 已删除），
+     * 其余按当前透明度档用皮肤面色。换皮肤或改透明度后都要重跑，选中态才不会丢。
+     */
+    private fun applyTabFaces() {
+        for (b in topButtons()) {
+            b.background = if (isSelectedCategoryButton(b)) {
+                buildKeyFaceBackground(
+                    context, 1f, KEY_FACE_CORNER_DP,
+                    skinColor(context, skin.accent, R.color.accent),
+                )
+            } else {
+                buildKeyFaceBackground(
+                    context, surfaceAlpha, KEY_FACE_CORNER_DP,
+                    skinColor(context, skin.functionFill, R.color.key_bg),
+                )
+            }
+        }
+    }
+
+    /** 顶栏的 7 个按钮（返回 / 全部 / 网址 / 数字 / 收藏 / 搜索 / 清空），顺序与 [buildUi] 一致 */
+    private fun topButtons() = listOf(
+        btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
+        btnCategoryFavorite, btnSearch, btnClear,
+    )
+
+    /** [b] 是否为「当前选中分类」的按钮（返回 / 搜索 / 清空等非分类按钮恒为 false） */
+    private fun isSelectedCategoryButton(b: TextView): Boolean {
+        val selected = currentCategory
+        return when (b) {
+            btnCategoryAll -> selected == null
+            btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
+            btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
+            btnCategoryFavorite -> selected == CATEGORY_FAVORITE
+            else -> false
+        }
     }
 
     private fun tabButton(label: String, onClick: () -> Unit): TextView =
         TextView(context).apply {
             text = label
             gravity = android.view.Gravity.CENTER
-            setTextColor(context.getColor(R.color.text_primary))
+            setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             textSize = 12f
-            // 键面背景按当前透明度档运行时构建（XML 的 key_bg 带不了动态 alpha；几何与其一致）
-            background = buildKeyFaceBackground(context, surfaceAlpha)
+            // 键面背景按当前透明度档 + 皮肤面色运行时构建（XML 的 key_bg 带不了动态 alpha；几何与其一致）
+            background = buildKeyFaceBackground(
+                context, surfaceAlpha, KEY_FACE_CORNER_DP,
+                skinColor(context, skin.functionFill, R.color.key_bg),
+            )
             isClickable = true
             setOnClickListener { onClick() }
+            // 注册到统一列表：换皮肤时由 applyPanelColors 重设文字与面
+            tabButtons += this
         }
 
     private fun lp() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -537,6 +620,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     private companion object {
         const val TAG = "ClipboardPanel"
+        /** 面板按钮的圆角（与 `key_bg.xml` 的 10dp 对齐，改 XML 时必须同步） */
+        const val KEY_FACE_CORNER_DP = 10f
         // 常量统一取自 ClipboardFilter，避免 UI 与数据层各定义一份而漂移
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         /** 距底部还有多少条时预取下一页 */

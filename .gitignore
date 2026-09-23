@@ -67,3 +67,9 @@ tools/dict_builder/THUOCL注音输出/
 .commitmsg.txt
 # Release 备注临时文件
 .relnotes.md
+
+# 助手工具临时导出（检索结果等，不入库）
+.codebuddy/*.json
+
+# 助手工作区规则（本地协作配置，不入库）
+.codebuddy/rules/
