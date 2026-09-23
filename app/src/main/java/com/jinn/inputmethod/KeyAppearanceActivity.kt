@@ -118,13 +118,13 @@ class KeyAppearanceActivity : Activity() {
     }
 
     /**
-     * 键盘皮肤选择器：每行五个「预览块 + 名称」，皮肤多于五个时自动换行（紧凑版式，不横向滚动），
+     * 键盘皮肤选择器：每行八个「名称写在按钮内」的预览键，多于八个自动换行（紧凑版式，不横向滚动），
      * 点选即落盘并即时生效。
      *
-     * 预览块直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
-     * 文案（标题 / 选项名）取代码常量与 [KeyboardSkins.label]：既不改 `strings.xml`
-     * （默认禁改），也不在 XML 里硬编码文本（避免 HardcodedText）。选项文本为字面量，
-     * 按项目既有做法就地抑制 lint 的 SetTextI18n。
+     * 预览键直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
+     * 按钮内文字取 [KeyboardSkins.label]（一律两字，`fitTextSize` 会按宽度自适应字号）：
+     * 既不改 `strings.xml`（默认禁改），也不在 XML 里硬编码文本（避免 HardcodedText）。
+     * 选项文本为字面量，按项目既有做法就地抑制 lint 的 SetTextI18n。
      */
     @SuppressLint("SetTextI18n")
     private fun initSkinSelector(prefs: Prefs) {
@@ -135,14 +135,16 @@ class KeyAppearanceActivity : Activity() {
         var line: LinearLayout? = null
         for ((index, skin) in KeyboardSkins.ALL.withIndex()) {
             if (index % SKINS_PER_ROW == 0) {
-                line = newSkinLine(isFirst = index == 0)
+                line = newSkinLine()
                 grid.addView(line)
             }
             val currentLine = line ?: continue
-            val preview = PinyinKey(this).apply {
-                label = "A"
+            val cell = PinyinKey(this).apply {
+                // 名称直接写在按钮内（两字，居中并按宽度自适应字号）—— 不再另起一行文字，行高更紧凑。
+                // 之前显示占位「A」、名称挂在下方 TextView 上，一行放不下八个。
+                label = skin.label
                 centeredStyle = true
-                setKeyAppearance(dp(8).toFloat(), dp(2).toFloat())
+                setKeyAppearance(dp(6).toFloat(), dp(2).toFloat())
                 applySkin(
                     if (skin.isDefault) {
                         null
@@ -157,21 +159,9 @@ class KeyAppearanceActivity : Activity() {
                         )
                     }
                 )
-                layoutParams = LinearLayout.LayoutParams(dp(42), dp(34))
-            }
-            val name = TextView(this).apply {
-                text = skin.label
-                textSize = 10f
-                gravity = Gravity.CENTER
-                setTextColor(getColor(R.color.text_secondary))
-            }
-            val column = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(dp(2), dp(4), dp(2), dp(4))
                 isClickable = true
-                addView(preview)
-                addView(name)
+                // 预览键是 PinyinKey：它自身的 onTouchEvent 恒返回 true（键位手势需要），
+                // 外层容器收不到点击，所以选择逻辑就挂在这里。
                 setOnClickListener {
                     prefs.keyboardSkinId = skin.id
                     Diagnostics.i(TAG, "键盘皮肤: ${skin.id}（${skin.label}）")
@@ -179,12 +169,9 @@ class KeyAppearanceActivity : Activity() {
                     refreshSkinSelection(items, prefs.keyboardSkinId)
                 }
             }
-            // 预览块是 PinyinKey：它自身的 onTouchEvent 恒返回 true（键位手势需要），
-            // 会把触摸吃掉、外层选项收不到点击 —— 这里把点击转回选项容器。
-            preview.setOnClickListener { column.performClick() }
-            items += skin to column
-            // 行内等分：一行五个，屏宽 ÷ 5 恰好放下（不横向滚动）
-            currentLine.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            items += skin to cell
+            // 宽按行等分（一行八个），高固定：屏宽 ÷ 8 恰好放下，不再横向滚动
+            currentLine.addView(cell, LinearLayout.LayoutParams(0, dp(SKIN_CELL_HEIGHT_DP), 1f))
         }
         // 末行不足一行时补空占位：等分权重下，缺位会把剩下的项拉伸变宽
         val remainder = KeyboardSkins.ALL.size % SKINS_PER_ROW
@@ -196,14 +183,14 @@ class KeyAppearanceActivity : Activity() {
         refreshSkinSelection(items, prefs.keyboardSkinId)
     }
 
-    /** 皮肤选择器的一行：横向等分容器，非首行留出行间距 */
-    private fun newSkinLine(isFirst: Boolean): LinearLayout =
+    /** 皮肤选择器的一行：横向等分容器，行间距压到 [SKIN_ROW_GAP_DP]（紧凑排布） */
+    private fun newSkinLine(): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { if (!isFirst) topMargin = dp(6) }
+            ).apply { topMargin = dp(SKIN_ROW_GAP_DP) }
         }
 
     /** 刷新皮肤选择器选中态：选中项全亮，其余降透明度（预览块自身即对应皮肤样式） */
@@ -216,8 +203,14 @@ class KeyAppearanceActivity : Activity() {
     private companion object {
         const val TAG = "KeyAppearance"
 
-        /** 皮肤选择器每行个数（十套皮肤排成两行五个） */
-        const val SKINS_PER_ROW = 5
+        /** 皮肤选择器每行个数（二十四套皮肤排成三行八个） */
+        const val SKINS_PER_ROW = 8
+
+        /** 皮肤预览键的高度（宽度由行内等分给出：屏宽 ÷ 8） */
+        const val SKIN_CELL_HEIGHT_DP = 30
+
+        /** 皮肤选择器的行间距：压到最小，同时留一点缝，避免相邻两行的键面贴死 */
+        const val SKIN_ROW_GAP_DP = 2
 
         /** 与 key_appearance_bg.xml 的夜空底色一致（状态栏只吃颜色值，取不到 drawable） */
         val AURORA_TOP = 0xFF161240.toInt()
