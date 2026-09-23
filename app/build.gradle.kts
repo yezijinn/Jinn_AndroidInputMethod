@@ -10,7 +10,7 @@ plugins {
 }
 
 // ── 签名配置 ─────────────────────────────────────────────
-// 一键打包脚本经环境变量 JINN_KEYSTORE_ROOT 注入统一密钥库目录（GLOBAL/credentials/JinnKeyStores）；
+// 一键打包脚本经环境变量 JINN_KEYSTORE_ROOT 注入统一密钥库目录（由环境变量指定）；
 // keystore.properties 仅作为手动构建的本地兼容回退，绝不入库。
 val keystoreProps = Properties()
 val ksFile = rootProject.file("keystore.properties")
@@ -109,6 +109,10 @@ android {
             "META-INF/*.kotlin_module",
             "META-INF/*.version",
             "DebugProbesKt.bin",
+            // OkHttp 的公共后缀表（Cookie 域判断用，41KB）：本应用只走 WebSocket 与几个简单
+            // GET（检查更新），从不解析 Cookie、也不调用 topPrivateDomain()，而它是惰性加载的，
+            // 不发请求就不会被读取。排除后 APK 体积回到 5MB 线下且有约 40KB 余量。
+            "okhttp3/internal/publicsuffix/publicsuffixes.gz",
         )
     }
 }

@@ -1,12 +1,8 @@
-# Gradle 构建产物
 .gradle/
 build/
 */build/
-
-# 本机 SDK 路径（每人路径不同，不入库）
 local.properties
 
-# IDE
 .idea/
 *.iml
 .DS_Store
@@ -14,61 +10,59 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# 代码图谱索引（助手工具生成，可随时重建）
-.codegraph/
-
-# 助手工具会话状态
-.omo/
-
-# 签名密钥与敏感配置
+*.apk
 *.keystore
 *.jks
-
-# 真机 QA 临时产物（截图/UI dump/调试脚本）
-artifacts/
-
-# 词库构建中间产物（由 tools/dict_builder 重新生成）
-tools/dict_builder/out/
-
-# APK 产物（安装包不入库）
-*.apk
-
-# 签名密码（本地密钥，不入库）
 keystore.properties
-
-# 云服务凭证 / 会话密钥（含真实凭据，绝不能入库）
 ses_*.json
 *service-account*.json
 *-credentials.json
 
-# 助手工具工作区状态（不入库）
+.codegraph/
+.omo/
 .workbuddy/
+.codebuddy/
 
-# 词库源文件（28MB 未压缩，可由 assets 基础包 + release 扩展包还原，不入库）
-tools/dict_builder/source/
-
-# 项目文档（本地资料，按约定不推送）
+artifacts/
 docs/
-
-# 词库包构建产物（已作为 Release 附件分发，不入库）
 release/
 
-# Python 缓存
+tools/dict_builder/out/
+tools/dict_builder/THUOCL注音输出/
+tools/dict_builder/THUOCL-master/
+tools/dict_builder/source/
+
 __pycache__/
 *.pyc
 
-# 第三方词库源码（调研用，非本项目代码）
-tools/dict_builder/THUOCL-master/
-# 注音中间产物（可由脚本重新生成）
-tools/dict_builder/THUOCL注音输出/
-
-# 提交信息临时文件
 .cm.txt
 .commitmsg.txt
-# Release 备注临时文件
 .relnotes.md
 
-# 助手工具工作区数据（会话导出 / 项目记忆 / 本地规则，全部留在本机，不入库）
-# 2026-09-23：一次 `git add -A` 把检索导出 json 带进提交，其中含真实 PAT，
-# 被 GitHub 密钥扫描拦下 → 该类文件一律排除
-.codebuddy/
+# 发版/签名临时产物
+payload.json
+*.idsig
+*.aab
+/*.zip
+
+# 构建/工具生成目录
+.kotlin/
+.vscode/
+
+# 通用临时文件与崩溃转储
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+*.hprof
+
+# 加密备份包（含剪贴板明文等隐私数据，绝不入库）
+*.jinn
+
+# 凭据类
+*.p12
+*.pem
+*.pk8
+*.p8
+JinnPassword.md

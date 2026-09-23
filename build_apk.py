@@ -35,7 +35,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent
 APPLICATION_ID = "com.jinn.inputmethod"
-KEYSTORE_ROOT = Path(os.environ.get("JINN_KEYSTORE_ROOT", r"E:\JinnKeyStores"))
+KEYSTORE_ROOT = Path(os.environ.get("JINN_KEYSTORE_ROOT", str(Path.home() / "JinnKeyStores")))
 GRADLE = None
 
 
@@ -48,7 +48,7 @@ def load_unified_signing_env():
         raise RuntimeError(
             f"未找到统一签名密钥: {keystore}\n"
             "  若密钥不在默认位置，请先设置环境变量再运行，例如：\n"
-            r"  set JINN_KEYSTORE_ROOT=C:\AI_WORKSPACE\GLOBAL\credentials\JinnKeyStores"
+            r"  set JINN_KEYSTORE_ROOT=<keystore root>"
         )
     if not password_file.is_file():
         raise RuntimeError(f"未找到统一签名密码文件: {password_file}")
