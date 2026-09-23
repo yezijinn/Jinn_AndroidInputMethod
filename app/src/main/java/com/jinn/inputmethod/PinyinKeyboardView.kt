@@ -913,6 +913,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (v in listOf(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
             (v as? TextView)?.setTextColor(glyph)
         }
+        // 中英键的高亮行是 SpannableString 里的 ForegroundColorSpan（不是 base color）：上面只换了
+        // base color，换肤后必须重建 span，否则高亮行仍是上一套皮肤的强调色（见 buildLangLabel）
+        btnLang.text = buildLangLabel()
         // 方向按钮：未激活态用皮肤主文字色；激活态用皮肤的红色提示色（见 refreshDirectionButton）
         refreshDirectionButton()
     }
@@ -2125,6 +2128,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
         hintView?.text = "控制"
     }
 
+    /**
+     * 方向面板内 9 个键按当前皮肤与透明度重刷「面 + 字色」。
+     *
+     * 面板视图懒加载且复用（[ensureDirectionPanel] 只在首次构建），键面与字色都在构建期取当时的
+     * 皮肤色 —— 不重刷的话，换肤色或拖透明度后再次打开仍是上一套配色（2026-09-23 审查发现：
+     * 中心键 ◉ 的激活态底色与字色也会一起过期）。
+     */
+    private fun applySkinToDirectionPanel(panel: ViewGroup) {
+        val glyph = skinToken(skin.functionGlyph, R.color.text_primary)
+        for (i in 0 until panel.childCount) {
+            val row = panel.getChildAt(i) as? ViewGroup ?: continue
+            for (j in 0 until row.childCount) {
+                val key = row.getChildAt(j) as? TextView ?: continue
+                val accent = key === centerSelectionKey && selectionActive
+                key.background = xmlKeyBackground(useAccent = accent)
+                key.setTextColor(
+                    if (accent) KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
+                    else glyph,
+                )
+            }
+        }
+    }
+
 
 
     // ── 键盘内方向面板（占 26 键的字母区域）────────────────
@@ -2195,6 +2221,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             viewLetters.getChildAt(i).visibility = View.GONE
         }
         panel.tag = DIRECTION_PANEL_TAG
+        // 面板对象复用：换皮肤 / 改透明度后必须重刷键面与字色，否则仍是上一套配色
+        applySkinToDirectionPanel(panel)
         viewLetters.addView(panel, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
