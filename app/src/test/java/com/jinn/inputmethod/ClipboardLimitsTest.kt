@@ -138,7 +138,7 @@ class ClipboardLimitsTest {
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(10, maxItemBytes = 0))
     }
 
-    // ── 搜索驻留预算的口径 ──────────────────────────────────────────────────
+    // ── 搜索驻留预算的算法 ──────────────────────────────────────────────────
     //
     // 命中集合要一直活到用户改关键词，所以有独立的驻留预算。预算按 UTF-8 字节 算，
     // 而 String.length 是 UTF-16 字符数，中文下 1 字符 = 3 字节，字符数当字节用会把

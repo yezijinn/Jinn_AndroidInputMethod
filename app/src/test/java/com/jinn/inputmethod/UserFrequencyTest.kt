@@ -1,8 +1,11 @@
 package com.jinn.inputmethod
 
 import org.junit.After
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -15,6 +18,83 @@ class UserFrequencyTest {
 
     @After
     fun tearDown() = UserFrequency.resetForTest()
+
+    /** 当天 tick（与 UserFrequency 内部一致）：测试数据若用很旧的天计数，会被按天衰减过滤掉 */
+    private fun today(): Int = (System.currentTimeMillis() / 86_400_000L).toInt()
+
+    // ── 备份导入：加锁替换 ──────────────────────────────────────────────────
+
+    @Test
+    fun 备份导入替换会落盘并同步内存态() {
+        val f = File.createTempFile("jinn-user-freq", ".txt").apply { deleteOnExit() }
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(f)
+        UserFrequency.putForTest("旧词", 9.0, 20000)
+        val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
+
+        assertTrue(UserFrequency.replaceFromBackup(f, merged, true))
+
+        assertEquals(merged, f.readText())
+        assertEquals(2.5, UserFrequency.weightForTest("新词")!!, 1e-6)
+        assertNull(UserFrequency.weightForTest("旧词"))
+        assertEquals(1, UserFrequency.sizeForTest())
+        // 替换后不能还是「脏」的：否则运行期的防抖写盘会立刻用内存快照覆写一遍
+        assertFalse(UserFrequency.isDirtyForTest())
+    }
+
+    @Test
+    fun 备份导入在开关关闭时也同步内存态但不参与排序() {
+        val f = File.createTempFile("jinn-user-freq", ".txt").apply { deleteOnExit() }
+        UserFrequency.loadForTest(false)
+        UserFrequency.setFileForTest(f)
+        val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
+
+        assertTrue(UserFrequency.replaceFromBackup(f, merged, false))
+
+        // 内存里有表（用户随后打开开关即可用），关闭状态排序不受影响
+        assertEquals(2.5, UserFrequency.weightForTest("新词")!!, 1e-6)
+        // 把学过的词放进入参数组：否则 rank 无论是否受开关影响都会原样返回（断言永真）
+        assertArrayEquals(arrayOf("甲", "新词"), UserFrequency.rank(arrayOf("甲", "新词")))
+    }
+
+    @Test
+    fun 极端天计数不会因整型回绕而逃过衰减() {
+        val now = 20000
+        // day = Int.MIN_VALUE：在 Int 域里 (day - now) 会回绕成大正数，被 coerceAtMost(0) 归零后
+        // 权重完全不衰减 —— 那样这类脏行会永久霸占首候选并被原样写回文件，每次启动都复现
+        val text = "# jinn user_freq v1\n脏行\t99999.000\t-2147483648\n正常\t1.000\t$now\n"
+        val parsed = UserFrequency.parse(text, now)
+        assertNull(parsed["脏行"])
+        assertNotNull(parsed["正常"])
+    }
+
+    @Test
+    fun 原子写会覆盖已存在的目标且不留临时文件() {
+        val f = File.createTempFile("jinn-freq-atomic", ".txt").apply { deleteOnExit() }
+        f.writeText("旧内容", Charsets.UTF_8)
+
+        assertTrue(UserFrequency.writeAtomically(f, "新内容"))
+
+        assertEquals("新内容", f.readText())
+        assertFalse("不该留下临时文件", File(f.parentFile, f.name + ".tmp").exists())
+    }
+
+    @Test
+    fun 备份导入写盘失败时不动内存态() {
+        // 父目录不存在 → 写盘必然失败
+        val bad = File(File(System.getProperty("java.io.tmpdir"), "jinn-no-such-dir"), "user_freq.txt")
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(bad)
+        UserFrequency.putForTest("旧词", 9.0, 20000)
+
+        assertFalse(
+            UserFrequency.replaceFromBackup(bad, "# jinn user_freq v1\n新词\t2.500\t20000\n", true)
+        )
+
+        // 失败必须保留原内存态：不能「导入没成功」却看起来像成功
+        assertEquals(9.0, UserFrequency.weightForTest("旧词")!!, 1e-6)
+        assertNull(UserFrequency.weightForTest("新词"))
+    }
 
     // ── 排序 ────────────────────────────────────────────────────────────────
 

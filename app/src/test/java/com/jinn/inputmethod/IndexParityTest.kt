@@ -115,7 +115,7 @@ class IndexParityTest {
      *
      * 回归点：段长校验若用 Int 累加，`p + keyCount + wordsLen + keyCount * 2` 会在超大声明值上
      * 溢出成负数、绕过检查，随后在切片处抛 ArrayIndexOutOfBoundsException，这就破坏了
-     * [PhraseIndex.of] 的契约（设备端可选包索引缓存是外部文件，坏了只应回退重建，不该崩）。
+     * [PhraseIndex.of] 的行为（设备端可选包索引缓存是外部文件，坏了只应回退重建，不该崩）。
      */
     @Test
     fun 头部不自洽的索引_解析返回null而不是抛异常() {
