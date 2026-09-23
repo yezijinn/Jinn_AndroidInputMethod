@@ -63,7 +63,7 @@ import kotlin.math.min
         /**
          * 皮肤渐变 shader 缓存：按「首色 / 次色 / 角度 / 键面尺寸」四个数值字段判据复用。
          *
-         * 原来用拼接字符串做 key（每次绘制都分配一个临时字符串），与绘制路径「零分配」的约定相悖。
+         * 原来用拼接字符串做 key（每次绘制都分配一个临时字符串），与绘制路径「零分配」的要求相悖。
          */
         private var skinShader: LinearGradient? = null
         private var shaderFace = 0

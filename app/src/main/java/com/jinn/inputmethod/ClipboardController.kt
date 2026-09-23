@@ -85,7 +85,7 @@ class ClipboardController(context: Context) {
      * 提取文本并入库（后台线程）。
      *
      * `coerceToText` 可能打开 ContentResolver 流，绝不能放主线程；正常与重试两条路径
-     * 统一走它，口径一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
+     * 统一走它，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
      */
     private fun extractAndSave(clip: android.content.ClipData) {
         if (clip.itemCount == 0) return
@@ -126,7 +126,7 @@ object ClipboardStore {
     /**
      * 单条上限（UTF-8 明文字节）：超过直接不入库，避免一条巨文本就把库撑到失控。
      *
-     * 注意口径：本条按明文字节算，而总量预算（[ClipboardDb.DEFAULT_MAX_TOTAL_BYTES]）
+     * 注意：本条按明文字节算，而总量预算（[ClipboardDb.DEFAULT_MAX_TOTAL_BYTES]）
      * 按库内密文体积算，两者单位不同，不要互相换算成同一个数。
      * 另：本条只拦采集（新复制的内容）；库里既有的超限行不会被它清理，只会被总量预算按最旧非收藏淘汰。
      */
@@ -155,7 +155,7 @@ object ClipboardStore {
     /**
      * 批量解密窗口的最坏内存估算（字节，纯函数）。
      *
-     * 口径 = 窗口条数 × 单条上限 × [DECRYPT_ITEM_AMPLIFICATION]；
+     * 算法 = 窗口条数 × 单条上限 × [DECRYPT_ITEM_AMPLIFICATION]；
      * 调用处用「≤ [DECRYPT_WINDOW_BUDGET_BYTES]」锁住参数，避免调大窗口时静默抬高内存峰值。
      */
     fun decryptWindowPeakBytes(windowItems: Int, maxItemBytes: Int = MAX_ITEM_BYTES): Long {
@@ -198,7 +198,7 @@ object ClipboardStore {
      *
      * 驻留/容量这类预算都按 UTF-8 字节算，而 `String.length` 是 UTF-16 字符数：
      * 中文 1 字符在 UTF-8 下占 3 字节，拿长度当字节会把预算低估到 1/3，护栏形同虚设。
-     * 这里与 [exceedsItemLimit] 保持同一口径。
+     * 这里与 [exceedsItemLimit] 保持一致。
      */
     fun utf8ByteSize(text: String): Long = text.toByteArray(Charsets.UTF_8).size.toLong()
 

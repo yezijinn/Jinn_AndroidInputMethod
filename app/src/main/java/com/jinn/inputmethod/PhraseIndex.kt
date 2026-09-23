@@ -400,7 +400,7 @@ internal class PhraseIndex private constructor(
 
             // 段长校验必须用 Long 累加：keysLen / wordsLen / keyCount 都来自外部字节，
             // 直接 Int 相加会在「超大声明值」上溢出成负数、绕过校验，随后在切片时抛数组越界
-            // （本方法的契约是「结构不自洽就返回 null」，绝不抛异常，调用方靠它决定是否回退）。
+            // （本方法的行为是「结构不自洽就返回 null」，绝不抛异常，调用方靠它决定是否回退）。
             // 总长是精确可算的：header + keysLen + keyCount(u8) + wordsLen + keyCount(u16×2)。
             val need = HEADER_SIZE.toLong() + keysLen + wordsLen + keyCount.toLong() * 3
             if (need != buf.capacity().toLong()) return null

@@ -97,6 +97,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     textSize = 11f
                     setTextColor(context.getColor(R.color.text_secondary))
                     setPadding(0, dp(3), 0, 0)
+                    // 分类字段来自数据库（备份包可写入）：单行 + 省略号，防超长文本拖垮主线程布局
+                    setMaxLines(1)
+                    setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 row.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 v.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -364,7 +367,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 offset = next
                 if (capped) break
                 if (reqToken != refreshToken) return@run
-                // 首帧兜底的判据必须在 post 之前固化成值：lambda 捕获的是变量本身，
+                // 首帧兜底的判据必须在 post 之前提前取成值：lambda 捕获的是变量本身，
                 // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
                 val isFirstChunk = offset <= SEARCH_WINDOW_ITEMS
                 val now = System.currentTimeMillis()

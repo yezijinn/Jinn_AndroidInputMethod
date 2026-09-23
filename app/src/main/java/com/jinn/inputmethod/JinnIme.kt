@@ -300,7 +300,7 @@ class JinnIme : InputMethodService() {
             }
             // requestShowSelf 是 API 28 才有的方法（minSdk 26）：低版本直接跳过，
             // 否则会抛 NoSuchMethodError，虽被 runCatching 兜住不崩溃，
-            // 但功能静默失效且空 onFailure 违反「绝不静默吞异常」的约定。
+            // 但功能静默失效且空 onFailure 违反「绝不静默吞异常」的底线。
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 runCatching { requestShowSelf(0) }.onFailure {
                     Diagnostics.w(TAG, "requestShowSelf 失败: ${it.message}")
@@ -530,7 +530,7 @@ class JinnIme : InputMethodService() {
      * 主守卫在 `PinyinKeyboardView.renderFunctionPanel`：搜索态候选栏只渲染「退出搜索」，
      * 全选/复制/方向/粘贴都不出现。这里再挡一道，保证任何将来新增的调用路径
      * （无障碍、外部触发、新的面板入口）都不会让它们落到宿主输入框上 ，
-     * 搜索态下 26 键只作用于搜索框，面板动作必须同口径。
+     * 搜索态下 26 键只作用于搜索框，面板动作必须一致。
      */
     private fun rejectedBySearchPanel(action: String): Boolean {
         if (pinyinKeyboard?.isSearchActive() != true) return false
@@ -1094,7 +1094,7 @@ class JinnIme : InputMethodService() {
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
     fun rebuildInputViewForSymbolLayout() {
         val keyboard = pinyinKeyboard ?: return
-        // 与换肤同口径地不打断未上屏输入：重建会清空拼音串/预测词，用户以为输入被吞。
+        // 与换肤一致地不打断未上屏输入：重建会清空拼音串/预测词，用户以为输入被吞。
         // 该路径真实可达：在编辑页「添加符号」对话框里打了一半拼音就按 Home / 锁屏，
         // Activity.onPause 会先于 IME 提交触发（真机日志实证 2026-09-22）。
         // 这里不看面板态：编辑页场景下面板不可能正被使用，而推迟会造成「改了符号不生效」。
@@ -1570,7 +1570,8 @@ class JinnIme : InputMethodService() {
             return
         }
 
-        Diagnostics.i(TAG, "handleResult: 最终结果 \"${text.take(60)}\" (共${message.text.length}字)")
+        // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
+        Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
         if (prefs.useComposing) {
             connection.setComposingText(text, 1)
             connection.finishComposingText()
@@ -1599,7 +1600,7 @@ class JinnIme : InputMethodService() {
      * 删除键三击（双击+长按）：清空输入框全部文本。
      *
      * 实现：光标折叠到 0 后删「光标之后」的全部内容。不再用 Ctrl+A + 删除：
-     * 按 Android 的 `InputConnection.deleteSurroundingText` 契约，它只作用于选区前后、
+     * 按 Android 的 `InputConnection.deleteSurroundingText` 规则，它只作用于选区前后、
      * 无法影响选区内容，AOSP `BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
      * 旧写法在标准宿主上一个字符都删不掉，只在「宿主不接受 Ctrl+A」时误删光标前的半截文本。
      * 新写法不依赖宿主对快捷键的支持：`afterLength` 会被实现钳到文本末尾。
