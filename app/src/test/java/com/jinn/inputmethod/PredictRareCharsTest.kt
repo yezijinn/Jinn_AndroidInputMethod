@@ -9,7 +9,7 @@ import org.junit.Test
  * 智能预测的生僻字过滤与「过滤后回填」护栏（纯 JVM，走索引注入）。
  *
  * 背景：索引路径（`PhraseIndex.collectLongerSuffixes`）直接解码后缀、不过滤，
- * 曾与运行时路径（`phrasesFor` 内的 `filterRareChars`）以及 `query` 的口径不一致 ，
+ * 曾与运行时路径（`phrasesFor` 内的 `filterRareChars`）以及 `query` 的标准不一致 ，
  * 开启「隐藏生僻字」（默认）时预测仍可能带出生僻词并可上屏。
  *
  * 修复采用「先收集、出口统一过滤」，因此收集上限必须给过滤留出回填空间：

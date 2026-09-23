@@ -111,7 +111,7 @@ class IndexBuilderParityTest {
      * 回归：同键合并按出现顺序去重（与文本路径 `existing + kept.filter { seen }` 同语义）。
      *
      * 裸拼接会让重复词在词表里出现两次，虽被查询侧的 LinkedHashSet 掩盖，
-     * 但索引体积与 [PhraseIndex.wordsFor] 的原始口径都被放大。
+     * 但索引体积与 [PhraseIndex.wordsFor] 的原始语义都被放大。
      */
     @Test
     fun 同键合并按出现顺序去重() {

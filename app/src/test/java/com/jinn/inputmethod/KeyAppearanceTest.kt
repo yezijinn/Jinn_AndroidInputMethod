@@ -45,11 +45,11 @@ class KeyAppearanceTest {
         assertEquals(KeyAppearance.DEFAULT_GAP_DP, KeyAppearance.clampGapDp(Float.NEGATIVE_INFINITY), 0f)
     }
 
-    /** 默认值（用户 2026-09-21 指定：圆角 1dp / 间隙 0.5dp）落在定义域内且恰在步进网格上 */
+    /** 默认值（用户 2026-09-23 指定：圆角 5dp / 间隙 2dp）落在定义域内且恰在步进网格上 */
     @Test
     fun defaults_areInsideDomainAndOnStepGrid() {
-        assertEquals(1f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
-        assertEquals(0.5f, KeyAppearance.DEFAULT_GAP_DP, 0f)
+        assertEquals(5f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
+        assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
         assertTrue(KeyAppearance.DEFAULT_CORNER_DP in KeyAppearance.MIN_CORNER_DP..KeyAppearance.MAX_CORNER_DP)
         assertTrue(KeyAppearance.DEFAULT_GAP_DP in KeyAppearance.MIN_GAP_DP..KeyAppearance.MAX_GAP_DP)
         // 默认值必须能被钳位原样保留：否则「默认值」在读取时就会被改写，设置页显示与实际不一致

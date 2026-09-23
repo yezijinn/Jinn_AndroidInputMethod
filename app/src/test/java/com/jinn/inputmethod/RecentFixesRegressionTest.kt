@@ -10,7 +10,7 @@ import java.io.BufferedReader
 import java.io.StringReader
 
 /**
- * 本轮缺陷修复的回归护栏。
+ * 本次缺陷修复的回归护栏。
  *
  * 每条断言对应一个已交叉验证过的真实缺陷，回归即复现：
  *  - [fieldKeyOf] 守住「暂存粘贴只回原输入框」（跨字段/跨应用注入）；

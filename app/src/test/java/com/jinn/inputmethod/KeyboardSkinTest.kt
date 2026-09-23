@@ -13,7 +13,7 @@ import org.junit.Test
  * 关注点：
  *  1. 默认皮肤必须是「全空覆盖」—— 绘制仍走 `R.color` 令牌，皮肤机制不得改变历史观感；
  *  2. 四套非默认皮肤的参数都在定义域内（填充色不透明、角度与描边/厚度范围、渐变不退化为纯色）；
- *  3. 「皮肤 × 面透明度」的合成口径：只改 alpha、RGB 原样，字色/提示色不被透明度影响；
+ *  3. 「皮肤 × 面透明度」的合成方式：只改 alpha、RGB 原样，字色/提示色不被透明度影响；
  *  4. 彩虹皮肤按 26 键序取色两两不同，无索引（分号键）收敛到起始色相。
  */
 class KeyboardSkinTest {
@@ -37,6 +37,19 @@ class KeyboardSkinTest {
         assertEquals(KeyboardSkins.DEFAULT_ID, KeyboardSkins.byId("").id)
         assertEquals(KeyboardSkins.DEFAULT_ID, KeyboardSkins.byId("no_such_skin").id)
         for (s in KeyboardSkins.ALL) assertEquals(s.id, KeyboardSkins.byId(s.id).id)
+    }
+
+    /**
+     * 初始皮肤（新用户的缺省值）必须是清单里真实存在的配色皮肤：
+     * 指向空覆盖基线、或指向一个不存在的 id（会被 `byId` 静默回退），都会让「默认观感」落空。
+     */
+    @Test
+    fun 初始皮肤必须存在且不是空覆盖基线() {
+        val s = KeyboardSkins.byId(KeyboardSkins.INITIAL_ID)
+        assertEquals(KeyboardSkins.INITIAL_ID, s.id)
+        assertTrue("初始皮肤应当是真实配色皮肤", !s.isDefault)
+        assertNotNull("初始皮肤必须给出键面填充色", s.keyFill)
+        assertNotNull("初始皮肤必须给出功能键文字色", s.functionGlyph)
     }
 
     @Test
@@ -228,19 +241,29 @@ class KeyboardSkinTest {
     }
 
     @Test
-    fun 展示顺序按键面亮度从亮到暗() {
+    fun 展示顺序默认固定首位_其余按键面亮度从亮到暗() {
         // 亮白主题的键面令牌（默认皮肤不覆盖键面色，亮度由它兜底）
         val fallback = 0xFFFFFFFF.toInt()
         val ordered = KeyboardSkins.orderedForDisplay(fallback)
         assertEquals("展示清单必须与定义清单同量", KeyboardSkins.ALL.size, ordered.size)
-        for (i in 0 until ordered.size - 1) {
-            val cur = KeyboardSkins.faceBrightness(ordered[i], fallback)
-            val next = KeyboardSkins.faceBrightness(ordered[i + 1], fallback)
-            assertTrue(
-                "展示顺序必须从亮到暗：第 ${i + 1} 位「${ordered[i].label}」($cur) 比第 ${i + 2} 位" +
-                    "「${ordered[i + 1].label}」($next) 更暗",
-                cur >= next - 1e-9,
-            )
+        assertEquals(
+            "默认必须固定在第一位且不参与排序（它的亮度随主题变化，排进去名次会漂）",
+            KeyboardSkins.DEFAULT_ID,
+            ordered.first().id,
+        )
+        // 其余按亮度从亮到暗；跑两套主题令牌，证明默认之外的名次不受主题影响
+        for (base in listOf(0xFFFFFFFF.toInt(), 0xFF242831.toInt())) {
+            val rest = KeyboardSkins.orderedForDisplay(base).drop(1)
+            assertEquals("除默认外不得重复", rest.size, rest.map { it.id }.toSet().size)
+            for (i in 0 until rest.size - 1) {
+                val cur = KeyboardSkins.faceBrightness(rest[i], base)
+                val next = KeyboardSkins.faceBrightness(rest[i + 1], base)
+                assertTrue(
+                    "展示顺序必须从亮到暗：第 ${i + 1} 位「${rest[i].label}」($cur) 比第 ${i + 2} 位" +
+                        "「${rest[i + 1].label}」($next) 更暗",
+                    cur >= next - 1e-9,
+                )
+            }
         }
     }
 
@@ -269,5 +292,52 @@ class KeyboardSkinTest {
                 s.label.length,
             )
         }
+    }
+
+    @Test
+    fun 候选栏色不得与背板或功能键面撞色() {
+        // 候选栏档位由 updateCandidateBarBackground 专管（有内容走 surface、空白走 plate）。
+        // 一旦某个皮肤的 candidateBar 与 alphaFaces 的识别色集（plate / functionFill）同值，
+        // 候选栏就会被统一压到 plate 档：透明度 100% 时候选词直接叠在宿主内容上，
+        // 且档位缓存不再更新（要清空一次内容才自愈）。新增皮肤必须避开这两个取值。
+        for (s in KeyboardSkins.ALL) {
+            val cb = s.candidateBar ?: continue
+            assertNotEquals("皮肤 ${s.id}: candidateBar 与 plate 撞色", s.plate, cb)
+            assertNotEquals("皮肤 ${s.id}: candidateBar 与 functionFill 撞色", s.functionFill, cb)
+        }
+    }
+
+    @Test
+    fun 未声明按压色时默认皮肤走令牌_皮肤按首色推导() {
+        // 判据必须是 isDefault：彩虹皮肤同样没有 keyFill，用「keyFill == null」判会把它的按压态
+        // 取成主题深灰，按键一按就从彩色闪成暗块。
+        val fallbackFace = 0xFFF2F4F8.toInt()
+        val fallbackPressed = 0xFFD0D5E0.toInt()
+        fun visual(s: KeyboardSkin) = KeyboardSkins.visualFor(
+            s, 0, 1f, 1f, fallbackFace, fallbackPressed,
+            0xFF101010.toInt(), 0xFF666666.toInt(), 0xFFFF0000.toInt(),
+        )
+
+        assertEquals("默认皮肤必须沿用历史令牌按压色", fallbackPressed, visual(KeyboardSkins.DEFAULT).pressed)
+
+        val rainbow = KeyboardSkins.byId("rainbow")
+        assertTrue("取到的应是彩虹皮肤", !rainbow.isDefault && rainbow.keyPressed == null)
+        val r = visual(rainbow)
+        assertNotEquals("未声明 keyPressed 的皮肤不得回落主题深灰", fallbackPressed, r.pressed)
+        assertEquals("按压色应由首色推导（darken 12%）", KeyboardSkins.darken(r.face, 0.88f), r.pressed)
+    }
+
+    @Test
+    fun 涟漪色按底面明暗取相反侧() {
+        // 亮面（如雪原 #EDF3FC）→ 10% 黑；暗面 → 30% 白：取值与两套主题令牌 `key_ripple` 同值，
+        // 皮肤下的按压反馈才与键面明暗一致
+        assertEquals(0x1A000000, KeyboardSkins.rippleOn(0xFFEDF3FC.toInt()))
+        assertEquals(0x4DFFFFFF.toInt(), KeyboardSkins.rippleOn(0xFF14171E.toInt()))
+        // 两个极端必须落在相反两侧，避免阈值失效后「两边都取同一侧」
+        assertNotEquals(
+            "纯白与纯黑的涟漪必须相反",
+            KeyboardSkins.rippleOn(0xFFFFFFFF.toInt()),
+            KeyboardSkins.rippleOn(0xFF000000.toInt()),
+        )
     }
 }
