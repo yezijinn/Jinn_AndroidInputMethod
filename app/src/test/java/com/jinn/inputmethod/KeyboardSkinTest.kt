@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -181,5 +182,18 @@ class KeyboardSkinTest {
         assertEquals("提示色与面透明度无关", a.hint, b.hint)
         assertNotEquals("键面 alpha 必须随面透明度变化", a.face, b.face)
         assertEquals("最透时键面 alpha = 0.6 × 255", 153, (b.face ushr 24) and 0xFF)
+    }
+
+    @Test
+    fun 非默认皮肤必须给出功能键文字色() {
+        for (s in KeyboardSkins.ALL) {
+            if (s.isDefault) continue
+            val glyph = s.functionGlyph
+            assertNotNull("皮肤 ${s.id} 必须定义 functionGlyph：功能键背景由皮肤接管，缺它会深底深字撞色", glyph)
+            assertNotNull("皮肤 ${s.id} 必须定义 functionHint（空格键小字 / 页码 / 候选提示）", s.functionHint)
+            assertEquals("functionGlyph 必须不透明", 0xFF, (glyph!! ushr 24) and 0xFF)
+        }
+        assertNull("默认皮肤不得覆盖功能键文字色", KeyboardSkins.DEFAULT.functionGlyph)
+        assertNull("默认皮肤不得覆盖功能键次要文字色", KeyboardSkins.DEFAULT.functionHint)
     }
 }

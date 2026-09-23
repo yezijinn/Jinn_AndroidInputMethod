@@ -835,29 +835,59 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 26 键按字母序取索引：彩虹皮肤按序取色相，而 keyViews 是 HashMap，遍历顺序不稳定
         val ordered = ('a'..'z').mapNotNull { keyViews[it] }
         if (skin.isDefault) {
+            // 默认皮肤：键面走 R.color 令牌路径，功能键文字 / 图标回落到主题令牌
             for (k in ordered) k.applySkin(null)
             keySemicolon.applySkin(null)
-            return
-        }
-        val density = resources.displayMetrics.density
-        val face = context.getColor(R.color.kb_key)
-        val pressed = context.getColor(R.color.kb_key_pressed)
-        val glyph = context.getColor(R.color.kb_key_text)
-        val hintDefault = KeyTransparency.withAlpha(glyph, 160f / 255f)
-        val hintRed = context.getColor(R.color.kb_key_hint_red)
-        for ((i, k) in ordered.withIndex()) {
-            k.applySkin(
+        } else {
+            val density = resources.displayMetrics.density
+            val face = context.getColor(R.color.kb_key)
+            val pressed = context.getColor(R.color.kb_key_pressed)
+            val glyph = context.getColor(R.color.kb_key_text)
+            val hintDefault = KeyTransparency.withAlpha(glyph, 160f / 255f)
+            val hintRed = context.getColor(R.color.kb_key_hint_red)
+            for ((i, k) in ordered.withIndex()) {
+                k.applySkin(
+                    KeyboardSkins.visualFor(
+                        skin, i, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
+                    )
+                )
+            }
+            // 分号键（搜狗 / 微软 / 紫光的 ing）不参与彩虹色序，取起始色相
+            keySemicolon.applySkin(
                 KeyboardSkins.visualFor(
-                    skin, i, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
+                    skin, -1, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
                 )
             )
         }
-        // 分号键（搜狗 / 微软 / 紫光的 ing）不参与彩虹色序，取起始色相
-        keySemicolon.applySkin(
-            KeyboardSkins.visualFor(
-                skin, -1, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
-            )
-        )
+        applySkinToTexts()
+    }
+
+    /**
+     * 把皮肤的「功能键文字 / 图标色」套到键盘内的静态控件上。
+     *
+     * 功能键的「面」由皮肤接管（见 [applyKeyTransparency]），文字与图标必须同源：
+     * 亮白主题下 `text_primary` 是深色，压在皮肤的深色功能键上会撞色（真机实测：
+     * 磨砂 / 极光皮肤下空格、回车、大写、删除、候选栏按钮文字不可读）。
+     *
+     * 默认皮肤的两个覆盖为 null ⇒ 回落到 `text_primary` / `text_secondary`，与历史一致。
+     * 动态构建的部分（候选词 / 预测词 / 符号分组标签 / 候选项 / 候选栏按钮 / 方向键）
+     * 在各 render / build 方法里读同一组皮肤色，见 [KeyboardSkins.functionGlyph]。
+     */
+    private fun applySkinToTexts() {
+        val glyph = skinToken(skin.functionGlyph, R.color.text_primary)
+        val hint = skinToken(skin.functionHint, R.color.text_secondary)
+        // 空格键：主文字「空格」+ 顶部输入类型小字
+        (btnSpace as? ViewGroup)?.let { space ->
+            (space.getChildAt(0) as? TextView)?.setTextColor(hint)
+            (space.getChildAt(1) as? TextView)?.setTextColor(glyph)
+        }
+        btnSpaceHint.setTextColor(hint)
+        // 图标键：回车 / 大写 / 删除（布局里是 ImageButton，字段声明为 View，故用 as?）
+        for (v in listOf(btnEnter, btnBackspace, btnShift)) {
+            (v as? ImageButton)?.imageTintList = ColorStateList.valueOf(glyph)
+        }
+        // 方向按钮：未激活态用皮肤主文字色；激活态的红色语义由 refreshDirectionButton 保留
+        refreshDirectionButton()
     }
 
     /**
@@ -1498,7 +1528,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 val item = TextView(context).apply {
                     text = pred
                     textSize = 21f
-                    setTextColor(resources.getColor(R.color.kb_candidate_sel_text, context.theme))
+                    setTextColor(skinToken(skin.accent, R.color.kb_candidate_sel_text))
                     setPadding(dp(2), 0, dp(2), 0)
                     isClickable = true
                     setOnClickListener { onPredictionSelected(pred) }
@@ -1556,7 +1586,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val item = TextView(context).apply {
                 text = candidate
                 textSize = 21f
-                setTextColor(resources.getColor(R.color.text_primary, context.theme))
+                setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
                 setPadding(dp(2), 0, dp(2), 0)
                 isClickable = true
                 setOnClickListener { onCandidateSelected(candidate) }
@@ -1586,8 +1616,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val label = TextView(context).apply {
                 text = group.label
                 textSize = labelSize
-                setTextColor(resources.getColor(
-                    if (sel) R.color.kb_key_hint_red else R.color.text_primary, context.theme))
+                setTextColor(
+                    if (sel) context.getColor(R.color.kb_key_hint_red)
+                    else skinToken(skin.functionGlyph, R.color.text_primary)
+                )
                 gravity = android.view.Gravity.CENTER
             }
             item.addView(label, LinearLayout.LayoutParams(
@@ -1597,7 +1629,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 val pageText = TextView(context).apply {
                     text = "${symbolPageInGroup.coerceIn(0, group.pages.lastIndex) + 1}/${group.pages.size}"
                     textSize = 9f // sp
-                    setTextColor(resources.getColor(R.color.text_secondary, context.theme))
+                    setTextColor(skinToken(skin.functionHint, R.color.text_secondary))
                     gravity = android.view.Gravity.END or android.view.Gravity.BOTTOM
                 }
                 item.addView(pageText, LinearLayout.LayoutParams(
@@ -1684,7 +1716,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             TextView(context).apply {
                 this.text = text
                 textSize = 15f
-                setTextColor(context.getColor(R.color.text_secondary))
+                setTextColor(skinToken(skin.functionHint, R.color.text_secondary))
                 setPadding(dp(6), 0, dp(6), 0)
             },
         )
@@ -2011,14 +2043,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         box.addView(TextView(context).apply {
             text = label
             textSize = 13f
-            setTextColor(resources.getColor(R.color.text_primary, context.theme))
+            setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(TextView(context).apply {
             text = hint
             textSize = 9f
-            setTextColor(resources.getColor(R.color.text_secondary, context.theme))
+            setTextColor(skinToken(skin.functionHint, R.color.text_secondary))
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.layoutParams = lp
@@ -2039,10 +2071,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val hintView = box.getChildAt(1) as? TextView
         labelView.text = if (active) "返回" else "方向"
         labelView.setTextColor(
-            resources.getColor(
-                if (active) R.color.kb_key_hint_red else R.color.text_primary,
-                context.theme,
-            )
+            if (active) context.getColor(R.color.kb_key_hint_red)
+            else skinToken(skin.functionGlyph, R.color.text_primary)
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         hintView?.text = "控制"
@@ -2394,7 +2424,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             text = label
             textSize = 16f
             gravity = android.view.Gravity.CENTER
-            setTextColor(resources.getColor(R.color.text_primary, context.theme))
+            setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
             // key_bg 同款（10dp 圆角），填充色带面 alpha
             background = xmlKeyBackground()
             isClickable = true

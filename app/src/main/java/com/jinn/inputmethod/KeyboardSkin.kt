@@ -37,6 +37,16 @@ data class KeyboardSkin(
     val bottomThicknessColor: Int? = null,
     /** 字色；null = `R.color.kb_key_text` */
     val glyph: Int? = null,
+    /**
+     * 功能键与候选区的主文字 / 图标色；null = `R.color.text_primary`。
+     *
+     * 功能键（空格 / 回车 / 大写 / 删除）、候选词、符号分组标签、候选项、候选栏按钮、方向键
+     * 的「面」都由本皮肤接管；若文字仍用主题色，亮白主题下会出现「深底 + 深字」撞色
+     * （真机实测：磨砂 / 极光的深色功能键上文字不可读），因此必须一并覆盖。
+     */
+    val functionGlyph: Int? = null,
+    /** 功能键次要文字（空格键顶部小字、页码、候选提示）；null = `R.color.text_secondary`，允许带 alpha */
+    val functionHint: Int? = null,
     /** 双拼提示字色；null = 字色 + alpha 160（现状） */
     val hint: Int? = null,
     /** 红色提示色；null = `R.color.kb_key_hint_red` */
@@ -68,7 +78,8 @@ data class KeyboardSkin(
             strokeColor == null && bottomThicknessColor == null && glyph == null &&
             hint == null && hintRed == null && functionFill == null &&
             functionStroke == null && candidateBar == null && plate == null &&
-            accent == null && rainbowHue == null
+            accent == null && rainbowHue == null &&
+            functionGlyph == null && functionHint == null
 }
 
 /**
@@ -131,6 +142,8 @@ object KeyboardSkins {
         glyph = 0xFFE8ECF5.toInt(),
         hint = 0x8CE8ECF5.toInt(),
         hintRed = 0xFFFF8A80.toInt(),
+        functionGlyph = 0xFFE8ECF5.toInt(),
+        functionHint = 0x99E8ECF5.toInt(),
         functionFill = 0xFF232833.toInt(),
         functionStroke = 0x33FFFFFF,
         candidateBar = 0xFF1C2029.toInt(),
@@ -146,6 +159,8 @@ object KeyboardSkins {
         glyph = 0xFF1B1B1F.toInt(),
         hint = 0xB31B1B1F.toInt(),
         hintRed = 0xFFB3141A.toInt(),
+        functionGlyph = 0xFF1B1B1F.toInt(),
+        functionHint = 0xB31B1B1F.toInt(),
         functionFill = 0xFFF2F3F7.toInt(),
         functionStroke = 0x33000000,
         candidateBar = 0xFFF7F8FB.toInt(),
@@ -166,6 +181,8 @@ object KeyboardSkins {
         glyph = 0xFFE6FBFF.toInt(),
         hint = 0x99E6FBFF.toInt(),
         hintRed = 0xFFFF7AB6.toInt(),
+        functionGlyph = 0xFFE6FBFF.toInt(),
+        functionHint = 0x99E6FBFF.toInt(),
         functionFill = 0xFF1B2A3E.toInt(),
         functionStroke = 0x4D22D3EE,
         candidateBar = 0xFF16223A.toInt(),
@@ -187,6 +204,8 @@ object KeyboardSkins {
         glyph = 0xFF2B2A26.toInt(),
         hint = 0x992B2A26.toInt(),
         hintRed = 0xFFA3352B.toInt(),
+        functionGlyph = 0xFF2B2A26.toInt(),
+        functionHint = 0x992B2A26.toInt(),
         functionFill = 0xFFE4DCC9.toInt(),
         functionStroke = 0xFF8C8471.toInt(),
         candidateBar = 0xFFF4EFE2.toInt(),
@@ -339,6 +358,7 @@ object KeyboardSkins {
                 "keyPressed" to skin.keyPressed, "bottomThicknessColor" to skin.bottomThicknessColor,
                 "functionFill" to skin.functionFill, "candidateBar" to skin.candidateBar,
                 "plate" to skin.plate, "accent" to skin.accent,
+                "functionGlyph" to skin.functionGlyph,
             ).forEach { (name, color) ->
                 color?.let { if ((it ushr 24) and 0xFF != 0xFF) out += "$name 需为不透明色: ${String.format("#%08X", it)}" }
             }
