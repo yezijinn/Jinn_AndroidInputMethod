@@ -3,8 +3,10 @@ package com.jinn.inputmethod
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -48,6 +50,37 @@ import kotlin.math.min
 
         /** 当前键面不透明度（1f = 不透明），见 [setFaceAlpha] */
         private var faceAlpha = 1f
+
+        /**
+         * 皮肤视觉参数（null = 默认皮肤）。
+         *
+         * 非空时键面走皮肤绘制路径（渐变 / 描边 / 底边厚度），颜色与 alpha 由
+         * [KeyboardSkins.visualFor] 一次算好，本类不再读 Prefs、也不自行合成 alpha；
+         * 为空时保持历史路径（[faceColor] + [faceColorPressed]，与半透明键盘逐像素一致）。
+         */
+        private var visual: KeyVisual? = null
+
+        /** 皮肤渐变 shader 缓存：键 = 色值 + 角度 + 键面尺寸（尺寸或皮肤变化时重建） */
+        private var skinShader: LinearGradient? = null
+        private var skinShaderKey = ""
+
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+        }
+
+        /**
+         * 套用皮肤（null = 回到默认令牌路径）。
+         *
+         * 由 [PinyinKeyboardView] 在每次弹键盘、改皮肤、拖动透明度滑杆时统一下发；
+         * 参数未变时提前返回（[KeyVisual] 是数据类，结构相等即不重绘）。
+         */
+        fun applySkin(value: KeyVisual?) {
+            if (visual == value) return
+            visual = value
+            skinShader = null
+            skinShaderKey = ""
+            invalidate()
+        }
 
         /**
          * 设置键面不透明度（1f = 不透明）：只降填充色，文字与提示色不动。
@@ -226,12 +259,17 @@ import kotlin.math.min
             val inset = insetPx.coerceIn(0f, (min(w, h) / 2f - 1f).coerceAtLeast(0f))
             rect.set(inset, inset, w - inset, h - inset)
 
-            keyPaint.color = if (pressed) faceColorPressed else faceColor
-            canvas.drawRoundRect(rect, cornerPx, cornerPx, keyPaint)
+            // 皮肤色：默认皮肤（visual == null）取历史令牌；皮肤路径由 [KeyVisual] 给出
+            val v = visual
+            val glyphColor = v?.glyph ?: colorText
+            val hintColor = v?.hint ?: colorText
+            val hintRedColor = v?.hintRed ?: colorCorner
+
+            drawKeyFace(canvas, rect)
 
             // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──
             if (fullPinyinStyle) {
-                textPaint.color = colorText
+                textPaint.color = glyphColor
                 textPaint.textSize = h * FULL_TEXT_RATIO
                 textPaint.textAlign = Paint.Align.CENTER
                 val fm = textPaint.fontMetrics
@@ -242,7 +280,7 @@ import kotlin.math.min
 
             // ── 符号层：一律水平 + 垂直居中（长文本按宽度收缩字号）──
             if (centeredStyle) {
-                textPaint.color = colorText
+                textPaint.color = glyphColor
                 textPaint.textAlign = Paint.Align.CENTER
                 textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - inset * 2f, h * MIN_LONG_TEXT_RATIO)
                 val centerFm = textPaint.fontMetrics
@@ -251,7 +289,7 @@ import kotlin.math.min
             }
 
             // ── 双拼模式：大写字母置顶 + 下方韵母提示 ──
-            textPaint.color = colorText
+            textPaint.color = glyphColor
             textPaint.textAlign = Paint.Align.CENTER
             // 长文本（多字符符号等）按可用宽度收缩字号并垂直居中。
             // 沿用小字顶置样式会左右溢出、内容显示不完整。
@@ -283,8 +321,9 @@ import kotlin.math.min
                 val lastBaseline = h * SUB_BOTTOM_RATIO - subFm.descent
                 var i = 0
                 for (line in normalLines) {
-                    subPaint.color = colorText
-                    subPaint.alpha = 160
+                    subPaint.color = hintColor
+                    // 默认皮肤走历史路径（字色 + paint alpha 160）；皮肤色自带 alpha，用 255 避免二次淡化
+                    subPaint.alpha = if (v == null) 160 else 255
                     canvas.drawText(
                         line, w / 2f,
                         lastBaseline - (total - 1 - i) * lineHeight, subPaint,
@@ -292,7 +331,7 @@ import kotlin.math.min
                     i++
                 }
                 for (line in redLines) {
-                    subPaint.color = colorCorner
+                    subPaint.color = hintRedColor
                     subPaint.alpha = 255
                     canvas.drawText(
                         line, w / 2f,
@@ -301,6 +340,65 @@ import kotlin.math.min
                     i++
                 }
             }
+        }
+
+        /**
+         * 绘制键面。
+         *
+         * 默认路径（[visual] 为空）：单色圆角矩形，与半透明键盘的历史观感逐像素一致；
+         * 皮肤路径：可选的底边「键帽厚度」+ 渐变或纯色键帽面 + 可选描边，
+         * 圆角与几何仍与同类键（大写/删除键）对齐。
+         */
+        private fun drawKeyFace(canvas: Canvas, r: RectF) {
+            val v = visual
+            if (v == null) {
+                keyPaint.shader = null
+                keyPaint.color = if (pressed) faceColorPressed else faceColor
+                canvas.drawRoundRect(r, cornerPx, cornerPx, keyPaint)
+                return
+            }
+            // 底边厚度：先整块铺厚度色，再把键帽面压在下方留出一条边（厚度上限 = 键面高的 1/3）
+            val thickness = v.thicknessPx.coerceIn(0f, r.height() / 3f)
+            if (thickness > 0f) {
+                keyPaint.shader = null
+                keyPaint.color = v.thicknessColor
+                canvas.drawRoundRect(r, cornerPx, cornerPx, keyPaint)
+            }
+            val faceRect = RectF(r.left, r.top, r.right, r.bottom - thickness)
+            if (pressed) {
+                keyPaint.shader = null
+                keyPaint.color = v.pressed
+            } else if (v.face != v.face2) {
+                keyPaint.shader = gradientShader(v, faceRect)
+                keyPaint.color = v.face
+            } else {
+                keyPaint.shader = null
+                keyPaint.color = v.face
+            }
+            canvas.drawRoundRect(faceRect, cornerPx, cornerPx, keyPaint)
+            keyPaint.shader = null
+            if (v.strokeWidthPx > 0f) {
+                strokePaint.strokeWidth = v.strokeWidthPx
+                strokePaint.color = v.strokeColor
+                canvas.drawRoundRect(faceRect, cornerPx, cornerPx, strokePaint)
+            }
+        }
+
+        /** 皮肤渐变（缓存：色值 / 角度 / 键面尺寸不变时复用同一实例，绘制路径零分配） */
+        private fun gradientShader(v: KeyVisual, r: RectF): LinearGradient {
+            val key = "${v.face}|${v.face2}|${v.gradientAngle}|${r.width().toInt()}x${r.height().toInt()}"
+            skinShader?.let { if (key == skinShaderKey) return it }
+            val rad = Math.toRadians(v.gradientAngle.toDouble())
+            val dx = (Math.cos(rad) * r.width() / 2.0).toFloat()
+            val dy = (Math.sin(rad) * r.height() / 2.0).toFloat()
+            val shader = LinearGradient(
+                r.centerX() - dx, r.centerY() - dy,
+                r.centerX() + dx, r.centerY() + dy,
+                v.face, v.face2, Shader.TileMode.CLAMP,
+            )
+            skinShader = shader
+            skinShaderKey = key
+            return shader
         }
 
         private companion object {

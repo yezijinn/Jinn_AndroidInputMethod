@@ -261,6 +261,17 @@ class Prefs(context: Context) {
         }
 
     /**
+     * 键盘皮肤 id（见 [KeyboardSkins]）。
+     *
+     * 皮肤只覆盖键盘自身的色值（键面 / 功能键 / 候选栏 / 背板）与质感参数，
+     * 与「亮白 / 暗黑主题」「半透明 / 圆角 / 间隙」正交；未知值读取时归一为默认皮肤，
+     * 保证脏配置不改变历史观感。
+     */
+    var keyboardSkinId: String
+        get() = KeyboardSkins.byId(sp.getString(KEY_KEYBOARD_SKIN, KeyboardSkins.DEFAULT_ID)).id
+        set(value) = sp.edit { putString(KEY_KEYBOARD_SKIN, KeyboardSkins.byId(value).id) }
+
+    /**
      * 语音输入总开关，默认禁用。
      *
      * 禁用时语音功能完全沉寂：不创建 [AsrClient]/[MicRecorder]、不发起 WebSocket 连接，
@@ -360,6 +371,7 @@ class Prefs(context: Context) {
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
+    private const val KEY_KEYBOARD_SKIN = "keyboard_skin"
         /** 主题模式与定时切换时刻（见 [ThemeManager]） */
         private const val KEY_THEME_MODE = "theme_mode"
 

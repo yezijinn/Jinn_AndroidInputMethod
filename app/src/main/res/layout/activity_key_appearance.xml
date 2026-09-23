@@ -191,6 +191,39 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
 
+            <!-- 键盘皮肤：标题 / 说明 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
+                 避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。 -->
+            <TextView
+                android:id="@+id/text_skin_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/skin_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+
+            <TextView
+                android:id="@+id/text_skin_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
