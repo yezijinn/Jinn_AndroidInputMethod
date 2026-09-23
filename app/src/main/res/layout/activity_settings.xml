@@ -806,6 +806,49 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- 配置备份：导出 / 导入（跨设备迁移）。
+             两个按钮的文本由代码下发：strings.xml 默认禁改，布局里留空避免硬编码文案进入资源 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_config_export"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+
+                <Button
+                    android:id="@+id/btn_config_import"
+                    style="@style/SettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_config_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:singleLine="false"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <!-- 使用说明纯文本（最底部） -->
         <TextView
             android:layout_width="match_parent"

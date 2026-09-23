@@ -109,6 +109,10 @@ android {
             "META-INF/*.kotlin_module",
             "META-INF/*.version",
             "DebugProbesKt.bin",
+            // OkHttp 的公共后缀表（Cookie 域判断用，41KB）：本应用只走 WebSocket 与几个简单
+            // GET（检查更新），从不解析 Cookie、也不调用 topPrivateDomain()，而它是惰性加载的，
+            // 不发请求就不会被读取。排除后 APK 体积回到 5MB 线下且有约 40KB 余量。
+            "okhttp3/internal/publicsuffix/publicsuffixes.gz",
         )
     }
 }

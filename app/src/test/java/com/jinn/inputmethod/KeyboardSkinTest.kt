@@ -39,6 +39,19 @@ class KeyboardSkinTest {
         for (s in KeyboardSkins.ALL) assertEquals(s.id, KeyboardSkins.byId(s.id).id)
     }
 
+    /**
+     * 初始皮肤（新用户的缺省值）必须是清单里真实存在的配色皮肤：
+     * 指向空覆盖基线、或指向一个不存在的 id（会被 `byId` 静默回退），都会让「默认观感」落空。
+     */
+    @Test
+    fun 初始皮肤必须存在且不是空覆盖基线() {
+        val s = KeyboardSkins.byId(KeyboardSkins.INITIAL_ID)
+        assertEquals(KeyboardSkins.INITIAL_ID, s.id)
+        assertTrue("初始皮肤应当是真实配色皮肤", !s.isDefault)
+        assertNotNull("初始皮肤必须给出键面填充色", s.keyFill)
+        assertNotNull("初始皮肤必须给出功能键文字色", s.functionGlyph)
+    }
+
     @Test
     fun 清单_id唯一且首项为默认() {
         assertEquals(KeyboardSkins.DEFAULT_ID, KeyboardSkins.ALL.first().id)

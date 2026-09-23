@@ -123,6 +123,16 @@ object KeyboardSkins {
 
     const val DEFAULT_ID = "default"
 
+    /**
+     * 新用户的初始皮肤（用户 2026-09-23 指定「紫晶」）。
+     *
+     * 与 [DEFAULT_ID] 刻意分开，两者语义不同：
+     *  - [DEFAULT_ID] 是「全空覆盖 + 沿用历史令牌」的基线皮肤（[DEFAULT]），也是 `byId` 对未知值的回退点；
+     *  - [INITIAL_ID] 只是 `Prefs.keyboardSkinId` 的缺省值，决定**从未选过皮肤**的用户看到哪套皮肤。
+     * 两者合并会让「坏值回退」也落到紫晶上，并破坏清单的 id 唯一性（[DEFAULT] 与紫晶会同 id）。
+     */
+    const val INITIAL_ID = "amethyst"
+
     /** 彩虹皮肤：HSV 饱和度与明度（固定值，保证键面文字对比度达标） */
     private const val RAINBOW_SATURATION = 0.62f
     private const val RAINBOW_VALUE = 0.96f

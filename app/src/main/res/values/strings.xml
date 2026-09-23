@@ -199,7 +199,7 @@
     <!-- 收藏分组：编辑页与设置页入口 -->
     <string name="favorite_title">符号收藏编辑</string>
     <string name="favorite_entry_title">符号的自定义</string>
-    <string name="favorite_desc">增删「收藏」里的符号；每页最多 26 个，满了自动开新页。改完即时保存，返回键盘就生效。</string>
+    <string name="favorite_desc">增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
     <string name="favorite_add">＋ 添加符号</string>
     <string name="favorite_close">✕</string>

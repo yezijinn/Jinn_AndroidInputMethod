@@ -171,6 +171,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     textSize = 11f
                     setTextColor(context.getColor(R.color.text_secondary))
                     setPadding(0, dp(4), 0, 0)
+                    // 分类字段来自数据库（备份包可写入）：单行 + 省略号，防超长文本拖垮主线程布局
+                    setMaxLines(1)
+                    setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 row.addView(num, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))

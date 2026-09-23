@@ -264,11 +264,13 @@ class Prefs(context: Context) {
      * 键盘皮肤 id（见 [KeyboardSkins]）。
      *
      * 皮肤只覆盖键盘自身的色值（键面 / 功能键 / 候选栏 / 背板）与质感参数，
-     * 与「亮白 / 暗黑主题」「半透明 / 圆角 / 间隙」正交；未知值读取时归一为默认皮肤，
-     * 保证脏配置不改变历史观感。
+     * 与「亮白 / 暗黑主题」「半透明 / 圆角 / 间隙」正交。
+     *
+     * 缺省值取 [KeyboardSkins.INITIAL_ID]（紫晶，用户 2026-09-23 指定的初始皮肤）；
+     * 未知/脏值仍由 `byId` 归一为 [KeyboardSkins.DEFAULT_ID]（历史令牌基线），不改历史观感。
      */
     var keyboardSkinId: String
-        get() = KeyboardSkins.byId(sp.getString(KEY_KEYBOARD_SKIN, KeyboardSkins.DEFAULT_ID)).id
+        get() = KeyboardSkins.byId(sp.getString(KEY_KEYBOARD_SKIN, KeyboardSkins.INITIAL_ID)).id
         set(value) = sp.edit { putString(KEY_KEYBOARD_SKIN, KeyboardSkins.byId(value).id) }
 
     /**
@@ -289,6 +291,139 @@ class Prefs(context: Context) {
      * 因此这里的字面拼接不会再产出 OkHttp 会拒绝的地址。
      */
     val wsUrl: String get() = "ws://$host:$port"
+
+    /**
+     * 等待所有已排队的 `apply()` 真正落盘。
+     *
+     * 导入结束后要 `killProcess` 重启输入法，而 `apply()` 是异步的、Activity 也不会走
+     * onPause/onStop 替我们等 —— IO 压力大时最后一批键可能丢，用户看到的是「导入了一半」。
+     * `commit()` 会排到队列末尾并等待其完成（SharedPreferences 的既有语义）。
+     */
+    internal fun flush(): Boolean =
+        runCatching { sp.edit().commit() }.getOrDefault(false)
+
+    // ── 备份导出 / 导入（见 ConfigBackup / ConfigBackupManager） ──────────
+
+    /**
+     * 备份导出：返回全部**可迁移**的键值。
+     *
+     * 覆盖 [Prefs] 的**全部**键（现在连 `update_last_check_at` 这类运行态时间戳也带上）：
+     * 用户要求「所有配置与设置参数都能导出 / 导入」，少一个键都算漏。照搬该时间戳的副作用
+     * 只是新机上首次自动检查更新可能晚一点（最长 7 天），不影响任何功能。
+     *
+     * `favorite_symbols` 用 null 标记「键不存在」= 从未编辑过（出厂预置 D I Y），
+     * 与用户删光的 `"[]"` 是两种语义，导入时必须原样还原，故 null 也要导出。
+     */
+    internal fun exportForBackup(): Map<String, ConfigBackup.BackupValue> {
+        val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
+        fun put(key: String, value: Any?) {
+            ConfigBackup.BackupValue.of(value)?.let { out[key] = it }
+        }
+        put(KEY_HOST, host)
+        put(KEY_PORT, port)
+        put(KEY_LOCK_SERVER, lockServer)
+        put(KEY_LANGUAGE, language)
+        put(KEY_PROMPT, prompt)
+        put(KEY_STRIP_PUNC, stripTrailingPunc)
+        put(KEY_COMPOSING, useComposing)
+        put(KEY_SHUANGPIN, useShuangpin)
+        put(KEY_SHUANGPIN_SCHEME, shuangpinScheme)
+        put(KEY_KB_ENGLISH, keyboardEnglish)
+        put(KEY_AUTO_SHOW_KB, autoShowKeyboard)
+        put(KEY_DEFAULT_MODE, defaultKeyboardMode)
+        put(KEY_PREDICT_ENABLED, predictEnabled)
+        put(KEY_USER_LEARNING, userLearning)
+        put(KEY_SHOW_RARE_CHARS, showRareChars)
+        put(KEY_VOICE_INPUT, voiceInputEnabled)
+        put(KEY_KEY_CORNER_DP, keyCornerDp)
+        put(KEY_KEY_GAP_DP, keyGapDp)
+        put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
+        put(KEY_KEYBOARD_SKIN, keyboardSkinId)
+        put(KEY_THEME_MODE, themeMode)
+        put(KEY_SYMBOL_ORDER, symbolGroupOrder)
+        put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
+        put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)
+        put(KEY_THEME_DARK_AT, themeDarkAtMinutes)
+        put(KEY_UPDATE_LAST_CHECK_AT, updateLastCheckAt)
+        return out
+    }
+
+    /** 导入报告：成功写入的键数 + 白名单外的键 + 类型不符的键 */
+    internal class ImportReport(val applied: Int, val unknown: List<String>, val mismatch: List<String>)
+
+    /**
+     * 备份导入（覆盖语义）：按白名单逐键写入，一律走本类 setter。
+     *
+     * 越界 / 未知取值由 setter 与各消费点的既有归一逻辑兜底（皮肤 id → 默认皮肤、
+     * 方案编号 → 自然码、符号顺序 → 补回缺失分组），脏备份不会把非法值带进运行期。
+     * 白名单外的键（更高版本生成的备份）忽略并计数，不报错。
+     */
+    internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): ImportReport {
+        var applied = 0
+        val unknown = ArrayList<String>()
+        val mismatch = ArrayList<String>()
+
+        fun ok() { applied++ }
+        fun bad(key: String) { mismatch.add(key) }
+
+        for ((key, v) in values) {
+            when (key) {
+                KEY_HOST -> asString(v)?.let { host = it; ok() } ?: bad(key)
+                KEY_PORT -> asInt(v)?.let { port = it; ok() } ?: bad(key)
+                KEY_LOCK_SERVER -> asBool(v)?.let { lockServer = it; ok() } ?: bad(key)
+                KEY_LANGUAGE -> asString(v)?.let { language = it; ok() } ?: bad(key)
+                KEY_PROMPT -> asString(v)?.let { prompt = it; ok() } ?: bad(key)
+                KEY_STRIP_PUNC -> asBool(v)?.let { stripTrailingPunc = it; ok() } ?: bad(key)
+                KEY_COMPOSING -> asBool(v)?.let { useComposing = it; ok() } ?: bad(key)
+                KEY_SHUANGPIN -> asBool(v)?.let { useShuangpin = it; ok() } ?: bad(key)
+                KEY_SHUANGPIN_SCHEME -> asInt(v)?.let { shuangpinScheme = it; ok() } ?: bad(key)
+                KEY_KB_ENGLISH -> asBool(v)?.let { keyboardEnglish = it; ok() } ?: bad(key)
+                KEY_AUTO_SHOW_KB -> asBool(v)?.let { autoShowKeyboard = it; ok() } ?: bad(key)
+                KEY_DEFAULT_MODE -> asInt(v)?.let { defaultKeyboardMode = it; ok() } ?: bad(key)
+                KEY_PREDICT_ENABLED -> asBool(v)?.let { predictEnabled = it; ok() } ?: bad(key)
+                KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
+                KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
+                KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
+                KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
+                KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
+                KEY_KEY_TRANSPARENCY_PERCENT ->
+                    asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
+                KEY_KEYBOARD_SKIN -> asString(v)?.let { keyboardSkinId = it; ok() } ?: bad(key)
+                KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
+                KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
+                // 键存在但值为 null = 从未编辑过：必须移除本机取值才能还原「出厂预置」态
+                KEY_FAVORITE_SYMBOLS -> if (v.kind == ConfigBackup.BackupValue.KIND_NULL) {
+                    sp.edit { remove(KEY_FAVORITE_SYMBOLS) }
+                    ok()
+                } else {
+                    val raw = asString(v)
+                    when {
+                        raw == null -> bad(key)
+                        // 与 symbol_group_order 同理必须归一：解析在主线程（键盘视图构造时）执行，
+                        // 十几 MB 的数组会让每次重建键盘都做百万级解析。归一后落盘的是规范结构，
+                        // 符号集合与顺序不变（见 FavoriteSymbols 的结构规则）。
+                        raw.length > MAX_FAVORITE_SYMBOLS_CHARS -> bad(key)
+                        else -> {
+                            favoriteSymbols = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))
+                            ok()
+                        }
+                    }
+                }
+                KEY_THEME_LIGHT_AT -> asInt(v)?.let { themeLightAtMinutes = it; ok() } ?: bad(key)
+                KEY_THEME_DARK_AT -> asInt(v)?.let { themeDarkAtMinutes = it; ok() } ?: bad(key)
+                // 运行态时间戳同样照搬（全量口径），也是 Long 类型路径的唯一真实使用者
+                KEY_UPDATE_LAST_CHECK_AT -> asLong(v)?.let { updateLastCheckAt = it; ok() } ?: bad(key)
+                else -> unknown.add(key)
+            }
+        }
+        return ImportReport(applied, unknown, mismatch)
+    }
+
+    private fun asString(v: ConfigBackup.BackupValue): String? = v.value as? String
+    private fun asInt(v: ConfigBackup.BackupValue): Int? = v.value as? Int
+    private fun asLong(v: ConfigBackup.BackupValue): Long? = v.value as? Long
+    private fun asFloat(v: ConfigBackup.BackupValue): Float? = v.value as? Float
+    private fun asBool(v: ConfigBackup.BackupValue): Boolean? = v.value as? Boolean
 
     companion object {
         const val DEFAULT_HOST = "192.168.1.3"
@@ -378,6 +513,14 @@ class Prefs(context: Context) {
         /** 符号分组顺序（label 串；空 = 默认，见 [SymbolOrder]） */
         private const val KEY_SYMBOL_ORDER = "symbol_group_order"
         private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
+
+        /**
+         * `favorite_symbols` 的导入长度上限（4096 字符 ≈ 十余页符号，远超任何真实用法）。
+         *
+         * 它必须与 `symbol_group_order` 一样在导入时归一：解析发生在键盘视图构造的**主线程**上，
+         * 超长 JSON 会让每次重建键盘都做百万级解析（ANR/OOM），且值已落盘、重启输入法也无效。
+         */
+        private const val MAX_FAVORITE_SYMBOLS_CHARS = 4096
         private const val KEY_THEME_LIGHT_AT = "theme_light_at"
         private const val KEY_THEME_DARK_AT = "theme_dark_at"
 

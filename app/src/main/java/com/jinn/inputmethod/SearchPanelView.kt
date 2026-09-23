@@ -97,6 +97,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     textSize = 11f
                     setTextColor(context.getColor(R.color.text_secondary))
                     setPadding(0, dp(3), 0, 0)
+                    // 分类字段来自数据库（备份包可写入）：单行 + 省略号，防超长文本拖垮主线程布局
+                    setMaxLines(1)
+                    setEllipsize(android.text.TextUtils.TruncateAt.END)
                 }
                 row.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 v.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

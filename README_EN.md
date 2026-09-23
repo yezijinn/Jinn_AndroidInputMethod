@@ -49,6 +49,13 @@ English ｜ [中文](README.md)
 - Optional dictionaries (Settings →「补充短语词库」): the long-word pack (~185K entries) and
   Tencent lexicon (~955K entries) are downloadable on demand; loaded only when idle, so typing is
   never blocked; adding or removing a pack auto-restarts the IME to apply.
+- Config backup (Settings → "配置导出 / 导入"): export all settings plus user word frequency
+  (optionally clipboard history and downloaded dictionaries) into one encrypted `.jinn` file,
+  and restore it on another device. Whole-package AES-256-GCM; the password (Chinese characters
+  only) is never stored. Import either as "restore over" (settings and word frequency are
+  written back from the backup) or "merge data only" (merge word frequency and clipboard,
+  leave local settings untouched). Package contents are previewed before importing
+  (backup time / source device / per-section counts).
 - No bundled models: APK is about 5.0MB, depending only on
   `core-ktx`, `activity-ktx`, `okhttp3`, and `xz`.
 - (Optional) Voice dictation: press-and-hold or tap the mic to speak; recognized text streams

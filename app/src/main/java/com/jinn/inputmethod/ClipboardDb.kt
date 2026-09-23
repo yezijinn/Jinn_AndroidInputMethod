@@ -393,6 +393,61 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
 
+    // ── 备份导入 ──────────────────────────────────────────
+
+    /**
+     * 全部内容哈希（备份导入去重用）。
+     *
+     * 只查 `content_hash` 一列、不解密：历史可能有几千条，逐条解密只为拿到哈希
+     * 等于把整个库的明文都搬进内存，与分页加载的初衷相悖。
+     */
+    fun allHashes(): Set<String> {
+        val out = HashSet<String>()
+        readableDatabase.rawQuery("SELECT content_hash FROM $TABLE_ITEMS", null).use { c ->
+            while (c.moveToNext()) {
+                val h = c.getString(0)
+                if (!h.isNullOrEmpty()) out.add(h)
+            }
+        }
+        return out
+    }
+
+    /**
+     * 备份导入写入：保留原始时间戳与收藏标记。
+     *
+     * 与 [upsert] 的区别是不做「置顶」也不覆盖同 hash 的既有行——去重由调用方
+     * （[allHashes] + `ConfigBackup.planClipboardImport`）先行规划，这里只负责
+     * 按原样落库，否则导入的上百条历史会被统一改写成「刚刚复制」。
+     *
+     * @return 新行 id；内容为空或加密失败返回 -1
+     */
+    @Synchronized
+    fun insertRestored(
+        content: String,
+        createdAt: Long,
+        sourcePackage: String,
+        sourceAppName: String,
+        category: String,
+        favorite: Boolean,
+    ): Long {
+        if (content.isBlank()) return -1
+        // 与采集路径同一口径的单条上限：备份里的超长单条会让面板每次打开都为它解密一遍，
+        // 而「新复制的同样内容不入库、导入的却入库」本身就是行为不一致
+        if (ClipboardStore.exceedsItemLimit(content)) return -1
+        val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
+        val values = ContentValues().apply {
+            put("encrypted_content", encrypted)
+            put("content_type", "text")
+            put("created_at", createdAt)
+            put("source_package", sourcePackage)
+            put("source_app_name", sourceAppName)
+            put("content_hash", stableHash(content))
+            put("category", category)
+            put("is_favorite", if (favorite) 1 else 0)
+        }
+        return writableDatabase.insert(TABLE_ITEMS, null, values)
+    }
+
     // ── 内部 ──────────────────────────────────────────────
 
     private fun readItem(c: android.database.Cursor): Item? {

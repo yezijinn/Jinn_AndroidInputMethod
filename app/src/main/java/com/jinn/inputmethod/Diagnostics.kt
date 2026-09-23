@@ -29,6 +29,15 @@ object Diagnostics {
     private const val DIR_NAME = "JinnIme"
     private const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
+
+    /**
+     * 打包时清理旧诊断包的最小年龄。
+     *
+     * 上一次导出的包可能正被 SAF 复制线程读着（云盘目标上能跑好几秒），而本函数一进来就会
+     * 清掉同前缀的旧包 —— 年龄闸让「刚生成的」那份不会被并发流程删掉（与配置导出侧的
+     * `STALE_MIN_AGE_MS` 同一思路）。
+     */
+    private const val EXPORT_BUNDLE_KEEP_MS = 60 * 1000L
     private const val LOG_FILE_PREFIX = "jinn-"
     private const val LOGCAT_FILE_PREFIX = "logcat-"
 
@@ -341,7 +350,9 @@ object Diagnostics {
     fun latestBundle(context: Context): File? =
         File(context.cacheDir, DIR_NAME)
             .listFiles()
-            ?.filter { it.isFile && it.name.startsWith("jinn-diagnostics-") }
+            // 排除 `.tmp`：打包中断留下的半截件 mtime 最新，兜底会把它当成品写给用户
+            // （提示还是「已导出」，用户拿着一个打不开的包去找原因）
+            ?.filter { it.isFile && it.name.startsWith("jinn-diagnostics-") && !it.name.endsWith(".tmp") }
             ?.maxByOrNull { it.lastModified() }
 
     /** 今天的日志文件（可能尚未创建） */
@@ -373,12 +384,23 @@ object Diagnostics {
                         appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
                     }
                 )
-                val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.US)
+                // 毫秒精度：秒级精度下同一秒的两次导出会同名，`dest.exists()` 的删除会撞上
+                // 前一次正在复制的包
+                val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.US)
                     .format(java.time.LocalDateTime.now())
                 // 生成到缓存目录：不申请存储权限，随后由调用方（系统文件选择器）复制到用户选定位置
                 val outDir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
-                // 只保留本次导出：清掉上次遗留的包，避免缓存目录堆积
-                outDir.listFiles()?.forEach { if (it.name.startsWith("jinn-diagnostics-")) it.delete() }
+                // 只保留本次导出：清掉上次遗留的包，避免缓存目录堆积。必须带年龄闸 ——
+                // 上一次导出的包可能正被 `copyDiagZipTo` 复制（SAF 目标是云盘时能跑好几秒），
+                // 无条件删会让那次复制失败，而目标文件已被先截断成 0 字节
+                val nowMs = System.currentTimeMillis()
+                outDir.listFiles()?.forEach {
+                    if (it.name.startsWith("jinn-diagnostics-") &&
+                        nowMs - it.lastModified() >= EXPORT_BUNDLE_KEEP_MS
+                    ) {
+                        it.delete()
+                    }
+                }
                 val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
                 val files = srcDir.listFiles()?.toList().orEmpty()
                 if (files.isEmpty()) return@runCatching null

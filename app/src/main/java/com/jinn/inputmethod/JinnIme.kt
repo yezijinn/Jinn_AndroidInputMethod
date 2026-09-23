@@ -1570,7 +1570,8 @@ class JinnIme : InputMethodService() {
             return
         }
 
-        Diagnostics.i(TAG, "handleResult: 最终结果 \"${text.take(60)}\" (共${message.text.length}字)")
+        // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
+        Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
         if (prefs.useComposing) {
             connection.setComposingText(text, 1)
             connection.finishComposingText()
