@@ -196,4 +196,16 @@ class KeyboardSkinTest {
         assertNull("默认皮肤不得覆盖功能键文字色", KeyboardSkins.DEFAULT.functionGlyph)
         assertNull("默认皮肤不得覆盖功能键次要文字色", KeyboardSkins.DEFAULT.functionHint)
     }
+
+    @Test
+    fun 皮肤标签一律两字() {
+        for (s in KeyboardSkins.ALL) {
+            assertEquals(
+                "皮肤 ${s.id} 的标签应为两个字（外观页选项每行五个、等分宽度，" +
+                    "三字以上会挤压或换行）",
+                2,
+                s.label.length,
+            )
+        }
+    }
 }
