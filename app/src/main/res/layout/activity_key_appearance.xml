@@ -176,9 +176,9 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 皮肤：标题 / 说明 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
+            <!-- 皮肤：标题 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
                  避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。
-                 五个选项按权重等分一行（不再横向滚动），尺寸由代码按紧凑版式给。 -->
+                 容器竖向、每行五个由代码插入：皮肤多于五个时自动换行，不横向滚动。 -->
             <TextView
                 android:id="@+id/text_skin_title"
                 android:layout_width="match_parent"
@@ -192,7 +192,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:orientation="horizontal" />
+                android:orientation="vertical" />
 
         </LinearLayout>
     </LinearLayout>

@@ -118,20 +118,27 @@ class KeyAppearanceActivity : Activity() {
     }
 
     /**
-     * 键盘皮肤选择器：五个「预览块 + 名称」等分一行（紧凑版式，不再横向滚动），点选即落盘并即时生效。
+     * 键盘皮肤选择器：每行五个「预览块 + 名称」，皮肤多于五个时自动换行（紧凑版式，不横向滚动），
+     * 点选即落盘并即时生效。
      *
      * 预览块直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
-     * 文案（标题 / 说明 / 选项名）取代码常量与 [KeyboardSkins.label]：既不改 `strings.xml`
+     * 文案（标题 / 选项名）取代码常量与 [KeyboardSkins.label]：既不改 `strings.xml`
      * （默认禁改），也不在 XML 里硬编码文本（避免 HardcodedText）。选项文本为字面量，
      * 按项目既有做法就地抑制 lint 的 SetTextI18n。
      */
     @SuppressLint("SetTextI18n")
     private fun initSkinSelector(prefs: Prefs) {
         findViewById<TextView>(R.id.text_skin_title).text = "皮肤"
-        val row = findViewById<LinearLayout>(R.id.skin_row)
+        val grid = findViewById<LinearLayout>(R.id.skin_row)
         val density = resources.displayMetrics.density
         val items = mutableListOf<Pair<KeyboardSkin, View>>()
-        for (skin in KeyboardSkins.ALL) {
+        var line: LinearLayout? = null
+        for ((index, skin) in KeyboardSkins.ALL.withIndex()) {
+            if (index % SKINS_PER_ROW == 0) {
+                line = newSkinLine(isFirst = index == 0)
+                grid.addView(line)
+            }
+            val currentLine = line ?: continue
             val preview = PinyinKey(this).apply {
                 label = "A"
                 centeredStyle = true
@@ -176,11 +183,28 @@ class KeyAppearanceActivity : Activity() {
             // 会把触摸吃掉、外层选项收不到点击 —— 这里把点击转回选项容器。
             preview.setOnClickListener { column.performClick() }
             items += skin to column
-            // 五个选项等分一行：屏宽 ÷ 5 恰好放下（不再横向滚动）
-            row.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            // 行内等分：一行五个，屏宽 ÷ 5 恰好放下（不横向滚动）
+            currentLine.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        // 末行不足一行时补空占位：等分权重下，缺位会把剩下的项拉伸变宽
+        val remainder = KeyboardSkins.ALL.size % SKINS_PER_ROW
+        if (remainder != 0) {
+            repeat(SKINS_PER_ROW - remainder) {
+                line?.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
+            }
         }
         refreshSkinSelection(items, prefs.keyboardSkinId)
     }
+
+    /** 皮肤选择器的一行：横向等分容器，非首行留出行间距 */
+    private fun newSkinLine(isFirst: Boolean): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { if (!isFirst) topMargin = dp(6) }
+        }
 
     /** 刷新皮肤选择器选中态：选中项全亮，其余降透明度（预览块自身即对应皮肤样式） */
     private fun refreshSkinSelection(items: List<Pair<KeyboardSkin, View>>, selectedId: String) {
@@ -191,6 +215,9 @@ class KeyAppearanceActivity : Activity() {
 
     private companion object {
         const val TAG = "KeyAppearance"
+
+        /** 皮肤选择器每行个数（十套皮肤排成两行五个） */
+        const val SKINS_PER_ROW = 5
 
         /** 与 key_appearance_bg.xml 的夜空底色一致（状态栏只吃颜色值，取不到 drawable） */
         val AURORA_TOP = 0xFF161240.toInt()
