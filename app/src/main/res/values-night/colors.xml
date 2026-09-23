@@ -63,9 +63,8 @@
          本页背景是固定色（key_appearance_bg.xml，不随主题变化），所以这里**刻意与亮色目录写同样的值**：
          值相同 ⇒ 观感固定；两套色板同名 ⇒ ThemeColorParityTest 的逐名对齐守卫依然成立。 -->
     <color name="key_appearance_fg">#F3F6FF</color>
-    <color name="key_appearance_fg_dim">#C3CEEE</color>
 
-    <!-- 按钮涟漪与次级底（原 drawable 硬编码值，逐条搬入） -->
+       <!-- 按钮涟漪与次级底（原 drawable 硬编码值，逐条搬入） -->
     <color name="ripple_on_accent">#33000000</color>
     <color name="ripple_on_surface">#26FFFFFF</color>
     <color name="btn_secondary_bg">#1E2A4A</color>

@@ -44,19 +44,11 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="4dp"
-            android:paddingBottom="8dp"
-            android:text="@string/key_appearance_desc"
-            android:textColor="@color/key_appearance_fg_dim"
-            android:textSize="12sp" />
-
         <!-- 测试编辑框：点这里唤起键盘，方便对照着调圆角 / 间隙 -->
         <EditText
             android:layout_width="match_parent"
             android:layout_height="44dp"
+            android:layout_marginTop="10dp"
             android:layout_marginBottom="10dp"
             android:background="@drawable/field_aurora"
             android:hint="@string/settings_ime_test_hint"
@@ -77,25 +69,26 @@
             android:orientation="vertical"
             android:padding="12dp">
 
-            <!-- 按键圆角 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/key_corner_title"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
+            <!-- 圆角：标签与拖动条同一行（极简紧凑版式，标签只两字，取值范围由拖动条自身表达） -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:text="@string/key_corner_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
 
                 <SeekBar
                     android:id="@+id/seek_key_corner"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
@@ -106,31 +99,32 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:minWidth="56dp"
+                    android:minWidth="52dp"
                     android:textColor="@color/accent"
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 按键间隙：左右间隙与上下间隙由同一个值控制 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/key_gap_title"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
+            <!-- 间隙：左右与上下间隙由同一个值控制，版式同「圆角」行 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:text="@string/key_gap_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
 
                 <SeekBar
                     android:id="@+id/seek_key_gap"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
@@ -141,31 +135,32 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:minWidth="56dp"
+                    android:minWidth="52dp"
                     android:textColor="@color/accent"
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 键盘透明度：只淡「面」不淡文字；双拼提示等文字保持原色 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/key_transparency_title"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
+            <!-- 透明：只淡「面」不淡文字；双拼提示等文字保持原色，版式同「圆角」行 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:text="@string/key_transparency_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
 
                 <SeekBar
                     android:id="@+id/seek_key_transparency"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
@@ -176,23 +171,14 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:minWidth="56dp"
+                    android:minWidth="52dp"
                     android:textColor="@color/accent"
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:text="@string/key_transparency_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <!-- 键盘皮肤：标题 / 说明 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
-                 避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。 -->
+            <!-- 皮肤：标题 / 说明 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
+                 避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。
+                 五个选项按权重等分一行（不再横向滚动），尺寸由代码按紧凑版式给。 -->
             <TextView
                 android:id="@+id/text_skin_title"
                 android:layout_width="match_parent"
@@ -201,38 +187,13 @@
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
 
-            <HorizontalScrollView
+            <LinearLayout
+                android:id="@+id/skin_row"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:scrollbars="none">
+                android:orientation="horizontal" />
 
-                <LinearLayout
-                    android:id="@+id/skin_row"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal" />
-            </HorizontalScrollView>
-
-            <TextView
-                android:id="@+id/text_skin_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:text="@string/key_appearance_apply_hint"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

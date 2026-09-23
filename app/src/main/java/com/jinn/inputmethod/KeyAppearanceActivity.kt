@@ -118,7 +118,7 @@ class KeyAppearanceActivity : Activity() {
     }
 
     /**
-     * 键盘皮肤选择器：横向排列「预览块 + 名称」，点选即落盘并即时生效。
+     * 键盘皮肤选择器：五个「预览块 + 名称」等分一行（紧凑版式，不再横向滚动），点选即落盘并即时生效。
      *
      * 预览块直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
      * 文案（标题 / 说明 / 选项名）取代码常量与 [KeyboardSkins.label]：既不改 `strings.xml`
@@ -127,9 +127,7 @@ class KeyAppearanceActivity : Activity() {
      */
     @SuppressLint("SetTextI18n")
     private fun initSkinSelector(prefs: Prefs) {
-        findViewById<TextView>(R.id.text_skin_title).text = "键盘皮肤"
-        findViewById<TextView>(R.id.text_skin_hint).text =
-            "只改键盘配色与质感；圆角 / 间隙 / 透明度仍由上面的滑杆控制"
+        findViewById<TextView>(R.id.text_skin_title).text = "皮肤"
         val row = findViewById<LinearLayout>(R.id.skin_row)
         val density = resources.displayMetrics.density
         val items = mutableListOf<Pair<KeyboardSkin, View>>()
@@ -152,18 +150,18 @@ class KeyAppearanceActivity : Activity() {
                         )
                     }
                 )
-                layoutParams = LinearLayout.LayoutParams(dp(56), dp(44))
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(34))
             }
             val name = TextView(this).apply {
                 text = skin.label
-                textSize = 11f
+                textSize = 10f
                 gravity = Gravity.CENTER
                 setTextColor(getColor(R.color.text_secondary))
             }
             val column = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(dp(6), dp(4), dp(6), dp(4))
+                setPadding(dp(2), dp(4), dp(2), dp(4))
                 isClickable = true
                 addView(preview)
                 addView(name)
@@ -178,7 +176,8 @@ class KeyAppearanceActivity : Activity() {
             // 会把触摸吃掉、外层选项收不到点击 —— 这里把点击转回选项容器。
             preview.setOnClickListener { column.performClick() }
             items += skin to column
-            row.addView(column)
+            // 五个选项等分一行：屏宽 ÷ 5 恰好放下（不再横向滚动）
+            row.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
         refreshSkinSelection(items, prefs.keyboardSkinId)
     }

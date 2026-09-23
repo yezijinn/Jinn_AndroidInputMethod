@@ -109,7 +109,7 @@
     <string name="update_btn_no">不要</string>
     <string name="update_download_page">打开下载页面</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者：https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者 https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -188,13 +188,10 @@
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_entry">键盘按钮调整</string>
-    <string name="key_appearance_desc">圆角与间隙作用于 26 键区 28 个按键\n透明度作用于整个键盘（含候选栏）</string>
-    <string name="key_corner_title">按键圆角（0 ~ 24dp，0 为直角）</string>
-    <string name="key_gap_title">按键间隙（0 ~ 8dp，0 为无缝）</string>
-    <string name="key_transparency_title">键盘透明度（0% ~ 100%，0% 为不透明）</string>
-    <string name="key_transparency_desc">只淡键面与底色，文字保持清晰</string>
-    <string name="key_appearance_apply_hint">松手即时生效 不用重启</string>
+    <string name="key_appearance_entry">键盘主题皮肤</string>
+    <string name="key_corner_title">圆角</string>
+    <string name="key_gap_title">间隙</string>
+    <string name="key_transparency_title">透明</string>
 
     <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
     <string name="symbol_order_title">符号分组顺序</string>

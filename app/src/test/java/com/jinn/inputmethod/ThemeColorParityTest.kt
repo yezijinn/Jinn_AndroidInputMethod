@@ -67,23 +67,25 @@ class ThemeColorParityTest {
     }
 
     /**
-     * 键盘透明度的标题文案必须与定义域（[KeyTransparency]）一致。
+     * 键盘外观页的滑杆标题保持「两字、不带范围」的极简版式（用户 2026-09-23 指定）。
      *
-     * 文案是写死的字符串：改了定义域忘改文案，编译 / lint / 运行都不报错，
-     * 只有用户会看到「0% ~ 80%」这种过期描述（2026-09-22 就把上限从 80 提到 100）。
+     * 改版前这里守的是「透明度标题的范围与 [KeyTransparency] 定义域一致」，前提是标题本身
+     * 写着 `0% ~ 100%`；版式改版后标题不再表达范围（由拖动条自身表达），改为守住新约定，
+     * 防止有人把范围描述写回标题。定义域本身的守卫仍在 `KeyTransparencyTest` / `KeyAppearanceTest`。
      */
     @Test
-    fun 透明度标题文案与定义域一致() {
+    fun 外观页滑杆标题保持两字且不带范围() {
         val xml = resFile("values/strings.xml").readText()
-        val title = Regex("<string name=\"key_transparency_title\">(.*?)</string>")
-            .find(xml)?.groupValues?.get(1)
-            ?: error("找不到 key_transparency_title")
-        // 断言「下界% ~ 上界%」连写形式，别写成 contains("0%")：
-        // 那是 "100%" 的子串，上界存在时下界断言恒真（守卫形同虚设）。
-        assertTrue(
-            "标题未按下界~上界连写（${KeyTransparency.MIN_PERCENT}% ~ ${KeyTransparency.MAX_PERCENT}%）: $title",
-            title.contains("${KeyTransparency.MIN_PERCENT}% ~ ${KeyTransparency.MAX_PERCENT}%"),
-        )
+        for ((name, expected) in listOf(
+            "key_corner_title" to "圆角",
+            "key_gap_title" to "间隙",
+            "key_transparency_title" to "透明",
+        )) {
+            val title = Regex("<string name=\"$name\">(.*?)</string>")
+                .find(xml)?.groupValues?.get(1)
+                ?: error("找不到 $name")
+            assertEquals("外观页标题应为「$expected」（极简版式，不带范围描述）", expected, title)
+        }
     }
 
     /**
