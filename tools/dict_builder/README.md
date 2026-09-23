@@ -15,7 +15,8 @@ app/src/main/assets/hot_phrases.txt.xz          高频子集（4 万词 / 220KB�
 release/dict_ext.txt.xz                         扩展包，Release 附件按需下载
 ```
 
-基础包**文本**（`out/rime_ice/pinyin_phrases.txt`）只作留档，不进 APK：运行时读二进制索引
+基础包**文本**由生成器输出到 `out/rime_ice/pinyin_phrases.txt`，只作对比（不进 APK）；
+留档副本存 `docs/dict_builder/`（本地，不入库）。运行时读二进制索引
 （`PhraseIndex` 二分查找 + 按需解码）。
 
 可选包（同样走 Release 附件）：`docs/rime-ice/cn_dicts/tencent.dict.yaml`
