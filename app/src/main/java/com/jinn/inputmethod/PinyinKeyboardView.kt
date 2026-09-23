@@ -822,6 +822,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         shiftBgAlpha = Float.NaN
         backspaceBgAlpha = Float.NaN
         candidateBarAlpha = Float.NaN
+        // 面板（剪贴板历史 / 搜索）与键盘同属一层皮肤：一并换色。必须在这里（早于
+        // applyKeyTransparency）下发，面板的纯色面才会被本轮的透明度套档扫到。
+        clipboardPanel.applySkin(s)
+        searchPanel.applySkin(s)
         Diagnostics.i(TAG, "键盘皮肤: $from -> ${s.id}（${s.label}）")
     }
 
@@ -886,6 +890,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (v in listOf(btnEnter, btnBackspace, btnShift)) {
             (v as? ImageButton)?.imageTintList = ColorStateList.valueOf(glyph)
         }
+        // 底部次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）：面随皮肤变深 / 变浅（见
+        // rebuildFunctionKeyBackgrounds），文字必须同源，否则默认的深色字会落在皮肤的深色面上
+        for (v in listOf(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
+            (v as? TextView)?.setTextColor(glyph)
+        }
         // 方向按钮：未激活态用皮肤主文字色；激活态的红色语义由 refreshDirectionButton 保留
         refreshDirectionButton()
     }
@@ -894,9 +903,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 皮肤色令牌：皮肤未覆盖（null）时回退到 `R.color` 令牌色。
      *
      * 默认皮肤与「未覆盖项」都走这个回退，保证皮肤机制不改变历史配色。
+     * 面板（剪贴板 / 搜索）复用文件级的 [skinColor]。
      */
-    private fun skinToken(override: Int?, tokenRes: Int): Int =
-        override ?: context.getColor(tokenRes)
+    private fun skinToken(override: Int?, tokenRes: Int): Int = skinColor(context, override, tokenRes)
 
     /** 组装「面」的 RGB 识别色集（默认令牌 + 可选皮肤覆盖色，null 项跳过），供 [alphaFaces] 匹配用 */
     private fun faceRgb(vararg colors: Int?): IntArray {
@@ -1007,7 +1016,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val keyFill = KeyTransparency.withAlpha(skinToken(skin.functionFill, R.color.key_bg), keyFaceAlpha)
         btnSpace.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
         btnEnter.background = buildKeyBackground(keyFill, dpFloat(KEY_BG_CORNER_DP))
-        val fill = KeyTransparency.withAlpha(context.getColor(R.color.btn_secondary_bg), keyFaceAlpha)
+        // 次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）的「面」：默认皮肤回落 btn_secondary_bg
+        // （历史观感），其余皮肤用功能面色 —— 磨砂等深色皮肤下若仍是白底，与周围深色键面形成刺眼对比
+        val fill = KeyTransparency.withAlpha(
+            skinToken(skin.functionFill, R.color.btn_secondary_bg),
+            keyFaceAlpha,
+        )
         val stroke = KeyTransparency.withAlpha(skinToken(skin.functionStroke, R.color.card_stroke), keyFaceAlpha)
         for (v in listOf<View>(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
             v.background = buildButtonBackground(fill, stroke)
@@ -1017,7 +1031,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 重建大写键背景：普通深色 / 大写锁定强调色二态，圆角跟设置页参数走。
      *
-     * 原先直接引用 key_bg.xml / key_bg_active.xml，圆角固定 10dp，与字母键自绘的
+     * 原先直接引用 key_bg.xml / key_bg_active.xml（后者随后续改造失去引用已删除），圆角固定 10dp，与字母键自绘的
      * 圆角对不上（同一行两种圆角），故改为运行时按同一参数生成。
      *
      * 带缓存：本方法由 [refreshKeyLabels] 间接调用（切层、翻符号页、切大小写都会走到），
@@ -1092,11 +1106,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 候选栏 / 面板里仍以 XML 静态背景（`key_bg.xml` / `key_bg_active.xml`）
+     * 候选栏 / 面板里仍以 XML 静态背景（`key_bg.xml`；`key_bg_active.xml` 随后续改造失去引用已删除）
      * 构建的按钮：按同款几何在运行时重建，只把填充色换成带「面不透明度」的版本，
      * 否则这些控件会一直是不透明的，把整条候选栏/面板压成实心（透明度拉满也看不出变化）。
      *
-     * [cornerDp] 与 XML 对齐：`key_bg` / `key_bg_active` 为 10dp；符号分组标签用 0（纯矩形，
+     * [cornerDp] 与 XML 对齐：`key_bg` 为 10dp（`key_bg_active` 同值，已删除）；符号分组标签用 0（纯矩形，
      * 原先由 `key_bg_rect.xml` 提供，随本次静态背景统一改造后该 drawable 已删除）。
      */
     private fun xmlKeyBackground(cornerDp: Float = KEY_BG_CORNER_DP, useAccent: Boolean = false): Drawable =
@@ -2112,7 +2126,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         selectionActive = active
         val key = centerSelectionKey
         key?.text = if (active) "◉" else "●"
-        // key_bg_active / key_bg 同款（10dp 圆角），填充色带面 alpha（激活态用强调色）
+        // key_bg 同款（10dp 圆角；原 key_bg_active 同值、已删除），填充色带面 alpha（激活态用强调色）
         key?.background = xmlKeyBackground(useAccent = active)
         // 激活态下副文字提示（放在按钮文字下方）
         key?.contentDescription = if (active) "文字拖选模式开启" else "文字拖选模式关闭"
@@ -2503,11 +2517,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
  * [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
  * `KEY_BG_CORNER_DP` 是同一口径）。
  */
-internal fun buildKeyFaceBackground(context: android.content.Context, alpha: Float, cornerDp: Float = 10f): android.graphics.drawable.Drawable {
+/**
+ * 皮肤覆盖色优先，未定义（null）时回落到 `R.color` 令牌色。键盘视图与面板共用同一口径，
+ * 使默认皮肤（全部覆盖为 null）与历史配色逐像素一致。
+ */
+internal fun skinColor(context: android.content.Context, override: Int?, tokenRes: Int): Int =
+    override ?: context.getColor(tokenRes)
+
+internal fun buildKeyFaceBackground(
+    context: android.content.Context,
+    alpha: Float,
+    cornerDp: Float = 10f,
+    fillColor: Int = context.getColor(R.color.key_bg),
+): android.graphics.drawable.Drawable {
     val corner = cornerDp * context.resources.displayMetrics.density
     val content = android.graphics.drawable.GradientDrawable().apply {
         shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-        setColor(KeyTransparency.withAlpha(context.getColor(R.color.key_bg), alpha))
+        setColor(KeyTransparency.withAlpha(fillColor, alpha))
         cornerRadius = corner
     }
     val mask = android.graphics.drawable.GradientDrawable().apply {
