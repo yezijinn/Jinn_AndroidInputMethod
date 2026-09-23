@@ -117,10 +117,31 @@ class SettingsActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { refreshMicState() }
 
-    /** 诊断包导出：走系统文件选择器让用户自选保存位置（全程不申请存储权限） */
+    /**
+     * 诊断包导出：走系统文件选择器让用户自选保存位置（全程不申请存储权限）。
+     *
+     * 回调可能发生在 Activity 重建之后（进程被系统回收再恢复，ColorOS 上概率不低）：
+     * 此时内存字段已丢，用缓存目录里最近的包兜底定位；两条异常分支都必须明确提示，
+     * 否则会静默什么都不做，并在目标位置留下 0 字节空文件。
+     */
     private val exportDiagLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
-    ) { uri -> if (uri != null) copyDiagZipTo(uri) }
+    ) { uri ->
+        val src = pendingDiagZip ?: Diagnostics.latestBundle(this)
+        pendingDiagZip = null
+        when {
+            uri == null -> {
+                Diagnostics.i(TAG, "exportDiagnostics: 用户取消导出（清理临时包 ${src?.name ?: "无"}）")
+                src?.delete()
+                resetDiagHint()
+            }
+            src == null || !src.isFile -> {
+                Diagnostics.w(TAG, "exportDiagnostics: 临时包不存在（导出被中断）")
+                textDiagDir.text = getString(R.string.settings_diag_export_fail, "导出被中断，请重试")
+            }
+            else -> copyDiagZipTo(uri, src)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -468,6 +489,13 @@ class SettingsActivity : ComponentActivity() {
     // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
     // 对应 ClipboardPermissionActivity / PermissionStore / Provider 已删除。
 
+    /** 提示行恢复为「日志目录：…」（用户取消导出、未产生结果时用） */
+    private fun resetDiagHint() {
+        Diagnostics.currentLogDir?.let {
+            textDiagDir.text = getString(R.string.settings_diag_dir_hint, it.absolutePath)
+        }
+    }
+
     /**
      * 导出诊断包：先在缓存目录打包（零权限），再弹系统文件选择器让用户挑保存位置。
      *
@@ -494,8 +522,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /** 把临时诊断包写入用户选定的位置（SAF），写完即删临时文件 */
-    private fun copyDiagZipTo(uri: Uri) {
-        val src = pendingDiagZip ?: return
+    private fun copyDiagZipTo(uri: Uri, src: java.io.File) {
         // 提示里用自己生成的文件名：部分 provider 的 lastPathSegment 是文档 ID（如 "18"），对用户没有意义
         val displayName = src.name
         Thread {
@@ -505,7 +532,6 @@ class SettingsActivity : ComponentActivity() {
                 } != null
             }.getOrDefault(false)
             src.delete()
-            pendingDiagZip = null
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 if (ok) {

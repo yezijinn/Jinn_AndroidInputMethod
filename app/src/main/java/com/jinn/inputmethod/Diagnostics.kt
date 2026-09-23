@@ -331,6 +331,19 @@ object Diagnostics {
 
     val currentLogDir: File? get() = logDir
 
+    /**
+     * 缓存目录里最近一次生成的诊断包；没有则返回 null。
+     *
+     * 用途：导出流程横跨「应用 → 系统文件选择器 → 应用」，进程被系统回收再恢复时
+     * 调用方持有的文件引用会丢，用它按最后一次生成时间兜底定位。
+     * 同一次导出最多只存在一个包（[exportBundle] 生成前会清掉旧包）。
+     */
+    fun latestBundle(context: Context): File? =
+        File(context.cacheDir, DIR_NAME)
+            .listFiles()
+            ?.filter { it.isFile && it.name.startsWith("jinn-diagnostics-") }
+            ?.maxByOrNull { it.lastModified() }
+
     /** 今天的日志文件（可能尚未创建） */
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
