@@ -1297,7 +1297,7 @@ object PinyinEngine {
         }
         // 出口统一过一遍生僻字过滤：索引路径（collectLongerSuffixes）此前绕过了过滤，
         // 与运行时路径（addLongerSuffixes → phrasesFor 内的 filterRareChars）以及 query 的
-        // 口径不一致，开启「隐藏生僻字」（默认）时，预测候选仍可能带出生僻词并可上屏。
+        // 不一致，开启「隐藏生僻字」（默认）时，预测候选仍可能带出生僻词并可上屏。
         // 收集上限用 PREDICT_COLLECT_LIMIT（2 倍）正是为此：前几个候选被过滤后仍有后续候选
         // 可回填，不会"无故变少/变空"；commonChars 为 null 时原样返回，零开销。
         return filterRareChars(out.toTypedArray()).take(MAX_PREDICTIONS).toList()
@@ -1591,7 +1591,7 @@ object PinyinEngine {
     /**
      * 前缀 → 完整音节列表缓存（补全查询热路径，避免重复扫描音节表）。
      *
-     * 用并发容器与 [mergedCache] / [candidatePinyin] 同口径：当前调用链只在主线程
+     * 用并发容器与 [mergedCache] / [candidatePinyin] 一致：当前调用链只在主线程
      * （[queryWithCompletion] ← [query] ← 键盘视图），普通 HashMap 还不会出事，
      * 但本类的读方本就与加载线程并发，缓存一旦被后台路径复用就是「读 get 撞写扩容
      * 成环卡死」那一类事故，声明处对齐，别留这颗雷。

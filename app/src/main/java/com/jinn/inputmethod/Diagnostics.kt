@@ -1,7 +1,6 @@
 package com.jinn.inputmethod
 
 import android.content.Context
-import android.os.Environment
 import android.os.Process
 import android.util.Log
 import java.io.File
@@ -14,12 +13,11 @@ import java.util.concurrent.TimeUnit
 /**
  * 诊断日志系统。
  *
- * 把应用全链路运行信息写入手机内部存储，便于在真机上直接读取排查问题：
- *   - 默认目录：`/storage/emulated/0/JinnIme/logs/`
+ * 把应用全链路运行信息写入应用专属目录，便于真机排查：
+ *   - 目录：`<应用专属外部目录>/logs/`（`getExternalFilesDir`，零权限即可读写）
  *   - 按天滚动一个文件 `jinn-YYYY-MM-dd.log`，线程安全追加写
  *   - 崩溃时把 stack trace 写入日志并抓取 logcat 快照
- *   - 有 root（KernelSU / Magisk）时用 chown 让应用获得共享存储写权限；
- *     无 root 则退回应用专属目录（getExternalFilesDir），日志不丢
+ *   - 导出的诊断包由设置页经系统文件选择器（SAF）交给用户自选位置，全程不申请存储权限
  *   - 自动清理 7 天前的旧日志
  *
  * 所有方法幂等、线程安全、绝不让日志异常影响业务逻辑。
@@ -31,6 +29,15 @@ object Diagnostics {
     private const val DIR_NAME = "JinnIme"
     private const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
+
+    /**
+     * 打包时清理旧诊断包的最小年龄。
+     *
+     * 上一次导出的包可能正被 SAF 复制线程读着（云盘目标上能跑好几秒），而本函数一进来就会
+     * 清掉同前缀的旧包 —— 年龄闸让「刚生成的」那份不会被并发流程删掉（与配置导出侧的
+     * `STALE_MIN_AGE_MS` 同一思路）。
+     */
+    private const val EXPORT_BUNDLE_KEEP_MS = 60 * 1000L
     private const val LOG_FILE_PREFIX = "jinn-"
     private const val LOGCAT_FILE_PREFIX = "logcat-"
 
@@ -88,72 +95,12 @@ object Diagnostics {
         }
     }
 
-    /** 依次尝试：共享存储直写 → root 授权 → 应用专属目录 */
-    private fun resolveLogDir(context: Context): File? {
-        val publicDir = File(Environment.getExternalStorageDirectory(), "$DIR_NAME/$LOG_DIR_NAME")
-        if (makeWritable(publicDir)) {
-            return publicDir
-        }
-        if (grantPublicDirViaRoot(context, publicDir)) {
-            return publicDir
-        }
-        return context.getExternalFilesDir(null)
+    /** 日志目录：一律用应用专属外部目录（零权限），不申请共享存储写入能力 */
+    private fun resolveLogDir(context: Context): File? =
+        context.getExternalFilesDir(null)
             ?.let { File(it, LOG_DIR_NAME) }
             ?.also { it.mkdirs() }
             ?.takeIf { it.isDirectory }
-    }
-
-    /** mkdir + 写探针验证可写 */
-    private fun makeWritable(dir: File): Boolean = runCatching {
-        dir.mkdirs()
-        if (!dir.isDirectory) return false
-        val probe = File(dir, ".probe-${Process.myPid()}")
-        probe.writeText("ok")
-        val writable = probe.exists() && probe.delete()
-        writable
-    }.getOrDefault(false)
-
-    /**
-     * 用 root 授权本应用直写共享存储：
-     *  1. `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow`，scoped storage 下
-     *     让应用获得"所有文件访问"能力，可直写 /storage/emulated/0/ 任意路径
-     *     （需 Manifest 声明 MANAGE_EXTERNAL_STORAGE 权限）
-     *  2. 兜底 chown 目标目录给本应用 uid（部分 ROM 的 FUSE 不认，仅作补充）
-     */
-    private fun grantPublicDirViaRoot(context: Context, dir: File): Boolean = runCatching {
-        val uid = Process.myUid()
-        val pkg = context.packageName
-        val commands = arrayOf(
-            "appops set $pkg MANAGE_EXTERNAL_STORAGE allow",
-            "mkdir -p '${dir.absolutePath}' && chown $uid:$uid '${dir.absolutePath}' && chmod 700 '${dir.absolutePath}'",
-        )
-        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", commands.joinToString(" && ")))
-        // 两路都必须后台排空：`chown`/`mkdir` 一旦输出写满管道（64KB），子进程会阻塞在写端，
-        // 而父进程正在 waitFor，只能等到 5s 超时（日志里表现为「root 授权超时」，
-        // root 直写共享目录的功能静默失效）。写法与 ClipboardFirewall.su 对齐。
-        val outDrain = Thread {
-            runCatching {
-                process.inputStream.use { input ->
-                    val buf = ByteArray(4096)
-                    while (input.read(buf) > 0) Unit
-                }
-            }
-        }.apply { isDaemon = true; start() }
-        val errDrain = Thread {
-            runCatching { process.errorStream.bufferedReader().forEachLine { } }
-        }.apply { isDaemon = true; start() }
-        val finished = process.waitFor(5, TimeUnit.SECONDS)
-        // 超时必须销毁：`su` 等用户点授权时 waitFor 会一直超时，不销毁就留下一个挂起进程
-        // 和它的三个管道句柄。
-        if (!finished) {
-            process.destroy()
-            Diagnostics.w(TAG, "root 授权超时（5s），已销毁 su 进程")
-        }
-        outDrain.join(200)
-        errDrain.join(200)
-        val ok = finished && process.exitValue() == 0
-        if (ok) makeWritable(dir) else false
-    }.getOrDefault(false)
 
     private fun installCrashHandler() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
@@ -393,15 +340,31 @@ object Diagnostics {
 
     val currentLogDir: File? get() = logDir
 
+    /**
+     * 缓存目录里最近一次生成的诊断包；没有则返回 null。
+     *
+     * 用途：导出流程横跨「应用 → 系统文件选择器 → 应用」，进程被系统回收再恢复时
+     * 调用方持有的文件引用会丢，用它按最后一次生成时间兜底定位。
+     * 同一次导出最多只存在一个包（[exportBundle] 生成前会清掉旧包）。
+     */
+    fun latestBundle(context: Context): File? =
+        File(context.cacheDir, DIR_NAME)
+            .listFiles()
+            // 排除 `.tmp`：打包中断留下的半截件 mtime 最新，兜底会把它当成品写给用户
+            // （提示还是「已导出」，用户拿着一个打不开的包去找原因）
+            ?.filter { it.isFile && it.name.startsWith("jinn-diagnostics-") && !it.name.endsWith(".tmp") }
+            ?.maxByOrNull { it.lastModified() }
+
     /** 今天的日志文件（可能尚未创建） */
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
     // ── 导出诊断包 ─────────────────────────────────────────
 
     /**
-     * 把日志目录打包成一个 zip 导出到共享存储（/storage/emulated/0/JinnIme/），
-     * 供用户用文件管理器直接取出。返回导出文件路径；失败返回 null。
-     * 包含：全部日志、最近的 logcat 快照、设备信息文本。
+     * 把日志目录打包成 zip，写到应用缓存目录并返回该文件（零权限）。
+     *
+     * 调用方（设置页）随后经系统文件选择器把内容交给用户自选位置，写完即删临时包。
+     * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
      */
     fun exportBundle(context: Context): File? {
         val srcDir = logDir ?: return null
@@ -421,10 +384,23 @@ object Diagnostics {
                         appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
                     }
                 )
-                val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.US)
+                // 毫秒精度：秒级精度下同一秒的两次导出会同名，`dest.exists()` 的删除会撞上
+                // 前一次正在复制的包
+                val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.US)
                     .format(java.time.LocalDateTime.now())
-                val outDir = File(Environment.getExternalStorageDirectory(), DIR_NAME)
-                outDir.mkdirs()
+                // 生成到缓存目录：不申请存储权限，随后由调用方（系统文件选择器）复制到用户选定位置
+                val outDir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
+                // 只保留本次导出：清掉上次遗留的包，避免缓存目录堆积。必须带年龄闸 ——
+                // 上一次导出的包可能正被 `copyDiagZipTo` 复制（SAF 目标是云盘时能跑好几秒），
+                // 无条件删会让那次复制失败，而目标文件已被先截断成 0 字节
+                val nowMs = System.currentTimeMillis()
+                outDir.listFiles()?.forEach {
+                    if (it.name.startsWith("jinn-diagnostics-") &&
+                        nowMs - it.lastModified() >= EXPORT_BUNDLE_KEEP_MS
+                    ) {
+                        it.delete()
+                    }
+                }
                 val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
                 val files = srcDir.listFiles()?.toList().orEmpty()
                 if (files.isEmpty()) return@runCatching null

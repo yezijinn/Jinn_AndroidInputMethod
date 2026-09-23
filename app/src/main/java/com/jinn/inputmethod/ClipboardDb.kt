@@ -272,7 +272,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 按总体积裁剪：密文总量超过 [maxTotalBytes] 时，从最旧的非收藏记录开始删，直到落回预算内。
      *
-     * 体积口径用 `LENGTH(encrypted_content)`，该列是 base64（纯 ASCII），字符数即字节数，
+     * 体积按 `LENGTH(encrypted_content)`，该列是 base64（纯 ASCII），字符数即字节数，
      * 单条 SQL 就能算出总量与逐条大小，无需解密、无需把正文读进内存。
      * 收藏计入总量但不参与淘汰（与 [TRIM_PRIORITY] 同一条原则）：若收藏本身就超预算，只能停手。
      */
@@ -350,7 +350,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 分页读取记录（新→旧），只解密本页 [limit] 条，并带回下一页的游标位置。
      *
-     * 游标口径：[Page.nextOffset] 是实际扫描过的原始行数，不是解密成功的条数。
+     * 游标含义：[Page.nextOffset] 是实际扫描过的原始行数，不是解密成功的条数。
      * [readItem] 遇到解密失败的行会跳过，两者一旦混用就会错位，调用方普遍拿
      * 「已加载条数」当 OFFSET，只要首页有 1 条解密失败，下一页就会重复取到已显示的行、
      * 并把尾部行永久跳过。分页必须改用 [Page.nextOffset]。
@@ -393,6 +393,61 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
 
+    // ── 备份导入 ──────────────────────────────────────────
+
+    /**
+     * 全部内容哈希（备份导入去重用）。
+     *
+     * 只查 `content_hash` 一列、不解密：历史可能有几千条，逐条解密只为拿到哈希
+     * 等于把整个库的明文都搬进内存，与分页加载的初衷相悖。
+     */
+    fun allHashes(): Set<String> {
+        val out = HashSet<String>()
+        readableDatabase.rawQuery("SELECT content_hash FROM $TABLE_ITEMS", null).use { c ->
+            while (c.moveToNext()) {
+                val h = c.getString(0)
+                if (!h.isNullOrEmpty()) out.add(h)
+            }
+        }
+        return out
+    }
+
+    /**
+     * 备份导入写入：保留原始时间戳与收藏标记。
+     *
+     * 与 [upsert] 的区别是不做「置顶」也不覆盖同 hash 的既有行——去重由调用方
+     * （[allHashes] + `ConfigBackup.planClipboardImport`）先行规划，这里只负责
+     * 按原样落库，否则导入的上百条历史会被统一改写成「刚刚复制」。
+     *
+     * @return 新行 id；内容为空或加密失败返回 -1
+     */
+    @Synchronized
+    fun insertRestored(
+        content: String,
+        createdAt: Long,
+        sourcePackage: String,
+        sourceAppName: String,
+        category: String,
+        favorite: Boolean,
+    ): Long {
+        if (content.isBlank()) return -1
+        // 与采集路径一致的单条上限：备份里的超长单条会让面板每次打开都为它解密一遍，
+        // 而「新复制的同样内容不入库、导入的却入库」本身就是行为不一致
+        if (ClipboardStore.exceedsItemLimit(content)) return -1
+        val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
+        val values = ContentValues().apply {
+            put("encrypted_content", encrypted)
+            put("content_type", "text")
+            put("created_at", createdAt)
+            put("source_package", sourcePackage)
+            put("source_app_name", sourceAppName)
+            put("content_hash", stableHash(content))
+            put("category", category)
+            put("is_favorite", if (favorite) 1 else 0)
+        }
+        return writableDatabase.insert(TABLE_ITEMS, null, values)
+    }
+
     // ── 内部 ──────────────────────────────────────────────
 
     private fun readItem(c: android.database.Cursor): Item? {
@@ -432,7 +487,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /**
          * 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB）。
          *
-         * 注意口径：按库内密文（base64）体积计（`LENGTH(encrypted_content)`），
+         * 注意：按库内密文（base64）体积计（`LENGTH(encrypted_content)`），
          * 不是明文字节，base64 膨胀约 4/3，故 100 MB 预算约对应 73 MB 明文。
          */
         const val DEFAULT_MAX_TOTAL_BYTES = 100L * 1024 * 1024

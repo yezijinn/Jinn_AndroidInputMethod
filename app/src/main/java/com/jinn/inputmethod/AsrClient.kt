@@ -234,7 +234,8 @@ class AsrClient(
             if (webSocket !== socket) return
             val message = RecognitionMessage.parse(text)
             if (message == null) {
-                Diagnostics.w(TAG, "onMessage: 报文解析失败 raw=${text.take(200)}")
+                // 只记长度不记原文：报文体里可能就是用户语音识别出的正文
+                Diagnostics.w(TAG, "onMessage: 报文解析失败 len=${text.length}")
                 Log.w(TAG, "onMessage: 报文解析失败")
                 return
             }
@@ -247,7 +248,7 @@ class AsrClient(
             if (message.isFinal) acceptingTask = null
             Diagnostics.i(
                 TAG,
-                "onMessage: final=${message.isFinal} dur=${message.duration}s text=\"${message.text.take(60)}\""
+                "onMessage: final=${message.isFinal} dur=${message.duration}s textLen=${message.text.length}"
             )
             onResult(message)
         }

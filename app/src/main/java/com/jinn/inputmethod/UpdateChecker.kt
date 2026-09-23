@@ -7,7 +7,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 版本更新检查（遵循 unified-update-check 约定）。
+ * 版本更新检查（遵循 unified-update-check 统一）。
  *
  * 版本方案：versionCode 取构建当日日期（yyyyMMdd，纯整数），天然单调可比，
  * versionName 仅展示不参与比较。远程真源取仓库 tag 中的最大日期数字。

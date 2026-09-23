@@ -835,7 +835,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         backspaceBgAlpha = Float.NaN
         candidateBarAlpha = Float.NaN
         // 面板（剪贴板历史 / 搜索）与键盘同属一层皮肤：一并换色。必须在这里（早于
-        // applyKeyTransparency）下发，面板的纯色面才会被本轮的透明度套档扫到。
+        // applyKeyTransparency）下发，面板的纯色面才会被本次的透明度套档扫到。
         clipboardPanel.applySkin(s)
         searchPanel.applySkin(s)
         Diagnostics.i(TAG, "键盘皮肤: $from -> ${s.id}（${s.label}）")
@@ -952,7 +952,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 候选栏底色按当前是否有内容选档：
      *  - 有拼音串 / 候选 / 预测时：面上叠着文字（候选词没有自己的面）→ 必须走 surface 档，
-     *    否则文字会直接糊在宿主内容上（与 [KeyTransparency] 的可读性约定冲突）；
+     *    否则文字会直接糊在宿主内容上（与 [KeyTransparency] 的可读性规则冲突）；
      *  - 空白铺底（功能面板 / 符号层 / 搜索态，文字都在按钮自己的面上）→ 走 plate 档，可做最透。
      *
      * 带缓存：档位没变就不重设，避免每次按键都白重绘一次候选栏；
@@ -1113,9 +1113,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             cornerRadius = cornerPx
         }
         return RippleDrawable(
-            ColorStateList.valueOf(context.getColor(R.color.key_ripple)), content, mask,
+            ColorStateList.valueOf(rippleColor(fillColor, R.color.key_ripple)), content, mask,
         )
     }
+
+    /**
+     * 涟漪色：默认皮肤走令牌（随主题明暗），其余皮肤按 [fillColor] 的明暗推导 ——
+     * 亮面用 10% 黑、暗面用 30% 白（与两套主题令牌同值）。
+     *
+     * 皮肤只覆盖面色与文字，涟漪若继续读令牌，「亮白主题 + 深色皮肤」会给深键面压 10% 黑
+     * （几乎看不见按压反馈）、「暗黑主题 + 浅色皮肤」则在浅键面上泛白，与皮肤观感割裂
+     * （2026-09-23 审查确认的唯一可见不搭配）。
+     */
+    private fun rippleColor(fillColor: Int, fallbackRes: Int): Int =
+        if (skin.isDefault) context.getColor(fallbackRes) else KeyboardSkins.rippleOn(fillColor)
 
     /**
      * 生成与 `btn_aurora_secondary.xml` 同款（实心 + 1dp 描边 + 水波纹）的按钮背景。
@@ -1135,7 +1146,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             cornerRadius = corner
         }
         return RippleDrawable(
-            ColorStateList.valueOf(context.getColor(R.color.ripple_on_surface)), content, mask,
+            ColorStateList.valueOf(rippleColor(fillColor, R.color.ripple_on_surface)), content, mask,
         )
     }
 
@@ -1922,7 +1933,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 keySemicolon.setPressedVisual(false)
-                // 命中判定不可省（与字母键同口径，见 isInsideKey 的 KDoc）：
+                // 命中判定不可省（与字母键一致，见 isInsideKey 的 KDoc）：
                 // 手指从 `;` 滑到相邻字母键再抬起时，不应把用户并未按下的分号追加进拼音串。
                 if (!isInsideKey(keySemicolon, event)) {
                     Diagnostics.v(TAG, "分号键: 抬起在键外，忽略")
@@ -1934,7 +1945,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
 
-            // 与字母键同口径：多指场景下不复位会让分号键卡在高亮态
+            // 与字母键一致：多指场景下不复位会让分号键卡在高亮态
             MotionEvent.ACTION_POINTER_DOWN -> {
                 keySemicolon.setPressedVisual(true)
                 return true
@@ -2009,7 +2020,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 搜索态：功能面板只保留「退出搜索」。
         // 其余按钮都不能出现，历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
         // 作用于宿主输入框的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
-        // 面板动作必须同口径。「全选」会让退出搜索后的下一次输入替换整段正文，
+        // 面板动作必须一致。「全选」会让退出搜索后的下一次输入替换整段正文，
         // 「粘贴」会把剪贴板正文注入宿主，「方向」会移动宿主光标。
         if (isPanelSearch()) {
             viewCandidateList.addView(buildFunctionButton(
@@ -2188,7 +2199,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // key_bg 同款（10dp 圆角；原 key_bg_active 同值、已删除），填充色带面 alpha（激活态用强调色）
         key?.background = xmlKeyBackground(useAccent = active)
         // 激活态底色是各皮肤 accent（浅到钛金 #B8C4D6、深到雪原 #3A6EA5）：字色按该色亮度取深/浅，
-        // 与 shift 键同口径；否则近白字压浅 accent 仅约 1.5:1，等于看不见（与 D4 同类）
+        // 与 shift 键一致；否则近白字压浅 accent 仅约 1.5:1，等于看不见（与 D4 同类）
         key?.setTextColor(
             if (active) KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
             else skinToken(skin.functionGlyph, R.color.text_primary),
@@ -2419,7 +2430,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         searchPanel.visibility = View.VISIBLE
         searchPanel.onShown()
         // 与方向面板互斥：两者同屏时方向键（箭头/复制/粘贴）会落到宿主输入框上，
-        // 与「搜索态只作用于搜索框」的口径冲突（同 showClipboardPanel 的对称处理）。
+        // 与「搜索态只作用于搜索框」的前提冲突（同 showClipboardPanel 的对称处理）。
         if (directionPanelVisible) hideDirectionPanel()
         // 必须在面板可见之后再刷一次候选栏：clearComposingState 内部那次刷新发生在
         // visibility 置位之前，isPanelSearch() 仍为 false，会渲染出宿主功能面板并残留。
@@ -2583,10 +2594,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
  * 用途：面板里的分类按钮用的是 `key_bg` drawable，带不了动态 alpha，键盘侧的「纯色面」
  * 识别也扫不到它；透明度 > 0 时由面板按当前档重建（见 `ClipboardPanelView.applySurfaceAlpha`）。
  * [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
- * `KEY_BG_CORNER_DP` 是同一口径）。
+ * `KEY_BG_CORNER_DP` 是一致）。
  */
 /**
- * 皮肤覆盖色优先，未定义（null）时回落到 `R.color` 令牌色。键盘视图与面板共用同一口径，
+ * 皮肤覆盖色优先，未定义（null）时回落到 `R.color` 令牌色。键盘视图与面板共用一致，
  * 使默认皮肤（全部覆盖为 null）与历史配色逐像素一致。
  */
 internal fun skinColor(context: android.content.Context, override: Int?, tokenRes: Int): Int =
@@ -2597,6 +2608,7 @@ internal fun buildKeyFaceBackground(
     alpha: Float,
     cornerDp: Float = 10f,
     fillColor: Int = context.getColor(R.color.key_bg),
+    rippleColor: Int = context.getColor(R.color.key_ripple),
 ): android.graphics.drawable.Drawable {
     val corner = cornerDp * context.resources.displayMetrics.density
     val content = android.graphics.drawable.GradientDrawable().apply {
@@ -2610,7 +2622,7 @@ internal fun buildKeyFaceBackground(
         cornerRadius = corner
     }
     return android.graphics.drawable.RippleDrawable(
-        android.content.res.ColorStateList.valueOf(context.getColor(R.color.key_ripple)),
+        android.content.res.ColorStateList.valueOf(rippleColor),
         content,
         mask,
     )

@@ -109,7 +109,7 @@
     <string name="update_btn_no">不要</string>
     <string name="update_download_page">打开下载页面</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者 https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n启用语音输入之后,长按空格键即可进入语音功能页面\n作者 https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -149,7 +149,7 @@
     <!-- 诊断 -->
     <string name="settings_voice_input">语音输入</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
-    <string name="settings_export_diag">导出诊断包到内部存储</string>
+    <string name="settings_export_diag">导出诊断包</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
     <string name="settings_diag_dir_hint">日志目录：%1$s</string>
@@ -162,11 +162,6 @@
     
 
     <!-- Root 增强模式 -->
-    <string name="clipboard_root_enhance">Root 增强模式</string>
-    <string name="clipboard_root_enhance_desc">用 Root 权限检查数据目录是否安全（可选）</string>
-    <string name="clipboard_root_status">Root 状态：%1$s</string>
-    <string name="clipboard_root_available">可用</string>
-    <string name="clipboard_root_unavailable">不可用</string>
 
     <!-- 剪贴板分类 -->
     <string name="switch_show_rare_chars">加更多生僻字</string>
@@ -188,7 +183,7 @@
 
     <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_entry">键盘主题皮肤</string>
+    <string name="key_appearance_entry">键盘配色皮肤</string>
     <string name="key_corner_title">圆角</string>
     <string name="key_gap_title">间隙</string>
     <string name="key_transparency_title">透明</string>
@@ -204,7 +199,7 @@
     <!-- 收藏分组：编辑页与设置页入口 -->
     <string name="favorite_title">符号收藏编辑</string>
     <string name="favorite_entry_title">符号的自定义</string>
-    <string name="favorite_desc">增删「收藏」里的符号；每页最多 26 个，满了自动开新页。改完即时保存，返回键盘就生效。</string>
+    <string name="favorite_desc">增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
     <string name="favorite_add">＋ 添加符号</string>
     <string name="favorite_close">✕</string>
@@ -214,7 +209,7 @@
     <string name="favorite_exists">该符号已在收藏中</string>
     <string name="favorite_invalid">请输入 1~8 个字符</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
-    <string name="theme_card_title">键盘主题配色</string>
+    <string name="theme_card_title">界面明暗切换</string>
     <string name="theme_card_desc">明暗跟随 定时切换</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
     <string name="theme_dark_at_tpl">暗起 %1$s</string>

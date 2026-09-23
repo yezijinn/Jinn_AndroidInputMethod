@@ -77,6 +77,10 @@ internal object UserFrequency {
         val f = File(context.filesDir, FILE_NAME)
         file = f
         if (!enabled) {
+            // 关掉学习时也要把内存态清干净：否则运行期的 flush() / 防抖落盘会把上一份内存快照
+            // 写回文件，把「刚导入的词频」覆盖掉（导入还原 userLearning=false 就是这条路径）。
+            entries.clear()
+            dirty = false
             Diagnostics.i(TAG, "用户词频学习已关闭（设置项 userLearning=false）")
             return
         }
@@ -153,6 +157,14 @@ internal object UserFrequency {
     }
 
     /** 测试用：dirty 状态（验证写失败后保留、写成功后清除） */
+    /**
+     * 内存态版本号：每次 [remember] 自增。落盘成功后只有「版本没变」时才清 [dirty] ——
+     * 渲染与清标记之间若有并发学习写进内存，无条件清 dirty 会把它标成「已落盘」，
+     * 此后 `flush` 直接因 `!dirty` 返回，那次学习就静默丢了。
+     */
+    @Volatile
+    private var version = 0L
+
     internal fun isDirtyForTest(): Boolean = dirty
 
     internal fun sizeForTest(): Int = entries.size
@@ -170,16 +182,20 @@ internal object UserFrequency {
             return
         }
         val now = today()
-        entries.compute(word) { _, old ->
-            // librime formula_d：dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)
-            // 与 parse 一致地对「未来 day」钳位：用户系统时钟回拨时 old.day > now，
-            // 不钳位的话 exp(正数) 会把权重放大到天文数字（回拨 2000 天 = 22 万倍），此后永久霸榜。
-            val elapsed = ((old?.day ?: now) - now).coerceAtMost(0)
-            val decayed = (old?.weight ?: 0.0) * Math.exp(elapsed / 200.0)
-            Entry(decayed + 1.0, now)
+        // 内存态更新放进写盘锁：导入的 replaceFromBackup 会在同一把锁内做「clear + 重填 + 清脏」，
+        // 不加锁就可能出现「刚学到的词被 clear 抹掉」或「内存里有、脏标记被清掉而永不落盘」
+        synchronized(saveLock) {
+            entries.compute(word) { _, old ->
+                // librime formula_d：dee_new = commits + dee_old * exp((tick_old - tick_now) / 200)
+                // 与 parse 一致地对「未来 day」钳位：用户系统时钟回拨时 old.day > now，
+                // 不钳位的话 exp(正数) 会把权重放大到天文数字（回拨 2000 天 = 22 万倍），此后永久霸榜。
+                val decayed = (old?.weight ?: 0.0) * Math.exp(dayDiff(old?.day ?: now, now) / 200.0)
+                Entry(decayed + 1.0, now)
+            }
+            trimIfNeeded()
+            dirty = true
+            version++
         }
-        trimIfNeeded()
-        dirty = true
         scheduleSave()
     }
 
@@ -238,7 +254,9 @@ internal object UserFrequency {
                 // （测试的 setFileForTest、未来可能的重新 load），旧任务既不该写到旧路径，
                 // 更不该把新文件的 `dirty` 清掉（那会让新内容白白跳过一轮落盘）。
                 if (file !== f) return@synchronized
-                if (writeAtomically(f, render())) dirty = false
+                // 清 dirty 前核对版本（见 [version]）：渲染与清标记之间可能有并发学习进内存
+                val v = version
+                if (writeAtomically(f, render()) && version == v) dirty = false
             }
         }
     }
@@ -255,7 +273,8 @@ internal object UserFrequency {
         // 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），等于静默丢失，
         // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
         synchronized(saveLock) {
-            if (writeAtomically(f, render())) dirty = false
+            val v = version
+            if (writeAtomically(f, render()) && version == v) dirty = false
         }
     }
 
@@ -293,6 +312,17 @@ internal object UserFrequency {
     }
 
     /**
+     * 天差值（≤0），供衰减指数使用。
+     *
+     * 必须用 Long 相减：`day` 来自外部文本（可被手工编辑，也会随导入进来），
+     * `Int.MIN_VALUE` 附近的值减 `nowDay` 会在 Int 域里**回绕成大正数**，被 `coerceAtMost(0)`
+     * 归零后权重完全不衰减 —— 这类脏行会永久霸占该拼音的首候选，并被 [render] 原样写回文件，
+     * 每次启动都复现，无法自愈。
+     */
+    private fun dayDiff(day: Int, nowDay: Int): Long =
+        (day.toLong() - nowDay.toLong()).coerceAtMost(0L)
+
+    /**
      * 解析文件文本并按天衰减（纯函数，便于单测）。
      * 容错：跳过表头/空行/字段数不对/权重非法/当天权重低于 [MIN_WEIGHT] 的行。
      */
@@ -312,7 +342,7 @@ internal object UserFrequency {
             // [rank] 后更麻烦：`Double.compare` 把 NaN 当最大值，这条权重坏掉的词会永久霸占该
             // 拼音的首候选（空格取首候选就等于一直上屏它），并被 [render] 原样写回文件、无法自愈。
             if (word.isEmpty() || !weight.isFinite() || weight <= 0.0) continue
-            val decayed = weight * Math.exp(((day - nowDay).coerceAtMost(0)) / 200.0)
+            val decayed = weight * Math.exp(dayDiff(day, nowDay) / 200.0)
             if (decayed < MIN_WEIGHT) continue
             val prev = out[word]
             if (prev == null || decayed > prev.first) {
@@ -322,6 +352,84 @@ internal object UserFrequency {
         return out
     }
 
+    /**
+     * 备份导入合并（纯函数，便于单测）：把备份的词频文本并入本机文本。
+     *
+     * 语义：
+     *  - 两边都先按 [parse] 衰减到 `nowDay` 再合并，与运行期加载一致（否则导入的是
+     *    「旧机器上的绝对权重」，换机后衰减基准不同，会出现导入即失真）；
+     *  - 同一词取「权重较大者、天较新者」而不是相加：两台设备都学过的词不该因导入翻倍；
+     *  - 结果按权重降序、截断 [MAX_ENTRIES]，并过滤低于 [MIN_WEIGHT] 的词
+     *    （否则导入的弱词会在下次加载时被静默丢掉，等于「导入了却没生效」）。
+     *
+     * @param localText 本机当前文件文本（「仅并入」模式传原文；「覆盖还原」模式传空串）
+     */
+    internal class MergeResult(
+        val text: String,
+        val localCount: Int,
+        val incomingCount: Int,
+        val mergedCount: Int,
+    )
+
+    internal fun mergeForBackup(localText: String, incomingText: String, nowDay: Int): MergeResult {
+        val local = parse(localText, nowDay)
+        val incoming = parse(incomingText, nowDay)
+        val merged = HashMap<String, Pair<Double, Int>>(local)
+        for ((word, v) in incoming) {
+            val prev = merged[word]
+            merged[word] = if (prev == null) v
+            else Pair(maxOf(prev.first, v.first), maxOf(prev.second, v.second))
+        }
+        val kept = merged.entries.sortedByDescending { it.value.first }.take(MAX_ENTRIES)
+        val sb = StringBuilder(kept.size * 24 + 32)
+        sb.append(HEADER).append('\n')
+        for (entry in kept) {
+            sb.append(entry.key).append('\t')
+                .append(String.format(java.util.Locale.US, "%.3f", entry.value.first)).append('\t')
+                .append(entry.value.second).append('\n')
+        }
+        return MergeResult(sb.toString(), local.size, incoming.size, kept.size)
+    }
+
+    /**
+     * 备份导入专用：把合并后的文本**在同一把写盘锁内**落盘并同步内存态。
+     *
+     * 必须走这里，而不是「[writeAtomically] + [load]」两步：运行期的防抖落盘（[scheduleSave]）
+     * 与 [flush] 会在任意时刻把**内存里的旧快照**写回同一个文件，两步之间被插一脚，就等于
+     * 刚导入的词频被静默覆盖。[saveLock] 由本模块独占，导入与运行期写盘因此严格串行。
+     *
+     * @param enabled 与 `Prefs.userLearning` 一致；关着也照样填内存 —— `rank()` 自会挡掉，
+     *   而用户随后打开开关时内存里已是导入后的表，不必等下次启动补载
+     * @return 是否写盘成功
+     */
+    internal fun replaceFromBackup(target: File, mergedText: String, enabled: Boolean): Boolean {
+        this.enabled = enabled
+        // 同步内部文件引用：导入之后运行期的防抖写盘 / flush 要落到同一个文件上
+        file = target
+        val written = synchronized(saveLock) {
+            val v = version
+            if (!writeAtomically(target, mergedText)) {
+                return@synchronized false
+            }
+            entries.clear()
+            for ((word, e) in parse(mergedText, today())) entries[word] = Entry(e.first, e.second)
+            // 重填期间若有并发学习进入内存（version 变了，见 [remember] 的锁），就保持 dirty，
+            // 让后续落盘把这份内存态（含那次学习）写回文件；无条件清掉等于把它永久跳过
+            dirty = version != v
+            true
+        }
+        if (written && dirty) scheduleSave()
+        if (written) {
+            Diagnostics.i(TAG, "备份导入: 词频已替换 ${entries.size} 条（学习开关=$enabled）")
+        } else {
+            Diagnostics.w(TAG, "备份导入: 词频写盘失败，保留原文件")
+        }
+        return written
+    }
+
+    /** 词频文件文本的行数统计（备份页预览用；坏行不计） */
+    internal fun countEntries(text: String): Int = parse(text, today()).size
+
     /** 原子写：临时文件 + 改名（与索引缓存同一套写法，避免半截文件被当成有效数据） */
     internal fun writeAtomically(target: File, text: String): Boolean = runCatching {
         val tmp = File(target.parentFile, target.name + ".tmp")
@@ -329,13 +437,18 @@ internal object UserFrequency {
             out.write(text.toByteArray(Charsets.UTF_8))
             out.flush()
         }
-        if (target.exists() && !target.delete()) {
-            tmp.delete()
-            return@runCatching false
-        }
+        // 直接改名覆盖（Linux 的 rename 是原子的）：先删目标会制造一个「目标不存在」的窗口，
+        // 恰好此时进程被杀，用户的词频文件就凭空消失了
         if (!tmp.renameTo(target)) {
-            tmp.delete()
-            return@runCatching false
+            // 少数文件系统不允许覆盖式改名，才退回「删了再改名」
+            if (target.exists() && !target.delete()) {
+                tmp.delete()
+                return@runCatching false
+            }
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                return@runCatching false
+            }
         }
         true
     }.getOrElse {

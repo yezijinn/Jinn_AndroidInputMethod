@@ -46,7 +46,7 @@ object KeyTransparency {
     /** 把任意输入钳到定义域内（脏配置/外部写入一律收敛到合法值） */
     fun clampPercent(percent: Int): Int = percent.coerceIn(MIN_PERCENT, MAX_PERCENT)
 
-    /** 百分比 → SeekBar 进度（口径与 [KeyAppearance] 的换算一致：进度 = 值 − 下界） */
+    /** 百分比 → SeekBar 进度（标准与 [KeyAppearance] 的换算一致：进度 = 值 − 下界） */
     fun percentToProgress(percent: Int): Int = clampPercent(percent) - MIN_PERCENT
 
     /** SeekBar 进度 → 百分比 */
