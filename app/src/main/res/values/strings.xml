@@ -109,7 +109,7 @@
     <string name="update_btn_no">不要</string>
     <string name="update_download_page">打开下载页面</string>
 
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n作者 https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n启用语音输入之后,长按空格键即可进入语音功能页面\n作者 https://github.com/yezijinn</string>
 
     <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
     <string-array name="language_entries">
@@ -149,7 +149,7 @@
     <!-- 诊断 -->
     <string name="settings_voice_input">语音输入</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
-    <string name="settings_export_diag">导出诊断包到内部存储</string>
+    <string name="settings_export_diag">导出诊断包</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
     <string name="settings_diag_dir_hint">日志目录：%1$s</string>

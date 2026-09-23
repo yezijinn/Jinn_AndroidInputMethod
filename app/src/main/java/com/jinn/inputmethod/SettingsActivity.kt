@@ -85,6 +85,9 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnExportDiag: Button
     private lateinit var textDiagDir: TextView
 
+    /** 待写入用户选定位置的诊断包（生成在缓存目录，写入或取消后删除） */
+    private var pendingDiagZip: java.io.File? = null
+
     // 剪贴板
     private lateinit var clipboardPrefs: ClipboardPrefs
     private lateinit var editClipboardMax: EditText
@@ -113,6 +116,11 @@ class SettingsActivity : ComponentActivity() {
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refreshMicState() }
+
+    /** 诊断包导出：走系统文件选择器让用户自选保存位置（全程不申请存储权限） */
+    private val exportDiagLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri -> if (uri != null) copyDiagZipTo(uri) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -460,22 +468,52 @@ class SettingsActivity : ComponentActivity() {
     // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
     // 对应 ClipboardPermissionActivity / PermissionStore / Provider 已删除。
 
-    /** 导出诊断包：zip 到 /storage/emulated/0/JinnIme/ 并提示路径 */
+    /**
+     * 导出诊断包：先在缓存目录打包（零权限），再弹系统文件选择器让用户挑保存位置。
+     *
+     * 打包与写入都走后台线程（SAF 的 OutputStream 可能较慢）；两处都保留 Activity
+     * 销毁守卫，避免操作已 detach 的 view。
+     */
     private fun exportDiagnostics() {
         btnExportDiag.isEnabled = false
-        Diagnostics.i(TAG, "exportDiagnostics: 开始导出诊断包")
+        Diagnostics.i(TAG, "exportDiagnostics: 开始打包诊断包")
         Thread {
             val file = Diagnostics.exportBundle(this)
             runOnUiThread {
-                // 导出是后台任务，回调时 Activity 可能已销毁（避免操作已 detach 的 view）
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 btnExportDiag.isEnabled = true
                 if (file != null) {
-                    Diagnostics.i(TAG, "exportDiagnostics: 导出完成 ${file.absolutePath}")
-                    textDiagDir.text = getString(R.string.settings_diag_exported, file.absolutePath)
+                    pendingDiagZip = file
+                    exportDiagLauncher.launch(file.name)
                 } else {
-                    Diagnostics.w(TAG, "exportDiagnostics: 导出失败")
-                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可写")
+                    Diagnostics.w(TAG, "exportDiagnostics: 打包失败")
+                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
+                }
+            }
+        }.start()
+    }
+
+    /** 把临时诊断包写入用户选定的位置（SAF），写完即删临时文件 */
+    private fun copyDiagZipTo(uri: Uri) {
+        val src = pendingDiagZip ?: return
+        // 提示里用自己生成的文件名：部分 provider 的 lastPathSegment 是文档 ID（如 "18"），对用户没有意义
+        val displayName = src.name
+        Thread {
+            val ok = runCatching {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    src.inputStream().use { it.copyTo(out) }
+                } != null
+            }.getOrDefault(false)
+            src.delete()
+            pendingDiagZip = null
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (ok) {
+                    Diagnostics.i(TAG, "exportDiagnostics: 导出完成 $uri")
+                    textDiagDir.text = getString(R.string.settings_diag_exported, displayName)
+                } else {
+                    Diagnostics.w(TAG, "exportDiagnostics: 写入失败")
+                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "写入失败")
                 }
             }
         }.start()
