@@ -825,7 +825,7 @@ class JinnIme : InputMethodService() {
      *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档，按色值识别；
      *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ，
      *    它们是 drawable，色值识别扫不到，按当前档重建；
-     *  - `mic_button`（MicButton）属禁改域（自绘），不参与；其底盘已随 `mic_area` 一起处理。
+     *  - `mic_button`（MicButton）不参与（自绘）；其底盘已随 `mic_area` 一起处理。
      */
     private fun applyTransparencyToVoicePanel() {
         val container = keyboardContainer ?: return

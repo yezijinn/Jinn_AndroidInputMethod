@@ -54,8 +54,8 @@ class SymbolLayoutTest {
 
     @Test
     fun 全角半角紧随其后于变量之前() {
-        // 用户要求的固定顺序：全角 半角 变量 ……（原来只有一个混装的「常用」组；
-        // 第三组原为「编程」，2026-09-24 按用户要求改为「变量」）
+        // 固定顺序：全角 半角 变量 ……（原来只有一个混装的「常用」组；
+        // 第三组原为「编程」，2026-09-24 改为「变量」）
         assertEquals(listOf("全角", "半角", "变量"), SYMBOL_GROUPS.take(3).map { it.label })
     }
 
@@ -81,7 +81,7 @@ class SymbolLayoutTest {
 
     @Test
     fun 全角半角两组不得含数字() {
-        // 用户要求：两组都全局禁用数字（含全角数字 ０-９），数字走数字层/数字键盘。
+        // 两组都全局禁用数字（含全角数字 ０-９），数字走数字层/数字键盘。
         // 原先「半角」组第 1 页带着 1~0 十个数字，就是这条规则要清掉的历史遗留。
         val bad = listOf("全角", "半角").flatMap { label ->
             val group = SYMBOL_GROUPS.first { it.label == label }
@@ -95,7 +95,7 @@ class SymbolLayoutTest {
 
     @Test
     fun 全角半角两组不得混入字母或汉字() {
-        // 用户要求：两组「只放符号，不得混入任何其他类型」。全角字母（Ａ）与汉字都算混入。
+        // 两组「只放符号，不得混入任何其他类型」。全角字母（Ａ）与汉字都算混入。
         val bad = listOf("全角", "半角").flatMap { label ->
             val group = SYMBOL_GROUPS.first { it.label == label }
             group.pages.withIndex().flatMap { (i, page) ->
@@ -108,9 +108,9 @@ class SymbolLayoutTest {
 
     @Test
     fun 符号页必须先放满26键再翻页() {
-        // 用户要求（2026-09-21）：一页 26 个符号，第 1 页必须先放满，剩余的才进下一页
-        //，不允许「16+16」这种半空页。这也是全表既有规范（其余分组的非末页都是 26 键），
-        // 此前只有「半角」组违反（两页各 16 键），本次修正后用本用例守住。
+        // 一页 26 个符号，第 1 页必须先放满，剩余的才进下一页，不允许「16+16」这种半空页。
+        // 这是全表的既有规范（其余分组的非末页都是 26 键），此前只有「半角」组违反
+        //（两页各 16 键），本次修正后用本用例守住。
         val bad = SYMBOL_GROUPS.flatMap { group ->
             group.pages.withIndex().mapNotNull { (i, page) ->
                 when {
@@ -126,8 +126,8 @@ class SymbolLayoutTest {
 
     @Test
     fun 全角与半角两组取值零重合() {
-        // 用户策略（2026-09-21）：半角组只留 ASCII，同一个符号不得在两组各有一份，
-        // 否则「按宽度选组」失去意义（`° ± × ÷ ℃` 这类无全/半角之分的符号统一放「全角」组）。
+        // 半角组只留 ASCII，同一个符号不得在两组各有一份，否则「按宽度选组」失去意义
+        //（`° ± × ÷ ℃` 这类无全/半角之分的符号统一放「全角」组）。
         val full = SYMBOL_GROUPS.first { it.label == "全角" }.pages.flatMap { it.values }.toSet()
         val half = SYMBOL_GROUPS.first { it.label == "半角" }.pages.flatMap { it.values }.toSet()
         assertEquals("「全角 / 半角」两组出现重合取值: ${full intersect half}", emptySet<String>(), full intersect half)
@@ -135,8 +135,8 @@ class SymbolLayoutTest {
 
     @Test
     fun 半角组顺序与全角组逐项对应() {
-        // 用户要求（2026-09-21）：半角组「尽量按与全角对应的顺序」排，全角第 1 个是逗号，
-        // 半角第 1 个也必须是逗号。判据：每个半角符号的全角对应（取全角组首次出现者）
+        // 半角组「尽量按与全角对应的顺序」排：全角第 1 个是逗号，半角第 1 个也必须是逗号。
+        // 判据：每个半角符号的全角对应（取全角组首次出现者）
         // 在全角序列里的下标单调递增；没有全角对应的（`$`）跳过，且只允许排在末尾。
         val full = SYMBOL_GROUPS.first { it.label == "全角" }.pages.flatMap { it.values }
         val half = SYMBOL_GROUPS.first { it.label == "半角" }.pages.flatMap { it.values }
@@ -165,8 +165,8 @@ class SymbolLayoutTest {
     }
 
     @Test
-    fun 变量组按用户清单给全且取值全为动态() {
-        // 用户要求（2026-09-24 第二次修订）：变量组按指定清单排列，去掉 IPV4 / IPV6。
+    fun 变量组按清单给全且取值全为动态() {
+        // 变量组按清单定序定名（2026-09-24 定稿），不做 IPV4 / IPV6。
         // 钉住「组内每个取值都是动态标记」：漏标记会把短名当符号直接上屏；
         // 键面短名与展开逻辑的护栏见 `DynamicSymbolsTest`。
         val group = SYMBOL_GROUPS.first { it.label == "变量" }
@@ -176,7 +176,7 @@ class SymbolLayoutTest {
         assertEquals("「变量」组出现了静态取值: $bad", emptyList<String>(), bad)
         val labels = group.pages.flatMap { it.values }.map(DynamicSymbols::labelOf)
         assertEquals(
-            "变量组应与用户清单逐项一致（键面文本与顺序都按清单）",
+            "变量组应与清单逐项一致（键面文本与顺序都按清单）",
             listOf(
                 "星期", "农历", "季度", "财年", "生肖", "天数", "周数", "分辨率", "时间戳", "毫秒戳",
                 "年日中", "年日数", "年日符", "时秒中", "时秒数", "时秒符", "长时中", "长时数", "长时符",
@@ -188,12 +188,12 @@ class SymbolLayoutTest {
     @Test
     fun 页内统一字号取最宽标签() {
         // 符号层按本页最宽标签算字号（`PinyinKey.uniformMeasureText`）⇒ 同页所有键同号，
-        // 不会出现用户反馈的「2 字大、4 字小」。宽度模型：ASCII ≈0.5em（记 1）、其余 ≈1em（记 2）。
+        // 不会出现「2 字大、4 字小」。宽度估算：ASCII 记 1（≈0.5em）、其余记 2（≈1em）。
         assertEquals("日期连字", widestSymbolLabel(listOf("日期", "日期连字", "年月")))
         assertEquals("年月日", widestSymbolLabel(listOf("日期", "年月日")))
         assertEquals("return", widestSymbolLabel(listOf("if", "return", "int")))
         assertEquals("", widestSymbolLabel(emptyList()))
-        // 回归：`\`（2 个 ASCII≈1em）与 `……`（2 个全角≈2em）曾按旧模型判成同宽，
+        // 回归：`\`（2 个 ASCII≈1em）与 `……`（2 个全角≈2em）曾按旧估算判成同宽，
         // 基准落到窄的一条 ⇒ 全角/标点页的 `……`、`——` 被键面裁掉两端
         assertEquals("……", widestSymbolLabel(listOf("\\", "……")))
         assertEquals("……", widestSymbolLabel(listOf("，", "……", "——")))
@@ -220,7 +220,7 @@ class SymbolLayoutTest {
         assertEquals("基准比最宽标签窄（该页文字会被裁切）: $tooNarrow", emptyList<String>(), tooNarrow)
     }
 
-    /** 字体宽度模型：ASCII ≈0.5em（记 1）、其余 ≈1em（记 2）；与 `widestSymbolLabel` 同源 */
+    /** 字体宽度估算：ASCII 记 1（≈0.5em）、其余记 2（≈1em）；与 `widestSymbolLabel` 同源 */
     private fun fontUnits(s: String): Int =
         s.count { it.code < 0x80 } + 2 * s.count { it.code >= 0x80 }
 

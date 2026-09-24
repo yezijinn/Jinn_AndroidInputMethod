@@ -152,22 +152,22 @@ class DynamicSymbolsTest {
     }
 
     @Test
-    fun `未登记的动态名去掉标记后上屏_不会把私用区字符打进输入框`() {
-        val out = DynamicSymbols.expand(t("未登记"), fixed)
-        assertEquals("未登记", out)
+    fun `没有对应分支的动态名去掉标记后上屏_不会把私用区字符打进输入框`() {
+        val out = DynamicSymbols.expand(t("没有这个名"), fixed)
+        assertEquals("没有这个名", out)
         assertFalse(out.contains(DynamicSymbols.MARK))
     }
 
     @Test
-    fun `变量组取值全部已登记且键面名唯一可读`() {
+    fun `变量组取值全部可展开且键面名唯一可读`() {
         val group = SYMBOL_GROUPS.first { it.label == "变量" }
         val values = group.pages.flatMap { it.values }
         assertTrue("变量组不该为空", values.isNotEmpty())
         val bad = values.filter { !DynamicSymbols.isDynamic(it) }
         assertEquals("变量组出现静态取值（键面会直接露出长字符串）: $bad", emptyList<String>(), bad)
-        // 每个短名都必须在 expand 里登记：未登记的名字展开后仍等于自身
+        // 每个短名都必须在 expand 里有同名分支：没有分支的名字展开后仍等于自身
         val unregistered = values.filter { DynamicSymbols.expand(it, fixed) == DynamicSymbols.labelOf(it) }
-        assertEquals("变量组有未登记的动态名: $unregistered", emptyList<String>(), unregistered)
+        assertEquals("变量组有展开不出来的动态名: $unregistered", emptyList<String>(), unregistered)
         val labels = values.map { DynamicSymbols.labelOf(it) }
         assertEquals("键面短名重复: $labels", labels.size, labels.toSet().size)
         assertTrue("键面短名过长会挤在键面上: $labels", labels.all { it.length <= 4 })
