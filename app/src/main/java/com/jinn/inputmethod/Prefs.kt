@@ -171,6 +171,17 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
 
     /**
+     * 候选词行数：1 = 单行横向（默认），2 = 双行（上排偶数项、下排奇数项，上下成列）。
+     *
+     * 只影响候选栏的结构与高度（见 [CandidateRows]），不改候选顺序：
+     * 空格 / 回车仍取第 1 个候选（= 下排首项）。越界值一律落回 1 行。
+     */
+    var candidateRows: Int
+        get() = sp.getInt(KEY_CANDIDATE_ROWS, CandidateRows.SINGLE).takeIf { it in CandidateRows.SINGLE..CandidateRows.DOUBLE }
+            ?: CandidateRows.SINGLE
+        set(value) = sp.edit { putInt(KEY_CANDIDATE_ROWS, value.coerceIn(CandidateRows.SINGLE, CandidateRows.DOUBLE)) }
+
+    /**
      * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
@@ -380,6 +391,7 @@ class Prefs(context: Context) {
         put(KEY_AUTO_SHOW_KB, autoShowKeyboard)
         put(KEY_DEFAULT_MODE, defaultKeyboardMode)
         put(KEY_PREDICT_ENABLED, predictEnabled)
+        put(KEY_CANDIDATE_ROWS, candidateRows)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_SHOW_RARE_CHARS, showRareChars)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
@@ -431,6 +443,7 @@ class Prefs(context: Context) {
                 KEY_AUTO_SHOW_KB -> asBool(v)?.let { autoShowKeyboard = it; ok() } ?: bad(key)
                 KEY_DEFAULT_MODE -> asInt(v)?.let { defaultKeyboardMode = it; ok() } ?: bad(key)
                 KEY_PREDICT_ENABLED -> asBool(v)?.let { predictEnabled = it; ok() } ?: bad(key)
+                KEY_CANDIDATE_ROWS -> asInt(v)?.let { candidateRows = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
@@ -563,6 +576,8 @@ class Prefs(context: Context) {
         private const val KEY_AUTO_SHOW_KB = "auto_show_keyboard"
         private const val KEY_DEFAULT_MODE = "default_mode"
         private const val KEY_PREDICT_ENABLED = "predict_enabled"
+        /** 候选词行数（1 单行 / 2 双行，见 [Prefs.candidateRows] 与 [CandidateRows]） */
+        private const val KEY_CANDIDATE_ROWS = "candidate_rows"
         private const val KEY_USER_LEARNING = "user_learning"
         /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
@@ -591,12 +606,15 @@ class Prefs(context: Context) {
         private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
 
         /**
-         * `favorite_symbols` 的导入长度上限（4096 字符 ≈ 十余页符号，远超任何真实用法）。
+         * `favorite_symbols` 的导入长度上限（32K 字符 ≈ 百页符号，远超任何真实用法）。
          *
          * 它必须与 `symbol_group_order` 一样在导入时归一：解析发生在键盘视图构造的**主线程**上，
          * 超长 JSON 会让每次重建键盘都做百万级解析（ANR/OOM），且值已落盘、重启输入法也无效。
+         *
+         * 取值要留出真实容量：单项最长 8 字符、序列化后每项约 12 字符，原先的 4096 约三百项即触顶，
+         * 收藏更多的用户自己的备份会导不回来（该键被整条拒收）。32K 下解析仍是毫秒级。
          */
-        private const val MAX_FAVORITE_SYMBOLS_CHARS = 4096
+        internal const val MAX_FAVORITE_SYMBOLS_CHARS = 32 * 1024
         private const val KEY_THEME_LIGHT_AT = "theme_light_at"
         private const val KEY_THEME_DARK_AT = "theme_dark_at"
 

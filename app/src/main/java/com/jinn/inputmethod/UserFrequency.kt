@@ -38,6 +38,7 @@ internal object UserFrequency {
     @Volatile
     private var dirty = false
 
+    @Volatile
     private var lastSaveAt = 0L
 
     /** 尾沿补写调度器：守护线程 + 纯 JVM 实现，不依赖 Android Looper（JVM 单测里也能跑） */
@@ -248,6 +249,8 @@ internal object UserFrequency {
      * 的交替，把较新的内容覆盖成旧的。锁内渲染则保证最后落盘的一定是最新快照。
      */
     private fun saveNow(f: File) {
+        // 每次真正落盘都刷新时间戳：尾沿补写此前不刷新，紧接着的下一次学习会立刻再同步写一次
+        lastSaveAt = System.currentTimeMillis()
         BackgroundIo.run {
             synchronized(saveLock) {
                 // 陈旧任务校验：任务里捕获的是排程当时的 File。若此后目标文件已变

@@ -8,14 +8,16 @@
         <item name="android:colorBackground">@color/app_bg</item>
         <item name="android:windowBackground">@color/app_bg</item>
         <item name="android:statusBarColor">@color/app_bg</item>
-        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/nav_bar</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_secondary</item>
         <!-- 对话框（框架 AlertDialog）跟页面配色，定义见 styles.xml 的 AppDialogTheme；
              不设它会走 Material 的浅色对话框主题，暗黑界面下白底黑字 -->
         <item name="android:alertDialogTheme">@style/AppDialogTheme</item>
-        <!-- 浅底状态栏/导航栏 → 图标需转深色（windowLightNavigationBar 为 API 27+，由 tools:targetApi 标注） -->
+        <!-- 浅底状态栏/导航栏 → 图标需转深色（windowLightNavigationBar 为 API 27+，由 tools:targetApi 标注）。
+             导航栏底色因此走 @color/nav_bar：API 26 拿不到这个标志，浅底会配浅色图标，那一档回退成深底
+             （覆盖定义见 values-v27/colors.xml） -->
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>

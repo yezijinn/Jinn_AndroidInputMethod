@@ -121,4 +121,18 @@ class FavoriteSymbolsTest {
         // 对照：旧写法 pageIndex*PER_PAGE+i = 1*26+3 = 29 在变长数据下越界 → 原样返回（删不中）
         assertEquals(pages, FavoriteSymbols.removeAt(pages, 1 * FavoriteSymbols.PER_PAGE + 3))
     }
+
+    @Test
+    fun 大批收藏的序列化长度落在导入上限内() {
+        // 20 页 × 26 项、每项 8 字符（顶到单项上限）是最坏形态的真实收藏：序列化后必须仍在上限内，
+        // 否则用户自己的备份会因为该键被整条拒收而导不回来（上限为 4096 时约三百项即触顶）。
+        val pages = (0 until 20).map { p -> (0 until 26).map { i -> "符%02d%02d０００".format(p, i) } }
+        val raw = FavoriteSymbols.serialize(pages)
+
+        assertTrue(
+            "序列化长度 ${raw.length} 应落在导入上限 ${Prefs.MAX_FAVORITE_SYMBOLS_CHARS} 内",
+            raw.length <= Prefs.MAX_FAVORITE_SYMBOLS_CHARS,
+        )
+        assertEquals(pages.flatten(), FavoriteSymbols.parse(raw).flatten())
+    }
 }

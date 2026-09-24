@@ -69,4 +69,9 @@
     <color name="btn_secondary_bg">#FFFFFF</color>
     <color name="field_bg">#F1F4FC</color>
     <color name="grip">#B9C2D2</color>
+
+    <!-- 系统导航栏底色。亮色主题想给浅底就得同时点亮 windowLightNavigationBar，而那是 API 27+ 属性：
+         26 上标志被忽略、浅底配浅色图标，所以这一档用深底；27+ 由 values-v27/colors.xml 覆盖成页面同色。
+         两套色板都写同名是为了不破 ThemeColorParityTest 的逐名对齐守卫（夜间档不引用它）。 -->
+    <color name="nav_bar">#1A1F2B</color>
 </resources>

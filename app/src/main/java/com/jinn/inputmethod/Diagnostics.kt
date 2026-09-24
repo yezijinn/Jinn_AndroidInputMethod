@@ -284,7 +284,10 @@ object Diagnostics {
      *
      * [waitMs] 是子进程等待上限（默认 10s；崩溃路径传 2s，见 [installCrashHandler]）。
      */
-    fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? {
+    fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? =
+        synchronized(snapshotLock) { dumpLogcatLocked(suffix, waitMs) }
+
+    private fun dumpLogcatLocked(suffix: String, waitMs: Long): File? {
         val dir = logDir ?: return null
         val safeSuffix = suffix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
         val name = "$LOGCAT_FILE_PREFIX$safeSuffix.log"
@@ -358,6 +361,15 @@ object Diagnostics {
     /** 今天的日志文件（可能尚未创建） */
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
+    /**
+     * 快照与导出包的互斥锁。
+     *
+     * 两者都读写同一个日志目录，而快照是**就地写**的（删除 → 写入 → 过滤回写，非原子）：
+     * 并发时同名快照会互相删掉对方的产物，导出包也可能把半截快照打进去。串行化之后，
+     * 崩溃路径要多等一次进行中的导出，量级是秒级，且两者都由用户主动触发，可以接受。
+     */
+    private val snapshotLock = Any()
+
     // ── 导出诊断包 ─────────────────────────────────────────
 
     /**
@@ -366,7 +378,10 @@ object Diagnostics {
      * 调用方（设置页）随后经系统文件选择器把内容交给用户自选位置，写完即删临时包。
      * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
      */
-    fun exportBundle(context: Context): File? {
+    fun exportBundle(context: Context): File? =
+        synchronized(snapshotLock) { exportBundleLocked(context) }
+
+    private fun exportBundleLocked(context: Context): File? {
         val srcDir = logDir ?: return null
         // 设备信息是临时给本次导出用的：用完必须删，它会永远留在日志目录里
         // （[cleanupOldLogs] 只按 jinn- / logcat- 前缀清理），并混进之后每一次导出包。

@@ -51,6 +51,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerLanguage: Spinner
     private lateinit var spinnerDefaultMode: Spinner
     private lateinit var spinnerShuangpin: Spinner
+    private lateinit var spinnerCandidateRows: Spinner
 
     // 主题：亮色 / 暗色 / 跟随系统 / 定时（两档各自用哪套皮肤见 Prefs.skinLightId / skinDarkId）
     private lateinit var spinnerTheme: Spinner
@@ -143,6 +144,7 @@ class SettingsActivity : ComponentActivity() {
      */
     private var defaultModeSpinnerTouched = false
     private var shuangpinSpinnerTouched = false
+    private var candidateRowsSpinnerTouched = false
 
     /** 主题下拉：与上面两个 Spinner 共用「只认用户触摸」的闸门 */
     private var themeSpinnerTouched = false
@@ -232,6 +234,8 @@ class SettingsActivity : ComponentActivity() {
         spinnerLanguage = findViewById(R.id.spinner_language)
         spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
         spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
+        spinnerCandidateRows = findViewById(R.id.spinner_candidate_rows)
+        findViewById<TextView>(R.id.label_candidate_rows).text = "候选词行数"
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
@@ -351,6 +355,34 @@ class SettingsActivity : ComponentActivity() {
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
+
+        // 候选词行数下拉：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，见 CandidateRows）。
+        // 只影响候选栏排版与高度，不必重启输入法：键盘下次弹出即按新档位渲染。
+        spinnerCandidateRows.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, arrayOf("1 行", "2 行"),
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerCandidateRows.setOnTouchListener { view, event ->
+            candidateRowsSpinnerTouched = true
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
+        spinnerCandidateRows.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+                ) {
+                    // 同「默认键盘模式」：初始化 setSelection 与恢复实例状态都会回调，
+                    // 不挡住就会把用户已选的行数静默改回第 0 项（单行档）。
+                    if (!candidateRowsSpinnerTouched) return
+                    val rows = position + 1
+                    if (rows != prefs.candidateRows) {
+                        prefs.candidateRows = rows
+                        Diagnostics.i(TAG, "候选词行数: $rows")
+                    }
+                }
+
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            }
 
         loadPrefs()
         // 之后 Spinner 若回调（含恢复实例状态），只有「用户触摸过」才会写配置
@@ -694,6 +726,8 @@ class SettingsActivity : ComponentActivity() {
         spinnerShuangpin.setSelection(
             ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
         )
+        // 候选词行数：档位 1/2 对应下拉下标 0/1（Prefs 已归一，下标必然合法）
+        spinnerCandidateRows.setSelection(prefs.candidateRows - 1)
     }
 
     /**
@@ -1382,6 +1416,12 @@ class SettingsActivity : ComponentActivity() {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ) {
+        // 页面重建后按钮会重新可点，而上一轮的导入线程可能还在跑：进程级标记拦下这种重入
+        if (ConfigBackupManager.importing) {
+            textConfigHint.text = TEXT_IMPORTING
+            alert(TEXT_IMPORT_CONFIG, TEXT_IMPORTING)
+            return
+        }
         btnConfigImport.isEnabled = false
         textConfigHint.text = TEXT_IMPORTING
         showBusy(TEXT_BUSY_IMPORT)

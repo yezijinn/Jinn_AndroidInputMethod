@@ -303,6 +303,16 @@ class JinnIme : InputMethodService() {
 
     /** 通过当前 InputConnection 粘贴文本（无效连接不崩溃）。返回是否成功提交。 */
     private fun pasteClipboardText(text: String): Boolean {
+        // 采集侧的单条上限只拦新写入：库里可能有上限生效前留下的旧行（见 ClipboardStore.MAX_ITEM_BYTES
+        // 的说明），那种量级直接 commitText 会让宿主卡住或提交失败 —— 在这里按同一上限拒收
+        if (ClipboardStore.exceedsItemLimit(text)) {
+            Diagnostics.w(
+                TAG,
+                "粘贴: 单条超过 ${ClipboardStore.MAX_ITEM_BYTES} 字节上限，已跳过 len=${text.length}",
+            )
+            android.widget.Toast.makeText(this, "内容过大，未粘贴", android.widget.Toast.LENGTH_SHORT).show()
+            return false
+        }
         val connection = currentInputConnection
         if (connection == null) {
             // 剪贴板面板在前台时 IME 可能无有效连接：暂存，并主动唤起键盘，

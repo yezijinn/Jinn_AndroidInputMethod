@@ -228,7 +228,7 @@ class ConfigBackupZipTest {
             dir,
             dictZip("fake.xz"),
             dictsDigestOf("fake.xz" to dictContent(0)),
-            onlySpec("fake.xz", dictContent(0)),
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
         )
 
         assertNotNull(r)
@@ -247,7 +247,7 @@ class ConfigBackupZipTest {
             dir,
             dictZip("fake.xz"),
             dictsDigestOf("fake.xz" to dictContent(0)),
-            onlySpec("fake.xz", dictContent(0)),
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
         )
 
         assertEquals(0, r!!.first)
@@ -270,7 +270,7 @@ class ConfigBackupZipTest {
             dir,
             broken,
             "0".repeat(64),
-            onlySpec("fake.xz", big),
+            checksumOf = onlySpec("fake.xz", big),
         )
 
         assertNull("读取失败必须整包拒绝", r)
@@ -289,7 +289,7 @@ class ConfigBackupZipTest {
             dir,
             dictZip("fake.xz"),
             "0".repeat(64),
-            onlySpec("fake.xz", dictContent(0)),
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
         )
 
         assertNull(r)
@@ -339,6 +339,194 @@ class ConfigBackupZipTest {
         assertTrue(ConfigBackupManager.EXPORT_SECTION_LIMIT_BYTES < ConfigBackupManager.MAX_TEXT_SECTION_BYTES)
         assertTrue(ConfigBackupManager.MAX_TEXT_SECTION_BYTES < ConfigBackupManager.MAX_PACKAGE_BYTES)
         assertTrue(ConfigBackupManager.MAX_DICT_BYTES < ConfigBackupManager.MAX_PACKAGE_BYTES)
+        // 按名查找的解压量上限要大于包体上限：合法包解压后比压缩后大，取等会把自产包拒掉
+        assertTrue(ConfigBackupManager.MAX_PACKAGE_BYTES < ConfigBackupManager.MAX_SCAN_INFLATED_BYTES)
+    }
+
+    @Test
+    fun `跳过条目的解压量超过预算时判Failed而不是继续解压`() {
+        // 前一条目解压后 4MB、预算只给 1MB：必须停在 Failed。
+        // 这条钉住「跳过的条目也要记账」—— 没有这道闸，几百 KB 的对抗包能让按名查找解压 GB 级数据
+        val zip = makeZip(
+            "a_junk.bin" to ByteArray(4 * 1024 * 1024),
+            ConfigBackup.ENTRY_PREFS to bytes("{}"),
+        )
+        val tight = ConfigBackupManager.ScanBudget(1024L * 1024)
+
+        assertEquals(
+            ConfigBackupManager.SectionRead.Failed,
+            ConfigBackupManager.readSection(zip, ConfigBackup.ENTRY_PREFS, budget = tight),
+        )
+        assertTrue("预算耗尽必须留痕（调用方据此整包拒收）", tight.exhausted)
+        // 同一个包在默认预算下读得到：证明拒收来自预算，而不是包本身有问题
+        assertTrue(
+            ConfigBackupManager.readSection(zip, ConfigBackup.ENTRY_PREFS)
+                is ConfigBackupManager.SectionRead.Ok,
+        )
+    }
+
+    @Test
+    fun `条目名收集与词库判定在预算耗尽时停下并留痕`() {
+        val zip = makeZip(
+            "a_junk.bin" to ByteArray(2 * 1024 * 1024),
+            ConfigBackup.DICT_DIR + "x.xz" to dictContent(1),
+        )
+        val tight = ConfigBackupManager.ScanBudget(512L * 1024)
+
+        val names = ConfigBackupManager.zipEntryNames(zip, budget = tight)
+        assertTrue("预算耗尽必须留痕", tight.exhausted)
+        assertTrue("停在预算处：后面的条目没有被收集", names.none { it.endsWith("x.xz") })
+
+        // 词库判定同样不能把「超限没读完」当成「包里没有词库」
+        val tight2 = ConfigBackupManager.ScanBudget(512L * 1024)
+        assertFalse(ConfigBackupManager.hasDictEntry(zip, tight2))
+        assertTrue(tight2.exhausted)
+
+        // 默认预算下两者都正常
+        assertTrue(ConfigBackupManager.zipEntryNames(zip).any { it.endsWith("x.xz") })
+        assertTrue(ConfigBackupManager.hasDictEntry(zip))
+    }
+
+    @Test
+    fun `词库恢复在预算耗尽时中止且不留临时件`() {
+        val zip = makeZip(
+            "a_junk.bin" to ByteArray(2 * 1024 * 1024),
+            ConfigBackup.DICT_DIR + "x.xz" to dictContent(1),
+        )
+        val dir = dictDir()
+        val tight = ConfigBackupManager.ScanBudget(256L * 1024)
+
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            zip,
+            dictsDigestOf("x.xz" to dictContent(1)),
+            budget = tight,
+        )
+
+        assertNull("预算耗尽必须整包失败（不能把没读完的包当成功）", r)
+        assertTrue("不得留下半截临时件", dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `多节一次遍历读出_包里没有的节不回键`() {
+        val zip = makeZip(
+            ConfigBackup.ENTRY_PREFS to bytes("{\"p\":1}"),
+            ConfigBackup.ENTRY_USER_FREQ to bytes("# freq\n"),
+        )
+
+        val got = ConfigBackupManager.readSections(
+            zip,
+            listOf(ConfigBackup.ENTRY_PREFS, ConfigBackup.ENTRY_USER_FREQ, ConfigBackup.ENTRY_CLIPBOARD),
+        )
+
+        assertEquals(
+            "{\"p\":1}",
+            (got[ConfigBackup.ENTRY_PREFS] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+        assertEquals(
+            "# freq\n",
+            (got[ConfigBackup.ENTRY_USER_FREQ] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+        assertNull("包里没有的节不回键（调用方按 Missing 处理）", got[ConfigBackup.ENTRY_CLIPBOARD])
+    }
+
+    @Test
+    fun `多节一次遍历_超限节记TooLarge_没走到的节记Failed`() {
+        val zip = makeZip(
+            "a_junk.bin" to ByteArray(2 * 1024 * 1024),
+            ConfigBackup.ENTRY_PREFS to ByteArray(4096) { 'a'.code.toByte() },
+            ConfigBackup.ENTRY_USER_FREQ to bytes("# freq\n"),
+        )
+        val names = listOf(ConfigBackup.ENTRY_PREFS, ConfigBackup.ENTRY_USER_FREQ)
+
+        // 预算在扫到节之前就耗尽：没走到的节必须记 Failed（当成「没有」的话导入会静默漏节）
+        val tight = ConfigBackupManager.ScanBudget(512L * 1024)
+        val starved = ConfigBackupManager.readSections(zip, names, budget = tight)
+        assertTrue("预算耗尽必须留痕", tight.exhausted)
+        assertEquals(
+            ConfigBackupManager.SectionRead.Failed,
+            starved[ConfigBackup.ENTRY_USER_FREQ],
+        )
+
+        // 上限卡在边界：prefs 超一个字节即 TooLarge，且它后面的节仍要读到（超限条目要读空再继续）
+        val got = ConfigBackupManager.readSections(zip, names, 4095)
+        assertEquals(ConfigBackupManager.SectionRead.TooLarge, got[ConfigBackup.ENTRY_PREFS])
+        assertEquals(
+            "# freq\n",
+            (got[ConfigBackup.ENTRY_USER_FREQ] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+    }
+
+    /**
+     * 手写 zip：允许**重名条目**（`ZipOutputStream` 会报 `duplicate entry`），stored 方式写入，
+     * 不带中央目录 —— `ZipInputStream` 只按局部头顺序读，这样才造得出该形态的包。
+     */
+    private fun rawZip(vararg entries: Pair<String, String>): File {
+        tmp.mkdirs()
+        val out = File(tmp, "raw-${System.nanoTime()}.zip")
+        out.outputStream().use { os ->
+            for ((name, content) in entries) {
+                val data = bytes(content)
+                val nameBytes = name.toByteArray(Charsets.US_ASCII)
+                val crc = java.util.zip.CRC32().apply { update(data) }.value
+                val h = java.io.ByteArrayOutputStream()
+                fun le16(v: Int) = h.write(byteArrayOf(v.toByte(), (v shr 8).toByte()))
+                fun le32(v: Int) = h.write(
+                    byteArrayOf(v.toByte(), (v shr 8).toByte(), (v shr 16).toByte(), (v shr 24).toByte()),
+                )
+                le32(0x04034b50)                  // 局部头签名
+                le16(20)                          // 解压所需版本
+                le16(0)                           // 通用标志
+                le16(0)                           // 压缩方法 = stored
+                le16(0); le16(0)                  // 修改时间、日期
+                le32(crc.toInt())
+                le32(data.size); le32(data.size)
+                le16(nameBytes.size); le16(0)     // 文件名长度、扩展字段长度
+                h.write(nameBytes)
+                h.write(data)
+                os.write(h.toByteArray())
+            }
+        }
+        return out
+    }
+
+    @Test
+    fun `同名条目重复时取第一条_与逐节读取一致`() {
+        // 手改过或按工具生成的包可能把同一节写两遍：读侧要与 readSection「命中即返回」一致取首条，
+        // 否则「首条有效、末条损坏」的包会从导入成功变成整包拒收
+        val zip = rawZip(
+            ConfigBackup.ENTRY_PREFS to "{\"first\":1}",
+            ConfigBackup.ENTRY_PREFS to "{\"second\":2}",
+            ConfigBackup.ENTRY_USER_FREQ to "# freq\n",
+        )
+
+        assertEquals("{\"first\":1}", ConfigBackupManager.readEntry(zip, ConfigBackup.ENTRY_PREFS))
+
+        val got = ConfigBackupManager.readSections(
+            zip,
+            listOf(ConfigBackup.ENTRY_PREFS, ConfigBackup.ENTRY_USER_FREQ),
+        )
+        assertEquals(
+            "同一节重复时也要取首条",
+            "{\"first\":1}",
+            (got[ConfigBackup.ENTRY_PREFS] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+        assertEquals(
+            "重复条目之后的节仍要读到",
+            "# freq\n",
+            (got[ConfigBackup.ENTRY_USER_FREQ] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+    }
+
+    @Test
+    fun `导入互斥门不可重入且释放后可再次进入`() {
+        assertTrue("首次应拿到导入位", ConfigBackupManager.beginImport())
+        assertTrue("进行中对外可见（页面重建后据此拒绝第二次）", ConfigBackupManager.importing)
+        assertFalse("重入必须被拒", ConfigBackupManager.beginImport())
+        ConfigBackupManager.endImport()
+        assertFalse(ConfigBackupManager.importing)
+        assertTrue("释放后可以再导入", ConfigBackupManager.beginImport())
+        ConfigBackupManager.endImport()
     }
 
     @Test
