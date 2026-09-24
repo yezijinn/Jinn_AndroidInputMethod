@@ -1147,8 +1147,35 @@ class JinnIme : InputMethodService() {
         scheduleThemeTick()
     }
 
+    /** 词库加载的重试上限（含 onCreate 那次预加载）：失败后不能无限重试 */
+    private val MAX_PINYIN_LOAD_ATTEMPTS = 3
+
+    /** 已发起的加载尝试次数（主线程写、后台日志线程读，故 @Volatile） */
+    @Volatile
+    private var pinyinLoadAttempts = 1
+
+    /**
+     * 词库加载失败后的补试（每次键盘弹出最多发起一次）。
+     *
+     * onCreate 的预加载失败只留一条日志，而 `PinyinEngine.load` 带 `loaded` 守卫 —— 不补试的话，
+     * 本次进程内会一直是「没有任何候选」，用户只能靠系统重建输入法进程恢复。
+     * `load` 幂等且加锁：已加载成功时这里只做一次 volatile 读；补试走独立守护线程，
+     * 绝不占用主线程（全量加载实测 6~10.7s，放主线程必定 ANR）。
+     */
+    private fun retryPinyinLoadIfNeeded() {
+        if (PinyinEngine.isLoaded || pinyinLoadAttempts >= MAX_PINYIN_LOAD_ATTEMPTS) return
+        val attempt = ++pinyinLoadAttempts
+        Thread({
+            runCatching { PinyinEngine.load(this) }
+                .onSuccess { Diagnostics.i(TAG, "词库补试加载成功（第 $attempt 次尝试）") }
+                .onFailure { Diagnostics.e(TAG, "词库补试加载失败（第 $attempt 次尝试）: ${it.message}", it) }
+        }, "jinn-pinyin-retry").apply { isDaemon = true }.start()
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 词库在 onCreate 预加载失败时这里补试（已就绪时开销为一次 volatile 读）
+        retryPinyinLoadIfNeeded()
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
         // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。

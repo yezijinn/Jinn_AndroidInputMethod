@@ -235,11 +235,18 @@ object ClipboardStore {
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
         // 自动分类（URL / NUMBER / OTHER）；隐私分类绝不自动判断
         val category = ClipboardClassifier.classify(text)
-        Diagnostics.i(TAG, "save: 已保存 len=${text.length} (分类=$category)")
-        return db.upsert(
+        val id = db.upsert(
             text, "text", sourcePackage, appName, maxItems,
             category = category,
         )
+        // 日志必须写在入库之后：upsert 返回 -1 表示加密/写库失败（`ClipboardDb.upsert`），
+        // 先记「已保存」会把失败伪装成成功，排查时结论正好相反
+        if (id > 0) {
+            Diagnostics.i(TAG, "save: 已保存 #$id len=${text.length} (分类=$category)")
+        } else {
+            Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length} (分类=$category)")
+        }
+        return id
     }
 
     private fun readMaxItems(context: Context): Int =

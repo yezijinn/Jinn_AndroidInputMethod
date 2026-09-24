@@ -748,6 +748,9 @@ internal object ConfigBackupManager {
                 prefsApplied = 0
                 failedStage = "设置项写盘失败"
             }
+            // 模糊音掩码在引擎里另有一份运行期副本（Prefs + `PinyinEngine.fuzzyMask`）：
+            // 导入改了它就必须同步一次，否则设置页显示与候选行为不一致，直到 IME 进程重建
+            PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
             // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
             // 这里补一次，否则「导入成功」后历史仍超限，用户会以为上限没生效
             runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems) }
