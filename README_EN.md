@@ -18,7 +18,7 @@ English ｜ [中文](README.md)
 - Smart prediction (off by default); one-tap CN/EN; the candidate bar shows the keys you actually pressed, so Shuangpin conversions never look frozen
 - Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release
 - Keyboard skins: Default / Frosted / Rainbow / Aurora / Retro mechanical — colours and texture only, drawn entirely in code, independent of the three sliders
-- Fuzzy pinyin (off by default): 11 optional accent equivalence groups (zh⇄z, n⇄l, en⇄eng, …); when a sound misses, its alternative readings are appended after the existing candidates
+- Fuzzy pinyin (off by default): 11 optional accent equivalence groups (zh⇄z, n⇄l, en⇄eng, …); when a sound misses, its alternative readings are added as extra candidates (precise candidates stay untouched and in their original order)
 - Backspace: tap deletes one char, hold keeps deleting, double-tap-then-hold also clears committed text; the ✕ on the candidate bar clears the current input
 
 **Clipboard history** (embedded panel)

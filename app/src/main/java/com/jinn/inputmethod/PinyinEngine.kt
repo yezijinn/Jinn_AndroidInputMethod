@@ -231,6 +231,15 @@ object PinyinEngine {
      */
     private val candidatePinyin = ConcurrentHashMap<String, String>(4_096)
 
+    /**
+     * 「候选词 → 词库里的真实拼音键」，**只在模糊音命中时**才有值。
+     *
+     * [candidatePinyin] 登记的必须是「用户实际输入的键」（[consumption] 按它算消费区间），
+     * 但预测要按该词在词库里的真实键扫延续词：输入 `zangguo` 选到「张国」，它的延续词在
+     * `zhangguo*` 键区下，用输入键去扫只会扫空。上限与清空策略同 [candidatePinyin]。
+     */
+    private val candidateTruePinyin = ConcurrentHashMap<String, String>(256)
+
     /** 合法音节集合（不含声调） */
     private val validSyllables = ConcurrentHashMap.newKeySet<String>()
 
@@ -434,6 +443,7 @@ object PinyinEngine {
             invalidateMergedCache()
             wordToPinyin.clear()
             candidatePinyin.clear()
+            candidateTruePinyin.clear()
             validSyllables.clear()
             syllablePrefixes = emptySet()
             // 有序表是不可变快照，置空引用即可（没有 clear 方法）
@@ -1231,6 +1241,9 @@ object PinyinEngine {
                             fuzzyWords.addAll(found.take(MAX_PHRASES))
                             // 候选→拼音键登记的是「用户实际输入的键」而不是变体键：消费区间按输入算
                             noteCandidateKeys(found, typedKey)
+                            // 真实键另记一份供预测扫延续词（见 candidateTruePinyin 的 KDoc）
+                            if (candidateTruePinyin.size > 4_096) candidateTruePinyin.clear()
+                            for (w in found) candidateTruePinyin[w] = k2
                         }
                     }
                 }
@@ -1331,8 +1344,11 @@ object PinyinEngine {
      */
     fun predict(lastWord: String): List<String> {
         if (!loaded || lastWord.isEmpty()) return emptyList()
-        // 优先用查询时记录的「候选→键」（基础词走索引后没有全量反向索引）
-        val lastPinyin = candidatePinyin[lastWord] ?: wordToPinyin[lastWord] ?: return emptyList()
+        // 优先用查询时记录的「候选→键」（基础词走索引后没有全量反向索引）。
+        // 模糊音命中的候选另有一份真实键：预测要按它扫延续词（输入 zangguo 选到「张国」，
+        // 延续词在 zhangguo* 键区下），而 candidatePinyin 存的是用户实际输入的键。
+        val lastPinyin = candidateTruePinyin[lastWord] ?: candidatePinyin[lastWord]
+            ?: wordToPinyin[lastWord] ?: return emptyList()
         val out = LinkedHashSet<String>()
         val wordBytes = lastWord.toByteArray(Charsets.UTF_8)
         val pinyinBytes = lastPinyin.toByteArray(Charsets.UTF_8).size

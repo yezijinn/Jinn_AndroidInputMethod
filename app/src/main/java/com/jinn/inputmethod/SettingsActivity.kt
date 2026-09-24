@@ -1651,7 +1651,7 @@ class SettingsActivity : ComponentActivity() {
         // ── 模糊音容错文案（strings.xml 默认禁改，文案收敛在此处） ──
         const val TEXT_FUZZY_TITLE = "模糊音容错"
         const val TEXT_FUZZY_DESC = "按自己的口音勾选不分的音。勾选后，某个音打不出想要的字时，" +
-            "会把该音的其他读法作为候选补在原有候选之后（不挤占、不替换）。"
+            "会把该音的其他读法作为补充候选加上（精确候选一个不动、不被替换）。"
         const val TEXT_FUZZY_ALL = "全开"
         const val TEXT_FUZZY_NONE = "全关"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
