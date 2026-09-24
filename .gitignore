@@ -66,3 +66,6 @@ payload.json
 *.pk8
 *.p8
 JinnPassword.md
+
+# 本机自用的工程约定文档（只留本地，不同步到远端）
+AGENTS.md

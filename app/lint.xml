@@ -9,7 +9,7 @@
 -->
 <lint>
     <!--
-      项目约定：功能文案写代码里（`strings.xml` 默认禁改，见 AGENTS.md）
+      项目约定：功能文案写代码里（`strings.xml` 默认不改）
       ⇒ 代码里拼接 setText 是刻意的，改写成字符串资源反而违反约定。
       同一个理由也出现在 KeyAppearanceActivity 的 @SuppressLint("SetTextI18n")。
     -->
