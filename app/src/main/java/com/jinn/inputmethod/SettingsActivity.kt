@@ -21,7 +21,6 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
-import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -53,12 +52,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerDefaultMode: Spinner
     private lateinit var spinnerShuangpin: Spinner
 
-    // 主题：亮白 / 暗黑 / 跟随系统 / 定时
+    // 主题：亮色 / 暗色 / 跟随系统 / 定时（两档各自用哪套皮肤见 Prefs.skinLightId / skinDarkId）
     private lateinit var spinnerTheme: Spinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
     private lateinit var rowThemeSchedule: View
     private lateinit var textThemeScheduleHint: TextView
+    private lateinit var textThemeDesc: TextView
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
@@ -78,9 +78,6 @@ class SettingsActivity : ComponentActivity() {
 
     /** 模糊音容错入口按钮（文案与状态在代码里下发：strings.xml 默认禁改） */
     private lateinit var btnFuzzyPinyin: Button
-
-    /** 模糊音对话框：代码创建、旋转重建不自动恢复，须在 onDestroy 显式关掉（防 WindowLeaked） */
-    private var fuzzyDialog: AlertDialog? = null
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
@@ -284,10 +281,11 @@ class SettingsActivity : ComponentActivity() {
         findViewById<Button>(R.id.btn_key_appearance).setOnClickListener {
             startActivity(Intent(this, KeyAppearanceActivity::class.java))
         }
-        // 模糊音容错：多选对话框（分组是并列维度，不做独立页面；勾选即落盘并即时生效）
+        // 模糊音容错：独立全屏页（页面内每组一个勾选框，勾选即落盘并即时生效）。
+        // 入口文案固定，不显示「（N 组）」——用户要的是一句话说明入口，当前勾选进页面看
         btnFuzzyPinyin = findViewById(R.id.btn_fuzzy_pinyin)
-        btnFuzzyPinyin.setOnClickListener { showFuzzyPinyinDialog() }
-        refreshFuzzyPinyinButton()
+        btnFuzzyPinyin.text = TEXT_FUZZY_ENTRY
+        btnFuzzyPinyin.setOnClickListener { startActivity(Intent(this, FuzzyPinyinActivity::class.java)) }
         appliedThemeDark = ThemeManager.isDark(this)
         scheduleThemeTick()
 
@@ -438,7 +436,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 主题卡片：模式下拉（跟随系统 / 亮白 / 暗黑 / 定时）+ 定时的两个切换时刻。
+     * 主题卡片：模式下拉（跟随系统 / 亮色 / 暗色 / 定时）+ 两档各自的皮肤说明 + 定时的两个切换时刻。
      *
      * 与另外两个下拉共用「只认用户触摸」的闸门（见 [themeSpinnerTouched]）：初始化 `setSelection`
      * 与实例状态恢复都会回调 `onItemSelected`，不挡住就会把用户配置写花。
@@ -450,6 +448,7 @@ class SettingsActivity : ComponentActivity() {
         btnThemeDarkAt = findViewById(R.id.btn_theme_dark_at)
         rowThemeSchedule = findViewById(R.id.row_theme_schedule)
         textThemeScheduleHint = findViewById(R.id.text_theme_schedule_hint)
+        textThemeDesc = findViewById(R.id.text_theme_desc)
 
         spinnerTheme.adapter = ArrayAdapter.createFromResource(
             this, R.array.theme_mode_entries, android.R.layout.simple_spinner_item
@@ -498,6 +497,26 @@ class SettingsActivity : ComponentActivity() {
         val modeValues = resources.getStringArray(R.array.theme_mode_values)
         spinnerTheme.setSelection(modeValues.indexOf(prefs.themeMode.toString()).coerceAtLeast(0))
         refreshThemeScheduleRow()
+        refreshThemeDesc()
+    }
+
+    /**
+     * 刷新卡片说明：显示两档各自选定的皮肤（在「键盘外观」页选定）。
+     *
+     * 两档皮肤决定「明暗切换时键盘换哪一套」，与模式下拉是同一件事的两半，故并排显示。
+     */
+    private fun refreshThemeDesc() {
+        textThemeDesc.text = getString(
+            R.string.theme_card_desc,
+            KeyboardSkins.byId(prefs.skinLightId, SkinTone.LIGHT).label,
+            KeyboardSkins.byId(prefs.skinDarkId, SkinTone.DARK).label,
+        )
+    }
+
+    /** 从「键盘外观」页返回时两档皮肤可能已改：这里补一次刷新（本页其余状态不变，无需 recreate） */
+    override fun onResume() {
+        super.onResume()
+        if (::textThemeDesc.isInitialized) refreshThemeDesc()
     }
 
     /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
@@ -537,7 +556,7 @@ class SettingsActivity : ComponentActivity() {
     private val themeTickRunnable = Runnable {
         val dark = ThemeManager.isDark(this)
         if (dark != appliedThemeDark) {
-            Diagnostics.i(TAG, "定时切换到点: 主题转为 ${if (dark) "暗黑" else "亮白"}")
+            Diagnostics.i(TAG, "定时切换到点: 主题转为 ${if (dark) "暗色" else "亮色"}")
             recreate()
         } else {
             scheduleThemeTick()
@@ -806,87 +825,6 @@ class SettingsActivity : ComponentActivity() {
         prefs.updateLastCheckAt = System.currentTimeMillis()
     }
 
-    /**
-     * 模糊音容错：多选对话框。
-     *
-     * 分组是并列的独立维度（平翘舌 / 鼻边音 / 前后鼻音…），所以不做「总开关 + 若干开关」的
-     * 一堆控件，也没有「保存」按钮 —— 勾选即落盘并即时生效，避免与返回键的语义打架。
-     */
-    private fun showFuzzyPinyinDialog() {
-        val groups = FuzzyPinyin.GROUPS
-        val boxes = ArrayList<CheckBox>(groups.size)
-        // 勾选即落盘；「全开 / 全关」批量改时先挂起逐项回调，最后统一写一次（避免 11 次写盘）
-        var bulk = false
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dpOf(20), dpOf(4), dpOf(20), dpOf(4))
-            addView(
-                TextView(this@SettingsActivity).apply {
-                    text = TEXT_FUZZY_DESC
-                    textSize = 13f
-                }
-            )
-        }
-        for (group in groups) {
-            val cb = CheckBox(this).apply {
-                text = group.label
-                isChecked = prefs.fuzzyPinyinMask and group.bit != 0
-                setOnCheckedChangeListener { _, checked ->
-                    if (bulk) return@setOnCheckedChangeListener
-                    val mask = if (checked) {
-                        prefs.fuzzyPinyinMask or group.bit
-                    } else {
-                        prefs.fuzzyPinyinMask and group.bit.inv()
-                    }
-                    applyFuzzyMask(mask)
-                }
-            }
-            boxes.add(cb)
-            box.addView(cb, lpOf(10))
-        }
-        // 用自定义勾选列表而不是框架的 setMultiChoiceItems：实测后者在本项目的对话框主题下
-        // 一个条目都不显示（只剩标题、说明与按钮），与配置导出对话框同型的做法才可靠
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_FUZZY_TITLE)
-            .setView(ScrollView(this).apply { addView(box) })
-            .setNeutralButton(TEXT_FUZZY_ALL, null)
-            .setNegativeButton(TEXT_FUZZY_NONE, null)
-            .setPositiveButton("完成", null)
-            .create()
-        dialog.show()
-        fuzzyDialog = dialog
-        // 两个批量按钮都要留在原地生效：默认回调会先 dismiss，用户看不到结果
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            bulk = true
-            boxes.forEach { it.isChecked = true }
-            bulk = false
-            applyFuzzyMask(FuzzyPinyin.MASK_ALL)
-        }
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-            bulk = true
-            boxes.forEach { it.isChecked = false }
-            bulk = false
-            applyFuzzyMask(FuzzyPinyin.NONE)
-        }
-    }
-
-    /** 写入模糊音掩码并立即生效（[PinyinEngine.setFuzzyMask] 只改查询派生，不需要重启输入法） */
-    private fun applyFuzzyMask(mask: Int) {
-        prefs.fuzzyPinyinMask = mask
-        PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
-        refreshFuzzyPinyinButton()
-    }
-
-    /** 入口按钮上带出当前状态：否则用户看不出「现在是开着还是关着」 */
-    private fun refreshFuzzyPinyinButton() {
-        val count = Integer.bitCount(prefs.fuzzyPinyinMask)
-        btnFuzzyPinyin.text = if (count == 0) {
-            "$TEXT_FUZZY_TITLE（关闭）"
-        } else {
-            "$TEXT_FUZZY_TITLE（$count 组）"
-        }
-    }
-
     /** 三类结果统一三套文案，措辞由 unified-update-check 统一，不得改写。 */
     private fun showUpdateDialog(result: UpdateChecker.Result) {
         val local = getString(R.string.update_local_version, BuildConfig.VERSION_CODE)
@@ -1065,8 +1003,6 @@ class SettingsActivity : ComponentActivity() {
         importPwdDialog = null
         importConfirmDialog?.dismiss()
         importConfirmDialog = null
-        fuzzyDialog?.dismiss()
-        fuzzyDialog = null
         // 明文临时包不跨页面生命周期：页面销毁（含旋转重建）时一并清掉。
         // 但导入正在进行时不能删——后台线程还要按节重开它；这种残留由下次进设置页的清扫兜底
         if (!importInFlight) {
@@ -1648,12 +1584,8 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_BUSY_DECRYPT = "正在解密并校验密码…\n（约需 1~2 秒，请勿退出）"
         const val TEXT_BUSY_IMPORT = "正在导入配置与数据…"
 
-        // ── 模糊音容错文案（strings.xml 默认禁改，文案收敛在此处） ──
-        const val TEXT_FUZZY_TITLE = "模糊音容错"
-        const val TEXT_FUZZY_DESC = "按自己的口音勾选不分的音。勾选后，某个音打不出想要的字时，" +
-            "会把该音的其他读法作为补充候选加上（精确候选一个不动、不被替换）。"
-        const val TEXT_FUZZY_ALL = "全开"
-        const val TEXT_FUZZY_NONE = "全关"
+        // 模糊音容错：入口文案（页面内的标题 / 说明 / 按钮文案在 FuzzyPinyinActivity 里下发）
+        const val TEXT_FUZZY_ENTRY = "增加模糊拼音"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
             "（也可能是文件超过 256MB 上限）"

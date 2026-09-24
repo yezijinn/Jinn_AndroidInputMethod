@@ -130,4 +130,19 @@ class ThemeManagerTest {
         assertEquals("默认亮起 07:00", 7 * 60, Prefs.DEFAULT_THEME_LIGHT_AT_MIN)
         assertEquals("默认暗起 19:00", 19 * 60, Prefs.DEFAULT_THEME_DARK_AT_MIN)
     }
+
+    /**
+     * 明暗决策 → 皮肤槽位：亮色阶段用亮色槽、暗色阶段用暗色槽（用户 2026-09-24 定的语义）。
+     *
+     * 两个槽位各自独立，换一档的皮肤不得影响另一档 —— 否则「亮色 / 暗色各选一套」就退化成单值了。
+     */
+    @Test
+    fun 明暗档位对应各自的皮肤槽位() {
+        val lightSkin = KeyboardSkins.INITIAL_LIGHT_ID
+        val darkSkin = KeyboardSkins.INITIAL_DARK_ID
+        assertEquals("亮色阶段用亮色槽", lightSkin, ThemeManager.skinIdFor(false, lightSkin, darkSkin))
+        assertEquals("暗色阶段用暗色槽", darkSkin, ThemeManager.skinIdFor(true, lightSkin, darkSkin))
+        assertEquals("换亮色槽不影响暗色档", "cream", ThemeManager.skinIdFor(false, "cream", darkSkin))
+        assertEquals("换暗色槽不影响亮色档", "midnight", ThemeManager.skinIdFor(true, lightSkin, "midnight"))
+    }
 }

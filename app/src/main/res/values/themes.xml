@@ -12,6 +12,9 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_secondary</item>
+        <!-- 对话框（框架 AlertDialog）跟页面配色，定义见 styles.xml 的 AppDialogTheme；
+             不设它会走 Material 的浅色对话框主题，暗黑界面下白底黑字 -->
+        <item name="android:alertDialogTheme">@style/AppDialogTheme</item>
         <!-- 浅底状态栏/导航栏 → 图标需转深色（windowLightNavigationBar 为 API 27+，由 tools:targetApi 标注） -->
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>

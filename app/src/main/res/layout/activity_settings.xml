@@ -297,13 +297,15 @@
                         android:paddingEnd="12dp"
                         android:spinnerMode="dropdown" />
 
+                    <!-- 两档皮肤说明：文本由代码填（theme_card_desc 是 %1$s / %2$s 模板，
+                         直接写在这里会先闪一帧占位符） -->
                     <TextView
+                        android:id="@+id/text_theme_desc"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
-                        android:text="@string/theme_card_desc"
                         android:textColor="@color/text_secondary"
                         android:textSize="11sp" />
                 </LinearLayout>

@@ -151,6 +151,31 @@ import kotlin.math.min
             }
 
         /**
+         * 符号层「页内统一样号」的度量文本（本页最宽的那条显示标签，见 `widestSymbolLabel`）。
+         *
+         * 空串 = 按自己的标签算字号。旧行为下同一页里 2 字标签与 4 字标签会各算各的字号，
+         * 看起来「一大一小」（用户反馈）；非空时本键字号一律按这段文本来算 ⇒ 整页同号，
+         * 且仍不会溢出按键（字号是按可用宽度算出来的）。
+         */
+        var uniformMeasureText: String = ""
+            set(value) {
+                field = value
+                invalidate()
+            }
+
+        /**
+         * 符号层「页内统一字号」的基准键宽（像素），见 `PinyinKeyboardView.refreshKeyLabels`。
+         *
+         * 0 = 按本键宽度算（旧行为）。不传基准宽度时，同一页里 9 键排的键比 10 键排宽，
+         * 同一条标签会各自算出不同字号（真机实测墨高 25px vs 22px）。
+         */
+        var uniformMeasureWidth: Float = 0f
+            set(value) {
+                field = value
+                invalidate()
+            }
+
+        /**
          * 双拼韵母提示（键下方，普通色）。多行用 `\n` 分隔，每行垂直均分下半区
          * （如 Y 键显示 uai/ing 两行）。
          */
@@ -292,7 +317,10 @@ import kotlin.math.min
             if (centeredStyle) {
                 textPaint.color = glyphColor
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = fitTextSize(label, h * TEXT_RATIO, w - inset * 2f, h * MIN_LONG_TEXT_RATIO)
+                // 页内统一样号：按本页最宽标签 + 最窄一排键的宽度算一次，整页所有键同号
+                val measure = if (uniformMeasureText.isNotEmpty()) uniformMeasureText else label
+                val refWidth = if (uniformMeasureWidth > 0f) uniformMeasureWidth else w
+                textPaint.textSize = fitTextSize(measure, h * TEXT_RATIO, refWidth - inset * 2f, h * MIN_LONG_TEXT_RATIO)
                 val centerFm = textPaint.fontMetrics
                 canvas.drawText(label, w / 2f, (h - centerFm.ascent - centerFm.descent) / 2f, textPaint)
                 return

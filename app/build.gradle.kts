@@ -67,6 +67,14 @@ android {
         buildConfig = true
     }
 
+    lint {
+        // 发布基线的例外清单（每条都写了理由）：只忽略「与项目约定冲突」或「刻意设计」的既有告警，
+        // 且按文件精确忽略 —— 新文件/新代码出现同类问题仍会报出来
+        lintConfig = file("lint.xml")
+        // 发布前把静态检查当门禁：有新 error 直接失败
+        abortOnError = true
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false

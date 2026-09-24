@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  发布基线的 lint 例外清单（2026-09-24 登记）。
+
+  只登记「与项目约定冲突」或「刻意设计」的既有告警，并且**按文件精确忽略**：
+  新文件、新代码出现同类问题仍会照常报出来，不会因为这份清单而静默。
+
+  每条都写明理由；要恢复某条检查，删掉对应 <ignore> 即可。
+-->
+<lint>
+    <!--
+      项目约定：功能文案写代码里（`strings.xml` 默认禁改，见 AGENTS.md）
+      ⇒ 代码里拼接 setText 是刻意的，改写成字符串资源反而违反约定。
+      同一个理由也出现在 KeyAppearanceActivity 的 @SuppressLint("SetTextI18n")。
+    -->
+    <issue id="SetTextI18n">
+        <ignore path="src/main/java/com/jinn/inputmethod/ClipboardPanelView.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/SearchPanelView.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/SettingsActivity.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/SymbolOrderActivity.kt" />
+    </issue>
+
+    <!--
+      麦克风键：中心受光的径向渐变要跟随半径脉动，着色器参数每帧都变，
+      按「预分配复用」反而要每帧重设同一对象 —— 保留每帧新建，属刻意设计。
+    -->
+    <issue id="DrawAllocation">
+        <ignore path="src/main/java/com/jinn/inputmethod/MicButton.kt" />
+    </issue>
+
+    <!--
+      语音键盘：IME 面板用 inflate(..., null) 拿 layoutParams=null 的视图（挂进自己的容器），
+      且触摸由输入法整块消费（不带 performClick）—— 两处都是输入法视图的固有形态。
+    -->
+    <issue id="InflateParams">
+        <ignore path="src/main/java/com/jinn/inputmethod/JinnIme.kt" />
+    </issue>
+    <issue id="ClickableViewAccessibility">
+        <ignore path="src/main/java/com/jinn/inputmethod/JinnIme.kt" />
+    </issue>
+
+    <!--
+      键盘布局是满屏横条 + 自绘键面：根布局自带底色（覆盖窗口底色，半透明键盘需要）、
+      外层嵌套用于逐行重排、内层 ScrollView 高度由键高决定。
+      重构这些布局的收益远小于错位风险，故按现状登记。
+    -->
+    <issue id="Overdraw">
+        <ignore path="src/main/res/layout/keyboard.xml" />
+        <ignore path="src/main/res/layout/keyboard_pinyin.xml" />
+    </issue>
+    <issue id="UselessParent">
+        <ignore path="src/main/res/layout/keyboard_pinyin.xml" />
+    </issue>
+    <issue id="ScrollViewSize">
+        <ignore path="src/main/res/layout/keyboard_pinyin.xml" />
+    </issue>
+    <!-- 韵母提示字号（9sp）是按键高比例定的，放大反而挤掉提示区 -->
+    <issue id="SmallSp">
+        <ignore path="src/main/res/layout/keyboard_pinyin.xml" />
+    </issue>
+
+    <!--
+      依赖版本由人工按需升级：lint 的「有新版本」提示在发布前不是行动项，
+      升级 androidx 要单独一轮回归（IME 生命周期对 activity/core 版本敏感）。
+    -->
+    <issue id="GradleDependency">
+        <ignore path="build.gradle.kts" />
+    </issue>
+
+    <!-- 自适应图标目录保留 -v26 后缀：minSdk 26 下冗余但无害，改目录名有启动图标失效风险 -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+
+    <!-- 用户可见文案里的连字符由用户定稿，不由 lint 的排版建议改（改的是上屏文本） -->
+    <issue id="TypographyDashes">
+        <ignore path="src/main/res/values/strings.xml" />
+    </issue>
+</lint>

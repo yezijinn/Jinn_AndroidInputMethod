@@ -169,4 +169,33 @@ class FuzzyQueryTest {
         // 消费区间仍按用户输入算（typedKey 那份映射不受影响）
         assertEquals(7, PinyinEngine.consumption("zangguo", "张国").quanpinChars)
     }
+
+    @Test
+    fun `关掉模糊音后预测必须按当前精确键扫延续词`() {
+        // 回归：真实键（candidateTruePinyin）只在模糊分支写过、精确路径不清 → 历史残留会让
+        // 「关掉模糊音后用另一个精确拼法打到同一个词」仍扫上一次的变体键区。
+        // 词库刻意让「朝阳」同时挂在 chaoyang / zhaoyang 下，两键各配一个不同的延续词：
+        // 扫哪个键区，结果里就能看出来（区 / 门）。
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "",
+            phrases = listOf(
+                "chaoyang\t朝阳",
+                "zhaoyang\t朝阳",
+                "chaoyangqu\t朝阳区",
+                "zhaoyangmen\t朝阳门",
+            ).joinToString("\n"),
+            syllables = listOf("cao", "chao", "yang", "zhao").joinToString("\n"),
+        )
+
+        // 1) 开 c⇄ch：输入 caoyang，变体 chaoyang 命中「朝阳」→ 按词库真实键 chaoyang* 扫
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.C_CH)
+        assertTrue("变体命中: ${PinyinEngine.query("caoyang").candidates}", PinyinEngine.query("caoyang").candidates.contains("朝阳"))
+        assertEquals(listOf("区"), PinyinEngine.predict("朝阳"))
+
+        // 2) 关掉模糊音，改用另一个精确键 zhaoyang 打到同一个词 → 必须按 zhaoyang* 扫
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.NONE)
+        assertTrue("精确命中: ${PinyinEngine.query("zhaoyang").candidates}", PinyinEngine.query("zhaoyang").candidates.contains("朝阳"))
+        assertEquals("历史残留没清掉时会得到 [区]", listOf("门"), PinyinEngine.predict("朝阳"))
+    }
 }

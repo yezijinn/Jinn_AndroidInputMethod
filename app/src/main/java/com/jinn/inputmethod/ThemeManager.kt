@@ -94,10 +94,22 @@ object ThemeManager {
         return c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
     }
 
-    /** 系统当前是否深色（读 Configuration 的 uiMode 掩码位） */
-    fun isSystemDark(context: Context): Boolean =
+    /**
+     * 指定 Context **自己解析出的**深浅（读它的 uiMode 快照）。
+     *
+     * 与 [isDark] 的分工：后者按 Prefs 现算决策，前者读 Context 自身 —— 对 [themedContext] 造出来的
+     * Context（键盘视图的创建 Context）就是「这份色板属于哪一档」。
+     * **键盘选皮肤必须用这个**（见 `PinyinKeyboardView.syncKeyboardSkin`）：视图的色板是创建时刻
+     * 定死的，而换主题的重建可能被延后（`JinnIme.applyThemeIfNeeded` 遇未上屏输入 / 面板打开时
+     * 只退出自己，随后 `configure()` 照常跑）。此刻若按现算决策取皮肤，令牌皮肤会拿着旧档色板画 ——
+     * 暗档的原黑被画成白键面，日志却写着「原黑」。
+     */
+    fun paletteIsDark(context: Context): Boolean =
         context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
             Configuration.UI_MODE_NIGHT_YES
+
+    /** 系统当前是否深色（读 Configuration 的 uiMode 掩码位） */
+    fun isSystemDark(context: Context): Boolean = paletteIsDark(context)
 
     /** 按 Prefs 解析「此刻是否深色」：强制模式看配置时刻，跟随系统看系统 */
     fun isDark(context: Context, prefs: Prefs = Prefs(context)): Boolean = isDarkNow(
@@ -106,6 +118,25 @@ object ThemeManager {
         lightAtMin = prefs.themeLightAtMinutes,
         darkAtMin = prefs.themeDarkAtMinutes,
         nowMin = nowMinutes(),
+    )
+
+    /**
+     * 纯函数：按明暗决策取当前档位的键盘皮肤 id（亮色档 / 暗色档，见 `Prefs.skinLightId`）。
+     *
+     * 「亮色 / 暗色」两个设置项各自记住一套皮肤，明暗切换时键盘皮肤随之切换 —— 这是该设置项的语义：
+     * 不再是一套固定死的皮肤加一套固定死的色板，而是「每一档用哪套皮肤」由用户指定。
+     */
+    fun skinIdFor(isDark: Boolean, lightId: String, darkId: String): String =
+        if (isDark) darkId else lightId
+
+    /**
+     * 当前生效的键盘皮肤：档位归一（跨档脏值回退本档令牌基线）在这里收口，调用方不必自己判档。
+     *
+     * 明暗判定与页面色板同源（都出自 [isDark]），因此不会出现「浅色页面 + 深色键盘」的搭配。
+     */
+    fun keyboardSkin(prefs: Prefs, isDark: Boolean): KeyboardSkin = KeyboardSkins.byId(
+        skinIdFor(isDark, prefs.skinLightId, prefs.skinDarkId),
+        if (isDark) SkinTone.DARK else SkinTone.LIGHT,
     )
 
     /**

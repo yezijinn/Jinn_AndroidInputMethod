@@ -176,19 +176,43 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 皮肤：标题 / 选项文案都在代码里给（选项名取自 KeyboardSkins.label），
+            <!-- 皮肤：两段（亮色 / 暗色）各一个标题 + 一个竖向容器。
+                 标题（带当前档位状态）与选项文案都在代码里给（选项名取自 KeyboardSkin.label），
                  避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。
-                 容器竖向、每行五个由代码插入：皮肤多于五个时自动换行，不横向滚动。 -->
+                 容器竖向、每行八个由代码插入（32 套皮肤、每段两整行）。 -->
             <TextView
-                android:id="@+id/text_skin_title"
+                android:id="@+id/text_skin_light_title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
+                android:autoSizeMaxTextSize="13sp"
+                android:autoSizeMinTextSize="9sp"
+                android:autoSizeTextType="uniform"
+                android:maxLines="1"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
             <LinearLayout
-                android:id="@+id/skin_row"
+                android:id="@+id/skin_row_light"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/text_skin_dark_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:autoSizeMaxTextSize="13sp"
+                android:autoSizeMinTextSize="9sp"
+                android:autoSizeTextType="uniform"
+                android:maxLines="1"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/skin_row_dark"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"

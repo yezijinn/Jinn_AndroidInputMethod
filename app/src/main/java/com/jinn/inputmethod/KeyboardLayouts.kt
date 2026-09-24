@@ -28,6 +28,20 @@ internal val DIGIT_MAP = mapOf(
 /** 符号分组：label 为候选栏标签；pages 为该组内的符号页（键盘滑动在此组内翻页），可自由添加页数不限 */
 internal class SymbolGroup(val label: String, val pages: List<Map<Char, String>>)
 
+/**
+ * 一页符号里「最宽」的那条显示标签。
+ *
+ * 宽度模型与字体排版对齐：**ASCII 记 1（约 0.5em）、其余字符记 2（约 1em）**。
+ * 只在「谁更宽」的相对比较里用，估偏大是安全方向（整页字号略小），估偏小会让真宽标签
+ * 超出键面被裁掉：曾经按「长度 + 全角标点额外记 1」估算，把 `\`（2 个 ASCII≈1em）与
+ * `……`（2 个全角≈2em）判成同宽，基准落到窄的一条 ⇒ 全角/标点页的 `……`、`——` 被切两端。
+ *
+ * 符号层用它统一页内字号（`PinyinKey.uniformMeasureText`）：同一页不会出现「2 字大、4 字小」。
+ * 纯函数，可直接 JVM 单测（见 `SymbolLayoutTest`，含逐页「基准不得比任何标签窄」的属性断言）。
+ */
+internal fun widestSymbolLabel(labels: Collection<String>): String =
+    labels.maxByOrNull { s -> s.count { it.code < 0x80 } + 2 * s.count { it.code >= 0x80 } }.orEmpty()
+
 internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
     // 全角：只放全角符号（中文全角标点 + 全角 ASCII 变体 + 无全/半角之分的通用符号），
     // 不得混入 ASCII、数字或字母（由 SymbolLayoutTest 守卫）；68 项按序铺满三页（26 + 26 + 16）
@@ -72,60 +86,21 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'q' to "{", 'w' to "}", 'e' to "`", 'r' to "_", 't' to "^", 'y' to "$",
         ),
     )),
-    // 编程：从关键字页开始直接排列（原「编程常用英文符号」页已移除，符号请用「半角」组），
-    // 键面可为整个单词（关键字），键面一律居中、长文本自动收缩字号
-    SymbolGroup("编程", listOf(
-        // 第 1 页：各语言最常用的控制流与声明关键字
+    // 变量：输出「随当前时间变化」的内容（原「编程」组的关键字已整体移除：实测用不上）。
+    // 取值写成 DynamicSymbols.token("短名")：键面显示短名，上屏时按点击那一刻的时间展开。
+    // 新增一项只需在 DynamicSymbols.expand 里登记同名分支，护栏见 DynamicSymbolsTest。
+    SymbolGroup("变量", listOf(
         mapOf(
-            'q' to "return", 'w' to "print", 'e' to "main", 'r' to "if", 't' to "else",
-            'y' to "for", 'u' to "while", 'i' to "class", 'o' to "def", 'p' to "func",
-            'a' to "import", 's' to "from", 'd' to "const", 'f' to "let", 'g' to "var",
-            'h' to "new", 'j' to "public", 'k' to "private", 'l' to "void",
-            'z' to "true", 'x' to "false", 'c' to "null", 'v' to "None",
-            'b' to "this", 'n' to "static", 'm' to "async",
-        ),
-        // 第 2 页：类型、异常与常见调用写法
-        mapOf(
-            'q' to "int", 'w' to "float", 'e' to "double", 'r' to "string", 't' to "bool",
-            'y' to "char", 'u' to "long", 'i' to "struct", 'o' to "enum", 'p' to "interface",
-            'a' to "try", 's' to "catch", 'd' to "finally", 'f' to "throw", 'g' to "break",
-            'h' to "continue", 'j' to "switch", 'k' to "case", 'l' to "default",
-            'z' to "print()", 'x' to "main()", 'c' to "println", 'v' to "printf",
-            'b' to "scanf", 'n' to "lambda", 'm' to "yield",
-        ),
-        // 第 3 页：Python 常用
-        mapOf(
-            'q' to "self", 'w' to "None", 'e' to "elif", 'r' to "lambda", 't' to "yield",
-            'y' to "global", 'u' to "assert", 'i' to "raise", 'o' to "with", 'p' to "as",
-            'a' to "pass", 's' to "del", 'd' to "not", 'f' to "and", 'g' to "or",
-            'h' to "is", 'j' to "True", 'k' to "False", 'l' to "__init__",
-            'z' to "__name__", 'x' to "print(", 'c' to "input(", 'v' to "range(",
-            'b' to "len(", 'n' to "str(", 'm' to "dict(",
-        ),
-        // 第 4 页：Java / C# 常用
-        mapOf(
-            'q' to "System", 'w' to "String", 'e' to "Integer", 'r' to "Boolean", 't' to "List",
-            'y' to "Map", 'u' to "HashMap", 'i' to "ArrayList", 'o' to "package", 'p' to "extends",
-            'a' to "implements", 's' to "abstract", 'd' to "final", 'f' to "override", 'g' to "namespace",
-            'h' to "using", 'j' to "foreach", 'k' to "params", 'l' to "synchronized",
-            'z' to "new ", 'x' to "get;", 'c' to "set;", 'v' to "await", 'b' to "Task", 'n' to "var ", 'm' to "public static",
-        ),
-        // 第 5 页：JavaScript / TypeScript 常用
-        mapOf(
-            'q' to "function", 'w' to "=>", 'e' to "console.log", 'r' to "document", 't' to "window",
-            'y' to "export", 'u' to "default", 'i' to "interface", 'o' to "type", 'p' to "enum",
-            'a' to "undefined", 's' to "NaN", 'd' to "typeof", 'f' to "instanceof", 'g' to "Promise",
-            'h' to "async", 'j' to "await", 'k' to "require", 'l' to "module",
-            'z' to "forEach", 'x' to "map(", 'c' to "filter(", 'v' to "reduce(",
-            'b' to "JSON.", 'n' to "Object.", 'm' to "Array.",
-        ),
-        // 第 6 页：C / C++ 常用
-        mapOf(
-            'q' to "#include", 'w' to "#define", 'e' to "stdio.h", 'r' to "stdlib.h", 't' to "iostream",
-            'y' to "cout", 'u' to "cin", 'i' to "endl", 'o' to "std::", 'p' to "vector",
-            'a' to "template", 's' to "typename", 'd' to "nullptr", 'f' to "sizeof", 'g' to "malloc",
-            'h' to "free(", 'j' to "printf(", 'k' to "scanf(", 'l' to "struct ",
-            'z' to "->", 'x' to "::", 'c' to "int main", 'v' to "return 0", 'b' to "unsigned", 'n' to "const ", 'm' to "static ",
+            'q' to DynamicSymbols.token("星期"), 'w' to DynamicSymbols.token("农历"),
+            'e' to DynamicSymbols.token("季度"), 'r' to DynamicSymbols.token("财年"),
+            't' to DynamicSymbols.token("生肖"), 'y' to DynamicSymbols.token("天数"),
+            'u' to DynamicSymbols.token("周数"), 'i' to DynamicSymbols.token("分辨率"),
+            'o' to DynamicSymbols.token("时间戳"), 'p' to DynamicSymbols.token("毫秒戳"),
+            'a' to DynamicSymbols.token("年日中"), 's' to DynamicSymbols.token("年日数"),
+            'd' to DynamicSymbols.token("年日符"), 'f' to DynamicSymbols.token("时秒中"),
+            'g' to DynamicSymbols.token("时秒数"), 'h' to DynamicSymbols.token("时秒符"),
+            'j' to DynamicSymbols.token("长时中"), 'k' to DynamicSymbols.token("长时数"),
+            'l' to DynamicSymbols.token("长时符"),
         ),
     )),
     // 标点
