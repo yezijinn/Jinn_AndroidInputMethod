@@ -48,9 +48,9 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `每个持久化键都必须同时在导出与导入白名单里`() {
-        // 精确 26：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
+        // 精确 27：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
         // 改键数是正常维护，改完同步这个数。
-        assertEquals("提取到的键常量应是 26 个（改键数请同步本断言）", 26, keyConstants.size)
+        assertEquals("提取到的键常量应是 27 个（改键数请同步本断言）", 27, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -73,7 +73,7 @@ class PrefsBackupCoverageTest {
         // 只核对「键名是否出现」会漏掉这类错误：把 KEY_PORT 写成 asString(v) 照样绿，
         // 但导入后这项设置会静默丢失（类型不符 → 计入忽略）。压缩空白以容忍换行写法。
         val import = bodyOf("importFromBackup").replace(Regex("\\s+"), " ")
-        // 全部 25 个「普通」键 → 期望的取值工具（`KEY_FAVORITE_SYMBOLS` 走归一分支，单列在下面）。
+        // 全部 26 个「普通」键 → 期望的取值工具（`KEY_FAVORITE_SYMBOLS` 走归一分支，单列在下面）。
         // 只钉少数几对时，剩下的键把 Int 写成 asString 这类错误不会被发现（导入时类型不符 = 静默丢失）
         val pairs = mapOf(
             "KEY_HOST" to "asString(v)",
@@ -91,6 +91,7 @@ class PrefsBackupCoverageTest {
             "KEY_PREDICT_ENABLED" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
             "KEY_SHOW_RARE_CHARS" to "asBool(v)",
+            "KEY_FUZZY_PINYIN" to "asInt(v)",
             "KEY_VOICE_INPUT" to "asBool(v)",
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
@@ -147,6 +148,7 @@ class PrefsBackupCoverageTest {
             Triple("keyGapDp", "KeyAppearance.clampGapDp", "越界间隙会进绘制流程"),
             Triple("keyTransparencyPercent", "KeyTransparency.clampPercent", "越界透明度会算出非法 alpha"),
             Triple("keyboardSkinId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
+            Triple("fuzzyPinyinMask", "FuzzyPinyin.clampMask", "越界掩码会派生出未定义的模糊音组"),
             Triple("symbolGroupOrder", "SymbolOrder.serialize", "脏顺序串会缺分组"),
             Triple("themeMode", "MODE_SYSTEM..", "未知模式编号会落到无效主题"),
             Triple("themeLightAtMinutes", "floorMod", "负值/超 24h 会显示成 -1:-30 这类非法时刻"),
