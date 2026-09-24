@@ -86,8 +86,8 @@ class LunarDateTest {
             assertTrue("$date 日号越界: $lunar", lunar!!.day in 1..30)
             assertTrue("$date 月号越界: $lunar", lunar.month in 1..12)
             if (previous != null) {
-                val advanced = lunar.day == previous!!.day + 1 ||
-                    (lunar.day == 1 && previous!!.day >= 29)
+                val advanced = lunar.day == previous.day + 1 ||
+                    (lunar.day == 1 && previous.day >= 29)
                 assertTrue("$date 与前一天不连续: $previous → $lunar", advanced)
             }
             previous = lunar

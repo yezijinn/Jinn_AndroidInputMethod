@@ -994,6 +994,8 @@ class SettingsActivity : ComponentActivity() {
     override fun onDestroy() {
         // 定时刷新的延时任务必须随页面撤销，否则会持有已销毁的 Activity
         uiHandler.removeCallbacks(themeTickRunnable)
+        // 检查更新的看门狗同理：它挂在按钮上，页面销毁后仍会跑一次并回头改按钮状态
+        btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
         // 进度框不能随页面销毁留下（WindowLeaked）；后台任务回来时另有 isFinishing 守卫兜底
         dismissBusy()
         // 三个配置流程对话框同理：它们是代码创建的，旋转重建时不会自动恢复

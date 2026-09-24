@@ -8,7 +8,8 @@ package com.jinn.inputmethod
  *  - 纯函数、零数据文件：规则全写在代码里（Release APK 上限 5MB，词表类数据一律走可选下载包）。
  *  - 只做「单个音节被整体替换」的派生（[keyVariants]）：多音节同时模糊会让键组合成倍增长，
  *    而本引擎没有语言模型兜底，候选一多就是噪声而不是帮助。
- *  - 变体必须仍是合法音节（调用方传 [isLegal]，实际为 `PinyinEngine::isValidSyllable`）：
+ *  - 变体必须仍是合法音节（调用方传 [isLegal]，实际是 `validSyllables.contains`：不带 `loaded`
+ *    门，加载期也能派生；`PinyinEngine.isValidSyllable` 比它多一个 `loaded &&`，两者不等价）：
  *    否则会凭空造出词库里不可能存在的键（例如 r/y 混淆派生出的 `yen`）。
  *  - 掩码 [NONE]（0）表示关闭：此时两个派生函数恒返回空，历史行为逐候选不变。
  *  - 结果顺序 = [GROUPS] 声明顺序：同一输入每次得到同一批变体（可单测、可回归对拍）。

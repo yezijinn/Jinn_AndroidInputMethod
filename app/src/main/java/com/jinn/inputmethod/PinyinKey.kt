@@ -134,8 +134,12 @@ import kotlin.math.min
             invalidate()
         }
 
-        /** 主显示：大写字母 */
+        /** 主显示：大写字母。改动即重绘：与其它样式属性一致，别让它成为「改了不刷新」的例外 */
         var label: String = ""
+            set(value) {
+                field = value
+                invalidate()
+            }
 
         /**
          * 符号层样式：一律水平 + 垂直居中。

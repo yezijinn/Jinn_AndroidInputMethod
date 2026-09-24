@@ -6,7 +6,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.temporal.WeekFields
 
 /**
  * 动态符号：输出「随当前时间（或设备）变化」的内容，供「变量」符号组使用。
