@@ -34,6 +34,14 @@ object PinyinEngine {
     private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
 
+    /**
+     * 模糊音变体的单字上限：比精确单字的 [MAX_CHARS] 小得多。
+     *
+     * 变体单字是「顺带给的兜底」，按 60 上限会把候选栏灌满、把精确单字推到更远；
+     * 真要找的字通常在变体音节的高频前几个里。
+     */
+    private const val MAX_FUZZY_CHARS = 20
+
     /** 「子集不是索引前缀」告警的逐条明细上限（超过则只汇总一行，避免刷屏） */
     private const val NOT_PREFIX_WARN_LIMIT = 10
 
@@ -294,6 +302,27 @@ object PinyinEngine {
     @Volatile
     private var sortedPhraseKeys: List<String> = emptyList()
 
+    /**
+     * 模糊音容错开关（位掩码，见 [FuzzyPinyin]）：[FuzzyPinyin.NONE] = 关闭，也是出厂默认。
+     *
+     * @Volatile：设置页（同进程）写入、查询路径读取；[load] 时从 [Prefs] 取一次，
+     * 之后由 [setFuzzyMask] 实时更新（不必重启输入法 —— 掩码只影响查询派生，不涉及词库加载）。
+     */
+    @Volatile
+    private var fuzzyMask: Int = FuzzyPinyin.NONE
+
+    /**
+     * 实时切换模糊音分组（设置页多选对话框逐项调用）：立即生效。
+     *
+     * 掩码归一后写入：越界位（旧配置 / 外部写入）不会进查询路径。
+     */
+    fun setFuzzyMask(mask: Int) {
+        val clamped = FuzzyPinyin.clampMask(mask)
+        if (clamped == fuzzyMask) return
+        fuzzyMask = clamped
+        Diagnostics.i(TAG, "模糊音容错: 掩码=$clamped（${Integer.bitCount(clamped)} 组启用）")
+    }
+
     /** 加载词库；幂等，可在后台线程调用 */
     fun load(context: Context) {
         if (loaded) return
@@ -306,6 +335,10 @@ object PinyinEngine {
             // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
             val showRareChars = Prefs(context).showRareChars
             if (!showRareChars) loadCommonChars(context)
+
+            // 模糊音容错：开关走 Prefs（默认 0 = 关），这里取一次供本次进程使用；
+            // 设置页改动走 setFuzzyMask 实时生效，不必重启输入法。
+            setFuzzyMask(Prefs(context).fuzzyPinyinMask)
 
             // ── 第一段：高频子集，先让用户能打字（真机实测 ~0.4s vs 全量 6~10.7s）──
             // 子集是同一份源里词频最高的那批词，且单字表/音节表都很小，一并先加载：
@@ -409,6 +442,8 @@ object PinyinEngine {
             sortedPhraseKeys = emptyList()
             completionCache.clear()
             commonChars = null
+            // 模糊音是全局开关，同样要复位：否则上一个测试类打开的组会影响后续所有查询
+            fuzzyMask = FuzzyPinyin.NONE
             loaded = false
             // 可选词库状态一并复位，否则下一个测试类会误以为可选包已加载
             optionalLoaded = false
@@ -1153,33 +1188,66 @@ object PinyinEngine {
      *  输入 nihaoma（[ni,hao,ma]）→ 3 字「你好吗」+ 2 字「你好」+ 各音节单字。
      *
      * 不做「整串前缀联想」（那会产生 nihaoa/nihaoma 等超出拼音数量的词）。
+     *
+     * 模糊音容错（默认关，见 [FuzzyPinyin]）：打开后额外派生变体键，顺序契约是
+     * **精确词 → 变体词 → 精确单字 → 变体单字** —— 变体只作补充，永不挤占精确结果，
+     * 所以关掉开关时结果与历史逐候选一致。
      */
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
         val raw = input.lowercase()
         if (raw.isEmpty()) return Result(emptyList(), emptyList(), "")
 
-        val result = LinkedHashSet<String>()
-
         // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
         val (syllables, partial) = segment(raw)
 
         // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
+        //    词语与单字分成两个集合：模糊音的词要插在两者之间（见 2b）
+        val words = LinkedHashSet<String>()
         for (k in syllables.size downTo 1) {
             val key = syllables.take(k).joinToString("")
             for (k2 in phraseKeysOf(key)) {
-                phrasesFor(k2)?.let { words ->
-                    result.addAll(words.take(MAX_PHRASES))
-                    noteCandidateKeys(words, k2)
-                }
-            }
-            // 逐级递减：k>1 时只取整词；k==1 时再补该音节的单字
-            if (k == 1) {
-                for (syl in syllables) {
-                    result.addAll(charsFor(syl).take(MAX_CHARS))
+                phrasesFor(k2)?.let { found ->
+                    words.addAll(found.take(MAX_PHRASES))
+                    noteCandidateKeys(found, k2)
                 }
             }
         }
+        val chars = LinkedHashSet<String>()
+        for (syl in syllables) {
+            chars.addAll(charsFor(syl).take(MAX_CHARS))
+        }
+
+        // 2b. 模糊音容错（默认关）：精确结果一个不动，变体一律排在其后
+        val fuzzyWords = LinkedHashSet<String>()
+        val fuzzyChars = LinkedHashSet<String>()
+        if (fuzzyMask != FuzzyPinyin.NONE) {
+            val isLegal = { s: String -> validSyllables.contains(s) }
+            for (k in syllables.size downTo 1) {
+                val typedKey = syllables.take(k).joinToString("")
+                for (variantKey in FuzzyPinyin.keyVariants(syllables.take(k), fuzzyMask, isLegal)) {
+                    for (k2 in phraseKeysOf(variantKey)) {
+                        phrasesFor(k2)?.let { found ->
+                            fuzzyWords.addAll(found.take(MAX_PHRASES))
+                            // 候选→拼音键登记的是「用户实际输入的键」而不是变体键：消费区间按输入算
+                            noteCandidateKeys(found, typedKey)
+                        }
+                    }
+                }
+            }
+            // 变体单字跟在精确单字之后，且上限更小（见 MAX_FUZZY_CHARS）
+            for (syl in syllables) {
+                for (variant in FuzzyPinyin.variantsOf(syl, fuzzyMask, isLegal)) {
+                    fuzzyChars.addAll(charsFor(variant).take(MAX_FUZZY_CHARS))
+                }
+            }
+        }
+
+        val result = LinkedHashSet<String>()
+        result.addAll(words)
+        result.addAll(fuzzyWords)
+        result.addAll(chars)
+        result.addAll(fuzzyChars)
 
         // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
         //    partial 非空；或末尾音节是「伪完整音节」（如 nim 的 m，本身合法但也是

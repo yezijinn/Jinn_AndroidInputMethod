@@ -147,6 +147,16 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
 
+    /**
+     * 模糊音容错：按 [FuzzyPinyin] 的分组位掩码存，**默认 [FuzzyPinyin.NONE]（关闭）**。
+     *
+     * 默认关是刻意选择：打开才派生变体候选，关闭时查询结果与历史逐候选一致。
+     * 读写两端都过 [FuzzyPinyin.clampMask]：导入的备份里可能带未定义的位。
+     */
+    var fuzzyPinyinMask: Int
+        get() = FuzzyPinyin.clampMask(sp.getInt(KEY_FUZZY_PINYIN, FuzzyPinyin.NONE))
+        set(value) = sp.edit { putInt(KEY_FUZZY_PINYIN, FuzzyPinyin.clampMask(value)) }
+
     /** 用户词频学习：记录「实际选过」的候选并提到前面（默认关；本地存储，不上传） */
     var userLearning: Boolean
         get() = sp.getBoolean(KEY_USER_LEARNING, false)
@@ -334,6 +344,7 @@ class Prefs(context: Context) {
         put(KEY_PREDICT_ENABLED, predictEnabled)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_SHOW_RARE_CHARS, showRareChars)
+        put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
@@ -383,6 +394,7 @@ class Prefs(context: Context) {
                 KEY_PREDICT_ENABLED -> asBool(v)?.let { predictEnabled = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
+                KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
                 KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
@@ -502,6 +514,8 @@ class Prefs(context: Context) {
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
 
     private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
+        /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
+        private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"

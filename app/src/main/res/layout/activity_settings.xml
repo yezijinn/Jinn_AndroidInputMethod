@@ -204,6 +204,24 @@
                 android:text="@string/key_appearance_entry" />
         </LinearLayout>
 
+        <!-- 模糊音容错：入口按钮（文案在代码里下发，strings.xml 默认禁改） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <Button
+                android:id="@+id/btn_fuzzy_pinyin"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+        </LinearLayout>
+
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
         <LinearLayout
             android:layout_width="match_parent"

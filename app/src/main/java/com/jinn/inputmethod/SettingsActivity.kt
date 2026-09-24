@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -74,6 +75,9 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
     private lateinit var switchVoiceInput: Switch
+
+    /** 模糊音容错入口按钮（文案与状态在代码里下发：strings.xml 默认禁改） */
+    private lateinit var btnFuzzyPinyin: Button
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
@@ -277,6 +281,10 @@ class SettingsActivity : ComponentActivity() {
         findViewById<Button>(R.id.btn_key_appearance).setOnClickListener {
             startActivity(Intent(this, KeyAppearanceActivity::class.java))
         }
+        // 模糊音容错：多选对话框（分组是并列维度，不做独立页面；勾选即落盘并即时生效）
+        btnFuzzyPinyin = findViewById(R.id.btn_fuzzy_pinyin)
+        btnFuzzyPinyin.setOnClickListener { showFuzzyPinyinDialog() }
+        refreshFuzzyPinyinButton()
         appliedThemeDark = ThemeManager.isDark(this)
         scheduleThemeTick()
 
@@ -793,6 +801,86 @@ class SettingsActivity : ComponentActivity() {
     private fun recordUpdateCheckTime(result: UpdateChecker.Result) {
         if (result is UpdateChecker.Result.NetworkError) return
         prefs.updateLastCheckAt = System.currentTimeMillis()
+    }
+
+    /**
+     * 模糊音容错：多选对话框。
+     *
+     * 分组是并列的独立维度（平翘舌 / 鼻边音 / 前后鼻音…），所以不做「总开关 + 若干开关」的
+     * 一堆控件，也没有「保存」按钮 —— 勾选即落盘并即时生效，避免与返回键的语义打架。
+     */
+    private fun showFuzzyPinyinDialog() {
+        val groups = FuzzyPinyin.GROUPS
+        val boxes = ArrayList<CheckBox>(groups.size)
+        // 勾选即落盘；「全开 / 全关」批量改时先挂起逐项回调，最后统一写一次（避免 11 次写盘）
+        var bulk = false
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpOf(20), dpOf(4), dpOf(20), dpOf(4))
+            addView(
+                TextView(this@SettingsActivity).apply {
+                    text = TEXT_FUZZY_DESC
+                    textSize = 13f
+                }
+            )
+        }
+        for (group in groups) {
+            val cb = CheckBox(this).apply {
+                text = group.label
+                isChecked = prefs.fuzzyPinyinMask and group.bit != 0
+                setOnCheckedChangeListener { _, checked ->
+                    if (bulk) return@setOnCheckedChangeListener
+                    val mask = if (checked) {
+                        prefs.fuzzyPinyinMask or group.bit
+                    } else {
+                        prefs.fuzzyPinyinMask and group.bit.inv()
+                    }
+                    applyFuzzyMask(mask)
+                }
+            }
+            boxes.add(cb)
+            box.addView(cb, lpOf(10))
+        }
+        // 用自定义勾选列表而不是框架的 setMultiChoiceItems：实测后者在本项目的对话框主题下
+        // 一个条目都不显示（只剩标题、说明与按钮），与配置导出对话框同型的做法才可靠
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_FUZZY_TITLE)
+            .setView(ScrollView(this).apply { addView(box) })
+            .setNeutralButton(TEXT_FUZZY_ALL, null)
+            .setNegativeButton(TEXT_FUZZY_NONE, null)
+            .setPositiveButton("完成", null)
+            .create()
+        dialog.show()
+        // 两个批量按钮都要留在原地生效：默认回调会先 dismiss，用户看不到结果
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            bulk = true
+            boxes.forEach { it.isChecked = true }
+            bulk = false
+            applyFuzzyMask(FuzzyPinyin.MASK_ALL)
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+            bulk = true
+            boxes.forEach { it.isChecked = false }
+            bulk = false
+            applyFuzzyMask(FuzzyPinyin.NONE)
+        }
+    }
+
+    /** 写入模糊音掩码并立即生效（[PinyinEngine.setFuzzyMask] 只改查询派生，不需要重启输入法） */
+    private fun applyFuzzyMask(mask: Int) {
+        prefs.fuzzyPinyinMask = mask
+        PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
+        refreshFuzzyPinyinButton()
+    }
+
+    /** 入口按钮上带出当前状态：否则用户看不出「现在是开着还是关着」 */
+    private fun refreshFuzzyPinyinButton() {
+        val count = Integer.bitCount(prefs.fuzzyPinyinMask)
+        btnFuzzyPinyin.text = if (count == 0) {
+            "$TEXT_FUZZY_TITLE（关闭）"
+        } else {
+            "$TEXT_FUZZY_TITLE（$count 组）"
+        }
     }
 
     /** 三类结果统一三套文案，措辞由 unified-update-check 统一，不得改写。 */
@@ -1553,6 +1641,13 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_BUSY_EXPORT = "正在打包并加密配置…\n（密钥派生按安全强度计算，约需 1~2 秒，请勿退出）"
         const val TEXT_BUSY_DECRYPT = "正在解密并校验密码…\n（约需 1~2 秒，请勿退出）"
         const val TEXT_BUSY_IMPORT = "正在导入配置与数据…"
+
+        // ── 模糊音容错文案（strings.xml 默认禁改，文案收敛在此处） ──
+        const val TEXT_FUZZY_TITLE = "模糊音容错"
+        const val TEXT_FUZZY_DESC = "按自己的口音勾选不分的音。勾选后，某个音打不出想要的字时，" +
+            "会把该音的其他读法作为候选补在原有候选之后（不挤占、不替换）。"
+        const val TEXT_FUZZY_ALL = "全开"
+        const val TEXT_FUZZY_NONE = "全关"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
             "（也可能是文件超过 256MB 上限）"
