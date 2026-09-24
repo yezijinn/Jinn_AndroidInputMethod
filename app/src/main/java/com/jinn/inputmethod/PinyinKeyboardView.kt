@@ -1570,7 +1570,111 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 设置页开关：关掉后不再产生预测，已显示的也会在下次刷新时清掉 */
     private fun predictionsEnabled(): Boolean = Prefs(context).predictEnabled
 
+    /**
+     * 候选栏高度按 [Prefs.candidateRows] 档位落位（单行 48dp / 双行 72dp）。
+     *
+     * 只在高度真的变化时写回布局参数：本方法每次刷新都调，无谓赋值会多触发一次
+     * requestLayout，让「每次按键重建候选」再搭上一次整键盘测量。
+     */
+    private fun applyCandidateRows(rows: Int) {
+        val lp = candidateBar.layoutParams as? LinearLayout.LayoutParams ?: return
+        val height = if (rows == CandidateRows.DOUBLE) {
+            doubleRowHeightPx() * 2
+        } else {
+            dp(CandidateRows.heightDp(rows))
+        }
+        if (lp.height == height) return
+        lp.height = height
+        candidateBar.layoutParams = lp
+    }
+
+    /**
+     * 双行档单排高度（px）：默认字体下 = 36dp（两排 72dp），系统字体放大时随之长高。
+     *
+     * 行高与候选栏高度必须用同一个来源，否则列会被裁掉底部或留出空隙。
+     */
+    private fun doubleRowHeightPx(): Int {
+        val dm = resources.displayMetrics
+        // sp → px 交给 TypedValue：它内部按字体缩放换算，不必自己读 DisplayMetrics 的缩放字段
+        val textPx = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP,
+            CandidateRows.textSizeSp(CandidateRows.DOUBLE),
+            dm,
+        )
+        return CandidateRows.rowHeightPx(density = dm.density, textPx = textPx)
+    }
+
+    /**
+     * 渲染候选 / 预测条目：两者只差字色与点击回调。
+     *
+     * - 单行档：每条一个 TextView 横向排列（历史形态）；
+     * - 双行档：每列 = 上排偶数项 + 下排奇数项（[CandidateRows.columnsOf]），
+     *   上排缺项时用等高占位补齐，各列候选的垂直位置才不会错位。
+     *
+     * 两档共用 [viewCandidateList] 作容器：横滑由外层那一个 HorizontalScrollView
+     * 承担（两排天然同步），功能面板 / 符号分组 / 内联提示对该容器的复用不受影响。
+     *
+     * @param rows 本帧档位，由 [refreshCandidateBar] 读出后传入（与候选栏高度同源）
+     */
+    private fun renderCandidateItems(
+        items: List<String>,
+        rows: Int,
+        colorToken: Int?,
+        colorRes: Int,
+        onClick: (String) -> Unit,
+    ) {
+        viewCandidateList.removeAllViews()
+        val sizeSp = CandidateRows.textSizeSp(rows)
+        // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
+        // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
+        fun build(text: String): TextView = TextView(context).apply {
+            this.text = text
+            textSize = sizeSp
+            gravity = android.view.Gravity.CENTER
+            setTextColor(skinToken(colorToken, colorRes))
+            setPadding(dp(2), 0, dp(2), 0)
+            isClickable = true
+            setOnClickListener { onClick(text) }
+        }
+        if (rows != CandidateRows.DOUBLE) {
+            for (text in items) {
+                viewCandidateList.addView(build(text))
+            }
+            return
+        }
+        val rowHeight = doubleRowHeightPx()
+        for ((top, bottom) in CandidateRows.columnsOf(items)) {
+            val column = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                // 列宽取上下两条的较宽者；列内水平居中 ⇒ 相邻序号的候选中线对齐
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            }
+            // 上排缺项（候选总数为奇数）也要占位，否则该列的下排会被父容器的垂直居中
+            // 拉到中线、与其它列不齐。占位宽度必须是 0：裸 View 没有固有宽度，在 AT_MOST
+            // 约束下会吃掉「本列剩余宽度」（实测单候选时宽达半屏），把那条候选顶到栏中间。
+            column.addView(
+                top?.let { build(it) } ?: View(context),
+                LinearLayout.LayoutParams(
+                    if (top == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight),
+            )
+            column.addView(
+                build(bottom),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight),
+            )
+            viewCandidateList.addView(
+                column,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            )
+        }
+    }
+
     private fun refreshCandidateBar() {
+        // 档位在这一帧只读一次并向下传：高度与列结构必须同档。分开读取时，
+        // 后台导入线程若恰在两次读取之间改键，会出现「高度按旧档、结构按新档」的
+        // 一帧错配（列底被裁），要到下次刷新才自愈。
+        val rows = Prefs(context).candidateRows
+        applyCandidateRows(rows)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
         // 开关刚被关掉时，把上一次留下的预测清掉，否则已显示的预测会一直挂在候选栏
@@ -1601,18 +1705,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (input.isEmpty()) {
             // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）
             viewCandidatePinyin.text = ""
-            viewCandidateList.removeAllViews()
-            for (pred in lastPredictions) {
-                val item = TextView(context).apply {
-                    text = pred
-                    textSize = 21f
-                    setTextColor(skinToken(skin.accent, R.color.kb_candidate_sel_text))
-                    setPadding(dp(2), 0, dp(2), 0)
-                    isClickable = true
-                    setOnClickListener { onPredictionSelected(pred) }
-                }
-                viewCandidateList.addView(item)
-            }
+            renderCandidateItems(
+                items = lastPredictions,
+                rows = rows,
+                colorToken = skin.accent,
+                colorRes = R.color.kb_candidate_sel_text,
+                onClick = { onPredictionSelected(it) },
+            )
             Diagnostics.v(TAG, "智能预测: ${lastPredictions.take(4)}")
             return
         }
@@ -1653,24 +1752,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin.text = input
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
-        viewCandidateList.removeAllViews()
         // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、
         // 93 个音节超过 60 字），而这里是「每条一个 TextView」且每次按键全量重建，
         // 一次按键创建 60 个 View 在低端机上会明显掉帧。用户实际只点最前面几个
         // （单字候选按常用度排序），因此截断渲染量。
         // 这只影响渲染，[lastCandidates] 仍保存完整候选，空格/回车取首候选不受影响。
-        for ((index, candidate) in result.candidates.withIndex()) {
-            if (index >= MAX_RENDERED_CANDIDATES) break
-            val item = TextView(context).apply {
-                text = candidate
-                textSize = 21f
-                setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
-                setPadding(dp(2), 0, dp(2), 0)
-                isClickable = true
-                setOnClickListener { onCandidateSelected(candidate) }
-            }
-            viewCandidateList.addView(item)
-        }
+        renderCandidateItems(
+            items = result.candidates.take(MAX_RENDERED_CANDIDATES),
+            rows = rows,
+            colorToken = skin.functionGlyph,
+            colorRes = R.color.text_primary,
+            onClick = { onCandidateSelected(it) },
+        )
     }
 
     /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
@@ -1713,8 +1806,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 item.addView(pageText, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
+            // 高度同功能按钮：内容与 48dp 取大（双行档居中、字体放大不裁）
+            item.minimumHeight = dp(CandidateRows.SINGLE_ROW_HEIGHT_DP)
             viewCandidateList.addView(item, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = dpFloat(2f).toInt()
                 marginEnd = dpFloat(2f).toInt()
             })
@@ -2135,13 +2230,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setPadding(dp(8), dp(4), dp(8), dp(4))
             // key_bg 同款（10dp 圆角），但填充色带面 alpha，这 6 个按钮占满候选栏
             background = xmlKeyBackground()
+            // 高度取「内容」与 48dp 的较大者：双行档候选栏 72dp，用 MATCH_PARENT 会被拉成
+            // 瘦高长条；只固定 48dp 又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）
+            minimumHeight = dp(CandidateRows.SINGLE_ROW_HEIGHT_DP)
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
         }
         // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 个按钮各占 1/6）
         val lp = LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
         ).apply {
             marginStart = dp(2)
             marginEnd = dp(2)

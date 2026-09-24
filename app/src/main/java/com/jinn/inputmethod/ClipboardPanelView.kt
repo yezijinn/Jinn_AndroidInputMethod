@@ -452,7 +452,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             listener?.onClose()
         } else {
             Diagnostics.w(TAG, "点击粘贴: id=${item.id} 失败，保持面板")
-            Toast.makeText(context, "粘贴失败，请确认输入框可用", Toast.LENGTH_SHORT).show()
+            // 失败原因由 IME 侧给出（连接不可用会在候选栏提示、单条过大另有说明），这里只报结果
+            Toast.makeText(context, "粘贴失败", Toast.LENGTH_SHORT).show()
         }
     }
 

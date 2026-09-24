@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 27 起才有 windowLightNavigationBar（浅底配深色图标），所以只有这一档的导航栏能与页面同色；
+         API 26 走 values/colors.xml 的深底回退。颜色资源按限定符覆盖即可，不必整套复制主题。 -->
+    <color name="nav_bar">@color/app_bg</color>
+</resources>

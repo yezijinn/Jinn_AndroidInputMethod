@@ -70,4 +70,8 @@
     <color name="btn_secondary_bg">#1E2A4A</color>
     <color name="field_bg">#101830</color>
     <color name="grip">#3A3F48</color>
+
+    <!-- 导航栏回退色：夜间主题不用它（导航栏走 @color/app_bg，深底深字外的观感不变），
+         这里只为与 values/colors.xml 逐名对齐 -->
+    <color name="nav_bar">#101830</color>
 </resources>

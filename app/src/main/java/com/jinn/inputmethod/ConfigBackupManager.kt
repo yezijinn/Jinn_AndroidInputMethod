@@ -46,6 +46,9 @@ internal object ConfigBackupManager {
     /** 解密到缓存目录的临时 zip 前缀（导入流程用完即删） */
     private const val DECRYPT_PREFIX = "jinn-import-"
 
+    /** 词库恢复的中间件后缀（`<文件名>.restore`，校验通过才改名成正式文件） */
+    private const val RESTORE_SUFFIX = ".restore"
+
     /** 单个文本节读入内存的上限：超出即视为不可用，宁可拒绝也不硬撑（String 常驻是字节数的 2 倍） */
     internal const val MAX_TEXT_SECTION_BYTES = 16L * 1024 * 1024
 
@@ -82,6 +85,14 @@ internal object ConfigBackupManager {
 
     /** [zipEntryNames] 的收集上限：见该函数说明（zip 本地头很小，无闸就是 OOM 通道） */
     internal const val MAX_ZIP_ENTRIES = 512
+
+    /**
+     * 一次检查/导入允许在「按名查找」上消耗的解压后字节总量（见 [ScanBudget]）。
+     *
+     * 合法包一次操作最多需要约 300MB（三节各 ≤16MB + 词库 ≤64MB，且每个节都要从包首重新顺序扫一遍），
+     * 取 512MB 留一倍余量；超限整包拒收 —— 宁可明确失败，也不能让一份对抗包把导入卡成假死。
+     */
+    internal const val MAX_SCAN_INFLATED_BYTES = 512L * 1024 * 1024
 
     /**
      * 从 SAF 读取加密包的时长上限。
@@ -124,6 +135,20 @@ internal object ConfigBackupManager {
 
     /** 导出互斥（见 [export]）：进程级，跨 Activity 重建也有效 */
     private val exportInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 导入互斥（见 [import]）：同为进程级，页面重建后的新实例也拦得住 */
+    private val importInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 是否已有导入在进行中：页面重建后导入按钮会重新可点，据此拒绝第二次 */
+    val importing: Boolean get() = importInFlight.get()
+
+    /** 占住导入位；返回 false = 已有导入在跑（见 [import]） */
+    internal fun beginImport(): Boolean = importInFlight.compareAndSet(false, true)
+
+    /** 释放导入位（与 [beginImport] 成对，异常路径也必须走到） */
+    internal fun endImport() {
+        importInFlight.set(false)
+    }
 
     /**
      * 导入时给系统文件选择器的 MIME 过滤。
@@ -577,7 +602,19 @@ internal object ConfigBackupManager {
     }
 
     fun inspect(zip: File): BackupInfo? {
-        val manifestText = readEntry(zip, ConfigBackup.ENTRY_MANIFEST) ?: return null
+        val budget = ScanBudget()
+        // 四个节一次遍历读完（见 [readSections]）：按名查找要从包首顺序扫，分开查等于把包反复解压
+        val sections = readSections(
+            zip,
+            listOf(
+                ConfigBackup.ENTRY_MANIFEST,
+                ConfigBackup.ENTRY_PREFS,
+                ConfigBackup.ENTRY_USER_FREQ,
+                ConfigBackup.ENTRY_CLIPBOARD,
+            ),
+            budget = budget,
+        )
+        val manifestText = (sections[ConfigBackup.ENTRY_MANIFEST] as? SectionRead.Ok)?.text ?: return null
         val manifest = ConfigBackup.parseManifest(manifestText) ?: run {
             Diagnostics.w(TAG, "检查: manifest 无法识别（不是本程序导出的包）")
             return null
@@ -585,7 +622,7 @@ internal object ConfigBackupManager {
         // 三态读取：超限的节要单独标出来（若当成「没有」，界面会显示 0 条，用户以为包里没内容）
         val oversized = ArrayList<String>()
         fun textOf(entry: String, section: String): String? =
-            when (val r = readSection(zip, entry)) {
+            when (val r = sections[entry] ?: SectionRead.Missing) {
                 is SectionRead.Ok -> r.text
                 SectionRead.TooLarge, SectionRead.Failed -> {
                     oversized.add(section)
@@ -600,10 +637,15 @@ internal object ConfigBackupManager {
             ?.let { UserFrequency.countEntries(it) } ?: 0
         val clipCount = textOf(ConfigBackup.ENTRY_CLIPBOARD, ConfigBackup.SEC_CLIPBOARD)
             ?.let { ConfigBackup.decodeClipboard(it).size } ?: 0
-        val dictNames = zipEntryNames(zip)
+        val dictNames = zipEntryNames(zip, budget = budget)
             .filter { it.startsWith(ConfigBackup.DICT_DIR) }
             .map { it.removePrefix(ConfigBackup.DICT_DIR) }
             .filter { it.isNotEmpty() }
+        // 预算耗尽时上面的段数已经不可信（词库名可能只数到一半），按「包不可用」处理
+        if (budget.exhausted) {
+            Diagnostics.w(TAG, "检查: 包内解压量超过预算，按不可用处理")
+            return null
+        }
         return BackupInfo(manifest, prefsKeys, freqCount, clipCount, dictNames, oversized)
     }
 
@@ -638,9 +680,32 @@ internal object ConfigBackupManager {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ): ImportOutcome? {
+        // 进程级互斥：导入跑在设置页的裸线程上，页面重建后按钮会重新可点 —— 不拦的话
+        // 两路流程会并发写 prefs / 词频 / 剪贴板（各有锁不会损坏，但报数会失真，
+        // 来自不同包时还会各阶段各留一份）
+        if (!beginImport()) {
+            Diagnostics.w(TAG, "导入: 已有导入在进行中，忽略本次")
+            return null
+        }
+        try {
+            return importLocked(context, zip, mode, includeClipboard, includeDicts)
+        } finally {
+            endImport()
+        }
+    }
+
+    private fun importLocked(
+        context: Context,
+        zip: File,
+        mode: ImportMode,
+        includeClipboard: Boolean,
+        includeDicts: Boolean,
+    ): ImportOutcome? {
+        // 一次导入共用一份解压预算（见 [ScanBudget]）：每个节都要从包首顺序扫一遍
+        val budget = ScanBudget()
         // 这两个早退必须留痕：同函数其它拒绝分支都有 W，只有这里静默的话，
         // 用户拿一个截断/损坏包求助时，诊断包里分不清「manifest 条目读不到」与「清单解析失败」
-        val manifestText = readEntry(zip, ConfigBackup.ENTRY_MANIFEST) ?: run {
+        val manifestText = readEntry(zip, ConfigBackup.ENTRY_MANIFEST, budget = budget) ?: run {
             Diagnostics.w(TAG, "导入: manifest 条目读不到（包被截断或损坏）")
             return null
         }
@@ -659,7 +724,17 @@ internal object ConfigBackupManager {
         // （半截包 / 被编辑过的包都不该进用户环境，宁可让用户重导）
         // prefs 是必备节（导出必写）。缺节、或「节存在但 manifest 里没有它的摘要」都判包不完整：
         // 后者正是「manifest 被裁剪得只剩 format 字段」的形态，旧写法会因此跳过校验直接导入
-        val prefsText = when (val r = readSection(zip, ConfigBackup.ENTRY_PREFS)) {
+        // 三个节一次遍历读完（见 [readSections]）；manifest 仍单独先读，版本不兼容的包要在读完前就拒掉
+        val sections = readSections(
+            zip,
+            listOf(
+                ConfigBackup.ENTRY_PREFS,
+                ConfigBackup.ENTRY_USER_FREQ,
+                ConfigBackup.ENTRY_CLIPBOARD,
+            ),
+            budget = budget,
+        )
+        val prefsText = when (val r = sections[ConfigBackup.ENTRY_PREFS] ?: SectionRead.Missing) {
             is SectionRead.Ok -> r.text
             SectionRead.Missing -> {
                 Diagnostics.w(TAG, "导入: 缺少 prefs 节")
@@ -676,7 +751,7 @@ internal object ConfigBackupManager {
             return null
         }
         // 词频是可选节；存在即摘要必须对得上，且「读不出来（超限）」必须拒绝而不是当成「没有」
-        val freqText = when (val r = readSection(zip, ConfigBackup.ENTRY_USER_FREQ)) {
+        val freqText = when (val r = sections[ConfigBackup.ENTRY_USER_FREQ] ?: SectionRead.Missing) {
             is SectionRead.Ok -> r.text
             SectionRead.Missing -> null
             else -> {
@@ -689,7 +764,7 @@ internal object ConfigBackupManager {
             return null
         }
         // 剪贴板同为可选节；同上
-        val clipText = when (val r = readSection(zip, ConfigBackup.ENTRY_CLIPBOARD)) {
+        val clipText = when (val r = sections[ConfigBackup.ENTRY_CLIPBOARD] ?: SectionRead.Missing) {
             is SectionRead.Ok -> r.text
             SectionRead.Missing -> null
             else -> {
@@ -709,20 +784,27 @@ internal object ConfigBackupManager {
         if (includeDicts) {
             // 包里有词库条目、manifest 却没登记摘要 ⇒ 与其它节一致：判包不完整。
             // 旧写法会静默跳过，用户勾了「导入词库」却什么都没发生（而清单里明明显示着词库数量）
-            if (dictSection == null && hasDictEntry(zip)) {
+            if (dictSection == null && hasDictEntry(zip, budget)) {
                 Diagnostics.w(TAG, "导入: 包内有词库条目但 manifest 未登记摘要，判包不完整")
                 return null
             }
             if (dictSection != null) {
                 // 词库是最先写入的一段，失败时还没动别的东西，保持「整包拒绝」语义
                 val r = runCatching {
-                    restoreDicts(File(context.filesDir, DICT_DIR), zip, dictSection.sha256)
+                    restoreDicts(File(context.filesDir, DICT_DIR), zip, dictSection.sha256, budget = budget)
                 }
                     .onFailure { Diagnostics.w(TAG, "导入: 词库恢复异常 ${it.javaClass.simpleName}") }
                     .getOrNull() ?: return null
                 dictsWritten = r.first
                 dictsSkipped = r.second
             }
+        }
+
+        // 预算耗尽后 hasDictEntry 会退化成 false（读成「包里没有词库」），不在这里拦就会静默漏导入；
+        // 位置必须在写入之前：要么整包收下，要么什么都不动
+        if (budget.exhausted) {
+            Diagnostics.w(TAG, "导入: 包内解压量超过预算，按不可用处理")
+            return null
         }
 
         val prefs = Prefs(context)
@@ -856,8 +938,24 @@ internal object ConfigBackupManager {
         dir: File,
         zip: File,
         expectedDigest: String,
+        budget: ScanBudget = ScanBudget(),
         /** 文件名 → 官方 sha256（null = 不在清单内）；测试注入合成表以覆盖成功落盘路径 */
         checksumOf: (String) -> String? = { OptionalDicts.byFileName(it)?.checksum },
+    ): Pair<Int, Int>? = try {
+        restoreDictsLocked(dir, zip, expectedDigest, budget, checksumOf)
+    } finally {
+        // 临时件在流程内已经改名或删除，在册登记到此为止：不注销的话集合每导入一次涨一批，
+        // 清扫器还会一直跳过同名的残留文件（见 [tempInFlight]）
+        tempInFlight.removeIf { it.endsWith(RESTORE_SUFFIX) }
+    }
+
+    /** [restoreDicts] 的实现体：`*.restore` 的在册登记在这一层，注销统一由外层包装负责 */
+    private fun restoreDictsLocked(
+        dir: File,
+        zip: File,
+        expectedDigest: String,
+        budget: ScanBudget,
+        checksumOf: (String) -> String?,
     ): Pair<Int, Int>? {
         dir.mkdirs()
         val pending = ArrayList<Pair<File, File>>()
@@ -884,7 +982,7 @@ internal object ConfigBackupManager {
                         // —— xz 压缩比轻松 >100:1，几百 KB 的包就能让输入法启动 OOM 或写满磁盘
                         val official = checksumOf(fileName)
                         val allowed = official != null
-                        val tmp = File(dir, "$fileName.restore")
+                        val tmp = File(dir, fileName + RESTORE_SUFFIX)
                         val md = java.security.MessageDigest.getInstance("SHA-256")
                         var size = 0L
                         var tooBig = false
@@ -934,6 +1032,11 @@ internal object ConfigBackupManager {
                             }
                         }
                     }
+                    // 非词库条目也要读空并记账：对抗包可以把巨大条目混在 dicts/ 前后
+                    if (!budget.drain(zis)) {
+                        Diagnostics.w(TAG, "词库恢复: 包内解压量超过预算，已中止")
+                        return@zipStream false
+                    }
                     entry = zis.nextEntry
                 }
                 true
@@ -946,7 +1049,7 @@ internal object ConfigBackupManager {
             // （两者都在循环之后才赋值），半截 `*.restore` 只能等下次清扫回收 —— 这里按后缀全清
             // （该目录只放词库文件，不会误伤）
             dir.listFiles()?.forEach { f ->
-                if (f.isFile && f.name.endsWith(".restore")) f.delete()
+                if (f.isFile && f.name.endsWith(RESTORE_SUFFIX)) f.delete()
             }
             Diagnostics.w(TAG, "词库恢复: 读取失败")
             return null
@@ -1038,6 +1141,43 @@ internal object ConfigBackupManager {
     }
 
     /**
+     * 按名查找的解压量预算（**解压后**字节）。
+     *
+     * `ZipInputStream.nextEntry` 会先把当前条目读完（`closeEntry` 解压丢弃）才走到下一条，
+     * 于是「跳过条目」的代价按解压后体积计；而 [MAX_PACKAGE_BYTES] 管的是压缩后的字节 ——
+     * 不另设这道闸，几百 KB 的对抗包就能让按名查找跑上几十分钟，而导入跑在不可取消的进度框后面，
+     * 用户只能杀进程。
+     *
+     * 检查与导入各自建一份、内部逐节共用：每个节都要从包首重新顺序扫一遍，
+     * 分开记账等于把上限乘上节数。超限后 [exhausted] 置位，由调用方整包拒收。
+     */
+    internal class ScanBudget(private var remaining: Long = MAX_SCAN_INFLATED_BYTES) {
+
+        /** 是否已因超限中止过（调用方据此拒收整包，而不是把半截结果当好结果） */
+        var exhausted = false
+            private set
+
+        /**
+         * 读空 [input] 当前条目的剩余内容并记账。
+         *
+         * 返回 false = 超限，调用方**必须停止遍历**（继续 `nextEntry` 等于放任它把剩下的条目
+         * 解压完）。读异常照旧向上抛：那属于「包损坏」，与超限是两种不同的失败。
+         */
+        fun drain(input: InputStream): Boolean {
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) return true
+                remaining -= n
+                if (remaining < 0) {
+                    exhausted = true
+                    return false
+                }
+            }
+        }
+    }
+
+    /**
      * 三态读取节。
      *
      * 为什么不能只返回 `String?`：「节超限读不出来」与「包里本来就没有这一节」都得到 null，
@@ -1048,6 +1188,7 @@ internal object ConfigBackupManager {
         zip: File,
         name: String,
         maxBytes: Long = MAX_TEXT_SECTION_BYTES,
+        budget: ScanBudget = ScanBudget(),
     ): SectionRead = runCatching {
         ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
             var entry = zis.nextEntry
@@ -1055,6 +1196,10 @@ internal object ConfigBackupManager {
                 if (!entry.isDirectory && entry.name == name) {
                     val text = readLimited(zis, maxBytes) ?: return@use SectionRead.TooLarge
                     return@use SectionRead.Ok(text)
+                }
+                if (!budget.drain(zis)) {
+                    Diagnostics.w(TAG, "读取条目 $name: 包内解压量超过预算，已中止")
+                    return@use SectionRead.Failed
                 }
                 entry = zis.nextEntry
             }
@@ -1071,7 +1216,58 @@ internal object ConfigBackupManager {
         zip: File,
         name: String,
         maxBytes: Long = MAX_TEXT_SECTION_BYTES,
-    ): String? = (readSection(zip, name, maxBytes) as? SectionRead.Ok)?.text
+        budget: ScanBudget = ScanBudget(),
+    ): String? = (readSection(zip, name, maxBytes, budget) as? SectionRead.Ok)?.text
+
+    /**
+     * 一次遍历读出多个节，键为节名；包里没有的名字不回键，语义同 [SectionRead.Missing]。
+     *
+     * 按名查找必须从包首顺序扫（`ZipInputStream` 不能跳转），而检查与导入要读的正是同一批节 ——
+     * 分散调用等于把同一个包反复解压（此前检查 5 遍 + 导入 6 遍）。
+     *
+     * 严格性与分开调用一致：读不出来的节记 [SectionRead.TooLarge]；遍历中途出错或预算耗尽时，
+     * **没走到的节一律记 [SectionRead.Failed]**，调用方据此整包拒收，而不是把「没走到」当成「没有这一节」。
+     */
+    internal fun readSections(
+        zip: File,
+        names: List<String>,
+        maxBytes: Long = MAX_TEXT_SECTION_BYTES,
+        budget: ScanBudget = ScanBudget(),
+    ): Map<String, SectionRead> {
+        val found = HashMap<String, SectionRead>(names.size)
+        val wanted = names.toHashSet()
+        val scanned = runCatching {
+            ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null && found.size < wanted.size) {
+                    // 同名条目重复（手改过的包可能有）时首条定案：与逐节读取「命中即返回」一致，
+                    // 重复的那条按跳读记账，不再解压进内存
+                    if (!entry.isDirectory && wanted.contains(entry.name) && !found.containsKey(entry.name)) {
+                        val text = readLimited(zis, maxBytes)
+                        if (text == null) {
+                            found[entry.name] = SectionRead.TooLarge
+                            // readLimited 触到上限就返回，条目还剩一大截没读：跳读照样要记账，
+                            // 否则一个超限节就能把后面的解压量免费送出去
+                            if (!budget.drain(zis)) return@use false
+                        } else {
+                            found[entry.name] = SectionRead.Ok(text)
+                        }
+                    } else if (!budget.drain(zis)) {
+                        return@use false
+                    }
+                    entry = zis.nextEntry
+                }
+                true
+            }
+        }.getOrElse {
+            Diagnostics.w(TAG, "读取节失败: ${it.message}")
+            false
+        }
+        if (!scanned) {
+            for (name in wanted) found.putIfAbsent(name, SectionRead.Failed)
+        }
+        return found
+    }
 
     private fun readLimited(input: InputStream, maxBytes: Long): String? {
         val buf = ByteArrayOutputStream()
@@ -1096,12 +1292,18 @@ internal object ConfigBackupManager {
      * 上限是必须的：zip 本地头只有几十字节，256MB 的包能塞数百万条，而这里要建
      * `List<String>`、调用方还会再复制几份 —— 不设闸就是一条 OOM 通道。
      */
-    internal fun zipEntryNames(zip: File, maxEntries: Int = MAX_ZIP_ENTRIES): List<String> = runCatching {
+    internal fun zipEntryNames(
+        zip: File,
+        maxEntries: Int = MAX_ZIP_ENTRIES,
+        budget: ScanBudget = ScanBudget(),
+    ): List<String> = runCatching {
         ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
             val out = ArrayList<String>()
             var entry = zis.nextEntry
             while (entry != null && out.size < maxEntries) {
                 if (!entry.isDirectory) out.add(entry.name)
+                // 超限就停下并回已收集的名字，由调用方按 [ScanBudget.exhausted] 拒收整包
+                if (!budget.drain(zis)) return@use out
                 entry = zis.nextEntry
             }
             out
@@ -1114,11 +1316,12 @@ internal object ConfigBackupManager {
      * 不能用 [zipEntryNames] 判断：它有收集上限，而（被改过的）包可以把词库条目排在上限之后 ——
      * 那样「有词库条目但 manifest 未登记」会被漏判成「没有词库」，用户勾了「导入词库」却什么都没发生。
      */
-    internal fun hasDictEntry(zip: File): Boolean = runCatching {
+    internal fun hasDictEntry(zip: File, budget: ScanBudget = ScanBudget()): Boolean = runCatching {
         ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory && entry.name.startsWith(ConfigBackup.DICT_DIR)) return@use true
+                if (!budget.drain(zis)) return@use false
                 entry = zis.nextEntry
             }
             false
