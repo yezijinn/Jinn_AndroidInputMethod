@@ -11,13 +11,13 @@ import org.junit.Test
  * 恰恰最容易出静默错误：历史上「标点」组第 2 页的 g 键被误录成 `"〈~"`，上屏会多出一个孤立波浪号。
  *
  * 注意（踩过的坑）：不要给取值加「长度 1~2」这类看似合理的规则，本表里
- * 「编程」组有 149 条合法代码片段（`#include`、`int main`）、「数学」组有 `∫∫∫`，
+ * 「数学」组有 `∫∫∫`、动态「变量」组上屏的是整条时间串（如 `2026年9月24日13点50分28秒`），
  * 长度规则会把正确数据判成错误。护栏只锁「由设计保证、且与录入事故直接相关」的性质。
  *
  * 「全角 / 半角」两组由原「常用」组拆分而来：全角组只放全角符号、半角组只放半角符号，
  * 宽度归属由本测试按「是否 ASCII」钉死（`·—…` 这类通用标点非 ASCII，计入全角组）；
- * 两组还都禁数字（数字走数字层）且不得混入字母/汉字。原「编程」组的纯符号页已删除，
- * 「第 1 页必须是关键字」由本测试钉住，需要符号请用「半角」组。
+ * 两组还都禁数字（数字走数字层）且不得混入字母/汉字。
+ * 「变量」组是动态取值（见 [DynamicSymbols]），其数据护栏在 `DynamicSymbolsTest`。
  */
 class SymbolLayoutTest {
 
@@ -53,9 +53,10 @@ class SymbolLayoutTest {
     }
 
     @Test
-    fun 全角半角紧随其后于编程之前() {
-        // 用户要求的固定顺序：全角 半角 编程 ……（原来只有一个混装的「常用」组）
-        assertEquals(listOf("全角", "半角", "编程"), SYMBOL_GROUPS.take(3).map { it.label })
+    fun 全角半角紧随其后于变量之前() {
+        // 用户要求的固定顺序：全角 半角 变量 ……（原来只有一个混装的「常用」组；
+        // 第三组原为「编程」，2026-09-24 按用户要求改为「变量」）
+        assertEquals(listOf("全角", "半角", "变量"), SYMBOL_GROUPS.take(3).map { it.label })
     }
 
     @Test
@@ -164,13 +165,64 @@ class SymbolLayoutTest {
     }
 
     @Test
-    fun 编程组第一页从关键字开始() {
-        // 用户要求：删掉编程组原第 1 页（编程常用英文符号），内容直接从关键字开始依次排列。
-        // 钉住「第 1 页每条都含字母」，防止纯符号页被加回来（符号请用「半角」组）。
-        val prog = SYMBOL_GROUPS.first { it.label == "编程" }
-        val symbols = prog.pages.first().filterValues { v -> v.none { it.isLetter() } }
-        assertEquals("编程组第 1 页出现了纯符号项: $symbols", emptyMap<Char, String>(), symbols)
+    fun 变量组按用户清单给全且取值全为动态() {
+        // 用户要求（2026-09-24 第二次修订）：变量组按指定清单排列，去掉 IPV4 / IPV6。
+        // 钉住「组内每个取值都是动态标记」：漏标记会把短名当符号直接上屏；
+        // 键面短名与展开逻辑的护栏见 `DynamicSymbolsTest`。
+        val group = SYMBOL_GROUPS.first { it.label == "变量" }
+        val bad = group.pages.withIndex().flatMap { (i, page) ->
+            page.filterValues { !DynamicSymbols.isDynamic(it) }.map { (k, v) -> "第${i + 1}页 $k=$v" }
+        }
+        assertEquals("「变量」组出现了静态取值: $bad", emptyList<String>(), bad)
+        val labels = group.pages.flatMap { it.values }.map(DynamicSymbols::labelOf)
+        assertEquals(
+            "变量组应与用户清单逐项一致（键面文本与顺序都按清单）",
+            listOf(
+                "星期", "农历", "季度", "财年", "生肖", "天数", "周数", "分辨率", "时间戳", "毫秒戳",
+                "年日中", "年日数", "年日符", "时秒中", "时秒数", "时秒符", "长时中", "长时数", "长时符",
+            ),
+            labels,
+        )
     }
+
+    @Test
+    fun 页内统一字号取最宽标签() {
+        // 符号层按本页最宽标签算字号（`PinyinKey.uniformMeasureText`）⇒ 同页所有键同号，
+        // 不会出现用户反馈的「2 字大、4 字小」。宽度模型：ASCII ≈0.5em（记 1）、其余 ≈1em（记 2）。
+        assertEquals("日期连字", widestSymbolLabel(listOf("日期", "日期连字", "年月")))
+        assertEquals("年月日", widestSymbolLabel(listOf("日期", "年月日")))
+        assertEquals("return", widestSymbolLabel(listOf("if", "return", "int")))
+        assertEquals("", widestSymbolLabel(emptyList()))
+        // 回归：`\`（2 个 ASCII≈1em）与 `……`（2 个全角≈2em）曾按旧模型判成同宽，
+        // 基准落到窄的一条 ⇒ 全角/标点页的 `……`、`——` 被键面裁掉两端
+        assertEquals("……", widestSymbolLabel(listOf("\\", "……")))
+        assertEquals("……", widestSymbolLabel(listOf("，", "……", "——")))
+        // 每页都得能取到基准，否则该页字号退化成按各键自身标签算（又回到一大一小）
+        val bad = SYMBOL_GROUPS.filter { group ->
+            group.pages.any { page ->
+                widestSymbolLabel(page.values.map(DynamicSymbols::labelOf)).isEmpty()
+            }
+        }
+        assertEquals("有符号页取不到统一字号基准: ${bad.map { it.label }}", emptyList<String>(), bad.map { it.label })
+        // 逐页属性：基准不得比本页任何标签更窄（估偏大只是字号略小，估偏小会裁切文字）
+        val tooNarrow = SYMBOL_GROUPS.flatMap { group ->
+            group.pages.mapIndexedNotNull { index, page ->
+                val labels = page.values.map(DynamicSymbols::labelOf)
+                val pick = widestSymbolLabel(labels)
+                val widest = labels.maxByOrNull(::fontUnits)
+                if (widest != null && fontUnits(pick) < fontUnits(widest)) {
+                    "${group.label}第${index + 1}页 基准=$pick < 最宽=$widest"
+                } else {
+                    null
+                }
+            }
+        }
+        assertEquals("基准比最宽标签窄（该页文字会被裁切）: $tooNarrow", emptyList<String>(), tooNarrow)
+    }
+
+    /** 字体宽度模型：ASCII ≈0.5em（记 1）、其余 ≈1em（记 2）；与 `widestSymbolLabel` 同源 */
+    private fun fontUnits(s: String): Int =
+        s.count { it.code < 0x80 } + 2 * s.count { it.code >= 0x80 }
 
     @Test
     fun 标点组第二页g键是单个左尖括号() {

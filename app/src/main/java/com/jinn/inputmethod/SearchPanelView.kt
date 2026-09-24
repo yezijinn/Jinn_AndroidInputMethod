@@ -133,7 +133,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     }
 
     /** 当前键盘皮肤（默认皮肤 ⇒ 全部走 `R.color` 令牌，配色与历史一致）。必须在 [init] 之前声明 */
-    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+    private var skin: KeyboardSkin = KeyboardSkins.LEGACY_LIGHT
 
     /** [init] 建完 UI 后置 true：本视图控件是 val，未建完就套皮肤色会碰到未初始化字段 */
     private var uiReady = false

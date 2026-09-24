@@ -15,6 +15,14 @@ import java.io.File
  */
 class PrefsBackupCoverageTest {
 
+    /**
+     * 已退役的持久化键：只被迁移逻辑读取，既不写也不再进备份白名单。
+     *
+     * 目前只有 `KEY_KEYBOARD_SKIN`（旧版单值皮肤 → 双槽位，见 `Prefs.ensureSkinSlotsMigrated`）：
+     * 它留在常量表里是为了让本守卫仍能清点它，因此必须显式列出而不是悄悄改名绕过。
+     */
+    private val retiredKeys = setOf("KEY_KEYBOARD_SKIN")
+
     private val sourceFile: File = listOf(
         File("src/main/java/com/jinn/inputmethod/Prefs.kt"),
         File("app/src/main/java/com/jinn/inputmethod/Prefs.kt"),
@@ -48,15 +56,16 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `每个持久化键都必须同时在导出与导入白名单里`() {
-        // 精确 27：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
-        // 改键数是正常维护，改完同步这个数。
-        assertEquals("提取到的键常量应是 27 个（改键数请同步本断言）", 27, keyConstants.size)
+        // 精确 29：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
+        // 改键数是正常维护，改完同步这个数（27 个原有键 + skin_light / skin_dark，含 1 个退役键）。
+        assertEquals("提取到的键常量应是 29 个（改键数请同步本断言）", 29, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
 
-        val missingExport = keyConstants.keys.filterNot { export.contains(it) }
-        val missingImport = keyConstants.keys.filterNot { import.contains(it) }
+        val liveKeys = keyConstants.keys - retiredKeys
+        val missingExport = liveKeys.filterNot { export.contains(it) }
+        val missingImport = liveKeys.filterNot { import.contains(it) }
 
         assertTrue("这些键没进导出白名单：$missingExport", missingExport.isEmpty())
         assertTrue("这些键没进导入白名单：$missingImport", missingImport.isEmpty())
@@ -73,7 +82,8 @@ class PrefsBackupCoverageTest {
         // 只核对「键名是否出现」会漏掉这类错误：把 KEY_PORT 写成 asString(v) 照样绿，
         // 但导入后这项设置会静默丢失（类型不符 → 计入忽略）。压缩空白以容忍换行写法。
         val import = bodyOf("importFromBackup").replace(Regex("\\s+"), " ")
-        // 全部 26 个「普通」键 → 期望的取值工具（`KEY_FAVORITE_SYMBOLS` 走归一分支，单列在下面）。
+        // 下表全部「普通」键（数量见 :61 的 29 个常量：27 个原有键 + skin_light/skin_dark，其中 1 个退役）
+        // → 期望的取值工具（`KEY_FAVORITE_SYMBOLS` 走归一分支，单列在下面）。
         // 只钉少数几对时，剩下的键把 Int 写成 asString 这类错误不会被发现（导入时类型不符 = 静默丢失）
         val pairs = mapOf(
             "KEY_HOST" to "asString(v)",
@@ -96,7 +106,8 @@ class PrefsBackupCoverageTest {
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
-            "KEY_KEYBOARD_SKIN" to "asString(v)",
+            "KEY_SKIN_LIGHT" to "asString(v)",
+            "KEY_SKIN_DARK" to "asString(v)",
             "KEY_THEME_MODE" to "asInt(v)",
             "KEY_SYMBOL_ORDER" to "asString(v)",
             "KEY_THEME_LIGHT_AT" to "asInt(v)",
@@ -147,7 +158,8 @@ class PrefsBackupCoverageTest {
             Triple("keyCornerDp", "KeyAppearance.clampCornerDp", "越界圆角会进绘制流程"),
             Triple("keyGapDp", "KeyAppearance.clampGapDp", "越界间隙会进绘制流程"),
             Triple("keyTransparencyPercent", "KeyTransparency.clampPercent", "越界透明度会算出非法 alpha"),
-            Triple("keyboardSkinId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
+            Triple("skinLightId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
+            Triple("skinDarkId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
             Triple("fuzzyPinyinMask", "FuzzyPinyin.clampMask", "越界掩码会派生出未定义的模糊音组"),
             Triple("symbolGroupOrder", "SymbolOrder.serialize", "脏顺序串会缺分组"),
             Triple("themeMode", "MODE_SYSTEM..", "未知模式编号会落到无效主题"),
@@ -166,17 +178,35 @@ class PrefsBackupCoverageTest {
         val import = bodyOf("importFromBackup")
         val exportKeys = Regex("KEY_[A-Z0-9_]+").findAll(export).map { it.value }.toSet()
         val importKeys = Regex("KEY_[A-Z0-9_]+").findAll(import).map { it.value }.toSet()
+        val liveKeys = keyConstants.keys - retiredKeys
 
         assertEquals(
-            "导出侧漏掉的键：${keyConstants.keys - exportKeys}",
+            "导出侧漏掉的键：${liveKeys - exportKeys}",
             emptySet<String>(),
-            keyConstants.keys - exportKeys,
+            liveKeys - exportKeys,
         )
         assertEquals(
-            "导入侧漏掉的键：${keyConstants.keys - importKeys}",
+            "导入侧漏掉的键：${liveKeys - importKeys}",
             emptySet<String>(),
-            keyConstants.keys - importKeys,
+            liveKeys - importKeys,
         )
+    }
+
+    /**
+     * 退役键的方向守卫：**导出侧不得再出现它**（新版本不再写这个键），**导入侧必须保留兼容分支**
+     * （否则「新机器导入旧版备份」会丢掉用户选过的皮肤，静默落回出厂默认）。
+     *
+     * 上面那条「liveKeys ⊆ 白名单」抓不到这两个方向：把退役键加回导出、或删掉导入兼容分支，
+     * 它都不会变红。
+     */
+    @Test
+    fun `退役键只在导入侧作为兼容分支出现`() {
+        val export = bodyOf("exportForBackup")
+        val import = bodyOf("importFromBackup")
+        for (key in retiredKeys) {
+            assertTrue("$key 已退役，不得再写进导出", !export.contains(key))
+            assertTrue("$key 的导入兼容分支不见了（旧版备份会丢皮肤）", import.contains(key))
+        }
     }
 
     @Test

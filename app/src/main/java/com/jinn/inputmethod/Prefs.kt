@@ -271,17 +271,55 @@ class Prefs(context: Context) {
         }
 
     /**
-     * 键盘皮肤 id（见 [KeyboardSkins]）。
+     * 亮色档的键盘皮肤 id（见 [KeyboardSkins]）。
      *
-     * 皮肤只覆盖键盘自身的色值（键面 / 功能键 / 候选栏 / 背板）与质感参数，
-     * 与「亮白 / 暗黑主题」「半透明 / 圆角 / 间隙」正交。
+     * 两档槽位 + 明暗判定 = 当前生效皮肤（见 [ThemeManager.keyboardSkin]）：亮色阶段用本槽，
+     * 暗色阶段用 [skinDarkId]。皮肤只覆盖键盘自身的色值（键面 / 功能键 / 候选栏 / 背板）与质感参数，
+     * 与「半透明 / 圆角 / 间隙」正交。
      *
-     * 缺省值取 [KeyboardSkins.INITIAL_ID]（紫晶，用户 2026-09-23 指定的初始皮肤）；
-     * 未知/脏值仍由 `byId` 归一为 [KeyboardSkins.DEFAULT_ID]（历史令牌基线），不改历史观感。
+     * 缺省值取 [KeyboardSkins.INITIAL_LIGHT_ID]（雪原，用户 2026-09-24 指定）；
+     * 未知 / 脏值 / 跨档值由 `byId` 归一为本档令牌基线（原白），不改历史观感。
      */
-    var keyboardSkinId: String
-        get() = KeyboardSkins.byId(sp.getString(KEY_KEYBOARD_SKIN, KeyboardSkins.INITIAL_ID)).id
-        set(value) = sp.edit { putString(KEY_KEYBOARD_SKIN, KeyboardSkins.byId(value).id) }
+    var skinLightId: String
+        get() {
+            ensureSkinSlotsMigrated()
+            val raw = sp.getString(KEY_SKIN_LIGHT, null) ?: return KeyboardSkins.INITIAL_LIGHT_ID
+            return KeyboardSkins.byId(raw, SkinTone.LIGHT).id
+        }
+        set(value) = sp.edit { putString(KEY_SKIN_LIGHT, KeyboardSkins.byId(value, SkinTone.LIGHT).id) }
+
+    /**
+     * 暗色档的键盘皮肤 id。语义与读写规则同 [skinLightId]，缺省值为
+     * [KeyboardSkins.INITIAL_DARK_ID]（紫晶，用户 2026-09-24 指定）。
+     */
+    var skinDarkId: String
+        get() {
+            ensureSkinSlotsMigrated()
+            val raw = sp.getString(KEY_SKIN_DARK, null) ?: return KeyboardSkins.INITIAL_DARK_ID
+            return KeyboardSkins.byId(raw, SkinTone.DARK).id
+        }
+        set(value) = sp.edit { putString(KEY_SKIN_DARK, KeyboardSkins.byId(value, SkinTone.DARK).id) }
+
+    /**
+     * 旧单值皮肤键（`keyboard_skin`）→ 双槽位的一次性迁移。
+     *
+     * 只在两个新键都缺失、且旧键存在时执行：[KeyboardSkins.migrateLegacySkin] 把旧值按档位拆成
+     * 两份并落盘，旧键**原样保留**（回滚到旧版 APK 仍读得到，配置不丢）。
+     * 放在 getter 而不是初始化里：配置可能在本次进程启动**之后**才被写入（备份导入、先回滚旧版
+     * 再升级回来），只认启动时刻会漏掉这些路径。
+     *
+     * 反向不成立：两个新键已在时旧键不再参与判断 —— 「升级 → 回滚旧版改皮肤 → 再升级」会忽略
+     * 回滚期的改动。这是把单值拆成双槽位的固有代价，不是漏改。
+     */
+    private fun ensureSkinSlotsMigrated() {
+        if (sp.contains(KEY_SKIN_LIGHT) || sp.contains(KEY_SKIN_DARK)) return
+        val legacy = sp.getString(KEY_KEYBOARD_SKIN, null) ?: return
+        val (light, dark) = KeyboardSkins.migrateLegacySkin(legacy)
+        sp.edit {
+            putString(KEY_SKIN_LIGHT, light)
+            putString(KEY_SKIN_DARK, dark)
+        }
+    }
 
     /**
      * 语音输入总开关，默认禁用。
@@ -349,7 +387,8 @@ class Prefs(context: Context) {
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
-        put(KEY_KEYBOARD_SKIN, keyboardSkinId)
+        put(KEY_SKIN_LIGHT, skinLightId)
+        put(KEY_SKIN_DARK, skinDarkId)
         put(KEY_THEME_MODE, themeMode)
         put(KEY_SYMBOL_ORDER, symbolGroupOrder)
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
@@ -400,7 +439,22 @@ class Prefs(context: Context) {
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
-                KEY_KEYBOARD_SKIN -> asString(v)?.let { keyboardSkinId = it; ok() } ?: bad(key)
+                KEY_SKIN_LIGHT -> asString(v)?.let { skinLightId = it; ok() } ?: bad(key)
+                KEY_SKIN_DARK -> asString(v)?.let { skinDarkId = it; ok() } ?: bad(key)
+                // 退役的旧皮肤键：新版本不再写它，但**旧备份里只有它** —— 不还原就会让
+                // 「新机器导入旧版备份」丢掉用户选过的皮肤（静默落回出厂默认）。
+                // 还原语义同迁移：旧皮肤入自己档位的槽、另一槽取该档令牌基线。
+                // 包内同带新键时以新键为准（新包不写旧键，并存只可能是手工构造的包）。
+                KEY_KEYBOARD_SKIN -> when {
+                    values.containsKey(KEY_SKIN_LIGHT) || values.containsKey(KEY_SKIN_DARK) ->
+                        unknown.add(key)
+                    else -> asString(v)?.let { legacy ->
+                        val (light, dark) = KeyboardSkins.migrateLegacySkin(legacy)
+                        skinLightId = light
+                        skinDarkId = dark
+                        ok()
+                    } ?: bad(key)
+                }
                 KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
                 KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
                 // 键存在但值为 null = 从未编辑过：必须移除本机取值才能还原「出厂预置」态
@@ -520,7 +574,15 @@ class Prefs(context: Context) {
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
-    private const val KEY_KEYBOARD_SKIN = "keyboard_skin"
+        /**
+         * 已退役：旧版单值皮肤键，现在只在 [ensureSkinSlotsMigrated] 里读取，不再写入。
+         * 常量名保留原样，好让备份覆盖面守卫把它一并清点（见 `PrefsBackupCoverageTest.retiredKeys`）。
+         */
+        private const val KEY_KEYBOARD_SKIN = "keyboard_skin"
+
+        /** 亮色 / 暗色两档的键盘皮肤（见 [KeyboardSkins] 与 [ThemeManager.keyboardSkin]） */
+        private const val KEY_SKIN_LIGHT = "skin_light"
+        private const val KEY_SKIN_DARK = "skin_dark"
         /** 主题模式与定时切换时刻（见 [ThemeManager]） */
         private const val KEY_THEME_MODE = "theme_mode"
 

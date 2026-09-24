@@ -19,12 +19,14 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.DisplayMetrics
 import android.util.Log
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
@@ -177,6 +179,23 @@ class JinnIme : InputMethodService() {
 
     // ── 生命周期 ──────────────────────────────────────────────
 
+    /**
+     * 「分辨率」取值器：真实屏幕物理尺寸（宽×高像素），点击时才调。
+     *
+     * 不用 `DynamicSymbols` 里的 `Resources.getSystem()` 默认值：它在真机上按**应用区域**报
+     * （PACM00 实测 1080×2200，比物理 1080×2280 少 80px 系统栏）。捕获 applicationContext
+     * 是为了不牵住 Service 实例；`getRealMetrics` 在新版本标记废弃但仍可用，故显式压制告警。
+     */
+    private fun screenSizeProvider(): () -> String {
+        val ctx = applicationContext
+        return {
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(dm)
+            "${dm.widthPixels}×${dm.heightPixels}"
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Diagnostics.init(this)
@@ -191,6 +210,8 @@ class JinnIme : InputMethodService() {
         }.onFailure { Diagnostics.w(TAG, "IME 窗口格式设置失败: ${it.message}") }
         prefs = Prefs(this)
         instance = WeakReference(this)
+        // 「变量」组的「分辨率」：交给 IME 提供真实屏幕尺寸（见 screenSizeProvider）
+        DynamicSymbols.screenSize = screenSizeProvider()
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
         // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
         keyboardMode = when {
@@ -1077,7 +1098,7 @@ class JinnIme : InputMethodService() {
                 Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入或面板），延后到下次弹出换肤")
                 return
             }
-            Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗黑" else "亮白"}）")
+            Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗色" else "亮色"}）")
             recreateKeyboardView()
         }
     }

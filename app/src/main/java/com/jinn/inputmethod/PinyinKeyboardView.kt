@@ -207,12 +207,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var backspaceBgAlpha = Float.NaN
 
     /**
-     * 当前键盘皮肤（见 [KeyboardSkins]；默认皮肤 = 全空覆盖，走历史 `R.color` 路径）。
+     * 当前键盘皮肤（见 [KeyboardSkins]；令牌皮肤 = 全空覆盖，走历史 `R.color` 路径）。
      *
+     * 取值为「当前明暗档位的槽位皮肤」（见 [ThemeManager.keyboardSkin]）：亮色阶段用亮色槽、
+     * 暗色阶段用暗色槽，档位一变由 [JinnIme.applyThemeIfNeeded] 重建视图后自然换肤。
      * 皮肤只决定键面 / 功能键 / 候选栏 / 背板的基色与质感参数，面 alpha 仍由
      * [applyKeyTransparency] 统一注入；两者在 [applySkinToKeys] 里合成到每个键。
      */
-    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+    private var skin: KeyboardSkin = KeyboardSkins.LEGACY_LIGHT
 
     /** 候选缓存：空格取第一个 */
     private var lastCandidates: List<String> = emptyList()
@@ -297,6 +299,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val group = currentSymbolGroup()
         return group.pages[symbolPageInGroup.coerceIn(0, group.pages.lastIndex)]
     }
+
+    /**
+     * 当前符号组某键的实际上屏内容（未映射键为 null）。
+     *
+     * 「变量」组存的是动态取值（[DynamicSymbols.token]）：在这里按**点击那一刻**展开成时间/日期，
+     * 其余组的静态取值原样返回。
+     */
+    private fun symbolValueOf(c: Char): String? =
+        currentSymbolMap()[c]?.takeIf { it.isNotEmpty() }?.let { DynamicSymbols.expand(it) }
 
     init {
         orientation = VERTICAL
@@ -826,7 +837,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 皮肤换色时先复位缓存，随后的 [applyKeyTransparency] 才会用新皮肤色重建它们。
      */
     private fun syncKeyboardSkin() {
-        val s = KeyboardSkins.byId(Prefs(context).keyboardSkinId)
+        val prefs = Prefs(context)
+        // 档位取**本视图的色板快照**（[ThemeManager.paletteIsDark]），不取此刻的决策：视图的
+        // `R.color.*` 是创建时刻定死的（JinnIme.onCreateInputView 用 themedContext 建视图），
+        // 而换主题的重建可能被延后（有未上屏输入 / 剪贴板面板打开，见 JinnIme.applyThemeIfNeeded）。
+        // 那一刻若按现算决策换皮肤，令牌皮肤会拿着旧档色板画（暗档的原黑被画成白键面）。
+        // 按快照取则「皮肤 ↔ 色板」永远同档，真正的换肤发生在重建之后（视图连同新色板一起新建）。
+        val s = ThemeManager.keyboardSkin(prefs, ThemeManager.paletteIsDark(context))
         if (s.id == skin.id) return
         val from = skin.id
         skin = s
@@ -850,8 +867,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun applySkinToKeys() {
         // 26 键按字母序取索引：彩虹皮肤按序取色相，而 keyViews 是 HashMap，遍历顺序不稳定
         val ordered = ('a'..'z').mapNotNull { keyViews[it] }
-        if (skin.isDefault) {
-            // 默认皮肤：键面走 R.color 令牌路径，功能键文字 / 图标回落到主题令牌
+        if (skin.isToken) {
+            // 令牌皮肤（原黑 / 原白）：键面走 R.color 令牌路径，功能键文字 / 图标回落到主题令牌。
+            // 色板由 [syncKeyboardSkin] 按**本视图的色板快照**选档（见那里的说明），
+            // 因此这里读本视图的 context 取到的令牌必定与皮肤同档。
             for (k in ordered) k.applySkin(null)
             keySemicolon.applySkin(null)
         } else {
@@ -1126,7 +1145,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * （2026-09-23 审查确认的唯一可见不搭配）。
      */
     private fun rippleColor(fillColor: Int, fallbackRes: Int): Int =
-        if (skin.isDefault) context.getColor(fallbackRes) else KeyboardSkins.rippleOn(fillColor)
+        if (skin.isToken) context.getColor(fallbackRes) else KeyboardSkins.rippleOn(fillColor)
 
     /**
      * 生成与 `btn_aurora_secondary.xml` 同款（实心 + 1dp 描边 + 水波纹）的按钮背景。
@@ -1297,7 +1316,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (isPanelSearch()) {
             when (layer) {
                 LAYER_SYMBOL -> {
-                    searchPanel.appendSearch(currentSymbolMap()[c]?.takeIf { it.isNotEmpty() } ?: return)
+                    searchPanel.appendSearch(symbolValueOf(c) ?: return)
                     return
                 }
                 LAYER_DIGIT -> {
@@ -1321,7 +1340,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 符号层 / 数字层：直接上屏对应字符
         when (layer) {
             LAYER_SYMBOL -> {
-                val symbol = currentSymbolMap()[c]?.takeIf { it.isNotEmpty() } ?: return
+                val symbol = symbolValueOf(c) ?: return
                 listener?.onCommitText(symbol)
                 return
             }
@@ -1803,6 +1822,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     // ── 键面显示 ───────────────────────────────────────────
 
+    /**
+     * 布局完成后按真实键宽再统一一次符号字号。
+     *
+     * 键宽要等布局才知道，而首次刷新可能发生在测量之前（基准宽度为 0，只能按各键自身宽度算）。
+     * 本方法只改文字属性、不动布局参数，因此不会再触发一轮布局（无循环）。
+     */
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        if (changed && layer == LAYER_SYMBOL) refreshKeyLabels()
+    }
+
     private fun refreshKeyLabels() {
         // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高
         val showUpper = capsMode && layer == LAYER_LETTER
@@ -1814,13 +1844,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
             englishMode -> false
             else -> !shuangpinMode
         }
+        // 符号层：整页共用一个字号 —— 文字基准取本页最宽的显示标签（否则同页「2 字大、4 字小」），
+        // 宽度基准取最窄那一排键（第 1 排 q..p 共 10 键；否则 9 键排的键更宽，同一条标签又算出另一号）
+        val uniformSymbolText = if (layer == LAYER_SYMBOL) {
+            widestSymbolLabel(currentSymbolMap().values.map(DynamicSymbols::labelOf))
+        } else {
+            ""
+        }
+        val uniformSymbolWidth = if (layer == LAYER_SYMBOL) {
+            (keyViews['q']?.width ?: 0).toFloat()
+        } else {
+            0f
+        }
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
             // 符号层一律水平 + 垂直居中（不用字母层的小字顶置样式）
+            key.uniformMeasureText = uniformSymbolText
+            key.uniformMeasureWidth = uniformSymbolWidth
             key.centeredStyle = layer == LAYER_SYMBOL
             key.label = when (layer) {
-                LAYER_SYMBOL -> currentSymbolMap()[c] ?: "" // 未映射的键显示空文本
+                // 变量组是动态取值：键面只显示短名（去掉标记），上屏时才展开成时间
+                LAYER_SYMBOL -> currentSymbolMap()[c]?.let(DynamicSymbols::labelOf) ?: ""
                 LAYER_DIGIT -> DIGIT_MAP[c] ?: c.toString()
                 else ->
                     if (showUpper) c.uppercaseChar().toString() else c.toString()

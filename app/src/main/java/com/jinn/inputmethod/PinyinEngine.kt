@@ -1143,7 +1143,13 @@ object PinyinEngine {
         // 就有 79 个（如「朝阳」= chaoyang / zhaoyang、「不了」= bule / buliao）。putIfAbsent
         // 让第一次记录的那个键粘住：用户换一种拼法打到同一个词时，消费区间与预测都按旧键算，
         // 消费会落到「无法确定区间→消费全部」的兜底分支（残码被整段清掉），预测则去扫错的键区。
-        for (w in words) candidatePinyin[w] = key
+        for (w in words) {
+            candidatePinyin[w] = key
+            // 真实键只在模糊音分支登记（见 candidateTruePinyin）。这里必须一并清掉残留：
+            // 否则用户关掉模糊音、改用另一个精确拼法打到同一个词时，预测仍按上一次的变体键扫延续词
+            // （模糊分支在其后写入，顺序天然正确：先清、再登记本轮的变体键）
+            candidateTruePinyin.remove(w)
+        }
     }
 
         /**
@@ -1290,8 +1296,8 @@ object PinyinEngine {
         }
 
         // 用户词频学习：把「用户实际选过」的词稳定提到前面（未学习时零开销、零行为变化）
-        val ordered = result.toList()
-        return Result(UserFrequency.rank(ordered.toTypedArray()).toList(), syllables, partial)
+        val ordered = UserFrequency.rank(result.toTypedArray()).toList()
+        return Result(ordered, syllables, partial)
     }
 
     /** 精确匹配 + ue/ve 变体：词库同时存在 shenglue/shenglve 两种写法 */

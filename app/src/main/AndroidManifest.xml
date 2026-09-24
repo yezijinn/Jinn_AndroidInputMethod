@@ -45,6 +45,11 @@
             android:exported="false"
             android:label="@string/symbol_order_title" />
 
+        <!-- 模糊音容错页：从设置页「增加模糊拼音」按钮进入（每组一个勾选框，勾选即生效） -->
+        <activity
+            android:name=".FuzzyPinyinActivity"
+            android:exported="false" />
+
         <!-- 收藏符号编辑页：从设置页「编辑收藏符号」按钮进入 -->
         <activity
             android:name=".FavoriteSymbolsActivity"

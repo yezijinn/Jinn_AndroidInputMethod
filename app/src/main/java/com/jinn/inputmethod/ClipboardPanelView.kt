@@ -68,7 +68,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      *
      * 必须在 [init] 之前声明：`buildUi()` 会读它取面板配色。
      */
-    private var skin: KeyboardSkin = KeyboardSkins.DEFAULT
+    private var skin: KeyboardSkin = KeyboardSkins.LEGACY_LIGHT
 
     /** [tabButton] 创建的全部按钮（顶栏 / 操作条 / 确认条）：换皮肤时统一重设文字与面 */
     private val tabButtons = mutableListOf<TextView>()
@@ -593,7 +593,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 与键盘侧 `rippleColor` 一致（亮底 10% 黑 / 暗底 30% 白）。
      */
     private fun faceRipple(base: Int): Int =
-        if (skin.isDefault) context.getColor(R.color.key_ripple) else KeyboardSkins.rippleOn(base)
+        if (skin.isToken) context.getColor(R.color.key_ripple) else KeyboardSkins.rippleOn(base)
 
     /** [b] 是否为「当前选中分类」的按钮（返回 / 搜索 / 清空等非分类按钮恒为 false） */
     private fun isSelectedCategoryButton(b: TextView): Boolean {

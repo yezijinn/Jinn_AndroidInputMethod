@@ -89,8 +89,9 @@ class FavoriteSymbolsTest {
         assertEquals("收藏", SymbolOrder.DEFAULT[2])
         assertEquals(listOf("全角", "半角", "收藏"), SymbolOrder.DEFAULT.take(3))
         // 旧顺序串（不含收藏）：插回「半角」之后，其余保持用户自定义
+        // 旧名「编程」= 现在的「变量」：改名后它在用户顺序里的位置必须保住（不能掉到尾巴）
         val got = SymbolOrder.parse("标点,特殊,全角,半角,编程")
-        assertEquals(listOf("标点", "特殊", "全角", "半角", "收藏", "编程"), got.take(6))
+        assertEquals(listOf("标点", "特殊", "全角", "半角", "收藏", "变量"), got.take(6))
     }
 
     @Test

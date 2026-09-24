@@ -31,4 +31,17 @@
         <item name="android:gravity">center</item>
         <item name="android:textStyle">bold</item>
     </style>
+
+    <!--
+      对话框主题（AppTheme 的 alertDialogTheme 指向它）。
+      框架 AlertDialog 默认取 Material 的**浅色**对话框主题，暗黑界面下会白底黑字、与页面撞色，
+      所以这里显式换成 App 的配色令牌；面板圆角与内边距仍由父主题提供，只替换颜色。
+      取值随 values-night/colors.xml 自动切换；夜间目录另有一份同名完整定义（同名 style 整条替换）。
+    -->
+    <style name="AppDialogTheme" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorBackground">@color/app_bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+    </style>
 </resources>

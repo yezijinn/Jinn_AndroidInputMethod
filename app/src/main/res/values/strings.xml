@@ -210,14 +210,14 @@
     <string name="favorite_invalid">请输入 1~8 个字符</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
     <string name="theme_card_title">界面明暗切换</string>
-    <string name="theme_card_desc">明暗跟随 定时切换</string>
+    <string name="theme_card_desc">亮色:%1$s 暗色:%2$s</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
     <string name="theme_dark_at_tpl">暗起 %1$s</string>
     <string name="theme_schedule_hint">定时模式：到达设定时刻自动切换，停留在本页也会准点刷新</string>
     <string-array name="theme_mode_entries">
         <item>跟随系统</item>
-        <item>亮白</item>
-        <item>暗黑</item>
+        <item>亮色</item>
+        <item>暗色</item>
         <item>定时</item>
     </string-array>
     <string-array name="theme_mode_values">

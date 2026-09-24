@@ -4,21 +4,46 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 键盘皮肤定义与解析（第一期：默认 / 磨砂 / 彩虹 / 极光 / 复古机械）。
+ * 皮肤的亮色 / 暗色归属。
+ *
+ * 这是**显式声明**的审美分组，不按键面亮度推导（见文件头说明）：它同时充当
+ * 「只能选进哪一档槽位」的约束与「令牌皮肤吃哪档色板」的依据。
+ */
+enum class SkinTone {
+    /** 亮色系：浅键面 + 深字 */
+    LIGHT,
+
+    /** 暗色系：深键面 + 浅字 */
+    DARK,
+}
+
+/**
+ * 键盘皮肤定义与解析（现役 32 套：原黑 / 原白 + 30 套配色皮肤）。
  *
  * 约束（改动前先读）：
  *  - **零位图**：皮肤只用色值与渐变参数表达，绘制由 [PinyinKey] 自绘完成 ——
  *    release APK 距 5MiB 上限仅约 21KB 余量，任何贴图/字体都会直接爆表；
- *  - **默认皮肤是全空覆盖**：字段为 null 表示沿用 `R.color.*` 令牌，`KeyTransparency` 0%
- *    时的历史观感必须逐像素保持（本类的 [isDefault] 与 `KeyboardSkinTest` 守卫这一点）；
+ *  - **两套令牌皮肤（[LEGACY_DARK] 原黑 / [LEGACY_LIGHT] 原白）是全空覆盖**：字段为 null 表示
+ *    沿用 `R.color.*` 令牌，`KeyTransparency` 0% 时的历史观感必须逐像素保持（[isToken] 与
+ *    `KeyboardSkinTest` 守卫这一点）。它们**固定吃自己那一档色板**（见 [tokenPaletteDark]），
+ *    不再跟随当前主题 —— 否则「原白」在夜间会自己变黑，与「用户选定的皮肤」语义冲突；
+ *  - **亮色 / 暗色归属由 [KeyboardSkin.tone] 显式声明**，不按键面亮度推导：彩虹的首键亮度
+ *    0.543 低于 [BRIGHT_THRESHOLD]，推导会把它判成暗色；分组还是审美判断，不该被排序算法改；
  *  - **与半透明 / 圆角 / 间隙正交**：皮肤只提供基色与质感参数，面 alpha 仍由
  *    [KeyTransparency] 统一注入（[visualFor] 负责把 alpha 合成进最终色）；
- *  - 皮肤自带色值，不随亮白 / 暗黑主题切换（与键盘外观页的固定极光同思路）；
- *  - 色值一律 8 位 ARGB，且列表中的非默认皮肤要求 alpha = 255（不透明度交给透明度滑杆统一控制）。
+ *  - 配色皮肤自带色值，不随亮色 / 暗色主题切换（与键盘外观页的固定极光同思路）；
+ *  - 色值一律 8 位 ARGB，且配色皮肤要求 alpha = 255（不透明度交给透明度滑杆统一控制）。
  */
 data class KeyboardSkin(
     val id: String,
     val label: String,
+    /**
+     * 亮色系 / 暗色系归属（见 [SkinTone]）。
+     *
+     * 决定两件事：① 该皮肤只能被选进对应档位的槽位（亮色槽 / 暗色槽，见 `Prefs.skinLightId`），
+     * ② 令牌皮肤按哪一档色板解析 `R.color.*`（见 [tokenPaletteDark]）。
+     */
+    val tone: SkinTone,
     /** 键面填充首色；null = `R.color.kb_key` */
     val keyFill: Int? = null,
     /** 键面填充次色：与首色不同即绘制线性渐变；null = 纯色 */
@@ -68,12 +93,12 @@ data class KeyboardSkin(
 ) {
 
     /**
-     * 是否为默认皮肤：全部色覆盖为空即沿用历史令牌。
+     * 是否为令牌皮肤：全部色覆盖为空即沿用 `R.color.*` 令牌。
      *
-     * 只要有一个覆盖（或启用彩虹取色）就不再是默认 —— 绘制路径据此在
-     * 「历史纯色路径」与「皮肤路径」之间二选一。
+     * 只要有一个覆盖（或启用彩虹取色）就不再是令牌皮肤 —— 绘制路径据此在
+     * 「历史纯色路径」与「皮肤路径」之间二选一。当前仅 [LEGACY_DARK] / [LEGACY_LIGHT] 为 true。
      */
-    val isDefault: Boolean
+    val isToken: Boolean
         get() = keyFill == null && keyFill2 == null && keyPressed == null &&
             strokeColor == null && bottomThicknessColor == null && glyph == null &&
             hint == null && hintRed == null && functionFill == null &&
@@ -121,29 +146,39 @@ data class KeyVisual(
  */
 object KeyboardSkins {
 
-    const val DEFAULT_ID = "default"
+    /** 原黑：暗色档的令牌基线（全空覆盖 + 固定暗色板） */
+    const val LEGACY_DARK_ID = "legacy_dark"
+
+    /** 原白：亮色档的令牌基线（全空覆盖 + 固定亮色板） */
+    const val LEGACY_LIGHT_ID = "legacy_light"
 
     /**
-     * 新用户的初始皮肤（用户 2026-09-23 指定「紫晶」）。
+     * 新用户两档槽位的缺省皮肤（用户 2026-09-24 指定「雪原 / 紫晶」）。
      *
-     * 与 [DEFAULT_ID] 刻意分开，两者语义不同：
-     *  - [DEFAULT_ID] 是「全空覆盖 + 沿用历史令牌」的基线皮肤（[DEFAULT]），也是 `byId` 对未知值的回退点；
-     *  - [INITIAL_ID] 只是 `Prefs.keyboardSkinId` 的缺省值，决定**从未选过皮肤**的用户看到哪套皮肤。
-     * 两者合并会让「坏值回退」也落到紫晶上，并破坏清单的 id 唯一性（[DEFAULT] 与紫晶会同 id）。
+     * 与令牌基线（[LEGACY_LIGHT] / [LEGACY_DARK]）刻意分开，两者语义不同：
+     *  - 令牌基线是「全空覆盖 + 沿用历史令牌」的兜底皮肤，也是 [byId] 对未知 / 跨档脏值的回退点；
+     *  - 这里的两个 id 只是 `Prefs.skinLightId` / `Prefs.skinDarkId` 的缺省值，
+     *    决定**从未选过皮肤**的用户看到哪两套。
+     * 两者合并会让「坏值回退」也落到雪原 / 紫晶上，并破坏清单的 id 唯一性。
      */
-    const val INITIAL_ID = "amethyst"
+    const val INITIAL_LIGHT_ID = "snow"
+    const val INITIAL_DARK_ID = "amethyst"
 
     /** 彩虹皮肤：HSV 饱和度与明度（固定值，保证键面文字对比度达标） */
     private const val RAINBOW_SATURATION = 0.62f
     private const val RAINBOW_VALUE = 0.96f
 
-    /** 默认皮肤：全空覆盖 = 沿用 `R.color.*`（历史观感基线） */
-    val DEFAULT = KeyboardSkin(id = DEFAULT_ID, label = "默认")
+    /** 原黑：暗色令牌基线（历史 `values-night` 观感），全空覆盖，靠 [tokenPaletteDark] 定档 */
+    val LEGACY_DARK = KeyboardSkin(id = LEGACY_DARK_ID, label = "原黑", tone = SkinTone.DARK)
+
+    /** 原白：亮色令牌基线（历史 `values` 观感），同上 */
+    val LEGACY_LIGHT = KeyboardSkin(id = LEGACY_LIGHT_ID, label = "原白", tone = SkinTone.LIGHT)
 
     /** 磨砂：深灰蓝渐变键面 + 半透明高光描边（模拟磨砂面受光） */
     val FROST = KeyboardSkin(
         id = "frost",
         label = "磨砂",
+        tone = SkinTone.DARK,
         keyFill = 0xFF2B3140.toInt(),
         keyFill2 = 0xFF3C455A.toInt(),
         keyPressed = 0xFF20252F.toInt(),
@@ -165,6 +200,7 @@ object KeyboardSkins {
     val RAINBOW = KeyboardSkin(
         id = "rainbow",
         label = "彩虹",
+        tone = SkinTone.LIGHT,
         rainbowHue = 0f,
         glyph = 0xFF1B1B1F.toInt(),
         hint = 0xB31B1B1F.toInt(),
@@ -182,6 +218,7 @@ object KeyboardSkins {
     val AURORA = KeyboardSkin(
         id = "aurora",
         label = "极光",
+        tone = SkinTone.DARK,
         keyFill = 0xFF14243A.toInt(),
         keyFill2 = 0xFF2A1B4D.toInt(),
         gradientAngle = 45f,
@@ -204,6 +241,7 @@ object KeyboardSkins {
     val RETRO = KeyboardSkin(
         id = "retro",
         label = "复古",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFEDE6D6.toInt(),
         keyFill2 = 0xFFDFD7C4.toInt(),
         keyPressed = 0xFFCFC6B0.toInt(),
@@ -227,6 +265,7 @@ object KeyboardSkins {
     val DARK = KeyboardSkin(
         id = "dark",
         label = "暗黑",
+        tone = SkinTone.DARK,
         keyFill = 0xFF1A1A1F.toInt(),
         keyFill2 = 0xFF26262E.toInt(),
         keyPressed = 0xFF121216.toInt(),
@@ -248,6 +287,7 @@ object KeyboardSkins {
     val NEON = KeyboardSkin(
         id = "neon",
         label = "霓虹",
+        tone = SkinTone.DARK,
         keyFill = 0xFF0B0B14.toInt(),
         keyFill2 = 0xFF1A1030.toInt(),
         gradientAngle = 45f,
@@ -272,6 +312,7 @@ object KeyboardSkins {
     val SAKURA = KeyboardSkin(
         id = "sakura",
         label = "樱花",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFFFF3F6.toInt(),
         keyFill2 = 0xFFFFE1EA.toInt(),
         keyPressed = 0xFFF6CFDA.toInt(),
@@ -293,6 +334,7 @@ object KeyboardSkins {
     val OCEAN = KeyboardSkin(
         id = "ocean",
         label = "海洋",
+        tone = SkinTone.DARK,
         keyFill = 0xFF0E2A3F.toInt(),
         keyFill2 = 0xFF0F3D57.toInt(),
         keyPressed = 0xFF0A2132.toInt(),
@@ -314,6 +356,7 @@ object KeyboardSkins {
     val MINT = KeyboardSkin(
         id = "mint",
         label = "薄荷",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFE8F7EF.toInt(),
         keyFill2 = 0xFFD2EFE0.toInt(),
         keyPressed = 0xFFBFE3D0.toInt(),
@@ -335,6 +378,7 @@ object KeyboardSkins {
     val GRAPHITE = KeyboardSkin(
         id = "graphite",
         label = "石墨",
+        tone = SkinTone.DARK,
         keyFill = 0xFF2A2D33.toInt(),
         keyFill2 = 0xFF383C44.toInt(),
         keyPressed = 0xFF22252A.toInt(),
@@ -356,6 +400,7 @@ object KeyboardSkins {
     val SUNSET = KeyboardSkin(
         id = "sunset",
         label = "日落",
+        tone = SkinTone.DARK,
         keyFill = 0xFF4A2148.toInt(),
         keyFill2 = 0xFF8A4A2A.toInt(),
         gradientAngle = 45f,
@@ -378,6 +423,7 @@ object KeyboardSkins {
     val MAGMA = KeyboardSkin(
         id = "magma",
         label = "岩浆",
+        tone = SkinTone.DARK,
         keyFill = 0xFF3B1210.toInt(),
         keyFill2 = 0xFF6A1F12.toInt(),
         keyPressed = 0xFF2E0D0B.toInt(),
@@ -401,6 +447,7 @@ object KeyboardSkins {
     val JADE = KeyboardSkin(
         id = "jade",
         label = "墨玉",
+        tone = SkinTone.DARK,
         keyFill = 0xFF12241E.toInt(),
         keyFill2 = 0xFF1B3A2E.toInt(),
         keyPressed = 0xFF0E1D18.toInt(),
@@ -422,6 +469,7 @@ object KeyboardSkins {
     val LEATHER = KeyboardSkin(
         id = "leather",
         label = "皮革",
+        tone = SkinTone.DARK,
         keyFill = 0xFF4A3428.toInt(),
         keyFill2 = 0xFF5C4232.toInt(),
         keyPressed = 0xFF3C2A20.toInt(),
@@ -445,6 +493,7 @@ object KeyboardSkins {
     val TITANIUM = KeyboardSkin(
         id = "titanium",
         label = "钛金",
+        tone = SkinTone.DARK,
         keyFill = 0xFF3A3E46.toInt(),
         keyFill2 = 0xFF4C525C.toInt(),
         keyPressed = 0xFF2F333A.toInt(),
@@ -468,6 +517,7 @@ object KeyboardSkins {
     val NAVY = KeyboardSkin(
         id = "navy",
         label = "夜蓝",
+        tone = SkinTone.DARK,
         keyFill = 0xFF16233F.toInt(),
         keyFill2 = 0xFF1E3157.toInt(),
         keyPressed = 0xFF111A30.toInt(),
@@ -489,6 +539,7 @@ object KeyboardSkins {
     val NIGHT = KeyboardSkin(
         id = "night",
         label = "夜空",
+        tone = SkinTone.DARK,
         keyFill = 0xFF1A1733.toInt(),
         keyFill2 = 0xFF2A2350.toInt(),
         gradientAngle = 45f,
@@ -511,6 +562,7 @@ object KeyboardSkins {
     val AMETHYST = KeyboardSkin(
         id = "amethyst",
         label = "紫晶",
+        tone = SkinTone.DARK,
         keyFill = 0xFF2E1B47.toInt(),
         keyFill2 = 0xFF472A6B.toInt(),
         keyPressed = 0xFF251539.toInt(),
@@ -532,6 +584,7 @@ object KeyboardSkins {
     val SNOW = KeyboardSkin(
         id = "snow",
         label = "雪原",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFF7FAFF.toInt(),
         keyFill2 = 0xFFE6EFFB.toInt(),
         keyPressed = 0xFFD8E4F5.toInt(),
@@ -553,6 +606,7 @@ object KeyboardSkins {
     val CELADON = KeyboardSkin(
         id = "celadon",
         label = "青瓷",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFF0F7F5.toInt(),
         keyFill2 = 0xFFDCEDE9.toInt(),
         keyPressed = 0xFFCBE3DE.toInt(),
@@ -574,6 +628,7 @@ object KeyboardSkins {
     val PEACH = KeyboardSkin(
         id = "peach",
         label = "蜜桃",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFFFF4EE.toInt(),
         keyFill2 = 0xFFFFE3D4.toInt(),
         keyPressed = 0xFFFBD2BD.toInt(),
@@ -595,6 +650,7 @@ object KeyboardSkins {
     val MATCHA = KeyboardSkin(
         id = "matcha",
         label = "抹茶",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFF3F7E9.toInt(),
         keyFill2 = 0xFFE2EDCB.toInt(),
         keyPressed = 0xFFD3E2B4.toInt(),
@@ -616,6 +672,7 @@ object KeyboardSkins {
     val CORAL = KeyboardSkin(
         id = "coral",
         label = "珊瑚",
+        tone = SkinTone.LIGHT,
         keyFill = 0xFFFFEFEA.toInt(),
         keyFill2 = 0xFFFFD6C9.toInt(),
         keyPressed = 0xFFFFBFAE.toInt(),
@@ -633,49 +690,245 @@ object KeyboardSkins {
         accent = 0xFFE85A4F.toInt(),
     )
 
+    /** 奶油：暖白键面 + 焦糖描边 + 深褐字（暖色系里最白的一套） */
+    val CREAM = KeyboardSkin(
+        id = "cream",
+        label = "奶油",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFFFFBF2.toInt(),
+        keyFill2 = 0xFFF7EBD8.toInt(),
+        keyPressed = 0xFFEDDCC2.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x33A88B5C,
+        glyph = 0xFF4A3A22.toInt(),
+        hint = 0x994A3A22.toInt(),
+        hintRed = 0xFFC2410C.toInt(),
+        functionGlyph = 0xFF4A3A22.toInt(),
+        functionHint = 0x994A3A22.toInt(),
+        functionFill = 0xFFFDF3E3.toInt(),
+        functionStroke = 0x33A88B5C,
+        candidateBar = 0xFFFFFDF8.toInt(),
+        plate = 0xFFF3E3CB.toInt(),
+        accent = 0xFFC08A34.toInt(),
+    )
+
+    /** 柠檬：浅黄键面 + 橄榄字（高明度黄色，暗环境下也不刺眼） */
+    val LEMON = KeyboardSkin(
+        id = "lemon",
+        label = "柠檬",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFFFFCE8.toInt(),
+        keyFill2 = 0xFFF8F2C8.toInt(),
+        keyPressed = 0xFFEFE6AC.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x33A08C2E,
+        glyph = 0xFF454018.toInt(),
+        hint = 0x99454018.toInt(),
+        hintRed = 0xFFC62828.toInt(),
+        functionGlyph = 0xFF454018.toInt(),
+        functionHint = 0x99454018.toInt(),
+        functionFill = 0xFFFDF8D9.toInt(),
+        functionStroke = 0x33A08C2E,
+        candidateBar = 0xFFFFFEF2.toInt(),
+        plate = 0xFFF1EAC0.toInt(),
+        accent = 0xFF9C7A10.toInt(),
+    )
+
+    /** 天青：浅蓝键面 + 藏青字（冷色浅系，比雪原更饱和） */
+    val SKY = KeyboardSkin(
+        id = "sky",
+        label = "天青",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFEEF6FF.toInt(),
+        keyFill2 = 0xFFD8E8FC.toInt(),
+        keyPressed = 0xFFC3DAF5.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x335577A8,
+        glyph = 0xFF1B3A5C.toInt(),
+        hint = 0x991B3A5C.toInt(),
+        hintRed = 0xFFC62828.toInt(),
+        functionGlyph = 0xFF1B3A5C.toInt(),
+        functionHint = 0x991B3A5C.toInt(),
+        functionFill = 0xFFE4F0FE.toInt(),
+        functionStroke = 0x335577A8,
+        candidateBar = 0xFFF6FAFF.toInt(),
+        plate = 0xFFCFE3F8.toInt(),
+        accent = 0xFF2E77C9.toInt(),
+    )
+
+    /** 藕荷：浅紫粉键面 + 深紫字（冷紫浅系） */
+    val LILAC = KeyboardSkin(
+        id = "lilac",
+        label = "藕荷",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFF8F1FB.toInt(),
+        keyFill2 = 0xFFE9DAF5.toInt(),
+        keyPressed = 0xFFD9C5EC.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x337A5B96,
+        glyph = 0xFF43285C.toInt(),
+        hint = 0x9943285C.toInt(),
+        hintRed = 0xFFC2185B.toInt(),
+        functionGlyph = 0xFF43285C.toInt(),
+        functionHint = 0x9943285C.toInt(),
+        functionFill = 0xFFF1E7F8.toInt(),
+        functionStroke = 0x337A5B96,
+        candidateBar = 0xFFFBF6FE.toInt(),
+        plate = 0xFFE1D0F0.toInt(),
+        accent = 0xFF8E4FC9.toInt(),
+    )
+
+    /** 雾灰：中性灰白键面 + 石墨字（商务浅色，最不挑背景的一套） */
+    val MIST = KeyboardSkin(
+        id = "mist",
+        label = "雾灰",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFF5F6F8.toInt(),
+        keyFill2 = 0xFFE4E6EB.toInt(),
+        keyPressed = 0xFFD3D7DE.toInt(),
+        strokeWidthDp = 0.6f,
+        strokeColor = 0x33595F6B,
+        glyph = 0xFF2A2F3A.toInt(),
+        hint = 0x992A2F3A.toInt(),
+        hintRed = 0xFFC62828.toInt(),
+        functionGlyph = 0xFF2A2F3A.toInt(),
+        functionHint = 0x992A2F3A.toInt(),
+        functionFill = 0xFFEDEFF2.toInt(),
+        functionStroke = 0x33595F6B,
+        candidateBar = 0xFFFAFBFC.toInt(),
+        plate = 0xFFDDE0E6.toInt(),
+        accent = 0xFF5A6474.toInt(),
+    )
+
+    /** 沙丘：米沙键面 + 陶土字（暖沙色，比奶油更沉、比复古更素） */
+    val DUNE = KeyboardSkin(
+        id = "dune",
+        label = "沙丘",
+        tone = SkinTone.LIGHT,
+        keyFill = 0xFFFBF5EA.toInt(),
+        keyFill2 = 0xFFEDE0C9.toInt(),
+        keyPressed = 0xFFDFCEB0.toInt(),
+        strokeWidthDp = 0.8f,
+        strokeColor = 0x338A7350,
+        glyph = 0xFF4A3B22.toInt(),
+        hint = 0x994A3B22.toInt(),
+        hintRed = 0xFFB45309.toInt(),
+        functionGlyph = 0xFF4A3B22.toInt(),
+        functionHint = 0x994A3B22.toInt(),
+        functionFill = 0xFFF4EAD8.toInt(),
+        functionStroke = 0x338A7350,
+        candidateBar = 0xFFFDF9F1.toInt(),
+        plate = 0xFFE6D7BC.toInt(),
+        accent = 0xFFA8792C.toInt(),
+    )
+
+    /** 午夜：近黑深蓝渐变 + 星灰字（比夜蓝更暗、比暗黑更冷，低亮度夜间首选） */
+    val MIDNIGHT = KeyboardSkin(
+        id = "midnight",
+        label = "午夜",
+        tone = SkinTone.DARK,
+        keyFill = 0xFF12161F.toInt(),
+        keyFill2 = 0xFF1C2431.toInt(),
+        keyPressed = 0xFF0D1017.toInt(),
+        strokeWidthDp = 0.5f,
+        strokeColor = 0x334C6EA8,
+        glyph = 0xFFDDE5F2.toInt(),
+        hint = 0x99DDE5F2.toInt(),
+        hintRed = 0xFFFF7A7A.toInt(),
+        functionGlyph = 0xFFDDE5F2.toInt(),
+        functionHint = 0x99DDE5F2.toInt(),
+        functionFill = 0xFF0F131B.toInt(),
+        functionStroke = 0x334C6EA8,
+        candidateBar = 0xFF0B0E15.toInt(),
+        plate = 0xFF06080D.toInt(),
+        accent = 0xFF6C8FD6.toInt(),
+    )
+
     /**
-     * 全部皮肤（顺序即外观页展示顺序：深色 / 中性系 → 深色彩色系 → 浅色 / 暖色系）。
+     * 全部皮肤，**顺序即展示顺序**（用户 2026-09-24 指定的固定顺序，不再按键面亮度重排）：
      *
-     * 这里是**定义清单**，顺序不是展示顺序：外观页用 [orderedForDisplay] 按键面亮度重排
-     * （用户 2026-09-23 要求从亮到暗排，不许按分组直觉乱排）。
+     * ```
+     * 亮色（16）: 原白 柠檬 奶油 雪原 樱花 蜜桃 青瓷 雾灰 · 天青 抹茶 沙丘 薄荷 藕荷 珊瑚 复古 彩虹
+     * 暗色（16）: 原黑 钛金 日落 皮革 磨砂 石墨 紫晶 海洋 · 岩浆 夜蓝 墨玉 极光 夜空 暗黑 午夜 霓虹
+     * ```
+     *
+     * 外观页每行八个 ⇒ 每段恰两整行。**新增皮肤要显式插进某一段的指定位置**（顺序不再自动落位），
+     * 并同步 `KeyboardSkinTest.展示顺序两段固定` 的期望值。
+     * 段内顺序由用户定、不按亮度排：令牌皮肤（原白 / 原黑）不覆盖键面色，亮度随色板漂，排不出稳定名次。
      * 标签一律两字（守卫见 `KeyboardSkinTest.皮肤标签一律两字`）。
      */
     val ALL: List<KeyboardSkin> = listOf(
-        DEFAULT, FROST, DARK, GRAPHITE, TITANIUM, LEATHER, OCEAN, NAVY,
-        NEON, MAGMA, SUNSET, NIGHT, AMETHYST, AURORA, JADE, CELADON,
-        RAINBOW, SAKURA, PEACH, CORAL, MATCHA, MINT, SNOW, RETRO,
+        LEGACY_LIGHT, LEMON, CREAM, SNOW, SAKURA, PEACH, CELADON, MIST,
+        SKY, MATCHA, DUNE, MINT, LILAC, CORAL, RETRO, RAINBOW,
+        LEGACY_DARK, TITANIUM, SUNSET, LEATHER, FROST, GRAPHITE, AMETHYST, OCEAN,
+        MAGMA, NAVY, JADE, AURORA, NIGHT, DARK, MIDNIGHT, NEON,
     )
 
-    /** 按 id 取皮肤：未知 / 空值一律回退默认（脏配置不抛异常、不改变观感） */
-    fun byId(id: String?): KeyboardSkin = ALL.firstOrNull { it.id == id } ?: DEFAULT
+    /** 按 id 精确查找（不做回退、不看档位）：预览与单测用 */
+    fun find(id: String?): KeyboardSkin? = ALL.firstOrNull { it.id == id }
 
     /**
-     * 外观页的展示顺序：**默认固定第一位且不参与排序**，其余按键面亮度从亮到暗
-     * （两点均为用户 2026-09-23 指定，不允许按分组直觉乱排）。
+     * 按档位取皮肤：未知 / 空值 / **跨档脏值**一律回退该档的令牌基线（亮档 → 原白，暗档 → 原黑）。
      *
-     * 默认皮肤不参与排序是必须的：它不覆盖键面色，亮度由当前主题令牌算出 —— 主题一换名次就变
-     * （亮白主题下排最前、暗黑主题下跌到末尾），位置不稳定。
-     *
-     * 排序键是纯函数（[faceBrightness]），新增皮肤不必手工找位置；亮度相同时保持 [ALL] 的
-     * 定义顺序（`sortedByDescending` 是稳定排序）。
-     *
-     * [fallbackKeyFill] 由调用方传当前主题的 `R.color.kb_key`：默认皮肤不覆盖键面色，
-     * 亮度只能由主题令牌算出来。
+     * 跨档回退是必须的：配置可被外部写入（备份导入、手工改 prefs），若把一套暗色皮肤塞进亮色槽，
+     * 就会出现「浅色页面 + 深色键盘」的割裂观感。
      */
-    fun orderedForDisplay(fallbackKeyFill: Int): List<KeyboardSkin> =
-        listOf(DEFAULT) +
-            ALL.filterNot { it.isDefault }.sortedByDescending { faceBrightness(it, fallbackKeyFill) }
+    fun byId(id: String?, tone: SkinTone): KeyboardSkin =
+        find(id)?.takeIf { it.tone == tone } ?: legacyOf(tone)
+
+    /** 该档的令牌基线皮肤 */
+    fun legacyOf(tone: SkinTone): KeyboardSkin =
+        if (tone == SkinTone.DARK) LEGACY_DARK else LEGACY_LIGHT
+
+    /**
+     * 令牌皮肤该按哪一档色板解析 `R.color.*`：配色皮肤（自带色值）返回 null ——
+     * 它们与视图主题无关，调用方不必包 Context。
+     *
+     * 原黑 / 原白因此不再「跟随当前主题」：原白在暗色阶段也是白键面深字 ——
+     * 用户选定的是「这套皮肤」，不该随明暗自己变色。
+     */
+    fun tokenPaletteDark(skin: KeyboardSkin): Boolean? =
+        if (skin.isToken) skin.tone == SkinTone.DARK else null
+
+    /**
+     * 旧单值皮肤（`keyboard_skin`）→ 双槽位的一次性迁移规则（纯函数，见 `KeyboardSkinTest`）。
+     *
+     * 返回 (亮色槽, 暗色槽)。语义：旧皮肤按**自己的档位**归入对应槽，另一槽取该档令牌基线。
+     * 为什么不用「当前明暗档位」：迁移结果会落盘，依赖时刻的规则会让同一份配置在不同时间
+     * 迁移出不同结果。
+     *
+     * 旧版「默认」皮肤（id = `default`，全空覆盖、跟随主题）在新清单里已不存在 ⇒ [find] 返回 null
+     * ⇒ 双槽都落令牌基线，正是历史观感的等价物。
+     */
+    fun migrateLegacySkin(oldId: String?): Pair<String, String> {
+        val light = legacyOf(SkinTone.LIGHT).id
+        val dark = legacyOf(SkinTone.DARK).id
+        val old = find(oldId) ?: return light to dark
+        return if (old.tone == SkinTone.LIGHT) old.id to dark else light to old.id
+    }
+
+    /**
+     * 某一段（亮色 / 暗色）的皮肤，**顺序即 [ALL] 里的定义顺序**（用户 2026-09-24 指定的固定顺序，
+     * 不排序）。外观页用它各渲染一段：亮色段首是原白、暗色段首是原黑。
+     *
+     * 段内不再按键面亮度自动排：那套规则会让新增皮肤改变已有布局，而令牌皮肤不覆盖键面色、
+     * 亮度随色板漂（色板一换名次就变），本来就排不出稳定结果。
+     */
+    fun ofTone(tone: SkinTone): List<KeyboardSkin> = ALL.filter { it.tone == tone }
 
     /**
      * 键面感知亮度（0~1）：取键面首色与次色的均值。
      *
      * 彩虹皮肤没有 `keyFill`（键面按色相逐键生成），按其起始色相的实际生成色计算 ——
-     * 否则会被当成「未覆盖」而拿主题色，排到最亮的位置上。
+     * 否则会被当成「未覆盖」而排到最亮的位置上。
+     *
+     * 只对配色皮肤有意义：令牌皮肤（原黑 / 原白）不覆盖键面色，亮度随色板变化，
+     * 且段内顺序由用户固定（见 [ALL]）、不参与任何排序 —— 这里返回 0.0。
      */
-    fun faceBrightness(skin: KeyboardSkin, fallbackKeyFill: Int): Double {
+    fun faceBrightness(skin: KeyboardSkin): Double {
         val hue = skin.rainbowHue
         if (hue != null) return perceivedBrightness(rainbowColor(hue, 0))
-        val first = skin.keyFill ?: fallbackKeyFill
+        val first = skin.keyFill ?: return 0.0
         val second = skin.keyFill2 ?: first
         return (perceivedBrightness(first) + perceivedBrightness(second)) / 2.0
     }
@@ -692,7 +945,7 @@ object KeyboardSkins {
      * 压在强调色（[KeyboardSkin.accent]）上的图标 / 文字色：按该色的感知亮度自动取深或浅。
      *
      * 用途是大写锁定态的大写键 —— 它的底色是各皮肤的 accent，从深蓝（雪原 `#3A6EA5`）到浅银
-     * （钛金 `#B8C4D6`）都有，单一固定色无法在 24 套皮肤上都保住对比（浅 accent 配近白图标
+     * （钛金 `#B8C4D6`）都有，单一固定色无法在 30 套配色皮肤上都保住对比（浅 accent 配近白图标
      * 实测约 1.5:1，等于看不见）。阈值 0.55 与 [faceBrightness] 同一套 BT.601 算法，即
      * 「这块颜色在人眼里算亮还是暗」的分界。
      */
@@ -809,11 +1062,11 @@ object KeyboardSkins {
     ): KeyVisual {
         val first = keyFill(skin, keyIndex, fallbackFace)
         val second = keyFill2(skin, keyIndex, first)
-        // 未覆盖按压/提示色时：默认皮肤沿用历史令牌色，皮肤路径由首色/字色推导。
-        // 判据必须用 isDefault 而非 keyFill == null：彩虹皮肤同样没有 keyFill，
+        // 未覆盖按压/提示色时：令牌皮肤沿用历史令牌色，皮肤路径由首色/字色推导。
+        // 判据必须用 isToken 而非 keyFill == null：彩虹皮肤同样没有 keyFill，
         // 用后者会把按压态取成主题深灰（按键一按就从彩色闪成暗块）。
         val pressed = skin.keyPressed
-            ?: if (skin.isDefault) fallbackPressed else darken(first, 0.88f)
+            ?: if (skin.isToken) fallbackPressed else darken(first, 0.88f)
         val glyph = skin.glyph ?: fallbackGlyph
         val hint = skin.hint
             ?: if (skin.glyph == null) fallbackHint else withAlpha(glyph, 160f / 255f)
@@ -852,7 +1105,7 @@ object KeyboardSkins {
             if (it < 0f || it >= 360f) out += "rainbowHue 越界: $it"
             if (skin.rainbowStep <= 0f) out += "rainbowStep 必须为正: ${skin.rainbowStep}"
         }
-        if (!skin.isDefault) {
+        if (!skin.isToken) {
             // 填充/底色（面上没有叠加语义）必须不透明：不透明度统一交给透明度滑杆控制；
             // 描边与字色允许自带 alpha（磨砂高光描边、半透明提示色是有意设计）。
             listOf(

@@ -11,8 +11,19 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_secondary</item>
+        <!-- 对话框（框架 AlertDialog）跟页面配色：夜间用深色父主题的面板 -->
+        <item name="android:alertDialogTheme">@style/AppDialogTheme</item>
         <!-- 深底状态栏/导航栏 → 图标保持浅色 -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- 暗色对话框主题：与 values/styles.xml 同名，此处必须写完整定义（同名 style 整条替换）。
+         父主题换成 Material 的深色对话框，面板即随暗色；颜色令牌走 values-night/colors.xml -->
+    <style name="AppDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorBackground">@color/app_bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
     </style>
 </resources>

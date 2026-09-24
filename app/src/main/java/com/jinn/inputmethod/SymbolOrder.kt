@@ -18,7 +18,13 @@ object SymbolOrder {
     /** 内置分组的默认顺序（不含「收藏」， 收藏是动态组，见 [KeyboardLayouts.favoriteGroup]） */
     private val BUILTIN: List<String> = SYMBOL_GROUPS.map { it.label }
 
-    /** 默认顺序 = 全角 / 半角 / 收藏 / 编程 / 标点 / 特殊 / 序号 / 数学 / …（收藏固定第三） */
+    /**
+     * 分组改名：用户已保存的顺序串里可能还是旧名。
+     * 不做映射的话，旧名会被当未知项丢掉、新名落到末尾 —— 用户调过的位置就没了。
+     */
+    private val RENAMED: Map<String, String> = mapOf("编程" to "变量")
+
+    /** 默认顺序 = 全角 / 半角 / 收藏 / 变量 / 标点 / 特殊 / 序号 / 数学 / …（收藏固定第三） */
     val DEFAULT: List<String> = BUILTIN.toMutableList().apply { add(2, FavoriteSymbols.LABEL) }
 
     /** 持久化串 → 归一后的顺序（空串 = 默认） */
@@ -32,7 +38,8 @@ object SymbolOrder {
 
     /** 去重 + 过滤未知 + 补缺失；结果恒为 [DEFAULT] 的一个排列 */
     fun normalize(saved: List<String>): List<String> {
-        val known = saved.map { it.trim() }.filter { it in DEFAULT }.distinct()
+        // 先按 [RENAMED] 把旧名换成新名再判「已知」：改名不能吃掉用户已调好的位置
+        val known = saved.map { RENAMED[it.trim()] ?: it.trim() }.filter { it in DEFAULT }.distinct()
         val result = (known + DEFAULT.filter { it !in known }).toMutableList()
         // 旧版本顺序串不含「收藏」：插到「半角」之后（默认第三位），不打乱用户已调的其余顺序
         if (FavoriteSymbols.LABEL !in known) {
