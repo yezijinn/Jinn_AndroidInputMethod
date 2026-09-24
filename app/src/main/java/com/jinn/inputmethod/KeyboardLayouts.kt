@@ -31,7 +31,7 @@ internal class SymbolGroup(val label: String, val pages: List<Map<Char, String>>
 /**
  * 一页符号里「最宽」的那条显示标签。
  *
- * 宽度模型与字体排版对齐：**ASCII 记 1（约 0.5em）、其余字符记 2（约 1em）**。
+ * 宽度估算与字体排版对齐：**ASCII 记 1（约 0.5em）、其余字符记 2（约 1em）**。
  * 只在「谁更宽」的相对比较里用，估偏大是安全方向（整页字号略小），估偏小会让真宽标签
  * 超出键面被裁掉：曾经按「长度 + 全角标点额外记 1」估算，把 `\`（2 个 ASCII≈1em）与
  * `……`（2 个全角≈2em）判成同宽，基准落到窄的一条 ⇒ 全角/标点页的 `……`、`——` 被切两端。
@@ -71,7 +71,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
     )),
     // 半角：只放半角符号（ASCII），且不得含数字（数字走数字层）。
     // 32 个可打印 ASCII 符号中 31 个有全角对应，按「其全角对应在全角组中的出现顺序」排列
-    // （用户要求：半角顺序尽量与全角对应，全角第 1 个是逗号，半角第 1 个也是逗号）；
+    // （半角顺序尽量与全角对应：全角第 1 个是逗号，半角第 1 个也是逗号）；
     // 没有全角对应的 $ 放末尾。26 键铺满第 1 页，余 6 个进末页。
     SymbolGroup("半角", listOf(
         mapOf(
@@ -88,7 +88,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
     )),
     // 变量：输出「随当前时间变化」的内容（原「编程」组的关键字已整体移除：实测用不上）。
     // 取值写成 DynamicSymbols.token("短名")：键面显示短名，上屏时按点击那一刻的时间展开。
-    // 新增一项只需在 DynamicSymbols.expand 里登记同名分支，护栏见 DynamicSymbolsTest。
+    // 新增一项只需在 DynamicSymbols.expand 里加同名分支，护栏见 DynamicSymbolsTest。
     SymbolGroup("变量", listOf(
         mapOf(
             'q' to DynamicSymbols.token("星期"), 'w' to DynamicSymbols.token("农历"),

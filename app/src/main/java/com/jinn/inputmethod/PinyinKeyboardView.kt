@@ -262,8 +262,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         override fun run() {
             if (!backspaceHeld) return
             // 标准的逐字连删：拼音删空后继续删已上屏正文，直到松手。
-            // （2026-09-20 起原先「按住 ≥1.2s 且拼音 ≥12 字符就整串清空」的捷径已按用户要求
-            //  移除，清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
+            // （2026-09-20 起原先「按住 ≥1.2s 且拼音 ≥12 字符就整串清空」的捷径已移除，
+            //  清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
             //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
             deleteOne()
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
@@ -607,7 +607,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
         btnShift.setOnClickListener {
-            // 符号层键面全是符号，没有大小写概念：大写键在此层无效（用户要求）
+            // 符号层键面全是符号，没有大小写概念：大写键在此层无效
             if (layer == LAYER_SYMBOL) {
                 Diagnostics.i(TAG, "符号层: 大写键无操作")
                 return@setOnClickListener
@@ -674,7 +674,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 学习「用户明确选过」的候选（点候选 / 空格首候选 / 预测词）。
+     * 学习「显式选过」的候选（点候选 / 空格首候选 / 预测词）。
      *
      * 敏感输入框直接跳过：输入行为与候选展示都不变，只是不落词频。
      */
@@ -1594,7 +1594,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderFunctionPanel()
             return
         }
-        // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮（用户要求），
+        // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮，
         // 有内容可清时才出现，功能面板与符号层都不显示。
         btnClearCandidates.visibility = View.VISIBLE
 
@@ -1885,7 +1885,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnLang.text = buildLangLabel()
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
             // 已进入符号层，此键的作用是回到字母页，用「返回」比「ABC」更直白。
-            // 红色粗体（用户要求）：提示这一键现在切换的是整层（键面已全是符号），
+            // 红色粗体：提示这一键现在切换的是整层（键面已全是符号），
             // 用 SpannableString 而不是 setTextColor，退出符号层时文本换回普通串，样式自动还原。
             android.text.SpannableString(context.getString(R.string.key_back)).apply {
                 setSpan(
@@ -2052,7 +2052,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 粘贴：粘贴剪贴板最新内容
      *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）
      *
-     * 「全拼 / 双拼」切换按钮已于 2026-09-20 按用户要求移除：输入方案统一在设置页
+     * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
      * 「输入方案」下拉里改（全拼 + 7 套双拼，全局生效），面板不再承担方案切换。
      *
      * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（48dp），

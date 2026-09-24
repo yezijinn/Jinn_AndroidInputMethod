@@ -49,7 +49,7 @@ object DynamicSymbols {
      * 屏幕分辨率取值（宽×高像素）。
      *
      * 用 `Resources.getSystem()`，不需要 Context；单测里把它替换成固定串 ——
-     * JVM 下拿不到系统资源，「变量组全部可展开」的护栏否则会把这里当成未登记的名字。
+     * JVM 下拿不到系统资源，「变量组全部可展开」的护栏否则会把这里当成没有分支的名字。
      */
     var screenSize: () -> String = {
         val dm = Resources.getSystem().displayMetrics
@@ -109,7 +109,7 @@ object DynamicSymbols {
             "长时间" -> at.format(FMT_TIME_CN)
             "长时间码" -> at.format(FMT_TIME_COMPACT)
             "长时间线" -> at.format(FMT_TIME_DASHED)
-            // 未登记的名字：返回去掉标记的名字本身（绝不把私用区字符上屏），并有单测守着数据表
+            // 没有分支的名字：返回去掉标记的名字本身（绝不把私用区字符上屏），并有单测守着数据表
             else -> name
         }
     }
