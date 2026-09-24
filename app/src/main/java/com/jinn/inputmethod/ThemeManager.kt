@@ -7,7 +7,7 @@ import java.util.Calendar
 /**
  * 亮白 / 暗黑主题的决策与应用。
  *
- * 设计要点（详见 AGENTS.md「主题」章节）：
+ * 设计要点：
  *  - 色板走资源限定符（`values/` 亮白、`values-night/` 暗黑），因此「跟随系统」不需要任何代码；
  *    只有「亮白 / 暗黑 / 定时」三种强制模式才需要把 uiMode 覆盖进 Context。
  *  - 本项目不引入 AppCompat，用不了 `AppCompatDelegate.setDefaultNightMode`；
