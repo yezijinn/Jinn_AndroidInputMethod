@@ -120,4 +120,53 @@ class FuzzyQueryTest {
         assertEquals("精确 1 字 + 变体截到上限 20 字", 1 + 20, candidates.size)
         assertEquals(many.take(20).map { it.toString() }, candidates.drop(1))
     }
+
+    @Test
+    fun `变体单字按所在音节定界_第二个音节同样只消费自己`() {
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.Z_ZH)
+        // 「张」来自第二个音节 zang 的变体 zhang：只消费 guo+zang（7 字符 / 2 音节）。
+        // 输入末尾再缀一段未完成音节，使「消费到该音节」与「全清兜底」的结果可区分
+        // （(7,2) vs (10,2)）——否则「只查首音节」的错误实现也能通过
+        val c = PinyinEngine.consumption("guozanghao", "张")
+        assertEquals(7, c.quanpinChars)
+        assertEquals(2, c.syllables)
+    }
+
+    @Test
+    fun `变体归属优先于末尾残码的全清兜底`() {
+        // 输入 fanh：末尾 h 是未完成音节，「汉」既在前缀联想结果里、也是 fan 的变体（f⇄h）。
+        // 变体归属优先 ⇒ 只消费 fan，把用户刚敲的 h 留作残码
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "fan\t帆\nhan\t汉\nhao\t好",
+            phrases = "",
+            syllables = "fan\nhan\nhao",
+        )
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.F_H)
+        val han = PinyinEngine.consumption("fanh", "汉")
+        assertEquals(3, han.quanpinChars)
+        assertEquals(1, han.syllables)
+        // 「好」只是 h 的前缀联想字、不属于任何变体：照旧消费全部
+        assertEquals(4, PinyinEngine.consumption("fanh", "好").quanpinChars)
+
+        // 关掉该组后「汉」不再有变体归属 → 回落到前缀联想的全清兜底
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.NONE)
+        assertEquals(4, PinyinEngine.consumption("fanh", "汉").quanpinChars)
+    }
+
+    @Test
+    fun `模糊音命中的词按词库真实键参与预测`() {
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "",
+            phrases = "zangguo\t赃果\nzhangguo\t张国\nzhangguorong\t张国荣",
+            syllables = "zang\nzhang\nguo\nrong",
+        )
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.Z_ZH)
+        assertTrue(PinyinEngine.query("zangguo").candidates.contains("张国"))
+        // 「张国」的真实键是 zhangguo：延续词「张国荣」要被扫到（登记输入键 zangguo 会扫空）
+        assertEquals(listOf("荣"), PinyinEngine.predict("张国"))
+        // 消费区间仍按用户输入算（typedKey 那份映射不受影响）
+        assertEquals(7, PinyinEngine.consumption("zangguo", "张国").quanpinChars)
+    }
 }
