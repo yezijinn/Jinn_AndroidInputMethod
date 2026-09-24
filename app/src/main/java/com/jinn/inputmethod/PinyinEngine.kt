@@ -38,9 +38,9 @@ object PinyinEngine {
      * 模糊音变体的单字上限：比精确单字的 [MAX_CHARS] 小得多。
      *
      * 变体单字是「顺带给的兜底」，按 60 上限会把候选栏灌满、把精确单字推到更远；
-     * 真要找的字通常在变体音节的高频前几个里。
+     * 真要找的字通常在变体音节的高频前几个里。internal 供单测钉住裁剪行为。
      */
-    private const val MAX_FUZZY_CHARS = 20
+    internal const val MAX_FUZZY_CHARS = 20
 
     /** 「子集不是索引前缀」告警的逐条明细上限（超过则只汇总一行，避免刷屏） */
     private const val NOT_PREFIX_WARN_LIMIT = 10
@@ -1629,11 +1629,23 @@ object PinyinEngine {
 
         // 2) 单字候选：定位首个含该字的音节，消费到该音节结束
         if (candidate.length == 1) {
+            // 2a) 先按用户实际输入的精确音节找：与历史行为逐字节一致
             var acc = 0
             for ((i, syl) in syllables.withIndex()) {
                 acc += syl.length
                 if (charsBySyllable[syl]?.contains(candidate) == true) {
                     return Consumption(acc, i + 1)
+                }
+            }
+            // 2b) 再看模糊音变体：变体字（输入 zang 时的「张」）同样只覆盖它由之派生的那个音节，
+            //     落到兜底「消费全部」会把后面的残码一起清掉（精确字却能保留残码）
+            if (fuzzyMask != FuzzyPinyin.NONE) {
+                acc = 0
+                for ((i, syl) in syllables.withIndex()) {
+                    acc += syl.length
+                    val hit = FuzzyPinyin.variantsOf(syl, fuzzyMask) { validSyllables.contains(it) }
+                        .any { charsBySyllable[it]?.contains(candidate) == true }
+                    if (hit) return Consumption(acc, i + 1)
                 }
             }
             // 来自末尾未完成音节的前缀联想 → 消费全部输入

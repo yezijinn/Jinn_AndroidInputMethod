@@ -19,7 +19,7 @@ class FuzzyPinyinTest {
         "la", "na", "li", "ni", "lin", "nin", "ling", "ning", "leng", "neng",
         "jin", "jing", "yin", "ying", "xian", "xiang", "ri", "yi", "ren", "rao", "yao",
         "cang", "chang", "ci", "chi", "si", "shi", "gen", "geng", "ken", "keng",
-        "fan", "han", "fang", "hang",
+        "fan", "han", "fang", "hang", "rang", "lang", "yang", "ran",
     )
 
     private val isLegal = { s: String -> legal.contains(s) }
@@ -118,5 +118,19 @@ class FuzzyPinyinTest {
         assertEquals("MASK_ALL 未覆盖全部组", FuzzyPinyin.MASK_ALL, bits.reduce { a, b -> a or b })
         assertEquals("每组都必须能在 MASK_ALL 里找到", bits.size, bits.count { FuzzyPinyin.MASK_ALL and it != 0 })
         assertTrue("标签不能为空（设置页直接显示）", FuzzyPinyin.GROUPS.all { it.label.isNotBlank() })
+    }
+
+    @Test
+    fun `声母与韵尾同时命中时恰好三个变体_上限必须容得下`() {
+        // r 同时命中 r⇄l 与 r⇄y，rang 再命中 an⇄ang：派生数量的理论最大值就是 3，
+        // 上限若被调小（或 break 提前返回）会把最后一个变体静默吃掉
+        assertEquals(
+            listOf("lang", "yang", "ran"),
+            FuzzyPinyin.variantsOf("rang", FuzzyPinyin.MASK_ALL, isLegal),
+        )
+        assertEquals(
+            FuzzyPinyin.MAX_VARIANTS_PER_SYLLABLE,
+            FuzzyPinyin.variantsOf("rang", FuzzyPinyin.MASK_ALL, isLegal).size,
+        )
     }
 }

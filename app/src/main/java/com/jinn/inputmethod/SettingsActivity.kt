@@ -79,6 +79,9 @@ class SettingsActivity : ComponentActivity() {
     /** 模糊音容错入口按钮（文案与状态在代码里下发：strings.xml 默认禁改） */
     private lateinit var btnFuzzyPinyin: Button
 
+    /** 模糊音对话框：代码创建、旋转重建不自动恢复，须在 onDestroy 显式关掉（防 WindowLeaked） */
+    private var fuzzyDialog: AlertDialog? = null
+
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
     /** 「打开下载页面」：与检查结果无关，直接跳 Gitee 发行版列表 */
@@ -851,6 +854,7 @@ class SettingsActivity : ComponentActivity() {
             .setPositiveButton("完成", null)
             .create()
         dialog.show()
+        fuzzyDialog = dialog
         // 两个批量按钮都要留在原地生效：默认回调会先 dismiss，用户看不到结果
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
             bulk = true
@@ -1061,6 +1065,8 @@ class SettingsActivity : ComponentActivity() {
         importPwdDialog = null
         importConfirmDialog?.dismiss()
         importConfirmDialog = null
+        fuzzyDialog?.dismiss()
+        fuzzyDialog = null
         // 明文临时包不跨页面生命周期：页面销毁（含旋转重建）时一并清掉。
         // 但导入正在进行时不能删——后台线程还要按节重开它；这种残留由下次进设置页的清扫兜底
         if (!importInFlight) {
