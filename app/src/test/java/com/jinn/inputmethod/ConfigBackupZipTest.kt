@@ -400,8 +400,8 @@ class ConfigBackupZipTest {
         )
         val names = listOf(ConfigBackup.ENTRY_PREFS)
 
-        val budget = ConfigBackupManager.ScanBudget()
-        val got = ConfigBackupManager.readSections(zip, names, budget = budget, maxEntries = 3)
+        val budget = ConfigBackupManager.ScanBudget(maxEntries = 3)
+        val got = ConfigBackupManager.readSections(zip, names, budget = budget)
         assertTrue("条目数超限必须留痕（调用方据此拒收整包）", budget.exhausted)
         assertEquals(
             "超限没走到的节不能当成「没有」",
@@ -409,8 +409,8 @@ class ConfigBackupZipTest {
             got[ConfigBackup.ENTRY_PREFS],
         )
 
-        val budget2 = ConfigBackupManager.ScanBudget()
-        assertFalse(ConfigBackupManager.hasDictEntry(zip, budget2, maxEntries = 3))
+        val budget2 = ConfigBackupManager.ScanBudget(maxEntries = 3)
+        assertFalse(ConfigBackupManager.hasDictEntry(zip, budget2))
         assertTrue(budget2.exhausted)
 
         // 放开门槛后同一个包读得出：证明失败来自条目数闸，而不是包本身有问题
@@ -431,13 +431,11 @@ class ConfigBackupZipTest {
             "d.bin" to ByteArray(0),
             ConfigBackup.ENTRY_MANIFEST to bytes("{\"format\":1}"),
         )
-        val budget = ConfigBackupManager.ScanBudget()
+        val budget = ConfigBackupManager.ScanBudget(maxEntries = 3)
 
         assertEquals(
             ConfigBackupManager.SectionRead.Failed,
-            ConfigBackupManager.readSection(
-                zip, ConfigBackup.ENTRY_MANIFEST, budget = budget, maxEntries = 3,
-            ),
+            ConfigBackupManager.readSection(zip, ConfigBackup.ENTRY_MANIFEST, budget = budget),
         )
         assertTrue("条目数超限必须留痕（调用方据此拒收整包）", budget.exhausted)
         // 放开门槛后同一个包读得到：失败来自闸，而不是包本身有问题
@@ -458,7 +456,7 @@ class ConfigBackupZipTest {
             ConfigBackup.DICT_DIR + "fake.xz" to dictContent(0),
         )
         val dir = dictDir()
-        val budget = ConfigBackupManager.ScanBudget()
+        val budget = ConfigBackupManager.ScanBudget(maxEntries = 3)
 
         val r = ConfigBackupManager.restoreDicts(
             dir,
@@ -466,7 +464,6 @@ class ConfigBackupZipTest {
             dictsDigestOf("fake.xz" to dictContent(0)),
             budget = budget,
             checksumOf = onlySpec("fake.xz", dictContent(0)),
-            maxEntries = 3,
         )
         assertNull("条目数超限必须整包失败", r)
         assertTrue("条目数超限必须留痕", budget.exhausted)

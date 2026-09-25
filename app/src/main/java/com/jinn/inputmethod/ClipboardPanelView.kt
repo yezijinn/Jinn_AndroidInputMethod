@@ -8,9 +8,6 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 输入法内剪贴板面板（重构版：替换 26 键字母区，候选栏/底部栏保持）。
@@ -201,7 +198,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.num.text = (categoryTotal - pos).toString()
             holder.content.text = item.content
             holder.meta.text = buildString {
-                append(formatTime(item.createdAt))
+                append(PanelTimes.entryStamp(item.createdAt))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
             }
@@ -637,14 +634,5 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
-        /**
-         * 条目时间格式。即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
-         * （lint ConstantLocale），而每条目构造一次的开销可忽略。
-         *
-         * Locale 固定 US 而非默认值：默认历法地区（如泰国）会把年份渲染成佛历（2025 → 2568），
-         * 与设置页里备份包时间的写法（`Locale.US`）也不一致。
-         */
-        fun formatTime(ts: Long): String =
-            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(ts))
     }
 }
