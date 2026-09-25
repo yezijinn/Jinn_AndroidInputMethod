@@ -36,19 +36,17 @@ internal object CandidateRows {
     /** 拼音文字字号（sp）：两档统一 */
     const val PINYIN_TEXT_SP = 14f
 
-    /** 拼音条高度（dp）：14sp 的文字行高（14 × 1.4 = 19.6）向上取整 */
-    const val PINYIN_BAR_HEIGHT_DP = 20
-
-    /** 单排候选行高（dp）：20sp 文字行高 28 + 上下留白 */
-    const val ROW_HEIGHT_DP = 32
-
     /**
-     * 单行档里拼音与候选之间的间隔（dp）。
+     * 拼音条高度（dp）：只保证 14sp 的**字形**放得下（14 × 1.15 ≈ 16）。
      *
-     * 单行档没有中缝，拼音条与候选行直接相邻时两条文字只隔约 2dp，看起来像一行（用户 2026-09-25 报告
-     * 「行间距不明显」）；双行档的间隔由两排之间的中缝（= 拼音条高）充当，不再另加。
+     * 比候选行口径更紧：字形之外的字体行框余量可以直接溢出条外（被候选栏裁掉的是空白，不是笔画），
+     * 因此条高不再按行框 1.4 系数算 —— 否则拼音行会「比自己的字高出一圈」（用户 2026-09-25 明确要求
+     * 拼音与候选的留白为 0）。
      */
-    const val SINGLE_PINYIN_GAP_DP = 6
+    const val PINYIN_BAR_HEIGHT_DP = 16
+
+    /** 单排候选行高（dp）：= 20sp 的文字行框（20 × 1.4 = 28），不含额外留白 */
+    const val ROW_HEIGHT_DP = 28
 
     /** 候选区左右内边距（dp）：与拼音条内边距同值（`keyboard_pinyin.xml` 与代码各一份，对拍守卫钉住） */
     const val SIDE_PAD_DP = 8
@@ -56,8 +54,8 @@ internal object CandidateRows {
     /** 「✕ 清空候选」按钮宽度（dp，叠在整栏右侧）：可见时候选区右内边距让出该宽度 */
     const val CLEAR_BUTTON_WIDTH_DP = 40
 
-    /** 单行档候选栏总高（dp）= 拼音条 + 间隔 + 一排候选 */
-    const val SINGLE_BAR_HEIGHT_DP = PINYIN_BAR_HEIGHT_DP + SINGLE_PINYIN_GAP_DP + ROW_HEIGHT_DP
+    /** 单行档候选栏总高（dp）= 拼音条 + 一排候选（拼音与候选之间不留间隔） */
+    const val SINGLE_BAR_HEIGHT_DP = PINYIN_BAR_HEIGHT_DP + ROW_HEIGHT_DP
 
     /** 双行档候选栏总高（dp）= 拼音条 + 两排候选（拼音条叠在两排之间的中缝上） */
     const val DOUBLE_BAR_HEIGHT_DP = PINYIN_BAR_HEIGHT_DP + ROW_HEIGHT_DP * 2
@@ -66,8 +64,11 @@ internal object CandidateRows {
     fun heightDp(rows: Int): Int =
         if (rows == DOUBLE) DOUBLE_BAR_HEIGHT_DP else SINGLE_BAR_HEIGHT_DP
 
-    /** 文字行高系数：字号的 1.4 倍（含行距与降部余量） */
+    /** 候选行高系数：字号的 1.4 倍（含行距与降部余量，整行框） */
     private const val TEXT_LINE_HEIGHT_RATIO = 1.4f
+
+    /** 拼音条系数：字号的 1.15 倍（只保证字形，行框余量允许溢出条外） */
+    private const val PINYIN_GLYPH_RATIO = 1.15f
 
     /**
      * 单排候选的实际高度（px）：紧凑档 [ROW_HEIGHT_DP] 与文字行高的较大者。
@@ -78,22 +79,12 @@ internal object CandidateRows {
     fun rowHeightPx(density: Float, textPx: Float): Int =
         maxOf((ROW_HEIGHT_DP * density).toInt(), (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
 
-    /** 拼音条的实际高度（px）：紧凑档 [PINYIN_BAR_HEIGHT_DP] 与文字行高的较大者 */
+    /** 拼音条的实际高度（px）：紧凑档 [PINYIN_BAR_HEIGHT_DP] 与字形高度（[PINYIN_GLYPH_RATIO]）取大 */
     fun pinyinBarHeightPx(density: Float, textPx: Float): Int =
-        maxOf((PINYIN_BAR_HEIGHT_DP * density).toInt(), (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
+        maxOf((PINYIN_BAR_HEIGHT_DP * density).toInt(), (textPx * PINYIN_GLYPH_RATIO).toInt())
 
     /**
-     * 拼音区高度（px）：拼音条 + 单行档额外的间隔（[SINGLE_PINYIN_GAP_DP]）。
-     *
-     * 单行档的候选区顶部要让出这一整块（拼音条 + 间隔），双行档只让出条本身（中缝在栏内部）。
-     */
-    fun pinyinAreaHeightPx(rows: Int, density: Float, pinyinTextPx: Float): Int {
-        val bar = pinyinBarHeightPx(density, pinyinTextPx)
-        return if (rows == DOUBLE) bar else bar + (SINGLE_PINYIN_GAP_DP * density).toInt()
-    }
-
-    /**
-     * 候选栏总高度（px）：拼音区 + 档位排数 × 单排 —— 高度的**唯一来源**。
+     * 候选栏总高度（px）：拼音条 + 档位排数 × 单排 —— 高度的**唯一来源**。
      *
      * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
      * 一帧错配（列底被裁或留缝）。
@@ -108,7 +99,7 @@ internal object CandidateRows {
     ): Int {
         val perRow = rowHeightPx(density, candidateTextPx)
         val count = if (rows == DOUBLE) 2 else 1
-        return pinyinAreaHeightPx(rows, density, pinyinTextPx) + perRow * count
+        return pinyinBarHeightPx(density, pinyinTextPx) + perRow * count
     }
 
     /**

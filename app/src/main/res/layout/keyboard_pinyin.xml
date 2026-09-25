@@ -15,14 +15,16 @@
     android:orientation="vertical">
 
     <!-- 候选栏：拼音条（横条）+ 候选（横向滚动）+ 清空按钮（叠在整栏右侧）。
-         几何见 CandidateRows：单行档 = 拼音条 20dp 贴顶 + 间隔 6dp + 一排候选 32dp（共 58dp）；
-         双行档 = 上排 / 拼音条（垂直居中，正好落在两排之间的中缝）/ 下排（共 84dp）。
+         几何见 CandidateRows：单行档 = 拼音条 16dp 贴顶 + 一排候选 28dp（共 44dp）；
+         双行档 = 上排 / 拼音条（垂直居中，正好落在两排之间的中缝）/ 下排（共 72dp）。
+         拼音与候选之间**不留间隔**：拼音条只按字形高度给（14sp × 1.15），字体行框的多余余量
+         溢出条外、由 clipChildren=false 放行（裁的只是空白，不是笔画）。
          拼音条是叠放层：无拼音时 GONE，候选区（含功能面板）占满整栏 —— 避让由
          PinyinKeyboardView.showPinyin 落位，高度与位置由 applyCandidateRows 落位。 -->
     <FrameLayout
         android:id="@+id/candidate_bar"
         android:layout_width="match_parent"
-        android:layout_height="58dp"
+        android:layout_height="44dp"
         android:background="@color/kb_candidate_bg">
 
         <!-- 叠放层：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），不靠子项顺序；
@@ -30,8 +32,9 @@
         <FrameLayout
             android:id="@+id/pinyin_bar"
             android:layout_width="match_parent"
-            android:layout_height="20dp"
+            android:layout_height="16dp"
             android:layout_gravity="top"
+            android:clipChildren="false"
             android:paddingStart="8dp"
             android:paddingEnd="8dp">
 

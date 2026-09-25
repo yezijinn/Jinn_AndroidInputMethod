@@ -1675,10 +1675,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun syncCandidatePadding() {
         val left = dpExact(CandidateRows.SIDE_PAD_DP)
-        // 单行档让出「拼音区」= 拼音条 + 间隔（见 SINGLE_PINYIN_GAP_DP）；双行档的间隔是中缝，不让位
+        // 单行档让出一条拼音条（拼音与候选之间不留间隔）；双行档的拼音条叠在中缝上，不让位
         val top = if (pinyinBar.visibility == View.VISIBLE && currentRows != CandidateRows.DOUBLE) {
-            CandidateRows.pinyinAreaHeightPx(
-                currentRows,
+            CandidateRows.pinyinBarHeightPx(
                 resources.displayMetrics.density,
                 spToPx(CandidateRows.PINYIN_TEXT_SP),
             )
