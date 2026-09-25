@@ -13,9 +13,6 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 搜索的一次解密窗口条数。
@@ -120,7 +117,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.itemId = item.id
             holder.content.text = item.content
             holder.meta.text = buildString {
-                append(formatTime(item.createdAt))
+                append(PanelTimes.entryStamp(item.createdAt))
                 if (item.category != "OTHER") append(" · ").append(item.category)
                 if (item.isFavorite) append(" · 收藏")
             }
@@ -425,14 +422,5 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val RESULT_HEIGHT_DP = 220
         /** 空态占位高度 */
         const val RESULT_EMPTY_HEIGHT_DP = 120
-        /**
-         * 条目时间格式。即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
-         * （lint ConstantLocale），而每条目构造一次的开销可忽略。
-         *
-         * Locale 固定 US 而非默认值：默认历法地区（如泰国）会把年份渲染成佛历（2025 → 2568），
-         * 与设置页里备份包时间的写法（`Locale.US`）也不一致。
-         */
-        fun formatTime(ts: Long): String =
-            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(ts))
     }
 }

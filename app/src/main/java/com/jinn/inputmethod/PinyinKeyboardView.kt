@@ -1581,12 +1581,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val height = if (rows == CandidateRows.DOUBLE) {
             doubleRowHeightPx() * 2
         } else {
-            dp(CandidateRows.heightDp(rows))
+            // 与 keyboard_pinyin.xml 的 48dp 同口径：资源值走运行时四舍五入，dp() 是截断，
+            // 非整数密度设备上首次刷新会差 1px 并多触发一次 requestLayout
+            dpExact(CandidateRows.heightDp(rows))
         }
         if (lp.height == height) return
         lp.height = height
         candidateBar.layoutParams = lp
     }
+
+    /** 与 XML 资源同口径的 dp → px（[dp] 是截断，资源走 `complexToDimensionPixelSize` 的四舍五入） */
+    private fun dpExact(v: Int): Int = android.util.TypedValue.applyDimension(
+        android.util.TypedValue.COMPLEX_UNIT_DIP,
+        v.toFloat(),
+        resources.displayMetrics,
+    ).toInt()
 
     /**
      * 双行档单排高度（px）：默认字体下 = 36dp（两排 72dp），系统字体放大时随之长高。
