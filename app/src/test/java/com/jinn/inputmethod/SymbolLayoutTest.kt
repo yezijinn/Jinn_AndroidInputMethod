@@ -47,6 +47,45 @@ class SymbolLayoutTest {
     }
 
     @Test
+    fun 同页重复符号仅限已复核过的那几处() {
+        // 表里确实存在「同一页两个键给同一个符号」。逐处复核过：都是**页内常用符的便利重复**
+        // （常用标点与几组括号在页尾 / 第二排再放一次，换手不用回第一排），不是录错 ——
+        // 其中「标点组第二页 g 键 = 〈」还有 2026-09-16 的回归用例钉住（那次修的是多出来的波浪号 "〈~"）。
+        // 历史对照：序号组第 2 页 z/n 同值 Ⅷ、v/m 同值 Ⅻ 是真录错，已改 ⅰ ⅱ 补位。
+        //
+        // 因此这里不要求「零重复」，而是把复核结论钉成黄金数据：**新增**一处重复会立刻红，
+        // 那时回来判断是有意还是录错（无论哪种都要同步更新下表）。
+        // 跨页重复不在此列（「日本」组的长音符 / 浊点按设计在多页出现）。
+        val actual = mutableListOf<String>()
+        for (group in SYMBOL_GROUPS) {
+            group.pages.forEachIndexed { i, page ->
+                page.entries.groupBy({ it.value }, { it.key })
+                    .filterValues { it.size > 1 }
+                    .forEach { (value, keys) ->
+                        actual.add("${group.label}#${i + 1}#$value#" + keys.sorted().joinToString(""))
+                    }
+            }
+        }
+        val expected = listOf(
+            "标点#1#，#jn",
+            "标点#1#……#ms",
+            "标点#2#〈#gtx",
+            "标点#2#〉#cy",
+            "标点#2#＞#hk",
+            "标点#2#「#ov",
+            "标点#2#」#bp",
+            "特殊#1#☆#ky",
+            "数学#1#≈#mu",
+            "单位#1#＄#mw",
+        )
+        assertEquals(
+            "同页重复集合变了：要么是录错，要么是有意新增 —— 两种情况都要回来复核并更新本表",
+            expected.sorted(),
+            actual.sorted(),
+        )
+    }
+
+    @Test
     fun 分组标签唯一() {
         val labels = SYMBOL_GROUPS.map { it.label }
         assertEquals("分组标签有重复: $labels", labels.size, labels.toSet().size)
