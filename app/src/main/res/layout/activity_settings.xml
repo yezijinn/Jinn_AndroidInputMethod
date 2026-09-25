@@ -25,7 +25,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:padding="12dp">
 
         <!-- 标题 -->
         <TextView
@@ -51,7 +51,7 @@
         <Button
             android:id="@+id/btn_save"
             style="@style/SettingsButtonPrimary"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:text="@string/settings_save" />
 
         <TextView
@@ -59,7 +59,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="-2dp"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:gravity="center"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
@@ -68,14 +68,14 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="14dp">
+            android:padding="12dp">
 
             <EditText
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:background="@drawable/field_aurora"
                 android:hint="@string/settings_ime_test_hint"
                 android:importantForAutofill="no"
@@ -94,16 +94,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <Button
                 android:id="@+id/btn_check_update"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/settings_check_update" />
@@ -112,7 +112,7 @@
                 android:id="@+id/btn_update_download"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -123,16 +123,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <Button
                 android:id="@+id/btn_enable"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/settings_enable_ime" />
@@ -141,7 +141,7 @@
                 android:id="@+id/btn_pick"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -152,16 +152,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <Button
                 android:id="@+id/btn_symbol_order"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/symbol_order_title" />
@@ -170,7 +170,7 @@
                 android:id="@+id/btn_edit_favorites"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -181,16 +181,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <Button
                 android:id="@+id/btn_dict_expand"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/dict_entry_button" />
@@ -199,7 +199,7 @@
                 android:id="@+id/btn_key_appearance"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -210,16 +210,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <Button
                 android:id="@+id/btn_fuzzy_pinyin"
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
@@ -228,10 +228,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -256,8 +256,8 @@
                     <Spinner
                         android:id="@+id/spinner_shuangpin"
                         android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="6dp"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="4dp"
                         android:background="@drawable/field_aurora"
                         android:paddingStart="12dp"
                         android:paddingEnd="12dp"
@@ -292,8 +292,8 @@
                     <Spinner
                         android:id="@+id/spinner_theme"
                         android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="6dp"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="4dp"
                         android:background="@drawable/field_aurora"
                         android:paddingStart="12dp"
                         android:paddingEnd="12dp"
@@ -318,7 +318,7 @@
                 android:id="@+id/row_theme_schedule"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="6dp"
                 android:orientation="horizontal"
                 android:visibility="gone">
 
@@ -344,7 +344,7 @@
                 android:id="@+id/text_theme_schedule_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:paddingStart="4dp"
                 android:paddingEnd="4dp"
                 android:text="@string/theme_schedule_hint"
@@ -359,11 +359,11 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:baselineAligned="false"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -382,8 +382,8 @@
                 <Spinner
                     android:id="@+id/spinner_candidate_rows"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="6dp"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="4dp"
                     android:background="@drawable/field_aurora"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -408,8 +408,8 @@
                 <EditText
                     android:id="@+id/edit_clipboard_max"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="6dp"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="4dp"
                     android:background="@drawable/field_aurora"
                     android:hint="@string/clipboard_max_items_hint"
                     android:importantForAutofill="no"
@@ -427,11 +427,11 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:baselineAligned="false"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -444,7 +444,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxLines="2"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -470,7 +470,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxLines="2"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -489,11 +489,11 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:baselineAligned="false"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -505,7 +505,7 @@
                     android:id="@+id/switch_auto_show_keyboard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:maxLines="2"
                     android:text="@string/switch_auto_show_keyboard"
                     android:textColor="@color/text_primary"
@@ -532,7 +532,7 @@
                     android:id="@+id/switch_show_rare_chars"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:maxLines="2"
                     android:text="@string/switch_show_rare_chars"
                     android:textColor="@color/text_primary"
@@ -553,11 +553,11 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:baselineAligned="false"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -569,7 +569,7 @@
                     android:id="@+id/switch_user_learning"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:maxLines="2"
                     android:text="@string/switch_user_learning"
                     android:textColor="@color/text_primary"
@@ -596,7 +596,7 @@
                     android:id="@+id/switch_predict"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="40dp"
+                    android:minHeight="36dp"
                     android:maxLines="2"
                     android:text="@string/switch_predict"
                     android:textColor="@color/text_primary"
@@ -618,10 +618,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -658,10 +658,10 @@
             android:id="@+id/card_mic_permission"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <TextView
                 android:id="@+id/text_mic_state"
@@ -676,7 +676,7 @@
                 android:id="@+id/btn_grant"
                 style="@style/SettingsButton"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:text="@string/settings_grant_mic" />
         </LinearLayout>
 
@@ -685,10 +685,10 @@
             android:id="@+id/card_voice_server"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="14dp">
+            android:padding="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -766,7 +766,7 @@
                     <CheckBox
                         android:id="@+id/check_lock_server"
                         android:layout_width="match_parent"
-                        android:layout_height="44dp"
+                        android:layout_height="40dp"
                         android:gravity="center"
                         android:buttonTint="@color/accent"
                         android:text="@string/settings_lock_short"
@@ -779,7 +779,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -796,7 +796,7 @@
                     <Spinner
                         android:id="@+id/spinner_language"
                         android:layout_width="match_parent"
-                        android:layout_height="44dp"
+                        android:layout_height="40dp"
                         android:background="@drawable/field_aurora"
                         android:paddingStart="12dp"
                         android:paddingEnd="12dp"
@@ -820,7 +820,7 @@
                     <Spinner
                         android:id="@+id/spinner_default_mode"
                         android:layout_width="match_parent"
-                        android:layout_height="44dp"
+                        android:layout_height="40dp"
                         android:background="@drawable/field_aurora"
                         android:paddingStart="12dp"
                         android:paddingEnd="12dp"
@@ -830,7 +830,7 @@
 
             <TextView
                 style="@style/SettingsLabel"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/settings_prompt" />
 
             <EditText
@@ -843,7 +843,7 @@
                 android:importantForAutofill="no"
                 android:inputType="textMultiLine"
                 android:minHeight="64dp"
-                android:padding="12dp"
+                android:padding="8dp"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_secondary"
                 android:textSize="14sp" />
@@ -852,7 +852,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:orientation="horizontal">
 
                 <CheckBox
@@ -880,10 +880,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -894,7 +894,7 @@
                     android:id="@+id/btn_config_export"
                     style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
+                    android:layout_height="40dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
 
@@ -902,7 +902,7 @@
                     android:id="@+id/btn_config_import"
                     style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
+                    android:layout_height="40dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
@@ -912,7 +912,7 @@
                 android:id="@+id/text_config_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:singleLine="false"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
@@ -924,10 +924,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
+            android:layout_marginBottom="0dp"
             android:background="@drawable/card_aurora"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -938,7 +938,7 @@
                     android:id="@+id/btn_export_diag"
                     style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
+                    android:layout_height="40dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
                     android:text="@string/settings_export_diag" />
@@ -947,7 +947,7 @@
                     android:id="@+id/btn_share_diag"
                     style="@style/SettingsButton"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
+                    android:layout_height="40dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:minWidth="0dp"
@@ -958,7 +958,7 @@
                 android:id="@+id/text_diag_dir"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:singleLine="true"
                 android:ellipsize="middle"
                 android:textColor="@color/text_secondary"
