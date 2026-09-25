@@ -343,7 +343,9 @@ class DictManagerActivity : Activity() {
             if (!OptionalDicts.matchesChecksum(actual, checksum)) {
                 error("文件校验失败（期望 $checksum，实际 $actual），已丢弃")
             }
-            if (dst.exists()) dst.delete()
+            // 不先删旧包：POSIX 的 rename(2) 本身就是原子替换（目标已存在也直接覆盖），
+            // 而「先删 → 改名」在改名失败时会让用户同时失去旧包与新包
+            // （`UserFrequency.writeAtomically` 的注释把「先删目标」列为反例，同一形态）
             if (!tmp.renameTo(dst)) error("写入失败")
             return dst.length()
         } catch (t: Throwable) {

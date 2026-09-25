@@ -56,6 +56,19 @@ object Diagnostics {
     @Volatile
     private var logDir: File? = null
 
+    /**
+     * 应用缓存目录：logcat 快照的「原始中转件」放这里。
+     *
+     * 日志目录里的任何文件都会被 [exportBundle] 打进诊断包，而原始快照是**未过滤**的
+     * （含本进程 V 级正文 —— 拼音串 / 候选 / 搜索词）。中转件放缓存目录，进程在
+     * 「落盘 → 过滤」之间被杀时留下的也只是不外传、且系统会自行回收的缓存件。
+     *
+     * 赋值必须早于 [logDir]：快照以「logDir 非空」判定可用，不能出现 logDir 已可见
+     * 而 cacheDir 还为空的一帧。
+     */
+    @Volatile
+    private var cacheDir: File? = null
+
     @Volatile
     private var inited = false
 
@@ -86,6 +99,7 @@ object Diagnostics {
         if (inited) return
         synchronized(lock) {
             if (inited) return
+            cacheDir = context.applicationContext.cacheDir
             logDir = resolveLogDir(context.applicationContext)
             inited = true
             installCrashHandler()
@@ -292,6 +306,10 @@ object Diagnostics {
         val safeSuffix = suffix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
         val name = "$LOGCAT_FILE_PREFIX$safeSuffix.log"
         val dest = File(dir, name)
+        // 子进程先写「原始中转件」，过滤后的内容才是产物。中转件放缓存目录而不是日志目录：
+        // 日志目录里的文件会被导出诊断包整个打包，而中转件是**未过滤**的（含本进程 V 级正文）。
+        // 进程在「落盘 → 过滤」之间被杀（崩溃路径只等 2s）时，留下的也只是不外传的缓存件。
+        val raw = File(cacheDir ?: dir, "$name.raw")
         // 只有「过滤后的内容成功写回」才算产出：其它任何路径（进程失败、空文件、过滤为空、
         // 读取/写入抛异常、进程被杀）都要把残留文件删掉，半截快照既不可用、又没经过滤
         // （里面可能仍有本进程 V 级正文），留着等 7 天再清、或被导出诊断包带走都不行。
@@ -299,22 +317,23 @@ object Diagnostics {
         // 会把未过滤的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
         var produced = false
         try {
-            // 先删同名旧快照，让「文件存在 ⇔ 本次产物」成为不变量：dest 是固定名，若下面在
+            // 先删同名旧件，让「文件存在 ⇔ 本次产物」成为不变量：dest / raw 都是固定名，若下面在
             // 「启动子进程」阶段就失败（logcat 不存在 / fork 失败 / OOM），文件里仍是上一次
             // 的可用产物，会被 finally 的清理一并删掉（丢的是排查材料）。先删则至多删到自己的残留。
             dest.delete()
+            raw.delete()
             val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
                 .redirectErrorStream(true)   // 等价原来的 2>&1
-                .redirectOutput(dest)
+                .redirectOutput(raw)
                 .start()
             val finished = process.waitFor(waitMs, TimeUnit.MILLISECONDS)
             if (!finished) process.destroy()
             val ok = finished && process.exitValue() == 0
             if (!ok) return null
-            if (!dest.exists() || dest.length() == 0L) return null
+            if (!raw.exists() || raw.length() == 0L) return null
             // 落盘后再过一遍：把本进程的 V 级行（用户正文通道）剔掉。
             // 保留「先落盘、后处理」的顺序：读取管道再 waitFor 会在输出超过管道缓冲时互相等死。
-            val filtered = filterOwnVerboseLines(dest.readText(), Process.myPid())
+            val filtered = filterOwnVerboseLines(raw.readText(), Process.myPid())
             if (filtered.isEmpty()) return null
             dest.writeText(filtered)
             produced = true
@@ -323,6 +342,8 @@ object Diagnostics {
             Diagnostics.w(TAG, "logcat 快照失败: ${t.message}")
             return null
         } finally {
+            // 中转件成功 / 失败都要删：它是唯一一份未过滤的 logcat
+            runCatching { raw.delete() }
             if (!produced) runCatching { dest.delete() }
         }
     }

@@ -133,9 +133,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 候选栏最右侧的「✕」清空候选按钮（2026-09-20 起，绑定见 init） */
     private val btnClearCandidates: TextView
 
-    /** 本帧生效的候选档位 / 单排行高（px），由 [applyCandidateRows] 落位、[showPinyin] 复用 */
+    /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
     private var currentRows = CandidateRows.SINGLE
-    private var currentRowHeightPx = 0
 
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
@@ -592,13 +591,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         else -> 0
     }
 
+    /**
+     * 切层（符号 / 数字）时收起挡住键区的面板。
+     *
+     * 两层的键都在字母区里，而剪贴板面板显示时 `viewLetters` 整体是 GONE：不收面板就会出现
+     * 「切了层却看不到键、候选栏的红色「返回」也被顶替」的无出口状态。
+     */
+    private fun hidePanelForLayerSwitch() {
+        if (clipboardActive) hideClipboardPanel()
+    }
+
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
             layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
             // 进符号层前清掉未上屏的拼音：该层不显示拼音条与候选，残留的 composing
             // 不可见却仍然生效 —— 退格先删它（屏幕上毫无变化），收起键盘 / 切中英时
             // 还会把上一次的首候选直接上屏。与 btnShift 的清理口径一致。
-            if (layer == LAYER_SYMBOL) clearComposingState()
+            if (layer == LAYER_SYMBOL) {
+                clearComposingState()
+                // 剪贴板面板打开时字母区是 GONE：符号键区被面板盖住，而候选栏上的红色
+                // 「返回」也被符号分组标签顶替 —— 用户既点不到符号键、也没有退出口，
+                // 只能再点一次「符号」回头。与方向面板同一条互斥规则
+                // （showDirectionPanel 里已有对称处理）。
+                hidePanelForLayerSwitch()
+            }
             refreshKeyLabels()
             // 符号层<->字母层切换：候选栏始终回到对应状态（进入显示分组 / 退出恢复正常）
             refreshCandidateBar()
@@ -606,6 +622,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         btnDigit.setOnClickListener {
             layer = if (layer == LAYER_DIGIT) LAYER_LETTER else LAYER_DIGIT
+            // 数字键同样在字母区里，面板打开时一并收起（否则切了层却什么都看不到）
+            hidePanelForLayerSwitch()
             refreshKeyLabels()
             refreshCandidateBar()
             Diagnostics.i(TAG, "数字层: ${layer == LAYER_DIGIT}")
@@ -620,10 +638,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (englishMode) {
                 // 切英文时清掉未上屏的拼音
                 commitComposing()
-            } else {
-                // 切回中文时清掉英文态残留的预测
-                lastPredictions = emptyList()
             }
+            // 两个方向都要清预测态：英文态期间没人清过它，留着的话切回中文后
+            // 第一次选预测词会拿上一次上屏的词去学词频（`onPredictionSelected` 的 fullWord）。
+            // 与 btnShift / btnSymbol 的清理口径保持一致。
+            lastPredictions = emptyList()
+            lastCommittedWord = ""
             refreshKeyLabels()
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
