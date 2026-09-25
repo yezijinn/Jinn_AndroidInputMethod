@@ -150,14 +150,14 @@
     <string name="settings_voice_input">语音输入</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
     <string name="settings_export_diag">导出诊断包</string>
+    <!-- 「发给作者」：生成诊断包后经系统分享面板发送（与「导出诊断包」同一份内容，只是出口不同） -->
+    <string name="settings_share_diag">发给作者</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
     <string name="settings_diag_dir_hint">日志目录：%1$s</string>
 
     <!-- 剪贴板历史 -->
-    <string name="settings_clipboard">剪贴板</string>
-    <string name="settings_clipboard_desc">剪贴板内容加密保存在本机，仅本输入法可读。\n在键盘候选栏点「历史」即可查看。</string>
-    <string name="clipboard_max_items_title">历史数量上限</string>
+    <string name="clipboard_max_items_title">剪贴板的数量</string>
     <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 500）</string>
     
 

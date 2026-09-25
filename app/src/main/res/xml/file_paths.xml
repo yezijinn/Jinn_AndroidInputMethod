@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 暴露给外部应用的目录（「发给作者」分享诊断包用）。
+  只开 cacheDir/JinnIme/ —— 诊断包（jinn-diagnostics-*.zip）就生成在那里，
+  不暴露 filesDir / 日志目录等其它私有数据。
+-->
+<paths>
+    <cache-path
+        name="diagnostics"
+        path="JinnIme/" />
+</paths>
