@@ -894,12 +894,15 @@ internal object ConfigBackupManager {
                 val planned = ConfigBackup.planClipboardImport(db.allHashes(), incoming)
                 clipSkipped = incoming.size - planned.size
                 for (e in planned) {
+                    // 分类按本机当前规则重算，不采用包里的取值：那是「导出设备当时的规则」
+                    // 算出来的，可能与本机不一致。落库时就算准，导入的这批行无需等下次启动重算，
+                    // 也就不必去清「已重算」标记（那次标记与 IME 侧的全库重算是跨线程竞争）
                     val id = db.insertRestored(
                         content = e.content,
                         createdAt = e.createdAt,
                         sourcePackage = e.sourcePackage,
                         sourceAppName = e.sourceAppName,
-                        category = e.category,
+                        category = ClipboardClassifier.classify(e.content),
                         favorite = e.favorite,
                     )
                     if (id <= 0) clipSkipped++
@@ -912,9 +915,6 @@ internal object ConfigBackupManager {
                 if (net < 0) clipSkipped += -net
                 val trimmedAway = (planned.size - clipSkipped) - clipAdded
                 if (trimmedAway > 0) clipSkipped += trimmedAway
-                // 包里的分类是「导出设备当时的规则」算出来的，可能与当前规则不一致：
-                // 清掉重算标记，下次 IME 启动时会按当前规则重新分类（见 ClipboardController.start）
-                if (clipAdded > 0) clipPrefs.reclassified = false
                 true
             }.getOrDefault(false)
             if (!ok) {

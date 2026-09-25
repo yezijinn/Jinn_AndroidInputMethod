@@ -6,6 +6,16 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /**
+ * 存量标签重算（[ClipboardDb.reclassifyAll]）的分页大小。
+ *
+ * 一页的密文串会同时驻留内存（base64 ≈ 明文的 4/3，再加解出的明文串，实测合计 2.33 倍），
+ * 峰值按 [ClipboardStore.decryptWindowPeakBytes] 估算：50 条 ≈ 32.8MB（最坏情形），
+ * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）内，由 `ClipboardLimitsTest` 守卫。
+ * 原值 200 条 ≈ 131MB，是唯一越界的解密窗口。
+ */
+internal const val RECLASSIFY_PAGE = 50
+
+/**
  * 剪贴板历史数据库。
  *
  * 存储策略：
@@ -405,35 +415,46 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 解密是必须的：标签由内容决定，而内容只存密文。因此只能在后台线程跑，
      * 由 [ClipboardController.start] 用一次性标记触发，跑完置位。
      *
-     * 分页扫描（不一次性把全库密文读进内存）：每页 [RECLASSIFY_PAGE] 条按 id 升序推进，
+     * 分页扫描（不一次性把全库密文读进内存）：每页 [RECLASSIFY_PAGE] 条，
+     * 游标是「上一页最后一个 id」而不是 SQL OFFSET —— 重算期间用户复制入库、
+     * 导入备份、按上限裁剪都会增删行，OFFSET 会随物理行位置漂移而漏扫。
      * 页内解密失败的行跳过（与列表路径同款容错）。
+     *
+     * 页内写入包一个事务：几百条各自成事务等于几百次 fsync，会把这趟迁移拖成
+     * 秒级以上的后台长任务。
      *
      * @return 实际改动的条数
      */
     fun reclassifyAll(): Int {
         var changed = 0
-        var offset = 0
+        var lastId = 0L
         while (true) {
             val rows = ArrayList<Pair<Long, String>>(RECLASSIFY_PAGE)
             readableDatabase.rawQuery(
-                "SELECT id, encrypted_content FROM $TABLE_ITEMS ORDER BY id " +
-                    "LIMIT $RECLASSIFY_PAGE OFFSET $offset",
-                null,
+                "SELECT id, encrypted_content FROM $TABLE_ITEMS WHERE id > ? ORDER BY id " +
+                    "LIMIT $RECLASSIFY_PAGE",
+                arrayOf(lastId.toString()),
             ).use { c -> while (c.moveToNext()) rows.add(c.getLong(0) to c.getString(1)) }
             if (rows.isEmpty()) return changed
-            for ((id, encrypted) in rows) {
-                val text = ClipboardCrypto.decrypt(encrypted) ?: continue
-                val label = ClipboardClassifier.classify(text)
-                val values = ContentValues().apply { put("category", label) }
-                if (writableDatabase.update(
-                        TABLE_ITEMS, values, "id = ? AND category <> ?",
-                        arrayOf(id.toString(), label),
-                    ) > 0
-                ) {
-                    changed++
+            lastId = rows.last().first
+            writableDatabase.beginTransaction()
+            try {
+                for ((id, encrypted) in rows) {
+                    val text = ClipboardCrypto.decrypt(encrypted) ?: continue
+                    val label = ClipboardClassifier.classify(text)
+                    val values = ContentValues().apply { put("category", label) }
+                    if (writableDatabase.update(
+                            TABLE_ITEMS, values, "id = ? AND category <> ?",
+                            arrayOf(id.toString(), label),
+                        ) > 0
+                    ) {
+                        changed++
+                    }
                 }
+                writableDatabase.setTransactionSuccessful()
+            } finally {
+                writableDatabase.endTransaction()
             }
-            offset += rows.size
         }
     }
 
@@ -519,9 +540,6 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         private const val DB_VERSION = 5
         private const val TABLE_ITEMS = "clipboard_items"
         private const val TAG = "ClipboardDb"
-
-        /** [reclassifyAll] 的分页大小：每次解密这么多条，避免一次性把全库密文读进内存 */
-        private const val RECLASSIFY_PAGE = 200
 
         /**
          * 容量裁剪的优先级：越靠前越先被删除。

@@ -115,11 +115,26 @@ class ClipboardLimitsTest {
     }
 
     @Test
+    fun 存量重算分页窗口同样在预算内() {
+        val peak = ClipboardStore.decryptWindowPeakBytes(RECLASSIFY_PAGE)
+        assertTrue("存量重算峰值 $peak 超预算", peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES)
+    }
+
+    @Test
     fun 护栏能拦下旧的300条窗口() {
         // 证明护栏有效：旧值 300 × 256KB ≈ 262MB（含放大），必然越界（若哪天有人调回去，这条会先失败）
         assertTrue(
             "300 条窗口应被判超预算",
             ClipboardStore.decryptWindowPeakBytes(300) > ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
+        )
+    }
+
+    @Test
+    fun 护栏能拦下存量重算用过的200条窗口() {
+        // 存量重算的分页原值 200 条 ≈ 131MB（含放大）—— 这是唯一越界的解密窗口
+        assertTrue(
+            "200 条窗口应被判超预算",
+            ClipboardStore.decryptWindowPeakBytes(200) > ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
         )
     }
 
