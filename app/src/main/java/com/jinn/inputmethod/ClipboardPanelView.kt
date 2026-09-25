@@ -7,7 +7,6 @@ import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
-import android.widget.Toast
 
 /**
  * 输入法内剪贴板面板（重构版：替换 26 键字母区，候选栏/底部栏保持）。
@@ -262,6 +261,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: android.widget.AbsListView?, scrollState: Int) {}
             override fun onScroll(view: android.widget.AbsListView?, firstVisibleItem: Int, visibleItemCount: Int, totalItemCount: Int) {
+                // 列表一动，操作条就挂在「已经滚出视口」的条目上：此时点删除删的不是眼前那条，
+                // 而删除后的 `refresh(resetScroll)` 会把列表拉回顶部，用户无从知道丢了哪条
+                // （selectCategory 的注释已承认同一危害，此处是漏覆盖的滚动分支）
+                //
+                // ⚠ `setOnScrollListener` 会**立即**同步回调一次，此刻 actionBar 还是未初始化的
+                // lateinit（在本构造函数靠后处才赋值）⇒ 必须先判 `isInitialized`，
+                // 否则每次 onCreateInputView 都抛 UninitializedPropertyAccessException（真机复现过）
+                if (::actionBar.isInitialized && actionBar.visibility == View.VISIBLE) hideActionBar()
                 // 距底部不足 LOAD_AHEAD 条时预取下一页
                 if (hasMorePages && totalItemCount > 0 &&
                     firstVisibleItem + visibleItemCount >= totalItemCount - LOAD_AHEAD) {
@@ -451,9 +458,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (ok) {
             listener?.onClose()
         } else {
-            Diagnostics.w(TAG, "点击粘贴: id=${item.id} 失败，保持面板")
-            // 失败原因由 IME 侧给出（连接不可用会在候选栏提示、单条过大另有说明），这里只报结果
-            Toast.makeText(context, "粘贴失败", Toast.LENGTH_SHORT).show()
+            // 只有「没提交成功」这一个事实，分不清「连接为空 → IME 已暂存、重聚焦时自动提交」
+            // 与「真提交失败」：在这里弹「粘贴失败」既会与 IME 的「内容过大，未粘贴」叠成两条，
+            // 也会把暂存态报成失败。提示统一由 IME 出（它能分辨原因），这里只留日志。
+            Diagnostics.w(TAG, "点击粘贴: id=${item.id} 未提交成功，保持面板")
         }
     }
 

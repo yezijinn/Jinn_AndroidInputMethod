@@ -343,6 +343,11 @@ class JinnIme : InputMethodService() {
         }
         val ok = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
         Diagnostics.i(TAG, "粘贴: len=${text.length} success=$ok")
+        // 失败提示统一由 IME 出：面板只拿到 true/false，分不清「连接为空 → 已暂存、重聚焦时
+        // 自动提交」与「真提交失败」，在那里弹提示会与上面的「内容过大」叠成两条、也会冤枉暂存态
+        if (!ok) {
+            android.widget.Toast.makeText(this, "粘贴失败", android.widget.Toast.LENGTH_SHORT).show()
+        }
         return ok
     }
 

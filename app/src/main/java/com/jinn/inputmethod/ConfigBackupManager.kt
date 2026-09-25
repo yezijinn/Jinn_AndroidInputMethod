@@ -892,7 +892,10 @@ internal object ConfigBackupManager {
                 val db = ClipboardDb.get(context)
                 val before = db.count()
                 val planned = ConfigBackup.planClipboardImport(db.allHashes(), incoming)
-                clipSkipped = incoming.size - planned.size
+                // 「本机已有 / 批内重复」的跳过量与「插入失败」必须分账：下面的裁掉量只能减后者，
+                // 混成一笔会把去重数当插入失败算（少报跳过数），裁剪量还会算成负数被丢掉
+                val dedupeSkipped = incoming.size - planned.size
+                var insertFailed = 0
                 for (e in planned) {
                     // 分类按本机当前规则重算，不采用包里的取值：那是「导出设备当时的规则」
                     // 算出来的，可能与本机不一致。落库时就算准，导入的这批行无需等下次启动重算，
@@ -905,16 +908,17 @@ internal object ConfigBackupManager {
                         category = ClipboardClassifier.classify(e.content),
                         favorite = e.favorite,
                     )
-                    if (id <= 0) clipSkipped++
+                    if (id <= 0) insertFailed++
                 }
                 db.trimTo(clipPrefs.maxItems)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）
                 val net = db.count() - before
                 clipAdded = net.coerceAtLeast(0)
-                if (net < 0) clipSkipped += -net
-                val trimmedAway = (planned.size - clipSkipped) - clipAdded
-                if (trimmedAway > 0) clipSkipped += trimmedAway
+                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉 + 本机总量反而减少的部分
+                val trimmedAway = (planned.size - insertFailed) - clipAdded
+                clipSkipped = dedupeSkipped + insertFailed +
+                    (if (trimmedAway > 0) trimmedAway else 0) + (if (net < 0) -net else 0)
                 true
             }.getOrDefault(false)
             if (!ok) {
@@ -1368,6 +1372,11 @@ internal object ConfigBackupManager {
      *
      * 上限是必须的：zip 本地头只有几十字节，256MB 的包能塞数百万条，而这里要建
      * `List<String>`、调用方还会再复制几份 —— 不设闸就是一条 OOM 通道。
+     *
+     * [budget] 的条目数闸同样必须走：目录条目不进 `out`、零字节条目一次 `read` 即 EOF
+     * 不吃解压预算，只靠 `out.size < maxEntries` 时构造包能让这里空转数秒~数十秒
+     * （调用方跑在不可取消的进度框后面）。其余四条 zip 遍历（`readSection` / `readSections` /
+     * `hasDictEntry` / `restoreDictsLocked`）都走同一出口。
      */
     internal fun zipEntryNames(
         zip: File,
@@ -1378,6 +1387,7 @@ internal object ConfigBackupManager {
             val out = ArrayList<String>()
             var entry = zis.nextEntry
             while (entry != null && out.size < maxEntries) {
+                if (!budget.stepEntry()) return@use out
                 if (!entry.isDirectory) out.add(entry.name)
                 // 超限就停下并回已收集的名字，由调用方按 [ScanBudget.exhausted] 拒收整包
                 if (!budget.drain(zis)) return@use out

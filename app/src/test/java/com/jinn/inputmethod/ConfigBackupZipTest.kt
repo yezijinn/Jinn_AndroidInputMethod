@@ -147,6 +147,31 @@ class ConfigBackupZipTest {
     }
 
     @Test
+    fun `条目名收集在条目数超限时停下并留痕`() {
+        // 目录条目不进 out、零字节条目一次 read 即 EOF 不吃预算：只看 `out.size < maxEntries`
+        // 时这里会一路走完整个包（zip 本地头只有几十字节，构造包能塞数百万条，
+        // 而调用方跑在不可取消的进度框后面）
+        val entries = ArrayList<Pair<String, ByteArray>>()
+        for (i in 1..600) entries.add("d$i/" to ByteArray(0))
+        entries.add((ConfigBackup.DICT_DIR + "ext.xz") to ByteArray(2))
+        val zip = makeZip(*entries.toTypedArray())
+
+        val tight = ConfigBackupManager.ScanBudget(maxEntries = 3)
+        val names = ConfigBackupManager.zipEntryNames(zip, budget = tight)
+        assertTrue("条目数超限必须留痕（调用方据此拒收整包）", tight.exhausted)
+        assertTrue(
+            "停在闸处：后面的词库条目不该被收集",
+            names.none { it.startsWith(ConfigBackup.DICT_DIR) },
+        )
+
+        // 放开门槛后同一个包收得到：证明截断来自条目数闸，而不是包本身有问题
+        assertTrue(
+            "默认预算下同一个包应能收到词库条目",
+            ConfigBackupManager.zipEntryNames(zip).any { it.startsWith(ConfigBackup.DICT_DIR) },
+        )
+    }
+
+    @Test
     fun `剪贴板分类字段归一到白名单`() {
         val jsonl = listOf(
             """{"content":"https://a","category":"URL"}""",

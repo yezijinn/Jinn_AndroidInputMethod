@@ -1036,10 +1036,9 @@ class SettingsActivity : ComponentActivity() {
 
         // SharedPreferences apply 异步落盘：延迟片刻等落盘完成再杀进程，
         // 系统随后自动重启 IME 服务加载新配置，本 Activity 随进程一并结束。
-        uiHandler.postDelayed({
-            Diagnostics.i(TAG, "saveAndRestart: 重启输入法进程")
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }, 800L)
+        // 走 restartImeProcess() 而不是在这里再写一遍延时杀进程：那条路径会先 flush()
+        // 确认落盘，只赌 800ms 在 IO 抖动时会把最后一批设置丢掉（表现为重启后设置回退）。
+        restartImeProcess()
     }
 
     private fun toast(resId: Int) {
