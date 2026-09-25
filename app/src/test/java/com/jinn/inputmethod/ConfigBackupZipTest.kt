@@ -422,6 +422,68 @@ class ConfigBackupZipTest {
     }
 
     @Test
+    fun `单节读取在条目数超限时停止遍历`() {
+        // manifest 排在闸之后：零字节条目不吃预算，旧写法会把整包走完才返回 Missing
+        val zip = makeZip(
+            "a.bin" to ByteArray(0),
+            "b.bin" to ByteArray(0),
+            "c.bin" to ByteArray(0),
+            "d.bin" to ByteArray(0),
+            ConfigBackup.ENTRY_MANIFEST to bytes("{\"format\":1}"),
+        )
+        val budget = ConfigBackupManager.ScanBudget()
+
+        assertEquals(
+            ConfigBackupManager.SectionRead.Failed,
+            ConfigBackupManager.readSection(
+                zip, ConfigBackup.ENTRY_MANIFEST, budget = budget, maxEntries = 3,
+            ),
+        )
+        assertTrue("条目数超限必须留痕（调用方据此拒收整包）", budget.exhausted)
+        // 放开门槛后同一个包读得到：失败来自闸，而不是包本身有问题
+        assertTrue(
+            ConfigBackupManager.readSection(zip, ConfigBackup.ENTRY_MANIFEST)
+                is ConfigBackupManager.SectionRead.Ok,
+        )
+    }
+
+    @Test
+    fun `词库恢复在条目数超限时中止`() {
+        // 在册词库排在闸之后：覆盖「读取阶段就停下」，而不是走到词库条目才失败
+        val zip = makeZip(
+            "a.bin" to ByteArray(0),
+            "b.bin" to ByteArray(0),
+            "c.bin" to ByteArray(0),
+            "d.bin" to ByteArray(0),
+            ConfigBackup.DICT_DIR + "fake.xz" to dictContent(0),
+        )
+        val dir = dictDir()
+        val budget = ConfigBackupManager.ScanBudget()
+
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            zip,
+            dictsDigestOf("fake.xz" to dictContent(0)),
+            budget = budget,
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
+            maxEntries = 3,
+        )
+        assertNull("条目数超限必须整包失败", r)
+        assertTrue("条目数超限必须留痕", budget.exhausted)
+        assertTrue("不得留下半截临时件", dir.listFiles().orEmpty().isEmpty())
+
+        // 放开门槛后同一个包能正常恢复
+        val ok = ConfigBackupManager.restoreDicts(
+            dir,
+            zip,
+            dictsDigestOf("fake.xz" to dictContent(0)),
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
+        )
+        assertNotNull(ok)
+        assertEquals(1, ok!!.first)
+    }
+
+    @Test
     fun `词库恢复在预算耗尽时中止且不留临时件`() {
         // 在册词库排在巨型条目**之前**：它会先落成 `*.restore`，随后预算被巨型条目耗尽。
         // 顺序反过来（词库在后）时中止发生在临时件创建之前，清理分支根本执行不到。
