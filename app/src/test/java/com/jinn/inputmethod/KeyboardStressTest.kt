@@ -231,9 +231,15 @@ class KeyboardStressTest {
             loadEngine()                                   // 故意不预热，量首次使用
             val kb = SimKeyboard(sc)
             val t0 = System.nanoTime()
-            "nihao".forEach { kb.pressLetter(it) }
+            var last = 0
+            "nihao".forEach { last = kb.pressLetter(it) }
             val ms = (System.nanoTime() - t0) / 1e6
             println("STRESS 首次用 ${sc.name.padEnd(9)} 打 5 键 = ${"%.2f".format(ms)}ms")
+            // 原用例只打印耗时、不断言任何东西（跑过即绿）—— 建表失败时「打不出字」是个静默结果，
+            // 恰是这条用例该抓住的东西：首次建表后 nihao 必须有候选
+            assertTrue("${sc.name}: 首次建表后打 nihao 应有候选（为 0 说明键位表没建起来）", last > 0)
+            // 上限取得极宽（实测 7 套全量预热 ≈38ms，这里单套给 5s）：不测性能，只拦「建表退化成 O(n²)」这类事故
+            assertTrue("${sc.name}: 首次建表 + 5 键耗时 ${"%.2f".format(ms)}ms 超过 5s", ms < 5_000)
             if (ms > worst) { worst = ms; worstName = sc.name }
         }
         println("STRESS 最慢首次方案 = $worstName ${"%.2f".format(worst)}ms（含该方案键位表首次构建）")
