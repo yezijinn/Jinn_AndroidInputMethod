@@ -638,10 +638,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
         /**
-         * 条目时间格式。按当前 Locale 即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
+         * 条目时间格式。即时构造：静态缓存会在系统语言切换后继续沿用旧 Locale
          * （lint ConstantLocale），而每条目构造一次的开销可忽略。
+         *
+         * Locale 固定 US 而非默认值：默认历法地区（如泰国）会把年份渲染成佛历（2025 → 2568），
+         * 与设置页里备份包时间的写法（`Locale.US`）也不一致。
          */
         fun formatTime(ts: Long): String =
-            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts))
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(ts))
     }
 }
