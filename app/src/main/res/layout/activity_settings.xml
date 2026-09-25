@@ -222,80 +222,74 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 候选词行数 / 键面韵母提示：两项都只影响键盘显示，同一张卡片内纵向排列。
+        <!-- 候选词行数 / 剪贴板数量：两个「数量」类设置并排（用户 2026-09-25 指定的首页顺序）。
              候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，上下成列）。
-             文案在代码里下发，strings.xml 默认禁改 -->
+             候选词行数的标签文案在代码里下发，strings.xml 默认禁改 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:background="@drawable/card_aurora"
-            android:orientation="vertical"
+            android:baselineAligned="false"
+            android:orientation="horizontal"
             android:padding="12dp">
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:baselineAligned="false"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_weight="1"
+                android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/label_candidate_rows"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp"
                     android:textStyle="bold" />
 
                 <Spinner
                     android:id="@+id/spinner_candidate_rows"
-                    android:layout_width="140dp"
+                    android:layout_width="match_parent"
                     android:layout_height="44dp"
+                    android:layout_marginTop="6dp"
                     android:background="@drawable/field_aurora"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
                     android:spinnerMode="dropdown" />
             </LinearLayout>
 
-            <Switch
-                android:id="@+id/switch_key_hint"
-                android:layout_width="match_parent"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:maxLines="2"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/text_key_hint_desc"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/clipboard_max_items_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-            <Switch
-                android:id="@+id/switch_pinyin_quanpin"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:maxLines="2"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:id="@+id/text_pinyin_quanpin_desc"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                <EditText
+                    android:id="@+id/edit_clipboard_max"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/field_aurora"
+                    android:hint="@string/clipboard_max_items_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
@@ -425,6 +419,107 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- 键盘内嵌韵母 / 双拼显示声韵：两个显示开关并排（各带说明小字，文案在代码里下发） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:baselineAligned="false"
+            android:orientation="horizontal"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_key_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxLines="2"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/text_key_hint_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_pinyin_quanpin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxLines="2"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/text_pinyin_quanpin_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不占内存、长按空格无效） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_voice_input"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <Switch
+                    android:id="@+id/switch_voice_input"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:singleLine="false"
+                android:text="@string/settings_voice_input_desc"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
         </LinearLayout>
 
         <!-- 自动唤起键盘 / 加更多生僻字：两个开关并排（各带说明小字） -->
@@ -580,39 +675,8 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
 
-            <!-- 历史数量上限：标题 + 输入框同行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/clipboard_max_items_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/edit_clipboard_max"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:background="@drawable/field_aurora"
-                    android:hint="@string/clipboard_max_items_hint"
-                    android:importantForAutofill="no"
-                    android:inputType="number"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
-            </LinearLayout>
+            <!-- 历史数量上限已上移到「候选词行数 / 剪贴板数量」卡片（用户 2026-09-25 指定的首页顺序），
+                 本卡只保留功能说明。 -->
 
         </LinearLayout>
 
@@ -836,45 +900,6 @@
                     android:textColor="@color/text_primary"
                     android:textSize="12sp" />
             </LinearLayout>
-        </LinearLayout>
-
-        <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不占内存、长按空格无效） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_voice_input"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <Switch
-                    android:id="@+id/switch_voice_input"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:singleLine="false"
-                android:text="@string/settings_voice_input_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
         </LinearLayout>
 
         <!-- 导出诊断包 -->
