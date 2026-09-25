@@ -64,7 +64,7 @@ class CandidateRowsTest {
         // 单行 48dp 是 keyboard_pinyin.xml 的历史值，改它等于改所有单行用户的外观
         assertEquals(48, CandidateRows.heightDp(CandidateRows.SINGLE))
         // 双行：两排合计必须正好等于候选栏高度，否则列底被裁（多）或留白（少）
-        assertEquals(CandidateRows.ROW_HEIGHT_DP * 2, CandidateRows.heightDp(CandidateRows.DOUBLE))
+        assertEquals(CandidateRows.DOUBLE_ROW_EACH_DP * 2, CandidateRows.heightDp(CandidateRows.DOUBLE))
         assertEquals(72, CandidateRows.heightDp(CandidateRows.DOUBLE))
         // 行高变矮必须同步收字号（两边都是 21sp 会在 36dp 行里贴边）
         assertTrue(CandidateRows.textSizeSp(CandidateRows.DOUBLE) < CandidateRows.textSizeSp(CandidateRows.SINGLE))

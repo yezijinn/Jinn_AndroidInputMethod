@@ -1806,8 +1806,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 item.addView(pageText, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
-            // 高度同功能按钮：内容与 48dp 取大（双行档居中、字体放大不裁）
-            item.minimumHeight = dp(CandidateRows.SINGLE_ROW_HEIGHT_DP)
+            // 高度同功能按钮：内容与复用块最小高度取大（双行档居中、字体放大不裁）
+            item.minimumHeight = dp(REUSE_BLOCK_MIN_DP)
             viewCandidateList.addView(item, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = dpFloat(2f).toInt()
@@ -2230,9 +2230,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setPadding(dp(8), dp(4), dp(8), dp(4))
             // key_bg 同款（10dp 圆角），但填充色带面 alpha，这 6 个按钮占满候选栏
             background = xmlKeyBackground()
-            // 高度取「内容」与 48dp 的较大者：双行档候选栏 72dp，用 MATCH_PARENT 会被拉成
-            // 瘦高长条；只固定 48dp 又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）
-            minimumHeight = dp(CandidateRows.SINGLE_ROW_HEIGHT_DP)
+            // 高度取「内容」与复用块最小高度的较大者（见 REUSE_BLOCK_MIN_DP 的说明）
+            minimumHeight = dp(REUSE_BLOCK_MIN_DP)
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
@@ -2716,6 +2715,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
          */
         const val MAX_RENDERED_CANDIDATES = 24
+
+        /**
+         * 复用块（功能按钮 / 符号分组标签）的最小高度（dp）：与单行档整栏高度同值。
+         *
+         * 实际高度取「内容与它」的较大者：用 `MATCH_PARENT` 会被双行档的 72dp 拉成瘦高长条，
+         * 固定成它又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）。
+         * 两处构建点共用本常量，避免规则漂移。
+         */
+        const val REUSE_BLOCK_MIN_DP = CandidateRows.SINGLE_BAR_HEIGHT_DP
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f
