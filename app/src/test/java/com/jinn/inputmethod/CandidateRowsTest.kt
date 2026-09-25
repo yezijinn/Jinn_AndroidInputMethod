@@ -63,11 +63,12 @@ class CandidateRowsTest {
     @Test
     fun 高度与字号按档位() {
         // 单行 = 拼音条 + 一排候选；双行 = 拼音条 + 两排（拼音条叠在两排之间的中缝上）
+        // 单行 = 拼音条 + 间隔 + 一排候选（间隔让拼音与候选分得开，双行由中缝充当间隔、不另加）
         assertEquals(
-            CandidateRows.PINYIN_BAR_HEIGHT_DP + CandidateRows.ROW_HEIGHT_DP,
+            CandidateRows.PINYIN_BAR_HEIGHT_DP + CandidateRows.SINGLE_PINYIN_GAP_DP + CandidateRows.ROW_HEIGHT_DP,
             CandidateRows.heightDp(CandidateRows.SINGLE),
         )
-        assertEquals(52, CandidateRows.heightDp(CandidateRows.SINGLE))
+        assertEquals(58, CandidateRows.heightDp(CandidateRows.SINGLE))
         assertEquals(
             CandidateRows.PINYIN_BAR_HEIGHT_DP + CandidateRows.ROW_HEIGHT_DP * 2,
             CandidateRows.heightDp(CandidateRows.DOUBLE),
@@ -81,14 +82,20 @@ class CandidateRowsTest {
     }
 
     @Test
-    fun 栏高恒等于拼音条加档位排数() {
+    fun 栏高恒等于拼音区加档位排数() {
         val d = 3f
         val cand = 60f // 20sp @ 默认字体
         val pin = 42f // 14sp @ 默认字体
         val perRow = CandidateRows.rowHeightPx(d, cand)
         val bar = CandidateRows.pinyinBarHeightPx(d, pin)
-        assertEquals(bar + perRow, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, cand, pin))
-        assertEquals(bar + perRow * 2, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, cand, pin))
+        val areaSingle = CandidateRows.pinyinAreaHeightPx(CandidateRows.SINGLE, d, pin)
+        val areaDouble = CandidateRows.pinyinAreaHeightPx(CandidateRows.DOUBLE, d, pin)
+
+        // 双行的拼音区就是拼音条本身（间隔是中缝）；单行要多一条间隔
+        assertEquals(bar, areaDouble)
+        assertEquals(bar + CandidateRows.SINGLE_PINYIN_GAP_DP * d.toInt(), areaSingle)
+        assertEquals(areaSingle + perRow, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, cand, pin))
+        assertEquals(areaDouble + perRow * 2, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, cand, pin))
     }
 
     @Test
@@ -120,9 +127,9 @@ class CandidateRowsTest {
     @Test
     fun 越界行数落回单行档() {
         // Prefs 已做归一，这里守的是兜底：任何非 2 的值都不得算成双行
-        assertEquals(52, CandidateRows.heightDp(0))
-        assertEquals(52, CandidateRows.heightDp(3))
-        assertEquals(52, CandidateRows.heightDp(-1))
+        assertEquals(58, CandidateRows.heightDp(0))
+        assertEquals(58, CandidateRows.heightDp(3))
+        assertEquals(58, CandidateRows.heightDp(-1))
     }
 
     /**

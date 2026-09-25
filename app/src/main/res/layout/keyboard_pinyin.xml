@@ -15,14 +15,14 @@
     android:orientation="vertical">
 
     <!-- 候选栏：拼音条（横条）+ 候选（横向滚动）+ 清空按钮（叠在整栏右侧）。
-         几何见 CandidateRows：单行档 = 拼音条 20dp 贴顶 + 一排候选 32dp；
-         双行档 = 上排 / 拼音条（垂直居中，正好落在两排之间的中缝）/ 下排。
+         几何见 CandidateRows：单行档 = 拼音条 20dp 贴顶 + 间隔 6dp + 一排候选 32dp（共 58dp）；
+         双行档 = 上排 / 拼音条（垂直居中，正好落在两排之间的中缝）/ 下排（共 84dp）。
          拼音条是叠放层：无拼音时 GONE，候选区（含功能面板）占满整栏 —— 避让由
          PinyinKeyboardView.showPinyin 落位，高度与位置由 applyCandidateRows 落位。 -->
     <FrameLayout
         android:id="@+id/candidate_bar"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="58dp"
         android:background="@color/kb_candidate_bg">
 
         <!-- 叠放层：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），不靠子项顺序；
