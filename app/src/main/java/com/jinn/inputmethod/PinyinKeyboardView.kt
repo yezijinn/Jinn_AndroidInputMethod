@@ -2287,12 +2287,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.v(TAG, "功能面板(搜索态): 退出")
             return
         }
+        // 剪贴板面板打开时这个键就是退出口：红色加粗「返回」，点击收起面板回键盘
+        // （面板内已不放「返回」，见 ClipboardPanelView.buildUi）
         viewCandidateList.addView(buildFunctionButton(
-            label = "历史",
+            label = if (clipboardActive) "返回" else "历史",
             hint = "剪贴板",
+            red = clipboardActive,
             onClick = {
-                Diagnostics.i(TAG, "功能面板: 点击剪贴板按钮")
-                listener?.onOpenClipboard()
+                if (clipboardActive) {
+                    Diagnostics.i(TAG, "功能面板: 点击剪贴板面板的返回")
+                    hideClipboardPanel()
+                } else {
+                    Diagnostics.i(TAG, "功能面板: 点击剪贴板按钮")
+                    listener?.onOpenClipboard()
+                }
             },
         ))
         directionButtonBox = buildFunctionButton(
@@ -2331,10 +2339,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
     }
 
-    /** 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字） */
+    /**
+     * 构建单个功能按钮：候选栏同高，现有键盘风格（深色圆角 + 主文字，主文字恒粗体）。
+     *
+     * [red] = true 时主文字改用红色提示色（皮肤可覆盖），用于「面板打开态的退出口」，
+     * 与「方向」键进入面板后的处理同款（见 [refreshDirectionButton]）。
+     */
     private fun buildFunctionButton(
         label: String,
         hint: String,
+        red: Boolean = false,
         onClick: () -> Unit,
     ): View {
         val box = LinearLayout(context).apply {
@@ -2359,7 +2373,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         box.addView(TextView(context).apply {
             text = label
             textSize = 13f
-            setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
+            setTextColor(
+                if (red) skinToken(skin.hintRed, R.color.kb_key_hint_red)
+                else skinToken(skin.functionGlyph, R.color.text_primary),
+            )
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -2614,6 +2631,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             clipboardPanel.onPanelShown()
             clipboardActive = true
             listener?.onClipboardStateChanged(true)
+            // 功能面板的「历史」键此刻要变成红色「返回」（面板内没有退出口了）
+            refreshCandidateBar()
             Diagnostics.i(
                 TAG,
                 "剪贴板面板: 显示 panelH=$panelH contentArea=${contentArea.height}",
@@ -2652,6 +2671,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         restoreLettersLayout()
         clipboardActive = false
         listener?.onClipboardStateChanged(false)
+        // 红色「返回」还原成「历史」
+        refreshCandidateBar()
         Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
     }
 

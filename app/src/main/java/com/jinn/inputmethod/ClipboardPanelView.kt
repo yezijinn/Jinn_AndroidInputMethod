@@ -88,7 +88,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnCategoryUrl: TextView
     private lateinit var btnCategoryNumber: TextView
     private lateinit var btnCategoryFavorite: TextView
-    private lateinit var btnBack: TextView
 
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
@@ -219,9 +218,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     private fun buildUi() {
-        // ── 顶栏：返回 + 全部/网址/数字/收藏 + 搜索 + 清空，均分（weight=1）──
+        // ── 顶栏：全部/网址/数字/收藏 + 搜索 + 清空，均分（weight=1）──
+        // 面板内不放「返回」：退出走键盘功能面板的「历史」键 —— 面板打开时它变成红色「返回」
+        // （见 PinyinKeyboardView.renderFunctionPanel 与 showClipboardPanel）
         val topRow = LinearLayout(context).apply { orientation = HORIZONTAL }
-        btnBack = tabButton("返回") { listener?.onClose() }
         btnCategoryAll = tabButton("全部") { selectCategory(null) }
         btnCategoryUrl = tabButton("网址") { selectCategory(ClipboardClassifier.CATEGORY_URL) }
         btnCategoryNumber = tabButton("数字") { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) }
@@ -230,7 +230,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnClear = tabButton("清空") { showClearConfirm() }
             .apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
-        val cells = listOf(btnBack, btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
+        val cells = listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
             btnCategoryFavorite, btnSearch, btnClear)
         for (cell in cells) {
             topRow.addView(cell, LinearLayout.LayoutParams(0, dp(36), 1f))
@@ -529,7 +529,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     fun applySurfaceAlpha(alpha: Float) {
         if (alpha == surfaceAlpha) return
         surfaceAlpha = alpha
-        if (!::btnBack.isInitialized) return
+        if (!::btnCategoryAll.isInitialized) return
         // 按当前分类重设「面」：原先一律按未选中面重建，会让选中分类的强调底在拖过
         // 透明度滑杆后丢失（视觉上「当前分类」没了标记）
         applyTabFaces()
