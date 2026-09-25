@@ -7,7 +7,8 @@ r"""
 ----------
 APK 内的基础包是二进制索引（pinyin_index.bin.xz），人不可读；审核「常用字 / 生僻字
 如何分配」必须回到文本。本脚本是 `build_dict_index.py` 的逆操作（索引 → 文本），
-并把单字表按现行判据拆成「常用 / 规范三级 / 表外」三份，便于看出哪些字被过滤。
+并把单字表拆成「规范表一二级 / 规范表三级 / 表外」三份，便于看出哪些字被过滤
+（现行判据 = 一二级 6500 + 三级 1407，只有表外字随「加更多生僻字」开关）。
 
 标准格式（与 `convert_rime_ice.render` 一致，可直接被 `loadPhrasesText` 导入）
     词库    : `拼音<TAB>词1|词2|…`   同键内按词频降序
@@ -24,9 +25,10 @@ APK 内的基础包是二进制索引（pinyin_index.bin.xz），人不可读；
     词库-被过滤词条.txt        关闭「加更多生僻字」时被整条丢弃的词
     词库-基础包-分片/*.txt     按拼音首字母切分，便于逐片审阅
     单字表.txt                 完整单字表（含被过滤字）
-    单字表-三级字.txt          规范表三级字（被误判为生僻的部分）
-    单字表-表外字.txt          非规范表字（繁体 / 异体 / 日韩 / 扩展区）
-    常用字表.txt               现行过滤基准（一级+二级 6500 字）
+    单字表-三级字.txt          规范表三级字（现行已默认加载，仅作审阅视图）
+    单字表-表外字.txt          非规范表字（繁体 / 异体 / 日韩 / 扩展区）—— 现行不加载
+    常用字表.txt               一二级 6500 字（asset 原样导出）
+    三级字表.txt               三级 1407 字（asset 原样导出）
     音节表.txt
     说明.md                    格式、行数、体积与统计
 
@@ -54,6 +56,7 @@ INDEX_ASSET = os.path.join(ASSETS, "pinyin_index.bin.xz")
 HOT_ASSET = os.path.join(ASSETS, "hot_phrases.txt.xz")
 CHARS_ASSET = os.path.join(ASSETS, "pinyin_chars.txt")
 COMMON_ASSET = os.path.join(ASSETS, "common_chars.txt")
+TIER3_ASSET = os.path.join(ASSETS, "tier3_chars.txt")
 SYLLABLE_ASSET = os.path.join(ASSETS, "pinyin_syllables.txt")
 TABLE_8105 = os.path.join(RIME_DIR, "8105.dict.yaml")
 
@@ -178,6 +181,8 @@ def main():
         lines.append(s)
 
     common = read_common_chars(COMMON_ASSET)
+    tier3_chars = read_common_chars(TIER3_ASSET) if os.path.isfile(TIER3_ASSET) else set()
+    loadable_chars = common | tier3_chars
     say("# 字典导出（人工审核用）")
     say()
     say("生成：`python tools/dict_builder/export_dicts.py`｜格式：UTF-8 + LF，"
@@ -229,7 +234,7 @@ def main():
             os.path.basename(src)))
 
     # 被过滤词条（关闭「加更多生僻字」时整条丢弃）
-    dropped = [(k, [w for w in ws if any(not is_loadable(c, common) for c in w)])
+    dropped = [(k, [w for w in ws if any(not is_loadable(c, loadable_chars) for c in w)])
                for k, ws in base]
     dropped = [(k, ws) for k, ws in dropped if ws]
     drop_n = sum(len(ws) for _, ws in dropped)
@@ -242,29 +247,31 @@ def main():
     chars = read_chars_table(CHARS_ASSET)
     write(os.path.join(out_dir, "单字表.txt"), render_chars(chars))
     n8105 = read_table_8105(TABLE_8105) if os.path.isfile(TABLE_8105) else set()
-    tier3 = [(s, [c for c in cs if len(c) == 1 and c in n8105 and not is_loadable(c, common)])
+    # 规范表三级字：按规范表档位切（不是按「是否被过滤」）——现行已默认加载，这份只作审阅视图
+    tier3 = [(s, [c for c in cs if len(c) == 1 and c in n8105 and c not in common])
              for s, cs in chars]
     tier3 = [(s, cs) for s, cs in tier3 if cs]
-    outer = [(s, [c for c in cs if len(c) == 1 and c not in n8105 and not is_loadable(c, common)])
+    outer = [(s, [c for c in cs if len(c) == 1 and not is_loadable(c, loadable_chars)])
              for s, cs in chars]
     outer = [(s, cs) for s, cs in outer if cs]
     write(os.path.join(out_dir, "单字表-三级字.txt"), render_chars(tier3))
     write(os.path.join(out_dir, "单字表-表外字.txt"), render_chars(outer))
 
-    say("## 单字表（现行判据 = 常用字表 6500 字）")
+    say("## 单字表（现行判据 = 一二级 6500 字 + 三级 %d 字）" % len(tier3_chars))
     say()
     char_items = sum(len(cs) for _, cs in chars)
     say("| 文件 | 音节 | 字条目 | 说明 |")
     say("|---|---|---|---|")
     say("| 单字表.txt | %d | %s | 完整表（含被过滤字） |" % (len(chars), f"{char_items:,}"))
-    say("| 单字表-三级字.txt | %d | %s | 规范表三级字，被整档判为生僻 |" % (
+    say("| 单字表-三级字.txt | %d | %s | 规范表三级字（现行已默认加载） |" % (
         len(tier3), f"{sum(len(cs) for _, cs in tier3):,}"))
-    say("| 单字表-表外字.txt | %d | %s | 非规范表字（繁体/异体/日韩/扩展区） |" % (
+    say("| 单字表-表外字.txt | %d | %s | 非规范表字（繁体/异体/日韩/扩展区），现行不加载 |" % (
         len(outer), f"{sum(len(cs) for _, cs in outer):,}"))
     say()
 
     for name, src, note in (
-        ("常用字表.txt", COMMON_ASSET, "现行过滤基准（一级+二级 %d 字）" % len(common)),
+        ("常用字表.txt", COMMON_ASSET, "一二级 %d 字" % len(common)),
+        ("三级字表.txt", TIER3_ASSET, "三级 %d 字（与一二级同为默认档）" % len(tier3_chars)),
         ("音节表.txt", SYLLABLE_ASSET, "合法音节全集"),
     ):
         text = open(src, encoding="utf-8").read().replace("\r\n", "\n").rstrip("\n")
