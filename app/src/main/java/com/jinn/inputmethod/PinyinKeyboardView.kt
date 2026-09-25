@@ -1947,14 +1947,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun refreshKeyLabels() {
         // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高
         val showUpper = capsMode && layer == LAYER_LETTER
-        // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示。
+        // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示；双拼关掉键面提示后同样铺满。
         // 大写键激活：统一全拼大字铺满。
         // 小写英文：统一「双拼切英文」的小字顶置样式（不随来源全拼/双拼变化）。
-        val fullPinyin = when {
-            capsMode -> true
-            englishMode -> false
-            else -> !shuangpinMode
-        }
+        // 开关在本帧只读一次并向下传，字母键与分号键不会出现两档错配。
+        val showKeyHint = Prefs(context).showKeyHint
+        val fullPinyin = KeyHint.fillLetter(
+            english = englishMode,
+            caps = capsMode,
+            shuangpin = shuangpinMode,
+            enabled = showKeyHint,
+        )
         // 符号层：整页共用一个字号 —— 文字基准取本页最宽的显示标签（否则同页「2 字大、4 字小」），
         // 宽度基准取最窄那一排键（第 1 排 q..p 共 10 键；否则 9 键排的键更宽，同一条标签又算出另一号）
         val uniformSymbolText = if (layer == LAYER_SYMBOL) {
@@ -1967,6 +1970,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             0f
         }
+        // 键面提示：仅中文双拼的字母层显示（英文态、大写锁定、关掉开关都不显示）
+        val showHint = KeyHint.visible(
+            letterLayer = layer == LAYER_LETTER,
+            english = englishMode,
+            caps = capsMode,
+            shuangpin = shuangpinMode,
+            enabled = showKeyHint,
+        )
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
@@ -1981,13 +1992,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 else ->
                     if (showUpper) c.uppercaseChar().toString() else c.toString()
             }
-            // 双拼模式下显示自然码键位提示（字母层）；大写激活时隐藏，统一用全拼大写键盘
-            val showHint = layer == LAYER_LETTER && !englishMode && shuangpinMode && !capsMode
             key.subLabel = if (showHint) shuangpinHint(c) else ""
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
         }
-        refreshSemicolonKey()
+        refreshSemicolonKey(showKeyHint)
         // 中英切换键：上下两行「中文 / 英文」，把当前语言那一行染成主题紫并加粗。
         // 必须用 SpannableString 做部分着色，拆成两个 TextView 会各自居中，看起来像两个按钮。
         btnLang.textSize = 12f
@@ -2124,18 +2133,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 刷新分号键：只在「当前方案用到分号键 + 字母层 + 非英文 + 非大写锁定」时显示。
      *
      * 键面与字母键同款：主文本 `;`、下方韵母提示（同样取自方案表，因此显示的就是该方案的
-     * 键位含义）。不需要它的方案与符号层/数字层一律 GONE，GONE 不参与测量，
+     * 键位含义）；提示随 [showKeyHint] 开关收起时改为铺满居中，与字母键一致。
+     * 不需要它的方案与符号层/数字层一律 GONE，GONE 不参与测量，
      * 26 键布局与已调好的圆角/间隙参数完全不受影响。
      */
-    private fun refreshSemicolonKey() {
+    private fun refreshSemicolonKey(showKeyHint: Boolean) {
         val visible = layer == LAYER_LETTER && !englishMode && !capsMode &&
             Shuangpin.needsSemicolon(scheme)
         keySemicolon.visibility = if (visible) View.VISIBLE else View.GONE
         if (!visible) return
-        keySemicolon.fullPinyinStyle = false
+        keySemicolon.fullPinyinStyle = !showKeyHint
         keySemicolon.centeredStyle = false
         keySemicolon.label = SEMICOLON_KEY.toString()
-        keySemicolon.subLabel = scheme.table?.finalHint(SEMICOLON_KEY).orEmpty()
+        keySemicolon.subLabel = if (showKeyHint) scheme.table?.finalHint(SEMICOLON_KEY).orEmpty() else ""
         keySemicolon.subLabelRed = ""
     }
 

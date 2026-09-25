@@ -70,12 +70,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textTest: TextView
     private lateinit var textMicState: TextView
 
-    // 功能开关（自动唤起键盘 / 生僻字 / 词频学习 / 预测 / 语音）
+    // 功能开关（自动唤起键盘 / 生僻字 / 词频学习 / 预测 / 语音 / 键面韵母提示）
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchShowRareChars: Switch
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
     private lateinit var switchVoiceInput: Switch
+    private lateinit var switchKeyHint: Switch
 
     /** 模糊音容错入口按钮（文案与状态在代码里下发：strings.xml 默认禁改） */
     private lateinit var btnFuzzyPinyin: Button
@@ -251,6 +252,10 @@ class SettingsActivity : ComponentActivity() {
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
+        switchKeyHint = findViewById(R.id.switch_key_hint)
+        // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认禁改，这里下发
+        switchKeyHint.text = "键面韵母提示"
+        findViewById<TextView>(R.id.text_key_hint_desc).text = "关闭后键面只显示字母"
         btnCheckUpdate = findViewById(R.id.btn_check_update)
         btnUpdateDownload = findViewById(R.id.btn_update_download)
         bindCheckUpdate()
@@ -430,6 +435,11 @@ class SettingsActivity : ComponentActivity() {
         switchPredict.setOnCheckedChangeListener { _, checked ->
             prefs.predictEnabled = checked
             Diagnostics.i(TAG, "候选预测词: ${if (checked) "开启" else "关闭"}（立即生效）")
+        }
+        // 键面韵母提示（双拼）：勾选即写入；键盘下次弹出时按新设置渲染，不必重启输入法
+        switchKeyHint.setOnCheckedChangeListener { _, checked ->
+            prefs.showKeyHint = checked
+            Diagnostics.i(TAG, "键面韵母提示: ${if (checked) "开启" else "关闭"}")
         }
         // 保活相关（前台服务 / 无障碍互保 / ROOT 白名单 / 电池白名单）已全部移除：
         // 语音输入改为按需连接后，不再需要进程常驻，也就不需要这些保活手段。
@@ -714,6 +724,7 @@ class SettingsActivity : ComponentActivity() {
         switchShowRareChars.isChecked = prefs.showRareChars
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
+        switchKeyHint.isChecked = prefs.showKeyHint
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
