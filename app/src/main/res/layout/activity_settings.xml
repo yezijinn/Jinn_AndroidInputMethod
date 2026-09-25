@@ -11,7 +11,7 @@
     拼音输入方案 / 界面明暗切换（定时行同卡片）→ 候选词的行数 / 剪贴板的数量 →
     键盘内嵌韵母 / 双拼显示声韵 → 自动唤起键盘 / 加更多生僻字 →
     用户词频学习 / 追加候选词语 → 语音输入 → 授权麦克风 → NAS 语音 →
-    导出配置文件 / 导入配置文件 → 导出诊断包 / 发给作者 → 使用说明纯文本
+    导出配置文件 / 导入配置文件 → 导出诊断数据（单按钮）→ 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
@@ -918,9 +918,8 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <!-- 导出诊断包 / 发给作者：同一份诊断包的两个出口 ——
-             「导出诊断包」经系统文件选择器存到用户自选位置（现有逻辑未变），
-             「发给作者」直接经系统分享面板发出（选微信 / 邮件 / QQ 等），不落用户目录。 -->
+        <!-- 导出诊断数据（单按钮，用户 2026-09-25 指定）：把日志目录打包，经系统文件选择器
+             存到用户自选位置。原「发给作者」分享按钮及其分享通道 / FileProvider 已按用户要求移除。 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -929,30 +928,13 @@
             android:orientation="vertical"
             android:padding="8dp">
 
-            <LinearLayout
+            <Button
+                android:id="@+id/btn_export_diag"
+                style="@style/SettingsButton"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btn_export_diag"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_export_diag" />
-
-                <Button
-                    android:id="@+id/btn_share_diag"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:text="@string/settings_share_diag" />
-            </LinearLayout>
+                android:layout_height="40dp"
+                android:minWidth="0dp"
+                android:text="@string/settings_export_diag" />
 
             <TextView
                 android:id="@+id/text_diag_dir"

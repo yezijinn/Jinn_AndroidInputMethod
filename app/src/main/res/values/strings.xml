@@ -149,9 +149,7 @@
     <!-- 诊断 -->
     <string name="settings_voice_input">语音输入</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
-    <string name="settings_export_diag">导出诊断包</string>
-    <!-- 「发给作者」：生成诊断包后经系统分享面板发送（与「导出诊断包」同一份内容，只是出口不同） -->
-    <string name="settings_share_diag">发给作者</string>
+    <string name="settings_export_diag">导出诊断数据</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
     <string name="settings_diag_export_fail">导出失败：%1$s</string>
     <string name="settings_diag_dir_hint">日志目录：%1$s</string>
