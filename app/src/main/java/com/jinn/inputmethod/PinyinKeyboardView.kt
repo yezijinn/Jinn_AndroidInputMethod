@@ -1623,6 +1623,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 两档共用 [viewCandidateList] 作容器：横滑由外层那一个 HorizontalScrollView
      * 承担（两排天然同步），功能面板 / 符号分组 / 内联提示对该容器的复用不受影响。
      *
+     * 双行档的列用 FrameLayout + gravity 定位置，列内**先加下排、后加上排**：视图树顺序即
+     * 无障碍遍历顺序，TalkBack 因此按 1、2、3、4… 朗读，与「第 1 个候选在下排首列」一致。
+     *
      * @param rows 本帧档位，由 [refreshCandidateBar] 读出后传入（与候选栏高度同源）
      */
     private fun renderCandidateItems(
@@ -1653,22 +1656,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         val rowHeight = doubleRowHeightPx()
         for ((top, bottom) in CandidateRows.columnsOf(items)) {
-            val column = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                // 列宽取上下两条的较宽者；列内水平居中 ⇒ 相邻序号的候选中线对齐
-                gravity = android.view.Gravity.CENTER_HORIZONTAL
-            }
-            // 上排缺项（候选总数为奇数）也要占位，否则该列的下排会被父容器的垂直居中
-            // 拉到中线、与其它列不齐。占位宽度必须是 0：裸 View 没有固有宽度，在 AT_MOST
-            // 约束下会吃掉「本列剩余宽度」（实测单候选时宽达半屏），把那条候选顶到栏中间。
-            column.addView(
-                top?.let { build(it) } ?: View(context),
-                LinearLayout.LayoutParams(
-                    if (top == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight),
-            )
+            // 列用 FrameLayout + gravity 定位置，添加顺序因此可以先「下排」后「上排」：
+            // 无障碍遍历默认按视图树顺序，这样 TalkBack 的朗读 / 焦点顺序是 1、2、3、4…，
+            // 与语义一致（第 1 个候选在下排首列，空格取的就是它）；视觉位置由 gravity 决定，
+            // 不随添加顺序变化。原先用垂直 LinearLayout 只能先加上排，顺序成了 2、1、4、3…。
+            val column = FrameLayout(context)
+            // 下排（第 1/3/5… 个候选）：列宽取上下两条的较宽者，列内水平居中 ⇒ 相邻序号的候选中线对齐
             column.addView(
                 build(bottom),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight),
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
+                    android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.BOTTOM),
+            )
+            // 上排（第 2/4/6… 个候选）；缺项（候选总数为奇数）也要占位，否则那半列会塌缩、
+            // 列内另一条贴到栏中间。占位宽度必须是 0：裸 View 没有固有宽度，在 AT_MOST 下会
+            // 吃掉「本列剩余宽度」（实测单候选时宽达半屏），把候选顶到栏中间。
+            column.addView(
+                top?.let { build(it) } ?: View(context),
+                FrameLayout.LayoutParams(
+                    if (top == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
+                    android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.TOP),
             )
             viewCandidateList.addView(
                 column,
