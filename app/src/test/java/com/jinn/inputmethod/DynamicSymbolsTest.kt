@@ -8,6 +8,7 @@ import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.Locale
 
 /**
  * 动态符号（「变量」组）纯逻辑与数据表护栏。
@@ -112,6 +113,37 @@ class DynamicSymbolsTest {
     @Test
     fun `分辨率取设备值`() {
         assertEquals("1080×2280", DynamicSymbols.expand(t("分辨率"), fixed))
+    }
+
+    /**
+     * 日期时间的数字与历法不随系统 Locale 变化。
+     *
+     * java.time 的 `ofPattern` 只借默认 Locale 取文本（月名 / 纪元），数字固定 ASCII、
+     * 历法固定公历 —— 与 `SimpleDateFormat` 不同（后者在 th-TH 走佛历、ar-* 走本地数字，
+     * 面板时间曾因此多出 543 年）。本用例把默认 Locale 换成那两类地区钉住契约：
+     * 将来若改用 `SimpleDateFormat` 或 `localizedBy()`，会先在这里变红。
+     */
+    @Test
+    fun `输出数字与历法不随系统 Locale 变化`() {
+        val saved = Locale.getDefault(Locale.Category.FORMAT)
+        try {
+            for (tag in listOf("th-TH", "ar-EG", "th-TH-u-nu-thai")) {
+                Locale.setDefault(Locale.Category.FORMAT, Locale.forLanguageTag(tag))
+                assertEquals(
+                    "Locale=$tag 时年份不该走佛历",
+                    "2026年9月24日",
+                    DynamicSymbols.expand(t("年日中"), fixed),
+                )
+                assertEquals(
+                    "Locale=$tag 时数字不该本地化",
+                    "20260924135028",
+                    DynamicSymbols.expand(t("长时数"), fixed),
+                )
+                assertEquals("2026-09-24-13:50:28", DynamicSymbols.expand(t("长时符"), fixed))
+            }
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, saved)
+        }
     }
 
     @Test

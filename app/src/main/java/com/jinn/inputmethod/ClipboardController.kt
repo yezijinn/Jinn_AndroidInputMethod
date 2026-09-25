@@ -53,19 +53,25 @@ class ClipboardController(context: Context) {
     /**
      * 存量分组标签重算（2026-09-25 起分组改为多标签语义；一次性）。
      *
-     * 只在未标记完成时跑，必须在 [BackgroundIo]：要全库解密才能重算（标签由内容决定，
-     * 内容只存密文）。跑完置位；失败不置位，下次启动自动重试。
-     * 只改 category 列，与面板的分页查询互不阻塞。
+     * 只在未标记完成时跑；要全库解密才能重算（标签由内容决定，内容只存密文）。
+     * 跑完置位；失败不置位，下次启动自动重试。
+     *
+     * 走**独立线程**而不是共用的 [BackgroundIo]：那是单线程串行队列，面板首屏查询、
+     * 首次复制入库都在队里排着，而这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），
+     * 排在队首会把「打开剪贴板面板」拖到它后面。数据库访问本身线程安全，
+     * 只改 category 列，与面板查询互不阻塞。
      */
     private fun reclassifyIfNeeded() {
         if (prefs.reclassified) return
-        BackgroundIo.run {
+        Thread {
             val changed = runCatching { db.reclassifyAll() }
                 .onFailure { Diagnostics.w(TAG, "分组标签重算失败: ${it.message}") }
-                .getOrNull() ?: return@run
-            prefs.reclassified = true
-            Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
-        }
+                .getOrNull()
+            if (changed != null) {
+                prefs.reclassified = true
+                Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
+            }
+        }.apply { name = "jinn-clipboard-reclassify" }.start()
     }
 
     /** 停用：注销监听（幂等）并丢弃待执行的重试，避免停用后仍落库 */

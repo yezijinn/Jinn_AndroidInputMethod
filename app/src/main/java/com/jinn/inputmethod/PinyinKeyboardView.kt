@@ -595,6 +595,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
             layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
+            // 进符号层前清掉未上屏的拼音：该层不显示拼音条与候选，残留的 composing
+            // 不可见却仍然生效 —— 退格先删它（屏幕上毫无变化），收起键盘 / 切中英时
+            // 还会把上一次的首候选直接上屏。与 btnShift 的清理口径一致。
+            if (layer == LAYER_SYMBOL) clearComposingState()
             refreshKeyLabels()
             // 符号层<->字母层切换：候选栏始终回到对应状态（进入显示分组 / 退出恢复正常）
             refreshCandidateBar()
@@ -1646,11 +1650,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 有拼音串：拼音条可见 —— 单行档贴顶，候选区顶部让出一条（内容区 = 栏高 − 拼音条高，
      * 单排候选在其中居中 ⇒「上拼音、下汉字」）；双行档垂直居中，候选区不动（两排各贴上下边，
      * 中缝恰好等于拼音条高，拼音条不遮候选）。
-     * 无拼音串（null / 空）：拼音条 GONE，候选区占满整栏（功能面板 / 符号分组 / 预测的历史形态）。
+     * 无拼音串（null / 空）：拼音条 GONE，候选区占满整栏（功能面板 / 符号分组）。
+     * 预测态没有拼音串但仍有可清空的内容，走 [showPinyinBarOnly]。
      */
     private fun showPinyin(text: String?) {
         pinyinBar.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
         viewCandidatePinyin.text = text.orEmpty()
+        applyPinyinInset()
+    }
+
+    /**
+     * 只留拼音条、不写拼音串（预测态专用）：✕ 清空按钮是拼音条的子树，
+     * 拼音条 GONE 会让它一起消失 —— 预测词便只剩退格一条清法。
+     *
+     * 留空条不影响「✕ 不遮候选」：单行档候选区照旧让出拼音条那一条（✕ 在顶部那行），
+     * 双行档拼音条本就在两排之间的中缝。
+     */
+    private fun showPinyinBarOnly() {
+        pinyinBar.visibility = View.VISIBLE
+        viewCandidatePinyin.text = ""
         applyPinyinInset()
     }
 
@@ -1805,8 +1823,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         setClearButtonVisible(true)
 
         if (input.isEmpty()) {
-            // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）
-            showPinyin(null)
+            // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）。
+            // 没有拼音串，但预测词同样属于「可清空」的内容：拼音条留空显示，✕ 才在
+            showPinyinBarOnly()
             renderCandidateItems(
                 items = lastPredictions,
                 rows = rows,

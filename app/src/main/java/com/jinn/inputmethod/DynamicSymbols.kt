@@ -22,7 +22,12 @@ object DynamicSymbols {
     /** 动态取值前缀（Unicode 私用区，正常符号不会用到） */
     const val MARK = "\uE000"
 
-    /** 键面短名 → 上屏内容的口径统一在这里，改格式只动这一个文件 */
+    /**
+     * 键面短名 → 上屏内容的口径统一在这里，改格式只动这一个文件。
+     *
+     * 下面这些 pattern 只含数字与中文字面量，不传 Locale 也不会被系统语言影响：java.time 的
+     * 数字与历法固定走 ASCII + 公历（`SimpleDateFormat` 才会按默认 Locale 取佛历 / 本地数字）。
+     */
     private val FMT_DATE_CN = DateTimeFormatter.ofPattern("yyyy年M月d日")
     private val FMT_DATE_COMPACT = DateTimeFormatter.ofPattern("yyyyMMdd")
     private val FMT_DATE_DASHED = DateTimeFormatter.ofPattern("yyyy-MM-dd")
