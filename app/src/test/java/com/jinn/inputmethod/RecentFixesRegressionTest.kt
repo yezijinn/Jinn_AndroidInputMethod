@@ -7,6 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedReader
+import java.io.File
 import java.io.StringReader
 
 /**
@@ -134,5 +135,123 @@ class RecentFixesRegressionTest {
         // width/height ≤ 0（未测量/已分离）：宁可保留旧行为，也不能让用户按不出字
         assertTrue(isInsideKeyBounds(0f, 0f, 0, 0, 0, 0, 8f))
         assertTrue(isInsideKeyBounds(9999f, 9999f, 100, 200, 0, 100, 8f))
+    }
+
+    // ── 源码对拍：只能用源码钉住的修复（行为要 Context / 视图 / 进程，JVM 测不到）──
+    //
+    // 这一组对应 2026-09-26 那批修复里「改回去会静默复现」的几处：改法都在一两行里，
+    // 单测与 lint 都看不见（真机崩溃、隐私留盘、丢设置都属于这类），所以用源码把**结论**钉住。
+    // 断言失败先回 `BUG.md` 的「已修复」区看当初的判定依据，别直接把断言删掉。
+
+    private fun sourceOf(name: String): String = (
+        listOf(
+            File("src/main/java/com/jinn/inputmethod/$name"),
+            File("app/src/main/java/com/jinn/inputmethod/$name"),
+        ).firstOrNull { it.isFile } ?: error("找不到 $name（cwd=${File("").absolutePath}）")
+        ).readText()
+
+    /**
+     * 截取 [marker] 之后那个花括号块（从 marker 后的第一个 `{` 起配对到对应 `}`）。
+     *
+     * 不用「取 marker 之后 N 个字符」：窗口取小了会把修复点漏在外面（`saveAndRestart` 第一版就栽在
+     * 1500 字符窗口上，函数实际 2500+ 字符），取大了又会把相邻函数的代码算进来 —— 花括号配对没有这个两难。
+     */
+    private fun blockAfter(text: String, marker: String): String {
+        val i = text.indexOf(marker)
+        assertTrue("源码里找不到锚点「$marker」—— 改名/重构后请同步本用例", i >= 0)
+        val open = text.indexOf('{', i)
+        assertTrue("锚点「$marker」之后没有花括号块", open > i)
+        var depth = 0
+        for (j in open until text.length) {
+            when (text[j]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open, j + 1)
+                }
+            }
+        }
+        error("锚点「$marker」的花括号不配对")
+    }
+
+    @Test
+    fun `保存并重启必须先落盘再杀进程`() {
+        val body = blockAfter(sourceOf("SettingsActivity.kt"), "fun saveAndRestart")
+        assertTrue(
+            "saveAndRestart 必须调 restartImeProcess()：直接 postDelayed + killProcess " +
+                "会在 IO 抖动时丢掉最后一批 apply()（重启后设置回退）",
+            body.contains("restartImeProcess()"),
+        )
+    }
+
+    @Test
+    fun `崩溃快照的原始中转件必须落在缓存目录且成对删除`() {
+        val text = sourceOf("Diagnostics.kt")
+        assertTrue(
+            "中转件是**未过滤** logcat 的唯一副本，不能落在会被导出诊断包整体打包的日志目录",
+            text.contains("File(cacheDir ?: dir"),
+        )
+        assertTrue("中转件成功 / 失败都要删（finally 里收口）", text.contains("runCatching { raw.delete() }"))
+    }
+
+    @Test
+    fun `七天清理必须覆盖导出用的 device-info`() {
+        val body = blockAfter(sourceOf("Diagnostics.kt"), "private fun cleanupOldLogs")
+        assertTrue(
+            "cleanupOldLogs 要认 DEVICE_INFO_FILE：进程被杀留下的该文件不匹配 jinn- / logcat- 前缀，" +
+                "会永久留在日志目录并混进之后每次导出包",
+            body.contains("DEVICE_INFO_FILE"),
+        )
+    }
+
+    @Test
+    fun `切符号层与数字层必须先收起剪贴板面板`() {
+        val text = sourceOf("PinyinKeyboardView.kt")
+        for (anchor in listOf("btnSymbol.setOnClickListener", "btnDigit.setOnClickListener")) {
+            assertTrue(
+                "$anchor 必须调 hidePanelForLayerSwitch()：两层的键都在字母区里，" +
+                    "面板显示时字母区整体 GONE ⇒ 切了层既看不到键、红色「返回」也被顶替，用户没有退出口",
+                blockAfter(text, anchor).contains("hidePanelForLayerSwitch()"),
+            )
+        }
+    }
+
+    @Test
+    fun `进符号层必须清掉未上屏的拼音`() {
+        val body = blockAfter(sourceOf("PinyinKeyboardView.kt"), "btnSymbol.setOnClickListener")
+        assertTrue(
+            "进符号层要调 clearComposingState()：该层不显示拼音条与候选，残留 composing 会「看不见却仍生效」" +
+                "（退格空删、收起键盘把上一次首候选上屏）",
+            body.contains("clearComposingState()"),
+        )
+    }
+
+    @Test
+    fun `预测候选必须让清空按钮可见`() {
+        val body = blockAfter(sourceOf("PinyinKeyboardView.kt"), "private fun refreshCandidateBar")
+        assertTrue(
+            "预测分支要走 showPinyinBarOnly()：✕ 是拼音条的子视图，拼音条 GONE 时它一起消失（只能退格清预测）",
+            body.contains("showPinyinBarOnly()"),
+        )
+    }
+
+    @Test
+    fun `滚动收起操作条必须判 lateinit 已初始化`() {
+        val text = sourceOf("ClipboardPanelView.kt")
+        assertTrue(
+            "onScroll 里读 actionBar 前必须判 ::actionBar.isInitialized —— setOnScrollListener 注册时会**同步回调一次**，" +
+                "那时 actionBar 还没赋值，真机实测会让键盘完全弹不出来（连崩 4 次）",
+            text.contains("::actionBar.isInitialized"),
+        )
+    }
+
+    @Test
+    fun `词库重装不得先删旧包`() {
+        val text = sourceOf("DictManagerActivity.kt")
+        assertTrue("必须直接 renameTo（POSIX 原子替换，目标已存在也覆盖）", text.contains("tmp.renameTo(dst)"))
+        assertFalse(
+            "不得出现 dst.delete()：先删目标再改名，改名失败时用户会同时失去旧包与新包",
+            text.contains("dst.delete()"),
+        )
     }
 }
