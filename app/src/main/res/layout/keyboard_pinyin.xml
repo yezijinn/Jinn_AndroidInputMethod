@@ -14,32 +14,46 @@
     android:background="@color/kb_bg"
     android:orientation="vertical">
 
-    <!-- 候选栏：拼音 + 候选词 -->
-    <LinearLayout
+    <!-- 候选栏：拼音条（横条）+ 候选（横向滚动）+ 清空按钮（叠在整栏右侧）。
+         几何见 CandidateRows：单行档 = 拼音条 20dp 贴顶 + 一排候选 32dp；
+         双行档 = 上排 / 拼音条（垂直居中，正好落在两排之间的中缝）/ 下排。
+         拼音条是叠放层：无拼音时 GONE，候选区（含功能面板）占满整栏 —— 避让由
+         PinyinKeyboardView.showPinyin 落位，高度与位置由 applyCandidateRows 落位。 -->
+    <FrameLayout
         android:id="@+id/candidate_bar"
         android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:background="@color/kb_candidate_bg"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp">
+        android:layout_height="52dp"
+        android:background="@color/kb_candidate_bg">
 
-        <TextView
-            android:id="@+id/candidate_pinyin"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:gravity="center_vertical"
-            android:maxWidth="120dp"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textColor="@color/text_secondary"
-            android:textSize="14sp" />
+        <!-- 叠放层：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），不靠子项顺序；
+             视图树里排在候选之前 —— 无障碍遍历按视图树先序，先读拼音串再读候选更顺。 -->
+        <FrameLayout
+            android:id="@+id/pinyin_bar"
+            android:layout_width="match_parent"
+            android:layout_height="20dp"
+            android:layout_gravity="top"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <!-- 拼音串：整条全宽（不再限宽），右端留出清空按钮的位置；
+                 左内边距由父级拼音条提供，这里显式写 0 以满足 RTL 对称性检查 -->
+            <TextView
+                android:id="@+id/candidate_pinyin"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:paddingStart="0dp"
+                android:paddingEnd="40dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+        </FrameLayout>
 
         <HorizontalScrollView
-            android:layout_width="0dp"
+            android:id="@+id/candidate_scroll"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_weight="1"
             android:fillViewport="true"
             android:scrollbars="none">
 
@@ -51,20 +65,22 @@
                 android:orientation="horizontal" />
         </HorizontalScrollView>
 
-        <!-- 清空候选：仅在「候选/预测/拼音串展示中」出现（功能面板与符号层为 GONE，不占宽度）。
+        <!-- 清空候选：整栏右侧叠放（触摸目标 40dp × 整栏高），仅在「候选/预测/拼音串展示中」
+             出现（功能面板与符号层为 GONE，也不占宽度 —— 候选区右内边距随之切换）。
              点击 = 完全清空候选词与拼音串，候选栏回到默认的 6 按钮功能面板。
              2026-09-20 起取代「长按退格整串清空拼音」的隐式手势。 -->
         <TextView
             android:id="@+id/btn_clear_candidates"
             android:layout_width="40dp"
             android:layout_height="match_parent"
+            android:layout_gravity="end"
             android:contentDescription="@string/cd_clear_candidates"
             android:gravity="center"
             android:text="@string/key_clear_candidates"
             android:textColor="@color/text_secondary"
             android:textSize="16sp"
             android:visibility="gone" />
-    </LinearLayout>
+    </FrameLayout>
 
     <!-- 26 键字母区 / 剪贴板面板共用容器：
          - 字母模式：高度 wrap_content（字母区自身 3 行高度），键盘紧凑

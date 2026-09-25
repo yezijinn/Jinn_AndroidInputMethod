@@ -16,6 +16,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -119,8 +120,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidatePinyin: TextView
     private val viewCandidateList: LinearLayout
 
+    /** 候选区视口：两排共用一个横滑容器（天然同步）；✕ 可见时右内边距让出按钮宽度 */
+    private val candidateScroll: HorizontalScrollView
+
+    /**
+     * 拼音条：**叠放层**，位于候选区之上。单行档贴顶（候选区随之下移一条），双行档垂直居中
+     * （正好落在两排候选之间的中缝，不遮候选）；无拼音时 GONE，候选区占满整栏。
+     * 显隐与避让统一走 [showPinyin]，高度与位置走 [applyCandidateRows]。
+     */
+    private val pinyinBar: View
+
     /** 候选栏最右侧的「✕」清空候选按钮（2026-09-20 起，绑定见 init） */
     private val btnClearCandidates: TextView
+
+    /** 本帧生效的候选档位 / 单排行高（px），由 [applyCandidateRows] 落位、[showPinyin] 复用 */
+    private var currentRows = CandidateRows.SINGLE
+    private var currentRowHeightPx = 0
 
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
@@ -323,6 +338,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
+        candidateScroll = root.findViewById(R.id.candidate_scroll)
+        pinyinBar = root.findViewById(R.id.pinyin_bar)
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
@@ -1571,24 +1588,50 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun predictionsEnabled(): Boolean = Prefs(context).predictEnabled
 
     /**
-     * 候选栏高度按 [Prefs.candidateRows] 档位落位（单行 48dp / 双行 72dp）。
+     * 候选栏几何落位（[Prefs.candidateRows] 档位）：栏高、拼音条高度与位置、本帧档位。
      *
-     * 只在高度真的变化时写回布局参数：本方法每次刷新都调，无谓赋值会多触发一次
-     * requestLayout，让「每次按键重建候选」再搭上一次整键盘测量。
+     * 高度全部由 [CandidateRows] 派生（同帧同源，不会出现「栏高按旧档、行高按新档」的错配）；
+     * 只在真的变化时写回布局参数 —— 本方法每次刷新都调，无谓赋值会多触发一次 requestLayout，
+     * 让「每次按键重建候选」再搭上一次整键盘测量。
+     *
+     * 拼音条的显隐与候选区避让在 [showPinyin] 里落位（本方法只落几何）。
      */
     private fun applyCandidateRows(rows: Int) {
-        val lp = candidateBar.layoutParams as? LinearLayout.LayoutParams ?: return
-        val height = if (rows == CandidateRows.DOUBLE) {
-            doubleRowHeightPx() * 2
-        } else {
-            // 与 keyboard_pinyin.xml 的 48dp 同口径：资源值走运行时四舍五入，dp() 是截断，
-            // 非整数密度设备上首次刷新会差 1px 并多触发一次 requestLayout
-            dpExact(CandidateRows.heightDp(rows))
+        val dm = resources.displayMetrics
+        val perRow = CandidateRows.rowHeightPx(dm.density, spToPx(CandidateRows.CANDIDATE_TEXT_SP))
+        val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, spToPx(CandidateRows.PINYIN_TEXT_SP))
+        currentRows = rows
+
+        val barHeight = pinyinBarPx + perRow * if (rows == CandidateRows.DOUBLE) 2 else 1
+        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+            if (lp.height != barHeight) {
+                lp.height = barHeight
+                candidateBar.layoutParams = lp
+            }
         }
-        if (lp.height == height) return
-        lp.height = height
-        candidateBar.layoutParams = lp
+        // 拼音条位置：单行档贴顶；双行档垂直居中 —— 两排候选各贴上下边，中缝恰好等于拼音条高
+        (pinyinBar.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            val gravity = if (rows == CandidateRows.DOUBLE) {
+                android.view.Gravity.CENTER_VERTICAL
+            } else {
+                android.view.Gravity.TOP
+            }
+            if (lp.height != pinyinBarPx || lp.gravity != gravity) {
+                lp.height = pinyinBarPx
+                lp.gravity = gravity
+                pinyinBar.layoutParams = lp
+            }
+        }
+        // 档位切换后避让要按新档重落（显隐状态未变，单靠 showPinyin 不会重算）
+        applyPinyinInset()
     }
+
+    /** sp → px：交给 TypedValue（内部按字体缩放换算，不必自己读 DisplayMetrics 的缩放字段） */
+    private fun spToPx(sp: Float): Float = android.util.TypedValue.applyDimension(
+        android.util.TypedValue.COMPLEX_UNIT_SP,
+        sp,
+        resources.displayMetrics,
+    )
 
     /** 与 XML 资源同口径的 dp → px（[dp] 是截断，资源走 `complexToDimensionPixelSize` 的四舍五入） */
     private fun dpExact(v: Int): Int = android.util.TypedValue.applyDimension(
@@ -1598,19 +1641,56 @@ class PinyinKeyboardView @JvmOverloads constructor(
     ).toInt()
 
     /**
-     * 双行档单排高度（px）：默认字体下 = 36dp（两排 72dp），系统字体放大时随之长高。
+     * 拼音条显隐 + 候选区避让（唯一入口）。
      *
-     * 行高与候选栏高度必须用同一个来源，否则列会被裁掉底部或留出空隙。
+     * 有拼音串：拼音条可见 —— 单行档贴顶，候选区顶部让出一条（内容区 = 栏高 − 拼音条高，
+     * 单排候选在其中居中 ⇒「上拼音、下汉字」）；双行档垂直居中，候选区不动（两排各贴上下边，
+     * 中缝恰好等于拼音条高，拼音条不遮候选）。
+     * 无拼音串（null / 空）：拼音条 GONE，候选区占满整栏（功能面板 / 符号分组 / 预测的历史形态）。
      */
-    private fun doubleRowHeightPx(): Int {
-        val dm = resources.displayMetrics
-        // sp → px 交给 TypedValue：它内部按字体缩放换算，不必自己读 DisplayMetrics 的缩放字段
-        val textPx = android.util.TypedValue.applyDimension(
-            android.util.TypedValue.COMPLEX_UNIT_SP,
-            CandidateRows.textSizeSp(CandidateRows.DOUBLE),
-            dm,
-        )
-        return CandidateRows.rowHeightPx(density = dm.density, textPx = textPx)
+    private fun showPinyin(text: String?) {
+        pinyinBar.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
+        viewCandidatePinyin.text = text.orEmpty()
+        applyPinyinInset()
+    }
+
+    /** 按「当前档位 + 拼音条显隐」落候选区让位：仅单行档且拼音可见时顶部让出一条 */
+    private fun applyPinyinInset() = syncCandidatePadding()
+
+    /**
+     * 「✕ 清空候选」显隐（唯一入口）：按钮叠在整栏右侧，可见时候选区右内边距让出按钮宽度，
+     * 候选不会滑到按钮底下（功能面板 / 符号层隐藏，同时把让位还回去）。
+     */
+    private fun setClearButtonVisible(visible: Boolean) {
+        btnClearCandidates.visibility = if (visible) View.VISIBLE else View.GONE
+        syncCandidatePadding()
+    }
+
+    /**
+     * 候选区（横滑视口）的内边距落位 —— **唯一入口**，三边各有来源：
+     *  - 左：与编辑区对齐的 8dp（原候选栏内边距，拼音条同值）
+     *  - 上：单行档拼音条可见时让出一条（[applyPinyinInset]）
+     *  - 右：✕ 可见时让出按钮宽度（[setClearButtonVisible]）
+     * 分开 setPadding 会互相覆盖（各自只记得自己那一项），故必须集中在一处算。
+     */
+    private fun syncCandidatePadding() {
+        val left = dpExact(CandidateRows.SIDE_PAD_DP)
+        val top = if (pinyinBar.visibility == View.VISIBLE && currentRows != CandidateRows.DOUBLE) {
+            (pinyinBar.layoutParams as? FrameLayout.LayoutParams)?.height ?: 0
+        } else {
+            0
+        }
+        val right = if (btnClearCandidates.visibility == View.VISIBLE) {
+            dpExact(CandidateRows.CLEAR_BUTTON_WIDTH_DP)
+        } else {
+            0
+        }
+        if (candidateScroll.paddingLeft != left ||
+            candidateScroll.paddingTop != top ||
+            candidateScroll.paddingRight != right
+        ) {
+            candidateScroll.setPadding(left, top, right, 0)
+        }
     }
 
     /**
@@ -1636,7 +1716,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         onClick: (String) -> Unit,
     ) {
         viewCandidateList.removeAllViews()
-        val sizeSp = CandidateRows.textSizeSp(rows)
+        val sizeSp = CandidateRows.CANDIDATE_TEXT_SP
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         fun build(text: String): TextView = TextView(context).apply {
@@ -1654,7 +1734,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             return
         }
-        val rowHeight = doubleRowHeightPx()
+        // 行高与候选栏高度同源（[CandidateRows.rowHeightPx]）：两排各贴上下边，中缝恰好 = 拼音条高
+        val rowHeight = CandidateRows.rowHeightPx(
+            resources.displayMetrics.density,
+            spToPx(CandidateRows.CANDIDATE_TEXT_SP),
+        )
         for ((top, bottom) in CandidateRows.columnsOf(items)) {
             // 列用 FrameLayout + gravity 定位置，添加顺序因此可以先「下排」后「上排」：
             // 无障碍遍历默认按视图树顺序，这样 TalkBack 的朗读 / 焦点顺序是 1、2、3、4…，
@@ -1699,7 +1783,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 符号层：候选栏显示符号分组标签（可横向滚动切换）；「✕ 清空候选」不适用 → 隐藏
         if (layer == LAYER_SYMBOL) {
-            btnClearCandidates.visibility = View.GONE
+            setClearButtonVisible(false)
             renderSymbolGroups()
             return
         }
@@ -1713,7 +1797,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
-            viewCandidatePinyin.text = ""
+            showPinyin(null)
             viewCandidateList.removeAllViews()
             // 内容刚全部清空：上面那次选档读到的 lastCandidates 还是旧值，这里清空后再判一次
             updateCandidateBarBackground()
@@ -1723,11 +1807,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 以下各分支都会展示「候选 / 预测 / 拼音串」：显示 ✕ 清空按钮，
         // 有内容可清时才出现，功能面板与符号层都不显示。
-        btnClearCandidates.visibility = View.VISIBLE
+        setClearButtonVisible(true)
 
         if (input.isEmpty()) {
             // 智能预测模式：候选栏显示预测词（如选「你好」后显示 吗/像/不好…）
-            viewCandidatePinyin.text = ""
+            showPinyin(null)
             renderCandidateItems(
                 items = lastPredictions,
                 rows = rows,
@@ -1742,7 +1826,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 词库尚未就绪（冷启动时高频子集约 0.4s，无子集的旧包则要 6~10.7s）：
         // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，改用内联提示。
         if (!PinyinEngine.isLoaded) {
-            viewCandidatePinyin.text = displayText
+            showPinyin(displayText)
             renderCandidateHint(context.getString(R.string.engine_dict_loading))
             return
         }
@@ -1764,7 +1848,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 否则用户会以为「这个字打不出来」。
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
-            viewCandidatePinyin.text = displayText
+            showPinyin(displayText)
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
             return
         }
@@ -1773,7 +1857,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
         // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
         // 需要看声韵的用「拼音显示为声韵」档：走 [Shuangpin.displayQuanpin]，残码逐键展开不丢键。
-        viewCandidatePinyin.text = displayText
+        showPinyin(displayText)
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、
@@ -1792,7 +1876,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
     private fun renderSymbolGroups() {
-        viewCandidatePinyin.text = ""
+        showPinyin(null)
         viewCandidateList.removeAllViews()
         val labelSize = 13f // 分组主文本字号（sp）
         for ((idx, group) in symbolGroups.withIndex()) {
@@ -2184,13 +2268,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
      * 「输入方案」下拉里改（全拼 + 7 套双拼，全局生效），面板不再承担方案切换。
      *
-     * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（48dp），
+     * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（见 [CandidateRows.heightDp]），
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
      */
     private fun renderFunctionPanel() {
         viewCandidateList.removeAllViews()
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
-        btnClearCandidates.visibility = View.GONE
+        setClearButtonVisible(false)
         // 搜索态：功能面板只保留「退出搜索」。
         // 其余按钮都不能出现，历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
         // 作用于宿主输入框的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
@@ -2753,7 +2837,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /**
          * 复用块（功能按钮 / 符号分组标签）的最小高度（dp）：与单行档整栏高度同值。
          *
-         * 实际高度取「内容与它」的较大者：用 `MATCH_PARENT` 会被双行档的 72dp 拉成瘦高长条，
+         * 实际高度取「内容与它」的较大者：用 `MATCH_PARENT` 会被双行档的整栏高度拉成瘦高长条，
          * 固定成它又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）。
          * 两处构建点共用本常量，避免规则漂移。
          */
