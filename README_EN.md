@@ -14,6 +14,7 @@ English ｜ [中文](README.md)
 
 **Pinyin keyboard (QWERTY)**
 - Full pinyin / Shuangpin / English; 7 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) with final/initial hints on keys (toggle in Settings; when off, keys show letters only); pick the scheme in Settings (applies globally)
+- Character set: covers the 通用规范汉字表 levels 1–3 by default (given name / place name characters such as 囧, 淼, 喆, 昇 type straight away); the "extra rare characters" switch additionally admits everything outside that table (traditional / variant forms, CJK extensions)
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
 - Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); smart prediction (off by default); one-tap CN/EN
 - Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release

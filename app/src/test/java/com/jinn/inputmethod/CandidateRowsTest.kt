@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -169,6 +170,38 @@ class CandidateRowsTest {
         assertTrue(
             "pinyin_bar 必须排在 candidate_scroll 之后（否则 ✕ 被候选区挡住点击）",
             text.indexOf("@+id/pinyin_bar") > text.indexOf("@+id/candidate_scroll"),
+        )
+    }
+
+    /**
+     * 键盘顶边与字母区都不得有 `paddingTop`（源码守卫）。
+     *
+     * 2026-09-25 真机逐像素扫过：键盘最顶那 4dp（density 3 下 12px）是背板色 plate，往下才是候选栏色
+     * surface —— 用户打字时看到「候选栏上方一条色带」。两处 `paddingTop` 都已删除（根布局的由项目早期
+     * 引入、字母区的跟着一起收掉），加回来就会重现。
+     *
+     * 只查这两处：底部功能行的 `paddingTop` / `paddingBottom` 是 56dp 行内的垂直留白，属正常设计。
+     */
+    @Test
+    fun 键盘顶边与字母区不得有内边距() {
+        val xml = listOf(
+            File("src/main/res/layout/keyboard_pinyin.xml"),
+            File("app/src/main/res/layout/keyboard_pinyin.xml"),
+        ).firstOrNull { it.isFile } ?: error("找不到 keyboard_pinyin.xml")
+        val text = xml.readText()
+
+        val rootTag = text.substringAfter("<LinearLayout").substringBefore(">")
+        assertFalse(
+            "根布局不得有 android:paddingTop（候选栏底色要铺到键盘最顶，否则顶边露一条背板色）: $rootTag",
+            rootTag.contains("paddingTop"),
+        )
+
+        val lettersAt = text.indexOf("@+id/keyboard_letters")
+        assertTrue("布局里应能找到 keyboard_letters", lettersAt > 0)
+        val lettersTag = text.substring(text.lastIndexOf('<', lettersAt), text.indexOf('>', lettersAt))
+        assertFalse(
+            "字母区不得有 android:paddingTop（第一行键的顶边直接接候选栏底边）: $lettersTag",
+            lettersTag.contains("paddingTop"),
         )
     }
 }

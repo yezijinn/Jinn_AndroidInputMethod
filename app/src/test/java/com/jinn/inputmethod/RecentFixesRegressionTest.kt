@@ -151,6 +151,20 @@ class RecentFixesRegressionTest {
         ).readText()
 
     /**
+     * 只留代码行（去掉整行注释）。
+     *
+     * 这一组的修复点旁边都写着「为什么必须这么写」的注释 —— 注释里大概率出现同一个调用名，
+     * 不剔掉的话「把调用删掉、注释留着」也会绿（实测过：`saveAndRestart` 的 KDoc 里就写着
+     * `restartImeProcess()`）。只丢整行注释，不动行尾注释：行尾注释里带 `//` 的字符串（URL）会被误切。
+     */
+    private fun codeOf(name: String): String = sourceOf(name).lines()
+        .filterNot { line ->
+            val t = line.trimStart()
+            t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
+        }
+        .joinToString("\n")
+
+    /**
      * 截取 [marker] 之后那个花括号块（从 marker 后的第一个 `{` 起配对到对应 `}`）。
      *
      * 不用「取 marker 之后 N 个字符」：窗口取小了会把修复点漏在外面（`saveAndRestart` 第一版就栽在
@@ -176,7 +190,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `保存并重启必须先落盘再杀进程`() {
-        val body = blockAfter(sourceOf("SettingsActivity.kt"), "fun saveAndRestart")
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "fun saveAndRestart")
         assertTrue(
             "saveAndRestart 必须调 restartImeProcess()：直接 postDelayed + killProcess " +
                 "会在 IO 抖动时丢掉最后一批 apply()（重启后设置回退）",
@@ -186,7 +200,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `崩溃快照的原始中转件必须落在缓存目录且成对删除`() {
-        val text = sourceOf("Diagnostics.kt")
+        val text = codeOf("Diagnostics.kt")
         assertTrue(
             "中转件是**未过滤** logcat 的唯一副本，不能落在会被导出诊断包整体打包的日志目录",
             text.contains("File(cacheDir ?: dir"),
@@ -196,7 +210,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `七天清理必须覆盖导出用的 device-info`() {
-        val body = blockAfter(sourceOf("Diagnostics.kt"), "private fun cleanupOldLogs")
+        val body = blockAfter(codeOf("Diagnostics.kt"), "private fun cleanupOldLogs")
         assertTrue(
             "cleanupOldLogs 要认 DEVICE_INFO_FILE：进程被杀留下的该文件不匹配 jinn- / logcat- 前缀，" +
                 "会永久留在日志目录并混进之后每次导出包",
@@ -206,7 +220,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `切符号层与数字层必须先收起剪贴板面板`() {
-        val text = sourceOf("PinyinKeyboardView.kt")
+        val text = codeOf("PinyinKeyboardView.kt")
         for (anchor in listOf("btnSymbol.setOnClickListener", "btnDigit.setOnClickListener")) {
             assertTrue(
                 "$anchor 必须调 hidePanelForLayerSwitch()：两层的键都在字母区里，" +
@@ -218,7 +232,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `进符号层必须清掉未上屏的拼音`() {
-        val body = blockAfter(sourceOf("PinyinKeyboardView.kt"), "btnSymbol.setOnClickListener")
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "btnSymbol.setOnClickListener")
         assertTrue(
             "进符号层要调 clearComposingState()：该层不显示拼音条与候选，残留 composing 会「看不见却仍生效」" +
                 "（退格空删、收起键盘把上一次首候选上屏）",
@@ -228,7 +242,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `预测候选必须让清空按钮可见`() {
-        val body = blockAfter(sourceOf("PinyinKeyboardView.kt"), "private fun refreshCandidateBar")
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun refreshCandidateBar")
         assertTrue(
             "预测分支要走 showPinyinBarOnly()：✕ 是拼音条的子视图，拼音条 GONE 时它一起消失（只能退格清预测）",
             body.contains("showPinyinBarOnly()"),
@@ -237,7 +251,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `滚动收起操作条必须判 lateinit 已初始化`() {
-        val text = sourceOf("ClipboardPanelView.kt")
+        val text = codeOf("ClipboardPanelView.kt")
         assertTrue(
             "onScroll 里读 actionBar 前必须判 ::actionBar.isInitialized —— setOnScrollListener 注册时会**同步回调一次**，" +
                 "那时 actionBar 还没赋值，真机实测会让键盘完全弹不出来（连崩 4 次）",
@@ -247,7 +261,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `词库重装不得先删旧包`() {
-        val text = sourceOf("DictManagerActivity.kt")
+        val text = codeOf("DictManagerActivity.kt")
         assertTrue("必须直接 renameTo（POSIX 原子替换，目标已存在也覆盖）", text.contains("tmp.renameTo(dst)"))
         assertFalse(
             "不得出现 dst.delete()：先删目标再改名，改名失败时用户会同时失去旧包与新包",
