@@ -81,8 +81,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingStart="4dp"
-            android:paddingEnd="4dp"
-            android:paddingTop="4dp">
+            android:paddingEnd="4dp">
 
         <!-- 第一行：10 个字母 -->
         <LinearLayout
