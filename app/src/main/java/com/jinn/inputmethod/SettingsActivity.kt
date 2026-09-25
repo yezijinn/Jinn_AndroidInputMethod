@@ -96,9 +96,6 @@ class SettingsActivity : ComponentActivity() {
 
     // 诊断
     private lateinit var btnExportDiag: Button
-
-    /** 「发给作者」：与「导出诊断包」同一份包，出口换成系统分享面板（见 [shareDiagnostics]） */
-    private lateinit var btnShareDiag: Button
     private lateinit var textDiagDir: TextView
 
     /** 待写入用户选定位置的诊断包（生成在缓存目录，写入或取消后删除） */
@@ -271,7 +268,6 @@ class SettingsActivity : ComponentActivity() {
         cardMicPermission = findViewById(R.id.card_mic_permission)
         cardVoiceServer = findViewById(R.id.card_voice_server)
         btnExportDiag = findViewById(R.id.btn_export_diag)
-        btnShareDiag = findViewById(R.id.btn_share_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
         // 剪贴板卡片
@@ -459,8 +455,6 @@ class SettingsActivity : ComponentActivity() {
 
         // 诊断导出：把日志目录打包到共享存储，方便取出排查
         btnExportDiag.setOnClickListener { exportDiagnostics() }
-        // 发给作者：同一份诊断包，直接经系统分享面板发出
-        btnShareDiag.setOnClickListener { shareDiagnostics() }
 
         // 配置备份：导出 / 导入（跨设备迁移）。按钮文本在代码里下发——strings.xml 默认禁改
         btnConfigExport = findViewById(R.id.btn_config_export)
@@ -698,64 +692,6 @@ class SettingsActivity : ComponentActivity() {
                 } else {
                     Diagnostics.w(TAG, "exportDiagnostics: 打包失败")
                     textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
-                }
-            }
-        }.start()
-    }
-
-    /**
-     * 「发给作者」：生成诊断包后经系统分享面板发出（微信 / 邮件 / QQ 等由用户当场选）。
-     *
-     * 与 [exportDiagnostics] 的区别只在出口：那条走 SAF 让用户选保存位置、写完即删临时包；
-     * 这条直接把缓存目录里的包分享出去（分享目标读的是 content://，包本身留在缓存，
-     * 由 [Diagnostics.exportBundle] 的年龄闸在下次导出时回收）。
-     * 必须用 FileProvider 的 content://：Android 7+ 把 file:// 放进 Intent 会抛 FileUriExposedException。
-     */
-    private fun shareDiagnostics() {
-        btnShareDiag.isEnabled = false
-        Diagnostics.i(TAG, "shareDiagnostics: 生成诊断包用于分享")
-        Thread {
-            val file = Diagnostics.exportBundle(this)
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                btnShareDiag.isEnabled = true
-                if (file == null) {
-                    Diagnostics.w(TAG, "shareDiagnostics: 无可导出内容或打包失败")
-                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
-                    return@runOnUiThread
-                }
-                val uri = runCatching {
-                    androidx.core.content.FileProvider.getUriForFile(
-                        this,
-                        "$packageName.fileprovider",
-                        file,
-                    )
-                }.getOrNull()
-                if (uri == null) {
-                    Diagnostics.w(TAG, "shareDiagnostics: FileProvider 取 URI 失败")
-                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "无法分享")
-                    return@runOnUiThread
-                }
-                // 没有可分享的应用时 startActivity 会抛 ActivityNotFoundException：给一次文字反馈，
-                // 不让设置页崩（分享目标只是常规应用，缺了不该影响输入法本身）
-                val sent = runCatching {
-                    startActivity(
-                        Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                putExtra(Intent.EXTRA_SUBJECT, "Jinn 输入法诊断包")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            },
-                            getString(R.string.settings_share_diag),
-                        ),
-                    )
-                }.isSuccess
-                Diagnostics.i(TAG, "shareDiagnostics: 分享面板已唤起=$sent")
-                if (sent) {
-                    textDiagDir.text = getString(R.string.settings_diag_exported, file.name)
-                } else {
-                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "无可用分享目标")
                 }
             }
         }.start()

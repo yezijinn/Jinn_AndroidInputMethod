@@ -73,16 +73,5 @@
             </intent-filter>
         </activity>
 
-        <!-- 分享诊断包用（设置页「发给作者」）：把 cacheDir/JinnIme 下的诊断 zip 以 content://
-             交给分享目标；不导出、无存储权限，仅按本次 Intent 授权读取（路径见 res/xml/file_paths.xml） -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 </manifest>
