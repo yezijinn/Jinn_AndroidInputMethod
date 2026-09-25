@@ -27,8 +27,27 @@
         android:layout_height="44dp"
         android:background="@color/kb_candidate_bg">
 
-        <!-- 叠放层：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），不靠子项顺序；
-             视图树里排在候选之前 —— 无障碍遍历按视图树先序，先读拼音串再读候选更顺。 -->
+        <!-- 候选滚动区。**必须排在拼音条之前**：FrameLayout 里后加的子项绘制与触摸都在上层，
+             候选区虽然透明却铺满整栏 —— 排在后面会把拼音条里的 ✕ 挡到点不动（2026-09-25 真机复现）。
+             无障碍遍历顺序由 accessibilityTraversalAfter 拉正（语义上先读拼音串再读候选）。 -->
+        <HorizontalScrollView
+            android:id="@+id/candidate_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:accessibilityTraversalAfter="@id/pinyin_bar"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/candidate_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <!-- 拼音条（叠放层，最后添加 ⇒ 在候选之上）：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），
+             高度与位置由 applyCandidateRows 落位、显隐由 showPinyin 落位。 -->
         <FrameLayout
             android:id="@+id/pinyin_bar"
             android:layout_width="match_parent"
@@ -68,21 +87,6 @@
                 android:textSize="14sp"
                 android:visibility="gone" />
         </FrameLayout>
-
-        <HorizontalScrollView
-            android:id="@+id/candidate_scroll"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/candidate_list"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:gravity="center_vertical"
-                android:orientation="horizontal" />
-        </HorizontalScrollView>
 
     </FrameLayout>
 
