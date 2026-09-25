@@ -1871,6 +1871,39 @@ object Shuangpin {
         return sb.toString()
     }
 
+    /**
+     * 候选栏「声韵显示」用的全拼：与 [toQuanpin] 同一张表、同一套两键分组，但**绝不丢键**。
+     *
+     * 为什么要独立一份：[toQuanpin] 面向查询，遇到无法成音节的组合即停止（只给已转换的前缀）；
+     * 而候选栏要求「每按一键都看得到变化」（2026-09-18 的「按键没反应」报告就是显示串被吞掉）。
+     * 因此这里对残余按键逐个展开 —— 声母键给声母、其余原样保留（含分号键），
+     * 保证追加按键时显示串一定变化。
+     *
+     * 合法输入的输出与 [toQuanpin] 逐字节一致，仅残码 / 非法组合的处理不同。
+     * 例（自然码）：`vsgo` → `zhongguo`；残码 `vsg` → `zhongg`（不是 `zhong`）。
+     */
+    fun displayQuanpin(input: String, scheme: ShuangpinScheme): String {
+        val table = scheme.table ?: return input.lowercase()
+        val raw = input.lowercase()
+        if (raw.isEmpty()) return ""
+        val sb = StringBuilder(raw.length * 2)
+        var i = 0
+        while (i < raw.length) {
+            // 每两键整查一次码表（与 toQuanpin 的合法路径同源）
+            val syllable = if (i + 1 < raw.length) table.codes[raw.substring(i, i + 2)] else null
+            if (syllable != null) {
+                sb.append(syllable)
+                i += 2
+                continue
+            }
+            // 残码 / 非法组合：逐键展开（声母键给声母，其余原样），绝不跳过按键
+            val key = raw[i]
+            sb.append(table.initialOf(key) ?: key.toString())
+            i += 1
+        }
+        return sb.toString()
+    }
+
     /** 该方案是否有键位落在分号键上（搜狗/微软/紫光的 `ing`），键面需要显示分号键 */
     fun needsSemicolon(scheme: ShuangpinScheme): Boolean = scheme.table?.needsSemicolon == true
 

@@ -1704,6 +1704,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         val input = composing.toString()
+        // 拼音行显示方式本帧只读一次并向下传（下方三处赋值必须同档）：
+        // 默认显示按下的英文字母；「拼音显示为声韵」打开后按声母/韵母展开成全拼（残码也不丢键）
+        val displayText = if (shuangpinMode && Prefs(context).showQuanpin) {
+            Shuangpin.displayQuanpin(input, scheme)
+        } else {
+            input
+        }
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             viewCandidatePinyin.text = ""
@@ -1735,7 +1742,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 词库尚未就绪（冷启动时高频子集约 0.4s，无子集的旧包则要 6~10.7s）：
         // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，改用内联提示。
         if (!PinyinEngine.isLoaded) {
-            viewCandidatePinyin.text = input
+            viewCandidatePinyin.text = displayText
             renderCandidateHint(context.getString(R.string.engine_dict_loading))
             return
         }
@@ -1757,15 +1764,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 否则用户会以为「这个字打不出来」。
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
-            viewCandidatePinyin.text = input          // 显示原始按键，不是转换后的全拼
+            viewCandidatePinyin.text = displayText
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
             return
         }
         lastCandidates = result.candidates
-        // 拼音行显示用户实际按下的键（input），不是转换后的全拼（queryInput）。
-        // 双拼下两者常常不同：`jg` 转全拼会被吞成 `j`，若显示 queryInput，
-        // 用户按下 g/h 后拼音行毫无变化，看起来就像"按键没反应/卡住了"（2026-09-18 用户报告）。
-        viewCandidatePinyin.text = input
+        // 拼音行默认显示用户按下的键（input），不是查询串（queryInput）。
+        // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
+        // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
+        // 需要看声韵的用「拼音显示为声韵」档：走 [Shuangpin.displayQuanpin]，残码逐键展开不丢键。
+        viewCandidatePinyin.text = displayText
         Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、

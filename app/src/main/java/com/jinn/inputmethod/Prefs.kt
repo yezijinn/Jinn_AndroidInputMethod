@@ -192,6 +192,16 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHOW_KEY_HINT, value) }
 
     /**
+     * 双拼候选栏拼音行的显示方式：false（默认）= 显示按下的英文字母；true = 按声母 / 韵母展开成全拼。
+     *
+     * 只影响候选栏显示，不改输入、查询与上屏；残码逐键展开、绝不丢键（见 [Shuangpin.displayQuanpin]）。
+     * 与 [showKeyHint] 一样，键盘下次弹出即按新设置渲染。
+     */
+    var showQuanpin: Boolean
+        get() = sp.getBoolean(KEY_SHOW_QUANPIN, false)
+        set(value) = sp.edit { putBoolean(KEY_SHOW_QUANPIN, value) }
+
+    /**
      * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
@@ -403,6 +413,7 @@ class Prefs(context: Context) {
         put(KEY_PREDICT_ENABLED, predictEnabled)
         put(KEY_CANDIDATE_ROWS, candidateRows)
         put(KEY_SHOW_KEY_HINT, showKeyHint)
+        put(KEY_SHOW_QUANPIN, showQuanpin)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_SHOW_RARE_CHARS, showRareChars)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
@@ -456,6 +467,7 @@ class Prefs(context: Context) {
                 KEY_PREDICT_ENABLED -> asBool(v)?.let { predictEnabled = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_ROWS -> asInt(v)?.let { candidateRows = it; ok() } ?: bad(key)
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
+                KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
@@ -592,6 +604,8 @@ class Prefs(context: Context) {
         private const val KEY_CANDIDATE_ROWS = "candidate_rows"
         /** 键面韵母提示开关（见 [Prefs.showKeyHint] 与 [KeyHint]） */
         private const val KEY_SHOW_KEY_HINT = "show_key_hint"
+        /** 双拼候选栏拼音行显示方式（false = 按下的字母 / true = 声母韵母全拼，见 [Prefs.showQuanpin]） */
+        private const val KEY_SHOW_QUANPIN = "show_quanpin"
         private const val KEY_USER_LEARNING = "user_learning"
         /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
