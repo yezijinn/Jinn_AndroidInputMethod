@@ -388,21 +388,59 @@ class ConfigBackupZipTest {
     }
 
     @Test
-    fun `词库恢复在预算耗尽时中止且不留临时件`() {
+    fun `条目数超限时停止遍历并判包不可用`() {
+        // 零字节条目一次 read 即 EOF、不消耗预算：只靠解压量预算拦不住 O(条目数) 空转
         val zip = makeZip(
+            "a.bin" to ByteArray(0),
+            "b.bin" to ByteArray(0),
+            "c.bin" to ByteArray(0),
+            "d.bin" to ByteArray(0),
+            "e.bin" to ByteArray(0),
+            ConfigBackup.ENTRY_PREFS to bytes("{\"p\":1}"),
+        )
+        val names = listOf(ConfigBackup.ENTRY_PREFS)
+
+        val budget = ConfigBackupManager.ScanBudget()
+        val got = ConfigBackupManager.readSections(zip, names, budget = budget, maxEntries = 3)
+        assertTrue("条目数超限必须留痕（调用方据此拒收整包）", budget.exhausted)
+        assertEquals(
+            "超限没走到的节不能当成「没有」",
+            ConfigBackupManager.SectionRead.Failed,
+            got[ConfigBackup.ENTRY_PREFS],
+        )
+
+        val budget2 = ConfigBackupManager.ScanBudget()
+        assertFalse(ConfigBackupManager.hasDictEntry(zip, budget2, maxEntries = 3))
+        assertTrue(budget2.exhausted)
+
+        // 放开门槛后同一个包读得出：证明失败来自条目数闸，而不是包本身有问题
+        val relaxed = ConfigBackupManager.readSections(zip, names)
+        assertEquals(
+            "{\"p\":1}",
+            (relaxed[ConfigBackup.ENTRY_PREFS] as ConfigBackupManager.SectionRead.Ok).text,
+        )
+    }
+
+    @Test
+    fun `词库恢复在预算耗尽时中止且不留临时件`() {
+        // 在册词库排在巨型条目**之前**：它会先落成 `*.restore`，随后预算被巨型条目耗尽。
+        // 顺序反过来（词库在后）时中止发生在临时件创建之前，清理分支根本执行不到。
+        val zip = makeZip(
+            ConfigBackup.DICT_DIR + "fake.xz" to dictContent(0),
             "a_junk.bin" to ByteArray(2 * 1024 * 1024),
-            ConfigBackup.DICT_DIR + "x.xz" to dictContent(1),
         )
         val dir = dictDir()
-        val tight = ConfigBackupManager.ScanBudget(256L * 1024)
+        val tight = ConfigBackupManager.ScanBudget(512L * 1024)
 
         val r = ConfigBackupManager.restoreDicts(
             dir,
             zip,
-            dictsDigestOf("x.xz" to dictContent(1)),
+            dictsDigestOf("fake.xz" to dictContent(0)),
             budget = tight,
+            checksumOf = onlySpec("fake.xz", dictContent(0)),
         )
 
+        assertTrue("预算耗尽必须留痕", tight.exhausted)
         assertNull("预算耗尽必须整包失败（不能把没读完的包当成功）", r)
         assertTrue("不得留下半截临时件", dir.listFiles().orEmpty().isEmpty())
     }
@@ -448,12 +486,23 @@ class ConfigBackupZipTest {
             starved[ConfigBackup.ENTRY_USER_FREQ],
         )
 
-        // 上限卡在边界：prefs 超一个字节即 TooLarge，且它后面的节仍要读到（超限条目要读空再继续）
-        val got = ConfigBackupManager.readSections(zip, names, 4095)
-        assertEquals(ConfigBackupManager.SectionRead.TooLarge, got[ConfigBackup.ENTRY_PREFS])
+        // 上限卡在边界：prefs 超一个字节即 TooLarge。该节必须远大于读块（readLimited 一次读 64KB），
+        // 否则超限时条目已读完，「超限节的剩余部分要读空并记账」这条分支执行不到。
+        val bigZip = makeZip(
+            ConfigBackup.ENTRY_PREFS to ByteArray(4 * 1024 * 1024) { 'a'.code.toByte() },
+            ConfigBackup.ENTRY_USER_FREQ to bytes("# freq\n"),
+        )
+        val small = ConfigBackupManager.ScanBudget(256L * 1024)
+        val byOversize = ConfigBackupManager.readSections(bigZip, names, 4095, budget = small)
         assertEquals(
-            "# freq\n",
-            (got[ConfigBackup.ENTRY_USER_FREQ] as ConfigBackupManager.SectionRead.Ok).text,
+            ConfigBackupManager.SectionRead.TooLarge,
+            byOversize[ConfigBackup.ENTRY_PREFS],
+        )
+        assertTrue("超限节的剩余部分必须计入预算", small.exhausted)
+        assertEquals(
+            "预算被超限节耗尽 ⇒ 后面的节记 Failed（不记账的话它会照常读出）",
+            ConfigBackupManager.SectionRead.Failed,
+            byOversize[ConfigBackup.ENTRY_USER_FREQ],
         )
     }
 
