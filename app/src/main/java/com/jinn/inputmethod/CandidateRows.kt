@@ -21,18 +21,18 @@ internal object CandidateRows {
     /** 双行档 */
     const val DOUBLE = 2
 
-    /** 单行候选栏高度（dp，= keyboard_pinyin.xml 的历史值） */
-    const val SINGLE_ROW_HEIGHT_DP = 48
+    /** 单行档的**整栏**高度（dp，= keyboard_pinyin.xml 的历史值） */
+    const val SINGLE_BAR_HEIGHT_DP = 48
 
-    /** 双行时**每排**的行高（dp）：两排合计即 [DOUBLE_ROW_HEIGHT_DP] */
-    const val ROW_HEIGHT_DP = 36
+    /** 双行档**每排**的行高（dp）：两排合计即 [DOUBLE_BAR_HEIGHT_DP] */
+    const val DOUBLE_ROW_EACH_DP = 36
 
-    /** 双行候选栏高度（dp）：2 × 36 */
-    const val DOUBLE_ROW_HEIGHT_DP = ROW_HEIGHT_DP * 2
+    /** 双行档的**整栏**高度（dp）：2 × 36 */
+    const val DOUBLE_BAR_HEIGHT_DP = DOUBLE_ROW_EACH_DP * 2
 
     /** 单行 / 双行档对应的候选栏高度（dp） */
     fun heightDp(rows: Int): Int =
-        if (rows == DOUBLE) DOUBLE_ROW_HEIGHT_DP else SINGLE_ROW_HEIGHT_DP
+        if (rows == DOUBLE) DOUBLE_BAR_HEIGHT_DP else SINGLE_BAR_HEIGHT_DP
 
     /** 单排文字的行高系数：字号的 1.4 倍（含行距与降部余量） */
     private const val TEXT_LINE_HEIGHT_RATIO = 1.4f
@@ -48,7 +48,7 @@ internal object CandidateRows {
      * @param textPx 单字实际像素高（sp 经 `TypedValue.applyDimension` 换算，已含系统字体缩放）
      */
     fun rowHeightPx(density: Float, textPx: Float): Int {
-        val compact = (ROW_HEIGHT_DP * density).toInt()
+        val compact = (DOUBLE_ROW_EACH_DP * density).toInt()
         return maxOf(compact, (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
     }
 
