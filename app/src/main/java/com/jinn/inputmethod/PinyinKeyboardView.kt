@@ -1657,21 +1657,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 按「当前档位 + 拼音条显隐」落候选区让位：仅单行档且拼音可见时顶部让出一条 */
     private fun applyPinyinInset() = syncCandidatePadding()
 
-    /**
-     * 「✕ 清空候选」显隐（唯一入口）：按钮叠在整栏右侧，可见时候选区右内边距让出按钮宽度，
-     * 候选不会滑到按钮底下（功能面板 / 符号层隐藏，同时把让位还回去）。
-     */
+    /** 「✕ 清空候选」显隐（唯一入口）：按钮与拼音条同高、贴其右端，候选区不需要为它让位 */
     private fun setClearButtonVisible(visible: Boolean) {
         btnClearCandidates.visibility = if (visible) View.VISIBLE else View.GONE
-        syncCandidatePadding()
     }
 
     /**
-     * 候选区（横滑视口）的内边距落位 —— **唯一入口**，三边各有来源：
+     * 候选区（横滑视口）的内边距落位 —— **唯一入口**，两处来源：
      *  - 左：与编辑区对齐的 8dp（原候选栏内边距，拼音条同值）
      *  - 上：单行档拼音条可见时让出一条（[applyPinyinInset]）
-     *  - 右：✕ 可见时让出按钮宽度（[setClearButtonVisible]）
-     * 分开 setPadding 会互相覆盖（各自只记得自己那一项），故必须集中在一处算。
+     * 右不让位：✕ 与拼音条同高、叠在拼音行右端（见 `keyboard_pinyin.xml`），不遮候选，
+     * 因此候选可以直接顶到栏右缘。分开 setPadding 会互相覆盖，故集中在一处算。
      */
     private fun syncCandidatePadding() {
         val left = dpExact(CandidateRows.SIDE_PAD_DP)
@@ -1684,16 +1680,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             0
         }
-        val right = if (btnClearCandidates.visibility == View.VISIBLE) {
-            dpExact(CandidateRows.CLEAR_BUTTON_WIDTH_DP)
-        } else {
-            0
-        }
         if (candidateScroll.paddingLeft != left ||
             candidateScroll.paddingTop != top ||
-            candidateScroll.paddingRight != right
+            candidateScroll.paddingRight != 0
         ) {
-            candidateScroll.setPadding(left, top, right, 0)
+            candidateScroll.setPadding(left, top, 0, 0)
         }
     }
 

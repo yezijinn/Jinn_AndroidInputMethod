@@ -51,7 +51,7 @@ internal object CandidateRows {
     /** 候选区左右内边距（dp）：与拼音条内边距同值（`keyboard_pinyin.xml` 与代码各一份，对拍守卫钉住） */
     const val SIDE_PAD_DP = 8
 
-    /** 「✕ 清空候选」按钮宽度（dp，叠在整栏右侧）：可见时候选区右内边距让出该宽度 */
+    /** 「✕ 清空候选」按钮宽度（dp）：叠在**拼音条内右端**（不遮候选），拼音文字为它让出同样宽度 */
     const val CLEAR_BUTTON_WIDTH_DP = 40
 
     /** 单行档候选栏总高（dp）= 拼音条 + 一排候选（拼音与候选之间不留间隔） */
