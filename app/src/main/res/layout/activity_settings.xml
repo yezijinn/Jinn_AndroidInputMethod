@@ -222,34 +222,61 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，上下成列）。
+        <!-- 候选词行数 / 键面韵母提示：两项都只影响键盘显示，同一张卡片内纵向排列。
+             候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，上下成列）。
              文案在代码里下发，strings.xml 默认禁改 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:background="@drawable/card_aurora"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:padding="12dp">
 
-            <TextView
-                android:id="@+id/label_candidate_rows"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp"
-                android:textStyle="bold" />
+                android:baselineAligned="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <Spinner
-                android:id="@+id/spinner_candidate_rows"
-                android:layout_width="140dp"
-                android:layout_height="44dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                <TextView
+                    android:id="@+id/label_candidate_rows"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Spinner
+                    android:id="@+id/spinner_candidate_rows"
+                    android:layout_width="140dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/field_aurora"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:spinnerMode="dropdown" />
+            </LinearLayout>
+
+            <Switch
+                android:id="@+id/switch_key_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="2"
+                android:minHeight="40dp"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/text_key_hint_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
         </LinearLayout>
 
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->

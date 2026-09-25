@@ -13,7 +13,7 @@ English ｜ [中文](README.md)
 ## Features
 
 **Pinyin keyboard (QWERTY)**
-- Full pinyin / Shuangpin / English; 7 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) with final/initial hints on keys; pick the scheme in Settings (applies globally)
+- Full pinyin / Shuangpin / English; 7 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) with final/initial hints on keys (toggle in Settings; when off, keys show letters only); pick the scheme in Settings (applies globally)
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
 - Smart prediction (off by default); one-tap CN/EN; the candidate bar shows the keys you actually pressed, so Shuangpin conversions never look frozen
 - Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release

@@ -56,9 +56,9 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `每个持久化键都必须同时在导出与导入白名单里`() {
-        // 精确 30：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
-        // 改键数是正常维护，改完同步这个数（28 个现有键 + skin_light / skin_dark，含 1 个退役键）。
-        assertEquals("提取到的键常量应是 30 个（改键数请同步本断言）", 30, keyConstants.size)
+        // 精确 31：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
+        // 改键数是正常维护，改完同步这个数（29 个现有键 + skin_light / skin_dark，含 1 个退役键）。
+        assertEquals("提取到的键常量应是 31 个（改键数请同步本断言）", 31, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -82,7 +82,7 @@ class PrefsBackupCoverageTest {
         // 只核对「键名是否出现」会漏掉这类错误：把 KEY_PORT 写成 asString(v) 照样绿，
         // 但导入后这项设置会静默丢失（类型不符 → 计入忽略）。压缩空白以容忍换行写法。
         val import = bodyOf("importFromBackup").replace(Regex("\\s+"), " ")
-        // 下表全部「普通」键（数量见 :61 的 30 个常量：28 个现有键 + skin_light/skin_dark，其中 1 个退役）
+        // 下表全部「普通」键（数量见 :61 的 31 个常量：29 个现有键 + skin_light/skin_dark，其中 1 个退役）
         // → 期望的取值工具（`KEY_FAVORITE_SYMBOLS` 走归一分支，单列在下面）。
         // 只钉少数几对时，剩下的键把 Int 写成 asString 这类错误不会被发现（导入时类型不符 = 静默丢失）
         val pairs = mapOf(
@@ -100,6 +100,7 @@ class PrefsBackupCoverageTest {
             "KEY_DEFAULT_MODE" to "asInt(v)",
             "KEY_PREDICT_ENABLED" to "asBool(v)",
             "KEY_CANDIDATE_ROWS" to "asInt(v)",
+            "KEY_SHOW_KEY_HINT" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
             "KEY_SHOW_RARE_CHARS" to "asBool(v)",
             "KEY_FUZZY_PINYIN" to "asInt(v)",

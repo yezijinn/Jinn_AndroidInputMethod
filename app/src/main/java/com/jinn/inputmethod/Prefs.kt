@@ -182,6 +182,16 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putInt(KEY_CANDIDATE_ROWS, value.coerceIn(CandidateRows.SINGLE, CandidateRows.DOUBLE)) }
 
     /**
+     * 键面韵母提示（仅双拼有意义）：字母键下方显示各键对应的韵母 / 声母小字，**默认开**（保持历史观感）。
+     *
+     * 关闭后键面只显示字母，字母改为铺满居中（见 [KeyHint]）。与候选词行数一样，
+     * 键盘下次弹出即按新设置渲染，不必重启输入法。
+     */
+    var showKeyHint: Boolean
+        get() = sp.getBoolean(KEY_SHOW_KEY_HINT, true)
+        set(value) = sp.edit { putBoolean(KEY_SHOW_KEY_HINT, value) }
+
+    /**
      * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
@@ -392,6 +402,7 @@ class Prefs(context: Context) {
         put(KEY_DEFAULT_MODE, defaultKeyboardMode)
         put(KEY_PREDICT_ENABLED, predictEnabled)
         put(KEY_CANDIDATE_ROWS, candidateRows)
+        put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_SHOW_RARE_CHARS, showRareChars)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
@@ -444,6 +455,7 @@ class Prefs(context: Context) {
                 KEY_DEFAULT_MODE -> asInt(v)?.let { defaultKeyboardMode = it; ok() } ?: bad(key)
                 KEY_PREDICT_ENABLED -> asBool(v)?.let { predictEnabled = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_ROWS -> asInt(v)?.let { candidateRows = it; ok() } ?: bad(key)
+                KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
@@ -578,6 +590,8 @@ class Prefs(context: Context) {
         private const val KEY_PREDICT_ENABLED = "predict_enabled"
         /** 候选词行数（1 单行 / 2 双行，见 [Prefs.candidateRows] 与 [CandidateRows]） */
         private const val KEY_CANDIDATE_ROWS = "candidate_rows"
+        /** 键面韵母提示开关（见 [Prefs.showKeyHint] 与 [KeyHint]） */
+        private const val KEY_SHOW_KEY_HINT = "show_key_hint"
         private const val KEY_USER_LEARNING = "user_learning"
         /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
