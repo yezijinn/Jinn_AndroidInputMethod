@@ -52,6 +52,14 @@ object PinyinEngine {
     private const val COMMON_CHARS_ASSET = "common_chars.txt"
 
     /**
+     * 规范表三级字 asset 名（同表三级，1407 字；`tools/dict_builder/gen_tier3_chars.py` 生成）。
+     *
+     * 三级字同样是规范汉字（囧 / 淼 / 喆 / 昇 一类人名地名用字），与一级二级一起默认加载；
+     * 只有表外字（繁体 / 异体 / 日韩 / 扩展区）才随「加更多生僻字」开关。
+     */
+    private const val TIER3_CHARS_ASSET = "tier3_chars.txt"
+
+    /**
      * 全量基础词库的二进制索引 asset（`tools/dict_builder/build_dict_index.py` 构建期产出）。
      *
      * 取代原来的 `pinyin_phrases.txt.xz`：运行时只需解压 + 顺序读入偏移数组，查询二分查找，
@@ -264,28 +272,35 @@ object PinyinEngine {
     private var syllablePrefixes: Set<String> = emptySet()
 
     /**
-     * 常用字位图（按 Char 码点直接索引，判定 O(1)）。
+     * 默认档单字位图（《通用规范汉字表》一级+二级，6500 字；按 Char 码点直接索引，判定 O(1)）。
      *
-     * null 表示不过滤（显示全部字，含生僻字）；非 null 时按位图过滤。
+     * null 表示位图未就绪（assets 缺失 / 测试未注入）：此时不过滤、一律放行 —— 过滤只是
+     * 「省内存 + 精简候选」的优化，不能因为读不到表就让用户打不出字。
      *
      * 用位图而不是 HashSet：词库加载要判定 123 万词条 / 450 万字符，
      * 位图是纯数组下标访问，比哈希查找快得多；65536 位的 BooleanArray 约 64KB，
      * 相比它省下的内存可以忽略。
      *
-     * 判定标准：《通用规范汉字表》(2013) 一级(3500) + 二级(3000) = 6500 常用字；
-     * 三级(1605) 及表外字（扩展区）视为生僻。见 assets/common_chars.txt。
-     */
-    /**
-     * 常用字位图（查询期生僻字过滤用）。
-     *
      * 必须 @Volatile：加载线程在 `load()` 里写它，主线程在 [phrasesFor] 里读它。
-     * 目前「碰巧安全」，`loadCommonChars()` 在 `loaded = true`（volatile 写）之前完成，
+     * 目前「碰巧安全」，[loadCharTiers] 在 `loaded = true`（volatile 写）之前完成，
      * 读方先在 `query()` 里读 `loaded`（volatile 读）建立了 happens-before。
      * 但这个保证是隐式的：任何「在 loaded 之后再改 commonChars」的路径都会让它失效
-     * （读方拿到旧的 null → 生僻字/常用字过滤结果错乱）。这里显式声明，把不变量钉在字段上。
+     * （读方拿到旧的 null → 过滤结果错乱）。这里显式声明，把不变量钉在字段上。
      */
     @Volatile
     private var commonChars: BooleanArray? = null
+
+    /** 三级字位图（同表三级 1407 字），与 [commonChars] 同为默认加载档；判定见 [isLoadableChar] */
+    @Volatile
+    private var tier3Chars: BooleanArray? = null
+
+    /**
+     * 表外字（繁体 / 异体 / 日韩 / 扩展区）是否放行，取「加更多生僻字」开关（[Prefs.showRareChars]）。
+     *
+     * 打开时过滤整体退化成「不过滤」，[filterRareChars] / [isLoadableWord] 都走零开销快路径。
+     */
+    @Volatile
+    private var allowRareChars: Boolean = false
 
     /** 因生僻字被过滤掉的词条数（诊断用） */
 
@@ -339,11 +354,13 @@ object PinyinEngine {
             if (loaded) return
             logMemory("词库加载前")
             val t0 = System.currentTimeMillis()
-            // 生僻字过滤：默认不加载（用户几乎用不到，平白占内存与加载时间）。
-            // 必须在读词库之前建立位图，否则过滤无从谈起，这也是它比
-            // 「加载后过滤」更省内存的原因：跳过的词条从未进过 HashMap。
+            // 单字过滤档位：一级+二级（6500）与三级（1407）默认加载；表外字（繁体 / 异体 /
+            // 日韩 / 扩展区）只在「加更多生僻字」开启时放行。必须在读词库之前建立位图，
+            // 否则过滤无从谈起，这也是它比「加载后过滤」更省内存的原因：
+            // 跳过的词条从未进过 HashMap。
             val showRareChars = Prefs(context).showRareChars
-            if (!showRareChars) loadCommonChars(context)
+            loadCharTiers(context)
+            allowRareChars = showRareChars
 
             // 模糊音容错：开关走 Prefs（默认 0 = 关），这里取一次供本次进程使用；
             // 设置页改动走 setFuzzyMask 实时生效，不必重启输入法。
@@ -400,7 +417,7 @@ object PinyinEngine {
                 "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
                     "运行时键=${phrasesByPinyin.size} 运行时反查=${wordToPinyin.size} " +
                     "合法音节=${validSyllables.size} " +
-                    if (showRareChars) "生僻字=显示" else "生僻字=隐藏(查询期过滤)",
+                    if (showRareChars) "单字=全量(含表外)" else "单字=规范表(一二级+三级)",
             )
             Diagnostics.i(
                 TAG,
@@ -452,6 +469,8 @@ object PinyinEngine {
             sortedPhraseKeys = emptyList()
             completionCache.clear()
             commonChars = null
+            tier3Chars = null
+            allowRareChars = false
             // 模糊音是全局开关，同样要复位：否则上一个测试类打开的组会影响后续所有查询
             fuzzyMask = FuzzyPinyin.NONE
             loaded = false
@@ -463,25 +482,28 @@ object PinyinEngine {
     }
 
     /**
-     * 测试注入：直接用字符串字典加载（跳过 Android assets）。
-     *
-     * @param commonCharsText 常用字表文本；传 null 表示不过滤（加载全部字，
-     *        与「显示生僻字」开关开启一致）。传入即启用生僻字过滤，用于验证过滤行为。
-     */
-    /**
      * 测试注入：从索引字节加载短语表（与 [loadFromTexts] 的文本路径对拍用）。
      *
      * 与真实加载一致：基础词走 [baseIndex]，因此生僻字过滤发生在查询期。
+     *
+     * @param commonCharsText 一二级字表文本；传 null 表示位图未就绪（不过滤，加载全部字）
+     * @param tier3CharsText 三级字表文本，与 [commonCharsText] 同为默认档
+     * @param rareChars true = 放行表外字（对应「加更多生僻字」开关开启）
      */
     internal fun loadFromIndexBytes(
         indexBytes: ByteArray,
         chars: String,
         syllables: String,
         commonCharsText: String? = null,
+        tier3CharsText: String? = null,
+        rareChars: Boolean = false,
     ) {
         synchronized(this) {
             commonChars = null
+            tier3Chars = null
+            allowRareChars = rareChars
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
+            if (tier3CharsText != null) setTier3CharsText(tier3CharsText)
             loadCharsText(chars)
             baseIndex = PhraseIndex.of(indexBytes) ?: throw AssertionError("测试索引结构异常")
             loadSyllablesText(syllables)
@@ -504,11 +526,16 @@ object PinyinEngine {
         phrases: String,
         syllables: String,
         commonCharsText: String? = null,
+        tier3CharsText: String? = null,
+        rareChars: Boolean = false,
     ) {
         synchronized(this) {
             // 先复位过滤状态，避免同一个 JVM 内多次注入时相互污染
             commonChars = null
+            tier3Chars = null
+            allowRareChars = rareChars
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
+            if (tier3CharsText != null) setTier3CharsText(tier3CharsText)
             loadCharsText(chars)
             loadPhrasesText(phrases)
             loadSyllablesText(syllables)
@@ -566,20 +593,32 @@ object PinyinEngine {
 
     // ── 生僻字过滤 ───────────────────────────────────────────
 
-    /** 读取常用字表 asset 并建立过滤位图 */
-    private fun loadCommonChars(context: Context) {
+    /** 读取两张默认档字表 asset（一级+二级 / 三级）并建立位图 */
+    private fun loadCharTiers(context: Context) {
         context.assets.open(COMMON_CHARS_ASSET).bufferedReader(StandardCharsets.UTF_8).use { reader ->
             setCommonCharsText(reader.readText())
+        }
+        context.assets.open(TIER3_CHARS_ASSET).bufferedReader(StandardCharsets.UTF_8).use { reader ->
+            setTier3CharsText(reader.readText())
         }
     }
 
     /**
-     * 解析常用字表文本并建立位图。
+     * 解析字表文本并建立位图。
      *
-     * 格式：`#` 开头为注释行，其余行里的字全部计入常用字（便于人工维护）。
+     * 格式：`#` 开头为注释行，其余行里的字全部计入该档（便于人工维护）。
      * assets 加载与单元测试注入共用本方法。
      */
     internal fun setCommonCharsText(text: String) {
+        commonChars = charsToBitmap(text)
+    }
+
+    /** 三级字表：格式与常用字表一致（`#` 注释 + 汉字行） */
+    internal fun setTier3CharsText(text: String) {
+        tier3Chars = charsToBitmap(text)
+    }
+
+    private fun charsToBitmap(text: String): BooleanArray {
         val bits = BooleanArray(CHAR_TABLE_SIZE)
         for (line in text.lineSequence()) {
             val trimmed = line.trim()
@@ -589,34 +628,30 @@ object PinyinEngine {
                 if (code < CHAR_TABLE_SIZE) bits[code] = true
             }
         }
-        commonChars = bits
-    }
-
-    /** 关闭过滤：加载全部字（含生僻字）。对应「显示生僻字」开关开启。 */
-    internal fun clearCommonCharsFilter() {
-        commonChars = null
+        return bits
     }
 
     /**
      * 单个字符是否允许载入。
      *
      *  - ASCII / 数字 / 标点（< 0x4E00）：不参与判定，一律放行；
-     *  - 基本区汉字（0x4E00~0x9FFF）：查常用字位图；
-     *  - 其它（含 BMP 外扩展区汉字的代理对）：视为生僻。
+     *  - 基本区汉字（0x4E00~0x9FFF）：查默认档两张位图（一级+二级 6500 字、三级 1407 字）；
+     *  - 表外字（不在两档里，含扩展区与 BMP 外汉字的代理对）：只在「加更多生僻字」开启时放行。
+     *
+     * 位图未就绪（assets 缺失 / 测试未注入）时一律放行。
      */
     private fun isLoadableChar(c: Char): Boolean {
-        val bits = commonChars ?: return true
         val code = c.code
-        return when {
-            code < 0x4E00 -> true
-            code <= 0x9FFF -> bits[code]
-            else -> false
-        }
+        if (code < 0x4E00) return true
+        val core = commonChars ?: return true
+        if (allowRareChars) return true
+        if (code > 0x9FFF) return false
+        return core[code] || tier3Chars?.get(code) == true
     }
 
     /** 整词是否允许载入：词中任一字符生僻即整条丢弃 */
     private fun isLoadableWord(word: String): Boolean {
-        if (commonChars == null) return true
+        if (commonChars == null || allowRareChars) return true
         for (c in word) {
             if (!isLoadableChar(c)) return false
         }
@@ -898,7 +933,7 @@ object PinyinEngine {
                     val syllable = line.substring(0, tab)
                     val chars = line.substring(tab + 1).split(',')
                     // 生僻字过滤：不载入（既不占内存，也不进候选）。
-                    // 长度判据无分支生效：显示生僻字时（commonChars == null）同样要丢掉非单字符
+                    // 长度判据无分支生效：位图未就绪 / 放行表外字时同样要丢掉非单字符
                     // token，否则表里混进的词条会进单字表，被当成单字候选上屏
                     // （实测 pinyin_chars.txt 里唯一的非单字符就是 junding 行的「均订」）。
                     val kept = chars.filter {
@@ -1120,8 +1155,8 @@ object PinyinEngine {
 
     /** 查询期生僻字过滤（索引与运行时词一视同仁） */
     private fun filterRareChars(raw: Array<String>): Array<String> {
-        // 常用字表未就绪时整体不过滤，与 isLoadableWord 的判据保持一致
-        if (commonChars == null) return raw
+        // 位图未就绪 / 放行表外字时整体不过滤，与 isLoadableWord 的判据保持一致
+        if (commonChars == null || allowRareChars) return raw
         var needFilter = false
         for (w in raw) {
             if (!isLoadableWord(w)) {
@@ -1389,7 +1424,7 @@ object PinyinEngine {
         // 与运行时路径（addLongerSuffixes → phrasesFor 内的 filterRareChars）以及 query 的
         // 不一致，开启「隐藏生僻字」（默认）时，预测候选仍可能带出生僻词并可上屏。
         // 收集上限用 PREDICT_COLLECT_LIMIT（2 倍）正是为此：前几个候选被过滤后仍有后续候选
-        // 可回填，不会"无故变少/变空"；commonChars 为 null 时原样返回，零开销。
+        // 可回填，不会"无故变少/变空"；位图未就绪 / 放行表外字时原样返回，零开销。
         return filterRareChars(out.toTypedArray()).take(MAX_PREDICTIONS).toList()
     }
 
