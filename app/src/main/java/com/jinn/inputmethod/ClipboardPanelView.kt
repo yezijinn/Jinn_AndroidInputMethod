@@ -195,10 +195,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
-            holder.content.text = item.content
+            // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
+            holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
-                if (item.category != "OTHER") append(" · ").append(item.category)
+                val labels = ClipboardClassifier.labelText(item.category)
+                if (labels.isNotEmpty()) append(" · ").append(labels)
                 if (item.isFavorite) append(" · 收藏")
             }
             return root
@@ -443,7 +445,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
         isPasting = true
-        val ok = listener?.onPaste(item.content) ?: false
+        // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）
+        val ok = listener?.onPaste(ClipboardClassifier.pieceFor(currentCategory, item.content)) ?: false
         isPasting = false
         if (ok) {
             listener?.onClose()

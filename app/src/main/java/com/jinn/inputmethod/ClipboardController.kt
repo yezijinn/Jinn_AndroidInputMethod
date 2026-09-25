@@ -25,6 +25,7 @@ class ClipboardController(context: Context) {
     private val appContext = context.applicationContext
     private val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     private val db = ClipboardDb.get(appContext)
+    private val prefs = ClipboardPrefs.of(appContext)
 
     /** 空剪贴板重试的延时载体：等待走主线程 Handler，不占用共享的 IO 单线程队列 */
     private val retryHandler = Handler(Looper.getMainLooper())
@@ -46,6 +47,25 @@ class ClipboardController(context: Context) {
         clipboard.addPrimaryClipChangedListener(listener)
         listenerRegistered = true
         Diagnostics.i(TAG, "start: 剪贴板监听已注册")
+        reclassifyIfNeeded()
+    }
+
+    /**
+     * 存量分组标签重算（2026-09-25 起分组改为多标签语义；一次性）。
+     *
+     * 只在未标记完成时跑，必须在 [BackgroundIo]：要全库解密才能重算（标签由内容决定，
+     * 内容只存密文）。跑完置位；失败不置位，下次启动自动重试。
+     * 只改 category 列，与面板的分页查询互不阻塞。
+     */
+    private fun reclassifyIfNeeded() {
+        if (prefs.reclassified) return
+        BackgroundIo.run {
+            val changed = runCatching { db.reclassifyAll() }
+                .onFailure { Diagnostics.w(TAG, "分组标签重算失败: ${it.message}") }
+                .getOrNull() ?: return@run
+            prefs.reclassified = true
+            Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
+        }
     }
 
     /** 停用：注销监听（幂等）并丢弃待执行的重试，避免停用后仍落库 */
