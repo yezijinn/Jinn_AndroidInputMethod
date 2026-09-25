@@ -41,6 +41,9 @@ object Diagnostics {
     private const val LOG_FILE_PREFIX = "jinn-"
     private const val LOGCAT_FILE_PREFIX = "logcat-"
 
+    /** 导出诊断包时临时补写的设备信息（正常路径在导出结束时删除） */
+    private const val DEVICE_INFO_FILE = "device-info.txt"
+
     /**
      * V 级（Verbose）日志是否写入文件，默认关闭。
      *
@@ -348,15 +351,18 @@ object Diagnostics {
         }
     }
 
-    /** 删除 KEEP_DAYS 天前的诊断日志（每日文件与 logcat 快照） */
+    /** 删除 KEEP_DAYS 天前的诊断日志（每日文件、logcat 快照与导出用的设备信息临时件） */
     private fun cleanupOldLogs() {
         val dir = logDir ?: return
         val cutoff = System.currentTimeMillis() - KEEP_DAYS * 24 * 3600 * 1000L
         dir.listFiles()?.forEach { file ->
             val name = file.name
-            if ((name.startsWith(LOG_FILE_PREFIX) || name.startsWith(LOGCAT_FILE_PREFIX)) &&
-                file.lastModified() < cutoff
-            ) {
+            // device-info.txt 是导出时临时写的，正常路径在 finally 里删掉；进程中途被杀会留下，
+            // 而它不匹配上面两个前缀 —— 不在这里兜底就是永久垃圾，还会混进之后每次导出包
+            val ours = name.startsWith(LOG_FILE_PREFIX) ||
+                name.startsWith(LOGCAT_FILE_PREFIX) ||
+                name == DEVICE_INFO_FILE
+            if (ours && file.lastModified() < cutoff) {
                 runCatching { file.delete() }
             }
         }
@@ -404,9 +410,9 @@ object Diagnostics {
 
     private fun exportBundleLocked(context: Context): File? {
         val srcDir = logDir ?: return null
-        // 设备信息是临时给本次导出用的：用完必须删，它会永远留在日志目录里
-        // （[cleanupOldLogs] 只按 jinn- / logcat- 前缀清理），并混进之后每一次导出包。
-        val meta = File(srcDir, "device-info.txt")
+        // 设备信息是临时给本次导出用的：用完必须删，否则会留在日志目录里并混进之后每一次导出包
+        // （进程被杀留下的残件由 [cleanupOldLogs] 按年龄兜底）
+        val meta = File(srcDir, DEVICE_INFO_FILE)
         var tmp: File? = null
         try {
             return runCatching {

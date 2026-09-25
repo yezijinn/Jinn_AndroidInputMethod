@@ -62,6 +62,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private var currentItems: List<ClipboardDb.Item> = emptyList()
 
+    /** 上一次搜索的结果是否被 `MAX_SEARCH_RESULTS` / 驻留字节预算截断（决定列表下要不要提示一行） */
+    private var resultsCapped = false
+
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
 
@@ -196,7 +199,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
         // 空态
         textEmpty = TextView(context).apply {
-            text = "输入关键词搜索剪贴板历史"
+            text = TEXT_EMPTY_IDLE
             gravity = android.view.Gravity.CENTER
             setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 13f
@@ -242,6 +245,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         refreshToken++
         editSearch.setText("")
         searchHandler.removeCallbacksAndMessages(null)
+        // 上次搜完后空态文案被改成了「未找到匹配内容」/ 截断提示，这里要退回提示语
+        resultsCapped = false
+        textEmpty.text = TEXT_EMPTY_IDLE
         textEmpty.visibility = View.VISIBLE
         listView.visibility = View.GONE
         currentItems = emptyList()
@@ -313,6 +319,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = emptyList()
+                    resultsCapped = false
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                 }
@@ -328,12 +335,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             var lastPublishAt = 0L
             var publishedCount = -1
 
-            /** 发布一次结果快照（主线程） */
-            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean) {
+            /** 发布一次结果快照（主线程）。capped 一并带过去：截断要显示，别让用户以为「就这些」 */
+            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean, capped: Boolean) {
                 publishedCount = items.size
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = items
+                    resultsCapped = capped
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底（与历史页一致）
@@ -374,12 +382,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 //（每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。
                 if (isFirstChunk || now - lastPublishAt >= PUBLISH_MIN_INTERVAL_MS) {
                     lastPublishAt = now
-                    publish(matches.toList(), relayout = isFirstChunk)
+                    publish(matches.toList(), relayout = isFirstChunk, capped = capped)
                 }
             }
             // 收尾无条件补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，
             // 否则用户会看到少于实际命中的结果（静默少给）。命中数没变时跳过，避免重复布局。
-            if (publishedCount != matches.size) publish(matches.toList(), relayout = false)
+            if (publishedCount != matches.size) publish(matches.toList(), relayout = false, capped = capped)
             // 关键词是用户输入正文：走 V 级（默认只进 logcat 不落盘），与「日志禁出正文」一致
             Diagnostics.v(TAG, "搜索完成: \"$q\" 命中=${matches.size} capped=$capped")
         }
@@ -395,10 +403,27 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
-        // 非空时列表可见、空态 GONE，「找到 N 条」根本无处显示，
-        // 原实现在这里给它赋了值却随即隐藏，属无效逻辑，只保留空态文案。
-        textEmpty.text = "未找到匹配内容\n换个关键词试试"
-        textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+        // 同一个 TextView 三种用途：真·空态（整块占位）/ 截断提示（列表下一行）/ 隐藏。
+        // 「找到 N 条」一类正计数无处显示（非空时它是 GONE），故不给它留逻辑。
+        val lp = textEmpty.layoutParams as LinearLayout.LayoutParams
+        when {
+            empty -> {
+                // 文案按「有没有输入」分两种：清空查询框回调到这里时是「还没开始搜」，
+                // 一律报「未找到匹配内容」会让人以为库里没有内容（与打开时的提示语矛盾）
+                textEmpty.text = if (editSearch.text.isNullOrBlank()) TEXT_EMPTY_IDLE else TEXT_EMPTY_NO_MATCH
+                lp.height = dp(RESULT_EMPTY_HEIGHT_DP)
+                textEmpty.visibility = View.VISIBLE
+            }
+            resultsCapped -> {
+                // 命中被上限截断：留一行说明，否则用户以为「就这些」。高度改成一行，
+                // 不按空态整块占位（结果已经很长，提示再占 120dp 会把键盘顶掉一截）
+                textEmpty.text = "只显示前 ${ClipboardStore.MAX_SEARCH_RESULTS} 条匹配结果，可缩小关键词"
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                textEmpty.visibility = View.VISIBLE
+            }
+            else -> textEmpty.visibility = View.GONE
+        }
+        textEmpty.layoutParams = lp
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
         listView.invalidate()
@@ -415,6 +440,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private companion object {
         const val TAG = "SearchPanel"
+        /** 空态：面板打开、还没输入时的提示 */
+        const val TEXT_EMPTY_IDLE = "输入关键词搜索剪贴板历史"
+        /** 空态：有输入但没搜到 */
+        const val TEXT_EMPTY_NO_MATCH = "未找到匹配内容\n换个关键词试试"
         const val DEBOUNCE_MS = 150L
         /** 单次搜索最多扫描的行数（硬保护，防超大库把搜索拖成秒级） */
         const val SEARCH_SCAN_LIMIT = 20_000

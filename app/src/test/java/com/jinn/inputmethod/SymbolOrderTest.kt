@@ -35,6 +35,17 @@ class SymbolOrderTest {
     }
 
     @Test
+    fun 锚点分组不在时收藏仍插回且不丢组() {
+        // 锚点（「半角」）将来被改名 / 从 SYMBOL_GROUPS 移除时，旧写法 indexOf 给 -1 会整组丢掉。
+        // 用「只认识别的分组」的顺序串模拟：结果里必须有「收藏」，且仍是 DEFAULT 的一个排列。
+        val got = SymbolOrder.normalize(listOf("全角", "标点", "数学"))
+        assertEquals(default.size, got.size)
+        assertEquals(default.toSet(), got.toSet())
+        val anchor = got.indexOf("半角")
+        assertEquals("收藏要紧跟在锚点分组之后", "收藏", got[anchor + 1])
+    }
+
+    @Test
     fun 重复项去重且保留首次位置() {
         val got = SymbolOrder.parse("半角,半角,全角,半角")
         assertEquals(listOf("半角", "收藏", "全角"), got.take(3))

@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -128,6 +129,14 @@ class SettingsActivity : ComponentActivity() {
     private var exportDialog: AlertDialog? = null
     private var importPwdDialog: AlertDialog? = null
     private var importConfirmDialog: AlertDialog? = null
+
+    /**
+     * 提示类对话框（更新提示 / 结果提示 / 时间选择器）：同一时刻只留一个，走 [showTipDialog] 弹。
+     *
+     * 这些框由代码创建，旋转重建时不会自动恢复 —— 不显式 dismiss 就是 WindowLeaked
+     * （manifest 未声明 configChanges，旋转必然重建页面）。
+     */
+    private var tipDialog: Dialog? = null
 
     // 剪贴板
     private lateinit var clipboardPrefs: ClipboardPrefs
@@ -570,6 +579,17 @@ class SettingsActivity : ComponentActivity() {
         if (::textThemeDesc.isInitialized) refreshThemeDesc()
     }
 
+    /**
+     * 离开页面时落盘「剪贴板数量上限」。
+     *
+     * 它平时只在输入框失焦时保存，而按返回键退出时输入框仍有焦点、失焦回调不保证触发
+     * ⇒ 改完上限直接返回会静默丢失（用户看到输入框里是新值，实际生效的还是旧值）。
+     */
+    override fun onPause() {
+        super.onPause()
+        if (::editClipboardMax.isInitialized) saveMaxItems()
+    }
+
     /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
     private fun refreshThemeScheduleRow() {
         val scheduled = prefs.themeMode == ThemeManager.MODE_SCHEDULED
@@ -589,13 +609,15 @@ class SettingsActivity : ComponentActivity() {
     /** 弹时间选择器；回调参数为「当天第几分钟」（0..1439） */
     private fun pickThemeTime(initialMinutes: Int, onPicked: (Int) -> Unit) {
         val m = Math.floorMod(initialMinutes, ThemeManager.MINUTES_PER_DAY)
-        android.app.TimePickerDialog(
-            this,
-            { _, hour, minute -> onPicked(hour * 60 + minute) },
-            m / 60,
-            m % 60,
-            true,
-        ).show()
+        showTipDialog(
+            android.app.TimePickerDialog(
+                this,
+                { _, hour, minute -> onPicked(hour * 60 + minute) },
+                m / 60,
+                m % 60,
+                true,
+            )
+        )
     }
 
     /**
@@ -909,7 +931,7 @@ class SettingsActivity : ComponentActivity() {
                 .setMessage(local + "\n" + getString(R.string.update_latest_unreachable))
                 .setPositiveButton(R.string.update_btn_ok, null)
         }
-        builder.show()
+        showTipDialog(builder.create())
     }
 
     /**
@@ -919,14 +941,16 @@ class SettingsActivity : ComponentActivity() {
      * 本对话框只服务「打开设置页自动检查」这条路径。
      */
     private fun showAskUpdateDialog(result: UpdateChecker.Result.Available) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.update_title_prompt)
-            .setMessage(R.string.update_ask_message)
-            .setNegativeButton(R.string.update_btn_no, null)
-            .setPositiveButton(R.string.update_btn_go) { _, _ ->
-                openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
-            }
-            .show()
+        showTipDialog(
+            AlertDialog.Builder(this)
+                .setTitle(R.string.update_title_prompt)
+                .setMessage(R.string.update_ask_message)
+                .setNegativeButton(R.string.update_btn_no, null)
+                .setPositiveButton(R.string.update_btn_go) { _, _ ->
+                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
+                }
+                .create()
+        )
     }
 
     private fun openUrl(url: String) {
@@ -1059,6 +1083,9 @@ class SettingsActivity : ComponentActivity() {
         importPwdDialog = null
         importConfirmDialog?.dismiss()
         importConfirmDialog = null
+        // 提示类框（更新提示 / 结果提示 / 时间选择器）同一套道理
+        tipDialog?.dismiss()
+        tipDialog = null
         // 明文临时包不跨页面生命周期：页面销毁（含旋转重建）时一并清掉。
         // 但导入正在进行时不能删——后台线程还要按节重开它；这种残留由下次进设置页的清扫兜底
         if (!importInFlight) {
@@ -1572,7 +1599,21 @@ class SettingsActivity : ComponentActivity() {
         } else {
             builder.setNegativeButton("关闭", null).setPositiveButton("重新输入密码") { _, _ -> action() }
         }
-        builder.show()
+        showTipDialog(builder.create())
+    }
+
+    /**
+     * 弹出提示类对话框并登记，`onDestroy` 时统一 dismiss（否则旋转/返回时 WindowLeaked）。
+     *
+     * 同一时刻只保留一个：后弹的会先收掉前一个，避免叠窗。**不要**给它传
+     * `setOnDismissListener`（这里要用它清引用，覆盖会丢）。
+     */
+    private fun showTipDialog(dialog: Dialog): Dialog {
+        tipDialog?.dismiss()
+        tipDialog = dialog
+        dialog.setOnDismissListener { if (tipDialog === dialog) tipDialog = null }
+        dialog.show()
+        return dialog
     }
 
     private fun dpOf(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()

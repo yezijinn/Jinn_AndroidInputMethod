@@ -242,10 +242,20 @@ class Prefs(context: Context) {
      * 「收藏」分组的内容（JSON 二维数组，见 [FavoriteSymbols]）。
      *
      * null（键不存在 = 从未编辑过）→ 上层按出厂预置（D I Y）处理；`"[]"` = 用户删光了，尊重之。
+     *
+     * 写入即归一（与导入路径同款）：解析发生在键盘视图构造的**主线程**上，超长或非规范的 JSON
+     * 会让每次重建键盘都做百万级解析，而值已落盘、重启输入法也无效。超过上限直接不写
+     * （保留原值），调用方自己要把内容收敛后再来。
      */
     var favoriteSymbols: String?
         get() = sp.getString(KEY_FAVORITE_SYMBOLS, null)
-        set(value) = sp.edit { putString(KEY_FAVORITE_SYMBOLS, value) }
+        set(value) = sp.edit {
+            when {
+                value == null -> putString(KEY_FAVORITE_SYMBOLS, null)
+                value.length <= MAX_FAVORITE_SYMBOLS_CHARS ->
+                    putString(KEY_FAVORITE_SYMBOLS, FavoriteSymbols.serialize(FavoriteSymbols.parse(value)))
+            }
+        }
 
     /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
     var themeLightAtMinutes: Int
