@@ -36,7 +36,8 @@ release/dict_ext.txt.xz                         扩展包，Release 附件按需
 `gen_shuangpin_tables.py`（7 套双拼键位 → `ShuangpinSchemes.kt`，改键位只改这里）·
 `verify_shuangpin_migration.py`（换表对拍 676 码）· `detect_ambiguous_keys.py` + `add_words.py`（连写歧义漏词检测 / 追加词条）
 
-**备用**：`merge_chars.py`（合并单字表 / 音节表）· `split_dict.py`（切 base / ext）
+**备用**：`merge_chars.py`（合并单字表 / 音节表）· `split_dict.py`（切 base / ext）·
+`export_dicts.py`（索引/发布包 → 标准文本，导出到 `docs/dict_review/` 供人工审核，含单字表三档拆分）
 
 **历史与评估**：`build_thuocl_pinyin.py`（THUOCL 自动注音，未采纳）· `dict_builder.py`（早期通用构建器）·
 `compare_dicts.py`（写死旧机器路径）· `extend_dict.py` / `merge_game_dicts.py`（一次性扩充）
