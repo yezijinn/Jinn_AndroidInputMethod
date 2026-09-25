@@ -949,10 +949,12 @@ internal object ConfigBackupManager {
         zip: File,
         expectedDigest: String,
         budget: ScanBudget = ScanBudget(),
-        /** 文件名 → 官方 sha256（null = 不在清单内）；测试注入合成表以覆盖成功落盘路径 */
+        maxEntries: Int = MAX_SCAN_ENTRIES,
+        /** 文件名 → 官方 sha256（null = 不在清单内）；测试注入合成表以覆盖成功落盘路径。
+         *  保持在参数表末尾：既有调用点把它写成尾随 lambda，追加在它之后的参数会改变绑定目标 */
         checksumOf: (String) -> String? = { OptionalDicts.byFileName(it)?.checksum },
     ): Pair<Int, Int>? = try {
-        restoreDictsLocked(dir, zip, expectedDigest, budget, checksumOf)
+        restoreDictsLocked(dir, zip, expectedDigest, budget, checksumOf, maxEntries)
     } finally {
         // 临时件在流程内已经改名或删除，在册登记到此为止：不注销的话集合每导入一次涨一批，
         // 清扫器还会一直跳过同名的残留文件（见 [tempInFlight]）
@@ -966,6 +968,7 @@ internal object ConfigBackupManager {
         expectedDigest: String,
         budget: ScanBudget,
         checksumOf: (String) -> String?,
+        maxEntries: Int,
     ): Pair<Int, Int>? {
         dir.mkdirs()
         val pending = ArrayList<Pair<File, File>>()
@@ -975,7 +978,14 @@ internal object ConfigBackupManager {
         val readOk = runCatching {
             ZipInputStream(BufferedInputStream(zip.inputStream())).use zipStream@ { zis ->
                 var entry = zis.nextEntry
+                var visited = 0
                 while (entry != null) {
+                    // 条目数闸：同 [readSections]，零字节条目不吃预算（drain 一次读到 EOF）
+                    if (++visited > maxEntries) {
+                        Diagnostics.w(TAG, "词库恢复: 条目数超过 $maxEntries，已中止")
+                        budget.overflow()
+                        return@zipStream false
+                    }
                     val name = entry.name
                     if (!entry.isDirectory && name.startsWith(ConfigBackup.DICT_DIR)) {
                         val fileName = name.removePrefix(ConfigBackup.DICT_DIR)
@@ -1210,13 +1220,21 @@ internal object ConfigBackupManager {
         name: String,
         maxBytes: Long = MAX_TEXT_SECTION_BYTES,
         budget: ScanBudget = ScanBudget(),
+        maxEntries: Int = MAX_SCAN_ENTRIES,
     ): SectionRead = runCatching {
         ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
             var entry = zis.nextEntry
+            var visited = 0
             while (entry != null) {
                 if (!entry.isDirectory && entry.name == name) {
                     val text = readLimited(zis, maxBytes) ?: return@use SectionRead.TooLarge
                     return@use SectionRead.Ok(text)
+                }
+                // 条目数闸：同 [readSections]，零字节条目不吃预算（drain 一次读到 EOF）
+                if (++visited > maxEntries) {
+                    Diagnostics.w(TAG, "读取条目 $name: 条目数超过 $maxEntries，已中止")
+                    budget.overflow()
+                    return@use SectionRead.Failed
                 }
                 if (!budget.drain(zis)) {
                     Diagnostics.w(TAG, "读取条目 $name: 包内解压量超过预算，已中止")
