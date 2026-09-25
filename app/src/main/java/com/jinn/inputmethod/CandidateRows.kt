@@ -1,15 +1,24 @@
 package com.jinn.inputmethod
 
 /**
- * 候选栏行数与「上偶下奇」排版规则。
+ * 候选栏的「拼音条 + 候选行」几何，与「上偶下奇」排版规则。
  *
- * 双行形态（视觉）：
+ * 布局（2026-09-25 用户定的分布，拼音统一 14sp、汉字统一 20sp）：
  * ```
- *   2   4   6      ← 上排 = 第 2 / 4 / 6 … 个候选
- *   1   3   5      ← 下排 = 第 1 / 3 / 5 … 个候选
+ *   单行档：拼音条 20dp                      ← 顶部一条
+ *          候选 1 3 5 …（横向滚动）32dp
+ *
+ *   双行档：上排 2 4 6 …（横向滚动）32dp
+ *          拼音条 20dp（**叠在两排之间的中缝上**）
+ *          下排 1 3 5 …（横向滚动）32dp
  * ```
- * 高频候选落在离键盘更近的下排；相邻序号上下成列。横滑由外层单个
- * `HorizontalScrollView` 承担，两排天然同步，不存在只有一行滚动导致的错位。
+ * 拼音条是**叠放层**：有拼音串时出现（单行档贴顶、双行档垂直居中），无拼音时（功能面板 /
+ * 符号分组 / 预测 / 内联提示）隐藏、候选区占满整栏。双行档两排各贴上下边，中缝高度恰好
+ * 等于拼音条高度，因此拼音条不遮候选。
+ *
+ * 紧凑值（20 / 32dp）只是**下限**：字号是 sp，会随系统「字体大小」放大，固定 dp 在约 150%
+ * 时就会裁字；高度一律取「紧凑值与文字行高」的较大者 ⇒ 字体放大时整体长高，宁可键盘高
+ * 一点也不裁字。所有高度都由 [barHeightPx] 派生，渲染侧不得各算各的。
  *
  * 纯函数（无 Android 依赖），渲染侧与 JVM 单测共用同一份规则。
  */
@@ -21,39 +30,68 @@ internal object CandidateRows {
     /** 双行档 */
     const val DOUBLE = 2
 
-    /** 单行档的**整栏**高度（dp，= keyboard_pinyin.xml 的历史值） */
-    const val SINGLE_BAR_HEIGHT_DP = 48
+    /** 候选文字字号（sp）：两档统一（用户 2026-09-25 指定） */
+    const val CANDIDATE_TEXT_SP = 20f
 
-    /** 双行档**每排**的行高（dp）：两排合计即 [DOUBLE_BAR_HEIGHT_DP] */
-    const val DOUBLE_ROW_EACH_DP = 36
+    /** 拼音文字字号（sp）：两档统一 */
+    const val PINYIN_TEXT_SP = 14f
 
-    /** 双行档的**整栏**高度（dp）：2 × 36 */
-    const val DOUBLE_BAR_HEIGHT_DP = DOUBLE_ROW_EACH_DP * 2
+    /** 拼音条高度（dp）：14sp 的文字行高（14 × 1.4 = 19.6）向上取整 */
+    const val PINYIN_BAR_HEIGHT_DP = 20
 
-    /** 单行 / 双行档对应的候选栏高度（dp） */
+    /** 单排候选行高（dp）：20sp 文字行高 28 + 上下留白 */
+    const val ROW_HEIGHT_DP = 32
+
+    /** 候选区左右内边距（dp）：与拼音条内边距同值（`keyboard_pinyin.xml` 与代码各一份，对拍守卫钉住） */
+    const val SIDE_PAD_DP = 8
+
+    /** 「✕ 清空候选」按钮宽度（dp，叠在整栏右侧）：可见时候选区右内边距让出该宽度 */
+    const val CLEAR_BUTTON_WIDTH_DP = 40
+
+    /** 单行档候选栏总高（dp）= 拼音条 + 一排候选 */
+    const val SINGLE_BAR_HEIGHT_DP = PINYIN_BAR_HEIGHT_DP + ROW_HEIGHT_DP
+
+    /** 双行档候选栏总高（dp）= 拼音条 + 两排候选（拼音条叠在两排之间的中缝上） */
+    const val DOUBLE_BAR_HEIGHT_DP = PINYIN_BAR_HEIGHT_DP + ROW_HEIGHT_DP * 2
+
+    /** 单行 / 双行档对应的候选栏高度（dp，默认字体下的紧凑值） */
     fun heightDp(rows: Int): Int =
         if (rows == DOUBLE) DOUBLE_BAR_HEIGHT_DP else SINGLE_BAR_HEIGHT_DP
 
-    /** 单排文字的行高系数：字号的 1.4 倍（含行距与降部余量） */
+    /** 文字行高系数：字号的 1.4 倍（含行距与降部余量） */
     private const val TEXT_LINE_HEIGHT_RATIO = 1.4f
 
     /**
-     * 双行档**单排**的实际高度（px）。
-     *
-     * 字号是 sp，会随系统「字体大小」放大，而固定 36dp 在约 150% 时就会把文字下半裁掉。
-     * 故取「紧凑档 36dp」与「文字行高」的较大者：默认字体下恒等于 36dp（双排 72dp，
-     * 与 [heightDp] 一致），字体放大时整体长高 —— 宁可键盘高一点，也不裁字。
+     * 单排候选的实际高度（px）：紧凑档 [ROW_HEIGHT_DP] 与文字行高的较大者。
      *
      * @param density [android.util.DisplayMetrics.density]
-     * @param textPx 单字实际像素高（sp 经 `TypedValue.applyDimension` 换算，已含系统字体缩放）
+     * @param textPx 候选文字实际像素高（sp 经 `TypedValue.applyDimension` 换算，已含系统字体缩放）
      */
-    fun rowHeightPx(density: Float, textPx: Float): Int {
-        val compact = (DOUBLE_ROW_EACH_DP * density).toInt()
-        return maxOf(compact, (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
-    }
+    fun rowHeightPx(density: Float, textPx: Float): Int =
+        maxOf((ROW_HEIGHT_DP * density).toInt(), (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
 
-    /** 候选文字字号（sp）：双行行高更矮，字号同步收一档 */
-    fun textSizeSp(rows: Int): Float = if (rows == DOUBLE) 20f else 21f
+    /** 拼音条的实际高度（px）：紧凑档 [PINYIN_BAR_HEIGHT_DP] 与文字行高的较大者 */
+    fun pinyinBarHeightPx(density: Float, textPx: Float): Int =
+        maxOf((PINYIN_BAR_HEIGHT_DP * density).toInt(), (textPx * TEXT_LINE_HEIGHT_RATIO).toInt())
+
+    /**
+     * 候选栏总高度（px）：拼音条 + 档位排数 × 单排 —— 高度的**唯一来源**。
+     *
+     * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
+     * 一帧错配（列底被裁或留缝）。
+     *
+     * @param candidateTextPx 候选文字像素高；@param pinyinTextPx 拼音文字像素高
+     */
+    fun barHeightPx(
+        rows: Int,
+        density: Float,
+        candidateTextPx: Float,
+        pinyinTextPx: Float,
+    ): Int {
+        val perRow = rowHeightPx(density, candidateTextPx)
+        val count = if (rows == DOUBLE) 2 else 1
+        return pinyinBarHeightPx(density, pinyinTextPx) + perRow * count
+    }
 
     /**
      * 把候选序列按「上偶下奇」切成若干列。

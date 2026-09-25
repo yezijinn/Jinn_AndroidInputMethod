@@ -15,7 +15,7 @@ English ｜ [中文](README.md)
 **Pinyin keyboard (QWERTY)**
 - Full pinyin / Shuangpin / English; 7 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) with final/initial hints on keys (toggle in Settings; when off, keys show letters only); pick the scheme in Settings (applies globally)
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
-- Smart prediction (off by default); one-tap CN/EN; the candidate bar shows the keys you actually pressed (or, optionally, the expanded pinyin, e.g. `vsgo` → `zhongguo`), so Shuangpin conversions never look frozen
+- Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); smart prediction (off by default); one-tap CN/EN
 - Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release
 - 32 keyboard skins (original dark / original light + 30 colour schemes; 16 light, 16 dark) — colours and texture only, drawn entirely in code, independent of the three sliders
 - Light/dark switching: follow system / light / dark / scheduled; each of the two slots keeps its own chosen skin, and the keyboard skin follows the switch
