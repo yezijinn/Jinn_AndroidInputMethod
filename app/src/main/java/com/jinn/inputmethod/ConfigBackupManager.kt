@@ -912,6 +912,9 @@ internal object ConfigBackupManager {
                 if (net < 0) clipSkipped += -net
                 val trimmedAway = (planned.size - clipSkipped) - clipAdded
                 if (trimmedAway > 0) clipSkipped += trimmedAway
+                // 包里的分类是「导出设备当时的规则」算出来的，可能与当前规则不一致：
+                // 清掉重算标记，下次 IME 启动时会按当前规则重新分类（见 ClipboardController.start）
+                if (clipAdded > 0) clipPrefs.reclassified = false
                 true
             }.getOrDefault(false)
             if (!ok) {

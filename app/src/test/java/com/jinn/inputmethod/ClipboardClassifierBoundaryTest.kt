@@ -72,18 +72,29 @@ class ClipboardClassifierBoundaryTest {
         )
     }
 
-    /** 负例：正文含数字但语义不是数字，不得误判（文档明确要求的边界） */
+    /** 负例：正文含短数字但语义不是数字，不得误判（文档明确要求的边界） */
     @Test
-    fun textContainingDigitsIsNotNumber() {
+    fun textContainingShortDigitsIsNotNumber() {
         val cases = listOf(
-            "我有123个苹果", "第1234567章读后感", "版本 2.0.1 发布说明",
+            "我有123个苹果", "版本 2.0.1 发布说明",
         )
         for (c in cases) {
             assertEquals(
-                "含数字的普通文本不应判为 NUMBER：$c",
+                "含短数字的普通文本不应判为 NUMBER：$c",
                 ClipboardClassifier.CATEGORY_OTHER, classify(c),
             )
         }
+    }
+
+    /**
+     * 语义变更（2026-09-25）：数字分组改为「提取内容里的数字片段」，因此**句中长数字串
+     * （≥6 位）也算数字**——「第1234567章读后感」进数字组并只显示 1234567。
+     * 短数字（<6 位）仍要求整段数字或带关键词，避免「我有123个苹果」被拉进来。
+     */
+    @Test
+    fun longDigitsInsideSentenceCountAsNumber() {
+        assertEquals(ClipboardClassifier.CATEGORY_NUMBER, classify("第1234567章读后感"))
+        assertEquals("1234567", ClipboardClassifier.firstNumber("第1234567章读后感"))
     }
 
     /** 空与纯空白：不得崩溃，且不判为数字 */
@@ -96,12 +107,12 @@ class ClipboardClassifierBoundaryTest {
         }
     }
 
-    /** URL 优先级高于数字：URL 内含长数字时仍判 URL */
+    /**
+     * 多标签（2026-09-25 起）：分组按「含哪类片段」划分，URL 里的长数字同样要给数字标签 ——
+     * 该条既要能在「网址」组看到链接，也要能在「数字」组看到订单号。
+     */
     @Test
-    fun urlTakesPrecedenceOverNumber() {
-        assertEquals(
-            ClipboardClassifier.CATEGORY_URL,
-            classify("https://example.com/order/123456789"),
-        )
+    fun urlWithLongDigitsCarriesBothLabels() {
+        assertEquals("URL,NUMBER", classify("https://example.com/order/123456789"))
     }
 }

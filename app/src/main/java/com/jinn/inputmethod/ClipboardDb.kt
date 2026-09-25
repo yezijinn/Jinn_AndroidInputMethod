@@ -319,8 +319,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 收藏是独立标签，可与分类并存：
      *  - [favoritesOnly] 为 true 时按收藏标记列过滤；
-     *  - [category] 为 URL / NUMBER / OTHER 按分类列过滤（FAVORITE 是
-     *    上层的伪分类，调用方需自行转成对应标记后传 null）。
+     *  - [category] 为 URL / NUMBER 时按「分类列是否含该标签」过滤（多标签语义，见 [whereClause]；
+     *    FAVORITE 是上层的伪分类，调用方需自行转成对应标记后传 null）。
      */
     private fun whereClause(
         category: String?,
@@ -330,8 +330,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val args = ArrayList<String>(1)
         if (favoritesOnly) where.append(" AND is_favorite = 1")
         if (category != null) {
-            where.append(" AND category = ?")
-            args.add(category)
+            // 多标签（2026-09-25）：category 存的是「含哪些片段」（如 `URL,NUMBER`），
+            // 命中条件是**含**该标签而非等值。标签集固定且互不包含（URL / NUMBER / OTHER），
+            // 所以 `LIKE '%URL%'` 不会误命中别的标签；旧库的单值（"URL"）同样被覆盖，无需迁移。
+            where.append(" AND category LIKE ?")
+            args.add("%$category%")
         }
         return where.toString() to args.toTypedArray()
     }
@@ -392,6 +395,47 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
+
+    // ── 分组标签重算（存量迁移）───────────────────────────
+
+    /**
+     * 按当前规则重算全部分组标签（2026-09-25 多标签语义变更的存量迁移；幂等）。
+     *
+     * 逐条解密 → [ClipboardClassifier.classify] → 仅在有变化时 UPDATE。
+     * 解密是必须的：标签由内容决定，而内容只存密文。因此只能在后台线程跑，
+     * 由 [ClipboardController.start] 用一次性标记触发，跑完置位。
+     *
+     * 分页扫描（不一次性把全库密文读进内存）：每页 [RECLASSIFY_PAGE] 条按 id 升序推进，
+     * 页内解密失败的行跳过（与列表路径同款容错）。
+     *
+     * @return 实际改动的条数
+     */
+    fun reclassifyAll(): Int {
+        var changed = 0
+        var offset = 0
+        while (true) {
+            val rows = ArrayList<Pair<Long, String>>(RECLASSIFY_PAGE)
+            readableDatabase.rawQuery(
+                "SELECT id, encrypted_content FROM $TABLE_ITEMS ORDER BY id " +
+                    "LIMIT $RECLASSIFY_PAGE OFFSET $offset",
+                null,
+            ).use { c -> while (c.moveToNext()) rows.add(c.getLong(0) to c.getString(1)) }
+            if (rows.isEmpty()) return changed
+            for ((id, encrypted) in rows) {
+                val text = ClipboardCrypto.decrypt(encrypted) ?: continue
+                val label = ClipboardClassifier.classify(text)
+                val values = ContentValues().apply { put("category", label) }
+                if (writableDatabase.update(
+                        TABLE_ITEMS, values, "id = ? AND category <> ?",
+                        arrayOf(id.toString(), label),
+                    ) > 0
+                ) {
+                    changed++
+                }
+            }
+            offset += rows.size
+        }
+    }
 
     // ── 备份导入 ──────────────────────────────────────────
 
@@ -475,6 +519,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         private const val DB_VERSION = 5
         private const val TABLE_ITEMS = "clipboard_items"
         private const val TAG = "ClipboardDb"
+
+        /** [reclassifyAll] 的分页大小：每次解密这么多条，避免一次性把全库密文读进内存 */
+        private const val RECLASSIFY_PAGE = 200
 
         /**
          * 容量裁剪的优先级：越靠前越先被删除。

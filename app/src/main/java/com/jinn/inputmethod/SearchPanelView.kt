@@ -115,10 +115,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id
+            // 搜索是全库结果、没有分组上下文，因此**始终显示原文**（分组里才显示提取片段）
             holder.content.text = item.content
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
-                if (item.category != "OTHER") append(" · ").append(item.category)
+                val labels = ClipboardClassifier.labelText(item.category)
+                if (labels.isNotEmpty()) append(" · ").append(labels)
                 if (item.isFavorite) append(" · 收藏")
             }
             return root

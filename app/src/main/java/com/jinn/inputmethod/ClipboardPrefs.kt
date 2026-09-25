@@ -29,6 +29,15 @@ class ClipboardPrefs(context: Context) {
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, 9999)) }
 
     /**
+     * 分组标签是否已按多标签规则重算过（2026-09-25 起；**运行态标记，不进备份**）。
+     *
+     * 重算本身幂等，但全库解密有成本，用标记保证只跑一次；失败不置位，下次启动自动重试。
+     */
+    var reclassified: Boolean
+        get() = sp.getBoolean(KEY_RECLASSIFIED, false)
+        set(value) = sp.edit { putBoolean(KEY_RECLASSIFIED, value) }
+
+    /**
      * 等待已排队的 `apply()` 落盘（导入后要杀进程重启时调用）。
      *
      * `apply()` 是异步的，而杀进程不走任何收尾：不 flush 的话这个文件的改动可能回退，
@@ -62,6 +71,12 @@ class ClipboardPrefs(context: Context) {
 
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MAX_ITEMS = "max_items"
+
+        /**
+         * 分组标签重算完成标记（运行态）：**不进备份**（见 [exportForBackup]），
+         * 它描述的是「本机库是否已按当前规则重算」，导入到别的设备没有意义。
+         */
+        private const val KEY_RECLASSIFIED = "reclassified"
 
         @Volatile
         private var instance: ClipboardPrefs? = null

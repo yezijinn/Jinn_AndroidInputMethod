@@ -350,14 +350,10 @@ internal object ConfigBackup {
                     createdAt = o.optLong("createdAt", 0L),
                     sourcePackage = o.optString("sourcePackage"),
                     sourceAppName = o.optString("sourceAppName"),
-                    // 归一到分类白名单：它会进剪贴板面板的 meta 文本（主线程布局），
-                    // 不归一的话一个包就能塞进任意长/任意内容的"分类"去卡界面
-                    category = when (val c = o.optString("category")) {
-                        ClipboardClassifier.CATEGORY_URL,
-                        ClipboardClassifier.CATEGORY_NUMBER,
-                        -> c
-                        else -> ClipboardClassifier.CATEGORY_OTHER
-                    },
+                    // 归一到分类标签白名单：它会进剪贴板面板的 meta 文本（主线程布局），
+                    // 不归一的话一个包就能塞进任意长/任意内容的"分类"去卡界面。
+                    // 多标签（2026-09-25）：合法的 `URL,NUMBER` 要保留两个标签，故走 normalizeLabels
+                    category = ClipboardClassifier.normalizeLabels(o.optString("category")),
                     favorite = o.optBoolean("favorite", false),
                 )
             }.getOrNull() ?: continue
