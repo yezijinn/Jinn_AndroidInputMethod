@@ -481,6 +481,46 @@ class ConfigBackupZipTest {
     }
 
     @Test
+    fun `manifest 声明了摘要却没有对应节时判包不完整`() {
+        val manifest = ConfigBackup.Manifest(
+            formatVersion = ConfigBackup.FORMAT_VERSION,
+            appVersionCode = 1,
+            createdAt = 0L,
+            device = "d",
+            sections = linkedMapOf(
+                ConfigBackup.SEC_PREFS to ConfigBackupManager.sectionOf("{}"),
+                ConfigBackup.SEC_USER_FREQ to ConfigBackupManager.sectionOf("# freq\n"),
+            ),
+        )
+        // 包里实际只有 prefs：manifest 声明的词频节缺失 ⇒ 必须报出来（缺节会被当成「没有这一节」）
+        val onlyPrefs = mapOf(
+            ConfigBackup.ENTRY_PREFS to ConfigBackupManager.SectionRead.Ok("{}"),
+        )
+        assertEquals(
+            ConfigBackup.SEC_USER_FREQ,
+            ConfigBackupManager.firstMissingDeclaredSection(manifest, onlyPrefs),
+        )
+
+        // 节齐全（包内还多出未被声明的节）时不报
+        val complete = mapOf(
+            ConfigBackup.ENTRY_PREFS to ConfigBackupManager.SectionRead.Ok("{}"),
+            ConfigBackup.ENTRY_USER_FREQ to ConfigBackupManager.SectionRead.Ok("# freq\n"),
+            ConfigBackup.ENTRY_CLIPBOARD to ConfigBackupManager.SectionRead.Ok(""),
+        )
+        assertNull(ConfigBackupManager.firstMissingDeclaredSection(manifest, complete))
+
+        // 节读不出来（超限 / 失败）同样算「声明了却没有」
+        val broken = mapOf(
+            ConfigBackup.ENTRY_PREFS to ConfigBackupManager.SectionRead.Ok("{}"),
+            ConfigBackup.ENTRY_USER_FREQ to ConfigBackupManager.SectionRead.TooLarge,
+        )
+        assertEquals(
+            ConfigBackup.SEC_USER_FREQ,
+            ConfigBackupManager.firstMissingDeclaredSection(manifest, broken),
+        )
+    }
+
+    @Test
     fun `词库恢复在预算耗尽时中止且不留临时件`() {
         // 在册词库排在巨型条目**之前**：它会先落成 `*.restore`，随后预算被巨型条目耗尽。
         // 顺序反过来（词库在后）时中止发生在临时件创建之前，清理分支根本执行不到。

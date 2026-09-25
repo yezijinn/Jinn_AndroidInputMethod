@@ -786,6 +786,12 @@ internal object ConfigBackupManager {
             Diagnostics.w(TAG, "导入: 剪贴板节校验失败")
             return null
         }
+        // manifest 登记了摘要却没有对应节 ⇒ 包被裁剪过，按不完整拒绝（见 [firstMissingDeclaredSection]）
+        val missingDeclared = firstMissingDeclaredSection(manifest, sections)
+        if (missingDeclared != null) {
+            Diagnostics.w(TAG, "导入: manifest 登记了 $missingDeclared 但没有对应节，判包不完整")
+            return null
+        }
 
         // 词库先落盘：它写入失败会让整包作废，越早发现越好（且失败时不会留下半套配置）
         var dictsWritten = 0
@@ -1316,6 +1322,26 @@ internal object ConfigBackupManager {
         }
         return found
     }
+
+    /**
+     * manifest 声明了摘要、实际却没有对应节（或该节读不出来）的**节名**；null = 没有这种节。
+     *
+     * [verify] 挡的是反方向（节存在、manifest 未登记摘要）。缺了这一半，「把节删掉、manifest 留着摘要」
+     * 的形态会被 [readSections] 当成 [SectionRead.Missing]（不回键）而静默跳过 —— 用户看到「导入完成」，
+     * 实际整节数据没进来。
+     */
+    internal fun firstMissingDeclaredSection(
+        manifest: ConfigBackup.Manifest,
+        sections: Map<String, SectionRead>,
+        /** 节名 to 条目名（manifest 用节名，[readSections] 的键是条目名） */
+        pairs: List<Pair<String, String>> = listOf(
+            ConfigBackup.SEC_PREFS to ConfigBackup.ENTRY_PREFS,
+            ConfigBackup.SEC_USER_FREQ to ConfigBackup.ENTRY_USER_FREQ,
+            ConfigBackup.SEC_CLIPBOARD to ConfigBackup.ENTRY_CLIPBOARD,
+        ),
+    ): String? = pairs.firstOrNull { (section, entry) ->
+        manifest.sections.containsKey(section) && sections[entry] !is SectionRead.Ok
+    }?.first
 
     private fun readLimited(input: InputStream, maxBytes: Long): String? {
         val buf = ByteArrayOutputStream()
