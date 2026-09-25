@@ -36,16 +36,22 @@ object SymbolOrder {
     /** 顺序 → 持久化串 */
     fun serialize(order: List<String>): String = normalize(order).joinToString(",")
 
+    /** 「收藏」插回的锚点分组（旧顺序串里它就在收藏前面） */
+    private const val FAVORITE_ANCHOR = "半角"
+
     /** 去重 + 过滤未知 + 补缺失；结果恒为 [DEFAULT] 的一个排列 */
     fun normalize(saved: List<String>): List<String> {
         // 先按 [RENAMED] 把旧名换成新名再判「已知」：改名不能吃掉用户已调好的位置
         val known = saved.map { RENAMED[it.trim()] ?: it.trim() }.filter { it in DEFAULT }.distinct()
         val result = (known + DEFAULT.filter { it !in known }).toMutableList()
-        // 旧版本顺序串不含「收藏」：插到「半角」之后（默认第三位），不打乱用户已调的其余顺序
+        // 旧版本顺序串不含「收藏」：插到「半角」之后（默认第三位），不打乱用户已调的其余顺序。
+        // 锚点自己也可能被改名（项目里已有「编程 → 变量」的先例）：那时 indexOf 给 -1，
+        // 直接 add 到末尾虽然不丢组，但收藏会跑到尾巴上 —— 用默认序列里它自己的下标兜底。
         if (FavoriteSymbols.LABEL !in known) {
             result.remove(FavoriteSymbols.LABEL)
-            val i = result.indexOf("半角")
-            if (i >= 0) result.add(i + 1, FavoriteSymbols.LABEL)
+            val anchor = result.indexOf(FAVORITE_ANCHOR)
+            val at = if (anchor >= 0) anchor + 1 else DEFAULT.indexOf(FavoriteSymbols.LABEL)
+            result.add(at.coerceIn(0, result.size), FavoriteSymbols.LABEL)
         }
         return result
     }

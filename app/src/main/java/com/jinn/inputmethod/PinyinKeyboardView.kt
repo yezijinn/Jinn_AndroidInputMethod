@@ -759,9 +759,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applyKeyAppearance()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
         // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
-        // 6 个按钮仍是旧档）。方向面板展开态时跳过：重建会把它收回默认布局，
-        // 其内部面的 alpha 由下次打开时取当前值。
-        if (!directionPanelVisible) refreshCandidateBar()
+        // 6 个按钮仍是旧档）。方向面板展开态时跳过：重建会把它收回默认布局。
+        if (!directionPanelVisible) {
+            refreshCandidateBar()
+        } else {
+            // 但面板里那 9 个键要就地重刷：它们的「面」是构建期按当时的皮肤色 + alpha 生成的
+            // RippleDrawable，`applyKeyTransparency` 扫不到，不重刷就会出现「改完皮肤 / 拖完
+            // 透明度，面板里还是上一套配色，收起再展开才自愈」（与 2026-09-23 修中心键激活态同源）。
+            directionPanel?.let { applySkinToDirectionPanel(it) }
+        }
     }
 
     // ── 26 键区统一外观（按键圆角 / 按键间隙）──────────────────────
