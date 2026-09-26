@@ -125,6 +125,31 @@ class JinnIme : InputMethodService() {
      */
     private var pendingPasteFieldKey: String? = null
 
+    /**
+     * 是否在等最终识别结果（松手后、服务端回 final 之前）。
+     *
+     * 服务端丢任务或卡住时不会触发任何回调，状态条会永远停在「识别中…」；
+     * 由 [recognizeTimeout] 兜底，连接断开时（[renderLink]）也立即复位。
+     */
+    private var awaitingResult = false
+
+    /**
+     * 发起本次听写时所在应用的包名。
+     *
+     * 松手后服务端还要 1~3 秒才回结果，这期间用户可能切到别的应用；
+     * 结果落到新应用是隐私问题，与暂存粘贴同一条口径做归属比对。
+     * 只比包名不比 fieldId：部分宿主的 fieldId 不稳定，按它比会误丢正常结果。
+     */
+    private var voiceResultPackage: String? = null
+
+    /** 松手后等最终结果的兜底：超时即复位状态条，不让「识别中…」永驻 */
+    private val recognizeTimeout = Runnable {
+        if (!awaitingResult) return@Runnable
+        awaitingResult = false
+        Diagnostics.w(TAG, "识别超时: ${RECOGNIZE_TIMEOUT_MS}ms 内未收到最终结果，复位状态条")
+        setHint(getString(R.string.hint_not_connected))
+    }
+
     /** 剪贴板面板打开标记：仅供诊断日志（视图侧的真实状态在 PinyinKeyboardView 内，重建后不恢复） */
     private var clipboardPanelOpen = false
 
@@ -614,6 +639,14 @@ class JinnIme : InputMethodService() {
      */
     private fun pasteClipboard() {
         val clip = clipboardManager.primaryClip
+        // 0 条目守卫不能省：`ClipData(label, mimeTypes, emptyArray())` 是合法构造（部分应用与
+        // 厂商定制会写出来），`getItemAt(0)` 会抛 IndexOutOfBoundsException，而这里不在任何
+        // runCatching 内 —— 异常落在主线程点击回调上会崩掉整个 IME 进程。
+        // 与 ClipboardController.extractAndSave 的守卫同一口径。
+        if ((clip?.itemCount ?: 0) == 0) {
+            Diagnostics.w(TAG, "粘贴: 剪贴板无条目（itemCount=0）")
+            return
+        }
         val text = clip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
         if (text.isEmpty()) {
             Diagnostics.w(TAG, "粘贴: 剪贴板为空")
@@ -1177,13 +1210,20 @@ class JinnIme : InputMethodService() {
     /**
      * 词库加载失败后的补试（每次键盘弹出最多发起一次）。
      *
-     * onCreate 的预加载失败只留一条日志，而 `PinyinEngine.load` 带 `loaded` 守卫 —— 不补试的话，
+     * onCreate 的预加载失败只留一条日志，而 `PinyinEngine.load` 带守卫 —— 不补试的话，
      * 本次进程内会一直是「没有任何候选」，用户只能靠系统重建输入法进程恢复。
-     * `load` 幂等且加锁：已加载成功时这里只做一次 volatile 读；补试走独立守护线程，
+     *
+     * 判据必须是 `isFullyLoaded`（全量就绪）而不是 `isLoaded`：后者在「高频子集就绪」时已为 true，
+     * 拿它当闸门会让「索引那一段失败」的进程永远得不到补试（只剩 4 万条高频子集，
+     * 「词库补全中」提示也永不消失）。加载正在进行时不占用重试次数（`isLoading` 守卫），
+     * 冷启动那 6~10.7s 里用户可能反复弹键盘。
+     *
+     * `load` 幂等且加锁：已全量就绪时这里只做一次 volatile 读；补试走独立守护线程，
      * 绝不占用主线程（全量加载实测 6~10.7s，放主线程必定 ANR）。
      */
     private fun retryPinyinLoadIfNeeded() {
-        if (PinyinEngine.isLoaded || pinyinLoadAttempts >= MAX_PINYIN_LOAD_ATTEMPTS) return
+        if (PinyinEngine.isFullyLoaded || PinyinEngine.isLoading) return
+        if (pinyinLoadAttempts >= MAX_PINYIN_LOAD_ATTEMPTS) return
         val attempt = ++pinyinLoadAttempts
         Thread({
             runCatching { PinyinEngine.load(this) }
@@ -1227,6 +1267,10 @@ class JinnIme : InputMethodService() {
         renderLink(asr?.state ?: LinkState.OFFLINE, null)
         micButton?.recording = false
         micButton?.cancelArmed = false
+        // 会话开始：上一次听写的等待态与归属快照不带进来（结果要么已到，要么已由超时/掉线复位）
+        awaitingResult = false
+        voiceResultPackage = null
+        ui.removeCallbacks(recognizeTimeout)
         setHint(getString(R.string.hint_idle))
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
         // 敏感输入框（密码框 / 声明 NO_SUGGESTIONS / imeOptions 声明不要个性化学习）
@@ -1531,8 +1575,17 @@ class JinnIme : InputMethodService() {
             asr?.endTask()
             Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
             setHint(getString(R.string.hint_recognizing))
+            // 等结果期间要两样东西：兜底超时（服务端不回 final 时状态条不能被永久卡住）
+            // 与归属快照（结果回来时判「输入框是否已经换了应用」）
+            awaitingResult = true
+            voiceResultPackage = currentInputEditorInfo?.packageName
+            ui.removeCallbacks(recognizeTimeout)
+            ui.postDelayed(recognizeTimeout, RECOGNIZE_TIMEOUT_MS)
         } else {
             asr?.cancelTask()
+            awaitingResult = false
+            voiceResultPackage = null
+            ui.removeCallbacks(recognizeTimeout)
             Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
             // 取消时把已经回显的预编辑文本一起撤掉
             if (prefs.useComposing) {
@@ -1621,6 +1674,19 @@ class JinnIme : InputMethodService() {
     // ── 识别结果 ──────────────────────────────────────────────
 
     private fun handleResult(message: RecognitionMessage) {
+        // 归属校验：松手后服务端还要 1~3 秒才回结果，期间用户可能已切到别的应用。
+        // 跨应用落字属隐私问题（用户没打算往那个输入框写字），与暂存粘贴同一条口径。
+        // 只比包名不比 fieldId：部分宿主的 fieldId 不稳定，按它比会误丢正常结果。
+        val origin = voiceResultPackage
+        val current = currentInputEditorInfo?.packageName
+        if (origin != null && current != null && origin != current) {
+            awaitingResult = false
+            voiceResultPackage = null
+            ui.removeCallbacks(recognizeTimeout)
+            Diagnostics.w(TAG, "handleResult: 输入框已切到其他应用（$origin -> $current），丢弃本次识别结果")
+            setHint(getString(R.string.hint_cancelled))
+            return
+        }
         val connection = currentInputConnection
         if (connection == null) {
             Log.w(TAG, "handleResult: InputConnection 已失效")
@@ -1638,6 +1704,10 @@ class JinnIme : InputMethodService() {
             return
         }
 
+        // 结果已到：清掉等待态与兜底任务（否则 60s 后还会改一次状态条文字）
+        awaitingResult = false
+        voiceResultPackage = null
+        ui.removeCallbacks(recognizeTimeout)
         // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
         Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
         if (prefs.useComposing) {
@@ -1791,6 +1861,13 @@ class JinnIme : InputMethodService() {
                 if (mode != Mode.NONE) {
                     stopRecording(commit = false)
                     setHint(getString(R.string.hint_not_connected))
+                } else if (awaitingResult) {
+                    // 松手后在途时掉线：服务端不可能再回结果，把「识别中…」复位。
+                    // 唯一的复位点原本是下次弹键盘，用户会把这条提示读成「还在识别」
+                    awaitingResult = false
+                    voiceResultPackage = null
+                    ui.removeCallbacks(recognizeTimeout)
+                    setHint(getString(R.string.hint_not_connected))
                 }
             }
         }
@@ -1880,6 +1957,14 @@ class JinnIme : InputMethodService() {
 
         /** 连续录音的最长时长，3 分钟 */
         const val MAX_TOGGLE_MS = 180_000L
+
+        /**
+         * 松手后等最终识别结果的兜底超时。
+         *
+         * 取 60s：3 分钟上限的长语音，服务端识别十几秒属正常量级，留足余量再判超时；
+         * 超时只复位状态条，不会影响后续听写。
+         */
+        const val RECOGNIZE_TIMEOUT_MS = 60_000L
 
         const val BACKSPACE_DELAY_MS = 400L
         const val BACKSPACE_REPEAT_MS = 55L

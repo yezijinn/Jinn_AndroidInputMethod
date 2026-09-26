@@ -436,6 +436,10 @@ class DictManagerActivity : Activity() {
      */
     private fun restartImeForDict() {
         Diagnostics.i(TAG, "分类词库变更：1.5s 后重启输入法进程以加载")
+        // SIGKILL 不会走 onDestroy：用户词频的尾沿补写（防抖 2s）与 onDestroy 里的 flush 都来不及跑，
+        // 「刚选过候选就来装/删词库」时那几次学习会丢。这里先同步刷一次（文件几千行，1~3ms）。
+        runCatching { PinyinEngine.flushUserFrequency() }
+            .onFailure { Diagnostics.w(TAG, "重启前刷用户词频失败: ${it.message}") }
         Handler(Looper.getMainLooper()).postDelayed({
             android.os.Process.killProcess(android.os.Process.myPid())
         }, 1500L)

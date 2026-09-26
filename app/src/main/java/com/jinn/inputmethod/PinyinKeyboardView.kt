@@ -599,6 +599,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun hidePanelForLayerSwitch() {
         if (clipboardActive) hideClipboardPanel()
+        // 方向面板同样挂在字母区里（`viewLetters` 的子视图全部 GONE 后才 addView 进来），
+        // 而符号/数字层的键也在字母区：不收面板就会出现「切了层却看不到键」——
+        // 面板还盖在上面吃触摸，候选栏又被符号分组标签顶替，红色「返回」根本没被创建，
+        // 用户没有退出口（`showDirectionPanel` 里已对剪贴板面板做了对称处理）。
+        if (directionPanelVisible) hideDirectionPanel()
     }
 
     private fun bindFunctionKeys() {
@@ -1304,13 +1309,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
 
     /**
-     * 视图上是否有正在使用的面板（剪贴板面板 / 顶部搜索面板）。
+     * 视图上是否有正在使用的面板（剪贴板面板 / 顶部搜索面板 / 方向面板）。
      *
      * 面板状态挂在视图上，重建会把它们直接关掉：用户正翻剪贴板历史时到点换肤，
      * 面板会毫无预告地消失（搜索态同）， 换肤延后判据因此要带上这一项。
+     *
+     * 方向面板同样要算：它也是视图内的临时状态，重建后会连同上一次的拖选一起消失，
+     * 而 IME 侧的拖选 Anchor/Focus 直到下次弹键盘才复位 —— 两处状态会分裂一整个会话。
      */
     val hasActiveOverlay: Boolean
-        get() = clipboardActive || searchPanel.isActive()
+        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible
 
     fun commitComposing() {
         if (isPanelSearch()) {

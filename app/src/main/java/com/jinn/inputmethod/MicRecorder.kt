@@ -115,6 +115,24 @@ class MicRecorder(
     }
 
     private fun loop(audioRecord: AudioRecord) {
+        // 顶层兜底：采集线程的未捕获异常在 Android 上会走默认处理器**直接杀掉 IME 进程**。
+        // 两条可达路径：① stop() 里 join 超时后的 interrupt() 打在 Thread.sleep 上（InterruptedException）；
+        // ② join 超时后已 release()，仍阻塞的 read() 抛出 IllegalStateException。
+        // 采集失败只该让本次录音结束，不该把整个输入法带走。
+        try {
+            loopBody(audioRecord)
+        } catch (e: InterruptedException) {
+            // stop() 的正常收尾路径：interrupt 是为了唤醒卡住的线程
+            running = false
+            Diagnostics.i(TAG, "采集线程被中断退出（stop 收尾）")
+        } catch (t: Throwable) {
+            running = false
+            Log.e(TAG, "loop: 采集线程异常退出", t)
+            Diagnostics.e(TAG, "loop: 采集线程异常退出: ${t.message}", t)
+        }
+    }
+
+    private fun loopBody(audioRecord: AudioRecord) {
         try {
             audioRecord.startRecording()
         } catch (e: Exception) {
