@@ -55,8 +55,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             db.execSQL(
                 "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
                     "source_package, source_app_name, content_hash, category, is_favorite) " +
+                    // COALESCE 兜住旧表的 NULL：新表的 content_hash 是 NOT NULL，
+                    // 直接搬 NULL 会让 INSERT 失败、升级抛异常 —— 后果是整库打不开
                     "SELECT id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite " +
+                    "source_package, source_app_name, COALESCE(content_hash, ''), category, is_favorite " +
                     "FROM ${TABLE_ITEMS}_old"
             )
             db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
@@ -68,9 +70,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
         }
         if (oldVersion < 4) {
-            // v4：入库阶段去重。先清理历史遗留的重复行（保留每组最新 + 合并收藏/隐私标记），
-            // 再建立 content_hash 唯一索引，后续写入由 upsert 在入库时去重，
-            // 不再依赖「打开面板时全表 deduplicate」维持数据正确性。
+            // v4：入库阶段去重。空 content_hash 先补成互不相同的 legacy 值（见 backfillBlankHashes）——
+            // 否则多行空值会被判成同一内容、只留最新一条，静默删掉用户的不同内容。
+            backfillBlankHashes(db)
             mergeDuplicates(db)
             db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
         }
@@ -82,8 +84,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             db.execSQL(
                 "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
                     "source_package, source_app_name, content_hash, category, is_favorite) " +
+                    // 同 v3 分支：COALESCE 兜住 NULL，NOT NULL 列搬 NULL 会失败
                     "SELECT id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite " +
+                    "source_package, source_app_name, COALESCE(content_hash, ''), category, is_favorite " +
                     "FROM ${TABLE_ITEMS}_old"
             )
             db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
@@ -92,9 +95,29 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 "UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM $TABLE_ITEMS) " +
                     "WHERE name = '$TABLE_ITEMS'"
             )
+            // 重建只搬列、不重算：旧表的空哈希到这里仍为空，建唯一索引前同样要补齐，
+            // 否则多行空值会让建索引失败 —— 升级抛异常就是整库打不开
+            backfillBlankHashes(db)
             db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
             db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
         }
+    }
+
+    /**
+     * 空 content_hash 兜底：补成 `legacy:<id>`。
+     *
+     * 早期版本的记录可能没有哈希（列默认 `''`，更早的表还可能留 NULL），而哈希算的是**明文**
+     * 内容（[stableHash]）—— 空值不代表「同一内容」，只说明这一行没有哈希。让它参与
+     * 「同 hash 即同内容」的去重（[mergeDuplicates]）或建唯一索引，会有两个后果：
+     * 多行被判同一组、只留最新一条（静默删掉用户的不同内容）；或索引建不上、升级失败。
+     * 补成互不相同的值后，这些行既不参与合并，也能安全建索引；后续入库的稳定哈希是
+     * 64 位 hex，绝不会与 `legacy:` 前缀碰撞（入库查重因此不会误命中这些旧行）。
+     */
+    private fun backfillBlankHashes(db: SQLiteDatabase) {
+        db.execSQL(
+            "UPDATE $TABLE_ITEMS SET content_hash = '$LEGACY_HASH_PREFIX' || id " +
+                "WHERE content_hash IS NULL OR content_hash = ''"
+        )
     }
 
     /** 合并重复行：每组 content_hash 保留最新一条，收藏标记以「任一为 true」合并到保留行 */
@@ -588,6 +611,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             instance ?: synchronized(this) {
                 instance ?: ClipboardDb(context).also { instance = it }
             }
+
+        /** 迁移期给空哈希补的占位前缀（见 backfillBlankHashes）：稳定哈希是 64 位 hex，不会碰撞 */
+        private const val LEGACY_HASH_PREFIX = "legacy:"
 
         /** 稳定哈希：内容去重与来源追踪用（不暴露原文） */
         fun stableHash(text: String): String {

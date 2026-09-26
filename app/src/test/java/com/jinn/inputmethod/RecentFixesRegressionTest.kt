@@ -600,4 +600,53 @@ class RecentFixesRegressionTest {
             codeOf("OptionalDicts.kt").contains("未压缩文件的 SHA-256"),
         )
     }
+
+    @Test
+    fun `迁移必须补齐空 content_hash`() {
+        val text = codeOf("ClipboardDb.kt")
+        assertTrue(
+            "必须有 backfillBlankHashes：空哈希不代表同一内容（哈希算的是明文），多行空值会被" +
+                "mergeDuplicates 判成同组、只留最新一条 —— 静默删掉用户的不同内容",
+            text.contains("private fun backfillBlankHashes"),
+        )
+        assertTrue(
+            "补齐判据要同时覆盖 NULL 与空串（列默认值是空串，更早的表可能留 NULL）",
+            text.contains("WHERE content_hash IS NULL OR content_hash = ''"),
+        )
+        assertTrue(
+            "占位值要用 legacy: 前缀 + id：稳定哈希是 64 位 hex，不会碰撞；占位行也不会被后续入库查重误命中",
+            text.contains("LEGACY_HASH_PREFIX = \"legacy:\"") &&
+                text.contains("content_hash = '\$LEGACY_HASH_PREFIX' || id"),
+        )
+        assertTrue(
+            "两个重建分支的搬运 SELECT 都要 COALESCE(content_hash, '')：新表该列是 NOT NULL，" +
+                "旧表若留 NULL 会让 INSERT 失败 —— 升级抛异常就是整库打不开",
+            Regex("COALESCE\\(content_hash, ''\\)").findAll(text).count() >= 2,
+        )
+        val calls = Regex("backfillBlankHashes\\(db\\)").findAll(text).map { it.range.first }.toList()
+        assertTrue("v4 与 v5 两个升级分支都要补（实际 ${calls.size} 处）", calls.size >= 2)
+        assertTrue(
+            "v4 分支：补齐必须紧挨在 mergeDuplicates 之前",
+            Regex("backfillBlankHashes\\(db\\)\\s*\\n\\s*mergeDuplicates\\(db\\)").containsMatchIn(text),
+        )
+        assertTrue(
+            "v5 分支：补齐必须排在建唯一索引之前（否则多行空值让建索引失败，升级抛异常 = 整库打不开）",
+            calls.last() < text.lastIndexOf("CREATE UNIQUE INDEX idx_items_hash"),
+        )
+    }
+
+    @Test
+    fun `诊断落盘正文必须过护栏`() {
+        val body = blockAfter(codeOf("Diagnostics.kt"), "private fun log(")
+        assertTrue(
+            "落盘组装必须用 sanitizeForFile(msg)：正文一旦写错（整篇剪贴板文本 / 搜索词），" +
+                "会绕过 V 级闸直接落盘并随诊断包外传",
+            body.contains("sanitizeForFile(msg)"),
+        )
+        assertFalse("不得裸 append(msg)", body.contains(".append(msg)"))
+        assertTrue(
+            "堆栈要脱敏但不截断（异常 message 可能含内容片段；堆栈上千字符，截断会砍关键帧）",
+            body.contains("redactSensitive(stackTraceOf(it))"),
+        )
+    }
 }
