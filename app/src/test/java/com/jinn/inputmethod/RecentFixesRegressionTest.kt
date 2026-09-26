@@ -268,4 +268,99 @@ class RecentFixesRegressionTest {
             text.contains("dst.delete()"),
         )
     }
+
+    @Test
+    fun `系统剪贴板粘贴必须走统一实现`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        assertTrue(
+            "功能面板「粘贴」必须委托 pasteClipboardText(text)：系统剪贴板装着别的应用复制的整篇文档，" +
+                "裸 commitText 会撞 Binder 事务上限抛 TransactionTooLargeException（未捕获 = IME 进程崩溃）",
+            body.contains("pasteClipboardText(text)"),
+        )
+        assertFalse(
+            "pasteClipboard 里不得直接 commitText：上限闸与 runCatching 都在 pasteClipboardText 里",
+            body.contains("commitText"),
+        )
+    }
+
+    @Test
+    fun `分号键抬起必须判自身是否仍可见`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun handleSemicolonTouch")
+        assertTrue(
+            "ACTION_UP 里必须判 keySemicolon.visibility：按下后按键可能被切层/中英/大写置 GONE，" +
+                "而已缓存目标仍会收到 UP ⇒ 一个看不见的分号被追加进拼音串（英文态下尤其费解）",
+            body.contains("keySemicolon.visibility != View.VISIBLE"),
+        )
+    }
+
+    @Test
+    fun `导入完成对话框必须登记且在取消时刷新页面`() {
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun doImportConfig")
+        assertTrue(
+            "「导入完成」框必须走 showTipDialog 登记：它是代码创建的，不登记会在旋转重建时泄漏窗口，" +
+                "且重建后这次导入的结论无处可看",
+            body.contains("showTipDialog(dialog)"),
+        )
+        assertTrue(
+            "必须在 setOnCancelListener 里 recreate()：返回键/点框外走 cancel 不会触发「稍后」回调，" +
+                "而此刻配置已落盘，页面上的旧值必须一并刷新",
+            body.contains("setOnCancelListener { recreate() }"),
+        )
+    }
+
+    @Test
+    fun `词库下载完成必须刷新当前活页`() {
+        val text = codeOf("DictManagerActivity.kt")
+        assertTrue(
+            "下载回调必须刷新 current 实例（activePage?.get()）：回调捕获的是发起下载的 Activity，" +
+                "下载期间旋转/关掉重进时旧实例的刷新会写进已 detach 的 View ⇒ 新页面停在" +
+                "「按钮禁用、无状态行」的旧快照上",
+            text.contains("activePage?.get()"),
+        )
+    }
+
+    @Test
+    fun `日志目录必须支持延迟可用`() {
+        val text = codeOf("Diagnostics.kt")
+        assertTrue(
+            "必须调 retryLogDirIfNeeded()：存储未挂载时 getExternalFilesDir 返回 null，而本对象是进程级单例、" +
+                "IME 长期存活 ⇒ 只解析一次会让该进程此后一条文件日志都不写（诊断包恒为空）",
+            text.contains("retryLogDirIfNeeded("),
+        )
+        assertTrue(
+            "落盘路径上必须按天闸补清理（maybeCleanupOldLogs）：只在 init 清一次时，常驻进程超过 7 天" +
+                "再不清理、日志目录无界增长",
+            text.contains("maybeCleanupOldLogs()"),
+        )
+    }
+
+    @Test
+    fun `收藏页添加对话框必须随页面销毁`() {
+        val text = codeOf("FavoriteSymbolsActivity.kt")
+        assertTrue(
+            "onDestroy 里必须 dismiss addDialog：对话框是代码创建的，不登记会随旋转泄漏窗口，" +
+                "此时点「确定」还会把符号写进已 detach 的旧列表",
+            text.contains("addDialog?.dismiss()"),
+        )
+    }
+
+    @Test
+    fun `语言下拉未触摸时不得改写导入值`() {
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun readLanguage")
+        assertTrue(
+            "readLanguage 必须先判 languageSpinnerTouched：导入的备份可能带本版不认识的取值，" +
+                "下拉退回显示第 0 项，读回它等于把导入值静默改写（其他四个下拉同款闸门）",
+            body.contains("if (!languageSpinnerTouched) return prefs.language"),
+        )
+    }
+
+    @Test
+    fun `导出诊断包在页面重建后必须留下提示`() {
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun exportDiagnostics")
+        assertTrue(
+            "isFinishing/isDestroyed 分支必须写 pendingNotice：与配置导出同款兜底，" +
+                "否则用户点了导出、界面上什么都没发生（打包好的临时包留在缓存目录无人认领）",
+            body.contains("pendingNotice ="),
+        )
+    }
 }

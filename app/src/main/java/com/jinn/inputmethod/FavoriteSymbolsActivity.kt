@@ -32,6 +32,9 @@ class FavoriteSymbolsActivity : Activity() {
     /** 本次进入是否改过收藏内容（决定离开时要不要通知 IME 重建键盘视图） */
     private var dirty = false
 
+    /** 「添加符号」对话框：代码创建的，旋转重建时不会自动恢复，必须自己登记并 dismiss */
+    private var addDialog: AlertDialog? = null
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
@@ -50,6 +53,14 @@ class FavoriteSymbolsActivity : Activity() {
         // 只有真正改过才通知（进来看看就退出的场景不必重建键盘视图）。
         // 标记不复位：重建可能被「有未上屏输入」守卫延后，下次 onPause 再通知一次（重建幂等）。
         if (dirty) JinnIme.onSymbolLayoutChanged()
+    }
+
+    override fun onDestroy() {
+        // 添加对话框不登记就会随页面旋转泄漏（WindowLeaked）；此时点「确定」还会把符号
+        // 写进已 detach 的旧列表，用户在当前页面上看不到任何变化
+        addDialog?.dismiss()
+        addDialog = null
+        super.onDestroy()
     }
 
     private fun currentPages(): List<List<String>> =
@@ -150,12 +161,14 @@ class FavoriteSymbolsActivity : Activity() {
             addView(input, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.favorite_dialog_title))
             .setView(box)
             .setPositiveButton(android.R.string.ok) { _, _ -> addItem(input.text.toString()) }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        addDialog = dialog
+        dialog.show()
     }
 
     private fun addItem(raw: String) {

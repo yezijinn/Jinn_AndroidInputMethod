@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  *   - 按天滚动一个文件 `jinn-YYYY-MM-dd.log`，线程安全追加写
  *   - 崩溃时把 stack trace 写入日志并抓取 logcat 快照
  *   - 导出的诊断包由设置页经系统文件选择器（SAF）交给用户自选位置，全程不申请存储权限
- *   - 自动清理 7 天前的旧日志
+ *   - 自动清理 7 天前的旧日志（进程常驻时也生效：落盘路径上按天闸补清）
  *
  * 所有方法幂等、线程安全、绝不让日志异常影响业务逻辑。
  */
@@ -29,6 +29,9 @@ object Diagnostics {
     private const val DIR_NAME = "JinnIme"
     private const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
+
+    /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按月反复补清（见 [maybeCleanupOldLogs]） */
+    private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
 
     /**
      * 打包时清理旧诊断包的最小年龄。
@@ -99,7 +102,10 @@ object Diagnostics {
 
     /** 由各组件入口调用，幂等。必须在首次写日志前调用。 */
     fun init(context: Context) {
-        if (inited) return
+        if (inited) {
+            retryLogDirIfNeeded(context.applicationContext)
+            return
+        }
         synchronized(lock) {
             if (inited) return
             cacheDir = context.applicationContext.cacheDir
@@ -107,8 +113,29 @@ object Diagnostics {
             inited = true
             installCrashHandler()
             cleanupOldLogs()
+            lastCleanupAt = System.currentTimeMillis()
             i(TAG, "日志目录: ${logDir?.absolutePath ?: "不可用"}")
             i(TAG, "设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} SDK=${android.os.Build.VERSION.SDK_INT}")
+        }
+    }
+
+    /**
+     * 日志目录解析失败后补一次。
+     *
+     * 存储未挂载时（首次解锁前 / 存储异常）`getExternalFilesDir` 返回 null，而本对象是
+     * 进程级单例、IME 进程又长期存活：只在 [init] 里解析一次、失败即放弃的写法，会让这个
+     * 进程此后**一条文件日志都不写**（导出诊断包恒为空），恰恰发生在最需要日志的场景。
+     */
+    private fun retryLogDirIfNeeded(context: Context) {
+        if (logDir != null) return
+        synchronized(lock) {
+            if (logDir != null) return
+            cacheDir = context.applicationContext.cacheDir
+            val dir = resolveLogDir(context.applicationContext) ?: return
+            logDir = dir
+            cleanupOldLogs()
+            lastCleanupAt = System.currentTimeMillis()
+            i(TAG, "日志目录: ${dir.absolutePath}（延迟解析成功）")
         }
     }
 
@@ -218,6 +245,7 @@ object Diagnostics {
         // 每次写日志都要 open/write/close 一次文件，累积开销不小（见 VERBOSE_TO_FILE）。
         if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
+        maybeCleanupOldLogs()
         val sb = StringBuilder(160)
         sb.append(now())
             .append(' ').append(level)
@@ -349,6 +377,23 @@ object Diagnostics {
             runCatching { raw.delete() }
             if (!produced) runCatching { dest.delete() }
         }
+    }
+
+    /**
+     * 上次清理时间与最小间隔。
+     *
+     * 「自动清理 7 天前的旧日志」原先只在 [init] 跑一次，而 IME 是常驻进程：连续存活
+     * 超过 7 天就再也不会清理（日志目录无界增长、导出诊断包随之越来越大）。
+     * 改为在落盘路径上按天闸补清 —— 幂等操作，多线程同时触发也无害。
+     */
+    @Volatile
+    private var lastCleanupAt = 0L
+
+    private fun maybeCleanupOldLogs() {
+        val now = System.currentTimeMillis()
+        if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return
+        lastCleanupAt = now
+        cleanupOldLogs()
     }
 
     /** 删除 KEEP_DAYS 天前的诊断日志（每日文件、logcat 快照与导出用的设备信息临时件） */

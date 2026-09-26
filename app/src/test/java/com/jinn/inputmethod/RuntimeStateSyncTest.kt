@@ -40,4 +40,24 @@ class RuntimeStateSyncTest {
         assertTrue("两个调用点都应存在（imported=$imported synced=$synced）", imported >= 0 && synced >= 0)
         assertTrue("同步必须在导入之后，否则同步的是旧值", synced > imported)
     }
+
+    @Test
+    fun `导入设置项之后必须同步用户词频开关`() {
+        val text = sourceOf("ConfigBackupManager.kt")
+        assertTrue(
+            "导入设置项后必须调用 UserFrequency.setEnabled(prefs.userLearning)：开关在 Prefs 与 " +
+                "UserFrequency 里各有一份，而包内没有词频节时 replaceFromBackup 不会被调用 ⇒ " +
+                "「设置页显示已关、候选仍在按上一次的学习结果重排」",
+            text.contains("UserFrequency.setEnabled(prefs.userLearning)"),
+        )
+    }
+
+    @Test
+    fun `用户词频开关的同步也必须排在 prefs 导入之后`() {
+        val text = sourceOf("ConfigBackupManager.kt")
+        val imported = text.indexOf("prefs.importFromBackup(main)")
+        val synced = text.indexOf("UserFrequency.setEnabled(prefs.userLearning)")
+        assertTrue("两个调用点都应存在（imported=$imported synced=$synced）", imported >= 0 && synced >= 0)
+        assertTrue("同步必须在导入之后，否则同步的是旧值", synced > imported)
+    }
 }

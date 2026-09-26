@@ -2230,6 +2230,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 keySemicolon.setPressedVisual(false)
+                // 分号键是全键盘唯一会随状态 GONE 的字母键（切层 / 切中英 / 大写锁定 / 换方案），
+                // 而按下后变 GONE 的键仍会收到本次手势的 ACTION_UP（框架对已缓存目标不复检可见性）：
+                // 不判可见性就会追加一个「看不见来源」的分号 —— 英文态下拼音串凭空多出 `;`
+                // 分号键是全键盘唯一会随状态 GONE 的字母键（切层 / 切中英 / 大写锁定 / 换方案），
+                // 而按下后变 GONE 的键仍会收到本次手势的 ACTION_UP（框架对已缓存目标不复检可见性）：
+                // 不判可见性就会追加一个「看不见来源」的分号 —— 英文态下拼音串凭空多出 `;`
+                if (keySemicolon.visibility != View.VISIBLE) {
+                    Diagnostics.v(TAG, "分号键: 抬起时已隐藏，忽略")
+                    return true
+                }
                 // 命中判定不可省（与字母键一致，见 isInsideKey 的 KDoc）：
                 // 手指从 `;` 滑到相邻字母键再抬起时，不应把用户并未按下的分号追加进拼音串。
                 if (!isInsideKey(keySemicolon, event)) {

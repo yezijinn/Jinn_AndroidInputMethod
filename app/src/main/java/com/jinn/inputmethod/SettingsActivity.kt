@@ -160,6 +160,9 @@ class SettingsActivity : ComponentActivity() {
     /** 主题下拉：与上面两个 Spinner 共用「只认用户触摸」的闸门 */
     private var themeSpinnerTouched = false
 
+    /** 语言下拉：同上（它的读回在 saveAndRestart，而不是 onItemSelected） */
+    private var languageSpinnerTouched = false
+
     /** 本次进页面时生效的深浅色；定时到点后用它与重新解析的结果比较，变了才重建页面 */
     private var appliedThemeDark = false
 
@@ -314,6 +317,12 @@ class SettingsActivity : ComponentActivity() {
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, android.R.layout.simple_spinner_item
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        // 用户触摸过才允许写配置（见 [languageSpinnerTouched]）；ACTION_UP 补 performClick 供无障碍服务识别
+        spinnerLanguage.setOnTouchListener { view, event ->
+            languageSpinnerTouched = true
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
 
         spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
             this, R.array.default_mode_entries, android.R.layout.simple_spinner_item
@@ -706,7 +715,17 @@ class SettingsActivity : ComponentActivity() {
         Thread {
             val file = Diagnostics.exportBundle(this)
             runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (isFinishing || isDestroyed) {
+                    // 与配置导出（doExportConfig）同一条兜底：页面被重建时把结论留下，
+                    // 新页面进入时补提示 —— 否则用户点了导出、界面上什么都没发生，
+                    // 只会以为按钮坏了（打包好的临时包留在缓存目录无人认领）
+                    pendingNotice = if (file == null) {
+                        "导出诊断包失败（页面被重建），请重试"
+                    } else {
+                        "诊断包已生成，但页面被重建，请重新点「导出诊断数据」选择保存位置。"
+                    }
+                    return@runOnUiThread
+                }
                 btnExportDiag.isEnabled = true
                 if (file != null) {
                     pendingDiagZip = file
@@ -985,6 +1004,10 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun readLanguage(): String {
+        // 用户没碰过就沿用 Prefs 的原值：导入的备份可能带本版不认识的取值（更高版本 / 手工构造），
+        // 此时 loadPrefs 里 indexOf 退回选中第 0 项，读回它等于把导入的语言静默改写。
+        // 与另外四个 Spinner 同一条「只认用户触摸」的闸门。
+        if (!languageSpinnerTouched) return prefs.language
         val values = resources.getStringArray(R.array.language_values)
         val pos = spinnerLanguage.selectedItemPosition.coerceIn(0, values.lastIndex)
         return values[pos]
@@ -1532,7 +1555,13 @@ class SettingsActivity : ComponentActivity() {
                 } else {
                     builder.setPositiveButton("好", null)
                 }
-                builder.show()
+                val dialog = builder.create()
+                // 返回键 / 点到框外走 cancel，**不会**触发上面的「稍后」回调（同 importConfirmDialog）：
+                // 此刻配置已落盘，页面上的旧值必须一并刷新
+                dialog.setOnCancelListener { recreate() }
+                // 必须登记（showTipDialog）：本框是代码创建的，不登记就会在旋转重建时泄漏窗口、
+                // 且重建后这次导入的结论无处可看
+                showTipDialog(dialog)
             }
         }.start()
     }
