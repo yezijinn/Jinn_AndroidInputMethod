@@ -86,6 +86,7 @@
     <string name="settings_restarting">已保存，正在重启输入法进程…</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
+    <string name="settings_mic_open_settings">前往系统设置授权</string>
     <string name="settings_enable_ime">启用本输入法</string>
     <string name="settings_pick_ime">改默认输入法</string>
     <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>

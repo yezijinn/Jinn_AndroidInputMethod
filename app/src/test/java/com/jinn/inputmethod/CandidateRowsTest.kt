@@ -49,10 +49,10 @@ class CandidateRowsTest {
 
     @Test
     fun 渲染上限条数下无重无漏() {
-        // 24 = PinyinKeyboardView.MAX_RENDERED_CANDIDATES，双行时正好 12 列
-        val items = (1..24).map { it.toString() }
+        // 36 = PinyinKeyboardView.MAX_RENDERED_CANDIDATES，双行时正好 18 列
+        val items = (1..36).map { it.toString() }
         val cols = CandidateRows.columnsOf(items)
-        assertEquals(12, cols.size)
+        assertEquals(18, cols.size)
         assertEquals(items.filterIndexed { i, _ -> i % 2 == 1 }, cols.mapNotNull { it.first })
         assertEquals(items.filterIndexed { i, _ -> i % 2 == 0 }, cols.map { it.second })
         assertEquals(

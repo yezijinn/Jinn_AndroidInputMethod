@@ -636,6 +636,56 @@ class RecentFixesRegressionTest {
     }
 
     @Test
+    fun `候选渲染上限不得回退`() {
+        val m = Regex("const val MAX_RENDERED_CANDIDATES = (\\d+)")
+            .find(codeOf("PinyinKeyboardView.kt"))
+        assertTrue("常量必须存在", m != null)
+        val n = m!!.groupValues[1].toInt()
+        assertTrue(
+            "渲染上限不得低于 36（当前 $n）：单音节候选可达 60 条，截断过狠时靠后的候选在滚动区里" +
+                "根本不存在（点不到）；帧统计实测 54 个 View 与 36 个无差异",
+            n >= 36,
+        )
+    }
+
+    @Test
+    fun `收尾包未送出时不得挂等待态`() {
+        val asr = codeOf("AsrClient.kt")
+        assertTrue(
+            "endTask / cancelTask 必须返回 Boolean：调用方要据它决定是否还等最终结果",
+            asr.contains("fun endTask(): Boolean") && asr.contains("fun cancelTask(): Boolean"),
+        )
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun stopRecording(")
+        assertTrue(
+            "commit 分支必须判 endTask() 的返回值：收尾包没送出时服务端不会回结果，" +
+                "挂上等待态要等 60s 兜底才复位，期间用户以为还在识别",
+            body.contains("asr?.endTask() != true"),
+        )
+    }
+
+    @Test
+    fun `麦克风永久拒绝必须给系统设置入口`() {
+        val text = codeOf("SettingsActivity.kt")
+        assertTrue(
+            "必须记录永久拒绝态（拒绝且系统不再弹窗）",
+            text.contains("micDeniedForever"),
+        )
+        assertTrue(
+            "必须以「已请求过仍未授予」为判据（micRequested）：Android 10 起第二次请求被系统静默拒绝，" +
+                "只看 shouldShowRequestPermissionRationale 会让按钮继续点了没反应",
+            text.contains("micRequested"),
+        )
+        assertTrue(
+            "永久拒绝时按钮要跳系统应用详情页：本页再申请不会弹窗，按钮会永远没效果",
+            text.contains("ACTION_APPLICATION_DETAILS_SETTINGS"),
+        )
+        assertTrue(
+            "onResume 必须刷新麦克风状态：从系统设置授权后返回，页面不能还显示「未授权」",
+            blockAfter(text, "override fun onResume()").contains("refreshMicState()"),
+        )
+    }
+
+    @Test
     fun `诊断落盘正文必须过护栏`() {
         val body = blockAfter(codeOf("Diagnostics.kt"), "private fun log(")
         assertTrue(

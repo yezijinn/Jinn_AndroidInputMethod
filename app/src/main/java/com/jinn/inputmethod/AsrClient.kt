@@ -129,23 +129,30 @@ class AsrClient(
         send(taskId, data, isFinal = false)
     }
 
-    /** 正常收尾：服务端据此输出最终文本 */
-    fun endTask() {
-        val taskId = sendingTask ?: return
+    /**
+     * 正常收尾：服务端据此输出最终文本。
+     *
+     * @return 收尾包是否真的送出。false（断线 / 无在途任务 / 队列满）时服务端不会给最终结果，
+     *         调用方不应再挂等待态，否则状态条要等 60s 兜底才复位
+     */
+    fun endTask(): Boolean {
+        val taskId = sendingTask ?: return false
         sendingTask = null
-        send(taskId, "", isFinal = true)
-        Diagnostics.i(TAG, "endTask: $taskId")
+        val ok = send(taskId, "", isFinal = true)
+        Diagnostics.i(TAG, "endTask: $taskId ok=$ok")
         Log.i(TAG, "endTask: $taskId")
+        return ok
     }
 
-    /** 取消：照样收尾以清空服务端缓冲，但结果不再采用 */
-    fun cancelTask() {
-        val taskId = sendingTask ?: return
+    /** 取消：照样收尾以清空服务端缓冲，但结果不再采用。@return 同 [endTask] */
+    fun cancelTask(): Boolean {
+        val taskId = sendingTask ?: return false
         sendingTask = null
         acceptingTask = null
-        send(taskId, "", isFinal = true)
-        Diagnostics.i(TAG, "cancelTask: $taskId")
+        val ok = send(taskId, "", isFinal = true)
+        Diagnostics.i(TAG, "cancelTask: $taskId ok=$ok")
         Log.i(TAG, "cancelTask: $taskId")
+        return ok
     }
 
     fun close() {
@@ -177,12 +184,18 @@ class AsrClient(
         Log.i(TAG, "scheduleReconnect: 第 $reconnectAttempt 次重连 ${delay}ms 后")
     }
 
-    private fun send(taskId: String, data: String, isFinal: Boolean) {
+    /**
+     * 发送一条报文。
+     *
+     * @return 是否真的送出 —— 断线或发送队列满都会返回 false；收尾包（isFinal）拿到 false 意味着
+     *         本次识别拿不到最终结果，调用方据此决定是否还等回调
+     */
+    private fun send(taskId: String, data: String, isFinal: Boolean): Boolean {
         val current = socket
         if (current == null) {
             Diagnostics.w(TAG, "send: 连接已断开，丢弃报文 taskId=$taskId isFinal=$isFinal")
             Log.w(TAG, "send: 连接已断开，丢弃报文")
-            return
+            return false
         }
         val message = AudioMessage(
             taskId = taskId,
@@ -195,14 +208,15 @@ class AsrClient(
         if (!current.send(message)) {
             Diagnostics.w(TAG, "send: 发送队列已满或连接关闭 taskId=$taskId size=${data.length}")
             Log.w(TAG, "send: 发送队列已满或连接关闭")
-        } else {
-            // 音频包很频繁，只记录 isFinal 收尾包避免刷屏；音频用 V 级别
-            if (isFinal) {
-                Diagnostics.i(TAG, "send: 收尾包已发送 taskId=$taskId")
-            } else {
-                Diagnostics.v(TAG, "send: 音频包 taskId=$taskId size=${data.length}B")
-            }
+            return false
         }
+        // 音频包很频繁，只记录 isFinal 收尾包避免刷屏；音频用 V 级别
+        if (isFinal) {
+            Diagnostics.i(TAG, "send: 收尾包已发送 taskId=$taskId")
+        } else {
+            Diagnostics.v(TAG, "send: 音频包 taskId=$taskId size=${data.length}B")
+        }
+        return true
     }
 
     private fun closeSocket() {
