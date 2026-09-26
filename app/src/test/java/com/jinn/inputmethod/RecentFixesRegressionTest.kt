@@ -363,4 +363,131 @@ class RecentFixesRegressionTest {
             body.contains("pendingNotice ="),
         )
     }
+
+    // ── 第二批：资源 / 协议 / 降级三视角并行审查后的修复 ──
+
+    @Test
+    fun `切层必须收起方向面板`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun hidePanelForLayerSwitch")
+        assertTrue(
+            "hidePanelForLayerSwitch 必须收起方向面板：面板与符号层的键同在字母区，不收面板就" +
+                "「切了层却看不到键」，候选栏又被符号分组标签顶替、红色「返回」根本没被创建，用户没有退出口",
+            body.contains("hideDirectionPanel()"),
+        )
+    }
+
+    @Test
+    fun `换肤延后判据必须覆盖方向面板`() {
+        val text = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "hasActiveOverlay 必须含 directionPanelVisible：方向面板也是视图内的临时状态，" +
+                "重建会连上一次的拖选一起丢，而 IME 侧的 Anchor/Focus 要到下次弹键盘才复位（状态分裂一整个会话）",
+            text.contains("clipboardActive || searchPanel.isActive() || directionPanelVisible"),
+        )
+    }
+
+    @Test
+    fun `粘贴前必须判剪贴板条目数`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        assertTrue(
+            "必须判 itemCount==0：`ClipData(label, mimeTypes, emptyArray())` 是合法构造，getItemAt(0) 会抛" +
+                " IndexOutOfBoundsException，而这里不在任何 runCatching 内 —— 主线程点击回调上未捕获即崩进程",
+            body.contains("(clip?.itemCount ?: 0) == 0"),
+        )
+    }
+
+    @Test
+    fun `索引缓存不得先删旧文件`() {
+        val body = blockAfter(codeOf("PinyinEngine.kt"), "private fun writeIndexCacheAtomically")
+        assertTrue("改名覆盖式写入（POSIX rename 替换目录项，旧映射仍指向旧 inode）", body.contains("tmp.renameTo(file)"))
+        assertFalse(
+            "不得 file.delete()：先删目标会制造一个「目标不存在」的窗口，改名失败时旧缓存与新缓存同时失去，" +
+                "下次启动只能整份重建（同 UserFrequency.writeAtomically 的反例注释）",
+            body.contains("file.delete()"),
+        )
+    }
+
+    @Test
+    fun `索引失败后必须能补试`() {
+        val engine = codeOf("PinyinEngine.kt")
+        assertTrue(
+            "load 的重入判据必须是 loaded && fullLoaded：只看 loaded 会让「索引段失败」的进程永远拿不到补试，" +
+                "整个进程只剩高频子集、「词库补全中」也永不消失",
+            engine.contains("if (loaded && fullLoaded) return"),
+        )
+        assertTrue("第二段要抽成可重用的 loadFullIndex", engine.contains("private fun loadFullIndex(context: Context): Long"))
+        assertTrue(
+            "等待加载中不得占用重试次数（上限 3 次，冷启动 6~10.7s 里用户会反复弹键盘）",
+            engine.contains("isLoading"),
+        )
+        assertTrue(
+            "IME 侧补试闸门必须用 isFullyLoaded + isLoading，用 isLoaded 等于把索引失败排除在补试之外",
+            codeOf("JinnIme.kt").contains("PinyinEngine.isFullyLoaded || PinyinEngine.isLoading"),
+        )
+    }
+
+    @Test
+    fun `可选词库加载失败不得报成未安装`() {
+        val text = codeOf("PinyinEngine.kt")
+        assertTrue(
+            "必须区分「没装」与「装了但一个都没读进来」：后者原先也打「未安装可选词库」，" +
+                "「词库装了却不生效」的排查会被直接带偏（包损坏只有上文一条 W 级日志）",
+            text.contains("packs.isEmpty()") && text.contains("可选词库全部加载失败"),
+        )
+    }
+
+    @Test
+    fun `词库重装重启前必须刷用户词频`() {
+        val body = blockAfter(codeOf("DictManagerActivity.kt"), "private fun restartImeForDict")
+        assertTrue(
+            "killProcess 是 SIGKILL、不会走 onDestroy：不先同步 flush，防抖窗口（2s）内的学习会随重启丢掉，" +
+                "而这条路径恰恰是应用自己主动发起的",
+            body.contains("flushUserFrequency()"),
+        )
+    }
+
+    @Test
+    fun `采集线程必须有顶层异常兜底`() {
+        val text = codeOf("MicRecorder.kt")
+        assertTrue(
+            "采集线程的未捕获异常在 Android 上会走默认处理器杀掉 IME 进程：" +
+                "stop() 的 interrupt 可能打在 Thread.sleep 上、release 后阻塞的 read 会抛 IllegalStateException",
+            text.contains("采集线程异常退出") && text.contains("private fun loopBody(audioRecord: AudioRecord)"),
+        )
+    }
+
+    @Test
+    fun `等识别结果必须有超时兜底`() {
+        val text = codeOf("JinnIme.kt")
+        assertTrue(
+            "stopRecording(commit=true) 后必须起 recognizeTimeout：服务端丢任务/卡住时没有任何回调，" +
+                "状态条会永远停在「识别中…」（唯一复位点是下次弹键盘）",
+            text.contains("ui.postDelayed(recognizeTimeout, RECOGNIZE_TIMEOUT_MS)"),
+        )
+        assertTrue("结果到达 / 取消 / 会话开始都要清掉兜底任务", text.contains("ui.removeCallbacks(recognizeTimeout)"))
+        assertTrue(
+            "掉线时若正在等结果也要复位状态条",
+            blockAfter(text, "private fun renderLink").contains("awaitingResult"),
+        )
+    }
+
+    @Test
+    fun `语音结果必须校验应用归属`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun handleResult")
+        assertTrue(
+            "必须比对接收到结果时的包名（voiceResultPackage）：松手后服务端还要 1~3s 才回结果，" +
+                "期间用户可能已切到别的应用 —— 跨应用落字是隐私问题，与暂存粘贴同一条口径",
+            body.contains("voiceResultPackage"),
+        )
+    }
+
+    @Test
+    fun `剪贴板分页必须检测列表变化`() {
+        val body = blockAfter(codeOf("ClipboardPanelView.kt"), "private fun loadNextPage")
+        assertTrue(
+            "翻下一页前必须比对总数：分页游标是 SQL OFFSET，面板打开期间有新内容入库时" +
+                "头部插入会让下一页重复返回已显示的行、并永久跳过尾部若干行",
+            body.contains("total != categoryTotal"),
+        )
+    }
 }

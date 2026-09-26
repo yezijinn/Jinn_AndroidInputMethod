@@ -140,6 +140,16 @@ object PinyinEngine {
     /** 是否已全量就绪（false 且 [isLoaded] 为 true 时，UI 可提示「词库补全中」） */
     val isFullyLoaded: Boolean get() = fullLoaded
 
+    /**
+     * 是否正有一次加载在进行（两段式全程或索引补试）。
+     *
+     * 供 IME 侧的补试闸门使用：冷启动那 6~10.7s 里用户可能反复弹键盘，把「正在加载」
+     * 也当成失败去补试会白耗重试次数（上限 3 次），真正失败时反而没有补试机会。
+     */
+    @Volatile
+    var isLoading: Boolean = false
+        private set
+
     /** 可选词库包是否正在后台加载（防重复触发） */
     @Volatile
     private var optionalLoading = false
@@ -347,11 +357,41 @@ object PinyinEngine {
         Diagnostics.i(TAG, "模糊音容错: 掩码=$clamped（${Integer.bitCount(clamped)} 组启用）")
     }
 
-    /** 加载词库；幂等，可在后台线程调用 */
+    /**
+     * 加载词库；幂等，可在后台线程调用。
+     *
+     * 重入判据是「全量就绪」而不是「能打字了」：高频子集就绪时 [loaded] 已为 true，
+     * 索引那一段失败（OOM / 资产读取失败）时早先的 `if (loaded) return` 会让所有重试
+     * 入口（含 [loadOptionalAsync] 内的同一次调用）全部失效 —— 用户在整个进程生命周期里
+     * 只剩 4 万条高频子集，`isFullyLoaded` 恒 false 让「词库补全中」提示永不消失，
+     * 只能等系统重建 IME 进程。这里允许「只补第二段」重入，失败每次仍只留一条 E 级日志。
+     */
     fun load(context: Context) {
-        if (loaded) return
+        if (loaded && fullLoaded) return
+        isLoading = true
+        try {
+            doLoad(context)
+        } finally {
+            // 复位必须在 finally：异常路径漏掉会让 `isLoading` 永久为 true，
+            // 此后 IME 侧的补试闸门直接把所有重试挡回，与「静默地永不加载」等价
+            isLoading = false
+        }
+    }
+
+    /** [load] 的实现（完整两段式，或只补第二段）。全程持本对象锁，幂等。 */
+    private fun doLoad(context: Context) {
         synchronized(this) {
-            if (loaded) return
+            if (loaded && fullLoaded) return
+            if (loaded) {
+                // 上一次只跑完第一段：高频子集 / 单字表 / 音节表都已在位，只补索引
+                val indexMs = loadFullIndex(context)
+                Diagnostics.i(
+                    TAG,
+                    "索引补试完成: indexMs=$indexMs 基础键=${baseIndex?.size ?: 0} fullLoaded=$fullLoaded",
+                )
+                logMemory("索引补试后")
+                return
+            }
             logMemory("词库加载前")
             val t0 = System.currentTimeMillis()
             // 单字过滤档位：一级+二级（6500）与三级（1407）默认加载；表外字（繁体 / 异体 /
@@ -389,15 +429,10 @@ object PinyinEngine {
             UserFrequency.load(context, Prefs(context).userLearning)
 
             // ── 第二段：全量基础包（二进制索引）──
-            if (charsBySyllable.isEmpty()) loadChars(context)
-            val indexMs = loadIndex(context)
             // 可选词库包不在这里加载，见 loadOptionalAsync()。
             // 它们可达 114 万词条、解析十几秒，改为基础包就绪后在空闲时补齐。
-            if (validSyllables.isEmpty()) loadSyllables(context)
-            if (indexMs >= 0) dropRedundantHotEntries()
-            finalizeLoad()
+            val indexMs = loadFullIndex(context)
             loaded = true
-            fullLoaded = indexMs >= 0
             Log.i(
                 TAG,
                 "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
@@ -428,6 +463,26 @@ object PinyinEngine {
             Diagnostics.i(TAG, "词库加载耗时: ${System.currentTimeMillis() - t0}ms")
             logMemory("词库加载后")
         }
+    }
+
+    /**
+     * 第二段：全量基础包（二进制索引）。
+     *
+     * 单独抽出来是为了**可重试**：高频子集就绪时 `loaded` 已为 true，索引这一段失败
+     * （OOM / 资产读取失败）在早先的实现里没有任何重试入口，用户会一直只剩高频子集。
+     * 幂等：单字表/音节表只在缺失时补建，[dropRedundantHotEntries] 与 [finalizeLoad]
+     * 都可重复执行（前者按「子集是索引前缀」删冗余键，删过的下次不再命中）。
+     *
+     * @return 索引加载耗时；失败为 -1（候选退化为高频子集/可选包）
+     */
+    private fun loadFullIndex(context: Context): Long {
+        if (charsBySyllable.isEmpty()) loadChars(context)
+        val indexMs = loadIndex(context)
+        if (validSyllables.isEmpty()) loadSyllables(context)
+        if (indexMs >= 0) dropRedundantHotEntries()
+        finalizeLoad()
+        fullLoaded = indexMs >= 0
+        return indexMs
     }
 
     /**
@@ -770,7 +825,13 @@ object PinyinEngine {
         invalidateMergedCache()
         extensionLoaded = loaded.isNotEmpty()
         if (loaded.isEmpty()) {
-            Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
+            // 区分「没装」与「装了但一个都没读进来」：后者原先也打这句 I 级日志，
+            // 「词库装了却不生效」的排查会被直接带偏（包损坏 / 解压失败只有上文一条 W 级日志）
+            if (packs.isEmpty()) {
+                Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
+            } else {
+                Diagnostics.w(TAG, "可选词库全部加载失败: 找到 ${packs.size} 个包，无一可用（长词不可用）")
+            }
         } else {
             Diagnostics.i(TAG, "可选词库已加载 ${loaded.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）")
         }
@@ -871,11 +932,9 @@ object PinyinEngine {
             }
             out.flush()
         }
-        if (file.exists() && !file.delete()) {
-            tmp.delete()
-            Diagnostics.w(TAG, "写索引缓存失败：无法删除旧文件 ${file.name}（本次退回堆内）")
-            return@runCatching false
-        }
+        // 不先删旧文件：POSIX rename 直接替换目录项，旧 inode 仍被已建立的映射持有（不会 SIGBUS），
+        // 而「先删再改名」会制造一个「目标不存在」的窗口 —— 改名一旦失败，旧缓存与新缓存同时失去，
+        // 下次启动只能整份重建。与 `DictManagerActivity` 的词库重装同一条口径（`tmp.renameTo(dst)`）。
         if (!tmp.renameTo(file)) {
             tmp.delete()
             Diagnostics.w(TAG, "写索引缓存失败：改名失败 ${tmp.name} -> ${file.name}（本次退回堆内）")

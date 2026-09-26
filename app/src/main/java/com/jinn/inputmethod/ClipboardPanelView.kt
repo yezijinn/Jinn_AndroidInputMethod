@@ -416,12 +416,25 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             val filter = ClipboardFilter.of(category)
             // 与 refresh 一致：查询异常也要复位 loadingPage（否则分页永久停摆）
             val loaded = runCatching {
-                db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                // 面板打开期间可能又有新内容入库（用户复制）或条目被删：分页游标是 SQL OFFSET，
+                // 头部一插入，下一页就会重复返回已显示的行、并永久跳过尾部若干行。
+                // 边翻边比总数：对不上就回首页重载，而不是沿着错的偏移继续翻。
+                val total = db.count(filter.category, filter.favoritesOnly)
+                if (total != categoryTotal) {
+                    null
+                } else {
+                    db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                }
             }
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
                 loaded.onSuccess { page ->
+                    if (page == null) {
+                        Diagnostics.i(TAG, "分页: 列表已变化（total 对不上），回首页重载")
+                        refresh(resetScroll = false)
+                        return@onSuccess
+                    }
                     // 判停用游标而非本页条数：整页解密失败时 items 为空但后面仍有内容，
                     // 以空页判停会让用户再也翻不到后面的条目。
                     if (page.nextOffset > offset) {
