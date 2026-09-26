@@ -166,10 +166,34 @@ class SettingsActivity : ComponentActivity() {
     /** 本次进页面时生效的深浅色；定时到点后用它与重新解析的结果比较，变了才重建页面 */
     private var appliedThemeDark = false
 
+    /**
+     * 麦克风被永久拒绝（拒绝后系统不再弹窗）。
+     *
+     * 该状态下再 launch 会立刻回调失败、按钮永远没效果 —— 唯一出路是系统应用详情页，
+     * 所以按钮文案与动作都改走那里（见 [requestMic]）。
+     */
+    private var micDeniedForever = false
+
+    /**
+     * 本页是否已发起过权限请求。
+     *
+     * 「已发起但仍未授予」是比 `shouldShowRequestPermissionRationale` 更可靠的
+     * 「弹窗不会再出现」判据 —— Android 10 起第二次请求会被系统静默拒绝（连弹窗都没有），
+     * 而那个 API 此时仍返回 true，只看它会让按钮继续「点了没反应」。
+     */
+    private var micRequested = false
+
     /** Activity Result API 替代已弃用的 requestPermissions */
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { refreshMicState() }
+    ) { granted ->
+        // 授权成功后复位「已请求」：之后若被系统撤销，仍可重新走弹窗
+        if (granted) micRequested = false
+        // 拒绝且系统不再允许弹窗 → 记下来供按钮切换
+        micDeniedForever = !granted &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        refreshMicState()
+    }
 
     /**
      * 诊断包导出：走系统文件选择器让用户自选保存位置（全程不申请存储权限）。
@@ -586,6 +610,8 @@ class SettingsActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::textThemeDesc.isInitialized) refreshThemeDesc()
+        // 麦克风状态同理：从系统设置授权后返回，页面不能还显示「未授权」
+        if (::textMicState.isInitialized) refreshMicState()
     }
 
     /**
@@ -1023,12 +1049,37 @@ class SettingsActivity : ComponentActivity() {
             refreshMicState()
             return
         }
+        // 已请求过仍未授予（弹窗不会再出现）或已确认永久拒绝 → 只能去应用详情页手动开
+        if (micRequested || micDeniedForever) {
+            openAppPermissionSettings()
+            return
+        }
+        micRequested = true
         micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    /** 跳系统应用详情页：永久拒绝后唯一能重新授权麦克风的地方 */
+    private fun openAppPermissionSettings() {
+        runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", packageName, null),
+                )
+            )
+        }.onFailure { Diagnostics.w(TAG, "打开应用详情页失败: ${it.message}") }
     }
 
     private fun refreshMicState() {
         val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val text = getString(if (granted) R.string.settings_mic_granted else R.string.settings_grant_mic)
+        // 点过一次仍未授权时按钮改为「前往系统设置」：本页再申请不会弹窗，只能去应用详情页手动开
+        val text = getString(
+            when {
+                granted -> R.string.settings_mic_granted
+                micRequested || micDeniedForever -> R.string.settings_mic_open_settings
+                else -> R.string.settings_grant_mic
+            }
+        )
         textMicState.text = text
         btnGrant.text = text
         btnGrant.isEnabled = !granted

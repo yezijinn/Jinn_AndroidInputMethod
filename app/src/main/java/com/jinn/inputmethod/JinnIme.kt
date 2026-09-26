@@ -1582,15 +1582,24 @@ class JinnIme : InputMethodService() {
         micButton?.cancelArmed = false
 
         if (commit) {
-            asr?.endTask()
-            Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
-            setHint(getString(R.string.hint_recognizing))
-            // 等结果期间要两样东西：兜底超时（服务端不回 final 时状态条不能被永久卡住）
-            // 与归属快照（结果回来时判「输入框是否已经换了应用」）
-            awaitingResult = true
-            voiceResultPackage = currentInputEditorInfo?.packageName
-            ui.removeCallbacks(recognizeTimeout)
-            ui.postDelayed(recognizeTimeout, RECOGNIZE_TIMEOUT_MS)
+            // 收尾包没送出去（断线 / 队列满）时服务端不会给最终结果：直接提示未连接、不挂等待态。
+            // 挂上就要等 60s 兜底超时才复位状态条，期间用户以为还在识别
+            if (asr?.endTask() != true) {
+                Diagnostics.w(TAG, "stopRecording: 收尾包未送出，放弃等待结果")
+                awaitingResult = false
+                voiceResultPackage = null
+                ui.removeCallbacks(recognizeTimeout)
+                setHint(getString(R.string.hint_not_connected))
+            } else {
+                Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
+                setHint(getString(R.string.hint_recognizing))
+                // 等结果期间要两样东西：兜底超时（服务端不回 final 时状态条不能被永久卡住）
+                // 与归属快照（结果回来时判「输入框是否已经换了应用」）
+                awaitingResult = true
+                voiceResultPackage = currentInputEditorInfo?.packageName
+                ui.removeCallbacks(recognizeTimeout)
+                ui.postDelayed(recognizeTimeout, RECOGNIZE_TIMEOUT_MS)
+            }
         } else {
             asr?.cancelTask()
             awaitingResult = false
