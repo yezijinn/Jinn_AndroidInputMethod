@@ -490,4 +490,59 @@ class RecentFixesRegressionTest {
             body.contains("total != categoryTotal"),
         )
     }
+
+    // ── 第三批：存储层与引擎状态机审查后的修复 ──
+
+    @Test
+    fun `数字层上屏前必须先提交拼音`() {
+        val text = codeOf("PinyinKeyboardView.kt")
+        val i = text.indexOf("val digit = DIGIT_MAP[c] ?: return")
+        assertTrue("源码里找不到数字层按键分支（改名 / 重构后请同步本用例）", i >= 0)
+        val window = text.substring(i, minOf(text.length, i + 400))
+        assertTrue(
+            "数字是即时上屏、候选要等收起键盘才提交：不先 commitComposing 就会「数字在前、候选在后」" +
+                "（真机实测：打拼音 → 切数字层点 1 → 收起键盘，正文是「1你」）",
+            window.contains("commitComposing()"),
+        )
+    }
+
+    @Test
+    fun `剪贴板导出必须防并发位移`() {
+        val body = blockAfter(codeOf("ConfigBackupManager.kt"), "private fun collectClipboard(context: Context)")
+        assertTrue(
+            "导出侧的分页游标是 SQL OFFSET：导出期间用户复制一条（插头 + 裁尾）会让后续页位移、" +
+                "静默跳过若干行（既没导出也不进 dropped）。必须比对总数并重来（面板侧已有同样防护）",
+            body.contains("db.count() == before") && body.contains("EXPORT_CLIP_ATTEMPTS"),
+        )
+    }
+
+    @Test
+    fun `词库恢复的落盘上限不把跳过项算进去`() {
+        val text = codeOf("ConfigBackupManager.kt")
+        assertTrue("上限判据必须存在（重构后同步本用例）", text.contains("pending.size >= MAX_DICT_FILES"))
+        assertFalse(
+            "上限不得把跳过项（清单外 / 校验不符）算进来：它们不落盘，" +
+                "计进来会让一个多余条目把整包（含设置 / 词频 / 剪贴板）拒收",
+            text.contains("skippedByName >= MAX_DICT_FILES"),
+        )
+    }
+
+    @Test
+    fun `配置包的加解密写盘不得先删目标`() {
+        assertFalse(
+            "encrypt / decrypt 都不许 dest.delete()：先删目标会制造「目标不存在」的窗口，" +
+                "改名失败时旧包与新包同时失去（与 UserFrequency.writeAtomically 同一条口径）",
+            codeOf("ConfigCrypto.kt").contains("dest.delete()"),
+        )
+    }
+
+    @Test
+    fun `SAF 落盘失败必须清掉半截文件`() {
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun copyConfigZipTo")
+        assertTrue(
+            "失败分支必须 contentResolver.delete(uri)：覆盖写一开始就把目标截断，" +
+                "留下半截文件只会让用户误以为是有效备份（拿去导入只会得到「密码错误或文件已损坏」）",
+            body.contains("contentResolver.delete(uri"),
+        )
+    }
 }

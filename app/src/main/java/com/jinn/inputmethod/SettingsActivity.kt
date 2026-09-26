@@ -748,6 +748,9 @@ class SettingsActivity : ComponentActivity() {
                     src.inputStream().use { it.copyTo(out) }
                 } != null
             }.getOrDefault(false)
+            // 失败时把刚写的半截文件删掉：覆盖写一开始就把目标清空，留下一份 0 字节或截断的文件
+            // 只会让用户误以为是有效产物（配置包拿去导入必然得到「密码错误或文件已损坏」，把排查带偏）
+            if (!ok) runCatching { contentResolver.delete(uri, null, null) }
             src.delete()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
@@ -1259,6 +1262,9 @@ class SettingsActivity : ComponentActivity() {
                     src.inputStream().use { it.copyTo(out) }
                 } != null
             }.getOrDefault(false)
+            // 失败时把刚写的半截文件删掉：覆盖写一开始就把目标清空，留下一份 0 字节或截断的文件
+            // 只会让用户误以为是有效产物（配置包拿去导入必然得到「密码错误或文件已损坏」，把排查带偏）
+            if (!ok) runCatching { contentResolver.delete(uri, null, null) }
             src.delete()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread

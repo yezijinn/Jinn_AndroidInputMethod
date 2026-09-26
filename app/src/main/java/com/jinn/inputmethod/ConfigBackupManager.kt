@@ -73,6 +73,9 @@ internal object ConfigBackupManager {
     /** 剪贴板导出/预览的分页步长 */
     private const val CLIP_PAGE = 200
 
+    /** 剪贴板导出遇到并发写入时的重来趟数（见 [collectClipboard]） */
+    private const val EXPORT_CLIP_ATTEMPTS = 3
+
     // 以下几组上限与 [readSection] / [zipEntryNames] 一样对测试可见（internal）：
     // 「打包 → 读回 → 校验」是主路径，此前只能靠真机人工验证（ADB 打不了中文密码）
 
@@ -409,8 +412,29 @@ internal object ConfigBackupManager {
 
     private class ClipPayload(val text: String, val dropped: Int)
 
+    /**
+     * 收集待导出的剪贴板条目。
+     *
+     * 分页游标是 SQL OFFSET，而导出期间 IME 仍在监听剪贴板：用户复制一条内容会触发
+     * 「插入新行 + 裁剪最旧」，整表位移一让后续页的 OFFSET 不再对齐原快照 ⇒ 有行被静默跳过
+     * （既没导出、也不进 `dropped`）。面板侧对同一问题已做位移防护，这里是导出侧的收敛：
+     * 每趟比对总数，一变就整份重来（最多 [EXPORT_CLIP_ATTEMPTS] 趟），宁可多跑两趟也不能漏。
+     */
     private fun collectClipboard(context: Context): ClipPayload {
         val db = ClipboardDb.get(context)
+        var last: ClipPayload? = null
+        repeat(EXPORT_CLIP_ATTEMPTS) { attempt ->
+            val before = db.count()
+            val payload = collectClipboardOnce(db)
+            if (db.count() == before) return payload
+            last = payload
+            Diagnostics.w(TAG, "剪贴板导出: 库在导出期间发生变化，重试（第 ${attempt + 1} 趟）")
+        }
+        Diagnostics.w(TAG, "剪贴板导出: 库仍在变化，采用最后一趟的结果")
+        return last ?: ClipPayload("", 0)
+    }
+
+    private fun collectClipboardOnce(db: ClipboardDb): ClipPayload {
         val entries = ArrayList<ConfigBackup.ClipEntry>()
         var bytes = 0L
         var dropped = 0
@@ -1006,8 +1030,11 @@ internal object ConfigBackupManager {
                         if (fileName.isEmpty() || fileName.contains('/') || fileName.contains('\\')) {
                             return@zipStream false
                         }
-                        if (pending.size + skippedByName >= MAX_DICT_FILES) {
-                            Diagnostics.w(TAG, "词库恢复: 条目数超过 $MAX_DICT_FILES 上限")
+                        // 上限只按**落盘**条目算：清单外与校验不符的条目走的是「跳过」语义（不占磁盘），
+                        // 把它们计进来会让一个多余条目把整包（含设置 / 词频 / 剪贴板）拒收 ——
+                        // 上限口径本来就是「落盘文件数」，与实现的遍历计数不是一回事
+                        if (pending.size >= MAX_DICT_FILES) {
+                            Diagnostics.w(TAG, "词库恢复: 落盘条目数超过 $MAX_DICT_FILES 上限")
                             return@zipStream false
                         }
                         // 白名单（可选词库清单）之外的条目：**参与摘要校验但不落盘**。

@@ -389,6 +389,30 @@ class ConfigBackupTest {
     }
 
     @Test
+    fun `导入时间戳被钳到合理区间`() {
+        val now = 1_800_000_000_000L
+        // 缺字段（0 = 1970）会让条目一入库就成「最旧」，库满时刚导入就被 trimTo 裁掉
+        assertEquals(ConfigBackup.MIN_CLIP_TIMESTAMP_MS, ConfigBackup.clampClipTimestamp(0L, now))
+        // 未来时间（时钟回拨 / 手改包）会永久钉在列表顶部，两种裁剪都不淘汰它
+        assertEquals(now, ConfigBackup.clampClipTimestamp(now + 86_400_000L, now))
+        // 合法时间原样保留
+        val legal = 1_700_000_000_000L
+        assertEquals(legal, ConfigBackup.clampClipTimestamp(legal, now))
+    }
+
+    @Test
+    fun `剪贴板解码对缺失或未来的时间戳做钳位`() {
+        val text = buildString {
+            append("{\"content\": \"缺时间戳\"}\n")
+            append("{\"content\": \"未来时间\", \"createdAt\": ").append(Long.MAX_VALUE).append("}\n")
+        }
+        val parsed = ConfigBackup.decodeClipboard(text)
+        assertEquals(2, parsed.size)
+        assertTrue(parsed[0].createdAt >= ConfigBackup.MIN_CLIP_TIMESTAMP_MS)
+        assertTrue(parsed[1].createdAt <= System.currentTimeMillis())
+    }
+
+    @Test
     fun `非有限浮点值不进包（否则写出非法 JSON 会让整节解析失败）`() {
         assertNull(ConfigBackup.BackupValue.of(Float.NaN))
         assertNull(ConfigBackup.BackupValue.of(Float.POSITIVE_INFINITY))

@@ -84,6 +84,24 @@ internal object ConfigBackup {
      */
     private const val CLIP_PARSE_ITEM_FACTOR = 4
 
+    /**
+     * 导入条目的时间戳下限（2000-01-01 UTC，毫秒）。
+     *
+     * 早于剪贴板功能存在的时间，不会误伤合法数据；只用来挡「缺字段 = 0（1970）」
+     * 与明显异常的远古时间。
+     */
+    const val MIN_CLIP_TIMESTAMP_MS = 946_684_800_000L
+
+    /**
+     * 备份包里的时间戳钳位（纯函数）。
+     *
+     * 外部包的时间戳不能直接采信：缺字段（0 = 1970）会让条目一入库就成「最旧」，
+     * 库满时刚导入就被 trimTo 裁掉；而未来时间（时钟回拨 / 手改包）会永久钉在列表顶部、
+     * 两种裁剪都不会淘汰它。钳到 [MIN_CLIP_TIMESTAMP_MS, now]。
+     */
+    fun clampClipTimestamp(raw: Long, now: Long = System.currentTimeMillis()): Long =
+        raw.coerceIn(MIN_CLIP_TIMESTAMP_MS, now)
+
     /** `manifest.device` 的展示长度上限：它是外部输入，会原样进导入清单的对话框 */
     private const val MAX_DEVICE_CHARS = 64
 
@@ -347,7 +365,7 @@ internal object ConfigBackup {
                 if (content.isEmpty()) return@runCatching null
                 ClipEntry(
                     content = content,
-                    createdAt = o.optLong("createdAt", 0L),
+                    createdAt = clampClipTimestamp(o.optLong("createdAt", 0L)),
                     sourcePackage = o.optString("sourcePackage"),
                     sourceAppName = o.optString("sourceAppName"),
                     // 归一到分类标签白名单：它会进剪贴板面板的 meta 文本（主线程布局），
