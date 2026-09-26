@@ -18,7 +18,7 @@ import org.junit.Test
  * 宽度归属由本测试按「是否 ASCII」钉死（`·—…` 这类通用标点非 ASCII，计入全角组）；
  * 两组还都禁数字（数字走数字层）且不得混入字母/汉字。
  * 「变量」组是动态取值（见 [DynamicSymbols]），其数据护栏在 `DynamicSymbolsTest`。
- * 「偏旁」组（2026-09-26，145 项笔画与部首）按页钉在 `偏旁组紧随变量之后且清单逐项一致`。
+ * 「偏旁」组（2026-09-26 用户给定清单的笔画与部首）按页钉在 `偏旁组紧随变量之后且清单逐项一致`。
  */
 class SymbolLayoutTest {
 
@@ -101,9 +101,10 @@ class SymbolLayoutTest {
 
     @Test
     fun 偏旁组紧随变量之后且清单逐项一致() {
-        // 「偏旁」组按用户 2026-09-26 给定清单录入：顺序即清单顺序，145 项铺 6 页（5×26 + 末页 15）。
+        // 「偏旁」组按用户 2026-09-26 给定清单录入：顺序即清单顺序，141 项铺 6 页（5×26 + 末页 11）。
         // 笔画与部首字形高度相邻（丿 乀 乁、孑 孓、氹 氽 汆…），漏字 / 错序既不报错也不显眼，
         // 只有真机逐个点击才发现 ⇒ 整串按页钉成黄金数据，改表必然先在这里红。
+        // 末页原有 8 个 CJK 扩展 B 区笔画，真机核对后删掉了 4 个系统字体无字形的（末页因此只剩 11 键）。
         val labels = SYMBOL_GROUPS.map { it.label }
         assertEquals("「偏旁」应紧跟在「变量」之后", "偏旁", labels[labels.indexOf("变量") + 1])
         val group = SYMBOL_GROUPS.first { it.label == "偏旁" }
@@ -113,17 +114,17 @@ class SymbolLayoutTest {
             "㔾〇廿卅卌皕亖丗尢尣疋疒癶禸攴曰覀虍豕豸隹鬥鬯鬲髟黹", // 第 3 页
             "黾龠艸耒聿艮舛缶氵灬亻讠饣忄扌犭牜礻衤钅纟艹宀辶阝刂", // 第 4 页
             "⺮罒爫攵夂夊歺氺龵爻囍卍卐々〆丼孑孓奀玍氹氽汆巜曱甴", // 第 5 页
-            "乄乊乢乭乶乷乸𠃉𠃊𠃋𠃌𠃍𠃎𠃏𠄡", // 第 6 页（末页 15 键）
+            "乄乊乢乭乶乷乸𠃊𠃋𠃌𠃍", // 第 6 页（末页 11 键）
         ).flatMap(::codePointsOf)
         assertEquals("偏旁组应与清单逐项一致", expected, group.pages.flatMap { it.values })
         assertEquals("偏旁组页数", 6, group.pages.size)
-        assertEquals("各页键数（先放满 26 键再翻页）", listOf(26, 26, 26, 26, 26, 15), group.pages.map { it.size })
+        assertEquals("各页键数（先放满 26 键再翻页）", listOf(26, 26, 26, 26, 26, 11), group.pages.map { it.size })
         val ascii = group.pages.flatMap { it.values }.filter { v -> v.any { it.code < 0x80 } }
         assertEquals("「偏旁」组混入 ASCII 字符: $ascii", emptyList<String>(), ascii)
     }
 
     /**
-     * 按 Unicode 码点切分。末页含 8 个 CJK 扩展 B 区笔画（`𠃉` 一类），按 `Char` 遍历会把它们
+     * 按 Unicode 码点切分。偏旁组末页留有 CJK 扩展 B 区笔画（`𠃊` 一类），按 `Char` 遍历会把它们
      * 劈成两个孤立代理项，与表里的单条取值对不上。
      */
     private fun codePointsOf(s: String): List<String> = buildList {

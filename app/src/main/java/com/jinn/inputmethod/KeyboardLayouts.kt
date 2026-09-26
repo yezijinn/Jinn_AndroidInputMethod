@@ -103,7 +103,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'l' to DynamicSymbols.token("长时符"),
         ),
     )),
-    // 偏旁：汉字笔画与部首（145 项，按序铺满 5 页 + 末页 15 键，顺序即用户给定清单）。
+    // 偏旁：汉字笔画与部首（141 项，按序铺满 5 页 + 末页 11 键，顺序即用户给定清单）。
     // 位置紧跟在「变量」之后，由 SymbolLayoutTest 的顺序守卫钉住。
     SymbolGroup("偏旁", listOf(
         // 第 1 页
@@ -151,11 +151,11 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "玍", 'x' to "氹", 'c' to "氽", 'v' to "汆", 'b' to "巜",
             'n' to "曱", 'm' to "甴",
         ),
-        // 第 6 页：末页 15 键（含 8 个 CJK 扩展 B 区笔画，键面字形取决于系统字体覆盖）
+        // 第 6 页：末页 11 键（含 4 个 CJK 扩展 B 区笔画；同区中无字形的 4 个已按用户要求删除）
         mapOf(
             'q' to "乄", 'w' to "乊", 'e' to "乢", 'r' to "乭", 't' to "乶",
-            'y' to "乷", 'u' to "乸", 'i' to "𠃉", 'o' to "𠃊", 'p' to "𠃋",
-            'a' to "𠃌", 's' to "𠃍", 'd' to "𠃎", 'f' to "𠃏", 'g' to "𠄡",
+            'y' to "乷", 'u' to "乸", 'i' to "𠃊", 'o' to "𠃋", 'p' to "𠃌",
+            'a' to "𠃍",
         ),
     )),
     // 标点
