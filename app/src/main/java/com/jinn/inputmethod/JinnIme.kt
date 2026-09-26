@@ -1520,6 +1520,16 @@ class JinnIme : InputMethodService() {
             return
         }
 
+        // 上一段的等待态到这里结束：新录音开始时它的最终结果已经拿不回来了
+        // （AsrClient 会用新 taskId 覆盖归属，旧结果回来会被当过期任务丢弃），
+        // 而那个 60s 兜底若留着，会在这次录音中途把状态条改成「未连接」，误导用户。
+        if (awaitingResult) {
+            Diagnostics.i(TAG, "startRecording: 上一段识别结果未回，本次录音开始后不再等待")
+        }
+        awaitingResult = false
+        voiceResultPackage = null
+        ui.removeCallbacks(recognizeTimeout)
+
         if (!hasMicPermission()) {
             Log.w(TAG, "startRecording: 缺少 RECORD_AUDIO 权限")
             Diagnostics.w(TAG, "startRecording: 缺少 RECORD_AUDIO 权限")

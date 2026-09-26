@@ -338,16 +338,7 @@ class DictManagerActivity : Activity() {
         val dst = File(dir, fileName)
 
         try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-                .followRedirects(true)
-                // 禁止 https→http 降级：Manifest 全局开了 usesCleartextTraffic，
-                // OkHttp 默认 followSslRedirects=true 会跟随这种跳转，一次 302
-                // 就能把词库下载降到明文 HTTP（同网段 MITM 改内容即可注入任意候选词）。
-                .followSslRedirects(false)
-                .build()
-            client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+            httpClient.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 val body = resp.body ?: error("响应为空")
                 body.byteStream().use { input ->
@@ -475,6 +466,25 @@ class DictManagerActivity : Activity() {
 
     private companion object {
         const val TAG = "DictManager"
+
+        /**
+         * 词库下载用的共享客户端（懒加载单例）。
+         *
+         * 每个 URL 都 new 一次会各建一套连接池与调度线程池，重试（Gitee 失败 → GitHub）
+         * 与反复点击会在同一进程里叠加 —— `AsrClient` 的注释已把这条列为反例。
+         *
+         * 超时与重定向策略固定：禁止 https→http 降级（Manifest 全局开了 usesCleartextTraffic，
+         * OkHttp 默认 `followSslRedirects=true` 会跟随这种跳转，一次 302 就能把词库下载
+         * 降到明文 HTTP，同网段 MITM 改内容即可注入任意候选词）。
+         */
+        private val httpClient: okhttp3.OkHttpClient by lazy {
+            okhttp3.OkHttpClient.Builder()
+                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(false)
+                .build()
+        }
 
         @Volatile
         private var activeDownload: String? = null

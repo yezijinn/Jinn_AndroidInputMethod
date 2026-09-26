@@ -46,6 +46,29 @@ class UpdateCheckerTest {
         assertEquals(7L * 24 * 60 * 60 * 1000, UpdateChecker.AUTO_CHECK_INTERVAL_MS)
     }
 
+    /**
+     * 仓库 tag 里 `v20260919` 这类带前缀的写法与纯数字并存，归一化只用于比较：
+     * 直达链接必须用**原始名**，否则落到 404。
+     */
+    @Test
+    fun 去更新链接必须用原始标签名() {
+        assertTrue(
+            UpdateChecker.releasesUrl(20260919, "gitee", "v20260919")
+                .endsWith("/releases/tag/v20260919")
+        )
+        assertTrue(
+            UpdateChecker.releasesUrl(20260926, "gitee", "20260926")
+                .endsWith("/releases/tag/20260926")
+        )
+        // 调用方没给 tag 时退回数字（老调用点兼容，不会拼出空 tag）
+        assertTrue(UpdateChecker.releasesUrl(20260926, "gitee").endsWith("/releases/tag/20260926"))
+        // GitHub 分支走发行版列表页，带不带 tag 都一样
+        assertEquals(
+            "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases",
+            UpdateChecker.releasesUrl(20260926, "github", "20260926"),
+        )
+    }
+
     private companion object {
         const val DAY = 24L * 60 * 60 * 1000
         const val NOW = 1_800_000_000_000L
