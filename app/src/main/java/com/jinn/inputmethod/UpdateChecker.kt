@@ -24,13 +24,22 @@ object UpdateChecker {
     private const val UA = "jinn-update-check"
     private const val TIMEOUT_MS = 10_000
 
+    /**
+     * 两源串行的总预算。
+     *
+     * 单个请求的 [TIMEOUT_MS] 管不住整体：GitHub 不可达是常态，超时后还要回退 Gitee
+     * 再来一轮，最坏是「10s + 10s」× 2。调用方的看门狗必须覆盖本预算 + 余量，
+     * 否则超时一到就解锁按钮，防重入判据失效、用户能并发发起第二次检查并重复弹窗。
+     */
+    internal const val TOTAL_BUDGET_MS = 25_000L
+
     /** 检查结果。Checking 是 UI 侧的瞬时态，不放这里。 */
     sealed interface Result {
         /** 已最新：远程最大日期 <= 本地 */
-        data class UpToDate(val latest: Int, val source: String) : Result
+        data class UpToDate(val latest: Int, val source: String, val tag: String = "") : Result
 
         /** 有更新：远程最大日期 > 本地 */
-        data class Available(val latest: Int, val source: String) : Result
+        data class Available(val latest: Int, val source: String, val tag: String = "") : Result
 
         /** 两个源都拉不到有效日期标签 */
         data object NetworkError : Result
@@ -44,10 +53,10 @@ object UpdateChecker {
      */
     fun checkAsync(local: Int, onDone: (Result) -> Unit) {
         Thread {
-            val result = runCatching { fetchLatestDateTag() }.fold(
-                onSuccess = { (latest, source) ->
-                    if (latest > local) Result.Available(latest, source)
-                    else Result.UpToDate(latest, source)
+            val result = runCatching { fetchLatest() }.fold(
+                onSuccess = { l ->
+                    if (l.date > local) Result.Available(l.date, l.source, l.tag)
+                    else Result.UpToDate(l.date, l.source, l.tag)
                 },
                 onFailure = {
                     Diagnostics.w(TAG, "检查更新失败: ${it.message}")
@@ -58,10 +67,18 @@ object UpdateChecker {
         }.apply { name = "jinn-update-check" }.start()
     }
 
-    /** 「去更新」跳转地址：按成功源切换，Gitee 直达对应 tag 页。 */
-    fun releasesUrl(latest: Int, source: String): String =
-        if (source == "gitee") "https://gitee.com/$OWNER/$REPO/releases/tag/$latest"
-        else "https://github.com/$OWNER/$REPO/releases"
+    /**
+     * 「去更新」跳转地址：按成功源切换，Gitee 直达对应 tag 页。
+     *
+     * [tag] 必须用**原始标签名**（[normalizeTag] 剥掉的 `v` 前缀要留着）：直达链接按名字取页面，
+     * 而仓库 tag 里 `v20260919` 这类带前缀的写法与纯数字并存，用归一化后的数字会落到 404。
+     */
+    fun releasesUrl(latest: Int, source: String, tag: String = ""): String =
+        if (source == "gitee") {
+            "https://gitee.com/$OWNER/$REPO/releases/tag/${tag.ifBlank { latest.toString() }}"
+        } else {
+            "https://github.com/$OWNER/$REPO/releases"
+        }
 
     /** 「打开下载页面」跳转地址：Gitee 发行版列表（附件下载入口），与当前更新源无关。 */
     fun downloadPageUrl(): String = "https://gitee.com/$OWNER/$REPO/releases"
@@ -84,41 +101,62 @@ object UpdateChecker {
         return now - lastCheckAt >= AUTO_CHECK_INTERVAL_MS
     }
 
-    /** 返回 (最大日期标签, 来源)；GitHub 失败自动回退 Gitee；两源皆败抛异常。 */
-    private fun fetchLatestDateTag(): Pair<Int, String> {
-        fetchFromGithub()?.let { return it to "github" }
+    /** 一次检查的候选结果：日期数字 + 来源 + **原始标签名**（`v` 前缀留着，跳转链接要用）。 */
+    private data class Latest(val date: Int, val source: String, val tag: String)
+
+    /**
+     * 取最大日期标签；GitHub 失败自动回退 Gitee；两源皆败抛异常。
+     *
+     * 全程受 [TOTAL_BUDGET_MS] 总预算约束：没有它时「GitHub 超时 + 回退 + Gitee 再超时」
+     * 会把调用方的看门狗远远甩在后面（见该常量的说明）。
+     */
+    private fun fetchLatest(): Latest {
+        val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
+        fetchFromGithub(deadline)?.let { return it }
         Diagnostics.i(TAG, "GitHub 源无可用标签，回退 Gitee")
-        fetchFromGitee()?.let { return it to "gitee" }
+        fetchFromGitee(deadline)?.let { return it }
         throw IOException("all update sources unreachable")
     }
 
     /** GitHub：/tags 是 HTML，链接形如 owner/repo/releases/tag/&lt;tag&gt; 或 .../tree/&lt;tag&gt;。 */
-    private fun fetchFromGithub(): Int? = runCatching {
-        val html = httpGet("https://github.com/$OWNER/$REPO/tags") ?: return@runCatching null
+    private fun fetchFromGithub(deadline: Long): Latest? = runCatching {
+        val html = httpGet("https://github.com/$OWNER/$REPO/tags", deadline) ?: return@runCatching null
         val linkRe = Regex("""$OWNER/$REPO/(?:tree|releases/tag)/([^"'<>?#\s]+)""")
-        val nums = linkRe.findAll(html).mapNotNull { m -> normalizeTag(m.groupValues[1]) }
-        nums.maxOrNull()
+        linkRe.findAll(html)
+            .mapNotNull { m ->
+                normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "github", m.groupValues[1]) }
+            }
+            .maxByOrNull { it.date }
     }.onFailure { Diagnostics.w(TAG, "GitHub 源异常: ${it.message}") }.getOrNull()
 
     /** Gitee：网页 /tags 返回 405，改走开放 API；JSON 内的 tag 名同样按统一规则归一化。 */
-    private fun fetchFromGitee(): Int? = runCatching {
-        val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags")
+    private fun fetchFromGitee(deadline: Long): Latest? = runCatching {
+        val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags", deadline)
             ?: return@runCatching null
         val nameRe = Regex(""""name"\s*:\s*"([^"]+)"""")
-        val nums = nameRe.findAll(body).mapNotNull { m -> normalizeTag(m.groupValues[1]) }
-        nums.maxOrNull()
+        nameRe.findAll(body)
+            .mapNotNull { m ->
+                normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "gitee", m.groupValues[1]) }
+            }
+            .maxByOrNull { it.date }
     }.onFailure { Diagnostics.w(TAG, "Gitee 源异常: ${it.message}") }.getOrNull()
 
     /** 统一标签归一化：去 v 前缀 → 仅接受 6..8 位纯数字（两源同规则）。 */
     private fun normalizeTag(raw: String): Int? =
         raw.removePrefix("v").takeIf { it.length in 6..8 && it.all(Char::isDigit) }?.toIntOrNull()
 
-    /** 返回响应体；非 200 或异常返回 null（由调用方决定是否回退下一源）。 */
-    private fun httpGet(url: String): String? {
+    /** 返回响应体；非 200 / 总预算耗尽 / 异常返回 null（由调用方决定是否回退下一源）。 */
+    private fun httpGet(url: String, deadline: Long): String? {
+        // 单个请求的超时不能超过剩余总预算：否则两源串行会把调用方的看门狗甩掉
+        val remain = (deadline - System.currentTimeMillis()).coerceAtMost(TIMEOUT_MS.toLong())
+        if (remain <= 0L) {
+            Diagnostics.w(TAG, "总预算已耗尽，跳过请求: ${url.substringBefore('?')}")
+            return null
+        }
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
+            connectTimeout = remain.toInt()
+            readTimeout = remain.toInt()
             setRequestProperty("User-Agent", UA)
         }
         return try {

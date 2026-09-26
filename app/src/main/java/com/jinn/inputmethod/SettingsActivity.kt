@@ -936,7 +936,7 @@ class SettingsActivity : ComponentActivity() {
                 )
                 .setNegativeButton(R.string.update_btn_later, null)
                 .setPositiveButton(R.string.update_btn_go) { _, _ ->
-                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
+                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source, result.tag))
                 }
 
             is UpdateChecker.Result.UpToDate -> builder
@@ -969,7 +969,7 @@ class SettingsActivity : ComponentActivity() {
                 .setMessage(R.string.update_ask_message)
                 .setNegativeButton(R.string.update_btn_no, null)
                 .setPositiveButton(R.string.update_btn_go) { _, _ ->
-                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source))
+                    openUrl(UpdateChecker.releasesUrl(result.latest, result.source, result.tag))
                 }
                 .create()
         )
@@ -1734,8 +1734,13 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_MODE_RESTORE = "覆盖还原（设置与词频按备份写回，剪贴板并入本机历史）"
         const val TEXT_MODE_MERGE = "仅并入数据（只合并词频、剪贴板与词库，保留本机设置）"
 
-        /** 「检查更新」看门狗超时：网络超时 10s + 5s 余量，到点（仍处于 Checking 时）兜底解锁 */
-        const val UPDATE_WATCHDOG_MS = 15_000L
+        /**
+         * 「检查更新」看门狗超时：两源串行的总预算（`UpdateChecker.TOTAL_BUDGET_MS` = 25s）+ 5s 余量。
+         *
+         * 15s 版本按「单个 10s 超时」留余量，但 GitHub 不可达时还要回退 Gitee 再来一轮，
+         * 看门狗会先于请求熄灯解锁 —— 防重入判据随之失效，用户可并发发起第二次检查并重复弹窗。
+         */
+        const val UPDATE_WATCHDOG_MS = 30_000L
 
         /** 自动检查的日志换算用（毫秒/天）；节流判据本体在 [UpdateChecker.shouldAutoCheck] */
         const val DAY_MS = 24L * 60 * 60 * 1000

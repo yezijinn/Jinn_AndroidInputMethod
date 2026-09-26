@@ -545,4 +545,59 @@ class RecentFixesRegressionTest {
             body.contains("contentResolver.delete(uri"),
         )
     }
+
+    // ── 第四批：协议与更新链路审查后的修复 ──
+
+    @Test
+    fun `检查更新的看门狗必须覆盖两源总预算`() {
+        val watchdog = Regex("""UPDATE_WATCHDOG_MS = ([\d_]+)L""")
+            .find(codeOf("SettingsActivity.kt"))?.groupValues?.get(1)
+            ?.replace("_", "")?.toLongOrNull()
+        assertTrue("源码里找不到 UPDATE_WATCHDOG_MS（改名后请同步本用例）", watchdog != null)
+        assertTrue(
+            "看门狗（${watchdog}ms）必须大于两源串行总预算（${UpdateChecker.TOTAL_BUDGET_MS}ms）：" +
+                "GitHub 不可达时会「超时 + 回退 Gitee + 再超时」，看门狗短了会在请求仍在途时解锁按钮，" +
+                "防重入判据随之失效、用户能并发发起第二次检查并重复弹窗",
+            watchdog!! > UpdateChecker.TOTAL_BUDGET_MS,
+        )
+    }
+
+    @Test
+    fun `更新请求必须受总预算约束`() {
+        val text = codeOf("UpdateChecker.kt")
+        assertTrue("总预算常量必须存在", text.contains("TOTAL_BUDGET_MS"))
+        assertTrue(
+            "httpGet 必须按剩余预算设超时（coerceAtMost）：单个 10s 超时管不住两源串行",
+            text.contains("coerceAtMost(TIMEOUT_MS.toLong())"),
+        )
+    }
+
+    @Test
+    fun `开始新录音必须清掉上一段的等待态`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun startRecording")
+        assertTrue(
+            "startRecording 必须复位 awaitingResult 并撤掉 recognizeTimeout：新录音会让上一段的结果" +
+                "被 AsrClient 当过期任务丢弃，而那个 60s 兜底若留着，会在这次录音中途把状态条改成「未连接」",
+            body.contains("awaitingResult = false") && body.contains("ui.removeCallbacks(recognizeTimeout)"),
+        )
+    }
+
+    @Test
+    fun `词库下载必须复用同一个客户端`() {
+        val body = blockAfter(codeOf("DictManagerActivity.kt"), "private fun fetchToFile")
+        assertFalse(
+            "fetchToFile 里不得 new OkHttpClient：每个 URL（含重试）各建一套连接池与调度线程池",
+            body.contains("OkHttpClient.Builder()"),
+        )
+        assertTrue("必须用共享单例", body.contains("httpClient.newCall"))
+    }
+
+    @Test
+    fun `可选词库摘要的文档口径必须是压缩文件`() {
+        assertFalse(
+            "KDoc 不得写成「未压缩文件的 SHA-256」：两条校验路径算的都是 .xz 字节，" +
+                "按文档填值会让下载与备份导入 100% 校验失败",
+            codeOf("OptionalDicts.kt").contains("未压缩文件的 SHA-256"),
+        )
+    }
 }
