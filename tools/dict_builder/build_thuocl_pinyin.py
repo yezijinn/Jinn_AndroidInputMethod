@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """为 THUOCL 各分类词表注音，输出输入法拼音词库（每分类独立文件）。"""
-import os, re, json
+import os, re, json, sys
 from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text  # noqa: E402
 
 BASE = r"C:\AI_WORKSPACE\PROJECTS\com.jinn.inputmethod"
 RIME = os.path.join(BASE, "docs", "rime-ice", "cn_dicts")
-SYLL = os.path.join(BASE, "app", "src", "main", "assets", "pinyin_syllables.txt")
+SYLL = os.path.join(BASE, "app", "src", "main", "assets", "pinyin_syllables.txt.xz")
 THUOCL_DIR = os.path.join(BASE, "tools", "dict_builder", "THUOCL-master", "data")
 OUT_DIR = os.path.join(BASE, "tools", "dict_builder", "THUOCL注音输出")
 
@@ -13,8 +16,7 @@ MAX_WORD_LEN = 8
 CN_RE = re.compile(r"^[\u4e00-\u9fff·]+$")
 
 # ---------- 1. 音节表 ----------
-with open(SYLL, encoding="utf-8") as f:
-    SYLLABLES = set(f.read().split())
+SYLLABLES = set(read_asset_text(SYLL).split())
 SYLL_MAXLEN = max(len(s) for s in SYLLABLES)
 
 def can_segment(key):

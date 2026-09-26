@@ -62,9 +62,12 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME = os.path.join(ROOT, 'docs', 'rime-ice')
-SYLL = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_syllables.txt')
+SYLL = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_syllables.txt.xz')
 # 词库文本已在 Stage 1 移出 assets（运行时改读二进制索引），这里改读流水线留档文本：
 # 由 convert_rime_ice.py / build_dict_index.py 写到 out/rime_ice/pinyin_phrases.txt。
 DICT = os.path.join(ROOT, 'tools', 'dict_builder', 'out', 'rime_ice', 'pinyin_phrases.txt')
@@ -307,7 +310,7 @@ def pick_canonical(sylls, counts):
 
 
 def main():
-    syllables = [l.strip() for l in io.open(SYLL, encoding='utf-8') if l.strip()]
+    syllables = [l.strip() for l in read_asset_text(SYLL).split('\n') if l.strip()]
     counts = dict_key_counts()
     print(f'音节表 {len(syllables)} 个；词库唯一键 {len(counts)} 个')
     os.makedirs(OUT_DIR, exist_ok=True)

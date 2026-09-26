@@ -46,6 +46,9 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ASSETS = os.path.join(ROOT, "app", "src", "main", "assets")
 RELEASE = os.path.join(ROOT, "release")
@@ -54,10 +57,10 @@ OUT_DIR = os.path.join(ROOT, "docs", "dict_review")
 
 INDEX_ASSET = os.path.join(ASSETS, "pinyin_index.bin.xz")
 HOT_ASSET = os.path.join(ASSETS, "hot_phrases.txt.xz")
-CHARS_ASSET = os.path.join(ASSETS, "pinyin_chars.txt")
-COMMON_ASSET = os.path.join(ASSETS, "common_chars.txt")
-TIER3_ASSET = os.path.join(ASSETS, "tier3_chars.txt")
-SYLLABLE_ASSET = os.path.join(ASSETS, "pinyin_syllables.txt")
+CHARS_ASSET = os.path.join(ASSETS, "pinyin_chars.txt.xz")
+COMMON_ASSET = os.path.join(ASSETS, "common_chars.txt.xz")
+TIER3_ASSET = os.path.join(ASSETS, "tier3_chars.txt.xz")
+SYLLABLE_ASSET = os.path.join(ASSETS, "pinyin_syllables.txt.xz")
 TABLE_8105 = os.path.join(RIME_DIR, "8105.dict.yaml")
 
 # 与 PinyinEngine 的判据保持一致
@@ -107,7 +110,7 @@ def read_plain_text_xz(path):
 def read_common_chars(path):
     """读常用字表：`#` 注释跳过，其余行的汉字全部计入。"""
     chars = set()
-    for line in open(path, encoding="utf-8"):
+    for line in read_asset_text(path).split("\n"):
         s = line.strip()
         if not s or s.startswith("#"):
             continue
@@ -135,7 +138,7 @@ def read_table_8105(path):
 def read_chars_table(path):
     """读单字表，返回 [(音节, [字, ...]), ...]（保持顺序）。"""
     out = []
-    for line in open(path, encoding="utf-8").read().split("\n"):
+    for line in read_asset_text(path).split("\n"):
         if not line or "\t" not in line:
             continue
         syl, seg = line.split("\t", 1)
@@ -274,7 +277,7 @@ def main():
         ("三级字表.txt", TIER3_ASSET, "三级 %d 字（与一二级同为默认档）" % len(tier3_chars)),
         ("音节表.txt", SYLLABLE_ASSET, "合法音节全集"),
     ):
-        text = open(src, encoding="utf-8").read().replace("\r\n", "\n").rstrip("\n")
+        text = read_asset_text(src).rstrip("\n")
         write(os.path.join(out_dir, name), text)
         say("- `%s`：%s" % (name, note))
     say()
