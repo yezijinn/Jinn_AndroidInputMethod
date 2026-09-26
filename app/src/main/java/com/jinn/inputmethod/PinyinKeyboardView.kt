@@ -1402,6 +1402,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             LAYER_DIGIT -> {
                 val digit = DIGIT_MAP[c] ?: return
+                // 数字是**即时上屏**，而残留的拼音候选要等收起键盘才提交：不先确定拼音，
+                // 数字就会插到它前面（实测：打拼音 → 切数字层点 1 → 收起键盘，正文是「1你」，
+                // 与输入顺序相反）。与切中英同一条口径：结束拼音输入时先提交首候选。
+                commitComposing()
                 listener?.onCommitText(digit)
                 return
             }

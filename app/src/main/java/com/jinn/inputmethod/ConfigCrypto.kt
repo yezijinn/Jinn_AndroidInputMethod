@@ -162,7 +162,9 @@ internal object ConfigCrypto {
             Diagnostics.w("ConfigCrypto", "加密失败: ${t.javaClass.simpleName}")
             return false
         }
-        dest.delete()
+        // 直接改名覆盖（rename 替换目录项）：先删目标会制造一个「目标不存在」的窗口，
+        // 改名一旦失败，旧包与新包同时失去。与 `UserFrequency.writeAtomically`、索引缓存
+        // 同一条口径（那两处都把「先删目标」写成反例）。
         if (!tmp.renameTo(dest)) {
             tmp.delete()
             return false
@@ -225,7 +227,7 @@ internal object ConfigCrypto {
             Diagnostics.w("ConfigCrypto", "解密失败（密码错误或文件损坏）: ${t.javaClass.simpleName}")
             return false
         }
-        dest.delete()
+        // 同上：直接改名覆盖，不先删目标
         if (!tmp.renameTo(dest)) {
             tmp.delete()
             return false
