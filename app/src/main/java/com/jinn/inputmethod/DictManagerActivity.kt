@@ -13,6 +13,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.Locale
 
 /**
@@ -92,7 +93,21 @@ class DictManagerActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        activePage = WeakReference(this)
+        // 下载仍在进行时页面被重建（旋转 / 关闭重进）：按钮与状态行按当前进度恢复，
+        // 否则新页面只显示一排禁用按钮，看不出正在下载什么
+        downloading?.let { name ->
+            OptionalDicts.ALL.firstOrNull { it.fileName == name }?.let {
+                setStatus(getString(R.string.dict_downloading, it.name))
+            }
+        }
         refreshList()
+    }
+
+    override fun onPause() {
+        // 只清自己的引用：重建时旧实例的 onPause 不能把新实例刚登记的引用冲掉
+        if (activePage?.get() === this) activePage = null
+        super.onPause()
     }
 
     /** 顶栏下方的静态提示行（每句一个 TextView，不折行） */
@@ -284,24 +299,25 @@ class DictManagerActivity : Activity() {
             }
             runOnUiThread {
                 downloading = null
-            // 用户可能在下载完成前点 ✕ 关闭页面：此时 View 已销毁、不能动 UI，
-            // 但词库已经下完、用户本就希望生效，所以仍要重启 IME。
-                if (isFinishing || isDestroyed) {
+                // 刷新「当前活着的页面」而不是发起下载的那个实例：下载期间用户可能旋转或
+                // 关闭重进本页，旧实例上的刷新会写进已 detach 的 View（原实现直接 return），
+                // 新页面就停在「按钮禁用、状态行不显示」的旧快照上，要等下次 resume 才自愈。
+                // 页面确实不在时（用户已关闭）：View 不能动，但词库已下完、用户本就希望生效，
+                // 仍要重启 IME 让引擎加载。
+                val page = activePage?.get()
+                if (page == null || page.isFinishing || page.isDestroyed) {
                     Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），仍重启输入法以加载")
                     if (ok) restartImeForDict()
                     return@runOnUiThread
                 }
-                val msg = if (ok) getString(R.string.dict_download_done, dict.name)
-                else getString(R.string.dict_download_failed, lastError)
-                setStatus(msg)
-                // 失败必须用 Toast 再提示一次：状态行是 Activity 的 View，
-                // 若下载期间页面发生过重建，runOnUiThread 里拿到的仍是旧实例的
-                // textStatus，提示写进了已不在屏幕上的 View，用户什么也看不到
-                // （实测：断网点下载后页面毫无反应，只会以为按钮坏了）。
-                // Toast 挂在系统窗口上，不受 Activity 重建影响。
-                if (!ok) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-                refreshList()
-                if (ok) restartImeForDict()
+                val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
+                else page.getString(R.string.dict_download_failed, lastError)
+                page.setStatus(msg)
+                // 失败再用 Toast 提示一次（提示挂在系统窗口上，不受页面重建影响）：
+                // 断网点下载时若状态行又随重建消失，用户只会以为按钮坏了
+                if (!ok) Toast.makeText(page, msg, Toast.LENGTH_LONG).show()
+                page.refreshList()
+                if (ok) page.restartImeForDict()
             }
         }.start()
     }
@@ -458,6 +474,15 @@ class DictManagerActivity : Activity() {
 
         @Volatile
         private var activeDownload: String? = null
+
+        /**
+         * 当前活着的页面实例（onResume 登记 / onPause 清除）。
+         *
+         * 下载完成回调捕获的是**发起下载**的那个 Activity，而下载期间页面可能已被重建：
+         * 刷新必须落在「用户眼前这个实例」上，否则新页面拿不到这次刷新（弱引用，不延长生命周期）。
+         */
+        @Volatile
+        private var activePage: WeakReference<DictManagerActivity>? = null
 
         /** 单个词库包的下载上限（字节）：现役最大包 6.36MB，取 64MB 留足余量 */
         const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024

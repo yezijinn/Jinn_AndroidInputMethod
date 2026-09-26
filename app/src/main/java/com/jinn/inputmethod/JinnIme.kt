@@ -604,17 +604,22 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "复制: 选中 ${sel.length} 字（保持选区与拖选模式）")
     }
 
-    /** 粘贴：有选区替换，无选区在光标处插入 */
+    /**
+     * 粘贴（功能面板「粘贴」键）：有选区替换，无选区在光标处插入。
+     *
+     * 内容来自**系统剪贴板**（别的应用复制过来的整篇文档可能几 MB），必须与剪贴板面板
+     * 走同一条实现：单条上限闸 + `runCatching` 包住 `commitText`。裸提交会撞 Binder
+     * 事务上限抛 `TransactionTooLargeException`（本项目 2026-09-16 已在同类链路上实测过），
+     * 未捕获时直接崩掉整个 IME 进程。
+     */
     private fun pasteClipboard() {
-        val connection = currentInputConnection ?: return
         val clip = clipboardManager.primaryClip
         val text = clip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
         if (text.isEmpty()) {
             Diagnostics.w(TAG, "粘贴: 剪贴板为空")
             return
         }
-        connection.commitText(text, 1)
-        Diagnostics.i(TAG, "粘贴: len=${text.length}")
+        pasteClipboardText(text)
     }
 
     /**

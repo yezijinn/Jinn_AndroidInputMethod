@@ -849,6 +849,10 @@ internal object ConfigBackupManager {
             // 模糊音掩码在引擎里另有一份运行期副本（Prefs + `PinyinEngine.fuzzyMask`）：
             // 导入改了它就必须同步一次，否则设置页显示与候选行为不一致，直到 IME 进程重建
             PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
+            // 用户词频开关同理（Prefs.userLearning + `UserFrequency.enabled`）：包内没有词频节时
+            // 上面那条 replaceFromBackup 不会被调用，只写 Prefs 会留下「设置页显示已关、
+            // 候选仍在按上一次的学习结果重排」的不一致，直到 IME 进程重建
+            UserFrequency.setEnabled(prefs.userLearning)
             // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
             // 这里补一次，否则「导入成功」后历史仍超限，用户会以为上限没生效
             runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems) }
