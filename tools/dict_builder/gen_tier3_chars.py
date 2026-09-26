@@ -28,10 +28,14 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text, write_asset_text  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TABLE_8105 = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts", "8105.dict.yaml")
-COMMON_ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "common_chars.txt")
-OUT_ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "tier3_chars.txt")
+# 资产以 .xz 存进 APK（体积余量），读写统一走 asset_io
+COMMON_ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "common_chars.txt.xz")
+OUT_ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "tier3_chars.txt.xz")
 
 HAN_LO, HAN_HI = 0x4E00, 0x9FFF
 PER_LINE = 50
@@ -40,7 +44,7 @@ PER_LINE = 50
 def read_chars(path):
     """读字表：`#` 注释跳过，其余行的汉字全部计入。"""
     chars = set()
-    for line in io.open(path, encoding="utf-8"):
+    for line in read_asset_text(path).split("\n"):
         s = line.strip()
         if not s or s.startswith("#"):
             continue
@@ -77,8 +81,7 @@ def main():
         % len(tier3),
     ]
     body = ["".join(tier3[i:i + PER_LINE]) for i in range(0, len(tier3), PER_LINE)]
-    with io.open(OUT_ASSET, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("\n".join(header + body) + "\n")
+    write_asset_text(OUT_ASSET, "\n".join(header + body))
 
     print("三级字 = %d（全表 %d − 一二级 %d 后取基本区）" % (len(tier3), len(full), len(common)))
     print("已写入 %s" % os.path.relpath(OUT_ASSET, ROOT))

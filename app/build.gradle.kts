@@ -121,6 +121,11 @@ android {
             // GET（检查更新），从不解析 Cookie、也不调用 topPrivateDomain()，而它是惰性加载的，
             // 不发请求就不会被读取。排除后 APK 体积回到 5MB 线下且有约 40KB 余量。
             "okhttp3/internal/publicsuffix/publicsuffixes.gz",
+            // Kotlin 标准库的反射元数据（约 29KB 未压缩 / 10KB 压缩）：只服务 kotlin-reflect，
+            // 本项目不用 Kotlin 反射（无 kotlin.reflect 依赖、无 Class.forName），运行时无需这些文件。
+            "kotlin/**/*.kotlin_builtins",
+            // 构建工具链元数据，与运行期无关
+            "kotlin-tooling-metadata.json",
         )
     }
 }

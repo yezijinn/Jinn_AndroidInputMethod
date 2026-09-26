@@ -21,6 +21,12 @@ class IndexFeatureRegressionTest {
         for (p in listOf("src/main/assets/$name", "app/src/main/assets/$name")) {
             val f = File(p)
             if (f.isFile) return f.readText()
+            // 文本资产自 2026-09-26 起以 .xz 存进 APK（体积余量），测试按短名取、自动解压
+            val xz = File("$p.xz")
+            if (xz.isFile) {
+                return org.tukaani.xz.XZInputStream(xz.inputStream())
+                    .use { String(it.readBytes(), Charsets.UTF_8) }
+            }
         }
         throw AssertionError("未找到 asset $name")
     }

@@ -21,6 +21,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 KT = os.path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'jinn', 'inputmethod',
                   'ShuangpinSchemes.kt')
@@ -118,9 +121,9 @@ def new_table(scheme_key):
 
 
 def valid_syllables():
-    """合法音节全集（`assets/pinyin_syllables.txt`）：判据只认「旧结果落在合法音节里」的差异。"""
-    p = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_syllables.txt')
-    return set(io.open(p, encoding='utf-8').read().split())
+    """合法音节全集（`assets/pinyin_syllables.txt.xz`）：判据只认「旧结果落在合法音节里」的差异。"""
+    p = os.path.join(ROOT, 'app', 'src', 'main', 'assets', 'pinyin_syllables.txt.xz')
+    return set(read_asset_text(p).split())
 
 
 def main():

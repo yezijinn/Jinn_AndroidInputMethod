@@ -48,8 +48,19 @@ object PinyinEngine {
     /** 合并缓存的「确实没有」哨兵（避免同一缺失键反复走逐段查找） */
     private val EMPTY_WORDS = emptyArray<String>()
 
-    /** 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字） */
-    private const val COMMON_CHARS_ASSET = "common_chars.txt"
+    /**
+     * 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字）。
+     *
+     * 4 个纯文本资产统一存 `.xz`：APK 内 deflate 后合计 63.8KB → xz 42.8KB（省约 21KB）。
+     * 体积是硬约束（5MB 上限），这笔省下来的是余量。
+     */
+    private const val COMMON_CHARS_ASSET = "common_chars.txt.xz"
+
+    /** 单字表 asset（`字<TAB>拼音`，`tools/dict_builder/export_dicts.py` 产出） */
+    private const val CHARS_ASSET = "pinyin_chars.txt.xz"
+
+    /** 合法音节表 asset（422 个音节；双拼表生成器脚本也读它） */
+    private const val SYLLABLES_ASSET = "pinyin_syllables.txt.xz"
 
     /**
      * 规范表三级字 asset 名（同表三级，1407 字；`tools/dict_builder/gen_tier3_chars.py` 生成）。
@@ -57,7 +68,7 @@ object PinyinEngine {
      * 三级字同样是规范汉字（囧 / 淼 / 喆 / 昇 一类人名地名用字），与一级二级一起默认加载；
      * 只有表外字（繁体 / 异体 / 日韩 / 扩展区）才随「加更多生僻字」开关。
      */
-    private const val TIER3_CHARS_ASSET = "tier3_chars.txt"
+    private const val TIER3_CHARS_ASSET = "tier3_chars.txt.xz"
 
     /**
      * 全量基础词库的二进制索引 asset（`tools/dict_builder/build_dict_index.py` 构建期产出）。
@@ -648,14 +659,20 @@ object PinyinEngine {
 
     // ── 生僻字过滤 ───────────────────────────────────────────
 
+    /**
+     * 打开文本资产（`.xz`），关闭 reader 会级联关掉解压流与 asset 流。
+     *
+     * 4 个纯文本资产的统一入口：字典大小在压缩时按输入规模给（1MB），解压端按流头分配，
+     * 不会因为小文件也吃大资产那档的 8MB。
+     */
+    private fun openAssetText(context: Context, name: String): java.io.BufferedReader =
+        org.tukaani.xz.XZInputStream(context.assets.open(name))
+            .bufferedReader(StandardCharsets.UTF_8)
+
     /** 读取两张默认档字表 asset（一级+二级 / 三级）并建立位图 */
     private fun loadCharTiers(context: Context) {
-        context.assets.open(COMMON_CHARS_ASSET).bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            setCommonCharsText(reader.readText())
-        }
-        context.assets.open(TIER3_CHARS_ASSET).bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            setTier3CharsText(reader.readText())
-        }
+        openAssetText(context, COMMON_CHARS_ASSET).use { setCommonCharsText(it.readText()) }
+        openAssetText(context, TIER3_CHARS_ASSET).use { setTier3CharsText(it.readText()) }
     }
 
     /**
@@ -978,9 +995,7 @@ object PinyinEngine {
     fun isExtensionLoaded(): Boolean = extensionLoaded
 
     private fun loadChars(context: Context) {
-        context.assets.open("pinyin_chars.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
-            loadCharsReader(reader)
-        }
+        openAssetText(context, CHARS_ASSET).use { loadCharsReader(it) }
     }
 
     private fun loadCharsReader(reader: java.io.BufferedReader) {
@@ -1259,7 +1274,7 @@ object PinyinEngine {
     }
 
     private fun loadSyllables(context: Context) {
-        context.assets.open("pinyin_syllables.txt").bufferedReader(StandardCharsets.UTF_8).use { reader ->
+        openAssetText(context, SYLLABLES_ASSET).use { reader ->
             var line = reader.readLine()
             while (line != null) {
                 if (line.isNotBlank()) validSyllables.add(line.trim())

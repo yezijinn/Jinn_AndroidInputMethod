@@ -39,8 +39,11 @@ OUT_XZ = os.path.join(ROOT, "release", "opt_tencent.txt.xz")
 
 XZ_FILTERS = [{"id": lzma.FILTER_LZMA2, "preset": 7, "lc": 4, "pb": 0}]
 
-SYLLABLES = set(open(os.path.join(ROOT, "app", "src", "main", "assets",
-                                  "pinyin_syllables.txt"), encoding="utf-8").read().split())
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from asset_io import read_asset_text  # noqa: E402
+
+SYLLABLES = set(read_asset_text(os.path.join(ROOT, "app", "src", "main", "assets",
+                                             "pinyin_syllables.txt.xz")).split())
 MAX_SYL = max(len(s) for s in SYLLABLES)
 
 # 多音字判定：最高权重 / 次高权重低于该比值时认为难以判断

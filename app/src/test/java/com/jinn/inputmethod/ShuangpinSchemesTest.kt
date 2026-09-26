@@ -221,6 +221,13 @@ class ShuangpinSchemesTest {
         for (path in candidates) {
             val f = File(path)
             if (f.isFile) return f.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+            // 文本资产自 2026-09-26 起以 .xz 存进 APK（体积余量），测试按短名取、自动解压
+            val xz = File("$path.xz")
+            if (xz.isFile) {
+                val text = org.tukaani.xz.XZInputStream(xz.inputStream())
+                    .use { String(it.readBytes(), Charsets.UTF_8) }
+                return text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            }
         }
         throw AssertionError("未找到音节表，尝试过: $candidates")
     }
