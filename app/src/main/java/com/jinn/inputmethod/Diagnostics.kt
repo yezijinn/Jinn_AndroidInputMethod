@@ -59,6 +59,28 @@ object Diagnostics {
      */
     private const val VERBOSE_TO_FILE = false
 
+    /**
+     * 单条落盘正文的长度上限（字符）。
+     *
+     * 正文写什么由调用点自撰（约定只写事件与计数），但约定没有机械约束 ——
+     * 一旦某处把剪贴板正文 / 搜索词 / 整篇文本写进 d/i/w 级日志，它会绕过 V 级闸
+     * 直接落盘并随导出诊断包外传。这里在唯一的落盘入口兜住长度与常见隐私模式，
+     * logcat 镜像仍输出原文，现场调试不受影响。
+     */
+    private const val MAX_FILE_BODY_CHARS = 512
+
+    /** 脱敏用的掩码 */
+    private const val MASK = "****"
+
+    /** 11 位大陆手机号（用数字边界避免切开更长的数字串） */
+    private val PHONE_RE = Regex("(?<!\\d)1[3-9]\\d{9}(?!\\d)")
+
+    /** 邮箱：只遮本地部分，保留域名便于辨认来源 */
+    private val EMAIL_RE = Regex("[\\w.+-]+@([\\w-]+\\.[\\w.]+)")
+
+    /** ≥15 位纯数字串（银行卡 / 证件号一类的量级） */
+    private val LONG_DIGITS_RE = Regex("(?<!\\d)\\d{15,}(?!\\d)")
+
     @Volatile
     private var logDir: File? = null
 
@@ -232,6 +254,29 @@ object Diagnostics {
     fun e(tag: String, msg: String) = log('E', tag, msg, null)
     fun e(tag: String, msg: String, tr: Throwable?) = log('E', tag, msg, tr)
 
+    /**
+     * 隐私模式脱敏：手机号 / 邮箱 / 长数字串各留首尾便于对照（纯函数，便于单测）。
+     * 堆栈与正文共用；只改敏感片段，不做长度处理。
+     */
+    internal fun redactSensitive(body: String): String {
+        var s = PHONE_RE.replace(body) { m -> m.value.replaceRange(3, 7, MASK) }
+        s = EMAIL_RE.replace(s) { m -> MASK + "@" + m.groupValues[1] }
+        s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
+        return s
+    }
+
+    /**
+     * 落盘正文护栏：脱敏 + 超长截断（纯函数，便于单测）。只作用于文件，logcat 用原文。
+     */
+    internal fun sanitizeForFile(body: String): String {
+        val s = redactSensitive(body)
+        return if (s.length <= MAX_FILE_BODY_CHARS) {
+            s
+        } else {
+            s.take(MAX_FILE_BODY_CHARS) + "…(截断，共 ${s.length} 字)"
+        }
+    }
+
     private fun log(level: Char, tag: String, msg: String, tr: Throwable?) {
         // 同步镜像到 logcat：无文件权限时仍有 adb 可读
         when (level) {
@@ -251,8 +296,10 @@ object Diagnostics {
             .append(' ').append(level)
             .append('/').append(tag)
             .append(" [").append(Thread.currentThread().name).append("] ")
-            .append(msg).append('\n')
-        tr?.let { sb.append(stackTraceOf(it)).append('\n') }
+            // 落盘走护栏（脱敏 + 截断）；logcat 上面已用原文输出
+            .append(sanitizeForFile(msg)).append('\n')
+        // 堆栈只脱敏、不截断：堆栈动辄上千字符，截断会砍掉关键帧
+        tr?.let { sb.append(redactSensitive(stackTraceOf(it))).append('\n') }
         appendToFile(dir, sb.toString())
     }
 
