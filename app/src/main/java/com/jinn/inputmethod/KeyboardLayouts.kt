@@ -103,6 +103,61 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'l' to DynamicSymbols.token("长时符"),
         ),
     )),
+    // 偏旁：汉字笔画与部首（145 项，按序铺满 5 页 + 末页 15 键，顺序即用户给定清单）。
+    // 位置紧跟在「变量」之后，由 SymbolLayoutTest 的顺序守卫钉住。
+    SymbolGroup("偏旁", listOf(
+        // 第 1 页
+        mapOf(
+            'q' to "丨", 'w' to "丶", 'e' to "丿", 'r' to "乀", 't' to "乁",
+            'y' to "乚", 'u' to "乛", 'i' to "亅", 'o' to "丂", 'p' to "丄",
+            'a' to "丅", 's' to "丆", 'd' to "丷", 'f' to "丩", 'g' to "丬",
+            'h' to "丏", 'j' to "丣", 'k' to "丠", 'l' to "丮",
+            'z' to "丯", 'x' to "丱", 'c' to "丳", 'v' to "丵", 'b' to "乂",
+            'n' to "乆", 'm' to "乇",
+        ),
+        // 第 2 页
+        mapOf(
+            'q' to "乑", 'w' to "乕", 'e' to "乜", 'r' to "乩", 't' to "亠",
+            'y' to "亼", 'u' to "亓", 'i' to "亍", 'o' to "亐", 'p' to "丟",
+            'a' to "厶", 's' to "卩", 'd' to "廴", 'f' to "廾", 'g' to "凵",
+            'h' to "匚", 'j' to "匸", 'k' to "勹", 'l' to "冂",
+            'z' to "冖", 'x' to "冫", 'c' to "彐", 'v' to "彑", 'b' to "屮",
+            'n' to "巛", 'm' to "卝",
+        ),
+        // 第 3 页
+        mapOf(
+            'q' to "㔾", 'w' to "〇", 'e' to "廿", 'r' to "卅", 't' to "卌",
+            'y' to "皕", 'u' to "亖", 'i' to "丗", 'o' to "尢", 'p' to "尣",
+            'a' to "疋", 's' to "疒", 'd' to "癶", 'f' to "禸", 'g' to "攴",
+            'h' to "曰", 'j' to "覀", 'k' to "虍", 'l' to "豕",
+            'z' to "豸", 'x' to "隹", 'c' to "鬥", 'v' to "鬯", 'b' to "鬲",
+            'n' to "髟", 'm' to "黹",
+        ),
+        // 第 4 页
+        mapOf(
+            'q' to "黾", 'w' to "龠", 'e' to "艸", 'r' to "耒", 't' to "聿",
+            'y' to "艮", 'u' to "舛", 'i' to "缶", 'o' to "氵", 'p' to "灬",
+            'a' to "亻", 's' to "讠", 'd' to "饣", 'f' to "忄", 'g' to "扌",
+            'h' to "犭", 'j' to "牜", 'k' to "礻", 'l' to "衤",
+            'z' to "钅", 'x' to "纟", 'c' to "艹", 'v' to "宀", 'b' to "辶",
+            'n' to "阝", 'm' to "刂",
+        ),
+        // 第 5 页
+        mapOf(
+            'q' to "⺮", 'w' to "罒", 'e' to "爫", 'r' to "攵", 't' to "夂",
+            'y' to "夊", 'u' to "歺", 'i' to "氺", 'o' to "龵", 'p' to "爻",
+            'a' to "囍", 's' to "卍", 'd' to "卐", 'f' to "々", 'g' to "〆",
+            'h' to "丼", 'j' to "孑", 'k' to "孓", 'l' to "奀",
+            'z' to "玍", 'x' to "氹", 'c' to "氽", 'v' to "汆", 'b' to "巜",
+            'n' to "曱", 'm' to "甴",
+        ),
+        // 第 6 页：末页 15 键（含 8 个 CJK 扩展 B 区笔画，键面字形取决于系统字体覆盖）
+        mapOf(
+            'q' to "乄", 'w' to "乊", 'e' to "乢", 'r' to "乭", 't' to "乶",
+            'y' to "乷", 'u' to "乸", 'i' to "𠃉", 'o' to "𠃊", 'p' to "𠃋",
+            'a' to "𠃌", 's' to "𠃍", 'd' to "𠃎", 'f' to "𠃏", 'g' to "𠄡",
+        ),
+    )),
     // 标点
     SymbolGroup("标点", listOf(
         mapOf(
