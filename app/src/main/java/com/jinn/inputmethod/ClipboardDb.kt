@@ -604,6 +604,54 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             return out
         }
 
+        /**
+         * 首屏连续填页的扫描上限（页数）：坏行密集时（如密钥整体失效）的止损。
+         *
+         * 取 8 页（≤400 原始行）的依据：稀疏坏行一页就够；连续坏行只可能来自
+         * 「整段写入失败 / 密钥失效」，而密钥失效是全表坏、扫多少页都无解 ——
+         * 上限只需覆盖「首屏附近有一段坏行」的现实情形，避免每次开面板都白解密全表。
+         */
+        const val FIRST_PAGE_MAX_SCAN_PAGES = 8
+
+        /**
+         * 首屏填页：连续取页直到凑满 [limit] 条**可解密**条目、或扫到末尾、或达 [maxScanPages]。
+         *
+         * 为什么不能只取一页：解密失败的行会被 [Item] 读取路径跳过（对用户不可见），
+         * 若最新的一整页恰好都是坏行，列表会拿到空结果 —— 面板据此显示空态并隐藏列表，
+         * 而预取闸门要求列表非空才继续翻页（`totalItemCount > 0`）⇒ 后面还能解密的
+         * 历史**永久翻不到**（功能死路）。填页让首屏要么给出真实条目，要么如实报告「有内容但读不出」。
+         *
+         * 健康库上只会调用一次 [fetch]（一页取满即停），无额外解密开销，
+         * 因此这是纯函数：取页语义与 [recentPageWithOffset] 相同，可直接 JVM 单测。
+         *
+         * ⚠ 返回的 [Page.items] **可能多于** [limit]（末页整页收下）—— 不能裁剪：
+         * 游标已扫过这些行，裁掉就再也没人能看到它们。调用方按「一屏多几条」处理即可。
+         *
+         * @param total 纯 SQL 计数的原始行数（[count]；坏行也计入）
+         * @param limit 每页取的行数（面板为 PANEL_PAGE_ITEMS）
+         * @param fetch 取页函数，语义同 [recentPageWithOffset]（游标必须按扫过的原始行前进）
+         */
+        fun fillFirstPage(
+            total: Int,
+            limit: Int,
+            maxScanPages: Int = FIRST_PAGE_MAX_SCAN_PAGES,
+            fetch: (offset: Int, limit: Int) -> Page,
+        ): Page {
+            if (limit <= 0 || total <= 0 || maxScanPages <= 0) return Page(emptyList(), 0)
+            val out = ArrayList<Item>(limit)
+            var offset = 0
+            var pages = 0
+            while (out.size < limit && offset < total && pages < maxScanPages) {
+                val page = fetch(offset, limit)
+                // 游标没前进（坏页/异常返回）：立刻退出，否则会无限取同一页
+                if (page.nextOffset <= offset) break
+                out.addAll(page.items)
+                offset = page.nextOffset
+                pages++
+            }
+            return Page(out, offset)
+        }
+
         @Volatile
         private var instance: ClipboardDb? = null
 

@@ -103,6 +103,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private var currentCategory: String? = null
     private var currentItems: MutableList<ClipboardDb.Item> = mutableListOf()
 
+    /**
+     * 「库里有行、但一条都读不出来」的状态（密钥失效 / 密文损坏）。
+     *
+     * 只在 [refresh] 判定：此时空态必须区别于「从未复制过」，否则界面对用户撒谎
+     * （明明有历史，却显示「暂无剪贴板历史」并隐藏列表）。
+     */
+    private var unreadableHistory = false
+
     /** 当前分类的总条数（分页编号用：序号 = 分类总数 − 位置，与全局条目数无关） */
     private var categoryTotal = 0
 
@@ -280,7 +288,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         // ── 空状态 ──
         textEmpty = TextView(context).apply {
-            text = "暂无剪贴板历史\n复制内容后将自动保存"
+            text = TEXT_EMPTY_IDLE
             gravity = android.view.Gravity.CENTER
             setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 14f
@@ -308,7 +316,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             visibility = GONE
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        val confirmText = tabButton("确认清空全部历史？", onClick = { }).apply {
+        // 文案必须与 deleteAll 的实际口径一致：只删普通记录，收藏永不参与清空（数据层保护）
+        val confirmText = tabButton("清空历史？（收藏保留）", onClick = { }).apply {
             textSize = 12f
         }
         val confirmOk = tabButton("确定") {
@@ -364,12 +373,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
             val loaded = runCatching {
+                // 分页加载：COUNT 不解密，解密只覆盖首屏要显示的那些条目。
+                // 首屏必须连续填页（不是只取一页）：解密失败的行对用户不可见，若它们
+                // 占满了最新的一整页，只取一页会拿到空结果 ⇒ 空态 + 隐藏列表，
+                // 而预取闸门要求 totalItemCount > 0 ⇒ 后面还能解密的历史永久翻不到。
+                // 见 ClipboardDb.fillFirstPage（健康库上仍只取一页，无额外开销）。
                 val total = db.count(filter.category, filter.favoritesOnly)
-                val page = db.recentPageWithOffset(0, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                val page = ClipboardDb.fillFirstPage(total, PANEL_PAGE_ITEMS) { off, lim ->
+                    db.recentPageWithOffset(off, lim, filter.category, filter.favoritesOnly)
+                }
                 Diagnostics.i(
                     TAG,
                     "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.items.size} " +
-                        "thread=${Thread.currentThread().name}",
+                        "next=${page.nextOffset} thread=${Thread.currentThread().name}",
                 )
                 total to page
             }
@@ -381,6 +397,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     currentItems = page.items.toMutableList()
                     nextPageOffset = page.nextOffset
                     hasMorePages = page.nextOffset < total
+                    // 一条都读不出来但库里有行 ⇒ 空态要说真话（见 unreadableHistory）
+                    unreadableHistory = currentItems.isEmpty() && total > 0
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
@@ -454,6 +472,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，避免有高度有数据却显示空白） */
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
+        // 空态有两种含义，不能混用同一句话：真没有历史 / 有行但解密不出来（见 unreadableHistory）
+        if (empty) {
+            textEmpty.text = if (unreadableHistory) TEXT_EMPTY_UNREADABLE else TEXT_EMPTY_IDLE
+        }
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
@@ -658,5 +680,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
+
+        /** 空态：从未有过历史（或历史已被清空/裁剪干净） */
+        const val TEXT_EMPTY_IDLE = "暂无剪贴板历史\n复制内容后将自动保存"
+
+        /**
+         * 空态：库里有行但一条都读不出来。
+         *
+         * 不说「暂无历史」是硬要求 —— 那是谎报；同时要点明「新的复制仍会正常记录」：
+         * 密钥失效后新条目会用新密钥加密，功能并未坏掉，用户在意的「以后还能不能用」要给答案。
+         */
+        const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
     }
 }
