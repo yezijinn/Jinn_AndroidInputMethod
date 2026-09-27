@@ -8,15 +8,17 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 生僻字过滤测试（纯 JVM，用 [PinyinEngine.loadFromTexts] 注入）。
+ * 生僻字档位过滤测试（纯 JVM，用 [PinyinEngine.loadFromTexts] 注入）。
  *
- * 判定标准：《通用规范汉字表》一级(3500) + 二级(3000) + 三级(1407) 为默认加载档，
- * 表外字（繁体 / 异体 / 日韩 / 扩展区）只在「加更多生僻字」开启时加载。默认：
- *  - 表外单字不进单字表，也就不进候选；含表外字的词整条丢弃；
- *  - 三级字（囧 / 淼 / 喆 / 昇 一类人名地名用字）与一二级同样可用。
+ * 机制（2026-09-27 起重构）：三档字表 —— 档 1（`common_chars`，默认放行）、
+ * 档 2（`tier2_chars`，设置页开关）、档 3（`tier3_chars`，开关且**依赖档 2**）；
+ * 档外字（不在任何档）**不随包，任何档位下都不放行**。
  *
- * 关键点是「加载时过滤」而非「加载后过滤」，被跳过的数据从未进入 HashMap，
- * 这才是真正降低内存占用的原因，本测试守住该行为。
+ * 过滤在**查询期**做（`isLoadableChar` / `filterRareChars`），所以开关一改即时生效、
+ * 不需要重载词库 —— 这与旧的「加载期过滤 + 重启生效」不同，本类同时守住这两条。
+ *
+ * 资产侧：`pinyin_chars` 是**三档并集**（`tools/dict_builder/build_dicts.py` 产出），
+ * 与三张档位表的口径一致性由 [三档字表并集等于单字表字集] 钉住。
  */
 class RareCharsFilterTest {
 
@@ -44,11 +46,16 @@ class RareCharsFilterTest {
         taotie	饕餮|涛涛
     """.trimIndent()
 
-    /** 一二级字表：刻意不含「饕 / 餮 / 噩」（后两个分属三级与表外） */
+    // ── 三档字表（2026-09-27 起重构：档 1 默认放行，档 2 / 档 3 按开关放行，档外字不随包）──
+
+    /** 档 1（默认）：常用字 */
     private val commonChars = "企乞起鹅额饿且切涛掏铁"
 
-    /** 三级字表：只收「噩」 —— 它进默认档，「饕 / 餮」仍属表外 */
-    private val tier3Chars = "噩"
+    /** 档 2（可选）：只收「噩」，模拟二级档 */
+    private val tier2Chars = "噩"
+
+    /** 档 3（可选，依赖档 2）：只收「餮」，模拟三级档 */
+    private val tier3Chars = "餮"
 
     @Before
     fun setUp() {
@@ -102,52 +109,227 @@ class RareCharsFilterTest {
         assertTrue("常用字「涛」应保留: $got", got.contains("涛"))
     }
 
-    /** 三级字是规范汉字，与一二级同档默认加载（2026-09-26 起）；表外字仍在默认档之外 */
+    /** 默认只放行档 1：档 2 / 档 3 / 档外字全部拦下 */
     @Test
-    fun 三级字进默认档而表外字仍被拦下() {
-        PinyinEngine.loadFromTexts(chars, phrases, syllables, commonChars, tier3Chars)
-        val got = PinyinEngine.query("e").candidates
-        assertTrue("三级字「噩」应默认可用: $got", got.contains("噩"))
-        assertFalse("表外字「餮」不得出现", PinyinEngine.query("tie").candidates.contains("餮"))
+    fun 默认只放行档1() {
+        PinyinEngine.loadFromTexts(
+            chars, phrases, syllables, commonChars, tier3Chars,
+            tier2CharsText = tier2Chars,
+        )
+        assertFalse("档 2 字「噩」默认不出现", PinyinEngine.query("e").candidates.contains("噩"))
+        assertFalse("档 3 字「餮」默认不出现", PinyinEngine.query("tie").candidates.contains("餮"))
+        assertFalse("档外字「饕」默认不出现", PinyinEngine.query("tao").candidates.contains("饕"))
+        assertTrue("档 1 字「涛」应保留", PinyinEngine.query("tao").candidates.contains("涛"))
     }
 
-    /** 「加更多生僻字」开启：表外字与表外词一并放行 */
+    /** 开档 2：档 2 字放行；档 3 与档外字仍拦下 */
     @Test
-    fun 加更多生僻字开启后表外字可用() {
-        PinyinEngine.loadFromTexts(chars, phrases, syllables, commonChars, tier3Chars, rareChars = true)
-        assertTrue("表外单字「饕」应可用", PinyinEngine.query("tao").candidates.contains("饕"))
-        assertTrue("含表外字的词「饕餮」应可用", PinyinEngine.query("taotie").candidates.contains("饕餮"))
+    fun 开档2后二级字可用而三级与档外仍拦下() {
+        PinyinEngine.loadFromTexts(
+            chars, phrases, syllables, commonChars, tier3Chars,
+            tier2CharsText = tier2Chars, rareTier2 = true,
+        )
+        assertTrue("档 2 字「噩」应可用", PinyinEngine.query("e").candidates.contains("噩"))
+        assertFalse("档 3 字「餮」仍需先开档 3", PinyinEngine.query("tie").candidates.contains("餮"))
+        assertFalse("档外字「饕」不可用", PinyinEngine.query("tao").candidates.contains("饕"))
+    }
+
+    /** 两档齐开：档 2 / 档 3 字都放行；档外字（含含它的词）仍不随包 */
+    @Test
+    fun 两档齐开后三级字可用而档外字仍拦下() {
+        PinyinEngine.loadFromTexts(
+            chars, phrases, syllables, commonChars, tier3Chars,
+            tier2CharsText = tier2Chars, rareTier2 = true, rareTier3 = true,
+        )
+        assertTrue("档 2 字「噩」应可用", PinyinEngine.query("e").candidates.contains("噩"))
+        assertTrue("档 3 字「餮」应可用", PinyinEngine.query("tie").candidates.contains("餮"))
+        assertFalse(
+            "含档外字的词「饕餮」仍应被过滤",
+            PinyinEngine.query("taotie").candidates.contains("饕餮"),
+        )
     }
 
     /**
-     * 随包的默认档字表：三级字表必须覆盖用户报告的那批人名地名用字。
+     * 非法组合「只开档 3」被引擎兜掉。
      *
-     * 判据错成「一二级一刀切」时，这批字默认打不出（用户 2026-09-25 报告）；
-     * 换了一张不覆盖它们的字表（例如误用某个更窄的字频表）同样会在这里变红。
+     * 设置页（`RareCharsActivity`）已强制「档 2 关则档 3 不可点」，这里的入口是导入的备份 /
+     * 手工改过的 prefs —— 引擎侧的 `setRareTiers` 必须再兜一次，否则会出现
+     * 「三级字能用、二级字反而不能用」的倒挂。
      */
     @Test
-    fun 默认档字表覆盖常用人名地名用字() {
-        val common = charsOf(asset("common_chars.txt"))
-        val tier3 = charsOf(asset("tier3_chars.txt"))
-        // 一二级表按规范表 6500 字维护（表内另有极少数增补字，故不钉死）
-        assertTrue("一二级表规模异常: ${common.size}", common.size >= 6500)
-        assertTrue("三级表规模异常: ${tier3.size}", tier3.size > 1000)
-        assertEquals("两张表不该有交集", emptySet<Char>(), common intersect tier3)
-        assertTrue(
-            "三级表必须落在基本区（位图只覆盖 0x4E00~0x9FFF）",
-            tier3.all { it.code in 0x4E00..0x9FFF },
+    fun 只开档3不生效_引擎强制依赖档2() {
+        PinyinEngine.loadFromTexts(
+            chars, phrases, syllables, commonChars, tier3Chars,
+            tier2CharsText = tier2Chars, rareTier3 = true,
         )
-        val missing = "囧欻扽挼覅淼喆昇堃".filterNot { it in common || it in tier3 }
-        assertEquals("默认档打不出的字: $missing", "", missing)
+        assertFalse("未开档 2 时档 3 字不得出现", PinyinEngine.query("tie").candidates.contains("餮"))
+        assertFalse("档 2 字同样不出现", PinyinEngine.query("e").candidates.contains("噩"))
     }
 
-    private fun charsOf(text: String): Set<Char> {
-        val out = HashSet<Char>()
+    /**
+     * 随包三档字表与单字表同口径：并集 == 单字表字集，且三档两两互斥。
+     *
+     * 档 1 / 档 2 / 档 3 分别由设置页开关放行（`RareCharsActivity`），单字表是它们的并集 ——
+     * 任何一边漏字都会让「开了开关却打不出」复现（用户 2026-09-25 报告过同型问题）。
+     * `囧淼喆昇` 是用户报告的人名地名用字，都在档 1。
+     */
+    @Test
+    fun 三档字表并集等于单字表字集() {
+        val common = charsOf(asset("common_chars.txt"))
+        val tier2 = charsOf(asset("tier2_chars.txt"))
+        val tier3 = charsOf(asset("tier3_chars.txt"))
+        val chars = charsOf(asset("pinyin_chars.txt"))
+        assertTrue("档 1 规模异常: ${common.size}", common.size >= 5000)
+        assertTrue("档 2 规模异常: ${tier2.size}", tier2.size >= 800)
+        assertTrue("档 3 规模异常: ${tier3.size}", tier3.size >= 2000)
+        assertEquals("三档并集必须等于单字表字集", common + tier2 + tier3, chars)
+        assertEquals("档 1 与档 2 不得重叠", emptySet<Int>(), common intersect tier2)
+        assertEquals("档 2 与档 3 不得重叠", emptySet<Int>(), tier2 intersect tier3)
+        val missing = "囧淼喆昇".filterNot { it.code in common }
+        assertEquals("档 1 打不出的字: $missing", "", missing)
+    }
+
+    /**
+     * 档位开关必须让「合并结果缓存」失效（2026-09-27 复现后固化，BUG.md L-57）。
+     *
+     * `mergedCache` 存的是 `filterRareChars` **之后**的词表：关档时查过的键会把它「档外词已被剔除」
+     * 的结果（整条被过滤时是 `EMPTY_WORDS` 哨兵）一直返回 ⇒ 用户「先打一次没打出来 → 去开档 →
+     * 回来再打同一拼音」时**词还是不出现**，而单字走 `charsFor`（不经缓存）当场就出得来，
+     * 看起来像「开关只对单字生效」。本条**两个方向**都要成立（开档要放行、关档要收回）。
+     *
+     * ⚠ 时序必须是「先按关档状态查询 → 再 setRareTiers」：加载时就带上档位的话，
+     * 每次过滤都是新算的，缓存缺陷会被完全掩盖（与 [开关打开后档2与档3的单字候选必须出现] 同一教训）。
+     */
+    @Test
+    fun 开关档位后此前查过的拼音键必须重新查得到() {
+        val syl = "chan\nshi\nshuo\n"
+        val ch = "chan\t产,谶\nshi\t事\nshuo\t说\n"
+        // 两个词**都含档 2 字「谶」**：关档时整词被过滤 ⇒ 这两个键都会拿到「确实没有」
+        val ph = "chanshuo\t谶说\nchanshi\t谶事\n"
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            ch, ph, syl,
+            commonCharsText = "产事说", tier2CharsText = "谶",
+            rareTier2 = false, rareTier3 = false,
+        )
+        val before = PinyinEngine.query("chanshuo").candidates
+        assertFalse("关档时含档 2 字的词不得出现: $before", before.contains("谶说"))
+
+        PinyinEngine.setRareTiers(true, false)
+        assertTrue(
+            "开档后单字「谶」应放行（单字不经合并缓存，用于与下面的键路径对照）: " +
+                "${PinyinEngine.query("chan").candidates}",
+            PinyinEngine.query("chan").candidates.contains("谶"),
+        )
+        assertTrue(
+            "开档后**没查过**的键应放行「谶事」: ${PinyinEngine.query("chanshi").candidates}",
+            PinyinEngine.query("chanshi").candidates.contains("谶事"),
+        )
+        assertTrue(
+            "开档后**先前查过的**键也必须放行「谶说」（缓存要随档位失效）: " +
+                "${PinyinEngine.query("chanshuo").candidates}",
+            PinyinEngine.query("chanshuo").candidates.contains("谶说"),
+        )
+
+        PinyinEngine.setRareTiers(false, false)
+        assertFalse(
+            "关档后先前查过的键不得再返回档外词「谶说」: ${PinyinEngine.query("chanshuo").candidates}",
+            PinyinEngine.query("chanshuo").candidates.contains("谶说"),
+        )
+    }
+
+    /**
+     * 按码点收集字表里的汉字。
+     *
+     * 单字表行首是拉丁音节（`a\t啊,阿`），必须剔除，否则「字集一致」永远不成立；
+     * 扩展区字按码点比对，避免代理对劈裂（`㹴` / `䍁` 在扩展 A 区）。
+     */
+    private fun charsOf(text: String): Set<Int> {
+        val out = HashSet<Int>()
         for (line in text.lineSequence()) {
             val t = line.trim()
             if (t.isEmpty() || t.startsWith("#")) continue
-            out.addAll(t.toList())
+            var i = 0
+            while (i < t.length) {
+                val cp = t.codePointAt(i)
+                i += Character.charCount(cp)
+                if (isHan(cp)) out.add(cp)
+            }
         }
         return out
     }
+
+    /**
+     * 档 2 / 档 3 的字在**开关打开后**必须真的出现在单字候选里（2026-09-27 真机抓到）。
+     *
+     * 原实现在**加载期**就把档外字丢掉了（`loadCharsReader` 里的 `isLoadableChar`），
+     * 而放行是「查询期」语义 —— 于是开关打开时字根本不在内存里，二级 / 三级字的**单字候选
+     * 永远打不出**（词语候选因为走 `filterRareChars` 反而正常，掩盖了这条）。
+     * 真机取证：开档 2 + 档 3 后输入 `lt`(lve)，候选里没有三级字「锊」。
+     */
+    @Test
+    fun 开关打开后档2与档3的单字候选必须出现() {
+        // **_真实的时序**：开档位发生在词库加载**之后**（用户进了设置页才点开关）；
+        // 所以测试必须「先按关档状态加载，再 setRareTiers」，而不是加载时就带上档位 ——
+        // 后者每次重新过滤，会把这条缺陷完全掩盖（第一版测试就是这么写的，跑出来是绿的）。
+        val syl = "lt\nlve\n"
+        val ch = "lve\t绿,圙,锊\n"
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            ch, "", syl,
+            commonCharsText = "绿", tier2CharsText = "圙", tier3CharsText = "锊",
+            rareTier2 = false, rareTier3 = false,
+        )
+        assertEquals("关档时只应有档 1 的字", listOf("绿"), PinyinEngine.charsFor("lve"))
+
+        PinyinEngine.setRareTiers(true, false)
+        val t2 = PinyinEngine.charsFor("lve").toList()
+        assertTrue("开档 2 后应有「圙」: $t2", t2.contains("圙"))
+        assertFalse("档 3 未开时不该有「锊」: $t2", t2.contains("锊"))
+
+        PinyinEngine.setRareTiers(true, true)
+        val t3 = PinyinEngine.charsFor("lve").toList()
+        assertTrue("开档 3 后应有「锊」: $t3", t3.contains("锊"))
+    }
+
+    /**
+     * 档位页的例字必须落在对应档里（2026-09-27）。
+     *
+     * 页面上「增加二级生僻字…」那句小字一度写着「亟 谌 髯」—— 它们后来被移进默认档，举例就成了
+     * 「默认档的字」；三级的「圙」其实在档 2。文案与数据脱节肉眼很难发现，这里从**源码常量**里取出
+     * 例字、逐个核档：改文案或改档位表都会把它逼出来。
+     */
+    @Test
+    fun 档位页例字必须落在对应档里() {
+        val path = listOf(
+            File("src/main/java/com/jinn/inputmethod/RareCharsActivity.kt"),
+            File("app/src/main/java/com/jinn/inputmethod/RareCharsActivity.kt"),
+        ).firstOrNull { it.isFile } ?: error("找不到 RareCharsActivity.kt")
+        val src = path.readText()
+        val t2 = charsOf(asset("tier2_chars.txt"))
+        val t3 = charsOf(asset("tier3_chars.txt"))
+        for ((key, allow, which) in listOf(
+            Triple("TIER2_DESC", t2, "档 2"),
+            Triple("TIER3_DESC", t3, "档 3"),
+        )) {
+            val examples = examplesOf(src, key)
+            assertTrue("$key 里没解析出例字（文案格式变了？）", examples.isNotEmpty())
+            for (c in examples) {
+                assertTrue(
+                    "档位页例字「$c」不在$which 里 —— 举例与实际档位脱节，请换成该档的字",
+                    c.codePointAt(0) in allow,
+                )
+            }
+        }
+    }
+
+    /** 取 `const val KEY = "...：甲 乙 丙 一类..."` 里「：」与「 一类」之间的例字 */
+    private fun examplesOf(src: String, key: String): List<String> {
+        val line = src.lineSequence().firstOrNull { it.contains("const val $key =") } ?: return emptyList()
+        return line.substringAfter("：").substringBefore(" 一类")
+            .split(" ").filter { it.isNotBlank() }
+    }
+
+    private fun isHan(cp: Int): Boolean =
+        cp in 0x3400..0x4DBF || cp in 0x4E00..0x9FFF || cp in 0x20000..0x3FFFF
 }

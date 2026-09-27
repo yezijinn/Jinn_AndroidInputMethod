@@ -148,7 +148,7 @@
     <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
 
     <!-- 诊断 -->
-    <string name="settings_voice_input">语音输入</string>
+    <string name="settings_voice_input">语音输入转文字,要自建服务器</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
     <string name="settings_export_diag">导出诊断数据</string>
     <string name="settings_diag_exported">已导出：%1$s</string>
@@ -163,14 +163,10 @@
     <!-- Root 增强模式 -->
 
     <!-- 剪贴板分类 -->
-    <string name="switch_show_rare_chars">加更多生僻字</string>
-    <string name="switch_show_rare_chars_desc">一般不用开</string>
     <string name="switch_user_learning">用户词频学习</string>
     <string name="switch_user_learning_desc">记住常选的词，下次放前排</string>
     <string name="switch_predict">追加候选词语</string>
     <string name="switch_predict_desc">额外显示后续的词</string>
-    <string name="rare_chars_on">已开启：重启输入法后候选会包含生僻字</string>
-    <string name="rare_chars_off">已关闭：重启输入法后候选不含生僻字</string>
 
     <!-- 词库加载状态提示（出现在候选栏，不弹窗——IME 内禁用弹窗） -->
     <string name="engine_dict_loading">词库加载中…</string>

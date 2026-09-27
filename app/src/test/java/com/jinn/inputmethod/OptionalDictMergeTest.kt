@@ -139,7 +139,7 @@ class OptionalDictMergeTest {
 
         all.forEach { dict ->
             assertTrue("${dict.name} 缺少下载源", dict.urls.isNotEmpty())
-            // 落地文件名与 Release 附件名可以不同（如 ext.xz 对应 dict_ext.txt.xz），
+            // 落地文件名与 Release 附件名可以不同（如 part2.xz 对应 dict_part2.txt.xz），
             // 但 URL 必须指向 .xz 资源，否则引擎加载不了
             dict.urls.forEach { url ->
                 assertTrue("${dict.name} 的下载源应以 .xz 结尾: $url", url.endsWith(".xz"))

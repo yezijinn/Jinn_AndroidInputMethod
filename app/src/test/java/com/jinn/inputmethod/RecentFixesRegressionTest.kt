@@ -137,6 +137,34 @@ class RecentFixesRegressionTest {
         assertTrue(isInsideKeyBounds(9999f, 9999f, 100, 200, 0, 100, 8f))
     }
 
+    /**
+     * 导入配置后必须同步「不需要重启就生效」的开关（2026-09-27）。
+     *
+     * 这几个开关平时靠各自监听器即时生效，而导入是**绕过监听器**直接写 prefs 的：漏了同步，
+     * 用户点「稍后」后看到的就是「导入成功但行为没变」（繁体 / 档位 / 模糊音 / 学习）。
+     * 改回去不报错（只有真机导入才看得见），所以用源码把结论钉住。
+     */
+    @Test
+    fun `导入配置后同步即时生效的开关`() {
+        val code = codeOf("SettingsActivity.kt")
+        // 判据是「定义之前已经出现过一次」而不是「文件里找得到」：只 contains 的话，
+        // 定义行自己就把它满足了（第一版就是栽在这 —— 删掉调用照样绿，变异验证抓出来的）
+        val call = code.indexOf("syncImmediateSettings()")
+        val def = code.indexOf("private fun syncImmediateSettings")
+        assertTrue("导入成功分支必须调用 syncImmediateSettings()（调用须出现在定义之前，当前 call=$call def=$def）",
+            def >= 0 && call in 0 until def)
+        val body = blockAfter(code, "private fun syncImmediateSettings()")
+        // 循环变量别叫 call：会遮蔽上面的 val call（Kotlin 报 "Name shadowed" 告警）
+        for (marker in listOf(
+            "setRareTiers(p.rareTier2, p.rareTier3)",
+            "setTraditional(p.useTraditional)",
+            "setFuzzyMask(p.fuzzyPinyinMask)",
+            "UserFrequency.setEnabled(p.userLearning)",
+        )) {
+            assertTrue("同步体缺少 $marker", body.contains(marker))
+        }
+    }
+
     // ── 源码对拍：只能用源码钉住的修复（行为要 Context / 视图 / 进程，JVM 测不到）──
     //
     // 这一组对应 2026-09-26 那批修复里「改回去会静默复现」的几处：改法都在一两行里，
@@ -697,6 +725,91 @@ class RecentFixesRegressionTest {
         assertTrue(
             "堆栈要脱敏但不截断（异常 message 可能含内容片段；堆栈上千字符，截断会砍关键帧）",
             body.contains("redactSensitive(stackTraceOf(it))"),
+        )
+    }
+
+    // ── 键盘按键的无障碍激活入口 ──────────────────────────
+
+    @Test
+    fun `字母键与分号键必须有无障碍激活入口`() {
+        // 字母键的触摸被外层 OnTouchListener 消费，触摸路径的 performClick 不产生输入；
+        // 辅助服务的「双击」只能经 performAccessibilityAction 进来。两条路径互斥，
+        // 不会「触摸输入一次、辅助服务再输入一次」——若改用 setOnClickListener 就会。
+        val key = codeOf("PinyinKey.kt")
+        assertTrue(
+            "PinyinKey 必须覆写 performAccessibilityAction 并调用 onActivate",
+            blockAfter(key, "override fun performAccessibilityAction(").contains("activate()"),
+        )
+        assertTrue(
+            "节点必须挂上 ACTION_CLICK，辅助服务才会走上面的回调（用 AccessibilityAction 重载：" +
+                "`addAction(Int)` 已弃用，退回旧写法会先在这里变红）",
+            blockAfter(key, "override fun onInitializeAccessibilityNodeInfo(")
+                .contains("addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)"),
+        )
+        assertTrue(
+            "label 变化必须同步 contentDescription：辅助服务靠它朗读键面文字（字母层读字母、符号层读符号）",
+            blockAfter(key, "var label: String = \"\"").contains("contentDescription = value"),
+        )
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "字母键必须把 onActivate 接回触摸同款输入函数（符号层复用同一批键，也走这里）",
+            view.contains("key.onActivate = { onLetterPressed(c) }"),
+        )
+        assertTrue(
+            "分号键必须把 onActivate 接到提取出的上屏函数",
+            view.contains("keySemicolon.onActivate = { onSemicolonPressed() }"),
+        )
+    }
+
+    @Test
+    fun `退格的无障碍激活必须走 delegate 且不挂监听`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "退格的 ACTION_CLICK 必须调 deleteOne()，与触摸路径同一删除语义",
+            blockAfter(view, "btnBackspace.accessibilityDelegate").contains("deleteOne()"),
+        )
+        // 挂 OnClickListener 会被触摸路径的 performClick 一并触发（DOWN 已删一个，
+        // 抬手再删一个 ⇒ 一次触摸删两个），所以这条断言盯住「没有监听」这个前提
+        assertFalse(
+            "退格不得挂 OnClickListener：触摸与辅助服务各删一次会变成删两个",
+            view.contains("btnBackspace.setOnClickListener"),
+        )
+    }
+
+    @Test
+    fun `跨输入框必须收起方向面板`() {
+        // 方向面板是视图内临时态，而视图实例跨输入框复用：configure（每次聚焦都会调用）
+        // 不复位就会让新输入框以展开态弹出（字母区被面板接管）。且**必须**走 hideDirectionPanel()：
+        // 它负责恢复字母三行、清 stale 面板并回传 onSelectionModeChanged(false)；
+        // 裸置 `directionPanelVisible = false` 会让字母区永久失活（无触摸），见 BUG.md L-29。
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "fun configure(scheme: ShuangpinScheme")
+        assertTrue(
+            "configure 必须收起方向面板（会话边界复位）",
+            body.contains("if (directionPanelVisible) hideDirectionPanel()"),
+        )
+        assertFalse(
+            "不得裸置 directionPanelVisible = false（字母区会永久失活）",
+            body.contains("directionPanelVisible = false"),
+        )
+    }
+
+    @Test
+    fun `生僻字页每次回前台都要重画且显示生效值`() {
+        // 只在 onCreate 画一次时，从设置页导入配置后返回本页（仍在栈中）会停在做旧快照上，
+        // 再拨任一档就把**另一档**按旧显示写回（等于回滚导入结果）；档 3 的显示值还要与
+        // 引擎 setRareTiers 的 `tier2 && tier3` 掩码同口径，否则非法组合会「界面勾着、实际没生效」。
+        val src = codeOf("RareCharsActivity.kt")
+        assertTrue(
+            "必须在 onStart 里渲染（每次回前台重读 prefs）",
+            blockAfter(src, "override fun onStart()").contains("renderRows()"),
+        )
+        assertFalse(
+            "渲染不得留在 onCreate（只画一次就会读到过期状态）",
+            blockAfter(src, "override fun onCreate(").contains("renderRows()"),
+        )
+        assertTrue(
+            "档 3 的显示值必须与档 2 取与（与引擎掩码同口径）",
+            src.contains("prefs.rareTier3 && prefs.rareTier2"),
         )
     }
 }

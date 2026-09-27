@@ -1,43 +1,42 @@
 # 词库构建工具
 
-## 一、现行流水线（唯一在用）
+## 一、现行流水线（2026-09-27 起，唯一在用）
 
 ```
-docs/rime-ice/cn_dicts/{base,ext}.dict.yaml     雾凇拼音源（本机 docs/ 内，不入库）
-        │  convert_rime_ice.py
+docs/所有词库/短语/词库_第{1,2,3,4}部分.txt     `词<TAB>拼音(空格分隔)<TAB>词频`（本机 docs/ 内，不入库）
+docs/所有词库/单字/单字注音_{一级,二级,三级}简体.txt  `拼音<TAB>字`
+docs/所有词库/单字/简繁对照.txt                `简体<TAB>繁体<TAB>拼音`
+        │  build_dicts.py（一体化：单字三档 + 索引 + 下载包 + 简繁映射）
         ▼
-out/rime_ice/pinyin_phrases.txt                 本项目格式（拼音<TAB>词1|词2|…）
-        │  切包：base = 词长 ≤4（含四字成语）／ ext = >4 字；压 xz（preset=7, lc=4, pb=0）
-        │  build_dict_index.py（按词频排序 → 二进制索引 v2：keysBlob + 长度数组）
-        ▼
-app/src/main/assets/pinyin_index.bin.xz         基础包索引，随 APK（4.48MB，原始 14.4MB）
-app/src/main/assets/hot_phrases.txt.xz          高频子集（4 万词 / 220KB，冷启动秒级可输入）
-release/dict_ext.txt.xz                         扩展包，Release 附件按需下载
+app/src/main/assets/pinyin_index.bin.xz        内置短语索引（第 1 部分：29.9 万键 / 40 万条 / xz 2.15MB）
+app/src/main/assets/pinyin_chars.txt.xz        单字表（三档并集：9,373 字 / 10,080 条）
+app/src/main/assets/{common,tier2,tier3}_chars.txt.xz   档 1 / 档 2 / 档 3 字表（5,613 / 837 / 2,923 字）
+app/src/main/assets/simp_trad.txt.xz           简繁映射（1,948 对，逐字；一简对多繁刻意不收）
+app/src/main/assets/simp_trad_words.txt.xz     简繁词级消歧（8,942 条，整词优先于逐字）
+app/src/main/assets/simplify.txt.xz            繁→简单字映射（3,221 项，源 OpenCC TSCharacters；折简体用）
+release/dict_part{2,3,4}.txt.xz                分类词库下载包（40 / 50 / 60 万条，Release 附件）
 ```
 
-基础包**文本**由生成器输出到 `out/rime_ice/pinyin_phrases.txt`，只作对比（不进 APK）；
-留档副本存 `docs/dict_builder/`（本地，不入库）。运行时读二进制索引
-（`PhraseIndex` 二分查找 + 按需解码）。
-
-可选包（同样走 Release 附件）：`docs/rime-ice/cn_dicts/tencent.dict.yaml`
-→ `convert_rime_tencent.py`（源无拼音列，需自动注音）→ `release/opt_tencent.txt.xz`。
+运行时读二进制索引（`PhraseIndex` 二分查找 + 按需解码）；**加载是单段**（不再有高频子集）。
 
 **改完词库必做三件事**（少一件都算没改完）：
 
-1. 重跑 `gen_hot_dict.py` 生成高频子集；`app/build.gradle.kts` 的 `noCompress += "xz"` 不可删（否则 APK 二次压缩）
-2. 真机验证加载与输入（后台线程；高频子集先就绪即可打字，全量索引为内存映射复用）
-3. 扩展包 / 可选包改动要重传双端 Release 附件并实测下载（比对 sha256）；只改基础包则随 APK 发布
+1. 重跑 `build_dicts.py`（按改动范围用 `--only chars|parts|simp`）；
+   `app/build.gradle.kts` 的 `noCompress += "xz"` 不可删（否则 APK 二次压缩）
+2. 真机验证加载与输入（索引加载含首次写 `.idx` 缓存约 1.2s）
+3. 下载包改动 → 重传双端 Release 附件（tag `dict-parts-20260927-v1`）→ 更新
+   `OptionalDicts.ALL` 的 checksum → 实测下载并比对 sha256
 
 ## 二、脚本一览
 
-**在用**：`convert_rime_ice.py`（主流程）· `convert_rime_tencent.py`（可选包）·
-`build_dict_index.py`（索引，改词库必跑，`--fixture` 出测试 fixture）·
-`gen_hot_dict.py`（高频子集，改词库必须重跑，否则前缀性质被破坏）·
+**在用**：`build_dicts.py`（主流程，生成上面全部资产）· `build_dict_index.py`（索引格式，`--fixture` 出测试 fixture）·
+`asset_io.py`（资产文本读写，`.txt.xz` 统一入口）·
 `gen_shuangpin_tables.py`（7 套双拼键位 → `ShuangpinSchemes.kt`，改键位只改这里）·
 `verify_shuangpin_migration.py`（换表对拍 676 码）· `detect_ambiguous_keys.py` + `add_words.py`（连写歧义漏词检测 / 追加词条）
 
 **备用**：`merge_chars.py`（合并单字表 / 音节表）· `split_dict.py`（切 base / ext）·
-`export_dicts.py`（索引/发布包 → 标准文本，导出到 `docs/dict_review/` 供人工审核，含单字表三档拆分）
+`export_dicts.py`（索引 / 发布包 → 标准文本，导出到 `docs/dict_review/` 供人工审核；
+**2026-09-27 已按三档方案适配**：档 1/2/3 拆分视图、两级「被过滤词条」口径、简繁字级 + 词级映射导出）
 
 **历史与评估**：`build_thuocl_pinyin.py`（THUOCL 自动注音，未采纳）· `dict_builder.py`（早期通用构建器）·
 `compare_dicts.py`（写死旧机器路径）· `extend_dict.py` / `merge_game_dicts.py`（一次性扩充）

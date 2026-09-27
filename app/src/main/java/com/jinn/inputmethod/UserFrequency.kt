@@ -288,12 +288,18 @@ internal object UserFrequency {
      *
      * 未学习时（[entries] 为空）直接返回原数组，零开销、零行为变化。
      */
-    fun rank(words: Array<String>): Array<String> {
+    fun rank(words: Array<String>): Array<String> = rank(words) { it }
+
+    /**
+     * 带 key 映射的重载：「只使用繁体字」模式下候选是繁体、词频表按简体存储（2026-09-27），
+     * 于是按 [keyOf] 转换后的简体形式查权重，返回的仍是候选原样（顺序变了、内容不变）。
+     */
+    fun rank(words: Array<String>, keyOf: (String) -> String): Array<String> {
         if (!enabled || entries.isEmpty() || words.size < 2) return words
         var anyKnown = false
-        for (w in words) if (entries.containsKey(w)) { anyKnown = true; break }
+        for (w in words) if (entries.containsKey(keyOf(w))) { anyKnown = true; break }
         if (!anyKnown) return words
-        return words.sortedByDescending { entries[it]?.weight ?: 0.0 }.toTypedArray()
+        return words.sortedByDescending { entries[keyOf(it)]?.weight ?: 0.0 }.toTypedArray()
     }
 
     // ── 序列化（纯函数，便于单测）──────────────────────────────────────────

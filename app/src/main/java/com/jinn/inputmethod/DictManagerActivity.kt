@@ -498,7 +498,7 @@ class DictManagerActivity : Activity() {
         @Volatile
         private var activePage: WeakReference<DictManagerActivity>? = null
 
-        /** 单个词库包的下载上限（字节）：现役最大包 6.36MB，取 64MB 留足余量 */
+        /** 单个词库包的下载上限（字节）：现役最大包 4.21MB（第 4 部分），取 64MB 留足余量 */
         const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
     }
 }

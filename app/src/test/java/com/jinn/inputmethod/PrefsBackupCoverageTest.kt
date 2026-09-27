@@ -18,10 +18,13 @@ class PrefsBackupCoverageTest {
     /**
      * 已退役的持久化键：只被迁移逻辑读取，既不写也不再进备份白名单。
      *
-     * 目前只有 `KEY_KEYBOARD_SKIN`（旧版单值皮肤 → 双槽位，见 `Prefs.ensureSkinSlotsMigrated`）：
-     * 它留在常量表里是为了让本守卫仍能清点它，因此必须显式列出而不是悄悄改名绕过。
+     *  - `KEY_KEYBOARD_SKIN`：旧版单值皮肤 → 双槽位（`Prefs.ensureSkinSlotsMigrated`）
+     *  - `KEY_SHOW_RARE_CHARS_LEGACY`：旧「显示生僻字」→ 档 2 / 档 3 两开关（2026-09-27），
+     *    只保留读取迁移与旧备份导入兼容
+     *
+     * 它们留在常量表里是为了让本守卫仍能清点，因此必须显式列出而不是悄悄改名绕过。
      */
-    private val retiredKeys = setOf("KEY_KEYBOARD_SKIN")
+    private val retiredKeys = setOf("KEY_KEYBOARD_SKIN", "KEY_SHOW_RARE_CHARS_LEGACY")
 
     private val sourceFile: File = listOf(
         File("src/main/java/com/jinn/inputmethod/Prefs.kt"),
@@ -51,14 +54,25 @@ class PrefsBackupCoverageTest {
         val cuts = listOf("\n    internal fun ", "\n    private fun ", "\n    internal class ")
             .map { tail.indexOf(it) }
             .filter { it > 0 }
-        return tail.substring(0, cuts.minOrNull() ?: tail.length)
+        // **先剥注释**再交给调用方：否则把 `put(KEY_X, ...)` 注释掉时，键名仍会命中下面的正则、
+        // 守卫照样绿（BUG.md L-50 —— 当初用「注释掉」做变异没变红、改用「删掉整行」才变红）。
+        return stripComments(tail.substring(0, cuts.minOrNull() ?: tail.length))
+    }
+
+    /** 去掉 `//` 行注释与 `/* … */` 块注释；其余文本原样保留（断言只做「键名 / 取值工具是否出现」） */
+    private fun stripComments(text: String): String {
+        val noBlock = text.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+        return noBlock.lineSequence().joinToString("\n") { line ->
+            val i = line.indexOf("//")
+            if (i >= 0) line.substring(0, i) else line
+        }
     }
 
     @Test
     fun `每个持久化键都必须同时在导出与导入白名单里`() {
-        // 精确 32：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
-        // 改键数是正常维护，改完同步这个数（30 个现有键 + skin_light / skin_dark，含 1 个退役键）。
-        assertEquals("提取到的键常量应是 32 个（改键数请同步本断言）", 32, keyConstants.size)
+        // 精确 35：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
+        // 改键数是正常维护，改完同步这个数（32 个旧键 − 1 个改名 + 3 个新键，含 2 个退役键）。
+        assertEquals("提取到的键常量应是 35 个（改键数请同步本断言）", 35, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -103,7 +117,9 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_KEY_HINT" to "asBool(v)",
             "KEY_SHOW_QUANPIN" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
-            "KEY_SHOW_RARE_CHARS" to "asBool(v)",
+            "KEY_RARE_TIER2" to "asBool(v)",
+            "KEY_RARE_TIER3" to "asBool(v)",
+            "KEY_USE_TRADITIONAL" to "asBool(v)",
             "KEY_FUZZY_PINYIN" to "asInt(v)",
             "KEY_VOICE_INPUT" to "asBool(v)",
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
@@ -224,6 +240,30 @@ class PrefsBackupCoverageTest {
             assertTrue("$key 未在 ClipboardPrefs 中声明", text.contains("private const val $key"))
             assertTrue("$key 未进导出白名单", text.contains("out[$key] = it"))
             assertTrue("$key 未进导入白名单", text.substringAfter("importFromBackup").contains(key))
+        }
+    }
+
+    /**
+     * 旧「加更多生僻字」开关的迁移口径：**两档的回落必须一致**（旧 true = 两档全开）。
+     *
+     * 迁移读的是 `show_rare_chars`（[retiredKeys] 之一），只能靠源码对拍钉住：
+     * `rare_tier2` 写了回落、`rare_tier3` 漏写时，原生升级（旧开关 true + 覆盖安装 + 不导入备份）
+     * 只得到档 2 —— 三级字 2,923 个与含三级字的词条整体消失，而**导出**又把这个回落值写进备份并把
+     * 旧键丢掉，于是「升级丢档 3 → 备份固化 → 换机永久丢」（2026-09-27 修，BUG.md L-41）。
+     *
+     * ⚠ 判据先剥 `//` 注释再匹配：`PrefsBackupCoverageTest` 的 `bodyOf` 曾因不剥注释而“看起来绿”
+     * （BUG.md L-50），属性块里现在也有讲述这条迁移的注释，别让注释自己满足断言。
+     */
+    @Test
+    fun `旧生僻字开关必须同时回落到两个档位`() {
+        for (prop in listOf("rareTier2", "rareTier3")) {
+            val code = propertyBlock(prop).lineSequence()
+                .joinToString("\n") { it.substringBefore("//") }
+            assertTrue(
+                "$prop 的 getter 未回落旧键：`rare_tier*` 缺失时应读 KEY_SHOW_RARE_CHARS_LEGACY" +
+                    "（否则原生升级只开档 2，三级字与含三级字的词条消失）",
+                code.contains("else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)"),
+            )
         }
     }
 }

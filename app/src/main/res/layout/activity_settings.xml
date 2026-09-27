@@ -206,7 +206,7 @@
                 android:text="@string/key_appearance_entry" />
         </LinearLayout>
 
-        <!-- 模糊音容错：入口按钮（文案在代码里下发，strings.xml 默认禁改） -->
+        <!-- 模糊音容错 / 加更多生僻字：两个入口按钮并排（文案在代码里下发，strings.xml 默认禁改） -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -220,6 +220,15 @@
                 style="@style/SettingsButton"
                 android:layout_width="0dp"
                 android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+
+            <Button
+                android:id="@+id/btn_rare_chars"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
@@ -485,71 +494,8 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 自动唤起键盘 / 加更多生僻字：两个开关并排（各带说明小字） -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:baselineAligned="false"
-            android:orientation="horizontal"
-            android:padding="8dp">
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <Switch
-                    android:id="@+id/switch_auto_show_keyboard"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="36dp"
-                    android:maxLines="2"
-                    android:text="@string/switch_auto_show_keyboard"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:text="@string/switch_auto_show_keyboard_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <Switch
-                    android:id="@+id/switch_show_rare_chars"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="36dp"
-                    android:maxLines="2"
-                    android:text="@string/switch_show_rare_chars"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:text="@string/switch_show_rare_chars_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 用户词频学习 / 追加候选词语：两个开关并排（各带说明小字） -->
+        <!-- 用户词频学习 / 追加候选词语：两个开关并排（各带说明小字）
+             （「加更多生僻字」2026-09-27 起改为入口按钮，与「增加模糊拼音」同行，页内是两档开关） -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -608,6 +554,70 @@
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"
                     android:text="@string/switch_predict_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 自动唤起键盘 / 只使用繁体字：两个开关并排（各带说明小字）。
+             「只使用繁体字」2026-09-27 起由勾选框改为胶囊开关，与「自动唤起键盘」同行（文案在代码里下发） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="0dp"
+            android:background="@drawable/card_aurora"
+            android:baselineAligned="false"
+            android:orientation="horizontal"
+            android:padding="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_auto_show_keyboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="36dp"
+                    android:maxLines="2"
+                    android:text="@string/switch_auto_show_keyboard"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:text="@string/switch_auto_show_keyboard_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_use_traditional"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="36dp"
+                    android:maxLines="2"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/text_use_traditional_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
             </LinearLayout>

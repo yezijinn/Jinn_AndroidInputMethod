@@ -71,17 +71,19 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var textTest: TextView
     private lateinit var textMicState: TextView
 
-    // 功能开关（自动唤起键盘 / 生僻字 / 词频学习 / 预测 / 语音 / 键面韵母提示 / 拼音声韵显示）
+    // 功能开关（自动唤起键盘 / 词频学习 / 预测 / 语音 / 键面韵母提示 / 拼音声韵显示）
     private lateinit var switchAutoShowKeyboard: Switch
-    private lateinit var switchShowRareChars: Switch
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
     private lateinit var switchVoiceInput: Switch
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
 
-    /** 模糊音容错入口按钮（文案与状态在代码里下发：strings.xml 默认禁改） */
+    /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认禁改） */
     private lateinit var btnFuzzyPinyin: Button
+
+    /** 「只使用繁体字」胶囊开关（2026-09-27 起：候选里的简体字全部替换为繁体字；与「自动唤起键盘」同行） */
+    private lateinit var switchUseTraditional: Switch
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
@@ -285,17 +287,20 @@ class SettingsActivity : ComponentActivity() {
         textMicState = findViewById(R.id.text_mic_state)
 
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
-        switchShowRareChars = findViewById(R.id.switch_show_rare_chars)
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
         switchKeyHint = findViewById(R.id.switch_key_hint)
         // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认禁改，这里下发
-        switchKeyHint.text = "键盘内嵌韵母"
+        switchKeyHint.text = "键盘内显韵母"
         findViewById<TextView>(R.id.text_key_hint_desc).text = "关闭后键面只显示字母"
         switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
-        switchPinyinQuanpin.text = "双拼显示声韵"
+        switchPinyinQuanpin.text = "双拼候选全音"
         findViewById<TextView>(R.id.text_pinyin_quanpin_desc).text = "关闭后显示按下的字母"
+        // 只使用繁体字：候选里的简体字全部替换为繁体字（文案同样代码下发）
+        switchUseTraditional = findViewById(R.id.switch_use_traditional)
+        switchUseTraditional.text = TEXT_USE_TRADITIONAL
+        findViewById<TextView>(R.id.text_use_traditional_desc).text = "开启后候选全部显示繁体字"
         btnCheckUpdate = findViewById(R.id.btn_check_update)
         btnUpdateDownload = findViewById(R.id.btn_update_download)
         bindCheckUpdate()
@@ -320,7 +325,7 @@ class SettingsActivity : ComponentActivity() {
         findViewById<Button>(R.id.btn_symbol_order).setOnClickListener {
             startActivity(Intent(this, SymbolOrderActivity::class.java))
         }
-        // 补充短语词库：独立页面按需下载长词包 / 专业词库
+        // 补充短语词库：独立页面按需下载分片短语库（词库_第 2/3/4 部分）
         findViewById<Button>(R.id.btn_dict_expand).setOnClickListener {
             Diagnostics.i(TAG, "设置页: 打开分类词库")
             runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
@@ -335,6 +340,11 @@ class SettingsActivity : ComponentActivity() {
         btnFuzzyPinyin = findViewById(R.id.btn_fuzzy_pinyin)
         btnFuzzyPinyin.text = TEXT_FUZZY_ENTRY
         btnFuzzyPinyin.setOnClickListener { startActivity(Intent(this, FuzzyPinyinActivity::class.java)) }
+        // 加更多生僻字：同一行的右侧按钮 → 独立全屏页（两档开关，档 3 依赖档 2，勾选即落盘即时生效）
+        findViewById<Button>(R.id.btn_rare_chars).apply {
+            text = TEXT_RARE_ENTRY
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, RareCharsActivity::class.java)) }
+        }
         appliedThemeDark = ThemeManager.isDark(this)
         scheduleThemeTick()
 
@@ -465,11 +475,11 @@ class SettingsActivity : ComponentActivity() {
             prefs.autoShowKeyboard = checked
             Diagnostics.i(TAG, "自动唤起键盘: ${if (checked) "开启" else "关闭"}")
         }
-        // 生僻字开关：词库在 IME 进程启动时加载，这里只落盘，需重启输入法才生效
-        switchShowRareChars.setOnCheckedChangeListener { _, checked ->
-            prefs.showRareChars = checked
-            Diagnostics.i(TAG, "显示生僻字: ${if (checked) "开启" else "关闭"}（重启输入法后生效）")
-            toast(if (checked) R.string.rare_chars_on else R.string.rare_chars_off)
+        // 只使用繁体字：拨动即写入并立即生效（引擎侧 setTraditional 只改查询期转换，不需要重启）
+        switchUseTraditional.setOnCheckedChangeListener { _, checked ->
+            prefs.useTraditional = checked
+            PinyinEngine.setTraditional(checked)
+            Diagnostics.i(TAG, "只使用繁体字: ${if (checked) "开启" else "关闭"}（立即生效）")
         }
         // 用户词频学习：勾选即写入并立即生效（不需要重启输入法）
         switchUserLearning.setOnCheckedChangeListener { _, checked ->
@@ -800,7 +810,7 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
         bindVoiceInputSwitch()
 
-        switchShowRareChars.isChecked = prefs.showRareChars
+        switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
         switchKeyHint.isChecked = prefs.showKeyHint
@@ -1585,6 +1595,9 @@ class SettingsActivity : ComponentActivity() {
                     alert(TEXT_IMPORT_CONFIG, TEXT_IMPORT_FAIL)
                     return@runOnUiThread
                 }
+                // 设置已落盘：先把「即时生效」的那几项同步给引擎，再走下面的「需重启」提示
+                // （用户点「稍后」时，繁体 / 档位 / 模糊音 / 学习这些不必等重启就该生效）
+                syncImmediateSettings()
                 val parts = ArrayList<String>()
                 if (mode == ConfigBackupManager.ImportMode.RESTORE) parts.add("设置 ${r.prefsApplied} 项")
                 parts.add("词频 ${r.freqBefore}→${r.freqAfter} 条")
@@ -1621,6 +1634,26 @@ class SettingsActivity : ComponentActivity() {
                 showTipDialog(dialog)
             }
         }.start()
+    }
+
+    /**
+     * 导入完成后，把「不需要重启就生效」的开关立即同步到运行时。
+     *
+     * 这些开关平时靠各自监听器里的 `setXxx` 即时生效；导入是**绕过监听器**直接写 prefs 的，
+     * 不同步的话用户点「稍后」后看到的是「导入成功但行为没变」—— 繁体 / 档位 / 模糊音 / 学习
+     * 都属于这一类（真正必须重启的只有词库与其它启动期读取的项，提示语里已经写明）。
+     */
+    private fun syncImmediateSettings() {
+        val p = Prefs(this)
+        PinyinEngine.setRareTiers(p.rareTier2, p.rareTier3)
+        PinyinEngine.setTraditional(p.useTraditional)
+        PinyinEngine.setFuzzyMask(p.fuzzyPinyinMask)
+        UserFrequency.setEnabled(p.userLearning)
+        Diagnostics.i(
+            TAG,
+            "导入后同步即时设置: 档2=${p.rareTier2} 档3=${p.rareTier3} " +
+                "繁体=${p.useTraditional} 模糊音=${p.fuzzyPinyinMask} 学习=${p.userLearning}",
+        )
     }
 
     /** 先把设置写实、再延迟杀进程：系统随后会自动重建 IME 服务 */
@@ -1775,6 +1808,12 @@ class SettingsActivity : ComponentActivity() {
 
         // 模糊音容错：入口文案（页面内的标题 / 说明 / 按钮文案在 FuzzyPinyinActivity 里下发）
         const val TEXT_FUZZY_ENTRY = "增加模糊拼音"
+
+        // 加更多生僻字：入口文案（页面内的文案在 RareCharsActivity 里下发）
+        const val TEXT_RARE_ENTRY = "加更多生僻字"
+
+        // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
+        const val TEXT_USE_TRADITIONAL = "只使用繁体字"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
             "（也可能是文件超过 256MB 上限）"

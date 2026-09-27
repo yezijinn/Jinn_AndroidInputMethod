@@ -7,9 +7,12 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.Bundle
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.min
 
     /**
@@ -138,6 +141,8 @@ import kotlin.math.min
         var label: String = ""
             set(value) {
                 field = value
+                // 辅助服务朗读键面文字（字母层读字母、符号层读符号）；空标签不设，避免读出空白
+                contentDescription = value.ifEmpty { null }
                 invalidate()
             }
 
@@ -267,10 +272,47 @@ import kotlin.math.min
             return true // 消费事件，保证 performClick 正常分发
         }
 
-        // 无障碍 / 键盘可达性：声明可点击，允许辅助服务触发
+        /**
+         * 触摸路径的点击入口（ACTION_UP 时由触摸监听调用）。
+         *
+         * 这里不发输入：字母键的触摸由 PinyinKeyboardView.handleKeyTouch 统一分发，
+         * 本方法只为让系统的点击语义完整（并保留 a11y 的点击事件）。
+         */
         override fun performClick(): Boolean {
             super.performClick()
             return true
+        }
+
+        /**
+         * 无障碍激活回调：辅助服务的「点击」操作（TalkBack 双击）走这里。
+         *
+         * 只由 [performAccessibilityAction] 触发，而它只被辅助服务调用；触摸链路走的是
+         * [performClick]，两条路径互斥，不会出现「触摸输入一次、辅助服务再输入一次」。
+         * 为 null 时节点不声明可点击，辅助服务无处可点。
+         */
+        var onActivate: (() -> Unit)? = null
+
+        override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+            super.onInitializeAccessibilityNodeInfo(info)
+            // 声明成按钮并挂上 ACTION_CLICK，辅助服务才会把「双击」派发到
+            // performAccessibilityAction —— 否则会走「注入手势」的兜底路径，
+            // 而字母键的触摸被外层监听消费，注入手势的结果不可预期。
+            info.className = "android.widget.Button"
+            if (onActivate != null) {
+                info.isClickable = true
+                // 用 AccessibilityAction 重载：addAction(Int) 自 API 21 起已弃用（编译会告警）
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+            }
+        }
+
+        override fun performAccessibilityAction(action: Int, args: Bundle?): Boolean {
+            val activate = onActivate
+            if (action == AccessibilityNodeInfo.ACTION_CLICK && activate != null) {
+                activate()
+                sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
+                return true
+            }
+            return super.performAccessibilityAction(action, args)
         }
 
         /**

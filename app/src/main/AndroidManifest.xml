@@ -50,6 +50,11 @@
             android:name=".FuzzyPinyinActivity"
             android:exported="false" />
 
+        <!-- 加更多生僻字页：从设置页「加更多生僻字」按钮进入（两档开关，档 3 依赖档 2） -->
+        <activity
+            android:name=".RareCharsActivity"
+            android:exported="false" />
+
         <!-- 收藏符号编辑页：从设置页「编辑收藏符号」按钮进入 -->
         <activity
             android:name=".FavoriteSymbolsActivity"

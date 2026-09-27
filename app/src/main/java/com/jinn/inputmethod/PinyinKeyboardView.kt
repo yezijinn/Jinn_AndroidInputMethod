@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -14,6 +15,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -366,6 +368,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnPeriod = root.findViewById(R.id.key_period)
         keySemicolon = root.findViewById(R.id.key_semicolon)
         keySemicolon.label = SEMICOLON_KEY.toString()
+        // 无障碍激活：与字母键同款；触摸路径的可见性 / 命中判定由触摸监听自己负责，
+        // 辅助服务的两次双击之间键不会变可见性，无需复刻那两个判据
+        keySemicolon.onActivate = { onSemicolonPressed() }
         keySemicolon.setOnTouchListener { view, event ->
             val consumed = handleSemicolonTouch(event)
             // 无障碍：抬手时补 performClick（与字母键同款处理）
@@ -435,6 +440,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 val key = root.findViewById<PinyinKey>(letterKeyId(c)) ?: continue
                 key.label = c.toString()
                 keyViews[c] = key
+                // 无障碍激活（TalkBack 双击）与触摸点击同走 onLetterPressed（内部按层分发，
+                // 符号层复用同一批键，走的也是这里）；它只由辅助服务经 performAccessibilityAction
+                // 触发，与下面的触摸监听互斥，不会双输入
+                key.onActivate = { onLetterPressed(c) }
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
                 key.setOnTouchListener { view, event ->
                     val consumed = handleKeyTouch(c, event)
@@ -683,6 +692,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             consumed
         }
+        // 退格是 XML 键、不能覆写方法，用 delegate 提供无障碍激活：
+        // ACTION_CLICK（TalkBack 双击）→ 删一个，与触摸链路（DOWN 删除 + 长按连删）互斥。
+        // 不挂 OnClickListener：它会被触摸路径的 performClick 一并触发，一次触摸变成删两个。
+        btnBackspace.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = "android.widget.Button"
+                info.isClickable = true
+                // 用 AccessibilityAction 重载：addAction(Int) 自 API 21 起已弃用（编译会告警）
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+            }
+
+            override fun performAccessibilityAction(host: View, action: Int, args: Bundle?): Boolean {
+                if (action == AccessibilityNodeInfo.ACTION_CLICK) {
+                    deleteOne()
+                    return true
+                }
+                return super.performAccessibilityAction(host, action, args)
+            }
+        }
         // 搜索模式：这三个键必须只作用于搜索框，否则回车会把原始拼音串或宿主动作
         // （输入框声明的是「发送」时就直接把消息发出去）落到宿主，逗号句号把全角标点写进
         // 用户正在编辑的正文里。搜索态下回车等价于面板自己的「退出搜索」按钮，不碰宿主。
@@ -736,6 +765,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 方案切换时清掉残留的拼音与预测
         composing.clear()
         lastPredictions = emptyList()
+        // 会话边界：方向面板是「视图内临时态」——视图实例跨输入框复用，不复位就会让新输入框
+        // 以展开态弹出（字母区被面板接管，用户看到的是「键盘变身」而不是正常键区）。
+        // **必须走 hideDirectionPanel()**：它负责恢复字母三行、清掉 stale 面板并把
+        // onSelectionModeChanged(false) 回传给 IME；裸置标志会让字母区永久失活（无触摸）。
+        // 与 IME 侧每会话清掉的拖选口径一致（见 BUG.md L-29）。layer / capsMode 是用户显式手选的
+        // 状态，不在这里清（那是可见的行为变化，另行拍板）。
+        if (directionPanelVisible) hideDirectionPanel()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
         // 键盘正显示时不走这里，外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
@@ -1875,7 +1911,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
 
-        // 词库尚未就绪（冷启动时高频子集约 0.4s，无子集的旧包则要 6~10.7s）：
+        // 词库尚未就绪（2026-09-27 起单段加载，冷启动约 0.5~0.7s）：
         // 明确提示，而不是给一个「看起来像坏了」的空白候选栏。IME 内禁弹窗，改用内联提示。
         if (!PinyinEngine.isLoaded) {
             showPinyin(displayText)
@@ -2233,6 +2269,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 与字母键一样由外部触摸驱动按压态（OnTouchListener 返回 true 后 PinyinKey.onTouchEvent
      * 不再执行），因此这里显式调 setPressedVisual。
      */
+    /** 分号键上屏（触摸抬起与无障碍激活共用；可见性 / 命中判定由各自入口负责） */
+    private fun onSemicolonPressed() {
+        composing.append(SEMICOLON_KEY)
+        refreshCandidateBar()
+        Diagnostics.v(TAG, "分号键(ing): 拼音串=$composing")
+    }
+
     private fun handleSemicolonTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -2258,9 +2301,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     Diagnostics.v(TAG, "分号键: 抬起在键外，忽略")
                     return true
                 }
-                composing.append(SEMICOLON_KEY)
-                refreshCandidateBar()
-                Diagnostics.v(TAG, "分号键(ing): 拼音串=${composing}")
+                onSemicolonPressed()
                 return true
             }
 

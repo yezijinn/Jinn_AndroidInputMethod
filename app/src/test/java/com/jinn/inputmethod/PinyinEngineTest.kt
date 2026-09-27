@@ -318,4 +318,36 @@ class PinyinEngineTest {
         val c2 = PinyinEngine.consumption(residual, "什么")
         assertEquals(residual, residual.substring(0, c2.quanpinChars))
     }
+
+    /**
+     * 单字查询兼容 üe 两种写法（2026-09-27）。
+     *
+     * 词库键统一下来是 v 型（`lve`/`nve`），而双拼转换输出 **ue 型**（`Shuangpin.toQuanpin` 的 `lt` → `lue`）——
+     * 单字查询只认单键时，「略 掠 虐」在双拼下没有单字候选（词候选不受影响，`phraseKeysOf` 早已兼容两写法）。
+     * 两种写法必须查到同一批字；无对偶的音节（`jue` 的 `jve` 不在词库）不受影响。
+     */
+    @Test
+    fun 单字查询兼容撮口呼的ue与ve两种写法() {
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "lve\t略,掠\nnve\t虐\n",
+            phrases = "",
+            syllables = "lve\nlue\nnve\nnue",
+        )
+        assertEquals("ue 型输入应命中 v 型键", listOf("略", "掠"), PinyinEngine.charsFor("lue"))
+        assertEquals("v 型输入原样命中", listOf("略", "掠"), PinyinEngine.charsFor("lve"))
+        assertEquals("nue 型同样兼容", listOf("虐"), PinyinEngine.charsFor("nue"))
+        assertEquals(
+            "含 ue 但无 lue/nue 对偶的音节不受影响",
+            emptyList<String>(),
+            PinyinEngine.charsFor("jue"),
+        )
+        // 端到端：双拼 lt → lue，候选里必须有「略」
+        val quanpin = Shuangpin.toQuanpin("lt", ShuangpinScheme.ZIRANMA)
+        assertEquals("双拼 lt 应转换为 lue", "lue", quanpin)
+        assertTrue(
+            "双拼 lt 的「略」应进候选：${PinyinEngine.query(quanpin).candidates}",
+            PinyinEngine.query(quanpin).candidates.contains("略"),
+        )
+    }
 }

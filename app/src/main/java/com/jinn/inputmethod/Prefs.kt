@@ -136,16 +136,50 @@ class Prefs(context: Context) {
         }
 
     /**
-     * 显示生僻字（默认关闭）。
+     * 可选字档 2（`单字注音_二级简体.txt`，837 字）是否放行，**默认关**。
      *
-     * 关闭时按《通用规范汉字表》过滤：候选里不出现三级字、表外字，也不出现含生僻字的词条。
-     * 过滤在查询期做（`phrasesFor`），词库与索引原样加载，不因开关变化重建。
+     * 2026-09-27 起「加更多生僻字」从开关改为设置页按钮 + 独立页面（[RareCharsActivity]）里的
+     * 两个档位开关：档 2 / 档 3 都按查询期判据放行（`isLoadableChar`），**改完即时生效**，
+     * 不再需要重启输入法（旧 [KEY_SHOW_RARE_CHARS] 的「重启生效」语义随两档开关一起退场）。
      *
-     * 开关在加载时读取，改完要重启输入法才生效（设置页「保存配置并立即重启生效」）。
+     * 旧键只作一次性迁移：新键没写过时回落到旧值，保证升级用户不丢设置。
+     * ⚠ **回落口径 = 旧 true 即两档全开**（旧版语义是「放行表外字」，而旧版默认本就放行三级字）——
+     * 与 `importFromBackup` 的旧键分支同款；两档的回落**必须一致**，否则原生升级用户会只得到档 2，
+     * 三级字（2,923 字）与含三级字的词条整体消失（2026-09-27 修，BUG.md L-41）。
      */
-    var showRareChars: Boolean
-        get() = sp.getBoolean(KEY_SHOW_RARE_CHARS, false)
-        set(value) = sp.edit { putBoolean(KEY_SHOW_RARE_CHARS, value) }
+    var rareTier2: Boolean
+        get() = if (sp.contains(KEY_RARE_TIER2)) sp.getBoolean(KEY_RARE_TIER2, false)
+        else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)
+        set(value) = sp.edit { putBoolean(KEY_RARE_TIER2, value) }
+
+    /**
+     * 可选字档 3（`单字注音_三级简体.txt`，2,923 字）是否放行，**默认关，且依赖 [rareTier2]**。
+     *
+     * 「不能只开档 3」由设置页强制（[RareCharsActivity] 里档 2 关闭时档 3 不可点），
+     * 引擎侧再兜一次（`setRareTiers` 内 `rareTier3 = tier2 && tier3`），
+     * 避免从导入的备份或测试注入里混进非法组合。
+     *
+     * 旧键回落与 [rareTier2] **同口径**（见其 KDoc）：`rare_tier3` 缺失但旧 `show_rare_chars` 为 true 时
+     * 也返回 true。这条曾经缺失 ⇒ 原生升级（旧开关 true + 覆盖安装 + 不导入备份）只开档 2，
+     * 而导出又把这个回落值写进备份、把旧键丢掉，于是「升级丢档 3 → 备份固化 → 换机永久丢」。
+     * 修法两种都可行：① 这里补回落（本处采用，getter / 导入 / 导出三条路径自然一致）；
+     * ② 改成一次性迁移（`ensureRareTiersMigrated()` 按旧键写入两个新键，与 `ensureSkinSlotsMigrated` 同款）
+     * —— 真值只剩一份，但要新增调用点，留待将来真加档位时一并做。
+     */
+    var rareTier3: Boolean
+        get() = if (sp.contains(KEY_RARE_TIER3)) sp.getBoolean(KEY_RARE_TIER3, false)
+        else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)
+        set(value) = sp.edit { putBoolean(KEY_RARE_TIER3, value) }
+
+    /**
+     * 「只使用繁体字」（默认关）：候选里的简体字按简繁映射表替换为繁体字。
+     *
+     * 查询期转换（`PinyinEngine.toDisplay`），**改完即时生效**：不改词库数据、不改拼音键；
+     * 用户词频恒按简体存储（`rememberChoice`），两种模式共享同一份学习结果。
+     */
+    var useTraditional: Boolean
+        get() = sp.getBoolean(KEY_USE_TRADITIONAL, false)
+        set(value) = sp.edit { putBoolean(KEY_USE_TRADITIONAL, value) }
 
     /**
      * 模糊音容错：按 [FuzzyPinyin] 的分组位掩码存，**默认 [FuzzyPinyin.NONE]（关闭）**。
@@ -425,7 +459,9 @@ class Prefs(context: Context) {
         put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_SHOW_QUANPIN, showQuanpin)
         put(KEY_USER_LEARNING, userLearning)
-        put(KEY_SHOW_RARE_CHARS, showRareChars)
+        put(KEY_RARE_TIER2, rareTier2)
+        put(KEY_RARE_TIER3, rareTier3)
+        put(KEY_USE_TRADITIONAL, useTraditional)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
         put(KEY_KEY_CORNER_DP, keyCornerDp)
@@ -479,7 +515,17 @@ class Prefs(context: Context) {
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
-                KEY_SHOW_RARE_CHARS -> asBool(v)?.let { showRareChars = it; ok() } ?: bad(key)
+                KEY_RARE_TIER2 -> asBool(v)?.let { rareTier2 = it; ok() } ?: bad(key)
+                KEY_RARE_TIER3 -> asBool(v)?.let { rareTier3 = it; ok() } ?: bad(key)
+                KEY_USE_TRADITIONAL -> asBool(v)?.let { useTraditional = it; ok() } ?: bad(key)
+                // 旧备份（≤2026-09-26）里是单个「显示生僻字」：true 视为两档都开，false 保持默认关
+                KEY_SHOW_RARE_CHARS_LEGACY -> asBool(v)?.let {
+                    if (it) {
+                        rareTier2 = true
+                        rareTier3 = true
+                    }
+                    ok()
+                } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
                 KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
@@ -620,7 +666,15 @@ class Prefs(context: Context) {
         /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
 
-    private const val KEY_SHOW_RARE_CHARS = "show_rare_chars"
+    /** 可选字档 2 / 档 3（设置页「加更多生僻字」页内两个开关，2026-09-27 起） */
+    private const val KEY_RARE_TIER2 = "rare_tier2"
+    private const val KEY_RARE_TIER3 = "rare_tier3"
+
+    /** 「只使用繁体字」（设置页，2026-09-27 起） */
+    private const val KEY_USE_TRADITIONAL = "use_traditional"
+
+    /** 旧「显示生僻字」键（2026-09-27 退役为两档开关）：只作读取迁移与旧备份导入兼容，不再写入 */
+    private const val KEY_SHOW_RARE_CHARS_LEGACY = "show_rare_chars"
         /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"

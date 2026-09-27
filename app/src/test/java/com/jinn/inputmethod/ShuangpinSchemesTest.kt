@@ -235,16 +235,19 @@ class ShuangpinSchemesTest {
     private companion object {
         /**
          * 双拼编不出来的音节（rime 同样编不出，项目也未收入词库）：
-         * `hng` / `hm` / `m` / `n` 是鼻音叹词（词库 0 条，紫光方案里 `hm` 还与 `hun` 同码）；
-         * `junding` 是词库音节表里的一条脏数据（7 字母，非音节）。
+         * `hng` / `hm` / `m` / `n` 是鼻音叹词（词库 0 条，紫光方案里 `hm` 还与 `hun` 同码）。
+         *
+         * ⚠ `junding` 曾在表里（词库「均订」行的脏数据，7 字母非音节），2026-09-27 已从
+         * `pinyin_syllables.txt.xz` 剔除，故不再列入豁免 —— 表回归 421 个合法音节。
          */
-        val UNENCODABLE = setOf("hng", "hm", "m", "n", "junding")
+        val UNENCODABLE = setOf("hng", "hm", "m", "n")
 
         /**
          * 「两键一音节」模型下同码让位的写法（一码只能映射一个音节，必须牺牲一个）：
          *  - `lo` 让给 `luo`（罗/落远比 咯/啰 常用；全拼下 lo 仍可输入）；
          *  - `lve` / `nve` 让给 `lue` / `nue`：词库里的 lve/nve 词条依旧能命中，
-         *    因为查询链路有 ue↔ve 变体回退（见 PinyinEngine.variants），只是不走「码」这条入口；
+         *    因为 `charsFor` / `phraseKeysOf` 都有 ue↔ve 变体回退（`PinyinEngine.ueVeVariant`），
+         *    只是不走「码」这条入口（`UmlautSyllableTest` 钉住这条回退）；
          *  - `ng` 让给 `neng` / `nang` / `niang`（词库 0 条）。
          */
         val HOMOPHONE_SACRIFICE = setOf("lo", "lve", "nve", "ng")

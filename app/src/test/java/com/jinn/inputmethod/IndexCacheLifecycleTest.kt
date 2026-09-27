@@ -18,11 +18,11 @@ class IndexCacheLifecycleTest {
     fun 基础索引缓存绝不被可选包清扫删除() {
         val existing = listOf(
             "base.1789655607000.idx",      // 基础索引缓存（源在 APK 内，不在包列表）
-            "ext.xz.idx",                  // 仍在用的可选包缓存
-            "opt_tencent.xz.idx",          // 仍在用的可选包缓存
+            "part2.xz.idx",                // 仍在用的可选包缓存
+            "part3.xz.idx",                // 仍在用的可选包缓存
             "gone.xz.idx",                 // 源包已删除 → 应清理
         )
-        val alive = setOf("ext.xz", "opt_tencent.xz")
+        val alive = setOf("part2.xz", "part3.xz")
 
         val stale = PinyinEngine.staleOptionalCacheNames(existing, alive)
 
@@ -32,8 +32,8 @@ class IndexCacheLifecycleTest {
 
     @Test
     fun 临时文件与非法后缀不参与清扫() {
-        val existing = listOf("ext.xz.idx.tmp", "readme.txt", "ext.xz.idx")
-        val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("ext.xz"))
+        val existing = listOf("part2.xz.idx.tmp", "readme.txt", "part2.xz.idx")
+        val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("part2.xz"))
         assertTrue("在用包的缓存与临时文件都不该被删: $stale", stale.isEmpty())
     }
 

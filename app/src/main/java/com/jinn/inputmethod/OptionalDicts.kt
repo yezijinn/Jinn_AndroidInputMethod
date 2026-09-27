@@ -27,11 +27,16 @@ data class OptionalDict(
     /** 压缩后体积（MB），用于页面标注供用户权衡 */
     val sizeMb: Double,
     /**
-     * 预计增加的「开机后首次使用输入法」候选就绪时间（秒）。
+     * 首次构建索引的耗时（秒），页面「第一次约 N 秒」直接用这个数。
      *
-     * 说明（2026-09-17 校正）：这是首次构建索引的耗时，加载只在空闲时进行
-     * （息屏 / 键盘闲置 20s / 兜底 180s），期间不影响打字；构建完成后索引落盘，
-     * 之后每次启动直接内存映射复用（实测约 0.05s）。页面文案据此生成。
+     * 说明：加载只在空闲时进行（息屏 / 键盘闲置 20s / 兜底 180s），期间不影响打字；
+     * 构建完成后索引落盘，之后每次启动直接内存映射复用（实测约 0.05s）。
+     *
+     * ⚠ 取**实测值向上取整**，不要凭条数外推 —— 2026-09-27 在 PACM00 上实测
+     * （清掉 `index/<包名>.idx` 后息屏触发重建，日志 `已构建词库包索引: …（…ms）`）：
+     * part2 **4022ms** / part3 **4859ms** / part4 **13978ms**；
+     * 此前按条数估的 3 / 4 / 5 秒把 part4 低报了近 3 倍（BUG.md L-46）。
+     * 换包（改分片规模）必须重新实测并同步这里。
      */
     val startupSec: Int,
     /** 下载源，按顺序尝试（Gitee 国内快，GitHub 备用） */
@@ -57,44 +62,60 @@ object OptionalDicts {
     private const val GITHUB =
         "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download"
 
-    /** 长词包的 Release tag（基础包已含四字成语，此包补五字及以上长词） */
-    private const val TAG_EXT = "dict-ext-20260915-v2"
-
-    /** 腾讯大词库的 Release tag */
-    private const val TAG_TENCENT = "dict-opt-tencent-v1"
+    /**
+     * 分片短语库的 Release tag（2026-09-27 起）。
+     *
+     * 三个包与内置索引同源同格式（`docs/所有词库/短语/词库_第 2~4 部分.txt`，
+     * 由 `tools/dict_builder/build_dicts.py` 产出），按词频从高到低切分、**逐级叠加**：
+     * 内置已含第 1 部分（40 万条），装一个加一档，不需要按顺序（后装的包照常合并）。
+     */
+    private const val TAG_PARTS = "dict-parts-20260927-v1"
 
     val ALL: List<OptionalDict> = listOf(
         OptionalDict(
-            fileName = "ext.xz",
-            // 界面上叫「长词包」，代码与文档里一般叫「扩展包」（dict_ext），指的是同一个包
-            name = "长词包",
+            fileName = "part2.xz",
+            name = "2级词库+40万",
             descLines = listOf(
-                "五字及以上的长词与专有名词。",
-                "人名、地名、作品名、机构名居多。",
+                "强烈建议下载。",
+                "在内置 40 万条之上再加 40 万条。",
             ),
-            sizeMb = 1.81,
-            startupSec = 2,          // 实测首次构建索引 1764ms
+            sizeMb = 2.62,
+            startupSec = 5,          // 实测 4022ms（PACM00，2026-09-27）
             urls = listOf(
-                "$GITEE/$TAG_EXT/dict_ext.txt.xz",
-                "$GITHUB/$TAG_EXT/dict_ext.txt.xz",
+                "$GITEE/$TAG_PARTS/dict_part2.txt.xz",
+                "$GITHUB/$TAG_PARTS/dict_part2.txt.xz",
             ),
-            checksum = "f831f41101b555d2f7a54648b3cd3507b55333a7637914a65882c678cce8e5b1",
+            checksum = "aa224cea041536a8e0a050aad8865c2abfb99c9fc893e037a117f93ef38c867a",
         ),
         OptionalDict(
-            fileName = "opt_tencent.xz",
-            name = "腾讯大词库",
+            fileName = "part3.xz",
+            name = "3级词库+50万",
             descLines = listOf(
-                "约 95.5 万词条。",
-                "专业术语与短语搭配较多。",
-                "体积较大，按需安装。",
+                "不够用再下载。",
+                "再增加 50 万条，总数约 130 万。",
             ),
-            sizeMb = 6.36,
-            startupSec = 7,          // 实测首次构建索引 6927ms
+            sizeMb = 3.30,
+            startupSec = 5,          // 实测 4859ms（PACM00，2026-09-27）
             urls = listOf(
-                "$GITEE/$TAG_TENCENT/opt_tencent.txt.xz",
-                "$GITHUB/$TAG_TENCENT/opt_tencent.txt.xz",
+                "$GITEE/$TAG_PARTS/dict_part3.txt.xz",
+                "$GITHUB/$TAG_PARTS/dict_part3.txt.xz",
             ),
-            checksum = "622b0ea87fb08afd87eadf72e055a8377e2f008da20e1c2a3d819599302146ea",
+            checksum = "619428b7c87f5183df72938c9661529f91ba5bd415e9e16a3889d966f98fc48f",
+        ),
+        OptionalDict(
+            fileName = "part4.xz",
+            name = "4级词库+60万",
+            descLines = listOf(
+                "一般不用下载。",
+                "再增加 60 万条，总数约 190 万。",
+            ),
+            sizeMb = 4.21,
+            startupSec = 14,         // 实测 13978ms（PACM00，2026-09-27）—— 别按条数外推，会低报近 3 倍
+            urls = listOf(
+                "$GITEE/$TAG_PARTS/dict_part4.txt.xz",
+                "$GITHUB/$TAG_PARTS/dict_part4.txt.xz",
+            ),
+            checksum = "5e08d39e582765090574506b7dede461633cc8e876ee39494d6845bb5fbba639",
         ),
     )
 
@@ -104,7 +125,7 @@ object OptionalDicts {
     /**
      * 流式计算文件的 SHA-256（纯 IO 逻辑，便于 JVM 单测）。
      *
-     * 边读边更新摘要，不把整个文件读进内存（现役最大包 6.36MB，往后可能更大）。
+     * 边读边更新摘要，不把整个文件读进内存（现役最大包 4.21MB，往后可能更大）。
      * 失败返回 null，由调用方决定重试还是拒收。
      */
     fun sha256Of(file: java.io.File): String? = runCatching {
