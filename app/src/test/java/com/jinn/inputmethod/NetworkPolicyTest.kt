@@ -21,11 +21,7 @@ import java.io.File
  */
 class NetworkPolicyTest {
 
-    private fun fileOf(vararg candidates: String): File =
-        candidates.map { File(it) }.firstOrNull { it.isFile }
-            ?: error("找不到文件：${candidates.joinToString(" / ")}（当前工作目录=${File("").absolutePath}）")
-
-    private fun sourceOf(vararg candidates: String) = fileOf(*candidates).readText()
+    private fun sourceOf(vararg candidates: String) = TestSources.rawSource(*candidates)
 
     /** `marker` 之后那个花括号块（与 RecentFixesRegressionTest.blockAfter 同款：配对而非取窗口） */
     private fun blockAfter(text: String, marker: String): String {
@@ -48,7 +44,9 @@ class NetworkPolicyTest {
 
     @Test
     fun 明文闸门必须由网络安全配置收窄而不是全局属性() {
-        val manifest = sourceOf("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml")
+        val manifest = TestSources.codeOf(
+            sourceOf("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml"),
+        )
         assertTrue(
             "manifest 必须挂上 network_security_config（否则平台默认禁明文的保护被全局属性顶掉）",
             "android:networkSecurityConfig=\"@xml/network_security_config\"" in manifest,
@@ -61,9 +59,11 @@ class NetworkPolicyTest {
 
     @Test
     fun 公网端点必须显式禁明文而base只为局域网语音放行() {
-        val xml = sourceOf(
-            "src/main/res/xml/network_security_config.xml",
-            "app/src/main/res/xml/network_security_config.xml",
+        val xml = TestSources.codeOf(
+            sourceOf(
+                "src/main/res/xml/network_security_config.xml",
+                "app/src/main/res/xml/network_security_config.xml",
+            ),
         )
         // 空白不敏感：这条配置是给人读的，允许换行缩进调整（`<base-config` 与属性分会不止一行）
         assertTrue(
@@ -90,9 +90,11 @@ class NetworkPolicyTest {
 
     @Test
     fun 词库下载客户端必须只准TLS且不跟随SSL重定向() {
-        val src = sourceOf(
-            "src/main/java/com/jinn/inputmethod/DictManagerActivity.kt",
-            "app/src/main/java/com/jinn/inputmethod/DictManagerActivity.kt",
+        val src = TestSources.codeOf(
+            sourceOf(
+                "src/main/java/com/jinn/inputmethod/DictManagerActivity.kt",
+                "app/src/main/java/com/jinn/inputmethod/DictManagerActivity.kt",
+            ),
         )
         val client = blockAfter(src, "private val httpClient: okhttp3.OkHttpClient by lazy")
         assertTrue(
@@ -111,9 +113,11 @@ class NetworkPolicyTest {
 
     @Test
     fun 更新检查只接受https地址() {
-        val src = sourceOf(
-            "src/main/java/com/jinn/inputmethod/UpdateChecker.kt",
-            "app/src/main/java/com/jinn/inputmethod/UpdateChecker.kt",
+        val src = TestSources.codeOf(
+            sourceOf(
+                "src/main/java/com/jinn/inputmethod/UpdateChecker.kt",
+                "app/src/main/java/com/jinn/inputmethod/UpdateChecker.kt",
+            ),
         )
         val body = blockAfter(src, "private fun httpGet(")
         val guard = body.indexOf("\"https://\"")
@@ -124,14 +128,13 @@ class NetworkPolicyTest {
 
     @Test
     fun 词库下载URL必须全是https() {
-        val src = sourceOf(
-            "src/main/java/com/jinn/inputmethod/OptionalDicts.kt",
-            "app/src/main/java/com/jinn/inputmethod/OptionalDicts.kt",
+        // 剥注释后判（共用 TestSources.codeOf）：KDoc 里可能出现 http:// 的举例（BUG.md L-116）
+        val code = TestSources.codeOf(
+            sourceOf(
+                "src/main/java/com/jinn/inputmethod/OptionalDicts.kt",
+                "app/src/main/java/com/jinn/inputmethod/OptionalDicts.kt",
+            ),
         )
-        // 剥掉整行注释再判：KDoc 里可能出现 http:// 的举例
-        val code = src.lines()
-            .filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("//") || it.trimStart().startsWith("/*") }
-            .joinToString("\n")
         assertFalse(
             "词库下载 URL 不得出现 http://（TLS-only 客户端会把它直接打死，等于下载功能失效）",
             Regex("\"http://").containsMatchIn(code),

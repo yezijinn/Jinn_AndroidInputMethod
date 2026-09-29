@@ -17,18 +17,10 @@ import java.io.File
  */
 class ThemeDeferralOverlayTest {
 
-    private fun sourceOf(name: String): String = listOf(
-        File("src/main/java/com/jinn/inputmethod/$name"),
-        File("app/src/main/java/com/jinn/inputmethod/$name"),
-    ).firstOrNull { it.isFile }?.readText() ?: error("找不到 $name")
+    private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
 
-    /** 只留代码行（去掉行注释与块注释的续行），并把 CRLF 归一化成 LF */
-    private fun codeOnly(text: String): String = text.replace("\r\n", "\n").lineSequence()
-        .filterNot {
-            val t = it.trimStart()
-            t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
-        }
-        .joinToString("\n")
+    /** 只留代码：共用 [TestSources.codeOf]（行尾注释、块注释、XML 注释一起剥，见 BUG.md L-116） */
+    private fun codeOnly(text: String): String = TestSources.codeOf(text)
 
     @Test
     fun `换肤延后判据必须覆盖密码模式与三种面板`() {

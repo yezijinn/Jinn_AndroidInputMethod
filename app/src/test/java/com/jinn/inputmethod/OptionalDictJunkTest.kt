@@ -66,19 +66,16 @@ class OptionalDictJunkTest {
         val src = sourceOf("DictManagerActivity.kt")
         val card = src.substringAfter("private fun buildUnknownCard").substringBefore("\n    /**")
         assertTrue("没取到 buildUnknownCard 的函数体（结构变了？）", card.length > 200)
-        // 只禁「使用」（`R.string.dict_startup_cost*`）：注释里说明「为什么不能用」是应该留的
+        // 两条钉都只判**代码**（剥注释，BUG.md L-116）：注释里说明「为什么不能用」「该用哪个文案」
+        // 是应该留的，而「实现删掉、名字留在注释里」这种情况必须转红 —— 本条正是 L-116 的实证场景
+        //（把 `text = TEXT_LEGACY_LOAD` 换成 `text = ""` 并在旁边注释里写下该名，旧版守卫仍绿）。
+        val code = TestSources.codeOf(card)
         assertTrue(
             "旧包卡片引用了 dict_startup_cost 系列资源：它们以逗号结尾，单用会留半句残话",
-            "R.string.dict_startup_cost" !in card,
+            "R.string.dict_startup_cost" !in code,
         )
-        assertTrue("旧包卡片没有用自己的加载提示文案（TEXT_LEGACY_LOAD）", "TEXT_LEGACY_LOAD" in card)
+        assertTrue("旧包卡片没有用自己的加载提示文案（TEXT_LEGACY_LOAD）", "TEXT_LEGACY_LOAD" in code)
     }
 
-    private fun sourceOf(name: String): String {
-        val path = listOf(
-            File("src/main/java/com/jinn/inputmethod/$name"),
-            File("app/src/main/java/com/jinn/inputmethod/$name"),
-        ).firstOrNull { it.isFile } ?: error("找不到 $name")
-        return path.readText()
-    }
+    private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
 }

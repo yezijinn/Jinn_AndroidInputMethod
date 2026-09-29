@@ -1074,7 +1074,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             (v as? TextView)?.setTextColor(glyph)
         }
         // 密码模式下「数字」键已变成「退出」：换肤路径也要保持提示红，
-        // 否则定时换肤 / 手动换肤会把唯一的出口刷回普通色（上面那行是统一刷 glyph 的）
+        // 否则定时换肤 / 手动换肤会把唯一的出口刷回普通色（上面那行是统一刷 glyph 的）。
+        // （符号层 / 数字层的红色「返回」不在这里处理：它带 ForegroundColorSpan 随文本走，
+        //   span 优先于 base color，换肤后仍是提示红 —— 见 [backLabel]。）
         if (passwordPad) btnDigit.setTextColor(skinToken(skin.hintRed, R.color.kb_key_hint_red))
         // 中英键的高亮行是 SpannableString 里的 ForegroundColorSpan（不是 base color）：上面只换了
         // base color，换肤后必须重建 span，否则高亮行仍是上一套皮肤的强调色（见 buildLangLabel）
@@ -2371,27 +2373,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnLang.text = buildLangLabel()
         btnSymbol.text = if (layer == LAYER_SYMBOL) {
             // 已进入符号层，此键的作用是回到字母页，用「返回」比「ABC」更直白。
-            // 红色粗体：提示这一键现在切换的是整层（键面已全是符号），
-            // 用 SpannableString 而不是 setTextColor，退出符号层时文本换回普通串，样式自动还原。
-            android.text.SpannableString(context.getString(R.string.key_back)).apply {
-                setSpan(
-                    android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
-                    0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-                setSpan(
-                    android.text.style.ForegroundColorSpan(
-                        skinToken(skin.hintRed, R.color.kb_key_hint_red)
-                    ),
-                    0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
+            // 红色粗体：提示这一键现在切换的是整层（键面已全是符号），样式见 [backLabel]。
+            backLabel()
         } else {
             context.getString(R.string.key_symbol)
         }
         btnDigit.text = when {
             // 密码模式：这个键是退出口（点击回进入前的状态，见 exitPasswordPad）
             passwordPad -> TEXT_PASSWORD_EXIT
-            layer == LAYER_DIGIT -> context.getString(R.string.key_abc)
+            // 数字层：与符号层同一条口径 —— 键面已全是数字，此键的作用是回字母页，
+            // 用同一枚红色粗体「返回」提示（用户 2026-09-29 指定；原先写的是「ABC」，
+            // 同一枚键在两个层里一个说「返回」一个说「ABC」，同一功能两种说法）。
+            layer == LAYER_DIGIT -> backLabel()
             else -> context.getString(R.string.key_digit)
         }
         // 退出口必须一眼可见（用户 2026-09-28）：加粗 + 提示红 —— 与候选栏的红色「返回」同一套令牌。
@@ -2432,6 +2425,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         key.includeFontPadding = false
         key.textSize = PUNCTUATION_TEXT_SP
     }
+
+    /**
+     * 层切换键的「返回」标签：红色粗体，与候选栏的红色「返回」、密码模式的「退出」同一套令牌。
+     *
+     * 用在「键面已经被别的层占满、这一键的作用是回字母页」的两处：符号层（「符号」→「返回」）
+     * 与数字层（「数字」→「返回」）。两处**共用同一枚标签**，避免同一功能漂出两种说法
+     * （数字层原先写「ABC」，与符号层的「返回」不一致 —— 用户 2026-09-29 指定统一）。
+     *
+     * 用 SpannableString 而不是 `setTextColor` / `setTypeface`：键面文本换回普通串时样式自动还原，
+     * 省掉「退出这一层时必须记得复原字色 / 字重」的隐性契约（换肤也不受影响，span 优先于 base color）。
+     */
+    private fun backLabel(): CharSequence =
+        android.text.SpannableString(context.getString(R.string.key_back)).apply {
+            setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            setSpan(
+                android.text.style.ForegroundColorSpan(
+                    skinToken(skin.hintRed, R.color.kb_key_hint_red)
+                ),
+                0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
 
     /**
      * 中英切换键的富文本标签。

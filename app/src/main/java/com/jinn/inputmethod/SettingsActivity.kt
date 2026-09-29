@@ -851,6 +851,16 @@ class SettingsActivity : ComponentActivity() {
     private enum class UpdateState { Idle, Checking }
 
     /**
+     * 「本次检查」的序号（BUG.md L-145）：晚到的回调**不得**动界面。
+     *
+     * 看门狗 30s 只是常态余量（网络侧总预算 25s，而预算本身此前管不住滴水响应）——
+     * 一旦某次请求真的超过 30s，看门狗会解锁按钮、用户再点一次；此时**上一次**的回调若照旧
+     * `removeCallbacks` + `setUpdateState(Idle)`，删掉的就是**新那次**的看门狗，并把新请求
+     * 变成「在飞但没有看门狗」：它的回调再丢，按钮就永久停在「检查中…」。
+     */
+    private var checkSeq = 0
+
+    /**
      * 请求看门狗：网络侧超时 10s，留 5s 余量。
      *
      * 不能像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
@@ -873,7 +883,15 @@ class SettingsActivity : ComponentActivity() {
         btnCheckUpdate.setOnClickListener {
             if (updateState == UpdateState.Checking) return@setOnClickListener
             setUpdateState(UpdateState.Checking)
-            UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { onUpdateChecked(it) }
+            val seq = ++checkSeq
+            UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { result ->
+                if (seq != checkSeq) {
+                    // 过期结果：只记日志，不解锁、不弹窗（弹了就是「答非所问」的那一次）
+                    Diagnostics.i(TAG, "忽略过期的检查结果（seq=$seq，当前=$checkSeq）")
+                    return@checkAsync
+                }
+                onUpdateChecked(result)
+            }
         }
         btnUpdateDownload.setOnClickListener {
             val url = UpdateChecker.downloadPageUrl()
@@ -900,7 +918,15 @@ class SettingsActivity : ComponentActivity() {
         val since = if (last <= 0L) "从未检查" else "${(now - last) / DAY_MS} 天前"
         Diagnostics.i(TAG, "自动检查更新: 开始（上次=$since）")
         setUpdateState(UpdateState.Checking)
-        UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { onAutoChecked(it) }
+        val seq = ++checkSeq
+        UpdateChecker.checkAsync(BuildConfig.VERSION_CODE) { result ->
+            // 与手动检查同一条纪律（BUG.md L-145）：过期结果不动界面
+            if (seq != checkSeq) {
+                Diagnostics.i(TAG, "忽略过期的自动检查结果（seq=$seq，当前=$checkSeq）")
+                return@checkAsync
+            }
+            onAutoChecked(result)
+        }
     }
 
     private fun setUpdateState(state: UpdateState) {
@@ -943,7 +969,10 @@ class SettingsActivity : ComponentActivity() {
         when (result) {
             is UpdateChecker.Result.Available -> showAskUpdateDialog(result)
             is UpdateChecker.Result.UpToDate ->
-                Diagnostics.i(TAG, "自动检查更新: 已是最新 ${result.latest}（静默）")
+                Diagnostics.i(
+                    TAG,
+                    "自动检查更新: 已是最新 ${result.latest}（归一 ${UpdateChecker.comparableVersion(result.latest)}，静默）",
+                )
             UpdateChecker.Result.NetworkError ->
                 Diagnostics.w(TAG, "自动检查更新: 网络异常（静默）")
         }
@@ -962,13 +991,17 @@ class SettingsActivity : ComponentActivity() {
 
     /** 三类结果统一三套文案，措辞由 unified-update-check 统一，不得改写。 */
     private fun showUpdateDialog(result: UpdateChecker.Result) {
+        // 展示与比较必须同量纲（BUG.md L-131）：比较走 [UpdateChecker.comparableVersion]，
+        // 文案若仍传 `normalizeTag` 的原始值，标签规范回退到 6 位时会出现
+        // 「你目前的版本：20260929 / 在线最新版本：260930」却提示有更新（数字看着更小）——自相矛盾。
         val local = getString(R.string.update_local_version, BuildConfig.VERSION_CODE)
+        fun shown(v: Int) = UpdateChecker.comparableVersion(v)
         val builder = AlertDialog.Builder(this)
         when (result) {
             is UpdateChecker.Result.Available -> builder
                 .setTitle(R.string.update_title_available)
                 .setMessage(
-                    local + "\n" + getString(R.string.update_latest_version, result.latest)
+                    local + "\n" + getString(R.string.update_latest_version, shown(result.latest))
                 )
                 .setNegativeButton(R.string.update_btn_later, null)
                 .setPositiveButton(R.string.update_btn_go) { _, _ ->
@@ -979,7 +1012,7 @@ class SettingsActivity : ComponentActivity() {
                 .setTitle(R.string.update_title_prompt)
                 .setMessage(
                     local + "\n" +
-                        getString(R.string.update_latest_version, result.latest) + "\n" +
+                        getString(R.string.update_latest_version, shown(result.latest)) + "\n" +
                         getString(R.string.update_uptodate)
                 )
                 .setPositiveButton(R.string.update_btn_ok, null)

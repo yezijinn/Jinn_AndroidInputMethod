@@ -8,16 +8,17 @@ import org.tukaani.xz.XZInputStream
 import java.io.File
 
 /**
- * 词级反查表「同繁体多简体」的胜者守卫（`BUG.md` L-114）。
+ * 词级反查表「同繁体多简体」的胜者守卫（`BUG.md` L-114 / L-93 / L-94）。
  *
- * 背景：`simp_trad_words.txt` 是 `简词<TAB>繁词`，而**多个简词可能对应同一个繁词**
- * （实测 6 组：于馀曲折 / 六鬚鮎 / 利慾薰心 / 傢俱 / 鉅萬 / 李鍾郁）。运行期
+ * 背景：`simp_trad_words.txt` 是 `简词<TAB>繁词`，而**多个简词可能对应同一个繁词**。运行期
  * [PinyinEngine.buildWordBackMap] 只能给每个繁词留一个简词（恒等条目优先，其余**首次写入者胜**）
  * ⇒ **文件顺序就是语义**：繁体模式下选中那个候选后，折简体折到谁头上，取决于它在文件里排第几。
  *
- * 判据：胜者取「该简词在短语词库里的**最大词频**」最高的那个（本机没有 OpenCC TSPhrases，
- * 词频是唯一能离线拿到的权威量；由 `tools/dict_builder/build_dicts.py` 的 `phrase_max_freq()`
- * 决定并写进文件顺序）。之前顺序 = STPhrases 的文件顺序（偶然量），实测 6 组里 2 组与词库口径相悖：
+ * 判据（2026-09-29 起）：胜者取「该简词在短语词库里的**最大词频**」最高的那个 —— 传统模式下
+ * 候选转换后**去重**，同一显示形下只有排在最前（≈词频最高）的那个可见，其余副本用户根本选不到，
+ * 它们的往返不可观测（`BUG.md` L-93 / L-94 的立论）。词频由 `tools/dict_builder/build_dicts.py`
+ * 的 `phrase_max_freq()` 算、并写进文件顺序（组内**槽位旋转**，见该脚本注释）。
+ * 之前的顺序 = STPhrases 的文件顺序（偶然量），实测 6 组里 2 组与词库口径相悖：
  *  - `六鬚鮎`：六须鲇（词频 **0**）胜 / 六须鲶（**2,855**）负 ⇒ 该词在繁体模式下学习**永不生效**；
  *  - `傢俱`：家俱（**17,050**）胜 / 家具（**18,970**）负 ⇒ 同上（词典词是「家具」）。
  *
@@ -55,10 +56,10 @@ class SimpTradWordBackTest {
 
         assertEquals(
             "同繁体多简体的组数变了（新增/减少 ⇒ 必须显式定一次胜者，别让文件顺序偶然决定）：$ambiguous",
-            6, ambiguous.size,
+            184, ambiguous.size,
         )
 
-        // 金表：繁词 → 期望的胜者（= 词库词频更高者；括号内为实测最大词频 简①/简②）
+        // 金表：繁词 → 期望的胜者（= 词库词频最高者；括号内为实测最大词频）
         val golden = mapOf(
             "于餘曲折" to "于余曲折",   // 11,948 / 0
             "六鬚鮎" to "六须鲶",        // 0 / 2,855（原胜者六须鲇词频为 0）
@@ -66,6 +67,11 @@ class SimpTradWordBackTest {
             "傢俱" to "家具",            // 17,050 / 18,970（原胜者家俱）
             "鉅萬" to "巨万",            // 14,097 / 0
             "李鍾郁" to "李钟郁",        // 13,822 / 0
+            // 2026-09-29 往返一致补收后新增的组（每组都是「词典词 vs 异体 / 变体」）：
+            "覆蓋" to "覆盖",            // 18,973 / 8,447（原胜者复盖 ⇒ 覆盖折回落到别的词上）
+            "萬餘" to "万余",            // 18,914 / 0（余 是规范形，馀 是异体）
+            "萬鍾" to "万钟",            // 15,939 / 0（万锺 只在表里、词典无此词）
+            "茶餘飯後" to "茶余饭后",     // 18,179 / 0
         )
         for ((trad, expected) in golden) {
             val candidates = ambiguous[trad] ?: error("词表里没有「$trad」这组（生成规则变了？）")
@@ -93,7 +99,7 @@ class SimpTradWordBackTest {
     @Test
     fun 资产条数必须与公开文档一致() {
         val count = orderedEntries().size
-        assertEquals("词级表条数变了（改文档前先确认真值）：$count", 8_100, count)
+        assertEquals("词级表条数变了（改文档前先确认真值）：$count", 9_139, count)
 
         val docs = listOf(
             "README.md", "README_EN.md", "AGENTS.md", "tools/dict_builder/export_dicts.py",
@@ -102,10 +108,12 @@ class SimpTradWordBackTest {
             val text = listOf(File(name), File("../$name")).firstOrNull { it.isFile }?.readText()
                 ?: error("找不到文档 $name")
             assertFalse("$name 仍写着旧的 8,075 条（资产实测 $count 条）", "8,075" in text)
-            assertTrue("$name 缺少当前条数 8,100（资产实测 $count 条）", "8,100" in text)
+            assertFalse("$name 仍写着旧的 8,100 条（资产实测 $count 条）", "8,100" in text)
+            assertTrue("$name 缺少当前条数 9,139（资产实测 $count 条）", "9,139" in text)
         }
         val agents = listOf(File("AGENTS.md"), File("../AGENTS.md")).first { it.isFile }.readText()
         assertFalse("AGENTS.md 仍写着旧的覆盖度 1,738", "1,738" in agents)
-        assertTrue("AGENTS.md 缺少当前覆盖度 1,744", "1,744" in agents)
+        assertFalse("工程约定 仍写着旧的覆盖度 1,744", "1,744" in agents)
+        assertTrue("工程约定 缺少当前覆盖度 1,843", "1,843" in agents)
     }
 }

@@ -34,7 +34,35 @@
 import argparse
 import lzma
 import sys
+import os
 from pathlib import Path
+
+# 输出与报错统一 utf-8：Windows 默认 cp936 会把中文汇总 / 报错写成乱码（另两支脚本同款）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# 失败信息走 stderr：Windows 默认 cp936 会把中文报错写成乱码，这里统一成 utf-8
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def check_before_write(bad_lines, empty_lines, src_words, base_words, ext_words):
+    """写盘前的真判据（`BUG.md` L-140）：坏行 / 空词条一律中止，且词条必须守恒。
+
+    为什么要它：本脚本写的是 **Release 分片**（扩展包按需下载）。静默丢一行、丢一个词条时
+    产物本身看不出异常 —— 用户只会觉得「某些词打不出来」。判据不通过时**一条产物都不写**
+    （与 L-108 立的分片核查同一口径；不是 `assert`，`python -O` 摘不掉，见 L-106）。
+    """
+    if bad_lines:
+        raise SystemExit("输入有 %d 行没有制表符（前 3 例：%s）—— 先清洗输入再切分"
+                         % (len(bad_lines), bad_lines[:3]))
+    if empty_lines:
+        raise SystemExit("输入有 %d 行含空词条（前 3 例：%s）—— `a||b` 会把空词写进包"
+                         % (len(empty_lines), empty_lines[:3]))
+    if base_words + ext_words != src_words:
+        raise SystemExit("词条不守恒：源 %d / 产出 %d（base %d + ext %d）"
+                         % (src_words, base_words + ext_words, base_words, ext_words))
 
 
 def main():
@@ -53,18 +81,25 @@ def main():
     out = Path(args.output)
     base_dir = out / "base"
     ext_dir = out / "ext"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    ext_dir.mkdir(parents=True, exist_ok=True)
 
     lim = args.base_max_len
     base_lines, ext_lines = [], []
-    base_words = ext_words = 0
+    base_words = ext_words = src_words = 0
+    bad_lines, empty_lines = [], []
     for line in src.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
         if "\t" not in line:
+            bad_lines.append(line[:40])
             continue
         key, words = line.split("\t", 1)
-        kept_base = [w for w in words.split("|") if len(w) <= lim]
-        kept_ext = [w for w in words.split("|") if len(w) > lim]
+        parts = words.split("|")
+        if any(not w for w in parts):
+            empty_lines.append(key)
+        parts = [w for w in parts if w]
+        src_words += len(parts)
+        kept_base = [w for w in parts if len(w) <= lim]
+        kept_ext = [w for w in parts if len(w) > lim]
         if kept_base:
             base_lines.append(f"{key}\t{'|'.join(kept_base)}")
             base_words += len(kept_base)
@@ -72,10 +107,28 @@ def main():
             ext_lines.append(f"{key}\t{'|'.join(kept_ext)}")
             ext_words += len(kept_ext)
 
+    # 写盘前的真判据（BUG.md L-140）：不通过时一条产物都不写
+    check_before_write(bad_lines, empty_lines, src_words, base_words, ext_words)
+    # 判据通过后才建输出目录：不通过时连目录都不留（「一条产物都不写」）
+    base_dir.mkdir(parents=True, exist_ok=True)
+    ext_dir.mkdir(parents=True, exist_ok=True)
+
     def write_xz(path, lines):
+        # 原子落盘（BUG.md L-122）：保留 `lzma.open` 的压缩参数（字节不变），
+        # 只把目标换成**同目录**临时件再 `os.replace` —— 跨盘替换不原子，临时件必须同目录；
+        # 名字带进程号：两进程并发跑同一支脚本时会互相截断同一个固定名临时件（BUG.md L-135）。
         data = ("\n".join(lines) + "\n").encode("utf-8")
-        with lzma.open(path, "wb", preset=6) as f:
-            f.write(data)
+        tmp = "%s.tmp.%d" % (path, os.getpid())
+        try:
+            with lzma.open(tmp, "wb", preset=6) as f:
+                f.write(data)
+            os.replace(tmp, path)
+        finally:
+            # 无竞态清理：见 asset_io.write_bytes_atomically 的同款说明
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                pass
         return len(data), path.stat().st_size
 
     base_raw, base_xz = write_xz(base_dir / "pinyin_phrases.txt.xz", base_lines)

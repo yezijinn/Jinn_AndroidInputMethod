@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -64,4 +65,46 @@ class IndexCacheLifecycleTest {
         val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("new.xz"))
         assertEquals(listOf("old.xz.idx"), stale)
     }
+
+    /**
+     * `BUG.md` L-153：缓存键取不到时间戳时**必须**退到 versionCode。
+     *
+     * 退回常量 `"0"` 会让所有版本共用同一个 `base.0.idx`（升级后仍复用旧索引，日志只写「复用磁盘缓存」，
+     * 用户只能清应用数据才恢复）。
+     */
+    @Test
+    fun 缓存键退化时必须带上版本号() {
+        assertEquals("12345", PinyinEngine.baseCacheStampOf(12345L, 999L, 20260929L))
+        assertEquals("999", PinyinEngine.baseCacheStampOf(0L, 999L, 20260929L))
+        assertEquals("v20260929", PinyinEngine.baseCacheStampOf(0L, 0L, 20260929L))
+        assertFalse(
+            "不同版本不得共用同一个键（退化路径）",
+            PinyinEngine.baseCacheStampOf(0L, 0L, 20260929L) == PinyinEngine.baseCacheStampOf(0L, 0L, 20260930L),
+        )
+        // 源码钉：真正的**字符串插值**（写成 `\$versionCode` 的话是常量文本，等于没修 —— 这次真踩过）
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("缓存键必须走 baseCacheStampOf", "baseCacheStampOf(apkMtime, updated" in src)
+        assertTrue("退化分支必须带版本号（插值，不是转义）", "else -> \"v\$versionCode\"" in src)
+    }
+
+    /**
+     * `BUG.md` L-151：「能解析但一行都没解析出来」必须判为**加载失败** ——
+     * 资产空文件 / 格式变更（列错位被静默跳过）会走到 `loaded = true`：候选栏永远空白，
+     * 连「词库载入中」的提示都不出现，也没有重试入口。
+     */
+    @Test
+    fun 词库空载必须判为失败() {
+        assertFalse(PinyinEngine.isDictionaryUsable(0, 0))
+        assertFalse(PinyinEngine.isDictionaryUsable(0, 500))
+        assertFalse(PinyinEngine.isDictionaryUsable(400, 0))
+        assertTrue(PinyinEngine.isDictionaryUsable(1, 1))
+        // 源码钉：加载收口必须过这条判据（切片定位，避免误伤「测试注入」那两处 loaded = true）
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        val after = src.substringAfter("val indexMs = loadFullIndex(context)")
+        assertTrue(
+            "加载收口必须过 isDictionaryUsable（否则零行资产会静默变成空词典）",
+            after.substringBefore("Log.i(").contains("isDictionaryUsable("),
+        )
+    }
+
 }

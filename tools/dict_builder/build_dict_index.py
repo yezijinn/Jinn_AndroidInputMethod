@@ -47,6 +47,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert_rime_ice import BASE_MAX_LEN, XZ_FILTERS, build_dict, parse_rime_dict, render  # noqa: E402
+from asset_io import write_bytes_atomically
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC_DIR = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts")
@@ -121,9 +122,9 @@ def main():
     print(f"键数: {keys}")
     print(f"索引：原始 {len(raw) / 1024 / 1024:.1f} MB → xz {len(xz) / 1024 / 1024:.2f} MB")
 
-    os.makedirs(os.path.dirname(OUT_TXT), exist_ok=True)
-    io.open(OUT_TXT, "w", encoding="utf-8", newline="\n").write(text)     # 文本留档（不入库、不进 APK）
-    io.open(OUT_XZ, "wb").write(xz)
+    # 原子落盘（BUG.md L-122）：直写会在中断 / 磁盘满时留下半截文件，而 OUT_XZ 是要进 APK 的索引
+    write_bytes_atomically(OUT_TXT, text.encode("utf-8"))     # 文本留档（不入库、不进 APK）
+    write_bytes_atomically(OUT_XZ, xz)
     print(f"已写入 {OUT_XZ}")
     print(f"文本留档 {OUT_TXT}（供比对/测试，不进 APK）")
 

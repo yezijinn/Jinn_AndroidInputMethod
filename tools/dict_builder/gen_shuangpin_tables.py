@@ -384,7 +384,8 @@ def main():
 
     print('\n'.join(report))
     body = KT_HEADER % len(syllables) + '\n'.join(kt_blocks) + '\n)\n'
-    io.open(OUT_KT, 'w', encoding='utf-8', newline='\n').write(body)
+    # 原子落盘（BUG.md L-122）：OUT_KT 是**仓库内 Kotlin 源码**，半截源码照样能编译，只会静默缺尾
+    write_bytes_atomically(OUT_KT, body.encode('utf-8'))
     print(f'\nKotlin 数据已写入 {OUT_KT}')
 
 

@@ -15,7 +15,7 @@ import java.net.URL
  * 源策略：GitHub 优先，Gitee 备选；GitHub 失败自动回退 Gitee，两源皆失败才判网络异常。
  * Gitee 的网页 /tags 会返回 405，所以备选源改走它的开放 API，
  * 返回的 JSON 里同样带 tag 名，标签解析规则与 GitHub 完全一致
- * （去 v 前缀、只保留 6..8 位纯数字、取最大）。
+ * （去 v 前缀、只保留 6 或 8 位 **ASCII** 数字、取最大；7 位与非 ASCII 数字见 BUG.md L-83 / L-126）。
  */
 object UpdateChecker {
 
@@ -55,7 +55,7 @@ object UpdateChecker {
         Thread {
             val result = runCatching { fetchLatest() }.fold(
                 onSuccess = { l ->
-                    if (l.date > local) Result.Available(l.date, l.source, l.tag)
+                    if (comparableVersion(l.date) > comparableVersion(local)) Result.Available(l.date, l.source, l.tag)
                     else Result.UpToDate(l.date, l.source, l.tag)
                 },
                 onFailure = {
@@ -102,7 +102,17 @@ object UpdateChecker {
     }
 
     /** 一次检查的候选结果：日期数字 + 来源 + **原始标签名**（`v` 前缀留着，跳转链接要用）。 */
-    private data class Latest(val date: Int, val source: String, val tag: String)
+    internal data class Latest(val date: Int, val source: String, val tag: String)
+
+    /**
+     * 从一批原始标签里挑出**日期最大**的那个（BUG.md L-146）。
+     *
+     * 抽成纯函数的原因：两个源的**返回顺序不同**（GitHub `/tags` 降序、Gitee API 按名称升序），
+     * 而「挑最大」必须与顺序无关 —— 这样它才能被单测钉住（升序 / 降序 / 6 位 8 位混用各来一遍）。
+     */
+    internal fun pickLatest(tags: List<String>, source: String): Latest? =
+        tags.mapNotNull { raw -> normalizeTag(raw)?.let { d -> Latest(d, source, raw) } }
+            .maxByOrNull { comparableVersion(it.date) }
 
     /**
      * 取最大日期标签；GitHub 失败自动回退 Gitee；两源皆败抛异常。
@@ -122,11 +132,7 @@ object UpdateChecker {
     private fun fetchFromGithub(deadline: Long): Latest? = runCatching {
         val html = httpGet("https://github.com/$OWNER/$REPO/tags", deadline) ?: return@runCatching null
         val linkRe = Regex("""$OWNER/$REPO/(?:tree|releases/tag)/([^"'<>?#\s]+)""")
-        val best = linkRe.findAll(html)
-            .mapNotNull { m ->
-                normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "github", m.groupValues[1]) }
-            }
-            .maxByOrNull { it.date }
+        val best = pickLatest(linkRe.findAll(html).map { it.groupValues[1] }.toList(), "github")
         // 有响应但一个可用标签都没有：与「连不上」是两回事，日志里必须分开，
         // 否则只凭界面文案（由 unified-update-check 约定统一为「访问失败」）无法判断是哪一种
         if (best == null) Diagnostics.w(TAG, "GitHub 源有响应，但没有可解析的日期标签（tag 规范可能变了）")
@@ -135,23 +141,66 @@ object UpdateChecker {
 
     /** Gitee：网页 /tags 返回 405，改走开放 API；JSON 内的 tag 名同样按统一规则归一化。 */
     private fun fetchFromGitee(deadline: Long): Latest? = runCatching {
-        val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags", deadline)
-            ?: return@runCatching null
         val nameRe = Regex(""""name"\s*:\s*"([^"]+)"""")
-        val best = nameRe.findAll(body)
-            .mapNotNull { m ->
-                normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "gitee", m.groupValues[1]) }
-            }
-            .maxByOrNull { it.date }
+        // **必须翻页取并集**（BUG.md L-146）：Gitee 的 tags 接口实测（2026-09-29）**默认 20 条/页**
+        // 且按**名称升序**返回 —— 最新日期 tag 排在后面。仓库当时正好已有 20 个 tag（含历史
+        // `v2026…` / `dict-*`），也就是说**再加一个日期 tag 就会把最新挤出首页**，此后这条回退源
+        // 永远报「已最新」且不自愈（GitHub 侧是降序、首页必含最新，所以只有回退源会出事）。
+        // 实测 `sort=` / `direction=desc` 参数被拒（400）、`per_page` 无据，所以不依赖任何排序参数：
+        // 逐页取、取并集再挑最大；不满一页即到底；到上限就停（并留日志，别静默）。
+        val all = ArrayList<String>()
+        var page = 1
+        while (page <= GITEE_TAGS_MAX_PAGES) {
+            val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags?page=$page", deadline)
+                ?: break
+            val names = nameRe.findAll(body).map { it.groupValues[1] }.toList()
+            if (names.isEmpty()) break
+            all += names
+            if (names.size < GITEE_TAGS_PAGE_SIZE) break
+            page++
+        }
+        if (page > GITEE_TAGS_MAX_PAGES) {
+            // 到上限不等于到底（可能有更多 tag 且更新的还在后面）⇒ 说出来，别让它变成静默漏报
+            Diagnostics.w(TAG, "Gitee 标签翻页到上限 ${GITEE_TAGS_MAX_PAGES} 页（${all.size} 个），可能还有更靠后的标签")
+        }
+        val best = pickLatest(all, "gitee")
         if (best == null) Diagnostics.w(TAG, "Gitee 源有响应，但没有可解析的日期标签（tag 规范可能变了）")
         best
     }.onFailure { Diagnostics.w(TAG, "Gitee 源异常: ${it.message}") }.getOrNull()
 
-    /** 统一标签归一化：去 v 前缀 → 仅接受 6..8 位纯数字（两源同规则）。 */
+    /**
+     * 比较用的**归一键**（BUG.md L-123）：6 位 `yyMMdd` 补成 8 位（`+20000000`），8 位原样。
+     *
+     * `normalizeTag` 的返回值会进 URL / 文案（必须保持原始写法），所以**只在这里**归一：
+     * 否则混用两种长度时按数值比会恒错（`260929` 恒小于 `20260929`）⇒ 跨源挑旧、与本地比判「已最新」。
+     */
+    internal fun comparableVersion(value: Int): Int =
+        if (value < 10_000_000) value + 20_000_000 else value
+
+    /**
+     * 标签归一化：去 `v` 前缀 → 只认 **6 位或 8 位**纯数字且须像日期。
+     *
+     * 返回值既进 URL / 文案（要保持原始写法），也进比较 —— 比较前必须先过 [comparableVersion]。
+     * 逐条判据（7 位为什么拒收、为什么必须是 ASCII 数字、日期闸的宽严）写在本函数体内。
+     */
     internal fun normalizeTag(raw: String): Int? {
-        val digits = raw.removePrefix("v")
-        if (digits.length !in 6..8 || !digits.all(Char::isDigit)) return null
+        // 大小写 `v` 前缀都认（BUG.md L-147）：仓库现行约定是小写，但 `V20260919` 这种写法
+        // 会被只去小写的实现**静默忽略**（等价于该 tag 不存在 ⇒ 退化为取次大值 ⇒ 可能误报
+        // 「已是最新」且不自愈）。只削**一个**前缀字符：`vV20260929` 仍然是拒收（长度 9）。
+        val digits = if (raw.startsWith("v") || raw.startsWith("V")) raw.substring(1) else raw
+        // 只认 6 位（yyMMdd）与 8 位（yyyyMMdd，= versionCode 格式）：7 位两者都不是（BUG.md L-83）。
+        // 现状（tag 全 8 位）里 7 位数值上**恒小于**任何 8 位、不会误报；但标签规范一旦回退到 6 位
+        // （`yyMMdd`，即 L-123 记的混用场景），7 位就会**恒大于**全部合法值 ⇒「永远提示有新版本、
+        // 点进去打不开」且不自愈（与 L-04 同型）⇒ 按「别猜」口径拒收，别留下要看前提才成立的判据。
+        if (digits.length != 6 && digits.length != 8) return null
+        // **ASCII** 数字：`Char::isDigit` 认 Unicode 全角 / 阿拉伯-印度数字，`toIntOrNull`
+        // （经 `Character.digit`）同样认 —— 实测 `"２０２６０９２９"` → 20260929、`"2026092０"` → 20260920
+        // ⇒ 用中文输入法打出的全角 tag 会被当成版本号，而 `releasesUrl` 按约定把**原始串**拼进直达
+        // 链接（不编码）⇒ 点进去 404（BUG.md L-126）。
+        if (!digits.all { it in '0'..'9' }) return null
         val value = digits.toIntOrNull() ?: return null
+        // 6 位按 `20yyMMdd` 过同一道日期闸：`v260999` 这种打错的同样要挡掉
+        if (digits.length == 6 && !isPlausibleDate(20000000 + value)) return null
         // 8 位（= 版本号格式 yyyyMMdd）必须是**合法日期**：tag 由人手动建，一个打错的
         // 20261331 会被当成「未来版本」⇒ 此后每次检查都提示有更新、点进去却打不开对应页面，
         // 而且这种误报不会自愈（要等一个更大的正确 tag 出现）。日期不合法即不认。
@@ -205,7 +254,14 @@ object UpdateChecker {
             } else {
                 // 限长读取：响应体没有上限时，一个「一直有数据、永不结束」的响应
                 // 能在 readTimeout 内累积到几十 MB（/tags 页正常只有几百 KB）。
-                conn.inputStream.bufferedReader().use { readCapped(it) }
+                // 读取也受**总预算**约束（BUG.md L-145）：socket 超时只约束「单次 read」，
+                // 一个滴水的服务器（每次都在超时前吐一行）能把总时长拉到远超 [TOTAL_BUDGET_MS]，
+                // 把调用方的看门狗甩掉 ⇒ 按钮解锁后用户可再点，晚到的回调又回来捣乱。
+                val body = conn.inputStream.bufferedReader().use { readCapped(it, MAX_BODY_CHARS, deadline) }
+                if (System.currentTimeMillis() >= deadline) {
+                    Diagnostics.w(TAG, "读取到总预算上限，已截断: ${url.substringBefore('?')}")
+                }
+                body
             }
         } finally {
             conn.disconnect()
@@ -220,11 +276,20 @@ object UpdateChecker {
      *
      * 注意截断按行判定（整行超限就整行不要）：真遇到「单行就超过 1MB」的响应会返回空串，
      * 结果是走「两个源都拉不到」分支报网络异常（不会误报成「已最新」），可以接受。
+     *
+     * [deadline] 是**总预算**（墙钟毫秒）：到点立刻停读（BUG.md L-145）。没有它时，
+     * `readTimeout` 只约束单次 read，滴水响应用「每次都在超时前吐一点」就能把总时长无限拉长。
+     * 本函数保持纯逻辑（不写日志），截断原因由调用方 [httpGet] 判定并记录。
      */
-    internal fun readCapped(reader: java.io.BufferedReader, maxChars: Int = MAX_BODY_CHARS): String {
+    internal fun readCapped(
+        reader: java.io.BufferedReader,
+        maxChars: Int = MAX_BODY_CHARS,
+        deadline: Long = Long.MAX_VALUE,
+    ): String {
         val sb = StringBuilder(minOf(maxChars, 8192))
         var total = 0
         while (true) {
+            if (System.currentTimeMillis() > deadline) break
             val line = reader.readLine() ?: break
             total += line.length + 1
             if (total > maxChars) break
@@ -237,4 +302,10 @@ object UpdateChecker {
 
     /** tags 页 / tags API 的响应上限（字符）：正常响应几百 KB，1MB 留足余量 */
     private const val MAX_BODY_CHARS = 1_000_000
+
+    /** Gitee tags 接口的**实测**页大小（2026-09-29：不带参数返回 20 条） */
+    private const val GITEE_TAGS_PAGE_SIZE = 20
+
+    /** 翻页上限（5 页 ≈ 100 个标签，够用数年；到上限会留日志，不静默漏） */
+    private const val GITEE_TAGS_MAX_PAGES = 5
 }

@@ -21,7 +21,7 @@ class MirroredSettingsPagesTest {
     @Test
     fun 两个复刻页都必须在onStart重画勾选态() {
         for (page in listOf("FuzzyPinyinActivity.kt", "RareCharsActivity.kt")) {
-            val src = sourceOf(page)
+            val src = codeOf(page)
             assertTrue(
                 "$page 必须在 onStart 里渲染（每次回前台重读 prefs）",
                 bodyOf(src, "override fun onStart()").contains("renderRows()"),
@@ -37,8 +37,8 @@ class MirroredSettingsPagesTest {
     fun 两页的关闭键文案与可听键名保持一致() {
         // 「两页是复刻关系，改动必须同步」是页面里写下的契约，这里只钉最容易分叉的两处：
         // 关闭键的键面文字与 contentDescription（无障碍读出来的名字）。
-        val fuzzy = sourceOf("FuzzyPinyinActivity.kt")
-        val rare = sourceOf("RareCharsActivity.kt")
+        val fuzzy = codeOf("FuzzyPinyinActivity.kt")
+        val rare = codeOf("RareCharsActivity.kt")
         assertTrue("模糊音页的关闭键缺少可听键名", "contentDescription = TEXT_CLOSE_DESC" in fuzzy)
         assertTrue("生僻字页的关闭键缺少可听键名", "contentDescription = TEXT_CLOSE_DESC" in rare)
         assertTrue("两页关闭键的可听键名必须同名同值", "\"关闭\"" in fuzzy && "\"关闭\"" in rare)
@@ -51,9 +51,8 @@ class MirroredSettingsPagesTest {
         return src.substring(idx).substringBefore("\n    }")
     }
 
-    private fun sourceOf(name: String): String =
-        listOf(
-            File("src/main/java/com/jinn/inputmethod/$name"),
-            File("app/src/main/java/com/jinn/inputmethod/$name"),
-        ).first { it.isFile }.readText()
+    private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
+
+    /** 判据一律在**剥注释后**的代码上做（BUG.md L-116）：注释里提到 `renderRows()` 不算实现 */
+    private fun codeOf(name: String): String = TestSources.codeOf(sourceOf(name))
 }

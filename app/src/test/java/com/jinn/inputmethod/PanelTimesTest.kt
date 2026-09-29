@@ -71,12 +71,12 @@ class PanelTimesTest {
         val offenders = dir.listFiles().orEmpty()
             .filter { it.name.endsWith(".kt") }
             .flatMap { f ->
-                f.readLines().withIndex().map { (i, line) -> Triple(f.name, i + 1, line) }
+                // 剥注释走共用 TestSources.codeOf（BUG.md L-116）：行数不变，行号仍可直接用
+                TestSources.codeOf(f.readText()).lines().withIndex()
+                    .map { (i, line) -> Triple(f.name, i + 1, line) }
             }
             .filter { (_, _, line) ->
-                val t = line.trim()
-                !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*") &&
-                    line.contains("SimpleDateFormat(") && !line.contains("Locale.US")
+                line.contains("SimpleDateFormat(") && !line.contains("Locale.US")
             }
             .map { (name, line, text) -> "$name:$line ${text.trim()}" }
         assertEquals(

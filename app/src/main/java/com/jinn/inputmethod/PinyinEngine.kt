@@ -84,12 +84,17 @@ object PinyinEngine {
     private const val SIMP_TRAD_ASSET = "simp_trad.txt.xz"
 
     /**
-     * 简繁**词级**消歧 asset（`简词<TAB>繁词`，8,100 条；同上生成。条数口径 = 资产里通过加载器
-     * 初筛的行数，另有 2 行 `#` 注释；2026-09-28 实测，BUG.md L-112）。
+     * 简繁**词级**消歧 asset（`简词<TAB>繁词`，9,139 条；同上生成。条数口径 = 资产里通过加载器
+     * 初筛的行数，另有 4 行 `#` 注释；2026-09-29 实测）。
      *
      * 字级映射是 1:1 的（发→發），但「头发」应作「頭髮」、「干净」应作「乾淨」—— 本表只收
      * 「逐字映射会出错」的词条，转换时整词优先命中、未命中再逐字兜底（见 [toDisplay]）。
-     * 其中 7 条是「词级结果 == 简体原形」（天台 / 天后 / 海里…）：字级表补齐后**正是这类**
+     * 两类条目：
+     *  ① `STPhrases` 里「逐字映射 != 词级结果」的词级消歧（同上）；
+     *  ② 按**显示形**补收的往返一致条目（覆盖→覆蓋、乾隆→乾隆）：同一显示形下有多个词典词时
+     *     候选转换后**去重**，只有词频最高的那个可见 ⇒ 反查胜者也必须是它，否则繁体模式学过的词
+     *     切回简体后词频键落到别的词上（BUG.md L-93 / L-94）。
+     * 其中 7 条（原有）是「词级结果 == 简体原形」（天台 / 天后 / 海里…）：字级表补齐后**正是这类**
      * 需要覆盖（逐字会把「天台」转成「天臺」），不能按「原形即相等」提前跳过。
      */
     private const val SIMP_TRAD_WORDS_ASSET = "simp_trad_words.txt.xz"
@@ -97,13 +102,13 @@ object PinyinEngine {
     /**
      * 繁→简**单字**映射 asset（`繁<TAB>简`，2,965 项；同上生成，只收 BMP 字 —— 与加载端 `length == 1` 同口径）。
      *
-     * [setSimpTradText] 从字级正向表（2,714 对）反推出的反查表覆盖不全：词级消歧表引入的
-     * 繁体字（去重 2,888 个）里，只靠反推表有 **1,889 个**折不动；本表（2,965 项）覆盖后仍有
-     * **1,744 个**看不到（髮 / 乾 / 淨 / 鬚…）——「頭髮」折回只得「头髮」，
+     * [setSimpTradText] 从字级正向表（2,714 对）反推出的反查表覆盖不全：词级表引入的
+     * 繁体字（去重 3,087 个）里，只靠反推表有 **2,011 个**折不动；本表（2,965 项）覆盖后仍有
+     * **1,843 个**看不到（髮 / 乾 / 淨 / 鬚…）——「頭髮」折回只得「头髮」，
      * 词频键就此跑偏（简体模式、消费区间、预测全都认不出）。本表由 OpenCC TSCharacters
      * 生成，加载时**覆盖**字级反推的结果（见 [setSimplifyText]）。
-     * （三个数均为 2026-09-28 按加载器口径实测：反推表覆盖 2,700 个繁体字、与本表合并后 2,969 个；
-     * 见 BUG.md L-113。）
+     * （三个数均为 2026-09-29 按加载器口径实测：反推表覆盖 2,700 个繁体字、与本表合并后 2,969 个；
+     * 见 BUG.md L-113；词级表从 8,100 条扩到 9,139 条后这三个数随之变大。）
      */
     private const val SIMPLIFY_ASSET = "simplify.txt.xz"
 
@@ -388,7 +393,7 @@ object PinyinEngine {
     private var simplifySrc: String? = null
 
     /**
-     * 简繁词级消歧（简词 → 繁词；[SIMP_TRAD_WORDS_ASSET]，8,100 条）。
+     * 简繁词级消歧（简词 → 繁词；[SIMP_TRAD_WORDS_ASSET]，9,139 条）。
      *
      * 只在**整词命中**时生效（未命中回落逐字映射），命中即直接返回 —— 1:1 的字级映射
      * 无法表达「头发→頭髮 vs 发财→發財」这类同字异词，逐字转换会把前者错成「頭發」。
@@ -512,7 +517,19 @@ object PinyinEngine {
             // 解压 + 解析约 0.5~0.7s，原「高频子集先行」的两段式与 hot 资产一并退场。
             // 可选词库包不在这里加载，见 loadOptionalAsync()。
             val indexMs = loadFullIndex(context)
-            loaded = true
+            // 真判据（BUG.md L-151）：「能解析但一行都没解析出来」必须当成**加载失败** ——
+            // 只按异常判断的话，资产内容为空 / 格式变了（`loadCharsReader` 里列错位会被静默跳过）
+            // 会走到这里置 `loaded = true`：候选栏永远空白，连「词库载入中」的提示都不出现
+            // （那两条内联提示分别以 `!isLoaded` / `!isFullyLoaded` 为条件），也没有重试入口。
+            // 保持 `loaded = false` ⇒ 界面提示照旧 + 上游最多 3 次补试照常生效。
+            loaded = isDictionaryUsable(validSyllables.size, charsBySyllable.size)
+            if (!loaded) {
+                Diagnostics.e(
+                    TAG,
+                    "词库加载失败（资产为空或格式变了）：音节=${validSyllables.size} 单字=${charsBySyllable.size} " +
+                        "⇒ 保持未加载，界面会提示「词库载入中」并等待补试",
+                )
+            }
             Log.i(
                 TAG,
                 "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
@@ -918,8 +935,10 @@ object PinyinEngine {
     /**
      * 词级**反查表**的构建规则（纯函数，便于单测；BUG.md L-59 / L-93）。
      *
-     * 同一繁体形可能对应多个简体候选（词表 8,100 条里有 6 组固有歧义 + 若干「变体 vs 规范词形」），
-     * 而反查表只能留一个：
+     * 同一繁体形可能对应多个简体候选（词表 9,139 条里有 184 组「同繁体多简体」，如 覆蓋 ← 覆盖 /
+     * 复盖），而反查表只能留一个。谁先出现谁胜 —— 这个顺序由**生成端**按「该显示形里词频最高的
+     * 词典词在前」排定（`build_dicts.py` 的 `word_back_map` 复算同一判据）：传统模式下候选转换后
+     * 会去重，只有词频最高的那个可见，反查胜者跟着它才自洽（BUG.md L-93 / L-94）。规则本身：
      *  - **恒等条目优先**（`s == f`，如「天台 / 天台」）：它们代表「两种模式下写法相同」，
      *    被普通条目按顺序覆盖掉时，`toSimplified` 会把该词折到**另一个词**上（学习键跑偏）；
      *  - 其余**首次写入者胜**：结果只与表内顺序绑定，后续重复行不会改变胜者
@@ -1251,16 +1270,36 @@ object PinyinEngine {
         }
     }
 
-    /** APK 文件 mtime 作为基础索引缓存的有效性键；取不到时退化用 lastUpdateTime / versionCode */
+    /**
+     * 基础索引缓存的有效性键（纯函数，便于单测；`BUG.md` L-153）。
+     *
+     * 优先用 APK 文件 mtime（App 一更新必变）；取不到时退 lastUpdateTime；
+     * **两个时间都取不到时必须退到 versionCode**，不能退回常量 `"0"`：
+     * 常量键会让所有版本共用同一个 `base.0.idx`（升级后仍复用旧索引，
+     * 而日志只写「复用磁盘缓存」，用户只能清应用数据才恢复）。
+     */
+    internal fun baseCacheStampOf(apkMtime: Long, lastUpdateTime: Long, versionCode: Long): String = when {
+        apkMtime > 0L -> apkMtime.toString()
+        lastUpdateTime > 0L -> lastUpdateTime.toString()
+        else -> "v$versionCode"
+    }
+
     private fun baseCacheStamp(context: Context): String {
         val apkMtime = runCatching { java.io.File(context.packageCodePath).lastModified() }
             .getOrDefault(0L)
-        if (apkMtime > 0L) return apkMtime.toString()
         val updated = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
         }.getOrDefault(0L)
-        return if (updated > 0L) updated.toString() else "0"
+        return baseCacheStampOf(apkMtime, updated, BuildConfig.VERSION_CODE.toLong())
     }
+
+    /**
+     * 词库是否**真的**加载好了（纯函数，便于单测；`BUG.md` L-151）。
+     *
+     * 判据：音节表与单字表都不能为空。资产空文件、格式变更（列错位被静默跳过）都属
+     * 「解析成功但零行」—— 那不是「加载好了」，而是静默空词典。
+     */
+    internal fun isDictionaryUsable(syllables: Int, chars: Int): Boolean = syllables > 0 && chars > 0
 
     /**
      * 原子写索引缓存：先写同目录临时文件再 `rename`。

@@ -35,10 +35,12 @@ def write_bytes_atomically(path, data):
     文本资产则是「脚本跑完看似成功、运行时用的还是半截数据」——与 Kotlin 侧
     `PinyinEngine.writeIndexCacheAtomically` / `UserFrequency.writeAtomically` 是同一条纪律。
 
-    临时件放**同目录**（`path + ".tmp"`）：`os.replace` 只有同文件系统内才是原子替换。
-    失败路径不留残件（`finally` 清 tmp）。
+    临时件放**同目录**、名字**带进程号**（`<目标>.tmp.<pid>`）：`os.replace` 只有同文件系统内
+    才是原子替换；带 pid 是因为**两个进程同时跑同一支脚本**时会互相截断同一个固定名临时件，
+    后写的半截内容被 `os.replace` 搬成「有效」资产（BUG.md L-135）。
+    失败路径不留残件（`finally` 清自己的临时件）。
     """
-    tmp = path + ".tmp"
+    tmp = "%s.tmp.%d" % (path, os.getpid())
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     try:
         with open(tmp, "wb") as fh:
@@ -48,8 +50,12 @@ def write_bytes_atomically(path, data):
             raise SystemExit("落盘长度不符：%s（写入 %d / 实际 %d）" % (path, len(data), size))
         os.replace(tmp, path)
     finally:
-        if os.path.exists(tmp):
+        # 无竞态清理：`exists` 再 `remove` 之间文件可能已被别人拿走（这次实验实测抛过
+        # FileNotFoundError，把真正的失败原因盖掉）⇒ 直接删、缺了就算。
+        try:
             os.remove(tmp)
+        except FileNotFoundError:
+            pass
     return len(data)
 
 

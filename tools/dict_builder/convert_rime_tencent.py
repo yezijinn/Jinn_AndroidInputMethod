@@ -29,6 +29,7 @@ from collections import defaultdict
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME = os.path.join(ROOT, "docs", "rime-ice", "cn_dicts")
@@ -93,6 +94,34 @@ def can_segment(key):
             if i + L <= n and key[i:i + L] in SYLLABLES:
                 reach[i + L] = True
     return reach[n]
+
+
+def check_before_write(char_readings, word_pinyin, entries_total, kept_words, stat):
+    """写盘前的真判据（`BUG.md` L-140）：输入前提 + 注音守恒，不通过就**中止**。
+
+    为什么要它：本脚本写的是 **Release 可选包**。三条静默坏路都看不出异常：
+    1. `8105.dict.yaml` / `tencent.dict.yaml` 缺失（或路径漂移）⇒ 全部走「缺字」⇒ 写出**近空包**；
+    2. `base/ext` 反查表为空 ⇒ 注音全线退化成逐字注音（准确度下降，但产物「看起来正常」）；
+    3. 统计与产出对不上 ⇒ 说明有词条既没进产出也没被计入任何一类丢弃（真实 bug）。
+    守恒式：`产出词条 + 各类丢弃 == 输入词条`（「base/ext 反查命中」「逐字注音」是子计数，不进等式）。
+    """
+    for name, path in (("8105.dict.yaml", os.path.join(RIME, "8105.dict.yaml")),
+                       ("tencent.dict.yaml", os.path.join(RIME, "tencent.dict.yaml"))):
+        if not os.path.isfile(path):
+            raise SystemExit("缺输入文件 %s（%s）—— 缺它会产出近空包，已中止" % (name, path))
+    if not char_readings:
+        raise SystemExit("8105 字表没解析出任何单字（%s）—— 逐字注音会全线「缺字」"
+                         % os.path.join(RIME, "8105.dict.yaml"))
+    if not word_pinyin:
+        raise SystemExit("base/ext 反查表为空（%s）—— 注音会全部退化成逐字注音，先确认 base/ext 词典"
+                         % RIME)
+    if entries_total <= 0:
+        raise SystemExit("tencent 词库没解析出任何词条（%s）—— 会写出空包"
+                         % os.path.join(RIME, "tencent.dict.yaml"))
+    drops = (stat["非纯中文或超长"] + stat["缺字"] + stat["多音字难判"] + stat["切分失败"])
+    if kept_words + drops != entries_total:
+        raise SystemExit("注音不守恒：输入 %d ≠ 产出 %d + 丢弃 %d（%d）"
+                         % (entries_total, kept_words, drops, kept_words + drops))
 
 
 def main():
@@ -203,12 +232,15 @@ def main():
     say(f"有效词条   : {words:,}")
     say()
 
+    # 写盘前的真判据（BUG.md L-140）：输入前提 + 注音守恒，不通过就不写任何产物
+    check_before_write(char_readings, word_pinyin, len(entries), words, stat)
+
     if not args.dry_run:
         text = "\n".join(f"{k}\t{'|'.join(w for w, _ in sorted(by_key[k].items(), key=lambda x: -x[1]))}"
                          for k in sorted(by_key))
         out = lzma.compress(text.encode("utf-8"), filters=XZ_FILTERS)
         os.makedirs(os.path.dirname(OUT_XZ), exist_ok=True)
-        open(OUT_XZ, "wb").write(out)
+        write_bytes_atomically(OUT_XZ, out)   # 原子落盘（BUG.md L-122）：OUT_XZ 是 Release 附件
         say(f"已写入 {OUT_XZ}")
         say(f"  文本 {len(text.encode())/1024/1024:.2f} MB -> xz {len(out)/1024/1024:.2f} MB")
         os.makedirs(OUT_DIR, exist_ok=True)
@@ -216,11 +248,6 @@ def main():
             f.write("\n".join(report))
     else:
         say("[dry-run] 未写入文件")
-
-    if not args.dry_run:
-        os.makedirs(OUT_DIR, exist_ok=True)
-        with open(os.path.join(OUT_DIR, "report.txt"), "w", encoding="utf-8") as f:
-            f.write("\n".join(report))
 
 
 if __name__ == "__main__":

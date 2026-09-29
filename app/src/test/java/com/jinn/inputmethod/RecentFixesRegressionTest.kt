@@ -257,12 +257,9 @@ class RecentFixesRegressionTest {
         val creator = Regex("""(?<![A-Za-z])Thread\s*[({]|Executors\.new\w+""")
         val missing = mutableListOf<String>()
         for (f in dir.listFiles { it -> it.extension == "kt" }!!.sortedBy { it.name }) {
-            val lines = f.readLines()
-            val isComment = { i: Int ->
-                val t = lines[i].trimStart()
-                t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
-            }
-            val points = lines.indices.filter { !isComment(it) && creator.containsMatchIn(lines[it]) }
+            // 剥注释走共用 TestSources.codeOf（BUG.md L-116）：行数不变，下面的行号窗口判据不受影响
+            val lines = TestSources.codeOf(f.readText()).lines()
+            val points = lines.indices.filter { creator.containsMatchIn(lines[it]) }
             for ((k, i) in points.withIndex()) {
                 // 窗口止于**它自己的** `.start()` 所在行（找不到则退化为 30 行）。
                 // 两种「看着合理」的口径本轮都实测翻车：① 固定 N 行 —— SettingsActivity 的导入线程光函数体
@@ -272,7 +269,7 @@ class RecentFixesRegressionTest {
                 val nextPoint = points.getOrNull(k + 1) ?: lines.size
                 val startLine = (i until minOf(nextPoint + 1, lines.size)).firstOrNull { ".start()" in lines[it] }
                 val end = minOf(startLine?.plus(1) ?: (i + 30), lines.size)
-                val window = (i until end).filterNot(isComment).joinToString("\n") { lines[it] }
+                val window = (i until end).joinToString("\n") { lines[it] }
                 if ("isDaemon = true" !in window) missing += "${f.name}:${i + 1}"
             }
         }
@@ -282,26 +279,14 @@ class RecentFixesRegressionTest {
         )
     }
 
-    private fun sourceOf(name: String): String = (
-        listOf(
-            File("src/main/java/com/jinn/inputmethod/$name"),
-            File("app/src/main/java/com/jinn/inputmethod/$name"),
-        ).firstOrNull { it.isFile } ?: error("找不到 $name（cwd=${File("").absolutePath}）")
-        ).readText()
-
     /**
-     * 只留代码行（去掉整行注释）。
+     * 只留代码行（剥掉行注释 / 行尾注释 / 块注释，引号里的 `//` 不误切 —— 见 [TestSources.codeOf]）。
      *
      * 这一组的修复点旁边都写着「为什么必须这么写」的注释 —— 注释里大概率出现同一个调用名，
      * 不剔掉的话「把调用删掉、注释留着」也会绿（实测过：`saveAndRestart` 的 KDoc 里就写着
-     * `restartImeProcess()`）。只丢整行注释，不动行尾注释：行尾注释里带 `//` 的字符串（URL）会被误切。
+     * `restartImeProcess()`）。旧版只丢**整行**注释，行尾注释仍留着一个口子（BUG.md L-116 建议 ④）。
      */
-    private fun codeOf(name: String): String = sourceOf(name).lines()
-        .filterNot { line ->
-            val t = line.trimStart()
-            t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
-        }
-        .joinToString("\n")
+    private fun codeOf(name: String): String = TestSources.codeSource(name)
 
     /**
      * 截取 [marker] 之后那个花括号块（从 marker 后的第一个 `{` 起配对到对应 `}`）。
@@ -1010,6 +995,34 @@ class RecentFixesRegressionTest {
             labelPath.contains("btnDigit.setTypeface(android.graphics.Typeface.DEFAULT)"))
         assertTrue("换肤路径也必须保持退出口的红色（否则换肤会把它刷回普通色）",
             code.substringAfter("private fun applySkinToTexts").contains("if (passwordPad) btnDigit.setTextColor"))
+    }
+
+    @Test
+    fun `数字层的「数字」键必须变成红色粗体的「返回」`() {
+        // 用户 2026-09-29 指定：点底部「数字」进入数字层后，该键位显示「返回」红字粗体
+        // （与符号层、候选栏的红色「返回」同一枚标签 / 同一套令牌；原先写的是「ABC」，
+        // 同一枚键在两个层里同一功能两种说法）。
+        val code = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "数字层必须显示「返回」（不得退回「ABC」）",
+            code.contains("layer == LAYER_DIGIT -> backLabel()"),
+        )
+        assertFalse(
+            "「ABC」标签已删（同一功能不再有两种说法），代码里不得再引用 key_abc",
+            code.contains("R.string.key_abc"),
+        )
+        assertTrue(
+            "符号层必须与数字层共用同一枚「返回」标签（否则两处样式会各自漂移）",
+            code.substringAfter("btnSymbol.text = if (layer == LAYER_SYMBOL)")
+                .substringBefore("} else {").contains("backLabel()"),
+        )
+        // 表达式函数体没有独立的花括号块，用「到下一个函数为止」切片（比 blockAfter 的锚点更贴切）
+        val helper = code.substringAfter("private fun backLabel").substringBefore("private fun buildLangLabel")
+        assertTrue("返回标签必须加粗", helper.contains("StyleSpan(android.graphics.Typeface.BOLD)"))
+        assertTrue(
+            "返回标签必须用提示红（与候选栏「返回」同一令牌）",
+            helper.contains("skinToken(skin.hintRed, R.color.kb_key_hint_red)"),
+        )
     }
 
     @Test

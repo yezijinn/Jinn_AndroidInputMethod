@@ -333,6 +333,30 @@ def phrase_max_freq():
     return freq
 
 
+def charwise(word, table):
+    """逐字查表（未命中原样保留）—— 与运行期 `toDisplay` / `toSimplified` 的兜底分支同口径"""
+    return "".join(table.get(ch, ch) for ch in word)
+
+
+def word_back_map(entries):
+    """运行期 `PinyinEngine.buildWordBackMap` 的镜像（恒等条目优先，其余首次写入者胜）。
+
+    生成端必须与运行端**同一个判据**：反查胜者由表内顺序决定 ⇒ 生成时怎么排、运行期就怎么胜
+    （BUG.md L-59 / L-93 / L-114）。抽成函数是为了在生成期就能复算「这个胜者是谁」。
+    """
+    back = {}
+    for s, t in entries:
+        old = back.get(t)
+        if old is None or (old != t and s == t):
+            back[t] = s
+    return back
+
+
+def word_back_fold(trad, back, back_char):
+    """词级优先、字级兜底的折简体（运行期 `toSimplified` 的分支顺序）"""
+    return back.get(trad) or charwise(trad, back_char)
+
+
 def build_simp_trad():
     """字级映射 = OpenCC STCharacters（繁体优先，右侧多候选取首项）+ 人工表覆盖。
 
@@ -466,20 +490,55 @@ def build_simp_trad():
         if fwd_ok:
             kept_rev += 1
         words.append((s, t))
+    freq = phrase_max_freq()
+
+    # ── 往返一致性补收（BUG.md L-93 / L-94）──────────────────────────
+    # 传统模式下候选是**转换后去重**（`displayTake` + LinkedHashSet）：同一显示形（繁体形）下有
+    # 多个词典词时，只有排在最前（≈词频最高）的那个可见，其余副本的「折回」用户观测不到。
+    # ⇒ 反查胜者应当取**该显示形里词频最高的词典词**，而不是由文件顺序偶然决定。
+    # 实测（1,900,984 个词）修复前：折回不是自己的 1,433 条，其中 1,041 条本词就是该显示形的
+    # 最高频词（可见缺陷 —— 繁体模式学过的词，切回简体后词频键落到别的词上）。
+    # 修法：为这些词补一条 `词 → 显示形`（正推方向零变化；「显示形 == 本词」那类由
+    # `word_back_map` 的「恒等条目优先」直接生效）。
+    fwd_rt = {}
+    for s, t in words:
+        fwd_rt[s] = t
+    back_rt = word_back_map(words)
+    display_of = {}
+    groups_rt = collections.defaultdict(list)
+    for w in freq:
+        t = fwd_rt.get(w) or charwise(w, char_map)
+        display_of[w] = t
+        groups_rt[t].append(w)
+    fail_top_before = 0
+    add = []
+    seen = set(words)
+    for t, members in groups_rt.items():
+        top = max(freq.get(x, 0) for x in members)
+        star = next(x for x in members if freq.get(x, 0) == top)   # 并列取读取序首个（不猜）
+        if word_back_fold(t, back_rt, back_char) == star:
+            continue
+        fail_top_before += 1
+        if (star, t) not in seen:
+            seen.add((star, t))
+            add.append((star, t))
+    words.extend(add)
+    log("往返一致：显示形 %d 组；补收候选 %d 条（修复前「最高频词折不回自己」%d 组）"
+        % (len(groups_rt), len(add), fail_top_before))
+
     # 「同繁体多简体」的胜者由**运行期 `buildWordBackMap` 的「首次写入者胜」**决定 ⇒ 组内顺序即语义。
-    # 这个顺序原先等于 STPhrases 的文件顺序（偶然量）：实测 6 组里有 2 组的胜者与词典口径相悖 ——
-    # `六鬚鮎→六须鲇`（词频 0）、`傢俱→家俱`（17,050 < 家具 18,970）⇒ 繁体模式下选中该候选后，
-    # `toSimplified` 折回得到**另一个简体词**，词频键与简体模式同词不一致（学习不迁移，BUG.md L-114）。
     # 判据：组内「短语词库最大词频」最高者**先出**（其余条目保持原有相对顺序）；并列或整组都
     # 不在词库时不猜、保留原序，并把该组打进日志（⚠ 口径）。
-    freq = phrase_max_freq()
+    # ⚠ 搬移只能在**本组槽位内**做：早先用「按目标位置降序 pop/insert」的原地搬移，多组同时搬移时
+    # 后处理的下标会被先处理的组顶偏（实测 1,041 组时把别的词搬到了组首、胜者静默失效）。
     by_trad = collections.OrderedDict()
     for i, (s, t) in enumerate(words):
         by_trad.setdefault(t, []).append(i)
     groups = [(t, v) for t, v in by_trad.items() if len(v) > 1]
-    flipped, no_authority, moves = [], [], []
+    flipped, no_authority = [], []
     for t, idxs in groups:
-        cands = [words[i][0] for i in idxs]
+        items = [words[i] for i in idxs]
+        cands = [s for s, _ in items]
         best = max(cands, key=lambda s: freq.get(s, 0))
         top = [s for s in cands if freq.get(s, 0) == freq.get(best, 0)]
         if freq.get(best, 0) <= 0 or len(top) > 1:
@@ -487,25 +546,53 @@ def build_simp_trad():
             continue
         if cands[0] == best:
             continue                       # 胜者已在组首：一动不动（避免整块位移污染 diff）
-        k = next(i for i in idxs if words[i][0] == best)
-        moves.append((idxs[0], k))         # (目标位置, 当前位置)
+        k = cands.index(best)
+        new_items = [items[k]] + items[:k] + items[k + 1:]
+        for i, it in zip(idxs, new_items):
+            words[i] = it
         flipped.append((t, cands[0], best))
-    # **从后往前**搬：只在同一条列表上做 pop/insert，后面的位置先动，前面的下标才不受影响
-    for dst, src in sorted(moves, key=lambda m: -m[0]):
-        words.insert(dst, words.pop(src))
-    log("简繁词级消歧：同繁体多简体 %d 组；按词频调序 %d 组（%s）"
-        % (len(groups), len(flipped),
-           "；".join("%s：%s→%s" % (t, old, new) for t, old, new in flipped) or "无"))
+    shown = "；".join("%s：%s→%s" % (t, old, new) for t, old, new in flipped[:8]) or "无"
+    shown += "…" if len(flipped) > 8 else ""
+    log("简繁词级消歧：同繁体多简体 %d 组；按词频调序 %d 组（%s）" % (len(groups), len(flipped), shown))
     if no_authority:
         log("⚠ 简繁词级消歧：%d 组没有词频判据（整组不在词库或最高频并列），保留原序：%s"
             % (len(no_authority), no_authority[:3]))
 
-    words_text = ("# 简繁词级消歧：OpenCC STPhrases 中「逐字映射 != 词级结果」的 %d 条\n"
-                  "# （如 头发→頭髮、干净→乾淨、台风→颱風）；整词命中优先于逐字映射\n" % len(words)
+    # 补收条目要**争到胜者**才算数：争不到（并列 / 被恒等条目挡住）的剔掉，只留有效项
+    back_after = word_back_map(words)
+    kept = [p for p in add if back_after.get(p[1]) == p[0]]
+    if len(kept) != len(add):
+        add_set, kept_set = set(add), set(kept)
+        words = [p for p in words if p not in add_set or p in kept_set]
+        back_after = word_back_map(words)
+
+    # 收口自检（真判据，**不用 `assert`**：`python -O` 会整体摘除，等于没有闸门 —— BUG.md L-106）：
+    # 补收后**可观测**的失败（该显示形的最高频词仍折不回自己）只允许剩「词频并列」那一类 ——
+    # 并列时本就不猜（胜者由文件顺序决定），这是记录在案的固有歧义，不是可修的缺陷。
+    fail_top_after, tie_only = 0, []
+    for t, members in groups_rt.items():
+        top = max(freq.get(x, 0) for x in members)
+        tops = [x for x in members if freq.get(x, 0) == top]
+        star = tops[0]
+        if word_back_fold(t, back_after, back_char) == star:
+            continue
+        fail_top_after += 1
+        if len(tops) == 1:
+            tie_only.append((t, star, word_back_fold(t, back_after, back_char)))
+    if tie_only:
+        raise SystemExit(
+            "往返一致性补收后仍有可观测失败 %d 组（非同频并列，判据失效）：%s" % (len(tie_only), tie_only[:5]))
+    log("往返一致：可观测失败 %d → %d 组（余者皆为词频并列的固有歧义，按「不猜」保留）"
+        % (fail_top_before, fail_top_after))
+
+    words_text = ("# 简繁词级消歧 + 反查往返一致：%d 条\n"
+                  "# ① OpenCC STPhrases 中「逐字映射 != 词级结果」的词级消歧（头发→頭髮、干净→乾淨）；\n"
+                  "# ② 按显示形补收的往返一致条目（覆盖→覆蓋、乾隆→乾隆）：同显示形里词频最高的词典词\n"
+                  "#    才是反查胜者（传统模式候选转换后去重 ⇒ 只有它可见）；整词命中优先于逐字映射\n" % len(words)
                   + "\n".join("%s\t%s" % p for p in words) + "\n")
     write_asset_text(os.path.join(A, "simp_trad_words.txt.xz"), words_text)
-    log("简繁词级消歧：%d 条（丢弃简体侧不干净 %d 条；两个方向都能靠字级表还原 %d 条；为反查保留 %d 条；多候选取首项 %d 条）；xz %d 字节"
-        % (len(words), dirty, redundant, kept_rev, multi,
+    log("简繁词级消歧：%d 条（往返补收 %d 条；丢弃简体侧不干净 %d 条；两个方向都能靠字级表还原 %d 条；为反查保留 %d 条；多候选取首项 %d 条）；xz %d 字节"
+        % (len(words), len(kept), dirty, redundant, kept_rev, multi,
            os.path.getsize(os.path.join(A, "simp_trad_words.txt.xz"))))
 
 

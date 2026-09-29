@@ -20,7 +20,7 @@ class DocsReferenceTest {
 
     @Test
     fun AGENTS里提到的测试类都必须存在() {
-        val doc = convention()
+        val doc = conventionWithDetails()
         val names = Regex("""\b([A-Za-z][A-Za-z0-9]*Test)\b""").findAll(doc)
             .map { it.groupValues[1] }
             // Gradle 任务名也会被这条正则匹配到，它不是测试类
@@ -33,7 +33,11 @@ class DocsReferenceTest {
 
     @Test
     fun 冷启动一节必须写当前的单段加载() {
-        val sec = convention().substringAfter("## 冷启动与加载顺序").substringBefore("\n## ")
+        // 2026-09-29 精简：该节外移到细节分册（工程约定 只留指针）⇒ 判据改成「在约定文件**或其明细分册**里」，
+        // 同时要求 工程约定 指明去哪读（否则等于把这条现状说明藏起来）。
+        val docs = conventionWithDetails()
+        assertTrue("工程约定 必须指向细节分册（`details:` 或指针表）", "agents-extras" in convention())
+        val sec = docs.substringAfter("## 冷启动与加载顺序").substringBefore("\n## ")
         assertTrue("没取到「冷启动与加载顺序」一节（标题变了？）", sec.length > 200)
         assertTrue("该节没写「单段加载」（漂回旧的两段式了？）", "单段加载" in sec)
         for (stale in listOf("两段式加载（", "高频 4 万词", "60.4 万键", "两段合计")) {
@@ -57,69 +61,292 @@ class DocsReferenceTest {
             File("src/test/java/com/jinn/inputmethod"),
             File("app/src/test/java/com/jinn/inputmethod"),
         ).first { it.isDirectory }
-        val per = (dir.listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
-            .map { f -> Regex("""(?m)^\s*@Test\b""").findAll(f.readText()).count() }
+        val files = dir.listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray()
+        // 剥注释后再数（BUG.md L-139）：原文计数会把「被注释掉的用例」也算进来 ⇒ 文档数字可稳定写错
+        val per = files.map { f -> Regex("""(?m)^\s*@Test\b""").findAll(TestSources.codeOf(f.readText())).count() }
         val classes = per.count { it > 0 }
         val total = per.sum()
         assertEquals("AGENTS.md 写的类数过期：文档 ${m!!.groupValues[1]} vs 源码 $classes", classes, m.groupValues[1].toInt())
         assertEquals("AGENTS.md 写的例数过期：文档 ${m.groupValues[2]} vs 源码 $total", total, m.groupValues[2].toInt())
+        // 带 `@Test` 却不跑的用例会让上面两个数字虚高（且这条守卫是唯一核对）：出现即要求显式处理
+        val ignored = files.sumOf { f ->
+            Regex("""(?m)^\s*@Ignore\b""").findAll(TestSources.codeOf(f.readText())).count()
+        }
+        assertEquals("有 @Ignore 的用例（带 @Test 却不跑 ⇒ 计数虚高，BUG.md L-139）", 0, ignored)
     }
 
     /**
-     * 台账（`BUG.md`）的计数必须与正文一致（`BUG.md` L-90）。
+     * 台账的计数必须与正文一致（`BUG.md` L-90；2026-09-29 起**入口 + 六个分册**）。
      *
      * 这三处计数最容易腐烂：`## 1` / `## 4` / `## 6` 的节标题、以及 front-matter 的五个字段，
-     * 每轮有人增删条目就会落后（本轮开工前实测 front-matter 仍写着 42/42/74/37，正文已是 44/43/106/53）。
+     * 每轮有人增删条目就会落后（曾有 front-matter 仍写 42/42/74/37、正文已是 44/43/106/53）。
      * 口径（本方法即定义，改口径要一起改这里）：
-     *  - `## 1` 索引行 = **该节内**的 `| L-XX |` 行数（`### 3.2` 里的遗留同形行不在其内 ——
-     *    按全文件计数会把它算进来，这个坑踩过两次，见 `4. 已排除` 的 X-84）；
-     *  - 详情块 = `### 3.1` 之前的 `### L-XX ·` 块数（3.2 的遗留块是 `####`，天然不算）；
-     *  - `excluded_items` / `history_records` = 全文的 `### X-` / `### B-` 块数；
+     *  - **入口** `BUG.md` 只放协议 / 待办 / 索引 / front-matter；详情在 `.wwlia-handoff/ledger/` 下的六个分册
+     *    （`medium.md` / `low.md` / `excluded.md` / `fixed.md` / `history.md` / `verify.md`；
+     *    ⚠ 注释里别写 `ledger` 后跟通配斜杠星号 —— Kotlin 块注释**可嵌套**，那个序列会被当成嵌套注释起始，
+     *    编译直接报 `Unclosed comment`，这次实测踩过）；
+     *  - `## 1` 索引行 = **入口的第 1 节内**的 `| L-XX |` 行数（`3.2` 里的遗留同形行不在其内 ——
+     *    按全文件计数会把它算进来，这个坑踩过两次，见 `excluded.md` 的 X-84）；
+     *  - 详情块 / `excluded_items` / `history_records` = **入口 + 全部分册**里的
+     *    `### L-XX ·` / `### X-` / `### B-` 块数（跨文件求和，随便挪到哪个分册都算数）；
      *  - `id_range` 上界与「0.5 维护规则」里写的最大编号一致（**已分配**的最大编号），
      *    且不小于在册最大编号（已修条目移出后两者会不相等，见 L-101…L-104 的先例）。
      */
     @Test
     fun 台账计数须与正文一致() {
-        val doc = ledger()
-        val indexRows = Regex("""(?m)^\| L-\d+ \|""")
-            .findAll(doc.substringAfter("## 1. 索引").substringBefore("\n## ")).count()
-        // 全文数 `### L-` 块：3.2 的遗留详情是 `#### L-53`（四个井号），天然不算；
-        // 而近几轮新增的条目块就落在 `### 3.1` 之后 ⇒ 按「3.1 之前」切会少数（实测只到 31）。
+        val entry = ledger()            // 入口：协议 + 待办 + 索引 + front-matter
+        val doc = ledgerAll()           // 入口 + 六个分册（块计数与标题查找都在全文上做）
+        // 索引行在**索引分册**（`.wwlia-handoff/ledger/index.md`）里数：2026-09-29 起入口只留指针
+        val indexPart = ledgerPartFiles()["index"]
+            ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        val indexRows = Regex("""(?m)^\| L-\d+ \|""").findAll(indexPart).count()
         val detailBlocks = Regex("""(?m)^### L-\d+ ·""").findAll(doc).count()
         val xCount = Regex("""(?m)^### X-\d+ ·""").findAll(doc).count()
         val bCount = Regex("""(?m)^### B-\d+ ·""").findAll(doc).count()
         val maxInBook = Regex("""(?m)^### L-(\d+) ·""").findAll(doc)
             .map { it.groupValues[1].toInt() }.maxOrNull() ?: 0
 
-        fun titleNumber(start: String): Int {
-            // 数字不在固定位置：`## 1. 索引（44 条在册）` 紧跟括号，而 `## 4. 已排除（复核判定不是缺陷，共 106 条）`
-            // 在括号尾部 ⇒ 取该行**最后一个**数字（行首的节号不会是最后一个）。
-            val line = doc.substringAfter(start, "").substringBefore("\n")
-            val nums = Regex("""\d+""").findAll(line).map { it.value.toInt() }.toList()
-            assertTrue("在「$start」标题里没找到数字：$line", nums.isNotEmpty())
-            return nums.last()
-        }
-        assertEquals("`## 1. 索引` 的「N 条在册」与本节行数不一致", indexRows, titleNumber("## 1. 索引"))
-        assertEquals("`## 4. 已排除` 的「共 N 条」与 X 块数不一致", xCount, titleNumber("## 4. 已排除"))
-        assertEquals("`## 6. 附录 B` 的「N 块」与 B 块数不一致", bCount, titleNumber("## 6. 附录 B"))
+        assertEquals("索引分册标题的「N 条在册」与行数不一致",
+            indexRows, titleNumberOf(indexPart, """## 1\. 索引"""))
+        // 入口（BUG.md）留的是**指针**：它写的条数也要与分册行数一致（两处都会被人改）
+        assertEquals("入口索引指针里的条数与索引分册行数不一致",
+            indexRows, titleNumberOf(entry, """## 1\. 索引"""))
+        assertEquals("`## 4. 已排除` 的「共 N 条」与 X 块数不一致", xCount, titleNumberOf(doc, """## 4\. 已排除"""))
+        assertEquals("`## 6. 附录 B` 的「N 块」与 B 块数不一致", bCount, titleNumberOf(doc, """## 6\. 附录 B"""))
 
         fun front(key: String) = Regex("""(?m)^%s: (\S+)$""".format(key))
-            .find(doc)?.groupValues?.get(1)
+            .find(entry)?.groupValues?.get(1)
         assertEquals("front-matter 的 active_entries 与索引行数不一致", indexRows, front("active_entries")?.toInt())
         assertEquals("front-matter 的 entries_with_detail 与详情块数不一致", detailBlocks, front("entries_with_detail")?.toInt())
         assertEquals("front-matter 的 excluded_items 与 X 块数不一致", xCount, front("excluded_items")?.toInt())
         assertEquals("front-matter 的 history_records 与 B 块数不一致", bCount, front("history_records")?.toInt())
-        val allocMax = Regex("""最大编号（当前 L-(\d+)""").find(doc)?.groupValues?.get(1)?.toInt()
+        val allocMax = Regex("""最大编号（当前 L-(\d+)""").find(entry)?.groupValues?.get(1)?.toInt()
         assertTrue("找不到 0.5 里写的最大编号", allocMax != null)
         assertEquals("front-matter 的 id_range 上界与 0.5 写的最大编号不一致",
             allocMax, front("id_range")?.substringAfter("..L-")?.toInt())
         assertTrue("id_range 上界小于在册最大编号 $maxInBook", (allocMax ?: 0) >= maxInBook)
     }
 
-    /** 取台账（`BUG.md`），工作目录不同时回退上一级。 */
+    /**
+     * 行首锚定地找节标题（`(?m)^…`）—— 台账 L-137。
+     *
+     * 为什么不能 `substringAfter("## 4. 已排除")`：台账**正文也会引用节名**（例如条目解释「块被放到了哪一节」），
+     * 子串定位会命中正文那一处 ⇒ 读到说明句里的数字。实测（2026-09-29 写 L-136 时）该写法把
+     * 「共 158 条」读成 **9**（那句「9 个块」的 9）；若那句里的数字恰好等于真值，还会**静默通过**。
+     */
+    private fun titleMatch(doc: String, escapedTitle: String): MatchResult =
+        Regex("(?m)^" + escapedTitle + ".*$").find(doc)
+            ?: error("台账里找不到节标题「$escapedTitle」（改名了？）")
+
+    /** 节标题行里的**最后一个**数字（`## 4. 已排除（复核判定不是缺陷，共 158 条）` ⇒ 158）。 */
+    private fun titleNumberOf(doc: String, escapedTitle: String): Int {
+        val line = titleMatch(doc, escapedTitle).value
+        val nums = Regex("""\d+""").findAll(line).map { it.value.toInt() }.toList()
+        assertTrue("节标题里没找到数字：$line", nums.isNotEmpty())
+        return nums.last()
+    }
+
+    /** 两个节标题之间的正文（两端都按 [titleMatch] 行首锚定）。 */
+    private fun sectionSpan(doc: String, escapedTitle: String, escapedNext: String): String {
+        val a = titleMatch(doc, escapedTitle).range
+        val b = titleMatch(doc, escapedNext).range
+        return doc.substring(a.last + 1, b.first)
+    }
+
+    /**
+     * 节标题解析必须**行首锚定**（台账 L-137 的回归守卫）。
+     *
+     * 夹具刻意让正文**先**出现一次同形标题（并带一个更小的数字）——旧写法 `substringAfter` 会读到
+     * 正文那一行（真实台账上就是这样把 158 读成 9 的）；锚定版必须仍取真标题。
+     */
+    @Test
+    fun 节标题解析必须行首锚定() {
+        val doc = listOf(
+            "## 1. 索引（3 条在册）",
+            "正文引用了一次「## 4. 已排除」并写到 9 个块",
+            "## 4. 已排除（复核判定不是缺陷，共 158 条）",
+            "## 6. 附录 B（2 块，逐字保留）",
+        ).joinToString("\n")
+        assertEquals("索引节标题", 3, titleNumberOf(doc, """## 1\. 索引"""))
+        assertEquals("已排除节标题（正文先出现同形字面也不许读错）", 158, titleNumberOf(doc, """## 4\. 已排除"""))
+        assertEquals("附录 B 节标题", 2, titleNumberOf(doc, """## 6\. 附录 B"""))
+        val span = sectionSpan(doc, """## 1\. 索引""", """## 4\. 已排除""")
+        assertTrue("区间必须从真标题**之后**开始（含正文那句、不含标题本身）",
+            span.contains("正文引用了一次") && !span.contains("## 1. 索引"))
+    }
+
+    /**
+     * 在册条目必须落在它**声明的分册**里（`BUG.md` 索引第 5 列；`0.5` 规则 ⑥）。
+     *
+     * 为什么需要它：L-136 / L-141 两次都是「块放错册」——计数对、位置错，而计数守卫按「入口 + 分册」
+     * 求和，天然看不见位置。这条把「索引声明的分册」与「块实际所在的分册」对拍：
+     *  - 每个索引行的条目必须在声明的那一册里有块（`### L-`，或 3.2 遗留区的 `#### L-`）；
+     *  - 且不许在**别的**册里再出现（两处真相 = 下一轮必然改漏一处）。
+     */
+    @Test
+    fun 在册条目必须落在它声明的分册() {
+        val entry = ledger()
+        val parts = ledgerPartFiles()
+        val indexPart = ledgerPartFiles()["index"]
+            ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        val rows = Regex("""(?m)^\| L-(\d+) \|([^\n]*)$""").findAll(indexPart)
+            .map { m -> m.groupValues[1] to m.groupValues[2].split("|").map { it.trim() } }
+            .toList()
+        assertTrue("索引里没解析出条目行（列变了？）：${rows.size}", rows.size >= 70)
+        val missing = mutableListOf<String>()
+        val dup = mutableListOf<String>()
+        for ((id, cells) in rows) {
+            val part = cells.getOrNull(3) ?: ""      // cells[0]=风险 / [1]=维度 / [2]=状态 / [3]=分册
+            // 编号可能补零（索引写 L-1、块标题写 `#### L-01 ·`）：用 `0*` 兼容两种写法
+            val inPart = parts[part]?.let { Regex("""(?m)^#{3,4} L-0*$id ·""").containsMatchIn(it) } ?: false
+            if (!inPart) missing += "L-$id（声明 $part）"
+            for ((name, text) in parts) {
+                if (name != part && Regex("""(?m)^### L-0*$id ·""").containsMatchIn(text)) {
+                    dup += "L-$id 也在 $name"
+                }
+            }
+        }
+        assertTrue("这些条目没落在声明的分册里（改分册后要同步索引第 5 列）：$missing", missing.isEmpty())
+        assertTrue("这些条目在多个分册都有块：$dup", dup.isEmpty())
+    }
+
+    /**
+     * 块首行形态（`0.5` 规则 ⑦）：L 块首行是字段行、X 块首行是列表项。
+     *
+     * 机器可解析的前提：**同一类块的第一个内容行长得一样**。B 块（历史回执）逐字保留，不约束。
+     */
+    @Test
+    fun 块首行形态必须统一() {
+        val bad = mutableListOf<String>()
+        for ((name, text) in ledgerPartFiles()) {
+            val lines = text.lines()
+            for (i in lines.indices) {
+                val m = Regex("""^### (L|X)-(\d+) ·""").find(lines[i]) ?: continue
+                val head = lines.drop(i + 1).firstOrNull { it.isNotBlank() } ?: ""
+                if (m.groupValues[1] == "L") {
+                    if ("**风险**" !in head || "**主维度**" !in head) bad += "$name:${i + 1}（L 块首行缺字段行）"
+                } else if (!head.trimStart().startsWith("- ")) {
+                    bad += "$name:${i + 1}（X 块首行不是列表项）"
+                }
+            }
+        }
+        assertTrue("块首行形态不一致（L 块要 `- **风险**：… ｜ **主维度**：…`，X 块要 `- ` 开头）：${bad.take(6)}", bad.isEmpty())
+    }
+
+    /**
+     * 文档 front-matter 的必需字段（`0.5` 规则：AI 先读那套元数据必须齐）。
+     *
+     * 角色不同字段不同：入口要五个计数键 + `parts`；分册要 `part` / `back` / `numbers`；
+     * 约定文件要 `numbers` / `details` / `ledger` / `guards`；流水账要 `note`（历史标注）。
+     */
+    @Test
+    fun 文档frontMatter必须含必需字段() {
+        val need = listOf(
+            "BUG.md" to listOf("schema", "doc", "role", "audience", "updated", "read_when",
+                "active_entries", "entries_with_detail", "excluded_items", "history_records", "id_range", "parts"),
+            "AGENTS.md" to listOf("schema", "doc", "role", "audience", "updated", "read_when",
+                "numbers", "details", "ledger", "guards"),
+            "更新日志.md" to listOf("schema", "doc", "role", "audience", "updated", "read_when", "note"),
+        ) + LEDGER_PARTS.map {
+            ".wwlia-handoff/ledger/$it.md" to listOf("schema", "doc", "role", "part", "audience",
+                "updated", "read_when", "back", "numbers")
+        }
+        val bad = need.filterNot { (rel, keys) ->
+            val text = readDoc(rel) ?: return@filterNot false      // 文件不在（本机文档）：不判
+            keys.all { k -> Regex("""(?m)^%s: """.format(k)).containsMatchIn(text) }
+        }.map { it.first }
+        assertTrue("这些文档的 front-matter 缺必需字段（见 BUG.md 0.5）：$bad", bad.isEmpty())
+    }
+
+    /**
+     * 入口文档不得重新膨胀（2026-09-29 用户指定的拆分：**入口只留红线 / 协议 / 计数真值**）。
+     *
+     * 拆的理由是「读不完就没有约束力」：BUG.md 曾带着 97 行索引表、工程约定 曾 629 行。
+     * 细节一律放 `.wwlia-handoff/ledger/index.md` 或 `.wwlia-handoff/memory/agents-extras*.md`，
+     * 本用例给两个入口各留一个**宽松上限**——不是审美，是防止下一轮把细节又堆回来。
+     */
+    @Test
+    fun 入口文档不得重新膨胀() {
+        val entry = ledger()
+        assertTrue(
+            "索引表必须留在 `ledger/index.md`：入口（BUG.md）里又出现了 `| L-… |` 行",
+            !Regex("""(?m)^\| L-\d+ \|""").containsMatchIn(entry),
+        )
+        val nonBlank = convention().lines().count { it.isNotBlank() }
+        assertTrue(
+            "工程约定 又变长了（非空行 $nonBlank，上限 260）：细节写进 `.wwlia-handoff/memory/` 的分册，别堆回入口",
+            nonBlank <= 260,
+        )
+        val bugLines = entry.lines().count { it.isNotBlank() }
+        assertTrue("BUG.md 又变长了（非空行 $bugLines，上限 160）", bugLines <= 160)
+    }
+
+    /**
+     * 语音条目**不得**标「已修」（`工程约定`「规则」：语音链路只记录、不改）。
+     *
+     * 起因（L-164）：2026-09-29 有一轮确实改了语音三条并标「同日已修」，按红线回滚后
+     * 台账里那三行**一度仍写着「已修」** —— 代码回滚了、文档没回滚，是最容易骗过下一轮的不一致。
+     * 判据：索引里凡标题涉及语音实现的条目，状态词不得含「已修」。
+     */
+    @Test
+    fun 语音条目不得标已修() {
+        val indexPart = ledgerPartFiles()["index"] ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        val bad = Regex("""(?m)^\| L-(\d+) \|([^\n]*)$""").findAll(indexPart)
+            .filter { m ->
+                // 用**语音实现名**判定，不用泛词「语音」：L-100（明文开关，为语音而设但改的是 manifest）
+                // 与 L-164（本条的来源）都只是在描述里提到语音，不是在改语音链路。
+                val voice = Regex("""MicRecorder|AsrClient|MicButton|Protocol|WebSocket|sendChunk|onMessage|音频包|二进制帧|重连""")
+                    .containsMatchIn(m.value)
+                voice && "已修" in m.value
+            }
+            .map { it.groupValues[1] }
+            .toList()
+        assertTrue(
+            "这些语音条目标了「已修」，但红线要求只记录不改（确已获授权才改，且要在回执里说明例外）：$bad",
+            bad.isEmpty(),
+        )
+    }
+
+    /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */
     private fun ledger(): String =
         listOf("BUG.md", "../BUG.md").map(::File).firstOrNull { it.isFile }?.readText()
             ?: error("找不到 BUG.md（测试工作目录变了？）")
+
+    /**
+     * 台账**全文** = 入口 + 六个详情分册（`BUG.md` 的 0.6 详情文件地图）。
+     *
+     * 块计数与节标题查找都在全文上做：新增条目块无论落在哪个分册都算数，
+     * 而入口自身的行数不影响计数（口径见 [台账计数须与正文一致]）。
+     * 分册放在 `.wwlia-handoff/ledger/`（该目录已 gitignore）。
+     */
+    private fun ledgerAll(): String = ledgerPartFiles().values.joinToString("\n")
+
+    /** 「入口 + 六个分册」的原文（键 = 分册基名 `medium` / `low` / …，`BUG.md` 用键 `entry`）。 */
+    private fun ledgerPartFiles(): Map<String, String> {
+        val m = LinkedHashMap<String, String>()
+        (listOf("entry" to "BUG.md") + LEDGER_PARTS.map { it to ".wwlia-handoff/ledger/$it.md" })
+            .forEach { (name, rel) -> readDoc(rel)?.let { m[name] = it } }
+        // 入口必须在；分册至少要有「低风险 + 已排除 + 历史回执」三个，否则说明结构被移走（宁可红）
+        assertTrue("台账分册缺失（只找到 ${m.size} 个文件）：结构见 BUG.md 的 0.6 详情文件地图", m.size >= 4)
+        return m
+    }
+
+    /** 读一份本机文档（工作目录不同时回退上一级）；文件不在返回 null。 */
+    private fun readDoc(rel: String): String? =
+        listOf(File(rel), File("../$rel")).firstOrNull { it.isFile }?.readText()
+
+    /**
+     * 约定文件 + 明细分册（2026-09-29 起 工程约定 只留红线、入口与计数真值，
+     * 排查方法 / 词库 / 冷启动 / 测试逐类清单等整体外移到 `.wwlia-handoff/memory/agents-extras*.md`）。
+     */
+    private fun conventionWithDetails(): String {
+        val extras = listOf(
+            ".wwlia-handoff/memory/agents-extras.md",
+            ".wwlia-handoff/memory/agents-extras-2.md",
+        ).mapNotNull(::readDoc)
+        assertTrue("明细分册缺失（工程约定 的 `已外移的细节` 指的就是它们）", extras.size >= 2)
+        return convention() + "\n" + extras.joinToString("\n")
+    }
 
     /**
      * 取项目约定文件（标准名 `AGENTS.md`）。
@@ -132,6 +359,12 @@ class DocsReferenceTest {
             .map(::File)
             .firstOrNull { it.isFile }?.readText()
             ?: error("找不到 AGENTS.md（项目约定文件；测试工作目录变了或文件被改名？）")
+
+    /** 台账详情六册（顺序与 `BUG.md` 的 0.6 详情文件地图一致）。 */
+    /**
+     * 台账分册（顺序 = 读取顺序）：`index` 是 2026-09-29 从入口外移的索引表，其余六册是详情。
+ */
+    private val LEDGER_PARTS = listOf("index", "medium", "low", "excluded", "fixed", "history", "verify")
 
     private fun testFile(name: String): File =
         listOf(

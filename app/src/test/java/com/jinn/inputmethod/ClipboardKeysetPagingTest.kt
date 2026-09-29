@@ -146,21 +146,12 @@ class ClipboardKeysetPagingTest {
 
     // ── 5. 源码对拍：调用方必须走键集 API，且不得再用 OFFSET 分页器 ──────────────
 
-    private fun codeOnly(name: String): String = sourceOf(name).lines()
-        .filterNot { line ->
-            val t = line.trimStart()
-            t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
-        }
-        .joinToString("\n")
+    private fun codeOnly(name: String): String = TestSources.codeSource(name)
 
-    private fun sourceOf(name: String): String =
-        listOf(
-            "src/main/java/com/jinn/inputmethod/", "app/src/main/java/com/jinn/inputmethod/",
-            "src/test/java/com/jinn/inputmethod/", "app/src/test/java/com/jinn/inputmethod/",
-        ).map { File(it + name) }
-            .firstOrNull { it.isFile }
-            ?.readText()
-            ?: error("找不到 $name（当前工作目录=${File("").absolutePath}）")
+    private fun sourceOf(name: String): String = TestSources.rawSource(
+        "src/main/java/com/jinn/inputmethod/$name", "app/src/main/java/com/jinn/inputmethod/$name",
+        "src/test/java/com/jinn/inputmethod/$name", "app/src/test/java/com/jinn/inputmethod/$name",
+    )
 
     @Test
     fun 剪贴板库必须只提供键集分页且排序键补全() {

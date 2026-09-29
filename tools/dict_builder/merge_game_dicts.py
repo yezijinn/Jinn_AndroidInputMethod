@@ -27,9 +27,11 @@ import os
 import re
 import sys
 from collections import defaultdict
+from asset_io import write_bytes_atomically
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DOCS = os.path.join(ROOT, "docs")
@@ -119,6 +121,26 @@ def load_base_words(path):
     return words
 
 
+def check_before_write(ext_exists, base_exists, kept, skipped, already, added_words):
+    """写盘前的真判据（`BUG.md` L-140）：输入前提 + 合并不守恒时**中止**，不写任何产物。
+
+    为什么要它（两条都是「静默产出坏附件」，产物本身看不出异常）：
+    1. **现有扩展包不存在** ⇒ 合并会把它覆盖成「只有游戏词」的包（把 rime-ice 的词全丢了）；
+    2. **基础包留档不存在** ⇒ 去重失效 ⇒ base/ext 两包出现同一个词、候选栏出现重复项
+       （文件头注释已经记过这个坑，此前只是打一行 stderr 警告就继续）。
+    守恒判据：`保留 = 因基础包跳过 + 已在扩展包里 + 本次追加`，不成立即中止。
+    """
+    if not ext_exists:
+        raise SystemExit("现有扩展包不存在（%s）—— 直接合并会把它覆盖成「只有游戏词」，先跑上一步生成它"
+                         % EXT_XZ)
+    if not base_exists:
+        raise SystemExit("基础包留档不存在（%s）—— 没有它无法排除重复词，会产出重复候选；先跑 build_dict_index.py"
+                         % BASE_XZ)
+    if skipped + already + added_words != kept:
+        raise SystemExit("合并不守恒：保留 %d ≠ 跳过 %d + 已在包里 %d + 本次追加 %d"
+                         % (kept, skipped, already, added_words))
+
+
 def main():
     ap = argparse.ArgumentParser(description="清洗游戏词库并合并进扩展包")
     ap.add_argument("--dry-run", action="store_true")
@@ -156,11 +178,13 @@ def main():
     say()
 
     # 与现有扩展包合并
+    ext_exists, base_exists = os.path.isfile(EXT_XZ), os.path.isfile(BASE_XZ)
     ext = load_ext_dict(EXT_XZ)
     base_words = load_base_words(BASE_XZ)
     say(f"现有扩展包: {len(ext)} 键")
     say(f"基础包已有词: {len(base_words):,} 个（合并时排除，避免重复候选）")
     skipped = 0
+    already = 0
     added_keys = 0
     added_words = 0
     for key, words in by_key.items():
@@ -174,11 +198,13 @@ def main():
                 if w not in ext[key]:
                     ext[key].append(w)
                     added_words += 1
+                else:
+                    already += 1
         else:
             ext[key] = fresh
             added_keys += 1
             added_words += len(fresh)
-    say(f"  因基础包已有而跳过: {skipped} 条")
+    say(f"  因基础包已有而跳过: {skipped} 条；已在扩展包里: {already} 条")
     say(f"合并后: {len(ext)} 键（新增键 {added_keys} 个，追加词 {added_words} 条）")
     total_words = sum(len(v) for v in ext.values())
     say(f"扩展包词条总数: {total_words:,}")
@@ -187,19 +213,17 @@ def main():
     if args.dry_run:
         say("[dry-run] 未写入任何文件")
     else:
+        # 写盘前的真判据（BUG.md L-140）：前提缺失 / 合并不守恒时中止，一条产物都不写。
+        # 放在这里而不是上面：`--dry-run`（只看报告）是只读用法，不该被前提检查挡住。
+        check_before_write(ext_exists, base_exists, len(all_kept), skipped, already, added_words)
         text = "\n".join(f"{k}\t{'|'.join(ext[k])}" for k in sorted(ext))
         out = lzma.compress(text.encode("utf-8"), filters=XZ_FILTERS)
         old_size = os.path.getsize(EXT_XZ) if os.path.isfile(EXT_XZ) else 0
         os.makedirs(OUT_DIR, exist_ok=True)
         os.makedirs(os.path.dirname(EXT_XZ), exist_ok=True)
-        open(EXT_XZ, "wb").write(out)
+        write_bytes_atomically(EXT_XZ, out)   # 原子落盘（BUG.md L-122）：EXT_XZ 是 Release 附件
         say(f"已写入 {EXT_XZ}")
         say(f"  {old_size/1024/1024:.2f} MB -> {len(out)/1024/1024:.2f} MB")
-        with open(os.path.join(OUT_DIR, "report.txt"), "w", encoding="utf-8") as f:
-            f.write("\n".join(report))
-
-    if not args.dry_run:
-        os.makedirs(OUT_DIR, exist_ok=True)
         with open(os.path.join(OUT_DIR, "report.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(report))
 

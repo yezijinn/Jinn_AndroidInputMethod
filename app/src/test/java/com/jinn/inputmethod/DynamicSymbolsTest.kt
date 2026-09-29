@@ -218,18 +218,9 @@ class DynamicSymbolsTest {
      */
     @Test
     fun `必须显式锁 Locale`() {
-        val src = listOf(
-            File("src/main/java/com/jinn/inputmethod/DynamicSymbols.kt"),
-            File("app/src/main/java/com/jinn/inputmethod/DynamicSymbols.kt"),
-        ).firstOrNull { it.isFile }?.readText()
-            ?: error("找不到 DynamicSymbols.kt（当前工作目录=${File("").absolutePath}）")
-        // 剥整行注释（BUG.md L-116 的纪律）：KDoc 里提到 ofPattern 不该被算成「一处未锁」
-        val code = src.lines()
-            .filterNot {
-                val t = it.trimStart()
-                t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
-            }
-            .joinToString("\n")
+        // 注释里提到 ofPattern 不该被算成「一处未锁」：剥注释走共用 TestSources.codeOf
+        //（BUG.md L-116；行尾注释与块注释一并剥，旧写法只丢整行注释）—— 行数不变，逐行判据不受影响
+        val code = TestSources.codeSource("DynamicSymbols.kt")
         val sites = code.lines().filter { it.contains("ofPattern(") }
         assertTrue("至少要有一处 ofPattern（改实现后请同步本用例）", sites.isNotEmpty())
         val unlocked = sites.filterNot { it.contains("Locale.") }

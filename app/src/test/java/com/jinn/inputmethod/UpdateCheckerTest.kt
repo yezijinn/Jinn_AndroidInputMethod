@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,6 +68,127 @@ class UpdateCheckerTest {
             "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases",
             UpdateChecker.releasesUrl(20260926, "github", "20260926"),
         )
+    }
+
+    @Test
+    fun `只有六位与八位数字标签算版本`() {
+        // BUG.md L-83：7 位既不是 yyyyMMdd 也不是 yyMMdd —— 现状（全 8 位）下它小于任何 8 位、不会
+        // 误报，但标签规范若回退到 6 位，它就会恒大于全部合法值 ⇒ 永久误报 ⇒ 直接拒收
+        assertNull(UpdateChecker.normalizeTag("v2026131"))
+        assertNull(UpdateChecker.normalizeTag("2026131"))
+        // 6 位与 8 位照收；两者都要过同一道日期闸（8 位 L-04，6 位按 20yyMMdd）
+        assertEquals(20260929, UpdateChecker.normalizeTag("v20260929"))
+        assertEquals(260929, UpdateChecker.normalizeTag("v260929"))
+        assertNull(UpdateChecker.normalizeTag("v260999"))
+        assertNull(UpdateChecker.normalizeTag("v20261331"))
+    }
+
+    @Test
+    fun `六位与八位标签比较时按归一键`() {
+        // BUG.md L-123：260929（=2026-09-29）必须大于 20260901（=2026-09-01），
+        // 否则混用两种长度时跨源会挑旧、与本地比会判「已最新」⇒ 漏报新版
+        assertTrue(UpdateChecker.comparableVersion(260929) > UpdateChecker.comparableVersion(20260901))
+        assertEquals(20260929, UpdateChecker.comparableVersion(260929))
+        assertEquals(20260929, UpdateChecker.comparableVersion(20260929)) // 8 位原样
+    }
+
+    /**
+     * 展示值与比较口径必须**同量纲**（`BUG.md` L-131）。
+     *
+     * 比较已在 L-123 归一到 `comparableVersion`，而对话框文案若仍传 `normalizeTag` 的原始值，
+     * 标签规范回退到 6 位时就会出现「你目前的版本：20260929 / 在线最新版本：260930」却提示有更新
+     * ——数字看着更小。两处文案都必须经「归一键」这一道（本地 helper `shown` 就是它）。
+     */
+    @Test
+    fun `更新对话框的展示值与比较口径同量纲`() {
+        assertEquals(20260930, UpdateChecker.comparableVersion(UpdateChecker.normalizeTag("v260930")!!))
+        assertTrue(
+            "6 位标签归一后必须大于同日的 8 位值",
+            UpdateChecker.comparableVersion(UpdateChecker.normalizeTag("v260930")!!) > 20260929,
+        )
+        val src = TestSources.codeSource("SettingsActivity.kt")
+        assertTrue(
+            "展示值必须经 UpdateChecker.comparableVersion（缺这个 helper 就等于退回原始值）",
+            "fun shown(v: Int) = UpdateChecker.comparableVersion(v)" in src,
+        )
+        val args = Regex("""R\.string\.update_latest_version,\s*([A-Za-z0-9_.()]+)""")
+            .findAll(src).map { it.groupValues[1] }.toList()
+        assertEquals("update_latest_version 的调用点数量变了，钉要跟着改：$args", 2, args.size)
+        assertTrue("两处文案都必须传归一后的值：$args", args.all { it.startsWith("shown(") })
+    }
+
+    /**
+     * 关键函数的 KDoc 必须**紧邻**声明（`BUG.md` L-130）。
+     *
+     * 插新函数时把原 KDoc 挤成「浮动注释」：读新函数的人先看到旧函数的说明，读旧函数的人反而
+     * 看不到自己的 KDoc（Kotlin 只把紧邻声明的那条当 KDoc），而编译器一个字都不报。
+     */
+    @Test
+    fun `关键函数的KDoc必须紧邻声明`() {
+        val raw = TestSources.rawSourceOfShortName("UpdateChecker.kt")
+        for (name in listOf("comparableVersion", "normalizeTag")) {
+            val head = raw.substringBefore("internal fun $name(").trimEnd()
+            assertTrue("$name 上方没有 KDoc：…${head.takeLast(40)}", head.endsWith("*/"))
+            val opener = head.lastIndexOf("/**")
+            assertTrue("$name 上方的注释不是 KDoc 形态", opener > 0)
+            val prevEnd = head.lastIndexOf("*/", head.length - 3)
+            if (prevEnd > 0) {
+                val gap = head.substring(prevEnd + 2, opener)
+                assertTrue(
+                    "$name 上方是连排注释（浮动 KDoc，读者会认错）：gap=「${gap.take(24)}」",
+                    gap.isNotBlank(),
+                )
+            }
+        }
+    }
+
+    /**
+     * 两个源的返回顺序不同（GitHub `/tags` 降序、Gitee API 按名称升序）⇒ 挑最大必须与顺序无关
+     * （`BUG.md` L-146）。抽成 [UpdateChecker.pickLatest] 就是为了让这件事可测。
+     */
+    @Test
+    fun `挑最新版本必须与标签顺序无关`() {
+        val asc = listOf("v20260821", "20260920", "20260928", "v260929", "dict-parts-20260927-v1")
+        val cases = listOf(asc, asc.reversed(), asc.shuffled(java.util.Random(7)))
+        for (tags in cases) {
+            val best = UpdateChecker.pickLatest(tags, "gitee")!!
+            // `Latest.date` 是**归一值**（6 位仍是 6 位，见 normalizeTag 的 KDoc）——「谁更大」必须过
+            // comparableVersion；展示面同理（SettingsActivity 的 shown）。
+            assertEquals("乱序 / 升序 / 降序都要挑出 2026-09-29：$tags", 20260929,
+                UpdateChecker.comparableVersion(best.date))
+            assertEquals("原始标签名要留着（跳转链接要用）", "v260929", best.tag)
+        }
+    }
+
+    /**
+     * 大写 `V` 前缀此前被**静默忽略**（`removePrefix("v")` 只去小写）⇒ 该 tag 等价于不存在，
+     * 退化为取次大值：可能误报「已是最新」且不自愈（`BUG.md` L-147）。
+     * 只削**一个**前缀字符，`vV20260919` 仍然拒收 —— 不把「猜」放进来。
+     */
+    @Test
+    fun `大写V前缀不得被静默忽略`() {
+        assertEquals(20260919, UpdateChecker.normalizeTag("V20260919"))
+        assertEquals(260919, UpdateChecker.normalizeTag("V260919"))
+        assertNull(UpdateChecker.normalizeTag("vV20260919"))
+        assertNull(UpdateChecker.normalizeTag("vv20260919"))
+    }
+
+    /**
+     * 源码钉：Gitee 侧必须**翻页取并集**、读取必须把**总预算**传进去（`BUG.md` L-146 / L-145）。
+     *
+     * 背景：Gitee tags 接口实测（2026-09-29）默认 20 条/页、按名称升序，而仓库当时正好已有 20 个
+     * tag ⇒ 再加一个日期 tag，最新的就会掉出首页 ⇒ 这条回退源永远报「已最新」且不自愈；
+     * 而 `readTimeout` 只约束单次 read，滴水响应能把总时长拉到远超 25s 预算 ⇒ 看门狗提前解锁。
+     */
+    @Test
+    fun `Gitee必须翻页且读取受总预算约束`() {
+        val src = TestSources.codeSource("UpdateChecker.kt")
+        assertTrue("Gitee 侧必须翻页（不然最新日期 tag 会掉出首页）", "GITEE_TAGS_MAX_PAGES" in src)
+        assertTrue("翻页请求必须带 page 参数", "tags?page=" in src)
+        assertTrue("读取必须把 deadline 传进去（socket 超时管不住滴水响应）",
+            "readCapped(it, MAX_BODY_CHARS, deadline)" in src)
+        assertTrue("挑最新必须走顺序无关的 pickLatest", "pickLatest(" in src)
+        assertTrue("到翻页上限要留日志（不静默漏）", "可能还有更靠后的标签" in src)
     }
 
     private companion object {

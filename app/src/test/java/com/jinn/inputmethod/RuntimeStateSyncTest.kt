@@ -16,16 +16,14 @@ import java.io.File
  */
 class RuntimeStateSyncTest {
 
-    private fun sourceOf(name: String): String = (
-        listOf(
-            File("src/main/java/com/jinn/inputmethod/$name"),
-            File("app/src/main/java/com/jinn/inputmethod/$name"),
-        ).firstOrNull { it.isFile } ?: error("找不到 $name（当前工作目录=${File("").absolutePath}）")
-        ).readText()
+    private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
+
+    /** 判据一律在**剥注释后**的代码上做：注释里提到同一行调用不算实现（BUG.md L-116） */
+    private fun codeOf(name: String): String = TestSources.codeOf(sourceOf(name))
 
     @Test
     fun `导入设置项之后必须同步模糊音掩码到引擎`() {
-        val text = sourceOf("ConfigBackupManager.kt")
+        val text = codeOf("ConfigBackupManager.kt")
         assertTrue(
             "导入设置项后必须调用 PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)：掩码在 Prefs 与引擎里各有一份",
             text.contains("PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)"),
@@ -34,7 +32,7 @@ class RuntimeStateSyncTest {
 
     @Test
     fun `同步必须排在 prefs 导入调用之后`() {
-        val text = sourceOf("ConfigBackupManager.kt")
+        val text = codeOf("ConfigBackupManager.kt")
         val imported = text.indexOf("prefs.importFromBackup(main)")
         val synced = text.indexOf("PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)")
         assertTrue("两个调用点都应存在（imported=$imported synced=$synced）", imported >= 0 && synced >= 0)
@@ -43,7 +41,7 @@ class RuntimeStateSyncTest {
 
     @Test
     fun `导入设置项之后必须同步用户词频开关`() {
-        val text = sourceOf("ConfigBackupManager.kt")
+        val text = codeOf("ConfigBackupManager.kt")
         assertTrue(
             "导入设置项后必须调用 UserFrequency.setEnabled(prefs.userLearning)：开关在 Prefs 与 " +
                 "UserFrequency 里各有一份，而包内没有词频节时 replaceFromBackup 不会被调用 ⇒ " +
@@ -54,7 +52,7 @@ class RuntimeStateSyncTest {
 
     @Test
     fun `用户词频开关的同步也必须排在 prefs 导入之后`() {
-        val text = sourceOf("ConfigBackupManager.kt")
+        val text = codeOf("ConfigBackupManager.kt")
         val imported = text.indexOf("prefs.importFromBackup(main)")
         val synced = text.indexOf("UserFrequency.setEnabled(prefs.userLearning)")
         assertTrue("两个调用点都应存在（imported=$imported synced=$synced）", imported >= 0 && synced >= 0)

@@ -339,7 +339,7 @@ class RareCharsFilterTest {
      */
     @Test
     fun 档位页写的常用字数必须等于档1资产字数() {
-        val src = sourceOf("RareCharsActivity.kt")
+        val src = codeOf("RareCharsActivity.kt")
         val m = Regex("""（([\d,]+) 字）""").find(src)
             ?: error("TEXT_DESC 里没有「（N 字）」（文案格式变了？）")
         val declared = m.groupValues[1].replace(",", "").toInt()
@@ -356,7 +356,7 @@ class RareCharsFilterTest {
     @Test
     fun 两个复刻页的关闭键都必须给出可听键名() {
         for (name in listOf("RareCharsActivity.kt", "FuzzyPinyinActivity.kt")) {
-            val src = sourceOf(name)
+            val src = codeOf(name)
             assertTrue(
                 "$name 的关闭键缺少 contentDescription（辅助服务只会读到「X」）",
                 src.contains("contentDescription = TEXT_CLOSE_DESC"),
@@ -375,7 +375,7 @@ class RareCharsFilterTest {
      */
     @Test
     fun 关档2的级联关档3必须在挂起态里做() {
-        val src = sourceOf("RareCharsActivity.kt")
+        val src = codeOf("RareCharsActivity.kt")
         val body = src.substringAfter("checkTier2.setOnCheckedChangeListener")
             .substringBefore("checkTier3.setOnCheckedChangeListener")
         assertTrue("tier2 监听器里找不到级联关档 3 的代码（重构后请同步这条守卫）", "checkTier3.isChecked = false" in body)
@@ -386,13 +386,10 @@ class RareCharsFilterTest {
     }
 
     /** 按短名找源码文件（测试既可能在仓库根、也可能在 app/ 下跑） */
-    private fun sourceOf(name: String): String {
-        val path = listOf(
-            File("src/main/java/com/jinn/inputmethod/$name"),
-            File("app/src/main/java/com/jinn/inputmethod/$name"),
-        ).firstOrNull { it.isFile } ?: error("找不到 $name")
-        return path.readText()
-    }
+    private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
+
+    /** 判据一律在**剥注释后**的代码上做（BUG.md L-116） */
+    private fun codeOf(name: String): String = TestSources.codeOf(sourceOf(name))
 
     private fun isHan(cp: Int): Boolean =
         cp in 0x3400..0x4DBF || cp in 0x4E00..0x9FFF || cp in 0x20000..0x3FFFF

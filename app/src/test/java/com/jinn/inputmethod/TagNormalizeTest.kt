@@ -44,10 +44,21 @@ class TagNormalizeTest {
     }
 
     @Test
-    fun 六到七位标签维持原口径() {
-        // 历史上出现过 6 位写法；它们数值必然小于八位日期，认了不会造成误报
-        assertEquals(202609, UpdateChecker.normalizeTag("202609"))
-        assertEquals(2026092, UpdateChecker.normalizeTag("2026092"))
+    fun 六位按yyMMdd收_七位与非ASCII数字不收() {
+        // 6 位是历史上的 `yyMMdd` 写法，照收 —— 但要走同一道日期闸（`20yyMMdd`）：
+        // `v260929` = 2026-09-29 ✓；`v202609` 展开成 2020 年 26 月、`v260999` 日 99 ⇒ 都拒收
+        assertEquals(260929, UpdateChecker.normalizeTag("v260929"))
+        assertNull("按 20yyMMdd 展开后月份非法", UpdateChecker.normalizeTag("v202609"))
+        assertNull("日 99", UpdateChecker.normalizeTag("v260999"))
+        // 7 位既不是 `yyMMdd` 也不是 `yyyyMMdd`：现状（tag 全 8 位）里它数值上小于任何 8 位、
+        // 不会误报，但标签规范一旦回退到 6 位，它就会**恒大于**全部合法值 ⇒ 永久误报（BUG.md L-83）
+        assertNull(UpdateChecker.normalizeTag("2026092"))
+        assertNull(UpdateChecker.normalizeTag("v2026131"))
+        // 非 ASCII 数字：`Char::isDigit` 与 `toIntOrNull` 都认（桌面 JVM 实测），
+        // 而 tag 与 Gitee 直达链接都要求 ASCII ⇒ 拒收（BUG.md L-126）
+        assertNull("全角数字", UpdateChecker.normalizeTag("２０２６０９２９"))
+        assertNull("混合全角（会静默解析成 20260920）", UpdateChecker.normalizeTag("2026092０"))
+        assertNull("阿拉伯-印度数字", UpdateChecker.normalizeTag("٢٠٢٦٠٩٢٩"))
     }
 
     @Test

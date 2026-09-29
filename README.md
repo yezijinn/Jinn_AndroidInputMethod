@@ -97,7 +97,7 @@ python build_apk.py --clean      # clean 后全新编译
 - `pinyin_index.bin.xz`：短语索引，约 29.9 万键 / 40 万条（按词频从高到低切分），二分查找按需解码
 - `pinyin_chars.txt.xz`：单字表（9,373 字 / 10,080 条读音，含三档全部）
 - `common_chars` / `tier2_chars` / `tier3_chars`.txt.xz：三档字表（5,613 / 837 / 2,923 字），档 2、档 3 按开关放行
-- `simp_trad.txt.xz` + `simp_trad_words.txt.xz`：简繁对照（2,714 对逐字 + 8,100 条词级消歧），供「只使用繁体字」替换候选（词级优先，如 头发 → 頭髮 而非 頭發；逐字表源 OpenCC STCharacters 繁体优先、人工表只作覆盖）
+- `simp_trad.txt.xz` + `simp_trad_words.txt.xz`：简繁对照（2,714 对逐字 + 9,139 条词级表），供「只使用繁体字」替换候选（词级优先，如 头发 → 頭髮 而非 頭發；逐字表源 OpenCC STCharacters 繁体优先、人工表只作覆盖；词级表含词级消歧与「往返一致」补收两类条目，同一繁体形下以词频最高的词典词为反查胜者）
 - `simplify.txt.xz`：繁→简单字映射（2,965 项，源 OpenCC TSCharacters）——把繁体候选折回简体，词频 / 消费区间 / 排序的键都按简体走（缺了它，「頭髮」只折得回「头髮」）
 - `pinyin_syllables.txt.xz`：合法音节全集（421 个；`lue`/`nue` 保留 —— 双拼输出 ue 型，切分与 üe 折返都要用）
 

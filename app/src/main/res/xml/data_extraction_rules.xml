@@ -32,6 +32,14 @@
         <exclude
             domain="sharedpref"
             path="jinn_clipboard.xml" />
+
+    <!-- 索引缓存是可**再生**的（基础 14 MB 上下、可选包各十几 MB）：交给 Auto Backup 只会挤占
+         25MB 配额（超限会让整包备份失败，连真正该备份的下载词库也备份不上），而换机恢复后
+         它的键（APK mtime）必然对不上，仍要靠清扫自愈。词库包 `dicts/` 是用户下载的**真数据**，
+         故意**不**排除（`BUG.md` L-152）。 -->
+    <exclude
+        domain="file"
+        path="index/" />
     </cloud-backup>
     <device-transfer>
         <exclude
@@ -58,5 +66,13 @@
         <exclude
             domain="sharedpref"
             path="jinn_clipboard.xml" />
+
+    <!-- 索引缓存是可**再生**的（基础 14 MB 上下、可选包各十几 MB）：交给 Auto Backup 只会挤占
+         25MB 配额（超限会让整包备份失败，连真正该备份的下载词库也备份不上），而换机恢复后
+         它的键（APK mtime）必然对不上，仍要靠清扫自愈。词库包 `dicts/` 是用户下载的**真数据**，
+         故意**不**排除（`BUG.md` L-152）。 -->
+    <exclude
+        domain="file"
+        path="index/" />
     </device-transfer>
 </data-extraction-rules>

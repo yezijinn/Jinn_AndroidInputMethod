@@ -173,12 +173,14 @@ class SimpTradAssetTest {
     }
 
     /**
-     * 词级表要**同时**兜住正推与反查（`BUG.md` L-71）。
+     * 词级表要**同时**兜住正推与反查（`BUG.md` L-71 / L-93 / L-94）。
      *
      * 生成端曾只按正推判「冗余」（逐字 == 词级结果就丢）—— 对**异体字**词条会出错：
      * `万锺 → 萬鍾` 丢掉后，`toSimplified("萬鍾")` 走逐字兜底会得「万**钟**」（另一个词），
      * 繁体模式下学过的词，词频键 / 消费区间 / 预测全都落到别的词上。
-     * 判据改成「两个方向都能靠字级表还原才丢」，实测为反查保留 25 条。
+     * 判据改成「两个方向都能靠字级表还原才丢」，实测为反查保留 25 条（正推方向必须留在表里）。
+     * ⚠ 反查的**胜者**另由词频定（同一显示形取词频最高的词典词，见 L-93 / L-94）⇒ 折回结果不是
+     * 「表里那个异体词」，而是该显示形下词典里最常用的词；条目（正推方向）仍然必须在表里。
      */
     @Test
     fun 词级表要同时兜住正推与反查() {
@@ -188,7 +190,7 @@ class SimpTradAssetTest {
             "讬了" to "託了", "游刃有馀" to "遊刃有餘", "盈馀加征" to "盈餘加徵",
         )
         for ((simp, trad) in golden) {
-            assertEquals("词级表应含「$simp → $trad」（反查要靠它兜住）", trad, words[simp])
+            assertEquals("词级表应含「$simp → $trad」（反查要靠它兜住，别按单方向判冗余）", trad, words[simp])
         }
 
         PinyinEngine.resetForTest()
@@ -198,11 +200,55 @@ class SimpTradAssetTest {
         PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
         PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
 
-        assertEquals("「萬鍾」应折回「万锺」（词表优先），逐字兜底会错成「万钟」",
-            "万锺", PinyinEngine.toSimplified("萬鍾"))
-        assertEquals("「茶餘飯後」应折回「茶馀饭后」", "茶馀饭后", PinyinEngine.toSimplified("茶餘飯後"))
-        assertEquals("词表未覆盖的「萬餘」走逐字兜底（字级反推保留异体「馀」，与简繁表自洽）",
-            "万馀", PinyinEngine.toSimplified("萬餘"))
+        assertEquals("「萬鍾」应折回「万钟」（该显示形下词典里最常用的词）",
+            "万钟", PinyinEngine.toSimplified("萬鍾"))
+        assertEquals("「茶餘飯後」应折回「茶余饭后」（余 是规范形）",
+            "茶余饭后", PinyinEngine.toSimplified("茶餘飯後"))
+        assertEquals("「萬餘」应折回「万余」（同上）",
+            "万余", PinyinEngine.toSimplified("萬餘"))
+        assertEquals("词级表仍优先于逐字兜底（逐字会给「盈余加征」）",
+            "盈馀加征", PinyinEngine.toSimplified("盈餘加徵"))
+    }
+
+    /**
+     * 往返一致性：词典里能选到的词，在两种模式下的**词频键必须相同**（`BUG.md` L-93 / L-94）。
+     *
+     * 视角：传统模式下候选是「转换后去重」的 —— 同一显示形下只有词频最高的那个词可见，
+     * 用户选中的就是它；折回落到别的词上，繁体模式学过的词切回简体后命中不了
+     * （词频键 / 消费区间 / 预测三处都不认）。金样例覆盖三类机理：
+     *  - 显示形有表项、但原胜者是别的词（覆蓋 ← 复盖）：L-93；
+     *  - 显示形没有表项、只能逐字兜底（乾隆 → 干隆）：L-94；
+     *  - 显示形 == 本词（拚命）：L-94 的恒等条目那一类。
+     * 生成侧的收口判据（补收后「可观测失败」只允许剩词频并列）写在 `build_dicts.py`，
+     * 这里钉的是**用户可见的那一段**：真实资产装载后的折回结果。
+     */
+    @Test
+    fun 往返一致_显示形的最高频词必须折回自己() {
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts("gai\t盖\n", "", "gai\n")
+        PinyinEngine.setSimpTradText(assetText("simp_trad.txt.xz"))
+        PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
+        PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
+
+        val golden = mapOf(
+            "覆蓋" to "覆盖",
+            "剩餘價值" to "剩余价值",
+            "全軍覆沒" to "全军覆没",
+            "萬餘" to "万余",
+            "乾隆" to "乾隆",
+            "承乾宮" to "承乾宫",
+            "拚命" to "拚命",
+            "反覆" to "反复",
+        )
+        for ((trad, simp) in golden) {
+            assertEquals("「$trad」应折回「$simp」（往返一致性：两种模式的词频键必须相同）",
+                simp, PinyinEngine.toSimplified(trad))
+        }
+
+        val words = pairs("simp_trad_words.txt.xz")
+        assertEquals("词级表应含「覆盖 → 覆蓋」（正推补收）", "覆蓋", words["覆盖"])
+        assertEquals("词级表应含恒等条目「乾隆 → 乾隆」（反查补收）", "乾隆", words["乾隆"])
     }
 
     /**

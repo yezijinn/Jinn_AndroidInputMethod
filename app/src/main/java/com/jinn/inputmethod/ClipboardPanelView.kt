@@ -120,6 +120,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      */
     private var scanStoppedEarly = false
 
+    /** 本次刷新**整体失败**（查询 / 解密抛异常）：空态要说「读取失败」，不能冒充「暂无历史」（BUG.md L-144） */
+    private var loadFailed = false
+
+    /**
+     * 「当前这条长按操作条」的令牌（BUG.md L-144）。
+     *
+     * 长按后的收藏 / 删除是**异步**的（写库走 [BackgroundIo]，前面可能还排着剪贴板入库 / 解密）。
+     * 回调回来时，用户可能已经长按了另一条、或切了分类 ⇒ 旧回调若照样 `hideActionBar()`，
+     * 用户刚打开的那条会被收掉（与 BUG.md L-127 同一症状）；`refresh(resetScroll = true)`
+     * 还会把列表拉回顶部。令牌在「显示操作条」与「收起操作条」两处自增，回调只在令牌未变时才动界面。
+     */
+    private var actionToken = 0
+
     /** 当前分类的总条数（分页编号用：序号 = 分类总数 − 位置，与全局条目数无关） */
     private var categoryTotal = 0
 
@@ -157,6 +170,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 本次打开的 Trace ID（onPanelShown 生成，刷新链路共享） */
     private var currentTraceId: String = ""
+
+    /**
+     * 用户是否正在**拖动 / 惯性滑动**列表（`SCROLL_STATE_TOUCH_SCROLL` / `FLING` / `SETTLING`）。
+     *
+     * 长按操作条只在「用户真的滚了列表」时才允许收起（BUG.md L-127）：`onScroll` 在**每一次布局**
+     * 都会回调 —— 面板打开、数据到达、乃至**操作条自己出现**导致列表变矮都会触发一次；
+     * 原判据「回调即收起」于是让操作条刚显示就被自己收掉（真机实测：15:06:53.007 显示操作条，
+     * 20ms 后 15:06:53.027 的布局回调又把它收起 ⇒ 长按后什么都看不到）。
+     */
+    private var listScrolling = false
 
     // ── 适配器（稳定 ID 绑定）──────────────────────────────
     // 必须声明在 init 块之前！Kotlin 属性按声明顺序初始化，
@@ -285,16 +308,25 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             true
         }
         listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
-            override fun onScrollStateChanged(view: android.widget.AbsListView?, scrollState: Int) {}
+            override fun onScrollStateChanged(view: android.widget.AbsListView?, scrollState: Int) {
+                listScrolling = scrollState != android.widget.AbsListView.OnScrollListener.SCROLL_STATE_IDLE
+            }
+
             override fun onScroll(view: android.widget.AbsListView?, firstVisibleItem: Int, visibleItemCount: Int, totalItemCount: Int) {
-                // 列表一动，操作条就挂在「已经滚出视口」的条目上：此时点删除删的不是眼前那条，
+                // 用户滚动时收起操作条：滚动后它挂在「已经滚出视口」的条目上，此时点删除删的不是眼前那条，
                 // 而删除后的 `refresh(resetScroll)` 会把列表拉回顶部，用户无从知道丢了哪条
                 // （selectCategory 的注释已承认同一危害，此处是漏覆盖的滚动分支）
+                //
+                // ⚠ 判据必须是「用户真的滚了」（[listScrolling]），**不能**用「onScroll 被调用」：
+                // 该方法在每一次布局都会回调（数据到达 / 面板重排 / 操作条自己出现把列表压矮…），
+                // 用「回调即收起」会让操作条刚显示就被自己收掉（BUG.md L-127，真机取证：显示后 20ms 即被收起）。
+                // 内容变化导致锚点失效的那些路径已有显式收起（`onPanelShown` / `selectCategory` /
+                // 收藏与删除的回调 / `showClearConfirm`），不依赖这里。
                 //
                 // ⚠ `setOnScrollListener` 会**立即**同步回调一次，此刻 actionBar 还是未初始化的
                 // lateinit（在本构造函数靠后处才赋值）⇒ 必须先判 `isInitialized`，
                 // 否则每次 onCreateInputView 都抛 UninitializedPropertyAccessException（真机复现过）
-                if (::actionBar.isInitialized && actionBar.visibility == View.VISIBLE) hideActionBar()
+                if (listScrolling && ::actionBar.isInitialized && actionBar.visibility == View.VISIBLE) hideActionBar()
                 // 距底部不足 LOAD_AHEAD 条时预取下一页
                 if (hasMorePages && totalItemCount > 0 &&
                     firstVisibleItem + visibleItemCount >= totalItemCount - LOAD_AHEAD) {
@@ -449,6 +481,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     // 还有没扫过的行（扫到止损上限提前收工）⇒ 空态要给「继续查找」入口，否则晚到的
                     // 可读历史永远翻不到（BUG.md L-76）
                     scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < total
+                    loadFailed = false
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
@@ -459,7 +492,22 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                         listView.post { if (token == scrollToken) listView.setSelection(0) }
                     }
                 }.onFailure {
-                    Diagnostics.e(TAG, "[$tid] 列表刷新失败（loadingPage 已复位）: ${it.message}", it)
+                    // 查询 / 解密整体失败：**视图状态也必须归位**（BUG.md L-144）——
+                    // 只打日志的话，列表还留着**上一个分类**的条目，而顶栏分类已经切走：
+                    // 用户点一条粘贴出来的是另一个分类的正文（与「粘的与看到的是同一份」相反）；
+                    // 首次加载即失败时还会是「空白面板、连空态文案都没有」。
+                    // 空态要说真话：`loadFailed` 让它显示「读取失败」而不是「暂无剪贴板历史」。
+                    categoryTotal = 0
+                    currentItems = mutableListOf()
+                    nextPageOffset = 0
+                    nextCursor = null
+                    hasMorePages = false
+                    unreadableHistory = false
+                    scanStoppedEarly = false
+                    loadFailed = true
+                    adapter.notifyDataSetChanged()
+                    updateEmpty()
+                    Diagnostics.e(TAG, "[$tid] 列表刷新失败（视角已归位）: ${it.message}", it)
                 }
             }
         }
@@ -606,9 +654,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，避免有高度有数据却显示空白） */
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
-        // 空态有三种含义，不能混用同一句话：真没有历史 / 有行但解密不出来 / 还有没扫完的行（可继续找）
+        // 空态有四种含义，不能混用同一句话：读取失败 / 真没有历史 / 有行但解密不出来 /
+        // 还有没扫完的行（可继续找）。前两种在 L-144 之前是**同一句**「暂无剪贴板历史」——
+        // 查询失败时那句是假的，用户会以为历史被清空了。
         if (empty) {
             textEmpty.text = when {
+                loadFailed -> TEXT_EMPTY_LOAD_FAILED
                 scanStoppedEarly -> TEXT_EMPTY_UNREADABLE_MORE
                 unreadableHistory -> TEXT_EMPTY_UNREADABLE
                 else -> TEXT_EMPTY_IDLE
@@ -646,7 +697,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun showItemMenu(item: ClipboardDb.Item) {
         // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
         hideConfirmBar()
+        // 换令牌：此后任何**旧**的长按回调都不得再动界面（BUG.md L-144）
+        actionToken++
         longPressItem = item
+        // 操作条一出现就把「用户正在滚动」标志清掉（BUG.md L-132）：该标志只在 onScrollStateChanged
+        // 里写，而触摸流被截断时（一指按住列表、另一指把键盘收掉）ACTION_CANCEL 可能永远不来 ⇒
+        // 标志粘在 true，之后操作条**自身**引起的布局回调（onScroll）就会立刻把它收掉 ——
+        // 那正是 L-127 的原症状（长按后什么都看不到）。复位点就是「保证判据不靠上一版手势的残余」。
+        listScrolling = false
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
         actionBar.visibility = View.VISIBLE
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
@@ -655,6 +713,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun hideActionBar() {
         actionBar.visibility = View.GONE
         longPressItem = null
+        // 条都不在了 ⇒ 在飞的长按回调也不得再动界面（切分类 / 内容刷新都会走到这里，BUG.md L-144）
+        actionToken++
+        // 条都不在了，就没有「别被布局回调收掉」要保护；顺带把粘性标志复位（BUG.md L-132）
+        listScrolling = false
     }
 
     /**
@@ -668,15 +730,20 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val item = longPressItem ?: return
         val favorite = !item.isFavorite
         val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
+        val token = actionToken    // 抓令牌（BUG.md L-144）：只认「我这一条」的操作条
         BackgroundIo.run {
             db.setFavorite(item.id, favorite)
             Diagnostics.i(TAG, "[$tid] 长按操作: 收藏切换 id=${item.id}")
             post {
-                hideActionBar()
+                val mine = token == actionToken
+                if (mine) hideActionBar()
+                else Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
+                refresh(resetScroll = mine)
                 // 与删除一致走 resetScroll：refresh 只取第一页，不重置滚动的话已加载的多页被
                 // 整体截回、ListView 的 firstPosition 又被钳到末尾，用户既不在原位置、
                 // 也找不到刚操作的那一条。回顶至少是明确、可预期的行为。
-                refresh(resetScroll = true)
+                // ⚠ 但「回顶」只在本操作仍然有效时才做（令牌未变）；过期回调拉回顶部会把
+                // 用户正在看的位置也不讲道理地抽走（BUG.md L-144）。
             }
         }
     }
@@ -684,12 +751,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun deleteItem() {
         val item = longPressItem ?: return
         val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
+        val token = actionToken    // 抓令牌（BUG.md L-144）
         BackgroundIo.run {
             db.delete(item.id)
             Diagnostics.i(TAG, "[$tid] 长按操作: 删除 id=${item.id}")
             post {
-                hideActionBar()
-                refresh(resetScroll = true)
+                val mine = token == actionToken
+                if (mine) {
+                    hideActionBar()
+                } else {
+                    Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
+                }
+                refresh(resetScroll = mine)
             }
         }
     }
@@ -837,6 +910,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          * 密钥失效后新条目会用新密钥加密，功能并未坏掉，用户在意的「以后还能不能用」要给答案。
          */
         const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
+
+    /** 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏 */
+    const val TEXT_EMPTY_LOAD_FAILED = "读取剪贴板历史失败\n（可稍后重试；新的复制仍会正常记录）"
 
         /**
          * 空态：**扫到止损上限仍一条都没读出来，但后面还有没扫过的行**（BUG.md L-76）。

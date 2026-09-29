@@ -30,7 +30,7 @@ APK 内的基础包是二进制索引（pinyin_index.bin.xz），人不可读；
     单字表-表外字.txt          三档之外的字（异体 / 日韩 / 扩展区等，不加载）
     档1字表.txt / 档2字表.txt / 档3字表.txt   三张档位表（asset 原样导出）
     简繁对照-字级.txt          逐字映射（2,714 对，OpenCC STCharacters + 人工覆盖）
-    简繁对照-词级.txt          词级消歧（8,100 条，整词优先于逐字）
+    简繁对照-词级.txt          词级消歧 + 往返一致补收（9,139 条，整词优先于逐字）
     音节表.txt
     说明.md                    格式、行数、体积与统计
 
@@ -167,8 +167,8 @@ def record_produced(path):
 
 
 def write(path, text):
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+    # 原子落盘（BUG.md L-122）：这条 write() 写的就是进 APK 的资产，半截文件会让运行期解压失败
+    write_bytes_atomically(path, text.encode("utf-8"))
     record_produced(path)
     return os.path.getsize(path) / 1024 / 1024
 
