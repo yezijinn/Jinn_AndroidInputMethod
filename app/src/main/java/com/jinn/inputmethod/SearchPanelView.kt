@@ -70,6 +70,15 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     /** debounce + 刷新令牌：合并连续输入，丢弃过期回调 */
     private val searchHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 刷新令牌：主线程写（`++refreshToken`），分块搜索在**后台线程**的循环体内读它判停。
+     *
+     * ⚠ `@Volatile` 是必需项（BUG.md L-79）：缺它时 JMM 允许后台线程一直读到陈旧值，
+     * 旧任务不会提前收工、白扫余下窗口（每块 50 行还要解密）。结果本身仍安全 ——
+     * `post{}` 走 Handler（内存屏障）、令牌比较在主线程执行，过期结果永远被丢弃。
+     */
+    @Volatile
     private var refreshToken = 0
 
     private val adapter = object : BaseAdapter() {
@@ -274,6 +283,19 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     /** 是否激活（PinyinKeyboardView 据此把 26 键输入路由到搜索框） */
     fun isActive(): Boolean = visibility == View.VISIBLE
 
+    /**
+     * 视图即将被换掉（换肤 / 符号顺序变更重建键盘）时中止仍在跑的后台任务。
+     *
+     * 分块搜索靠 [refreshToken] 判停，而令牌只在 [onShown] / [onHidden] 里递增 —— 重建键盘视图
+     * 这两个入口都不走：旧面板会把整库扫完（每块 50 行解密），并把结果 post 到已经脱离视图树的
+     * 列表上，同时占着单线程的 [BackgroundIo] 让剪贴板入库排在后面。见 `BUG.md` L-17。
+     */
+    fun stopBackgroundWork() {
+        searchHandler.removeCallbacksAndMessages(null)
+        refreshToken++
+        Diagnostics.i(TAG, "搜索面板: 视图重建，中止后台搜索")
+    }
+
     /** 键盘输入路由：向搜索框追加文本（走 TextWatcher → debounce 查询） */
     fun appendSearch(text: String) {
         val cur = editSearch.text ?: return
@@ -331,7 +353,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             // 收藏多时实际行数会超过它，拿配置值当上限会漏搜尾部条目。
             // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
             val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
-            var offset = 0
             var lastPublishAt = 0L
             var publishedCount = -1
 
@@ -351,10 +372,14 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
             var retainedBytes = 0L
             var capped = false
-            while (offset < total) {
-                // 游标必须取回带的 nextOffset：解密失败的行不进结果但仍占游标位，
-                // 用 chunk.size 推进会让下一块重复扫描已看过的行、并永久漏掉尾部行。
-                val page = db.recentPageWithOffset(offset, SEARCH_WINDOW_ITEMS)
+            var cursor: ClipboardCursor? = null
+            var scannedTotal = 0
+            // 上界仍是「扫描过的行数」，不是位置：total 里含 SEARCH_SCAN_LIMIT 的止损（别丢它）
+            while (scannedTotal < total) {
+                // 键集游标（BUG.md L-92）：只认「上一块最后扫描过的行」。
+                // 不能用 SQL OFFSET —— 搜索期间别的应用改一次剪贴板（头部插一条 + 尾部裁一条，
+                // 总条数不变）就会让行位置整体位移，下一块重复扫描 / 永久漏掉尾部行。
+                val page = db.recentPageAfter(cursor, SEARCH_WINDOW_ITEMS)
                 for (item in page.items) {
                     if (item.content.lowercase().contains(lower)) {
                         if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes)) {
@@ -367,16 +392,16 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                         retainedBytes += ClipboardStore.utf8ByteSize(item.content)
                     }
                 }
-                // 判停只看游标有没有前进：整窗解密失败时 items 为空、但游标仍在推进，
+                // 判停只看扫描行数：整窗解密失败时 items 为空、但游标仍在推进，
                 // 用 items.isEmpty() 判停会静默漏掉后面的有效条目。
-                val next = page.nextOffset
-                if (next <= offset) break
-                offset = next
+                if (page.scanned == 0) break
+                cursor = page.last
+                scannedTotal += page.scanned
                 if (capped) break
                 if (reqToken != refreshToken) return@run
                 // 首帧兜底的判据必须在 post 之前提前取成值：lambda 捕获的是变量本身，
-                // 等它延迟执行时 offset 早已推进，「首块」永远判不成立。
-                val isFirstChunk = offset <= SEARCH_WINDOW_ITEMS
+                // 等它延迟执行时 cursor / scannedTotal 早已推进，「首块」永远判不成立。
+                val isFirstChunk = scannedTotal <= SEARCH_WINDOW_ITEMS
                 val now = System.currentTimeMillis()
                 // 发布节流：窗口细化到 50 条后，逐块发布会让大库搜索产生数百次布局
                 //（每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。

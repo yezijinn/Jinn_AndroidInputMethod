@@ -35,8 +35,10 @@ for y in sorted(known):
     mmdd = int(entry[5:7], 16)
     flag = "√" if mmdd == known[y] else "✗ 期望 %d" % known[y]
     print("  %d %s 春节=%04d 闰月=%s" % (y, flag, mmdd, entry[3]), file=sys.stderr)
-    assert mmdd == known[y], y
-assert len(data) >= 203, len(data)
+    if mmdd != known[y]:
+        raise SystemExit("春节锚点不符（源表索引基准变了？）：%d 年读出 %d，期望 %d" % (y, mmdd, known[y]))
+if len(data) < 203:
+    raise SystemExit("LUNAR_DATA 条目数不足：%d（需 ≥203 才能覆盖 2000–2050）" % len(data))
 
 
 def decode(entry):
@@ -54,9 +56,12 @@ def decode(entry):
 
 
 def encode(month_bits, leap_month, leap30, mmdd):
-    assert 0 <= leap_month <= 15 and leap30 in (0, 1)
+    # 真判据（**不用 `assert`**：`python -O` 会整体摘除 —— BUG.md L-106）
+    if not (0 <= leap_month <= 15) or leap30 not in (0, 1):
+        raise SystemExit("闰月字段越界：leap_month=%r leap30=%r" % (leap_month, leap30))
     month, day = mmdd // 100, mmdd % 100
-    assert 1 <= month <= 12 and 1 <= day <= 31, mmdd
+    if not (1 <= month <= 12) or not (1 <= day <= 31):
+        raise SystemExit("春节月日越界：mmdd=%r" % (mmdd,))
     return (leap_month << 22) | (month_bits << 10) | (leap30 << 9) | (month << 5) | day
 
 
@@ -70,9 +75,11 @@ for y in YEARS:
     month_bits, leap_month, leap30, mmdd = decode(data[y - 1899])
     if y in SPRING:
         m, d = SPRING[y]
-        assert mmdd == m * 100 + d, "春节锚点不符 %d: %d != %d" % (y, mmdd, m * 100 + d)
+        if mmdd != m * 100 + d:
+            raise SystemExit("春节锚点不符 %d: %d != %d" % (y, mmdd, m * 100 + d))
     if y in LEAPS:
-        assert leap_month == LEAPS[y], "闰月锚点不符 %d: %d != %d" % (y, leap_month, LEAPS[y])
+        if leap_month != LEAPS[y]:
+            raise SystemExit("闰月锚点不符 %d: %d != %d" % (y, leap_month, LEAPS[y]))
     enc.append(encode(month_bits, leap_month, leap30, mmdd))
 
 print("// 校验通过：%d 年春节锚点、%d 年闰月锚点" % (len(SPRING), len(LEAPS)), file=sys.stderr)
@@ -133,7 +140,8 @@ for (gy, gm, gd), expect in CASES.items():
     tag = "√" if expect is None or got == expect else "✗"
     print("  %s %d-%02d-%02d → %s%s" % (tag, gy, gm, gd, got, "" if expect is None or got == expect else " 期望 %s" % (expect,), ), file=sys.stderr)
     if expect is not None:
-        assert got == expect, (gy, gm, gd, got, expect)
+        if got != expect:
+            raise SystemExit("内部函数校验失败 %d-%02d-%02d：got=%s expect=%s" % (gy, gm, gd, got, expect))
 
 lines = []
 for i in range(0, len(enc), 6):

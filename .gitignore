@@ -57,6 +57,13 @@ payload.json
 *.rej
 *.hprof
 
+# 根目录截图（真机取证图一律放 .codebuddy/，见 BUG.md L-80；防「误放根目录被 git add -A 提交」）
+# 覆盖常见截图格式：只挡 png 时，误存的 jpg/webp 仍会被提交（本仓是公开仓，截图含输入法界面）
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+
 # 加密备份包（含剪贴板明文等隐私数据，绝不入库）
 *.jinn
 

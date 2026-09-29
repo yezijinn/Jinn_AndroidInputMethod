@@ -98,6 +98,137 @@ class SimpTradAssetTest {
     }
 
     /**
+     * 字级表必须是 **OpenCC STCharacters 口径**，而不是只剩人工那 1,948 对（`BUG.md` L-37）。
+     *
+     * 人工表 `单字/简繁对照.txt` 与 STCharacters 首候选零冲突，但它只覆盖 2,714 个里的一部分：
+     * 少了的那批在繁体模式下**原地不动**（于→於 / 征→徵 / 托→託 / 佥→僉 / 䲢→鰧），
+     * 由人工表独占**必然**漏。这条守卫同时钉住「旧对零丢失」与「新对已补齐」两侧。
+     */
+    @Test
+    fun 字级表须覆盖OpenCC默认映射() {
+        val chars = pairs("simp_trad.txt.xz")
+        val golden = mapOf(
+            // 人工表原有（不得因换口径而丢）
+            "里" to "裏", "干" to "幹", "台" to "臺", "发" to "發", "头" to "頭", "准" to "準",
+            // OpenCC 补齐的（档 1 的 4 个 + 档 2 / 档 3 的扩展 A 字）
+            "于" to "於", "征" to "徵", "托" to "託", "咤" to "吒",
+            "佥" to "僉", "䲢" to "鰧", "㧟" to "擓",
+        )
+        for ((simp, trad) in golden) {
+            assertEquals("字级表应含「$simp → $trad」（OpenCC STCharacters 首候选）", trad, chars[simp])
+        }
+        assertTrue("字级表条目数异常（${chars.size}）：口径退回人工表？", chars.size >= 2700)
+        val selfMapped = chars.filter { (k, v) -> k == v }.keys
+        assertTrue("字级表不得含自映射项: $selfMapped", selfMapped.isEmpty())
+    }
+
+    /**
+     * 字级补齐后，「词级结果 == 简体原形」那 7 条（天台 / 天后 / 海里…）必须**仍进词级表**。
+     *
+     * 生成端曾按 `s == t` 提前跳过 —— 字级表变全后，这类词正是需要覆盖的：逐字会把「天台」
+     * 转成「天臺」。这条守卫用**真实资产**跑端到端，锁住「词级优先于逐字」在补齐后依然成立。
+     */
+    @Test
+    fun 词级结果等于简体原形的词也要覆盖字级() {
+        val words = pairs("simp_trad_words.txt.xz")
+        for (w in listOf("天台", "天后", "海里", "丰度", "出戏", "占城", "小丑")) {
+            assertEquals("词级表应含「$w → $w」（逐字会转错）", w, words[w])
+        }
+
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts(
+            "tian\t天\ntai\t台\nzheng\t征\nzhan\t战\n",
+            "tiantai\t天台\nzhengzhan\t征战\n",
+            "tian\ntai\nzheng\nzhan\n",
+        )
+        PinyinEngine.setSimpTradText(assetText("simp_trad.txt.xz"))
+        PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
+        PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
+        PinyinEngine.setTraditional(true)
+
+        val tai = PinyinEngine.query("tiantai").candidates
+        assertTrue("繁体下「天台」应整体作「天台」（词级覆盖字级）: $tai", tai.contains("天台"))
+        assertFalse("不得出现逐字结果「天臺」: $tai", tai.contains("天臺"))
+
+        val zhan = PinyinEngine.query("zhengzhan").candidates
+        assertTrue("繁体下「征战」应作「征戰」: $zhan", zhan.contains("征戰"))
+        assertFalse("不得出现逐字结果「徵戰」: $zhan", zhan.contains("徵戰"))
+    }
+
+    /** 端到端：字级补齐的单字（于→於）必须真的出现在候选里 —— 这才是用户能看见的那一半 */
+    @Test
+    fun 补齐的字级映射在候选里生效() {
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts("yu\t于\n", "", "yu\n")
+        PinyinEngine.setSimpTradText(assetText("simp_trad.txt.xz"))
+        PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
+        PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
+        PinyinEngine.setTraditional(true)
+
+        val c = PinyinEngine.query("yu").candidates
+        assertTrue("繁体下单字「于」应作「於」: $c", c.contains("於"))
+        assertFalse("不得再出现未转换的「于」: $c", c.contains("于"))
+    }
+
+    /**
+     * 词级表要**同时**兜住正推与反查（`BUG.md` L-71）。
+     *
+     * 生成端曾只按正推判「冗余」（逐字 == 词级结果就丢）—— 对**异体字**词条会出错：
+     * `万锺 → 萬鍾` 丢掉后，`toSimplified("萬鍾")` 走逐字兜底会得「万**钟**」（另一个词），
+     * 繁体模式下学过的词，词频键 / 消费区间 / 预测全都落到别的词上。
+     * 判据改成「两个方向都能靠字级表还原才丢」，实测为反查保留 25 条。
+     */
+    @Test
+    fun 词级表要同时兜住正推与反查() {
+        val words = pairs("simp_trad_words.txt.xz")
+        val golden = listOf(
+            "万锺" to "萬鍾", "茶馀饭后" to "茶餘飯後", "锺馗" to "鍾馗",
+            "讬了" to "託了", "游刃有馀" to "遊刃有餘", "盈馀加征" to "盈餘加徵",
+        )
+        for ((simp, trad) in golden) {
+            assertEquals("词级表应含「$simp → $trad」（反查要靠它兜住）", trad, words[simp])
+        }
+
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts("wan\t万\n", "", "wan\n")
+        PinyinEngine.setSimpTradText(assetText("simp_trad.txt.xz"))
+        PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
+        PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
+
+        assertEquals("「萬鍾」应折回「万锺」（词表优先），逐字兜底会错成「万钟」",
+            "万锺", PinyinEngine.toSimplified("萬鍾"))
+        assertEquals("「茶餘飯後」应折回「茶馀饭后」", "茶馀饭后", PinyinEngine.toSimplified("茶餘飯後"))
+        assertEquals("词表未覆盖的「萬餘」走逐字兜底（字级反推保留异体「馀」，与简繁表自洽）",
+            "万馀", PinyinEngine.toSimplified("萬餘"))
+    }
+
+    /**
+     * 用**真实单字表**跑一遍 `yu`：繁体转换后不得出现重复候选。
+     *
+     * 字表里本来就有「于」「於」两个字（§简繁同形的字对），转换后两者都会显示成「於」——
+     * 候选出口若不在转换**之后**去重，用户会看到两个一模一样的候选（`displayTake` 的契约是
+     * 「转换后入列」，此例正是它的回归位）。
+     */
+    @Test
+    fun 真实字表下转换后不得出现重复候选() {
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts(assetText("pinyin_chars.txt.xz"), "", "yu\n")
+        PinyinEngine.setSimpTradText(assetText("simp_trad.txt.xz"))
+        PinyinEngine.setSimplifyText(assetText("simplify.txt.xz"))
+        PinyinEngine.setSimpTradWordsText(assetText("simp_trad_words.txt.xz"))
+        PinyinEngine.setTraditional(true)
+
+        val c = PinyinEngine.query("yu").candidates
+        assertFalse("繁体下不得残留未转换的「于」", c.contains("于"))
+        assertTrue("繁体下应出现「於」: ${c.take(6)}", c.contains("於"))
+        assertEquals("转换后不得出现重复候选: ${c.take(8)}", c.size, c.toSet().size)
+    }
+
+    /**
      * 测试注入 API 必须复位简繁表（`BUG.md` L-55）。
      *
      * 四张表是全局单例状态：`loadFromTexts` 只复位档位位图时，上一个用例设过的映射会渗进下一个用例，

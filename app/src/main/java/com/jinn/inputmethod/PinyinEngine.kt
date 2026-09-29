@@ -73,7 +73,10 @@ object PinyinEngine {
     private const val TIER3_CHARS_ASSET = "tier3_chars.txt.xz"
 
     /**
-     * 简繁映射 asset（`简体<TAB>繁体`，1,948 对；`tools/dict_builder/build_dicts.py` 生成）。
+     * 简繁映射 asset（`简体<TAB>繁体`，2,714 对；`tools/dict_builder/build_dicts.py` 生成）。
+     *
+     * 源是 OpenCC `STCharacters`（万象随包，**繁体优先**，右侧多候选取首项）＋人工覆盖层
+     * `docs/所有词库/单字/简繁对照.txt`（两边零冲突，人工表只作覆盖；BUG.md L-37）。
      *
      * 「只使用繁体字」（[Prefs.useTraditional]）开启时，候选里的简体字按本表替换 ——
      * 查询期转换，开关即时生效（[setTraditional]），不改词库数据。
@@ -81,20 +84,26 @@ object PinyinEngine {
     private const val SIMP_TRAD_ASSET = "simp_trad.txt.xz"
 
     /**
-     * 简繁**词级**消歧 asset（`简词<TAB>繁词`，8,965 条；同上生成）。
+     * 简繁**词级**消歧 asset（`简词<TAB>繁词`，8,100 条；同上生成。条数口径 = 资产里通过加载器
+     * 初筛的行数，另有 2 行 `#` 注释；2026-09-28 实测，BUG.md L-112）。
      *
      * 字级映射是 1:1 的（发→發），但「头发」应作「頭髮」、「干净」应作「乾淨」—— 本表只收
      * 「逐字映射会出错」的词条，转换时整词优先命中、未命中再逐字兜底（见 [toDisplay]）。
+     * 其中 7 条是「词级结果 == 简体原形」（天台 / 天后 / 海里…）：字级表补齐后**正是这类**
+     * 需要覆盖（逐字会把「天台」转成「天臺」），不能按「原形即相等」提前跳过。
      */
     private const val SIMP_TRAD_WORDS_ASSET = "simp_trad_words.txt.xz"
 
     /**
      * 繁→简**单字**映射 asset（`繁<TAB>简`，2,965 项；同上生成，只收 BMP 字 —— 与加载端 `length == 1` 同口径）。
      *
-     * [setSimpTradText] 只能从字级正向表（1,948 对）反推出反查表，而词级消歧表引入的
-     * 繁体字有 2,100 个不在其中（髮 / 乾 / 淨 / 鬚…）——「頭髮」折回只得「头髮」，
+     * [setSimpTradText] 从字级正向表（2,714 对）反推出的反查表覆盖不全：词级消歧表引入的
+     * 繁体字（去重 2,888 个）里，只靠反推表有 **1,889 个**折不动；本表（2,965 项）覆盖后仍有
+     * **1,744 个**看不到（髮 / 乾 / 淨 / 鬚…）——「頭髮」折回只得「头髮」，
      * 词频键就此跑偏（简体模式、消费区间、预测全都认不出）。本表由 OpenCC TSCharacters
      * 生成，加载时**覆盖**字级反推的结果（见 [setSimplifyText]）。
+     * （三个数均为 2026-09-28 按加载器口径实测：反推表覆盖 2,700 个繁体字、与本表合并后 2,969 个；
+     * 见 BUG.md L-113。）
      */
     private const val SIMPLIFY_ASSET = "simplify.txt.xz"
 
@@ -116,6 +125,9 @@ object PinyinEngine {
 
     /** 索引缓存文件后缀（源文件 `ext.xz` → 缓存 `ext.xz.idx`） */
     private const val INDEX_SUFFIX = ".idx"
+
+    /** 原子写的临时件后缀（`ext.xz.idx` → `ext.xz.idx.tmp`）；清扫侧按同一后缀识别残留 */
+    private const val TMP_SUFFIX = ".tmp"
 
     /** 基础索引磁盘缓存前缀（文件名形如 `base.<APK mtime>.idx`） */
     private const val BASE_CACHE_PREFIX = "base."
@@ -354,7 +366,7 @@ object PinyinEngine {
     private var rareTier3: Boolean = false
 
     /**
-     * 简繁映射（简体码点 → 繁体字；[SIMP_TRAD_ASSET]，1,948 对）。
+     * 简繁映射（简体码点 → 繁体字；[SIMP_TRAD_ASSET]，2,714 对）。
      *
      * 用 CharArray 下标直查（65536 项，未映射为 `'\u0000'`）：转换在候选出口逐字符做，
      * 走 HashMap 会让每次查询多上万次装箱查找。
@@ -367,7 +379,16 @@ object PinyinEngine {
     private var tradSimp: CharArray? = null
 
     /**
-     * 简繁词级消歧（简词 → 繁词；[SIMP_TRAD_WORDS_ASSET]，8,965 条）。
+     * 最近一次 [setSimplifyText] 的源文本，供 [setSimpTradText] 重建反查表后**重放**。
+     *
+     * 两张表（字级反推 + 简化表）过去靠调用顺序保证合并结果，单看 [setSimplifyText] 的
+     * 实现看不出这个隐含依赖；记下源文本后两者顺序可互换（BUG.md L-51）。
+     */
+    @Volatile
+    private var simplifySrc: String? = null
+
+    /**
+     * 简繁词级消歧（简词 → 繁词；[SIMP_TRAD_WORDS_ASSET]，8,100 条）。
      *
      * 只在**整词命中**时生效（未命中回落逐字映射），命中即直接返回 —— 1:1 的字级映射
      * 无法表达「头发→頭髮 vs 发财→發財」这类同字异词，逐字转换会把前者错成「頭發」。
@@ -736,7 +757,8 @@ object PinyinEngine {
         openAssetText(context, TIER3_CHARS_ASSET).use { setTier3CharsText(it.readText()) }
         openAssetText(context, SIMP_TRAD_ASSET).use { setSimpTradText(it.readText()) }
         openAssetText(context, SIMP_TRAD_WORDS_ASSET).use { setSimpTradWordsText(it.readText()) }
-        // 必须排在 setSimpTradText 之后：它覆盖字级反推出来的反查表
+        // 顺序与结果无关（简化表的源文本会被重放，见 setSimplifyText 的 KDoc）：仍按
+        // 「字级 → 词级 → 简化」的阅读顺序排列，别据此推断出依赖关系。
         openAssetText(context, SIMPLIFY_ASSET).use { setSimplifyText(it.readText()) }
     }
 
@@ -804,12 +826,16 @@ object PinyinEngine {
         tradSimp = null
         simpTradWords = null
         tradSimpWords = null
+        simplifySrc = null
     }
 
     /**
      * 简繁映射文本（`简体<TAB>繁体`，`#` 注释行）→ 65536 项 CharArray。
      *
      * 与位图同一取舍：查表在候选出口的热路径上，数组下标比哈希便宜得多。
+     *
+     * **替换**语义：字级反查表整份重建，随后**重放**已收到的 [setSimplifyText] 源文本 ——
+     * 于是本方法与 [setSimplifyText] 的调用顺序与结果无关（见后者的 KDoc）。
      */
     internal fun setSimpTradText(text: String) {
         val toTrad = CharArray(CHAR_TABLE_SIZE)
@@ -825,23 +851,45 @@ object PinyinEngine {
         }
         simpTrad = toTrad
         tradSimp = toSimp
+        // 简化表可能先到：反查表重建后按同一覆盖口径补上，保证两种顺序结果一致（BUG.md L-51）
+        reapplySimplifySource()
     }
 
     /**
      * 繁→简单字映射文本（`繁<TAB>简`，`#` 注释行）→ 并入 [tradSimp]。
      *
-     * **合并**而非替换：字级正向表反推出来的那批（1,948 项）里有些是 TSCharacters 没有的
-     * 异体对，打底保留；本表（2,965 项）覆盖并补充。生成侧规范化词级表时用的是**同一套合并
-     * 口径**，两边必须一致，否则「折简体」与「生成时判干净」会得出不同结果。
+     * **合并**而非替换：字级正向表反推出来的那批（2,700 项）里有些是 TSCharacters 没有的
+     * 异体对（4 项），打底保留；本表（2,965 项，另有 269 项为反推所无）覆盖并补充。生成侧
+     * 规范化词级表时用的是**同一套合并口径**，两边必须一致，否则「折简体」与「生成时判干净」
+     * 会得出不同结果。
+     *
+     * **与调用顺序无关**：源文本记在 [simplifySrc]，[setSimpTradText] 重建反查表后会重放它。
+     * 原实现是「并入**当前**反查表」而对方整份重建 ⇒ 先调本方法再调 `setSimpTradText` 会让
+     * 本表全部蒸发（字级反推的那批与简化表一起只剩一半，用户症状是「有些字折不回简体」；
+     * BUG.md L-51）。顺序现已不设防，别把「必须先调 setSimpTradText」的注释当契约。
      */
     internal fun setSimplifyText(text: String) {
+        simplifySrc = text
         val map = tradSimp ?: CharArray(CHAR_TABLE_SIZE)
+        applySimplifyInto(map, text)
+        tradSimp = map
+    }
+
+    /** 把简化表条目覆盖进 [map]（`繁<TAB>简`，逐条校验单字；[setSimplifyText] 与重放共用） */
+    private fun applySimplifyInto(map: CharArray, text: String) {
         for (line in text.lineSequence()) {
             val t = line.trim()
             if (t.isEmpty() || t.startsWith("#") || t.count { it == '\t' } != 1) continue
             val (f, j) = t.split("\t")
             if (f.length == 1 && j.length == 1 && f != j) map[f[0].code] = j[0]
         }
+    }
+
+    /** 反查表重建后重放 [simplifySrc]（简化表先到时靠它补上覆盖项） */
+    private fun reapplySimplifySource() {
+        val src = simplifySrc ?: return
+        val map = tradSimp ?: CharArray(CHAR_TABLE_SIZE)
+        applySimplifyInto(map, src)
         tradSimp = map
     }
 
@@ -853,18 +901,39 @@ object PinyinEngine {
      */
     internal fun setSimpTradWordsText(text: String) {
         val map = HashMap<String, String>(16384)
-        val back = HashMap<String, String>(16384)
+        val entries = ArrayList<Pair<String, String>>(16384)
         for (line in text.lineSequence()) {
             val t = line.trim()
             if (t.isEmpty() || t.startsWith("#") || t.count { it == '\t' } != 1) continue
             val (s, f) = t.split("\t")
             if (s.isNotEmpty() && f.isNotEmpty()) {
                 map[s] = f
-                back[f] = s      // 反查同表反转（[toSimplified] 用）
+                entries.add(s to f)
             }
         }
         simpTradWords = map
-        tradSimpWords = back
+        tradSimpWords = buildWordBackMap(entries)
+    }
+
+    /**
+     * 词级**反查表**的构建规则（纯函数，便于单测；BUG.md L-59 / L-93）。
+     *
+     * 同一繁体形可能对应多个简体候选（词表 8,100 条里有 6 组固有歧义 + 若干「变体 vs 规范词形」），
+     * 而反查表只能留一个：
+     *  - **恒等条目优先**（`s == f`，如「天台 / 天台」）：它们代表「两种模式下写法相同」，
+     *    被普通条目按顺序覆盖掉时，`toSimplified` 会把该词折到**另一个词**上（学习键跑偏）；
+     *  - 其余**首次写入者胜**：结果只与表内顺序绑定，后续重复行不会改变胜者
+     *    （以前的 `back[f] = s` 是后写覆盖，加一行重复就会静默改语义）。
+     *
+     * 抽成独立函数是为了能在 JVM 单测里直接喂合成表 —— 反查规则曾只藏在加载流程里，改动无从验证。
+     */
+    internal fun buildWordBackMap(entries: List<Pair<String, String>>): HashMap<String, String> {
+        val back = HashMap<String, String>(entries.size * 2)
+        for ((s, f) in entries) {
+            val old = back[f]
+            if (old == null || (old != f && s == f)) back[f] = s
+        }
+        return back
     }
 
     /**
@@ -950,15 +1019,26 @@ object PinyinEngine {
     /**
      * 单个字符是否允许载入。
      *
-     *  - ASCII / 数字 / 标点（< 0x4E00）：不参与判定，一律放行；
-     *  - 基本区汉字（0x4E00~0x9FFF）：档 1 默认放行，档 2 / 档 3 按开关放行（[setRareTiers]）；
-     *  - 扩展区与 BMP 外汉字：一律不放行（档外字不再随包，2026-09-27 起）。
+     *  - ASCII / 数字 / 标点（< 0x3400）：不参与判定，一律放行；
+     *  - 汉字（扩展 A 区 0x3400~0x4DBF 与基本区 0x4E00~0x9FFF）：档 1 默认放行，
+     *    档 2 / 档 3 按开关放行（[setRareTiers]）；
+     *  - BMP 外汉字（代理对）：一律不放行（档外字不再随包，2026-09-27 起）。
+     *
+     * ⚠ 扩展 A 区**必须**走位图：三档表里共有 39 个扩展 A 字（档 1 = 7、档 2 = 11、档 3 = 21），
+     * 若按 `< 0x4E00 → true` 处理，档 2 / 档 3 的 32 个字会绕过开关照常出现（与本节承诺「扩展区
+     * 按档位」矛盾，BUG.md L-67）。**单字表零丢字**依据（2026-09-27 脚本实测）：9,373 字全部落在
+     * 三档并集内、非 BMP 0 个。
+     *
+     * ⚠ **词库正文里另有扩展 A 字**（实测 part1-4 共 31 个：档内 11 / 档外 20），其中 20 个字牵涉
+     * 37 条词条（「㞎㞎」「㓥房」「㸆大虾」一类）。阈值下调后这些词条随档位判据被过滤 ——
+     * 与 1,854 条基本区档外词条同口径，属附带收敛；**不是**「词库不含扩展 A 字」（那是错的，
+     * 见 BUG.md L-70；`build_dicts.py` 生成时会打印这类字的条数告警）。
      *
      * 位图未就绪（assets 缺失 / 测试未注入）时一律放行。
      */
     private fun isLoadableChar(c: Char): Boolean {
         val code = c.code
-        if (code < 0x4E00) return true
+        if (code < 0x3400) return true
         val core = commonChars ?: return true
         if (code > 0x9FFF) return false
         return core[code] ||
@@ -995,6 +1075,9 @@ object PinyinEngine {
             if (optionalLoaded || optionalLoading) return
             optionalLoading = true
         }
+        // 线程要活 21~34s（真机实测），期间服务可能被系统销毁重建 ⇒ 线程只该持有**应用** Context，
+        // 不该把 IME Service 的 Context 一直挂在后台线程上（BUG.md L-22）。
+        val appContext = context.applicationContext
         val thread = Thread {
             try {
                 // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
@@ -1002,10 +1085,10 @@ object PinyinEngine {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
                 val ok = runCatching {
                     // load() 幂等：若基础包已就绪会立即返回
-                    load(context)
+                    load(appContext)
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val t0 = System.currentTimeMillis()
-                    loadExtensionDict(context)
+                    loadExtensionDict(appContext)
                     // 可选包引入了新的拼音键，必须重建有序键表：
                     // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
                     synchronized(this) { finalizeLoad() }
@@ -1031,7 +1114,7 @@ object PinyinEngine {
                 // loadOptionalAsync 直接返回，可选词库静默地永不加载且没有任何重试入口。
                 optionalLoading = false
             }
-        }
+        }.apply { isDaemon = true }
         try {
             thread.start()
         } catch (t: Throwable) {
@@ -1156,9 +1239,15 @@ object PinyinEngine {
      */
     internal fun staleOptionalCacheNames(existing: List<String>, alivePacks: Set<String>): List<String> {
         return existing.filter { name ->
-            name.endsWith(INDEX_SUFFIX) &&
-                !name.startsWith(BASE_CACHE_PREFIX) &&
-                name.removeSuffix(INDEX_SUFFIX) !in alivePacks
+            if (name.startsWith(BASE_CACHE_PREFIX)) return@filter false
+            // 半截的原子写临时件（`<包名>.idx.tmp`）一并回收 —— 否则「装过包 → 写索引时被杀 → 删包」
+            // 会留下一份永远没人清的空转文件（每包最多一份，可占十几 MB；BUG.md L-20）。
+            // 只回收**源包已不在**的那些：在用包的临时件可能正被写线程持有，删了会让它改名失败。
+            if (name.endsWith(INDEX_SUFFIX + TMP_SUFFIX)) {
+                name.removeSuffix(INDEX_SUFFIX + TMP_SUFFIX) !in alivePacks
+            } else {
+                name.endsWith(INDEX_SUFFIX) && name.removeSuffix(INDEX_SUFFIX) !in alivePacks
+            }
         }
     }
 
@@ -1183,7 +1272,7 @@ object PinyinEngine {
      * @return 是否成功落盘（失败只是让本次退回堆内，不影响可用性）
      */
     private fun writeIndexCacheAtomically(file: java.io.File, bytes: ByteArray): Boolean = runCatching {
-        val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+        val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
         tmp.outputStream().use { out ->
             var off = 0
             while (off < bytes.size) {
@@ -1207,7 +1296,7 @@ object PinyinEngine {
         // 写阶段抛异常时临时文件已经落地（可达十几 MB），必须清掉；
         // 只有「删旧失败 / 改名失败」那两条路径自己清了 tmp，这里漏了就会长期占空间。
         runCatching {
-            val tmp = java.io.File(file.parentFile, file.name + ".tmp")
+            val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
             if (tmp.exists()) tmp.delete()
         }
         Diagnostics.w(TAG, "写入索引缓存失败（本次退回堆内，不影响可用性）: ${file.name} - ${e.message}")
@@ -1598,7 +1687,12 @@ object PinyinEngine {
             )
             val asList = ArrayList(result)
             result.clear()
-            result.addAll(displayTake(completionWords, completionWords.size))
+            // [queryWithCompletion] 的**出口契约**是「已经转过一次的显示词」（它在自己出口过了一次
+            // displayTake 并按显示词登记候选→键）⇒ 这里绝不能再转一次：繁体模式下二次 toDisplay
+            // 会拿繁体形去查词级消歧表（键是简体）必然落空，字级 1:1 映射把消歧过的字又改坏
+            // （万里 → 萬里（正）→ **萬裏**（错），真库逐条复算 360 条），且显示词与登记键不一致
+            // 会让 consumption / predict 的一级查表落空（BUG.md L-65）。
+            result.addAll(completionWords)
             result.addAll(asList)
             // 3b. 单字前缀联想（原有逻辑，保持）
             if (syllables.isNotEmpty()) {
@@ -2006,24 +2100,35 @@ object PinyinEngine {
             }
         }
 
-        // 2) 单字候选：定位首个含该字的音节，消费到该音节结束
+        // 2) 单字候选：定位**展示序**里首个含该字的音节，消费到该音节结束（BUG.md L-12）
+        //
+        //    ⚠ 口径必须与展示侧一致：展示是「每音节取前 [MAX_CHARS] 条」（候选组装处的
+        //    `displayTake(charsFor(syl), MAX_CHARS)`）。这里若按**全量**字表 `contains` 查找，会把
+        //    「首现音节」定位到展示窗口**之外**的那个：同一字挂在两个音节、靠前那次被 60 条上限挡住时，
+        //    渲染出来的那一条其实来自后一音节，而消费仍钉在靠前音节 ⇒ 点击后残码多留一个音节。
+        //    也**不能**直接复用 [displayTake]：它会按「只使用繁体字」把字替换成繁体，而这里要比的是简体键。
         if (key.length == 1) {
-            // 2a) 先按用户实际输入的精确音节找：与历史行为逐字节一致
+            // 2a) 先按用户实际输入的精确音节找：与历史行为一致（找到的那个「展示序首个」不因截断而变）。
+            //     字表统一是 v 型键（lve / nve），而全拼按键与双拼（lt / nt）给出的都是 ue 型
+            //     ⇒ 与 [charsFor] 同口径地连对偶键一起查：只查实际输入的键时，`luema` 选「略」
+            //     会落到步骤 3 兜底「消费全部」、把残码 ma 一起清掉（`lvema` 打同一候选却是 (3,1)，
+            //     见 BUG.md L-66）。
             var acc = 0
             for ((i, syl) in syllables.withIndex()) {
                 acc += syl.length
-                if (charsBySyllable[syl]?.contains(key) == true) {
+                if (charsFor(syl).take(MAX_CHARS).contains(key)) {
                     return Consumption(acc, i + 1)
                 }
             }
             // 2b) 再看模糊音变体：变体字（输入 zang 时的「张」）同样只覆盖它由之派生的那个音节，
-            //     落到兜底「消费全部」会把后面的残码一起清掉（精确字却能保留残码）
+            //     落到兜底「消费全部」会把后面的残码一起清掉（精确字却能保留残码）。
+            //     截断口径与展示侧的模糊变体出口一致（那里用的是 MAX_FUZZY_CHARS，见候选组装处）。
             if (fuzzyMask != FuzzyPinyin.NONE) {
                 acc = 0
                 for ((i, syl) in syllables.withIndex()) {
                     acc += syl.length
                     val hit = FuzzyPinyin.variantsOf(syl, fuzzyMask) { validSyllables.contains(it) }
-                        .any { charsBySyllable[it]?.contains(key) == true }
+                        .any { charsFor(it).take(MAX_FUZZY_CHARS).contains(key) }
                     if (hit) return Consumption(acc, i + 1)
                 }
             }

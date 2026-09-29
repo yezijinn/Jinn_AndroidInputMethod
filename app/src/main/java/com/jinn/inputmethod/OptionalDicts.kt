@@ -123,6 +123,27 @@ object OptionalDicts {
     fun byFileName(fileName: String): OptionalDict? = ALL.firstOrNull { it.fileName == fileName }
 
     /**
+     * 从 `dicts/` 的文件名里挑出「清单外的包」（旧版遗留、手工放入）。
+     *
+     * 引擎是**扫目录**加载的（`loadExtensionDict` 收 `dicts/` 下全部 `.xz`），而分类词库页原先只渲染
+     * [ALL] 里的三条 —— 升级前装过旧「长词包」/「腾讯大词库」的设备，文件仍在被内存映射
+     * （两个包合计约 34MB），页面上却看不到、也删不掉，只能 adb / Root 动手（BUG.md L-45）。
+     * 这里把筛选做成纯函数：调用方传真实文件名，返回该展示成「其他包」的那些。
+     *
+     * 过滤规则（顺序即判定顺序）：
+     *  - 只收 `.xz`：下载中的 `<名字>.xz.tmp` 是临时件，不属于用户可见的包；
+     *  - 排除清单内的名字：那些由既有卡片渲染，重复列出会出现两个删除入口；
+     *  - 排序输出：文件系统的列目录顺序不保证稳定，页面每次重画要长得一样。
+     *
+     * 注意：清单外的包**仍然照常被引擎加载**（既定的兼容口径，见 `更新日志.md`）——
+     * 这里只提供删除入口，不改变加载行为。
+     */
+    fun unknownPackages(fileNames: Collection<String>): List<String> =
+        fileNames.filter { it.endsWith(".xz") }
+            .filter { name -> ALL.none { it.fileName == name } }
+            .sorted()
+
+    /**
      * 流式计算文件的 SHA-256（纯 IO 逻辑，便于 JVM 单测）。
      *
      * 边读边更新摘要，不把整个文件读进内存（现役最大包 4.21MB，往后可能更大）。

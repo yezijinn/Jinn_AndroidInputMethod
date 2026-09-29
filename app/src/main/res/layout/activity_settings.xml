@@ -453,7 +453,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxLines="2"
-                    android:minHeight="36dp"
+                    android:ellipsize="end"
+                    android:minHeight="40dp"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -479,7 +480,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxLines="2"
-                    android:minHeight="36dp"
+                    android:ellipsize="end"
+                    android:minHeight="40dp"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -515,8 +517,9 @@
                     android:id="@+id/switch_user_learning"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="36dp"
+                    android:minHeight="40dp"
                     android:maxLines="2"
+                    android:ellipsize="end"
                     android:text="@string/switch_user_learning"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
@@ -542,8 +545,9 @@
                     android:id="@+id/switch_predict"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="36dp"
+                    android:minHeight="40dp"
                     android:maxLines="2"
+                    android:ellipsize="end"
                     android:text="@string/switch_predict"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
@@ -580,8 +584,9 @@
                     android:id="@+id/switch_auto_show_keyboard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="36dp"
+                    android:minHeight="40dp"
                     android:maxLines="2"
+                    android:ellipsize="end"
                     android:text="@string/switch_auto_show_keyboard"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
@@ -607,8 +612,9 @@
                     android:id="@+id/switch_use_traditional"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="36dp"
+                    android:minHeight="40dp"
                     android:maxLines="2"
+                    android:ellipsize="end"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -650,7 +656,8 @@
                 <Switch
                     android:id="@+id/switch_voice_input"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp" />
             </LinearLayout>
 
             <TextView

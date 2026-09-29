@@ -191,8 +191,36 @@ class UserFrequencyTest {
         val back = UserFrequency.parse(text, 20000)
         assertEquals(3.5, back["你好"]!!.first, 1e-9)
         assertEquals(1.25, back["拟好"]!!.first, 1e-9)
+        // 天一律跟到**解析日**（BUG.md L-111）：权重已被折算到 20000，天也必须记 20000 ——
+        // 否则 (权重, 天) 这对值不再自洽，下次加载会再折算一次
+        //（「拟好」原为 20001 = 未来天，过去会被原样写回 ⇒ 复利衰减）
         assertEquals(20000, back["你好"]!!.second)
-        assertEquals(20001, back["拟好"]!!.second)
+        assertEquals(20000, back["拟好"]!!.second)
+    }
+
+    @Test
+    fun 跨天加载不得重复衰减() {
+        // BUG.md L-111：`parse` 曾把权重折算到解析日却**原样保留 day**，而 `render` 写的也是这个 day
+        // ⇒ 文件里成了「已折算的权重 + 原 day」，下次加载按 `原 day → 那时的今天` 再折算一遍
+        //（同一天的衰减被反复计息：实测 5 天多衰减 8%、30 天残余只剩 0.10）。现值把 day 一并推进
+        // 到解析日，「权重 = 该 day 上的值」自洽 ⇒ 往返幂等。
+        UserFrequency.resetForTest()
+        val now = today()
+        UserFrequency.putForTest("旧词", 5.0, now - 100)
+
+        // ① 第一次跨天加载：按 100 天折算一次（这是设计行为），天推进到今天
+        val first = UserFrequency.parse(UserFrequency.render(), now)["旧词"]!!
+        assertEquals(5.0 * Math.exp(-100.0 / 200.0), first.first, 1e-9)
+        assertEquals("权重折算到哪天，天就要记在哪天", now, first.second)
+
+        // ② 把这次的内存态落盘（= 这天学习过触发的整表落盘）后再加载同一天：不得再折算
+        UserFrequency.resetForTest()
+        UserFrequency.putForTest("旧词", first.first, first.second)
+        val second = UserFrequency.parse(UserFrequency.render(), now)["旧词"]!!
+        // 容差 = 文件格式精度（权重按 `%.3f` 写盘，往返只能精确到 1e-3）；
+        // 历史缺陷在这里会再乘一个 exp(-100/200) ≈ 0.61（3.033 → 1.84），差三个数量级，拦得住。
+        assertEquals("同一天再次加载不得再乘一次衰减因子（往返幂等）", first.first, second.first, 1e-3)
+        assertEquals("天保持今天", now, second.second)
     }
 
     @Test
@@ -335,5 +363,17 @@ class UserFrequencyTest {
             WINDOW,
             UserFrequency.saveDelayMs(now = epochNow, lastSaveAt = epochNow + 3_600_000L, window = WINDOW),
         )
+    }
+
+    @Test
+    fun 旧版遗留的半简半繁键在加载时被清洗() {
+        // 修复 toSimplified（2026-09-27）之前，繁体模式学过的词存的是「头髮」这类折不回简体的键：
+        // 升级后它们不再被任何候选匹配（无害但白占文件）。传归一化器时丢弃（BUG.md L-54）；
+        // 不传（默认恒等）时行为与老口径一致 —— 纯函数单测与不带归一化的调用方都不受影响。
+        val text = "头髮\t2.0\t100\n头发\t1.0\t100\n"
+        val normalized = UserFrequency.parse(text, nowDay = 100) { if (it == "头髮") "头发" else it }
+        assertEquals("已规范化的键保留、折不回简体的键丢弃", setOf("头发"), normalized.keys)
+        assertEquals("不传归一化器时两条都保留（老口径）", setOf("头髮", "头发"),
+            UserFrequency.parse(text, nowDay = 100).keys)
     }
 }

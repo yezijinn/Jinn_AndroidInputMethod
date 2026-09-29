@@ -97,6 +97,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否处于英文模式（字母直接上屏，不查候选） */
     private var englishMode = false
 
+    /**
+     * 密码模式（长按底部「数字」进入）：英文小写 26 键 + 候选栏换成数字条 0-9 + 数字键变「退出」。
+     *
+     * 用途：密码框里数字与字母要同屏，省去在字母层 / 数字层之间来回切。
+     *
+     * 这是**视图内临时态**（与方向面板同类）：进入前的语言 / 层 / 大写状态记在
+     * [passwordPadRestore]，[exitPasswordPad] 按它复原 —— 会话边界（[configure]）也必须退出，
+     * 否则新输入框会以「英文小写 + 数字条」弹出（见 BUG.md L-29 的同款教训）。
+     */
+    private var passwordPad = false
+
+    /** 进入密码模式前的 (englishMode, layer, capsMode)；null = 当前不在密码模式 */
+    private var passwordPadRestore: Triple<Boolean, Int, Boolean>? = null
+
     /** 是否大写锁定（影响英文模式字母大小写与键面显示） */
     private var capsMode = false
 
@@ -158,8 +172,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnBackspace: View
     private val btnEnter: View
     private val btnShift: ImageButton
-    private val btnComma: View
-    private val btnPeriod: View
+    private val btnComma: TextView
+    private val btnPeriod: TextView
 
     /**
      * 分号键（第三行 m 右侧）。
@@ -617,6 +631,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
+            // 密码模式内不做层切换：进符号层会让候选栏的数字条被符号分组标签顶掉
+            // （`refreshCandidateBar` 的符号层分支在前，见 BUG.md L-105），模式前提
+            // 「26 键 + 数字条」就破了。与中英切换同一条口径：点「退出」返回后再切。
+            // 反例（曾考虑）是让数字条优先 —— 那会顶掉符号分组标签，而分组标签正是符号层的
+            // 分组切换入口，等于用新缺口换旧缺口。
+            if (passwordPad) {
+                Diagnostics.i(TAG, "符号层: 密码模式内无效（点「退出」返回后再切）")
+                return@setOnClickListener
+            }
             layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
             // 进符号层前清掉未上屏的拼音：该层不显示拼音条与候选，残留的 composing
             // 不可见却仍然生效 —— 退格先删它（屏幕上毫无变化），收起键盘 / 切中英时
@@ -635,6 +658,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "符号层: ${layer == LAYER_SYMBOL}")
         }
         btnDigit.setOnClickListener {
+            // 密码模式里这个键是「退出」：点它回到进入前的状态（语言 / 层 / 大写一起复原）
+            if (passwordPad) {
+                exitPasswordPad()
+                return@setOnClickListener
+            }
             layer = if (layer == LAYER_DIGIT) LAYER_LETTER else LAYER_DIGIT
             // 数字键同样在字母区里，面板打开时一并收起（否则切了层却什么都看不到）
             hidePanelForLayerSwitch()
@@ -642,7 +670,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshCandidateBar()
             Diagnostics.i(TAG, "数字层: ${layer == LAYER_DIGIT}")
         }
+        // 长按「数字」：密码模式（数字与 26 字母同屏）。已在模式里时长按不做事 ——
+        // 这个键此时是「退出」，退出只认点击（长按返回 true 会把点击一并吃掉，避免误触退出）。
+        btnDigit.setOnLongClickListener {
+            if (passwordPad) {
+                Diagnostics.i(TAG, "密码模式: 已在该模式，长按无操作（点「退出」返回）")
+            } else {
+                enterPasswordPad()
+            }
+            true
+        }
         btnLang.setOnClickListener {
+            // 密码模式强制英文小写：此刻切中文会变成「数字条 + 拼音候选」并存，先退出再谈切换
+            if (passwordPad) {
+                Diagnostics.i(TAG, "中英切换: 密码模式内无效（点「退出」返回后再切）")
+                return@setOnClickListener
+            }
             // 大写键激活：强制锁定大写英文，任何中英切换无效
             if (capsMode) {
                 Diagnostics.i(TAG, "中英切换: 大写锁定激活，切换无效")
@@ -772,6 +815,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与 IME 侧每会话清掉的拖选口径一致（见 BUG.md L-29）。layer / capsMode 是用户显式手选的
         // 状态，不在这里清（那是可见的行为变化，另行拍板）。
         if (directionPanelVisible) hideDirectionPanel()
+        // 剪贴板面板同属「视图内临时态」，且比方向面板更敏感（BUG.md L-110）：不复位就会让
+        // **新输入框以「面板」弹出** —— 字母区被历史条目接管，误点一下就把上一个输入框的
+        // 历史内容粘进来（隐私面）。搜索面板在 IME 侧同一处被明确收掉，这条原先漏了。
+        // 必须走 hideClipboardPanel()：它负责恢复字母区布局（restoreLettersLayout）并把状态回传
+        // IME；裸置 `clipboardActive = false` 会让字母区停在面板的 2 行高度上（键盘变形）。
+        if (clipboardActive) hideClipboardPanel()
+        // 密码模式同属「视图内临时态」：跨输入框必须退出，否则新输入框会以「英文小写 + 数字条」
+        // 弹出（键盘变身）。语言**不**按记忆复原 —— 上面 `englishMode = english` 是 IME 按本输入框
+        // 给出的值，拿上一个输入框的语言覆盖它才是错的；层与大写仍按用户手选状态复原。
+        if (passwordPad) exitPasswordPad(restoreLanguage = false)
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
         // 键盘正显示时不走这里，外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
@@ -1020,6 +1073,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for (v in listOf(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
             (v as? TextView)?.setTextColor(glyph)
         }
+        // 密码模式下「数字」键已变成「退出」：换肤路径也要保持提示红，
+        // 否则定时换肤 / 手动换肤会把唯一的出口刷回普通色（上面那行是统一刷 glyph 的）
+        if (passwordPad) btnDigit.setTextColor(skinToken(skin.hintRed, R.color.kb_key_hint_red))
         // 中英键的高亮行是 SpannableString 里的 ForegroundColorSpan（不是 base color）：上面只换了
         // base color，换肤后必须重建 span，否则高亮行仍是上一套皮肤的强调色（见 buildLangLabel）
         btnLang.text = buildLangLabel()
@@ -1345,16 +1401,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
         get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
 
     /**
-     * 视图上是否有正在使用的面板（剪贴板面板 / 顶部搜索面板 / 方向面板）。
+     * 视图上是否有「不该被重建打断」的临时态（剪贴板面板 / 顶部搜索面板 / 方向面板 / 密码模式）。
      *
      * 面板状态挂在视图上，重建会把它们直接关掉：用户正翻剪贴板历史时到点换肤，
      * 面板会毫无预告地消失（搜索态同）， 换肤延后判据因此要带上这一项。
      *
      * 方向面板同样要算：它也是视图内的临时状态，重建后会连同上一次的拖选一起消失，
      * 而 IME 侧的拖选 Anchor/Focus 直到下次弹键盘才复位 —— 两处状态会分裂一整个会话。
+     *
+     * **密码模式（`passwordPad`）同理，且更严重**（BUG.md L-87）：它把键盘切成「英文小写 26 键 +
+     * 数字条」，而复原三元组 `passwordPadRestore` 只存在**当前视图实例**上 —— 重建后新视图默认
+     * 不在密码模式，且**回不去**（用户正输密码时键盘变回普通键盘，状态无从恢复）。
+     * 定时换肤（`MODE_SCHEDULED` 的 `themeTick`）走的正是这条判据 ⇒ 漏掉它就会在打字期间静默退出。
      */
     val hasActiveOverlay: Boolean
-        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible
+        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible || passwordPad
+
+    /**
+     * 视图即将被换掉：让两个面板中止仍在跑的后台任务。
+     *
+     * 面板的任务靠各自的 `refreshToken` 判停，而令牌只在面板打开/收起时递增 —— 重建键盘视图
+     * 不走这两个入口，不作废就会让旧面板把任务跑完、把结果 post 到已脱离视图树的列表上
+     * （见 `BUG.md` L-17）。由 [JinnIme] 在重建前调用。
+     */
+    fun stopPanelBackgroundWork() {
+        clipboardPanel.stopBackgroundWork()
+        searchPanel.stopBackgroundWork()
+    }
 
     fun commitComposing() {
         if (isPanelSearch()) {
@@ -1673,8 +1746,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 让「每次按键重建候选」再搭上一次整键盘测量。
      *
      * 拼音条的显隐与候选区避让在 [showPinyin] 里落位（本方法只落几何）。
+     *
+     * @return 本帧每排候选的行高（px）：同帧的 [renderCandidateItems] 直接复用，
+     *   不再各算一遍（`BUG.md` L-35）。
      */
-    private fun applyCandidateRows(rows: Int) {
+    private fun applyCandidateRows(rows: Int): Int {
         val dm = resources.displayMetrics
         val perRow = CandidateRows.rowHeightPx(dm.density, spToPx(CandidateRows.CANDIDATE_TEXT_SP))
         val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, spToPx(CandidateRows.PINYIN_TEXT_SP))
@@ -1702,6 +1778,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 档位切换后避让要按新档重落（显隐状态未变，单靠 showPinyin 不会重算）
         applyPinyinInset()
+        return perRow
     }
 
     /** sp → px：交给 TypedValue（内部按字体缩放换算，不必自己读 DisplayMetrics 的缩放字段） */
@@ -1794,10 +1871,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 无障碍遍历顺序，TalkBack 因此按 1、2、3、4… 朗读，与「第 1 个候选在下排首列」一致。
      *
      * @param rows 本帧档位，由 [refreshCandidateBar] 读出后传入（与候选栏高度同源）
+     * @param rowHeightPx 本帧每排行高，取自 [applyCandidateRows] 的返回值（同源、不重算）
      */
     private fun renderCandidateItems(
         items: List<String>,
         rows: Int,
+        rowHeightPx: Int,
         colorToken: Int?,
         colorRes: Int,
         onClick: (String) -> Unit,
@@ -1821,11 +1900,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             return
         }
-        // 行高与候选栏高度同源（[CandidateRows.rowHeightPx]）：两排各贴上下边，中缝恰好 = 拼音条高
-        val rowHeight = CandidateRows.rowHeightPx(
-            resources.displayMetrics.density,
-            spToPx(CandidateRows.CANDIDATE_TEXT_SP),
-        )
+        // 行高与候选栏高度同源（[applyCandidateRows] 已按同一密度/字号算过），两排各贴上下边、
+        // 中缝恰好 = 拼音条高；这里直接用本帧传进来的值，不重复计算
+        val rowHeight = rowHeightPx
         for ((top, bottom) in CandidateRows.columnsOf(items)) {
             // 列用 FrameLayout + gravity 定位置，添加顺序因此可以先「下排」后「上排」：
             // 无障碍遍历默认按视图树顺序，这样 TalkBack 的朗读 / 焦点顺序是 1、2、3、4…，
@@ -1857,15 +1934,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshCandidateBar() {
-        // 档位在这一帧只读一次并向下传：高度与列结构必须同档。分开读取时，
-        // 后台导入线程若恰在两次读取之间改键，会出现「高度按旧档、结构按新档」的
-        // 一帧错配（列底被裁），要到下次刷新才自愈。
-        val rows = Prefs(context).candidateRows
-        applyCandidateRows(rows)
+        // 本帧用到的三个开关共用一次 Prefs 实例（省掉两次实例化），并各自**只读一次**：
+        // 要防的是**同一个键在一帧内被读两遍** —— 后台导入线程若恰在两次读取之间改键，
+        // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
+        // ⚠ 别把这里读成「三个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
+        // 不提供快照语义（BUG.md L-68 的 ②）。
+        val prefs = Prefs(context)
+        val rows = prefs.candidateRows
+        val perRow = applyCandidateRows(rows)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
         // 开关刚被关掉时，把上一次留下的预测清掉，否则已显示的预测会一直挂在候选栏
-        if (!predictionsEnabled() && lastPredictions.isNotEmpty()) {
+        if (!prefs.predictEnabled && lastPredictions.isNotEmpty()) {
             lastPredictions = emptyList()
         }
         // 符号层：候选栏显示符号分组标签（可横向滚动切换）；「✕ 清空候选」不适用 → 隐藏
@@ -1874,10 +1954,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderSymbolGroups()
             return
         }
+        // 密码模式：候选栏换成 0-9 数字条（该模式强制字母层，与上面的符号层分支互斥）
+        if (passwordPad) {
+            setClearButtonVisible(false)
+            renderPasswordDigits()
+            return
+        }
         val input = composing.toString()
         // 拼音行显示方式本帧只读一次并向下传（下方三处赋值必须同档）：
         // 默认显示按下的英文字母；「拼音显示为声韵」打开后按声母/韵母展开成全拼（残码也不丢键）
-        val displayText = if (shuangpinMode && Prefs(context).showQuanpin) {
+        val displayText = if (shuangpinMode && prefs.showQuanpin) {
             Shuangpin.displayQuanpin(input, scheme)
         } else {
             input
@@ -1903,6 +1989,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderCandidateItems(
                 items = lastPredictions,
                 rows = rows,
+                rowHeightPx = perRow,
                 colorToken = skin.accent,
                 colorRes = R.color.kb_candidate_sel_text,
                 onClick = { onPredictionSelected(it) },
@@ -1956,6 +2043,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         renderCandidateItems(
             items = result.candidates.take(MAX_RENDERED_CANDIDATES),
             rows = rows,
+            rowHeightPx = perRow,
             colorToken = skin.functionGlyph,
             colorRes = R.color.text_primary,
             onClick = { onCandidateSelected(it) },
@@ -1963,6 +2051,104 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
+    // ── 密码模式（长按「数字」）─────────────────────────────
+
+    /**
+     * 进入密码模式：切到英文小写 26 键，候选栏换成数字条 0-9，底部「数字」键变成「退出」。
+     *
+     * 做三件事，缺一不可：
+     *  1. **先把未上屏的拼音落定**（[commitComposing]）：数字是即时上屏，残留拼音会让数字插到
+     *     它前面（与数字层点数字同口径，见 `onLetterPressed` 的 LAYER_DIGIT 分支）；
+     *  2. 记下进入前的 (语言 / 层 / 大写)，供 [exitPasswordPad] 复原；
+     *  3. 强制英文小写 + 字母层：密码是 ASCII 场景，字母层才有 26 键。
+     */
+    private fun enterPasswordPad() {
+        if (passwordPad) return
+        commitComposing()
+        hidePanelForLayerSwitch()
+        passwordPadRestore = Triple(englishMode, layer, capsMode)
+        passwordPad = true
+        englishMode = true
+        capsMode = false
+        layer = LAYER_LETTER
+        // 与切中英 / 切符号层同一条清理口径：残留预测会在退出后第一次选词时学错词频
+        lastPredictions = emptyList()
+        lastCommittedWord = ""
+        refreshKeyLabels()
+        refreshCandidateBar()
+        Diagnostics.i(TAG, "密码模式: 进入（英文小写 + 候选栏数字条）")
+    }
+
+    /**
+     * 退出密码模式并复原进入前的状态。
+     *
+     * @param restoreLanguage 会话边界传 false：那一刻 IME 已经通过 [configure] 给出了「本输入框该用
+     *   中文还是英文」，再拿**上一个输入框**的语言覆盖它才是错的（层与大写仍按用户手选状态复原）。
+     */
+    private fun exitPasswordPad(restoreLanguage: Boolean = true) {
+        if (!passwordPad) return
+        val saved = passwordPadRestore
+        passwordPad = false
+        passwordPadRestore = null
+        if (saved != null) {
+            if (restoreLanguage) englishMode = saved.first
+            layer = saved.second
+            capsMode = saved.third
+        }
+        refreshKeyLabels()
+        refreshCandidateBar()
+        Diagnostics.i(
+            TAG,
+            "密码模式: 退出" + if (restoreLanguage) "，已复原进入前的语言 / 层 / 大写" else "（会话边界，语言交给新输入框）",
+        )
+    }
+
+    /**
+     * 密码模式的候选栏：0-9 十个数字键（点上屏该数字）。
+     *
+     * 放在候选栏而不是字母区：这里正是「工具栏」，替换掉候选 / 预测后**键盘高度不变**，
+     * 数字与 26 键同屏 —— 密码框不必在字母层与数字层之间来回切。
+     * 样式对齐符号分组（同款矩形键面、等宽分栏），数字加粗居中便于点按。
+     */
+    private fun renderPasswordDigits() {
+        showPinyin(null)
+        viewCandidateList.removeAllViews()
+        for (digit in PASSWORD_DIGIT_ORDER) {
+            val item = TextView(context).apply {
+                text = digit
+                textSize = PASSWORD_DIGIT_TEXT_SP
+                setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = android.view.Gravity.CENTER
+                isClickable = true
+                // 无障碍：读数字本身（键面就是数字，无需额外描述）
+                contentDescription = digit
+                background = xmlKeyBackground(0f)
+                setOnClickListener { commitPasswordDigit(digit) }
+            }
+            item.minimumHeight = dp(REUSE_BLOCK_MIN_DP)
+            viewCandidateList.addView(
+                item,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    marginStart = dpFloat(2f).toInt()
+                    marginEnd = dpFloat(2f).toInt()
+                },
+            )
+        }
+    }
+
+    /**
+     * 密码模式的数字键上屏（与数字层同口径）：搜索态进搜索框，否则先落定拼音再即时上屏。
+     */
+    private fun commitPasswordDigit(digit: String) {
+        if (isPanelSearch()) {
+            searchPanel.appendSearch(digit)
+            return
+        }
+        commitComposing()
+        listener?.onCommitText(digit)
+    }
+
     private fun renderSymbolGroups() {
         showPinyin(null)
         viewCandidateList.removeAllViews()
@@ -2202,11 +2388,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             context.getString(R.string.key_symbol)
         }
-        btnDigit.text = if (layer == LAYER_DIGIT) {
-            context.getString(R.string.key_abc)
-        } else {
-            context.getString(R.string.key_digit)
+        btnDigit.text = when {
+            // 密码模式：这个键是退出口（点击回进入前的状态，见 exitPasswordPad）
+            passwordPad -> TEXT_PASSWORD_EXIT
+            layer == LAYER_DIGIT -> context.getString(R.string.key_abc)
+            else -> context.getString(R.string.key_digit)
         }
+        // 退出口必须一眼可见（用户 2026-09-28）：加粗 + 提示红 —— 与候选栏的红色「返回」同一套令牌。
+        // 退出后要**还原**成底部功能键的常规样式，否则「数字」两字会一直红着。
+        if (passwordPad) {
+            btnDigit.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+            btnDigit.setTextColor(skinToken(skin.hintRed, R.color.kb_key_hint_red))
+        } else {
+            btnDigit.setTypeface(android.graphics.Typeface.DEFAULT)
+            btnDigit.setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
+        }
+        // 底部逗号 / 句号：拼音态全角（，。）、英文态半角（,.），样式见 applyPunctuationLabel
+        applyPunctuationLabel(btnComma, cn = "，", en = ",")
+        applyPunctuationLabel(btnPeriod, cn = "。", en = ".")
         // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）；
         // 符号层大写键不参与操作：isEnabled=false（无障碍也报「不可用」）+ 置灰，
         // 点击路径另有层守卫（见 bindFunctionKeys），二者互为兜底。
@@ -2215,6 +2414,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift.alpha = if (layer == LAYER_SYMBOL) 0.4f else 1f
         // 空格键顶部小字：同步当前输入类型
         updateSpaceHint()
+    }
+
+    /**
+     * 底部逗号 / 句号键的标签与样式（用户 2026-09-28 指定）。
+     *
+     *  - 字形：拼音态全角（`，` / `。`）、英文态半角（`，` 变 `,`、`。` 变 `.`）——
+     *    与点击上屏的字符同源（见 `bindFunctionKeys` 里两个键的 onClick），键面必须跟着变，
+     *    否则英文态看到的是全角、打出来却是半角；
+     *  - 样式：居中（水平 + 垂直）+ 粗体 + 字号 = 同排功能键基础 13sp + 3 = [PUNCTUATION_TEXT_SP]。
+     *    垂直居中的关键是 `includeFontPadding = false`：默认的字体上下留白会让单个标点看起来偏下。
+     */
+    private fun applyPunctuationLabel(key: TextView, cn: String, en: String) {
+        key.text = if (englishMode) en else cn
+        key.gravity = android.view.Gravity.CENTER
+        key.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        key.includeFontPadding = false
+        key.textSize = PUNCTUATION_TEXT_SP
     }
 
     /**
@@ -2285,9 +2501,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 keySemicolon.setPressedVisual(false)
-                // 分号键是全键盘唯一会随状态 GONE 的字母键（切层 / 切中英 / 大写锁定 / 换方案），
-                // 而按下后变 GONE 的键仍会收到本次手势的 ACTION_UP（框架对已缓存目标不复检可见性）：
-                // 不判可见性就会追加一个「看不见来源」的分号 —— 英文态下拼音串凭空多出 `;`
                 // 分号键是全键盘唯一会随状态 GONE 的字母键（切层 / 切中英 / 大写锁定 / 换方案），
                 // 而按下后变 GONE 的键仍会收到本次手势的 ACTION_UP（框架对已缓存目标不复检可见性）：
                 // 不判可见性就会追加一个「看不见来源」的分号 —— 英文态下拼音串凭空多出 `;`
@@ -2979,8 +3192,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val LAYER_LETTER = 0
         const val LAYER_SYMBOL = 1
         const val LAYER_DIGIT = 2
+
+        /**
+         * 密码模式下「数字」键改成这个标签（点击即退出，见 [exitPasswordPad]）。
+         *
+         * 文案写在代码里：`strings.xml` 默认禁改（与词库页 / 生僻字页 / 模糊音页的 `TEXT_*` 同做法）。
+         */
+        const val TEXT_PASSWORD_EXIT = "退出"
+
+        /** 密码模式数字条的字号（sp）：比候选正文大一档，密码框里点得更准 */
+        const val PASSWORD_DIGIT_TEXT_SP = 18f
+
+        /**
+         * 底部逗号 / 句号键的字号（sp）＝同排功能键基础字号 13sp（`SettingsButton` 样式）+ 3（用户指定）。
+         *
+         * 标点是长句 / 密码里最常用的键，要比同排的「符号 / 数字 / 中英」更醒目。
+         * 改这里必须同步 `SettingsButton` 的基础字号与 [applyPunctuationLabel] 的 KDoc。
+         */
+        const val PUNCTUATION_TEXT_SP = 16f
     }
 }
+
+/**
+ * 密码模式数字条的排列（用户 2026-09-28 指定）：**1 放最左、0 放最右、中间 2~9**。
+ *
+ * 不用 `0..9` 的自然序 —— 密码 / 验证码里 1 与 0 是最常点的两个键，放两端更靠近拇指。
+ * 顺序是契约：`RecentFixesRegressionTest.密码模式数字条顺序与退出口醒目标记` 直接断言它的取值，
+ * 所以放在文件级（internal）而不是私有 companion 里。
+ */
+internal val PASSWORD_DIGIT_ORDER = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
 
 /**
  * 构建与 `R.drawable.key_bg` 同款（圆角 [cornerDp] + `R.color.key_bg` 填充 + `R.color.key_ripple`

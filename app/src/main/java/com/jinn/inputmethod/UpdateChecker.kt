@@ -64,7 +64,7 @@ object UpdateChecker {
                 },
             )
             Handler(Looper.getMainLooper()).post { onDone(result) }
-        }.apply { name = "jinn-update-check" }.start()
+        }.apply { name = "jinn-update-check"; isDaemon = true }.start()
     }
 
     /**
@@ -122,11 +122,15 @@ object UpdateChecker {
     private fun fetchFromGithub(deadline: Long): Latest? = runCatching {
         val html = httpGet("https://github.com/$OWNER/$REPO/tags", deadline) ?: return@runCatching null
         val linkRe = Regex("""$OWNER/$REPO/(?:tree|releases/tag)/([^"'<>?#\s]+)""")
-        linkRe.findAll(html)
+        val best = linkRe.findAll(html)
             .mapNotNull { m ->
                 normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "github", m.groupValues[1]) }
             }
             .maxByOrNull { it.date }
+        // 有响应但一个可用标签都没有：与「连不上」是两回事，日志里必须分开，
+        // 否则只凭界面文案（由 unified-update-check 约定统一为「访问失败」）无法判断是哪一种
+        if (best == null) Diagnostics.w(TAG, "GitHub 源有响应，但没有可解析的日期标签（tag 规范可能变了）")
+        best
     }.onFailure { Diagnostics.w(TAG, "GitHub 源异常: ${it.message}") }.getOrNull()
 
     /** Gitee：网页 /tags 返回 405，改走开放 API；JSON 内的 tag 名同样按统一规则归一化。 */
@@ -134,19 +138,49 @@ object UpdateChecker {
         val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags", deadline)
             ?: return@runCatching null
         val nameRe = Regex(""""name"\s*:\s*"([^"]+)"""")
-        nameRe.findAll(body)
+        val best = nameRe.findAll(body)
             .mapNotNull { m ->
                 normalizeTag(m.groupValues[1])?.let { d -> Latest(d, "gitee", m.groupValues[1]) }
             }
             .maxByOrNull { it.date }
+        if (best == null) Diagnostics.w(TAG, "Gitee 源有响应，但没有可解析的日期标签（tag 规范可能变了）")
+        best
     }.onFailure { Diagnostics.w(TAG, "Gitee 源异常: ${it.message}") }.getOrNull()
 
     /** 统一标签归一化：去 v 前缀 → 仅接受 6..8 位纯数字（两源同规则）。 */
-    private fun normalizeTag(raw: String): Int? =
-        raw.removePrefix("v").takeIf { it.length in 6..8 && it.all(Char::isDigit) }?.toIntOrNull()
+    internal fun normalizeTag(raw: String): Int? {
+        val digits = raw.removePrefix("v")
+        if (digits.length !in 6..8 || !digits.all(Char::isDigit)) return null
+        val value = digits.toIntOrNull() ?: return null
+        // 8 位（= 版本号格式 yyyyMMdd）必须是**合法日期**：tag 由人手动建，一个打错的
+        // 20261331 会被当成「未来版本」⇒ 此后每次检查都提示有更新、点进去却打不开对应页面，
+        // 而且这种误报不会自愈（要等一个更大的正确 tag 出现）。日期不合法即不认。
+        if (digits.length == 8 && !isPlausibleDate(value)) return null
+        return value
+    }
+
+    /**
+     * `yyyyMMdd` 是否构成合法日期（年 2000..2099、月 1..12、日 1..31；不查闰年与大小月）。
+     *
+     * 判据刻意宽（只挡「明显不是日期」的标签），因为版本号只要求单调可比，
+     * 目的不是校历而是过滤打错的 tag（BUG.md L-04）。
+     */
+    internal fun isPlausibleDate(yyyymmdd: Int): Boolean {
+        val year = yyyymmdd / 10_000
+        val month = (yyyymmdd / 100) % 100
+        val day = yyyymmdd % 100
+        return year in 2000..2099 && month in 1..12 && day in 1..31
+    }
 
     /** 返回响应体；非 200 / 总预算耗尽 / 异常返回 null（由调用方决定是否回退下一源）。 */
     private fun httpGet(url: String, deadline: Long): String? {
+        // 只准 https（BUG.md L-100）：本文件两条源的 URL 都是 https 字面量，这里把口径钉成
+        // 代码级契约 —— 将来有人加一条 http 源（或把某处的 scheme 写错），会在这里被拒并留日志，
+        // 而不是静默走明文（明文闸门只对用户自填的局域网语音地址放开，见 network_security_config.xml）。
+        if (!url.startsWith("https://")) {
+            Diagnostics.w(TAG, "拒绝非 HTTPS 地址: ${url.substringBefore('?')}")
+            return null
+        }
         // 单个请求的超时不能超过剩余总预算：否则两源串行会把调用方的看门狗甩掉
         val remain = (deadline - System.currentTimeMillis()).coerceAtMost(TIMEOUT_MS.toLong())
         if (remain <= 0L) {

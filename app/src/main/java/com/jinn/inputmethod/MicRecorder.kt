@@ -72,7 +72,7 @@ class MicRecorder(
 
         record = audioRecord
         running = true
-        thread = Thread({ loop(audioRecord) }, "jinn-mic").apply { start() }
+        thread = Thread({ loop(audioRecord) }, "jinn-mic").apply { isDaemon = true; start() }
         Diagnostics.i(
             TAG,
             "start: 采集已启动, minBuffer=$minBuffer bufferSize=$bufferSize, " +

@@ -27,17 +27,40 @@ def read_asset_text(path):
     return raw.replace("\r\n", "\n")
 
 
+def write_bytes_atomically(path, data):
+    r"""二进制原子落盘：同目录临时件 → 长度校验 → `os.replace` 覆盖（BUG.md L-107）。
+
+    直接 `open(path, "wb").write(data)` 在中断 / 磁盘满 / 进程被杀时会留下**半截资产**：
+    内置索引与下载包要么进 APK、要么上传 Release 附件（checksum 与文档对不上），
+    文本资产则是「脚本跑完看似成功、运行时用的还是半截数据」——与 Kotlin 侧
+    `PinyinEngine.writeIndexCacheAtomically` / `UserFrequency.writeAtomically` 是同一条纪律。
+
+    临时件放**同目录**（`path + ".tmp"`）：`os.replace` 只有同文件系统内才是原子替换。
+    失败路径不留残件（`finally` 清 tmp）。
+    """
+    tmp = path + ".tmp"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        size = os.path.getsize(tmp)
+        if size != len(data):
+            raise SystemExit("落盘长度不符：%s（写入 %d / 实际 %d）" % (path, len(data), size))
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return len(data)
+
+
 def write_asset_text(path, text):
-    """写资产文本；`.xz` 后缀自动压缩（参数与 APK 内一致）。"""
+    """写资产文本；`.xz` 后缀自动压缩（参数与 APK 内一致）。落盘走 [write_bytes_atomically]。"""
     if not text.endswith("\n"):
         text += "\n"
     if path.endswith(".xz"):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as fh:
-            fh.write(lzma.compress(text.encode("utf-8"), filters=ASSET_XZ_FILTERS))
+        write_bytes_atomically(path, lzma.compress(text.encode("utf-8"), filters=ASSET_XZ_FILTERS))
     else:
-        with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
+        write_bytes_atomically(path, text.encode("utf-8"))
 
 
 def asset_name(stem):

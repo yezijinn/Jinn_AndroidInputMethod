@@ -102,8 +102,17 @@ def find_build_tool(name):
         build_tools = Path(sdk_root) / "build-tools"
         if build_tools.is_dir():
             candidates.extend(path / name for path in build_tools.iterdir() if path.is_dir())
-    # 版本号降序：优先用最新 build-tools（目录名如 34.0.0 / 37.0.0）
-    candidates.sort(reverse=True)
+    # 版本号降序：优先用最新 build-tools（目录名如 34.0.0 / 37.0.0）。
+    # ⚠ 不能直接对 Path 排序：那是**字符串**比较，`9.0.0` 会排在 `34.0.0` 之前
+    # （本机残留单数字主版本时会选中旧 apksigner / zipalign，新参数不被支持 ⇒ 签名白跑一轮；
+    # 见 BUG.md L-77）。
+    def version_key(path):
+        out = []
+        for chunk in path.parent.name.split("."):
+            out.append(int(chunk) if chunk.isdigit() else -1)
+        return tuple(out)
+
+    candidates.sort(key=version_key, reverse=True)
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
@@ -146,9 +155,30 @@ def run(cmd, cwd=None):
         sys.exit(r.returncode)
     return r
 
+
+def parse_adb_devices(output):
+    """`adb devices -l` 输出 → 可用设备序列号列表。
+
+    ⚠ 不能按子串 `"device" in line` 过滤：表头 `List of devices attached` 自带这个子串、
+    `???????????? no permissions` 行也有（会把表头 / 不可用设备算成设备，
+    进而让多设备判断误拒或让 `--device` 校验误判；见 BUG.md L-72）。
+    只认「第二列恰为 `device`」的行，且显式跳过表头与空行。
+    """
+    devices = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line or line.startswith("List of devices"):
+            continue
+        cols = line.split()
+        if len(cols) >= 2 and cols[1] == "device":
+            devices.append(cols[0])
+    return devices
+
+
 def main():
     ap = argparse.ArgumentParser(description="构建正式签名 release APK")
     ap.add_argument("--install", action="store_true", help="编译后安装到设备")
+    ap.add_argument("--device", help="安装目标设备序列号（多设备时必须指定；也可用环境变量 JINN_ADB_DEVICE）")
     ap.add_argument("--clean", action="store_true", help="clean 后全新编译")
     args = ap.parse_args()
 
@@ -305,12 +335,25 @@ def main():
 
     # 4. 可选安装
     if args.install:
-        r = subprocess.run("adb devices", shell=True, capture_output=True, text=True)
-        devices = [l.split("\t")[0] for l in r.stdout.splitlines()[1:] if "device" in l]
+        # ⚠ 三条失败路径必须**非 0 退出**：`--install` 是用户明确要求的一步，静默 return 会让 CI / `&&`
+        # 链路以为「编译 + 安装都成功」（BUG.md L-72）。
+        r = subprocess.run("adb devices -l", shell=True, capture_output=True, text=True)
+        devices = parse_adb_devices(r.stdout)
         if not devices:
-            print("[警告] 未检测到设备，跳过安装")
-            return
-        dev = devices[0]
+            print("[错误] 未检测到可用设备（adb devices -l 里没有状态为 device 的行）", file=sys.stderr)
+            sys.exit(1)
+        # 多设备（另一台可能是别人的机器）时**不猜**：原来取 devices[0]，插拔顺序一变就装错机。
+        # 用 --device / JINN_ADB_DEVICE 明确指定，或在只有一台设备时自动使用。
+        dev = args.device or os.environ.get("JINN_ADB_DEVICE")
+        if not dev:
+            if len(devices) > 1:
+                print(f"[错误] 检测到 {len(devices)} 台设备（{'、'.join(devices)}），"
+                      f"请用 --device <序列号> 或 JINN_ADB_DEVICE 指定目标，避免装错机器", file=sys.stderr)
+                sys.exit(1)
+            dev = devices[0]
+        if dev not in devices:
+            print(f"[错误] 指定的设备 {dev} 不在已连接列表（{'、'.join(devices)}）", file=sys.stderr)
+            sys.exit(1)
         print(f"安装到: {dev}")
         run(f'adb -s {dev} install -r "{final_apk}"')
         print("安装完成")

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全策略（BUG.md L-100）：明文只留给用户自填的局域网语音服务，公网端点一律禁明文。
+
+  背景：`targetSdk = 34` 时平台的默认口径是「拒绝一切明文」。本项目唯一的明文需求是语音
+  WebSocket（`ws://$host:$port`，host 由用户在设置里自填，可以是任意 IP / 域名 / 端口），
+  Android 的 domain-config 不支持网段与通配符 ⇒ 静态白名单覆盖不了这条链路 ⇒ base 只能放行。
+  代价（本配置要收窄的部分）：同一进程里其余的出网链路（词库下载、更新检查）也因此不再受
+  「拒绝明文」保护 —— 它们已由下面的 domain-config 显式禁止，另在代码侧只准 TLS
+  （`DictManagerActivity.httpClient` 的 `connectionSpecs` / `UpdateChecker.httpGet` 的 https 判据）。
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 唯一为它放行明文的链路：局域网语音 socket（用户自填地址，静态白名单覆盖不了）。
+         `InsecureBaseConfiguration` 是 lint 对「base 放行明文」的固定警告；这里是**刻意**的，
+         禁掉它就等于把语音功能打死（用户自填的任意主机无法预先枚举），故就地 suppress 并把理由留在这里。 -->
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration" />
+
+    <!-- 公网端点：只准 TLS（含子域 —— gitee/github 自己就是靠子域分流 API 与附件 CDN）。
+
+         维护口径：只列「本应用真的会连」的域名，且**宁可少列**——
+         少列 = 退回 base 的放行（与收窄前行为一致，不会误伤下载）；多列错一个域名会让对应
+         功能直接连不上。新增下载源时，先在 `OptionalDicts` 里确认 URL 是 https，再来这里补一行。
+         （`includeSubdomains` 必须显式写：默认值为 true，lint 的 NetworkSecurityConfig 检查
+          会要求写明，避免「以为只禁了主域」的误读。） -->
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- 更新检查 + Release 附件（api.github.com 是其子域） -->
+        <domain includeSubdomains="true">github.com</domain>
+        <!-- Release 附件 CDN：github 的附件下载会 302 到这里 -->
+        <domain includeSubdomains="true">objects.githubusercontent.com</domain>
+        <!-- 更新检查 + 词库下载（api/v5/repos 挂在主域下，子域一并只准 TLS） -->
+        <domain includeSubdomains="true">gitee.com</domain>
+    </domain-config>
+
+</network-security-config>

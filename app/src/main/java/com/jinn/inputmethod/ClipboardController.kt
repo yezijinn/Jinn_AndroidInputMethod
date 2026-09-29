@@ -1,7 +1,9 @@
 package com.jinn.inputmethod
 
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 
@@ -64,6 +66,10 @@ class ClipboardController(context: Context) {
     private fun reclassifyIfNeeded() {
         if (prefs.reclassified) return
         Thread {
+            // 启动期任务必须显式降优先级（AGENTS.md 的约定：「不与词库加载抢 CPU」）：
+            // 这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），跑在 onCreate 路径上、与词库加载同时发生，
+            // 不降级就会在用户等键盘弹出、准备打字的时刻抢 CPU（BUG.md L-103）。
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val changed = runCatching { db.reclassifyAll() }
                 .onFailure { Diagnostics.w(TAG, "分组标签重算失败: ${it.message}") }
                 .getOrNull()
@@ -71,7 +77,7 @@ class ClipboardController(context: Context) {
                 prefs.reclassified = true
                 Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
             }
-        }.apply { name = "jinn-clipboard-reclassify" }.start()
+        }.apply { name = "jinn-clipboard-reclassify"; isDaemon = true }.start()
     }
 
     /** 停用：注销监听（幂等）并丢弃待执行的重试，避免停用后仍落库 */
@@ -115,6 +121,16 @@ class ClipboardController(context: Context) {
      */
     private fun extractAndSave(clip: android.content.ClipData) {
         if (clip.itemCount == 0) return
+        // Android 13+ 系统会为「密码框复制 / 安全来源」的剪贴板内容打敏感标记（BUG.md L-95）：
+        // 这类内容不入库 —— 加密存储也不能例外，面板可列、搜索可命中、一键粘贴，等于把口令留在历史里。
+        // 与输入框侧已实现的 InputFieldPrivacy（密码框不学词频）同一口径；API 33 以下系统不设该标记，行为不变。
+        if (Build.VERSION.SDK_INT >= 33 &&
+            clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
+        ) {
+            // 只记事件、不记正文（日志禁出正文）
+            Diagnostics.i(TAG, "跳过系统标记的敏感剪贴板条目")
+            return
+        }
         val text = clip.getItemAt(0).coerceToText(appContext)?.toString() ?: return
         if (text.isBlank()) return
         // upsert 在库层按 content_hash 去重，不会重复写入
@@ -188,6 +204,17 @@ object ClipboardStore {
         if (windowItems <= 0 || maxItemBytes <= 0) return 0L
         return (windowItems.toLong() * maxItemBytes.toLong() * DECRYPT_ITEM_AMPLIFICATION).toLong()
     }
+
+    /**
+     * 单次解密窗口能容纳的**明文**字节预算（纯函数）。
+     *
+     * 峰值估算走的是「条数 × 单条上限」，而按条数限窗口的地方（如首屏连续填页）
+     * 只能按**实际明文**记账，两者必须同源 —— 于是把 [DECRYPT_WINDOW_BUDGET_BYTES] 反推回明文侧：
+     * `明文 ≤ 预算 / 放大系数`（48MB / 2.5 ≈ 19.2MB）时，`峰值 = 明文 × 放大系数 ≤ 预算` 必然成立。
+     * 见 `ClipboardDb.FIRST_PAGE_MAX_PLAIN_BYTES`（BUG.md L-91）。
+     */
+    fun decryptWindowPlainBudgetBytes(): Long =
+        (DECRYPT_WINDOW_BUDGET_BYTES / DECRYPT_ITEM_AMPLIFICATION).toLong()
 
     /**
      * 文本的 UTF-8 字节数是否超过 [limit]（纯函数，便于单测）。

@@ -42,6 +42,9 @@ class RareCharsActivity : Activity() {
         findViewById<TextView>(R.id.text_rare_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_rare_close).apply {
             text = TEXT_CLOSE
+            // 键面是「X」，辅助服务照字面朗读等于没读；给出可听的键名。
+            // 本页与模糊音页是复刻关系，改这里要连 FuzzyPinyinActivity 一起改（守卫会红）
+            contentDescription = TEXT_CLOSE_DESC
             setOnClickListener { finish() }
         }
         findViewById<Button>(R.id.btn_rare_all).apply {
@@ -78,8 +81,14 @@ class RareCharsActivity : Activity() {
         checkTier3 = addRow(TIER3_LABEL, TIER3_DESC, prefs.rareTier3 && prefs.rareTier2, density)
         checkTier2.setOnCheckedChangeListener { _, checked ->
             if (bulk) return@setOnCheckedChangeListener
-            // 关档 2 必须连带关档 3（依赖关系；引擎侧 setRareTiers 也会再兜一次）
-            if (!checked) checkTier3.isChecked = false
+            // 关档 2 必须连带关档 3（依赖关系；引擎侧 setRareTiers 也会再兜一次）。
+            // 赋值会**同步**触发档 3 自己的监听器，所以要在挂起态里做：否则同一次拨动
+            // 会写两遍盘、打两条日志、让合并缓存失效两次（BUG.md L-63）
+            if (!checked) {
+                bulk = true
+                checkTier3.isChecked = false
+                bulk = false
+            }
             syncTier3Enabled()
             apply()
         }
@@ -155,6 +164,9 @@ class RareCharsActivity : Activity() {
         const val TEXT_DESC = "默认只收常用字（5,613 字）。\n开启档位后，这些字连同它们组成的词一起放行；\n" +
             "档 3 必须先开档 2。"
         const val TEXT_CLOSE = "X"
+
+        /** 关闭键的可听键名：键面只有一个「X」，辅助服务需要这句话才读得懂（复刻页同款） */
+        const val TEXT_CLOSE_DESC = "关闭"
         const val TEXT_ALL = "全开"
         const val TEXT_NONE = "全关"
         const val TIER2_LABEL = "增加二级生僻字885个"

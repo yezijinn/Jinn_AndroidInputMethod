@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -164,6 +165,108 @@ class DictManagerActivity : Activity() {
         for (dict in OptionalDicts.ALL) {
             listHost.addView(buildCard(dict), matchWrap(bottom = 10))
         }
+        // 清单外的包（旧版遗留）：只列出来给个删除入口，见 OptionalDicts.unknownPackages
+        for (fileName in unknownPackagesInDir()) {
+            listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 10))
+        }
+    }
+
+    /**
+     * `dicts/` 下不在清单里的包名（纯筛选在 [OptionalDicts.unknownPackages]）。
+     *
+     * 只在**文件**里挑（BUG.md L-84）：`File.list()` 会把目录名一起交出去，而纯函数只认 `.xz` 后缀
+     * ⇒ 名为 `foo.xz` 的**目录**会被渲染成「其他包」卡片，点删除还必然失败
+     * （`File.delete()` 对非空目录返回 false）。目录过滤留在调用侧，纯函数保持「只认名字」的语义。
+     */
+    private fun unknownPackagesInDir(): List<String> =
+        OptionalDicts.unknownPackages(
+            dictDir().listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList(),
+        )
+
+    /**
+     * 旧版遗留包的卡片。
+     *
+     * 与清单内的卡片有两处**有意不同**：
+     *  - 不给下载按钮：这些包的下载源已随版本下线，删了就回不来（所以删除要二次确认）；
+     *  - 不写「第一次约 N 秒」：它们的索引建立耗时没有实测值，凭空标一个数字等于撒谎。
+     */
+    private fun buildUnknownCard(fileName: String): View {
+        val file = dictFile(fileName)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(getColor(R.color.surface_hi), 10)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+        }
+        card.addView(line(legacyName(fileName), getColor(R.color.text_primary), 16f, bold = true))
+        card.addView(line(TEXT_LEGACY_DESC, getColor(R.color.text_secondary), 13f, top = 4))
+        card.addView(
+            line(
+                text = getString(R.string.dict_status_installed, formatSize(file.length())),
+                color = getColor(R.color.ok),
+                size = 13f,
+                top = 10,
+            ),
+        )
+        card.addView(
+            line(
+                // 不能复用 dict_startup_cost_line1：它是给清单内卡片做**前缀**的，值以逗号结尾
+                // （后面接「第一次约 N 秒」），单用会留下半句残话（BUG.md L-69）
+                text = TEXT_LEGACY_LOAD,
+                color = getColor(R.color.warn),
+                size = 13f,
+                top = 8,
+            ),
+        )
+        card.addView(
+            actionButton(
+                text = getString(R.string.dict_action_remove),
+                color = getColor(R.color.danger),
+                enabled = downloading == null,
+            ) { confirmRemoveLegacy(fileName) },
+            matchWrap(top = 12).also { it.gravity = Gravity.END },
+        )
+        return card
+    }
+
+    /** 旧包的中文名：老用户认得这两个名字，比裸文件名 `ext.xz` 好认 */
+    private fun legacyName(fileName: String): String = when (fileName) {
+        "ext.xz" -> TEXT_LEGACY_EXT
+        "opt_tencent.xz" -> TEXT_LEGACY_TENCENT
+        else -> fileName
+    }
+
+    /**
+     * 删除旧包前二次确认：这些包在页面上没有下载源（旧 Release 附件已清理），
+     * 删掉就是永久失去，不能像清单内的包那样一点就删。
+     */
+    private fun confirmRemoveLegacy(fileName: String) {
+        if (downloading != null) {
+            Toast.makeText(this, R.string.dict_remove_busy, Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(legacyName(fileName))
+            .setMessage(TEXT_LEGACY_CONFIRM)
+            .setPositiveButton(TEXT_CONFIRM_OK) { _, _ -> removeLegacy(fileName) }
+            .setNegativeButton(TEXT_CONFIRM_CANCEL, null)
+            .show()
+    }
+
+    /**
+     * 删除旧包并重启输入法。
+     *
+     * 删除成功后必须重启：文件已被内存映射，不重启的话本次会话里它仍会被用来出词，
+     * 用户看到的会是「删了还在」——与清单内包的删除同一条口径（[promptRestart]）。
+     */
+    private fun removeLegacy(fileName: String) {
+        val ok = runCatching { dictFile(fileName).delete() }.getOrDefault(false)
+        Diagnostics.i(TAG, "遗留词库包删除: $fileName ok=$ok")
+        setStatus(
+            if (ok) getString(R.string.dict_removed, legacyName(fileName))
+            else getString(R.string.dict_remove_failed),
+        )
+        refreshList()
+        if (ok) promptRestart()
     }
 
     private fun buildCard(dict: OptionalDict): View {
@@ -319,7 +422,7 @@ class DictManagerActivity : Activity() {
                 page.refreshList()
                 if (ok) page.restartImeForDict()
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     /**
@@ -438,8 +541,9 @@ class DictManagerActivity : Activity() {
 
     // ── 工具 ────────────────────────────────────────────────
 
-    private fun dictFile(fileName: String) =
-        File(File(filesDir, PinyinEngine.OPT_DICT_DIR), fileName)
+    private fun dictDir() = File(filesDir, PinyinEngine.OPT_DICT_DIR)
+
+    private fun dictFile(fileName: String) = File(dictDir(), fileName)
 
     private fun formatSize(bytes: Long): String = when {
         bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1048576.0)
@@ -465,6 +569,18 @@ class DictManagerActivity : Activity() {
     ).apply { rightMargin = dp(right) }
 
     private companion object {
+
+        // 旧版遗留包区的文案在代码里下发：strings.xml 默认禁改，与生僻字页 / 模糊音页的 TEXT_* 同做法
+        const val TEXT_LEGACY_DESC = "旧版本装过的词库包，现在的下载源已下线。"
+
+        /** 旧包的加载提示：完整一句话（旧包没有实测耗时，见 [buildUnknownCard] 的 KDoc） */
+        const val TEXT_LEGACY_LOAD = "空闲时才在后台加载（息屏或收起键盘后生效）。"
+        const val TEXT_LEGACY_EXT = "长词包（旧版）"
+        const val TEXT_LEGACY_TENCENT = "腾讯大词库（旧版）"
+        const val TEXT_LEGACY_CONFIRM = "这些包已没有下载源，删除后无法重新下载。确定删除吗？"
+        const val TEXT_CONFIRM_OK = "删除"
+        const val TEXT_CONFIRM_CANCEL = "取消"
+
         const val TAG = "DictManager"
 
         /**
@@ -473,14 +589,19 @@ class DictManagerActivity : Activity() {
          * 每个 URL 都 new 一次会各建一套连接池与调度线程池，重试（Gitee 失败 → GitHub）
          * 与反复点击会在同一进程里叠加 —— `AsrClient` 的注释已把这条列为反例。
          *
-         * 超时与重定向策略固定：禁止 https→http 降级（Manifest 全局开了 usesCleartextTraffic，
-         * OkHttp 默认 `followSslRedirects=true` 会跟随这种跳转，一次 302 就能把词库下载
-         * 降到明文 HTTP，同网段 MITM 改内容即可注入任意候选词）。
+         * 超时与重定向策略固定，且**只准 TLS**（BUG.md L-100）：
+         *  - `connectionSpecs(MODERN_TLS)` 去掉 CLEARTEXT ⇒ 请求 URL 只可能是 https（词库 URL
+         *    全是 https 字面量，见 `OptionalDicts`）；即便将来有人误加一条 http 源，也会在这里
+         *    直接失败并留日志，而不是走明文；
+         *  - `followSslRedirects(false)` 再加一道：OkHttp 默认会跟随 https→http 跳转，
+         *    一次 302 就能把词库下载降到明文 HTTP，同网段 MITM 改内容即可注入任意候选词；
+         *  - 收下的最后一关是 SHA-256 校验（见 [fetchToFile]），三者叠加才叫「改不了字节」。
          */
         private val httpClient: okhttp3.OkHttpClient by lazy {
             okhttp3.OkHttpClient.Builder()
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+                .connectionSpecs(listOf(okhttp3.ConnectionSpec.MODERN_TLS))
                 .followRedirects(true)
                 .followSslRedirects(false)
                 .build()

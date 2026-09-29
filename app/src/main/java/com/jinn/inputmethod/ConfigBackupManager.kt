@@ -70,8 +70,17 @@ internal object ConfigBackupManager {
      */
     internal const val CLIP_EXPORT_BYTE_BUDGET = 12L * 1024 * 1024
 
-    /** 剪贴板导出/预览的分页步长 */
-    private const val CLIP_PAGE = 200
+    /**
+     * 剪贴板导出/预览的分页步长（BUG.md L-102）。
+     *
+     * 这不是纯粹的性能参数：`ClipboardDb.recentPageAfter` 会**解密整页每一行**并返回带正文的列表，
+     * 所以页宽就是一次解密窗口 —— 上界 `CLIP_PAGE × MAX_ITEM_BYTES(256KB) × 放大 2.5`。
+     * 原值 **200** 条 ≈ **131MB**，是 48MB 预算（`ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES`）的 2.7 倍，
+     * 且当时不在任何窗口守卫的覆盖里（搜索 / 面板分页 / 存量重算三条都有，导出这条漏了）。
+     * 取 **50**：与 `ClipboardDb.RECLASSIFY_PAGE` 同量级（≈32.8MB，留三成余量），代价是导出查询次数变多
+     * （页数 ×4），而导出是用户手动触发、带进度反馈的一次性动作，慢几百毫秒换掉 OOM 值得。
+     */
+    internal const val CLIP_PAGE = 50
 
     /** 剪贴板导出遇到并发写入时的重来趟数（见 [collectClipboard]） */
     private const val EXPORT_CLIP_ATTEMPTS = 3
@@ -438,14 +447,15 @@ internal object ConfigBackupManager {
         val entries = ArrayList<ConfigBackup.ClipEntry>()
         var bytes = 0L
         var dropped = 0
-        var offset = 0
+        var cursor: ClipboardCursor? = null
         var taken = 0
         while (true) {
-            val page = db.recentPageWithOffset(offset, CLIP_PAGE, null, false)
-            // 以「游标有没有前进」判结束：若用 `items.size < limit`，本页只要有解密失败的行
-            // （密钥轮换 / 单行损坏）就会被误判成「已经到底」，其后所有更旧的条目被静默漏导
-            // （nextOffset 是扫描过的原始行数标准，items 是解密成功的条数，两者不能混用）
-            if (page.nextOffset <= offset) break
+            val page = db.recentPageAfter(cursor, CLIP_PAGE, null, false)
+            // 以「扫描行数」判结束（不是看 items 是否为空）：本页只要有解密失败的行（密钥轮换 /
+            // 单行损坏），`items` 就会少于 limit，只有 items 判停会让整页解密失败时静默漏导其后
+            // 所有更旧的条目。游标取「最后扫描过的行」（BUG.md L-92 的键集口径），位置位移不影响。
+            if (page.scanned == 0) break
+            cursor = page.last
             for (item in page.items) {
                 // 与导入侧一致的条数上限：导入端只收前 N 条，多带的会在那边被静默截断
                 if (taken >= ConfigBackup.MAX_CLIP_IMPORT_ITEMS) {
@@ -477,7 +487,6 @@ internal object ConfigBackupManager {
                     )
                 )
             }
-            offset = page.nextOffset
         }
         return ClipPayload(ConfigBackup.encodeClipboard(entries), dropped)
     }

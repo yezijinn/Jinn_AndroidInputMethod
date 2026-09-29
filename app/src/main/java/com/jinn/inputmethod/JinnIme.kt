@@ -78,6 +78,15 @@ class JinnIme : InputMethodService() {
     private var pendingSymbolLayoutRebuild = false
 
     /**
+     * 本次会话的「敏感输入框不学习」判定（由 [onStartInputView] 按 EditorInfo 算出）。
+     *
+     * 抑制标记本体是**视图上的字段**（`PinyinKeyboardView.suppressLearning`，声明处默认 false），
+     * 而视图重建（换肤 / 符号布局变更）会整只换掉它 ⇒ 重建后必须重放这个值，
+     * 否则本会话余下时间在密码框里选候选会被学进词频（BUG.md L-96）。
+     */
+    private var suppressLearningForSession = false
+
+    /**
      * 键盘视图创建时用的主题覆盖 Context（见 [ThemeManager.themedContext]）。
      *
      * 服务自身的 `getColor()` 走的是系统配置：强制亮白/暗黑时，服务里直接取色会拿到另一套色板
@@ -300,7 +309,7 @@ class JinnIme : InputMethodService() {
             // 原来固定「基础包就绪后 5 秒」开始，而那正是用户开始打字的时间点，重活抢 CPU/内存带宽
             // → 冷启动后「很卡」。改为等空闲信号（见 maybeLoadOptionalDict）。
             Diagnostics.i(TAG, "可选词库: 已改为空闲时加载（息屏 / 键盘收起后 / 兜底超时）")
-        }.start()
+        }.apply { isDaemon = true }.start()
 
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
         if (ClipboardPrefs.of(this).enabled) {
@@ -408,12 +417,13 @@ class JinnIme : InputMethodService() {
     private var selectionFocus = -1
 
     /**
-     * 我们最后一次请求设置的选区（`InputConnection.setSelection`）。
+     * 我们请求设置过的选区（`InputConnection.setSelection`，保留最近几次）。
      *
-     * 只用于在 [onUpdateSelection] 里区分「这次变化是我们自己造的」与「宿主改的」，
-     * 后者必须让拖选状态失效。只放行一次：回调重复或延迟到达时，陈旧期望不能一直挡着外部变化。
+     * 只用于在 [onUpdateSelection] 里区分「这次变化是我们自己造的」与「宿主改的」，后者必须让拖选状态失效。
+     * 用队列而不是单个值：回调可能**乱序投递**（见 [SelectionExpectations] 的 KDoc），
+     * 单值会被后一次的回调消费掉、让前一次的回调被误判成外部变化。
      */
-    private var lastSetSelection: Pair<Int, Int>? = null
+    private val selectionExpectations = SelectionExpectations()
 
     /**
      * 执行方向控制动作（通过当前 InputConnection）。
@@ -449,7 +459,7 @@ class JinnIme : InputMethodService() {
         selectionActive = false
         selectionAnchor = -1
         selectionFocus = -1
-        lastSetSelection = null
+        selectionExpectations.clear()
         pinyinKeyboard?.setSelectionActive(false)
     }
 
@@ -459,7 +469,7 @@ class JinnIme : InputMethodService() {
         start: Int,
         end: Int,
     ) {
-        lastSetSelection = start to end
+        selectionExpectations.note(start, end)
         connection.setSelection(start, end)
     }
 
@@ -509,8 +519,10 @@ class JinnIme : InputMethodService() {
         // 绝对下标，而 range.text 可能只是光标附近的窗口（见 [currentSelectionRange]）。
         val cursor = range.start - range.startOffset
         val newRel = when (action) {
-            PinyinKeyboardView.DirectionAction.LEFT -> (cursor - 1).coerceAtLeast(0)
-            PinyinKeyboardView.DirectionAction.RIGHT -> (cursor + 1).coerceAtMost(range.textLength)
+            // 与拖选同一套口径（L-120）：左右必须按**码点**走。此前这里另抄了一份 `±1`，
+            // 遇 emoji（代理对）会停在字符中间，光标处输入就把一个 emoji 撕成两半。
+            PinyinKeyboardView.DirectionAction.LEFT -> TextSelection.stepByCodePoint(range.text, cursor, -1)
+            PinyinKeyboardView.DirectionAction.RIGHT -> TextSelection.stepByCodePoint(range.text, cursor, +1)
             PinyinKeyboardView.DirectionAction.UP -> TextSelection.moveLine(range.text, cursor, up = true)
             PinyinKeyboardView.DirectionAction.DOWN -> TextSelection.moveLine(range.text, cursor, up = false)
             PinyinKeyboardView.DirectionAction.LINE_START -> TextSelection.lineStart(range.text, cursor)
@@ -1099,11 +1111,11 @@ class JinnIme : InputMethodService() {
         super.onUpdateSelection(
             oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
         )
-        val expected = lastSetSelection
-        // 只放行一次：回调重复或延迟到达时，陈旧期望不能继续挡着外部变化
-        lastSetSelection = null
+        // 先认领：命中任意一个在途期望值就是我们自己造的（乱序回调也能认出，见 SelectionExpectations）。
+        // 认领要在 selectionActive 判断之前做 —— 不在拖选时同样要把期望消费掉，不能留着垫给外部变化。
+        val ours = selectionExpectations.consumeIfOurs(newSelStart, newSelEnd)
         if (!selectionActive) return
-        if (!TextSelection.isExternalSelectionChange(newSelStart, newSelEnd, expected)) return
+        if (ours) return
         Diagnostics.i(TAG, "宿主改动选区[$newSelStart,$newSelEnd]，退出拖选（Anchor/Focus 已失效）")
         clearSelectionState()
     }
@@ -1144,9 +1156,10 @@ class JinnIme : InputMethodService() {
     private fun applyThemeIfNeeded() {
         val wantDark = ThemeManager.isDark(this, prefs)
         if (appliedThemeDark != null && appliedThemeDark != wantDark) {
-            // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板面板、搜索面板）时不动视图：
+            // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板 / 搜索 / 方向面板、密码模式）时不动视图：
             // 重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。延后到下次弹出 ，
-            // onStartInputView 会再判一次。
+            // onStartInputView 会再判一次。密码模式的复原三元组只活在旧视图上 ⇒ 漏掉它就是
+            // 「打字期间键盘变回普通键盘且回不去」（BUG.md L-87）。
             if (pinyinKeyboard?.let { it.hasPendingInput || it.hasActiveOverlay } == true) {
                 Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入或面板），延后到下次弹出换肤")
                 return
@@ -1162,7 +1175,18 @@ class JinnIme : InputMethodService() {
      */
     private fun recreateKeyboardView() {
         pendingSymbolLayoutRebuild = false
+        // 旧视图连同它的两个面板一起被换掉：面板的后台扫描靠各自的刷新令牌判停，而重建不走
+        // 面板的「打开 / 收起」入口（令牌不会自己失效）⇒ 先明确收工，否则旧面板会把任务跑完、
+        // 把结果 post 到已脱离视图树的列表上，还占着单线程的 BackgroundIo（BUG.md L-17）。
+        pinyinKeyboard?.stopPanelBackgroundWork()
+        // 面板状态挂在视图上：新视图的面板一律是收起态，IME 侧这个标记（仅供诊断日志）要跟着复位，
+        // 否则后续日志会一直报 clipboardPanelOpen=true（BUG.md L-18）
+        clipboardPanelOpen = false
         setInputView(onCreateInputView())
+        // 换视图后重放敏感框抑制（BUG.md L-96）：新视图的 `suppressLearning` 默认 false，
+        // 不重放则本会话余下时间在密码框里选候选会被学进词频；顺序必须是「先换视图、再重放」
+        // （setInputView 同步更新 pinyinKeyboard，重放才落在新视图上）。
+        pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
     }
 
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
@@ -1275,9 +1299,9 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.updateImeOptions(info?.imeOptions ?: 0)
         // 敏感输入框（密码框 / 声明 NO_SUGGESTIONS / imeOptions 声明不要个性化学习）
         // 不学用户词频：否则口令片段会被写进本地词频文件，之后在普通输入框里被优先推荐出来。
-        pinyinKeyboard?.setSuppressLearning(
-            InputFieldPrivacy.suppressLearning(info?.inputType, info?.imeOptions ?: 0)
-        )
+        // 同时记在 IME 侧：视图重建（换肤 / 符号布局变更）会换掉整个视图，标记是视图字段 ⇒ 重建后要重放（L-96）
+        suppressLearningForSession = InputFieldPrivacy.suppressLearning(info?.inputType, info?.imeOptions ?: 0)
+        pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
@@ -1355,6 +1379,9 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.commitComposing()
         // 会话边界：搜索面板必须退出，跨输入框残留会让下一次输入被路由进搜索框
         pinyinKeyboard?.hideSearchPanel()
+        // 剪贴板面板同理（BUG.md L-110）：键盘收起后再弹出，它会带着上一个输入框的历史条目
+        // 一起回来，误点即把历史内容粘进新字段。上面那行是同族的既有处理，这条原先漏了。
+        pinyinKeyboard?.hideClipboardPanel()
         ui.removeCallbacks(backspaceRunnable)
         ui.removeCallbacks(themeTick) // 键盘已收起：到点检查交给下次弹出时的 scheduleThemeTick
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
@@ -1407,7 +1434,7 @@ class JinnIme : InputMethodService() {
             recorder?.stop()
             asr?.close()
             Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
-        }.start()
+        }.apply { isDaemon = true }.start()
         super.onDestroy()
     }
 
@@ -1765,6 +1792,7 @@ class JinnIme : InputMethodService() {
     private fun deleteAllText() {
         Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，清空全部文本")
         val connection = currentInputConnection ?: return
+        // 不登记期望值：清空后光标归零，此时若还挂着拖选，让它退出才是对的（见 SelectionExpectations）
         connection.setSelection(0, 0)
         connection.deleteSurroundingText(0, Int.MAX_VALUE)
         Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾）")

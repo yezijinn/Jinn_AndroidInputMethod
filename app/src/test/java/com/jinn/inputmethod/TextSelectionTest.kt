@@ -1,6 +1,8 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -257,14 +259,156 @@ class TextSelectionTest {
         assertEquals(null, TextSelection.toWindowOffset(5, 0, windowLength = -1))
     }
 
+    // ── 期望值队列：认出「我们自己造的选区变化」，把宿主改的判成外部（BUG.md L-14） ──
+
     @Test
-    fun externalSelectionChangeOnlyWhenNotOurs() {
-        // 我们自己刚设的选区：回调值与我们记的一致 → 不算外部变化（拖选要继续）
-        assertEquals(false, TextSelection.isExternalSelectionChange(10, 20, 10 to 20))
-        // 宿主改的：值不一致 → 外部变化（拖选 Anchor/Focus 失效）
-        assertEquals(true, TextSelection.isExternalSelectionChange(30, 30, 10 to 20))
-        assertEquals(true, TextSelection.isExternalSelectionChange(10, 21, 10 to 20))
-        // 没有待放行的期望值 → 一律当外部变化
-        assertEquals(true, TextSelection.isExternalSelectionChange(10, 20, null))
+    fun 顺序回调逐个放行() {
+        val e = SelectionExpectations()
+        e.note(10, 20)
+        e.note(12, 22)
+        assertTrue(e.consumeIfOurs(10, 20))
+        assertTrue(e.consumeIfOurs(12, 22))
+    }
+
+    @Test
+    fun 乱序回调也要认出早先那次() {
+        // 核心回归：方向键连按两下，第二次的回调先到 —— 单值实现会把第一次的回调误判成
+        // 「宿主改的选区」而静默退出拖选（用户看到方向键拖到一半突然不动了）
+        val e = SelectionExpectations()
+        e.note(10, 20)
+        e.note(12, 22)
+        assertTrue("后发先至：第二次 setSelection 的回调先到", e.consumeIfOurs(12, 22))
+        assertTrue("迟到的第一次回调仍必须被认出", e.consumeIfOurs(10, 20))
+    }
+
+    @Test
+    fun 没记过的选区一律当外部变化() {
+        val e = SelectionExpectations()
+        e.note(10, 20)
+        assertFalse("宿主把光标挪到别处", e.consumeIfOurs(30, 30))
+        assertFalse("只差一格也算外部", e.consumeIfOurs(10, 21))
+        assertFalse("区间颠倒不算命中", e.consumeIfOurs(20, 10))
+        e.clear()
+        assertFalse("会话边界清空后，旧期望不再放行", e.consumeIfOurs(10, 20))
+    }
+
+    @Test
+    fun 同一个期望只放行一次() {
+        val e = SelectionExpectations()
+        e.note(10, 20)
+        assertTrue(e.consumeIfOurs(10, 20))
+        assertFalse("重复投递按外部处理（安全侧：宁可多退一次拖选）", e.consumeIfOurs(10, 20))
+    }
+
+    @Test
+    fun 期望值超出容量时挤掉最旧的() {
+        val e = SelectionExpectations() // 默认容量 4
+        for (i in 0 until 5) e.note(i, i + 1)
+        assertFalse("最旧那次已被挤掉 ⇒ 按外部处理", e.consumeIfOurs(0, 1))
+        for (i in 1 until 5) assertTrue(e.consumeIfOurs(i, i + 1))
+    }
+
+    @Test
+    fun 打包编码不串味() {
+        // 用「拼接字符串」或简单异或实现打包时，(1,0) 与 (0,1) 会相撞
+        val a = SelectionExpectations()
+        a.note(1, 0)
+        assertFalse(a.consumeIfOurs(0, 1))
+        assertTrue(a.consumeIfOurs(1, 0))
+
+        val b = SelectionExpectations()
+        b.note(Int.MAX_VALUE, Int.MIN_VALUE)
+        assertTrue(b.consumeIfOurs(Int.MAX_VALUE, Int.MIN_VALUE))
+        assertFalse(b.consumeIfOurs(Int.MAX_VALUE, Int.MAX_VALUE))
+    }
+
+    // ── L-120：非 BMP 字符（emoji = 代理对）不得被拆开 ─────────────────────────
+    // 本文件此前的夹具是「这是一个测试文本」（纯汉字）⇒ 非 BMP 情形 0 覆盖；
+    // 实测（修复前）："😀ab" 下 LEFT(2)=1、RIGHT(0)=1，substring(0,1) 得到孤立代理 U+D83D。
+
+    private val emojiText = "😀ab" // 😀 占 [0,1]
+    private val emojiMulti = "abcd\n😀x" // 第二行起点 5，😀 占 [5,6]
+    private val left = PinyinKeyboardView.DirectionAction.LEFT
+    private val right = PinyinKeyboardView.DirectionAction.RIGHT
+
+    /** 孤立代理检测：高代理后面必须紧跟低代理（成对字符不属于孤立代理） */
+    private fun hasLoneSurrogate(s: String): Boolean {
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (Character.isHighSurrogate(c)) {
+                if (i + 1 >= s.length || !Character.isLowSurrogate(s[i + 1])) return true
+                i += 2
+            } else if (Character.isLowSurrogate(c)) {
+                return true
+            } else {
+                i++
+            }
+        }
+        return false
+    }
+
+    @Test
+    fun 左右按码点跨过整个代理对() {
+        val r = TextSelection.Range(0, 0, emojiText.length, emojiText)
+        assertEquals("从 0 右移应跨过 emoji（到 2，而不是停在 1）", 2, TextSelection.nextFocus(r, 0, right))
+        assertEquals("从 2 左移应跨过 emoji（到 0，而不是停在 1）", 0, TextSelection.nextFocus(r, 2, left))
+        assertEquals("BMP 区间行为不变（2→3）", 3, TextSelection.nextFocus(r, 2, right))
+    }
+
+    @Test
+    fun 外部带进来的中间下标会被吸附() {
+        val r = TextSelection.Range(0, 0, emojiText.length, emojiText)
+        assertEquals("吸附函数本身：1 是代理对中间 ⇒ 退到 0", 0, TextSelection.snapToBoundary(emojiText, 1))
+        assertEquals("从中间下标左移不留在中间", 0, TextSelection.nextFocus(r, 1, left))
+        assertEquals("从中间下标右移不留在中间", 2, TextSelection.nextFocus(r, 1, right))
+    }
+
+    @Test
+    fun 六个方向动作都不会停在代理对中间() {
+        // 元断言：任一入口（含中间下标）+ 任一动作，结果都必须是码点边界。
+        // 用 snapToBoundary(pos) == pos 表达「pos 本身就在边界上」。
+        val text = "😀a😀b\n😀😀c"
+        val r = TextSelection.Range(0, 0, text.length, text)
+        val actions = listOf(
+            left, right,
+            PinyinKeyboardView.DirectionAction.UP,
+            PinyinKeyboardView.DirectionAction.DOWN,
+            PinyinKeyboardView.DirectionAction.LINE_START,
+            PinyinKeyboardView.DirectionAction.LINE_END,
+        )
+        for (from in 0..text.length) {
+            for (a in actions) {
+                val pos = TextSelection.nextFocus(r, from, a)
+                assertTrue(
+                    "动作 $a 从 $from 落到 $pos 会拆开代理对",
+                    TextSelection.snapToBoundary(text, pos) == pos,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun 行移动的列位置不落在代理对中间() {
+        assertEquals("列 1 下移应停在 emoji 起点（修复前实测 6 = emoji 中间）", 5, TextSelection.moveLine(emojiMulti, 1, up = false))
+        assertEquals("列 2 下移落在 emoji 之后（'x' 处，本就是边界）", 7, TextSelection.moveLine(emojiMulti, 2, up = false))
+        assertEquals("从 emoji 中间上移，回到上一行同列", 1, TextSelection.moveLine(emojiMulti, 6, up = true))
+    }
+
+    @Test
+    fun 拖选复制不会产出孤立代理() {
+        // 与 JinnIme.copySelection 同一条路径：normalizedSelection 归一化后 substring。
+        val anchor = 0
+        var focus = 0
+        val r = TextSelection.Range(0, 0, emojiText.length, emojiText)
+        for (a in listOf(right, right, right, left, left, left, right)) {
+            focus = TextSelection.nextFocus(r, focus, a)
+            val (s, e) = TextSelection.normalizedSelection(anchor, focus)
+            val sel = emojiText.substring(s, e)
+            assertFalse(
+                "选区 [$s,$e) 复制出孤立代理：${sel.map { "U+%04X".format(it.code) }}",
+                hasLoneSurrogate(sel),
+            )
+        }
     }
 }

@@ -33,6 +33,8 @@ class FuzzyPinyinActivity : Activity() {
         findViewById<TextView>(R.id.text_fuzzy_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_fuzzy_close).apply {
             text = TEXT_CLOSE
+            // 与生僻字页同款：键面「X」要被读成「关闭」，两页是复刻关系，改动必须同步
+            contentDescription = TEXT_CLOSE_DESC
             setOnClickListener { finish() }
         }
         findViewById<Button>(R.id.btn_fuzzy_all).apply {
@@ -44,10 +46,19 @@ class FuzzyPinyinActivity : Activity() {
             setOnClickListener { setAll(false) }
         }
         groupList = findViewById(R.id.fuzzy_group_list)
+    }
+
+    /**
+     * 按当前掩码渲染勾选态；**每次回前台都重画**（见 [onStart]），避免与设置页 / 备份导入后的值不一致。
+     *
+     * ⚠ 渲染不能只留在 `onCreate`：页面在栈里时从设置页导入配置或改过模糊音，返回本页会停在旧快照上
+     * （与 `RareCharsActivity` 同款缺陷、同款修法，两页是复刻关系，改动必须同步 —— BUG.md L-74 / L-48）。
+     */
+    override fun onStart() {
+        super.onStart()
         renderRows()
     }
 
-    /** 按当前掩码渲染勾选态；每次进入都重画，避免与设置页/备份导入后的值不一致 */
     private fun renderRows() {
         val density = resources.displayMetrics.density
         val mask = Prefs(this).fuzzyPinyinMask
@@ -92,6 +103,9 @@ class FuzzyPinyinActivity : Activity() {
         const val TEXT_DESC = "按自己的口音勾选不分的音。\n勾选后，某个音打不出想要的字时，\n" +
             "会把该音的其他读法作为补充候选加上\n（精确候选一个不动、不被替换）。"
         const val TEXT_CLOSE = "X"
+
+        /** 关闭键的可听键名（与生僻字页同名同值，两页复刻） */
+        const val TEXT_CLOSE_DESC = "关闭"
         const val TEXT_ALL = "全开"
         const val TEXT_NONE = "全关"
     }

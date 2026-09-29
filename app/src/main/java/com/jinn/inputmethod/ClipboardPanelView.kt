@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.content.Context
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -111,16 +112,33 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      */
     private var unreadableHistory = false
 
+    /**
+     * 一条都没读出来、但**后面还有没扫过的行**：空态要给「继续查找」入口（BUG.md L-76）。
+     *
+     * 判据来自 [ClipboardDb.fillFirstPage] 的返回值：`items.isEmpty() && nextOffset < total`
+     * 只可能出现在「扫到上限提前收工」（扫完末尾时 nextOffset == total）；整表扫完且全坏时是 false。
+     */
+    private var scanStoppedEarly = false
+
     /** 当前分类的总条数（分页编号用：序号 = 分类总数 − 位置，与全局条目数无关） */
     private var categoryTotal = 0
 
     /**
-     * 下一页的 SQL OFFSET。
+     * 已扫描过的原始行数（进度；**不是** SQL OFFSET —— 分页改用键集游标，见 [nextCursor]）。
      *
-     * 必须取查询回带的原始行游标，不能拿 [currentItems] 的条数顶替，解密失败的行
-     * 不进列表但仍占游标位，用条数当偏移会让下一页重复取到已显示的行、并把尾部行跳过。
+     * 必须取查询回带的扫描行数，不能拿 [currentItems] 的条数顶替：解密失败的行不进列表但仍占游标位，
+     * 用条数当进度会让下一页重复取到已显示的行、并把尾部行跳过。
      */
     private var nextPageOffset = 0
+
+    /**
+     * 下一页的**键集游标**：上一页最后扫描过的那一行的 `(created_at, id)`（BUG.md L-92）。
+     *
+     * 不用 SQL OFFSET 的原因：面板打开期间外部改一次剪贴板就是「头部插一条 + 尾部裁一条」
+     * （到上限时成对发生、总条数不变）⇒ 行位置整体位移，OFFSET 会重复 / 跳过一行；
+     * 键集游标只认行键，位移免疫。`null` = 还没加载过，下一次从最新一条开始。
+     */
+    private var nextCursor: ClipboardCursor? = null
 
     /** 是否还有下一页 */
     private var hasMorePages = false
@@ -293,6 +311,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 14f
             visibility = GONE
+            // 只有在「还有没扫完的行」时空态才可点（见 scanStoppedEarly / continueScan）——
+            // 其余两种空态点它什么也不会发生，文案里也不提「点这里」
+            setOnClickListener { if (scanStoppedEarly) continueScan() }
         }
         addView(textEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -378,27 +399,56 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 // 占满了最新的一整页，只取一页会拿到空结果 ⇒ 空态 + 隐藏列表，
                 // 而预取闸门要求 totalItemCount > 0 ⇒ 后面还能解密的历史永久翻不到。
                 // 见 ClipboardDb.fillFirstPage（健康库上仍只取一页，无额外开销）。
+                val tCount = SystemClock.elapsedRealtime()
                 val total = db.count(filter.category, filter.favoritesOnly)
+                val countMs = SystemClock.elapsedRealtime() - tCount
+                // 键集游标（BUG.md L-92 / L-117）：取页器自己持有游标，交回 fillFirstPage 的 nextOffset 仍是
+                // 「已扫描行数」（`off` 只当进度基线）⇒ 两边口径一致。但 fillFirstPage 的字节预算是**取回之后**
+                // 才决定收不收（见其 KDoc）⇒ 游标不能一取回就提交：accepted = 已确定被接受的那一页末键，
+                // pending = 刚取回、还没确认的一页；收尾用 ClipboardDb.pageAccepted 判一次（被拒就保留 accepted，
+                // 让那一页在下次分页/续扫时被重新取到 —— 否则它的条目会被永久跳过）。
+                var accepted: ClipboardCursor? = null
+                var pending: ClipboardCursor? = null
+                var fetchOff = 0
+                var pendingScanned = 0
                 val page = ClipboardDb.fillFirstPage(total, PANEL_PAGE_ITEMS) { off, lim ->
-                    db.recentPageWithOffset(off, lim, filter.category, filter.favoritesOnly)
+                    // 又被调用一次 = 上一页已被接受（fillFirstPage 只在接受后仍需更多时才再取）
+                    if (pending != null) accepted = pending
+                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
+                    pending = keyed.last
+                    fetchOff = off
+                    pendingScanned = keyed.scanned
+                    ClipboardDb.Page(keyed.items, off + keyed.scanned)
                 }
+                if (pending != null && ClipboardDb.pageAccepted(page.nextOffset, fetchOff, pendingScanned)) {
+                    accepted = pending
+                }
+                // count= / page= 分开计时：分类 / 收藏过滤没有可用索引（全表扫描），
+                // 两个数字才能分别看清「库大了会不会痛」——page 里还含解密，坏行多时会明显偏高
+                // （解密失败要走异常处理与日志）。见 BUG.md L-06
                 Diagnostics.i(
                     TAG,
                     "[$tid] DB category=${category ?: "ALL"} total=$total page=${page.items.size} " +
-                        "next=${page.nextOffset} thread=${Thread.currentThread().name}",
+                        "next=${page.nextOffset} count=${countMs}ms " +
+                        "page=${SystemClock.elapsedRealtime() - tCount - countMs}ms " +
+                        "thread=${Thread.currentThread().name}",
                 )
-                total to page
+                Triple(total, page, accepted)
             }
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
-                loaded.onSuccess { (total, page) ->
+                loaded.onSuccess { (total, page, cursor) ->
                     categoryTotal = total
                     currentItems = page.items.toMutableList()
                     nextPageOffset = page.nextOffset
+                    nextCursor = cursor
                     hasMorePages = page.nextOffset < total
                     // 一条都读不出来但库里有行 ⇒ 空态要说真话（见 unreadableHistory）
                     unreadableHistory = currentItems.isEmpty() && total > 0
+                    // 还有没扫过的行（扫到止损上限提前收工）⇒ 空态要给「继续查找」入口，否则晚到的
+                    // 可读历史永远翻不到（BUG.md L-76）
+                    scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < total
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底：异步回填可能发生在 ListView 首次布局完成前，
@@ -428,42 +478,126 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (loadingPage || !hasMorePages) return
         val category = currentCategory
         val offset = nextPageOffset
+        val cursor = nextCursor
         val reqToken = refreshToken
         loadingPage = true
         BackgroundIo.run {
             val filter = ClipboardFilter.of(category)
             // 与 refresh 一致：查询异常也要复位 loadingPage（否则分页永久停摆）
             val loaded = runCatching {
-                // 面板打开期间可能又有新内容入库（用户复制）或条目被删：分页游标是 SQL OFFSET，
-                // 头部一插入，下一页就会重复返回已显示的行、并永久跳过尾部若干行。
-                // 边翻边比总数：对不上就回首页重载，而不是沿着错的偏移继续翻。
+                // 面板打开期间可能又有新内容入库（用户复制）或条目被删：键集游标对位置位移免疫
+                // （BUG.md L-92）⇒ 不再需要「总数对不上就回首页重载」那套兜底（它会白白把列表弹回顶部），
+                // 总数只用来刷新编号基准。可读性上也一致：游标跟着「最后扫描过的行」走，不跟位置走。
                 val total = db.count(filter.category, filter.favoritesOnly)
                 if (total != categoryTotal) {
-                    null
-                } else {
-                    db.recentPageWithOffset(offset, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                    Diagnostics.i(TAG, "分页: 总数 $categoryTotal → $total（编号基准已刷新，继续翻页）")
                 }
+                total to db.recentPageAfter(cursor, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
             }
             post {
                 if (reqToken != refreshToken) return@post
                 loadingPage = false
-                loaded.onSuccess { page ->
-                    if (page == null) {
-                        Diagnostics.i(TAG, "分页: 列表已变化（total 对不上），回首页重载")
-                        refresh(resetScroll = false)
-                        return@onSuccess
-                    }
-                    // 判停用游标而非本页条数：整页解密失败时 items 为空但后面仍有内容，
+                loaded.onSuccess { (total, page) ->
+                    categoryTotal = total
+                    // 判停用「扫描行数」而非本页条数：整页解密失败时 items 为空但后面仍有内容，
                     // 以空页判停会让用户再也翻不到后面的条目。
+                    if (page.scanned > 0) {
+                        currentItems.addAll(page.items)
+                        nextPageOffset += page.scanned
+                        nextCursor = page.last
+                    }
+                    hasMorePages = page.scanned > 0 && nextPageOffset < categoryTotal
+                    adapter.notifyDataSetChanged()
+                    Diagnostics.i(
+                        TAG,
+                        "分页加载: offset=$offset +${page.items.size} scanned=${page.scanned} " +
+                            "next=$nextPageOffset hasMore=$hasMorePages",
+                    )
+                }.onFailure {
+                    Diagnostics.e(TAG, "分页加载失败（loadingPage 已复位）: ${it.message}", it)
+                }
+            }
+        }
+    }
+
+    /**
+     * 视图即将被换掉时作废在飞的查询（与 [SearchPanelView.stopBackgroundWork] 同款，
+     * 见 `BUG.md` L-17）：面板的刷新/分页靠 [refreshToken] 判停，而重建键盘不走
+     * `onShown` / `onHidden`，不作废就会把结果回填到已经脱离视图树的列表上。
+     *
+     * 剪贴板面板只取单页（50 条），代价远小于搜索的整库扫描，这一层是防御性对称。
+     */
+    fun stopBackgroundWork() {
+        refreshToken++
+        Diagnostics.i(TAG, "剪贴板面板: 视图重建，作废在飞的查询")
+    }
+
+    /**
+     * 空态可点：沿既有游标再扫一批（[ClipboardDb.FIRST_PAGE_MAX_SCAN_PAGES] 页），找更早的条目。
+     *
+     * 为什么是手动触发：首屏止损存在的意义就是**不**在每次开面板时白解密全表 —— 密钥失效时整表都
+     * 读不出，自动续扫等于每次开面板把所有密文页读一遍。手动则把代价限定在「用户真的想找」的点击上
+     * （每点一次多扫 ≤400 行；找不到就还是这个空态，可以再点）。
+     */
+    private fun continueScan() {
+        if (loadingPage || !scanStoppedEarly) return
+        val category = currentCategory
+        val offset = nextPageOffset
+        val reqToken = refreshToken
+        loadingPage = true
+        BackgroundIo.run {
+            val filter = ClipboardFilter.of(category)
+            val loaded = runCatching {
+                // 键集游标（BUG.md L-92）：与 loadNextPage 同策 —— 总数只刷新编号基准，不再中断续扫
+                val total = db.count(filter.category, filter.favoritesOnly)
+                if (total != categoryTotal) {
+                    Diagnostics.i(TAG, "续扫: 总数 $categoryTotal → $total（编号基准已刷新，继续扫）")
+                }
+                // 命名参数（BUG.md L-86）：第三个位置参数在语义上不可读
+                //（`(total, limit, maxScanPages, startOffset, fetch)` 两个可选参数同为 Int）
+                // 与 refresh 同款（BUG.md L-117）：只有被 fillFirstPage 接受的页才能提交游标
+                var accepted = nextCursor
+                var pending: ClipboardCursor? = null
+                var fetchOff = 0
+                var pendingScanned = 0
+                val filled = ClipboardDb.fillFirstPage(total, PANEL_PAGE_ITEMS, startOffset = offset) { off, lim ->
+                    if (pending != null) accepted = pending
+                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
+                    pending = keyed.last
+                    fetchOff = off
+                    pendingScanned = keyed.scanned
+                    ClipboardDb.Page(keyed.items, off + keyed.scanned)
+                }
+                if (pending != null && ClipboardDb.pageAccepted(filled.nextOffset, fetchOff, pendingScanned)) {
+                    accepted = pending
+                }
+                Triple(filled, accepted, total)
+            }
+            post {
+                if (reqToken != refreshToken) return@post
+                loadingPage = false
+                loaded.onSuccess { (page, cursor, total) ->
+                    categoryTotal = total
+                    Diagnostics.i(
+                        TAG,
+                        "续扫: 从 $offset 起读到 ${page.items.size} 条，游标 → ${page.nextOffset}",
+                    )
+                    // 判停用游标（页的 nextOffset = 已扫描行数），不是本页条数：整页解密失败时
+                    // items 为空但游标仍在推进，以空页判停会让用户再也找不到后面的条目。
                     if (page.nextOffset > offset) {
                         currentItems.addAll(page.items)
                         nextPageOffset = page.nextOffset
+                        nextCursor = cursor
                     }
                     hasMorePages = page.nextOffset > offset && page.nextOffset < categoryTotal
+                    // 仍为空且还有没扫的行 ⇒ 保持可点（用户想继续找就再点）；扫到底则不再是这条死路
+                    scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < categoryTotal
                     adapter.notifyDataSetChanged()
-                    Diagnostics.i(TAG, "分页加载: offset=$offset +${page.items.size} next=${page.nextOffset} hasMore=$hasMorePages")
-                }.onFailure {
-                    Diagnostics.e(TAG, "分页加载失败（loadingPage 已复位）: ${it.message}", it)
+                    updateEmpty()
+                }
+                loaded.onFailure { e ->
+                    // 失败不吞：留在原空态上（可再点重试），日志留下原因
+                    Diagnostics.w(TAG, "续扫失败: ${e.message}")
                 }
             }
         }
@@ -472,11 +606,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，避免有高度有数据却显示空白） */
     private fun updateEmpty() {
         val empty = currentItems.isEmpty()
-        // 空态有两种含义，不能混用同一句话：真没有历史 / 有行但解密不出来（见 unreadableHistory）
+        // 空态有三种含义，不能混用同一句话：真没有历史 / 有行但解密不出来 / 还有没扫完的行（可继续找）
         if (empty) {
-            textEmpty.text = if (unreadableHistory) TEXT_EMPTY_UNREADABLE else TEXT_EMPTY_IDLE
+            textEmpty.text = when {
+                scanStoppedEarly -> TEXT_EMPTY_UNREADABLE_MORE
+                unreadableHistory -> TEXT_EMPTY_UNREADABLE
+                else -> TEXT_EMPTY_IDLE
+            }
         }
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+        // 「可点」必须与文案同源更新（BUG.md L-85）：setOnClickListener 会把视图**永久**标成可点击，
+        // 于是「暂无历史 / 全坏读不出」两种空态下读屏仍播报「双击激活」而双击毫无反应。
+        // 只有「还有没扫完的行」才真的可点（continueScan）。
+        textEmpty.isClickable = scanStoppedEarly
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
         listView.invalidate()
@@ -657,6 +799,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             gravity = android.view.Gravity.CENTER
             setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             textSize = 12f
+            // 固定 36dp 高的操作条 + SP 文本：系统字体放大（fontScale ≥ ~1.7）时会换行、多余的行被硬裁
+            // ⇒ 退化成省略号而不是被裁掉（与 L-35 设置页开关同一口径，BUG.md L-98）
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             // 键面背景按当前透明度档 + 皮肤面色运行时构建（XML 的 key_bg 带不了动态 alpha；几何与其一致）
             val fill = skinColor(context, skin.functionFill, R.color.key_bg)
             background = buildKeyFaceBackground(
@@ -691,5 +837,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          * 密钥失效后新条目会用新密钥加密，功能并未坏掉，用户在意的「以后还能不能用」要给答案。
          */
         const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
+
+        /**
+         * 空态：**扫到止损上限仍一条都没读出来，但后面还有没扫过的行**（BUG.md L-76）。
+         *
+         * 与 [TEXT_EMPTY_UNREADABLE] 的区别是「还有得找」：文案明说可点，点一下沿游标再扫一批
+         * （[continueScan]）。首屏止损让「最新 400 行连续坏」时不再白解密全表，代价是更早那批
+         * 能解密的历史要靠这一步才能翻到 —— 不给出入口就是死路。
+         */
+        const val TEXT_EMPTY_UNREADABLE_MORE = "历史内容无法读取\n（点这里继续查找更早的记录；新的复制仍会正常记录）"
     }
 }

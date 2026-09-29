@@ -31,10 +31,31 @@ class IndexCacheLifecycleTest {
     }
 
     @Test
-    fun 临时文件与非法后缀不参与清扫() {
+    fun 在用包的临时文件与非法后缀不参与清扫() {
         val existing = listOf("part2.xz.idx.tmp", "readme.txt", "part2.xz.idx")
         val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("part2.xz"))
         assertTrue("在用包的缓存与临时文件都不该被删: $stale", stale.isEmpty())
+    }
+
+    /**
+     * 源包已删除的**半截临时件**要一并回收（`BUG.md` L-20）。
+     *
+     * 「装过包 → 写索引时被杀 → 删包」会留下 `<包名>.idx.tmp`：既不在 `.idx` 判据里，
+     * 又没人再写同名临时件（包已不在 ⇒ 不会重建索引 ⇒ `renameTo` 自愈不了），于是永久占空间
+     * （单份可十几 MB）。只回收**死包**的临时件 —— 在用包的临时件可能正被写线程持有，
+     * 删了会让它改名失败、退回堆内。`base.` 前缀（源在 APK 内、不在包列表）同样交给另一条清扫。
+     */
+    @Test
+    fun 死包的半截临时件要回收() {
+        val existing = listOf(
+            "part2.xz.idx.tmp",            // 在用包 → 不动
+            "gone.xz.idx.tmp",             // 源包已删 → 回收
+            "gone2.xz.idx",                // 源包已删 → 回收
+            "base.1789655607000.idx.tmp",  // 基础缓存前缀 → 另一条清扫负责
+            "readme.txt",
+        )
+        val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("part2.xz"))
+        assertEquals(listOf("gone.xz.idx.tmp", "gone2.xz.idx"), stale)
     }
 
     @Test

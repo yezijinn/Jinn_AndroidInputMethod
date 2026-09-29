@@ -12,7 +12,9 @@ import org.junit.Test
  * 才继续翻页（`totalItemCount > 0`）⇒ 后面还能解密的历史**永久翻不到**（功能死路）。
  *
  * [ClipboardDb.fillFirstPage] 把「连续填页」做成纯函数（取页器注入），这里用假的取页器
- * 模拟坏行分布，钉住四条契约：跨页补齐 / 止损上限 / 不裁剪末页 / 游标不前进即退出。
+ * 模拟坏行分布，钉住七条契约：跨页补齐 / 止损上限 / 不裁剪末页 / 游标不前进即退出 /
+ * 止损可分辨（空结果且游标未到末尾，面板据此给「继续查找」入口，L-76）/ 续扫从既有游标起（L-76）/
+ * 空库与非法参数。
  */
 class ClipboardFillFirstPageTest {
 
@@ -121,5 +123,35 @@ class ClipboardFillFirstPageTest {
         assertEquals(0, ClipboardDb.fillFirstPage(total = 0, limit = 3, fetch = fetch).items.size)
         assertEquals(0, ClipboardDb.fillFirstPage(total = 10, limit = 0, fetch = fetch).items.size)
         assertTrue("不应调用取页器", calls.isEmpty())
+    }
+
+    @Test
+    fun 止损命中要能从返回值分辨出来() {
+        // 面板的空态文案能否给出「继续查找」入口，全靠这组特征（BUG.md L-76）：
+        // 扫到上限提前收工 = 空结果 + 游标还没到末尾；整表扫完仍为空 = 游标 == 总行数（没得找了）
+        val (capped, _) = fetcher(List(ClipboardDb.FIRST_PAGE_MAX_SCAN_PAGES * 3) { false })
+        val early = ClipboardDb.fillFirstPage(total = 99, limit = 3, fetch = capped)
+        assertTrue(early.items.isEmpty())
+        assertTrue("提前收工：游标必须小于总行数（否则面板不会给继续查找入口）", early.nextOffset < 99)
+
+        val (whole, _) = fetcher(List(6) { false })
+        val done = ClipboardDb.fillFirstPage(total = 6, limit = 3, fetch = whole)
+        assertTrue(done.items.isEmpty())
+        assertEquals("整表扫完：游标必须等于总行数", 6, done.nextOffset)
+    }
+
+    @Test
+    fun 续扫从既有游标开始不重扫前面() {
+        // 「继续查找更早的记录」= 从 nextPageOffset 接着扫；重扫前面既白解密又可能重复显示
+        val (fetch, calls) = fetcher(List(100) { true })
+        val page = ClipboardDb.fillFirstPage(total = 100, limit = 3, startOffset = 40, fetch = fetch)
+        assertEquals(listOf(40), calls)
+        assertEquals(listOf(40L, 41L, 42L), page.items.map { it.id })
+        assertEquals(43, page.nextOffset)
+
+        val (fetch2, calls2) = fetcher(List(100) { true })
+        val clamped = ClipboardDb.fillFirstPage(total = 100, limit = 3, startOffset = 500, fetch = fetch2)
+        assertTrue("起点越界必须钳到末尾且不调取页器", calls2.isEmpty())
+        assertEquals(100, clamped.nextOffset)
     }
 }

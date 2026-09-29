@@ -91,7 +91,7 @@ internal object UserFrequency {
         }
         runCatching {
             val now = today()
-            val parsed = parse(f.readText(), now)
+            val parsed = parse(f.readText(), now, PinyinEngine::toSimplified)
             entries.clear()
             for ((word, v) in parsed) entries[word] = Entry(v.first, v.second)
             Diagnostics.i(TAG, "用户词频: 已载入 ${parsed.size} 条（含按天衰减）")
@@ -121,7 +121,7 @@ internal object UserFrequency {
     private fun reload(f: File) {
         if (!f.isFile) return
         runCatching {
-            val parsed = parse(f.readText(), today())
+            val parsed = parse(f.readText(), today(), PinyinEngine::toSimplified)
             if (parsed.isEmpty()) return
             for ((word, v) in parsed) entries.putIfAbsent(word, Entry(v.first, v.second))
             Diagnostics.i(TAG, "用户词频: 开关打开后补载 ${parsed.size} 条")
@@ -335,7 +335,11 @@ internal object UserFrequency {
      * 解析文件文本并按天衰减（纯函数，便于单测）。
      * 容错：跳过表头/空行/字段数不对/权重非法/当天权重低于 [MIN_WEIGHT] 的行。
      */
-    internal fun parse(text: String, nowDay: Int): Map<String, Pair<Double, Int>> {
+    internal fun parse(
+        text: String,
+        nowDay: Int,
+        normalize: (String) -> String = { it },
+    ): Map<String, Pair<Double, Int>> {
         val out = HashMap<String, Pair<Double, Int>>()
         for (raw in text.split('\n')) {
             val line = raw.trim('\r', ' ', '\t')
@@ -343,6 +347,11 @@ internal object UserFrequency {
             val parts = line.split('\t')
             if (parts.size < 3) continue
             val word = parts[0]
+            // 键必须已是「规范化」形式（调用方传 `PinyinEngine::toSimplified`；BUG.md L-54）：
+            // 修复 toSimplified（2026-09-27）之前，繁体模式下学过的词存的是「头髮」这类折不回简体的键
+            // ⇒ 升级后它们不再被任何候选匹配（无害但占空间），顺手丢弃即为清洗路径。
+            // 默认参数是恒等函数：纯函数单测与「没有归一化器」的调用方行为不变。
+            if (normalize(word) != word) continue
             val weight = parts[1].toDoubleOrNull() ?: continue
             val day = parts[2].toIntOrNull() ?: continue
             // 非有限值必须挡掉：`"NaN".toDoubleOrNull()` 与 `"Infinity".toDoubleOrNull()` 都不是
@@ -355,7 +364,12 @@ internal object UserFrequency {
             if (decayed < MIN_WEIGHT) continue
             val prev = out[word]
             if (prev == null || decayed > prev.first) {
-                out[word] = Pair(decayed, maxOf(day, prev?.second ?: day))
+                // `day` 必须**跟到解析日**（BUG.md L-111）：这里的权重是「折算到今天之后的值」，
+                // 若把原 day 一起留下，文件里就成了「已折算的权重 + 原 day」——下次加载会按
+                // `原 day → 那时的今天` 再折算一遍，同一天的衰减被反复计息（实测 5 天多衰减 8%，
+                // 30 天残余只剩 0.10：学习成果静默流失，且落盘后不可逆）。
+                // 不变量：**权重 = 该 day 上的值**，两者必须一起推进（`remember` 也是这样做的）。
+                out[word] = Pair(decayed, nowDay)
             }
         }
         return out
@@ -381,8 +395,8 @@ internal object UserFrequency {
     )
 
     internal fun mergeForBackup(localText: String, incomingText: String, nowDay: Int): MergeResult {
-        val local = parse(localText, nowDay)
-        val incoming = parse(incomingText, nowDay)
+        val local = parse(localText, nowDay, PinyinEngine::toSimplified)
+        val incoming = parse(incomingText, nowDay, PinyinEngine::toSimplified)
         val merged = HashMap<String, Pair<Double, Int>>(local)
         for ((word, v) in incoming) {
             val prev = merged[word]
@@ -421,7 +435,7 @@ internal object UserFrequency {
                 return@synchronized false
             }
             entries.clear()
-            for ((word, e) in parse(mergedText, today())) entries[word] = Entry(e.first, e.second)
+            for ((word, e) in parse(mergedText, today(), PinyinEngine::toSimplified)) entries[word] = Entry(e.first, e.second)
             // 重填期间若有并发学习进入内存（version 变了，见 [remember] 的锁），就保持 dirty，
             // 让后续落盘把这份内存态（含那次学习）写回文件；无条件清掉等于把它永久跳过
             dirty = version != v
@@ -437,7 +451,7 @@ internal object UserFrequency {
     }
 
     /** 词频文件文本的行数统计（备份页预览用；坏行不计） */
-    internal fun countEntries(text: String): Int = parse(text, today()).size
+    internal fun countEntries(text: String): Int = parse(text, today(), PinyinEngine::toSimplified).size
 
     /** 原子写：临时文件 + 改名（与索引缓存同一套写法，避免半截文件被当成有效数据） */
     internal fun writeAtomically(target: File, text: String): Boolean = runCatching {

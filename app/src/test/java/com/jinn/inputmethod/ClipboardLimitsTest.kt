@@ -115,6 +115,18 @@ class ClipboardLimitsTest {
     }
 
     @Test
+    fun 导出分页窗口同样在预算内() {
+        // 配置备份导出剪贴板节的页宽（BUG.md L-102）：原值 200 条 ≈ 131MB，是当时**唯一**
+        // 没被窗口守卫覆盖的越界路径（搜索 / 面板分页 / 存量重算三条都有守卫，导出这条漏了）。
+        // 页宽即一次解密窗口：本测试只量这个窗口的峰值。
+        val peak = ClipboardStore.decryptWindowPeakBytes(ConfigBackupManager.CLIP_PAGE)
+        assertTrue(
+            "导出分页峰值 ${peak / 1024 / 1024}MB 超预算 ${ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES / 1024 / 1024}MB",
+            peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
+        )
+    }
+
+    @Test
     fun 存量重算分页窗口同样在预算内() {
         val peak = ClipboardStore.decryptWindowPeakBytes(RECLASSIFY_PAGE)
         assertTrue("存量重算峰值 $peak 超预算", peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES)
@@ -151,6 +163,43 @@ class ClipboardLimitsTest {
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(0))
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(-5))
         assertEquals(0L, ClipboardStore.decryptWindowPeakBytes(10, maxItemBytes = 0))
+    }
+
+    @Test
+    fun 填页路径的累计峰值不超过预算() {
+        // BUG.md L-91：`fillFirstPage` 的累计上限曾经只由**页数**决定（`limit - 1 + limit`）。
+        // 关键场景是「坏行把每页削薄」—— 一页 50 行只有 49 条可解密时，两页就累计 98 条；
+        // 若这 98 条都接近单条上限（256KB），峰值 = 98 × 256KB × 2.5 ≈ 61MB > 48MB 预算
+        // （页一旦凑满 50 条就停，所以整页健康的数据永远碰不到这个上限）。
+        // 现值按**实际明文**限预算（`FIRST_PAGE_MAX_PLAIN_BYTES`）⇒ 第二页就该被拒。
+        val big = "汉".repeat(256 * 1024 / 3)              // UTF-8 约 256KB，等于单条上限
+        fun pageOf(from: Int) = ClipboardDb.Page(
+            // 一页 50 行里 1 行是坏行 ⇒ 只返回 49 条（正好凑不满 limit，于是继续取下一页）
+            items = (0 until 49).map {
+                ClipboardDb.Item(
+                    id = (from + it).toLong(),
+                    content = big,
+                    contentType = "text",
+                    createdAt = (from + it).toLong(),
+                    sourcePackage = "com.example",
+                    sourceAppName = "示例",
+                    contentHash = "h${from + it}",
+                )
+            },
+            nextOffset = from + 50,
+        )
+
+        val got = ClipboardDb.fillFirstPage(total = 400, limit = 50) { off, _ -> pageOf(off) }
+
+        val plain = got.items.sumOf { ClipboardStore.utf8ByteSize(it.content) }
+        assertTrue(
+            "填页累计明文 ${plain / 1024 / 1024}MB 超明文预算 " +
+                "${ClipboardStore.decryptWindowPlainBudgetBytes() / 1024 / 1024}MB" +
+                "（峰值 = 明文 × 放大系数，越过明文预算就等于越过 ${ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES / 1024 / 1024}MB 预算）",
+            plain <= ClipboardStore.decryptWindowPlainBudgetBytes(),
+        )
+        assertEquals("首屏给出一页（49 条），第二页必须被预算拦下", 49, got.items.size)
+        assertEquals("游标停在被拒那页之前 ⇒ 剩下的行由分页 / 续扫照常取到", 50, got.nextOffset)
     }
 
     // ── 搜索驻留预算的算法 ──────────────────────────────────────────────────

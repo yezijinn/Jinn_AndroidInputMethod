@@ -771,7 +771,7 @@ class SettingsActivity : ComponentActivity() {
                     textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
                 }
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     /** 把临时诊断包写入用户选定的位置（SAF），写完即删临时文件 */
@@ -798,7 +798,7 @@ class SettingsActivity : ComponentActivity() {
                     textDiagDir.text = getString(R.string.settings_diag_export_fail, "写入失败")
                 }
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     private fun loadPrefs() {
@@ -1291,7 +1291,7 @@ class SettingsActivity : ComponentActivity() {
                     exportConfigLauncher.launch(outcome.file.name)
                 }
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     /**
@@ -1344,7 +1344,7 @@ class SettingsActivity : ComponentActivity() {
                     )
                 }
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     /**
@@ -1451,7 +1451,7 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     private fun showImportConfigDialog(zip: java.io.File, info: ConfigBackupManager.BackupInfo) {
@@ -1633,7 +1633,7 @@ class SettingsActivity : ComponentActivity() {
                 // 且重建后这次导入的结论无处可看
                 showTipDialog(dialog)
             }
-        }.start()
+        }.apply { isDaemon = true }.start()
     }
 
     /**

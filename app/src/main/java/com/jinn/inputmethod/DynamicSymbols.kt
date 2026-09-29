@@ -6,6 +6,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * 动态符号：输出「随当前时间（或设备）变化」的内容，供「变量」符号组使用。
@@ -25,19 +26,26 @@ object DynamicSymbols {
     /**
      * 键面短名 → 上屏内容的口径统一在这里，改格式只动这一个文件。
      *
-     * 下面这些 pattern 只含数字与中文字面量，不传 Locale 也不会被系统语言影响：java.time 的
-     * 数字与历法固定走 ASCII + 公历（`SimpleDateFormat` 才会按默认 Locale 取佛历 / 本地数字）。
+     * **必须显式锁 Locale**（BUG.md L-119）：`ofPattern(String)` 会带上
+     * `Locale.getDefault(Locale.Category.FORMAT)` 的 `DecimalStyle` —— 也就是「数字是不是 ASCII」
+     * 取决于**平台数据**（桌面 JVM 走 CLDR、Android 走 ICU，同一 locale 的口径并不保证一致）。
+     * 这些符号是**直接上屏给用户的正文**，不能把它的字节形态交给设备默认值决定 ⇒ 统一锁 [Locale.US]
+     * （数字恒为 ASCII、历法恒为公历），与本仓其它 12 处格式化（Diagnostics / ConfigBackup /
+     * UserFrequency / SettingsActivity …）口径一致。
+     *
+     * ⚠ 行为层单测**测不出**这一条：桌面 JVM 上实测 20 个 locale（含 `my-MM` 与 `-u-nu-arab/ext/
+     * beng/deva/thai`）无锁输出也全是 ASCII ⇒ 口径由 `DynamicSymbolsTest.必须显式锁 Locale`（源码钉）守住。
      */
-    private val FMT_DATE_CN = DateTimeFormatter.ofPattern("yyyy年M月d日")
-    private val FMT_DATE_COMPACT = DateTimeFormatter.ofPattern("yyyyMMdd")
-    private val FMT_DATE_DASHED = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    private val FMT_MONTH_CN = DateTimeFormatter.ofPattern("yyyy年M月")
-    private val FMT_TIME_ONLY_CN = DateTimeFormatter.ofPattern("HH点mm分ss秒")
-    private val FMT_TIME_ONLY = DateTimeFormatter.ofPattern("HH:mm:ss")
-    private val FMT_TIME_ONLY_COMPACT = DateTimeFormatter.ofPattern("HHmmss")
-    private val FMT_TIME_CN = DateTimeFormatter.ofPattern("yyyy年M月d日HH点mm分ss秒")
-    private val FMT_TIME_COMPACT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-    private val FMT_TIME_DASHED = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss")
+    private val FMT_DATE_CN = DateTimeFormatter.ofPattern("yyyy年M月d日", Locale.US)
+    private val FMT_DATE_COMPACT = DateTimeFormatter.ofPattern("yyyyMMdd", Locale.US)
+    private val FMT_DATE_DASHED = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+    private val FMT_MONTH_CN = DateTimeFormatter.ofPattern("yyyy年M月", Locale.US)
+    private val FMT_TIME_ONLY_CN = DateTimeFormatter.ofPattern("HH点mm分ss秒", Locale.US)
+    private val FMT_TIME_ONLY = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
+    private val FMT_TIME_ONLY_COMPACT = DateTimeFormatter.ofPattern("HHmmss", Locale.US)
+    private val FMT_TIME_CN = DateTimeFormatter.ofPattern("yyyy年M月d日HH点mm分ss秒", Locale.US)
+    private val FMT_TIME_COMPACT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss", Locale.US)
+    private val FMT_TIME_DASHED = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss", Locale.US)
 
     /** 财年起始月：4 月（需求样例 2026-09 为 FY2026-Q2，即 4 月起算）；换口径只改这里 */
     private const val FISCAL_START_MONTH = 4

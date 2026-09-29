@@ -350,4 +350,30 @@ class PinyinEngineTest {
             PinyinEngine.query(quanpin).candidates.contains("略"),
         )
     }
+
+    @Test
+    fun 词级反查表_恒等条目优先_其余首次写入者胜() {
+        // BUG.md L-59 / L-93：同一繁体形可能对应多个简体候选（词表 8,100 条里有 6 组固有歧义
+        // + 若干「变体 vs 规范词形」），而反查表只能留一个。旧实现是 `back[f] = s`（后写覆盖）：
+        // 恒等条目会被普通条目按顺序顶掉 ⇒ toSimplified(该词) 折到**别的词**上（学习键跑偏）。
+        val identityFirst = PinyinEngine.buildWordBackMap(
+            listOf("天台" to "天台", "天台" to "天臺"),
+        )
+        assertEquals("恒等条目必须留下来（它是「两模式写法相同」的唯一凭据）", "天台", identityFirst["天台"])
+
+        val identityEvenIfLater = PinyinEngine.buildWordBackMap(
+            listOf("天后" to "天後", "天后" to "天后"),
+        )
+        assertEquals("恒等条目即使后到，也要顶掉普通条目", "天后", identityEvenIfLater["天后"])
+
+        val firstWins = PinyinEngine.buildWordBackMap(
+            listOf("复盖" to "覆蓋", "覆盖" to "覆蓋"),
+        )
+        assertEquals("非恒等冲突按首次写入者胜（结果与表内顺序绑定，不被后写影响）", "复盖", firstWins["覆蓋"])
+
+        val dup = PinyinEngine.buildWordBackMap(
+            listOf("头发" to "頭髮", "头发" to "頭髮"),
+        )
+        assertEquals("重复行不改变胜者（旧实现靠「最后一行」定胜负）", "头发", dup["頭髮"])
+    }
 }

@@ -7,6 +7,7 @@ import org.junit.Before
 import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDateTime
+import java.io.File
 import java.time.ZoneId
 import java.util.Locale
 
@@ -203,5 +204,35 @@ class DynamicSymbolsTest {
         val labels = values.map { DynamicSymbols.labelOf(it) }
         assertEquals("键面短名重复: $labels", labels.size, labels.toSet().size)
         assertTrue("键面短名过长会挤在键面上: $labels", labels.all { it.length <= 4 })
+    }
+
+    /**
+     * 口径钉（BUG.md L-119）：`ofPattern` 必须显式带 `Locale`。
+     *
+     * 为什么是源码对拍而不是行为断言：`ofPattern(String)` 的数字系统取自
+     * `Locale.getDefault(Locale.Category.FORMAT)` 的 `DecimalStyle`，而这只由**平台数据**决定
+     * （桌面 JVM 走 CLDR、Android 走 ICU，同一 locale 不保证同口径）。桌面 JVM 上实测 20 个 locale
+     * —— 含 `my-MM` 与 `-u-nu-arab/ext/beng/deva/thai` —— **无锁输出也全是 ASCII** ⇒
+     * 行为断言在本地恒真（`输出数字与历法不随系统 Locale 变化` 那条就是这样：它能挡住改用
+     * `SimpleDateFormat` / `localizedBy()`，却挡不住「漏传 Locale」）⇒ 口径只能由这条对拍守住。
+     */
+    @Test
+    fun `必须显式锁 Locale`() {
+        val src = listOf(
+            File("src/main/java/com/jinn/inputmethod/DynamicSymbols.kt"),
+            File("app/src/main/java/com/jinn/inputmethod/DynamicSymbols.kt"),
+        ).firstOrNull { it.isFile }?.readText()
+            ?: error("找不到 DynamicSymbols.kt（当前工作目录=${File("").absolutePath}）")
+        // 剥整行注释（BUG.md L-116 的纪律）：KDoc 里提到 ofPattern 不该被算成「一处未锁」
+        val code = src.lines()
+            .filterNot {
+                val t = it.trimStart()
+                t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")
+            }
+            .joinToString("\n")
+        val sites = code.lines().filter { it.contains("ofPattern(") }
+        assertTrue("至少要有一处 ofPattern（改实现后请同步本用例）", sites.isNotEmpty())
+        val unlocked = sites.filterNot { it.contains("Locale.") }
+        assertTrue("这些 ofPattern 没锁 Locale（数字形态会交给设备默认值）: $unlocked", unlocked.isEmpty())
     }
 }
