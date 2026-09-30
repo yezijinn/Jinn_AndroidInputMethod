@@ -78,6 +78,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onCopy()
         /** 功能面板：收起键盘（隐藏面板，非停止服务） */
         fun onHideKeyboard()
+        /** 功能面板：翻译光标前的最后一句，译文追加在原文下一行（总开关打开时才出现该键） */
+        fun onTranslate()
     }
 
     /**
@@ -1415,9 +1417,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 数字条」，而复原三元组 `passwordPadRestore` 只存在**当前视图实例**上 —— 重建后新视图默认
      * 不在密码模式，且**回不去**（用户正输密码时键盘变回普通键盘，状态无从恢复）。
      * 定时换肤（`MODE_SCHEDULED` 的 `themeTick`）走的正是这条判据 ⇒ 漏掉它就会在打字期间静默退出。
+     *
+     * **在途翻译也要算**（2026-09-30 审查发现）：`translateInFlight` 同样是视图字段，重建后恒为
+     * false ⇒ 按钮渲染成**可点的「翻译」**，而 IME 侧的 in-flight 闸门还关着，点击被静默吞掉
+     * （用户视角＝按钮没反应）。重建前问这里，翻译期间就不会换肤重建。
      */
     val hasActiveOverlay: Boolean
-        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible || passwordPad
+        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible ||
+            passwordPad || translateInFlight
 
     /**
      * 视图即将被换掉：让两个面板中止仍在跑的后台任务。
@@ -2590,13 +2597,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 功能面板（无候选时展示）──────────────────────────────
 
     /**
-     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（共 6 个按钮）：
+     * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（顺序固定，恒以「收起」结尾）：
      *  - 剪贴板：打开安全剪贴板历史页
      *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
      *  - 全选：选中输入框全部文本
      *  - 复制：复制选中文本到系统剪贴板
      *  - 粘贴：粘贴剪贴板最新内容
-     *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）
+     *  - 翻译：把光标前最后一句译成目标语言（**仅总开关打开时出现**，固定位于「收起」左侧）
+     *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）—— **恒为最右端**（用户 2026-09-30 定）
      *
      * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
      * 「输入方案」下拉里改（全拼 + 7 套双拼，全局生效），面板不再承担方案切换。
@@ -2666,6 +2674,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             hint = "文本",
             onClick = { listener?.onPasteClipboard() },
         ))
+        // 第 7 键「翻译」：只由总开关控制（用户 2026-09-30 定），关掉后这个键不存在、面板回到 6 键。
+        // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[翻译]/收起，**「收起」恒为最右端**
+        // （用户 2026-09-30 追加要求，两个键的先后不可颠倒）。
+        // 本帧只读一次 translate_enabled（与 refreshCandidateBar 的「同键只读一遍」约定一致）。
+        if (Prefs(context).translateEnabled) {
+            translateButtonBox = buildFunctionButton(
+                label = if (translateInFlight) LABEL_TRANSLATING else LABEL_TRANSLATE,
+                hint = "网络",
+                onClick = { listener?.onTranslate() },
+            ).also { applyTranslatingVisuals(it, translateInFlight) }
+            viewCandidateList.addView(translateButtonBox)
+        } else {
+            translateButtonBox = null
+        }
         viewCandidateList.addView(buildFunctionButton(
             label = "收起",
             hint = "键盘",
@@ -2673,7 +2695,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         Diagnostics.v(
             TAG,
-            "功能面板(6 按钮): 历史/方向/全选/复制/粘贴/收起（当前方案=${scheme.displayName}）",
+            "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
+                (if (translateButtonBox != null) "/翻译" else "") + "/收起" +
+                "（当前方案=${scheme.displayName}）",
         )
     }
 
@@ -2693,7 +2717,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
             setPadding(dp(8), dp(4), dp(8), dp(4))
-            // key_bg 同款（10dp 圆角），但填充色带面 alpha，这 6 个按钮占满候选栏
+            // key_bg 同款（10dp 圆角），但填充色带面 alpha，功能面板按钮占满候选栏
             background = xmlKeyBackground()
             // 高度取「内容」与复用块最小高度的较大者（见 REUSE_BLOCK_MIN_DP 的说明）
             minimumHeight = dp(REUSE_BLOCK_MIN_DP)
@@ -2701,7 +2725,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             setOnClickListener { onClick() }
         }
-        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 个按钮各占 1/6）
+        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 或 7 个按钮，翻译键按总开关增减）
         val lp = LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
         ).apply {
@@ -2750,6 +2774,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 翻译状态切换（IME 侧发起请求 / 收尾时调用）：就地改按钮文案与可用性，不重建面板。
+     *
+     * 「翻译中」期间按钮置灰 + 不可点，从 UI 层挡住连点；请求代际校验是 IME 侧的第二道闸门。
+     */
+    fun setTranslating(on: Boolean) {
+        translateInFlight = on
+        applyTranslatingVisuals(translateButtonBox, on)
+    }
+
+    /**
+     * 把「翻译中」的视觉状态刷到按钮上（文案 / 可点 / 透明度）。
+     *
+     * 抽出共用：[renderFunctionPanel] 重建按钮与 [setTranslating] 就地切换必须**同款** ——
+     * 否则面板一重建就会出现「文案写着翻译中、按钮却全亮可点」的缝，点下去被 IME 侧
+     * 的 in-flight 闸门静默吞掉（用户视角＝按钮没反应）。
+     */
+    private fun applyTranslatingVisuals(box: View?, on: Boolean) {
+        val group = box as? ViewGroup ?: return
+        val labelView = group.getChildAt(0) as? TextView ?: return
+        labelView.text = if (on) LABEL_TRANSLATING else LABEL_TRANSLATE
+        group.isEnabled = !on
+        group.alpha = if (on) 0.5f else 1f
+    }
+
+    /**
      * 方向面板内 9 个键按当前皮肤与透明度重刷「面 + 字色」。
      *
      * 面板视图懒加载且复用（[ensureDirectionPanel] 只在首次构建），键面与字色都在构建期取当时的
@@ -2790,6 +2839,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 不必重建整个功能面板。
      */
     private var directionButtonBox: View? = null
+
+    /**
+     * 候选栏「翻译」按钮的引用（总开关关闭时该键不存在，引用为 null）。
+     *
+     * 翻译是在途网络请求：按钮要能就地变「翻译中」并置灰（防连点），不重建整个功能面板 ——
+     * 与 [refreshDirectionButton] 同款，只改两个 TextView。
+     */
+    private var translateButtonBox: View? = null
+
+    /** 是否有在途翻译请求（本视图的显示态；请求代际校验在 IME 侧，见 JinnIme.startTranslate） */
+    private var translateInFlight = false
 
     /** 中心拖选开关按钮（●/◉）与当前状态 */
     private var centerSelectionKey: TextView? = null
@@ -3166,6 +3226,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /** 功能面板「翻译」键的两种文案（在途请求时切换并置灰防连点） */
+        const val LABEL_TRANSLATE = "翻译"
+        const val LABEL_TRANSLATING = "翻译中"
 
         /**
          * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ，

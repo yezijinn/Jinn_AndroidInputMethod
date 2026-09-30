@@ -90,6 +90,23 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     /** ≥15 位纯数字串（银行卡 / 证件号一类的量级） */
     private val LONG_DIGITS_RE = Regex("(?<!\\d)\\d{15,}(?!\\d)")
 
+    /**
+     * 常见 API Key / 令牌形态（2026-09-30 第二轮审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
+     * `Bearer <token>`。
+     *
+     * 这是**兜底**：凭据本身严禁进日志（各调用点自律 + 失败响应体只记结构化摘要）。但只要有人
+     * 写下一行 `"… $url"`、或把异常 message 全文记下来，这一层就能挡住「Key 进落盘日志 →
+     * 随导出诊断包外发」；整段替换、不保留片段（Key 的任意片段都有价值）。
+     *
+     * ⚠ 刻意**不含**「32 位纯 hex」形态：它与哈希 / 摘要同形，误伤面大（`DiagnosticsSanitizeTest`
+     * 就钉着一条「十六进制串不受影响」），而凭据进日志的前提本身已被多处自律挡住 —— 精确优先。
+     */
+    private val API_KEY_RES = listOf(
+        Regex("\\bsk-[A-Za-z0-9_\\-]{12,}"),
+        Regex("[A-Za-z0-9\\-]{16,}:fx\\b"),
+        Regex("(?i)\\bBearer\\s+\\S{12,}"),
+    )
+
     @Volatile
     private var logDir: File? = null
 
@@ -271,18 +288,32 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         var s = PHONE_RE.replace(body) { m -> m.value.replaceRange(3, 7, MASK) }
         s = EMAIL_RE.replace(s) { m -> MASK + "@" + m.groupValues[1] }
         s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
+        // 凭据形态兜底（见 API_KEY_RES 的说明）
+        for (re in API_KEY_RES) s = re.replace(s, MASK)
         return s
     }
 
     /**
-     * 落盘正文护栏：脱敏 + 超长截断（纯函数，便于单测）。只作用于文件，logcat 用原文。
+     * 落盘正文护栏：脱敏 + **剔除换行/控制字符** + 超长截断（纯函数，便于单测）。
+     * 只作用于文件，logcat 用原文。
+     *
+     * 为什么剔控制字符（2026-09-30 第二轮审查）：日志行以换行分界，而日志里会出现用户可控串
+     * （Base URL、host、导入包里的设备名…）—— 带一个换行就能伪造出完整的假日志行（含时间戳与
+     * 级别），排障时会被彻底带偏。
      */
     internal fun sanitizeForFile(body: String): String {
-        val s = redactSensitive(body)
-        return if (s.length <= MAX_FILE_BODY_CHARS) {
-            s
+        val flattened = redactSensitive(body).map { c ->
+            when {
+                c == '\n' -> '⏎'
+                c == '\r' -> '␍'
+                c.isISOControl() -> ' '
+                else -> c
+            }
+        }.joinToString("")
+        return if (flattened.length <= MAX_FILE_BODY_CHARS) {
+            flattened
         } else {
-            s.take(MAX_FILE_BODY_CHARS) + "…(截断，共 ${s.length} 字)"
+            flattened.take(MAX_FILE_BODY_CHARS) + "…(截断，共 ${flattened.length} 字)"
         }
     }
 

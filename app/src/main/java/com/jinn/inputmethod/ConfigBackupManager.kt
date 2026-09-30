@@ -879,6 +879,15 @@ internal object ConfigBackupManager {
                 prefsApplied = 0
                 failedStage = "设置项写盘失败"
             }
+            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30 第二轮审查）：
+            // 只 flush 主 prefs 时，导入改了剪贴板开关/上限、用户又选「稍后重启」，进程在 apply 队列
+            // 排空前被回收 ⇒ 剪贴板设置静默回退，而弹窗已经把剪贴板侧的项数算进「设置 N 项」了。
+            if (failedStage == null && appliedClip > 0 && !clipPrefs.flush()) {
+                Diagnostics.w(TAG, "导入: 剪贴板设置落盘失败，计入忽略")
+                prefsIgnored += appliedClip
+                prefsApplied -= appliedClip
+                failedStage = "剪贴板设置写盘失败"
+            }
             // 模糊音掩码在引擎里另有一份运行期副本（Prefs + `PinyinEngine.fuzzyMask`）：
             // 导入改了它就必须同步一次，否则设置页显示与候选行为不一致，直到 IME 进程重建
             PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
@@ -952,10 +961,11 @@ internal object ConfigBackupManager {
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）
                 val net = db.count() - before
                 clipAdded = net.coerceAtLeast(0)
-                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉 + 本机总量反而减少的部分
-                val trimmedAway = (planned.size - insertFailed) - clipAdded
-                clipSkipped = dedupeSkipped + insertFailed +
-                    (if (trimmedAway > 0) trimmedAway else 0) + (if (net < 0) -net else 0)
+                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥（2026-09-30 第二轮审查）：
+                // `net < 0` 表示本机自己的旧条目也被多裁掉了更多，那部分**不能**再算进「刚插入又被裁掉」
+                // —— 否则跳过数会超过包内条数，界面出现「跳过 30 条」而包里只有 10 条。
+                val trimmedAway = if (net < 0) 0 else (planned.size - insertFailed) - clipAdded
+                clipSkipped = dedupeSkipped + insertFailed + (if (trimmedAway > 0) trimmedAway else 0)
                 true
             }.getOrDefault(false)
             if (!ok) {

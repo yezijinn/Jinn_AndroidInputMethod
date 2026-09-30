@@ -226,16 +226,47 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     // ── 写入 ──────────────────────────────────────────────
 
     /**
+     * 本进程内已确认「该哈希对应的行密文可解」的备忘（BUG.md L-199）。
+     *
+     * 命中 `content_hash` 是重复复制**最常见**的路径，而为发现极少数坏行让每次都整行解密
+     * （AES-GCM + base64，单条最大 256KB）不划算：验证过一次就不再验。
+     * 只记「验证通过」这一个结论 —— 没验证过的行仍会真解一次，坏行的自愈机会不因备忘而消失
+     * （BUG.md L-173）。写路径（自愈 / 插入）成功后登记，读路径解不开时撤销（见 [readItem]），
+     * 备份恢复整批作废（见 [insertRestored]）。
+     *
+     * 并发：写路径在对象监视器内，[readItem] 可能跑在多个读线程上 ⇒ 用并发集合。
+     * 它只是缓存，竞态的最坏结果是多解一次密。
+     */
+    private val verifiedReadable: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 登记「可解」；超过上限整体清空（有界，避免长会话无限增长） */
+    private fun rememberReadable(hash: String) {
+        if (hash.isEmpty()) return
+        if (verifiedReadable.size >= VERIFIED_MEMO_MAX) verifiedReadable.clear()
+        verifiedReadable.add(hash)
+    }
+
+    /** 撤销备忘（读路径发现解不开 / 备份恢复批处理） */
+    private fun forgetReadable(hash: String?) {
+        if (!hash.isNullOrEmpty()) verifiedReadable.remove(hash)
+    }
+
+    /**
      * 入库去重写入（原子，@Synchronized 串行）：同一内容（content_hash 相同）已存在时
      * 只更新必要元数据并重新置顶（created_at=now），绝不产生重复记录；
      * 收藏标记是用户主动状态，重复复制时不覆盖。
      *
      * **坏行自愈**：命中哈希但那一行的密文已经解不开（Keystore 密钥变更 / 单行损坏）时，
      * 用本次的新内容重加密覆盖该行 —— 否则它会永远不可见、又继续占条数与字节配额，
-     * 而重复复制本是唯一的恢复机会（BUG.md L-173）。
+     * 而重复复制本是唯一的恢复机会（BUG.md L-173）。试解本身**有界**：本进程验证过一次的行
+     * 不再重复解密（见 [verifiedReadable]，BUG.md L-199）；没验证过的行仍会真解一次。
      *
      * 加密放在**判重之后**：去重只需要明文哈希，重复内容不必白做一次 AES-GCM + base64（BUG.md L-182）。
-     * 不存在则插入，超上限裁剪最旧非收藏。返回条目 id，失败返回 -1。
+     * 不存在则插入，超上限裁剪最旧非收藏。
+     *
+     * @return 条目 id（已存在的行或新插入的行）；内容为空 / 加密失败返回 -1。
+     *   命中哈希但那一行已经不在了（外部改库、库文件被换）时**落到插入路径重建**，
+     *   绝不把不存在的 id 当成功返回（BUG.md L-200）。
      */
     @Synchronized
     fun upsert(
@@ -251,30 +282,33 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val hash = stableHash(content)
         val existingId = findIdByHash(hash)
         if (existingId != null) {
-            if (!decryptsById(existingId)) {
+            // 试解只在「本进程还没验证过这一行」时做（BUG.md L-199）：命中哈希是重复复制
+            // 最常见的路径，为发现极少数坏行让每次都整行解密不划算。没验证过的行仍会真解一次，
+            // 所以坏行的自愈机会照旧（BUG.md L-173）。
+            val unreadable = hash !in verifiedReadable && !decryptsById(existingId)
+            val values = ContentValues()
+            if (unreadable) {
+                // 坏行自愈：用本次的新内容重加密覆盖，行 id 不变（BUG.md L-173）
                 val reEncrypted = ClipboardCrypto.encrypt(content) ?: return -1
-                val fix = ContentValues().apply {
-                    put("encrypted_content", reEncrypted)
-                    put("content_type", contentType)
-                    put("created_at", System.currentTimeMillis())
-                    put("source_package", sourcePackage)
-                    put("source_app_name", sourceAppName)
-                    put("category", category)
+                values.put("encrypted_content", reEncrypted)
+            }
+            // 可解与否都要更新元数据 + 置顶；收藏标记是用户主动状态，不覆盖
+            values.put("content_type", contentType)
+            values.put("created_at", System.currentTimeMillis())
+            values.put("source_package", sourcePackage)
+            values.put("source_app_name", sourceAppName)
+            values.put("category", category)
+            val rows = writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(existingId.toString()))
+            if (rows > 0) {
+                if (unreadable) {
+                    Diagnostics.w(TAG, "重加密自愈: id=$existingId（原密文解不开，已用新内容覆盖）")
                 }
-                writableDatabase.update(TABLE_ITEMS, fix, "id = ?", arrayOf(existingId.toString()))
-                Diagnostics.w(TAG, "重加密自愈: id=$existingId（原密文解不开，已用新内容覆盖）")
+                rememberReadable(hash)
                 return existingId
             }
-            // 已存在且可解：只更新必要元数据 + 置顶，保留收藏标记
-            val values = ContentValues().apply {
-                put("content_type", contentType)
-                put("created_at", System.currentTimeMillis())
-                put("source_package", sourcePackage)
-                put("source_app_name", sourceAppName)
-                put("category", category)
-            }
-            writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(existingId.toString()))
-            return existingId
+            // 命中哈希却一行未改 ⇒ 那一行已经不在库里。这时**不能**再 return existingId：
+            // 它是幽灵 id —— 调用方只把 -1 当失败，会以为「已入库」而库里什么都没有（BUG.md L-200）。
+            Diagnostics.w(TAG, "命中哈希但行已消失: id=$existingId，改走插入")
         }
         // 到这一步才加密：上面的判重分支不需要密文（BUG.md L-182）
         val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
@@ -289,14 +323,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             put("is_favorite", if (isFavorite) 1 else 0)
         }
         val id = writableDatabase.insert(TABLE_ITEMS, null, values)
-        if (id > 0) trimTo(maxItems)
+        if (id > 0) {
+            // 刚写入的行当然可解：登记备忘，下一次同内容复制不必再试解（BUG.md L-199）
+            rememberReadable(hash)
+            trimTo(maxItems)
+        }
         return id
     }
 
     /**
      * 该行的密文现在还能解开吗（坏行自愈的前置判据，BUG.md L-173）。
      *
-     * 解不开或行已不在都返回 false：前者要重加密覆盖，后者的哈希行是脏数据（交给插入路径）。
+     * 解不开或行已不在都返回 false，两种原因由**调用方**区分：解不开 ⇒ 用新内容重加密覆盖（自愈）；
+     * 行已不在 ⇒ `update` 影响 0 行，落到插入路径重建，**不返回那一行的 id**（幽灵 id，BUG.md L-200）。
      */
     private fun decryptsById(id: Long): Boolean {
         val c = readableDatabase.rawQuery(
@@ -334,6 +373,27 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             "is_favorite = 0",
             null,
         )
+
+    /**
+     * 按**明文内容**删除历史条目（「凭据不留痕」，2026-09-30 用户要求增强防泄露）。
+     *
+     * 背景：用户从密码管理器 / 云控制台复制 API Key 的那一刻，本应用的剪贴板监听已经把那条内容
+     * 采集入库 —— 库里虽是密文，但**剪贴板面板里明文可见**，还会随配置备份整体导出。
+     * 凭据设置页在保存后会调用本方法把它从历史里抹掉。
+     *
+     * 口径：哈希命中即删（与入库去重同一个 [stableHash]）；**收藏条目不删**（用户明确标记要留的）；
+     * 内容为空返回 0。调用方应放到后台线程（有 DB 写）。
+     *
+     * @return 删除条数（0 = 历史里没有这条）
+     */
+    fun deleteByPlaintext(text: String): Int {
+        if (text.isEmpty()) return 0
+        return writableDatabase.delete(
+            TABLE_ITEMS,
+            "content_hash = ? AND is_favorite = 0",
+            arrayOf(stableHash(text)),
+        )
+    }
 
     /** 更新收藏状态 */
     fun setFavorite(id: Long, favorite: Boolean): Boolean {
@@ -398,17 +458,31 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             null
         ).use { c -> while (c.moveToNext()) rows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), c.getInt(2) != 0)) }
         val ids = overflowIdsForByteBudget(rows, maxTotalBytes)
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) {
+            // 可删的只剩收藏（收藏计入总量但不参与淘汰）⇒ 库会**长期停在预算之上**。
+            // 这种情况原先一条日志都没有：出问题时既看不到现象也看不到原因（2026-09-30 审查发现）
+            Diagnostics.w(
+                TAG,
+                "按体积裁剪停手: 可删条目已尽（收藏不计淘汰），当前 ${total / 1024 / 1024}MB " +
+                    "仍超预算 ${maxTotalBytes / 1024 / 1024}MB",
+            )
+            return
+        }
         deleteByIds(ids)
         Diagnostics.i(TAG, "按体积裁剪: 删除 ${ids.size} 条非收藏记录（预算 ${maxTotalBytes / 1024 / 1024}MB）")
     }
 
-    /** 批量删除（单事务） */
+    /** 批量删除（单事务）；**只删非收藏**（`is_favorite = 0`） */
     private fun deleteByIds(ids: List<Long>) {
         if (ids.isEmpty()) return
         writableDatabase.beginTransaction()
         try {
-            for (id in ids) writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
+            // 条件里再判一次收藏（2026-09-30 第二轮审查）：候选集是按快照算的，用户在这几毫秒里把某条
+            // 标成收藏后，原写法仍会把它删掉 —— 而「收藏不参与裁剪」是本模块的不变量。少删一条无害
+            // （下次入库会重新评估），删错一条则不可恢复。
+            for (id in ids) {
+                writableDatabase.delete(TABLE_ITEMS, "id = ? AND is_favorite = 0", arrayOf(id.toString()))
+            }
             writableDatabase.setTransactionSuccessful()
         } finally {
             writableDatabase.endTransaction()
@@ -553,18 +627,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         var changed = 0
         var lastId = 0L
         while (true) {
-            val rows = ArrayList<Pair<Long, String>>(RECLASSIFY_PAGE)
+            val rows = ArrayList<Triple<Long, String, String>>(RECLASSIFY_PAGE)
             readableDatabase.rawQuery(
-                "SELECT id, encrypted_content FROM $TABLE_ITEMS WHERE id > ? ORDER BY id " +
+                "SELECT id, encrypted_content, content_hash FROM $TABLE_ITEMS WHERE id > ? ORDER BY id " +
                     "LIMIT $RECLASSIFY_PAGE",
                 arrayOf(lastId.toString()),
-            ).use { c -> while (c.moveToNext()) rows.add(c.getLong(0) to c.getString(1)) }
+            ).use { c -> while (c.moveToNext()) rows.add(Triple(c.getLong(0), c.getString(1), c.getString(2))) }
             if (rows.isEmpty()) return changed
             lastId = rows.last().first
             writableDatabase.beginTransaction()
             try {
-                for ((id, encrypted) in rows) {
-                    val text = ClipboardCrypto.decrypt(encrypted) ?: continue
+                for ((id, encrypted, hash) in rows) {
+                    val text = ClipboardCrypto.decrypt(encrypted)
+                    if (text == null) {
+                        // 与 readItem 同口径：解不开就撤销备忘（BUG.md L-199）
+                        forgetReadable(hash)
+                        continue
+                    }
                     val label = ClipboardClassifier.classify(text)
                     val values = ContentValues().apply { put("category", label) }
                     if (writableDatabase.update(
@@ -634,7 +713,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             put("category", category)
             put("is_favorite", if (favorite) 1 else 0)
         }
-        return writableDatabase.insert(TABLE_ITEMS, null, values)
+        val id = writableDatabase.insert(TABLE_ITEMS, null, values)
+        // 恢复进来的密文可能来自别的设备 / 别的密钥（解不开是常态），而备忘里可能还留着
+        // 「恢复前这个哈希可解」的结论 ⇒ 整体作废，让下一次命中重新试解（BUG.md L-173 / L-199）
+        if (id > 0) verifiedReadable.clear()
+        return id
     }
 
     // ── 内部 ──────────────────────────────────────────────
@@ -642,10 +725,15 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     private fun readItem(c: android.database.Cursor): Item? {
         val id = c.getLong(0)
         val encrypted = c.getString(1)
+        val hash = c.getString(6)
         val content = ClipboardCrypto.decrypt(encrypted) ?: run {
+            // 解不开就撤销备忘：否则下一次同内容复制会因「已验证」跳过试解，白丢一次自愈机会
+            // （BUG.md L-173 与 L-199 的边界）
+            forgetReadable(hash)
             Diagnostics.w(TAG, "解密失败，跳过 id=$id")
             return null
         }
+        rememberReadable(hash)
         return Item(
             id = id,
             content = content,
@@ -653,7 +741,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             createdAt = c.getLong(3),
             sourcePackage = c.getString(4),
             sourceAppName = c.getString(5),
-            contentHash = c.getString(6),
+            contentHash = hash,
             category = c.getString(7),
             isFavorite = c.getInt(8) != 0,
         )
@@ -672,6 +760,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          */
         private const val DB_VERSION = 6
         private const val TABLE_ITEMS = "clipboard_items"
+
+        /** [verifiedReadable] 的上限：超过就整体清空（备忘只是加速，不是正确性依赖） */
+        private const val VERIFIED_MEMO_MAX = 512
         private const val TAG = "ClipboardDb"
 
         /**

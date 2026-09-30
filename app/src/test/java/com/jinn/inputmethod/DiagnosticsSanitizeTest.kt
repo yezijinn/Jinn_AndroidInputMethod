@@ -38,6 +38,25 @@ class DiagnosticsSanitizeTest {
     }
 
     @Test
+    fun `凭据形态被兜底脱敏（sk-、_fx 后缀、Bearer）`() {
+        // 2026-09-30 第二轮审查：失败响应体、异常 message 一旦被写进日志，这层是最后的兜底
+        assertTrue(Diagnostics.redactSensitive("key=sk-proj-Ab12cd34EF56gh78").contains("****"))
+        assertTrue(Diagnostics.redactSensitive("k=abcdefghijklmnopqrst:fx").contains("****"))
+        assertTrue(Diagnostics.redactSensitive("Authorization: Bearer abcdef1234567890").contains("****"))
+        // 32 位纯 hex 与哈希同形：刻意不脱敏（误伤面大，见 API_KEY_RES 的说明）
+        val hex = "aaaaaaaaaaaaaaaa0123456789abcdef"
+        assertEquals("hash=$hex", Diagnostics.redactSensitive("hash=$hex"))
+    }
+
+    @Test
+    fun `落盘时换行与控制字符被替换（防伪造日志行）`() {
+        // 日志行以换行分界：用户可控串（Base URL / host / 包内设备名）带换行就能伪造完整假日志行
+        val out = Diagnostics.sanitizeForFile("a\nb\r\nc\u0000d")
+        assertFalse("不能含裸换行：$out", out.contains('\n'))
+        assertTrue("换行应变成可见占位：$out", out.contains("⏎"))
+    }
+
+    @Test
     fun `超长正文截断并标注原长`() {
         val out = Diagnostics.sanitizeForFile("x".repeat(600))
         assertTrue("保留前 512 字", out.startsWith("x".repeat(512)))

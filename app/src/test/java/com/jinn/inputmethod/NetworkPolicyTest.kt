@@ -88,6 +88,62 @@ class NetworkPolicyTest {
         assertTrue("只准 base-config 一处放行明文，实测 $allowCount 处", allowCount == 1)
     }
 
+    /**
+     * 翻译的**常量端点**必须进禁明文名单（2026-09-30 第二轮审查补）。
+     *
+     * 代码侧有 `TranslationClient` 的 `isHttps` 判据，但平台层此前对这几条链路是**放行明文**的
+     * —— 判据一旦被绕开或误删，网络层不会兜底。这里从各 Translator 源码**提取** ENDPOINT 的 host
+     * 再对照名单：新增一家 Provider 而忘了登记时直接变红。
+     *
+     * （用户自填的 OpenAI 兼容域名无法静态枚举，仍靠代码判据 —— 见配置文件的注释。）
+     */
+    @Test
+    fun 翻译常量端点必须进禁明文名单() {
+        // ① 端点 host 清单（与各 Translator 的 ENDPOINT 常量一一对应；新增一家 Provider 时同步这里与 XML）
+        val hosts = listOf(
+            "mt.cn-hangzhou.aliyuncs.com",           // AliyunTranslator.ENDPOINT
+            "api.cognitive.microsofttranslator.com", // AzureTranslator.ENDPOINT
+            "fanyi-api.baidu.com",                   // BaiduTranslator / BaiduLlmTranslator.ENDPOINT
+            "api.deepl.com",                         // DeepLTranslator.PRO_ENDPOINT
+            "api-free.deepl.com",                    // DeepLTranslator.FREE_ENDPOINT
+        )
+        // ② 反向对拍：每个 host 必须真的写在某个 Translator 源码里（清单过时/写错 → 变红提示同步，
+        //    不依赖正则匹配 URL 的引号形态，比"提取"更稳）
+        val sources = listOf(
+            "AliyunTranslator.kt", "AzureTranslator.kt", "BaiduTranslator.kt",
+            "BaiduLlmTranslator.kt", "DeepLTranslator.kt",
+        ).map { name ->
+            TestSources.codeOf(
+                sourceOf(
+                    "src/main/java/com/jinn/inputmethod/$name",
+                    "app/src/main/java/com/jinn/inputmethod/$name",
+                ),
+            )
+        }
+        for (host in hosts) {
+            assertTrue(
+                "$host 应出现在某个 Translator 的端点常量里（本清单过时请同步）",
+                sources.any { "https://$host" in it },
+            )
+        }
+        // ③ 配置层：清单里每个 host 都必须在「显式禁明文」块内
+        val xml = TestSources.codeOf(
+            sourceOf(
+                "src/main/res/xml/network_security_config.xml",
+                "app/src/main/res/xml/network_security_config.xml",
+            ),
+        )
+        val start = xml.indexOf("cleartextTrafficPermitted=\"false\"")
+        assertTrue("配置里必须存在「显式禁明文」的 domain-config", start > 0)
+        val denyBlock = xml.substring(start, xml.indexOf("</domain-config>", start))
+        for (host in hosts) {
+            assertTrue(
+                "翻译端点 $host 必须显式禁明文（代码判据之外再加一层平台兜底）",
+                Regex(">\\s*" + Regex.escape(host) + "\\s*<").containsMatchIn(denyBlock),
+            )
+        }
+    }
+
     @Test
     fun 词库下载客户端必须只准TLS且不跟随SSL重定向() {
         val src = TestSources.codeOf(

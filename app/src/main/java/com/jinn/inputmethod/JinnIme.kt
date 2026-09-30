@@ -162,6 +162,14 @@ class JinnIme : InputMethodService() {
     /** 剪贴板面板打开标记：仅供诊断日志（视图侧的真实状态在 PinyinKeyboardView 内，重建后不恢复） */
     private var clipboardPanelOpen = false
 
+    // ── 在线翻译（BYOK，2026-09-30 起）─────────────────────────
+
+    /** 翻译请求代际：新会话 / 新请求都递增，回调只认最新一代（旧结果直接丢弃） */
+    private var translateGeneration = 0
+
+    /** 是否有在途翻译请求（防连点；键盘侧「翻译」按钮同步置灰） */
+    private var translateInFlight = false
+
     /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private var focusRequest: AudioFocusRequest? = null
@@ -577,9 +585,12 @@ class JinnIme : InputMethodService() {
      * 行移动 / 行首行末会算出无关位置，甚至把光标挪到「窗口长度」那个绝对下标上。
      */
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
-        val extracted = connection.getExtractedText(
-            android.view.inputmethod.ExtractedTextRequest(), 0
-        ) ?: return null
+        // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 第二轮审查）：这里是编辑键
+        // （全选 / 复制 / 拖选）与「译文提交前的选区检查」的公共入口，异常未捕获会崩 IME 进程。
+        // 拿不到就当「无选区」，各调用方按既有 null 语义处理。
+        val extracted = runCatching {
+            connection.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
+        }.getOrNull() ?: return null
         if (extracted.selectionStart < 0 || extracted.selectionEnd < 0) return null
         val start = extracted.selectionStart.coerceAtLeast(0)
         val end = extracted.selectionEnd.coerceAtLeast(start)
@@ -878,6 +889,11 @@ class JinnIme : InputMethodService() {
                     runCatching { requestHideSelf(0) }
                         .onFailure { Diagnostics.w(TAG, "收起键盘失败: ${it.message}") }
                 }
+                override fun onTranslate() {
+                    if (rejectedBySearchPanel("翻译")) return
+                    Diagnostics.i(TAG, "功能面板: 翻译")
+                    startTranslate()
+                }
             }
             configure(
                 scheme = prefs.effectiveShuangpinScheme,
@@ -1167,6 +1183,11 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacks(backspaceRunnable)
         ui.removeCallbacks(autoStopRunnable)
         ui.removeCallbacks(startHoldRunnable)
+        // 会话边界：在途翻译作废（2026-09-30 审查发现）。onFinishInput 早于下一个输入框的
+        // onStartInputView，而译文回调走 `ui.post` —— 不在**这里**作废的话，结果可能在
+        // 「新框已开始、onStartInputView 尚未跑到」的窗口里，经回调闭包里的**旧 connection**
+        // 提交进用户已经离开的那个输入框。
+        cancelTranslate()
     }
 
     /**
@@ -1225,6 +1246,10 @@ class JinnIme : InputMethodService() {
         // 不重放则本会话余下时间在密码框里选候选会被学进词频；顺序必须是「先换视图、再重放」
         // （setInputView 同步更新 pinyinKeyboard，重放才落在新视图上）。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        // 换视图后重放「翻译中」（2026-09-30 审查发现）：新视图的 translateInFlight 默认 false，
+        // 不重放会让按钮渲染成**可点的「翻译」**，而 IME 侧闸门还关着 —— 点击被静默吞掉。
+        // 与上面同款：必须在 setInputView 之后重放，才落在新视图上。
+        pinyinKeyboard?.setTranslating(translateInFlight)
     }
 
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
@@ -1340,6 +1365,8 @@ class JinnIme : InputMethodService() {
         // 同时记在 IME 侧：视图重建（换肤 / 符号布局变更）会换掉整个视图，标记是视图字段 ⇒ 重建后要重放（L-96）
         suppressLearningForSession = InputFieldPrivacy.suppressLearning(info?.inputType, info?.imeOptions ?: 0)
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        // 会话边界：上一个输入框的在途翻译作废（结果回来时代际不符，直接丢弃）
+        cancelTranslate()
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
@@ -1420,6 +1447,8 @@ class JinnIme : InputMethodService() {
         // 剪贴板面板同理（BUG.md L-110）：键盘收起后再弹出，它会带着上一个输入框的历史条目
         // 一起回来，误点即把历史内容粘进新字段。上面那行是同族的既有处理，这条原先漏了。
         pinyinKeyboard?.hideClipboardPanel()
+        // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
+        cancelTranslate()
         ui.removeCallbacks(backspaceRunnable)
         ui.removeCallbacks(themeTick) // 键盘已收起：到点检查交给下次弹出时的 scheduleThemeTick
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
@@ -1458,6 +1487,12 @@ class JinnIme : InputMethodService() {
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         ui.removeCallbacksAndMessages(null)
+        // 在途翻译作废：服务销毁后即使回调到达，也没有视图可改（代际已不符）
+        cancelTranslate()
+        // 视图引用断开（与下面 screenOffReceiver 同款口径）：视图持 listener 强引用本服务、
+        // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30 审查发现）。
+        // 顺序必须在 cancelTranslate 之后 —— 它内部要调 pinyinKeyboard.setTranslating。
+        pinyinKeyboard = null
         unregisterNetwork()
         // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
         // 这里不置 null：后续 refreshConfig 仍可能重新 start（stop 幂等）。
@@ -1810,6 +1845,288 @@ class JinnIme : InputMethodService() {
     private fun stripTrailingPunc(text: String): String =
         text.trimEnd().trimEnd(*TRAILING_PUNC)
 
+    // ── 在线翻译（BYOK）────────────────────────────────────
+
+    /**
+     * 翻译光标前的最后一句，译文追加在原文下一行（原文一个字不动）。
+     *
+     * 取值只读、不复制：主路径 `getTextBeforeCursor`，宿主不支持时兜底 `getExtractedText`；
+     * 全程不碰系统剪贴板、不改输入框内容、不动光标。失败路径一个字都不写。
+     */
+    private fun startTranslate() {
+        if (translateInFlight) return
+        // 总开关是「关掉即不可能发请求」的闸门（2026-09-30 审查发现）：功能面板只按它渲染按钮，
+        // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
+        if (!prefs.translateEnabled) return
+        // 敏感输入框（密码 / NO_SUGGESTIONS / 不要个性化学习）不翻译：不能把口令发到云端。
+        // 判据在**点击这一刻**按当前 EditorInfo 现跑（2026-09-30 第二轮审查）：会话缓存的
+        // `suppressLearningForSession` 只在 onStartInputView 刷新 —— 宿主在键盘已显示时把焦点
+        // 从普通框切到密码框，可能不重发该回调，缓存会停留在 false。
+        // 同时必须 fail-safe：拿不到 EditorInfo 时 InputFieldPrivacy 返回 false（对本地词频是合理
+        // 取舍，对「把正文发公网」是反向取舍）⇒ 信息缺失一律拒绝。
+        val info = currentInputEditorInfo
+        if (info == null ||
+            InputFieldPrivacy.suppressLearning(info.inputType, info.imeOptions) ||
+            suppressLearningForSession
+        ) {
+            Diagnostics.w(TAG, "翻译: 输入框敏感或 EditorInfo 缺失，拒绝")
+            toast(TEXT_TRANSLATE_PRIVATE_FIELD)
+            return
+        }
+        val provider = prefs.translationProvider()
+        if (provider == null) {
+            Diagnostics.w(TAG, "翻译: 未配置凭据")
+            toast(TranslationError.NOT_CONFIGURED.message)
+            return
+        }
+        val connection = currentInputConnection ?: return
+        // 原文范围与字节上限都按**当前 Provider**取（每家独立配置）
+        val id = TranslationProviderId.of(prefs.translateProvider)
+        val scope = TranslationScope.of(prefs.translateScopeOf(id))
+        val maxBytes = prefs.translateMaxBytesOf(id)
+        // 读取长度：一个字符至少占 1 字节 ⇒ 读 maxBytes 个字符一定覆盖得住字节上限内的原文；
+        // 再与 Binder 安全上限取小（超大文档整篇回包会撞宿主的事务上限）
+        val limit = minOf(maxBytes, TranslationText.MAX_READ_CHARS)
+        // 读取时刻的**原始**文本（快照）与截取结果分开保存：截取会 trim + 按字节截断，
+        // 拿它当快照判据会让「原文本身带首尾空白 / 超限被截」这类**原样未变**的情形
+        // 被误判成「输入已变化」（2026-09-30 修过同类缺陷：用截取结果当判据）。
+        val before = readTextBeforeCursor(connection, limit)
+        // 只有「整行 / 整篇」两种范围需要光标后的文本：其余范围不读，省一次 Binder 往返
+        val needAfter = scope == TranslationScope.LINE_FULL || scope == TranslationScope.ALL
+        val after = if (needAfter) readTextAfterCursor(connection, limit) else ""
+        val slice = TranslationText.extract(before, after, scope, maxBytes)
+        // 用 hasVisibleContent 而不是 isBlank：零宽字符（ZWSP / BOM / NBSP）不算内容 —— 否则
+        // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 第二轮审查）
+        if (!slice.text.hasVisibleContent()) {
+            toast(TEXT_TRANSLATE_EMPTY)
+            return
+        }
+        val target = TranslationLanguage.of(prefs.translateTarget)
+        translateInFlight = true
+        val generation = ++translateGeneration
+        pinyinKeyboard?.setTranslating(true)
+        // 只记 provider / 语言 / 范围 / 字数与截断：待译正文与凭据都不进日志
+        Diagnostics.i(
+            TAG,
+            "翻译: ${provider.javaClass.simpleName} → ${target.name} 范围=${scope.id} " +
+                "共${slice.text.length}字" + (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
+        )
+        val snapshot = TranslateSnapshot(before, after, limit, needAfter, slice.appendOffset)
+        runCatching {
+            TranslationClient.translate(provider, slice.text, target) { outcome ->
+                // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection
+                ui.post {
+                    if (generation != translateGeneration) {
+                        Diagnostics.w(TAG, "翻译: 丢弃过期结果 gen=$generation 当前=$translateGeneration")
+                        return@post
+                    }
+                    translateInFlight = false
+                    pinyinKeyboard?.setTranslating(false)
+                    when (outcome) {
+                        is TranslationOutcome.Ok -> appendTranslation(connection, snapshot, outcome.text)
+                        is TranslationOutcome.Fail -> {
+                            Diagnostics.w(TAG, "翻译失败: ${outcome.error}")
+                            toast(outcome.error.message)
+                        }
+                    }
+                }
+            }
+        }.onFailure {
+            // 请求装配/入队本身抛异常（client 初始化失败、URL 非法……）绝不能把 in-flight 留在
+            // true：按钮会永久置灰、再没有复位路径（2026-09-30 审查发现）。
+            Diagnostics.w(TAG, "翻译: 请求发起失败 ${it.javaClass.simpleName}")
+            translateInFlight = false
+            pinyinKeyboard?.setTranslating(false)
+            toast(TranslationError.SERVER.message)
+        }
+    }
+
+    /**
+     * 会话边界（切换输入框 / 收起键盘 / 服务销毁）：作废在途翻译。
+     *
+     * 不取消网络请求本身（OkHttp 的 call 让它在后台自然结束），回调按代际丢弃 ——
+     * 旧请求的译文绝不会落到用户已经切换后的新输入内容上。
+     */
+    private fun cancelTranslate() {
+        translateGeneration++
+        if (translateInFlight) {
+            translateInFlight = false
+            pinyinKeyboard?.setTranslating(false)
+        }
+    }
+
+    /**
+     * 一次翻译请求的输入快照：提交译文前用它校验「原始文本一个字符都没变」。
+     *
+     * 保存的是**读取时刻的原始读数**（未 trim、未按字节截断）与当时的读取长度、追加偏移：
+     * 截取结果只用于上传，校验必须逐字比对原始文本 —— 2026-09-30 修过「拿截取结果当判据」
+     * 造成的误判（原文本身带首尾空白时永远提示「输入已变化」）。
+     */
+    private class TranslateSnapshot(
+        val before: String,
+        val after: String,
+        val limit: Int,
+        /** 该范围模式是否需要光标后文本（整行 / 整篇两种需要） */
+        val needAfter: Boolean,
+        /** 译文追加偏移：0 = 光标处；N = 光标后第 N 个单元（原文区间末尾） */
+        val appendOffset: Int,
+    )
+
+    /**
+     * 提交译文：前导换行 + 译文（原文一个字不动）。
+     *
+     * 提交前四道闸：有选区不提交（`commitText` 在选区上是替换语义）、输入快照逐字校验、
+     * 追加位置必须确认移到位、译文超单条上限拒绝。
+     */
+    private fun appendTranslation(
+        connection: android.view.inputmethod.InputConnection,
+        snapshot: TranslateSnapshot,
+        translated: String,
+    ) {
+        // ① 有选区不提交：`commitText` 在宿主存在选区时是**替换**语义，会把用户选中的文本删掉。
+        //    请求期间用户长按选择 / 拖选都可能造成这个状态，宁可丢弃（可重试）也不破坏既有内容。
+        val range = currentSelectionRange(connection)
+        if (range != null && range.start != range.end) {
+            Diagnostics.w(TAG, "翻译: 存在选区，丢弃结果以免覆盖选中文本")
+            toast(TEXT_TRANSLATE_STALE)
+            return
+        }
+        // ② 输入快照校验：与请求时刻的**原始文本逐字相等**（用户续打 / 挪光标 / 宿主改动都会失配）。
+        //
+        // ⚠ 判据必须是原始读数：截取结果被 trim 与字节截断加工过，拿它比对会把
+        // 「原样未变」误判成「输入已变化」（2026-09-30 修过同类缺陷）。
+        if (readTextBeforeCursor(connection, snapshot.limit) != snapshot.before) {
+            Diagnostics.w(TAG, "翻译: 输入已变化，丢弃旧结果（len=${translated.length}）")
+            toast(TEXT_TRANSLATE_STALE)
+            return
+        }
+        // 光标后的文本同样要比：整行 / 整篇模式的原文含着它，请求期间改了下一行也要丢弃
+        if (snapshot.needAfter && readTextAfterCursor(connection, snapshot.limit) != snapshot.after) {
+            Diagnostics.w(TAG, "翻译: 光标后文本已变化，丢弃旧结果（len=${translated.length}）")
+            toast(TEXT_TRANSLATE_STALE)
+            return
+        }
+        // ③ 追加位置：整行 / 整篇模式要把光标移到原文区间末尾，译文才落在整段之后。
+        //    移不到位一律放弃 —— 否则译文插在光标处（原文中间），把用户的内容割开。
+        if (snapshot.appendOffset > 0 && !moveCursorByOffset(connection, snapshot.appendOffset)) {
+            Diagnostics.w(TAG, "翻译: 追加位置未能确认，放弃提交（避免插进原文中间）")
+            toast(TEXT_TRANSLATE_STALE)
+            return
+        }
+        val submit = TranslationText.appendText(charBeforeCursor(connection), translated)
+        // ④ 译文是**服务端返回的内容**（不可信输入），必须有与粘贴链路同款的单条上限闸 +
+        //    runCatching：裸提交超长文本会撞 Binder 事务上限抛 TransactionTooLargeException，
+        //    未捕获时直接崩掉整个 IME 进程（本项目 2026-09-16 已在同类链路上实测过）。
+        if (ClipboardStore.exceedsItemLimit(submit)) {
+            Diagnostics.w(TAG, "翻译: 译文超单条上限，拒绝提交 len=${submit.length}")
+            toast(TEXT_TRANSLATE_TOO_LONG)
+            return
+        }
+        // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）
+        Diagnostics.i(TAG, "翻译: 已追加译文 共${translated.length}字")
+        runCatching { connection.commitText(submit, 1) }
+            .onFailure { Diagnostics.w(TAG, "翻译: 提交失败 ${it.javaClass.simpleName}") }
+    }
+
+    /**
+     * 把光标右移 [offset] 个单元（整行 / 整篇模式要把译文追加到原文区间末尾）。
+     *
+     * 返回是否**确认**移到位：`setSelection` 是异步提交，宿主可能忽略或压根不支持；移不到就
+     * 不能提交 —— 否则译文会落在光标处的原文中间。二审失败即返回 false，调用方放弃本次提交。
+     */
+    private fun moveCursorByOffset(
+        connection: android.view.inputmethod.InputConnection,
+        offset: Int,
+    ): Boolean {
+        val range = currentSelectionRange(connection) ?: return false
+        if (range.start != range.end) return false
+        val to = range.end + offset
+        if (to > range.startOffset + range.textLength) {
+            Diagnostics.w(
+                TAG,
+                "翻译: 追加位置越出宿主文本窗口（$to > ${range.startOffset + range.textLength}）",
+            )
+            return false
+        }
+        applySelection(connection, to, to)
+        val now = currentSelectionRange(connection)
+        val moved = now != null && now.start == to && now.end == to
+        if (!moved) Diagnostics.w(TAG, "翻译: 宿主未接受光标移动（目标 $to）")
+        return moved
+    }
+
+    /** 取「插入点前面那一个字符」：决定译文要不要补前导换行（取不到返回 null，按需补处理） */
+    private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? =
+        runCatching { connection.getTextBeforeCursor(1, 0)?.lastOrNull() }.getOrNull()
+
+    /**
+     * 只读地取「光标前」的文本（**不复制、不写系统剪贴板**）。
+     *
+     * 主路径是 `getTextBeforeCursor`（IME 框架的只读查询，不改内容、不触发宿主回调）；
+     * 宿主不支持时（返回 null）兜底 `getExtractedText` + 窗口下标换算，
+     * 与 [currentSelectionRange] 同一套坐标口径。两次都取不到时返回空串。
+     */
+    private fun readTextBeforeCursor(
+        connection: android.view.inputmethod.InputConnection,
+        limit: Int,
+    ): String {
+        // 整段包 runCatching（2026-09-30 第二轮审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
+        // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
+        // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
+        // 读不到就返回空串，让上层按「没有可翻译的文字」处理 —— 与「写」侧 commitText 同口径。
+        return runCatching {
+            connection.getTextBeforeCursor(limit, 0)?.let { return@runCatching it.toString() }
+            // hintMaxChars **不能留 0**：兜底路径拿到的会是整个窗口，不限长就让大文档整篇走 Binder
+            // 回包 —— 正是上面那条 TransactionTooLargeException 的触发源。限制到读取上限即可
+            // （取哪一段由 TranslationText.extract 按范围模式决定，多读的会被字节上限截掉）。
+            val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
+            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching ""
+            val text = extracted.text?.toString().orEmpty()
+            // 与 [currentSelectionRange]（:591）同一口径：负下标 = 宿主没给出选区，按「取不到」处理。
+            // 不能 `coerceAtLeast(0)` 成 0 —— 那会被读成「光标在文首」，用户看到的是
+            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持，提示指向错方向（第一轮审查发现）。
+            if (extracted.selectionEnd < 0) return@runCatching ""
+            val endRel = TextSelection.toWindowOffset(
+                extracted.selectionEnd,
+                extracted.startOffset.coerceAtLeast(0),
+                text.length,
+            ) ?: return@runCatching ""
+            text.substring(0, endRel.coerceIn(0, text.length))
+        }.getOrElse {
+            Diagnostics.w(TAG, "翻译: 读取光标前文本失败 ${it.javaClass.simpleName}")
+            ""
+        }
+    }
+
+    /**
+     * 只读地取「光标后」的文本（「整行 / 整篇」两种原文范围需要）。
+     *
+     * 与 [readTextBeforeCursor] 完全同款：主路径 `getTextAfterCursor`，宿主不支持时兜底
+     * `getExtractedText` + 窗口下标换算，两次都取不到时返回空串（调用方按「光标后没有内容」
+     * 处理 —— 整行模式就只翻光标前那半行，不报错）。
+     */
+    private fun readTextAfterCursor(
+        connection: android.view.inputmethod.InputConnection,
+        limit: Int,
+    ): String {
+        return runCatching {
+            connection.getTextAfterCursor(limit, 0)?.let { return@runCatching it.toString() }
+            val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
+            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching ""
+            val text = extracted.text?.toString().orEmpty()
+            if (extracted.selectionEnd < 0) return@runCatching ""
+            val startRel = TextSelection.toWindowOffset(
+                extracted.selectionEnd,
+                extracted.startOffset.coerceAtLeast(0),
+                text.length,
+            ) ?: return@runCatching ""
+            text.substring(startRel.coerceIn(0, text.length))
+        }.getOrElse {
+            Diagnostics.w(TAG, "翻译: 读取光标后文本失败 ${it.javaClass.simpleName}")
+            ""
+        }
+    }
+
     // ── 编辑键 ────────────────────────────────────────────────
 
     private fun commit(text: String) {
@@ -1976,6 +2293,16 @@ class JinnIme : InputMethodService() {
 
     companion object {
         const val TAG = "JinnIme"
+
+        /** 在线翻译（BYOK）的本机提示文案（文案在代码里下发，与文件内既有 Toast 写法一致） */
+        const val TEXT_TRANSLATE_EMPTY = "光标前没有可翻译的文字"
+        const val TEXT_TRANSLATE_PRIVATE_FIELD = "当前输入框不支持翻译"
+
+        /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
+        const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"
+
+        /** 译文超单条上限（与粘贴链路同一道闸，见 ClipboardStore.MAX_ITEM_BYTES） */
+        const val TEXT_TRANSLATE_TOO_LONG = "译文过大，未追加"
 
         /**
          * 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信）。

@@ -76,6 +76,11 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
     private lateinit var switchVoiceInput: Switch
+
+    /** 在线翻译（BYOK）：总开关 + 入口按钮 + 状态摘要（文案全部代码下发） */
+    private lateinit var switchTranslate: Switch
+    private lateinit var btnTranslateSettings: Button
+    private lateinit var textTranslateState: TextView
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
 
@@ -290,6 +295,17 @@ class SettingsActivity : ComponentActivity() {
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
+        // 在线翻译（BYOK）：开关 + 入口 + 状态摘要，文案全部代码下发（strings.xml 默认禁改）
+        switchTranslate = findViewById(R.id.switch_translate)
+        switchTranslate.text = TEXT_TRANSLATE_SWITCH
+        btnTranslateSettings = findViewById(R.id.btn_translate_settings)
+        btnTranslateSettings.text = TEXT_TRANSLATE_SETTINGS
+        btnTranslateSettings.setOnClickListener {
+            Diagnostics.i(TAG, "设置页: 打开翻译设置")
+            runCatching { startActivity(Intent(this, TranslationSettingsActivity::class.java)) }
+                .onFailure { Diagnostics.w(TAG, "打开翻译设置失败: ${it.message}") }
+        }
+        textTranslateState = findViewById(R.id.text_translate_state)
         switchKeyHint = findViewById(R.id.switch_key_hint)
         // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认禁改，这里下发
         switchKeyHint.text = "键盘内显韵母"
@@ -622,6 +638,8 @@ class SettingsActivity : ComponentActivity() {
         if (::textThemeDesc.isInitialized) refreshThemeDesc()
         // 麦克风状态同理：从系统设置授权后返回，页面不能还显示「未授权」
         if (::textMicState.isInitialized) refreshMicState()
+        // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
+        if (::textTranslateState.isInitialized) refreshTranslateState()
     }
 
     /**
@@ -809,6 +827,7 @@ class SettingsActivity : ComponentActivity() {
         checkComposing.isChecked = prefs.useComposing
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
         bindVoiceInputSwitch()
+        bindTranslateCard()
 
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
@@ -1062,6 +1081,38 @@ class SettingsActivity : ComponentActivity() {
         val visibility = if (voiceEnabled) View.VISIBLE else View.GONE
         cardMicPermission.visibility = visibility
         cardVoiceServer.visibility = visibility
+    }
+
+    /**
+     * 翻译卡片：开关写 [Prefs.translateEnabled]（键盘功能面板据此决定是否显示「翻译」键，
+     * 收起键盘再弹出即生效，不需要重启）；状态摘要只说「已配置 / 未配置」，
+     * 不回显任何凭据字符（凭据本身在翻译设置页里可见可改）。
+     */
+    private fun bindTranslateCard() {
+        switchTranslate.isChecked = prefs.translateEnabled
+        switchTranslate.setOnCheckedChangeListener { _, checked ->
+            prefs.translateEnabled = checked
+            Diagnostics.i(TAG, "翻译功能: $checked")
+        }
+        refreshTranslateState()
+    }
+
+    private fun refreshTranslateState() {
+        val provider = TranslationProviderId.of(prefs.translateProvider)
+        val ready = prefs.translationProvider() != null
+        // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，30+ 种），
+        // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
+        // 本页的下拉、摘要却报另一套语言，指向与实际行为不符）
+        val targetLabel = if (provider == TranslationProviderId.OPENAI) {
+            prefs.openAiTargetLanguage
+        } else {
+            TranslationLanguage.of(prefs.translateTarget).label
+        }
+        textTranslateState.text = if (ready) {
+            "已配置：${provider.label} · 目标 $targetLabel"
+        } else {
+            "未配置：点「翻译设置」填写 ${provider.label} 凭据"
+        }
     }
 
     private fun applyServerLock() {
@@ -1524,6 +1575,12 @@ class SettingsActivity : ComponentActivity() {
                 .append(info.freqCount).append(" 条、剪贴板 ")
                 .append(info.clipCount).append(" 条、词库 ")
                 .append(info.dictNames.size).append(" 个")
+            // 端点类设置也在「设置项」里（语音服务地址、OpenAI 兼容 Base URL / Chat Path 等）：
+            // 「覆盖还原」会用包里的值覆盖本机，而翻译请求会把**本机已有的凭据与光标前的正文**发往
+            // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 第二轮审查）。
+            // 这里明说，不让它藏在「设置 N 项」这个计数后面。
+            append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址、")
+            append("OpenAI 兼容 Base URL 等）会覆盖本机 —— 请确认备份来源可信。")
             if (info.tooNew) append("\n\n该备份由更新版本的 App 生成，本机版本无法导入。")
             if (info.hasOversized) {
                 append("\n\n包内的 ").append(info.oversizedSections.joinToString("、"))
@@ -1847,6 +1904,10 @@ class SettingsActivity : ComponentActivity() {
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
+
+        // 在线翻译（BYOK）：卡片文案（页面内的标题 / 说明 / 按钮文案在 TranslationSettingsActivity 里下发）
+        const val TEXT_TRANSLATE_SWITCH = "启用翻译"
+        const val TEXT_TRANSLATE_SETTINGS = "翻译设置"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
             "（也可能是文件超过 256MB 上限）"

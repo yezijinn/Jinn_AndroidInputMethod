@@ -415,6 +415,376 @@ class Prefs(context: Context) {
      */
     val wsUrl: String get() = "ws://$host:$port"
 
+    // ── 在线翻译（BYOK：用户自带 API Key，2026-09-30 起） ─────────────────
+
+    /**
+     * 翻译总开关（默认关闭）。
+     *
+     * 关闭时功能面板连「翻译」键都不出现（见 `PinyinKeyboardView.renderFunctionPanel`），
+     * 也就不会有任何误触发起的网络请求；开启后仍需在「翻译设置」页填好凭据才可用。
+     */
+    var translateEnabled: Boolean
+        get() = sp.getBoolean(KEY_TRANSLATE_ENABLED, false)
+        set(value) = sp.edit { putBoolean(KEY_TRANSLATE_ENABLED, value) }
+
+    /**
+     * 翻译服务提供方 id（见 [TranslationProviderId]）。
+     *
+     * 键**缺失**（用户从未动过服务方下拉）时按「已填的凭据」推导，而不是直接回落当前默认 ——
+     * 这是 2026-09-30 第二轮审查发现的升级回归：第一版默认是 Azure，而 `providerTouched` 闸门只在
+     * 用户动过下拉时才写键，于是「填了 Azure Key、从没碰过下拉」的老用户升级后会落到新默认（阿里云），
+     * 凭据为空 ⇒ 翻译直接不可用、提示还指向「填写阿里云凭据」；更糟的是导出会把推导结果写进备份，
+     * 换机后**永远回不去**（与 rareTier3「升级丢档 → 备份固化」同一失效模式）。
+     *
+     * 只做「读取时推导」、不写盘：IME、设置页摘要、备份导出三条路径读到同一个值，且无副作用；
+     * 用户一碰下拉就会写入显式选择，此后按显式值走。未知取值仍由 [TranslationProviderId.of] 回落。
+     */
+    var translateProvider: String
+        get() {
+            val stored = sp.getString(KEY_TRANSLATE_PROVIDER, null)
+            if (stored != null) return TranslationProviderId.of(stored).id
+            return TranslationProviderId.entries.firstOrNull { hasCredentialFor(it) }?.id
+                ?: TranslationProviderId.DEFAULT.id
+        }
+        set(value) = sp.edit { putString(KEY_TRANSLATE_PROVIDER, TranslationProviderId.of(value).id) }
+
+    /** 该家是否已有可用凭据（仅供上面「键缺失时推导」使用；判据与 [TranslationClient.providerOf] 对齐） */
+    private fun hasCredentialFor(id: TranslationProviderId): Boolean = when (id) {
+        TranslationProviderId.ALIYUN -> aliyunAccessKeyId.isNotBlank() && aliyunAccessKeySecret.isNotBlank()
+        TranslationProviderId.AZURE -> azureApiKey.isNotBlank()
+        TranslationProviderId.BAIDU -> baiduAppId.isNotBlank() && baiduSecretKey.isNotBlank()
+        TranslationProviderId.BAIDU_LLM -> baiduLlmAppId.isNotBlank() && baiduLlmApiKey.isNotBlank()
+        TranslationProviderId.DEEPL -> deeplApiKey.isNotBlank()
+        TranslationProviderId.OPENAI -> openAiApiKey.isNotBlank() && openAiModel.isNotBlank()
+    }
+
+    // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（用户 2026-09-30 定）──
+
+    /**
+     * 「哪些内容算翻译原文」的模式（见 [TranslationScope]），每家 Provider 各一份。
+     *
+     * 存 id 字符串并走 [TranslationScope.of] 归一：脏备份（未知 id）不会带进运行期。
+     */
+    internal fun translateScopeOf(id: TranslationProviderId): String =
+        TranslationScope.of(sp.getString(scopeKeyOf(id), null)).id
+
+    internal fun setTranslateScopeOf(id: TranslationProviderId, value: String) {
+        sp.edit { putString(scopeKeyOf(id), TranslationScope.of(value).id) }
+    }
+
+    /**
+     * 单次翻译的字节上限（UTF-8 字节；超出时从头截断），每家 Provider 各一份。
+     *
+     * 键缺失时取 [TranslationProviderId.defaultMaxBytes]（已查到的官方值）；读写两侧都钳到
+     * [TranslationText.MIN_MAX_BYTES]..[TranslationText.MAX_MAX_BYTES] —— 导入的是一份外部文件，
+     * `0` 或 `Int.MAX_VALUE` 这类值不钳住就会进运行期（前者让原文恒为空、后者绕过读取上限）。
+     */
+    internal fun translateMaxBytesOf(id: TranslationProviderId): Int =
+        sp.getInt(maxBytesKeyOf(id), id.defaultMaxBytes)
+            .coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)
+
+    internal fun setTranslateMaxBytesOf(id: TranslationProviderId, value: Int) {
+        sp.edit {
+            putInt(
+                maxBytesKeyOf(id),
+                value.coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES),
+            )
+        }
+    }
+
+    /**
+     * 范围模式的存储键。
+     *
+     * 用 `when` 而不是拼字符串（`"translate_scope_" + id.id`）：导出 / 导入白名单要显式引用
+     * `KEY_*` 常量，[PrefsBackupCoverageTest] 的源码对拍才看得见这些键 —— 拼出来的键名
+     * 会让「新增键必须进两份白名单」的守卫静默失效。
+     */
+    private fun scopeKeyOf(id: TranslationProviderId): String = when (id) {
+        TranslationProviderId.ALIYUN -> KEY_TRANSLATE_SCOPE_ALIYUN
+        TranslationProviderId.AZURE -> KEY_TRANSLATE_SCOPE_AZURE
+        TranslationProviderId.BAIDU -> KEY_TRANSLATE_SCOPE_BAIDU
+        TranslationProviderId.BAIDU_LLM -> KEY_TRANSLATE_SCOPE_BAIDU_LLM
+        TranslationProviderId.DEEPL -> KEY_TRANSLATE_SCOPE_DEEPL
+        TranslationProviderId.OPENAI -> KEY_TRANSLATE_SCOPE_OPENAI
+    }
+
+    /** 字节上限的存储键（同上，不拼字符串） */
+    private fun maxBytesKeyOf(id: TranslationProviderId): String = when (id) {
+        TranslationProviderId.ALIYUN -> KEY_TRANSLATE_MAX_BYTES_ALIYUN
+        TranslationProviderId.AZURE -> KEY_TRANSLATE_MAX_BYTES_AZURE
+        TranslationProviderId.BAIDU -> KEY_TRANSLATE_MAX_BYTES_BAIDU
+        TranslationProviderId.BAIDU_LLM -> KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM
+        TranslationProviderId.DEEPL -> KEY_TRANSLATE_MAX_BYTES_DEEPL
+        TranslationProviderId.OPENAI -> KEY_TRANSLATE_MAX_BYTES_OPENAI
+    }
+
+    // ── 凭据的加密落盘（2026-09-30 起，见 CredentialCrypto）────────────
+
+    private val TAG = "Prefs"
+
+    /**
+     * 凭据解密的进程内缓存：`存储键 → 明文`。
+     *
+     * 为什么必须缓存：Keystore 解密要走 binder/TEE（5~20ms/次），而凭据读取分布在「组装 Provider」
+     * 「设置页摘要」「多配置判空」等多处、且可能在主线程 —— 每次都解密会明显卡顿。
+     *
+     * 它**不额外增加**内存暴露面：`SharedPreferences` 本身就把整个 XML 解析进内存 Map，
+     * 加密之前那些明文本来就常驻在进程里，这里只是换了个持有者。（Java `String` 不可擦除，
+     * 不做「用完清零」这类样子货。）
+     */
+    private val credentialCache = HashMap<String, String>()
+
+    /**
+     * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
+     *
+     * 三种情况：
+     *  1. 空值 ⇒ 空串（未配置）；
+     *  2. **旧版明文** ⇒ 返回明文并把加密结果写回（迁移）；
+     *  3. 密文但解不开（换机 / Keystore 失效 / 系统重置）⇒ **返回空串 + W 日志**，等价「未配置」。
+     *
+     * 第 3 条是关键：**绝不能把密文原文当成 Key 用** —— 那会发一次莫名失败的请求，
+     * 而用户看到的是「凭据已配置却认证失败」，比「未配置」难查得多。
+     */
+    private fun readCredential(key: String): String {
+        credentialCache[key]?.let { return it }
+        val raw = sp.getString(key, "").orEmpty()
+        if (raw.isEmpty()) return ""
+        if (!CredentialCrypto.looksEncrypted(raw)) {
+            Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
+            credentialCache[key] = raw
+            writeCredential(key, raw)
+            return raw
+        }
+        val plain = CredentialCrypto.decrypt(raw)
+        if (plain == null) {
+            Diagnostics.w(TAG, "凭据解密失败（换机 / Keystore 失效），按未配置处理，需重新填写")
+            return ""
+        }
+        credentialCache[key] = plain
+        return plain
+    }
+
+    /**
+     * 写凭据：清洗（剥不可见字符）→ 加密 → 落盘；**加密失败绝不回退成明文**（安全优先）。
+     *
+     * 失败时（Keystore 不可用）只留在内存缓存里：本次会话可用、重启后需重填，并记 W 日志 ——
+     * 用户能从诊断包看出「凭据为什么没了」，而不是无声消失。
+     */
+    private fun writeCredential(key: String, value: String) {
+        val cleaned = value.cleanCredential()
+        if (cleaned.isEmpty()) {
+            credentialCache.remove(key)
+            sp.edit { remove(key) }
+            return
+        }
+        val encrypted = CredentialCrypto.encrypt(cleaned)
+        if (encrypted == null) {
+            Diagnostics.w(TAG, "凭据加密失败，未落盘（重启后需重新填写）")
+            credentialCache[key] = cleaned
+            sp.edit { remove(key) }
+            return
+        }
+        credentialCache[key] = cleaned
+        sp.edit { putString(key, encrypted) }
+    }
+
+    /** 目标语言（见 [TranslationLanguage]）；未知取值回落英文 */
+    var translateTarget: String
+        get() = TranslationLanguage.of(sp.getString(KEY_TRANSLATE_TARGET, null)).name
+        set(value) = sp.edit { putString(KEY_TRANSLATE_TARGET, TranslationLanguage.of(value).name) }
+
+    /**
+     * Azure Translator 订阅密钥；作者不提供、不内置任何共享 Key。
+     *
+     * **加密落盘**（2026-09-30 起）：走 [readCredential] / [writeCredential] —— Keystore AES-GCM 密文，
+     * 密钥材料不出安全硬件；旧版明文值在首次读取时自动迁移。
+     */
+    var azureApiKey: String
+        get() = readCredential(KEY_AZURE_API_KEY)
+        set(value) = writeCredential(KEY_AZURE_API_KEY, value)
+
+    /** Azure 资源区域（多服务/区域资源必填；单区域全局资源留空即可）—— 非机密，明文存 */
+    var azureRegion: String
+        get() = sp.getString(KEY_AZURE_REGION, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_AZURE_REGION, value.trim()) }
+
+    /** 百度翻译开放平台 AppID（**加密落盘**，见 [readCredential]） */
+    var baiduAppId: String
+        get() = readCredential(KEY_BAIDU_APP_ID)
+        set(value) = writeCredential(KEY_BAIDU_APP_ID, value)
+
+    /** 百度翻译开放平台密钥（只参与本地 MD5 签名，绝不进日志与异常信息；**加密落盘**） */
+    var baiduSecretKey: String
+        get() = readCredential(KEY_BAIDU_SECRET_KEY)
+        set(value) = writeCredential(KEY_BAIDU_SECRET_KEY, value)
+
+    /** 阿里云机器翻译 AccessKey ID（默认服务方，见 [TranslationProviderId.DEFAULT]；**加密落盘**） */
+    var aliyunAccessKeyId: String
+        get() = readCredential(KEY_ALIYUN_ACCESS_KEY_ID)
+        set(value) = writeCredential(KEY_ALIYUN_ACCESS_KEY_ID, value)
+
+    /** 阿里云机器翻译 AccessKey Secret（进 HMAC-SHA1 签名，绝不进日志；**加密落盘**） */
+    var aliyunAccessKeySecret: String
+        get() = readCredential(KEY_ALIYUN_ACCESS_KEY_SECRET)
+        set(value) = writeCredential(KEY_ALIYUN_ACCESS_KEY_SECRET, value)
+
+    /** DeepL API Key（Free 密钥以 `:fx` 结尾，Free / Pro 域名由它自动判定；**加密落盘**） */
+    var deeplApiKey: String
+        get() = readCredential(KEY_DEEPL_API_KEY)
+        set(value) = writeCredential(KEY_DEEPL_API_KEY, value)
+
+    /** 百度大模型文本翻译 APPID（与通用文本翻译是两个服务，分开开通与计费；**加密落盘**） */
+    var baiduLlmAppId: String
+        get() = readCredential(KEY_BAIDU_LLM_APP_ID)
+        set(value) = writeCredential(KEY_BAIDU_LLM_APP_ID, value)
+
+    /** 百度大模型文本翻译 API Key（Bearer 鉴权；**加密落盘**） */
+    var baiduLlmApiKey: String
+        get() = readCredential(KEY_BAIDU_LLM_API_KEY)
+        set(value) = writeCredential(KEY_BAIDU_LLM_API_KEY, value)
+
+    /**
+     * OpenAI 兼容：配置名称（仅用于列表与摘要显示，如 `DeepSeek` / `本地 Ollama`）。
+     *
+     * 多配置档（新增 / 复制 / 删除 / 导入导出）排在下一轮；本轮先把单档的每一项配置都打开。
+     */
+    var openAiName: String
+        get() = sp.getString(KEY_OPENAI_NAME, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_PROFILE_NAME }
+        set(value) = sp.edit { putString(KEY_OPENAI_NAME, value.trim()) }
+
+    /**
+     * OpenAI 兼容服务的 Base URL（默认官方 `https://api.openai.com/v1`）。
+     *
+     * 原样保存用户输入：规范化放在 [OpenAiTranslator.joinUrl] 里做 —— 存归一后的值
+     * 会让用户看不到自己填的是什么，出问题时无从对照。
+     */
+    var openAiBaseUrl: String
+        get() = sp.getString(KEY_OPENAI_BASE_URL, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_BASE_URL }
+        set(value) = sp.edit { putString(KEY_OPENAI_BASE_URL, value.trim()) }
+
+    /** OpenAI 兼容服务的 API Key（Bearer 鉴权；**加密落盘**，界面与日志都不回显） */
+    var openAiApiKey: String
+        get() = readCredential(KEY_OPENAI_API_KEY)
+        set(value) = writeCredential(KEY_OPENAI_API_KEY, value)
+
+    /** OpenAI 兼容服务的模型名（如 `gpt-4o-mini` / `qwen3.8-flash-free`）；空 = 未配置 */
+    var openAiModel: String
+        get() = sp.getString(KEY_OPENAI_MODEL, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_MODEL, value.trim()) }
+
+    /** 对话端点路径（默认 `/chat/completions`；换网关只改这一项即可，不必等 App 更新） */
+    var openAiChatPath: String
+        get() = sp.getString(KEY_OPENAI_CHAT_PATH, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_CHAT_PATH }
+        set(value) = sp.edit { putString(KEY_OPENAI_CHAT_PATH, value.trim()) }
+
+    /** 模型列表端点路径（默认 `/models`；「获取模型」用它，服务端没实现也不影响翻译） */
+    var openAiModelsPath: String
+        get() = sp.getString(KEY_OPENAI_MODELS_PATH, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_MODELS_PATH }
+        set(value) = sp.edit { putString(KEY_OPENAI_MODELS_PATH, value.trim()) }
+
+    /** 目标语言（自由文本：简体中文 / 繁體中文（台灣）/ 粤语 / 古文…，进 `{{target_language}}`） */
+    var openAiTargetLanguage: String
+        get() = sp.getString(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_TARGET_LANGUAGE }
+        set(value) = sp.edit { putString(KEY_OPENAI_TARGET_LANGUAGE, value.trim()) }
+
+    /** System 提示词（可整段改写；支持 `{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`） */
+    var openAiSystemPrompt: String
+        get() = sp.getString(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_SYSTEM_PROMPT }
+        set(value) = sp.edit { putString(KEY_OPENAI_SYSTEM_PROMPT, value.trim()) }
+
+    /** User 提示词模板（同上；变量替换见 [OpenAiTranslator.applyTemplate]） */
+    var openAiUserPrompt: String
+        get() = sp.getString(KEY_OPENAI_USER_PROMPT, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_USER_PROMPT }
+        set(value) = sp.edit { putString(KEY_OPENAI_USER_PROMPT, value.trim()) }
+
+    /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
+    var openAiTemperature: String
+        get() = sp.getString(KEY_OPENAI_TEMPERATURE, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_TEMPERATURE, value.trim()) }
+
+    /** Top P；空串 = 不发送 */
+    var openAiTopP: String
+        get() = sp.getString(KEY_OPENAI_TOP_P, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_TOP_P, value.trim()) }
+
+    /** Max Tokens；空串 = 不发送 */
+    var openAiMaxTokens: String
+        get() = sp.getString(KEY_OPENAI_MAX_TOKENS, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_MAX_TOKENS, value.trim()) }
+
+    /** 自定义请求头（一行一条 `Key: Value`；`Authorization` 会被忽略，它由 API Key 字段独占） */
+    var openAiExtraHeaders: String
+        get() = sp.getString(KEY_OPENAI_EXTRA_HEADERS, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_HEADERS, value) }
+
+    /** 自定义请求体 JSON（**最高优先级**：同名键覆盖标准参数，厂商私有参数写这里） */
+    var openAiExtraJson: String
+        get() = sp.getString(KEY_OPENAI_EXTRA_JSON, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_JSON, value) }
+
+    /** 响应解析路径（默认 `choices[0].message.content`；换协议如 `output_text` 只改这一项） */
+    var openAiResponsePath: String
+        get() = sp.getString(KEY_OPENAI_RESPONSE_PATH, "").orEmpty()
+            .ifBlank { OpenAiTranslator.DEFAULT_RESPONSE_PATH }
+        set(value) = sp.edit { putString(KEY_OPENAI_RESPONSE_PATH, value.trim()) }
+
+    /** 整体超时（秒）：大模型首字延迟不可控，钳到 5~300 秒 */
+    var openAiTimeoutSec: Int
+        get() = sp.getInt(KEY_OPENAI_TIMEOUT_SEC, OpenAiTranslator.DEFAULT_TIMEOUT_SEC)
+            .coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)
+        set(value) = sp.edit { putInt(KEY_OPENAI_TIMEOUT_SEC, value.coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)) }
+
+    /** 最近一次成功获取的模型列表缓存（换行分隔；接口暂时不可用时下拉仍可用） */
+    var openAiModelsCache: String
+        get() = sp.getString(KEY_OPENAI_MODELS_CACHE, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OPENAI_MODELS_CACHE, value.trim()) }
+
+    /** 组装 OpenAI 兼容 Provider 的配置（UI / Prefs / 翻译器共用一处口径） */
+    internal val openAiConfig: OpenAiConfig
+        get() = OpenAiConfig(
+            baseUrl = openAiBaseUrl,
+            apiKey = openAiApiKey,
+            model = openAiModel,
+            chatPath = openAiChatPath,
+            modelsPath = openAiModelsPath,
+            targetLanguage = openAiTargetLanguage,
+            systemPrompt = openAiSystemPrompt,
+            userPrompt = openAiUserPrompt,
+            temperature = openAiTemperature,
+            topP = openAiTopP,
+            maxTokens = openAiMaxTokens,
+            extraHeaders = openAiExtraHeaders,
+            extraJson = openAiExtraJson,
+            responsePath = openAiResponsePath,
+            timeoutSec = openAiTimeoutSec,
+        )
+
+    /**
+     * 按当前配置组装翻译 Provider；凭据不全时返回 null（调用方据此提示「先配置」）。
+     *
+     * 取值口径只此一处：IME 的「翻译」键与设置页的状态摘要都走它，避免两边各列一遍参数。
+     */
+    internal fun translationProvider(): TranslationProvider? = TranslationClient.providerOf(
+        TranslationProviderId.of(translateProvider),
+        azureApiKey,
+        azureRegion,
+        baiduAppId,
+        baiduSecretKey,
+        aliyunAccessKeyId,
+        aliyunAccessKeySecret,
+        deeplApiKey,
+        baiduLlmAppId,
+        baiduLlmApiKey,
+        openAiConfig,
+    )
+
     /**
      * 等待所有已排队的 `apply()` 真正落盘。
      *
@@ -464,6 +834,49 @@ class Prefs(context: Context) {
         put(KEY_USE_TRADITIONAL, useTraditional)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
+        put(KEY_TRANSLATE_ENABLED, translateEnabled)
+        put(KEY_TRANSLATE_PROVIDER, translateProvider)
+        put(KEY_TRANSLATE_TARGET, translateTarget)
+        // 「哪些算原文」按 Provider 各一份：逐家显式导出（白名单里必须看得见常量名，
+        // 否则 PrefsBackupCoverageTest 的源码对拍抓不到这些键）
+        put(KEY_TRANSLATE_SCOPE_ALIYUN, translateScopeOf(TranslationProviderId.ALIYUN))
+        put(KEY_TRANSLATE_MAX_BYTES_ALIYUN, translateMaxBytesOf(TranslationProviderId.ALIYUN))
+        put(KEY_TRANSLATE_SCOPE_AZURE, translateScopeOf(TranslationProviderId.AZURE))
+        put(KEY_TRANSLATE_MAX_BYTES_AZURE, translateMaxBytesOf(TranslationProviderId.AZURE))
+        put(KEY_TRANSLATE_SCOPE_BAIDU, translateScopeOf(TranslationProviderId.BAIDU))
+        put(KEY_TRANSLATE_MAX_BYTES_BAIDU, translateMaxBytesOf(TranslationProviderId.BAIDU))
+        put(KEY_TRANSLATE_SCOPE_BAIDU_LLM, translateScopeOf(TranslationProviderId.BAIDU_LLM))
+        put(KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM, translateMaxBytesOf(TranslationProviderId.BAIDU_LLM))
+        put(KEY_TRANSLATE_SCOPE_DEEPL, translateScopeOf(TranslationProviderId.DEEPL))
+        put(KEY_TRANSLATE_MAX_BYTES_DEEPL, translateMaxBytesOf(TranslationProviderId.DEEPL))
+        put(KEY_TRANSLATE_SCOPE_OPENAI, translateScopeOf(TranslationProviderId.OPENAI))
+        put(KEY_TRANSLATE_MAX_BYTES_OPENAI, translateMaxBytesOf(TranslationProviderId.OPENAI))
+        put(KEY_AZURE_API_KEY, azureApiKey)
+        put(KEY_AZURE_REGION, azureRegion)
+        put(KEY_BAIDU_APP_ID, baiduAppId)
+        put(KEY_BAIDU_SECRET_KEY, baiduSecretKey)
+        put(KEY_ALIYUN_ACCESS_KEY_ID, aliyunAccessKeyId)
+        put(KEY_ALIYUN_ACCESS_KEY_SECRET, aliyunAccessKeySecret)
+        put(KEY_DEEPL_API_KEY, deeplApiKey)
+        put(KEY_BAIDU_LLM_APP_ID, baiduLlmAppId)
+        put(KEY_BAIDU_LLM_API_KEY, baiduLlmApiKey)
+        put(KEY_OPENAI_NAME, openAiName)
+        put(KEY_OPENAI_BASE_URL, openAiBaseUrl)
+        put(KEY_OPENAI_API_KEY, openAiApiKey)
+        put(KEY_OPENAI_MODEL, openAiModel)
+        put(KEY_OPENAI_CHAT_PATH, openAiChatPath)
+        put(KEY_OPENAI_MODELS_PATH, openAiModelsPath)
+        put(KEY_OPENAI_TARGET_LANGUAGE, openAiTargetLanguage)
+        put(KEY_OPENAI_SYSTEM_PROMPT, openAiSystemPrompt)
+        put(KEY_OPENAI_USER_PROMPT, openAiUserPrompt)
+        put(KEY_OPENAI_TEMPERATURE, openAiTemperature)
+        put(KEY_OPENAI_TOP_P, openAiTopP)
+        put(KEY_OPENAI_MAX_TOKENS, openAiMaxTokens)
+        put(KEY_OPENAI_EXTRA_HEADERS, openAiExtraHeaders)
+        put(KEY_OPENAI_EXTRA_JSON, openAiExtraJson)
+        put(KEY_OPENAI_RESPONSE_PATH, openAiResponsePath)
+        put(KEY_OPENAI_TIMEOUT_SEC, openAiTimeoutSec)
+        put(KEY_OPENAI_MODELS_CACHE, openAiModelsCache)
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
@@ -528,6 +941,73 @@ class Prefs(context: Context) {
                 } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
                 KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
+                KEY_TRANSLATE_ENABLED -> asBool(v)?.let { translateEnabled = it; ok() } ?: bad(key)
+                // 三个枚举型取值都走 setter 里的 of() 归一：脏备份（未知 id / 未知语言）不会带进运行期
+                KEY_TRANSLATE_PROVIDER -> asString(v)?.let { translateProvider = it; ok() } ?: bad(key)
+                KEY_TRANSLATE_TARGET -> asString(v)?.let { translateTarget = it; ok() } ?: bad(key)
+                // 原文范围 / 字节上限：脏值由 of() 与 coerceIn 归一，不会带进运行期
+                KEY_TRANSLATE_SCOPE_ALIYUN ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.ALIYUN, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_ALIYUN ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.ALIYUN, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_SCOPE_AZURE ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.AZURE, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_AZURE ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.AZURE, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_SCOPE_BAIDU ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.BAIDU, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_BAIDU ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.BAIDU, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_SCOPE_BAIDU_LLM ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.BAIDU_LLM, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.BAIDU_LLM, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_SCOPE_DEEPL ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.DEEPL, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_DEEPL ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.DEEPL, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_SCOPE_OPENAI ->
+                    asString(v)?.let { setTranslateScopeOf(TranslationProviderId.OPENAI, it); ok() }
+                        ?: bad(key)
+                KEY_TRANSLATE_MAX_BYTES_OPENAI ->
+                    asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.OPENAI, it); ok() }
+                        ?: bad(key)
+                KEY_AZURE_API_KEY -> asString(v)?.let { azureApiKey = it; ok() } ?: bad(key)
+                KEY_AZURE_REGION -> asString(v)?.let { azureRegion = it; ok() } ?: bad(key)
+                KEY_BAIDU_APP_ID -> asString(v)?.let { baiduAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_SECRET_KEY -> asString(v)?.let { baiduSecretKey = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
+                KEY_DEEPL_API_KEY -> asString(v)?.let { deeplApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_APP_ID -> asString(v)?.let { baiduLlmAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_API_KEY -> asString(v)?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
+                KEY_OPENAI_NAME -> asString(v)?.let { openAiName = it; ok() } ?: bad(key)
+                KEY_OPENAI_BASE_URL -> asString(v)?.let { openAiBaseUrl = it; ok() } ?: bad(key)
+                KEY_OPENAI_API_KEY -> asString(v)?.let { openAiApiKey = it; ok() } ?: bad(key)
+                KEY_OPENAI_MODEL -> asString(v)?.let { openAiModel = it; ok() } ?: bad(key)
+                KEY_OPENAI_CHAT_PATH -> asString(v)?.let { openAiChatPath = it; ok() } ?: bad(key)
+                KEY_OPENAI_MODELS_PATH -> asString(v)?.let { openAiModelsPath = it; ok() } ?: bad(key)
+                KEY_OPENAI_TARGET_LANGUAGE -> asString(v)?.let { openAiTargetLanguage = it; ok() } ?: bad(key)
+                KEY_OPENAI_SYSTEM_PROMPT -> asString(v)?.let { openAiSystemPrompt = it; ok() } ?: bad(key)
+                KEY_OPENAI_USER_PROMPT -> asString(v)?.let { openAiUserPrompt = it; ok() } ?: bad(key)
+                KEY_OPENAI_TEMPERATURE -> asString(v)?.let { openAiTemperature = it; ok() } ?: bad(key)
+                KEY_OPENAI_TOP_P -> asString(v)?.let { openAiTopP = it; ok() } ?: bad(key)
+                KEY_OPENAI_MAX_TOKENS -> asString(v)?.let { openAiMaxTokens = it; ok() } ?: bad(key)
+                KEY_OPENAI_EXTRA_HEADERS -> asString(v)?.let { openAiExtraHeaders = it; ok() } ?: bad(key)
+                KEY_OPENAI_EXTRA_JSON -> asString(v)?.let { openAiExtraJson = it; ok() } ?: bad(key)
+                KEY_OPENAI_RESPONSE_PATH -> asString(v)?.let { openAiResponsePath = it; ok() } ?: bad(key)
+                KEY_OPENAI_TIMEOUT_SEC -> asInt(v)?.let { openAiTimeoutSec = it; ok() } ?: bad(key)
+                KEY_OPENAI_MODELS_CACHE -> asString(v)?.let { openAiModelsCache = it; ok() } ?: bad(key)
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
@@ -578,7 +1058,16 @@ class Prefs(context: Context) {
         return ImportReport(applied, unknown, mismatch)
     }
 
-    private fun asString(v: ConfigBackup.BackupValue): String? = v.value as? String
+    /**
+     * 字符串取值 + **长度闸**（2026-09-30 第二轮审查）。
+     *
+     * 导入包的单节上限是 16MB：被改坏的包能把 `openai_base_url` 写成十几 MB 字符串，此后每次
+     * `translationProvider()` / `joinUrl`（都在主线程）都要复制它，且每次 `sp.edit{}` 都会重写整份
+     * prefs XML —— 卡顿与 GC 压力是**持久**的。这里统一挡在 64KB（所有正常取值都远小于它；
+     * `favorite_symbols` 另有更严的 32KB 闸，不受影响），超限按「类型不符」计入忽略数。
+     */
+    private fun asString(v: ConfigBackup.BackupValue): String? =
+        (v.value as? String)?.takeIf { it.length <= 64 * 1024 }
     private fun asInt(v: ConfigBackup.BackupValue): Int? = v.value as? Int
     private fun asLong(v: ConfigBackup.BackupValue): Long? = v.value as? Long
     private fun asFloat(v: ConfigBackup.BackupValue): Float? = v.value as? Float
@@ -678,6 +1167,60 @@ class Prefs(context: Context) {
         /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
+
+        /** 在线翻译（BYOK，2026-09-30 起）：开关 + Provider / 目标语言 + 六家各自的一组凭据 */
+        private const val KEY_TRANSLATE_ENABLED = "translate_enabled"
+        private const val KEY_TRANSLATE_PROVIDER = "translate_provider"
+        private const val KEY_TRANSLATE_TARGET = "translate_target"
+        private const val KEY_AZURE_API_KEY = "azure_api_key"
+        private const val KEY_AZURE_REGION = "azure_region"
+        private const val KEY_BAIDU_APP_ID = "baidu_app_id"
+        private const val KEY_BAIDU_SECRET_KEY = "baidu_secret_key"
+        private const val KEY_ALIYUN_ACCESS_KEY_ID = "aliyun_access_key_id"
+        private const val KEY_ALIYUN_ACCESS_KEY_SECRET = "aliyun_access_key_secret"
+        private const val KEY_DEEPL_API_KEY = "deepl_api_key"
+        private const val KEY_BAIDU_LLM_APP_ID = "baidu_llm_app_id"
+        private const val KEY_BAIDU_LLM_API_KEY = "baidu_llm_api_key"
+        private const val KEY_OPENAI_NAME = "openai_name"
+        private const val KEY_OPENAI_BASE_URL = "openai_base_url"
+        private const val KEY_OPENAI_API_KEY = "openai_api_key"
+        private const val KEY_OPENAI_MODEL = "openai_model"
+        private const val KEY_OPENAI_CHAT_PATH = "openai_chat_path"
+        private const val KEY_OPENAI_MODELS_PATH = "openai_models_path"
+        private const val KEY_OPENAI_TARGET_LANGUAGE = "openai_target_language"
+        private const val KEY_OPENAI_SYSTEM_PROMPT = "openai_system_prompt"
+        private const val KEY_OPENAI_USER_PROMPT = "openai_user_prompt"
+        private const val KEY_OPENAI_TEMPERATURE = "openai_temperature"
+        private const val KEY_OPENAI_TOP_P = "openai_top_p"
+        private const val KEY_OPENAI_MAX_TOKENS = "openai_max_tokens"
+        private const val KEY_OPENAI_EXTRA_HEADERS = "openai_extra_headers"
+        private const val KEY_OPENAI_EXTRA_JSON = "openai_extra_json"
+        private const val KEY_OPENAI_RESPONSE_PATH = "openai_response_path"
+        private const val KEY_OPENAI_TIMEOUT_SEC = "openai_timeout_sec"
+        private const val KEY_OPENAI_MODELS_CACHE = "openai_models_cache"
+
+        /**
+         * 「哪些算翻译原文」按 Provider 各一份：范围模式 + 单次字节上限。
+         *
+         * 十二个键都显式写出来（不用循环拼名）：导出 / 导入白名单要逐键引用常量，
+         * `PrefsBackupCoverageTest` 的源码对拍才能把「新增键必须进两份白名单」守住。
+         */
+        private const val KEY_TRANSLATE_SCOPE_ALIYUN = "translate_scope_aliyun"
+        private const val KEY_TRANSLATE_MAX_BYTES_ALIYUN = "translate_max_bytes_aliyun"
+        private const val KEY_TRANSLATE_SCOPE_AZURE = "translate_scope_azure"
+        private const val KEY_TRANSLATE_MAX_BYTES_AZURE = "translate_max_bytes_azure"
+        private const val KEY_TRANSLATE_SCOPE_BAIDU = "translate_scope_baidu"
+        private const val KEY_TRANSLATE_MAX_BYTES_BAIDU = "translate_max_bytes_baidu"
+        private const val KEY_TRANSLATE_SCOPE_BAIDU_LLM = "translate_scope_baidu_llm"
+        private const val KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM = "translate_max_bytes_baidu_llm"
+        private const val KEY_TRANSLATE_SCOPE_DEEPL = "translate_scope_deepl"
+        private const val KEY_TRANSLATE_MAX_BYTES_DEEPL = "translate_max_bytes_deepl"
+        private const val KEY_TRANSLATE_SCOPE_OPENAI = "translate_scope_openai"
+        private const val KEY_TRANSLATE_MAX_BYTES_OPENAI = "translate_max_bytes_openai"
+
+        /** 整体超时的允许区间（秒）：太短会误杀大模型，太长会把按钮的「翻译中」挂死 */
+        private const val TIMEOUT_MIN_SEC = 5
+        private const val TIMEOUT_MAX_SEC = 300
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"

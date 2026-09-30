@@ -70,9 +70,10 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `每个持久化键都必须同时在导出与导入白名单里`() {
-        // 精确 35：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
-        // 改键数是正常维护，改完同步这个数（32 个旧键 − 1 个改名 + 3 个新键，含 2 个退役键）。
-        assertEquals("提取到的键常量应是 35 个（改键数请同步本断言）", 35, keyConstants.size)
+        // 精确 76：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
+        // 改键数是正常维护，改完同步这个数（35 个旧键 + 41 个翻译键，含 2 个退役键）。
+        // 2026-09-30 起 64 → 76：新增「原文范围」12 键（6 家 × 范围模式 / 字节上限）。
+        assertEquals("提取到的键常量应是 76 个（改键数请同步本断言）", 76, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -122,6 +123,48 @@ class PrefsBackupCoverageTest {
             "KEY_USE_TRADITIONAL" to "asBool(v)",
             "KEY_FUZZY_PINYIN" to "asInt(v)",
             "KEY_VOICE_INPUT" to "asBool(v)",
+            "KEY_TRANSLATE_ENABLED" to "asBool(v)",
+            "KEY_TRANSLATE_PROVIDER" to "asString(v)",
+            "KEY_TRANSLATE_TARGET" to "asString(v)",
+            // 「哪些算原文」12 键：范围模式是字符串（走 of() 归一），字节上限是整数（走 coerceIn 钳位）
+            "KEY_TRANSLATE_SCOPE_ALIYUN" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_ALIYUN" to "asInt(v)",
+            "KEY_TRANSLATE_SCOPE_AZURE" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_AZURE" to "asInt(v)",
+            "KEY_TRANSLATE_SCOPE_BAIDU" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_BAIDU" to "asInt(v)",
+            "KEY_TRANSLATE_SCOPE_BAIDU_LLM" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM" to "asInt(v)",
+            "KEY_TRANSLATE_SCOPE_DEEPL" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_DEEPL" to "asInt(v)",
+            "KEY_TRANSLATE_SCOPE_OPENAI" to "asString(v)",
+            "KEY_TRANSLATE_MAX_BYTES_OPENAI" to "asInt(v)",
+            "KEY_AZURE_API_KEY" to "asString(v)",
+            "KEY_AZURE_REGION" to "asString(v)",
+            "KEY_BAIDU_APP_ID" to "asString(v)",
+            "KEY_BAIDU_SECRET_KEY" to "asString(v)",
+            "KEY_ALIYUN_ACCESS_KEY_ID" to "asString(v)",
+            "KEY_ALIYUN_ACCESS_KEY_SECRET" to "asString(v)",
+            "KEY_DEEPL_API_KEY" to "asString(v)",
+            "KEY_BAIDU_LLM_APP_ID" to "asString(v)",
+            "KEY_BAIDU_LLM_API_KEY" to "asString(v)",
+            "KEY_OPENAI_NAME" to "asString(v)",
+            "KEY_OPENAI_BASE_URL" to "asString(v)",
+            "KEY_OPENAI_API_KEY" to "asString(v)",
+            "KEY_OPENAI_MODEL" to "asString(v)",
+            "KEY_OPENAI_CHAT_PATH" to "asString(v)",
+            "KEY_OPENAI_MODELS_PATH" to "asString(v)",
+            "KEY_OPENAI_TARGET_LANGUAGE" to "asString(v)",
+            "KEY_OPENAI_SYSTEM_PROMPT" to "asString(v)",
+            "KEY_OPENAI_USER_PROMPT" to "asString(v)",
+            "KEY_OPENAI_TEMPERATURE" to "asString(v)",
+            "KEY_OPENAI_TOP_P" to "asString(v)",
+            "KEY_OPENAI_MAX_TOKENS" to "asString(v)",
+            "KEY_OPENAI_EXTRA_HEADERS" to "asString(v)",
+            "KEY_OPENAI_EXTRA_JSON" to "asString(v)",
+            "KEY_OPENAI_RESPONSE_PATH" to "asString(v)",
+            "KEY_OPENAI_TIMEOUT_SEC" to "asInt(v)",
+            "KEY_OPENAI_MODELS_CACHE" to "asString(v)",
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
@@ -185,6 +228,8 @@ class PrefsBackupCoverageTest {
             Triple("themeMode", "MODE_SYSTEM..", "未知模式编号会落到无效主题"),
             Triple("themeLightAtMinutes", "floorMod", "负值/超 24h 会显示成 -1:-30 这类非法时刻"),
             Triple("themeDarkAtMinutes", "floorMod", "同上"),
+            Triple("translateProvider", "TranslationProviderId.of", "未知 id 会取不到 Provider 实现"),
+            Triple("translateTarget", "TranslationLanguage.of", "未知语言码会被服务端直接拒（400 / 58001）"),
         )
         for ((prop, marker, why) in guards) {
             assertTrue("$prop 的归一（$marker）不见了：$why", propertyBlock(prop).contains(marker))
@@ -264,6 +309,31 @@ class PrefsBackupCoverageTest {
                     "（否则原生升级只开档 2，三级字与含三级字的词条消失）",
                 code.contains("else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)"),
             )
+        }
+    }
+
+    /**
+     * 「哪些算原文」两项（2026-09-30）的**归一守卫**：它们按 Provider 存，是 `fun` 而非 `var`，
+     * 上面那条 `取值可能有越界的键必须在读写路径上有归一` 的 `propertyBlock` 覆盖不到。
+     *
+     * 字节上限是 Int，导入的备份可以是任意数值：`0` 不钳位会让原文恒为空（翻译永远提示
+     * 「没有可翻译的文字」），`Int.MAX_VALUE` 则绕过读取上限。范围模式走 `of()` 同理 ——
+     * 未知 id 会取不到对应的取值分支。
+     */
+    @Test
+    fun `原文范围与字节上限的读写两侧都必须归一`() {
+        val scopeGuard = "TranslationScope.of("
+        val bytesGuard = "coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)"
+        for ((marker, guard) in listOf(
+            "fun translateScopeOf" to scopeGuard,
+            "fun setTranslateScopeOf" to scopeGuard,
+            "fun translateMaxBytesOf" to bytesGuard,
+            "fun setTranslateMaxBytesOf" to bytesGuard,
+        )) {
+            val start = source.indexOf(marker)
+            assertTrue("源码里没找到 $marker", start > 0)
+            val body = source.substring(start, (start + 400).coerceAtMost(source.length))
+            assertTrue("$marker 缺少归一（$guard）—— 脏备份的越界值会进运行期", body.contains(guard))
         }
     }
 }

@@ -16,10 +16,13 @@
     -->
     <issue id="SetTextI18n">
         <ignore path="src/main/java/com/jinn/inputmethod/ClipboardPanelView.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/OpenAiSettingsActivity.kt" />
         <ignore path="src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt" />
         <ignore path="src/main/java/com/jinn/inputmethod/SearchPanelView.kt" />
         <ignore path="src/main/java/com/jinn/inputmethod/SettingsActivity.kt" />
         <ignore path="src/main/java/com/jinn/inputmethod/SymbolOrderActivity.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/TranslationSettingsActivity.kt" />
+        <ignore path="src/main/java/com/jinn/inputmethod/TranslationSourceActivity.kt" />
     </issue>
 
     <!--
@@ -77,5 +80,16 @@
     <!-- 用户可见文案里的连字符由用户定稿，不由 lint 的排版建议改（改的是上屏文本） -->
     <issue id="TypographyDashes">
         <ignore path="src/main/res/values/strings.xml" />
+    </issue>
+
+    <!--
+      翻译设置页与原文范围页：字段标签与输入框 hint 全部在对应 Activity 里代码下发
+      （strings.xml 默认禁改）⇒ 静态布局里 label 必然没有 android:text，
+      即使补了 labelFor 也会报「label 自身缺文本」。无障碍实际可用，不改布局。
+    -->
+    <issue id="LabelFor">
+        <ignore path="src/main/res/layout/activity_translation_settings.xml" />
+        <ignore path="src/main/res/layout/activity_openai_settings.xml" />
+        <ignore path="src/main/res/layout/activity_translation_source.xml" />
     </issue>
 </lint>

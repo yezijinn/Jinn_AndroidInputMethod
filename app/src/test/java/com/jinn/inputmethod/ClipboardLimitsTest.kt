@@ -373,7 +373,10 @@ class ClipboardLimitsTest {
         val src = TestSources.codeSource("ClipboardDb.kt")
         assertTrue("必须有按 id 试解的入口", "private fun decryptsById(id: Long): Boolean" in src)
         assertTrue("命中坏行必须重加密覆盖", "重加密自愈: id=\$existingId" in src)
-        assertTrue("自愈后要保留原有 id（不产生重复行）", "return existingId\n            }" in src)
+        assertTrue(
+            "自愈必须复用既有行（原地覆盖密文，不插入重复行）",
+            "values.put(\"encrypted_content\", reEncrypted)" in src,
+        )
 
         // 只在 upsert 的范围内比较次序（文件里另有一条导入路径也会加密，那条不做判重、不该被算进来）
         val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
@@ -387,6 +390,57 @@ class ClipboardLimitsTest {
         assertTrue("失败路径必须先截断临时件", "runCatching { tmp.outputStream().use { } }" in cc)
         assertTrue("删除失败要留痕", "解密失败后清残件未成功" in cc)
         assertFalse("不得再只调 tmp.delete() 就返回", "tmp.delete()\n            Diagnostics.w(\"ConfigCrypto\", \"解密失败" in cc)
+    }
+
+    /**
+     * `BUG.md` L-200：命中哈希但那一行已经不存在时，`update` 影响 0 行 —— 不能再把
+     * `existingId` 当成功返回（调用方只把 -1 当失败，会以为「已入库」而库里什么都没有）。
+     */
+    @Test
+    fun 命中行消失不得返回幽灵id() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+
+        assertTrue(
+            "命中分支必须看 update 的返回行数",
+            "val rows = writableDatabase.update(TABLE_ITEMS, values, \"id = ?\"" in upsert,
+        )
+        assertTrue("写入成功才返回既有 id", "if (rows > 0) {" in upsert)
+        assertTrue("行消失必须留痕（不是静默改用插入）", "命中哈希但行已消失" in upsert)
+        assertTrue(
+            "幽灵路径必须落到插入路径重建这一行",
+            "writableDatabase.insert(TABLE_ITEMS, null, values)" in upsert,
+        )
+        // 反向钉：老写法（不看行数、直接 return existingId）一旦回来就红
+        assertFalse(
+            "不得无条件返回既有 id（fix 是旧变量名）",
+            "writableDatabase.update(TABLE_ITEMS, fix, \"id = ?\"" in upsert,
+        )
+    }
+
+    /**
+     * `BUG.md` L-199：命中哈希是重复复制最常见的路径，试解必须有界 ——
+     * 本进程验证过的行不再整行解密；没验证过的仍会真解一次（L-173 的自愈机会不丢）。
+     * 读路径发现解不开要撤销备忘，备份恢复后要整批作废（恢复集可能来自别的密钥）。
+     */
+    @Test
+    fun 重复复制不得重复解密() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+
+        assertTrue(
+            "试解必须有界：已在备忘里的哈希不再试解",
+            "hash !in verifiedReadable && !decryptsById(existingId)" in upsert,
+        )
+        assertFalse("不得无条件每次试解（旧写法）", "if (!decryptsById(existingId)) {" in upsert)
+        assertTrue("写入成功后要登记备忘", "rememberReadable(hash)" in upsert)
+        assertTrue("备忘必须有上限", "VERIFIED_MEMO_MAX" in src)
+        assertTrue(
+            "读路径解不开要撤销备忘（否则白丢一次自愈机会）",
+            "forgetReadable(hash)\n            Diagnostics.w(TAG, \"解密失败，跳过 id=\$id\")" in src,
+        )
+        assertTrue("存量重算解不开也要撤销", "forgetReadable(hash)\n                        continue" in src)
+        assertTrue("备份恢复后市进程内的「已验证」结论整批作废", "if (id > 0) verifiedReadable.clear()" in src)
     }
 
 }

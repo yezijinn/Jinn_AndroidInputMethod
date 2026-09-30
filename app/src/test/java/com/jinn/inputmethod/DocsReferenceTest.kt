@@ -61,8 +61,11 @@ class DocsReferenceTest {
             File("src/test/java/com/jinn/inputmethod"),
             File("app/src/test/java/com/jinn/inputmethod"),
         ).first { it.isDirectory }
-        val files = dir.listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray()
-        // 剥注释后再数（BUG.md L-139）：原文计数会把「被注释掉的用例」也算进来 ⇒ 文档数字可稳定写错
+        // **递归**收集（2026-09-30 第二轮审查）：原先只扫一层，测试文件一旦按包拆进子目录，
+        // 「类数 / 例数」对拍与「文档提到的测试类必须存在」两条守卫会一起失效（静默变绿）。
+        val files = dir.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.toList()
+        // 剥注释后再数（BUG.md L-139）：原文计数会把「被注释掉的用例」也算进来 ⇒ 文档数字可稳定写错。
+        // 口径：**类数 = 含 @Test 的文件数**（项目约定一文件一测试类，多类同文件会让类数偏低）
         val per = files.map { f -> Regex("""(?m)^\s*@Test\b""").findAll(TestSources.codeOf(f.readText())).count() }
         val classes = per.count { it > 0 }
         val total = per.sum()
@@ -185,7 +188,6 @@ class DocsReferenceTest {
      */
     @Test
     fun 在册条目必须落在它声明的分册() {
-        val entry = ledger()
         val parts = ledgerPartFiles()
         val indexPart = ledgerPartFiles()["index"]
             ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")

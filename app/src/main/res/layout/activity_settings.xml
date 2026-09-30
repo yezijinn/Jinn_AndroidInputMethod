@@ -892,6 +892,43 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- 在线翻译（BYOK）：总开关 + 配置入口。开关决定键盘功能面板是否显示「翻译」键；
+             文案全部代码下发（strings.xml 默认禁改），布局里不写 android:text -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="0dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="8dp">
+
+            <Switch
+                android:id="@+id/switch_translate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:minHeight="40dp"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/text_translate_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:singleLine="false"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_translate_settings"
+                style="@style/SettingsButton"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
         <!-- 配置备份：导出 / 导入（跨设备迁移）。
              两个按钮的文本由代码下发：strings.xml 默认禁改，布局里留空避免硬编码文案进入资源 -->
         <LinearLayout
