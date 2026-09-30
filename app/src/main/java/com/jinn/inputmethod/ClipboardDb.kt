@@ -229,6 +229,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 入库去重写入（原子，@Synchronized 串行）：同一内容（content_hash 相同）已存在时
      * 只更新必要元数据并重新置顶（created_at=now），绝不产生重复记录；
      * 收藏标记是用户主动状态，重复复制时不覆盖。
+     *
+     * **坏行自愈**：命中哈希但那一行的密文已经解不开（Keystore 密钥变更 / 单行损坏）时，
+     * 用本次的新内容重加密覆盖该行 —— 否则它会永远不可见、又继续占条数与字节配额，
+     * 而重复复制本是唯一的恢复机会（BUG.md L-173）。
+     *
+     * 加密放在**判重之后**：去重只需要明文哈希，重复内容不必白做一次 AES-GCM + base64（BUG.md L-182）。
      * 不存在则插入，超上限裁剪最旧非收藏。返回条目 id，失败返回 -1。
      */
     @Synchronized
@@ -242,11 +248,24 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         isFavorite: Boolean = false,
     ): Long {
         if (content.isBlank()) return -1
-        val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
         val hash = stableHash(content)
         val existingId = findIdByHash(hash)
         if (existingId != null) {
-            // 已存在：只更新必要元数据 + 置顶，保留收藏标记
+            if (!decryptsById(existingId)) {
+                val reEncrypted = ClipboardCrypto.encrypt(content) ?: return -1
+                val fix = ContentValues().apply {
+                    put("encrypted_content", reEncrypted)
+                    put("content_type", contentType)
+                    put("created_at", System.currentTimeMillis())
+                    put("source_package", sourcePackage)
+                    put("source_app_name", sourceAppName)
+                    put("category", category)
+                }
+                writableDatabase.update(TABLE_ITEMS, fix, "id = ?", arrayOf(existingId.toString()))
+                Diagnostics.w(TAG, "重加密自愈: id=$existingId（原密文解不开，已用新内容覆盖）")
+                return existingId
+            }
+            // 已存在且可解：只更新必要元数据 + 置顶，保留收藏标记
             val values = ContentValues().apply {
                 put("content_type", contentType)
                 put("created_at", System.currentTimeMillis())
@@ -257,6 +276,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(existingId.toString()))
             return existingId
         }
+        // 到这一步才加密：上面的判重分支不需要密文（BUG.md L-182）
+        val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
         val values = ContentValues().apply {
             put("encrypted_content", encrypted)
             put("content_type", contentType)
@@ -270,6 +291,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val id = writableDatabase.insert(TABLE_ITEMS, null, values)
         if (id > 0) trimTo(maxItems)
         return id
+    }
+
+    /**
+     * 该行的密文现在还能解开吗（坏行自愈的前置判据，BUG.md L-173）。
+     *
+     * 解不开或行已不在都返回 false：前者要重加密覆盖，后者的哈希行是脏数据（交给插入路径）。
+     */
+    private fun decryptsById(id: Long): Boolean {
+        val c = readableDatabase.rawQuery(
+            "SELECT encrypted_content FROM $TABLE_ITEMS WHERE id = ? LIMIT 1",
+            arrayOf(id.toString()),
+        )
+        return c.use {
+            if (!it.moveToFirst()) return@use false
+            val enc = it.getString(0) ?: return@use false
+            ClipboardCrypto.decrypt(enc) != null
+        }
     }
 
     /** 按内容哈希查已存在的记录 id（入库去重用） */

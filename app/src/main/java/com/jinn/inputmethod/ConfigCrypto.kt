@@ -183,7 +183,12 @@ internal object ConfigCrypto {
      *
      * 注意没有用 `CipherInputStream`：它在认证失败时可能把 AEADBadTagException 吞掉、
      * 让人以为解出了一份「短一截但看着正常」的备份。这里手动 update/doFinal，
-     * 让 GCM 的校验失败必定抛出并中断（内容不落盘，直接删临时文件）。
+     * 让 GCM 的校验失败必定抛出并中断。
+     *
+     * 明文的处理口径（写实）：解密过程会把中间明文写进同目录的 `dest.name + ".tmp"`，
+     * **认证通过才改名**到 [dest]；失败路径先**截断**该临时件再删除，删除失败留一条 W ——
+     * 极端情况下（进程被杀 / 删除失败）可能残留一个空文件，由
+     * `ConfigBackupManager.cleanupStaleCache` 按前缀兜底清掉（BUG.md L-172）。
      */
     fun decrypt(src: File, dest: File, password: CharArray): Boolean = runCatching {
         val tmp = File(dest.parentFile, dest.name + ".tmp")
@@ -223,7 +228,12 @@ internal object ConfigCrypto {
                 }
             }
         } catch (t: Throwable) {
-            tmp.delete()
+            // 先截断再删：即使删除失败（权限 / 占用），留在磁盘上的也只是空文件，
+            // 而不是一份未认证的明文（BUG.md L-172）
+            runCatching { tmp.outputStream().use { } }
+            if (tmp.exists() && !tmp.delete()) {
+                Diagnostics.w("ConfigCrypto", "解密失败后清残件未成功: ${tmp.name}")
+            }
             Diagnostics.w("ConfigCrypto", "解密失败（密码错误或文件损坏）: ${t.javaClass.simpleName}")
             return false
         }

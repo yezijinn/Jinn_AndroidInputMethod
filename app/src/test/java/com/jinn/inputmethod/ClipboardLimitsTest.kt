@@ -361,4 +361,32 @@ class ClipboardLimitsTest {
         assertNull("兼容层失败时仍为 null", ClipboardStore.readTextWithBudget(raw(5), 4))
     }
 
+
+    /**
+     * `BUG.md` L-173 + L-182：坏行必须能自愈，且加密要在判重之后。
+     *
+     * 命中 content_hash 后先试解一次：解不开就用新内容重加密覆盖（否则那行永远不可见、还占配额）；
+     * 加密本身只服务插入路径 —— 重复内容不该白做一次 AES-GCM + base64。
+     */
+    @Test
+    fun 坏行必须能自愈且加密在判重之后() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        assertTrue("必须有按 id 试解的入口", "private fun decryptsById(id: Long): Boolean" in src)
+        assertTrue("命中坏行必须重加密覆盖", "重加密自愈: id=\$existingId" in src)
+        assertTrue("自愈后要保留原有 id（不产生重复行）", "return existingId\n            }" in src)
+
+        // 只在 upsert 的范围内比较次序（文件里另有一条导入路径也会加密，那条不做判重、不该被算进来）
+        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+        val hashAt = upsert.indexOf("stableHash(content)")
+        val encAt = upsert.indexOf("ClipboardCrypto.encrypt(content)")
+        assertTrue("upsert 里必须能定位到判重与加密两处", hashAt >= 0 && encAt >= 0)
+        assertTrue("加密必须在判重之后（L-182）", encAt > hashAt)
+
+        // L-172：解密失败要先截断再删，删除失败要留痕
+        val cc = TestSources.codeSource("ConfigCrypto.kt")
+        assertTrue("失败路径必须先截断临时件", "runCatching { tmp.outputStream().use { } }" in cc)
+        assertTrue("删除失败要留痕", "解密失败后清残件未成功" in cc)
+        assertFalse("不得再只调 tmp.delete() 就返回", "tmp.delete()\n            Diagnostics.w(\"ConfigCrypto\", \"解密失败" in cc)
+    }
+
 }
