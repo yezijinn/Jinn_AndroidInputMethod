@@ -83,4 +83,31 @@ class DiagnosticsLogcatFilterTest {
         assertTrue("其它进程的 V 行不受影响", out.contains("别人的日志"))
         assertTrue("E 级必须保留", out.contains("Crash"))
     }
+
+    /**
+     * 抓取退回全量（不带 `--pid`）时，缓冲里混着别的应用的 V 级行 —— 那些行同样要剔：
+     * V 是各应用自由填的文本，而这份快照会进对外的诊断包（BUG.md L-193）。
+     * 同级的 I / E 行保留，它们才是排查用的证据。
+     */
+    @Test
+    fun 退回全量时其它进程的V行也要剔除() {
+        val raw = buildString {
+            appendLine(line(pid, 'V', "PinyinKeyboard", "拼音输入: nihao"))
+            appendLine(line(pid + 7, 'V', "OtherApp", "别人的正文"))
+            appendLine(line(pid + 7, 'I', "OtherApp", "别人的普通日志"))
+            appendLine(line(pid, 'E', "JinnDiag", "Crash"))
+        }
+
+        val out = Diagnostics.filterOwnVerboseLines(raw, pid, foreignVerboseToo = true)
+
+        assertFalse("本进程 V 行仍要剔", out.contains("nihao"))
+        assertFalse("其它进程的 V 行同样要剔", out.contains("别人的正文"))
+        assertTrue("其它进程的 I 级要保留", out.contains("别人的普通日志"))
+        assertTrue("E 级必须保留", out.contains("Crash"))
+        assertTrue(
+            "默认模式（本进程抓取）下别的进程的 V 行不受影响",
+            Diagnostics.filterOwnVerboseLines(raw, pid).contains("别人的正文"),
+        )
+    }
+
 }

@@ -99,8 +99,19 @@ class DiagnosticsSanitizeTest {
         assertTrue("抓取必须限定本进程", "--pid=\${Process.myPid()}" in src)
         // BUG.md L-188：按 pid 抓失败时必须有**退路**（退回全量）且失败要留痕；
         // 反向钉：单次抓取 + 静默 null 的老形状不得回来
-        assertTrue("必须有退回全量的兜底", "退回全量再试一次" in src)
-        assertTrue("两次都失败必须留日志", "logcat 快照失败: exit=" in src)
+        // 结构钉（BUG.md L-195）：钉「两次抓取」的形状 —— 改日志措辞不该变红，删掉兜底必须变红
+        assertTrue(
+            "必须有一次按 pid 抓取",
+            "runLogcat(baseArgs + \"--pid=\${Process.myPid()}\", raw, waitMs)" in src,
+        )
+        assertTrue("必须有一次不带 pid 的抓取（退回）", "runLogcat(baseArgs, raw, waitMs)" in src)
+        assertTrue("退回前必须清掉第一次的残留", "raw.delete()" in src)
+        assertTrue("失败判定必须恰好两处",
+            Regex("""if \(code != 0\) \{""").findAll(src).count() == 2)
+        // 退回全量时剔掉其它进程的 V 级行；快照首行自证来源
+        assertTrue("退回时必须切换筛选模式", "foreignVerboseToo = fullDevice" in src)
+        assertTrue("快照必须自带来源标记", "# snapshot source=\$label" in src)
+        assertTrue("两次都失败仍要留日志（文案钉保留为附加断言）", "logcat 快照失败: exit=" in src)
         assertFalse("不得回到「单次抓取 + 静默返回 null」", "val ok = finished && process.exitValue() == 0" in src)
         // BUG.md L-189：清理是尽力而为，但失败不能静默
         assertTrue("体积清理失败必须留痕", "日志体积清理失败" in src)

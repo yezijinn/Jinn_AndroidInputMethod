@@ -345,8 +345,15 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
      *
      * @param raw logcat 原始输出
      * @param ownPid 本进程 pid（`Process.myPid()`）；无法判定的行原样保留
+     * @param foreignVerboseToo 缓冲可能来自**全系统**（抓取退回不带 `--pid` 的那一次）时置真：
+     *   连**其它进程**的 V 级行一起剔 —— V 是各应用自由填的文本（浏览器、其它输入法都可能写用户可见内容），
+     *   而这份快照会进要外传的诊断包（BUG.md L-193）。别的进程的 verbose 对本输入法的崩溃排查没有价值。
      */
-    internal fun filterOwnVerboseLines(raw: String, ownPid: Int): String {
+    internal fun filterOwnVerboseLines(
+        raw: String,
+        ownPid: Int,
+        foreignVerboseToo: Boolean = false,
+    ): String {
         // 年份前缀可选：logcat 在条目时间戳与「当前年」不同年时会输出 `yyyy-` 前缀
         // （跨年缓冲区 / `-v threadtime` 的两种形态）。不识别它，这些行会因正则失配而
         // 沿用上一行的 drop 状态，本进程的 V 行可能被原样保留（正文进快照）。
@@ -360,7 +367,8 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         for (line in lines) {
             val m = header.find(line)
             if (m != null) {
-                drop = m.groupValues[3] == "V" && m.groupValues[1].toIntOrNull() == ownPid
+                val pid = m.groupValues[1].toIntOrNull()
+                drop = m.groupValues[3] == "V" && (pid == ownPid || (foreignVerboseToo && pid != null))
             }
             if (!drop) kept.add(line)
         }
@@ -434,8 +442,10 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             // 就丢掉整份现场 —— 原先的 `if (!ok) return null` 正是这样，而且那条路径连日志都没有。
             // 退回时抓的是全系统（那份快照会被脱敏，但**含其它进程的行**）⇒ 必须留一条 W 说明。
             val baseArgs = listOf("logcat", "-d", "-v", "threadtime", "-t", "3000")
+            var fullDevice = false
             var code = runLogcat(baseArgs + "--pid=${Process.myPid()}", raw, waitMs)
             if (code != 0) {
+                fullDevice = true
                 Diagnostics.w(TAG, "logcat 快照: 按 pid 抓取失败（exit=$code），退回全量再试一次")
                 raw.delete()
                 code = runLogcat(baseArgs, raw, waitMs)
@@ -450,12 +460,15 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             }
             // 落盘后再过一遍：把本进程的 V 级行（用户正文通道）剔掉。
             // 保留「先落盘、后处理」的顺序：读取管道再 waitFor 会在输出超过管道缓冲时互相等死。
-            val filtered = filterOwnVerboseLines(raw.readText(), Process.myPid())
+            val filtered = filterOwnVerboseLines(raw.readText(), Process.myPid(), foreignVerboseToo = fullDevice)
             if (filtered.isEmpty()) return null
             // 与日文件同一句脱敏（BUG.md L-169：原先这条通道整体绕过护栏）。**不做截断** ——
             // `sanitizeForFile` 的截断是按「一条消息」设计的，套到整份快照上会把堆栈拦腰砍断。
             val safe = redactSensitive(filtered)
-            dest.writeText(safe)
+            // 首行自证来源：单个文件就能看出「这次是不是全量」，不必回头翻日文件里的那条 W（BUG.md L-194）。
+            // 也标出 V 级行的处理口径，避免读者误以为「没有 V 行 = 一定只抓了本进程」。
+            val label = if (fullDevice) "full(含其它进程，V 级仅本进程)" else "pid"
+            dest.writeText("# snapshot source=$label\n" + safe)
             produced = true
             return dest
         } catch (t: Throwable) {
