@@ -444,9 +444,17 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             val baseArgs = listOf("logcat", "-d", "-v", "threadtime", "-t", "3000")
             var fullDevice = false
             var code = runLogcat(baseArgs + "--pid=${Process.myPid()}", raw, waitMs)
-            if (code != 0) {
+            // 「成功但为空」同样需要退回：崩溃刚发生过，本进程至少有一条 E 级（崩溃本身），
+            // 按 pid 抓到空是反常信号（logd 缓冲区异常 / 权限收紧都可能），而空文件对排查无用
+            // ⇒ 丢弃前先试一次全量（BUG.md L-196）。
+            val emptyAfterPid = code == 0 && (!raw.exists() || raw.length() == 0L)
+            if (code != 0 || emptyAfterPid) {
                 fullDevice = true
-                Diagnostics.w(TAG, "logcat 快照: 按 pid 抓取失败（exit=$code），退回全量再试一次")
+                Diagnostics.w(
+                    TAG,
+                    if (emptyAfterPid) "logcat 快照: 按 pid 抓取为空，退回全量再试一次"
+                    else "logcat 快照: 按 pid 抓取失败（exit=$code），退回全量再试一次",
+                )
                 raw.delete()
                 code = runLogcat(baseArgs, raw, waitMs)
             }
@@ -467,7 +475,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             val safe = redactSensitive(filtered)
             // 首行自证来源：单个文件就能看出「这次是不是全量」，不必回头翻日文件里的那条 W（BUG.md L-194）。
             // 也标出 V 级行的处理口径，避免读者误以为「没有 V 行 = 一定只抓了本进程」。
-            val label = if (fullDevice) "full(含其它进程，V 级仅本进程)" else "pid"
+            val label = if (fullDevice) "full(含其它进程，V 级已剔)" else "pid"
             dest.writeText("# snapshot source=$label\n" + safe)
             produced = true
             return dest

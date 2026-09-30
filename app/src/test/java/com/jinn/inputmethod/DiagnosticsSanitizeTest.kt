@@ -105,9 +105,19 @@ class DiagnosticsSanitizeTest {
             "runLogcat(baseArgs + \"--pid=\${Process.myPid()}\", raw, waitMs)" in src,
         )
         assertTrue("必须有一次不带 pid 的抓取（退回）", "runLogcat(baseArgs, raw, waitMs)" in src)
-        assertTrue("退回前必须清掉第一次的残留", "raw.delete()" in src)
-        assertTrue("失败判定必须恰好两处",
-            Regex("""if \(code != 0\) \{""").findAll(src).count() == 2)
+        // 弱钉换成块内顺序断言（BUG.md L-198）：全文件有三处 raw.delete()，只匹配标识符会假绿；
+        // 这里要求「退回条件块里：先删残留、再退回抓取」，且与缩进无关。
+        assertTrue(
+            "退回分支必须先清残留再抓取",
+            Regex("""if \(code != 0 \|\| emptyAfterPid\) \{[\s\S]*?raw\.delete\(\)[\s\S]*?runLogcat\(baseArgs, raw, waitMs\)""")
+                .containsMatchIn(src),
+        )
+        // BUG.md L-196：按 pid 成功但为空同样要退回（空文件对排查无用，丢弃前先试一次全量）
+        assertTrue("空结果必须并入退回条件", "val emptyAfterPid = code == 0 && (!raw.exists() || raw.length() == 0L)" in src)
+        assertTrue("空退回要有自己的日志", "按 pid 抓取为空，退回全量再试一次" in src)
+        // BUG.md L-197：来源标记的每一句都要能被实现印证（退回模式下所有 V 行都已剔除）
+        assertTrue("标记必须写明 V 级已剔", "V 级已剔" in src)
+        assertFalse("不得再写「V 级仅本进程」（与实现不符）", "V 级仅本进程" in src)
         // 退回全量时剔掉其它进程的 V 级行；快照首行自证来源
         assertTrue("退回时必须切换筛选模式", "foreignVerboseToo = fullDevice" in src)
         assertTrue("快照必须自带来源标记", "# snapshot source=\$label" in src)
