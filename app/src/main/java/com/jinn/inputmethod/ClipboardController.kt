@@ -107,8 +107,8 @@ class ClipboardController(context: Context) {
             return
         }
         val clip = clipboard.primaryClip ?: return
-        // 取文本（coerceToText）也放后台：URI 型条目会同步读取整个 content:// 流
-        // （AOSP 实现把流读进 StringBuilder，无长度上限），在主线程上就是一次文件读 ，
+        // 取文本一律放后台：URI 型条目要打开 content:// 流（**带预算**读，见
+        // `ClipboardStore.readTextWithBudget` 与 BUG.md L-171），在主线程上就是一次文件读，
         // 输入法键盘卡顿甚至 ANR 的来源。回调里只做开销极小的 ClipData 快照读取。
         BackgroundIo.run { extractAndSave(clip) }
     }
@@ -116,8 +116,12 @@ class ClipboardController(context: Context) {
     /**
      * 提取文本并入库（后台线程）。
      *
-     * `coerceToText` 可能打开 ContentResolver 流，绝不能放主线程；正常与重试两条路径
-     * 统一走它，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
+     * URI 型条目**不走** `coerceToText`：AOSP 对 URI 的实现是「打开流的 `while(read)` 追加进
+     * StringBuilder」，**没有任何长度上限**，而单条上限在写库那一步才判 ⇒ 复制一个大文件会先把
+     * 整份内容分配出来，超限才被丢，`jinn-clipboard-io` 线程 OOM、进程被杀（BUG.md L-171）。
+     * 现在 URI 型统一走 [ClipboardStore.readTextWithBudget]（边读边判、读满即放弃），
+     * 且先看 MIME：非文本类型连流都不开。文本 / Intent 型是内存拷贝，维持 `coerceToText`。
+     * 正常与重试两条路径都走这里，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
      */
     private fun extractAndSave(clip: android.content.ClipData) {
         if (clip.itemCount == 0) return
@@ -131,7 +135,16 @@ class ClipboardController(context: Context) {
             Diagnostics.i(TAG, "跳过系统标记的敏感剪贴板条目")
             return
         }
-        val text = clip.getItemAt(0).coerceToText(appContext)?.toString() ?: return
+        // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
+        // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
+        val text = when (val r = ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)) {
+            is ClipboardStore.ItemText.Ok -> r.text
+            ClipboardStore.ItemText.TooLarge -> {
+                Diagnostics.w(TAG, "跳过超单条上限的剪贴板条目（读入即止，未整份读入）")
+                return
+            }
+            else -> return
+        }
         if (text.isBlank()) return
         // upsert 在库层按 content_hash 去重，不会重复写入
         ClipboardStore.save(appContext, db, text, resolveSourcePackage())
@@ -164,6 +177,196 @@ class ClipboardController(context: Context) {
  * 删除只来自用户主动删除、去重和容量上限裁剪最旧的非收藏记录。
  */
 object ClipboardStore {
+
+    /**
+     * 带预算把流读成文本（纯函数，便于单测）—— **URI 型剪贴板条目的唯一读入口**（BUG.md L-171）。
+     *
+     * 为什么不直接 `ClipData.Item.coerceToText`：AOSP 对 URI 的实现是
+     * 「打开 provider 的流 → `while (read)` 追加进 StringBuilder」，**没有任何长度上限**；
+     * 而单条上限（[MAX_ITEM_BYTES]）在写库那一步才判 ⇒「复制一个大文件」会先把整份内容分配出来，
+     * 超限才被丢，后台线程直接 OOM、IME 进程被杀（用户看到的是键盘突然消失）。
+     * 这里改成**边读边判**：读满预算即放弃，**不返回半截内容**（与超限不入库同一口径）。
+     *
+     * 连续空读按 [MAX_EMPTY_READS] 为限：`InputStream.read` 允许返回 0（非阻塞流），
+     * 不设上限会把后台线程钉死在一次读取里。
+     */
+    /**
+     * 取一条剪贴板条目正文的**结果**：失败必须能分层（BUG.md L-183）。
+     *
+     * 先前所有失败都返回 null ⇒ 调用方只能当成「剪贴板为空」：粘贴时**连一句提示都给不出**
+     * （原先的「内容过大，未粘贴」也因此丢失），采集侧的日志也少了「为什么没入库」。
+     */
+    internal sealed interface ItemText {
+        class Ok(val text: String) : ItemText
+
+        /** MIME 明确是二进制，或未知 MIME 档解码结果像二进制（[looksLikeText] 判否） */
+        object NotTextual : ItemText
+
+        /** 超过单条上限（与入库 / 粘贴闸同源）—— 读入即止，**不会**整份读进来 */
+        object TooLarge : ItemText
+
+        /** 时间预算耗尽（只可能出现在主线程调用路径上，见 [PASTE_READ_BUDGET_MS]） */
+        object TimedOut : ItemText
+
+        /** 打不开流 / 读失败 / 预算非法 */
+        object Failed : ItemText
+    }
+
+    /**
+     * 带预算读流，返回**带原因**的结果；[readTextWithBudget] 是它的兼容层。
+     *
+     * 语义与判据都没变（字节预算、连续空读上限、时间预算），只是把「为什么没拿到」带出来。
+     * 超预算一律**不返回半截内容**（TooLarge 而非截断）。
+     */
+    internal fun readBounded(
+        input: java.io.InputStream,
+        budget: Int = MAX_ITEM_BYTES,
+        maxEmptyReads: Int = MAX_EMPTY_READS,
+        deadlineNanos: Long? = null,
+    ): ItemText {
+        if (budget <= 0) return ItemText.Failed
+        val out = java.io.ByteArrayOutputStream(minOf(budget, 64 * 1024))
+        val chunk = ByteArray(16 * 1024)
+        var total = 0
+        var empty = 0
+        while (true) {
+            // 时间预算：字节预算管不住**慢** provider —— 主线程上（粘贴路径）读 256KB 也可能要几秒，
+            // 那种情况必须放弃（BUG.md L-177）。采集路径在后台线程，传 null 即可。
+            // 局限（BUG.md L-185）：这里只在**循环顶部**检查，打断不了阻塞的单次 read()。
+            if (deadlineNanos != null && System.nanoTime() >= deadlineNanos) return ItemText.TimedOut
+            val n = runCatching { input.read(chunk) }.getOrNull() ?: return ItemText.Failed
+            if (n < 0) break
+            if (n == 0) {
+                if (++empty > maxEmptyReads) return ItemText.Failed
+                continue
+            }
+            empty = 0
+            total += n
+            if (total > budget) return ItemText.TooLarge
+            out.write(chunk, 0, n)
+        }
+        return ItemText.Ok(String(out.toByteArray(), Charsets.UTF_8))
+    }
+
+    /** 兼容层：只要文本，失败一律 null（既有调用方与单测的口径） */
+    internal fun readTextWithBudget(
+        input: java.io.InputStream,
+        budget: Int = MAX_ITEM_BYTES,
+        maxEmptyReads: Int = MAX_EMPTY_READS,
+        deadlineNanos: Long? = null,
+    ): String? = (readBounded(input, budget, maxEmptyReads, deadlineNanos) as? ItemText.Ok)?.text
+
+    /** 连续空读上限（非阻塞 provider 的兜底；本类不做重试，超限即放弃） */
+    internal const val MAX_EMPTY_READS = 64
+
+    /**
+     * 粘贴路径的读入**时间**预算（毫秒）。
+     *
+     * 粘贴必须在主线程上拿到正文（`commitText` 要用当前的 InputConnection），所以这一路径不能像采集那样
+     * 丢到后台线程：字节预算只能管住「读多少」，管不住「读多久」—— 一个慢 provider 的 256KB 也能拖出 ANR。
+     * 取 200ms：真机本地 provider 读满 256KB 在几十毫秒量级，这个值只拦「明显不对劲」的情况（BUG.md L-177）。
+     */
+    internal const val PASTE_READ_BUDGET_MS = 200L
+
+    /** 新代码专用日志标签：本文件里已有两个对象各自的 TAG，这里不蹭它们的可见性 */
+    private const val ITEM_TAG = "ClipboardItem"
+
+    /** 明确算文本的应用类型（不在表里的走 [textualMime] 的「未知」档，试读后由 [looksLikeText] 兜底） */
+    private val TEXTUAL_APP_MIMES = setOf(
+        "application/json", "application/xml", "application/javascript", "application/x-javascript",
+    )
+
+    /** 明确算二进制的应用类型：连流都不开 */
+    private val BINARY_APP_MIMES = setOf(
+        "application/pdf", "application/zip", "application/gzip", "application/x-gzip",
+        "application/octet-stream", "application/vnd.android.package-archive",
+    )
+
+    /**
+     * MIME 是否文本（**三态**纯函数）：`true`=明确文本 / `false`=明确二进制 / `null`=未知（BUG.md L-178）。
+     *
+     * 为什么必须分三态：provider 常报通配类型（星号斜杠星号那种）或不给类型 —— 一律判死会**静默丢掉**本来能入库的文本
+     * （旧实现只看「以 `text/` 开头」就是这个毛病）；一律放行又会把二进制解码成乱码入库。
+     * 「未知」档允许试读，但结果要过 [looksLikeText]。
+     */
+    internal fun textualMime(type: String?): Boolean? {
+        val t = type?.trim()?.lowercase()?.substringBefore(';')?.trim() ?: return null
+        if (t.isEmpty() || t == "*/*") return null
+        if (t.startsWith("text/")) return true
+        if (t in TEXTUAL_APP_MIMES || t.endsWith("+json") || t.endsWith("+xml")) return true
+        if (t.startsWith("image/") || t.startsWith("video/") || t.startsWith("audio/")) return false
+        if (t in BINARY_APP_MIMES) return false
+        return null
+    }
+
+    /**
+     * 解码结果**像不像文本**（纯函数）：给「未知 MIME」档做兜底。
+     *
+     * 判据只有两条，都能在二进制流上稳定命中：出现 NUL（文本里不该有），或替换字符 U+FFFD 占比 >1%
+     * （UTF-8 解码把非法字节各解成一个 U+FFFD）。宁可少入库一条，也不要把乱码塞进面板。
+     */
+    internal fun looksLikeText(s: String): Boolean {
+        if (s.isEmpty()) return true
+        if (s.indexOf('\u0000') >= 0) return false
+        val bad = s.count { it == '\uFFFD' }
+        return bad * 100 <= s.length
+    }
+
+    /**
+     * 取一条剪贴板条目的正文 —— **采集与粘贴共用**的唯一入口（BUG.md L-177 / L-178）。
+     *
+     * 判据顺序与 AOSP `ClipData.Item.coerceToText` 对齐：`text` → `htmlText` → `uri` → 其它（Intent 等）。
+     * 只有 **URI 档**会打开流，所以只有它需要预算；前三档是内存拷贝，`coerceToText` 也照用。
+     * [deadlineNanos] 只在**主线程**调用路径（粘贴）上传，见 [PASTE_READ_BUDGET_MS]。
+     */
+    internal fun itemTextResult(
+        item: android.content.ClipData.Item,
+        context: android.content.Context,
+        deadlineNanos: Long? = null,
+    ): ItemText {
+        item.text?.let { return ItemText.Ok(it.toString()) }
+        item.htmlText?.let { return ItemText.Ok(it.toString()) }
+        val uri = item.uri
+        if (uri != null) return uriText(uri, context, deadlineNanos)
+        val other = runCatching { item.coerceToText(context)?.toString() }.getOrNull()
+            ?: return ItemText.Failed
+        return ItemText.Ok(other)
+    }
+
+    /** URI 档：先问 MIME（明确二进制直接跳过），再带预算试读，最后过 [looksLikeText]（BUG.md L-178 / L-184） */
+    private fun uriText(
+        uri: android.net.Uri,
+        context: android.content.Context,
+        deadlineNanos: Long?,
+    ): ItemText {
+        val type = runCatching { context.contentResolver.getType(uri) }.onFailure {
+            // 只记异常类名与 scheme：日志禁出正文（BUG.md L-179：原先这条路径一条日志都没有）
+            Diagnostics.w(ITEM_TAG, "读剪贴板 URI 类型失败: ${it.javaClass.simpleName} scheme=${uri.scheme}")
+        }.getOrNull()
+        val textual = textualMime(type)
+        if (textual == false) {
+            Diagnostics.i(ITEM_TAG, "跳过非文本 URI 剪贴板条目（type=$type，未读流）")
+            return ItemText.NotTextual
+        }
+        val read = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                readBounded(input, deadlineNanos = deadlineNanos)
+            }
+        }.onFailure {
+            Diagnostics.w(
+                ITEM_TAG,
+                "读剪贴板 URI 失败: ${it.javaClass.simpleName} scheme=${uri.scheme} authority=${uri.authority}",
+            )
+        }.getOrNull() ?: ItemText.Failed
+        val text = (read as? ItemText.Ok)?.text ?: return read
+        // L-184：**无条件**过一遍「像不像文本」—— 明确文本档也照样检查（provider 可能谎报 text/plain）。
+        // 代价写清：真的 UTF-16 / GBK 文本会被丢弃（而不是存成乱码）；正解是按 charset 解码，见台账。
+        if (!looksLikeText(text)) {
+            Diagnostics.i(ITEM_TAG, "跳过疑似二进制的剪贴板条目（type=${type ?: "未知"}，解码含替换字符）")
+            return ItemText.NotTextual
+        }
+        return ItemText.Ok(text)
+    }
 
     /**
      * 单条上限（UTF-8 明文字节）：超过直接不入库，避免一条巨文本就把库撑到失控。

@@ -175,6 +175,42 @@ object PinyinEngine {
     private var optionalLoaded = false
 
     /**
+     * 已经尝试装过的可选包：**包名 → 源文件 stamp**（BUG.md L-155 / L-154 的另一半）。
+     *
+     * 只跳过「同一个字节的包」：重下 / 换包会换 stamp ⇒ 自动再试一次；失败的包 stamp 没变，
+     * 不会进这个集合，因此也不会形成重试风暴。原先是个布尔闸（试过一次就再也不看）。
+     */
+    private val optionalAttempted = HashMap<String, Long>()
+
+    /**
+     * 上次尝试里**找到文件但没读进来**的包：包名 → 该身份下的失败次数（BUG.md L-155 / L-167）。
+     *
+     * 失败不能只记「试过」：那样闸门会永久早退，而词库页写着「空闲时自动装载」——等于骗用户。
+     * 记次数就能**有界重试**：同一个字节的包最多试 [MAX_OPTIONAL_RETRIES] 次，
+     * 换过文件（重下）则计数清零重来。
+     */
+    private val optionalFailed = HashMap<String, Int>()
+
+    /** 同一个（未变过的）包最多尝试几次 —— 一次首发 + 一次重试；再多只是白烧 CPU（解压失败是确定性的） */
+    internal const val MAX_OPTIONAL_RETRIES = 2
+
+    /**
+     * 这个包这次要不要尝试装载（纯函数，便于单测）：
+     * 身份变了要试；身份没变但**上次失败且还没试满**也要试；成功过且没变则不必再试。
+     */
+    internal fun packShouldRetry(attemptedStamp: Long?, currentStamp: Long, failedTimes: Int?): Boolean =
+        packNeedsAttempt(attemptedStamp, currentStamp) ||
+            (failedTimes != null && failedTimes < MAX_OPTIONAL_RETRIES)
+
+    /** 上次尝试里**找到文件但没读进来**的包名（原先只有 logcat 知道，见 BUG.md L-155） */
+    @Volatile
+    private var optionalFailedPacks: Set<String> = emptySet()
+
+    /** 单个包是否需要（重新）尝试装载：身份变了就要（纯函数，便于单测） */
+    internal fun packNeedsAttempt(attemptedStamp: Long?, currentStamp: Long): Boolean =
+        attemptedStamp != currentStamp
+
+    /**
      * 全量基础包是否已 merge 完成。
      *
      * 单段加载下它与 [loaded] 基本同时置位；保留独立标志是因为索引那一段可能失败 ——
@@ -1085,13 +1121,23 @@ object PinyinEngine {
      * @param delayMs 基础包就绪后再等多久开始加载，给首屏输入让路
      * @param onReady 全部可选包加载完成后的回调（不在主线程，调用方自行切线程）
      */
-    fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null) {
+    fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null): Boolean {
         // 检查-置位必须在同一把锁内：两个线程同时抵达时，
         // 无锁写法会让两边都通过检查、各自启一个加载线程，重复把词库 merge 一遍。
         // 锁用 [optionalLock] 而非 `this`：`load()` 全程持 `this`（含秒级索引解压），
         // 本方法的调用点又全在主线程，首次加载期间的空闲信号会把主线程阻塞数秒。
+        val packDir = java.io.File(context.applicationContext.filesDir, OPT_DICT_DIR)
+        val packs = packDir.listFiles { f -> f.isFile && f.name.endsWith(".xz") }
+            ?.sortedBy { it.name }
+            .orEmpty()
         synchronized(optionalLock) {
-            if (optionalLoaded || optionalLoading) return
+            if (optionalLoading) return false
+            // 两道判据（见 packShouldRetry）：包的**身份变过**（新装 / 重下 / 换包）要试；
+            // 身份没变但**上次失败且没试满**也要试 —— 否则词库页那句「空闲时自动装载」就是空话。
+            val pending = packs.any {
+                packShouldRetry(optionalAttempted[it.name], packStamp(it), optionalFailed[it.name])
+            }
+            if (optionalLoaded && !pending) return false
             optionalLoading = true
         }
         // 线程要活 21~34s（真机实测），期间服务可能被系统销毁重建 ⇒ 线程只该持有**应用** Context，
@@ -1102,16 +1148,37 @@ object PinyinEngine {
                 // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
                 // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                // 失败集合要在 lambda 外可见：onReady 的判据要用它（见下）
+                var failed: Set<String> = emptySet()
                 val ok = runCatching {
                     // load() 幂等：若基础包已就绪会立即返回
                     load(appContext)
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val t0 = System.currentTimeMillis()
-                    loadExtensionDict(appContext)
+                    failed = loadExtensionDict(appContext)
                     // 可选包引入了新的拼音键，必须重建有序键表：
                     // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
                     synchronized(this) { finalizeLoad() }
-                    optionalLoaded = true
+                    // 记账：记的是**这次真正看到的**包身份；失败集合对外可见（BUG.md L-155）。
+                    // 全部写都在同一把锁内，读侧（闸门）才看得到一致的组合。
+                    synchronized(optionalLock) {
+                        packs.forEach { f ->
+                            val stamp = packStamp(f)
+                            if (optionalAttempted[f.name] != stamp) {
+                                // 换了文件：上一次身份的失败次数作废（重下后要从头算）
+                                optionalFailed.remove(f.name)
+                                optionalAttempted[f.name] = stamp
+                            }
+                            if (f.name in failed) {
+                                optionalFailed[f.name] = (optionalFailed[f.name] ?: 0) + 1
+                            } else {
+                                optionalFailed.remove(f.name)
+                            }
+                        }
+                        optionalFailedPacks = failed
+                        optionalLoaded = true
+                        optionalLoading = false
+                    }
                     Diagnostics.i(
                         TAG,
                         "可选词库延迟加载完成，耗时 ${System.currentTimeMillis() - t0}ms，" +
@@ -1120,9 +1187,11 @@ object PinyinEngine {
                 }.onFailure {
                     Diagnostics.e(TAG, "可选词库延迟加载失败（基础词库不受影响）: ${it.message}")
                 }.isSuccess
-                // onReady 只在成功后回调：失败路径同样触发会让调用方打出
-                // 「可选词库已在后台就绪」，与同批的 E 级失败日志自相矛盾。
-                if (ok) {
+                // onReady 的判据是「没抛异常 **且** 没有读不进来的包」：
+                // 只看前者的话，一个包都没读进来时也会回调，调用方照样打出「可选词库已在后台就绪」，
+                // 与同一批 W 级日志自相矛盾（BUG.md L-167）。失败集合非空即视为**未就绪** ——
+                // 词库页会显示「索引未就绪」，重试由闸门按身份 + 失败次数推进。
+                if (ok && failed.isEmpty()) {
                     runCatching { onReady?.invoke() }.onFailure {
                         Diagnostics.w(TAG, "可选词库就绪回调异常: ${it.message}")
                     }
@@ -1131,7 +1200,9 @@ object PinyinEngine {
                 // 复位必须在 finally：`setThreadPriority` 在 runCatching 之外，一旦它（或将来
                 // 新增的语句）抛异常，optionalLoading 会永远停在 true，此后所有
                 // loadOptionalAsync 直接返回，可选词库静默地永不加载且没有任何重试入口。
-                optionalLoading = false
+                // 复位与闸门的「检查-置位」用同一把锁：否则窄交错下第三次调用能再起一个加载线程。
+                // （正常路径已在记账块里复位过一次，这里是异常路径的兜底。）
+                synchronized(optionalLock) { optionalLoading = false }
             }
         }.apply { isDaemon = true }
         try {
@@ -1139,13 +1210,33 @@ object PinyinEngine {
         } catch (t: Throwable) {
             // `start()` 也可能失败（OOM / 线程数受限），而它在子线程 finally 的保护范围之外：
             // 不复位的话 optionalLoading 永久为 true，同样是「静默地永不加载」。
-            optionalLoading = false
+            synchronized(optionalLock) { optionalLoading = false }
             Diagnostics.e(TAG, "可选词库加载线程启动失败: ${t.message}")
         }
+        return true
     }
 
     /** 可选词库是否已就绪（供 UI 显示状态） */
     fun isOptionalReady(): Boolean = optionalLoaded
+
+    /** 上次尝试里没读进来的可选包（供诊断与守卫读取；不再只活在 logcat 里） */
+    internal fun failedOptionalPacks(): Set<String> = optionalFailedPacks
+
+    /** 源文件身份：与索引缓存头里记的 [PhraseIndex.sourceStamp] 同口径 */
+    private fun packStamp(f: java.io.File): Long = PhraseIndex.stampOfFile(f.length(), f.lastModified())
+
+    /**
+     * 这个**已安装**的可选包，索引是否已就绪（BUG.md L-155）。
+     *
+     * 判据与加载路径同一句（[PhraseIndex.cacheMatchesSource]）：缓存存在、能映射、且头里的
+     * `sourceStamp` 与源文件当前 `length:mtime` 相等。界面上的「已安装」从此不再与
+     * 「真的会出词」被显示成同一回事。
+     */
+    internal fun isOptionalIndexReady(context: Context, packName: String): Boolean =
+        PhraseIndex.cacheMatchesSource(
+            java.io.File(java.io.File(context.filesDir, INDEX_CACHE_DIR), packName + INDEX_SUFFIX),
+            java.io.File(java.io.File(context.filesDir, OPT_DICT_DIR), packName),
+        )
 
     /**
      * 加载全部可选词库包。
@@ -1157,7 +1248,7 @@ object PinyinEngine {
      * 全部用 merge 模式加载（基础包词条在前，可选包追加，并去重）。
      * 未安装任何可选包不算错误：基础包已覆盖日常输入，仅记一条日志。
      */
-    private fun loadExtensionDict(context: Context) {
+    private fun loadExtensionDict(context: Context): Set<String> {
         val dir = java.io.File(context.filesDir, OPT_DICT_DIR)
         val packs = dir.listFiles { f -> f.isFile && f.name.endsWith(".xz") }
             ?.sortedBy { it.name }
@@ -1178,11 +1269,16 @@ object PinyinEngine {
         }
 
         val loaded = ArrayList<PhraseIndex>(packs.size)
+        // 「找到文件但没读进来」的包：返回给调用方记账（原先只留一条 W 级日志，UI 看不出区别）
+        val failed = LinkedHashSet<String>()
         var loadedBytes = 0L
         for (f in packs) {
-            loadOptionalIndex(f, indexDir)?.let {
-                loaded.add(it)
+            val idx = loadOptionalIndex(f, indexDir)
+            if (idx != null) {
+                loaded.add(idx)
                 loadedBytes += f.length()
+            } else {
+                failed.add(f.name)
             }
         }
         optionalIndexes = loaded            // 原子整体替换（查询侧并发读旧表安全）
@@ -1199,6 +1295,7 @@ object PinyinEngine {
         } else {
             Diagnostics.i(TAG, "可选词库已加载 ${loaded.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）")
         }
+        return failed
     }
 
     /**

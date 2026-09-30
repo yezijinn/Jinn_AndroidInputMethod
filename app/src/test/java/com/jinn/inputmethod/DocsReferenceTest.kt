@@ -307,6 +307,97 @@ class DocsReferenceTest {
         )
     }
 
+    /**
+     * README 的 APK 体积声明必须与本地发布包相符（`BUG.md` L-165）。
+     *
+     * 对外写「约 2.6MB」而实际 2.71 MiB，用户按体积预估下载量会判错；这也是发布后最容易腐烂的一处数字
+     * （每次改动都在长，而 README 没人回头改）。只在仓库根存在 `jinn-release.apk` 时判，
+     * 干净检出 / CI 里没有这个包就跳过。
+     */
+    @Test
+    fun README体积声明必须与实际发布包相符() {
+        val apk = listOf(File("jinn-release.apk"), File("../jinn-release.apk"))
+            .firstOrNull { it.isFile } ?: return
+        val mib = apk.length() / 1048576.0
+        for (name in listOf("README.md", "README_EN.md")) {
+            val doc = readDoc(name) ?: continue
+            val m = Regex("""(?i)APK[^\n]{0,12}?约?\s*~?\s*([0-9]+(?:\.[0-9]+)?)\s*MB""").find(doc)
+                ?: continue
+            val claimed = m.groupValues[1].toDouble()
+            val actual = "%.1f".format(mib)      // 对外写的是「约 X.YMB」：取一位小数比
+            assertEquals(
+                "$name 写「$claimed MB」与实际 ${"%.2f".format(mib)} MiB 不符（守卫要求 X.Y 位一致；" +
+                    "体积变大时请同步改 README）",
+                actual, "%.1f".format(claimed),
+            )
+        }
+    }
+
+    /**
+     * 索引行的状态必须与详情块的 `**状态**：` 一致。
+     *
+     * 第五十四回实测：L-155 的索引行写「未修 · 需口径」、详情块写「已修·留存」—— 两处互相矛盾，
+     * 而「未修 / 已修」直接决定下一轮要不要动手 ⇒ 必须机械对拍。比对前各自归一：去掉 markdown 标记
+     * 与「（…）」后缀（索引里常带「（第五十四回）」这类注记），只比状态词那一层。
+     */
+    @Test
+    fun 索引状态必须与详情块一致() {
+        val indexPart = ledgerPartFiles()["index"] ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        val all = (listOf(ledger()) + ledgerPartFiles().values).joinToString("\n")
+        val bad = ArrayList<String>()
+        for (m in Regex("""(?m)^\| (L-\d+) \|([^\n]*)$""").findAll(indexPart)) {
+            val id = m.groupValues[1]
+            val cells = m.value.split("|")
+            if (cells.size < 6) continue
+            // 行格式：`| L-xx | 风险 | 维度 | 状态 | 分册 | 标题 |`
+            // ⇒ split('|') 之后状态在第 5 段（下标 4）；取错列会拿「维度」当状态
+            val indexWord = statusWord(cells[4])
+            // `#{3,4}`：遗留区里有 `#### L-53` 这类四级块，只认三级会把它们静默跳过
+            // （旁证：front-matter 的 entries_with_detail 恰好比 active_entries 少 1）
+            val blk = Regex("(?s)#{3,4} $id · .*?(?=\n#{3,4} |\\z)").find(all)?.value ?: continue
+            val detail = Regex("""\*\*状态\*\*：([^｜\n]*)""").find(blk)?.groupValues?.get(1) ?: continue
+            val detailWord = statusWord(detail)
+            if (indexWord != detailWord) bad.add("$id（索引=$indexWord｜详情=$detailWord）")
+        }
+        assertTrue("索引与详情的状态词不一致（改一处忘另一处）：$bad", bad.isEmpty())
+    }
+
+    /**
+     * 状态词（判据按两段取，别只看括号前那一层）：
+     *
+     * ① 含「已修」⇒ 归为 `已修` —— 这套台账里最常写的状态差异就在括号里
+     * （`真实缺陷（同日已修）` vs `真实缺陷（未修 · 需口径）`），只看括号前会把它们**整片漏掉**
+     * （第五十五回审计实测）；
+     * ② 否则取「（…）」之前的词（`真实缺陷 / 存疑 / 部分已修 / 有意设计 / 复核排除 / 已清理` …）。
+     */
+    private fun statusWord(raw: String): String {
+        val t = raw.replace("*", "").replace("`", "").trim()
+        // 「部分已修」必须**先**判：它本身含「已修」，压在后面会被当成整条已修（BUG.md L-191）——
+        // 而「部分 / 全部」正是这套台账最常用的区分。
+        if (t.contains("部分已修")) return "部分已修"
+        if (t.contains("已修")) return "已修"
+        return t.substringBefore("（").trim()
+    }
+
+    /**
+     * 每个详情分册页眉的 `blocks: N` 必须等于该册里的块数。
+     *
+     * 全局计数（front-matter ↔ 全库）由 [文档计数须与源码一致] 把守，但**单册**页眉原先没人核对：
+     * 第五十五回我的批量改写脚本吞掉 24 个块时，low.md 的页眉还写着 87（当时的真值），
+     * 与文件里的 63 块自相矛盾 —— 这条守卫能在那一刻立即报出来（BUG.md L-167）。
+     */
+    @Test
+    fun 分册页眉的块数必须与该册实际块数一致() {
+        val bad = ArrayList<String>()
+        for ((name, text) in ledgerPartFiles()) {
+            val declared = Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
+                ?: continue
+            val actual = Regex("""(?m)^#{3,4} (?:L|X|B)-\d+ ·""").findAll(text).count()
+            if (declared != actual) bad.add("$name（页眉 $declared / 实际 $actual）")
+        }
+        assertTrue("分册页眉块数与实际不一致：$bad", bad.isEmpty())
+    }
+
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */
     private fun ledger(): String =
         listOf("BUG.md", "../BUG.md").map(::File).firstOrNull { it.isFile }?.readText()

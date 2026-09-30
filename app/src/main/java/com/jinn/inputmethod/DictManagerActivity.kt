@@ -307,6 +307,12 @@ class DictManagerActivity : Activity() {
             ),
         )
 
+        // 「已安装」不等于「真的会出词」：索引还没跟上就如实说（BUG.md L-155）。
+        // 判据与装载路径同一句（PinyinEngine.isOptionalIndexReady），只在**装了但没就绪**时多一行。
+        if (installed && !PinyinEngine.isOptionalIndexReady(this, dict.fileName)) {
+            card.addView(line(TEXT_INDEX_PENDING, getColor(R.color.warn), 13f, top = 4))
+        }
+
         // 操作按钮
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -580,6 +586,10 @@ class DictManagerActivity : Activity() {
         const val TEXT_LEGACY_CONFIRM = "这些包已没有下载源，删除后无法重新下载。确定删除吗？"
         const val TEXT_CONFIRM_OK = "删除"
         const val TEXT_CONFIRM_CANCEL = "取消"
+
+        /** 装了包但索引还没跟上（后台空闲时装载；换了包会重建）—— 文案在代码里下发，与本节其它 TEXT_* 同做法 */
+        const val TEXT_INDEX_PENDING =
+            "索引未就绪：空闲时（息屏或收起键盘后）自动装载；若长时间没变化，请删除该包后重新下载。"
 
         const val TAG = "DictManager"
 

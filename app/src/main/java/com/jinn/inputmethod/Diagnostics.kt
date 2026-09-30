@@ -30,6 +30,15 @@ object Diagnostics {
     private const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
 
+/**
+ * 日志目录的**体积**预算（BUG.md L-170）。
+ *
+ * 年龄闸（[KEEP_DAYS]）保证「不超 7 天」，不保证「不超多少 MB」：崩溃循环下每次崩溃都会新增一份
+ * 3000 行快照（文件名带毫秒），一天就能写出几百 MB。这里补一条总量闸：超预算时按**最旧先删**
+ * 我们自己的文件（当天的文件不动 —— 那是正在追加的目标）。
+ */
+private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
+
     /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按月反复补清（见 [maybeCleanupOldLogs]） */
     private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
 
@@ -379,6 +388,22 @@ object Diagnostics {
     fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? =
         synchronized(snapshotLock) { dumpLogcatLocked(suffix, waitMs) }
 
+    /**
+     * 跑一次 logcat（不经 shell，见 [dumpLogcat] 的命令注入说明）；返回退出码。
+     *
+     * 未在 [waitMs] 内结束（已 destroy）或抛异常都返回 **-1** —— 调用方按「这次没成功」处理
+     * （BUG.md L-188：失败要有退路，也要有痕迹）。
+     */
+    private fun runLogcat(args: List<String>, out: File, waitMs: Long): Int = runCatching {
+        val process = ProcessBuilder(args).redirectErrorStream(true).redirectOutput(out).start()
+        val finished = process.waitFor(waitMs, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            process.destroy()
+            return@runCatching -1
+        }
+        process.exitValue()
+    }.getOrDefault(-1)
+
     private fun dumpLogcatLocked(suffix: String, waitMs: Long): File? {
         val dir = logDir ?: return null
         val safeSuffix = suffix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
@@ -400,20 +425,37 @@ object Diagnostics {
             // 的可用产物，会被 finally 的清理一并删掉（丢的是排查材料）。先删则至多删到自己的残留。
             dest.delete()
             raw.delete()
-            val process = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "3000")
-                .redirectErrorStream(true)   // 等价原来的 2>&1
-                .redirectOutput(raw)
-                .start()
-            val finished = process.waitFor(waitMs, TimeUnit.MILLISECONDS)
-            if (!finished) process.destroy()
-            val ok = finished && process.exitValue() == 0
-            if (!ok) return null
-            if (!raw.exists() || raw.length() == 0L) return null
+            // `--pid` 只取本进程：本机开发设备是 root，不加这一条 logcat 会给**全系统**的行
+            //（`dumpLogcat` 的 KDoc 自己写着「有 root 时是系统全量」），而这份快照会被打进**要外传的**
+            // 诊断包 ⇒ 等于把别家的日志一起交出去（BUG.md L-169）。
+            // 代价说清：系统侧（lowmemorykiller 之类）的旁证不再进包，排查这类问题要看 `dumpsys`。
+            // 先按「只取本进程」抓；**失败就退回不带 `--pid`** 再抓一次（BUG.md L-188）：
+            // 隐私优先是默认，但不能因为一个参数不被支持（裁剪 ROM / 旧 toybox / 将来行为变化）
+            // 就丢掉整份现场 —— 原先的 `if (!ok) return null` 正是这样，而且那条路径连日志都没有。
+            // 退回时抓的是全系统（那份快照会被脱敏，但**含其它进程的行**）⇒ 必须留一条 W 说明。
+            val baseArgs = listOf("logcat", "-d", "-v", "threadtime", "-t", "3000")
+            var code = runLogcat(baseArgs + "--pid=${Process.myPid()}", raw, waitMs)
+            if (code != 0) {
+                Diagnostics.w(TAG, "logcat 快照: 按 pid 抓取失败（exit=$code），退回全量再试一次")
+                raw.delete()
+                code = runLogcat(baseArgs, raw, waitMs)
+            }
+            if (code != 0) {
+                Diagnostics.w(TAG, "logcat 快照失败: exit=$code（两次都未成功）")
+                return null
+            }
+            if (!raw.exists() || raw.length() == 0L) {
+                Diagnostics.w(TAG, "logcat 快照为空（本次未产出内容）")
+                return null
+            }
             // 落盘后再过一遍：把本进程的 V 级行（用户正文通道）剔掉。
             // 保留「先落盘、后处理」的顺序：读取管道再 waitFor 会在输出超过管道缓冲时互相等死。
             val filtered = filterOwnVerboseLines(raw.readText(), Process.myPid())
             if (filtered.isEmpty()) return null
-            dest.writeText(filtered)
+            // 与日文件同一句脱敏（BUG.md L-169：原先这条通道整体绕过护栏）。**不做截断** ——
+            // `sanitizeForFile` 的截断是按「一条消息」设计的，套到整份快照上会把堆栈拦腰砍断。
+            val safe = redactSensitive(filtered)
+            dest.writeText(safe)
             produced = true
             return dest
         } catch (t: Throwable) {
@@ -443,6 +485,28 @@ object Diagnostics {
         cleanupOldLogs()
     }
 
+    /**
+     * 超体积预算时该删哪些文件（纯函数，便于单测）：跳过 [keepName]，最旧先删，删到预算内为止。
+     *
+     * @param entries `(文件名, 修改时间, 字节数)`，顺序无关（内部按时间升序）
+     */
+    internal fun overBudgetVictims(
+        entries: List<Triple<String, Long, Long>>,
+        budget: Long,
+        keepName: String?,
+    ): List<String> {
+        var total = entries.sumOf { it.third }
+        if (total <= budget) return emptyList()
+        val victims = ArrayList<String>()
+        for (e in entries.sortedBy { it.second }) {
+            if (total <= budget) break
+            if (e.first == keepName) continue
+            victims.add(e.first)
+            total -= e.third
+        }
+        return victims
+    }
+
     /** 删除 KEEP_DAYS 天前的诊断日志（每日文件、logcat 快照与导出用的设备信息临时件） */
     private fun cleanupOldLogs() {
         val dir = logDir ?: return
@@ -457,6 +521,31 @@ object Diagnostics {
             if (ours && file.lastModified() < cutoff) {
                 runCatching { file.delete() }
             }
+        }
+        // 年龄闸之后再过一遍**体积**闸（BUG.md L-170）：崩溃循环能在一天内写出几百 MB，
+        // 只按年龄删拦不住「当天写满」——那时导出会失败、同分区别的应用也跟着遭殃。
+        runCatching {
+            val nowName = "$LOG_FILE_PREFIX${today()}.log"
+            val entries = dir.listFiles()
+                ?.filter { it.isFile && (
+                    it.name.startsWith(LOG_FILE_PREFIX) || it.name.startsWith(LOGCAT_FILE_PREFIX) ||
+                        it.name == DEVICE_INFO_FILE) }
+                ?.map { Triple(it.name, it.lastModified(), it.length()) }
+                .orEmpty()
+            val victims = overBudgetVictims(entries, LOG_DIR_BUDGET_BYTES, nowName)
+            if (victims.isNotEmpty()) {
+                var freed = 0L
+                for (v in victims) {
+                    val f = File(dir, v)
+                    val len = f.length()
+                    if (runCatching { f.delete() }.getOrDefault(false)) freed += len
+                }
+                Diagnostics.i(TAG, "日志体积超预算，已按最旧先删 ${victims.size} 个（释放 ${freed / 1024}KB）")
+            }
+        }.onFailure {
+            // 清理是尽力而为，不该让日志写入路径因它抛异常；但也**不能静默**
+            //（仓库自定底线：空 onFailure 等于吞异常，见 BUG.md L-189）。只记异常类名。
+            Diagnostics.w(TAG, "日志体积清理失败: ${it.javaClass.simpleName}")
         }
     }
 
@@ -545,8 +634,16 @@ object Diagnostics {
                 java.util.zip.ZipOutputStream(FileOutputStream(t)).use { zos ->
                     for (f in files) {
                         if (!f.isFile) continue
+                        // 先把内容读进内存再建条目：读失败（文件正被清理删掉 —— BUG.md L-170/L-174
+                        // 的两条通道）时**跳过这一个**，而不是留下半截 zip 或让整包失败。
+                        // 单文件大小受 [LOG_DIR_BUDGET_BYTES] 与逐条截断约束，读进内存是安全的。
+                        val bytes = runCatching { f.readBytes() }.getOrNull()
+                        if (bytes == null) {
+                            Diagnostics.w(TAG, "导出诊断包: 跳过读不出的文件 ${f.name}")
+                            continue
+                        }
                         zos.putNextEntry(java.util.zip.ZipEntry(f.name))
-                        f.inputStream().use { it.copyTo(zos) }
+                        zos.write(bytes)
                         zos.closeEntry()
                     }
                 }

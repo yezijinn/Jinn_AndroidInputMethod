@@ -53,7 +53,7 @@ class JinnIme : InputMethodService() {
     private val ui = Handler(Looper.getMainLooper())
 
     /** 可选词库包是否已触发加载（三种空闲信号只生效一次） */
-    private var optionalLoadTriggered = false
+
 
     /** 息屏接收器：锁屏即视为空闲，可安全做 21~34s 的后台重活 */
     private var screenOffReceiver: BroadcastReceiver? = null
@@ -649,6 +649,11 @@ class JinnIme : InputMethodService() {
      * 事务上限抛 `TransactionTooLargeException`（本项目 2026-09-16 已在同类链路上实测过），
      * 未捕获时直接崩掉整个 IME 进程。
      */
+    /** 提示（粘贴失败的几种原因要让人看见；文案在代码里下发，与文件内既有 Toast 写法一致） */
+    private fun toast(msg: String) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun pasteClipboard() {
         val clip = clipboardManager.primaryClip
         // 0 条目守卫不能省：`ClipData(label, mimeTypes, emptyArray())` 是合法构造（部分应用与
@@ -659,7 +664,40 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "粘贴: 剪贴板无条目（itemCount=0）")
             return
         }
-        val text = clip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        // 与采集侧**共用**取文入口：URI 档带字节预算 + MIME 三态判定 + 失败日志（BUG.md L-177 / L-178）。
+        // 并且**必须带时间预算**：粘贴要在主线程上拿到正文（`commitText` 要用当前 InputConnection），
+        // 字节预算管不住「慢 provider」——一次 IPC 读 256KB 也能拖出 ANR。
+        val result = ClipboardStore.itemTextResult(
+            clip!!.getItemAt(0),
+            this,
+            deadlineNanos = System.nanoTime() + ClipboardStore.PASTE_READ_BUDGET_MS * 1_000_000L,
+        )
+        // 失败**分层**给提示（BUG.md L-183）：先前四种失败都落进「剪贴板为空」，
+        // 用户按了没反应、日志还说「空」；「内容过大，未粘贴」这句原先由 pasteClipboardText 弹出，
+        // 但读入即止之后那一步已经到不了 —— 必须在这里补回来。
+        val text = when (result) {
+            is ClipboardStore.ItemText.Ok -> result.text
+            ClipboardStore.ItemText.TooLarge -> {
+                Diagnostics.w(TAG, "粘贴: 单条超过 ${ClipboardStore.MAX_ITEM_BYTES} 字节上限，读入即止")
+                toast("内容过大，未粘贴")
+                return
+            }
+            ClipboardStore.ItemText.NotTextual -> {
+                Diagnostics.w(TAG, "粘贴: 剪贴板不是文本内容（未读流或解码像二进制）")
+                toast("剪贴板不是文本内容")
+                return
+            }
+            ClipboardStore.ItemText.TimedOut -> {
+                Diagnostics.w(TAG, "粘贴: 读取剪贴板超时（预算 ${ClipboardStore.PASTE_READ_BUDGET_MS}ms）")
+                toast("读取剪贴板超时")
+                return
+            }
+            ClipboardStore.ItemText.Failed -> {
+                Diagnostics.w(TAG, "粘贴: 读不到剪贴板内容（打不开流或读失败）")
+                toast("读不到剪贴板内容")
+                return
+            }
+        }
         if (text.isEmpty()) {
             Diagnostics.w(TAG, "粘贴: 剪贴板为空")
             return
@@ -1451,13 +1489,16 @@ class JinnIme : InputMethodService() {
      * 加载线程本身已设 [android.os.Process.THREAD_PRIORITY_BACKGROUND]（见 PinyinEngine）。
      */
     private fun maybeLoadOptionalDict(reason: String) {
-        if (optionalLoadTriggered) return
-        optionalLoadTriggered = true
-        Diagnostics.i(TAG, "可选词库: 开始后台加载（触发: $reason）")
+        // 这里**不再**放一次性旗标：装了包但那次没读进来（损坏 / 解压失败）时，
+        // 旗标会让本进程**永远没有第二次触发**，而词库页写着「空闲时自动装载」——
+        // 与用户看到的界面矛盾（BUG.md L-154 / L-167）。要不要真装载由引擎的闸门决定：
+        // 它按包身份 + 失败次数（有界重试）判定，未变过的包在闸门处就返回 false、几乎不花时间。
         runCatching {
-            PinyinEngine.loadOptionalAsync(this, delayMs = 0L) {
+            val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L) {
                 Diagnostics.i(TAG, "可选词库已在后台就绪")
             }
+            // 只在**真的开始装载**时打日志：否则每次息屏 / 收键盘都会多一行噪音
+            if (started) Diagnostics.i(TAG, "可选词库: 开始后台加载（触发: $reason）")
         }.onFailure {
             Diagnostics.e(TAG, "启动可选词库加载失败: ${it.message}", it)
         }

@@ -236,7 +236,50 @@ internal class PhraseIndex private constructor(
         fun stampOfText(text: String): Long = fnv1a64(text.toByteArray(Charsets.UTF_8))
 
         /** 源文件摘要：把 length 与 lastModified 拼起来做 FNV，用于「文件是否变过」的复用校验 */
-        fun stampOfFile(length: Long, modified: Long): Long =
+        /**
+     * 磁盘上的索引缓存是否**跟得上**某个源文件（判据与加载路径同一句，见 [stampOfFile]）。
+     *
+     * 词库页用它显示「索引已就绪 / 未就绪」：装了包但没生效，原先只有 logcat 能看出来
+     * （BUG.md L-155）。任何一步不成立都算「没跟上」：缓存不在、映射失败、stamp 不相等。
+     */
+    internal fun cacheMatchesSource(cache: java.io.File?, src: java.io.File): Boolean =
+        cache != null && mappedSourceStamp(cache) == stampOfFile(src.length(), src.lastModified())
+
+    /**
+     * 只读索引缓存**头部**的来源摘要（不解析键区 / 词区，不分配长度数组）。
+     *
+     * 供「索引是否跟上源文件」这类**只要 stamp** 的调用方使用：完整 [ofMapped] 会解析整份索引
+     * （`expandLengths` 两次 ⇒ 各一个 `IntArray(键数 + 1)`，几十万键 ≈ 数 MB 临时垃圾），
+     * 而词库页每次刷新都要为每个已安装包查一次 —— 在设置页**主线程**上做完整解析是白花的开销
+     * （BUG.md L-167）。头部的合法性判据与 [parse] 一致（magic / version），另加长度自洽检查。
+     */
+    internal fun mappedSourceStamp(file: java.io.File): Long? = runCatching {
+        if (!file.isFile) return@runCatching null
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            if (raf.length() < HEADER_SIZE) return@runCatching null
+            val head = ByteArray(HEADER_SIZE)
+            raf.readFully(head)
+            val buf = java.nio.ByteBuffer.wrap(head).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            // magic 与 parse() 同一判据（逐字节比，不引入第二份常量）
+            if (buf.get(0) != 'J'.code.toByte() || buf.get(1) != 'N'.code.toByte() ||
+                buf.get(2) != 'I'.code.toByte() || buf.get(3) != 'H'.code.toByte()
+            ) {
+                return@runCatching null
+            }
+            if (u16(buf, 4) != 2) return@runCatching null
+            val keyCount = i32(buf, 6)
+            val keysLen = i32(buf, 10)
+            val wordsLen = i32(buf, 14)
+            if (keyCount <= 0 || keysLen <= 0 || wordsLen <= 0) return@runCatching null
+            // 保守的长度下界：键区与词区必须落在文件里（挡住「只剩头部」这类明显截断）。
+            // 不在这里复算长度数组的偏移：那两个数组的宽度是自适应的（见 parse()），从头部推不出来；
+            // 更严的结构校验仍由装载路径的 parse() 把守 —— 本函数只回答「头部像不像跟上源文件的索引」。
+            if (raf.length() < HEADER_SIZE.toLong() + keysLen + wordsLen) return@runCatching null
+            stampOf(buf, 22)
+        }
+    }.getOrNull()
+
+    fun stampOfFile(length: Long, modified: Long): Long =
             fnv1a64("$length:$modified".toByteArray(Charsets.UTF_8))
 
         /**

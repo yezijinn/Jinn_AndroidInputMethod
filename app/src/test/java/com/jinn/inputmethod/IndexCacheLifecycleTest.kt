@@ -107,4 +107,92 @@ class IndexCacheLifecycleTest {
         )
     }
 
+
+    /**
+     * `BUG.md` L-155（+ L-154 的另一半）：可选包的装载尝试必须**按包身份记账** ——
+     * 换了文件（重下 / 换包）要能再试一次，而不是「本进程试过一次就再也不看」。
+     */
+    @Test
+    fun 可选包装载必须按文件身份记账() {
+        // 判据是纯函数，直接验四档：没试过 / 没变且成功过 / 没变但失败过 / 换过文件
+        assertTrue("没试过的包必须尝试", PinyinEngine.packShouldRetry(null, 100L, null))
+        assertFalse("没变且没失败过 ⇒ 不必再试", PinyinEngine.packShouldRetry(100L, 100L, null))
+        assertTrue("没变但上次失败过 ⇒ 要重试（词库页那句「空闲时自动装载」必须为真）",
+            PinyinEngine.packShouldRetry(100L, 100L, 1))
+        assertFalse("同一个身份的失败重试用完 ⇒ 不再白烧 CPU",
+            PinyinEngine.packShouldRetry(100L, 100L, PinyinEngine.MAX_OPTIONAL_RETRIES))
+        assertTrue("换了文件（重下 / 换包）必须再试，哪怕旧身份试满过",
+            PinyinEngine.packShouldRetry(100L, 101L, PinyinEngine.MAX_OPTIONAL_RETRIES))
+
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        val ime = TestSources.codeSource("JinnIme.kt")
+        // 正向：闸门真的用了这个判据（改语义就红）
+        assertTrue(
+            "闸门必须逐包调 packShouldRetry（身份 + 失败次数）",
+            "packShouldRetry(optionalAttempted[it.name], packStamp(it), optionalFailed[it.name])" in src,
+        )
+        assertTrue("失败次数必须被累计", "optionalFailed[f.name] = (optionalFailed[f.name] ?: 0) + 1" in src)
+        assertTrue("换过文件必须清零旧身份的失败次数", "optionalFailed.remove(f.name)" in src)
+        assertTrue("失败集合必须对外可见（原先只有 logcat 知道）", "internal fun failedOptionalPacks()" in src)
+        assertTrue("找到文件但没读进来的包名必须被收集", "failed.add(f.name)" in src)
+        // 反向钉：这两句一旦回来，就是「失败的包永远不再试」的老毛病（BUG.md L-154 / L-167）
+        assertFalse("闸门不得退回布尔闸", "if (optionalLoaded) return" in src)
+        assertFalse("调用方不得再放一次性旗标（放回去 ⇒ 失败后没有第二次触发）", "optionalLoadTriggered" in ime)
+        assertTrue("调用方必须直接调装载（并只在真的开始时打日志）",
+            "val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L)" in ime)
+    }
+
+    /**
+     * `BUG.md` L-155：词库页要能看出「装了但没生效」——判据必须与装载路径同一句，
+     * 并且用**真文件**验正反两档（不是只钉字符串）。
+     */
+    @Test
+    fun 索引就绪判据必须与源文件同口径() {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "jinn-idxready-" + System.nanoTime())
+        assertTrue("建临时目录失败", dir.mkdirs())
+        try {
+            val src = java.io.File(dir, "opt_demo.xz")
+            src.writeBytes(ByteArray(64) { 7 })
+            val cache = java.io.File(dir, "opt_demo.xz.idx")
+            assertFalse("缓存不存在 ⇒ 未就绪", PhraseIndex.cacheMatchesSource(cache, src))
+            assertFalse("缓存为 null ⇒ 未就绪", PhraseIndex.cacheMatchesSource(null, src))
+            val stamp = PhraseIndex.stampOfFile(src.length(), src.lastModified())
+            cache.writeBytes(PhraseIndex.build(sequenceOf("nihao\t你好"), stamp))
+            assertTrue("同 stamp 的缓存 ⇒ 就绪", PhraseIndex.cacheMatchesSource(cache, src))
+            src.writeBytes(ByteArray(65) { 7 })     // 源换了（长度变）⇒ stamp 变
+            assertFalse("源变了 ⇒ 未就绪（必须重建）", PhraseIndex.cacheMatchesSource(cache, src))
+        // 快路径必须与完整解析**同口径**：同一个缓存，两种读法给出同一个来源摘要
+        val stamp2 = PhraseIndex.stampOfFile(src.length(), src.lastModified())
+        cache.writeBytes(PhraseIndex.build(sequenceOf("nihao\t你好"), stamp2))
+        assertEquals(
+            "只读头部的快路径与 ofMapped 必须给出同一个 stamp（否则界面会误报）",
+            PhraseIndex.ofMapped(cache)!!.sourceStamp,
+            PhraseIndex.mappedSourceStamp(cache)!!,
+        )
+        // 头部不合法（magic 坏 / 长度不成比例）不算「就绪」。
+        // 注意残余：快路径只校验头部，**头合法而体被截断**的缓存仍会显示「就绪」——
+        // 那种缓存会被装载路径的 parse() 拒绝并重建，界面最多少提示一次（本轮记进 L-167 的取舍）。
+        // 用**另一个文件**做这两种情形：Windows 不允许重写已被内存映射的文件（ofMapped 刚映射过它）
+        val good = cache.readBytes()
+        val bad = java.io.File(dir, "opt_bad.xz")
+        bad.writeBytes(ByteArray(48) { 3 })
+        val badCache = java.io.File(dir, "opt_bad.xz.idx")
+        badCache.writeBytes(ByteArray(good.size) { 0 })
+        assertFalse("magic 坏的缓存不算就绪", PhraseIndex.cacheMatchesSource(badCache, bad))
+        badCache.writeBytes(good.copyOf(12))
+        assertFalse("只剩头部的缓存不算就绪", PhraseIndex.cacheMatchesSource(badCache, bad))
+        } finally {
+            dir.deleteRecursively()
+        }
+
+        val page = TestSources.codeSource("DictManagerActivity.kt")
+        // 钉**整条判据**（含条件与取反），而不是只钉常量名：常量声明就在被扫文件里，钉名字会假绿
+        assertTrue(
+            "词库页必须按「已安装 && 未就绪」显示（判据与装载路径同一句）",
+            "if (installed && !PinyinEngine.isOptionalIndexReady(this, dict.fileName)) {" in page,
+        )
+        assertTrue("未就绪文案必须在（代码内下发，不动 strings.xml）", "TEXT_INDEX_PENDING" in page)
+        assertTrue("文案必须给出「有界重试用尽」时的出路", "请删除该包后重新下载" in page)
+    }
+
 }
