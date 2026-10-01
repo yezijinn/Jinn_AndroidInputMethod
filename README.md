@@ -32,6 +32,12 @@ APK 约 2.8MB，不含离线语音数据。
 - 分类词库（设置页「补充短语词库」）：内置 40 万条，另提供三个下载包 —— 2级词库+40万（建议下载）/ 3级词库+50万 / 4级词库+60万；空闲时后台加载，下载后自动重启输入法
 - 用户词频学习：记住点过的候选并排到前面；数据只留本机，可关
 
+**在线翻译**（可选，自带 Key）
+- 一键翻译光标前 / 编辑框内的文本，译文追加在原文下一行；候选栏功能面板第 7 键（关掉即不出现）
+- 六家服务方：阿里云 / Azure / 百度 / 百度大模型 / DeepL / OpenAI 兼容；默认服务方，以及「翻译原文范围」（光标前本行 / 所在整行 / 光标前全部 / 编辑框全部）按服务方独立配置
+- 单次字节上限按服务方独立可填，出厂值取各家官方限制；原文超出时从前面开始取、舍弃后面的
+- 凭据 Keystore 加密落盘；凭据页防截屏；复制过的 Key 会从剪贴板历史里清掉
+
 **配置备份**（设置页）
 - 全部设置项 + 用户词频（可选剪贴板历史、已下载词库）导出为单个 `.jinn` 加密包
 - AES-256-GCM + 中文汉字密码（本机不存）；导入可选「覆盖还原」或「仅并入数据」；导入前可预览备份时间 / 来源设备 / 各节条数
@@ -106,8 +112,11 @@ python build_apk.py --clean      # clean 后全新编译
 
 ## 许可证与致谢
 
-GPL-3.0（见 [LICENSE](LICENSE)）。内置词库含 GPL-3.0 来源（雾凇 / 白霜拼音），故整体以 GPL-3.0 分发。
+GPL-3.0（见 [LICENSE](LICENSE)）。内置词库与简繁映射的来源：雾凇拼音、白霜拼音（GPL-3.0），
+万象拼音（CC BY 4.0），结巴分词（MIT）—— 因含 GPL-3.0 来源，整体以 GPL-3.0 分发。
 
-[CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) ·
 [rime-ice 雾凇拼音](https://github.com/iDvel/rime-ice) ·
+[rime-wanxiang 万象拼音](https://github.com/amzxyz/rime-wanxiang) ·
+[jieba 结巴分词](https://github.com/fxsjy/jieba) ·
+[CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) ·
 [pypinyin](https://github.com/mozillazg/pypinyin)

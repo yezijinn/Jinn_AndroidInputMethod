@@ -33,6 +33,12 @@ English ｜ [中文](README.md)
 - Optional packs in Settings ("Supplement phrase dictionaries"): 400K entries built in, plus three downloadable packs — level 2 +400K (recommended), level 3 +500K, level 4 +600K; loaded only when idle, IME restarts automatically after add/removal
 - User word frequency: remembers chosen candidates and ranks them higher; stored locally only, switchable
 
+**Online translation** (optional, bring your own key)
+- Translates the text before the cursor or the whole field; the translation is appended on the next line; 7th key in the function panel (removable)
+- Six providers: Aliyun / Azure / Baidu / Baidu LLM / DeepL / OpenAI-compatible; the default provider and the "translation source range" (current line before cursor / whole line / everything before cursor / whole field) are set per provider
+- Byte limit per provider, preset to each vendor's own limit; longer text is sent from the front, the tail is dropped
+- Credentials are encrypted with the Android Keystore; credential pages block screenshots; copied keys are wiped from clipboard history
+
 **Config backup** (Settings)
 - Exports all settings plus word frequency (optionally clipboard history and downloaded dictionaries) into one encrypted `.jinn` file
 - AES-256-GCM with a Chinese-character password (never stored); import as "restore over" or "merge data only"; contents previewed before import (time / source device / per-section counts)
@@ -108,9 +114,12 @@ entries). Builder tools: `tools/dict_builder/`.
 
 ## License and credits
 
-GPL-3.0 (see [LICENSE](LICENSE)). The bundled lexicon contains GPL-3.0 sources (rime-ice / bai-shuang),
-so the project is distributed under GPL-3.0.
+GPL-3.0 (see [LICENSE](LICENSE)). The bundled lexicon and Simplified/Traditional mapping come from
+rime-ice and bai-shuang (GPL-3.0), rime-wanxiang (CC BY 4.0) and jieba (MIT); because GPL-3.0 sources
+are included, the project is distributed under GPL-3.0.
 
-[CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) ·
 [iDvel/rime-ice](https://github.com/iDvel/rime-ice) ·
+[amzxyz/rime-wanxiang](https://github.com/amzxyz/rime-wanxiang) ·
+[fxsjy/jieba](https://github.com/fxsjy/jieba) ·
+[CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) ·
 [mozillazg/pypinyin](https://github.com/mozillazg/pypinyin)

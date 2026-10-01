@@ -11,9 +11,9 @@ docs/所有词库/单字/简繁对照.txt                `简体<TAB>繁体<TAB>
 app/src/main/assets/pinyin_index.bin.xz        内置短语索引（第 1 部分：29.9 万键 / 40 万条 / xz 2.15MB）
 app/src/main/assets/pinyin_chars.txt.xz        单字表（三档并集：9,373 字 / 10,080 条）
 app/src/main/assets/{common,tier2,tier3}_chars.txt.xz   档 1 / 档 2 / 档 3 字表（5,613 / 837 / 2,923 字）
-app/src/main/assets/simp_trad.txt.xz           简繁映射（1,948 对，逐字；一简对多繁刻意不收）
-app/src/main/assets/simp_trad_words.txt.xz     简繁词级消歧（8,942 条，整词优先于逐字）
-app/src/main/assets/simplify.txt.xz            繁→简单字映射（3,221 项，源 OpenCC TSCharacters；折简体用）
+app/src/main/assets/simp_trad.txt.xz           简繁映射（2,714 对，逐字；一简对多繁刻意不收）
+app/src/main/assets/simp_trad_words.txt.xz     简繁词级消歧（9,139 条，整词优先于逐字）
+app/src/main/assets/simplify.txt.xz            繁→简单字映射（2,965 项，源 OpenCC TSCharacters；折简体用）
 release/dict_part{2,3,4}.txt.xz                分类词库下载包（40 / 50 / 60 万条，Release 附件）
 ```
 
