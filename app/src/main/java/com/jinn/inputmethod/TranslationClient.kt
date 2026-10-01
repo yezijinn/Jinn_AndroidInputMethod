@@ -9,6 +9,7 @@ import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,8 +33,16 @@ internal object TranslationClient {
     /** 整体预算：覆盖连接 + 读写 + 重定向，防止「慢响应」把按钮的「翻译中」挂死 */
     private const val CALL_TIMEOUT_SEC = 25L
 
-    /** 结构化错误摘要里错误码的最大长度（错误码是短标识，超出即为异常内容，不记） */
-    private const val MAX_ERROR_CODE_CHARS = 40
+    /**
+     * 结构化错误摘要里错误码的最大长度。
+     *
+     * 2026-10-01 审查 L-214 从 40 收到 24：40 恰好装得下一把完整的 API Key（`sk-…` 常见
+     * 30~50 字符），与下面 [looksLikeCredential] 的负判据一起收紧。
+     */
+    private const val MAX_ERROR_CODE_CHARS = 24
+
+    /** 错误码里出现这些**前缀**即视为「凭据被回显」（大小写不敏感） */
+    private val CREDENTIAL_PREFIXES = listOf("sk-", "sk_", "pk-", "ak-", "ltai", "gsk_", "hf_")
 
     /**
      * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，256KB 足够宽松，
@@ -183,9 +192,16 @@ internal object TranslationClient {
                 response.use {
                     val body = readBodyCapped(it)
                     // 记协议：排障时「走的哪个协议」是第一个要分清的事（曾疑 503 与 h2 有关，实测排除）
+                    // len 恰好顶到上限时**可能是被截断的**（peekBody 的语义）：标出来，免得把
+                    // 「半截 JSON 解析失败」当成服务端问题（2026-10-01 修复 L-243）
+                    // 按 **UTF-8 字节**比上限（`peekBody` 也是按字节截断）：用字符数会在多字节译文下
+                    // 恒小于上限，标记永远不亮 —— 正好抵消了它要消除的那类误导（2026-10-01 修复 L-257）
+                    val capped = body != null &&
+                        body.toByteArray(Charsets.UTF_8).size.toLong() >= MAX_BODY_BYTES
                     Diagnostics.i(
                         TAG,
-                        "翻译响应: HTTP ${it.code} ${it.protocol} len=${body?.length ?: 0}",
+                        "翻译响应: HTTP ${it.code} ${it.protocol} len=${body?.length ?: 0}" +
+                            (if (capped) "(可能已截断)" else ""),
                     )
                     // 失败时只记**结构化摘要**（长度 + 白名单错误码），绝不记响应体原文：
                     // 错误体是服务端可控文本，OpenAI 兼容网关的 401 常规形态就是回显提交的 Key
@@ -194,7 +210,16 @@ internal object TranslationClient {
                     if (it.code !in 200..299) {
                         Diagnostics.w(TAG, "翻译失败响应: HTTP ${it.code} ${errorSummary(body)}")
                     }
-                    onDone(provider.parseResponse(it.code, body))
+                    val outcome = provider.parseResponse(it.code, body)
+                    // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
+                    // 只留一行 len 的话，用户看到「翻译服务异常」而日志里查不出为什么（2026-10-01 修复 L-243）
+                    if (it.code in 200..299 &&
+                        outcome is TranslationOutcome.Fail &&
+                        outcome.error == TranslationError.SERVER
+                    ) {
+                        Diagnostics.w(TAG, "翻译失败响应(2xx): HTTP ${it.code} ${errorSummary(body)}")
+                    }
+                    onDone(outcome)
                 }
             }
         })
@@ -204,7 +229,8 @@ internal object TranslationClient {
      * 「获取模型 / 测试连接」：`GET {Base}{ModelsPath}` + Bearer。
      *
      * [onDone] 在 OkHttp 的 IO 线程触发（调用方自行切主线程）：成功 `(models, code)`；
-     * HTTP 失败 `(null, code)`；网络失败 `(null, -1)`；**地址非 HTTPS `(null, -2)`**。
+     * HTTP 失败 `(null, code)`；网络失败 `(null, -1)`；**地址非 HTTPS `(null, -2)`**；
+     * **凭据含非法字符 `(null, -3)`**。
      * 服务端未实现 `/models` 属常态，调用方不得据此判定配置错误（文档要求）。
      *
      * 返回 `Call` 供调用方取消（2026-09-30 第二轮审查）：超时上限可到 300s，页面在响应回来前
@@ -226,7 +252,16 @@ internal object TranslationClient {
             return null
         }
         val builder = Request.Builder().url(url).get()
-        if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+        // Key 里混入 NBSP / 零宽字符时 `header()` 会抛 IllegalArgumentException（同步、在调用方
+        // 线程，会直接冒到设置页）—— 与 translate 侧同款兜底，归「凭据不可用」（2026-10-01 审查 L-228）
+        val headerOk = runCatching {
+            if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+        }.isSuccess
+        if (!headerOk) {
+            Diagnostics.w(TAG, "获取模型: 凭据含非法字符，拒绝发送")
+            onDone(null, -3)
+            return null
+        }
         Diagnostics.i(TAG, "获取模型: ${url.host}${url.encodedPath}")
         val client = if (timeoutSec > 0) {
             http.newBuilder()
@@ -294,7 +329,32 @@ internal object TranslationClient {
         ).firstOrNull { it != null && it != org.json.JSONObject.NULL }
             ?.toString()
             ?.take(MAX_ERROR_CODE_CHARS)
-            ?.takeIf { s -> s.isNotEmpty() && s.all { it.isLetterOrDigit() || it in "_.-" } }
+            ?.takeIf { s ->
+                // 白名单必须是**ASCII** 显式区间：`isLetterOrDigit()` 对非 ASCII 也为真，
+                // 一串连续中文（≤24 字、无空格）会被当成「错误码」写进日志（2026-10-01 修复 L-243）
+                s.isNotEmpty() &&
+                    s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "_.-" } &&
+                    !s.looksLikeCredential()
+            }
         return if (code == null) "body=len${body.length}" else "body=len${body.length} code=$code"
+    }
+
+    /**
+     * 凭据形态的负判据（2026-10-01 审查 L-214）。
+     *
+     * 白名单字符集 `[A-Za-z0-9_.-]` 恰好覆盖 API Key 的典型形态 —— `sk-proj-Ab12Cd34Ef56Gh78Ij90Kl.`
+     * 逐字通过它；网关把提交的 Key 回显在 `code` / `error_code` 字段时（不是 `message`），
+     * 这段凭据就会落盘并随「导出诊断包」外发。这里按「已知前缀 + 高熵形态」两道判据拦截：
+     * 宁可少记一条错误码，也不让凭据出网。
+     */
+    private fun String.looksLikeCredential(): Boolean {
+        val lower = lowercase(Locale.US)
+        if (CREDENTIAL_PREFIXES.any { lower.startsWith(it) }) return true
+        // 高熵：长且大小写与数字混排 —— 正常错误码（invalid_api_key / SignatureDoesNotMatch /
+        // 54001 / 10004）极少三条同时满足
+        return length >= 20 &&
+            any { it.isUpperCase() } &&
+            any { it.isLowerCase() } &&
+            any { it.isDigit() }
     }
 }

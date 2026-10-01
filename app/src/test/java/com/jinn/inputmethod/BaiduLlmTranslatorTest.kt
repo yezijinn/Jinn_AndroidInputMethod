@@ -4,6 +4,7 @@ import okhttp3.Request
 import okio.Buffer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -56,6 +57,31 @@ class BaiduLlmTranslatorTest {
     fun `200 正常解析 dst（与通用平台同形）`() {
         val body = """{"from":"en","to":"zh","trans_result":[{"src":"apple","dst":"苹果"}]}"""
         assertEquals(TranslationOutcome.Ok("苹果"), translator.parseResponse(200, body))
+    }
+
+    @Test
+    fun `error_code 为 0 视为成功（数字与字符串两种形态）`() {
+        // 百度语义：0 = 成功。数字兼容之后 `"error_code":0` 会被取到 —— 不豁免就会把一次正常
+        // 翻译判成服务端错误（2026-10-01 复审 L-233）
+        val body = """{"error_code":0,"trans_result":[{"src":"apple","dst":"苹果"}]}"""
+        assertEquals(TranslationOutcome.Ok("苹果"), translator.parseResponse(200, body))
+        val asText = """{"error_code":"0","trans_result":[{"src":"apple","dst":"苹果"}]}"""
+        assertEquals(TranslationOutcome.Ok("苹果"), translator.parseResponse(200, asText))
+    }
+
+    @Test
+    fun `数字型 error_code 也归失败（不能落进「结果为空」）`() {
+        // 官方示例把 error_code 写成字符串，数字形态同样存在；只认 String 的实现会跳过
+        // 错误分支、在 trans_result 缺失时报「翻译结果为空」，把真因（配额用尽）藏起来
+        // （2026-10-01 审查 L-226）
+        val outcome = translator.parseResponse(200, """{"error_code":54003,"error_msg":"quota"}""")
+        assertTrue("数字型 54003 必须归为失败，实际=$outcome", outcome is TranslationOutcome.Fail)
+        val error = (outcome as TranslationOutcome.Fail).error
+        assertEquals(
+            "必须按服务端错误码归类，不能退化成「结果为空」",
+            false,
+            error === TranslationError.EMPTY,
+        )
     }
 
     @Test

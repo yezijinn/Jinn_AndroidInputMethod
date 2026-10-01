@@ -276,7 +276,11 @@ internal object ConfigBackup {
      * 键与类型标记的合法性校验在 [Prefs.importFromBackup] 内做（只有它知道白名单），
      * 这里只保证「值取出来时已经是正确的 Kotlin 类型」。
      */
-    fun decodePrefs(text: String): Map<String, Map<String, BackupValue>> = runCatching {
+    fun decodePrefs(
+        text: String,
+        /** 可选：收集「类型不符被跳过」的键（`fileName.key`），供调用方计数与记日志（L-235） */
+        skipped: MutableList<String>? = null,
+    ): Map<String, Map<String, BackupValue>> = runCatching {
         val root = JSONObject(text)
         val out = LinkedHashMap<String, Map<String, BackupValue>>()
         for (fileName in root.keys()) {
@@ -288,7 +292,17 @@ internal object ConfigBackup {
                 val v = item.opt("v")
                 val value: Any? = when (kind) {
                     BackupValue.KIND_STRING -> v as? String
-                    BackupValue.KIND_INT -> (v as? Number)?.toInt()
+                    // Int 越界 / 带小数（存档被外部改成 5000000000、1.5）一律按「类型不符」处理：
+                    // `toInt()` 会静默绕回成另一个数（5000000000 → 705032704），用户导入后看到
+                    // 的是自己没设过的值，之后还会被当合法配置执行（2026-10-01 审查 L-226）
+                    BackupValue.KIND_INT -> (v as? Number)?.let {
+                        val d = it.toDouble()
+                        if (d == Math.floor(d) && d >= -2147483648.0 && d <= 2147483647.0) {
+                            d.toInt()
+                        } else {
+                            null
+                        }
+                    }
                     BackupValue.KIND_LONG -> (v as? Number)?.toLong()
                     BackupValue.KIND_FLOAT -> (v as? Number)?.toFloat()
                     BackupValue.KIND_BOOL -> v as? Boolean
@@ -296,7 +310,9 @@ internal object ConfigBackup {
                     else -> null
                 }
                 val restored = BackupValue(kind, value)
-                if (restored.isSupported) values[key] = restored
+                // 不支持的键**不静默丢弃**（2026-10-01 审查 L-235）：收集起来交给调用方计数 ——
+                // 静默丢键与静默绕回（旧行为）一样都会让用户看到「导入成功」却少了一项
+                if (restored.isSupported) values[key] = restored else skipped?.add("$fileName.$key")
             }
             out[fileName] = values
         }

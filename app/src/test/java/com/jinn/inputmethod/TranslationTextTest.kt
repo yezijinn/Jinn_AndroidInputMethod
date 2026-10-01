@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -154,6 +155,36 @@ class TranslationTextTest {
         }
     }
 
+    // ── 读取窗口被截断时的位置确定性（L-213 回归守卫）────────────
+
+    @Test
+    fun `读取窗口被截断时，整行与整篇的追加位置标记为不确定`() {
+        // 窗口读满且窗口内没有换行 ⇒ 本行可能还没结束，appendOffset 不可信
+        val line = TranslationText.extract("", "abcdefg", TranslationScope.LINE_FULL, 100, afterTruncated = true)
+        assertEquals(7, line.appendOffset)
+        assertFalse("行尾不可确认时必须标记不确定", line.appendOffsetExact)
+
+        val all = TranslationText.extract("", "abcdefg", TranslationScope.ALL, 100, afterTruncated = true)
+        assertFalse(all.appendOffsetExact)
+
+        // 窗口内出现换行 ⇒ 行尾位置确定
+        val withNl = TranslationText.extract("", "abc\ndef", TranslationScope.LINE_FULL, 100, afterTruncated = true)
+        assertTrue(withNl.appendOffsetExact)
+        assertEquals(3, withNl.appendOffset)
+
+        // 没读满 ⇒ 都确定
+        assertTrue(TranslationText.extract("", "abc", TranslationScope.ALL, 100, false).appendOffsetExact)
+    }
+
+    @Test
+    fun `光标处追加的两种范围永远算确定位置`() {
+        for (scope in listOf(TranslationScope.LINE_BEFORE, TranslationScope.BEFORE_ALL)) {
+            val slice = TranslationText.extract("abc", "def", scope, 100, afterTruncated = true)
+            assertEquals(scope.id, 0, slice.appendOffset)
+            assertTrue(scope.id, slice.appendOffsetExact)
+        }
+    }
+
     // ── 范围模式与默认上限的取值归一 ────────────────────────────
 
     @Test
@@ -190,7 +221,9 @@ class TranslationTextTest {
         assertEquals(5_000, TranslationProviderId.ALIYUN.defaultMaxBytes)
         assertEquals(50_000, TranslationProviderId.AZURE.defaultMaxBytes)
         assertEquals(6_000, TranslationProviderId.BAIDU.defaultMaxBytes)
-        assertEquals(131_072, TranslationProviderId.DEEPL.defaultMaxBytes)
+        // DeepL 官方给 131072 字节，但本机单次读取窗口只有 MAX_MAX_BYTES（100000）—— 填官方值也
+        // 发不出去（读不回来的文本不会被上传），故按本机上界填，设置页说明同步（2026-10-01 L-223）
+        assertEquals(TranslationText.MAX_MAX_BYTES, TranslationProviderId.DEEPL.defaultMaxBytes)
     }
 
     // ── 提交前的快照判据（2026-09-30 用户实测缺陷的回归守卫）────
@@ -200,7 +233,11 @@ class TranslationTextTest {
         val src = TestSources.codeSource("JinnIme.kt")
         assertTrue(
             "判据应为读取时刻的原始文本严格相等",
-            "readTextBeforeCursor(connection, snapshot.limit) != snapshot.before" in src,
+            "beforeNow != snapshot.before" in src,
+        )
+        assertTrue(
+            "「提交时读不到」必须单独分支（不能混进「输入已变化」，2026-10-01 修复 L-240）",
+            "TEXT_TRANSLATE_BEFORE_UNREADABLE" in src,
         )
         assertFalse("不得再拿截取结果做 endsWith（会被 trim 与字节截断误伤）", "endsWith(source)" in src)
         assertTrue(
@@ -214,7 +251,11 @@ class TranslationTextTest {
         val src = TestSources.codeSource("JinnIme.kt")
         assertTrue(
             "光标后文本变化同样要丢弃（整行/整篇的原文含着它）",
-            "readTextAfterCursor(connection, snapshot.limit) != snapshot.after" in src,
+            "afterNow != snapshot.after" in src,
+        )
+        assertTrue(
+            "「提交时读不到」也要单独分支，不算「输入已变化」（2026-10-01 修复 L-242）",
+            "TEXT_TRANSLATE_AFTER_UNREADABLE" in src,
         )
     }
 
@@ -270,5 +311,35 @@ class TranslationTextTest {
     fun `纯零宽译文同样不写回（不留不可见字符）`() {
         assertEquals("", TranslationText.appendText('好', "\u200B"))
         assertEquals("", TranslationText.appendText('好', " \uFEFF "))
+    }
+
+    @Test
+    fun `可填的字节上限不得超过本机单次读取窗口`() {
+        // 二者脱节时用户能填到窗口之外：实际生效的仍是窗口值，而日志按填的值报「已截断」，
+        // 阈值失真（2026-10-01 审查 L-223）。绑定后读取窗口恒等于填写的上限。
+        assertEquals(
+            "MAX_MAX_BYTES 必须等于 MAX_READ_CHARS（一个字符至少 1 字节 ⇒ 不超过窗口一定读得全）",
+            TranslationText.MAX_READ_CHARS,
+            TranslationText.MAX_MAX_BYTES,
+        )
+        for (id in TranslationProviderId.entries) {
+            assertTrue(
+                "$id 的默认上限 ${id.defaultMaxBytes} 必须在可填范围 " +
+                    "${TranslationText.MIN_MAX_BYTES}..${TranslationText.MAX_MAX_BYTES} 内",
+                id.defaultMaxBytes in TranslationText.MIN_MAX_BYTES..TranslationText.MAX_MAX_BYTES,
+            )
+        }
+    }
+
+    @Test
+    fun `数字型错误码也能取到（字符串与数字两种形态等价）`() {
+        // 百度官方示例把 error_code 写成字符串，数字形态也出现过：只认 String 会让
+        // 配额用尽（54003）落进成功分支，最后报「翻译结果为空」（2026-10-01 审查 L-226）
+        assertEquals("54003", jsonCode(JSONObject("""{"error_code":54003}"""), "error_code"))
+        assertEquals("54003", jsonCode(JSONObject("""{"error_code":"54003"}"""), "error_code"))
+        // JSON null 必须返回 null，不能变成字面量 "null"（那会被当成一个「错误码」）
+        assertEquals(null, jsonCode(JSONObject("""{"error_code":null}"""), "error_code"))
+        assertEquals(null, jsonCode(JSONObject("{}"), "error_code"))
+        assertEquals(null, jsonCode(null, "error_code"))
     }
 }

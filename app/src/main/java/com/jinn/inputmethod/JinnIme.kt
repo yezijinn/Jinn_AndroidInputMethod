@@ -170,6 +170,39 @@ class JinnIme : InputMethodService() {
     /** 是否有在途翻译请求（防连点；键盘侧「翻译」按钮同步置灰） */
     private var translateInFlight = false
 
+    /**
+     * 翻译看门狗（2026-10-01 审查 L-217）。
+     *
+     * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
+     * **不会**回落到 `onFailure`（只被平台记一条 INFO）。少了这道兜底，`translateInFlight`
+     * 会永久为真、按钮永远显示「翻译中」，唯一复位路径只剩会话边界。
+     */
+    private val translateWatchdog = Runnable {
+        // 只在**确实还在途**时收尾：定时器可能是上一次请求留下的（正常路径都会撤，万一漏撤，
+        // 这里也不能误伤后来者 —— 收尾会作废代际，2026-10-01 复审 L-229）
+        if (translateInFlight) {
+            Diagnostics.w(TAG, "翻译: 看门狗超时，强制收尾（回调未到达）")
+            finishTranslate()
+        }
+    }
+
+    /**
+     * 结束一次翻译会话：撤看门狗 + 复位按钮态 + **作废代际**（2026-10-01 复审 L-229/L-231）。
+     *
+     * 四个入口（看门狗超时 / 会话边界取消 / 回调到达 / 请求发起失败）必须共用这一套收尾：
+     * 少了「作废代际」，看门狗复位之后到达的旧回调仍会被当成当前代际，把译文插进已经变化过的
+     * 输入框；少了「撤看门狗」，正常完成的请求会白挂一个定时器到 330s（虽然被
+     * `if (translateInFlight)` 守卫兜住，但那是巧合不是设计）。
+     */
+    private fun finishTranslate() {
+        ui.removeCallbacks(translateWatchdog)
+        translateGeneration++
+        if (translateInFlight) {
+            translateInFlight = false
+            pinyinKeyboard?.setTranslating(false)
+        }
+    }
+
     /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private var focusRequest: AudioFocusRequest? = null
@@ -472,13 +505,25 @@ class JinnIme : InputMethodService() {
     }
 
     /** 请求宿主设置选区，并记下这次期望值（供 [onUpdateSelection] 辨认自身动作） */
+    /**
+     * 请求宿主移动光标 / 选区。
+     *
+     * `setSelection` 是**同步 Binder 调用**：连接在请求期间失效（宿主进程死亡、编辑器重建）会抛
+     * DeadObjectException，未捕获时会从提交路径一路冒到主线程把 IME 进程带走（2026-10-01 复审 L-238）。
+     * 失败与「宿主没接受」同路处理 —— 调用方（[moveCursorByOffset]）本来就要复核结果。
+     */
     private fun applySelection(
         connection: android.view.inputmethod.InputConnection,
         start: Int,
         end: Int,
-    ) {
-        selectionExpectations.note(start, end)
-        connection.setSelection(start, end)
+    ): Boolean {
+        val ok = runCatching { connection.setSelection(start, end) }
+            .onFailure { Diagnostics.w(TAG, "选区/光标移动调用失败 ${it.javaClass.simpleName}") }
+            .isSuccess
+        // 期望值只在**调用真的落地**后才登记：失败那次若也登记，之后遇到同坐标的外部改动会被
+        // 当成自有动作（拖选不退出、Anchor 陈旧）（2026-10-01 修复 L-242）
+        if (ok) selectionExpectations.note(start, end)
+        return ok
     }
 
     /** 中心 ●/◉ 开关：切换拖选模式 */
@@ -497,8 +542,11 @@ class JinnIme : InputMethodService() {
             selectionActive = false
             selectionAnchor = -1
             selectionFocus = -1
-            applySelection(connection, end, end)
-            Diagnostics.i(TAG, "拖选取消: 光标停在 Focus=$end")
+            if (applySelection(connection, end, end)) {
+                Diagnostics.i(TAG, "拖选取消: 光标停在 Focus=$end")
+            } else {
+                Diagnostics.w(TAG, "拖选取消: 宿主未接受（目标 $end）")
+            }
         }
         pinyinKeyboard?.setSelectionActive(selectionActive)
     }
@@ -539,8 +587,12 @@ class JinnIme : InputMethodService() {
         }
         if (newRel != cursor) {
             val newPos = newRel + range.startOffset
-            applySelection(connection, newPos, newPos)
-            Diagnostics.i(TAG, "光标移动: 窗口内 $cursor → $newRel（offset=${range.startOffset}）")
+            // 按返回值决定说什么：宿主没接受还报「光标移动」就是假日志（2026-10-01 修复 L-242）
+            if (applySelection(connection, newPos, newPos)) {
+                Diagnostics.i(TAG, "光标移动: 窗口内 $cursor → $newRel（offset=${range.startOffset}）")
+            } else {
+                Diagnostics.w(TAG, "光标移动: 宿主未接受（目标 $newPos）")
+            }
         }
     }
 
@@ -572,8 +624,13 @@ class JinnIme : InputMethodService() {
         selectionFocus = newFocusRel + range.startOffset
         // Anchor 固定，Focus 可移动：选区两端取 min/max
         val (start, end) = TextSelection.normalizedSelection(selectionAnchor, selectionFocus)
-        applySelection(connection, start, end)
-        Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$selectionFocus → 选区[$start,$end]")
+        if (applySelection(connection, start, end)) {
+            Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$selectionFocus → 选区[$start,$end]")
+        } else {
+            // 宿主没接受就别再维持拖选状态：Anchor 与实际选区已经脱钩（2026-10-01 修复 L-242）
+            Diagnostics.w(TAG, "拖选扩展: 宿主未接受（选区[$start,$end]），退出拖选")
+            clearSelectionState()
+        }
     }
 
     /**
@@ -587,7 +644,9 @@ class JinnIme : InputMethodService() {
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
         // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 第二轮审查）：这里是编辑键
         // （全选 / 复制 / 拖选）与「译文提交前的选区检查」的公共入口，异常未捕获会崩 IME 进程。
-        // 拿不到就当「无选区」，各调用方按既有 null 语义处理。
+        // null 是**三态里的一态**（2026-10-01 复审 L-230）：既可能是「确实没有选区」，也可能是
+        // 「宿主不支持 `getExtractedText` / 大文档下抛事务异常」。调用方必须区分对待 ——
+        // 编辑键（全选 / 复制）按「无选区」处理无碍，**译文提交**绝不能（fail-closed）。
         val extracted = runCatching {
             connection.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
         }.getOrNull() ?: return null
@@ -1848,7 +1907,8 @@ class JinnIme : InputMethodService() {
     // ── 在线翻译（BYOK）────────────────────────────────────
 
     /**
-     * 翻译光标前的最后一句，译文追加在原文下一行（原文一个字不动）。
+     * 翻译「原文范围」设置里取到的那段文本（默认：光标所在行、光标前面的内容），
+     * 译文插在光标处（通常即原文之后）并另起一行，原文一个字不动。
      *
      * 取值只读、不复制：主路径 `getTextBeforeCursor`，宿主不支持时兜底 `getExtractedText`；
      * 全程不碰系统剪贴板、不改输入框内容、不动光标。失败路径一个字都不写。
@@ -1880,6 +1940,26 @@ class JinnIme : InputMethodService() {
             return
         }
         val connection = currentInputConnection ?: return
+        // 选区检测（2026-10-01 复审 L-230 / L-236）：`commitText` 在宿主存在选区时是**替换**语义，
+        // 提交前必须能确认「没有选区」；而确认选区状态的唯一 API 是 `getExtractedText`
+        // （`getTextBeforeCursor` 不暴露选区），不支持它的宿主（WebView / 部分 Compose / 大文档
+        // 抛事务异常）会恒返回 null。
+        //
+        // 三态一起判，全部放在**发请求之前**：读不到 → 无法保证不覆盖选中内容；已有选区 →
+        // 提交必然被拒，而且框架的「光标前」以**选区末端**为基准，选中的正文本身就在会上传的
+        // 原文里。两种都不发请求：不让用户白等，更不为一次注定被丢弃的翻译付费；文案必须说清
+        // 原因，不能复用「输入已变化」（那等于把原因指向用户）。
+        val selection = currentSelectionRange(connection)
+        if (selection == null) {
+            Diagnostics.w(TAG, "翻译: 宿主不提供选区信息，无法安全追加，拒绝发起")
+            toast(TEXT_TRANSLATE_NO_SELECTION_INFO)
+            return
+        }
+        if (selection.start != selection.end) {
+            Diagnostics.w(TAG, "翻译: 存在选区，拒绝发起（请先取消选中）")
+            toast(TEXT_TRANSLATE_SELECTION_ACTIVE)
+            return
+        }
         // 原文范围与字节上限都按**当前 Provider**取（每家独立配置）
         val id = TranslationProviderId.of(prefs.translateProvider)
         val scope = TranslationScope.of(prefs.translateScopeOf(id))
@@ -1890,11 +1970,28 @@ class JinnIme : InputMethodService() {
         // 读取时刻的**原始**文本（快照）与截取结果分开保存：截取会 trim + 按字节截断，
         // 拿它当快照判据会让「原文本身带首尾空白 / 超限被截」这类**原样未变**的情形
         // 被误判成「输入已变化」（2026-09-30 修过同类缺陷：用截取结果当判据）。
+        // 读失败（null）与「光标前确实没有内容」（空串）必须分开：把前者说成后者会把
+        // 「宿主读不到」报成「你没写字」（2026-10-01 修复 L-240）
         val before = readTextBeforeCursor(connection, limit)
+        if (before == null) {
+            Diagnostics.w(TAG, "翻译: 读不到光标前内容，拒绝发起")
+            toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
+            return
+        }
         // 只有「整行 / 整篇」两种范围需要光标后的文本：其余范围不读，省一次 Binder 往返
         val needAfter = scope == TranslationScope.LINE_FULL || scope == TranslationScope.ALL
+        // 读失败（null）与「光标后确实没有内容」（空串）必须分开：整行 / 整篇把失败当空串会
+        // 静默退化成「只翻光标前」，且 appendOffsetExact 会误判成「末尾已确认」
+        // （2026-10-01 复审 L-237）
         val after = if (needAfter) readTextAfterCursor(connection, limit) else ""
-        val slice = TranslationText.extract(before, after, scope, maxBytes)
+        if (after == null) {
+            Diagnostics.w(TAG, "翻译: 读不到光标后内容，拒绝发起（范围=${scope.id}）")
+            toast(TEXT_TRANSLATE_AFTER_UNREADABLE)
+            return
+        }
+        // 读满窗口 = 可能还有内容（分不清「恰好读完」与「被截断」⇒ 按后者处理，见 L-213）
+        val afterTruncated = needAfter && after.length >= limit
+        val slice = TranslationText.extract(before, after, scope, maxBytes, afterTruncated)
         // 用 hasVisibleContent 而不是 isBlank：零宽字符（ZWSP / BOM / NBSP）不算内容 —— 否则
         // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 第二轮审查）
         if (!slice.text.hasVisibleContent()) {
@@ -1911,7 +2008,19 @@ class JinnIme : InputMethodService() {
             "翻译: ${provider.javaClass.simpleName} → ${target.name} 范围=${scope.id} " +
                 "共${slice.text.length}字" + (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
         )
-        val snapshot = TranslateSnapshot(before, after, limit, needAfter, slice.appendOffset)
+        val snapshot = TranslateSnapshot(
+            before,
+            after,
+            limit,
+            needAfter,
+            slice.appendOffset,
+            slice.appendOffsetExact,
+        )
+        // 看门狗（2026-10-01 审查 L-217）：OkHttp 在调用 onResponse **之前**就置了
+        // `signalledCallback`，回调内部抛出的异常**不会**回落到 onFailure ⇒ 少了这道兜底，
+        // `translateInFlight` 会永久为真、按钮永远「翻译中」。预算 = 超时上限 + 余量。
+        ui.removeCallbacks(translateWatchdog)
+        ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
         runCatching {
             TranslationClient.translate(provider, slice.text, target) { outcome ->
                 // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection
@@ -1920,8 +2029,6 @@ class JinnIme : InputMethodService() {
                         Diagnostics.w(TAG, "翻译: 丢弃过期结果 gen=$generation 当前=$translateGeneration")
                         return@post
                     }
-                    translateInFlight = false
-                    pinyinKeyboard?.setTranslating(false)
                     when (outcome) {
                         is TranslationOutcome.Ok -> appendTranslation(connection, snapshot, outcome.text)
                         is TranslationOutcome.Fail -> {
@@ -1929,14 +2036,15 @@ class JinnIme : InputMethodService() {
                             toast(outcome.error.message)
                         }
                     }
+                    // 收尾放在业务之后：本代际此刻仍是「当前」，提前作废会让上面的分支过期
+                    finishTranslate()
                 }
             }
         }.onFailure {
             // 请求装配/入队本身抛异常（client 初始化失败、URL 非法……）绝不能把 in-flight 留在
             // true：按钮会永久置灰、再没有复位路径（2026-09-30 审查发现）。
             Diagnostics.w(TAG, "翻译: 请求发起失败 ${it.javaClass.simpleName}")
-            translateInFlight = false
-            pinyinKeyboard?.setTranslating(false)
+            finishTranslate()
             toast(TranslationError.SERVER.message)
         }
     }
@@ -1948,11 +2056,7 @@ class JinnIme : InputMethodService() {
      * 旧请求的译文绝不会落到用户已经切换后的新输入内容上。
      */
     private fun cancelTranslate() {
-        translateGeneration++
-        if (translateInFlight) {
-            translateInFlight = false
-            pinyinKeyboard?.setTranslating(false)
-        }
+        finishTranslate()
     }
 
     /**
@@ -1970,6 +2074,8 @@ class JinnIme : InputMethodService() {
         val needAfter: Boolean,
         /** 译文追加偏移：0 = 光标处；N = 光标后第 N 个单元（原文区间末尾） */
         val appendOffset: Int,
+        /** [appendOffset] 是否确定是区间末尾（读取窗口被截断时为 false，见 L-213） */
+        val appendOffsetExact: Boolean,
     )
 
     /**
@@ -1985,8 +2091,19 @@ class JinnIme : InputMethodService() {
     ) {
         // ① 有选区不提交：`commitText` 在宿主存在选区时是**替换**语义，会把用户选中的文本删掉。
         //    请求期间用户长按选择 / 拖选都可能造成这个状态，宁可丢弃（可重试）也不破坏既有内容。
-        val range = currentSelectionRange(connection)
-        if (range != null && range.start != range.end) {
+        //
+        //    **读不到选区也拒绝**（fail-closed，2026-10-01 审查 L-216）：`currentSelectionRange`
+        //    返回 null 时无法区分「确实没有选区」与「读不到」，只能按危险处理。请求发起前已用
+        //    同一判据挡过一次（见 startTranslate），这里还能触发说明连接在请求期间失效
+        //    （2026-10-01 复审 L-230）。
+        val range = currentSelectionRange(connection) ?: run {
+            Diagnostics.w(TAG, "翻译: 提交时读不到选区状态，丢弃结果（无法确认是否会覆盖选中文本）")
+            toast(TEXT_TRANSLATE_NO_SELECTION_INFO)
+            return
+        }
+        // 请求发起时已挡过「已有选区」（见 startTranslate 的三态检测），走到这里只可能是
+        // **提交前这一刻**用户才做的选择（长按 / 拖选）：文案复用 STALE —— 此刻确实是他刚动过输入
+        if (range.start != range.end) {
             Diagnostics.w(TAG, "翻译: 存在选区，丢弃结果以免覆盖选中文本")
             toast(TEXT_TRANSLATE_STALE)
             return
@@ -1995,33 +2112,68 @@ class JinnIme : InputMethodService() {
         //
         // ⚠ 判据必须是原始读数：截取结果被 trim 与字节截断加工过，拿它比对会把
         // 「原样未变」误判成「输入已变化」（2026-09-30 修过同类缺陷）。
-        if (readTextBeforeCursor(connection, snapshot.limit) != snapshot.before) {
+        val beforeNow = readTextBeforeCursor(connection, snapshot.limit)
+        if (beforeNow == null) {
+            // 「读不到」与「变了」是两回事：前者是宿主问题，别把原因指向用户（2026-10-01 修复 L-240）
+            Diagnostics.w(TAG, "翻译: 提交时读不到光标前文本，丢弃结果")
+            toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
+            return
+        }
+        if (beforeNow != snapshot.before) {
             Diagnostics.w(TAG, "翻译: 输入已变化，丢弃旧结果（len=${translated.length}）")
             toast(TEXT_TRANSLATE_STALE)
             return
         }
         // 光标后的文本同样要比：整行 / 整篇模式的原文含着它，请求期间改了下一行也要丢弃
-        if (snapshot.needAfter && readTextAfterCursor(connection, snapshot.limit) != snapshot.after) {
-            Diagnostics.w(TAG, "翻译: 光标后文本已变化，丢弃旧结果（len=${translated.length}）")
-            toast(TEXT_TRANSLATE_STALE)
+        if (snapshot.needAfter) {
+            val afterNow = readTextAfterCursor(connection, snapshot.limit)
+            if (afterNow == null) {
+                // 同上：读不到不是「用户改了输入」（2026-10-01 修复 L-242）
+                Diagnostics.w(TAG, "翻译: 提交时读不到光标后文本，丢弃结果")
+                toast(TEXT_TRANSLATE_AFTER_UNREADABLE)
+                return
+            }
+            if (afterNow != snapshot.after) {
+                Diagnostics.w(TAG, "翻译: 光标后文本已变化，丢弃旧结果（len=${translated.length}）")
+                toast(TEXT_TRANSLATE_STALE)
+                return
+            }
+        }
+        // ③ 追加位置是否**确定**：读取窗口被截断时「行尾 / 篇尾」无从确认，照 appendOffset 移光标
+        //    会把译文插进用户句子的中间（2026-10-01 审查 L-213）—— 宁可丢弃并说清原因。
+        if (snapshot.appendOffset > 0 && !snapshot.appendOffsetExact) {
+            Diagnostics.w(
+                TAG,
+                "翻译: 原文范围超出读取窗口，末尾无法确认（offset=${snapshot.appendOffset}）",
+            )
+            toast(TEXT_TRANSLATE_RANGE_TOO_LONG)
             return
         }
-        // ③ 追加位置：整行 / 整篇模式要把光标移到原文区间末尾，译文才落在整段之后。
+        // ④ 译文的可见性与长度**先判**（2026-10-01 审查 L-221 / L-222）：这两道闸原先排在移动
+        //    光标之后，拒绝时光标已被移走而正文一个字没加 —— 用户接着打字就打在原文区间末尾。
+        val body = translated.trim()
+        if (!body.hasVisibleContent()) {
+            Diagnostics.w(TAG, "翻译: 译文没有可见内容，不提交")
+            toast(TEXT_TRANSLATE_EMPTY)
+            return
+        }
+        // 预留一个前导换行的余量。译文是**服务端返回的内容**（不可信输入），必须有与粘贴链路同款
+        // 的单条上限闸 + runCatching：裸提交超长文本会撞 Binder 事务上限抛
+        // TransactionTooLargeException，未捕获时直接崩掉整个 IME 进程（2026-09-16 实测过）。
+        if (ClipboardStore.exceedsItemLimit(body + "\n")) {
+            Diagnostics.w(TAG, "翻译: 译文超单条上限，拒绝提交 len=${body.length}")
+            toast(TEXT_TRANSLATE_TOO_LONG)
+            return
+        }
+        // ⑤ 追加位置：整行 / 整篇模式要把光标移到原文区间末尾，译文才落在整段之后。
         //    移不到位一律放弃 —— 否则译文插在光标处（原文中间），把用户的内容割开。
         if (snapshot.appendOffset > 0 && !moveCursorByOffset(connection, snapshot.appendOffset)) {
             Diagnostics.w(TAG, "翻译: 追加位置未能确认，放弃提交（避免插进原文中间）")
             toast(TEXT_TRANSLATE_STALE)
             return
         }
+        // ⑥ 到这里光标已在最终插入点，才取它的前一个字符（决定要不要补前导换行）
         val submit = TranslationText.appendText(charBeforeCursor(connection), translated)
-        // ④ 译文是**服务端返回的内容**（不可信输入），必须有与粘贴链路同款的单条上限闸 +
-        //    runCatching：裸提交超长文本会撞 Binder 事务上限抛 TransactionTooLargeException，
-        //    未捕获时直接崩掉整个 IME 进程（本项目 2026-09-16 已在同类链路上实测过）。
-        if (ClipboardStore.exceedsItemLimit(submit)) {
-            Diagnostics.w(TAG, "翻译: 译文超单条上限，拒绝提交 len=${submit.length}")
-            toast(TEXT_TRANSLATE_TOO_LONG)
-            return
-        }
         // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）
         Diagnostics.i(TAG, "翻译: 已追加译文 共${translated.length}字")
         runCatching { connection.commitText(submit, 1) }
@@ -2064,12 +2216,16 @@ class JinnIme : InputMethodService() {
      *
      * 主路径是 `getTextBeforeCursor`（IME 框架的只读查询，不改内容、不触发宿主回调）；
      * 宿主不支持时（返回 null）兜底 `getExtractedText` + 窗口下标换算，
-     * 与 [currentSelectionRange] 同一套坐标口径。两次都取不到时返回空串。
+     * 与 [currentSelectionRange] 同一套坐标口径。
+     *
+     * 返回 **null 表示读取失败**（宿主不支持 / 连接失效 / 事务过大），与「光标前确实没有内容」
+     * （空串，光标在文首）严格区分 —— 把前者报成后者会把「宿主读不到」说成「你没写字」
+     * （2026-10-01 修复 L-240）。
      */
     private fun readTextBeforeCursor(
         connection: android.view.inputmethod.InputConnection,
         limit: Int,
-    ): String {
+    ): String? {
         // 整段包 runCatching（2026-09-30 第二轮审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
         // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
         // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
@@ -2080,21 +2236,21 @@ class JinnIme : InputMethodService() {
             // 回包 —— 正是上面那条 TransactionTooLargeException 的触发源。限制到读取上限即可
             // （取哪一段由 TranslationText.extract 按范围模式决定，多读的会被字节上限截掉）。
             val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
-            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching ""
+            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching null
             val text = extracted.text?.toString().orEmpty()
-            // 与 [currentSelectionRange]（:591）同一口径：负下标 = 宿主没给出选区，按「取不到」处理。
+            // 与 [currentSelectionRange]（:591）同一口径：负下标 = 宿主没给出选区，按「读不到」处理。
             // 不能 `coerceAtLeast(0)` 成 0 —— 那会被读成「光标在文首」，用户看到的是
-            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持，提示指向错方向（第一轮审查发现）。
-            if (extracted.selectionEnd < 0) return@runCatching ""
+            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持（2026-10-01 修复 L-240）。
+            if (extracted.selectionEnd < 0) return@runCatching null
             val endRel = TextSelection.toWindowOffset(
                 extracted.selectionEnd,
                 extracted.startOffset.coerceAtLeast(0),
                 text.length,
-            ) ?: return@runCatching ""
+            ) ?: return@runCatching null
             text.substring(0, endRel.coerceIn(0, text.length))
         }.getOrElse {
             Diagnostics.w(TAG, "翻译: 读取光标前文本失败 ${it.javaClass.simpleName}")
-            ""
+            null
         }
     }
 
@@ -2102,28 +2258,31 @@ class JinnIme : InputMethodService() {
      * 只读地取「光标后」的文本（「整行 / 整篇」两种原文范围需要）。
      *
      * 与 [readTextBeforeCursor] 完全同款：主路径 `getTextAfterCursor`，宿主不支持时兜底
-     * `getExtractedText` + 窗口下标换算，两次都取不到时返回空串（调用方按「光标后没有内容」
-     * 处理 —— 整行模式就只翻光标前那半行，不报错）。
+     * `getExtractedText` + 窗口下标换算。
+     *
+     * 返回 **null 表示读取失败**，与「光标后确实没有内容」（空串，光标在文末）严格区分：调用方
+     * （整行 / 整篇模式）拿到 null 必须拒绝发起 —— 把失败当空串会让这两种范围静默退化成
+     * 「只翻光标前」，且「末尾不可确认」那道闸不会触发（2026-10-01 修复 L-237 与 L-242）。
      */
     private fun readTextAfterCursor(
         connection: android.view.inputmethod.InputConnection,
         limit: Int,
-    ): String {
+    ): String? {
         return runCatching {
             connection.getTextAfterCursor(limit, 0)?.let { return@runCatching it.toString() }
             val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
-            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching ""
+            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching null
             val text = extracted.text?.toString().orEmpty()
-            if (extracted.selectionEnd < 0) return@runCatching ""
+            if (extracted.selectionEnd < 0) return@runCatching null
             val startRel = TextSelection.toWindowOffset(
                 extracted.selectionEnd,
                 extracted.startOffset.coerceAtLeast(0),
                 text.length,
-            ) ?: return@runCatching ""
+            ) ?: return@runCatching null
             text.substring(startRel.coerceIn(0, text.length))
         }.getOrElse {
             Diagnostics.w(TAG, "翻译: 读取光标后文本失败 ${it.javaClass.simpleName}")
-            ""
+            null
         }
     }
 
@@ -2135,7 +2294,10 @@ class JinnIme : InputMethodService() {
         // 打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
         // 这里【不能】调用 onOwnCommit()，否则标记会残留到下一次真实复制，
         // 导致用户复制的内容被误判为「自身操作」而跳过保存。
-        currentInputConnection?.commitText(text, 1)
+        // 兜底：宿主连接失效时裸调 commitText 会从主线程带走 IME 进程。**必须留痕** ——
+        // 打字路径失败时用户只会看到「字没上去」，日志里得留下原因（2026-10-01 修复 L-241）
+        runCatching { currentInputConnection?.commitText(text, 1) }
+            .onFailure { Diagnostics.w(TAG, "commit: 上屏失败 ${it.javaClass.simpleName}") }
     }
 
     /**
@@ -2151,9 +2313,15 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，清空全部文本")
         val connection = currentInputConnection ?: return
         // 不登记期望值：清空后光标归零，此时若还挂着拖选，让它退出才是对的（见 SelectionExpectations）
-        connection.setSelection(0, 0)
-        connection.deleteSurroundingText(0, Int.MAX_VALUE)
-        Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾）")
+        // 两个同步 Binder 调用都要兜底：宿主连接失效时裸调会从主线程带走 IME 进程
+        // （2026-10-01 修复 L-241）
+        val ok = runCatching {
+            connection.setSelection(0, 0)
+            connection.deleteSurroundingText(0, Int.MAX_VALUE)
+        }.onFailure {
+            Diagnostics.w(TAG, "deleteAllText: 调用失败 ${it.javaClass.simpleName}")
+        }.isSuccess
+        if (ok) Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾）")
     }
 
     /**
@@ -2303,6 +2471,34 @@ class JinnIme : InputMethodService() {
 
         /** 译文超单条上限（与粘贴链路同一道闸，见 ClipboardStore.MAX_ITEM_BYTES） */
         const val TEXT_TRANSLATE_TOO_LONG = "译文过大，未追加"
+
+        /** 原文范围超出读取窗口、末尾位置无法确认（L-213）：丢弃必须说清原因 */
+        const val TEXT_TRANSLATE_RANGE_TOO_LONG = "范围过大，未确认原文末尾，未追加译文"
+
+        /**
+         * 宿主不提供选区信息（`getExtractedText` 不可用）：无法确认提交会不会覆盖选中内容。
+         *
+         * 独立文案是硬要求（2026-10-01 复审 L-230）：复用「输入已变化」会把「输入框不支持」
+         * 说成「用户自己的操作」，排障方向整个带偏。
+         */
+        const val TEXT_TRANSLATE_NO_SELECTION_INFO = "当前输入框不支持选区检测，无法安全插入译文"
+
+        /** 请求发起时已有选区（2026-10-01 复审 L-236）：选中的正文会随原文上传，且提交必被拒 */
+        const val TEXT_TRANSLATE_SELECTION_ACTIVE = "请先取消选中的内容再翻译"
+
+        /** 光标后内容读不到（2026-10-01 复审 L-237）：整行 / 整篇无法确定原文末尾，不发起 */
+        const val TEXT_TRANSLATE_AFTER_UNREADABLE = "当前输入框读不到光标后内容，未发起翻译"
+
+        /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
+        const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起翻译"
+
+        /**
+         * 看门狗预算（毫秒）：覆盖最慢一家的整体超时上限（300s）再留 30s 余量（L-217）。
+         *
+         * 不按 Provider 分别取值 —— 早复位晚复位都不影响正确性：真超时的话 OkHttp 会先按
+         * `callTimeout` 结束并走正常失败回调，看门狗只兜「回调根本没到达」那一种。
+         */
+        private const val TRANSLATE_WATCHDOG_MS = 330_000L
 
         /**
          * 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信）。

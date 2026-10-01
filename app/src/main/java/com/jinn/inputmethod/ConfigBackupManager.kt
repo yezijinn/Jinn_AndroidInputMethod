@@ -863,14 +863,21 @@ internal object ConfigBackupManager {
         var prefsIgnored = 0
         var failedStage: String? = null
         if (mode == ImportMode.RESTORE) {
-            val decoded = ConfigBackup.decodePrefs(prefsText.orEmpty())
+            // 类型不符的键在**解码阶段**就不进结果（如存档被外部改成 5000000000）：收集起来一并
+            // 计入忽略数 —— 否则用户看到「导入成功」却少了一项，而忽略数还是 0（2026-10-01 审查 L-235）
+            val skippedPrefs = ArrayList<String>()
+            val decoded = ConfigBackup.decodePrefs(prefsText.orEmpty(), skippedPrefs)
             val main = decoded[ConfigBackup.PREFS_MAIN].orEmpty()
             val clip = decoded[ConfigBackup.PREFS_CLIPBOARD].orEmpty()
             val r1 = prefs.importFromBackup(main)
             val appliedClip = clipPrefs.importFromBackup(clip)
             prefsApplied = r1.applied + appliedClip
-            // 未知键（更高版本写入）+ 类型不符 + 剪贴板侧未识别的键，统一计入忽略数
-            prefsIgnored = r1.unknown.size + r1.mismatch.size + (clip.size - appliedClip)
+            // 未知键（更高版本写入）+ 类型不符（含解码阶段跳过的）+ 剪贴板侧未识别的键，统一计入忽略数
+            prefsIgnored = r1.unknown.size + r1.mismatch.size + (clip.size - appliedClip) +
+                skippedPrefs.size
+            if (skippedPrefs.isNotEmpty()) {
+                Diagnostics.w(TAG, "导入: 解码阶段跳过 ${skippedPrefs.size} 个类型不符的配置项")
+            }
             // 写入走 apply()（没有失败信号），必须主动 flush 才知道是否真的落盘：
             // 磁盘满时静默丢一半而弹窗仍报「设置 26 项」，这种虚高必须变成如实的忽略数
             if (prefsApplied > 0 && !prefs.flush()) {

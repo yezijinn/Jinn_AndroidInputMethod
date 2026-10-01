@@ -102,6 +102,25 @@ class ConfigBackupTest {
     }
 
     @Test
+    fun `解码阶段跳过的项必须能被调用方数到`() {
+        // 越界 / 带小数的 Int 在解码时就被判成「类型不符」而不进结果：必须留下痕迹，
+        // 否则导入流程会报「成功」而忽略数仍是 0（2026-10-01 审查 L-235）
+        val skipped = ArrayList<String>()
+        val decoded = ConfigBackup.decodePrefs(
+            "{\"jinn_inputmethod\": {\"k\": {\"t\": \"i\", \"v\": 5000000000}}}",
+            skipped,
+        )
+        assertTrue("越界项不该进结果", decoded[ConfigBackup.PREFS_MAIN]?.containsKey("k") != true)
+        assertEquals("越界项必须被记进跳过清单", 1, skipped.size)
+        assertEquals("跳过项要带上 文件.键 的全名", "jinn_inputmethod.k", skipped[0])
+        // 不传收集参数时行为不变（既有调用点不受影响）
+        val plain = ConfigBackup.decodePrefs(
+            "{\"jinn_inputmethod\": {\"k\": {\"t\": \"s\", \"v\": \"x\"}}}",
+        )
+        assertEquals("x", plain.getValue(ConfigBackup.PREFS_MAIN).getValue("k").value)
+    }
+
+    @Test
     fun `剪贴板导入有条数上限`() {
         // 单节 16MB 挡不住「极短条目」的洪流：没有条数上限时，构造包会让导入卡上几分钟
         val incoming = (1..(ConfigBackup.MAX_CLIP_IMPORT_ITEMS + 25)).map {

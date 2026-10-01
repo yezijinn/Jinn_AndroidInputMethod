@@ -395,6 +395,69 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    /**
+     * 按**清洗后相等**删除历史条目（「凭据不留痕」的补强，2026-10-01 修复 L-239）。
+     *
+     * 为什么不能只靠 [deleteByPlaintext]：用户从网页 / 控制台复制的 Key 常带不可见字符
+     * （NBSP / ZWSP / BOM），监听采集入库的是**那份原文**；而凭据保存进 Prefs 时会先经
+     * `cleanCredential()` 剥掉杂质 —— 两端形态不同，精确哈希必然对不上，一条都删不掉，
+     * Key 就留在面板里（明文可见）并随备份导出。而这恰好是本功能要覆盖的场景。
+     *
+     * 口径：只删**未收藏**、且「剥掉不可见字符并 trim 后」与目标相等的条目。比精确哈希宽松
+     * 一档，代价是可能连带删掉「只差不可见字符」的同内容条目 —— 那正是要清理的东西。
+     * 有 DB 读 + 解密，调用方放在后台线程（与 [deleteByPlaintext] 同一处调用）。
+     *
+     * @return 删除条数（0 = 历史里没有等价条目）
+     */
+    fun deleteByCleanedPlaintexts(targets: Collection<String>): Int {
+        val wanted = targets
+            .mapNotNull { it.cleanCredential().takeIf { s -> s.isNotEmpty() } }
+            .toHashSet()
+        if (wanted.isEmpty()) return 0
+        val ids = ArrayList<Long>()
+        readableDatabase.query(
+            TABLE_ITEMS,
+            arrayOf("id", "encrypted_content"),
+            "is_favorite = 0",
+            null,
+            null,
+            null,
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                val plain = ClipboardCrypto.decrypt(c.getString(1)) ?: continue
+                if (plain.cleanCredential() in wanted) ids.add(c.getLong(0))
+            }
+        }
+        if (ids.isEmpty()) return 0
+        var removed = 0
+        writableDatabase.beginTransaction()
+        try {
+            for (id in ids) {
+                removed += writableDatabase.delete(
+                    TABLE_ITEMS,
+                    "id = ? AND is_favorite = 0",
+                    arrayOf(id.toString()),
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+        return removed
+    }
+
+    /**
+     * 当前历史里最大的条目 id（0 = 空表）。
+     *
+     * 「凭据不留痕」用它判断「上次清理之后历史里是否又出现了新条目」：有新条目就重扫，
+     * 没有就跳过 —— 既收敛，又不会漏掉用户**再次复制**的同一个 Key（2026-10-01 修复 L-254）。
+     */
+    fun maxItemId(): Long =
+        readableDatabase.rawQuery("SELECT MAX(id) FROM $TABLE_ITEMS", null).use { c ->
+            if (c.moveToFirst()) c.getLong(0) else 0L
+        }
+
     /** 更新收藏状态 */
     fun setFavorite(id: Long, favorite: Boolean): Boolean {
         val values = ContentValues().apply { put("is_favorite", if (favorite) 1 else 0) }

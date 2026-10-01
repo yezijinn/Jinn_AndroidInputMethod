@@ -245,6 +245,33 @@ class TranslationClientTest {
         assertEquals("body=len${body.length}", summary)
     }
 
+    /**
+     * L-214 回归守卫：白名单字符集 `[A-Za-z0-9_.-]` 恰好覆盖 API Key 形态，
+     * 网关把凭据回显在 `code` 字段（不是 `message`）时必须靠**形态判据**拦住。
+     */
+    @Test
+    fun `摘要丢弃凭据形态的错误码（前缀与高熵两道判据）`() {
+        for (key in listOf(
+            "sk-c0FfEe12Ab34Cd56Ef78Gh90Ij",
+            "sk-proj-Ab12Cd34Ef56Gh78Ij90Kl",
+            "sk_live_51H8xQ2eZvKYlo2C",
+            "LTAI5tAbCdEfGhIjKlMnOpQr",
+        )) {
+            val summary = TranslationClient.errorSummary("""{"error_code":"$key"}""")
+            assertFalse("凭据形态必须丢弃：$summary", summary.contains(key.take(12)))
+            assertTrue("应只留长度：$summary", summary.startsWith("body=len"))
+        }
+    }
+
+    @Test
+    fun `正常错误码不被形态判据误伤（含带大写的服务端码）`() {
+        // 三家真实错误码：全小写下划线 / 大驼峰 / 点分 —— 都不该触发「高熵」或「前缀」判据
+        for (code in listOf("54001", "invalid_api_key", "SignatureDoesNotMatch", "InvalidTimeStamp.Expired")) {
+            val summary = TranslationClient.errorSummary("""{"Code":"$code"}""")
+            assertTrue("正常错误码应保留：$summary", summary.contains("code=$code"))
+        }
+    }
+
     // ── HTTPS 硬判据 ─────────────────────────────────────────
 
     /** 只用于「请求构造后被拦」的用例：返回一个明文 URL */

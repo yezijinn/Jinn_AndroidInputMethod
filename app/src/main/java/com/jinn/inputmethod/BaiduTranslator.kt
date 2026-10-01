@@ -56,8 +56,13 @@ internal class BaiduTranslator(
         // 业务错误码优先，且**非 2xx 也先取**：百度把频率/额度类错误码（54003/54004/54005）也放在
         // 响应体里，网关用 403/5xx 承载它时若先看状态，就会被归成 AUTH/SERVER、提示「检查凭据」，
         // 而真实原因是限流/欠费（2026-09-30 审查发现）。
-        val errorCode = json?.let { jsonText(it, "error_code") }
-        if (!errorCode.isNullOrEmpty()) return TranslationOutcome.Fail(baiduErrorOf(errorCode))
+        // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01 审查 L-226）
+        val errorCode = jsonCode(json, "error_code")
+        // `"0"` 是百度的**成功**码：数字兼容之后 `"error_code":0` 也会被取到，不豁免就会把一次
+        // 正常翻译判成服务端错误（2026-10-01 复审 L-233）
+        if (!errorCode.isNullOrEmpty() && errorCode != "0") {
+            return TranslationOutcome.Fail(baiduErrorOf(errorCode))
+        }
         if (json == null || code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
         // 取值统一走 jsonText：JSON null / 类型不符都返回 null，不会变成字面量 "null" 当译文
         val text = jsonText(json.optJSONArray("trans_result")?.optJSONObject(0), "dst")

@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.app.Activity
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.AdapterView
@@ -34,8 +35,11 @@ class TranslationSourceActivity : Activity() {
     private lateinit var editMaxBytes: EditText
     private lateinit var textOfficial: TextView
 
-    /** 当前正在编辑的服务方（下拉切换即换一份配置） */
+    /** 当前正在编辑的服务方；初值在 [onStart] 里按 `prefs.translateProvider` 定（见那里的说明） */
     private var currentId: TranslationProviderId = TranslationProviderId.DEFAULT
+
+    /** 用户是否在本页动过服务方下拉：动过就不再按 prefs 复位，否则刚选完就被弹回去 */
+    private var providerTouched = false
 
     /**
      * 程序化设置控件期间为 true：下拉位置 / 单选 / 输入框文本的写入不触发落盘回调，
@@ -89,6 +93,12 @@ class TranslationSourceActivity : Activity() {
             this, android.R.layout.simple_spinner_item,
             TranslationProviderId.entries.map { it.label },
         ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        spinnerProvider.setOnTouchListener { view, event ->
+            providerTouched = true
+            // ACTION_UP 补 performClick 供无障碍服务识别（与翻译设置页同款）
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            false
+        }
         spinnerProvider.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: AdapterView<*>?,
@@ -97,10 +107,12 @@ class TranslationSourceActivity : Activity() {
                 id: Long,
             ) {
                 if (loading) return
+                val picked = TranslationProviderId.entries.getOrNull(position) ?: return
+                // 位置没变 = 程序化设置的回调（Spinner 的选中通知是 **post** 投递，布尔闸门盖不住）
+                if (picked == currentId) return
                 // 切服务方 = 换一份配置：先把手头输入框里的值落盘，再载入新的一家
                 saveMaxBytes()
-                currentId = TranslationProviderId.entries.getOrNull(position)
-                    ?: TranslationProviderId.DEFAULT
+                currentId = picked
                 loadValues()
             }
 
@@ -122,13 +134,17 @@ class TranslationSourceActivity : Activity() {
     /**
      * 每次回前台都重载（覆盖「备份导入改写过配置」的场景）。
      *
-     * 下拉位置也要复位：在别处改过 `translateProvider` 后回到本页，不重设就会与 [currentId] 分裂。
+     * 下拉位置只在**用户没动过**时按 prefs 复位：动过就保持他的选择，否则刚选完切个页面
+     * 回来就被弹回当前服务方（2026-10-01 审查 L-215）。
      */
     override fun onStart() {
         super.onStart()
-        loading = true
-        spinnerProvider.setSelection(TranslationProviderId.entries.indexOf(currentId))
-        loading = false
+        if (!providerTouched) {
+            currentId = TranslationProviderId.of(prefs.translateProvider)
+            loading = true
+            spinnerProvider.setSelection(TranslationProviderId.entries.indexOf(currentId))
+            loading = false
+        }
         loadValues()
     }
 
@@ -160,7 +176,14 @@ class TranslationSourceActivity : Activity() {
      */
     private fun saveMaxBytes() {
         val raw = editMaxBytes.text?.toString()?.trim().orEmpty()
-        prefs.setTranslateMaxBytesOf(currentId, raw.toIntOrNull() ?: currentId.defaultMaxBytes)
+        // 0 / 负数视为「恢复默认」（2026-10-01 修复 L-257）：以前填 0 会被钳到 1，该家变成
+        // 「每次只翻 1 字节」，界面只回填一个 1 且没有任何解释，用户难以归因
+        val parsed = raw.toIntOrNull()?.takeIf { it >= TranslationText.MIN_MAX_BYTES }
+        prefs.setTranslateMaxBytesOf(currentId, parsed ?: currentId.defaultMaxBytes)
+        // 回填**真实生效值**（2026-10-01 审查 L-225）：钳位后的数才是下次翻译真正用的；
+        // 显示未生效的数会让用户以为「填 0 就是不限」（实际存 1）。
+        val effective = prefs.translateMaxBytesOf(currentId).toString()
+        if (editMaxBytes.text?.toString() != effective) editMaxBytes.setText(effective)
     }
 
     /**
@@ -182,26 +205,29 @@ class TranslationSourceActivity : Activity() {
         const val TAG = "TranslationSource"
 
         const val TEXT_TITLE = "翻译原文范围"
-        const val TEXT_DESC = "两家事各自独立保存：①「哪些内容算原文」② 单次翻译的字节上限（超出时" +
+        const val TEXT_DESC = "两件事各自独立保存：①「哪些内容算原文」② 单次翻译的字节上限（超出时" +
             "从前面开始取、舍弃后面的）。"
         const val TEXT_PROVIDER = "翻译服务"
         const val TEXT_SCOPE = "哪些内容算翻译原文"
-        const val TEXT_MAX_BYTES = "单次翻译的字节上限"
-        const val TEXT_TRUNCATE = "统一规则：原文按 UTF-8 字节数算，超出上限时**从前面开始取、" +
-            "舍弃后面的**。译文一律另起一行追加在原文之后，原文一个字都不动。"
+        /** 可填范围用常量插值：改 [TranslationText.MAX_MAX_BYTES] 时文案自动跟随，不会脱节 */
+        val TEXT_MAX_BYTES = "单次翻译的字节上限（可填 ${TranslationText.MIN_MAX_BYTES} 至 " +
+            "${TranslationText.MAX_MAX_BYTES} 字节）"
+        const val TEXT_TRUNCATE = "统一规则：原文按 UTF-8 字节数算，超出上限时从前面开始取、" +
+            "舍弃后面的。\n译文插在光标处（通常即原文之后）并另起一行；原文一个字都不动。"
         const val TEXT_CLOSE = "关闭"
         const val TEXT_CLOSE_DESC = "关闭翻译原文范围设置"
 
         const val NOTE_ALIYUN = "阿里云官方：单次 5000 字符（超出报错 10008）。UTF-8 中文 3 字节/字，" +
             "默认 5000 字节是保守值（约 1600 汉字）；主要翻中文可改为 15000（≈5000 汉字）。"
-        const val NOTE_AZURE = "Azure 官方：单次 50000 字符。默认 50000 字节是保守值；" +
-            "主要翻中文可改为 150000（≈50000 汉字）。"
+        val NOTE_AZURE = "Azure 官方：单次 50000 字符。默认 50000 字节是保守值；主要翻中文可改为 " +
+            "${TranslationText.MAX_MAX_BYTES}（≈3.3 万汉字，已到本机单次读取上界）。"
         const val NOTE_BAIDU = "百度官方：单次 6000 字节（官方口径就是字节，已按官方填）。" +
             "约合 2000 汉字。"
         const val NOTE_BAIDU_LLM = "百度大模型接口没有公开的字符上限（按 token 计费）：" +
             "默认 32768 字节（≈1 万汉字），可自行调大。"
-        const val NOTE_DEEPL = "DeepL 官方：单次请求体上限 128 KiB = 131072 字节" +
-            "（官方口径就是字节，已按官方填）。"
+        val NOTE_DEEPL = "DeepL 官方：单次请求体上限 128 KiB = 131072 字节；本机单次最多读取 " +
+            "${TranslationText.MAX_MAX_BYTES} 字节（输入法框架的限制），已按本机上界填 —— " +
+            "官方更大的额度在本机用不上。"
         const val NOTE_OPENAI = "OpenAI 兼容接口的上限由服务方模型决定（通常几万到几十万 token）：" +
             "默认 32768 字节（≈1 万汉字），可自行调大。"
     }

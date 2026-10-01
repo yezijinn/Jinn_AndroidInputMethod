@@ -81,6 +81,37 @@ class OpenAiTranslatorTest {
         )
     }
 
+    /**
+     * L-218 回归守卫：端点整段粘贴**且带 query** 时（Azure OpenAI 的 `?api-version=…` 是必填），
+     * 老实现用字符串后缀匹配剥尾部 —— query 让后缀对不上，拼成 `…/chat/completions/chat/completions`。
+     */
+    @Test
+    fun `joinUrl：整段粘贴且带 query 时不重复拼接、query 保留`() {
+        assertEquals(
+            "https://x.openai.azure.com/openai/deployments/d/chat/completions?api-version=2024-02-01",
+            OpenAiTranslator.joinUrl(
+                "https://x.openai.azure.com/openai/deployments/d/chat/completions?api-version=2024-02-01",
+                "",
+            )?.toString(),
+        )
+        assertEquals(
+            "https://host/v1/chat/completions?api-version=2024-02-01",
+            OpenAiTranslator.joinUrl(
+                "https://host/v1/chat/completions?api-version=2024-02-01",
+                "/chat/completions",
+            )?.toString(),
+        )
+    }
+
+    @Test
+    fun `joinUrl：自定义 path 自带 query 时走 query 而不是被编码进路径`() {
+        val url = OpenAiTranslator.joinUrl("https://host/v1", "/chat/completions?api-version=2024-02-01")!!
+        assertEquals("/v1/chat/completions", url.encodedPath)
+        assertEquals("api-version=2024-02-01", url.encodedQuery)
+        // `?` 不能被编码进路径（那会 404）
+        assertFalse("路径里不能出现 %3F：${url.encodedPath}", url.encodedPath.contains("%3F"))
+    }
+
     @Test
     fun `joinUrl：缺 scheme 补 https；空串与乱填返回 null`() {
         val url = OpenAiTranslator.joinUrl("api.openai.com/v1", "/chat/completions")!!
@@ -215,6 +246,16 @@ class OpenAiTranslatorTest {
         assertEquals(1024L, json.getLong("max_tokens"))
         // 文本形态必须是 1024 而不是 1024.0（部分网关对数字形态挑剔）
         assertTrue(json.toString().contains("\"max_tokens\":1024"))
+    }
+
+    @Test
+    fun `buildBody：超大整数不得饱和成 Long_MAX_VALUE`() {
+        // 收窄成 Long 只对精确可表示的整数范围做：`toLong()` 对 1e30 会饱和成
+        // 9223372036854775807，把用户填的数悄悄改掉（2026-10-01 审查 L-226）
+        val json = bodyJson(config.copy(maxTokens = "1e30"))
+        val text = json.toString()
+        assertFalse("不得写成饱和后的 Long.MAX_VALUE：$text", "9223372036854775807" in text)
+        assertEquals(1.0e30, json.getDouble("max_tokens"), 1.0e24)
     }
 
     @Test

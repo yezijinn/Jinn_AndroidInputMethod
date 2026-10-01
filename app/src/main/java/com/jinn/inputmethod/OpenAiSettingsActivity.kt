@@ -172,12 +172,15 @@ class OpenAiSettingsActivity : Activity() {
 
     /** 从剪贴板历史删除与本机 API Key 相同的条目（后台线程；见 [purgeApiKeyFromClipboardHistory] 的说明） */
     private fun purgeApiKeyFromClipboardHistory() {
-        val key = prefs.openAiApiKey
-        if (key.isBlank()) return
         val appContext = applicationContext
         BackgroundIo.run {
             val db = runCatching { ClipboardDb.get(appContext) }.getOrNull() ?: return@run
-            val removed = runCatching { db.deleteByPlaintext(key) }.getOrDefault(0)
+            // 与翻译设置页共用同一条链路（精确哈希 → 剥不可见字符后相等，一次遍历处理全部目标）：
+            // 本页此前只有精确哈希，带 NBSP / ZWSP 的 Key 一条都删不掉（2026-10-01 修复 L-245）
+            // 目标除 API Key 外，还包含自定义请求头与自定义 JSON 里的值（2026-10-01 修复 L-252）
+            val targets = listOf(prefs.openAiApiKey) +
+                CredentialTrace.candidatesFrom(prefs.openAiExtraHeaders, prefs.openAiExtraJson)
+            val removed = CredentialTrace.purge(db, targets)
             if (removed > 0) Diagnostics.i(TAG, "凭据不留痕: 从剪贴板历史删除 $removed 条")
         }
     }
@@ -218,11 +221,21 @@ class OpenAiSettingsActivity : Activity() {
         }
     }
 
+    /** 只回写用户真的改过的字段（2026-10-01 修复 L-247）：见 [CredentialSaveGuard] */
+    private val saveGuard = CredentialSaveGuard()
+
+    /** 灌值并记下「载入时的原值」（与 [saveGuard] 配套） */
+    private fun loadField(field: android.widget.EditText, value: String) {
+        field.setText(value)
+        saveGuard.remember(field, value)
+    }
+
     private fun loadValues() {
         targetTouched = false
+        saveGuard.reset()
         editName.setText(prefs.openAiName)
         editBaseUrl.setText(prefs.openAiBaseUrl)
-        editApiKey.setText(prefs.openAiApiKey)
+        loadField(editApiKey, prefs.openAiApiKey)
         editModel.setText(prefs.openAiModel)
         editChatPath.setText(prefs.openAiChatPath)
         editModelsPath.setText(prefs.openAiModelsPath)
@@ -236,6 +249,14 @@ class OpenAiSettingsActivity : Activity() {
         editHeaders.setText(prefs.openAiExtraHeaders)
         editExtraJson.setText(prefs.openAiExtraJson)
         applyTargetLanguage(prefs.openAiTargetLanguage)
+        // 提示词里没有 {{text}} 时请求不会带原文（运行时已兜底，但用户应当知道）：
+        // 用 EditText 的 error 显示，零布局改动（2026-10-01 修复 L-250）
+        val promptMissing = OpenAiTranslator.VAR_TEXT !in prefs.openAiSystemPrompt &&
+            OpenAiTranslator.VAR_TEXT !in prefs.openAiUserPrompt
+        editUser.error = if (promptMissing) TEXT_PROMPT_MISSING else null
+        // 自定义 JSON 写错时参数会被静默丢弃（2026-10-01 修复 L-257）：用 error 让用户看得见
+        editExtraJson.error =
+            if (OpenAiTranslator.isValidExtraJson(prefs.openAiExtraJson)) null else TEXT_EXTRA_JSON_INVALID
     }
 
     /** 标准语言落到下拉；不在表内的（粤语 / 古文 / 繁體中文（台灣）…）放进「自定义语言」 */
@@ -253,7 +274,9 @@ class OpenAiSettingsActivity : Activity() {
     private fun saveValues() {
         prefs.openAiName = editName.text.toString()
         prefs.openAiBaseUrl = editBaseUrl.text.toString()
-        prefs.openAiApiKey = editApiKey.text.toString()
+        // 只回写真的改过的字段（2026-10-01 修复 L-247）：Key 解密失败时读出来是空串，
+        // 无条件回写等于「打开又离开」就把密文删了
+        if (saveGuard.changed(editApiKey)) prefs.openAiApiKey = editApiKey.text.toString()
         prefs.openAiModel = editModel.text.toString()
         prefs.openAiChatPath = editChatPath.text.toString()
         prefs.openAiModelsPath = editModelsPath.text.toString()
@@ -312,6 +335,9 @@ class OpenAiSettingsActivity : Activity() {
                 if (generation != fetchGeneration) return@runOnUiThread
                 when {
                     models == null && code == -2 -> setHint(TEXT_NEED_HTTPS)
+                    // -3 = 凭据含非法字符（header 设置抛异常，见 fetchModels）：不能混进「网络错误」——
+                    // 用户去查网络与地址永远查不出问题（2026-10-01 复审 L-231③）
+                    models == null && code == -3 -> setHint(TEXT_KEY_INVALID)
                     models == null && code < 0 -> setHint(TEXT_NETWORK_FAILED)
                     models == null -> setHint(String.format(Locale.US, TEXT_TEST_FAIL_FMT, code))
                     models.isEmpty() -> setHint(TEXT_MODELS_EMPTY)
@@ -404,6 +430,9 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_URL_INVALID = "Base URL 无法解析，请检查格式"
         const val TEXT_NETWORK_FAILED = "请求失败：网络错误或超时"
         const val TEXT_NEED_HTTPS = "地址需以 https:// 开头（明文会把 Key 暴露在链路上）"
+        const val TEXT_KEY_INVALID = "Key 里混入了不可见字符（从网页复制常见），请重新粘贴"
+    const val TEXT_PROMPT_MISSING = "提示词里没有 {{text}}：请求不会带原文，会把原文追加到提示词之后"
+    const val TEXT_EXTRA_JSON_INVALID = "自定义 JSON 解析失败：这些参数不会生效"
         const val TEXT_TEST_OK_FMT = "连接正常，可选模型 %d 个"
         const val TEXT_TEST_FAIL_FMT = "连接失败：HTTP %d（该服务可能未实现 /models，不影响翻译）"
     }

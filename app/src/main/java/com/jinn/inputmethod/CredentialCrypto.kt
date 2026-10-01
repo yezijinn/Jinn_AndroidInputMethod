@@ -76,7 +76,8 @@ object CredentialCrypto {
         cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
         val iv = cipher.iv
         val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        Base64.encodeToString(iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        VERSION_PREFIX + Base64.encodeToString(iv, Base64.NO_WRAP) + ":" +
+            Base64.encodeToString(encrypted, Base64.NO_WRAP)
     }.getOrElse {
         Diagnostics.e(TAG, "凭据加密失败: ${it.javaClass.simpleName}")
         null
@@ -84,10 +85,12 @@ object CredentialCrypto {
 
     /** 解密 [encrypt] 的产物；失败（密文被篡改 / 换机 / Keystore 失效）返回 null */
     fun decrypt(stored: String): String? = runCatching {
-        val sep = stored.indexOf(':')
+        // 版本前缀可省：兼容本次改动之前落盘的密文（无前缀）
+        val body = stored.removePrefix(VERSION_PREFIX)
+        val sep = body.indexOf(':')
         if (sep != IV_B64_LENGTH) return null
-        val iv = Base64.decode(stored.substring(0, sep), Base64.NO_WRAP)
-        val data = Base64.decode(stored.substring(sep + 1), Base64.NO_WRAP)
+        val iv = Base64.decode(body.substring(0, sep), Base64.NO_WRAP)
+        val data = Base64.decode(body.substring(sep + 1), Base64.NO_WRAP)
         if (iv.size < 12) return null
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
@@ -106,13 +109,24 @@ object CredentialCrypto {
      * 这是刻意选的方向：**宁可让用户重填，也不能把密文原文当 Key 发出去**。
      */
     fun looksEncrypted(raw: String): Boolean {
-        if (raw.length <= IV_B64_LENGTH + 1) return false
-        if (raw[IV_B64_LENGTH] != ':') return false
-        for (i in 0 until IV_B64_LENGTH) if (raw[i] !in BASE64_CHARS) return false
-        val body = raw.substring(IV_B64_LENGTH + 1)
-        // 密文段：GCM tag 16 字节 ⇒ base64 ≥ 24 字符；全 base64 字符
-        return body.length >= 24 && body.all { it in BASE64_CHARS }
+        // 带版本前缀的一律是自家密文（新写入都带，见 encrypt）
+        if (raw.startsWith(VERSION_PREFIX)) return true
+        // 无前缀的存量密文：`base64段:base64段`，首段 16 或 24 字符、密文段 ≥ 24 字符
+        // （GCM tag 16 字节的 base64 长度）。判据取**宽**不取窄（fail-closed）——
+        // 判成密文最多让用户重填一次；判成明文则会把密文当 Key 发出去、并覆盖写回原始密文
+        // （2026-10-01 审查 L-219）。
+        val sep = raw.indexOf(':')
+        if (sep != IV_B64_LENGTH && sep != IV_B64_LENGTH_ALT) return false
+        if (raw.length <= sep + 24) return false
+        for (i in 0 until sep) if (raw[i] !in BASE64_CHARS) return false
+        return raw.substring(sep + 1).all { it in BASE64_CHARS }
     }
+
+    /** 密文版本前缀：新写入带它；读取侧按「可省」处理以兼容存量密文 */
+    private const val VERSION_PREFIX = "v1:"
+
+    /** 另一种可能的 IV 段长度（base64 无填充 / 其它编码口径），按密文处理以避免 fail-open */
+    private const val IV_B64_LENGTH_ALT = 24
 
     private const val BASE64_CHARS =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="

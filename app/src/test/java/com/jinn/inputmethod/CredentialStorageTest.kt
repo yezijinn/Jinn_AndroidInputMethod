@@ -30,6 +30,26 @@ class CredentialStorageTest {
         assertFalse(CredentialCrypto.looksEncrypted("AAAAAAAAAAAAAAAA:short"))
     }
 
+    /**
+     * L-219 回归守卫（两个方向都要 fail-closed）。
+     *
+     * 反方向（本测试）：判成密文最多让用户重填一次；判成明文则会把密文当 Key 发出去、
+     * 并把它当明文**覆盖写回**（原始密文永久丢失）。
+     */
+    @Test
+    fun `带版本前缀的一律算密文`() {
+        assertTrue(CredentialCrypto.looksEncrypted("v1:AAAAAAAAAAAAAAAA:" + "B".repeat(44)))
+        // 前缀在身时即使后半段形态不规范也按密文对待
+        assertTrue(CredentialCrypto.looksEncrypted("v1:whatever"))
+        // 真凭据不会以 v1: 开头
+        assertFalse(CredentialCrypto.looksEncrypted("sk-proj-Ab12Cd34Ef56"))
+    }
+
+    @Test
+    fun `首段 24 字符的 base64 形态也算密文（换 IV 长度不 fail-open）`() {
+        assertTrue(CredentialCrypto.looksEncrypted("A".repeat(24) + ":" + "B".repeat(44)))
+    }
+
     // ── 加密落盘（源码对拍）─────────────────────────────────
 
     @Test

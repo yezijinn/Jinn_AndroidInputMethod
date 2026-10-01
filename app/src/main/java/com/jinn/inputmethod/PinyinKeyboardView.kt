@@ -2603,7 +2603,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 全选：选中输入框全部文本
      *  - 复制：复制选中文本到系统剪贴板
      *  - 粘贴：粘贴剪贴板最新内容
-     *  - 翻译：把光标前最后一句译成目标语言（**仅总开关打开时出现**，固定位于「收起」左侧）
+     *  - 翻译：把「原文范围」设置里的那段文本译成目标语言（**仅总开关打开时出现**，固定位于「收起」左侧）
      *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）—— **恒为最右端**（用户 2026-09-30 定）
      *
      * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
@@ -2630,6 +2630,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     hideSearchPanel()
                 },
             ))
+            // 早退前清掉上帧的按钮引用（2026-10-01 审查 L-228）：`removeAllViews` 只是把视图从
+            // 容器摘下来，字段还指着旧按钮 —— `setTranslating` 之后会去改一个已脱离视图树的 View
+            translateButtonBox = null
+            directionButtonBox = null
             Diagnostics.v(TAG, "功能面板(搜索态): 退出")
             return
         }

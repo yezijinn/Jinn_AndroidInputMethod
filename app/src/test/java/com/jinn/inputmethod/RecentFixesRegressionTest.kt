@@ -1283,4 +1283,188 @@ class RecentFixesRegressionTest {
         assertFalse("线程内不得再用传入的 Service context 调 load", "load(context)" in body)
         assertFalse("线程内不得再用传入的 Service context 调 loadExtensionDict", "loadExtensionDict(context)" in body)
     }
+
+    /**
+     * 翻译收尾只能有一个入口（BUG.md L-229 / L-231）。
+     *
+     * 看门狗超时、会话边界取消、回调到达、请求发起失败，四处若各写各的收尾，最容易漏掉
+     * 「作废代际」—— 那样 330s 看门狗复位之后到达的旧回调仍会被当成当前代际，把译文插进
+     * 用户已经改过的输入框。判据是**收尾动作各只许出现一份**：三处共用 `finishTranslate`
+     * 之后，裸复位与代际自增都只剩它里面那一处。
+     */
+    @Test
+    fun `翻译收尾只能有一个入口`() {
+        val src = codeOf("JinnIme.kt")
+        assertEquals(
+            "收尾函数只此一处定义（四处入口必须调它）",
+            1,
+            Regex("private fun finishTranslate\\(\\)").findAll(src).count(),
+        )
+        assertEquals(
+            "裸复位 `translateInFlight = false` 只允许出现在 finishTranslate 里（字段初始化不算）",
+            1,
+            Regex("(?m)^\\s+translateInFlight = false").findAll(src).count(),
+        )
+        assertEquals(
+            "`translateGeneration++` 只允许出现在 finishTranslate 里（startTranslate 用前缀形式 ++）",
+            1,
+            Regex("translateGeneration\\+\\+").findAll(src).count(),
+        )
+        assertEquals(
+            "撤看门狗只能有两处：startTranslate 清旧的、finishTranslate 收尾",
+            2,
+            Regex("removeCallbacks\\(translateWatchdog\\)").findAll(src).count(),
+        )
+    }
+
+    /**
+     * 本轮修复（2026-10-01 第九十七回）的关键调用不许退化。
+     *
+     * 全部用源码对拍，因为这几条的失败模式都是**静默**：删不掉（隐私目标落空）、把「读不到」
+     * 报成「没有内容」（归因错）、裸 Binder 调用带走进程（崩溃）、摘要门槛失效（排障无门）。
+     */
+    @Test
+    fun `本轮修复的关键调用不许退化`() {
+        val db = codeOf("ClipboardDb.kt")
+        assertTrue(
+            "剪贴板库必须提供「清洗后相等」的删除（L-239，批量版见 L-244）",
+            "fun deleteByCleanedPlaintexts(" in db,
+        )
+        assertTrue(
+            "清洗后匹配只删未收藏条目（L-239）",
+            "is_favorite = 0" in blockAfter(db, "fun deleteByCleanedPlaintexts("),
+        )
+        val settings = codeOf("TranslationSettingsActivity.kt")
+        assertTrue(
+            "凭据不留痕走公共入口（L-239 → L-244/L-245：两段匹配已收进 CredentialTrace）",
+            "CredentialTrace.purge(db, targets)" in settings,
+        )
+
+        val ime = codeOf("JinnIme.kt")
+        assertTrue(
+            "光标前读取必须能区分「读失败」（L-240）",
+            "private fun readTextBeforeCursor(" in ime && "): String? {" in ime,
+        )
+        assertTrue("光标后读取同样要三态（L-237）", "): String? {" in ime)
+        assertTrue(
+            "两条读取失败的提示必须用独立文案（L-240 / L-242）",
+            "TEXT_TRANSLATE_BEFORE_UNREADABLE" in ime && "TEXT_TRANSLATE_AFTER_UNREADABLE" in ime,
+        )
+        assertTrue("移动光标后的日志必须按调用结果说话（L-242）", "if (applySelection(" in ime)
+        assertTrue(
+            "清空与打字上屏都要兜底且留痕（L-241）",
+            "deleteAllText: 调用失败" in ime && "commit: 上屏失败" in ime,
+        )
+
+        val client = codeOf("TranslationClient.kt")
+        assertTrue("2xx 里的错误体也要有摘要（L-243）", "(2xx)" in client)
+        assertTrue("响应被截断要标出来（L-243）", "capped" in client)
+        assertFalse(
+            "摘要白名单不得再用 isLetterOrDigit（非 ASCII 也为真，L-243）",
+            "it.isLetterOrDigit()" in client,
+        )
+    }
+
+    /**
+     * 凭据读写闭环与不留痕入口不许退化（2026-10-01 第九十九回）。
+     *
+     * 这四条失败时都**无声**：删数据（读失败当清空）、漏删（入口分叉）、不翻译（模板缺占位符）、
+     * 扫描放大（每个目标各扫一遍全表）—— 所以钉在源码上。
+     */
+    @Test
+    fun `凭据读写闭环与不留痕入口不许退化`() {
+        val saveGuard = codeOf("CredentialSaveGuard.kt")
+        assertTrue("必须存在保存护栏（L-247）", "fun changed(field: EditText)" in saveGuard)
+
+        val settings = codeOf("TranslationSettingsActivity.kt")
+        assertTrue(
+            "保存必须逐字段判「改过才回写」（L-247）",
+            "saveGuard.changed(editDeeplKey)" in settings &&
+                "saveGuard.changed(editAliyunKeyId)" in settings,
+        )
+        assertTrue("载入必须记原值（L-247）", "saveGuard.remember(field, value)" in settings)
+        assertTrue("OpenAI Key 也要进不留痕目标（L-245）", "prefs.openAiApiKey," in settings)
+        assertTrue("不留痕走公共入口（L-244 / L-245）", "CredentialTrace.purge(db, targets)" in settings)
+
+        val openAiPage = codeOf("OpenAiSettingsActivity.kt")
+        assertTrue("OpenAI 页同样走公共入口（L-245）", "CredentialTrace.purge(" in openAiPage)
+        assertTrue("OpenAI 页的 Key 也要 guard（L-247）", "saveGuard.changed(editApiKey)" in openAiPage)
+
+        val db = codeOf("ClipboardDb.kt")
+        assertTrue("清洗匹配必须是批量、一次遍历（L-244）", "fun deleteByCleanedPlaintexts(" in db)
+        assertFalse("不得退回「每个目标各扫一遍全表」（L-244）", "fun deleteByCleanedPlaintext(" in db)
+
+        val translator = codeOf("OpenAiTranslator.kt")
+        assertTrue("模板缺占位符要有兜底（L-246）", "fun applyTemplateEnsuringText(" in translator)
+        assertTrue(
+            "兜底必须落在 user 消息（L-246 → L-250：system 是角色指令，不该承载正文）",
+            "applyTemplateEnsuringText(user, system" in translator,
+        )
+        assertFalse(
+            "system 消息不得再走兜底（否则原文会在两条消息里各出现一遍）",
+            "applyTemplateEnsuringText(system" in translator,
+        )
+
+        val trace = codeOf("CredentialTrace.kt")
+        assertTrue(
+            "不留痕必须收敛，且收敛要看**历史变化**而不只是内容（L-249 → L-254）",
+            "private val purged" in trace && "private val purged = java.util.concurrent.ConcurrentHashMap<String, Long>" in trace,
+        )
+        assertTrue(
+            "收敛判据要基于 maxItemId（历史里又出现新条目就重扫）",
+            "fun maxItemId(" in codeOf("ClipboardDb.kt"),
+        )
+        assertTrue(
+            "自定义 Headers / JSON 里的值也要进目标（L-252）",
+            "fun candidatesFrom(" in trace,
+        )
+        assertTrue(
+            "JSON 要递归收集（嵌套 / 数组里的密钥同样会发出去，L-256）",
+            "collectJsonStrings" in trace,
+        )
+
+        val prefs = codeOf("Prefs.kt")
+        assertTrue(
+            "「留空即默认」的字段要把存量里等于默认值的当作未配置（L-251）",
+            "private fun defaulted(stored: String, fallback: String)" in prefs,
+        )
+        assertTrue(
+            "等于默认值必须**删键**而不是写死（L-255：超时 / 界面语言 / 每家字节上限）",
+            "remove(KEY_LANGUAGE)" in prefs &&
+                "remove(KEY_OPENAI_TIMEOUT_SEC)" in prefs &&
+                "remove(maxBytesKeyOf(id))" in prefs,
+        )
+    }
+
+    /**
+     * 「该家是否已配置」的两处判据必须同源（BUG.md L-231）。
+     *
+     * `Prefs.hasCredentialFor`（翻译设置页摘要）与 `TranslationClient.providerOf`（点翻译时
+     * 真正建 provider）若一个用 `isNotBlank()`、一个用 `cleanCredential()`，一个纯零宽字符的
+     * 假凭据就会造成「摘要说已配置、点翻译说未配置」—— 用户两边都看不出为什么。
+     */
+    @Test
+    fun `摘要与建 provider 的凭据判据必须同源`() {
+        // 用户看得见的那条路径（2026-10-01 复审 L-232）：上一版只盯了内部辅助函数，
+        // 摘要照样把零宽「假凭据」显示成「已配置」—— 守卫必须盯用户路径，不是内部辅助。
+        val ui = blockAfter(codeOf("TranslationSettingsActivity.kt"), "private fun refreshState(")
+        assertTrue(
+            "摘要必须走 cleanCredential（与 providerOf 逐字对齐）",
+            "cleanCredential()" in ui,
+        )
+        assertFalse(
+            "摘要不得再用 isNotBlank()（纯零宽凭据会被显示成「已配置」）",
+            "isNotBlank()" in ui,
+        )
+        // 内部推导辅助（键缺失时推导默认 provider）同样要同源
+        val helper = blockAfter(codeOf("Prefs.kt"), "private fun hasCredentialFor(")
+        assertTrue(
+            "hasCredentialFor 必须走 cleanCredential（与 providerOf 逐字对齐）",
+            "cleanCredential()" in helper,
+        )
+        assertFalse(
+            "hasCredentialFor 不得再用 isNotBlank()（纯零宽凭据会被当成已配置）",
+            "isNotBlank()" in helper,
+        )
+    }
 }

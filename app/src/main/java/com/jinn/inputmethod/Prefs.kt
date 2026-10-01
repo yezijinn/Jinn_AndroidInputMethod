@@ -49,7 +49,11 @@ class Prefs(context: Context) {
     /** 统一语言代码，取值见服务端 engines/language.py */
     var language: String
         get() = sp.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
-        set(value) = sp.edit { putString(KEY_LANGUAGE, value) }
+        // 等于默认值就**删键**（2026-10-01 修复 L-255）：否则「打开过一次设置页」就把当时的默认
+        // 语言固化进 prefs，将来改默认语言对该用户无效（口径同 [defaulted]）
+        set(value) = sp.edit {
+            if (value == DEFAULT_LANGUAGE) remove(KEY_LANGUAGE) else putString(KEY_LANGUAGE, value)
+        }
 
     /** 识别提示词，人名/地名/术语写在这里能提升准确率 */
     var prompt: String
@@ -448,14 +452,33 @@ class Prefs(context: Context) {
         }
         set(value) = sp.edit { putString(KEY_TRANSLATE_PROVIDER, TranslationProviderId.of(value).id) }
 
-    /** 该家是否已有可用凭据（仅供上面「键缺失时推导」使用；判据与 [TranslationClient.providerOf] 对齐） */
+    /**
+     * 该家是否已有可用凭据（仅供上面「键缺失时推导」使用）。
+     *
+     * 判据必须与 [providerOf] **逐字对齐**：那里所有凭据都先走 [cleanCredential]（剥零宽 / BOM / NBSP
+     * 再 trim），这里若用 `isNotBlank()`，一个纯零宽字符的「假凭据」会让摘要说「已配置」而点翻译
+     * 说「未配置」（2026-10-01 复审 L-231：L-228 只对齐了 joinUrl 那半）。
+     */
     private fun hasCredentialFor(id: TranslationProviderId): Boolean = when (id) {
-        TranslationProviderId.ALIYUN -> aliyunAccessKeyId.isNotBlank() && aliyunAccessKeySecret.isNotBlank()
-        TranslationProviderId.AZURE -> azureApiKey.isNotBlank()
-        TranslationProviderId.BAIDU -> baiduAppId.isNotBlank() && baiduSecretKey.isNotBlank()
-        TranslationProviderId.BAIDU_LLM -> baiduLlmAppId.isNotBlank() && baiduLlmApiKey.isNotBlank()
-        TranslationProviderId.DEEPL -> deeplApiKey.isNotBlank()
-        TranslationProviderId.OPENAI -> openAiApiKey.isNotBlank() && openAiModel.isNotBlank()
+        TranslationProviderId.ALIYUN ->
+            aliyunAccessKeyId.cleanCredential().isNotEmpty() &&
+                aliyunAccessKeySecret.cleanCredential().isNotEmpty()
+
+        TranslationProviderId.AZURE -> azureApiKey.cleanCredential().isNotEmpty()
+
+        TranslationProviderId.BAIDU ->
+            baiduAppId.cleanCredential().isNotEmpty() && baiduSecretKey.cleanCredential().isNotEmpty()
+
+        TranslationProviderId.BAIDU_LLM ->
+            baiduLlmAppId.cleanCredential().isNotEmpty() && baiduLlmApiKey.cleanCredential().isNotEmpty()
+
+        TranslationProviderId.DEEPL -> deeplApiKey.cleanCredential().isNotEmpty()
+
+        // OpenAI 兼容多一道端点校验（2026-10-01 审查 L-228）：`providerOf` 还要求 joinUrl 能解析出
+        // URL，少了这一条会出现「摘要说已配置、点翻译说未配置」的自相矛盾
+        TranslationProviderId.OPENAI -> openAiApiKey.cleanCredential().isNotEmpty() &&
+            openAiModel.cleanCredential().isNotEmpty() &&
+            OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath) != null
     }
 
     // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（用户 2026-09-30 定）──
@@ -485,10 +508,14 @@ class Prefs(context: Context) {
 
     internal fun setTranslateMaxBytesOf(id: TranslationProviderId, value: Int) {
         sp.edit {
-            putInt(
-                maxBytesKeyOf(id),
-                value.coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES),
-            )
+            val v = value.coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)
+            // 等于该家默认就**删键**（2026-10-01 修复 L-255）：否则打开过一次「原文范围」页就把这家
+            // 钉死在当时的默认值，将来抬高默认（如 DeepL）老用户拿不到
+            if (v == id.defaultMaxBytes) {
+                remove(maxBytesKeyOf(id))
+            } else {
+                putInt(maxBytesKeyOf(id), v)
+            }
         }
     }
 
@@ -532,7 +559,7 @@ class Prefs(context: Context) {
      * 加密之前那些明文本来就常驻在进程里，这里只是换了个持有者。（Java `String` 不可擦除，
      * 不做「用完清零」这类样子货。）
      */
-    private val credentialCache = HashMap<String, String>()
+    private val credentialCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /**
      * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
@@ -648,9 +675,19 @@ class Prefs(context: Context) {
      *
      * 多配置档（新增 / 复制 / 删除 / 导入导出）排在下一轮；本轮先把单档的每一项配置都打开。
      */
+    /**
+     * 「留空即默认」字段的统一读法（2026-10-01 修复 L-251）。
+     *
+     * 为什么不能只判 blank：设置页会把 getter 的**默认值**灌进输入框，用户打开一次页面再返回，
+     * 默认值就被无条件回写成了**显式字面量** —— 于是 App 升级默认提示词 / 路径之后，老用户再也
+     * 拿不到新默认值（本地已是字面量）。这里把「存量里恰好等于默认值」的也当作未配置，
+     * 等价于一次自动迁移。
+     */
+    private fun defaulted(stored: String, fallback: String): String =
+        if (stored == fallback) "" else stored.ifBlank { fallback }
+
     var openAiName: String
-        get() = sp.getString(KEY_OPENAI_NAME, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_PROFILE_NAME }
+        get() = defaulted(sp.getString(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
         set(value) = sp.edit { putString(KEY_OPENAI_NAME, value.trim()) }
 
     /**
@@ -660,8 +697,7 @@ class Prefs(context: Context) {
      * 会让用户看不到自己填的是什么，出问题时无从对照。
      */
     var openAiBaseUrl: String
-        get() = sp.getString(KEY_OPENAI_BASE_URL, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_BASE_URL }
+        get() = defaulted(sp.getString(KEY_OPENAI_BASE_URL, "").orEmpty(), OpenAiTranslator.DEFAULT_BASE_URL)
         set(value) = sp.edit { putString(KEY_OPENAI_BASE_URL, value.trim()) }
 
     /** OpenAI 兼容服务的 API Key（Bearer 鉴权；**加密落盘**，界面与日志都不回显） */
@@ -676,32 +712,30 @@ class Prefs(context: Context) {
 
     /** 对话端点路径（默认 `/chat/completions`；换网关只改这一项即可，不必等 App 更新） */
     var openAiChatPath: String
-        get() = sp.getString(KEY_OPENAI_CHAT_PATH, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_CHAT_PATH }
+        get() = defaulted(sp.getString(KEY_OPENAI_CHAT_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_CHAT_PATH)
         set(value) = sp.edit { putString(KEY_OPENAI_CHAT_PATH, value.trim()) }
 
     /** 模型列表端点路径（默认 `/models`；「获取模型」用它，服务端没实现也不影响翻译） */
     var openAiModelsPath: String
-        get() = sp.getString(KEY_OPENAI_MODELS_PATH, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_MODELS_PATH }
+        get() = defaulted(sp.getString(KEY_OPENAI_MODELS_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_MODELS_PATH)
         set(value) = sp.edit { putString(KEY_OPENAI_MODELS_PATH, value.trim()) }
 
     /** 目标语言（自由文本：简体中文 / 繁體中文（台灣）/ 粤语 / 古文…，进 `{{target_language}}`） */
     var openAiTargetLanguage: String
-        get() = sp.getString(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_TARGET_LANGUAGE }
+        get() = defaulted(
+            sp.getString(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty(),
+            OpenAiTranslator.DEFAULT_TARGET_LANGUAGE,
+        )
         set(value) = sp.edit { putString(KEY_OPENAI_TARGET_LANGUAGE, value.trim()) }
 
     /** System 提示词（可整段改写；支持 `{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`） */
     var openAiSystemPrompt: String
-        get() = sp.getString(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_SYSTEM_PROMPT }
+        get() = defaulted(sp.getString(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
         set(value) = sp.edit { putString(KEY_OPENAI_SYSTEM_PROMPT, value.trim()) }
 
     /** User 提示词模板（同上；变量替换见 [OpenAiTranslator.applyTemplate]） */
     var openAiUserPrompt: String
-        get() = sp.getString(KEY_OPENAI_USER_PROMPT, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_USER_PROMPT }
+        get() = defaulted(sp.getString(KEY_OPENAI_USER_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_USER_PROMPT)
         set(value) = sp.edit { putString(KEY_OPENAI_USER_PROMPT, value.trim()) }
 
     /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
@@ -731,15 +765,23 @@ class Prefs(context: Context) {
 
     /** 响应解析路径（默认 `choices[0].message.content`；换协议如 `output_text` 只改这一项） */
     var openAiResponsePath: String
-        get() = sp.getString(KEY_OPENAI_RESPONSE_PATH, "").orEmpty()
-            .ifBlank { OpenAiTranslator.DEFAULT_RESPONSE_PATH }
+        get() = defaulted(sp.getString(KEY_OPENAI_RESPONSE_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_RESPONSE_PATH)
         set(value) = sp.edit { putString(KEY_OPENAI_RESPONSE_PATH, value.trim()) }
 
     /** 整体超时（秒）：大模型首字延迟不可控，钳到 5~300 秒 */
     var openAiTimeoutSec: Int
         get() = sp.getInt(KEY_OPENAI_TIMEOUT_SEC, OpenAiTranslator.DEFAULT_TIMEOUT_SEC)
             .coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)
-        set(value) = sp.edit { putInt(KEY_OPENAI_TIMEOUT_SEC, value.coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)) }
+        // 等于默认值就**删键**而不是写死（2026-10-01 修复 L-255）：口径同 [defaulted] ——
+        // 否则「打开过一次设置页」会把当时的默认超时固化，将来调大默认对老用户无效
+        set(value) = sp.edit {
+            val v = value.coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)
+            if (v == OpenAiTranslator.DEFAULT_TIMEOUT_SEC) {
+                remove(KEY_OPENAI_TIMEOUT_SEC)
+            } else {
+                putInt(KEY_OPENAI_TIMEOUT_SEC, v)
+            }
+        }
 
     /** 最近一次成功获取的模型列表缓存（换行分隔；接口暂时不可用时下拉仍可用） */
     var openAiModelsCache: String

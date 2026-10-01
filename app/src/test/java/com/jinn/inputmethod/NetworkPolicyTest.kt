@@ -106,12 +106,13 @@ class NetworkPolicyTest {
             "fanyi-api.baidu.com",                   // BaiduTranslator / BaiduLlmTranslator.ENDPOINT
             "api.deepl.com",                         // DeepLTranslator.PRO_ENDPOINT
             "api-free.deepl.com",                    // DeepLTranslator.FREE_ENDPOINT
+            "api.openai.com",                        // OpenAiTranslator.DEFAULT_BASE_URL
         )
         // ② 反向对拍：每个 host 必须真的写在某个 Translator 源码里（清单过时/写错 → 变红提示同步，
         //    不依赖正则匹配 URL 的引号形态，比"提取"更稳）
         val sources = listOf(
             "AliyunTranslator.kt", "AzureTranslator.kt", "BaiduTranslator.kt",
-            "BaiduLlmTranslator.kt", "DeepLTranslator.kt",
+            "BaiduLlmTranslator.kt", "DeepLTranslator.kt", "OpenAiTranslator.kt",
         ).map { name ->
             TestSources.codeOf(
                 sourceOf(
@@ -142,6 +143,22 @@ class NetworkPolicyTest {
                 Regex(">\\s*" + Regex.escape(host) + "\\s*<").containsMatchIn(denyBlock),
             )
         }
+        // ④ 正向（2026-10-01 复审 L-231④）：上面 ①②③ 都是「清单 → 别处」的单向校验，XML 里
+        //    新增一个域名不会有任何东西变红 —— api.openai.com 就是这样漏过一次。这条把方向补齐：
+        //    禁明文块里的**每个**域名都得在已知清单里（翻译端点 ∪ 词库下载端点）。
+        //    清单只增不减：域名该不该禁明文是安全决策，不能为了让断言变绿而从清单里删。
+        val knownHosts = hosts + listOf("github.com", "objects.githubusercontent.com", "gitee.com")
+        val declared = Regex("<domain[^>]*>\\s*([A-Za-z0-9.\\-]+)\\s*</domain>")
+            .findAll(denyBlock)
+            .map { it.groupValues[1] }
+            .toSet()
+        for (host in declared) {
+            assertTrue(
+                "禁明文块里的域名 $host 没登记（新增域名请同步本测试的清单与注释）",
+                host in knownHosts,
+            )
+        }
+        assertTrue("禁明文块里应当解析出域名（解析式失效时本断言会先红）", declared.isNotEmpty())
     }
 
     @Test

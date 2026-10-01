@@ -42,6 +42,9 @@
         <domain includeSubdomains="true">mt.cn-hangzhou.aliyuncs.com</domain>
         <domain includeSubdomains="true">api.deepl.com</domain>
         <domain includeSubdomains="true">api-free.deepl.com</domain>
+        <!-- OpenAI 兼容的**默认端点**：它同样是可静态枚举的常量（用户自填的其它域名无法枚举，
+             仍靠代码判据）—— 漏掉它等于代码侧 https 判据一旦回归就明文放行（2026-10-01 审查 L-228） -->
+        <domain includeSubdomains="true">api.openai.com</domain>
     </domain-config>
 
 </network-security-config>

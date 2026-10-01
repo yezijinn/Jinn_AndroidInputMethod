@@ -171,6 +171,9 @@ class TranslationSettingsActivity : Activity() {
         prefs.aliyunAccessKeyId, prefs.aliyunAccessKeySecret,
         prefs.azureApiKey, prefs.baiduAppId, prefs.baiduSecretKey,
         prefs.baiduLlmAppId, prefs.baiduLlmApiKey, prefs.deeplApiKey,
+        // OpenAI 兼容那一家的 Key 同样要抹（2026-10-01 修复 L-245）：它最常来自网页控制台、
+        // 也最常带不可见字符 —— 此前只在 OpenAI 页用精确哈希删过，删不掉
+        prefs.openAiApiKey,
     )
 
     /**
@@ -187,8 +190,9 @@ class TranslationSettingsActivity : Activity() {
         val appContext = applicationContext
         BackgroundIo.run {
             val db = runCatching { ClipboardDb.get(appContext) }.getOrNull() ?: return@run
-            var removed = 0
-            for (v in targets) removed += runCatching { db.deleteByPlaintext(v) }.getOrDefault(0)
+            // 两段匹配（精确哈希 → 剥不可见字符后相等）与「一次遍历处理全部目标」都在
+            // CredentialTrace 里：本页只管取凭据值（2026-10-01 修复 L-244 / L-245）
+            val removed = CredentialTrace.purge(db, targets)
             if (removed > 0) Diagnostics.i(TAG, "凭据不留痕: 从剪贴板历史删除 $removed 条")
         }
     }
@@ -273,21 +277,33 @@ class TranslationSettingsActivity : Activity() {
         editDeeplKey.setOnFocusChangeListener(save)
     }
 
+    /** 只回写用户真的改过的字段（2026-10-01 修复 L-247）：见 [CredentialSaveGuard] */
+    private val saveGuard = CredentialSaveGuard()
+
+    /** 灌值并记下「载入时的原值」（与 [saveGuard] 配套） */
+    private fun loadField(field: android.widget.EditText, value: String) {
+        field.setText(value)
+        saveGuard.remember(field, value)
+    }
+
     private fun loadValues() {
         // 闸门复位必须在本方法的 setSelection 之前：否则重载会把 UI 选中项当成用户选择写回配置
         providerTouched = false
         targetTouched = false
         spinnerProvider.setSelection(TranslationProviderId.of(prefs.translateProvider).ordinal)
         spinnerTarget.setSelection(TranslationLanguage.of(prefs.translateTarget).ordinal)
-        editAliyunKeyId.setText(prefs.aliyunAccessKeyId)
-        editAliyunKeySecret.setText(prefs.aliyunAccessKeySecret)
-        editAzureKey.setText(prefs.azureApiKey)
-        editAzureRegion.setText(prefs.azureRegion)
-        editBaiduAppId.setText(prefs.baiduAppId)
-        editBaiduSecret.setText(prefs.baiduSecretKey)
-        editBaiduLlmAppId.setText(prefs.baiduLlmAppId)
-        editBaiduLlmKey.setText(prefs.baiduLlmApiKey)
-        editDeeplKey.setText(prefs.deeplApiKey)
+        // 灌值的同时记下「载入时的原值」：保存时只回写真的改过的字段 —— 凭据解密失败时读出来是
+        // 空串，无条件回写等于把还躺在 prefs 里的密文删掉（2026-10-01 修复 L-247）
+        saveGuard.reset()
+        loadField(editAliyunKeyId, prefs.aliyunAccessKeyId)
+        loadField(editAliyunKeySecret, prefs.aliyunAccessKeySecret)
+        loadField(editAzureKey, prefs.azureApiKey)
+        loadField(editAzureRegion, prefs.azureRegion)
+        loadField(editBaiduAppId, prefs.baiduAppId)
+        loadField(editBaiduSecret, prefs.baiduSecretKey)
+        loadField(editBaiduLlmAppId, prefs.baiduLlmAppId)
+        loadField(editBaiduLlmKey, prefs.baiduLlmApiKey)
+        loadField(editDeeplKey, prefs.deeplApiKey)
         applyProviderVisibility()
         refreshState()
     }
@@ -327,16 +343,22 @@ class TranslationSettingsActivity : Activity() {
     }
 
     /** 凭据落盘；日志只记长度不记内容（日志会随「导出诊断包」整体外发） */
+    /**
+     * 只回写**用户真的改过**的字段（[CredentialSaveGuard]，2026-10-01 修复 L-247）：
+     * 凭据解密失败时读出来是空串，无条件回写等于「打开又离开」就把密文删了。
+     */
     private fun saveCredentials() {
-        prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
-        prefs.aliyunAccessKeySecret = editAliyunKeySecret.text.toString()
-        prefs.azureApiKey = editAzureKey.text.toString()
-        prefs.azureRegion = editAzureRegion.text.toString()
-        prefs.baiduAppId = editBaiduAppId.text.toString()
-        prefs.baiduSecretKey = editBaiduSecret.text.toString()
-        prefs.baiduLlmAppId = editBaiduLlmAppId.text.toString()
-        prefs.baiduLlmApiKey = editBaiduLlmKey.text.toString()
-        prefs.deeplApiKey = editDeeplKey.text.toString()
+        if (saveGuard.changed(editAliyunKeyId)) prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
+        if (saveGuard.changed(editAliyunKeySecret)) {
+            prefs.aliyunAccessKeySecret = editAliyunKeySecret.text.toString()
+        }
+        if (saveGuard.changed(editAzureKey)) prefs.azureApiKey = editAzureKey.text.toString()
+        if (saveGuard.changed(editAzureRegion)) prefs.azureRegion = editAzureRegion.text.toString()
+        if (saveGuard.changed(editBaiduAppId)) prefs.baiduAppId = editBaiduAppId.text.toString()
+        if (saveGuard.changed(editBaiduSecret)) prefs.baiduSecretKey = editBaiduSecret.text.toString()
+        if (saveGuard.changed(editBaiduLlmAppId)) prefs.baiduLlmAppId = editBaiduLlmAppId.text.toString()
+        if (saveGuard.changed(editBaiduLlmKey)) prefs.baiduLlmApiKey = editBaiduLlmKey.text.toString()
+        if (saveGuard.changed(editDeeplKey)) prefs.deeplApiKey = editDeeplKey.text.toString()
         // OpenAI 兼容的一整组配置由 OpenAiSettingsActivity 落盘，这里只记本页那几家的长度
         Diagnostics.i(
             TAG,
@@ -352,25 +374,33 @@ class TranslationSettingsActivity : Activity() {
         purgeClipboardHistory(configuredCredentials())
     }
 
-    /** 状态摘要：只说是否已配置，不回显任何凭据字符 */
+    /**
+     * 状态摘要：只说是否已配置，不回显任何凭据字符。
+     *
+     * 判据必须与 `TranslationClient.providerOf` **逐字一致**：凭据先走 `cleanCredential()`
+     * （剥零宽 / BOM / NBSP 再 trim）再判空。用 `isNotBlank()` 时，一个纯零宽字符的「假凭据」
+     * 会让本页显示「已配置」而点翻译提示「未配置」（2026-10-01 复审 L-232 —— 上一轮只改了
+     * `Prefs.hasCredentialFor` 这条内部路径，用户看得见的摘要漏在外面）。
+     */
     private fun refreshState() {
         textAliyunState.text = stateText(
-            prefs.aliyunAccessKeyId.isNotBlank() && prefs.aliyunAccessKeySecret.isNotBlank()
+            prefs.aliyunAccessKeyId.cleanCredential().isNotEmpty() &&
+                prefs.aliyunAccessKeySecret.cleanCredential().isNotEmpty()
         )
-        textAzureState.text = stateText(prefs.azureApiKey.isNotBlank())
+        textAzureState.text = stateText(prefs.azureApiKey.cleanCredential().isNotEmpty())
         textBaiduState.text = stateText(
-            prefs.baiduAppId.isNotBlank() && prefs.baiduSecretKey.isNotBlank()
+            prefs.baiduAppId.cleanCredential().isNotEmpty() && prefs.baiduSecretKey.cleanCredential().isNotEmpty()
         )
         textBaiduLlmState.text = stateText(
-            prefs.baiduLlmAppId.isNotBlank() && prefs.baiduLlmApiKey.isNotBlank()
+            prefs.baiduLlmAppId.cleanCredential().isNotEmpty() && prefs.baiduLlmApiKey.cleanCredential().isNotEmpty()
         )
-        textDeeplState.text = stateText(prefs.deeplApiKey.isNotBlank())
+        textDeeplState.text = stateText(prefs.deeplApiKey.cleanCredential().isNotEmpty())
         // OpenAI 兼容：给「配置名 · 模型」这样一眼能认的摘要（Key / Prompt / JSON 一律不回显）。
         // 判据必须与 Prefs.translationProvider() 一致（**含 Base URL 可解析**）：只看 Key 与 Model 时，
         // Base URL 乱填会出现「本页说已配置、设置页说未配置、IME 点翻译说未配置」的三方矛盾
         // （2026-09-30 审查发现）。
-        val openAiReady = prefs.openAiApiKey.isNotBlank() &&
-            prefs.openAiModel.isNotBlank() &&
+        val openAiReady = prefs.openAiApiKey.cleanCredential().isNotEmpty() &&
+            prefs.openAiModel.cleanCredential().isNotEmpty() &&
             OpenAiTranslator.joinUrl(prefs.openAiBaseUrl, prefs.openAiChatPath) != null
         textOpenAiState.text = if (openAiReady) {
             "${prefs.openAiName} · ${prefs.openAiModel}"

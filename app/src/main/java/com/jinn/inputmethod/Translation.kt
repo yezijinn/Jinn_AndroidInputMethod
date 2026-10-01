@@ -135,6 +135,10 @@ internal enum class TranslationScope(val id: String, val label: String, val deta
  * 官方按**字符**计的两家（阿里云 5000 / Azure 50000）这里填等值字节：一个字符至少占 1 字节，
  * 所以「字节数 ≤ 官方字符上限」是保守成立的 —— 中文文本会提前截断（可自行调大），
  * 但绝不会撞上服务端的「字符串过长」错误。
+ *
+ * ⚠ 所有默认值都必须 ≤ [TranslationText.MAX_MAX_BYTES]（= 本机单次读取上限，2026-10-01 审查 L-223）：
+ * 服务端允许更大也没用，**读不回来的文本发不出去**。DeepL 官方给到 131072 字节，本机读取窗口
+ * 只有 100000，故按窗口填（≈3.3 万汉字）—— 要真正用满官方额度，得先把读取上限提上去。
  */
 internal val TranslationProviderId.defaultMaxBytes: Int
     get() = when (this) {
@@ -142,7 +146,7 @@ internal val TranslationProviderId.defaultMaxBytes: Int
         TranslationProviderId.AZURE -> 50_000
         TranslationProviderId.BAIDU -> 6_000
         TranslationProviderId.BAIDU_LLM -> 32_768
-        TranslationProviderId.DEEPL -> 131_072
+        TranslationProviderId.DEEPL -> 100_000
         TranslationProviderId.OPENAI -> 32_768
     }
 
@@ -159,14 +163,19 @@ internal object TranslationText {
      * 单次读取上限（字符）：防止超大文档整篇走 Binder 回包（宿主侧
      * `TransactionTooLargeException` 的触发源，见 `JinnIme.readTextBeforeCursor`）。
      *
-     * 只有设置页里把「字节上限」填得比它还大时才会生效 —— 一个字符至少占 1 字节，
-     * 读这么多字符一定覆盖得住任何 ≤[MAX_READ_CHARS] 字节的原文。
+     * 它同时是「字节上限」可填范围的上界（[MAX_MAX_BYTES] 直接引用它，2026-10-01 审查 L-223）：
+     * 二者曾经脱节（窗口 50000 / 可填 1000000），用户填到窗口之外时实际生效的仍是窗口值，
+     * 日志却按填的值报「已截断」—— 阈值失真。绑在一起后读取窗口恒等于填写的字节上限。
+     *
+     * 100000 字符 = 200 KB（UTF-16）走 Binder 往返，在事务缓冲最小的机型（1 MB）上也留有充足余量。
      */
-    const val MAX_READ_CHARS = 50_000
+    const val MAX_READ_CHARS = 100_000
 
     /** 单个 Provider 的字节上限可填写范围（设置页与备份导入共用同一钳位） */
     const val MIN_MAX_BYTES = 1
-    const val MAX_MAX_BYTES = 1_000_000
+
+    /** 可填上界 = 读取上限：一个字符至少 1 字节 ⇒ 不超过窗口的字节数一定读得全 */
+    const val MAX_MAX_BYTES = MAX_READ_CHARS
 
     /** 截取结果：上传的原文 + 追加位置 */
     internal class Slice(
@@ -176,13 +185,23 @@ internal object TranslationText {
         val truncated: Boolean,
         /** 译文追加位置：0 = 光标处；N = 光标后第 N 个单元（整行 / 整篇模式取区间末尾） */
         val appendOffset: Int,
+        /**
+         * [appendOffset] 指向的位置是否**确定**是原文区间末尾。
+         *
+         * `after` 只读到读取上限（[MAX_READ_CHARS] / 字节上限）时就分不清「本行 / 本篇到此结束」
+         * 与「窗口读满了」—— 此时 `appendOffset` 会落在行中 / 文中，照它移光标会把译文插进
+         * 用户句子的中间。调用方据此拒绝提交（2026-10-01 审查 L-213）。
+         */
+        val appendOffsetExact: Boolean,
     )
 
     /**
      * 取待译原文。
      *
      * [before] 是光标前文本（**尾部对齐**：取不满时拿到的是紧邻光标的那一段），[after] 是光标后
-     * 文本（头部对齐），两者的长度上限由调用方按 [MAX_READ_CHARS] 把住。
+     * 文本（头部对齐），两者的长度上限由调用方按 [MAX_READ_CHARS] 把住；
+     * [afterTruncated] 表示 [after] 是否**读满了窗口**（调用方按 `after.length >= limit` 判定，
+     * 无法区分「恰好读完」与「还有内容」时按后者处理）。
      *
      * [Slice.text] 为空串表示「这段范围里没有可翻译的文字」，调用方据此提示
      * （零宽字符由调用方的 `hasVisibleContent` 再筛一道）。
@@ -192,19 +211,24 @@ internal object TranslationText {
         after: CharSequence,
         scope: TranslationScope,
         maxBytes: Int,
+        afterTruncated: Boolean = false,
     ): Slice {
         val head = lineHead(before)
         val raw: String
         val appendOffset: Int
+        var exact = true
         when (scope) {
             TranslationScope.LINE_BEFORE -> {
                 raw = head
                 appendOffset = 0
             }
             TranslationScope.LINE_FULL -> {
-                val tailLen = lineTailLength(after)
+                val nl = after.indexOf('\n')
+                val tailLen = if (nl < 0) after.length else nl
                 raw = head + after.subSequence(0, tailLen)
                 appendOffset = tailLen
+                // 窗口读满且窗口内没有换行 ⇒ 本行可能还没结束，末尾位置不可信
+                exact = nl >= 0 || !afterTruncated
             }
             TranslationScope.BEFORE_ALL -> {
                 raw = before.toString()
@@ -213,26 +237,18 @@ internal object TranslationText {
             TranslationScope.ALL -> {
                 raw = before.toString() + after
                 appendOffset = after.length
+                // 文档比读取窗口长时，after 的末尾不是全篇末尾
+                exact = !afterTruncated
             }
         }
         val (cut, truncated) = takeHeadBytes(raw, maxBytes)
-        return Slice(cut.trim(), truncated, appendOffset)
+        return Slice(cut.trim(), truncated, appendOffset, exact)
     }
 
     /** 光标所在行的行首之后那一段（[before] 里最后一个换行之后的部分；没有换行就是整段） */
     private fun lineHead(before: CharSequence): String {
         val nl = before.lastIndexOf('\n')
         return if (nl < 0) before.toString() else before.substring(nl + 1)
-    }
-
-    /**
-     * 光标所在行的行尾之前那一段（[after] 里第一个换行之前的长度）。
-     *
-     * 这个长度顺带就是「整行模式」译文的追加偏移：区间末尾在光标后第这么多个单元处。
-     */
-    private fun lineTailLength(after: CharSequence): Int {
-        val nl = after.indexOf('\n')
-        return if (nl < 0) after.length else nl
     }
 
     /**
@@ -311,6 +327,20 @@ internal interface TranslationProvider {
  * 其余各家漏了，属内部不一致 —— 2026-09-30 审查发现）。
  */
 internal fun jsonText(json: JSONObject?, key: String): String? = json?.opt(key) as? String
+
+/**
+ * 取**可能是数字**的字符串字段（错误码、状态码）。
+ *
+ * 百度的 `error_code` 官方示例写成字符串，但反过来（数字）也出现过：只认 String 会让
+ * `{"error_code":54003}` 落进成功分支，`trans_result` 缺失后报「翻译结果为空」——
+ * 用户拿着真实错误码（配额用尽）去查「结果为空」（2026-10-01 审查 L-226）。
+ * JSON null 走 [JSONObject.NULL] 哨兵，必须显式排除，否则会取到字面量 `"null"`。
+ */
+internal fun jsonCode(json: JSONObject?, key: String): String? {
+    val raw = json?.opt(key) ?: return null
+    if (raw === JSONObject.NULL) return null
+    return raw.toString()
+}
 
 /**
  * 是否含**可见内容**（非空白、且非零宽字符）。

@@ -138,6 +138,7 @@
                 android:importantForAutofill="no"
                 android:inputType="number"
                 android:maxLength="7"
+                android:saveEnabled="false"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:textColor="@color/text_primary"

@@ -80,7 +80,12 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
             ?: return TranslationOutcome.Fail(TranslationError.SERVER)
         // 部分网关把错误塞在 HTTP 200 的 body 里（{"error":{…}}）
-        if (json.has("error")) return TranslationOutcome.Fail(TranslationError.SERVER)
+        // 过滤 JSON null（2026-10-01 修复 L-257）：`has` 对显式 `"error": null` 也返回 true，
+        // 会把正常响应判成服务端错误；口径与本文件其它取值的 `JSONObject.NULL` 过滤一致
+        val error = json.opt("error")
+        if (error != null && error !== org.json.JSONObject.NULL) {
+            return TranslationOutcome.Fail(TranslationError.SERVER)
+        }
         val text = extractByPath(json, config.responsePath)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)
@@ -115,6 +120,32 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         const val DEFAULT_USER_PROMPT = "请将以下文本翻译成{{target_language}}，只返回译文：\n{{text}}"
 
         const val VAR_TEXT = "{{text}}"
+
+/**
+ * 应用模板并**保证原文一定在其中**（2026-10-01 修复 L-246）。
+ *
+ * 用户可以把提示词改写成自然语言（例如「把上面的内容翻译成中文」），此时模板里不再有
+ * [VAR_TEXT] —— 请求里也就**没有任何原文**，模型只能凭空编，而界面与日志都显示「成功」。
+ * 这里把原文追加到消息末尾，保证「翻译」这件事仍然成立；并留一条 W 便于发现配置问题。
+ */
+internal fun applyTemplateEnsuringText(
+    template: String,
+    otherTemplate: String,
+    text: String,
+    target: String,
+): String {
+    val filled = applyTemplate(template, text, target)
+    // 只在**两个模板都没有占位符**时兜底：system 提示词本来就不该带 {{text}}（正文由 user 带），
+    // 只看单个模板会在 system 里重复塞一遍原文
+    if (VAR_TEXT !in template && VAR_TEXT !in otherTemplate) {
+        Diagnostics.w(
+            "OpenAiTranslator",
+            "提示词模板缺少 $VAR_TEXT，已把原文追加到消息末尾（否则请求里没有原文）",
+        )
+        return "$filled\n\n$text"
+    }
+    return filled
+}
         const val VAR_TARGET = "{{target_language}}"
         const val VAR_SOURCE = "{{source_language}}"
         const val VAR_DATE = "{{date}}"
@@ -145,9 +176,23 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
             var tail = path.trim()
             if (tail.isEmpty()) tail = DEFAULT_CHAT_PATH
             tail = "/" + tail.trimStart('/')
-            val base = s.trimEnd('/').removeSuffix(tail).trimEnd('/')
-            val url = base.toHttpUrlOrNull() ?: return null
-            return url.newBuilder().addPathSegments(tail.trimStart('/')).build()
+            // path 允许带 query（Azure OpenAI 的 `?api-version=…` 是必填）：拆出来单独设，
+            // 否则 `addPathSegments` 会把 `?` 编码成 `%3F`
+            val q = tail.indexOf('?')
+            val tailPath = if (q >= 0) tail.substring(0, q) else tail
+            val tailQuery = if (q >= 0) tail.substring(q + 1) else ""
+            val parsed = s.trimEnd('/').toHttpUrlOrNull() ?: return null
+            // 用户把端点整段粘进 Base URL 时剥掉尾部：按**路径**比较，不看 query ——
+            // base 带 query 时（Azure OpenAI 的端点整段粘贴必带 `?api-version=…`）字符串后缀
+            // 匹配必然失败，会拼成 `…/chat/completions/chat/completions` → 404 被归成 PARAM，
+            // 把用户引向「检查语言设置」（2026-10-01 审查 L-218）。
+            val basePath = parsed.encodedPath
+            val stripped = if (basePath.endsWith(tailPath)) basePath.dropLast(tailPath.length) else basePath
+            val withPath = parsed.newBuilder()
+                .encodedPath(stripped.ifEmpty { "/" })
+                .addPathSegments(tailPath.trimStart('/'))
+                .build()
+            return if (tailQuery.isEmpty()) withPath else withPath.newBuilder().encodedQuery(tailQuery).build()
         }
 
         /** 模型列表端点：`{BaseURL}{ModelsPath}`（默认 `/models`） */
@@ -237,7 +282,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
                         .put(
                             JSONObject()
                                 .put("role", "user")
-                                .put("content", applyTemplate(user, text, target)),
+                                .put("content", applyTemplateEnsuringText(user, system, text, target)),
                         ),
                 )
             putNumber(body, "temperature", config.temperature)
@@ -250,7 +295,10 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         /** 数字参数入体：null（未填/非法）直接跳过，绝不默认发送 */
         private fun putNumber(body: JSONObject, key: String, raw: String) {
             val d = numberOrNull(raw) ?: return
-            val value: Any = if (d == Math.floor(d)) d.toLong() else d
+            // 只在**精确可表示**的整数范围内收窄成 Long：`toLong()` 对 1e30 这类超范围值会
+            // 饱和成 Long.MAX_VALUE，把用户填的数悄悄改掉（JSON 本身支持 1e30 这种写法，
+            // 2026-10-01 审查 L-226）
+            val value: Any = if (d == Math.floor(d) && Math.abs(d) < 9.0e15) d.toLong() else d
             body.put(key, value)
         }
 
@@ -259,7 +307,20 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
          *
          * 解析失败返回 `false`（UI 据此提示格式问题），但**不阻止翻译** —— JSON 写错不该把功能打死。
          */
-        internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
+        /**
+     * 自定义 JSON 是否可解析（2026-10-01 修复 L-257）。
+     *
+     * UI 用它给用户**看得见**的提示：此前这个校验的返回值在 `buildBody` 里被丢弃，而
+     * `EXTRA_JSON_INVALID` 常量的注释写着「UI 用它提示用户」却全仓无人引用 —— 用户把 JSON 写错时
+     * 参数被静默丢弃、翻译照常「成功」。
+     */
+    internal fun isValidExtraJson(extraJson: String): Boolean {
+        val raw = extraJson.trim()
+        if (raw.isEmpty()) return true
+        return runCatching { JSONObject(raw) }.isSuccess
+    }
+
+    internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
             val raw = extraJson.trim()
             if (raw.isEmpty()) return true
             val extra = runCatching { JSONObject(raw) }.getOrNull() ?: return false
