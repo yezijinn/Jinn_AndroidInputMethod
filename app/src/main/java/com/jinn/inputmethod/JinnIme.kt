@@ -668,6 +668,56 @@ class JinnIme : InputMethodService() {
     }
 
     /**
+     * 「此刻能否安全追加译文」的判据。
+     *
+     * 与 [currentSelectionRange] 的差别在**取不到精确选区时怎么取舍**：那个函数只有
+     * `getExtractedText` 一条路径，而 WebView 类宿主（Via / 系统浏览器内核的搜索框）对它恒返回
+     * null —— 据此整体拒绝会让翻译在这些宿主上**完全不生效**，用户看到的只是「点了没反应」。
+     *
+     * 判据分两层：
+     * 1. `getExtractedText` 成功 ⇒ 以它的 start/end 为准（最准）；start != end 即有选区；
+     * 2. 取不到 ⇒ 用 `getSelectedText` 问「有没有选中内容」：非空 = 有选区（拒绝追加），
+     *    空或 null = 放行。
+     *
+     * 放宽的代价由提交路径兜住：[appendTranslation] 仍逐字比对请求时刻的原文，用户在请求期间
+     * 选择内容会改变 `getTextBeforeCursor` 的读数并失配，结果被丢弃而不是覆盖选中文本。
+     */
+    private fun canAppendTranslation(connection: android.view.inputmethod.InputConnection): Boolean {
+        val range = currentSelectionRange(connection)
+        if (range != null) return range.start == range.end
+        val selected = runCatching { connection.getSelectedText(0)?.toString() }.getOrNull()
+        if (!selected.isNullOrEmpty()) {
+            Diagnostics.w(TAG, "翻译: 宿主不提供精确选区，但 getSelectedText 报有选中内容，拒绝追加")
+            return false
+        }
+        // 正常路径（WebView 类宿主每次翻译都会走到这里），用 V 级，别把诊断包的 W 段占满
+        Diagnostics.v(TAG, "翻译: 宿主不提供精确选区，按「无选区」放行（提交时仍逐字比对原文）")
+        return true
+    }
+
+    /**
+     * 读当前选中的文本。
+     *
+     * 三态：**null** = 宿主读不到（调用方按「读不到」处理）；**空串** = 确实没有选中内容；
+     * **非空** = 选中的那一段。
+     *
+     * 精确选区可用时直接从窗口文本里切 —— `getSelectedText` 在部分宿主上只对 URI / 富文本有实现，
+     * 拿它当唯一来源会对普通文本框漏判；两者都取不到才返回 null。
+     */
+    private fun readSelectedText(connection: android.view.inputmethod.InputConnection): String? {
+        val range = currentSelectionRange(connection)
+        if (range != null) {
+            if (range.start >= range.end) return ""
+            val s = TextSelection.toWindowOffset(range.start, range.startOffset, range.text.length)
+                ?: return null
+            val e = TextSelection.toWindowOffset(range.end, range.startOffset, range.text.length)
+                ?: return null
+            return range.text.substring(s, e.coerceIn(s, range.text.length))
+        }
+        return runCatching { connection.getSelectedText(0)?.toString() ?: "" }.getOrNull()
+    }
+
+    /**
      * 搜索态的「作用于宿主」面板动作一律拒绝（纵深防御）。
      *
      * 主守卫在 `PinyinKeyboardView.renderFunctionPanel`：搜索态候选栏只渲染「退出搜索」，
@@ -1918,18 +1968,23 @@ class JinnIme : InputMethodService() {
         // 总开关是「关掉即不可能发请求」的闸门（2026-09-30 审查发现）：功能面板只按它渲染按钮，
         // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
         if (!prefs.translateEnabled) return
-        // 敏感输入框（密码 / NO_SUGGESTIONS / 不要个性化学习）不翻译：不能把口令发到云端。
-        // 判据在**点击这一刻**按当前 EditorInfo 现跑（2026-09-30 第二轮审查）：会话缓存的
-        // `suppressLearningForSession` 只在 onStartInputView 刷新 —— 宿主在键盘已显示时把焦点
-        // 从普通框切到密码框，可能不重发该回调，缓存会停留在 false。
-        // 同时必须 fail-safe：拿不到 EditorInfo 时 InputFieldPrivacy 返回 false（对本地词频是合理
-        // 取舍，对「把正文发公网」是反向取舍）⇒ 信息缺失一律拒绝。
+        // 密码框不翻译：不能把口令发到云端。判据在**点击这一刻**按当前 EditorInfo 现跑 —— 会话缓存
+        // 只在 onStartInputView 刷新，宿主在键盘已显示时把焦点从普通框切到密码框可能不重发该回调。
+        //
+        // 判据只用 [InputFieldPrivacy.isPasswordField]，**不能**复用 `suppressLearning`（2026-10-01
+        // 真机实测修复）：那套判据服务本地词频学习，把 `TYPE_NULL` / `NO_SUGGESTIONS` /
+        // `IME_FLAG_NO_PERSONALIZED_LEARNING` 都算敏感 —— 而这三个标志在浏览器里是常规做法
+        // （Chrome 内核的搜索框全带，WebView 输入框常报 TYPE_NULL），拿它们拦翻译会让整类宿主
+        // 点了没反应。翻译是用户主动点击发起的，本身就是「同意把这段发出去」。
+        // EditorInfo 缺失时也不拦：读得到原文就说明这个框能翻译，真读不到后面自然会报「读不到」。
         val info = currentInputEditorInfo
-        if (info == null ||
-            InputFieldPrivacy.suppressLearning(info.inputType, info.imeOptions) ||
-            suppressLearningForSession
-        ) {
-            Diagnostics.w(TAG, "翻译: 输入框敏感或 EditorInfo 缺失，拒绝")
+        if (InputFieldPrivacy.blocksTranslation(info?.inputType, info?.imeOptions ?: 0)) {
+            // 带上原始标志位：将来再有宿主被拦，日志里直接能看出是哪一位命中的
+            Diagnostics.w(
+                TAG,
+                "翻译: 输入框被拒绝（inputType=0x${Integer.toHexString(info?.inputType ?: 0)}" +
+                    " imeOptions=0x${Integer.toHexString(info?.imeOptions ?: 0)}）",
+            )
             toast(TEXT_TRANSLATE_PRIVATE_FIELD)
             return
         }
@@ -1939,24 +1994,29 @@ class JinnIme : InputMethodService() {
             toast(TranslationError.NOT_CONFIGURED.message)
             return
         }
-        val connection = currentInputConnection ?: return
-        // 选区检测（2026-10-01 复审 L-230 / L-236）：`commitText` 在宿主存在选区时是**替换**语义，
-        // 提交前必须能确认「没有选区」；而确认选区状态的唯一 API 是 `getExtractedText`
-        // （`getTextBeforeCursor` 不暴露选区），不支持它的宿主（WebView / 部分 Compose / 大文档
-        // 抛事务异常）会恒返回 null。
-        //
-        // 三态一起判，全部放在**发请求之前**：读不到 → 无法保证不覆盖选中内容；已有选区 →
-        // 提交必然被拒，而且框架的「光标前」以**选区末端**为基准，选中的正文本身就在会上传的
-        // 原文里。两种都不发请求：不让用户白等，更不为一次注定被丢弃的翻译付费；文案必须说清
-        // 原因，不能复用「输入已变化」（那等于把原因指向用户）。
-        val selection = currentSelectionRange(connection)
-        if (selection == null) {
-            Diagnostics.w(TAG, "翻译: 宿主不提供选区信息，无法安全追加，拒绝发起")
-            toast(TEXT_TRANSLATE_NO_SELECTION_INFO)
+        // 静默 return 是「点了没反应」的另一个来源（2026-10-01）：连接拿不到时用户无从判断
+        // 是没生效还是宿主不支持，至少要说一句。
+        val connection = currentInputConnection ?: run {
+            Diagnostics.w(TAG, "翻译: 当前没有活动的输入连接，未发起")
+            toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
             return
         }
-        if (selection.start != selection.end) {
-            Diagnostics.w(TAG, "翻译: 存在选区，拒绝发起（请先取消选中）")
+        // 选区与光标是**两条独立的路**（2026-10-01 放宽）：
+        //
+        // - 有选中内容 ⇒ 翻译选中的那一段，提交时用它替换选区。`commitText` 在宿主存在选区时
+        //   本就是**替换**语义 —— 与其拒绝，不如把它用对。这是最自然的用法（在浏览器里选一段
+        //   外文再翻），此前被整体拒绝，用户只能看到「请先取消选中的内容再翻译」。
+        // - 没有选中内容 ⇒ 走光标模式：原文按「翻译原文范围」取，译文追加在原文后面、一个字不动。
+        //   这条路仍要求能确认「没有选区」，判据见 [canAppendTranslation]（WebView 类宿主取不到
+        //   精确选区时靠 `getSelectedText` + 原文逐字比对兜底）。
+        val selected = readSelectedText(connection)
+        if (selected == null) {
+            Diagnostics.w(TAG, "翻译: 读不到选中内容，按光标模式继续")
+        }
+        val replaceSelection = !selected.isNullOrEmpty()
+        if (!replaceSelection && !canAppendTranslation(connection)) {
+            // 读选中文本说「没有选中内容」，而精确判据说「有」—— 两者冲突时按危险处理
+            Diagnostics.w(TAG, "翻译: 选区状态不一致，拒绝发起")
             toast(TEXT_TRANSLATE_SELECTION_ACTIVE)
             return
         }
@@ -1972,14 +2032,16 @@ class JinnIme : InputMethodService() {
         // 被误判成「输入已变化」（2026-09-30 修过同类缺陷：用截取结果当判据）。
         // 读失败（null）与「光标前确实没有内容」（空串）必须分开：把前者说成后者会把
         // 「宿主读不到」报成「你没写字」（2026-10-01 修复 L-240）
-        val before = readTextBeforeCursor(connection, limit)
+        val before = if (replaceSelection) selected.orEmpty() else readTextBeforeCursor(connection, limit)
         if (before == null) {
             Diagnostics.w(TAG, "翻译: 读不到光标前内容，拒绝发起")
             toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
             return
         }
-        // 只有「整行 / 整篇」两种范围需要光标后的文本：其余范围不读，省一次 Binder 往返
-        val needAfter = scope == TranslationScope.LINE_FULL || scope == TranslationScope.ALL
+        // 只有「整行 / 整篇」两种范围需要光标后的文本：其余范围不读，省一次 Binder 往返；
+        // 选区模式整段就是选中的内容，与光标位置无关，同样不读
+        val needAfter = !replaceSelection &&
+            (scope == TranslationScope.LINE_FULL || scope == TranslationScope.ALL)
         // 读失败（null）与「光标后确实没有内容」（空串）必须分开：整行 / 整篇把失败当空串会
         // 静默退化成「只翻光标前」，且 appendOffsetExact 会误判成「末尾已确认」
         // （2026-10-01 复审 L-237）
@@ -1991,7 +2053,11 @@ class JinnIme : InputMethodService() {
         }
         // 读满窗口 = 可能还有内容（分不清「恰好读完」与「被截断」⇒ 按后者处理，见 L-213）
         val afterTruncated = needAfter && after.length >= limit
-        val slice = TranslationText.extract(before, after, scope, maxBytes, afterTruncated)
+        val slice = if (replaceSelection) {
+            TranslationText.extractSelection(before, maxBytes)
+        } else {
+            TranslationText.extract(before, after, scope, maxBytes, afterTruncated)
+        }
         // 用 hasVisibleContent 而不是 isBlank：零宽字符（ZWSP / BOM / NBSP）不算内容 —— 否则
         // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 第二轮审查）
         if (!slice.text.hasVisibleContent()) {
@@ -2015,6 +2081,7 @@ class JinnIme : InputMethodService() {
             needAfter,
             slice.appendOffset,
             slice.appendOffsetExact,
+            replaceSelection,
         )
         // 看门狗（2026-10-01 审查 L-217）：OkHttp 在调用 onResponse **之前**就置了
         // `signalledCallback`，回调内部抛出的异常**不会**回落到 onFailure ⇒ 少了这道兜底，
@@ -2076,6 +2143,8 @@ class JinnIme : InputMethodService() {
         val appendOffset: Int,
         /** [appendOffset] 是否确定是区间末尾（读取窗口被截断时为 false，见 L-213） */
         val appendOffsetExact: Boolean,
+        /** 选区模式：[before] 是用户选中的那一段，提交时用它替换选区（而非追加到光标处） */
+        val replaceSelection: Boolean = false,
     )
 
     /**
@@ -2089,40 +2158,51 @@ class JinnIme : InputMethodService() {
         snapshot: TranslateSnapshot,
         translated: String,
     ) {
-        // ① 有选区不提交：`commitText` 在宿主存在选区时是**替换**语义，会把用户选中的文本删掉。
-        //    请求期间用户长按选择 / 拖选都可能造成这个状态，宁可丢弃（可重试）也不破坏既有内容。
+        // ① 两条路分别把关：
         //
-        //    **读不到选区也拒绝**（fail-closed，2026-10-01 审查 L-216）：`currentSelectionRange`
-        //    返回 null 时无法区分「确实没有选区」与「读不到」，只能按危险处理。请求发起前已用
-        //    同一判据挡过一次（见 startTranslate），这里还能触发说明连接在请求期间失效
-        //    （2026-10-01 复审 L-230）。
-        val range = currentSelectionRange(connection) ?: run {
-            Diagnostics.w(TAG, "翻译: 提交时读不到选区状态，丢弃结果（无法确认是否会覆盖选中文本）")
-            toast(TEXT_TRANSLATE_NO_SELECTION_INFO)
-            return
-        }
-        // 请求发起时已挡过「已有选区」（见 startTranslate 的三态检测），走到这里只可能是
-        // **提交前这一刻**用户才做的选择（长按 / 拖选）：文案复用 STALE —— 此刻确实是他刚动过输入
-        if (range.start != range.end) {
+        //    选区模式 —— 校验选中的那一段没变，然后**替换**它（`commitText` 在宿主存在选区时本就是
+        //    替换语义，这里正是要用它）。用户选中的内容变了说明他改过输入，丢弃。
+        //
+        //    光标模式 —— 仍要求能确认「没有选区」：那里 `commitText` 是**插入**，用户请求期间长按
+        //    选中了什么，译文就会把选中的内容顶掉。判据与发起前同源（[canAppendTranslation]）：
+        //    WebView 类宿主拿不到精确选区，改由 `getSelectedText` 判定；判不出时放行，此时下面的
+        //    原文逐字比对是最后一道网。
+        if (snapshot.replaceSelection) {
+            val nowSelected = readSelectedText(connection)
+            if (nowSelected == null) {
+                Diagnostics.w(TAG, "翻译: 提交时读不到选中内容，丢弃结果")
+                toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
+                return
+            }
+            if (nowSelected != snapshot.before) {
+                Diagnostics.w(TAG, "翻译: 选中内容已变化，丢弃旧结果（len=${translated.length}）")
+                toast(TEXT_TRANSLATE_STALE)
+                return
+            }
+        } else if (!canAppendTranslation(connection)) {
             Diagnostics.w(TAG, "翻译: 存在选区，丢弃结果以免覆盖选中文本")
             toast(TEXT_TRANSLATE_STALE)
             return
         }
-        // ② 输入快照校验：与请求时刻的**原始文本逐字相等**（用户续打 / 挪光标 / 宿主改动都会失配）。
+        // ② 输入快照校验（光标模式）：与请求时刻的**原始文本逐字相等**（用户续打 / 挪光标 / 宿主
+        //    改动都会失配）。选区模式不走这里 —— 它的原文是选中的那一段，比对已在 ① 用
+        //    `getSelectedText` 做过，再读「光标前」比的是另一段文本。
         //
         // ⚠ 判据必须是原始读数：截取结果被 trim 与字节截断加工过，拿它比对会把
         // 「原样未变」误判成「输入已变化」（2026-09-30 修过同类缺陷）。
-        val beforeNow = readTextBeforeCursor(connection, snapshot.limit)
-        if (beforeNow == null) {
-            // 「读不到」与「变了」是两回事：前者是宿主问题，别把原因指向用户（2026-10-01 修复 L-240）
-            Diagnostics.w(TAG, "翻译: 提交时读不到光标前文本，丢弃结果")
-            toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
-            return
-        }
-        if (beforeNow != snapshot.before) {
-            Diagnostics.w(TAG, "翻译: 输入已变化，丢弃旧结果（len=${translated.length}）")
-            toast(TEXT_TRANSLATE_STALE)
-            return
+        if (!snapshot.replaceSelection) {
+            val beforeNow = readTextBeforeCursor(connection, snapshot.limit)
+            if (beforeNow == null) {
+                // 「读不到」与「变了」是两回事：前者是宿主问题，别把原因指向用户（2026-10-01 修复 L-240）
+                Diagnostics.w(TAG, "翻译: 提交时读不到光标前文本，丢弃结果")
+                toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
+                return
+            }
+            if (beforeNow != snapshot.before) {
+                Diagnostics.w(TAG, "翻译: 输入已变化，丢弃旧结果（len=${translated.length}）")
+                toast(TEXT_TRANSLATE_STALE)
+                return
+            }
         }
         // 光标后的文本同样要比：整行 / 整篇模式的原文含着它，请求期间改了下一行也要丢弃
         if (snapshot.needAfter) {
@@ -2172,10 +2252,19 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_STALE)
             return
         }
-        // ⑥ 到这里光标已在最终插入点，才取它的前一个字符（决定要不要补前导换行）
-        val submit = TranslationText.appendText(charBeforeCursor(connection), translated)
+        // ⑥ 选区模式直接替换选中内容，**不加前导换行** —— 替换是原地操作，补换行会把用户的段落
+        //    切碎。光标模式走到这里光标已在最终插入点，取它的前一个字符决定要不要补前导换行。
+        val submit = if (snapshot.replaceSelection) {
+            body
+        } else {
+            TranslationText.appendText(charBeforeCursor(connection), translated)
+        }
         // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）
-        Diagnostics.i(TAG, "翻译: 已追加译文 共${translated.length}字")
+        Diagnostics.i(
+            TAG,
+            "翻译: " + (if (snapshot.replaceSelection) "已替换选中内容" else "已追加译文") +
+                " 共${translated.length}字",
+        )
         runCatching { connection.commitText(submit, 1) }
             .onFailure { Diagnostics.w(TAG, "翻译: 提交失败 ${it.javaClass.simpleName}") }
     }
@@ -2464,7 +2553,7 @@ class JinnIme : InputMethodService() {
 
         /** 在线翻译（BYOK）的本机提示文案（文案在代码里下发，与文件内既有 Toast 写法一致） */
         const val TEXT_TRANSLATE_EMPTY = "光标前没有可翻译的文字"
-        const val TEXT_TRANSLATE_PRIVATE_FIELD = "当前输入框不支持翻译"
+        const val TEXT_TRANSLATE_PRIVATE_FIELD = "密码框不翻译（避免口令外发）"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
         const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"
@@ -2481,7 +2570,6 @@ class JinnIme : InputMethodService() {
          * 独立文案是硬要求（2026-10-01 复审 L-230）：复用「输入已变化」会把「输入框不支持」
          * 说成「用户自己的操作」，排障方向整个带偏。
          */
-        const val TEXT_TRANSLATE_NO_SELECTION_INFO = "当前输入框不支持选区检测，无法安全插入译文"
 
         /** 请求发起时已有选区（2026-10-01 复审 L-236）：选中的正文会随原文上传，且提交必被拒 */
         const val TEXT_TRANSLATE_SELECTION_ACTIVE = "请先取消选中的内容再翻译"

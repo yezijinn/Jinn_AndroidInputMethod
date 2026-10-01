@@ -81,4 +81,58 @@ class InputFieldPrivacyTest {
         assertFalse(InputFieldPrivacy.suppressLearning(null))
         assertEquals(0, EditorInfo.TYPE_NULL)
     }
+
+    /**
+     * 翻译用的判据只认口令框。
+     *
+     * 与 [InputFieldPrivacy.suppressLearning]（学习判据）是**两套**答案，不能合并：本地词频学习
+     * 宁可多拦，被误拦的代价只是「这个词没记住」；翻译是用户主动点击发起的，本身即同意发送，
+     * 只该拦口令框。浏览器搜索框带着 `TYPE_NULL` / `NO_SUGGESTIONS` /
+     * `IME_FLAG_NO_PERSONALIZED_LEARNING`（Chrome 内核常规做法），用学习判据拦翻译会让整类宿主
+     * 点了没反应 —— 真机实测 Via 浏览器搜索框就是这样。
+     */
+    @Test
+    fun 翻译只拦口令框() {
+        assertTrue(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_PASSWORD)))
+        assertTrue(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)))
+        assertTrue(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD)))
+        assertTrue(
+            InputFieldPrivacy.isPasswordField(
+                EditorInfo.TYPE_CLASS_NUMBER or EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD
+            )
+        )
+        // 下面这些在浏览器里是常规做法，绝不能拦翻译
+        assertFalse(InputFieldPrivacy.isPasswordField(EditorInfo.TYPE_NULL))
+        assertFalse(InputFieldPrivacy.isPasswordField(text(flags = EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS)))
+        assertFalse(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS)))
+        assertFalse(InputFieldPrivacy.isPasswordField(text()))
+        assertFalse(InputFieldPrivacy.isPasswordField(EditorInfo.TYPE_CLASS_NUMBER))
+        // 信息缺失时同样不拦：读得到原文就说明这个框能翻译
+        assertFalse(InputFieldPrivacy.isPasswordField(null))
+    }
+
+    /**
+     * 翻译的闸口：密码框、或宿主**显式声明**「不要个性化学习」。
+     *
+     * 最后一条是真机上量出来的回归点（2026-10-01，Via 浏览器搜索框）：
+     * `inputType=0x80001`（`TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS`）配
+     * `imeOptions=0x8000002`（`IME_ACTION_GO | IME_FLAG_NO_FULLSCREEN`）—— 只带「不要联想」，
+     * 没有任何隐私声明位。旧实现把它当敏感框，浏览器里翻译点了没反应。
+     */
+    @Test
+    fun 翻译只拦密码框与显式声明() {
+        assertTrue(InputFieldPrivacy.blocksTranslation(text(EditorInfo.TYPE_TEXT_VARIATION_PASSWORD)))
+        assertTrue(InputFieldPrivacy.blocksTranslation(text(EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)))
+        assertTrue(InputFieldPrivacy.blocksTranslation(text(EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD)))
+        assertTrue(
+            InputFieldPrivacy.blocksTranslation(text(), EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING)
+        )
+        // 真机实测的浏览器字段：必须放行
+        assertFalse(InputFieldPrivacy.blocksTranslation(0x80001, 0x8000002))
+        assertFalse(InputFieldPrivacy.blocksTranslation(text(flags = EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS)))
+        assertFalse(InputFieldPrivacy.blocksTranslation(EditorInfo.TYPE_NULL))
+        assertFalse(InputFieldPrivacy.blocksTranslation(text()))
+        assertFalse(InputFieldPrivacy.blocksTranslation(text(flags = EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE)))
+        assertFalse(InputFieldPrivacy.blocksTranslation(null))
+    }
 }

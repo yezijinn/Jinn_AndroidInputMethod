@@ -421,9 +421,11 @@ class TranslationSettingsActivity : Activity() {
 
         /** 关闭键的可听键名（与模糊音页/生僻字页同值，三页是复刻关系） */
         const val TEXT_CLOSE_DESC = "关闭"
-        const val TEXT_DESC = "使用你自带的 API 凭据翻译（BYOK）：输入法不内置任何共享 Key，\n" +
-            "免费额度与计费以各平台官方为准（默认服务：阿里云）。\n" +
-            "填好后点键盘功能面板的「翻译」，译文追加在原文下一行。"
+        const val TEXT_DESC = "使用你自带的 API 凭据翻译（BYOK）：输入法不内置任何共享 Key，凭据只存本机。\n" +
+            "怎么用：点键盘功能面板的「翻译」—— 选中了内容就翻选中的那一段、译文原地替换；" +
+            "没选中就按「翻译原文范围」取光标前后的文本，译文另起一行追加、原文一个字不动。\n" +
+            "免费额度（2026-10 核对，以平台为准）：阿里云 100 万字符/月；Azure F0 层 200 万字符/月；" +
+            "百度标准版 5 万字符/月（个人认证后 100 万）；百度大模型与 DeepL 各为一次性 100 万字符。"
         const val TEXT_PROVIDER = "翻译服务"
         const val TEXT_ALIYUN_KEY_ID = "阿里云 AccessKey ID"
         const val TEXT_ALIYUN_KEY_ID_HINT = "RAM 用户的 AccessKey ID"
@@ -450,8 +452,9 @@ class TranslationSettingsActivity : Activity() {
 
         /** OpenAI 兼容选中时的标签：它的目标语言在配置页里（本页下拉对它无效，见 applyProviderVisibility） */
         const val TEXT_TARGET_OPENAI = "目标语言（OpenAI 兼容在配置页里设置）"
-        const val TEXT_PRIVACY = "翻译按「翻译原文范围」里选的取法把正文上传到所选服务商" +
-            "（默认只取光标所在这一行里光标前面的内容）；密码等敏感输入框不会翻译。\n" +
+        const val TEXT_PRIVACY = "上传的是哪一段：选中模式下只有你选中的那一段；" +
+            "没选中时按「翻译原文范围」取（默认只取光标所在这一行里光标前面的内容）。\n" +
+            "密码类输入框、以及声明「不要个性化学习」的输入框不会翻译。\n" +
             "凭据只存本机，随配置备份一起加密；界面与日志只显示是否已配置。"
         const val TEXT_CONFIGURED = "已配置"
         const val TEXT_UNCONFIGURED = "未配置：还没填凭据"

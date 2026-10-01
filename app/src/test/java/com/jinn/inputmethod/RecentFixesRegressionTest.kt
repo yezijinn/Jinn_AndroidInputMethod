@@ -1276,6 +1276,69 @@ class RecentFixesRegressionTest {
      * 线程活 21~34s（真机实测），期间 IME 服务可能被系统销毁重建 ⇒ 把 Service 的 Context
      * 一直挂在后台线程上是生命周期越界（短期强引用一个已销毁的服务）。
      */
+    /**
+     * WebView 类宿主不得被整体拒绝（2026-10-01 修复）。
+     *
+     * 精确选区只有 `getExtractedText` 一条路，而它对这些宿主恒返回 null。若翻译链路据此
+     * 直接拒绝，浏览器搜索框里就是「点了没反应」；若哪次重构把那层 `getSelectedText` 兜底
+     * 去掉、改回「null 即拒绝」，本用例会先红。
+     */
+    /**
+     * 翻译的敏感闸不得复用学习判据（2026-10-01 真机修复）。
+     *
+     * `InputFieldPrivacy.suppressLearning` 把 `TYPE_NULL` / `NO_SUGGESTIONS` /
+     * `IME_FLAG_NO_PERSONALIZED_LEARNING` 都算敏感，这是为本地词频学习定的（宁可多拦）；
+     * 浏览器搜索框恰好带着这些标志，拿它拦翻译会让整类宿主「点了没反应」。
+     */
+    @Test
+    fun `翻译的敏感闸不得复用学习判据`() {
+        val src = codeOf("JinnIme.kt")
+        assertTrue(
+            "翻译必须用 blocksTranslation（密码框 + 显式声明不要个性化）",
+            "InputFieldPrivacy.blocksTranslation(" in src,
+        )
+        val body = blockAfter(src, "private fun startTranslate(")
+        assertFalse(
+            "startTranslate 不得再用 suppressLearning 判敏感（浏览器搜索框会被误拦）",
+            "suppressLearning(" in body,
+        )
+        assertTrue(
+            "被拒时必须打出 inputType / imeOptions 的原始值，便于定位是哪一位命中的",
+            "inputType=0x" in body && "imeOptions=0x" in body,
+        )
+    }
+
+    @Test
+    fun `翻译的选区判据必须带 getSelectedText 兜底`() {
+        val src = codeOf("JinnIme.kt")
+        assertTrue(
+            "翻译必须有 canAppendTranslation（分层判据）",
+            "private fun canAppendTranslation(" in src,
+        )
+        val body = blockAfter(src, "private fun canAppendTranslation(")
+        assertTrue(
+            "取不到精确选区时要用 getSelectedText 判断有没有选中内容",
+            "getSelectedText(" in body,
+        )
+        assertTrue(
+            "判不出也要放行（安全网交给提交时的原文比对），不能一律拒绝",
+            "return true" in body,
+        )
+        assertEquals(
+            "发起前与提交前都要判选区（发起处 if、提交处 else if）",
+            2,
+            Regex("canAppendTranslation\\(connection\\)").findAll(src).count(),
+        )
+        assertTrue(
+            "选区模式必须在提交前校验选中内容未变，否则会用旧译文盖掉用户新选的内容",
+            "nowSelected != snapshot.before" in src,
+        )
+        assertTrue(
+            "选区模式必须原地替换、不得补前导换行（补了会把用户段落切碎）",
+            "val submit = if (snapshot.replaceSelection) {" in src,
+        )
+    }
+
     @Test
     fun `可选词库线程不得持有 Service Context`() {
         val body = blockAfter(codeOf("PinyinEngine.kt"), "fun loadOptionalAsync(")

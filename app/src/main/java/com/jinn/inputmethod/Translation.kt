@@ -245,6 +245,17 @@ internal object TranslationText {
         return Slice(cut.trim(), truncated, appendOffset, exact)
     }
 
+    /**
+     * 选区模式：用户选中的整段就是原文。
+     *
+     * 与 [extract] 的差别只在挑选区间的方式 —— 那里按「光标前 / 整行 / 全篇」去切，而选区已经是
+     * 用户的明确选择，再按行切会把选中的内容丢掉一部分。截断方向与其他模式一致：从前面取、舍弃后面的。
+     */
+    fun extractSelection(text: CharSequence, maxBytes: Int): Slice {
+        val (cut, truncated) = takeHeadBytes(text.toString(), maxBytes)
+        return Slice(cut.trim(), truncated, 0, true)
+    }
+
     /** 光标所在行的行首之后那一段（[before] 里最后一个换行之后的部分；没有换行就是整段） */
     private fun lineHead(before: CharSequence): String {
         val nl = before.lastIndexOf('\n')

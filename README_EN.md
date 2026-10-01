@@ -34,7 +34,7 @@ English ｜ [中文](README.md)
 - User word frequency: remembers chosen candidates and ranks them higher; stored locally only, switchable
 
 **Online translation** (optional, bring your own key)
-- Translates the text before the cursor or the whole field; the translation is appended on the next line; 7th key in the function panel (removable)
+- One-tap translate: **with a selection, the selected text is translated and replaced in place**; without one, text around the cursor is used (range configurable) and the translation is appended on the next line. 7th key in the function panel (removable)
 - Six providers: Aliyun / Azure / Baidu / Baidu LLM / DeepL / OpenAI-compatible; the default provider and the "translation source range" (current line before cursor / whole line / everything before cursor / whole field) are set per provider
 - Byte limit per provider, preset to each vendor's own limit; longer text is sent from the front, the tail is dropped
 - Credentials are encrypted with the Android Keystore; credential pages block screenshots; copied keys are wiped from clipboard history
