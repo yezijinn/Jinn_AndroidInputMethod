@@ -23,7 +23,7 @@ class CredentialStorageTest {
         // 真实凭据里唯一带冒号的形态：DeepL 的 `uuid:fx`（首段 36 字符）—— 绝不误判成密文
         assertFalse(CredentialCrypto.looksEncrypted("01234567-89ab-cdef-0123-456789abcdef:fx"))
         assertFalse(CredentialCrypto.looksEncrypted("sk-proj-Ab12Cd34Ef56"))
-        assertFalse(CredentialCrypto.looksEncrypted("LTAI5t8EbSZh2Jqx1ucnyda2"))
+        assertFalse(CredentialCrypto.looksEncrypted("LTAI5tExampleAccessKeyId"))
         assertFalse(CredentialCrypto.looksEncrypted(""))
         assertFalse(CredentialCrypto.looksEncrypted("short:abc"))
         // 首段 16 字符合法 base64、但密文段过短 ⇒ 不是本模块的密文
