@@ -170,8 +170,11 @@ class SettingsActivity : ComponentActivity() {
     /** 语言下拉：同上（它的读回在 saveAndRestart，而不是 onItemSelected） */
     private var languageSpinnerTouched = false
 
-    /** 本次进页面时生效的深浅色；定时到点后用它与重新解析的结果比较，变了才重建页面 */
-    private var appliedThemeDark = false
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉。原先本页自带一份 Handler + `appliedThemeDark` 字段，2026-10-02 收归共用实现（L-476）。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
 
     /**
      * 麦克风被永久拒绝（拒绝后系统不再弹窗）。
@@ -361,12 +364,9 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_RARE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, RareCharsActivity::class.java)) }
         }
-        appliedThemeDark = ThemeManager.isDark(this)
-        scheduleThemeTick()
-
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
-            this, R.array.language_entries, android.R.layout.simple_spinner_item
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            this, R.array.language_entries, R.layout.item_spinner
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         // 用户触摸过才允许写配置（见 [languageSpinnerTouched]）；ACTION_UP 补 performClick 供无障碍服务识别
         spinnerLanguage.setOnTouchListener { view, event ->
             languageSpinnerTouched = true
@@ -375,8 +375,8 @@ class SettingsActivity : ComponentActivity() {
         }
 
         spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
-            this, R.array.default_mode_entries, android.R.layout.simple_spinner_item
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            this, R.array.default_mode_entries, R.layout.item_spinner
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         // 用户触摸过才允许写配置（见字段说明）；ACTION_UP 补 performClick 供无障碍服务识别
         spinnerDefaultMode.setOnTouchListener { view, event ->
             defaultModeSpinnerTouched = true
@@ -408,9 +408,9 @@ class SettingsActivity : ComponentActivity() {
         // 按键面板不再提供「全拼 / 双拼」切换按钮，这里是唯一的输入方案入口。
         // 列表取自 [ShuangpinScheme.ALL]，与引擎共用同一份数据，不会脱节。
         spinnerShuangpin.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item,
+            this, R.layout.item_spinner,
             ShuangpinScheme.ALL.map { it.displayName },
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerShuangpin.setOnTouchListener { view, event ->
             shuangpinSpinnerTouched = true
             if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
@@ -436,8 +436,8 @@ class SettingsActivity : ComponentActivity() {
         // 候选词行数下拉：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，见 CandidateRows）。
         // 只影响候选栏排版与高度，不必重启输入法：键盘下次弹出即按新档位渲染。
         spinnerCandidateRows.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item, arrayOf("1 行", "2 行"),
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            this, R.layout.item_spinner, arrayOf("1 行", "2 行"),
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerCandidateRows.setOnTouchListener { view, event ->
             candidateRowsSpinnerTouched = true
             if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
@@ -570,8 +570,8 @@ class SettingsActivity : ComponentActivity() {
         textThemeDesc = findViewById(R.id.text_theme_desc)
 
         spinnerTheme.adapter = ArrayAdapter.createFromResource(
-            this, R.array.theme_mode_entries, android.R.layout.simple_spinner_item
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            this, R.array.theme_mode_entries, R.layout.item_spinner
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerTheme.setOnTouchListener { view, event ->
             themeSpinnerTouched = true
             if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
@@ -632,6 +632,22 @@ class SettingsActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * 定时换色：`onStart` 里对一次表并排下一次、`onStop` 里撤掉（见 [ThemeManager.ScheduledThemeTicker]）。
+     *
+     * 对表那一下也覆盖「在后台跨过切换点」—— 原先只在 `onCreate` 排一次，后台期间到点的换色要等
+     * 用户重新进页面才补上。
+     */
+    override fun onStart() {
+        super.onStart()
+        themeTicker.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
     /** 从「键盘外观」页返回时两档皮肤可能已改：这里补一次刷新（本页其余状态不变，无需 recreate） */
     override fun onResume() {
         super.onResume()
@@ -687,35 +703,6 @@ class SettingsActivity : ComponentActivity() {
                 true,
             )
         )
-    }
-
-    /**
-     * 定时模式：停在设置页时到点自动换色（不必等下一次操作或重开页面）。
-     *
-     * 只在「定时」模式排一次延时任务；到点重新解析，结果变了才 `recreate()` ，
-     * 没变（例如刚过切换点）就继续排下一次，不会无谓地重建页面。
-     */
-    private val themeTickRunnable = Runnable {
-        val dark = ThemeManager.isDark(this)
-        if (dark != appliedThemeDark) {
-            Diagnostics.i(TAG, "定时切换到点: 主题转为 ${if (dark) "暗色" else "亮色"}")
-            recreate()
-        } else {
-            scheduleThemeTick()
-        }
-    }
-
-    private fun scheduleThemeTick() {
-        uiHandler.removeCallbacks(themeTickRunnable)
-        val minutes = ThemeManager.minutesUntilSwitch(
-            prefs.themeMode,
-            prefs.themeLightAtMinutes,
-            prefs.themeDarkAtMinutes,
-            ThemeManager.nowMinutes(),
-        )
-        if (minutes <= 0) return // 非定时模式 / 无效配置
-        // +1s 余量：刚好卡在切换点上时避免边界抖动
-        uiHandler.postDelayed(themeTickRunnable, minutes * 60_000L + 1000L)
     }
 
     /**
@@ -1247,8 +1234,6 @@ class SettingsActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // 定时刷新的延时任务必须随页面撤销，否则会持有已销毁的 Activity
-        uiHandler.removeCallbacks(themeTickRunnable)
         // 检查更新的看门狗同理：它挂在按钮上，页面销毁后仍会跑一次并回头改按钮状态
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
         // 进度框不能随页面销毁留下（WindowLeaked）；后台任务回来时另有 isFinishing 守卫兜底
@@ -1880,6 +1865,12 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_CONFIG_HINT = "导出为加密备份包（AES-256 整包加密，密码只能用中文汉字）；导入需输入该密码"
         const val TEXT_EXPORT_DESC = "导出内容：全部设置项、用户词频，以及下面勾选的附加数据。\n" +
             "设置项里还包含连接设置（服务器地址/端口）与语音提示词，包内另记录来源设备型号与 App 版本；" +
+            // ⚠ 翻译凭据必须点名（2026-10-02 第四轮审查）：六家的 API Key / AppID / SecretKey / AccessKey
+            // 是**无条件**进包的（导出侧取的是 Keystore 解密后的明文，只包在整包密码的壳里）——
+            // 这是全项目唯一能把凭据带出设备、且绕开本机 Keystore 的路径，但原先的说明只告知了
+            // 剪贴板明文，用户完全不知道 Key 也在包里。
+            "翻译 API 凭据（六家的 Key / AppID / SecretKey / AccessKey）也在包内，同样只靠整包密码保护；" +
+            "请勿复用常用密码，也不要分享给不信任的人。\n" +
             "分享给他人前请先确认。\n" +
             "备份包用密码加密，密码只能用中文汉字、4~64 个字（建议 6 个字以上）；密码不保存在本机，忘记后无法解密。"
         const val TEXT_INCLUDE_CLIPBOARD =

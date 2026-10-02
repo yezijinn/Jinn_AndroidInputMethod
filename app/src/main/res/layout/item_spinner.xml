@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  下拉框（Spinner）折叠态的文字项。
+
+  统一前用的是 `android.R.layout.simple_spinner_item`：字号与内边距由系统 textAppearance 决定，
+  与同页的输入框（`@style/SettingsField`：14sp / 12dp / text_primary）肉眼可见地不一致 ——
+  一个页面里两种字号就是「各自独立」。这里与字段样式对齐，改规格只改这一处。
+
+  守卫：`PageStyleParityTest`（反向钉「不许再用 android.R.layout.simple_spinner_*」）。
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:textColor="@color/text_primary"
+    android:textSize="14sp" />

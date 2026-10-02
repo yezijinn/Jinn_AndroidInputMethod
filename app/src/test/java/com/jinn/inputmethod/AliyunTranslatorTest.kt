@@ -104,10 +104,10 @@ class AliyunTranslatorTest {
         assertEquals("mt.cn-hangzhou.aliyuncs.com", request.url.host)
         assertEquals("/api/translate/web/general", request.url.encodedPath)
         assertEquals("application/json", request.header("Accept"))
-        // Content-Type 必须与签名串**同源**（2026-10-02 修复 L-354）：OkHttp 的 BridgeInterceptor
-        // 会用 `body.contentType().toString()` **覆盖**显式头（归一成带空格的形态），
-        // 所以常量就该是带空格的那个值 —— 差一个空格即 SignatureDoesNotMatch（被归成 AUTH）
-        assertEquals(AliyunTranslator.CONTENT_TYPE, request.header("Content-Type"))
+        // 不再显式设 Content-Type 头（2026-10-02 修复 L-486）：实发头由 OkHttp 的 BridgeInterceptor
+        // 用 `body.contentType().toString()` 决定，显式设的同名头会被它覆盖 ⇒ 那一行是死代码，
+        // 留着还会与签名侧的注释互相矛盾（误导后人以为「必须显式设头」）。
+        assertNull(request.header("Content-Type"))
         assertEquals(
             "签名串必须等于实发头（显式头会被 body 的 MediaType 覆盖）",
             AliyunTranslator.CONTENT_TYPE,

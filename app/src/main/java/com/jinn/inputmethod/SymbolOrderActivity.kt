@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -29,18 +30,63 @@ class SymbolOrderActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
+    override fun onStart() {
+        super.onStart()
+        themeTicker.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_symbol_order)
         orderList = findViewById(R.id.symbol_order_list)
-        findViewById<Button>(R.id.btn_symbol_order_close).setOnClickListener { finish() }
-        findViewById<Button>(R.id.btn_symbol_order_reset).setOnClickListener {
-            // 「恢复默认」：写入空串，Prefs 的 setter 会归一为完整的默认序列串（见 [SymbolOrder]）
-            Prefs(this).symbolGroupOrder = ""
-            dirty = true
-            renderRows()
+        findViewById<Button>(R.id.btn_symbol_order_close).apply {
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
+            setOnClickListener { finish() }
+        }
+        findViewById<TextView>(R.id.text_symbol_order_desc).text = TEXT_DESC
+        findViewById<Button>(R.id.btn_symbol_order_reset).apply {
+            text = TEXT_RESET
+            setOnClickListener {
+                // 「恢复默认」：写入空串，Prefs 的 setter 会归一为完整的默认序列串（见 [SymbolOrder]）
+                Prefs(this@SymbolOrderActivity).symbolGroupOrder = ""
+                dirty = true
+                renderRows()
+            }
         }
         renderRows()
+    }
+
+    private companion object {
+        /**
+         * 紧凑行参数（用户 2026-10-02：13 个分组要一屏放完，不必上下滑动）。
+         *
+         * 行高 = 卡片上下内边距 ×2 + 箭头按钮高 = 5×2+32 = 42dp，加卡片间距 2dp 共 44dp，
+         * 13 行 ≈ 572dp。原先 6dp 内边距 + 36dp 按钮 = 50dp/行，一屏差半行（13. 注音 被切）。
+         */
+        const val ROW_PADDING_DP = 5
+        const val ARROW_HEIGHT_DP = 32
+
+        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认禁改）—— 与其余页面一致。
+        // 这两页（本页与收藏符号页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
+        // （2026-10-02 统一，见 B-152）。
+        // ⚠ 标题**不在**这里：`symbol_order_title` 同时是 `AndroidManifest` 里本 activity 的
+        //   `android:label`，必须与 `app_name` / `settings_title` 一样留在 strings.xml，
+        //   所以标题由布局直接引用那条 string（设置页的入口按钮也用它）。
+        const val TEXT_DESC = "改变符号面板分组的排序，收起键盘即生效"
+        const val TEXT_RESET = "恢复默认顺序"
     }
 
     override fun onPause() {
@@ -53,12 +99,10 @@ class SymbolOrderActivity : Activity() {
     private fun renderRows() {
         val labels = SymbolOrder.parse(Prefs(this).symbolGroupOrder)
         orderList.removeAllViews()
-        val density = resources.displayMetrics.density
         labels.forEachIndexed { idx, label ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(0, (3 * density).toInt(), 0, (3 * density).toInt())
             }
             val name = TextView(this).apply {
                 text = "${idx + 1}. $label"
@@ -67,13 +111,19 @@ class SymbolOrderActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             row.addView(name)
-            row.addView(orderArrowButton(getString(R.string.symbol_order_move_up), idx > 0) {
+            row.addView(orderArrowButton(R.drawable.ic_arrow_up, getString(R.string.symbol_order_move_up), idx > 0) {
                 applyOrder(SymbolOrder.move(labels, idx, idx - 1))
             })
-            row.addView(orderArrowButton(getString(R.string.symbol_order_move_down), idx < labels.lastIndex) {
-                applyOrder(SymbolOrder.move(labels, idx, idx + 1))
-            })
-            orderList.addView(row)
+            row.addView(
+                orderArrowButton(
+                    R.drawable.ic_arrow_down,
+                    getString(R.string.symbol_order_move_down),
+                    idx < labels.lastIndex,
+                ) {
+                    applyOrder(SymbolOrder.move(labels, idx, idx + 1))
+                },
+            )
+            PageStyle.addCard(orderList, row, ROW_PADDING_DP)
         }
     }
 
@@ -83,25 +133,31 @@ class SymbolOrderActivity : Activity() {
         renderRows()
     }
 
-    /** ↑↓ 小按钮：主题同款（半透明蓝底圆角 + 白字），首/末行相应方向禁用（半透明） */
-    private fun orderArrowButton(label: String, enabled: Boolean, onClick: () -> Unit): Button {
-        val density = resources.displayMetrics.density
-        return Button(this).apply {
-            text = label
-            textSize = 16f
-            isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(0, 0, 0, 0)
-            // 系统默认灰底与极光主题不符（用户反馈）：换主题次级按钮底 + 白字
-            background = getDrawable(R.drawable.btn_aurora_secondary)
-            setTextColor(getColor(R.color.text_primary))
+    /**
+     * ↑↓ 按钮：**纯矢量箭头**（无底色 / 无边框），首/末行相应方向禁用（半透明）。
+     *
+     * 用户 2026-10-02：取消包裹箭头的次级按钮矩形，箭头本身要放大 —— 文字字形 `↑` / `↓`
+     * 在系统字体里只占 em 的一小块（20sp 真机实测不足 5dp 高），所以改用 28dp 画布的矢量图标
+     * （`ic_arrow_up` / `ic_arrow_down`）。按压反馈与热区仍由这个按钮承担。
+     */
+    private fun orderArrowButton(
+        iconRes: Int,
+        desc: String,
+        enabled: Boolean,
+        onClick: () -> Unit,
+    ): ImageButton {
+        return ImageButton(this).apply {
+            setImageResource(iconRes)
+            // 无障碍名沿用 strings.xml 里那两条（图标没有文字，没有它就只剩「按钮」）
+            contentDescription = desc
+            background = null
             isEnabled = enabled
             alpha = if (enabled) 1f else 0.4f
             setOnClickListener { onClick() }
+            // dp 换算统一走 PageStyle（原先这里内联 resources.displayMetrics.density 相乘）
             layoutParams = LinearLayout.LayoutParams(
-                (44 * density).toInt(), (36 * density).toInt()).apply {
-                marginStart = (6 * density).toInt()
+                PageStyle.dp(context, 40), PageStyle.dp(context, ARROW_HEIGHT_DP)).apply {
+                marginStart = PageStyle.dp(context, 6)
             }
         }
     }

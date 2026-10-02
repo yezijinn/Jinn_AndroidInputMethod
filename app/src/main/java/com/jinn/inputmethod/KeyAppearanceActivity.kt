@@ -6,8 +6,6 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
@@ -28,11 +26,11 @@ import android.widget.TextView
  */
 class KeyAppearanceActivity : Activity() {
 
-    /** 主线程 Handler：定时主题到点后重建本页（机制与 [SettingsActivity] 一致） */
-    private val uiHandler = Handler(Looper.getMainLooper())
-
-    /** 本次进页面时生效的深浅色；定时到点后与重新解析的结果比较，变了才重建页面 */
-    private var appliedDark = false
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉。原先本页自带一份 Handler + `appliedDark` 字段，2026-10-02 收归共用实现（L-476）。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -100,6 +98,33 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 字距：候选栏里相邻候选词之间的水平间隔（标题在代码里下发 —— strings.xml 默认禁改，
+        // 本页其余三行的标题仍在 strings.xml，属历史遗留）
+        val labelSpacing = findViewById<TextView>(R.id.label_candidate_spacing)
+        val seekSpacing = findViewById<SeekBar>(R.id.seek_candidate_spacing)
+        val textSpacing = findViewById<TextView>(R.id.text_candidate_spacing)
+        labelSpacing.text = TEXT_SPACING_TITLE
+        seekSpacing.max = KeyAppearance.SPACING_PROGRESS_MAX
+        seekSpacing.progress = KeyAppearance.spacingDpToProgress(prefs.candidateSpacingDp)
+        textSpacing.text = KeyAppearance.formatDp(prefs.candidateSpacingDp)
+
+        seekSpacing.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = KeyAppearance.spacingProgressToDp(progress)
+                prefs.candidateSpacingDp = dp
+                textSpacing.text = KeyAppearance.formatDp(dp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "候选字距: ${KeyAppearance.formatDp(prefs.candidateSpacingDp)}")
+                // 与圆角 / 间隙 / 透明度同一条即时生效路径：refreshAppearance → refreshCandidateBar
+                // → 候选条目按新字距重建（键盘正显示时立刻看到）
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
         val seekTransparency = findViewById<SeekBar>(R.id.seek_key_transparency)
         val textTransparency = findViewById<TextView>(R.id.text_key_transparency)
         seekTransparency.max = KeyTransparency.PROGRESS_MAX
@@ -125,46 +150,23 @@ class KeyAppearanceActivity : Activity() {
         })
 
         initSkinSelector(prefs)
-        // 定时主题到点后重建本页：色板来自 attachBaseContext、段标题在 initSkinSelector 里写死，
-        // 没有这个钩子就会停在旧档（标题仍写「现为亮色」、黄框停在旧档），而键盘已经换肤
-        appliedDark = ThemeManager.isDark(this, prefs)
-        scheduleThemeTick()
     }
 
     /**
-     * 定时模式：停在本页时到点自动换色。
+     * 定时主题到点后重建本页：色板来自 `attachBaseContext`、段标题在 [initSkinSelector] 里写死，
+     * 没有这个钩子就会停在旧档（标题仍写「现为亮色」、黄框停在旧档），而键盘已经换肤。
      *
-     * 与 [SettingsActivity] 同一机制：只在「定时」模式排一次延时任务，到点重新解析，
-     * 结果变了才 [recreate]（重建后色板与段标题一起换档），没变就继续排下一次。
+     * 接在 [onStart]（不是 `onCreate`）：从后台回来时也补一次对表 —— 在后台跨过切换点的那段时间
+     * 定时器是撤着的（见 [ThemeManager.ScheduledThemeTicker.start]）。
      */
-    private val themeTickRunnable = Runnable {
-        val dark = ThemeManager.isDark(this, Prefs(this))
-        if (dark != appliedDark) {
-            Diagnostics.i(TAG, "定时切换到点: 主题转为 ${if (dark) "暗色" else "亮色"}")
-            recreate()
-        } else {
-            scheduleThemeTick()
-        }
+    override fun onStart() {
+        super.onStart()
+        themeTicker.start()
     }
 
-    private fun scheduleThemeTick() {
-        uiHandler.removeCallbacks(themeTickRunnable)
-        val prefs = Prefs(this)
-        val minutes = ThemeManager.minutesUntilSwitch(
-            prefs.themeMode,
-            prefs.themeLightAtMinutes,
-            prefs.themeDarkAtMinutes,
-            ThemeManager.nowMinutes(),
-        )
-        if (minutes <= 0) return // 非定时模式 / 无效配置
-        // +1s 余量：刚好卡在切换点上时避免边界抖动
-        uiHandler.postDelayed(themeTickRunnable, minutes * 60_000L + 1000L)
-    }
-
-    override fun onDestroy() {
-        // 定时刷新的延时任务必须随页面撤销，否则会持有已销毁的 Activity
-        uiHandler.removeCallbacks(themeTickRunnable)
-        super.onDestroy()
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
     }
 
     /**
@@ -312,6 +314,14 @@ class KeyAppearanceActivity : Activity() {
 
     private companion object {
         const val TAG = "KeyAppearance"
+
+        /**
+         * 「字距」项的标题文案。
+         *
+         * 写在代码里而不是 strings.xml：项目约定「strings.xml 默认禁改」（与各页 `TEXT_*` 同做法），
+         * 新项不再往资源里加标题。
+         */
+        const val TEXT_SPACING_TITLE = "字距"
 
         /** 皮肤选择器每行个数（每段 16 套排成两行八个，两段共四行） */
         const val SKINS_PER_ROW = 8

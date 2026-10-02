@@ -207,20 +207,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前键面不透明度（1f = 不透明），见 [applyKeyTransparency]；功能键背景的缓存判据也用它 */
     private var keyFaceAlpha = 1f
 
-    /**
-     * 背板当前档位（[applyKeyTransparency] 里随 [keyFaceAlpha] 一起更新；供候选栏选档复用）。
-     *
-     * 必须声明在 `init` 之前：Kotlin 属性按声明顺序初始化，而 `init` 里会调用
-     * [applyKeyTransparency] 写入该值；声明在 `init` 之后会被属性初始化器重置回 `1f`，
-     * 只靠当次会话再跑一遍 `configure()` 掩盖（2026-09-23 审查发现的隐患写法）。
-     */
-    private var plateFaceAlpha = 1f
-
     /** 上次打印的透明度（仅在变化时打日志，避免每次弹键盘都刷屏） */
     private var lastTransparencyDesc = ""
 
-    /** 候选栏底当前生效的档位（NaN 保证首次一定设置），判据与更新见 [updateCandidateBarBackground] */
-    private var candidateBarAlpha = Float.NaN
+    /**
+     * 候选栏底**当前生效的颜色**（缓存键；0 是「未设置过」的哨兵，保证首次一定设置）。
+     *
+     * 判据用**颜色**而不是「档位」：候选栏底现在固定走内容面档（与功能面板按钮同档），
+     * 档位不再是变量，颜色才是 —— 皮肤 / 色板切换都会换色，用颜色比才不会被旧值挡住。
+     * 见 [updateCandidateBarBackground]。
+     */
+    private var candidateBarColor = 0
 
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
     private var functionBgAlpha = Float.NaN
@@ -899,7 +896,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      *  - 背板类（键盘底色 kb_bg、面板底 app_bg）：面上没有文字，走 plate 档，可以做得最透；
      *  - 内容面类（条目卡 card_bg、搜索框底 surface_hi）：带文字/内容，走 surface 档；
-     *  - 候选栏底按当前是否有内容选档（见 [updateCandidateBarBackground]）；
+     *  - 候选栏底**固定**走 surface 档；空白铺底时与功能按钮**同色**（见 [updateCandidateBarBackground]）；
      *  - 键面与面板里的按钮同上走 surface 档（键面走 [PinyinKey.setFaceAlpha]，面板按钮走各自
      *    面板的 `applySurfaceAlpha`，它们的背景是 drawable，颜色识别扫不到）；
      *  - 文字一律不变：这里只给「面」的颜色套 alpha（[KeyTransparency.withAlpha]），本功能的
@@ -912,7 +909,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val percent = Prefs(context).keyTransparencyPercent
         keyFaceAlpha = KeyTransparency.surfaceAlpha(percent)
         val plateAlpha = KeyTransparency.plateAlpha(percent)
-        plateFaceAlpha = plateAlpha
 
         // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明，attachToRoot=true 时 inflate
         // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
@@ -927,9 +923,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 皮肤会改背板/键面的色值：皮肤色一并并入识别色集，否则这些面匹配不到、透明度对它们失效。
         alphaFaces(
             this,
-            // 候选栏色（skin.candidateBar）**不并入**背板集：它的档位随内容切换（有候选走 surface、
-            // 空白走 plate），由 updateCandidateBarBackground 专管；并进来会被统一压到 plate 档
-            // （100% 时候选词直接叠在宿主内容上），且其档位缓存会因此不再更新、要清空一次内容才自愈。
+            // 候选栏色（skin.candidateBar）**不并入**背板集：它固定走内容面档，由
+            // updateCandidateBarBackground 专管；并进背板集会被统一压到 plate 档
+            // （100% 时文字直接叠在宿主内容上），且其颜色缓存会因此不再更新。
+            // （空白铺底的栏色 = 功能按钮色，本就在 surfaceRgb 集内 ⇒ 被压到同一档即预期。）
             plateRgb = faceRgb(
                 context.getColor(R.color.kb_bg), context.getColor(R.color.app_bg),
                 skin.plate,
@@ -990,7 +987,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         functionBgAlpha = Float.NaN
         shiftBgAlpha = Float.NaN
         backspaceBgAlpha = Float.NaN
-        candidateBarAlpha = Float.NaN
+        candidateBarColor = 0
         // 面板（剪贴板历史 / 搜索）与键盘同属一层皮肤：一并换色。必须在这里（早于
         // applyKeyTransparency）下发，面板的纯色面才会被本次的透明度套档扫到。
         clipboardPanel.applySkin(s)
@@ -1114,22 +1111,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 候选栏底色按当前是否有内容选档：
-     *  - 有拼音串 / 候选 / 预测时：面上叠着文字（候选词没有自己的面）→ 必须走 surface 档，
-     *    否则文字会直接糊在宿主内容上（与 [KeyTransparency] 的可读性规则冲突）；
-     *  - 空白铺底（功能面板 / 符号层 / 搜索态，文字都在按钮自己的面上）→ 走 plate 档，可做最透。
+     * 候选栏底色：**两态都走内容面档**（[keyFaceAlpha]），并**按态选色** ——
+     * 空白铺底用**功能按钮色**（`skin.functionFill`），有内容时用候选栏色（`skin.candidateBar`）。
      *
-     * 带缓存：档位没变就不重设，避免每次按键都白重绘一次候选栏；
-     * 档位取自 [plateFaceAlpha] / [keyFaceAlpha]，不读 Prefs，本函数挂在按键热路径上。
+     * 为什么要按态选色：空白铺底（功能面板 / 符号层 / 搜索态）栏内只有按钮，栏若用自己的色，
+     * 就会在按钮四周（含上下、间隙）留出一圈异色底；半透明下这圈还会因两档透出量不同而更显形
+     * （原先空白态走 plate 档 = 80%、按钮走 surface 档 = 92%），在浅色页面上看起来像
+     * 「候选栏比按钮高出一截」（2026-10-02 用户反馈：只在设置主页这类浅底页面可见，
+     * 深色页 / 会压掉它的 App 里看不见）。**同色 + 同档**后按钮与栏连成一块，那一圈消失；
+     * 按钮本身仍靠自己的描边（`functionStroke`）分辨。
+     *
+     * 有内容时（拼音串 / 候选 / 预测）：候选词没有自己的面，直接叠在栏底上 ⇒ 用候选栏色，
+     * 清晰度由 surface 档的可读性下限保证（[KeyTransparency.MIN_SURFACE_ALPHA]）。
+     *
+     * 带缓存：**颜色**没变就不重设，避免每次按键都白重绘一次候选栏；
+     * 判据不读 Prefs，本函数挂在按键热路径上。
      */
     private fun updateCandidateBarBackground() {
         val hasContent = composing.isNotEmpty() || lastCandidates.isNotEmpty() || lastPredictions.isNotEmpty()
-        val alpha = if (hasContent) keyFaceAlpha else plateFaceAlpha
-        if (alpha == candidateBarAlpha) return
-        candidateBarAlpha = alpha
-        candidateBar.setBackgroundColor(
-            KeyTransparency.withAlpha(skinToken(skin.candidateBar, R.color.kb_candidate_bg), alpha)
-        )
+        val base = if (hasContent) {
+            skinToken(skin.candidateBar, R.color.kb_candidate_bg)
+        } else {
+            skinToken(skin.functionFill, R.color.key_bg)
+        }
+        val color = KeyTransparency.withAlpha(base, keyFaceAlpha)
+        if (color == candidateBarColor) return
+        candidateBarColor = color
+        candidateBar.setBackgroundColor(color)
     }
 
     /**
@@ -1758,6 +1766,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, spToPx(CandidateRows.PINYIN_TEXT_SP))
         currentRows = rows
 
+        // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 44dp；双行 = 拼音条 + 两排 = 72dp），
+        // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
+        // ⚠ 别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
+        // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
         val barHeight = pinyinBarPx + perRow * if (rows == CandidateRows.DOUBLE) 2 else 1
         (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
             if (lp.height != barHeight) {
@@ -1765,7 +1777,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 candidateBar.layoutParams = lp
             }
         }
-        // 拼音条位置：单行档贴顶；双行档垂直居中 —— 两排候选各贴上下边，中缝恰好等于拼音条高
+        // 拼音条位置：单行档贴顶；双行档垂直居中 —— 两排候选各贴上下边，中缝恰好等于拼音条高。
         (pinyinBar.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
             val gravity = if (rows == CandidateRows.DOUBLE) {
                 android.view.Gravity.CENTER_VERTICAL
@@ -1885,6 +1897,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     ) {
         viewCandidateList.removeAllViews()
         val sizeSp = CandidateRows.CANDIDATE_TEXT_SP
+        // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
+        // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
+        // （语义与按键「间隙」一致；定义域 5~30dp、默认 10dp）；垂直方向不受影响。
+        val spacingHalfPx = dpFloat(Prefs(context).candidateSpacingDp / 2f).toInt()
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         fun build(text: String): TextView = TextView(context).apply {
@@ -1892,7 +1908,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             textSize = sizeSp
             gravity = android.view.Gravity.CENTER
             setTextColor(skinToken(colorToken, colorRes))
-            setPadding(dp(2), 0, dp(2), 0)
+            // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
+            setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
             isClickable = true
             setOnClickListener { onClick(text) }
         }
@@ -1970,6 +1987,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             input
         }
+        // 无候选、无拼音串、无预测 ⇒ 功能面板态。
+        // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
+        // 双行档的面板态也保持整栏 72dp —— 用户 2026-10-02 明确要求「2 行候选恒定增高，
+        // 不要随内容动态变化」。（曾按单排收缩，导致键盘高度来回跳，已撤销。）
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             showPinyin(null)

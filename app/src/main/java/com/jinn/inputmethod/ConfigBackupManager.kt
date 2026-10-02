@@ -904,6 +904,21 @@ internal object ConfigBackupManager {
                 prefsApplied -= appliedClip
                 failedStage = "剪贴板设置写盘失败"
             }
+            // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02 第二轮审查）：
+            // Keystore 不可用（锁屏等）时 `writeCredential` 只更新进程内缓存并删掉磁盘旧密文，
+            // 而导入收尾还会提示「重启输入法后生效」—— 一重启，导入的 Key 全部消失，
+            // 用户看到的是「导入成功但翻译又回到未配置」。
+            // 与两个设置页已立起来的三态口径（L-355 的 TEXT_SAVE_NOT_PERSISTED）保持一致。
+            val inMemoryCredentials = prefs.unpersistedCredentialKeys()
+            if (inMemoryCredentials.isNotEmpty()) {
+                Diagnostics.w(
+                    TAG,
+                    "导入: ${inMemoryCredentials.size} 个凭据未落盘（Keystore 不可用），计入忽略",
+                )
+                prefsIgnored += inMemoryCredentials.size
+                prefsApplied = (prefsApplied - inMemoryCredentials.size).coerceAtLeast(0)
+                if (failedStage == null) failedStage = "凭据未落盘（解锁后重试）"
+            }
             // 模糊音掩码在引擎里另有一份运行期副本（Prefs + `PinyinEngine.fuzzyMask`）：
             // 导入改了它就必须同步一次，否则设置页显示与候选行为不一致，直到 IME 进程重建
             PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)

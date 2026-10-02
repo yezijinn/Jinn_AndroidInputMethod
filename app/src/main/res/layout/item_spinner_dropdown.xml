@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  下拉框（Spinner）展开后的下拉项。
+
+  统一前用的是 `android.R.layout.simple_spinner_dropdown_item`：文字走系统 textAppearance、
+  按压反馈与触摸高度也不由我们控制。这里与页面字段同规格（15sp / text_primary / ≥44dp 触摸高度），
+  背景用主题的 selectableItemBackground 保留按压态。
+
+  守卫：`PageStyleParityTest`（反向钉「不许再用 android.R.layout.simple_spinner_*」）。
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:ellipsize="end"
+    android:gravity="center_vertical"
+    android:maxLines="1"
+    android:minHeight="44dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:textColor="@color/text_primary"
+    android:textSize="15sp" />

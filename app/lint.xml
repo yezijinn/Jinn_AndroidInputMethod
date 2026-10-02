@@ -48,10 +48,16 @@
       键盘布局是满屏横条 + 自绘键面：根布局自带底色（覆盖窗口底色，半透明键盘需要）、
       外层嵌套用于逐行重排、内层 ScrollView 高度由键高决定。
       重构这些布局的收益远小于错位风险，故按现状登记。
+
+      下拉项布局（`item_spinner_dropdown.xml`）是**列表项**，不是页面根：Spinner 展开后它由
+      ListPopupWindow 承载，`selectableItemBackground` 提供的是按压反馈。lint 的说明里自己写着
+      这个检查「relies on an inexact pattern matching algorithm … can incorrectly conclude
+      which activity the layout is associated with」⇒ 属误判，登记而不是去掉反馈。
     -->
     <issue id="Overdraw">
         <ignore path="src/main/res/layout/keyboard.xml" />
         <ignore path="src/main/res/layout/keyboard_pinyin.xml" />
+        <ignore path="src/main/res/layout/item_spinner_dropdown.xml" />
     </issue>
     <issue id="UselessParent">
         <ignore path="src/main/res/layout/keyboard_pinyin.xml" />

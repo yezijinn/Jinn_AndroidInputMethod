@@ -346,6 +346,21 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
 
     /**
+     * 候选栏字距（dp）：**相邻两个候选词之间的水平间隔**（只影响水平方向，行高不动）。
+     *
+     * 与按键「间隙」同语义：实现上每个候选左右各内缩本值的一半（见 PinyinKeyboardView
+     * 的候选渲染）。定义域 5~30dp、默认 10dp（用户 2026-10-02 指定）。
+     */
+    var candidateSpacingDp: Float
+        // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02 第二轮审查）：
+        // 手改 prefs、第三方写入或将来某条绕过 setter 的路径写进越界值时会**直达绘制** ——
+        // 值越大候选项左右内缩越多，巨大值会把每个候选撑到屏幕外（跨行溢出型布局异常）。
+        get() = KeyAppearance.clampSpacingDp(
+            sp.getFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.DEFAULT_SPACING_DP),
+        )
+        set(value) = sp.edit { putFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.clampSpacingDp(value)) }
+
+    /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
      *
      * 只影响「面」（背板 / 键面 / 候选栏），文字始终不透明。getter 也做一次钳位：
@@ -804,7 +819,10 @@ class Prefs(context: Context) {
     /** OpenAI 兼容服务的模型名（如 `gpt-4o-mini` / `qwen3.8-flash-free`）；空 = 未配置 */
     var openAiModel: String
         get() = sp.getString(KEY_OPENAI_MODEL, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_OPENAI_MODEL, value.trim()) }
+        // 与同页其它字符串字段同口径：走 cleanCredential 去掉复制粘贴带进来的 NBSP / ZWSP /
+        // 全角空格（2026-10-02 第二轮审查）。只 trim 时「是否已配置」的判据看着正常，
+        // 请求真发出去必然 404 / 参数被拒 ⇒ 归 PARAM/AUTH，用户按提示核对 Key、路径、语言都查不出真因。
+        set(value) = sp.edit { putString(KEY_OPENAI_MODEL, value.cleanCredential()) }
 
     /** 对话端点路径（默认 `/chat/completions`；换网关只改这一项即可，不必等 App 更新） */
     var openAiChatPath: String
@@ -1046,6 +1064,7 @@ class Prefs(context: Context) {
         put(KEY_OPENAI_MODELS_CACHE, openAiModelsCache)
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
+        put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         put(KEY_SKIN_LIGHT, skinLightId)
         put(KEY_SKIN_DARK, skinDarkId)
@@ -1177,6 +1196,7 @@ class Prefs(context: Context) {
                 KEY_OPENAI_MODELS_CACHE -> asString(v)?.let { openAiModelsCache = it; ok() } ?: bad(key)
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
+                KEY_CANDIDATE_SPACING_DP -> asFloat(v)?.let { candidateSpacingDp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 KEY_SKIN_LIGHT -> asString(v)?.let { skinLightId = it; ok() } ?: bad(key)
@@ -1432,6 +1452,7 @@ class Prefs(context: Context) {
         private const val TIMEOUT_MAX_SEC = 300
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
+    private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
         /**
          * 已退役：旧版单值皮肤键，现在只在 [ensureSkinSlotsMigrated] 里读取，不再写入。

@@ -68,6 +68,13 @@ class JinnIme : InputMethodService() {
      *
      * `onStartInputView` 用它判断主题是否被改过（设置页改了模式、或定时模式跨过切换点）：
      * 只有决策结果变了才重建键盘，常规弹出路径零额外开销。
+     *
+     * ⚠ **不要**为了「统一」把它换成 `ThemeManager.paletteIsDark(this)`：页面能用那个是因为
+     * 页面的 Context 被 `attachBaseContext` 换过、`Resources` 里就是它**画出来**的那一档；
+     * 而 IME 是 Service，它的 Context 没有被换（键盘视图是拿 `themeCtx` 现造的）⇒ 在 IME 里读
+     * `paletteIsDark` 得到的是**系统**深浅，与「视图用的是哪一档」是两件事。
+     * （页面对应的字段确实被删了，那是因为页面场景下两者等价 —— 见
+     * `ThemeManager.recreateIfPaletteStale` 的 KDoc，2026-10-02 L-476。）
      */
     private var appliedThemeDark: Boolean? = null
 
@@ -1451,21 +1458,16 @@ class JinnIme : InputMethodService() {
         recreateKeyboardView()
     }
 
-    /** 定时模式的到点检查（键盘可见期间跨过切换点也换肤）；非定时模式无操作 */
-    private fun scheduleThemeTick() {
-        ui.removeCallbacks(themeTick)
-        if (prefs.themeMode != ThemeManager.MODE_SCHEDULED) return
-        val minutes = ThemeManager.minutesUntilSwitch(
-            prefs.themeMode, prefs.themeLightAtMinutes, prefs.themeDarkAtMinutes, ThemeManager.nowMinutes(),
-        )
-        if (minutes <= 0) return
-        // 多等 2 秒：避免恰好落在分钟边界上、判定仍读到上一分钟
-        ui.postDelayed(themeTick, minutes * 60_000L + 2_000L)
-    }
-
-    private val themeTick = Runnable {
-        applyThemeIfNeeded()
-        scheduleThemeTick()
+    /**
+     * 定时换色的准点定时器：与页面**共用同一份实现**（[ThemeManager.ScheduledThemeTicker]，`BUG.md` L-476）。
+     *
+     * 弹出时排下一次（[onStartInputView] 里紧挨着的 [applyThemeIfNeeded] 已经先对过表），
+     * 收起时撤掉 —— 键盘不显示的那段时间到点检查交给下次弹出。
+     * 到点做什么由这个 lambda 定：直接调 [applyThemeIfNeeded]，它自己会跳过「档位没变」与
+     * 「视图上有未完成操作（未上屏输入 / 面板 / 密码模式）」两种情形（后者延后到下次弹出）。
+     */
+    private val themeTicker by lazy {
+        ThemeManager.ScheduledThemeTicker(prefs) { applyThemeIfNeeded() }
     }
 
     /** 词库加载的重试上限（含 onCreate 那次预加载）：失败后不能无限重试 */
@@ -1532,7 +1534,7 @@ class JinnIme : InputMethodService() {
         }
         // 半透明键盘：语音面板底色的透明度也在这里刷新（用户可能在键盘外观页改过）
         applyTransparencyToVoicePanel()
-        scheduleThemeTick() // 定时模式：键盘可见期间也准点换肤
+        themeTicker.schedule() // 定时模式：键盘可见期间也准点换肤
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
         ui.removeCallbacks(optionalIdleCheck)
@@ -1634,7 +1636,7 @@ class JinnIme : InputMethodService() {
         // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
         cancelTranslate()
         ui.removeCallbacks(backspaceRunnable)
-        ui.removeCallbacks(themeTick) // 键盘已收起：到点检查交给下次弹出时的 scheduleThemeTick
+        themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
         if (pendingPasteText != null) {
@@ -2192,6 +2194,24 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_RANGE_TOO_LONG)
             return
         }
+        // ②.b 与上一条是**两回事**：这条查的是「宿主能不能给出精确选区」。
+        //    放行侧（canAppendTranslation）把「读不到精确选区」当成「明确无选区」而放行，
+        //    但提交侧 `moveCursorByOffset` 依赖同一能力、此时**必然**失败
+        //    （WebView 类宿主对 getExtractedText 恒返回 null，那条注释自己写明了）⇒
+        //    每次点击都是「真计费 + 等一轮（大模型几十秒） + 丢译文」。
+        //    在发请求前用同一事实拦下，成本为零（2026-10-02 修复 L-482）。
+        //    判据取**本帧已读的探针**（`selectionRange.range`，L-325/L-315 那次为此专门包的），
+        //    不再裸调一次 `currentSelectionRange` —— 那是主线程上的整窗口 Binder 往返
+        //    （`getExtractedText` 上限 10 万字符），而这里要的正是「同一次点击里同一份事实」
+        //    （2026-10-02 第二轮审查）。
+        if (!replaceSelection && slice.appendOffset > 0 && selectionRange.range == null) {
+            Diagnostics.w(
+                TAG,
+                "翻译: 宿主读不到精确选区，追加位置无法确认（offset=${slice.appendOffset}）",
+            )
+            toast(TEXT_TRANSLATE_APPEND_UNKNOWN)
+            return
+        }
         // ③ 光标前这段取不到**开头**时，上传的不是用户以为的那一段 —— `readTextBeforeCursor` 主路径
         //    取的是紧邻光标的那一段（L-277）。判据用读取路径给出的事实（`beforeFromDocStart`），不再用
         //    「读满窗口」反推：兜底路径返回的是「窗口起点 → 光标」，长度天然小于窗口，窗口起点非零时
@@ -2238,6 +2258,13 @@ class JinnIme : InputMethodService() {
             "翻译: ${provider.javaClass.simpleName} → ${target.name} 范围=${scope.id} " +
                 "共${slice.text.length}字" + (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
         )
+        // 插入模式下的截断必须说出来（2026-10-02 修复 L-485）：同一件事（原文超单次上限）此前
+        // 两条路径口径相反 —— 选区模式发请求前就拒绝并说明（替换会丢掉尾部原文，不可逆），
+        // 插入模式只写日志。插入模式只翻了前半段、译文追加在区间末尾（原文一个字不动），
+        // 拒绝反而更糟；但不告知的话用户会以为服务端漏译，往往重试 —— 每次都真计费。
+        if (slice.truncated) {
+            toast(TEXT_TRANSLATE_TRUNCATED)
+        }
         val snapshot = TranslateSnapshot(
             before,
             after,
@@ -2463,6 +2490,34 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_APPEND_UNKNOWN)
             return
         }
+        // ⑤.b 移到「请求时的区间末尾」≠ 落点正确：宿主可能**少给** `getTextAfterCursor`
+        //     （返回长度 < 请求长度、但文中仍有内容），此时 `appendOffset` 只到句子 / 文档中间，
+        //     移过去也就在中间 ⇒ commitText 把译文插进**原文中间**（数据破坏，且不保证可撤销）。
+        //     确认方式：落点之后要么没有内容，要么就是换行；读不到同样放弃（保守方向与
+        //     「移不到位一律放弃」一致 —— 这类宿主已被发请求前的 ②.b 拦过一道）。
+        //     （2026-10-02 修复 L-480）
+        if (snapshot.appendOffset > 0) {
+            val tail = runCatching { connection.getTextAfterCursor(1, 0) }.getOrNull()
+            val atRangeEnd = tail != null && (tail.isEmpty() || tail[0] == '\n')
+            if (!atRangeEnd) {
+                Diagnostics.w(
+                    TAG,
+                    "翻译: 追加落点不是区间末尾（" +
+                        (if (tail == null) "读不到光标后内容" else "后一个字符=${tail[0]}") +
+                        "），放弃提交并回滚光标",
+                )
+                // ⚠ 拒绝前必须把光标**移回去**（2026-10-02 第二轮审查）：这一步排在 ⑤（移动）之后，
+                // 直接 return 会把用户的光标留在「移过去但没确认」的位置，接着打字就插进句子中间 ——
+                // 与 ④ 段立下的「拒绝前不得移动光标」原则相冲突（L-221 的唯一反例）。
+                // 反向移回复用同一实现；移不回去也不再改文案（用户看到的仍是「未写入」，
+                // 光标能否精确复位属宿主能力问题，记日志即可）。
+                if (!moveCursorByOffset(connection, -snapshot.appendOffset)) {
+                    Diagnostics.w(TAG, "翻译: 光标回滚失败（宿主忽略反向移动或越界），放弃继续处理")
+                }
+                toast(TEXT_TRANSLATE_APPEND_UNKNOWN)
+                return
+            }
+        }
         // ⑥ 选区模式直接替换选中内容，**不加前导换行** —— 替换是原地操作，补换行会把用户的段落
         //    切碎。光标模式走到这里光标已在最终插入点，取它的前一个字符决定要不要补前导换行。
         val submit = if (snapshot.replaceSelection) {
@@ -2521,6 +2576,12 @@ class JinnIme : InputMethodService() {
         val range = currentSelectionRange(connection) ?: return false
         if (range.start != range.end) return false
         val to = range.end + offset
+        // 下界校验：反向移动（回滚光标，见 ⑤.b）可能算出负下标 —— 负下标传给 setSelection
+        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02 第二轮审查）。
+        if (to < 0) {
+            Diagnostics.w(TAG, "翻译: 目标下标为负（$to），放弃移动")
+            return false
+        }
         if (to > range.startOffset + range.textLength) {
             Diagnostics.w(
                 TAG,
@@ -2535,9 +2596,25 @@ class JinnIme : InputMethodService() {
         return moved
     }
 
-    /** 取「插入点前面那一个字符」：决定译文要不要补前导换行（取不到返回 null，按需补处理） */
-    private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? =
-        runCatching { connection.getTextBeforeCursor(1, 0)?.lastOrNull() }.getOrNull()
+    /**
+     * 取「插入点前面那一个字符」，供 `TranslationText.appendText` 决定要不要补前导换行。
+     *
+     * 三态语义（2026-10-02 修复 L-481）：
+     *  - **空串** = 光标确实在文首 ⇒ 返回 null（不补换行）✓
+     *  - **抛异常 / 宿主返回 null** = *读不到*，与「文首」不是一回事 ⇒ 返回 `'\n'`（按「需要补换行」处理）。
+     *    原先两者都塌缩成 null，于是读失败时译文直接**黏在原文行末**；而本函数的 KDoc 却写着
+     *    「按需补处理」—— 文档与实现相反，属同一类静默失效。
+     */
+    private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? {
+        val s = runCatching { connection.getTextBeforeCursor(1, 0) }.getOrNull()
+        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02 修复 L-481，第二轮纠正）：
+        //  - 空串（真文首）⇒ null ⇒ 不补前导换行；
+        //  - 读不到（抛异常 / 宿主返回 null）⇒ 替换字符占位 ⇒ 让 `appendText` 走「补前导换行」。
+        // ⚠ 上一版把读不到映射成 '\n'，而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个
+        // 分支** ⇒ 那次改动等价于没改（译文照样黏在原文行末），注释与守卫却都写成了「按需补换行」。
+        // 无法区分时就按「前面有内容」处理：宁可在行间多一个换行，也不要把译文接在句尾。
+        return if (s == null) '\uFFFD' else s.lastOrNull()
+    }
 
     /**
      * 只读地取「光标前」的文本（**不复制、不写系统剪贴板**）。
@@ -2764,10 +2841,8 @@ class JinnIme : InputMethodService() {
 
         if (hasAction) {
             if (customActionId != 0) {
-                Diagnostics.i(
-                    TAG,
-                    "performEnter: 走宿主自定义动作 id=$customActionId（imeOptions 里的 $action 不是它认的码）",
-                )
+                // 只记事实，不写归因：宿主认哪个码我们无从得知（曾写「不是它认的码」，那是未证实的断言）
+                Diagnostics.i(TAG, "performEnter: 走宿主自定义动作 id=$customActionId（imeOptions 动作位=$action）")
                 guardHostCall("performEnter(输入框自定义动作)") {
                     connection.performEditorAction(customActionId)
                 }
@@ -2920,6 +2995,16 @@ class JinnIme : InputMethodService() {
         /** 选区模式专用：选中内容超上限时替换会丢掉尾部原文，宁可拒绝（2026-10-01 审查 L-261） */
         const val TEXT_TRANSLATE_SELECTION_TOO_LONG =
             "选中内容超出单次上限，未翻译（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
+
+        /**
+         * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02 修复 L-485）。
+         *
+         * 与选区模式两套口径是**故意的**：选区模式的替换会丢掉尾部原文（不可逆）⇒ 宁可拒绝；
+         * 插入模式只翻了前半段、译文追加在区间末尾（原文一个字不动）⇒ 拒绝反而更糟。
+         * 但不告知的话，用户会以为服务端漏译并反复重试 —— 每次都真计费。
+         */
+        const val TEXT_TRANSLATE_TRUNCATED =
+            "原文超出单次上限，已按上限截断（仅翻译前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
         /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
         const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起翻译"

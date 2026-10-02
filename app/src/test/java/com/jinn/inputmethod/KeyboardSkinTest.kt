@@ -361,10 +361,10 @@ class KeyboardSkinTest {
 
     @Test
     fun 候选栏色不得与背板或功能键面撞色() {
-        // 候选栏档位由 updateCandidateBarBackground 专管（有内容走 surface、空白走 plate）。
+        // 候选栏底由 updateCandidateBarBackground 专管（固定走 surface 档，与功能面板按钮同档）。
         // 一旦某个皮肤的 candidateBar 与 alphaFaces 的识别色集（plate / functionFill）同值，
-        // 候选栏就会被统一压到 plate 档：透明度 100% 时候选词直接叠在宿主内容上，
-        // 且档位缓存不再更新（要清空一次内容才自愈）。新增皮肤必须避开这两个取值。
+        // 候选栏就会被该集统一压档：并进背板集（plate）时透明度 100% 就叠在宿主内容上，
+        // 且颜色缓存不再更新（要清空一次内容才自愈）。新增皮肤必须避开这两个取值。
         for (s in KeyboardSkins.ALL) {
             val cb = s.candidateBar ?: continue
             assertNotEquals("皮肤 ${s.id}: candidateBar 与 plate 撞色", s.plate, cb)

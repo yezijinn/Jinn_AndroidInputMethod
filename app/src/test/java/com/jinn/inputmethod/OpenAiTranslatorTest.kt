@@ -427,6 +427,19 @@ class OpenAiTranslatorTest {
         assertEquals(listOf("gpt-4o-mini", "m2"), OpenAiTranslator.parseModels(body))
     }
 
+    @Test
+    fun `finish_reason 为 length 时不算成功（半截译文不得上屏）`() {
+        // 模型输出被 max_tokens（或网关自带上限）砍断时，响应仍是 2xx + 有 content，
+        // 旧实现会把它当完整译文提交 —— 用户拿到半句话且毫无提示（2026-10-02 修复 L-484）
+        val truncated = """{"choices":[{"message":{"content":"这是一句被砍断的译"},"finish_reason":"length"}]}"""
+        assertEquals(TranslationOutcome.Fail(TranslationError.TRUNCATED), translator.parseResponse(200, truncated))
+        // finish_reason=stop（正常结束）与缺失该字段的老网关都不能受影响
+        val normal = """{"choices":[{"message":{"content":"完整译文"},"finish_reason":"stop"}]}"""
+        assertEquals(TranslationOutcome.Ok("完整译文"), translator.parseResponse(200, normal))
+        val noField = """{"choices":[{"message":{"content":"老网关译文"}}]}"""
+        assertEquals(TranslationOutcome.Ok("老网关译文"), translator.parseResponse(200, noField))
+    }
+
     private companion object {
         const val API_KEY = "sk-test-0123456789abcdef"
         const val MODEL = "gpt-4o-mini"

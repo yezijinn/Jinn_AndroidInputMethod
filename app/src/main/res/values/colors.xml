@@ -30,7 +30,13 @@
     <color name="mic_active">#D93036</color>
     <color name="mic_active_center">#E5484D</color>
     <color name="mic_ring">#D93036</color>
-    <color name="mic_glyph">#FFFFFF</color>
+    <!-- 空闲 / 取消预警态的图标。亮色档的底盘是**近白**的（mic_idle #E3E9F5 / mic_idle_center #CFD8EA），
+         白图标压上去只有 1.2~1.4:1（需 ≥3:1）—— 与同面板编辑键的做法对齐（白键面 kb_key + 深字
+         kb_key_text），亮色档用深色图标。2026-10-02 修复 L-475。 -->
+    <color name="mic_glyph">#1A1F2B</color>
+    <!-- 录音态图标：底盘是红色（mic_active / mic_active_center，两档都是深红），白图标两档都成立
+         （亮 4.7:1 / 暗 3.9:1）⇒ 这是**有意的明暗同值**令牌，见 ThemeColorParityTest 的白名单 -->
+    <color name="mic_glyph_active">#FFFFFF</color>
 
     <!-- 连接状态指示点 -->
     <color name="dot_online">#157347</color>

@@ -45,7 +45,7 @@ class DeepLTranslatorTest {
         assertEquals("/v2/translate", request.url.encodedPath)
         assertEquals("DeepL-Auth-Key $PRO_KEY", request.header("Authorization"))
         assertEquals("你好", json.getJSONArray("text").getString(0))
-        assertEquals("ZH", json.getString("target_lang"))
+        assertEquals("ZH-HANS", json.getString("target_lang"))
         // 不传 source_lang = 交给 DeepL 自动检测
         assertEquals(false, json.has("source_lang"))
     }
@@ -55,7 +55,8 @@ class DeepLTranslatorTest {
         fun to(language: TranslationLanguage): String =
             JSONObject(bodyOf(proTranslator.buildRequest("x", language))).getString("target_lang")
 
-        assertEquals("ZH", to(TranslationLanguage.CHINESE))
+        // 中文用正名 ZH-HANS 而不是别名 ZH（2026-10-02 修复 L-487）：官方已标 ZH 为 deprecated
+        assertEquals("ZH-HANS", to(TranslationLanguage.CHINESE))
         assertEquals("EN", to(TranslationLanguage.ENGLISH))
         assertEquals("JA", to(TranslationLanguage.JAPANESE))
         assertEquals("KO", to(TranslationLanguage.KOREAN))

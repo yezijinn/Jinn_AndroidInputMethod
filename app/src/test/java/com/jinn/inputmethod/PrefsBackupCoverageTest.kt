@@ -73,7 +73,7 @@ class PrefsBackupCoverageTest {
         // 精确 76：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
         // 改键数是正常维护，改完同步这个数（35 个旧键 + 41 个翻译键，含 2 个退役键）。
         // 2026-09-30 起 64 → 76：新增「原文范围」12 键（6 家 × 范围模式 / 字节上限）。
-        assertEquals("提取到的键常量应是 76 个（改键数请同步本断言）", 76, keyConstants.size)
+        assertEquals("提取到的键常量应是 77 个（改键数请同步本断言）", 77, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -167,6 +167,7 @@ class PrefsBackupCoverageTest {
             "KEY_OPENAI_MODELS_CACHE" to "asString(v)",
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
+            "KEY_CANDIDATE_SPACING_DP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
             "KEY_SKIN_LIGHT" to "asString(v)",
             "KEY_SKIN_DARK" to "asString(v)",

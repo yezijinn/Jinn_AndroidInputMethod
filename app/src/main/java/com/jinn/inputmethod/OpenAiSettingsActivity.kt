@@ -67,6 +67,12 @@ class OpenAiSettingsActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 凭据页防**截屏 / 录屏 / 投屏 / 最近任务缩略图**（2026-09-30 用户要求增强防泄露），
@@ -104,8 +110,9 @@ class OpenAiSettingsActivity : Activity() {
         textHint = findViewById(R.id.text_ai_hint)
         findViewById<TextView>(R.id.text_ai_footer).text = TEXT_FOOTER
         findViewById<Button>(R.id.btn_ai_close).apply {
-            text = TEXT_CLOSE
-            contentDescription = TEXT_CLOSE_DESC
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
         }
 
@@ -207,8 +214,14 @@ class OpenAiSettingsActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        themeTicker.start()
         loadValues()
         purgeApiKeyFromClipboardHistory()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
     }
 
     /** 从剪贴板历史删除与本机 API Key 相同的条目（后台线程；见 [purgeApiKeyFromClipboardHistory] 的说明） */
@@ -253,9 +266,9 @@ class OpenAiSettingsActivity : Activity() {
     private fun initTargetSpinner() {
         spinnerTarget.adapter = ArrayAdapter(
             this,
-            android.R.layout.simple_spinner_item,
+            R.layout.item_spinner,
             TARGET_LANGUAGES,
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerTarget.setOnTouchListener { view, event ->
             targetTouched = true
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
@@ -527,8 +540,6 @@ class OpenAiSettingsActivity : Activity() {
 
         // 文案在代码里下发（strings.xml 默认禁改），与本项目其它设置页同做法
         const val TEXT_TITLE = "OpenAI 兼容配置"
-        const val TEXT_CLOSE = "X"
-        const val TEXT_CLOSE_DESC = "关闭"
 
         // 显式保存（2026-10-01 用户要求）：按钮文案 + 结果提示（与翻译设置页同款措辞）
         const val TEXT_SAVE = "保存"

@@ -31,6 +31,10 @@ internal class BaiduTranslator(
     private val saltSource: () -> String = { Random.nextLong().toString() },
 ) : TranslationProvider {
 
+    /** 通用版按输入行对齐返回（`trans_result` 靠顺序对应原文行）⇒ 参与出口的「少给行」对拍（L-483） */
+    override val alignsPerLine: Boolean = true
+
+
     override fun buildRequest(text: String, target: TranslationLanguage): Request {
         val salt = saltSource()
         // 签名用**未编码原文**（官方要求），发送用**自定义全量百分号编码**：
@@ -86,10 +90,13 @@ internal class BaiduTranslator(
             val arr = json?.optJSONArray("trans_result") ?: return null
             val parts = ArrayList<String>(arr.length())
             for (i in 0 until arr.length()) {
-                val dst = jsonText(arr.optJSONObject(i), "dst")
-                if (!dst.isNullOrEmpty()) parts.add(dst)
+                // ⚠ 空 dst 必须**占位保留**（原文该行为空行、或服务端对某行不给译文）：
+                // `trans_result` 是**按输入行对齐**的数组，丢掉一个元素会让其后所有行上移一行，
+                // 译文与原文逐行错位，而界面仍报成功（2026-10-02 修复 L-310；百度通用与大模型两家共用本函数）。
+                parts.add(jsonText(arr.optJSONObject(i), "dst").orEmpty())
             }
-            return parts.joinToString("\n").ifEmpty { null }
+            // 用 ifBlank 而不是 ifEmpty：全是空行时仍要按「无译文」处理（EMPTY），不能把一堆换行当结果
+            return parts.joinToString("\n").ifBlank { null }
         }
 
         const val ENDPOINT = "https://fanyi-api.baidu.com/api/trans/vip/translate"

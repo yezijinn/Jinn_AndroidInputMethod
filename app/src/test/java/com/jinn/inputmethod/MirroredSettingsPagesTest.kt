@@ -35,13 +35,15 @@ class MirroredSettingsPagesTest {
 
     @Test
     fun 两页的关闭键文案与可听键名保持一致() {
-        // 「两页是复刻关系，改动必须同步」是页面里写下的契约，这里只钉最容易分叉的两处：
-        // 关闭键的键面文字与 contentDescription（无障碍读出来的名字）。
-        val fuzzy = codeOf("FuzzyPinyinActivity.kt")
-        val rare = codeOf("RareCharsActivity.kt")
-        assertTrue("模糊音页的关闭键缺少可听键名", "contentDescription = TEXT_CLOSE_DESC" in fuzzy)
-        assertTrue("生僻字页的关闭键缺少可听键名", "contentDescription = TEXT_CLOSE_DESC" in rare)
-        assertTrue("两页关闭键的可听键名必须同名同值", "\"关闭\"" in fuzzy && "\"关闭\"" in rare)
+        // 「两页是复刻关系，改动必须同步」是页面里写下的契约。原先这里钉的是两页各自的
+        // `TEXT_CLOSE` / `TEXT_CLOSE_DESC` 常量；2026-10-02 全仓统一后（BUG.md L-477），
+        // 键面文字与可听名只有**一个**定义（`PageChrome`），于是判据改成「两页都必须走那个唯一定义」
+        // —— 这比原先两条常量各自相等更强（原来两页可以各自漂移成同一个错值）。
+        for (page in listOf("FuzzyPinyinActivity.kt", "RareCharsActivity.kt")) {
+            val src = codeOf(page)
+            assertTrue("$page 的关闭键缺少可听键名", "contentDescription = PageChrome.CLOSE_DESC" in src)
+            assertTrue("$page 的关闭键键面文字必须来自 PageChrome", "text = PageChrome.CLOSE" in src)
+        }
     }
 
     /** 取方法体（从签名到下一个 4 空格缩进的右花括号；两页的方法体都不到这一层嵌套之外） */

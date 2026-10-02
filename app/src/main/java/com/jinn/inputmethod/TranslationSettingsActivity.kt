@@ -16,15 +16,8 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * 翻译设置页（BYOK）：选 Provider、填对应凭据、选目标语言，**改动即落盘**，
- * 并在底部另给一个固定的「保存」按钮 + 结果提示（2026-10-01 用户要求）——
- * 自动保存保证不丢，显式保存让用户**看见**保存确实发生了（回读核对后才报「已保存」）。
- *
- * 六家服务各一个凭据区块，只显示当前选中的那家（另一个用途是防串用凭据）；
- * 每个区块底部一行状态摘要，只写「已配置 / 未配置」，不出现任何凭据字符。
- *
- * 生效方式：IME 每次点击「翻译」都从 [Prefs] 现读配置、用 [Prefs.translationProvider] 现组
- * Provider，所以本页改完**不需要重启输入法**，收起键盘再弹出即生效。
+ * 翻译设置页（BYOK）：配置各服务商凭据与目标语言。
+ * 支持改动即时落盘及手动显式保存；输入法每次请求实时读取 Prefs，修改即刻生效。
  */
 class TranslationSettingsActivity : Activity() {
 
@@ -56,11 +49,11 @@ class TranslationSettingsActivity : Activity() {
     private lateinit var btnTranslateSource: Button
     private lateinit var textTranslateSourceState: TextView
 
-    /** 显式保存入口与结果提示（用户 2026-10-01 要求：改动虽已即时落盘，也要有看得见的「保存」） */
+    // 显式保存按钮与反馈提示
     private lateinit var btnSave: Button
     private lateinit var textSaveHint: TextView
 
-    /** 用户触摸过才允许写配置：初始化 `setSelection` 也会回调 onItemSelected（与设置页各下拉同款闸门） */
+    // 避免 setSelection 初始化误触发写配置
     private var providerTouched = false
     private var targetTouched = false
 
@@ -70,16 +63,15 @@ class TranslationSettingsActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 凭据页防**截屏 / 录屏 / 投屏 / 最近任务缩略图**（防泄露增强）：
-        // 页面里有掩码后的凭据输入框，FLAG_SECURE 让系统级截取通道拿不到内容
-        // （实测：本页前台时 `adb exec-out screencap -p` 输出 **0 字节**）。
-        //
-        // ⚠ **预期行为，别当 BUG 修**：用 ADB / scrcpy 投屏时，本页在电脑上
-        // **整页不可见**，连 Spinner 的下拉弹窗也看不到 —— `PopupWindow` 会继承宿主窗口的 secure 标志，
-        // 走的是同一条被屏蔽的通道；手机本机屏幕上一切正常（含下拉）。
-        // 这是「凭据页不出现在任何镜像通道上」的应有代价；若要恢复投屏可见，等于放弃这条防护。
+        // 凭据防截屏/录屏/镜像（注：投屏环境下本页面及弹出层均会被系统黑屏遮蔽）
         window.setFlags(
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
@@ -102,8 +94,9 @@ class TranslationSettingsActivity : Activity() {
         labelTarget.text = TEXT_TARGET
         findViewById<TextView>(R.id.text_translate_privacy).text = TEXT_PRIVACY
         findViewById<Button>(R.id.btn_translate_settings_close).apply {
-            text = TEXT_CLOSE
-            contentDescription = TEXT_CLOSE_DESC
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
         }
 
@@ -133,7 +126,8 @@ class TranslationSettingsActivity : Activity() {
         textOpenAiState = findViewById(R.id.text_openai_state)
         spinnerProvider = findViewById(R.id.spinner_translate_provider)
         spinnerTarget = findViewById(R.id.spinner_translate_target)
-        // 显式保存（2026-10-01 用户要求）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
+
+        // 显式保存按钮
         btnSave = findViewById(R.id.btn_translate_save)
         btnSave.text = TEXT_SAVE
         btnSave.setOnClickListener { saveAndNotify() }
@@ -166,36 +160,28 @@ class TranslationSettingsActivity : Activity() {
         bindCredentialFields()
     }
 
-    /**
-     * 每次回前台都从 [Prefs] 重载（含备份导入改写过配置的场景）：
-     * 重载前必须先复位触摸闸门，否则 `setSelection` 的回调会把 UI 的选中项写回配置。
-     */
     override fun onStart() {
         super.onStart()
+        themeTicker.start()
         loadValues()
-        // 打开页面时清一次「历史里与本机凭据相同」的条目（2026-09-30）：覆盖「之前复制过 Key
-        // 但没粘进本页」的场景 —— 那条内容仍躺在剪贴板历史里（面板里明文可见、随备份导出）
+        // 清除剪贴板历史中残留的已配置凭据，防止泄露
         purgeClipboardHistory(configuredCredentials())
     }
 
-    /** 本机已配置的全部凭据（**只**用于「不留痕」比对，不参与任何日志与 UI 展示） */
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
+    /** 当前配置的全部凭据列表，仅用于历史清理比对 */
     private fun configuredCredentials(): List<String> = listOf(
         prefs.aliyunAccessKeyId, prefs.aliyunAccessKeySecret,
         prefs.azureApiKey, prefs.baiduAppId, prefs.baiduSecretKey,
         prefs.baiduLlmAppId, prefs.baiduLlmApiKey, prefs.deeplApiKey,
-        // OpenAI 兼容那一家的 Key 同样要抹（2026-10-01 修复 L-245）：它最常来自网页控制台、
-        // 也最常带不可见字符 —— 此前只在 OpenAI 页用精确哈希删过，删不掉
         prefs.openAiApiKey,
     )
 
-    /**
-     * 「凭据不留痕」：用户从密码管理器 / 云控制台复制 API Key 时，
-     * 那条内容会被本应用的剪贴板监听采集入库 —— 库里虽是 Keystore 密文，但**剪贴板面板里明文可见**，
-     * 且随配置备份整体导出。这里把与凭据内容**完全相同**的条目从历史里删掉（精确匹配，零误伤；
-     * 用户手动收藏过的条目不动）。
-     *
-     * 走 [BackgroundIo]：有 DB 写，不能放主线程（本方法会在 onStart / onPause 被调用）。
-     */
+    /** 从剪贴板数据库中异步剔除匹配当前凭据的历史记录（保留已收藏项） */
     private fun purgeClipboardHistory(values: List<String>) {
         val targets = values.filter { it.isNotBlank() }
         if (targets.isEmpty()) {
@@ -205,69 +191,40 @@ class TranslationSettingsActivity : Activity() {
         val appContext = applicationContext
         BackgroundIo.run {
             val db = runCatching { ClipboardDb.get(appContext) }.getOrElse {
-                // 库打不开必须留痕（2026-10-02 修复 L-410）：此前静默 return —— 凭据明文可能
-                // 一直留在剪贴板历史里（面板可见、随备份导出），而诊断包里连「试过清理」都看不到
                 Diagnostics.w(TAG, "凭据不留痕: 库打不开，本轮未清理（${it.javaClass.simpleName}）")
                 return@run
             }
-            // 两段匹配（精确哈希 → 剥不可见字符后相等）与「一次遍历处理全部目标」都在
-            // CredentialTrace 里：本页只管取凭据值（2026-10-01 修复 L-244 / L-245）
             val removed = CredentialTrace.purge(db, targets)
             if (removed > 0) {
                 Diagnostics.i(TAG, "凭据不留痕: 从剪贴板历史删除 $removed 条")
             } else {
-                // 只记数量不记内容：零删除是常态（历史里没有等价条目），但排障时需要知道"跑过"
                 Diagnostics.v(TAG, "凭据不留痕: 本轮无需删除（${targets.size} 个目标）")
             }
         }
     }
 
-    /**
-     * 离开页面即落盘，并显式等一次写入（[Prefs.flush]）。
-     *
-     * 两处真机实测的坑，缺一不可：
-     *  1. 只在 EditText 失焦时保存不够 —— 输入完直接按返回时，焦点丢失**不一定**派发
-     *     `onFocusChange`，凭据会静默丢掉；
-     *  2. 保存必须在 [onPause] 而不是 `onStop` —— 返回设置页时，**下一个页面的 onResume
-     *     早于本页的 onStop**，写在 onStop 里会让设置页的摘要读到保存前的值。
-     */
+    /** 退出前执行凭据落盘；避免在 onStop 保存导致上级页面读取旧值 */
     override fun onPause() {
         super.onPause()
-        // 导入进行中一律不回写（2026-10-02 修复 L-405）：导入线程在写**同一份** Prefs，而这里的
-        // 回写是无条件的（界面全套字段）—— 两条流交错时，界面旧值会把刚导入的值覆盖回去，
-        // 用户看到「导入成功」却发现配置没变（静默退回）。导入结束时会 `recreate()` 设置页，
-        // 界面值本就要重置，跳过不丢任何用户输入。
+        // 配置导入进行中跳过回写，避免界面旧值覆盖导入数据
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过凭据回写（避免覆盖导入结果）")
         } else {
             saveCredentials()
         }
-        // flush 的布尔值就是「有没有真落盘」，不许丢（2026-10-02 修复 L-407）：
-        // 磁盘满时改动只在内存生效，用户重启后静默回退，而日志里一点痕迹都没有
         if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 凭据落盘失败（改动可能回退）")
     }
 
-    /**
-     * 这次下拉选中是否来自**用户**操作。
-     *
-     * `setOnTouchListener` 只覆盖真实触摸 —— 读屏（TalkBack 双击走 `ACTION_CLICK`，不产生
-     * MotionEvent）与外接键盘都不会触发它。此前只认触摸，于是这两类用户切换服务方 / 目标语言时
-     * 配置**从不落盘**，界面却已经切过去了；再叠上 `translateProvider` 在键缺失时按凭据顺序推导，
-     * 就会出现"填了 OpenAI 的 Key 却一直走阿里云"（2026-10-01 审查 L-276）。
-     *
-     * 补的判据是「控件是否持有焦点 / 按下态」：用户操作（触摸、键盘、读屏都一样）之后控件会持有它，
-     * 而程序化 `setSelection` 与 `onRestoreInstanceState` 迟来的恢复不会 —— 那道防穿透的闸门仍然有效。
-     */
+    /** 区分用户交互（触控/无障碍/键盘）与代码初始化回调 */
     private fun isUserDriven(view: View): Boolean = view.isFocused || view.isPressed
 
     private fun initSpinners() {
         spinnerProvider.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item,
+            this, R.layout.item_spinner,
             TranslationProviderId.entries.map { it.label },
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerProvider.setOnTouchListener { view, event ->
             providerTouched = true
-            // ACTION_UP 补 performClick 供无障碍服务识别（与设置页各下拉一致）
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             false
         }
@@ -287,9 +244,9 @@ class TranslationSettingsActivity : Activity() {
         }
 
         spinnerTarget.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item,
+            this, R.layout.item_spinner,
             TranslationLanguage.entries.map { it.label },
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerTarget.setOnTouchListener { view, event ->
             targetTouched = true
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
@@ -310,10 +267,7 @@ class TranslationSettingsActivity : Activity() {
         }
     }
 
-    /**
-     * 凭据输入框失焦即落盘（与剪贴板数量上限同款）：每次键入都写盘没必要，
-     * 且会与 IME 侧的现读抢一次 IO。返回/切页由 [onPause] 兜底。
-     */
+    /** 焦点移出输入框时自动暂存 */
     private fun bindCredentialFields() {
         val save = View.OnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveCredentials() }
         editAliyunKeyId.setOnFocusChangeListener(save)
@@ -327,23 +281,22 @@ class TranslationSettingsActivity : Activity() {
         editDeeplKey.setOnFocusChangeListener(save)
     }
 
-    /** 只回写用户真的改过的字段（2026-10-01 修复 L-247）：见 [CredentialSaveGuard] */
     private val saveGuard = CredentialSaveGuard()
 
-    /** 灌值并记下「载入时的原值」（与 [saveGuard] 配套） */
+    /** 填充输入框并记录初始值，用于变更检测 */
     private fun loadField(field: android.widget.EditText, value: String) {
         field.setText(value)
         saveGuard.remember(field, value)
     }
 
     private fun loadValues() {
-        // 闸门复位必须在本方法的 setSelection 之前：否则重载会把 UI 选中项当成用户选择写回配置
+        // 先复位交互标记，防止触发写入
         providerTouched = false
         targetTouched = false
         spinnerProvider.setSelection(TranslationProviderId.of(prefs.translateProvider).ordinal)
         spinnerTarget.setSelection(TranslationLanguage.of(prefs.translateTarget).ordinal)
-        // 灌值的同时记下「载入时的原值」：保存时只回写真的改过的字段 —— 凭据解密失败时读出来是
-        // 空串，无条件回写等于把还躺在 prefs 里的密文删掉（2026-10-01 修复 L-247）
+
+        // 仅在字段被真实修改后回写，避免解密失败时的空值覆盖已有密文
         saveGuard.reset()
         loadField(editAliyunKeyId, prefs.aliyunAccessKeyId)
         loadField(editAliyunKeySecret, prefs.aliyunAccessKeySecret)
@@ -358,13 +311,7 @@ class TranslationSettingsActivity : Activity() {
         refreshState()
     }
 
-    /**
-     * 只显示与当前 Provider 相关的凭据区块（避免用户填错一组），并同步「目标语言」的可用性。
-     *
-     * **OpenAI 兼容的目标语言是它自己那一套**（在配置页里选，12 项预设 + 自定义输入）——本页这个下拉对它
-     * 无效，因此选中它时禁用下拉、并把原因写进标签：否则用户改完以为生效，实际 IME 用的是
-     * 配置页里的值（2026-09-30 审查发现）。
-     */
+    /** 切换服务商卡片展示；OpenAI 目标语言由其专用配置页控制，此处置灰 */
     private fun applyProviderVisibility() {
         val picked = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
             ?: TranslationProviderId.DEFAULT
@@ -380,23 +327,14 @@ class TranslationSettingsActivity : Activity() {
         refreshSourceState(picked)
     }
 
-    /**
-     * 刷新「原文范围」入口的摘要：显示**当前下拉选中那家**正在用的范围与字节上限。
-     *
-     * 读的是入参而不是 [Prefs.translateProvider]：切换服务方的回调里，触摸闸门
-     * （[providerTouched]）没被碰过时不会写配置，摘要就会与用户眼前的选中项不一致。
-     */
+    /** 根据当前选中的服务商显示其原文捕获范围与字节上限 */
     private fun refreshSourceState(picked: TranslationProviderId) {
         val scope = TranslationScope.of(prefs.translateScopeOf(picked))
         textTranslateSourceState.text =
             "当前：${scope.label} · 上限 ${prefs.translateMaxBytesOf(picked)} 字节"
     }
 
-    /** 凭据落盘；日志只记长度不记内容（日志会随「导出诊断包」整体外发） */
-    /**
-     * 只回写**用户真的改过**的字段（[CredentialSaveGuard]，2026-10-01 修复 L-247）：
-     * 凭据解密失败时读出来是空串，无条件回写等于「打开又离开」就把密文删了。
-     */
+    /** 保存修改过的凭据，日志仅输出长度 */
     private fun saveCredentials() {
         if (saveGuard.changed(editAliyunKeyId)) prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
         if (saveGuard.changed(editAliyunKeySecret)) {
@@ -409,7 +347,7 @@ class TranslationSettingsActivity : Activity() {
         if (saveGuard.changed(editBaiduLlmAppId)) prefs.baiduLlmAppId = editBaiduLlmAppId.text.toString()
         if (saveGuard.changed(editBaiduLlmKey)) prefs.baiduLlmApiKey = editBaiduLlmKey.text.toString()
         if (saveGuard.changed(editDeeplKey)) prefs.deeplApiKey = editDeeplKey.text.toString()
-        // OpenAI 兼容的一整组配置由 OpenAiSettingsActivity 落盘，这里只记本页那几家的长度
+
         Diagnostics.i(
             TAG,
             "翻译凭据已保存（长度）: aliyunId=${prefs.aliyunAccessKeyId.length} " +
@@ -420,43 +358,27 @@ class TranslationSettingsActivity : Activity() {
                 "deeplKey=${prefs.deeplApiKey.length}",
         )
         refreshState()
-        // 刚保存的凭据同样从剪贴板历史里清掉（用户的真实路径就是「复制 → 粘贴到本页 → 保存」）
         purgeClipboardHistory(configuredCredentials())
     }
 
-    /**
-     * 显式保存（用户 2026-10-01 要求）：下拉 + 全部字段写一遍 → **同步落盘** → 回读核对 → 明确提示。
-     *
-     * 「确保真的保存了」落在三处：
-     *  ① [Prefs.flush] 走的是 `commit()`（同步落盘、返回是否成功），不是异步 `apply()`；
-     *  ② 凭据按 [CredentialSaveGuard] 语义**回读核对**（与写入同一个 `cleanCredential()` 口径），
-     *     不一致就不报「已保存」；
-     *  ③ 核对后把持久化值**回填界面**（[loadValues]）—— 用户看到的就是本机真实值，
-     *     「界面显示」与「实际生效」不会再分叉。
-     *
-     * 下拉的当前选择一并写：读屏 / 外接键盘不产生触摸事件，`isUserDriven` 闸门可能放过写入
-     * （2026-10-01 审查 L-276）；这里写的是界面上显示的那一项，幂等。
-     */
+    /** 执行同步落盘并回读校验，展示确认状态 */
     private fun saveAndNotify() {
         val pickedProvider = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
         if (pickedProvider != null) prefs.translateProvider = pickedProvider.id
         val pickedTarget = TranslationLanguage.entries.getOrNull(spinnerTarget.selectedItemPosition)
-        // OpenAI 兼容的目标语言在它自己的配置页里（本页下拉对它无效），不写
         if (pickedTarget != null && pickedProvider != TranslationProviderId.OPENAI) {
             prefs.translateTarget = pickedTarget.name
         }
         saveCredentials()
         val flushed = prefs.flush()
         val failed = mismatchedCredentials()
-        // 加密不可用（锁屏）的凭据只在内存、重启即失：回读核对命中同一个缓存 ⇒ 必然"相等"，
-        // 必须由写侧记账才能如实报告（2026-10-02 修复 L-355）
         val unpersisted = prefs.unpersistedCredentialKeys()
-        // 回填：把「本机真实值」显示出来（含后端归一后的结果，如超时被钳位）
+
+        // 重新载入持久化后的值刷新界面
         loadValues()
         refreshState()
         val ok = failed.isEmpty() && flushed && unpersisted.isEmpty()
-        // 三态提示（2026-10-02 修复 L-420）：原来 `!flushed` 且字段全一致时会显示**空的**
-        // 「未写入的字段：」——用户拿不到任何可执行信息
+
         textSaveHint.text = when {
             !flushed -> TEXT_SAVE_DISK_FAILED
             unpersisted.isNotEmpty() -> TEXT_SAVE_NOT_PERSISTED
@@ -471,12 +393,7 @@ class TranslationSettingsActivity : Activity() {
         }
     }
 
-    /**
-     * 回读核对：只核**本轮真的写过**的凭据（[CredentialSaveGuard] 语义）。
-     *
-     * 没改过的字段本轮没写，拿它们去比会把「载入时解密失败的空串」误报成保存失败；
-     * 非凭据项（下拉 / 原文范围）各有归一，也不在这里重复比对。
-     */
+    /** 校验本次修改过的字段在落盘后与预期值是否一致 */
     private fun mismatchedCredentials(): List<String> {
         val pairs = listOf(
             Triple("阿里云 AccessKey ID", editAliyunKeyId, prefs.aliyunAccessKeyId),
@@ -491,8 +408,6 @@ class TranslationSettingsActivity : Activity() {
         )
         return pairs.filter { (_, field, saved) ->
             if (!saveGuard.changed(field)) return@filter false
-            // 区域在写侧被归一（L-347）：核对必须走**同一个**函数，否则「East Asia → eastasia」
-            // 这种正常归一会被报成「未写入的字段」（L-365 的同族失效模式）
             val expected = if (field.id == R.id.edit_azure_region) {
                 normalizeAzureRegion(field.text.toString())
             } else {
@@ -506,14 +421,7 @@ class TranslationSettingsActivity : Activity() {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 
-    /**
-     * 状态摘要：只说是否已配置，不回显任何凭据字符。
-     *
-     * 判据必须与 `TranslationClient.providerOf` **逐字一致**：凭据先走 `cleanCredential()`
-     * （剥零宽 / BOM / NBSP 再 trim）再判空。用 `isNotBlank()` 时，一个纯零宽字符的「假凭据」
-     * 会让本页显示「已配置」而点翻译提示「未配置」（2026-10-01 复审 L-232 —— 上一轮只改了
-     * `Prefs.hasCredentialFor` 这条内部路径，用户看得见的摘要漏在外面）。
-     */
+    /** 刷新凭据状态文本，判空逻辑与 TranslationClient.providerOf 保持一致 */
     private fun refreshState() {
         textAliyunState.text = stateText(
             prefs.aliyunAccessKeyId.cleanCredential().isNotEmpty() &&
@@ -527,10 +435,7 @@ class TranslationSettingsActivity : Activity() {
             prefs.baiduLlmAppId.cleanCredential().isNotEmpty() && prefs.baiduLlmApiKey.cleanCredential().isNotEmpty()
         )
         textDeeplState.text = stateText(prefs.deeplApiKey.cleanCredential().isNotEmpty())
-        // OpenAI 兼容：给「配置名 · 模型」这样一眼能认的摘要（Key / Prompt / JSON 一律不回显）。
-        // 判据必须与 Prefs.translationProvider() 一致（**含 Base URL 可解析**）：只看 Key 与 Model 时，
-        // Base URL 乱填会出现「本页说已配置、设置页说未配置、IME 点翻译说未配置」的三方矛盾
-        // （2026-09-30 审查发现）。
+
         val openAiReady = prefs.openAiApiKey.cleanCredential().isNotEmpty() &&
             prefs.openAiModel.cleanCredential().isNotEmpty() &&
             OpenAiTranslator.joinUrl(prefs.openAiBaseUrl, prefs.openAiChatPath) != null
@@ -547,12 +452,7 @@ class TranslationSettingsActivity : Activity() {
     private companion object {
         const val TAG = "TranslationSettings"
 
-        // 文案在代码里下发：strings.xml 默认禁改，与本页模板（模糊音页）同做法
         const val TEXT_TITLE = "翻译设置"
-        const val TEXT_CLOSE = "X"
-
-        /** 关闭键的可听键名（与模糊音页/生僻字页同值，三页是复刻关系） */
-        const val TEXT_CLOSE_DESC = "关闭"
         const val TEXT_DESC = "使用你自带的 API 凭据翻译（BYOK）：输入法不内置任何共享 Key，凭据只存本机。\n" +
             "怎么用：点键盘功能面板的「翻译」—— 选中了内容就翻选中的那一段、译文原地替换；" +
             "没选中就按「翻译原文范围」取光标前后的文本，译文另起一行追加、原文一个字不动。\n" +
@@ -581,8 +481,6 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_OPENAI_UNCONFIGURED = "未配置：点上面的按钮填 Base URL / API Key / 模型"
         const val TEXT_SOURCE_CONFIG = "翻译原文范围（每家服务方独立）"
         const val TEXT_TARGET = "目标语言"
-
-        /** OpenAI 兼容选中时的标签：它的目标语言在配置页里（本页下拉对它无效，见 applyProviderVisibility） */
         const val TEXT_TARGET_OPENAI = "目标语言（OpenAI 兼容在配置页里设置）"
         const val TEXT_PRIVACY = "上传的是哪一段：选中模式下只有你选中的那一段；" +
             "没选中时按「翻译原文范围」取（默认只取光标所在这一行里光标前面的内容）。\n" +
@@ -591,17 +489,12 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_CONFIGURED = "已配置"
         const val TEXT_UNCONFIGURED = "未配置：还没填凭据"
 
-        // 显式保存（2026-10-01 用户要求）：按钮文案 + 结果提示
         const val TEXT_SAVE = "保存"
         const val TEXT_SAVE_IDLE = "点「保存」立即写入本机（改动也会在离开页面时自动保存）"
         const val TEXT_SAVED = "已保存到本机"
         const val TEXT_SAVE_FAILED = "保存未完成，请重试"
         const val TEXT_SAVE_MISMATCH = "未写入的字段："
-
-        /** 磁盘写失败（L-420 三态之一：此前这种情况会显示**空的**「未写入的字段：」） */
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
-
-        /** 加密不可用（锁屏）时凭据只在内存、重启即失 —— 必须如实说（L-355） */
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
     }
 }

@@ -4,12 +4,8 @@
      里下发（strings.xml 默认禁改），布局里只用 `labelFor` 关联标签与控件（无障碍 + lint 基线）。
      落盘时机：下拉 / 单选即时写，数字输入框在 onPause 写（见该页 onPause 的说明） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/bg_aurora"
-    android:fitsSystemWindows="true"
-    android:orientation="vertical"
-    android:padding="12dp">
+    style="@style/PageRoot"
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -18,33 +14,20 @@
         android:orientation="horizontal">
 
         <TextView
+            style="@style/PageTitle"
             android:id="@+id/text_source_title"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="@color/text_primary"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:layout_height="wrap_content" />
 
         <Button
-            android:id="@+id/btn_source_close"
-            style="@style/SettingsButton"
-            android:layout_width="40dp"
-            android:layout_height="32dp"
-            android:minWidth="0dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:textSize="14sp" />
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_source_close" />
     </LinearLayout>
 
     <TextView
+        style="@style/PageDesc"
         android:id="@+id/text_source_desc"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="4dp"
-        android:paddingBottom="8dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        android:layout_height="wrap_content" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -58,108 +41,104 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/label_source_provider"
-                style="@style/SettingsLabel"
-                android:labelFor="@id/spinner_source_provider" />
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_source_provider"
+                    android:labelFor="@id/spinner_source_provider"/>
 
-            <Spinner
-                android:id="@+id/spinner_source_provider"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                <Spinner
+                    style="@style/SettingsField"
+                    android:id="@+id/spinner_source_provider"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="2dp"
+                    android:spinnerMode="dropdown"/>
 
-            <TextView
-                android:id="@+id/label_source_scope"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="14dp" />
+            </LinearLayout>
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_source_scope"
+                    android:layout_marginTop="6dp"/>
 
-            <RadioGroup
-                android:id="@+id/group_source_scope"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <RadioButton
-                    android:id="@+id/radio_scope_line_before"
+                <RadioGroup
+                    android:id="@+id/group_source_scope"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:orientation="vertical">
 
-                <RadioButton
-                    android:id="@+id/radio_scope_line_full"
+                    <RadioButton
+                        android:id="@+id/radio_scope_line_before"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <RadioButton
+                        android:id="@+id/radio_scope_line_full"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <RadioButton
+                        android:id="@+id/radio_scope_before_all"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <RadioButton
+                        android:id="@+id/radio_scope_all"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+                </RadioGroup>
+
+                <TextView
+                    android:id="@+id/text_source_scope_detail"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
 
-                <RadioButton
-                    android:id="@+id/radio_scope_before_all"
+            </LinearLayout>
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_source_max_bytes"
+                    android:layout_marginTop="6dp"
+                    android:labelFor="@id/edit_source_max_bytes"/>
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_source_max_bytes"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="2dp"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:maxLength="7"
+                    android:saveEnabled="false"/>
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_source_official"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:paddingTop="4dp"/>
 
-                <RadioButton
-                    android:id="@+id/radio_scope_all"
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_source_truncate"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
-            </RadioGroup>
-
-            <TextView
-                android:id="@+id/text_source_scope_detail"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:paddingTop="2dp"
-                android:paddingEnd="8dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/label_source_max_bytes"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="14dp"
-                android:labelFor="@id/edit_source_max_bytes" />
-
-            <EditText
-                android:id="@+id/edit_source_max_bytes"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="number"
-                android:maxLength="7"
-                android:saveEnabled="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/text_source_official"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="4dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/text_source_truncate"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:paddingBottom="12dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                    android:paddingTop="8dp"
+                    android:paddingBottom="12dp"/>
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

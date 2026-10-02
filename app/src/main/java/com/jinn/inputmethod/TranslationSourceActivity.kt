@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
@@ -55,6 +56,27 @@ class TranslationSourceActivity : Activity() {
      */
     private var loading = false
 
+    /**
+     * 明暗跟随：按设置里选的模式（跟随系统 / 亮白 / 暗黑 / 定时）换掉本页 Context 的 uiMode，
+     * 于是布局里的 `@color/` 系列令牌（含 [R.drawable.bg_aurora] 引用的极光三色）解析到对应那套色板。
+     *
+     * 必须在 `attachBaseContext` 里换 —— 放到 `onCreate` 再 `setTheme` 会先按系统配置解析一帧、
+     * 再换色，那就是「打开页面闪一下」的来源（同 `SettingsActivity` 的说明）。
+     *
+     * 本页此前是全仓十个页面里**唯一漏了这一处**的（2026-10-02 修复台账 L-392）：其余九个都在
+     * `attachBaseContext` 里调 [ThemeManager.themedContext]，只有它直接吃系统深浅 ——
+     * 于是在「强制亮白」的手机（系统本身是深色）上，本页整页仍是暗色，与相邻的翻译设置页割裂。
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
+    }
+
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 与两个凭据页同款防护：防截屏 / 录屏 / 投屏 / 最近任务缩略图。
@@ -74,8 +96,9 @@ class TranslationSourceActivity : Activity() {
         findViewById<TextView>(R.id.label_source_max_bytes).text = TEXT_MAX_BYTES
         findViewById<TextView>(R.id.text_source_truncate).text = TEXT_TRUNCATE
         findViewById<Button>(R.id.btn_source_close).apply {
-            text = TEXT_CLOSE
-            contentDescription = TEXT_CLOSE_DESC
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
         }
 
@@ -95,9 +118,9 @@ class TranslationSourceActivity : Activity() {
 
         loading = true
         spinnerProvider.adapter = ArrayAdapter(
-            this, android.R.layout.simple_spinner_item,
+            this, R.layout.item_spinner,
             TranslationProviderId.entries.map { it.label },
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerProvider.setOnTouchListener { view, event ->
             providerTouched = true
             // ACTION_UP 补 performClick 供无障碍服务识别（与翻译设置页同款）
@@ -144,6 +167,7 @@ class TranslationSourceActivity : Activity() {
      */
     override fun onStart() {
         super.onStart()
+        themeTicker.start()
         if (!providerTouched) {
             currentId = TranslationProviderId.of(prefs.translateProvider)
             loading = true
@@ -151,6 +175,11 @@ class TranslationSourceActivity : Activity() {
             loading = false
         }
         loadValues()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
     }
 
     /** 离开页面即落盘并等一次写入（理由见类注释；[Prefs.flush] 与凭据页同款） */
@@ -233,8 +262,6 @@ class TranslationSourceActivity : Activity() {
             "舍弃后面的。\n译文插在光标处（通常即原文之后）并另起一行；原文一个字都不动。" +
             "\n选中模式：原文就是选中的那一段，译文原地替换它（不补换行、不改动选区以外的内容）；" +
             "选中内容超出上限时**直接拒绝**，不会只替换一半。"
-        const val TEXT_CLOSE = "关闭"
-        const val TEXT_CLOSE_DESC = "关闭翻译原文范围设置"
 
         const val NOTE_ALIYUN = "阿里云官方：单次 5000 字符（超出报错 10008）。UTF-8 中文 3 字节/字，" +
             "默认 5000 字节是保守值（约 1600 汉字）；主要翻中文可改为 15000（≈5000 汉字）。" +

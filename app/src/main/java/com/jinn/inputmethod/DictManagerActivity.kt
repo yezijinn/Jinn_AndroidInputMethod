@@ -52,6 +52,22 @@ class DictManagerActivity : Activity() {
         get() = activeDownload
         set(value) { activeDownload = value }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
+    override fun onStart() {
+        super.onStart()
+        themeTicker.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -63,7 +79,7 @@ class DictManagerActivity : Activity() {
         root.addView(buildTopBar())
 
         // 提示：两句各占一行，避免被系统折行
-        root.addView(hint(getString(R.string.dict_manager_hint_line1)), matchWrap(top = 10))
+        root.addView(hint(getString(R.string.dict_manager_hint_line1)), matchWrap(top = 4))
         root.addView(hint(getString(R.string.dict_manager_hint_line2)), matchWrap())
 
         // 动态状态行：初始隐藏，下载/删除时才出现。单行 + 省略号，
@@ -163,11 +179,11 @@ class DictManagerActivity : Activity() {
     private fun refreshList() {
         listHost.removeAllViews()
         for (dict in OptionalDicts.ALL) {
-            listHost.addView(buildCard(dict), matchWrap(bottom = 10))
+            listHost.addView(buildCard(dict), matchWrap(bottom = 2))
         }
         // 清单外的包（旧版遗留）：只列出来给个删除入口，见 OptionalDicts.unknownPackages
         for (fileName in unknownPackagesInDir()) {
-            listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 10))
+            listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 2))
         }
     }
 
@@ -194,8 +210,8 @@ class DictManagerActivity : Activity() {
         val file = dictFile(fileName)
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(getColor(R.color.surface_hi), 10)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
+            // 外观与 XML 侧的 @style/SettingsCard 同款（原先自造 surface_hi + 10dp 圆角、无描边）
+            PageStyle.dressAsCard(this)
         }
         card.addView(line(legacyName(fileName), getColor(R.color.text_primary), 16f, bold = true))
         card.addView(line(TEXT_LEGACY_DESC, getColor(R.color.text_secondary), 13f, top = 4))
@@ -275,8 +291,8 @@ class DictManagerActivity : Activity() {
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(getColor(R.color.surface_hi), 10)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
+            // 外观与 XML 侧的 @style/SettingsCard 同款（原先自造 surface_hi + 10dp 圆角、无描边）
+            PageStyle.dressAsCard(this)
         }
 
         // 词库名

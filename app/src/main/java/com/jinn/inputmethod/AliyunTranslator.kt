@@ -67,7 +67,11 @@ internal class AliyunTranslator(
             httpVerb = HTTP_VERB,
             accept = ACCEPT,
             contentMd5 = contentMd5,
-            contentType = CONTENT_TYPE,
+            // ⚠ 参与签名的 Content-Type 取自 **body 实际用的那个 MediaType**（单一真相，2026-10-02 修复 L-486）。
+            // 实发头由 OkHttp 的 BridgeInterceptor 用 `body.contentType().toString()` 决定，签名串若另用
+            // 一个常量，两者只是**恰好同源**（同值不同源）；将来只改一处就会出现 `SignatureDoesNotMatch`，
+            // 而它走 404 通道被归成 AUTH —— 用户反复核对正确的 AK/SK 也无效。
+            contentType = JSON_MEDIA_TYPE.toString(),
             date = date,
             nonce = nonce,
             path = ENDPOINT_URL.encodedPath,
@@ -75,11 +79,11 @@ internal class AliyunTranslator(
         return Request.Builder()
             .url(ENDPOINT_URL)
             .post(bodyBytes.toRequestBody(JSON_MEDIA_TYPE))
-            // ⚠ Content-Type 必须**显式**发出、且与签名同源（2026-09-30 审查发现）：
-            // 只给 body 的 MediaType 时，OkHttp 会把它归一成「; charset=utf-8」（**带空格**），
-            // 与服务端按收到的头原值重建的 stringToSign 差一个空格 ⇒ SignatureDoesNotMatch，
-            // 而该错误走 404/Code 通道被归成 AUTH —— 用户会反复检查明明是对的凭据。
-            .header("Content-Type", CONTENT_TYPE)
+            // ⚠ 这里**不再**设 `Content-Type` 头（2026-10-02 修复 L-486）：实发头由 OkHttp 的
+            // BridgeInterceptor 用 `body.contentType().toString()` 决定，显式设的同名头会被它覆盖 ⇒
+            // 那一行是死代码，还会与 `sign()` 上方的注释互相矛盾（误导后人以为「必须显式设头」）。
+            // 现在签名串取自同一个 `JSON_MEDIA_TYPE.toString()`（单一真相）：要改 Content-Type
+            // 只改 `CONTENT_TYPE` 一处，两边再没有漂移的机会。
             .header("Accept", ACCEPT)
             .header("Content-MD5", contentMd5)
             .header("Date", date)

@@ -12,7 +12,7 @@ APK 约 2.8MB，不含离线语音数据。
 ## 功能
 
 **拼音键盘（26 键）**
-- 全拼 / 双拼 / 英文；双拼 7 套（自然码、小鹤、搜狗、微软、紫光、智能ABC、加加），键面自动提示韵母与 zh/ch/sh（设置页「键盘内嵌韵母」可关，关闭后键面只显示字母）；设置页「拼音输入方案」切换，选中即全局生效
+- 全拼 / 双拼 / 英文；双拼 7 套（自然码、小鹤、搜狗、微软、紫光、智能ABC、加加），键面自动提示韵母与 zh/ch/sh（设置页「键盘内显韵母」可关，关闭后键面只显示字母）；设置页「拼音输入方案」切换，选中即全局生效
 - 字符集：默认收录常用字 5,613 个（囧 / 淼 / 喆 / 昇 这类人名地名用字直接打得出）；设置页「加更多生僻字」进页可按档放开二级（837 字）与三级（2,923 字）生僻字，档 3 需先开档 2，勾选即时生效
 - 「只使用繁体字」（设置页）：候选按简繁对照表替换为繁体上屏（如 爱 → 愛、碍 → 礙），开关即时生效；学习记录仍按简体保存，繁简两种模式共享
 - 不完整拼音补全（`ni m` / `nim` →「你们」）、词库约束分词（`xuni` → `xu+ni` 虚拟）
@@ -90,8 +90,10 @@ python build_apk.py --clean      # clean 后全新编译
 ./gradlew assembleRelease        # 无 JINN_KEYSTORE_* 时产出未签名包
 ```
 
-**签名**：仓库不含密钥，禁止把密钥库 / 口令文件放进仓库目录。在仓库外生成后由环境变量注入：
-`JINN_KEYSTORE_ROOT='<凭据目录>' python build_apk.py`，或给 Gradle 传
+**签名**：仓库不含密钥，禁止把密钥库 / 口令文件放进仓库目录。在仓库外生成后由环境变量注入
+（cmd 用 `set JINN_KEYSTORE_ROOT=<凭据目录>`，PowerShell 用 `$env:JINN_KEYSTORE_ROOT="<凭据目录>"`），
+再运行 `python build_apk.py`。不设该变量时，脚本按「共享工作区 → `%USERPROFILE%\JinnKeyStores`」
+自动找含本包密钥的目录。也可以绕过脚本直接给 Gradle 传
 `JINN_KEYSTORE_FILE` / `JINN_KEYSTORE_PASSWORD` / `JINN_KEY_ALIAS` / `JINN_KEY_PASSWORD`。
 
 签名顺序不可调换：构建 → 去 META-INF → `zipalign -p 4` → `apksigner` → 校验

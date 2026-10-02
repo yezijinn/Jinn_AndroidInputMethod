@@ -30,7 +30,13 @@ class MicButton @JvmOverloads constructor(
     private val colorActive = context.getColor(R.color.mic_active)
     private val colorActiveCenter = context.getColor(R.color.mic_active_center)
     private val colorRing = context.getColor(R.color.mic_ring)
+    /**
+     * 图标分两枚：空闲态底盘是*跟主题走的*（亮色近白 / 暗色深灰），录音态底盘是红色（两档都深）。
+     * 只给一枚令牌就会在一档里与自己的底盘撞车 —— 亮色档白图标压近白底盘只有 1.2~1.4:1
+     * （2026-10-02 修复 L-475）。
+     */
     private val colorGlyph = context.getColor(R.color.mic_glyph)
+    private val colorGlyphActive = context.getColor(R.color.mic_glyph_active)
 
     /** 光圈最大扩散半径 */
     private val ringSpan = RING_SPAN_DP * resources.displayMetrics.density
@@ -112,7 +118,8 @@ class MicButton @JvmOverloads constructor(
                 centerX.toInt() + half,
                 centerY.toInt() + half,
             )
-            icon.setTint(colorGlyph)
+            // 录音态底盘转到红档（cancelArmed 会让底盘退回空闲色）⇒ 图标跟着换那一枚
+            icon.setTint(if (recording && !cancelArmed) colorGlyphActive else colorGlyph)
             icon.alpha = if (cancelArmed) CANCEL_ALPHA else 255
             icon.draw(canvas)
         }

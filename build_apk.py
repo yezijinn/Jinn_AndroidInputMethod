@@ -392,7 +392,9 @@ def main():
     # ⚠ 只按**精确模式**删，绝不用 `*.APK` 这类通配 —— Windows / PowerShell 的通配
     # 大小写不敏感，历史上正是它把发布包一起删掉了（见 `.workbuddy/memory` 2026-09-23 的记录）。
     # 时间戳模式要求「包名 + 恰好 14 位数字 + .APK」，因此永远匹配不到上面的 com.jinn.inputmethod.apk。
-    ts_pattern = re.compile(rf"{re.escape(APPLICATION_ID)}\.\d{{14}}\.APK\Z")
+    # 大小写不敏感是必须的：glob 在 Windows 上本来就不区分大小写，
+    # 正则若区分，小写扩展名的遗留件（…20261002090827.apk）会被 glob 选中却判不中 ⇒ 静默漏清（L-469）。
+    ts_pattern = re.compile(rf"{re.escape(APPLICATION_ID)}\.\d{{14}}\.APK\Z", re.IGNORECASE)
     stale = [ROOT / "jinn-release.apk"]
     stale += [path for path in ROOT.glob(f"{APPLICATION_ID}.*.APK") if ts_pattern.match(path.name)]
     for old in stale:

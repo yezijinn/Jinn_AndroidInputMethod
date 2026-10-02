@@ -145,6 +145,20 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
             )
         }
         if (json == null || code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
+        // 输出被上限截断时**不能算成功**（2026-10-02 修复 L-484）：
+        // `finish_reason == "length"` 表示模型输出被 `max_tokens`（或网关自带上限）砍断 ——
+        // 拿它上屏等于把**半句话**写进用户正文，且毫无提示（用户只会以为模型翻得烂）。
+        // 归 PARAM 而不是 SERVER：这是「调用方参数（输出上限）太小」，不是服务端故障。
+        val finishReason = json.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optString("finish_reason")
+            .orEmpty()
+        if (finishReason.equals("length", ignoreCase = true)) {
+            Diagnostics.w("OpenAiTranslator", "翻译: 模型输出被上限截断（finish_reason=length），不当作成功")
+            // 用专有的 TRUNCATED 而不是 PARAM：后者让用户去核对「语言方向 / 模型名 / 路径 /
+            // 原文长度」，而真因是**输出上限** —— 按 PARAM 的提示核对必然无果（2026-10-02 第二轮审查）
+            return TranslationOutcome.Fail(TranslationError.TRUNCATED)
+        }
         val text = extractByPath(json, config.responsePath)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)

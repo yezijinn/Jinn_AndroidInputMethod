@@ -183,21 +183,21 @@
     <string name="key_transparency_title">透明</string>
 
     <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
-    <string name="symbol_order_title">符号分组顺序</string>
-    <string name="symbol_order_desc">改变符号面板分组的排序，收起键盘即生效</string>
     <string name="symbol_order_move_up">↑</string>
     <string name="symbol_order_move_down">↓</string>
-    <string name="symbol_order_reset">恢复默认顺序</string>
-    <string name="symbol_order_close">✕</string>
+        <!-- 以下两条同时是 AndroidManifest 里 activity 的 android:label（任务切换器显示的名字）——
+        与 app_name / settings_title 同属「必须留在 strings.xml」的例外 -->
+    <string name="symbol_order_title">符号分组顺序</string>
+    <string name="favorite_title">符号收藏编辑</string>
+<string name="symbol_order_close">✕</string>
 
     <!-- 收藏分组：编辑页与设置页入口 -->
-    <string name="favorite_title">符号收藏编辑</string>
     <string name="favorite_entry_title">符号的自定义</string>
-    <string name="favorite_desc">增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。</string>
     <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
-    <string name="favorite_add">＋ 添加符号</string>
-    <string name="favorite_close">✕</string>
     <string name="favorite_delete">移除</string>
+    <!-- 角标上显示的字符（2026-10-02 用户反馈后加）：原实现直接把「移除」当显示文本塞进 22dp 角标，
+         两个汉字在 Button 默认内边距里被挤成「只剩蓝底」。显示用符号、无障碍仍读「移除」（见 favorite_delete）。 -->
+    <string name="favorite_delete_mark" translatable="false">×</string>
     <string name="favorite_dialog_title">添加符号</string>
     <string name="favorite_dialog_hint">输入或粘贴符号（1~8 个字符）</string>
     <string name="favorite_exists">该符号已在收藏中</string>

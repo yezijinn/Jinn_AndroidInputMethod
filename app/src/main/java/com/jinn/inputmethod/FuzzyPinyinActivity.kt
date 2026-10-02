@@ -26,15 +26,21 @@ class FuzzyPinyinActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_fuzzy_pinyin)
         findViewById<TextView>(R.id.text_fuzzy_title).text = TEXT_TITLE
         findViewById<TextView>(R.id.text_fuzzy_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_fuzzy_close).apply {
-            text = TEXT_CLOSE
-            // 与生僻字页同款：键面「X」要被读成「关闭」，两页是复刻关系，改动必须同步
-            contentDescription = TEXT_CLOSE_DESC
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
         }
         findViewById<Button>(R.id.btn_fuzzy_all).apply {
@@ -56,11 +62,16 @@ class FuzzyPinyinActivity : Activity() {
      */
     override fun onStart() {
         super.onStart()
+        themeTicker.start()
         renderRows()
     }
 
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
     private fun renderRows() {
-        val density = resources.displayMetrics.density
         val mask = Prefs(this).fuzzyPinyinMask
         groupList.removeAllViews()
         for (group in FuzzyPinyin.GROUPS) {
@@ -69,13 +80,14 @@ class FuzzyPinyinActivity : Activity() {
                 isChecked = mask and group.bit != 0
                 textSize = 14f
                 setTextColor(getColor(R.color.text_primary))
-                setPadding(0, (3 * density).toInt(), 0, (3 * density).toInt())
                 // 掩码每次都从 Prefs 现读：不缓存快照，避免与批量写盘/备份导入抢写
                 setOnCheckedChangeListener { _, checked ->
                     if (!bulk) applyMask(if (checked) currentMask() or group.bit else currentMask() and group.bit.inv())
                 }
             }
-            groupList.addView(check)
+            // 外观走共享卡片（一行 = 一张卡片）。⚠ 这里**不能**给勾选框套一层容器：
+            // setAll() 是按 groupList 的直接子元素遍历并强转 CheckBox 的
+            PageStyle.addCard(groupList, check)
         }
     }
 
@@ -102,10 +114,6 @@ class FuzzyPinyinActivity : Activity() {
         const val TEXT_TITLE = "模糊音容错"
         const val TEXT_DESC = "按自己的口音勾选不分的音。\n勾选后，某个音打不出想要的字时，\n" +
             "会把该音的其他读法作为补充候选加上\n（精确候选一个不动、不被替换）。"
-        const val TEXT_CLOSE = "X"
-
-        /** 关闭键的可听键名（与生僻字页同名同值，两页复刻） */
-        const val TEXT_CLOSE_DESC = "关闭"
         const val TEXT_ALL = "全开"
         const val TEXT_NONE = "全关"
     }

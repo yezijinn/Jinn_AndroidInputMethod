@@ -51,6 +51,26 @@ class InputFieldPrivacyTest {
     }
 
     @Test
+    fun 学习侧对口令变体宁可多拦翻译侧不收() {
+        // 学习侧收「只报变体位 / 变体位配到别的类」的畸形声明：误拦的代价只是这个词没记住
+        //（2026-10-02 修复 L-466，此前复用翻译侧判据时把这几种放走了）
+        assertTrue(InputFieldPrivacy.suppressLearning(EditorInfo.TYPE_TEXT_VARIATION_PASSWORD))
+        assertTrue(
+            InputFieldPrivacy.suppressLearning(
+                EditorInfo.TYPE_CLASS_NUMBER or EditorInfo.TYPE_TEXT_VARIATION_PASSWORD
+            )
+        )
+        // 但地址栏（0x11）与日期框（0x14）两边都不许拦 —— L-454 的修复不能被这层兜底收回来
+        assertFalse(InputFieldPrivacy.suppressLearning(text(EditorInfo.TYPE_TEXT_VARIATION_URI)))
+        assertFalse(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_URI)))
+        assertFalse(
+            InputFieldPrivacy.suppressLearning(
+                EditorInfo.TYPE_CLASS_DATETIME or EditorInfo.TYPE_DATETIME_VARIATION_DATE
+            )
+        )
+    }
+
+    @Test
     fun 声明不联想的框不学习() {
         assertTrue(InputFieldPrivacy.suppressLearning(text(flags = EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS)))
         // 多行、自动补全等其它标志不影响判定

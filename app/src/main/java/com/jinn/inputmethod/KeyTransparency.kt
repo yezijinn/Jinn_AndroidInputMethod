@@ -7,10 +7,13 @@ import kotlin.math.roundToInt
  *
  * 一个旋钮（[Prefs.keyTransparencyPercent]）控制整块键盘四层面板的透明度：
  *  - 背板（键盘底色 `kb_bg`、面板底 `app_bg`）：[plateAlpha]，面上没有文字，可以做得最透；
- *  - 内容面（键面、按钮，以及有内容时的候选栏底）：[surfaceAlpha]，必须比背板实，
+ *  - 内容面（键面、按钮，以及候选栏底）：[surfaceAlpha]，必须比背板实，
  *    最透时仍保留 [MIN_SURFACE_ALPHA] 的不透明度，否则文字会糊在应用内容上。
- *    候选栏底按是否有内容动态选档（有拼音/候选/预测 → surface；空白铺底 → plate），
- *    见 `PinyinKeyboardView.updateCandidateBarBackground`，别改回固定 plate。
+ *    候选栏底**固定**用这一档，且空白铺底时直接用**功能按钮色**，见
+ *    `PinyinKeyboardView.updateCandidateBarBackground`：它曾按「是否有内容」在 plate / surface
+ *    之间切档，但两档透出量不同（20% 时 80% vs 92%）⇒ 空白态会在浅色页面上显出一圈底色差；
+ *    统一到本档、并让空白态的栏色与功能按钮同色后，两者连成一块
+ *    （2026-10-02 用户反馈，方案 A），别再切回动态选档。
  *
  * 0%（默认）= 完全不透明，与历史观感逐像素一致；[MAX_PERCENT] = 背板可全透（[MIN_PLATE_ALPHA] = 0），
  * 内容面（含有内容时的候选栏底）仍保留 [MIN_SURFACE_ALPHA]，再透文字就糊在应用内容上了。

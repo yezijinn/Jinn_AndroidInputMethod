@@ -348,4 +348,23 @@ class TranslationTextTest {
         assertEquals(null, jsonCode(JSONObject("{}"), "error_code"))
         assertEquals(null, jsonCode(null, "error_code"))
     }
+
+    @Test
+    fun `模型包装必须剥掉：围栏、前缀、引号，且不误伤正文`() {
+        // OpenAI 兼容那家常给译文加包装：``` 围栏、「译文：」前缀，原样插进输入框很难看
+        // （2026-10-02 修复 L-321；剥离在 TranslationClient 的唯一出口，六家共用）
+        assertEquals("你好", TranslationText.stripWrapper("```\n你好\n```"))
+        assertEquals("你好", TranslationText.stripWrapper("```text\n你好\n```"))
+        assertEquals("你好", TranslationText.stripWrapper("译文：你好"))
+        assertEquals("你好", TranslationText.stripWrapper("以下是翻译：你好"))
+        assertEquals("你好", TranslationText.stripWrapper("Translation: 你好"))
+        assertEquals("你好", TranslationText.stripWrapper("\"你好\""))
+        assertEquals("你好", TranslationText.stripWrapper("「你好」"))
+        assertEquals("你好", TranslationText.stripWrapper("  你好  "))
+        // 不误伤：``` 与前缀**不在首尾**时保持原样（正文里合法出现）
+        assertEquals("代码 ``` 示例", TranslationText.stripWrapper("代码 ``` 示例"))
+        assertEquals("请翻译：这行", TranslationText.stripWrapper("请翻译：这行"))
+        // 剥空回退：只有一个围栏符、正则不成对 ⇒ 原样返回，绝不把有效内容剥没
+        assertEquals("```", TranslationText.stripWrapper("```"))
+    }
 }

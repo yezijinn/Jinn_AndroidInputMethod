@@ -3,6 +3,7 @@ package com.jinn.inputmethod
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -39,13 +40,49 @@ class FavoriteSymbolsActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
+    override fun onStart() {
+        super.onStart()
+        themeTicker.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_favorite_symbols)
         listContainer = findViewById(R.id.favorite_list)
-        findViewById<Button>(R.id.btn_favorite_close).setOnClickListener { finish() }
-        findViewById<Button>(R.id.btn_favorite_add).setOnClickListener { showAddDialog() }
+        findViewById<Button>(R.id.btn_favorite_close).apply {
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
+            setOnClickListener { finish() }
+        }
+        findViewById<TextView>(R.id.text_favorite_desc).text = TEXT_DESC
+        findViewById<Button>(R.id.btn_favorite_add).apply {
+            text = TEXT_ADD
+            setOnClickListener { showAddDialog() }
+        }
         renderPages()
+    }
+
+    private companion object {
+        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认禁改）—— 与其余页面一致。
+        // 这两页（本页与符号排序页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
+        // （2026-10-02 统一，见 B-152）。
+        // ⚠ 标题**不在**这里：`favorite_title` 同时是 `AndroidManifest` 里本 activity 的
+        //   `android:label`（任务切换器显示的名字），必须与 `app_name` / `settings_title` 一样
+        //   留在 strings.xml，所以标题由布局直接引用那条 string（与设置页各入口按钮同做法）。
+        const val TEXT_DESC = "增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。"
+        const val TEXT_ADD = "＋ 添加符号"
     }
 
     override fun onPause() {
@@ -79,27 +116,31 @@ class FavoriteSymbolsActivity : Activity() {
                 text = getString(R.string.favorite_empty)
                 textSize = 13f
                 setTextColor(getColor(R.color.text_secondary))
-                setPadding(0, (24 * resources.displayMetrics.density).toInt(), 0, 0)
+                setPadding(0, PageStyle.dp(context, 24), 0, 0)
                 gravity = Gravity.CENTER
             })
             return
         }
-        val density = resources.displayMetrics.density
         pages.forEachIndexed { pi, page ->
             listContainer.addView(TextView(this).apply {
                 text = getString(R.string.favorite_page_fmt, pi + 1, page.size)
                 textSize = 12f
                 setTextColor(getColor(R.color.text_secondary))
-                setPadding(0, if (pi == 0) 0 else (10 * density).toInt(), 0, (4 * density).toInt())
+                // dp 换算统一走 PageStyle（原先这里的 density 局部变量只服务这一行）
+                setPadding(
+                    0,
+                    if (pi == 0) 0 else PageStyle.dp(context, 10),
+                    0,
+                    PageStyle.dp(context, 4),
+                )
             })
-            listContainer.addView(gridForPage(pi, page))
+            PageStyle.addCard(listContainer, gridForPage(pi, page))
         }
     }
 
     /** 一页的符号网格：每格 = 符号按钮 + 右上角 ✕ 移除角标 */
     private fun gridForPage(pageIndex: Int, page: List<String>): GridLayout {
-        val density = resources.displayMetrics.density
-        val cell = (44 * density).toInt()
+        val cell = PageStyle.dp(this, 44)
         val grid = GridLayout(this).apply {
             columnCount = 6
             useDefaultMargins = true
@@ -112,20 +153,45 @@ class FavoriteSymbolsActivity : Activity() {
                 isAllCaps = false
                 minWidth = 0
                 minimumWidth = 0
-                setPadding(0, 0, 0, 0)
                 background = getDrawable(R.drawable.btn_aurora_secondary)
                 setTextColor(getColor(R.color.text_primary))
+                // ⚠ 必须去掉 Material 按钮自带的按下抬升（`stateListAnimator` + elevation）：
+                //    有 elevation 的视图在 Z 轴上**高于**无 elevation 的兄弟，会盖住后添加的
+                //    角标 —— 屏幕上的表现就是「角标那圈只有按钮底色、看不到 ×」
+                //    （2026-10-02 真机定位：角标视图存在、bounds 正确，采样像素却全是按钮底色）。
+                //    这颗按钮是「格子里的面」，本来也不需要悬浮感。
+                stateListAnimator = null
+                elevation = 0f
                 layoutParams = FrameLayout.LayoutParams(cell, cell)
             })
-            frame.addView(Button(this).apply {
-                text = getString(R.string.favorite_delete)
-                textSize = 9f
-                isAllCaps = false
+            // ✕ 移除角标（2026-10-02 用户反馈修复）：
+            // ① 显示**符号**而不是「移除」两个字 —— 22dp 角标里两个汉字被 `Button` 的默认内边距挤到
+            //    几乎不可见，用户看到的就是「按钮和背景色相同、文字不可见」；无障碍语义仍由
+            //    contentDescription 保留（读作「移除」）。
+            // ② **红色粗体**（用户指定）：kb_key_hint_red（明 #C62828 / 暗 #FF5A5F）+ BOLD。
+            // ③ 不再用负 margin：那会把角标推出格子边界、右上角被父容器裁掉，与「在字符容器
+            //    **内部**的右上角」的预期相反；现在完整落在 44dp 格子内。
+            // ④ 用 TextView 而不是 Button：这里只要一个符号，`Button` 自带的最小高 / 内边距 /
+            //    大小写转换 / 状态动画都得逐条覆写，反而更脆（原先正是漏了内边距才被挤没的）。
+            frame.addView(TextView(this).apply {
+                text = getString(R.string.favorite_delete_mark)
+                textSize = 14f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setPadding(0, 0, 0, 0)
                 minWidth = 0
                 minimumWidth = 0
-                setPadding(0, 0, 0, 0)
-                background = getDrawable(R.drawable.btn_aurora_secondary)
+                minHeight = 0
+                minimumHeight = 0
+                // ⚠ **不要背景**（2026-10-02 用户指定）：原先那颗圆角蓝底（btn_aurora_secondary）
+                // 会在符号按钮上再叠一个小圆片，看着像「角标自己也是一颗按钮」。这里是**纯文本** ×，
+                // 直接压在符号格上；点击热区仍是这 22dp 方块（透明但不影响命中）。
+                // 注意 elevation 要留着：它只影响 Z 序（透明背景不会画阴影），是「不被按钮盖住」的保证。
                 setTextColor(getColor(R.color.kb_key_hint_red))
+                // 与上一颗按钮的「取消抬升」成对：角标给一点点 elevation，确保它在最上层
+                // （双保险 —— 只依赖添加顺序的话，将来谁给按钮加回 elevation 就会再被盖住）
+                elevation = PageStyle.dp(context, 2).toFloat()
                 contentDescription = getString(R.string.favorite_delete)
                 setOnClickListener {
                     val pages = currentPages()
@@ -136,12 +202,9 @@ class FavoriteSymbolsActivity : Activity() {
                     renderPages()
                 }
                 layoutParams = FrameLayout.LayoutParams(
-                    (22 * density).toInt(), (22 * density).toInt(),
+                    PageStyle.dp(context, 22), PageStyle.dp(context, 22),
                     Gravity.TOP or Gravity.END,
-                ).apply {
-                    marginEnd = (-4 * density).toInt()
-                    topMargin = (-4 * density).toInt()
-                }
+                )
             })
             grid.addView(frame)
         }
@@ -155,7 +218,7 @@ class FavoriteSymbolsActivity : Activity() {
             hint = getString(R.string.favorite_dialog_hint)
             setSingleLine(true)
         }
-        val pad = (16 * resources.displayMetrics.density).toInt()
+        val pad = PageStyle.dp(this, 16)
         val box = FrameLayout(this).apply {
             setPadding(pad, pad / 2, pad, 0)
             addView(input, FrameLayout.LayoutParams(

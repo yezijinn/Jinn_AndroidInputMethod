@@ -35,16 +35,21 @@ class RareCharsActivity : Activity() {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
 
+    /**
+     * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     */
+    private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_rare_chars)
         findViewById<TextView>(R.id.text_rare_title).text = TEXT_TITLE
         findViewById<TextView>(R.id.text_rare_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_rare_close).apply {
-            text = TEXT_CLOSE
-            // 键面是「X」，辅助服务照字面朗读等于没读；给出可听的键名。
-            // 本页与模糊音页是复刻关系，改这里要连 FuzzyPinyinActivity 一起改（守卫会红）
-            contentDescription = TEXT_CLOSE_DESC
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
         }
         findViewById<Button>(R.id.btn_rare_all).apply {
@@ -67,18 +72,23 @@ class RareCharsActivity : Activity() {
      */
     override fun onStart() {
         super.onStart()
+        themeTicker.start()
         renderRows()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        themeTicker.stop()
     }
 
     /** 按当前设置渲染勾选态；显示值 = 引擎实际生效值（档 3 还要乘以档 2，见 [apply]） */
     private fun renderRows() {
-        val density = resources.displayMetrics.density
         val prefs = Prefs(this)
         tierList.removeAllViews()
-        checkTier2 = addRow(TIER2_LABEL, TIER2_DESC, prefs.rareTier2, density)
+        checkTier2 = addRow(TIER2_LABEL, TIER2_DESC, prefs.rareTier2)
         // 档 3 显示 prefs 与档 2 的**与**：导入 / 手改的非法组合（只有 rare_tier3=true）在引擎侧
         // 按 `tier2 && tier3` 当关处理，页面照原值显示就会出现「界面勾着、候选不受影响」的错位。
-        checkTier3 = addRow(TIER3_LABEL, TIER3_DESC, prefs.rareTier3 && prefs.rareTier2, density)
+        checkTier3 = addRow(TIER3_LABEL, TIER3_DESC, prefs.rareTier3 && prefs.rareTier2)
         checkTier2.setOnCheckedChangeListener { _, checked ->
             if (bulk) return@setOnCheckedChangeListener
             // 关档 2 必须连带关档 3（依赖关系；引擎侧 setRareTiers 也会再兜一次）。
@@ -99,11 +109,10 @@ class RareCharsActivity : Activity() {
         syncTier3Enabled()
     }
 
-    /** 一行：勾选框 + 说明小字；返回勾选框供上层接线 */
-    private fun addRow(label: String, desc: String, checked: Boolean, density: Float): CheckBox {
+    /** 一行：勾选框 + 说明小字；返回勾选框供上层接线。外观走 [PageStyle.addCard]（一行 = 一张卡片） */
+    private fun addRow(label: String, desc: String, checked: Boolean): CheckBox {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, (4 * density).toInt(), 0, (4 * density).toInt())
         }
         val check = CheckBox(this).apply {
             text = label
@@ -115,11 +124,11 @@ class RareCharsActivity : Activity() {
             text = desc
             textSize = 11f
             setTextColor(getColor(R.color.text_secondary))
-            setPadding((28 * density).toInt(), 0, 0, 0)
+            setPadding(PageStyle.dp(context, 28), 0, 0, 0)
         }
         row.addView(check)
         row.addView(hint)
-        tierList.addView(row)
+        PageStyle.addCard(tierList, row)
         return check
     }
 
@@ -163,10 +172,6 @@ class RareCharsActivity : Activity() {
         const val TEXT_TITLE = "加更多生僻字"
         const val TEXT_DESC = "默认只收常用字（5,613 字）。\n开启档位后，这些字连同它们组成的词一起放行；\n" +
             "档 3 必须先开档 2。"
-        const val TEXT_CLOSE = "X"
-
-        /** 关闭键的可听键名：键面只有一个「X」，辅助服务需要这句话才读得懂（复刻页同款） */
-        const val TEXT_CLOSE_DESC = "关闭"
         const val TEXT_ALL = "全开"
         const val TEXT_NONE = "全关"
         const val TIER2_LABEL = "增加二级生僻字885个"

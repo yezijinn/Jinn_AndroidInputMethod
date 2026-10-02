@@ -32,6 +32,7 @@
     <color name="mic_active_center">#FF6B6F</color>
     <color name="mic_ring">#E5484D</color>
     <color name="mic_glyph">#FFFFFF</color>
+    <color name="mic_glyph_active">#FFFFFF</color>
 
     <!-- 连接状态指示点 -->
     <color name="dot_online">#34D399</color>

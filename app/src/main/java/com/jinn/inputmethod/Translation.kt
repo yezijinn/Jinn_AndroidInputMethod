@@ -31,7 +31,10 @@ internal enum class TranslationLanguage(
     val aliyunCode: String,
     val deeplCode: String,
 ) {
-    CHINESE("中文", "zh-Hans", "zh", "zh", "ZH"),
+    // 末位 = DeepL 目标语言码。中文用正名 `ZH-HANS` 而不是别名 `ZH`（2026-10-02 修复 L-487）：
+    // 官方文档已把 `ZH` 标为 deprecated（当前等同简体），一旦别名被移除 ⇒ `target_lang` 非法 ⇒
+    // 400 ⇒ 归一成 PARAM（提示指向「语言方向」）—— 用户会以为是自己选错了语言。
+    CHINESE("中文", "zh-Hans", "zh", "zh", "ZH-HANS"),
     ENGLISH("English", "en", "en", "en", "EN"),
     JAPANESE("日本語", "ja", "jp", "ja", "JA"),
     KOREAN("한국어", "ko", "kor", "ko", "KO");
@@ -90,6 +93,23 @@ internal enum class TranslationError(val message: String) {
     AUTH("认证失败：请检查凭据（API Key / AppID / SecretKey / AccessKey）与 Azure 区域"),
     QUOTA("额度不足或请求过于频繁，请稍后重试"),
     PARAM("服务端拒绝了这次请求的参数（语言方向 / 模型名 / 路径 / 原文长度），请对照服务方文档核对"),
+
+    /**
+     * 输出被上限截断（OpenAI 兼容那家的 `finish_reason == "length"`）。
+     *
+     * 与 [PARAM] 分开（2026-10-02 第二轮审查）：PARAM 的文案让用户去核对「语言方向 / 模型名 /
+     * 路径 / 原文长度」，而真因是**输出上限**（Max Tokens 或网关自带上限）—— 按 PARAM 的提示
+     * 逐项核对必然无果。
+     */
+    TRUNCATED("译文被输出上限截断（可在该服务商设置里调大 Max Tokens，或改用非推理模型）"),
+
+    /**
+     * 服务端「少给行」：译文行数 < 原文非空行数（按行对齐的 Provider，如百度系）。
+     *
+     * 与 [PARAM] 分开（2026-10-02 第五轮审查）：PARAM 会让用户去核「语言方向 / 模型名 / 路径 /
+     * 原文长度」，而真因是服务端少返回了行 —— 逐行对应会错位，宁可拒绝也不写进正文。
+     */
+    LINE_MISMATCH("服务端返回的行与原文不齐，为避免逐行错位未写入（可去掉空行后重试）"),
     SERVER("翻译服务异常，请稍后重试"),
     EMPTY("翻译结果为空"),
 }
@@ -314,6 +334,31 @@ internal object TranslationText {
      * [prev] 是**插入点前面那一个字符**（调用方按追加位置的上下文给）：它本来就是换行
      * （用户自己敲了空行，或追加在整行 / 整篇末尾）时不再补前导换行，避免多出一个空行。
      */
+    /**
+     * 剥掉模型 / 网关给译文加的**包装**（2026-10-02 修复 L-321）。
+     *
+     * 六家的出口原本只做 `trim()`：OpenAI 兼容那家最容易中 —— 模型即使被提示「只输出译文」，
+     * 也常在首尾加上 ``` 代码块围栏，或「译文：」「以下是翻译：」这类前缀；这些内容会**原样插进
+     * 用户的输入框**。这里只剥**成对 / 明确**的首尾包装：
+     *  ① 首行 ``` 与末行 ``` 成对的代码块围栏（带语言标注也算）；
+     *  ② 「译文：」「翻译：」「以下是翻译：」「Translation:」等首前缀；
+     *  ③ 整体被一对引号包住（直引号 / 弯引号 / 书名号式引号）。
+     * **剥离后为空则回退原值** —— 宁可留着围栏，也绝不把有效译文剥没。
+     */
+    fun stripWrapper(text: String): String {
+        var t = text.trim()
+        Regex("^```[^\\n]*\\n([\\s\\S]*?)\\n?```$").find(t)?.let { t = it.groupValues[1].trim() }
+        t = t.replace(
+            Regex("^(?:译文|翻译|以下是翻译|翻译结果|Translation|Translated)\\s*[:：]\\s*"),
+            "",
+        ).trim()
+        if (t.length >= 2) {
+            val pairs = mapOf('"' to '"', '\'' to '\'', '\u201c' to '\u201d', '\u2018' to '\u2019', '「' to '」', '『' to '』')
+            if (pairs[t.first()] == t.last()) t = t.substring(1, t.length - 1).trim()
+        }
+        return t.ifEmpty { text.trim() }
+    }
+
     fun appendText(prev: Char?, translated: String): String {
         val body = translated.trim()
         // 空 / 纯零宽译文只返回空串：绝不留下孤立换行或不可见字符（上游按 EMPTY 拦截，
@@ -346,6 +391,16 @@ internal interface TranslationProvider {
      * 其余四家是 10s 级返回的 REST 接口，用默认预算，不需要各自的旋钮。
      */
     val callTimeoutSec: Int get() = 0
+
+    /**
+     * 响应是否**按输入行对齐**（每行一条译文；服务端对空行 / 被跳过的行可能**根本不返回元素**）。
+     *
+     * 百度系两家（通用版 / 大模型）为 `true`：`trans_result` 只给数组，靠**顺序**与输入行对应 ——
+     * 服务端「少给行」时其后所有行上移一位，译文与原文**逐行错位**（2026-10-02 修复 L-483）。
+     * 解析侧手里只有响应体、无法自证，所以由出口（[TranslationClient]）按本标志做一次对拍，
+     * 宁可拒绝也不把错位译文写进用户正文。
+     */
+    val alignsPerLine: Boolean get() = false
 }
 
 /**

@@ -7,7 +7,8 @@ import java.io.File
 /**
  * 换肤延后判据必须覆盖全部「视图内临时态」（`BUG.md` L-87）。
  *
- * 定时换肤（`MODE_SCHEDULED` 的 `themeTick`）在键盘可见期间准点触发 `applyThemeIfNeeded()`，
+ * 定时换肤（`MODE_SCHEDULED` 的 [ThemeManager.ScheduledThemeTicker]）在键盘可见期间准点触发
+ * `applyThemeIfNeeded()`，
  * 到点即 `recreateKeyboardView()`；而面板与密码模式的状态都挂在**旧视图实例**上，重建等于静默丢弃：
  * 面板会毫无预告地关闭；密码模式的复原三元组（`passwordPadRestore`）只活在旧视图上 ⇒
  * 用户正输密码时键盘变回普通键盘，且**回不去**。

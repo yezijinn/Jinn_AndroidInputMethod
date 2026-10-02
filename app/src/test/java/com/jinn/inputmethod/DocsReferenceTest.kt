@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -325,20 +326,29 @@ class DocsReferenceTest {
      */
     @Test
     fun README体积声明必须与实际发布包相符() {
-        listOf(File("build_apk.py"), File("../build_apk.py"))
-            .firstOrNull { it.isFile }?.let { script ->
-                // 脚本里的产物名是 `f"{APPLICATION_ID}.apk"` 拼出来的（不是字面量），
-                // 所以这里校验**派生关系**而不是子串包含 —— 后半句才是真正要钉的东西：
-                // 「仓库根的产物名 = 包名 + .apk」。
-                val appId = Regex("""(?m)^APPLICATION_ID\s*=\s*"([^"]+)"""")
-                    .find(script.readText())?.groupValues?.get(1)
-                assertTrue("build_apk.py 里找不到 APPLICATION_ID 常量", appId != null)
-                assertEquals(
-                    "产物名必须由包名派生：build_apk.py 的 APPLICATION_ID 是 $appId，" +
-                        "而本守卫按 $APK_FILE_NAME 找包（改包名 / 改产物名时请两处同改）",
-                    "$appId.apk", APK_FILE_NAME,
-                )
-            }
+        // 脚本缺失 → **报错**，不静默（与 `BuildScriptContractTest` 用 `first {}` 的口径一致；L-474）
+        val script = listOf(File("build_apk.py"), File("../build_apk.py"))
+            .firstOrNull { it.isFile }?.readText()
+            ?: error("找不到 build_apk.py —— 产物名对拍与 README 体积核对都无法进行")
+        // 脚本里的产物名是 `f"{APPLICATION_ID}.apk"` 拼出来的（不是字面量），
+        // 所以先校验**派生关系**：仓库根的产物名 = 包名 + .apk。
+        val appId = Regex("""(?m)^APPLICATION_ID\s*=\s*"([^"]+)"""")
+            .find(script)?.groupValues?.get(1)
+        assertTrue("build_apk.py 里找不到 APPLICATION_ID 常量", appId != null)
+        assertEquals(
+            "产物名必须由包名派生：build_apk.py 的 APPLICATION_ID 是 $appId，" +
+                "而本守卫按 $APK_FILE_NAME 找包（改包名 / 改产物名时请两处同改）",
+            "$appId.apk", APK_FILE_NAME,
+        )
+        // ⚠ 上面那条只证明「包名 + .apk == 守卫里的名字」，**证明不了脚本真按它产出文件**：
+        // 把 `output_apk = ROOT / f"{APPLICATION_ID}.apk"` 改成别的表达式而保留 APPLICATION_ID，
+        // 上面照样绿，下面的 `?: return` 又会静默跳过整个体积核对 —— 等于没修（2026-10-02 修复 L-464）。
+        // 因此要钉**脚本里的那句构造式**本身。
+        val expectedOutput = "ROOT / f\"{APPLICATION_ID}.apk\""
+        assertEquals(
+            "build_apk.py 必须按 `$expectedOutput` 产出（只对拍名字不够：改这句表达式时这里要红）",
+            1, script.split(expectedOutput).size - 1,
+        )
         val apk = listOf(File(APK_FILE_NAME), File("../$APK_FILE_NAME"))
             .firstOrNull { it.isFile } ?: return
         val mib = apk.length() / 1048576.0
@@ -427,6 +437,49 @@ class DocsReferenceTest {
             if (titled != null && titled != actual) bad.add("$name（节标题 $titled / 实际 $actual）")
         }
         assertTrue("分册页眉块数与实际不一致：$bad", bad.isEmpty())
+    }
+
+    /**
+     * `功能总览.md` 里几处**会腐烂的事实**必须与源码一致（2026-10-02 修复 L-465 / L-473）。
+     *
+     * 这份文档自称「逐条列出全部用户可见功能……一个不漏」，但此前**零守卫**：默认值写反、
+     * 控件改了名它不知道、键位序号与它自己的面板清单互相矛盾 —— 三处都是发布之后才由人工审出来的。
+     * 这里只钉**能机械对拍**的三类；剩下没有权威来源的计数（「30 余个设置项」之类）仍靠人工，
+     * 那是 L-473 留的口子。
+     */
+    @Test
+    fun 功能总览的事实必须与源码一致() {
+        val doc = readDoc("功能总览.md") ?: error("找不到 功能总览.md（改名或移位了？）")
+        val prefs = readDoc("app/src/main/java/com/jinn/inputmethod/Prefs.kt")
+            ?: error("找不到 Prefs.kt")
+        val settings = readDoc("app/src/main/java/com/jinn/inputmethod/SettingsActivity.kt")
+            ?: error("找不到 SettingsActivity.kt")
+
+        // ① 默认值：从 Prefs 读真值，再要求文档写对（曾写「双拼候选全音……默认开」，实际默认关）
+        val quanpin = Regex("""getBoolean\(KEY_SHOW_QUANPIN,\s*(true|false)\)""")
+            .find(prefs)?.groupValues?.get(1)
+            ?: error("Prefs.kt 里找不到 KEY_SHOW_QUANPIN 的默认值")
+        val line = doc.lineSequence().firstOrNull { "双拼显示声韵" in it }
+            ?: error("功能总览里找不到「双拼显示声韵」那一行")
+        val expected = if (quanpin == "true") "默认开" else "默认关"
+        assertTrue(
+            "功能总览里「双拼显示声韵」的默认值与 Prefs.KEY_SHOW_QUANPIN 不符（实际应为$expected）：$line",
+            expected in line,
+        )
+
+        // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，
+        //    文案在代码里下发而非 strings.xml）
+        assertTrue("SettingsActivity 里找不到「键盘内显韵母」", "键盘内显韵母" in settings)
+        assertFalse("功能总览仍在用旧控件名「键盘内嵌韵母」", "键盘内嵌韵母" in doc)
+
+        // ③ 翻译键的序号必须与文档**自己的**面板清单一致
+        //    （此前「翻译（第 7 键）」与清单里的第 6 位自相矛盾，而改哪个数字都不会有测试变红）
+        val items = doc.substringAfter("**功能面板按钮**").lines().drop(1)
+            .takeWhile { it.startsWith("  ") && it.trimStart().startsWith("- ") }
+        val pos = items.indexOfFirst { "翻译（第" in it } + 1
+        assertTrue("功能总览的面板清单里找不到「翻译（第 N 键）」", pos > 0)
+        val claimed = Regex("""翻译（第 (\d+) 键""").find(items[pos - 1])?.groupValues?.get(1)?.toInt()
+        assertEquals("功能总览里翻译键的序号与面板清单的顺序不一致", pos, claimed)
     }
 
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */

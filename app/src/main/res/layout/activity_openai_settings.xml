@@ -3,12 +3,8 @@
      文案（含 label、hint、按钮）全部在 OpenAiSettingsActivity 里下发（strings.xml 默认禁改）；
      布局里的 label 只挂 labelFor 做无障碍关联（LabelFor 例外见 app/lint.xml） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/bg_aurora"
-    android:fitsSystemWindows="true"
-    android:orientation="vertical"
-    android:padding="12dp">
+    style="@style/PageRoot"
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -17,33 +13,20 @@
         android:orientation="horizontal">
 
         <TextView
+            style="@style/PageTitle"
             android:id="@+id/text_ai_title"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="@color/text_primary"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:layout_height="wrap_content" />
 
         <Button
-            android:id="@+id/btn_ai_close"
-            style="@style/SettingsButton"
-            android:layout_width="40dp"
-            android:layout_height="32dp"
-            android:minWidth="0dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:textSize="14sp" />
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_ai_close" />
     </LinearLayout>
 
     <TextView
+        style="@style/PageDesc"
         android:id="@+id/text_ai_desc"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="4dp"
-        android:paddingBottom="8dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        android:layout_height="wrap_content" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -58,433 +41,317 @@
             android:orientation="vertical">
 
             <!-- ── 基础 ─────────────────────────────── -->
-            <TextView
-                android:id="@+id/label_ai_section_basic"
-                style="@style/SettingsLabel"
-                android:textStyle="bold" />
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SectionTitle"
+                    android:id="@+id/label_ai_section_basic"/>
 
-            <TextView
-                android:id="@+id/label_ai_name"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_name" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_name"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_name" />
 
-            <EditText
-                android:id="@+id/edit_ai_name"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_name"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_base_url"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_base_url" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_base_url"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_base_url" />
 
-            <EditText
-                android:id="@+id/edit_ai_base_url"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:saveEnabled="false"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_base_url"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:saveEnabled="false"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_api_key"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_api_key" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_api_key"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_api_key" />
 
-            <EditText
-                android:id="@+id/edit_ai_api_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="textPassword"
-                android:saveEnabled="false"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:saveEnabled="false"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_model"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_model" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_model"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_model" />
 
-            <EditText
-                android:id="@+id/edit_ai_model"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_model"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true"/>
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
 
-                <Button
-                    android:id="@+id/btn_ai_fetch_models"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginEnd="6dp"
-                    android:layout_weight="1" />
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_ai_fetch_models"
+                        android:layout_width="0dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1" />
 
-                <Button
-                    android:id="@+id/btn_ai_test"
-                    style="@style/SettingsButton"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1" />
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_ai_test"
+                        android:layout_width="0dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1" />
+                </LinearLayout>
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_ai_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    />
+
+                <!-- ── 翻译设置 ─────────────────────────── -->
             </LinearLayout>
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SectionTitle"
+                    android:id="@+id/label_ai_section_prompt"
+                    android:layout_marginTop="6dp"/>
 
-            <TextView
-                android:id="@+id/text_ai_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:singleLine="false"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_target"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/spinner_ai_target" />
 
-            <!-- ── 翻译设置 ─────────────────────────── -->
-            <TextView
-                android:id="@+id/label_ai_section_prompt"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="14dp"
-                android:textStyle="bold" />
+                <Spinner
+                    style="@style/SettingsField"
+                    android:id="@+id/spinner_ai_target"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="2dp"
+                    android:spinnerMode="dropdown"/>
 
-            <TextView
-                android:id="@+id/label_ai_target"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/spinner_ai_target" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_target_custom"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_target_custom" />
 
-            <Spinner
-                android:id="@+id/spinner_ai_target"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_target_custom"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_target_custom"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_target_custom" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_system"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_system" />
 
-            <EditText
-                android:id="@+id/edit_ai_target_custom"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_ai_system"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:maxLines="8"/>
 
-            <TextView
-                android:id="@+id/label_ai_system"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_system" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_user"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_user" />
 
-            <EditText
-                android:id="@+id/edit_ai_system"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:gravity="top|start"
-                android:importantForAutofill="no"
-                android:inputType="textMultiLine"
-                android:maxLines="8"
-                android:minLines="2"
-                android:padding="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_ai_user"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:maxLines="8"/>
 
-            <TextView
-                android:id="@+id/label_ai_user"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_user" />
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_ai_prompt_reset"
+                    android:layout_width="match_parent"
+                    android:layout_marginTop="3dp" />
 
-            <EditText
-                android:id="@+id/edit_ai_user"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:gravity="top|start"
-                android:importantForAutofill="no"
-                android:inputType="textMultiLine"
-                android:maxLines="8"
-                android:minLines="2"
-                android:padding="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
+                <!-- ── 模型参数 ─────────────────────────── -->
+            </LinearLayout>
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SectionTitle"
+                    android:id="@+id/label_ai_section_params"
+                    android:layout_marginTop="6dp"/>
 
-            <Button
-                android:id="@+id/btn_ai_prompt_reset"
-                style="@style/SettingsButton"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="6dp" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_temperature"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_temperature" />
 
-            <!-- ── 模型参数 ─────────────────────────── -->
-            <TextView
-                android:id="@+id/label_ai_section_params"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="14dp"
-                android:textStyle="bold" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_temperature"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="numberDecimal"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_temperature"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_temperature" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_top_p"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_top_p" />
 
-            <EditText
-                android:id="@+id/edit_ai_temperature"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="numberDecimal"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_top_p"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="numberDecimal"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_top_p"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_top_p" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_max_tokens"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_max_tokens" />
 
-            <EditText
-                android:id="@+id/edit_ai_top_p"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="numberDecimal"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_max_tokens"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_max_tokens"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_max_tokens" />
+                <!-- ── 高级 ─────────────────────────────── -->
+            </LinearLayout>
+            <LinearLayout style="@style/SettingsCard">
+                <TextView
+                    style="@style/SectionTitle"
+                    android:id="@+id/label_ai_section_advanced"
+                    android:layout_marginTop="6dp"/>
 
-            <EditText
-                android:id="@+id/edit_ai_max_tokens"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="number"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_chat_path"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_chat_path" />
 
-            <!-- ── 高级 ─────────────────────────────── -->
-            <TextView
-                android:id="@+id/label_ai_section_advanced"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="14dp"
-                android:textStyle="bold" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_chat_path"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_chat_path"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_chat_path" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_models_path"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_models_path" />
 
-            <EditText
-                android:id="@+id/edit_ai_chat_path"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_models_path"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_models_path"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_models_path" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_response_path"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_response_path" />
 
-            <EditText
-                android:id="@+id/edit_ai_models_path"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_response_path"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_response_path"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_response_path" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_timeout"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_timeout" />
 
-            <EditText
-                android:id="@+id/edit_ai_response_path"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ai_timeout"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:singleLine="true"/>
 
-            <TextView
-                android:id="@+id/label_ai_timeout"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_timeout" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_headers"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_headers" />
 
-            <EditText
-                android:id="@+id/edit_ai_timeout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:importantForAutofill="no"
-                android:inputType="number"
-                android:minHeight="44dp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_ai_headers"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:maxLines="6"/>
 
-            <TextView
-                android:id="@+id/label_ai_headers"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_headers" />
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_ai_extra_json"
+                    android:layout_marginTop="4dp"
+                    android:labelFor="@id/edit_ai_extra_json" />
 
-            <EditText
-                android:id="@+id/edit_ai_headers"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:gravity="top|start"
-                android:importantForAutofill="no"
-                android:inputType="textMultiLine"
-                android:maxLines="6"
-                android:minLines="2"
-                android:padding="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_ai_extra_json"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:maxLines="8"/>
 
-            <TextView
-                android:id="@+id/label_ai_extra_json"
-                style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
-                android:labelFor="@id/edit_ai_extra_json" />
-
-            <EditText
-                android:id="@+id/edit_ai_extra_json"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:gravity="top|start"
-                android:importantForAutofill="no"
-                android:inputType="textMultiLine"
-                android:maxLines="8"
-                android:minLines="3"
-                android:padding="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
-
-            <TextView
-                android:id="@+id/text_ai_footer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:singleLine="false"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_ai_footer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 
@@ -493,22 +360,20 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:orientation="vertical">
 
         <Button
-            android:id="@+id/btn_ai_save"
             style="@style/SettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="44dp" />
+            android:id="@+id/btn_ai_save"
+            android:layout_width="match_parent" />
 
         <TextView
+            style="@style/CardHint"
             android:id="@+id/text_ai_save_hint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:singleLine="false"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
+            android:layout_marginTop="2dp"
+            />
     </LinearLayout>
 </LinearLayout>

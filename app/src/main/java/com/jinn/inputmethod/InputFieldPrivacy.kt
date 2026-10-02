@@ -37,7 +37,10 @@ object InputFieldPrivacy {
         if (imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return true
         if (inputType == null) return false   // 信息缺失：宁可继续学习，不降级正常输入
         if (inputType == EditorInfo.TYPE_NULL) return true
-        if (isPasswordField(inputType)) return true
+        // 学习侧**宁可多拦**（见 KDoc 的分工）：除完整的「类位 + 变体位」外，再收一层保守兜底，
+        // 覆盖宿主只报变体位、或把变体位配到别的类上的畸形声明。翻译侧**不**收这一层 ——
+        // 那边多拦会让整类宿主不可用（见 blocksTranslation）。
+        if (isPasswordField(inputType) || isPasswordVariation(inputType)) return true
         return (inputType and EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0
     }
 
@@ -89,4 +92,29 @@ object InputFieldPrivacy {
             else -> false
         }
     }
+
+    /**
+     * 只按**变体位**判口令 —— 学习侧专用的保守兜底（2026-10-02 修复 L-466）。
+     *
+     * 真实控件都会带类位，所以 [isPasswordField] 对正常声明是够的；这一层是给畸形声明留的网：
+     * 宿主只报 `TYPE_TEXT_VARIATION_PASSWORD`（`0x080`）、或把文本口令变体位配到别的类上
+     * （`0x082` / `0x092` / `0x0E2`）时，完整掩码判不出来，而那些值在平台里**只可能**是
+     * 「想声明口令」。学习侧误拦的代价只是「这个词没记住」，所以收进来；
+     * [blocksTranslation] 不收 —— 那边多拦会让地址栏这类整类宿主不可用。
+     *
+     * ⚠ `0x10` 那一支只认「类位缺失」：`0x10` 是数字密码 / 文本 URI / 日期三个语义共用的值，
+     * 有类位时一律交给 [isPasswordField] 判 —— 否则地址栏（`0x11`）又会被收回来，
+     * 正是 L-454 修掉的那件事。同理，宿主若**真的**想用数字密码变体位声明文本口令，
+     * 报出来的仍是 `0x11`，与地址栏**无法区分**，只能按地址栏处理。
+     */
+    private fun isPasswordVariation(inputType: Int): Boolean =
+        when (inputType and EditorInfo.TYPE_MASK_VARIATION) {
+            EditorInfo.TYPE_TEXT_VARIATION_PASSWORD,
+            EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+            -> true
+            EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD ->
+                (inputType and EditorInfo.TYPE_MASK_CLASS) == 0
+            else -> false
+        }
 }

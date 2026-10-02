@@ -4,12 +4,8 @@
      六家服务各一个区块，按 Provider 选择显隐；文案（含 hint）全部在 TranslationSettingsActivity
      里下发（strings.xml 默认禁改），布局里只用 `labelFor` 把标签与控件关联（无障碍 + lint 基线） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/bg_aurora"
-    android:fitsSystemWindows="true"
-    android:orientation="vertical"
-    android:padding="12dp">
+    style="@style/PageRoot"
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -18,33 +14,20 @@
         android:orientation="horizontal">
 
         <TextView
+            style="@style/PageTitle"
             android:id="@+id/text_translate_settings_title"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="@color/text_primary"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:layout_height="wrap_content" />
 
         <Button
-            android:id="@+id/btn_translate_settings_close"
-            style="@style/SettingsButton"
-            android:layout_width="40dp"
-            android:layout_height="32dp"
-            android:minWidth="0dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:textSize="14sp" />
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_translate_settings_close" />
     </LinearLayout>
 
     <TextView
+        style="@style/PageDesc"
         android:id="@+id/text_translate_settings_desc"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="4dp"
-        android:paddingBottom="8dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        android:layout_height="wrap_content" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -59,363 +42,271 @@
             android:orientation="vertical">
 
             <TextView
-                android:id="@+id/label_translate_provider"
                 style="@style/SettingsLabel"
+                android:id="@+id/label_translate_provider"
                 android:labelFor="@id/spinner_translate_provider" />
 
             <Spinner
+                style="@style/SettingsField"
                 android:id="@+id/spinner_translate_provider"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                android:layout_marginTop="2dp"
+                android:spinnerMode="dropdown"/>
 
             <!-- 「哪些内容算翻译原文」入口：范围模式 + 单次字节上限（每家服务方独立，见 TranslationSourceActivity） -->
             <Button
-                android:id="@+id/btn_translate_source"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_translate_source"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="10dp" />
+                android:layout_marginTop="4dp" />
 
             <TextView
+                style="@style/PageDesc"
                 android:id="@+id/text_translate_source_state"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="4dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:layout_height="wrap_content"/>
 
             <!-- 阿里云区块：AccessKey ID + AccessKey Secret（默认服务方） -->
             <LinearLayout
-                android:id="@+id/block_translate_aliyun"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_aliyun">
 
                 <TextView
-                    android:id="@+id/label_aliyun_key_id"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_aliyun_key_id"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_aliyun_key_id" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_aliyun_key_id"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
-                    android:id="@+id/label_aliyun_key_secret"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_aliyun_key_secret"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_aliyun_key_secret" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_aliyun_key_secret"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_aliyun_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
 
             <!-- Azure 区块：API Key + Region -->
             <LinearLayout
-                android:id="@+id/block_translate_azure"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_azure">
 
                 <TextView
-                    android:id="@+id/label_azure_key"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_azure_key"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_azure_key" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_azure_key"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
-                    android:id="@+id/label_azure_region"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_azure_region"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_azure_region" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_azure_region"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="text"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
                     android:saveEnabled="false"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_azure_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
 
             <!-- 百度区块：AppID + SecretKey -->
             <LinearLayout
-                android:id="@+id/block_translate_baidu"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_baidu">
 
                 <TextView
-                    android:id="@+id/label_baidu_app_id"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_baidu_app_id"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_baidu_app_id" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_baidu_app_id"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
                     android:saveEnabled="false"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
-                    android:id="@+id/label_baidu_secret"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_baidu_secret"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_baidu_secret" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_baidu_secret"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_baidu_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
 
             <!-- 百度大模型区块：APPID + API Key（与通用文本翻译是两个服务，Bearer 鉴权） -->
             <LinearLayout
-                android:id="@+id/block_translate_baidu_llm"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_baidu_llm">
 
                 <TextView
-                    android:id="@+id/label_baidu_llm_app_id"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_baidu_llm_app_id"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_baidu_llm_app_id" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_baidu_llm_app_id"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
                     android:saveEnabled="false"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
-                    android:id="@+id/label_baidu_llm_key"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_baidu_llm_key"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_baidu_llm_key" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_baidu_llm_key"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_baidu_llm_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
 
             <!-- DeepL 区块：单个 API Key（Free 密钥以 :fx 结尾，域名自动判定） -->
             <LinearLayout
-                android:id="@+id/block_translate_deepl"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_deepl">
 
                 <TextView
-                    android:id="@+id/label_deepl_key"
                     style="@style/SettingsLabel"
-                    android:layout_marginTop="10dp"
+                    android:id="@+id/label_deepl_key"
+                    android:layout_marginTop="4dp"
                     android:labelFor="@id/edit_deepl_key" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_deepl_key"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/field_aurora"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
                     android:saveEnabled="false"
-                    android:minHeight="44dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_deepl_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
 
             <!-- OpenAI 兼容区块：只留入口 + 摘要；Base URL / Prompt / 参数 / Headers / JSON / 路径
                  都在独立配置页（OpenAiSettingsActivity）里，避免这里堆十几个控件 -->
             <LinearLayout
-                android:id="@+id/block_translate_openai"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                style="@style/SettingsCard"
+                android:id="@+id/block_translate_openai">
 
                 <Button
-                    android:id="@+id/btn_openai_config"
                     style="@style/SettingsButton"
+                    android:id="@+id/btn_openai_config"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="10dp" />
+                    android:layout_marginTop="4dp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_openai_state"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:singleLine="false"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_marginTop="2dp"
+                    />
             </LinearLayout>
 
             <TextView
-                android:id="@+id/label_translate_target"
                 style="@style/SettingsLabel"
-                android:layout_marginTop="10dp"
+                android:id="@+id/label_translate_target"
+                android:layout_marginTop="4dp"
                 android:labelFor="@id/spinner_translate_target" />
 
             <Spinner
+                style="@style/SettingsField"
                 android:id="@+id/spinner_translate_target"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/field_aurora"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:spinnerMode="dropdown" />
+                android:layout_marginTop="2dp"
+                android:spinnerMode="dropdown"/>
 
             <TextView
+                style="@style/CardHint"
                 android:id="@+id/text_translate_privacy"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:singleLine="false"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:layout_marginTop="4dp"
+                />
         </LinearLayout>
     </ScrollView>
 
@@ -424,22 +315,20 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:orientation="vertical">
 
         <Button
-            android:id="@+id/btn_translate_save"
             style="@style/SettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="44dp" />
+            android:id="@+id/btn_translate_save"
+            android:layout_width="match_parent" />
 
         <TextView
+            style="@style/CardHint"
             android:id="@+id/text_translate_save_hint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:singleLine="false"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
+            android:layout_marginTop="2dp"
+            />
     </LinearLayout>
 </LinearLayout>

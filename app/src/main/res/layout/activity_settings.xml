@@ -14,34 +14,26 @@
     导出配置文件 / 导入配置文件 → 导出诊断数据（单按钮）→ 使用说明纯文本
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
     xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/bg_aurora"
     android:overScrollMode="never"
     tools:ignore="TooManyViews">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="12dp">
+        android:orientation="vertical">
 
         <!-- 标题 -->
         <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="@string/settings_title"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            style="@style/PageHeroTitle"
+            android:text="@string/settings_title" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="14dp"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="6dp"
             android:gravity="center"
             android:text="@string/settings_subtitle"
             android:textColor="@color/text_secondary"
@@ -49,8 +41,8 @@
 
         <!-- 保存并重启：置顶，保存永久配置后重启输入法进程 -->
         <Button
-            android:id="@+id/btn_save"
             style="@style/SettingsButtonPrimary"
+            android:id="@+id/btn_save"
             android:layout_marginBottom="0dp"
             android:text="@string/settings_save" />
 
@@ -66,53 +58,35 @@
 
         <!-- 输入法测试：纯粹的编辑框，点这里唤起键盘打字（保存后可直接验证）-->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
+            style="@style/SettingsCard">
 
             <EditText
+                style="@style/SettingsField"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:background="@drawable/field_aurora"
                 android:hint="@string/settings_ime_test_hint"
                 android:importantForAutofill="no"
                 android:imeOptions="actionDone"
                 android:inputType="text"
-                android:maxLines="1"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                android:maxLines="1"/>
         </LinearLayout>
 
         <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
              同行右侧为 Gitee 下载页入口 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow">
 
             <Button
-                android:id="@+id/btn_check_update"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_check_update"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/settings_check_update" />
 
             <Button
-                android:id="@+id/btn_update_download"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_update_download"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -121,27 +95,20 @@
 
         <!-- 输入法控制：启用 / 切换。与语音无关，不受语音开关影响 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow">
 
             <Button
-                android:id="@+id/btn_enable"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_enable"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/settings_enable_ime" />
 
             <Button
-                android:id="@+id/btn_pick"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_pick"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -150,27 +117,20 @@
 
         <!-- 符号布局入口：分组顺序 + 收藏编辑，同一张卡片内并排 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow">
 
             <Button
-                android:id="@+id/btn_symbol_order"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_symbol_order"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/symbol_order_title" />
 
             <Button
-                android:id="@+id/btn_edit_favorites"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_edit_favorites"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -179,27 +139,20 @@
 
         <!-- 词库补充 / 键盘外观：两个入口按钮并排，各自打开独立页面设置 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow">
 
             <Button
-                android:id="@+id/btn_dict_expand"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_dict_expand"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
                 android:text="@string/dict_entry_button" />
 
             <Button
-                android:id="@+id/btn_key_appearance"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_key_appearance"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp"
@@ -208,26 +161,19 @@
 
         <!-- 模糊音容错 / 加更多生僻字：两个入口按钮并排（文案在代码里下发，strings.xml 默认禁改） -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow">
 
             <Button
-                android:id="@+id/btn_fuzzy_pinyin"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_fuzzy_pinyin"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
 
             <Button
-                android:id="@+id/btn_rare_chars"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_rare_chars"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
@@ -235,12 +181,7 @@
 
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -255,32 +196,24 @@
                     android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/settings_shuangpin_scheme"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        style="@style/SettingsFieldTitle"
+                        android:text="@string/settings_shuangpin_scheme" />
 
                     <Spinner
+                        style="@style/SettingsField"
                         android:id="@+id/spinner_shuangpin"
                         android:layout_width="match_parent"
-                        android:layout_height="40dp"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/field_aurora"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:spinnerMode="dropdown" />
+                        android:layout_marginTop="2dp"
+                        android:spinnerMode="dropdown"/>
 
                     <TextView
+                        style="@style/CardHint"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="2dp"
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
-                        android:text="@string/settings_shuangpin_scheme_desc"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
+                        android:text="@string/settings_shuangpin_scheme_desc"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -291,34 +224,26 @@
                     android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/theme_card_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        style="@style/SettingsFieldTitle"
+                        android:text="@string/theme_card_title" />
 
                     <Spinner
+                        style="@style/SettingsField"
                         android:id="@+id/spinner_theme"
                         android:layout_width="match_parent"
-                        android:layout_height="40dp"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/field_aurora"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:spinnerMode="dropdown" />
+                        android:layout_marginTop="2dp"
+                        android:spinnerMode="dropdown"/>
 
                     <!-- 两档皮肤说明：文本由代码填（theme_card_desc 是 %1$s / %2$s 模板，
                          直接写在这里会先闪一帧占位符） -->
                     <TextView
+                        style="@style/CardHint"
                         android:id="@+id/text_theme_desc"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="2dp"
                         android:paddingStart="4dp"
-                        android:paddingEnd="4dp"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
+                        android:paddingEnd="4dp"/>
                 </LinearLayout>
             </LinearLayout>
 
@@ -327,52 +252,44 @@
                 android:id="@+id/row_theme_schedule"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="3dp"
                 android:orientation="horizontal"
                 android:visibility="gone">
 
                 <Button
-                    android:id="@+id/btn_theme_light_at"
                     style="@style/SettingsButton"
+                    android:id="@+id/btn_theme_light_at"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
 
                 <Button
-                    android:id="@+id/btn_theme_dark_at"
                     style="@style/SettingsButton"
+                    android:id="@+id/btn_theme_dark_at"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
             </LinearLayout>
 
             <TextView
+                style="@style/CardHint"
                 android:id="@+id/text_theme_schedule_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="2dp"
                 android:paddingStart="4dp"
                 android:paddingEnd="4dp"
                 android:text="@string/theme_schedule_hint"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp"
-                android:visibility="gone" />
+                android:visibility="gone"/>
         </LinearLayout>
 
         <!-- 候选词的行数 / 剪贴板的数量：两个「数量」类设置并排（用户 2026-09-25 指定的首页顺序）。
              候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，上下成列）。
              候选词行数的标签文案在代码里下发，strings.xml 默认禁改 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:baselineAligned="false"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -381,22 +298,15 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:id="@+id/label_candidate_rows"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    style="@style/SettingsFieldTitle"
+                    android:id="@+id/label_candidate_rows" />
 
                 <Spinner
+                    style="@style/SettingsField"
                     android:id="@+id/spinner_candidate_rows"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:layout_marginTop="4dp"
-                    android:background="@drawable/field_aurora"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:spinnerMode="dropdown" />
+                    android:layout_marginTop="2dp"
+                    android:spinnerMode="dropdown"/>
             </LinearLayout>
 
             <LinearLayout
@@ -407,40 +317,25 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/clipboard_max_items_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    style="@style/SettingsFieldTitle"
+                    android:text="@string/clipboard_max_items_title" />
 
                 <EditText
+                    style="@style/SettingsField"
                     android:id="@+id/edit_clipboard_max"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:layout_marginTop="4dp"
-                    android:background="@drawable/field_aurora"
+                    android:layout_marginTop="2dp"
                     android:hint="@string/clipboard_max_items_hint"
                     android:importantForAutofill="no"
                     android:inputType="number"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:singleLine="true"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:singleLine="true"/>
             </LinearLayout>
         </LinearLayout>
 
         <!-- 键盘内嵌韵母 / 双拼显示声韵：两个显示开关并排（各带说明小字，文案在代码里下发） -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:baselineAligned="false"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -459,13 +354,12 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_key_hint_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:paddingEnd="8dp"/>
             </LinearLayout>
 
             <LinearLayout
@@ -486,26 +380,20 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_pinyin_quanpin_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:paddingEnd="8dp"/>
             </LinearLayout>
         </LinearLayout>
 
         <!-- 用户词频学习 / 追加候选词语：两个开关并排（各带说明小字）
              （「加更多生僻字」2026-09-27 起改为入口按钮，与「增加模糊拼音」同行，页内是两档开关） -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:baselineAligned="false"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -525,13 +413,12 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"
-                    android:text="@string/switch_user_learning_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:text="@string/switch_user_learning_desc"/>
             </LinearLayout>
 
             <LinearLayout
@@ -553,26 +440,20 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"
-                    android:text="@string/switch_predict_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:text="@string/switch_predict_desc"/>
             </LinearLayout>
         </LinearLayout>
 
         <!-- 自动唤起键盘 / 只使用繁体字：两个开关并排（各带说明小字）。
              「只使用繁体字」2026-09-27 起由勾选框改为胶囊开关，与「自动唤起键盘」同行（文案在代码里下发） -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:baselineAligned="false"
-            android:orientation="horizontal"
-            android:padding="8dp">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -592,13 +473,12 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"
-                    android:text="@string/switch_auto_show_keyboard_desc"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:text="@string/switch_auto_show_keyboard_desc"/>
             </LinearLayout>
 
             <LinearLayout
@@ -619,25 +499,19 @@
                     android:textSize="13sp" />
 
                 <TextView
+                    style="@style/CardHint"
                     android:id="@+id/text_use_traditional_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
+                    android:paddingEnd="8dp"/>
             </LinearLayout>
         </LinearLayout>
 
         <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不占内存、长按空格无效）。
              下面两张卡（授权麦克风 / NAS 语音）都随它显隐，故紧随其后。 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -661,51 +535,38 @@
             </LinearLayout>
 
             <TextView
+                style="@style/CardHint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:singleLine="false"
-                android:text="@string/settings_voice_input_desc"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:layout_marginTop="2dp"
+                android:text="@string/settings_voice_input_desc"/>
         </LinearLayout>
 
         <!-- 授权麦克风：状态 + 单个授权按钮（与下方 NAS 控件同组，随语音开关整体隐藏） -->
         <LinearLayout
-            android:id="@+id/card_mic_permission"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard"
+            android:id="@+id/card_mic_permission">
 
             <TextView
                 android:id="@+id/text_mic_state"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
+                android:layout_marginBottom="4dp"
                 android:text="@string/settings_grant_mic"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
             <Button
-                android:id="@+id/btn_grant"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_grant"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
                 android:text="@string/settings_grant_mic" />
         </LinearLayout>
 
         <!-- NAS 语音：地址 + 端口 / 语言 + 默认键盘 / 提示词 / 识别选项 -->
         <LinearLayout
-            android:id="@+id/card_voice_server"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="12dp">
+            style="@style/SettingsCard"
+            android:id="@+id/card_voice_server">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -724,20 +585,13 @@
                         android:text="@string/settings_host" />
 
                     <EditText
+                        style="@style/SettingsField"
                         android:id="@+id/edit_host"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/field_aurora"
                         android:hint="@string/settings_host"
                         android:importantForAutofill="no"
                         android:inputType="textUri"
-                        android:minHeight="44dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:singleLine="true"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:singleLine="true"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -752,20 +606,13 @@
                         android:text="@string/settings_port" />
 
                     <EditText
+                        style="@style/SettingsField"
                         android:id="@+id/edit_port"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/field_aurora"
                         android:hint="@string/settings_port"
                         android:importantForAutofill="no"
                         android:inputType="number"
-                        android:minHeight="44dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:singleLine="true"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:singleLine="true"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -796,7 +643,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -811,13 +658,10 @@
                         android:text="@string/settings_language" />
 
                     <Spinner
+                        style="@style/SettingsField"
                         android:id="@+id/spinner_language"
                         android:layout_width="match_parent"
-                        android:layout_height="40dp"
-                        android:background="@drawable/field_aurora"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:spinnerMode="dropdown" />
+                        android:spinnerMode="dropdown"/>
                 </LinearLayout>
 
                 <Space
@@ -835,41 +679,32 @@
                         android:text="@string/settings_default_mode" />
 
                     <Spinner
+                        style="@style/SettingsField"
                         android:id="@+id/spinner_default_mode"
                         android:layout_width="match_parent"
-                        android:layout_height="40dp"
-                        android:background="@drawable/field_aurora"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:spinnerMode="dropdown" />
+                        android:spinnerMode="dropdown"/>
                 </LinearLayout>
             </LinearLayout>
 
             <TextView
                 style="@style/SettingsLabel"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:text="@string/settings_prompt" />
 
             <EditText
+                style="@style/SettingsFieldMultiline"
                 android:id="@+id/edit_prompt"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/field_aurora"
-                android:gravity="top"
                 android:hint="@string/settings_prompt"
                 android:importantForAutofill="no"
                 android:inputType="textMultiLine"
-                android:minHeight="64dp"
-                android:padding="8dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                android:minHeight="64dp"/>
 
             <!-- 识别选项：两个开关一行 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="2dp"
                 android:orientation="horizontal">
 
                 <CheckBox
@@ -895,12 +730,7 @@
         <!-- 在线翻译（BYOK）：总开关 + 配置入口。开关决定键盘功能面板是否显示「翻译」键；
              文案全部代码下发（strings.xml 默认禁改），布局里不写 android:text -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard">
 
             <Switch
                 android:id="@+id/switch_translate"
@@ -913,31 +743,24 @@
                 android:textSize="13sp" />
 
             <TextView
+                style="@style/CardHint"
                 android:id="@+id/text_translate_state"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:singleLine="false"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:layout_marginTop="2dp"
+                />
 
             <Button
-                android:id="@+id/btn_translate_settings"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_translate_settings"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="8dp" />
+                android:layout_marginTop="4dp" />
         </LinearLayout>
 
         <!-- 配置备份：导出 / 导入（跨设备迁移）。
              两个按钮的文本由代码下发：strings.xml 默认禁改，布局里留空避免硬编码文案进入资源 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -945,68 +768,58 @@
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btn_config_export"
                     style="@style/SettingsButton"
+                    android:id="@+id/btn_config_export"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
 
                 <Button
-                    android:id="@+id/btn_config_import"
                     style="@style/SettingsButton"
+                    android:id="@+id/btn_config_import"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
             </LinearLayout>
 
             <TextView
+                style="@style/CardHint"
                 android:id="@+id/text_config_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:singleLine="false"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:layout_marginTop="2dp"
+                />
         </LinearLayout>
 
         <!-- 导出诊断数据（单按钮，用户 2026-09-25 指定）：把日志目录打包，经系统文件选择器
              存到用户自选位置。原「发给作者」分享按钮及其分享通道 / FileProvider 已按用户要求移除。 -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
-            android:background="@drawable/card_aurora"
-            android:orientation="vertical"
-            android:padding="8dp">
+            style="@style/SettingsCard">
 
             <Button
-                android:id="@+id/btn_export_diag"
                 style="@style/SettingsButton"
+                android:id="@+id/btn_export_diag"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
                 android:minWidth="0dp"
                 android:text="@string/settings_export_diag" />
 
             <TextView
+                style="@style/CardHint"
                 android:id="@+id/text_diag_dir"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="2dp"
                 android:singleLine="true"
-                android:ellipsize="middle"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:ellipsize="middle"/>
         </LinearLayout>
 
         <!-- 使用说明纯文本（最底部） -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="24dp"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="6dp"
             android:gravity="center"
             android:text="@string/settings_usage"
             android:textColor="@color/text_secondary"

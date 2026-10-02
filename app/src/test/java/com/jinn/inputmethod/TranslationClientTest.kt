@@ -308,4 +308,23 @@ class TranslationClientTest {
         // 早退路径在调用方线程**同步**回调（与 IO 线程路径不同，这条同时钉住线程契约）
         assertEquals(TranslationOutcome.Fail(TranslationError.INSECURE), outcome)
     }
+
+    @Test
+    fun `纯 hex 形态的凭据也必须脱敏，正常错误码仍保留`() {
+        // Azure 订阅密钥 / 百度系 SecretKey 的典型形态是**全小写 32 位 hex** —— 不含大小写混排，
+        // 旧判据（前缀 + 高熵混排）整个漏判；网关把凭据回显在 code / error_code 字段时，
+        // 前 24 字符会落盘并随「导出诊断包」外发（2026-10-02 修复 L-479）
+        val hex = "0123456789abcdef0123456789abcdef"
+        val summary = TranslationClient.errorSummary("""{"code":"$hex"}""")
+        assertTrue("hex 凭据不得出现在摘要里：$summary", hex !in summary)
+        assertTrue(
+            "全大写 hex 同样要挡",
+            "0123456789ABCDEF0123456789ABCDEF" !in
+                TranslationClient.errorSummary("""{"error_code":"0123456789ABCDEF0123456789ABCDEF"}"""),
+        )
+        // 正常错误码（白名单短码 / 常见形态）必须保留，否则排障就没信息了
+        assertTrue("invalid_api_key" in TranslationClient.errorSummary("""{"code":"invalid_api_key"}"""))
+        assertTrue("54001" in TranslationClient.errorSummary("""{"error_code":54001}"""))
+        assertTrue("SignatureDoesNotMatch" in TranslationClient.errorSummary("""{"Code":"SignatureDoesNotMatch"}"""))
+    }
 }

@@ -213,8 +213,8 @@ internal object TranslationClient {
                     val capped = isBodyCapped(body)
                     Diagnostics.i(
                         TAG,
-                        "翻译响应: HTTP ${it.code} ${it.protocol} len=${body?.length ?: 0}" +
-                            (if (capped) "(可能已截断)" else ""),
+                        "翻译响应: HTTP ${it.code} ${it.protocol} chars=${body?.length ?: 0}" +
+                            " bytes=${bodyBytes(body)}" + (if (capped) "(可能已截断)" else ""),
                     )
                     // 失败时只记**结构化摘要**（长度 + 白名单错误码），绝不记响应体原文：
                     // 错误体是服务端可控文本，OpenAI 兼容网关的 401 常规形态就是回显提交的 Key
@@ -223,7 +223,16 @@ internal object TranslationClient {
                     if (it.code !in 200..299) {
                         Diagnostics.w(TAG, "翻译失败响应: HTTP ${it.code} ${errorSummary(body)}")
                     }
-                    val outcome = provider.parseResponse(it.code, body)
+                    // 解析也要兜底（2026-10-02 加固）：此刻 OkHttp 已置 `signalledCallback=true`，
+                    // 从这里抛出的 Throwable 不会被回落到 onFailure，而是冒到 dispatcher 线程 ⇒
+                    // 未捕获处理器接手 ⇒ **整个 IME 进程终止**（键盘消失、未上屏拼音与在途翻译一起丢）。
+                    // 六家 Provider 的契约是「自己兜住非法 JSON」，但那是**约定**不是机械约束 ——
+                    // 这里再兜一层：第七家写漏时最多丢一次结果，不会杀进程。
+                    val outcome = runCatching { provider.parseResponse(it.code, body) }
+                        .getOrElse {
+                            Diagnostics.w(TAG, "翻译响应解析异常: ${it.javaClass.simpleName}")
+                            TranslationOutcome.Fail(TranslationError.SERVER)
+                        }
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
                     // 只留一行 len 的话，用户看到「翻译服务异常」而日志里查不出为什么（2026-10-01 修复 L-243）
                     if (it.code in 200..299 &&
@@ -234,7 +243,38 @@ internal object TranslationClient {
                     ) {
                         Diagnostics.w(TAG, "翻译失败响应(2xx): HTTP ${it.code} ${errorSummary(body)}")
                     }
-                    onDone(outcome)
+                    // 唯一出口做一次包装剥离（六家共用；2026-10-02 修复 L-321）：
+                    // 模型的 ``` 围栏与「译文：」前缀不能原样插进用户的输入框
+                    val final: TranslationOutcome = if (outcome is TranslationOutcome.Ok) {
+                        val translated = TranslationText.stripWrapper(outcome.text)
+                        // 「少给行」对拍（2026-10-02 修复 L-483）：按行对齐的 Provider（百度两家）靠**顺序**
+                        // 把 `trans_result` 对应到输入行；服务端对空行 / 被跳过的行若不返回元素，其后所有行
+                        // 上移一位 ⇒ 译文与原文**逐行错位**，界面照报 Ok 并把整段错位译文追加进用户正文。
+                        // 解析侧手里只有响应体、无法自证；出口手上有**实际送出的原文**（`text` 参数本身就是
+                        // 送出的内容，含截断后的形态）⇒ 在这里对拍。
+                        // 只在**少**的时候拒绝：多出行可能只是译文自带换行，拒绝反而误伤。
+                        // ⚠ 空行**不参与**对拍（2026-10-02 第五轮审查的回归修正）：服务端对空行
+                        // 根本不返回元素（百度系 `trans_result` 只给有内容的行），把空行算进 expected
+                        // 会让「原文含空行」的整篇 / 整行翻译**必然被拒** —— 而段落之间有空行是常态，
+                        // 等于百度家在默认场景下 100% 失败。两边都按**非空行**计数，口径一致。
+                        val expected = text.split('\n').count { it.isNotBlank() }
+                        val actual = translated.split('\n').count { it.isNotBlank() }
+                        if (provider.alignsPerLine && actual < expected) {
+                            Diagnostics.w(
+                                TAG,
+                                "翻译: 服务端少给行（译文 $actual 行 < 原文 $expected 行）—— 逐行会错位，" +
+                                    "不写入正文（L-483）",
+                            )
+                            // 专用错误项：复用 PARAM 会把用户引去向「语言方向 / 模型名 / 路径 /
+                            // 原文长度」核对，而真因是服务端少给了行（2026-10-02 第五轮审查）
+                            TranslationOutcome.Fail(TranslationError.LINE_MISMATCH)
+                        } else {
+                            TranslationOutcome.Ok(translated)
+                        }
+                    } else {
+                        outcome
+                    }
+                    onDone(final)
                 }
             }
         })
@@ -305,7 +345,8 @@ internal object TranslationClient {
                         // 「服务端返回了空列表（不代表配置错误）」，而日志里查不出为什么。
                         Diagnostics.i(
                             TAG,
-                            "获取模型: HTTP ${it.code} 共${models.size}个 len=${body?.length ?: 0}" +
+                            "获取模型: HTTP ${it.code} 共${models.size}个 chars=${body?.length ?: 0}" +
+                                " bytes=${bodyBytes(body)}" +
                                 (if (isBodyCapped(body)) "(可能已截断)" else ""),
                         )
                         onDone(models, it.code)
@@ -331,6 +372,16 @@ internal object TranslationClient {
         runCatching { response.peekBody(MAX_BODY_BYTES).string() }.getOrNull()
 
     /**
+     * 响应体的 UTF-8 字节数 —— 截断判据与日志**共用这一个换算**。
+     *
+     * 别处不要再用 `body.length` 当「长度」打印：那是 UTF-16 字符数，与字节口径相差 2~3 倍
+     * （中文响应），两个数并排出现在一行日志里会让人按字符数去解释截断标记，方向正好相反
+     *（2026-10-02 修复 L-467）。
+     */
+    private fun bodyBytes(body: String?): Long =
+        body?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L
+
+    /**
      * 响应体是否顶到了读取上限（**因此可能已被 `peekBody` 截断**）。
      *
      * 按 **UTF-8 字节**比（`peekBody` 也是按字节截断）：用字符数会在多字节译文下恒小于上限，
@@ -340,8 +391,7 @@ internal object TranslationClient {
      * 后者在响应被截断时只剩一句「共 0 个」，与「服务端真的回了空列表」无法分辨
      *（2026-10-02 修复 L-457）。
      */
-    private fun isBodyCapped(body: String?): Boolean =
-        body != null && body.toByteArray(Charsets.UTF_8).size.toLong() >= MAX_BODY_BYTES
+    private fun isBodyCapped(body: String?): Boolean = bodyBytes(body) >= MAX_BODY_BYTES
 
     /**
      * 失败响应体的**结构化摘要**（只进日志）：长度 + 白名单错误码，**永不记自由文本**。
@@ -389,7 +439,7 @@ internal object TranslationClient {
      * 这段凭据就会落盘并随「导出诊断包」外发。这里按「已知前缀 + 高熵形态」两道判据拦截：
      * 宁可少记一条错误码，也不让凭据出网。
      */
-    private fun String.looksLikeCredential(): Boolean {
+    internal fun String.looksLikeCredential(): Boolean {
         val lower = lowercase(Locale.US)
         if (CREDENTIAL_PREFIXES.any { lower.startsWith(it) }) return true
         // 后缀型（2026-10-02 修复）：DeepL 的 Free 密钥以 `:fx` 结尾，本体是 UUID 形态
@@ -398,9 +448,17 @@ internal object TranslationClient {
         if (lower.endsWith(":fx") || lower.endsWith("-fx")) return true
         // 高熵：长且大小写与数字混排 —— 正常错误码（invalid_api_key / SignatureDoesNotMatch /
         // 54001 / 10004）极少三条同时满足
-        return length >= 20 &&
+        if (length >= 20 &&
             any { it.isUpperCase() } &&
             any { it.isLowerCase() } &&
             any { it.isDigit() }
+        ) {
+            return true
+        }
+        // 纯十六进制长串（2026-10-02 修复 L-479）：Azure 订阅密钥与百度系 SecretKey 的典型形态是
+        // **全小写**（或全大写）的 32 位 hex，不含大小写混排 ⇒ 上面那条「高熵」判据整个漏判，
+        // 网关把凭据回显在 `code` / `error_code` 字段时前 24 字符就会落盘并随诊断包外发。
+        // 32~64 位、只有 hex 字符、无分隔符 —— 正常错误码极少长这样（宁可少记一条错误码）。
+        return length in 32..64 && all { it in "0123456789abcdefABCDEF" }
     }
 }

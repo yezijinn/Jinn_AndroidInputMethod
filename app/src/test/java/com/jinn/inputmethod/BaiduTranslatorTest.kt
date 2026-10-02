@@ -232,4 +232,26 @@ class BaiduTranslatorTest {
         val body = "{\"trans_result\":[{\"src\":\"apple\",\"dst\":\"苹果\"}]}"
         assertEquals(TranslationOutcome.Ok("苹果"), translator.parseResponse(200, body))
     }
+
+    @Test
+    fun `空行必须占位保留，译文与原文逐行对齐`() {
+        // trans_result 是**按输入行对齐**的数组：原文中间的空行服务端会回 `dst: ""`，
+        // 若把它当「不存在」丢掉，其后所有行会上移一行、译文与原文逐行错位，而界面仍报成功
+        // （2026-10-02 修复 L-310；百度通用与大模型两家共用同一条合并逻辑）
+        val body = "{\"trans_result\":[" +
+            "{\"src\":\"a\",\"dst\":\"甲\"}," +
+            "{\"src\":\"\",\"dst\":\"\"}," +
+            "{\"src\":\"b\",\"dst\":\"乙\"}]}"
+        assertEquals(TranslationOutcome.Ok("甲\n\n乙"), translator.parseResponse(200, body))
+    }
+
+    @Test
+    fun `全是空 dst 时仍按无译文处理`() {
+        // 占位保留不能把「一行都没有译文」变成「一堆换行」——那会被当成有效结果上屏
+        val body = "{\"trans_result\":[{\"src\":\"a\",\"dst\":\"\"},{\"src\":\"b\",\"dst\":\"\"}]}"
+        assertEquals(
+            TranslationOutcome.Fail(TranslationError.EMPTY),
+            translator.parseResponse(200, body),
+        )
+    }
 }

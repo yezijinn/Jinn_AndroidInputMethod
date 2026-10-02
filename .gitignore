@@ -84,3 +84,8 @@ BUG.md
 # 交接包（一次性快照，只留本地）
 .wwlia-handoff/
 
+
+# PPT 工作区与临时脚本（2026-10-03）：不属于 App 源码，勿入库
+.ppt-master/
+/diag_export.py
+/fix_line_filter.py

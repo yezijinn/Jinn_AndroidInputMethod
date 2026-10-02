@@ -350,18 +350,23 @@ class RareCharsFilterTest {
     /**
      * 两个复刻页的关闭键都必须给出可听键名（BUG.md L-64）。
      *
-     * 键面只有「X」，辅助服务照字面朗读等于没读；两页是复刻关系，只改一页会让结构分叉
-     * （本类另一条守卫 [档位页例字必须落在对应档里] 同样依赖这两页一一对应）。
+     * 键面只是一个字形，辅助服务照字面朗读等于没读 ⇒ 必须给出可听名；两页是复刻关系，
+     * 只改一页会让结构分叉（本类另一条守卫 [档位页例字必须落在对应档里] 同样依赖这两页一一对应）。
+     *
+     * 键面与名字自 2026-10-02 起是**全仓唯一定义**（`PageChrome.CLOSE` / `CLOSE_DESC`，BUG.md L-477），
+     * 所以除了两页都接线，还要钉住那个定义本身没被改空（`✕` 是有形无名的字形）。
      */
     @Test
     fun 两个复刻页的关闭键都必须给出可听键名() {
+        val chrome = codeOf("PageChrome.kt")
+        assertTrue("PageChrome 必须定义可听键名", chrome.contains("const val CLOSE_DESC = \"关闭\""))
+        assertTrue("PageChrome 必须定义键面字形", chrome.contains("const val CLOSE = \"✕\""))
         for (name in listOf("RareCharsActivity.kt", "FuzzyPinyinActivity.kt")) {
             val src = codeOf(name)
             assertTrue(
-                "$name 的关闭键缺少 contentDescription（辅助服务只会读到「X」）",
-                src.contains("contentDescription = TEXT_CLOSE_DESC"),
+                "$name 的关闭键缺少 contentDescription（辅助服务只会读到一个字形）",
+                src.contains("contentDescription = PageChrome.CLOSE_DESC"),
             )
-            assertTrue("$name 未定义 TEXT_CLOSE_DESC", src.contains("const val TEXT_CLOSE_DESC ="))
         }
     }
 

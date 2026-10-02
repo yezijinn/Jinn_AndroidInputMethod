@@ -123,8 +123,9 @@ class TranslationFixBatchTest {
             request.body?.contentType().toString(),
         )
         assertEquals(
-            "显式设的 Content-Type 也不能与签名串分叉",
-            AliyunTranslator.CONTENT_TYPE,
+            "2026-10-02 修复 L-486：不再显式设 Content-Type —— 它会被 BridgeInterceptor 覆盖（死代码），" +
+                "签名串现在直接取自 body 的 MediaType（单一真相），两边再没有分叉的机会",
+            null,
             request.header("Content-Type"),
         )
     }

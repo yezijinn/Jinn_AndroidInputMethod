@@ -58,6 +58,41 @@ object KeyAppearance {
     /** SeekBar 最大进度（间隙：0~8dp，每格 0.5dp） */
     val GAP_PROGRESS_MAX: Int = progressSteps(MIN_GAP_DP, MAX_GAP_DP, GAP_STEP_DP)
 
+    // ── 候选栏字距（dp）────────────────────────────────────────
+
+    /**
+     * 候选词之间的**水平间隔**（用户 2026-10-02 要求：只调水平方向，垂直行高不动）。
+     *
+     * 语义与「按键间隙」一致：[DEFAULT_SPACING_DP] 指的是**相邻两个候选之间**的空隙 ——
+     * 实现上每个候选左右各内缩「字距的一半」，两个相邻候选的内缩相加正好等于字距。
+     */
+    const val MIN_SPACING_DP = 5f
+
+    /** 字距上界：30dp（用户 2026-10-02 指定） */
+    const val MAX_SPACING_DP = 30f
+
+    /** 字距步进：1dp（间隔是观感量，半格在候选栏上看不出来） */
+    const val SPACING_STEP_DP = 1f
+
+    /** 默认字距：10dp（用户 2026-10-02 指定；此前的 0~20dp 定义域与 4dp 默认值已被取代） */
+    const val DEFAULT_SPACING_DP = 10f
+
+    /** SeekBar 最大进度（字距：5~30dp，每格 1dp ⇒ 25 格） */
+    val SPACING_PROGRESS_MAX: Int = progressSteps(MIN_SPACING_DP, MAX_SPACING_DP, SPACING_STEP_DP)
+
+    /** 把任意输入钳到字距定义域内，并对齐到 [SPACING_STEP_DP] 的整数倍 */
+    fun clampSpacingDp(dp: Float): Float =
+        snap(dp, MIN_SPACING_DP, MAX_SPACING_DP, DEFAULT_SPACING_DP, SPACING_STEP_DP)
+
+    /** 字距 dp → SeekBar 进度 */
+    fun spacingDpToProgress(dp: Float): Int =
+        ((clampSpacingDp(dp) - MIN_SPACING_DP) / SPACING_STEP_DP).roundToInt()
+            .coerceIn(0, SPACING_PROGRESS_MAX)
+
+    /** SeekBar 进度 → 字距 dp */
+    fun spacingProgressToDp(progress: Int): Float =
+        clampSpacingDp(MIN_SPACING_DP + progress.coerceIn(0, SPACING_PROGRESS_MAX) * SPACING_STEP_DP)
+
     /** 把任意输入钳到圆角定义域内，并对齐到 [CORNER_STEP_DP] 的整数倍 */
     fun clampCornerDp(dp: Float): Float = snap(dp, MIN_CORNER_DP, MAX_CORNER_DP, DEFAULT_CORNER_DP, CORNER_STEP_DP)
 

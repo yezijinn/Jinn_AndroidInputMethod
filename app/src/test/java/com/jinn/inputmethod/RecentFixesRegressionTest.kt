@@ -1949,9 +1949,139 @@ class RecentFixesRegressionTest {
                 client.split("isBodyCapped(body)").size - 1 >= 2,
         )
         // L-461：只写不读的视图字段不得复活（KDoc 曾声称它驱动回车键行为，实际没人读）。
+        // 钉**声明**而不是「整个文件不许出现这个词」—— 后者会在注释 / 局部变量正常提到 imeOptions 时误红
+        //（2026-10-02 修复 L-474）。
+        val view = codeOf("PinyinKeyboardView.kt")
         assertTrue(
             "PinyinKeyboardView 不得再有只写不读的 imeOptions 字段",
-            "imeOptions" !in codeOf("PinyinKeyboardView.kt"),
+            "var imeOptions" !in view && "fun updateImeOptions" !in view,
+        )
+        // 2026-10-02（用户澄清后改回）：候选栏高度**只按档位**算 —— 双行档恒定增高（72dp），
+        // 不随「有候选 ↔ 功能面板」变化。此前曾按「本帧实际内容排数」把面板态收缩到单排，
+        // 结果是键盘高度来回跳；用户明确要求不要这种动态变化，已撤销。
+        // 钉住：几何入口只收「档位」一个参数，且不得再有按内容排数收缩的写法。
+        assertTrue(
+            "候选栏高度必须只按档位算（双行档恒定增高，不随内容变化）",
+            "fun applyCandidateRows(rows: Int): Int" in view && "functionPanel" !in view,
+        )
+        // L-478 的延续（2026-10-02，用户选「方案 A」）：候选栏底必须与功能面板按钮**同档**
+        // （都走内容面档 keyFaceAlpha）。它曾按「是否有内容」在 plate / surface 之间切档：
+        // 空白态（功能面板）比按钮更透（20% 时 80% vs 92%）⇒ 在浅色页面上按钮四周显出一圈底色差，
+        // 用户读作「候选栏比按钮高出一截」（深色页面 / 会压掉它的 App 里看不见）。
+        assertTrue(
+            "候选栏底必须固定走内容面档（keyFaceAlpha）：不得再用 plateFaceAlpha 选档",
+            "plateFaceAlpha" !in view && "candidateBarColor" in view,
+        )
+        assertTrue(
+            "候选栏底的缓存判据必须是颜色（换肤/换色板才能刷新）",
+            "if (color == candidateBarColor) return" in view,
+        )
+        assertTrue(
+            "空白铺底的候选栏必须用功能按钮色（同色才连成一块，不在按钮四周留异色底）",
+            "skinToken(skin.functionFill, R.color.key_bg)" in view,
+        )
+    }
+
+    /**
+     * 翻译提交链路的三处 2026-10-02 修复（L-480 / L-481 / L-482）——它们在 IME 里依赖真实
+     * `InputConnection` 行为，单测跑不了，用源码守卫钉住「修法本身还在」。
+     */
+    @Test
+    fun `翻译提交链路的落点与三态守卫`() {
+        val ime = codeOf("JinnIme.kt")
+        // L-482：发请求前必须用「宿主能否给出精确选区」拦下 —— 否则提交阶段必然失败、白付一次请求
+        assertTrue(
+            "L-482 守卫缺失：发请求前应有「宿主读不到精确选区就拒绝」的闸门（用本帧已读的探针）",
+            "slice.appendOffset > 0 && selectionRange.range == null" in ime,
+        )
+        // L-480：移到「请求时的区间末尾」之后必须确认落点（后一个字符为空或换行）
+        assertTrue(
+            "L-480 守卫缺失：提交前应确认追加落点确为区间末尾",
+            "getTextAfterCursor(1, 0)" in ime && "追加落点不是区间末尾" in ime,
+        )
+        // L-481：charBeforeCursor 的「读不到」必须真的触发**补前导换行**。
+        // ⚠ 第一条刻意做成**行为断言**而不是「看源码里写了哪个字符」：上一版把「读不到」映射成 '\n'，
+        // 而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个分支** ⇒ 源码看着改了、行为没变，
+        // 源码形态守卫还把这个 no-op 形态钉死了。现在直接拿占位符去跑 `appendText`，行为不对就红。
+        assertTrue(
+            "charBeforeCursor 的读失败占位必须让 appendText 补前导换行（不得是 null 或 '\\n'）",
+            TranslationText.appendText('\uFFFD', "x").startsWith("\n"),
+        )
+        assertTrue(
+            "charBeforeCursor 必须用替换字符占位（真文首仍返回 null 不补换行）",
+            "return if (s == null) '\\uFFFD' else s.lastOrNull()" in ime,
+        )
+
+        // L-493（2026-10-02 用户反馈）：符号收藏编辑页的删除角标**看不到字** ——
+        // 原实现把 `favorite_delete`（"移除"两个字）当显示文本 + 9sp + `Button` 自带内边距，
+        // 塞进 22dp 方块（还被 -4dp 负 margin 裁掉右上角）后只剩蓝底，用户读作「按钮与背景同色」；
+        // 负 margin 同时让角标溢出格子边界，与「在字符容器**内部**的右上角」相反。
+        // 三条一起钉，缺一条就能悄悄回来：
+        val fav = codeOf("FavoriteSymbolsActivity.kt")
+        assertTrue(
+            "删除角标必须显示符号（favorite_delete_mark），不得再把「移除」两字当显示文本",
+            "getString(R.string.favorite_delete_mark)" in fav &&
+                "text = getString(R.string.favorite_delete)" !in fav,
+        )
+        assertTrue(
+            "删除角标必须红色粗体（用户指定）：kb_key_hint_red + Typeface.BOLD",
+            "R.color.kb_key_hint_red" in fav &&
+                "Typeface.create(Typeface.DEFAULT, Typeface.BOLD)" in fav,
+        )
+        assertTrue(
+            "删除角标必须完整落在字符容器内部：不得再用负 margin 外溢（会被父容器裁掉）",
+            "marginEnd = -PageStyle.dp" !in fav && "topMargin = -PageStyle.dp" !in fav,
+        )
+        // ⚠ 真机上「角标存在、bounds 正确、像素却全是按钮底色」的真因：Material `Button` 自带
+        // stateListAnimator（elevation 2dp），Z 序高于无 elevation 的兄弟，把后添加的角标盖住了。
+        // ⇒ 两条一起钉：符号按钮取消抬升 + 角标自带一点 elevation（双保险）。
+        assertTrue(
+            "符号格按钮必须取消 Material 抬升（否则 Z 序盖住角标，屏幕上只剩按钮底色）",
+            "stateListAnimator = null" in fav && "elevation = 0f" in fav,
+        )
+        assertTrue(
+            "删除角标必须自带 elevation（确保绘制在最上层）",
+            "elevation = PageStyle.dp(context, 2).toFloat()" in fav,
+        )
+        // 纯文本（2026-10-02 用户指定）：角标块内不得再出现 background —— 那颗圆角蓝底会在符号按钮上
+        // 再叠一个小圆片，看着像「角标自己也是一颗按钮」。
+        assertTrue(
+            "删除角标必须是纯文本：块内不得再有 background（圆角蓝底）",
+            "background" !in blockAfter(fav, "R.string.favorite_delete_mark"),
+        )
+
+        // L-483（2026-10-02 第四轮审查）：按行对齐的 Provider（百度两家）在服务端「少给行」时，
+        // 其后所有行上移一位 ⇒ 译文与原文**逐行错位**，界面照报 Ok 并把错位译文写进用户正文。
+        // 解析侧手里只有响应体、无法自证；出口手上有实际送出的原文 ⇒ 在唯一出口对拍。
+        // 三条一起钉：接口默认必须是 false / 百度两家必须声明 true / 出口必须做对拍且只对「少」拒绝。
+        val client = codeOf("TranslationClient.kt")
+        assertTrue(
+            "L-483 守卫缺失：出口必须对按行对齐的 Provider 做「少给行」对拍（只对「少」拒绝）",
+            "provider.alignsPerLine && actual < expected" in client,
+        )
+        assertTrue(
+            "百度两家必须声明 alignsPerLine = true（否则对拍永不生效）",
+            "override val alignsPerLine: Boolean = true" in codeOf("BaiduTranslator.kt") &&
+                "override val alignsPerLine: Boolean = true" in codeOf("BaiduLlmTranslator.kt"),
+        )
+        assertTrue(
+            "alignsPerLine 的接口默认值必须是 false（默认 true 会把不按行对齐的家也卷进对拍）",
+            "val alignsPerLine: Boolean get() = false" in codeOf("Translation.kt"),
+        )
+        // ⚠ 对拍必须按**非空行**计数（2026-10-02 第五轮审查的回归修正）：服务端对空行根本不返回元素
+        // （百度系 `trans_result` 只给有内容的行），把空行算进 expected 会让「原文含空行」的整篇 /
+        // 整行翻译**必然被拒** —— 段落之间有空行是常态 ⇒ 等于百度家在默认场景下 100% 失败。
+        assertTrue(
+            "对拍必须按非空行计数（空行参与计数会让含空行的整篇翻译必然被拒）",
+            "text.split('\\n').count { it.isNotBlank() }" in client &&
+                "translated.split('\\n').count { it.isNotBlank() }" in client,
+        )
+        // L-485（2026-10-02 第四轮审查）：插入模式的截断必须提示。与选区模式的两套口径是**故意的**
+        // —— 选区替换会丢尾部原文（不可逆）⇒ 拒绝；插入只翻前半段、原文不动 ⇒ 拒绝更糟。
+        // 但不告知用户会以为服务端漏译、反复重试（每次都真计费）。
+        assertTrue(
+            "L-485 守卫缺失：插入模式原文被截断时必须 toast 提示",
+            "toast(TEXT_TRANSLATE_TRUNCATED)" in ime && "TEXT_TRANSLATE_TRUNCATED =" in ime,
         )
     }
 }
