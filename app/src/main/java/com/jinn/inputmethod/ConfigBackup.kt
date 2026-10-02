@@ -303,7 +303,25 @@ internal object ConfigBackup {
                             null
                         }
                     }
-                    BackupValue.KIND_LONG -> (v as? Number)?.toLong()
+                    // Long 这里是 L-226 的**未闭半边**（2026-10-02 修复）：`toLong()` 会把 `1.5`
+                    // 截成 1、把 `1e30` 饱和成 `Long.MAX_VALUE`。唯一消费者是 `update_last_check_at`，
+                    // 被写坏后自动更新检查会长期失效（时间戳停在最大值），而用户完全看不到 ——
+                    // 与 Int 分支同款判定：JSON 的整数形式直接取（无精度损失），浮点形式要求整数值
+                    // 且落在 Long 范围内，否则按「类型不符」计入 skipped。
+                    BackupValue.KIND_LONG -> when (v) {
+                        is Int, is Long -> (v as Number).toLong()
+                        is Number -> {
+                            val d = v.toDouble()
+                            if (d == Math.floor(d) && !d.isInfinite() &&
+                                d >= -9.223372036854776E18 && d <= 9.223372036854776E18
+                            ) {
+                                d.toLong()
+                            } else {
+                                null
+                            }
+                        }
+                        else -> null
+                    }
                     BackupValue.KIND_FLOAT -> (v as? Number)?.toFloat()
                     BackupValue.KIND_BOOL -> v as? Boolean
                     BackupValue.KIND_NULL -> null
@@ -317,7 +335,13 @@ internal object ConfigBackup {
             out[fileName] = values
         }
         out
-    }.getOrDefault(emptyMap())
+    }.getOrElse { e ->
+        // 结构非法（不是对象 / 空文本 / 数组 / 截断 JSON）**必须留痕**（2026-10-02 修复）：此前直接
+        // 回空表，而调用方把空表当「合法空配置」⇒ 用户看到「导入完成：设置 0 项」，与本文档
+        // 「调用方按**缺失**处理」的承诺相反，排障时也没有任何线索。
+        Diagnostics.w("ConfigBackup", "decodePrefs: 结构非法，按空表处理（${e.javaClass.simpleName}）")
+        emptyMap()
+    }
 
     private fun encodeScalar(v: BackupValue): String = when (v.kind) {
         BackupValue.KIND_STRING -> "\"" + escape(v.value as String) + "\""

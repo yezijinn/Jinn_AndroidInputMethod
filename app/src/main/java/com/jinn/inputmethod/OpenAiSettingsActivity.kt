@@ -48,6 +48,10 @@ class OpenAiSettingsActivity : Activity() {
     private lateinit var spinnerTarget: Spinner
     private lateinit var textHint: TextView
 
+    /** 显式保存入口与结果提示（用户 2026-10-01 要求：参数多，改完要有看得见的「保存」与结果） */
+    private lateinit var btnSave: Button
+    private lateinit var textSaveHint: TextView
+
     /** 用户触摸过才允许写配置：初始化 setSelection 也会回调 onItemSelected（与设置页各下拉同款闸门） */
     private var targetTouched = false
 
@@ -112,6 +116,16 @@ class OpenAiSettingsActivity : Activity() {
         editChatPath = findViewById(R.id.edit_ai_chat_path)
         editModelsPath = findViewById(R.id.edit_ai_models_path)
         editTargetCustom = findViewById(R.id.edit_ai_target_custom)
+        // 用户**亲手改过**自定义语言 ⇒ 它优先于下拉（2026-10-02 修复 L-367）：
+        // `loading` 抑制程序化回填（loadValues 的 setText），只有真键入才算数
+        editTargetCustom.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (!loading) customEdited = true
+            }
+
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
         editSystem = findViewById(R.id.edit_ai_system)
         editUser = findViewById(R.id.edit_ai_user)
         editTemperature = findViewById(R.id.edit_ai_temperature)
@@ -122,6 +136,24 @@ class OpenAiSettingsActivity : Activity() {
         editHeaders = findViewById(R.id.edit_ai_headers)
         editExtraJson = findViewById(R.id.edit_ai_extra_json)
         spinnerTarget = findViewById(R.id.spinner_ai_target)
+        // 结果提示复位（2026-10-02 修复 L-371）：保存成功后提示一直停在「已保存到本机」，
+        // 用户继续改字段时它与屏幕上的未保存改动矛盾。挂「获得焦点即回 idle」，零侵入
+        // （不用 TextWatcher：`loadValues()` 的回填 setText 会把刚显示的保存结果立刻抹掉）。
+        for (f in listOf(
+            editName, editBaseUrl, editApiKey, editModel, editChatPath, editModelsPath,
+            editTargetCustom, editSystem, editUser, editTemperature, editTopP, editMaxTokens,
+            editResponsePath, editTimeout, editHeaders, editExtraJson,
+        )) {
+            f.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus && !loading) textSaveHint.text = TEXT_SAVE_IDLE
+            }
+        }
+        // 显式保存（2026-10-01 用户要求）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
+        btnSave = findViewById(R.id.btn_ai_save)
+        btnSave.text = TEXT_SAVE
+        btnSave.setOnClickListener { saveAndNotify() }
+        textSaveHint = findViewById(R.id.text_ai_save_hint)
+        textSaveHint.text = TEXT_SAVE_IDLE
 
         editName.hint = TEXT_NAME_HINT
         editBaseUrl.hint = TEXT_BASE_URL_HINT
@@ -157,8 +189,17 @@ class OpenAiSettingsActivity : Activity() {
      */
     override fun onPause() {
         super.onPause()
-        saveValues()
-        prefs.flush()
+        // 导入进行中一律不回写（2026-10-02 修复 L-405）：本页的回写是**无条件**的全字段
+        // （15 项直接 setText → saveValues），与导入线程写同一份 Prefs ⇒ 交错时界面旧值
+        // 会把刚导入的 model / baseUrl / 提示词覆盖回去。导入结束会 `recreate()` 设置页，
+        // 界面值本就要重置，跳过不丢用户输入。
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "onPause: 导入进行中，跳过配置回写（避免覆盖导入结果）")
+        } else {
+            saveValues()
+        }
+        // flush 的布尔值就是「有没有真落盘」，不许丢（2026-10-02 修复 L-407）
+        if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
         // 「凭据不留痕」（2026-09-30）：用户从云控制台复制的 API Key 已被剪贴板监听采集入库
         // （面板里明文可见、随备份导出），保存后把它从历史里删掉（精确匹配，收藏条目不动）
         purgeApiKeyFromClipboardHistory()
@@ -174,14 +215,24 @@ class OpenAiSettingsActivity : Activity() {
     private fun purgeApiKeyFromClipboardHistory() {
         val appContext = applicationContext
         BackgroundIo.run {
-            val db = runCatching { ClipboardDb.get(appContext) }.getOrNull() ?: return@run
+            val db = runCatching { ClipboardDb.get(appContext) }.getOrElse {
+                // 库打不开必须留痕（2026-10-02 修复 L-410）：此前静默 return —— 从网页控制台
+                // 复制的 Key 明文可能一直留在历史里（面板可见、随备份导出），而诊断包里
+                // 连「试过清理」都看不到
+                Diagnostics.w(TAG, "凭据不留痕: 库打不开，本轮未清理（${it.javaClass.simpleName}）")
+                return@run
+            }
             // 与翻译设置页共用同一条链路（精确哈希 → 剥不可见字符后相等，一次遍历处理全部目标）：
             // 本页此前只有精确哈希，带 NBSP / ZWSP 的 Key 一条都删不掉（2026-10-01 修复 L-245）
             // 目标除 API Key 外，还包含自定义请求头与自定义 JSON 里的值（2026-10-01 修复 L-252）
             val targets = listOf(prefs.openAiApiKey) +
                 CredentialTrace.candidatesFrom(prefs.openAiExtraHeaders, prefs.openAiExtraJson)
             val removed = CredentialTrace.purge(db, targets)
-            if (removed > 0) Diagnostics.i(TAG, "凭据不留痕: 从剪贴板历史删除 $removed 条")
+            if (removed > 0) {
+                Diagnostics.i(TAG, "凭据不留痕: 从剪贴板历史删除 $removed 条")
+            } else {
+                Diagnostics.v(TAG, "凭据不留痕: 本轮无需删除（${targets.count { it.isNotBlank() }} 个目标）")
+            }
         }
     }
 
@@ -212,8 +263,17 @@ class OpenAiSettingsActivity : Activity() {
         }
         spinnerTarget.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (!targetTouched) return
-                // 选了标准语言就清掉自定义框（两者只应有一个生效）
+                // 程序化回填期间一律不放行（2026-10-02 修复）：`loadValues` 里的 `setSelection`
+                // 也会走到这里，此时 Spinner 往往正好有焦点 ⇒ 仅凭 `isUserDriven` 会误判成用户操作。
+                if (loading) return
+                // 闸门要认全「用户来源」：触摸只是其中一种（2026-10-02 修复）—— 读屏 / 外接键盘选
+                // 下拉不产生触摸事件，只认 `targetTouched` 的话它们选的语言**清不掉残留的自定义值**，
+                // 而 `saveValues` 正是按「自定义框是否还有内容」判定生效值 ⇒ 选了不生效。
+                if (!targetTouched && !isUserDriven(spinnerTarget)) return
+                // 选了标准语言就清掉自定义框（两者只应有一个生效）。`customEdited` 必须一并复位：
+                // 它现在也会被「载入自定义值」置真（见 `applyTargetLanguage`），不复位的话读屏用户
+                // 选完下拉保存下来仍是旧的自定义语言。
+                customEdited = false
                 editTargetCustom.setText("")
             }
 
@@ -224,6 +284,22 @@ class OpenAiSettingsActivity : Activity() {
     /** 只回写用户真的改过的字段（2026-10-01 修复 L-247）：见 [CredentialSaveGuard] */
     private val saveGuard = CredentialSaveGuard()
 
+    /** 程序化回填期间抑制下拉 / 自定义框的回调（2026-10-02 修复 L-367 的必要配套） */
+    private var loading = false
+
+    /**
+     * 用户是否**亲手编辑过**「自定义语言」框（2026-10-02 修复 L-367 的判据底座）。
+     *
+     * 目标语言的两个控件（下拉 + 自定义框）此前按「自定义框非空优先」保存 —— 读屏 / 外接键盘
+     * 用户选了下拉也不会清掉残留的自定义值 ⇒ **选了不生效**（用户看着下拉变了，保存后仍是旧值）。
+     * 改成按「最后动过哪个控件」判定。
+     */
+    private var customEdited = false
+
+    /** 「这次变化来自用户」的判据：触摸 / 焦点 / 无障碍焦点（键盘与读屏都不产生触摸事件） */
+    private fun isUserDriven(view: View): Boolean =
+        view.isFocused || view.isPressed || view.isAccessibilityFocused
+
     /** 灌值并记下「载入时的原值」（与 [saveGuard] 配套） */
     private fun loadField(field: android.widget.EditText, value: String) {
         field.setText(value)
@@ -233,6 +309,10 @@ class OpenAiSettingsActivity : Activity() {
     private fun loadValues() {
         targetTouched = false
         saveGuard.reset()
+        // 程序化回填整段抑制（2026-10-02 修复 L-367 的配套）：下面的 setText 会触发自定义框的
+        // TextWatcher，不抑制就会把「载入」当成「用户编辑」
+        loading = true
+        customEdited = false
         editName.setText(prefs.openAiName)
         editBaseUrl.setText(prefs.openAiBaseUrl)
         loadField(editApiKey, prefs.openAiApiKey)
@@ -251,12 +331,16 @@ class OpenAiSettingsActivity : Activity() {
         applyTargetLanguage(prefs.openAiTargetLanguage)
         // 提示词里没有 {{text}} 时请求不会带原文（运行时已兜底，但用户应当知道）：
         // 用 EditText 的 error 显示，零布局改动（2026-10-01 修复 L-250）
-        val promptMissing = OpenAiTranslator.VAR_TEXT !in prefs.openAiSystemPrompt &&
-            OpenAiTranslator.VAR_TEXT !in prefs.openAiUserPrompt
+        // ⚠ 判据与运行期同源（2026-10-02 修复 L-338 / L-419）：此前是 `VAR_TEXT !in 原串`，
+        // 用户写 `{{ text }}` / `{{　text　}}` 这类容错写法时运行期已正常展开，这里却报
+        // 「提示词里没有 {{text}}」——把完全正确的配置标红。
+        val promptMissing = !OpenAiTranslator.hasTextVar(prefs.openAiSystemPrompt) &&
+            !OpenAiTranslator.hasTextVar(prefs.openAiUserPrompt)
         editUser.error = if (promptMissing) TEXT_PROMPT_MISSING else null
         // 自定义 JSON 写错时参数会被静默丢弃（2026-10-01 修复 L-257）：用 error 让用户看得见
         editExtraJson.error =
             if (OpenAiTranslator.isValidExtraJson(prefs.openAiExtraJson)) null else TEXT_EXTRA_JSON_INVALID
+        loading = false
     }
 
     /** 标准语言落到下拉；不在表内的（粤语 / 古文 / 繁體中文（台灣）…）放进「自定义语言」 */
@@ -268,6 +352,12 @@ class OpenAiSettingsActivity : Activity() {
         } else {
             spinnerTarget.setSelection(0)
             editTargetCustom.setText(value)
+            // ⚠ 载入进来的自定义值**就是**当前生效值（2026-10-02 修复）：不置这一位的话，
+            // `saveValues` 的判据（`customEdited && custom.isNotEmpty()`）会判「用户没编辑过自定义框」
+            // ⇒ 落回下拉第 0 项「简体中文」⇒ **打开页面再返回就把翻译方向改掉**（连点「保存」都救不了：
+            // `saveAndNotify` 保存后立刻 `loadValues()` 又把这一位清零）。这里必须显式置真，因为
+            // 「回填自定义值」与「用户输入自定义值」在数据面是等价的；`value` 为空时不置（空串走下拉）。
+            if (value.isNotEmpty()) customEdited = true
         }
     }
 
@@ -282,16 +372,26 @@ class OpenAiSettingsActivity : Activity() {
         prefs.openAiModelsPath = editModelsPath.text.toString()
         prefs.openAiSystemPrompt = editSystem.text.toString()
         prefs.openAiUserPrompt = editUser.text.toString()
-        prefs.openAiTemperature = editTemperature.text.toString()
-        prefs.openAiTopP = editTopP.text.toString()
-        prefs.openAiMaxTokens = editMaxTokens.text.toString()
+        // 数字参数（2026-10-02 修复 L-370）：非空但非法的值此前原样存下、请求里被静默丢弃
+        // （`numberOrNull` 返 null ⇒ 该参数根本不发），而保存提示照说「已保存到本机」
+        applyNumberField(editTemperature) { prefs.openAiTemperature = it }
+        applyNumberField(editTopP) { prefs.openAiTopP = it }
+        applyNumberField(editMaxTokens) { prefs.openAiMaxTokens = it }
         prefs.openAiResponsePath = editResponsePath.text.toString()
-        prefs.openAiTimeoutSec = editTimeout.text.toString().toIntOrNull() ?: OpenAiTranslator.DEFAULT_TIMEOUT_SEC
+        // `toIntOrNull()` 不忽略空白（走 `Integer.parseInt` 语义）⇒ 粘贴 `" 30"` 会静默落回默认值，
+        // 而同一页的数字三项（`applyNumberField`）与「原文范围」页的字节上限都做了 `trim()`
+        // （2026-10-02 修复：同族数值字段口径统一）
+        prefs.openAiTimeoutSec = editTimeout.text.toString().trim().toIntOrNull()
+            ?: OpenAiTranslator.DEFAULT_TIMEOUT_SEC
         prefs.openAiExtraHeaders = editHeaders.text.toString()
         prefs.openAiExtraJson = editExtraJson.text.toString()
-        // 自定义语言非空则优先；否则用下拉里选中的那项
+        // 目标语言（2026-10-02 修复 L-367）：按「用户最后动过哪个控件」判定 —— 旧判据是
+        // 「自定义框非空优先」，读屏 / 外接键盘用户选了下拉也清不掉残留的自定义值 ⇒
+        // 用户看着下拉变了、保存后仍是旧语言。现在只有**亲手编辑过**自定义框才让它优先。
         val custom = editTargetCustom.text.toString().trim()
-        prefs.openAiTargetLanguage = custom.ifEmpty {
+        prefs.openAiTargetLanguage = if (customEdited && custom.isNotEmpty()) {
+            custom
+        } else {
             TARGET_LANGUAGES.getOrNull(spinnerTarget.selectedItemPosition)
                 ?: OpenAiTranslator.DEFAULT_TARGET_LANGUAGE
         }
@@ -303,6 +403,58 @@ class OpenAiSettingsActivity : Activity() {
                 "prompt=${prefs.openAiSystemPrompt.length}/${prefs.openAiUserPrompt.length} " +
                 "extra=${prefs.openAiExtraJson.length} headers=${prefs.openAiExtraHeaders.length}",
         )
+    }
+
+    /**
+     * 数字字段的保存：留空 = 不发该参数（清错误）；非空但非法 ⇒ 标红并留痕
+     * （2026-10-02 修复 L-370：此前非法值原样存下、请求里被静默丢弃，用户以为参数生效了）。
+     *
+     * 非法值仍照写（"留空即不发"的语义与所见即所得不变），由 [OpenAiTranslator.numberOrNull]
+     * 在组装请求体时兜住；这里只负责让用户**在设置页就看见**。
+     */
+    private fun applyNumberField(field: android.widget.EditText, write: (String) -> Unit) {
+        val raw = field.text.toString().trim()
+        val invalid = raw.isNotEmpty() && OpenAiTranslator.numberOrNull(raw) == null
+        field.error = if (invalid) TEXT_NUMBER_INVALID else null
+        if (invalid) Diagnostics.w(TAG, "数字参数非法，该参数不会被发送（字段 id=${field.id}）")
+        write(raw)
+    }
+
+    /**
+     * 显式保存（用户 2026-10-01 要求）：本页参数多且分四段，改完要有明确的「保存」出口与结果提示
+     * —— 参数本来就会在离开页面时自动落盘，但「自动」是用户看不见的。
+     *
+     * 「确保真的保存了」落在三处：
+     *  ① [Prefs.flush] 走 `commit()`（同步落盘、返回是否成功），不是异步 `apply()`；
+     *  ② API Key 是唯一带「不许误删」闸门的字段，按 [CredentialSaveGuard] 语义**回读核对**
+     *     （与写入同一个 `cleanCredential()` 口径）；不一致就不报「已保存」；
+     *  ③ 核对后把持久化值**回填界面**（[loadValues]）—— 超时被钳位、空值回默认这类归一
+     *     都会立刻显示出来，界面与「本机真实值」不再分叉。
+     */
+    private fun saveAndNotify() {
+        saveValues()
+        val flushed = prefs.flush()
+        val keyOk = !saveGuard.changed(editApiKey) ||
+            prefs.openAiApiKey == editApiKey.text.toString().cleanCredential()
+        // 加密不可用（锁屏）时 Key 只在内存、重启即失（2026-10-02 修复 L-355）：
+        // 回读核对命中同一个缓存 ⇒ 必然"相等"，必须由写侧记账才能如实报告
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        loadValues()
+        val ok = flushed && keyOk && unpersisted.isEmpty()
+        // 三态 +1（2026-10-02 修复 L-420 的 OpenAI 页侧）：原来失败只有一句
+        // 「保存未完成」，分不清是写盘失败、Key 未落盘、还是核对不一致
+        textSaveHint.text = when {
+            !flushed -> TEXT_SAVE_DISK_FAILED
+            unpersisted.isNotEmpty() -> TEXT_SAVE_NOT_PERSISTED
+            !keyOk -> TEXT_SAVE_KEY_FAILED
+            else -> TEXT_SAVED
+        }
+        if (ok) {
+            toast(TEXT_SAVED)
+        } else {
+            Diagnostics.w(TAG, "显式保存未完成: flushed=$flushed keyOk=$keyOk 未落盘=${unpersisted.size}")
+            toast(TEXT_SAVE_FAILED)
+        }
     }
 
     /**
@@ -377,6 +529,17 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_TITLE = "OpenAI 兼容配置"
         const val TEXT_CLOSE = "X"
         const val TEXT_CLOSE_DESC = "关闭"
+
+        // 显式保存（2026-10-01 用户要求）：按钮文案 + 结果提示（与翻译设置页同款措辞）
+        const val TEXT_SAVE = "保存"
+        const val TEXT_SAVE_IDLE = "点「保存」立即写入本机（改动也会在离开页面时自动保存）"
+        const val TEXT_SAVED = "已保存到本机"
+        const val TEXT_SAVE_FAILED = "保存未完成，请重试"
+
+        /** 保存结果三态（2026-10-02 修复 L-420 的 OpenAI 页侧）：失败要能分清是哪一步 */
+        const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
+        const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
+        const val TEXT_SAVE_KEY_FAILED = "API Key 未写入本机，请重试"
         const val TEXT_DESC = "留空 = 用默认值或不发送该参数；提示词支持 {{text}} / {{target_language}} / {{source_language}} / {{date}}"
         const val SECTION_BASIC = "基础配置"
         const val SECTION_PROMPT = "翻译设置"
@@ -407,7 +570,9 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_TOP_P = "Top P（留空 = 不发送）"
         const val TEXT_TOP_P_HINT = "如 1"
         const val TEXT_MAX_TOKENS = "Max Tokens（留空 = 不发送）"
-        const val TEXT_MAX_TOKENS_HINT = "如 2048"
+const val TEXT_MAX_TOKENS_HINT =
+            "如 2048。推理模型（o1 / o3 / gpt-5 等）只认 max_completion_tokens：" +
+                "此处留空，在自定义 JSON 里写 {\"max_completion_tokens\": 2048}"
 
         const val TEXT_CHAT_PATH = "对话端点路径"
         const val TEXT_CHAT_PATH_HINT = "/chat/completions"
@@ -420,7 +585,9 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_HEADERS = "自定义 Headers（一行一条 Key: Value）"
         const val TEXT_HEADERS_HINT = "X-Custom: 1\n# 井号开头是注释，Authorization 由 API Key 独占"
         const val TEXT_EXTRA_JSON = "自定义 JSON（优先级最高，同名覆盖）"
-        const val TEXT_EXTRA_JSON_HINT = "{\"enable_thinking\": false, \"reasoning_effort\": \"low\"}"
+const val TEXT_EXTRA_JSON_HINT =
+            "{\"enable_thinking\": false}；值写 null = 删掉同名标准参数" +
+                "（如 {\"max_tokens\": null, \"max_completion_tokens\": 2048}）"
 
         const val TEXT_FOOTER = "提示：JSON 写错只会被忽略并在此提示，不影响翻译；换服务只需改这里的路径与参数。"
         const val TEXT_FETCHING = "正在请求…"
@@ -432,7 +599,11 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_NEED_HTTPS = "地址需以 https:// 开头（明文会把 Key 暴露在链路上）"
         const val TEXT_KEY_INVALID = "Key 里混入了不可见字符（从网页复制常见），请重新粘贴"
     const val TEXT_PROMPT_MISSING = "提示词里没有 {{text}}：请求不会带原文，会把原文追加到提示词之后"
-    const val TEXT_EXTRA_JSON_INVALID = "自定义 JSON 解析失败：这些参数不会生效"
+
+    /** 数字参数非法（2026-10-02 修复 L-370：该参数不会被发送，此前完全静默） */
+    const val TEXT_NUMBER_INVALID = "不是合法数字，该参数不会被发送"
+const val TEXT_EXTRA_JSON_INVALID =
+        "自定义 JSON 不可用：解析失败、开了 stream（本客户端按非流式解析）、删必需键（model / messages）、或覆盖 messages（原文在里面）"
         const val TEXT_TEST_OK_FMT = "连接正常，可选模型 %d 个"
         const val TEXT_TEST_FAIL_FMT = "连接失败：HTTP %d（该服务可能未实现 /models，不影响翻译）"
     }

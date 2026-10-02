@@ -30,7 +30,15 @@ class TranslationSourceActivity : Activity() {
     private lateinit var prefs: Prefs
     private lateinit var spinnerProvider: Spinner
     private lateinit var groupScope: RadioGroup
-    private lateinit var radios: List<RadioButton>
+    /**
+     * 单选按钮 ↔ 范围的**显式映射**（2026-10-02 修复 L-436）。
+     *
+     * 此前标签按 `TranslationScope.entries` 的**下标**写、提交按 `radios.indexOfFirst{id}` 读，
+     * 两者只在「布局顺序 == 枚举顺序」时一致 —— 重排布局里四个 RadioButton（改 UI 最常见的动作）
+     * 会让按钮文案与它实际写入的范围**静默错位**（无编译错误、无测试）。现在标签、写入、
+     * 选中态共用这一张表，与布局顺序无关。
+     */
+    private lateinit var radios: List<Pair<RadioButton, TranslationScope>>
     private lateinit var textScopeDetail: TextView
     private lateinit var editMaxBytes: EditText
     private lateinit var textOfficial: TextView
@@ -76,17 +84,14 @@ class TranslationSourceActivity : Activity() {
         textScopeDetail = findViewById(R.id.text_source_scope_detail)
         editMaxBytes = findViewById(R.id.edit_source_max_bytes)
         textOfficial = findViewById(R.id.text_source_official)
-        radios = listOf(
-            findViewById(R.id.radio_scope_line_before),
-            findViewById(R.id.radio_scope_line_full),
-            findViewById(R.id.radio_scope_before_all),
-            findViewById(R.id.radio_scope_all),
+        radios = listOf<Pair<RadioButton, TranslationScope>>(
+            findViewById<RadioButton>(R.id.radio_scope_line_before) to TranslationScope.LINE_BEFORE,
+            findViewById<RadioButton>(R.id.radio_scope_line_full) to TranslationScope.LINE_FULL,
+            findViewById<RadioButton>(R.id.radio_scope_before_all) to TranslationScope.BEFORE_ALL,
+            findViewById<RadioButton>(R.id.radio_scope_all) to TranslationScope.ALL,
         )
-        // 单选按钮的文案跟着枚举走：以后加一档范围，这里的按钮数量对不上时下面会自动跳过
-        // （`getOrNull` 而不是下标，避免「枚举加了、布局没加」直接崩在 onCreate）
-        TranslationScope.entries.forEachIndexed { index, scope ->
-            radios.getOrNull(index)?.text = scope.label
-        }
+        // 文案与写入共用同一张表（见字段声明处的说明）：枚举加档时这里少写一个会**编译期**就能看出来
+        for ((view, scope) in radios) view.text = scope.label
 
         loading = true
         spinnerProvider.adapter = ArrayAdapter(
@@ -120,7 +125,7 @@ class TranslationSourceActivity : Activity() {
         }
         groupScope.setOnCheckedChangeListener { _, checkedId ->
             if (loading) return@setOnCheckedChangeListener
-            val scope = TranslationScope.entries.getOrNull(radios.indexOfFirst { it.id == checkedId })
+            val scope = radios.firstOrNull { it.first.id == checkedId }?.second
                 ?: return@setOnCheckedChangeListener
             prefs.setTranslateScopeOf(currentId, scope.id)
             Diagnostics.i(TAG, "原文范围: ${currentId.id} → ${scope.id}")
@@ -151,15 +156,24 @@ class TranslationSourceActivity : Activity() {
     /** 离开页面即落盘并等一次写入（理由见类注释；[Prefs.flush] 与凭据页同款） */
     override fun onPause() {
         super.onPause()
-        saveMaxBytes()
-        prefs.flush()
+        // 导入进行中一律不回写（2026-10-02 修复 L-405）：本页无条件写 scope / maxBytes，
+        // 与导入线程写同一份 Prefs ⇒ 交错时界面旧值会覆盖刚导入的值。
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "onPause: 导入进行中，跳过原文范围/上限回写（避免覆盖导入结果）")
+        } else {
+            saveMaxBytes()
+        }
+        // 落盘失败要留痕（2026-10-02 修复 L-407）：`commit()` 返回 false 是**正常返回值**
+        // （磁盘满 / 只读挂载），不抛异常 —— 丢弃返回值会让「看着改了、重启后回退」完全无声
+        if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 原文范围/上限落盘失败（改动可能回退）")
     }
 
     /** 载入当前服务方的一份配置（程序化写入全部走 [loading] 闸门） */
     private fun loadValues() {
         loading = true
         val scope = TranslationScope.of(prefs.translateScopeOf(currentId))
-        radios.getOrNull(TranslationScope.entries.indexOf(scope))?.isChecked = true
+        // 只勾选匹配的那一个（RadioGroup 会自动取消其它）：按显式映射找，下标不再参与
+        for ((view, entry) in radios) if (entry == scope) view.isChecked = true
         textScopeDetail.text = scope.detail
         editMaxBytes.setText(prefs.translateMaxBytesOf(currentId).toString())
         // hint 给该家的出厂默认值：用户清空输入框后，一眼能看到「不填就是它」
@@ -207,8 +221,9 @@ class TranslationSourceActivity : Activity() {
         const val TEXT_TITLE = "翻译原文范围"
         const val TEXT_DESC = "两件事各自独立保存：①「哪些内容算原文」② 单次翻译的字节上限（超出时" +
             "从前面开始取、舍弃后面的）。\n" +
-            "这两项都在「没有选中内容」时才生效：选中了内容就翻选中的那一段，译文原地替换选区，" +
-            "与光标位置、下两项都无关。"
+            "没有选中内容时按①取原文；选中了内容就翻选中的那一段、译文原地替换选区（不补换行）。" +
+            "②对**两种模式都生效**：选中内容超出上限时**拒绝翻译**（不会只替换一半，原文不动；" +
+            "缩短选择或调大上限即可）。"
         const val TEXT_PROVIDER = "翻译服务"
         const val TEXT_SCOPE = "哪些内容算翻译原文"
         /** 可填范围用常量插值：改 [TranslationText.MAX_MAX_BYTES] 时文案自动跟随，不会脱节 */
@@ -216,7 +231,8 @@ class TranslationSourceActivity : Activity() {
             "${TranslationText.MAX_MAX_BYTES} 字节）"
         const val TEXT_TRUNCATE = "统一规则：原文按 UTF-8 字节数算，超出上限时从前面开始取、" +
             "舍弃后面的。\n译文插在光标处（通常即原文之后）并另起一行；原文一个字都不动。" +
-            "\n选中模式：原文就是选中的那一段，译文原地替换它（不补换行、不改动选区以外的内容）。"
+            "\n选中模式：原文就是选中的那一段，译文原地替换它（不补换行、不改动选区以外的内容）；" +
+            "选中内容超出上限时**直接拒绝**，不会只替换一半。"
         const val TEXT_CLOSE = "关闭"
         const val TEXT_CLOSE_DESC = "关闭翻译原文范围设置"
 
@@ -231,7 +247,7 @@ class TranslationSourceActivity : Activity() {
             "约合 2000 汉字。\n额度：标准版 5 万字符/月；个人认证后 100 万字符/月，每月 1 日刷新。" +
             "常见错误码：54001 签名错误；54003 频率受限；54004 余额不足。"
         const val NOTE_BAIDU_LLM = "百度大模型接口：官方文档写 q 上限 6000 字符、建议单次 2000 字符以内，" +
-            "默认 32768 字节偏大，建议调到 6000 字节以内。\n额度：认证后一次性 100 万字符（不按月重置）。"
+            "默认已按官方上限填 6000 字节（2026-10-01 修复 L-307）。\n额度：认证后一次性 100 万字符（不按月重置）。"
         val NOTE_DEEPL = "DeepL 官方：单次请求体上限 128 KiB = 131072 字节；本机单次最多读取 " +
             "${TranslationText.MAX_MAX_BYTES} 字节（输入法框架的限制），已按本机上界填 —— " +
             "官方更大的额度在本机用不上。\n额度：Developer 免费计划一次性 100 万字符。" +

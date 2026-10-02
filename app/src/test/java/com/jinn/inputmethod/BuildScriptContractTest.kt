@@ -10,7 +10,8 @@ import java.io.File
  * `build_apk.py` 的源码契约守卫（`BUG.md` L-72 / L-77）。
  *
  * 构建脚本不在 JVM 单测覆盖范围内，但它的两条契约靠一次踩坑换来：
- *  - `--install` 的失败路径必须**非 0 退出**（否则 CI / `&&` 链路把「没装上」当成功）；
+ *  - `--install` 的**每条**失败路径都必须**非 0 退出**（否则 CI / `&&` 链路把「没装上」当成功）；
+ *    失败原因还要分开说 —— 「adb 用不了」与「没有设备」混成一句会把前者的可行动原因藏起来；
  *  - 设备列表必须按 `adb devices -l` 的**列位**解析（按子串 `"device"` 过滤会把表头与
  *    `no permissions` 行算成设备）；构建工具按**版本元组**排序（`Path` 排序是字符串比较，
  *    `9.0.0` 会盖过 `34.0.0`）。
@@ -23,11 +24,14 @@ class BuildScriptContractTest {
     @Test
     fun 安装失败必须非零退出() {
         val block = src.substringAfter("if args.install:").substringBefore("\nif __name__")
+        // 四条失败路径：adb 不可用 / 无设备 / 多设备未指定 / 指定设备不在位。
+        // 第一条是 2026-10-02 补的：此前「adb 不在 PATH」与「没有设备」报同一句，
+        // 会把「装 platform-tools、配 PATH」这种可行动的原因说成「没有设备」。
         assertEquals(
-            "安装段的三条失败路径（无设备 / 多设备未指定 / 指定设备不在位）都必须 sys.exit(1)",
-            3, Regex("sys\\.exit\\(1\\)").findAll(block).count(),
+            "安装段的四条失败路径都必须 sys.exit(1)",
+            4, Regex("sys\\.exit\\(1\\)").findAll(block).count(),
         )
-        for (msg in listOf("未检测到可用设备", "请用 --device", "不在已连接列表")) {
+        for (msg in listOf("adb 不可用", "未检测到可用设备", "请用 --device", "不在已连接列表")) {
             assertTrue("安装段的失败文案缺「$msg」", msg in block)
         }
         assertTrue("失败文案必须打到 stderr", "file=sys.stderr" in block)

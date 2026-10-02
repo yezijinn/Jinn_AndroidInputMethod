@@ -267,6 +267,12 @@ class TranslationTextTest {
         // ⇒ 发出一次真实（计费）请求，模型还可能编造整句译文
         assertFalse("\u200B".hasVisibleContent())
         assertFalse("\u00A0\u200B\uFEFF".hasVisibleContent())
+        // 非断行空格族（2026-10-02 修复）：JDK 的 `Character.isWhitespace(int)` **明确排除**
+        // 这三个码位，只问它会让「一串窄 NBSP」被判成有内容 ⇒ 发一次真实计费请求。
+        // U+00A0 另有 ZERO_WIDTH 兜住，U+2007 / U+202F 靠 `isSpaceChar` 那一半。
+        assertFalse("\u2007".hasVisibleContent())
+        assertFalse("\u202F".hasVisibleContent())
+        assertFalse("\u2007\u202F\u2007".hasVisibleContent())
         assertFalse("   \n\t".hasVisibleContent())
         assertTrue("好".hasVisibleContent())
         assertTrue("a\u200B".hasVisibleContent())

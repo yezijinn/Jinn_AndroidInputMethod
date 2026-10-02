@@ -70,7 +70,8 @@ class AliyunTranslatorTest {
         val expected = "POST\n" +
             "application/json\n" +
             "MD5VALUE\n" +
-            "application/json;charset=utf-8\n" +
+            // 用常量：它的具体形态（带不带空格）由 OkHttp 实发头决定，见 L-354 的守卫
+            AliyunTranslator.CONTENT_TYPE + "\n" +
             "Wed, 26 Aug 2015 17:01:00 GMT\n" +
             "x-acs-signature-method:HMAC-SHA1\n" +
             "x-acs-signature-nonce:$NONCE\n" +
@@ -82,7 +83,8 @@ class AliyunTranslatorTest {
                 httpVerb = "POST",
                 accept = "application/json",
                 contentMd5 = "MD5VALUE",
-                contentType = "application/json;charset=utf-8",
+                // 引用常量而非硬编码（2026-10-02）：签名串必须与 OkHttp 实发头同源（L-354）
+                contentType = AliyunTranslator.CONTENT_TYPE,
                 date = AliyunTranslator.gmtDate(fixedDate),
                 nonce = NONCE,
                 path = "/api/translate/web/general",
@@ -102,10 +104,15 @@ class AliyunTranslatorTest {
         assertEquals("mt.cn-hangzhou.aliyuncs.com", request.url.host)
         assertEquals("/api/translate/web/general", request.url.encodedPath)
         assertEquals("application/json", request.header("Accept"))
-        // Content-Type 必须与签名串**同源**且显式发出：交给 OkHttp 由 MediaType 生成时，
-        // 参数会被归一成带空格的「; charset=utf-8」，差一个空格即 SignatureDoesNotMatch
-        // （2026-09-30 审查发现：此前这一处无人看守，测试只把 contentType 当入参喂给签名函数）
+        // Content-Type 必须与签名串**同源**（2026-10-02 修复 L-354）：OkHttp 的 BridgeInterceptor
+        // 会用 `body.contentType().toString()` **覆盖**显式头（归一成带空格的形态），
+        // 所以常量就该是带空格的那个值 —— 差一个空格即 SignatureDoesNotMatch（被归成 AUTH）
         assertEquals(AliyunTranslator.CONTENT_TYPE, request.header("Content-Type"))
+        assertEquals(
+            "签名串必须等于实发头（显式头会被 body 的 MediaType 覆盖）",
+            AliyunTranslator.CONTENT_TYPE,
+            request.body?.contentType().toString(),
+        )
         assertEquals("HMAC-SHA1", request.header("x-acs-signature-method"))
         assertEquals("2019-01-02", request.header("x-acs-version"))
         assertEquals(NONCE, request.header("x-acs-signature-nonce"))
@@ -121,7 +128,7 @@ class AliyunTranslatorTest {
                 httpVerb = "POST",
                 accept = "application/json",
                 contentMd5 = md5Base64Reference(bodyBytes),
-                contentType = "application/json;charset=utf-8",
+                contentType = AliyunTranslator.CONTENT_TYPE,
                 date = AliyunTranslator.gmtDate(fixedDate),
                 nonce = NONCE,
                 path = "/api/translate/web/general",

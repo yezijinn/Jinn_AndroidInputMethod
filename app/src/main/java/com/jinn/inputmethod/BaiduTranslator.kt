@@ -64,8 +64,7 @@ internal class BaiduTranslator(
             return TranslationOutcome.Fail(baiduErrorOf(errorCode))
         }
         if (json == null || code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
-        // 取值统一走 jsonText：JSON null / 类型不符都返回 null，不会变成字面量 "null" 当译文
-        val text = jsonText(json.optJSONArray("trans_result")?.optJSONObject(0), "dst")
+        val text = transResultText(json)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)
         } else {
@@ -74,6 +73,25 @@ internal class BaiduTranslator(
     }
 
     companion object {
+        /**
+         * 取 `trans_result` 里的译文。
+         *
+         * 百度的这个字段是**按输入行对齐的数组** —— 多行原文返回多个元素，只读 `[0]` 会丢掉
+         * 第 2..N 行的译文，而界面仍报成功（2026-10-01 审查 L-268）。这里按顺序用 `\n` 连起来；
+         * 服务端不拆行时数组长度恒为 1，行为与原来一致。
+         *
+         * 取值仍走 [jsonText]：JSON null / 类型不符都返回 null，不会变成字面量 "null" 当译文。
+         */
+        internal fun transResultText(json: JSONObject?): String? {
+            val arr = json?.optJSONArray("trans_result") ?: return null
+            val parts = ArrayList<String>(arr.length())
+            for (i in 0 until arr.length()) {
+                val dst = jsonText(arr.optJSONObject(i), "dst")
+                if (!dst.isNullOrEmpty()) parts.add(dst)
+            }
+            return parts.joinToString("\n").ifEmpty { null }
+        }
+
         const val ENDPOINT = "https://fanyi-api.baidu.com/api/trans/vip/translate"
         const val SOURCE_LANGUAGE_AUTO = "auto"
 
@@ -115,7 +133,10 @@ internal class BaiduTranslator(
 
         /** HTTP 状态码 → 归一错误分类（业务错误码走 [baiduErrorOf]） */
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
-            400 -> TranslationError.PARAM
+            400, 413, 414 -> TranslationError.PARAM      // 413 请求体过大；414 URL 过长 —— 百度通用版是 **GET 家**（原文在 query 里，
+                  // 非 ASCII 一字节膨胀成 3 个字符），真正撞上的会是 414。原先只认 413
+                  //（对 GET 不可达）会把「原文过长」显示成「服务异常」，按提示重试永远失败
+                  //（2026-10-01 修复 L-308）
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             429 -> TranslationError.QUOTA
@@ -141,6 +162,9 @@ internal class BaiduTranslator(
             "58000" -> TranslationError.AUTH             // 客户端 IP 非法
             "58001" -> TranslationError.PARAM            // 译文语言方向不支持
             "58002" -> TranslationError.SERVER           // 服务当前已关闭
+            // 90107 = 认证未通过或未生效（2026-10-01 审查 L-275）：账号实名 / 认证没走完时百度回
+            // 这个码，落进 else 会让用户看到「服务异常，请稍后重试」—— 重试与换 Key 都无效。
+            "90107" -> TranslationError.AUTH
             else -> TranslationError.SERVER
         }
     }

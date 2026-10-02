@@ -62,8 +62,8 @@ internal class BaiduLlmTranslator(
         if (json == null || code !in 200..299) {
             return TranslationOutcome.Fail(BaiduTranslator.httpErrorOf(code))
         }
-        // 取值统一走 jsonText：JSON null / 类型不符都返回 null，不会变成字面量 "null"
-        val text = jsonText(json.optJSONArray("trans_result")?.optJSONObject(0), "dst")
+        // 与通用平台同款：数组按行对齐，多行原文要合并（2026-10-01 审查 L-268）
+        val text = BaiduTranslator.transResultText(json)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)
         } else {

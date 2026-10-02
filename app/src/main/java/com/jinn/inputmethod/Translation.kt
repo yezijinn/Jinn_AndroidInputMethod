@@ -77,11 +77,19 @@ internal enum class TranslationError(val message: String) {
     NOT_CONFIGURED("请先在设置里填写翻译 API 凭据"),
     /** 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上 */
     INSECURE("翻译地址必须以 https:// 开头"),
+
+    /**
+     * 凭据含 Header 非法字符（从网页复制时混入 U+3000 / 控制符很常见）。
+     *
+     * 与 [AUTH] 不同：**请求根本没发出去**；与 [PARAM] 不同：真因不在语言/模型/路径上。
+     * 与 `fetchModels` 的 `-3`（`TEXT_KEY_INVALID`）同源（2026-10-02 修复 L-429）。
+     */
+    CREDENTIAL("凭据含不可见字符，未发送请求（请重新粘贴 Key）"),
     NETWORK("网络错误，请检查网络后重试"),
     TIMEOUT("翻译请求超时，请重试"),
-    AUTH("认证失败：请检查凭据（API Key / AppID / SecretKey / AccessKey）"),
+    AUTH("认证失败：请检查凭据（API Key / AppID / SecretKey / AccessKey）与 Azure 区域"),
     QUOTA("额度不足或请求过于频繁，请稍后重试"),
-    PARAM("翻译参数被服务端拒绝，请检查语言设置"),
+    PARAM("服务端拒绝了这次请求的参数（语言方向 / 模型名 / 路径 / 原文长度），请对照服务方文档核对"),
     SERVER("翻译服务异常，请稍后重试"),
     EMPTY("翻译结果为空"),
 }
@@ -145,7 +153,10 @@ internal val TranslationProviderId.defaultMaxBytes: Int
         TranslationProviderId.ALIYUN -> 5_000
         TranslationProviderId.AZURE -> 50_000
         TranslationProviderId.BAIDU -> 6_000
-        TranslationProviderId.BAIDU_LLM -> 32_768
+        // 官方 q 上限 6000 字符、建议 2000 字符以内 ⇒ 与通用版取同一档。原先填 32_768
+        // （与 OpenAI 兼容同款）会让**默认配置**必然撞服务端上限，而超限码不在精确码表里 ⇒
+        // 一律「服务异常」，用户重试永远失败且每次都真计费（2026-10-01 修复 L-307）。
+        TranslationProviderId.BAIDU_LLM -> 6_000
         TranslationProviderId.DEEPL -> 100_000
         TranslationProviderId.OPENAI -> 32_768
     }
@@ -213,16 +224,19 @@ internal object TranslationText {
         maxBytes: Int,
         afterTruncated: Boolean = false,
     ): Slice {
-        val head = lineHead(before)
         val raw: String
         val appendOffset: Int
         var exact = true
         when (scope) {
             TranslationScope.LINE_BEFORE -> {
-                raw = head
+                raw = lineHead(before)
                 appendOffset = 0
             }
             TranslationScope.LINE_FULL -> {
+                // `lineHead` 只在「按行」的两档需要（2026-10-02 修复 L-432）：BEFORE_ALL / ALL
+                // 此前也先算一遍，白付一次全窗口扫描 + 最多 10 万字符的 substring 拷贝，
+                // 而这条路径由点击直接跑在 IME 主线程上（键盘场景对主线程停顿敏感）
+                val head = lineHead(before)
                 val nl = after.indexOf('\n')
                 val tailLen = if (nl < 0) after.length else nl
                 raw = head + after.subSequence(0, tailLen)
@@ -241,8 +255,12 @@ internal object TranslationText {
                 exact = !afterTruncated
             }
         }
-        val (cut, truncated) = takeHeadBytes(raw, maxBytes)
-        return Slice(cut.trim(), truncated, appendOffset, exact)
+        // 先 trim、再截断（2026-10-02 修复 L-433）：顺序反了时首尾空白先吃掉字节配额、
+        // 随后又被丢掉 —— 缩进代码块 / 网页复制的行首空格会让上传量凭空少一截
+        // （方向安全，属「少翻」而非「多发」）。`trimEnd()` 兜住「截断刀口留在空白上」的情形。
+        val trimmed = raw.trim()
+        val (cut, truncated) = takeHeadBytes(trimmed, maxBytes)
+        return Slice(cut.trimEnd(), truncated, appendOffset, exact)
     }
 
     /**
@@ -252,8 +270,9 @@ internal object TranslationText {
      * 用户的明确选择，再按行切会把选中的内容丢掉一部分。截断方向与其他模式一致：从前面取、舍弃后面的。
      */
     fun extractSelection(text: CharSequence, maxBytes: Int): Slice {
-        val (cut, truncated) = takeHeadBytes(text.toString(), maxBytes)
-        return Slice(cut.trim(), truncated, 0, true)
+        // 与 [extract] 同款顺序（2026-10-02 修复 L-433）：先 trim 再截断，别让首尾空白吃配额
+        val (cut, truncated) = takeHeadBytes(text.toString().trim(), maxBytes)
+        return Slice(cut.trimEnd(), truncated, 0, true)
     }
 
     /** 光标所在行的行首之后那一段（[before] 里最后一个换行之后的部分；没有换行就是整段） */
@@ -322,8 +341,9 @@ internal interface TranslationProvider {
     /**
      * 该 Provider 期望的**整体**超时（秒）；`0` = 用 [TranslationClient] 的默认预算。
      *
-     * 只有 OpenAI 兼容一家暴露这个值：大模型首字延迟不可控，用户可把它调到 60s 以上；
-     * 其余各家的 REST 接口都在 10s 级返回，不需要各自的旋钮。
+     * 当前**两家**覆写：OpenAI 兼容（用户可调，默认 60s）与百度大模型（固定 60s，见
+     * [BaiduLlmTranslator]）—— 都是「首字延迟不可控、20s 默认预算会把长句打成假超时」的大模型接口。
+     * 其余四家是 10s 级返回的 REST 接口，用默认预算，不需要各自的旋钮。
      */
     val callTimeoutSec: Int get() = 0
 }
@@ -356,16 +376,115 @@ internal fun jsonCode(json: JSONObject?, key: String): String? {
 /**
  * 是否含**可见内容**（非空白、且非零宽字符）。
  *
- * `isBlank()` 走 `Char.isWhitespace()`，对 **U+200B（ZWSP）/ U+FEFF（BOM）/ U+00A0（NBSP）**
- * 都返回 false：一个从网页复制来的零宽字符会被当成「有内容」⇒ 发起一次真实（计费）请求，
- * 而模型面对一个不可见字符**可能编造整句译文**并把它追加进用户正文（2026-09-30 第二轮审查发现）。
- * 反向同理：服务端若只回零宽字符，也不能当成有效译文写回。
+ * ⚠ 判据是 `Char.isWhitespace()`，它在 JVM 上是 `Character.isWhitespace(c) || Character.isSpaceChar(c)`：
+ * **ZWSP（U+200B）与 BOM（U+FEFF）返回 false**（`Cf` 类，Java 明列为非空白），而
+ * **NBSP（U+00A0）返回 true**（它是 `Zs`，被 `isSpaceChar` 接住）—— 两种都判不出来，要靠
+ * [ZERO_WIDTH] 兜。少一个码位就多一条「一个不可见字符也算有内容」的漏洞：用户从网页复制来的
+ * 零宽字符会被当成有内容 ⇒ 发出一次真实（计费）请求，而模型面对一个不可见字符**可能编造整句译文**
+ * 并把它追加进用户正文（2026-09-30 第二轮审查发现）。反向同理：服务端若只回零宽字符，也不能写回。
+ *
+ * ⚠ 但**判空不等于可写**：`U+202E`（RLO）这类双向文本控制符既非空白也不在 [ZERO_WIDTH] 里，
+ * 「有可见内容」成立，写进输入框却会改变**用户自己那段文字**的显示顺序 —— 见 [sanitizedForOutput]。
  */
-internal fun CharSequence.hasVisibleContent(): Boolean =
-    any { !it.isWhitespace() && it !in ZERO_WIDTH }
+internal fun CharSequence.hasVisibleContent(): Boolean {
+    var i = 0
+    while (i < length) {
+        // 按**码位**遍历（2026-10-02 修复 L-339）：TAG 字符是代理对，逐 `Char` 判时低代理
+        // 既非空白、也不在任何表里 ⇒ 一串纯 TAG 文本会被判「有内容」，一段用户看不见的东西
+        // 被写进输入框并随复制传染 —— 正是本条要关掉的那条路。
+        val cp = Character.codePointAt(this, i)
+        // ⚠ 必须**同时**问 `isWhitespace` 与 `isSpaceChar`（2026-10-02 修复）：JDK 的
+        // `Character.isWhitespace(int)` **明确排除非断行空格**（U+00A0 / U+2007 / U+202F），
+        // 而本函数的语义（下面 KDoc 与全部调用点）是 Kotlin `Char.isWhitespace()` 那一套
+        // （= `isWhitespace || isSpaceChar`）。少了这一半，一个 U+202F（窄 NBSP，从网页复制极常见）
+        // 就足以让「纯不可见内容」过检 ⇒ 发出一次真实（计费）请求，而模型面对它可能编造整句译文
+        // 并写进用户正文。U+00A0 另有 [ZERO_WIDTH] 兜住，U+2007 / U+202F 依赖这里。
+        if (!Character.isWhitespace(cp) && !Character.isSpaceChar(cp) && !isInvisibleCodePoint(cp)) {
+            return true
+        }
+        i += Character.charCount(cp)
+    }
+    return false
+}
+
+/**
+ * **判空**用的「不可见全集」（2026-10-01 修复 L-324）。
+ *
+ * 在 [ZERO_WIDTH] 之外再补几个「本身没有内容、只在依附于基字符时才有意义」的面：
+ * 软连字符、不可见运算符、变体选择符、TAG 字符（后者能编码出一串隐藏 ASCII）。
+ * 少了它们，服务端只回一个 `U+FE0F` 或一串 TAG 字符也能过「有没有内容」这一关，
+ * 于是一段**用户看不见的东西**被写进输入框，并随复制继续传染到邮件与网页表单。
+ *
+ * ⚠ 只用于**判空，不用于剥除**：变体选择符与 TAG 字符在 emoji 序列（❤️ / 旗帜）里是语义相关的，
+ * 剥掉会破坏正文；但一串**只有它们**的「译文」没有任何意义，不能当成有效结果写回。
+ */
+private fun isInvisibleCodePoint(cp: Int): Boolean = when {
+    cp in ZERO_WIDTH_CODEPOINTS -> true
+    cp == 0x00AD -> true                      // 软连字符
+    cp in 0x2061..0x2064 -> true               // 不可见运算符（U+2060 已在 ZERO_WIDTH 里）
+    cp == 0x061C -> true                      // ALM（阿拉伯字母标记）：同族，判空侧也要认（L-343）
+    cp in 0xFE00..0xFE0F -> true               // 变体选择符（没有基字符时无意义）
+    cp in 0xE0000..0xE007F -> true             // TAG 字符（按**码位**整段覆盖，2026-10-02 修复 L-339）
+    cp == 0x2800 -> true                      // 盲文空白（L-343）
+    cp == 0x115F || cp == 0xFFA0 -> true       // Hangul 填充符（L-343）
+    else -> false
+}
 
 /** 常见「看起来是空、`isWhitespace()` 却不认」的零宽字符（含 NBSP：网页/文档复制的常客） */
 private const val ZERO_WIDTH = "\u200B\u200C\u200D\u2060\uFEFF\u00A0"
+
+/**
+ * [ZERO_WIDTH] 的码位形态（判空按码位遍历，与 Char 表同源等值）。
+ *
+ * ⚠ 必须定义在 [ZERO_WIDTH] **之后**：顶层 `val` 按文件内声明顺序初始化，
+ * 反过来写在前面会直接编译失败（"must be initialized"）。
+ */
+private val ZERO_WIDTH_CODEPOINTS: Set<Int> = ZERO_WIDTH.map { it.code }.toSet()
+
+/**
+ * 双向文本控制符：本身看不见，却会改变**其后同段落**里字符的显示顺序。
+ *
+ * 插入一个 `U+202E`（RLO）之后，用户自己写的文字会按从右到左渲染 —— 看到的顺序与真正存进去的
+ * 顺序不一致，而这段文字会随复制、发送流到邮件、工单与代码 diff 里继续传染（经典的 trojan source）。
+ * 译阿拉伯语 / 希伯来语 / 波斯语时，模型**自发**带上 `U+200E` / `U+200F` 也是常态。
+ */
+private const val BIDI_CONTROLS =
+    "\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069"
+
+/**
+ * 译文落地前的净化（2026-10-01 修复 L-314）。
+ *
+ * 服务端返回的文本是**不可信输入**：它既可能夹着双向文本控制符（改变用户文字的显示顺序），也可能
+ * 夹着 C0/C1 控制符 —— `U+0000` 在部分宿主上等同字符串终止符、`U+0085` 是「看不见的换行」、
+ * `U+001B` 开头的转义序列会在用户把这段文字复制到终端之后才发作。这些字符**都不会**让
+ * [hasVisibleContent] 判空：那个判据管的是「有没有内容」，管不了「内容里夹了什么」。
+ *
+ * 规则：保留 `\n` 与 `\t`（译文本就是多行的），其余 C0、`DEL`、C1 与双向控制符一律剥掉。
+ * 只剥不可见字符，**不动任何可见字符**。
+ */
+internal fun CharSequence.sanitizedForOutput(): String {
+    var dirty = false
+    for (c in this) {
+        if (c.isInvisibleControl()) {
+            dirty = true
+            break
+        }
+    }
+    if (!dirty) return toString()
+    val sb = StringBuilder(length)
+    for (c in this) if (!c.isInvisibleControl()) sb.append(c)
+    return sb.toString()
+}
+
+private fun Char.isInvisibleControl(): Boolean = when {
+    this == '\n' || this == '\t' -> false
+    this < ' ' -> true                    // C0（含 \r、\u0000、ESC）
+    this == '\u007F' -> true              // DEL
+    this in '\u0080'..'\u009F' -> true     // C1（含 U+0085 NEL ——「看不见的换行」）
+    this in BIDI_CONTROLS -> true         // 双向文本控制符
+    this == '\u061C' -> true              // ALM：改显示序（与 BIDI 同族），此前漏在剥除表外（L-343）
+    else -> false
+}
 
 /**
  * 凭据/端点取值的统一清洗：**剥掉不可见字符再 trim**。
@@ -377,3 +496,20 @@ private const val ZERO_WIDTH = "\u200B\u200C\u200D\u2060\uFEFF\u00A0"
  * 完全无关，而且肉眼永远查不出来。
  */
 internal fun String.cleanCredential(): String = filter { it !in ZERO_WIDTH }.trim()
+
+/**
+ * Azure 区域的归一：**小写、去空格与连字符**（2026-10-02 修复 L-347）。
+ *
+ * `Ocp-Apim-Subscription-Region` 头要求 `eastasia` / `global` 这类标识符形态，而 Azure 门户上
+ * 显示给用户的是 **`East Asia`**（带空格、首字母大写）。照抄进输入框 → 头值非法 → 服务端 401
+ * → 归 AUTH → 提示只说「检查凭据」，用户重贴一遍 Key 仍然失败 —— 整条链上没有一处指向真因。
+ * 写侧（[Prefs.azureRegion]）与显式保存的核对侧共用这一个函数，避免两侧口径分叉（L-365 的同族坑）。
+ */
+internal fun normalizeAzureRegion(raw: String): String =
+    // 只保留 ASCII 小写字母与数字（区域名的官方形态：`eastasia` / `global` / `westus2`）。
+    // ⚠ 不要只 `replace(" ", "")`（2026-10-02 修复：上一轮就是这么写的，漏掉 U+3000 全角空格 ——
+    // 中文输入法空格键的默认输出）。`East\u3000Asia` 会带着一个**非法头值字符**进
+    // `Ocp-Apim-Subscription-Region`，OkHttp 抛 `IllegalArgumentException`、被兜成 PARAM，
+    // toast 却说「语言方向 / 模型名 / 路径 / 原文长度」—— 比它要修的 401 更难查。
+    // `cleanCredential()` 仍先跑：它负责剥零宽族与两端空白，本行负责收口到合法字符集。
+    raw.cleanCredential().lowercase().filter { it in 'a'..'z' || it in '0'..'9' }

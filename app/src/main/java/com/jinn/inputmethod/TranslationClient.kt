@@ -30,7 +30,7 @@ internal object TranslationClient {
     private const val CONNECT_TIMEOUT_SEC = 10L
     private const val READ_TIMEOUT_SEC = 20L
 
-    /** 整体预算：覆盖连接 + 读写 + 重定向，防止「慢响应」把按钮的「翻译中」挂死 */
+    /** 整体预算：覆盖连接 + 读写，防止「慢响应」把按钮的「翻译中」挂死（重定向已关，见 http 的 followRedirects） */
     private const val CALL_TIMEOUT_SEC = 25L
 
     /**
@@ -66,6 +66,11 @@ internal object TranslationClient {
             .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
             .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
             .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
+            // 翻译端点是**用户自填**的（中转 / 聚合网关是常见用法）：跟随重定向意味着一个不太可信
+            // 的网关回 307/308 时，能把 POST 与**用户正文**原样重发到 `Location` 指定的任意主机，
+            // 响应还会被当成正常译文插进输入框。翻译端点没有合理的跳转需求（2026-10-01 修复 L-306）
+            // —— 词库下载那个客户端早已出于同样的理由关掉了跨协议跳转。
+            .followRedirects(false)
             .followSslRedirects(false)
             .build()
     }
@@ -152,7 +157,16 @@ internal object TranslationClient {
     ) {
         val request = runCatching { provider.buildRequest(text, target) }.getOrElse {
             Diagnostics.w(TAG, "翻译请求构造失败: ${it.javaClass.simpleName}")
-            onDone(TranslationOutcome.Fail(TranslationError.PARAM))
+            // 凭据含 Header 非法字符（`IllegalArgumentException`）单独归因（2026-10-02 修复 L-429）：
+            // 归 PARAM 会把用户引向「语言方向 / 模型名 / 路径」——那是他刚检查过的东西；
+            // 真因在 Key 里混了不可见字符（与 fetchModels 的 -3 / TEXT_KEY_INVALID 同源）。
+            // 其余构造期异常（URL 非法等）仍归 PARAM。
+            val error = if (it is IllegalArgumentException) {
+                TranslationError.CREDENTIAL
+            } else {
+                TranslationError.PARAM
+            }
+            onDone(TranslationOutcome.Fail(error))
             return
         }
         // HTTPS 硬判据（与 UpdateChecker 同款）：地址被改成明文一律拒发。
@@ -196,8 +210,7 @@ internal object TranslationClient {
                     // 「半截 JSON 解析失败」当成服务端问题（2026-10-01 修复 L-243）
                     // 按 **UTF-8 字节**比上限（`peekBody` 也是按字节截断）：用字符数会在多字节译文下
                     // 恒小于上限，标记永远不亮 —— 正好抵消了它要消除的那类误导（2026-10-01 修复 L-257）
-                    val capped = body != null &&
-                        body.toByteArray(Charsets.UTF_8).size.toLong() >= MAX_BODY_BYTES
+                    val capped = isBodyCapped(body)
                     Diagnostics.i(
                         TAG,
                         "翻译响应: HTTP ${it.code} ${it.protocol} len=${body?.length ?: 0}" +
@@ -214,8 +227,10 @@ internal object TranslationClient {
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
                     // 只留一行 len 的话，用户看到「翻译服务异常」而日志里查不出为什么（2026-10-01 修复 L-243）
                     if (it.code in 200..299 &&
-                        outcome is TranslationOutcome.Fail &&
-                        outcome.error == TranslationError.SERVER
+                        // 不再限定 SERVER（2026-10-01 审查 L-274）：原条件把「2xx 承载额度 / 认证类
+                        // 失败」挡在门外，而这段逻辑的目标恰恰是网关用 200 报限额与欠费 —— 用户报
+                        // 「额度不足」时诊断包里只剩 `翻译响应: HTTP 200 len=…`，分不清限流与欠费。
+                        outcome is TranslationOutcome.Fail
                     ) {
                         Diagnostics.w(TAG, "翻译失败响应(2xx): HTTP ${it.code} ${errorSummary(body)}")
                     }
@@ -228,9 +243,11 @@ internal object TranslationClient {
     /**
      * 「获取模型 / 测试连接」：`GET {Base}{ModelsPath}` + Bearer。
      *
-     * [onDone] 在 OkHttp 的 IO 线程触发（调用方自行切主线程）：成功 `(models, code)`；
-     * HTTP 失败 `(null, code)`；网络失败 `(null, -1)`；**地址非 HTTPS `(null, -2)`**；
-     * **凭据含非法字符 `(null, -3)`**。
+     * [onDone] 可能在 **OkHttp 的 IO 线程**触发，但两条早退（非 HTTPS / 凭据含非法字符）在
+     * **调用方线程同步触发** —— 与 [translate] 同款（2026-10-02 修复 L-437：此前这里只写了
+     * 「在 IO 线程触发」，照它省掉 `runOnUiThread` 的后来者会踩到）。
+     * 成功 `(models, code)`；HTTP 失败 `(null, code)`；网络失败 `(null, -1)`；
+     * **地址非 HTTPS `(null, -2)`**；**凭据含非法字符 `(null, -3)`**。
      * 服务端未实现 `/models` 属常态，调用方不得据此判定配置错误（文档要求）。
      *
      * 返回 `Call` 供调用方取消（2026-09-30 第二轮审查）：超时上限可到 300s，页面在响应回来前
@@ -283,7 +300,14 @@ internal object TranslationClient {
                     val body = readBodyCapped(it)
                     if (it.code in 200..299) {
                         val models = OpenAiTranslator.parseModels(body)
-                        Diagnostics.i(TAG, "获取模型: HTTP ${it.code} 共${models.size}个")
+                        // 与 `translate` 同口径记长度与截断标记（2026-10-02 修复 L-457）：
+                        // 响应超上限被截后只剩一句「共 0 个」，用户看到的是
+                        // 「服务端返回了空列表（不代表配置错误）」，而日志里查不出为什么。
+                        Diagnostics.i(
+                            TAG,
+                            "获取模型: HTTP ${it.code} 共${models.size}个 len=${body?.length ?: 0}" +
+                                (if (isBodyCapped(body)) "(可能已截断)" else ""),
+                        )
                         onDone(models, it.code)
                     } else {
                         // 与 translate 同口径：只记结构化摘要，响应体原文绝不进日志（可能回显 Key）
@@ -307,6 +331,19 @@ internal object TranslationClient {
         runCatching { response.peekBody(MAX_BODY_BYTES).string() }.getOrNull()
 
     /**
+     * 响应体是否顶到了读取上限（**因此可能已被 `peekBody` 截断**）。
+     *
+     * 按 **UTF-8 字节**比（`peekBody` 也是按字节截断）：用字符数会在多字节译文下恒小于上限，
+     * 标记永远不亮 —— 正好抵消了它要消除的那类误导。
+     *
+     * 两条读取链（`translate` 与 `fetchModels`）共用同一判据：原先只有前者记这个标记，
+     * 后者在响应被截断时只剩一句「共 0 个」，与「服务端真的回了空列表」无法分辨
+     *（2026-10-02 修复 L-457）。
+     */
+    private fun isBodyCapped(body: String?): Boolean =
+        body != null && body.toByteArray(Charsets.UTF_8).size.toLong() >= MAX_BODY_BYTES
+
+    /**
      * 失败响应体的**结构化摘要**（只进日志）：长度 + 白名单错误码，**永不记自由文本**。
      *
      * 为什么不能记原文：错误体是**服务端可控文本** —— OpenAI 兼容网关的 401 常规形态就是回显
@@ -328,13 +365,18 @@ internal object TranslationClient {
             json.opt("code"),
         ).firstOrNull { it != null && it != org.json.JSONObject.NULL }
             ?.toString()
+            // ⚠ 先判凭据形态、**后**截断（2026-10-02 修复）：`take(24)` 会把 DeepL 的识别特征
+            // 后缀 `:fx` 截掉，于是 `looksLikeCredential()` 漏判（它只看前缀与高熵形态），
+            // `Diagnostics` 的 `[A-Za-z0-9\-]{16,}:fx\b` 兜底也因后缀已丢而失效 ⇒
+            // 该 Key 的前 24 字符会落盘并随「导出诊断包」外发（24 这个上限来自 L-214，
+            // 从 40 收到 24 时正好把 `:fx` 从窗口里挤了出去）。
+            ?.takeIf { !it.looksLikeCredential() }
             ?.take(MAX_ERROR_CODE_CHARS)
             ?.takeIf { s ->
                 // 白名单必须是**ASCII** 显式区间：`isLetterOrDigit()` 对非 ASCII 也为真，
                 // 一串连续中文（≤24 字、无空格）会被当成「错误码」写进日志（2026-10-01 修复 L-243）
                 s.isNotEmpty() &&
-                    s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "_.-" } &&
-                    !s.looksLikeCredential()
+                    s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "_.-"}
             }
         return if (code == null) "body=len${body.length}" else "body=len${body.length} code=$code"
     }
@@ -350,6 +392,10 @@ internal object TranslationClient {
     private fun String.looksLikeCredential(): Boolean {
         val lower = lowercase(Locale.US)
         if (CREDENTIAL_PREFIXES.any { lower.startsWith(it) }) return true
+        // 后缀型（2026-10-02 修复）：DeepL 的 Free 密钥以 `:fx` 结尾，本体是 UUID 形态
+        // （全小写 + 数字，**没有大写字母**）⇒ 「前缀 + 高熵」两条判据都不命中；
+        // 若照抄进网关的错误码字段就会被当普通错误码记下并外发。
+        if (lower.endsWith(":fx") || lower.endsWith("-fx")) return true
         // 高熵：长且大小写与数字混排 —— 正常错误码（invalid_api_key / SignatureDoesNotMatch /
         // 54001 / 10004）极少三条同时满足
         return length >= 20 &&

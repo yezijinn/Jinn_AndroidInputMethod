@@ -75,17 +75,76 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         return builder.build()
     }
 
+    /**
+     * OpenAI 兼容的 `error.code` / `error.type` → 归一分类（2026-10-01 审查 L-270）。
+     *
+     * 词表取 OpenAI 官方与常见网关（OpenRouter / 自建中转）的取值；认不出的仍归 SERVER ——
+     * 宁可提示「服务异常」，也不要把它猜成「检查凭据」。
+     */
+    private fun openAiErrorOf(code: String?): TranslationError {
+        // trim 不能省（2026-10-02 修复 L-430）：网关回 `" 429 "` 这类带空白的错误码时，
+        // `toIntOrNull()` 会失败并落进 else ⇒ 限流被报成「服务异常」
+        val c = code.orEmpty().trim().lowercase()
+        return when {
+            c.isEmpty() -> TranslationError.SERVER
+            "invalid_api_key" in c || "authentication" in c || "unauthorized" in c ||
+                "permission" in c -> TranslationError.AUTH
+            "quota" in c || "rate_limit" in c || "insufficient" in c || "billing" in c ||
+                "credit" in c -> TranslationError.QUOTA
+            "context_length" in c || "too_long" in c || "max_tokens" in c ||
+                "invalid_request" in c || "bad_request" in c -> TranslationError.PARAM
+            // 纯数字错误码（2026-10-02 修复 L-299 / L-430）：`jsonCode` 已能把
+            // `{"error":{"code":429}}` 取成 "429"，但此前这里只认关键词 ⇒ 又落回 SERVER，
+            // L-287 的修复等于白做。数字分支还要处理两件事：
+            //  · `429.0` 这类浮点形态（`toIntOrNull()` 失败）⇒ 用 `toDoubleOrNull` 兜；
+            //  · `0` 与 `2xx` 是**非错误语义**（不少网关用 0 表示成功）⇒ 返回 SERVER，
+            //    交给调用方的「业务码只在更具体时才覆盖」吸收，不会被当成一次失败。
+            else -> {
+                val n = c.toIntOrNull()
+                    ?: c.toDoubleOrNull()?.takeIf { it % 1.0 == 0.0 }?.toInt()
+                when {
+                    n == null -> TranslationError.SERVER
+                    n == 0 || n in 200..299 -> TranslationError.SERVER
+                    else -> httpErrorOf(n)
+                }
+            }
+        }
+    }
+
     override fun parseResponse(code: Int, body: String?): TranslationOutcome {
-        if (code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
-            ?: return TranslationOutcome.Fail(TranslationError.SERVER)
-        // 部分网关把错误塞在 HTTP 200 的 body 里（{"error":{…}}）
+        // 业务错误码优先，且**非 2xx 也先读**（2026-10-02 修复 L-358）：与百度 / 阿里云同一口径 ——
+        // 网关用 4xx/5xx 承载 `insufficient_quota` / `invalid_api_key` 时，先看 HTTP 状态会把
+        // 「欠费」「Key 无效」压成「服务异常」/「认证失败」，用户查不出真因。
         // 过滤 JSON null（2026-10-01 修复 L-257）：`has` 对显式 `"error": null` 也返回 true，
         // 会把正常响应判成服务端错误；口径与本文件其它取值的 `JSONObject.NULL` 过滤一致
-        val error = json.opt("error")
+        val error = json?.opt("error")
         if (error != null && error !== org.json.JSONObject.NULL) {
-            return TranslationOutcome.Fail(TranslationError.SERVER)
+            // 按 `error.code` / `error.type` 分类（2026-10-01 审查 L-270）：不少网关与中转用 200
+            // 承载 `insufficient_quota` / `invalid_api_key` / `context_length_exceeded` 与限流，
+            // 一律报「服务异常」会让用户无从下手 —— 换 Key、充值、缩短原文被压成同一句提示。
+            // ⚠ 用 jsonCode 而不是 jsonText（2026-10-01 修复 L-287）：`{"error":{"code":429}}`
+            // 这类**数字**错误码（不少网关如此）经 `as? String` 会被丢成 null ⇒ 一律归 SERVER，
+            // 于是欠费 / 限流 / 超上下文又被压成「服务异常，请稍后重试」。`jsonCode` 就是为
+            // 「可能是数字的错误码」准备的（见它在 Translation.kt 的 KDoc）。
+            val errorCode = when (error) {
+                is org.json.JSONObject ->
+                    // 空串要跳过，否则会盖掉可用的 `type`：`jsonCode` 对 "" 返回 ""（只过滤 NULL）
+                    jsonCode(error, "code")?.takeIf { it.isNotBlank() } ?: jsonCode(error, "type")
+                else -> error.toString()
+            }
+            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02 修复：上一轮引入的回归）：
+            // `openAiErrorOf` 认不出时返回 SERVER，直接 return 会**挤掉** `httpErrorOf` 的结论 ——
+            // `404 + {"error":{"message":…}}` 会从 PARAM 退回 SERVER、
+            // `429 + {"error":{"type":"requests"}}`（OpenAI 429 的真实形态，`code` 为 null）会
+            // 从 QUOTA 退回 SERVER，恰好把 L-287 / L-299 那条线要服务的场景打回原形。
+            val byBody = errorCode?.let { openAiErrorOf(it) }
+            val byHttp = if (code in 200..299) null else httpErrorOf(code)
+            return TranslationOutcome.Fail(
+                byBody?.takeIf { it != TranslationError.SERVER } ?: byHttp ?: TranslationError.SERVER,
+            )
         }
+        if (json == null || code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
         val text = extractByPath(json, config.responsePath)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)
@@ -136,8 +195,11 @@ internal fun applyTemplateEnsuringText(
 ): String {
     val filled = applyTemplate(template, text, target)
     // 只在**两个模板都没有占位符**时兜底：system 提示词本来就不该带 {{text}}（正文由 user 带），
-    // 只看单个模板会在 system 里重复塞一遍原文
-    if (VAR_TEXT !in template && VAR_TEXT !in otherTemplate) {
+    // 只看单个模板会在 system 里重复塞一遍原文。
+    // ⚠ 判据用 [OpenAiTranslator.hasTextVar]（归一化后）而不是原串字面量（2026-10-02 修复 L-338）：
+    // 展开走归一化、判据走原串时，容错写法（`{{ text }}` / `{{TEXT}}`）会被误判成「没有占位符」
+    // ⇒ 原文进请求两次，用户看到重复译文。
+    if (!hasTextVar(template) && !hasTextVar(otherTemplate)) {
         Diagnostics.w(
             "OpenAiTranslator",
             "提示词模板缺少 $VAR_TEXT，已把原文追加到消息末尾（否则请求里没有原文）",
@@ -152,9 +214,6 @@ internal fun applyTemplateEnsuringText(
 
         /** 源语言变量的取值：四家都由服务端自动识别，本地不做检测 */
         const val SOURCE_AUTO_LABEL = "自动检测"
-
-        /** 自定义 JSON 解析失败时的返回标记（UI 用它提示用户，但不阻止翻译） */
-        const val EXTRA_JSON_INVALID = "extra_json_invalid"
 
         private val JSON_MEDIA_TYPE = "application/json; charset=UTF-8".toMediaType()
 
@@ -235,21 +294,76 @@ internal fun applyTemplateEnsuringText(
         /**
          * 提示词变量替换：`{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`。
          *
-         * 认不出的变量**原样保留**：用户可能自己引入业务变量（配合 Custom JSON 用），不该被吃掉。
+         * 认不出的变量**原样保留**：将来加新变量时不至于吃掉旧模板；但本客户端**不会替换它们**
+         * ——`messages` 不可被自定义 JSON 覆盖（原文必须由提示词模板携带，见 L-428），
+         * 所以自定义变量只会字面进请求。
+         *
+         * **单趟扫描**（2026-10-01 修复 L-332）：链式 `replace` 会让被代入的**值**再被后续 replace 扫描，
+         * 而 `target` 是用户自由文本 —— 把它写成 `{{text}}` 就会让原文出现两次、目标语言消失。
+         * 单趟扫描里值只是被 append，不会再被当成模板。
          */
         internal fun applyTemplate(
             template: String,
             text: String,
             target: String,
             now: Date = Date(),
-        ): String = template
-            .replace(VAR_TARGET, target)
-            .replace(VAR_SOURCE, SOURCE_AUTO_LABEL)
-            .replace(VAR_DATE, SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now))
-            // ⚠ 正文必须**最后**注入（2026-09-30 审查发现）：先注入的话，用户正文里恰好含
-            //    `{{target_language}}` 这类占位符（提示词模板、配置文档、代码片段都很常见）
-            //    会被后续 replace 二次改写，发给模型的原文与屏幕上的原文不再一致。
-            .replace(VAR_TEXT, text)
+        ): String {
+            val normalized = normalizeKnownVars(template)
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now)
+            val sb = StringBuilder(normalized.length + text.length)
+            var i = 0
+            while (i < normalized.length) {
+                val hit = when {
+                    normalized.startsWith(VAR_TEXT, i) -> VAR_TEXT to text
+                    normalized.startsWith(VAR_TARGET, i) -> VAR_TARGET to target
+                    normalized.startsWith(VAR_SOURCE, i) -> VAR_SOURCE to SOURCE_AUTO_LABEL
+                    normalized.startsWith(VAR_DATE, i) -> VAR_DATE to date
+                    else -> null
+                }
+                if (hit == null) {
+                    sb.append(normalized[i])
+                    i++
+                } else {
+                    sb.append(hit.second)
+                    i += hit.first.length
+                }
+            }
+            return sb.toString()
+        }
+
+        /**
+         * 已知变量的书写容错：`{{ text }}` / `{{TEXT}}` 这类写法也认（2026-10-01 修复 L-334）。
+         *
+         * 只归一这四个名字，其余 `{{…}}` **原样保留**（不替换：2026-10-02 修复 L-428 —— `messages`
+         * 不可被覆盖，原文只能由**提示词模板**携带，自定义变量没有用武之地）。
+         * 此前链式 `replace` 只认精确字面量，用户写 `{{ text }}` 时提示词里会原样留着它、
+         * 兜底再把原文追加到末尾，而三处反馈都没说清是空格导致的。
+         */
+        // ⚠ 空白类必须带 `\p{Zs}`（2026-10-02 修复 L-419）：Java 的 `\s` 是 `[ \t\n\x0B\f\r]`，
+        // **不含 U+3000 全角空格** —— 而中文输入法下空格键的默认输出正是它，`cleanCredential`
+        // 的剥除表也不含它 ⇒ `{{　text　}}` 归一化失败、占位符原样泄进请求。
+        // ⚠ 花括号**本身**同样要容错（2026-10-02 修复）：`｛｝`（U+FF5B / U+FF5D 全角）是中文
+        // 输入法下打花括号的常见形态，而本 App 自己就是中文 IME —— 只补内侧空白不补括号本身，
+        // 等于把同一个漏洞从「半开」改成「开一半」：`｛｛text｝｝` 依旧归一化失败、占位符原样
+        // 进请求，兜底再把原文追加一遍。允许半角/全角混用（`{｛text}}` 也认）。
+        private val KNOWN_VAR_PATTERN = Regex(
+            "[{｛]{2}[\\s\\p{Zs}]*(text|target_language|source_language|date)[\\s\\p{Zs}]*[}｝]{2}",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** 归一化：容错写法统一成精确字面量；判据与展开**共用**（见 [hasTextVar]） */
+        internal fun normalizeKnownVars(template: String): String =
+            KNOWN_VAR_PATTERN.replace(template) { "{{${it.groupValues[1].lowercase()}}}" }
+
+        /**
+         * 模板里是否带 `{{text}}`（含容错写法）。
+         *
+         * 判据必须与展开同源（2026-10-02 修复 L-338）：`applyTemplate` 展开的是**归一化后**的串，
+         * 而兜底判据原来看的是原串 —— 用户写 `{{ text }}` 或 `{{TEXT}}` 时展开生效、判据却看不见
+         * ⇒ 原文被追加第二遍（模型可能译两份、token 翻倍），同时日志与设置页报「模板缺少 {{text}}」。
+         * 展开、兜底、设置页三处现在共用这一个判据。
+         */
+        internal fun hasTextVar(template: String): Boolean = VAR_TEXT in normalizeKnownVars(template)
 
         /** 数字解析：空串 / 非数字 / NaN / 无穷 → null（null = 该参数不发送） */
         internal fun numberOrNull(raw: String): Double? {
@@ -288,7 +402,11 @@ internal fun applyTemplateEnsuringText(
             putNumber(body, "temperature", config.temperature)
             putNumber(body, "top_p", config.topP)
             putNumber(body, "max_tokens", config.maxTokens)
-            mergeExtraJson(body, config.extraJson)
+            // 返回值此前被丢弃（2026-10-02 修复 L-424）：解析失败时静默跳过合并，排障
+            // （尤其配置来自**备份导入**、绕过设置页校验时）看不到「写了但没生效」
+            if (!mergeExtraJson(body, config.extraJson)) {
+                Diagnostics.w("OpenAiTranslator", "自定义 JSON 解析失败，本次未合并（设置页保存时会提示）")
+            }
             return body
         }
 
@@ -317,16 +435,88 @@ internal fun applyTemplateEnsuringText(
     internal fun isValidExtraJson(extraJson: String): Boolean {
         val raw = extraJson.trim()
         if (raw.isEmpty()) return true
-        return runCatching { JSONObject(raw) }.isSuccess
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return false
+        // 让用户在**设置页**就看见问题（2026-10-01 L-333 / 2026-10-02 L-259·L-344·L-421）：
+        // 判据与 [mergeExtraJson] 共用 [extraKeyRejection] —— 两处各写一套是本条族的教训。
+        return obj.keys().asSequence().none { extraKeyRejection(it, obj.opt(it)) != null }
+    }
+
+    /** 会破坏本客户端的键（2026-10-01 修复 L-333）：响应按非流式解析，开了 SSE 就解析不了 */
+    private val UNSUPPORTED_EXTRA_KEYS = listOf("stream", "stream_options")
+
+    /** 删掉会让请求体非法的必需键（2026-10-02 修复 L-421） */
+    private val REQUIRED_EXTRA_KEYS = listOf("model", "messages")
+
+    /** 覆盖即失效的键（2026-10-02 修复 L-259）：本客户端组装的原文就在 `messages` 里 */
+    private val NO_OVERWRITE_KEYS = listOf("messages")
+
+    /**
+     * 该键在当前取值下会被拒绝的原因（null = 可用）。**设置页判据与运行期合并共用这一处**
+     * （2026-10-02：此前两处各写一套，`{"stream": null}` 在运行期被"忽略"、在设置页却判"不可用"）。
+     *
+     * 三条规则都按**值**判，不按"键在不在"：
+     *  · 破坏客户端：只有 `stream` 类键**为真**才算（`false` / `null` 等价于"不发这个键"，无害）；
+     *  · 必需键：`null`（删键语义）一律拒绝 —— `{"model": null}` 会让请求体非法、错误却被归成
+     *    `PARAM`、提示指向语言设置，与真因（自己删了 model）无关；
+     *  · 关键键：`messages` **不可覆盖** —— 用户抄网关文档的完整示例时，含原文的消息被整体换掉，
+     *    模型凭空编、界面仍显示「成功」（与 L-246 同类失效，入口不同）。
+     */
+    /**
+     * 自定义 JSON 里的「真值」判据（2026-10-02 补完 L-431）：`true` / `"true"`（不分大小写）/
+     * 任意**非零数值**（含 `1.0`、`2`）。
+     *
+     * 此前只认 `toBoolean()` 与字面量 `"1"` ⇒ `{"stream": 2}` / `{"stream": 1.0}` 会被放行、
+     * 请求开成流式、响应按非流式解析必然失败 —— 正是这条规则要拦的场景（部分网关按「非零即真」
+     * 解释该参数，而 JSON 里的 `1.0` 经 `toString()` 是 `"1.0"`，两个字面量判据都不命中）。
+     */
+    private fun isTruthy(value: Any?): Boolean = when (value) {
+        is Boolean -> value
+        is Number -> value.toDouble() != 0.0
+        else -> value.toString().toBoolean() || value.toString() == "1"
+    }
+
+    internal fun extraKeyRejection(key: String, value: Any?): String? {
+        val isDelete = value == null || value === JSONObject.NULL
+        // 键名按**大小写不敏感**比较（2026-10-02 修复 L-431）：规则要防的是「用户照抄网关文档」，
+        // 而文档里的 `Stream` / `Messages` 这类大写键真实存在 —— 精确比较会被整片绕过。
+        val k = key.lowercase()
+        // 真值判据还要认 `1`（部分网关接受 1/0 写法）：`"1".toBoolean()` 是 false，
+        // 漏掉它就会放行 `{"stream":1}` ⇒ 响应变 SSE ⇒ 解析必然失败
+        val streaming = k in UNSUPPORTED_EXTRA_KEYS && !isDelete && isTruthy(value)
+        return when {
+            streaming -> "开启流式会破坏本客户端的响应解析（本客户端按非流式解析）"
+            isDelete && k in REQUIRED_EXTRA_KEYS ->
+                "必需键（${REQUIRED_EXTRA_KEYS.joinToString(" / ")}）不可删"
+            !isDelete && k in NO_OVERWRITE_KEYS ->
+                "原文就在这个键里（不可覆盖）：请把要翻译的内容放进「提示词」的 {{text}}，而不是自定义 messages"
+            else -> null
+        }
     }
 
     internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
-            val raw = extraJson.trim()
-            if (raw.isEmpty()) return true
-            val extra = runCatching { JSONObject(raw) }.getOrNull() ?: return false
-            for (key in extra.keys()) body.put(key, extra.get(key))
-            return true
+        val raw = extraJson.trim()
+        if (raw.isEmpty()) return true
+        val extra = runCatching { JSONObject(raw) }.getOrNull() ?: return false
+        for (key in extra.keys()) {
+            val value = extra.opt(key)
+            val rejection = extraKeyRejection(key, value)
+            if (rejection != null) {
+                // 拒绝该键但**不中断**：其余键照常合并（JSON 写错不该把功能打死，与解析失败的既有口径一致）
+                Diagnostics.w("OpenAiTranslator", "自定义 JSON 的 $key 已忽略（$rejection）")
+                continue
+            }
+            if (value == null || value === JSONObject.NULL) {
+                // 写成 JSON `null` = **删掉这个标准参数**（2026-10-01 修复 L-331）。标准参数里有已经
+                // 过时的键名 —— `max_tokens` 就是：新一代推理模型只认 `max_completion_tokens`，且
+                // 不兼容旧名。而「留空即不发」只对空字段生效，用户必须能只替换掉其中一个键。
+                // 注意 `body.put(key, null)` 是另一回事：那会写进 JSONObject.NULL 并序列化成 `null` 发出去。
+                body.remove(key)
+            } else {
+                body.put(key, value)
+            }
         }
+        return true
+    }
 
         // ── 响应解析（纯函数） ─────────────────────────────────
 

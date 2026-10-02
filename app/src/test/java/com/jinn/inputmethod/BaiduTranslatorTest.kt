@@ -218,4 +218,18 @@ class BaiduTranslatorTest {
         const val SECRET = "abcdefghijklmnopqrstuvwxyz123456"
         const val SALT = "1234567890"
     }
+    @Test
+    fun `多行原文的译文必须合并，不能只取第一行`() {
+        // 百度的 trans_result 是按**输入行对齐的数组**，只读 [0] 会丢掉后面几行（2026-10-01 审查 L-268）
+        val body = "{\"from\":\"en\",\"to\":\"zh\",\"trans_result\":[" +
+            "{\"src\":\"line one\",\"dst\":\"第一行\"}," +
+            "{\"src\":\"line two\",\"dst\":\"第二行\"}]}"
+        assertEquals(TranslationOutcome.Ok("第一行\n第二行"), translator.parseResponse(200, body))
+    }
+
+    @Test
+    fun `单行响应仍是原样，不受合并逻辑影响`() {
+        val body = "{\"trans_result\":[{\"src\":\"apple\",\"dst\":\"苹果\"}]}"
+        assertEquals(TranslationOutcome.Ok("苹果"), translator.parseResponse(200, body))
+    }
 }

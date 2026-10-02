@@ -37,14 +37,7 @@ object InputFieldPrivacy {
         if (imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return true
         if (inputType == null) return false   // 信息缺失：宁可继续学习，不降级正常输入
         if (inputType == EditorInfo.TYPE_NULL) return true
-        val variation = inputType and EditorInfo.TYPE_MASK_VARIATION
-        when (variation) {
-            EditorInfo.TYPE_TEXT_VARIATION_PASSWORD,
-            EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-            EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD,
-            EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD,
-            -> return true
-        }
+        if (isPasswordField(inputType)) return true
         return (inputType and EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS) != 0
     }
 
@@ -73,13 +66,25 @@ object InputFieldPrivacy {
         return false
     }
 
+    /**
+     * 是否命中口令变体 —— ⚠ **必须连类位一起比**。
+     *
+     * 只掩 [EditorInfo.TYPE_MASK_VARIATION] 会把地址栏判成口令框：平台里
+     * `TYPE_TEXT_VARIATION_URI` 与 `TYPE_NUMBER_VARIATION_PASSWORD` **同为 0x10**
+     * （`TYPE_DATETIME_VARIATION_DATE` 也是），三个互不相干的语义共用一个数 ——
+     * 地址栏因此被翻译拦下（提示「密码框不翻译」）且不学词频，而人眼看不出它们是同一个值。
+     * 只有「类位 + 变体位」的组合能把它们分开（2026-10-02 修复 L-454；常量值用
+     * `javap -constants` 直读 `android.text.InputType` 核对过，不是凭记忆）。
+     *
+     * 要求类位存在是安全的：`TYPE_NULL` 在上游单独处理，真实控件也不会只报变体位。
+     */
     fun isPasswordField(inputType: Int?): Boolean {
         if (inputType == null) return false
-        return when (inputType and EditorInfo.TYPE_MASK_VARIATION) {
-            EditorInfo.TYPE_TEXT_VARIATION_PASSWORD,
-            EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-            EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD,
-            EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD,
+        return when (inputType and (EditorInfo.TYPE_MASK_CLASS or EditorInfo.TYPE_MASK_VARIATION)) {
+            EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_PASSWORD,
+            EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+            EditorInfo.TYPE_CLASS_NUMBER or EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD,
             -> true
             else -> false
         }

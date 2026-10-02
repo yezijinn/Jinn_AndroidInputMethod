@@ -100,6 +100,7 @@
                 android:minHeight="44dp"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
+                android:saveEnabled="false"
                 android:singleLine="true"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_secondary"
@@ -486,4 +487,28 @@
                 android:textSize="11sp" />
         </LinearLayout>
     </ScrollView>
+
+    <!-- 显式保存（2026-10-01 用户要求）：参数仍会即时落盘，这里再给一个**固定的**保存出口 ——
+         参数多且分组，用户改完可能不确定是否生效；点完有明确结果提示（即使多此一举） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/btn_ai_save"
+            style="@style/SettingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="44dp" />
+
+        <TextView
+            android:id="@+id/text_ai_save_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:singleLine="false"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+    </LinearLayout>
 </LinearLayout>

@@ -650,7 +650,13 @@ class SettingsActivity : ComponentActivity() {
      */
     override fun onPause() {
         super.onPause()
-        if (::editClipboardMax.isInitialized) saveMaxItems()
+        // 导入进行中不回写（2026-10-02 修复 L-405）：本页只写一个字段，但导入线程同在写 Prefs，
+        // 且设置页正是导入的**发起页**（用户可能边导入边返回）—— 交错同样会把界面旧值写回去
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "onPause: 导入进行中，跳过剪贴板上限回写（避免覆盖导入结果）")
+        } else if (::editClipboardMax.isInitialized) {
+            saveMaxItems()
+        }
     }
 
     /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
@@ -1100,7 +1106,7 @@ class SettingsActivity : ComponentActivity() {
     private fun refreshTranslateState() {
         val provider = TranslationProviderId.of(prefs.translateProvider)
         val ready = prefs.translationProvider() != null
-        // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，30+ 种），
+        // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，12 项预设 + 自定义），
         // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
         // 本页的下拉、摘要却报另一套语言，指向与实际行为不符）
         val targetLabel = if (provider == TranslationProviderId.OPENAI) {

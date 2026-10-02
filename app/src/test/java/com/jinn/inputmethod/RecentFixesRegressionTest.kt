@@ -1321,13 +1321,19 @@ class RecentFixesRegressionTest {
             "getSelectedText(" in body,
         )
         assertTrue(
-            "判不出也要放行（安全网交给提交时的原文比对），不能一律拒绝",
-            "return true" in body,
+            "**问不出来**要给独立结论（L-262 fail-closed，L-284 起还要让调用方分文案），不能混进「无选区」",
+            "return AppendCheck.HOST_UNREADABLE" in body,
         )
+        assertTrue(
+            "明确没有选中内容时放行（安全网交给提交时的原文比对）",
+            "return AppendCheck.OK" in body,
+        )
+        // 发起处会把 `readSelectedText` 刚读到的选区一起传进来（L-315 少读一次），
+        // 提交处没有现成的读数、照旧自己读 ⇒ 两种调用形态都算
         assertEquals(
             "发起前与提交前都要判选区（发起处 if、提交处 else if）",
             2,
-            Regex("canAppendTranslation\\(connection\\)").findAll(src).count(),
+            Regex("canAppendTranslation\\(connection[,)]").findAll(src).count(),
         )
         assertTrue(
             "选区模式必须在提交前校验选中内容未变，否则会用旧译文盖掉用户新选的内容",
@@ -1336,6 +1342,223 @@ class RecentFixesRegressionTest {
         assertTrue(
             "选区模式必须原地替换、不得补前导换行（补了会把用户段落切碎）",
             "val submit = if (snapshot.replaceSelection) {" in src,
+        )
+    }
+
+    /**
+     * 本轮（2026-10-01）修复的形态守卫。
+     *
+     * 四条各自对应一条已入册缺陷，共同点是**回退后 JVM 单测依然全绿**：
+     * L-261 选区超限时若照常替换会删掉选区后半段原文；L-262 宿主对 `getSelectedText` 抛异常时
+     * 若放行，可能删掉用户选中的内容；L-263 选区探测不设 `hintMaxChars` 会让长文档每次回包整篇
+     * 窗口；L-276 下拉闸门只认触摸时，读屏与外接键盘用户的选择永远不落盘。
+     */
+    @Test
+    fun `本轮修复的形态不得回退`() {
+        val src = codeOf("JinnIme.kt")
+        assertTrue("选区超限必须在发请求之前拒绝（L-261）", "TEXT_TRANSLATE_SELECTION_TOO_LONG" in src)
+        assertTrue("getSelectedText 抛异常时不能放行（L-262）", "getSelectedText 抛异常，无法确认选区" in src)
+        assertTrue("选区探测必须设 hintMaxChars（L-263）", "hintMaxChars = TranslationText.MAX_READ_CHARS" in src)
+        assertTrue("「光标前全部」读满窗口时必须拒绝（L-277）", "TEXT_TRANSLATE_BEFORE_TOO_LONG" in src)
+        assertTrue("下拉的用户来源判据必须含焦点（L-276）", "isUserDriven" in codeOf("TranslationSettingsActivity.kt"))
+    }
+
+    /**
+     * 本批（2026-10-01）修复的形态守卫。
+     *
+     * 与上一批同样的道理：这八处**回退之后 JVM 单测依然全绿**，只有真机才能看出来，所以钉住形态。
+     *
+     * - L-293 `defaulted` 若退回「等于默认值 ⇒ 空串」，**打开一次 OpenAI 设置页就能让该家翻译整体
+     *   不可用**，而且重填同一个 URL 也无效（下游 `joinUrl` 拿到空串是直接失败，不是回落默认）。
+     * - L-288 Base URL 若退回 `trim()`，从网页复制时混进的 NBSP / 零宽字符会进 URL，两处消费点
+     *   （摘要判据与建 provider）就会给出互相矛盾的结论。
+     * - L-284 两种拒绝若合回一条文案，「宿主不支持选区检测」会被说成「请先取消选中的内容」。
+     * - L-287 错误码若退回只认字符串的 `jsonText`，数字型错误码一律变成「服务异常」。
+     * - L-289 清理失败若退回整批早退，一处抛错就让本轮谁都没清。
+     * - L-285 / L-286 「`before` 取不到开头」的判据若退回「读满窗口」反推，`ALL` 范围与读取兜底
+     *   路径都会漏拦。
+     */
+    @Test
+    fun `本批修复的形态不得回退`() {
+        val jinn = codeOf("JinnIme.kt")
+        assertTrue(
+            "选区判据必须三态 ——「宿主答不出」与「有选区」是两种要给不同提示的拒绝（L-284）",
+            "private enum class AppendCheck { OK, SELECTION_PRESENT, HOST_UNREADABLE }" in jinn &&
+                "AppendCheck.HOST_UNREADABLE" in jinn &&
+                "TEXT_TRANSLATE_SELECTION_UNREADABLE" in jinn,
+        )
+        assertTrue(
+            "「取不到文首」的判据必须同时覆盖 BEFORE_ALL 与 ALL（L-285）",
+            "val needsDocStart = scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL" in jinn,
+        )
+        assertTrue(
+            "「这段是不是从文首开始」必须由读取路径给出，不能靠长度反推（L-286）",
+            "private class BeforeText(val text: String, val fromDocStart: Boolean)" in jinn &&
+                "BeforeText(s, s.length < limit)" in jinn &&
+                "BeforeText(text.substring(0, endRel.coerceIn(0, text.length)), startOffset == 0)" in jinn,
+        )
+
+        assertTrue(
+            "Base URL 必须与另外三个路径键同口径清洗（L-288）",
+            "set(value) = putDefaulted(KEY_OPENAI_BASE_URL, value, OpenAiTranslator.DEFAULT_BASE_URL)" in
+                codeOf("Prefs.kt"),
+        )
+        assertTrue(
+            "OpenAI 错误码要认数字型（L-287）",
+            "jsonCode(error, \"code\")" in codeOf("OpenAiTranslator.kt"),
+        )
+        assertTrue(
+            "PARAM 文案要覆盖模型名 / 路径这类真因（L-290）",
+            "模型名 / 路径 / 原文长度" in codeOf("Translation.kt"),
+        )
+        assertTrue(
+            "凭据清理失败只影响标记，不得整批早退（L-289）；水位取失败同样不标记（L-258）",
+            "if (failed || cleaned < 0 || maxIdUncertain) return removed" in codeOf("CredentialTrace.kt"),
+        )
+    }
+
+    /**
+     * 第三批修复的形态守卫（BUG.md L-314 / L-315 / L-319 / L-320）。
+     *
+     * 同样都是「回退之后 JVM 单测依然全绿」的位置，只有真机能看出来，所以钉形态：
+     *
+     * - L-314 译文若**不净化**就落地，服务端回一个 `U+202E` 就能让用户自己那段文字的显示顺序反转
+     *   （「有可见内容」这条判据完全不拦它 —— 它判的是有没有内容，不是内容里夹了什么）。
+     * - L-315 选区若**各读一次**，每次点翻译就白付一次整窗口（最多 10 万字符）的 `getExtractedText`；
+     *   `beforeNow` 那一份也是同样道理 —— 它已经在手里，没理由再为 1 个字符读一次 Binder。
+     * - L-319 少了那条比对，服务端回显原文时界面会报成功而用户看到自己的话被复制了一遍，事后无从归因。
+     * - L-320 成功日志若又排到 `commitText` **之前**，提交失败时诊断包里会先成功后失败，排障得到反结论。
+     */
+    @Test
+    fun `第三批修复的形态不得回退`() {
+        val ime = codeOf("JinnIme.kt")
+        assertTrue(
+            "译文必须先过净化再落地（L-314）",
+            "translated.sanitizedForOutput()" in ime,
+        )
+        assertTrue(
+            "选区读数必须复用给两个判据（L-315）",
+            "canAppendTranslation(connection, selectionRange)" in ime,
+        )
+        assertTrue(
+            "前导换行只能在**光标没动过**时复用 `beforeNow`（L-315 的省读 / L-323 的契约：" +
+                "`appendOffset > 0` 时插入点已经不在原处，照旧复用会把译文黏到原文行尾）",
+            "snapshot.appendOffset == 0 && !beforeNow.isNullOrEmpty()" in ime,
+        )
+        assertTrue(
+            "服务端回显原文时必须留下可辨认的记录（L-319）",
+            "译文与所发原文逐字相同" in ime,
+        )
+        assertTrue(
+            "提交失败必须让用户看到（L-320）",
+            "TEXT_TRANSLATE_COMMIT_FAILED" in ime && "toast(TEXT_TRANSLATE_COMMIT_FAILED)" in ime,
+        )
+
+        val tr = codeOf("Translation.kt")
+        assertTrue(
+            "双向控制符必须在净化表里（L-314）",
+            "BIDI_CONTROLS" in tr && "\\u202E" in tr,
+        )
+
+
+        assertTrue(
+            "净化必须保留换行与制表符（多行译文不能被压成一行，L-314）",
+            "this == '\\n' || this == '\\t' -> false" in tr,
+        )
+    }
+
+
+    /**
+     * 第四批修复的形态守卫（BUG.md L-323…L-336）。
+     *
+     * 同样都是「回退之后 JVM 单测依然全绿」的位置：
+     *
+     * - L-323 前导换行若又去复用**原光标**的读数，`LINE_FULL` / `ALL` 两档会把译文黏到原文行尾。
+     * - L-324 判空表若退回只看 `ZERO_WIDTH`，服务端只回一个变体选择符或一串 TAG 字符就能落地。
+     * - L-325 选区标记若退回 `SelectionRange?`，WebView 类宿主上每次点翻译会多读一次整窗口。
+     * - L-326 `commitText` 若又只看异常，返回 false（连接已失效）会被记成成功。
+     * - L-327 提交阶段若又复用「未发起翻译」那两条文案，用户会以为什么都没外发。
+     * - L-331 `null` 若又当成写值，用户就没有办法只替换掉一个过时的标准参数（`max_tokens`）。
+     * - L-332 模板替换若退回链式 `replace`，被代入的值会被二次扫描。
+     * - L-333 `stream` 若不被拦，响应是 SSE 而解析按非流式 ⇒ 必然报「服务异常」且永远重试不好。
+     * - L-334 书写容错若没有，`{{ text }}` 会被静默丢弃并触发兜底追加。
+     * - L-336 取消若挪回换肤之后，被翻译态挡下的换肤会在同一回调里失去补做机会。
+     */
+    @Test
+    fun `第四批修复的形态不得回退`() {
+        val ime = codeOf("JinnIme.kt")
+        assertTrue(
+            "选区标记必须能区分「没读过」与「读过但读不出来」（L-325）",
+            "private class SelectionProbe(val range: SelectionRange?)" in ime &&
+                "if (known != null) known.range else currentSelectionRange(connection)" in ime,
+        )
+        assertTrue(
+            "`commitText` 的返回值必须看（L-326：返回 false 不抛异常）",
+            "if (outcome.getOrDefault(false)) {" in ime,
+        )
+        assertTrue(
+            "提交阶段不得复用「未发起翻译」那两条文案（L-327）",
+            "TEXT_TRANSLATE_DISCARDED_UNREADABLE" in ime &&
+                "TEXT_TRANSLATE_APPEND_UNKNOWN" in ime,
+        )
+        val startView = blockAfter(ime, "override fun onStartInputView(")
+        assertTrue(
+            "会话边界取消必须在换肤之前（L-336：延后判据里含 translateInFlight）",
+            startView.indexOf("cancelTranslate()") < startView.indexOf("applyThemeIfNeeded()"),
+        )
+
+        val tr = codeOf("Translation.kt")
+        assertTrue(
+            "判空表要覆盖软连字符 / 变体选择符 / TAG 字符（L-324）；" +
+                "**按码位**判定 —— 逐 Char 判时 TAG 的低代理会漏网（L-339）",
+            "isInvisibleCodePoint" in tr && "0xE0000" in tr,
+        )
+        assertTrue(
+            "判空表要补盲文空白 / Hangul 填充符，剥除表要补 ALM（L-343）",
+            "0x2800" in tr && "0x115F" in tr && "'\\u061C'" in tr,
+        )
+
+        val oa = codeOf("OpenAiTranslator.kt")
+        assertTrue(
+            "模板替换必须是单趟扫描（L-332：链式 replace 会二次展开被代入的值）",
+            "normalizeKnownVars" in oa && "val hit = when {" in oa,
+        )
+        assertTrue(
+            "已知变量的书写容错要认空格与大小写（L-334）",
+            "KNOWN_VAR_PATTERN" in oa,
+        )
+        assertTrue(
+            "`stream` 必须被当作不可用（L-333：会破坏本客户端，且失败被吞成 SERVER）",
+            "UNSUPPORTED_EXTRA_KEYS" in oa,
+        )
+        assertTrue(
+            "自定义 JSON 的 `null` 必须表示删键（L-331）；删键判定改为**按值**并与必需键闸同源（L-421）",
+            "value === JSONObject.NULL" in oa && "body.remove(key)" in oa,
+        )
+    }
+
+    /**
+     * 凭据缓存必须是**进程级**（BUG.md L-298）。
+     *
+     * 挂在实例上时，设置页改完 Key 只更新它自己那一份，常驻的 IME 会一直拿旧 Key 发请求 ——
+     * 「改 Key 不生效、删 Key 也不生效」，与设置页写下的「本页改完不需要重启输入法」直接矛盾。
+     * 这条回退之后 JVM 单测依然全绿（同进程的两个 `Prefs` 实例要真机才演得出来）。
+     */
+    @Test
+    fun `凭据缓存必须是进程级`() {
+        val prefs = codeOf("Prefs.kt")
+        val companion = blockAfter(prefs, "companion object {")
+        assertTrue(
+            "凭据缓存必须声明在 companion object 里（L-298）",
+            "private val credentialCache" in companion,
+        )
+        assertFalse(
+            "类体里不得再有第二份凭据缓存（L-298：实例级那份就是缺陷本身）",
+            "\n    private val credentialCache" in prefs,
+        )
+        assertTrue(
+            "回填缓存前必须确认密文没被换掉（L-298 的竞态）",
+            "凭据在解密期间被改写" in prefs,
         )
     }
 
@@ -1415,9 +1638,10 @@ class RecentFixesRegressionTest {
         )
         assertTrue("移动光标后的日志必须按调用结果说话（L-242）", "if (applySelection(" in ime)
         assertTrue(
-            "清空与打字上屏都要兜底且留痕（L-241）",
-            "deleteAllText: 调用失败" in ime && "commit: 上屏失败" in ime,
+            "清空要兜底（L-241；2026-10-02 起统一走 guardHostCall，留痕由助手提供）",
+            "guardHostCall(\"deleteAllText\")" in ime && "宿主调用失败" in ime,
         )
+        assertTrue("打字上屏失败要留痕（L-241）", "commit: 上屏失败" in ime)
 
         val client = codeOf("TranslationClient.kt")
         assertTrue("2xx 里的错误体也要有摘要（L-243）", "(2xx)" in client)
@@ -1488,8 +1712,13 @@ class RecentFixesRegressionTest {
 
         val prefs = codeOf("Prefs.kt")
         assertTrue(
-            "「留空即默认」的字段要把存量里等于默认值的当作未配置（L-251）",
-            "private fun defaulted(stored: String, fallback: String)" in prefs,
+            "「留空即默认」的读侧只回落默认值，**不得**把「等于默认」折成空串（L-293）",
+            "private fun defaulted(stored: String, fallback: String): String = stored.ifBlank { fallback }" in prefs,
+        )
+        assertTrue(
+            "「留空即默认」的写侧走 putDefaulted 删键，而不是写死字面量（L-293 / L-288）",
+            "private fun putDefaulted(key: String, value: String, fallback: String)" in prefs &&
+                "if (v.isEmpty() || v == fallback) remove(key) else putString(key, v)" in prefs,
         )
         assertTrue(
             "等于默认值必须**删键**而不是写死（L-255：超时 / 界面语言 / 每家字节上限）",
@@ -1528,6 +1757,201 @@ class RecentFixesRegressionTest {
         assertFalse(
             "hasCredentialFor 不得再用 isNotBlank()（纯零宽凭据会被当成已配置）",
             "isNotBlank()" in helper,
+        )
+    }
+
+    @Test
+    fun `本批修复的形态不得回退（第一百三十五回）`() {
+        // 本轮最值得钉住的一条背景：**声称修好、实现却没改**（编辑未落盘）发生过多次 ——
+        // `setTranslateScopeOf` 的删键、⓪ 步的提示分列都曾如此。机械对拍是唯一可靠的防线：
+        // 源码形态一旦被改回旧写法，这里立刻变红。
+        val prefs = codeOf("Prefs.kt")
+        // L-425 后半：scope 等于默认必须删键，否则「进过原文范围页一次」就把当时的默认固化进备份
+        assertTrue(
+            "setTranslateScopeOf 必须含「等于默认删键」",
+            blockAfter(prefs, "fun setTranslateScopeOf").let {
+                "TranslationScope.DEFAULT.id" in it && "remove(scopeKeyOf(id))" in it
+            },
+        )
+        // 导出侧必须是类型安全快照：`getInt` / `getString` 对类型不符的键抛 ClassCastException，
+        // 一个脏键会让整次导出失败（本轮发现）
+        assertTrue(
+            "导出侧必须用类型安全快照（as? 过滤），不得回到 sp.getInt / sp.getString 直读",
+            "fun putIfSetInt" in prefs && "as? Int" in prefs && "as? String" in prefs,
+        )
+
+        val ime = codeOf("JinnIme.kt")
+        // L-438：⓪ 步必须把「读不到 EditorInfo」与「敏感框」分成两条提示
+        val append = blockAfter(ime, "private fun appendTranslation")
+        assertTrue(
+            "提交前复查必须分开两种原因（读不到属性 vs 敏感框）",
+            "if (info == null) {" in append &&
+                "TEXT_TRANSLATE_DISCARDED_UNREADABLE" in append &&
+                "TEXT_TRANSLATE_PRIVATE_FIELD" in append,
+        )
+        // L-427 的过度修正：窗口必须按范围分档，否则默认档（阿里云 5000 字节）被放大 20×
+        assertTrue("读取窗口必须按 needAfter 分档", "val limit = if (needAfter) {" in ime)
+        // 本轮新发现的两条交互缺口
+        assertTrue(
+            "剪贴板面板打开时必须拦下翻译（否则已计费的请求会被随后的粘贴作废）",
+            "isClipboardActive() == true" in ime && "TEXT_TRANSLATE_CLIPBOARD_OPEN" in ime,
+        )
+        assertTrue(
+            "切到语音键盘必须一并收剪贴板面板（否则 hasActiveOverlay 持续为真、换肤被无限延后）",
+            "hideSearchPanel()" in ime && "hideClipboardPanel()" in ime,
+        )
+
+        val openAi = codeOf("OpenAiTranslator.kt")
+        assertTrue(
+            "stream 真值判据必须覆盖数值形态（2 / 1.0 会被放行成流式）",
+            "private fun isTruthy" in openAi && "isTruthy(value)" in openAi,
+        )
+    }
+
+    @Test
+    fun `本批修复的形态不得回退（第一百三十六回）`() {
+        // 最重的一条：自定义目标语言「打开页面再返回就被改回简体中文」。修法必须**成对** ——
+        // 载入自定义值时置 `customEdited`，加上下拉闸门复位它；只留一半比不修更糟：
+        // 读屏 / 外接键盘用户选完下拉会保存到**旧的自定义语言**（L-367 的老问题复活）。
+        val settings = codeOf("OpenAiSettingsActivity.kt")
+        assertTrue(
+            "载入自定义目标语言时必须置 customEdited（否则打开页面再返回就改翻译方向）",
+            "customEdited = true" in blockAfter(settings, "private fun applyTargetLanguage"),
+        )
+        val onSelected = blockAfter(settings, "override fun onItemSelected")
+        assertTrue("下拉闸门必须先挡程序化回填", "if (loading) return" in onSelected)
+        assertTrue(
+            "下拉闸门必须认全用户来源并复位 customEdited",
+            "isUserDriven(spinnerTarget)" in onSelected && "customEdited = false" in onSelected,
+        )
+        assertTrue(
+            "超时字段必须 trim（与同页数字三项、字节上限同口径）",
+            "toString().trim().toIntOrNull()" in settings,
+        )
+
+        val openAi = codeOf("OpenAiTranslator.kt")
+        assertTrue("容错写法必须认全角花括号（中文 IME 的常见输出）", "[{｛]{2}" in openAi)
+
+        val translation = codeOf("Translation.kt")
+        assertTrue(
+            "判空必须同时问 isWhitespace 与 isSpaceChar（U+2007 / U+202F 落在后者）",
+            "!Character.isWhitespace(cp) && !Character.isSpaceChar(cp)" in translation,
+        )
+        assertFalse(
+            "callTimeoutSec 的 KDoc 不得再声称「只有 OpenAI 兼容一家覆写」（百度大模型也覆写）",
+            "只有 OpenAI 兼容一家暴露这个值" in translation,
+        )
+    }
+
+    @Test
+    fun `编辑路径的宿主调用必须走 guardHostCall（第一百三十七回 · L-404）`() {
+        // 裸调同步的 InputConnection 写方法，会在**宿主进程被强停 / 崩溃**后抛 DeadObjectException
+        // （`sendDownUpKeyEvents` 更是 AOSP 内部裸调 sendKeyEvent）；异常从主线程的点击回调上抛
+        // ⇒ 崩溃处理器接手 ⇒ 整个 IME 进程终止：键盘消失，未上屏的组合串与暂存粘贴一起丢。
+        // 最小复现：`adb shell am force-stop <宿主包>` 后立刻按「全选」/ 回车。
+        // ⚠ 语音链路的调用点按红线**只记录不改**，所以这里只钉编辑与面板四条路径。
+        val ime = codeOf("JinnIme.kt")
+        assertTrue("guardHostCall 助手不得删除", "private inline fun guardHostCall" in ime)
+        for (signature in listOf(
+            "private fun selectAllText()",
+            "private fun performEnter()",
+            "private fun flushPendingPaste(",
+            "private fun deleteAllText()",
+        )) {
+            val body = blockAfter(ime, signature)
+            assertTrue("$signature 的宿主调用必须包在 guardHostCall 里", "guardHostCall(" in body)
+        }
+        // 包裹面不得缩水：上面四处共 5 个调用点 + 助手定义 1 处 = 6；少一个说明有人把某处改回了
+        // 裸调、或删掉了某处兜底（负向「行首裸调」正则在这里不可用 —— 包裹后调用仍在行首）。
+        val calls = Regex("guardHostCall\\(").findAll(ime).count()
+        assertTrue("guardHostCall 的出现次数不得少于 6（助手 + 5 处调用），实际 $calls", calls >= 6)
+    }
+
+    @Test
+    fun `正文落盘主闸门与往返长度闸不得被打开（第一百三十九回 · L-446 · L-375）`() {
+        // L-446：V 级是**用户正文**的主要通道（拼音串 / 搜索词 / 按键串 / commit 正文都走 v()），
+        // 而 `VERBOSE_TO_FILE` 是它们「不落盘」的**唯一防线** —— 脱敏是正则白名单，挡不住任意正文。
+        // 此前它没有任何守卫：改成 true 不会有测试红，正文会直接进日志文件并随诊断包外发。
+        val diag = codeOf("Diagnostics.kt")
+        assertTrue(
+            "VERBOSE_TO_FILE 必须保持 false（正文不落盘的主闸门）",
+            "private const val VERBOSE_TO_FILE = false" in diag,
+        )
+        assertTrue("v() 的短路判据必须存在", "if (level == 'V' && !VERBOSE_TO_FILE) return" in diag)
+        // 空包不得当成功交出（L-449）。用全文判据而非块判据：`blockAfter` 取的是 marker 之后
+        // **第一个** `{` 的配对块，而那里第一个 `{` 是 `ZipOutputStream(...).use {`，
+        // 空包判据在它**之后**（踩过这个坑）
+        assertTrue("诊断包必须检测「一个条目都没写进去」", "if (written == 0)" in diag)
+
+        // L-375：导入侧闸与写入侧闸必须**共用同一常量**（此前只有导入侧有闸 ⇒ 自产的包被自己拒收）。
+        val prefs = codeOf("Prefs.kt")
+        assertTrue("长度上限必须是单一来源的常量", "MAX_BACKUP_STRING_CHARS = 64 * 1024" in prefs)
+        assertTrue("导入侧必须引用该常量", "length <= MAX_BACKUP_STRING_CHARS" in prefs)
+        for (field in listOf("openAiExtraHeaders", "openAiExtraJson", "openAiModelsCache")) {
+            assertTrue(
+                "$field 的 setter 必须在写入侧过共享上限（否则导出成功、导入静默丢键）",
+                "capForBackup(" in blockAfter(prefs, "var $field: String"),
+            )
+        }
+        // 助手本身必须真的引用那个常量（否则「共享」只是名义上的）；
+        // 用全文判据：助手的第一个 `{` 是 `if` 的 then 块，块判据取不到 take(...) 那行
+        assertTrue("capForBackup 必须引用共享常量", "take(MAX_BACKUP_STRING_CHARS)" in prefs)
+    }
+
+    @Test
+    fun `设置页 onPause 必须在导入期间跳过回写（第一百三十七回 · L-405）`() {
+        // 导入线程写 Prefs ↔ 设置页 onPause 的**无条件**回写是两条独立执行流：交错时界面旧值
+        // 覆盖刚导入的值，用户看到「导入成功」却发现配置没变（静默退回）。四个页面都有这个面。
+        for (name in listOf(
+            "TranslationSettingsActivity.kt",
+            "OpenAiSettingsActivity.kt",
+            "TranslationSourceActivity.kt",
+            "SettingsActivity.kt",
+        )) {
+            val body = blockAfter(codeOf(name), "override fun onPause()")
+            assertTrue(
+                "$name 的 onPause 必须带 ConfigBackupManager.importing 闸门",
+                "ConfigBackupManager.importing" in body,
+            )
+        }
+    }
+
+    @Test
+    fun `本批修复的形态不得回退（第一百四十回）`() {
+        // L-454：口令判据必须**连类位一起掩**。平台里 TYPE_TEXT_VARIATION_URI 与
+        // TYPE_NUMBER_VARIATION_PASSWORD 同为 0x10（日期变体也是），只掩变体位会把地址栏
+        // 判成口令框 —— 翻译被拒、词频不学，而人眼看不出它们是同一个值。
+        // 行为断言在 InputFieldPrivacyTest.同一个变体位值下的其它语义不误判为口令框。
+        assertTrue(
+            "口令判据必须掩「类位 + 变体位」：只掩变体位会让 URI(0x10) 撞上数字密码(0x10)",
+            "EditorInfo.TYPE_MASK_CLASS or EditorInfo.TYPE_MASK_VARIATION" in codeOf("InputFieldPrivacy.kt"),
+        )
+        val ime = codeOf("JinnIme.kt")
+        // L-455：宿主带自定义动作 id 时必须发它 —— 只发标准动作码会让「搜索 / 提交」不触发，
+        // 而且因为 hasAction 为真也不会退回发回车键，用户按下去「完全没反应」。
+        assertTrue(
+            "回车键必须把宿主的自定义 actionId 交给 performEditorAction",
+            "editorInfo?.actionId" in ime && "performEditorAction(customActionId)" in ime,
+        )
+        // L-456：提交成功日志不得断言「已写入」—— commitText 返回 true 只代表调用被接受，
+        // 宿主的 InputFilter（数字框最常见）会把正文整段丢弃而不报错。
+        // ⚠ 钉的是**日志字面量**（带引号）：正文里引述旧措辞的历史注释不算。
+        assertTrue(
+            "提交成功日志必须用「已提交…（未验落地）」，不得写 \"已追加译文\"",
+            "\"已提交追加\"" in ime && "\"已追加译文\"" !in ime,
+        )
+        // L-457：两条读取链（translate / fetchModels）必须共用同一个截断判据 ——
+        // 只在一路记标记时，另一路截断后只剩「共 0 个」，与真的空列表不可分辨。
+        val client = codeOf("TranslationClient.kt")
+        assertTrue(
+            "translate 与 fetchModels 必须共用 isBodyCapped（截断标记不能只在一路）",
+            "private fun isBodyCapped(" in client &&
+                client.split("isBodyCapped(body)").size - 1 >= 2,
+        )
+        // L-461：只写不读的视图字段不得复活（KDoc 曾声称它驱动回车键行为，实际没人读）。
+        assertTrue(
+            "PinyinKeyboardView 不得再有只写不读的 imeOptions 字段",
+            "imeOptions" !in codeOf("PinyinKeyboardView.kt"),
         )
     }
 }

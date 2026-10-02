@@ -323,17 +323,30 @@ class PrefsBackupCoverageTest {
     @Test
     fun `原文范围与字节上限的读写两侧都必须归一`() {
         val scopeGuard = "TranslationScope.of("
-        val bytesGuard = "coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)"
         for ((marker, guard) in listOf(
             "fun translateScopeOf" to scopeGuard,
             "fun setTranslateScopeOf" to scopeGuard,
-            "fun translateMaxBytesOf" to bytesGuard,
-            "fun setTranslateMaxBytesOf" to bytesGuard,
         )) {
             val start = source.indexOf(marker)
             assertTrue("源码里没找到 $marker", start > 0)
             val body = source.substring(start, (start + 400).coerceAtMost(source.length))
             assertTrue("$marker 缺少归一（$guard）—— 脏备份的越界值会进运行期", body.contains(guard))
+        }
+        // 字节上限两侧（2026-10-02 改判据，见 L-434）：下界不再是 `coerceIn` 而是「回落该家默认」——
+        // 界面里「清空 / 0」的语义是恢复出厂默认，钳成 1 会让该家变成「每次只翻 1 字节」；
+        // 上界仍是钳制。两侧都必须有，缺哪边都放脏值进运行期。
+        for (marker in listOf("fun translateMaxBytesOf", "fun setTranslateMaxBytesOf")) {
+            val start = source.indexOf(marker)
+            assertTrue("源码里没找到 $marker", start > 0)
+            val body = source.substring(start, (start + 600).coerceAtMost(source.length))
+            assertTrue(
+                "$marker 缺少下界归一（MIN_MAX_BYTES ⇒ 回落该家默认）",
+                "TranslationText.MIN_MAX_BYTES" in body,
+            )
+            assertTrue(
+                "$marker 缺少上界归一（coerceAtMost(MAX_MAX_BYTES)）—— 脏备份的越界值会进运行期",
+                "coerceAtMost(TranslationText.MAX_MAX_BYTES)" in body,
+            )
         }
     }
 }

@@ -4,14 +4,20 @@ r"""
 Jinn拼音输入法 一键构建脚本：编译带正式签名的 release APK。
 
 用法：
-    python build_apk.py              # 编译 release，复制 APK 到根目录
-    python build_apk.py --install    # 编译后安装到已连接设备
-    python build_apk.py --clean      # clean 后全新编译
+    python build_apk.py                      # 编译 release，复制 APK 到根目录
+    python build_apk.py --install            # 编译后安装到已连接设备
+    python build_apk.py --install --device <序列号>   # 多设备时明确指定目标
+    python build_apk.py --clean              # clean 后全新编译
 
-签名：用环境变量 JINN_KEYSTORE_ROOT 指向的目录（按包名自动选 <applicationId>/release.jks）
+签名：密钥库根目录按以下顺序找（找到即用），也可以显式覆盖：
+        1) 环境变量 JINN_KEYSTORE_ROOT（**设了就只用它**，打错路径会明确报错而不是换一个库）
+        2) <workspace>/GLOBAL/credentials/JinnKeyStores   （本仓库所在的共享工作区）
+        3) %USERPROFILE%\JinnKeyStores
+      根目录下按包名取密钥：<根目录>/<applicationId>/release.jks，密码读同级的 JinnPassword.md。
 产物：app/build/outputs/apk/release/app-release.apk
-复制到：./release.apk
-最终命名：./com.jinn.inputmethod.YYYYMMDDHHMMSS.APK（运行时间戳 + 大写 APK 后缀）
+复制到：**根目录只留一个** ./com.jinn.inputmethod.apk —— 固定名，发布与装机都用它，
+        因此根目录那份永远是本次构建的产物（发布前仍应核对 sha256，见 AGENTS.md 发版节）。
+        同时清掉旧命名的遗留产物（jinn-release.apk、com.jinn.inputmethod.<14位时间戳>.APK）。
 
 签名流程（顺序不可调换）：
     AGP 产物 → 去掉 META-INF → zipalign 4 字节对齐 → apksigner 签名 → 校验
@@ -25,7 +31,6 @@ import sys
 import os
 import re
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
 # 控制台输出用 UTF-8（避免 Windows GBK 打印中文/符号崩溃）
@@ -35,21 +40,44 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent
 APPLICATION_ID = "com.jinn.inputmethod"
-KEYSTORE_ROOT = Path(os.environ.get("JINN_KEYSTORE_ROOT", str(Path.home() / "JinnKeyStores")))
-GRADLE = None
+
+
+def keystore_root_candidates():
+    """按优先级列出密钥库根目录候选项。
+
+    环境变量**优先且独占**：设了就只用它 —— 打错路径时宁可明确报错，也不要静默回落到
+    另一个库上（拿错密钥签出的包更难排查）。
+    """
+    env = (os.environ.get("JINN_KEYSTORE_ROOT") or "").strip()
+    if env:
+        return [Path(env)]
+    return [
+        # 本仓库所在的共享工作区：<workspace>/PROJECTS/<repo> → <workspace>/GLOBAL/credentials/JinnKeyStores
+        ROOT.parent.parent / "GLOBAL" / "credentials" / "JinnKeyStores",
+        # 传统默认位置
+        Path.home() / "JinnKeyStores",
+    ]
+
+
+def resolve_keystore_root():
+    """找到**含本包密钥**的那个根目录（只认结构，不读任何秘密值）。"""
+    tried = keystore_root_candidates()
+    for root in tried:
+        if (root / APPLICATION_ID / "release.jks").is_file():
+            return root
+    raise RuntimeError(
+        "未找到统一签名密钥（已试过下列位置）：\n"
+        + "\n".join(f"  - {root / APPLICATION_ID / 'release.jks'}" for root in tried)
+        + "\n  请设置环境变量指向密钥库根目录后重试，例如：\n"
+        r"  set JINN_KEYSTORE_ROOT=<密钥库根目录>"
+    )
 
 
 def load_unified_signing_env():
     """Load the package-specific external keystore without printing secret values."""
-    key_dir = KEYSTORE_ROOT / APPLICATION_ID
-    keystore = key_dir / "release.jks"
-    password_file = KEYSTORE_ROOT / "JinnPassword.md"
-    if not keystore.is_file():
-        raise RuntimeError(
-            f"未找到统一签名密钥: {keystore}\n"
-            "  若密钥不在默认位置，请先设置环境变量再运行，例如：\n"
-            r"  set JINN_KEYSTORE_ROOT=<keystore root>"
-        )
+    root = resolve_keystore_root()
+    keystore = root / APPLICATION_ID / "release.jks"
+    password_file = root / "JinnPassword.md"
     if not password_file.is_file():
         raise RuntimeError(f"未找到统一签名密码文件: {password_file}")
 
@@ -77,10 +105,18 @@ def load_unified_signing_env():
 
 # 查找 gradle（项目 wrapper 或本机临时安装）
 def find_gradle():
-    candidates = [
-        ROOT / "gradlew.bat",
+    """找 gradle：项目 wrapper 优先（版本与仓库锁定），其次 GRADLE_HOME / PATH。"""
+    if os.name == "nt":
+        wrapper_names = ("gradlew.bat", "gradlew")
+        exe = "gradle.bat"
+    else:
+        wrapper_names = ("gradlew", "gradlew.bat")
+        exe = "gradle"
+    candidates = [ROOT / name for name in wrapper_names]
+    candidates += [
+        Path(os.environ.get("GRADLE_HOME", "")) / "bin" / exe,
         Path(os.environ.get("LOCALAPPDATA", "")) / "Temp" / "opencode" / "gradle-8.10.2" / "bin" / "gradle.bat",
-        shutil.which("gradle.bat") or shutil.which("gradle"),
+        shutil.which(exe) or shutil.which("gradle"),
     ]
     for c in candidates:
         if c and Path(c).exists():
@@ -88,17 +124,39 @@ def find_gradle():
     return None
 
 
-def find_build_tool(name):
-    """Find an Android SDK build tool without depending on PATH."""
-    sdk_roots = [
+def sdk_root_candidates():
+    """按优先级列出可能的 Android SDK 根目录（跳过空值、按路径去重）。
+
+    `ANDROID_HOME` / `ANDROID_SDK_ROOT` 没设时不能只靠 PATH：`apksigner` / `zipalign`
+    通常不在 PATH 上，而 SDK 的默认安装位置是确定的（Windows 是
+    `%LOCALAPPDATA%\\Android\\Sdk`，本机就装了一份）。
+    """
+    local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    home = Path.home()
+    raw = [
         os.environ.get("ANDROID_HOME"),
         os.environ.get("ANDROID_SDK_ROOT"),
+        os.path.join(local, "Android", "Sdk"),      # Windows 默认
+        str(home / "Library" / "Android" / "sdk"),  # macOS 默认
+        str(home / "Android" / "Sdk"),              # Linux 默认
         r"C:\Android\sdk",
     ]
-    candidates = []
-    for sdk_root in sdk_roots:
-        if not sdk_root:
+    seen, out = set(), []
+    for item in raw:
+        if not item or not str(item).strip():
             continue
+        item = str(item).strip()
+        key = os.path.normcase(os.path.normpath(item))
+        if key not in seen:
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def find_build_tool(name):
+    """Find an Android SDK build tool without depending on PATH."""
+    candidates = []
+    for sdk_root in sdk_root_candidates():
         build_tools = Path(sdk_root) / "build-tools"
         if build_tools.is_dir():
             candidates.extend(path / name for path in build_tools.iterdir() if path.is_dir())
@@ -323,21 +381,39 @@ def main():
         sys.exit(1)
     print("对齐校验: 4 字节对齐通过")
 
-    # 3. 复制到根目录：时间戳包（留档）+ 固定发布名 jinn-release.apk（发布直接用这一份，
-    #    与本次构建同源，避免误用根目录遗留的历史发布包）
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    final_apk = ROOT / f"{APPLICATION_ID}.{ts}.APK"
-    shutil.copy2(apk, final_apk)
-    release_apk = ROOT / "jinn-release.apk"
-    shutil.copy2(apk, release_apk)
-    print(f"已生成: {final_apk} ({final_apk.stat().st_size / 1024 / 1024:.1f} MB)")
-    print(f"发布包: {release_apk} ({release_apk.stat().st_size / 1024 / 1024:.1f} MB)")
+    # 3. 复制到根目录：**只留一个**固定命名的产物 ./com.jinn.inputmethod.apk。
+    #    用一个固定名而不是时间戳名，是为了不发错包：根目录那份永远就是本次构建的产物，
+    #    发布 / 装机都直接用它，不需要再从一堆历史副本里挑（用户 2026-10-02 明确要求）。
+    output_apk = ROOT / f"{APPLICATION_ID}.apk"
+    shutil.copy2(apk, output_apk)
+    print(f"已生成: {output_apk} ({output_apk.stat().st_size / 1024 / 1024:.1f} MB)")
+
+    # 清掉**旧命名**的遗留产物，别让根目录继续堆历史副本。
+    # ⚠ 只按**精确模式**删，绝不用 `*.APK` 这类通配 —— Windows / PowerShell 的通配
+    # 大小写不敏感，历史上正是它把发布包一起删掉了（见 `.workbuddy/memory` 2026-09-23 的记录）。
+    # 时间戳模式要求「包名 + 恰好 14 位数字 + .APK」，因此永远匹配不到上面的 com.jinn.inputmethod.apk。
+    ts_pattern = re.compile(rf"{re.escape(APPLICATION_ID)}\.\d{{14}}\.APK\Z")
+    stale = [ROOT / "jinn-release.apk"]
+    stale += [path for path in ROOT.glob(f"{APPLICATION_ID}.*.APK") if ts_pattern.match(path.name)]
+    for old in stale:
+        if old.is_file() and old.name != output_apk.name:
+            old.unlink()
+            print(f"已清理旧命名的产物: {old.name}")
 
     # 4. 可选安装
     if args.install:
         # ⚠ 三条失败路径必须**非 0 退出**：`--install` 是用户明确要求的一步，静默 return 会让 CI / `&&`
         # 链路以为「编译 + 安装都成功」（BUG.md L-72）。
         r = subprocess.run("adb devices -l", shell=True, capture_output=True, text=True)
+        # 「adb 用不了」与「没有设备」必须分开说：混成一句会把「装 platform-tools / 配 PATH」
+        # 这种可行动的原因说成「没有设备」，用户就去反复插拔、重启 adb 了（2026-10-02 审查）。
+        if r.returncode != 0 or "List of devices attached" not in r.stdout:
+            print(
+                "[错误] adb 不可用（不在 PATH 上，或 adb server 没起来）：\n"
+                f"  {(r.stderr or r.stdout or '').strip()[:500]}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         devices = parse_adb_devices(r.stdout)
         if not devices:
             print("[错误] 未检测到可用设备（adb devices -l 里没有状态为 device 的行）", file=sys.stderr)
@@ -355,7 +431,7 @@ def main():
             print(f"[错误] 指定的设备 {dev} 不在已连接列表（{'、'.join(devices)}）", file=sys.stderr)
             sys.exit(1)
         print(f"安装到: {dev}")
-        run(f'adb -s {dev} install -r "{final_apk}"')
+        run(f'adb -s {dev} install -r "{output_apk}"')
         print("安装完成")
 
 if __name__ == "__main__":

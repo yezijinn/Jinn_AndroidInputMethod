@@ -50,4 +50,30 @@ class BackupRulesTest {
         assertTrue("cloud-backup 段缺索引排除", "index/" in cloud)
         assertTrue("device-transfer 段缺索引排除", "index/" in device)
     }
+
+    /**
+     * 诊断日志目录也必须排除（2026-10-02 修复）。
+     *
+     * 日志目录 = `getExternalFilesDir()/logs/`，落在 Auto Backup 的 **`external` 域**里 —— 那是
+     * **默认会被整包上传**的域，与「用户主动点按钮导出诊断包」是两条独立出路（后者有 X-169 复核，
+     * 前者从未被核过）：
+     *  · 隐私：崩溃快照在退回全量抓取时含**其它应用**的 I/D/W/E 行（L-193）、端点主机名（L-212）、
+     *    凭据长度指纹（L-384）；
+     *  · 配额：目录预算 32 MB > Auto Backup 的 25 MB 配额 ⇒ 超限会让**整包备份失败**，
+     *    连用户下载的 `dicts/` 都备不上（与索引缓存同款代价）。
+     * 三处（full-backup-content / cloud-backup / device-transfer）缺一，那条路径就仍在往外送。
+     */
+    @Test
+    fun 诊断日志目录必须排除在备份与迁移之外() {
+        val pattern = Regex("""domain="external"\s+path="logs/"""")
+        assertTrue(
+            "backup_rules.xml 必须按 external 域排除 logs/（那是 Auto Backup 的默认上传域）",
+            pattern.containsMatchIn(rules("backup_rules.xml")),
+        )
+        val transfer = rules("data_extraction_rules.xml")
+        val cloud = transfer.substringAfter("<cloud-backup>").substringBefore("</cloud-backup>")
+        val device = transfer.substringAfter("<device-transfer>").substringBefore("</device-transfer>")
+        assertTrue("cloud-backup 段缺 external 域日志排除", pattern.containsMatchIn(cloud))
+        assertTrue("device-transfer 段缺 external 域日志排除", pattern.containsMatchIn(device))
+    }
 }

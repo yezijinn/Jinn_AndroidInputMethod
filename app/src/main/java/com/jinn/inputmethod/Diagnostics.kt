@@ -105,6 +105,10 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         Regex("\\bsk-[A-Za-z0-9_\\-]{12,}"),
         Regex("[A-Za-z0-9\\-]{16,}:fx\\b"),
         Regex("(?i)\\bBearer\\s+\\S{12,}"),
+        // 阿里云 AccessKeyId 固定以 `LTAI` 开头（如 `LTAI5t…`）：前缀独特、误伤面极小
+        // （2026-10-02 修复 L-312 未覆盖的第三种形态）。AccessKey**Secret** 是高熵随机串，
+        // 与哈希同形，仍按上面的原口径不覆盖 —— 靠调用点自律 + 失败体只记结构化摘要挡住。
+        Regex("\\bLTAI[A-Za-z0-9]{8,}"),
     )
 
     @Volatile
@@ -287,9 +291,11 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     internal fun redactSensitive(body: String): String {
         var s = PHONE_RE.replace(body) { m -> m.value.replaceRange(3, 7, MASK) }
         s = EMAIL_RE.replace(s) { m -> MASK + "@" + m.groupValues[1] }
-        s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
-        // 凭据形态兜底（见 API_KEY_RES 的说明）
+        // 凭据形态**先跑**（2026-10-02 修复 L-440）：长数字规则会把 `LTAI0123456789012345`
+        // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
+        // 本该整段替换的值反而露出前 4 位与末 2 位（fail-open 的方向）
         for (re in API_KEY_RES) s = re.replace(s, MASK)
+        s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
         return s
     }
 
@@ -338,8 +344,21 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             .append(" [").append(Thread.currentThread().name).append("] ")
             // 落盘走护栏（脱敏 + 截断）；logcat 上面已用原文输出
             .append(sanitizeForFile(msg)).append('\n')
-        // 堆栈只脱敏、不截断：堆栈动辄上千字符，截断会砍掉关键帧
-        tr?.let { sb.append(redactSensitive(stackTraceOf(it))).append('\n') }
+        // 堆栈：脱敏 + **首行平坦化**（2026-10-02 修复）。首行是「异常类名 + message」，而 message
+        // 里可能嵌用户可控串（Base URL、host、导入包里的设备名、JSON 片段）—— 带一个换行就能伪造出
+        // 一条完整假日志行（含时间戳与级别），与正文那条护栏的动机**逐字相同**，此前只护了正文。
+        // 帧行（`at …`）由编译器生成、不含用户内容，保持原样才可读；整体仍不截断（截断会砍掉关键帧）。
+        tr?.let {
+            val stack = redactSensitive(stackTraceOf(it))
+            val nl = stack.indexOf('\n')
+            sb.append(
+                if (nl < 0) {
+                    sanitizeForFile(stack)
+                } else {
+                    sanitizeForFile(stack.substring(0, nl)) + stack.substring(nl)
+                },
+            ).append('\n')
+        }
         appendToFile(dir, sb.toString())
     }
 
@@ -683,6 +702,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
                 // 并发导出撞同一路径）等于白导；临时名带纳秒，两次导出各写各的、改名原子生效。
                 val t = File(outDir, "jinn-diagnostics-$stamp-${System.nanoTime()}.zip.tmp")
                 tmp = t
+                var written = 0
                 java.util.zip.ZipOutputStream(FileOutputStream(t)).use { zos ->
                     for (f in files) {
                         if (!f.isFile) continue
@@ -697,14 +717,24 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
                         zos.putNextEntry(java.util.zip.ZipEntry(f.name))
                         zos.write(bytes)
                         zos.closeEntry()
+                        written++
                     }
+                }
+                // 一个条目都没写进去时**不要交出空包**（2026-10-02 修复 L-449）：此前只看 `renameTo`
+                // 成功就记「导出成功」并经 SAF 交给用户 —— 用户把空包发给维护者，双方都要多一轮往返
+                // 才知道里面什么都没有（日志里的 `files.size` 还是目录条目数，看着更像成功了）。
+                if (written == 0) {
+                    Diagnostics.w(TAG, "导出诊断包: 所有文件都读不出（目录条目 ${files.size} 个），放弃导出")
+                    return@runCatching null
                 }
                 if (dest.exists()) dest.delete()
                 if (!t.renameTo(dest)) {
                     Diagnostics.w(TAG, "导出诊断包: 改名失败 ${dest.absolutePath}")
                     return@runCatching null
                 }
-                i(TAG, "导出诊断包: ${dest.absolutePath} (${files.size} 个文件)")
+                // 记**实际写入**的条目数（此前是目录条目数 `files.size`：有文件被跳过时数字偏大，
+                // 排障时看不出来 —— 2026-10-02 修复 L-449）
+                i(TAG, "导出诊断包: ${dest.absolutePath} ($written 个文件)")
                 dest
             }.getOrNull()
         } finally {

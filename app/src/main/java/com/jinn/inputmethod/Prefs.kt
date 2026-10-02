@@ -14,6 +14,16 @@ object DefaultKeyboardMode {
 }
 
 /**
+ * 备份里**单个字符串值**的长度上限（导入侧闸与写入侧闸**共用同一来源**，2026-10-02 修复 L-375）。
+ *
+ * 取 64 KB：它本是 `asString` 的既有阈值（对抗性防护 —— 外部包塞一个巨大字符串），此前
+ * **只用在导入侧**，于是出现「自产的包不一定导得回来」：导出不设限 ⇒ 该键被自己的导入端拒收，
+ * 而清单说「包含」、导入说「忽略 N 项」，两个数字互相矛盾。
+ * 两侧共用同一常量后，改这个数字只需改一处，也不会再出现「一边放行、一边拒收」。
+ */
+internal const val MAX_BACKUP_STRING_CHARS = 64 * 1024
+
+/**
  * 配置存储。只暴露真正需要用户改的项，其余走协议默认值。
  */
 class Prefs(context: Context) {
@@ -492,7 +502,17 @@ class Prefs(context: Context) {
         TranslationScope.of(sp.getString(scopeKeyOf(id), null)).id
 
     internal fun setTranslateScopeOf(id: TranslationProviderId, value: String) {
-        sp.edit { putString(scopeKeyOf(id), TranslationScope.of(value).id) }
+        sp.edit {
+            val v = TranslationScope.of(value).id
+            // 等于默认就**删键**（2026-10-02 修复 L-425 的后半）：与 [setTranslateMaxBytesOf] 同款 ——
+            // 否则用户只要在「原文范围」页选过一次（哪怕选回默认档），键就落下去了，导出段
+            // 的 `putIfSetString` 见键存在便把**当时的默认**固化成显式值，跨版本默认调整拿不到。
+            if (v == TranslationScope.DEFAULT.id) {
+                remove(scopeKeyOf(id))
+            } else {
+                putString(scopeKeyOf(id), v)
+            }
+        }
     }
 
     /**
@@ -502,13 +522,26 @@ class Prefs(context: Context) {
      * [TranslationText.MIN_MAX_BYTES]..[TranslationText.MAX_MAX_BYTES] —— 导入的是一份外部文件，
      * `0` 或 `Int.MAX_VALUE` 这类值不钳住就会进运行期（前者让原文恒为空、后者绕过读取上限）。
      */
-    internal fun translateMaxBytesOf(id: TranslationProviderId): Int =
-        sp.getInt(maxBytesKeyOf(id), id.defaultMaxBytes)
-            .coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)
+    internal fun translateMaxBytesOf(id: TranslationProviderId): Int {
+        val stored = sp.getInt(maxBytesKeyOf(id), id.defaultMaxBytes)
+        // `< MIN` 视为「未设置」⇒ 回落该家默认（2026-10-02 修复 L-434）：界面里「清空 / 0」的
+        // 语义是「恢复出厂默认」，而 `coerceIn` 会把它钳成 1 —— 手改或损坏的备份
+        // （`translate_max_bytes_x: 0`）导入后该家会变成「每次只翻 1 字节」，
+        // 叠加「读取窗口跟着上限走」（L-427）后两档必然失败、提示还归因错误。
+        return if (stored < TranslationText.MIN_MAX_BYTES) {
+            id.defaultMaxBytes
+        } else {
+            stored.coerceAtMost(TranslationText.MAX_MAX_BYTES)
+        }
+    }
 
     internal fun setTranslateMaxBytesOf(id: TranslationProviderId, value: Int) {
         sp.edit {
-            val v = value.coerceIn(TranslationText.MIN_MAX_BYTES, TranslationText.MAX_MAX_BYTES)
+            val v = if (value < TranslationText.MIN_MAX_BYTES) {
+                id.defaultMaxBytes
+            } else {
+                value.coerceAtMost(TranslationText.MAX_MAX_BYTES)
+            }
             // 等于该家默认就**删键**（2026-10-01 修复 L-255）：否则打开过一次「原文范围」页就把这家
             // 钉死在当时的默认值，将来抬高默认（如 DeepL）老用户拿不到
             if (v == id.defaultMaxBytes) {
@@ -549,17 +582,8 @@ class Prefs(context: Context) {
 
     private val TAG = "Prefs"
 
-    /**
-     * 凭据解密的进程内缓存：`存储键 → 明文`。
-     *
-     * 为什么必须缓存：Keystore 解密要走 binder/TEE（5~20ms/次），而凭据读取分布在「组装 Provider」
-     * 「设置页摘要」「多配置判空」等多处、且可能在主线程 —— 每次都解密会明显卡顿。
-     *
-     * 它**不额外增加**内存暴露面：`SharedPreferences` 本身就把整个 XML 解析进内存 Map，
-     * 加密之前那些明文本来就常驻在进程里，这里只是换了个持有者。（Java `String` 不可擦除，
-     * 不做「用完清零」这类样子货。）
-     */
-    private val credentialCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    // 凭据明文的缓存持有者在 companion object 里 —— 必须**进程级**，原因见那里的 KDoc
+    //（2026-10-01 修复 L-298）。
 
     /**
      * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
@@ -572,20 +596,58 @@ class Prefs(context: Context) {
      * 第 3 条是关键：**绝不能把密文原文当成 Key 用** —— 那会发一次莫名失败的请求，
      * 而用户看到的是「凭据已配置却认证失败」，比「未配置」难查得多。
      */
-    private fun readCredential(key: String): String {
+    /**
+     * 当前**只在内存、未落盘**的凭据键（空集合 = 全部已落盘）。
+     *
+     * 供两个设置页的显式保存如实报告（2026-10-02 修复 L-355）：加密不可用时（锁屏）值只进内存，
+     * 而回读核对比的是同一个 getter（命中缓存）⇒ 必然"相等"，仅靠字符串比对揭不穿 —— 必须由写侧记账。
+     */
+    internal fun unpersistedCredentialKeys(): Set<String> = unpersistedCredentials.toSet()
+
+    private fun readCredential(key: String, retry: Int = 0): String {
         credentialCache[key]?.let { return it }
         val raw = sp.getString(key, "").orEmpty()
         if (raw.isEmpty()) return ""
         if (!CredentialCrypto.looksEncrypted(raw)) {
             Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
+            // ⚠ 顺序是「**先加密、再比对、最后落盘**」（2026-10-02 修复：上一轮把闸放在加密
+            // 之前，两次 `getString` 紧邻 ⇒ 必然相等 ⇒ 闸等于没挡）。加密是慢操作（5~20ms），
+            // 期间别的 `Prefs` 实例写入新值时，这里会把旧明文重新加密写回磁盘 ——
+            // 缓存与**磁盘**一起回退，正是 L-342 要根除的场景（连重启都恢复不回来）。
+            // 这里不复用 [writeCredential]：那条路径没有「比对期望旧值」这一步，
+            // 而本分支的判据必须在加密之后、提交之前，形态不同。
+            val encrypted = CredentialCrypto.encrypt(raw)
+            if (sp.getString(key, "").orEmpty() != raw) {
+                Diagnostics.w(TAG, "凭据在迁移期间被改写，改读新值")
+                return if (retry >= 1) raw else readCredential(key, retry + 1)
+            }
+            if (encrypted == null) {
+                Diagnostics.w(TAG, "凭据迁移: 加密不可用，只留在内存（重启后需重填）")
+                credentialCache[key] = raw
+                unpersistedCredentials.add(key)
+                sp.edit { remove(key) }
+                return raw
+            }
             credentialCache[key] = raw
-            writeCredential(key, raw)
+            unpersistedCredentials.remove(key)
+            sp.edit { putString(key, encrypted) }
             return raw
         }
         val plain = CredentialCrypto.decrypt(raw)
         if (plain == null) {
             Diagnostics.w(TAG, "凭据解密失败（换机 / Keystore 失效），按未配置处理，需重新填写")
             return ""
+        }
+        // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
+        // 无条件回填会把缓存**盖回旧值**，而「凭据不留痕」随后正是拿这个值去比对剪贴板的，
+        // 用户刚复制的新 Key 会因此留在剪贴板历史里（2026-10-01 修复 L-298）。
+        if (sp.getString(key, "").orEmpty() != raw) {
+            Diagnostics.w(TAG, "凭据在解密期间被改写，本次不回填缓存（改读新值）")
+            // 2026-10-02 修复 L-422：此前这里直接 `return plain` —— 闸门只挡住了"污染缓存"，
+            // 没挡住"本次结论已过期"：窗口里发生的若是**删除**（用户清空字段并保存），
+            // 紧接着的一次翻译会拿已撤销的凭据发请求。重读一次即收敛（命中新缓存或新磁盘值，
+            // 删除场景得空串）；极端并发下最多重试一次，之后退回旧值并留 W，不做无限重读。
+            return if (retry >= 1) plain else readCredential(key, retry + 1)
         }
         credentialCache[key] = plain
         return plain
@@ -594,13 +656,17 @@ class Prefs(context: Context) {
     /**
      * 写凭据：清洗（剥不可见字符）→ 加密 → 落盘；**加密失败绝不回退成明文**（安全优先）。
      *
-     * 失败时（Keystore 不可用）只留在内存缓存里：本次会话可用、重启后需重填，并记 W 日志 ——
-     * 用户能从诊断包看出「凭据为什么没了」，而不是无声消失。
+     * 失败时（Keystore 不可用，如 API 28+ 锁屏 + `setUnlockedDeviceRequired`）只留在内存缓存里，
+     * 同时**删掉磁盘上仍可解密的旧密文**（fail-closed：宁可让该家回到「未配置」并如实告知，
+     * 也不要悄悄退回旧 Key），并把该键记入 [unpersistedCredentialKeys] 供显式保存如实报告
+     * （2026-10-02 修复 L-355：此前缓存命中让回读核对必然相等 ⇒ 报「已保存」，而重启后该家
+     * 回到「未配置」，用户与日志都看不出真因）。
      */
     private fun writeCredential(key: String, value: String) {
         val cleaned = value.cleanCredential()
         if (cleaned.isEmpty()) {
             credentialCache.remove(key)
+            unpersistedCredentials.remove(key)
             sp.edit { remove(key) }
             return
         }
@@ -608,10 +674,12 @@ class Prefs(context: Context) {
         if (encrypted == null) {
             Diagnostics.w(TAG, "凭据加密失败，未落盘（重启后需重新填写）")
             credentialCache[key] = cleaned
+            unpersistedCredentials.add(key)
             sp.edit { remove(key) }
             return
         }
         credentialCache[key] = cleaned
+        unpersistedCredentials.remove(key)
         sp.edit { putString(key, encrypted) }
     }
 
@@ -630,10 +698,16 @@ class Prefs(context: Context) {
         get() = readCredential(KEY_AZURE_API_KEY)
         set(value) = writeCredential(KEY_AZURE_API_KEY, value)
 
-    /** Azure 资源区域（多服务/区域资源必填；单区域全局资源留空即可）—— 非机密，明文存 */
+    /**
+     * Azure 资源区域（多服务/区域资源必填；单区域全局资源留空即可）—— 非机密，明文存。
+     *
+     * **读写两侧都归一**（2026-10-02 修复 L-347）：门户显示的是 `East Asia`，而该头要求
+     * `eastasia`。写侧归一让"照抄门户"直接可用；读侧归一让**存量脏值**（升级前填的 `East Asia`）
+     * 不必用户重填就自愈 —— 否则该类用户会一直 401，而提示只说「检查凭据」。
+     */
     var azureRegion: String
-        get() = sp.getString(KEY_AZURE_REGION, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_AZURE_REGION, value.trim()) }
+        get() = normalizeAzureRegion(sp.getString(KEY_AZURE_REGION, "").orEmpty())
+        set(value) = sp.edit { putString(KEY_AZURE_REGION, normalizeAzureRegion(value)) }
 
     /** 百度翻译开放平台 AppID（**加密落盘**，见 [readCredential]） */
     var baiduAppId: String
@@ -678,27 +752,49 @@ class Prefs(context: Context) {
     /**
      * 「留空即默认」字段的统一读法（2026-10-01 修复 L-251）。
      *
-     * 为什么不能只判 blank：设置页会把 getter 的**默认值**灌进输入框，用户打开一次页面再返回，
-     * 默认值就被无条件回写成了**显式字面量** —— 于是 App 升级默认提示词 / 路径之后，老用户再也
-     * 拿不到新默认值（本地已是字面量）。这里把「存量里恰好等于默认值」的也当作未配置，
-     * 等价于一次自动迁移。
+     * 设置页会把 getter 的**默认值**灌进输入框，用户打开一次页面再返回就会回写一次，所以存量里
+     * 随时可能出现「恰好等于默认值」的字面量。写入侧由 [putDefaulted] 保证它不再堆积（等于默认就
+     * 删键），读取侧这里只做一件事：空串回落默认值。
+     *
+     * ⚠ 此前这里对「等于默认值」的存量**返回空串**（想用「值为空」表达「没配过」）。出发点可以理解，
+     * 但八个字段里 `openAiBaseUrl` 的下游 [OpenAiTranslator.joinUrl] 拿到空串是**直接失败**而不是
+     * 回落默认 —— 于是「打开一次 OpenAI 设置页再返回」就让 OpenAI 兼容翻译整体不可用，而且重填
+     * 同一个 URL 也无效（2026-10-01 审查 L-293）。同款症状还让提示词框显示为空、并误报缺
+     * `{{text}}`（L-294）。「未配置」这个概念由写入侧的**删键**表达，不能由读值表达。
      */
-    private fun defaulted(stored: String, fallback: String): String =
-        if (stored == fallback) "" else stored.ifBlank { fallback }
+    private fun defaulted(stored: String, fallback: String): String = stored.ifBlank { fallback }
+
+    /**
+     * 「留空即默认」字段的统一写法（与 [defaulted] 配对，2026-10-01 修复 L-293）。
+     *
+     * 清洗后为空、或恰好等于默认值 ⇒ **删键**，不写死字面量 —— 这样 App 升级默认值时老用户能跟着
+     * 拿到新值（口径同 [openAiTimeoutSec] 的 setter，2026-10-01 修复 L-255）。
+     *
+     * 清洗统一走 [cleanCredential]：Base URL / 路径 / 提示词都是「从网页复制」的高发区，混进 NBSP
+     * 或零宽字符会让 URL 解析失败、或让响应解析路径取不到值（2026-10-01 修复 L-288）。
+     */
+    private fun putDefaulted(key: String, value: String, fallback: String) = sp.edit {
+        val v = value.cleanCredential()
+        if (v.isEmpty() || v == fallback) remove(key) else putString(key, v)
+    }
 
     var openAiName: String
         get() = defaulted(sp.getString(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
-        set(value) = sp.edit { putString(KEY_OPENAI_NAME, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME)
 
     /**
      * OpenAI 兼容服务的 Base URL（默认官方 `https://api.openai.com/v1`）。
      *
-     * 原样保存用户输入：规范化放在 [OpenAiTranslator.joinUrl] 里做 —— 存归一后的值
-     * 会让用户看不到自己填的是什么，出问题时无从对照。
+     * 原样保存用户输入（只剥不可见字符，不补 `https://`、不剥尾部端点）：规范化放在
+     * [OpenAiTranslator.joinUrl] 里做 —— 存归一后的值会让用户看不到自己填的是什么，出问题时无从对照。
+     *
+     * ⚠ 与另外三个路径键同口径走 [putDefaulted]（2026-10-01 修复 L-288）：`joinUrl` 内部只做
+     * `trim()`，挡不住从网页复制时混进来的 NBSP / 零宽字符，而解析结果在两处被消费
+     *（[hasCredentialFor] 与 [openAiConfig]）—— 口径不一致就会出现「摘要说未配置、却能翻译」。
      */
     var openAiBaseUrl: String
         get() = defaulted(sp.getString(KEY_OPENAI_BASE_URL, "").orEmpty(), OpenAiTranslator.DEFAULT_BASE_URL)
-        set(value) = sp.edit { putString(KEY_OPENAI_BASE_URL, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_BASE_URL, value, OpenAiTranslator.DEFAULT_BASE_URL)
 
     /** OpenAI 兼容服务的 API Key（Bearer 鉴权；**加密落盘**，界面与日志都不回显） */
     var openAiApiKey: String
@@ -713,12 +809,12 @@ class Prefs(context: Context) {
     /** 对话端点路径（默认 `/chat/completions`；换网关只改这一项即可，不必等 App 更新） */
     var openAiChatPath: String
         get() = defaulted(sp.getString(KEY_OPENAI_CHAT_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_CHAT_PATH)
-        set(value) = sp.edit { putString(KEY_OPENAI_CHAT_PATH, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_CHAT_PATH, value, OpenAiTranslator.DEFAULT_CHAT_PATH)
 
     /** 模型列表端点路径（默认 `/models`；「获取模型」用它，服务端没实现也不影响翻译） */
     var openAiModelsPath: String
         get() = defaulted(sp.getString(KEY_OPENAI_MODELS_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_MODELS_PATH)
-        set(value) = sp.edit { putString(KEY_OPENAI_MODELS_PATH, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_MODELS_PATH, value, OpenAiTranslator.DEFAULT_MODELS_PATH)
 
     /** 目标语言（自由文本：简体中文 / 繁體中文（台灣）/ 粤语 / 古文…，进 `{{target_language}}`） */
     var openAiTargetLanguage: String
@@ -726,17 +822,17 @@ class Prefs(context: Context) {
             sp.getString(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty(),
             OpenAiTranslator.DEFAULT_TARGET_LANGUAGE,
         )
-        set(value) = sp.edit { putString(KEY_OPENAI_TARGET_LANGUAGE, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_TARGET_LANGUAGE, value, OpenAiTranslator.DEFAULT_TARGET_LANGUAGE)
 
     /** System 提示词（可整段改写；支持 `{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`） */
     var openAiSystemPrompt: String
         get() = defaulted(sp.getString(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
-        set(value) = sp.edit { putString(KEY_OPENAI_SYSTEM_PROMPT, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_SYSTEM_PROMPT, value, OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
 
     /** User 提示词模板（同上；变量替换见 [OpenAiTranslator.applyTemplate]） */
     var openAiUserPrompt: String
         get() = defaulted(sp.getString(KEY_OPENAI_USER_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_USER_PROMPT)
-        set(value) = sp.edit { putString(KEY_OPENAI_USER_PROMPT, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_USER_PROMPT, value, OpenAiTranslator.DEFAULT_USER_PROMPT)
 
     /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
     var openAiTemperature: String
@@ -756,17 +852,22 @@ class Prefs(context: Context) {
     /** 自定义请求头（一行一条 `Key: Value`；`Authorization` 会被忽略，它由 API Key 字段独占） */
     var openAiExtraHeaders: String
         get() = sp.getString(KEY_OPENAI_EXTRA_HEADERS, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_HEADERS, value) }
+        // 写入侧与导入侧**共用同一长度闸**（2026-10-02 修复 L-375）：此前闸只在导入侧（[asString]），
+        // 而导出侧不设限 ⇒ 自产的包会被自己的导入端拒收该键 —— 直接违反本仓「自产的包必须自己导得
+        // 回来」的约定，且清单说「包含」、导入说「忽略」，两个数字互相矛盾。
+        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_HEADERS, value.capForBackup(KEY_OPENAI_EXTRA_HEADERS)) }
 
     /** 自定义请求体 JSON（**最高优先级**：同名键覆盖标准参数，厂商私有参数写这里） */
     var openAiExtraJson: String
         get() = sp.getString(KEY_OPENAI_EXTRA_JSON, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_JSON, value) }
+        // 写入侧闸同 [openAiExtraHeaders]（2026-10-02 修复 L-375）：超限截尾后会是非法 JSON，
+        // 设置页的 `isValidExtraJson` 会当场报错 —— 比「导出成功、导入静默丢键」好
+        set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_JSON, value.capForBackup(KEY_OPENAI_EXTRA_JSON)) }
 
     /** 响应解析路径（默认 `choices[0].message.content`；换协议如 `output_text` 只改这一项） */
     var openAiResponsePath: String
         get() = defaulted(sp.getString(KEY_OPENAI_RESPONSE_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_RESPONSE_PATH)
-        set(value) = sp.edit { putString(KEY_OPENAI_RESPONSE_PATH, value.trim()) }
+        set(value) = putDefaulted(KEY_OPENAI_RESPONSE_PATH, value, OpenAiTranslator.DEFAULT_RESPONSE_PATH)
 
     /** 整体超时（秒）：大模型首字延迟不可控，钳到 5~300 秒 */
     var openAiTimeoutSec: Int
@@ -786,7 +887,11 @@ class Prefs(context: Context) {
     /** 最近一次成功获取的模型列表缓存（换行分隔；接口暂时不可用时下拉仍可用） */
     var openAiModelsCache: String
         get() = sp.getString(KEY_OPENAI_MODELS_CACHE, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_OPENAI_MODELS_CACHE, value.trim()) }
+        // 写入侧闸（2026-10-02 修复 L-375）：这个字段是**服务端可控**的（`/models` 返回几千条时
+        // 拼出的名字串可超 64 KB），正是最容易撞上导入侧闸的一个 —— 截尾即可（缓存丢了可重取）
+        set(value) = sp.edit {
+            putString(KEY_OPENAI_MODELS_CACHE, value.trim().capForBackup(KEY_OPENAI_MODELS_CACHE))
+        }
 
     /** 组装 OpenAI 兼容 Provider 的配置（UI / Prefs / 翻译器共用一处口径） */
     internal val openAiConfig: OpenAiConfig
@@ -880,19 +985,39 @@ class Prefs(context: Context) {
         put(KEY_TRANSLATE_PROVIDER, translateProvider)
         put(KEY_TRANSLATE_TARGET, translateTarget)
         // 「哪些算原文」按 Provider 各一份：逐家显式导出（白名单里必须看得见常量名，
-        // 否则 PrefsBackupCoverageTest 的源码对拍抓不到这些键）
-        put(KEY_TRANSLATE_SCOPE_ALIYUN, translateScopeOf(TranslationProviderId.ALIYUN))
-        put(KEY_TRANSLATE_MAX_BYTES_ALIYUN, translateMaxBytesOf(TranslationProviderId.ALIYUN))
-        put(KEY_TRANSLATE_SCOPE_AZURE, translateScopeOf(TranslationProviderId.AZURE))
-        put(KEY_TRANSLATE_MAX_BYTES_AZURE, translateMaxBytesOf(TranslationProviderId.AZURE))
-        put(KEY_TRANSLATE_SCOPE_BAIDU, translateScopeOf(TranslationProviderId.BAIDU))
-        put(KEY_TRANSLATE_MAX_BYTES_BAIDU, translateMaxBytesOf(TranslationProviderId.BAIDU))
-        put(KEY_TRANSLATE_SCOPE_BAIDU_LLM, translateScopeOf(TranslationProviderId.BAIDU_LLM))
-        put(KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM, translateMaxBytesOf(TranslationProviderId.BAIDU_LLM))
-        put(KEY_TRANSLATE_SCOPE_DEEPL, translateScopeOf(TranslationProviderId.DEEPL))
-        put(KEY_TRANSLATE_MAX_BYTES_DEEPL, translateMaxBytesOf(TranslationProviderId.DEEPL))
-        put(KEY_TRANSLATE_SCOPE_OPENAI, translateScopeOf(TranslationProviderId.OPENAI))
-        put(KEY_TRANSLATE_MAX_BYTES_OPENAI, translateMaxBytesOf(TranslationProviderId.OPENAI))
+        // 否则 PrefsBackupCoverageTest 的源码对拍抓不到这些键）。
+        //
+        // ⚠ 这 12 个键只导出**用户真的设置过**的（2026-10-02 修复 L-425）：getter 在键缺失时
+        // 返回出厂默认，无条件导出会把「当时的默认」固化成显式值 —— 跨版本导入时（默认值已改，
+        // 例如 L-307 把百度大模型从 32768 降到 6000）它会被当成用户显式值写回，把默认值的
+        // 调整整个吃掉。`putIfSet*` 让「未设置」保持为一个**状态**而不是一个值。
+        // 取一次原始值快照、**不做类型假设**（2026-10-02 修复）：
+        //  · `getInt` / `getString` 对**类型不符**的键会抛 `ClassCastException`（不是返回默认），
+        //    而备份导入允许外部文件写进任意类型 ⇒ 一个脏键就让**整次导出**失败，外层只有一句
+        //    通用失败文案，用户不知道是哪个键；
+        //  · `contains` → 再读之间还有竞态（导出跑在后台线程）：期间别的实例 `remove` 掉该键时，
+        //    int 侧会读回默认 `0` 并被当成真实值导出。一次快照把两个问题一起消掉。
+        val rawValues: Map<String, *> = runCatching { sp.all }.getOrNull().orEmpty()
+        fun putIfSetString(exportKey: String, storeKey: String) {
+            val v = rawValues[storeKey] as? String ?: return
+            put(exportKey, v)
+        }
+        fun putIfSetInt(exportKey: String, storeKey: String) {
+            val v = rawValues[storeKey] as? Int ?: return
+            put(exportKey, v)
+        }
+        putIfSetString(KEY_TRANSLATE_SCOPE_ALIYUN, scopeKeyOf(TranslationProviderId.ALIYUN))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_ALIYUN, maxBytesKeyOf(TranslationProviderId.ALIYUN))
+        putIfSetString(KEY_TRANSLATE_SCOPE_AZURE, scopeKeyOf(TranslationProviderId.AZURE))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_AZURE, maxBytesKeyOf(TranslationProviderId.AZURE))
+        putIfSetString(KEY_TRANSLATE_SCOPE_BAIDU, scopeKeyOf(TranslationProviderId.BAIDU))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_BAIDU, maxBytesKeyOf(TranslationProviderId.BAIDU))
+        putIfSetString(KEY_TRANSLATE_SCOPE_BAIDU_LLM, scopeKeyOf(TranslationProviderId.BAIDU_LLM))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM, maxBytesKeyOf(TranslationProviderId.BAIDU_LLM))
+        putIfSetString(KEY_TRANSLATE_SCOPE_DEEPL, scopeKeyOf(TranslationProviderId.DEEPL))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_DEEPL, maxBytesKeyOf(TranslationProviderId.DEEPL))
+        putIfSetString(KEY_TRANSLATE_SCOPE_OPENAI, scopeKeyOf(TranslationProviderId.OPENAI))
+        putIfSetInt(KEY_TRANSLATE_MAX_BYTES_OPENAI, maxBytesKeyOf(TranslationProviderId.OPENAI))
         put(KEY_AZURE_API_KEY, azureApiKey)
         put(KEY_AZURE_REGION, azureRegion)
         put(KEY_BAIDU_APP_ID, baiduAppId)
@@ -1108,14 +1233,56 @@ class Prefs(context: Context) {
      * prefs XML —— 卡顿与 GC 压力是**持久**的。这里统一挡在 64KB（所有正常取值都远小于它；
      * `favorite_symbols` 另有更严的 32KB 闸，不受影响），超限按「类型不符」计入忽略数。
      */
+    /**
+     * 写入侧的长度闸（2026-10-02 修复 L-375）：超限即**截尾**并留痕（只记键名与长度，不记内容）。
+     *
+     * 为什么截断而不是拒绝：这三个字段的合理用法远小于 64 KB（几行 Header / 几百字节 JSON /
+     * 一屏模型名），超限只可能是粘贴失误或**服务端可控**的长列表。截断能让「导出的包一定导得回来」，
+     * 而拒绝写入会让界面上的值与落盘值不一致（用户以为存了，重启后才发现没了）。
+     */
+    private fun String.capForBackup(key: String): String =
+        if (length <= MAX_BACKUP_STRING_CHARS) {
+            this
+        } else {
+            Diagnostics.w(TAG, "写入侧长度闸($key): 超 $MAX_BACKUP_STRING_CHARS 字，已截断（原 $length）")
+            take(MAX_BACKUP_STRING_CHARS)
+        }
+
     private fun asString(v: ConfigBackup.BackupValue): String? =
-        (v.value as? String)?.takeIf { it.length <= 64 * 1024 }
+        (v.value as? String)?.takeIf { it.length <= MAX_BACKUP_STRING_CHARS }
     private fun asInt(v: ConfigBackup.BackupValue): Int? = v.value as? Int
     private fun asLong(v: ConfigBackup.BackupValue): Long? = v.value as? Long
     private fun asFloat(v: ConfigBackup.BackupValue): Float? = v.value as? Float
     private fun asBool(v: ConfigBackup.BackupValue): Boolean? = v.value as? Boolean
 
     companion object {
+        /**
+         * 凭据解密的**进程级**缓存：`存储键 → 明文`。
+         *
+         * 为什么必须缓存：Keystore 解密要走 binder/TEE（5~20ms/次），而凭据读取分布在「组装 Provider」
+         * 「设置页摘要」「多配置判空」等多处、且可能在主线程 —— 每次都解密会明显卡顿。
+         *
+         * 为什么必须**进程级**（2026-10-01 修复 L-298）：`Prefs` 在本进程里被创建三十余次
+         * （IME 一份常驻、每个设置页各一份）。缓存挂在实例上时，设置页改完 Key 只更新它自己那一份，
+         * 常驻的 IME 会**一直拿旧 Key 发请求** —— 改 Key 不生效、删 Key 也不生效（已撤销的凭据继续
+         * 外发），直到进程被杀；这与设置页写下的「本页改完不需要重启输入法」直接矛盾。
+         *
+         * 它**不额外增加**内存暴露面：`SharedPreferences` 本身就把整个 XML 解析进内存 Map，
+         * 加密之前那些明文本来就常驻在进程里，这里只是换了个持有者。（Java `String` 不可擦除，
+         * 不做「用完清零」这类样子货。）
+         */
+        private val credentialCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+        /**
+         * 「只在内存、未落盘」的凭据键（2026-10-02 修复 L-355）。
+         *
+         * 加密不可用时（API 28+ 锁屏 + `setUnlockedDeviceRequired`）值只进 [credentialCache]，
+         * 重启即失；设置页的显式保存必须能看见这件事 —— 否则「缓存命中 ⇒ 回读核对必然相等」
+         * 会让界面报「已保存到本机」，而实际磁盘上一个 Key 都没有。与缓存同为进程级，同源同清。
+         */
+        private val unpersistedCredentials: MutableSet<String> =
+            java.util.concurrent.ConcurrentHashMap.newKeySet()
+
         const val DEFAULT_HOST = "192.168.1.3"
         const val DEFAULT_PORT = 6016
         const val DEFAULT_LANGUAGE = "auto"

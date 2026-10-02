@@ -309,16 +309,37 @@ class DocsReferenceTest {
         )
     }
 
+    /** 构建产物在仓库根的文件名 —— 必须与 `build_apk.py` 的 `output_apk` 一致。 */
+    private val APK_FILE_NAME = "com.jinn.inputmethod.apk"
+
     /**
      * README 的 APK 体积声明必须与本地发布包相符（`BUG.md` L-165）。
      *
      * 对外写「约 2.6MB」而实际 2.71 MiB，用户按体积预估下载量会判错；这也是发布后最容易腐烂的一处数字
-     * （每次改动都在长，而 README 没人回头改）。只在仓库根存在 `jinn-release.apk` 时判，
-     * 干净检出 / CI 里没有这个包就跳过。
+     * （每次改动都在长，而 README 没人回头改）。只在仓库根存在构建产物时判，干净检出 / CI 里没有这个包就跳过。
+     *
+     * ⚠ 产物名必须与 `build_apk.py` 一致 —— 改名时只改一处，这条守卫就会**静默跳过**，
+     * README 的体积声明从此没人核对（2026-10-02 产物由 `jinn-release.apk` 改为
+     * `com.jinn.inputmethod.apk`，正是需要两处同改的一次）。所以先与脚本对拍：
+     * 脚本里找不到这个名字即失败；只有「脚本对得上、但本机没有包」才算干净检出并跳过。
      */
     @Test
     fun README体积声明必须与实际发布包相符() {
-        val apk = listOf(File("jinn-release.apk"), File("../jinn-release.apk"))
+        listOf(File("build_apk.py"), File("../build_apk.py"))
+            .firstOrNull { it.isFile }?.let { script ->
+                // 脚本里的产物名是 `f"{APPLICATION_ID}.apk"` 拼出来的（不是字面量），
+                // 所以这里校验**派生关系**而不是子串包含 —— 后半句才是真正要钉的东西：
+                // 「仓库根的产物名 = 包名 + .apk」。
+                val appId = Regex("""(?m)^APPLICATION_ID\s*=\s*"([^"]+)"""")
+                    .find(script.readText())?.groupValues?.get(1)
+                assertTrue("build_apk.py 里找不到 APPLICATION_ID 常量", appId != null)
+                assertEquals(
+                    "产物名必须由包名派生：build_apk.py 的 APPLICATION_ID 是 $appId，" +
+                        "而本守卫按 $APK_FILE_NAME 找包（改包名 / 改产物名时请两处同改）",
+                    "$appId.apk", APK_FILE_NAME,
+                )
+            }
+        val apk = listOf(File(APK_FILE_NAME), File("../$APK_FILE_NAME"))
             .firstOrNull { it.isFile } ?: return
         val mib = apk.length() / 1048576.0
         for (name in listOf("README.md", "README_EN.md")) {
@@ -382,7 +403,8 @@ class DocsReferenceTest {
     }
 
     /**
-     * 每个详情分册页眉的 `blocks: N` 必须等于该册里的块数。
+     * 每个分册**声明**的块数必须等于该册里的实际块数 —— 声明有两种写法：页眉的 `blocks: N（`，
+     * 与节标题里的「`## N. 中风险（X 条`」（2026-10-02 起两者都核对，见 L-460）。
      *
      * 全局计数（front-matter ↔ 全库）由 [文档计数须与源码一致] 把守，但**单册**页眉原先没人核对：
      * 第五十五回我的批量改写脚本吞掉 24 个块时，low.md 的页眉还写着 87（当时的真值），
@@ -392,10 +414,17 @@ class DocsReferenceTest {
     fun 分册页眉的块数必须与该册实际块数一致() {
         val bad = ArrayList<String>()
         for ((name, text) in ledgerPartFiles()) {
-            val declared = Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
-                ?: continue
             val actual = Regex("""(?m)^#{3,4} (?:L|X|B)-\d+ ·""").findAll(text).count()
-            if (declared != actual) bad.add("$name（页眉 $declared / 实际 $actual）")
+            // 两种「声明块数」的写法各自独立核对：有哪种就查哪种，都没有才算该册不声明计数。
+            // 原先只认页眉、拿不到就 `continue`，于是 medium / low 这两册（块数最多、最常被
+            // 批量脚本改写）一句都不报 —— 实测 medium 写 15 实为 12、low 写 191 实为 243
+            //（2026-10-02 修复 L-460）。index 的「N 条在册」另有专门断言（它数的是索引行，
+            // 不是 L 块），所以这里的节标题分支只认中风险 / 低风险两节。
+            val header = Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
+            val titled = Regex("""(?m)^## \d+\. (?:中风险|低风险)（(\d+) 条""")
+                .find(text)?.groupValues?.get(1)?.toInt()
+            if (header != null && header != actual) bad.add("$name（页眉 $header / 实际 $actual）")
+            if (titled != null && titled != actual) bad.add("$name（节标题 $titled / 实际 $actual）")
         }
         assertTrue("分册页眉块数与实际不一致：$bad", bad.isEmpty())
     }

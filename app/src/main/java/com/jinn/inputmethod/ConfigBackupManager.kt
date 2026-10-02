@@ -254,6 +254,15 @@ internal object ConfigBackupManager {
 
     fun export(context: Context, options: ExportOptions): ExportOutcome? {
         lastError = null
+        // 导入进行中不导出（2026-10-02 修复 L-452）：两条流写/读同一份 Prefs 与各节，交错时产出的
+        // 包是导入的**中间态**（部分节已更新、部分未更新），而用户以为拿到了一份完整备份 ——
+        // 换机恢复时才发现缺项。两把锁此前各自为政（`exportInFlight` / `importInFlight`），
+        // 而导入跑在裸线程上、页面重建后导出按钮会重新可点，所以这条路径是可达的。
+        if (importing) {
+            lastError = "正在导入配置，请等导入结束后再导出"
+            Diagnostics.w(TAG, "导出中止: 导入进行中（避免产出中间态备份）")
+            return null
+        }
         // 进程级互斥：页面被重建后，旧实例的导出线程可能仍在跑，而导出一开始就会清掉同前缀的
         // 遗留包（见 [exportLocked] 内）——两次并行必然互相删中间件，让后来者明确失败更安全
         if (!exportInFlight.compareAndSet(false, true)) {

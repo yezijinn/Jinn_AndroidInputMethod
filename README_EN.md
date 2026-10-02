@@ -85,7 +85,7 @@ overwrite-displays and never concatenates itself.
 Requirements: JDK 17, Android SDK (compileSdk 34 / minSdk 26), Gradle 8.9 (bundled wrapper).
 
 ```bash
-python build_apk.py              # builds release to ./jinn-release.apk
+python build_apk.py              # builds release to ./com.jinn.inputmethod.apk
 python build_apk.py --install    # build & install to a connected device
 python build_apk.py --clean      # clean build
 ./gradlew assembleDebug          # Debug (unsigned)

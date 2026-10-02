@@ -83,7 +83,7 @@ APK 约 2.8MB，不含离线语音数据。
 环境：JDK 17、Android SDK（compileSdk 34 / minSdk 26）、Gradle 8.9（项目内置 wrapper）。
 
 ```bash
-python build_apk.py              # 编译 release → jinn-release.apk
+python build_apk.py              # 编译 release → ./com.jinn.inputmethod.apk
 python build_apk.py --install    # 编译并安装到设备
 python build_apk.py --clean      # clean 后全新编译
 ./gradlew assembleDebug          # Debug（未签名）

@@ -90,9 +90,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     var listener: Listener? = null
 
-    /** 当前输入框的 IME 动作（用于回车键行为） */
-    var imeOptions: Int = 0
-
     /** 当前拼音串（全拼或双拼原文） */
     private var composing = StringBuilder()
 
@@ -1353,10 +1350,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         lp.setMargins(inset, inset, inset, inset)
         view.layoutParams = lp
-    }
-
-    fun updateImeOptions(options: Int) {
-        imeOptions = options
     }
 
     /** 中文输入时是否还有未上屏内容 */

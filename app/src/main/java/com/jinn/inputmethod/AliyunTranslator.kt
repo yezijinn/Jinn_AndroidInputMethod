@@ -135,11 +135,16 @@ internal class AliyunTranslator(
         const val SIGNATURE_METHOD = "HMAC-SHA1"
         const val ACCEPT = "application/json"
         /**
-         * 参与签名的 Content-Type：**必须原样作为请求头发出**（见 [buildRequest]）。
-         * 若交给 OkHttp 由 body 的 MediaType 生成，参数会被归一成带空格的
-         * `; charset=utf-8`，与签名串不再一致（差一个空格即 SignatureDoesNotMatch）。
+         * 参与签名的 Content-Type —— 必须是 **OkHttp 实际发出的那个形态**。
+         *
+         * ⚠ 显式 `.header("Content-Type", …)` 会被 OkHttp 的 BridgeInterceptor **覆盖**：
+         * 它执行时用 `body.contentType().toString()` 重设该头，而 `MediaType.toString()` 把参数
+         * 归一成 `; charset=utf-8`（**带空格**）。所以签名串必须用带空格的写法，否则
+         * 「签名的串 ≠ 服务端按收到的头重建的串」—— 差一个空格即 `SignatureDoesNotMatch`，
+         * 而它走 404/Code 通道被归成 AUTH（2026-10-02 修复 L-354：此前显式设头无效、
+         * 签名串与实发头不同源，只是服务端做了归一化才没炸）。
          */
-        const val CONTENT_TYPE = "application/json;charset=utf-8"
+        const val CONTENT_TYPE = "application/json; charset=utf-8"
         const val FORMAT_TYPE = "text"
 
         /** 通用版场景（专业版用 `title` / `ecommerce` 一类，见官方「机器翻译调用方式」） */
@@ -208,7 +213,7 @@ internal class AliyunTranslator(
         )
 
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
-            400 -> TranslationError.PARAM
+            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01 审查 L-273）
             401, 403 -> TranslationError.AUTH
             // 实测：阿里云网关把「AK 不存在 / 签名不匹配」报成 404（带 Code 字段）；
             // 走到这里说明响应体没给出错误码，仍按认证失败处理（该接口路径是常量，不会是「路径不存在」）
@@ -228,6 +233,10 @@ internal class AliyunTranslator(
         internal fun aliyunErrorOf(code: String): TranslationError = when {
             // 通用版数字错误码（实测 10004 = 参数出错：缺 Scene / 参数不合法时 HTTP 200 返回它）
             code == "10004" -> TranslationError.PARAM
+            // 超出单次字符上限 —— 设置页的说明里点名的就是它（「超出报错 10008」）。落进 else 会让
+            // 「原文过长」显示成「服务异常」，用户按提示重试永远失败，而说明与行为互相矛盾
+            //（2026-10-01 修复 L-328）。
+            code == "10008" -> TranslationError.PARAM
             code.startsWith("InvalidAccessKeyId") -> TranslationError.AUTH
             code.startsWith("SignatureDoesNotMatch") -> TranslationError.AUTH
             code.startsWith("InvalidTimeStamp") -> TranslationError.AUTH

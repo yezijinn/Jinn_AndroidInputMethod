@@ -184,6 +184,37 @@ class NetworkPolicyTest {
         )
     }
 
+    /**
+     * 翻译客户端同款策略（BUG.md L-306 / L-313）。
+     *
+     * 翻译端点由**用户自填**（中转 / 聚合网关是常见用法）：`followRedirects` 一旦回到默认的 true，
+     * 一个不太可信的网关回 307/308 就能把 POST 与**用户正文**原样重发到任意主机，响应还会被当成
+     * 正常译文插进输入框。而这两行原先**删掉不会有任何测试变红** —— 上面那条守卫只覆盖词库下载
+     * 客户端，翻译客户端的同类设置一直裸着。
+     */
+    @Test
+    fun `翻译客户端必须只准TLS且不跟随任何重定向`() {
+        val src = TestSources.codeOf(
+            sourceOf(
+                "src/main/java/com/jinn/inputmethod/TranslationClient.kt",
+                "app/src/main/java/com/jinn/inputmethod/TranslationClient.kt",
+            ),
+        )
+        val client = blockAfter(src, "private val http: OkHttpClient by lazy")
+        assertTrue(
+            "翻译客户端必须只准 TLS（connectionSpecs 去掉 CLEARTEXT）",
+            "connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))" in client,
+        )
+        assertTrue(
+            "必须显式 followRedirects(false)：默认值会让 307/308 把用户正文转投到任意主机（L-306）",
+            "followRedirects(false)" in client,
+        )
+        assertTrue(
+            "必须保持 followSslRedirects(false)：默认值会跟随 https→http 降级跳转",
+            "followSslRedirects(false)" in client,
+        )
+    }
+
     @Test
     fun 更新检查只接受https地址() {
         val src = TestSources.codeOf(

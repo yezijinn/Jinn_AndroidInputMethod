@@ -85,7 +85,11 @@ internal class DeepLTranslator(
          */
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
             400, 413, 414 -> TranslationError.PARAM
-            403 -> TranslationError.AUTH
+            // 401 / 408 官方错误表里没有（DeepL 用 403 表达密钥无效），但前置 CDN / 代理会回它们。
+            // 其余五家都认这两个码，只有这家落 else ⇒ 同一家的凭据错在 403 说「认证失败」、
+            // 在 401 却说「服务异常」，用户无从判断该查凭据还是该重试（2026-10-01 修复 L-309）。
+            401, 403 -> TranslationError.AUTH
+            408 -> TranslationError.TIMEOUT
             429, 456 -> TranslationError.QUOTA
             in 500..599 -> TranslationError.SERVER
             else -> TranslationError.SERVER

@@ -82,7 +82,7 @@ internal class AzureTranslator(
          * 不是 401），所以 403 归 QUOTA；429 = 请求过于频繁，同样归 QUOTA。
          */
         internal fun errorOf(code: Int): TranslationError = when (code) {
-            400 -> TranslationError.PARAM
+            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01 审查 L-273）
             401 -> TranslationError.AUTH
             403, 429 -> TranslationError.QUOTA
             408 -> TranslationError.TIMEOUT

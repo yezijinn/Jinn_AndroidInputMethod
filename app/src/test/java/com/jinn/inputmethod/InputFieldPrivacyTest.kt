@@ -31,6 +31,26 @@ class InputFieldPrivacyTest {
     }
 
     @Test
+    fun 同一个变体位值下的其它语义不误判为口令框() {
+        // 平台里 TYPE_TEXT_VARIATION_URI、TYPE_NUMBER_VARIATION_PASSWORD 与
+        // TYPE_DATETIME_VARIATION_DATE **同为 0x10**，只掩变体位会把三者混成一个 ——
+        // 地址栏与日期框会被当成口令框，翻译被拦且不学词频（2026-10-02 修复 L-454）。
+        assertFalse(InputFieldPrivacy.isPasswordField(text(EditorInfo.TYPE_TEXT_VARIATION_URI)))
+        assertFalse(InputFieldPrivacy.suppressLearning(text(EditorInfo.TYPE_TEXT_VARIATION_URI)))
+        assertFalse(
+            InputFieldPrivacy.isPasswordField(
+                EditorInfo.TYPE_CLASS_DATETIME or EditorInfo.TYPE_DATETIME_VARIATION_DATE
+            )
+        )
+        // 真正的数字密码框仍然拦得住（0x12 与上面几个 0x11 / 0x14 只差类位）
+        assertTrue(
+            InputFieldPrivacy.isPasswordField(
+                EditorInfo.TYPE_CLASS_NUMBER or EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD
+            )
+        )
+    }
+
+    @Test
     fun 声明不联想的框不学习() {
         assertTrue(InputFieldPrivacy.suppressLearning(text(flags = EditorInfo.TYPE_TEXT_FLAG_NO_SUGGESTIONS)))
         // 多行、自动补全等其它标志不影响判定

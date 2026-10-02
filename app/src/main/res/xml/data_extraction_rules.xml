@@ -29,9 +29,16 @@
         <exclude
             domain="sharedpref"
             path="jinn_inputmethod.xml" />
+        <!-- 平台写的 `.bak`（= 上一版配置，含旧凭据密文）也必须排（2026-10-02 修复 L-408） -->
+        <exclude
+            domain="sharedpref"
+            path="jinn_inputmethod.xml.bak" />
         <exclude
             domain="sharedpref"
             path="jinn_clipboard.xml" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_clipboard.xml.bak" />
 
     <!-- 索引缓存是可**再生**的（基础 14 MB 上下、可选包各十几 MB）：交给 Auto Backup 只会挤占
          25MB 配额（超限会让整包备份失败，连真正该备份的下载词库也备份不上），而换机恢复后
@@ -40,6 +47,12 @@
     <exclude
         domain="file"
         path="index/" />
+    <!-- 诊断日志目录在 `external` 域（`getExternalFilesDir()/logs/`）里，默认会被上传：
+         日志含崩溃快照（退回全量时含其它应用的行）、端点主机名、凭据长度指纹，
+         且 32 MB 预算 > 25 MB 配额会让整包备份失败（2026-10-02 修复） -->
+    <exclude
+        domain="external"
+        path="logs/" />
     </cloud-backup>
     <device-transfer>
         <exclude
@@ -63,9 +76,16 @@
         <exclude
             domain="sharedpref"
             path="jinn_inputmethod.xml" />
+        <!-- 平台写的 `.bak`（= 上一版配置，含旧凭据密文）也必须排（2026-10-02 修复 L-408） -->
+        <exclude
+            domain="sharedpref"
+            path="jinn_inputmethod.xml.bak" />
         <exclude
             domain="sharedpref"
             path="jinn_clipboard.xml" />
+        <exclude
+            domain="sharedpref"
+            path="jinn_clipboard.xml.bak" />
 
     <!-- 索引缓存是可**再生**的（基础 14 MB 上下、可选包各十几 MB）：交给 Auto Backup 只会挤占
          25MB 配额（超限会让整包备份失败，连真正该备份的下载词库也备份不上），而换机恢复后
@@ -74,5 +94,11 @@
     <exclude
         domain="file"
         path="index/" />
+    <!-- 诊断日志目录在 `external` 域（`getExternalFilesDir()/logs/`）里，默认会被上传：
+         日志含崩溃快照（退回全量时含其它应用的行）、端点主机名、凭据长度指纹，
+         且 32 MB 预算 > 25 MB 配额会让整包备份失败（2026-10-02 修复） -->
+    <exclude
+        domain="external"
+        path="logs/" />
     </device-transfer>
 </data-extraction-rules>

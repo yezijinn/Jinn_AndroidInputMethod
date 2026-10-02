@@ -39,26 +39,49 @@ internal object CredentialTrace {
     fun purge(db: ClipboardDb, values: Collection<String>): Int {
         val all = values.mapNotNull { it.cleanCredential().takeIf { s -> s.isNotEmpty() } }
         if (all.isEmpty()) return 0
-        // 取不到 maxItemId 时按「历史可能变了」处理（Long.MAX_VALUE ⇒ 全部重扫），保守优先
-        val maxId = runCatching { db.maxItemId() }.getOrDefault(Long.MAX_VALUE)
+        // 取不到 maxItemId 时按「历史可能变了」处理（Long.MAX_VALUE ⇒ 全部重扫），保守优先。
+        // ⚠ 但**不能把这个哨兵写回水位**（2026-10-02 修复 L-258）：写回后 `purged[v] = MAX_VALUE`，
+        // 之后任一次成功的 `maxItemId()` 都小于它 ⇒ 该凭据在本进程内**永不重扫**（用户之后再复制
+        // 同一个 Key 也照样跳过），与「没有新条目才跳过」的语义正好相反。取失败 ⇒ 本轮不标记。
+        var maxIdUncertain = false
+        val maxId = runCatching { db.maxItemId() }.getOrElse {
+            maxIdUncertain = true
+            Long.MAX_VALUE
+        }
         val targets = all.filter { (purged[it] ?: -1L) < maxId }
         if (targets.isEmpty()) return 0
         var removed = 0
+        var failed = false
         val missed = ArrayList<String>()
         for (v in targets) {
-            val exact = runCatching { db.deleteByPlaintext(v) }.getOrDefault(0)
+            val exact = runCatching { db.deleteByPlaintext(v) }.getOrElse {
+                // **抛错不是「未命中」**（2026-10-01 审查 L-269）：磁盘满 / 库损坏 / 只读时这一轮
+                // 对该目标根本没有结论，不能标成已清 —— 否则只要没有新条目就永不重试，
+                // 凭据明文会一直留在剪贴板历史里（面板可见、随备份导出）。与下面那一遍的 `-1` 对齐。
+                Diagnostics.w("CredentialTrace", "凭据清理: 精确删除失败 ${it.javaClass.simpleName}")
+                failed = true
+                0
+            }
             removed += exact
-            // 精确命中就说明「干净的那份」在；带杂质的那份交给下面唯一一次遍历（L-244 / L-253）
-            if (exact == 0) missed.add(v)
+            // **无条件**进 missed（2026-10-02 修复）：注释一直说「带杂质的那份交给下面唯一一次
+            // 遍历」，但此前只在 `exact == 0` 时加入 —— 精确命中的目标反而**不会**被那一遍看到，
+            // 于是「干净版删掉了、带 NBSP 的版还在」要等水位变化才可能被扫到；用户不再产生新条目
+            // 它就长期留在历史里（面板明文可见、随备份导出），正是本功能要关掉的口子。
+            // 清洗遍是幂等的（判据「剥不可见字符后相等」且排除收藏条目），多带一个目标无副作用。
+            missed.add(v)
         }
+        // **失败只影响「标记」，不影响「清洗」**（2026-10-01 修复 L-289）：此前是 `if (failed) return`，
+        // 于是任一目标抛错就让本轮**谁都没清** —— 其中还包括「精确删成功了、但历史里另有带杂质变体」
+        //（missed 里的其他目标）。清洗遍本身是幂等的，多做一轮没有副作用。
         val cleaned = if (missed.isEmpty()) {
             0
         } else {
             // 失败返回 -1：下面据此**不标记**，让这些目标在下次调用时重试
             runCatching { db.deleteByCleanedPlaintexts(missed) }.getOrDefault(-1)
         }
-        if (cleaned < 0) return removed
-        removed += cleaned
+        if (cleaned > 0) removed += cleaned
+        // 任一环节没得出结论就不标记 —— 下次调用会重扫（`failed` / `cleaned < 0` / `maxIdUncertain` 同权）
+        if (failed || cleaned < 0 || maxIdUncertain) return removed
         for (v in targets) purged[v] = maxId
         return removed
     }

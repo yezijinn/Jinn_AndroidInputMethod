@@ -31,9 +31,17 @@
     <exclude
         domain="sharedpref"
         path="jinn_inputmethod.xml" />
+    <!-- 平台在 apply/commit 时会留一份同目录的 `.bak`（内容 = **上一版**配置，含旧凭据密文）：
+         只排主名等于把它留在备份范围里（2026-10-02 修复 L-408） -->
+    <exclude
+        domain="sharedpref"
+        path="jinn_inputmethod.xml.bak" />
     <exclude
         domain="sharedpref"
         path="jinn_clipboard.xml" />
+    <exclude
+        domain="sharedpref"
+        path="jinn_clipboard.xml.bak" />
     <!-- 索引缓存是可**再生**的（基础 14 MB 上下、可选包各十几 MB）：交给 Auto Backup 只会挤占
          25MB 配额（超限会让整包备份失败，连真正该备份的下载词库也备份不上），而换机恢复后
          它的键（APK mtime）必然对不上，仍要靠清扫自愈。词库包 `dicts/` 是用户下载的**真数据**，
@@ -41,4 +49,14 @@
     <exclude
         domain="file"
         path="index/" />
-</full-backup-content>
+    <!-- 诊断日志目录（`getExternalFilesDir()/logs/`）落在 Auto Backup 的 **`external` 域**里，
+         默认会被整包上传 —— 而手工导出诊断包是需要用户主动点按钮的（2026-10-02 修复）：
+         · 隐私：日志里有崩溃快照，退回全量抓取时**含其它应用的 I/D/W/E 行**（L-193）、
+           端点主机名（L-212）、凭据长度指纹（L-384）；
+         · 配额：目录预算 32 MB > Auto Backup 的 25 MB 配额，超限会让**整包备份失败**，
+           连用户下载的 `dicts/` 都备不上（与 `index/` 同款代价，见 L-152）。
+         云备份与换机迁移三条规则（full-backup-content / cloud-backup / device-transfer）必须同时排。 -->
+    <exclude
+        domain="external"
+        path="logs/" />
+    </full-backup-content>
