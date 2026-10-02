@@ -109,7 +109,12 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         // （2026-10-02 修复 L-312 未覆盖的第三种形态）。AccessKey**Secret** 是高熵随机串，
         // 与哈希同形，仍按上面的原口径不覆盖 —— 靠调用点自律 + 失败体只记结构化摘要挡住。
         Regex("\\bLTAI[A-Za-z0-9]{8,}"),
-    )
+        // URL query 里的签名 / 凭据参数形态（2026-10-03 修复 L-497）：百度系把 `appid` / `sign`
+        // 直接放在 query 上（同一条 query 里的 `q` 还是**用户正文**），阿里云用 `AccessKeyId` ——
+        // 脱敏表不认这些形态时，任何一处打印 URL（或异常 message 内嵌 URL）都会把签名与正文带出去。
+        // 约定不变：打印一律用 `host + encodedPath`（现有调用点已是这个口径），这里再加一道网。
+        Regex("(?i)[?&](sign|appid|accesskeyid|sig|secret)=[^&\\s]{4,}"),
+        )
 
     @Volatile
     private var logDir: File? = null

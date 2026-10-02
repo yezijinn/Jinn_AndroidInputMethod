@@ -81,18 +81,26 @@ internal object TranslationClient {
      * 纯函数（不碰 Android API 与网络），JVM 单测直接覆盖「未配置 / 六种 Provider」。
      * 六家凭据互不串用：选了哪家就只看那家的键。
      */
+    /**
+     * 按 [id] 组装 Provider。
+     *
+     * ⚠ 非目标家的凭据参数**留默认空值**即可（2026-10-03 修复 L-530 / L-531）：Kotlin 的参数在
+     * 调用前就会求值，调用方若把关凭据的 getter 全列上，冷缓存下一次翻译就要在主线程做最多 8 次
+     * TEE 解密（5~20ms/次 = 40~160ms 停顿），而本次只用其中一家。给默认值后，调用方按 `id`
+     * **只传该家的凭据**，其余保持空。
+     */
     fun providerOf(
         id: TranslationProviderId,
-        azureKey: String,
-        azureRegion: String,
-        baiduAppId: String,
-        baiduSecret: String,
-        aliyunKeyId: String,
-        aliyunKeySecret: String,
-        deeplKey: String,
-        baiduLlmAppId: String,
-        baiduLlmApiKey: String,
-        openAi: OpenAiConfig,
+        azureKey: String = "",
+        azureRegion: String = "",
+        baiduAppId: String = "",
+        baiduSecret: String = "",
+        aliyunKeyId: String = "",
+        aliyunKeySecret: String = "",
+        deeplKey: String = "",
+        baiduLlmAppId: String = "",
+        baiduLlmApiKey: String = "",
+        openAi: OpenAiConfig = OpenAiConfig(),
     ): TranslationProvider? = when (id) {
         // 所有凭据统一走 cleanCredential()：**先剥不可见字符（NBSP / 零宽 / BOM）再 trim**。
         // 从网页/文档复制 Key 时这些字符极常见，而 trim 不删它们；带进 OkHttp 的 header 会抛
@@ -154,7 +162,7 @@ internal object TranslationClient {
         text: String,
         target: TranslationLanguage,
         onDone: (TranslationOutcome) -> Unit,
-    ) {
+    ): Call? {
         val request = runCatching { provider.buildRequest(text, target) }.getOrElse {
             Diagnostics.w(TAG, "翻译请求构造失败: ${it.javaClass.simpleName}")
             // 凭据含 Header 非法字符（`IllegalArgumentException`）单独归因（2026-10-02 修复 L-429）：
@@ -167,7 +175,7 @@ internal object TranslationClient {
                 TranslationError.PARAM
             }
             onDone(TranslationOutcome.Fail(error))
-            return
+            return null
         }
         // HTTPS 硬判据（与 UpdateChecker 同款）：地址被改成明文一律拒发。
         // 归 INSECURE 而不是 SERVER：这是**用户可修的配置问题**（自定义 Base URL 写成 http://），
@@ -175,7 +183,7 @@ internal object TranslationClient {
         if (!request.url.isHttps) {
             Diagnostics.w(TAG, "翻译地址不是 HTTPS，拒绝发送")
             onDone(TranslationOutcome.Fail(TranslationError.INSECURE))
-            return
+            return null
         }
         Diagnostics.i(TAG, "翻译请求: ${provider.javaClass.simpleName} → ${target.name} len=${text.length}")
         // Provider 可以要求更宽的时间预算（大模型首字延迟不可控）：0 = 用客户端默认。
@@ -190,7 +198,8 @@ internal object TranslationClient {
         } else {
             http
         }
-        client.newCall(request).enqueue(object : Callback {
+        val call = client.newCall(request)
+        call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 // SocketTimeoutException 与 callTimeout 的 InterruptedIOException 同族，一并归超时
                 val error = if (e is InterruptedIOException) {
@@ -278,6 +287,8 @@ internal object TranslationClient {
                 }
             }
         })
+        // 返回句柄给调用方（IME 侧据此**真取消**，见 JinnIme.finishTranslate；2026-10-03 修复 L-494）
+        return call
     }
 
     /**

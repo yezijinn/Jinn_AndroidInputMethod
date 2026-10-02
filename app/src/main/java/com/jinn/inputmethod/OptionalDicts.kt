@@ -159,7 +159,7 @@ object OptionalDicts {
                 md.update(buf, 0, n)
             }
         }
-        md.digest().joinToString("") { "%02x".format(it) }
+        md.digest().joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
     }.getOrNull()
 
     /**

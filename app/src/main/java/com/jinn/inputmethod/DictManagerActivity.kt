@@ -111,6 +111,14 @@ class DictManagerActivity : Activity() {
     override fun onResume() {
         super.onResume()
         activePage = WeakReference(this)
+        // 上次下载完成时页面已关闭、因而没有重启（2026-10-03 修复 L-547）：现在用户回到了本页
+        // （前台、键盘已收起）⇒ 此刻重启是安全的，把已下载的词库真正加载进来。
+        if (pendingDictRestart) {
+            pendingDictRestart = false
+            Toast.makeText(this, TEXT_RESUME_RESTART, Toast.LENGTH_LONG).show()
+            Diagnostics.i(TAG, "回到本页：补做上次未执行的重启（加载已下载的词库）")
+            restartImeForDict()
+        }
         // 下载仍在进行时页面被重建（旋转 / 关闭重进）：按钮与状态行按当前进度恢复，
         // 否则新页面只显示一排禁用按钮，看不出正在下载什么
         downloading?.let { name ->
@@ -431,8 +439,14 @@ class DictManagerActivity : Activity() {
                 // 仍要重启 IME 让引擎加载。
                 val page = activePage?.get()
                 if (page == null || page.isFinishing || page.isDestroyed) {
-                    Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），仍重启输入法以加载")
-                    if (ok) restartImeForDict()
+                    // ⚠ 页面已关闭时**不重启进程**（2026-10-03 修复 L-547）：本进程同时承载键盘、
+                    // 在途翻译请求、composing 未提交文本、剪贴板面板与候选状态 —— 在用户已离开本页
+                    // （很可能正在别的应用用本输入法打字）时强杀，会把这些**一起带走**：键盘当场消失、
+                    // 未提交输入与在途翻译全部丢失，且用户无从归因到「刚才在下载词库」。
+                    // 词库已落盘；这里只置标记，等用户回到本页（前台、键盘收起）时再重启。
+                    // 进程若在此期间自然结束，IME 重建时会直接加载 `dicts/` ⇒ 标记无需持久化。
+                    Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），不重启（等用户回到本页）")
+                    if (ok) pendingDictRestart = true
                     return@runOnUiThread
                 }
                 val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
@@ -595,6 +609,17 @@ class DictManagerActivity : Activity() {
         // 旧版遗留包区的文案在代码里下发：strings.xml 默认禁改，与生僻字页 / 模糊音页的 TEXT_* 同做法
         const val TEXT_LEGACY_DESC = "旧版本装过的词库包，现在的下载源已下线。"
 
+        /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
+        const val TEXT_RESUME_RESTART = "词库已下载完成，输入法将重启以加载"
+
+        /**
+         * 下载完成时页面已关闭、因而**没有**重启进程（2026-10-03 修复 L-547）。
+         *
+         * 只需在进程内存活：进程若自然结束，IME 重建时会直接加载 `dicts/` ⇒ 标记无需持久化。
+         */
+        @Volatile
+        private var pendingDictRestart = false
+
         /** 旧包的加载提示：完整一句话（旧包没有实测耗时，见 [buildUnknownCard] 的 KDoc） */
         const val TEXT_LEGACY_LOAD = "空闲时才在后台加载（息屏或收起键盘后生效）。"
         const val TEXT_LEGACY_EXT = "长词包（旧版）"
@@ -627,6 +652,10 @@ class DictManagerActivity : Activity() {
             okhttp3.OkHttpClient.Builder()
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+                // 整体预算（2026-10-03 修复 L-548）：只有 connect/read 两层时，服务端「开始回包后极慢地
+                // 吐字节」（每 179s 一个字节）能让下载线程挂到理论无限，而 `activeDownload` 只在成功/失败
+                // 时清 ⇒ 按钮永久禁用、用户既不能取消也没有提示。600s 覆盖 64MB 上限在慢速网络下的合理耗时。
+                .callTimeout(600, java.util.concurrent.TimeUnit.SECONDS)
                 .connectionSpecs(listOf(okhttp3.ConnectionSpec.MODERN_TLS))
                 .followRedirects(true)
                 .followSslRedirects(false)

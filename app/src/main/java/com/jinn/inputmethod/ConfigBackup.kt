@@ -188,7 +188,7 @@ internal object ConfigBackup {
     fun sha256(bytes: ByteArray): String =
         java.security.MessageDigest.getInstance("SHA-256")
             .digest(bytes)
-            .joinToString("") { "%02x".format(it) }
+            .joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
 
     // ── manifest ─────────────────────────────────────────────
 

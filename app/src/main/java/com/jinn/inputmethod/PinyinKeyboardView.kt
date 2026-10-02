@@ -958,8 +958,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(
                 TAG,
                 "键盘透明度: $desc plate=$plateAlpha surface=$keyFaceAlpha " +
-                    "kbBg=${String.format("#%08X", kbBg)} " +
-                    "rootBg=${rootBg?.let { String.format("#%08X", it) }}",
+                    "kbBg=${String.format(java.util.Locale.US, "#%08X", kbBg)} " +
+                    "rootBg=${rootBg?.let { String.format(java.util.Locale.US, "#%08X", it) }}",
             )
             // 布局完成后再诊断（否则尺寸全是 0）
             postDelayed({ logBackgrounds() }, 500L)
@@ -1191,7 +1191,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     if (v.id != View.NO_ID) {
                         sb.append('#').append(runCatching { resources.getResourceEntryName(v.id) }.getOrDefault("?"))
                     }
-                    sb.append("=#").append(String.format("%08X", c))
+                    sb.append("=#").append(String.format(java.util.Locale.US, "%08X", c))
                         .append("(a=").append((c ushr 24) and 0xFF)
                         .append(" kbBgRgb=").append(c and 0x00FFFFFF == kbBg and 0x00FFFFFF)
                         .append(' ').append(v.width).append('x').append(v.height)

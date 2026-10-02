@@ -77,7 +77,10 @@ internal enum class TranslationProviderId(val id: String, val label: String) {
  */
 internal enum class TranslationError(val message: String) {
     /** 当前选定的 Provider 还没填凭据 */
-    NOT_CONFIGURED("请先在设置里填写翻译 API 凭据"),
+    // 补全文路径（2026-10-03 修复 L-538）：键盘上点翻译时这是**唯一**的提示，而实际路径是
+    // 「系统设置 → 语言与输入法 → 本输入法 → 设置 → 翻译设置」四级 —— 只说「设置里」会让
+    // 新用户在这一步卡死。设置页摘要早已写全落点，这里对齐。
+    NOT_CONFIGURED("请先在「设置 → 翻译设置」里填写翻译 API 凭据"),
     /** 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上 */
     INSECURE("翻译地址必须以 https:// 开头"),
 
@@ -257,7 +260,9 @@ internal object TranslationText {
                 // 此前也先算一遍，白付一次全窗口扫描 + 最多 10 万字符的 substring 拷贝，
                 // 而这条路径由点击直接跑在 IME 主线程上（键盘场景对主线程停顿敏感）
                 val head = lineHead(before)
-                val nl = after.indexOf('\n')
+                // 本行到哪结束：与 [lineHead] 同源（[firstLineBreak] 认 `\n` / `\r` / Unicode 行终止符），
+                // 否则 CR-only / U+2028 文档里「本行」的两端会用两套判据（2026-10-03 修复 L-499）
+                val nl = firstLineBreak(after)
                 val tailLen = if (nl < 0) after.length else nl
                 raw = head + after.subSequence(0, tailLen)
                 appendOffset = tailLen
@@ -295,9 +300,58 @@ internal object TranslationText {
         return Slice(cut.trimEnd(), truncated, 0, true)
     }
 
-    /** 光标所在行的行首之后那一段（[before] 里最后一个换行之后的部分；没有换行就是整段） */
+    /**
+     * 行分隔符：`\n`、`\r`，以及 Unicode 行终止符（U+2028 / U+2029 / U+0085 / U+000B / U+000C）。
+     *
+     * ⚠ 只认 `\n` 是不够的（2026-10-03 修复 L-499）：CR-only 的文本（部分应用粘贴、网页编辑器、
+     * PDF 复制）与以 U+2028 分隔的文本里，「光标前本行」会**静默退化成整段上文** ——
+     * 而默认档对用户的承诺恰恰是「只上传本行、上传面最小」（设置页有明确文案）。
+     * 退化成最多 `maxBytes` 字节的上文，等于把对外承诺打破，且用户毫无察觉。
+     */
+    private val LINE_BREAKS = charArrayOf('\n', '\r', '\u2028', '\u2029', '\u0085', '\u000B', '\u000C')
+
+    /**
+     * 单个字符是否是行分隔符（见 [LINE_BREAKS]）。
+     *
+     * 供提交阶段的「落点是不是区间末尾」复用（2026-10-03 第十二轮审查）：那一处此前只认 `'\n'`，
+     * 而行分隔符在 L-499 已扩到 CR / U+2028 / U+0085… ⇒ CR-only 与 U+2028 文档里
+     * 「光标所在整行 / 编辑框全部」两档会在**已付费之后**被判成「落点不对」而拒绝。
+     * 同一个概念必须只有一处判据。
+     */
+    internal fun isLineBreak(c: Char): Boolean = c in LINE_BREAKS
+
+    /** [text] 里最后一个行分隔符（见 [LINE_BREAKS]）的下标；`-1` = 没有 */
+    private fun lastLineBreak(text: CharSequence): Int {
+        for (i in text.length - 1 downTo 0) {
+            if (text[i] in LINE_BREAKS) return i
+        }
+        return -1
+    }
+
+    /** [text] 从 [from] 起第一个行分隔符的下标；`-1` = 没有 */
+    private fun firstLineBreak(text: CharSequence, from: Int = 0): Int {
+        for (i in from until text.length) {
+            if (text[i] in LINE_BREAKS) return i
+        }
+        return -1
+    }
+
+    /**
+     * [text] 里是否含任何行分隔符（见 [LINE_BREAKS]）。
+     *
+     * 供「行首能否定位」的日志判据复用：此前那边只查 `\n`，**措辞与事实相反**
+     * （说「上传的是光标前末段」，实际是整段上文），排障时会被误导（2026-10-03 修复 L-499）。
+     */
+    internal fun hasLineBreak(text: CharSequence): Boolean = lastLineBreak(text) >= 0
+
+    /**
+     * 光标所在行的行首之后那一段（[before] 里最后一个**行分隔符**之后的部分；没有就是整段）。
+     *
+     * 判据取自 [lastLineBreak]（`\n` / `\r` / Unicode 行终止符）—— 只认 `\n` 会让默认档
+     * 在 CR-only / U+2028 文档里静默上传整段上文（2026-10-03 修复 L-499）。
+     */
     private fun lineHead(before: CharSequence): String {
-        val nl = before.lastIndexOf('\n')
+        val nl = lastLineBreak(before)
         return if (nl < 0) before.toString() else before.substring(nl + 1)
     }
 

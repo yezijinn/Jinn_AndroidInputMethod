@@ -367,4 +367,43 @@ class TranslationTextTest {
         // 剥空回退：只有一个围栏符、正则不成对 ⇒ 原样返回，绝不把有效内容剥没
         assertEquals("```", TranslationText.stripWrapper("```"))
     }
+
+    // ── 行分隔符不只有 `\n`（2026-10-03 修复 L-499）──────────────────────
+
+    @Test
+    fun `行边界也认 CR 与 Unicode 行终止符（默认档不该退化成上传全部上文）`() {
+        // CR-only（部分应用粘贴、网页编辑器、PDF 复制）：默认档「光标前本行」只应取最后一行。
+        // 修复前它取不到行首 ⇒ 静默把**整段上文**当成本行发出去（上传面承诺被破）。
+        assertEquals(
+            "第三行",
+            TranslationText.extract("第一行\r第二行\r第三行", "", TranslationScope.LINE_BEFORE, 10_000).text,
+        )
+        // U+2028 LINE SEPARATOR / U+0085 NEL 同理
+        assertEquals(
+            "乙",
+            TranslationText.extract("甲\u2028乙", "", TranslationScope.LINE_BEFORE, 10_000).text,
+        )
+        assertEquals(
+            "乙",
+            TranslationText.extract("甲\u0085乙", "", TranslationScope.LINE_BEFORE, 10_000).text,
+        )
+        // 光标所在整行：行尾也要认 CR，否则会把下一行一起吃进来
+        val slice = TranslationText.extract(
+            before = "上一行\r这一行",
+            after = "\r下一行",
+            scope = TranslationScope.LINE_FULL,
+            maxBytes = 10_000,
+        )
+        assertEquals("这一行", slice.text)
+        assertEquals(0, slice.appendOffset)
+        // 老行为不变：`\n` 仍然只取最后一行
+        assertEquals(
+            "第三行",
+            TranslationText.extract("一\n二\n第三行", "", TranslationScope.LINE_BEFORE, 10_000).text,
+        )
+        // 判据与日志同源：hasLineBreak 认全部分隔符（JinnIme 的「行首不可定位」日志据此报）
+        assertTrue(TranslationText.hasLineBreak("甲\r乙"))
+        assertTrue(TranslationText.hasLineBreak("甲\u2028乙"))
+        assertFalse(TranslationText.hasLineBreak("甲乙"))
+    }
 }

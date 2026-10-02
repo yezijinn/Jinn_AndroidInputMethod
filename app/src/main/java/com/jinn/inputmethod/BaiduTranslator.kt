@@ -113,7 +113,7 @@ internal class BaiduTranslator(
          */
         internal fun md5Hex(input: String): String {
             val digest = MessageDigest.getInstance("MD5").digest(input.toByteArray(Charsets.UTF_8))
-            return digest.joinToString("") { "%02x".format(it) }
+            return digest.joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
         }
 
         /**

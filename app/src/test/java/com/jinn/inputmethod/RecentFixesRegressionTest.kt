@@ -1392,9 +1392,14 @@ class RecentFixesRegressionTest {
             "val needsDocStart = scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL" in jinn,
         )
         assertTrue(
-            "「这段是不是从文首开始」必须由读取路径给出，不能靠长度反推（L-286）",
+            "「这段是不是从文首开始」必须由读取路径给出，不能靠长度反推（L-286 / L-565）" +
+                "；短返回时还必须取证（宿主可能少给）",
             "private class BeforeText(val text: String, val fromDocStart: Boolean)" in jinn &&
-                "BeforeText(s, s.length < limit)" in jinn &&
+                // 取满 ⇒ 明确「不是文首」（L-286）
+                "if (s.length >= limit) return@runCatching BeforeText(s, false)" in jinn &&
+                // 取不满 ⇒ 付一次取证再判（L-565；此前直接 `s.length < limit` 会把宿主少给当成到文首）
+                "beforeStartsAtDocStart(connection, limit)" in jinn &&
+                "extracted.startOffset == 0" in jinn &&
                 "BeforeText(text.substring(0, endRel.coerceIn(0, text.length)), startOffset == 0)" in jinn,
         )
 
@@ -2083,5 +2088,187 @@ class RecentFixesRegressionTest {
             "L-485 守卫缺失：插入模式原文被截断时必须 toast 提示",
             "toast(TEXT_TRANSLATE_TRUNCATED)" in ime && "TEXT_TRANSLATE_TRUNCATED =" in ime,
         )
+
+        // L-494 的实现竞态（2026-10-03 第六轮自查发现，是上一轮修复自己引入的）：
+        // 回调里**无条件**清 `translateCall` ⇒ 旧请求的回调迟到时会把**新请求**的句柄抹掉，
+        // 之后取消就落空、新请求照样跑完计费 —— 正是 L-494 要修的现象被实现漏洞放了回来。
+        // 判据必须用**块内顺序**（清空要在 return@post 之后），不能只看两个字符串在不在。
+        val translateCb = blockAfter(ime, "translateCall = TranslationClient.translate")
+        assertTrue(
+            "translateCall 必须在代际判据之后才清空（否则旧回调会抹掉新请求的句柄）",
+            "return@post" in translateCb &&
+                translateCb.indexOf("translateCall = null") > translateCb.indexOf("return@post"),
+        )
+        // 语译互斥（2026-10-03 第六轮审查 B-1）：翻译在途开录音 ⇒ 语音的非终态回显会改动光标前
+        // 文本 ⇒ 译文提交时的逐字快照校验必然失配 ⇒ **已付费的译文被丢弃**；反向则译文的
+        // commitText 会落在语音预编辑区间上顶掉正在识别的字。两条入口各一道闸门。
+        assertTrue(
+            "startTranslate 必须拒绝「录音中发起翻译」（B-1）",
+            "TEXT_RECORDING_PLEASE_WAIT" in ime &&
+                blockAfter(ime, "private fun startTranslate").contains("mode != Mode.NONE"),
+        )
+        assertTrue(
+            "startRecording 必须拒绝「翻译在途时开始录音」（B-1）",
+            "TEXT_TRANSLATING_PLEASE_WAIT" in ime &&
+                blockAfter(ime, "private fun startRecording").contains("translateInFlight"),
+        )
+
+        // L-513 / L-514 / L-515（2026-10-03 第七轮修复）：配置信任链与「保存成功」的口径。
+        // 三条一起钉，缺一条就会回到「保存说成功、点翻译才失败 / 同屏提示自相矛盾」的旧状。
+        assertTrue(
+            "L-513：OPENAI 的凭据判据必须要求端点 https（否则 http:// 一路放行到「已配置」）",
+            "OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath)?.isHttps == true" in codeOf("Prefs.kt"),
+        )
+        assertTrue(
+            "L-513：OpenAI 页保存时也要标红非 https 端点（与运行期同一份判据）",
+            "editBaseUrl.error = if (" in codeOf("OpenAiSettingsActivity.kt"),
+        )
+        assertTrue(
+            "L-514：字段合法性必须计入保存成功口径",
+            "val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson).all { it.error == null }" in
+                codeOf("OpenAiSettingsActivity.kt"),
+        )
+        assertTrue(
+            "L-515 + L-546：翻译页保存提示必须纳入凭据完整性，且判据取**本页选中的那家**" +
+                "（全局 getter 在键未写入时会逐家推导，会把「正在编辑的那家不完整」判成已配置）",
+            "prefs.translationProvider(pickedProvider) == null -> TEXT_SAVE_INCOMPLETE" in
+                codeOf("TranslationSettingsActivity.kt"),
+        )
+
+        // L-530 / L-531（2026-10-03 第九轮修复）：凭据读取必须**下沉到按 id 分开的工厂**且 id 只求值一次。
+        // 此前把关凭据的 10 个 getter 全作为 `providerOf` 的参数求值（Kotlin 参数调用前求值）⇒
+        // 冷缓存下一次翻译要在主线程做最多 8 次 TEE 解密（5~20ms/次 = 40~160ms 停顿），而只用其中一家；
+        // 且 `translateProvider` 的 getter 在键未写入时会逐家探测、同帧还被求值两次。
+        assertTrue(
+            "L-530：Prefs 必须提供按 id 的 Provider 工厂（只读该家凭据）",
+            "internal fun translationProvider(id: TranslationProviderId): TranslationProvider? = when (id)" in
+                codeOf("Prefs.kt"),
+        )
+        assertTrue(
+            "L-530：凭据参数必须有默认值（否则调用方仍会被迫全量传参）",
+            "aliyunKeyId: String = \"\"," in codeOf("TranslationClient.kt"),
+        )
+        // L-537：这两个键只在用户真的设置过时才导出，否则「未设置」会被固化成显式值 ——
+        // 新机上先配好 DeepL 再导入旧包，provider 被钉死为推导值，报「请先填写凭据」而 DeepL 已配置。
+        assertTrue(
+            "L-537：translate_provider / translate_target 必须条件导出",
+            "if (sp.contains(KEY_TRANSLATE_PROVIDER)) put(KEY_TRANSLATE_PROVIDER, translateProvider)" in
+                codeOf("Prefs.kt") &&
+                "if (sp.contains(KEY_TRANSLATE_TARGET)) put(KEY_TRANSLATE_TARGET, translateTarget)" in
+                codeOf("Prefs.kt"),
+        )
+        // L-538：键盘上点翻译时这是**唯一**的提示，必须给出落点（实际路径是四级设置）
+        assertTrue(
+            "L-538：未配置提示必须写全路径（含「翻译设置」）",
+            "请先在「设置 → 翻译设置」里填写" in codeOf("Translation.kt"),
+        )
+
+        // L-563（2026-10-03 第十一轮）：providerOf 的凭据参数全部默认空值（为性能，见 L-530），于是
+        // 「漏传」不再报编译错误 ⇒ 只表现为「配置明明填了却说没配置」的静默失败。
+        // 守卫：按 id 的工厂里每个分支都必须传该家的凭据参数（将来新增服务方时漏传会立刻变红）。
+        val prefsCode = codeOf("Prefs.kt")
+        assertTrue(
+            "L-563：按 id 的工厂里，每家分支都必须传该家的凭据参数",
+            "aliyunKeyId = aliyunAccessKeyId" in prefsCode &&
+                "aliyunKeySecret = aliyunAccessKeySecret" in prefsCode &&
+                "azureKey = azureApiKey" in prefsCode &&
+                "baiduAppId = baiduAppId" in prefsCode &&
+                "baiduSecret = baiduSecretKey" in prefsCode &&
+                "baiduLlmAppId = baiduLlmAppId" in prefsCode &&
+                "baiduLlmApiKey = baiduLlmApiKey" in prefsCode &&
+                "deeplKey = deeplApiKey" in prefsCode &&
+                "openAi = openAiConfig" in prefsCode,
+        )
+        // L-547（2026-10-03 第十一轮）：词库下载完成时若页面已关闭，**不得**直接重启进程 ——
+        // 本进程同时承载键盘、在途翻译、composing 未提交文本与剪贴板面板，强杀会一起带走。
+        // 判据用**块内顺序**：置标记必须在「直接重启」之前（否则改了等于没改）。
+        val dict = codeOf("DictManagerActivity.kt")
+        assertTrue(
+            "L-547：页面已关闭时必须置 pendingDictRestart（而不是直接 killProcess）",
+            "pendingDictRestart = true" in dict &&
+                dict.indexOf("pendingDictRestart = true") < dict.indexOf("if (ok) page.restartImeForDict()"),
+        )
+        assertTrue(
+            "L-547：回到本页时必须补做重启（否则词库永不生效）",
+            "if (pendingDictRestart) {" in dict && "restartImeForDict()" in dict,
+        )
+        // L-548：下载链路必须有整体预算（否则「开始回包后极慢吐字节」可把线程拖到理论无限）
+        assertTrue(
+            "L-548：词库下载必须设 callTimeout",
+            "callTimeout(600, java.util.concurrent.TimeUnit.SECONDS)" in dict,
+        )
+        // L-552：三个翻译枚举的 keep 必须显式写进仓库（不能只靠 AGP 默认规则集的隐性契约）
+        val pro = File("proguard-rules.pro").let { if (it.isFile) it else File("app/proguard-rules.pro") }
+        assertTrue(
+            "L-552：TranslationLanguage 的成员必须显式 keep（它的常量名是持久化值）",
+            pro.isFile && "-keepclassmembers enum com.jinn.inputmethod.TranslationLanguage" in pro.readText(),
+        )
+
+        // L-564（2026-10-03 第十二轮审查）：提交阶段的「落点是不是区间末尾」必须**三态分开**且与
+        // `TranslationText` 的行分隔符同源 ——
+        //  · `null`（宿主读不到）不能当「已到末尾」：那会让译文插进**原文中间**，而 commitText
+        //    不保证可撤销（这是防「插进中间」的唯一一道网）；
+        //  · 只认 '\n' 会让 CR-only / U+2028 文档里的「整行 / 整篇」在**已付费之后**被判成
+        //    「落点不对」而拒绝（L-499 扩了行分隔符，那一处当时没跟上）。
+        assertTrue(
+            "L-564：落点判据必须用 TranslationText.isLineBreak（不得再只认 '\\n'）",
+            "TranslationText.isLineBreak(tail[0])" in ime,
+        )
+        assertTrue(
+            "L-564：tail 为 null 时必须判「不是末尾」（三态不能塌缩成两态）",
+            "tail != null && (tail.isEmpty() || TranslationText.isLineBreak(tail[0]))" in ime,
+        )
+        assertTrue(
+            "isLineBreak 必须由 TranslationText 暴露（行分隔符只留一处判据）",
+            "internal fun isLineBreak(c: Char): Boolean = c in LINE_BREAKS" in codeOf("Translation.kt"),
+        )
+
+        // 2026-10-03 第十四轮审查纠正的一处过度保守：`getSelectedText` 返回 **null 是官方契约里的
+        // 「没有选区」**，必须放行 —— 走到这一步的都是「拿不到精确选区」的宿主（WebView 类），
+        // 且本段注释自己写着**每次翻译都会走到这里**；把 null 判成「问不出来」会让这些宿主上的
+        // 默认档（appendOffset = 0）100% 被拒 —— 把「可用」改成「不可用」。
+        // 真正的危险面（有选区 + appendOffset > 0）已在发请求前被 ②.b 的闸拒掉。
+        assertTrue(
+            "getSelectedText 的 null 必须按「无选区」放行（不得判成 HOST_UNREADABLE）",
+            "if (selected != null && selected.isNotEmpty()) {" in ime &&
+                "getSelectedText 返回 null（官方契约 = 无选区），按「无选区」放行" in ime,
+        )
+
+        // L-575（2026-10-03 第十五轮）：**协议级 hex 必须显式 Locale.US** —— `"%02x".format(it)` 走
+        // `String.format` 的默认 Locale，而 `Formatter` 会把 `%x` 里的 0-9 本地化 ⇒ 在 `ar-EG` /
+        // `fa-IR` / `bn-*` / `mr-*` / `ne-*` 等区域下，字节摘要里混入本地数字：
+        //  · 百度签名 ⇒ 与对端按 ASCII hex 重建的不等 ⇒ 54001 ⇒ 归 AUTH（「请检查凭据」）——
+        //    凭据完全正确而用户怎么查都没用，该区域整家失败；
+        //  · 备份包 SHA-256（写入侧与校验侧）⇒ 跨区域导入时合法备份被判「校验失败」拒绝导入；
+        //  · 词库校验和 ⇒ 包被判损坏；剪贴板去重哈希 ⇒ 切换系统语言后不再匹配（重复入库）。
+        for (f in listOf(
+            "BaiduTranslator.kt",
+            "ClipboardDb.kt",
+            "ConfigBackup.kt",
+            "ConfigBackupManager.kt",
+            "OptionalDicts.kt",
+        )) {
+            assertTrue(
+                "L-575：$f 的 hex 不得再用「\"%02x\".format(...)」（受默认 Locale 影响）",
+                "\"%02x\".format(" !in codeOf(f) &&
+                    "String.format(java.util.Locale.US, \"%02x\", it)" in codeOf(f),
+            )
+        }
+        // L-578：三个翻译页必须声明 singleTop（默认 standard 会在连点入口时叠出两份实例）
+        // ⚠ `TestSources` 只认 `.kt`（短名映射），xml 要用直接路径（工作目录 = 模块目录）
+        val manifest = File("src/main/AndroidManifest.xml")
+            .let { if (it.isFile) it else File("app/src/main/AndroidManifest.xml") }
+            .readText()
+        for (page in listOf(
+            "TranslationSettingsActivity",
+            "OpenAiSettingsActivity",
+            "TranslationSourceActivity",
+        )) {
+            assertTrue(
+                "L-578：$page 必须声明 android:launchMode=\"singleTop\"",
+                Regex("android:name=\"\\.$page\"[\\s\\S]{0,200}?android:launchMode=\"singleTop\"")
+                    .containsMatchIn(manifest),
+            )
+        }
     }
 }

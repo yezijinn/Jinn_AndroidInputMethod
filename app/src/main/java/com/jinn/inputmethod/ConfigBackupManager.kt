@@ -1120,7 +1120,7 @@ internal object ConfigBackupManager {
                             return@zipStream false
                         }
                         totalBytes += size
-                        val digest = md.digest().joinToString("") { "%02x".format(it) }
+                        val digest = md.digest().joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
                         hashes.add(fileName to digest)
                         when {
                             official == null -> {
@@ -1222,7 +1222,7 @@ internal object ConfigBackupManager {
                 md.update(buf, 0, n)
             }
         }
-        return md.digest().joinToString("") { "%02x".format(it) }
+        return md.digest().joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
     }
 
     private fun putBytes(zos: ZipOutputStream, name: String, bytes: ByteArray) {

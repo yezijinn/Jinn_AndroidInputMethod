@@ -500,11 +500,25 @@ class Prefs(context: Context) {
         TranslationProviderId.DEEPL -> deeplApiKey.cleanCredential().isNotEmpty()
 
         // OpenAI 兼容多一道端点校验（2026-10-01 审查 L-228）：`providerOf` 还要求 joinUrl 能解析出
-        // URL，少了这一条会出现「摘要说已配置、点翻译说未配置」的自相矛盾
+        // URL，少了这一条会出现「摘要说已配置、点翻译说未配置」的自相矛盾。
+        // ⚠ 还要求**必须是 https**（2026-10-03 修复 L-513）：只判「能解析」时 `http://` 会一路放行到
+        // 「已配置：…」摘要，直到第一次点翻译才被 `INSECURE` 拒掉 —— 配置信任链在这里断裂，
+        // 而平台层对用户自填的域名没有兜底（见 `network_security_config` 的说明），
+        // 这里与 `TranslationClient` 的 HTTPS 判据是**同一份事实**，必须同源。
         TranslationProviderId.OPENAI -> openAiApiKey.cleanCredential().isNotEmpty() &&
             openAiModel.cleanCredential().isNotEmpty() &&
-            OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath) != null
+            OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath)?.isHttps == true
     }
+
+    /**
+     * 当前生效的服务方是否**凭据完整可用**（含 OpenAI 兼容的 https 端点要求）。
+     *
+     * ⚠ 设置页**不要**用它判「保存提示」（2026-10-03 修复 L-546）：那边的判据是「本页选中的那家」，
+     * 而本方法走全局 `translateProvider`，在键未写入时会逐家推导 ⇒ 已配好 DeepL 的用户编辑
+     * 「阿里云」时会被判成"已配置"。本方法保留给「当前生效服务方是否可用」这类全局问句。
+     */
+    internal fun currentProviderConfigured(): Boolean =
+        hasCredentialFor(TranslationProviderId.of(translateProvider))
 
     // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（用户 2026-09-30 定）──
 
@@ -936,19 +950,50 @@ class Prefs(context: Context) {
      *
      * 取值口径只此一处：IME 的「翻译」键与设置页的状态摘要都走它，避免两边各列一遍参数。
      */
-    internal fun translationProvider(): TranslationProvider? = TranslationClient.providerOf(
-        TranslationProviderId.of(translateProvider),
-        azureApiKey,
-        azureRegion,
-        baiduAppId,
-        baiduSecretKey,
-        aliyunAccessKeyId,
-        aliyunAccessKeySecret,
-        deeplApiKey,
-        baiduLlmAppId,
-        baiduLlmApiKey,
-        openAiConfig,
-    )
+    internal fun translationProvider(): TranslationProvider? {
+        val id = TranslationProviderId.of(translateProvider)
+        return translationProvider(id)
+    }
+
+    /**
+     * 按 [id] 组装 Provider —— **只读该家的凭据**（2026-10-03 修复 L-530 / L-531）。
+     *
+     * 此前把关凭据的 10 个 getter 全部作为 `providerOf` 的参数求值（Kotlin 的参数在调用前求值）
+     * ⇒ 冷缓存下一次翻译要在**主线程**做最多 8 次 TEE 解密（5~20ms/次 = **40~160ms 停顿**），
+     * 而本次只用其中一家；且 `translateProvider` 的 getter 在键未写入时会**逐家探测凭据**
+     * （首次使用者必然如此），同帧还会被求值两次。现在 id 只求值一次、凭据只读该家。
+     *
+     * 调用方若已持有 id（如设置页的下拉选中项），直接传进来即可复用同一次求值。
+     */
+    internal fun translationProvider(id: TranslationProviderId): TranslationProvider? = when (id) {
+        TranslationProviderId.ALIYUN -> TranslationClient.providerOf(
+            id,
+            aliyunKeyId = aliyunAccessKeyId,
+            aliyunKeySecret = aliyunAccessKeySecret,
+        )
+
+        TranslationProviderId.AZURE -> TranslationClient.providerOf(
+            id,
+            azureKey = azureApiKey,
+            azureRegion = azureRegion,
+        )
+
+        TranslationProviderId.BAIDU -> TranslationClient.providerOf(
+            id,
+            baiduAppId = baiduAppId,
+            baiduSecret = baiduSecretKey,
+        )
+
+        TranslationProviderId.BAIDU_LLM -> TranslationClient.providerOf(
+            id,
+            baiduLlmAppId = baiduLlmAppId,
+            baiduLlmApiKey = baiduLlmApiKey,
+        )
+
+        TranslationProviderId.DEEPL -> TranslationClient.providerOf(id, deeplKey = deeplApiKey)
+
+        TranslationProviderId.OPENAI -> TranslationClient.providerOf(id, openAi = openAiConfig)
+    }
 
     /**
      * 等待所有已排队的 `apply()` 真正落盘。
@@ -1000,8 +1045,13 @@ class Prefs(context: Context) {
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
         put(KEY_TRANSLATE_ENABLED, translateEnabled)
-        put(KEY_TRANSLATE_PROVIDER, translateProvider)
-        put(KEY_TRANSLATE_TARGET, translateTarget)
+        // ⚠ 这两个键只在**用户真的设置过**时才导出（2026-10-03 修复 L-537）：`translateProvider`
+        // 的 getter 在键缺失时按「谁有凭据」逐家推导、`translateTarget` 会回落默认 ⇒ 无条件导出
+        // 会把「未设置」固化成显式值。后果：新机上先配好 DeepL，再导入一份旧包（导出时用户还没选过
+        // 服务方）⇒ provider 被钉死为推导值，点翻译报「请先填写凭据」而 DeepL 明明已配置。
+        // L-425 已为 12 个 scope / maxBytes 键修过同一类问题，这里是漏掉的两个。
+        if (sp.contains(KEY_TRANSLATE_PROVIDER)) put(KEY_TRANSLATE_PROVIDER, translateProvider)
+        if (sp.contains(KEY_TRANSLATE_TARGET)) put(KEY_TRANSLATE_TARGET, translateTarget)
         // 「哪些算原文」按 Provider 各一份：逐家显式导出（白名单里必须看得见常量名，
         // 否则 PrefsBackupCoverageTest 的源码对拍抓不到这些键）。
         //

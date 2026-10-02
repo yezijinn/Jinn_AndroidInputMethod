@@ -440,6 +440,28 @@ class OpenAiTranslatorTest {
         assertEquals(TranslationOutcome.Ok("老网关译文"), translator.parseResponse(200, noField))
     }
 
+    // ── 数值参数的定义域（2026-10-03 修复 L-500）─────────────────────
+
+    @Test
+    fun `越界数值在组装期被钳位，不把注定 400 的请求发出去`() {
+        // 修复前越界值原样发出 ⇒ 服务端 400 ⇒ 归 PARAM ⇒ 提示让用户核「语言方向 / 模型名 /
+        // 路径 / 原文长度」，而真因就是这个数字。备份导入路径绕过设置页校验，
+        // 组装期是唯一能兜住三条路径的地方。
+        val outOfRange = bodyJson(config.copy(temperature = "3", topP = "5"))
+        assertEquals(2.0, outOfRange.getDouble("temperature"), 0.0001)
+        assertEquals(1.0, outOfRange.getDouble("top_p"), 0.0001)
+        // 下界同样兜住；max_tokens 还得是整数（服务端不认 1024.5）
+        val negative = bodyJson(config.copy(maxTokens = "-1"))
+        assertEquals(1L, negative.getLong("max_tokens"))
+        val fractional = bodyJson(config.copy(maxTokens = "1024.7"))
+        assertEquals(1024L, fractional.getLong("max_tokens"))
+        // 合法值原样通过（不误伤）
+        val ok = bodyJson(config.copy(temperature = "0.3", topP = "0.9", maxTokens = "2048"))
+        assertEquals(0.3, ok.getDouble("temperature"), 0.0001)
+        assertEquals(0.9, ok.getDouble("top_p"), 0.0001)
+        assertEquals(2048L, ok.getLong("max_tokens"))
+    }
+
     private companion object {
         const val API_KEY = "sk-test-0123456789abcdef"
         const val MODEL = "gpt-4o-mini"

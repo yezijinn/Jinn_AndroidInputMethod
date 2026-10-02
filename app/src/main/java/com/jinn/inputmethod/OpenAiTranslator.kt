@@ -424,13 +424,48 @@ internal fun applyTemplateEnsuringText(
             return body
         }
 
-        /** 数字参数入体：null（未填/非法）直接跳过，绝不默认发送 */
+        /**
+         * 数值参数的**定义域**（2026-10-03 修复 L-500）。
+         *
+         * 越界值此前原样发出 ⇒ 服务端 400 ⇒ 归 `PARAM` ⇒ 提示让用户去核「语言方向 / 模型名 /
+         * 路径 / 原文长度」，而真因就是这个数字。备份导入路径绕过设置页校验，
+         * 组装期是**唯一**能兜住三条路径的地方。
+         */
+        private val NUMBER_RANGES = mapOf(
+            "temperature" to 0.0..2.0,
+            "top_p" to 0.0..1.0,
+        )
+
+        /** `max_tokens` 的下界（上界不设：各家上限不同，钳死反而不让用） */
+        private const val MIN_MAX_TOKENS = 1.0
+
+        /**
+         * 数字参数入体：null（未填 / 非法）直接跳过，绝不默认发送；越界值**钳位并记 W**。
+         *
+         * `max_tokens` 还要取整（服务端只认整数，`1024.5` 会被拒）。
+         */
         private fun putNumber(body: JSONObject, key: String, raw: String) {
             val d = numberOrNull(raw) ?: return
+            val ranged = NUMBER_RANGES[key]
+            val clamped = when {
+                ranged != null -> d.coerceIn(ranged.start, ranged.endInclusive)
+                key == "max_tokens" -> Math.floor(d).coerceAtLeast(MIN_MAX_TOKENS)
+                else -> d
+            }
+            if (clamped != d) {
+                Diagnostics.w(
+                    "OpenAiTranslator",
+                    "参数 $key=$d 超出可用范围，已按 $clamped 发送（设置页与备份导入同源钳位）",
+                )
+            }
             // 只在**精确可表示**的整数范围内收窄成 Long：`toLong()` 对 1e30 这类超范围值会
             // 饱和成 Long.MAX_VALUE，把用户填的数悄悄改掉（JSON 本身支持 1e30 这种写法，
             // 2026-10-01 审查 L-226）
-            val value: Any = if (d == Math.floor(d) && Math.abs(d) < 9.0e15) d.toLong() else d
+            val value: Any = if (clamped == Math.floor(clamped) && Math.abs(clamped) < 9.0e15) {
+                clamped.toLong()
+            } else {
+                clamped
+            }
             body.put(key, value)
         }
 

@@ -70,17 +70,20 @@
         <!-- 翻译设置页：Provider / 凭据 / 目标语言，从设置页「翻译设置」进入（改动即落盘） -->
         <activity
             android:name=".TranslationSettingsActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
 
         <!-- OpenAI 兼容配置页：基础 / 翻译 / 参数 / 高级四段，从翻译设置页的 OpenAI 兼容区块进入 -->
         <activity
             android:name=".OpenAiSettingsActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
 
         <!-- 翻译原文范围设置页：每家服务方独立的「哪些算原文」+ 单次字节上限，从翻译设置页进入 -->
         <activity
             android:name=".TranslationSourceActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
 
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity

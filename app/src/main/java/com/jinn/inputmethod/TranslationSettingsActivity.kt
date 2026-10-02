@@ -383,6 +383,12 @@ class TranslationSettingsActivity : Activity() {
             !flushed -> TEXT_SAVE_DISK_FAILED
             unpersisted.isNotEmpty() -> TEXT_SAVE_NOT_PERSISTED
             failed.isNotEmpty() -> TEXT_SAVE_MISMATCH + failed.joinToString("、")
+            // 凭据不完整也要说清（2026-10-03 修复 L-515）：写盘没失败，但同一屏上不能一边
+            // 「已保存到本机」一边「未配置：还没填凭据」—— 用户会以为保存没生效而反复粘贴。
+            // ⚠ 判据取**本页选中的那家**（2026-10-03 修复 L-546）：全局 getter 在键未写入时会逐家
+            // 推导，已配好 DeepL 的用户来编辑「阿里云」时会被判成"已配置"，收不到这条提示 ——
+            // 而这条提示描述的是"你刚编辑的那家"，就该用选中的那家判。
+            pickedProvider != null && prefs.translationProvider(pickedProvider) == null -> TEXT_SAVE_INCOMPLETE
             else -> TEXT_SAVED
         }
         if (ok) {
@@ -496,5 +502,13 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_SAVE_MISMATCH = "未写入的字段："
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
+
+        /**
+         * 写盘成功、但当前服务方的凭据不完整（2026-10-03 修复 L-515）。
+         *
+         * 不算失败（配置确实存下来了），但必须说清 —— 否则同一屏上「已保存到本机」与状态文字的
+         * 「未配置：还没填凭据」并存，用户会以为保存没生效而反复粘贴。
+         */
+        const val TEXT_SAVE_INCOMPLETE = "已保存到本机；当前服务方的凭据还不完整，补齐后才能翻译"
     }
 }

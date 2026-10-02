@@ -453,13 +453,27 @@ class OpenAiSettingsActivity : Activity() {
         // 回读核对命中同一个缓存 ⇒ 必然"相等"，必须由写侧记账才能如实报告
         val unpersisted = prefs.unpersistedCredentialKeys()
         loadValues()
-        val ok = flushed && keyOk && unpersisted.isEmpty()
+        // 校验也计入「保存成功」的口径（2026-10-03 修复 L-514）：`loadValues()` 刚按持久化值重算过
+        // 各字段的 error，这里直接读 —— 非法 JSON / 缺 {{text}} 的提示词不能与「已保存到本机」并存。
+        // 端点必须能解析成 https，与运行期同源（2026-10-03 修复 L-513）：此前保存、状态摘要、
+        // 「已配置」三处全放行 `http://`，直到第一次点翻译才被 INSECURE 拒掉 —— 用户拿到的是
+        // 「配置成功」的正反馈。这里与 Prefs.hasCredentialFor 用同一份判据（joinUrl + isHttps）。
+        editBaseUrl.error = if (
+            OpenAiTranslator.joinUrl(prefs.openAiBaseUrl, prefs.openAiChatPath)?.isHttps == true
+        ) {
+            null
+        } else {
+            TEXT_NEED_HTTPS
+        }
+        val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson).all { it.error == null }
+        val ok = flushed && keyOk && unpersisted.isEmpty() && fieldsOk
         // 三态 +1（2026-10-02 修复 L-420 的 OpenAI 页侧）：原来失败只有一句
         // 「保存未完成」，分不清是写盘失败、Key 未落盘、还是核对不一致
         textSaveHint.text = when {
             !flushed -> TEXT_SAVE_DISK_FAILED
             unpersisted.isNotEmpty() -> TEXT_SAVE_NOT_PERSISTED
             !keyOk -> TEXT_SAVE_KEY_FAILED
+            !fieldsOk -> TEXT_SAVE_FIELDS_INVALID
             else -> TEXT_SAVED
         }
         if (ok) {
@@ -551,6 +565,14 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
         const val TEXT_SAVE_KEY_FAILED = "API Key 未写入本机，请重试"
+
+        /**
+         * 写盘成功、但有字段不合法（2026-10-03 修复 L-514）。
+         *
+         * 此前 `ok` 只看写盘与凭据回读，于是非法 JSON / 缺 `{{text}}` 的提示词会同时出现
+         * 「已保存到本机」与一条红色 error —— 用户以为配置生效了。
+         */
+        const val TEXT_SAVE_FIELDS_INVALID = "已保存到本机；但有字段不合法（见输入框下方的提示）"
         const val TEXT_DESC = "留空 = 用默认值或不发送该参数；提示词支持 {{text}} / {{target_language}} / {{source_language}} / {{date}}"
         const val SECTION_BASIC = "基础配置"
         const val SECTION_PROMPT = "翻译设置"
@@ -613,7 +635,13 @@ const val TEXT_EXTRA_JSON_HINT =
 
     /** 数字参数非法（2026-10-02 修复 L-370：该参数不会被发送，此前完全静默） */
     const val TEXT_NUMBER_INVALID = "不是合法数字，该参数不会被发送"
-const val TEXT_EXTRA_JSON_INVALID =
+
+    // ⚠ 上面这条 [TEXT_NEED_HTTPS] 现在**保存侧也在用**（2026-10-03 修复 L-513）：
+    // 运行期 `TranslationClient` 对明文地址一律拒发（归 INSECURE），而保存、状态摘要、「已配置」
+    // 三处此前全部放行 `http://` ⇒ 配置信任链断裂（用户拿到「配置成功」的正反馈，直到第一次
+    // 点翻译才失败）；平台层对用户自填域名没有兜底，这里是唯一的把关点。
+
+    const val TEXT_EXTRA_JSON_INVALID =
         "自定义 JSON 不可用：解析失败、开了 stream（本客户端按非流式解析）、删必需键（model / messages）、或覆盖 messages（原文在里面）"
         const val TEXT_TEST_OK_FMT = "连接正常，可选模型 %d 个"
         const val TEXT_TEST_FAIL_FMT = "连接失败：HTTP %d（该服务可能未实现 /models，不影响翻译）"

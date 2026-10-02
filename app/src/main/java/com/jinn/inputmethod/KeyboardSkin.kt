@@ -1115,7 +1115,7 @@ object KeyboardSkins {
                 "plate" to skin.plate, "accent" to skin.accent,
                 "functionGlyph" to skin.functionGlyph,
             ).forEach { (name, color) ->
-                color?.let { if ((it ushr 24) and 0xFF != 0xFF) out += "$name 需为不透明色: ${String.format("#%08X", it)}" }
+                color?.let { if ((it ushr 24) and 0xFF != 0xFF) out += "$name 需为不透明色: ${String.format(java.util.Locale.US, "#%08X", it)}" }
             }
             if (skin.keyFill != null && skin.keyFill2 == skin.keyFill) {
                 out += "keyFill 与 keyFill2 相同（渐变退化为纯色，应留空 keyFill2）"

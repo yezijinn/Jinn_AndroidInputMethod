@@ -178,6 +178,15 @@ class JinnIme : InputMethodService() {
     private var translateInFlight = false
 
     /**
+     * 在途翻译的**网络请求句柄**（2026-10-03 修复 L-494）。
+     *
+     * 此前「取消翻译」只复位状态与代际，请求仍在网上跑完（大模型可达 300s）并**照常计费**；
+     * 取消后 `translateInFlight` 也变回 false ⇒ 闸门重开，用户回来再点就有两个请求同时在途。
+     * 代际闸门保留作二道网（已完成的回调仍会被代际判据丢弃），这里补的是「真的别发了」。
+     */
+    private var translateCall: okhttp3.Call? = null
+
+    /**
      * 翻译看门狗（2026-10-01 审查 L-217）。
      *
      * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
@@ -204,6 +213,11 @@ class JinnIme : InputMethodService() {
     private fun finishTranslate() {
         ui.removeCallbacks(translateWatchdog)
         translateGeneration++
+        // 真取消网络请求（2026-10-03 修复 L-494）：取消后正是「闸门重开 + 旧请求仍在跑」的窗口，
+        // 不 cancel 就等于用户回来再点会同时挂两个请求（旧那笔白付）。`cancel()` 对已结束的 Call
+        // 是无害的（OkHttp 文档口径），所以这里不必区分状态。
+        translateCall?.cancel()
+        translateCall = null
         if (translateInFlight) {
             translateInFlight = false
             pinyinKeyboard?.setTranslating(false)
@@ -735,9 +749,18 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "翻译: getSelectedText 抛异常，无法确认选区，拒绝追加")
             return AppendCheck.HOST_UNREADABLE
         }
-        if (!selected.isNullOrEmpty()) {
+        // ⚠ `null` **不能**当成「问不出来」（2026-10-03 第十四轮审查纠正当日早先的一处过度保守）：
+        // `getSelectedText` 的**官方契约**是「返回选中文本；**没有选区时返回 null**」，而走到这里的
+        // 都是「拿不到精确选区」的宿主（WebView 类）—— 按本段的注释，**这类宿主每次翻译都会走到这里**。
+        // 若把 null 判成不可确认，它们上面的**默认档（appendOffset = 0）会被 100% 拒绝**：
+        // 那是把「可用」改成「不可用」。真正的危险面（有选区 + appendOffset > 0）在**发请求前**
+        // 已被 ②.b 的闸拒掉，这里只需按「无选区」放行 —— 提交前仍有逐字比对兜底。
+        if (selected != null && selected.isNotEmpty()) {
             Diagnostics.w(TAG, "翻译: 宿主不提供精确选区，但 getSelectedText 报有选中内容，拒绝追加")
             return AppendCheck.SELECTION_PRESENT
+        }
+        if (selected == null) {
+            Diagnostics.v(TAG, "翻译: getSelectedText 返回 null（官方契约 = 无选区），按「无选区」放行")
         }
         // 正常路径（WebView 类宿主每次翻译都会走到这里），用 V 级，别把诊断包的 W 段占满
         Diagnostics.v(TAG, "翻译: 宿主不提供精确选区，按「无选区」放行（提交时仍逐字比对原文）")
@@ -953,7 +976,7 @@ class JinnIme : InputMethodService() {
             // 系统默认给非不透明导航栏叠一层对比度纱罩，会把透明底又压灰，关掉
             w.isNavigationBarContrastEnforced = false
         }
-        Diagnostics.i(TAG, "导航栏: navigationBarColor=${String.format("#%08X", w.navigationBarColor)}")
+        Diagnostics.i(TAG, "导航栏: navigationBarColor=${String.format(java.util.Locale.US, "#%08X", w.navigationBarColor)}")
     }
 
     override fun onCreateInputView(): View {
@@ -1207,7 +1230,7 @@ class JinnIme : InputMethodService() {
                 Diagnostics.i(
                     TAG,
                     "半透明: 清掉祖先背景 ${parent.javaClass.simpleName} " +
-                        (color?.let { String.format("#%08X", it) } ?: bg.javaClass.simpleName),
+                        (color?.let { String.format(java.util.Locale.US, "#%08X", it) } ?: bg.javaClass.simpleName),
                 )
                 parent.background = null
             }
@@ -1217,7 +1240,7 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(
             TAG,
             "半透明: 窗口 fmt=${window?.window?.attributes?.format} " +
-                "decorBg=${(decorBg as? ColorDrawable)?.let { String.format("#%08X", it.color) } ?: "无"}",
+                "decorBg=${(decorBg as? ColorDrawable)?.let { String.format(java.util.Locale.US, "#%08X", it.color) } ?: "无"}",
         )
     }
 
@@ -1500,6 +1523,16 @@ class JinnIme : InputMethodService() {
                 .onSuccess { Diagnostics.i(TAG, "词库补试加载成功（第 $attempt 次尝试）") }
                 .onFailure { Diagnostics.e(TAG, "词库补试加载失败（第 $attempt 次尝试）: ${it.message}", it) }
         }, "jinn-pinyin-retry").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * 会话边界（比 [onStartInputView] **更早**，且不依赖窗口是否显示）：宿主调 `restartInput()`
+     * 或同会话内换框而框架跳过 `doFinishInput` 时，上一个输入框的在途翻译必须作废
+     * （2026-10-03 修复 L-496）—— 否则结果可能落回旧框、或经旧 connection 落到别处。
+     */
+    override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(info, restarting)
+        cancelTranslate()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -1808,6 +1841,14 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "startRecording: 已在录音中 mode=$mode，忽略")
             return
         }
+        // 反向互斥（2026-10-03 第六轮审查 B-1）：翻译在途时开录音，语音的非终态回显
+        // （`setComposingText`）会改动光标前文本 ⇒ 翻译提交时的**逐字快照校验必然失配** ⇒
+        // 用户**已付费的译文被丢弃**，只留一句「输入已变化」—— 花钱却什么都没得到。
+        if (translateInFlight) {
+            Diagnostics.w(TAG, "startRecording: 翻译在途，忽略本次录音")
+            toast(TEXT_TRANSLATING_PLEASE_WAIT)
+            return
+        }
 
         // 上一段的等待态到这里结束：新录音开始时它的最终结果已经拿不回来了
         // （AsrClient 会用新 taskId 覆盖归属，旧结果回来会被当过期任务丢弃），
@@ -2042,6 +2083,14 @@ class JinnIme : InputMethodService() {
      */
     private fun startTranslate() {
         if (translateInFlight) return
+        // 与语音互斥（2026-10-03 第六轮审查 B-1）：录音中发翻译，译文的 `commitText` 会落在
+        // 语音的预编辑区间上，把正在识别的字顶掉（最终结果会整段重放、不丢字，但屏上文本会抖 /
+        // 错序）。与「密码框 / 无连接 / 行内两档」同款：在发请求**之前**零成本拒绝。
+        if (mode != Mode.NONE) {
+            Diagnostics.w(TAG, "startTranslate: 录音中（mode=$mode），忽略本次翻译")
+            toast(TEXT_RECORDING_PLEASE_WAIT)
+            return
+        }
         // 总开关是「关掉即不可能发请求」的闸门（2026-09-30 审查发现）：功能面板只按它渲染按钮，
         // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
         if (!prefs.translateEnabled) return
@@ -2228,14 +2277,18 @@ class JinnIme : InputMethodService() {
                 toast(TEXT_TRANSLATE_BEFORE_TOO_LONG)
                 return
             }
-            // 行内两个范围：窗口里只要出现过换行，最后一个换行就是真实行首，仍可信；一个换行都没有时
-            // 行首同样定位不到（上传的是末段）。位置仍正确、只是内容偏多，所以只记日志不拦（L-285）。
+            // 行内两个范围：窗口里只要出现过**行分隔符**（`\n` / `\r` / Unicode 行终止符），
+            // 最后一个就是真实行首，仍可信；一个都没有时行首同样定位不到。位置仍正确、
+            // 只是内容偏多，所以只记日志不拦（L-285）。
+            // ⚠ 判据与文案都必须与事实一致（2026-10-03 修复 L-499）：此前只查 `\n` ——
+            // CR-only / U+2028 文档里行首其实**定位得到**（TranslationText 已认这些分隔符），
+            // 却报「窗口内无换行，上传的是光标前末段」，两处互相矛盾且误导排障。
             if ((scope == TranslationScope.LINE_BEFORE || scope == TranslationScope.LINE_FULL) &&
-                !before.contains('\n')
+                !TranslationText.hasLineBreak(before)
             ) {
                 Diagnostics.w(
                     TAG,
-                    "翻译: 行首不可定位（范围=${scope.id} 窗口内无换行），上传的是光标前末段",
+                    "翻译: 行首不可定位（范围=${scope.id} 窗口内无行分隔符），上传的是窗口内全部上文",
                 )
             }
         }
@@ -2280,13 +2333,22 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacks(translateWatchdog)
         ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
         runCatching {
-            TranslationClient.translate(provider, slice.text, target) { outcome ->
+            // 句柄用于真取消（2026-10-03 修复 L-494）：会话边界（onFinishInput / onStartInput /
+            // 收起键盘 / 旋转）都会走到 finishTranslate，那里对在途请求调 cancel()
+            translateCall = TranslationClient.translate(provider, slice.text, target) { outcome ->
                 // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection
                 ui.post {
                     if (generation != translateGeneration) {
+                        // ⚠ 代际不匹配时**绝不能**清句柄（2026-10-03 第六轮自查发现的竞态）：
+                        // 旧请求的回调可能在新请求已在途时才到达（旧 Call 被 cancel 后 OkHttp 仍会
+                        // 回调 onFailure），无条件清空会把**新请求**的句柄抹掉 ⇒ 之后再取消就落空、
+                        // 新请求照样跑完并计费 —— 正是 L-494 要修的现象。旧句柄在 finishTranslate
+                        // 里已经清过，这里什么都不用做。
                         Diagnostics.w(TAG, "翻译: 丢弃过期结果 gen=$generation 当前=$translateGeneration")
                         return@post
                     }
+                    // 代际匹配 ⇒ 这个回调就属于当前请求 ⇒ 句柄作废（避免后续取消落在已完成的请求上）
+                    translateCall = null
                     when (outcome) {
                         is TranslationOutcome.Ok -> appendTranslation(connection, snapshot, outcome.text)
                         is TranslationOutcome.Fail -> {
@@ -2497,8 +2559,15 @@ class JinnIme : InputMethodService() {
         //     「移不到位一律放弃」一致 —— 这类宿主已被发请求前的 ②.b 拦过一道）。
         //     （2026-10-02 修复 L-480）
         if (snapshot.appendOffset > 0) {
+            // ⚠ 三态必须分开（2026-10-03 第十二轮审查）：
+            //  · `null`  = 宿主读不到 ⇒ **不能**当「已到末尾」——那会让译文插进**原文中间**，
+            //              而 commitText 不保证可撤销（这是防「插进中间」的唯一一道网）；
+            //  · `""`    = 确实是区间末尾 ⇒ 接受；
+            //  · 有内容  = 再看是不是**行分隔符**：判据必须与 `TranslationText` 同源，
+            //              只认 '\n' 会让 CR-only / U+2028 文档里的「整行 / 整篇」在**已付费之后**
+            //              被判成「落点不对」而拒绝（L-499 扩了行分隔符，这一处当时没跟上）。
             val tail = runCatching { connection.getTextAfterCursor(1, 0) }.getOrNull()
-            val atRangeEnd = tail != null && (tail.isEmpty() || tail[0] == '\n')
+            val atRangeEnd = tail != null && (tail.isEmpty() || TranslationText.isLineBreak(tail[0]))
             if (!atRangeEnd) {
                 Diagnostics.w(
                     TAG,
@@ -2541,6 +2610,22 @@ class JinnIme : InputMethodService() {
         // 写进去」记成成功（2026-10-01 修复 L-326）—— 仓库别处（编辑键那条）早就是这么写的。
         val outcome = runCatching { connection.commitText(submit, 1) }
         if (outcome.getOrDefault(false)) {
+            // 落地复核（2026-10-03 修复 L-567）：返回 true 只代表**调用被接受** —— 宿主的 InputFilter
+            // （数字框的 `DigitsKeyListener` 最常见）会把正文整段丢掉而**不报错**，此时字段里一个字都没有，
+            // 用户只看到「点了没反应」，而诊断包里还写着「已提交追加」（排障被引向相反结论）。
+            // 复核一次尾部（最多 256 字符，一次 Binder 往返）；**读不到时不误报**（宁可不提示也不误报）。
+            // 替换模式不做复核：它的落点在选区里，尾部判据不适用。
+            if (!snapshot.replaceSelection) {
+                val probeLen = minOf(submit.length, 256)
+                val landed = runCatching {
+                    connection.getTextBeforeCursor(probeLen, 0)?.toString()
+                        ?.endsWith(submit.takeLast(probeLen))
+                }.getOrNull()
+                if (landed == false) {
+                    Diagnostics.w(TAG, "翻译: 提交后未在输入框找到译文尾部（宿主可能丢弃了写入）")
+                    toast(TEXT_TRANSLATE_COMMIT_UNVERIFIED)
+                }
+            }
             // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）。
             // ⚠ 措辞不能写「已追加译文」—— `commitText` 返回 true 只代表**调用被接受**：
             // 宿主的 InputFilter（数字框的 `DigitsKeyListener` 是最常见的一种）会把正文整段
@@ -2635,6 +2720,27 @@ class JinnIme : InputMethodService() {
      */
     private class BeforeText(val text: String, val fromDocStart: Boolean)
 
+    /**
+     * 取证：光标前的窗口是不是**从文档起点**开始的（2026-10-03 修复 L-565）。
+     *
+     * `getTextBeforeCursor` 返回长度小于请求长度**有两种**可能：确实到文首，或宿主自己少给
+     * （框架允许宿主按窗口 / 缓存上限截断）。前者可直接采信，后者会把「上传的是什么」与
+     * 「要不要拦（`TEXT_TRANSLATE_BEFORE_TOO_LONG`）」一起判错 —— 用户以为整篇被翻译，
+     * 实际拿到的是残缺译文，且每轮重试都真计费。
+     *
+     * 所以只在**取不满**时才付这一次 `getExtractedText`（守约宿主的回包受 `hintMaxChars` 限制）；
+     * 取证不可用（宿主不支持）时按**不可确认**处理 ⇒ 返回 `false`，让上层对「从文首 / 整篇」两档
+     * 拒绝 —— 与 after 侧「读不到一律放弃」的保守方向一致。
+     */
+    private fun beforeStartsAtDocStart(
+        connection: android.view.inputmethod.InputConnection,
+        limit: Int,
+    ): Boolean = runCatching {
+        val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
+        val extracted = connection.getExtractedText(request, 0) ?: return@runCatching false
+        extracted.startOffset == 0
+    }.getOrDefault(false)
+
     private fun readTextBeforeCursor(
         connection: android.view.inputmethod.InputConnection,
         limit: Int,
@@ -2644,11 +2750,16 @@ class JinnIme : InputMethodService() {
         // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
         // 读不到就返回 null，让上层按「读不到」处理 —— 与「写」侧 commitText 同口径。
         return runCatching {
-            // `getTextBeforeCursor` 返回「紧邻光标的至多 limit 个字符」：取不满就说明光标前一共只有这么长
-            // ⇒ 确实是从文首开始的（2026-10-01 修复 L-286）
+            // `getTextBeforeCursor` 返回「紧邻光标的至多 limit 个字符」：**取满**了 ⇒ 上面还有（明确不是文首）。
+            // ⚠ 但「取不满」**不能**直接当成「到文首」（2026-10-03 修复 L-565）：框架允许宿主按自身窗口 /
+            // 缓存上限**少给**（长度既不为 0 也不等于请求量，而文中仍有上文）。而这个 fromDocStart 在同一次
+            // 点击里同时决定**上传什么**与**要不要拦** —— 判错会让 BEFORE_ALL / ALL 的专用拒绝闸
+            // （TEXT_TRANSLATE_BEFORE_TOO_LONG）静默失效：用户以为整篇被翻译，拿去用的是残缺译文。
+            // 所以取不满时**再取一次证**（见 beforeStartsAtDocStart），只在证据支持时才认「从文首开始」。
             connection.getTextBeforeCursor(limit, 0)?.let {
                 val s = it.toString()
-                return@runCatching BeforeText(s, s.length < limit)
+                if (s.length >= limit) return@runCatching BeforeText(s, false)
+                return@runCatching BeforeText(s, beforeStartsAtDocStart(connection, limit))
             }
             // hintMaxChars **不能留 0**：兜底路径拿到的会是整个窗口，不限长就让大文档整篇走 Binder
             // 回包 —— 正是上面那条 TransactionTooLargeException 的触发源。限制到读取上限即可
@@ -3005,6 +3116,21 @@ class JinnIme : InputMethodService() {
          */
         const val TEXT_TRANSLATE_TRUNCATED =
             "原文超出单次上限，已按上限截断（仅翻译前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
+
+        /** 语译互斥：录音中不发起翻译（2026-10-03 第六轮审查 B-1） */
+        const val TEXT_RECORDING_PLEASE_WAIT = "正在录音，请先结束录音再翻译"
+
+        /** 语译互斥：翻译在途不开录音（2026-10-03 第六轮审查 B-1） */
+        const val TEXT_TRANSLATING_PLEASE_WAIT = "正在翻译，请稍候再录音"
+
+        /**
+         * 提交后复核发现译文不在输入框里（2026-10-03 修复 L-567）。
+         *
+         * `commitText` 返回 true 只代表调用被接受；宿主的 InputFilter（数字框一类）会把正文整段丢掉
+         * 而不报错。此前只在日志里写「未验落地」，用户端完全静默 —— 本次真计费、译文却一个字没写进去。
+         */
+        const val TEXT_TRANSLATE_COMMIT_UNVERIFIED =
+            "译文可能未写入该输入框（数字框等会过滤内容），请手动粘贴"
 
         /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
         const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起翻译"

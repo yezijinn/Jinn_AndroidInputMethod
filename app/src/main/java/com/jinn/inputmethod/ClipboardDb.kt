@@ -987,7 +987,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /** 稳定哈希：内容去重与来源追踪用（不暴露原文） */
         fun stableHash(text: String): String {
             val md = java.security.MessageDigest.getInstance("SHA-256")
-            return md.digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            return md.digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
         }
     }
 }
