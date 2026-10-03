@@ -187,6 +187,18 @@ class JinnIme : InputMethodService() {
     private var translateCall: okhttp3.Call? = null
 
     /**
+     * 本次请求的**上下文**：起始时刻 / Provider 名 / 目标语言 / 关联 ID
+     * （2026-10-03 修复 L-615 + L-617）。
+     *
+     * 三者都只为日志服务：看门狗触发时要说清「哪一家、卡了多久、第几次」，而「翻译失败」这类
+     * 一句话报告需要一个能把「发起 → 响应 → 提交/拒绝」串起来的 ID —— 此前诊断包里只能靠时间戳猜。
+     */
+    private var translateStartedAtMs = 0L
+    private var translateProviderName = ""
+    private var translateTargetName = ""
+    private var translateTraceId = ""
+
+    /**
      * 翻译看门狗（2026-10-01 审查 L-217）。
      *
      * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
@@ -197,7 +209,14 @@ class JinnIme : InputMethodService() {
         // 只在**确实还在途**时收尾：定时器可能是上一次请求留下的（正常路径都会撤，万一漏撤，
         // 这里也不能误伤后来者 —— 收尾会作废代际，2026-10-01 复审 L-229）
         if (translateInFlight) {
-            Diagnostics.w(TAG, "翻译: 看门狗超时，强制收尾（回调未到达）")
+            // 带上下文（2026-10-03 修复 L-617）：原先只有一句无信息量的话 —— 诊断包里无法回答
+            // 「是哪一家、卡了多久、同一会话第几次」。同一会话翻译多次时，日志里只会重复同一句。
+            Diagnostics.w(
+                TAG,
+                "[$translateTraceId] 翻译: 看门狗超时，强制收尾（回调未到达）" +
+                    " provider=$translateProviderName target=$translateTargetName " +
+                    "已等${System.currentTimeMillis() - translateStartedAtMs}ms",
+            )
             finishTranslate()
         }
     }
@@ -1113,6 +1132,16 @@ class JinnIme : InputMethodService() {
             )
         }
         pinyinKeyboard = pinyin
+        // 视图态重放：**凡新建视图就重放 IME 侧持有的状态** —— 绑在"视图创建"这件事上，
+        // 而不是绑在某个调用点（2026-10-03 审查 A2）。新视图的这两个字段一律是初值
+        // （`suppressLearning=false` / `translateInFlight=false`），不重放就与 IME 侧真实状态
+        // 分叉：密码框里选候选会被学进词频；在途翻译时按钮渲染成**可点的「翻译」**，
+        // 点下去被 `startTranslate` 的在途闸门静默吞掉（用户视角 = 按钮没反应，日志里连
+        // 这次点击都没有）。⚠ 此前只在 `recreateKeyboardView` 里重放，而框架自己调
+        // `onCreateInputView()`（窗口 / 配置变更后重建输入视图）时不走那条路径 ⇒ 分叉仍会发生。
+        // 两处都重放是**幂等**的（这些 setter 只写字段 / 重绘）。
+        pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        pinyinKeyboard?.setTranslating(translateInFlight)
 
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
         val container = FrameLayout(this)
@@ -1398,7 +1427,13 @@ class JinnIme : InputMethodService() {
         // onStartInputView，而译文回调走 `ui.post` —— 不在**这里**作废的话，结果可能在
         // 「新框已开始、onStartInputView 尚未跑到」的窗口里，经回调闭包里的**旧 connection**
         // 提交进用户已经离开的那个输入框。
-        cancelTranslate()
+        // ⚠ notify 必须在这里就传 true（2026-10-03 修复 L-603 的回归）：本回调**先于**
+        // onStartInput / onStartInputView 执行，并且**在这里**就把 `translateInFlight` 复位了 ——
+        // 若此处静默，后面两处 `notify = true` 取到的 `wasInFlight` 恒为 false ⇒
+        // 「翻译已取消」在**同 App 换输入框**（最高频的边界）这条路径上**永不弹**。
+        // 上一版正是把"去重"理解成"这里别弹、留给后面弹"，而后面已经没得弹了。
+        // `wasInFlight` 快照仍保证整条链路上最多弹一次。
+        cancelTranslate(notify = true)
     }
 
     /**
@@ -1453,13 +1488,13 @@ class JinnIme : InputMethodService() {
         // 否则后续日志会一直报 clipboardPanelOpen=true（BUG.md L-18）
         clipboardPanelOpen = false
         setInputView(onCreateInputView())
-        // 换视图后重放敏感框抑制（BUG.md L-96）：新视图的 `suppressLearning` 默认 false，
-        // 不重放则本会话余下时间在密码框里选候选会被学进词频；顺序必须是「先换视图、再重放」
-        // （setInputView 同步更新 pinyinKeyboard，重放才落在新视图上）。
+        // 换视图后重放敏感框抑制（BUG.md L-96）与「翻译中」状态：新视图这两个字段默认 false，
+        // 不重放会在密码框里把候选学进词频、或在在途翻译时让按钮渲染成**可点的「翻译」**
+        // 而 IME 侧闸门还关着（点击被静默吞掉）。
+        // ⚠ 2026-10-03 审查 A2 起，这两个重放已**统一放进 `onCreateInputView()` 末尾**
+        // （凡新建视图就重放，框架自己调它时也覆盖），这里保留一份是**幂等**的兜底：
+        // setInputView 同步更新 pinyinKeyboard，重放仍落在新视图上。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
-        // 换视图后重放「翻译中」（2026-09-30 审查发现）：新视图的 translateInFlight 默认 false，
-        // 不重放会让按钮渲染成**可点的「翻译」**，而 IME 侧闸门还关着 —— 点击被静默吞掉。
-        // 与上面同款：必须在 setInputView 之后重放，才落在新视图上。
         pinyinKeyboard?.setTranslating(translateInFlight)
     }
 
@@ -1532,7 +1567,9 @@ class JinnIme : InputMethodService() {
      */
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
         super.onStartInput(info, restarting)
-        cancelTranslate()
+        // notify：这一类边界用户最可能没预期（切框 / 旋转 / 分屏拖动），丢的又往往是
+        // 已经出网、正在计费的大模型请求（2026-10-03 修复 L-603）
+        cancelTranslate(notify = true)
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -1553,7 +1590,8 @@ class JinnIme : InputMethodService() {
         // ⚠ 必须在 applyThemeIfNeeded **之前**（2026-10-01 修复 L-336）：换肤的延后判据里含视图侧
         // `translateInFlight`，顺序反过来时，被翻译态挡下的换肤会在**同一个回调**里失去补做机会，
         // 键盘继续用旧皮、要再等一次弹出。
-        cancelTranslate()
+        // notify=true 但不会与 onStartInput 重复弹（第二次进来时 translateInFlight 已复位）
+        cancelTranslate(notify = true)
         // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘
         applyThemeIfNeeded()
         // 系统导航栏透明：框架在显示窗口时可能已用主题属性重写过窗口参数，这里每会话补一次
@@ -1667,7 +1705,7 @@ class JinnIme : InputMethodService() {
         // 一起回来，误点即把历史内容粘进新字段。上面那行是同族的既有处理，这条原先漏了。
         pinyinKeyboard?.hideClipboardPanel()
         // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
-        cancelTranslate()
+        cancelTranslate(notify = true)
         ui.removeCallbacks(backspaceRunnable)
         themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
@@ -2093,7 +2131,14 @@ class JinnIme : InputMethodService() {
         }
         // 总开关是「关掉即不可能发请求」的闸门（2026-09-30 审查发现）：功能面板只按它渲染按钮，
         // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
-        if (!prefs.translateEnabled) return
+        if (!prefs.translateEnabled) {
+            // 无声无痕是不可接受的（2026-10-03 审查 A3）：关掉总开关**不是**面板重绘入口，
+            // 面板若还带着旧的「翻译」键，它就是**亮的、可点的**，点下去却毫无反应 ——
+            // 用户只会以为键盘坏了，而诊断包里连这次点击都查不到。补一条 W（零成本的一半；
+            // 另一半是"把总开关变更做成面板重绘入口"，属设计取舍）。
+            Diagnostics.w(TAG, "翻译: 总开关已关闭，忽略本次点击")
+            return
+        }
         // 密码框不翻译：不能把口令发到云端。判据在**点击这一刻**按当前 EditorInfo 现跑 —— 会话缓存
         // 只在 onStartInputView 刷新，宿主在键盘已显示时把焦点从普通框切到密码框可能不重发该回调。
         //
@@ -2304,6 +2349,19 @@ class JinnIme : InputMethodService() {
         val target = TranslationLanguage.of(prefs.translateTarget)
         translateInFlight = true
         val generation = ++translateGeneration
+        // 看门狗**紧跟置位**挂上（2026-10-03 审查 A5）：它此前排在置位之后的一串调用
+        // （setTranslating / 日志 / toast / TranslateSnapshot）**末尾**，那些调用任一抛出
+        // （视图被拆、Toast 异常…）都会留下 `translateInFlight = true` 却**没有看门狗**，
+        // 同一会话内按钮永久「翻译中」，只剩会话边界能复位。
+        ui.removeCallbacks(translateWatchdog)
+        ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
+        // 本次请求的上下文（2026-10-03 修复 L-615/L-617）：放在**挂表之后**，
+        // 以免影响上面那条「置位 → 挂表之间不夹任何可能抛出的调用」的顺序约束（A5）。
+        // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
+        translateStartedAtMs = System.currentTimeMillis()
+        translateProviderName = provider.javaClass.simpleName
+        translateTargetName = target.name
+        translateTraceId = Diagnostics.traceId("TR")
         pinyinKeyboard?.setTranslating(true)
         // 只记 provider / 语言 / 范围 / 字数与截断：待译正文与凭据都不进日志
         Diagnostics.i(
@@ -2327,15 +2385,19 @@ class JinnIme : InputMethodService() {
             slice.appendOffset,
             replaceSelection,
         )
-        // 看门狗（2026-10-01 审查 L-217）：OkHttp 在调用 onResponse **之前**就置了
-        // `signalledCallback`，回调内部抛出的异常**不会**回落到 onFailure ⇒ 少了这道兜底，
-        // `translateInFlight` 会永久为真、按钮永远「翻译中」。预算 = 超时上限 + 余量。
-        ui.removeCallbacks(translateWatchdog)
-        ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
+        // 看门狗已提前到置位之后立即挂上（见上，2026-10-03 审查 A5）；这里只留它存在的理由：
+        // OkHttp 在调用 onResponse **之前**就置了 `signalledCallback`，回调内部抛出的异常
+        // **不会**回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
+        // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
         runCatching {
             // 句柄用于真取消（2026-10-03 修复 L-494）：会话边界（onFinishInput / onStartInput /
             // 收起键盘 / 旋转）都会走到 finishTranslate，那里对在途请求调 cancel()
-            translateCall = TranslationClient.translate(provider, slice.text, target) { outcome ->
+            translateCall = TranslationClient.translate(
+                provider,
+                slice.text,
+                target,
+                traceId = translateTraceId,
+            ) { outcome ->
                 // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection
                 ui.post {
                     if (generation != translateGeneration) {
@@ -2372,11 +2434,32 @@ class JinnIme : InputMethodService() {
     /**
      * 会话边界（切换输入框 / 收起键盘 / 服务销毁）：作废在途翻译。
      *
-     * 不取消网络请求本身（OkHttp 的 call 让它在后台自然结束），回调按代际丢弃 ——
-     * 旧请求的译文绝不会落到用户已经切换后的新输入内容上。
+     * 同时**真取消**网络请求（[finishTranslate] 里 `call.cancel()`，2026-10-03 修复 L-494），
+     * 回调按代际丢弃 —— 旧请求的译文绝不会落到用户已经切换后的新输入内容上。
+     *
+     * @param notify 是否在**确实有在途请求**时提示「已取消」（2026-10-03 修复 L-603）。
+     *   默认 `false`：进程销毁、以及「同一会话里连续两级回调」（`onStartInput` →
+     *   `onStartInputView`）不该重复弹窗 —— 第二次进来时 [translateInFlight] 已复位，
+     *   自然不会二次提示。[wasInFlight] 就是为此取的快照。
      */
-    private fun cancelTranslate() {
+    private fun cancelTranslate(notify: Boolean = false) {
+        val wasInFlight = translateInFlight
         finishTranslate()
+        // 只在**用户可感知的会话边界**提示：60~300s 的大模型请求最容易被旋转 / 分屏 /
+        // 折叠展开 / 切框丢掉，而原先「翻译中」只是悄悄变回「翻译」——用户以为键盘坏了，
+        // 很可能再点一次（**又计费**）。提交阶段的每条拒绝路径都有 toast，取消不该是例外。
+        if (notify && wasInFlight) toast(TEXT_TRANSLATE_CANCELLED)
+        // 用户能看到「已取消」时，日志里必须也查得到（2026-10-03 修复 L-618）——
+        // 这是与"日志有、用户看不到"相反的另一半：用户报「翻译被取消了，我什么都没做」时，
+        // 包里原先只有 FinishInputView/StartInputView 这类会话事件，无法确认是哪个边界、哪一次请求。
+        if (wasInFlight) {
+            Diagnostics.i(
+                TAG,
+                "[$translateTraceId] 翻译: 会话边界取消在途请求" +
+                    " provider=$translateProviderName target=$translateTargetName" +
+                    if (notify) "（已提示用户）" else "（静默：进程销毁或紧随其后的边界）",
+            )
+        }
     }
 
     /**
@@ -2615,14 +2698,18 @@ class JinnIme : InputMethodService() {
             // 用户只看到「点了没反应」，而诊断包里还写着「已提交追加」（排障被引向相反结论）。
             // 复核一次尾部（最多 256 字符，一次 Binder 往返）；**读不到时不误报**（宁可不提示也不误报）。
             // 替换模式不做复核：它的落点在选区里，尾部判据不适用。
+            var landed: Boolean? = null
             if (!snapshot.replaceSelection) {
                 val probeLen = minOf(submit.length, 256)
-                val landed = runCatching {
+                landed = runCatching {
                     connection.getTextBeforeCursor(probeLen, 0)?.toString()
                         ?.endsWith(submit.takeLast(probeLen))
                 }.getOrNull()
                 if (landed == false) {
-                    Diagnostics.w(TAG, "翻译: 提交后未在输入框找到译文尾部（宿主可能丢弃了写入）")
+                    Diagnostics.w(
+                        TAG,
+                        "[$translateTraceId] 翻译: 提交后未在输入框找到译文尾部（宿主可能丢弃了写入）",
+                    )
                     toast(TEXT_TRANSLATE_COMMIT_UNVERIFIED)
                 }
             }
@@ -2631,10 +2718,17 @@ class JinnIme : InputMethodService() {
             // 宿主的 InputFilter（数字框的 `DigitsKeyListener` 是最常见的一种）会把正文整段
             // 丢掉而**不报错**，此时字段里一个字都没有（2026-10-02 修复 L-456）。
             // 写成「已写入」会让排障时把「没写进去」读成成功 —— 正好是这里唯一要避免的事。
+            // ⚠ 补字段（2026-10-03 修复 L-616）：用户报「译文插进句子中间 / 少一个空行 / 多发一个
+            // 换行」时，原先日志里没有可判定的数字。同时**统一长度口径** —— 原先成功行记
+            // `translated.length`（净化**前**）、失败行记 `submit.length`（实发串），两条并排会得出
+            // 相反结论（L-346 复核仍未修）；现在一律用实发串长度。
             Diagnostics.i(
                 TAG,
-                "翻译: " + (if (snapshot.replaceSelection) "已提交替换" else "已提交追加") +
-                    "（commitText 返回 true，未验落地）共${translated.length}字",
+                "[$translateTraceId] 翻译: " +
+                    (if (snapshot.replaceSelection) "已提交替换" else "已提交追加") +
+                    " append=${snapshot.appendOffset} replace=${snapshot.replaceSelection}" +
+                    " landed=${landed?.let { if (it) "是" else "否" } ?: "未测"}" +
+                    " len=${submit.length}",
             )
         } else {
             // 失败时也带上长度：提交长度闸（256 KiB）与本机 Binder 事务上限不是同一把尺子，
@@ -3108,6 +3202,14 @@ class JinnIme : InputMethodService() {
             "选中内容超出单次上限，未翻译（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
         /**
+         * 在途翻译被会话边界取消（2026-10-03 修复 L-603）。
+         *
+         * 与各条「未写入」文案并列：那些说的是**结果**没落进正文，这条说的是**请求**被取消
+         * —— 用户需要知道「刚才那次点击已经作废、要重来得再点一次（会重新计费）」。
+         */
+        const val TEXT_TRANSLATE_CANCELLED = "翻译已取消（输入框已切换或键盘已收起）"
+
+        /**
          * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02 修复 L-485）。
          *
          * 与选区模式两套口径是**故意的**：选区模式的替换会丢掉尾部原文（不可逆）⇒ 宁可拒绝；
@@ -3141,7 +3243,15 @@ class JinnIme : InputMethodService() {
          * 不按 Provider 分别取值 —— 早复位晚复位都不影响正确性：真超时的话 OkHttp 会先按
          * `callTimeout` 结束并走正常失败回调，看门狗只兜「回调根本没到达」那一种。
          */
-        private const val TRANSLATE_WATCHDOG_MS = 330_000L
+        /**
+     * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03 修复 L-602）。
+     *
+     * 此前这里是硬编码 `330_000L`，与 `Prefs.TIMEOUT_MAX_SEC`（300s）靠「330 > 300」这个
+     * **隐式**关系成立 —— 把上限提到 400 而忘了改这里，看门狗就会抢在 `callTimeout` 之前
+     * 收尾并 `cancel()`：用户看到「翻译中」凭空消失、一句提示都没有，而编译与门禁全绿。
+     * 现在改成派生式（单一真相）：改上限，看门狗自动跟随。
+     */
+    private const val TRANSLATE_WATCHDOG_MS = (Prefs.TIMEOUT_MAX_SEC + 30) * 1000L
 
         /**
          * 同进程的 IME 实例：设置页改主题时直接通知它换肤（设置页与 IME 同进程，无需跨进程通信）。

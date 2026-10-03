@@ -1419,13 +1419,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 不在密码模式，且**回不去**（用户正输密码时键盘变回普通键盘，状态无从恢复）。
      * 定时换肤（`MODE_SCHEDULED` 的 `themeTick`）走的正是这条判据 ⇒ 漏掉它就会在打字期间静默退出。
      *
-     * **在途翻译也要算**（2026-09-30 审查发现）：`translateInFlight` 同样是视图字段，重建后恒为
-     * false ⇒ 按钮渲染成**可点的「翻译」**，而 IME 侧的 in-flight 闸门还关着，点击被静默吞掉
-     * （用户视角＝按钮没反应）。重建前问这里，翻译期间就不会换肤重建。
+     * ~~**在途翻译也要算**~~：**已移除**（2026-10-03 修复 L-613）。原先把 `translateInFlight` 算进来，
+     * 理由是「重建后视图字段恒为 false ⇒ 按钮渲染成**可点的「翻译」**、点击被在途闸门静默吞掉」——
+     * 但那个理由**已被视图重放消解**：重放现在写在 `onCreateInputView()` 里（凡新建视图就重放，
+     * 见 A2/L-610），重建后按钮会正确显示「翻译中」。留着它的代价是**用户可见的副作用**：
+     * 请求最长 330s，期间改主题 / 定时换肤到点 / 符号布局变更都会被**延后到会话结束**
+     * —— 用户以为改主题没生效，最长要等 5 分钟。同一件事被防了两遍，其中一遍有害。
      */
     val hasActiveOverlay: Boolean
         get() = clipboardActive || searchPanel.isActive() || directionPanelVisible ||
-            passwordPad || translateInFlight
+            passwordPad
 
     /**
      * 视图即将被换掉：让两个面板中止仍在跑的后台任务。

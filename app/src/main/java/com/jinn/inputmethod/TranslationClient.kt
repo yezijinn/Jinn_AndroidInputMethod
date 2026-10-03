@@ -4,6 +4,7 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.ConnectionSpec
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -161,6 +162,10 @@ internal object TranslationClient {
         provider: TranslationProvider,
         text: String,
         target: TranslationLanguage,
+        // 一次点击的关联 ID（2026-10-03 修复 L-615）：形参带默认值 ⇒ 既有调用点与测试
+        // 一个都不用改；IME 侧传 `Diagnostics.traceId("TR")`，响应日志据此前缀，
+        // 诊断包里就能把「发起 → 响应 → 分类 → 提交/拒绝」按**一次点击**归并。
+        traceId: String = "",
         onDone: (TranslationOutcome) -> Unit,
     ): Call? {
         val request = runCatching { provider.buildRequest(text, target) }.getOrElse {
@@ -185,7 +190,15 @@ internal object TranslationClient {
             onDone(TranslationOutcome.Fail(TranslationError.INSECURE))
             return null
         }
-        Diagnostics.i(TAG, "翻译请求: ${provider.javaClass.simpleName} → ${target.name} len=${text.length}")
+        // 补端点 host（2026-10-03 修复 L-619）：六家里 `OpenAiTranslator` **一个类**覆盖无数
+        // baseUrl / model 组合（中转、自建网关是常见用法），只记类名分不清是哪个端点。
+        // ⚠ 只记 `host + encodedPath`（项目统一口径）——**绝不记 query**：百度系把 appid/sign
+        // 直接放在 query 上，`q` 还是用户正文。
+        Diagnostics.i(
+            TAG,
+            "${traceTag(traceId)}翻译请求: ${provider.javaClass.simpleName} → ${target.name} " +
+                "len=${text.length} @${request.url.host}${request.url.encodedPath}",
+        )
         // Provider 可以要求更宽的时间预算（大模型首字延迟不可控）：0 = 用客户端默认。
         // ⚠ 必须**派生 client** 同时放宽 readTimeout —— 只设 `Call.timeout()`（整体预算）时，
         // client 级的 20s 读超时依旧先生效（真机实测：20s 到点抛 SocketTimeoutException）。
@@ -201,13 +214,22 @@ internal object TranslationClient {
         val call = client.newCall(request)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+                // 主动取消不是故障（2026-10-03 修复 L-604）：会话边界（切框 / 收起键盘 / 旋转 /
+                // 销毁）会调 `call.cancel()`，OkHttp 必然回调这里一次，异常是
+                // `IOException("Canceled")`（**不是** InterruptedIOException）⇒ 原先会被记成
+                // `翻译失败: IOException → NETWORK`。用户报「翻译老是失败」时，诊断包里
+                // 无法区分「他自己切了框」与「真断网」。调用方那边靠代际丢弃、不受影响。
+                if (call.isCanceled()) {
+                    Diagnostics.i(TAG, "翻译: 请求已被取消（会话边界，不是网络故障）")
+                    return
+                }
                 // SocketTimeoutException 与 callTimeout 的 InterruptedIOException 同族，一并归超时
                 val error = if (e is InterruptedIOException) {
                     TranslationError.TIMEOUT
                 } else {
                     TranslationError.NETWORK
                 }
-                Diagnostics.w(TAG, "翻译失败: ${e.javaClass.simpleName} → $error")
+                Diagnostics.w(TAG, traceTag(traceId) + "翻译失败: ${e.javaClass.simpleName} → $error")
                 onDone(TranslationOutcome.Fail(error))
             }
 
@@ -222,15 +244,56 @@ internal object TranslationClient {
                     val capped = isBodyCapped(body)
                     Diagnostics.i(
                         TAG,
-                        "翻译响应: HTTP ${it.code} ${it.protocol} chars=${body?.length ?: 0}" +
+                        traceTag(traceId) + "翻译响应: HTTP ${it.code} ${it.protocol} chars=${body?.length ?: 0}" +
                             " bytes=${bodyBytes(body)}" + (if (capped) "(可能已截断)" else ""),
                     )
+                    // 3xx：重定向是**刻意关闭**的（L-306，防不可信网关把用户正文转投到
+                    // `Location` 指定的任意主机），所以这里不会自动跟随 —— 但原先 3xx 与 5xx
+                    // 同归 SERVER ⇒ 「网关尾斜杠归一 / http→https 升级 / 路径补全」这类
+                    // **用户可修**的问题被显示成「翻译服务异常」，用户只会反复重试（每次真计费）。
+                    // 单列一条指向真因（2026-10-03 修复 L-600）。
+                    if (it.code in 300..399) {
+                        // 只记 Location 的 **host**：全 URL 可能带 query（凭据形态），不能落盘
+                        val locHost = it.header("Location")
+                            ?.let { loc -> runCatching { loc.toHttpUrlOrNull()?.host }.getOrNull() }
+                        Diagnostics.w(TAG, traceTag(traceId) + "翻译端点返回重定向: HTTP ${it.code} → ${locHost ?: "无可解析 Location"}")
+                        onDone(TranslationOutcome.Fail(TranslationError.REDIRECT))
+                        return@use
+                    }
+                    // 2xx 但**不是 JSON**：公共 WiFi 的门户页 / 企业 MITM 代理会回 200 + text/html
+                    // 登录页 ⇒ 原先归 SERVER（「请稍后重试」），而真因是「网络还没认证」，
+                    // 重试一百次也没用（2026-10-03 修复 L-601）。归 NETWORK 与 DNS / 私有 CA
+                    // 失败（已正确归 NETWORK 并提示「检查网络」）口径一致。
+                    // 空 body 不算：那是「网关返回空」的既有分支，交给各 Provider 处理。
+                    if (it.code in 200..299 && body != null && body.isNotBlank() && !looksLikeJson(body)) {
+                        Diagnostics.w(
+                            TAG,
+                            "翻译响应不是 JSON（可能被登录门户 / 代理拦截）: HTTP ${it.code} " +
+                                "ct=${headerBrief(it.header("Content-Type"))}",
+                        )
+                        onDone(TranslationOutcome.Fail(TranslationError.NETWORK))
+                        return@use
+                    }
                     // 失败时只记**结构化摘要**（长度 + 白名单错误码），绝不记响应体原文：
                     // 错误体是服务端可控文本，OpenAI 兼容网关的 401 常规形态就是回显提交的 Key
                     // （`Incorrect API key provided: sk-…`），而日志会落盘并随「导出诊断包」外发，
                     // Diagnostics 的脱敏只挡手机号/邮箱/纯数字，挡不住 sk- 形态的凭据。
                     if (it.code !in 200..299) {
-                        Diagnostics.w(TAG, "翻译失败响应: HTTP ${it.code} ${errorSummary(body)}")
+                        // 401/403 补 UA 与 `Server:` 摘要（2026-10-03 修复 L-606）：翻译请求不带
+                        // 自定义 UA（用的是 `okhttp/4.x`），Cloudflare / WAF 类网关按 UA 拦时回 403，
+                        // 而那会被归成 AUTH（「请检查凭据」）⇒ 用户反复核对正确的 Key 也无效。
+                        // 有了这两项，「网关拦 UA」与「Key 无效」在诊断包里才分得开。
+                        // ⚠ 两者都是服务端可控文本：只取头部、截断 64 字符，且绝不记 URL / query。
+                        val gateway = if (it.code == 401 || it.code == 403) {
+                            // ⚠ 走 headerBrief 而不是 take(64)（2026-10-03 修复 L-620）：
+                            // 这两个头是服务端可控的，可能回显我们发出去的凭据（含 32 位纯 hex 形态，
+                            // 而脱敏表刻意不含该形态）⇒ 命中凭据即**完全不记**。
+                            " ua=${headerBrief(it.header("User-Agent"))} " +
+                                "server=${headerBrief(it.header("Server"))}"
+                        } else {
+                            ""
+                        }
+                        Diagnostics.w(TAG, traceTag(traceId) + "翻译失败响应: HTTP ${it.code} ${errorSummary(body)}$gateway")
                     }
                     // 解析也要兜底（2026-10-02 加固）：此刻 OkHttp 已置 `signalledCallback=true`，
                     // 从这里抛出的 Throwable 不会被回落到 onFailure，而是冒到 dispatcher 线程 ⇒
@@ -239,7 +302,7 @@ internal object TranslationClient {
                     // 这里再兜一层：第七家写漏时最多丢一次结果，不会杀进程。
                     val outcome = runCatching { provider.parseResponse(it.code, body) }
                         .getOrElse {
-                            Diagnostics.w(TAG, "翻译响应解析异常: ${it.javaClass.simpleName}")
+                            Diagnostics.w(TAG, traceTag(traceId) + "翻译响应解析异常: ${it.javaClass.simpleName}")
                             TranslationOutcome.Fail(TranslationError.SERVER)
                         }
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
@@ -250,7 +313,7 @@ internal object TranslationClient {
                         // 「额度不足」时诊断包里只剩 `翻译响应: HTTP 200 len=…`，分不清限流与欠费。
                         outcome is TranslationOutcome.Fail
                     ) {
-                        Diagnostics.w(TAG, "翻译失败响应(2xx): HTTP ${it.code} ${errorSummary(body)}")
+                        Diagnostics.w(TAG, traceTag(traceId) + "翻译失败响应(2xx): HTTP ${it.code} ${errorSummary(body)}")
                     }
                     // 唯一出口做一次包装剥离（六家共用；2026-10-02 修复 L-321）：
                     // 模型的 ``` 围栏与「译文：」前缀不能原样插进用户的输入框
@@ -379,6 +442,51 @@ internal object TranslationClient {
      * `body.string()` 会把整段内容读进内存，非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份；
      * 内存尖峰最坏会 OOM —— 设置页与 IME 同进程，一起带走。正常译文响应只有几百字，不会误截。
      */
+    /** 日志前缀：有 traceId 时是 `[TR-xxxx] `，没有时是空串（2026-10-03 修复 L-615） */
+    private fun traceTag(traceId: String): String = if (traceId.isEmpty()) "" else "[$traceId] "
+
+    /**
+     * 32~64 位纯 hex —— Azure 订阅密钥 / 百度系 SecretKey 的形态。
+     *
+     * `Diagnostics.API_KEY_RES` **刻意不含**这一形态（避免误伤哈希与摘要），所以它挡住「打印响应头」
+     * 这条通道的唯一办法是在调用点判（2026-10-03 修复 L-620）。
+     */
+    private val HEX_CREDENTIAL_RE = Regex("\\b[0-9a-fA-F]{32,64}\\b")
+
+    /**
+     * 响应头的**安全摘要**（2026-10-03 修复 L-620）。
+     *
+     * `Content-Type` / `User-Agent` / `Server` 都是**服务端可控**文本：不可信网关可以把收到的
+     * `Authorization: Bearer <key>` 回显在里面，而日志会落盘并随「导出诊断包」外发。
+     * `Diagnostics` 的脱敏表对 `sk-` / `:fx` / `Bearer …` / `LTAI…` 有效，但**不认识裸的
+     * 32 位纯 hex**（正是订阅密钥的形态）。
+     *
+     * 所以这里做两层：① 命中凭据形态（含纯 hex 长串）⇒ **完全不记**；
+     * ② 其余只留可见 ASCII 并截断（顺带挡掉控制字符 / 换行注入进日志）。
+     */
+    private fun headerBrief(value: String?): String {
+        val v = value?.trim().orEmpty()
+        if (v.isEmpty()) return "无"
+        if (v.looksLikeCredential() || HEX_CREDENTIAL_RE.containsMatchIn(v)) return "已隐去(疑似凭据)"
+        val safe = v.filter { it in ' '..'~' }.take(48)
+        return safe.ifEmpty { "无" }
+    }
+
+    /**
+     * 响应体是否**看起来像 JSON**（跳过前导空白后首字符是 `{` 或 `[`）。
+     *
+     * 只用于「门户页判别」（2026-10-03 修复 L-601）：六家的合法响应无一例外都是 JSON 对象/数组，
+     * 而门户页/代理的拦截页是 HTML。**不解析**、不做严格校验 —— 真正的 JSON 合法性仍由各
+     * Provider 的 `parseResponse` 负责（它有自己的错误分支与文案），这里只挡「明显不是 JSON」那一类。
+     */
+    private fun looksLikeJson(body: String): Boolean {
+        for (ch in body) {
+            if (ch.isWhitespace()) continue
+            return ch == '{' || ch == '['
+        }
+        return false
+    }
+
     private fun readBodyCapped(response: Response): String? =
         runCatching { response.peekBody(MAX_BODY_BYTES).string() }.getOrNull()
 

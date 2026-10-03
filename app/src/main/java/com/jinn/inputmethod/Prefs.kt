@@ -1499,7 +1499,14 @@ class Prefs(context: Context) {
 
         /** 整体超时的允许区间（秒）：太短会误杀大模型，太长会把按钮的「翻译中」挂死 */
         private const val TIMEOUT_MIN_SEC = 5
-        private const val TIMEOUT_MAX_SEC = 300
+
+        /**
+         * 超时上限（秒）。`internal`（2026-10-03 修复 L-602）——
+         * [JinnIme.TRANSLATE_WATCHDOG_MS] 必须**派生**自它，否则两者是人肉耦合：
+         * 把上限提到 400 而忘了改看门狗，看门狗就会抢在 `callTimeout` 之前收尾、
+         * 用户看到「翻译中」凭空消失且一句提示都没有（编译与门禁全绿，只有真机才发现）。
+         */
+        internal const val TIMEOUT_MAX_SEC = 300
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
     private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"

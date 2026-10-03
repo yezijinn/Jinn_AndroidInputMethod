@@ -1356,10 +1356,13 @@ class RecentFixesRegressionTest {
     @Test
     fun `本轮修复的形态不得回退`() {
         val src = codeOf("JinnIme.kt")
-        assertTrue("选区超限必须在发请求之前拒绝（L-261）", "TEXT_TRANSLATE_SELECTION_TOO_LONG" in src)
+        // ⚠ 断「**调用形态**」而不是「标识符存在」（2026-10-03 修复 L-607）：这两个标识符各自
+        // 还有一个常量声明，只断"出现"的话，把守卫条件改成永假（声明留着）断言仍会绿 ——
+        // 现象就是「拒译逻辑事实上不可达，门禁却全绿」。加 `toast(` 前缀把断言钉在调用点上。
+        assertTrue("选区超限必须在发请求之前拒绝（L-261）", "toast(TEXT_TRANSLATE_SELECTION_TOO_LONG)" in src)
         assertTrue("getSelectedText 抛异常时不能放行（L-262）", "getSelectedText 抛异常，无法确认选区" in src)
         assertTrue("选区探测必须设 hintMaxChars（L-263）", "hintMaxChars = TranslationText.MAX_READ_CHARS" in src)
-        assertTrue("「光标前全部」读满窗口时必须拒绝（L-277）", "TEXT_TRANSLATE_BEFORE_TOO_LONG" in src)
+        assertTrue("「光标前全部」读满窗口时必须拒绝（L-277）", "toast(TEXT_TRANSLATE_BEFORE_TOO_LONG)" in src)
         assertTrue("下拉的用户来源判据必须含焦点（L-276）", "isUserDriven" in codeOf("TranslationSettingsActivity.kt"))
     }
 
@@ -1508,8 +1511,11 @@ class RecentFixesRegressionTest {
         )
         val startView = blockAfter(ime, "override fun onStartInputView(")
         assertTrue(
-            "会话边界取消必须在换肤之前（L-336：延后判据里含 translateInFlight）",
-            startView.indexOf("cancelTranslate()") < startView.indexOf("applyThemeIfNeeded()"),
+            "会话边界取消必须在换肤之前（L-336）：换肤的延后判据里含视图侧 translateInFlight" +
+                "（2026-10-03 修复 L-613 后它已不在 `hasActiveOverlay` 里，但 `setTranslating(false)`" +
+                "仍是视图字段的写入，顺序反过来会让同一回调里的补做机会丢失）",
+            startView.indexOf("cancelTranslate(notify = true)") <
+                startView.indexOf("applyThemeIfNeeded()"),
         )
 
         val tr = codeOf("Translation.kt")
@@ -1591,20 +1597,42 @@ class RecentFixesRegressionTest {
             1,
             Regex("private fun finishTranslate\\(\\)").findAll(src).count(),
         )
+        // ⚠ 三条正则都要**容忍写法变体**（2026-10-03 修复 L-608）：只认单一写法的计数断言
+        // 是"脆钉" —— `translateInFlight=false`（无空格）、`this.translateInFlight = false`、
+        // `translateGeneration += 1` 都能绕过「收尾只有一个入口」这条不变量，而测试仍绿。
         assertEquals(
             "裸复位 `translateInFlight = false` 只允许出现在 finishTranslate 里（字段初始化不算）",
             1,
-            Regex("(?m)^\\s+translateInFlight = false").findAll(src).count(),
+            Regex("(?m)^\\s*(?:this\\.)?translateInFlight\\s*=\\s*false").findAll(src).count(),
+        )
+        // ⚠ `translateGeneration` 的递增在实现里是**两种形式**：finishTranslate 用后缀
+        // `translateGeneration++`、startTranslate 用前缀 `++translateGeneration`。
+        // 所以不能只钉一种形态（原先只数 `translateGeneration++`：谁把 finishTranslate 那处
+        // 改成前缀形式，计数会变 0 ⇒ 断言**红**，看着还行；但谁**新增**第三种写法
+        // （如 `translateGeneration += 1`）则两种形态都不匹配 ⇒ 计数不变 ⇒ **静默通过**）。
+        // 现在分别钉住两个位置，再用总数 2 挡住"第三种写法"（2026-10-03 修复 L-608）。
+        assertEquals(
+            "后缀 `translateGeneration++` 只允许出现在 finishTranslate 里",
+            1,
+            Regex("translateGeneration\\s*\\+\\+").findAll(src).count(),
         )
         assertEquals(
-            "`translateGeneration++` 只允许出现在 finishTranslate 里（startTranslate 用前缀形式 ++）",
+            "前缀 `++translateGeneration` 只允许出现在 startTranslate 里",
             1,
-            Regex("translateGeneration\\+\\+").findAll(src).count(),
+            Regex("\\+\\+\\s*translateGeneration").findAll(src).count(),
+        )
+        assertEquals(
+            "递增入口只允许这两处：多出第三种写法（+= 1 / inc() 等）即失败",
+            2,
+            Regex(
+                "(?:translateGeneration\\s*\\+\\+|\\+\\+\\s*translateGeneration|" +
+                    "translateGeneration\\s*\\+=\\s*1|translateGeneration\\s*=\\s*translateGeneration\\s*\\+\\s*1)",
+            ).findAll(src).count(),
         )
         assertEquals(
             "撤看门狗只能有两处：startTranslate 清旧的、finishTranslate 收尾",
             2,
-            Regex("removeCallbacks\\(translateWatchdog\\)").findAll(src).count(),
+            Regex("removeCallbacks\\(\\s*translateWatchdog\\s*\\)").findAll(src).count(),
         )
     }
 
@@ -2268,6 +2296,161 @@ class RecentFixesRegressionTest {
                 "L-578：$page 必须声明 android:launchMode=\"singleTop\"",
                 Regex("android:name=\"\\.$page\"[\\s\\S]{0,200}?android:launchMode=\"singleTop\"")
                     .containsMatchIn(manifest),
+            )
+        }
+
+        // ── 第六轮修复（2026-10-03）：出口分类 / 看门狗派生 / 取消可见性 ──────────────
+        // （`client` 复用本方法前段已有的声明：L-483 那条守卫就在这里取的 TranslationClient 源码）
+
+        // L-600：3xx 必须单列成 REDIRECT。重定向是**刻意关闭**的（L-306），所以"打开重定向"
+        // 不是选项 —— 缺的是出路：不做这条断言，3xx 会被顺手并回 SERVER（与 5xx 同归），
+        // 用户看到的仍是「服务异常，请稍后重试」，永远不会去改 Base URL。
+        assertTrue(
+            "L-600 守卫缺失：3xx 必须归 REDIRECT（不得与 5xx 同归 SERVER）",
+            "TranslationError.REDIRECT" in client && "it.code in 300..399" in client,
+        )
+        // L-601：2xx + 非 JSON（门户页 / MITM 代理）必须归 NETWORK，而不是 SERVER。
+        assertTrue(
+            "L-601 守卫缺失：2xx 非 JSON 响应必须归 NETWORK（门户页/代理拦截）",
+            "looksLikeJson" in client && "TranslationError.NETWORK" in client,
+        )
+        // L-604：取消不是网络故障 —— `call.isCanceled()` 必须排在异常分类之前。
+        assertTrue(
+            "L-604 守卫缺失：onFailure 必须先判 call.isCanceled()（否则取消被记成 NETWORK）",
+            "call.isCanceled()" in client,
+        )
+        // L-606：401/403 要能分辨「网关拦 UA」与「Key 无效」。
+        // ⚠ 取值必须走 headerBrief（L-620 修复后这里是新形态）：直接 take(N) 会把服务端
+        // 回显的凭据（含 32 位纯 hex）写进落盘日志 —— 见下面 L-620 那条守卫。
+        assertTrue(
+            "L-606 守卫缺失：401/403 日志必须补 ua / server 摘要（且经 headerBrief 取值）",
+            "ua=\${headerBrief(" in client && "server=\${headerBrief(" in client,
+        )
+        // L-602：看门狗必须**派生**自超时上限（硬编码会让两者静默失配）。
+        assertTrue(
+            "L-602 守卫缺失：看门狗必须派生自 Prefs.TIMEOUT_MAX_SEC，不得硬编码",
+            "(Prefs.TIMEOUT_MAX_SEC + 30) * 1000L" in ime,
+        )
+        // L-603：会话边界取消要有用户可见提示（且只在该提示的入口传 true）。
+        assertTrue(
+            "L-603 守卫缺失：会话边界取消在途翻译必须提示用户",
+            "cancelTranslate(notify = true)" in ime && "toast(TEXT_TRANSLATE_CANCELLED)" in ime,
+        )
+
+        // ── 第十八轮审查的修复（2026-10-03）：状态机缺口 ────────────────────────────
+        // ⚠⚠ L-603 的**回归**（本人上一轮引入）：`onFinishInput` **先于** onStartInput /
+        // onStartInputView 执行，并且**在它里面**就把 `translateInFlight` 复位了 —— 上一轮
+        // 那里传的是默认 `notify = false`（理由是"留给后面的入口弹"），而后面两处取到的
+        // `wasInFlight` 恒为 false ⇒「翻译已取消」在**同 App 换输入框**（最高频边界）
+        // 这条路径上**永不弹**，而它正是 L-603 要关掉的那件事。
+        // ⇒ 判据：**每个会复位 flag 的边界入口都必须自己带 notify**，不得靠后面的入口补弹。
+        assertEquals(
+            "会话边界取消提示：四个边界入口（onFinishInput/onStartInput/onStartInputView/onFinishInputView）" +
+                "都必须传 notify=true —— 不能靠后面的入口补弹（前面那个已把 flag 吃掉）",
+            4,
+            Regex("cancelTranslate\\(notify = true\\)").findAll(ime).count(),
+        )
+        assertTrue(
+            "onFinishInput 必须带 notify：它先复位 translateInFlight，后面的入口已无从判断",
+            Regex("override fun onFinishInput\\(\\)[\\s\\S]{0,1200}?cancelTranslate\\(notify = true\\)")
+                .containsMatchIn(ime),
+        )
+        // A2：视图态重放必须绑在「**视图创建**」这件事上（onCreateInputView），
+        // 而不是绑在某个调用点 —— 框架自己调 onCreateInputView() 重建输入视图时，
+        // 不走 recreateKeyboardView，只在那里重放就会让新视图的按钮变成"可点的翻译"，
+        // 而 IME 侧闸门还关着 ⇒ 点击被静默吞掉（无提示、无日志）。
+        // ⚠ 用**位置比较**而不是"起点后 N 字符内包含"：后者依赖函数体长度（加几行注释/代码
+        // 就会失效，是又一种脆钉）。这里断言「**第一次**重放出现在 onCreateInputView 与
+        // recreateKeyboardView 这两个函数之间」—— 即视图创建的路径上就有重放。
+        run {
+            val createAt = ime.indexOf("override fun onCreateInputView")
+            val replayAt = ime.indexOf("pinyinKeyboard?.setTranslating(translateInFlight)")
+            val recreateAt = ime.indexOf("private fun recreateKeyboardView")
+            assertTrue(
+                "视图态重放必须放进 onCreateInputView（框架自己重建视图时也要覆盖）；" +
+                    "createAt=$createAt replayAt=$replayAt recreateAt=$recreateAt",
+                createAt >= 0 && replayAt > createAt && (recreateAt < 0 || replayAt < recreateAt),
+            )
+        }
+        // A3：总开关闸门必须留痕（按钮在面板上还是亮的、可点的，点下去不能毫无记录）。
+        assertTrue(
+            "总开关关闭时的点击必须留日志（否则诊断包无法回溯这次点击）",
+            "总开关已关闭，忽略本次点击" in ime,
+        )
+
+        // ── 第七轮修复（2026-10-03）：凭据回显 / 端点可辨 / 关联 ID / 提交字段 ────────────
+        // L-620（安全，**优先于本批其它项**）：三个服务端可控头（Content-Type / User-Agent /
+        // Server）必须走 headerBrief —— 不可信网关可以把收到的 `Authorization: Bearer <key>`
+        // 回显在里面，而脱敏表**刻意不含**「32~64 位纯 hex」（Azure 订阅密钥 / 百度 SecretKey
+        // 的形态）⇒ 裸 take(N) 会把用户凭据写进落盘日志并随诊断包外发。
+        assertTrue(
+            "L-620 守卫缺失：服务端可控头必须走 headerBrief（含纯 hex 凭据负判据）",
+            "private fun headerBrief" in client &&
+                "HEX_CREDENTIAL_RE" in client &&
+                "ct=\${headerBrief" in client &&
+                "ua=\${headerBrief" in client &&
+                "server=\${headerBrief" in client,
+        )
+        // L-619：发起日志必须带端点 host（六家里 OpenAiTranslator 一类覆盖无数 baseUrl 组合）。
+        assertTrue(
+            "L-619 守卫缺失：发起日志必须记录端点 host + path（且不得记 query）",
+            "@\${request.url.host}\${request.url.encodedPath}" in client &&
+                "encodedQuery" !in client,
+        )
+        // L-615：关联 ID 必须能穿过 Client 边界（形参默认值 ⇒ 既有调用点与测试不用改）。
+        assertTrue(
+            "L-615 守卫缺失：translate 必须有带默认值的 traceId 形参 + 日志前缀函数",
+            "traceId: String = \"\"," in client && "private fun traceTag" in client,
+        )
+        assertTrue(
+            "L-615 守卫缺失：IME 侧必须生成并传递 traceId",
+            "translateTraceId = Diagnostics.traceId(\"TR\")" in ime &&
+                "traceId = translateTraceId" in ime,
+        )
+        // L-617：看门狗日志必须带上下文（provider / target / 已等时长）。
+        assertTrue(
+            "L-617 守卫缺失：看门狗日志必须带 provider/target/elapsed",
+            "看门狗超时，强制收尾" in ime &&
+                "provider=\$translateProviderName target=\$translateTargetName" in ime &&
+                "translateStartedAtMs" in ime,
+        )
+        // L-618：用户看得到的「已取消」，日志里也必须查得到（含是否提示）。
+        assertTrue(
+            "L-618 守卫缺失：会话边界取消在途请求时必须写日志",
+            "会话边界取消在途请求" in ime,
+        )
+        // L-616：提交日志必须带落点与**统一长度口径**（原先成功记净化前长度、失败记实发串）。
+        assertTrue(
+            "L-616 守卫缺失：提交成功日志必须带 append/replace/landed 且长度用实发串",
+            "append=\${snapshot.appendOffset} replace=\${snapshot.replaceSelection}" in ime &&
+                "landed=\${landed?.let" in ime &&
+                "len=\${submit.length}" in ime,
+        )
+        // L-613：在途翻译**不得**再进入换肤的延后判据（否则改主题最长要等 330s 才生效；
+        // 引入它的理由已被「视图重放在 onCreateInputView」消解）。
+        // 判据取 `hasActiveOverlay` 之后的**一小段窗口**（getter 很短），比按行正则更稳。
+        run {
+            val kb = codeOf("PinyinKeyboardView.kt")
+            val at = kb.indexOf("val hasActiveOverlay")
+            assertTrue("L-613 守卫缺失：找不到 hasActiveOverlay", at >= 0)
+            val window = kb.substring(at, minOf(kb.length, at + 220))
+            assertTrue(
+                "L-613 守卫缺失：hasActiveOverlay 不得再含 translateInFlight（否则换肤被延后到会话结束）",
+                "translateInFlight" !in window,
+            )
+        }
+        // A5：看门狗必须**紧跟置位**挂上 —— 原先它排在 setTranslating/日志/toast/快照之后，
+        // 那些调用任一抛出都会留下 translateInFlight=true 却**没有看门狗**（按钮永久「翻译中」）。
+        run {
+            val flagAt = ime.indexOf("translateInFlight = true")
+            val watchdogAt = ime.indexOf("postDelayed(translateWatchdog")
+            assertTrue(
+                "看门狗必须在置位之后立即挂上（中间不得夹可能抛出的调用）",
+                flagAt in 1..<watchdogAt,
+            )
+            assertTrue(
+                "置位与挂表之间不得夹 setTranslating / 日志 / toast（只允许 generation 递增）",
+                watchdogAt - flagAt < 400,
             )
         }
     }
