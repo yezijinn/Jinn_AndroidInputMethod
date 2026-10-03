@@ -172,12 +172,12 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         const val DEFAULT_PROFILE_NAME = "OpenAI 兼容"
 
         /** 默认 Base URL（OpenAI 官方） */
-        const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
+        const val DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
         const val DEFAULT_CHAT_PATH = "/chat/completions"
         const val DEFAULT_MODELS_PATH = "/models"
 
-        /** 默认目标语言（文档给定：简体中文） */
-        const val DEFAULT_TARGET_LANGUAGE = "简体中文"
+        /** 默认目标语言 */
+        const val DEFAULT_TARGET_LANGUAGE = "English"
 
         /** 默认响应解析路径 */
         const val DEFAULT_RESPONSE_PATH = "choices[0].message.content"
@@ -187,7 +187,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
 
         /** system 提示词（逐字取自接入文档） */
         const val DEFAULT_SYSTEM_PROMPT =
-            "你是专业翻译引擎。只输出译文，不解释、不分析、不添加额外内容。保持原文语气、格式和专有名词。"
+            "你是专业翻译引擎.只输出译文,不解释/不分析/不加额外内容.保持原文语气/格式/专有名词,保证译文完整,无语法错误."
 
         /** user 提示词模板（逐字取自接入文档，`{目标语言}` 变成可替换变量） */
         const val DEFAULT_USER_PROMPT = "请将以下文本翻译成{{target_language}}，只返回译文：\n{{text}}"
@@ -292,7 +292,15 @@ internal fun applyTemplateEnsuringText(
                     // 得到同一个误导提示。
                     val valueOk = value.all { it == '\t' || it in '\u0020'..'\u007e' }
                     if (name.isEmpty() || name.equals("Authorization", ignoreCase = true) ||
-                        !name.all { it in HEADER_TOKEN_CHARS } || !valueOk
+                        !name.all { it in HEADER_TOKEN_CHARS } || !valueOk ||
+                        // ⚠ 协议级头一律不接纳（2026-10-03 修复 L-705 / L-590）：OkHttp 的
+                        // `transparentGzip` 只在**调用方未设** `Accept-Encoding` 时才透明解压 ⇒ 用户照抄
+                        // 网关文档填 `Accept-Encoding: gzip`，body 变成原始 gzip 字节，被门户判别
+                        // 归成「不是 JSON（被登录门户 / 代理拦截）」，归因完全误导；`Range` 会让响应
+                        // 被截断成解析失败；`Host` / `Content-Length` / `Transfer-Encoding` /
+                        // `Connection` 由客户端与 BridgeInterceptor 掌管，留着会让请求本身变形
+                        // （`Host` 还能把凭据改道到别的主机）。
+                        name.lowercase(Locale.US) in CLIENT_OWNED_HEADERS
                     ) {
                         null
                     } else {
@@ -300,6 +308,18 @@ internal fun applyTemplateEnsuringText(
                     }
                 }
                 .toList()
+
+        /**
+         * 由客户端（或 OkHttp 的 `BridgeInterceptor`）掌管的协议级头名（小写）：**一律不接纳用户的自定义头**。
+         *
+         * 判据是「这个头由传输层决定语义」：`accept-encoding` 关掉透明解压、`content-length` 与
+         * `transfer-encoding` 决定 body 形态、`connection` 决定连接复用、`host` 决定寻址与凭据去向、
+         * `range` 让服务端只回一段。
+         */
+        private val CLIENT_OWNED_HEADERS = setOf(
+            "accept-encoding", "content-length", "transfer-encoding",
+            "connection", "host", "range", "expect", "upgrade",
+        )
 
         /** HTTP header 名的合法字符集（RFC 7230 `token`）：字母数字与 `!#$%&'*+-.^_\`|~` */
         private const val HEADER_TOKEN_CHARS =

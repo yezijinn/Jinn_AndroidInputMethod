@@ -211,7 +211,10 @@ object ThemeManager {
         private val handler = Handler(Looper.getMainLooper())
 
         private val tick = Runnable {
-            onSwitch()
+            // onSwitch 必须兜住（2026-10-03 修复 L-674）：两条链分别是 activity.recreate() 与
+            // JinnIme.recreateKeyboardView()，异常抛到主 Looper 会崩掉设置页 / 正在打字的 IME 进程；
+            // 且异常发生在 schedule() 之前，一次就把续排链打断 ⇒ 到点不再换色直到下次 onStart。
+            runCatching { onSwitch() }.onFailure { Diagnostics.w("ThemeManager", "定时换色失败: " + it.javaClass.simpleName) }
             schedule()
         }
 

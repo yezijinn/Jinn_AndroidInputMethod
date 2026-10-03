@@ -113,7 +113,12 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         // 直接放在 query 上（同一条 query 里的 `q` 还是**用户正文**），阿里云用 `AccessKeyId` ——
         // 脱敏表不认这些形态时，任何一处打印 URL（或异常 message 内嵌 URL）都会把签名与正文带出去。
         // 约定不变：打印一律用 `host + encodedPath`（现有调用点已是这个口径），这里再加一道网。
-        Regex("(?i)[?&](sign|appid|accesskeyid|sig|secret)=[^&\\s]{4,}"),
+        Regex("(?i)[?&](sign|signature|sig|appid|app_id|accesskeyid|access_key_id|secret|secretkey|api_key|apikey|key|token|access_token|password|pwd)=[^&\\s]{4,}"),
+        // 「Authorization: <token>」的**非 Bearer** 形态（部分网关用 `Authorization: <key>` 或
+        // `X-Api-Key: <key>`，压根不带 Bearer 前缀）—— 原表只认 `Bearer\s+\S{12,}`（2026-10-03 修复 L-668）
+        Regex("(?i)\\b(authorization|proxy-authorization|x-api-key)\\s*[:=]\\s*(?!bearer\\s)\\S{8,}"),
+        // URL 的 userinfo 形态（`https://user:pass@host/`）—— 凭据藏在 URL 里，任何一处打印完整 URL 都会带走它
+        Regex("(?i)https?://[^/\\s:@]+:[^/\\s@]+@"),
         )
 
     @Volatile

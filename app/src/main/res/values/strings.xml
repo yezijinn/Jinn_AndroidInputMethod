@@ -156,7 +156,7 @@
 
     <!-- 剪贴板历史 -->
     <string name="clipboard_max_items_title">剪贴板的数量</string>
-    <string name="clipboard_max_items_hint">最多保存条数（1~9999，默认 500）</string>
+    <string name="clipboard_max_items_hint">1~9999 默认 500</string>
     
 
     <!-- Root 增强模式 -->

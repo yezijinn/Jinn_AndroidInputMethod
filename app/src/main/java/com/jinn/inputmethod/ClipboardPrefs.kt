@@ -49,7 +49,10 @@ class ClipboardPrefs(context: Context) {
 
     internal fun exportForBackup(): Map<String, ConfigBackup.BackupValue> {
         val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
-        ConfigBackup.BackupValue.of(enabled)?.let { out[KEY_ENABLED] = it }
+        // ⚠ `enabled` **不进备份**（2026-10-03 修复 L-751）：它是产品不变量、不是用户偏好 ——
+        // 设置页每次进页面都强制 `enabled = true`（历史功能没有独立开关）。而导入侧曾无条件写回，
+        // 于是「覆盖还原」一份带 `enabled=false` 的包会**静默停止剪贴板采集**，且导入摘要与完成提示都不提它；
+        // 更糟的是这个状态会在包与本机之间自我传播。与 [KEY_RECLASSIFIED] 同类，运行态不进备份。
         ConfigBackup.BackupValue.of(maxItems)?.let { out[KEY_MAX_ITEMS] = it }
         return out
     }
@@ -59,7 +62,6 @@ class ClipboardPrefs(context: Context) {
         var applied = 0
         for ((key, v) in values) {
             when (key) {
-                KEY_ENABLED -> (v.value as? Boolean)?.let { enabled = it; applied++ }
                 KEY_MAX_ITEMS -> (v.value as? Int)?.let { maxItems = it; applied++ }
             }
         }

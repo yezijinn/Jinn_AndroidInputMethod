@@ -1750,7 +1750,8 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "「留空即默认」的写侧走 putDefaulted 删键，而不是写死字面量（L-293 / L-288）",
-            "private fun putDefaulted(key: String, value: String, fallback: String)" in prefs &&
+            "private fun putDefaulted(" in prefs &&
+                "multiline: Boolean = false" in prefs &&
                 "if (v.isEmpty() || v == fallback) remove(key) else putString(key, v)" in prefs,
         )
         assertTrue(
@@ -2101,13 +2102,74 @@ class RecentFixesRegressionTest {
             "alignsPerLine 的接口默认值必须是 false（默认 true 会把不按行对齐的家也卷进对拍）",
             "val alignsPerLine: Boolean get() = false" in codeOf("Translation.kt"),
         )
-        // ⚠ 对拍必须按**非空行**计数（2026-10-02 第五轮审查的回归修正）：服务端对空行根本不返回元素
-        // （百度系 `trans_result` 只给有内容的行），把空行算进 expected 会让「原文含空行」的整篇 /
-        // 整行翻译**必然被拒** —— 段落之间有空行是常态 ⇒ 等于百度家在默认场景下 100% 失败。
+        // ⚠ 对拍必须按「有可见内容的行」计数，**且行的切分与行分隔符集合同源**
+        // （2026-10-02 第五轮审查的回归修正 → 2026-10-03 修复 L-679 / L-682）：
+        //  ① 空行不参与：服务端对空行根本不返回元素（百度系 `trans_result` 只给有内容的行），
+        //     把空行算进 expected 会让「原文含空行」的整篇 / 整行翻译**必然被拒**；
+        //  ② 零宽字符行（ZWSP / BOM / TAG）同样不算「有内容」—— `isNotBlank()` 对它们返回
+        //     true，而净化链认它们是空 ⇒ 原文多算一行、误报「服务端少给行」，且提示
+        //     「去掉空行」对用户无效（他看不见那行）；
+        //  ③ 切分必须走 `TranslationText.splitLines`（7 种分隔符同源）：只 `split('\n')` 时，
+        //     服务端用 U+2028 分行 ⇒ 原文 2 行、译文 1 行 ⇒ 已付费却被判少给行而拒绝。
         assertTrue(
-            "对拍必须按非空行计数（空行参与计数会让含空行的整篇翻译必然被拒）",
-            "text.split('\\n').count { it.isNotBlank() }" in client &&
-                "translated.split('\\n').count { it.isNotBlank() }" in client,
+            "对拍必须用 splitLines + hasVisibleContent 计数（切分与行分隔符同源、零宽行不算内容）",
+            "TranslationText.splitLines(text).count { it.hasVisibleContent() }" in client &&
+                "TranslationText.splitLines(translated).count { it.hasVisibleContent() }" in client,
+        )
+        // 上面那条是形态钉，判据真的对不对要靠下面三条行为断言（形态钉挡不住「函数改了但语义反了」）
+        assertEquals(
+            "splitLines 必须把 U+2028 当行分隔符（否则服务端用它分行时误判少给行）",
+            listOf("第一行", "第二行"),
+            TranslationText.splitLines("第一行\u2028第二行"),
+        )
+        assertEquals(
+            "splitLines 必须把 CRLF 当**一个**分隔符（否则凭空多出一行）",
+            listOf("a", "b"),
+            TranslationText.splitLines("a\r\nb"),
+        )
+        assertEquals(
+            "零宽字符行不算「有可见内容」（否则原文多算一行 ⇒ 误报少给行）",
+            0,
+            TranslationText.splitLines("\u200B\uFEFF").count { it.hasVisibleContent() },
+        )
+        // L-678：读取上限必须覆盖「可发上限 × UTF-8 最坏字节数」，否则合法长请求被截成坏 JSON
+        assertTrue(
+            "L-678 违反：响应体读取上限必须 ≥ 可发文本上限的 UTF-8 最坏字节数（" +
+                "${TranslationClient.bodyBytesLimit()} < ${TranslationClient.requiredBodyBytesLimit()}）" +
+                "—— 否则长请求必然归「服务异常」",
+            TranslationClient.bodyBytesLimit() >= TranslationClient.requiredBodyBytesLimit(),
+        )
+        // L-677：代理要求认证的两个码必须归 NETWORK（企业 / 校园网最常见的标准响应）
+        assertTrue(
+            "L-677 守卫缺失：407（代理认证）必须被识别",
+            TranslationClient.isProxyAuthCode(407),
+        )
+        assertTrue(
+            "L-677 守卫缺失：511（网络认证）必须被识别",
+            TranslationClient.isProxyAuthCode(511),
+        )
+        assertFalse(
+            "L-677 误判：普通状态码不得被当成代理认证（401/403/429 各自的分类另有其表）",
+            TranslationClient.isProxyAuthCode(401) || TranslationClient.isProxyAuthCode(403) ||
+                TranslationClient.isProxyAuthCode(429) || TranslationClient.isProxyAuthCode(200),
+        )
+        // L-679：U+2028 / U+2029 是行分隔符（模型常用），但它们在输入框里渲染不出来 ——
+        // 写入前必须剥掉，否则用户只看到「译文粘在一起了」
+        assertEquals(
+            "U+2028 必须在写入前被剥除（渲染层不可见的换行）",
+            "ab",
+            "a\u2028b".sanitizedForOutput(),
+        )
+        assertEquals(
+            "U+2029 必须在写入前被剥除",
+            "ab",
+            "a\u2029b".sanitizedForOutput(),
+        )
+        // 反向：剥除表不得误伤合法内容（ZWJ 家族 emoji / 变体选择符 / 组合字符 / 换行与制表）
+        assertEquals(
+            "剥除表不得误伤 ZWJ 家族 emoji 与换行",
+            "a👨‍👩‍👧\n\tb",
+            "a👨‍👩‍👧\n\tb".sanitizedForOutput(),
         )
         // L-485（2026-10-02 第四轮审查）：插入模式的截断必须提示。与选区模式的两套口径是**故意的**
         // —— 选区替换会丢尾部原文（不可逆）⇒ 拒绝；插入只翻前半段、原文不动 ⇒ 拒绝更糟。
@@ -2153,7 +2215,7 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "L-514：字段合法性必须计入保存成功口径",
-            "val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson).all { it.error == null }" in
+            "editTemperature, editTopP, editMaxTokens" in
                 codeOf("OpenAiSettingsActivity.kt"),
         )
         assertTrue(
@@ -2344,13 +2406,47 @@ class RecentFixesRegressionTest {
         // `wasInFlight` 恒为 false ⇒「翻译已取消」在**同 App 换输入框**（最高频边界）
         // 这条路径上**永不弹**，而它正是 L-603 要关掉的那件事。
         // ⇒ 判据：**每个会复位 flag 的边界入口都必须自己带 notify**，不得靠后面的入口补弹。
-        assertEquals(
-            "会话边界取消提示：五个入口（onFinishInput / onStartInput / onStartInputView / " +
-                "onFinishInputView / switchToVoiceKeyboard）都必须传 notify=true —— " +
-                "不能靠后面的入口补弹（前面那个已把 flag 吃掉）",
-            5,
-            Regex("cancelTranslate\\(notify = true\\)").findAll(ime).count(),
-        )
+        // ⚠ 不用「计数 == N」（L-726：计数型守卫会让「修得更好」也变红），也**不用字符窗口**：
+        // 2026-10-03 审查 L-731 实测窗口法的两个致命失效 ——
+        // ① `commit` 的**注释正文**里就写着「用 `cancelTranslate(notify = true)` 而不是拒绝」，
+        //    删掉真闸门断言照样绿（注释即守卫）；② 切窗锚点 `\n    private fun ` 会把相邻函数
+        //    的那一处算进来，于是 onBackspace / onStartInput / switchToVoiceKeyboard 三条都在
+        //    窗口里「借」了别处的闸门通过。改用本文件已有的 `blockAfter`（花括号配对）。
+        // 会话边界 4 个 + 改宿主文本的入口 7 个（见下），都必须自己带 notify=true。
+        for ((sig, label) in listOf(
+            "override fun onFinishInput(" to "onFinishInput",
+            "override fun onStartInput(" to "onStartInput",
+            "override fun onStartInputView(" to "onStartInputView",
+            "override fun onFinishInputView(" to "onFinishInputView",
+            "private fun switchToVoiceKeyboard(" to "switchToVoiceKeyboard（切键盘）",
+            "override fun onOpenClipboard(" to "onOpenClipboard（打开剪贴板面板）",
+            "private fun commit(" to "commit（打字/候选/空格/预测的唯一出口）",
+            "override fun onBackspace(" to "onBackspace（拼音面板退格）",
+            "private fun deleteAllText(" to "deleteAllText（清空）",
+            "private fun pasteClipboard(" to "pasteClipboard（功能面板粘贴）",
+            "private fun pasteClipboardTextInternal(" to "pasteClipboardTextInternal（面板条目粘贴）",
+            "private fun performEnter(" to "performEnter（回车把原始拼音上屏，不经 commit）",
+            "private fun bindBackspace(" to "bindBackspace（语音面板退格，不经 commit）",
+        )) {
+            assertTrue(
+                "$label 必须自己带 notify=true 的取消（不能靠后面的入口补弹）",
+                "cancelTranslate(notify = true)" in blockAfter(ime, sig),
+            )
+        }
+        // 第 6 处必须落在 onOpenClipboard 体内（2026-10-03 修复 L-688）：翻译在途时打开面板，
+        // 点任意一条就是 commitText 改宿主文本 ⇒ 已付费的译文必然作废，而提示还说「输入已变化」。
+        // 「打开面板」不是会话边界，所以不能靠上面五个入口兜住。
+        // L-688 的「onOpenClipboard 必须自己取消」已由上面列表里的 `onOpenClipboard` 一条覆盖
+        // （2026-10-03 修复 L-731：原先那段用「下一个 override fun」切窗，同样吃注释），
+        // 这里不再重复钉 —— 两处判据同源才不会出现「一条绿一条红」的矛盾。
+        run {
+            val openAt = ime.indexOf("override fun onOpenClipboard(")
+            assertTrue("找不到 onOpenClipboard 的定义", openAt >= 0)
+            assertTrue(
+                "L-688 守卫缺失：onOpenClipboard 必须在翻译在途时取消请求（面板粘贴会改宿主文本）",
+                "cancelTranslate(notify = true)" in blockAfter(ime, "override fun onOpenClipboard("),
+            )
+        }
         assertTrue(
             "onFinishInput 必须带 notify：它先复位 translateInFlight，后面的入口已无从判断",
             Regex("override fun onFinishInput\\(\\)[\\s\\S]{0,1200}?cancelTranslate\\(notify = true\\)")
@@ -2443,20 +2539,404 @@ class RecentFixesRegressionTest {
 
         // ── 第八轮修复（2026-10-03）：成本治理 / 按档取证 / 生命周期 ─────────────────────
         // L-628（资金 + 数据一致性）：译文追加后光标停在插入文本末尾，默认档取「光标前本行」⇒
-        // 再点一次会把**刚写入的译文**再翻一遍（二次付费 + 回译污染正文）。三条一起钉：
-        // 判据存在、成功后记录「已送出的原文」、有专门文案。
+        // 再点一次会把**刚写入的译文**再翻一遍（二次付费 + 回译污染正文）。
+        // ⚠ 这三条守卫在 2026-10-03 被重写：原版钉的是 `slice.text == lastSentText` 与
+        // `lastSentText = snapshot.sent` 两个**字面量** —— 把记账挪到提交之前、或把判据换成
+        // 不含维度的实现，它照样全绿（这正是 L-655 / L-656 能合进来的原因）。
+        // 现版钉「记账点在落地之后」（顺序判据）+「判据是含维度的指纹」（行为断言）。
         assertTrue(
-            "L-628 守卫缺失：同一段文本的重复点击必须被拦下（并记录已送出原文）",
-            "slice.text == lastSentText" in ime &&
-                "lastSentText = snapshot.sent" in ime &&
-                "TEXT_TRANSLATE_REPEATED" in ime,
+            "L-628 守卫缺失：同一段文本的重复点击必须被拦下（判据用含维度的请求指纹）",
+            "repeatKey == lastSentKey" in ime && "TEXT_TRANSLATE_REPEATED" in ime,
+        )
+        // 记账必须排在 appendTranslation **之后** —— 落地失败（宿主变敏感框 / 选区变化 / InputFilter
+        // 丢弃）时用户一个字没拿到，30s 内的重试不该被自己的去重挡回去（L-656）
+        run {
+            val appendAt = ime.indexOf("appendTranslation(connection, snapshot, outcome.text)")
+            val recordAt = ime.indexOf("lastSentKey = repeatKey")
+            assertTrue("L-656 守卫缺失：找不到记账点或 appendTranslation 调用", appendAt >= 0 && recordAt >= 0)
+            assertTrue(
+                "L-656 违反：去重记账必须排在 appendTranslation 之后（落地失败不该被记成「已翻过」）",
+                recordAt > appendAt,
+            )
+        }
+        // 指纹必须带服务方 / 目标语言 / 原文范围：换了其中任何一项都是**另一次合法请求**（L-655）
+        assertEquals(
+            "请求指纹必须随目标语言变化（否则换语言后翻同一段会被误拦成「刚刚翻译过」）",
+            false,
+            translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.JAPANESE,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ),
+        )
+        assertEquals(
+            "请求指纹必须随原文范围变化（否则改范围后翻同一段会被误拦）",
+            false,
+            translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.ALL,
+                "hello",
+            ),
+        )
+        assertEquals(
+            "请求指纹必须随服务方变化",
+            false,
+            translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.DEEPL,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ),
+        )
+        assertEquals(
+            "同一请求（服务方+语言+范围+原文全同）必须命中同一指纹，否则去重永不生效",
+            true,
+            translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ),
+        )
+        // 换输入框必须清指纹：A 框翻过的文本在 B 框里不该被拦（提示让用户「改动原文」在这里无效）
+        assertTrue(
+            "L-655 守卫缺失：onStartInput 必须清空去重指纹（跨输入框误拦）",
+            "lastSentKey = \"\"" in ime,
+        )
+        // ── 第二十四轮修复（2026-10-03）：回归面 + 交叉面 ──────────────────────────
+        // L-702：凭据清洗必须按 Unicode 类别剥，而不是枚举 6 个码位（okhttp 只拒 C0 与 DEL，
+        // 而 U+202F / U+2007 / U+180E / U+00AD / U+2061 既不抛异常也不该留在头里）
+        for (raw in listOf("abc\u00A0def", "abc\u202Fdef", "abc\u007Fdef", "abc\u180Edef", "abc\u00ADdef")) {
+            assertEquals(
+                "凭据里的不可见 / 非法头值字符必须被剥掉：${raw.map { it.code.toString(16) }}",
+                "abcdef",
+                raw.cleanCredential(),
+            )
+        }
+        assertEquals(
+            "凭据**内部**的普通空格必须保留（Base URL 与区域名里合法；首尾空白由 trim 负责）",
+            "https://host/v1/chat",
+            "  https://host/v1/chat  ".cleanCredential(),
+        )
+        // L-707：appendText 的行判据必须与 LINE_BREAKS 同源（否则 CR-only / U+2028 文档里
+        // 译文前多出一个空行）—— 两条行为断言，现状无任何守卫
+        assertEquals(
+            "光标前是 CR 时不该补前导换行（CR-only 文档）",
+            "译文",
+            TranslationText.appendText('\r', "译文"),
+        )
+        assertEquals(
+            "光标前是 U+2028 时不该补前导换行",
+            "译文",
+            TranslationText.appendText('\u2028', "译文"),
+        )
+        assertEquals(
+            "光标前是普通文字时仍要补前导换行（不得把这条判据放宽过头）",
+            "\n译文",
+            TranslationText.appendText('字', "译文"),
+        )
+        // L-704：不可见全集缺口（纯这些字符构成的原文不得判成「有内容」，否则白发一次计费请求）
+        for (raw in listOf("\u180E", "\u3164", "\u034F", "\uD800")) {
+            assertFalse(
+                "该码位必须算「不可见」：U+${raw[0].code.toString(16).uppercase()}",
+                raw.hasVisibleContent(),
+            )
+        }
+        // L-703 + L-739：写超时必须**基线与两处派生都**设。
+        // ⚠ 不用「精确计数 == 2」（L-726）：给基线补上更彻底的修法反而会让它变红 ——
+        // 那种守卫会把「修得更好」判成失败。改成「基线块里有」+「总数 ≥ 3」双向判据。
+        assertTrue(
+            "L-739 守卫缺失：基线 client 必须显式设 writeTimeout" +
+                "（OkHttp 默认只有 10s，而 callTimeoutSec=0 的四家走的就是基线）",
+            "writeTimeout(" in blockAfter(client, "private val http: OkHttpClient by lazy"),
+        )
+        assertTrue(
+            "L-703 守卫缺失：translate 与 fetchModels 两处派生也必须带 writeTimeout",
+            Regex("""\.writeTimeout\(""").findAll(client).count() >= 3,
+        )
+        // L-701：自检请求必须与翻译请求同源（带自定义头）
+        assertTrue(
+            "L-701 守卫缺失：fetchModels 必须接受并注入自定义请求头",
+            "extraHeaders: List<Pair<String, String>> = emptyList()" in client &&
+                "extraHeaders.forEach { (name, value) -> builder.header(name, value) }" in client,
+        )
+        assertTrue(
+            "L-701 守卫缺失：调用处必须把已保存的自定义头传进去",
+            codeOf("OpenAiSettingsActivity.kt").let {
+                "OpenAiTranslator.parseHeaders(prefs.openAiExtraHeaders)" in it
+            },
+        )
+        // L-705：协议级头一律不接纳（填了 Accept-Encoding 会关掉 OkHttp 的透明解压）
+        assertTrue(
+            "L-705 守卫缺失：自定义头必须跳过客户端掌管的协议级头",
+            "CLIENT_OWNED_HEADERS" in codeOf("OpenAiTranslator.kt") &&
+                "accept-encoding" in codeOf("OpenAiTranslator.kt"),
+        )
+        // L-667 / L-668：凭据形态与脱敏表
+        // ⚠ `looksLikeCredential` 是 companion 内的**成员扩展函数**，不能 `TranslationClient.looksLikeCredential(…)`
+        // 那样调，必须进 companion 作用域（`TranslationClientTest` 已有同款写法）。
+        with(TranslationClient) {
+            assertTrue(
+                "20~31 位的纯小写字母数字串必须被当成凭据形态（DeepL Pro 形态）",
+                "0a1b2c3d-4e5f-6789-abcd-ef0123456789".looksLikeCredential(),
+            )
+            assertTrue(
+                "L-667 误判防护：真实错误码不得被形态判据吞掉",
+                !"InvalidAccessKeyIdNotFound".looksLikeCredential() &&
+                    !"SignatureDoesNotMatch".looksLikeCredential() &&
+                    !"InvalidTimeStamp.Expired".looksLikeCredential(),
+            )
+        }
+        val diag = codeOf("Diagnostics.kt")
+        assertTrue(
+            "L-668 守卫缺失：脱敏表必须覆盖 api_key / signature / access_token / userinfo / 非 Bearer 授权头",
+            "api_key" in diag && "access_token" in diag && "proxy-authorization" in diag &&
+                // 源码里是正则字面量，`\\s` 是**两个字符**（反斜杠 + s），所以三引号里也要写两个
+                """https?://[^/\\s:@]+:[^/\\s@]+@""" in diag,
+        )
+        // L-665：自动保存路径也必须消费 unpersistedCredentialKeys
+        assertTrue(
+            "L-665 守卫缺失：自动保存路径（saveCredentials）必须消费 unpersisted 并提示",
+            "unpersistedCredentialKeys()" in codeOf("TranslationSettingsActivity.kt") &&
+                "TEXT_SAVE_NOT_PERSISTED" in codeOf("TranslationSettingsActivity.kt"),
+        )
+        // ── 第二十六轮修复（2026-10-03）：收敛面 + 半扇门 ──────────────────────────
+        // L-715：提示词 / 配置名 / 目标语言必须走**宽松**清洗（保留换行），否则多行提示词被压平，
+        // 且「值 == 默认值就删键」失效 ⇒ 恢复默认后变成显式写键 ⇒ 将来改默认值这批用户拿不到新值。
+        assertEquals(
+            "宽松清洗必须保留换行（提示词本就是多行文本）",
+            "第一行\n{{text}}",
+            "第一行\n{{text}}".cleanPromptText(),
+        )
+        assertEquals(
+            "宽松清洗仍要剥零宽族与 DEL",
+            "ab",
+            "a\u200B\u007Fb".cleanPromptText(),
+        )
+        // ⚠ 逐键断言，不数「出现次数」（L-734：数次数既不绑键名，也会让「把 URL 误改成 multiline」
+        // 这类错误仍然全绿）
+        // ⚠ 这些 setter 是**单行表达式**而不是函数定义，所以不能用 `blockAfter`——
+        // 它会往后找第一个 `{` 而跨进别的函数里。按**行**定位才准确。
+        val prefsSrc = codeOf("Prefs.kt")
+        fun setterLineOf(key: String): String? =
+            prefsSrc.lineSequence().firstOrNull { "putDefaulted($key" in it }
+        for (key in listOf("KEY_OPENAI_SYSTEM_PROMPT", "KEY_OPENAI_USER_PROMPT",
+            "KEY_OPENAI_TARGET_LANGUAGE", "KEY_OPENAI_NAME")) {
+            val line = setterLineOf(key)
+            assertTrue("L-715 守卫缺失：找不到 $key 的 setter 行（改名了？）", line != null)
+            assertTrue(
+                "L-715 守卫缺失：$key 是多行文本字段，必须声明 multiline = true",
+                "multiline = true" in line!!,
+            )
+        }
+        for (key in listOf("KEY_OPENAI_BASE_URL", "KEY_OPENAI_CHAT_PATH",
+            "KEY_OPENAI_MODELS_PATH", "KEY_OPENAI_RESPONSE_PATH")) {
+            val line = setterLineOf(key)
+            assertTrue("L-715 回归防护：找不到 $key 的 setter 行（改名了？）", line != null)
+            assertTrue(
+                "L-715 回归防护：$key 要进 URL 与 HTTP 头，必须走严格版（不得声明 multiline）",
+                "multiline" !in line!!,
+            )
+        }
+        // L-732：宽松清洗必须 trim，否则「值 == 默认值就删键」在带首尾空白时失效
+        assertEquals(
+            "宽松清洗必须 trim（否则备份导入带空白的值不会被判为「等于默认值」而删键）",
+            "第一行\n{{text}}",
+            "  第一行\n{{text}}  ".cleanPromptText(),
+        )
+        // L-720：数字 / 日期类输入框在发请求前就拦（否则译文必被 InputFilter 整段丢弃）
+        val privacy = codeOf("InputFieldPrivacy.kt")
+        assertTrue(
+            "L-720 守卫缺失：必须有独立的「数字/日期类不翻译」判据",
+            "fun rejectsTranslationText(" in privacy &&
+                "TYPE_CLASS_NUMBER" in privacy && "TYPE_CLASS_DATETIME" in privacy,
+        )
+        assertEquals(
+            "数字类输入框必须被判为「不接受译文」",
+            true,
+            InputFieldPrivacy.rejectsTranslationText(android.text.InputType.TYPE_CLASS_NUMBER),
+        )
+        assertEquals(
+            "日期类输入框必须被判为「不接受译文」",
+            true,
+            InputFieldPrivacy.rejectsTranslationText(
+                android.text.InputType.TYPE_CLASS_DATETIME or
+                    android.text.InputType.TYPE_DATETIME_VARIATION_DATE,
+            ),
+        )
+        assertEquals(
+            "普通文本框不得被这条判据拦下（浏览器与聊天框全靠它）",
+            false,
+            InputFieldPrivacy.rejectsTranslationText(
+                android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
+            ),
+        )
+        assertEquals(
+            "EditorInfo 缺失时不得拦（读不到原文时后面自然会报「读不到」）",
+            false,
+            InputFieldPrivacy.rejectsTranslationText(null),
+        )
+        assertTrue(
+            "L-720 守卫缺失：startTranslate 必须在发请求前用上该判据并给专属文案",
+            "rejectsTranslationText(info.inputType)" in ime && "TEXT_TRANSLATE_NUMERIC_FIELD" in ime,
+        )
+        // L-717：显式保存路径必须让 saveCredentials 闭嘴（否则两处 toast 互相打脸）
+        // L-740：回车的三条分支都改宿主文本，闸门必须统一在函数开头一次
+        // （上一轮只补了「原始拼音上屏」那一条，另两条仍会静默作废已付费译文）
+        val enterBlock = blockAfter(ime, "private fun performEnter(")
+        val enterGateAt = enterBlock.indexOf("cancelTranslate(notify = true)")
+        assertTrue("L-740 守卫缺失：performEnter 必须有取消闸门", enterGateAt >= 0)
+        assertTrue(
+            "L-740 回归防护：闸门必须排在三条分支之前（提到函数开头）",
+            enterGateAt < enterBlock.indexOf("performEnter(原始按键上屏)"),
+        )
+        // L-743：onResponse 也必须判 isCanceled（与 onFailure 对称，否则取消后出幽灵失败日志）
+        // 4 = onFailure 两处（原有）+ onResponse 两处（L-743 补齐）：两条链各 2 个 callback
+        assertEquals(
+            "isCanceled 守卫必须四条回调链各一处（onFailure × 2 + onResponse × 2）",
+            4,
+            client.split("if (call.isCanceled())").size - 1,
+        )
+        // 结构化判据改用「守卫里那行日志文案」计数：它只出现在 L-743 新加的两处；
+        // 而「{ 后紧跟 if」的正则形态在 codeOf 剥注释后会因残留空行而不稳（试过，不可靠）
+        assertEquals(
+            "onResponse 两处都必须有「响应到达时已被取消」这条守卫日志（该文案只在新加的两处）",
+            2,
+            client.split("响应到达时已被取消").size - 1,
+        )
+        val openAiSrc = codeOf("OpenAiSettingsActivity.kt")
+        assertTrue(
+            "L-741 守卫缺失：OpenAI 设置页 onPause 必须消费 unpersistedCredentialKeys",
+            "unpersistedCredentialKeys()" in blockAfter(openAiSrc, "override fun onPause(") &&
+                "TEXT_SAVE_NOT_PERSISTED" in openAiSrc,
+        )
+        val trSettings = codeOf("TranslationSettingsActivity.kt")
+        assertTrue(
+            "L-717 守卫缺失：saveAndNotify 必须以 notify = false 调用 saveCredentials",
+            "saveCredentials(notify = false)" in blockAfter(trSettings, "private fun saveAndNotify("),
+        )
+        assertTrue(
+            "L-728 守卫缺失：onPause 的自动保存路径必须 notify = false（否则离开页面弹一次）",
+            "saveCredentials(notify = false)" in blockAfter(trSettings, "override fun onPause("),
+        )
+        assertTrue(
+            "L-728 守卫缺失：失焦监听的自动保存路径必须 notify = false（9 个输入框会弹十几次）",
+            // 监听器声明可能跨行，故按「OnFocusChangeListener 之后的整段」判
+            "saveCredentials(notify = false)" in trSettings.substring(
+                trSettings.indexOf("val save = View.OnFocusChangeListener")
+                    .let { if (it < 0) 0 else it },
+            ),
+        )
+
+        // L-687（性能）：提交侧的整窗口取证是白付的 —— `BeforeText.fromDocStart` 在提交处没有消费者，
+        // 而代价是一次 `getExtractedText(limit)` 的整窗口 Binder 往返（limit 上界 10 万字符 ≈ 200 KB）。
+        // L-629 只在发起处按档关掉了它，提交处漏了 ⇒ 默认档每次成功落地都白付一次。
+        assertTrue(
+            "L-687 守卫缺失：提交阶段读光标前文本必须关掉 doc-start 取证（否则每次成功落地多一次 200KB 往返）",
+            "readTextBeforeCursor(connection, snapshot.limit, probeDocStart = false)" in ime,
+        )
+        assertTrue(
+            "L-687 回归：发起处仍必须按档取证（BEFORE_ALL / ALL 需要知道是否到文档首）",
+            "probeDocStart = needDocStartProbe" in ime,
+        )
+        // L-689：选区模式不记去重（选区是用户明确重新框选的内容）
+        assertTrue(
+            "L-689 守卫缺失：选区翻译成功后不得写去重指纹（否则光标移到别处会被 30s 守卫误拦）",
+            Regex("if \\(!snapshot\\.replaceSelection\\) \\{\\s*lastSentKey = repeatKey").containsMatchIn(ime),
+        )
+        // L-690：未出网的失败不进冷却（INSECURE / CREDENTIAL 是同步早退，一个字节都没出网）
+        assertTrue(
+            "L-690 守卫缺失：非 HTTPS 与凭据含非法字符这两类不得计入失败冷却（提示说「可能已送往服务方」）",
+            Regex("outcome\\.error != TranslationError\\.INSECURE").containsMatchIn(ime) &&
+                Regex("outcome\\.error != TranslationError\\.CREDENTIAL").containsMatchIn(ime),
+        )
+        assertTrue(
+            "L-690 守卫缺失：未出网时要有一行说明（否则用户只看到「不发送」而无从判断）",
+            "请求未发出" in ime,
+        )
+        // L-691：`ui.post` 返回 false 时回调永不执行 ⇒ 必须就地收尾（看门狗与它同队列，一起失效）
+        assertTrue(
+            "L-691 守卫缺失：必须处理 ui.post 返回 false（否则永久停在「翻译中」且看门狗同生共死）",
+            "val posted = ui.post" in ime && "回调未能入队" in ime,
+        )
+        // L-692：落地复核判否时不得指示「手动粘贴」（改写型 InputFilter 下译文已在框里）
+        assertTrue(
+            "L-692 守卫缺失：落地复核判否的文案不得指示手动粘贴",
+            "请手动粘贴" !in ime && "请查看输入框" in ime,
+        )
+        // L-394 的具体落点：语音「结果在途」时翻译入口必须拦（松手后立刻切回拼音是唯一可达时序）
+        assertTrue(
+            "L-394 守卫缺失：startTranslate 必须拦语音结果在途（awaitingResult）",
+            Regex("if \\(awaitingResult\\) \\{").containsMatchIn(ime),
         )
         // L-627（资金）：失败后闸门立即重开 ⇒ 连点即连付（超时 / 断连 / 落地失败 / 取消都可能已计费）。
+        // ⚠ 原守卫只钉「有一个 lastFailAtMs 赋值」，而四条应记账的路径里原先只有一条在写 ——
+        // 现版钉「唯一写点收敛进 markTranslateFailed」+「四个调用点都在」（L-657）。
         assertTrue(
             "L-627 守卫缺失：失败后必须有冷却窗口（并说明该请求可能已送往服务方）",
-            "lastFailAtMs = System.currentTimeMillis()" in ime &&
-                "sinceFail < failCooldownMs" in ime &&
+            "sinceFail < failCooldownMs" in ime &&
                 "TEXT_TRANSLATE_FAIL_COOLDOWN" in ime,
+        )
+        run {
+            val markDef = ime.indexOf("private fun markTranslateFailed(")
+            assertTrue("L-657 守卫缺失：找不到 markTranslateFailed（失败记账的唯一写点）", markDef >= 0)
+            val calls = Regex("markTranslateFailed\\(").findAll(ime).count()
+            // 1 处定义 + 4 个调用点：回调失败 / 落地失败 / 会话边界取消 / 看门狗超时 / 发起失败
+            assertTrue(
+                "L-657 违反：四条「可能已计费」的路径必须都记账（现状 $calls 处，含定义）",
+                calls >= 5,
+            )
+            // 唯一写点：lastFailAtMs 的赋值只能出现在 markTranslateFailed 里
+            val writerAt = ime.indexOf("lastFailAtMs = System.currentTimeMillis()")
+            assertTrue("L-657 守卫缺失：找不到 lastFailAtMs 的写入", writerAt >= 0)
+            assertTrue(
+                "L-657 违反：lastFailAtMs 必须只在 markTranslateFailed 里写（分散写点必漏一路）",
+                writerAt in (markDef + 1)..(markDef + 800),
+            )
+        }
+        // 落地复核：宿主「少给字符」必须记为**未测**而不是「没写进去」（L-681）
+        assertEquals(
+            "读不到（null）必须记为未测、不得误报",
+            null,
+            commitProbeVerdict(null, "译文", 2),
+        )
+        assertEquals(
+            "宿主少给字符时必须记为未测（否则一条已写入的译文被报成「可能未写入」）",
+            null,
+            commitProbeVerdict("译", "译文内容", 4),
+        )
+        assertEquals(
+            "尾部对得上时确认落地",
+            true,
+            commitProbeVerdict("前文译文", "译文", 2),
+        )
+        assertEquals(
+            "尾部对不上时判为未落地（宿主丢弃了写入）",
+            false,
+            commitProbeVerdict("前文别的", "译文", 2),
         )
         // L-629（性能）：取证只有 BEFORE_ALL / ALL 两档会用 ⇒ 其余档位不得为它多付一次整窗口往返。
         assertTrue(

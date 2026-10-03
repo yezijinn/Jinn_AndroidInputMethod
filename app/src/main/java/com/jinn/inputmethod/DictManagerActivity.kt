@@ -165,14 +165,15 @@ class DictManagerActivity : Activity() {
             setTypeface(Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        // 右上角关闭：结束本页返回设置页
+        // 右上角关闭：结束本页返回设置页（统一走 PageChrome 的文案与无障碍名，2026-10-03 修复 L-676）
         bar.addView(TextView(this).apply {
-            text = "✕"
+            text = PageChrome.CLOSE
+            contentDescription = PageChrome.CLOSE_DESC
             setTextColor(getColor(R.color.text_secondary))
             textSize = 20f
             gravity = Gravity.CENTER
             isClickable = true
-            setPadding(dp(12), dp(2), dp(12), dp(2))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             setOnClickListener {
                 Diagnostics.i(TAG, "DictManagerActivity: 用户关闭页面")
                 finish()

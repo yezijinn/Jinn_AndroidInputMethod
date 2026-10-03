@@ -210,13 +210,39 @@ class TranslationSettingsActivity : Activity() {
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过凭据回写（避免覆盖导入结果）")
         } else {
-            saveCredentials()
+            // 同上：onPause 是自动保存路径，弹 toast 会与失焦那次重复（L-728）
+            saveCredentials(notify = false)
+            // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03 修复 L-774）：L-758 把它加在了 if/else 之外，
+            // 而 L-405 的守卫只判「`importing` 字符串在 onPause 块里出现过」、不判「所有回写都在分支内」
+            // ⇒ 一旦可达就是「界面旧值覆盖刚导入的值」。姊妹页 OpenAiSettingsActivity 的同类回写已整段在守卫内。
+            //
+            // 读屏 / 外接键盘选中的那一次可能既没被 `onItemSelected` 的闸门放行、也没进
+            // `saveCredentials`（它只管凭据字段）⇒ 服务方 / 目标语言会静默丢失。
+            // 这里按「当前选中项」补写一次：用户能看见的就是下拉框显示的那一项。
+            val pickedProvider = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
+            if (pickedProvider != null && pickedProvider.id != prefs.translateProvider) {
+                prefs.translateProvider = pickedProvider.id
+                Diagnostics.i(TAG, "翻译服务(onPause 回写): ${pickedProvider.id}")
+            }
+            val pickedTarget = TranslationLanguage.entries.getOrNull(spinnerTarget.selectedItemPosition)
+            if (pickedTarget != null && pickedTarget.name != prefs.translateTarget) {
+                prefs.translateTarget = pickedTarget.name
+                Diagnostics.i(TAG, "翻译目标语言(onPause 回写): ${pickedTarget.name}")
+            }
         }
         if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 凭据落盘失败（改动可能回退）")
     }
 
-    /** 区分用户交互（触控/无障碍/键盘）与代码初始化回调 */
-    private fun isUserDriven(view: View): Boolean = view.isFocused || view.isPressed
+    /**
+     * 这次改动**是不是用户做的**。
+     *
+     * ⚠ 必须含 [View.isAccessibilityFocused]（2026-10-03 修复 L-758）：读屏与外接键盘选下拉**不产生触摸事件**
+     *   ⇒ 少了这一位，TalkBack 双击选中的服务方 / 目标语言会被判成「不是用户动的」而**不落盘**，
+     *   而界面早已切到对应区块，用户以为生效了。同一项目 `OpenAiSettingsActivity` 早就这么写。
+     */
+    private fun isUserDriven(view: View): Boolean =
+        view.isFocused || view.isPressed || view.isAccessibilityFocused
+
 
     private fun initSpinners() {
         spinnerProvider.adapter = ArrayAdapter(
@@ -224,19 +250,25 @@ class TranslationSettingsActivity : Activity() {
             TranslationProviderId.entries.map { it.label },
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerProvider.setOnTouchListener { view, event ->
-            providerTouched = true
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             false
         }
         spinnerProvider.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                // ⚠ 顺序：先判闸门、再切界面（2026-10-03 修复 L-758）。原先是「先 applyProviderVisibility()
+                // 再判 isUserDriven」⇒ 读屏 / 外接键盘用户选中后，界面已经切成新服务方的凭据区块，
+                // 而落盘被跳过 ⇒ **界面说谎**（用户在新区块里填了 AppID/SecretKey 却没生效）。
+                if (!providerTouched && !isUserDriven(spinnerProvider)) return
+                providerTouched = true
+                // ⚠ 这一句是 L-768：上一批把闸门与注释都改到位了，**唯独把方法体里这句删掉没补回**
+                // ⇒ 改服务方后六个凭据区块不切换、spinnerTarget 不置灰、labelTarget 不换，
+                // 而值仍会落盘 ⇒ 下次打开页面「突然变成」上次选的服务方。
                 applyProviderVisibility()
-                if (isUserDriven(spinnerProvider)) providerTouched = true
-                if (!providerTouched) return
-                val picked = TranslationProviderId.entries.getOrNull(position) ?: return
-                if (picked.id != prefs.translateProvider) {
-                    prefs.translateProvider = picked.id
-                    Diagnostics.i(TAG, "翻译服务: ${picked.id}")
+                // 与目标语言监听器对称：选中即落盘，不等「保存」按钮
+                val pickedNow = TranslationProviderId.entries.getOrNull(position)
+                if (pickedNow != null && pickedNow.id != prefs.translateProvider) {
+                    prefs.translateProvider = pickedNow.id
+                    Diagnostics.i(TAG, "翻译服务: ${pickedNow.id}")
                 }
             }
 
@@ -269,7 +301,12 @@ class TranslationSettingsActivity : Activity() {
 
     /** 焦点移出输入框时自动暂存 */
     private fun bindCredentialFields() {
-        val save = View.OnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveCredentials() }
+        // 失焦是高频触发点（9 个输入框），弹 toast 会变成十几次，而 textSaveHint 的常驻提示
+        // 已经说清一切 ⇒ 自动路径一律 notify = false（2026-10-03 修复 L-728：上一轮只改了
+        // 显式保存那条，自动路径漏了，代码与自己写的注释相互矛盾）
+        val save = View.OnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) saveCredentials(notify = false)
+        }
         editAliyunKeyId.setOnFocusChangeListener(save)
         editAliyunKeySecret.setOnFocusChangeListener(save)
         editAzureKey.setOnFocusChangeListener(save)
@@ -334,8 +371,15 @@ class TranslationSettingsActivity : Activity() {
             "当前：${scope.label} · 上限 ${prefs.translateMaxBytesOf(picked)} 字节"
     }
 
-    /** 保存修改过的凭据，日志仅输出长度 */
-    private fun saveCredentials() {
+    /**
+     * 保存修改过的凭据，日志仅输出长度。
+     *
+     * @param notify 是否由本函数弹「未写入本机」的 toast。**显式保存那条路要传 `false`**
+     *   （2026-10-03 修复 L-717）：它自己会按三态出文案（未落盘 / 回读不符 / 已保存），
+     *   两处都弹会互相打脸 —— Toast 队列后者覆盖前者，用户最终只看到信息量最少的那句
+     *   「保存未完成，请重试」，而本可执行的「解锁后重试」被吃掉。
+     */
+    private fun saveCredentials(notify: Boolean = true) {
         if (saveGuard.changed(editAliyunKeyId)) prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
         if (saveGuard.changed(editAliyunKeySecret)) {
             prefs.aliyunAccessKeySecret = editAliyunKeySecret.text.toString()
@@ -359,6 +403,20 @@ class TranslationSettingsActivity : Activity() {
         )
         refreshState()
         purgeClipboardHistory(configuredCredentials())
+        // ⚠ 自动保存路径必须也消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-665）：
+        // `writeCredential` 在 Keystore 不可用时把键记进该集合并**删掉磁盘旧密文**（fail-closed，
+        // 有意设计），而它的 KDoc 写明「供**显式保存**如实报告」—— 显式保存是 `saveAndNotify` 那条路。
+        // 本页的落盘时机是**失焦 / onPause 自动保存**（L-209 已记该窗口），也就是说绝大多数改动
+        // 根本走不到告知分支：用户看到「已配置 / 已保存」，重启后该家回到未配置 ⇒ **Key 静默丢失**。
+        // 不新增状态词，复用既有的 TEXT_SAVE_NOT_PERSISTED。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isNotEmpty()) {
+            Diagnostics.w(TAG, "凭据未落盘（自动保存路径）: ${unpersisted.size} 项")
+            // 只改常驻提示，不弹 toast —— 失焦/onPause 都是高频触发点（9 个输入框 + 离开页面），
+            // 弹一次会变成十几次（2026-10-03 修复 L-717 的第二半）。
+            textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            if (notify) toast(TEXT_SAVE_NOT_PERSISTED)
+        }
     }
 
     /** 执行同步落盘并回读校验，展示确认状态 */
@@ -369,7 +427,9 @@ class TranslationSettingsActivity : Activity() {
         if (pickedTarget != null && pickedProvider != TranslationProviderId.OPENAI) {
             prefs.translateTarget = pickedTarget.name
         }
-        saveCredentials()
+        // 显式保存：由本函数按三态统一出文案（未落盘 / 回读不符 / 已保存），
+        // 所以 saveCredentials 不再自己弹 —— 否则两处 toast 互相打脸（L-717）
+        saveCredentials(notify = false)
         val flushed = prefs.flush()
         val failed = mismatchedCredentials()
         val unpersisted = prefs.unpersistedCredentialKeys()
@@ -459,11 +519,11 @@ class TranslationSettingsActivity : Activity() {
         const val TAG = "TranslationSettings"
 
         const val TEXT_TITLE = "翻译设置"
-        const val TEXT_DESC = "使用你自带的 API 凭据翻译（BYOK）：输入法不内置任何共享 Key，凭据只存本机。\n" +
-            "怎么用：点键盘功能面板的「翻译」—— 选中了内容就翻选中的那一段、译文原地替换；" +
-            "没选中就按「翻译原文范围」取光标前后的文本，译文另起一行追加、原文一个字不动。\n" +
-            "免费额度（2026-10 核对，以平台为准）：阿里云 100 万字符/月；Azure F0 层 200 万字符/月；" +
-            "百度标准版 5 万字符/月（个人认证后 100 万）；百度大模型与 DeepL 各为一次性 100 万字符。"
+        const val TEXT_DESC = "使用你申请的 API Key 和相关凭证 \n" +
+            "有框选,原文消失,选中的内容直接用译文替换,原文消失 \n" +
+            "没框选,原文不变,根据'翻译原文范围'取文本,在下行补充译文 \n" +
+            "免费额度：阿里云 100 万字符/月；Azure 200 万字符/月 \n" +
+            "百度 机翻 5 万字符/月；百度大模型与 DeepL 一次性 100 万字符"
         const val TEXT_PROVIDER = "翻译服务"
         const val TEXT_ALIYUN_KEY_ID = "阿里云 AccessKey ID"
         const val TEXT_ALIYUN_KEY_ID_HINT = "RAM 用户的 AccessKey ID"
@@ -487,16 +547,16 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_OPENAI_UNCONFIGURED = "未配置：点上面的按钮填 Base URL / API Key / 模型"
         const val TEXT_SOURCE_CONFIG = "翻译原文范围（每家服务方独立）"
         const val TEXT_TARGET = "目标语言"
-        const val TEXT_TARGET_OPENAI = "目标语言（OpenAI 兼容在配置页里设置）"
-        const val TEXT_PRIVACY = "上传的是哪一段：选中模式下只有你选中的那一段；" +
-            "没选中时按「翻译原文范围」取（默认只取光标所在这一行里光标前面的内容）。\n" +
+        const val TEXT_TARGET_OPENAI = "输出目标语言（OpenAI 兼容在配置页里设置）"
+        const val TEXT_PRIVACY = "上传的原文是哪一段?\n有框选,你框选的那一段内容就是要传的原文(译文覆盖原文) \n" +
+            "没框选,按「翻译原文范围」取原文(译文放下一行) \n" +
             "密码类输入框、以及声明「不要个性化学习」的输入框不会翻译。\n" +
-            "凭据只存本机，随配置备份一起加密；界面与日志只显示是否已配置。"
+            "凭据只存本机，随配置备份加密；界面与日志只显示是否已配置。"
         const val TEXT_CONFIGURED = "已配置"
         const val TEXT_UNCONFIGURED = "未配置：还没填凭据"
 
         const val TEXT_SAVE = "保存"
-        const val TEXT_SAVE_IDLE = "点「保存」立即写入本机（改动也会在离开页面时自动保存）"
+        const val TEXT_SAVE_IDLE = "点「保存」时 立即存入本机（即使不点,离开本页时,也会自动保存）"
         const val TEXT_SAVED = "已保存到本机"
         const val TEXT_SAVE_FAILED = "保存未完成，请重试"
         const val TEXT_SAVE_MISMATCH = "未写入的字段："
@@ -509,6 +569,6 @@ class TranslationSettingsActivity : Activity() {
          * 不算失败（配置确实存下来了），但必须说清 —— 否则同一屏上「已保存到本机」与状态文字的
          * 「未配置：还没填凭据」并存，用户会以为保存没生效而反复粘贴。
          */
-        const val TEXT_SAVE_INCOMPLETE = "已保存到本机；当前服务方的凭据还不完整，补齐后才能翻译"
+        const val TEXT_SAVE_INCOMPLETE = "已保存；当前服务方凭据不完整，补齐后才能翻译"
     }
 }

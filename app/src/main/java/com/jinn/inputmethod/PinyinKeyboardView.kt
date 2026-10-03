@@ -46,6 +46,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : LinearLayout(context, attrs) {
 
+    init {
+        // ⚠ 键位方向必须锁 LTR（2026-10-03 修复 L-763）：manifest 声明了 supportsRtl=true，而 IME 输入视图默认跟随
+        // locale 翻转 ⇒ RTL 语系下整个键盘（含 QWERTY 字母区与候选栏的功能面板）左右镜像，
+        // 而「收起恒为最右端」「退格在左、删除在右」这些都是写死在代码里的约定（LTR 语义），
+        // 镜像后收起到最左、翻译键换到另一侧 ⇒ 肌肉记忆失效、误触。
+        // IMEs 的通行做法就是键位永不跟随 locale；设置页保持继承 RTL（它们本就该镜像）。
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+    }
+
     /** 回调接口，全部在主线程调用 */
     interface Listener {
         /** 上屏文本（中文字符或英文字母） */
@@ -2704,7 +2713,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             translateButtonBox = buildFunctionButton(
                 label = if (translateInFlight) LABEL_TRANSLATING else LABEL_TRANSLATE,
                 hint = "网络",
-                onClick = { listener?.onTranslate() },
+                // ⚠ 面板上也记一笔（2026-10-03 修复 L-759）：同面板的「历史 / 方向 / 退出搜索」都有 i 级日志，
+                // 唯独翻译键没有 ⇒ 用户报「点了没反应」时，诊断包**证明不了他点过**。
+                onClick = {
+                    Diagnostics.i("PinyinKeyboardView", "功能面板: 点翻译 inFlight=$translateInFlight")
+                    listener?.onTranslate()
+                },
             ).also { applyTranslatingVisuals(it, translateInFlight) }
             viewCandidateList.addView(translateButtonBox)
         } else {
@@ -2745,6 +2759,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             minimumHeight = dp(REUSE_BLOCK_MIN_DP)
             isClickable = true
             isFocusable = true
+            // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
+            contentDescription = "$label $hint"
             setOnClickListener { onClick() }
         }
         // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 或 7 个按钮，翻译键按总开关增减）
@@ -2816,8 +2832,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val group = box as? ViewGroup ?: return
         val labelView = group.getChildAt(0) as? TextView ?: return
         labelView.text = if (on) LABEL_TRANSLATING else LABEL_TRANSLATE
-        group.isEnabled = !on
+        // ⚠ 不用 isEnabled 表达「在途」（2026-10-03 修复 L-764）：`isEnabled=false` 会把控件从无障碍树里
+        // 摘掉 ⇒ 读屏用户在 60~300s 的大模型请求期间**既听不到「翻译中」，也失去了这个唯一状态**。
+        // 改为「不可点 + 半透明」，并把状态写进 contentDescription 与主动播报。
+        group.isClickable = !on
+        group.isFocusable = true
         group.alpha = if (on) 0.5f else 1f
+        val hintView = group.getChildAt(1) as? TextView
+        group.contentDescription = if (on) LABEL_TRANSLATING else "${LABEL_TRANSLATE} ${hintView?.text ?: ""}"
+        if (on) group.announceForAccessibility(LABEL_TRANSLATING)
     }
 
     /**

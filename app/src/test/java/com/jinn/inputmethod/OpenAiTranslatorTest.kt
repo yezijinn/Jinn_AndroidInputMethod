@@ -225,7 +225,10 @@ class OpenAiTranslatorTest {
         assertEquals(OpenAiTranslator.DEFAULT_SYSTEM_PROMPT, messages.getJSONObject(0).getString("content"))
         assertEquals("user", messages.getJSONObject(1).getString("role"))
         assertEquals(
-            "请将以下文本翻译成简体中文，只返回译文：\n你好世界",
+            // 期望值跟着默认目标语言走（2026-10-03 修正）：硬编码「简体中文」会让
+            // `DEFAULT_TARGET_LANGUAGE` 一改就红，而那条红与本用例要验的「逐字展开」无关。
+            // 判据强度不变 —— 仍是逐字比对展开结果。
+            "请将以下文本翻译成${OpenAiTranslator.DEFAULT_TARGET_LANGUAGE}，只返回译文：\n你好世界",
             messages.getJSONObject(1).getString("content"),
         )
     }

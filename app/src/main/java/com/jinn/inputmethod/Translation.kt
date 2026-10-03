@@ -332,6 +332,34 @@ internal object TranslationText {
      */
     internal fun isLineBreak(c: Char): Boolean = c in LINE_BREAKS
 
+    /**
+     * 按 [LINE_BREAKS] 切分文本（**保留空行**，与 `String.split` 的默认行为一致）。
+     *
+     * 存在的理由只有一个：**「行」的定义此前有三份**。切分与落点认 [LINE_BREAKS] 的 7 种分隔符，
+     * 而 [TranslationClient] 的行对齐对拍只 `split('\n')` ⇒ 服务端用 U+2028 分行时，
+     * 原文数出 2 行、译文数出 1 行 ⇒ 判「服务端少给行」而拒绝写入（已付费却什么都没拿到），
+     * 且 U+2028 作为 `Zl` 类字符还会原样进输入框（渲染层不可见）。
+     * 同一个概念必须只有一处判据（2026-10-03 修复 L-679）。
+     */
+    internal fun splitLines(text: CharSequence): List<String> {
+        val out = ArrayList<String>()
+        var start = 0
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (isLineBreak(c)) {
+                out.add(text.substring(start, i).toString())
+                // `\r\n` 是**一个**分隔符算一行，别把它切出两个空行
+                i += if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') 2 else 1
+                start = i
+            } else {
+                i++
+            }
+        }
+        out.add(text.substring(start, text.length).toString())
+        return out
+    }
+
     /** [text] 里最后一个行分隔符（见 [LINE_BREAKS]）的下标；`-1` = 没有 */
     private fun lastLineBreak(text: CharSequence): Int {
         for (i in text.length - 1 downTo 0) {
@@ -439,7 +467,12 @@ internal object TranslationText {
         // 空 / 纯零宽译文只返回空串：绝不留下孤立换行或不可见字符（上游按 EMPTY 拦截，
         // 这里是纯函数兜底；零宽判据见 [hasVisibleContent]），2026-09-30 第二轮审查
         if (!body.hasVisibleContent()) return ""
-        if (prev == null || prev == '\n') return body
+        // ⚠ 行判据必须与 [LINE_BREAKS] 同源（2026-10-03 修复 L-707）：这里原先只认 `'\n'`，
+        // 是「什么算换行」的**第二份实现**。而 `prev` 的两个来源都会喂进别的分隔符 ——
+        // 光标模式下取 `beforeNow.last()`，CR-only / U+2028 文档里光标在行首时它是 `'\r'` / `'\u2028'`；
+        // 区间模式下取 `charBeforeCursor()`，光标刚被移到整行 / 整篇末尾，前一字符**必然**是行分隔符
+        // （而落点复核刚用 [isLineBreak] **放行**了它）。判据不一致 ⇒ 译文前多出一个空行。
+        if (prev == null || isLineBreak(prev)) return body
         return "\n$body"
     }
 }
@@ -552,11 +585,19 @@ private fun isInvisibleCodePoint(cp: Int): Boolean = when {
     cp in ZERO_WIDTH_CODEPOINTS -> true
     cp == 0x00AD -> true                      // 软连字符
     cp in 0x2061..0x2064 -> true               // 不可见运算符（U+2060 已在 ZERO_WIDTH 里）
+    cp in 0x206A..0x206F -> true               // 废弃格式符（inhibit / symmetry 等，L-704）
     cp == 0x061C -> true                      // ALM（阿拉伯字母标记）：同族，判空侧也要认（L-343）
     cp in 0xFE00..0xFE0F -> true               // 变体选择符（没有基字符时无意义）
-    cp in 0xE0000..0xE007F -> true             // TAG 字符（按**码位**整段覆盖，2026-10-02 修复 L-339）
+    cp in 0xE0000..0xE01EF -> true             // TAG 字符 + VS Supplement（L-704 补齐 Supplement 段）
     cp == 0x2800 -> true                      // 盲文空白（L-343）
     cp == 0x115F || cp == 0xFFA0 -> true       // Hangul 填充符（L-343）
+    // ↓↓ L-704（2026-10-03）：以下三类此前漏判，纯它们构成的原文会被判成「有内容」⇒ 发一次
+    // **真实计费**请求，模型面对一个不可见字符可能编造整句译文并写进用户正文。
+    cp in 0x180B..0x180E -> true              // 蒙古文元音分隔符（U+180E 至今仍被大量编辑器插入）
+    cp == 0x3164 -> true                      // Hangul Filler（韩语最常用；上两条只收了 115F / FFA0）
+    cp == 0x034F -> true                      // COMBINING GRAPHEME JOINER（Mn 类，不可见）
+    cp in 0xD800..0xDFFF -> true              // 孤立代理（**判空侧**；正常代理对不会被拆开遍历，
+    //                                            剥除表不得加它 —— 那会破坏 emoji，见 L-578 的教训）
     else -> false
 }
 
@@ -611,21 +652,80 @@ private fun Char.isInvisibleControl(): Boolean = when {
     this < ' ' -> true                    // C0（含 \r、\u0000、ESC）
     this == '\u007F' -> true              // DEL
     this in '\u0080'..'\u009F' -> true     // C1（含 U+0085 NEL ——「看不见的换行」）
+    // U+2028 / U+2029（Zl / Zp，行分隔符）：行分隔符集合里有它们（[LINE_BREAKS]），而服务端
+    // 用它们分行时会被 [TranslationClient] 的行对齐对拍按「少给行」拒绝 —— 既然本函数是
+    // 「写入前不许把不可见字符带进用户输入框」的最后一道网，这两个也必须剥掉，否则会
+    // 静默进正文：它们在渲染层不可见，用户只会看到「译文粘在一起了」（2026-10-03 修复 L-679）
+    this == '\u2028' || this == '\u2029' -> true
     this in BIDI_CONTROLS -> true         // 双向文本控制符
     this == '\u061C' -> true              // ALM：改显示序（与 BIDI 同族），此前漏在剥除表外（L-343）
     else -> false
 }
 
 /**
- * 凭据/端点取值的统一清洗：**剥掉不可见字符再 trim**。
+ * 凭据/端点取值的统一清洗：**剥掉不可见 / 非法头值字符再 trim**（2026-10-03 修复 L-702）。
  *
- * 为什么必须剥（2026-09-30 第二轮审查，并用探针单测实测确认）：这些字符从网页/文档复制时极常见，
- * 而 `String.trim()` **不删**它们（trim 只删 ≤ U+0020）。带着 NBSP 的 Key 进 OkHttp 的
- * `header("Authorization", …)` 会抛 `IllegalArgumentException: Unexpected char 0xa0`，
- * 被 TranslationClient 兜成 PARAM → 用户看到「请检查语言设置」，与真实原因（Key 里混了个不可见字符）
- * 完全无关，而且肉眼永远查不出来。
+ * 剥除判据从「枚举 6 个码位」改成**按 Unicode 类别**（`FORMAT` / `LINE_SEPARATOR` /
+ * `PARAGRAPH_SEPARATOR` / `SPACE_SEPARATOR` / `CONTROL`）+ `DEL`：
+ *  - 原先只剥 `ZERO_WIDTH` 六码位，而**真正会让 okhttp 4.12 抛 `IllegalArgumentException` 的
+ *    `U+007F`（DEL）不在其中**（`trim()` 也不删它），带 DEL 的 Key 走到客户端才被归 CREDENTIAL；
+ *  - 更常见的一类是**既不抛异常、也不被剥**的那些（U+202F / U+2007 / U+180E / U+00AD / U+2061）：
+ *    它们直接进 `Authorization` 头 ⇒ 服务端 401 ⇒ 归 AUTH「请检查凭据」，用户拿肉眼看不出问题的
+ *    Key 反复核对仍失败，整条链没有一处指向真因 —— 正是本函数 KDoc 想避免的结局。
+ *
+ * ⚠ 按**类别**而不是白名单枚举，是为了不再漏下一个：不可见字符是 Unicode 里的一个类，不是 6 个点。
+ * ⚠ 逐**码位**处理（`codePointAt` + `charCount`）：按 `Char` 迭代会把代理对拆成两个单元。
  */
-internal fun String.cleanCredential(): String = filter { it !in ZERO_WIDTH }.trim()
+internal fun String.cleanCredential(): String {
+    val sb = StringBuilder(length)
+    var changed = false
+    var i = 0
+    while (i < length) {
+        val cp = codePointAt(i)
+        if (isCredentialUnsafeChar(cp)) {
+            changed = true
+        } else {
+            sb.appendCodePoint(cp)
+        }
+        i += Character.charCount(cp)
+    }
+    return (if (changed) sb.toString() else this).trim()
+}
+
+/**
+ * **多行文本**（提示词 / 配置名 / 目标语言）的清洗：**只剥零宽族与 DEL，保留换行与制表**。
+ *
+ * ⚠ 与 [cleanCredential] 分开的原因（2026-10-03 修复 L-715）：严格版会剥掉全部 C0（含 `\n`），
+ * 而提示词**本来就可以是多行** —— 设置页的输入框就是 `textMultiLine` + `maxLines=8`，
+ * `OpenAiTranslator.DEFAULT_USER_PROMPT` 本身也带一个 `\n`。用严格版的后果是：
+ * ① 用户写的多行提示词被静默压成一行（界面上仍显示多行，无任何提示）；
+ * ② 「恢复默认提示词」存下去的是被剥版，而 [cleanCredential] 之外的 `putDefaulted` 判据
+ * （值 == 默认值就删键）因此不成立 ⇒ 本该删键变成显式写键 ⇒ 将来 App 改默认值，
+ * 这批用户永远拿不到新默认。
+ * ③ 备份导入走同一 setter ⇒ 带换行的提示词导入即被压平。
+ *
+ * 仍然要剥的：零宽族（含 ZWSP / ZWNJ / ZWJ / BOM）与 `DEL` —— 它们同样会让模型收到不可见内容，
+ * 且在提示词里没有任何合法用途（想换行请用回车）。
+ */
+internal fun String.cleanPromptText(): String = filter { it !in ZERO_WIDTH && it != '\u007F' }.trim()
+
+/**
+ * 该码位是否必须从凭据 / 端点取值里剥掉（理由见 [cleanCredential]）。 */
+private fun isCredentialUnsafeChar(cp: Int): Boolean {
+    if (cp < 0x20 || cp == 0x7F) return true // C0 与 DEL：okhttp 头值校验直接拒（按码位比）
+    // ⚠ SPACE_SEPARATOR 里**必须放过 U+0020（普通空格）**：它在凭据内部是合法的（Base URL 的 path、
+    // Azure 区域名都可能出现），整类剥掉会把 `https://host/v1/chat` 之类的取值拼坏 ——
+    // 首尾空白由 `trim()` 负责，只有「看起来像空白但不是空白」的那些（NBSP / U+202F / U+2007）该剥。
+    if (Character.getType(cp).toByte() == Character.SPACE_SEPARATOR) return cp != 0x20
+    return when (Character.getType(cp).toByte()) {
+        Character.FORMAT,
+        Character.LINE_SEPARATOR,
+        Character.PARAGRAPH_SEPARATOR,
+        Character.CONTROL,
+        -> true
+        else -> false
+    }
+}
 
 /**
  * Azure 区域的归一：**小写、去空格与连字符**（2026-10-02 修复 L-347）。

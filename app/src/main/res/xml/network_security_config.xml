@@ -43,7 +43,11 @@
         <domain includeSubdomains="true">api.deepl.com</domain>
         <domain includeSubdomains="true">api-free.deepl.com</domain>
         <!-- OpenAI 兼容的**默认端点**：它同样是可静态枚举的常量（用户自填的其它域名无法枚举，
-             仍靠代码判据）—— 漏掉它等于代码侧 https 判据一旦回归就明文放行（2026-10-01 审查 L-228） -->
+             仍靠代码判据）—— 漏掉它等于代码侧 https 判据一旦回归就明文放行（2026-10-01 审查 L-228）。
+             ⚠ 2026-10-03：默认端点已改为 DeepSeek（见 OpenAiTranslator.DEFAULT_BASE_URL），
+             原来只有 api.openai.com ⇒ 平台层兜底**漏了真正在用的那个**，这里补上；
+             api.openai.com 保留（它是设置页与 KDoc 里的「用户可填示例」，不少用户会照抄）。 -->
+        <domain includeSubdomains="true">api.deepseek.com</domain>
         <domain includeSubdomains="true">api.openai.com</domain>
     </domain-config>
 

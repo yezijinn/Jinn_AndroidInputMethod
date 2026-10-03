@@ -152,7 +152,10 @@ class OpenAiSettingsActivity : Activity() {
             editResponsePath, editTimeout, editHeaders, editExtraJson,
         )) {
             f.setOnFocusChangeListener { _, hasFocus ->
-                if (hasFocus && !loading) textSaveHint.text = TEXT_SAVE_IDLE
+                    // ⚠ 未落盘是**持续状态**（Keystore 锁住时写不进），不能被获得焦点时复位掉（L-750）
+                    if (hasFocus && !loading && prefs.unpersistedCredentialKeys().isEmpty()) {
+                        textSaveHint.text = TEXT_SAVE_IDLE
+                    }
             }
         }
         // 显式保存（2026-10-01 用户要求）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
@@ -204,6 +207,15 @@ class OpenAiSettingsActivity : Activity() {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过配置回写（避免覆盖导入结果）")
         } else {
             saveValues()
+            // ⚠ 自动保存路径也要消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-741）：
+            // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
+            // 而本页只有「保存」按钮那条路读这个集合 ⇒ 填完 Key 直接返回的用户看到的是
+            // 「界面照旧显示已配置、重启后回到未配置」，全程零提示。翻译页已修（L-728），两页口径要一致。
+            val unpersisted = prefs.unpersistedCredentialKeys()
+            if (unpersisted.isNotEmpty()) {
+                Diagnostics.w(TAG, "凭据未落盘（自动保存路径）: ${unpersisted.size} 项")
+                textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            }
         }
         // flush 的布尔值就是「有没有真落盘」，不许丢（2026-10-02 修复 L-407）
         if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
@@ -465,7 +477,10 @@ class OpenAiSettingsActivity : Activity() {
         } else {
             TEXT_NEED_HTTPS
         }
-        val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson).all { it.error == null }
+        // ⚠ 三个数字字段也必须计入（2026-10-03 修复 L-771）：`applyNumberField` 给它们设了 `error`，
+        // 而本判据原先只看三个字符串字段 ⇒ 红字与「已保存到本机」同屏（L-514 要消灭的形态原样存在）。
+        val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson, editTemperature, editTopP, editMaxTokens)
+            .all { it.error == null }
         val ok = flushed && keyOk && unpersisted.isEmpty() && fieldsOk
         // 三态 +1（2026-10-02 修复 L-420 的 OpenAI 页侧）：原来失败只有一句
         // 「保存未完成」，分不清是写盘失败、Key 未落盘、还是核对不一致
@@ -513,7 +528,15 @@ class OpenAiSettingsActivity : Activity() {
         fetchCall?.cancel()
         fetchGeneration++
         val generation = fetchGeneration
-        fetchCall = TranslationClient.fetchModels(url, prefs.openAiApiKey, prefs.openAiTimeoutSec) { models, code ->
+        // 自检与翻译同源（2026-10-03 修复 L-701）：把自定义请求头一并带上，否则指向需要额外
+        // 认证头的网关（Azure OpenAI 的 `api-key`、Cloudflare Access、OpenRouter 组织头）时
+        // 翻译能成功、自检却必然 401/403，而提示里真因一个字都没有。
+        fetchCall = TranslationClient.fetchModels(
+            url,
+            prefs.openAiApiKey,
+            prefs.openAiTimeoutSec,
+            OpenAiTranslator.parseHeaders(prefs.openAiExtraHeaders),
+        ) { models, code ->
             runOnUiThread {
                 // 页面可能在响应回来前就被关掉（整体超时上限可到 300s）：往已 finish 的 Activity
                 // 上 show() 会抛 WindowManager$BadTokenException 直接崩溃（与 SettingsActivity:810
@@ -597,17 +620,17 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_BASE_URL = "API Base URL"
         const val TEXT_BASE_URL_HINT = "如 https://api.openai.com/v1"
         const val TEXT_API_KEY = "API Key"
-        const val TEXT_API_KEY_HINT = "Bearer 鉴权用（只存本机，不进日志）"
+        const val TEXT_API_KEY_HINT = "Bearer Token 鉴权用（只存本机，不进日志）"
         const val TEXT_MODEL = "Model"
         const val TEXT_MODEL_HINT = "模型 ID，可点「获取模型」拉取"
         const val TEXT_FETCH_MODELS = "获取模型"
         const val TEXT_TEST = "测试连接"
 
-        const val TEXT_TARGET = "目标语言"
-        const val TEXT_TARGET_CUSTOM = "自定义语言（非空则优先）"
-        const val TEXT_TARGET_CUSTOM_HINT = "如 粤语、古文、繁體中文（台灣）"
-        const val TEXT_SYSTEM = "System Prompt"
-        const val TEXT_USER = "User Prompt"
+        const val TEXT_TARGET = "输出语言(默认目标)"
+        const val TEXT_TARGET_CUSTOM = "自定义输出语言（留空则用默认,非空则以此处为准）"
+        const val TEXT_TARGET_CUSTOM_HINT = "如 粤语、繁體、拉丁文"
+        const val TEXT_SYSTEM = "System Prompt 系统提示词"
+        const val TEXT_USER = "User Prompt 用户提示词"
         const val TEXT_PROMPT_RESET = "恢复默认提示词"
         const val TEXT_PROMPT_RESET_DONE = "已恢复默认提示词"
 
@@ -635,7 +658,7 @@ const val TEXT_EXTRA_JSON_HINT =
             "{\"enable_thinking\": false}；值写 null = 删掉同名标准参数" +
                 "（如 {\"max_tokens\": null, \"max_completion_tokens\": 2048}）"
 
-        const val TEXT_FOOTER = "提示：JSON 写错只会被忽略并在此提示，不影响翻译；换服务只需改这里的路径与参数。"
+        const val TEXT_FOOTER = "提示：JSON 写错只会被忽略并在此提示，不影响翻译\n换服务只需改这里的路径与参数。"
         const val TEXT_FETCHING = "正在请求…"
         const val TEXT_MODELS_EMPTY = "服务端返回了空列表（不代表配置错误）"
         const val TEXT_PICK_MODEL = "选择模型"

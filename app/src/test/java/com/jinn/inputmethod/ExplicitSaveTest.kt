@@ -93,7 +93,9 @@ class ExplicitSaveTest {
         assertEquals("布局里的输入框与登记表必须一一对应（新增字段要同时登记）", translationFields.keys, ids)
         val body = bodyOf(
             TestSources.codeSource("TranslationSettingsActivity.kt"),
-            "private fun saveCredentials()",
+            // 只钉到函数名（形参在 2026-10-03 修复 L-717 时加了 `notify: Boolean = true`，
+            // 锁死完整签名会让「加一个默认参数」这种无害改动也变红 —— 那是形态钉的过度收紧）
+            "private fun saveCredentials(",
         )
         val missing = translationFields.values.filterNot { it in body }
         assertTrue("这些输入框没进 saveCredentials()：$missing（填了不会生效）", missing.isEmpty())
@@ -127,7 +129,8 @@ class ExplicitSaveTest {
     @Test
     fun `保存按钮必须落盘、回填并给提示`() {
         val pages = listOf(
-            Triple("TranslationSettingsActivity.kt", "saveCredentials()", "btn_translate_save"),
+            // 同上：只认「调用了 saveCredentials」这件事，不锁参数形态
+            Triple("TranslationSettingsActivity.kt", "saveCredentials(", "btn_translate_save"),
             Triple("OpenAiSettingsActivity.kt", "saveValues()", "btn_ai_save"),
         )
         for ((file, writeCall, buttonId) in pages) {

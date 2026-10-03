@@ -1862,28 +1862,23 @@ class SettingsActivity : ComponentActivity() {
         // ── 配置备份文案（strings.xml 默认禁改，文案收敛在此处） ──
         const val TEXT_EXPORT_CONFIG = "导出配置文件"
         const val TEXT_IMPORT_CONFIG = "导入配置文件"
-        const val TEXT_CONFIG_HINT = "导出为加密备份包（AES-256 整包加密，密码只能用中文汉字）；导入需输入该密码"
-        const val TEXT_EXPORT_DESC = "导出内容：全部设置项、用户词频，以及下面勾选的附加数据。\n" +
-            "设置项里还包含连接设置（服务器地址/端口）与语音提示词，包内另记录来源设备型号与 App 版本；" +
-            // ⚠ 翻译凭据必须点名（2026-10-02 第四轮审查）：六家的 API Key / AppID / SecretKey / AccessKey
-            // 是**无条件**进包的（导出侧取的是 Keystore 解密后的明文，只包在整包密码的壳里）——
-            // 这是全项目唯一能把凭据带出设备、且绕开本机 Keystore 的路径，但原先的说明只告知了
-            // 剪贴板明文，用户完全不知道 Key 也在包里。
-            "翻译 API 凭据（六家的 Key / AppID / SecretKey / AccessKey）也在包内，同样只靠整包密码保护；" +
-            "请勿复用常用密码，也不要分享给不信任的人。\n" +
-            "分享给他人前请先确认。\n" +
-            "备份包用密码加密，密码只能用中文汉字、4~64 个字（建议 6 个字以上）；密码不保存在本机，忘记后无法解密。"
+        const val TEXT_CONFIG_HINT = "AES-256 加密  密码只能用汉字  导入时要输密码"
+        const val TEXT_EXPORT_DESC = "导出内容：全部设置项、用户词频\n" +
+            "包含连接设置（服务器地址/端口）与语音提示词" +
+            "包含翻译设置的 API Key 凭据" +
+            "禁止分享给不信任的人(即使它无法破解)\n" +
+            "密码不保存在本机，忘记后无法解密 永久丢失"
         const val TEXT_INCLUDE_CLIPBOARD =
-            "包含剪贴板历史（在包内以明文保存，仅靠整包密码保护；可能含身份证、手机号、地址、银行卡、账号口令）"
-        const val TEXT_INCLUDE_DICTS = "包含已下载的可选词库（体积较大）"
-        const val TEXT_PWD_HINT = "备份密码（只能用汉字，4~64 字，别用同一个字重复）"
+            "额外导出:剪贴板历史 明文，靠压缩密码保护\n可能含身份地址、手机银行、账号密码"
+        const val TEXT_INCLUDE_DICTS = "额外导出:已下载词库（没必要,可重复下）"
+        const val TEXT_PWD_HINT = "备份密码（4~64 个不相同的汉字）"
         const val TEXT_PWD_HINT_CONFIRM = "再输一次备份密码"
         const val TEXT_PWD_MISMATCH = "两次输入的密码不一致"
         const val TEXT_EXPORTING = "正在打包并加密…"
         const val TEXT_EXPORT_FAIL = "导出失败，请重试"
         const val TEXT_IMPORT_PWD_TITLE = "输入备份密码"
-        const val TEXT_IMPORT_PWD_DESC = "该备份已加密。请输入导出时设置的密码（只能用汉字）。\n" +
-            "密码错误或文件被改动都无法解密，这是加密包的保护机制。"
+        const val TEXT_IMPORT_PWD_DESC = "备份已加密  请输入导出时设置的密码\n" +
+            "密码错误 / 文件被改动 都无法解密"
         const val TEXT_DECRYPTING = "正在解密（密钥校验中，请稍候）…"
         const val TEXT_DECRYPT_FAIL = "密码错误或文件已损坏，无法解密"
         const val TEXT_EXPORT_CANCELED = "已取消导出"
@@ -1903,7 +1898,7 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
 
         // 在线翻译（BYOK）：卡片文案（页面内的标题 / 说明 / 按钮文案在 TranslationSettingsActivity 里下发）
-        const val TEXT_TRANSLATE_SWITCH = "启用翻译"
+        const val TEXT_TRANSLATE_SWITCH = "启用翻译(需要联网,发送原文,接收译文)"
         const val TEXT_TRANSLATE_SETTINGS = "翻译设置"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +

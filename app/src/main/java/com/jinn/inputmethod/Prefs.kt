@@ -813,17 +813,27 @@ class Prefs(context: Context) {
      * 清洗后为空、或恰好等于默认值 ⇒ **删键**，不写死字面量 —— 这样 App 升级默认值时老用户能跟着
      * 拿到新值（口径同 [openAiTimeoutSec] 的 setter，2026-10-01 修复 L-255）。
      *
-     * 清洗统一走 [cleanCredential]：Base URL / 路径 / 提示词都是「从网页复制」的高发区，混进 NBSP
-     * 或零宽字符会让 URL 解析失败、或让响应解析路径取不到值（2026-10-01 修复 L-288）。
+     * 清洗分两档（2026-10-03 修复 L-715）：
+     *  - [multiline] = true（提示词 / 配置名 / 目标语言）走 [cleanPromptText]，**保留换行** ——
+     *    这些字段本就是多行文本（设置页 `textMultiLine`，且默认提示词自带 `\n`），用严格版会把它压平，
+     *    还会让下面「值 == 默认值就删键」的判据失效（默认提示词被剥成单行 ⇒ 显式写键 ⇒ 将来改默认值
+     *    这批用户永远拿不到新默认）。
+     *  - 其余（Base URL / 三个 path）走 [cleanCredential] 严格版：这些值要进 URL 与 HTTP 头，
+     *    换行是**非法**字符，留着会让 [OpenAiTranslator.joinUrl] 直接解析失败。
      */
-    private fun putDefaulted(key: String, value: String, fallback: String) = sp.edit {
-        val v = value.cleanCredential()
+    private fun putDefaulted(
+        key: String,
+        value: String,
+        fallback: String,
+        multiline: Boolean = false,
+    ) = sp.edit {
+        val v = if (multiline) value.cleanPromptText() else value.cleanCredential()
         if (v.isEmpty() || v == fallback) remove(key) else putString(key, v)
     }
 
     var openAiName: String
         get() = defaulted(strOr(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
-        set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME)
+        set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME, multiline = true)
 
     /**
      * OpenAI 兼容服务的 Base URL（默认官方 `https://api.openai.com/v1`）。
@@ -868,17 +878,22 @@ class Prefs(context: Context) {
             strOr(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty(),
             OpenAiTranslator.DEFAULT_TARGET_LANGUAGE,
         )
-        set(value) = putDefaulted(KEY_OPENAI_TARGET_LANGUAGE, value, OpenAiTranslator.DEFAULT_TARGET_LANGUAGE)
+        // 目标语言是单行值，但用户可能从网页复制带零宽/全角空格的形态 ⇒ 仍走宽松版（L-715）
+        set(value) = putDefaulted(KEY_OPENAI_TARGET_LANGUAGE, value, OpenAiTranslator.DEFAULT_TARGET_LANGUAGE, multiline = true)
 
     /** System 提示词（可整段改写；支持 `{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`） */
     var openAiSystemPrompt: String
         get() = defaulted(strOr(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
-        set(value) = putDefaulted(KEY_OPENAI_SYSTEM_PROMPT, value, OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
+        // ⚠ `multiline = true`：提示词**保留换行**（L-715）。用严格版会把多行提示词压成一行，
+        // 还会让「值 == 默认值就删键」失效 ⇒ 恢复默认后变成显式写键 ⇒ 将来改默认值这批用户拿不到新值。
+        // （写成单行是刻意的：守卫要按 `putDefaulted(<键名>` 定位，跨行会让锚点失配）
+        set(value) = putDefaulted(KEY_OPENAI_SYSTEM_PROMPT, value, OpenAiTranslator.DEFAULT_SYSTEM_PROMPT, multiline = true)
 
     /** User 提示词模板（同上；变量替换见 [OpenAiTranslator.applyTemplate]） */
     var openAiUserPrompt: String
         get() = defaulted(strOr(KEY_OPENAI_USER_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_USER_PROMPT)
-        set(value) = putDefaulted(KEY_OPENAI_USER_PROMPT, value, OpenAiTranslator.DEFAULT_USER_PROMPT)
+        // 默认模板本身就含一个 `\n`（`…只返回译文：\n{{text}}`）⇒ 同样必须走宽松版（L-715）
+        set(value) = putDefaulted(KEY_OPENAI_USER_PROMPT, value, OpenAiTranslator.DEFAULT_USER_PROMPT, multiline = true)
 
     /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
     var openAiTemperature: String

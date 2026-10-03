@@ -106,7 +106,10 @@ class NetworkPolicyTest {
             "fanyi-api.baidu.com",                   // BaiduTranslator / BaiduLlmTranslator.ENDPOINT
             "api.deepl.com",                         // DeepLTranslator.PRO_ENDPOINT
             "api-free.deepl.com",                    // DeepLTranslator.FREE_ENDPOINT
-            "api.openai.com",                        // OpenAiTranslator.DEFAULT_BASE_URL
+            "api.deepseek.com",                       // OpenAiTranslator.DEFAULT_BASE_URL（2026-10-03 核对：
+            //                                            默认端点已是 deepseek；`api.openai.com` 仍作为
+            //                                            「用户可填的示例」出现在设置页提示与 KDoc 里，
+            //                                            而 KDoc 不在端点常量的扫描范围内）
         )
         // ② 反向对拍：每个 host 必须真的写在某个 Translator 源码里（清单过时/写错 → 变红提示同步，
         //    不依赖正则匹配 URL 的引号形态，比"提取"更稳）
@@ -147,7 +150,12 @@ class NetworkPolicyTest {
         //    新增一个域名不会有任何东西变红 —— api.openai.com 就是这样漏过一次。这条把方向补齐：
         //    禁明文块里的**每个**域名都得在已知清单里（翻译端点 ∪ 词库下载端点）。
         //    清单只增不减：域名该不该禁明文是安全决策，不能为了让断言变绿而从清单里删。
-        val knownHosts = hosts + listOf("github.com", "objects.githubusercontent.com", "gitee.com")
+        val knownHosts = hosts + listOf(
+            // 用户可填的示例端点：不是代码里的默认常量（默认是 deepseek），但它在设置页提示与
+            // KDoc 里以明文出现、且用户确实会照抄 ⇒ 平台层同样要禁明文（L-228 的原意）
+            "api.openai.com",
+            "github.com", "objects.githubusercontent.com", "gitee.com",
+        )
         val declared = Regex("<domain[^>]*>\\s*([A-Za-z0-9.\\-]+)\\s*</domain>")
             .findAll(denyBlock)
             .map { it.groupValues[1] }

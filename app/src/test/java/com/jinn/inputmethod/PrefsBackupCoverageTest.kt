@@ -276,17 +276,42 @@ class PrefsBackupCoverageTest {
     }
 
     @Test
-    fun `剪贴板配置的两个键也必须进白名单`() {
+    fun `剪贴板白名单只认容量键：总开关是产品不变量，不进备份`() {
         val clipSource = listOf(
             File("src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt"),
             File("app/src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt"),
         ).firstOrNull { it.isFile } ?: error("找不到 ClipboardPrefs.kt")
         val text = clipSource.readText()
+        // ⚠ 只看 importFromBackup 的**函数体**：`substringAfter("importFromBackup")` 会一路吃到
+        // companion object，而那里仍有 `private const val KEY_ENABLED`（声明，不是白名单）⇒
+        // 用它判「导入白名单里没有 KEY_ENABLED」永远为假（2026-10-03 实测）。
+        val importBody = text.substringAfter("internal fun importFromBackup")
+            .substringBefore("companion object")
         for (key in listOf("KEY_ENABLED", "KEY_MAX_ITEMS")) {
             assertTrue("$key 未在 ClipboardPrefs 中声明", text.contains("private const val $key"))
-            assertTrue("$key 未进导出白名单", text.contains("out[$key] = it"))
-            assertTrue("$key 未进导入白名单", text.substringAfter("importFromBackup").contains(key))
         }
+        // 容量键是用户偏好，必须往返都进白名单
+        assertTrue("KEY_MAX_ITEMS 未进导出白名单", text.contains("out[KEY_MAX_ITEMS] = it"))
+        assertTrue(
+            "KEY_MAX_ITEMS 未进导入白名单",
+            importBody.contains("KEY_MAX_ITEMS"),
+        )
+        // ⚠ 总开关**必须不在**往返里（2026-10-03 修复 L-751）：它是产品不变量（设置页每次进页面都
+        // 强制 true），而导入侧曾无条件写回 ⇒ 「覆盖还原」一份带 false 的包会静默停止剪贴板采集，
+        // 导入摘要与完成提示都不提它，且该状态会在包与本机之间自我传播。
+        assertTrue(
+            "KEY_ENABLED 不得进导出白名单（否则覆盖还原会静默停采集）",
+            !text.contains("out[KEY_ENABLED] = it"),
+        )
+        assertTrue(
+            "KEY_ENABLED 不得进导入白名单（旧包里的 false 也必须忽略）",
+            !importBody.contains("KEY_ENABLED"),
+        )
+        // 与另一条运行态标记口径一致（reclassified 早已以同样理由剔除）
+        assertTrue(
+            "剪贴板的运行态标记应一致地都不进备份",
+            !text.contains("out[KEY_RECLASSIFIED] = it"),
+        )
     }
 
     /**

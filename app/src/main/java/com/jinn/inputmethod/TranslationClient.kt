@@ -46,12 +46,18 @@ internal object TranslationClient {
     private val CREDENTIAL_PREFIXES = listOf("sk-", "sk_", "pk-", "ak-", "ltai", "gsk_", "hf_")
 
     /**
-     * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，256KB 足够宽松，
+     * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，本值足够宽松，
      * 同时挡住「Base URL 指到一个返回大文件/大 HTML 的站点时整段读进内存」的内存尖峰
      * （2026-09-30 第二轮审查：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
      * 非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份）。
+     *
+     * ⚠ **必须 ≥ 可发文本上限的 4 倍 + 余量**（2026-10-03 修复 L-678）：可发上限是
+     * `TranslationText.MAX_READ_CHARS`（10 万）个**码位**，UTF-8 最坏 4 字节/码位 ⇒ 上界
+     * 400 KB。原先 256 KB 与它脱钩：`peekBody` 截断后首字符仍是 `{`，过得了门户判别，
+     * 随后 `JSONObject` 抛异常 ⇒ 一条**完全合法**的长请求（DeepL 默认上限就是 10 万）
+     * 被归成「翻译服务异常」，已付费却一个字都不写。
      */
-    private const val MAX_BODY_BYTES = 256L * 1024
+    private const val MAX_BODY_BYTES = 420L * 1024
 
     /**
      * 只走 TLS 1.2+，不跟随跨协议跳转：翻译地址是常量 HTTPS，任何降级都是异常。
@@ -65,6 +71,12 @@ internal object TranslationClient {
         OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
+            // ⚠ 写超时**必须显式设**（2026-10-03 修复 L-739）：上一轮只给两处**派生** client 补了它，
+            // 基线一直没设 ⇒ 一直是 OkHttp 默认的 10 s。而 `callTimeoutSec` 默认 0 的那四家
+            // （DeepL / Azure / 百度通用 / 阿里云）走的正是基线，其中 DeepL 出厂单次上限就有
+            // 100_000 字节、Azure 50_000。OkHttp 默认 writeTimeout=10s 会**先于** callTimeout 25s 到点，
+            // 抛的仍是 InterruptedIOException ⇒ 归 TIMEOUT（不是 NETWORK）；本行只是把「每次 socket 写」
+            .writeTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
             .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
             .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
             // 翻译端点是**用户自填**的（中转 / 聚合网关是常见用法）：跟随重定向意味着一个不太可信
@@ -158,6 +170,53 @@ internal object TranslationClient {
      * 响应解析交给 Provider（纯函数）。日志只记 Provider 类名、语言、字数与响应码，
      * **凭据与正文一个字都不进日志**。
      */
+    /**
+     * 唯一的回调出口：把结果交给 [onDone]，并**吞掉回调自身的异常**（2026-10-03 修复 L-680）。
+     *
+     * 为什么要包这一层：OkHttp 在调用 `onResponse` **之前**就置了 `signalledCallback`，此后从
+     * 回调里抛出的 Throwable **不会**回落到 `onFailure`，而是冒到 dispatcher 线程 ⇒ 未捕获处理器
+     * 接手 ⇒ **整个 IME 进程终止**（键盘消失、未上屏拼音与在途译文一起丢）。
+     * 本文件此前只给 `parseResponse` 加了一层（见响应侧那段注释），而**回调本身**与同层的
+     * `Diagnostics` / `stripWrapper` 都是裸调 —— 载体已经就位，只差这一行保护。
+     */
+    private fun deliver(onDone: (TranslationOutcome) -> Unit, outcome: TranslationOutcome) {
+        runCatching { onDone(outcome) }.onFailure {
+            Diagnostics.w(TAG, "翻译: onDone 回调抛出异常（已吞住，不影响进程）: ${it.javaClass.simpleName}")
+        }
+    }
+
+    /** [deliver] 的 `fetchModels` 版（回调签名不同，成因与后果完全相同） */
+    private fun deliverModels(
+        onDone: (List<String>?, Int) -> Unit,
+        models: List<String>?,
+        code: Int,
+    ) {
+        runCatching { onDone(models, code) }.onFailure {
+            Diagnostics.w(TAG, "拉取模型: onDone 回调抛出异常（已吞住，不影响进程）: ${it.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * 代理要求认证的响应码（407 / 511）—— 企业代理与校园网接入的**标准**响应
+     * （2026-10-03 修复 L-677）。
+     *
+     * 与「2xx + HTML 门户页」同族：真因都是「网络还没认证」，重试一百次也没用；原先它们落各家
+     * 码表的 `else -> SERVER`，提示「翻译服务异常，请稍后重试」⇒ 用户反复重试且每次都真计费。
+     */
+    internal fun isProxyAuthCode(code: Int): Boolean = code == 407 || code == 511
+
+    /**
+     * 读取上限的**可测口径**（守卫用）：实际值必须覆盖「可发文本上限的 UTF-8 最坏字节数 + 余量」。
+     *
+     * 为什么要可测：两个上限分属两个文件、此前互不知情（256KB vs 10 万码位最坏 400KB）⇒
+     * 一条**完全合法**的长请求必然被截断成「服务端返回了坏 JSON」，而日志里只有一个
+     * 「解析异常」。钉住这个不等式，那类回归就会在门禁里红（2026-10-03 修复 L-678）。
+     */
+    internal fun bodyBytesLimit(): Long = MAX_BODY_BYTES
+
+    /** 可发文本按 UTF-8 最坏情况（4 字节/码位）编码后的上界 + 4KB 余量 */
+    internal fun requiredBodyBytesLimit(): Long = TranslationText.MAX_READ_CHARS * 4L + 4096L
+
     fun translate(
         provider: TranslationProvider,
         text: String,
@@ -179,7 +238,7 @@ internal object TranslationClient {
             } else {
                 TranslationError.PARAM
             }
-            onDone(TranslationOutcome.Fail(error))
+            deliver(onDone, TranslationOutcome.Fail(error))
             return null
         }
         // HTTPS 硬判据（与 UpdateChecker 同款）：地址被改成明文一律拒发。
@@ -187,7 +246,7 @@ internal object TranslationClient {
         // 提示「翻译服务异常」会让用户无从下手（2026-09-30 审查发现）。
         if (!request.url.isHttps) {
             Diagnostics.w(TAG, "翻译地址不是 HTTPS，拒绝发送")
-            onDone(TranslationOutcome.Fail(TranslationError.INSECURE))
+            deliver(onDone, TranslationOutcome.Fail(TranslationError.INSECURE))
             return null
         }
         // 补端点 host（2026-10-03 修复 L-619）：六家里 `OpenAiTranslator` **一个类**覆盖无数
@@ -202,10 +261,16 @@ internal object TranslationClient {
         // Provider 可以要求更宽的时间预算（大模型首字延迟不可控）：0 = 用客户端默认。
         // ⚠ 必须**派生 client** 同时放宽 readTimeout —— 只设 `Call.timeout()`（整体预算）时，
         // client 级的 20s 读超时依旧先生效（真机实测：20s 到点抛 SocketTimeoutException）。
+        // ⚠ 写超时同样要派生（2026-10-03 修复 L-703）：基线 client 从未设置 `writeTimeout`
+        // ⇒ 一直是 OkHttp 默认的 **10s**。各家 body 可达 100~300 KB（DeepL 上限 100 KB、
+        // Azure 50 KB，JSON 转义后更大），弱网（200 kbps）下 300 KB ≈ 12 s > 10 s ⇒
+        // `SocketTimeoutException` 被归成 NETWORK「网络错误，请检查网络」，而网络其实是通的，
+        // 用户会反复重试、每次真计费。三处超时必须一起派生。
         // `newBuilder()` 复用连接池与线程池，成本可忽略。
         val client = if (provider.callTimeoutSec > 0) {
             http.newBuilder()
                 .readTimeout(provider.callTimeoutSec.toLong(), TimeUnit.SECONDS)
+                .writeTimeout(provider.callTimeoutSec.toLong(), TimeUnit.SECONDS)
                 .callTimeout(provider.callTimeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
         } else {
@@ -220,7 +285,7 @@ internal object TranslationClient {
                 // `翻译失败: IOException → NETWORK`。用户报「翻译老是失败」时，诊断包里
                 // 无法区分「他自己切了框」与「真断网」。调用方那边靠代际丢弃、不受影响。
                 if (call.isCanceled()) {
-                    Diagnostics.i(TAG, "翻译: 请求已被取消（会话边界，不是网络故障）")
+                    Diagnostics.i(TAG, traceTag(traceId) + "翻译: 请求已被取消（会话边界，不是网络故障）")
                     return
                 }
                 // SocketTimeoutException 与 callTimeout 的 InterruptedIOException 同族，一并归超时
@@ -230,10 +295,21 @@ internal object TranslationClient {
                     TranslationError.NETWORK
                 }
                 Diagnostics.w(TAG, traceTag(traceId) + "翻译失败: ${e.javaClass.simpleName} → $error")
-                onDone(TranslationOutcome.Fail(error))
+                deliver(onDone, TranslationOutcome.Fail(error))
             }
 
             override fun onResponse(call: Call, response: Response) {
+                // 取消可能发生在响应头已到达之后：此时 OkHttp 已置 signalledCallback、不会再回调
+                // onFailure，而是带着已取消的 exchange 调 onResponse。读体的 IOException 被
+                // readBodyCapped 吞掉后 body 变成 null，于是跳过非 JSON 判别、落到
+                // parseResponse(200, null)，打出一串「HTTP 200 chars=0 / 解析失败」—— 用户无感
+                // （代际闸门会丢结果），代价是诊断包被污染 + 大 body 白读。与 onFailure 的
+                // isCanceled 判定对称（2026-10-03 修复 L-743）
+                if (call.isCanceled()) {
+                    Diagnostics.i(TAG, traceTag(traceId) + "翻译: 响应到达时已被取消（不解析、不记账）")
+                    response.close()
+                    return
+                }
                 response.use {
                     val body = readBodyCapped(it)
                     // 记协议：排障时「走的哪个协议」是第一个要分清的事（曾疑 503 与 h2 有关，实测排除）
@@ -257,7 +333,19 @@ internal object TranslationClient {
                         val locHost = it.header("Location")
                             ?.let { loc -> runCatching { loc.toHttpUrlOrNull()?.host }.getOrNull() }
                         Diagnostics.w(TAG, traceTag(traceId) + "翻译端点返回重定向: HTTP ${it.code} → ${locHost ?: "无可解析 Location"}")
-                        onDone(TranslationOutcome.Fail(TranslationError.REDIRECT))
+                        deliver(onDone, TranslationOutcome.Fail(TranslationError.REDIRECT))
+                        return@use
+                    }
+                    // 代理要求认证（407 / 511）：企业 / 校园网接入的**标准**响应，与下面的门户页
+                    // 同族 —— 真因都是「网络还没认证」，原先落各家码表的 `else -> SERVER`，
+                    // 提示「服务异常，请稍后重试」会让用户反复重试且每次真计费（2026-10-03 修复 L-677）
+                    if (isProxyAuthCode(it.code)) {
+                        Diagnostics.w(
+                            TAG,
+                            traceTag(traceId) + "翻译响应被代理要求认证: HTTP ${it.code} " +
+                                "（代理未放行该域名，重试无效）",
+                        )
+                        deliver(onDone, TranslationOutcome.Fail(TranslationError.NETWORK))
                         return@use
                     }
                     // 2xx 但**不是 JSON**：公共 WiFi 的门户页 / 企业 MITM 代理会回 200 + text/html
@@ -271,7 +359,7 @@ internal object TranslationClient {
                             "翻译响应不是 JSON（可能被登录门户 / 代理拦截）: HTTP ${it.code} " +
                                 "ct=${headerBrief(it.header("Content-Type"))}",
                         )
-                        onDone(TranslationOutcome.Fail(TranslationError.NETWORK))
+                        deliver(onDone, TranslationOutcome.Fail(TranslationError.NETWORK))
                         return@use
                     }
                     // 失败时只记**结构化摘要**（长度 + 白名单错误码），绝不记响应体原文：
@@ -302,7 +390,13 @@ internal object TranslationClient {
                     // 这里再兜一层：第七家写漏时最多丢一次结果，不会杀进程。
                     val outcome = runCatching { provider.parseResponse(it.code, body) }
                         .getOrElse {
-                            Diagnostics.w(TAG, traceTag(traceId) + "翻译响应解析异常: ${it.javaClass.simpleName}")
+                            // 「可能已被读取上限截断」要一起记：否则「合法长请求的译文超上限」
+                            // 会被读成服务端返回了坏 JSON（2026-10-03 修复 L-678 的归因侧）
+                            Diagnostics.w(
+                                TAG,
+                                traceTag(traceId) + "翻译响应解析异常: ${it.javaClass.simpleName}" +
+                                    (if (capped) "（响应体已顶到读取上限，可能被截断）" else ""),
+                            )
                             TranslationOutcome.Fail(TranslationError.SERVER)
                         }
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
@@ -329,8 +423,16 @@ internal object TranslationClient {
                         // 根本不返回元素（百度系 `trans_result` 只给有内容的行），把空行算进 expected
                         // 会让「原文含空行」的整篇 / 整行翻译**必然被拒** —— 而段落之间有空行是常态，
                         // 等于百度家在默认场景下 100% 失败。两边都按**非空行**计数，口径一致。
-                        val expected = text.split('\n').count { it.isNotBlank() }
-                        val actual = translated.split('\n').count { it.isNotBlank() }
+                        // ②「行」的判据与 [TranslationText.LINE_BREAKS] **同源**（2026-10-03 修复 L-679）：
+                        //   原先只 `split('\n')`，而切分与落点认 7 种分隔符（`\r` / U+2028 / U+2029 /
+                        //   U+0085 / U+000B / U+000C）⇒ 服务端用 U+2028 分行时，原文数出 2 行、
+                        //   译文数出 1 行 ⇒ 判「少给行」而**拒绝写入**（已付费却什么都没拿到）。
+                        // ③「这一行算不算」用 [hasVisibleContent] 而不是 `isNotBlank`：后者对
+                        //   ZWSP / BOM / TAG 这类零宽字符返回 true，而净化链认它们是「空」⇒
+                        //   原文多算一行、同样误报（且提示「去掉空行」对用户无效，他看不见那行）
+                        //   （2026-10-03 修复 L-682）。
+                        val expected = TranslationText.splitLines(text).count { it.hasVisibleContent() }
+                        val actual = TranslationText.splitLines(translated).count { it.hasVisibleContent() }
                         if (provider.alignsPerLine && actual < expected) {
                             Diagnostics.w(
                                 TAG,
@@ -346,7 +448,7 @@ internal object TranslationClient {
                     } else {
                         outcome
                     }
-                    onDone(final)
+                    deliver(onDone, final)
                 }
             }
         })
@@ -371,6 +473,7 @@ internal object TranslationClient {
         url: HttpUrl,
         apiKey: String,
         timeoutSec: Int,
+        extraHeaders: List<Pair<String, String>> = emptyList(),
         onDone: (List<String>?, Int) -> Unit,
     ): Call? {
         // HTTPS 硬判据与 translate 同款（2026-09-30 审查发现：这里曾漏掉）：Base URL 填成
@@ -379,7 +482,7 @@ internal object TranslationClient {
         // 区分开，调用方才能给出「可修」的提示。
         if (!url.isHttps) {
             Diagnostics.w(TAG, "获取模型: 地址不是 HTTPS，拒绝发送")
-            onDone(null, -2)
+            deliverModels(onDone, null, -2)
             return null
         }
         val builder = Request.Builder().url(url).get()
@@ -387,16 +490,23 @@ internal object TranslationClient {
         // 线程，会直接冒到设置页）—— 与 translate 侧同款兜底，归「凭据不可用」（2026-10-01 审查 L-228）
         val headerOk = runCatching {
             if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+            // ⚠ 自检请求必须与翻译请求**同源**（2026-10-03 修复 L-701）：这里原先只发 Bearer，
+            // 而翻译走 `buildRequest` 会注入 `extraHeaders` ⇒ 指向需要额外认证头的网关
+            // （Azure OpenAI 用 `api-key`、Cloudflare Access、OpenRouter 的组织头）时，
+            // **翻译能成功但自检必然 401/403** —— 模型下拉空、失败提示里真因一个字都没有。
+            // 而这是产品里唯一的自检入口，误报成本最高。
+            extraHeaders.forEach { (name, value) -> builder.header(name, value) }
         }.isSuccess
         if (!headerOk) {
             Diagnostics.w(TAG, "获取模型: 凭据含非法字符，拒绝发送")
-            onDone(null, -3)
+            deliverModels(onDone, null, -3)
             return null
         }
         Diagnostics.i(TAG, "获取模型: ${url.host}${url.encodedPath}")
         val client = if (timeoutSec > 0) {
             http.newBuilder()
                 .readTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
+                .writeTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .callTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
         } else {
@@ -414,10 +524,21 @@ internal object TranslationClient {
                     return
                 }
                 Diagnostics.w(TAG, "获取模型失败: ${e.javaClass.simpleName}")
-                onDone(null, -1)
+                deliverModels(onDone, null, -1)
             }
 
             override fun onResponse(call: Call, response: Response) {
+                // 取消可能发生在响应头已到达之后：此时 OkHttp 已置 signalledCallback、不会再回调
+                // onFailure，而是带着已取消的 exchange 调 onResponse。读体的 IOException 被
+                // readBodyCapped 吞掉后 body 变成 null，于是跳过非 JSON 判别、落到
+                // parseResponse(200, null)，打出一串「HTTP 200 chars=0 / 解析失败」—— 用户无感
+                // （代际闸门会丢结果），代价是诊断包被污染 + 大 body 白读。与 onFailure 的
+                // isCanceled 判定对称（2026-10-03 修复 L-743）
+                if (call.isCanceled()) {
+                    Diagnostics.i(TAG, "获取模型: 响应到达时已被取消（不解析、不记账）")  // fetchModels 无 traceId 形参
+                    response.close()
+                    return
+                }
                 response.use {
                     val body = readBodyCapped(it)
                     if (it.code in 200..299) {
@@ -431,11 +552,11 @@ internal object TranslationClient {
                                 " bytes=${bodyBytes(body)}" +
                                 (if (isBodyCapped(body)) "(可能已截断)" else ""),
                         )
-                        onDone(models, it.code)
+                        deliverModels(onDone, models, it.code)
                     } else {
                         // 与 translate 同口径：只记结构化摘要，响应体原文绝不进日志（可能回显 Key）
                         Diagnostics.w(TAG, "获取模型失败: HTTP ${it.code} ${errorSummary(body)}")
-                        onDone(null, it.code)
+                        deliverModels(onDone, null, it.code)
                     }
                 }
             }
@@ -573,19 +694,37 @@ internal object TranslationClient {
         // （全小写 + 数字，**没有大写字母**）⇒ 「前缀 + 高熵」两条判据都不命中；
         // 若照抄进网关的错误码字段就会被当普通错误码记下并外发。
         if (lower.endsWith(":fx") || lower.endsWith("-fx")) return true
-        // 高熵：长且大小写与数字混排 —— 正常错误码（invalid_api_key / SignatureDoesNotMatch /
-        // 54001 / 10004）极少三条同时满足
-        if (length >= 20 &&
-            any { it.isUpperCase() } &&
-            any { it.isLowerCase() } &&
-            any { it.isDigit() }
+        // 高熵：长且字母与数字混排 —— 正常错误码（invalid_api_key / SignatureDoesNotMatch /
+        // 54001 / 10004）极少满足「≥16 位 + 字母数字同时出现」
+        // ⚠ 判据在 2026-10-03 放宽（原 L-214 的写法要求「大小写 + 数字**同时**出现」）：DeepL Pro 密钥
+        // （`0a1b2c3d-4e5f-6789-abcd-ef0123456789`，36 字符、**全小写**加连字符）三条判据全不命中，
+        // 原样进 `code=` 落盘并随诊断包外发 —— 放宽方向是「宁可少记一条错误码」。
+        if (length >= 16 && any { it in 'a'..'z' || it in 'A'..'Z' } && any { it in '0'..'9' }) return true
+        // 纯十六进制长串（2026-10-02 修复 L-479）：Azure 订阅密钥与百度系 SecretKey 的典型形态是
+        // **全小写**（或全大写）的 32 位 hex，不含大小写混排 ⇒ 上面那条「高熵」判据整个漏判。
+        // ⚠ 区间在 2026-10-03 扩到 ≥20 位（原 32..64）：20~31 位的 hex 段（部分服务商的短密钥形态）
+        // 与 ≥65 位的长 token 同样落在原先的空白里。
+        if (length >= 20 && all { it in "0123456789abcdefABCDEF" }) return true
+        // 形态兜底（2026-10-03 修复 L-667）：**长**且只由字母数字与 `_-:` 组成 ⇒ 一律不落盘。
+        // 这一格此前没有任何判据覆盖，全小写密钥会从 `errorSummary` 逐字进日志。
+        // ⚠ 阈值 28 与「不含点」都是被真实错误码逼出来的：阿里云 `InvalidTimeStamp.Expired`
+        // 是 **24 字符**且带点（初版写成 ≥24 会把它当凭据丢掉，TranslationClientTest 直接变红），
+        // `InvalidAccessKeyIdNotFound` 是 25 字符无点 ⇒ 阈值必须高于 25；含点的错误码形态
+        // （点分命名）也比纯字母数字常见，所以点不进兜底集合。
+        if (length >= MAX_CREDENTIAL_SHAPE_CHARS && '.' !in this &&
+            all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "_-:" }
         ) {
             return true
         }
-        // 纯十六进制长串（2026-10-02 修复 L-479）：Azure 订阅密钥与百度系 SecretKey 的典型形态是
-        // **全小写**（或全大写）的 32 位 hex，不含大小写混排 ⇒ 上面那条「高熵」判据整个漏判，
-        // 网关把凭据回显在 `code` / `error_code` 字段时前 24 字符就会落盘并随诊断包外发。
-        // 32~64 位、只有 hex 字符、无分隔符 —— 正常错误码极少长这样（宁可少记一条错误码）。
-        return length in 32..64 && all { it in "0123456789abcdefABCDEF" }
+        return false
     }
+
+    /**
+     * 形态兜底的字符数阈值：**28** 位。
+     *
+     * 下界来自真实错误码的最长形态（阿里云 `InvalidAccessKeyIdNotFound` 25 字符、
+     * `InvalidTimeStamp.Expired` 24 字符）；上界要盖住各家 Key 的常见长度（Azure / 百度 32 位 hex
+     * 走 hex 臂，DeepL Pro 36 位、多数 token 32~40 位）。
+     */
+    private const val MAX_CREDENTIAL_SHAPE_CHARS = 28
 }

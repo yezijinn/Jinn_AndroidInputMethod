@@ -70,6 +70,29 @@ object InputFieldPrivacy {
     }
 
     /**
+     * 是否是**数字 / 日期类**输入框（这类框不接受译文 ⇒ 发了也白花）。
+     *
+     * 与 [blocksTranslation] 严格分开：那个函数的宗旨是「只拦真正的口令框」，而本条是
+     * 「**别为注定失败的请求付费**」—— 判定依据完全不同，混在一起会让 KDoc 与日志都说不清。
+     *
+     * 为什么要拦（2026-10-03 修复 L-720）：这类框的宿主会装 `InputFilter`
+     * （`DigitsKeyListener` / `DateTimeKeyListener`），它把译文**整段丢弃且不报错** ——
+     * `commitText` 返回 true、提交阶段的落地复核才发现尾部对不上。落地复核的注释里本来就写着
+     * 「数字框的 `DigitsKeyListener` 是最常见的一种」（L-456 / L-567），但闸门在**提交之后**，
+     * 于是变成「先付费、再校验、最后只得到一句『提交后未在输入框找到译文尾部』」。
+     *
+     * 判据只看**类位**：[EditorInfo.TYPE_CLASS_NUMBER] = 0x02、[EditorInfo.TYPE_CLASS_DATETIME] = 0x03。
+     * 变位（`TYPE_NUMBER_VARIATION_PASSWORD` 等）已由 [isPasswordField] 先行拦掉 ⇒ 到这里的
+     * 「数字 / 日期」变体都是普通数值、日期、金额、电话。
+     * `TYPE_NULL`（0x00）与 `TYPE_CLASS_TEXT`（0x01）不在其中 ⇒ 浏览器与普通文本框不受影响。
+     */
+    fun rejectsTranslationText(inputType: Int?): Boolean {
+        val type = inputType ?: return false
+        val cls = type and EditorInfo.TYPE_MASK_CLASS
+        return cls == EditorInfo.TYPE_CLASS_NUMBER || cls == EditorInfo.TYPE_CLASS_DATETIME
+    }
+
+    /**
      * 是否命中口令变体 —— ⚠ **必须连类位一起比**。
      *
      * 只掩 [EditorInfo.TYPE_MASK_VARIATION] 会把地址栏判成口令框：平台里
