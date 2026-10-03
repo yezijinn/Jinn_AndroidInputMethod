@@ -405,6 +405,14 @@ internal object TranslationClient {
         val call = client.newCall(builder.build())
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+                // 主动取消不是故障（2026-10-03 修复 L-644，与 translate 侧同款）：
+                // 页面销毁 / 连点触发的 `cancel()` 会被报成「-1 网络错误或超时」。
+                // 当前调用方的 `isFinishing || isDestroyed` 恰好挡住了这一格，所以现象还不可见，
+                // 但两条闸门（连点保护与 cancel 点）一调整就会显形 —— 判据先补齐。
+                if (call.isCanceled()) {
+                    Diagnostics.i(TAG, "获取模型: 请求已被取消")
+                    return
+                }
                 Diagnostics.w(TAG, "获取模型失败: ${e.javaClass.simpleName}")
                 onDone(null, -1)
             }

@@ -2345,9 +2345,10 @@ class RecentFixesRegressionTest {
         // 这条路径上**永不弹**，而它正是 L-603 要关掉的那件事。
         // ⇒ 判据：**每个会复位 flag 的边界入口都必须自己带 notify**，不得靠后面的入口补弹。
         assertEquals(
-            "会话边界取消提示：四个边界入口（onFinishInput/onStartInput/onStartInputView/onFinishInputView）" +
-                "都必须传 notify=true —— 不能靠后面的入口补弹（前面那个已把 flag 吃掉）",
-            4,
+            "会话边界取消提示：五个入口（onFinishInput / onStartInput / onStartInputView / " +
+                "onFinishInputView / switchToVoiceKeyboard）都必须传 notify=true —— " +
+                "不能靠后面的入口补弹（前面那个已把 flag 吃掉）",
+            5,
             Regex("cancelTranslate\\(notify = true\\)").findAll(ime).count(),
         )
         assertTrue(
@@ -2494,6 +2495,46 @@ class RecentFixesRegressionTest {
                 "if (fetchCall != null) {" in op && "fetchCall = null" in op,
             )
         }
+        // ── 第九轮修复（2026-10-03）：崩溃防御 / 互斥对称 / 闸门提示 / 取消可辨 ──────────────
+        // L-638（唯一会崩进程的）：`SharedPreferences` 对类型不符的键**强转抛 ClassCastException**
+        // （不是返回默认）⇒ 读侧必须走 intOr/strOr 收口，否则外部写坏 prefs 时点翻译即崩。
+        // 判据落在「**翻译读点真的走收口**」上，而不是"helper 存在"：
+        // 只看声明的话，把调用点改回裸读也能过。
+        run {
+            val prefs = codeOf("Prefs.kt")
+            assertTrue(
+                "L-638 守卫缺失：Prefs 读侧必须有类型防御收口（intOr/strOr）",
+                "private fun intOr(" in prefs && "private fun strOr(" in prefs,
+            )
+            assertTrue(
+                "L-638 守卫缺失：翻译相关读点必须走 intOr/strOr（裸 sp.getInt/getString 会崩进程）",
+                "strOr(KEY_OPENAI_" in prefs && "strOr(KEY_TRANSLATE_" in prefs &&
+                    "intOr(maxBytesKeyOf(id)" in prefs && "strOr(scopeKeyOf(id)" in prefs,
+            )
+        }
+        // L-641：翻译 × 语音互斥必须**双向** —— 切到语音键盘同样要作废在途翻译，
+        // 否则译文回调会 commitText 压在语音的预编辑区间上（文本错序 + 两笔计费同时发生）。
+        run {
+            val i = ime
+            val at = i.indexOf("private fun switchToVoiceKeyboard")
+            assertTrue("L-641 守卫缺失：找不到 switchToVoiceKeyboard", at >= 0)
+            val block = i.substring(at, minOf(i.length, at + 1400))
+            assertTrue(
+                "L-641 守卫缺失：切到语音键盘必须作废在途翻译（互斥要双向）",
+                "cancelTranslate(notify = true)" in block,
+            )
+        }
+        // L-648：总开关闸门必须有用户提示（按钮是亮的、可点的，只写日志用户以为键盘坏了）。
+        assertTrue(
+            "L-648 守卫缺失：总开关关闭时必须提示用户",
+            "toast(TEXT_TRANSLATE_DISABLED)" in ime && "TEXT_TRANSLATE_DISABLED =" in ime,
+        )
+        // L-644：获取模型的失败回调也要先判取消（与 translate 侧同款），否则主动取消被报成网络故障。
+        assertTrue(
+            "L-644 守卫缺失：fetchModels 的 onFailure 必须判 call.isCanceled()",
+            "获取模型: 请求已被取消" in client,
+        )
+
         // L-636（性能 / 一致性）：包装剥离的两个正则必须提为 object 级单例，不得每次调用重新编译。
         // ⚠ 判据取 `stripWrapper` 的**函数体窗口**判不含 `Regex(` —— 不能断"全文件没有 Regex("：
         // 单例定义本身写的就是 `private val WRAPPER_FENCE_RE = Regex("^``` …")`，

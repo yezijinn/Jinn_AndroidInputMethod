@@ -32,6 +32,20 @@ class Prefs(context: Context) {
         .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
 
     /**
+     * 读侧类型防御（收口，见 BUG.md L-638）：`SharedPreferences` 对**类型不符**的键是
+     * `(Integer) mMap.get(key)` 强转 ⇒ 抛 `ClassCastException`（**不是**返回默认值）。
+     * 配置被手改 / 第三方克隆工具恢复 / `adb restore` 旧 prefs 时就会命中，而抛点在
+     * 主线程点击回调里、未捕获即崩溃。
+     *
+     * 只用于**翻译相关**的读点：备份导出 / 导入那几条走变量键、已自带类型门（`as? Int` 等），
+     * 不纳入收口以免改变它们的语义。写侧（`putInt` 等）类型由自己决定，不需要这层。
+     */
+    private fun intOr(key: String, def: Int): Int = runCatching { sp.getInt(key, def) }.getOrDefault(def)
+
+    private fun strOr(key: String, def: String? = null): String? =
+        runCatching { sp.getString(key, def) }.getOrNull() ?: def
+
+    /**
      * 飞牛 NAS 的局域网地址。
      *
      * getter 做一次合法性兜底：存档里的非法值（旧版本写入、手动改 prefs）一律回落到默认地址。
@@ -470,7 +484,7 @@ class Prefs(context: Context) {
      */
     var translateProvider: String
         get() {
-            val stored = sp.getString(KEY_TRANSLATE_PROVIDER, null)
+            val stored = strOr(KEY_TRANSLATE_PROVIDER, null)
             if (stored != null) return TranslationProviderId.of(stored).id
             return TranslationProviderId.entries.firstOrNull { hasCredentialFor(it) }?.id
                 ?: TranslationProviderId.DEFAULT.id
@@ -528,7 +542,7 @@ class Prefs(context: Context) {
      * 存 id 字符串并走 [TranslationScope.of] 归一：脏备份（未知 id）不会带进运行期。
      */
     internal fun translateScopeOf(id: TranslationProviderId): String =
-        TranslationScope.of(sp.getString(scopeKeyOf(id), null)).id
+        TranslationScope.of(strOr(scopeKeyOf(id), null)).id
 
     internal fun setTranslateScopeOf(id: TranslationProviderId, value: String) {
         sp.edit {
@@ -552,7 +566,7 @@ class Prefs(context: Context) {
      * `0` 或 `Int.MAX_VALUE` 这类值不钳住就会进运行期（前者让原文恒为空、后者绕过读取上限）。
      */
     internal fun translateMaxBytesOf(id: TranslationProviderId): Int {
-        val stored = sp.getInt(maxBytesKeyOf(id), id.defaultMaxBytes)
+        val stored = intOr(maxBytesKeyOf(id), id.defaultMaxBytes)
         // `< MIN` 视为「未设置」⇒ 回落该家默认（2026-10-02 修复 L-434）：界面里「清空 / 0」的
         // 语义是「恢复出厂默认」，而 `coerceIn` 会把它钳成 1 —— 手改或损坏的备份
         // （`translate_max_bytes_x: 0`）导入后该家会变成「每次只翻 1 字节」，
@@ -714,7 +728,7 @@ class Prefs(context: Context) {
 
     /** 目标语言（见 [TranslationLanguage]）；未知取值回落英文 */
     var translateTarget: String
-        get() = TranslationLanguage.of(sp.getString(KEY_TRANSLATE_TARGET, null)).name
+        get() = TranslationLanguage.of(strOr(KEY_TRANSLATE_TARGET, null)).name
         set(value) = sp.edit { putString(KEY_TRANSLATE_TARGET, TranslationLanguage.of(value).name) }
 
     /**
@@ -735,7 +749,7 @@ class Prefs(context: Context) {
      * 不必用户重填就自愈 —— 否则该类用户会一直 401，而提示只说「检查凭据」。
      */
     var azureRegion: String
-        get() = normalizeAzureRegion(sp.getString(KEY_AZURE_REGION, "").orEmpty())
+        get() = normalizeAzureRegion(strOr(KEY_AZURE_REGION, "").orEmpty())
         set(value) = sp.edit { putString(KEY_AZURE_REGION, normalizeAzureRegion(value)) }
 
     /** 百度翻译开放平台 AppID（**加密落盘**，见 [readCredential]） */
@@ -808,7 +822,7 @@ class Prefs(context: Context) {
     }
 
     var openAiName: String
-        get() = defaulted(sp.getString(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
+        get() = defaulted(strOr(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
         set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME)
 
     /**
@@ -822,7 +836,7 @@ class Prefs(context: Context) {
      *（[hasCredentialFor] 与 [openAiConfig]）—— 口径不一致就会出现「摘要说未配置、却能翻译」。
      */
     var openAiBaseUrl: String
-        get() = defaulted(sp.getString(KEY_OPENAI_BASE_URL, "").orEmpty(), OpenAiTranslator.DEFAULT_BASE_URL)
+        get() = defaulted(strOr(KEY_OPENAI_BASE_URL, "").orEmpty(), OpenAiTranslator.DEFAULT_BASE_URL)
         set(value) = putDefaulted(KEY_OPENAI_BASE_URL, value, OpenAiTranslator.DEFAULT_BASE_URL)
 
     /** OpenAI 兼容服务的 API Key（Bearer 鉴权；**加密落盘**，界面与日志都不回显） */
@@ -832,7 +846,7 @@ class Prefs(context: Context) {
 
     /** OpenAI 兼容服务的模型名（如 `gpt-4o-mini` / `qwen3.8-flash-free`）；空 = 未配置 */
     var openAiModel: String
-        get() = sp.getString(KEY_OPENAI_MODEL, "").orEmpty()
+        get() = strOr(KEY_OPENAI_MODEL, "").orEmpty()
         // 与同页其它字符串字段同口径：走 cleanCredential 去掉复制粘贴带进来的 NBSP / ZWSP /
         // 全角空格（2026-10-02 第二轮审查）。只 trim 时「是否已配置」的判据看着正常，
         // 请求真发出去必然 404 / 参数被拒 ⇒ 归 PARAM/AUTH，用户按提示核对 Key、路径、语言都查不出真因。
@@ -840,50 +854,50 @@ class Prefs(context: Context) {
 
     /** 对话端点路径（默认 `/chat/completions`；换网关只改这一项即可，不必等 App 更新） */
     var openAiChatPath: String
-        get() = defaulted(sp.getString(KEY_OPENAI_CHAT_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_CHAT_PATH)
+        get() = defaulted(strOr(KEY_OPENAI_CHAT_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_CHAT_PATH)
         set(value) = putDefaulted(KEY_OPENAI_CHAT_PATH, value, OpenAiTranslator.DEFAULT_CHAT_PATH)
 
     /** 模型列表端点路径（默认 `/models`；「获取模型」用它，服务端没实现也不影响翻译） */
     var openAiModelsPath: String
-        get() = defaulted(sp.getString(KEY_OPENAI_MODELS_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_MODELS_PATH)
+        get() = defaulted(strOr(KEY_OPENAI_MODELS_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_MODELS_PATH)
         set(value) = putDefaulted(KEY_OPENAI_MODELS_PATH, value, OpenAiTranslator.DEFAULT_MODELS_PATH)
 
     /** 目标语言（自由文本：简体中文 / 繁體中文（台灣）/ 粤语 / 古文…，进 `{{target_language}}`） */
     var openAiTargetLanguage: String
         get() = defaulted(
-            sp.getString(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty(),
+            strOr(KEY_OPENAI_TARGET_LANGUAGE, "").orEmpty(),
             OpenAiTranslator.DEFAULT_TARGET_LANGUAGE,
         )
         set(value) = putDefaulted(KEY_OPENAI_TARGET_LANGUAGE, value, OpenAiTranslator.DEFAULT_TARGET_LANGUAGE)
 
     /** System 提示词（可整段改写；支持 `{{text}}` / `{{target_language}}` / `{{source_language}}` / `{{date}}`） */
     var openAiSystemPrompt: String
-        get() = defaulted(sp.getString(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
+        get() = defaulted(strOr(KEY_OPENAI_SYSTEM_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
         set(value) = putDefaulted(KEY_OPENAI_SYSTEM_PROMPT, value, OpenAiTranslator.DEFAULT_SYSTEM_PROMPT)
 
     /** User 提示词模板（同上；变量替换见 [OpenAiTranslator.applyTemplate]） */
     var openAiUserPrompt: String
-        get() = defaulted(sp.getString(KEY_OPENAI_USER_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_USER_PROMPT)
+        get() = defaulted(strOr(KEY_OPENAI_USER_PROMPT, "").orEmpty(), OpenAiTranslator.DEFAULT_USER_PROMPT)
         set(value) = putDefaulted(KEY_OPENAI_USER_PROMPT, value, OpenAiTranslator.DEFAULT_USER_PROMPT)
 
     /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
     var openAiTemperature: String
-        get() = sp.getString(KEY_OPENAI_TEMPERATURE, "").orEmpty()
+        get() = strOr(KEY_OPENAI_TEMPERATURE, "").orEmpty()
         set(value) = sp.edit { putString(KEY_OPENAI_TEMPERATURE, value.trim()) }
 
     /** Top P；空串 = 不发送 */
     var openAiTopP: String
-        get() = sp.getString(KEY_OPENAI_TOP_P, "").orEmpty()
+        get() = strOr(KEY_OPENAI_TOP_P, "").orEmpty()
         set(value) = sp.edit { putString(KEY_OPENAI_TOP_P, value.trim()) }
 
     /** Max Tokens；空串 = 不发送 */
     var openAiMaxTokens: String
-        get() = sp.getString(KEY_OPENAI_MAX_TOKENS, "").orEmpty()
+        get() = strOr(KEY_OPENAI_MAX_TOKENS, "").orEmpty()
         set(value) = sp.edit { putString(KEY_OPENAI_MAX_TOKENS, value.trim()) }
 
     /** 自定义请求头（一行一条 `Key: Value`；`Authorization` 会被忽略，它由 API Key 字段独占） */
     var openAiExtraHeaders: String
-        get() = sp.getString(KEY_OPENAI_EXTRA_HEADERS, "").orEmpty()
+        get() = strOr(KEY_OPENAI_EXTRA_HEADERS, "").orEmpty()
         // 写入侧与导入侧**共用同一长度闸**（2026-10-02 修复 L-375）：此前闸只在导入侧（[asString]），
         // 而导出侧不设限 ⇒ 自产的包会被自己的导入端拒收该键 —— 直接违反本仓「自产的包必须自己导得
         // 回来」的约定，且清单说「包含」、导入说「忽略」，两个数字互相矛盾。
@@ -891,19 +905,19 @@ class Prefs(context: Context) {
 
     /** 自定义请求体 JSON（**最高优先级**：同名键覆盖标准参数，厂商私有参数写这里） */
     var openAiExtraJson: String
-        get() = sp.getString(KEY_OPENAI_EXTRA_JSON, "").orEmpty()
+        get() = strOr(KEY_OPENAI_EXTRA_JSON, "").orEmpty()
         // 写入侧闸同 [openAiExtraHeaders]（2026-10-02 修复 L-375）：超限截尾后会是非法 JSON，
         // 设置页的 `isValidExtraJson` 会当场报错 —— 比「导出成功、导入静默丢键」好
         set(value) = sp.edit { putString(KEY_OPENAI_EXTRA_JSON, value.capForBackup(KEY_OPENAI_EXTRA_JSON)) }
 
     /** 响应解析路径（默认 `choices[0].message.content`；换协议如 `output_text` 只改这一项） */
     var openAiResponsePath: String
-        get() = defaulted(sp.getString(KEY_OPENAI_RESPONSE_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_RESPONSE_PATH)
+        get() = defaulted(strOr(KEY_OPENAI_RESPONSE_PATH, "").orEmpty(), OpenAiTranslator.DEFAULT_RESPONSE_PATH)
         set(value) = putDefaulted(KEY_OPENAI_RESPONSE_PATH, value, OpenAiTranslator.DEFAULT_RESPONSE_PATH)
 
     /** 整体超时（秒）：大模型首字延迟不可控，钳到 5~300 秒 */
     var openAiTimeoutSec: Int
-        get() = sp.getInt(KEY_OPENAI_TIMEOUT_SEC, OpenAiTranslator.DEFAULT_TIMEOUT_SEC)
+        get() = intOr(KEY_OPENAI_TIMEOUT_SEC, OpenAiTranslator.DEFAULT_TIMEOUT_SEC)
             .coerceIn(TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC)
         // 等于默认值就**删键**而不是写死（2026-10-01 修复 L-255）：口径同 [defaulted] ——
         // 否则「打开过一次设置页」会把当时的默认超时固化，将来调大默认对老用户无效
@@ -918,7 +932,7 @@ class Prefs(context: Context) {
 
     /** 最近一次成功获取的模型列表缓存（换行分隔；接口暂时不可用时下拉仍可用） */
     var openAiModelsCache: String
-        get() = sp.getString(KEY_OPENAI_MODELS_CACHE, "").orEmpty()
+        get() = strOr(KEY_OPENAI_MODELS_CACHE, "").orEmpty()
         // 写入侧闸（2026-10-02 修复 L-375）：这个字段是**服务端可控**的（`/models` 返回几千条时
         // 拼出的名字串可超 64 KB），正是最容易撞上导入侧闸的一个 —— 截尾即可（缓存丢了可重取）
         set(value) = sp.edit {
