@@ -2439,6 +2439,81 @@ class RecentFixesRegressionTest {
                 "translateInFlight" !in window,
             )
         }
+
+        // ── 第八轮修复（2026-10-03）：成本治理 / 按档取证 / 生命周期 ─────────────────────
+        // L-628（资金 + 数据一致性）：译文追加后光标停在插入文本末尾，默认档取「光标前本行」⇒
+        // 再点一次会把**刚写入的译文**再翻一遍（二次付费 + 回译污染正文）。三条一起钉：
+        // 判据存在、成功后记录「已送出的原文」、有专门文案。
+        assertTrue(
+            "L-628 守卫缺失：同一段文本的重复点击必须被拦下（并记录已送出原文）",
+            "slice.text == lastSentText" in ime &&
+                "lastSentText = snapshot.sent" in ime &&
+                "TEXT_TRANSLATE_REPEATED" in ime,
+        )
+        // L-627（资金）：失败后闸门立即重开 ⇒ 连点即连付（超时 / 断连 / 落地失败 / 取消都可能已计费）。
+        assertTrue(
+            "L-627 守卫缺失：失败后必须有冷却窗口（并说明该请求可能已送往服务方）",
+            "lastFailAtMs = System.currentTimeMillis()" in ime &&
+                "sinceFail < failCooldownMs" in ime &&
+                "TEXT_TRANSLATE_FAIL_COOLDOWN" in ime,
+        )
+        // L-629（性能）：取证只有 BEFORE_ALL / ALL 两档会用 ⇒ 其余档位不得为它多付一次整窗口往返。
+        assertTrue(
+            "L-629 守卫缺失：readTextBeforeCursor 必须有 probeDocStart 形参（默认 true 保持既有行为）",
+            "probeDocStart: Boolean = true" in ime &&
+                "probeDocStart && beforeStartsAtDocStart(" in ime &&
+                "scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL" in ime,
+        )
+        // L-631（生命周期）：注释宣称的「视图引用断开」必须名副其实 —— 六个字段都要置空。
+        assertTrue(
+            "L-631 守卫缺失：onDestroy 必须把键盘容器 / 主题上下文 / 四个语音控件一并置空",
+            "keyboardContainer = null" in ime && "keyboardThemeCtx = null" in ime &&
+                "micButton = null" in ime && "statusDot = null" in ime &&
+                "statusLabel = null" in ime && "hintLabel = null" in ime,
+        )
+        // L-633（生命周期）：清队列只能清「此刻已在队列里」的消息，而 cancel 触发的回调是**之后**才入队的
+        // ⇒ 必须先自增代际（cancelTranslate）再清队列。用位置判据钉顺序。
+        run {
+            val destroyAt = ime.indexOf("override fun onDestroy()")
+            assertTrue("L-633 守卫缺失：找不到 onDestroy", destroyAt >= 0)
+            val destroyBlock = ime.substring(destroyAt, minOf(ime.length, destroyAt + 900))
+            val cancelAt = destroyBlock.indexOf("cancelTranslate()")
+            val clearAt = destroyBlock.indexOf("removeCallbacksAndMessages(null)")
+            assertTrue(
+                "L-633 守卫缺失：onDestroy 必须**先** cancelTranslate（代际自增）**再**清队列；" +
+                    "cancelAt=$cancelAt clearAt=$clearAt",
+                cancelAt >= 0 && clearAt >= 0 && cancelAt < clearAt,
+            )
+        }
+        // L-634（成本）：设置页「获取模型 / 测试连接」不得无限连点 —— 早退保护与回调清理必须成对
+        //（只加早退不加清理 ⇒ 判据在首次请求后**永久成立**，按钮彻底失效）。
+        run {
+            val op = codeOf("OpenAiSettingsActivity.kt")
+            assertTrue(
+                "L-634 守卫缺失：连点保护（fetchCall != null 早退）必须与回调里的 fetchCall = null 成对",
+                "if (fetchCall != null) {" in op && "fetchCall = null" in op,
+            )
+        }
+        // L-636（性能 / 一致性）：包装剥离的两个正则必须提为 object 级单例，不得每次调用重新编译。
+        // ⚠ 判据取 `stripWrapper` 的**函数体窗口**判不含 `Regex(` —— 不能断"全文件没有 Regex("：
+        // 单例定义本身写的就是 `private val WRAPPER_FENCE_RE = Regex("^``` …")`，
+        // 那种写法会**把自己判失败**（本轮自查踩到）。
+        run {
+            val tr = codeOf("Translation.kt")
+            assertTrue(
+                "L-636 守卫缺失：包装剥离的两个正则必须提为单例",
+                "private val WRAPPER_FENCE_RE" in tr && "private val WRAPPER_PREFIX_RE" in tr,
+            )
+            val fnAt = tr.indexOf("fun stripWrapper(")
+            assertTrue("L-636 守卫缺失：找不到 stripWrapper", fnAt >= 0)
+            // 函数体到下一个 `fun ` 之前（本 object 里紧随其后的是 appendText）
+            val nextFun = tr.indexOf("fun appendText(", fnAt)
+            val body = tr.substring(fnAt, if (nextFun > fnAt) nextFun else minOf(tr.length, fnAt + 800))
+            assertTrue(
+                "L-636 守卫缺失：stripWrapper 体内不得再出现 Regex(（应复用上面的单例）",
+                "Regex(" !in body,
+            )
+        }
         // A5：看门狗必须**紧跟置位**挂上 —— 原先它排在 setTranslating/日志/toast/快照之后，
         // 那些调用任一抛出都会留下 translateInFlight=true 却**没有看门狗**（按钮永久「翻译中」）。
         run {

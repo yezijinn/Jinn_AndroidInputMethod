@@ -411,13 +411,22 @@ internal object TranslationText {
      *  ③ 整体被一对引号包住（直引号 / 弯引号 / 书名号式引号）。
      * **剥离后为空则回退原值** —— 宁可留着围栏，也绝不把有效译文剥没。
      */
+    /**
+     * 包装剥离用的两个正则：**提到 object 级只编译一次**（2026-10-03 修复 L-636）。
+     *
+     * 此前它们写在 `stripWrapper` 函数体内，每次翻译（成功与 2xx 承载失败都算）都会重新
+     * 编译两份 `Pattern` —— 与本仓「正则与常量都是单例」的口径不一致（Prompt 模板那边早已如此）。
+     * `Regex` 线程安全，六家共用同一出口。
+     */
+    private val WRAPPER_FENCE_RE = Regex("^```[^\\n]*\\n([\\s\\S]*?)\\n?```$")
+
+    private val WRAPPER_PREFIX_RE =
+        Regex("^(?:译文|翻译|以下是翻译|翻译结果|Translation|Translated)\\s*[:：]\\s*")
+
     fun stripWrapper(text: String): String {
         var t = text.trim()
-        Regex("^```[^\\n]*\\n([\\s\\S]*?)\\n?```$").find(t)?.let { t = it.groupValues[1].trim() }
-        t = t.replace(
-            Regex("^(?:译文|翻译|以下是翻译|翻译结果|Translation|Translated)\\s*[:：]\\s*"),
-            "",
-        ).trim()
+        WRAPPER_FENCE_RE.find(t)?.let { t = it.groupValues[1].trim() }
+        t = t.replace(WRAPPER_PREFIX_RE, "").trim()
         if (t.length >= 2) {
             val pairs = mapOf('"' to '"', '\'' to '\'', '\u201c' to '\u201d', '\u2018' to '\u2019', '「' to '」', '『' to '』')
             if (pairs[t.first()] == t.last()) t = t.substring(1, t.length - 1).trim()

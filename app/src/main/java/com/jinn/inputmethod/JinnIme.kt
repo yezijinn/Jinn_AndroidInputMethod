@@ -199,6 +199,32 @@ class JinnIme : InputMethodService() {
     private var translateTraceId = ""
 
     /**
+     * 上一次**已送出**的原文与时刻（2026-10-03 修复 L-628）。
+     *
+     * 译文追加后光标停在插入文本末尾，而默认档取「光标前本行」⇒ 用户不再输入就再点一次时，
+     * 取到的正是**刚刚写入的译文** —— 结果是二次付费 + **回译污染正文**（用户自己看不出发生了什么）。
+     */
+    private var lastSentText = ""
+    private var lastSentAtMs = 0L
+
+    /**
+     * 上一次**失败**的时刻（2026-10-03 修复 L-627）。
+     *
+     * 失败后闸门立即重开，而超时 / 断连 / 落地失败 / 用户取消这几种情形里，
+     * **服务端可能已经处理并计费** —— 用户连点 N 次就是 N 次付费，界面只留下一串相同 toast。
+     * 冷却期内点击只提示、不发送。
+     */
+    private var lastFailAtMs = 0L
+
+    // ⚠ 这两个是**实例字段**而不是 `const val`（Kotlin 的 `const` 只允许 top-level / object /
+    // companion）：它们只是窗口值，非编译期常量，放这里不影响任何东西。
+    /** 同一段文本的重复点击窗口（毫秒）：窗口内只提示、不重发 */
+    private val repeatGuardMs = 30_000L
+
+    /** 失败后的冷却窗口（毫秒）：这些失败里服务端可能已计费，窗口内只提示、不重发 */
+    private val failCooldownMs = 3_000L
+
+    /**
      * 翻译看门狗（2026-10-01 审查 L-217）。
      *
      * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
@@ -1743,13 +1769,25 @@ class JinnIme : InputMethodService() {
         // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
-        ui.removeCallbacksAndMessages(null)
-        // 在途翻译作废：服务销毁后即使回调到达，也没有视图可改（代际已不符）
+        // ⚠ 先作废在途翻译、**再**清消息队列（2026-10-03 修复 L-633）：`removeCallbacksAndMessages(null)`
+        // 只能清**此刻已在队列里**的消息，而紧接着的 `cancel()` 会让 OkHttp 在 IO 线程回调
+        // `onFailure → onDone → ui.post{…}` —— 那条消息是在清队列**之后**才入队的，清不到。
+        // 顺序对调能让代际先自增，把「销毁后被触碰」的窗口收到最小。
         cancelTranslate()
+        ui.removeCallbacksAndMessages(null)
         // 视图引用断开（与下面 screenOffReceiver 同款口径）：视图持 listener 强引用本服务、
         // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30 审查发现）。
-        // 顺序必须在 cancelTranslate 之后 —— 它内部要调 pinyinKeyboard.setTranslating。
+        // ⚠ 但**只清 `pinyinKeyboard` 是不够的**（2026-10-03 修复 L-631）：容器仍强引用拼音视图
+        // （`container.addView(pinyin, …)`），主题包装 Context 又包住本服务 —— 注释宣称的
+        // 「视图引用断开」与实际不符。下面把这几个字段一并置空（顺序在 cancelTranslate 之后，
+        // 因为它内部要调 `pinyinKeyboard.setTranslating`）。
         pinyinKeyboard = null
+        keyboardContainer = null
+        keyboardThemeCtx = null
+        micButton = null
+        statusDot = null
+        statusLabel = null
+        hintLabel = null
         unregisterNetwork()
         // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
         // 这里不置 null：后续 refreshConfig 仍可能重新 start（stop 幂等）。
@@ -2243,7 +2281,16 @@ class JinnIme : InputMethodService() {
         // ⚠ `before` 是**尾部对齐**的：`readTextBeforeCursor` 主路径 `getTextBeforeCursor(limit, 0)`
         // 返回紧邻光标的那 limit 个字符 —— 取不满时拿到的是靠近光标的一段，不是文首那段。
         // 「这一段是不是从文首开始」由读取路径**如实给出**，不再靠长度反推（2026-10-01 修复 L-286）
-        val beforeRead = if (replaceSelection) null else readTextBeforeCursor(connection, limit)
+        // 「从文首开始」这个事实**只有 BEFORE_ALL / ALL 两档会用来拒绝**（见下面 `beforeFromDocStart`
+        // 的唯一消费者）⇒ 其余档位不必为它多付一次整窗口 `getExtractedText`
+        // （2026-10-03 修复 L-629）：短文本框（取不满 limit）本来就必然触发取证，
+        // 而默认档一次翻译会因此多 2 次同量级往返（发起 + 提交）。
+        val needDocStartProbe = scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL
+        val beforeRead = if (replaceSelection) {
+            null
+        } else {
+            readTextBeforeCursor(connection, limit, probeDocStart = needDocStartProbe)
+        }
         if (!replaceSelection && beforeRead == null) {
             Diagnostics.w(TAG, "翻译: 读不到光标前内容，拒绝发起")
             toast(TEXT_TRANSLATE_BEFORE_UNREADABLE)
@@ -2267,9 +2314,30 @@ class JinnIme : InputMethodService() {
         } else {
             TranslationText.extract(before, after, scope, maxBytes, afterTruncated)
         }
+        // 重复翻译去重（2026-10-03 修复 L-628）：译文追加后光标停在插入文本末尾，默认档取
+        // 「光标前本行」⇒ 不再输入就再点一次时，取到的正是**刚刚写入的译文** —— 二次付费 +
+        // 回译污染正文，而用户完全看不出发生了什么。窗口内只提示、不发送。
+        // 只对**非选区**生效：选区是用户明确重新框选的内容，不该被历史拦下。
+        if (!replaceSelection && slice.text.isNotEmpty() &&
+            slice.text == lastSentText &&
+            System.currentTimeMillis() - lastSentAtMs < repeatGuardMs
+        ) {
+            val ago = (System.currentTimeMillis() - lastSentAtMs) / 1000
+            Diagnostics.i(TAG, "翻译: 同一段文本 ${ago}s 前刚翻过，未再次发送（去重）")
+            toast(TEXT_TRANSLATE_REPEATED)
+            return
+        }
+        // 失败冷却（2026-10-03 修复 L-627）：超时 / 断连 / 落地失败 / 用户取消这几种情形里，
+        // **服务端可能已经处理并计费** —— 冷却期内点击只提示、不重发，避免连点即连付。
+        val sinceFail = System.currentTimeMillis() - lastFailAtMs
+        if (lastFailAtMs > 0 && sinceFail < failCooldownMs) {
+            Diagnostics.i(TAG, "翻译: 上次失败后 ${sinceFail}ms 内再次点击，冷却中未发送")
+            toast(TEXT_TRANSLATE_FAIL_COOLDOWN)
+            return
+        }
         // 选区模式**不能**在被截断时替换（2026-10-01 审查 L-261）：截断只作用于上传的那一份，
         // 服务端返回的译文也只覆盖选中的前一段，拿它替换**整个选区**会把后半段原文删掉，
-        // 而 `commitText` 不保证可撤销。这里在发请求之前就拒绝 —— 既不花钱，也能把原因说清。
+        // 而 `commitText` 不保证可撤销。这里在发请求前就拒绝 —— 既不花钱，也能把原因说清。
         if (replaceSelection && slice.truncated) {
             Diagnostics.w(
                 TAG,
@@ -2412,9 +2480,17 @@ class JinnIme : InputMethodService() {
                     // 代际匹配 ⇒ 这个回调就属于当前请求 ⇒ 句柄作废（避免后续取消落在已完成的请求上）
                     translateCall = null
                     when (outcome) {
-                        is TranslationOutcome.Ok -> appendTranslation(connection, snapshot, outcome.text)
+                        is TranslationOutcome.Ok -> {
+                            // 记下「已送出」的原文（去重判据，见 L-628 的注释）
+                            lastSentText = snapshot.sent
+                            lastSentAtMs = System.currentTimeMillis()
+                            appendTranslation(connection, snapshot, outcome.text)
+                        }
                         is TranslationOutcome.Fail -> {
                             Diagnostics.w(TAG, "翻译失败: ${outcome.error}")
+                            // 失败也记时刻（2026-10-03 修复 L-627）：这些情形里服务端**可能已经计费**，
+                            // 冷却期内再点只提示不发送
+                            lastFailAtMs = System.currentTimeMillis()
                             toast(outcome.error.message)
                         }
                     }
@@ -2838,6 +2914,14 @@ class JinnIme : InputMethodService() {
     private fun readTextBeforeCursor(
         connection: android.view.inputmethod.InputConnection,
         limit: Int,
+        /**
+         * 取不满 `limit` 时是否**再取一次证**（判断是否从文首开始）。
+         *
+         * 取证本身是必要的（L-565：框架允许宿主少给），但**只有 BEFORE_ALL / ALL 两档会用它拒绝**
+         * （2026-10-03 修复 L-629）⇒ 其余档位传 false 省一次整窗口 Binder 往返。
+         * 默认 true = 保持既有行为，调用方不必逐个改。
+         */
+        probeDocStart: Boolean = true,
     ): BeforeText? {
         // 整段包 runCatching（2026-09-30 第二轮审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
         // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
@@ -2853,7 +2937,9 @@ class JinnIme : InputMethodService() {
             connection.getTextBeforeCursor(limit, 0)?.let {
                 val s = it.toString()
                 if (s.length >= limit) return@runCatching BeforeText(s, false)
-                return@runCatching BeforeText(s, beforeStartsAtDocStart(connection, limit))
+                // `probeDocStart = false` 时不做取证（调用方按档位决定，见形参 KDoc）：
+                // 此时 fromDocStart 一律报 false = 保守（宁可让上层认为「可能还有上文」）
+                return@runCatching BeforeText(s, probeDocStart && beforeStartsAtDocStart(connection, limit))
             }
             // hintMaxChars **不能留 0**：兜底路径拿到的会是整个窗口，不限长就让大文档整篇走 Binder
             // 回包 —— 正是上面那条 TransactionTooLargeException 的触发源。限制到读取上限即可
@@ -3208,6 +3294,22 @@ class JinnIme : InputMethodService() {
          * —— 用户需要知道「刚才那次点击已经作废、要重来得再点一次（会重新计费）」。
          */
         const val TEXT_TRANSLATE_CANCELLED = "翻译已取消（输入框已切换或键盘已收起）"
+
+        /**
+         * 同一段文本刚翻过（2026-10-03 修复 L-628）。
+         *
+         * 译文追加后光标停在插入文本末尾，默认档取「光标前本行」⇒ 用户不再输入就再点一次时，
+         * 取到的正是**刚写入的译文**：既会二次付费，又会把译文再翻一遍写进正文（回译污染）。
+         */
+        const val TEXT_TRANSLATE_REPEATED = "这段刚刚翻译过，未重复发送（如需再翻可先改动原文）"
+
+        /**
+         * 上次失败后的冷却提示（2026-10-03 修复 L-627）。
+         *
+         * 超时 / 断连 / 落地失败 / 用户取消这几种情形里，**服务端可能已经处理并计费** ——
+         * 连点即连付，而用户看不到任何账目。冷却期内只提示、不发送。
+         */
+        const val TEXT_TRANSLATE_FAIL_COOLDOWN = "上次翻译刚失败，稍候再试（该请求可能已送往服务方）"
 
         /**
          * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02 修复 L-485）。

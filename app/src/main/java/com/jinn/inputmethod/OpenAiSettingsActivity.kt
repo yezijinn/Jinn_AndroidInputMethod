@@ -491,6 +491,15 @@ class OpenAiSettingsActivity : Activity() {
      * 用户照样能手填 Model。
      */
     private fun fetchModels(showPicker: Boolean) {
+        // 连点保护（2026-10-03 修复 L-634）：原先没有任何请求中判据 —— 连点会 cancel 上一个
+        // （**服务端已收到**）并重发，部分网关把它计入限流、返回 429 后本页还会把提示误导成
+        // 「网络失败」；同时每次点击都跑一遍 `saveValues()`（整份 prefs 写 + 凭据加解密）。
+        // 这里直接早退并保持「请求中…」提示，用户看到的是明确状态而不是"点了没反应"。
+        // ⚠ 必须配合回调里的 `fetchCall = null`：否则这个判据会在首次请求后**永久成立**。
+        if (fetchCall != null) {
+            setHint(TEXT_FETCHING)
+            return
+        }
         saveValues()
         val url = OpenAiTranslator.modelsUrl(prefs.openAiBaseUrl, prefs.openAiModelsPath)
         if (url == null) {
@@ -509,9 +518,13 @@ class OpenAiSettingsActivity : Activity() {
                 // 页面可能在响应回来前就被关掉（整体超时上限可到 300s）：往已 finish 的 Activity
                 // 上 show() 会抛 WindowManager$BadTokenException 直接崩溃（与 SettingsActivity:810
                 // 同款防线，第一轮审查发现）。
+                // 请求已回来 ⇒ 清句柄，让「连点保护」重新放开（2026-10-03 修复 L-634）。
+                // ⚠ 必须放在**两个早退之后**：早退时说明这次响应已过期或不适用，
+                // 句柄属于**更新的那次请求**（与 JinnIme 里代际匹配才清句柄是同一条纪律）。
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 // 代际闸门：连点两次时，先发的旧响应后到也不能覆盖用户刚看到的新结果
                 if (generation != fetchGeneration) return@runOnUiThread
+                fetchCall = null
                 when {
                     models == null && code == -2 -> setHint(TEXT_NEED_HTTPS)
                     // -3 = 凭据含非法字符（header 设置抛异常，见 fetchModels）：不能混进「网络错误」——
