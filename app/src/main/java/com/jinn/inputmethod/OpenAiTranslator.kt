@@ -268,6 +268,30 @@ internal fun applyTemplateEnsuringText(
             return if (tailQuery.isEmpty()) withPath else withPath.newBuilder().encodedQuery(tailQuery).build()
         }
 
+        /**
+         * 「端点可用」的**唯一判据**：能解析出 URL **且是 https**（2026-10-03 修复 L-811）。
+         *
+         * 只判「能解析」时 `http://` 会一路放行到界面说「已配置」，直到第一次点翻译才被 `INSECURE`
+         * 拒掉 —— 而平台层对用户自填的域名没有兜底（见 `network_security_config` 的说明）。
+         */
+        internal fun endpointReady(baseUrl: String, chatPath: String): Boolean =
+            joinUrl(baseUrl, chatPath)?.isHttps == true
+
+        /**
+         * 「OpenAI 兼容是否**已配置**」的**唯一判据**（2026-10-03 修复 L-811）。
+         *
+         * 此前这份事实散在**四处**：`Prefs.hasCredentialFor` / `OpenAiSettingsActivity` 的保存校验 /
+         * 翻译设置页的状态行都要求端点是 https，而 `TranslationClient.providerOf` 只判「端点能解析」
+         * ⇒ 用户把 Base URL 填成 `http://` 时，翻译设置页与设置页都显示「已配置 · 模型名」，
+         * 真正点翻译却被 `INSECURE` 拒掉：界面说配好了、一用就报错，且每次点击前都以为要花钱。
+         *
+         * 四处全调它 —— **同一份事实只允许有一份判据**（本仓已因判据分叉翻车多次，见 L-557）。
+         */
+        internal fun isReady(apiKey: String, model: String, baseUrl: String, chatPath: String): Boolean =
+            apiKey.cleanCredential().isNotEmpty() &&
+                model.cleanCredential().isNotEmpty() &&
+                endpointReady(baseUrl, chatPath)
+
         /** 模型列表端点：`{BaseURL}{ModelsPath}`（默认 `/models`） */
         internal fun modelsUrl(baseUrl: String, modelsPath: String): HttpUrl? =
             joinUrl(baseUrl, modelsPath.trim().ifEmpty { DEFAULT_MODELS_PATH })

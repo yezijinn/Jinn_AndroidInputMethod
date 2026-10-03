@@ -469,13 +469,15 @@ class OpenAiSettingsActivity : Activity() {
         // 各字段的 error，这里直接读 —— 非法 JSON / 缺 {{text}} 的提示词不能与「已保存到本机」并存。
         // 端点必须能解析成 https，与运行期同源（2026-10-03 修复 L-513）：此前保存、状态摘要、
         // 「已配置」三处全放行 `http://`，直到第一次点翻译才被 INSECURE 拒掉 —— 用户拿到的是
-        // 「配置成功」的正反馈。这里与 Prefs.hasCredentialFor 用同一份判据（joinUrl + isHttps）。
+        // 「配置成功」的正反馈。判据收敛到 `OpenAiTranslator.endpointReady`（2026-10-03 修复 L-811），
+        // 与 `Prefs.hasCredentialFor` / 翻译设置页状态行同源。
+        // ⚠ 这里只判**端点**：模型名 / 提示词 / 数字字段各有自己的 error，不能混进 Base URL 这一栏。
         editBaseUrl.error = if (
-            OpenAiTranslator.joinUrl(prefs.openAiBaseUrl, prefs.openAiChatPath)?.isHttps == true
+            OpenAiTranslator.endpointReady(prefs.openAiBaseUrl, prefs.openAiChatPath)
         ) {
             null
         } else {
-            TEXT_NEED_HTTPS
+            TEXT_ENDPOINT_NEEDS_HTTPS
         }
         // ⚠ 三个数字字段也必须计入（2026-10-03 修复 L-771）：`applyNumberField` 给它们设了 `error`，
         // 而本判据原先只看三个字符串字段 ⇒ 红字与「已保存到本机」同屏（L-514 要消灭的形态原样存在）。
@@ -549,7 +551,7 @@ class OpenAiSettingsActivity : Activity() {
                 if (generation != fetchGeneration) return@runOnUiThread
                 fetchCall = null
                 when {
-                    models == null && code == -2 -> setHint(TEXT_NEED_HTTPS)
+                    models == null && code == -2 -> setHint(TEXT_ENDPOINT_NEEDS_HTTPS)
                     // -3 = 凭据含非法字符（header 设置抛异常，见 fetchModels）：不能混进「网络错误」——
                     // 用户去查网络与地址永远查不出问题（2026-10-01 复审 L-231③）
                     models == null && code == -3 -> setHint(TEXT_KEY_INVALID)
@@ -665,17 +667,17 @@ const val TEXT_EXTRA_JSON_HINT =
         const val TEXT_CANCEL = "取消"
         const val TEXT_URL_INVALID = "Base URL 无法解析，请检查格式"
         const val TEXT_NETWORK_FAILED = "请求失败：网络错误或超时"
-        const val TEXT_NEED_HTTPS = "地址需以 https:// 开头（明文会把 Key 暴露在链路上）"
         const val TEXT_KEY_INVALID = "Key 里混入了不可见字符（从网页复制常见），请重新粘贴"
     const val TEXT_PROMPT_MISSING = "提示词里没有 {{text}}：请求不会带原文，会把原文追加到提示词之后"
 
     /** 数字参数非法（2026-10-02 修复 L-370：该参数不会被发送，此前完全静默） */
     const val TEXT_NUMBER_INVALID = "不是合法数字，该参数不会被发送"
 
-    // ⚠ 上面这条 [TEXT_NEED_HTTPS] 现在**保存侧也在用**（2026-10-03 修复 L-513）：
-    // 运行期 `TranslationClient` 对明文地址一律拒发（归 INSECURE），而保存、状态摘要、「已配置」
-    // 三处此前全部放行 `http://` ⇒ 配置信任链断裂（用户拿到「配置成功」的正反馈，直到第一次
-    // 点翻译才失败）；平台层对用户自填域名没有兜底，这里是唯一的把关点。
+    // ⚠ 「端点必须 https」这句**不在本页定义**（2026-10-03 修复 L-816）：统一用
+    // [Translation.TEXT_ENDPOINT_NEEDS_HTTPS]，键盘 toast / 翻译设置页状态行 / 本页的
+    // Base URL 红字与自检提示共用一份措辞 —— 此前三处各写一遍且措辞不同，改一处不会红。
+    // 运行期对明文地址一律拒发（归 INSECURE），而保存、状态摘要、「已配置」三处此前全部放行
+    // `http://` ⇒ 配置信任链断裂；平台层对用户自填域名没有兜底，本页是唯一的把关点（L-513）。
 
     const val TEXT_EXTRA_JSON_INVALID =
         "自定义 JSON 不可用：解析失败、开了 stream（本客户端按非流式解析）、删必需键（model / messages）、或覆盖 messages（原文在里面）"

@@ -1,7 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    strings.xml —— 全应用文案。
+
+    排序：按「用户从哪看到它」分区，区内按用途分组，节间空一行、缩进一律 4 空格。
+      应用标识 → 键盘状态条 → 语音 → 按键与无障碍 → 拼音键盘 → 候选栏与引擎状态
+      → 分类词库页 → 剪贴板 → 设置页（连接与语言 / 行为开关 / 语音授权与诊断 / 保存与重启
+      / 使用说明 / 下拉数组）→ 检查更新 → 键盘外观 → 主题 → 符号分组顺序 → 符号收藏
+
+    注释规范：每节只写一行节名注释，块内分组同样一行；不写日期、不写改动缘由、
+      不写历史叙事（那些进 更新日志.md 与 BUG.md）；不写括号补充，补充信息归到下面的「硬约束」。
+
+    硬约束（全文件仅此四条）：
+      ① app_name / subtype_label / settings_title / symbol_order_close / favorite_title
+         同时是 AndroidManifest 里的 android:label，必须留在本文件。
+      ② favorite_delete_mark 是角标字符（translatable="false"）：显示「×」，无障碍读 favorite_delete。
+      ③ language_* / default_mode_* / theme_mode_* 三组数组的 entries 与 values 顺序必须一一对应。
+      ④ update_* 的三套输出文案由 unified-update-check 约定：禁止改写措辞、增删字段。
+
+    改名会让 Manifest 引用、代码引用与守卫同时失效；要改名必须先改代码，再改这里。
+-->
 <resources>
+    <!-- 应用标识 -->
     <string name="app_name">Jinn拼音输入法</string>
     <string name="subtype_label">语音听写</string>
+    <string name="settings_title">Jinn拼音输入法</string>
+    <string name="settings_subtitle">26 键全拼 + 7 套双拼方案</string>
 
     <!-- 键盘状态条 -->
     <string name="status_online">已连接 %1$s:%2$d</string>
@@ -10,34 +33,11 @@
     <string name="status_no_permission">缺少麦克风权限</string>
     <string name="status_settings">设置</string>
 
-    <!-- 麦克风提示 -->
+    <!-- 语音 -->
+    <!-- 入口提示 -->
     <string name="hint_idle">按住说话 / 点一次连续录音</string>
     <string name="voice_offline_blocked">语音服务未连接（%1$s:%2$d），暂不能使用语音输入</string>
-    <!-- 可选词库的加载代价说明（2026-09-17 按实现校正）：
-         现状是「只在空闲时后台加载（息屏 / 键盘闲置 20s / 兜底 180s），加载期间照常打字」，
-         且首次构建索引后落盘缓存，之后启动直接内存映射复用（实测约 0.05s）。
-         旧文案「开机后首次使用输入法时，候选就绪需等待约 7 秒」早已不成立，属过期描述。 -->
-    <string name="dict_startup_cost_line1">空闲时才在后台加载（息屏或收起键盘后），</string>
-    <string name="dict_startup_cost_line2">第一次约 %1$d 秒，期间照样能打字。</string>
-    <string name="dict_startup_cost_line3">之后启动几乎瞬间就绪。</string>
-
-    <!-- 分类词库页 -->
-    <string name="dict_manager_title">分类词库</string>
-    <string name="dict_entry_button">补充短语词库</string>
-    <string name="dict_manager_hint_line1">需要哪个下哪个，能打的词更多。</string>
-    <string name="dict_manager_hint_line2">下载完会自动重启输入法。</string>
-    <string name="dict_status_installed">已安装（%1$s）</string>
-    <string name="dict_status_absent">未安装</string>
-    <string name="dict_action_download">下载</string>
-    <string name="dict_action_reinstall">重新下载</string>
-    <string name="dict_action_remove">删除</string>
-    <string name="dict_downloading">正在下载 %1$s…</string>
-    <string name="dict_download_done">%1$s 下载完成</string>
-    <string name="dict_download_failed">下载失败：%1$s</string>
-    <string name="dict_removed">已删除 %1$s</string>
-    <string name="dict_remove_failed">删除失败</string>
-    <string name="dict_remove_busy">正在下载，无法删除</string>
-    <string name="dict_need_restart">正在重启输入法以生效…</string>
+    <!-- 录音过程提示 -->
     <string name="hint_release_send">松手发送 · 上滑取消</string>
     <string name="hint_release_cancel">松手即取消</string>
     <string name="hint_tap_stop">正在录音 · 点一下结束</string>
@@ -46,21 +46,24 @@
     <string name="hint_cancelled">已取消</string>
     <string name="hint_done">完成</string>
     <string name="hint_empty">没听到内容</string>
+    <string name="hint_silence">没听到声音</string>
+    <!-- 服务未连接 / 未授权 -->
     <string name="hint_not_connected">服务端未连接，点上方状态栏检查设置</string>
     <string name="hint_grant_permission">点上方状态栏去授权麦克风</string>
-    <string name="hint_silence">没听到声音</string>
 
-    <!-- 按键 -->
+    <!-- 按键与无障碍 -->
+    <!-- 键面文字 -->
     <string name="key_space">空格</string>
     <string name="space_hint_placeholder">输入类型</string>
     <string name="key_comma">，</string>
     <string name="key_period">。</string>
+    <string name="key_clear_candidates">✕</string>
+    <!-- 无障碍描述 -->
+    <string name="cd_clear_candidates">清空候选</string>
     <string name="cd_mic">按住说话</string>
     <string name="cd_backspace">退格</string>
     <string name="cd_enter">换行</string>
     <string name="cd_keyboard">切换到拼音键盘</string>
-    <string name="key_clear_candidates">✕</string>
-    <string name="cd_clear_candidates">清空候选</string>
 
     <!-- 拼音键盘 -->
     <string name="key_cn">中</string>
@@ -69,49 +72,83 @@
     <string name="key_digit">数字</string>
     <string name="cd_shift">切换大写</string>
 
-    <!-- 设置页 -->
-    <string name="settings_title">Jinn拼音输入法</string>
-    <string name="settings_subtitle">26 键全拼 + 7 套双拼方案</string>
+    <!-- 候选栏与引擎状态 -->
+    <string name="engine_dict_loading">词库加载中…</string>
+    <string name="engine_dict_filling">词库补全中…</string>
+
+    <!-- 分类词库页 -->
+    <!-- 顶部四句提示 -->
+    <string name="dict_manager_title">分类词库</string>
+    <string name="dict_entry_button">补充短语词库</string>
+    <string name="dict_manager_hint_line1">请务必下载2级/3级词库，之后能打的词更多</string>
+    <string name="dict_manager_hint_line2">下载完成，会自动重启输入法</string>
+    <string name="dict_load_timing">息屏/收起键盘，才会完成加载</string>
+    <string name="dict_startup_instant">以后启动都是瞬间就绪 不用等待</string>
+    <!-- 卡片状态与操作 -->
+    <string name="dict_status_installed">已安装（%1$s）</string>
+    <string name="dict_status_absent">未安装</string>
+    <string name="dict_action_download">下载</string>
+    <string name="dict_action_reinstall">重新下载</string>
+    <string name="dict_action_remove">删除</string>
+    <!-- 下载与删除结果 -->
+    <string name="dict_downloading">正在下载 %1$s…</string>
+    <string name="dict_download_done">%1$s 下载完成</string>
+    <string name="dict_download_failed">下载失败：%1$s</string>
+    <string name="dict_removed">已删除 %1$s</string>
+    <string name="dict_remove_failed">删除失败</string>
+    <string name="dict_remove_busy">正在下载，无法删除</string>
+    <string name="dict_need_restart">正在重启输入法以生效…</string>
+
+    <!-- 剪贴板 -->
+    <string name="clipboard_max_items_title">剪贴板的数量</string>
+    <string name="clipboard_max_items_hint">1~9999 默认 500</string>
+
+    <!-- 设置页 · 连接与语言 -->
     <string name="settings_host">NAS 地址</string>
     <string name="settings_port">端口</string>
     <string name="settings_lock">固定</string>
     <string name="settings_lock_short">锁定</string>
     <string name="settings_language">语言</string>
+    <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
+    <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
+    <string name="settings_check_update">检查软件更新</string>
+
+    <!-- 设置页 · 行为开关与输入选项 -->
+    <string name="switch_user_learning">用户词频学习</string>
+    <string name="switch_user_learning_desc">记住常选的词，下次放前排</string>
+    <string name="switch_predict">追加候选词语</string>
+    <string name="switch_predict_desc">额外显示后续的词</string>
     <string name="settings_default_mode">默认键盘样式</string>
-    <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
     <string name="settings_strip_punc">去句尾标点</string>
     <string name="settings_composing">语音文字实时回显</string>
-    <string name="settings_save">保存配置并立即重启生效</string>
-    <string name="settings_restarting">已保存，正在重启输入法进程…</string>
+    <string name="settings_prompt">提示词（人名 / 地名 / 术语，可留空）</string>
+    <string name="settings_shuangpin_scheme">拼音输入方案</string>
+    <string name="settings_shuangpin_scheme_desc">双拼时键面显示韵母</string>
+    <string name="settings_ime_test_hint">点这里唤起键盘</string>
+    <string name="switch_auto_show_keyboard">自动唤起键盘</string>
+    <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
+
+    <!-- 设置页 · 语音授权与诊断导出 -->
+    <string name="settings_voice_input">语音输入转文字,要自建服务器</string>
+    <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
     <string name="settings_mic_open_settings">前往系统设置授权</string>
     <string name="settings_enable_ime">启用本输入法</string>
     <string name="settings_pick_ime">改默认输入法</string>
-    <string name="settings_invalid_host">请填写 NAS 的局域网地址</string>
-    <string name="settings_invalid_port">端口需在 1 - 65535 之间</string>
-    <string name="settings_check_update">检查软件更新</string>
+    <string name="settings_export_diag">导出诊断数据</string>
+    <string name="settings_diag_exported">已导出：%1$s</string>
+    <string name="settings_diag_export_fail">导出失败：%1$s</string>
+    <string name="settings_diag_dir_hint">日志目录：%1$s</string>
 
-    <!-- 检查更新：三套输出文案由 unified-update-check 约定，禁止改写措辞/增删字段 -->
-    <string name="update_title_available">发现新版本</string>
-    <string name="update_title_prompt">提示</string>
-    <string name="update_local_version">你目前的版本：%1$d</string>
-    <string name="update_latest_version">在线最新版本：%1$d</string>
-    <string name="update_latest_unreachable">在线最新版本：访问 github.com / gitee.com 失败</string>
-    <string name="update_uptodate">已是最新版本 无需更新</string>
-    <string name="update_btn_later">稍后</string>
-    <string name="update_btn_go">去更新</string>
-    <string name="update_btn_ok">知道了</string>
-    <string name="update_checking">检查中…</string>
+    <!-- 设置页 · 保存与重启 -->
+    <string name="settings_save">保存配置并立即重启生效</string>
+    <string name="settings_restarting">已保存，正在重启输入法进程…</string>
 
-    <!-- 自动检查（打开设置页触发）：只有「有新版本」提示，失败与已最新一律静默 -->
-    <string name="update_ask_message">有新版本，要更新吗？</string>
-    <string name="update_btn_no">不要</string>
-    <string name="update_download_page">打开下载页面</string>
-
+    <!-- 设置页 · 使用说明 -->
     <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n启用语音输入之后,长按空格键即可进入语音功能页面\n作者 https://github.com/yezijinn</string>
 
-    <!-- 语言下拉：entries 显示，values 发给服务端，顺序必须一一对应 -->
+    <!-- 设置页 · 下拉数组 -->
     <string-array name="language_entries">
         <item>自动</item>
         <item>中文</item>
@@ -128,8 +165,6 @@
         <item>japanese</item>
         <item>korean</item>
     </string-array>
-
-    <!-- 默认键盘模式：entries 显示，values 写入 prefs，顺序必须一一对应 -->
     <string-array name="default_mode_entries">
         <item>语音键盘</item>
         <item>26 键中文</item>
@@ -141,68 +176,32 @@
         <item>2</item>
     </string-array>
 
-    <!-- 输入法测试：点编辑框唤起键盘 -->
-    <string name="settings_ime_test_hint">点这里唤起键盘</string>
-    <string name="switch_auto_show_keyboard">自动唤起键盘</string>
-    <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
+    <!-- 检查更新 -->
+    <!-- 手动检查 -->
+    <string name="update_title_available">发现新版本</string>
+    <string name="update_title_prompt">提示</string>
+    <string name="update_local_version">你目前的版本：%1$d</string>
+    <string name="update_latest_version">在线最新版本：%1$d</string>
+    <string name="update_latest_unreachable">在线最新版本：访问 github.com / gitee.com 失败</string>
+    <string name="update_uptodate">已是最新版本 无需更新</string>
+    <string name="update_btn_later">稍后</string>
+    <string name="update_btn_go">去更新</string>
+    <string name="update_btn_ok">知道了</string>
+    <string name="update_checking">检查中…</string>
+    <!-- 自动检查：仅「有新版本」提示，失败与已最新一律静默 -->
+    <string name="update_ask_message">有新版本，要更新吗？</string>
+    <string name="update_btn_no">不要</string>
+    <string name="update_download_page">打开下载页面</string>
 
-    <!-- 诊断 -->
-    <string name="settings_voice_input">语音输入转文字,要自建服务器</string>
-    <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
-    <string name="settings_export_diag">导出诊断数据</string>
-    <string name="settings_diag_exported">已导出：%1$s</string>
-    <string name="settings_diag_export_fail">导出失败：%1$s</string>
-    <string name="settings_diag_dir_hint">日志目录：%1$s</string>
-
-    <!-- 剪贴板历史 -->
-    <string name="clipboard_max_items_title">剪贴板的数量</string>
-    <string name="clipboard_max_items_hint">1~9999 默认 500</string>
-    
-
-    <!-- Root 增强模式 -->
-
-    <!-- 剪贴板分类 -->
-    <string name="switch_user_learning">用户词频学习</string>
-    <string name="switch_user_learning_desc">记住常选的词，下次放前排</string>
-    <string name="switch_predict">追加候选词语</string>
-    <string name="switch_predict_desc">额外显示后续的词</string>
-
-    <!-- 词库加载状态提示（出现在候选栏，不弹窗——IME 内禁用弹窗） -->
-    <string name="engine_dict_loading">词库加载中…</string>
-    <string name="engine_dict_filling">词库补全中…</string>
-
-    <!-- 输入方案（全拼 + 七种双拼；2026-09-20 起为**全局**方案选择，语音键盘不在此列；方案名取自 ShuangpinScheme，不写死列表） -->
-    <string name="settings_shuangpin_scheme">拼音输入方案</string>
-    <string name="settings_shuangpin_scheme_desc">双拼时键面显示韵母</string>
-
-    <!-- 键盘外观：26 键区（3 行 28 键）统一圆角与间隙；透明度作用于整块键盘 -->
+    <!-- 键盘外观 -->
+    <!-- 圆角 / 间隙 / 透明度作用于整块键盘，26 键区三行统一生效 -->
     <string name="key_appearance_title">键盘外观</string>
     <string name="key_appearance_entry">键盘配色皮肤</string>
     <string name="key_corner_title">圆角</string>
     <string name="key_gap_title">间隙</string>
     <string name="key_transparency_title">透明</string>
 
-    <!-- 主题：亮白 / 暗黑（跟随系统 / 亮白 / 暗黑 / 定时）——切换后本页立即变色，键盘同步切换 -->
-    <string name="symbol_order_move_up">↑</string>
-    <string name="symbol_order_move_down">↓</string>
-        <!-- 以下两条同时是 AndroidManifest 里 activity 的 android:label（任务切换器显示的名字）——
-        与 app_name / settings_title 同属「必须留在 strings.xml」的例外 -->
-    <string name="symbol_order_title">符号分组顺序</string>
-    <string name="favorite_title">符号收藏编辑</string>
-<string name="symbol_order_close">✕</string>
-
-    <!-- 收藏分组：编辑页与设置页入口 -->
-    <string name="favorite_entry_title">符号的自定义</string>
-    <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
-    <string name="favorite_delete">移除</string>
-    <!-- 角标上显示的字符（2026-10-02 用户反馈后加）：原实现直接把「移除」当显示文本塞进 22dp 角标，
-         两个汉字在 Button 默认内边距里被挤成「只剩蓝底」。显示用符号、无障碍仍读「移除」（见 favorite_delete）。 -->
-    <string name="favorite_delete_mark" translatable="false">×</string>
-    <string name="favorite_dialog_title">添加符号</string>
-    <string name="favorite_dialog_hint">输入或粘贴符号（1~8 个字符）</string>
-    <string name="favorite_exists">该符号已在收藏中</string>
-    <string name="favorite_invalid">请输入 1~8 个字符</string>
-    <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
+    <!-- 主题 -->
     <string name="theme_card_title">界面明暗切换</string>
     <string name="theme_card_desc">亮色:%1$s 暗色:%2$s</string>
     <string name="theme_light_at_tpl">亮起 %1$s</string>
@@ -220,4 +219,22 @@
         <item>2</item>
         <item>3</item>
     </string-array>
+
+    <!-- 符号分组顺序 -->
+    <string name="symbol_order_title">符号分组顺序</string>
+    <string name="symbol_order_move_up">↑</string>
+    <string name="symbol_order_move_down">↓</string>
+    <string name="symbol_order_close">✕</string>
+
+    <!-- 符号收藏 -->
+    <string name="favorite_title">符号收藏编辑</string>
+    <string name="favorite_entry_title">符号的自定义</string>
+    <string name="favorite_empty">还没有收藏符号，点下方「＋ 添加符号」开始 DIY。</string>
+    <string name="favorite_delete">移除</string>
+    <string name="favorite_delete_mark" translatable="false">×</string>
+    <string name="favorite_dialog_title">添加符号</string>
+    <string name="favorite_dialog_hint">输入或粘贴符号（1~8 个字符）</string>
+    <string name="favorite_exists">该符号已在收藏中</string>
+    <string name="favorite_invalid">请输入 1~8 个字符</string>
+    <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
 </resources>

@@ -227,6 +227,51 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 见 [updateCandidateBarBackground]。
      */
     private var candidateBarColor = 0
+    /**
+     * 候选条目渲染指纹（2026-10-03 修复 L-796）：内容与布局都没变时**跳过整棵重建**。
+     *
+     * 此前每按一次键（含退格连删 18 次/秒）都 `removeAllViews()` 后逐条新建 TextView + 闭包，
+     * ≈900 个短命对象/秒；而同文件所有外观类重建都带缓存判据，唯独候选条目没有。
+     *
+     * 指纹用 `items.hashCode()` —— `List.hashCode` 逐元素参与，36 个字符串的哈希远比建 36 个 View 便宜，
+     * 且**覆盖全部候选文本**（只取首项会在中间项变化时漏判）。
+     *
+     * ⚠ 外观变化（字号 / 字距 / 主题色）必须复位，否则换肤后候选不重建。
+     *
+     * ⚠ 复位只有一个出口 [resetCandidateRender]：本容器（`viewCandidateList`）被**五条旁路**共用
+     * （功能面板 / 密码数字条 / 符号分组 / 引擎加载提示 / 空态），它们各自 `removeAllViews()` 后重填。
+     * 2026-10-03 修复 L-809：此前只有外观两处复位，于是「输入 ni → ✕ 清空候选 → 再输入 ni」
+     * 时候选栏停在**功能面板**（点按钮会真的执行动作，候选无法点选上屏）——
+     * 根因就是旁路不复位、而跳过判据又写在清空之前。凡是清这个容器，一律走 [clearCandidateList]。
+     *
+     * ⚠ 哨兵用 `null` 而不是 0（2026-10-03 修复 L-818）：`renderKey` 是若干哈希的线性和，
+     * 任何**取值域内**的哨兵都有极小概率被它撞上 ⇒ 误判命中、整棵重建被跳过（候选栏空白）。
+     * `null` 不在取值域内，碰撞不可能发生。
+     */
+    private var candidateRenderKey: Long? = null
+
+    /**
+     * 复位候选渲染指纹（2026-10-03 修复 L-809 / L-818）：下一次 [renderCandidateItems] 必须重建整棵树。
+     *
+     * 两条路径需要它：① 换肤 / 改字距（外观变了）；② 本容器被**非候选形态**占用过
+     * （功能面板、密码数字条、符号分组、引擎加载提示、空态）—— 指纹是「上次渲染的样子」，
+     * 形态换过之后它就不再代表当前内容。
+     */
+    private fun resetCandidateRender() {
+        candidateRenderKey = null
+    }
+
+    /**
+     * 清空候选容器并复位指纹（2026-10-03 修复 L-809 的唯一出口）。
+     *
+     * ⚠ **不要**在别处直接写 `viewCandidateList.removeAllViews()`：那正是 L-809 的成因 ——
+     * 清了容器却留着「上次渲染」指纹，下一次内容恰好相同就会跳过重建，界面停在另一种形态上。
+     * 唯一的例外是 [renderCandidateItems] 自己：它在**设置完新指纹之后**才清容器。
+     */
+    private fun clearCandidateList() {
+        resetCandidateRender()
+        viewCandidateList.removeAllViews()
+    }
 
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
     private var functionBgAlpha = Float.NaN
@@ -852,6 +897,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 改外观不该把用户正在打的字吞掉（configure 会清 composing 与预测）。
      */
     fun refreshAppearance() {
+        // 外观变了（字号 / 字距 / 主题色）⇒ 候选必须重建，否则指纹命中会留下旧字距与旧颜色（L-796）
+        resetCandidateRender()
         syncKeyboardSkin()
         applyKeyTransparency()
         applySkinToKeys()
@@ -983,6 +1030,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 皮肤换色时先复位缓存，随后的 [applyKeyTransparency] 才会用新皮肤色重建它们。
      */
     private fun syncKeyboardSkin() {
+        // 换肤同样要让候选重建（颜色 token 变了）（L-796）
+        resetCandidateRender()
         val prefs = Prefs(context)
         // 档位取**本视图的色板快照**（[ThemeManager.paletteIsDark]），不取此刻的决策：视图的
         // `R.color.*` 是创建时刻定死的（JinnIme.onCreateInputView 用 themedContext 建视图），
@@ -1907,12 +1956,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
         colorRes: Int,
         onClick: (String) -> Unit,
     ) {
-        viewCandidateList.removeAllViews()
-        val sizeSp = CandidateRows.CANDIDATE_TEXT_SP
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
         // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
         // （语义与按键「间隙」一致；定义域 5~30dp、默认 10dp）；垂直方向不受影响。
         val spacingHalfPx = dpFloat(Prefs(context).candidateSpacingDp / 2f).toInt()
+        // 指纹命中就跳过整棵重建（2026-10-03 修复 L-796）：退格连删时 items 往往不变，只是选中项在移，
+        // 而重建要付 36 个 TextView + 36 个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
+        // items 一致（指纹已覆盖全部文本），所以跳过是安全的。
+        // ⚠ 用 Long 做线性和（L-818）：Int 线性和的取值域与「无缓存」哨兵重叠，改为 `Long? = null` 后
+        // 碰撞不可能发生 —— 指纹相等就跳过重建，撞上就是候选栏空白。
+        val renderKey = items.hashCode().toLong() * 31 + rows * 7 + spacingHalfPx * 13 +
+            (colorToken?.hashCode()?.toLong() ?: 0L) + colorRes
+        if (renderKey == candidateRenderKey) return
+        candidateRenderKey = renderKey
+        viewCandidateList.removeAllViews()
+        val sizeSp = CandidateRows.CANDIDATE_TEXT_SP
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         fun build(text: String): TextView = TextView(context).apply {
@@ -2006,7 +2064,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             showPinyin(null)
-            viewCandidateList.removeAllViews()
+            // ⚠ 必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
+            // 若不复位，「清空后再打同一串拼音」会命中旧指纹而跳过重建。
+            clearCandidateList()
             // 内容刚全部清空：上面那次选档读到的 lastCandidates 还是旧值，这里清空后再判一次
             updateCandidateBarBackground()
             // 无候选、无拼音串、无预测：候选栏展示功能面板按钮（✕ 在 renderFunctionPanel 里隐藏）
@@ -2147,7 +2207,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun renderPasswordDigits() {
         showPinyin(null)
-        viewCandidateList.removeAllViews()
+        clearCandidateList()
         for (digit in PASSWORD_DIGIT_ORDER) {
             val item = TextView(context).apply {
                 text = digit
@@ -2186,7 +2246,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun renderSymbolGroups() {
         showPinyin(null)
-        viewCandidateList.removeAllViews()
+        clearCandidateList()
         val labelSize = 13f // 分组主文本字号（sp）
         for ((idx, group) in symbolGroups.withIndex()) {
             val sel = idx == symbolGroupIndex
@@ -2301,7 +2361,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 只是候选栏里的一条文本：不改键盘高度、不弹窗（IME 内禁用 AlertDialog）。
      */
     private fun renderCandidateHint(text: String) {
-        viewCandidateList.removeAllViews()
+        clearCandidateList()
         viewCandidateList.addView(
             TextView(context).apply {
                 this.text = text
@@ -2640,7 +2700,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
      */
     private fun renderFunctionPanel() {
-        viewCandidateList.removeAllViews()
+        clearCandidateList()
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
         setClearButtonVisible(false)
         // 搜索态：功能面板只保留「退出搜索」。

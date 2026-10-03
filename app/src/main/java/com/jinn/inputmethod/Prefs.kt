@@ -517,11 +517,13 @@ class Prefs(context: Context) {
         // URL，少了这一条会出现「摘要说已配置、点翻译说未配置」的自相矛盾。
         // ⚠ 还要求**必须是 https**（2026-10-03 修复 L-513）：只判「能解析」时 `http://` 会一路放行到
         // 「已配置：…」摘要，直到第一次点翻译才被 `INSECURE` 拒掉 —— 配置信任链在这里断裂，
-        // 而平台层对用户自填的域名没有兜底（见 `network_security_config` 的说明），
-        // 这里与 `TranslationClient` 的 HTTPS 判据是**同一份事实**，必须同源。
-        TranslationProviderId.OPENAI -> openAiApiKey.cleanCredential().isNotEmpty() &&
-            openAiModel.cleanCredential().isNotEmpty() &&
-            OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath)?.isHttps == true
+        // 而平台层对用户自填的域名没有兜底（见 `network_security_config` 的说明）。
+        // ⚠ 2026-10-03 修复 L-811：判据收敛到 `OpenAiTranslator.isReady`（**唯一真源**）——
+        // 此前这份「端点必须 https」的事实只写在运行链路的对面（`providerOf` 只判「能解析」），
+        // 两边分叉 ⇒ `http://` 端点时摘要说已配置、点翻译必报 INSECURE。这里不再自己拼判据。
+        TranslationProviderId.OPENAI -> OpenAiTranslator.isReady(
+            openAiApiKey, openAiModel, openAiBaseUrl, openAiChatPath,
+        )
     }
 
     /**
@@ -533,6 +535,49 @@ class Prefs(context: Context) {
      */
     internal fun currentProviderConfigured(): Boolean =
         hasCredentialFor(TranslationProviderId.of(translateProvider))
+
+    /**
+     * 「翻译不可用」的**成因**（2026-10-03 修复 L-815）。
+     *
+     * 为什么要分因：`providerOf` 把「凭据齐备 + 端点是 https」收成**一个**判据（`isReady`）之后，
+     * `null` 这个结果就**不再区分**「Key / 模型名没填」与「Base URL 写成 `http://`」——
+     * 而这两种情况下用户该做的事完全相反（去填凭据 vs 去改地址）。
+     * 合并判据时若不同时把「未满足」这一态变成可分因，就会把**有用的错误归因一起吞掉**：
+     * http 端点用户会被引导去检查已经填好的 Key 与模型名。
+     *
+     * 判据与 [hasCredentialFor] / `providerOf` 同源（端点部分走 [OpenAiTranslator.endpointReady]），
+     * 本方法只做**归因**，不新增事实。
+     */
+    internal fun translateNotReadyReason(): TranslateNotReady {
+        val id = TranslationProviderId.of(translateProvider)
+        if (id != TranslationProviderId.OPENAI) {
+            return if (hasCredentialFor(id)) TranslateNotReady.NONE else TranslateNotReady.MISSING_CREDENTIAL
+        }
+        // OpenAI 兼容：先判凭据、再判端点 —— 顺序反了会把「没填 Key」说成「地址要 https」
+        if (openAiApiKey.cleanCredential().isEmpty() || openAiModel.cleanCredential().isEmpty()) {
+            return TranslateNotReady.MISSING_CREDENTIAL
+        }
+        return if (OpenAiTranslator.endpointReady(openAiBaseUrl, openAiChatPath)) {
+            TranslateNotReady.NONE
+        } else {
+            TranslateNotReady.ENDPOINT
+        }
+    }
+
+    /** [translateNotReadyReason] 的取值（`NONE` = 可用）。 */
+    internal enum class TranslateNotReady {
+        /** 凭据与端点都齐备，可以发请求 */
+        NONE,
+
+        /** 凭据没填 / 填了空白：用户该去「翻译设置」或 OpenAI 配置页填 Key 与模型名 */
+        MISSING_CREDENTIAL,
+
+        /**
+         * 凭据齐备但端点不合格（`http://` 或解析不出来）：用户该去改 Base URL。
+         * 与 [MISSING_CREDENTIAL] 必须分开 —— 合并会把用户引向错误的页面。
+         */
+        ENDPOINT,
+    }
 
     // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（用户 2026-09-30 定）──
 

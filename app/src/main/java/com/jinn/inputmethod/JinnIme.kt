@@ -2312,8 +2312,17 @@ class JinnIme : InputMethodService() {
         }
         val provider = prefs.translationProvider()
         if (provider == null) {
-            Diagnostics.w(TAG, "翻译: 未配置凭据")
-            toast(TranslationError.NOT_CONFIGURED.message)
+            // ⚠ `null` 有**两种成因**（2026-10-03 修复 L-815）：凭据没填 / 端点不是 https。
+            // 判据收敛（`isReady`）之后 `providerOf` 不再区分它们，而两者的用户动作完全相反 ——
+            // 合并提示会把 http 端点用户引去检查已经填好的 Key 与模型名（比收敛前更差）。
+            val reason = prefs.translateNotReadyReason()
+            val err = if (reason == Prefs.TranslateNotReady.ENDPOINT) {
+                TranslationError.INSECURE
+            } else {
+                TranslationError.NOT_CONFIGURED
+            }
+            Diagnostics.w(TAG, "翻译: 不可用（成因=$reason）")
+            toast(err.message)
             return
         }
         // 静默 return 是「点了没反应」的另一个来源（2026-10-01）：连接拿不到时用户无从判断

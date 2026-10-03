@@ -1,29 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  页面控件的**统一规格**（2026-10-02 用户要求「页面的样式风格配色应该统一、完全一致、不各自独立」，
-  见 BUG.md L-477）。
+    页面控件的统一规格。
 
-  为什么集中到这里：同一件事此前在 9 个页面各写一份，而且常常三样都不一样 ——
-  关闭按钮的键面文字有 `✕`（strings.xml）/ `"X"`（5 个页面的 TEXT_CLOSE 常量）/ `"关闭"`（原文范围页）三种；
-  说明文字 11sp / 12sp；按钮高度 40dp / 44dp；单行输入框 40dp / 44dp / minHeight 44dp 三种；
-  三个翻译页干脆没有卡片分组。
-
-  约定（由 `ThemeColorParityTest.页面控件必须用统一样式` 机械对拍）：
-  **页面里的同类控件只写 `style`，不再各写颜色 / 字号 / 高度**；颜色一律走色令牌，
-  因此明暗两档自动切换（`values-night/colors.xml`）。
-  键盘配色皮肤页（`activity_key_appearance.xml`）按用户要求**保持独立**，不受这些样式约束。
+    排序：页面骨架 → 分组容器 → 字段 → 按钮 → 对话框主题。
+    注释规范：每节一行节名注释；块内补充只写「为什么这样定」这类必要事实，不写日期、不写改动缘由。
+    硬约束（全文件仅此四条）：
+      ① 同类控件只写 style，不各写颜色 / 字号 / 高度；颜色走色令牌，明暗自动切换。
+      ② 同名 style 在 values-night 是整条替换、不做 item 合并，夜间目录必须写完整定义。
+      ③ 键盘配色皮肤页（activity_key_appearance.xml）保持独立，不受这些样式约束。
+      ④ SettingsButton 的 android:textSize 是键盘标点字号基准（PUNCTUATION_TEXT_SP = 本值 + 3），
+         改这里必须同步 PinyinKeyboardView 的同名常量。① 与 ④ 由 ThemeColorParityTest 机械对拍。
 -->
 <resources>
-
-    <!-- ===================== 页面骨架 ===================== -->
+    <!-- 页面骨架 -->
 
     <!--
-      页面根容器：底色（极光）+ 给系统栏留位 + 内容三边 8dp（**底部不留白**）。
-      ⚠ 不含 `orientation`：设置页的根是 `ScrollView`（无此属性），把它写进样式会对那一页无效，
-      所以「竖排」由各页的根自己写（它是结构、不是配色规格）。
-      ⚠ 底部必须是 0：根上的 `paddingBottom` 在 ScrollView 页是**裁剪区**（`clipToPadding` 默认
-      true），键盘弹出时可见区最下 8dp 只会画极光底色端点色 —— 视觉上就是候选栏正上方多出
-      一条纯黑色带（暗色 `#0B1020` / 亮色 `#FBFCFE`）。用户 2026-10-02 要求去掉。
+      页面根容器：极光底色 + 给系统栏留位 + 内容三边 8dp，底部不留白。
+      不含 orientation：设置页的根是 ScrollView（无此属性），写进样式对该页无效，竖排由各页根自己写。
+      底部 padding 必须是 0：根上的 paddingBottom 在 ScrollView 页是裁剪区（clipToPadding 默认
+      true），键盘弹出时可见区最下 8dp 只画极光端点色，视觉上就是候选栏正上方多出一条纯色带。
     -->
     <style name="PageRoot">
         <item name="android:layout_width">match_parent</item>
@@ -35,7 +30,7 @@
         <item name="android:paddingTop">8dp</item>
     </style>
 
-    <!-- 页面标题：子页顶部一行，与关闭按钮同排（占满按钮之外的全部宽度） -->
+    <!-- 页面标题：子页顶部一行，与关闭按钮同排，占满按钮之外的全部宽度 -->
     <style name="PageTitle">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>
@@ -45,7 +40,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!-- 页面说明：标题下方一段（文案在代码里下发 —— AGENTS.md：strings.xml 默认禁改） -->
+    <!-- 页面说明：标题下方一段；文案在代码里下发（工程约定：strings.xml 默认禁改） -->
     <style name="PageDesc">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -55,11 +50,7 @@
         <item name="android:textSize">12sp</item>
     </style>
 
-    <!--
-      页面主标题（首页顶部的品牌行：`设置页` 那一行大标题）。
-      与 [PageTitle] 分开：那是子页顶部、与关闭按钮同排的标题（16sp）；
-      这里是首页品牌行（22sp 居中 + 粗体）—— 此前这段规格直接写在布局里。
-    -->
+    <!-- 页面主标题：首页顶部的品牌行，22sp 居中粗体；与 PageTitle 分开（那是子页标题，16sp） -->
     <style name="PageHeroTitle">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -69,11 +60,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!--
-      关闭按钮：全仓同一形态与同一尺寸。
-      键面字形与无障碍名来自**代码里唯一的** `PageChrome.CLOSE` / `CLOSE_DESC`
-      —— 此前 9 个页面各写一份（`✕` / `X` / `关闭`），辅助服务读出来的名字也各不相同。
-    -->
+    <!-- 关闭按钮：全仓同一形态与尺寸；键面字形与无障碍名取代码里唯一的 PageChrome.CLOSE / CLOSE_DESC -->
     <style name="PageCloseButton" parent="SettingsButton">
         <item name="android:layout_width">40dp</item>
         <item name="android:layout_height">32dp</item>
@@ -83,9 +70,9 @@
         <item name="android:textSize">14sp</item>
     </style>
 
-    <!-- ===================== 分组容器 ===================== -->
+    <!-- 分组容器 -->
 
-    <!-- 卡片（组卡）：竖排一「组」控件的外框，与设置页同款 -->
+    <!-- 组卡：竖排一「组」控件的外框 -->
     <style name="SettingsCard">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -95,7 +82,7 @@
         <item name="android:padding">6dp</item>
     </style>
 
-    <!-- 卡片（行卡）：一行并排若干控件的窄内边距版本 -->
+    <!-- 行卡：一行并排若干控件的窄内边距版本 -->
     <style name="SettingsCardRow" parent="SettingsCard">
         <item name="android:orientation">horizontal</item>
         <item name="android:padding">6dp</item>
@@ -107,11 +94,9 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:textColor">@color/text_primary</item>
         <item name="android:textSize">13sp</item>
-    </style>
+    </style>    <!-- 字段 -->
 
-    <!-- ===================== 字段 ===================== -->
-
-    <!-- 设置页字段标签 -->
+    <!-- 字段标签 -->
     <style name="SettingsLabel">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -120,10 +105,7 @@
         <item name="android:layout_marginBottom">2dp</item>
     </style>
 
-    <!--
-      双列卡片里的**栏标题**（一个卡片里左右两栏各放一个控件时，控件上方的粗体小标题）。
-      统一 13sp + 主色 + 粗体：此前这段规格在设置页的 4 个栏里各写一遍（无样式）。
-    -->
+    <!-- 双列卡片里的栏标题：控件上方的粗体小标题，统一 13sp 主色 -->
     <style name="SettingsFieldTitle">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -132,7 +114,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!-- 单行输入框 / 下拉：全仓同一高度与内边距（原先 40dp / 44dp / minHeight 44dp 三种并存） -->
+    <!-- 单行输入框与下拉：全仓同一高度与内边距 -->
     <style name="SettingsField">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">40dp</item>
@@ -152,10 +134,7 @@
         <item name="android:padding">12dp</item>
     </style>
 
-    <!--
-      卡片内的提示 / 辅助小字（开关说明、页脚、配额与错误码说明…）。
-      统一 11sp + text_secondary：此前 11sp / 12sp 两种并存。
-    -->
+    <!-- 卡片内的提示与辅助小字（开关说明、页脚、配额与错误码说明）：统一 11sp 次级色 -->
     <style name="CardHint">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -163,13 +142,9 @@
         <item name="android:textSize">11sp</item>
     </style>
 
-    <!-- ===================== 按钮 ===================== -->
+    <!-- 按钮 -->
 
-    <!--
-      普通按钮（页面里的次级动作）：极光次级样式，圆角、固定高度、按压态。
-      ⚠ `android:textSize` 是**键盘标点字号**的基准（`PUNCTUATION_TEXT_SP = 本值 + 3`），
-      改这里必须同步 `PinyinKeyboardView.PUNCTUATION_TEXT_SP`（守卫：RecentFixesRegressionTest）。
-    -->
+    <!-- 普通按钮：极光次级样式，圆角、固定高度、按压态；textSize 的约束见文件头硬约束 ④ -->
     <style name="SettingsButton">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">40dp</item>
@@ -190,24 +165,14 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!--
-      键盘底部功能键（符号 / 数字 / 中英 / 回车 / 切换…）的规格**不在这里**。
-      键盘侧是全代码构建的（`PinyinKeyboardView.buildFunctionButton` + `KeyboardSkin` 的皮肤令牌）：
-      键面是 `key_bg`（无描边、10dp 圆角、跟键盘皮肤走），而页面按钮是 `SettingsButton`
-      （`btn_aurora_secondary`：描边 + 12dp 圆角 + 半透明蓝底）—— 两者**刻意不同源**，因为键盘若借用
-      页面样式，「页面改一次按钮」会悄悄改到键盘（2026-10-02 样式统一时发现的同类问题）。
+    <!-- 键盘底部功能键的规格不在本文件：键盘侧是代码构建的，键面取 key_bg（无描边、10dp 圆角、
+         跟键盘皮肤走），页面按钮取 btn_aurora_secondary（描边、12dp 圆角、半透明蓝底）。两者刻意
+         不同源，键盘若借用页面样式，「页面改一次按钮」会悄悄改到键盘。 -->
 
-      2026-10-02 续：这里原先还留着一份 `KeyboardFunctionKey` 样式，但**全仓零引用**（键盘功能键是
-      代码构建的），取值（页面按钮背景 + 13sp）与键盘实现也不符 —— 留着既让 lint 报
-      UnusedResources，又会误导后人「键盘该用这个样式」，已删除。
-    -->
+    <!-- 对话框主题 -->
 
-    <!--
-      对话框主题（AppTheme 的 alertDialogTheme 指向它）。
-      框架 AlertDialog 默认取 Material 的**浅色**对话框主题，暗黑界面下会白底黑字、与页面撞色，
-      所以这里显式换成 App 的配色令牌；面板圆角与内边距仍由父主题提供，只替换颜色。
-      取值随 values-night/colors.xml 自动切换；夜间目录另有一份同名完整定义（同名 style 整条替换）。
-    -->
+    <!-- AppTheme 的 alertDialogTheme 指向它：框架 AlertDialog 默认取 Material 浅色对话框主题，
+         暗黑界面下白底黑字与页面撞色，故显式换成 App 的配色令牌；圆角与内边距仍由父主题提供。 -->
     <style name="AppDialogTheme" parent="@android:style/Theme.Material.Light.Dialog.Alert">
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:colorBackground">@color/app_bg</item>

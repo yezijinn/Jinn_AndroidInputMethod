@@ -57,9 +57,11 @@ class OptionalDictJunkTest {
     /**
      * 旧包卡片必须用自己的完整文案（BUG.md L-69）。
      *
-     * `dict_startup_cost_line1` 的值以逗号结尾（「…（息屏或收起键盘后），」），它是给清单内卡片做**前缀**的
-     * （后面接「第一次约 N 秒」），单用会在卡片上留下半句残话。旧包没有实测耗时（见 `buildUnknownCard` 的 KDoc），
-     * 所以只写一句完整的话。
+     * 清单卡片已瘦到「名称 / 说明 / 状态+按钮」三块（2026-10-03 按用户要求删掉体积与加载说明），
+     * `dict_startup_cost_line1~3` 随之删除；那两句加载说明（`dict_load_timing` /
+     * `dict_startup_instant`）搬到了**页面顶部**的四句提示里，不再进卡片。
+     * 旧包没有对应清单条目可复用，`TEXT_LEGACY_LOAD` 仍是它唯一合适的写法 —— 因此这里既钉
+     * 「代码里用了自己的文案」，也钉「那三条资源不许复活」。
      */
     @Test
     fun `旧包卡片不得复用前缀型资源`() {
@@ -71,11 +73,27 @@ class OptionalDictJunkTest {
         //（把 `text = TEXT_LEGACY_LOAD` 换成 `text = ""` 并在旁边注释里写下该名，旧版守卫仍绿）。
         val code = TestSources.codeOf(card)
         assertTrue(
-            "旧包卡片引用了 dict_startup_cost 系列资源：它们以逗号结尾，单用会留半句残话",
+            "旧包卡片引用了 dict_startup_cost 系列资源：那三条已删除，且都是半句残话",
             "R.string.dict_startup_cost" !in code,
         )
         assertTrue("旧包卡片没有用自己的加载提示文案（TEXT_LEGACY_LOAD）", "TEXT_LEGACY_LOAD" in code)
+        val xml = resFile("values/strings.xml").readText()
+        assertTrue(
+            "dict_startup_cost_line1~3 已随卡片瘦身删除（卡片只留名称 / 说明 / 状态+按钮），不许复活",
+            "dict_startup_cost" !in xml,
+        )
     }
 
     private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
+
+    /**
+     * 资源文件读取（与 [ThemeColorParityTest] 同款，工作目录可能是模块目录或仓库根）。
+     *
+     * ⚠ 两份副本是刻意的：那个是它的 private 助手、这里需要跨类复用同一个「两个候选路径」口径 ——
+     * 统一到 [TestSources] 的收益只有一处调用点，代价是动一个已冻结的共用助手。
+     */
+    private fun resFile(relative: String): File =
+        listOf(File("src/main/res/$relative"), File("app/src/main/res/$relative"))
+            .firstOrNull { it.isFile }
+            ?: error("找不到资源文件: $relative")
 }

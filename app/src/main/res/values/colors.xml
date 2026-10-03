@@ -1,14 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 亮白主题色板（默认目录 = 跟随系统浅色时的取值）。
-         暗黑主题在 values-night/colors.xml —— 两套**逐名对齐**：少一个名字，该令牌在暗色下会静默退回亮色值。
-         对比度（WCAG 2.1）实测：正文 ≥4.5:1、大字与 UI 组件 ≥3:1。 -->
+<!--
+    亮白主题色板（默认目录，跟随系统浅色时取这些值）。
 
-    <!-- 键盘 -->
+    排序：键盘底与键面 → 拼音键盘 → 文字 → 麦克风 → 连接状态 → 强调与状态 → 设置页
+          → 键盘外观页 → 按钮与字段 → 系统栏。
+
+    注释规范：每节只写一行节名注释；补充信息只写「为什么是这个值」这类必要事实，
+    不写日期、不写改动缘由、不写历史叙事。
+
+    硬约束（全文件仅此三条）：
+      ① 暗黑主题在 values-night/colors.xml，两套**逐名对齐**：少一个名字，该令牌在暗色下
+         会静默退回亮色值（ThemeColorParityTest 机械对拍）。
+      ② 明暗**同值**是有意为之的令牌（当前只有 mic_glyph_active）：该名字在两套色板里
+         保持一致，测试白名单显式列出，不许「顺手改成不同值」。
+      ③ 颜色一律进色令牌，页面与代码里不许再写硬编码色值。
+-->
+<resources>
+    <!-- 键盘底与键面 -->
     <color name="kb_bg">#EDF1F9</color>
     <color name="kb_divider">#DCE3F0</color>
     <color name="key_bg">#FFFFFF</color>
-    <!-- 浅色键面上的涟漪必须用「黑」：白色涟漪在近白键面上不可见 -->
+    <!-- 浅色键面上的涟漪必须用黑：白色涟漪在近白键面上不可见 -->
     <color name="key_ripple">#1A000000</color>
     <color name="surface_hi">#FFFFFF</color>
 
@@ -30,29 +42,28 @@
     <color name="mic_active">#D93036</color>
     <color name="mic_active_center">#E5484D</color>
     <color name="mic_ring">#D93036</color>
-    <!-- 空闲 / 取消预警态的图标。亮色档的底盘是**近白**的（mic_idle #E3E9F5 / mic_idle_center #CFD8EA），
-         白图标压上去只有 1.2~1.4:1（需 ≥3:1）—— 与同面板编辑键的做法对齐（白键面 kb_key + 深字
-         kb_key_text），亮色档用深色图标。2026-10-02 修复 L-475。 -->
+    <!-- 空闲与取消预警态图标：亮色档底盘是近白的（mic_idle / mic_idle_center），
+         白图标压上去只有 1.2~1.4:1（需 ≥3:1），与同面板编辑键的做法对齐（白键面 + 深字），
+         亮色档用深色图标 -->
     <color name="mic_glyph">#1A1F2B</color>
-    <!-- 录音态图标：底盘是红色（mic_active / mic_active_center，两档都是深红），白图标两档都成立
-         （亮 4.7:1 / 暗 3.9:1）⇒ 这是**有意的明暗同值**令牌，见 ThemeColorParityTest 的白名单 -->
+    <!-- 录音态图标：底盘是红色，两档都成立（亮 4.7:1 / 暗 3.9:1）⇒ 明暗同值令牌 -->
     <color name="mic_glyph_active">#FFFFFF</color>
 
-    <!-- 连接状态指示点 -->
+    <!-- 连接状态 -->
     <color name="dot_online">#157347</color>
     <color name="dot_connecting">#8A5200</color>
     <color name="dot_offline">#C62828</color>
 
     <!-- 强调与状态 -->
     <color name="accent">#2F6BE0</color>
-    <!-- 主按钮文字：亮色主题的按钮是**深**渐变 → 白字（实测 4.88~6.11:1）；暗色主题反之用深墨字 -->
+    <!-- 主按钮文字：亮色主题的按钮是深渐变，用白字（实测 4.88~6.11:1），暗色主题反之用深墨字 -->
     <color name="text_on_accent">#FFFFFF</color>
     <color name="danger">#C62828</color>
     <color name="ok">#157347</color>
     <color name="warn">#8A5200</color>
     <color name="btn_disabled">#C9D2E0</color>
 
-    <!-- 设置页：极光风格（亮色版） -->
+    <!-- 设置页 -->
     <color name="app_bg">#F5F7FB</color>
     <color name="aurora_bg_top">#E7EDFA</color>
     <color name="aurora_bg_mid">#F1F4FC</color>
@@ -64,20 +75,18 @@
     <color name="aurora_purple">#6D3FE0</color>
     <color name="launcher_bg">#F5F7FB</color>
 
-    <!-- 键盘外观页：压在固定「七彩极光」背景上的文字色。
-         背景固定（key_appearance_bg.xml 不随主题变化），这里与 values-night 写**同样的值** ⇒ 观感不变；
-         两套色板同名是为了不破 ThemeColorParityTest 的逐名对齐守卫 -->
+    <!-- 键盘外观页：压在固定背景上，背景不随主题变化，故与 values-night 写同样的值 -->
     <color name="key_appearance_fg">#F3F6FF</color>
 
-    <!-- 按钮涟漪与次级底（2026-09-21 由 drawable 里的硬编码收敛而来，两套主题各给值） -->
+    <!-- 按钮与字段 -->
     <color name="ripple_on_accent">#33FFFFFF</color>
     <color name="ripple_on_surface">#1A000000</color>
     <color name="btn_secondary_bg">#FFFFFF</color>
     <color name="field_bg">#F1F4FC</color>
     <color name="grip">#B9C2D2</color>
 
-    <!-- 系统导航栏底色。亮色主题想给浅底就得同时点亮 windowLightNavigationBar，而那是 API 27+ 属性：
-         26 上标志被忽略、浅底配浅色图标，所以这一档用深底；27+ 由 values-v27/colors.xml 覆盖成页面同色。
-         两套色板都写同名是为了不破 ThemeColorParityTest 的逐名对齐守卫（夜间档不引用它）。 -->
+    <!-- 系统栏 -->
+    <!-- 亮色下想要浅底就得同时点亮 windowLightNavigationBar，而那是 API 27+ 属性：26 上标志被忽略、
+         浅底会配浅色图标，所以这一档用深底，27+ 由 values-v27/colors.xml 覆盖成页面同色 -->
     <color name="nav_bar">#1A1F2B</color>
 </resources>

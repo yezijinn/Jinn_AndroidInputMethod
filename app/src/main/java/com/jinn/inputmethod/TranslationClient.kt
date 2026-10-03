@@ -89,13 +89,10 @@ internal object TranslationClient {
     }
 
     /**
-     * 按当前选择的 Provider 组装实现；**凭据不全时返回 null**（调用方据此提示「先配置」）。
+     * 按 [id] 组装 Provider；**凭据不全时返回 null**（调用方据此提示「先配置」）。
      *
      * 纯函数（不碰 Android API 与网络），JVM 单测直接覆盖「未配置 / 六种 Provider」。
      * 六家凭据互不串用：选了哪家就只看那家的键。
-     */
-    /**
-     * 按 [id] 组装 Provider。
      *
      * ⚠ 非目标家的凭据参数**留默认空值**即可（2026-10-03 修复 L-530 / L-531）：Kotlin 的参数在
      * 调用前就会求值，调用方若把关凭据的 getter 全列上，冷缓存下一次翻译就要在主线程做最多 8 次
@@ -153,9 +150,10 @@ internal object TranslationClient {
                 model = openAi.model.cleanCredential(),
                 baseUrl = openAi.baseUrl.cleanCredential(),
             )
-            // 端点解析不出来（Base URL 乱填）等同「未配置」：不把非法地址交给网络层
-            val endpoint = OpenAiTranslator.joinUrl(cleaned.baseUrl, cleaned.chatPath)
-            if (cleaned.apiKey.isEmpty() || cleaned.model.isEmpty() || endpoint == null) {
+            // 「已配置」判据**必须与设置面同源**（2026-10-03 修复 L-811）：此前这里只判「端点能解析」，
+            // 而 `Prefs.hasCredentialFor` / 翻译设置页状态行还额外要求 https ⇒ Base URL 填 `http://`
+            // 时界面显示「已配置」，点翻译却被下面的 `INSECURE` 拒掉。四处统一走 `isReady`。
+            if (!OpenAiTranslator.isReady(cleaned.apiKey, cleaned.model, cleaned.baseUrl, cleaned.chatPath)) {
                 null
             } else {
                 OpenAiTranslator(cleaned)
@@ -242,8 +240,12 @@ internal object TranslationClient {
             return null
         }
         // HTTPS 硬判据（与 UpdateChecker 同款）：地址被改成明文一律拒发。
-        // 归 INSECURE 而不是 SERVER：这是**用户可修的配置问题**（自定义 Base URL 写成 http://），
-        // 提示「翻译服务异常」会让用户无从下手（2026-09-30 审查发现）。
+        // ⚠ 这是一条**纵深防御**，六家 provider 当前都到不了这里（2026-10-03 复核 L-817）：
+        // OpenAI 兼容的端点判据已在 `providerOf` 收口（`OpenAiTranslator.endpointReady`），
+        // 另五家端点是源码常量 https ⇒ `request.url.isHttps` 恒真。留着是为了「将来新增 provider
+        // 时不必记得再加一道判据」，仍覆盖它的只有单测里的假 Provider。
+        // 用户可见的同义提示改由 [TEXT_ENDPOINT_NEEDS_HTTPS] 承担（键盘 / 设置页按成因分因，L-815）——
+        // 别再把本分支写成「用户可修的配置问题」的活跃路径。
         if (!request.url.isHttps) {
             Diagnostics.w(TAG, "翻译地址不是 HTTPS，拒绝发送")
             deliver(onDone, TranslationOutcome.Fail(TranslationError.INSECURE))
@@ -313,10 +315,11 @@ internal object TranslationClient {
                 response.use {
                     val body = readBodyCapped(it)
                     // 记协议：排障时「走的哪个协议」是第一个要分清的事（曾疑 503 与 h2 有关，实测排除）
-                    // len 恰好顶到上限时**可能是被截断的**（peekBody 的语义）：标出来，免得把
+                    // len 恰好顶到上限时**可能是被截断的**（读取上限的语义）：标出来，免得把
                     // 「半截 JSON 解析失败」当成服务端问题（2026-10-01 修复 L-243）
-                    // 按 **UTF-8 字节**比上限（`peekBody` 也是按字节截断）：用字符数会在多字节译文下
+                    // 按 **UTF-8 字节**比上限（读取侧也是按字节截断）：用字符数会在多字节译文下
                     // 恒小于上限，标记永远不亮 —— 正好抵消了它要消除的那类误导（2026-10-01 修复 L-257）
+                    // ⚠ 上限本身已改成**真有界读**（2026-10-03 修复 L-810，`peekBody` 会先读完整 body）。
                     val capped = isBodyCapped(body)
                     Diagnostics.i(
                         TAG,
@@ -564,13 +567,6 @@ internal object TranslationClient {
         return call
     }
 
-    /**
-     * 读取响应体，**带上限**（[MAX_BODY_BYTES]）：用 `peekBody` 截断而不是直接 `string()`。
-     *
-     * 为什么要有闸（2026-09-30 第二轮审查）：Base URL 填错指向一个返回大文件/大 HTML 的站点时，
-     * `body.string()` 会把整段内容读进内存，非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份；
-     * 内存尖峰最坏会 OOM —— 设置页与 IME 同进程，一起带走。正常译文响应只有几百字，不会误截。
-     */
     /** 日志前缀：有 traceId 时是 `[TR-xxxx] `，没有时是空串（2026-10-03 修复 L-615） */
     private fun traceTag(traceId: String): String = if (traceId.isEmpty()) "" else "[$traceId] "
 
@@ -616,8 +612,34 @@ internal object TranslationClient {
         return false
     }
 
-    private fun readBodyCapped(response: Response): String? =
-        runCatching { response.peekBody(MAX_BODY_BYTES).string() }.getOrNull()
+    /**
+     * 读取响应体，**真正有界**（[MAX_BODY_BYTES]）：只向连接要 `MAX+1` 字节，超限部分**根本不入内存**。
+     *
+     * 为什么要有闸（2026-09-30 第二轮审查）：Base URL 填错指向一个返回大文件/大 HTML 的站点时，
+     * 无界读会把整段内容读进内存，非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份；
+     * 内存尖峰最坏会 OOM —— 设置页与 IME 同进程，一起带走。正常译文响应只有几百字，不会误截。
+     *
+     * ⚠ 为什么不能用 `peekBody`（2026-10-03 修复 L-810）：`Response.peekBody(n)` 的内部是
+     * `source.request(Long.MAX_VALUE)` —— **先把整个 body 读进内存 Buffer**，再对克隆出来的源
+     * `limit(n)`。`n` 只限制交给 `.string()` 的那一份，**峰值内存与响应体真实体量同阶**
+     * ⇒ 「挡住大文件站点的内存尖峰 / 最坏 OOM」这两条收益此前都不成立（**结果**有界 ≠ **峰值**有界）。
+     *
+     * 现在的做法：`BufferedSource.request(MAX+1)` 只向连接要这么多字节（流没结束就到此为止），
+     * 再从缓冲里**精确拷贝**需要的那一份；多读的那 1 字节只用来判「是否顶到上限」。
+     * 字符集沿用响应声明（与 `ResponseBody.string()` 同口径），服务端声明错编码时的行为不变。
+     *
+     * 未读完的部分仍由调用方的 `response.use {}` 关闭（与原实现同一收尾，不新增连接处理分支）。
+     */
+    private fun readBodyCapped(response: Response): String? = runCatching {
+        val body = response.body ?: return@runCatching null
+        val source = body.source()
+        source.request(MAX_BODY_BYTES + 1)
+        val buffer = source.buffer
+        val size = minOf(buffer.size, MAX_BODY_BYTES + 1L).toInt()
+        val bytes = ByteArray(size)
+        buffer.read(bytes, 0, size)
+        String(bytes, body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
+    }.getOrNull()
 
     /**
      * 响应体的 UTF-8 字节数 —— 截断判据与日志**共用这一个换算**。
@@ -630,14 +652,17 @@ internal object TranslationClient {
         body?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L
 
     /**
-     * 响应体是否顶到了读取上限（**因此可能已被 `peekBody` 截断**）。
+     * 响应体是否顶到了读取上限（**因此可能已被截断**）。
      *
-     * 按 **UTF-8 字节**比（`peekBody` 也是按字节截断）：用字符数会在多字节译文下恒小于上限，
+     * 按 **UTF-8 字节**比（读取侧也是按字节截断）：用字符数会在多字节译文下恒小于上限，
      * 标记永远不亮 —— 正好抵消了它要消除的那类误导。
      *
      * 两条读取链（`translate` 与 `fetchModels`）共用同一判据：原先只有前者记这个标记，
      * 后者在响应被截断时只剩一句「共 0 个」，与「服务端真的回了空列表」无法分辨
      *（2026-10-02 修复 L-457）。
+     *
+     * ⚠ 已知不精确（归 L-457）：判据是「把**截断后解出的串**重新按 UTF-8 编码」再比上限，
+     * 服务端声明 GBK / ISO-8859-1 时未截断也可能判成顶格 —— 只影响日志里那句「可能已截断」。
      */
     private fun isBodyCapped(body: String?): Boolean = bodyBytes(body) >= MAX_BODY_BYTES
 
@@ -655,7 +680,7 @@ internal object TranslationClient {
     internal fun errorSummary(body: String?): String {
         if (body.isNullOrBlank()) return "body=空"
         val json = runCatching { org.json.JSONObject(body) }.getOrNull()
-            ?: return "body=非JSON(len=${body.length})"
+            ?: return "body=非JSON(len=${bodyBytes(body)})"
         val code = listOf(
             json.optJSONObject("error")?.opt("code"),
             json.opt("error_code"),
@@ -676,7 +701,10 @@ internal object TranslationClient {
                 s.isNotEmpty() &&
                     s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "_.-"}
             }
-        return if (code == null) "body=len${body.length}" else "body=len${body.length} code=$code"
+        // ⚠ 长度一律走 `bodyBytes`（UTF-8 字节，2026-10-03 修复 L-813）：原实现用 `body.length`
+        // （UTF-16 字符数），与同一响应日志里的 `bytes=` 相差 2~3 倍、并排出现时对不上账。
+        val len = bodyBytes(body)
+        return if (code == null) "body=len$len" else "body=len$len code=$code"
     }
 
     /**

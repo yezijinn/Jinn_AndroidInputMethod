@@ -459,11 +459,11 @@ class DocsReferenceTest {
         val quanpin = Regex("""getBoolean\(KEY_SHOW_QUANPIN,\s*(true|false)\)""")
             .find(prefs)?.groupValues?.get(1)
             ?: error("Prefs.kt 里找不到 KEY_SHOW_QUANPIN 的默认值")
-        val line = doc.lineSequence().firstOrNull { "双拼显示声韵" in it }
-            ?: error("功能总览里找不到「双拼显示声韵」那一行")
+        val line = doc.lineSequence().firstOrNull { "双拼候选全音" in it }
+            ?: error("功能总览里找不到「双拼候选全音」那一行")
         val expected = if (quanpin == "true") "默认开" else "默认关"
         assertTrue(
-            "功能总览里「双拼显示声韵」的默认值与 Prefs.KEY_SHOW_QUANPIN 不符（实际应为$expected）：$line",
+            "功能总览里「双拼候选全音」的默认值与 Prefs.KEY_SHOW_QUANPIN 不符（实际应为$expected）：$line",
             expected in line,
         )
 

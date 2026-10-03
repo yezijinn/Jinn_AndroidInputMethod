@@ -378,8 +378,10 @@ class TranslationSettingsActivity : Activity() {
      *   （2026-10-03 修复 L-717）：它自己会按三态出文案（未落盘 / 回读不符 / 已保存），
      *   两处都弹会互相打脸 —— Toast 队列后者覆盖前者，用户最终只看到信息量最少的那句
      *   「保存未完成，请重试」，而本可执行的「解锁后重试」被吃掉。
+     *   ⚠ **没有默认参数**（2026-10-03 修复 L-814）：三个调用点（onPause / 失焦 / 显式保存）全都
+     *   传 `false`，留默认值等于凭空造一条「不传就是弹 toast」的路径 —— 那条路径不存在。
      */
-    private fun saveCredentials(notify: Boolean = true) {
+    private fun saveCredentials(notify: Boolean) {
         if (saveGuard.changed(editAliyunKeyId)) prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
         if (saveGuard.changed(editAliyunKeySecret)) {
             prefs.aliyunAccessKeySecret = editAliyunKeySecret.text.toString()
@@ -502,13 +504,20 @@ class TranslationSettingsActivity : Activity() {
         )
         textDeeplState.text = stateText(prefs.deeplApiKey.cleanCredential().isNotEmpty())
 
-        val openAiReady = prefs.openAiApiKey.cleanCredential().isNotEmpty() &&
-            prefs.openAiModel.cleanCredential().isNotEmpty() &&
-            OpenAiTranslator.joinUrl(prefs.openAiBaseUrl, prefs.openAiChatPath) != null
-        textOpenAiState.text = if (openAiReady) {
-            "${prefs.openAiName} · ${prefs.openAiModel}"
-        } else {
-            TEXT_OPENAI_UNCONFIGURED
+        // ⚠ 判据收敛到 `OpenAiTranslator.isReady`（2026-10-03 修复 L-811）：原先这里只判
+        // 「端点能解析」而**不判 https**，`providerOf` 也一样 ⇒ Base URL 填 `http://` 时本页显示
+        // 「已配置 · 模型名」，点翻译却必被 INSECURE 拒掉（界面说配好了、一用就报错）。
+        val openAiReady = OpenAiTranslator.isReady(
+            prefs.openAiApiKey, prefs.openAiModel, prefs.openAiBaseUrl, prefs.openAiChatPath,
+        )
+        textOpenAiState.text = when {
+            openAiReady -> "${prefs.openAiName} · ${prefs.openAiModel}"
+            // ⚠ 端点不是 https 时说清原因（2026-10-03 修复 L-811）：判据与运行期同源后，
+            // `http://` 端点在本页已判「未配置」，若仍只写「点上面的按钮填…」会把用户引去
+            // 反复检查已经填好的 Key / 模型名，真因（端点协议）一个字都不提。
+            prefs.openAiApiKey.cleanCredential().isNotEmpty() &&
+                prefs.openAiModel.cleanCredential().isNotEmpty() -> TEXT_ENDPOINT_NEEDS_HTTPS
+            else -> TEXT_OPENAI_UNCONFIGURED
         }
     }
 

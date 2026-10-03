@@ -17,7 +17,7 @@ English ｜ [中文](README.md)
 - Character set: 5,613 common characters by default (given name / place name characters such as 囧, 淼, 喆, 昇 type straight away); "More rare characters" in Settings opens a page with two tiers — level 2 (837 chars) and level 3 (2,923 chars); tier 3 requires tier 2, and toggles take effect instantly
 - "Traditional Chinese only" (Settings): candidates are replaced with their traditional forms on commit (爱 → 愛, 碍 → 礙), applied instantly; learning is still stored in simplified form, shared by both modes
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
-- Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); smart prediction (off by default); one-tap CN/EN
+- Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); next-word prediction (off by default); one-tap CN/EN
 - Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release
 - 32 keyboard skins (original dark / original light + 30 colour schemes; 16 light, 16 dark) — colours and texture only, drawn entirely in code, independent of the three sliders
 - Light/dark switching: follow system / light / dark / scheduled; each of the two slots keeps its own chosen skin, and the keyboard skin follows the switch
@@ -34,7 +34,7 @@ English ｜ [中文](README.md)
 - User word frequency: remembers chosen candidates and ranks them higher; stored locally only, switchable
 
 **Online translation** (optional, bring your own key)
-- One-tap translate: **with a selection, the selected text is translated and replaced in place**; without one, text around the cursor is used (range configurable) and the translation is appended on the next line. 7th key in the function panel (removable)
+- One-tap translate: **with a selection, the selected text is translated and replaced in place**; without one, text around the cursor is used (range configurable) and the translation is appended on the next line. 6th key in the function panel (removable)
 - Six providers: Aliyun / Azure / Baidu / Baidu LLM / DeepL / OpenAI-compatible; the default provider and the "translation source range" (current line before cursor / whole line / everything before cursor / whole field) are set per provider
 - Byte limit per provider, preset to each vendor's own limit; longer text is sent from the front, the tail is dropped
 - Credentials are encrypted with the Android Keystore; credential pages block screenshots; copied keys are wiped from clipboard history

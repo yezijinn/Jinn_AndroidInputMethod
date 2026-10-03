@@ -24,10 +24,14 @@ data class OptionalDict(
      * 所以按句主动分行，一行就是一句话。
      */
     val descLines: List<String>,
-    /** 压缩后体积（MB），用于页面标注供用户权衡 */
+    /** 压缩后体积（MB）—— **清单数据，卡片上不再显示**（2026-10-03 按用户要求删掉那一行） */
     val sizeMb: Double,
     /**
-     * 首次构建索引的耗时（秒），页面「第一次约 N 秒」直接用这个数。
+     * 首次构建索引的耗时（秒）—— **清单实测数据，不再显示在卡片上**（2026-10-03）。
+     *
+     * 卡片改说「息屏/收起键盘才会完成加载 / 以后启动都是瞬间就绪」两句通用文案：
+     * 实测值每次换包都会变，写死在卡片上等于给用户一个会过期的数。
+     * 本字段保留为**换包时的实测依据**（下面这套值就是），别删。
      *
      * 说明：加载只在空闲时进行（息屏 / 键盘闲置 20s / 兜底 180s），期间不影响打字；
      * 构建完成后索引落盘，之后每次启动直接内存映射复用（实测约 0.05s）。
@@ -74,10 +78,9 @@ object OptionalDicts {
     val ALL: List<OptionalDict> = listOf(
         OptionalDict(
             fileName = "part2.xz",
-            name = "2级词库+40万",
+            name = "2级词库 +40万条短语",
             descLines = listOf(
-                "强烈建议下载。",
-                "在内置 40 万条之上再加 40 万条。",
+                "在内置 40 万条基础上再加 40 万\n软件的体积占用 +11.7 MiB",
             ),
             sizeMb = 2.62,
             startupSec = 5,          // 实测 4022ms（PACM00，2026-09-27）
@@ -89,10 +92,9 @@ object OptionalDicts {
         ),
         OptionalDict(
             fileName = "part3.xz",
-            name = "3级词库+50万",
+            name = "3级词库 +50万条短语",
             descLines = listOf(
-                "不够用再下载。",
-                "再增加 50 万条，总数约 130 万。",
+                "再加 50 万条短语，总数约 130 万\n软件的体积占用 +14.4 MiB",
             ),
             sizeMb = 3.30,
             startupSec = 5,          // 实测 4859ms（PACM00，2026-09-27）
@@ -104,10 +106,9 @@ object OptionalDicts {
         ),
         OptionalDict(
             fileName = "part4.xz",
-            name = "4级词库+60万",
+            name = "4级词库 +60万条短语",
             descLines = listOf(
-                "一般不用下载。",
-                "再增加 60 万条，总数约 190 万。",
+                "再加 60 万条短语，总数约 190 万\n软件的体积占用 +20.8 MiB",
             ),
             sizeMb = 4.21,
             startupSec = 14,         // 实测 13978ms（PACM00，2026-09-27）—— 别按条数外推，会低报近 3 倍

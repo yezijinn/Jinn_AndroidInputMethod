@@ -1092,7 +1092,10 @@ class SettingsActivity : ComponentActivity() {
 
     private fun refreshTranslateState() {
         val provider = TranslationProviderId.of(prefs.translateProvider)
-        val ready = prefs.translationProvider() != null
+        // ⚠ 用「不可用成因」而不是 `translationProvider() != null`（2026-10-03 修复 L-815）：
+        // ① `null` 不再区分「没填凭据」与「端点不是 https」，摘要必须分因，否则 http 端点用户
+        //    会去反复检查已经填好的 Key 与模型名；② 顺带**省掉一次 provider 组装**（那会解密凭据）。
+        val reason = prefs.translateNotReadyReason()
         // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，12 项预设 + 自定义），
         // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
         // 本页的下拉、摘要却报另一套语言，指向与实际行为不符）
@@ -1101,10 +1104,12 @@ class SettingsActivity : ComponentActivity() {
         } else {
             TranslationLanguage.of(prefs.translateTarget).label
         }
-        textTranslateState.text = if (ready) {
-            "已配置：${provider.label} · 目标 $targetLabel"
-        } else {
-            "未配置：点「翻译设置」填写 ${provider.label} 凭据"
+        textTranslateState.text = when {
+            reason == Prefs.TranslateNotReady.NONE -> "已配置：${provider.label} · 目标 $targetLabel"
+            // 端点不合格：用户该改的是 Base URL，不是凭据 —— 文案与键盘 toast 同一处定义（L-816）
+            reason == Prefs.TranslateNotReady.ENDPOINT ->
+                "${provider.label}：${TranslationError.INSECURE.message}"
+            else -> "未配置：点「翻译设置」填写 ${provider.label} 凭据"
         }
     }
 

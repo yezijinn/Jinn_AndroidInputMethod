@@ -242,7 +242,9 @@ class TranslationClientTest {
         val body = """{"error_code":"bad key: sk-abc def"}"""
         val summary = TranslationClient.errorSummary(body)
         assertFalse("含空格的错误码不是标识符，必须丢弃：$summary", summary.contains("sk-abc"))
-        assertEquals("body=len${body.length}", summary)
+        // 长度口径 = **UTF-8 字节**（2026-10-03 修复 L-813）：原先用 `body.length`（UTF-16 字符数），
+        // 与同一响应日志里的 `bytes=` 相差 2~3 倍 —— 这条用例改按字节断言，把口径钉死。
+        assertEquals("body=len${body.toByteArray(Charsets.UTF_8).size}", summary)
     }
 
     /**

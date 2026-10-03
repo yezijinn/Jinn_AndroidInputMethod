@@ -2206,8 +2206,21 @@ class RecentFixesRegressionTest {
         // L-513 / L-514 / L-515（2026-10-03 第七轮修复）：配置信任链与「保存成功」的口径。
         // 三条一起钉，缺一条就会回到「保存说成功、点翻译才失败 / 同屏提示自相矛盾」的旧状。
         assertTrue(
-            "L-513：OPENAI 的凭据判据必须要求端点 https（否则 http:// 一路放行到「已配置」）",
-            "OpenAiTranslator.joinUrl(openAiBaseUrl, openAiChatPath)?.isHttps == true" in codeOf("Prefs.kt"),
+            "L-513 / L-811：OPENAI 的凭据判据必须要求端点 https（否则 http:// 一路放行到「已配置」）",
+            "internal fun endpointReady(" in codeOf("OpenAiTranslator.kt") &&
+                "?.isHttps == true" in codeOf("OpenAiTranslator.kt"),
+        )
+        // L-811：同一份「已配置」事实只允许有一份判据 —— 三个调用点必须都走它，不得各拼一份
+        for (target in listOf("Prefs.kt", "TranslationSettingsActivity.kt", "TranslationClient.kt")) {
+            assertTrue(
+                "L-811：$target 的 OPENAI 判据必须走 OpenAiTranslator.isReady",
+                "OpenAiTranslator.isReady(" in codeOf(target),
+            )
+        }
+        // 运行链路也不得自己拼端点判据（那正是 L-811 的成因）
+        assertTrue(
+            "L-811：providerOf 不得自己判端点，统一走 isReady",
+            "joinUrl(" !in blockAfter(codeOf("TranslationClient.kt"), "fun providerOf("),
         )
         assertTrue(
             "L-513：OpenAI 页保存时也要标红非 https 端点（与运行期同一份判据）",
@@ -2834,6 +2847,221 @@ class RecentFixesRegressionTest {
                 "TEXT_SAVE_NOT_PERSISTED" in openAiSrc,
         )
         val trSettings = codeOf("TranslationSettingsActivity.kt")
+
+        // ── 词库下载链路：安全接线必须有守卫（L-802）────────────────────────────────
+        // 此前把 `matchesChecksum(...)` 删掉、直接 `tmp.renameTo(dst)` 也能全绿：checksum 测试只测纯函数、
+        // 不测接线，而 `MAX_DOWNLOAD_BYTES` 与 `copyCapped` 在整个测试目录零命中。
+        run {
+            val dictSrc = codeOf("DictManagerActivity.kt")
+            val fetch = blockAfter(dictSrc, "private fun fetchToFile(")
+            val verifyAt = fetch.indexOf("matchesChecksum")
+            val renameAt = fetch.indexOf("tmp.renameTo(dst)")
+            assertTrue("L-802 守卫缺失：fetchToFile 里找不到 matchesChecksum 调用", verifyAt >= 0)
+            assertTrue("L-802 守卫缺失：fetchToFile 里找不到 tmp.renameTo(dst)", renameAt >= 0)
+            assertTrue(
+                "L-802 违反：SHA-256 校验必须早于改名（否则「校验后才收下」这个属性形同虚设）",
+                verifyAt < renameAt,
+            )
+            assertTrue(
+                "L-802 守卫缺失：校验失败必须删临时件（不得留下半个文件）",
+                "tmp.delete()" in fetch,
+            )
+            val copy = blockAfter(dictSrc, "private fun copyCapped(")
+            assertTrue(
+                "L-802 守卫缺失：copyCapped 必须有大小上限判定（否则异常响应能写满用户存储）",
+                "MAX_DOWNLOAD_BYTES" in copy,
+            )
+        }
+        // L-797：下载线程必须降后台优先级（与其它后台重活线程同口径，守卫已存在但漏了这条链路）
+        assertTrue(
+            "L-797 守卫缺失：词库下载线程必须降后台优先级（默认优先级会与前台输入争 CPU/IO）",
+            "THREAD_PRIORITY_BACKGROUND" in codeOf("DictManagerActivity.kt"),
+        )
+        // 2026-10-03 用户要求：词库卡片删掉「体积 / 加载说明」三行，且安装状态与按钮**同一行**
+        run {
+            val dict = codeOf("DictManagerActivity.kt")
+            val card = blockAfter(dict, "private fun buildCard(")
+            for (gone in listOf("dict_load_timing", "dict_startup_instant", "体积 %.1f MB")) {
+                assertTrue(
+                    "词库卡片不该再显示「$gone」（用户要求删掉这三行）",
+                    gone !in card,
+                )
+            }
+            assertTrue(
+                "安装状态必须与按钮同处一个 row（weight=1 的状态 + 按钮），不能拆成两行",
+                "LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)" in card &&
+                    card.indexOf("dict_status_absent") in 0 until card.indexOf("card.addView(row, matchWrap(top = 12))"),
+            )
+            // 那两句加载说明从卡片搬到了页面顶部（四句提示），四句都要在
+            val page = codeOf("DictManagerActivity.kt")
+            for (res in listOf(
+                "R.string.dict_manager_hint_line1",
+                "R.string.dict_manager_hint_line2",
+                "R.string.dict_load_timing",
+                "R.string.dict_startup_instant",
+            )) {
+                assertTrue("页面顶部四句提示缺一句：$res", res in page)
+            }
+        }
+        // L-800：下载完成的 UI 回调必须兜住（其中 refreshList 在主线程做文件 IO）。
+        // ⚠ 2026-10-03 修复 L-812 把判据从「整段包住」升级为「**刷界面那一段**包住」——
+        // 整段包住会把生效动作 `restartImeForDict` 一起吞掉（一次刷新异常 ⇒ 词库下完却不生效）。
+        // 判据从「日志文案字面量」改成位置比较：文案会改，结构不会。
+        run {
+            val cb = blockAfter(codeOf("DictManagerActivity.kt"), "runOnUiThread {")
+            val caught = cb.indexOf("runCatching")
+            val refresh = cb.indexOf("page.refreshList()")
+            val failed = cb.indexOf(".onFailure")
+            assertTrue(
+                "L-800 守卫缺失：下载完成的 UI 刷新必须包 runCatching（一次刷新异常会杀 IME 进程）",
+                caught >= 0 && refresh > caught && failed > refresh,
+            )
+        }
+        // L-796：候选条目渲染必须有缓存判据（每键全量重建 ≈900 对象/秒）
+        run {
+            val kb = codeOf("PinyinKeyboardView.kt")
+            val render = blockAfter(kb, "private fun renderCandidateItems(")
+            assertTrue(
+                "L-796 守卫缺失：候选渲染入口必须比对指纹后再重建",
+                "candidateRenderKey" in render,
+            )
+            assertTrue(
+                "L-796 回归防护：外观刷新必须重置指纹，否则换肤后候选留着旧字距与旧颜色",
+                "resetCandidateRender()" in blockAfter(kb, "fun refreshAppearance()"),
+            )
+            assertTrue(
+                "L-796 回归防护：换肤必须重置指纹，否则候选留着旧颜色",
+                "resetCandidateRender()" in blockAfter(kb, "private fun syncKeyboardSkin()"),
+            )
+            // L-809：候选容器被**五条旁路**共用（功能面板 / 密码数字条 / 符号分组 / 引擎加载提示 / 空态），
+            // 每一处清空都必须复位指纹 —— 否则「输入 ni → ✕ 清空 → 再输入 ni」时候选栏停在功能面板，
+            // 点那些按钮会真的执行动作（历史 / 设置 / 翻译…），候选无法点选上屏。
+            for (fn in listOf(
+                "private fun renderFunctionPanel(",
+                "private fun renderPasswordDigits(",
+                "private fun renderSymbolGroups(",
+                "private fun renderCandidateHint(",
+            )) {
+                assertTrue(
+                    "L-809 守卫缺失：$fn 清空候选容器前必须复位指纹（改走 clearCandidateList）",
+                    "clearCandidateList()" in blockAfter(kb, fn),
+                )
+            }
+            assertTrue(
+                "L-809 守卫缺失：refreshCandidateBar 的空态分支也必须复位指纹",
+                "clearCandidateList()" in blockAfter(kb, "private fun refreshCandidateBar()"),
+            )
+            // 「唯一出口」守卫：除 clearCandidateList（复位）与 renderCandidateItems（自己管指纹）之外，
+            // 任何地方都不得直接清这个容器 —— 那正是 L-809 的成因。注释已由 codeOf 剥掉，不计入。
+            assertEquals(
+                "L-809：viewCandidateList.removeAllViews() 只允许出现在 clearCandidateList 与 renderCandidateItems",
+                2,
+                Regex("""viewCandidateList\.removeAllViews\(\)""").findAll(kb).count(),
+            )
+            assertTrue(
+                "L-809：clearCandidateList 必须复位指纹后再清容器",
+                blockAfter(kb, "private fun clearCandidateList()").let {
+                    it.indexOf("resetCandidateRender()") in 0 until it.indexOf("removeAllViews()")
+                },
+            )
+        }
+        // L-810：`peekBody` 不是内存上限（内部先 `source.request(Long.MAX_VALUE)` 读完整 body），
+        // 读取必须自己向连接要「上限 + 1」字节，否则 KDoc 承诺的 OOM 防护根本不存在。
+        run {
+            val client = codeOf("TranslationClient.kt")
+            val read = blockAfter(client, "private fun readBodyCapped(")
+            assertTrue(
+                "L-810 守卫缺失：读取响应体必须有界（只 request 上限 + 1 字节）",
+                "request(MAX_BODY_BYTES + 1)" in read,
+            )
+            assertTrue(
+                "L-810 回归防护：不得再用 peekBody（它会先把整个 body 读进内存）",
+                "peekBody" !in read,
+            )
+        }
+        // L-812：让词库生效的 `restartImeForDict()` 必须在 runCatching **之外** ——
+        // 与「刷界面」绑在一个 try 里时，一次主线程 IO 异常会静默吃掉生效动作。
+        run {
+            val dict = codeOf("DictManagerActivity.kt")
+            val cb = blockAfter(dict, "runOnUiThread {")
+            val refresh = cb.indexOf("page.refreshList()")
+            val restart = cb.indexOf("page.restartImeForDict()")
+            val caught = cb.indexOf(".onFailure")
+            assertTrue(
+                "L-812：restartImeForDict 必须存在且排在刷新之后（实际生效顺序）",
+                refresh >= 0 && restart > refresh,
+            )
+            assertTrue(
+                "L-812：restartImeForDict 必须在 runCatching 之外（否则刷新异常会吃掉词库生效）",
+                caught >= 0 && restart > caught,
+            )
+        }
+        // L-813：日志里的长度口径必须统一走 UTF-8 字节（与同一响应的 bytes= 同源）
+        assertTrue(
+            "L-813：errorSummary 不得再按 UTF-16 字符数打长度（与 bytes= 相差 2~3 倍）",
+            "body=len\${body.length}" !in codeOf("TranslationClient.kt") &&
+                "len=\${body.length}" !in codeOf("TranslationClient.kt"),
+        )
+        // L-814：saveCredentials 的 notify 不留默认参数（三处调用点全传 false，默认值是假路径）
+        assertTrue(
+            "L-814：saveCredentials(notify) 不得带默认值（默认路径并不存在）",
+            "saveCredentials(notify: Boolean = true)" !in codeOf("TranslationSettingsActivity.kt"),
+        )
+        // L-815：「不可用」必须**可分因** —— 判据收敛（isReady）之后 providerOf 的 null 不再区分
+        // 「没填凭据」与「端点不是 https」，而这两者的用户动作完全相反。
+        run {
+            val prefsCode = codeOf("Prefs.kt")
+            val reason = blockAfter(prefsCode, "internal fun translateNotReadyReason()")
+            assertTrue(
+                "L-815 守卫缺失：必须有「不可用成因」归因（NONE / MISSING_CREDENTIAL / ENDPOINT）",
+                "internal enum class TranslateNotReady" in prefsCode &&
+                    "ENDPOINT" in reason && "MISSING_CREDENTIAL" in reason,
+            )
+            assertTrue(
+                "L-815：端点这一因必须走 endpointReady（不得在归因处再拼一份判据）",
+                "OpenAiTranslator.endpointReady(" in reason,
+            )
+            val start = blockAfter(ime, "private fun startTranslate")
+            assertTrue(
+                "L-815 守卫缺失：键盘 toast 必须按成因选文案（ENDPOINT → INSECURE）",
+                "translateNotReadyReason()" in start && "TranslationError.INSECURE" in start,
+            )
+            val state = blockAfter(codeOf("SettingsActivity.kt"), "private fun refreshTranslateState()")
+            assertTrue(
+                "L-815：主设置页摘要必须按成因分因，且不再用 translationProvider() != null 判",
+                "translateNotReadyReason()" in state && "translationProvider() != null" !in state,
+            )
+        }
+        // L-816：「端点必须 https」这句文案只允许**一处字面量**
+        run {
+            val literal = "端点必须以 https:// 开头"
+            val sites = listOf("Translation.kt", "OpenAiSettingsActivity.kt", "TranslationSettingsActivity.kt")
+                .filter { literal in codeOf(it) }
+            assertEquals(
+                "L-816：「端点必须 https」这句在 ${sites.size} 个文件里各写了一遍（只允许 Translation.kt 一处）：$sites",
+                1,
+                sites.size,
+            )
+            for (page in listOf("OpenAiSettingsActivity.kt", "TranslationSettingsActivity.kt")) {
+                assertTrue(
+                    "L-816：$page 必须引用共享常量 TEXT_ENDPOINT_NEEDS_HTTPS",
+                    "TEXT_ENDPOINT_NEEDS_HTTPS" in codeOf(page),
+                )
+            }
+        }
+        // L-818：指纹哨兵必须落在取值域之外（0 会被线性和撞上 ⇒ 误判命中、候选栏空白）
+        run {
+            val kb = codeOf("PinyinKeyboardView.kt")
+            assertTrue(
+                "L-818：candidateRenderKey 必须是可空类型且初值为 null",
+                "private var candidateRenderKey: Long? = null" in kb,
+            )
+            assertTrue(
+                "L-818：复位必须写 null，且全文件不得再出现 = 0 的复位",
+                "candidateRenderKey = null" in blockAfter(kb, "private fun resetCandidateRender()") &&
+                    "candidateRenderKey = 0" !in kb,
+            )
+        }
         assertTrue(
             "L-717 守卫缺失：saveAndNotify 必须以 notify = false 调用 saveCredentials",
             "saveCredentials(notify = false)" in blockAfter(trSettings, "private fun saveAndNotify("),

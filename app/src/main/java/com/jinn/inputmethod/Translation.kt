@@ -70,6 +70,18 @@ internal enum class TranslationProviderId(val id: String, val label: String) {
 }
 
 /**
+ * 「端点必须以 https:// 开头」的**唯一文案**（2026-10-03 修复 L-816）。
+ *
+ * 此前同一件事在三处各写一遍且措辞不同：`TranslationError.INSECURE.message`（键盘 toast）、
+ * OpenAI 设置页的 `TEXT_NEED_HTTPS`（Base URL 红字 + 自检提示）、翻译设置页的 `TEXT_OPENAI_NEED_HTTPS`
+ * （状态行）—— 改一处不会红（零守卫），用户跨页却看到三种说法。
+ *
+ * ⚠ 一处定义、三处引用；新增第四处前先想清楚能不能引用它。
+ * `http://` 不发送的理由要写进文案：那是**安全**限制（Bearer 凭据会明文上链路），不是「不支持」。
+ */
+internal const val TEXT_ENDPOINT_NEEDS_HTTPS = "端点必须以 https:// 开头（http:// 不发送，凭据会明文出网）"
+
+/**
  * 翻译失败原因（归一后的分类，直接当提示文案用）。
  *
  * 文案里不含服务端返回的原始 JSON：排障信息走 [Diagnostics] 的响应码与异常类名，
@@ -81,8 +93,17 @@ internal enum class TranslationError(val message: String) {
     // 「系统设置 → 语言与输入法 → 本输入法 → 设置 → 翻译设置」四级 —— 只说「设置里」会让
     // 新用户在这一步卡死。设置页摘要早已写全落点，这里对齐。
     NOT_CONFIGURED("请先在「设置 → 翻译设置」里填写翻译 API 凭据"),
-    /** 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上 */
-    INSECURE("翻译地址必须以 https:// 开头"),
+
+    /**
+     * 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上。
+     *
+     * ⚠ 六家 provider 当前**到不了这里**（2026-10-03 复核 L-817）：OpenAI 兼容的端点判据已在
+     * `providerOf` 收口（`OpenAiTranslator.endpointReady`），另五家端点是源码常量 https ⇒
+     * `TranslationClient.translate` 的 `INSECURE` 分支只剩**纵深防御**价值。
+     * 用户可见的这条路径改由 [TEXT_ENDPOINT_NEEDS_HTTPS] 承担（键盘 / 设置页按「不可用成因」分因，
+     * 见 `Prefs.translateNotReadyReason` 与 L-815）—— 别再把本分支当活跃路径。
+     */
+    INSECURE(TEXT_ENDPOINT_NEEDS_HTTPS),
 
     /**
      * 凭据含 Header 非法字符（从网页复制时混入 U+3000 / 控制符很常见）。

@@ -78,9 +78,17 @@ class DictManagerActivity : Activity() {
 
         root.addView(buildTopBar())
 
-        // 提示：两句各占一行，避免被系统折行
-        root.addView(hint(getString(R.string.dict_manager_hint_line1)), matchWrap(top = 4))
-        root.addView(hint(getString(R.string.dict_manager_hint_line2)), matchWrap())
+        // 提示：四句各占一行，避免被系统折行（2026-10-03 按用户要求补足到四句：
+        // 下载取舍 / 下载后重启 / 加载时机 / 以后不用等）。
+        // ⚠ 这四句对三个包通用，只在顶部说一次 —— 卡片里重复三遍反而啰嗦。
+        listOf(
+            R.string.dict_manager_hint_line1,
+            R.string.dict_manager_hint_line2,
+            R.string.dict_load_timing,
+            R.string.dict_startup_instant,
+        ).forEachIndexed { i, res ->
+            root.addView(hint(getString(res)), matchWrap(top = if (i == 0) 4 else 0))
+        }
 
         // 动态状态行：初始隐藏，下载/删除时才出现。单行 + 省略号，
         // 内容是「正在下载 X…」这类变长文案，不适合按句拆分。
@@ -234,8 +242,8 @@ class DictManagerActivity : Activity() {
         )
         card.addView(
             line(
-                // 不能复用 dict_startup_cost_line1：它是给清单内卡片做**前缀**的，值以逗号结尾
-                // （后面接「第一次约 N 秒」），单用会留下半句残话（BUG.md L-69）
+                // 旧包卡片自己写完整一句：清单卡片的加载说明已改成「通用两句」（不报实测耗时），
+                // 旧包没有对应清单条目可复用，单用半句会留下残话（BUG.md L-69）
                 text = TEXT_LEGACY_LOAD,
                 color = getColor(R.color.warn),
                 size = 13f,
@@ -312,14 +320,19 @@ class DictManagerActivity : Activity() {
             card.addView(line(sentence, getColor(R.color.text_secondary), 13f, top = 4))
         }
 
-        // 代价一行一句，避免长句被折
-        card.addView(line("体积 %.1f MB。".format(Locale.US, dict.sizeMb), getColor(R.color.warn), 13f, top = 8))
-        card.addView(line(getString(R.string.dict_startup_cost_line1), getColor(R.color.warn), 13f, top = 2))
-        card.addView(line(getString(R.string.dict_startup_cost_line2, dict.startupSec), getColor(R.color.warn), 13f, top = 2))
-        card.addView(line(getString(R.string.dict_startup_cost_line3), getColor(R.color.warn), 13f, top = 2))
+        // 「已安装」不等于「真的会出词」：索引还没跟上就如实说（BUG.md L-155）。
+        // 判据与装载路径同一句（PinyinEngine.isOptionalIndexReady），只在**装了但没就绪**时多一行。
+        if (installed && !PinyinEngine.isOptionalIndexReady(this, dict.fileName)) {
+            card.addView(line(TEXT_INDEX_PENDING, getColor(R.color.warn), 13f, top = 10))
+        }
 
-        // 安装状态
-        card.addView(
+        // 安装状态与操作按钮**同一行**（2026-10-03 按用户要求）：状态占满剩余宽度、按钮靠右。
+        // ⚠ 别再拆成「状态一行、按钮另起一行」—— 每张卡片多出一行竖直空白，三张连起来很松散。
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(
             line(
                 text = if (installed) {
                     getString(R.string.dict_status_installed, formatSize(file.length()))
@@ -328,21 +341,10 @@ class DictManagerActivity : Activity() {
                 },
                 color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
                 size = 13f,
-                top = 10,
             ),
+            // weight = 1：状态文字长短不一时，按钮仍右对齐（wrap_content + weight 0 会紧贴状态、被顶到中间）
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-
-        // 「已安装」不等于「真的会出词」：索引还没跟上就如实说（BUG.md L-155）。
-        // 判据与装载路径同一句（PinyinEngine.isOptionalIndexReady），只在**装了但没就绪**时多一行。
-        if (installed && !PinyinEngine.isOptionalIndexReady(this, dict.fileName)) {
-            card.addView(line(TEXT_INDEX_PENDING, getColor(R.color.warn), 13f, top = 4))
-        }
-
-        // 操作按钮
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-        }
         row.addView(
             actionButton(
                 text = if (installed) getString(R.string.dict_action_reinstall)
@@ -350,7 +352,8 @@ class DictManagerActivity : Activity() {
                 color = getColor(R.color.accent),
                 enabled = downloading == null,
             ) { download(dict) },
-            buttonLp(right = 8),
+            // 左边距让按钮与状态文字之间留出呼吸位；右边距是原按钮之间的间距
+            buttonLp(right = 8).apply { leftMargin = dp(8) },
         )
         if (installed) {
             row.addView(
@@ -418,6 +421,11 @@ class DictManagerActivity : Activity() {
         refreshList()
 
         Thread {
+            // ⚠ 必须降后台优先级（2026-10-03 修复 L-797）：本仓所有后台重活线程都显式降优先级，
+            // 而 `RecentFixesRegressionTest` 里就有「存量重算线程必须降优先级」这条守卫 —— 约定存在，只是漏了本链路。
+            // 本线程做「网络读 + 持续磁盘写」最长可活 600s（callTimeout），默认优先级会与前台输入争 CPU/IO。
+            // 放在 for 之前，不影响 downloading 的复位时机。
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             var lastError = "未知错误"
             var ok = false
             for (url in dict.urls) {
@@ -452,11 +460,17 @@ class DictManagerActivity : Activity() {
                 }
                 val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
                 else page.getString(R.string.dict_download_failed, lastError)
-                page.setStatus(msg)
-                // 失败再用 Toast 提示一次（提示挂在系统窗口上，不受页面重建影响）：
-                // 断网点下载时若状态行又随重建消失，用户只会以为按钮坏了
-                if (!ok) Toast.makeText(page, msg, Toast.LENGTH_LONG).show()
-                page.refreshList()
+                // ⚠ 只把「刷界面」兜住（2026-10-03 修复 L-800 + L-812）：`page.refreshList()` 在**主线程**
+                // 做文件 IO（listFiles / file.length() / 打开索引读头），一次异常不该让整个 IME 进程崩掉；
+                // 但**生效动作必须在这段 try 之外** —— 原先 `restartImeForDict()` 排在同一 try 内，
+                // 一次刷新异常就会把「重启让词库生效」静默吃掉，用户看到「说下好了但没生效」。
+                runCatching {
+                    page.setStatus(msg)
+                    // 失败再用 Toast 提示一次（提示挂在系统窗口上，不受页面重建影响）：
+                    // 断网点下载时若状态行又随重建消失，用户只会以为按钮坏了
+                    if (!ok) Toast.makeText(page, msg, Toast.LENGTH_LONG).show()
+                    page.refreshList()
+                }.onFailure { Diagnostics.w(TAG, "下载完成刷新界面失败: ${it.javaClass.simpleName}") }
                 if (ok) page.restartImeForDict()
             }
         }.apply { isDaemon = true }.start()
