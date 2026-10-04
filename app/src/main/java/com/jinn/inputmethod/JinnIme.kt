@@ -2593,13 +2593,14 @@ class JinnIme : InputMethodService() {
         // OkHttp 在调用 onResponse **之前**就置了 `signalledCallback`，回调内部抛出的异常
         // **不会**回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
         // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
+        val mutualTarget = if (id != TranslationProviderId.OPENAI) mutualSwapTarget(slice.text, target) else target
         runCatching {
-            // 句柄用于真取消（2026-10-03 修复 L-494）：会话边界（onFinishInput / onStartInput /
-            // 收起键盘 / 旋转）都会走到 finishTranslate，那里对在途请求调 cancel()
+            // ���������ȡ����2026-10-03 �޸� L-494�����꽂�߽磨onFinishInput / onStartInput /
+            // ������� / ��ת�������ߵ� finishTranslate���������;����� cancel()
             translateCall = TranslationClient.translate(
                 provider,
                 slice.text,
-                target,
+                mutualTarget,
                 traceId = translateTraceId,
             ) { outcome ->
                 // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection

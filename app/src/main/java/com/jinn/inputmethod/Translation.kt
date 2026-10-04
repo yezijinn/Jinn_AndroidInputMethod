@@ -49,6 +49,45 @@ internal enum class TranslationLanguage(
 }
 
 /**
+ * 源语言脚本的薄判定：按计字数把文本归到「中/英/日/韩」之一，无法判定（丢字节少、混写、
+ * URL/数字为主）则返回 null。只用于互译开关的「要不要翻向」这一步，不传给任何 provider。
+ */
+internal fun guessSourceScript(text: String): TranslationLanguage? {
+    var cjk = 0; var kana = 0; var hangul = 0; var latin = 0
+    for (ch in text) {
+        when {
+            ch in '\u4e00'..'\u9fff' -> cjk++
+            ch in '\u30a0'..'\u30ff' || ch in '\u3040'..'\u309f' -> kana++
+            ch in '\uac00'..'\ud7af' -> hangul++
+            ch in 'A'..'Z' || ch in 'a'..'z' -> latin++
+        }
+    }
+    return when {
+        kana >= 3 -> TranslationLanguage.JAPANESE
+        hangul >= 3 -> TranslationLanguage.KOREAN
+        cjk >= 2 && cjk * 2 >= latin -> TranslationLanguage.CHINESE
+        latin >= 2 && cjk == 0 && kana == 0 && hangul == 0 -> TranslationLanguage.ENGLISH
+        else -> null
+    }
+}
+
+/**
+ * 互译目标：本地判定源与固定目标同语（例目标=英文但文本实为英文）时，
+ * 翻向本目标的对立端（当前仅「中⇄英」对称互译），否则保持 target 原处。
+ * OPENAI 兼容路径真正生效的是自由文本，命中目标为该枚举无差异，故调用方按 `id != OPENAI` 使用。
+ */
+internal fun mutualSwapTarget(text: String, target: TranslationLanguage): TranslationLanguage {
+    val guess = guessSourceScript(text) ?: return target
+    if (guess != target) return target
+    return when (target) {
+        TranslationLanguage.CHINESE -> TranslationLanguage.ENGLISH
+        TranslationLanguage.ENGLISH -> TranslationLanguage.CHINESE
+        else -> target
+    }
+}
+
+
+/**
  * 翻译服务提供方（[Prefs.translateProvider] 存 id 字符串）。
  *
  * 顺序即设置页下拉顺序；[DEFAULT] = 阿里云（2026-09-30 定）。
