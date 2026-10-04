@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 加更多生僻字页：从设置页「加更多生僻字」按钮进入（2026-09-27 起取代原单一开关）。
      两档可选字表，档 3 依赖档 2；勾选即落盘即时生效。文案在 RareCharsActivity 里下发
-     （strings.xml 默认禁改，与模糊音页同做法），故此处不写 android:text -->
+     （strings.xml 默认不改动，与模糊音页同做法），故此处不写 android:text -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     style="@style/PageRoot"
     android:orientation="vertical">

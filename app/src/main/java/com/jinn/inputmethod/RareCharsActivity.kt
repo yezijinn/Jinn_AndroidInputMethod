@@ -168,7 +168,7 @@ class RareCharsActivity : Activity() {
     private companion object {
         const val TAG = "RareCharsActivity"
 
-        // 文案在代码里下发：strings.xml 默认禁改，与设置页 / 模糊音页的 TEXT_* 同做法
+        // 文案在代码里下发：strings.xml 默认不改动，与设置页 / 模糊音页的 TEXT_* 同做法
         const val TEXT_TITLE = "加更多生僻字"
         const val TEXT_DESC = "默认只收常用字（5,613 字）。\n开启档位后，这些字连同它们组成的词一起放行；\n" +
             "档 3 必须先开档 2。"

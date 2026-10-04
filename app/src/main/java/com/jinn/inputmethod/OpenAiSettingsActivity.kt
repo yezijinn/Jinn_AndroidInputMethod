@@ -4,13 +4,11 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
-import android.view.MotionEvent
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
@@ -45,20 +43,17 @@ class OpenAiSettingsActivity : Activity() {
     private lateinit var editTimeout: EditText
     private lateinit var editHeaders: EditText
     private lateinit var editExtraJson: EditText
-    private lateinit var spinnerTarget: Spinner
+    private lateinit var spinnerTarget: UserAwareSpinner
     private lateinit var textHint: TextView
 
-    /** 显式保存入口与结果提示（用户 2026-10-01 要求：参数多，改完要有看得见的「保存」与结果） */
+    /** 显式保存入口与结果提示（2026-10-01：参数多，改完要有看得见的「保存」与结果） */
     private lateinit var btnSave: Button
     private lateinit var textSaveHint: TextView
-
-    /** 用户触摸过才允许写配置：初始化 setSelection 也会回调 onItemSelected（与设置页各下拉同款闸门） */
-    private var targetTouched = false
 
     /** 在途的「获取模型 / 测试连接」请求；[onDestroy] 时取消（超时上限可到 300s，不取消会拖住 Activity） */
     private var fetchCall: okhttp3.Call? = null
 
-    /** 请求代际：连续点两次时，先发的旧响应后到也不能覆盖新结果（2026-09-30 第二轮审查） */
+    /** 请求代际：连续点两次时，先发的旧响应后到也不能覆盖新结果（2026-09-30 审查） */
     private var fetchGeneration = 0
 
     private val prefs: Prefs by lazy { Prefs(this) }
@@ -75,7 +70,7 @@ class OpenAiSettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 凭据页防**截屏 / 录屏 / 投屏 / 最近任务缩略图**（2026-09-30 用户要求增强防泄露），
+        // 凭据页防**截屏 / 录屏 / 投屏 / 最近任务缩略图**（2026-09-30 加固防泄露），
         // 与 TranslationSettingsActivity 同款（那里有完整的取舍说明）：本页有 API Key 输入框。
         // ⚠ 投屏（ADB / scrcpy）下整页不可见是**预期行为**，不是缺陷。
         window.setFlags(
@@ -158,7 +153,7 @@ class OpenAiSettingsActivity : Activity() {
                     }
             }
         }
-        // 显式保存（2026-10-01 用户要求）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
+        // 显式保存（2026-10-01）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
         btnSave = findViewById(R.id.btn_ai_save)
         btnSave.text = TEXT_SAVE
         btnSave.setOnClickListener { saveAndNotify() }
@@ -262,7 +257,7 @@ class OpenAiSettingsActivity : Activity() {
     }
 
     /**
-     * 取消在途的「获取模型 / 测试连接」（2026-09-30 第二轮审查）。
+     * 取消在途的「获取模型 / 测试连接」（2026-09-30 审查）。
      *
      * 该请求的超时上限可到 300s：用户点完就返回时，不取消会让回调闭包**持有本 Activity 最多 5 分钟**
      * 不释放；而且第二次请求的旧响应后到时会覆盖用户刚做的选择（提示被改、甚至弹出第二个选模型对话框）。
@@ -281,20 +276,17 @@ class OpenAiSettingsActivity : Activity() {
             R.layout.item_spinner,
             TARGET_LANGUAGES,
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerTarget.setOnTouchListener { view, event ->
-            targetTouched = true
-            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
         spinnerTarget.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 // 程序化回填期间一律不放行（2026-10-02 修复）：`loadValues` 里的 `setSelection`
-                // 也会走到这里，此时 Spinner 往往正好有焦点 ⇒ 仅凭 `isUserDriven` 会误判成用户操作。
+                // 也会走到这里，此时 Spinner 往往正好有焦点 ⇒ 只看焦点状态会误判成用户操作。
                 if (loading) return
-                // 闸门要认全「用户来源」：触摸只是其中一种（2026-10-02 修复）—— 读屏 / 外接键盘选
-                // 下拉不产生触摸事件，只认 `targetTouched` 的话它们选的语言**清不掉残留的自定义值**，
-                // 而 `saveValues` 正是按「自定义框是否还有内容」判定生效值 ⇒ 选了不生效。
-                if (!targetTouched && !isUserDriven(spinnerTarget)) return
+                // 闸门（BUG.md L-822）：只有**用户亲手操作过**下拉才放行 —— 原先的判据
+                // 「`targetTouched` 或 `isUserDriven`」中，前者只认触摸、后者的三标志在 ColorOS
+                // 下拉弹窗路径上常为 false（L-820 实测）⇒ 读屏 / 外接键盘选的语言**清不掉残留的
+                // 自定义值**，而 `saveValues` 正是按「自定义框是否还有内容」判定生效值 ⇒ 选了不生效。
+                // 现在由 [UserAwareSpinner] 覆盖触摸 / 确认键 / 无障碍三条路径（程序化路径不经过它）。
+                if (!spinnerTarget.userInteracted) return
                 // 选了标准语言就清掉自定义框（两者只应有一个生效）。`customEdited` 必须一并复位：
                 // 它现在也会被「载入自定义值」置真（见 `applyTargetLanguage`），不复位的话读屏用户
                 // 选完下拉保存下来仍是旧的自定义语言。
@@ -321,10 +313,6 @@ class OpenAiSettingsActivity : Activity() {
      */
     private var customEdited = false
 
-    /** 「这次变化来自用户」的判据：触摸 / 焦点 / 无障碍焦点（键盘与读屏都不产生触摸事件） */
-    private fun isUserDriven(view: View): Boolean =
-        view.isFocused || view.isPressed || view.isAccessibilityFocused
-
     /** 灌值并记下「载入时的原值」（与 [saveGuard] 配套） */
     private fun loadField(field: android.widget.EditText, value: String) {
         field.setText(value)
@@ -332,7 +320,8 @@ class OpenAiSettingsActivity : Activity() {
     }
 
     private fun loadValues() {
-        targetTouched = false
+        // 每次回到本页都重新载入配置：清掉上一轮的用户操作探针，免得它授权一次程序化回填（L-822）
+        spinnerTarget.resetUserInteracted()
         saveGuard.reset()
         // 程序化回填整段抑制（2026-10-02 修复 L-367 的配套）：下面的 setText 会触发自定义框的
         // TextWatcher，不抑制就会把「载入」当成「用户编辑」
@@ -446,7 +435,7 @@ class OpenAiSettingsActivity : Activity() {
     }
 
     /**
-     * 显式保存（用户 2026-10-01 要求）：本页参数多且分四段，改完要有明确的「保存」出口与结果提示
+     * 显式保存（2026-10-01）：本页参数多且分四段，改完要有明确的「保存」出口与结果提示
      * —— 参数本来就会在离开页面时自动落盘，但「自动」是用户看不见的。
      *
      * 「确保真的保存了」落在三处：
@@ -525,7 +514,7 @@ class OpenAiSettingsActivity : Activity() {
         }
         setHint(TEXT_FETCHING)
         // 直接读内存值：saveValues() 刚把编辑框写进 Prefs，请求用的就是这份内存值。
-        // （2026-09-30 第二轮审查：此处原先的 flush() 是多余的 —— 它挡不住任何真实故障，却把
+        // （2026-09-30 审查：此处原先的 flush() 是多余的 —— 它挡不住任何真实故障，却把
         //  「整份 prefs 重写 + fsync」放进主线程点击回调；真正的落盘在 onPause。）
         fetchCall?.cancel()
         fetchGeneration++
@@ -542,7 +531,7 @@ class OpenAiSettingsActivity : Activity() {
             runOnUiThread {
                 // 页面可能在响应回来前就被关掉（整体超时上限可到 300s）：往已 finish 的 Activity
                 // 上 show() 会抛 WindowManager$BadTokenException 直接崩溃（与 SettingsActivity:810
-                // 同款防线，第一轮审查发现）。
+                // 同款防线，早先发现）。
                 // 请求已回来 ⇒ 清句柄，让「连点保护」重新放开（2026-10-03 修复 L-634）。
                 // ⚠ 必须放在**两个早退之后**：早退时说明这次响应已过期或不适用，
                 // 句柄属于**更新的那次请求**（与 JinnIme 里代际匹配才清句柄是同一条纪律）。
@@ -590,10 +579,10 @@ class OpenAiSettingsActivity : Activity() {
             "Deutsch", "Español", "Italiano", "Português", "Русский", "العربية",
         )
 
-        // 文案在代码里下发（strings.xml 默认禁改），与本项目其它设置页同做法
+        // 文案在代码里下发（strings.xml 默认不改动），与本项目其它设置页同做法
         const val TEXT_TITLE = "OpenAI 兼容配置"
 
-        // 显式保存（2026-10-01 用户要求）：按钮文案 + 结果提示（与翻译设置页同款措辞）
+        // 显式保存（2026-10-01）：按钮文案 + 结果提示（与翻译设置页同款措辞）
         const val TEXT_SAVE = "保存"
         const val TEXT_SAVE_IDLE = "点「保存」立即写入本机（改动也会在离开页面时自动保存）"
         const val TEXT_SAVED = "已保存到本机"

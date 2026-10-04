@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 候选栏「拼音显示为声韵」（[Shuangpin.displayQuanpin]，用户 2026-09-25 新增的可选显示方式）的硬性规则：
+ * 候选栏「拼音显示为声韵」（[Shuangpin.displayQuanpin]，2026-09-25 新增的可选显示方式）的硬性规则：
  *  1. 合法输入与查询用的 [Shuangpin.toQuanpin] 逐字节一致 —— 显示不许与引擎理解漂移；
  *  2. 残码 / 非法组合同样**不丢键**：按下的每个键都必须在显示串里留下痕迹，
  *     保证「输入变长 ⇒ 显示一定变化」（2026-09-18「按键没反应」报告的根因就是显示串被吞）；

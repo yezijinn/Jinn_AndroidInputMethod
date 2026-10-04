@@ -22,6 +22,8 @@ import javax.crypto.spec.GCMParameterSpec
  */
 object ClipboardCrypto {
 
+    private const val TAG = "ClipboardCrypto"
+
     private const val KEY_ALIAS = "jinn_clipboard_key"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -86,6 +88,4 @@ object ClipboardCrypto {
         Diagnostics.e(TAG, "解密失败: ${it.message}")
         null
     }
-
-    private const val TAG = "ClipboardCrypto"
 }

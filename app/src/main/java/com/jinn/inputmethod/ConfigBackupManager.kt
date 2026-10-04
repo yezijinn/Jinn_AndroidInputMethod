@@ -252,6 +252,12 @@ internal object ConfigBackupManager {
         val clipDropped: Int,
     )
 
+    /**
+     * 按 [options] 导出一个加密备份包到缓存目录，返回包与未导出的剪贴板条数。
+     *
+     * 返回 `null` 表示**没产出包**（正在导入、或写入失败），原因在 [lastError]；
+     * 调用方据此决定提示文案，不要把 null 当成「导出成功但没内容」。
+     */
     fun export(context: Context, options: ExportOptions): ExportOutcome? {
         lastError = null
         // 导入进行中不导出（2026-10-02 修复 L-452）：两条流写/读同一份 Prefs 与各节，交错时产出的
@@ -653,6 +659,11 @@ internal object ConfigBackupManager {
         val hasOversized: Boolean get() = oversizedSections.isNotEmpty()
     }
 
+    /**
+     * 只读体检一个包：读出 manifest 与各节规模，供导入前展示与判否。
+     *
+     * 不解密、不写任何配置；包损坏或不是本应用的包返回 `null`（原因在 [lastError]）。
+     */
     fun inspect(zip: File): BackupInfo? {
         val budget = ScanBudget()
         // 四个节一次遍历读完（见 [readSections]）：按名查找要从包首顺序扫，分开查等于把包反复解压
@@ -725,6 +736,12 @@ internal object ConfigBackupManager {
         val failedStage: String?,
     )
 
+    /**
+     * 导入一个备份包：解密 → 校验各节摘要 → 按 [mode] 覆盖或合并写回。
+     *
+     * 返回 `null` 表示**没进导入流程**（已在导入中、包损坏、或密码不对），原因在 [lastError]；
+     * 进了流程但中途失败则返回带 [ImportOutcome.failedStage] 的结果，重试是幂等的。
+     */
     fun import(
         context: Context,
         zip: File,
@@ -895,7 +912,7 @@ internal object ConfigBackupManager {
                 prefsApplied = 0
                 failedStage = "设置项写盘失败"
             }
-            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30 第二轮审查）：
+            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30 审查）：
             // 只 flush 主 prefs 时，导入改了剪贴板开关/上限、用户又选「稍后重启」，进程在 apply 队列
             // 排空前被回收 ⇒ 剪贴板设置静默回退，而弹窗已经把剪贴板侧的项数算进「设置 N 项」了。
             if (failedStage == null && appliedClip > 0 && !clipPrefs.flush()) {
@@ -904,7 +921,7 @@ internal object ConfigBackupManager {
                 prefsApplied -= appliedClip
                 failedStage = "剪贴板设置写盘失败"
             }
-            // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02 第二轮审查）：
+            // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02 审查）：
             // Keystore 不可用（锁屏等）时 `writeCredential` 只更新进程内缓存并删掉磁盘旧密文，
             // 而导入收尾还会提示「重启输入法后生效」—— 一重启，导入的 Key 全部消失，
             // 用户看到的是「导入成功但翻译又回到未配置」。
@@ -992,7 +1009,7 @@ internal object ConfigBackupManager {
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）
                 val net = db.count() - before
                 clipAdded = net.coerceAtLeast(0)
-                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥（2026-09-30 第二轮审查）：
+                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥（2026-09-30 审查）：
                 // `net < 0` 表示本机自己的旧条目也被多裁掉了更多，那部分**不能**再算进「刚插入又被裁掉」
                 // —— 否则跳过数会超过包内条数，界面出现「跳过 30 条」而包里只有 10 条。
                 val trimmedAway = if (net < 0) 0 else (planned.size - insertFailed) - clipAdded
@@ -1189,6 +1206,7 @@ internal object ConfigBackupManager {
 
     // ── zip / 文件工具 ───────────────────────────────────────
 
+    /** 校验某一节的文本与 manifest 里记的 sha256 是否一致（不一致即内容被换过或包被裁剪） */
     internal fun verify(manifest: ConfigBackup.Manifest, section: String, text: String): Boolean =
         manifest.sections[section]?.sha256 == ConfigBackup.sha256(text)
 

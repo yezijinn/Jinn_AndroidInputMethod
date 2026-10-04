@@ -125,6 +125,32 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 候选字号：候选词的字号（sp）。**整个候选栏按它派生**（行高 / 拼音条高度 / 栏高一起变），
+        // 标题同样在代码里下发（strings.xml 默认禁改）
+        val labelTextSize = findViewById<TextView>(R.id.label_candidate_text_size)
+        val seekTextSize = findViewById<SeekBar>(R.id.seek_candidate_text_size)
+        val textTextSize = findViewById<TextView>(R.id.text_candidate_text_size)
+        labelTextSize.text = TEXT_TEXT_SIZE_TITLE
+        seekTextSize.max = CandidateText.PROGRESS_MAX
+        seekTextSize.progress = CandidateText.spToProgress(prefs.candidateTextSp)
+        textTextSize.text = CandidateText.formatSp(prefs.candidateTextSp)
+
+        seekTextSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sp = CandidateText.progressToSp(progress)
+                prefs.candidateTextSp = sp
+                textTextSize.text = CandidateText.formatSp(sp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "候选字号: ${CandidateText.formatSp(prefs.candidateTextSp)}")
+                // 与字距同一条即时生效路径：松手后 applyCandidateRows 按新字号重落栏高、候选条目重建
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
         val seekTransparency = findViewById<SeekBar>(R.id.seek_key_transparency)
         val textTransparency = findViewById<TextView>(R.id.text_key_transparency)
         seekTransparency.max = KeyTransparency.PROGRESS_MAX
@@ -322,6 +348,9 @@ class KeyAppearanceActivity : Activity() {
          * 新项不再往资源里加标题。
          */
         const val TEXT_SPACING_TITLE = "字距"
+
+        /** 「候选字号」项的标题文案（同上：写在代码里，不进 strings.xml） */
+        const val TEXT_TEXT_SIZE_TITLE = "候选字号"
 
         /** 皮肤选择器每行个数（每段 16 套排成两行八个，两段共四行） */
         const val SKINS_PER_ROW = 8

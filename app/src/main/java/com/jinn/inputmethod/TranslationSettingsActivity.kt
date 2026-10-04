@@ -54,7 +54,17 @@ class TranslationSettingsActivity : Activity() {
     private lateinit var textSaveHint: TextView
 
     // 避免 setSelection 初始化误触发写配置
-    private var providerTouched = false
+    /**
+     * 程序性回填下拉时为 true：此时 `onItemSelected` 只切界面、**不落盘**（2026-10-04 修复 L-820）。
+     *
+     * 取代原先的 `providerTouched`：那套判据靠 `isFocused || isPressed || isAccessibilityFocused`
+     * 猜「是否用户操作」，而下拉弹窗在 ColorOS 上这三项常常都是 false ⇒ 换了服务方凭据区块不跟随，
+     * 重开页面才刷新。落盘闸门必须由**我们自己置位**（回填时置 true），不能由系统状态反推。
+     */
+    private var suppressProviderPersist = false
+
+    /** 已经渲染在界面上的服务方；与下拉选中项不同才需要重切凭据区块 */
+    private var renderedProvider: TranslationProviderId? = null
     private var targetTouched = false
 
     private val prefs: Prefs by lazy { Prefs(this) }
@@ -255,18 +265,18 @@ class TranslationSettingsActivity : Activity() {
         }
         spinnerProvider.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                // ⚠ 顺序：先判闸门、再切界面（2026-10-03 修复 L-758）。原先是「先 applyProviderVisibility()
-                // 再判 isUserDriven」⇒ 读屏 / 外接键盘用户选中后，界面已经切成新服务方的凭据区块，
-                // 而落盘被跳过 ⇒ **界面说谎**（用户在新区块里填了 AppID/SecretKey 却没生效）。
-                if (!providerTouched && !isUserDriven(spinnerProvider)) return
-                providerTouched = true
-                // ⚠ 这一句是 L-768：上一批把闸门与注释都改到位了，**唯独把方法体里这句删掉没补回**
-                // ⇒ 改服务方后六个凭据区块不切换、spinnerTarget 不置灰、labelTarget 不换，
-                // 而值仍会落盘 ⇒ 下次打开页面「突然变成」上次选的服务方。
-                applyProviderVisibility()
+                val pickedNow = TranslationProviderId.entries.getOrNull(position) ?: return
+                // ① 界面跟随选择：不看 isFocused / isPressed（2026-10-04 修复 L-820）。
+                //    旧闸门里那三个判据（isUserDriven = isFocused || isPressed || isAccessibilityFocused）
+                //    在下拉弹窗路径上常常都是 false ⇒ 改了服务方凭据区块不跟随，重开页面才刷新。
+                if (renderedProvider != pickedNow) {
+                    applyProviderVisibility(pickedNow)
+                }
+                // ② 落盘闸门由我们自己置位（loadValues 回填时为 true），不再由系统状态反推：
+                //    触摸 / 外接键盘 / 读屏选中一律「先切界面、后落盘」，界面与落盘不会分叉。
+                if (suppressProviderPersist) return
                 // 与目标语言监听器对称：选中即落盘，不等「保存」按钮
-                val pickedNow = TranslationProviderId.entries.getOrNull(position)
-                if (pickedNow != null && pickedNow.id != prefs.translateProvider) {
+                if (pickedNow.id != prefs.translateProvider) {
                     prefs.translateProvider = pickedNow.id
                     Diagnostics.i(TAG, "翻译服务: ${pickedNow.id}")
                 }
@@ -328,10 +338,12 @@ class TranslationSettingsActivity : Activity() {
 
     private fun loadValues() {
         // 先复位交互标记，防止触发写入
-        providerTouched = false
         targetTouched = false
+        // 程序性回填下拉：setSelection 照样会触发 onItemSelected，此时只切界面、不落盘
+        suppressProviderPersist = true
         spinnerProvider.setSelection(TranslationProviderId.of(prefs.translateProvider).ordinal)
         spinnerTarget.setSelection(TranslationLanguage.of(prefs.translateTarget).ordinal)
+        suppressProviderPersist = false
 
         // 仅在字段被真实修改后回写，避免解密失败时的空值覆盖已有密文
         saveGuard.reset()
@@ -348,10 +360,17 @@ class TranslationSettingsActivity : Activity() {
         refreshState()
     }
 
-    /** 切换服务商卡片展示；OpenAI 目标语言由其专用配置页控制，此处置灰 */
-    private fun applyProviderVisibility() {
-        val picked = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
-            ?: TranslationProviderId.DEFAULT
+    /**
+     * 切换服务商卡片展示；OpenAI 目标语言由其专用配置页控制，此处置灰。
+     *
+     * @param picked 本次要渲染的服务方，默认取下拉当前选中项。显式传入是让去重判据与实际渲染同源：
+     *   回调期间读 `spinnerProvider.selectedItemPosition` 在部分 ROM 上可能仍是旧值。
+     */
+    private fun applyProviderVisibility(
+        picked: TranslationProviderId = TranslationProviderId.entries
+            .getOrNull(spinnerProvider.selectedItemPosition) ?: TranslationProviderId.DEFAULT,
+    ) {
+        renderedProvider = picked
         blockAliyun.visibility = if (picked == TranslationProviderId.ALIYUN) View.VISIBLE else View.GONE
         blockAzure.visibility = if (picked == TranslationProviderId.AZURE) View.VISIBLE else View.GONE
         blockBaidu.visibility = if (picked == TranslationProviderId.BAIDU) View.VISIBLE else View.GONE

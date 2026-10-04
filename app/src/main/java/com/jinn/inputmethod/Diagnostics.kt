@@ -91,7 +91,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     private val LONG_DIGITS_RE = Regex("(?<!\\d)\\d{15,}(?!\\d)")
 
     /**
-     * 常见 API Key / 令牌形态（2026-09-30 第二轮审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
+     * 常见 API Key / 令牌形态（2026-09-30 审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
      * `Bearer <token>`。
      *
      * 这是**兜底**：凭据本身严禁进日志（各调用点自律 + 失败响应体只记结构化摘要）。但只要有人
@@ -313,7 +313,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
      * 落盘正文护栏：脱敏 + **剔除换行/控制字符** + 超长截断（纯函数，便于单测）。
      * 只作用于文件，logcat 用原文。
      *
-     * 为什么剔控制字符（2026-09-30 第二轮审查）：日志行以换行分界，而日志里会出现用户可控串
+     * 为什么剔控制字符（2026-09-30 审查）：日志行以换行分界，而日志里会出现用户可控串
      * （Base URL、host、导入包里的设备名…）—— 带一个换行就能伪造出完整的假日志行（含时间戳与
      * 级别），排障时会被彻底带偏。
      */
@@ -630,6 +630,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         }
     }
 
+    /** 当前日志目录；尚未初始化（或未授权）时为 null */
     val currentLogDir: File? get() = logDir
 
     /**

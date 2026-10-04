@@ -17,6 +17,8 @@ import java.util.concurrent.RejectedExecutionException
  */
 object BackgroundIo {
 
+    private const val TAG = "BackgroundIo"
+
     private val exec: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "jinn-clipboard-io").apply { isDaemon = true }
     }
@@ -33,6 +35,4 @@ object BackgroundIo {
         } catch (_: RejectedExecutionException) {
         }
     }
-
-    private const val TAG = "BackgroundIo"
 }

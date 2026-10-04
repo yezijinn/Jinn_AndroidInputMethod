@@ -19,7 +19,7 @@ import org.json.JSONObject
  */
 
 /**
- * 目标语言（用户 2026-09-30 定：至少中/英/日/韩，默认英文）。
+ * 目标语言（2026-09-30 定：至少中/英/日/韩，默认英文）。
  *
  * 语言码只在 Provider 自己的映射里出现，设置页与 [Prefs.translateTarget] 只认枚举 name：
  * `zh / zh-Hans` 这类差异、DeepL 的全大写代码都收敛在这一层，UI 与配置不受影响。
@@ -51,7 +51,7 @@ internal enum class TranslationLanguage(
 /**
  * 翻译服务提供方（[Prefs.translateProvider] 存 id 字符串）。
  *
- * 顺序即设置页下拉顺序；[DEFAULT] = 阿里云（用户 2026-09-30 指定）。
+ * 顺序即设置页下拉顺序；[DEFAULT] = 阿里云（2026-09-30 定）。
  * 旧配置里的 `azure` / `baidu` 取值继续有效（id 不变），只有未知取值才回落到默认。
  */
 internal enum class TranslationProviderId(val id: String, val label: String) {
@@ -121,7 +121,7 @@ internal enum class TranslationError(val message: String) {
     /**
      * 输出被上限截断（OpenAI 兼容那家的 `finish_reason == "length"`）。
      *
-     * 与 [PARAM] 分开（2026-10-02 第二轮审查）：PARAM 的文案让用户去核对「语言方向 / 模型名 /
+     * 与 [PARAM] 分开（2026-10-02 审查）：PARAM 的文案让用户去核对「语言方向 / 模型名 /
      * 路径 / 原文长度」，而真因是**输出上限**（Max Tokens 或网关自带上限）—— 按 PARAM 的提示
      * 逐项核对必然无果。
      */
@@ -130,7 +130,7 @@ internal enum class TranslationError(val message: String) {
     /**
      * 服务端「少给行」：译文行数 < 原文非空行数（按行对齐的 Provider，如百度系）。
      *
-     * 与 [PARAM] 分开（2026-10-02 第五轮审查）：PARAM 会让用户去核「语言方向 / 模型名 / 路径 /
+     * 与 [PARAM] 分开（2026-10-02 审查）：PARAM 会让用户去核「语言方向 / 模型名 / 路径 /
      * 原文长度」，而真因是服务端少返回了行 —— 逐行对应会错位，宁可拒绝也不写进正文。
      */
     LINE_MISMATCH("服务端返回的行与原文不齐，为避免逐行错位未写入（可去掉空行后重试）"),
@@ -220,9 +220,9 @@ internal val TranslationProviderId.defaultMaxBytes: Int
 /**
  * 原文提取与译文追加（纯函数，运行期与 JVM 单测共用同一份规则）。
  *
- * 追加语义（用户 2026-09-30 定）：原文一个字都不动，译文另起一行跟在后面；
+ * 追加语义（2026-09-30 定）：原文一个字都不动，译文另起一行跟在后面；
  * 翻译失败时**不写任何东西**（失败路径根本不经过这里）。
- * 截断规则（用户 2026-09-30 定）：超出字节上限时**从前面开始取、舍弃后面的**。
+ * 截断规则（2026-09-30 定）：超出字节上限时**从前面开始取、舍弃后面的**。
  */
 internal object TranslationText {
 
@@ -346,7 +346,7 @@ internal object TranslationText {
     /**
      * 单个字符是否是行分隔符（见 [LINE_BREAKS]）。
      *
-     * 供提交阶段的「落点是不是区间末尾」复用（2026-10-03 第十二轮审查）：那一处此前只认 `'\n'`，
+     * 供提交阶段的「落点是不是区间末尾」复用（2026-10-03 审查）：那一处此前只认 `'\n'`，
      * 而行分隔符在 L-499 已扩到 CR / U+2028 / U+0085… ⇒ CR-only 与 U+2028 文档里
      * 「光标所在整行 / 编辑框全部」两档会在**已付费之后**被判成「落点不对」而拒绝。
      * 同一个概念必须只有一处判据。
@@ -472,6 +472,11 @@ internal object TranslationText {
     private val WRAPPER_PREFIX_RE =
         Regex("^(?:译文|翻译|以下是翻译|翻译结果|Translation|Translated)\\s*[:：]\\s*")
 
+    /**
+     * 还原模型回包的纯文本：去掉 ```json 围栏、外侧「译文：」类前缀、以及整段被包裹的引号。
+     *
+     * 若剥完是空串则回退传入原文，避免把「清洗失败」伪装成「翻译成功」。
+     */
     fun stripWrapper(text: String): String {
         var t = text.trim()
         WRAPPER_FENCE_RE.find(t)?.let { t = it.groupValues[1].trim() }
@@ -486,7 +491,7 @@ internal object TranslationText {
     fun appendText(prev: Char?, translated: String): String {
         val body = translated.trim()
         // 空 / 纯零宽译文只返回空串：绝不留下孤立换行或不可见字符（上游按 EMPTY 拦截，
-        // 这里是纯函数兜底；零宽判据见 [hasVisibleContent]），2026-09-30 第二轮审查
+        // 这里是纯函数兜底；零宽判据见 [hasVisibleContent]），2026-09-30 审查
         if (!body.hasVisibleContent()) return ""
         // ⚠ 行判据必须与 [LINE_BREAKS] 同源（2026-10-03 修复 L-707）：这里原先只认 `'\n'`，
         // 是「什么算换行」的**第二份实现**。而 `prev` 的两个来源都会喂进别的分隔符 ——
@@ -565,7 +570,7 @@ internal fun jsonCode(json: JSONObject?, key: String): String? {
  * **NBSP（U+00A0）返回 true**（它是 `Zs`，被 `isSpaceChar` 接住）—— 两种都判不出来，要靠
  * [ZERO_WIDTH] 兜。少一个码位就多一条「一个不可见字符也算有内容」的漏洞：用户从网页复制来的
  * 零宽字符会被当成有内容 ⇒ 发出一次真实（计费）请求，而模型面对一个不可见字符**可能编造整句译文**
- * 并把它追加进用户正文（2026-09-30 第二轮审查发现）。反向同理：服务端若只回零宽字符，也不能写回。
+ * 并把它追加进用户正文（2026-09-30 审查发现）。反向同理：服务端若只回零宽字符，也不能写回。
  *
  * ⚠ 但**判空不等于可写**：`U+202E`（RLO）这类双向文本控制符既非空白也不在 [ZERO_WIDTH] 里，
  * 「有可见内容」成立，写进输入框却会改变**用户自己那段文字**的显示顺序 —— 见 [sanitizedForOutput]。
@@ -618,7 +623,7 @@ private fun isInvisibleCodePoint(cp: Int): Boolean = when {
     cp == 0x3164 -> true                      // Hangul Filler（韩语最常用；上两条只收了 115F / FFA0）
     cp == 0x034F -> true                      // COMBINING GRAPHEME JOINER（Mn 类，不可见）
     cp in 0xD800..0xDFFF -> true              // 孤立代理（**判空侧**；正常代理对不会被拆开遍历，
-    //                                            剥除表不得加它 —— 那会破坏 emoji，见 L-578 的教训）
+    //                                            剥除表不得加它 —— 那会破坏 emoji，见 L-578）
     else -> false
 }
 

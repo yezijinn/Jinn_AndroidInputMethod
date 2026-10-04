@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 上移箭头（符号分组顺序页用）：与 ic_shift 同款字形，但画布放大到 28dp ——
-     用户 2026-10-02 要求「箭头必须放大」，文字字形（↑）在系统字体里只有 em 的一小块，
+     2026-10-02：箭头要放大，文字字形（↑）在系统字体里只有 em 的一小块，
      调到 20sp 仍然很小，故改用矢量图标。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="28dp"

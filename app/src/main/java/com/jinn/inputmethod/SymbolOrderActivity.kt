@@ -71,7 +71,7 @@ class SymbolOrderActivity : Activity() {
 
     private companion object {
         /**
-         * 紧凑行参数（用户 2026-10-02：13 个分组要一屏放完，不必上下滑动）。
+         * 紧凑行参数（2026-10-02：13 个分组要一屏放完，不必上下滑动）。
          *
          * 行高 = 卡片上下内边距 ×2 + 箭头按钮高 = 5×2+32 = 42dp，加卡片间距 2dp 共 44dp，
          * 13 行 ≈ 572dp。原先 6dp 内边距 + 36dp 按钮 = 50dp/行，一屏差半行（13. 注音 被切）。
@@ -79,7 +79,7 @@ class SymbolOrderActivity : Activity() {
         const val ROW_PADDING_DP = 5
         const val ARROW_HEIGHT_DP = 32
 
-        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认禁改）—— 与其余页面一致。
+        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认不改动）—— 与其余页面一致。
         // 这两页（本页与收藏符号页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
         // （2026-10-02 统一，见 B-152）。
         // ⚠ 标题**不在**这里：`symbol_order_title` 同时是 `AndroidManifest` 里本 activity 的
@@ -136,7 +136,7 @@ class SymbolOrderActivity : Activity() {
     /**
      * ↑↓ 按钮：**纯矢量箭头**（无底色 / 无边框），首/末行相应方向禁用（半透明）。
      *
-     * 用户 2026-10-02：取消包裹箭头的次级按钮矩形，箭头本身要放大 —— 文字字形 `↑` / `↓`
+     * 2026-10-02：取消包裹箭头的次级按钮矩形，箭头本身要放大 —— 文字字形 `↑` / `↓`
      * 在系统字体里只占 em 的一小块（20sp 真机实测不足 5dp 高），所以改用 28dp 画布的矢量图标
      * （`ic_arrow_up` / `ic_arrow_down`）。按压反馈与热区仍由这个按钮承担。
      */

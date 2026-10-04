@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 模糊音容错页：从设置页「增加模糊拼音」按钮进入；每组一个勾选框，勾选即落盘即时生效。
-     文案在 FuzzyPinyinActivity 里下发（strings.xml 默认禁改），故此处不写 android:text -->
+     文案在 FuzzyPinyinActivity 里下发（strings.xml 默认不改动），故此处不写 android:text -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     style="@style/PageRoot"
     android:orientation="vertical">

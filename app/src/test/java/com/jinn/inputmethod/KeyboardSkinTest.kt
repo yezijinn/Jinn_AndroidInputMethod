@@ -87,7 +87,7 @@ class KeyboardSkinTest {
     @Test
     fun 清单共三十二套且id唯一() {
         assertEquals(
-            "用户 2026-09-24 定的规模：32 套 = 原黑 / 原白 + 30 套配色皮肤",
+            "2026-09-24 定的规模：32 套 = 原黑 / 原白 + 30 套配色皮肤",
             32,
             KeyboardSkins.ALL.size,
         )
@@ -324,7 +324,7 @@ class KeyboardSkinTest {
             "原黑", "钛金", "日落", "皮革", "磨砂", "石墨", "紫晶", "海洋",
             "岩浆", "夜蓝", "墨玉", "极光", "夜空", "暗黑", "午夜", "霓虹",
         )
-        assertEquals("展示顺序必须与用户指定的 32 项逐项一致", expected, KeyboardSkins.ALL.map { it.label })
+        assertEquals("展示顺序必须与指定的 32 项逐项一致", expected, KeyboardSkins.ALL.map { it.label })
         // 两段各 16 套且段首是令牌皮肤（原白 / 原黑）—— 每段恰两整行（每行八个）
         assertEquals("亮色段", 16, KeyboardSkins.ofTone(SkinTone.LIGHT).size)
         assertEquals("暗色段", 16, KeyboardSkins.ofTone(SkinTone.DARK).size)

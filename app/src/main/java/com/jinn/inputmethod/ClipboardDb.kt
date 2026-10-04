@@ -53,7 +53,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 不覆写会命中平台默认实现，直接抛 `SQLiteException: Can't downgrade database from version X to Y`
      * ⇒ 库永远打不开，剪贴板面板 / 搜索 / 自动记录全部失效，而调用点大多有兜底（BackgroundIo 包装 +
-     * 面板 runCatching）⇒ **不崩、只留日志**，比崩溃更难自查。
+     * 面板 runCatching）⇒ **不崩、只留日志**，比崩溃更难排查。
      *
      * 这里按「向前兼容」处理：只把 `user_version` 降回本版本认识的值，**不动数据、不动表结构** ——
      * 前提是库层遵循「加列不删列」的演进口径（本文件历次迁移都是重建表后补齐列，没有删过用户数据列；
@@ -375,7 +375,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         )
 
     /**
-     * 按**明文内容**删除历史条目（「凭据不留痕」，2026-09-30 用户要求增强防泄露）。
+     * 按**明文内容**删除历史条目（「凭据不留痕」，2026-09-30 加固防泄露）。
      *
      * 背景：用户从密码管理器 / 云控制台复制 API Key 的那一刻，本应用的剪贴板监听已经把那条内容
      * 采集入库 —— 库里虽是密文，但**剪贴板面板里明文可见**，还会随配置备份整体导出。
@@ -445,6 +445,41 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             writableDatabase.endTransaction()
         }
         return removed
+    }
+
+    /**
+     * 目标明文 → **仍因收藏被保留**的等价条目数（2026-10-04 修复 L-592）。
+     *
+     * 为什么要单独问一次：上面两个删除接口都带 `is_favorite = 0`（收藏是用户明确要留的），
+     * 于是「删了 0 条」有两种含义 —— 「历史里没有」与「有、但被收藏保护」。调用方原本分不出来，
+     * 把第二种也当成「已清干净」并推进水位 ⇒ 该凭据在本进程内**永不重扫**，Key 明文长期留在
+     * 面板里（可列、可搜索、一键粘贴）并随配置备份明文外发，而日志只说「本轮无需删除」。
+     *
+     * 只扫收藏行（用户手工标记的几条），一次遍历判定全部目标；判据与清洗遍同源
+     * （`cleanCredential()` 后相等 —— 它是精确相等的超集）。
+     *
+     * @return 清洗后的目标值 → 保留条数；没有保留的键不出现在结果里
+     */
+    fun favoriteKeptCounts(targets: Collection<String>): Map<String, Int> {
+        val wanted = targets.mapNotNull { it.cleanCredential().takeIf { s -> s.isNotEmpty() } }.toHashSet()
+        if (wanted.isEmpty()) return emptyMap()
+        val kept = HashMap<String, Int>()
+        readableDatabase.query(
+            TABLE_ITEMS,
+            arrayOf("encrypted_content"),
+            "is_favorite = 1",
+            null,
+            null,
+            null,
+            null,
+        ).use { c ->
+            while (c.moveToNext()) {
+                val plain = ClipboardCrypto.decrypt(c.getString(0)) ?: continue
+                val cleaned = plain.cleanCredential()
+                if (cleaned in wanted) kept[cleaned] = (kept[cleaned] ?: 0) + 1
+            }
+        }
+        return kept
     }
 
     /**
@@ -540,7 +575,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (ids.isEmpty()) return
         writableDatabase.beginTransaction()
         try {
-            // 条件里再判一次收藏（2026-09-30 第二轮审查）：候选集是按快照算的，用户在这几毫秒里把某条
+            // 条件里再判一次收藏（2026-09-30 审查）：候选集是按快照算的，用户在这几毫秒里把某条
             // 标成收藏后，原写法仍会把它删掉 —— 而「收藏不参与裁剪」是本模块的不变量。少删一条无害
             // （下次入库会重新评估），删错一条则不可恢复。
             for (id in ids) {

@@ -57,7 +57,7 @@ class OptionalDictJunkTest {
     /**
      * 旧包卡片必须用自己的完整文案（BUG.md L-69）。
      *
-     * 清单卡片已瘦到「名称 / 说明 / 状态+按钮」三块（2026-10-03 按用户要求删掉体积与加载说明），
+     * 清单卡片已瘦到「名称 / 说明 / 状态+按钮」三块（2026-10-03 删掉体积与加载说明），
      * `dict_startup_cost_line1~3` 随之删除；那两句加载说明（`dict_load_timing` /
      * `dict_startup_instant`）搬到了**页面顶部**的四句提示里，不再进卡片。
      * 旧包没有对应清单条目可复用，`TEXT_LEGACY_LOAD` 仍是它唯一合适的写法 —— 因此这里既钉
@@ -82,6 +82,78 @@ class OptionalDictJunkTest {
             "dict_startup_cost_line1~3 已随卡片瘦身删除（卡片只留名称 / 说明 / 状态+按钮），不许复活",
             "dict_startup_cost" !in xml,
         )
+    }
+
+    // ── 残留下载临时件（BUG.md L-798）────────────────────────────
+
+    @Test
+    fun `残留临时件按后缀筛出且排除正在下载的那个`() {
+        val names = listOf(
+            "dict_part2.txt.xz", // 已装好的包：不是临时件
+            "dict_part2.txt.xz.tmp", // 正在下载的那个的临时件
+            "dict_part3.txt.xz.tmp", // 上次被杀留下的残件
+            "notes.txt",
+        )
+        assertEquals(
+            listOf("dict_part3.txt.xz.tmp"),
+            OptionalDicts.staleTempNames(names, active = "dict_part2.txt.xz"),
+        )
+    }
+
+    @Test
+    fun `空闲时（没有下载）全部临时件都算残留`() {
+        assertEquals(
+            listOf("a.xz.tmp", "b.xz.tmp"),
+            OptionalDicts.staleTempNames(listOf("a.xz.tmp", "b.xz.tmp", "a.xz"), active = null),
+        )
+    }
+
+    @Test
+    fun `残留件的清理与重启窗口接线不得回退（L-798、L-801）`() {
+        val src = TestSources.codeOf(TestSources.rawSourceOfShortName("DictManagerActivity.kt"))
+        assertTrue(
+            "refreshList 必须清理残留临时件（否则一次下载中进程被杀就在存储里留最多 64MB）",
+            "OptionalDicts.staleTempNames(" in block(src, "private fun refreshList"),
+        )
+        assertTrue(
+            "清理必须留一条日志（否则事后无法判断有没有清过）",
+            "清理残留下载临时件" in src,
+        )
+        // L-801：1.5s 重启窗口内不得再接受改 dicts/ 的操作
+        val restart = block(src, "private fun restartImeForDict")
+        assertTrue("重启窗口必须先置位 restartPending", "restartPending = true" in restart)
+        assertTrue(
+            "置位必须排在 postDelayed 之前（否则窗口内按钮仍可点）",
+            restart.indexOf("restartPending = true") < restart.indexOf("postDelayed"),
+        )
+        for (entry in listOf(
+            "private fun download", "private fun remove", "private fun confirmRemoveLegacy",
+            "private fun removeLegacy",
+        )) {
+            assertTrue("$entry 必须判重启窗口（blockedByRestart）", "blockedByRestart()" in block(src, entry))
+        }
+        assertTrue(
+            "按钮可用性必须走 actionsEnabled()（下载中或重启窗口内都禁用）",
+            "actionsEnabled()" in src && "enabled = downloading == null" !in src,
+        )
+    }
+
+    /** 取 [marker] 之后的花括号块（与 RecentFixesRegressionTest.blockAfter 同款；那边是 private 助手） */
+    private fun block(src: String, marker: String): String {
+        val i = src.indexOf(marker)
+        assertTrue("源码里找不到锚点「$marker」（改名了？）", i >= 0)
+        val open = src.indexOf('{', i)
+        var depth = 0
+        for (j in open until src.length) {
+            when (src[j]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return src.substring(open, j + 1)
+                }
+            }
+        }
+        error("块没有闭合：$marker")
     }
 
     private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)

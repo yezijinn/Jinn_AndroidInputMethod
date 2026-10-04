@@ -78,7 +78,7 @@ class DictManagerActivity : Activity() {
 
         root.addView(buildTopBar())
 
-        // 提示：四句各占一行，避免被系统折行（2026-10-03 按用户要求补足到四句：
+        // 提示：四句各占一行，避免被系统折行（2026-10-03 补足到四句：
         // 下载取舍 / 下载后重启 / 加载时机 / 以后不用等）。
         // ⚠ 这四句对三个包通用，只在顶部说一次 —— 卡片里重复三遍反而啰嗦。
         listOf(
@@ -194,6 +194,25 @@ class DictManagerActivity : Activity() {
     // ── 列表 ────────────────────────────────────────────────
 
     private fun refreshList() {
+        // 残留临时件清理（2026-10-04 修复 L-798）：下载中被系统杀会留下 `*.xz.tmp`（上限 64MB），
+        // 而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见也删不掉，只能清数据 / 卸载才释放。
+        // 判据：`*.xz.tmp` 且不是**正在下载**的那个（`downloading` 跨实例跟踪，重建页面也不会误删）。
+        runCatching {
+            val dir = dictDir()
+            val stale = OptionalDicts.staleTempNames(
+                dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList(),
+                downloading,
+            )
+            if (stale.isNotEmpty()) {
+                var freed = 0L
+                for (name in stale) {
+                    val f = File(dir, name)
+                    val len = f.length()
+                    if (f.delete()) freed += len
+                }
+                Diagnostics.i(TAG, "清理残留下载临时件: ${stale.size} 个 / $freed B")
+            }
+        }.onFailure { Diagnostics.w(TAG, "清理残留下载临时件失败: ${it.javaClass.simpleName}") }
         listHost.removeAllViews()
         for (dict in OptionalDicts.ALL) {
             listHost.addView(buildCard(dict), matchWrap(bottom = 2))
@@ -202,6 +221,18 @@ class DictManagerActivity : Activity() {
         for (fileName in unknownPackagesInDir()) {
             listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 2))
         }
+    }
+
+    /** 下载 / 删除按钮的可用性：下载中或**重启窗口内**一律禁用（后者见 L-801） */
+    private fun actionsEnabled() = downloading == null && !restartPending
+
+    /**
+     * 重启窗口内拒绝会改 `dicts/` 的操作（2026-10-04 修复 L-801）；已拒绝时给提示并返回 true。
+     */
+    private fun blockedByRestart(): Boolean {
+        if (!restartPending) return false
+        Toast.makeText(this, R.string.dict_need_restart, Toast.LENGTH_SHORT).show()
+        return true
     }
 
     /**
@@ -254,7 +285,7 @@ class DictManagerActivity : Activity() {
             actionButton(
                 text = getString(R.string.dict_action_remove),
                 color = getColor(R.color.danger),
-                enabled = downloading == null,
+                enabled = actionsEnabled(),
             ) { confirmRemoveLegacy(fileName) },
             matchWrap(top = 12).also { it.gravity = Gravity.END },
         )
@@ -277,6 +308,7 @@ class DictManagerActivity : Activity() {
             Toast.makeText(this, R.string.dict_remove_busy, Toast.LENGTH_SHORT).show()
             return
         }
+        if (blockedByRestart()) return
         AlertDialog.Builder(this)
             .setTitle(legacyName(fileName))
             .setMessage(TEXT_LEGACY_CONFIRM)
@@ -292,6 +324,8 @@ class DictManagerActivity : Activity() {
      * 用户看到的会是「删了还在」——与清单内包的删除同一条口径（[promptRestart]）。
      */
     private fun removeLegacy(fileName: String) {
+        // 确认框可能在窗口开始前就已打开（下载完成会立刻安排重启）⇒ 真正动手这一步也要判
+        if (blockedByRestart()) return
         val ok = runCatching { dictFile(fileName).delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "遗留词库包删除: $fileName ok=$ok")
         setStatus(
@@ -326,7 +360,7 @@ class DictManagerActivity : Activity() {
             card.addView(line(TEXT_INDEX_PENDING, getColor(R.color.warn), 13f, top = 10))
         }
 
-        // 安装状态与操作按钮**同一行**（2026-10-03 按用户要求）：状态占满剩余宽度、按钮靠右。
+        // 安装状态与操作按钮**同一行**（2026-10-03）：状态占满剩余宽度、按钮靠右。
         // ⚠ 别再拆成「状态一行、按钮另起一行」—— 每张卡片多出一行竖直空白，三张连起来很松散。
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -350,7 +384,7 @@ class DictManagerActivity : Activity() {
                 text = if (installed) getString(R.string.dict_action_reinstall)
                 else getString(R.string.dict_action_download),
                 color = getColor(R.color.accent),
-                enabled = downloading == null,
+                enabled = actionsEnabled(),
             ) { download(dict) },
             // 左边距让按钮与状态文字之间留出呼吸位；右边距是原按钮之间的间距
             buttonLp(right = 8).apply { leftMargin = dp(8) },
@@ -360,7 +394,7 @@ class DictManagerActivity : Activity() {
                 actionButton(
                     text = getString(R.string.dict_action_remove),
                     color = getColor(R.color.danger),
-                    enabled = downloading == null,
+                    enabled = actionsEnabled(),
                 ) { remove(dict) },
                 buttonLp(),
             )
@@ -416,6 +450,7 @@ class DictManagerActivity : Activity() {
 
     private fun download(dict: OptionalDict) {
         if (downloading != null) return
+        if (blockedByRestart()) return
         downloading = dict.fileName
         setStatus(getString(R.string.dict_downloading, dict.name))
         refreshList()
@@ -550,6 +585,7 @@ class DictManagerActivity : Activity() {
             Toast.makeText(this, R.string.dict_remove_busy, Toast.LENGTH_SHORT).show()
             return
         }
+        if (blockedByRestart()) return
         val f = dictFile(dict.fileName)
         val ok = runCatching { f.delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "分类词库删除: ${dict.fileName} ok=$ok")
@@ -580,6 +616,11 @@ class DictManagerActivity : Activity() {
      * 挂在已销毁 View 上的延时任务不保证执行，而这里必须执行。
      */
     private fun restartImeForDict() {
+        // 1.5s 窗口内不再接受任何改 `dicts/` 的操作（L-801）：置位 + 立刻置灰按钮
+        // （置位必须在 refreshList 之前，否则按钮仍是「可点」态）
+        restartPending = true
+        runCatching { refreshList() }
+            .onFailure { Diagnostics.w(TAG, "重启前刷新列表失败: ${it.javaClass.simpleName}") }
         Diagnostics.i(TAG, "分类词库变更：1.5s 后重启输入法进程以加载")
         // SIGKILL 不会走 onDestroy：用户词频的尾沿补写（防抖 2s）与 onDestroy 里的 flush 都来不及跑，
         // 「刚选过候选就来装/删词库」时那几次学习会丢。这里先同步刷一次（文件几千行，1~3ms）。
@@ -621,7 +662,7 @@ class DictManagerActivity : Activity() {
 
     private companion object {
 
-        // 旧版遗留包区的文案在代码里下发：strings.xml 默认禁改，与生僻字页 / 模糊音页的 TEXT_* 同做法
+        // 旧版遗留包区的文案在代码里下发：strings.xml 默认不改动，与生僻字页 / 模糊音页的 TEXT_* 同做法
         const val TEXT_LEGACY_DESC = "旧版本装过的词库包，现在的下载源已下线。"
 
         /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
@@ -634,6 +675,15 @@ class DictManagerActivity : Activity() {
          */
         @Volatile
         private var pendingDictRestart = false
+
+        /**
+         * 「已安排重启」窗口（2026-10-04 修复 L-801）：[restartImeForDict] 延迟 1.5s 才 SIGKILL，
+         * 而这段时间里 `activeDownload` 已是 null、按钮又是「可点」态 ⇒ 用户能再发起一次下载或删除，
+         * 写到一半被随后的 kill 打断（还会叠加 L-798 的残留），而他刚看到 Toast「输入法将重启以加载」。
+         * 置位后所有会改 `dicts/` 的入口一律拒绝，直到进程真的结束（本进程内的窗口，无需持久化）。
+         */
+        @Volatile
+        private var restartPending = false
 
         /** 旧包的加载提示：完整一句话（旧包没有实测耗时，见 [buildUnknownCard] 的 KDoc） */
         const val TEXT_LEGACY_LOAD = "空闲时才在后台加载（息屏或收起键盘后生效）。"

@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 键面韵母提示的硬性规则（用户明示，不得违反）：
+ * 键面韵母提示的硬性规则（不得违反）：
  *  1. 绝不显示与该键字母相同的韵母（e 键不显示 e、v 键不显示 v、a/i/u 同理）；
  *  2. ü 的两种写法（u / v）同时出现时只留 v；
  *  3. 总行数强制 ≤ 2（含红色 zh/ch/sh 那一行）。
@@ -49,7 +49,7 @@ class HintRuleTest {
     }
 
     @Test
-    fun 用户点名项逐个核对() {
+    fun 指定项逐个核对() {
         val zr = ShuangpinScheme.ZIRANMA.table!!
         val flypy = ShuangpinScheme.FLYPY.table!!
         val sogou = ShuangpinScheme.SOGOU.table!!

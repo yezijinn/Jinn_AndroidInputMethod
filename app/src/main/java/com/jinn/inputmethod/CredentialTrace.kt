@@ -80,9 +80,30 @@ internal object CredentialTrace {
             runCatching { db.deleteByCleanedPlaintexts(missed) }.getOrDefault(-1)
         }
         if (cleaned > 0) removed += cleaned
-        // 任一环节没得出结论就不标记 —— 下次调用会重扫（`failed` / `cleaned < 0` / `maxIdUncertain` 同权）
-        if (failed || cleaned < 0 || maxIdUncertain) return removed
-        for (v in targets) purged[v] = maxId
+        // 收藏条目是**有意保留**的（删除 SQL 一律带 `is_favorite = 0`），但「0 条」的两种含义必须
+        // 分开（2026-10-04 修复 L-592）：此前全按「已清干净」处理 ⇒ 水位照推、该凭据在本进程内
+        // **永不重扫**，Key 明文长期留在面板里（可列、可搜索、一键粘贴）并随配置备份明文外发，
+        // 而日志只有 V 级「本轮无需删除」—— 事后排查会得出「已经清干净」的错误结论。
+        // 这里单独问一次「有多少条被收藏保住了」：① 记 W；② 这些目标**不推进水位**（下次仍重扫，
+        // 用户取消收藏后就能被清掉）。
+        var keptUncertain = false
+        val kept = runCatching { db.favoriteKeptCounts(all) }.getOrElse {
+            Diagnostics.w("CredentialTrace", "凭据清理: 收藏保留计数失败 ${it.javaClass.simpleName}")
+            keptUncertain = true
+            emptyMap()
+        }
+        if (kept.isNotEmpty()) {
+            Diagnostics.w(
+                "CredentialTrace",
+                "凭据清理: ${kept.values.sum()} 条等价条目因收藏被保留" +
+                    "（面板明文可见、随备份导出；需要时请手动取消收藏再清理）",
+            )
+        }
+        // 任一环节没得出结论就不标记 —— 下次调用会重扫
+        //（`failed` / `cleaned < 0` / `maxIdUncertain` / `keptUncertain` 同权）
+        if (failed || cleaned < 0 || maxIdUncertain || keptUncertain) return removed
+        // 被收藏保住的目标同样不标记：删不掉就不算清过（下次仍重扫）
+        for (v in targets) if (v !in kept) purged[v] = maxId
         return removed
     }
 

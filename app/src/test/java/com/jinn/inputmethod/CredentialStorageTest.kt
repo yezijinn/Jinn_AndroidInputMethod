@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 凭据保护（Keystore 加密落盘 / 防截屏 / 剪贴板不留痕）的守卫 —— 用户 2026-09-30 要求增强防泄露。
+ * 凭据保护（Keystore 加密落盘 / 防截屏 / 剪贴板不留痕）的守卫 —— 2026-09-30 加固防泄露。
  *
  * 为什么用「纯函数 + 源码对拍」而不是行为测试：Keystore 与 `SharedPreferences` 在 JVM 单测里都不存在，
  * 而这几条防线恰恰是「有人顺手改回明文、删掉一行 FLAG_SECURE」的高危位置 —— 机械对拍正对这种回退。

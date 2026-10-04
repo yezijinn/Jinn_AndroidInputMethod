@@ -110,7 +110,7 @@ class FuzzyPinyinActivity : Activity() {
     }
 
     private companion object {
-        // 文案在代码里下发：strings.xml 默认禁改，与设置页的 TEXT_* 同做法
+        // 文案在代码里下发：strings.xml 默认不改动，与设置页的 TEXT_* 同做法
         const val TEXT_TITLE = "模糊音容错"
         const val TEXT_DESC = "按自己的口音勾选不分的音。\n勾选后，某个音打不出想要的字时，\n" +
             "会把该音的其他读法作为补充候选加上\n（精确候选一个不动、不被替换）。"

@@ -24,7 +24,7 @@ data class OptionalDict(
      * 所以按句主动分行，一行就是一句话。
      */
     val descLines: List<String>,
-    /** 压缩后体积（MB）—— **清单数据，卡片上不再显示**（2026-10-03 按用户要求删掉那一行） */
+    /** 压缩后体积（MB）—— **清单数据，卡片上不再显示**（2026-10-03 删掉那一行） */
     val sizeMb: Double,
     /**
      * 首次构建索引的耗时（秒）—— **清单实测数据，不再显示在卡片上**（2026-10-03）。
@@ -143,6 +143,25 @@ object OptionalDicts {
         fileNames.filter { it.endsWith(".xz") }
             .filter { name -> ALL.none { it.fileName == name } }
             .sorted()
+
+    /**
+     * 下载**残留临时件**（`*.xz.tmp`，见 BUG.md L-798）：排除 [active]（正在下载的那个包名）的 tmp。
+     *
+     * 为什么需要：`DictManagerActivity.fetchToFile` 只在 `catch` 里删 tmp，进程被系统杀掉
+     * （或下载中页面被关、随后进程回收）就留下最多 `MAX_DOWNLOAD_BYTES` = 64MB 垃圾；而残留件
+     * 既不在清单、也不以 `.xz` 结尾 ⇒ 「其他包」区也看不见、页面上删不掉，只有清数据 / 卸载能释放。
+     *
+     * 纯函数（不碰文件系统）：只按名字筛，删除与跳过由调用侧决定 —— 与 [unknownPackages] 同口径。
+     */
+    fun staleTempNames(fileNames: Collection<String>, active: String?): List<String> {
+        // ⚠ 正在下载那个的临时件名是 `"$fileName.tmp"`（文件名本身已含 `.xz`），
+        // 而不是 `"$fileName$TEMP_SUFFIX"` —— 后者会拼成 `X.xz.xz.tmp`，永远排不掉在跑的下载
+        val activeTmp = active?.let { "$it.tmp" }
+        return fileNames.filter { it.endsWith(TEMP_SUFFIX) && it != activeTmp }.sorted()
+    }
+
+    /** 下载临时件后缀：`fetchToFile` 写 `"$fileName.tmp"`，而文件名恒以 `.xz` 结尾 */
+    const val TEMP_SUFFIX = ".xz.tmp"
 
     /**
      * 流式计算文件的 SHA-256（纯 IO 逻辑，便于 JVM 单测）。

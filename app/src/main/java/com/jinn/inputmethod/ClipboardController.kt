@@ -178,6 +178,8 @@ class ClipboardController(context: Context) {
  */
 object ClipboardStore {
 
+    private const val TAG = "ClipboardStore"
+
     /**
      * 带预算把流读成文本（纯函数，便于单测）—— **URI 型剪贴板条目的唯一读入口**（BUG.md L-171）。
      *
@@ -513,6 +515,4 @@ object ClipboardStore {
         val appInfo = pm.getApplicationInfo(pkg, 0)
         pm.getApplicationLabel(appInfo).toString()
     }.getOrElse { pkg.substringAfterLast('.') }
-
-    private const val TAG = "ClipboardStore"
 }

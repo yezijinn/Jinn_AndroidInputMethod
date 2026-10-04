@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 翻译原文范围设置页（用户 2026-09-30 定）：每家翻译服务独立配置「哪些算翻译原文」与
+<!-- 翻译原文范围设置页（2026-09-30 定）：每家翻译服务独立配置「哪些算翻译原文」与
      「单次翻译的字节上限」。文案（含 hint 与官方限制说明）全部在 TranslationSourceActivity
-     里下发（strings.xml 默认禁改），布局里只用 `labelFor` 关联标签与控件（无障碍 + lint 基线）。
+     里下发（strings.xml 默认不改动），布局里只用 `labelFor` 关联标签与控件（无障碍 + lint 基线）。
      落盘时机：下拉 / 单选即时写，数字输入框在 onPause 写（见该页 onPause 的说明） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     style="@style/PageRoot"

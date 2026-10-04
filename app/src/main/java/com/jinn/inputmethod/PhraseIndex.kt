@@ -279,6 +279,7 @@ internal class PhraseIndex private constructor(
         }
     }.getOrNull()
 
+    /** 取文件指纹：对「长度:修改时间」做 FNV-1a64，与 [build] 写入头部的 stamp 同源，供复用校验 */
     fun stampOfFile(length: Long, modified: Long): Long =
             fnv1a64("$length:$modified".toByteArray(Charsets.UTF_8))
 

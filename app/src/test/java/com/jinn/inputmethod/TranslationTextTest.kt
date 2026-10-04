@@ -86,7 +86,7 @@ class TranslationTextTest {
         assertEquals("你好", TranslationText.extract("  你好  ", "", TranslationScope.BEFORE_ALL, 10_000).text)
     }
 
-    // ── 单次字节上限：超出时从前面取、舍弃后面的（用户 2026-09-30 定的统一规则）──
+    // ── 单次字节上限：超出时从前面取、舍弃后面的（2026-09-30 定的统一规则）──
 
     @Test
     fun `takeHeadBytes 的字节口径：ASCII 1 - 汉字 3 - emoji 4`() {
@@ -226,7 +226,7 @@ class TranslationTextTest {
         assertEquals(TranslationText.MAX_MAX_BYTES, TranslationProviderId.DEEPL.defaultMaxBytes)
     }
 
-    // ── 提交前的快照判据（2026-09-30 用户实测缺陷的回归守卫）────
+    // ── 提交前的快照判据（2026-09-30 实测缺陷的回归守卫）────
 
     @Test
     fun `提交前的快照判据必须是「原始读数逐字相等」`() {
@@ -259,7 +259,7 @@ class TranslationTextTest {
         )
     }
 
-    // ── 可见内容与凭据清洗（2026-09-30 第二轮审查）────────────
+    // ── 可见内容与凭据清洗（2026-09-30 审查）────────────
 
     @Test
     fun `零宽字符不算可翻译内容`() {

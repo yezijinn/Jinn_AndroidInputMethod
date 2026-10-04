@@ -32,18 +32,30 @@ class Prefs(context: Context) {
         .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
 
     /**
-     * 读侧类型防御（收口，见 BUG.md L-638）：`SharedPreferences` 对**类型不符**的键是
+     * 读侧类型防御（收口，见 BUG.md L-638 / L-653）：`SharedPreferences` 对**类型不符**的键是
      * `(Integer) mMap.get(key)` 强转 ⇒ 抛 `ClassCastException`（**不是**返回默认值）。
      * 配置被手改 / 第三方克隆工具恢复 / `adb restore` 旧 prefs 时就会命中，而抛点在
      * 主线程点击回调里、未捕获即崩溃。
      *
-     * 只用于**翻译相关**的读点：备份导出 / 导入那几条走变量键、已自带类型门（`as? Int` 等），
-     * 不纳入收口以免改变它们的语义。写侧（`putInt` 等）类型由自己决定，不需要这层。
+     * **全部读点**都走这五个助手（2026-10-04 修复 L-653）：L-638 只收了翻译相关的字符串 / 整型，
+     * 凭据键、布尔总开关与更新检查时间戳仍是裸读 —— 「打开设置页就崩」比「点翻译才崩」更早暴露。
+     * 备份导出 / 导入那几条走变量键、自带类型门（`as? Int` 等），不经这里。
+     *
+     * 写侧（`putInt` 等）类型由自己决定，不需要这层。
      */
     private fun intOr(key: String, def: Int): Int = runCatching { sp.getInt(key, def) }.getOrDefault(def)
 
     private fun strOr(key: String, def: String? = null): String? =
         runCatching { sp.getString(key, def) }.getOrNull() ?: def
+
+    private fun boolOr(key: String, def: Boolean): Boolean =
+        runCatching { sp.getBoolean(key, def) }.getOrDefault(def)
+
+    private fun longOr(key: String, def: Long): Long =
+        runCatching { sp.getLong(key, def) }.getOrDefault(def)
+
+    private fun floatOr(key: String, def: Float): Float =
+        runCatching { sp.getFloat(key, def) }.getOrDefault(def)
 
     /**
      * 飞牛 NAS 的局域网地址。
@@ -54,7 +66,7 @@ class Prefs(context: Context) {
      * 语音链路属禁改区，所以校验放在配置层，保证交出去的 URL 一定是合法形式。
      */
     var host: String
-        get() = normalizeHost(sp.getString(KEY_HOST, DEFAULT_HOST).orEmpty()) ?: DEFAULT_HOST
+        get() = normalizeHost(strOr(KEY_HOST, DEFAULT_HOST).orEmpty()) ?: DEFAULT_HOST
         set(value) = sp.edit { putString(KEY_HOST, value.trim()) }
 
     /**
@@ -62,17 +74,17 @@ class Prefs(context: Context) {
      * getter 钳到合法端口区间：越界端口同样会让 `HttpUrl` 抛异常。
      */
     var port: Int
-        get() = sp.getInt(KEY_PORT, DEFAULT_PORT).takeIf { it in 1..65535 } ?: DEFAULT_PORT
+        get() = intOr(KEY_PORT, DEFAULT_PORT).takeIf { it in 1..65535 } ?: DEFAULT_PORT
         set(value) = sp.edit { putInt(KEY_PORT, value) }
 
     /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改（默认勾选） */
     var lockServer: Boolean
-        get() = sp.getBoolean(KEY_LOCK_SERVER, true)
+        get() = boolOr(KEY_LOCK_SERVER, true)
         set(value) = sp.edit { putBoolean(KEY_LOCK_SERVER, value) }
 
     /** 统一语言代码，取值见服务端 engines/language.py */
     var language: String
-        get() = sp.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
+        get() = strOr(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
         // 等于默认值就**删键**（2026-10-01 修复 L-255）：否则「打开过一次设置页」就把当时的默认
         // 语言固化进 prefs，将来改默认语言对该用户无效（口径同 [defaulted]）
         set(value) = sp.edit {
@@ -81,12 +93,12 @@ class Prefs(context: Context) {
 
     /** 识别提示词，人名/地名/术语写在这里能提升准确率 */
     var prompt: String
-        get() = sp.getString(KEY_PROMPT, "").orEmpty()
+        get() = strOr(KEY_PROMPT, "").orEmpty()
         set(value) = sp.edit { putString(KEY_PROMPT, value) }
 
     /** 去掉句尾逗号句号，对齐桌面端 trash_punc 的习惯 */
     var stripTrailingPunc: Boolean
-        get() = sp.getBoolean(KEY_STRIP_PUNC, true)
+        get() = boolOr(KEY_STRIP_PUNC, true)
         set(value) = sp.edit { putBoolean(KEY_STRIP_PUNC, value) }
 
     /**
@@ -95,7 +107,7 @@ class Prefs(context: Context) {
      * 默认关闭：识别完成一次性提交更稳，避免长串兼容问题。
      */
     var useComposing: Boolean
-        get() = sp.getBoolean(KEY_COMPOSING, false)
+        get() = boolOr(KEY_COMPOSING, false)
         set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
 
     /**
@@ -105,7 +117,7 @@ class Prefs(context: Context) {
      * 按键面板的「全拼 / 双拼」按钮已按用户要求移除）。老版本即用此键，故无需迁移。
      */
     var useShuangpin: Boolean
-        get() = sp.getBoolean(KEY_SHUANGPIN, false)
+        get() = boolOr(KEY_SHUANGPIN, false)
         set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
 
     /**
@@ -116,7 +128,7 @@ class Prefs(context: Context) {
      */
     var shuangpinScheme: Int
         get() {
-            val v = sp.getInt(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.ZIRANMA.prefsValue)
+            val v = intOr(KEY_SHUANGPIN_SCHEME, ShuangpinScheme.ZIRANMA.prefsValue)
             // 历史/异常值（含 0 全拼、未知编号）一律落到自然码：本键的语义就是「双拼用哪套」。
             // 回写的必须是 of() 规范化之后的取值：of() 对未知编号会兜底成自然码，
             // 此时原值 v 仍是个脏编号，判据成立却把脏值原样返回，与上面的说明不符。
@@ -131,7 +143,7 @@ class Prefs(context: Context) {
 
     /** 键盘是否默认英文模式（字母直通，不查候选） */
     var keyboardEnglish: Boolean
-        get() = sp.getBoolean(KEY_KB_ENGLISH, false)
+        get() = boolOr(KEY_KB_ENGLISH, false)
         set(value) = sp.edit { putBoolean(KEY_KB_ENGLISH, value) }
 
     /**
@@ -140,7 +152,7 @@ class Prefs(context: Context) {
      * 直到用户在设置页重新开启。拦截点在 [JinnIme.onShowInputRequested]。
      */
     var autoShowKeyboard: Boolean
-        get() = sp.getBoolean(KEY_AUTO_SHOW_KB, true)
+        get() = boolOr(KEY_AUTO_SHOW_KB, true)
         set(value) = sp.edit { putBoolean(KEY_AUTO_SHOW_KB, value) }
 
     /**
@@ -155,7 +167,7 @@ class Prefs(context: Context) {
         get() {
             // 越界值（旧版本/外部写入）会让 JinnIme 建视图时的 when 落到 else 分支，
             // 默认键盘变成语音键盘，与「默认 26 键全拼」的预期正好相反。
-            val v = sp.getInt(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
+            val v = intOr(KEY_DEFAULT_MODE, DefaultKeyboardMode.PINYIN_CN)
             return v.takeIf { it in DefaultKeyboardMode.VOICE..DefaultKeyboardMode.PINYIN_EN }
                 ?: DefaultKeyboardMode.PINYIN_CN
         }
@@ -176,8 +188,8 @@ class Prefs(context: Context) {
      * 三级字（2,923 字）与含三级字的词条整体消失（2026-09-27 修，BUG.md L-41）。
      */
     var rareTier2: Boolean
-        get() = if (sp.contains(KEY_RARE_TIER2)) sp.getBoolean(KEY_RARE_TIER2, false)
-        else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)
+        get() = if (sp.contains(KEY_RARE_TIER2)) boolOr(KEY_RARE_TIER2, false)
+        else boolOr(KEY_SHOW_RARE_CHARS_LEGACY, false)
         set(value) = sp.edit { putBoolean(KEY_RARE_TIER2, value) }
 
     /**
@@ -195,8 +207,8 @@ class Prefs(context: Context) {
      * —— 真值只剩一份，但要新增调用点，留待将来真加档位时一并做。
      */
     var rareTier3: Boolean
-        get() = if (sp.contains(KEY_RARE_TIER3)) sp.getBoolean(KEY_RARE_TIER3, false)
-        else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)
+        get() = if (sp.contains(KEY_RARE_TIER3)) boolOr(KEY_RARE_TIER3, false)
+        else boolOr(KEY_SHOW_RARE_CHARS_LEGACY, false)
         set(value) = sp.edit { putBoolean(KEY_RARE_TIER3, value) }
 
     /**
@@ -206,7 +218,7 @@ class Prefs(context: Context) {
      * 用户词频恒按简体存储（`rememberChoice`），两种模式共享同一份学习结果。
      */
     var useTraditional: Boolean
-        get() = sp.getBoolean(KEY_USE_TRADITIONAL, false)
+        get() = boolOr(KEY_USE_TRADITIONAL, false)
         set(value) = sp.edit { putBoolean(KEY_USE_TRADITIONAL, value) }
 
     /**
@@ -216,12 +228,12 @@ class Prefs(context: Context) {
      * 读写两端都过 [FuzzyPinyin.clampMask]：导入的备份里可能带未定义的位。
      */
     var fuzzyPinyinMask: Int
-        get() = FuzzyPinyin.clampMask(sp.getInt(KEY_FUZZY_PINYIN, FuzzyPinyin.NONE))
+        get() = FuzzyPinyin.clampMask(intOr(KEY_FUZZY_PINYIN, FuzzyPinyin.NONE))
         set(value) = sp.edit { putInt(KEY_FUZZY_PINYIN, FuzzyPinyin.clampMask(value)) }
 
     /** 用户词频学习：记录「实际选过」的候选并提到前面（默认关；本地存储，不上传） */
     var userLearning: Boolean
-        get() = sp.getBoolean(KEY_USER_LEARNING, false)
+        get() = boolOr(KEY_USER_LEARNING, false)
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
@@ -229,7 +241,7 @@ class Prefs(context: Context) {
      * 打开后选完文字才会出现预测候选；关掉时完全不产生预测。
      */
     var predictEnabled: Boolean
-        get() = sp.getBoolean(KEY_PREDICT_ENABLED, false)
+        get() = boolOr(KEY_PREDICT_ENABLED, false)
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
 
     /**
@@ -239,7 +251,7 @@ class Prefs(context: Context) {
      * 空格 / 回车仍取第 1 个候选（= 下排首项）。越界值一律落回 1 行。
      */
     var candidateRows: Int
-        get() = sp.getInt(KEY_CANDIDATE_ROWS, CandidateRows.SINGLE).takeIf { it in CandidateRows.SINGLE..CandidateRows.DOUBLE }
+        get() = intOr(KEY_CANDIDATE_ROWS, CandidateRows.SINGLE).takeIf { it in CandidateRows.SINGLE..CandidateRows.DOUBLE }
             ?: CandidateRows.SINGLE
         set(value) = sp.edit { putInt(KEY_CANDIDATE_ROWS, value.coerceIn(CandidateRows.SINGLE, CandidateRows.DOUBLE)) }
 
@@ -250,7 +262,7 @@ class Prefs(context: Context) {
      * 键盘下次弹出即按新设置渲染，不必重启输入法。
      */
     var showKeyHint: Boolean
-        get() = sp.getBoolean(KEY_SHOW_KEY_HINT, true)
+        get() = boolOr(KEY_SHOW_KEY_HINT, true)
         set(value) = sp.edit { putBoolean(KEY_SHOW_KEY_HINT, value) }
 
     /**
@@ -260,7 +272,7 @@ class Prefs(context: Context) {
      * 与 [showKeyHint] 一样，键盘下次弹出即按新设置渲染。
      */
     var showQuanpin: Boolean
-        get() = sp.getBoolean(KEY_SHOW_QUANPIN, false)
+        get() = boolOr(KEY_SHOW_QUANPIN, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_QUANPIN, value) }
 
     /**
@@ -270,7 +282,7 @@ class Prefs(context: Context) {
      * 成功则 [UpdateChecker.AUTO_CHECK_INTERVAL_MS] 内不再自动检查，避免反复打扰。
      */
     var updateLastCheckAt: Long
-        get() = sp.getLong(KEY_UPDATE_LAST_CHECK_AT, 0L)
+        get() = longOr(KEY_UPDATE_LAST_CHECK_AT, 0L)
         set(value) = sp.edit { putLong(KEY_UPDATE_LAST_CHECK_AT, value) }
 
     /**
@@ -279,7 +291,7 @@ class Prefs(context: Context) {
      * 默认跟随系统（用户 2026-09-21 指定）：系统深浅色即 App 主题；越界值同样退回该默认。
      */
     var themeMode: Int
-        get() = sp.getInt(KEY_THEME_MODE, ThemeManager.MODE_SYSTEM)
+        get() = intOr(KEY_THEME_MODE, ThemeManager.MODE_SYSTEM)
             .takeIf { it in ThemeManager.MODE_SYSTEM..ThemeManager.MODE_SCHEDULED }
             ?: ThemeManager.MODE_SYSTEM
         set(value) = sp.edit {
@@ -297,7 +309,7 @@ class Prefs(context: Context) {
      * 写入即归一（[SymbolOrder.serialize]）：落盘的恒为完整序列串，不会是空串。
      */
     var symbolGroupOrder: String
-        get() = sp.getString(KEY_SYMBOL_ORDER, "").orEmpty()
+        get() = strOr(KEY_SYMBOL_ORDER, "").orEmpty()
         set(value) = sp.edit { putString(KEY_SYMBOL_ORDER, SymbolOrder.serialize(SymbolOrder.parse(value))) }
 
     /**
@@ -310,7 +322,7 @@ class Prefs(context: Context) {
      * （保留原值），调用方自己要把内容收敛后再来。
      */
     var favoriteSymbols: String?
-        get() = sp.getString(KEY_FAVORITE_SYMBOLS, null)
+        get() = strOr(KEY_FAVORITE_SYMBOLS, null)
         set(value) = sp.edit {
             when {
                 value == null -> putString(KEY_FAVORITE_SYMBOLS, null)
@@ -321,7 +333,7 @@ class Prefs(context: Context) {
 
     /** 定时模式：切到亮白的时刻（当天第几分钟），默认 07:00 */
     var themeLightAtMinutes: Int
-        get() = sp.getInt(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
+        get() = intOr(KEY_THEME_LIGHT_AT, DEFAULT_THEME_LIGHT_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_LIGHT_AT_MIN
         set(value) = sp.edit {
             // 写入即归一：读取端虽已兜底，但存进配置里的脏值（负数 / 超 24h）会坑到绕过 Prefs 的读方
@@ -330,7 +342,7 @@ class Prefs(context: Context) {
 
     /** 定时模式：切到暗黑的时刻（当天第几分钟），默认 19:00 */
     var themeDarkAtMinutes: Int
-        get() = sp.getInt(KEY_THEME_DARK_AT, DEFAULT_THEME_DARK_AT_MIN)
+        get() = intOr(KEY_THEME_DARK_AT, DEFAULT_THEME_DARK_AT_MIN)
             .takeIf { it in 0 until ThemeManager.MINUTES_PER_DAY } ?: DEFAULT_THEME_DARK_AT_MIN
         set(value) = sp.edit {
             putInt(KEY_THEME_DARK_AT, Math.floorMod(value, ThemeManager.MINUTES_PER_DAY))
@@ -344,7 +356,7 @@ class Prefs(context: Context) {
      */
     var keyCornerDp: Float
         get() = KeyAppearance.clampCornerDp(
-            sp.getFloat(KEY_KEY_CORNER_DP, KeyAppearance.DEFAULT_CORNER_DP)
+            floatOr(KEY_KEY_CORNER_DP, KeyAppearance.DEFAULT_CORNER_DP)
         )
         set(value) = sp.edit { putFloat(KEY_KEY_CORNER_DP, KeyAppearance.clampCornerDp(value)) }
 
@@ -355,7 +367,7 @@ class Prefs(context: Context) {
      */
     var keyGapDp: Float
         get() = KeyAppearance.clampGapDp(
-            sp.getFloat(KEY_KEY_GAP_DP, KeyAppearance.DEFAULT_GAP_DP)
+            floatOr(KEY_KEY_GAP_DP, KeyAppearance.DEFAULT_GAP_DP)
         )
         set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
 
@@ -370,9 +382,21 @@ class Prefs(context: Context) {
         // 手改 prefs、第三方写入或将来某条绕过 setter 的路径写进越界值时会**直达绘制** ——
         // 值越大候选项左右内缩越多，巨大值会把每个候选撑到屏幕外（跨行溢出型布局异常）。
         get() = KeyAppearance.clampSpacingDp(
-            sp.getFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.DEFAULT_SPACING_DP),
+            floatOr(KEY_CANDIDATE_SPACING_DP, KeyAppearance.DEFAULT_SPACING_DP),
         )
         set(value) = sp.edit { putFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.clampSpacingDp(value)) }
+
+    /**
+     * 候选文字字号（sp，默认 20sp）：**整个候选栏按它派生** —— 行高、拼音条高度、栏高
+     * 都由 [CandidateRows] 按本值算（见 [CandidateText] 的定义域说明）。
+     *
+     * getter 也做一次钳位（与圆角 / 间隙 / 字距 / 透明度四个兄弟键同款）：手改 prefs、
+     * 第三方写入或将来某条绕过 setter 的路径写进越界值时会直达布局 —— 字号过大把候选栏撑满
+     * 整屏、过小则连字都点不中。
+     */
+    var candidateTextSp: Float
+        get() = CandidateText.clampSp(floatOr(KEY_CANDIDATE_TEXT_SP, CandidateText.DEFAULT_SP))
+        set(value) = sp.edit { putFloat(KEY_CANDIDATE_TEXT_SP, CandidateText.clampSp(value)) }
 
     /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
@@ -382,7 +406,7 @@ class Prefs(context: Context) {
      */
     var keyTransparencyPercent: Int
         get() = KeyTransparency.clampPercent(
-            sp.getInt(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.DEFAULT_PERCENT)
+            intOr(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.DEFAULT_PERCENT)
         )
         set(value) = sp.edit {
             putInt(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.clampPercent(value))
@@ -401,7 +425,7 @@ class Prefs(context: Context) {
     var skinLightId: String
         get() {
             ensureSkinSlotsMigrated()
-            val raw = sp.getString(KEY_SKIN_LIGHT, null) ?: return KeyboardSkins.INITIAL_LIGHT_ID
+            val raw = strOr(KEY_SKIN_LIGHT, null) ?: return KeyboardSkins.INITIAL_LIGHT_ID
             return KeyboardSkins.byId(raw, SkinTone.LIGHT).id
         }
         set(value) = sp.edit { putString(KEY_SKIN_LIGHT, KeyboardSkins.byId(value, SkinTone.LIGHT).id) }
@@ -413,7 +437,7 @@ class Prefs(context: Context) {
     var skinDarkId: String
         get() {
             ensureSkinSlotsMigrated()
-            val raw = sp.getString(KEY_SKIN_DARK, null) ?: return KeyboardSkins.INITIAL_DARK_ID
+            val raw = strOr(KEY_SKIN_DARK, null) ?: return KeyboardSkins.INITIAL_DARK_ID
             return KeyboardSkins.byId(raw, SkinTone.DARK).id
         }
         set(value) = sp.edit { putString(KEY_SKIN_DARK, KeyboardSkins.byId(value, SkinTone.DARK).id) }
@@ -431,7 +455,7 @@ class Prefs(context: Context) {
      */
     private fun ensureSkinSlotsMigrated() {
         if (sp.contains(KEY_SKIN_LIGHT) || sp.contains(KEY_SKIN_DARK)) return
-        val legacy = sp.getString(KEY_KEYBOARD_SKIN, null) ?: return
+        val legacy = strOr(KEY_KEYBOARD_SKIN, null) ?: return
         val (light, dark) = KeyboardSkins.migrateLegacySkin(legacy)
         sp.edit {
             putString(KEY_SKIN_LIGHT, light)
@@ -447,7 +471,7 @@ class Prefs(context: Context) {
      * 启用后才在 IME 重建（设置页保存会重启进程）时装配语音组件。
      */
     var voiceInputEnabled: Boolean
-        get() = sp.getBoolean(KEY_VOICE_INPUT, false)
+        get() = boolOr(KEY_VOICE_INPUT, false)
         set(value) = sp.edit { putBoolean(KEY_VOICE_INPUT, value) }
 
     /**
@@ -467,7 +491,7 @@ class Prefs(context: Context) {
      * 也就不会有任何误触发起的网络请求；开启后仍需在「翻译设置」页填好凭据才可用。
      */
     var translateEnabled: Boolean
-        get() = sp.getBoolean(KEY_TRANSLATE_ENABLED, false)
+        get() = boolOr(KEY_TRANSLATE_ENABLED, false)
         set(value) = sp.edit { putBoolean(KEY_TRANSLATE_ENABLED, value) }
 
     /**
@@ -694,7 +718,7 @@ class Prefs(context: Context) {
 
     private fun readCredential(key: String, retry: Int = 0): String {
         credentialCache[key]?.let { return it }
-        val raw = sp.getString(key, "").orEmpty()
+        val raw = strOr(key, "").orEmpty()
         if (raw.isEmpty()) return ""
         if (!CredentialCrypto.looksEncrypted(raw)) {
             Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
@@ -705,7 +729,7 @@ class Prefs(context: Context) {
             // 这里不复用 [writeCredential]：那条路径没有「比对期望旧值」这一步，
             // 而本分支的判据必须在加密之后、提交之前，形态不同。
             val encrypted = CredentialCrypto.encrypt(raw)
-            if (sp.getString(key, "").orEmpty() != raw) {
+            if (strOr(key, "").orEmpty() != raw) {
                 Diagnostics.w(TAG, "凭据在迁移期间被改写，改读新值")
                 return if (retry >= 1) raw else readCredential(key, retry + 1)
             }
@@ -729,7 +753,7 @@ class Prefs(context: Context) {
         // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
         // 无条件回填会把缓存**盖回旧值**，而「凭据不留痕」随后正是拿这个值去比对剪贴板的，
         // 用户刚复制的新 Key 会因此留在剪贴板历史里（2026-10-01 修复 L-298）。
-        if (sp.getString(key, "").orEmpty() != raw) {
+        if (strOr(key, "").orEmpty() != raw) {
             Diagnostics.w(TAG, "凭据在解密期间被改写，本次不回填缓存（改读新值）")
             // 2026-10-02 修复 L-422：此前这里直接 `return plain` —— 闸门只挡住了"污染缓存"，
             // 没挡住"本次结论已过期"：窗口里发生的若是**删除**（用户清空字段并保存），
@@ -1189,6 +1213,7 @@ class Prefs(context: Context) {
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
         put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
+        put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         put(KEY_SKIN_LIGHT, skinLightId)
         put(KEY_SKIN_DARK, skinDarkId)
@@ -1321,6 +1346,7 @@ class Prefs(context: Context) {
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_SPACING_DP -> asFloat(v)?.let { candidateSpacingDp = it; ok() } ?: bad(key)
+                KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 KEY_SKIN_LIGHT -> asString(v)?.let { skinLightId = it; ok() } ?: bad(key)
@@ -1583,7 +1609,8 @@ class Prefs(context: Context) {
         internal const val TIMEOUT_MAX_SEC = 300
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
-    private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
+        private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
+        private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
         /**
          * 已退役：旧版单值皮肤键，现在只在 [ensureSkinSlotsMigrated] 里读取，不再写入。

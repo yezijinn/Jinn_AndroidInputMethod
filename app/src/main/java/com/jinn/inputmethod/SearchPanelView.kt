@@ -268,6 +268,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "搜索面板: 显示并聚焦")
     }
 
+    /** 面板隐藏：作废进行中的刷新（refreshToken 自增）、清空搜索框与焦点，并清掉所有待执行回调 */
     fun onHidden() {
         isPasting = false
         searchHandler.removeCallbacksAndMessages(null)

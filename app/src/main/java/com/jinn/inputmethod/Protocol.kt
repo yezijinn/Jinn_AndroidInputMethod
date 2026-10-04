@@ -38,6 +38,7 @@ data class AudioMessage(
     val prompt: String = "",
     val language: String = "auto",
 ) {
+    /** 按服务端协议把音频段序列化成 JSON（seg 时长 / 重叠取 [Protocol] 常量；prompt 映射为 context） */
     fun toJson(): String = JSONObject().apply {
         put("task_id", taskId)
         put("source", "mic")

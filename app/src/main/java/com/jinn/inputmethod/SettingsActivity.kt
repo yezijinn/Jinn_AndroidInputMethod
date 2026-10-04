@@ -22,7 +22,6 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
-import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -49,13 +48,13 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var editHost: EditText
     private lateinit var editPort: EditText
     private lateinit var checkLockServer: CheckBox
-    private lateinit var spinnerLanguage: Spinner
-    private lateinit var spinnerDefaultMode: Spinner
-    private lateinit var spinnerShuangpin: Spinner
-    private lateinit var spinnerCandidateRows: Spinner
+    private lateinit var spinnerLanguage: UserAwareSpinner
+    private lateinit var spinnerDefaultMode: UserAwareSpinner
+    private lateinit var spinnerShuangpin: UserAwareSpinner
+    private lateinit var spinnerCandidateRows: UserAwareSpinner
 
     // 主题：亮色 / 暗色 / 跟随系统 / 定时（两档各自用哪套皮肤见 Prefs.skinLightId / skinDarkId）
-    private lateinit var spinnerTheme: Spinner
+    private lateinit var spinnerTheme: UserAwareSpinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
     private lateinit var rowThemeSchedule: View
@@ -84,7 +83,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
 
-    /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认禁改） */
+    /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认不改动） */
     private lateinit var btnFuzzyPinyin: Button
 
     /** 「只使用繁体字」胶囊开关（2026-09-27 起：候选里的简体字全部替换为繁体字；与「自动唤起键盘」同行） */
@@ -153,22 +152,15 @@ class SettingsActivity : ComponentActivity() {
     private val uiHandler = Handler(Looper.getMainLooper())
 
     /**
-     * 两个 Spinner 是否已被用户实际碰过。
+     * 落盘闸门：只有**用户亲手操作过**下拉才允许写配置 —— 判据来自 [UserAwareSpinner.userInteracted]。
      *
      * 不能只用「初始化是否完成」做闸门：`setSelection` 之外，Activity 恢复实例状态
      * （`onRestoreInstanceState`）也会触发 `onItemSelected`，而且是在 `onCreate` 返回之后，
      * 只靠 ready 标志挡不住，会把用户配置静默改成上次的临时选择。
-     * 因此改为只有用户触摸过 Spinner 才允许写配置。
+     * 原先的探针只在 `setOnTouchListener` 里置位 ⇒ 键盘确认键与读屏选中的值**不落盘**
+     * （BUG.md L-821，真机取证）；[UserAwareSpinner] 把触摸 / 确认键 / 无障碍三条用户路径都覆盖，
+     * 而 `setSelection` 与实例状态恢复两条程序化路径都不经过它。
      */
-    private var defaultModeSpinnerTouched = false
-    private var shuangpinSpinnerTouched = false
-    private var candidateRowsSpinnerTouched = false
-
-    /** 主题下拉：与上面两个 Spinner 共用「只认用户触摸」的闸门 */
-    private var themeSpinnerTouched = false
-
-    /** 语言下拉：同上（它的读回在 saveAndRestart，而不是 onItemSelected） */
-    private var languageSpinnerTouched = false
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
@@ -298,7 +290,7 @@ class SettingsActivity : ComponentActivity() {
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
         switchVoiceInput = findViewById(R.id.switch_voice_input)
-        // 在线翻译（BYOK）：开关 + 入口 + 状态摘要，文案全部代码下发（strings.xml 默认禁改）
+        // 在线翻译（BYOK）：开关 + 入口 + 状态摘要，文案全部代码下发（strings.xml 默认不改动）
         switchTranslate = findViewById(R.id.switch_translate)
         switchTranslate.text = TEXT_TRANSLATE_SWITCH
         btnTranslateSettings = findViewById(R.id.btn_translate_settings)
@@ -310,7 +302,7 @@ class SettingsActivity : ComponentActivity() {
         }
         textTranslateState = findViewById(R.id.text_translate_state)
         switchKeyHint = findViewById(R.id.switch_key_hint)
-        // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认禁改，这里下发
+        // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认不改动，这里下发
         switchKeyHint.text = "键盘内显韵母"
         findViewById<TextView>(R.id.text_key_hint_desc).text = "关闭后键面只显示字母"
         switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
@@ -367,22 +359,9 @@ class SettingsActivity : ComponentActivity() {
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        // 用户触摸过才允许写配置（见 [languageSpinnerTouched]）；ACTION_UP 补 performClick 供无障碍服务识别
-        spinnerLanguage.setOnTouchListener { view, event ->
-            languageSpinnerTouched = true
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
-
         spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
             this, R.array.default_mode_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        // 用户触摸过才允许写配置（见字段说明）；ACTION_UP 补 performClick 供无障碍服务识别
-        spinnerDefaultMode.setOnTouchListener { view, event ->
-            defaultModeSpinnerTouched = true
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
         spinnerDefaultMode.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
@@ -390,7 +369,8 @@ class SettingsActivity : ComponentActivity() {
                 // 初始化 setSelection（以及恢复实例状态）都会回调这里。若此时 prefs 里的值不在
                 // values 中（如配置损坏或新增了模式），indexOf 会退回第 0 项，
                 // 未加保护就会把用户的默认键盘静默改成第 0 项。
-                if (!defaultModeSpinnerTouched) return
+                // 闸门见字段说明（BUG.md L-821）：触摸 / 确认键 / 读屏三条路径都算用户操作。
+                if (!spinnerDefaultMode.userInteracted) return
                 val values = resources.getStringArray(R.array.default_mode_values)
                 val mode = values.getOrNull(position)?.toIntOrNull()
                     ?: DefaultKeyboardMode.VOICE
@@ -411,18 +391,13 @@ class SettingsActivity : ComponentActivity() {
             this, R.layout.item_spinner,
             ShuangpinScheme.ALL.map { it.displayName },
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerShuangpin.setOnTouchListener { view, event ->
-            shuangpinSpinnerTouched = true
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
         spinnerShuangpin.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
                 // 与「默认键盘模式」同一个坑：初始化 setSelection 与恢复实例状态都会回调，
                 // 不挡住就会把用户已选的方案静默改掉（真机上实测被改写过）。
-                if (!shuangpinSpinnerTouched) return
+                if (!spinnerShuangpin.userInteracted) return
                 val scheme = ShuangpinScheme.ALL.getOrNull(position) ?: return
                 prefs.useShuangpin = scheme.isShuangpin
                 // 双拼方案记忆：只在选双拼项时写（选全拼不清记忆，再选回双拼时回到上次那套）
@@ -438,11 +413,6 @@ class SettingsActivity : ComponentActivity() {
         spinnerCandidateRows.adapter = ArrayAdapter(
             this, R.layout.item_spinner, arrayOf("1 行", "2 行"),
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerCandidateRows.setOnTouchListener { view, event ->
-            candidateRowsSpinnerTouched = true
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
         spinnerCandidateRows.onItemSelectedListener =
             object : android.widget.AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(
@@ -450,7 +420,7 @@ class SettingsActivity : ComponentActivity() {
                 ) {
                     // 同「默认键盘模式」：初始化 setSelection 与恢复实例状态都会回调，
                     // 不挡住就会把用户已选的行数静默改回第 0 项（单行档）。
-                    if (!candidateRowsSpinnerTouched) return
+                    if (!spinnerCandidateRows.userInteracted) return
                     val rows = position + 1
                     if (rows != prefs.candidateRows) {
                         prefs.candidateRows = rows
@@ -524,7 +494,7 @@ class SettingsActivity : ComponentActivity() {
         // 诊断导出：把日志目录打包到共享存储，方便取出排查
         btnExportDiag.setOnClickListener { exportDiagnostics() }
 
-        // 配置备份：导出 / 导入（跨设备迁移）。按钮文本在代码里下发——strings.xml 默认禁改
+        // 配置备份：导出 / 导入（跨设备迁移）。按钮文本在代码里下发——strings.xml 默认不改动
         btnConfigExport = findViewById(R.id.btn_config_export)
         btnConfigImport = findViewById(R.id.btn_config_import)
         textConfigHint = findViewById(R.id.text_config_hint)
@@ -557,7 +527,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 主题卡片：模式下拉（跟随系统 / 亮色 / 暗色 / 定时）+ 两档各自的皮肤说明 + 定时的两个切换时刻。
      *
-     * 与另外两个下拉共用「只认用户触摸」的闸门（见 [themeSpinnerTouched]）：初始化 `setSelection`
+     * 与另外两个下拉共用同一条「用户亲手操作过」的闸门（见 [UserAwareSpinner]）：初始化 `setSelection`
      * 与实例状态恢复都会回调 `onItemSelected`，不挡住就会把用户配置写花。
      * 任一改动都立即生效：写盘后 `recreate()`，`attachBaseContext` 会读到新主题重建整页颜色。
      */
@@ -572,16 +542,11 @@ class SettingsActivity : ComponentActivity() {
         spinnerTheme.adapter = ArrayAdapter.createFromResource(
             this, R.array.theme_mode_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerTheme.setOnTouchListener { view, event ->
-            themeSpinnerTouched = true
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP) view.performClick()
-            false
-        }
         spinnerTheme.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
-                if (!themeSpinnerTouched) return
+                if (!spinnerTheme.userInteracted) return
                 val values = resources.getStringArray(R.array.theme_mode_values)
                 val mode = values.getOrNull(position)?.toIntOrNull() ?: return
                 if (mode != prefs.themeMode) {
@@ -1127,8 +1092,8 @@ class SettingsActivity : ComponentActivity() {
     private fun readLanguage(): String {
         // 用户没碰过就沿用 Prefs 的原值：导入的备份可能带本版不认识的取值（更高版本 / 手工构造），
         // 此时 loadPrefs 里 indexOf 退回选中第 0 项，读回它等于把导入的语言静默改写。
-        // 与另外四个 Spinner 同一条「只认用户触摸」的闸门。
-        if (!languageSpinnerTouched) return prefs.language
+        // 与另外四个 Spinner 同一条闸门（判据见字段说明 / [UserAwareSpinner]，BUG.md L-821）。
+        if (!spinnerLanguage.userInteracted) return prefs.language
         val values = resources.getStringArray(R.array.language_values)
         val pos = spinnerLanguage.selectedItemPosition.coerceIn(0, values.lastIndex)
         return values[pos]
@@ -1197,7 +1162,7 @@ class SettingsActivity : ComponentActivity() {
                 return
             }
             // 非法 host 会被拼成 HttpUrl 拒绝的地址，进而在主线程抛异常把 IME 打崩；
-            // 这里拦在保存入口，配合 Prefs 的兜底形成两道防线（语音链路禁改，不能在那里兜）。
+            // 这里拦在保存入口，配合 Prefs 的兜底形成两道防线（语音链路不改动，不能在那里兜）。
             if (!Prefs.isValidHost(host)) {
                 Diagnostics.w(TAG, "saveAndRestart: host 含非法字符，已拒绝保存")
                 editHost.error = getString(R.string.settings_invalid_host)
@@ -1294,12 +1259,14 @@ class SettingsActivity : ComponentActivity() {
             addView(cbClipboard, lpOf(10))
             addView(cbDicts, lpOf(2))
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_EXPORT_CONFIG)
-            .setView(box)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("开始导出", null)
-            .create()
+        val dialog = securePasswordDialog(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_EXPORT_CONFIG)
+                .setView(box)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("开始导出", null)
+                .create(),
+        )
         dialog.show()
         exportDialog = dialog
         // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
@@ -1428,6 +1395,21 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
+     * 给**含密码输入框**的对话框加防截屏 / 录屏 / 投屏 / 最近任务缩略图标志（2026-10-04 修复 L-588）。
+     *
+     * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是**按窗口**生效的，而本页只有
+     * 「导出配置 / 导入配置」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
+     * 整页加会把「设置页截图」一并废掉（真机排查与用户留证都要用），对密码框却没有任何额外收益。
+     * ⚠ 投屏（ADB / scrcpy）下对话框内容不可见是**预期行为**，不是缺陷。
+     */
+    private fun securePasswordDialog(dialog: AlertDialog): AlertDialog = dialog.apply {
+        window?.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+        )
+    }
+
+    /**
      * 导入第一步：先审密码（明文输入框，刻意不触发系统安全键盘）。
      *
      * 备份整包加密，密码不对就什么都拿不到（连包里的设备信息也看不到），
@@ -1446,16 +1428,18 @@ class SettingsActivity : ComponentActivity() {
             )
             addView(pwd, lpOf(10))
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_IMPORT_PWD_TITLE)
-            .setView(box)
-            .setNegativeButton("取消") { _, _ ->
-                // 取消要复位入口按钮并给出反馈，否则提示行会停在上一次的失败文案上（误导）
-                btnConfigImport.isEnabled = true
-                textConfigHint.text = TEXT_IMPORT_CANCELED
-            }
-            .setPositiveButton("解密", null)
-            .create()
+        val dialog = securePasswordDialog(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_IMPORT_PWD_TITLE)
+                .setView(box)
+                .setNegativeButton("取消") { _, _ ->
+                    // 取消要复位入口按钮并给出反馈，否则提示行会停在上一次的失败文案上（误导）
+                    btnConfigImport.isEnabled = true
+                    textConfigHint.text = TEXT_IMPORT_CANCELED
+                }
+                .setPositiveButton("解密", null)
+                .create(),
+        )
         dialog.show()
         importPwdDialog = dialog
         // 返回键 / 点对话框外面也要复位入口按钮：这两种取消不会触发 negative 回调，
@@ -1573,7 +1557,7 @@ class SettingsActivity : ComponentActivity() {
                 .append(info.dictNames.size).append(" 个")
             // 端点类设置也在「设置项」里（语音服务地址、OpenAI 兼容 Base URL / Chat Path 等）：
             // 「覆盖还原」会用包里的值覆盖本机，而翻译请求会把**本机已有的凭据与光标前的正文**发往
-            // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 第二轮审查）。
+            // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 审查）。
             // 这里明说，不让它藏在「设置 N 项」这个计数后面。
             append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址、")
             append("OpenAI 兼容 Base URL 等）会覆盖本机 —— 请确认备份来源可信。")
@@ -1864,7 +1848,7 @@ class SettingsActivity : ComponentActivity() {
         @Volatile
         private var pendingNotice: String? = null
 
-        // ── 配置备份文案（strings.xml 默认禁改，文案收敛在此处） ──
+        // ── 配置备份文案（strings.xml 默认不改动，文案收敛在此处） ──
         const val TEXT_EXPORT_CONFIG = "导出配置文件"
         const val TEXT_IMPORT_CONFIG = "导入配置文件"
         const val TEXT_CONFIG_HINT = "AES-256 加密  密码只能用汉字  导入时要输密码"

@@ -62,7 +62,7 @@ class DocsReferenceTest {
             File("src/test/java/com/jinn/inputmethod"),
             File("app/src/test/java/com/jinn/inputmethod"),
         ).first { it.isDirectory }
-        // **递归**收集（2026-09-30 第二轮审查）：原先只扫一层，测试文件一旦按包拆进子目录，
+        // **递归**收集（2026-09-30 审查）：原先只扫一层，测试文件一旦按包拆进子目录，
         // 「类数 / 例数」对拍与「文档提到的测试类必须存在」两条守卫会一起失效（静默变绿）。
         val files = dir.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         // 剥注释后再数（BUG.md L-139）：原文计数会把「被注释掉的用例」也算进来 ⇒ 文档数字可稳定写错。
@@ -262,7 +262,7 @@ class DocsReferenceTest {
     }
 
     /**
-     * 入口文档不得重新膨胀（2026-09-29 用户指定的拆分：**入口只留红线 / 协议 / 计数真值**）。
+     * 入口文档不得重新膨胀（2026-09-29 的拆分：**入口只留红线 / 协议 / 计数真值**）。
      *
      * 拆的理由是「读不完就没有约束力」：BUG.md 曾带着 97 行索引表、工程约定 曾 629 行。
      * 细节一律放 `.wwlia-handoff/ledger/index.md` 或 `.wwlia-handoff/memory/agents-extras*.md`，
@@ -456,7 +456,9 @@ class DocsReferenceTest {
             ?: error("找不到 SettingsActivity.kt")
 
         // ① 默认值：从 Prefs 读真值，再要求文档写对（曾写「双拼候选全音……默认开」，实际默认关）
-        val quanpin = Regex("""getBoolean\(KEY_SHOW_QUANPIN,\s*(true|false)\)""")
+        // 读侧收口后（BUG.md L-653）默认值写在 `boolOr(KEY_SHOW_QUANPIN, …)` 里：两种形态都认，
+        // 否则「把裸读换成收口助手」这种纯加固会把本条守卫打红
+        val quanpin = Regex("""(?:getBoolean|boolOr)\(KEY_SHOW_QUANPIN,\s*(true|false)\)""")
             .find(prefs)?.groupValues?.get(1)
             ?: error("Prefs.kt 里找不到 KEY_SHOW_QUANPIN 的默认值")
         val line = doc.lineSequence().firstOrNull { "双拼候选全音" in it }

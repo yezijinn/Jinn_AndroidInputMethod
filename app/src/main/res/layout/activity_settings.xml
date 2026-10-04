@@ -4,7 +4,7 @@
   能同排的控件一律同排；删掉冗余分组标题，减少卡片数量；
   深蓝极光渐变背景 + 大圆角卡片，视觉更圆润。
 
-  布局顺序（自上而下，用户 2026-09-25 指定，严格照排）：
+  布局顺序（自上而下，2026-09-25 定，严格照排）：
     标题 → 保存配置并立即重启生效 → 输入法测试（点这里唤起键盘）→ 检查软件更新 / 打开下载页面 →
     启用本输入法 / 改默认输入法 → 符号分组顺序 / 符号的自定义 →
     补充短语词库 / 键盘配色皮肤 → 增加模糊拼音 →
@@ -159,7 +159,7 @@
                 android:text="@string/key_appearance_entry" />
         </LinearLayout>
 
-        <!-- 模糊音容错 / 加更多生僻字：两个入口按钮并排（文案在代码里下发，strings.xml 默认禁改） -->
+        <!-- 模糊音容错 / 加更多生僻字：两个入口按钮并排（文案在代码里下发，strings.xml 默认不改动） -->
         <LinearLayout
             style="@style/SettingsCardRow">
 
@@ -199,7 +199,7 @@
                         style="@style/SettingsFieldTitle"
                         android:text="@string/settings_shuangpin_scheme" />
 
-                    <Spinner
+                    <com.jinn.inputmethod.UserAwareSpinner
                         style="@style/SettingsField"
                         android:id="@+id/spinner_shuangpin"
                         android:layout_width="match_parent"
@@ -227,7 +227,7 @@
                         style="@style/SettingsFieldTitle"
                         android:text="@string/theme_card_title" />
 
-                    <Spinner
+                    <com.jinn.inputmethod.UserAwareSpinner
                         style="@style/SettingsField"
                         android:id="@+id/spinner_theme"
                         android:layout_width="match_parent"
@@ -284,9 +284,9 @@
                 android:visibility="gone"/>
         </LinearLayout>
 
-        <!-- 候选词的行数 / 剪贴板的数量：两个「数量」类设置并排（用户 2026-09-25 指定的首页顺序）。
+        <!-- 候选词的行数 / 剪贴板的数量：两个「数量」类设置并排（2026-09-25 定的首页顺序）。
              候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，上下成列）。
-             候选词行数的标签文案在代码里下发，strings.xml 默认禁改 -->
+             候选词行数的标签文案在代码里下发，strings.xml 默认不改动 -->
         <LinearLayout
             style="@style/SettingsCardRow"
             android:baselineAligned="false">
@@ -301,7 +301,7 @@
                     style="@style/SettingsFieldTitle"
                     android:id="@+id/label_candidate_rows" />
 
-                <Spinner
+                <com.jinn.inputmethod.UserAwareSpinner
                     style="@style/SettingsField"
                     android:id="@+id/spinner_candidate_rows"
                     android:layout_width="match_parent"
@@ -657,7 +657,7 @@
                         style="@style/SettingsLabel"
                         android:text="@string/settings_language" />
 
-                    <Spinner
+                    <com.jinn.inputmethod.UserAwareSpinner
                         style="@style/SettingsField"
                         android:id="@+id/spinner_language"
                         android:layout_width="match_parent"
@@ -678,7 +678,7 @@
                         style="@style/SettingsLabel"
                         android:text="@string/settings_default_mode" />
 
-                    <Spinner
+                    <com.jinn.inputmethod.UserAwareSpinner
                         style="@style/SettingsField"
                         android:id="@+id/spinner_default_mode"
                         android:layout_width="match_parent"
@@ -728,7 +728,7 @@
         </LinearLayout>
 
         <!-- 在线翻译（BYOK）：总开关 + 配置入口。开关决定键盘功能面板是否显示「翻译」键；
-             文案全部代码下发（strings.xml 默认禁改），布局里不写 android:text -->
+             文案全部代码下发（strings.xml 默认不改动），布局里不写 android:text -->
         <LinearLayout
             style="@style/SettingsCard">
 
@@ -758,7 +758,7 @@
         </LinearLayout>
 
         <!-- 配置备份：导出 / 导入（跨设备迁移）。
-             两个按钮的文本由代码下发：strings.xml 默认禁改，布局里留空避免硬编码文案进入资源 -->
+             两个按钮的文本由代码下发：strings.xml 默认不改动，布局里留空避免硬编码文案进入资源 -->
         <LinearLayout
             style="@style/SettingsCard">
 
@@ -792,8 +792,8 @@
                 />
         </LinearLayout>
 
-        <!-- 导出诊断数据（单按钮，用户 2026-09-25 指定）：把日志目录打包，经系统文件选择器
-             存到用户自选位置。原「发给作者」分享按钮及其分享通道 / FileProvider 已按用户要求移除。 -->
+        <!-- 导出诊断数据（单按钮，2026-09-25 定）：把日志目录打包，经系统文件选择器
+             存到用户自选位置。原「发给作者」分享按钮及其分享通道 / FileProvider 已移除。 -->
         <LinearLayout
             style="@style/SettingsCard">
 

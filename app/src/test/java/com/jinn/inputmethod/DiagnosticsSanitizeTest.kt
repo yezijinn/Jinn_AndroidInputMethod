@@ -39,7 +39,7 @@ class DiagnosticsSanitizeTest {
 
     @Test
     fun `凭据形态被兜底脱敏（sk-、_fx 后缀、Bearer）`() {
-        // 2026-09-30 第二轮审查：失败响应体、异常 message 一旦被写进日志，这层是最后的兜底
+        // 2026-09-30 审查：失败响应体、异常 message 一旦被写进日志，这层是最后的兜底
         assertTrue(Diagnostics.redactSensitive("key=sk-proj-Ab12cd34EF56gh78").contains("****"))
         assertTrue(Diagnostics.redactSensitive("k=abcdefghijklmnopqrst:fx").contains("****"))
         assertTrue(Diagnostics.redactSensitive("Authorization: Bearer abcdef1234567890").contains("****"))

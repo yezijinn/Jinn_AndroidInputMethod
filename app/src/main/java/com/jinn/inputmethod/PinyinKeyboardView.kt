@@ -160,6 +160,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
     private var currentRows = CandidateRows.SINGLE
 
+    /**
+     * 本帧生效的候选字号（sp，用户参数 [Prefs.candidateTextSp]），由 [applyCandidateRows] 落位。
+     *
+     * 与 `currentRows` 同款：本帧的候选条目字号、拼音条字号与复用块最小高度都读它，
+     * 保证「栏高 / 行高 / 字号」同帧同源（中途被后台导入改值也不会一半新一半旧）。
+     */
+    private var currentCandidateSp = CandidateText.DEFAULT_SP
+
+    /** 已下发到拼音条与 ✕ 的字号（sp）：避免每次刷新重复 setTextSize（会多触发一次 requestLayout） */
+    private var appliedPinyinTextSp = -1f
+
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
 
@@ -1821,11 +1832,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * @return 本帧每排候选的行高（px）：同帧的 [renderCandidateItems] 直接复用，
      *   不再各算一遍（`BUG.md` L-35）。
      */
-    private fun applyCandidateRows(rows: Int): Int {
+    private fun applyCandidateRows(rows: Int, candidateSp: Float): Int {
         val dm = resources.displayMetrics
-        val perRow = CandidateRows.rowHeightPx(dm.density, spToPx(CandidateRows.CANDIDATE_TEXT_SP))
-        val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, spToPx(CandidateRows.PINYIN_TEXT_SP))
+        val fontScale = resources.configuration.fontScale
+        val perRow = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
+        val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, candidateSp)
         currentRows = rows
+        currentCandidateSp = candidateSp
+        applyPinyinTextSize(candidateSp)
 
         // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 44dp；双行 = 拼音条 + 两排 = 72dp），
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
@@ -1856,12 +1870,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return perRow
     }
 
-    /** sp → px：交给 TypedValue（内部按字体缩放换算，不必自己读 DisplayMetrics 的缩放字段） */
-    private fun spToPx(sp: Float): Float = android.util.TypedValue.applyDimension(
-        android.util.TypedValue.COMPLEX_UNIT_SP,
-        sp,
-        resources.displayMetrics,
-    )
+    /**
+     * 拼音条与 ✕ 的字号按候选字号派生（[CandidateText.pinyinSpOf]）：两者同处一行，字号必须同步。
+     *
+     * 只在真的变了时才写：`setTextSize` 会触发一次 requestLayout，而本方法每次刷新都调。
+     */
+    private fun applyPinyinTextSize(candidateSp: Float) {
+        val sp = CandidateText.pinyinSpOf(candidateSp)
+        if (sp == appliedPinyinTextSp) return
+        appliedPinyinTextSp = sp
+        viewCandidatePinyin.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
+        btnClearCandidates.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
+    }
 
     /** 与 XML 资源同口径的 dp → px（[dp] 是截断，资源走 `complexToDimensionPixelSize` 的四舍五入） */
     private fun dpExact(v: Int): Int = android.util.TypedValue.applyDimension(
@@ -1919,7 +1939,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val top = if (pinyinBar.visibility == View.VISIBLE && currentRows != CandidateRows.DOUBLE) {
             CandidateRows.pinyinBarHeightPx(
                 resources.displayMetrics.density,
-                spToPx(CandidateRows.PINYIN_TEXT_SP),
+                resources.configuration.fontScale,
+                currentCandidateSp,
             )
         } else {
             0
@@ -1965,12 +1986,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // items 一致（指纹已覆盖全部文本），所以跳过是安全的。
         // ⚠ 用 Long 做线性和（L-818）：Int 线性和的取值域与「无缓存」哨兵重叠，改为 `Long? = null` 后
         // 碰撞不可能发生 —— 指纹相等就跳过重建，撞上就是候选栏空白。
+        // 候选字号也算进指纹：字号变了而候选文本没变（外观页拖滑杆 / 导入配置）时同样要重建，
+        // 否则命中旧指纹会留下旧字号（与 L-809 同族：指纹必须覆盖全部影响渲染的入参）
+        // ⚠ 系统字体缩放同样要进指纹（2026-10-04 修复 L-824）：双行档两排的**行高是写死的 px**
+        // （下方 LayoutParams EXACTLY，由 applyCandidateRows 按 fontScale 派生），fontScale 变了而
+        // items / 字号 / 字距都没变时命中旧指纹 ⇒ 子项保留旧行高、与已重算的栏高错配（放大即裁字）。
+        val sizeSp = currentCandidateSp
+        val fontScaleToken = (resources.configuration.fontScale * 100f).toInt()
         val renderKey = items.hashCode().toLong() * 31 + rows * 7 + spacingHalfPx * 13 +
-            (colorToken?.hashCode()?.toLong() ?: 0L) + colorRes
+            (colorToken?.hashCode()?.toLong() ?: 0L) + colorRes + sizeSp.toInt() * 17 +
+            fontScaleToken * 23
         if (renderKey == candidateRenderKey) return
         candidateRenderKey = renderKey
         viewCandidateList.removeAllViews()
-        val sizeSp = CandidateRows.CANDIDATE_TEXT_SP
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         fun build(text: String): TextView = TextView(context).apply {
@@ -2023,14 +2051,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshCandidateBar() {
-        // 本帧用到的三个开关共用一次 Prefs 实例（省掉两次实例化），并各自**只读一次**：
+        // 本帧用到的开关与外观参数共用一次 Prefs 实例（省掉多次实例化），并各自**只读一次**：
         // 要防的是**同一个键在一帧内被读两遍** —— 后台导入线程若恰在两次读取之间改键，
         // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
-        // ⚠ 别把这里读成「三个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
+        // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val prefs = Prefs(context)
         val rows = prefs.candidateRows
-        val perRow = applyCandidateRows(rows)
+        val candidateSp = prefs.candidateTextSp
+        val perRow = applyCandidateRows(rows, candidateSp)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
         // 开关刚被关掉时，把上一次留下的预测清掉，否则已显示的预测会一直挂在候选栏
@@ -2221,7 +2250,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 background = xmlKeyBackground(0f)
                 setOnClickListener { commitPasswordDigit(digit) }
             }
-            item.minimumHeight = dp(REUSE_BLOCK_MIN_DP)
+            item.minimumHeight = reuseBlockMinPx()
             viewCandidateList.addView(
                 item,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -2284,7 +2313,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
             // 高度同功能按钮：内容与复用块最小高度取大（双行档居中、字体放大不裁）
-            item.minimumHeight = dp(REUSE_BLOCK_MIN_DP)
+            item.minimumHeight = reuseBlockMinPx()
             viewCandidateList.addView(item, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = dpFloat(2f).toInt()
@@ -2815,8 +2844,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setPadding(dp(8), dp(4), dp(8), dp(4))
             // key_bg 同款（10dp 圆角），但填充色带面 alpha，功能面板按钮占满候选栏
             background = xmlKeyBackground()
-            // 高度取「内容」与复用块最小高度的较大者（见 REUSE_BLOCK_MIN_DP 的说明）
-            minimumHeight = dp(REUSE_BLOCK_MIN_DP)
+            // 高度取「内容」与复用块最小高度的较大者（见 reuseBlockMinPx 的说明）
+            minimumHeight = reuseBlockMinPx()
             isClickable = true
             isFocusable = true
             // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
@@ -3313,6 +3342,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     /**
+     * 复用块（功能按钮 / 符号分组标签 / 密码数字条）的最小高度（px）：与**当前字号下单行档的整栏高度**同值。
+     *
+     * 实际高度取「内容与本值」的较大者：用 `MATCH_PARENT` 会被双行档的整栏高度拉成瘦高长条，
+     * 固定成一个死值又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）。三处构建点共用本方法，
+     * 避免规则漂移；字号由用户参数决定，故跟着 [currentCandidateSp]（本帧值）走。
+     */
+    private fun reuseBlockMinPx(): Int = dp(CandidateRows.singleBarHeightDp(currentCandidateSp))
+
+    /**
      * 视图被移除时的收尾。
      *
      * 必须做：连删是一个自我重排的 55ms 循环（[backspaceRepeatRunnable]），唯一的
@@ -3359,15 +3397,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 24 时多一半。仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
          */
         const val MAX_RENDERED_CANDIDATES = 36
-
-        /**
-         * 复用块（功能按钮 / 符号分组标签）的最小高度（dp）：与单行档整栏高度同值。
-         *
-         * 实际高度取「内容与它」的较大者：用 `MATCH_PARENT` 会被双行档的整栏高度拉成瘦高长条，
-         * 固定成它又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）。
-         * 两处构建点共用本常量，避免规则漂移。
-         */
-        const val REUSE_BLOCK_MIN_DP = CandidateRows.SINGLE_BAR_HEIGHT_DP
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f

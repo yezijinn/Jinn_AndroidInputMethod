@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- OpenAI 兼容配置页：基础参数 / 翻译设置 / 模型参数 / 高级，四段纵排。
-     文案（含 label、hint、按钮）全部在 OpenAiSettingsActivity 里下发（strings.xml 默认禁改）；
+     文案（含 label、hint、按钮）全部在 OpenAiSettingsActivity 里下发（strings.xml 默认不改动）；
      布局里的 label 只挂 labelFor 做无障碍关联（LabelFor 例外见 app/lint.xml） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     style="@style/PageRoot"
@@ -147,7 +147,7 @@
                     android:layout_marginTop="4dp"
                     android:labelFor="@id/spinner_ai_target" />
 
-                <Spinner
+                <com.jinn.inputmethod.UserAwareSpinner
                     style="@style/SettingsField"
                     android:id="@+id/spinner_ai_target"
                     android:layout_width="match_parent"
@@ -355,7 +355,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 显式保存（2026-10-01 用户要求）：参数仍会即时落盘，这里再给一个**固定的**保存出口 ——
+    <!-- 显式保存（2026-10-01）：参数仍会即时落盘，这里再给一个**固定的**保存出口 ——
          参数多且分组，用户改完可能不确定是否生效；点完有明确结果提示（即使多此一举） -->
     <LinearLayout
         android:layout_width="match_parent"

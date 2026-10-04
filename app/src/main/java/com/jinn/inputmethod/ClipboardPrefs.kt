@@ -47,6 +47,12 @@ class ClipboardPrefs(context: Context) {
 
     // ── 备份导出 / 导入（见 ConfigBackup / ConfigBackupManager） ──
 
+    /**
+     * 导出**进备份**的配置键：只含用户偏好（当前仅 [maxItems]）。
+     *
+     * 运行态标记（[reclassified]）与产品不变量（[enabled]）一律不进，
+     * 否则一份包能把本机的采集开关或重算状态带偏。
+     */
     internal fun exportForBackup(): Map<String, ConfigBackup.BackupValue> {
         val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
         // ⚠ `enabled` **不进备份**（2026-10-03 修复 L-751）：它是产品不变量、不是用户偏好 ——

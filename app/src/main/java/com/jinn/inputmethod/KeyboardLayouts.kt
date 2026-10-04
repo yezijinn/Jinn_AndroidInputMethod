@@ -151,7 +151,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "玍", 'x' to "氹", 'c' to "氽", 'v' to "汆", 'b' to "巜",
             'n' to "曱", 'm' to "甴",
         ),
-        // 第 6 页：末页 11 键（含 4 个 CJK 扩展 B 区笔画；同区中无字形的 4 个已按用户要求删除）
+        // 第 6 页：末页 11 键（含 4 个 CJK 扩展 B 区笔画；同区中无字形的 4 个已删除）
         mapOf(
             'q' to "乄", 'w' to "乊", 'e' to "乢", 'r' to "乭", 't' to "乶",
             'y' to "乷", 'u' to "乸", 'i' to "𠃊", 'o' to "𠃋", 'p' to "𠃌",

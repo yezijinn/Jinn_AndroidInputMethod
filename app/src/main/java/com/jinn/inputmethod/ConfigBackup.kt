@@ -54,6 +54,7 @@ internal object ConfigBackup {
      */
     const val FORMAT_VERSION = 1
 
+    /** 包内条目名（[DICT_DIR] 是目录，其余都是文件） */
     const val ENTRY_MANIFEST = "manifest.json"
     const val ENTRY_PREFS = "prefs.json"
     const val ENTRY_USER_FREQ = "user_freq.txt"
@@ -183,6 +184,7 @@ internal object ConfigBackup {
 
     // ── 摘要 ────────────────────────────────────────────────
 
+    /** 节摘要：manifest 里每节记一份，导入侧按它判内容是否被换过（小写十六进制） */
     fun sha256(text: String): String = sha256(text.toByteArray(Charsets.UTF_8))
 
     fun sha256(bytes: ByteArray): String =
@@ -192,6 +194,7 @@ internal object ConfigBackup {
 
     // ── manifest ─────────────────────────────────────────────
 
+    /** 把 [Manifest] 序列化成包内 `manifest.json` 用的可读 JSON 字符串（数字不引号、字符串转义） */
     fun encodeManifest(m: Manifest): String {
         val sb = StringBuilder(256)
         sb.append("{\n")

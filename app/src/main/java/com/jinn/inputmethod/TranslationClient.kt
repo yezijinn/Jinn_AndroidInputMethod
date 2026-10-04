@@ -48,7 +48,7 @@ internal object TranslationClient {
     /**
      * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，本值足够宽松，
      * 同时挡住「Base URL 指到一个返回大文件/大 HTML 的站点时整段读进内存」的内存尖峰
-     * （2026-09-30 第二轮审查：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
+     * （2026-09-30 审查：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
      * 非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份）。
      *
      * ⚠ **必须 ≥ 可发文本上限的 4 倍 + 余量**（2026-10-03 修复 L-678）：可发上限是
@@ -116,7 +116,7 @@ internal object TranslationClient {
         // 从网页/文档复制 Key 时这些字符极常见，而 trim 不删它们；带进 OkHttp 的 header 会抛
         // IllegalArgumentException（探针实测 `Unexpected char 0xa0`），被本文件的 runCatching 兜成
         // PARAM → 用户看到「请检查语言设置」，与真实原因（肉眼不可见的字符）完全无关
-        // （2026-09-30 第二轮审查发现）。
+        // （2026-09-30 审查发现）。
         TranslationProviderId.ALIYUN -> {
             val keyId = aliyunKeyId.cleanCredential()
             val secret = aliyunKeySecret.cleanCredential()
@@ -422,7 +422,7 @@ internal object TranslationClient {
                         // 解析侧手里只有响应体、无法自证；出口手上有**实际送出的原文**（`text` 参数本身就是
                         // 送出的内容，含截断后的形态）⇒ 在这里对拍。
                         // 只在**少**的时候拒绝：多出行可能只是译文自带换行，拒绝反而误伤。
-                        // ⚠ 空行**不参与**对拍（2026-10-02 第五轮审查的回归修正）：服务端对空行
+                        // ⚠ 空行**不参与**对拍（2026-10-02 审查的回归修正）：服务端对空行
                         // 根本不返回元素（百度系 `trans_result` 只给有内容的行），把空行算进 expected
                         // 会让「原文含空行」的整篇 / 整行翻译**必然被拒** —— 而段落之间有空行是常态，
                         // 等于百度家在默认场景下 100% 失败。两边都按**非空行**计数，口径一致。
@@ -443,7 +443,7 @@ internal object TranslationClient {
                                     "不写入正文（L-483）",
                             )
                             // 专用错误项：复用 PARAM 会把用户引去向「语言方向 / 模型名 / 路径 /
-                            // 原文长度」核对，而真因是服务端少给了行（2026-10-02 第五轮审查）
+                            // 原文长度」核对，而真因是服务端少给了行（2026-10-02 审查）
                             TranslationOutcome.Fail(TranslationError.LINE_MISMATCH)
                         } else {
                             TranslationOutcome.Ok(translated)
@@ -469,7 +469,7 @@ internal object TranslationClient {
      * **地址非 HTTPS `(null, -2)`**；**凭据含非法字符 `(null, -3)`**。
      * 服务端未实现 `/models` 属常态，调用方不得据此判定配置错误（文档要求）。
      *
-     * 返回 `Call` 供调用方取消（2026-09-30 第二轮审查）：超时上限可到 300s，页面在响应回来前
+     * 返回 `Call` 供调用方取消（2026-09-30 审查）：超时上限可到 300s，页面在响应回来前
      * 就被关掉时，不取消会让回调闭包**持有 Activity 最多 5 分钟**；早退路径返回 null。
      */
     fun fetchModels(
@@ -615,7 +615,7 @@ internal object TranslationClient {
     /**
      * 读取响应体，**真正有界**（[MAX_BODY_BYTES]）：只向连接要 `MAX+1` 字节，超限部分**根本不入内存**。
      *
-     * 为什么要有闸（2026-09-30 第二轮审查）：Base URL 填错指向一个返回大文件/大 HTML 的站点时，
+     * 为什么要有闸（2026-09-30 审查）：Base URL 填错指向一个返回大文件/大 HTML 的站点时，
      * 无界读会把整段内容读进内存，非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份；
      * 内存尖峰最坏会 OOM —— 设置页与 IME 同进程，一起带走。正常译文响应只有几百字，不会误截。
      *

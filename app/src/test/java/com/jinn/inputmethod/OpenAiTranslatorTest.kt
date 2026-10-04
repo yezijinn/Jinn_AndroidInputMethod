@@ -178,6 +178,16 @@ class OpenAiTranslatorTest {
         assertEquals(listOf("X-Good-Name_1" to "v"), OpenAiTranslator.parseHeaders(raw))
     }
 
+    @Test
+    fun `parseHeaders：协议级头一律丢弃（Accept-Encoding 会关掉透明解压，Content-Type 会被覆盖）`() {
+        // L-705 修的 Accept-Encoding / L-590 残余的 Content-Type：留着不会报错，但**静默失效**
+        // （前者让 body 变原始 gzip 字节，被归成「不是 JSON」；后者被 BridgeInterceptor 用 body 的
+        // MediaType 覆盖）⇒ 用户按网关文档照抄却排查不出为什么。
+        val raw = "Accept-Encoding: gzip\nContent-Type: application/json-patch+json\n" +
+            "HOST: elsewhere.example\nX-Ok: 1"
+        assertEquals(listOf("X-Ok" to "1"), OpenAiTranslator.parseHeaders(raw))
+    }
+
     // ── Prompt 模板 ─────────────────────────────────────────
 
     @Test

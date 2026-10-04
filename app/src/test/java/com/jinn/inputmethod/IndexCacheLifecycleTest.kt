@@ -171,7 +171,7 @@ class IndexCacheLifecycleTest {
         )
         // 头部不合法（magic 坏 / 长度不成比例）不算「就绪」。
         // 注意残余：快路径只校验头部，**头合法而体被截断**的缓存仍会显示「就绪」——
-        // 那种缓存会被装载路径的 parse() 拒绝并重建，界面最多少提示一次（本轮记进 L-167 的取舍）。
+        // 那种缓存会被装载路径的 parse() 拒绝并重建，界面最多少提示一次（取舍记在 L-167）。
         // 用**另一个文件**做这两种情形：Windows 不允许重写已被内存映射的文件（ofMapped 刚映射过它）
         val good = cache.readBytes()
         val bad = java.io.File(dir, "opt_bad.xz")

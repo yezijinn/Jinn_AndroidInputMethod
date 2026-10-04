@@ -11,7 +11,7 @@ import org.junit.Test
  *
  * 这条判据是崩不崩的边界：`Prefs.wsUrl` 会被直接送进 OkHttp，而 `HttpUrl` 对含空白、
  * 重复端口、`..` 之类的取值会抛 `IllegalArgumentException`，调用点又都在主线程，一旦命中
- * 就是整个 IME 崩掉。语音链路属禁改区，所以校验只能放在配置层，这里锁住它的边界。
+ * 就是整个 IME 崩掉。语音链路不改动，所以校验只能放在配置层，这里锁住它的边界。
  */
 class PrefsHostValidationTest {
 

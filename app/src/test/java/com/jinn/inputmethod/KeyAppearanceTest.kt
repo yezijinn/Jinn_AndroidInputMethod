@@ -48,7 +48,7 @@ class KeyAppearanceTest {
 
     /**
      * 候选字距（键盘外观页的「字距」滑杆，控制候选词之间的水平间隔）：
-     * 与圆角 / 间隙同一套边界约定 —— 定义域 **5~30dp**（用户 2026-10-02 指定）、整格 1dp。
+     * 与圆角 / 间隙同一套边界约定 —— 定义域 **5~30dp**（2026-10-02 定）、整格 1dp。
      */
     @Test
     fun spacing_clampsToDomainAndSnapsToStep() {
@@ -64,7 +64,7 @@ class KeyAppearanceTest {
     fun defaults_areInsideDomainAndOnStepGrid() {
         assertEquals(5f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
         assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
-        // 字距默认 10dp（用户 2026-10-02 指定）
+        // 字距默认 10dp（2026-10-02 定）
         assertEquals(10f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
         assertTrue(KeyAppearance.DEFAULT_CORNER_DP in KeyAppearance.MIN_CORNER_DP..KeyAppearance.MAX_CORNER_DP)
         assertTrue(KeyAppearance.DEFAULT_GAP_DP in KeyAppearance.MIN_GAP_DP..KeyAppearance.MAX_GAP_DP)

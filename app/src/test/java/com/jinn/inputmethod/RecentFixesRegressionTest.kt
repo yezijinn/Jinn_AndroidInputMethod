@@ -486,12 +486,12 @@ class RecentFixesRegressionTest {
     }
 
     @Test
-    fun `语言下拉未触摸时不得改写导入值`() {
+    fun `语言下拉未被用户操作时不得改写导入值`() {
         val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun readLanguage")
         assertTrue(
-            "readLanguage 必须先判 languageSpinnerTouched：导入的备份可能带本版不认识的取值，" +
-                "下拉退回显示第 0 项，读回它等于把导入值静默改写（其他四个下拉同款闸门）",
-            body.contains("if (!languageSpinnerTouched) return prefs.language"),
+            "readLanguage 必须先判下拉的「用户操作」探针：导入的备份可能带本版不认识的取值，" +
+                "下拉退回显示第 0 项，读回它等于把导入值静默改写（其他四个下拉同款闸门，见 L-821）",
+            body.contains("if (!spinnerLanguage.userInteracted) return prefs.language"),
         )
     }
 
@@ -1364,6 +1364,25 @@ class RecentFixesRegressionTest {
         assertTrue("选区探测必须设 hintMaxChars（L-263）", "hintMaxChars = TranslationText.MAX_READ_CHARS" in src)
         assertTrue("「光标前全部」读满窗口时必须拒绝（L-277）", "toast(TEXT_TRANSLATE_BEFORE_TOO_LONG)" in src)
         assertTrue("下拉的用户来源判据必须含焦点（L-276）", "isUserDriven" in codeOf("TranslationSettingsActivity.kt"))
+        // L-820：服务方下拉的「界面跟随」不得再靠焦点 / 按压态猜 —— 那套判据在下拉弹窗路径上常常
+        // 都是 false，结果是改了服务方凭据区块不跟随、重开页面才刷新。落盘闸门改由我们自己置位。
+        run {
+            val ts = codeOf("TranslationSettingsActivity.kt")
+            val listener = blockAfter(ts, "spinnerProvider.onItemSelectedListener")
+            assertTrue(
+                "L-820 守卫缺失：服务方回调必须先按实际选中项切界面，且不得再判 isUserDriven",
+                "applyProviderVisibility(pickedNow)" in listener && "isUserDriven" !in listener,
+            )
+            assertTrue(
+                "L-820 守卫缺失：程序性回填必须自置闸门（loadValues 期间不落盘）",
+                "suppressProviderPersist = true" in blockAfter(ts, "private fun loadValues()") &&
+                    "suppressProviderPersist = false" in blockAfter(ts, "private fun loadValues()"),
+            )
+            assertTrue(
+                "L-820：焦点猜测那套字段不许回来",
+                "private var providerTouched" !in ts,
+            )
+        }
     }
 
     /**
@@ -1421,8 +1440,31 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "凭据清理失败只影响标记，不得整批早退（L-289）；水位取失败同样不标记（L-258）",
-            "if (failed || cleaned < 0 || maxIdUncertain) return removed" in codeOf("CredentialTrace.kt"),
+            "if (failed || cleaned < 0 || maxIdUncertain || keptUncertain) return removed" in
+                codeOf("CredentialTrace.kt"),
         )
+        // L-592（2026-10-04）：收藏条目让删除恒为 0，而「0」的两种含义必须分开 —— 否则水位照推、
+        // 该凭据永不重扫，Key 明文长期留在面板并随备份明文外发，日志却只说「无需删除」。
+        run {
+            val trace = codeOf("CredentialTrace.kt")
+            assertTrue(
+                "L-592 守卫缺失：必须问一次「有多少条因收藏被保留」并记 W",
+                "favoriteKeptCounts(" in trace && "因收藏被保留" in trace,
+            )
+            assertTrue(
+                "L-592 守卫缺失：被收藏保住的目标不得推进水位（删不掉就不算清过）",
+                "for (v in targets) if (v !in kept) purged[v] = maxId" in trace,
+            )
+            assertTrue(
+                "L-592 守卫缺失：收藏保留计数失败同样算「没得出结论」，不得标记水位",
+                "maxIdUncertain || keptUncertain" in trace,
+            )
+            assertTrue(
+                "L-592 守卫缺失：ClipboardDb 必须只扫收藏行来数保留条数",
+                "fun favoriteKeptCounts(" in codeOf("ClipboardDb.kt") &&
+                    "\"is_favorite = 1\"" in codeOf("ClipboardDb.kt"),
+            )
+        }
     }
 
     /**
@@ -1855,8 +1897,8 @@ class RecentFixesRegressionTest {
         val onSelected = blockAfter(settings, "override fun onItemSelected")
         assertTrue("下拉闸门必须先挡程序化回填", "if (loading) return" in onSelected)
         assertTrue(
-            "下拉闸门必须认全用户来源并复位 customEdited",
-            "isUserDriven(spinnerTarget)" in onSelected && "customEdited = false" in onSelected,
+            "下拉闸门必须认全用户来源（触摸 / 确认键 / 读屏，L-822）并复位 customEdited",
+            "spinnerTarget.userInteracted" in onSelected && "customEdited = false" in onSelected,
         )
         assertTrue(
             "超时字段必须 trim（与同页数字三项、字节上限同口径）",
@@ -1996,7 +2038,10 @@ class RecentFixesRegressionTest {
         // 钉住：几何入口只收「档位」一个参数，且不得再有按内容排数收缩的写法。
         assertTrue(
             "候选栏高度必须只按档位算（双行档恒定增高，不随内容变化）",
-            "fun applyCandidateRows(rows: Int): Int" in view && "functionPanel" !in view,
+            // 入参只有「档位 + 候选字号」两个**帧内稳定**的值（2026-10-03 起字号也是参数），
+            // 都不是「本帧内容排数」——按内容收缩的写法仍被这条钉挡住
+            "fun applyCandidateRows(rows: Int, candidateSp: Float): Int" in view &&
+                "functionPanel" !in view,
         )
         // L-478 的延续（2026-10-02，用户选「方案 A」）：候选栏底必须与功能面板按钮**同档**
         // （都走内容面档 keyFaceAlpha）。它曾按「是否有内容」在 plate / surface 之间切档：
@@ -2579,11 +2624,13 @@ class RecentFixesRegressionTest {
             translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ) == translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.JAPANESE,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ),
@@ -2594,11 +2641,13 @@ class RecentFixesRegressionTest {
             translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ) == translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.ALL,
                 "hello",
             ),
@@ -2609,11 +2658,13 @@ class RecentFixesRegressionTest {
             translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ) == translateRepeatKey(
                 TranslationProviderId.DEEPL,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ),
@@ -2624,14 +2675,62 @@ class RecentFixesRegressionTest {
             translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ) == translateRepeatKey(
                 TranslationProviderId.ALIYUN,
                 TranslationLanguage.ENGLISH,
+                openAiTarget = "",
                 TranslationScope.LINE_BEFORE,
                 "hello",
             ),
+        )
+        // L-787：OpenAI 兼容路径真正生效的是**自由文本**目标语言 ⇒ 指纹必须随它变化；
+        // 而非 OpenAI 服务方忽略该字段（指纹仍只随枚举语言变），否则会凭空多出一维噪声
+        assertEquals(
+            "L-787：OpenAI 路径改自由文本目标语言后指纹必须变化（否则第二次付费请求被误拦）",
+            false,
+            translateRepeatKey(
+                TranslationProviderId.OPENAI,
+                TranslationLanguage.ENGLISH,
+                openAiTarget = "日本語",
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.OPENAI,
+                TranslationLanguage.ENGLISH,
+                openAiTarget = "English",
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ),
+        )
+        assertEquals(
+            "L-787：非 OpenAI 服务方不受自由文本影响（指纹仍只随枚举语言变）",
+            true,
+            translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                openAiTarget = "日本語",
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ) == translateRepeatKey(
+                TranslationProviderId.ALIYUN,
+                TranslationLanguage.ENGLISH,
+                openAiTarget = "",
+                TranslationScope.LINE_BEFORE,
+                "hello",
+            ),
+        )
+        assertEquals(
+            "L-787：日志与指纹口径必须是生效语言（含 trim），不是枚举名",
+            "openai:日本語",
+            effectiveTargetLabel(TranslationProviderId.OPENAI, TranslationLanguage.ENGLISH, " 日本語 "),
+        )
+        assertEquals(
+            "L-787：自由文本留空必须归一到默认语言（与请求组装同源，不许各写一份）",
+            "openai:${OpenAiTranslator.DEFAULT_TARGET_LANGUAGE}",
+            effectiveTargetLabel(TranslationProviderId.OPENAI, TranslationLanguage.JAPANESE, "   "),
         )
         // 换输入框必须清指纹：A 框翻过的文本在 B 框里不该被拦（提示让用户「改动原文」在这里无效）
         assertTrue(
@@ -2702,10 +2801,20 @@ class RecentFixesRegressionTest {
             },
         )
         // L-705：协议级头一律不接纳（填了 Accept-Encoding 会关掉 OkHttp 的透明解压）
+        // L-590 残余（2026-10-04 补）：content-type 同样要被覆盖 ⇒ 一并拒；并把**被丢弃的头名**
+        // 记进日志 —— 静默丢弃时用户「看着配置生效、实际没发出去」，只能靠猜。
         assertTrue(
             "L-705 守卫缺失：自定义头必须跳过客户端掌管的协议级头",
             "CLIENT_OWNED_HEADERS" in codeOf("OpenAiTranslator.kt") &&
                 "accept-encoding" in codeOf("OpenAiTranslator.kt"),
+        )
+        assertTrue(
+            "L-590 守卫缺失：content-type 必须进拒绝名单（会被 BridgeInterceptor 覆盖）",
+            "\"content-type\"" in codeOf("OpenAiTranslator.kt"),
+        )
+        assertTrue(
+            "L-589 守卫缺失：被丢弃的自定义头必须记一条日志（此前是静默丢弃）",
+            "自定义请求头被丢弃" in codeOf("OpenAiTranslator.kt"),
         )
         // L-667 / L-668：凭据形态与脱敏表
         // ⚠ `looksLikeCredential` 是 companion 内的**成员扩展函数**，不能 `TranslationClient.looksLikeCredential(…)`
@@ -3219,6 +3328,14 @@ class RecentFixesRegressionTest {
                 "strOr(KEY_OPENAI_" in prefs && "strOr(KEY_TRANSLATE_" in prefs &&
                     "intOr(maxBytesKeyOf(id)" in prefs && "strOr(scopeKeyOf(id)" in prefs,
             )
+            // L-653（2026-10-04）：收口必须**收全** —— 裸读只允许出现在 5 个 xxxOr 助手内部。
+            // 用「出现次数」而不是「某几行存在」：上面那两条只认 4 个字符串模式，把凭据键 / 布尔总开关 /
+            // 更新检查时间戳改回裸读照样全绿，而「打开设置页就崩」比「点翻译才崩」更早暴露。
+            assertEquals(
+                "L-653 守卫：Prefs 里只允许 5 个 xxxOr 助手内部出现裸读（其余读点一律走收口）",
+                5,
+                Regex("""sp\.get(Boolean|Int|Long|Float|String)\(""").findAll(prefs).count(),
+            )
         }
         // L-641：翻译 × 语音互斥必须**双向** —— 切到语音键盘同样要作废在途翻译，
         // 否则译文回调会 commitText 压在语音的预编辑区间上（文本错序 + 两笔计费同时发生）。
@@ -3277,5 +3394,86 @@ class RecentFixesRegressionTest {
                 watchdogAt - flagAt < 400,
             )
         }
+    }
+
+    // ── 第一百四十回（2026-10-04）：下拉的「用户操作」探针 ─────────────
+
+    /**
+     * L-821 / L-822：下拉的「用户主动操作过」判据不得退回「只认触摸」。
+     *
+     * 原形态是 `setOnTouchListener` 里置位一个布尔标记 ⇒ 键盘确认键与读屏（`ACTION_CLICK`）
+     * 选中后**不落盘**：界面显示新值、配置未变、退出重进静默还原（真机取证见 BUG.md L-821）。
+     * 修法把判定收进 [UserAwareSpinner]：触摸走 `onTouchEvent`（`spinnerMode=dropdown` 的触摸
+     * 由 ForwardingListener 直接开弹窗，**不经过** `performClick`），确认键与读屏都走
+     * `performClick`（AOSP `View.onKeyUp` / `performAccessibilityActionInternal`），而
+     * `setSelection` 与实例状态恢复两条程序化路径都不经过它们 —— 正好等于「用户动过它」。
+     */
+    @Test
+    fun `下拉的用户操作探针不得退回只认触摸`() {
+        val probe = codeOf("UserAwareSpinner.kt")
+        assertTrue("探针必须覆盖触摸路径（dropdown 触摸不经过 performClick）", "override fun onTouchEvent" in probe)
+        assertTrue("探针必须覆盖 performClick（确认键 / 无障碍 ACTION_CLICK）", "override fun performClick" in probe)
+        assertTrue("探针必须在 ACTION_DOWN 置位", "MotionEvent.ACTION_DOWN" in probe)
+        assertFalse(
+            "不许给 Spinner 设 OnClickListener：Spinner.performClick 在 super 返回 true 时会跳过打开下拉",
+            "setOnClickListener" in probe,
+        )
+
+        val settings = codeOf("SettingsActivity.kt")
+        for (spinner in listOf(
+            "spinnerLanguage", "spinnerDefaultMode", "spinnerShuangpin", "spinnerCandidateRows", "spinnerTheme",
+        )) {
+            assertTrue("$spinner 的闸门必须走用户操作探针", "$spinner.userInteracted" in settings)
+        }
+        assertFalse("不得残留只认触摸的字段（SpinnerTouched）", "SpinnerTouched" in settings)
+        assertFalse("不得再给下拉挂 OnTouchListener 当闸门", "setOnTouchListener" in settings)
+
+        val layout = listOf(
+            File("src/main/res/layout/activity_settings.xml"),
+            File("app/src/main/res/layout/activity_settings.xml"),
+        ).firstOrNull { it.isFile } ?: error("找不到 activity_settings.xml")
+        assertEquals(
+            "设置页 5 个下拉必须都换成 UserAwareSpinner（退回普通 Spinner 时闸门静默失效：闸门永远为 false）",
+            5,
+            Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layout.readText()).count(),
+        )
+
+        val openAi = codeOf("OpenAiSettingsActivity.kt")
+        assertTrue("OpenAI 页目标语言下拉必须走同一探针", "spinnerTarget.userInteracted" in openAi)
+        assertFalse(
+            "isUserDriven 三标志判据必须删干净（L-820 实测其在 ColorOS 下拉路径上常为 false）",
+            "isUserDriven" in openAi,
+        )
+        assertTrue(
+            "每次载入必须复位探针（否则上一轮的点击会授权一次程序化回填）",
+            "resetUserInteracted()" in blockAfter(openAi, "private fun loadValues"),
+        )
+    }
+
+    // ── 第一百四十一回（2026-10-04）：备份密码对话框防截屏 ─────────────
+
+    /**
+     * L-588：`FLAG_SECURE` 覆盖到设置页的**两个密码对话框**，但不整页加。
+     *
+     * 三个翻译页早就整页加；本页的导出 / 导入密码框一直是裸的（`AlertDialog` 有自己的窗口，
+     * 不继承页面的标志）。为什么不顺手整页加：`FLAG_SECURE` 按窗口生效，而本页只有密码框是机密 ——
+     * 整页加会把「设置页截图」一并废掉（真机排查与用户留证都要用），却对密码框没有额外收益。
+     */
+    @Test
+    fun `备份密码对话框必须防截屏`() {
+        val s = codeOf("SettingsActivity.kt")
+        // 只数**调用点**（`= securePasswordDialog(`）：函数声明那行也含 `securePasswordDialog(`，
+        // 用裸名字数会把声明算进去
+        assertEquals(
+            "导出 / 导入两个密码对话框都要走 securePasswordDialog（L-588）",
+            2,
+            Regex("""= securePasswordDialog\(""").findAll(s).count(),
+        )
+        val helper = blockAfter(s, "private fun securePasswordDialog")
+        assertTrue("对话框窗口必须设 FLAG_SECURE（截屏 / 录屏 / 投屏 / 最近任务缩略图）", "FLAG_SECURE" in helper)
+        assertFalse(
+            "设置页不得整页加 FLAG_SECURE（只有密码框是机密；整页加会废掉设置页截图，真机排查要用）",
+            "setFlags(" in s.replace(helper, ""),
+        )
     }
 }

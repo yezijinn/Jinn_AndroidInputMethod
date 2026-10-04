@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 页面样式必须**统一**（用户 2026-10-02：「页面的样式风格配色应该统一 / 完全一致 / 不各自独立 ——
+ * 页面样式必须**统一**（2026-10-02：「页面的样式风格配色应该统一 / 完全一致 / 不各自独立 ——
  * 包括按钮、X 关闭；每种类型都统一用同类型的 UI」，见 `BUG.md` L-477）。
  *
  * 为什么要有它：同一件事此前在 9 个页面各写一份，而且常常互不相同 ——
@@ -20,7 +20,7 @@ import java.io.File
  * 文案的**唯一**定义在 `PageChrome`。这条守卫的做法是**反向钉**：
  * 页面里不许再出现「自己那一套」（自带尺寸/字号、直接引用卡片与输入框的 drawable）。
  *
- * ⚠ 键盘配色皮肤页（`activity_key_appearance.xml`）按用户要求**保持独立**，不在本类的检查范围。
+ * ⚠ 键盘配色皮肤页（`activity_key_appearance.xml`）**保持独立**，不在本类的检查范围。
  */
 class PageStyleParityTest {
 
@@ -119,7 +119,7 @@ class PageStyleParityTest {
     }
 
     /**
-     * 页面根**底部不许留白**（用户 2026-10-02 报的真机现象：设置页唤起键盘时，候选栏正上方
+     * 页面根**底部不许留白**（2026-10-02 真机现象：设置页唤起键盘时，候选栏正上方
      * 有一条纯黑色（暗色）/ 纯白色（亮色）色带）。
      *
      * 成因：设置页的根就是 `ScrollView`，`clipToPadding` 默认 true ⇒ 根部 `paddingBottom`
@@ -186,7 +186,7 @@ class PageStyleParityTest {
     }
 
     /**
-     * 行间距必须保持紧凑（用户 2026-10-02：「不同行之间的行间距尽量接近 0，成为紧凑视图；
+     * 行间距必须保持紧凑（2026-10-02：「不同行之间的行间距尽量接近 0，成为紧凑视图；
      * 尽量一页展示完，而不是让用户上下滑动去观看」）。
      *
      * 反向钉：卡片间距与页面元素的纵向 margin 都不许再涨回两位数 —— 这类值一涨就回到「要滑半天」，
@@ -212,7 +212,7 @@ class PageStyleParityTest {
                 if (m.groupValues[2].toInt() > 6) bad += "$name 里有 ${m.value}（纵向间距上限 6dp）"
             }
         }
-        assertEquals("行间距必须保持紧凑（用户要求：尽量接近 0、一页展示完）", emptyList<String>(), bad)
+        assertEquals("行间距必须保持紧凑（尽量接近 0、一页展示完）", emptyList<String>(), bad)
     }
 
     @Test
@@ -239,7 +239,7 @@ class PageStyleParityTest {
         assertEquals("关闭按钮的键面文字与可听名只允许在 PageChrome 里定义", emptyList<String>(), found)
     }
 
-    // ---------------- 助手 ----------------
+    // ──────────── 助手 ────────────
 
     private fun stripComments(xml: String): String = xml.replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
 

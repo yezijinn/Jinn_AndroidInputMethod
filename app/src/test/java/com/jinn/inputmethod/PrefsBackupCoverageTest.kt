@@ -73,7 +73,8 @@ class PrefsBackupCoverageTest {
         // 精确 76：用「>=」时，新增键被正则漏检或键被误删都不会报警，守卫价值被高估。
         // 改键数是正常维护，改完同步这个数（35 个旧键 + 41 个翻译键，含 2 个退役键）。
         // 2026-09-30 起 64 → 76：新增「原文范围」12 键（6 家 × 范围模式 / 字节上限）。
-        assertEquals("提取到的键常量应是 77 个（改键数请同步本断言）", 77, keyConstants.size)
+        // 2026-10-03 起 77 → 78：新增「候选字号」1 键（外观参数，整个候选栏按它派生）。
+        assertEquals("提取到的键常量应是 78 个（改键数请同步本断言）", 78, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -168,6 +169,7 @@ class PrefsBackupCoverageTest {
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
             "KEY_CANDIDATE_SPACING_DP" to "asFloat(v)",
+            "KEY_CANDIDATE_TEXT_SP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
             "KEY_SKIN_LIGHT" to "asString(v)",
             "KEY_SKIN_DARK" to "asString(v)",
@@ -221,6 +223,7 @@ class PrefsBackupCoverageTest {
             Triple("keyCornerDp", "KeyAppearance.clampCornerDp", "越界圆角会进绘制流程"),
             Triple("keyGapDp", "KeyAppearance.clampGapDp", "越界间隙会进绘制流程"),
             Triple("keyTransparencyPercent", "KeyTransparency.clampPercent", "越界透明度会算出非法 alpha"),
+            Triple("candidateTextSp", "CandidateText.clampSp", "越界字号会把候选栏撑满整屏或缩到点不中"),
             Triple("skinLightId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
             Triple("skinDarkId", "KeyboardSkins.byId", "未知皮肤 id 会取不到色板"),
             Triple("fuzzyPinyinMask", "FuzzyPinyin.clampMask", "越界掩码会派生出未定义的模糊音组"),
@@ -333,7 +336,10 @@ class PrefsBackupCoverageTest {
             assertTrue(
                 "$prop 的 getter 未回落旧键：`rare_tier*` 缺失时应读 KEY_SHOW_RARE_CHARS_LEGACY" +
                     "（否则原生升级只开档 2，三级字与含三级字的词条消失）",
-                code.contains("else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)"),
+                // 读侧收口后（BUG.md L-653）是 `else boolOr(…, false)`；两种形态都认，
+                // 否则「把裸读换成收口助手」这种纯加固会把本条守卫打红
+                code.contains("else sp.getBoolean(KEY_SHOW_RARE_CHARS_LEGACY, false)") ||
+                    code.contains("else boolOr(KEY_SHOW_RARE_CHARS_LEGACY, false)"),
             )
         }
     }

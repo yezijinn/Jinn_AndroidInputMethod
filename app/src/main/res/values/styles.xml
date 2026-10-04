@@ -40,7 +40,7 @@
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!-- 页面说明：标题下方一段；文案在代码里下发（工程约定：strings.xml 默认禁改） -->
+    <!-- 页面说明：标题下方一段；文案在代码里下发（工程约定：strings.xml 默认不改动） -->
     <style name="PageDesc">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>

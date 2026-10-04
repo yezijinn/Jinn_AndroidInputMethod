@@ -198,7 +198,7 @@ class AliyunTranslatorTest {
     @Test
     fun `成功响应里的 code 0 或 JSON null 不算错误码`() {
         // `code:0` 是这类 OpenAPI 常见的成功约定，`code:null` 是显式空值 —— 两者都不能把
-        // 已经译好的正文丢掉（2026-09-30 第二轮审查：optString 会给出 "0" / "null"）
+        // 已经译好的正文丢掉（2026-09-30 审查：optString 会给出 "0" / "null"）
         assertEquals(
             TranslationOutcome.Ok("你好"),
             translator.parseResponse(200, """{"code":0,"Data":{"Translated":"你好"}}"""),

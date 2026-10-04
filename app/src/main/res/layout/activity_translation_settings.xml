@@ -2,7 +2,7 @@
 <!-- 翻译设置页：从设置页「翻译设置」按钮进入。`onPause` 落盘（下拉改动立即写，凭据在失焦或离开页面时写）。
      ⚠ 输入框**不**逐键写盘：输入框仍聚焦时进程被强停会丢刚键入的凭据（台账 L-209，2026-09-30 审查）。
      六家服务各一个区块，按 Provider 选择显隐；文案（含 hint）全部在 TranslationSettingsActivity
-     里下发（strings.xml 默认禁改），布局里只用 `labelFor` 把标签与控件关联（无障碍 + lint 基线） -->
+     里下发（strings.xml 默认不改动），布局里只用 `labelFor` 把标签与控件关联（无障碍 + lint 基线） -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     style="@style/PageRoot"
     android:orientation="vertical">
@@ -310,7 +310,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 显式保存（2026-10-01 用户要求）：改动仍会即时落盘，这里再给一个**固定的**保存出口 ——
+    <!-- 显式保存（2026-10-01）：改动仍会即时落盘，这里再给一个**固定的**保存出口 ——
          按钮在滚动区之外，用户在任何位置都能点，点完有明确的结果提示（即使多此一举） -->
     <LinearLayout
         android:layout_width="match_parent"

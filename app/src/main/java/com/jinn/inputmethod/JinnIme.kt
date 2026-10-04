@@ -30,8 +30,8 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
-import android.widget.Toast
 import android.widget.TextView
+import android.widget.Toast
 import java.lang.ref.WeakReference
 
 /**
@@ -195,6 +195,15 @@ class JinnIme : InputMethodService() {
      */
     private var translateStartedAtMs = 0L
     private var translateProviderName = ""
+
+    /**
+     * 本次请求的**生效目标语言**（不是枚举名）：由 [effectiveTargetLabel] 给（BUG.md L-787）。
+     *
+     * OpenAI 兼容路径真正生效的是自由文本 `Prefs.openAiTargetLanguage`，枚举
+     * `TranslationLanguage`（`Prefs.translateTarget`）对它只是不相干的字段 ⇒ 原先写 `target.name` 时，
+     * 日志里的 `target=` 恒为枚举名（`ENGLISH`），
+     * 与真实目标不符、无条件误导排障。
+     */
     private var translateTargetName = ""
     private var translateTraceId = ""
 
@@ -747,7 +756,7 @@ class JinnIme : InputMethodService() {
      * 行移动 / 行首行末会算出无关位置，甚至把光标挪到「窗口长度」那个绝对下标上。
      */
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
-        // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 第二轮审查）：这里是编辑键
+        // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 审查）：这里是编辑键
         // （全选 / 复制 / 拖选）与「译文提交前的选区检查」的公共入口，异常未捕获会崩 IME 进程。
         // null 是**三态里的一态**（2026-10-01 复审 L-230）：既可能是「确实没有选区」，也可能是
         // 「宿主不支持 `getExtractedText` / 大文档下抛事务异常」。调用方必须区分对待 ——
@@ -833,7 +842,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "翻译: getSelectedText 抛异常，无法确认选区，拒绝追加")
             return AppendCheck.HOST_UNREADABLE
         }
-        // ⚠ `null` **不能**当成「问不出来」（2026-10-03 第十四轮审查纠正当日早先的一处过度保守）：
+        // ⚠ `null` **不能**当成「问不出来」（2026-10-03 纠正当日早先的一处过度保守）：
         // `getSelectedText` 的**官方契约**是「返回选中文本；**没有选区时返回 null**」，而走到这里的
         // 都是「拿不到精确选区」的宿主（WebView 类）—— 按本段的注释，**这类宿主每次翻译都会走到这里**。
         // 若把 null 判成不可确认，它们上面的**默认档（appendOffset = 0）会被 100% 拒绝**：
@@ -944,7 +953,7 @@ class JinnIme : InputMethodService() {
      */
     /** 提示（粘贴失败的几种原因要让人看见；文案在代码里下发，与文件内既有 Toast 写法一致） */
     private fun toast(msg: String) {
-        // 包一层：窗口切换瞬间弹 toast，个别 ROM 会抛 BadTokenException。本轮把取消 / 超时提示
+        // 包一层：窗口切换瞬间弹 toast，个别 ROM 会抛 BadTokenException。取消 / 超时提示
         // 挂到了 6 处生命周期回调与看门狗路径上（原先只有粘贴失败等少数几处），不包的话异常会
         // 冒到主线程 —— 而其中一处正在 `finishTranslate()` 之前，会把按钮态与在途标志一起带歪
         // （2026-10-03 修复 L-686；同文件另一处 Toast 早已这样包）。
@@ -1994,7 +2003,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "startRecording: 已在录音中 mode=$mode，忽略")
             return
         }
-        // 反向互斥（2026-10-03 第六轮审查 B-1）：翻译在途时开录音，语音的非终态回显
+        // 反向互斥（2026-10-03 审查 B-1）：翻译在途时开录音，语音的非终态回显
         // （`setComposingText`）会改动光标前文本 ⇒ 翻译提交时的**逐字快照校验必然失配** ⇒
         // 用户**已付费的译文被丢弃**，只留一句「输入已变化」—— 花钱却什么都没得到。
         if (translateInFlight) {
@@ -2241,7 +2250,7 @@ class JinnIme : InputMethodService() {
         // 一条都没带上 ⇒ traceId 在闸门阶段是死变量，诊断包仍只能靠时间戳把面板那条日志与后续 W 级
         // 日志拼起来。面板那条已是 i 级（会落盘），所以此处补一条 i 级即可把「他点过」与本次尝试关联。
         Diagnostics.i(TAG, "[$translateTraceId] 翻译: 面板点击进入翻译流程")
-        // 与语音互斥（2026-10-03 第六轮审查 B-1）：录音中发翻译，译文的 `commitText` 会落在
+        // 与语音互斥（2026-10-03 审查 B-1）：录音中发翻译，译文的 `commitText` 会落在
         // 语音的预编辑区间上，把正在识别的字顶掉（最终结果会整段重放、不丢字，但屏上文本会抖 /
         // 错序）。与「密码框 / 无连接 / 行内两档」同款：在发请求**之前**零成本拒绝。
         if (mode != Mode.NONE) {
@@ -2442,7 +2451,7 @@ class JinnIme : InputMethodService() {
         // 只对**非选区**生效：选区是用户明确重新框选的内容，不该被历史拦下。
         // 判据是**请求指纹**（服务方 + 目标语言 + 原文范围 + 原文）而不是裸原文：换了其中任何
         // 一项都是另一次合法请求，只比原文会把用户的第二次付费请求误拦成「刚刚翻译过」。
-        val repeatKey = translateRepeatKey(id, target, scope, sent = slice.text)
+        val repeatKey = translateRepeatKey(id, target, prefs.openAiTargetLanguage, scope, sent = slice.text)
         if (!replaceSelection && slice.text.isNotEmpty() &&
             repeatKey == lastSentKey &&
             System.currentTimeMillis() - lastSentAtMs < repeatGuardMs
@@ -2493,7 +2502,7 @@ class JinnIme : InputMethodService() {
         //    判据取**本帧已读的探针**（`selectionRange.range`，L-325/L-315 那次为此专门包的），
         //    不再裸调一次 `currentSelectionRange` —— 那是主线程上的整窗口 Binder 往返
         //    （`getExtractedText` 上限 10 万字符），而这里要的正是「同一次点击里同一份事实」
-        //    （2026-10-02 第二轮审查）。
+        //    （2026-10-02 审查）。
         if (!replaceSelection && slice.appendOffset > 0 && selectionRange.range == null) {
             Diagnostics.w(
                 TAG,
@@ -2534,7 +2543,7 @@ class JinnIme : InputMethodService() {
             }
         }
         // 用 hasVisibleContent 而不是 isBlank：零宽字符（ZWSP / BOM / NBSP）不算内容 —— 否则
-        // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 第二轮审查）
+        // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 审查）
         if (!slice.text.hasVisibleContent()) {
             // 同函数其余每个早退都有 W + toast，这一条此前只有 toast ⇒ 用户报「弹了『没有可翻译的文字』」
             // 时诊断包里查不到这次点击（2026-10-01 修复 L-327）
@@ -2555,12 +2564,13 @@ class JinnIme : InputMethodService() {
         // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
         translateStartedAtMs = System.currentTimeMillis()
         translateProviderName = provider.javaClass.simpleName
-        translateTargetName = target.name
+        // 生效目标语言（不是枚举名）：与指纹同源，日志才与真实请求一致（BUG.md L-787）
+        translateTargetName = effectiveTargetLabel(id, target, prefs.openAiTargetLanguage)
         pinyinKeyboard?.setTranslating(true)
         // 只记 provider / 语言 / 范围 / 字数与截断：待译正文与凭据都不进日志
         Diagnostics.i(
             TAG,
-            "翻译: ${provider.javaClass.simpleName} → ${target.name} 范围=${scope.id} " +
+            "翻译: ${provider.javaClass.simpleName} → $translateTargetName 范围=${scope.id} " +
                 "共${slice.text.length}字" + (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
         )
         // 插入模式下的截断必须说出来（2026-10-02 修复 L-485）：同一件事（原文超单次上限）此前
@@ -2595,7 +2605,7 @@ class JinnIme : InputMethodService() {
                 // 回调在 OkHttp 的 IO 线程：切回主线程再碰视图与 InputConnection
                 val posted = ui.post {
                     if (generation != translateGeneration) {
-                        // ⚠ 代际不匹配时**绝不能**清句柄（2026-10-03 第六轮自查发现的竞态）：
+                        // ⚠ 代际不匹配时**绝不能**清句柄（2026-10-03 发现的竞态）：
                         // 旧请求的回调可能在新请求已在途时才到达（旧 Call 被 cancel 后 OkHttp 仍会
                         // 回调 onFailure），无条件清空会把**新请求**的句柄抹掉 ⇒ 之后再取消就落空、
                         // 新请求照样跑完并计费 —— 正是 L-494 要修的现象。旧句柄在 finishTranslate
@@ -2901,7 +2911,7 @@ class JinnIme : InputMethodService() {
         //     「移不到位一律放弃」一致 —— 这类宿主已被发请求前的 ②.b 拦过一道）。
         //     （2026-10-02 修复 L-480）
         if (snapshot.appendOffset > 0) {
-            // ⚠ 三态必须分开（2026-10-03 第十二轮审查）：
+            // ⚠ 三态必须分开（2026-10-03 审查）：
             //  · `null`  = 宿主读不到 ⇒ **不能**当「已到末尾」——那会让译文插进**原文中间**，
             //              而 commitText 不保证可撤销（这是防「插进中间」的唯一一道网）；
             //  · `""`    = 确实是区间末尾 ⇒ 接受；
@@ -2917,7 +2927,7 @@ class JinnIme : InputMethodService() {
                         (if (tail == null) "读不到光标后内容" else "后一个字符=${tail[0]}") +
                         "），放弃提交并回滚光标",
                 )
-                // ⚠ 拒绝前必须把光标**移回去**（2026-10-02 第二轮审查）：这一步排在 ⑤（移动）之后，
+                // ⚠ 拒绝前必须把光标**移回去**（2026-10-02）：这一步排在 ⑤（移动）之后，
                 // 直接 return 会把用户的光标留在「移过去但没确认」的位置，接着打字就插进句子中间 ——
                 // 与 ④ 段立下的「拒绝前不得移动光标」原则相冲突（L-221 的唯一反例）。
                 // 反向移回复用同一实现；移不回去也不再改文案（用户看到的仍是「未写入」，
@@ -3026,7 +3036,7 @@ class JinnIme : InputMethodService() {
         if (range.start != range.end) return false
         val to = range.end + offset
         // 下界校验：反向移动（回滚光标，见 ⑤.b）可能算出负下标 —— 负下标传给 setSelection
-        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02 第二轮审查）。
+        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02 审查）。
         if (to < 0) {
             Diagnostics.w(TAG, "翻译: 目标下标为负（$to），放弃移动")
             return false
@@ -3056,7 +3066,7 @@ class JinnIme : InputMethodService() {
      */
     private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? {
         val s = runCatching { connection.getTextBeforeCursor(1, 0) }.getOrNull()
-        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02 修复 L-481，第二轮纠正）：
+        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02 修复 L-481，同日纠正）：
         //  - 空串（真文首）⇒ null ⇒ 不补前导换行；
         //  - 读不到（抛异常 / 宿主返回 null）⇒ 替换字符占位 ⇒ 让 `appendText` 走「补前导换行」。
         // ⚠ 上一版把读不到映射成 '\n'，而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个
@@ -3117,7 +3127,7 @@ class JinnIme : InputMethodService() {
          */
         probeDocStart: Boolean = true,
     ): BeforeText? {
-        // 整段包 runCatching（2026-09-30 第二轮审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
+        // 整段包 runCatching（2026-09-30 审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
         // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
         // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
         // 读不到就返回 null，让上层按「读不到」处理 —— 与「写」侧 commitText 同口径。
@@ -3563,10 +3573,10 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_TRUNCATED =
             "原文超出单次上限，已按上限截断（仅翻译前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
-        /** 语译互斥：录音中不发起翻译（2026-10-03 第六轮审查 B-1） */
+        /** 语译互斥：录音中不发起翻译（2026-10-03 审查 B-1） */
         const val TEXT_RECORDING_PLEASE_WAIT = "正在录音，请先结束录音再翻译"
 
-        /** 语译互斥：翻译在途不开录音（2026-10-03 第六轮审查 B-1） */
+        /** 语译互斥：翻译在途不开录音（2026-10-03 审查 B-1） */
         const val TEXT_TRANSLATING_PLEASE_WAIT = "正在翻译，请稍候再录音"
 
         /**
@@ -3713,12 +3723,16 @@ internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =
     if (packageName.isNullOrEmpty()) null else "$packageName#$fieldId"
 
 /**
- * 去重指纹：把「服务方 + 目标语言 + 原文范围 + 原文」拼成一个可比较的串。
+ * 去重指纹：把「服务方 + **生效**目标语言 + 原文范围 + 原文」拼成一个可比较的串。
  *
  * 为什么必须带那三个维度（2026-10-03 修复 L-655）：它们都是**用户可改**的设置，
  * 改了之后点同一段文本是**另一次合法请求**。只比裸原文时，用户换语言 / 换服务方 / 把范围
  * 从「光标前本行」改成「编辑框全部」再点同一段，会被自己的去重挡回去，提示
  * 「刚刚翻译过，未重复发送」—— 而他从未翻译过这段的日文版。
+ *
+ * ⚠ 目标语言这一维必须用**生效值**而不是枚举名（2026-10-04 修复 L-787）：OpenAI 兼容路径
+ * 真正生效的是自由文本 `Prefs.openAiTargetLanguage`，在它上面改语言时枚举不变 ⇒ 指纹逐字
+ * 相同，用户「翻得不对、改语言再试」的第二次付费请求仍被误拦成「刚刚翻译过」。
  *
  * 放独立纯函数而不是内联拼串：守卫能**真跑**（内联拼串只能源码对拍，而 L-685 记录的
  * 正是「钉字符串存在性」这类改错也不会红的假守卫）。放在**文件顶层**是因为 `JinnIme`
@@ -3727,9 +3741,27 @@ internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =
 internal fun translateRepeatKey(
     provider: TranslationProviderId,
     target: TranslationLanguage,
+    openAiTarget: String,
     scope: TranslationScope,
     sent: String,
-): String = "${provider.id}|${target.name}|${scope.id}|$sent"
+): String = "${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
+
+/**
+ * 「生效目标语言」的规范串：去重指纹与诊断日志共用的唯一口径（BUG.md L-787）。
+ *
+ * 为什么不能直接用枚举 [target]：OpenAI 兼容路径真正生效的是**自由文本** `Prefs.openAiTargetLanguage`
+ * （`OpenAiTranslator.buildBody` 读的就是它），枚举 `translateTarget` 在那条链路上只是不相干的字段。
+ * 前缀 `openai:` 让自由文本与枚举名不可能撞车（枚举名全大写，自由文本是用户输入的语言名）。
+ */
+internal fun effectiveTargetLabel(
+    provider: TranslationProviderId,
+    target: TranslationLanguage,
+    openAiTarget: String,
+): String = if (provider == TranslationProviderId.OPENAI) {
+    "openai:${OpenAiTranslator.effectiveTarget(openAiTarget)}"
+} else {
+    target.name
+}
 
 /**
  * 落地复核的判据：译文尾部**是否真的在输入框里**。三态（2026-10-03 修复 L-681）：

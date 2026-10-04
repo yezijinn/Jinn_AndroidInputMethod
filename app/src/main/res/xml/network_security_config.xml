@@ -33,7 +33,7 @@
         <!-- 更新检查 + 词库下载（api/v5/repos 挂在主域下，子域一并只准 TLS） -->
         <domain includeSubdomains="true">gitee.com</domain>
 
-        <!-- 在线翻译的五个常量端点（2026-09-30 第二轮审查补）：代码侧已有 isHttps 判据，
+        <!-- 在线翻译的五个常量端点（2026-09-30 补）：代码侧已有 isHttps 判据，
              但平台层此前对它们是**放行明文**的（只靠代码兜）—— 补进拒绝名单后，即便将来某处
              漏了判据，网络层也会直接拒绝。用户自填的 OpenAI 兼容域名无法静态枚举，仍靠代码判据。
              （`NetworkPolicyTest` 会断言这份名单与各 Translator 的 ENDPOINT 常量一一对应。） -->

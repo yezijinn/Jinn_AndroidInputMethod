@@ -102,7 +102,7 @@ internal class AliyunTranslator(
         //  · 参数出错时是 **HTTP 200 + `{"Code":"10004"}`**（实测：缺 Scene）。
         // 只看状态会把这两种情况分别显示成「服务异常」与「翻译结果为空」，用户都无从下手。
         // 成功码是 "200"（大写 Code 与老写法 code 都认，数字 200 经 optString 也是 "200"）。
-        // 判存在性要**排除 JSON null**（2026-09-30 第二轮审查）：`optString` 对 `"code":null` 返回
+        // 判存在性要**排除 JSON null**（2026-09-30 审查）：`optString` 对 `"code":null` 返回
         // 字面量 `"null"`、对 `"code":0` 返回 `"0"` —— 两者都会被当成业务错误码（归 SERVER），
         // 而正文其实已经译好躺在 `Data.Translated` 里（`code:0` 是这类 OpenAPI 常见的成功约定）。
         // 仍用 `opt(...).toString()` 而不是 jsonText：数字码（10004）必须保留，jsonText 只认字符串会漏判。

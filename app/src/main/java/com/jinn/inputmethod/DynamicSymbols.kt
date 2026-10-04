@@ -85,7 +85,7 @@ object DynamicSymbols {
     fun expand(value: String, at: LocalDateTime = LocalDateTime.now()): String {
         if (!isDynamic(value)) return value
         return when (val name = value.removePrefix(MARK)) {
-            // 时间类：中 = 中文式、数 = 纯数字、符 = 带分隔符（用户 2026-09-24 第三次修订的命名）
+            // 时间类：中 = 中文式、数 = 纯数字、符 = 带分隔符（2026-09-24 第三次修订的命名）
             "年日中" -> at.format(FMT_DATE_CN)
             "年日数" -> at.format(FMT_DATE_COMPACT)
             "年日符" -> at.format(FMT_DATE_DASHED)

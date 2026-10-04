@@ -18,7 +18,7 @@ English ｜ [中文](README.md)
 - "Traditional Chinese only" (Settings): candidates are replaced with their traditional forms on commit (爱 → 愛, 碍 → 礙), applied instantly; learning is still stored in simplified form, shared by both modes
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
 - Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); next-word prediction (off by default); one-tap CN/EN
-- Corner radius / gap / transparency in Settings (0~24dp / 0~8dp / 0~100%), applied instantly on release
+- Corner radius / gap / candidate text size / candidate spacing / transparency in Settings (0~24dp / 0~8dp / 14~28sp / 5~30dp / 0~100%), applied instantly on release; the whole candidate bar grows or shrinks with the text size
 - 32 keyboard skins (original dark / original light + 30 colour schemes; 16 light, 16 dark) — colours and texture only, drawn entirely in code, independent of the three sliders
 - Light/dark switching: follow system / light / dark / scheduled; each of the two slots keeps its own chosen skin, and the keyboard skin follows the switch
 - Fuzzy pinyin (off by default): 11 optional accent equivalence groups (zh⇄z, n⇄l, en⇄eng, …); when a sound misses, its alternative readings are added as extra candidates (precise candidates stay untouched and in their original order)

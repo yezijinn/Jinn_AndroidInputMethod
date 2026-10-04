@@ -394,6 +394,11 @@ internal object UserFrequency {
         val mergedCount: Int,
     )
 
+    /**
+     * 导入时合并本地与入站的用户词频：同词取权重、学习日各自较大者；结果按权重降序保留最多 [MAX_ENTRIES] 条。
+     *
+     * [nowDay] 仅用于解析两端的日期字段（学习日），不参与取舍。
+     */
     internal fun mergeForBackup(localText: String, incomingText: String, nowDay: Int): MergeResult {
         val local = parse(localText, nowDay, PinyinEngine::toSimplified)
         val incoming = parse(incomingText, nowDay, PinyinEngine::toSimplified)

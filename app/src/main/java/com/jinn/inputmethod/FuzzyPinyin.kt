@@ -21,6 +21,7 @@ object FuzzyPinyin {
     /** 关闭：不派生任何变体（也是出厂默认） */
     const val NONE = 0
 
+    /** 模糊音分组的位标志（按位或成掩码；顺序即 [GROUPS] 的派生顺序） */
     const val Z_ZH = 1 shl 0
     const val C_CH = 1 shl 1
     const val S_SH = 1 shl 2
@@ -49,7 +50,7 @@ object FuzzyPinyin {
     /**
      * 一组模糊音：[bit] 掩码位，[a] / [b] 互相混淆的两个串，[kind] 决定替换位置。
      *
-     * [label] 供设置页多选对话框直接显示（文案在代码里，`strings.xml` 默认禁改）。
+     * [label] 供设置页多选对话框直接显示（文案在代码里，`strings.xml` 默认不改动）。
      */
     class Group(
         val bit: Int,

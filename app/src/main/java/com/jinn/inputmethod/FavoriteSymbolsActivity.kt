@@ -19,7 +19,7 @@ import android.widget.Toast
 /**
  * 「收藏」分组编辑页：从设置页「编辑收藏符号」按钮进入，用户自由 DIY 符号。
  *
- * 交互（用户确认的方案）：
+ * 交互：
  * - 按页分节网格展示，每个符号右上角小 ✕ 移除（后续符号前移补位、删空的页自动收起）；
  * - 底部「＋ 添加符号」：仅输入框（自由键入/粘贴），末页满 26 自动开新页；
  * - 禁止重复：添加已存在的符号提示「已存在」；
@@ -75,7 +75,7 @@ class FavoriteSymbolsActivity : Activity() {
     }
 
     private companion object {
-        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认禁改）—— 与其余页面一致。
+        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认不改动）—— 与其余页面一致。
         // 这两页（本页与符号排序页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
         // （2026-10-02 统一，见 B-152）。
         // ⚠ 标题**不在**这里：`favorite_title` 同时是 `AndroidManifest` 里本 activity 的
@@ -164,11 +164,11 @@ class FavoriteSymbolsActivity : Activity() {
                 elevation = 0f
                 layoutParams = FrameLayout.LayoutParams(cell, cell)
             })
-            // ✕ 移除角标（2026-10-02 用户反馈修复）：
+            // ✕ 移除角标（2026-10-02 修复）：
             // ① 显示**符号**而不是「移除」两个字 —— 22dp 角标里两个汉字被 `Button` 的默认内边距挤到
             //    几乎不可见，用户看到的就是「按钮和背景色相同、文字不可见」；无障碍语义仍由
             //    contentDescription 保留（读作「移除」）。
-            // ② **红色粗体**（用户指定）：kb_key_hint_red（明 #C62828 / 暗 #FF5A5F）+ BOLD。
+            // ② **红色粗体**：kb_key_hint_red（明 #C62828 / 暗 #FF5A5F）+ BOLD。
             // ③ 不再用负 margin：那会把角标推出格子边界、右上角被父容器裁掉，与「在字符容器
             //    **内部**的右上角」的预期相反；现在完整落在 44dp 格子内。
             // ④ 用 TextView 而不是 Button：这里只要一个符号，`Button` 自带的最小高 / 内边距 /
@@ -184,7 +184,7 @@ class FavoriteSymbolsActivity : Activity() {
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
-                // ⚠ **不要背景**（2026-10-02 用户指定）：原先那颗圆角蓝底（btn_aurora_secondary）
+                // ⚠ **不要背景**（2026-10-02）：原先那颗圆角蓝底（btn_aurora_secondary）
                 // 会在符号按钮上再叠一个小圆片，看着像「角标自己也是一颗按钮」。这里是**纯文本** ×，
                 // 直接压在符号格上；点击热区仍是这 22dp 方块（透明但不影响命中）。
                 // 注意 elevation 要留着：它只影响 Z 序（透明背景不会画阴影），是「不被按钮盖住」的保证。

@@ -13,7 +13,7 @@ import kotlin.math.roundToInt
  *    `PinyinKeyboardView.updateCandidateBarBackground`：它曾按「是否有内容」在 plate / surface
  *    之间切档，但两档透出量不同（20% 时 80% vs 92%）⇒ 空白态会在浅色页面上显出一圈底色差；
  *    统一到本档、并让空白态的栏色与功能按钮同色后，两者连成一块
- *    （2026-10-02 用户反馈，方案 A），别再切回动态选档。
+ *    （2026-10-02，方案 A），别再切回动态选档。
  *
  * 0%（默认）= 完全不透明，与历史观感逐像素一致；[MAX_PERCENT] = 背板可全透（[MIN_PLATE_ALPHA] = 0），
  * 内容面（含有内容时的候选栏底）仍保留 [MIN_SURFACE_ALPHA]，再透文字就糊在应用内容上了。

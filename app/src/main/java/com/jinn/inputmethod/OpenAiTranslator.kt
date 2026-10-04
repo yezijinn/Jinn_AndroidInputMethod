@@ -37,7 +37,7 @@ internal data class OpenAiConfig(
     val timeoutSec: Int = OpenAiTranslator.DEFAULT_TIMEOUT_SEC,
 ) {
     /**
-     * 打码的 `toString`（2026-09-30 第二轮审查）：data class 的默认实现会把 **apiKey 明文**带出去 ——
+     * 打码的 `toString`（2026-09-30 审查）：data class 的默认实现会把 **apiKey 明文**带出去 ——
      * 一行 `Diagnostics.i(TAG, "cfg=$config")`、一条把 config 塞进异常的写法、或一次失败的
      * `assertEquals(config, …)`（JUnit 会打印两边 toString）就足以把 Key 写进可外传的日志。
      */
@@ -156,7 +156,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         if (finishReason.equals("length", ignoreCase = true)) {
             Diagnostics.w("OpenAiTranslator", "翻译: 模型输出被上限截断（finish_reason=length），不当作成功")
             // 用专有的 TRUNCATED 而不是 PARAM：后者让用户去核对「语言方向 / 模型名 / 路径 /
-            // 原文长度」，而真因是**输出上限** —— 按 PARAM 的提示核对必然无果（2026-10-02 第二轮审查）
+            // 原文长度」，而真因是**输出上限** —— 按 PARAM 的提示核对必然无果（2026-10-02 审查）
             return TranslationOutcome.Fail(TranslationError.TRUNCATED)
         }
         val text = extractByPath(json, config.responsePath)
@@ -299,50 +299,62 @@ internal fun applyTemplateEnsuringText(
         /**
          * 自定义 Headers 解析：一行一条 `Key: Value`；空行与 `#` 注释行忽略；
          * **`Authorization` 一律跳过** —— 它由 API Key 字段独占，两处配置只会互相打架（文档要求）。
+         *
+         * 被丢弃的头**记一条 W 日志**（2026-10-04 修复 L-589 / L-590 的残余）：此前是静默丢弃，
+         * 用户按网关文档填 `Accept-Encoding: gzip` / `Content-Type: …json-patch+json` 时，
+         * 界面看着配置生效、实际一个字节都没发出去，排查只能靠猜（值不进日志，可能含密钥）。
          */
-        internal fun parseHeaders(raw: String): List<Pair<String, String>> =
-            raw.lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains(':') }
-                .mapNotNull { line ->
-                    val name = line.substringBefore(':').trim()
-                    val value = line.substringAfter(':').trim()
-                    // 名字必须是合法 HTTP token（RFC 7230）：中文名 / 含空格的名字会让
-                    // `Request.Builder.header` 抛 IllegalArgumentException，被 TranslationClient
-                    // 兜成 PARAM → 提示「请检查语言设置」，与真实原因（自定义 Headers 写错）
-                    // 完全无关（2026-09-30 审查发现）。
-                    // **值同样要校验**（第二轮审查，探针实测）：OkHttp 对值只允许 `\t` 与 U+0020..U+007E，
-                    // 中文值、或从网页复制来的 NBSP / ZWSP（`trim()` 不删它们！）都会抛同一个异常、
-                    // 得到同一个误导提示。
-                    val valueOk = value.all { it == '\t' || it in '\u0020'..'\u007e' }
-                    if (name.isEmpty() || name.equals("Authorization", ignoreCase = true) ||
-                        !name.all { it in HEADER_TOKEN_CHARS } || !valueOk ||
-                        // ⚠ 协议级头一律不接纳（2026-10-03 修复 L-705 / L-590）：OkHttp 的
-                        // `transparentGzip` 只在**调用方未设** `Accept-Encoding` 时才透明解压 ⇒ 用户照抄
-                        // 网关文档填 `Accept-Encoding: gzip`，body 变成原始 gzip 字节，被门户判别
-                        // 归成「不是 JSON（被登录门户 / 代理拦截）」，归因完全误导；`Range` 会让响应
-                        // 被截断成解析失败；`Host` / `Content-Length` / `Transfer-Encoding` /
-                        // `Connection` 由客户端与 BridgeInterceptor 掌管，留着会让请求本身变形
-                        // （`Host` 还能把凭据改道到别的主机）。
-                        name.lowercase(Locale.US) in CLIENT_OWNED_HEADERS
-                    ) {
-                        null
-                    } else {
-                        name to value
-                    }
+        internal fun parseHeaders(raw: String): List<Pair<String, String>> {
+            val out = ArrayList<Pair<String, String>>()
+            val dropped = ArrayList<String>()
+            for (line in raw.lineSequence()) {
+                val trimmed = line.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("#") || !trimmed.contains(':')) continue
+                val name = trimmed.substringBefore(':').trim()
+                val value = trimmed.substringAfter(':').trim()
+                // 名字必须是合法 HTTP token（RFC 7230）：中文名 / 含空格的名字会让
+                // `Request.Builder.header` 抛 IllegalArgumentException，被 TranslationClient
+                // 兜成 PARAM → 提示「请检查语言设置」，与真实原因（自定义 Headers 写错）
+                // 完全无关（2026-09-30 审查发现）。
+                // **值同样要校验**（探针实测）：OkHttp 对值只允许 `\t` 与 U+0020..U+007E，
+                // 中文值、或从网页复制来的 NBSP / ZWSP（`trim()` 不删它们！）都会抛同一个异常、
+                // 得到同一个误导提示。
+                val valueOk = value.all { it == '\t' || it in '\u0020'..'\u007e' }
+                when {
+                    name.isEmpty() || !name.all { it in HEADER_TOKEN_CHARS } || !valueOk ->
+                        dropped.add(name.ifEmpty { "(无名)" })
+                    name.equals("Authorization", ignoreCase = true) -> dropped.add("Authorization")
+                    // ⚠ 协议级头一律不接纳（2026-10-03 修复 L-705 / L-590；2026-10-04 补 content-type）：
+                    // OkHttp 的 `transparentGzip` 只在**调用方未设** `Accept-Encoding` 时才透明解压 ⇒ 用户
+                    // 照抄网关文档填 `Accept-Encoding: gzip`，body 变成原始 gzip 字节，被门户判别
+                    // 归成「不是 JSON（被登录门户 / 代理拦截）」，归因完全误导；`Range` 会让响应被截断成
+                    // 解析失败；`Host` / `Content-Length` / `Transfer-Encoding` / `Connection` 由客户端与
+                    // BridgeInterceptor 掌管，留着会让请求本身变形（`Host` 还能把凭据改道到别的主机）；
+                    // `Content-Type` 会被 BridgeInterceptor 用 body 的 MediaType **覆盖** ⇒ 用户设了也不生效。
+                    name.lowercase(Locale.US) in CLIENT_OWNED_HEADERS -> dropped.add(name)
+                    else -> out.add(name to value)
                 }
-                .toList()
+            }
+            if (dropped.isNotEmpty()) {
+                Diagnostics.w(
+                    "OpenAiTranslator",
+                    "自定义请求头被丢弃（协议级 / 保留名 / 非法）：${dropped.joinToString("、")}",
+                )
+            }
+            return out
+        }
 
         /**
          * 由客户端（或 OkHttp 的 `BridgeInterceptor`）掌管的协议级头名（小写）：**一律不接纳用户的自定义头**。
          *
          * 判据是「这个头由传输层决定语义」：`accept-encoding` 关掉透明解压、`content-length` 与
          * `transfer-encoding` 决定 body 形态、`connection` 决定连接复用、`host` 决定寻址与凭据去向、
-         * `range` 让服务端只回一段。
+         * `range` 让服务端只回一段、`content-type` 会被 `BridgeInterceptor` 用 body 的 MediaType 覆盖
+         * （2026-10-04 补，见 L-590）。
          */
         private val CLIENT_OWNED_HEADERS = setOf(
             "accept-encoding", "content-length", "transfer-encoding",
-            "connection", "host", "range", "expect", "upgrade",
+            "connection", "host", "range", "expect", "upgrade", "content-type",
         )
 
         /** HTTP header 名的合法字符集（RFC 7230 `token`）：字母数字与 `!#$%&'*+-.^_\`|~` */
@@ -423,6 +435,15 @@ internal fun applyTemplateEnsuringText(
          */
         internal fun hasTextVar(template: String): Boolean = VAR_TEXT in normalizeKnownVars(template)
 
+        /**
+         * 「生效目标语言」的唯一归一：留空 / 全空白退回默认（BUG.md L-787）。
+         *
+         * 请求组装（[buildBody]）与去重指纹（`JinnIme.effectiveTargetLabel`）必须同源 ——
+         * 两处各写一份「trim + ifEmpty」时，任何一处漏改都会让指纹与真实请求再次错位。
+         */
+        internal fun effectiveTarget(raw: String): String =
+            raw.trim().ifEmpty { DEFAULT_TARGET_LANGUAGE }
+
         /** 数字解析：空串 / 非数字 / NaN / 无穷 → null（null = 该参数不发送） */
         internal fun numberOrNull(raw: String): Double? {
             val s = raw.trim()
@@ -438,7 +459,7 @@ internal fun applyTemplateEnsuringText(
          * 整数值写成整数（`1024` 而不是 `1024.0`）：部分网关对数字形态挑剔。
          */
         internal fun buildBody(config: OpenAiConfig, text: String): JSONObject {
-            val target = config.targetLanguage.trim().ifEmpty { DEFAULT_TARGET_LANGUAGE }
+            val target = effectiveTarget(config.targetLanguage)
             val system = config.systemPrompt.ifBlank { DEFAULT_SYSTEM_PROMPT }
             val user = config.userPrompt.ifBlank { DEFAULT_USER_PROMPT }
             val body = JSONObject()
@@ -530,7 +551,7 @@ internal fun applyTemplateEnsuringText(
         if (raw.isEmpty()) return true
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return false
         // 让用户在**设置页**就看见问题（2026-10-01 L-333 / 2026-10-02 L-259·L-344·L-421）：
-        // 判据与 [mergeExtraJson] 共用 [extraKeyRejection] —— 两处各写一套是本条族的教训。
+        // 判据与 [mergeExtraJson] 共用 [extraKeyRejection] —— 两处各写一套就会判出两种结果。
         return obj.keys().asSequence().none { extraKeyRejection(it, obj.opt(it)) != null }
     }
 
@@ -586,6 +607,12 @@ internal fun applyTemplateEnsuringText(
         }
     }
 
+    /**
+     * 把用户填的自定义 JSON 合并进请求体 [body]。
+     *
+     * 返回 `false` 仅当整串不是合法 JSON（直接拒绝）；单键命中协议级拒绝名单（如 header/url 类）
+     * 时**忽略该键但继续合并其余键**，不让一处写错把功能打死。
+     */
     internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
         val raw = extraJson.trim()
         if (raw.isEmpty()) return true
@@ -682,7 +709,7 @@ internal fun applyTemplateEnsuringText(
             return (0 until data.length()).mapNotNull { index ->
                 val item = data.optJSONObject(index) ?: return@mapNotNull null
                 // 走 jsonText：JSON null / 类型不符都返回 null —— `optString` 会给出字面量 "null"，
-                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30 第二轮审查，同类漏网）
+                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30 审查，同类漏网）
                 (jsonText(item, "id") ?: jsonText(item, "name"))?.takeIf { it.isNotBlank() }
             }
         }
