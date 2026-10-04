@@ -494,7 +494,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             dest.delete()
             raw.delete()
             // `--pid` 只取本进程：本机开发设备是 root，不加这一条 logcat 会给**全系统**的行
-            //（`dumpLogcat` 的 KDoc 自己写着「有 root 时是系统全量」），而这份快照会被打进**要外传的**
+            // （`dumpLogcat` 的 KDoc 自己写着「有 root 时是系统全量」），而这份快照会被打进**要外传的**
             // 诊断包 ⇒ 等于把别家的日志一起交出去（BUG.md L-169）。
             // 代价说清：系统侧（lowmemorykiller 之类）的旁证不再进包，排查这类问题要看 `dumpsys`。
             // 先按「只取本进程」抓；**失败就退回不带 `--pid`** 再抓一次（BUG.md L-188）：
@@ -625,7 +625,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             }
         }.onFailure {
             // 清理是尽力而为，不该让日志写入路径因它抛异常；但也**不能静默**
-            //（仓库自定底线：空 onFailure 等于吞异常，见 BUG.md L-189）。只记异常类名。
+            // （仓库自定底线：空 onFailure 等于吞异常，见 BUG.md L-189）。只记异常类名。
             Diagnostics.w(TAG, "日志体积清理失败: ${it.javaClass.simpleName}")
         }
     }

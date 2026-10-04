@@ -142,8 +142,8 @@ internal class BaiduTranslator(
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
             400, 413, 414 -> TranslationError.PARAM      // 413 请求体过大；414 URL 过长 —— 百度通用版是 **GET 家**（原文在 query 里，
                   // 非 ASCII 一字节膨胀成 3 个字符），真正撞上的会是 414。原先只认 413
-                  //（对 GET 不可达）会把「原文过长」显示成「服务异常」，按提示重试永远失败
-                  //（2026-10-01 修复 L-308）
+                  // （对 GET 不可达）会把「原文过长」显示成「服务异常」，按提示重试永远失败
+                  // （2026-10-01 修复 L-308）
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             429 -> TranslationError.QUOTA

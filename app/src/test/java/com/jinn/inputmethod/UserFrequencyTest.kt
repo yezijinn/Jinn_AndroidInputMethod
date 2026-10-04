@@ -193,7 +193,7 @@ class UserFrequencyTest {
         assertEquals(1.25, back["拟好"]!!.first, 1e-9)
         // 天一律跟到**解析日**（BUG.md L-111）：权重已被折算到 20000，天也必须记 20000 ——
         // 否则 (权重, 天) 这对值不再自洽，下次加载会再折算一次
-        //（「拟好」原为 20001 = 未来天，过去会被原样写回 ⇒ 复利衰减）
+        // （「拟好」原为 20001 = 未来天，过去会被原样写回 ⇒ 复利衰减）
         assertEquals(20000, back["你好"]!!.second)
         assertEquals(20000, back["拟好"]!!.second)
     }
@@ -202,7 +202,7 @@ class UserFrequencyTest {
     fun 跨天加载不得重复衰减() {
         // BUG.md L-111：`parse` 曾把权重折算到解析日却**原样保留 day**，而 `render` 写的也是这个 day
         // ⇒ 文件里成了「已折算的权重 + 原 day」，下次加载按 `原 day → 那时的今天` 再折算一遍
-        //（同一天的衰减被反复计息：实测 5 天多衰减 8%、30 天残余只剩 0.10）。现值把 day 一并推进
+        // （同一天的衰减被反复计息：实测 5 天多衰减 8%、30 天残余只剩 0.10）。现值把 day 一并推进
         // 到解析日，「权重 = 该 day 上的值」自洽 ⇒ 往返幂等。
         UserFrequency.resetForTest()
         val now = today()

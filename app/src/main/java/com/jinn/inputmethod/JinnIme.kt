@@ -2828,7 +2828,7 @@ class JinnIme : InputMethodService() {
         // ⚠ 判据必须是原始读数：截取结果被 trim 与字节截断加工过，拿它比对会把
         // 「原样未变」误判成「输入已变化」（2026-09-30 修过同类缺陷）。
         // 这次读回的「光标前文本」两用：① 与快照逐字比对；② 取它的末字符决定要不要补前导换行
-        //（原先为那 1 个字符单独开一次 Binder 往返，2026-10-01 修复 L-315）。
+        // （原先为那 1 个字符单独开一次 Binder 往返，2026-10-01 修复 L-315）。
         var beforeNow: String? = null
         if (!snapshot.replaceSelection) {
             // ⚠ `probeDocStart = false`（2026-10-03 修复 L-687）：提交侧只用到 `.text` 做逐字比对，
@@ -2882,7 +2882,7 @@ class JinnIme : InputMethodService() {
         // 服务端把原文当译文回显（网关回显请求字段 / 提示词被改坏 / 模型照抄输入）时，写回去等于把
         // 用户的话复制一遍。**不拒绝** —— 原文本身已经是目标语言时「译文与原文相同」是完全正常的
         // 结果（单词、专有名词、数字尤其常见），按失败处理会误伤。只记一条可辨认的便于事后归因
-        //（2026-10-01 修复 L-319）。
+        // （2026-10-01 修复 L-319）。
         if (body == snapshot.sent.trim() && snapshot.sent.isNotBlank()) {
             Diagnostics.w(TAG, "翻译: 译文与所发原文逐字相同（可能是服务端回显，或原文本身已是目标语言）")
         }
@@ -2900,7 +2900,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "翻译: 追加位置未能确认，放弃提交（避免插进原文中间）")
             // 这是**宿主问题**（不支持 getExtractedText，或忽略了光标移动），而 `TEXT_TRANSLATE_STALE`
             // 讲的是「输入已变化」—— 把宿主问题算到用户头上，而前一步的逐字比对刚证明输入没变
-            //（2026-10-01 修复 L-327）。
+            // （2026-10-01 修复 L-327）。
             toast(TEXT_TRANSLATE_APPEND_UNKNOWN)
             return false
         }
@@ -3348,7 +3348,7 @@ class JinnIme : InputMethodService() {
         // （`SearchView` 与大量「搜索 / 提交」按钮的标准写法），而它的 `OnEditorActionListener`
         // 只认这个 id —— 只发标准动作码会让搜索 / 提交不触发；更糟的是下面 `hasAction` 为真，
         // 于是也不会退回发回车键，用户按回车「完全没反应」且日志里没有痕迹
-        //（2026-10-02 修复 L-455）。`IME_FLAG_NO_ENTER_ACTION` 仍然优先：宿主声明了就别动作。
+        // （2026-10-02 修复 L-455）。`IME_FLAG_NO_ENTER_ACTION` 仍然优先：宿主声明了就别动作。
         val customActionId = editorInfo?.actionId ?: 0
 
         val hasAction = !actionDisabled &&

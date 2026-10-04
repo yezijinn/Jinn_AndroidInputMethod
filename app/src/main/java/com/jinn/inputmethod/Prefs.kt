@@ -695,7 +695,7 @@ class Prefs(context: Context) {
     private val TAG = "Prefs"
 
     // 凭据明文的缓存持有者在 companion object 里 —— 必须**进程级**，原因见那里的 KDoc
-    //（2026-10-01 修复 L-298）。
+    // （2026-10-01 修复 L-298）。
 
     /**
      * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。

@@ -405,7 +405,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 val isFirstChunk = scannedTotal <= SEARCH_WINDOW_ITEMS
                 val now = System.currentTimeMillis()
                 // 发布节流：窗口细化到 50 条后，逐块发布会让大库搜索产生数百次布局
-                //（每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。
+                // （每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。
                 if (isFirstChunk || now - lastPublishAt >= PUBLISH_MIN_INTERVAL_MS) {
                     lastPublishAt = now
                     publish(matches.toList(), relayout = isFirstChunk, capped = capped)

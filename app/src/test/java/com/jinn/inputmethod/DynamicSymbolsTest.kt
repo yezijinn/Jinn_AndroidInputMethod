@@ -219,7 +219,7 @@ class DynamicSymbolsTest {
     @Test
     fun `必须显式锁 Locale`() {
         // 注释里提到 ofPattern 不该被算成「一处未锁」：剥注释走共用 TestSources.codeOf
-        //（BUG.md L-116；行尾注释与块注释一并剥，旧写法只丢整行注释）—— 行数不变，逐行判据不受影响
+        // （BUG.md L-116；行尾注释与块注释一并剥，旧写法只丢整行注释）—— 行数不变，逐行判据不受影响
         val code = TestSources.codeSource("DynamicSymbols.kt")
         val sites = code.lines().filter { it.contains("ofPattern(") }
         assertTrue("至少要有一处 ofPattern（改实现后请同步本用例）", sites.isNotEmpty())

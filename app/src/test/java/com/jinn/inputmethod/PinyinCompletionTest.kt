@@ -281,7 +281,7 @@ class PinyinCompletionTest {
     @Test
     fun 英文模式隔离由上层保证() {
         // 引擎本身不感知英文模式；验证：纯字母输入走全拼查询不崩溃即可
-        //（英文隔离在 PinyinKeyboardView 层：englishMode 时不调 PinyinEngine.query）
+        // （英文隔离在 PinyinKeyboardView 层：englishMode 时不调 PinyinEngine.query）
         val result = PinyinEngine.query("hello")
         assertTrue(result.candidates.isEmpty() || result.candidates.isNotEmpty())
     }

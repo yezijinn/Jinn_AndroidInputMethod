@@ -187,7 +187,7 @@ class SymbolLayoutTest {
     fun 符号页必须先放满26键再翻页() {
         // 一页 26 个符号，第 1 页必须先放满，剩余的才进下一页，不允许「16+16」这种半空页。
         // 这是全表的既有规范（其余分组的非末页都是 26 键），此前只有「半角」组违反
-        //（两页各 16 键），本次修正后用本用例守住。
+        // （两页各 16 键），本次修正后用本用例守住。
         val bad = SYMBOL_GROUPS.flatMap { group ->
             group.pages.withIndex().mapNotNull { (i, page) ->
                 when {
@@ -204,7 +204,7 @@ class SymbolLayoutTest {
     @Test
     fun 全角与半角两组取值零重合() {
         // 半角组只留 ASCII，同一个符号不得在两组各有一份，否则「按宽度选组」失去意义
-        //（`° ± × ÷ ℃` 这类无全/半角之分的符号统一放「全角」组）。
+        // （`° ± × ÷ ℃` 这类无全/半角之分的符号统一放「全角」组）。
         val full = SYMBOL_GROUPS.first { it.label == "全角" }.pages.flatMap { it.values }.toSet()
         val half = SYMBOL_GROUPS.first { it.label == "半角" }.pages.flatMap { it.values }.toSet()
         assertEquals("「全角 / 半角」两组出现重合取值: ${full intersect half}", emptySet<String>(), full intersect half)

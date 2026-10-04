@@ -187,7 +187,7 @@ class ClipboardClassifierExtractTest {
     @Test
     fun sourceMustNotUseWordBoundary() {
         // 注释里可能引用这两个记号（说明规则），只看代码：剥注释走共用 TestSources.codeOf
-        //（BUG.md L-116）—— 旧写法只丢整行注释，行尾注释里引用 `\b` 仍会误红
+        // （BUG.md L-116）—— 旧写法只丢整行注释，行尾注释里引用 `\b` 仍会误红
         val code = TestSources.codeSource("ClipboardClassifier.kt")
         assertTrue("分类器代码里禁止用单词边界 b", !code.contains("\\b"))
         assertTrue("分类器代码里禁止用单词边界 B", !code.contains("\\B"))

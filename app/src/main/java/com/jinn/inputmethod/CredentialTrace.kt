@@ -72,7 +72,7 @@ internal object CredentialTrace {
         }
         // **失败只影响「标记」，不影响「清洗」**（2026-10-01 修复 L-289）：此前是 `if (failed) return`，
         // 于是任一目标抛错就让本轮**谁都没清** —— 其中还包括「精确删成功了、但历史里另有带杂质变体」
-        //（missed 里的其他目标）。清洗遍本身是幂等的，多做一轮没有副作用。
+        // （missed 里的其他目标）。清洗遍本身是幂等的，多做一轮没有副作用。
         val cleaned = if (missed.isEmpty()) {
             0
         } else {
@@ -100,7 +100,7 @@ internal object CredentialTrace {
             )
         }
         // 任一环节没得出结论就不标记 —— 下次调用会重扫
-        //（`failed` / `cleaned < 0` / `maxIdUncertain` / `keptUncertain` 同权）
+        // （`failed` / `cleaned < 0` / `maxIdUncertain` / `keptUncertain` 同权）
         if (failed || cleaned < 0 || maxIdUncertain || keptUncertain) return removed
         // 被收藏保住的目标同样不标记：删不掉就不算清过（下次仍重扫）
         for (v in targets) if (v !in kept) purged[v] = maxId

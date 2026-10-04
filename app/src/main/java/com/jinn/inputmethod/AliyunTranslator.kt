@@ -241,7 +241,7 @@ internal class AliyunTranslator(
             code == "10004" -> TranslationError.PARAM
             // 超出单次字符上限 —— 设置页的说明里点名的就是它（「超出报错 10008」）。落进 else 会让
             // 「原文过长」显示成「服务异常」，用户按提示重试永远失败，而说明与行为互相矛盾
-            //（2026-10-01 修复 L-328）。
+            // （2026-10-01 修复 L-328）。
             code == "10008" -> TranslationError.PARAM
             code.startsWith("InvalidAccessKeyId") -> TranslationError.AUTH
             code.startsWith("SignatureDoesNotMatch") -> TranslationError.AUTH

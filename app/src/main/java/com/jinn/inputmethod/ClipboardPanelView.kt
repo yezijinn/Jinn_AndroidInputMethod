@@ -602,7 +602,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     Diagnostics.i(TAG, "续扫: 总数 $categoryTotal → $total（编号基准已刷新，继续扫）")
                 }
                 // 命名参数（BUG.md L-86）：第三个位置参数在语义上不可读
-                //（`(total, limit, maxScanPages, startOffset, fetch)` 两个可选参数同为 Int）
+                // （`(total, limit, maxScanPages, startOffset, fetch)` 两个可选参数同为 Int）
                 // 与 refresh 同款（BUG.md L-117）：只有被 fillFirstPage 接受的页才能提交游标
                 var accepted = nextCursor
                 var pending: ClipboardCursor? = null

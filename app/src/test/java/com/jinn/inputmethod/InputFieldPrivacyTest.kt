@@ -53,7 +53,7 @@ class InputFieldPrivacyTest {
     @Test
     fun 学习侧对口令变体宁可多拦翻译侧不收() {
         // 学习侧收「只报变体位 / 变体位配到别的类」的畸形声明：误拦的代价只是这个词没记住
-        //（2026-10-02 修复 L-466，此前复用翻译侧判据时把这几种放走了）
+        // （2026-10-02 修复 L-466，此前复用翻译侧判据时把这几种放走了）
         assertTrue(InputFieldPrivacy.suppressLearning(EditorInfo.TYPE_TEXT_VARIATION_PASSWORD))
         assertTrue(
             InputFieldPrivacy.suppressLearning(

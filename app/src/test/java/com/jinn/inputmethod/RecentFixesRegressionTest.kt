@@ -2026,7 +2026,7 @@ class RecentFixesRegressionTest {
         )
         // L-461：只写不读的视图字段不得复活（KDoc 曾声称它驱动回车键行为，实际没人读）。
         // 钉**声明**而不是「整个文件不许出现这个词」—— 后者会在注释 / 局部变量正常提到 imeOptions 时误红
-        //（2026-10-02 修复 L-474）。
+        // （2026-10-02 修复 L-474）。
         val view = codeOf("PinyinKeyboardView.kt")
         assertTrue(
             "PinyinKeyboardView 不得再有只写不读的 imeOptions 字段",
@@ -3304,7 +3304,7 @@ class RecentFixesRegressionTest {
             )
         }
         // L-634（成本）：设置页「获取模型 / 测试连接」不得无限连点 —— 早退保护与回调清理必须成对
-        //（只加早退不加清理 ⇒ 判据在首次请求后**永久成立**，按钮彻底失效）。
+        // （只加早退不加清理 ⇒ 判据在首次请求后**永久成立**，按钮彻底失效）。
         run {
             val op = codeOf("OpenAiSettingsActivity.kt")
             assertTrue(

@@ -174,7 +174,7 @@ class ClipboardKeysetPagingTest {
             assertFalse("$name 不得再用 OFFSET 分页器", "recentPageWithOffset" in code)
         }
         // 代码口径之外还要查**原始文本**（BUG.md L-118）：删了函数、只在注释里提它同样会误导读者
-        //（`@param` 里的失效链接、解释句里的幽灵函数名）。守卫文件自身要排除 —— 它必须写下这个串名。
+        // （`@param` 里的失效链接、解释句里的幽灵函数名）。守卫文件自身要排除 —— 它必须写下这个串名。
         for (name in listOf("ClipboardDb.kt", "ConfigBackupManager.kt", "ClipboardLimitsTest.kt")) {
             assertFalse(
                 "$name 不得再（连注释一起）提到已删除的 recentPageWithOffset",
