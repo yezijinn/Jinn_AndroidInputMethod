@@ -463,6 +463,15 @@ class DictManagerActivity : Activity() {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             var lastError = "未知错误"
             var ok = false
+            // 空间预检（L-799）：下载前先确认磁盘可写、容量够得下，避免写到一半 ENOSPC
+            // 才收到英文 IOException。需要量 = 压缩包 ×2 + 8MB 余量（解压/校验/移动都要临时空间）。
+            val stat = runCatching { android.os.StatFs(filesDir.absolutePath) }.getOrNull()
+            val freeBytes = stat?.availableBytes ?: Long.MAX_VALUE
+            val needBytes = (dict.sizeMb * 1024 * 1024 * 2).toLong() + 8L * 1024 * 1024
+            if (freeBytes < needBytes) {
+                lastError = "存储空间不足：约需 ${needBytes / 1024 / 1024}MB，仅剩 ${freeBytes / 1024 / 1024}MB"
+                Diagnostics.w(TAG, "分类词库下载中止：$lastError file=${dict.fileName}")
+            } else {
             for (url in dict.urls) {
                 runCatching {
                     val len = fetchToFile(url, dict.fileName, dict.checksum)
@@ -473,6 +482,7 @@ class DictManagerActivity : Activity() {
                     Diagnostics.w(TAG, "分类词库下载失败 url=$url : $lastError")
                 }
                 if (ok) break
+            }
             }
             runOnUiThread {
                 downloading = null
