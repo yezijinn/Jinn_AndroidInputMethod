@@ -114,6 +114,19 @@ class CustomDictsTest {
         assertFalse("键必须严格升序", CustomDicts.validateRawPack("zhangsan\t张三\njiqi\t机器\n"))
         assertFalse("空词会在引擎侧被丢弃，先挡在门外", CustomDicts.validateRawPack("zhangsan\t张三||李四\n"))
         assertFalse("键是小写字母连写", CustomDicts.validateRawPack("ZhangSan\t张三\n"))
+        assertFalse("键长须与 PhraseIndex.build 的 255B 闸同源", CustomDicts.validateRawPack("a".repeat(256) + "\t词\n"))
+        assertTrue("恰好 255 字符合法", CustomDicts.validateRawPack("a".repeat(255) + "\t词\n"))
+    }
+
+    @Test
+    fun `超长键与竖线符控制字符须在解析期跳过`() {
+        // 键长上限与 PhraseIndex.build 的 255B 硬闸同源（BUG.md L-828）：超限会让索引构建抛错、整包转回退
+        val ok = (1..200).joinToString(" ") { "a" }
+        assertTrue("200 个音节（键 200 字符）仍应合法", CustomDicts.parseHuman("词\t$ok", null).entries.isNotEmpty())
+        val tooLong = (1..300).joinToString(" ") { "a" }
+        val r = CustomDicts.parseHuman("词\t$tooLong\n甲\tjia\n乙|丙\tjia\n丙\u0000丁\tjia", null)
+        assertEquals(listOf("甲"), r.entries.map { it.text })
+        assertEquals("超长键 / 竖线符词 / 控制字符词各跳过一行（BUG.md L-829）", 3, r.skipped)
     }
 
     @Test

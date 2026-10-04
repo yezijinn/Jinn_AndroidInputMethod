@@ -49,6 +49,13 @@ internal object CustomDicts {
     /** 单个词的长度上限（字符）：防超长行混进来 */
     const val MAX_TEXT_CHARS = 64
 
+    /**
+     * 单个键的长度上限（字符）：与 `PhraseIndex.build` 的 `require(kb.size <= 255)` 同源 ——
+     * 键全是 `[a-z]`（见 [KEY_SHAPE]）⇒ 字符数 == UTF-8 字节数，直接比字符即可。
+     * 超限的键会让索引构建抛错、整包转「回退并入」并被记账为加载失败（BUG.md L-828）。
+     */
+    const val MAX_KEY_CHARS = 255
+
     /** 引擎侧音节表资产名（与 `PinyinEngine.SYLLABLES_ASSET` 同名，那边是 private 常量） */
     private const val SYLLABLES_ASSET = "pinyin_syllables.txt.xz"
 
@@ -95,11 +102,20 @@ internal object CustomDicts {
             }
             val word = pair.first
             val normalized = normalizeSyllables(pair.second, syllables)
-            if (word.length > MAX_TEXT_CHARS || normalized == null) {
+            if (normalized == null) {
                 skipped++
                 continue
             }
             val key = normalized.replace(" ", "")
+            // 键长与 `PhraseIndex.build` 的 255B 硬闸同源（键全 [a-z] ⇒ 字符数 == 字节数，见 MAX_KEY_CHARS）；
+            // 竖线符是词表分隔符（会被装载侧拆成多个候选）、控制字符会进候选文本 —— 都在解析期挡掉
+            // 并计入跳过（BUG.md L-828 / L-829）
+            if (word.length > MAX_TEXT_CHARS || key.length > MAX_KEY_CHARS ||
+                word.any { it == '|' || it.isISOControl() }
+            ) {
+                skipped++
+                continue
+            }
             if (!seen.add(word + "\u0000" + key)) {
                 skipped++
                 continue
@@ -175,7 +191,7 @@ internal object CustomDicts {
             val tab = line.indexOf('\t')
             if (tab <= 0) return false
             val key = line.substring(0, tab)
-            if (!KEY_SHAPE.matches(key)) return false
+            if (!KEY_SHAPE.matches(key) || key.length > MAX_KEY_CHARS) return false
             if (prevKey != null && key <= prevKey) return false
             prevKey = key
             val words = line.substring(tab + 1).split('|')

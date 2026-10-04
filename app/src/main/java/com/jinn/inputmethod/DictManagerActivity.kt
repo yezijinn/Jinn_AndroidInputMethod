@@ -264,15 +264,20 @@ class DictManagerActivity : Activity() {
     }
 
     private fun refreshList() {
-        // 残留临时件清理（2026-10-04 修复 L-798）：下载中被系统杀会留下 `*.xz.tmp`（上限 64MB），
-        // 而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见也删不掉，只能清数据 / 卸载才释放。
-        // 判据：`*.xz.tmp` 且不是**正在下载**的那个（`downloading` 跨实例跟踪，重建页面也不会误删）。
+        // 残留临时件清理（2026-10-04 修复 L-798；2026-10-05 加 mtime 保护，见 BUG.md L-827）：
+        // 下载中被系统杀会留下 `*.xz.tmp`（上限 64MB），而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见
+        // 也删不掉，只能清数据 / 卸载才释放。判据三条：`*.xz.tmp`、不是**正在下载**的那个（`downloading`
+        // 跨实例跟踪，重建页面也不会误删）、也不在**刚写入**的保护窗内（自定义词库导入走固定临时名，
+        // 导入中回到前台时这里若把它当残留删掉，随后的改名必然失败 —— Linux 删除已打开文件是成功的）。
         runCatching {
             val dir = dictDir()
-            val stale = OptionalDicts.staleTempNames(
-                dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList(),
+            val byName = dir.listFiles()?.filter { it.isFile }
+                ?.associate { it.name to it.lastModified() } ?: emptyMap()
+            val stale = OptionalDicts.cleanableTempNames(
+                byName.keys,
                 downloading,
-            )
+                System.currentTimeMillis(),
+            ) { byName[it] ?: 0L }
             if (stale.isNotEmpty()) {
                 var freed = 0L
                 for (name in stale) {
@@ -283,15 +288,22 @@ class DictManagerActivity : Activity() {
                 Diagnostics.i(TAG, "清理残留下载临时件: ${stale.size} 个 / $freed B")
             }
         }.onFailure { Diagnostics.w(TAG, "清理残留下载临时件失败: ${it.javaClass.simpleName}") }
-        listHost.removeAllViews()
-        for (dict in OptionalDicts.ALL) {
-            listHost.addView(buildCard(dict), matchWrap(bottom = 2))
-        }
-        // 用户自定义词库：导入为 OPT_DICT_DIR/custom_user.txt.xz，引擎与备份均走可选包同一通道
-        listHost.addView(buildCustomCard(), matchWrap(bottom = 2))
-        // 清单外的包（旧版遗留）：只列出来给个删除入口，见 OptionalDicts.unknownPackages
-        for (fileName in unknownPackagesInDir()) {
-            listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 2))
+        // 渲染单独兜底：清理失败不该挡住渲染，渲染异常也不能把同进程的 IME 服务一起带崩
+        // （BUG.md L-831；对照下载回调里那句 L-800 —— 那次实测过「一次刷新异常会杀 IME 进程」）
+        runCatching {
+            listHost.removeAllViews()
+            for (dict in OptionalDicts.ALL) {
+                listHost.addView(buildCard(dict), matchWrap(bottom = 2))
+            }
+            // 用户自定义词库：导入为 OPT_DICT_DIR/custom_user.txt.xz，引擎与备份均走可选包同一通道
+            listHost.addView(buildCustomCard(), matchWrap(bottom = 2))
+            // 清单外的包（旧版遗留）：只列出来给个删除入口，见 OptionalDicts.unknownPackages
+            for (fileName in unknownPackagesInDir()) {
+                listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 2))
+            }
+        }.onFailure {
+            Diagnostics.w(TAG, "词库页刷新失败: ${it.javaClass.simpleName}")
+            runCatching { setStatus(TEXT_REFRESH_FAIL) }
         }
     }
 
@@ -847,6 +859,9 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_WRITE_FAIL = "写入词库失败"
         const val TEXT_CUSTOM_RESULT = "已导入 %d 条（跳过 %d 行），输入法将重启以生效"
         const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
+
+        /** 列表渲染异常时的兜底提示（BUG.md L-831：刷新失败不崩进程，重进本页即恢复） */
+        const val TEXT_REFRESH_FAIL = "刷新词库列表失败，重进本页可恢复"
 
         /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
         const val TEXT_RESUME_RESTART = "词库已下载完成，输入法将重启以加载"

@@ -167,6 +167,30 @@ object OptionalDicts {
     const val TEMP_SUFFIX = ".xz.tmp"
 
     /**
+     * 刚写入的临时件保护窗（见 [cleanableTempNames]）。
+     *
+     * 自定义词库导入走固定名 `custom_user.txt.xz.tmp`（`CustomDicts.writePack`），页面只要再进一次前台
+     * （`onResume → refreshList`）就会跑清理，而 Linux 上删除已打开文件是**成功**的、随后的 `renameTo`
+     * 必失败 ⇒ 本次导入报废（BUG.md L-827）。清理前用文件系统事实（mtime）兜一层，
+     * 对下载与导入两条路径同时生效，也不受页面实例重建影响。
+     */
+    const val TMP_PROTECT_MS = 10 * 60 * 1000L
+
+    /**
+     * 「可以清理的临时件」= [staleTempNames] 的结果里，去掉**修改时间在 [TMP_PROTECT_MS] 之内**的。
+     *
+     * 纯函数（mtime 由调用侧传入，不碰文件系统），与 [staleTempNames] 同款便于单测；
+     * 保护窗放宽只会推迟清理（下次进页面再清），不会漏清。
+     */
+    fun cleanableTempNames(
+        fileNames: Collection<String>,
+        active: String?,
+        now: Long,
+        modifiedAtOf: (String) -> Long,
+    ): List<String> = staleTempNames(fileNames, active)
+        .filter { now - modifiedAtOf(it) > TMP_PROTECT_MS }
+
+    /**
      * 流式计算文件的 SHA-256（纯 IO 逻辑，便于 JVM 单测）。
      *
      * 边读边更新摘要，不把整个文件读进内存（现役最大包 4.21MB，往后可能更大）。

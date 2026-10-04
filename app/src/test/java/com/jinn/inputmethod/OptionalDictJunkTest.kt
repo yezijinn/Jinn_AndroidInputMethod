@@ -109,11 +109,38 @@ class OptionalDictJunkTest {
     }
 
     @Test
+    fun `刚写入的临时件须在保护窗内豁免清理`() {
+        // 自定义词库导入走固定临时名：导入中回到前台时若把它当残留删掉，随后的改名必然失败（BUG.md L-827）
+        val now = 1_000_000_000_000L
+        val names = listOf("custom_user.txt.xz.tmp", "dict_part2.txt.xz.tmp", "notes.txt")
+        val mtimes = mapOf(
+            "custom_user.txt.xz.tmp" to now - 1_000L,                            // 正在写（1 秒前）
+            "dict_part2.txt.xz.tmp" to now - OptionalDicts.TMP_PROTECT_MS - 1,   // 老残留
+        )
+        assertEquals(
+            listOf("dict_part2.txt.xz.tmp"),
+            OptionalDicts.cleanableTempNames(names, active = null, now = now) { mtimes[it] ?: 0L },
+        )
+        // 边界：恰好等于保护窗的也算「刚写入」，不清理（宁多留一轮）
+        assertEquals(
+            emptyList<String>(),
+            OptionalDicts.cleanableTempNames(listOf("a.xz.tmp"), active = null, now = now) {
+                now - OptionalDicts.TMP_PROTECT_MS
+            },
+        )
+    }
+
+    @Test
     fun `残留件的清理与重启窗口接线不得回退（L-798、L-801）`() {
         val src = TestSources.codeOf(TestSources.rawSourceOfShortName("DictManagerActivity.kt"))
         assertTrue(
-            "refreshList 必须清理残留临时件（否则一次下载中进程被杀就在存储里留最多 64MB）",
-            "OptionalDicts.staleTempNames(" in block(src, "private fun refreshList"),
+            "refreshList 必须清理残留临时件（否则一次下载中进程被杀就在存储里留最多 64MB）；" +
+                "2026-10-05 起走 cleanableTempNames（带刚写入保护窗，BUG.md L-827）",
+            "OptionalDicts.cleanableTempNames(" in block(src, "private fun refreshList"),
+        )
+        assertTrue(
+            "不得退回只按名字筛的 staleTempNames：会把正在写入的自定义词库临时件当残留删掉，随后的改名必失败（BUG.md L-827）",
+            "OptionalDicts.staleTempNames(" !in block(src, "private fun refreshList"),
         )
         assertTrue(
             "清理必须留一条日志（否则事后无法判断有没有清过）",
