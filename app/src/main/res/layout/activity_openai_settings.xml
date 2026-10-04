@@ -196,21 +196,6 @@
                     android:inputType="textMultiLine"
                     android:maxLines="8"/>
 
-                <TextView
-                    style="@style/SettingsLabel"
-                    android:id="@+id/label_ai_prompt_preset"
-                    android:layout_marginTop="4dp"
-                    android:labelFor="@id/spinner_ai_prompt_preset"
-                    android:text="提示词模板"/>
-
-                <com.jinn.inputmethod.UserAwareSpinner
-                    style="@style/SettingsField"
-                    android:id="@+id/spinner_ai_prompt_preset"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:spinnerMode="dropdown"/>
-
                 <Button
                     style="@style/SettingsButton"
                     android:id="@+id/btn_ai_prompt_reset"
