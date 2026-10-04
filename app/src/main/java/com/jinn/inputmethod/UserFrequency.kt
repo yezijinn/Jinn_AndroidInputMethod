@@ -114,6 +114,13 @@ internal object UserFrequency {
         if (value && entries.isEmpty()) {
             val f = file ?: return
             BackgroundIo.run { reload(f) }
+        } else if (!value) {
+            // 关闭即清内存：否则关闭期间最后一次 flush 仍会把旧学习写回文件、
+            // 重开后被 reload 读回，等于「关掉了又偷偷学」。
+            synchronized(saveLock) {
+                entries.clear()
+                dirty = false
+            }
         }
     }
 
