@@ -44,6 +44,7 @@ class OpenAiSettingsActivity : Activity() {
     private lateinit var editHeaders: EditText
     private lateinit var editExtraJson: EditText
     private lateinit var spinnerTarget: UserAwareSpinner
+    private lateinit var spinnerPromptPreset: UserAwareSpinner
     private lateinit var textHint: TextView
 
     /** 显式保存入口与结果提示（2026-10-01：参数多，改完要有看得见的「保存」与结果） */
@@ -138,6 +139,7 @@ class OpenAiSettingsActivity : Activity() {
         editHeaders = findViewById(R.id.edit_ai_headers)
         editExtraJson = findViewById(R.id.edit_ai_extra_json)
         spinnerTarget = findViewById(R.id.spinner_ai_target)
+        spinnerPromptPreset = findViewById(R.id.spinner_ai_prompt_preset)
         // 结果提示复位（2026-10-02 修复 L-371）：保存成功后提示一直停在「已保存到本机」，
         // 用户继续改字段时它与屏幕上的未保存改动矛盾。挂「获得焦点即回 idle」，零侵入
         // （不用 TextWatcher：`loadValues()` 的回填 setText 会把刚显示的保存结果立刻抹掉）。
@@ -179,6 +181,7 @@ class OpenAiSettingsActivity : Activity() {
         findViewById<Button>(R.id.btn_ai_test).text = TEXT_TEST
 
         initTargetSpinner()
+        initPromptPresetSpinner()
         findViewById<Button>(R.id.btn_ai_fetch_models).setOnClickListener { fetchModels(showPicker = true) }
         findViewById<Button>(R.id.btn_ai_test).setOnClickListener { fetchModels(showPicker = false) }
         findViewById<Button>(R.id.btn_ai_prompt_reset).setOnClickListener {
@@ -298,6 +301,25 @@ class OpenAiSettingsActivity : Activity() {
         }
     }
 
+    private fun initPromptPresetSpinner() {
+        spinnerPromptPreset.adapter = ArrayAdapter(
+            this,
+            R.layout.item_spinner,
+            OpenAiTranslator.PROMPT_PRESETS.map { it.name },
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
+        spinnerPromptPreset.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (loading) return
+                if (!spinnerPromptPreset.userInteracted) return
+                val p = OpenAiTranslator.PROMPT_PRESETS[position]
+                editSystem.setText(p.system)
+                editUser.setText(p.user)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
     /** 只回写用户真的改过的字段（2026-10-01 修复 L-247）：见 [CredentialSaveGuard] */
     private val saveGuard = CredentialSaveGuard()
 
@@ -322,6 +344,7 @@ class OpenAiSettingsActivity : Activity() {
     private fun loadValues() {
         // 每次回到本页都重新载入配置：清掉上一轮的用户操作探针，免得它授权一次程序化回填（L-822）
         spinnerTarget.resetUserInteracted()
+        spinnerPromptPreset.resetUserInteracted()
         saveGuard.reset()
         // 程序化回填整段抑制（2026-10-02 修复 L-367 的配套）：下面的 setText 会触发自定义框的
         // TextWatcher，不抑制就会把「载入」当成「用户编辑」

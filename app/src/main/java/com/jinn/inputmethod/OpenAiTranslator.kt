@@ -192,6 +192,28 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         /** user 提示词模板（逐字取自接入文档，`{目标语言}` 变成可替换变量） */
         const val DEFAULT_USER_PROMPT = "请将以下文本翻译成{{target_language}}，只返回译文：\n{{text}}"
 
+        /** 专业方向预设：界面里「提示词模板」下拉可直接套用，不含 {{text}} 的模板由调用方兜底追加 */
+        data class PromptPreset(val name: String, val system: String, val user: String)
+
+        val PROMPT_PRESETS: List<PromptPreset> = listOf(
+            PromptPreset("默认翻译", DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT),
+            PromptPreset(
+                "闲聊社交",
+                "你是日常社交口语翻译者。只输出译文，自然口语、语气贴合上下文，语句要完整且语法正确。禁止加解释/前缀/多余换行。",
+                "请把下面这段短句/聊天翻译成{{target_language}}。原文可能是不完整碎片，仍要输出完整、通顺、语法正确的译文：\n{{text}}",
+            ),
+            PromptPreset(
+                "工作书面",
+                "你是正式书面翻译者。只输出译文，用书面语、标准格式、规范用词，保证语法与术语准确。禁止加解释/前缀。",
+                "请将以下文本以规范书面用词、标准格式译为{{target_language}}，只返回译文：\n{{text}}",
+            ),
+            PromptPreset(
+                "编程代码",
+                "你是技术内容翻译者。只输出译文。区分需要翻译的描述性文字与不应翻译的编程专名：变量名/方法名/类名/类型名/包名/命令/配置项/路径/正则/代码片段必须原样保留，且不得被翻译链接或结构改写。",
+                "请将以下文本译成{{target_language}}：其中自然语言部分正常翻译，编程标识符/代码片段保持原样不动，不加解释：\n{{text}}",
+            ),
+        )
+
         const val VAR_TEXT = "{{text}}"
 
 /**
