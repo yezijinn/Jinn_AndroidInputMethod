@@ -716,6 +716,10 @@ object PinyinEngine {
         invalidateMergedCache()
     }
 
+    /**
+     * 从多份文本词表加载拼音引擎词典：汉字 / 词组 / 音节 / 各档稀有字。
+     * 在 [synchronized] 内重建，避免与查询并发；`rareXxx` 开关控制各稀有档是否纳入。
+     */
     internal fun loadFromTexts(
         chars: String,
         phrases: String,

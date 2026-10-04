@@ -1,5 +1,5 @@
 # ============================================================
-# bug_capture.ps1 - One-click diagnostic bundle for Jinn Pinyin IME
+# bug_capture.ps1 - 一键抓取精灵输入法的诊断包
 #
 # Uses ADB + Root(KernelSU) to collect a complete diagnostic snapshot:
 #   - app logs (jinn-*.log)

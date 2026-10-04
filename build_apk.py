@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 r"""
-Jinn拼音输入法 一键构建脚本：编译带正式签名的 release APK。
+精灵输入法 一键构建脚本：编译带正式签名的 release APK。
 
 用法：
     python build_apk.py                      # 编译 release，复制 APK 到根目录

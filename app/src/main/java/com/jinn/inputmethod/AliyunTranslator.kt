@@ -48,6 +48,7 @@ internal class AliyunTranslator(
     private val nonceSource: () -> String = { UUID.randomUUID().toString() },
 ) : TranslationProvider {
 
+    /** 构造阿里云机器翻译的 HTTP 请求：表单字段 + 基于实际发送字节的 Content-MD5 签名（Scene 为实测必填项） */
     override fun buildRequest(text: String, target: TranslationLanguage): Request {
         val body = JSONObject()
             .put("FormatType", FORMAT_TYPE)
@@ -94,6 +95,7 @@ internal class AliyunTranslator(
             .build()
     }
 
+    /** 解析响应：先判业务错误码（如 10004 缺 Scene、404 认证失败）再退判 HTTP 状态，避免把认证/参数错误误报成「翻译为空」 */
     override fun parseResponse(code: Int, body: String?): TranslationOutcome {
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
             ?: return TranslationOutcome.Fail(httpErrorOf(code))

@@ -21,9 +21,9 @@
 -->
 <resources>
     <!-- 应用标识 -->
-    <string name="app_name">Jinn拼音输入法</string>
+    <string name="app_name">精灵输入法</string>
     <string name="subtype_label">语音听写</string>
-    <string name="settings_title">Jinn拼音输入法</string>
+    <string name="settings_title">精灵输入法</string>
     <string name="settings_subtitle">26 键全拼 + 7 套双拼方案</string>
 
     <!-- 键盘状态条 -->

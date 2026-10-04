@@ -35,7 +35,7 @@ import android.widget.Toast
 import java.lang.ref.WeakReference
 
 /**
- * Jinn 拼音输入法。
+ * 精灵输入法。
  *
  * 双模式：
  *  - 语音模式：麦克风 + 最小编辑键（长按说话 / 短按连续录音，实时推给服务端识别）

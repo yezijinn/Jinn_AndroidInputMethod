@@ -1,4 +1,4 @@
-# Jinn Pinyin IME
+# 精灵输入法
 
 A lightweight Android IME: QWERTY full pinyin / Shuangpin (7 schemes), clipboard history, optional
 dictionaries. Everything core runs on-device, no server needed; APK ~2.8MB with no bundled speech datas.
