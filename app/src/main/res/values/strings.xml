@@ -90,6 +90,7 @@
     <string name="dict_action_download">下载</string>
     <string name="dict_action_reinstall">重新下载</string>
     <string name="dict_action_remove">删除</string>
+    <string name="dict_action_import_custom">导入自定义词库</string>
     <!-- 下载与删除结果 -->
     <string name="dict_downloading">正在下载 %1$s…</string>
     <string name="dict_download_done">%1$s 下载完成</string>

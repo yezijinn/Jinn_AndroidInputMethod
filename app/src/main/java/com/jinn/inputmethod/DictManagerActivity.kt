@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -193,6 +194,34 @@ class DictManagerActivity : Activity() {
 
     // ── 列表 ────────────────────────────────────────────────
 
+    private val RC_CUSTOM_DICT = 0x6901
+
+    private fun openCustomPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "*/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+        }
+        runCatching { startActivityForResult(intent, RC_CUSTOM_DICT) }
+            .onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
+    }
+
+    @Deprecated("onActivityResult 已废弃，但此页是 Activity（非 ComponentActivity），无 registerForActivityResult")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != RC_CUSTOM_DICT || resultCode != Activity.RESULT_OK || data == null) return
+        val uri = data.data ?: return
+        val text = runCatching {
+            contentResolver.openInputStream(uri)?.use { it.bufferedReader(Charsets.UTF_8).readText() }
+        }.getOrNull() ?: run { setStatus("无法读取文件"); return }
+        val (entries, skipped) = CustomDicts.parseHuman(text)
+        if (entries.isEmpty()) { setStatus("未找到合法词条（跳过 $skipped 行）"); return }
+        val f = CustomDicts.writePack(this, entries)
+        if (f == null) { setStatus("写入词库失败"); return }
+        setStatus("已导入 ${entries.size} 条（跳过 $skipped 行），正在生效…")
+        restartImeForDict()
+    }
+
     private fun refreshList() {
         // 残留临时件清理（2026-10-04 修复 L-798）：下载中被系统杀会留下 `*.xz.tmp`（上限 64MB），
         // 而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见也删不掉，只能清数据 / 卸载才释放。
@@ -214,6 +243,15 @@ class DictManagerActivity : Activity() {
             }
         }.onFailure { Diagnostics.w(TAG, "清理残留下载临时件失败: ${it.javaClass.simpleName}") }
         listHost.removeAllViews()
+        // 用户自定义词库：导入为 OPT_DICT_DIR/custom_user.txt.xz，后续引擎 + ConfigBackup 与可选包走同一通道
+        listHost.addView(
+            actionButton(
+                text = getString(R.string.dict_action_import_custom),
+                color = getColor(R.color.accent),
+                enabled = actionsEnabled(),
+            ) { openCustomPicker() },
+            matchWrap(bottom = 2),
+        )
         for (dict in OptionalDicts.ALL) {
             listHost.addView(buildCard(dict), matchWrap(bottom = 2))
         }
