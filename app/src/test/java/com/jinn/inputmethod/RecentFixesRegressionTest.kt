@@ -3017,7 +3017,12 @@ class RecentFixesRegressionTest {
         // 整段包住会把生效动作 `restartImeForDict` 一起吞掉（一次刷新异常 ⇒ 词库下完却不生效）。
         // 判据从「日志文案字面量」改成位置比较：文案会改，结构不会。
         run {
-            val cb = blockAfter(codeOf("DictManagerActivity.kt"), "runOnUiThread {")
+            // 锚点取「download 函数体内的第一个 runOnUiThread」：页面里还有别的 runOnUiThread
+            // （自定义词库导入的回调），按全文第一个取会锚到那段、判据随锚点漂走
+            val cb = blockAfter(
+                blockAfter(codeOf("DictManagerActivity.kt"), "private fun download("),
+                "runOnUiThread {",
+            )
             val caught = cb.indexOf("runCatching")
             val refresh = cb.indexOf("page.refreshList()")
             val failed = cb.indexOf(".onFailure")
@@ -3092,7 +3097,8 @@ class RecentFixesRegressionTest {
         // 与「刷界面」绑在一个 try 里时，一次主线程 IO 异常会静默吃掉生效动作。
         run {
             val dict = codeOf("DictManagerActivity.kt")
-            val cb = blockAfter(dict, "runOnUiThread {")
+            // 与 L-800 同一锚点口径：取 download 函数体内那个回调，别锚到自定义词库导入的回调
+            val cb = blockAfter(blockAfter(dict, "private fun download("), "runOnUiThread {")
             val refresh = cb.indexOf("page.refreshList()")
             val restart = cb.indexOf("page.restartImeForDict()")
             val caught = cb.indexOf(".onFailure")

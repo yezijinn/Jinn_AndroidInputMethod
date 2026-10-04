@@ -196,7 +196,13 @@ class DictManagerActivity : Activity() {
 
     private val RC_CUSTOM_DICT = 0x6901
 
+    /** 导入线程在跑时按钮置灰，防连点重复解析（见 [actionsEnabled]） */
+    @Volatile
+    private var importingCustom = false
+
     private fun openCustomPicker() {
+        if (downloading != null) return
+        if (blockedByRestart()) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "*/*"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
@@ -205,21 +211,56 @@ class DictManagerActivity : Activity() {
             .onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
     }
 
+    /**
+     * 自定义词库导入：人写的 `.txt` → [CustomDicts] 校验归一 → 原子写 `dicts/custom_user.txt.xz`。
+     *
+     * 流在主线程取（URI 授权绑本进程，取到流即持有），**解析与打包放后台**：8MB 文本的逐行
+     * 校验加 xz 压缩放主线程会掉帧。所有失败都落到状态行，不抛给系统。
+     */
     @Deprecated("onActivityResult 已废弃，但此页是 Activity（非 ComponentActivity），无 registerForActivityResult")
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != RC_CUSTOM_DICT || resultCode != Activity.RESULT_OK || data == null) return
+        if (blockedByRestart()) return
         val uri = data.data ?: return
-        val text = runCatching {
-            contentResolver.openInputStream(uri)?.use { it.bufferedReader(Charsets.UTF_8).readText() }
-        }.getOrNull() ?: run { setStatus("无法读取文件"); return }
-        val (entries, skipped) = CustomDicts.parseHuman(text)
-        if (entries.isEmpty()) { setStatus("未找到合法词条（跳过 $skipped 行）"); return }
-        val f = CustomDicts.writePack(this, entries)
-        if (f == null) { setStatus("写入词库失败"); return }
-        setStatus("已导入 ${entries.size} 条（跳过 $skipped 行），正在生效…")
-        restartImeForDict()
+        val input = runCatching { applicationContext.contentResolver.openInputStream(uri) }.getOrNull()
+        if (input == null) {
+            setStatus(TEXT_CUSTOM_READ_FAIL)
+            return
+        }
+        importingCustom = true
+        setStatus(TEXT_CUSTOM_IMPORTING)
+        refreshList()
+        val app = applicationContext
+        Thread {
+            var restart = false
+            val status = try {
+                val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_BYTES) }
+                val parsed = CustomDicts.parseHuman(text, CustomDicts.loadSyllables(app))
+                val pack = if (parsed.entries.isEmpty()) null else CustomDicts.writePack(app, parsed.entries)
+                when {
+                    parsed.truncated -> TEXT_CUSTOM_TOO_MANY
+                    parsed.entries.isEmpty() -> TEXT_CUSTOM_EMPTY.format(parsed.skipped)
+                    pack == null -> TEXT_CUSTOM_WRITE_FAIL
+                    else -> {
+                        restart = true
+                        Diagnostics.i(TAG, "自定义词库导入: ${parsed.entries.size} 条 / 跳过 ${parsed.skipped} 行")
+                        TEXT_CUSTOM_RESULT.format(parsed.entries.size, parsed.skipped)
+                    }
+                }
+            } catch (t: Throwable) {
+                Diagnostics.w(TAG, "自定义词库导入失败: ${t.javaClass.simpleName}")
+                if (t is CustomDicts.TooLargeException) TEXT_CUSTOM_TOO_BIG else TEXT_CUSTOM_READ_FAIL
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                importingCustom = false
+                setStatus(status)
+                refreshList()
+                if (restart) restartImeForDict()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun refreshList() {
@@ -243,26 +284,19 @@ class DictManagerActivity : Activity() {
             }
         }.onFailure { Diagnostics.w(TAG, "清理残留下载临时件失败: ${it.javaClass.simpleName}") }
         listHost.removeAllViews()
-        // 用户自定义词库：导入为 OPT_DICT_DIR/custom_user.txt.xz，后续引擎 + ConfigBackup 与可选包走同一通道
-        listHost.addView(
-            actionButton(
-                text = getString(R.string.dict_action_import_custom),
-                color = getColor(R.color.accent),
-                enabled = actionsEnabled(),
-            ) { openCustomPicker() },
-            matchWrap(bottom = 2),
-        )
         for (dict in OptionalDicts.ALL) {
             listHost.addView(buildCard(dict), matchWrap(bottom = 2))
         }
+        // 用户自定义词库：导入为 OPT_DICT_DIR/custom_user.txt.xz，引擎与备份均走可选包同一通道
+        listHost.addView(buildCustomCard(), matchWrap(bottom = 2))
         // 清单外的包（旧版遗留）：只列出来给个删除入口，见 OptionalDicts.unknownPackages
         for (fileName in unknownPackagesInDir()) {
             listHost.addView(buildUnknownCard(fileName), matchWrap(bottom = 2))
         }
     }
 
-    /** 下载 / 删除按钮的可用性：下载中或**重启窗口内**一律禁用（后者见 L-801） */
-    private fun actionsEnabled() = downloading == null && !restartPending
+    /** 下载 / 删除 / 导入按钮的可用性：下载中、导入中或**重启窗口内**一律禁用（后者见 L-801） */
+    private fun actionsEnabled() = downloading == null && !restartPending && !importingCustom
 
     /**
      * 重启窗口内拒绝会改 `dicts/` 的操作（2026-10-04 修复 L-801）；已拒绝时给提示并返回 true。
@@ -328,6 +362,91 @@ class DictManagerActivity : Activity() {
             matchWrap(top = 12).also { it.gravity = Gravity.END },
         )
         return card
+    }
+
+    /**
+     * 自定义词库卡片。
+     *
+     * 它是**用户自己写的**补充包，没有下载源 —— 删掉只能重新导入，所以删除要二次确认
+     * （与旧版遗留包同款）；导入入口只在这张卡片上，页面上不出现第二个入口。
+     */
+    private fun buildCustomCard(): View {
+        val file = CustomDicts.packFile(this)
+        val installed = file.isFile
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            PageStyle.dressAsCard(this)
+        }
+        card.addView(line(TEXT_CUSTOM_TITLE, getColor(R.color.text_primary), 16f, bold = true))
+        for (sentence in TEXT_CUSTOM_DESC) {
+            card.addView(line(sentence, getColor(R.color.text_secondary), 13f, top = 4))
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(
+            line(
+                text = if (installed) {
+                    getString(R.string.dict_status_installed, formatSize(file.length()))
+                } else {
+                    getString(R.string.dict_status_absent)
+                },
+                color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
+                size = 13f,
+            ),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        row.addView(
+            actionButton(
+                text = getString(R.string.dict_action_import_custom),
+                color = getColor(R.color.accent),
+                enabled = actionsEnabled(),
+            ) { openCustomPicker() },
+            buttonLp(right = 8).apply { leftMargin = dp(8) },
+        )
+        if (installed) {
+            row.addView(
+                actionButton(
+                    text = getString(R.string.dict_action_remove),
+                    color = getColor(R.color.danger),
+                    enabled = actionsEnabled(),
+                ) { confirmRemoveCustom() },
+                buttonLp(),
+            )
+        }
+        card.addView(row, matchWrap(top = 12))
+        return card
+    }
+
+    /** 删除自定义词库前二次确认（没有下载源，删掉就得重新导入） */
+    private fun confirmRemoveCustom() {
+        if (downloading != null) {
+            Toast.makeText(this, R.string.dict_remove_busy, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (blockedByRestart()) return
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_CUSTOM_TITLE)
+            .setMessage(TEXT_CUSTOM_CONFIRM)
+            .setPositiveButton(TEXT_CONFIRM_OK) { _, _ -> removeCustom() }
+            .setNegativeButton(TEXT_CONFIRM_CANCEL, null)
+            .show()
+    }
+
+    private fun removeCustom() {
+        // 确认框可能在窗口开始前就已打开（下载完成会立刻安排重启）⇒ 真正动手这一步也要判
+        if (blockedByRestart()) return
+        val ok = CustomDicts.deletePack(this)
+        Diagnostics.i(TAG, "自定义词库删除 ok=$ok")
+        setStatus(
+            if (ok) getString(R.string.dict_removed, TEXT_CUSTOM_TITLE)
+            else getString(R.string.dict_remove_failed),
+        )
+        refreshList()
+        if (ok) promptRestart()
     }
 
     /** 旧包的中文名：老用户认得这两个名字，比裸文件名 `ext.xz` 好认 */
@@ -712,6 +831,22 @@ class DictManagerActivity : Activity() {
 
         // 旧版遗留包区的文案在代码里下发：strings.xml 默认不改动，与生僻字页 / 模糊音页的 TEXT_* 同做法
         const val TEXT_LEGACY_DESC = "旧版本装过的词库包，现在的下载源已下线。"
+
+        // 自定义词库的文案同款：按钮复用 strings 里的 dict_action_import_custom，其余代码里下发
+        const val TEXT_CUSTOM_TITLE = "自定义词库"
+        val TEXT_CUSTOM_DESC = listOf(
+            "导入自己写的补充词库（.txt）：每行「词 拼音」，拼音用空格分音节。",
+            "词条与内置词库合并出候选；随配置备份一起导出与导入。",
+        )
+
+        const val TEXT_CUSTOM_IMPORTING = "正在导入自定义词库…"
+        const val TEXT_CUSTOM_READ_FAIL = "无法读取该文件"
+        const val TEXT_CUSTOM_TOO_BIG = "文件超过 8MB 上限，请拆分后导入"
+        const val TEXT_CUSTOM_TOO_MANY = "词条超过 5 万条上限，请精简后重试"
+        const val TEXT_CUSTOM_EMPTY = "没有可导入的合法词条（跳过 %d 行）"
+        const val TEXT_CUSTOM_WRITE_FAIL = "写入词库失败"
+        const val TEXT_CUSTOM_RESULT = "已导入 %d 条（跳过 %d 行），输入法将重启以生效"
+        const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
 
         /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
         const val TEXT_RESUME_RESTART = "词库已下载完成，输入法将重启以加载"

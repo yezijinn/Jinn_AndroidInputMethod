@@ -134,6 +134,8 @@ object OptionalDicts {
      * 过滤规则（顺序即判定顺序）：
      *  - 只收 `.xz`：下载中的 `<名字>.xz.tmp` 是临时件，不属于用户可见的包；
      *  - 排除清单内的名字：那些由既有卡片渲染，重复列出会出现两个删除入口；
+     *  - 排除用户自定义词库（[CustomDicts.PACK_NAME]）：它由词库页的专用卡片渲染，
+     *    被当成「旧版遗留包」列出等于把自己的词库显示成未知包；
      *  - 排序输出：文件系统的列目录顺序不保证稳定，页面每次重画要长得一样。
      *
      * 注意：清单外的包**仍然照常被引擎加载**（既定的兼容口径，见 `更新日志.md`）——
@@ -142,6 +144,7 @@ object OptionalDicts {
     fun unknownPackages(fileNames: Collection<String>): List<String> =
         fileNames.filter { it.endsWith(".xz") }
             .filter { name -> ALL.none { it.fileName == name } }
+            .filter { name -> !CustomDicts.isPackName(name) }
             .sorted()
 
     /**

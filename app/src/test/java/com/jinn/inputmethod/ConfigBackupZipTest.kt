@@ -356,6 +356,37 @@ class ConfigBackupZipTest {
     }
 
     @Test
+    fun `自定义词库须结构合法才放行且不合法只跳过`() {
+        // ① 合法：本应用导出的形态（xz 正文是 `键<TAB>词|词`）—— 它不在可选清单里，
+        //    但换机恢复必须带回来，所以备份导入侧要为它开一条结构校验通道
+        val dir1 = dictDir()
+        val good = CustomDicts.encodePack(listOf(CustomDicts.Entry("张三", "zhang san")))
+        val r1 = ConfigBackupManager.restoreDicts(
+            dir1,
+            makeZip((ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME) to good),
+            dictsDigestOf(CustomDicts.PACK_NAME to good),
+        )
+        assertNotNull("自定义词库不该被清单白名单挡掉", r1)
+        assertEquals(1, r1!!.first)
+        assertEquals(0, r1.second)
+        assertTrue("文件要真的落地", File(dir1, CustomDicts.PACK_NAME).isFile)
+
+        // ② 不合法：随便一段字节（xz 解不开 / 解出来不是 raw 形态）→ 跳过，绝不落盘。
+        //    独立子目录：dictDir() 每次返回同一路径，复用会让 ① 的落盘文件混进本断言
+        val dir2 = File(tmp, "dicts2").apply { mkdirs() }
+        val bad = ByteArray(64) { (it * 7).toByte() }
+        val r2 = ConfigBackupManager.restoreDicts(
+            dir2,
+            makeZip((ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME) to bad),
+            dictsDigestOf(CustomDicts.PACK_NAME to bad),
+        )
+        assertNotNull(r2)
+        assertEquals(0, r2!!.first)
+        assertEquals(1, r2.second)
+        assertTrue("结构不合法的自定义包绝不能落盘", dir2.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
     fun `预算链关系成立`() {
         // 导出预算 ≤ 导出单节闸（留转义余量）；单节上限 < 包体上限 < 词库总量上限的关系
         assertTrue(

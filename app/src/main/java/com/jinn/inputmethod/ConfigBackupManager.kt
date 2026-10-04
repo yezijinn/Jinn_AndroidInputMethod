@@ -1048,7 +1048,8 @@ internal object ConfigBackupManager {
      * 之所以不让单文件「边校验边改名」：聚合校验失败时已经改名的文件无法回滚，
      * 会留下「一部分是备份的、一部分是原来的」的混合状态。
      *
-     * @return 写入数 to 跳过数（跳过的**四种**情形：文件名不在清单内、内容与官方校验值不符、
+     * @return 写入数 to 跳过数（跳过的**五种**情形：文件名不在清单内、内容与官方校验值不符、
+     *   自定义词库结构校验不过（见 [CustomDicts.isValidPackFile]）、
      *   目标文件已存在（不覆盖用户现有词库，即使内容与包里的不同）、改名落盘失败（磁盘/权限问题））；
      *   失败返回 null
      */
@@ -1106,9 +1107,12 @@ internal object ConfigBackupManager {
                         }
                         // 白名单（可选词库清单）之外的条目：**参与摘要校验但不落盘**。
                         // 否则任意 .xz 都能被塞进 dicts/，而引擎启动会无条件加载并全量解压它
-                        // —— xz 压缩比轻松 >100:1，几百 KB 的包就能让输入法启动 OOM 或写满磁盘
+                        // —— xz 压缩比轻松 >100:1，几百 KB 的包就能让输入法启动 OOM 或写满磁盘。
+                        // 例外：用户自定义词库（换机恢复必须带回来，否则词条静默丢失）——
+                        // 它没有官方 sha，改以**结构校验**当判据，见下面的 custom 分支。
                         val official = checksumOf(fileName)
-                        val allowed = official != null
+                        val custom = CustomDicts.isPackName(fileName)
+                        val allowed = official != null || custom
                         val tmp = File(dir, fileName + RESTORE_SUFFIX)
                         val md = java.security.MessageDigest.getInstance("SHA-256")
                         var size = 0L
@@ -1140,6 +1144,19 @@ internal object ConfigBackupManager {
                         val digest = md.digest().joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
                         hashes.add(fileName to digest)
                         when {
+                            custom -> {
+                                // 无官方 sha 可用：限定解压量 + 只收本应用能产出的 raw 形态，
+                                // 与「用户自己在词库页导入」同一把闸（xz 炸弹在解压上限处失效）
+                                if (CustomDicts.isValidPackFile(tmp)) {
+                                    pending.add(tmp to File(dir, fileName))
+                                    // 登记为 in-flight：清理器跑在别的线程/执行器上，不能删正在写的中间件
+                                    tempInFlight.add(tmp.name)
+                                } else {
+                                    tmp.delete()
+                                    skippedByName++
+                                    Diagnostics.w(TAG, "词库恢复: 自定义词库内容不合法，已跳过")
+                                }
+                            }
                             official == null -> {
                                 skippedByName++
                                 Diagnostics.w(TAG, "词库恢复: 跳过不在可选词库清单内的 $fileName")
