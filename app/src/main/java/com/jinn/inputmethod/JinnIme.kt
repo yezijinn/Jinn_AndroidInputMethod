@@ -58,6 +58,15 @@ class JinnIme : InputMethodService() {
     /** 息屏接收器：锁屏即视为空闲，可安全做 21~34s 的后台重活 */
     private var screenOffReceiver: BroadcastReceiver? = null
 
+    /**
+     * 响铃模式接收器：静音 / 仅震动切换时把键反馈的闸门缓存刷新一遍。
+     *
+     * 为什么需要它：按键路径不查 IPC，响铃模式是缓存值；而用音量键调静音**不需要离开键盘界面**，
+     * 只在弹键盘时刷新的话，键盘显示期间切静音、按键音会照旧出声，直到下一次弹键盘才收口。
+     * 去系统设置里改也发这条广播，两条路径一并覆盖。
+     */
+    private var ringerModeReceiver: BroadcastReceiver? = null
+
     /** 键盘收起后的空闲检查（见 [maybeLoadOptionalDict]） */
     private val optionalIdleCheck = Runnable { maybeLoadOptionalDict("键盘收起后闲置") }
 
@@ -429,6 +438,22 @@ class JinnIme : InputMethodService() {
             }.onFailure { e ->
                 // 注册失败不影响功能：还有键盘收起与兜底两条路
                 Diagnostics.w(TAG, "息屏接收器注册失败: ${e.message}")
+            }
+        }
+        // 响铃模式变化（静音 / 仅震动 / 恢复）：把键反馈的闸门缓存刷新一遍。
+        // 这条广播覆盖「键盘显示期间用音量键调静音」这条不改界面就改变模式的路径。
+        ringerModeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == AudioManager.RINGER_MODE_CHANGED_ACTION) {
+                    KeyFeedback.refreshSystemGates(this@JinnIme)
+                }
+            }
+        }.also {
+            runCatching {
+                registerReceiver(it, IntentFilter(AudioManager.RINGER_MODE_CHANGED_ACTION))
+            }.onFailure { e ->
+                // 注册失败不影响功能：弹键盘时仍会刷新一次，只是新鲜度降到会话粒度
+                Diagnostics.w(TAG, "响铃模式接收器注册失败: ${e.message}")
             }
         }
         // 兜底：用户一直开着键盘打字，既不息屏也不收起，也要保证最终加载
@@ -1307,6 +1332,11 @@ class JinnIme : InputMethodService() {
         // 等挂上后再清祖先的不透明底色
         applyTransparencyToVoicePanel()
         container.post { clearOpaqueAncestorBackgrounds(container) }
+        // 平台反馈抑制属于「视图态」：凡新建视图就按 IME 侧当前策略重放一次。
+        // 这里才是唯一可靠的落点 —— `recreateKeyboardView()` 与**框架自己**调 `onCreateInputView()`
+        // 都经过此处，而键盘可见期间的换肤 / 改符号顺序同样会重建树；只在 onStartInputView 装一次的话，
+        // 重建之后本会话剩余时间功能键又会回到「平台一声 + 引擎一声」。
+        applyFeedbackSuppression()
         return container
     }
 
@@ -1317,22 +1347,15 @@ class JinnIme : InputMethodService() {
     )
 
     /**
-     * 半透明键盘：语音面板与 26 键面板同属「键盘面」，底色与键面一起跟透明度走
-     * （面板底若是实心，切到语音面板就会跳色）。
-     *
-     *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档，按色值识别；
-     *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ，
-     *    它们是 drawable，色值识别扫不到，按当前档重建；
-     *  - `mic_button`（MicButton）不参与（自绘）；其底盘已随 `mic_area` 一起处理。
-     */
-    /**
      * 按需抑制平台自带的点击音效与长按触觉。
      *
      * 那两份由 `View.performClick()` 与长按自己发出，而键盘自带引擎之后是重复的；且它只作用于
      * 有 `OnClickListener` 的键（字母键走自定义触摸，不触发），于是同一屏里功能键响两声、
      * 字母键响一声。开关没开时**必须还原**：那时平台那份是用户唯一的反馈来源。
      *
-     * 从 `keyboardContainer` 起整树递归（这两个标记在 `View` 上不继承），一次覆盖两套键盘与两块面板。
+     * 覆盖两套键盘与两块面板：从 `keyboardContainer` 起整树递归（这两个标记在 `View` 上不继承），
+     * 同时给每个容器挂上入树回调 —— 运行期按需建的键（候选词、面板按钮、密码数字条…）由它按
+     * 当前策略补一次，只靠递归盖不住那些。
      */
     private fun applyFeedbackSuppression() {
         keyboardContainer?.applyPlatformFeedbackPolicy(
@@ -1341,6 +1364,15 @@ class JinnIme : InputMethodService() {
         )
     }
 
+    /**
+     * 半透明键盘：语音面板与 26 键面板同属「键盘面」，底色与键面一起跟透明度走
+     * （面板底若是实心，切到语音面板就会跳色）。
+     *
+     *  - 纯色面（`kb_bg` 背板 / `kb_divider` 分隔线）走 plate 档，按色值识别；
+     *  - 键面（6 个 `key_bg` 编辑键）与麦克风底盘（`mic_area_bg`）走 surface 档 ，
+     *    它们是 drawable，色值识别扫不到，按当前档重建；
+     *  - `mic_button`（MicButton）不参与（自绘）；其底盘已随 `mic_area` 一起处理。
+     */
     private fun applyTransparencyToVoicePanel() {
         val container = keyboardContainer ?: return
         if (container.childCount < 1) return
@@ -1749,8 +1781,6 @@ class JinnIme : InputMethodService() {
         // 而用户改完开关回来必然经过弹键盘，缓存足够新鲜。
         KeyFeedback.refresh(prefs)
         KeyFeedback.refreshSystemGates(this)
-        // 平台自带的点击音 / 长按触觉是否抑制，随两个开关走；与上面两行同处刷新，改完开关必然生效
-        applyFeedbackSuppression()
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
         // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
@@ -1778,6 +1808,10 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "符号分组顺序/收藏变更: 补重建（上次延后）")
             recreateKeyboardView()
         }
+        // 平台自带的点击音 / 长按触觉是否抑制，随两个开关走。**必须排在可能重建的两处之后** ——
+        // 重建会换掉整棵树，先装的那次会被一起换走（本方法上半段的 applyThemeIfNeeded 也会重建）。
+        // 每次弹键盘重读一次开关，配置导入这类不经过设置页回调的改动也能在这里收口。
+        applyFeedbackSuppression()
         // 半透明键盘：语音面板底色的透明度也在这里刷新（用户可能在键盘外观页改过）
         applyTransparencyToVoicePanel()
         themeTicker.schedule() // 定时模式：键盘可见期间也准点换肤
@@ -1955,6 +1989,8 @@ class JinnIme : InputMethodService() {
         runCatching { unregisterReceiver(configReceiver) }
         screenOffReceiver?.let { runCatching { unregisterReceiver(it) } }
         screenOffReceiver = null
+        ringerModeReceiver?.let { runCatching { unregisterReceiver(it) } }
+        ringerModeReceiver = null
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
         // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧

@@ -533,7 +533,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 key.onActivate = {
                     // 无障碍（TalkBack 双击）走这条路径、不经过触摸监听：补一次敲击反馈，
                     // 否则辅助服务用户完全听不到 / 感觉不到按键。与触摸监听互斥，不会双发。
-                    KeyFeedback.fire(currentTapGroup())
+                    // 符号层的空槽键例外：它没有可上屏的内容（见 ACTION_UP 分支的同一判据），
+                    // 报了反馈等于把「按了但什么都没有」说成「已输入」
+                    if (layer != LAYER_SYMBOL || symbolValueOf(c) != null) KeyFeedback.fire(currentTapGroup())
                     onLetterPressed(c)
                 }
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
@@ -600,7 +602,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 //
                 // 符号层例外：本层的水平滑动是「翻页」而不是输入（见下面 ACTION_MOVE），在 DOWN 响的话
                 // 翻页会先响一声 —— 同一键盘的候选栏为了避开这件事刻意改用了点击语义，两套口径并存才是问题。
-                // 本层的反馈因此推到 UP，且与真正上屏共用同一个条件（没翻页、抬起点仍在键内）。
+                // 本层的反馈因此推到 UP，条件与真正上屏对齐（没翻页、抬起点仍在键内、该键在当前页有值）。
                 if (layer != LAYER_SYMBOL) KeyFeedback.fire(currentTapGroup())
                 return true
             }
@@ -649,9 +651,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 命中判定不可省：手指从 Q 滑到 W 抬起时，UP 依然回调到 Q 的监听器，
                 // 不做判定就会把 Q 上屏（用户看到的是自己按了 W）。
                 if (!keyTouchConsumed && isInsideKey(keyViews[c], event)) {
-                    // 符号层的反馈在这里补：条件与上屏完全一致（没翻页、抬起点仍在键内），
-                    // 所以翻页不会响、滑出键外抬起也不会响（见 ACTION_DOWN 的说明）
-                    if (layer == LAYER_SYMBOL) KeyFeedback.fire(TapSound.G_SYMBOL)
+                    // 符号层的反馈在这里补，条件跟「真的会上屏」对齐：没翻页、抬起点仍在键内，
+                    // 且**该键在当前符号页确实有值** —— 分组页不满 26 个时余下是空槽（键面空白），
+                    // `symbolValueOf` 对它们返回 null、`onLetterPressed` 直接 return，
+                    // 少这一个判据就会「响一声却什么都不上屏」。见 ACTION_DOWN 的说明。
+                    if (layer == LAYER_SYMBOL && symbolValueOf(c) != null) KeyFeedback.fire(TapSound.G_SYMBOL)
                     onLetterPressed(c)
                 }
                 keyTouchConsumed = false
@@ -3465,6 +3469,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         backspaceHandler.removeCallbacksAndMessages(null)
         backspaceHeld = false
         backspaceTapCount = 0
+        // 按下态也要复位：清理点里的「键盘收起」不保证收到 ACTION_CANCEL（那条路径才会关掉它），
+        // 不复位的话退格键会停在按下外观，直到用户再点它一次
+        btnBackspace.isPressed = false
     }
 
     private companion object {

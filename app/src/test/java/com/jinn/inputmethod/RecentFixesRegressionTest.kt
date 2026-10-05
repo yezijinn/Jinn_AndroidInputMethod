@@ -3508,4 +3508,32 @@ class RecentFixesRegressionTest {
         )
     }
 
+    @Test
+    fun `平台反馈策略要绑在视图创建上并覆盖运行期新建的键`() {
+        // L-916 / L-917：只在一个调用点装一次会漏两类树 —— 会话内重建换掉的那棵，
+        // 以及运行期按需建的键（候选词 / 功能面板按钮 / 密码数字条 / 面板按钮）。
+        // 这里钉住四件事：调用点不止一处、视图创建末尾必须重放、整树套用时必须挂入树回调、
+        // 响铃模式要有自己的刷新源（否则键盘显示期间用音量键静音仍会出声）。
+        val ime = codeOf("JinnIme.kt")
+        val callSites = Regex("""(?m)^\s+applyFeedbackSuppression\(\)$""").findAll(ime).count()
+        assertTrue(
+            "平台反馈策略的调用点缺一不可（弹键盘刷新 + 视图创建重放），当前 = $callSites",
+            callSites >= 2,
+        )
+        assertTrue(
+            "onCreateInputView 末尾必须重放策略（recreateKeyboardView 与框架自己都经过它）",
+            ime.contains("applyFeedbackSuppression()\n        return container"),
+        )
+        val engine = codeOf("KeyFeedback.kt")
+        assertTrue(
+            "整树套用策略时要给容器挂入树回调，否则运行期新建的键回到平台默认",
+            engine.contains("setOnHierarchyChangeListener(") &&
+                engine.contains("applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)"),
+        )
+        assertTrue(
+            "响铃模式必须有自己的刷新源，不能只靠弹键盘",
+            ime.contains("AudioManager.RINGER_MODE_CHANGED_ACTION"),
+        )
+    }
+
 }

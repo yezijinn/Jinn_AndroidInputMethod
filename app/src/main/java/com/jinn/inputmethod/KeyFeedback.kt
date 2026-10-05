@@ -276,6 +276,18 @@ internal fun View.applyPlatformFeedbackPolicy(suppressSound: Boolean, suppressHa
     isSoundEffectsEnabled = !suppressSound
     isHapticFeedbackEnabled = !suppressHaptic
     if (this is ViewGroup) {
+        // 每个容器都挂一次入树回调：新子树无论挂到哪一层，都会由「它进入的那个容器」按当前策略补一次。
+        // 只在安装那一刻递归一遍盖不住运行期新建的视图 —— 候选词、功能面板按钮、密码数字条、
+        // 符号分组标签、方向键、面板按钮都是按需建的，而这两个标记在 `View` 上不继承、
+        // 新视图一律回到平台默认开，于是它们会「平台一声 + 引擎一声」。
+        // 关闭引擎时本回调同样按新策略还原（参数每帧显式赋值，不是「只置 false」）。
+        setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+            override fun onChildViewAdded(parent: View?, child: View?) {
+                child?.applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)
+            }
+
+            override fun onChildViewRemoved(parent: View?, child: View?) = Unit
+        })
         for (i in 0 until childCount) getChildAt(i).applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)
     }
 }
