@@ -31,12 +31,15 @@ English ｜ [中文](README.md)
 
 **Dictionaries and learning**
 - Optional packs in Settings ("Supplement phrase dictionaries"): 400K entries built in, plus three downloadable packs — level 2 +400K (recommended), level 3 +500K, level 4 +600K; loaded only when idle, IME restarts automatically after add/removal
+- Custom dictionary (same page, "Import custom dictionary"): import your own `.txt` (one entry per line, `word  pinyin`, pinyin split by syllable), 8MB / 50K entries max; packed into `custom_user.txt.xz` and merged with the built-in lexicon, IME restarts after import; travels with config backup, re-import or delete from the dictionary page
 - User word frequency: remembers chosen candidates and ranks them higher; stored locally only, switchable
 
 **Online translation** (optional, bring your own key)
 - One-tap translate: **with a selection, the selected text is translated and replaced in place**; without one, text around the cursor is used (range configurable) and the translation is appended on the next line. 6th key in the function panel (removable)
 - Six providers: Aliyun / Azure / Baidu / Baidu LLM / DeepL / OpenAI-compatible; the default provider and the "translation source range" (current line before cursor / whole line / everything before cursor / whole field) are set per provider
 - Byte limit per provider, preset to each vendor's own limit; longer text is sent from the front, the tail is dropped
+- Auto swap: when the script detected locally matches the fixed target language, the direction flips to the opposite side (currently Chinese ⇄ English); mixed text, emoji, digits or URLs keep the fixed target
+- Prompt presets (OpenAI-compatible): the "Restore default prompt" button offers four presets — Default / Casual chat / Formal work / Code — which fill the system and user boxes
 - Credentials are encrypted with the Android Keystore; credential pages block screenshots; copied keys are wiped from clipboard history
 
 **Config backup** (Settings)
