@@ -819,7 +819,7 @@ class DictManagerActivity : Activity() {
      */
     private fun fetchToFile(url: String, fileName: String, checksum: String): Long {
         val dir = File(filesDir, PinyinEngine.OPT_DICT_DIR).apply { mkdirs() }
-        val tmp = File(dir, "$fileName.tmp")
+        val tmp = File(dir, OptionalDicts.tempNameOf(fileName))
         val dst = File(dir, fileName)
 
         try {

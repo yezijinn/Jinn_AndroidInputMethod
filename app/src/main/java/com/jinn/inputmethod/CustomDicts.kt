@@ -112,7 +112,7 @@ internal object CustomDicts {
     }
 
     /**
-     * 逐行解析的累积器：[parseHuman] 与 [scanFormatted] 共用同一套判定 —— 两边各写一份规则就会漂
+     * 逐行解析的累积器：[parseHuman] 与 [scanAndWriteSource] 共用同一套判定 —— 两边各写一份规则就会漂
      * （词库的解析口径被改过多次，重复实现是上一批缺陷的共同根因）。
      *
      * 截断后 [feed] 直接返回：与旧实现的 `break` 同语义（后面的行不再计入跳过数）。
@@ -195,7 +195,7 @@ internal object CustomDicts {
     }
 
     /**
-     * 单行格式化：[formatHuman] / [scanFormatted] / 流式落盘共用同一份规则。
+     * 单行格式化：[formatHuman] 与保存路径共用同一份规则。
      *
      * 能解析出词条的行统一成「词 空格 拼音」；注释、空行、解析不出词条的行、以及带**第三列**的行
      * （备注 / 插入位置，与 `add_words.py` 同格式）原样返回。
@@ -218,8 +218,8 @@ internal object CustomDicts {
      * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
      * 与 [parseHuman] 不会各写一套规则）。
      *
-     * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanFormatted] + [writeSourceFormatted]
-     * 的逐行形态，不为全文再留一份副本（BUG.md L-858 / L-862）。
+     * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanAndWriteSource] 的逐行形态，
+     * 不为全文再留一份副本（BUG.md L-858 / L-862）。
      */
     /**
      * 逐行格式化并交给 [emitLine] / [emitNewline]：行间分隔与「原文以换行结尾时补回末尾换行」
@@ -258,17 +258,59 @@ internal object CustomDicts {
      * 「原文 + 整份格式化文本」降到「原文 + 单行」—— 入口保护放宽到 2× 上限后，那一份副本会让
      * 16M 字符的输入峰值逼近 64MB（BUG.md L-858 / L-862）。
      */
-    internal fun scanFormatted(text: String, syllables: Set<String>?): Scan {
+    /**
+     * 保存路径的唯一一遍：逐行格式化，边统计（格式化后的字数 / 词条 / 截断）边写源文本临时件。
+     *
+     * 闸位判定在调用侧、写完临时件之后 —— 命中 TOO_BIG / TOO_MANY / NO_VALID 时把临时件删掉，
+     * 源文本与包这两个正式文件一个都不动。与「先扫一遍、再写一遍」相比少一遍全量格式化
+     * （1057 万字符的输入在一遍格式化上是百毫秒量级）。
+     *
+     * 写盘失败的兜底也在这里：删掉半截临时件，**另扫一遍**（不写盘）保证闸位判定照样完整，
+     * 返回 null 让调用侧按 WRITE_FAIL_SOURCE 上报（判闸先于写盘结果）。
+     */
+    internal fun scanAndWriteSource(dir: File, text: String, syllables: Set<String>?): Pass1 {
         val collector = LineCollector(syllables)
         var chars = 0L
-        forEachFormattedLine(text, syllables, { chars++ }) { line ->
-            chars += line.length
-            collector.feed(line)
+        dir.mkdirs()
+        val tmp = File(dir, sourceTempName())
+        val dest = File(dir, SOURCE_NAME)
+        try {
+            FileOutputStream(tmp).use { out ->
+                val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8))
+                forEachFormattedLine(
+                    text,
+                    syllables,
+                    {
+                        chars++
+                        w.write("\n")
+                    },
+                ) { line ->
+                    chars += line.length
+                    w.write(line)
+                    collector.feed(line)
+                }
+                w.flush()
+                out.fd.sync()
+            }
+            if (!tmp.renameTo(dest)) error("改名失败")
+            return Pass1(Scan(collector.result(), chars), dest)
+        } catch (t: Throwable) {
+            runCatching { tmp.delete() }
+            Diagnostics.w(TAG, "自定义词库源文本写入失败: ${t.javaClass.simpleName}")
+            val again = LineCollector(syllables)
+            var counted = 0L
+            forEachFormattedLine(text, syllables, { counted++ }) { line ->
+                counted += line.length
+                again.feed(line)
+            }
+            return Pass1(Scan(again.result(), counted), null)
         }
-        return Scan(collector.result(), chars)
     }
 
-    /** [scanFormatted] 的产物：[result] 供判闸，[formattedChars] 即 [formatHuman] 之后的字符数 */
+    /** [scanAndWriteSource] 的产物：[scan] 供判闸，[sourceTmp] 为 null 表示源文本没写成 */
+    internal class Pass1(val scan: Scan, val sourceTmp: File?)
+
+    /** 统计结果：[result] 供判闸，[formattedChars] 即 [formatHuman] 之后的字符数 */
     internal class Scan(val result: Result, val formattedChars: Long)
 
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */
@@ -515,43 +557,6 @@ internal object CustomDicts {
         }.getOrNull()
     }
 
-    /**
-     * 源文本流式落盘：逐行格式化直写 `*.tmp` 再改名。语义与 `writeSource(dir, formatHuman(text))`
-     * 相同，但不构造整份格式化副本（BUG.md L-858 / L-862）。保存路径用它，[writeSource] 留给
-     * 小输入与单测。
-     */
-    private fun writeSourceFormatted(dir: File, text: String, syllables: Set<String>?): File? {
-        dir.mkdirs()
-        val dest = File(dir, SOURCE_NAME)
-        val tmp = File(dir, sourceTempName())
-        return runCatching {
-            FileOutputStream(tmp).use { out ->
-                val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8))
-                var written = 0L
-                forEachFormattedLine(
-                    text,
-                    syllables,
-                    {
-                        w.write("\n")
-                        written++
-                    },
-                ) { line ->
-                    w.write(line)
-                    written += line.length
-                    // 上限已由 [scanFormatted] 判过（同一套逐行规则）；这里只兜住规则漂移
-                    if (written > MAX_INPUT_CHARS) error("格式化后超过上限")
-                }
-                w.flush()
-                out.fd.sync()
-            }
-            if (!tmp.renameTo(dest)) error("改名失败")
-            dest
-        }.onFailure {
-            runCatching { tmp.delete() }
-            Diagnostics.w(TAG, "自定义词库源文本写入失败: ${it.javaClass.simpleName}")
-        }.getOrNull()
-    }
-
     /** 读源文本：不存在返回 `""`；读不出或超 [MAX_INPUT_CHARS] 返回 null（调用侧按读失败提示） */
     fun readSource(file: File): String? {
         if (!file.isFile) return ""
@@ -643,9 +648,9 @@ internal object CustomDicts {
     /**
      * 人写文本 → 包（+ 源文本）的**完整保存流程**，编辑页与导入页共用一份实现。
      *
-     * 两条不变量（2026-10-05 修复 BUG.md L-851 / L-856；此前两处各写一份、都在同一个位置漏）：
-     * ① **先判闸、后写盘**：[MAX_ENTRIES] 截断或没有合法词条时**一个字都不落盘**。此前是
-     *    「先 `writePack` 再 `when` 判闸」，界面报「词条超过 5 万条」失败、磁盘上却已被替换成截断版。
+     * 两条不变量（BUG.md L-851 / L-856；此前两处各写一份、都在同一个位置漏）：
+     * ① **先判闸、后落正式文件**：[MAX_ENTRIES] 截断或没有合法词条时源文本与包都不动。
+     *    此前是「先 `writePack` 再判闸」，界面报「词条超过 5 万条」失败、磁盘上却已被替换成截断版。
      * ② **真相先落、派生后落**：先写源文本（用户输入，回显与再编辑的依据）再写包；源文本写不进去
      *    就**中止**（包不动）。反过来（先写包）会出现「包新文本旧」—— 用户在原内容上再保存，
      *    就等于用旧文本把新包静默回滚。
@@ -653,9 +658,8 @@ internal object CustomDicts {
      * 顺序上包写失败时源文本已更新（文本新、包旧）是**有意为之**：文本才是用户的意图、词库是它的
      * 派生物，用户可以再点一次保存重试，而不会丢自己写的内容。
      *
-     * 实现分两遍：第一遍 [scanFormatted] 只统计（格式化后的长度 / 词条 / 截断），过闸后才由
-     * [writeSourceFormatted] 逐行写出源文本 —— 两遍都不持有整份格式化文本（BUG.md L-858 / L-862）。
-     *
+     * 实现只走一遍（[scanAndWriteSource]）：格式化、统计、写源文本临时件在同一遍里完成 —— 源文本
+     * 先在临时名上写好，过闸后才改名生效（BUG.md L-858 / L-862 / L-878）。
      * @param dir 词库目录（`filesDir/dicts`）；传 File 让单测能直接验「不落盘」这条路径
      */
     fun saveHuman(dir: File, text: String, syllables: Set<String>? = null): SaveReport {
@@ -665,27 +669,31 @@ internal object CustomDicts {
             return SaveReport(SaveGate.BUSY, 0, 0, 0)
         }
         try {
-            // 第一遍：逐行格式化 + 解析（[scanFormatted]）。判定与「formatHuman 再 parseHuman」逐项相同，
-            // 但不再为全文留副本，入口 2× 保护下的内存峰值因此降下来（BUG.md L-858 / L-862）
-            val scan = scanFormatted(text, syllables)
+            // 唯一一遍：逐行格式化 + 解析 + 写源文本临时件（判定与「formatHuman 再 parseHuman」逐项相同）
+            val pass = scanAndWriteSource(dir, text, syllables)
+            val scan = pass.scan
+            val staged = pass.sourceTmp
             if (scan.formattedChars > MAX_INPUT_CHARS) {
+                staged?.delete()
                 Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")
                 return SaveReport(SaveGate.TOO_BIG, 0, 0, 0)
             }
             val parsed = scan.result
             val n = parsed.entries.size
             if (parsed.truncated) {
+                staged?.delete()
                 Diagnostics.w(TAG, "保存中止: 词条数超过 $MAX_ENTRIES 上限（已读到 $n 条，未落盘）")
                 return SaveReport(SaveGate.TOO_MANY, n, parsed.skipped, 0)
             }
             if (n == 0) {
+                staged?.delete()
                 Diagnostics.w(TAG, "保存中止: 没有合法词条（跳过 ${parsed.skipped} 行，未落盘）")
                 return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
             }
             // 先打包（顺带拿到同键丢弃数，L-864），再按「源文本失败 = 磁盘没变 / 包失败 = 文本已落」
-            // 两档分别上报（L-861）；源文本由第二遍逐行写出
+            // 两档分别上报（L-861）
             val pack = toRawPackLines(parsed.entries)
-            if (writeSourceFormatted(dir, text, syllables) == null) {
+            if (staged == null) {
                 return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0, pack.dropped)
             }
             if (writePack(dir, pack) == null) {

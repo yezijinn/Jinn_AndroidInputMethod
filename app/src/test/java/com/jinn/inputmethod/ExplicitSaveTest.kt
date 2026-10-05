@@ -237,6 +237,7 @@ class ExplicitSaveTest {
         // onPause 早有守卫，显式保存这条路必须同款 —— 两处口径一致才算修好
         val src = TestSources.codeSource("OpenAiSettingsActivity.kt")
         val save = src.substringAfter("private fun saveAndNotify()")
+            .substringBefore("\n    private fun ")
         assertTrue("saveAndNotify 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
         assertTrue("导入在途必须早退", "ConfigBackupManager.importing" in save)
         assertTrue("早退要给出提示文案", "TEXT_SAVE_BLOCKED_IMPORTING" in save)

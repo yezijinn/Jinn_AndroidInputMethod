@@ -605,13 +605,55 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `格式化结果的末尾补行规则要有确定值`() {
+        // 期望值对照旧实现逐个推过（拼接 + 「原文以换行结尾且拼接结果尚未以换行结尾时补一个」）：
+        // lineSequence 保留末尾空行，所以原文以换行结尾时拼接结果本来就带换行，补行分支构造不出来。
+        // 这条规则曾在三处各写一遍，收口后靠这组期望值防回归
+        val cases = mapOf(
+            "" to "",
+            "\n" to "\n",
+            "a" to "a",
+            "a\n" to "a\n",
+            "a\n\n" to "a\n\n",
+            "\n\n" to "\n\n",
+            "a\nb" to "a\nb",
+            "a\nb\n\n" to "a\nb\n\n",
+            "张三\tzhang  san3\n" to "张三 zhang san\n",
+            "张三 zhang san" to "张三 zhang san",
+        )
+        for ((input, want) in cases) {
+            assertEquals("formatHuman(<$input>)", want, CustomDicts.formatHuman(input, null))
+        }
+    }
+
+    @Test
+    fun `闸位命中时不许留下临时件`() {
+        // 单遍写：源文本先在临时名上写好，命中数据闸要把它删掉 —— 留着半截临时件既脏了目录，
+        // 也会让「目录里还剩什么」这类判断失真（残留清理器要等保护窗过去才收）
+        val dir = File(tmp, "dicts-stage-clean").apply { mkdirs() }
+        val tooMany = buildString {
+            repeat(CustomDicts.MAX_ENTRIES + 1) { append("w").append(it).append("\ti\n") }
+        }
+        assertEquals(CustomDicts.SaveGate.TOO_MANY, CustomDicts.saveHuman(dir, tooMany, null).gate)
+        assertTrue(
+            "超限被拒后目录要干净：<${dir.listFiles().orEmpty().joinToString { it.name }}>",
+            dir.listFiles().orEmpty().isEmpty(),
+        )
+        assertEquals(CustomDicts.SaveGate.NO_VALID, CustomDicts.saveHuman(dir, "只有词\n", null).gate)
+        assertTrue(
+            "无合法词条时同样要干净：<${dir.listFiles().orEmpty().joinToString { it.name }}>",
+            dir.listFiles().orEmpty().isEmpty(),
+        )
+    }
+
+    @Test
     fun `保存路径不许再构造整份格式化副本`() {
         // L-858 / L-862 的守卫：formatHuman 返回整份副本，保存路径一旦回头用它，内存峰值立刻翻倍
         val src = TestSources.codeSource("CustomDicts.kt")
         val body = src.substringAfter("fun saveHuman(").substringBefore("备份导入侧的源文本放行判据")
         assertTrue("saveHuman 方法体锚点失效（源码结构变了）", body.isNotEmpty() && body.length < src.length)
         assertFalse("saveHuman 不得调用 formatHuman（会为全文再造一份副本）", "formatHuman(" in body)
-        assertTrue("源文本必须逐行写出", "writeSourceFormatted(" in body)
+        assertTrue("源文本必须逐行写出", "scanAndWriteSource(" in body)
     }
 
     @Test
@@ -637,18 +679,19 @@ class CustomDictsTest {
     }
 
     @Test
-    fun `扫描的字数口径与整份格式化一致`() {
-        // 判闸按 scanFormatted 的数字、落盘按同一套逐行规则：两者对不上就会出现「该拒的存下了」
-        // 或「能存的被拒」。这里逐例对拍，把末尾补行、纯空行、空文本这些边界钉住
+    fun `保存路径的统计与整份格式化同源`() {
+        // 这条只防「两侧各写一套规则」：判闸用的字数与落盘用的文本都出自 forEachFormattedLine。
+        // 规则本身改错时两边会一起错，所以另有 `格式化结果的末尾补行规则要有确定值` 用期望值钉住
         val cases = listOf("", "\n", "a", "a\n", "a\n\n", "\n\n", "词  ci\n\n# 尾注释", "张三 zhang san\n李四 li si")
-        for (text in cases) {
+        for ((i, text) in cases.withIndex()) {
+            val dir = File(tmp, "dicts-parity-$i")
+            val pass = CustomDicts.scanAndWriteSource(dir, text, null)
             val formatted = CustomDicts.formatHuman(text, null)
-            val scan = CustomDicts.scanFormatted(text, null)
-            assertEquals("长度口径：<$text>", formatted.length.toLong(), scan.formattedChars)
+            assertEquals("长度口径：<$text>", formatted.length.toLong(), pass.scan.formattedChars)
             assertEquals(
                 "条数口径：<$text>",
                 CustomDicts.parseHuman(formatted, null).entries.size,
-                scan.result.entries.size,
+                pass.scan.result.entries.size,
             )
         }
     }

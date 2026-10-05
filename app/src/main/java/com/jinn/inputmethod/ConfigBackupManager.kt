@@ -676,7 +676,7 @@ internal object ConfigBackupManager {
     /**
      * 只读体检一个包：读出 manifest 与各节规模，供导入前展示与判否。
      *
-     * 不解密、不写任何配置；包损坏或不是本应用的包返回 `null`（原因在 [lastError]）。
+     * 不解密、不写任何配置；包损坏或不是本应用的包返回 `null`。
      */
     fun inspect(zip: File): BackupInfo? {
         val budget = ScanBudget()
@@ -753,10 +753,9 @@ internal object ConfigBackupManager {
     /**
      * 导入一个备份包：解密 → 校验各节摘要 → 按 [mode] 覆盖或合并写回。
      *
-     * 返回 `null` 表示**没进导入流程**（已在导入中、包损坏、或密码不对），原因在 [lastError]；
-     * 进了流程但中途失败则返回带 [ImportOutcome.failedStage] 的结果，重试是幂等的。
-     *
-     * 失败原因记在 [lastImportError]（覆盖词库段与各节读取/校验），调用侧据此给出具体原因。
+     * 返回 `null` 表示这次导入没有落地（已在导入中、包损坏、密码不对，或某一段读不出来 / 校验不符），
+     * 原因记在 [lastImportError]，调用侧据此提示；进了流程但中途失败则返回带
+     * [ImportOutcome.failedStage] 的结果，重试是幂等的。
      */
     fun import(
         context: Context,

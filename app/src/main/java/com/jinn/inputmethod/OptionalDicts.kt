@@ -162,7 +162,7 @@ object OptionalDicts {
     fun staleTempNames(fileNames: Collection<String>, active: String?): List<String> {
         // ⚠ 正在下载那个的临时件名是 `"$fileName.tmp"`（文件名本身已含 `.xz`），
         // 而不是 `"$fileName$TEMP_SUFFIX"` —— 后者会拼成 `X.xz.xz.tmp`，永远排不掉在跑的下载
-        val activeTmp = active?.let { "$it.tmp" }
+        val activeTmp = active?.let { tempNameOf(it) }
         // 自定义词库**源文本**的临时件（`custom_user.src.txt.tmp`）也一并收：它不匹配 `.xz.tmp`，
         // 却同样是「写到一半进程被杀」就永久留下的垃圾（BUG.md L-857），页面看不见也删不掉
         return fileNames
@@ -172,6 +172,14 @@ object OptionalDicts {
 
     /** 下载临时件后缀：`fetchToFile` 写 `"$fileName.tmp"`，而文件名恒以 `.xz` 结尾 */
     const val TEMP_SUFFIX = ".xz.tmp"
+
+    /**
+     * 下载临时件名：写侧（`DictManagerActivity.fetchToFile`）与清理侧共用同一处拼装。
+     *
+     * 分开各拼一次的话，改名或清理任一侧漏改都会出错 —— 轻则残件没人清，重则清理器把正在下载的
+     * 那份删掉（Linux 删已打开文件是成功的，随后的改名必失败，见 L-827）。
+     */
+    fun tempNameOf(fileName: String): String = fileName + ".tmp"
 
     /**
      * 刚写入的临时件保护窗（见 [cleanableTempNames]）。
