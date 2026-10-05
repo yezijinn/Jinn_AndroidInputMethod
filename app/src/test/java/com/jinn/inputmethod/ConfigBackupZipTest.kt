@@ -387,6 +387,78 @@ class ConfigBackupZipTest {
     }
 
     @Test
+    fun `包与源文本都合法时一起恢复`() {
+        val dir = File(tmp, "dicts-pair-ok").apply { mkdirs() }
+        val pack = CustomDicts.encodePack(listOf(CustomDicts.Entry("张三", "zhang san")))
+        val source = bytes("张三 zhang san\n")
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            makeZip(
+                ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to pack,
+                ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to source,
+            ),
+            dictsDigestOf(CustomDicts.PACK_NAME to pack, CustomDicts.SOURCE_NAME to source),
+        )
+        assertNotNull(r)
+        assertEquals(2, r!!.first)
+        assertEquals(0, r.second)
+        assertTrue(File(dir, CustomDicts.PACK_NAME).isFile)
+        assertTrue(File(dir, CustomDicts.SOURCE_NAME).isFile)
+    }
+
+    @Test
+    fun `自定义词库与其源文本须成对恢复`() {
+        // BUG.md L-850：包与源文本是同一份词库的两个面。源文本合法、包不合法时此前只恢复源文本 ——
+        // 编辑页回显的文本与实际生效的词库对不上，用户下一次保存就用这份文本覆盖。反方向同一分支覆盖
+        val dir = File(tmp, "dicts-pair").apply { mkdirs() }
+        val badPack = ByteArray(64) { (it * 7).toByte() }
+        val source = bytes("张三 zhang san\n")
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            makeZip(
+                ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to badPack,
+                ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to source,
+            ),
+            dictsDigestOf(CustomDicts.PACK_NAME to badPack, CustomDicts.SOURCE_NAME to source),
+        )
+        assertNotNull(r)
+        assertEquals("两个都不许落地", 0, r!!.first)
+        assertEquals("包被跳过、源文本随对跳过", 2, r.second)
+        assertTrue("目录里不许留任何文件", dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `词库写盘锁被占时恢复拒绝且不落任何文件`() {
+        // L-865 / L-873：拿不到锁就整次失败（不留半状态），原因由调用侧读 lastError 说明
+        val dir = File(tmp, "dicts-busy").apply { mkdirs() }
+        val pack = CustomDicts.encodePack(listOf(CustomDicts.Entry("张三", "zhang san")))
+        val zip = makeZip(ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to pack)
+        assertTrue(CustomDicts.beginWrite())
+        try {
+            assertNull(
+                "写盘锁被占时必须拒绝（而不是等待 / 覆盖）",
+                ConfigBackupManager.restoreDicts(dir, zip, dictsDigestOf(CustomDicts.PACK_NAME to pack)),
+            )
+            assertTrue("拒绝时不许留下任何文件", dir.listFiles().orEmpty().isEmpty())
+        } finally {
+            CustomDicts.endWrite()
+        }
+    }
+
+    @Test
+    fun `恢复被写盘锁挡下时导入侧给出「忙」的原因`() {
+        // L-873 源码对拍：恢复失败的原因要落到 lastError（含「另有写入在进行」），UI 再读它显示
+        val manager = TestSources.codeSource("ConfigBackupManager.kt")
+        val site = manager.substringAfter("restoreDicts(File(context.filesDir, DICT_DIR)")
+            .substringBefore("dictsWritten")
+        assertTrue("恢复失败要写 lastError", "lastError =" in site)
+        assertTrue("「忙」与「真失败」要分开", "CustomDicts.writing" in site)
+        val settings = TestSources.codeSource("SettingsActivity.kt")
+        val fail = settings.substringAfter("if (r == null) {").substringBefore("return@runOnUiThread")
+        assertTrue("导入失败提示要优先用 lastError", "ConfigBackupManager.lastError" in fail)
+    }
+
+    @Test
     fun `预算链关系成立`() {
         // 导出预算 ≤ 导出单节闸（留转义余量）；单节上限 < 包体上限 < 词库总量上限的关系
         assertTrue(

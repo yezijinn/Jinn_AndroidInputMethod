@@ -747,6 +747,8 @@ internal object ConfigBackupManager {
      *
      * 返回 `null` 表示**没进导入流程**（已在导入中、包损坏、或密码不对），原因在 [lastError]；
      * 进了流程但中途失败则返回带 [ImportOutcome.failedStage] 的结果，重试是幂等的。
+     *
+     * 词库段失败（含被词库自身的写盘锁挡下）同样落一条 [lastError]，调用侧据此给出具体原因。
      */
     fun import(
         context: Context,
@@ -755,6 +757,8 @@ internal object ConfigBackupManager {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ): ImportOutcome? {
+        // 上一次的失败原因（导出 / 体检留下的）不许挂到本次导入上
+        lastError = null
         // 进程级互斥：导入跑在设置页的裸线程上，页面重建后按钮会重新可点 —— 不拦的话
         // 两路流程会并发写 prefs / 词频 / 剪贴板（各有锁不会损坏，但报数会失真，
         // 来自不同包时还会各阶段各留一份）
@@ -875,7 +879,16 @@ internal object ConfigBackupManager {
                     restoreDicts(File(context.filesDir, DICT_DIR), zip, dictSection.sha256, budget = budget)
                 }
                     .onFailure { Diagnostics.w(TAG, "导入: 词库恢复异常 ${it.javaClass.simpleName}") }
-                    .getOrNull() ?: return null
+                    .getOrNull() ?: run {
+                        // 「另有写入在进行」与「恢复本身失败」分开报（BUG.md L-873）：前者等几秒重试即可，
+                        // 笼统一句「导入失败」会让用户以为备份包坏了。原因经 [lastError] 传给调用侧
+                        lastError = if (CustomDicts.writing) {
+                            "词库正在写入，请稍后重试"
+                        } else {
+                            "词库恢复失败，原有词库未动；请重试"
+                        }
+                        return null
+                    }
                 dictsWritten = r.first
                 dictsSkipped = r.second
             }
@@ -1234,6 +1247,22 @@ internal object ConfigBackupManager {
             pending.forEach { it.first.delete() }
             Diagnostics.w(TAG, "词库恢复: 摘要不符，已丢弃临时文件")
             return null
+        }
+        // 包与源文本成对判定（BUG.md L-850）：两者是同一份自定义词库的两个面 —— 只恢复其一会出现
+        // 「编辑页回显的文本」与「实际生效的词库」错配，用户下一次保存就用对不上的文本覆盖新包。
+        // 只看**这次包里同时出现过**的那一对：老备份里只有包（没有源文本）时照旧单独恢复。
+        val packPending = pending.filter { CustomDicts.isPackName(it.second.name) }
+        val sourcePending = pending.filter { CustomDicts.isSourceName(it.second.name) }
+        val packSeen = hashes.any { CustomDicts.isPackName(it.first) }
+        val sourceSeen = hashes.any { CustomDicts.isSourceName(it.first) }
+        val pairBroken = (packPending.isNotEmpty() && sourceSeen && sourcePending.isEmpty()) ||
+            (sourcePending.isNotEmpty() && packSeen && packPending.isEmpty())
+        if (pairBroken) {
+            val dropped = packPending + sourcePending
+            dropped.forEach { it.first.delete() }
+            pending.removeAll(dropped)
+            skippedByName += dropped.size
+            Diagnostics.w(TAG, "词库恢复: 自定义词库与其源文本须成对（其一不合法），已整对跳过")
         }
         var written = 0
         var skipped = skippedByName

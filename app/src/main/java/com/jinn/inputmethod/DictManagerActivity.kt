@@ -213,7 +213,7 @@ class DictManagerActivity : Activity() {
             .onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
     }
 
-    /** 打开「快捷补充」编辑页：与「导入.txt文档」共享同一份源文本，保存即导入 */
+    /** 打开「快捷补充」编辑页：与「导入 .txt」共享同一份源文本，保存即导入 */
     private fun openCustomEditor() {
         if (downloading != null) return
         if (blockedByRestart()) return
@@ -436,7 +436,7 @@ class DictManagerActivity : Activity() {
      *
      * 它是**用户自己写的**补充包，没有下载源 —— 删掉只能重新导入，所以删除要二次确认
      * （与旧版遗留包同款）。两个入口同在这张卡片上，且共用同一份源文本：
-     * 「快捷补充」直接编辑（保存即导入），「导入.txt文档」从 SAF 选一份 txt。
+     * 「快捷补充」直接编辑（保存即导入），「导入 .txt」从 SAF 选一份 txt。
      */
     private fun buildCustomCard(): View {
         val file = CustomDicts.packFile(this)
@@ -474,25 +474,28 @@ class DictManagerActivity : Activity() {
             matchWrap(top = 12),
         )
 
+        // 三按钮等宽（BUG.md L-854）：固定宽度行在字体放大到 1.3 倍时只剩几像素余量，「删除」被挤到
+        // 折行、更窄的屏上会被裁到屏幕外（删不掉词库）；等宽后每个入口只在自己那一份里收缩，不再互相挤压
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
         }
         row.addView(
             actionButton(
                 text = getString(R.string.dict_action_quick_edit),
                 color = getColor(R.color.accent),
                 enabled = actionsEnabled(),
+                hPad = 8,
             ) { openCustomEditor() },
-            buttonLp(right = 8),
+            weightedButtonLp(right = 8),
         )
         row.addView(
             actionButton(
                 text = getString(R.string.dict_action_import_custom),
                 color = getColor(R.color.accent),
                 enabled = actionsEnabled(),
+                hPad = 8,
             ) { openCustomPicker() },
-            buttonLp(right = if (installed) 8 else 0),
+            weightedButtonLp(right = if (installed) 8 else 0),
         )
         if (installed) {
             row.addView(
@@ -500,8 +503,9 @@ class DictManagerActivity : Activity() {
                     text = getString(R.string.dict_action_remove),
                     color = getColor(R.color.danger),
                     enabled = actionsEnabled(),
+                    hPad = 8,
                 ) { confirmRemoveCustom() },
-                buttonLp(),
+                weightedButtonLp(),
             )
         }
         card.addView(row, matchWrap(top = 8))
@@ -697,11 +701,17 @@ class DictManagerActivity : Activity() {
         setPadding(0, dp(top), 0, 0)
     }
 
-    /** 操作按钮：与剪贴板页 actionButton 同款（实心圆角色块 + 白字） */
+    /**
+     * 操作按钮：与剪贴板页 actionButton 同款（实心圆角色块 + 白字）。
+     *
+     * [hPad] 是水平内边距；等宽行（自定义词库卡片）传小值 —— 每个按钮只占整行的一部分，
+     * 18dp 两侧会让 4 字标签在大字体下折行（BUG.md L-854）。
+     */
     private fun actionButton(
         text: String,
         color: Int,
         enabled: Boolean,
+        hPad: Int = 18,
         onClick: () -> Unit,
     ): TextView = TextView(this).apply {
         this.text = text
@@ -709,7 +719,7 @@ class DictManagerActivity : Activity() {
         setTextColor(getColor(R.color.text_on_accent))
         textSize = 14f
         background = rounded(if (enabled) color else getColor(R.color.btn_disabled), 8)
-        setPadding(dp(18), dp(9), dp(18), dp(9))
+        setPadding(dp(hPad), dp(9), dp(hPad), dp(9))
         isClickable = true
         isEnabled = enabled
         alpha = if (enabled) 1f else 0.45f
@@ -945,6 +955,14 @@ class DictManagerActivity : Activity() {
     private fun buttonLp(right: Int = 0) = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
     ).apply { rightMargin = dp(right) }
+
+    /**
+     * 等宽按钮（宽 0 + 权重 1）：整行按份数分完，任何字体 / 屏宽下都挤不出屏幕。
+     * 自定义词库卡片的三个入口用它（BUG.md L-854）。
+     */
+    private fun weightedButtonLp(right: Int = 0) =
+        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { rightMargin = dp(right) }
 
     private companion object {
 

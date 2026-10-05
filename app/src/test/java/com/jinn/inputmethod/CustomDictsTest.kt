@@ -137,7 +137,11 @@ class CustomDictsTest {
         val branch = src.substringAfter("!shouldRefill(text.length) ->").substringBefore("else ->")
         assertTrue("跳过回填分支必须置 refillSkipped", "refillSkipped = true" in branch)
         assertTrue("跳过回填分支必须停用保存", "saveButton.isEnabled = false" in branch)
-        val restore = src.substringAfter("saving = false")
+        // 锚点必须落在 save() 方法体里（BUG.md L-874）：`saving = false` 在字段声明处先出现一次，
+        // 直接从文件头 substringAfter 会把断言范围扩到整个文件 —— 守卫强度远低于预期
+        val saveBody = src.substringAfter("private fun save()").substringBefore("\n    private fun ")
+        assertTrue("save() 方法体锚点失效（源码结构变了）", saveBody.isNotEmpty() && saveBody.length < src.length)
+        val restore = saveBody.substringAfter("saving = false")
         assertTrue(
             "保存结束后的恢复必须判 refillSkipped（否则会把整体替换的风险放回来）",
             "if (!refillSkipped)" in restore,
@@ -541,5 +545,72 @@ class CustomDictsTest {
             .substringBefore("super.onBackPressed()")
         assertTrue("返回键必须在 saving 时早退", "if (saving)" in back)
         assertTrue("返回键拦截要给出提示（否则用户以为点了没反应）", "TEXT_SAVING_WAIT" in back)
+    }
+
+    @Test
+    fun `保存走逐行扫描时与格式化后解析逐项一致`() {
+        // L-858 / L-862：保存路径改为「逐行格式化 + 逐行解析 + 逐行落盘」，不再为全文造副本。
+        // 判定与落盘文本对拍到旧写法（formatHuman 再 parseHuman）—— 换实现不许换语义
+        val cases = listOf(
+            "张三 zhang san\n李四  li si",
+            "张三\tzhang san3\n旅客\tlü ke\n",
+            "# 注释\nCPU\tcpu\n张三\tzhang san\n",
+            "黄霄雲 huang xiao yun\n张三 zhang san\n机器学习  ji qi  xue xi\n",
+            "甲\tjia\t备注列\n乙 jia\n",
+            "张三\u3000zhang san\n李四\u00A0li si\n",
+            "",
+            "\n",
+            "a\n\n",
+            "词  ci\n\n# 尾注释",
+        )
+        for ((i, text) in cases.withIndex()) {
+            val dir = File(tmp, "dicts-stream-$i")
+            val report = CustomDicts.saveHuman(dir, text, null)
+            val formatted = CustomDicts.formatHuman(text, null)
+            val parsed = CustomDicts.parseHuman(formatted, null)
+            val src = File(dir, CustomDicts.SOURCE_NAME)
+            if (parsed.entries.isEmpty()) {
+                assertEquals("该判 NO_VALID：<$text>", CustomDicts.SaveGate.NO_VALID, report.gate)
+                assertFalse("判空时不许落盘：<$text>", src.exists())
+            } else {
+                assertEquals("闸位：<$text>", CustomDicts.SaveGate.OK, report.gate)
+                assertEquals("条数：<$text>", parsed.entries.size, report.entries)
+                assertEquals("跳过行数：<$text>", parsed.skipped, report.skipped)
+                assertEquals(
+                    "源文本必须与 formatHuman 逐字符一致：<$text>",
+                    formatted,
+                    CustomDicts.readSource(src),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `原文超上限而格式化后不超限的内容可以保存`() {
+        // L-852 的口径：数据闸按**格式化后**的文本判。极端「多空格 → 单空格」输入里原文可以远超
+        // 8M 字符、格式化后只剩几十万 —— 逐行扫描按格式化后统计，不该误拒，也不需要先造一份大副本
+        val text = buildString {
+            repeat(20_000) { append("词").append(it).append(" ".repeat(520)).append("ci\n") }
+        }
+        assertTrue("测试数据本身要超过原文上限", text.length > CustomDicts.MAX_INPUT_CHARS)
+        val dir = File(tmp, "dicts-raw-big")
+        val report = CustomDicts.saveHuman(dir, text, null)
+        assertEquals(CustomDicts.SaveGate.OK, report.gate)
+        assertEquals(20_000, report.entries)
+        val src = CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME))!!
+        assertTrue("落盘的是格式化后的短文本", src.length < CustomDicts.MAX_INPUT_CHARS)
+        assertEquals("行数不变", 20_000, src.count { it == '\n' })
+        assertTrue("首行已归一：<${src.take(20)}>", src.startsWith("词0 ci\n"))
+        assertTrue("末行已归一", src.endsWith("词19999 ci\n"))
+    }
+
+    @Test
+    fun `保存路径不许再构造整份格式化副本`() {
+        // L-858 / L-862 的守卫：formatHuman 返回整份副本，保存路径一旦回头用它，内存峰值立刻翻倍
+        val src = TestSources.codeSource("CustomDicts.kt")
+        val body = src.substringAfter("fun saveHuman(").substringBefore("备份导入侧的源文本放行判据")
+        assertTrue("saveHuman 方法体锚点失效（源码结构变了）", body.isNotEmpty() && body.length < src.length)
+        assertFalse("saveHuman 不得调用 formatHuman（会为全文再造一份副本）", "formatHuman(" in body)
+        assertTrue("源文本必须逐行写出", "writeSourceFormatted(" in body)
     }
 }

@@ -1651,7 +1651,7 @@ class SettingsActivity : ComponentActivity() {
                 if (isFinishing || isDestroyed) {
                     // 最危险的一种：导入其实已经落盘，用户却什么都没看到，多半会以为失败再导一次
                     pendingNotice = if (r == null) {
-                        TEXT_IMPORT_FAIL
+                        ConfigBackupManager.lastError ?: TEXT_IMPORT_FAIL
                     } else {
                         "配置导入已完成（写入的设置与词库需重启输入法后生效）。"
                     }
@@ -1660,9 +1660,11 @@ class SettingsActivity : ComponentActivity() {
                 dismissBusy()
                 btnConfigImport.isEnabled = true
                 if (r == null) {
-                    Diagnostics.w(TAG, "importConfig: 导入失败")
-                    textConfigHint.text = TEXT_IMPORT_FAIL
-                    alert(TEXT_IMPORT_CONFIG, TEXT_IMPORT_FAIL)
+                    // 具体原因由 Manager 记在 lastError（如「词库正在写入，请稍后重试」），比通用文案有用
+                    val reason = ConfigBackupManager.lastError ?: TEXT_IMPORT_FAIL
+                    Diagnostics.w(TAG, "importConfig: 导入失败（$reason）")
+                    textConfigHint.text = reason
+                    alert(TEXT_IMPORT_CONFIG, reason)
                     return@runOnUiThread
                 }
                 // 设置已落盘：先把「即时生效」的那几项同步给引擎，再走下面的「需重启」提示

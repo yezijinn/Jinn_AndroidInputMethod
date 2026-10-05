@@ -103,23 +103,35 @@ internal object CustomDicts {
      *   （资产读不出来不应让整个导入失败）。
      */
     fun parseHuman(text: String, syllables: Set<String>? = null): Result {
-        val entries = ArrayList<Entry>()
-        val seen = HashSet<String>()
-        var skipped = 0
-        var truncated = false
-        for (rawLine in text.lineSequence()) {
+        val collector = LineCollector(syllables)
+        for (line in text.lineSequence()) collector.feed(line)
+        return collector.result()
+    }
+
+    /**
+     * 逐行解析的累积器：[parseHuman] 与 [scanFormatted] 共用同一套判定 —— 两边各写一份规则就会漂
+     * （词库的解析口径被改过多次，重复实现是上一批缺陷的共同根因）。
+     *
+     * 截断后 [feed] 直接返回：与旧实现的 `break` 同语义（后面的行不再计入跳过数）。
+     */
+    private class LineCollector(private val syllables: Set<String>?) {
+        private val entries = ArrayList<Entry>()
+        private val seen = HashSet<String>()
+        private var skipped = 0
+        private var truncated = false
+
+        fun feed(rawLine: String) {
+            if (truncated) return
             val line = rawLine.trim()
-            if (line.isEmpty() || line.startsWith("#")) continue
-            val pair = splitHumanLine(line)
-            if (pair == null) {
+            if (line.isEmpty() || line.startsWith("#")) return
+            val pair = CustomDicts.splitHumanLine(line) ?: run {
                 skipped++
-                continue
+                return
             }
             val word = pair.first
-            val normalized = normalizeSyllables(pair.second, syllables)
-            if (normalized == null) {
+            val normalized = CustomDicts.normalizeSyllables(pair.second, syllables) ?: run {
                 skipped++
-                continue
+                return
             }
             val key = normalized.replace(" ", "")
             // 键长与 `PhraseIndex.build` 的 255B 硬闸同源（键全 [a-z] ⇒ 字符数 == 字节数，见 MAX_KEY_CHARS）；
@@ -129,11 +141,11 @@ internal object CustomDicts {
                 word.any { it == '|' || it.isISOControl() }
             ) {
                 skipped++
-                continue
+                return
             }
             if (!seen.add(word + "\u0000" + key)) {
                 skipped++
-                continue
+                return
             }
             // 配额判定放在「这条确认能收」之后（BUG.md L-863）：旧写法在循环头判，
             // 把**恰好** MAX_ENTRIES 条（后面只剩注释 / 空行）也判成超限 ——
@@ -141,11 +153,12 @@ internal object CustomDicts {
             // 现在只有「确实有合法词条被丢下」才算截断。
             if (entries.size >= MAX_ENTRIES) {
                 truncated = true
-                break
+                return
             }
             entries += Entry(word, normalized)
         }
-        return Result(entries, skipped, truncated)
+
+        fun result() = Result(entries, skipped, truncated)
     }
 
     /**
@@ -179,32 +192,65 @@ internal object CustomDicts {
     }
 
     /**
-     * 把用户写的文本整理成**标准格式**（导入 / 保存成功后写回源文本；2026-10-05 用户要求）。
+     * 单行格式化：[formatHuman] / [scanFormatted] / 流式落盘共用同一份规则。
+     *
+     * 能解析出词条的行统一成「词 空格 拼音」；注释、空行、解析不出词条的行、以及带**第三列**的行
+     * （备注 / 插入位置，与 `add_words.py` 同格式）原样返回。
+     */
+    private fun formatLine(raw: String, line: String, syllables: Set<String>?): String {
+        if (line.isEmpty() || line.startsWith("#")) return raw
+        if (line.split('\t').count { it.isNotBlank() } > 2) return raw
+        val pair = splitHumanLine(line) ?: return raw
+        val pinyin = normalizeSyllables(pair.second, syllables) ?: return raw
+        return pair.first + " " + pinyin
+    }
+
+    /**
+     * 把用户写的文本整理成**标准格式**（导入 / 保存成功后写回源文本）。
      *
      * 规则：能解析出词条的行统一成「词 空格 拼音」（拼音小写、`ü`→`v`、剥声调数字、音节单空格），
      * 于是「几个空格 / 全角空格 / NBSP / TAB / 混合写法」在保存后都收敛成同一形态；注释、空行、
-     * 解析不出词条的行、以及带**第三列**的行（备注 / 插入位置，与 `add_words.py` 同格式）都**原样保留**
-     * —— 用户写的内容一行都不丢，下次打开还能看见并修正。
+     * 解析不出词条的行、以及带**第三列**的行都**原样保留** —— 写过的内容一行都不丢，下次打开还能看见并修正。
      *
      * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
      * 与 [parseHuman] 不会各写一套规则）。
+     *
+     * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanFormatted] + [writeSourceFormatted]
+     * 的逐行形态，不为全文再留一份副本（BUG.md L-858 / L-862）。
      */
     fun formatHuman(text: String, syllables: Set<String>? = null): String {
-        val out = text.lineSequence().joinToString("\n") { raw ->
-            val line = raw.trim()
-            when {
-                line.isEmpty() || line.startsWith("#") -> raw
-                line.split('\t').count { it.isNotBlank() } > 2 -> raw
-                else -> {
-                    val pair = splitHumanLine(line)
-                    val pinyin = if (pair == null) null else normalizeSyllables(pair.second, syllables)
-                    if (pair == null || pinyin == null) raw else pair.first + " " + pinyin
-                }
-            }
-        }
+        val out = text.lineSequence().joinToString("\n") { formatLine(it, it.trim(), syllables) }
         // lineSequence 会吞掉末尾空行：原文以换行结尾时补回（写回源文本后观感不变）
         return if (text.endsWith("\n") && !out.endsWith("\n")) out + "\n" else out
     }
+
+    /**
+     * 保存路径的第一遍：逐行格式化 + 解析，只累计**格式化后**的总长与词条，不构造整份副本。
+     *
+     * 与 `parseHuman(formatHuman(text))` 的解析结果与长度判定逐项一致（单测对拍），内存峰值却从
+     * 「原文 + 整份格式化文本」降到「原文 + 单行」—— 入口保护放宽到 2× 上限后，那一份副本会让
+     * 16M 字符的输入峰值逼近 64MB（BUG.md L-858 / L-862）。
+     */
+    private fun scanFormatted(text: String, syllables: Set<String>?): Scan {
+        val collector = LineCollector(syllables)
+        var chars = 0L
+        var lines = 0
+        var lastEmpty = false
+        for (raw in text.lineSequence()) {
+            val out = formatLine(raw, raw.trim(), syllables)
+            if (lines > 0) chars++ // 行间换行
+            chars += out.length
+            lines++
+            lastEmpty = out.isEmpty()
+            collector.feed(out)
+        }
+        // 末尾补行与 [formatHuman] 同规则：原文以换行结尾、且拼接结果尚未以换行结尾时补一个
+        if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) chars++
+        return Scan(collector.result(), chars)
+    }
+
+    /** [scanFormatted] 的产物：[result] 供判闸，[formattedChars] 即 [formatHuman] 之后的字符数 */
+    private class Scan(val result: Result, val formattedChars: Long)
 
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */
     private fun normalizeSyllables(token: String, syllables: Set<String>?): String? {
@@ -221,12 +267,6 @@ internal object CustomDicts {
     }
 
     /**
-     * 打包：按 compact 键升序输出 `键<TAB>词1|词2`。
-     *
-     * 键升序是 `PhraseIndex.build` 的硬要求（乱序即抛错、整包回退）；
-     * 同键词表按输入顺序去重，超过 [MAX_WORDS_PER_KEY] 的词丢弃（防 64KB 硬闸）。
-     */
-    /**
      * 打包结果：raw 行 + 因同键上限**被丢掉**的词数（BUG.md L-864）。
      *
      * @property lines   `键<TAB>词1|词2` 的行（键升序）
@@ -234,6 +274,13 @@ internal object CustomDicts {
      */
     data class PackLines(val lines: List<String>, val dropped: Int)
 
+    /**
+     * 打包：按 compact 键升序输出 `键<TAB>词1|词2`。
+     *
+     * 键升序是 `PhraseIndex.build` 的硬要求（乱序即抛错、整包回退）；
+     * 同键词表按输入顺序去重，超过 [MAX_WORDS_PER_KEY] 的词丢弃（防 64KB 硬闸），
+     * 丢弃数经 [PackLines.dropped] 回传给界面（BUG.md L-864）。
+     */
     fun toRawPackLines(entries: List<Entry>): PackLines {
         val byKey = java.util.TreeMap<String, LinkedHashSet<String>>()
         var dropped = 0
@@ -423,6 +470,46 @@ internal object CustomDicts {
         }.getOrNull()
     }
 
+    /**
+     * 源文本流式落盘：逐行格式化直写 `*.tmp` 再改名。语义与 `writeSource(dir, formatHuman(text))`
+     * 相同，但不构造整份格式化副本（BUG.md L-858 / L-862）。保存路径用它，[writeSource] 留给
+     * 小输入与单测。
+     */
+    private fun writeSourceFormatted(dir: File, text: String, syllables: Set<String>?): File? {
+        dir.mkdirs()
+        val dest = File(dir, SOURCE_NAME)
+        val tmp = File(dir, "$SOURCE_NAME.tmp")
+        return runCatching {
+            FileOutputStream(tmp).use { out ->
+                val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8))
+                var lines = 0
+                var lastEmpty = false
+                var written = 0L
+                for (raw in text.lineSequence()) {
+                    if (lines > 0) {
+                        w.write("\n")
+                        written++
+                    }
+                    val line = formatLine(raw, raw.trim(), syllables)
+                    w.write(line)
+                    written += line.length
+                    // 上限已由 [scanFormatted] 判过（同一套逐行规则）；这里只兜住规则漂移
+                    if (written > MAX_INPUT_CHARS) error("格式化后超过上限")
+                    lastEmpty = line.isEmpty()
+                    lines++
+                }
+                if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) w.write("\n")
+                w.flush()
+                out.fd.sync()
+            }
+            if (!tmp.renameTo(dest)) error("改名失败")
+            dest
+        }.onFailure {
+            runCatching { tmp.delete() }
+            Diagnostics.w(TAG, "自定义词库源文本写入失败: ${it.javaClass.simpleName}")
+        }.getOrNull()
+    }
+
     /** 读源文本：不存在返回 `""`；读不出或超 [MAX_INPUT_CHARS] 返回 null（调用侧按读失败提示） */
     fun readSource(file: File): String? {
         if (!file.isFile) return ""
@@ -521,21 +608,26 @@ internal object CustomDicts {
      * 顺序上包写失败时源文本已更新（文本新、包旧）是**有意为之**：文本才是用户的意图、词库是它的
      * 派生物，用户可以再点一次保存重试，而不会丢自己写的内容。
      *
+     * 实现分两遍：第一遍 [scanFormatted] 只统计（格式化后的长度 / 词条 / 截断），过闸后才由
+     * [writeSourceFormatted] 逐行写出源文本 —— 两遍都不持有整份格式化文本（BUG.md L-858 / L-862）。
+     *
      * @param dir 词库目录（`filesDir/dicts`）；传 File 让单测能直接验「不落盘」这条路径
      */
     fun saveHuman(dir: File, text: String, syllables: Set<String>? = null): SaveReport {
-        // 互斥占位放在最前：并发时立刻返回，连 formatHuman 的全文副本都不必造（BUG.md L-859）
+        // 互斥占位放在最前：并发时立刻返回，连逐行扫描都不必跑（BUG.md L-859）
         if (!beginWrite()) {
             Diagnostics.w(TAG, "另一次词库写入进行中，本次保存已拒绝（未落盘）")
             return SaveReport(SaveGate.BUSY, 0, 0, 0)
         }
         try {
-            val formatted = formatHuman(text, syllables)
-            if (formatted.length > MAX_INPUT_CHARS) {
+            // 第一遍：逐行格式化 + 解析（[scanFormatted]）。判定与「formatHuman 再 parseHuman」逐项相同，
+            // 但不再为全文留副本，入口 2× 保护下的内存峰值因此降下来（BUG.md L-858 / L-862）
+            val scan = scanFormatted(text, syllables)
+            if (scan.formattedChars > MAX_INPUT_CHARS) {
                 Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")
                 return SaveReport(SaveGate.TOO_BIG, 0, 0, 0)
             }
-            val parsed = parseHuman(formatted, syllables)
+            val parsed = scan.result
             val n = parsed.entries.size
             if (parsed.truncated) {
                 Diagnostics.w(TAG, "保存中止: 词条数超过 $MAX_ENTRIES 上限（已读到 $n 条，未落盘）")
@@ -546,9 +638,9 @@ internal object CustomDicts {
                 return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
             }
             // 先打包（顺带拿到同键丢弃数，L-864），再按「源文本失败 = 磁盘没变 / 包失败 = 文本已落」
-            // 两档分别上报（L-861）
+            // 两档分别上报（L-861）；源文本由第二遍逐行写出
             val pack = toRawPackLines(parsed.entries)
-            if (writeSource(dir, formatted) == null) {
+            if (writeSourceFormatted(dir, text, syllables) == null) {
                 return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0, pack.dropped)
             }
             if (writePack(dir, pack) == null) {

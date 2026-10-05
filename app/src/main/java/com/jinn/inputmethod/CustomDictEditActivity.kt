@@ -16,7 +16,7 @@ import java.io.File
 /**
  * 快捷补充：直接编辑自定义词库的**源文本**，保存即等于走一遍导入。
  *
- * 与「导入.txt文档」共享同一份内容：导入成功后把原文写进 `dicts/custom_user.src.txt`
+ * 与「导入 .txt」共享同一份内容：导入成功后把原文写进 `dicts/custom_user.src.txt`
  * （见 [CustomDicts.writeSource]），本页打开时回显；本页保存也写同一文件。所以两个入口
  * 互为「同一份文本的两种打法」，用户先导入再进来补两行也不会互相覆盖。
  *
@@ -146,7 +146,7 @@ class CustomDictEditActivity : Activity() {
     // ── 载入 / 保存 ──────────────────────────────────────────
 
     /**
-     * 回显源文本（与「导入.txt文档」共享同一份）。
+     * 回显源文本（与「导入 .txt」共享同一份）。
      *
      * 读放后台：上限 8MB 的文本一次性读进内存并铺到 EditText，主线程做会掉帧。
      * 读不出来时**提示**而不是静默留空 —— 否则用户会以为词库内容丢了。
@@ -168,7 +168,7 @@ class CustomDictEditActivity : Activity() {
                     }
                     // 体验阈值（BUG.md L-870）：`EditText.setText` 在主线程同步排版，真机实测 8M 字符
                     // 会卡住主线程 18 秒（Skipped 1083 frames / Davey 18.067s）——超过阈值就不铺，
-                    // 改为指路「导入.txt文档」。此时编辑器仍为空，点保存走「还没有内容」分支，不会误清词库。
+                    // 改为指路「导入 .txt」。此时编辑器仍为空，点保存走「还没有内容」分支，不会误清词库。
                     !shouldRefill(text.length) -> {
                         Diagnostics.i(TAG, "快捷补充：源文本 ${text.length} 字符超过回填阈值，跳过铺入")
                         setStatus(TEXT_TOO_LARGE_TO_REFILL.format(text.length / 10000))
@@ -203,9 +203,10 @@ class CustomDictEditActivity : Activity() {
             setStatus(TEXT_EMPTY_INPUT)
             return
         }
-        // 这里只做**内存保护**：原文超过两倍上限就不进后台（formatHuman 会为全文再造一份副本，
-        // 见 L-858）。真正的数据闸在 saveHuman 里按**格式化后**的文本判（BUG.md L-852）——
-        // 此前直接在入口按原文拦，原文超限而格式化后不超限的内容会被无辜拒绝。
+        // 这里只做**内存保护**：原文超过两倍上限就不进后台（编辑器与快照各持一份 UTF-16，见 L-862）。
+        // 真正的数据闸在 saveHuman 里按**格式化后**的文本判（BUG.md L-852）—— 此前直接在入口按原文拦，
+        // 原文超限而格式化后不超限的内容会被无辜拒绝；保存路径已改逐行扫描 + 逐行落盘（L-858），
+        // 峰值不再随全文翻倍。
         if (text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
             setStatus(TEXT_TOO_BIG)
             return
@@ -386,7 +387,7 @@ class CustomDictEditActivity : Activity() {
         // 文案在代码里下发（与词库页的 TEXT_CUSTOM_* 同做法，strings.xml 只承载卡片按钮）
         const val TEXT_TITLE = "快捷补充"
         const val TEXT_HINT_LINE1 = "# 开头是注释\n每行一条：你好 ni hao\n拼音用'空格'分隔每个字的音节"
-        const val TEXT_HINT_LINE2 = "这里的内容与「导入.txt文档」共用同一份文本。"
+        const val TEXT_HINT_LINE2 = "这里的内容与「导入 .txt」共用同一份文本。"
         const val TEXT_HINT_LINE3 = "词组不受字表限制：生僻、繁体 不启用的都能输出"
         const val TEXT_EDITOR_HINT = "# 示范例子：\n许嵩 xu song\n冯禧 feng xi\n黄龄 huang ling\n黄霄雲 huang xiao yun"
         const val TEXT_SAVE = "保存"
@@ -402,7 +403,7 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_WRITE_FAIL_PACK = "内容已保留，词库生成失败：请再点一次保存"
         const val TEXT_BUSY = "正在写入词库，请稍候再试"
         const val TEXT_SAVING_WAIT = "正在保存，请稍候…"
-        const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入.txt文档」整体替换（此页保存已停用）"
+        const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入 .txt」整体替换（此页保存已停用）"
 
         /** 回填体验阈值（字符）：见 [shouldRefill] 与 BUG.md L-870 */
         const val MAX_REFILL_CHARS = 1_000_000
