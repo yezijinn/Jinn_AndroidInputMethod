@@ -289,7 +289,10 @@ class DictManagerActivity : Activity() {
                     CustomDicts.SaveGate.TOO_BIG -> TEXT_CUSTOM_TOO_BIG
                     CustomDicts.SaveGate.TOO_MANY -> TEXT_CUSTOM_TOO_MANY
                     CustomDicts.SaveGate.NO_VALID -> TEXT_CUSTOM_EMPTY.format(report.skipped)
-                    CustomDicts.SaveGate.WRITE_FAIL -> TEXT_CUSTOM_WRITE_FAIL
+                    // 两档写盘失败文案不同（BUG.md L-861）：前者磁盘没变，后者文本已落、只差词库
+                    CustomDicts.SaveGate.WRITE_FAIL_SOURCE -> TEXT_CUSTOM_WRITE_FAIL
+                    CustomDicts.SaveGate.WRITE_FAIL_PACK -> TEXT_CUSTOM_WRITE_FAIL_PACK
+                    CustomDicts.SaveGate.BUSY -> TEXT_CUSTOM_BUSY
                     CustomDicts.SaveGate.OK -> {
                         restart = true
                         Diagnostics.i(
@@ -941,6 +944,8 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_TOO_MANY = "词条超过 5 万条上限，请精简后重试"
         const val TEXT_CUSTOM_EMPTY = "没有可导入的合法词条（跳过 %d 行）"
         const val TEXT_CUSTOM_WRITE_FAIL = "写入词库失败"
+        const val TEXT_CUSTOM_WRITE_FAIL_PACK = "内容已读入，词库生成失败：请重新导入一次"
+        const val TEXT_CUSTOM_BUSY = "正在写入词库，请稍候再试"
         const val TEXT_CUSTOM_RESULT = "已导入 %d 条（跳过 %d 行），输入法将重启以生效"
         const val TEXT_CUSTOM_RESULT_FILTERED =
             "已导入 %d 条（跳过 %d 行），其中 %d 条是单字且不在字表内，候选里不会出现"

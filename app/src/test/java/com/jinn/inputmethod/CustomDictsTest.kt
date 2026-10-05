@@ -361,7 +361,7 @@ class CustomDictsTest {
         dir.mkdirs()
         File(dir, CustomDicts.SOURCE_NAME).mkdirs() // 同名目录占位 ⇒ writeSource 的改名必失败
         val report = CustomDicts.saveHuman(dir, "张三 zhang san\n", null)
-        assertEquals(CustomDicts.SaveGate.WRITE_FAIL, report.gate)
+        assertEquals(CustomDicts.SaveGate.WRITE_FAIL_SOURCE, report.gate)
         assertFalse("源文本没落盘时包也不许落盘", File(dir, CustomDicts.PACK_NAME).exists())
     }
 
@@ -408,5 +408,67 @@ class CustomDictsTest {
         assertEquals(CustomDicts.SaveGate.TOO_BIG, report.gate)
         assertFalse(File(dir, CustomDicts.PACK_NAME).exists())
         assertFalse(File(dir, CustomDicts.SOURCE_NAME).exists())
+    }
+
+    @Test
+    fun `写入进行中第二次保存被拒且不落盘`() {
+        // L-859：两处 UI 的防连点都是实例级，跨页面并发挡不住 —— 两条路写同一个固定临时名
+        // （同一 inode，默认截断模式），交错写会把包或源文本写坏；互斥建成进程级后第二次直接 BUSY
+        val dir = File(tmp, "dicts-busy")
+        assertTrue("单测先占住写盘位，模拟另一次写入在跑", CustomDicts.beginWrite())
+        try {
+            val report = CustomDicts.saveHuman(dir, "张三 zhang san\n", null)
+            assertEquals(CustomDicts.SaveGate.BUSY, report.gate)
+            assertFalse("被拒时一个字都不许写", File(dir, CustomDicts.PACK_NAME).exists())
+            assertFalse(File(dir, CustomDicts.SOURCE_NAME).exists())
+        } finally {
+            CustomDicts.endWrite()
+        }
+        assertEquals(
+            "释放后必须能正常保存（互斥不许把自己锁死）",
+            CustomDicts.SaveGate.OK,
+            CustomDicts.saveHuman(dir, "张三 zhang san\n", null).gate,
+        )
+    }
+
+    @Test
+    fun `包写不进去时源文本已落且闸位与源文本失败分开`() {
+        // L-861：包失败 = 文本已落、只差词库（提示「内容已保留」）；源文本失败 = 磁盘没变
+        val dir = File(tmp, "dicts-packlock")
+        dir.mkdirs()
+        File(dir, CustomDicts.PACK_NAME).mkdirs() // 同名目录占位 ⇒ writePack 的改名必失败
+        val report = CustomDicts.saveHuman(dir, "张三 zhang san\n", null)
+        assertEquals(CustomDicts.SaveGate.WRITE_FAIL_PACK, report.gate)
+        assertEquals(
+            "包失败时源文本必须已经落成新内容（这正是两档文案不同的依据）",
+            "张三 zhang san\n",
+            CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME)),
+        )
+    }
+
+    @Test
+    fun `恰好达到上限不算截断而多一条才算`() {
+        // L-863：旧写法把配额判定放在循环头，恰好 5 万条（后面只剩注释 / 空行）也判成截断 ——
+        // 提示「超过 5 万条」且一个字不落盘，用户正好 5 万条的词库永远存不进去
+        val exact = buildString {
+            repeat(CustomDicts.MAX_ENTRIES) { append("w").append(it).append("\ti\n") }
+        }
+        val r = CustomDicts.parseHuman(exact, null)
+        assertEquals(CustomDicts.MAX_ENTRIES, r.entries.size)
+        assertFalse("恰好 5 万条 + 后面无词条，不许判成截断", r.truncated)
+        assertFalse("后面只剩注释 / 空行同样不算", CustomDicts.parseHuman(exact + "# 注释\n\n", null).truncated)
+        assertTrue("真超一条就必须如实上报", CustomDicts.parseHuman(exact + "w50000\ti\n", null).truncated)
+    }
+
+    @Test
+    fun `编辑页保存中关闭与返回键都被拦`() {
+        // L-860 源码对拍：✕ 置灰与 onBackPressed 早退缺一不可 ——
+        // 少任何一个，保存中的 finish() 都会让写盘结果回执丢失（包已更新却不重启引擎）
+        val src = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("保存中必须禁用关闭按钮", "closeButton.isEnabled = false" in src)
+        val back = src.substringAfter("override fun onBackPressed()")
+            .substringBefore("super.onBackPressed()")
+        assertTrue("返回键必须在 saving 时早退", "if (saving)" in back)
+        assertTrue("返回键拦截要给出提示（否则用户以为点了没反应）", "TEXT_SAVING_WAIT" in back)
     }
 }

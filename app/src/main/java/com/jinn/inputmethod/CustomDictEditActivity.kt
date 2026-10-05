@@ -32,6 +32,13 @@ class CustomDictEditActivity : Activity() {
     private lateinit var textStatus: TextView
     private lateinit var saveButton: TextView
 
+    /**
+     * 顶栏「✕」。保存期间与「保存」一起置灰并拦返回键（BUG.md L-860）：
+     * 此前保存中点 ✕ 会先 `finish()`，写盘继续但结果回执被 `isFinishing` 早退吃掉 ——
+     * 包已更新却不重启引擎、词库页也不刷新，用户以为「没保存」。
+     */
+    private lateinit var closeButton: TextView
+
     /** 保存线程在跑时按钮置灰，防连点（与词库页的 importingCustom 同款） */
     @Volatile
     private var saving = false
@@ -115,6 +122,19 @@ class CustomDictEditActivity : Activity() {
         editor.requestFocus()
     }
 
+    /**
+     * 保存中拦返回键（BUG.md L-860）：返回键的 `finish()` 与点 ✕ 是同一个后果 ——
+     * 写盘继续跑，而结果回执被 `isFinishing` 早退吃掉（包已更新却不重启引擎、词库页不刷新）。
+     */
+    @Deprecated("onBackPressed 已废弃，但此页是 Activity（非 ComponentActivity），无 OnBackPressedDispatcher")
+    override fun onBackPressed() {
+        if (saving) {
+            setStatus(TEXT_SAVING_WAIT)
+            return
+        }
+        super.onBackPressed()
+    }
+
     // ── 载入 / 保存 ──────────────────────────────────────────
 
     /**
@@ -172,8 +192,11 @@ class CustomDictEditActivity : Activity() {
         }
         saving = true
         setStatus(TEXT_SAVING)
+        // 「保存」与「✕」一起置灰：保存中关闭会让写盘结果回执丢失（BUG.md L-860）
         saveButton.isEnabled = false
         saveButton.alpha = 0.45f
+        closeButton.isEnabled = false
+        closeButton.alpha = 0.45f
         val app = applicationContext
         Thread {
             // 与词库页导入同款：解析 + xz 压缩是重活，降后台优先级，别和前台输入争 CPU
@@ -195,7 +218,10 @@ class CustomDictEditActivity : Activity() {
                     CustomDicts.SaveGate.TOO_BIG -> TEXT_TOO_BIG
                     CustomDicts.SaveGate.TOO_MANY -> TEXT_TOO_MANY
                     CustomDicts.SaveGate.NO_VALID -> TEXT_NO_VALID.format(report.skipped)
-                    CustomDicts.SaveGate.WRITE_FAIL -> TEXT_WRITE_FAIL
+                    // 两档写盘失败文案不同（BUG.md L-861）：前者磁盘没变，后者文本已落、只差词库
+                    CustomDicts.SaveGate.WRITE_FAIL_SOURCE -> TEXT_WRITE_FAIL
+                    CustomDicts.SaveGate.WRITE_FAIL_PACK -> TEXT_WRITE_FAIL_PACK
+                    CustomDicts.SaveGate.BUSY -> TEXT_BUSY
                     CustomDicts.SaveGate.OK -> {
                         ok = true
                         ""
@@ -210,6 +236,8 @@ class CustomDictEditActivity : Activity() {
                 saving = false
                 saveButton.isEnabled = true
                 saveButton.alpha = 1f
+                closeButton.isEnabled = true
+                closeButton.alpha = 1f
                 if (ok) {
                     Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
                     setResult(
@@ -263,7 +291,7 @@ class CustomDictEditActivity : Activity() {
             setOnClickListener { save() }
         }
         bar.addView(saveButton, wrapWrap())
-        bar.addView(TextView(this).apply {
+        closeButton = TextView(this).apply {
             text = PageChrome.CLOSE
             contentDescription = PageChrome.CLOSE_DESC
             setTextColor(getColor(R.color.text_secondary))
@@ -272,10 +300,16 @@ class CustomDictEditActivity : Activity() {
             isClickable = true
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setOnClickListener {
-                Diagnostics.i(TAG, "CustomDictEditActivity: 用户关闭页面（saving=$saving）")
+                // 保存中先拦住（BUG.md L-860）：写盘已完成但回执被 finish 吃掉 = 静默半生效
+                if (saving) {
+                    setStatus(TEXT_SAVING_WAIT)
+                    return@setOnClickListener
+                }
+                Diagnostics.i(TAG, "CustomDictEditActivity: 用户关闭页面")
                 finish()
             }
-        }, wrapWrap())
+        }
+        bar.addView(closeButton, wrapWrap())
         return bar
     }
 
@@ -329,6 +363,9 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_TOO_MANY = "词条超过 5 万条上限，请精简后重试"
         const val TEXT_NO_VALID = "没有可保存的合法词条（跳过 %d 行）"
         const val TEXT_WRITE_FAIL = "保存失败，请重试"
+        const val TEXT_WRITE_FAIL_PACK = "内容已保留，词库生成失败：请再点一次保存"
+        const val TEXT_BUSY = "正在写入词库，请稍候再试"
+        const val TEXT_SAVING_WAIT = "正在保存，请稍候…"
 
         private const val TAG = "CustomDictEdit"
     }

@@ -108,10 +108,6 @@ internal object CustomDicts {
         var skipped = 0
         var truncated = false
         for (rawLine in text.lineSequence()) {
-            if (entries.size >= MAX_ENTRIES) {
-                truncated = true
-                break
-            }
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) continue
             val pair = splitHumanLine(line)
@@ -138,6 +134,14 @@ internal object CustomDicts {
             if (!seen.add(word + "\u0000" + key)) {
                 skipped++
                 continue
+            }
+            // 配额判定放在「这条确认能收」之后（BUG.md L-863）：旧写法在循环头判，
+            // 把**恰好** MAX_ENTRIES 条（后面只剩注释 / 空行）也判成超限 ——
+            // 提示「超过 5 万条」且拒存，用户正好 5 万条的词库永远存不进去。
+            // 现在只有「确实有合法词条被丢下」才算截断。
+            if (entries.size >= MAX_ENTRIES) {
+                truncated = true
+                break
             }
             entries += Entry(word, normalized)
         }
@@ -395,8 +399,47 @@ internal object CustomDicts {
      */
     fun isSourceTempName(fileName: String): Boolean = fileName == "$SOURCE_NAME.tmp"
 
-    /** [saveHuman] 的闸位：三档数据闸 + 文本超限 + 写盘失败 */
-    enum class SaveGate { OK, TOO_BIG, TOO_MANY, NO_VALID, WRITE_FAIL }
+    /**
+     * [saveHuman] 的闸位：三档数据闸 + 两档写盘失败（L-861 拆分） + 写入互斥（L-859）。
+     *
+     * 写盘失败拆两档不是为了好看：源文本失败时**磁盘上什么都没变**（原样重试即可），
+     * 包失败时**源文本已是新内容**（词条只剩「再点一次保存」）—— 同一句「保存失败」会让
+     * 用户在两种完全不同的处境里猜磁盘状态（BUG.md L-861）。
+     */
+    enum class SaveGate {
+        OK,
+        TOO_BIG,
+        TOO_MANY,
+        NO_VALID,
+
+        /** 源文本没写进去：一个文件都没动，原样重试即可 */
+        WRITE_FAIL_SOURCE,
+
+        /** 包没生成：源文本已落新内容，用户再点一次保存就能补上 */
+        WRITE_FAIL_PACK,
+
+        /** 另一次词库写入正在进行，本次一个字都没动 */
+        BUSY,
+    }
+
+    /**
+     * 写盘互斥（**进程级**，BUG.md L-859）。
+     *
+     * 两处 UI 的防连点（编辑页 `saving` / 词库页 `importingCustom`）都是**实例级私有**的 ——
+     * 换页面 / 换实例就挡不住（导入 8MB 期间重进词库页再导入、保存中点关闭再回来点导入），
+     * 而两条路写的是**同一个固定临时名**（`custom_user.txt.xz.tmp` / `custom_user.src.txt.tmp`）：
+     * 两个 `FileOutputStream` 指向同一 inode（默认截断模式），交错写会把包或源文本写坏 ——
+     * 源文本是「唯一真相」，写坏等于用户写的词条丢失。
+     */
+    private val writeInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 占写盘位；返回 false = 已有写入在跑（[saveHuman] 内部用，也供单测构造并发场景） */
+    internal fun beginWrite(): Boolean = writeInFlight.compareAndSet(false, true)
+
+    /** 释放写盘位（与 [beginWrite] 成对；[saveHuman] 的 finally 保证异常路径也走到） */
+    internal fun endWrite() {
+        writeInFlight.set(false)
+    }
 
     /**
      * @property gate    闸位（[SaveGate.OK] 以外都不该重启输入法）
@@ -422,25 +465,39 @@ internal object CustomDicts {
      * @param dir 词库目录（`filesDir/dicts`）；传 File 让单测能直接验「不落盘」这条路径
      */
     fun saveHuman(dir: File, text: String, syllables: Set<String>? = null): SaveReport {
-        val formatted = formatHuman(text, syllables)
-        if (formatted.length > MAX_INPUT_CHARS) {
-            Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")
-            return SaveReport(SaveGate.TOO_BIG, 0, 0, 0)
+        // 互斥占位放在最前：并发时立刻返回，连 formatHuman 的全文副本都不必造（BUG.md L-859）
+        if (!beginWrite()) {
+            Diagnostics.w(TAG, "另一次词库写入进行中，本次保存已拒绝（未落盘）")
+            return SaveReport(SaveGate.BUSY, 0, 0, 0)
         }
-        val parsed = parseHuman(formatted, syllables)
-        val n = parsed.entries.size
-        if (parsed.truncated) {
-            Diagnostics.w(TAG, "保存中止: 词条数超过 $MAX_ENTRIES 上限（已读到 $n 条，未落盘）")
-            return SaveReport(SaveGate.TOO_MANY, n, parsed.skipped, 0)
+        try {
+            val formatted = formatHuman(text, syllables)
+            if (formatted.length > MAX_INPUT_CHARS) {
+                Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")
+                return SaveReport(SaveGate.TOO_BIG, 0, 0, 0)
+            }
+            val parsed = parseHuman(formatted, syllables)
+            val n = parsed.entries.size
+            if (parsed.truncated) {
+                Diagnostics.w(TAG, "保存中止: 词条数超过 $MAX_ENTRIES 上限（已读到 $n 条，未落盘）")
+                return SaveReport(SaveGate.TOO_MANY, n, parsed.skipped, 0)
+            }
+            if (n == 0) {
+                Diagnostics.w(TAG, "保存中止: 没有合法词条（跳过 ${parsed.skipped} 行，未落盘）")
+                return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
+            }
+            // 两档写盘失败分开报（L-861）：源文本失败 = 磁盘没变；包失败 = 文本已落、只差词库
+            if (writeSource(dir, formatted) == null) {
+                return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0)
+            }
+            if (writePack(dir, parsed.entries) == null) {
+                return SaveReport(SaveGate.WRITE_FAIL_PACK, n, parsed.skipped, 0)
+            }
+            val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
+            return SaveReport(SaveGate.OK, n, parsed.skipped, filtered)
+        } finally {
+            endWrite()
         }
-        if (n == 0) {
-            Diagnostics.w(TAG, "保存中止: 没有合法词条（跳过 ${parsed.skipped} 行，未落盘）")
-            return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
-        }
-        if (writeSource(dir, formatted) == null) return SaveReport(SaveGate.WRITE_FAIL, n, parsed.skipped, 0)
-        if (writePack(dir, parsed.entries) == null) return SaveReport(SaveGate.WRITE_FAIL, n, parsed.skipped, 0)
-        val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
-        return SaveReport(SaveGate.OK, n, parsed.skipped, filtered)
     }
 
     /**
