@@ -14,12 +14,11 @@ import org.tukaani.xz.XZOutputStream
  * 用户自定义补充词库：把「人写的 .txt」转成引擎已在用的可选词库包，
  * 落在 `filesDir/dicts/custom_user.txt.xz`，与下载的可选包走同一条装载 / 备份通道。
  *
- * 人写的文件（UTF-8，一行一条；第三列及以后忽略 —— 与 `tools/dict_builder/add_words.py`
- * 的补词表格式一致，那一列是插入位置，不是词频）：
+ * 人写的文件（UTF-8，一行一条；第三列及以后忽略）：
  * ```
  * # 注释
- * 张三<TAB>zhang san
- * 机器学习<TAB>ji qi xue xi
+ * 黄霄雲 huang xiao yun      ← 手机写法：词 + 空格 + 拼音（拼音内部也用空格分音节）
+ * 张三<TAB>zhang san         ← PC / 工具写法：TAB 分隔（与 tools/dict_builder/add_words.py 同口径）
  * ```
  *
  * 打包 raw（`PhraseIndex.build` / `loadExtensionDict` 读的形态，与 `build_dicts.py` 产出同格式）：
@@ -100,17 +99,10 @@ internal object CustomDicts {
             }
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) continue
-            // TAB 优先（工具格式）；没有 TAB 时接受「两个以上空格」这种从表格粘贴的形态
-            val tabbed = line.split('\t').map { it.trim() }.filter { it.isNotEmpty() }
-            val pair = if (tabbed.size >= 2) {
-                tabbed[0] to tabbed[1]
-            } else {
-                val cols = line.split(Regex("\\s{2,}")).map { it.trim() }.filter { it.isNotEmpty() }
-                if (cols.size < 2) {
-                    skipped++
-                    continue
-                }
-                cols[0] to cols[1]
+            val pair = splitHumanLine(line)
+            if (pair == null) {
+                skipped++
+                continue
             }
             val word = pair.first
             val normalized = normalizeSyllables(pair.second, syllables)
@@ -135,6 +127,36 @@ internal object CustomDicts {
             entries += Entry(word, normalized)
         }
         return Result(entries, skipped, truncated)
+    }
+
+    /**
+     * 行切分：TAB 优先（工具格式）；没有 TAB 时按「**词 + 空格 + 拼音**」解析。
+     *
+     * 手机上打不出 TAB（2026-10-05 用户实测）：用户会写 `黄霄雲 huang xiao yun`（单空格），
+     * 而旧口径要求「两个以上空格」才分列 ⇒ 同样的输入整行被跳过、只提示「没有可保存的合法词条」。
+     * 现在从**行尾往前**剥离连续拼音段，剩下的一段才是词 —— 单空格、双空格、TAB 三种写法归一。
+     *
+     * 两类歧义行一律返回 null（调用侧计「跳过」，不猜）：
+     *  - 全是拼音段（词是纯拼音形状，如误把拼音整行粘进来）；
+     *  - 词含空格（拼音段前面还剩多段，词表里不该出现带空格的词——要这种词请用 TAB 写）。
+     */
+    private fun splitHumanLine(line: String): Pair<String, String>? {
+        val tabbed = line.split('\t').map { it.trim() }.filter { it.isNotEmpty() }
+        if (tabbed.size >= 2) return tabbed[0] to tabbed[1]
+        val tokens = line.split(TOKEN_SPLIT).filter { it.isNotEmpty() }
+        if (tokens.size < 2) return null
+        var cut = tokens.size
+        while (cut > 1 && isPinyinShape(tokens[cut - 1])) cut--
+        if (cut != 1) return null
+        val word = tokens[0]
+        if (KEY_SHAPE.matches(word)) return null
+        return word to tokens.subList(1, tokens.size).joinToString(" ")
+    }
+
+    /** 单段是否呈拼音形状（小写、`ü`→`v`、可带声调数字）—— 只判形状，音节表校验在 [normalizeSyllables] */
+    private fun isPinyinShape(token: String): Boolean {
+        val syl = token.lowercase().replace("ü", "v").trimEnd { it in '1'..'5' }
+        return syl.isNotEmpty() && KEY_SHAPE.matches(syl)
     }
 
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */

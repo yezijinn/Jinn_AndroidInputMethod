@@ -141,15 +141,14 @@ class EngineEdgeCaseTest {
     }
 
     /**
-     * 词条里含**档外**扩展 A 字时，整条按档位过滤（L-67 / L-70 的连带口径）。
+     * 档外扩展 A 字的**单字**仍按档位拦下，**词组一律放行**（2026-10-05 用户要求）。
      *
-     * 判据改成 `< 0x3400` 之后，词库正文里的扩展 A 字（实测 part1-4 共 31 个，其中 20 个档外、
-     * 牵涉 37 条词条）与基本区档外字同口径：档外即整条不出现 —— 这是**设计**（档外字不随包），
-     * 不是丢字；`build_dicts.py` 生成时会打印这类字的条数，避免再出现「词库不含扩展 A 字」
-     * 那种未经实测的结论（BUG.md L-70）。
+     * 旧口径是「词中任一字符档外即整条丢弃」——用户自己写的词条（如「黄霄雲」）会因此永远
+     * 打不出；改成只管单字后，词组不再受字表闸约束（能不能显示由系统字体决定，不由拼音库替
+     * 用户拦）。`build_dicts.py` 打印档外字条数只是统计口径（BUG.md L-70），不再拦词。
      */
     @Test
-    fun 档外扩展A字的词条要整条过滤() {
+    fun 档外扩展A字单字仍拦下而词组放行() {
         PinyinEngine.loadFromTexts(
             "ba\t爸,㞎\n",                   // 㞎 = 扩展 A 字，且不在任何档位表里（真实数据同款）
             "baba\t㞎㞎\n",                  // part1 真实词条（「㞎㞎」）
@@ -157,8 +156,8 @@ class EngineEdgeCaseTest {
             commonCharsText = "爸",          // 档 1 只放行「爸」
         )
         val c = PinyinEngine.query("baba").candidates
-        assertFalse("含档外扩展 A 字的词条不得进候选: $c", c.contains("㞎㞎"))
-        assertFalse("档外扩展 A 字本身也不得进单字候选: $c", c.contains("㞎"))
+        assertTrue("词组不受字表闸约束，「㞎㞎」应进候选: $c", c.contains("㞎㞎"))
+        assertFalse("档外扩展 A 字本身仍不得进单字候选: $c", c.contains("㞎"))
     }
 
     /**

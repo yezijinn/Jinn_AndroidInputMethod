@@ -710,10 +710,14 @@ object PinyinEngine {
 
     /**
      * 测试注入：设置「可选包索引」列表（模拟 Stage 2 的可选包索引，验证逐段合并语义）。
+     *
+     * 与生产路径同款收尾（`loadOptionalAsync` 设置完索引后也调 [finalizeLoad]）：不重建有序键表的话，
+     * **只在可选包里出现**的键查不到（基础包与可选包同键时反而看不出来，测试会假绿）。
      */
     internal fun setOptionalIndexesForTest(indexes: List<PhraseIndex>) {
         optionalIndexes = indexes
         invalidateMergedCache()
+        synchronized(this) { finalizeLoad() }
     }
 
     /**
@@ -840,6 +844,19 @@ object PinyinEngine {
 
     /** 当前档位开关（诊断 / 测试用） */
     fun rareTierState(): Pair<Boolean, Boolean> = rareTier2 to rareTier3
+
+    /**
+     * 统计这批词里有多少条会被**字表闸**丢下（判据与候选出口同一句，见 [isLoadableWord]）。
+     *
+     * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05 用户要求），
+     * 所以这个数通常为 0，只有用户写了档外单字（例如单独一行 `雲 yun`）时才会出现。
+     *
+     * 位图未就绪（引擎尚未加载）时返回 0：此时谈不上过滤，不误报。
+     */
+    internal fun countUnloadableWords(words: List<String>): Int {
+        if (commonChars == null) return 0
+        return words.count { !isLoadableWord(it) }
+    }
 
     /**
      * 设置「只使用繁体字」（[Prefs.useTraditional]）：即时生效，候选出口按 [simpTrad] 替换。
@@ -1105,13 +1122,20 @@ object PinyinEngine {
             (rareTier3 && tier3Chars?.get(code) == true)
     }
 
-    /** 整词是否允许载入：词中任一字符生僻即整条丢弃 */
+    /**
+     * 整词是否允许进候选。
+     *
+     * **词组（两个字及以上）一律放行**：字表闸只管**单字**（2026-10-05 用户要求）——
+     * 用户自己写的词条（如「黄霄雲」里的繁体「雲」）不该因为某个字不在档内就整条消失，
+     * 否则自定义词库等于白写；能不能显示由系统字体决定，不由拼音库替用户拦。
+     * 单字仍按 [isLoadableChar] 的档位规则放行（设置页档 2 / 档 3 开关继续只影响单字）。
+     */
     private fun isLoadableWord(word: String): Boolean {
         if (commonChars == null) return true
-        for (c in word) {
-            if (!isLoadableChar(c)) return false
-        }
-        return true
+        if (word.isEmpty()) return true
+        // 按码点数判：扩展 B 区单字（代理对）仍属单字，不能被当成词组放行
+        if (word.codePointCount(0, word.length) >= 2) return true
+        return isLoadableChar(word[0])
     }
 
     /**
@@ -1647,7 +1671,7 @@ object PinyinEngine {
         return filtered
     }
 
-    /** 查询期生僻字过滤（索引与运行时词一视同仁；判据 = 档位开关，见 [isLoadableChar]） */
+    /** 查询期生僻字过滤（索引与运行时词一视同仁；**只管单字**，词组一律放行，见 [isLoadableWord]） */
     private fun filterRareChars(raw: Array<String>): Array<String> {
         // 位图未就绪时整体不过滤，与 isLoadableWord 的判据保持一致
         if (commonChars == null) return raw

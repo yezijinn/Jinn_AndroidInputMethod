@@ -90,14 +90,14 @@ class RareCharsFilterTest {
     }
 
     @Test
-    fun withFilter_rareWordIsDropped() {
+    fun withFilter_rareWordIsKeptWhileRareSingleCharDropped() {
         PinyinEngine.loadFromTexts(chars, phrases, syllables, commonChars, tier3Chars)
         assertTrue(
             "常用字构成的「企鹅」应保留",
             PinyinEngine.query("qie").candidates.contains("企鹅"),
         )
         val got = PinyinEngine.query("taotie").candidates
-        assertFalse("含表外字的「饕餮」应被过滤: $got", got.contains("饕餮"))
+        assertTrue("词组不受字表闸约束（2026-10-05 用户要求），「饕餮」应保留: $got", got.contains("饕餮"))
         assertTrue("同键的常用词「涛涛」应保留: $got", got.contains("涛涛"))
     }
 
@@ -109,7 +109,9 @@ class RareCharsFilterTest {
         assertTrue("常用字「涛」应保留: $got", got.contains("涛"))
     }
 
-    /** 默认只放行档 1：档 2 / 档 3 / 档外字全部拦下 */
+    /**
+     * 默认只放行档 1：档 2 / 档 3 / 档外字全部拦下
+     */
     @Test
     fun 默认只放行档1() {
         PinyinEngine.loadFromTexts(
@@ -134,7 +136,7 @@ class RareCharsFilterTest {
         assertFalse("档外字「饕」不可用", PinyinEngine.query("tao").candidates.contains("饕"))
     }
 
-    /** 两档齐开：档 2 / 档 3 字都放行；档外字（含含它的词）仍不随包 */
+    /** 两档齐开：档 2 / 档 3 的**单字**都放行；档外**单字**仍拦下，词组一律放行 */
     @Test
     fun 两档齐开后三级字可用而档外字仍拦下() {
         PinyinEngine.loadFromTexts(
@@ -143,8 +145,8 @@ class RareCharsFilterTest {
         )
         assertTrue("档 2 字「噩」应可用", PinyinEngine.query("e").candidates.contains("噩"))
         assertTrue("档 3 字「餮」应可用", PinyinEngine.query("tie").candidates.contains("餮"))
-        assertFalse(
-            "含档外字的词「饕餮」仍应被过滤",
+        assertTrue(
+            "词组不受字表闸约束，「饕餮」应在候选里",
             PinyinEngine.query("taotie").candidates.contains("饕餮"),
         )
     }
@@ -190,21 +192,16 @@ class RareCharsFilterTest {
     }
 
     /**
-     * 档位开关必须让「合并结果缓存」失效（2026-09-27 复现后固化，BUG.md L-57）。
+     * 档位开关**只改单字**（2026-10-05 用户要求：字表闸只管单字，词组一律放行）。
      *
-     * `mergedCache` 存的是 `filterRareChars` **之后**的词表：关档时查过的键会把它「档外词已被剔除」
-     * 的结果（整条被过滤时是 `EMPTY_WORDS` 哨兵）一直返回 ⇒ 用户「先打一次没打出来 → 去开档 →
-     * 回来再打同一拼音」时**词还是不出现**，而单字走 `charsFor`（不经缓存）当场就出得来，
-     * 看起来像「开关只对单字生效」。本条**两个方向**都要成立（开档要放行、关档要收回）。
-     *
-     * ⚠ 时序必须是「先按关档状态查询 → 再 setRareTiers」：加载时就带上档位的话，
-     * 每次过滤都是新算的，缓存缺陷会被完全掩盖（与 [开关打开后档2与档3的单字候选必须出现] 同源）。
+     * 旧语义下词组会被档位过滤，因此还要守「合并结果缓存随档位失效」（BUG.md L-57）；
+     * 改成只管单字后词组的候选恒定，缓存不再需要按档位翻转 —— 本用例改成钉**新语义**：
+     * 单字随开关即时出现 / 收回，词组两态都在（缓存里也不会被错剔）。
      */
     @Test
-    fun 开关档位后此前查过的拼音键必须重新查得到() {
+    fun 档位开关只管单字而词组两态都在() {
         val syl = "chan\nshi\nshuo\n"
         val ch = "chan\t产,谶\nshi\t事\nshuo\t说\n"
-        // 两个词**都含档 2 字「谶」**：关档时整词被过滤 ⇒ 这两个键都会拿到「确实没有」
         val ph = "chanshuo\t谶说\nchanshi\t谶事\n"
         PinyinEngine.resetForTest()
         PinyinEngine.loadFromTexts(
@@ -212,28 +209,29 @@ class RareCharsFilterTest {
             commonCharsText = "产事说", tier2CharsText = "谶",
             rareTier2 = false, rareTier3 = false,
         )
-        val before = PinyinEngine.query("chanshuo").candidates
-        assertFalse("关档时含档 2 字的词不得出现: $before", before.contains("谶说"))
+        assertTrue(
+            "词组不受字表闸约束，关档时也应在: ${PinyinEngine.query("chanshuo").candidates}",
+            PinyinEngine.query("chanshuo").candidates.contains("谶说"),
+        )
+        assertFalse("关档时单字「谶」不出现", PinyinEngine.query("chan").candidates.contains("谶"))
 
         PinyinEngine.setRareTiers(true, false)
         assertTrue(
-            "开档后单字「谶」应放行（单字不经合并缓存，用于与下面的键路径对照）: " +
-                "${PinyinEngine.query("chan").candidates}",
+            "开档后单字「谶」应放行: ${PinyinEngine.query("chan").candidates}",
             PinyinEngine.query("chan").candidates.contains("谶"),
         )
         assertTrue(
-            "开档后**没查过**的键应放行「谶事」: ${PinyinEngine.query("chanshi").candidates}",
-            PinyinEngine.query("chanshi").candidates.contains("谶事"),
-        )
-        assertTrue(
-            "开档后**先前查过的**键也必须放行「谶说」（缓存要随档位失效）: " +
-                "${PinyinEngine.query("chanshuo").candidates}",
+            "开档后词组仍在: ${PinyinEngine.query("chanshuo").candidates}",
             PinyinEngine.query("chanshuo").candidates.contains("谶说"),
         )
 
         PinyinEngine.setRareTiers(false, false)
         assertFalse(
-            "关档后先前查过的键不得再返回档外词「谶说」: ${PinyinEngine.query("chanshuo").candidates}",
+            "关档后单字「谶」应收回: ${PinyinEngine.query("chan").candidates}",
+            PinyinEngine.query("chan").candidates.contains("谶"),
+        )
+        assertTrue(
+            "词组不受开关影响: ${PinyinEngine.query("chanshuo").candidates}",
             PinyinEngine.query("chanshuo").candidates.contains("谶说"),
         )
     }
@@ -388,6 +386,38 @@ class RareCharsFilterTest {
             "级联关档 3 没有在挂起态里做：同一次拨动会写两遍盘、打两条日志",
             Regex("""bulk = true\s*\n\s*checkTier3\.isChecked = false\s*\n\s*bulk = false""").containsMatchIn(body),
         )
+    }
+
+    /**
+     * 自定义词库（走可选包通道）的**词组**不受字表闸约束 —— 2026-10-05 用户要求：
+     * 繁体「雲」不在任何档（`common_chars` 5,613 字里没有它），但「黄霄雲」是词组 ⇒ 照常出候选。
+     */
+    @Test
+    fun 可选包里的繁体词组能出候选() {
+        // 用真实资产：档 1（5,613 字）里没有「雲」，词组放行与否一目了然
+        val realChars = asset("pinyin_chars.txt")
+        val realSyllables = asset("pinyin_syllables.txt")
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromIndexBytes(
+            PhraseIndex.build("xusong\t许嵩\n".lineSequence(), 1L),
+            realChars, realSyllables, asset("common_chars.txt"),
+        )
+        val pack = PhraseIndex.of(PhraseIndex.build("huangxiaoyun\t黄霄雲|黄霄云\n".lineSequence(), 2L))!!
+        PinyinEngine.setOptionalIndexesForTest(listOf(pack))
+
+        val words = PinyinEngine.query("huangxiaoyun").candidates.toList()
+        assertTrue("词组不受字表闸约束，「黄霄雲」应出候选: $words", words.contains("黄霄雲"))
+        assertTrue("同键的「黄霄云」也在: $words", words.contains("黄霄云"))
+    }
+
+    /** [PinyinEngine.countUnloadableWords]：保存 / 导入提示里那个「N 条打不出」的口径（只可能命中单字） */
+    @Test
+    fun 统计会被字表丢下的条数() {
+        PinyinEngine.loadFromTexts(chars, phrases, syllables, commonChars, tier3Chars)
+        assertEquals("词组一律放行，不计", 0, PinyinEngine.countUnloadableWords(listOf("企鹅", "饕餮")))
+        assertEquals("档外**单字**才计", 1, PinyinEngine.countUnloadableWords(listOf("企鹅", "饕")))
+        PinyinEngine.resetForTest()
+        assertEquals("引擎未加载（位图未就绪）时不误报", 0, PinyinEngine.countUnloadableWords(listOf("饕")))
     }
 
     /** 按短名找源码文件（测试既可能在仓库根、也可能在 app/ 下跑） */

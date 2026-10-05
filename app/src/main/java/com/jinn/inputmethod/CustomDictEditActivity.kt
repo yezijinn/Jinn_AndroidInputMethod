@@ -71,6 +71,7 @@ class CustomDictEditActivity : Activity() {
         root.addView(buildTopBar())
         root.addView(hint(TEXT_HINT_LINE1), matchWrap(top = 8))
         root.addView(hint(TEXT_HINT_LINE2), matchWrap(top = 2))
+        root.addView(hint(TEXT_HINT_LINE3), matchWrap(top = 2))
 
         textStatus = TextView(this).apply {
             setTextColor(getColor(R.color.accent))
@@ -162,6 +163,7 @@ class CustomDictEditActivity : Activity() {
             var ok = false
             var entries = 0
             var skipped = 0
+            var filtered = 0
             val status = try {
                 val parsed = CustomDicts.parseHuman(text, CustomDicts.loadSyllables(app))
                 entries = parsed.entries.size
@@ -175,6 +177,8 @@ class CustomDictEditActivity : Activity() {
                         // 包已生效；源文本写失败只记日志（编辑页下次打开看不到这次内容，词库本身是好的）
                         val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), text)
                         if (wrote == null) Diagnostics.w(TAG, "快捷补充：源文本写入失败（包已生效）")
+                        // 字表闸（繁体 / 生僻字）会把整条丢在候选出口：条数回传词库页一起提示
+                        filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
                         ok = true
                         ""
                     }
@@ -189,12 +193,13 @@ class CustomDictEditActivity : Activity() {
                 saveButton.isEnabled = true
                 saveButton.alpha = 1f
                 if (ok) {
-                    Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行")
+                    Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
                     setResult(
                         RESULT_OK,
                         Intent()
                             .putExtra(EXTRA_ENTRIES, entries)
-                            .putExtra(EXTRA_SKIPPED, skipped),
+                            .putExtra(EXTRA_SKIPPED, skipped)
+                            .putExtra(EXTRA_FILTERED, filtered),
                     )
                     finish()
                 } else {
@@ -282,15 +287,17 @@ class CustomDictEditActivity : Activity() {
 
     companion object {
 
-        /** 词库页从结果里取「已保存条数 / 跳过行数」，复用同一句结果文案 */
+        /** 词库页从结果里取「已保存条数 / 跳过行数 / 打不出的条数」，复用同一句结果文案 */
         const val EXTRA_ENTRIES = "custom_entries"
         const val EXTRA_SKIPPED = "custom_skipped"
+        const val EXTRA_FILTERED = "custom_filtered"
 
         // 文案在代码里下发（与词库页的 TEXT_CUSTOM_* 同做法，strings.xml 只承载卡片按钮）
         const val TEXT_TITLE = "快捷补充"
-        const val TEXT_HINT_LINE1 = "每行一条：「词 拼音」，拼音用空格分音节；# 开头是注释。"
-        const val TEXT_HINT_LINE2 = "保存即生效；这里的内容与「导入.txt文档」共用同一份文本。"
-        const val TEXT_EDITOR_HINT = "例如：\n机器学习\tji qi xue xi\n张三\tzhang san"
+        const val TEXT_HINT_LINE1 = "# 开头是注释\n每行一条：你好 ni hao\n拼音用'空格'分隔每个字的音节"
+        const val TEXT_HINT_LINE2 = "这里的内容与「导入.txt文档」共用同一份文本。"
+        const val TEXT_HINT_LINE3 = "词组（两个字以上）不受字表限制：生僻字、繁体字都能打；单字仍受限制。"
+        const val TEXT_EDITOR_HINT = "# 示范例子：\n许嵩 xu song\n冯禧 feng xi\n黄龄 huang ling\n黄霄雲 huang xiao yun"
         const val TEXT_SAVE = "保存"
         const val TEXT_SAVING = "正在保存并生成词库…"
         const val TEXT_READ_FAIL = "无法读取已保存的内容（文件过大或损坏）"

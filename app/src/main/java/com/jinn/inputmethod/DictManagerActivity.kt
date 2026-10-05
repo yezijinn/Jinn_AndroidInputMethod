@@ -247,8 +247,9 @@ class DictManagerActivity : Activity() {
         if (blockedByRestart()) return
         val entries = data.getIntExtra(CustomDictEditActivity.EXTRA_ENTRIES, 0)
         val skipped = data.getIntExtra(CustomDictEditActivity.EXTRA_SKIPPED, 0)
-        Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行")
-        setStatus(TEXT_CUSTOM_RESULT.format(entries, skipped))
+        val filtered = data.getIntExtra(CustomDictEditActivity.EXTRA_FILTERED, 0)
+        Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
+        setStatus(customResultText(entries, skipped, filtered))
         refreshList()
         restartImeForDict()
     }
@@ -288,8 +289,12 @@ class DictManagerActivity : Activity() {
                         // 原文另存一份：与「快捷补充」页共享同一份内容（写失败不影响包已生效）
                         val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), text)
                         if (wrote == null) Diagnostics.w(TAG, "自定义词库源文本保存失败（包已生效）")
-                        Diagnostics.i(TAG, "自定义词库导入: ${parsed.entries.size} 条 / 跳过 ${parsed.skipped} 行")
-                        TEXT_CUSTOM_RESULT.format(parsed.entries.size, parsed.skipped)
+                        val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
+                        Diagnostics.i(
+                            TAG,
+                            "自定义词库导入: ${parsed.entries.size} 条 / 跳过 ${parsed.skipped} 行 / 打不出 $filtered 条",
+                        )
+                        customResultText(parsed.entries.size, parsed.skipped, filtered)
                     }
                 }
             } catch (t: Throwable) {
@@ -486,6 +491,16 @@ class DictManagerActivity : Activity() {
         card.addView(row, matchWrap(top = 8))
         return card
     }
+
+    /**
+     * 结果文案：有词条会被字表闸丢下时改说「候选里不会出现」。
+     *
+     * 用户写「黄霄雲」这类繁体时包能落盘、界面显示「已导入」，但候选出口按字表整条丢下 ——
+     * 不点名的话用户只会在键盘上反复试却打不出，无从归因（2026-10-05 实测）。
+     */
+    private fun customResultText(entries: Int, skipped: Int, filtered: Int): String =
+        if (filtered > 0) TEXT_CUSTOM_RESULT_FILTERED.format(entries, skipped, filtered)
+        else TEXT_CUSTOM_RESULT.format(entries, skipped)
 
     /** 删除自定义词库前二次确认（没有下载源，删掉就得重新导入） */
     private fun confirmRemoveCustom() {
@@ -901,7 +916,8 @@ class DictManagerActivity : Activity() {
         // 自定义词库的文案同款：按钮复用 strings 里的 dict_action_import_custom，其余代码里下发
         const val TEXT_CUSTOM_TITLE = "自定义词库"
         val TEXT_CUSTOM_DESC = listOf(
-            "导入自己写的补充词库（.txt）：每行「词 拼音」，拼音用空格分音节。"
+            "导入自己写的.txt补充词库 (可备份,随配置导出)",
+            "每行都是词组 拼音 (点'快捷补充'有参考)"
         )
 
         const val TEXT_CUSTOM_IMPORTING = "正在导入自定义词库…"
@@ -911,6 +927,8 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_EMPTY = "没有可导入的合法词条（跳过 %d 行）"
         const val TEXT_CUSTOM_WRITE_FAIL = "写入词库失败"
         const val TEXT_CUSTOM_RESULT = "已导入 %d 条（跳过 %d 行），输入法将重启以生效"
+        const val TEXT_CUSTOM_RESULT_FILTERED =
+            "已导入 %d 条（跳过 %d 行），其中 %d 条是单字且不在字表内，候选里不会出现"
         const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
 
         /** 列表渲染异常时的兜底提示（BUG.md L-831：刷新失败不崩进程，重进本页即恢复） */

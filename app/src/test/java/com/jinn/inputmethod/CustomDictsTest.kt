@@ -199,4 +199,32 @@ class CustomDictsTest {
         }
         assertFalse("超过 8MB 上限的源文本不许随备份落盘", CustomDicts.isValidSourceFile(huge))
     }
+
+    @Test
+    fun `单空格分隔的词与拼音须能分列`() {
+        // 手机上打不出 TAB（2026-10-05 用户实测）：`黄霄雲 huang xiao yun` 必须能直接保存
+        val r = CustomDicts.parseHuman("黄霄雲 huang xiao yun\n张三 zhang san3\n机器学习  ji qi  xue xi", null)
+        assertEquals(listOf("黄霄雲", "张三", "机器学习"), r.entries.map { it.text })
+        assertEquals(listOf("huang xiao yun", "zhang san", "ji qi xue xi"), r.entries.map { it.pinyin })
+        assertEquals(0, r.skipped)
+    }
+
+    @Test
+    fun `纯拼音行与含空格的词须跳过`() {
+        assertEquals(
+            "整行都是拼音 ⇒ 没有词，不猜（避免误粘一行拼音变成垃圾词条）",
+            0,
+            CustomDicts.parseHuman("huang xiao yun", null).entries.size,
+        )
+        assertEquals(
+            "词含空格（拼音段前面还剩多段）⇒ 跳过；这类词请用 TAB 形态写",
+            0,
+            CustomDicts.parseHuman("黄 霄雲 huang xiao yun", null).entries.size,
+        )
+        assertEquals(
+            "TAB 形态下即使词是纯拼音形状（如英文缩写）也照收",
+            1,
+            CustomDicts.parseHuman("CPU\tcpu", null).entries.size,
+        )
+    }
 }
