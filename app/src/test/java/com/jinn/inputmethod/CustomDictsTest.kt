@@ -4,6 +4,8 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -649,18 +651,18 @@ class CustomDictsTest {
     @Test
     fun `自定义词库改过后要跳过空闲等待`() {
         // 可选包默认只在息屏 / 收键盘 / 180s 兜底时才装载；自定义词库是刚写完的小包，跟着官方大包
-        // 一起等，用户保存后马上打字就是「没有候选」（BUG.md L-888）。判据本身在 PinyinEngine
-        // （见 IndexCacheLifecycleTest），这里钉接线：启动路径要判「可否立刻装载」，通过就真的触发
+        // 一起等，用户保存后马上打字就是「没有候选」（BUG.md L-888 / L-893）。范围判据本身在
+        // PinyinEngine（见 IndexCacheLifecycleTest），这里钉接线：启动路径要算范围，非空就真的触发
         val src = TestSources.codeSource("JinnIme.kt")
-        val at = src.indexOf("PinyinEngine.optionalShouldLoadNow(")
-        assertTrue("IME 启动路径要判可否立刻装载", at > 0)
-        assertTrue(
-            "判定通过后要真的触发装载",
-            "maybeLoadOptionalDict(" in src.substring(at).substringBefore("onFailure"),
-        )
-        assertTrue(
+        val at = src.indexOf("PinyinEngine.immediateLoadTargets(this)")
+        assertTrue("IME 启动路径要算立刻装载的范围", at > 0)
+        val site = src.substring(at).substringBefore("onFailure")
+        assertTrue("范围非空才触发", "if (targets.isNotEmpty())" in site)
+        assertTrue("要真的触发装载", "maybeLoadOptionalDict(" in site)
+        assertEquals(
             "自定义包不看索引是否就绪（几十条，重建也是毫秒级）",
-            PinyinEngine.optionalShouldLoadNow(listOf(CustomDicts.PACK_NAME)) { false },
+            listOf(CustomDicts.PACK_NAME),
+            PinyinEngine.immediateLoadTargets(listOf(CustomDicts.PACK_NAME)) { false },
         )
     }
 
@@ -672,6 +674,46 @@ class CustomDictsTest {
         assertTrue("saveHuman 方法体锚点失效（源码结构变了）", body.isNotEmpty() && body.length < src.length)
         assertFalse("saveHuman 不得调用 formatHuman（会为全文再造一份副本）", "formatHuman(" in body)
         assertTrue("源文本必须逐行写出", "scanAndWriteSource(" in body)
+    }
+
+    @Test
+    fun `源文本身份：不在为 null，改过就变`() {
+        // BUG.md L-896：编辑器用它判断「打开之后词库有没有被别处改过」
+        val dir = File(tmp, "dicts-src-stamp").apply { mkdirs() }
+        val src = File(dir, CustomDicts.SOURCE_NAME)
+        assertNull("没有源文本时身份为空", CustomDicts.sourceStamp(src))
+        src.writeBytes("张三 zhang san\n".toByteArray(Charsets.UTF_8))
+        val first = CustomDicts.sourceStamp(src)
+        assertNotNull("写出来后要有身份", first)
+        // 同名文件重写：长度与 mtime 至少一项变（改名落盘也是这个口径）
+        src.writeBytes("张三 zhang san\n李四 li si\n".toByteArray(Charsets.UTF_8))
+        assertNotEquals("内容变过身份必须变", first, CustomDicts.sourceStamp(src))
+    }
+
+    @Test
+    fun `编辑器保存前要比对源文本身份`() {
+        // BUG.md L-896：恢复（对话框有「稍后」，进程还活着）或导入 .txt 之后，编辑器里那份
+        // 已经过期；保存前必须比对，不一致先确认，否则会把别的改动整份盖掉
+        val src = TestSources.codeSource("CustomDictEditActivity.kt")
+        val save = src.substringAfter("private fun save()").substringBefore("val text = editor.text.toString()")
+        assertTrue("save() 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
+        assertTrue("保存前要比对身份", "CustomDicts.sourceStamp(CustomDicts.sourceFile(this))" in save)
+        assertTrue("确认过才放行", "forceSave" in save)
+        assertTrue("载入时要记一份身份", "loadedSourceStamp = stamp" in src)
+    }
+
+    @Test
+    fun `编辑器返回与关闭都要走放弃确认`() {
+        // BUG.md L-897：本页专门用来粘贴大词表，返回 / ✕ 都走同一个出口，有改动先问
+        val src = TestSources.codeSource("CustomDictEditActivity.kt")
+        val back = src.substringAfter("override fun onBackPressed()").substringBefore("private fun confirmExit()")
+        assertTrue("返回键要走确认出口", "confirmExit()" in back)
+        val exit = src.substringAfter("private fun confirmExit()").substringBefore("private fun confirmOverwrite()")
+        assertTrue("没有改动就直接退出", "if (!dirty) {" in exit)
+        assertTrue("有改动要弹确认", "TEXT_DISCARD_TITLE" in exit)
+        val close = src.substringAfter("closeButton = TextView(this)").substringBefore("private fun")
+        assertTrue("✕ 也要走确认出口", "confirmExit()" in close)
+        assertTrue("程序化回填不算用户改动", "if (!refilling) dirty = true" in src)
     }
 
     @Test

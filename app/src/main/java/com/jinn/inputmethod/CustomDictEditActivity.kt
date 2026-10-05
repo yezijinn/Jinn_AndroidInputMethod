@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
@@ -50,6 +51,18 @@ class CustomDictEditActivity : Activity() {
      * 整体替换掉，而提示只显示「已保存 N 条」—— 那是静默的数据丢失。
      */
     private var refillSkipped = false
+
+    /** 载入时记下的源文本身份（null = 当时没有源文本）；保存前再取一次比对，见 [save]（BUG.md L-896） */
+    private var loadedSourceStamp: Long? = null
+
+    /** 用户在覆盖确认里选了「继续保存」：本次放行，不再弹第二次 */
+    private var forceSave = false
+
+    /** 编辑器里有未保存改动（返回 / ✕ 时据此确认，BUG.md L-897） */
+    private var dirty = false
+
+    /** 正在程序化回填（`editor.setText`）：期间的文本变化不算用户改动 */
+    private var refilling = false
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
@@ -108,6 +121,14 @@ class CustomDictEditActivity : Activity() {
         }
         // 外观走卡片同款（底色 / 圆角 / 描边 / 内边距）；padding 由 dressAsCard 统一给
         PageStyle.dressAsCard(editor)
+        // 未保存改动的判据（BUG.md L-897）：程序化回填期间的变化不算，其余都算用户改过
+        editor.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (!refilling) dirty = true
+            }
+        })
         root.addView(
             editor,
             LinearLayout.LayoutParams(
@@ -133,14 +154,42 @@ class CustomDictEditActivity : Activity() {
     /**
      * 保存中拦返回键（BUG.md L-860）：返回键的 `finish()` 与点 ✕ 是同一个后果 ——
      * 写盘继续跑，而结果回执被 `isFinishing` 早退吃掉（包已更新却不重启引擎、词库页不刷新）。
+     * 另有未保存改动时先确认（BUG.md L-897）：本页专门用来粘贴大词表，误触返回就白干。
      */
     @Deprecated("onBackPressed 已废弃，但此页是 Activity（非 ComponentActivity），无 OnBackPressedDispatcher")
     override fun onBackPressed() {
+        confirmExit()
+    }
+
+    /** 返回 / ✕ 的共用出口：保存中拦住，有改动先确认 */
+    private fun confirmExit() {
         if (saving) {
             setStatus(TEXT_SAVING_WAIT)
             return
         }
-        super.onBackPressed()
+        if (!dirty) {
+            finish()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_DISCARD_TITLE)
+            .setMessage(TEXT_DISCARD_BODY)
+            .setPositiveButton(TEXT_DISCARD_OK) { _, _ -> finish() }
+            .setNegativeButton(TEXT_KEEP_EDITING, null)
+            .show()
+    }
+
+    /** 源文本在别处被改过时的二次确认：继续保存会用编辑框里的内容覆盖它（BUG.md L-896） */
+    private fun confirmOverwrite() {
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_OVERWRITE_TITLE)
+            .setMessage(TEXT_OVERWRITE_BODY)
+            .setPositiveButton(TEXT_OVERWRITE_OK) { _, _ ->
+                forceSave = true
+                save()
+            }
+            .setNegativeButton(TEXT_CONFIRM_CANCEL, null)
+            .show()
     }
 
     // ── 载入 / 保存 ──────────────────────────────────────────
@@ -156,8 +205,12 @@ class CustomDictEditActivity : Activity() {
         Thread {
             val file = CustomDicts.sourceFile(app)
             val text = CustomDicts.readSource(file)
+            // 与内容同一次取身份：保存前再取一次，不一致说明词库在别处被改过（BUG.md L-896）
+            val stamp = CustomDicts.sourceStamp(file)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
+                // 读失败不认这份身份（编辑器也留空，保存走「还没有内容」分支）
+                if (text != null) loadedSourceStamp = stamp
                 when {
                     text == null -> setStatus(TEXT_READ_FAIL)
                     text.isEmpty() -> Unit
@@ -178,7 +231,12 @@ class CustomDictEditActivity : Activity() {
                         saveButton.isEnabled = false
                         saveButton.alpha = 0.45f
                     }
-                    else -> editor.setText(text)
+                    else -> {
+                        refilling = true
+                        editor.setText(text)
+                        refilling = false
+                        dirty = false
+                    }
                 }
             }
         }.apply { isDaemon = true }.start()
@@ -197,6 +255,15 @@ class CustomDictEditActivity : Activity() {
         if (ConfigBackupManager.importing) {
             setStatus(TEXT_CONFIG_IMPORTING)
             return
+        }
+        // 恢复写完了但进程还没重启时（对话框有「稍后」），这里的编辑内容已经过期；导入 .txt 与
+        // 手工替换同理 —— 闷头保存会把别人的改动整份盖掉（BUG.md L-896），先问一句
+        if (!forceSave) {
+            val now = CustomDicts.sourceStamp(CustomDicts.sourceFile(this))
+            if (now != loadedSourceStamp) {
+                confirmOverwrite()
+                return
+            }
         }
         // 两道入口判据都读编辑器自身（`Editable` 就是 CharSequence，读长度与判空都不必先复制快照）
         if (editor.text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
@@ -333,9 +400,11 @@ class CustomDictEditActivity : Activity() {
             isClickable = true
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setOnClickListener {
-                // 保存中先拦住（BUG.md L-860）：写盘已完成但回执被 finish 吃掉 = 静默半生效
-                if (saving) {
-                    setStatus(TEXT_SAVING_WAIT)
+                // 保存中先拦住（BUG.md L-860）：写盘已完成但回执被 finish 吃掉 = 静默半生效；
+                // 有未保存改动时同样先确认（BUG.md L-897）
+                if (saving || dirty) {
+                    Diagnostics.i(TAG, "CustomDictEditActivity: 关闭前需确认（saving=$saving dirty=$dirty）")
+                    confirmExit()
                     return@setOnClickListener
                 }
                 Diagnostics.i(TAG, "CustomDictEditActivity: 用户关闭页面")
@@ -403,6 +472,19 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_BUSY = "正在写入词库，请稍候再试"
         const val TEXT_SAVING_WAIT = "正在保存，请稍候…"
         const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入 .txt」整体替换（此页保存已停用）"
+
+        // 覆盖确认（BUG.md L-896）：打开之后词库被别处改过
+        const val TEXT_OVERWRITE_TITLE = "词库已在别处改过"
+        const val TEXT_OVERWRITE_BODY =
+            "打开这一页之后，词库被「配置恢复 / 导入 .txt」改过。继续保存会用编辑框里的内容覆盖它。"
+        const val TEXT_OVERWRITE_OK = "继续保存"
+        const val TEXT_CONFIRM_CANCEL = "取消"
+
+        // 放弃确认（BUG.md L-897）：返回 / ✕ 时还有没保存的改动
+        const val TEXT_DISCARD_TITLE = "放弃未保存的改动？"
+        const val TEXT_DISCARD_BODY = "编辑框里的改动还没有保存，离开后会丢失。"
+        const val TEXT_DISCARD_OK = "放弃"
+        const val TEXT_KEEP_EDITING = "继续编辑"
 
         /** 回填体验阈值（字符）：见 [shouldRefill] 与 BUG.md L-870 */
         const val MAX_REFILL_CHARS = 1_000_000

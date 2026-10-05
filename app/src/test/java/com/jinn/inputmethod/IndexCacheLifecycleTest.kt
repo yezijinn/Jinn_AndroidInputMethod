@@ -173,8 +173,10 @@ class IndexCacheLifecycleTest {
         // 反向钉：这两句一旦回来，就是「失败的包永远不再试」的老毛病（BUG.md L-154 / L-167）
         assertFalse("闸门不得退回布尔闸", "if (optionalLoaded) return" in src)
         assertFalse("调用方不得再放一次性旗标（放回去 ⇒ 失败后没有第二次触发）", "optionalLoadTriggered" in ime)
-        assertTrue("调用方必须直接调装载（并只在真的开始时打日志）",
-            "val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L)" in ime)
+        assertTrue(
+            "调用方必须直接调装载（并只在真的开始时打日志）",
+            "val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L, onlyPacks = onlyPacks)" in ime,
+        )
     }
 
     /**
@@ -231,31 +233,66 @@ class IndexCacheLifecycleTest {
     }
 
     @Test
-    fun 全都就绪或只差自定义包时启动即装载() {
-        // 可选包默认等空闲信号（息屏 / 键盘闲置 20s / 180s 兜底）；两种情形不该等（BUG.md L-888 / L-892）：
-        // 索引都就绪（装载只是映射复用，清单实测约 0.05s）、需要重建的只有自定义词库（几十条，毫秒级）。
-        // 官方大包要重建时仍要等 —— 首次构建实测 4~14s，压在首屏就是「刚开机很卡」
-        val ready = listOf("pinyin_index_part2.txt.xz", "pinyin_index_part3.txt.xz")
-        assertTrue(
-            "全都就绪：启动即装",
-            PinyinEngine.optionalShouldLoadNow(ready + CustomDicts.PACK_NAME) { it in ready },
+    fun 立即装载的范围按包算() {
+        // 可选包默认等空闲信号（息屏 / 键盘闲置 20s / 180s 兜底）；两类不该等（BUG.md L-888 / L-892）：
+        // 索引已就绪（映射复用，清单实测约 0.05s）、自定义词库（几十条，重建也是毫秒级）。
+        // 官方大包要重建时不在范围内 —— 首次构建实测 4~14s，压在首屏就是「刚开机很卡」；
+        // 但它**不该拖住别的包**（BUG.md L-893）
+        val part2 = "pinyin_index_part2.txt.xz"
+        val part3 = "pinyin_index_part3.txt.xz"
+        assertEquals(
+            "全都就绪：都能立刻装",
+            listOf(part2, part3, CustomDicts.PACK_NAME),
+            PinyinEngine.immediateLoadTargets(listOf(part2, part3, CustomDicts.PACK_NAME)) { true },
+        )
+        assertEquals(
+            "官方包待重建：只剩自定义词库可以立刻装（L-893）",
+            listOf(CustomDicts.PACK_NAME),
+            PinyinEngine.immediateLoadTargets(listOf(part2, CustomDicts.PACK_NAME)) { it != part2 },
         )
         assertTrue(
-            "只差自定义包：也启动即装",
-            PinyinEngine.optionalShouldLoadNow(listOf(CustomDicts.PACK_NAME)) { false },
+            "只有官方包待重建：这一遍没什么可立刻装的",
+            PinyinEngine.immediateLoadTargets(listOf(part2)) { false }.isEmpty(),
         )
-        assertFalse(
-            "官方包要重建：仍旧等空闲信号",
-            PinyinEngine.optionalShouldLoadNow(listOf("pinyin_index_part2.txt.xz")) { false },
+        assertTrue("没装包不必触发", PinyinEngine.immediateLoadTargets(emptyList()) { true }.isEmpty())
+    }
+
+    @Test
+    fun 小包装载范围收窄但闸门仍看全部包() {
+        // BUG.md L-893：只装自定义词库这一遍如果按子集算 pending，闸门会以为「都装过了」而早退，
+        // 官方大包再也等不到装载 —— 范围可以收窄，闸门必须按全部已装包算
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        val fn = engine.substringAfter("fun loadOptionalAsync(").substringBefore("线程要活 21~34s")
+        assertTrue("loadOptionalAsync 锚点失效（源码结构变了）", fn.isNotEmpty() && fn.length < engine.length)
+        assertTrue("这一遍按 onlyPacks 收窄", "val packs = if (onlyPacks == null) installed" in fn)
+        assertTrue("闸门要按全部已装包算", "val pending = installed.any {" in fn)
+        val jinn = TestSources.codeSource("JinnIme.kt")
+        val site = jinn.substringAfter("val targets = PinyinEngine.immediateLoadTargets(this)").substringBefore("onFailure")
+        assertTrue("空集就别触发", "if (targets.isNotEmpty())" in site)
+        assertTrue("收窄的范围要传下去", "maybeLoadOptionalDict(\"索引就绪或只差自定义词库\", targets)" in site)
+        assertTrue("日志要写清范围（L-894）", "可立即装载（" in site)
+        // BUG.md L-895：清单说明得跟上启动装载这条（文档类断言读原文 —— codeSource 会剥注释）
+        assertTrue(
+            "清单说明要提到启动装载",
+            "随启动装载" in TestSources.rawSourceOfShortName("OptionalDicts.kt"),
         )
-        assertFalse("没装包不必触发", PinyinEngine.optionalShouldLoadNow(emptyList()) { true })
+    }
+
+    @Test
+    fun 缓存身份判据要求三处一致() {
+        // BUG.md L-890 / L-898：判据是「缓存头记的身份、入口取的身份、此刻再取的身份」三者相等。
+        // 行为用例才挡得住运算符被换（`&&` 换 `||` 的写法只靠源码对拍查不出来）
+        assertTrue("三者一致才复用", PinyinEngine.cacheStampMatches(7L, 7L, 7L))
+        assertFalse("没有缓存头不算命中", PinyinEngine.cacheStampMatches(null, 7L, 7L))
+        assertFalse("缓存与入口对不上（换了包）", PinyinEngine.cacheStampMatches(6L, 7L, 7L))
+        assertFalse("此刻身份变了（判定期间被换掉）", PinyinEngine.cacheStampMatches(7L, 7L, 8L))
     }
 
     @Test
     fun 索引缓存命中前后各核一次源包身份() {
         // 入口取一次 length:mtime，既用它判缓存命中、又用它给新缓存贴标签，而内容读取发生在两处之后：
         // 取值与判定之间包被换掉时，旧缓存会被当成新包的索引复用 —— 用户看到「改过的词库不生效」
-        // （BUG.md L-890）。守卫只认这条判据本身，不认别的写法
+        // （BUG.md L-890）。判据本身由上一条行为用例覆盖，这里只钉接线
         val engine = TestSources.codeSource("PinyinEngine.kt")
         val body = engine.substringAfter("private fun loadOptionalIndex(")
             .substringBefore("判定「源包已被删除」")
@@ -264,7 +301,7 @@ class IndexCacheLifecycleTest {
             body.isNotEmpty() && body.length < engine.length,
         )
         val hit = body.substringAfter("if (cache.isFile)").substringBefore("val t0")
-        assertTrue("命中缓存前要再取一次身份", "packStamp(src) == stamp" in hit)
+        assertTrue("命中要走统一的身份判据", "cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))" in hit)
         val build = body.substringAfter("PhraseIndex.build(reader.lineSequence(), stamp)")
         assertTrue("写缓存前要再核一次身份", "packStamp(src)" in build)
         assertTrue("身份变了就不落缓存", "stampNow == stamp" in build)

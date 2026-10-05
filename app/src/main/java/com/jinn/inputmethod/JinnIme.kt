@@ -458,9 +458,12 @@ class JinnIme : InputMethodService() {
                 // 官方大包需要重建时才值得推迟（首次构建 4~14s，压在首屏就是「刚开机很卡」）；
                 // 卡片文案「以后启动都是瞬间就绪 不用等待」正是这条规则的承诺（BUG.md L-888 / L-892）
                 runCatching {
-                    if (PinyinEngine.optionalShouldLoadNow(this)) {
-                        Diagnostics.i(TAG, "可选词库索引已就绪：跳过空闲等待，立即装载")
-                        maybeLoadOptionalDict("索引已就绪")
+                    // 立刻装的范围按包给：官方大包待重建不该拖住别的包（BUG.md L-893），
+                    // 而它自己仍等息屏 / 收键盘 / 兜底，别和前台输入抢 CPU
+                    val targets = PinyinEngine.immediateLoadTargets(this)
+                    if (targets.isNotEmpty()) {
+                        Diagnostics.i(TAG, "可选词库可立即装载（${targets.size} 个）：跳过空闲等待")
+                        maybeLoadOptionalDict("索引就绪或只差自定义词库", targets)
                     }
                 }.onFailure { Diagnostics.w(TAG, "可选词库就绪检查失败: ${it.message}") }
             }.onFailure {
@@ -1907,21 +1910,25 @@ class JinnIme : InputMethodService() {
      * 触发可选词库包的后台加载（单次）。
      *
      * 不用固定延迟：实测那 1.14M 词条的解析要 21~34s，而「基础包就绪后 5 秒」
-     * 恰好是用户开始打字的时刻，后台重活与前台输入抢 CPU/内存带宽，主观感受就是
-     * 「刚开机很卡」。改为等空闲信号，三选一（先到先得）：
+     * 恰好是用户开始打字的时刻，后台重活与前台输入抢 CPU / 内存带宽，主观感受就是
+     * 「刚开机很卡」。装载时机（先到先得）：
+     *  · 启动捷径：索引都已就绪（映射复用）或只差自定义词库时，基础包就绪后就装 —— 这两种
+     *    都不必等空闲信号（见 `onCreate` 里的 `optionalShouldLoadNow`）；
      *  · 息屏：用户锁屏，最可靠的空闲信号；
      *  · 键盘收起后再闲置 [OPTIONAL_IDLE_DELAY_MS]：用户停止输入；
      *  · 兜底 [OPTIONAL_FALLBACK_DELAY_MS]：一直没出现上面两种情况时也必须加载。
      *
+     * @param onlyPacks 只装这些包（启动捷径算出来的那一批，BUG.md L-893）；为空表示装全部
+     *
      * 加载线程本身已设 [android.os.Process.THREAD_PRIORITY_BACKGROUND]（见 PinyinEngine）。
      */
-    private fun maybeLoadOptionalDict(reason: String) {
+    private fun maybeLoadOptionalDict(reason: String, onlyPacks: Collection<String>? = null) {
         // 这里**不再**放一次性旗标：装了包但那次没读进来（损坏 / 解压失败）时，
         // 旗标会让本进程**永远没有第二次触发**，而词库页写着「空闲时自动装载」——
         // 与用户看到的界面矛盾（BUG.md L-154 / L-167）。要不要真装载由引擎的闸门决定：
         // 它按包身份 + 失败次数（有界重试）判定，未变过的包在闸门处就返回 false、几乎不花时间。
         runCatching {
-            val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L) {
+            val started = PinyinEngine.loadOptionalAsync(this, delayMs = 0L, onlyPacks = onlyPacks) {
                 Diagnostics.i(TAG, "可选词库已在后台就绪")
             }
             // 只在**真的开始装载**时打日志：否则每次息屏 / 收键盘都会多一行噪音

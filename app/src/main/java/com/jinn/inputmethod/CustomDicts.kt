@@ -490,6 +490,15 @@ internal object CustomDicts {
     fun sourceFile(context: Context): File = File(File(context.filesDir, PinyinEngine.OPT_DICT_DIR), SOURCE_NAME)
 
     /**
+     * 源文本的当前身份（`length:mtime`，与索引缓存头同口径）；文件不在时返回 null。
+     *
+     * 快捷补充页在载入时记一次、保存前再取一次：不一致说明词库在别处被改过（备份恢复、
+     * 导入 .txt、手工替换），继续保存会把那份改动整份覆盖（BUG.md L-896）。
+     */
+    internal fun sourceStamp(file: File): Long? =
+        if (file.isFile) PhraseIndex.stampOfFile(file.length(), file.lastModified()) else null
+
+    /**
      * 删除自定义词库：**包与源文本一起清**。
      *
      * 只删包的话，「快捷补充」页下次打开仍会回显已删词库的内容，用户会以为没删掉。

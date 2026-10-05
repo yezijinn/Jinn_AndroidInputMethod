@@ -1149,17 +1149,27 @@ object PinyinEngine {
      * @param delayMs 基础包就绪后再等多久开始加载，给首屏输入让路
      * @param onReady 全部可选包加载完成后的回调（不在主线程，调用方自行切线程）
      */
-    fun loadOptionalAsync(context: Context, delayMs: Long = 5000L, onReady: (() -> Unit)? = null): Boolean {
+    fun loadOptionalAsync(
+        context: Context,
+        delayMs: Long = 5000L,
+        onlyPacks: Collection<String>? = null,
+        onReady: (() -> Unit)? = null,
+    ): Boolean {
         // 检查-置位必须在同一把锁内：两个线程同时抵达时，
         // 无锁写法会让两边都通过检查、各自启一个加载线程，重复把词库 merge 一遍。
         // 锁用 [optionalLock] 而非 `this`：`load()` 全程持 `this`（含秒级索引解压），
         // 本方法的调用点又全在主线程，首次加载期间的空闲信号会把主线程阻塞数秒。
-        val packs = installedOptionalPacks(context.applicationContext)
+        val installed = installedOptionalPacks(context.applicationContext)
+        // 这一遍实际要装的包：`onlyPacks` 非空时只装这些（启动捷径里「就绪的 + 自定义词库」那一批，
+        // BUG.md L-893）。闸门的 pending 仍按**全部已装包**算 —— 只按子集算的话，小包装完就以为
+        // 「都装过了」，官方大包再也等不到装载。
+        val packs = if (onlyPacks == null) installed else installed.filter { it.name in onlyPacks }
+        if (packs.isEmpty()) return false
         synchronized(optionalLock) {
             if (optionalLoading) return false
             // 两道判据（见 packShouldRetry）：包的**身份变过**（新装 / 重下 / 换包）要试；
             // 身份没变但**上次失败且没试满**也要试 —— 否则词库页那句「空闲时自动装载」就是空话。
-            val pending = packs.any {
+            val pending = installed.any {
                 packShouldRetry(optionalAttempted[it.name], packStamp(it), optionalFailed[it.name])
             }
             if (optionalLoaded && !pending) return false
@@ -1180,7 +1190,7 @@ object PinyinEngine {
                     load(appContext)
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val t0 = System.currentTimeMillis()
-                    failed = loadExtensionDict(appContext)
+                    failed = loadExtensionDict(appContext, packs)
                     // 可选包引入了新的拼音键，必须重建有序键表：
                     // sortedPhraseKeys 是加载时的快照，不重建则新词不参与前缀补全。
                     synchronized(this) { finalizeLoad() }
@@ -1271,26 +1281,37 @@ object PinyinEngine {
             .orEmpty()
 
     /**
-     * 启动时是否该立刻装载可选包，不等空闲信号（BUG.md L-888 / L-892）。
+     * 启动时**立刻**该装哪些包，不等空闲信号（BUG.md L-888 / L-892 / L-893）；返回空集表示没得
+     * 立刻装的、继续等空闲信号。
      *
-     * 判据：已装包里每个要么是自定义词库（几十条，重建也是毫秒级），要么索引已就绪
-     * （映射复用，清单实测约 0.05s）。任一官方包需要重建时返回 `false` —— 首次构建实测
-     * 4~14s，压在首屏就是「刚开机很卡」，那种情形仍旧等息屏 / 收键盘 / 兜底 180s。
+     * 两类可以立刻装：索引已就绪的（映射复用，清单实测约 0.05s）、自定义词库（几十条，重建也是
+     * 毫秒级）。需要重建的**官方大包**不在其中 —— 首次构建实测 4~14s，压在首屏就是「刚开机很卡」。
+     *
+     * 判据按**包**给，不是按批：官方包待重建时不该把自定义词库一起拖住 —— 用户刚保存完就打字，
+     * 那几个字节得先进内存（BUG.md L-893）；反过来，只有官方包待重建时返回空集，那一遍仍旧等空闲。
      *
      * 拆成纯函数是为了让判定可以直接单测（[indexReady] 由调用侧注入）。
      */
-    internal fun optionalShouldLoadNow(
+    internal fun immediateLoadTargets(
         packNames: List<String>,
         indexReady: (String) -> Boolean,
-    ): Boolean = packNames.isNotEmpty() && packNames.all {
-        it == CustomDicts.PACK_NAME || indexReady(it)
-    }
+    ): List<String> = packNames.filter { it == CustomDicts.PACK_NAME || indexReady(it) }
 
-    /** [optionalShouldLoadNow] 的取用版：直接查已装包与各自的索引缓存 */
-    internal fun optionalShouldLoadNow(context: Context): Boolean =
-        optionalShouldLoadNow(installedOptionalPacks(context).map { it.name }) {
+    /** [immediateLoadTargets] 的取用版：直接查已装包与各自的索引缓存 */
+    internal fun immediateLoadTargets(context: Context): List<String> =
+        immediateLoadTargets(installedOptionalPacks(context).map { it.name }) {
             isOptionalIndexReady(context, it)
         }
+
+    /**
+     * 索引缓存能不能当这次的索引用：缓存头里记的身份、入口取到的身份、**此刻再取一次的**身份，
+     * 三者必须一致（BUG.md L-890）。
+     *
+     * 拆成纯函数是为了让判据本身能被单测 —— 源码对拍只能确认「片段在」，把 `&&` 换成 `||`
+     * 照样通过（BUG.md L-898）。
+     */
+    internal fun cacheStampMatches(cacheStamp: Long?, entryStamp: Long, nowStamp: Long): Boolean =
+        cacheStamp != null && cacheStamp == entryStamp && nowStamp == entryStamp
 
     /**
      * 加载全部可选词库包。
@@ -1302,14 +1323,15 @@ object PinyinEngine {
      * 全部用 merge 模式加载（基础包词条在前，可选包追加，并去重）。
      * 未安装任何可选包不算错误：基础包已覆盖日常输入，仅记一条日志。
      */
-    private fun loadExtensionDict(context: Context): Set<String> {
-        val packs = installedOptionalPacks(context)
+    private fun loadExtensionDict(context: Context, packs: List<java.io.File>): Set<String> {
+        // 清扫按**全部已装包**算：只按这一遍要装的子集算，会把没参与本遍的包索引缓存
+        // 当成「源包已被删除」删掉
+        val alive = installedOptionalPacks(context).map { it.name }.toSet()
 
         val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR).apply { mkdirs() }
 
         // 清理：源包已被删除的索引缓存（用户可能只删了词库文件）
         runCatching {
-            val alive = packs.map { it.name }.toSet()
             // 带上 mtime：源包仍在的 `.idx.tmp` 也要按保护窗回收（BUG.md L-869）
             val byName = indexDir.listFiles()?.filter { it.isFile }
                 ?.associate { it.name to it.lastModified() }.orEmpty()
@@ -1344,10 +1366,10 @@ object PinyinEngine {
         if (loaded.isEmpty()) {
             // 区分「没装」与「装了但一个都没读进来」：后者原先也打这句 I 级日志，
             // 「词库装了却不生效」的排查会被直接带偏（包损坏 / 解压失败只有上文一条 W 级日志）
-            if (packs.isEmpty()) {
+            if (alive.isEmpty()) {
                 Diagnostics.i(TAG, "未安装可选词库：仅加载基础词库（长词不可用）")
             } else {
-                Diagnostics.w(TAG, "可选词库全部加载失败: 找到 ${packs.size} 个包，无一可用（长词不可用）")
+                Diagnostics.w(TAG, "可选词库全部加载失败: 这一遍的 ${packs.size} 个包无一可用（长词不可用）")
             }
         } else {
             Diagnostics.i(TAG, "可选词库已加载 ${loaded.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）")
@@ -1372,7 +1394,7 @@ object PinyinEngine {
                 // 命中要求三处身份一致：缓存头记的、入口取到的、**此刻再取一次的**。入口取值与这次
                 // 判定之间源包可能被换掉（保存 / 恢复都是改名落盘），那时旧缓存会被当成新包的索引
                 // 复用，用户看到的是「改过的词库不生效」（BUG.md L-890）
-                if (idx.sourceStamp == stamp && packStamp(src) == stamp) {
+                if (cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))) {
                     Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
                     return idx
                 }
