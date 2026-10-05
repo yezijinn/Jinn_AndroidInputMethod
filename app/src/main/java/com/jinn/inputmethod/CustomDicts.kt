@@ -6,6 +6,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.Locale
 import org.tukaani.xz.LZMA2Options
 import org.tukaani.xz.XZInputStream
 import org.tukaani.xz.XZOutputStream
@@ -71,7 +72,15 @@ internal object CustomDicts {
     private const val SYLLABLES_ASSET = "pinyin_syllables.txt.xz"
 
     private val KEY_SHAPE = Regex("[a-z]+")
-    private val TOKEN_SPLIT = Regex("[\\s']+")
+
+    /**
+     * 词与拼音、以及拼音音节之间的分隔符集合。
+     *
+     * 必须显式带上全角空格 U+3000 与不换行空格 U+00A0（BUG.md L-845）：Java 正则的 `\s`
+     * 只含 ASCII 空白（`[ \t\n\x0B\f\r]`），而从微信 / 网页 / WPS 复制来的词条常用全角空格 ——
+     * 少这两个字符时整行会被判成「没有可保存的合法词条」。
+     */
+    private val TOKEN_SPLIT = Regex("[\\s\\u3000\\u00A0']+")
 
     data class Entry(val text: String, val pinyin: String)
 
@@ -155,13 +164,13 @@ internal object CustomDicts {
 
     /** 单段是否呈拼音形状（小写、`ü`→`v`、可带声调数字）—— 只判形状，音节表校验在 [normalizeSyllables] */
     private fun isPinyinShape(token: String): Boolean {
-        val syl = token.lowercase().replace("ü", "v").trimEnd { it in '1'..'5' }
+        val syl = token.lowercase(Locale.US).replace("ü", "v").trimEnd { it in '1'..'5' }
         return syl.isNotEmpty() && KEY_SHAPE.matches(syl)
     }
 
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */
     private fun normalizeSyllables(token: String, syllables: Set<String>?): String? {
-        val parts = token.lowercase().replace("ü", "v").split(TOKEN_SPLIT).filter { it.isNotEmpty() }
+        val parts = token.lowercase(Locale.US).replace("ü", "v").split(TOKEN_SPLIT).filter { it.isNotEmpty() }
         if (parts.isEmpty()) return null
         val out = ArrayList<String>(parts.size)
         for (raw in parts) {
@@ -182,7 +191,7 @@ internal object CustomDicts {
     fun toRawPackLines(entries: List<Entry>): List<String> {
         val byKey = java.util.TreeMap<String, LinkedHashSet<String>>()
         for (e in entries) {
-            val set = byKey.getOrPut(e.pinyin.replace(" ", "").lowercase()) { LinkedHashSet() }
+            val set = byKey.getOrPut(e.pinyin.replace(" ", "").lowercase(Locale.US)) { LinkedHashSet() }
             if (set.size < MAX_WORDS_PER_KEY) set.add(e.text)
         }
         return byKey.map { (k, words) -> k + "\t" + words.joinToString("|") }
@@ -306,6 +315,13 @@ internal object CustomDicts {
      * 原子性与读写回环，不必依赖 Context（`writePack` 因要 Context 而测不到的那一层在这里补上）。
      */
     fun writeSource(dir: File, text: String): File? {
+        // 与 [readSource] / [readCapped] 同一口径（**字符**数）：写进去的必须能读回来。
+        // 不设上限时，超大草稿（注释行不占词条配额）能让源文本超过 8MB —— 之后编辑页读不回、
+        // 备份导入侧 [isValidSourceFile] 也拒收，文件在而界面看不到（BUG.md L-846）。
+        if (text.length > MAX_INPUT_BYTES) {
+            Diagnostics.w(TAG, "自定义词库源文本超过 ${MAX_INPUT_BYTES / 1024 / 1024}MB 上限，拒绝写入")
+            return null
+        }
         dir.mkdirs()
         val dest = File(dir, SOURCE_NAME)
         val tmp = File(dir, "$SOURCE_NAME.tmp")

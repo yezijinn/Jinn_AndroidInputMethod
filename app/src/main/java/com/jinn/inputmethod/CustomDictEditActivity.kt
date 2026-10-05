@@ -133,7 +133,13 @@ class CustomDictEditActivity : Activity() {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 when {
                     text == null -> setStatus(TEXT_READ_FAIL)
-                    text.isNotEmpty() -> editor.setText(text)
+                    text.isEmpty() -> Unit
+                    // 用户已开始输入（打开即弹键盘，大文本回填可达数百毫秒）：跳过回填，别把刚敲的内容盖掉（BUG.md L-849）
+                    editor.text.isNotEmpty() -> {
+                        Diagnostics.i(TAG, "快捷补充：回填跳过（编辑框已有 ${editor.text.length} 字符）")
+                        setStatus(TEXT_SKIP_REFILL)
+                    }
+                    else -> editor.setText(text)
                 }
             }
         }.apply { isDaemon = true }.start()
@@ -147,9 +153,20 @@ class CustomDictEditActivity : Activity() {
      */
     private fun save() {
         if (saving) return
+        // 备份恢复在途时拒绝写（BUG.md L-848）：恢复线程写的是同一个 custom_user.txt.xz，
+        // 两边都走「临时名 → rename」，后 rename 者胜 —— 保存的成果会被旧包静默盖掉。
+        if (ConfigBackupManager.importing) {
+            setStatus(TEXT_CONFIG_IMPORTING)
+            return
+        }
         val text = editor.text.toString()
         if (text.isBlank()) {
             setStatus(TEXT_EMPTY_INPUT)
+            return
+        }
+        // 与 readSource / writeSource 同一口径（字符数）：超限时先拦，别等落盘失败（BUG.md L-846）
+        if (text.length > CustomDicts.MAX_INPUT_BYTES) {
+            setStatus(TEXT_TOO_BIG)
             return
         }
         saving = true
@@ -296,12 +313,15 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_TITLE = "快捷补充"
         const val TEXT_HINT_LINE1 = "# 开头是注释\n每行一条：你好 ni hao\n拼音用'空格'分隔每个字的音节"
         const val TEXT_HINT_LINE2 = "这里的内容与「导入.txt文档」共用同一份文本。"
-        const val TEXT_HINT_LINE3 = "词组（两个字以上）不受字表限制：生僻字、繁体字都能打；单字仍受限制。"
+        const val TEXT_HINT_LINE3 = "词组不受字表限制：生僻、繁体 不启用的都能输出"
         const val TEXT_EDITOR_HINT = "# 示范例子：\n许嵩 xu song\n冯禧 feng xi\n黄龄 huang ling\n黄霄雲 huang xiao yun"
         const val TEXT_SAVE = "保存"
         const val TEXT_SAVING = "正在保存并生成词库…"
         const val TEXT_READ_FAIL = "无法读取已保存的内容（文件过大或损坏）"
-        const val TEXT_EMPTY_INPUT = "还没有内容：每行写「词 拼音」后再保存"
+        const val TEXT_EMPTY_INPUT = "还没有内容：每行写「词 空格 拼音」后再保存"
+        const val TEXT_TOO_BIG = "内容超过 8MB 上限，请精简后重试"
+        const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
+        const val TEXT_SKIP_REFILL = "已跳过回填：编辑框里已有你输入的内容"
         const val TEXT_TOO_MANY = "词条超过 5 万条上限，请精简后重试"
         const val TEXT_NO_VALID = "没有可保存的合法词条（跳过 %d 行）"
         const val TEXT_WRITE_FAIL = "保存失败，请重试"

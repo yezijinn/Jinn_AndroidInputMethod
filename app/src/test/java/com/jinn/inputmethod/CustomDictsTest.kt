@@ -210,6 +210,67 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `全角空格与不换行空格也要能分列`() {
+        // 从微信 / 网页 / WPS 粘来的词条常用全角空格当分隔符（BUG.md L-845）
+        val r = CustomDicts.parseHuman("张三\u3000zhang san\n李四\u00A0li si", null)
+        assertEquals(listOf("张三", "李四"), r.entries.map { it.text })
+        assertEquals(listOf("zhang san", "li si"), r.entries.map { it.pinyin })
+        assertEquals(0, r.skipped)
+    }
+
+    @Test
+    fun `源文本超过上限须拒绝写入`() {
+        // 与 readSource / isValidSourceFile 同一口径：写进去的必须能读回来（BUG.md L-846）
+        val dir = File(tmp, "dicts-overflow")
+        val huge = "a".repeat(CustomDicts.MAX_INPUT_BYTES + 1)
+        assertNull("超 8MB 的源文本不许落盘", CustomDicts.writeSource(dir, huge))
+        assertFalse("被拒绝时不许留下临时件", File(dir, CustomDicts.SOURCE_NAME + ".tmp").exists())
+        assertTrue(
+            "恰好等于上限仍应放行",
+            CustomDicts.writeSource(dir, "a".repeat(CustomDicts.MAX_INPUT_BYTES)) != null,
+        )
+    }
+
+    @Test
+    fun `土耳其语 Locale 下大写拼音仍须归一`() {
+        // 裸 lowercase() 在 tr-TR 下把 "NI" 折成 "nı"（无点 i）⇒ 整行被跳过（BUG.md L-847）
+        val old = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"))
+            val r = CustomDicts.parseHuman("张三 NI HAO", null)
+            assertEquals("tr-TR 下大写拼音仍须解析", listOf("张三"), r.entries.map { it.text })
+            assertEquals("ni hao", r.entries[0].pinyin)
+        } finally {
+            java.util.Locale.setDefault(old)
+        }
+    }
+
+    @Test
+    fun `配置恢复进行中必须挡住词库写入口`() {
+        // 源码对拍（BUG.md L-848）：定义 1 处 + 两个入口各 1 处调用
+        val mgr = TestSources.codeSource("DictManagerActivity.kt")
+        assertEquals(
+            "词库页两个入口都要判 ConfigBackupManager.importing（定义 1 + 调用 2）",
+            3,
+            Regex("blockedByConfigImport\\(\\)").findAll(mgr).count(),
+        )
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue(
+            "快捷补充保存也要判 ConfigBackupManager.importing",
+            edit.contains("ConfigBackupManager.importing"),
+        )
+    }
+
+    @Test
+    fun `快捷补充回填须避开用户已输入的内容`() {
+        // 源码对拍（BUG.md L-849）：回填前必须判编辑框是否已被改动
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+        val body = edit.substringAfter("private fun loadSource(")
+            .substringBefore("private fun save(")
+        assertTrue("loadSource 回填前要判 editor.text.isNotEmpty()", body.contains("editor.text.isNotEmpty()"))
+    }
+
+    @Test
     fun `纯拼音行与含空格的词须跳过`() {
         assertEquals(
             "整行都是拼音 ⇒ 没有词，不猜（避免误粘一行拼音变成垃圾词条）",

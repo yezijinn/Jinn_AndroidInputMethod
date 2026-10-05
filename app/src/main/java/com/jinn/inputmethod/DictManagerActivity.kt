@@ -204,6 +204,7 @@ class DictManagerActivity : Activity() {
     private fun openCustomPicker() {
         if (downloading != null) return
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "*/*"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
@@ -216,6 +217,7 @@ class DictManagerActivity : Activity() {
     private fun openCustomEditor() {
         if (downloading != null) return
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         runCatching {
             startActivityForResult(Intent(this, CustomDictEditActivity::class.java), RC_CUSTOM_EDIT)
         }.onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
@@ -528,6 +530,19 @@ class DictManagerActivity : Activity() {
         )
         refreshList()
         if (ok) promptRestart()
+    }
+
+    /**
+     * 配置恢复（备份导入）进行中拒绝改 `dicts/`（BUG.md L-848）。
+     *
+     * 恢复线程写的是同一个 `custom_user.txt.xz`（`RESTORE_SUFFIX` 临时名 → rename），
+     * 与导入 / 快捷补充保存的 `.tmp` → rename 撞在同一目标上：用户在恢复期间保存，界面提示
+     * 「已保存」而内容可能被恢复包里的旧版静默盖掉。四个设置页早已有同款守卫，词库两页漏了。
+     */
+    private fun blockedByConfigImport(): Boolean {
+        if (!ConfigBackupManager.importing) return false
+        Toast.makeText(this, TEXT_CONFIG_IMPORTING, Toast.LENGTH_SHORT).show()
+        return true
     }
 
     /** 旧包的中文名：老用户认得这两个名字，比裸文件名 `ext.xz` 好认 */
@@ -930,6 +945,7 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_RESULT_FILTERED =
             "已导入 %d 条（跳过 %d 行），其中 %d 条是单字且不在字表内，候选里不会出现"
         const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
+        const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
 
         /** 列表渲染异常时的兜底提示（BUG.md L-831：刷新失败不崩进程，重进本页即恢复） */
         const val TEXT_REFRESH_FAIL = "刷新词库列表失败，重进本页可恢复"
