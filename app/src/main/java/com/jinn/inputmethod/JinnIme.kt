@@ -1358,7 +1358,14 @@ class JinnIme : InputMethodService() {
      * 当前策略补一次，只靠递归盖不住那些。
      */
     private fun applyFeedbackSuppression() {
-        keyboardContainer?.applyPlatformFeedbackPolicy(
+        val container = keyboardContainer
+        if (container == null) {
+            // 静默跳过会让「没装上」没人知道 —— 抑制失效的表现是「平台一声 + 引擎一声」，不好归因。
+            // 正常只在「设置页回调早于首次建过键盘视图」时走到，随后建树必然重放一次。
+            Diagnostics.w(TAG, "平台反馈抑制未安装：keyboardContainer 为空（尚未建过键盘视图）")
+            return
+        }
+        container.applyPlatformFeedbackPolicy(
             suppressSound = prefs.tapSoundEnabled,
             suppressHaptic = prefs.tapVibrateEnabled,
         )
@@ -1919,6 +1926,8 @@ class JinnIme : InputMethodService() {
         // 拼音视图那份连删循环不归本服务的 ui 管：窗口隐藏时若平台没派发 ACTION_CANCEL、
         // 且 inputView 被跨会话复用（不 detach），它会继续发 DEL 并每约 150ms 响一声删除音
         pinyinKeyboard?.stopBackspaceRepeat()
+        // 语音面板的退格同理：按下态在它自己身上（另一个实例），收起时一并复位
+        voiceBackspaceView?.isPressed = false
         themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
@@ -3407,8 +3416,18 @@ class JinnIme : InputMethodService() {
             action, keyCode, 0, meta,
         )
 
+    /**
+     * 语音面板的退格键（`bindBackspace` 绑定时记下）。
+     *
+     * 只为收起键盘时复位按下态：触摸监听只在 UP/CANCEL 里清它，而键盘隐藏不保证收到 CANCEL，
+     * 留着会让键停在按下外观。拼音键盘那份由 `stopBackspaceRepeat()` 自己复位 ——
+     * 两套布局各有一个 `key_backspace`，是两个实例，谁也不能替谁清。
+     */
+    private var voiceBackspaceView: View? = null
+
     /** 退格支持长按连删，纯语音输入改错字全靠它 */
     private fun bindBackspace(key: View) {
+        voiceBackspaceView = key
         key.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {

@@ -261,6 +261,16 @@ internal object KeyFeedback {
 }
 
 /**
+ * 平台反馈抑制的**当前策略**（最近一次套用的值）。
+ *
+ * 入树回调读它，而不是在闭包里捕获调用时的参数 —— 否则「开关改了但还没重新套用」时，
+ * 之后新建的键会按旧值走。进程内只有一处策略来源（键盘树按 `Prefs` 的两个开关套用），
+ * 读写都在主线程，与引擎其余字段同一契约。
+ */
+private var suppressSoundNow = false
+private var suppressHapticNow = false
+
+/**
  * 按需关掉平台自带的点击音效与长按触觉（递归作用于整棵子树）。
  *
  * 为什么需要：`View.performClick()` 在存在 `OnClickListener` 时会向系统播一次 CLICK 音、
@@ -271,23 +281,26 @@ internal object KeyFeedback {
  * 反过来，引擎没开时**不能**关：那时平台那份是用户唯一的反馈来源。所以两个参数都每帧显式赋值
  * （而不是「只置 false」），关掉引擎后能把开关还原回去 —— 这两个标记在 `View` 上不继承，
  * 必须逐个子视图设置，故走整树递归。
+ *
+ * 运行期新建的键（候选词、功能面板按钮、密码数字条、符号分组标签、方向键、面板按钮）靠每个容器上
+ * 那一次入树回调兜住：新子树无论挂到容器树的哪一层，都由「它进入的那个容器」按当前策略补一次。
+ *
+ * ⚠ 入树回调被本函数**独占**：`setOnHierarchyChangeListener` 没有 add/remove 版本，
+ * 容器上若另有代码设置它，双方会互相顶掉且都看不出来（键盘树内不要再动这条 API）。
  */
 internal fun View.applyPlatformFeedbackPolicy(suppressSound: Boolean, suppressHaptic: Boolean) {
-    isSoundEffectsEnabled = !suppressSound
-    isHapticFeedbackEnabled = !suppressHaptic
+    suppressSoundNow = suppressSound
+    suppressHapticNow = suppressHaptic
+    isSoundEffectsEnabled = !suppressSoundNow
+    isHapticFeedbackEnabled = !suppressHapticNow
     if (this is ViewGroup) {
-        // 每个容器都挂一次入树回调：新子树无论挂到哪一层，都会由「它进入的那个容器」按当前策略补一次。
-        // 只在安装那一刻递归一遍盖不住运行期新建的视图 —— 候选词、功能面板按钮、密码数字条、
-        // 符号分组标签、方向键、面板按钮都是按需建的，而这两个标记在 `View` 上不继承、
-        // 新视图一律回到平台默认开，于是它们会「平台一声 + 引擎一声」。
-        // 关闭引擎时本回调同样按新策略还原（参数每帧显式赋值，不是「只置 false」）。
         setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
             override fun onChildViewAdded(parent: View?, child: View?) {
-                child?.applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)
+                child?.applyPlatformFeedbackPolicy(suppressSoundNow, suppressHapticNow)
             }
 
             override fun onChildViewRemoved(parent: View?, child: View?) = Unit
         })
-        for (i in 0 until childCount) getChildAt(i).applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)
+        for (i in 0 until childCount) getChildAt(i).applyPlatformFeedbackPolicy(suppressSoundNow, suppressHapticNow)
     }
 }

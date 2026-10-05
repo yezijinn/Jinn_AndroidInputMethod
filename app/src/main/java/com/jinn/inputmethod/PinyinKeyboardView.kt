@@ -404,6 +404,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun symbolValueOf(c: Char): String? =
         currentSymbolMap()[c]?.takeIf { it.isNotEmpty() }?.let { DynamicSymbols.expand(it) }
 
+    /**
+     * 该符号键在当前页上有没有内容（空槽为假）。
+     *
+     * 反馈判据只需要知道「有没有东西可上屏」，所以只判空、**不展开**：`symbolValueOf` 会走
+     * `DynamicSymbols.expand`，而它的默认参数是 `LocalDateTime.now()` —— Kotlin 的默认参数在
+     * 每个调用点都会求值，连静态符号也要白跑一次时钟读取与格式化。
+     */
+    private fun symbolKeyHasContent(c: Char): Boolean = currentSymbolMap()[c]?.isNotEmpty() == true
+
     init {
         orientation = VERTICAL
         // 必须显式 `attachToRoot = false`：attachToRoot=true 时 inflate 返回的是调用方 this
@@ -535,7 +544,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     // 否则辅助服务用户完全听不到 / 感觉不到按键。与触摸监听互斥，不会双发。
                     // 符号层的空槽键例外：它没有可上屏的内容（见 ACTION_UP 分支的同一判据），
                     // 报了反馈等于把「按了但什么都没有」说成「已输入」
-                    if (layer != LAYER_SYMBOL || symbolValueOf(c) != null) KeyFeedback.fire(currentTapGroup())
+                    if (layer != LAYER_SYMBOL || symbolKeyHasContent(c)) KeyFeedback.fire(currentTapGroup())
                     onLetterPressed(c)
                 }
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
@@ -655,7 +664,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     // 且**该键在当前符号页确实有值** —— 分组页不满 26 个时余下是空槽（键面空白），
                     // `symbolValueOf` 对它们返回 null、`onLetterPressed` 直接 return，
                     // 少这一个判据就会「响一声却什么都不上屏」。见 ACTION_DOWN 的说明。
-                    if (layer == LAYER_SYMBOL && symbolValueOf(c) != null) KeyFeedback.fire(TapSound.G_SYMBOL)
+                    if (layer == LAYER_SYMBOL && symbolKeyHasContent(c)) KeyFeedback.fire(TapSound.G_SYMBOL)
                     onLetterPressed(c)
                 }
                 keyTouchConsumed = false

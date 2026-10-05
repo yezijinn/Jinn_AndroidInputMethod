@@ -3528,11 +3528,43 @@ class RecentFixesRegressionTest {
         assertTrue(
             "整树套用策略时要给容器挂入树回调，否则运行期新建的键回到平台默认",
             engine.contains("setOnHierarchyChangeListener(") &&
-                engine.contains("applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)"),
+                engine.contains("for (i in 0 until childCount) getChildAt(i).applyPlatformFeedbackPolicy("),
         )
         assertTrue(
             "响铃模式必须有自己的刷新源，不能只靠弹键盘",
             ime.contains("AudioManager.RINGER_MODE_CHANGED_ACTION"),
+        )
+    }
+
+    @Test
+    fun `抑制机制的独占项与两处清理都不能少`() {
+        // 入树回调（setOnHierarchyChangeListener）是单槽 API：键盘树里若出现第二处设置它的代码，
+        // 两边会互相顶掉、抑制静默失效 —— 表现是「平台一声 + 引擎一声」，很难归因到这一行。
+        val engine = codeOf("KeyFeedback.kt")
+        assertTrue(
+            "平台反馈抑制要靠入树回调覆盖运行期新建的键",
+            "setOnHierarchyChangeListener(" in engine,
+        )
+        assertTrue(
+            "入树回调要读当前策略，不能用闭包捕获的调用时快照",
+            "child?.applyPlatformFeedbackPolicy(suppressSoundNow, suppressHapticNow)" in engine,
+        )
+        val extra = listOf(
+            "JinnIme.kt", "PinyinKeyboardView.kt", "ClipboardPanelView.kt", "SearchPanelView.kt",
+            "PinyinKey.kt", "MicButton.kt", "TapSoundActivity.kt",
+        ).filter { "setOnHierarchyChangeListener" in codeOf(it) }
+        assertTrue("入树回调只允许引擎那一处设置，现状另外出现在：$extra", extra.isEmpty())
+
+        // 两套键盘各有一个退格键（两个实例），收起键盘时都要复位按下态
+        val ime = codeOf("JinnIme.kt")
+        assertTrue(
+            "语音退格的按下态要在收起键盘时复位（拼音那份由 stopBackspaceRepeat 负责）",
+            "voiceBackspaceView?.isPressed = false" in ime,
+        )
+        // 反馈判据只判空、不展开动态值（expand 的默认参数会白跑一次时钟读取与格式化）
+        assertTrue(
+            "符号层的反馈判据不得走 symbolValueOf",
+            "symbolKeyHasContent(c)" in codeOf("PinyinKeyboardView.kt"),
         )
     }
 
