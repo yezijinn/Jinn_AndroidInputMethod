@@ -250,8 +250,9 @@ class DictManagerActivity : Activity() {
         val entries = data.getIntExtra(CustomDictEditActivity.EXTRA_ENTRIES, 0)
         val skipped = data.getIntExtra(CustomDictEditActivity.EXTRA_SKIPPED, 0)
         val filtered = data.getIntExtra(CustomDictEditActivity.EXTRA_FILTERED, 0)
-        Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
-        setStatus(customResultText(entries, skipped, filtered))
+        val dropped = data.getIntExtra(CustomDictEditActivity.EXTRA_DROPPED, 0)
+        Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条 / 同键挤掉 $dropped 条")
+        setStatus(customResultText(entries, skipped, filtered, dropped))
         refreshList()
         restartImeForDict()
     }
@@ -297,9 +298,10 @@ class DictManagerActivity : Activity() {
                         restart = true
                         Diagnostics.i(
                             TAG,
-                            "自定义词库导入: ${report.entries} 条 / 跳过 ${report.skipped} 行 / 打不出 ${report.filtered} 条",
+                            "自定义词库导入: ${report.entries} 条 / 跳过 ${report.skipped} 行 / 打不出 ${report.filtered} 条" +
+                                " / 同键挤掉 ${report.dropped} 条",
                         )
-                        customResultText(report.entries, report.skipped, report.filtered)
+                        customResultText(report.entries, report.skipped, report.filtered, report.dropped)
                     }
                 }
             } catch (t: Throwable) {
@@ -512,9 +514,12 @@ class DictManagerActivity : Activity() {
      * 用户写「黄霄雲」这类繁体时包能落盘、界面显示「已导入」，但候选出口按字表整条丢下 ——
      * 不点名的话用户只会在键盘上反复试却打不出，无从归因（2026-10-05 实测）。
      */
-    private fun customResultText(entries: Int, skipped: Int, filtered: Int): String =
-        if (filtered > 0) TEXT_CUSTOM_RESULT_FILTERED.format(entries, skipped, filtered)
-        else TEXT_CUSTOM_RESULT.format(entries, skipped)
+    private fun customResultText(entries: Int, skipped: Int, filtered: Int, dropped: Int): String = when {
+        // 同键超 100 被丢下（L-864）：比字表闸更该先说 —— 它是「提示条数与实际入包不符」的直接原因
+        dropped > 0 -> TEXT_CUSTOM_RESULT_DROPPED.format(entries, skipped, dropped)
+        filtered > 0 -> TEXT_CUSTOM_RESULT_FILTERED.format(entries, skipped, filtered)
+        else -> TEXT_CUSTOM_RESULT.format(entries, skipped)
+    }
 
     /** 删除自定义词库前二次确认（没有下载源，删掉就得重新导入） */
     private fun confirmRemoveCustom() {
@@ -534,6 +539,12 @@ class DictManagerActivity : Activity() {
     private fun removeCustom() {
         // 确认框可能在窗口开始前就已打开（下载完成会立刻安排重启）⇒ 真正动手这一步也要判
         if (blockedByRestart()) return
+        // 「忙」与「删失败」分开显示（BUG.md L-865）：原先两者都落进同一句「删除失败」，
+        // 用户会以为是权限或磁盘问题，其实只是另有写入在进行
+        if (CustomDicts.writing) {
+            setStatus(TEXT_CUSTOM_BUSY)
+            return
+        }
         val ok = CustomDicts.deletePack(this)
         Diagnostics.i(TAG, "自定义词库删除 ok=$ok")
         setStatus(
@@ -958,6 +969,8 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_RESULT = "已导入 %d 条（跳过 %d 行），输入法将重启以生效"
         const val TEXT_CUSTOM_RESULT_FILTERED =
             "已导入 %d 条（跳过 %d 行），其中 %d 条是单字且不在字表内，候选里不会出现"
+        const val TEXT_CUSTOM_RESULT_DROPPED =
+            "已导入 %d 条（跳过 %d 行），另有 %d 条因同音超过 100 条未入包"
         const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
 

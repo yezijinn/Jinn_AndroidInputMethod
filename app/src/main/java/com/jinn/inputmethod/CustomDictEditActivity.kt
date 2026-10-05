@@ -44,6 +44,14 @@ class CustomDictEditActivity : Activity() {
     private var saving = false
 
     /**
+     * 本次因源文本超出回填阈值而**没有**把内容铺进编辑器（BUG.md L-871）。
+     *
+     * 置上后保存保持禁用：编辑器是空的，用户顺手补几条再保存，就会把整份大词表（源文本 + 包）
+     * 整体替换掉，而提示只显示「已保存 N 条」—— 那是静默的数据丢失。
+     */
+    private var refillSkipped = false
+
+    /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
      * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
      */
@@ -164,6 +172,11 @@ class CustomDictEditActivity : Activity() {
                     !shouldRefill(text.length) -> {
                         Diagnostics.i(TAG, "快捷补充：源文本 ${text.length} 字符超过回填阈值，跳过铺入")
                         setStatus(TEXT_TOO_LARGE_TO_REFILL.format(text.length / 10000))
+                        // 连保存一并停用（BUG.md L-871）：编辑器是空的，若允许保存，
+                        // 用户补几条就会把整份大词表整体替换掉，且提示只显示「已保存 N 条」
+                        refillSkipped = true
+                        saveButton.isEnabled = false
+                        saveButton.alpha = 0.45f
                     }
                     else -> editor.setText(text)
                 }
@@ -215,6 +228,7 @@ class CustomDictEditActivity : Activity() {
             var entries = 0
             var skipped = 0
             var filtered = 0
+            var dropped = 0
             val status = try {
                 val syllables = CustomDicts.loadSyllables(app)
                 // 解析 → 判闸 → 落盘（源文本归一后**先**落、包**后**落）全在 saveHuman 里，见其
@@ -224,6 +238,7 @@ class CustomDictEditActivity : Activity() {
                 entries = report.entries
                 skipped = report.skipped
                 filtered = report.filtered
+                dropped = report.dropped
                 when (report.gate) {
                     CustomDicts.SaveGate.TOO_BIG -> TEXT_TOO_BIG
                     CustomDicts.SaveGate.TOO_MANY -> TEXT_TOO_MANY
@@ -244,19 +259,26 @@ class CustomDictEditActivity : Activity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 saving = false
-                saveButton.isEnabled = true
-                saveButton.alpha = 1f
+                // 跳过回填时保存保持停用（BUG.md L-871）：无条件恢复会把「补几条 = 整体替换」放回来
+                if (!refillSkipped) {
+                    saveButton.isEnabled = true
+                    saveButton.alpha = 1f
+                }
                 closeButton.isEnabled = true
                 closeButton.alpha = 1f
                 editor.isEnabled = true
                 if (ok) {
-                    Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
+                    Diagnostics.i(
+                        TAG,
+                        "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条 / 同键挤掉 $dropped 条",
+                    )
                     setResult(
                         RESULT_OK,
                         Intent()
                             .putExtra(EXTRA_ENTRIES, entries)
                             .putExtra(EXTRA_SKIPPED, skipped)
-                            .putExtra(EXTRA_FILTERED, filtered),
+                            .putExtra(EXTRA_FILTERED, filtered)
+                            .putExtra(EXTRA_DROPPED, dropped),
                     )
                     finish()
                 } else {
@@ -358,6 +380,9 @@ class CustomDictEditActivity : Activity() {
         const val EXTRA_SKIPPED = "custom_skipped"
         const val EXTRA_FILTERED = "custom_filtered"
 
+        /** 同键词表超 100 被丢下的条数（BUG.md L-864） */
+        const val EXTRA_DROPPED = "custom_dropped"
+
         // 文案在代码里下发（与词库页的 TEXT_CUSTOM_* 同做法，strings.xml 只承载卡片按钮）
         const val TEXT_TITLE = "快捷补充"
         const val TEXT_HINT_LINE1 = "# 开头是注释\n每行一条：你好 ni hao\n拼音用'空格'分隔每个字的音节"
@@ -377,7 +402,7 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_WRITE_FAIL_PACK = "内容已保留，词库生成失败：请再点一次保存"
         const val TEXT_BUSY = "正在写入词库，请稍候再试"
         const val TEXT_SAVING_WAIT = "正在保存，请稍候…"
-        const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入.txt文档」整体替换，或精简后再回来编辑"
+        const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入.txt文档」整体替换（此页保存已停用）"
 
         /** 回填体验阈值（字符）：见 [shouldRefill] 与 BUG.md L-870 */
         const val MAX_REFILL_CHARS = 1_000_000

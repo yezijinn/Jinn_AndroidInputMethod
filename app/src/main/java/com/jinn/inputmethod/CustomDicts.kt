@@ -226,21 +226,39 @@ internal object CustomDicts {
      * 键升序是 `PhraseIndex.build` 的硬要求（乱序即抛错、整包回退）；
      * 同键词表按输入顺序去重，超过 [MAX_WORDS_PER_KEY] 的词丢弃（防 64KB 硬闸）。
      */
-    fun toRawPackLines(entries: List<Entry>): List<String> {
+    /**
+     * 打包结果：raw 行 + 因同键上限**被丢掉**的词数（BUG.md L-864）。
+     *
+     * @property lines   `键<TAB>词1|词2` 的行（键升序）
+     * @property dropped 同键词表已满 [MAX_WORDS_PER_KEY] 后被迫丢弃的词条数（不含同键同词去重 —— 去重是设计）
+     */
+    data class PackLines(val lines: List<String>, val dropped: Int)
+
+    fun toRawPackLines(entries: List<Entry>): PackLines {
         val byKey = java.util.TreeMap<String, LinkedHashSet<String>>()
+        var dropped = 0
         for (e in entries) {
             val set = byKey.getOrPut(e.pinyin.replace(" ", "").lowercase(Locale.US)) { LinkedHashSet() }
-            if (set.size < MAX_WORDS_PER_KEY) set.add(e.text)
+            if (set.size < MAX_WORDS_PER_KEY) {
+                set.add(e.text)
+            } else if (e.text !in set) {
+                // 同键满了、且不是重复词 ⇒ 真被丢下。此前静默丢弃、也不回传计数（L-864），
+                // 用户看到「已保存 N 条」会以为全都进了包
+                dropped++
+            }
         }
-        return byKey.map { (k, words) -> k + "\t" + words.joinToString("|") }
+        return PackLines(byKey.map { (k, words) -> k + "\t" + words.joinToString("|") }, dropped)
     }
 
     /** 打包字节（xz） */
-    fun encodePack(entries: List<Entry>): ByteArray {
+    fun encodePack(entries: List<Entry>): ByteArray = encodePackLines(toRawPackLines(entries).lines)
+
+    /** 打包字节（xz）—— 已有行形态；[saveHuman] 路径用它避免重复算同键分组 */
+    fun encodePackLines(lines: List<String>): ByteArray {
         val out = ByteArrayOutputStream()
         XZOutputStream(out, LZMA2Options()).use { xz ->
             val w = xz.bufferedWriter(Charsets.UTF_8)
-            for (line in toRawPackLines(entries)) w.write(line + "\n")
+            for (line in lines) w.write(line + "\n")
             w.flush()
         }
         return out.toByteArray()
@@ -315,13 +333,13 @@ internal object CustomDicts {
      * [dir] 即包所在目录（`filesDir/dicts`，调用侧传 `File(filesDir, OPT_DICT_DIR)`）；
      * 抽成 File 参数与 [writeSource] 同款，让 JVM 单测能直接验落盘与「不落盘」两条路径。
      */
-    fun writePack(dir: File, entries: List<Entry>): File? {
+    fun writePack(dir: File, pack: PackLines): File? {
         dir.mkdirs()
         val dest = File(dir, PACK_NAME)
         val tmp = File(dir, "$PACK_NAME.tmp")
         return runCatching {
             FileOutputStream(tmp).use { out ->
-                out.write(encodePack(entries))
+                out.write(encodePackLines(pack.lines))
                 out.fd.sync()
             }
             if (!tmp.renameTo(dest)) error("改名失败")
@@ -331,6 +349,9 @@ internal object CustomDicts {
             Diagnostics.w(TAG, "自定义词库写入失败: ${it.javaClass.simpleName}")
         }.getOrNull()
     }
+
+    /** 便利重载：直接给词条（内部先打包成 [PackLines]；同键丢弃数因此也被算出来） */
+    fun writePack(dir: File, entries: List<Entry>): File? = writePack(dir, toRawPackLines(entries))
 
     /** 已导入的自定义词库文件（不存在时返回目标路径，供卡片判空） */
     fun packFile(context: Context): File = File(File(context.filesDir, PinyinEngine.OPT_DICT_DIR), PACK_NAME)
@@ -342,12 +363,35 @@ internal object CustomDicts {
      * 删除自定义词库：**包与源文本一起清**。
      *
      * 只删包的话，「快捷补充」页下次打开仍会回显已删词库的内容，用户会以为没删掉。
+     *
+     * 也走写盘互斥（BUG.md L-865）：删除与保存并发时，两次 unlink 若落在保存的
+     * 「源文本已写、包未写」之间，会留下「包在、源文本没了」（或反过来「删了又被写回」）
+     * 的半状态 —— 内容不损坏，但用户看到的与以为的不一致。
      */
-    fun deletePack(context: Context): Boolean = runCatching {
-        sourceFile(context).delete()
-        val ok = packFile(context).delete()
-        ok || !packFile(context).exists()
-    }.getOrDefault(false)
+    fun deletePack(context: Context): Boolean =
+        deletePackIn(File(context.filesDir, PinyinEngine.OPT_DICT_DIR))
+
+    /**
+     * [deletePack] 的核心（[dir] = `filesDir/dicts`）。
+     *
+     * 抽成 File 参数与 [writeSource] / [saveHuman] 同一口径：JVM 单测能直接验「被占位时不删任何文件」。
+     */
+    internal fun deletePackIn(dir: File): Boolean {
+        if (!beginWrite()) {
+            Diagnostics.w(TAG, "另一次词库写入进行中，删除已拒绝（未删任何文件）")
+            return false
+        }
+        return try {
+            runCatching {
+                File(dir, SOURCE_NAME).delete()
+                val pack = File(dir, PACK_NAME)
+                val ok = pack.delete()
+                ok || !pack.exists()
+            }.getOrDefault(false)
+        } finally {
+            endWrite()
+        }
+    }
 
     /**
      * 源文本原子落盘（`*.tmp` → rename，与 [writePack] 同一套）。
@@ -436,6 +480,14 @@ internal object CustomDicts {
     /** 占写盘位；返回 false = 已有写入在跑（[saveHuman] 内部用，也供单测构造并发场景） */
     internal fun beginWrite(): Boolean = writeInFlight.compareAndSet(false, true)
 
+    /**
+     * 是否有词库写入正在进行（只读）。
+     *
+     * 供 UI 在动手前把「忙」与「失败」分开显示（BUG.md L-865）：删除 / 恢复拿不到锁时不该
+     * 只报一句笼统的「删除失败」，用户会以为是权限或磁盘问题。
+     */
+    val writing: Boolean get() = writeInFlight.get()
+
     /** 释放写盘位（与 [beginWrite] 成对；[saveHuman] 的 finally 保证异常路径也走到） */
     internal fun endWrite() {
         writeInFlight.set(false)
@@ -446,8 +498,15 @@ internal object CustomDicts {
      * @property entries 解析出的词条数
      * @property skipped 跳过的行数
      * @property filtered 字表闸（繁体 / 生僻字）打不出的条数（仅在成功路径统计）
+     * @property dropped 同键词表超 [MAX_WORDS_PER_KEY] 被丢下的条数（BUG.md L-864，只在走完打包时统计）
      */
-    data class SaveReport(val gate: SaveGate, val entries: Int, val skipped: Int, val filtered: Int)
+    data class SaveReport(
+        val gate: SaveGate,
+        val entries: Int,
+        val skipped: Int,
+        val filtered: Int,
+        val dropped: Int = 0,
+    )
 
     /**
      * 人写文本 → 包（+ 源文本）的**完整保存流程**，编辑页与导入页共用一份实现。
@@ -486,15 +545,17 @@ internal object CustomDicts {
                 Diagnostics.w(TAG, "保存中止: 没有合法词条（跳过 ${parsed.skipped} 行，未落盘）")
                 return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
             }
-            // 两档写盘失败分开报（L-861）：源文本失败 = 磁盘没变；包失败 = 文本已落、只差词库
+            // 先打包（顺带拿到同键丢弃数，L-864），再按「源文本失败 = 磁盘没变 / 包失败 = 文本已落」
+            // 两档分别上报（L-861）
+            val pack = toRawPackLines(parsed.entries)
             if (writeSource(dir, formatted) == null) {
-                return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0)
+                return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0, pack.dropped)
             }
-            if (writePack(dir, parsed.entries) == null) {
-                return SaveReport(SaveGate.WRITE_FAIL_PACK, n, parsed.skipped, 0)
+            if (writePack(dir, pack) == null) {
+                return SaveReport(SaveGate.WRITE_FAIL_PACK, n, parsed.skipped, 0, pack.dropped)
             }
             val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
-            return SaveReport(SaveGate.OK, n, parsed.skipped, filtered)
+            return SaveReport(SaveGate.OK, n, parsed.skipped, filtered, pack.dropped)
         } finally {
             endWrite()
         }

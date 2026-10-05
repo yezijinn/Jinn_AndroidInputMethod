@@ -1068,7 +1068,19 @@ internal object ConfigBackupManager {
          *  保持在参数表末尾：既有调用点把它写成尾随 lambda，追加在它之后的参数会改变绑定目标 */
         checksumOf: (String) -> String? = { OptionalDicts.byFileName(it)?.checksum },
     ): Pair<Int, Int>? = try {
-        restoreDictsLocked(dir, zip, expectedDigest, budget, checksumOf)
+        // 与词库自身写盘互斥（BUG.md L-865）：两条路都往 `dicts/` 里 rename，竞争同一目标时
+        // 「后 rename 者胜」——恢复期间若用户在别处保存 / 删除自定义词库，会看到「保存成功」
+        // 被备份里的旧包静默回滚（或反之）。拿不到位就让整次恢复失败，由调用侧按失败提示。
+        if (!CustomDicts.beginWrite()) {
+            Diagnostics.w(TAG, "词库恢复中止: 另一次词库写入进行中")
+            null
+        } else {
+            try {
+                restoreDictsLocked(dir, zip, expectedDigest, budget, checksumOf)
+            } finally {
+                CustomDicts.endWrite()
+            }
+        }
     } finally {
         // 临时件在流程内已经改名或删除，在册登记到此为止：不注销的话集合每导入一次涨一批，
         // 清扫器还会一直跳过同名的残留文件（见 [tempInFlight]）

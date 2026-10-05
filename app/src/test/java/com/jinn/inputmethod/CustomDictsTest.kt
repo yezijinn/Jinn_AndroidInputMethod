@@ -93,19 +93,54 @@ class CustomDictsTest {
                 CustomDicts.Entry("张四", "zhang san"),
             ),
         )
-        assertEquals(listOf("jiqixuexi\t机器学习", "zhangsan\t张三|张四"), lines)
+        assertEquals(listOf("jiqixuexi\t机器学习", "zhangsan\t张三|张四"), lines.lines)
+        assertEquals("同键同词是去重、不是丢弃（L-864 的计数口径）", 0, lines.dropped)
     }
 
     @Test
-    fun `单键词数须限长`() {
+    fun `单键词数须限长且丢弃数须回传`() {
         val entries = (1..(CustomDicts.MAX_WORDS_PER_KEY + 20)).map {
             CustomDicts.Entry("词$it", "a")
         }
-        val line = CustomDicts.toRawPackLines(entries).single()
+        val pack = CustomDicts.toRawPackLines(entries)
+        val line = pack.lines.single()
         assertEquals(
             "同键词表超 64KB 会让 PhraseIndex.build 拒收整包",
             CustomDicts.MAX_WORDS_PER_KEY,
             line.substringAfter('\t').split('|').size,
+        )
+        assertEquals(
+            "被同键上限丢下的条数必须如实回传（BUG.md L-864：提示条数要与实际入包一致）",
+            20,
+            pack.dropped,
+        )
+    }
+
+    @Test
+    fun `写入进行中删除被拒且一个文件都不删`() {
+        // L-865：删除与保存并发会留下「包在、源文本没了」这类半状态 —— 删除也走同一把写盘锁
+        val dir = File(tmp, "dicts-del")
+        CustomDicts.writePack(dir, listOf(CustomDicts.Entry("旧词", "jiu ci")))
+        assertTrue("单测先占住写盘位，模拟保存进行中", CustomDicts.beginWrite())
+        try {
+            assertTrue("被占位时删除必须失败（而不是删掉一半）", !CustomDicts.deletePackIn(dir))
+        } finally {
+            CustomDicts.endWrite()
+        }
+        assertTrue("包必须还在（一个文件都没删）", File(dir, CustomDicts.PACK_NAME).isFile)
+    }
+
+    @Test
+    fun `跳过回填时保存必须保持停用`() {
+        // L-871：跳过回填后编辑器是空的，若保存可点，用户补几条再保存就会把整份大词表整体替换掉
+        val src = TestSources.codeSource("CustomDictEditActivity.kt")
+        val branch = src.substringAfter("!shouldRefill(text.length) ->").substringBefore("else ->")
+        assertTrue("跳过回填分支必须置 refillSkipped", "refillSkipped = true" in branch)
+        assertTrue("跳过回填分支必须停用保存", "saveButton.isEnabled = false" in branch)
+        val restore = src.substringAfter("saving = false")
+        assertTrue(
+            "保存结束后的恢复必须判 refillSkipped（否则会把整体替换的风险放回来）",
+            "if (!refillSkipped)" in restore,
         )
     }
 
