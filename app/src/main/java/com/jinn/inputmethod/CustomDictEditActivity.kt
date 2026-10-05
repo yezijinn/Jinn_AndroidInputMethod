@@ -182,7 +182,10 @@ class CustomDictEditActivity : Activity() {
             var skipped = 0
             var filtered = 0
             val status = try {
-                val parsed = CustomDicts.parseHuman(text, CustomDicts.loadSyllables(app))
+                val syllables = CustomDicts.loadSyllables(app)
+                // 先整理成标准格式：解析与写回都用它 —— 多空格 / TAB / 全角空格在这里被归一（2026-10-05 用户要求）
+                val formatted = CustomDicts.formatHuman(text, syllables)
+                val parsed = CustomDicts.parseHuman(formatted, syllables)
                 entries = parsed.entries.size
                 skipped = parsed.skipped
                 val pack = if (parsed.entries.isEmpty()) null else CustomDicts.writePack(app, parsed.entries)
@@ -192,7 +195,7 @@ class CustomDictEditActivity : Activity() {
                     pack == null -> TEXT_WRITE_FAIL
                     else -> {
                         // 包已生效；源文本写失败只记日志（编辑页下次打开看不到这次内容，词库本身是好的）
-                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), text)
+                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), formatted)
                         if (wrote == null) Diagnostics.w(TAG, "快捷补充：源文本写入失败（包已生效）")
                         // 字表闸（繁体 / 生僻字）会把整条丢在候选出口：条数回传词库页一起提示
                         filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })

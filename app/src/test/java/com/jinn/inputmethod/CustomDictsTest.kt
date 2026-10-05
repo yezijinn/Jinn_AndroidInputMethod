@@ -219,6 +219,32 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `导入后源文本须归一为标准格式`() {
+        // 用户在手机上什么样的分隔符都可能打出来：多空格 / TAB / 全角空格 / NBSP / 声调数字（2026-10-05 要求）
+        val text = "# 注释保留\n张三\t\tzhang   san\n李四\u3000li\u00A0si\n无效行没有拼音\n" +
+            "黄霄雲\u3000huang xiao yun3\n带备注\tpi yin\t插入位置\n"
+        val formatted = CustomDicts.formatHuman(text, null)
+        assertEquals(
+            listOf(
+                "# 注释保留",
+                "张三 zhang san",
+                "李四 li si",
+                "无效行没有拼音",
+                "黄霄雲 huang xiao yun",
+                "带备注\tpi yin\t插入位置",
+            ),
+            formatted.trimEnd('\n').split('\n'),
+        )
+        assertEquals("格式化须幂等（再跑一次结果不变）", formatted, CustomDicts.formatHuman(formatted, null))
+        assertTrue("原文以换行结尾时须补回", formatted.endsWith("\n"))
+        assertEquals(
+            "格式化后语义不变：仍是同四条词条",
+            listOf("张三", "李四", "黄霄雲", "带备注"),
+            CustomDicts.parseHuman(formatted, null).entries.map { it.text },
+        )
+    }
+
+    @Test
     fun `源文本超过上限须拒绝写入`() {
         // 与 readSource / isValidSourceFile 同一口径：写进去的必须能读回来（BUG.md L-846）
         val dir = File(tmp, "dicts-overflow")

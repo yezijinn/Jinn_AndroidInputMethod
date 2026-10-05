@@ -280,7 +280,10 @@ class DictManagerActivity : Activity() {
             var restart = false
             val status = try {
                 val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_BYTES) }
-                val parsed = CustomDicts.parseHuman(text, CustomDicts.loadSyllables(app))
+                val syllables = CustomDicts.loadSyllables(app)
+                // 导入后源文本要落**标准格式**（多空格 / TAB / 全角空格统一），见 CustomDicts.formatHuman
+                val formatted = CustomDicts.formatHuman(text, syllables)
+                val parsed = CustomDicts.parseHuman(formatted, syllables)
                 val pack = if (parsed.entries.isEmpty()) null else CustomDicts.writePack(app, parsed.entries)
                 when {
                     parsed.truncated -> TEXT_CUSTOM_TOO_MANY
@@ -289,7 +292,7 @@ class DictManagerActivity : Activity() {
                     else -> {
                         restart = true
                         // 原文另存一份：与「快捷补充」页共享同一份内容（写失败不影响包已生效）
-                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), text)
+                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), formatted)
                         if (wrote == null) Diagnostics.w(TAG, "自定义词库源文本保存失败（包已生效）")
                         val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
                         Diagnostics.i(

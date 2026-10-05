@@ -168,6 +168,34 @@ internal object CustomDicts {
         return syl.isNotEmpty() && KEY_SHAPE.matches(syl)
     }
 
+    /**
+     * 把用户写的文本整理成**标准格式**（导入 / 保存成功后写回源文本；2026-10-05 用户要求）。
+     *
+     * 规则：能解析出词条的行统一成「词 空格 拼音」（拼音小写、`ü`→`v`、剥声调数字、音节单空格），
+     * 于是「几个空格 / 全角空格 / NBSP / TAB / 混合写法」在保存后都收敛成同一形态；注释、空行、
+     * 解析不出词条的行、以及带**第三列**的行（备注 / 插入位置，与 `add_words.py` 同格式）都**原样保留**
+     * —— 用户写的内容一行都不丢，下次打开还能看见并修正。
+     *
+     * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
+     * 与 [parseHuman] 不会各写一套规则）。
+     */
+    fun formatHuman(text: String, syllables: Set<String>? = null): String {
+        val out = text.lineSequence().joinToString("\n") { raw ->
+            val line = raw.trim()
+            when {
+                line.isEmpty() || line.startsWith("#") -> raw
+                line.split('\t').count { it.isNotBlank() } > 2 -> raw
+                else -> {
+                    val pair = splitHumanLine(line)
+                    val pinyin = if (pair == null) null else normalizeSyllables(pair.second, syllables)
+                    if (pair == null || pinyin == null) raw else pair.first + " " + pinyin
+                }
+            }
+        }
+        // lineSequence 会吞掉末尾空行：原文以换行结尾时补回（写回源文本后观感不变）
+        return if (text.endsWith("\n") && !out.endsWith("\n")) out + "\n" else out
+    }
+
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */
     private fun normalizeSyllables(token: String, syllables: Set<String>?): String? {
         val parts = token.lowercase(Locale.US).replace("ü", "v").split(TOKEN_SPLIT).filter { it.isNotEmpty() }
