@@ -74,7 +74,9 @@ class PrefsBackupCoverageTest {
         // 改键数是正常维护，改完同步这个数（35 个旧键 + 41 个翻译键，含 2 个退役键）。
         // 2026-09-30 起 64 → 76：新增「原文范围」12 键（6 家 × 范围模式 / 字节上限）。
         // 2026-10-03 起 77 → 78：新增「候选字号」1 键（外观参数，整个候选栏按它派生）。
-        assertEquals("提取到的键常量应是 78 个（改键数请同步本断言）", 78, keyConstants.size)
+        // 2026-10-05 起 78 → 84：新增「敲击音效反馈」6 键（音效开关 / 强度 / 静音仍播 / 分组映射
+        //                        + 震动开关 / 档位）—— 音色与档位是用户偏好，换机必须带走。
+        assertEquals("提取到的键常量应是 84 个（改键数请同步本断言）", 84, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -178,6 +180,13 @@ class PrefsBackupCoverageTest {
             "KEY_THEME_LIGHT_AT" to "asInt(v)",
             "KEY_THEME_DARK_AT" to "asInt(v)",
             "KEY_UPDATE_LAST_CHECK_AT" to "asLong(v)",
+            // 敲击音效反馈 6 键（2026-10-05）：三个布尔 / 两个整型 + 一个分组映射串
+            "KEY_TAP_SOUND_ENABLED" to "asBool(v)",
+            "KEY_TAP_SOUND_VOLUME" to "asInt(v)",
+            "KEY_TAP_SOUND_ON_SILENT" to "asBool(v)",
+            "KEY_TAP_SOUND_MAP" to "asString(v)",
+            "KEY_TAP_VIBRATE_ENABLED" to "asBool(v)",
+            "KEY_TAP_VIBRATE_STRENGTH" to "asInt(v)",
         )
         for ((key, tool) in pairs) {
             assertTrue(
@@ -234,6 +243,9 @@ class PrefsBackupCoverageTest {
             Triple("themeDarkAtMinutes", "floorMod", "同上"),
             Triple("translateProvider", "TranslationProviderId.of", "未知 id 会取不到 Provider 实现"),
             Triple("translateTarget", "TranslationLanguage.of", "未知语言码会被服务端直接拒（400 / 58001）"),
+            Triple("tapSoundVolume", "TapSound.clampVolume", "越界音量会算出非法播放增益"),
+            Triple("tapSoundMap", "TapSound.parseMap", "越界音效索引会让数组访问直接崩"),
+            Triple("tapVibrateStrength", "TapSound.clampVibrationTier", "未知档位会让震动规格取不到值"),
         )
         for ((prop, marker, why) in guards) {
             assertTrue("$prop 的归一（$marker）不见了：$why", propertyBlock(prop).contains(marker))

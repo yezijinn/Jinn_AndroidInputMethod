@@ -55,8 +55,14 @@ class CustomDictEditActivity : Activity() {
     /** 载入时记下的源文本身份（null = 当时没有源文本）；保存前再取一次比对，见 [save]（BUG.md L-896） */
     private var loadedSourceStamp: Long? = null
 
-    /** 用户在覆盖确认里选了「继续保存」：本次放行，不再弹第二次 */
-    private var forceSave = false
+    /**
+     * 上面那份身份是否可信（BUG.md L-899）。
+     *
+     * 载入分「读内容」与「取身份」两步：源文本在两步之间被外部改名落盘时，记下的是**新**身份、
+     * 编辑器里铺的是**旧**内容 ⇒ 保存时比对相等、不弹确认，旧文本静默盖掉新词库。
+     * 读前读后各取一次即可发现，不一致就把身份标成不可信，保存时一律按「已变化」处理。
+     */
+    private var sourceStampTrusted = false
 
     /** 编辑器里有未保存改动（返回 / ✕ 时据此确认，BUG.md L-897） */
     private var dirty = false
@@ -184,10 +190,7 @@ class CustomDictEditActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle(TEXT_OVERWRITE_TITLE)
             .setMessage(TEXT_OVERWRITE_BODY)
-            .setPositiveButton(TEXT_OVERWRITE_OK) { _, _ ->
-                forceSave = true
-                save()
-            }
+            .setPositiveButton(TEXT_OVERWRITE_OK) { _, _ -> save(force = true) }
             .setNegativeButton(TEXT_CONFIRM_CANCEL, null)
             .show()
     }
@@ -204,13 +207,19 @@ class CustomDictEditActivity : Activity() {
         val app = applicationContext
         Thread {
             val file = CustomDicts.sourceFile(app)
+            // 读前读后各取一次身份（BUG.md L-899）：只在读完后取一次的话，「读内容」与「取身份」
+            // 之间被外部改名落盘时，记下的是新身份、铺的是旧内容 ⇒ 保存时比对相等、静默覆盖。
+            val stampBefore = CustomDicts.sourceStamp(file)
             val text = CustomDicts.readSource(file)
-            // 与内容同一次取身份：保存前再取一次，不一致说明词库在别处被改过（BUG.md L-896）
-            val stamp = CustomDicts.sourceStamp(file)
+            val stampAfter = CustomDicts.sourceStamp(file)
+            val stampStable = stampBefore == stampAfter
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 // 读失败不认这份身份（编辑器也留空，保存走「还没有内容」分支）
-                if (text != null) loadedSourceStamp = stamp
+                if (text != null) {
+                    loadedSourceStamp = stampAfter
+                    sourceStampTrusted = stampStable
+                }
                 when {
                     text == null -> setStatus(TEXT_READ_FAIL)
                     text.isEmpty() -> Unit
@@ -247,8 +256,12 @@ class CustomDictEditActivity : Activity() {
      *
      * 无合法词条时**不落盘**（与导入同一口径）：清空词库请用卡片上的「删除」，
      * 免得一次误编辑把已有词库清掉。
+     *
+     * [force] 只对**本次**调用有效：覆盖确认里点「继续保存」时由 [confirmOverwrite] 传进来。
+     * 写在字段上会跨多次保存累积（BUG.md L-900）—— 一次失败之后，后续几次都不再比对，
+     * 期间别人恢复进来的内容会被静默覆盖。
      */
-    private fun save() {
+    private fun save(force: Boolean = false) {
         if (saving) return
         // 备份恢复在途时拒绝写（BUG.md L-848）：恢复线程写的是同一个 custom_user.txt.xz，
         // 两边都走「临时名 → rename」，后 rename 者胜 —— 保存的成果会被旧包静默盖掉。
@@ -256,15 +269,8 @@ class CustomDictEditActivity : Activity() {
             setStatus(TEXT_CONFIG_IMPORTING)
             return
         }
-        // 恢复写完了但进程还没重启时（对话框有「稍后」），这里的编辑内容已经过期；导入 .txt 与
-        // 手工替换同理 —— 闷头保存会把别人的改动整份盖掉（BUG.md L-896），先问一句
-        if (!forceSave) {
-            val now = CustomDicts.sourceStamp(CustomDicts.sourceFile(this))
-            if (now != loadedSourceStamp) {
-                confirmOverwrite()
-                return
-            }
-        }
+        // 便宜且确定的判据先判（BUG.md L-901）：尺寸与空文本都不必问用户，排在覆盖确认**之前** ——
+        // 否则编辑器为空时点保存会先弹「会用编辑框里的内容覆盖它」，点继续才说「还没有内容」。
         // 两道入口判据都读编辑器自身（`Editable` 就是 CharSequence，读长度与判空都不必先复制快照）
         if (editor.text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
             setStatus(TEXT_TOO_BIG)
@@ -273,6 +279,17 @@ class CustomDictEditActivity : Activity() {
         if (editor.text.isBlank()) {
             setStatus(TEXT_EMPTY_INPUT)
             return
+        }
+        // 恢复写完了但进程还没重启时（对话框有「稍后」），这里的编辑内容已经过期；导入 .txt 与
+        // 手工替换同理 —— 闷头保存会把别人的改动整份盖掉（BUG.md L-896），先问一句。
+        // 身份不可信（载入时两次取值不一致，见 [sourceStampTrusted]）也走这里：
+        // 宁可多问一次，不可静默覆盖（BUG.md L-899）。
+        if (!force) {
+            val now = CustomDicts.sourceStamp(CustomDicts.sourceFile(this))
+            if (!sourceStampTrusted || now != loadedSourceStamp) {
+                confirmOverwrite()
+                return
+            }
         }
         // 这里只做**内存保护**：原文超过两倍上限就不进后台。真正的数据闸在 saveHuman 里按
         // **格式化后**的文本判（BUG.md L-852）—— 按原文拦会把「原文超限而格式化后不超限」的内容误拒。

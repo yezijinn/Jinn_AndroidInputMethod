@@ -869,13 +869,19 @@ class RecentFixesRegressionTest {
             blockAfter(key, "var label: String = \"\"").contains("contentDescription = value"),
         )
         val view = codeOf("PinyinKeyboardView.kt")
+        // 判据取**整个 onActivate 块**而不是整行字符串：块内允许再挂别的东西
+        // （2026-10-05 起补了一次敲击反馈 —— 辅助服务用户同样该听到按键音），
+        // 只要它仍把输入接回触摸同款函数，无障碍就不会失灵。
         assertTrue(
             "字母键必须把 onActivate 接回触摸同款输入函数（符号层复用同一批键，也走这里）",
-            view.contains("key.onActivate = { onLetterPressed(c) }"),
+            blockAfter(view, "key.onActivate =").contains("onLetterPressed(c)"),
         )
+        // 与字母键同款：判据取**整个 onActivate 块**。块内允许再挂别的东西
+        // （2026-10-06 起补了一次敲击反馈 —— 辅助服务用户同样该听到按键音），
+        // 只要仍把输入接回同一个上屏函数，无障碍就不会失灵。
         assertTrue(
             "分号键必须把 onActivate 接到提取出的上屏函数",
-            view.contains("keySemicolon.onActivate = { onSemicolonPressed() }"),
+            blockAfter(view, "keySemicolon.onActivate =").contains("onSemicolonPressed()"),
         )
     }
 

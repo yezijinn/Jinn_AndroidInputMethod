@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 敲击音效反馈页：从设置页「敲击音效反馈」按钮进入。
+     文案在 TapSoundActivity 里下发（strings.xml 默认不改动），故此处不写 android:text。
+     行内容（两张开关卡 + 六组音色选择）全部代码生成，样式走 PageStyle.addCard。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_tap_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_tap_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_tap_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/tap_group_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:orientation="vertical" />
+    </ScrollView>
+</LinearLayout>

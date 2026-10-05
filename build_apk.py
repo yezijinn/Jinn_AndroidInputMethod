@@ -381,6 +381,23 @@ def main():
         sys.exit(1)
     print("对齐校验: 4 字节对齐通过")
 
+    # 按键音效必须**未压缩**：两条播放路径都用 `AssetManager.openFd` 打开
+    # assets/sounds/keyboard/*.ogg，而 openFd 对已压缩条目会抛 IOException ——
+    # 症状是「按键彻底没声、也没有任何提示」，编译 / 单测 / lint 全绿也查不出来，
+    # 只有在产物上核对 zip 的压缩方式才能拦住。aapt 默认就不压 .ogg，这里是防打包配置回归。
+    sound_entries = [
+        info for info in zipfile.ZipFile(apk).infolist()
+        if "assets/sounds/keyboard/" in info.filename
+    ]
+    if not sound_entries:
+        print("[错误] 产物里没有 assets/sounds/keyboard/ 条目（音效丢了？）", file=sys.stderr)
+        sys.exit(1)
+    compressed = [i.filename for i in sound_entries if i.compress_type != 0]
+    if compressed:
+        print(f"[错误] 音效被压缩，openFd 会失败: {compressed}", file=sys.stderr)
+        sys.exit(1)
+    print(f"音效校验: {len(sound_entries)} 个条目全部未压缩")
+
     # 3. 复制到根目录：**只留一个**固定命名的产物 ./com.jinn.inputmethod.apk。
     #    用一个固定名而不是时间戳名，是为了不发错包：根目录那份永远就是本次构建的产物，
     #    发布 / 装机都直接用它，不需要再从一堆历史副本里挑（用户 2026-10-02 明确要求）。

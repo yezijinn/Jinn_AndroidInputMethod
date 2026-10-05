@@ -356,6 +356,11 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_RARE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, RareCharsActivity::class.java)) }
         }
+        // 敲击音效反馈：独占下一行的单按钮入口 → 独立全屏页（音效六组音色 + 震动四档，改动即落盘）
+        findViewById<Button>(R.id.btn_tap_sound).apply {
+            text = TEXT_TAP_SOUND_ENTRY
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, TapSoundActivity::class.java)) }
+        }
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -1884,6 +1889,9 @@ class SettingsActivity : ComponentActivity() {
 
         // 加更多生僻字：入口文案（页面内的文案在 RareCharsActivity 里下发）
         const val TEXT_RARE_ENTRY = "加更多生僻字"
+
+        // 敲击音效反馈：入口文案（页面内文案在 TapSoundActivity 里下发）
+        const val TEXT_TAP_SOUND_ENTRY = "敲击音效反馈"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"

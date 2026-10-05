@@ -93,3 +93,8 @@ BUG.md
 .ppt-master/
 /diag_export.py
 /fix_line_filter.py
+
+# 音效原始素材（WAV 母版 / 参考音）：各站点的免费音效许可都禁止把素材本身再分发，
+# 入库只放 OGG（随 APK 走）与取用脚本 + 清单，见 tools/sound_preview/keyboard_sounds_manifest.md
+tools/sound_preview/masters/
+tools/sound_preview/my/

@@ -141,7 +141,10 @@ class CustomDictsTest {
         assertTrue("跳过回填分支必须停用保存", "saveButton.isEnabled = false" in branch)
         // 锚点必须落在 save() 方法体里（BUG.md L-874）：`saving = false` 在字段声明处先出现一次，
         // 直接从文件头 substringAfter 会把断言范围扩到整个文件 —— 守卫强度远低于预期
-        val saveBody = src.substringAfter("private fun save()").substringBefore("\n    private fun ")
+        // 锚点取 `private fun save(` 而不是带空括号的完整签名：L-900 给 save 加了
+        // `force` 参数后，旧锚点找不到分隔符 ⇒ substringAfter 返回**整份源码**，
+        // 断言范围被悄悄放大到全文件（守卫强度骤降）
+        val saveBody = src.substringAfter("private fun save(").substringBefore("\n    private fun ")
         assertTrue("save() 方法体锚点失效（源码结构变了）", saveBody.isNotEmpty() && saveBody.length < src.length)
         val restore = saveBody.substringAfter("saving = false")
         assertTrue(
@@ -693,13 +696,40 @@ class CustomDictsTest {
     @Test
     fun `编辑器保存前要比对源文本身份`() {
         // BUG.md L-896：恢复（对话框有「稍后」，进程还活着）或导入 .txt 之后，编辑器里那份
-        // 已经过期；保存前必须比对，不一致先确认，否则会把别的改动整份盖掉
+        // 已经过期；保存前必须比对，不一致先确认，否则会把别的改动整份盖掉。
+        //
+        // L-902：判据要钉**整句比较式（含极性）**。此前只查「出现过 forceSave」，把
+        // `now != loadedSourceStamp` 写成 `==`（条件取反 ⇒ 每次都弹确认）守卫照样绿。
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
-        val save = src.substringAfter("private fun save()").substringBefore("val text = editor.text.toString()")
+        val save = src.substringAfter("private fun save(").substringBefore("val text = editor.text.toString()")
         assertTrue("save() 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
         assertTrue("保存前要比对身份", "CustomDicts.sourceStamp(CustomDicts.sourceFile(this))" in save)
-        assertTrue("确认过才放行", "forceSave" in save)
-        assertTrue("载入时要记一份身份", "loadedSourceStamp = stamp" in src)
+        assertTrue(
+            "身份比对必须含极性与「不可信也提醒」（L-899）",
+            "if (!sourceStampTrusted || now != loadedSourceStamp) {" in save,
+        )
+        // L-900：放行标志必须是**本次调用的参数**。留在字段上会跨多次保存累积 ——
+        // 一次失败之后，后续几次都不再比对，期间别人恢复进来的内容会被静默覆盖。
+        assertTrue("确认只放行本次调用", "private fun save(force: Boolean = false)" in src)
+        assertTrue("确认后按参数放行", "save(force = true)" in src)
+        assertFalse("不得再留字段式放行标志（会粘住）", "private var forceSave" in src)
+        // L-899：读前读后各取一次身份，不一致就不认这份身份
+        assertTrue("载入时要记一份身份", "loadedSourceStamp = stampAfter" in src)
+        assertTrue(
+            "身份要读前读后各取一次",
+            "val stampBefore = CustomDicts.sourceStamp(file)" in src &&
+                "val stampAfter = CustomDicts.sourceStamp(file)" in src,
+        )
+        assertTrue("两次不一致时不认这份身份", "sourceStampTrusted = stampStable" in src)
+        // L-901：便宜且确定的判据（尺寸 / 空）必须排在需要弹窗的判据**之前** ——
+        // 否则编辑器为空点保存会先弹「继续保存会用编辑框里的内容覆盖它」，点继续才说「还没有内容」
+        val iTooBig = save.indexOf("TEXT_TOO_BIG")
+        val iEmpty = save.indexOf("TEXT_EMPTY_INPUT")
+        val iConfirm = save.indexOf("confirmOverwrite()")
+        assertTrue(
+            "三道判据的顺序必须是「便宜的先判、弹窗的最后」（当前 尺寸=$iTooBig 空=$iEmpty 确认=$iConfirm）",
+            iTooBig in 1 until iConfirm && iEmpty in 1 until iConfirm,
+        )
     }
 
     @Test

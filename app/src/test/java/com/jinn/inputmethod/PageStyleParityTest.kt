@@ -31,6 +31,7 @@ class PageStyleParityTest {
         "activity_rare_chars.xml",
         "activity_symbol_order.xml",
         "activity_settings.xml",
+        "activity_tap_sound.xml",
         "activity_translation_settings.xml",
         "activity_translation_source.xml",
     )
@@ -175,7 +176,8 @@ class PageStyleParityTest {
     fun 代码生成的列表项必须用共享卡片() {
         val bad = ArrayList<String>()
         for (name in listOf("RareCharsActivity.kt", "FuzzyPinyinActivity.kt", "SymbolOrderActivity.kt",
-                            "FavoriteSymbolsActivity.kt", "DictManagerActivity.kt")) {
+                            "FavoriteSymbolsActivity.kt", "DictManagerActivity.kt",
+                            "TapSoundActivity.kt")) {
             val code = TestSources.codeOf(TestSources.rawSourceOfShortName(name))
             if ("PageStyle.addCard(" !in code && "PageStyle.dressAsCard(" !in code) {
                 bad += "$name 的列表项没有走 PageStyle 的共享卡片"

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 采集麦克风音频送服务端识别 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 按键震动反馈（关闭 / 弱 / 中 / 强 四档）；普通权限，无需运行时弹窗申请 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 不申请任何存储权限：日志写应用专属目录，诊断包经系统文件选择器（SAF）导出 -->
 
     <application
@@ -77,6 +79,11 @@
             android:name=".KeyAppearanceActivity"
             android:exported="false"
             android:label="@string/key_appearance_entry" />
+
+        <!-- 敲击音效反馈页：从设置页「敲击音效反馈」进入（六组音色分配 + 震动四档，改动即落盘） -->
+        <activity
+            android:name=".TapSoundActivity"
+            android:exported="false" />
 
         <!-- 翻译设置页：Provider / 凭据 / 目标语言，从设置页「翻译设置」进入（改动即落盘） -->
         <activity

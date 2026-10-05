@@ -357,6 +357,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             //  清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
             //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
             deleteOne()
+            // 连删期间**不产生新的触摸事件**，反馈必须在这里单独补 —— 否则按住退格只有第一下会响。
+            // 55ms 的重复节奏由 [KeyFeedback] 的「删除组节流」（150ms）压到约每秒 6~7 次：
+            // 既跟得上手速，又不会叠成机关枪。
+            KeyFeedback.fire(TapSound.G_ERASE)
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
         }
     }
@@ -421,6 +425,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
         //  展示时可见，功能面板与符号层为 GONE，见 refreshCandidateBar 与 renderFunctionPanel。）
         btnClearCandidates.setOnClickListener {
+            // 清空拼音串与退格同属「删除 / 清空」组：两者都用 kbd_15（警报感），
+            // 让「擦掉输入」在声音上能一眼（耳）分辨出来，不与普通打字混淆
+            KeyFeedback.fire(TapSound.G_ERASE)
             Diagnostics.i(
                 TAG,
                 "候选栏 ✕：清空候选（拼音=${composing.length} 候选=${lastCandidates.size} " +
@@ -445,7 +452,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         keySemicolon.label = SEMICOLON_KEY.toString()
         // 无障碍激活：与字母键同款；触摸路径的可见性 / 命中判定由触摸监听自己负责，
         // 辅助服务的两次双击之间键不会变可见性，无需复刻那两个判据
-        keySemicolon.onActivate = { onSemicolonPressed() }
+        keySemicolon.onActivate = {
+            // 辅助服务路径不经过触摸监听，反馈要在这里补：与触摸路径（handleSemicolonTouch）
+            // 同组，否则同一个键在两条路径上一条有声一条没声
+            KeyFeedback.fire(TapSound.G_TEXT)
+            onSemicolonPressed()
+        }
         keySemicolon.setOnTouchListener { view, event ->
             val consumed = handleSemicolonTouch(event)
             // 无障碍：抬手时补 performClick（与字母键同款处理）
@@ -518,7 +530,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 无障碍激活（TalkBack 双击）与触摸点击同走 onLetterPressed（内部按层分发，
                 // 符号层复用同一批键，走的也是这里）；它只由辅助服务经 performAccessibilityAction
                 // 触发，与下面的触摸监听互斥，不会双输入
-                key.onActivate = { onLetterPressed(c) }
+                key.onActivate = {
+                    // 无障碍（TalkBack 双击）走这条路径、不经过触摸监听：补一次敲击反馈，
+                    // 否则辅助服务用户完全听不到 / 感觉不到按键。与触摸监听互斥，不会双发。
+                    KeyFeedback.fire(currentTapGroup())
+                    onLetterPressed(c)
+                }
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
                 key.setOnTouchListener { view, event ->
                     val consumed = handleKeyTouch(c, event)
@@ -548,6 +565,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun dpFloat(v: Float): Float = v * resources.displayMetrics.density
 
     /**
+     * 当前按键该归入哪个音效分组（见 [TapSound]）。
+     *
+     * ⚠ 必须按**按下瞬间的角色**判定，不能按物理键位：26 个键在字母 / 数字 / 符号 / 密码
+     * 四态下是**同一批 View**，同一个键在数字层是「1」、在符号层是「，」。按物理键分组的话，
+     * 打字与输入数字会响同一个音，分组就失去意义。
+     *
+     * 搜索面板态下字母键被路由进搜索框，仍属「文字输入」，故不需要单独分支。
+     */
+    private fun currentTapGroup(): Int = when {
+        passwordPad -> TapSound.G_DIGIT
+        layer == LAYER_DIGIT -> TapSound.G_DIGIT
+        layer == LAYER_SYMBOL -> TapSound.G_SYMBOL
+        else -> TapSound.G_TEXT
+    }
+
+    /**
      * 字母键触摸：正常点击上屏；符号层左右滑动切换符号页。
      * 左滑（dx<0）下一页、右滑（dx>0）上一页，滑动后本次按下不再触发点击。
      */
@@ -562,6 +595,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
                 // 必须显式驱动按压态，否则按键没有任何视觉反馈（按压高亮是死代码）
                 keyViews[c]?.setPressedVisual(true)
+                // 敲击反馈：在 DOWN 触发，与上面的按压高亮同频（手感才「即时」）。
+                // 这里是 26 个键唯一的入口，字母 / 数字 / 符号 / 密码四态一次覆盖。
+                KeyFeedback.fire(currentTapGroup())
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -692,6 +728,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
             // 密码模式内不做层切换：进符号层会让候选栏的数字条被符号分组标签顶掉
             // （`refreshCandidateBar` 的符号层分支在前，见 BUG.md L-105），模式前提
             // 「26 键 + 数字条」就破了。与中英切换同一条口径：点「退出」返回后再切。
@@ -719,6 +756,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "符号层: ${layer == LAYER_SYMBOL}")
         }
         btnDigit.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
             // 密码模式里这个键是「退出」：点它回到进入前的状态（语言 / 层 / 大写一起复原）
             if (passwordPad) {
                 exitPasswordPad()
@@ -734,6 +772,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 长按「数字」：密码模式（数字与 26 字母同屏）。已在模式里时长按不做事 ——
         // 这个键此时是「退出」，退出只认点击（长按返回 true 会把点击一并吃掉，避免误触退出）。
         btnDigit.setOnLongClickListener {
+            // 长按不会触发短按的 click ⇒ 那份反馈也不会发，这里补一次（与短按同组）
+            KeyFeedback.fire(TapSound.G_FUNC)
             if (passwordPad) {
                 Diagnostics.i(TAG, "密码模式: 已在该模式，长按无操作（点「退出」返回）")
             } else {
@@ -742,6 +782,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             true
         }
         btnLang.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
             // 密码模式强制英文小写：此刻切中文会变成「数字条 + 拼音候选」并存，先退出再谈切换
             if (passwordPad) {
                 Diagnostics.i(TAG, "中英切换: 密码模式内无效（点「退出」返回后再切）")
@@ -766,6 +807,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
         btnShift.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
             // 符号层键面全是符号，没有大小写概念：大写键在此层无效
             if (layer == LAYER_SYMBOL) {
                 Diagnostics.i(TAG, "符号层: 大写键无操作")
@@ -783,9 +825,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshKeyLabels()
             Diagnostics.i(TAG, "大写锁定: $capsMode")
         }
-        btnSpace.setOnClickListener { onSpacePressed() }
+        btnSpace.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            onSpacePressed()
+        }
         btnSpace.setOnLongClickListener {
-            // 空格长按：切回语音模式（不触发短按）
+            // 空格长按：切回语音模式（不触发短按 ⇒ 短按那份反馈也不会发，这里补上）
+            KeyFeedback.fire(TapSound.G_CONFIRM)
             listener?.onVoiceRequested()
             true
         }
@@ -811,6 +857,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             override fun performAccessibilityAction(host: View, action: Int, args: Bundle?): Boolean {
                 if (action == AccessibilityNodeInfo.ACTION_CLICK) {
                     deleteOne()
+                    // 辅助服务路径不经过触摸监听：与触摸路径同组补一次反馈，否则同键两套体验
+                    KeyFeedback.fire(TapSound.G_ERASE)
                     return true
                 }
                 return super.performAccessibilityAction(host, action, args)
@@ -820,6 +868,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （输入框声明的是「发送」时就直接把消息发出去）落到宿主，逗号句号把全角标点写进
         // 用户正在编辑的正文里。搜索态下回车等价于面板自己的「退出搜索」按钮，不碰宿主。
         btnEnter.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
             if (isPanelSearch()) {
                 hideSearchPanel()
                 return@setOnClickListener
@@ -828,10 +877,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 逗号/句号：英文模式上 ASCII，中文模式上全角
         btnComma.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) "," else "，"
             if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
         }
         btnPeriod.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) "." else "。"
             if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
         }
@@ -1693,6 +1744,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 backspaceHeld = true
                 backspacePressStart = System.currentTimeMillis()
                 deleteOne()
+                // 点击退格的第一下：与连删循环（backspaceRepeatRunnable）共用同一个组，
+                // 两处都调 [KeyFeedback.fire]，节流在引擎里统一做，这里不需要判重
+                KeyFeedback.fire(TapSound.G_ERASE)
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
                 // 已处于「双击后」状态：本次长按到阈值触发清空。
@@ -2009,7 +2063,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
             setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
             isClickable = true
-            setOnClickListener { onClick(text) }
+            // 候选词 / 预测词走 Click 语义（**不是** ACTION_DOWN）：候选栏是横向滚动容器，
+            // 在 DOWN 触发的话，用户横滑候选列表会先响一声。走点击则只有真正选中才响。
+            setOnClickListener {
+                KeyFeedback.fire(TapSound.G_TEXT)
+                onClick(text)
+            }
         }
         if (rows != CandidateRows.DOUBLE) {
             for (text in items) {
@@ -2248,7 +2307,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 无障碍：读数字本身（键面就是数字，无需额外描述）
                 contentDescription = digit
                 background = xmlKeyBackground(0f)
-                setOnClickListener { commitPasswordDigit(digit) }
+                setOnClickListener {
+                    // 密码模式数字条：与数字层同一组（用户在凭据框里按数字，听感应一致）
+                    KeyFeedback.fire(TapSound.G_DIGIT)
+                    commitPasswordDigit(digit)
+                }
             }
             item.minimumHeight = reuseBlockMinPx()
             viewCandidateList.addView(
@@ -2288,7 +2351,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
                 isClickable = true
             }
-            item.setOnClickListener { selectGroup(idx) }
+            // 符号分组标签：切分组属「功能切换」组（与符号层入口同一个语义）
+            item.setOnClickListener {
+                KeyFeedback.fire(TapSound.G_FUNC)
+                selectGroup(idx)
+            }
             // 主文本（矩形样式，字体放大 30%）
             val label = TextView(context).apply {
                 text = group.label
@@ -2635,6 +2702,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 keySemicolon.setPressedVisual(true)
+                // 分号键是 `ing` 韵母键，与 26 个字母键同为「文字输入」组
+                KeyFeedback.fire(TapSound.G_TEXT)
                 return true
             }
 
@@ -2850,7 +2919,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
             contentDescription = "$label $hint"
-            setOnClickListener { onClick() }
+            // 功能面板按钮（历史 / 方向 / 全选 / 复制 / 粘贴 / 翻译 / 收起）统一归「功能切换」组：
+            // 这里是它们唯一的构建出口，挂一处即全覆盖
+            setOnClickListener {
+                KeyFeedback.fire(TapSound.G_FUNC)
+                onClick()
+            }
         }
         // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 或 7 个按钮，翻译键按总开关增减）
         val lp = LinearLayout.LayoutParams(
@@ -3331,6 +3405,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isClickable = true
             isFocusable = true
             setOnClickListener {
+                // 方向面板的 9 个键（箭头 / 行首行尾 / 拖选开关 / 复制粘贴）与功能面板同组
+                KeyFeedback.fire(TapSound.G_FUNC)
                 Diagnostics.i(TAG, "方向按键: $action")
                 listener?.onDirectionAction(action)
             }

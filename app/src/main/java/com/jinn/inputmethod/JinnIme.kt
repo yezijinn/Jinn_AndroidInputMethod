@@ -358,6 +358,9 @@ class JinnIme : InputMethodService() {
     private val backspaceRunnable = object : Runnable {
         override fun run() {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            // 连删期间不产生新的触摸事件，反馈必须在这里补；55ms 的节奏由 [KeyFeedback]
+            // 的删除组节流（150ms）压到约每秒 6~7 次，不会叠成机关枪
+            KeyFeedback.fire(TapSound.G_ERASE)
             ui.postDelayed(this, BACKSPACE_REPEAT_MS)
         }
     }
@@ -394,6 +397,10 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "IME 窗口: 已请求 TRANSLUCENT, fmt=${w?.attributes?.format}")
         }.onFailure { Diagnostics.w(TAG, "IME 窗口格式设置失败: ${it.message}") }
         prefs = Prefs(this)
+        // 敲击反馈引擎（音效 + 震动）：进程级单例，attach 幂等 —— 系统重建 IME 会再次 onCreate，
+        // 重复挂载必须无害（否则会多出一份 SoundPool，旧的永不释放）
+        KeyFeedback.attach(this)
+        KeyFeedback.refresh(prefs)
         instance = WeakReference(this)
         // 「变量」组的「分辨率」：交给 IME 提供真实屏幕尺寸（见 screenSizeProvider）
         DynamicSymbols.screenSize = screenSizeProvider()
@@ -1123,14 +1130,38 @@ class JinnIme : InputMethodService() {
             if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
             consumed
         }
-        voice.findViewById<View>(R.id.status_bar).setOnClickListener { openSettings() }
-        voice.findViewById<View>(R.id.key_comma).setOnClickListener { commit("，") }
-        voice.findViewById<View>(R.id.key_period).setOnClickListener { commit("。") }
-        voice.findViewById<View>(R.id.key_space).setOnClickListener { commit(" ") }
-        voice.findViewById<View>(R.id.key_enter).setOnClickListener { performEnter() }
+        // ⚠ 语音键盘与拼音键盘是**两套 View**（`keyboard.xml` / `keyboard_pinyin.xml`），
+        // 同名 id 各自解析到自己的布局里，因此敲击反馈必须在两侧各自绑定，不能共用一次绑定。
+        // ⚠ 麦克风键（mic_button）**不挂钩**：按下即开始录音，此刻播按键音会被 AudioRecord
+        // 一并录进去、影响识别率。录音相关代码一行不改（2026-10-05 用户要求）。
+        voice.findViewById<View>(R.id.status_bar).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
+            openSettings()
+        }
+        voice.findViewById<View>(R.id.key_comma).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
+            commit("，")
+        }
+        voice.findViewById<View>(R.id.key_period).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
+            commit("。")
+        }
+        voice.findViewById<View>(R.id.key_space).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            commit(" ")
+        }
+        voice.findViewById<View>(R.id.key_enter).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            performEnter()
+        }
         // 语音键盘的「键盘」键：切到拼音键盘；长按仍切输入法
-        voice.findViewById<View>(R.id.key_switch).setOnClickListener { switchToPinyinKeyboard() }
+        voice.findViewById<View>(R.id.key_switch).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
+            switchToPinyinKeyboard()
+        }
         voice.findViewById<View>(R.id.key_switch).setOnLongClickListener {
+            // 长按不会触发短按的 click ⇒ 短按那份反馈也不会发，这里补一次（与短按同组）
+            KeyFeedback.fire(TapSound.G_FUNC)
             showImePicker()
             true
         }
@@ -1697,6 +1728,11 @@ class JinnIme : InputMethodService() {
         super.onStartInputView(info, restarting)
         // 词库在 onCreate 预加载失败时这里补试（已就绪时开销为一次 volatile 读）
         retryPinyinLoadIfNeeded()
+        // 敲击反馈：每次弹键盘重读一次「用户意愿」与「系统闸门」（静音 / 触摸提示音 / 触摸时振动）。
+        // 放在这里而不是每次按键查：Settings.System 是 Binder 调用，快速打字时每秒十几次 IPC 不划算；
+        // 而用户改完开关回来必然经过弹键盘，缓存足够新鲜。
+        KeyFeedback.refresh(prefs)
+        KeyFeedback.refreshSystemGates(this)
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
         // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
@@ -1864,6 +1900,9 @@ class JinnIme : InputMethodService() {
         // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
+        // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，
+        // 不 release 会持续泄漏 native 资源（每次重建泄漏一份）
+        KeyFeedback.release()
         // ⚠ 先作废在途翻译、**再**清消息队列（2026-10-03 修复 L-633）：`removeCallbacksAndMessages(null)`
         // 只能清**此刻已在队列里**的消息，而紧接着的 `cancel()` 会让 OkHttp 在 IO 线程回调
         // `onFailure → onDone → ui.post{…}` —— 那条消息是在清队列**之后**才入队的，清不到。
@@ -3320,6 +3359,7 @@ class JinnIme : InputMethodService() {
                     // 同 L-716：语音面板的退格也改宿主文本，它不经 commit（直接发 DEL 键）
                     if (translateInFlight) cancelTranslate(notify = true)
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                    KeyFeedback.fire(TapSound.G_ERASE)
                     ui.postDelayed(backspaceRunnable, BACKSPACE_DELAY_MS)
                     true
                 }
@@ -3685,6 +3725,19 @@ class JinnIme : InputMethodService() {
                 // 默认语音模式下拖滑杆将毫无反应（只能重弹键盘才生效）。
                 ime.applyTransparencyToVoicePanel()
             }
+        }
+
+        /**
+         * 设置页改了敲击音效 / 震动后调用（主线程）：立刻把新配置读进 [KeyFeedback]。
+         *
+         * 为什么需要它：[KeyFeedback] 的配置是**内存缓存**（按键路径上不做 IO、不查 IPC），
+         * 没有这个入口的话，在设置页改完要等下次弹键盘（[onStartInputView]）才生效 ——
+         * 这与「键盘外观页拖滑杆要边拖边看」是同一个诉求，故沿用同一套
+         * `instance?.get()` + `ui.post` 写法（IME 实例可能已不存在，`instance` 是弱引用）。
+         */
+        fun onKeyFeedbackChanged() {
+            val ime = instance?.get() ?: return
+            ime.ui.post { KeyFeedback.refresh(ime.prefs) }
         }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */

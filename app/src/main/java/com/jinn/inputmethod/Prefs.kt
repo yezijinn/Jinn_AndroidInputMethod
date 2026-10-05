@@ -412,6 +412,54 @@ class Prefs(context: Context) {
             putInt(KEY_KEY_TRANSPARENCY_PERCENT, KeyTransparency.clampPercent(value))
         }
 
+    // ── 敲击音效反馈（设置页「敲击音效反馈」，2026-10-05 起）────────────────
+    //
+    // 出厂默认**音效关 / 震动关**：按键发声与震动都是打扰性反馈，必须由用户主动开启。
+    // 本组只表达「用户意愿」；系统侧的闸门（静音模式 / 触摸提示音 / 触摸时振动）在播放侧
+    // 另行判断（见 [KeyFeedback]），两者是 AND 关系 —— 用户开了但如果系统关了，仍然不出声/不震。
+
+    /** 敲击音效总开关（默认关，见 [KeyFeedback]） */
+    var tapSoundEnabled: Boolean
+        get() = boolOr(KEY_TAP_SOUND_ENABLED, false)
+        set(value) = sp.edit { putBoolean(KEY_TAP_SOUND_ENABLED, value) }
+
+    /**
+     * 音效强度（0–100，默认 70）。
+     *
+     * 为什么要它：按键音走 `USAGE_ASSISTANCE_SONIFICATION`（= 系统音效音量），
+     * 而系统音效音量在多数 ROM 上**没有**给用户的可见滑杆，只能靠 SoundPool 的
+     * 单次播放音量做独立调节。getter 也钳位：脏配置不能把音量算成非法值。
+     */
+    var tapSoundVolume: Int
+        get() = TapSound.clampVolume(intOr(KEY_TAP_SOUND_VOLUME, TapSound.VOLUME_DEFAULT))
+        set(value) = sp.edit { putInt(KEY_TAP_SOUND_VOLUME, TapSound.clampVolume(value)) }
+
+    /** 静音（含仅震动）时是否仍然播放按键音（默认关 = 严格跟随系统响铃模式） */
+    var tapSoundOnSilent: Boolean
+        get() = boolOr(KEY_TAP_SOUND_ON_SILENT, false)
+        set(value) = sp.edit { putBoolean(KEY_TAP_SOUND_ON_SILENT, value) }
+
+    /**
+     * 分组 → 音效索引映射（`"7,3,0,14,13,2"` 形式，分组顺序见 [TapSound.GROUP_LABELS]，
+     * 索引 -1 = 该组不播放）。
+     *
+     * 读写两侧都过 [TapSound.parseMap] / [TapSound.formatMap]：备份导入允许外部文件写进
+     * 任意字符串，没有这层钳位就是一次数组越界崩溃。归一后落盘的永远是规范串。
+     */
+    var tapSoundMap: String
+        get() = TapSound.formatMap(TapSound.parseMap(strOr(KEY_TAP_SOUND_MAP, null)))
+        set(value) = sp.edit { putString(KEY_TAP_SOUND_MAP, TapSound.formatMap(TapSound.parseMap(value))) }
+
+    /** 按键震动总开关（默认关） */
+    var tapVibrateEnabled: Boolean
+        get() = boolOr(KEY_TAP_VIBRATE_ENABLED, false)
+        set(value) = sp.edit { putBoolean(KEY_TAP_VIBRATE_ENABLED, value) }
+
+    /** 震动强度档（0 关 / 1 弱 / 2 中 / 3 强，见 [TapSound.vibrationSpec]） */
+    var tapVibrateStrength: Int
+        get() = TapSound.clampVibrationTier(intOr(KEY_TAP_VIBRATE_STRENGTH, TapSound.VIB_DEFAULT))
+        set(value) = sp.edit { putInt(KEY_TAP_VIBRATE_STRENGTH, TapSound.clampVibrationTier(value)) }
+
     /**
      * 亮色档的键盘皮肤 id（见 [KeyboardSkins]）。
      *
@@ -1215,6 +1263,16 @@ class Prefs(context: Context) {
         put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
         put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
+        // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
+        put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
+        put(KEY_TAP_SOUND_VOLUME, tapSoundVolume)
+        put(KEY_TAP_SOUND_ON_SILENT, tapSoundOnSilent)
+        // ⚠ 分组映射只在**用户真的改过**时才导出（与 translate_provider 同款）：缺键时 getter
+        // 回落的是当前默认映射，无条件导出会把「那时的默认」固化成显式值 —— 将来调整默认音色
+        // （例如替换删除键那个警报音）对这批用户失效。
+        if (sp.contains(KEY_TAP_SOUND_MAP)) put(KEY_TAP_SOUND_MAP, tapSoundMap)
+        put(KEY_TAP_VIBRATE_ENABLED, tapVibrateEnabled)
+        put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)
         put(KEY_SKIN_LIGHT, skinLightId)
         put(KEY_SKIN_DARK, skinDarkId)
         put(KEY_THEME_MODE, themeMode)
@@ -1349,6 +1407,14 @@ class Prefs(context: Context) {
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
+                // 敲击音效反馈 6 键：setter 里已有钳位（TapSound.clampVolume / parseMap /
+                // clampVibrationTier），脏备份的越界值不会进运行期
+                KEY_TAP_SOUND_ENABLED -> asBool(v)?.let { tapSoundEnabled = it; ok() } ?: bad(key)
+                KEY_TAP_SOUND_VOLUME -> asInt(v)?.let { tapSoundVolume = it; ok() } ?: bad(key)
+                KEY_TAP_SOUND_ON_SILENT -> asBool(v)?.let { tapSoundOnSilent = it; ok() } ?: bad(key)
+                KEY_TAP_SOUND_MAP -> asString(v)?.let { tapSoundMap = it; ok() } ?: bad(key)
+                KEY_TAP_VIBRATE_ENABLED -> asBool(v)?.let { tapVibrateEnabled = it; ok() } ?: bad(key)
+                KEY_TAP_VIBRATE_STRENGTH -> asInt(v)?.let { tapVibrateStrength = it; ok() } ?: bad(key)
                 KEY_SKIN_LIGHT -> asString(v)?.let { skinLightId = it; ok() } ?: bad(key)
                 KEY_SKIN_DARK -> asString(v)?.let { skinDarkId = it; ok() } ?: bad(key)
                 // 退役的旧皮肤键：新版本不再写它，但**旧备份里只有它** —— 不还原就会让
@@ -1612,6 +1678,19 @@ class Prefs(context: Context) {
         private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
+
+        /**
+         * 敲击音效反馈 6 键（2026-10-05）：音效开关 / 强度 / 静音仍播 / 分组映射 + 震动开关 / 档位。
+         *
+         * 全部要进备份白名单：用户对这项功能的验收标准是「所有配置与设置参数都能导出 / 导入」，
+         * 音色选择与震动档位同样是用户偏好，换机必须带走。
+         */
+        private const val KEY_TAP_SOUND_ENABLED = "tap_sound_enabled"
+        private const val KEY_TAP_SOUND_VOLUME = "tap_sound_volume"
+        private const val KEY_TAP_SOUND_ON_SILENT = "tap_sound_on_silent"
+        private const val KEY_TAP_SOUND_MAP = "tap_sound_map"
+        private const val KEY_TAP_VIBRATE_ENABLED = "tap_vibrate_enabled"
+        private const val KEY_TAP_VIBRATE_STRENGTH = "tap_vibrate_strength"
         /**
          * 已退役：旧版单值皮肤键，现在只在 [ensureSkinSlotsMigrated] 里读取，不再写入。
          * 常量名保留原样，好让备份覆盖面守卫把它一并清点（见 `PrefsBackupCoverageTest.retiredKeys`）。

@@ -97,6 +97,10 @@ android {
     androidResources {
         // 词库以 xz 压缩格式存放，再被 deflate 压一遍既无收益，还拖慢构建
         noCompress += "xz"
+        // 按键音效（assets/sounds/keyboard/*.ogg）必须能被 SoundPool 经 openFd 打开：
+        // ogg 本就在 aapt 的不压缩默认名单里，这里显式再声明一次，避免将来改打包配置时静默失效
+        // （一旦被压缩，openFd 会直接抛 IOException，按键就彻底没声了）
+        noCompress += "ogg"
     }
 
     compileOptions {
