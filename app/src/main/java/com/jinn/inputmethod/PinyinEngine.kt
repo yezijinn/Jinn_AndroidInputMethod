@@ -1287,9 +1287,15 @@ object PinyinEngine {
         // 清理：源包已被删除的索引缓存（用户可能只删了词库文件）
         runCatching {
             val alive = packs.map { it.name }.toSet()
-            val existing = indexDir.listFiles()?.filter { it.isFile }?.map { it.name }.orEmpty()
-            val stale = staleOptionalCacheNames(existing, alive)
-            existing.filter { it in stale }.forEach { name ->
+            // 带上 mtime：源包仍在的 `.idx.tmp` 也要按保护窗回收（BUG.md L-869）
+            val byName = indexDir.listFiles()?.filter { it.isFile }
+                ?.associate { it.name to it.lastModified() }.orEmpty()
+            val stale = staleOptionalCacheNames(
+                byName.keys.toList(),
+                alive,
+                System.currentTimeMillis(),
+            ) { byName[it] ?: 0L }
+            stale.forEach { name ->
                 if (java.io.File(indexDir, name).delete()) {
                     Diagnostics.i(TAG, "清理失效索引缓存: $name")
                 }
@@ -1381,19 +1387,37 @@ object PinyinEngine {
      * 症状是"内存映射永远命中不了、每次冷启动都要重新解压 1.8s"，而且日志上只看到一行
      * 「清理失效索引缓存」，极难联想到根因（2026-09-17 真机日志实锤）。
      */
-    internal fun staleOptionalCacheNames(existing: List<String>, alivePacks: Set<String>): List<String> {
+    internal fun staleOptionalCacheNames(
+        existing: List<String>,
+        alivePacks: Set<String>,
+        now: Long = 0L,
+        modifiedAtOf: (String) -> Long = { 0L },
+    ): List<String> {
         return existing.filter { name ->
             if (name.startsWith(BASE_CACHE_PREFIX)) return@filter false
             // 半截的原子写临时件（`<包名>.idx.tmp`）一并回收 —— 否则「装过包 → 写索引时被杀 → 删包」
             // 会留下一份永远没人清的空转文件（每包最多一份，可占十几 MB；BUG.md L-20）。
-            // 只回收**源包已不在**的那些：在用包的临时件可能正被写线程持有，删了会让它改名失败。
             if (name.endsWith(INDEX_SUFFIX + TMP_SUFFIX)) {
-                name.removeSuffix(INDEX_SUFFIX + TMP_SUFFIX) !in alivePacks
+                val pack = name.removeSuffix(INDEX_SUFFIX + TMP_SUFFIX)
+                if (pack !in alivePacks) return@filter true
+                // 源包仍在：写临时件的与跑清理的是**同一条加载线程**（另有 optionalLoading 防重入），
+                // 所以这里能遇到的只可能是**跨启动的陈旧残件**（上次构建索引时被杀留下的）——
+                // 用 mtime 保护窗区分（BUG.md L-869）：窗口内可能是本线程正在写的那个，窗口外一律回收，
+                // 否则它要等该源包被删才清。
+                now - modifiedAtOf(name) > INDEX_TMP_PROTECT_MS
             } else {
                 name.endsWith(INDEX_SUFFIX) && name.removeSuffix(INDEX_SUFFIX) !in alivePacks
             }
         }
     }
+
+    /**
+     * 索引缓存半截临时件的保护窗（与 `OptionalDicts.TMP_PROTECT_MS` 同思路，故取同值）。
+     *
+     * 见 [staleOptionalCacheNames] 与 BUG.md L-869。默认参数（`now = 0`）让不传 mtime 的旧调用
+     * 保持「不清理」的保守行为，便于渐进接入。
+     */
+    internal const val INDEX_TMP_PROTECT_MS = 10 * 60 * 1000L
 
     /**
      * 基础索引缓存的有效性键（纯函数，便于单测；`BUG.md` L-153）。

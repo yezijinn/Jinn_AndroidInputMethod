@@ -158,6 +158,13 @@ class CustomDictEditActivity : Activity() {
                         Diagnostics.i(TAG, "快捷补充：回填跳过（编辑框已有 ${editor.text.length} 字符）")
                         setStatus(TEXT_SKIP_REFILL)
                     }
+                    // 体验阈值（BUG.md L-870）：`EditText.setText` 在主线程同步排版，真机实测 8M 字符
+                    // 会卡住主线程 18 秒（Skipped 1083 frames / Davey 18.067s）——超过阈值就不铺，
+                    // 改为指路「导入.txt文档」。此时编辑器仍为空，点保存走「还没有内容」分支，不会误清词库。
+                    !shouldRefill(text.length) -> {
+                        Diagnostics.i(TAG, "快捷补充：源文本 ${text.length} 字符超过回填阈值，跳过铺入")
+                        setStatus(TEXT_TOO_LARGE_TO_REFILL.format(text.length / 10000))
+                    }
                     else -> editor.setText(text)
                 }
             }
@@ -197,6 +204,9 @@ class CustomDictEditActivity : Activity() {
         saveButton.alpha = 0.45f
         closeButton.isEnabled = false
         closeButton.alpha = 0.45f
+        // 编辑器一并冻结（BUG.md L-866）：保存用的是上面 `text` 这个快照，等待期间补敲的字不会进词库，
+        // 而保存完成后页面会直接 finish —— 那些字会静默消失（重开编辑页也看不到）
+        editor.isEnabled = false
         val app = applicationContext
         Thread {
             // 与词库页导入同款：解析 + xz 压缩是重活，降后台优先级，别和前台输入争 CPU
@@ -238,6 +248,7 @@ class CustomDictEditActivity : Activity() {
                 saveButton.alpha = 1f
                 closeButton.isEnabled = true
                 closeButton.alpha = 1f
+                editor.isEnabled = true
                 if (ok) {
                     Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条")
                     setResult(
@@ -366,6 +377,19 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_WRITE_FAIL_PACK = "内容已保留，词库生成失败：请再点一次保存"
         const val TEXT_BUSY = "正在写入词库，请稍候再试"
         const val TEXT_SAVING_WAIT = "正在保存，请稍候…"
+        const val TEXT_TOO_LARGE_TO_REFILL = "内容约 %d 万字符，已跳过回填：请用「导入.txt文档」整体替换，或精简后再回来编辑"
+
+        /** 回填体验阈值（字符）：见 [shouldRefill] 与 BUG.md L-870 */
+        const val MAX_REFILL_CHARS = 1_000_000
+
+        /**
+         * 是否把源文本铺进编辑器（纯函数，便于单测）。
+         *
+         * 数据侧上限是 [CustomDicts.MAX_INPUT_CHARS]（8M 字符），但 UI 侧承受不了：
+         * `EditText.setText` 在主线程同步构建 Spannable 并排版，真机实测 880k 行 / 8.1MB
+         * 会让主线程卡 18 秒（BUG.md L-870），所以回填单独设一条更低的体验阈值。
+         */
+        internal fun shouldRefill(textLength: Int): Boolean = textLength <= MAX_REFILL_CHARS
 
         private const val TAG = "CustomDictEdit"
     }

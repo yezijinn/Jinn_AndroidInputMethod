@@ -86,6 +86,7 @@
     <string name="dict_startup_instant">以后启动都是瞬间就绪 不用等待</string>
     <!-- 卡片状态与操作 -->
     <string name="dict_status_installed">已安装（%1$s）</string>
+    <string name="dict_status_installed_pending">已安装（%1$s）· 待输入法加载后生效</string>
     <string name="dict_status_absent">未安装</string>
     <string name="dict_action_download">下载</string>
     <string name="dict_action_reinstall">重新下载</string>

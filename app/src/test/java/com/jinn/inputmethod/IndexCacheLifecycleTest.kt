@@ -33,9 +33,44 @@ class IndexCacheLifecycleTest {
 
     @Test
     fun 在用包的临时文件与非法后缀不参与清扫() {
+        // 不传 mtime（默认 now = 0）时保持保守口径：源包仍在的 `.idx.tmp` 一律不动。
+        // 传了 mtime 才按保护窗回收陈旧残件，见下一条（BUG.md L-869）。
         val existing = listOf("part2.xz.idx.tmp", "readme.txt", "part2.xz.idx")
         val stale = PinyinEngine.staleOptionalCacheNames(existing, setOf("part2.xz"))
         assertTrue("在用包的缓存与临时文件都不该被删: $stale", stale.isEmpty())
+    }
+
+    @Test
+    fun 源包仍在但陈旧的临时件也要回收() {
+        // BUG.md L-869：写临时件的与跑清理的是同一条加载线程（optionalLoading 防重入），
+        // 所以"源包仍在 ⇒ 永远不清理"会漏掉跨启动留下的残件（每包一份，大包十几 MB）。
+        // 带 mtime 后：保护窗外回收、窗口内保留。
+        val now = 1_000_000_000_000L
+        assertEquals(
+            "超过保护窗的残件要回收",
+            listOf("part2.xz.idx.tmp"),
+            PinyinEngine.staleOptionalCacheNames(
+                listOf("part2.xz.idx.tmp", "part2.xz.idx"),
+                setOf("part2.xz"),
+                now,
+            ) { now - PinyinEngine.INDEX_TMP_PROTECT_MS - 1 },
+        )
+        assertTrue(
+            "窗口内（可能正是本线程在写）不许动",
+            PinyinEngine.staleOptionalCacheNames(
+                listOf("part2.xz.idx.tmp"),
+                setOf("part2.xz"),
+                now,
+            ) { now - 1_000L }.isEmpty(),
+        )
+        assertTrue(
+            "恰好等于保护窗视为刚写入，不清理（宁多留一轮）",
+            PinyinEngine.staleOptionalCacheNames(
+                listOf("part2.xz.idx.tmp"),
+                setOf("part2.xz"),
+                now,
+            ) { now - PinyinEngine.INDEX_TMP_PROTECT_MS }.isEmpty(),
+        )
     }
 
     /**

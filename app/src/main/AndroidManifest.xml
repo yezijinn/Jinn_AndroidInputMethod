@@ -39,11 +39,15 @@
             android:exported="false"
             android:label="@string/dict_manager_title" />
 
-        <!-- 快捷补充：直接编辑自定义词库的源文本，保存即导入（与「导入.txt文档」共用同一份文本） -->
+        <!-- 快捷补充：直接编辑自定义词库的源文本，保存即导入（与「导入.txt文档」共用同一份文本）。
+             旋转等配置变更**不重建**本页（BUG.md L-867）：编辑器是代码创建且无 id，系统不保存/恢复它的内容，
+             重建就会让未保存的编辑静默丢失（真机实证：盘上改内容后旋转，编辑框显示的是盘上新内容），
+             且保存中旋转会让旧实例的写盘结果回执丢失。本页布局全是代码构建，旋转后自行重新测量即可。 -->
         <activity
             android:name=".CustomDictEditActivity"
             android:exported="false"
             android:label="@string/dict_action_quick_edit"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
 
         <!-- 符号分组排序页：从设置页「符号分组顺序」按钮进入 -->

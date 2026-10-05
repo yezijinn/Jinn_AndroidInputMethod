@@ -439,6 +439,10 @@ class DictManagerActivity : Activity() {
     private fun buildCustomCard(): View {
         val file = CustomDicts.packFile(this)
         val installed = file.isFile
+        // 索引是否跟得上包（BUG.md L-868）：清单卡片有 L-155 的就绪判据，自定义卡片此前只看文件存在 ——
+        // 包被写坏 / 加载失败时仍显绿色「已安装（N B）」，用户以为正常，实际引擎整包拒收、候选一条不出。
+        // 只读文件头，主线程开销可忽略（同 L-167 的优化口径）。
+        val indexReady = installed && PinyinEngine.isOptionalIndexReady(this, CustomDicts.PACK_NAME)
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -452,12 +456,17 @@ class DictManagerActivity : Activity() {
         // 状态行独占一行：三个按钮同排时，状态文字与按钮挤在一行会被压成竖排（2026-10-05 真机实证）
         card.addView(
             line(
-                text = if (installed) {
-                    getString(R.string.dict_status_installed, formatSize(file.length()))
-                } else {
-                    getString(R.string.dict_status_absent)
+                text = when {
+                    !installed -> getString(R.string.dict_status_absent)
+                    indexReady -> getString(R.string.dict_status_installed, formatSize(file.length()))
+                    else -> getString(R.string.dict_status_installed_pending, formatSize(file.length()))
                 },
-                color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
+                color = when {
+                    !installed -> getColor(R.color.text_secondary)
+                    indexReady -> getColor(R.color.ok)
+                    // 中性色：刚保存、还没重启输入法时本来就短暂未就绪，不该显示成故障
+                    else -> getColor(R.color.text_secondary)
+                },
                 size = 13f,
             ),
             matchWrap(top = 12),

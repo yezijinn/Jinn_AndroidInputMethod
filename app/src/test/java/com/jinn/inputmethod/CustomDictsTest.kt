@@ -461,6 +461,42 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `编辑页保存中必须冻结编辑器且旋转不重建`() {
+        // L-866：保存用的是点击那一刻的快照，等待里补敲的字不会进词库、而完成后页面直接 finish ⇒ 静默丢失。
+        // L-867：编辑器是代码创建且无 id，重建会让未保存的编辑消失（真机实证）；旋转必须走 configChanges 免重建。
+        val src = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("保存中必须冻结编辑器（L-866）", "editor.isEnabled = false" in src)
+        assertTrue("保存结束后必须恢复可编辑", "editor.isEnabled = true" in src)
+        val manifest = File("src/main/AndroidManifest.xml")
+            .let { if (it.isFile) it else File("app/src/main/AndroidManifest.xml") }
+            .readText()
+        val block = manifest.substringAfter("android:name=\".CustomDictEditActivity\"")
+            .substringBefore("/>")
+        assertTrue(
+            "编辑页必须声明 configChanges（L-867），否则旋转重建丢草稿",
+            "android:configChanges=" in block,
+        )
+        val declared = block.split("android:configChanges=\"")[1].substringBefore("\"")
+        assertTrue("configChanges 必须覆盖 orientation（否则竖横屏仍重建），实际：$declared", "orientation" in declared)
+        assertTrue("configChanges 必须覆盖 screenSize（否则分屏/尺寸变化仍重建），实际：$declared", "screenSize" in declared)
+    }
+
+    @Test
+    fun `回填阈值须恰好放行上限并拒绝多一字符`() {
+        // L-870：`EditText.setText` 在主线程同步排版，8M 字符实测卡 18 秒（Skipped 1083 frames）——
+        // 回填有独立体验阈值，边界要钉住（等于阈值放行、多一字符拒绝）
+        assertTrue(
+            "恰好等于阈值仍应回填",
+            CustomDictEditActivity.shouldRefill(CustomDictEditActivity.MAX_REFILL_CHARS),
+        )
+        assertFalse(
+            "超过阈值不许回填（否则主线程停顿秒级）",
+            CustomDictEditActivity.shouldRefill(CustomDictEditActivity.MAX_REFILL_CHARS + 1),
+        )
+        assertTrue("空文本当然回填", CustomDictEditActivity.shouldRefill(0))
+    }
+
+    @Test
     fun `编辑页保存中关闭与返回键都被拦`() {
         // L-860 源码对拍：✕ 置灰与 onBackPressed 早退缺一不可 ——
         // 少任何一个，保存中的 finish() 都会让写盘结果回执丢失（包已更新却不重启引擎）
