@@ -647,6 +647,19 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `自定义词库改过后要跳过空闲等待`() {
+        // 可选包默认只在息屏 / 收起键盘 / 3 分钟兜底时才装载；自定义词库是刚写完的小包，
+        // 跟着官方大包一起等，用户保存后马上打字就是「没有候选」。判据：IME 启动路径发现
+        // 自定义包索引未就绪时，必须立即触发一次装载
+        val src = TestSources.codeSource("JinnIme.kt")
+        val i = src.indexOf("isOptionalIndexReady")
+        assertTrue("IME 启动路径要查自定义包的索引就绪状态", i > 0)
+        val around = src.substring(maxOf(0, i - 400), minOf(src.length, i + 400))
+        assertTrue("就绪检查要针对自定义包", "CustomDicts.PACK_NAME" in around)
+        assertTrue("未就绪时要立即触发装载", "maybeLoadOptionalDict" in around)
+    }
+
+    @Test
     fun `保存路径不许再构造整份格式化副本`() {
         // L-858 / L-862 的守卫：formatHuman 返回整份副本，保存路径一旦回头用它，内存峰值立刻翻倍
         val src = TestSources.codeSource("CustomDicts.kt")

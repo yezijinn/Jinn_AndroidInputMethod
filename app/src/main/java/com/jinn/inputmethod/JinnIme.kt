@@ -452,6 +452,18 @@ class JinnIme : InputMethodService() {
                 PinyinEngine.load(this)
             }.onSuccess {
                 Diagnostics.i(TAG, "onCreate: 词库加载完成，耗时 ${System.currentTimeMillis() - start}ms")
+                // 自定义词库刚改过（索引对不上）就跳过空闲等待立刻装载：快捷补充 / 导入刚写完包、
+                // 进程随即重启，用户下一件事就是打字 —— 而三条空闲触发要等息屏、收起键盘，或
+                // 兜底的 3 分钟（OPTIONAL_FALLBACK_DELAY_MS）。自定义包只有几十条，
+                // 建索引是毫秒级，不必跟着官方大包一起等。
+                runCatching {
+                    if (CustomDicts.packFile(this).isFile &&
+                        !PinyinEngine.isOptionalIndexReady(this, CustomDicts.PACK_NAME)
+                    ) {
+                        Diagnostics.i(TAG, "自定义词库索引未就绪：跳过空闲等待，立即装载可选包")
+                        maybeLoadOptionalDict("自定义词库待生效")
+                    }
+                }.onFailure { Diagnostics.w(TAG, "自定义词库就绪检查失败: ${it.message}") }
             }.onFailure {
                 Diagnostics.e(TAG, "onCreate: 词库加载失败，候选将不可用: ${it.message}", it)
             }
