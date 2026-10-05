@@ -198,19 +198,18 @@ class CustomDictEditActivity : Activity() {
             setStatus(TEXT_CONFIG_IMPORTING)
             return
         }
-        val text = editor.text.toString()
-        if (text.isBlank()) {
-            setStatus(TEXT_EMPTY_INPUT)
-            return
-        }
-        // 这里只做**内存保护**：原文超过两倍上限就不进后台（编辑器与快照各持一份 UTF-16，见 L-862）。
-        // 真正的数据闸在 saveHuman 里按**格式化后**的文本判（BUG.md L-852）—— 此前直接在入口按原文拦，
-        // 原文超限而格式化后不超限的内容会被无辜拒绝；保存路径已改逐行扫描 + 逐行落盘（L-858），
-        // 峰值不再随全文翻倍。
-        if (text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
+        // 两道入口判据都读编辑器自身（`Editable` 就是 CharSequence，读长度与判空都不必先复制快照）
+        if (editor.text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
             setStatus(TEXT_TOO_BIG)
             return
         }
+        if (editor.text.isBlank()) {
+            setStatus(TEXT_EMPTY_INPUT)
+            return
+        }
+        // 这里只做**内存保护**：原文超过两倍上限就不进后台。真正的数据闸在 saveHuman 里按
+        // **格式化后**的文本判（BUG.md L-852）—— 按原文拦会把「原文超限而格式化后不超限」的内容误拒。
+        val text = editor.text.toString()
         saving = true
         setStatus(TEXT_SAVING)
         // 「保存」与「✕」一起置灰：保存中关闭会让写盘结果回执丢失（BUG.md L-860）

@@ -155,6 +155,14 @@ internal object ConfigBackupManager {
     var lastError: String? = null
         private set
 
+    /**
+     * 导入失败的原因。与 [lastError] **分开**：设置页上导出与导入是两个入口，两条流程各跑各的，
+     * 共用一只字段时只要时间上挨近，用户看到的原因就可能张冠李戴（导出报的是导入的错）。
+     */
+    @Volatile
+    var lastImportError: String? = null
+        private set
+
     /** 导出互斥（见 [export]）：进程级，跨 Activity 重建也有效 */
     private val exportInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -748,7 +756,7 @@ internal object ConfigBackupManager {
      * 返回 `null` 表示**没进导入流程**（已在导入中、包损坏、或密码不对），原因在 [lastError]；
      * 进了流程但中途失败则返回带 [ImportOutcome.failedStage] 的结果，重试是幂等的。
      *
-     * 词库段失败（含被词库自身的写盘锁挡下）同样落一条 [lastError]，调用侧据此给出具体原因。
+     * 失败原因记在 [lastImportError]（覆盖词库段与各节读取/校验），调用侧据此给出具体原因。
      */
     fun import(
         context: Context,
@@ -757,8 +765,8 @@ internal object ConfigBackupManager {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ): ImportOutcome? {
-        // 上一次的失败原因（导出 / 体检留下的）不许挂到本次导入上
-        lastError = null
+        // 上一次的失败原因不许挂到本次导入上
+        lastImportError = null
         // 进程级互斥：导入跑在设置页的裸线程上，页面重建后按钮会重新可点 —— 不拦的话
         // 两路流程会并发写 prefs / 词频 / 剪贴板（各有锁不会损坏，但报数会失真，
         // 来自不同包时还会各阶段各留一份）
@@ -786,14 +794,17 @@ internal object ConfigBackupManager {
         // 用户拿一个截断/损坏包求助时，诊断包里分不清「manifest 条目读不到」与「清单解析失败」
         val manifestText = readEntry(zip, ConfigBackup.ENTRY_MANIFEST, budget = budget) ?: run {
             Diagnostics.w(TAG, "导入: manifest 条目读不到（包被截断或损坏）")
+            lastImportError = "备份包不完整或已损坏"
             return null
         }
         val manifest = ConfigBackup.parseManifest(manifestText) ?: run {
             Diagnostics.w(TAG, "导入: manifest 无法解析（不是本程序导出的包）")
+            lastImportError = "不是本程序导出的备份包"
             return null
         }
         if (ConfigBackup.checkVersion(manifest.formatVersion) == ConfigBackup.VersionCompat.TOO_NEW) {
             Diagnostics.w(TAG, "导入: 包格式版本 ${manifest.formatVersion} 高于本版 ${ConfigBackup.FORMAT_VERSION}，已拒绝")
+            lastImportError = "备份包由更新版本生成，本机无法导入"
             return null
         }
 
@@ -817,16 +828,19 @@ internal object ConfigBackupManager {
             is SectionRead.Ok -> r.text
             SectionRead.Missing -> {
                 Diagnostics.w(TAG, "导入: 缺少 prefs 节")
+                lastImportError = "备份包缺少设置节，判包不完整"
                 return null
             }
             else -> {
                 // TooLarge / Failed：读不出来就不许假装成功
                 Diagnostics.w(TAG, "导入: prefs 节不可用（$r）")
+                lastImportError = "设置节过大或损坏，无法导入"
                 return null
             }
         }
         if (!verify(manifest, ConfigBackup.SEC_PREFS, prefsText)) {
             Diagnostics.w(TAG, "导入: prefs 节校验失败")
+            lastImportError = "设置节校验不符（包被改动过）"
             return null
         }
         // 词频是可选节；存在即摘要必须对得上，且「读不出来（超限）」必须拒绝而不是当成「没有」
@@ -835,11 +849,13 @@ internal object ConfigBackupManager {
             SectionRead.Missing -> null
             else -> {
                 Diagnostics.w(TAG, "导入: 词频节不可用（$r）")
+                lastImportError = "词频节损坏，无法导入"
                 return null
             }
         }
         if (freqText != null && !verify(manifest, ConfigBackup.SEC_USER_FREQ, freqText)) {
             Diagnostics.w(TAG, "导入: 词频节校验失败")
+            lastImportError = "词频节校验不符（包被改动过）"
             return null
         }
         // 剪贴板同为可选节；同上
@@ -848,17 +864,20 @@ internal object ConfigBackupManager {
             SectionRead.Missing -> null
             else -> {
                 Diagnostics.w(TAG, "导入: 剪贴板节不可用（$r）")
+                lastImportError = "剪贴板节损坏，无法导入"
                 return null
             }
         }
         if (clipText != null && !verify(manifest, ConfigBackup.SEC_CLIPBOARD, clipText)) {
             Diagnostics.w(TAG, "导入: 剪贴板节校验失败")
+            lastImportError = "剪贴板节校验不符（包被改动过）"
             return null
         }
         // manifest 登记了摘要却没有对应节 ⇒ 包被裁剪过，按不完整拒绝（见 [firstMissingDeclaredSection]）
         val missingDeclared = firstMissingDeclaredSection(manifest, sections)
         if (missingDeclared != null) {
             Diagnostics.w(TAG, "导入: manifest 登记了 $missingDeclared 但没有对应节，判包不完整")
+            lastImportError = "备份包缺少登记的 ${missingDeclared} 节，判不完整"
             return null
         }
 
@@ -871,6 +890,7 @@ internal object ConfigBackupManager {
             // 旧写法会静默跳过，用户勾了「导入词库」却什么都没发生（而清单里明明显示着词库数量）
             if (dictSection == null && hasDictEntry(zip, budget)) {
                 Diagnostics.w(TAG, "导入: 包内有词库条目但 manifest 未登记摘要，判包不完整")
+                lastImportError = "包内有词库条目但未登记摘要，判包不完整"
                 return null
             }
             if (dictSection != null) {
@@ -882,7 +902,7 @@ internal object ConfigBackupManager {
                     .getOrNull() ?: run {
                         // 「另有写入在进行」与「恢复本身失败」分开报（BUG.md L-873）：前者等几秒重试即可，
                         // 笼统一句「导入失败」会让用户以为备份包坏了。原因经 [lastError] 传给调用侧
-                        lastError = if (CustomDicts.writing) {
+                        lastImportError = if (CustomDicts.writing) {
                             "词库正在写入，请稍后重试"
                         } else {
                             "词库恢复失败，原有词库未动；请重试"
@@ -898,6 +918,7 @@ internal object ConfigBackupManager {
         // 位置必须在写入之前：要么整包收下，要么什么都不动
         if (budget.exhausted) {
             Diagnostics.w(TAG, "导入: 包内解压量超过预算，按不可用处理")
+            lastImportError = "包内解压量超出预算，按不可用处理"
             return null
         }
 
@@ -1248,21 +1269,30 @@ internal object ConfigBackupManager {
             Diagnostics.w(TAG, "词库恢复: 摘要不符，已丢弃临时文件")
             return null
         }
-        // 包与源文本成对判定（BUG.md L-850）：两者是同一份自定义词库的两个面 —— 只恢复其一会出现
-        // 「编辑页回显的文本」与「实际生效的词库」错配，用户下一次保存就用对不上的文本覆盖新包。
-        // 只看**这次包里同时出现过**的那一对：老备份里只有包（没有源文本）时照旧单独恢复。
+        // 包与源文本成对判定（BUG.md L-850 / L-877）：两者是同一份自定义词库的两个面 —— 只落地其一，
+        // 编辑页回显的文本就与实际生效的词库错配，用户下一次保存便用对不上的文本覆盖词库。
+        // 判定必须看「落盘后会变成什么」，所以把「目标已存在 ⇒ 改名循环会跳过」也算进来。
         val packPending = pending.filter { CustomDicts.isPackName(it.second.name) }
         val sourcePending = pending.filter { CustomDicts.isSourceName(it.second.name) }
         val packSeen = hashes.any { CustomDicts.isPackName(it.first) }
         val sourceSeen = hashes.any { CustomDicts.isSourceName(it.first) }
-        val pairBroken = (packPending.isNotEmpty() && sourceSeen && sourcePending.isEmpty()) ||
-            (sourcePending.isNotEmpty() && packSeen && packPending.isEmpty())
+        val packWillLand = packPending.isNotEmpty() && !File(dir, CustomDicts.PACK_NAME).isFile
+        val sourceWillLand = sourcePending.isNotEmpty() && !File(dir, CustomDicts.SOURCE_NAME).isFile
+        val pairBroken = when {
+            // 两份都在包里：要么都落地，要么都不落地
+            packSeen && sourceSeen -> packWillLand != sourceWillLand
+            // 只带包：老备份的形态（源文本是后加的文件），落地后编辑页为空但词库可用，放行
+            packSeen -> false
+            // 只带源文本：本机已有包时不能只落文本（无从确认两份同源）⇒ 整对跳过；本机没包才放行
+            sourceSeen -> sourceWillLand && File(dir, CustomDicts.PACK_NAME).isFile
+            else -> false
+        }
         if (pairBroken) {
             val dropped = packPending + sourcePending
             dropped.forEach { it.first.delete() }
             pending.removeAll(dropped)
             skippedByName += dropped.size
-            Diagnostics.w(TAG, "词库恢复: 自定义词库与其源文本须成对（其一不合法），已整对跳过")
+            Diagnostics.w(TAG, "词库恢复: 自定义词库与其源文本须成对（其一不落地），已整对跳过")
         }
         var written = 0
         var skipped = skippedByName

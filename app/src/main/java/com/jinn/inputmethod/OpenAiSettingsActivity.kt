@@ -455,6 +455,13 @@ class OpenAiSettingsActivity : Activity() {
      *     都会立刻显示出来，界面与「本机真实值」不再分叉。
      */
     private fun saveAndNotify() {
+        // 导入在途时不回写：界面此刻还是导入前的旧值，全字段写回会把刚导入的 model / baseUrl /
+        // 提示词覆盖掉（onPause 早有同款守卫，显式保存这条路漏了 —— 两条路的口径要一致）
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "保存: 导入进行中，已跳过（避免覆盖导入结果）")
+            textSaveHint.text = TEXT_SAVE_BLOCKED_IMPORTING
+            return
+        }
         saveValues()
         val flushed = prefs.flush()
         val keyOk = !saveGuard.changed(editApiKey) ||
@@ -601,6 +608,9 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
         const val TEXT_SAVE_KEY_FAILED = "API Key 未写入本机，请重试"
+
+        /** 备份导入在途：此时保存会用界面旧值覆盖刚导入的配置（与 onPause 的守卫同一件事） */
+        const val TEXT_SAVE_BLOCKED_IMPORTING = "配置导入进行中，暂不可保存"
 
         /**
          * 写盘成功、但有字段不合法（2026-10-03 修复 L-514）。

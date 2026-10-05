@@ -613,4 +613,57 @@ class CustomDictsTest {
         assertFalse("saveHuman 不得调用 formatHuman（会为全文再造一份副本）", "formatHuman(" in body)
         assertTrue("源文本必须逐行写出", "writeSourceFormatted(" in body)
     }
+
+    @Test
+    fun `删除顺序：包删不掉时草稿必须留着`() {
+        // 包是词库本体，源文本是用户写过的草稿。包删失败时若草稿已经删掉，编辑页从此是空的，
+        // 写过的内容无处可取；反过来留下草稿，再点一次保存就能把包重建出来
+        val dir = File(tmp, "dicts-delorder").apply { mkdirs() }
+        CustomDicts.writeSource(dir, "张三 zhang san\n")
+        File(dir, CustomDicts.PACK_NAME).mkdirs()
+        File(File(dir, CustomDicts.PACK_NAME), "x").writeText("x") // 非空目录：delete() 必失败
+        assertFalse("包没删掉就不算删除成功", CustomDicts.deletePackIn(dir))
+        assertTrue("包还在时草稿必须保留", File(dir, CustomDicts.SOURCE_NAME).isFile)
+    }
+
+    @Test
+    fun `删除成功时包与源文本一起消失`() {
+        val dir = File(tmp, "dicts-delok").apply { mkdirs() }
+        CustomDicts.writePack(dir, listOf(CustomDicts.Entry("张三", "zhang san")))
+        CustomDicts.writeSource(dir, "张三 zhang san\n")
+        assertTrue(CustomDicts.deletePackIn(dir))
+        assertFalse(File(dir, CustomDicts.PACK_NAME).exists())
+        assertFalse(File(dir, CustomDicts.SOURCE_NAME).exists())
+    }
+
+    @Test
+    fun `扫描的字数口径与整份格式化一致`() {
+        // 判闸按 scanFormatted 的数字、落盘按同一套逐行规则：两者对不上就会出现「该拒的存下了」
+        // 或「能存的被拒」。这里逐例对拍，把末尾补行、纯空行、空文本这些边界钉住
+        val cases = listOf("", "\n", "a", "a\n", "a\n\n", "\n\n", "词  ci\n\n# 尾注释", "张三 zhang san\n李四 li si")
+        for (text in cases) {
+            val formatted = CustomDicts.formatHuman(text, null)
+            val scan = CustomDicts.scanFormatted(text, null)
+            assertEquals("长度口径：<$text>", formatted.length.toLong(), scan.formattedChars)
+            assertEquals(
+                "条数口径：<$text>",
+                CustomDicts.parseHuman(formatted, null).entries.size,
+                scan.result.entries.size,
+            )
+        }
+    }
+
+    @Test
+    fun `自定义卡片三入口必须等宽`() {
+        // 固定宽度的按钮行在字体放大或窄屏上会把「删除」挤出可用区域（折行、被裁到屏幕外）。
+        // 真机复现成本高，这条用源码对拍兜住：三个入口都得走 weightedButtonLp
+        val src = TestSources.codeSource("DictManagerActivity.kt")
+        val card = src.substringAfter("private fun buildCustomCard()").substringBefore("private fun customResultText(")
+        assertTrue("自定义卡片锚点失效（源码结构变了）", card.isNotEmpty() && card.length < src.length)
+        assertEquals("三个入口都要等宽", 3, Regex("weightedButtonLp\\(").findAll(card).count())
+        assertFalse(
+            "不许回退到固定宽度",
+            "buttonLp(" in card.replace("weightedButtonLp(", ""),
+        )
+    }
 }

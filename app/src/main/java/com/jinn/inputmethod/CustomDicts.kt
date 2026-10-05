@@ -41,6 +41,9 @@ internal object CustomDicts {
     /** 落地文件名；放在 `dicts/` 下才会被引擎扫描与备份收录 */
     const val PACK_NAME = "custom_user.txt.xz"
 
+    /** 原子写的临时件后缀（写入与残留判据共用） */
+    private const val TMP_SUFFIX = ".tmp"
+
     /**
      * 人写的**源文本**文件名：与包同放 `dicts/`，供「快捷补充」页回显与再编辑。
      *
@@ -218,10 +221,34 @@ internal object CustomDicts {
      * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanFormatted] + [writeSourceFormatted]
      * 的逐行形态，不为全文再留一份副本（BUG.md L-858 / L-862）。
      */
+    /**
+     * 逐行格式化并交给 [emitLine] / [emitNewline]：行间分隔与「原文以换行结尾时补回末尾换行」
+     * 只写在这一处 —— 整份副本、扫描判闸、流式落盘三条路共用同一份规则。
+     */
+    private inline fun forEachFormattedLine(
+        text: String,
+        syllables: Set<String>?,
+        emitNewline: () -> Unit,
+        emitLine: (String) -> Unit,
+    ) {
+        var lines = 0
+        var lastEmpty = false
+        for (raw in text.lineSequence()) {
+            val line = formatLine(raw, raw.trim(), syllables)
+            if (lines > 0) emitNewline()
+            emitLine(line)
+            lastEmpty = line.isEmpty()
+            lines++
+        }
+        // lineSequence 会吞掉末尾空行：原文以换行结尾、且拼接结果尚未以换行结尾时补一个
+        // （末行为空且不止一行时，拼接结果本身就以换行结尾）
+        if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) emitNewline()
+    }
+
     fun formatHuman(text: String, syllables: Set<String>? = null): String {
-        val out = text.lineSequence().joinToString("\n") { formatLine(it, it.trim(), syllables) }
-        // lineSequence 会吞掉末尾空行：原文以换行结尾时补回（写回源文本后观感不变）
-        return if (text.endsWith("\n") && !out.endsWith("\n")) out + "\n" else out
+        val sb = StringBuilder()
+        forEachFormattedLine(text, syllables, { sb.append('\n') }) { sb.append(it) }
+        return sb.toString()
     }
 
     /**
@@ -231,26 +258,18 @@ internal object CustomDicts {
      * 「原文 + 整份格式化文本」降到「原文 + 单行」—— 入口保护放宽到 2× 上限后，那一份副本会让
      * 16M 字符的输入峰值逼近 64MB（BUG.md L-858 / L-862）。
      */
-    private fun scanFormatted(text: String, syllables: Set<String>?): Scan {
+    internal fun scanFormatted(text: String, syllables: Set<String>?): Scan {
         val collector = LineCollector(syllables)
         var chars = 0L
-        var lines = 0
-        var lastEmpty = false
-        for (raw in text.lineSequence()) {
-            val out = formatLine(raw, raw.trim(), syllables)
-            if (lines > 0) chars++ // 行间换行
-            chars += out.length
-            lines++
-            lastEmpty = out.isEmpty()
-            collector.feed(out)
+        forEachFormattedLine(text, syllables, { chars++ }) { line ->
+            chars += line.length
+            collector.feed(line)
         }
-        // 末尾补行与 [formatHuman] 同规则：原文以换行结尾、且拼接结果尚未以换行结尾时补一个
-        if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) chars++
         return Scan(collector.result(), chars)
     }
 
     /** [scanFormatted] 的产物：[result] 供判闸，[formattedChars] 即 [formatHuman] 之后的字符数 */
-    private class Scan(val result: Result, val formattedChars: Long)
+    internal class Scan(val result: Result, val formattedChars: Long)
 
     /** 音节归一：小写、`ü`→`v`、剥声调数字、逐节形状与音节表校验；不合法返回 null */
     private fun normalizeSyllables(token: String, syllables: Set<String>?): String? {
@@ -362,6 +381,23 @@ internal object CustomDicts {
         return sb.toString().removePrefix("\uFEFF")
     }
 
+    /**
+     * 只数流里的字符数：超 [limit] 立即返回 false，不保留解码结果。
+     *
+     * 备份恢复的放行判据用它 —— 那边只需要「有没有超限」这一个事实；走 [readCapped]
+     * 会把最多 8M 字符读成 String 再丢掉（判据本身不需要持有数据）。
+     */
+    fun countCapped(reader: java.io.Reader, limit: Int): Boolean {
+        val buf = CharArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val n = reader.read(buf)
+            if (n < 0) return true
+            total += n
+            if (total > limit) return false
+        }
+    }
+
     /** 读取限长文本并解成 UTF-8（供导入线程用；超 [limit] **字符**抛 [TooLargeException]） */
     fun readUtf8Capped(input: InputStream, limit: Int): String {
         val text = InputStreamReader(input, Charsets.UTF_8).use { readCapped(it, limit) }
@@ -383,7 +419,7 @@ internal object CustomDicts {
     fun writePack(dir: File, pack: PackLines): File? {
         dir.mkdirs()
         val dest = File(dir, PACK_NAME)
-        val tmp = File(dir, "$PACK_NAME.tmp")
+        val tmp = File(dir, PACK_NAME + TMP_SUFFIX)
         return runCatching {
             FileOutputStream(tmp).use { out ->
                 out.write(encodePackLines(pack.lines))
@@ -430,10 +466,19 @@ internal object CustomDicts {
         }
         return try {
             runCatching {
-                File(dir, SOURCE_NAME).delete()
+                // 顺序有讲究：包是词库本体，源文本是用户写过的草稿。
+                // 先删包 —— 包删不掉就整个中止（草稿还在，下一次保存即可重建）；
+                // 反过来先删草稿的话，包这一删失败就只剩「包在、草稿没了」，写过的内容无处可取。
                 val pack = File(dir, PACK_NAME)
-                val ok = pack.delete()
-                ok || !pack.exists()
+                val packGone = pack.delete() || !pack.exists()
+                if (packGone) {
+                    val source = File(dir, SOURCE_NAME)
+                    if (!source.delete() && source.exists()) {
+                        // 词库已删除、草稿留着：编辑页仍能看见内容，再保存一次即可重建
+                        Diagnostics.w(TAG, "自定义词库删除: 源文本未能删除（保留，可由再保存重建）")
+                    }
+                }
+                packGone
             }.getOrDefault(false)
         } finally {
             endWrite()
@@ -456,7 +501,7 @@ internal object CustomDicts {
         }
         dir.mkdirs()
         val dest = File(dir, SOURCE_NAME)
-        val tmp = File(dir, "$SOURCE_NAME.tmp")
+        val tmp = File(dir, sourceTempName())
         return runCatching {
             FileOutputStream(tmp).use { out ->
                 out.write(text.toByteArray(Charsets.UTF_8))
@@ -478,27 +523,24 @@ internal object CustomDicts {
     private fun writeSourceFormatted(dir: File, text: String, syllables: Set<String>?): File? {
         dir.mkdirs()
         val dest = File(dir, SOURCE_NAME)
-        val tmp = File(dir, "$SOURCE_NAME.tmp")
+        val tmp = File(dir, sourceTempName())
         return runCatching {
             FileOutputStream(tmp).use { out ->
                 val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8))
-                var lines = 0
-                var lastEmpty = false
                 var written = 0L
-                for (raw in text.lineSequence()) {
-                    if (lines > 0) {
+                forEachFormattedLine(
+                    text,
+                    syllables,
+                    {
                         w.write("\n")
                         written++
-                    }
-                    val line = formatLine(raw, raw.trim(), syllables)
+                    },
+                ) { line ->
                     w.write(line)
                     written += line.length
                     // 上限已由 [scanFormatted] 判过（同一套逐行规则）；这里只兜住规则漂移
                     if (written > MAX_INPUT_CHARS) error("格式化后超过上限")
-                    lastEmpty = line.isEmpty()
-                    lines++
                 }
-                if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) w.write("\n")
                 w.flush()
                 out.fd.sync()
             }
@@ -522,13 +564,16 @@ internal object CustomDicts {
 
     fun isSourceName(fileName: String): Boolean = fileName == SOURCE_NAME
 
+    /** 源文本临时件名：写入与残留判据共用一处（改名时只改这里，漏改一处的残件没人清） */
+    fun sourceTempName(): String = SOURCE_NAME + TMP_SUFFIX
+
     /**
      * 源文本的写入临时件名（[writeSource] 用固定名）。
      *
      * 词库页的残留清理器据此把它纳入判据 —— 此前只认下载包的 `*.xz.tmp`，
      * 源文本写到一半进程被杀就永久留下（BUG.md L-857）。
      */
-    fun isSourceTempName(fileName: String): Boolean = fileName == "$SOURCE_NAME.tmp"
+    fun isSourceTempName(fileName: String): Boolean = fileName == sourceTempName()
 
     /**
      * [saveHuman] 的闸位：三档数据闸 + 两档写盘失败（L-861 拆分） + 写入互斥（L-859）。
@@ -660,8 +705,8 @@ internal object CustomDicts {
      * 「超大文件塞进备份包 → 恢复时被整份读进内存」。
      */
     fun isValidSourceFile(file: File): Boolean = runCatching {
-        file.inputStream().use { readUtf8Capped(it, MAX_INPUT_CHARS) }
-    }.isSuccess
+        file.inputStream().use { countCapped(InputStreamReader(it, Charsets.UTF_8), MAX_INPUT_CHARS) }
+    }.getOrDefault(false)
 
     /**
      * 读随包音节表（421 条，解压约几毫秒）。

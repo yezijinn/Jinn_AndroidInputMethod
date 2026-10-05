@@ -1651,7 +1651,7 @@ class SettingsActivity : ComponentActivity() {
                 if (isFinishing || isDestroyed) {
                     // 最危险的一种：导入其实已经落盘，用户却什么都没看到，多半会以为失败再导一次
                     pendingNotice = if (r == null) {
-                        ConfigBackupManager.lastError ?: TEXT_IMPORT_FAIL
+                        ConfigBackupManager.lastImportError ?: TEXT_IMPORT_FAIL
                     } else {
                         "配置导入已完成（写入的设置与词库需重启输入法后生效）。"
                     }
@@ -1660,8 +1660,8 @@ class SettingsActivity : ComponentActivity() {
                 dismissBusy()
                 btnConfigImport.isEnabled = true
                 if (r == null) {
-                    // 具体原因由 Manager 记在 lastError（如「词库正在写入，请稍后重试」），比通用文案有用
-                    val reason = ConfigBackupManager.lastError ?: TEXT_IMPORT_FAIL
+                    // 具体原因由 Manager 记在 lastImportError（如「词库正在写入，请稍后重试」），比通用文案有用
+                    val reason = ConfigBackupManager.lastImportError ?: TEXT_IMPORT_FAIL
                     Diagnostics.w(TAG, "importConfig: 导入失败（$reason）")
                     textConfigHint.text = reason
                     alert(TEXT_IMPORT_CONFIG, reason)

@@ -451,11 +451,67 @@ class ConfigBackupZipTest {
         val manager = TestSources.codeSource("ConfigBackupManager.kt")
         val site = manager.substringAfter("restoreDicts(File(context.filesDir, DICT_DIR)")
             .substringBefore("dictsWritten")
-        assertTrue("恢复失败要写 lastError", "lastError =" in site)
+        assertTrue("恢复失败要写 lastImportError", "lastImportError =" in site)
         assertTrue("「忙」与「真失败」要分开", "CustomDicts.writing" in site)
         val settings = TestSources.codeSource("SettingsActivity.kt")
         val fail = settings.substringAfter("if (r == null) {").substringBefore("return@runOnUiThread")
-        assertTrue("导入失败提示要优先用 lastError", "ConfigBackupManager.lastError" in fail)
+        assertTrue("导入失败提示要优先用 lastImportError", "ConfigBackupManager.lastImportError" in fail)
+    }
+
+    @Test
+    fun `本机已有包时不许只落源文本`() {
+        // 目标已存在 ⇒ 改名循环会跳过包。此时若把备份里的源文本落下来，编辑页回显的文本
+        // 与实际生效的词库就对不上，用户下一次保存用这份文本静默替换掉本机词库
+        val dir = File(tmp, "dicts-pair-local").apply { mkdirs() }
+        File(dir, CustomDicts.PACK_NAME).writeBytes(
+            CustomDicts.encodePack(listOf(CustomDicts.Entry("旧词", "jiu ci"))),
+        )
+        val newPack = CustomDicts.encodePack(listOf(CustomDicts.Entry("新词", "xin ci")))
+        val source = bytes("新词 xin ci\n")
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            makeZip(
+                ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to newPack,
+                ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to source,
+            ),
+            dictsDigestOf(CustomDicts.PACK_NAME to newPack, CustomDicts.SOURCE_NAME to source),
+        )
+        assertNotNull(r)
+        assertEquals("两个都不许落地", 0, r!!.first)
+        assertEquals("包被跳过、源文本随对跳过", 2, r.second)
+        assertFalse(
+            "源文本落地就会与磁盘上的旧包错配",
+            File(dir, CustomDicts.SOURCE_NAME).exists(),
+        )
+    }
+
+    @Test
+    fun `只带源文本的备份在本机已有包时整对跳过`() {
+        val dir = File(tmp, "dicts-src-only").apply { mkdirs() }
+        File(dir, CustomDicts.PACK_NAME).writeBytes(
+            CustomDicts.encodePack(listOf(CustomDicts.Entry("旧词", "jiu ci"))),
+        )
+        val source = bytes("草稿 xin ci\n")
+        val r = ConfigBackupManager.restoreDicts(
+            dir,
+            makeZip(ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to source),
+            dictsDigestOf(CustomDicts.SOURCE_NAME to source),
+        )
+        assertNotNull(r)
+        assertEquals(0, r!!.first)
+        assertFalse("本机有包时不能只落草稿", File(dir, CustomDicts.SOURCE_NAME).exists())
+    }
+
+    @Test
+    fun `导入失败的每条拒绝分支都要留原因`() {
+        // 只报一句「配置导入失败」时用户无从归因；判据是源码对拍：拒绝点与赋值点数量对齐
+        val src = TestSources.codeSource("ConfigBackupManager.kt")
+        val locked = src.substringAfter("private fun importLocked(").substringBefore("internal fun restoreDicts(")
+        assertTrue("importLocked 锚点失效", locked.isNotEmpty() && locked.length < src.length)
+        val rejects = Regex("return null").findAll(locked).count()
+        val reasons = Regex("lastImportError = ").findAll(locked).count()
+        assertTrue("拒绝点数量异常（源码结构变了？）：$rejects", rejects >= 12)
+        assertTrue("每个拒绝点都要留原因：rejects=$rejects reasons=$reasons", reasons >= rejects)
     }
 
     @Test
