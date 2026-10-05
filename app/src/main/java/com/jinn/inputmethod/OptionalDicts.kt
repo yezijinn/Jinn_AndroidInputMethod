@@ -154,13 +154,20 @@ object OptionalDicts {
      * （或下载中页面被关、随后进程回收）就留下最多 `MAX_DOWNLOAD_BYTES` = 64MB 垃圾；而残留件
      * 既不在清单、也不以 `.xz` 结尾 ⇒ 「其他包」区也看不见、页面上删不掉，只有清数据 / 卸载能释放。
      *
+     * 另收自定义词库**源文本**的临时件（`custom_user.src.txt.tmp`，BUG.md L-857）：它与 `.xz.tmp`
+     * 同款 —— 写到一半被杀就永久留下（≤8M 字符），既不在清单、也不以 `.xz` 结尾 ⇒ 同样无人清理。
+     *
      * 纯函数（不碰文件系统）：只按名字筛，删除与跳过由调用侧决定 —— 与 [unknownPackages] 同口径。
      */
     fun staleTempNames(fileNames: Collection<String>, active: String?): List<String> {
         // ⚠ 正在下载那个的临时件名是 `"$fileName.tmp"`（文件名本身已含 `.xz`），
         // 而不是 `"$fileName$TEMP_SUFFIX"` —— 后者会拼成 `X.xz.xz.tmp`，永远排不掉在跑的下载
         val activeTmp = active?.let { "$it.tmp" }
-        return fileNames.filter { it.endsWith(TEMP_SUFFIX) && it != activeTmp }.sorted()
+        // 自定义词库**源文本**的临时件（`custom_user.src.txt.tmp`）也一并收：它不匹配 `.xz.tmp`，
+        // 却同样是「写到一半进程被杀」就永久留下的垃圾（BUG.md L-857），页面看不见也删不掉
+        return fileNames
+            .filter { (it.endsWith(TEMP_SUFFIX) || CustomDicts.isSourceTempName(it)) && it != activeTmp }
+            .sorted()
     }
 
     /** 下载临时件后缀：`fetchToFile` 写 `"$fileName.tmp"`，而文件名恒以 `.xz` 结尾 */

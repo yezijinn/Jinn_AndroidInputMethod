@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -194,7 +195,7 @@ class CustomDictsTest {
         val huge = File(tmp, "huge.src.txt").apply {
             outputStream().use { out ->
                 val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
-                repeat(CustomDicts.MAX_INPUT_BYTES / chunk.size + 1) { out.write(chunk) }
+                repeat(CustomDicts.MAX_INPUT_CHARS / chunk.size + 1) { out.write(chunk) }
             }
         }
         assertFalse("超过 8MB 上限的源文本不许随备份落盘", CustomDicts.isValidSourceFile(huge))
@@ -248,12 +249,12 @@ class CustomDictsTest {
     fun `源文本超过上限须拒绝写入`() {
         // 与 readSource / isValidSourceFile 同一口径：写进去的必须能读回来（BUG.md L-846）
         val dir = File(tmp, "dicts-overflow")
-        val huge = "a".repeat(CustomDicts.MAX_INPUT_BYTES + 1)
+        val huge = "a".repeat(CustomDicts.MAX_INPUT_CHARS + 1)
         assertNull("超 8MB 的源文本不许落盘", CustomDicts.writeSource(dir, huge))
         assertFalse("被拒绝时不许留下临时件", File(dir, CustomDicts.SOURCE_NAME + ".tmp").exists())
         assertTrue(
             "恰好等于上限仍应放行",
-            CustomDicts.writeSource(dir, "a".repeat(CustomDicts.MAX_INPUT_BYTES)) != null,
+            CustomDicts.writeSource(dir, "a".repeat(CustomDicts.MAX_INPUT_CHARS)) != null,
         )
     }
 
@@ -313,5 +314,99 @@ class CustomDictsTest {
             1,
             CustomDicts.parseHuman("CPU\tcpu", null).entries.size,
         )
+    }
+
+    // ── 保存流程的两条不变量（BUG.md L-851 / L-856）────────────────
+
+    @Test
+    fun `截断超限时一个字都不许落盘`() {
+        // L-851：此前两处都是「先 writePack 再 when 判闸」——
+        // 界面报「词条超过 5 万条」失败，磁盘上却已被替换成截断版（前 5 万条）
+        val dir = File(tmp, "dicts-truncated")
+        val old = CustomDicts.writePack(dir, listOf(CustomDicts.Entry("旧词", "jiu ci")))
+        val oldBytes = old!!.readBytes()
+        val text = buildString {
+            repeat(CustomDicts.MAX_ENTRIES + 5) { append("w").append(it).append("\ti\n") }
+        }
+        val report = CustomDicts.saveHuman(dir, text, null)
+        assertEquals(CustomDicts.SaveGate.TOO_MANY, report.gate)
+        assertArrayEquals(
+            "报失败时磁盘上的包必须原封不动：写进截断版等于静默丢词条",
+            oldBytes,
+            File(dir, CustomDicts.PACK_NAME).readBytes(),
+        )
+        assertFalse("失败路径连源文本也不该写", File(dir, CustomDicts.SOURCE_NAME).exists())
+    }
+
+    @Test
+    fun `没有合法词条时不许落盘`() {
+        // 清空词库要用卡片上的「删除」，不能让一次误编辑把已有内容清掉
+        val dir = File(tmp, "dicts-empty")
+        CustomDicts.writeSource(dir, "旧内容\n")
+        val report = CustomDicts.saveHuman(dir, "只有词没有拼音\n# 注释\n", null)
+        assertEquals(CustomDicts.SaveGate.NO_VALID, report.gate)
+        assertFalse("没有合法词条就不许动包", File(dir, CustomDicts.PACK_NAME).exists())
+        assertEquals(
+            "源文本也不许被这次保存改写",
+            "旧内容\n",
+            CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME)),
+        )
+    }
+
+    @Test
+    fun `源文本写不进去时不许写包`() {
+        // L-856：真相（源文本）先落、派生（包）后落 —— 源文本失败即中止，避免「包新文本旧」
+        // （用户在原内容上再保存，等于用旧文本把新包静默回滚）
+        val dir = File(tmp, "dicts-srclock")
+        dir.mkdirs()
+        File(dir, CustomDicts.SOURCE_NAME).mkdirs() // 同名目录占位 ⇒ writeSource 的改名必失败
+        val report = CustomDicts.saveHuman(dir, "张三 zhang san\n", null)
+        assertEquals(CustomDicts.SaveGate.WRITE_FAIL, report.gate)
+        assertFalse("源文本没落盘时包也不许落盘", File(dir, CustomDicts.PACK_NAME).exists())
+    }
+
+    @Test
+    fun `保存成功时源文本归一且包可装载`() {
+        val dir = File(tmp, "dicts-ok")
+        val report = CustomDicts.saveHuman(dir, "张三\t\tzhang   san3\n# 注释\n", null)
+        assertEquals(CustomDicts.SaveGate.OK, report.gate)
+        assertEquals(1, report.entries)
+        assertEquals(
+            "源文本落的是归一后的标准格式（多空格 / TAB / 声调数字都收敛）",
+            "张三 zhang san\n# 注释\n",
+            CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME)),
+        )
+        assertTrue(
+            "包必须是引擎与备份导入侧认得的 raw 形态",
+            CustomDicts.isValidPackFile(File(dir, CustomDicts.PACK_NAME)),
+        )
+    }
+
+    @Test
+    fun `词库写盘只许走 saveHuman 一个入口`() {
+        // L-851 / L-856 的根因是「两个 UI 各写一份流程」—— 谁都会漏掉一条不变量。
+        // 现在两处都只调 saveHuman；writePack / writeSource 不得再被 UI 直接调用
+        for (name in listOf("DictManagerActivity.kt", "CustomDictEditActivity.kt")) {
+            val src = TestSources.codeSource(name)
+            assertTrue("$name 必须走 CustomDicts.saveHuman", "CustomDicts.saveHuman(" in src)
+            assertTrue(
+                "$name 不得直接调 writePack：先判闸后写盘的不变量在 saveHuman 里",
+                "CustomDicts.writePack(" !in src,
+            )
+            assertTrue(
+                "$name 不得直接调 writeSource：源文本先落的不变量在 saveHuman 里",
+                "CustomDicts.writeSource(" !in src,
+            )
+        }
+    }
+
+    @Test
+    fun `超上限的文本不许落盘`() {
+        // 数据闸按**格式化后**的文本判（L-852）：直接给超限输入，走 TOO_BIG 且一个字不落盘
+        val dir = File(tmp, "dicts-toobig")
+        val report = CustomDicts.saveHuman(dir, "a".repeat(CustomDicts.MAX_INPUT_CHARS + 1), null)
+        assertEquals(CustomDicts.SaveGate.TOO_BIG, report.gate)
+        assertFalse(File(dir, CustomDicts.PACK_NAME).exists())
+        assertFalse(File(dir, CustomDicts.SOURCE_NAME).exists())
     }
 }

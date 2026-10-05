@@ -49,8 +49,14 @@ internal object CustomDicts {
      */
     const val SOURCE_NAME = "custom_user.src.txt"
 
-    /** 单次导入的**解压后文本**上限（8MB）：防误选巨型文件把内存与解析拖死 */
-    const val MAX_INPUT_BYTES = 8 * 1024 * 1024
+    /**
+     * 单次导入 / 保存的**文本**上限：8M **字符**，不是字节（BUG.md L-853）。
+     *
+     * 口径是字符数 —— `readCapped` 按 `CharArray` 计数、`String.length` 同款，两处必须一致
+     * （写进去的要能读回来）。中文在 UTF-8 里一行三字节，8M 字符最多约 24MB：旧名
+     * `MAX_INPUT_BYTES` 与「8MB」文案都会让人按字节理解，评估内存与用户提示都会偏。
+     */
+    const val MAX_INPUT_CHARS = 8 * 1024 * 1024
 
     /** 词条数上限：个人补充足够用，也保证索引构建是秒级 */
     const val MAX_ENTRIES = 50_000
@@ -237,7 +243,7 @@ internal object CustomDicts {
     }
 
     /**
-     * 备份导入侧的内容校验：解压（限 [MAX_INPUT_BYTES]）后必须是本应用能产出的 raw 形态。
+     * 备份导入侧的内容校验：解压（限 [MAX_INPUT_CHARS]）后必须是本应用能产出的 raw 形态。
      *
      * 白名单外的 `.xz` 一律不落盘（防「任意 xz 被引擎全量解压」）；自定义词库允许落盘，
      * 但只收**结构合法**的内容 —— 等价于「用户自己导进来的那份文件」。
@@ -247,7 +253,7 @@ internal object CustomDicts {
         // 文件句柄会泄漏 —— Windows 上紧接着的 delete() 会失败，留下半截临时件
         file.inputStream().use { raw ->
             val text = XZInputStream(raw).bufferedReader(Charsets.UTF_8)
-                .use { readCapped(it, MAX_INPUT_BYTES) } ?: return false
+                .use { readCapped(it, MAX_INPUT_CHARS) } ?: return false
             validateRawPack(text)
         }
     }.getOrDefault(false)
@@ -272,7 +278,7 @@ internal object CustomDicts {
         return keys > 0
     }
 
-    /** 读流上限长文本：超限返回 null（BOM 剥掉 —— Windows 记事本默认带 BOM） */
+    /** 读流限长文本：超 [limit]（**字符**，与 [MAX_INPUT_CHARS] 同口径）返回 null（BOM 剥掉 —— Windows 记事本默认带 BOM） */
     fun readCapped(reader: java.io.Reader, limit: Int): String? {
         val sb = StringBuilder()
         val buf = CharArray(8 * 1024)
@@ -287,23 +293,26 @@ internal object CustomDicts {
         return sb.toString().removePrefix("\uFEFF")
     }
 
-    /** 读取少量字节并解成 UTF-8 文本（供导入线程用；超限抛 [TooLargeException]） */
+    /** 读取限长文本并解成 UTF-8（供导入线程用；超 [limit] **字符**抛 [TooLargeException]） */
     fun readUtf8Capped(input: InputStream, limit: Int): String {
         val text = InputStreamReader(input, Charsets.UTF_8).use { readCapped(it, limit) }
         if (text == null) throw TooLargeException()
         return text
     }
 
-    class TooLargeException : Exception("文件超过 ${MAX_INPUT_BYTES / 1024 / 1024}MB 上限")
+    class TooLargeException : Exception("文件超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限")
 
     /**
      * 原子落盘：写 `custom_user.txt.xz.tmp` 再改名。
      *
      * 直接覆盖目标会在失败时留下半截文件，而引擎下一次空闲加载会把坏包算进
      * 「可选词库加载失败」——旧的自定义词库也随之失效。
+     *
+     * [dir] 即包所在目录（`filesDir/dicts`，调用侧传 `File(filesDir, OPT_DICT_DIR)`）；
+     * 抽成 File 参数与 [writeSource] 同款，让 JVM 单测能直接验落盘与「不落盘」两条路径。
      */
-    fun writePack(context: Context, entries: List<Entry>): File? {
-        val dir = File(context.filesDir, PinyinEngine.OPT_DICT_DIR).apply { mkdirs() }
+    fun writePack(dir: File, entries: List<Entry>): File? {
+        dir.mkdirs()
         val dest = File(dir, PACK_NAME)
         val tmp = File(dir, "$PACK_NAME.tmp")
         return runCatching {
@@ -344,10 +353,10 @@ internal object CustomDicts {
      */
     fun writeSource(dir: File, text: String): File? {
         // 与 [readSource] / [readCapped] 同一口径（**字符**数）：写进去的必须能读回来。
-        // 不设上限时，超大草稿（注释行不占词条配额）能让源文本超过 8MB —— 之后编辑页读不回、
+        // 不设上限时，超大草稿（注释行不占词条配额）能让源文本超过 8M 字符 —— 之后编辑页读不回、
         // 备份导入侧 [isValidSourceFile] 也拒收，文件在而界面看不到（BUG.md L-846）。
-        if (text.length > MAX_INPUT_BYTES) {
-            Diagnostics.w(TAG, "自定义词库源文本超过 ${MAX_INPUT_BYTES / 1024 / 1024}MB 上限，拒绝写入")
+        if (text.length > MAX_INPUT_CHARS) {
+            Diagnostics.w(TAG, "自定义词库源文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限，拒绝写入")
             return null
         }
         dir.mkdirs()
@@ -366,11 +375,11 @@ internal object CustomDicts {
         }.getOrNull()
     }
 
-    /** 读源文本：不存在返回 `""`；读不出或超 [MAX_INPUT_BYTES] 返回 null（调用侧按读失败提示） */
+    /** 读源文本：不存在返回 `""`；读不出或超 [MAX_INPUT_CHARS] 返回 null（调用侧按读失败提示） */
     fun readSource(file: File): String? {
         if (!file.isFile) return ""
         return runCatching {
-            file.inputStream().use { readUtf8Capped(it, MAX_INPUT_BYTES) }
+            file.inputStream().use { readUtf8Capped(it, MAX_INPUT_CHARS) }
         }.getOrNull()
     }
 
@@ -379,13 +388,69 @@ internal object CustomDicts {
     fun isSourceName(fileName: String): Boolean = fileName == SOURCE_NAME
 
     /**
+     * 源文本的写入临时件名（[writeSource] 用固定名）。
+     *
+     * 词库页的残留清理器据此把它纳入判据 —— 此前只认下载包的 `*.xz.tmp`，
+     * 源文本写到一半进程被杀就永久留下（BUG.md L-857）。
+     */
+    fun isSourceTempName(fileName: String): Boolean = fileName == "$SOURCE_NAME.tmp"
+
+    /** [saveHuman] 的闸位：三档数据闸 + 文本超限 + 写盘失败 */
+    enum class SaveGate { OK, TOO_BIG, TOO_MANY, NO_VALID, WRITE_FAIL }
+
+    /**
+     * @property gate    闸位（[SaveGate.OK] 以外都不该重启输入法）
+     * @property entries 解析出的词条数
+     * @property skipped 跳过的行数
+     * @property filtered 字表闸（繁体 / 生僻字）打不出的条数（仅在成功路径统计）
+     */
+    data class SaveReport(val gate: SaveGate, val entries: Int, val skipped: Int, val filtered: Int)
+
+    /**
+     * 人写文本 → 包（+ 源文本）的**完整保存流程**，编辑页与导入页共用一份实现。
+     *
+     * 两条不变量（2026-10-05 修复 BUG.md L-851 / L-856；此前两处各写一份、都在同一个位置漏）：
+     * ① **先判闸、后写盘**：[MAX_ENTRIES] 截断或没有合法词条时**一个字都不落盘**。此前是
+     *    「先 `writePack` 再 `when` 判闸」，界面报「词条超过 5 万条」失败、磁盘上却已被替换成截断版。
+     * ② **真相先落、派生后落**：先写源文本（用户输入，回显与再编辑的依据）再写包；源文本写不进去
+     *    就**中止**（包不动）。反过来（先写包）会出现「包新文本旧」—— 用户在原内容上再保存，
+     *    就等于用旧文本把新包静默回滚。
+     *
+     * 顺序上包写失败时源文本已更新（文本新、包旧）是**有意为之**：文本才是用户的意图、词库是它的
+     * 派生物，用户可以再点一次保存重试，而不会丢自己写的内容。
+     *
+     * @param dir 词库目录（`filesDir/dicts`）；传 File 让单测能直接验「不落盘」这条路径
+     */
+    fun saveHuman(dir: File, text: String, syllables: Set<String>? = null): SaveReport {
+        val formatted = formatHuman(text, syllables)
+        if (formatted.length > MAX_INPUT_CHARS) {
+            Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")
+            return SaveReport(SaveGate.TOO_BIG, 0, 0, 0)
+        }
+        val parsed = parseHuman(formatted, syllables)
+        val n = parsed.entries.size
+        if (parsed.truncated) {
+            Diagnostics.w(TAG, "保存中止: 词条数超过 $MAX_ENTRIES 上限（已读到 $n 条，未落盘）")
+            return SaveReport(SaveGate.TOO_MANY, n, parsed.skipped, 0)
+        }
+        if (n == 0) {
+            Diagnostics.w(TAG, "保存中止: 没有合法词条（跳过 ${parsed.skipped} 行，未落盘）")
+            return SaveReport(SaveGate.NO_VALID, 0, parsed.skipped, 0)
+        }
+        if (writeSource(dir, formatted) == null) return SaveReport(SaveGate.WRITE_FAIL, n, parsed.skipped, 0)
+        if (writePack(dir, parsed.entries) == null) return SaveReport(SaveGate.WRITE_FAIL, n, parsed.skipped, 0)
+        val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
+        return SaveReport(SaveGate.OK, n, parsed.skipped, filtered)
+    }
+
+    /**
      * 备份导入侧的源文本放行判据：能按 UTF-8 读出且不超上限。
      *
      * 它只是用户自己的草稿（可能是半成品），不要求词条合法；限长是为了防止
      * 「超大文件塞进备份包 → 恢复时被整份读进内存」。
      */
     fun isValidSourceFile(file: File): Boolean = runCatching {
-        file.inputStream().use { readUtf8Capped(it, MAX_INPUT_BYTES) }
+        file.inputStream().use { readUtf8Capped(it, MAX_INPUT_CHARS) }
     }.isSuccess
 
     /**

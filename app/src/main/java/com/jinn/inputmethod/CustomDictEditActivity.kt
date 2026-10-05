@@ -8,7 +8,6 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -60,9 +59,9 @@ class CustomDictEditActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 打开就拉起键盘（Manifest 已声明 stateAlwaysVisible|adjustResize）：
-        // 本页的用途就是「直接开写」，不该再让用户点一次输入框
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        // 键盘由 Manifest 的 `stateAlwaysVisible|adjustResize` 拉起（本页用途就是「直接开写」，
+        // 不该再让用户点一次输入框）。这里**不再**调 window.setSoftInputMode：它会把 adjust 位
+        // 清成 UNSPECIFIED、与 Manifest 声明打架（BUG.md L-855）；真机实测同样会弹键盘。
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -164,8 +163,10 @@ class CustomDictEditActivity : Activity() {
             setStatus(TEXT_EMPTY_INPUT)
             return
         }
-        // 与 readSource / writeSource 同一口径（字符数）：超限时先拦，别等落盘失败（BUG.md L-846）
-        if (text.length > CustomDicts.MAX_INPUT_BYTES) {
+        // 这里只做**内存保护**：原文超过两倍上限就不进后台（formatHuman 会为全文再造一份副本，
+        // 见 L-858）。真正的数据闸在 saveHuman 里按**格式化后**的文本判（BUG.md L-852）——
+        // 此前直接在入口按原文拦，原文超限而格式化后不超限的内容会被无辜拒绝。
+        if (text.length > CustomDicts.MAX_INPUT_CHARS * 2) {
             setStatus(TEXT_TOO_BIG)
             return
         }
@@ -183,22 +184,19 @@ class CustomDictEditActivity : Activity() {
             var filtered = 0
             val status = try {
                 val syllables = CustomDicts.loadSyllables(app)
-                // 先整理成标准格式：解析与写回都用它 —— 多空格 / TAB / 全角空格在这里被归一（2026-10-05 用户要求）
-                val formatted = CustomDicts.formatHuman(text, syllables)
-                val parsed = CustomDicts.parseHuman(formatted, syllables)
-                entries = parsed.entries.size
-                skipped = parsed.skipped
-                val pack = if (parsed.entries.isEmpty()) null else CustomDicts.writePack(app, parsed.entries)
-                when {
-                    parsed.truncated -> TEXT_TOO_MANY
-                    parsed.entries.isEmpty() -> TEXT_NO_VALID.format(parsed.skipped)
-                    pack == null -> TEXT_WRITE_FAIL
-                    else -> {
-                        // 包已生效；源文本写失败只记日志（编辑页下次打开看不到这次内容，词库本身是好的）
-                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), formatted)
-                        if (wrote == null) Diagnostics.w(TAG, "快捷补充：源文本写入失败（包已生效）")
-                        // 字表闸（繁体 / 生僻字）会把整条丢在候选出口：条数回传词库页一起提示
-                        filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
+                // 解析 → 判闸 → 落盘（源文本归一后**先**落、包**后**落）全在 saveHuman 里，见其
+                // 两条不变量（BUG.md L-851 / L-856）。本页此前那份「先 writePack 再判闸、源文本写
+                // 失败只记日志」已删除：截断时会写坏包、且包新文本旧
+                val report = CustomDicts.saveHuman(dictDir(), text, syllables)
+                entries = report.entries
+                skipped = report.skipped
+                filtered = report.filtered
+                when (report.gate) {
+                    CustomDicts.SaveGate.TOO_BIG -> TEXT_TOO_BIG
+                    CustomDicts.SaveGate.TOO_MANY -> TEXT_TOO_MANY
+                    CustomDicts.SaveGate.NO_VALID -> TEXT_NO_VALID.format(report.skipped)
+                    CustomDicts.SaveGate.WRITE_FAIL -> TEXT_WRITE_FAIL
+                    CustomDicts.SaveGate.OK -> {
                         ok = true
                         ""
                     }
@@ -228,6 +226,9 @@ class CustomDictEditActivity : Activity() {
             }
         }.apply { isDaemon = true }.start()
     }
+
+    /** 词库目录（包与源文本都在这里；与词库页、备份侧同一处 `filesDir/dicts`） */
+    private fun dictDir(): File = File(filesDir, PinyinEngine.OPT_DICT_DIR)
 
     // ── 版面 ────────────────────────────────────────────────
 
@@ -322,7 +323,7 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_SAVING = "正在保存并生成词库…"
         const val TEXT_READ_FAIL = "无法读取已保存的内容（文件过大或损坏）"
         const val TEXT_EMPTY_INPUT = "还没有内容：每行写「词 空格 拼音」后再保存"
-        const val TEXT_TOO_BIG = "内容超过 8MB 上限，请精简后重试"
+        const val TEXT_TOO_BIG = "内容超过 800 万字符上限，请精简后重试"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
         const val TEXT_SKIP_REFILL = "已跳过回填：编辑框里已有你输入的内容"
         const val TEXT_TOO_MANY = "词条超过 5 万条上限，请精简后重试"

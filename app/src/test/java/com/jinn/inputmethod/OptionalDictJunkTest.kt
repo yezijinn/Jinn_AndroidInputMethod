@@ -109,6 +109,31 @@ class OptionalDictJunkTest {
     }
 
     @Test
+    fun `源文本临时件也要纳入残留清理判据`() {
+        // BUG.md L-857：源文本写入也用固定临时名，进程被杀就永久留下（≤8M 字符）——
+        // 此前判据只认 `.xz.tmp`，它既不被清理、页面也看不见
+        assertEquals(
+            listOf("custom_user.src.txt.tmp", "dict_part3.txt.xz.tmp"),
+            OptionalDicts.staleTempNames(
+                listOf(
+                    "custom_user.src.txt", // 已写好的源文本：不是临时件
+                    "custom_user.src.txt.tmp", // 写到一半被杀的残件
+                    "dict_part3.txt.xz.tmp",
+                ),
+                active = null,
+            ),
+        )
+        assertTrue(
+            "仍在写（保护窗内）的源文本临时件不许被清：清了随后的改名必失败",
+            OptionalDicts.cleanableTempNames(
+                listOf("custom_user.src.txt.tmp"),
+                active = null,
+                now = 1_000_000_000_000L,
+            ) { 1_000_000_000_000L - 1_000L }.isEmpty(),
+        )
+    }
+
+    @Test
     fun `刚写入的临时件须在保护窗内豁免清理`() {
         // 自定义词库导入走固定临时名：导入中回到前台时若把它当残留删掉，随后的改名必然失败（BUG.md L-827）
         val now = 1_000_000_000_000L

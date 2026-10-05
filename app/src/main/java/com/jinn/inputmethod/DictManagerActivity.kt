@@ -279,27 +279,24 @@ class DictManagerActivity : Activity() {
         Thread {
             var restart = false
             val status = try {
-                val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_BYTES) }
+                val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_CHARS) }
                 val syllables = CustomDicts.loadSyllables(app)
-                // 导入后源文本要落**标准格式**（多空格 / TAB / 全角空格统一），见 CustomDicts.formatHuman
-                val formatted = CustomDicts.formatHuman(text, syllables)
-                val parsed = CustomDicts.parseHuman(formatted, syllables)
-                val pack = if (parsed.entries.isEmpty()) null else CustomDicts.writePack(app, parsed.entries)
-                when {
-                    parsed.truncated -> TEXT_CUSTOM_TOO_MANY
-                    parsed.entries.isEmpty() -> TEXT_CUSTOM_EMPTY.format(parsed.skipped)
-                    pack == null -> TEXT_CUSTOM_WRITE_FAIL
-                    else -> {
+                // 解析 → 判闸 → 落盘（源文本归一后**先**落、包**后**落）走同一个入口，见
+                // CustomDicts.saveHuman 的两条不变量（BUG.md L-851 / L-856）——此前这里先 writePack
+                // 再判闸，导入超 5 万条的现成词表时会把截断版写进磁盘、界面却报失败
+                val report = CustomDicts.saveHuman(dictDir(), text, syllables)
+                when (report.gate) {
+                    CustomDicts.SaveGate.TOO_BIG -> TEXT_CUSTOM_TOO_BIG
+                    CustomDicts.SaveGate.TOO_MANY -> TEXT_CUSTOM_TOO_MANY
+                    CustomDicts.SaveGate.NO_VALID -> TEXT_CUSTOM_EMPTY.format(report.skipped)
+                    CustomDicts.SaveGate.WRITE_FAIL -> TEXT_CUSTOM_WRITE_FAIL
+                    CustomDicts.SaveGate.OK -> {
                         restart = true
-                        // 原文另存一份：与「快捷补充」页共享同一份内容（写失败不影响包已生效）
-                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), formatted)
-                        if (wrote == null) Diagnostics.w(TAG, "自定义词库源文本保存失败（包已生效）")
-                        val filtered = PinyinEngine.countUnloadableWords(parsed.entries.map { it.text })
                         Diagnostics.i(
                             TAG,
-                            "自定义词库导入: ${parsed.entries.size} 条 / 跳过 ${parsed.skipped} 行 / 打不出 $filtered 条",
+                            "自定义词库导入: ${report.entries} 条 / 跳过 ${report.skipped} 行 / 打不出 ${report.filtered} 条",
                         )
-                        customResultText(parsed.entries.size, parsed.skipped, filtered)
+                        customResultText(report.entries, report.skipped, report.filtered)
                     }
                 }
             } catch (t: Throwable) {
@@ -940,7 +937,7 @@ class DictManagerActivity : Activity() {
 
         const val TEXT_CUSTOM_IMPORTING = "正在导入自定义词库…"
         const val TEXT_CUSTOM_READ_FAIL = "无法读取该文件"
-        const val TEXT_CUSTOM_TOO_BIG = "文件超过 8MB 上限，请拆分后导入"
+        const val TEXT_CUSTOM_TOO_BIG = "文件超过 800 万字符上限，请拆分后导入"
         const val TEXT_CUSTOM_TOO_MANY = "词条超过 5 万条上限，请精简后重试"
         const val TEXT_CUSTOM_EMPTY = "没有可导入的合法词条（跳过 %d 行）"
         const val TEXT_CUSTOM_WRITE_FAIL = "写入词库失败"
