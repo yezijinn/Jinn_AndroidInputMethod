@@ -307,8 +307,13 @@ internal object CustomDicts {
         }
     }
 
-    /** [scanAndWriteSource] 的产物：[scan] 供判闸，[sourceTmp] 为 null 表示源文本没写成 */
-    internal class Pass1(val scan: Scan, val sourceTmp: File?)
+    /**
+     * [scanAndWriteSource] 的产物：[scan] 供判闸，[stagedSource] 为 null 表示源文本没写成。
+     *
+     * 成功时 [stagedSource] 是**改名生效后的正式源文本**（不是临时件）；闸位命中时删掉它，
+     * 就是「这次保存不进磁盘」。
+     */
+    internal class Pass1(val scan: Scan, val stagedSource: File?)
 
     /** 统计结果：[result] 供判闸，[formattedChars] 即 [formatHuman] 之后的字符数 */
     internal class Scan(val result: Result, val formattedChars: Long)
@@ -672,7 +677,8 @@ internal object CustomDicts {
             // 唯一一遍：逐行格式化 + 解析 + 写源文本临时件（判定与「formatHuman 再 parseHuman」逐项相同）
             val pass = scanAndWriteSource(dir, text, syllables)
             val scan = pass.scan
-            val staged = pass.sourceTmp
+            // 名字叫 staged 而不是 tmp：过闸即改名生效，闸位命中时删的是正式源文本（见 Pass1）
+            val staged = pass.stagedSource
             if (scan.formattedChars > MAX_INPUT_CHARS) {
                 staged?.delete()
                 Diagnostics.w(TAG, "保存中止: 文本超过 ${MAX_INPUT_CHARS / 1024 / 1024}M 字符上限（未落盘）")

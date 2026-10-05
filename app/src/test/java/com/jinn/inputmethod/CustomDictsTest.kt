@@ -648,15 +648,20 @@ class CustomDictsTest {
 
     @Test
     fun `自定义词库改过后要跳过空闲等待`() {
-        // 可选包默认只在息屏 / 收起键盘 / 3 分钟兜底时才装载；自定义词库是刚写完的小包，
-        // 跟着官方大包一起等，用户保存后马上打字就是「没有候选」。判据：IME 启动路径发现
-        // 自定义包索引未就绪时，必须立即触发一次装载
+        // 可选包默认只在息屏 / 收键盘 / 180s 兜底时才装载；自定义词库是刚写完的小包，跟着官方大包
+        // 一起等，用户保存后马上打字就是「没有候选」（BUG.md L-888）。判据本身在 PinyinEngine
+        // （见 IndexCacheLifecycleTest），这里钉接线：启动路径要判「可否立刻装载」，通过就真的触发
         val src = TestSources.codeSource("JinnIme.kt")
-        val i = src.indexOf("isOptionalIndexReady")
-        assertTrue("IME 启动路径要查自定义包的索引就绪状态", i > 0)
-        val around = src.substring(maxOf(0, i - 400), minOf(src.length, i + 400))
-        assertTrue("就绪检查要针对自定义包", "CustomDicts.PACK_NAME" in around)
-        assertTrue("未就绪时要立即触发装载", "maybeLoadOptionalDict" in around)
+        val at = src.indexOf("PinyinEngine.optionalShouldLoadNow(")
+        assertTrue("IME 启动路径要判可否立刻装载", at > 0)
+        assertTrue(
+            "判定通过后要真的触发装载",
+            "maybeLoadOptionalDict(" in src.substring(at).substringBefore("onFailure"),
+        )
+        assertTrue(
+            "自定义包不看索引是否就绪（几十条，重建也是毫秒级）",
+            PinyinEngine.optionalShouldLoadNow(listOf(CustomDicts.PACK_NAME)) { false },
+        )
     }
 
     @Test

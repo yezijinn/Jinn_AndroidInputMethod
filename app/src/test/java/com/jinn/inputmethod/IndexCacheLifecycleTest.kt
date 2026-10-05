@@ -230,4 +230,44 @@ class IndexCacheLifecycleTest {
         assertTrue("文案必须给出「有界重试用尽」时的出路", "请删除该包后重新下载" in page)
     }
 
+    @Test
+    fun 全都就绪或只差自定义包时启动即装载() {
+        // 可选包默认等空闲信号（息屏 / 键盘闲置 20s / 180s 兜底）；两种情形不该等（BUG.md L-888 / L-892）：
+        // 索引都就绪（装载只是映射复用，清单实测约 0.05s）、需要重建的只有自定义词库（几十条，毫秒级）。
+        // 官方大包要重建时仍要等 —— 首次构建实测 4~14s，压在首屏就是「刚开机很卡」
+        val ready = listOf("pinyin_index_part2.txt.xz", "pinyin_index_part3.txt.xz")
+        assertTrue(
+            "全都就绪：启动即装",
+            PinyinEngine.optionalShouldLoadNow(ready + CustomDicts.PACK_NAME) { it in ready },
+        )
+        assertTrue(
+            "只差自定义包：也启动即装",
+            PinyinEngine.optionalShouldLoadNow(listOf(CustomDicts.PACK_NAME)) { false },
+        )
+        assertFalse(
+            "官方包要重建：仍旧等空闲信号",
+            PinyinEngine.optionalShouldLoadNow(listOf("pinyin_index_part2.txt.xz")) { false },
+        )
+        assertFalse("没装包不必触发", PinyinEngine.optionalShouldLoadNow(emptyList()) { true })
+    }
+
+    @Test
+    fun 索引缓存命中前后各核一次源包身份() {
+        // 入口取一次 length:mtime，既用它判缓存命中、又用它给新缓存贴标签，而内容读取发生在两处之后：
+        // 取值与判定之间包被换掉时，旧缓存会被当成新包的索引复用 —— 用户看到「改过的词库不生效」
+        // （BUG.md L-890）。守卫只认这条判据本身，不认别的写法
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        val body = engine.substringAfter("private fun loadOptionalIndex(")
+            .substringBefore("判定「源包已被删除」")
+        assertTrue(
+            "loadOptionalIndex 方法体锚点失效（源码结构变了）",
+            body.isNotEmpty() && body.length < engine.length,
+        )
+        val hit = body.substringAfter("if (cache.isFile)").substringBefore("val t0")
+        assertTrue("命中缓存前要再取一次身份", "packStamp(src) == stamp" in hit)
+        val build = body.substringAfter("PhraseIndex.build(reader.lineSequence(), stamp)")
+        assertTrue("写缓存前要再核一次身份", "packStamp(src)" in build)
+        assertTrue("身份变了就不落缓存", "stampNow == stamp" in build)
+    }
+
 }

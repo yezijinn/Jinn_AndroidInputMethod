@@ -1154,10 +1154,7 @@ object PinyinEngine {
         // 无锁写法会让两边都通过检查、各自启一个加载线程，重复把词库 merge 一遍。
         // 锁用 [optionalLock] 而非 `this`：`load()` 全程持 `this`（含秒级索引解压），
         // 本方法的调用点又全在主线程，首次加载期间的空闲信号会把主线程阻塞数秒。
-        val packDir = java.io.File(context.applicationContext.filesDir, OPT_DICT_DIR)
-        val packs = packDir.listFiles { f -> f.isFile && f.name.endsWith(".xz") }
-            ?.sortedBy { it.name }
-            .orEmpty()
+        val packs = installedOptionalPacks(context.applicationContext)
         synchronized(optionalLock) {
             if (optionalLoading) return false
             // 两道判据（见 packShouldRetry）：包的**身份变过**（新装 / 重下 / 换包）要试；
@@ -1266,6 +1263,35 @@ object PinyinEngine {
             java.io.File(java.io.File(context.filesDir, OPT_DICT_DIR), packName),
         )
 
+    /** 已安装的可选包（`filesDir/dicts` 下的 `*.xz`，按名排序）：装载与启动判定共用同一份口径 */
+    internal fun installedOptionalPacks(context: Context): List<java.io.File> =
+        java.io.File(context.filesDir, OPT_DICT_DIR)
+            .listFiles { f -> f.isFile && f.name.endsWith(".xz") }
+            ?.sortedBy { it.name }
+            .orEmpty()
+
+    /**
+     * 启动时是否该立刻装载可选包，不等空闲信号（BUG.md L-888 / L-892）。
+     *
+     * 判据：已装包里每个要么是自定义词库（几十条，重建也是毫秒级），要么索引已就绪
+     * （映射复用，清单实测约 0.05s）。任一官方包需要重建时返回 `false` —— 首次构建实测
+     * 4~14s，压在首屏就是「刚开机很卡」，那种情形仍旧等息屏 / 收键盘 / 兜底 180s。
+     *
+     * 拆成纯函数是为了让判定可以直接单测（[indexReady] 由调用侧注入）。
+     */
+    internal fun optionalShouldLoadNow(
+        packNames: List<String>,
+        indexReady: (String) -> Boolean,
+    ): Boolean = packNames.isNotEmpty() && packNames.all {
+        it == CustomDicts.PACK_NAME || indexReady(it)
+    }
+
+    /** [optionalShouldLoadNow] 的取用版：直接查已装包与各自的索引缓存 */
+    internal fun optionalShouldLoadNow(context: Context): Boolean =
+        optionalShouldLoadNow(installedOptionalPacks(context).map { it.name }) {
+            isOptionalIndexReady(context, it)
+        }
+
     /**
      * 加载全部可选词库包。
      *
@@ -1277,10 +1303,7 @@ object PinyinEngine {
      * 未安装任何可选包不算错误：基础包已覆盖日常输入，仅记一条日志。
      */
     private fun loadExtensionDict(context: Context): Set<String> {
-        val dir = java.io.File(context.filesDir, OPT_DICT_DIR)
-        val packs = dir.listFiles { f -> f.isFile && f.name.endsWith(".xz") }
-            ?.sortedBy { it.name }
-            .orEmpty()
+        val packs = installedOptionalPacks(context)
 
         val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR).apply { mkdirs() }
 
@@ -1346,7 +1369,10 @@ object PinyinEngine {
         if (cache.isFile) {
             // 内存映射：不再把整块 .idx 读进堆（可选包两个缓存合计 34MB）
             PhraseIndex.ofMapped(cache)?.let { idx ->
-                if (idx.sourceStamp == stamp) {
+                // 命中要求三处身份一致：缓存头记的、入口取到的、**此刻再取一次的**。入口取值与这次
+                // 判定之间源包可能被换掉（保存 / 恢复都是改名落盘），那时旧缓存会被当成新包的索引
+                // 复用，用户看到的是「改过的词库不生效」（BUG.md L-890）
+                if (idx.sourceStamp == stamp && packStamp(src) == stamp) {
                     Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
                     return idx
                 }
@@ -1359,8 +1385,15 @@ object PinyinEngine {
                 .bufferedReader(StandardCharsets.UTF_8).use { reader ->
                     PhraseIndex.build(reader.lineSequence(), stamp)
                 }
+            // 读完再核一次身份：读取期间源包被换掉时，这份索引贴的身份已经不对（内容是本进程读到的
+            // 那一份，自己用没问题），不落盘 —— 否则下次启动按身份判为不符，白重建一遍（BUG.md L-890）
+            val stampNow = packStamp(src)
             // 原子落盘（写临时文件 + 改名）：缓存可能正被本进程 内存映射 使用，直接覆盖会截断映射
-            val mapped = if (writeIndexCacheAtomically(cache, bytes)) PhraseIndex.ofMapped(cache) else null
+            val mapped = if (stampNow == stamp && writeIndexCacheAtomically(cache, bytes)) {
+                PhraseIndex.ofMapped(cache)
+            } else {
+                null
+            }
             val idx = mapped ?: PhraseIndex.of(bytes) ?: error("构建出的索引结构异常")
             Diagnostics.i(
                 TAG,
