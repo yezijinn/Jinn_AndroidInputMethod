@@ -158,4 +158,45 @@ class CustomDictsTest {
             OptionalDicts.unknownPackages(listOf(CustomDicts.PACK_NAME)),
         )
     }
+
+    @Test
+    fun `源文本须原子落盘且可读回`() {
+        val dir = File(tmp, "dicts")
+        val text = "# 草稿\n张三\tzhang san\n半成品没有拼音\n"
+        val f = CustomDicts.writeSource(dir, text)
+        assertEquals(CustomDicts.SOURCE_NAME, f?.name)
+        assertEquals(
+            "「快捷补充」页下次打开要能原样回显（导入与保存共用这一份）",
+            text,
+            CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME)),
+        )
+        assertEquals(
+            "临时件改名后不许留残件（残留会被词库页的清理器当垃圾扫）",
+            listOf(CustomDicts.SOURCE_NAME),
+            dir.listFiles()!!.map { it.name }.sorted(),
+        )
+    }
+
+    @Test
+    fun `源文本不存在时读回空串`() {
+        assertEquals(
+            "没有源文本时返回空串（编辑页据此留空，不是「读失败」）",
+            "",
+            CustomDicts.readSource(File(tmp, CustomDicts.SOURCE_NAME)),
+        )
+    }
+
+    @Test
+    fun `源文本校验须放行草稿并拒绝超限`() {
+        tmp.mkdirs()
+        val draft = File(tmp, CustomDicts.SOURCE_NAME).apply { writeText("张三\tzhang san\n半成品") }
+        assertTrue("草稿允许有不合法的行（编辑页随时保存，不要求全文可导入）", CustomDicts.isValidSourceFile(draft))
+        val huge = File(tmp, "huge.src.txt").apply {
+            outputStream().use { out ->
+                val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+                repeat(CustomDicts.MAX_INPUT_BYTES / chunk.size + 1) { out.write(chunk) }
+            }
+        }
+        assertFalse("超过 8MB 上限的源文本不许随备份落盘", CustomDicts.isValidSourceFile(huge))
+    }
 }

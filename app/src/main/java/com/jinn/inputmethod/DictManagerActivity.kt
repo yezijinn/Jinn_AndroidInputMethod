@@ -195,6 +195,7 @@ class DictManagerActivity : Activity() {
     // ── 列表 ────────────────────────────────────────────────
 
     private val RC_CUSTOM_DICT = 0x6901
+    private val RC_CUSTOM_EDIT = 0x6902
 
     /** 导入线程在跑时按钮置灰，防连点重复解析（见 [actionsEnabled]） */
     @Volatile
@@ -211,17 +212,56 @@ class DictManagerActivity : Activity() {
             .onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
     }
 
+    /** 打开「快捷补充」编辑页：与「导入.txt文档」共享同一份源文本，保存即导入 */
+    private fun openCustomEditor() {
+        if (downloading != null) return
+        if (blockedByRestart()) return
+        runCatching {
+            startActivityForResult(Intent(this, CustomDictEditActivity::class.java), RC_CUSTOM_EDIT)
+        }.onFailure { Toast.makeText(this, it.message ?: it.toString(), Toast.LENGTH_SHORT).show() }
+    }
+
     /**
-     * 自定义词库导入：人写的 `.txt` → [CustomDicts] 校验归一 → 原子写 `dicts/custom_user.txt.xz`。
+     * 两个自定义词库入口的回执分发：导入（SAF 选文件）与快捷补充（编辑页保存）。
      *
-     * 流在主线程取（URI 授权绑本进程，取到流即持有），**解析与打包放后台**：8MB 文本的逐行
-     * 校验加 xz 压缩放主线程会掉帧。所有失败都落到状态行，不抛给系统。
+     * 此页是 Activity（非 ComponentActivity），没有 registerForActivityResult，只能走旧接口。
      */
     @Deprecated("onActivityResult 已废弃，但此页是 Activity（非 ComponentActivity），无 registerForActivityResult")
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != RC_CUSTOM_DICT || resultCode != Activity.RESULT_OK || data == null) return
+        when (requestCode) {
+            RC_CUSTOM_EDIT -> onCustomEditResult(resultCode, data)
+            RC_CUSTOM_DICT -> onCustomImportResult(resultCode, data)
+        }
+    }
+
+    /**
+     * 快捷补充页保存成功：与导入共用同一句结果文案与重启路径。
+     *
+     * 重启动作留给本页做（`restartPending` 这个窗口位在 companion 里）：编辑页自己 kill
+     * 会把「已保存」的提示一起带走，用户只看到页面闪退。
+     */
+    private fun onCustomEditResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) return
+        if (blockedByRestart()) return
+        val entries = data.getIntExtra(CustomDictEditActivity.EXTRA_ENTRIES, 0)
+        val skipped = data.getIntExtra(CustomDictEditActivity.EXTRA_SKIPPED, 0)
+        Diagnostics.i(TAG, "快捷补充保存: $entries 条 / 跳过 $skipped 行")
+        setStatus(TEXT_CUSTOM_RESULT.format(entries, skipped))
+        refreshList()
+        restartImeForDict()
+    }
+
+    /**
+     * 自定义词库导入：人写的 `.txt` → [CustomDicts] 校验归一 → 原子写 `dicts/custom_user.txt.xz`，
+     * 同时把原文留一份到 `dicts/custom_user.src.txt`（「快捷补充」页回显用）。
+     *
+     * 流在主线程取（URI 授权绑本进程，取到流即持有），**解析与打包放后台**：8MB 文本的逐行
+     * 校验加 xz 压缩放主线程会掉帧。所有失败都落到状态行，不抛给系统。
+     */
+    private fun onCustomImportResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) return
         if (blockedByRestart()) return
         val uri = data.data ?: return
         val input = runCatching { applicationContext.contentResolver.openInputStream(uri) }.getOrNull()
@@ -245,6 +285,9 @@ class DictManagerActivity : Activity() {
                     pack == null -> TEXT_CUSTOM_WRITE_FAIL
                     else -> {
                         restart = true
+                        // 原文另存一份：与「快捷补充」页共享同一份内容（写失败不影响包已生效）
+                        val wrote = CustomDicts.writeSource(File(app.filesDir, PinyinEngine.OPT_DICT_DIR), text)
+                        if (wrote == null) Diagnostics.w(TAG, "自定义词库源文本保存失败（包已生效）")
                         Diagnostics.i(TAG, "自定义词库导入: ${parsed.entries.size} 条 / 跳过 ${parsed.skipped} 行")
                         TEXT_CUSTOM_RESULT.format(parsed.entries.size, parsed.skipped)
                     }
@@ -380,7 +423,8 @@ class DictManagerActivity : Activity() {
      * 自定义词库卡片。
      *
      * 它是**用户自己写的**补充包，没有下载源 —— 删掉只能重新导入，所以删除要二次确认
-     * （与旧版遗留包同款）；导入入口只在这张卡片上，页面上不出现第二个入口。
+     * （与旧版遗留包同款）。两个入口同在这张卡片上，且共用同一份源文本：
+     * 「快捷补充」直接编辑（保存即导入），「导入.txt文档」从 SAF 选一份 txt。
      */
     private fun buildCustomCard(): View {
         val file = CustomDicts.packFile(this)
@@ -395,11 +439,8 @@ class DictManagerActivity : Activity() {
             card.addView(line(sentence, getColor(R.color.text_secondary), 13f, top = 4))
         }
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(
+        // 状态行独占一行：三个按钮同排时，状态文字与按钮挤在一行会被压成竖排（2026-10-05 真机实证）
+        card.addView(
             line(
                 text = if (installed) {
                     getString(R.string.dict_status_installed, formatSize(file.length()))
@@ -409,7 +450,20 @@ class DictManagerActivity : Activity() {
                 color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
                 size = 13f,
             ),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            matchWrap(top = 12),
+        )
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        row.addView(
+            actionButton(
+                text = getString(R.string.dict_action_quick_edit),
+                color = getColor(R.color.accent),
+                enabled = actionsEnabled(),
+            ) { openCustomEditor() },
+            buttonLp(right = 8),
         )
         row.addView(
             actionButton(
@@ -417,7 +471,7 @@ class DictManagerActivity : Activity() {
                 color = getColor(R.color.accent),
                 enabled = actionsEnabled(),
             ) { openCustomPicker() },
-            buttonLp(right = 8).apply { leftMargin = dp(8) },
+            buttonLp(right = if (installed) 8 else 0),
         )
         if (installed) {
             row.addView(
@@ -429,7 +483,7 @@ class DictManagerActivity : Activity() {
                 buttonLp(),
             )
         }
-        card.addView(row, matchWrap(top = 12))
+        card.addView(row, matchWrap(top = 8))
         return card
     }
 
@@ -847,8 +901,7 @@ class DictManagerActivity : Activity() {
         // 自定义词库的文案同款：按钮复用 strings 里的 dict_action_import_custom，其余代码里下发
         const val TEXT_CUSTOM_TITLE = "自定义词库"
         val TEXT_CUSTOM_DESC = listOf(
-            "导入自己写的补充词库（.txt）：每行「词 拼音」，拼音用空格分音节。",
-            "词条与内置词库合并出候选；随配置备份一起导出与导入。",
+            "导入自己写的补充词库（.txt）：每行「词 拼音」，拼音用空格分音节。"
         )
 
         const val TEXT_CUSTOM_IMPORTING = "正在导入自定义词库…"

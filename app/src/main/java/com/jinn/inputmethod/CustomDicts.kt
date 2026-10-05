@@ -28,6 +28,10 @@ import org.tukaani.xz.XZOutputStream
  * zhangsan<TAB>张三
  * ```
  *
+ * 「快捷补充」页（[CustomDictEditActivity]）编辑的是同目录下的**源文本** `custom_user.src.txt`
+ * （扩展名不是 `.xz`，引擎不装载它）：导入与快捷补充保存后都写这一份，两个入口因此共享同一内容
+ * （见 [writeSource] / [readSource]）。
+ *
  * 职责边界：本层只做「校验 + 归一 + 打包 + 原子落盘」；装载复用 `PinyinEngine.loadExtensionDict`
  * 扫 `dicts/` 目录下全部 `.xz` 的既有路径，备份复用 `ConfigBackup` 的 dicts 节（导出按目录收，
  * 导入对这一件额外做**结构校验**后放行，见 [isValidPackFile]）。
@@ -36,6 +40,14 @@ internal object CustomDicts {
 
     /** 落地文件名；放在 `dicts/` 下才会被引擎扫描与备份收录 */
     const val PACK_NAME = "custom_user.txt.xz"
+
+    /**
+     * 人写的**源文本**文件名：与包同放 `dicts/`，供「快捷补充」页回显与再编辑。
+     *
+     * 扩展名不是 `.xz` ⇒ 引擎扫描（只认 `.xz`）不会装载它；备份按目录一起收（见
+     * [ConfigBackupManager.dictFiles]），换机后编辑页仍能看到导入 / 保存过的内容。
+     */
+    const val SOURCE_NAME = "custom_user.src.txt"
 
     /** 单次导入的**解压后文本**上限（8MB）：防误选巨型文件把内存与解析拖死 */
     const val MAX_INPUT_BYTES = 8 * 1024 * 1024
@@ -251,9 +263,64 @@ internal object CustomDicts {
     /** 已导入的自定义词库文件（不存在时返回目标路径，供卡片判空） */
     fun packFile(context: Context): File = File(File(context.filesDir, PinyinEngine.OPT_DICT_DIR), PACK_NAME)
 
-    fun deletePack(context: Context): Boolean = runCatching { packFile(context).delete() }.getOrDefault(false)
+    /** 「快捷补充」页回显用的源文本文件（不存在时返回目标路径） */
+    fun sourceFile(context: Context): File = File(File(context.filesDir, PinyinEngine.OPT_DICT_DIR), SOURCE_NAME)
+
+    /**
+     * 删除自定义词库：**包与源文本一起清**。
+     *
+     * 只删包的话，「快捷补充」页下次打开仍会回显已删词库的内容，用户会以为没删掉。
+     */
+    fun deletePack(context: Context): Boolean = runCatching {
+        sourceFile(context).delete()
+        val ok = packFile(context).delete()
+        ok || !packFile(context).exists()
+    }.getOrDefault(false)
+
+    /**
+     * 源文本原子落盘（`*.tmp` → rename，与 [writePack] 同一套）。
+     *
+     * [dir] 即包所在目录（`filesDir/dicts`）；抽成 File 参数让纯 JVM 单测能直接验
+     * 原子性与读写回环，不必依赖 Context（`writePack` 因要 Context 而测不到的那一层在这里补上）。
+     */
+    fun writeSource(dir: File, text: String): File? {
+        dir.mkdirs()
+        val dest = File(dir, SOURCE_NAME)
+        val tmp = File(dir, "$SOURCE_NAME.tmp")
+        return runCatching {
+            FileOutputStream(tmp).use { out ->
+                out.write(text.toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
+            if (!tmp.renameTo(dest)) error("改名失败")
+            dest
+        }.onFailure {
+            runCatching { tmp.delete() }
+            Diagnostics.w(TAG, "自定义词库源文本写入失败: ${it.javaClass.simpleName}")
+        }.getOrNull()
+    }
+
+    /** 读源文本：不存在返回 `""`；读不出或超 [MAX_INPUT_BYTES] 返回 null（调用侧按读失败提示） */
+    fun readSource(file: File): String? {
+        if (!file.isFile) return ""
+        return runCatching {
+            file.inputStream().use { readUtf8Capped(it, MAX_INPUT_BYTES) }
+        }.getOrNull()
+    }
 
     fun isPackName(fileName: String): Boolean = fileName == PACK_NAME
+
+    fun isSourceName(fileName: String): Boolean = fileName == SOURCE_NAME
+
+    /**
+     * 备份导入侧的源文本放行判据：能按 UTF-8 读出且不超上限。
+     *
+     * 它只是用户自己的草稿（可能是半成品），不要求词条合法；限长是为了防止
+     * 「超大文件塞进备份包 → 恢复时被整份读进内存」。
+     */
+    fun isValidSourceFile(file: File): Boolean = runCatching {
+        file.inputStream().use { readUtf8Capped(it, MAX_INPUT_BYTES) }
+    }.isSuccess
 
     /**
      * 读随包音节表（421 条，解压约几毫秒）。

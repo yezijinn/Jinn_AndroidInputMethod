@@ -506,9 +506,15 @@ internal object ConfigBackupManager {
         return ClipPayload(ConfigBackup.encodeClipboard(entries), dropped)
     }
 
+    /**
+     * 备份要收的词库文件：全部 `.xz` 包 + 「快捷补充」的源文本。
+     *
+     * 源文本（`custom_user.src.txt`）不带的话，换机后编辑页是空的 —— 包还在但用户看不到
+     * 自己写过什么，也无法在原内容上继续补词（见 [CustomDicts.SOURCE_NAME]）。
+     */
     private fun dictFiles(context: Context): List<File> =
         File(context.filesDir, DICT_DIR).listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".xz") }
+            ?.filter { it.isFile && (it.name.endsWith(".xz") || CustomDicts.isSourceName(it.name)) }
             ?.sortedBy { it.name }
             .orEmpty()
 
@@ -1109,10 +1115,12 @@ internal object ConfigBackupManager {
                         // 否则任意 .xz 都能被塞进 dicts/，而引擎启动会无条件加载并全量解压它
                         // —— xz 压缩比轻松 >100:1，几百 KB 的包就能让输入法启动 OOM 或写满磁盘。
                         // 例外：用户自定义词库（换机恢复必须带回来，否则词条静默丢失）——
-                        // 它没有官方 sha，改以**结构校验**当判据，见下面的 custom 分支。
+                        // 它没有官方 sha，改以**结构校验**当判据；「快捷补充」的源文本同样放行，
+                        // 只设读取上限。两者见下面的 custom / source 分支。
                         val official = checksumOf(fileName)
                         val custom = CustomDicts.isPackName(fileName)
-                        val allowed = official != null || custom
+                        val source = CustomDicts.isSourceName(fileName)
+                        val allowed = official != null || custom || source
                         val tmp = File(dir, fileName + RESTORE_SUFFIX)
                         val md = java.security.MessageDigest.getInstance("SHA-256")
                         var size = 0L
@@ -1155,6 +1163,18 @@ internal object ConfigBackupManager {
                                     tmp.delete()
                                     skippedByName++
                                     Diagnostics.w(TAG, "词库恢复: 自定义词库内容不合法，已跳过")
+                                }
+                            }
+                            source -> {
+                                // 用户自己的草稿文本：不要求词条合法（可能存着半成品），只设读取上限
+                                if (CustomDicts.isValidSourceFile(tmp)) {
+                                    pending.add(tmp to File(dir, fileName))
+                                    // 登记为 in-flight：清理器跑在别的线程/执行器上，不能删正在写的中间件
+                                    tempInFlight.add(tmp.name)
+                                } else {
+                                    tmp.delete()
+                                    skippedByName++
+                                    Diagnostics.w(TAG, "词库恢复: 自定义词库源文本不合法，已跳过")
                                 }
                             }
                             official == null -> {

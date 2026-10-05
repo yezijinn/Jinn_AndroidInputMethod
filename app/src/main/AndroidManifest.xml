@@ -39,6 +39,13 @@
             android:exported="false"
             android:label="@string/dict_manager_title" />
 
+        <!-- 快捷补充：直接编辑自定义词库的源文本，保存即导入（与「导入.txt文档」共用同一份文本） -->
+        <activity
+            android:name=".CustomDictEditActivity"
+            android:exported="false"
+            android:label="@string/dict_action_quick_edit"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
         <!-- 符号分组排序页：从设置页「符号分组顺序」按钮进入 -->
         <activity
             android:name=".SymbolOrderActivity"
