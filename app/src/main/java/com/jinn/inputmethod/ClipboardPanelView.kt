@@ -277,7 +277,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnCategoryNumber = tabButton("数字") { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) }
         btnCategoryFavorite = tabButton("收藏") { selectCategory(CATEGORY_FAVORITE) }
         btnSearch = tabButton("搜索") { listener?.onSearch() }
-        btnClear = tabButton("清空") { showClearConfirm() }
+        btnClear = tabButton("清空", TapSound.G_ERASE) { showClearConfirm() }
             .apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
         val cells = listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
@@ -300,11 +300,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             val renderedId = (view?.tag as? Holder)?.itemId ?: -1L
             return currentItems.firstOrNull { it.id == renderedId } ?: currentItems.getOrNull(pos)
         }
+        // 条目点击是「粘进宿主」，与候选词上屏同一语义（文字输入组）；长按只弹操作条，归功能组。
+        // 取不到条目时不响：那说明这一行已不是它渲染时的那条，跟着不动作
         listView.setOnItemClickListener { _, view, pos, _ ->
-            itemAt(pos, view)?.let { handleItemClick(it) }
+            itemAt(pos, view)?.let {
+                KeyFeedback.fire(TapSound.G_TEXT)
+                handleItemClick(it)
+            }
         }
         listView.setOnItemLongClickListener { _, view, pos, _ ->
-            itemAt(pos, view)?.let { showItemMenu(it) }
+            itemAt(pos, view)?.let {
+                KeyFeedback.fire(TapSound.G_FUNC)
+                showItemMenu(it)
+            }
             true
         }
         listView.setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
@@ -345,7 +353,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             visibility = GONE
             // 只有在「还有没扫完的行」时空态才可点（见 scanStoppedEarly / continueScan）——
             // 其余两种空态点它什么也不会发生，文案里也不提「点这里」
-            setOnClickListener { if (scanStoppedEarly) continueScan() }
+            setOnClickListener {
+                if (!scanStoppedEarly) return@setOnClickListener
+                KeyFeedback.fire(TapSound.G_FUNC)
+                continueScan()
+            }
         }
         addView(textEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -356,7 +368,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
-        actionDelete = tabButton("删除") { deleteItem() }
+        actionDelete = tabButton("删除", TapSound.G_ERASE) { deleteItem() }
         actionDelete.setTextColor(context.getColor(R.color.danger))
         dangerButtons += actionDelete
         actionBar.addView(actionFavorite, LinearLayout.LayoutParams(0, dp(36), 1f))
@@ -373,7 +385,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val confirmText = tabButton("清空历史？（收藏保留）", onClick = { }).apply {
             textSize = 12f
         }
-        val confirmOk = tabButton("确定") {
+        val confirmOk = tabButton("确定", TapSound.G_ERASE) {
             hideConfirmBar()
             BackgroundIo.run {
                 db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
@@ -866,7 +878,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    private fun tabButton(label: String, onClick: () -> Unit): TextView =
+    private fun tabButton(label: String, group: Int = TapSound.G_FUNC, onClick: () -> Unit): TextView =
         TextView(context).apply {
             text = label
             gravity = android.view.Gravity.CENTER
@@ -882,7 +894,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 context, surfaceAlpha, KEY_FACE_CORNER_DP, fill, faceRipple(fill),
             )
             isClickable = true
-            setOnClickListener { onClick() }
+            // 面板动作补反馈：同一屏的键盘外圈都有声，面板内整块没有反馈时，用户听不出
+            // 「点到了没有」—— 而这里的删除与清空历史都不可撤销。默认归功能组
+            // （分类、搜索、长按操作条都是面板操作，不是文字输入），破坏性的那几个由调用点改组。
+            setOnClickListener {
+                KeyFeedback.fire(group)
+                onClick()
+            }
             // 注册到统一列表：换皮肤时由 applyPanelColors 重设文字与面
             tabButtons += this
         }

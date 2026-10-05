@@ -29,7 +29,7 @@ internal object TapSound {
     /** 符号 / 标点：符号层 26 键、逗号键、句号键 */
     const val G_SYMBOL = 2
 
-    /** 删除 / 清空：退格键 + 候选栏清空 ✕（默认 kbd_15，警报感，2026-10-05 用户指定） */
+    /** 删除 / 清空：退格键 + 候选栏清空 ✕（默认 kbd_15，警报感，2026-10-05 定） */
     const val G_ERASE = 3
 
     /** 确认：空格键、回车键 */
@@ -175,5 +175,49 @@ internal object TapSound {
     fun formatMap(map: IntArray): String = (0 until GROUP_COUNT).joinToString(",") { i ->
         val v = map.getOrElse(i) { DEFAULT_MAP[i] }
         v.coerceIn(NONE, SOUND_COUNT - 1).toString()
+    }
+
+    /**
+     * 试听该用哪个音：优先 [G_TEXT] 当前的音，该组是「不播放」时改用手上第一个可用的。
+     *
+     * 为什么回退：强度滑杆松手时试听的就是「文字输入」组的音。若这一组被设成「不播放」，
+     * 试听会完全没有声音，而用户此刻的意图是「听一下现在多大声」—— 把无声当成
+     * 「强度坏了」是最容易发生的误判。六组全部设成「不播放」时才真的没有可听的音。
+     */
+    fun previewSound(map: IntArray): Int {
+        if (map.getOrElse(G_TEXT) { NONE } != NONE) return map[G_TEXT]
+        return map.firstOrNull { it != NONE } ?: NONE
+    }
+
+    /**
+     * 反馈节流：普通键共用一份时间戳，删除 / 清空单独一份。
+     *
+     * 为什么删除组要单独记：它的间隔阈值比普通键大一个量级，两份共用一个时间戳时，
+     * 它的基准会变成「上一次**任意**分组」的触发时刻 —— 「打字后马上按退格」这一下会被
+     * 上一个普通键挡掉，而删除档用的正是辨识度最高的警报音，也是最不该被吞的一档。
+     *
+     * 纯逻辑、无 Android 依赖，可直接单测（见 TapSoundTest）。时间戳以 `-1` 表示「从未触发」，
+     * 不取 `Long.MIN_VALUE` 是为了避开 `now - last` 的溢出。
+     */
+    class Throttle(private val genericGapMs: Long, private val eraseGapMs: Long) {
+
+        private var lastGeneric = -1L
+        private var lastErase = -1L
+
+        /** 放行返回 true 并记下时刻；被节流返回 false，且不动任何状态 */
+        fun allow(group: Int, now: Long): Boolean {
+            val erase = group == G_ERASE
+            val last = if (erase) lastErase else lastGeneric
+            val gap = if (erase) eraseGapMs else genericGapMs
+            if (last >= 0L && now - last < gap) return false
+            if (erase) lastErase = now else lastGeneric = now
+            return true
+        }
+
+        /** 释放时复位：重建后的第一次反馈不该被上一轮的残值挡掉 */
+        fun reset() {
+            lastGeneric = -1L
+            lastErase = -1L
+        }
     }
 }

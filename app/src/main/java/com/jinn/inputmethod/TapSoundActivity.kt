@@ -72,18 +72,23 @@ class TapSoundActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
+        // 试听与真实按键走同一套闸门（[KeyFeedback.soundGatesOpen]）：进页先把用户意愿与系统闸门
+        // 读进引擎缓存，渲染时才能据它决定「试听」是否可用。本页不依赖 IME 是否在运行 ——
+        // refresh 只写缓存字段，没有池也能调。
+        KeyFeedback.refresh(prefs)
+        KeyFeedback.refreshSystemGates(this)
         renderAll()
-        // 先把 17 个音效排进加载队列再让用户挑：`SoundPool.load` 是异步的，
-        // 而「点试听」与「建池」在同一帧发生（`playPreview` 里的惰性建池）⇒ 进页后**第一次**
-        // 试听几乎必然无声（`play` 对未加载完的 id 返回 0），第二次起才正常。
-        // 预载把这段时间提前到页面渲染期，用户读说明的那一两秒足够加载完。
+        // 先把 17 个音效排进加载队列再让用户挑：`SoundPool.load` 是异步的，而「进页后马上点试听」
+        // 与建池几乎同帧 ⇒ 第一次试听可能无声（`play` 对未加载完的 id 返回 0）。
+        // 预载把这段时间提前到渲染期，用户读说明的那一两秒足够加载完。
         ensurePreview()
     }
 
     override fun onStop() {
         super.onStop()
         themeTicker.stop()
-        releasePreview()
+        // 池不在这里释放：load 是异步的、句柄只增不减，每次回前台重建池会让「回到页面后
+        // 第一次试听」再无声一次。页面存活期内复用，统一在 onDestroy 释放。
     }
 
     override fun onDestroy() {
@@ -155,9 +160,23 @@ class TapSoundActivity : Activity() {
             textSize = 11f
         })
         val map = TapSound.parseMap(prefs.tapSoundMap)
+        // 试听要能出声，前提与真实按键完全一致（开关 + 系统触摸提示音 + 响铃模式）。这三条只在
+        // KeyFeedback 里判一次：试听若走自己那套判据，就会出现「关了音效仍能听见试听声」，
+        // 用户据此会判断音效是开着的。
+        val previewOpen = KeyFeedback.soundGatesOpen()
         for (group in 0 until TapSound.GROUP_COUNT) {
-            groupCard.addView(makeGroupRow(group, map[group]))
+            groupCard.addView(makeGroupRow(group, map[group], previewOpen))
         }
+        if (soundOn && !previewOpen) {
+            groupCard.addView(TextView(this).apply {
+                text = TEXT_GATE_HINT
+                setTextColor(getColor(R.color.text_secondary))
+                textSize = 11f
+            })
+        }
+        // 与上面两张卡同一口径：总开关关着时子项置灰不可点
+        groupCard.alpha = if (soundOn) 1f else 0.45f
+        setEnabledDeep(groupCard, soundOn)
         PageStyle.addCard(list, groupCard)
     }
 
@@ -237,7 +256,7 @@ class TapSoundActivity : Activity() {
 
             override fun onStopTrackingTouch(sb: SeekBar?) {
                 Diagnostics.i(TAG, "音效强度: ${prefs.tapSoundVolume}%")
-                playPreview(currentTextSound())
+                playPreview(currentPreviewSound())
             }
         }
 
@@ -280,7 +299,8 @@ class TapSoundActivity : Activity() {
     }
 
     /** 分组行：组名（左，撑开）+ 当前音色（右）+ 试听；点整行换音色 */
-    private fun makeGroupRow(group: Int, index: Int): LinearLayout {
+    private fun makeGroupRow(group: Int, index: Int, previewAllowed: Boolean): LinearLayout {
+        val groupLabel = TapSound.GROUP_LABELS[group]
         val current = TextView(this).apply {
             text = if (index == TapSound.NONE) TEXT_NONE else TapSound.soundLabel(index)
             setTextColor(getColor(R.color.text_secondary))
@@ -288,16 +308,19 @@ class TapSoundActivity : Activity() {
         }
         val preview = Button(this).apply {
             text = TEXT_PREVIEW
+            // 读屏：六个按钮的可见文字都是「试听」，不给区分名只能听到六个一样的按钮
+            contentDescription = "试听${groupLabel}的音色"
             textSize = 12f
             setTextColor(getColor(R.color.text_primary))
             setBackgroundResource(R.drawable.btn_aurora_secondary)
             minWidth = 0
             minimumWidth = 0
-            minHeight = 0
-            minimumHeight = 0
+            // 触摸目标：原先上下只有 4dp 内边距、最小高度归零，整行高约 30dp，低于可点目标下限
             setPadding(dp(10), dp(4), dp(10), dp(4))
-            // 「不播放」的组没有音可试：置灰并禁用，而不是点了没反应
-            isEnabled = index != TapSound.NONE
+            minHeight = dp(44)
+            minimumHeight = dp(44)
+            // 「不播放」的组没有音可试；闸门不允许时点了也出不了声 —— 两种情况都置灰禁用
+            isEnabled = index != TapSound.NONE && previewAllowed
             alpha = if (isEnabled) 1f else 0.4f
             setOnClickListener { playPreview(index) }
         }
@@ -305,7 +328,7 @@ class TapSoundActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(TextView(this@TapSoundActivity).apply {
-                text = TapSound.GROUP_LABELS[group]
+                text = groupLabel
                 setTextColor(getColor(R.color.text_primary))
                 textSize = 13f
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -315,7 +338,7 @@ class TapSoundActivity : Activity() {
             ).apply { marginEnd = dp(8) })
             addView(preview)
             // 可点击的 ViewGroup 必须自报名字，否则读屏落在这一行只念得到一个空节点
-            contentDescription = "${TapSound.GROUP_LABELS[group]}，当前 ${current.text}，点按更换"
+            contentDescription = "$groupLabel，当前 ${current.text}，点按更换"
             // 整行可点：给系统标准的行按压反馈（ripple），否则「能点」这件事没有任何视觉暗示
             isClickable = true
             background = selectableItemBackground()
@@ -334,8 +357,13 @@ class TapSoundActivity : Activity() {
     private fun dp(value: Int): Int = PageStyle.dp(this, value)
 
     /** 当前「文字输入」组用的音效（强度试听就用它：那是用户按得最多的那个音） */
-    private fun currentTextSound(): Int =
-        TapSound.parseMap(prefs.tapSoundMap).getOrElse(TapSound.G_TEXT) { TapSound.NONE }
+    /**
+     * 松手试听用哪个音：交给 [TapSound.previewSound] 决定 —— 「文字输入」组被设成「不播放」时
+     * 它会回退到手上第一个可用的音，而不是静默返回（用户此刻的意图是「听一下现在多大声」，
+     * 把无声当成「强度坏了」是最容易发生的误判）。
+     */
+    private fun currentPreviewSound(): Int =
+        TapSound.previewSound(TapSound.parseMap(prefs.tapSoundMap))
 
     private fun showSoundPicker(group: Int) {
         // 列表项带时长：用户不点开也能分辨「短 tick」与「长 thock」
@@ -385,8 +413,12 @@ class TapSoundActivity : Activity() {
             .build()
         for (i in 0 until TapSound.SOUND_COUNT) {
             val path = "${TapSound.ASSET_DIR}/${TapSound.assetName(i)}"
+            // 打不开就记一条 W：失败静默的话，「试听点了没反应」只能靠人猜（IME 侧同款代码也有这条日志）。
+            // 成因通常是打包时资产被压缩 —— 发布前的产物校验拦的是发布路径，debug 直装拦不住。
             previewIds[i] = runCatching {
                 assets.openFd(path).use { pool.load(it, 1) }
+            }.onFailure {
+                Diagnostics.w(TAG, "试听音效加载失败: $path (${it.message})")
             }.getOrDefault(0)
         }
         previewPool = pool
@@ -394,6 +426,9 @@ class TapSoundActivity : Activity() {
 
     private fun playPreview(index: Int) {
         if (index == TapSound.NONE) return
+        // 与真实按键同一套闸门：关了音效、系统关了触摸提示音、或手机静音时，试听也不出声。
+        // 走独立判据的话，用户会从「试听有声音」推出「音效是开着的」这个错误结论。
+        if (!KeyFeedback.soundGatesOpen()) return
         // 已销毁的实例上不再建池：弹窗回调可能晚于 onDestroy 到达，那时建起来的池再没机会释放
         // （这个实例不会再有 onStop），而且会出现「看不见的页面在出声」
         if (isFinishing || isDestroyed) return
@@ -428,5 +463,8 @@ class TapSoundActivity : Activity() {
         const val TEXT_GROUP_HINT = "点一行即可换音色；右侧按钮可单独试听当前音色"
         const val TEXT_PREVIEW = "试听"
         const val TEXT_NONE = "不播放"
+
+        /** 闸门不放行时的说明：与页首口径一致，用户不必猜按钮为什么点不动 */
+        const val TEXT_GATE_HINT = "手机静音或系统「触摸提示音」关闭时，按键音不出声，这里也无法试听。"
     }
 }

@@ -943,9 +943,13 @@ class RecentFixesRegressionTest {
         // **能解密**的历史仍然翻不到（预取闸门要求 totalItemCount > 0）。修法：空态可点，
         // 沿游标续扫。见 BUG.md L-76。
         val src = codeOf("ClipboardPanelView.kt")
+        // 形状钉改为「先判止损态、再续扫」这条语义：入口补敲击反馈后，中间多了一句反馈调用，
+        // 判据不再绑死单行写法（中间允许零或一句其它语句），但「只在止损态才动作」必须留着。
         assertTrue(
-            "空态必须挂点击入口（只在这一条死路成立时才有效，见 scanStoppedEarly）",
-            src.contains("setOnClickListener { if (scanStoppedEarly) continueScan() }"),
+            "空态必须挂点击入口，且只在止损态才动作并沿游标续扫（见 scanStoppedEarly）",
+            Regex(
+                """setOnClickListener \{\s*if \(!scanStoppedEarly\) return@setOnClickListener\s+(?:[^\n]*\n\s*)?continueScan\(\)""",
+            ).containsMatchIn(src),
         )
         assertTrue(
             "止损态必须能从填页返回值推出（空结果 + 游标未到末尾）",
@@ -3488,4 +3492,20 @@ class RecentFixesRegressionTest {
             "setFlags(" in s.replace(helper, ""),
         )
     }
+    @Test
+    fun `响铃模式取不到音频服务时必须按放行处理`() {
+        // `audioManager?.ringerMode == RINGER_MODE_NORMAL` 在左侧为 null 时整句求值为 false，
+        // 被静默当成「手机静音」⇒ 闸门永远关着（真机实测：系统三项全开而设置页试听恒置灰，
+        // runCatching 的兜底也救不了 —— 没有异常可抓）。这里钉住「取不到就当放行」这条兜底。
+        val src = codeOf("KeyFeedback.kt")
+        assertTrue(
+            "响铃判据必须显式兜底为放行，不能靠 ?. 比较的隐式 false",
+            src.contains("am?.ringerMode?.let { it == AudioManager.RINGER_MODE_NORMAL } ?: true"),
+        )
+        assertFalse(
+            "不得回到 audioManager?.ringerMode == AudioManager.RINGER_MODE_NORMAL",
+            src.contains("audioManager?.ringerMode == AudioManager.RINGER_MODE_NORMAL"),
+        )
+    }
+
 }

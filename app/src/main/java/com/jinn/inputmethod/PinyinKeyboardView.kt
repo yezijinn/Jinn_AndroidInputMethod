@@ -595,9 +595,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
                 // 必须显式驱动按压态，否则按键没有任何视觉反馈（按压高亮是死代码）
                 keyViews[c]?.setPressedVisual(true)
-                // 敲击反馈：在 DOWN 触发，与上面的按压高亮同频（手感才「即时」）。
-                // 这里是 26 个键唯一的入口，字母 / 数字 / 符号 / 密码四态一次覆盖。
-                KeyFeedback.fire(currentTapGroup())
+                // 敲击反馈：字母 / 数字 / 密码层在 DOWN 触发，与上面的按压高亮同频（手感才「即时」）。
+                // 这里是 26 个键唯一的入口，四态一次覆盖。
+                //
+                // 符号层例外：本层的水平滑动是「翻页」而不是输入（见下面 ACTION_MOVE），在 DOWN 响的话
+                // 翻页会先响一声 —— 同一键盘的候选栏为了避开这件事刻意改用了点击语义，两套口径并存才是问题。
+                // 本层的反馈因此推到 UP，且与真正上屏共用同一个条件（没翻页、抬起点仍在键内）。
+                if (layer != LAYER_SYMBOL) KeyFeedback.fire(currentTapGroup())
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -645,6 +649,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 命中判定不可省：手指从 Q 滑到 W 抬起时，UP 依然回调到 Q 的监听器，
                 // 不做判定就会把 Q 上屏（用户看到的是自己按了 W）。
                 if (!keyTouchConsumed && isInsideKey(keyViews[c], event)) {
+                    // 符号层的反馈在这里补：条件与上屏完全一致（没翻页、抬起点仍在键内），
+                    // 所以翻页不会响、滑出键外抬起也不会响（见 ACTION_DOWN 的说明）
+                    if (layer == LAYER_SYMBOL) KeyFeedback.fire(TapSound.G_SYMBOL)
                     onLetterPressed(c)
                 }
                 keyTouchConsumed = false
@@ -728,7 +735,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun bindFunctionKeys() {
         btnSymbol.setOnClickListener {
-            KeyFeedback.fire(TapSound.G_FUNC)
             // 密码模式内不做层切换：进符号层会让候选栏的数字条被符号分组标签顶掉
             // （`refreshCandidateBar` 的符号层分支在前，见 BUG.md L-105），模式前提
             // 「26 键 + 数字条」就破了。与中英切换同一条口径：点「退出」返回后再切。
@@ -738,6 +744,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 Diagnostics.i(TAG, "符号层: 密码模式内无效（点「退出」返回后再切）")
                 return@setOnClickListener
             }
+            // 反馈排在有效性判定**之后**：无效分支什么都不做，响了就是把「无效」报成「成功」
+            // （密码模式里连点中英 / 符号层入口，用户会以为切过去了）
+            KeyFeedback.fire(TapSound.G_FUNC)
             layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL
             // 进符号层前清掉未上屏的拼音：该层不显示拼音条与候选，残留的 composing
             // 不可见却仍然生效 —— 退格先删它（屏幕上毫无变化），收起键盘 / 切中英时
@@ -772,17 +781,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 长按「数字」：密码模式（数字与 26 字母同屏）。已在模式里时长按不做事 ——
         // 这个键此时是「退出」，退出只认点击（长按返回 true 会把点击一并吃掉，避免误触退出）。
         btnDigit.setOnLongClickListener {
-            // 长按不会触发短按的 click ⇒ 那份反馈也不会发，这里补一次（与短按同组）
-            KeyFeedback.fire(TapSound.G_FUNC)
             if (passwordPad) {
                 Diagnostics.i(TAG, "密码模式: 已在该模式，长按无操作（点「退出」返回）")
             } else {
+                // 长按不会触发短按的 click ⇒ 那份反馈也不会发，这里在有效分支里补一次（与短按同组）
+                KeyFeedback.fire(TapSound.G_FUNC)
                 enterPasswordPad()
             }
             true
         }
         btnLang.setOnClickListener {
-            KeyFeedback.fire(TapSound.G_FUNC)
             // 密码模式强制英文小写：此刻切中文会变成「数字条 + 拼音候选」并存，先退出再谈切换
             if (passwordPad) {
                 Diagnostics.i(TAG, "中英切换: 密码模式内无效（点「退出」返回后再切）")
@@ -793,6 +801,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 Diagnostics.i(TAG, "中英切换: 大写锁定激活，切换无效")
                 return@setOnClickListener
             }
+            KeyFeedback.fire(TapSound.G_FUNC)
             englishMode = !englishMode
             if (englishMode) {
                 // 切英文时清掉未上屏的拼音
@@ -807,12 +816,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
         btnShift.setOnClickListener {
-            KeyFeedback.fire(TapSound.G_FUNC)
             // 符号层键面全是符号，没有大小写概念：大写键在此层无效
             if (layer == LAYER_SYMBOL) {
                 Diagnostics.i(TAG, "符号层: 大写键无操作")
                 return@setOnClickListener
             }
+            KeyFeedback.fire(TapSound.G_FUNC)
             capsMode = !capsMode
             // 大写锁定切换的是「字母直通」模式，与切中英文同理：
             // 不清残留拼音的话，切回小写后按退格会先删这些看不见的拼音，
@@ -1824,6 +1833,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内容已全部清空：停掉仍在跑的连续删除。否则会以 55ms 间隔继续发 DEL，
         // 在部分宿主（如 WebView）里可能被解释成「返回」等其它动作。
         backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
+        // 清空是不可撤销的一次性动作，且紧跟在连删循环后面：走普通节流会被上一次连删反馈挡掉，
+        // 而那正是最需要给出「已经清干净了」提示的时刻，故强制发一次
+        KeyFeedback.fire(TapSound.G_ERASE, force = true)
         Diagnostics.i(TAG, "退格双击+长按：清空全部")
         onTripleBackspace()
     }
@@ -3437,10 +3449,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 也就是持续给当前输入框发 DEL，用户没碰键盘，字却一直在被删。
      */
     override fun onDetachedFromWindow() {
+        stopBackspaceRepeat()
+        super.onDetachedFromWindow()
+    }
+
+    /**
+     * 停掉退格连删循环（含双击后的长按清空）。
+     *
+     * detach 之外还要一个入口：[JinnIme.onFinishInputView] 收起键盘时只撤了自己那份退格
+     * runnable，本视图这份不归它管。窗口隐藏时若平台没派发 ACTION_CANCEL、且 inputView
+     * 被跨会话复用（不 detach），循环会带着 DEL 与敲击反馈一起继续跑到下次触摸；
+     * 两处共用同一条清理，避免只堵住一半。
+     */
+    fun stopBackspaceRepeat() {
         backspaceHandler.removeCallbacksAndMessages(null)
         backspaceHeld = false
         backspaceTapCount = 0
-        super.onDetachedFromWindow()
     }
 
     private companion object {

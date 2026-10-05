@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -177,5 +178,58 @@ class TapSoundTest {
         assertEquals(TapSound.VOLUME_MIN, TapSound.clampVolume(-20))
         assertEquals(TapSound.VOLUME_MAX, TapSound.clampVolume(500))
         assertEquals(TapSound.VOLUME_DEFAULT, TapSound.clampVolume(TapSound.VOLUME_DEFAULT))
+    }
+
+    // ── 节流 ─────────────────────────────────────────────────
+
+    @Test
+    fun `普通键挡掉 30ms 内的连击`() {
+        val t = TapSound.Throttle(30L, 150L)
+        assertTrue(t.allow(TapSound.G_TEXT, 1_000L))
+        assertFalse("20ms 内的下一击应被挡", t.allow(TapSound.G_TEXT, 1_020L))
+        assertTrue("越过阈值后放行", t.allow(TapSound.G_TEXT, 1_030L))
+    }
+
+    @Test
+    fun `删除组不被紧邻的普通键吞掉`() {
+        val t = TapSound.Throttle(30L, 150L)
+        assertTrue(t.allow(TapSound.G_TEXT, 1_000L))
+        // 打字后 10ms 按退格：两份时间戳共用时这一下会静默，而删除档正是辨识度最高的一档
+        assertTrue("删除组只跟自己的上一次比", t.allow(TapSound.G_ERASE, 1_010L))
+    }
+
+    @Test
+    fun `删除组把 55ms 的连删压到 150ms 一档`() {
+        val t = TapSound.Throttle(30L, 150L)
+        assertTrue(t.allow(TapSound.G_ERASE, 1_000L))
+        assertFalse("55ms 后的下一次连删应被挡", t.allow(TapSound.G_ERASE, 1_055L))
+        assertTrue("越过 150ms 后放行", t.allow(TapSound.G_ERASE, 1_150L))
+    }
+
+    @Test
+    fun `节流复位后第一次放行`() {
+        val t = TapSound.Throttle(30L, 150L)
+        assertTrue(t.allow(TapSound.G_ERASE, 1_000L))
+        assertFalse(t.allow(TapSound.G_ERASE, 1_010L))
+        t.reset()
+        assertTrue("复位后不该被上一轮的残值挡掉", t.allow(TapSound.G_ERASE, 1_020L))
+    }
+
+    // ── 试听音取值 ─────────────────────────────────────────────
+
+    @Test
+    fun `试听音在本组为不播放时回退到可用音`() {
+        val allNone = IntArray(TapSound.GROUP_COUNT) { TapSound.NONE }
+        assertEquals("六组全不播放时确实没有可试听的音", TapSound.NONE, TapSound.previewSound(allNone))
+
+        val map = TapSound.DEFAULT_MAP.copyOf()
+        assertEquals("本组有音就用本组", map[TapSound.G_TEXT], TapSound.previewSound(map))
+
+        map[TapSound.G_TEXT] = TapSound.NONE
+        assertEquals(
+            "本组不播放时回退到手上第一个可用的音",
+            map.first { it != TapSound.NONE },
+            TapSound.previewSound(map),
+        )
     }
 }

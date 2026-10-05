@@ -10,6 +10,8 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
 
 /**
  * 敲击反馈引擎（音效 + 震动）：IME 进程内唯一实例。
@@ -63,7 +65,17 @@ internal object KeyFeedback {
     private var systemSoundAllowed = true
     private var systemHapticAllowed = true
 
-    private var lastFireAt = 0L
+    /**
+     * 响铃模式是否普通档（缓存值）。
+     *
+     * 与上面两道闸门放在同一处缓存：[fire] 原本每次都读 `AudioManager.ringerMode`，而
+     * `getRingerMode()` 是到音频服务的跨进程调用 —— 连打时每次按键一次 IPC，与「按键路径零 IPC」
+     * 的承诺不符。用户改响铃模式必然先离开键盘界面，随 [refreshSystemGates] 一起刷新足够新鲜。
+     */
+    private var ringerNormal = true
+
+    /** 节流：普通键与删除组各一份时间戳（见 [TapSound.Throttle]） */
+    private val throttle = TapSound.Throttle(MIN_GAP_MS, ERASE_MIN_GAP_MS)
 
     /**
      * 挂载：建 SoundPool、预载全部音效、解析系统闸门。**幂等**——系统重建 IME 时会再次
@@ -92,7 +104,7 @@ internal object KeyFeedback {
         runCatching { vibrator?.cancel() }
         vibrator = null
         hasAmplitudeControl = false
-        lastFireAt = 0L
+        throttle.reset()
     }
 
     /**
@@ -116,22 +128,45 @@ internal object KeyFeedback {
     fun refreshSystemGates(context: Context) {
         systemSoundAllowed = systemFlag(context, Settings.System.SOUND_EFFECTS_ENABLED)
         systemHapticAllowed = systemFlag(context, Settings.System.HAPTIC_FEEDBACK_ENABLED)
+        // 音频服务按需取：设置页会在本进程还没挂载 IME 时调用本方法，那时 audioManager 还是 null。
+        // ⚠ 不能写成 `audioManager?.ringerMode == RINGER_MODE_NORMAL` —— 左侧为 null 时整个表达式
+        // 求值为 false，被静默当成「手机静音」，闸门永远关着（真机实测：三项系统设置全开而试听恒置灰）。
+        // 取不到音频服务时按「放行」处理，与另外两道闸门的兜底口径一致。
+        val am = audioManager
+            ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)
+                ?.also { audioManager = it }
+        ringerNormal = runCatching {
+            am?.ringerMode?.let { it == AudioManager.RINGER_MODE_NORMAL } ?: true
+        }.getOrDefault(true)
     }
 
     /**
      * 触发一次按键反馈（**按下时**调用，与键盘的按压视觉同频）。
      *
      * 全部判据走缓存字段，无 IO、无 IPC；总开关都关时立即返回（最常见的情形）。
+     *
+     * @param force 跳过节流。给「清空全部」这类一次性、不可撤销的动作用：它紧跟在连删循环后面，
+     *              走普通节流会被上一次连删反馈挡掉，而那正是最需要给出「已经清干净了」的时刻。
      */
-    fun fire(group: Int) {
-        if (!soundEnabled && !vibrateEnabled) return
-        val now = SystemClock.uptimeMillis()
-        val minGap = if (group == TapSound.G_ERASE) ERASE_MIN_GAP_MS else MIN_GAP_MS
-        if (now - lastFireAt < minGap) return
-        lastFireAt = now
-        if (soundEnabled && systemSoundAllowed && ringerAllowsSound()) play(group)
-        if (vibrateEnabled && systemHapticAllowed) vibrate(group)
+    fun fire(group: Int, force: Boolean = false) {
+        val sound = soundGatesOpen()
+        val vibrate = vibrateGatesOpen()
+        if (!sound && !vibrate) return
+        if (!force && !throttle.allow(group, SystemClock.uptimeMillis())) return
+        if (sound) play(group)
+        if (vibrate) vibrate(group)
     }
+
+    /**
+     * 发声的三道闸门是否全开：用户开关 + 系统「触摸提示音」+ 响铃模式放行。
+     *
+     * 设置页试听复用这一条 —— 试听与真实按键必须同一套判据。此前试听一条闸门都不过，
+     * 于是「关了音效仍能听见试听声」，用户据此会判断音效是开着的。
+     */
+    fun soundGatesOpen(): Boolean = soundEnabled && systemSoundAllowed && ringerAllows()
+
+    /** 震动的两道闸门是否全开：用户开关 + 系统「触摸时振动」 */
+    fun vibrateGatesOpen(): Boolean = vibrateEnabled && systemHapticAllowed
 
     // ── 音效 ─────────────────────────────────────────────────
 
@@ -180,12 +215,8 @@ internal object KeyFeedback {
         runCatching { pool.play(id, volume, volume, 1, 0, 1.0f) }
     }
 
-    /** 静音（含仅震动）时是否放行音效：默认严格跟随系统响铃模式，用户可显式覆盖 */
-    private fun ringerAllowsSound(): Boolean {
-        if (soundOnSilent) return true
-        val am = audioManager ?: return true
-        return am.ringerMode == AudioManager.RINGER_MODE_NORMAL
-    }
+    /** 响铃模式放行：默认跟随系统（静音 / 仅震动都不出声），用户可显式覆盖 */
+    private fun ringerAllows(): Boolean = soundOnSilent || ringerNormal
 
     // ── 震动 ─────────────────────────────────────────────────
 
@@ -227,4 +258,24 @@ internal object KeyFeedback {
     /** 系统开关（0 = 关）。读不到时按「开」处理：宁可多一次反馈，也不要静默失效 */
     private fun systemFlag(context: Context, key: String): Boolean =
         runCatching { Settings.System.getInt(context.contentResolver, key, 1) != 0 }.getOrDefault(true)
+}
+
+/**
+ * 按需关掉平台自带的点击音效与长按触觉（递归作用于整棵子树）。
+ *
+ * 为什么需要：`View.performClick()` 在存在 `OnClickListener` 时会向系统播一次 CLICK 音、
+ * 长按被消费后会发 LONG_PRESS 触觉。键盘自带引擎之后那两份是重复的，而且只作用于
+ * **有 OnClickListener 的键** —— 字母键走自定义触摸、不触发平台音，于是同一屏里
+ * 功能键响两声、字母键响一声。
+ *
+ * 反过来，引擎没开时**不能**关：那时平台那份是用户唯一的反馈来源。所以两个参数都每帧显式赋值
+ * （而不是「只置 false」），关掉引擎后能把开关还原回去 —— 这两个标记在 `View` 上不继承，
+ * 必须逐个子视图设置，故走整树递归。
+ */
+internal fun View.applyPlatformFeedbackPolicy(suppressSound: Boolean, suppressHaptic: Boolean) {
+    isSoundEffectsEnabled = !suppressSound
+    isHapticFeedbackEnabled = !suppressHaptic
+    if (this is ViewGroup) {
+        for (i in 0 until childCount) getChildAt(i).applyPlatformFeedbackPolicy(suppressSound, suppressHaptic)
+    }
 }

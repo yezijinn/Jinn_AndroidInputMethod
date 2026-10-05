@@ -1325,6 +1325,22 @@ class JinnIme : InputMethodService() {
      *    它们是 drawable，色值识别扫不到，按当前档重建；
      *  - `mic_button`（MicButton）不参与（自绘）；其底盘已随 `mic_area` 一起处理。
      */
+    /**
+     * 按需抑制平台自带的点击音效与长按触觉。
+     *
+     * 那两份由 `View.performClick()` 与长按自己发出，而键盘自带引擎之后是重复的；且它只作用于
+     * 有 `OnClickListener` 的键（字母键走自定义触摸，不触发），于是同一屏里功能键响两声、
+     * 字母键响一声。开关没开时**必须还原**：那时平台那份是用户唯一的反馈来源。
+     *
+     * 从 `keyboardContainer` 起整树递归（这两个标记在 `View` 上不继承），一次覆盖两套键盘与两块面板。
+     */
+    private fun applyFeedbackSuppression() {
+        keyboardContainer?.applyPlatformFeedbackPolicy(
+            suppressSound = prefs.tapSoundEnabled,
+            suppressHaptic = prefs.tapVibrateEnabled,
+        )
+    }
+
     private fun applyTransparencyToVoicePanel() {
         val container = keyboardContainer ?: return
         if (container.childCount < 1) return
@@ -1733,6 +1749,8 @@ class JinnIme : InputMethodService() {
         // 而用户改完开关回来必然经过弹键盘，缓存足够新鲜。
         KeyFeedback.refresh(prefs)
         KeyFeedback.refreshSystemGates(this)
+        // 平台自带的点击音 / 长按触觉是否抑制，随两个开关走；与上面两行同处刷新，改完开关必然生效
+        applyFeedbackSuppression()
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
         // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
@@ -1864,6 +1882,9 @@ class JinnIme : InputMethodService() {
         // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
         cancelTranslate(notify = true)
         ui.removeCallbacks(backspaceRunnable)
+        // 拼音视图那份连删循环不归本服务的 ui 管：窗口隐藏时若平台没派发 ACTION_CANCEL、
+        // 且 inputView 被跨会话复用（不 detach），它会继续发 DEL 并每约 150ms 响一声删除音
+        pinyinKeyboard?.stopBackspaceRepeat()
         themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
@@ -3737,7 +3758,11 @@ class JinnIme : InputMethodService() {
          */
         fun onKeyFeedbackChanged() {
             val ime = instance?.get() ?: return
-            ime.ui.post { KeyFeedback.refresh(ime.prefs) }
+            ime.ui.post {
+                KeyFeedback.refresh(ime.prefs)
+                // 抑制平台自带反馈的开关也可能刚被改过，一并落到视图上
+                ime.applyFeedbackSuppression()
+            }
         }
 
         /** 键盘收起后多久视为「用户空闲」（太短会把「切个应用马上回来」也算空闲） */

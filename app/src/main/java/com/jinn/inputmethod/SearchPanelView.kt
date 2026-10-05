@@ -321,6 +321,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private fun handleItemClick(item: ClipboardDb.Item) {
         if (isPasting) return
         isPasting = true
+        // 粘贴是「把文字送进宿主」，与候选词上屏同一语义（文字输入组）。放在 isPasting 判据之后：
+        // 连点第二下不动作，也就不该响
+        KeyFeedback.fire(TapSound.G_TEXT)
         val ok = listener?.onPaste(item.content) ?: false
         isPasting = false
         if (ok) {
