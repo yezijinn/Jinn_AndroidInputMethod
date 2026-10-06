@@ -1,10 +1,17 @@
-import os, shutil, wave, numpy as np, urllib.request, re, time
+import os, shutil, sys, wave, numpy as np, urllib.request, re, time
 
 base = 'c:/AI_WORKSPACE/PROJECTS/com.jinn.inputmethod/tools/sound_preview'
 RK = os.path.join(base, 'real_keyboard')
 ASSETS = 'c:/AI_WORKSPACE/PROJECTS/com.jinn.inputmethod/app/src/main/assets/sounds/keyboard'
 MASTERS = os.path.join(base, 'masters')
 SR = 44100
+
+# 下面这一步会把 assets/ 与 masters/ 清空后重编号，而它要求输入目录真的存在。
+# 输入目录早被上一次运行删掉（脚本末尾 rmtree），空跑只会毁掉已入库的 16 个 ogg 与本地母版。
+if not os.path.isdir(RK):
+    raise SystemExit('输入目录不存在: %s（先把素材放进去再跑）' % RK)
+if '--force' not in sys.argv:
+    raise SystemExit('要清空 assets/ 与 masters/ 再重编号，加 --force 明确一次')
 for d in (ASSETS, MASTERS):
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(d): os.remove(os.path.join(d, f))
@@ -94,22 +101,14 @@ for i, (dur, f, on) in enumerate(info, 1):
     shutil.copy(os.path.join(RK, f), os.path.join(MASTERS, key + '.wav'))
     ogg = os.path.join(RK, os.path.splitext(f)[0] + '.ogg')
     if os.path.exists(ogg): shutil.copy(ogg, os.path.join(ASSETS, key + '.ogg'))
-    role = "删除/清空(已定)" if os.path.splitext(f)[0] == 'mx2841' else "待定"
+    role = "待定"   # 建议角色由 gen_manifest.py 的表给出，这里只落素材
     rows.append((key, f, src, url, dur*1000, on, role))
     print(f"  {key}.ogg  <- {f:48s} {dur*1000:5.0f}ms on={on}  {src}", flush=True)
 
 # ---- 4) manifest ----
-mp = os.path.join(base, 'keyboard_sounds_manifest.md')
-with open(mp, 'w', encoding='utf-8') as fp:
-    fp.write("# 键盘音效清单 (assets/sounds/keyboard/)\n\n")
-    fp.write("命名规范：`kbd_NN.ogg`（中性序号，按时长升序）。角色→音效映射在设置/代码里，不写进文件名。\n")
-    fp.write("OGG 进 APK（约 4-5KB/个，aapt 不二次压缩）；WAV 母版在 `tools/sound_preview/masters/`。\n\n")
-    fp.write("| 文件 | 原始名 | 来源 | 时长 | onsets | 建议角色 |\n|---|---|---|---|---|---|\n")
-    for key, f, src, url, dur, on, role in rows:
-        s = src if src.startswith('由') else f"{src} · {url}"
-        fp.write(f"| `{key}.ogg` | `{f}` | {s} | {dur:.0f}ms | {on} | {role} |\n")
-    fp.write("\n> Freesound 条目均为 CC0；Mixkit 条目为 Mixkit 免费音效（免费商用、无需署名）。\n")
-print("\nmanifest ->", mp)
+# 清单的表体由 gen_manifest.py 渲染（它持有编号 / 时长 / 起音数 / 来源四张表），这里不再维护第二份模板 ——
+# 两处模板必然漂移，上回就是（旧模板少了「不入库」那句，重跑一次会把它从清单里抹掉）。
+print("\n素材已落位；渲染清单: python tools/sound_preview/gen_manifest.py --write")
 
 # ---- 5) remove relocated working dir ----
 shutil.rmtree(RK)

@@ -188,6 +188,8 @@ internal object TapSound {
      *
      * - 串为空 → 整体回落 [DEFAULT_MAP]
      * - 多余字段忽略、缺失字段留默认（不会因为多一个逗号把六组自定义一起清空）
+     * - 项数超长**且**出现空字段 → 整体回落 [DEFAULT_MAP]：空位右侧的字段无法判断是对齐在
+     *   分组序号上还是顺延过来的，按位读会把六个值整体后移一位
      * - 单项非数字 → 该项留默认，**不牵连其余五项**
      * - 单项负数（连 [NONE] 之外的值）→「不播放」
      * - 单项上界外 → 回落该项默认音
@@ -203,6 +205,10 @@ internal object TapSound {
     fun parseMap(raw: String?): IntArray {
         if (raw.isNullOrBlank()) return DEFAULT_MAP.copyOf()
         val parts = raw.split(',')
+        // 串形如 ",7,3,0,14,13,2" 时按位读会解出 9,7,3,0,14,13 —— 六个值整体后移一位，
+        // 而页面照常显示「音效 XX · NNNms」，看不出错。本应用写不出这种串（formatMap 永远写
+        // 6 项），来源只能是外部，与其猜不如整体回落。
+        if (parts.size > GROUP_COUNT && parts.any { it.isBlank() }) return DEFAULT_MAP.copyOf()
         val out = DEFAULT_MAP.copyOf()
         for (i in 0 until minOf(parts.size, GROUP_COUNT)) {
             val v = parts[i].trim().toIntOrNull() ?: continue

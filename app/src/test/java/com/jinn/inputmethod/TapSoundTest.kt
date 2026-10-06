@@ -148,9 +148,9 @@ class TapSoundTest {
     /**
      * 默认映射：六组统一用 kbd_10（索引 9）。
      *
-     * 不读清单、也不碰 DEFAULT_MAP（L-929 / L-947）。
      * 需求是「分组音色全部用音效 10」—— 一条声音对所有按键，分组只留在震动波形上。
-     * 清单里 kbd_10 那一行的「建议角色」是**人工同步**的：发布对账只覆盖「文件名 ↔ SOUND_COUNT」与时长表项数，
+     * 清单里 kbd_10 那一行的「建议角色」是**人工同步**的：发布对账只覆盖「文件名 ↔ SOUND_COUNT」
+     * 与时长表项数，它既不读清单、也不碰 [TapSound.DEFAULT_MAP]。
      */
     @Test
     fun `六组默认统一用 kbd_10`() {
@@ -220,6 +220,29 @@ class TapSoundTest {
         assertTrue("弱 < 中", weak.first < medium.first && weak.second < medium.second)
         assertTrue("中 < 强", medium.first < strong.first && medium.second < strong.second)
         assertTrue("振幅必须在 0..255", strong.second in 0..255)
+    }
+
+    @Test
+    fun `震动默认档与三档规格都被钉住`() {
+        // 上面那条钳位是自指的（两边引同一个常量），把默认档改掉它也通过；三档的时长与振幅
+        // 同样只有序关系断言 —— 改数值全绿。这里按字面量钉住，改动必须同时改这条。
+        assertEquals(2, TapSound.VIB_DEFAULT)
+        assertEquals(10L to 60, TapSound.vibrationSpec(TapSound.VIB_WEAK))
+        assertEquals(15L to 120, TapSound.vibrationSpec(TapSound.VIB_MEDIUM))
+        assertEquals(20L to 200, TapSound.vibrationSpec(TapSound.VIB_STRONG))
+    }
+
+    @Test
+    fun `空字段与多余字段并存时整体回落，不错位`() {
+        // ",7,3,0,14,13,2" 按位读会解出 9,7,3,0,14,13（六个值整体后移一位）。
+        // 项数超长且有空字段只可能来自外部串，宁可整体回落，也不静默错配。
+        assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap(",7,3,0,14,13,2"))
+        assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap("7,,0,14,13,2,9"))
+        // 项数不超长时按位回落不受影响：空位留默认，其余按原值
+        assertArrayEquals(
+            intArrayOf(7, TapSound.DEFAULT_MAP[1], 0, 14, 13, 2),
+            TapSound.parseMap("7,,0,14,13,2"),
+        )
     }
 
     @Test

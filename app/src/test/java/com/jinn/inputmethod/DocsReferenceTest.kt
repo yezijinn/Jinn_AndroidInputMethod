@@ -482,6 +482,15 @@ class DocsReferenceTest {
         assertTrue("功能总览的面板清单里找不到「翻译（第 N 键）」", pos > 0)
         val claimed = Regex("""翻译（第 (\d+) 键""").find(items[pos - 1])?.groupValues?.get(1)?.toInt()
         assertEquals("功能总览里翻译键的序号与面板清单的顺序不一致", pos, claimed)
+
+        // ④ 音效库条数：删音效那批改了设置页与测试，这份文档漏了（BUG.md L-473 留的「计数归人工」口子）
+        val tap = readDoc("app/src/main/java/com/jinn/inputmethod/TapSound.kt")
+            ?: error("找不到 TapSound.kt")
+        val soundCount = Regex("""const val SOUND_COUNT\s*=\s*(\d+)""").find(tap)?.groupValues?.get(1)
+            ?: error("TapSound.kt 里找不到 SOUND_COUNT")
+        val soundClaim = Regex("""(\d+)\s*个真实键盘录音""").find(doc)?.groupValues?.get(1)
+            ?: error("功能总览里找不到「N 个真实键盘录音」那一句")
+        assertEquals("功能总览里的音效个数与 TapSound.SOUND_COUNT 不符", soundCount, soundClaim)
     }
 
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */

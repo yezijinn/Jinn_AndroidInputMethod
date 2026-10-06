@@ -46,10 +46,19 @@ internal object KeyFeedback {
     /** 同时播放的最大流数：快速连打时旧的让位给新的，而不是排队堆积 */
     private const val MAX_STREAMS = 4
 
+    /** 句柄缺失的诊断间隔：同类失败最多 5 秒报一条 */
+    private const val MISSING_SOUND_LOG_GAP_MS = 5000L
+
     private var soundPool: SoundPool? = null
 
-    /** 索引 → SoundPool 句柄（0 = 未加载完成，播放时跳过） */
+    /**
+     * 索引 → SoundPool 句柄。**0 = 加载失败**（`load` 失败返回 0，成功即返回正数句柄，
+     * 样本可能仍在异步解码），播放时跳过，见 [play]。
+     */
     private val soundIds = IntArray(TapSound.SOUND_COUNT)
+
+    /** 句柄缺失的诊断限频时间戳（连打时每键一条会刷屏） */
+    private var lastMissingSoundLogAt = 0L
 
     private var vibrator: Vibrator? = null
     private var hasAmplitudeControl = false
@@ -212,9 +221,23 @@ internal object KeyFeedback {
         val index = map.getOrElse(group) { TapSound.NONE }
         if (index == TapSound.NONE) return
         val id = soundIds.getOrElse(index) { 0 }
-        // 0 = 尚未加载完成（load 是异步的）：静默跳过即可，绝不能在主线程等待
-        if (id == 0) return
+        // 0 = 加载失败（asset 缺失 / openFd 抛异常，失败已在 loadSounds 里报过一条）。
+        // 跳过并留一条限频诊断：静默无声与「开关没开」在用户那里长得一样。
+        if (id == 0) {
+            logMissingSound(index)
+            return
+        }
+        // 句柄有效不代表样本已解码完（load 是异步的）：那一刻 play 自己不出声；
+        // 这里没有就绪回调可挂，也不该在主线程等 —— 挂载后加载窗口内的第一下可能没声。
         runCatching { pool.play(id, volume, volume, 1, 0, 1.0f) }
+    }
+
+    /** 句柄为 0 的限频留痕（间隔见 [MISSING_SOUND_LOG_GAP_MS]） */
+    private fun logMissingSound(index: Int) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastMissingSoundLogAt < MISSING_SOUND_LOG_GAP_MS) return
+        lastMissingSoundLogAt = now
+        Diagnostics.w(TAG, "音效未加载，跳过播放: " + TapSound.assetName(index))
     }
 
     /** 响铃模式放行：默认跟随系统（静音 / 仅震动都不出声），用户可显式覆盖 */

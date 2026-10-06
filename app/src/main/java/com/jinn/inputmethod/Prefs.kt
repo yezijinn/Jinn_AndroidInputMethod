@@ -1267,12 +1267,14 @@ class Prefs(context: Context) {
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
         if (sp.contains(KEY_TAP_SOUND_VOLUME)) put(KEY_TAP_SOUND_VOLUME, tapSoundVolume)
         put(KEY_TAP_SOUND_ON_SILENT, tapSoundOnSilent)
-        // ⚠ 音量与分组映射都只在**用户真的改过**时才导出（与 translate_provider 同款）：缺键时 getter
-        // 回落的是当前默认值，无条件导出会把「那时的默认」固化成显式值 —— 将来调整默认音色
-        // 或默认音量，对这批用户都失效。
+        // ⚠ 音量、分组映射与震动档位都只在**用户真的改过**时才导出（与 translate_provider 同款）：
+        // 缺键时 getter 回落的是当前默认值，无条件导出会把「那时的默认」固化成显式值 ——
+        // 将来调整默认音色 / 默认音量 / 默认档位，对这批用户都失效。档位默认是「中」，属不平凡
+        // 默认：连从未开过震动的用户，备份里也会带着 2。两个开关的默认是 false，导出与否等价
+        // （新机上缺键回落同样是 false），故不套这道守卫。
         if (sp.contains(KEY_TAP_SOUND_MAP)) put(KEY_TAP_SOUND_MAP, tapSoundMap)
         put(KEY_TAP_VIBRATE_ENABLED, tapVibrateEnabled)
-        put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)
+        if (sp.contains(KEY_TAP_VIBRATE_STRENGTH)) put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)
         put(KEY_SKIN_LIGHT, skinLightId)
         put(KEY_SKIN_DARK, skinDarkId)
         put(KEY_THEME_MODE, themeMode)

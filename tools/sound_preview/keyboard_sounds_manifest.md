@@ -25,3 +25,5 @@
 | `kbd_15.ogg` | `maybe_057` | Freesound CC0 · id 842480 · https://cdn.freesound.org/previews/842/842480_10196790-lq.ogg | 205ms | 2 | 待定 |
 | `kbd_16.ogg` | `maybe_003` | Freesound CC0 · id 491920 · https://cdn.freesound.org/previews/491/491920_10630312-lq.ogg | 210ms | 2 | 待定 |
 
+> 注：默认映射见 `TapSound.DEFAULT_MAP`（六组统一用 kbd_10）。
+
