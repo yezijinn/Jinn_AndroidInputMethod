@@ -96,7 +96,7 @@ internal object TapSound {
     // ── 默认映射（用户未改动时各组用哪个音）────────────────────────
     //
     // 挑选依据：时长与角色匹配（数字/符号要短促、确认要偏重），音色统一在机械键盘范畴内。
-    //  文字=08(122ms) 数字=04(73ms) 符号=01(60ms) 删除=15(185ms,警报) 确认=14(183ms) 功能=03(67ms)
+    //  文字=08(122ms) 数字=04(73ms) 符号=01(60ms) 删除=15(205ms,警报) 确认=14(183ms) 功能=03(67ms)
     val DEFAULT_MAP = intArrayOf(7, 3, 0, 14, 13, 2)
 
     // ── 音效强度 ───────────────────────────────────────────────
@@ -152,13 +152,30 @@ internal object TapSound {
      */
     fun isDoublePulse(group: Int): Boolean = group == G_ERASE
 
+    /**
+     * 双段触感两段之间的停顿，与脉冲宽度同比例。
+     *
+     * 比例固定 2:1（弱 10/20、中 15/30、强 20/40），而不是三档共用一个常数：停顿一旦与脉冲
+     * 宽度脱钩，弱档会退化成「一次带凹陷的震动」—— 10ms 脉冲配 20ms 停顿已在人手指可辨的
+     * 边缘，而 20ms 脉冲配同样的 20ms 停顿又偏挤。取比例后三档的「哒-哒」形状一致。
+     *
+     * 下限 20ms 是给弱档的：低于它 2:1 的比例就破了，而弱档没有更细的档位可退。
+     * 弱档究竟能否听出两下要实测波形才能定论，这里只保证三档比例一致。
+     */
+    fun erasePulseGap(pulseMs: Long): Long = maxOf(20L, pulseMs * 2)
+
     // ── 映射串解析（脏数据防护）──────────────────────────────────
 
     /**
      * 解析 `"7,3,0,14,13,2"` 形式的映射串。
      *
-     * 任何异常输入都**不抛异常**：长度不符 / 非数字 → 整体回落 [DEFAULT_MAP]；
-     * 单项越界 → 钳到 `[NONE, SOUND_COUNT-1]`（负数变「不播放」）。
+      * 任何异常输入都**不抛异常**：长度不符 / 非数字 → 整体回落 [DEFAULT_MAP]；
+      *
+      * 上界外为什么不钳到末位：音效下架会让 [SOUND_COUNT] 变小，于是**旧版本里合法的索引变成
+      * 越界**。钳到末位会把用户精挑的音色静默换成另一个（而读写两侧都过本函数，落盘串随即被
+      * 覆写、原值不可恢复）；回落默认音至少是条明确规则，且该组没被改过时它的默认音本就是
+      * 用户自己的选择。
+      * 负数（连 [NONE] 之外的值）→「不播放」；**上界外 → 回落该组默认音**。
      * 备份导入会把字符串原样写回来，没有这层防护就是一次越界崩溃。
      */
     fun parseMap(raw: String?): IntArray {
@@ -168,7 +185,11 @@ internal object TapSound {
         val out = IntArray(GROUP_COUNT)
         for (i in 0 until GROUP_COUNT) {
             val v = parts[i].trim().toIntOrNull() ?: return DEFAULT_MAP.copyOf()
-            out[i] = v.coerceIn(NONE, SOUND_COUNT - 1)
+            out[i] = when {
+                v in 0 until SOUND_COUNT -> v
+                v >= SOUND_COUNT -> DEFAULT_MAP[i]
+                else -> NONE
+            }
         }
         return out
     }

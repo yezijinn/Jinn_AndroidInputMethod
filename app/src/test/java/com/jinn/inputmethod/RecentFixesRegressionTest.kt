@@ -3550,15 +3550,25 @@ class RecentFixesRegressionTest {
             "child?.applyPlatformFeedbackPolicy(suppressSoundNow, suppressHapticNow)" in engine,
         )
         // 扫**整个源码目录**而不是列几个文件：这条回归要「将来多一个容器类并用了这条 API」才会漏，
-        // 固定清单只覆盖今天已有的那几个。测试工作目录是 app/（见 TestSources 的路径候选）。
-        val extra = File("src/main/java/com/jinn/inputmethod")
-            .walkTopDown()
+        // 两种前缀都要试：Gradle 的 Test 任务工作目录是 app/，而从仓库根跑（IDE、部分脚本）也是真实场景。
+        // 少了回退会**静默恒真** —— walkTopDown() 在目录不存在时返回空序列而不是抛错，
+        // extra 恒为空、断言永远通过，且不给任何提示。
+        val dir = listOf(
+            File("src/main/java/com/jinn/inputmethod"),
+            File("app/src/main/java/com/jinn/inputmethod"),
+        ).firstOrNull { it.isDirectory } ?: error("找不到主源码目录（cwd=${File("").absolutePath}）")
+        val extra = dir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .filter { it.readText().contains("setOnHierarchyChangeListener") }
             .map { it.name }
             .filter { it != "KeyFeedback.kt" }
             .toList()
         assertTrue("入树回调只允许引擎那一处设置，现状另外出现在：$extra", extra.isEmpty())
+        // 自检：目录里一个 kt 文件都没有 ⇒ 路径没找对，上面那条断言等于没跑
+        assertTrue(
+            "源码目录扫到 0 个 kt 文件（cwd=${File("").absolutePath}），这条守卫本身没生效",
+            dir.walkTopDown().any { it.isFile && it.extension == "kt" },
+        )
 
         // 两套键盘各有一个退格键（两个实例），收起键盘时都要复位按下态
         val ime = codeOf("JinnIme.kt")

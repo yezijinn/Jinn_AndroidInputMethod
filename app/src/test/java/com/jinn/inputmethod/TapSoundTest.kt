@@ -39,11 +39,18 @@ class TapSoundTest {
     }
 
     @Test
-    fun `越界索引被钳位而不是崩溃`() {
-        // 上溢钳到最后一个音；负值（除 -1 外）落到「不播放」
-        val map = TapSound.parseMap("99,-5,0,14,13,2")
-        assertEquals(TapSound.SOUND_COUNT - 1, map[0])
-        assertEquals(TapSound.NONE, map[1])
+    fun `上界外的索引回落该组默认音而不是钳到末位`() {
+        // 音效下架后 [SOUND_COUNT] 变小，旧版本里合法的索引就变成了上界外。钳到末位会静默换成一个
+        // 用户没选过的音色，而读写两侧都过 parseMap，落盘串随即被覆写、原值不可恢复。
+        val stale = TapSound.SOUND_COUNT            // 曾经合法的最后一个索引
+        val map = TapSound.parseMap("$stale,3,0,14,13,2")
+        assertEquals("文字组应回落到该组默认音", TapSound.DEFAULT_MAP[0], map[0])
+        assertEquals("其余项不受影响", 3, map[1])
+        // 负数（连 NONE 之外的值）仍落到「不播放」，不回落默认
+        assertEquals(TapSound.NONE, TapSound.parseMap("-5,3,0,14,13,2")[0])
+        assertEquals(TapSound.NONE, TapSound.parseMap("-1,3,0,14,13,2")[0])
+        // 远超上界的脏数据与「旧索引」在语义上无法区分，统一按上界外处理，不猜用户想要哪一个
+        assertEquals(TapSound.DEFAULT_MAP[0], TapSound.parseMap("99,3,0,14,13,2")[0])
     }
 
     @Test
@@ -146,6 +153,22 @@ class TapSoundTest {
         assertEquals(TapSound.VIB_OFF, TapSound.clampVibrationTier(-3))
         assertEquals(TapSound.VIB_STRONG, TapSound.clampVibrationTier(99))
         assertEquals(TapSound.VIB_MEDIUM, TapSound.clampVibrationTier(TapSound.VIB_MEDIUM))
+    }
+
+    @Test
+    fun `双段触感的停顿与脉冲宽度同比例`() {
+        // 停顿与脉冲脱钩时弱档会退化成「一次带凹陷的震动」：10ms 脉冲配 20ms 停顿已在
+        // 人手指可辨的边缘。三档都按 2:1 取，形状才一致。
+        assertEquals(20L, TapSound.erasePulseGap(10L))   // 弱
+        assertEquals(30L, TapSound.erasePulseGap(15L))   // 中
+        assertEquals(40L, TapSound.erasePulseGap(20L))   // 强
+        // 2:1 的比例对三档都成立（VIB_OFF 的脉冲宽是 0ms —— 那是「关闭」，不是一档脉冲）
+        for (tier in TapSound.VIB_WEAK..TapSound.VIB_STRONG) {
+            val (ms, _) = TapSound.vibrationSpec(tier)
+            assertEquals("档位 $tier", 2 * ms, TapSound.erasePulseGap(ms))
+        }
+        // 档位为「关闭」时脉冲宽 0，停顿回到下限而不是 0 —— 波形不能出现 0 长度的段
+        assertEquals(20L, TapSound.erasePulseGap(0L))
     }
 
     @Test

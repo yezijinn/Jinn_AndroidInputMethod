@@ -386,9 +386,12 @@ def main():
     # assets/sounds/keyboard/*.ogg，而 openFd 对已压缩条目会抛 IOException ——
     # 症状是「按键彻底没声、也没有任何提示」，编译 / 单测 / lint 全绿也查不出来，
     # 只有在产物上核对 zip 的压缩方式才能拦住。aapt 默认就不压 .ogg，这里是防打包配置回归。
+    # 用 startswith + endswith 而不是子串包含：某些 aapt2 版本会往 APK 里写目录条目
+    # （文件名恰为 assets/sounds/keyboard/、不以 .ogg 结尾），子串匹配会把它算进清单，
+    # 于是对账恒不相等、构建被无端挡住。
     sound_entries = [
         info for info in zipfile.ZipFile(apk).infolist()
-        if "assets/sounds/keyboard/" in info.filename
+        if info.filename.startswith("assets/sounds/keyboard/") and info.filename.endswith(".ogg")
     ]
     if not sound_entries:
         print("[错误] 产物里没有 assets/sounds/keyboard/ 条目（音效丢了？）", file=sys.stderr)

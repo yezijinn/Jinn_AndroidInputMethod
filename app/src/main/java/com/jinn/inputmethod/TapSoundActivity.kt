@@ -78,7 +78,7 @@ class TapSoundActivity : Activity() {
         KeyFeedback.refresh(prefs)
         KeyFeedback.refreshSystemGates(this)
         renderAll()
-        // 先把 17 个音效排进加载队列再让用户挑：`SoundPool.load` 是异步的，而「进页后马上点试听」
+        // 先把全部音效排进加载队列再让用户挑：`SoundPool.load` 是异步的，而「进页后马上点试听」
         // 与建池几乎同帧 ⇒ 第一次试听可能无声（`play` 对未加载完的 id 返回 0）。
         // 预载把这段时间提前到渲染期，用户读说明的那一两秒足够加载完。
         ensurePreview()

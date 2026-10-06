@@ -41,19 +41,7 @@ internal object KeyFeedback {
      */
     private const val ERASE_MIN_GAP_MS = 150L
 
-    /**
-     * 删除 / 清空「双段触感」两段之间的停顿。
-     *
-     * 取 20ms 是权衡的结果：`Vibrator.vibrate(effect)` 是**替换**语义，后一次调用会取消在途波形，
-     * 而普通键的最小间隔是 30ms（[MIN_GAP_MS]）—— 只要有键在这 30ms 之后落下，双段的后半就可能被削掉。
-     * 中档下 15ms 脉冲 + 20ms 停顿 = 50ms，后半段落在 35–50ms；要削掉它需要下一键恰好落在这 15ms 内
-     * （快速连打时会发生）。间隔再大只会把后半段推得更远、反而更易被削。
-     *
-     * 后半段被削短是**已知且刻意接受**的：一次按键只该有一次触觉，后半段属附加信息，
-     * 丢它不改变「这一下确实是删除键」这件事 —— 删除组另有专属音色，两条辨识线索里短暂失效一条
-     * 不会让用户误判。
-     */
-    private const val ERASE_PULSE_GAP_MS = 20L
+
 
     /** 同时播放的最大流数：快速连打时旧的让位给新的，而不是排队堆积 */
     private const val MAX_STREAMS = 4
@@ -248,7 +236,7 @@ internal object KeyFeedback {
      */
     private fun buildEffect(group: Int, ms: Long, amp: Int): VibrationEffect =
         if (TapSound.isDoublePulse(group)) {
-            val timings = longArrayOf(0L, ms, ERASE_PULSE_GAP_MS, ms)
+            val timings = longArrayOf(0L, ms, TapSound.erasePulseGap(ms), ms)
             if (hasAmplitudeControl) {
                 VibrationEffect.createWaveform(timings, intArrayOf(0, amp, 0, amp), -1)
             } else {

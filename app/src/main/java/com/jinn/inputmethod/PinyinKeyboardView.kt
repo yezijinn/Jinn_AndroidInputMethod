@@ -436,7 +436,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnClearCandidates.setOnClickListener {
             // 清空拼音串与退格同属「删除 / 清空」组：两者都用 kbd_15（警报感），
             // 让「擦掉输入」在声音上能一眼（耳）分辨出来，不与普通打字混淆
-            KeyFeedback.fire(TapSound.G_ERASE)
+            KeyFeedback.fire(TapSound.G_ERASE, force = true)
             Diagnostics.i(
                 TAG,
                 "候选栏 ✕：清空候选（拼音=${composing.length} 候选=${lastCandidates.size} " +
