@@ -7,10 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 剪贴板容量两条上限的纯逻辑护栏。
+ * 剪贴板容量与解密窗口的纯逻辑护栏。
  *
- * 采集侧只拦条数是不够的：单条巨文本（大段代码/日志）能让库无界增长，
- * 因此补两道闸，单条 256KB 直接不入库 + 总量 100MB 按最旧非收藏淘汰。
+ * 采集侧只拦条数不够：单条巨文本（大段代码/日志）能让库无界增长 —— 于是有三道闸：
+ * 单条上限（默认 256KB，用户可调，再与解密窗天花板取小）+ 总量预算（默认 100MB，按最旧非收藏淘汰）
+ * + 收藏软上限（条数/字节任一超限即淘汰最旧收藏，用户可调）。
  * 这里只测纯函数部分（真正的入库/裁剪要 Android SQLite，走真机验证）。
  */
 class ClipboardLimitsTest {
@@ -95,6 +96,38 @@ class ClipboardLimitsTest {
         assertEquals(100L * 1024 * 1024, ClipboardDb.DEFAULT_MAX_TOTAL_BYTES)
     }
 
+    // ── 收藏软上限的淘汰算法 ────────────────────────────────────────────────
+    //
+    // 与总量预算的分工：这里收藏**参与**淘汰（软上限就是为它设的），条数 / 字节任一超限
+    // 即从最旧开始删；那边则「收藏计入总量但不参与淘汰」。
+
+    @Test
+    fun 收藏淘汰从最旧开始且条数或字节任一超限即触发() {
+        val rows = listOf(row(1, 100), row(2, 100), row(3, 100), row(4, 100), row(5, 100))
+        assertEquals("都不超 ⇒ 不删", emptyList<Long>(), ClipboardDb.favoriteOverflowIds(rows, 5, 500))
+        assertEquals("条数超 1 ⇒ 只删最旧 1 条", listOf(1L), ClipboardDb.favoriteOverflowIds(rows, 4, 500))
+        assertEquals("字节超 ⇒ 删到落回预算", listOf(1L, 2L, 3L), ClipboardDb.favoriteOverflowIds(rows, 5, 250))
+        assertEquals("双超 ⇒ 取更严的一侧", listOf(1L, 2L, 3L), ClipboardDb.favoriteOverflowIds(rows, 2, 500))
+        assertEquals("非正上限视为不限制", emptyList<Long>(), ClipboardDb.favoriteOverflowIds(rows, 0, 0))
+        assertEquals("空表不删", emptyList<Long>(), ClipboardDb.favoriteOverflowIds(emptyList(), 1, 1))
+    }
+
+    /**
+     * 收藏裁剪必须走**含收藏**的删除入口（2026-10-06 审查的高危项）。
+     *
+     * 原实现调 `deleteByIds`（SQL 条件固定带 `is_favorite = 0`）⇒ 目标全是收藏行、一行都删不掉，
+     * 日志仍按候选集报「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报。
+     * 现改用 `deleteAnyByIds`，并把普通裁剪入口改名 `deleteNonFavoriteByIds`，让误用在调用点显形。
+     */
+    @Test
+    fun 收藏裁剪必须走含收藏的删除入口() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val body = src.substringAfter("private fun trimFavorites()").substringBefore("private fun trimByCount")
+        assertTrue("trimFavorites 必须走含收藏的删除入口", "deleteAnyByIds(ids)" in body)
+        assertFalse("trimFavorites 不得复用只删非收藏的入口", "deleteNonFavoriteByIds" in body)
+        assertTrue("普通裁剪入口必须带 non-favorite 语义名", "private fun deleteNonFavoriteByIds(" in src)
+    }
+
     // ── 解密窗口内存预算护栏 ────────────────────────────────────────────────
     //
     // 分页/分块查询会把整个窗口逐条解密后才返回，故单次明文峰值 = 窗口条数 × 单条上限。
@@ -111,8 +144,47 @@ class ClipboardLimitsTest {
 
     @Test
     fun 面板分页窗口同样在预算内() {
-        val peak = ClipboardStore.decryptWindowPeakBytes(PANEL_PAGE_ITEMS)
+        val peak = ClipboardStore.decryptWindowPeakBytes(ClipboardPrefs.DEFAULT_PANEL_PAGE)
         assertTrue("面板分页峰值 $peak 超预算", peak <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES)
+    }
+
+    /**
+     * 页宽与单条上限都可调（「剪贴板自定义」页），窗口预算必须对**任意组合**成立。
+     *
+     * 判据链：写入侧单条上限 = [ClipboardStore.effectiveItemLimitBytes]（含天花板），
+     * 读取侧页宽 ≤ [ClipboardStore.PANEL_PAGE_ITEMS_MAX] ⇒ `峰值 = 页宽 × 天花板 × 放大 ≤ 预算`。
+     * 2026-10-06 审查发现的原缺口：天花板曾按「用户当前页宽」反推，而库里既有行是按**写入当时**
+     * 的页宽写的 —— 先按小页宽写入的大条目在页宽调大后会一起进入更大窗口
+     * （页宽 50 写入的 393KB 行 + 页宽调到 100 ⇒ 100 × 393KB × 2.5 ≈ 100MB > 48MB）。
+     */
+    @Test
+    fun 页宽与单条上限的任意组合都在窗口预算内() {
+        val budget = ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES
+        for (items in 2..ClipboardStore.PANEL_PAGE_ITEMS_MAX) {
+            for (kb in intArrayOf(4, 64, 256, 512, 1024)) {
+                val limit = ClipboardStore.effectiveItemLimitBytes(kb * 1024L)
+                val peak = ClipboardStore.decryptWindowPeakBytes(items, limit.toInt())
+                assertTrue(
+                    "页宽 $items × 生效单条 ${limit / 1024}KB 峰值 ${peak / 1024 / 1024}MB " +
+                        "超预算 ${budget / 1024 / 1024}MB",
+                    peak <= budget,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun 单条上限的天花板不压缩默认值() {
+        // 默认 256KB 必须能全量生效，否则「自定义」这项一进来就先把默认行为改小了
+        val dflt = ClipboardPrefs.DEFAULT_MAX_ITEM_KB * 1024L
+        assertEquals(dflt, ClipboardStore.effectiveItemLimitBytes(dflt))
+        assertTrue(
+            "页宽硬上限必须与默认单条上限相容（天花板就是按这个组合定的）",
+            ClipboardStore.decryptWindowPeakBytes(
+                ClipboardStore.PANEL_PAGE_ITEMS_MAX,
+                ClipboardPrefs.DEFAULT_MAX_ITEM_KB * 1024,
+            ) <= ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES,
+        )
     }
 
     @Test
@@ -264,7 +336,7 @@ class ClipboardLimitsTest {
         val src = TestSources.codeSource("ClipboardController.kt")
         val ime = TestSources.codeSource("JinnIme.kt")
         // 正向：URI 型真的走了带预算的读入口，且先看 MIME
-        assertTrue("URI 型必须走带预算的读入口", "readBounded(input, deadlineNanos = deadlineNanos)" in src)
+        assertTrue("URI 型必须走带预算的读入口", "readBounded(input, budget = ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt(), deadlineNanos = deadlineNanos)" in src)
         assertTrue("必须先做 MIME 三态判定", "val textual = textualMime(type)" in src)
         assertTrue(
             "采集侧必须调共用取文入口（带原因的结果）",

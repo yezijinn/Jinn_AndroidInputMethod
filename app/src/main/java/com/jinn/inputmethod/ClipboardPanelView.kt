@@ -35,15 +35,6 @@ import android.widget.TextView
  *
  * 安全：不输出任何剪贴板正文日志。
  */
-/**
- * 剪贴板面板的一页条数。
- *
- * 与搜索窗口同理：一页会整页解密后才发布，单次内存峰值 ≈ 本值 × 单条上限 × 放大系数
- * （见 [ClipboardStore.decryptWindowPeakBytes]）。50 条 ≈ 32.8MB（最坏情形），
- * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）内，由 `ClipboardLimitsTest` 守卫。
- */
-internal const val PANEL_PAGE_ITEMS = 50
-
 class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 面板回调（全部主线程） */
@@ -433,7 +424,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {
-            // 分页加载：COUNT 不解密，解密只覆盖第一页（PANEL_PAGE_ITEMS）
+            // 分页加载：COUNT 不解密，解密只覆盖第一页（ClipboardPrefs.of(context).panelPageItems）
             val filter = ClipboardFilter.of(category)
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
@@ -455,7 +446,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 var pending: ClipboardCursor? = null
                 var fetchOff = 0
                 var pendingScanned = 0
-                val page = ClipboardDb.fillFirstPage(total, PANEL_PAGE_ITEMS) { off, lim ->
+                val page = ClipboardDb.fillFirstPage(total, ClipboardPrefs.of(context).panelPageItems) { off, lim ->
                     // 又被调用一次 = 上一页已被接受（fillFirstPage 只在接受后仍需更多时才再取）
                     if (pending != null) accepted = pending
                     val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
@@ -552,7 +543,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 if (total != categoryTotal) {
                     Diagnostics.i(TAG, "分页: 总数 $categoryTotal → $total（编号基准已刷新，继续翻页）")
                 }
-                total to db.recentPageAfter(cursor, PANEL_PAGE_ITEMS, filter.category, filter.favoritesOnly)
+                total to db.recentPageAfter(cursor, ClipboardPrefs.of(context).panelPageItems, filter.category, filter.favoritesOnly)
             }
             post {
                 if (reqToken != refreshToken) return@post
@@ -620,7 +611,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 var pending: ClipboardCursor? = null
                 var fetchOff = 0
                 var pendingScanned = 0
-                val filled = ClipboardDb.fillFirstPage(total, PANEL_PAGE_ITEMS, startOffset = offset) { off, lim ->
+                val filled = ClipboardDb.fillFirstPage(total, ClipboardPrefs.of(context).panelPageItems, startOffset = offset) { off, lim ->
                     if (pending != null) accepted = pending
                     val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
                     pending = keyed.last

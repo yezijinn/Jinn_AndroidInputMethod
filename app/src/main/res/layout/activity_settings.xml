@@ -179,16 +179,23 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 敲击音效反馈：独占一行的单按钮入口 → 独立全屏页
-             （音效开关 / 强度 / 静音仍播 + 六组音色分配 + 震动开关与四档强度）。
-             文案在代码里下发（与「增加模糊拼音 / 加更多生僻字」同做法），strings.xml 默认不改动 -->
+        <!-- 敲击音效反馈 / 剪贴板自定义：两按钮并排 → 各自的独立全屏页 -->
         <LinearLayout
             style="@style/SettingsCardRow">
 
             <Button
                 style="@style/SettingsButton"
                 android:id="@+id/btn_tap_sound"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_clipboard_customize"
+                android:layout_width="0dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
 

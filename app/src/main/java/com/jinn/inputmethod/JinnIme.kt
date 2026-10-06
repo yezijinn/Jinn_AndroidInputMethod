@@ -508,9 +508,7 @@ class JinnIme : InputMethodService() {
         }.apply { isDaemon = true }.start()
 
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
-        if (ClipboardPrefs.of(this).enabled) {
-            clipboardController = ClipboardController(this).also { it.start() }
-        }
+        syncClipboardController()
 
         // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
         registerNetwork()
@@ -535,10 +533,10 @@ class JinnIme : InputMethodService() {
     private fun pasteClipboardText(text: String): Boolean {
         // 采集侧的单条上限只拦新写入：库里可能有上限生效前留下的旧行（见 ClipboardStore.MAX_ITEM_BYTES
         // 的说明），那种量级直接 commitText 会让宿主卡住或提交失败 —— 在这里按同一上限拒收
-        if (ClipboardStore.exceedsItemLimit(text)) {
+        if (ClipboardStore.exceedsItemLimit(text, ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
             Diagnostics.w(
                 TAG,
-                "粘贴: 单条超过 ${ClipboardStore.MAX_ITEM_BYTES} 字节上限，已跳过 len=${text.length}",
+                "粘贴: 单条超过 ${ClipboardPrefs.of(this).effectiveMaxItemBytes()} 字节上限，已跳过 len=${text.length}",
             )
             android.widget.Toast.makeText(this, "内容过大，未粘贴", android.widget.Toast.LENGTH_SHORT).show()
             return false
@@ -592,17 +590,28 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 设置页保存后广播：强制刷新连接与键盘配置。
-     * 广播由 [SettingsActivity.saveAndTest] 发出，同进程内即时送达。
+     * 配置更新广播：整机配置走 [refreshConfig]，剪贴板采集开关走轻量支路。
+     *
+     * 为什么剪贴板单开一条 action：`refreshConfig` 会 `asr?.connect(force = true)` 强断语音
+     * WebSocket、重套键盘方案 —— 「剪贴板自定义」页保存时只需要同步采集开关，不该付这份代价。
+     * 广播都以 `RECEIVER_NOT_EXPORTED` 注册，只有本应用能发。
      */
     private val configReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == ACTION_CLIPBOARD_CONFIG_UPDATED) {
+                Diagnostics.i(TAG, "onReceive: 剪贴板配置更新广播（只同步采集开关）")
+                syncClipboardController()
+                return
+            }
             Diagnostics.i(TAG, "onReceive: 收到配置更新广播")
             refreshConfig()
         }
     }
 
-    private val configFilter = IntentFilter().apply { addAction(ACTION_CONFIG_UPDATED) }
+    private val configFilter = IntentFilter().apply {
+        addAction(ACTION_CONFIG_UPDATED)
+        addAction(ACTION_CLIPBOARD_CONFIG_UPDATED)
+    }
 
     // ── 方向控制 + 文字拖选状态机 ──────────────────────────
 
@@ -968,7 +977,7 @@ class JinnIme : InputMethodService() {
         // 与粘贴链路同款的单条上限闸（2026-10-02 修复 L-406）：这是全仓**唯一**写系统剪贴板的
         // 地方，此前既无尺寸闸也无兜底 —— 选中整篇长文时 `setPrimaryClip` 会把整段塞进 Binder
         // 事务（宿主与监听器还要各读一遍），超限即抛异常、直接崩 IME 进程。
-        if (ClipboardStore.exceedsItemLimit(sel)) {
+        if (ClipboardStore.exceedsItemLimit(sel, ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
             Diagnostics.w(TAG, "复制: 选区超过单条上限，未复制 len=${sel.length}")
             toast(TEXT_COPY_TOO_LONG)
             return
@@ -1032,7 +1041,7 @@ class JinnIme : InputMethodService() {
         val text = when (result) {
             is ClipboardStore.ItemText.Ok -> result.text
             ClipboardStore.ItemText.TooLarge -> {
-                Diagnostics.w(TAG, "粘贴: 单条超过 ${ClipboardStore.MAX_ITEM_BYTES} 字节上限，读入即止")
+                Diagnostics.w(TAG, "粘贴: 单条超过 ${ClipboardPrefs.of(this).effectiveMaxItemBytes()} 字节上限，读入即止")
                 toast("内容过大，未粘贴")
                 return
             }
@@ -1091,10 +1100,22 @@ class JinnIme : InputMethodService() {
             english = prefs.keyboardEnglish,
         )
         // 剪贴板历史开关变化：按最新偏好启停监听
-        val cpEnabled = ClipboardPrefs.of(this).enabled
-        if (cpEnabled && clipboardController == null) {
-            clipboardController = ClipboardController(this).also { it.start() }
-        } else if (!cpEnabled) {
+        syncClipboardController()
+    }
+
+    /**
+     * 按偏好同步剪贴板监听：开则确保在跑，关则停掉（`stop` 幂等，重复调用安全）。
+     *
+     * 三处调用：`onCreate`（首次）/ [refreshConfig]（「保存并重启」类广播）/ `onStartInputView`
+     * （自定义页改开关**不走**广播，弹键盘是唯一稳定的核对点）。
+     * 早先这三处各写一份同样的 if/else，改一处漏两处的风险太高（2026-10-06 审查收口）。
+     */
+    private fun syncClipboardController() {
+        if (ClipboardPrefs.of(this).enabled) {
+            if (clipboardController == null) {
+                clipboardController = ClipboardController(this).also { it.start() }
+            }
+        } else {
             clipboardController?.stop()
             clipboardController = null
         }
@@ -1787,6 +1808,8 @@ class JinnIme : InputMethodService() {
         // 而用户改完开关回来必然经过弹键盘，缓存足够新鲜。
         KeyFeedback.refresh(prefs)
         KeyFeedback.refreshSystemGates(this)
+        // 剪贴板开关可能在输入法进程外被改（自定义页不走「保存并重启」）：弹键盘时按偏好同步一次
+        syncClipboardController()
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
         // 立即收起；此后一切显示请求都被 onShowInputRequested 拒绝，不会重新唤起。
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
@@ -3014,7 +3037,7 @@ class JinnIme : InputMethodService() {
         // 预留一个前导换行的余量。译文是**服务端返回的内容**（不可信输入），必须有与粘贴链路同款
         // 的单条上限闸 + runCatching：裸提交超长文本会撞 Binder 事务上限抛
         // TransactionTooLargeException，未捕获时直接崩掉整个 IME 进程（2026-09-16 实测过）。
-        if (ClipboardStore.exceedsItemLimit(body + "\n")) {
+        if (ClipboardStore.exceedsItemLimit(body + "\n", ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
             Diagnostics.w(TAG, "翻译: 译文超单条上限，拒绝提交 len=${body.length}")
             toast(TEXT_TRANSLATE_TOO_LONG)
             return false
@@ -3829,6 +3852,9 @@ class JinnIme : InputMethodService() {
 
         /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
         const val ACTION_CONFIG_UPDATED = "com.jinn.inputmethod.action.CONFIG_UPDATED"
+
+        /** 「剪贴板自定义」页保存后的轻量广播：只让 IME 同步采集开关（见 `configReceiver`） */
+        const val ACTION_CLIPBOARD_CONFIG_UPDATED = "com.jinn.inputmethod.action.CLIPBOARD_CONFIG_UPDATED"
 
         /**
          * 暂存粘贴文本的有效期：剪贴板面板点击粘贴但 IME 无连接时暂存，

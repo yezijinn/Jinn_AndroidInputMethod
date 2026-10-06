@@ -361,6 +361,10 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_TAP_SOUND_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, TapSoundActivity::class.java)) }
         }
+        findViewById<Button>(R.id.btn_clipboard_customize).apply {
+            text = TEXT_CLIPBOARD_CUSTOMIZE_ENTRY
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, ClipboardCustomizeActivity::class.java)) }
+        }
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -626,6 +630,9 @@ class SettingsActivity : ComponentActivity() {
         if (::textMicState.isInitialized) refreshMicState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
+        // 剪贴板上限在「剪贴板自定义」页也能改：进页面按盘上值刷新，否则本页持有创建时的旧值，
+        // 离开时的回写会把别处刚保存的值覆盖掉（L-991）
+        refreshClipboardMax()
     }
 
     /**
@@ -676,17 +683,12 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 剪贴板卡片初始化：强制启用历史、绑定数量上限、接 Root 增强开关。
-     * 历史功能无独立开关，这里直接强制 enabled=true；上限在失焦或「保存并重启」时落盘。
+     * 剪贴板卡片初始化：绑定数量上限。
+     * 上限在失焦或「保存并重启」时落盘。开关已移至「剪贴板自定义」页。
      */
     private fun initClipboardCard() {
-        // 剪贴板历史强制启用：用户无需也无法关闭（核心功能，UI 不提供开关）
-        if (!clipboardPrefs.enabled) {
-            clipboardPrefs.enabled = true
-            Diagnostics.i(TAG, "剪贴板历史: 强制启用")
-        }
-
-        editClipboardMax.setText(clipboardPrefs.maxItems.toString())
+        // 剪贴板历史开关由用户在「剪贴板自定义」页控制，设置页不再强制（2026-10-06）
+        refreshClipboardMax()
         editClipboardMax.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) saveMaxItems()
         }
@@ -696,18 +698,26 @@ class SettingsActivity : ComponentActivity() {
 
     private fun saveMaxItems() {
         val v = editClipboardMax.text.toString().toIntOrNull()
-        if (v != null) {
+        if (v != null && v != clipboardPrefs.maxItems) {
+            // 值未变即早退：进页面看一眼再退出不该触发全库裁剪，更不该把本页的旧值写回去（L-991）
             clipboardPrefs.maxItems = v
             Diagnostics.i(TAG, "剪贴板历史数量上限: ${clipboardPrefs.maxItems}")
             // 立即裁剪数据库（统一走 BackgroundIo 单线程，避免并发写库）
-            BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems) }
+            BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems, clipboardPrefs.maxTotalBytes) }
         }
-        // 输入越界（0 / 99999）会被 Prefs 钳到 1..9999，非数字则完全忽略，
+        // 输入越界（0 / 99999）会被 Prefs 钳到 1..ClipboardPrefs.MAX_ITEMS_CAP，非数字则完全忽略，
         // 两种情况下输入框都回写为真实生效值，否则用户看到的和生效的不一致。
         val effective = clipboardPrefs.maxItems.toString()
         if (editClipboardMax.text.toString() != effective) {
             editClipboardMax.setText(effective)
         }
+    }
+
+    /** 「历史数量上限」输入框按盘上值刷新（该参数在「剪贴板自定义」页也能改） */
+    private fun refreshClipboardMax() {
+        if (!::editClipboardMax.isInitialized) return
+        val effective = clipboardPrefs.maxItems.toString()
+        if (editClipboardMax.text.toString() != effective) editClipboardMax.setText(effective)
     }
 
     // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
@@ -1892,6 +1902,7 @@ class SettingsActivity : ComponentActivity() {
 
         // 敲击音效反馈：入口文案（页面内文案在 TapSoundActivity 里下发）
         const val TEXT_TAP_SOUND_ENTRY = "敲击音效反馈"
+        const val TEXT_CLIPBOARD_CUSTOMIZE_ENTRY = "剪贴板自定义"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"

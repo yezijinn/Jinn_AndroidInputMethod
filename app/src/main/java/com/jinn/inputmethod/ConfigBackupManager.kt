@@ -457,7 +457,7 @@ internal object ConfigBackupManager {
         var last: ClipPayload? = null
         repeat(EXPORT_CLIP_ATTEMPTS) { attempt ->
             val before = db.count()
-            val payload = collectClipboardOnce(db)
+            val payload = collectClipboardOnce(db, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())
             if (db.count() == before) return payload
             last = payload
             Diagnostics.w(TAG, "剪贴板导出: 库在导出期间发生变化，重试（第 ${attempt + 1} 趟）")
@@ -466,7 +466,7 @@ internal object ConfigBackupManager {
         return last ?: ClipPayload("", 0)
     }
 
-    private fun collectClipboardOnce(db: ClipboardDb): ClipPayload {
+    private fun collectClipboardOnce(db: ClipboardDb, maxItemBytes: Int): ClipPayload {
         val entries = ArrayList<ConfigBackup.ClipEntry>()
         var bytes = 0L
         var dropped = 0
@@ -487,7 +487,7 @@ internal object ConfigBackupManager {
                 }
                 // 与导入侧一致的单条上限：超限条目导入时必然被丢掉，带上它只会造成
                 // 「导出说有、导入却没有」的不对称（用户无从诊断）
-                if (ClipboardStore.exceedsItemLimit(item.content)) {
+                if (ClipboardStore.exceedsItemLimit(item.content, maxItemBytes)) {
                     dropped++
                     continue
                 }
@@ -984,7 +984,7 @@ internal object ConfigBackupManager {
             UserFrequency.setEnabled(prefs.userLearning)
             // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
             // 这里补一次，否则「导入成功」后历史仍超限，用户会以为上限没生效
-            runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems) }
+            runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes) }
         }
 
         val freqFile = File(context.filesDir, USER_FREQ_FILE)
@@ -1043,7 +1043,7 @@ internal object ConfigBackupManager {
                     )
                     if (id <= 0) insertFailed++
                 }
-                db.trimTo(clipPrefs.maxItems)
+                db.trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）
                 val net = db.count() - before

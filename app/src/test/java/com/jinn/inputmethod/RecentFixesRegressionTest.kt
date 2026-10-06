@@ -979,7 +979,7 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "续扫必须从既有游标开始，不能从 0 重扫（白解密又可能重复显示）",
-            "fillFirstPage(total, PANEL_PAGE_ITEMS, startOffset = offset)" in src,
+            "fillFirstPage(total, ClipboardPrefs.of(context).panelPageItems, startOffset = offset)" in src,
         )
         assertTrue(
             "止损态要有自己的空态文案（不能与「整表都读不出」混用一句）",
@@ -3616,6 +3616,38 @@ class RecentFixesRegressionTest {
             "符号层的反馈判据不得走 symbolValueOf",
             "symbolKeyHasContent" in pkv && "symbolValueOf(c) != null" !in pkv,
         )
+    }
+
+    /**
+     * 剪贴板参数入口与提示的四条收口（L-991 / L-992 / L-993 / L-995）＋ L-997 的复核结论。
+     *
+     * 共同点是「算式或文案错一处就失效」：置灰判据多带一个条件、刷新少一次、提示口径不区分来源，
+     * 界面表现几乎不变，靠人眼回归看不出来。字面量对拍比行为测试便宜，也更能抗重构。
+     */
+    @Test
+    fun 剪贴板参数入口的四条收口不得回退() {
+        val page = codeOf("ClipboardCustomizeActivity.kt")
+        // L-992：可用性只看解锁态。把草稿里的总开关算进来，「关掉历史」这条改动会连保存一起禁用
+        assertTrue("参数区置灰必须只随解锁态", "val editable = unlocked" in page)
+        assertFalse("不得再把草稿里的总开关算进可用性", "val editable = draft.enabled && unlocked" in page)
+        // L-993：裁剪失败要让用户看到，不能只落诊断日志
+        assertTrue("裁剪失败必须有可见提示", "TEXT_TRIM_FAILED" in page)
+        // L-997 复核结论：数值文本必须用盘上原值。默认值 500 / 200 / 256 都不在步进格点上，
+        // 一旦改成对齐值就会被显示成 451 / 191 / 228，并把它们写回盘（试过，代价更大）
+        assertTrue("数值文本必须用盘上原值", "text = format(value)" in page)
+        assertFalse(
+            "不得再引入步进对齐",
+            "val shown = min + ((value.coerceIn(min, max) - min) / step) * step" in page,
+        )
+
+        val settings = codeOf("SettingsActivity.kt")
+        // L-991：进页面按盘上值刷新；值未变不写盘（否则本页旧值会覆盖别处刚保存的值）
+        assertTrue("onResume 必须刷新上限输入框", "refreshClipboardMax()" in settings)
+        assertTrue("值未变必须早退，不写盘也不裁剪", "v != null && v != clipboardPrefs.maxItems" in settings)
+
+        val history = codeOf("ClipboardHistoryActivity.kt")
+        // L-995：只有条数触顶才够资格报「最多 N 条」，容量预算先触发时要说别的
+        assertTrue("截断提示必须区分条数与容量两种来源", "cappedByCount" in history)
     }
 
 }

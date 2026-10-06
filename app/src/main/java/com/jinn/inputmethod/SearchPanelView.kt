@@ -386,7 +386,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 val page = db.recentPageAfter(cursor, SEARCH_WINDOW_ITEMS)
                 for (item in page.items) {
                     if (item.content.lowercase().contains(lower)) {
-                        if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes)) {
+                        if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes, maxResults = ClipboardPrefs.of(context).maxSearchResults)) {
                             capped = true
                             break
                         }
@@ -446,7 +446,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             resultsCapped -> {
                 // 命中被上限截断：留一行说明，否则用户以为「就这些」。高度改成一行，
                 // 不按空态整块占位（结果已经很长，提示再占 120dp 会把键盘顶掉一截）
-                textEmpty.text = "只显示前 ${ClipboardStore.MAX_SEARCH_RESULTS} 条匹配结果，可缩小关键词"
+                textEmpty.text = "只显示前 ${ClipboardPrefs.of(context).maxSearchResults} 条匹配结果，可缩小关键词"
                 lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
                 textEmpty.visibility = View.VISIBLE
             }

@@ -80,6 +80,11 @@
             android:exported="false"
             android:label="@string/key_appearance_entry" />
 
+        <!-- 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧进入（数量/体积/收藏/单条/分页/搜索上限） -->
+        <activity
+            android:name=".ClipboardCustomizeActivity"
+            android:exported="false" />
+
         <!-- 敲击音效反馈页：从设置页「敲击音效反馈」进入（六组音色分配 + 震动四档，改动即落盘） -->
         <activity
             android:name=".TapSoundActivity"
@@ -102,6 +107,11 @@
             android:name=".TranslationSourceActivity"
             android:exported="false"
             android:launchMode="singleTop" />
+
+        <!-- 剪贴板历史管理页：搜索 / 分类 / 多选 / 分类删除，从「剪贴板自定义」底部进入 -->
+        <activity
+            android:name=".ClipboardHistoryActivity"
+            android:exported="false" />
 
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity

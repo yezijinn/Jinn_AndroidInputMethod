@@ -352,7 +352,7 @@ object ClipboardStore {
         }
         val read = runCatching {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                readBounded(input, deadlineNanos = deadlineNanos)
+                readBounded(input, budget = ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt(), deadlineNanos = deadlineNanos)
             }
         }.onFailure {
             Diagnostics.w(
@@ -388,7 +388,7 @@ object ClipboardStore {
      *，与「4/3 + 1」吻合；明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，
      * 早先"按 UTF-16 翻倍"的假设不成立）。取 2.5 留约 7% 余量覆盖对象头与瞬时解码缓冲。
      */
-    private const val DECRYPT_ITEM_AMPLIFICATION = 2.5
+    internal const val DECRYPT_ITEM_AMPLIFICATION = 2.5
 
     /**
      * 一次批量解密窗口的内存预算（字节）。
@@ -400,6 +400,17 @@ object ClipboardStore {
     const val DECRYPT_WINDOW_BUDGET_BYTES = 48L * 1024 * 1024
 
     /**
+     * 面板单页条数的**硬上限**（也是页宽定义域的上界）。
+     *
+     * 取 75 的依据：`75 × 256KB × 2.5 ≈ 46.9MB ≤ 48MB 预算` —— 即「页宽取最大 + 单条上限
+     * 保持默认 256KB」时窗口仍不越界。[effectiveItemLimitBytes] 用**本常量**（而非用户当前页宽）
+     * 作分母反推单条上限：库里既有行是**写入当时**的页宽写进去的，分母若跟着当前页宽走，
+     * 用户把页宽调大后旧行会一并进入更大窗口 ⇒ 峰值突破预算
+     * （2026-10-06 审查：页宽 50 写入的 393KB 行 + 页宽调到 100 ⇒ 100 × 393KB × 2.5 ≈ 100MB）。
+     */
+    const val PANEL_PAGE_ITEMS_MAX = 75
+
+    /**
      * 批量解密窗口的最坏内存估算（字节，纯函数）。
      *
      * 算法 = 窗口条数 × 单条上限 × [DECRYPT_ITEM_AMPLIFICATION]；
@@ -408,6 +419,22 @@ object ClipboardStore {
     fun decryptWindowPeakBytes(windowItems: Int, maxItemBytes: Int = MAX_ITEM_BYTES): Long {
         if (windowItems <= 0 || maxItemBytes <= 0) return 0L
         return (windowItems.toLong() * maxItemBytes.toLong() * DECRYPT_ITEM_AMPLIFICATION).toLong()
+    }
+
+    /**
+     * 生效的单条上限（字节，纯函数）：用户想要的值再与解密窗反推的天花板取小。
+     *
+     * `天花板 = 预算 / 放大 / [PANEL_PAGE_ITEMS_MAX]`（48MB / 2.5 / 75 = 268,435B ≈ 262KB），
+     * 于是 `页宽(≤75) × 单条(≤天花板) × 2.5 ≤ 预算` 对**任意**用户参数组合成立；
+     * 默认 256KB 恰好落在天花板之下，默认行为不被压缩。
+     *
+     * 分母取常量而不取用户当前页宽，是为了让「先按小页宽写入、后调大页宽」的历史行
+     * 也在窗口预算内（详见 [PANEL_PAGE_ITEMS_MAX]）。
+     */
+    fun effectiveItemLimitBytes(wantedBytes: Long): Long {
+        if (wantedBytes <= 0) return 0L
+        val ceiling = (DECRYPT_WINDOW_BUDGET_BYTES / DECRYPT_ITEM_AMPLIFICATION / PANEL_PAGE_ITEMS_MAX).toLong()
+        return minOf(wantedBytes, ceiling)
     }
 
     /**
@@ -486,8 +513,8 @@ object ClipboardStore {
         maxItems: Int = readMaxItems(context),
     ): Long? {
         // 单条体积上限：超出即丢弃（不截断，半截内容比不记更糟）
-        if (exceedsItemLimit(text)) {
-            Diagnostics.w(TAG, "超单条上限，不入库: len=${text.length} 上限=${MAX_ITEM_BYTES}B")
+        if (exceedsItemLimit(text, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())) {
+            Diagnostics.w(TAG, "超单条上限，不入库: len=${text.length}")
             return null
         }
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 剪贴板自定义页：从设置页「敲击音效反馈」右侧按钮进入。
+     文案在 ClipboardCustomizeActivity 里下发（strings.xml 默认不改动），行内容代码生成，卡片走 PageStyle.addCard -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_clip_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_clip_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_clip_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <!-- 页面重画后要恢复滚动位置（见 ClipboardCustomizeActivity.renderAll）：必须带 id -->
+    <ScrollView
+        android:id="@+id/clip_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/clip_customize_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <!-- 保存 / 重置：底部常驻（不随内容滚动），锁定或无改动时由代码置灰 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <Button
+            style="@style/SettingsButton"
+            android:id="@+id/btn_clip_reset"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp" />
+
+        <Button
+            style="@style/SettingsButton"
+            android:id="@+id/btn_clip_save"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:minWidth="0dp" />
+    </LinearLayout>
+
+    <Button
+        style="@style/SettingsButton"
+        android:id="@+id/btn_clip_history"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" />
+</LinearLayout>

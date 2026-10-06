@@ -36,6 +36,7 @@ internal const val RECLASSIFY_PAGE = 50
 class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     context.applicationContext, DB_NAME, null, DB_VERSION
 ) {
+    private val appContext = context.applicationContext
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(createTableSql())
@@ -326,7 +327,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (id > 0) {
             // 刚写入的行当然可解：登记备忘，下一次同内容复制不必再试解（BUG.md L-199）
             rememberReadable(hash)
-            trimTo(maxItems)
+            trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
         }
         return id
     }
@@ -500,16 +501,42 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪历史：先按条数裁到 [maxItems]，再按总体积裁到 [maxTotalBytes]。
+     * 裁剪历史：先按条数裁到 [maxItems]，再按总体积裁到 [maxTotalBytes]，最后收一遍收藏软上限。
      *
      * 裁剪优先级：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
      * 任一维度剩的全是收藏、删不到目标时即停止 ，
      * 宁可超出上限，也不删用户明确标记保留的内容。
+     *
+     * ⚠ 唯一的例外是 [trimFavorites]：收藏**自身**的软上限（用户显式设置，见
+     * [ClipboardPrefs.favoriteMaxItems]）超限时会淘汰最旧收藏 —— 那不是总预算的溢出，
+     * 而是用户对「收藏能留多少」的直接约定，两条不变量不冲突。
      */
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
+        trimFavorites()
+    }
+
+    /**
+     * 收藏软上限：条数 / 字节任一超限即淘汰**最旧**收藏（用户可调，见 [ClipboardPrefs]）。
+     *
+     * ⚠ 删除必须走 [deleteAnyByIds]（含收藏），**不能**用普通裁剪入口 [deleteNonFavoriteByIds]：
+     * 后者的 SQL 固定带 `is_favorite = 0`，用它删收藏一行都删不掉，而日志却按候选集报
+     * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06 审查实证，由守卫钉住）。
+     */
+    private fun trimFavorites() {
+        val prefs = ClipboardPrefs.of(appContext)
+        val favRows = ArrayList<ClipboardRowSize>()
+        readableDatabase.rawQuery(
+            "SELECT id, LENGTH(encrypted_content) FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
+                "ORDER BY created_at ASC", null
+        ).use { c -> while (c.moveToNext()) favRows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), true)) }
+        val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
+        if (ids.isEmpty()) return
+        // 按**实际删除行数**记账：候选集是快照，这几毫秒里用户可能已取消收藏或删除该行
+        val deleted = deleteAnyByIds(ids)
+        Diagnostics.i(TAG, "收藏软上限淘汰: 候选 ${ids.size} 条，实删 $deleted 条")
     }
 
     /** 按条数裁剪（原有行为：只删最旧的非收藏记录） */
@@ -531,7 +558,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
         if (ids.isEmpty()) return // 剩余全是收藏，不裁剪
-        deleteByIds(ids)
+        deleteNonFavoriteByIds(ids)
     }
 
     /**
@@ -566,12 +593,16 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             )
             return
         }
-        deleteByIds(ids)
+        deleteNonFavoriteByIds(ids)
         Diagnostics.i(TAG, "按体积裁剪: 删除 ${ids.size} 条非收藏记录（预算 ${maxTotalBytes / 1024 / 1024}MB）")
     }
 
-    /** 批量删除（单事务）；**只删非收藏**（`is_favorite = 0`） */
-    private fun deleteByIds(ids: List<Long>) {
+    /**
+     * 批量删除（单事务）；**只删非收藏**（`is_favorite = 0`）。
+     *
+     * 名字把约束写进调用点：要删收藏走 [deleteAnyByIds]，误用本方法会静默删 0 行。
+     */
+    private fun deleteNonFavoriteByIds(ids: List<Long>) {
         if (ids.isEmpty()) return
         writableDatabase.beginTransaction()
         try {
@@ -585,6 +616,27 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         } finally {
             writableDatabase.endTransaction()
         }
+    }
+
+    /** 管理页专用：删除任意行（含收藏），不受「收藏不参与裁剪」那条不变量限制 */
+    fun deleteAnyByIds(ids: List<Long>): Int {
+        if (ids.isEmpty()) return 0
+        var n = 0
+        writableDatabase.beginTransaction()
+        try {
+            for (id in ids) n += writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+        return n
+    }
+
+    /** 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行 */
+    fun deleteByCategory(tag: String?): Int {
+        val where = if (tag == null) "is_favorite = 0" else "is_favorite = 0 AND category LIKE ?"
+        val args = if (tag == null) null else arrayOf("%$tag%")
+        return writableDatabase.delete(TABLE_ITEMS, where, args)
     }
 
     // ── 查询 ──────────────────────────────────────────────
@@ -799,7 +851,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (content.isBlank()) return -1
         // 与采集路径一致的单条上限：备份里的超长单条会让面板每次打开都为它解密一遍，
         // 而「新复制的同样内容不入库、导入的却入库」本身就是行为不一致
-        if (ClipboardStore.exceedsItemLimit(content)) return -1
+        if (ClipboardStore.exceedsItemLimit(content, ClipboardPrefs.of(appContext).effectiveMaxItemBytes().toInt())) return -1
         val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
         val values = ContentValues().apply {
             put("encrypted_content", encrypted)
@@ -899,6 +951,35 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 if (row.favorite) continue
                 out.add(row.id)
                 total -= row.bytes
+            }
+            return out
+        }
+
+        /**
+         * 收藏软上限的淘汰候选（纯函数）。
+         *
+         * 与 [overflowIdsForByteBudget] 的分工：这里收藏**参与**淘汰（软上限就是为它设的，
+         * 见 [ClipboardPrefs.favoriteMaxItems]），条数 / 字节任一超限即从最旧开始删；
+         * 那边则「收藏计入总量但不参与淘汰」（收藏永不因总预算被删）。
+         *
+         * @param rows 必须按最旧在前传入（查询侧即 `ORDER BY created_at ASC`）
+         * @param maxItems 条数上限；`<= 0` 视为不限制
+         * @param maxBytes 字节上限；`<= 0` 视为不限制
+         * @return 应删除的 id（**含收藏**；调用方必须走 `deleteAnyByIds` 之外的含收藏删除入口）
+         */
+        fun favoriteOverflowIds(rows: List<ClipboardRowSize>, maxItems: Int, maxBytes: Long): List<Long> {
+            if (rows.isEmpty()) return emptyList()
+            val itemCap = if (maxItems > 0) maxItems else rows.size
+            val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
+            var kept = rows.size
+            var bytes = rows.sumOf { it.bytes }
+            if (kept <= itemCap && bytes <= byteCap) return emptyList()
+            val out = ArrayList<Long>()
+            for (row in rows) {
+                if (kept <= itemCap && bytes <= byteCap) break
+                out.add(row.id)
+                kept--
+                bytes -= row.bytes
             }
             return out
         }
