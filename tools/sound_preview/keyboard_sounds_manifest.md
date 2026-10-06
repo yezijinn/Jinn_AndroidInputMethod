@@ -17,7 +17,7 @@
 | `kbd_07.ogg` | `var_a` | 由 `006` 派生的轻量变体（音高/EQ 微调，仍为真实音） | 114ms | 1 | 待定 |
 | `kbd_08.ogg` | `006` | Freesound CC0 · id 701113 · https://cdn.freesound.org/previews/701/701113_15173053-lq.ogg | 122ms | 1 | 待定 |
 | `kbd_09.ogg` | `maybe_014` | Freesound CC0 · id 752745 · https://cdn.freesound.org/previews/752/752745_14222278-lq.ogg | 135ms | 1 | 待定 |
-| `kbd_10.ogg` | `maybe_010` | Freesound CC0 · id 253215 · https://cdn.freesound.org/previews/253/253215_789068-lq.ogg | 138ms | 2 | 待定 |
+| `kbd_10.ogg` | `maybe_010` | Freesound CC0 · id 253215 · https://cdn.freesound.org/previews/253/253215_789068-lq.ogg | 138ms | 2 | 六组默认（文字/数字/符号/删除/确认/功能） |
 | `kbd_11.ogg` | `var_c` | 由 `028` 派生的轻量变体（音高/EQ 微调，仍为真实音） | 152ms | 1 | 待定 |
 | `kbd_12.ogg` | `005` | Freesound CC0 · id 734201 · https://cdn.freesound.org/previews/734/734201_15961219-lq.ogg | 159ms | 1 | 待定 |
 | `kbd_13.ogg` | `028` | Freesound CC0 · id 506765 · https://cdn.freesound.org/previews/506/506765_3797507-lq.ogg | 171ms | 1 | 待定 |

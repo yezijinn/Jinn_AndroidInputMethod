@@ -1269,7 +1269,7 @@ class Prefs(context: Context) {
         put(KEY_TAP_SOUND_ON_SILENT, tapSoundOnSilent)
         // ⚠ 分组映射只在**用户真的改过**时才导出（与 translate_provider 同款）：缺键时 getter
         // 回落的是当前默认映射，无条件导出会把「那时的默认」固化成显式值 —— 将来调整默认音色
-        // （例如替换删除键那个警报音）对这批用户失效。
+        // 对这批用户失效。
         if (sp.contains(KEY_TAP_SOUND_MAP)) put(KEY_TAP_SOUND_MAP, tapSoundMap)
         put(KEY_TAP_VIBRATE_ENABLED, tapVibrateEnabled)
         put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)

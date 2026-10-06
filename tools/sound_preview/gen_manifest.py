@@ -65,9 +65,9 @@ with open(mp, 'w', encoding='utf-8') as fp:
             src = f"Mixkit · sfx/{extra} · https://assets.mixkit.co/active_storage/sfx/{extra}/{extra}-preview.mp3"
         else:
             src = f"由 `{extra}` 派生的轻量变体（音高/EQ 微调，仍为真实音）"
-        role = "删除/清空（已定）" if key == "kbd_15" else "待定"
+        role = "六组默认（文字/数字/符号/删除/确认/功能）" if key == "kbd_10" else "待定"
         fp.write(f"| `{key}.ogg` | `{orig}` | {src} | {DUR[key]}ms | {ON[key]} | {role} |\n")
-    fp.write("\n> 注：kbd_15 = 原 `mx2841`，用户指定用于「删除键 / 清空拼音的 x 键」。\n")
+    fp.write("\n> 注：默认映射见 `TapSound.DEFAULT_MAP`（六组统一用 kbd_10）。\n")
 
 print("manifest written ->", mp)
 # verify placement

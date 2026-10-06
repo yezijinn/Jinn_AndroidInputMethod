@@ -434,8 +434,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
         //  展示时可见，功能面板与符号层为 GONE，见 refreshCandidateBar 与 renderFunctionPanel。）
         btnClearCandidates.setOnClickListener {
-            // 清空拼音串与退格同属「删除 / 清空」组：两者都用 kbd_15（警报感），
-            // 让「擦掉输入」在声音上能一眼（耳）分辨出来，不与普通打字混淆
+            // 清空拼音串与退格同属「删除 / 清空」组，声音与其余键相同（六组默认统一），
+            // 靠 force 跳过被「按下那一声」挡住的节流，让「已经清干净了」确实响出来
             KeyFeedback.fire(TapSound.G_ERASE, force = true)
             Diagnostics.i(
                 TAG,

@@ -146,15 +146,17 @@ class TapSoundTest {
     }
 
     /**
-     * 默认映射里「删除 / 清空」必须是用户 2026-10-05 指定的 kbd_15（索引 14）。
+     * 默认映射：六组统一用 kbd_10（索引 9）。
      *
-     * 它同时是 `tools/sound_preview/keyboard_sounds_manifest.md` 里标注的角色；
-     * 谁改默认映射把这条改掉，两处就对不上了。
+     * 需求是「分组音色全部用音效 10」—— 一条声音对所有按键，分组只留在震动波形上。
+     * 清单里 kbd_10 那一行标的就是这个默认音；谁改默认映射把这条改掉，两处就对不上了。
      */
     @Test
-    fun `删除清空组默认用 kbd_15`() {
-        assertEquals(14, TapSound.DEFAULT_MAP[TapSound.G_ERASE])
-        assertEquals("kbd_15.ogg", TapSound.assetName(TapSound.DEFAULT_MAP[TapSound.G_ERASE]))
+    fun `六组默认统一用 kbd_10`() {
+        for (g in 0 until TapSound.GROUP_COUNT) {
+            assertEquals("组 $g 的默认音", 9, TapSound.DEFAULT_MAP[g])
+        }
+        assertEquals("kbd_10.ogg", TapSound.assetName(TapSound.DEFAULT_MAP[0]))
     }
 
     // ── 震动档位 ─────────────────────────────────────────────
