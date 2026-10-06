@@ -1144,22 +1144,28 @@ class JinnIme : InputMethodService() {
      */
     private fun flushPendingGalleryImage() {
         val picked = GalleryInsert.takePending() ?: return
-        if (currentInputConnection == null) {
-            Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
-            return
-        }
-        // 选图期间前台可能被切换：输入框换了就不插 —— 只比包名不够（同一应用换个会话就是另一个
-        // 输入框），与 [flushPendingPaste] 同口径用 fieldKey。图片落到别的应用或别的会话都不只是
-        // 「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
+        // 选图期间前台可能被切换：输入框换了就不插。标识用图库专用的宽口径（带 inputType / imeOptions /
+        // hint 摘要）—— 自绘输入框的 fieldId 常恒为同一个值，只靠包名 + fieldId 分不出同一应用的不同会话。
+        // 图落到别的应用或别的会话都不只是「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
         // 任一侧取不到标识时放行，不因缺信息丢掉用户的一次选择。
-        val current = pendingPasteFieldKey(currentInputEditorInfo)
+        val current = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
         if (picked.hostKey != null && current != null && picked.hostKey != current) {
             Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
+            toast(TEXT_GALLERY_FIELD_CHANGED)
             return
         }
-        val ok = GalleryInsert.commit(this, picked.file, picked.mime)
-        // ⚠ ok 不可信（闲鱼/DeepSeek 返回 true 却毫无效果），只记日志、不作任何展示判据
-        Diagnostics.i(TAG, "图库快贴：插入 ok=$ok")
+        when (GalleryInsert.commit(this, picked.file, picked.mime)) {
+            GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "图库快贴：已提交")
+            GalleryInsert.InsertResult.FileMissing -> {
+                Diagnostics.w(TAG, "图库快贴：待插入图片已失效")
+                toast(TEXT_GALLERY_GONE)
+            }
+            // 无连接说明输入会话已结束、宿主拒收多半意味着入口本不该出现：都不弹提示，免得变成噪音
+            GalleryInsert.InsertResult.NoConnection ->
+                Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
+            GalleryInsert.InsertResult.Rejected ->
+                Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
+        }
     }
 
     /**
@@ -1169,9 +1175,9 @@ class JinnIme : InputMethodService() {
      * 选图期间键盘让位给系统选择器，回来时 `onStartInputView` 重来一遍 —— 那正是提交通道。
      */
     private fun openGalleryPicker() {
-        // 带上发起**输入框**的标识：选图期间前台可能被切换，哪怕同一个应用里换个会话也是另一个
-        // 输入框，回来时靠它核对（见 [flushPendingGalleryImage]）
-        val hostKey = pendingPasteFieldKey(currentInputEditorInfo)
+        // 带上发起**输入框**的标识（图库专用宽口径，见 [GalleryInsert.galleryFieldKeyOf]）：
+        // 选图期间前台可能被切换，哪怕同一个应用里换个会话也是另一个输入框，回来时靠它核对
+        val hostKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
         val intent = Intent(this, GalleryPickActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(GalleryInsert.EXTRA_HOST_KEY, hostKey)
@@ -3685,6 +3691,12 @@ class JinnIme : InputMethodService() {
 
         /** 写系统剪贴板失败（2026-10-02 修复 L-439：此前只记日志，用户按了没反应） */
         const val TEXT_COPY_FAILED = "复制失败，请重试"
+
+        /** 图库快贴：待插入图片已失效（被系统清 cache 或其后被清理）—— 落地阶段的失败要说话（L-1006） */
+        const val TEXT_GALLERY_GONE = "图片已失效，未插入"
+
+        /** 图库快贴：选图期间切换了输入框，为免插错地方丢弃这次选择 */
+        const val TEXT_GALLERY_FIELD_CHANGED = "已切换输入框，图片未插入"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
         const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"

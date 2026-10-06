@@ -10,8 +10,8 @@ import java.io.File
  * 图库快贴的纯逻辑护栏。
  *
  * 真机取证（2026-10-07）确认了三条不做就会踩的约束：宿主不声明图片能力时装入口只会白点、
- * `commitContent` 返回值不可信、缺 GRANT 标志时宿主会把 URI 当纯文本。另有三次复核修出的
- * 缺口（输入框粒度、清理保护面、提交前存在性），都在下面钉住。
+ * `commitContent` 返回值不可信、缺 GRANT 标志时宿主会把 URI 当纯文本。另有一批复核修出的
+ * 缺口（输入框标识、清理保护面、提交前存在性、失败上报），都在下面钉住。
  */
 class GalleryInsertTest {
 
@@ -63,6 +63,20 @@ class GalleryInsertTest {
     }
 
     /**
+     * 保留张数必须由另两个常量推导（L-1007）。
+     *
+     * 写死 5 会掩盖「张数与字节在单张上限下互斥」这件事，后来调参的人容易以为放宽张数就能多留。
+     */
+    @Test
+    fun 保留张数由总字节与单张上限推导() {
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        assertTrue(
+            "KEEP_FILES 必须由常量推导",
+            "private val KEEP_FILES = (MAX_CACHE_BYTES / MAX_BYTES).toInt() + PROTECTED_RECENT" in src,
+        )
+    }
+
+    /**
      * 能力标记必须由 IME 重放（L-998）。
      *
      * 视图重建（换肤 / 反馈开关 / 符号布局变更）换掉整棵树，视图字段回落 `false`；
@@ -78,25 +92,42 @@ class GalleryInsertTest {
     }
 
     /**
-     * 落库前必须核对发起**输入框**（L-999 首修到包名，L-1002 收到 fieldKey）。
+     * 图库的输入框标识必须比粘贴暂存宽（L-1005）。
      *
-     * 只比包名时，同一个应用里换个会话（另一个输入框）会被放行，图插进用户刚切过去的那个；
-     * `flushPendingPaste` 早就用 `fieldKeyOf(packageName, fieldId)`，两处口径必须一致。
+     * `fieldKeyOf` 只有包名 + fieldId，而自绘输入框（微信聊天框等）的 fieldId 常恒为同一个值
+     * ⇒ 分不出同一应用的不同会话。图库的误插代价是「图片进了别的会话」，故多带
+     * `inputType` / `imeOptions` / hint 摘要；hint 只取摘要、不落明文。
      */
     @Test
-    fun 落库前核对发起输入框() {
-        val src = TestSources.codeSource("JinnIme.kt")
-        val body = src.substringAfter("private fun flushPendingGalleryImage()")
+    fun 图库输入框标识比粘贴暂存更宽() {
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        val body = src.substringAfter("internal fun galleryFieldKeyOf(").substringBefore("fun putPending(")
+        for (field in listOf("fieldId", "inputType", "imeOptions", "hintText")) {
+            assertTrue("标识要带 $field", field in body)
+        }
+        assertTrue("hint 只取摘要、不落明文", "hintDigest" in body && "hashCode()" in body)
+        val mine = TestSources.codeSource("JinnIme.kt")
+        val uses = Regex("""galleryFieldKeyOf\(currentInputEditorInfo\)""").findAll(mine).count()
+        assertEquals("发起点与落库都要用图库口径", 2, uses)
+    }
+
+    /**
+     * 落地阶段的**本地可判定**失败要上报（L-1006）：文件失效与输入框已切换各给一次提示；
+     * 宿主拒收与无连接保持静默，免得变成噪音。
+     */
+    @Test
+    fun 落地失败的两类会上报界面() {
+        val mine = TestSources.codeSource("JinnIme.kt")
+        val body = mine.substringAfter("private fun flushPendingGalleryImage()")
             .substringBefore("private fun openGalleryPicker()")
-        assertTrue(
-            "落库要按输入框标识比对，不能只比包名",
-            "pendingPasteFieldKey(currentInputEditorInfo)" in body,
-        )
-        assertTrue("发起点要把标识带进选图页", "putExtra(GalleryInsert.EXTRA_HOST_KEY" in src)
-        assertTrue(
-            "选图页要读回标识并随桥保存",
-            "putPending(result.file, result.mime, hostKey)" in TestSources.codeSource("GalleryPickActivity.kt"),
-        )
+        assertTrue("文件失效要提示", "toast(TEXT_GALLERY_GONE)" in body)
+        assertTrue("输入框已切换要提示", "toast(TEXT_GALLERY_FIELD_CHANGED)" in body)
+        val rejectedTail = body.substringAfter("InsertResult.Rejected", "").take(60)
+        assertFalse("宿主拒收不弹提示", "toast" in rejectedTail)
+        val gallery = TestSources.codeSource("GalleryInsert.kt")
+        for (state in listOf("Submitted", "Rejected", "NoConnection", "FileMissing")) {
+            assertTrue("提交结果要有 $state 态", state in gallery)
+        }
     }
 
     /**
@@ -123,5 +154,6 @@ class GalleryInsertTest {
         val src = TestSources.codeSource("GalleryInsert.kt")
         val body = src.substringAfter("fun commit(").substringBefore("fun copyToCache(")
         assertTrue("commit 要先判文件存在与长度", "!file.exists() || file.length() == 0L" in body)
+        assertTrue("并回报 FileMissing 让调用方说话", "InsertResult.FileMissing" in body)
     }
 }
