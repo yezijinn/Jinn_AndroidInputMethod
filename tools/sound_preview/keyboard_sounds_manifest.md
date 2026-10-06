@@ -22,8 +22,6 @@
 | `kbd_12.ogg` | `005` | Freesound CC0 · id 734201 · https://cdn.freesound.org/previews/734/734201_15961219-lq.ogg | 159ms | 1 | 待定 |
 | `kbd_13.ogg` | `028` | Freesound CC0 · id 506765 · https://cdn.freesound.org/previews/506/506765_3797507-lq.ogg | 171ms | 1 | 待定 |
 | `kbd_14.ogg` | `mixkit-single-key-type-2533` | Mixkit · sfx/2533 · https://assets.mixkit.co/active_storage/sfx/2533/2533-preview.mp3 | 183ms | 1 | 待定 |
-| `kbd_15.ogg` | `mx2841` | Mixkit · sfx/2841 · https://assets.mixkit.co/active_storage/sfx/2841/2841-preview.mp3 | 185ms | 1 | 删除/清空（已定） |
-| `kbd_16.ogg` | `maybe_057` | Freesound CC0 · id 842480 · https://cdn.freesound.org/previews/842/842480_10196790-lq.ogg | 205ms | 2 | 待定 |
-| `kbd_17.ogg` | `maybe_003` | Freesound CC0 · id 491920 · https://cdn.freesound.org/previews/491/491920_10630312-lq.ogg | 210ms | 2 | 待定 |
+| `kbd_15.ogg` | `maybe_057` | Freesound CC0 · id 842480 · https://cdn.freesound.org/previews/842/842480_10196790-lq.ogg | 205ms | 2 | 待定 |
+| `kbd_16.ogg` | `maybe_003` | Freesound CC0 · id 491920 · https://cdn.freesound.org/previews/491/491920_10630312-lq.ogg | 210ms | 2 | 待定 |
 
-> 注：kbd_15 = 原 `mx2841`，用户指定用于「删除键 / 清空拼音的 x 键」。

@@ -50,12 +50,14 @@ internal object TapSound {
     const val ASSET_DIR = "sounds/keyboard"
 
     /**
-     * 音效个数（kbd_01.ogg … kbd_17.ogg，按时长升序命名）。
+     * 音效个数（kbd_01.ogg … kbd_16.ogg，按时长升序命名）。
      *
      * 来源与授权见 `tools/sound_preview/keyboard_sounds_manifest.md`：
      * Freesound 条目为 CC0，Mixkit 条目为免费商用音效。
+     * ⚠ 增删资产后必须同步三处：本常量、[SOUND_DURATION_MS]、清单里的文件名 ——
+     * 编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
      */
-    const val SOUND_COUNT = 17
+    const val SOUND_COUNT = 16
 
     /** 「这一组不播放声音」的哨兵值（与合法索引 0..SOUND_COUNT-1 区分开） */
     const val NONE = -1
@@ -75,7 +77,7 @@ internal object TapSound {
      * 但**内容**对不上只能人工复核 —— 别把它当成音效的事实来源。
      */
     val SOUND_DURATION_MS = intArrayOf(
-        60, 66, 67, 73, 79, 109, 114, 122, 135, 138, 152, 159, 171, 183, 185, 205, 210,
+        60, 66, 67, 73, 79, 109, 114, 122, 135, 138, 152, 159, 171, 183, 205, 210,
     )
 
     /**

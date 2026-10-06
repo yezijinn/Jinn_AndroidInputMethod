@@ -30,6 +30,7 @@ import subprocess
 import sys
 import os
 import re
+import io
 import zipfile
 from pathlib import Path
 
@@ -397,6 +398,53 @@ def main():
         print(f"[错误] 音效被压缩，openFd 会失败: {compressed}", file=sys.stderr)
         sys.exit(1)
     print(f"音效校验: {len(sound_entries)} 个条目全部未压缩")
+
+    # 与**代码里的清单**逐项对账。上面只验了「条目存在且未压缩」，没验「条目就是代码要的那几个」——
+    # 增删资产时漏改 SOUND_COUNT、或编号不连续（assetName 靠序号拼名字，中间少一个就整体错位），
+    # 症状是设置页列出「音效 17 · 210ms」而点下去无声：编译、单测、lint 全绿，只有逐项比名字能拦。
+    # 清单的事实来源是 TapSound.SOUND_COUNT + SOUND_DURATION_MS，直接从源码读，不另建一份。
+    tap_src = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "app", "src", "main", "java", "com", "jinn", "inputmethod", "TapSound.kt",
+    )
+    if not os.path.isfile(tap_src):
+        print(f"[错误] 找不到音效清单来源: {tap_src}", file=sys.stderr)
+        sys.exit(1)
+    tap = io.open(tap_src, encoding="utf-8").read()
+
+    m_count = re.search(r"const val SOUND_COUNT\s*=\s*(\d+)", tap)
+    if not m_count:
+        print("[错误] 没能从 TapSound.kt 解析 SOUND_COUNT", file=sys.stderr)
+        sys.exit(1)
+    sound_count = int(m_count.group(1))
+
+    m_dur = re.search(r"val SOUND_DURATION_MS\s*=\s*intArrayOf\((.*?)\)", tap, re.S)
+    if not m_dur:
+        print("[错误] 没能从 TapSound.kt 解析 SOUND_DURATION_MS", file=sys.stderr)
+        sys.exit(1)
+    durations = [int(x) for x in re.findall(r"\d+", m_dur.group(1))]
+    if len(durations) != sound_count:
+        print(
+            f"[错误] 时长表 {len(durations)} 项与 SOUND_COUNT={sound_count} 不符: {durations}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    expected = {f"assets/sounds/keyboard/kbd_{i + 1:02d}.ogg" for i in range(sound_count)}
+    actual = {i.filename for i in sound_entries}
+    if expected != actual:
+        only_code = sorted(expected - actual)
+        only_apk = sorted(actual - expected)
+        print("[错误] 音效条目与 TapSound.kt 的清单不一致", file=sys.stderr)
+        if only_code:
+            print(f"  代码要用但产物里没有: {only_code}", file=sys.stderr)
+        if only_apk:
+            print(f"  产物里多出: {only_apk}", file=sys.stderr)
+        sys.exit(1)
+    print(
+        f"音效对账: {sound_count} 个条目与 TapSound.SOUND_COUNT 逐项一致"
+        f"（时长 {min(durations)}-{max(durations)}ms）"
+    )
 
     # 3. 复制到根目录：**只留一个**固定命名的产物 ./com.jinn.inputmethod.apk。
     #    用一个固定名而不是时间戳名，是为了不发错包：根目录那份永远就是本次构建的产物，

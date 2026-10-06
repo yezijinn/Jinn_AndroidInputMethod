@@ -3549,10 +3549,15 @@ class RecentFixesRegressionTest {
             "入树回调要读当前策略，不能用闭包捕获的调用时快照",
             "child?.applyPlatformFeedbackPolicy(suppressSoundNow, suppressHapticNow)" in engine,
         )
-        val extra = listOf(
-            "JinnIme.kt", "PinyinKeyboardView.kt", "ClipboardPanelView.kt", "SearchPanelView.kt",
-            "PinyinKey.kt", "MicButton.kt", "TapSoundActivity.kt",
-        ).filter { "setOnHierarchyChangeListener" in codeOf(it) }
+        // 扫**整个源码目录**而不是列几个文件：这条回归要「将来多一个容器类并用了这条 API」才会漏，
+        // 固定清单只覆盖今天已有的那几个。测试工作目录是 app/（见 TestSources 的路径候选）。
+        val extra = File("src/main/java/com/jinn/inputmethod")
+            .walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { it.readText().contains("setOnHierarchyChangeListener") }
+            .map { it.name }
+            .filter { it != "KeyFeedback.kt" }
+            .toList()
         assertTrue("入树回调只允许引擎那一处设置，现状另外出现在：$extra", extra.isEmpty())
 
         // 两套键盘各有一个退格键（两个实例），收起键盘时都要复位按下态
@@ -3561,10 +3566,15 @@ class RecentFixesRegressionTest {
             "语音退格的按下态要在收起键盘时复位（拼音那份由 stopBackspaceRepeat 负责）",
             "voiceBackspaceView?.isPressed = false" in ime,
         )
-        // 反馈判据只判空、不展开动态值（expand 的默认参数会白跑一次时钟读取与格式化）
+        // 反馈判据只判空、不展开动态值（expand 的默认参数会白跑一次时钟读取与格式化）。
+        // 断言**两处都在**而不是「文件里出现过」：`symbolKeyHasContent(c)` 在触摸抬起与无障碍两个
+        // 分支各出现一次，只改其中一处、另一处仍留着，「出现过」照样成立（变异验证实测过）。
+        val pkv = codeOf("PinyinKeyboardView.kt")
+        val contentChecks = Regex("symbolKeyHasContent\\(c\\)").findAll(pkv).count()
+        assertTrue("符号层的反馈判据要覆盖触摸与无障碍两条路径，实际 $contentChecks 处", contentChecks == 2)
         assertTrue(
             "符号层的反馈判据不得走 symbolValueOf",
-            "symbolKeyHasContent(c)" in codeOf("PinyinKeyboardView.kt"),
+            "symbolKeyHasContent" in pkv && "symbolValueOf(c) != null" !in pkv,
         )
     }
 

@@ -357,10 +357,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             //  清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
             //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
             deleteOne()
-            // 连删期间**不产生新的触摸事件**，反馈必须在这里单独补 —— 否则按住退格只有第一下会响。
-            // 55ms 的重复节奏由 [KeyFeedback] 的「删除组节流」（150ms）压到约每秒 6~7 次：
-            // 既跟得上手速，又不会叠成机关枪。
-            KeyFeedback.fire(TapSound.G_ERASE)
+            // 按住期间**不发声**：真实键盘的连删是一次按下里的连续动作，听感上只有第一下 ——
+            // 每 55ms 响一次会变成机关枪，与实物不符。发声只留在按下那一下
+            // （见 [handleBackspaceTouch]）；「双击 + 长按清空」那一次仍然发，
+            // 因为它是不可撤销的动作，需要确认感。
             backspaceHandler.postDelayed(this, backspaceRepeatIntervalMs)
         }
     }
@@ -1766,8 +1766,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 backspaceHeld = true
                 backspacePressStart = System.currentTimeMillis()
                 deleteOne()
-                // 点击退格的第一下：与连删循环（backspaceRepeatRunnable）共用同一个组，
-                // 两处都调 [KeyFeedback.fire]，节流在引擎里统一做，这里不需要判重
+                // 按下立即发声，**只有这一声**：按住不松手时连删循环不再发声
+                // （一次按下 = 一次声音，与真实键盘一致，见 [backspaceRepeatRunnable]）
                 KeyFeedback.fire(TapSound.G_ERASE)
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
@@ -1846,8 +1846,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内容已全部清空：停掉仍在跑的连续删除。否则会以 55ms 间隔继续发 DEL，
         // 在部分宿主（如 WebView）里可能被解释成「返回」等其它动作。
         backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
-        // 清空是不可撤销的一次性动作，且紧跟在连删循环后面：走普通节流会被上一次连删反馈挡掉，
-        // 而那正是最需要给出「已经清干净了」提示的时刻，故强制发一次
+        // 清空是不可撤销的一次性动作，且与「按下那一声」间隔极短：走普通节流会被**按下那声**挡掉，
+        // 而这正是最需要给出「已经清干净了」提示的时刻，故强制发一次
         KeyFeedback.fire(TapSound.G_ERASE, force = true)
         Diagnostics.i(TAG, "退格双击+长按：清空全部")
         onTripleBackspace()

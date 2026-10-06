@@ -98,7 +98,7 @@ class TapSoundTest {
     @Test
     fun `asset 名按两位序号拼接`() {
         assertEquals("kbd_01.ogg", TapSound.assetName(0))
-        assertEquals("kbd_17.ogg", TapSound.assetName(TapSound.SOUND_COUNT - 1))
+        assertEquals("kbd_16.ogg", TapSound.assetName(TapSound.SOUND_COUNT - 1))
     }
 
     /**
@@ -121,7 +121,7 @@ class TapSoundTest {
     @Test
     fun `设置页显示名带补零序号与时长`() {
         assertEquals("音效 01 · 60ms", TapSound.soundLabel(0))
-        assertEquals("音效 17 · 210ms", TapSound.soundLabel(TapSound.SOUND_COUNT - 1))
+        assertEquals("音效 16 · 210ms", TapSound.soundLabel(TapSound.SOUND_COUNT - 1))
         assertEquals("「不播放」由调用方显示，这里应是空串", "", TapSound.soundLabel(TapSound.NONE))
         // 越界索引不崩（映射串已被钳位，这里是最后一道防线）
         assertEquals("", TapSound.soundLabel(TapSound.SOUND_COUNT + 5))

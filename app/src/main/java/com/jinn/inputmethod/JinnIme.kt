@@ -367,9 +367,8 @@ class JinnIme : InputMethodService() {
     private val backspaceRunnable = object : Runnable {
         override fun run() {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
-            // 连删期间不产生新的触摸事件，反馈必须在这里补；55ms 的节奏由 [KeyFeedback]
-            // 的删除组节流（150ms）压到约每秒 6~7 次，不会叠成机关枪
-            KeyFeedback.fire(TapSound.G_ERASE)
+            // 与拼音侧同口径：按住期间不发声（一次按下只响第一下，见 bindBackspace 的 ACTION_DOWN），
+            // 否则每 55ms 一次会叠成机关枪
             ui.postDelayed(this, BACKSPACE_REPEAT_MS)
         }
     }
@@ -1991,6 +1990,8 @@ class JinnIme : InputMethodService() {
         statusDot = null
         statusLabel = null
         hintLabel = null
+        // 语音退格键同样要断：它经 parent 链指着整棵语音键盘树（含主题包装的 Context）
+        voiceBackspaceView = null
         unregisterNetwork()
         // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
         // 这里不置 null：后续 refreshConfig 仍可能重新 start（stop 幂等）。

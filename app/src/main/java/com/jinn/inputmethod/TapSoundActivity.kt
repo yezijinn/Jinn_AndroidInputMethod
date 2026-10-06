@@ -452,7 +452,7 @@ class TapSoundActivity : Activity() {
         // 文案在代码里下发：strings.xml 默认不改动，与设置页的 TEXT_* 同做法
         const val TEXT_TITLE = "敲击音效反馈"
         const val TEXT_DESC = "给按键配上声音与震动。\n" +
-            "六个分组可各选一个音色（全程真实键盘录音）。\n" +
+            "六个分组可各选一个音色（取材真实键盘录音，部分为轻量变体）。\n" +
             "手机静音或关闭系统触摸提示音时，按键音按系统口径不出声。"
         const val TEXT_SOUND_SWITCH = "敲击音效"
         const val TEXT_SILENT_SWITCH = "静音时仍播放"
