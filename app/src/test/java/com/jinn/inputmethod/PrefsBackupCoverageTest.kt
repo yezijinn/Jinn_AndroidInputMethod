@@ -253,6 +253,20 @@ class PrefsBackupCoverageTest {
     }
 
     @Test
+    fun `非平凡默认值的键导出前必须问「用户改过没有」`() {
+        // 这三个键的 getter 在缺键时回落的不是平凡默认（音量 50 / 六组统一用 kbd_10 / 中档）：
+        // 无条件导出会把「当时的默认」固化成显式值，将来调默认值这批人（恰恰是从没改过的那批）
+        // 永远拿不到。两个开关的默认是 false，导出与否等价，故不在其列。
+        val export = bodyOf("exportForBackup")
+        for (key in listOf("KEY_TAP_SOUND_VOLUME", "KEY_TAP_SOUND_MAP", "KEY_TAP_VIBRATE_STRENGTH")) {
+            assertTrue(
+                "$key 的导出没有 sp.contains 守卫（缺键时会把当时的默认值写进备份）",
+                Regex("""if \(sp\.contains\($key\)\)""").containsMatchIn(export),
+            )
+        }
+    }
+
+    @Test
     fun `导出与导入两侧都必须覆盖全部键`() {
         // 比逐项类型更强的兜底：新增一个键时，只加进导出、或只加进导入，都会在这里被抓住
         val export = bodyOf("exportForBackup")
