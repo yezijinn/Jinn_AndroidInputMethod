@@ -196,37 +196,64 @@ internal object GalleryInsert {
     /** 读文件头供 [sniffImageMime] 用（读不到给空数组，嗅探自然走兜底） */
     private fun readHead(file: File): ByteArray = runCatching {
         val head = ByteArray(12)
-        val n = java.io.FileInputStream(file).use { it.read(head) }
-        if (n <= 0) ByteArray(0) else head.copyOf(n)
+        var filled = 0
+        java.io.FileInputStream(file).use { input ->
+            // 单次 read 允许短读，循环读到 12 字节或 EOF（L-1012）
+            while (filled < head.size) {
+                val n = input.read(head, filled, head.size - filled)
+                if (n <= 0) break
+                filled += n
+            }
+        }
+        if (filled == 0) ByteArray(0) else head.copyOf(filled)
     }.getOrDefault(ByteArray(0))
 
     /**
      * 按文件头判图片类型（纯函数，供守卫枚举格式）。
      *
-     * 认 JPEG / PNG / GIF / WebP / HEIF 家族五种常见形态，都不是时兜底 `image/png` ——
+     * 认 JPEG / PNG / GIF / WebP / HEIF 家族 / AVIF 六种形态，都不是时兜底 `image/png` ——
      * 兜底必须是**具体**类型：通配属性在 `ClipDescription` 里是无定义行为，严格解析的宿主会直接认不出。
-     * `ftyp` 在偏移 4，MP4 也有，但入口是 `PickVisualMedia.ImageOnly`，不会拿到视频。
+     * ISO-BMFF 的 brand 决定 HEIF 家族还是 AVIF，只判偏移 4 的 `ftyp` 会把 AVIF 当成 HEIC（L-1011）；
+     * 两者都不是（MP4 的 `isom` 等）同样走兜底 —— 入口是 `PickVisualMedia.ImageOnly`，正常拿不到视频。
      */
     internal fun sniffImageMime(head: ByteArray): String {
         fun at(i: Int): Int = if (i < head.size) head[i].toInt() and 0xFF else -1
+        fun tag4(from: Int): String = buildString {
+            for (k in from until from + 4) {
+                val b = at(k)
+                if (b < 0) return ""
+                append(b.toChar())
+            }
+        }
         return when {
             at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF -> "image/jpeg"
             at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "image/png"
             at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 -> "image/gif"
             at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 &&
                 at(8) == 0x57 && at(9) == 0x45 && at(10) == 0x42 && at(11) == 0x50 -> "image/webp"
-            at(4) == 0x66 && at(5) == 0x74 && at(6) == 0x79 && at(7) == 0x70 -> "image/heic"
+            tag4(4) == "ftyp" -> when (val brand = tag4(8)) {
+                "avif", "avis" -> "image/avif"
+                "mif1", "msf1" -> "image/heic"
+                // 其余 HEIF 家族 brand（heic / heix / hevc / hevx / heim / heis …）都以 he 起头
+                else -> if (brand.startsWith("he")) "image/heic" else "image/png"
+            }
             else -> "image/png"
         }
     }
 
-    /** 与 [sniffImageMime] 结果对应的扩展名 */
+    /**
+     * 与 [sniffImageMime] 结果对应的扩展名。
+     *
+     * 未列出的类型（`image/bmp`、`image/tiff` 等）取 MIME 子类型当扩展名，滤掉非字母数字 ——
+     * 固定给 `png` 会让后缀与内容不符（L-1011）。
+     */
     private fun extOf(mime: String): String = when (mime) {
         "image/jpeg" -> "jpg"
         "image/gif" -> "gif"
         "image/webp" -> "webp"
         "image/heic" -> "heic"
-        else -> "png"
+        "image/avif" -> "avif"
+        else -> mime.substringAfter('/', "").filter { it.isLetterOrDigit() }.ifEmpty { "png" }
     }
 
     /**

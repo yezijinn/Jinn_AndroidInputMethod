@@ -2899,9 +2899,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 onClick = { listener?.onOpenGallery() },
             ))
         }
-        // 第 7 键「翻译」：只由总开关控制（用户 2026-09-30 定），关掉后这个键不存在、面板回到 6 键。
-        // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[翻译]/收起，**「收起」恒为最右端**
-        // （用户 2026-09-30 追加要求，两个键的先后不可颠倒）。
+        // 「翻译」键：只由总开关控制（2026-09-30 定），关掉后这个键不存在。
+        // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[图库]/[翻译]/收起，**「收起」恒为最右端**
+        // （2026-09-30 追加要求，两个键的先后不可颠倒）。
         // 本帧只读一次 translate_enabled（与 refreshCandidateBar 的「同键只读一遍」约定一致）。
         if (Prefs(context).translateEnabled) {
             translateButtonBox = buildFunctionButton(
@@ -2923,6 +2923,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
             hint = "键盘",
             onClick = { listener?.onHideKeyboard() },
         ))
+        // 8 键（图库 + 翻译同开）时按钮会被压到标签放不下：weight 均分下 360dp 屏每键内容区
+        // 只剩 25dp，而 13sp 的两个汉字约 26dp；容器宽度是 match_parent，横向滚动条这时不介入
+        // （L-1010）。内边距从 8dp 收到 4dp，320dp 屏也能给到 28dp。
+        if (viewCandidateList.childCount >= PANEL_COMPACT_SLOTS) {
+            for (i in 0 until viewCandidateList.childCount) {
+                viewCandidateList.getChildAt(i).setPadding(dp(4), dp(4), dp(4), dp(4))
+            }
+        }
         Diagnostics.v(
             TAG,
             "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
@@ -2956,14 +2964,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
             isFocusable = true
             // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
             contentDescription = "$label $hint"
-            // 功能面板按钮（历史 / 方向 / 全选 / 复制 / 粘贴 / 翻译 / 收起）统一归「功能切换」组：
+            // 功能面板按钮（历史 / 方向 / 全选 / 复制 / 粘贴 / 图库 / 翻译 / 收起）统一归「功能切换」组：
             // 这里是它们唯一的构建出口，挂一处即全覆盖
             setOnClickListener {
                 KeyFeedback.fire(TapSound.G_FUNC)
                 onClick()
             }
         }
-        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（6 或 7 个按钮，翻译键按总开关增减）
+        // 百分比均分：每个按钮 weight=1，均分候选栏宽度（基础 6 个，图库键按宿主声明增减、翻译键按总开关增减；
+        // 到 8 个时内边距在 renderFunctionPanel 里收窄，见 L-1010）
         val lp = LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
         ).apply {
@@ -3516,6 +3525,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
+        const val PANEL_COMPACT_SLOTS = 8
 
         /** 功能面板「翻译」键的两种文案（在途请求时切换并置灰防连点） */
         const val LABEL_TRANSLATE = "翻译"

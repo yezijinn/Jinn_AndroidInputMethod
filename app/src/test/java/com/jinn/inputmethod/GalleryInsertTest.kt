@@ -177,9 +177,13 @@ class GalleryInsertTest {
         assertEquals("GIF", "image/gif", GalleryInsert.sniffImageMime("GIF89a".toByteArray()))
         assertEquals("WebP", "image/webp", GalleryInsert.sniffImageMime("RIFF????WEBPVP8 ".toByteArray()))
         assertEquals("HEIF", "image/heic", GalleryInsert.sniffImageMime("????ftypheic".toByteArray()))
+        assertEquals("HEIF 家族 mif1", "image/heic", GalleryInsert.sniffImageMime("????ftypmif1".toByteArray()))
+        assertEquals("AVIF 不能被当成 HEIC", "image/avif", GalleryInsert.sniffImageMime("????ftypavif".toByteArray()))
+        assertEquals("非图片的 ftyp 走兜底", "image/png", GalleryInsert.sniffImageMime("????ftypisom".toByteArray()))
         assertEquals("都不认时兜底具体类型", "image/png", GalleryInsert.sniffImageMime(bytes(0x01, 0x02)))
         assertEquals("空头不炸", "image/png", GalleryInsert.sniffImageMime(ByteArray(0)))
         assertEquals("截断的 JPEG 头不误判", "image/png", GalleryInsert.sniffImageMime(bytes(0xFF, 0xD8)))
+        assertTrue("未列出的类型取 MIME 子类型当扩展名", "substringAfter('/', \"\")" in src)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
