@@ -35,6 +35,24 @@
                 android:resource="@xml/method" />
         </service>
 
+        <!-- 图库快贴：选图中转页（无界面；Photo Picker → 复制进 cache → 交 IME 插入） -->
+        <activity
+            android:name=".GalleryPickActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- 图库快贴：只对外开放 cache/gallery_share 下的选图（宿主经 commitContent 临时授权读） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/share_file_paths" />
+        </provider>
+
         <!-- 分类词库页：从设置页进入，按需下载/删除可选词库包 -->
         <activity
             android:name=".DictManagerActivity"

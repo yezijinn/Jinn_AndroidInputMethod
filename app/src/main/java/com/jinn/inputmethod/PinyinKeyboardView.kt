@@ -81,6 +81,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onSelectionModeChanged(active: Boolean)
         /** 功能面板：粘贴剪贴板最新内容（剪贴板为空则无反应） */
         fun onPasteClipboard()
+        /** 功能面板：从相册选图并插入当前输入框（仅宿主声明可接收图片时出现该键，见 `JinnIme.applyHostImageCapability`） */
+        fun onOpenGallery()
         /** 功能面板：全选当前输入框全部文本 */
         fun onSelectAll()
         /** 功能面板：复制选中文本到系统剪贴板 */
@@ -2888,6 +2890,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
             hint = "文本",
             onClick = { listener?.onPasteClipboard() },
         ))
+        // 「图库」键（2026-10-07 图库快贴）：只在宿主声明可接收图片时出现 —— 实测 QQ/TIM/抖音/
+        // 邮箱/笔记的输入框声明为空且拒收，露键只会白点；声明逐输入框变化，由 IME 每次会话推送。
+        if (hostImageCapable) {
+            viewCandidateList.addView(buildFunctionButton(
+                label = "图库",
+                hint = "快贴",
+                onClick = { listener?.onOpenGallery() },
+            ))
+        }
         // 第 7 键「翻译」：只由总开关控制（用户 2026-09-30 定），关掉后这个键不存在、面板回到 6 键。
         // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[翻译]/收起，**「收起」恒为最右端**
         // （用户 2026-09-30 追加要求，两个键的先后不可颠倒）。
@@ -2915,6 +2926,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.v(
             TAG,
             "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
+                (if (hostImageCapable) "/图库" else "") +
                 (if (translateButtonBox != null) "/翻译" else "") + "/收起" +
                 "（当前方案=${scheme.displayName}）",
         )
@@ -3010,6 +3022,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 宿主图片能力变化（IME 在每次 `onStartInputView` 后调用）：功能面板上「图库」键随之增删。
+     *
+     * 幂等（值没变直接返回）。与 [setTranslating] 的就地改字不同，这个键是**增删**，
+     * 只能让候选栏重画一帧（[refreshCandidateBar] 在无候选时即渲染功能面板）。
+     */
+    fun setHostImageCapable(capable: Boolean) {
+        if (hostImageCapable == capable) return
+        hostImageCapable = capable
+        refreshCandidateBar()
+    }
+
+    /**
      * 把「翻译中」的视觉状态刷到按钮上（文案 / 可点 / 透明度）。
      *
      * 抽出共用：[renderFunctionPanel] 重建按钮与 [setTranslating] 就地切换必须**同款** ——
@@ -3083,6 +3107,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 是否有在途翻译请求（本视图的显示态；请求代际校验在 IME 侧，见 JinnIme.startTranslate） */
     private var translateInFlight = false
+
+    /**
+     * 宿主是否声明可接收图片（`EditorInfo.contentMimeTypes` 里有以 `image/` 开头的类型）：决定功能面板
+     * 「图库」键的显隐。由 IME 每次输入会话推送 —— 声明**逐输入框变化**（微信进聊天页时
+     * 先后出现不声明与声明的两个框），跨会话缓存会导致键显示错误。
+     */
+    private var hostImageCapable = false
 
     /** 中心拖选开关按钮（●/◉）与当前状态 */
     private var centerSelectionKey: TextView? = null

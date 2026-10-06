@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  图库快贴：只对外开放应用私有 cache 下的 gallery_share 目录（选图后复制进来的图片）。
+  宿主应用通过 commitContent 的临时授权读取，不暴露其它任何路径。
+-->
+<paths>
+    <cache-path
+        name="gallery_share"
+        path="gallery_share/" />
+</paths>

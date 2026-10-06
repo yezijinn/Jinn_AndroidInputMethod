@@ -1110,6 +1110,73 @@ class JinnIme : InputMethodService() {
      * （自定义页改开关**不走**广播，弹键盘是唯一稳定的核对点）。
      * 早先这三处各写一份同样的 if/else，改一处漏两处的风险太高（2026-10-06 审查收口）。
      */
+    /**
+     * 本会话宿主是否声明可接收图片（视图重建后重放用，判据见 [applyHostImageCapability]）。
+     *
+     * 与 [suppressLearningForSession] 同款理由：能力标记在视图上是字段，而视图重建
+     * （换肤 / 反馈开关 / 符号布局变更）会换掉整棵树 ⇒ 必须由 IME 侧重放，否则「图库」
+     * 键会在重建后的本会话剩余时间里消失（L-998）。
+     */
+    private var hostImageCapableForSession = false
+
+    /**
+     * 图库快贴：按宿主声明决定键盘上「图库」入口的显隐。
+     *
+     * `EditorInfo.contentMimeTypes` 里声明了图片类型（以 `image/` 开头，或全通配）才显示入口 —— 真机实测这是
+     * **必要**条件：QQ / TIM / 抖音评论 / QQ 邮箱 / Obsidian 声明为空且拒收，露入口只会白点；
+     * 声明了也未必可用（DeepSeek、闲鱼会「假成功」），但那种情况用户没有损失、只是没反应。
+     * 声明**逐输入框变化**（微信进聊天页时先出现一个不声明的框），所以每次输入会话都要重判。
+     */
+    private fun applyHostImageCapability(info: EditorInfo?) {
+        val mimes = info?.let { androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it) }
+        val capable = GalleryInsert.canHostAccept(mimes)
+        hostImageCapableForSession = capable
+        pinyinKeyboard?.setHostImageCapable(capable)
+    }
+
+    /**
+     * 落待插入图片：选图页（[GalleryPickActivity]）已把图片复制进 cache 并挂在
+     * [GalleryInsert] 桥上，回到本会话时提交给宿主。
+     *
+     * 时机与 [flushPendingPaste] 同款：从选图页回来必定新起一次输入会话，在
+     * `onStartInputView` 调用即可。无连接时直接丢弃 —— 入口已按声明显隐，这里是兜底，
+     * 且桥本身带 60s 有效期，过期图片不会插到无关输入框。
+     */
+    private fun flushPendingGalleryImage() {
+        val picked = GalleryInsert.takePending() ?: return
+        if (currentInputConnection == null) {
+            Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
+            return
+        }
+        // 选图期间前台可能被切换：宿主换了就不插 —— 图片落到别的应用不只是「插错地方」，
+        // 落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。任一侧取不到包名时放行，
+        // 不因缺信息丢掉用户的一次选择。
+        val current = currentInputEditorInfo?.packageName
+        if (picked.host != null && current != null && picked.host != current) {
+            Diagnostics.w(TAG, "图库快贴：宿主已切换（发起=${picked.host} 当前=$current），丢弃待插入图片")
+            return
+        }
+        val ok = GalleryInsert.commit(this, picked.file, picked.mime)
+        // ⚠ ok 不可信（闲鱼/DeepSeek 返回 true 却毫无效果），只记日志、不作任何展示判据
+        Diagnostics.i(TAG, "图库快贴：插入 ok=$ok")
+    }
+
+    /**
+     * 打开系统选图页（[GalleryPickActivity]），选中的图片由 [flushPendingGalleryImage] 落进输入框。
+     *
+     * IME 是 Service，启动 Activity 必须带 `FLAG_ACTIVITY_NEW_TASK`（同 [openSettings]）。
+     * 选图期间键盘让位给系统选择器，回来时 `onStartInputView` 重来一遍 —— 那正是提交通道。
+     */
+    private fun openGalleryPicker() {
+        // 带上发起宿主：选图期间前台可能被切换，回来时靠它核对（见 [flushPendingGalleryImage]）
+        val host = currentInputEditorInfo?.packageName
+        val intent = Intent(this, GalleryPickActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(GalleryInsert.EXTRA_HOST, host)
+        runCatching { startActivity(intent) }
+            .onFailure { Diagnostics.w(TAG, "打开选图页失败: ${it.message}") }
+    }
+
     private fun syncClipboardController() {
         if (ClipboardPrefs.of(this).enabled) {
             if (clipboardController == null) {
@@ -1277,6 +1344,11 @@ class JinnIme : InputMethodService() {
                     Diagnostics.i(TAG, "功能面板: 粘贴剪贴板")
                     pasteClipboard()
                 }
+                override fun onOpenGallery() {
+                    if (rejectedBySearchPanel("图库")) return
+                    Diagnostics.i(TAG, "功能面板: 图库快贴")
+                    openGalleryPicker()
+                }
                 override fun onSelectAll() {
                     if (rejectedBySearchPanel("全选")) return
                     // 同 L-733：全选会在提交阶段被判 SELECTION_PRESENT ⇒ 已付费译文作废
@@ -1331,6 +1403,7 @@ class JinnIme : InputMethodService() {
         // 两处都重放是**幂等**的（这些 setter 只写字段 / 重绘）。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
+        pinyinKeyboard?.setHostImageCapable(hostImageCapableForSession)
 
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
         val container = FrameLayout(this)
@@ -1720,6 +1793,7 @@ class JinnIme : InputMethodService() {
         // setInputView 同步更新 pinyinKeyboard，重放仍落在新视图上。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
+        pinyinKeyboard?.setHostImageCapable(hostImageCapableForSession)
     }
 
     /** 排序页/收藏编辑页改动符号数据后重建键盘视图（companion 的 [onSymbolLayoutChanged] 转发到这里） */
@@ -1820,6 +1894,9 @@ class JinnIme : InputMethodService() {
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
         Diagnostics.event("IME", "StartInputView", "restart=$restarting pkg=${info?.packageName}")
+        // 图库快贴入口显隐（按宿主声明）+ 把选图页备好的图片落进输入框
+        applyHostImageCapability(info)
+        flushPendingGalleryImage()
         // 会话边界：上一个输入框的在途翻译作废（结果回来时代际不符，直接丢弃）。
         // ⚠ 必须在 applyThemeIfNeeded **之前**（2026-10-01 修复 L-336）：换肤的延后判据里含视图侧
         // `translateInFlight`，顺序反过来时，被翻译态挡下的换肤会在**同一个回调**里失去补做机会，
