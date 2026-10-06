@@ -18,16 +18,15 @@ MAP = [
     ("kbd_12", "005", "fs", 5),
     ("kbd_13", "028", "fs", 28),
     ("kbd_14", "mixkit-single-key-type-2533", "mixkit", "2533"),
-    ("kbd_15", "mx2841", "mixkit", "2841"),
-    ("kbd_16", "maybe_057", "fs", 57),
-    ("kbd_17", "maybe_003", "fs", 3),
+    ("kbd_15", "maybe_057", "fs", 57),
+    ("kbd_16", "maybe_003", "fs", 3),
 ]
 DUR = {"kbd_01":60,"kbd_02":66,"kbd_03":67,"kbd_04":73,"kbd_05":79,"kbd_06":109,"kbd_07":114,
        "kbd_08":122,"kbd_09":135,"kbd_10":138,"kbd_11":152,"kbd_12":159,"kbd_13":171,
-       "kbd_14":183,"kbd_15":185,"kbd_16":205,"kbd_17":210}
+       "kbd_14":183,"kbd_15":205,"kbd_16":210}
 ON = {"kbd_01":1,"kbd_02":1,"kbd_03":1,"kbd_04":1,"kbd_05":1,"kbd_06":1,"kbd_07":1,
       "kbd_08":1,"kbd_09":1,"kbd_10":2,"kbd_11":1,"kbd_12":1,"kbd_13":1,"kbd_14":1,
-      "kbd_15":1,"kbd_16":2,"kbd_17":2}
+      "kbd_15":2,"kbd_16":2}
 
 # rebuild freesound index -> preview url
 queries = ["keyboard+single+key","mechanical+keyboard+keystroke","single+key+press",

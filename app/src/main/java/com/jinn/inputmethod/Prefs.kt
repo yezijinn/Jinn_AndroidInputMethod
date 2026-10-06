@@ -424,7 +424,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_TAP_SOUND_ENABLED, value) }
 
     /**
-     * 音效强度（0–100，默认 70）。
+     * 音效强度（0–100，默认 50）。
      *
      * 为什么要它：按键音走 `USAGE_ASSISTANCE_SONIFICATION`（= 系统音效音量），
      * 而系统音效音量在多数 ROM 上**没有**给用户的可见滑杆，只能靠 SoundPool 的
@@ -1265,11 +1265,11 @@ class Prefs(context: Context) {
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
-        put(KEY_TAP_SOUND_VOLUME, tapSoundVolume)
+        if (sp.contains(KEY_TAP_SOUND_VOLUME)) put(KEY_TAP_SOUND_VOLUME, tapSoundVolume)
         put(KEY_TAP_SOUND_ON_SILENT, tapSoundOnSilent)
-        // ⚠ 分组映射只在**用户真的改过**时才导出（与 translate_provider 同款）：缺键时 getter
-        // 回落的是当前默认映射，无条件导出会把「那时的默认」固化成显式值 —— 将来调整默认音色
-        // 对这批用户失效。
+        // ⚠ 音量与分组映射都只在**用户真的改过**时才导出（与 translate_provider 同款）：缺键时 getter
+        // 回落的是当前默认值，无条件导出会把「那时的默认」固化成显式值 —— 将来调整默认音色
+        // 或默认音量，对这批用户都失效。
         if (sp.contains(KEY_TAP_SOUND_MAP)) put(KEY_TAP_SOUND_MAP, tapSoundMap)
         put(KEY_TAP_VIBRATE_ENABLED, tapVibrateEnabled)
         put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)

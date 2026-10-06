@@ -148,8 +148,9 @@ class TapSoundTest {
     /**
      * 默认映射：六组统一用 kbd_10（索引 9）。
      *
+     * 不读清单、也不碰 DEFAULT_MAP（L-929 / L-947）。
      * 需求是「分组音色全部用音效 10」—— 一条声音对所有按键，分组只留在震动波形上。
-     * 清单里 kbd_10 那一行标的就是这个默认音；谁改默认映射把这条改掉，两处就对不上了。
+     * 清单里 kbd_10 那一行的「建议角色」是**人工同步**的：发布对账只覆盖「文件名 ↔ SOUND_COUNT」与时长表项数，
      */
     @Test
     fun `六组默认统一用 kbd_10`() {
@@ -234,6 +235,15 @@ class TapSoundTest {
         assertEquals(TapSound.VOLUME_MIN, TapSound.clampVolume(-20))
         assertEquals(TapSound.VOLUME_MAX, TapSound.clampVolume(500))
         assertEquals(TapSound.VOLUME_DEFAULT, TapSound.clampVolume(TapSound.VOLUME_DEFAULT))
+    }
+
+    @Test
+    fun `默认音量是 50`() {
+        // 「音量被钳位」那条里 assertEquals(VOLUME_DEFAULT, clampVolume(VOLUME_DEFAULT)) 是**自指**的，
+        // 把常量改成任何值都通过。默认值要单独钉住，否则「默认 50」没有任何回归保护。
+        assertEquals(50, TapSound.VOLUME_DEFAULT)
+        // 滑杆初值走 getter 回落，缺键时拿到的就是这个默认值
+        assertEquals(50, TapSound.clampVolume(TapSound.VOLUME_DEFAULT))
     }
 
     // ── 节流 ─────────────────────────────────────────────────
