@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 诊断落盘护栏（[Diagnostics.sanitizeForFile] / [Diagnostics.redactSensitive]）的纯函数用例。
@@ -45,6 +46,34 @@ class DiagnosticsSanitizeTest {
         assertTrue("阿拉伯-印度数字也要遮: $arabic", arabic.contains("****"))
         // 反向：日期与连写手机号不受牵连（分隔符规则不能把 `2026-10-06` 当成号码）
         assertEquals("ts=2026-10-06", Diagnostics.sanitizeForFile("ts=2026-10-06"))
+    }
+
+    /**
+     * `BUG.md` L-968：分隔符与形态收口的另一半 —— 全角分隔、分组写法、国际前缀。
+     *
+     * 中文输入法打得出全角数字，也打得出全角分隔；而卡号 / 证件号的常见写法是每 4 位一组，
+     * 逐段都不足 15 位、规则够不着。两组都漏时号码原样落盘并随诊断包外传。
+     */
+    @Test
+    fun `全角分隔、分组长串与国际前缀同样要遮`() {
+        // 全角空格分隔（全角数字与半角数字各一条）
+        assertEquals(
+            "联系 １３８****５６７８ 谢谢",
+            Diagnostics.sanitizeForFile("联系 １３８　１２３４　５６７８ 谢谢"),
+        )
+        assertEquals("联系 138****5678 谢谢", Diagnostics.sanitizeForFile("联系 138　1234　5678 谢谢"))
+        // 全角连字符
+        assertEquals("联系 138****5678 谢谢", Diagnostics.sanitizeForFile("联系 138－1234－5678 谢谢"))
+        // 分组写法：每 4 位一组、4 组（留首 4 尾 4）
+        assertEquals("卡号 6222****7890", Diagnostics.sanitizeForFile("卡号 6222 0212 3456 7890"))
+        assertEquals("卡号 6222****7890", Diagnostics.sanitizeForFile("卡号 6222-0212-3456-7890"))
+        // 国际前缀：不认前缀时 `1` 的前一位落在数字上，整条会被边界否掉
+        assertEquals("联系 +86****5678", Diagnostics.sanitizeForFile("联系 +8613812345678"))
+        assertEquals("联系 861****5678", Diagnostics.sanitizeForFile("联系 8613812345678"))
+        assertEquals("联系 008****5678", Diagnostics.sanitizeForFile("联系 008613812345678"))
+        // 反向：3 组（12 位）不算分组长串、日期与时间不受牵连
+        assertEquals("分组 1234 5678 9012", Diagnostics.sanitizeForFile("分组 1234 5678 9012"))
+        assertEquals("ts=2026-10-06 12:34", Diagnostics.sanitizeForFile("ts=2026-10-06 12:34"))
     }
 
     @Test
@@ -122,6 +151,40 @@ class DiagnosticsSanitizeTest {
             listOf("x"),
             Diagnostics.overBudgetVictims(listOf(Triple(keep, 9L, 999L), Triple("x", 1L, 1L)), 10L, keep),
         )
+    }
+
+    /**
+     * `BUG.md` L-969：体积预算对**当日文件**是豁免的（年龄闸嫌它新、体积闸当它是保留项），
+     * 于是一个跑飞的当日日志能一路长到写满同分区。闸门落在写盘路径上：单文件到顶就滚动一段。
+     */
+    @Test
+    fun 当日日志超上限要滚动并只留最近两段() {
+        val day = "2026-10-06"
+        val dir = java.nio.file.Files.createTempDirectory("jinn-log").toFile()
+        try {
+            val current = File(dir, "jinn-$day.log")
+            current.writeText("x".repeat(32))
+            // 未超上限：不动
+            assertEquals(current, Diagnostics.rollDailyLogIfNeeded(dir, day, 64L, 2))
+            // 已有 1/2/3 段，超上限 ⇒ 滚成第 4 段，只留编号最大的两段（4、3）
+            for (n in 1..3) File(dir, "jinn-$day-$n.log").writeText("old$n")
+            assertEquals(current, Diagnostics.rollDailyLogIfNeeded(dir, day, 16L, 2))
+            assertEquals("滚出来的段落要接在当日文件后面", 32L, File(dir, "jinn-$day-4.log").length())
+            assertTrue("最近一段保留", File(dir, "jinn-$day-3.log").exists())
+            assertTrue("更旧的段删掉", !File(dir, "jinn-$day-1.log").exists() && !File(dir, "jinn-$day-2.log").exists())
+            // 别的日期与别的前缀都不参与；同日段按编号保大删小
+            val names = listOf(
+                "jinn-$day-9.log", "jinn-$day-8.log", "jinn-$day.log",
+                "jinn-2026-10-05-9.log", "logcat-crash-1.log",
+            )
+            assertEquals(
+                "只挑同日滚动段、按编号保大删小（当日文件与别的日期都不在名单里）",
+                listOf("jinn-$day-8.log"),
+                Diagnostics.segmentsToDelete(names, day, 1),
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     /**

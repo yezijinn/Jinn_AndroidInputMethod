@@ -434,18 +434,28 @@ class TranslationSettingsActivity : Activity() {
      *   ⚠ **没有默认参数**（2026-10-03 修复 L-814）：三个调用点（onPause / 失焦 / 显式保存）全都
      *   传 `false`，留默认值等于凭空造一条「不传就是弹 toast」的路径 —— 那条路径不存在。
      */
+    /**
+     * 回写一个字段（BUG.md L-970）。
+     *
+     * 只负责写，**不推基线** —— 基线的推进要等这一趟全部写完、看清有没有字段没落盘（见
+     * [saveCredentials] 末尾）：Keystore 锁住时写侧会删掉磁盘旧密文（fail-closed，
+     * 见 L-665），那时若把基线推平，下一次自动保存就没有可回写的字段，用户解锁后也不会补上。
+     */
+    private fun saveIfChanged(field: EditText, write: (String) -> Unit) {
+        if (!saveGuard.changed(field)) return
+        write(field.text.toString())
+    }
+
     private fun saveCredentials(notify: Boolean) {
-        if (saveGuard.changed(editAliyunKeyId)) prefs.aliyunAccessKeyId = editAliyunKeyId.text.toString()
-        if (saveGuard.changed(editAliyunKeySecret)) {
-            prefs.aliyunAccessKeySecret = editAliyunKeySecret.text.toString()
-        }
-        if (saveGuard.changed(editAzureKey)) prefs.azureApiKey = editAzureKey.text.toString()
-        if (saveGuard.changed(editAzureRegion)) prefs.azureRegion = editAzureRegion.text.toString()
-        if (saveGuard.changed(editBaiduAppId)) prefs.baiduAppId = editBaiduAppId.text.toString()
-        if (saveGuard.changed(editBaiduSecret)) prefs.baiduSecretKey = editBaiduSecret.text.toString()
-        if (saveGuard.changed(editBaiduLlmAppId)) prefs.baiduLlmAppId = editBaiduLlmAppId.text.toString()
-        if (saveGuard.changed(editBaiduLlmKey)) prefs.baiduLlmApiKey = editBaiduLlmKey.text.toString()
-        if (saveGuard.changed(editDeeplKey)) prefs.deeplApiKey = editDeeplKey.text.toString()
+        saveIfChanged(editAliyunKeyId) { prefs.aliyunAccessKeyId = it }
+        saveIfChanged(editAliyunKeySecret) { prefs.aliyunAccessKeySecret = it }
+        saveIfChanged(editAzureKey) { prefs.azureApiKey = it }
+        saveIfChanged(editAzureRegion) { prefs.azureRegion = it }
+        saveIfChanged(editBaiduAppId) { prefs.baiduAppId = it }
+        saveIfChanged(editBaiduSecret) { prefs.baiduSecretKey = it }
+        saveIfChanged(editBaiduLlmAppId) { prefs.baiduLlmAppId = it }
+        saveIfChanged(editBaiduLlmKey) { prefs.baiduLlmApiKey = it }
+        saveIfChanged(editDeeplKey) { prefs.deeplApiKey = it }
 
         Diagnostics.i(
             TAG,
@@ -461,7 +471,7 @@ class TranslationSettingsActivity : Activity() {
         // ⚠ 自动保存路径必须也消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-665）：
         // `writeCredential` 在 Keystore 不可用时把键记进该集合并**删掉磁盘旧密文**（fail-closed，
         // 有意设计），而它的 KDoc 写明「供**显式保存**如实报告」—— 显式保存是 `saveAndNotify` 那条路。
-        // 本页的落盘时机是**失焦 / onPause 自动保存**（L-209 已记该窗口），也就是说绝大多数改动
+        // 本页的落盘时机是**失焦 / 输入停顿 / onPause 自动保存**（L-209 已修），也就是说绝大多数改动
         // 根本走不到告知分支：用户看到「已配置 / 已保存」，重启后该家回到未配置 ⇒ **Key 静默丢失**。
         // 不新增状态词，复用既有的 TEXT_SAVE_NOT_PERSISTED。
         val unpersisted = prefs.unpersistedCredentialKeys()
@@ -471,6 +481,12 @@ class TranslationSettingsActivity : Activity() {
             // 弹一次会变成十几次（2026-10-03 修复 L-717 的第二半）。
             textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
             if (notify) toast(TEXT_SAVE_NOT_PERSISTED)
+        }
+        // 全部落盘后才推基线（BUG.md L-970）。推了它，「粘贴 → 停顿落盘 → 全选删空 → 离开」
+        // 那一次清空才不会再被当成「没改过」而漏写；而只要有一个字段没落盘就**一个都不推**，
+        // 下一次自动保存会把改动过的字段整批重写（幂等），用户解锁后不必重新输入。
+        if (unpersisted.isEmpty()) {
+            for (f in credentialFields()) if (saveGuard.changed(f)) saveGuard.markWritten(f)
         }
     }
 
@@ -528,7 +544,9 @@ class TranslationSettingsActivity : Activity() {
             Triple("DeepL API Key", editDeeplKey, prefs.deeplApiKey),
         )
         return pairs.filter { (_, field, saved) ->
-            if (!saveGuard.changed(field)) return@filter false
+            // 问的是「用户动过这个字段没有」⇒ 用载入基线：写侧基线在落盘那一刻就被推平了，
+            // 拿它筛会把刚写过的字段全滤掉，回读校验直接空转（BUG.md L-970）
+            if (!saveGuard.edited(field)) return@filter false
             val expected = if (field.id == R.id.edit_azure_region) {
                 normalizeAzureRegion(field.text.toString())
             } else {
@@ -627,7 +645,7 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_UNCONFIGURED = "未配置：还没填凭据"
 
         const val TEXT_SAVE = "保存"
-        const val TEXT_SAVE_IDLE = "点「保存」时 立即存入本机（不点也会自动保存：输入停顿后、离开本页时）"
+        const val TEXT_SAVE_IDLE = "点「保存」时 立即存入本机（不点也会自动保存：失焦时、输入停顿后、离开本页时）"
         const val TEXT_SAVED = "已保存到本机"
         const val TEXT_SAVE_FAILED = "保存未完成，请重试"
         const val TEXT_SAVE_MISMATCH = "未写入的字段："

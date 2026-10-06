@@ -426,6 +426,12 @@ class OpenAiSettingsActivity : Activity() {
                 "prompt=${prefs.openAiSystemPrompt.length}/${prefs.openAiUserPrompt.length} " +
                 "extra=${prefs.openAiExtraJson.length} headers=${prefs.openAiExtraHeaders.length}",
         )
+        // 写完统一推基线（BUG.md L-970）：推了它，「粘贴 Key → 落盘 → 删空」那一次清空才不会再被
+        // 当成没改过；只有确认落盘才推 —— Keystore 锁住时写侧会删掉磁盘旧密文（fail-closed），
+        // 基线一推就再也不重试，用户解锁后还得重新输入。
+        if (saveGuard.changed(editApiKey) && prefs.unpersistedCredentialKeys().isEmpty()) {
+            saveGuard.markWritten(editApiKey)
+        }
     }
 
     /**
@@ -464,7 +470,8 @@ class OpenAiSettingsActivity : Activity() {
         }
         saveValues()
         val flushed = prefs.flush()
-        val keyOk = !saveGuard.changed(editApiKey) ||
+        // 「用户动过没有」用载入基线：写侧基线在 `saveValues()` 里已被推平（BUG.md L-970）
+        val keyOk = !saveGuard.edited(editApiKey) ||
             prefs.openAiApiKey == editApiKey.text.toString().cleanCredential()
         // 加密不可用（锁屏）时 Key 只在内存、重启即失（2026-10-02 修复 L-355）：
         // 回读核对命中同一个缓存 ⇒ 必然"相等"，必须由写侧记账才能如实报告

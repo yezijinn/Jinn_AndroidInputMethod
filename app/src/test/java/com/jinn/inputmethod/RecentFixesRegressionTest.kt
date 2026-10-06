@@ -1773,8 +1773,12 @@ class RecentFixesRegressionTest {
         val settings = codeOf("TranslationSettingsActivity.kt")
         assertTrue(
             "保存必须逐字段判「改过才回写」（L-247）",
-            "saveGuard.changed(editDeeplKey)" in settings &&
-                "saveGuard.changed(editAliyunKeyId)" in settings,
+            "saveIfChanged(editDeeplKey)" in settings &&
+                "saveIfChanged(editAliyunKeyId)" in settings,
+        )
+        assertTrue(
+            "落盘成功要推进写入基线（L-970）：不推的话「粘贴 → 落盘 → 删空」那一次清空会被判成没改过",
+            "for (f in credentialFields()) if (saveGuard.changed(f)) saveGuard.markWritten(f)" in settings,
         )
         assertTrue("载入必须记原值（L-247）", "saveGuard.remember(field, value)" in settings)
         assertTrue("OpenAI Key 也要进不留痕目标（L-245）", "prefs.openAiApiKey," in settings)
@@ -1783,6 +1787,10 @@ class RecentFixesRegressionTest {
         val openAiPage = codeOf("OpenAiSettingsActivity.kt")
         assertTrue("OpenAI 页同样走公共入口（L-245）", "CredentialTrace.purge(" in openAiPage)
         assertTrue("OpenAI 页的 Key 也要 guard（L-247）", "saveGuard.changed(editApiKey)" in openAiPage)
+        assertTrue(
+            "OpenAI 页同样要推写入基线（L-970），且只在确认落盘后推",
+            "saveGuard.markWritten(editApiKey)" in openAiPage && "prefs.unpersistedCredentialKeys().isEmpty()" in openAiPage,
+        )
 
         val db = codeOf("ClipboardDb.kt")
         assertTrue("清洗匹配必须是批量、一次遍历（L-244）", "fun deleteByCleanedPlaintexts(" in db)

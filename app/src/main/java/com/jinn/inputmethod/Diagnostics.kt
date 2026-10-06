@@ -53,6 +53,19 @@ private const val LOG_DIR_BUDGET_BYTES = 100L * 1024 * 1024
  */
 private const val BUNDLE_INMEM_MAX_BYTES = 16L * 1024 * 1024
 
+/**
+ * 单个日志文件的上限：超了就把当日文件滚成 `jinn-<日期>-N.log`（BUG.md L-969）。
+ *
+ * 体积预算 [LOG_DIR_BUDGET_BYTES] 对**当日文件**是豁免的（年龄闸嫌它新、体积闸把它当保留项），
+ * 于是一个跑飞的当日日志能一路长到把同分区写满。闸门因此落在写盘路径上：单文件到顶就换一段，
+ * 滚出来的段落受既有的年龄闸与体积预算正常管。16MB 与 [BUNDLE_INMEM_MAX_BYTES] 同量级 ——
+ * 滚出来的每一段都能整份进诊断包。
+ */
+private const val LOG_FILE_MAX_BYTES = 16L * 1024 * 1024
+
+/** 同日滚动段的保留个数（当日文件 + 2 段 ≈ 48MB 封顶，再多的段由体积预算与年龄闸收走） */
+private const val LOG_SEGMENTS_KEPT = 2
+
     /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按月反复补清（见 [maybeCleanupOldLogs]） */
     private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
 
@@ -112,13 +125,34 @@ private const val BUNDLE_INMEM_MAX_BYTES = 16L * 1024 * 1024
     private const val PHONE_HEAD = "[1１١][3-9３-９٣-٩]"
 
     /**
-     * 11 位大陆手机号（用数字边界避免切开更长的数字串）。
+     * 号码里的分隔符：半角空格与连字符之外，再收**全角空格 / 全角连字符 / 短破折号**。
+     *
+     * 本 App 是中文输入法，用户打得出全角数字，也打得出全角分隔
+     * （`１３８　１２３４　５６７８`）—— 只认半角等于漏掉这一整类（BUG.md L-968）。
+     */
+    private const val PHONE_SEP = "[- \u3000\uFF0D\u2013]"
+
+    /**
+     * 11 位大陆手机号（用数字边界避免切开更长的数字串），带可选国际前缀。
      *
      * 分隔写法（`138-1234-5678` / `138 1234 5678`）同样要遮：从通讯录、网页、聊天记录复制时
-     * 常带分隔符，只认连写形态等于漏掉一半（BUG.md L-169）。
+     * 常带分隔符，只认连写形态等于漏掉一半（BUG.md L-169）。前缀不认的话，`+8613812345678`
+     * 里 `1` 的前一位落在数字上，整条会被边界直接否掉（BUG.md L-968）。
      */
     private val PHONE_RE = Regex(
-        "(?<!$DIGIT)$PHONE_HEAD$DIGIT(?:[- ]?$DIGIT{4}){2}(?!$DIGIT)",
+        "(?<!$DIGIT)(?:\\+?86$PHONE_SEP?|0086$PHONE_SEP?)?$PHONE_HEAD$DIGIT" +
+            "(?:$PHONE_SEP?$DIGIT{4}){2}(?!$DIGIT)",
+    )
+
+    /**
+     * 分组写法（每 4 位一组、至少 4 组）的长数字串：银行卡 / 证件号最常见的写法。
+     *
+     * 连续形态由 [LONG_DIGITS_RE] 兜（≥15 位），而 `6222 0212 3456 7890` 逐段都不足 15 位、
+     * 头一位也不是 `1[3-9]`，两条规则都够不着（BUG.md L-968）。要求**分隔符在场**且 4 组以上，
+     * 是为了不把 `2026-10-06`（两组、每组 ≤4 位）与普通计数串卷进来。
+     */
+    private val GROUPED_DIGITS_RE = Regex(
+        "(?<!$DIGIT)$DIGIT{4}(?:$PHONE_SEP$DIGIT{4}){3,}(?!$DIGIT)",
     )
 
     /** 邮箱：只遮本地部分，保留域名便于辨认来源 */
@@ -342,6 +376,9 @@ private const val BUNDLE_INMEM_MAX_BYTES = 16L * 1024 * 1024
         // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
         // 本该整段替换的值反而露出前 4 位与末 2 位（fail-open 的方向）
         for (re in API_KEY_RES) s = re.replace(s, MASK)
+        // 分组写法排在连续形态之前：两者不重叠（一个要求分隔符在场、一个要求全连写），
+        // 但分组串若先被插进 `****`，长数字规则就再也拼不回完整的一段
+        s = GROUPED_DIGITS_RE.replace(s) { m -> m.value.take(4) + MASK + m.value.takeLast(4) }
         s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
         return s
     }
@@ -416,14 +453,56 @@ private const val BUNDLE_INMEM_MAX_BYTES = 16L * 1024 * 1024
     }
 
     private fun appendToFile(dir: File, text: String) {
-        val file = File(dir, "$LOG_FILE_PREFIX${today()}.log")
         synchronized(lock) {
             try {
+                val file = rollDailyLogIfNeeded(dir, today(), LOG_FILE_MAX_BYTES, LOG_SEGMENTS_KEPT)
                 FileOutputStream(file, true).use { it.write(text.toByteArray(Charsets.UTF_8)) }
             } catch (e: Exception) {
                 Log.w(TAG, "写日志文件失败: ${e.message}")
             }
         }
+    }
+
+    /**
+     * 当日日志超 [maxBytes] 时滚动一段：改名成 `jinn-<日期>-N.log`，并只留编号最大的 [keep] 段
+     * （BUG.md L-969）。返回到该写入的文件。
+     *
+     * 改名失败就继续往原文件追加 —— 少一次滚动好过丢这一条日志。
+     *
+     * 这里不取 [dirLock]：写日志在业务路径上，等一次导出会把调用方一起拖住。改名对正在读该文件的
+     * 导出是安全的（读侧握的是 inode；按名字重开的那些走既有的「跳过 + 记 W」分支）。
+     */
+    internal fun rollDailyLogIfNeeded(dir: File, day: String, maxBytes: Long, keep: Int): File {
+        val current = File(dir, "$LOG_FILE_PREFIX$day.log")
+        if (!current.isFile || current.length() <= maxBytes) return current
+        var n = 1
+        // 编号上限只为防呆：段名撞车才往后找，正常路径一次就命中
+        while (n < 1_000 && File(dir, segmentName(day, n)).exists()) n++
+        val rolled = File(dir, segmentName(day, n))
+        if (!runCatching { current.renameTo(rolled) }.getOrDefault(false)) return current
+        Log.i(TAG, "日志文件超单文件上限，已滚动: ${rolled.name}")
+        for (name in segmentsToDelete(dir.listFiles()?.map { it.name }.orEmpty(), day, keep)) {
+            runCatching { File(dir, name).delete() }
+        }
+        return current
+    }
+
+    /** 同日滚动段的文件名：`jinn-<日期>-<编号>.log` —— 前缀与当日文件一致，年龄闸与体积闸照旧管得到 */
+    private fun segmentName(day: String, n: Int) = "$LOG_FILE_PREFIX$day-$n.log"
+
+    /**
+     * 滚动后该删的同日段（纯函数，便于单测）：按编号从大到小保留 [keep] 个，其余删。
+     *
+     * 判据是文件名里的编号（不是 mtime —— 改名与复制会带走 mtime），编号缺口不影响顺序。
+     */
+    internal fun segmentsToDelete(names: List<String>, day: String, keep: Int): List<String> {
+        val head = "$LOG_FILE_PREFIX$day-"
+        val re = Regex("^$head(\\d+)\\.log$")
+        return names
+            .mapNotNull { name -> re.matchEntire(name)?.groupValues?.get(1)?.toInt()?.let { name to it } }
+            .sortedByDescending { it.second }
+            .drop(keep)
+            .map { it.first }
     }
 
     /**
