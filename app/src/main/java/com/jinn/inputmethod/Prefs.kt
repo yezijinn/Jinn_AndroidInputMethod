@@ -1275,9 +1275,14 @@ class Prefs(context: Context) {
         if (sp.contains(KEY_TAP_SOUND_MAP)) put(KEY_TAP_SOUND_MAP, tapSoundMap)
         put(KEY_TAP_VIBRATE_ENABLED, tapVibrateEnabled)
         if (sp.contains(KEY_TAP_VIBRATE_STRENGTH)) put(KEY_TAP_VIBRATE_STRENGTH, tapVibrateStrength)
-        put(KEY_SKIN_LIGHT, skinLightId)
-        put(KEY_SKIN_DARK, skinDarkId)
-        put(KEY_THEME_MODE, themeMode)
+        // 皮肤两档与主题模式同理（缺键时 getter 回落的是「指定默认」，哪天改默认这批人就拿不到）。
+        // ⚠ 皮肤要**先取值再判**：getter 里跑 `ensureSkinSlotsMigrated`（旧单值键 → 双槽位），
+        // 迁移之后 contains 才看得到 —— 顺序反了会把「老版本升上来的用户」当成没改过，皮肤丢出备份。
+        val lightSkin = skinLightId
+        val darkSkin = skinDarkId
+        if (sp.contains(KEY_SKIN_LIGHT)) put(KEY_SKIN_LIGHT, lightSkin)
+        if (sp.contains(KEY_SKIN_DARK)) put(KEY_SKIN_DARK, darkSkin)
+        if (sp.contains(KEY_THEME_MODE)) put(KEY_THEME_MODE, themeMode)
         put(KEY_SYMBOL_ORDER, symbolGroupOrder)
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
         put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)

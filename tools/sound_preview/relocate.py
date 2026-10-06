@@ -1,4 +1,4 @@
-import os, shutil, sys, wave, numpy as np, urllib.request, re, time
+import os, shutil, sys, wave, numpy as np
 
 base = 'c:/AI_WORKSPACE/PROJECTS/com.jinn.inputmethod/tools/sound_preview'
 RK = os.path.join(base, 'real_keyboard')
@@ -6,20 +6,26 @@ ASSETS = 'c:/AI_WORKSPACE/PROJECTS/com.jinn.inputmethod/app/src/main/assets/soun
 MASTERS = os.path.join(base, 'masters')
 SR = 44100
 
-# 下面这一步会把 assets/ 与 masters/ 清空后重编号，而它要求输入目录真的存在。
-# 输入目录早被上一次运行删掉（脚本末尾 rmtree），空跑只会毁掉已入库的 16 个 ogg 与本地母版。
-if not os.path.isdir(RK):
-    raise SystemExit('输入目录不存在: %s（先把素材放进去再跑）' % RK)
-if '--force' not in sys.argv:
-    raise SystemExit('要清空 assets/ 与 masters/ 再重编号，加 --force 明确一次')
-for d in (ASSETS, MASTERS):
-    os.makedirs(d, exist_ok=True)
-    for f in os.listdir(d): os.remove(os.path.join(d, f))
-
 # ---- 1) dedupe: drop mx2542 (same recording as mixkit-hard-...-2542) ----
 for ext in ('.wav', '.ogg'):
     p = os.path.join(RK, 'mx2542' + ext)
     if os.path.exists(p): os.remove(p)
+
+# 往下会把 assets/ 与 masters/ 清空后重编号，而清空是无条件的、回填却是「有同名 ogg 才拷」——
+# 能失败的事一律排在清空之前：输入目录要有，素材要成对，还得显式给 --force。输入目录早被上一次
+# 运行删掉（脚本末尾 rmtree），空跑只会毁掉已入库的 16 个 ogg 与本地母版，且退 0 不留痕。
+if not os.path.isdir(RK):
+    raise SystemExit('输入目录不存在: %s（先把素材放进去再跑）' % RK)
+ogg_names = {f for f in os.listdir(RK) if f.endswith('.ogg')}
+lonely = sorted(f for f in os.listdir(RK) if f.endswith('.wav')
+                and os.path.splitext(f)[0] + '.ogg' not in ogg_names)
+if lonely:
+    raise SystemExit('这些 wav 没有同名 ogg，清空之后补不回来，先补齐：%s' % lonely)
+if '--force' not in sys.argv[1:]:
+    raise SystemExit('要清空 assets/ 与 masters/ 再重编号，加 --force 明确一次')
+for d in (ASSETS, MASTERS):
+    os.makedirs(d, exist_ok=True)
+    for f in os.listdir(d): os.remove(os.path.join(d, f))
 
 def load_wav(path):
     w = wave.open(path, 'rb'); n = w.getnframes(); ch = w.getnchannels(); sw = w.getsampwidth()
@@ -47,43 +53,22 @@ def onset(d, th=0.20, min_gap=0.05):
         else: m.append(list(s))
     return len(m)
 
-# ---- 2) rebuild Freesound index->url map (same order as get_real.py) ----
-queries = ["keyboard+single+key","mechanical+keyboard+keystroke","single+key+press",
-           "key+press+mechanical","computer+key+click","mechanical+switch+click","keystroke+single"]
-seen = {}
-for q in queries:
-    for page in range(1, 4):
-        url = f"https://freesound.org/search/?q={q}&f=license+%22CC0+1.0%22&f=duration:[0+TO+1]&s=downloads+desc&advanced=1&g=1&page={page}"
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
-            html = urllib.request.urlopen(req, timeout=30).read().decode('utf-8','ignore')
-        except Exception as e:
-            print('fetch err', q, page, e, flush=True); continue
-        mp3s = re.findall(r'data-mp3="([^"]+)"', html)
-        oggs = re.findall(r'data-ogg="([^"]+)"', html)
-        for m,o in zip(mp3s, oggs): seen[o if o else m] = True
-        time.sleep(0.15)
-    print(f"  mapped query {q} -> {len(seen)}", flush=True)
-urls = list(seen)[:60]
-idx2url = {i:u for i,u in enumerate(urls)}
+# ---- 2) 来源文案 ----
+# 原先这里按 Freesound 搜索页的返回顺序重建 id→直链，只为打印时看着详细；那些 id 与直链的真正
+# 归属已经写死在 gen_manifest.py 的 SRC 表里，抓取对输出没有任何影响 —— 离线时还要按三十秒
+# 超时白等十来分钟，干脆去掉。
+VARBASE = {'var_a': '006', 'var_b': '015', 'var_c': '028', 'var_d': 'mx2541'}
 
-VARBASE = {'var_a':'006','var_b':'015','var_c':'028','var_d':'mx2541'}
 
 def source_of(name):
     n = os.path.splitext(name)[0]
     if n in VARBASE:
-        return f"由 {VARBASE[n]} 派生(真实音轻量变体)", ''
-    if n.startswith('mx'):
-        sid = n[2:]
-        return "Mixkit", f"https://assets.mixkit.co/active_storage/sfx/{sid}/{sid}-preview.mp3"
-    if n.startswith('mixkit-'):
-        sid = re.search(r'(\d+)$', n).group(1)
-        return "Mixkit", f"https://assets.mixkit.co/active_storage/sfx/{sid}/{sid}-preview.mp3"
+        return '由 %s 派生(真实音轻量变体)' % VARBASE[n]
+    if n.startswith('mx') or n.startswith('mixkit-'):
+        return 'Mixkit'
     if n.isdigit():
-        u = idx2url.get(int(n), '')
-        sid = re.search(r'/(\d+)_\d+-', u)
-        return ("Freesound (CC0)", u) if u else ("Freesound (CC0)", '')
-    return "unknown", ''
+        return 'Freesound (CC0)'
+    return 'unknown'
 
 # ---- 3) sort by duration asc, assign kbd_NN ----
 wavs = [f for f in os.listdir(RK) if f.endswith('.wav')]
@@ -94,16 +79,12 @@ for f in wavs:
 info.sort()
 print(f"\nfiles to place: {len(info)}", flush=True)
 
-rows = []
 for i, (dur, f, on) in enumerate(info, 1):
     key = f"kbd_{i:02d}"
-    src, url = source_of(f)
     shutil.copy(os.path.join(RK, f), os.path.join(MASTERS, key + '.wav'))
     ogg = os.path.join(RK, os.path.splitext(f)[0] + '.ogg')
     if os.path.exists(ogg): shutil.copy(ogg, os.path.join(ASSETS, key + '.ogg'))
-    role = "待定"   # 建议角色由 gen_manifest.py 的表给出，这里只落素材
-    rows.append((key, f, src, url, dur*1000, on, role))
-    print(f"  {key}.ogg  <- {f:48s} {dur*1000:5.0f}ms on={on}  {src}", flush=True)
+    print(f"  {key}.ogg  <- {f:48s} {dur*1000:5.0f}ms on={on}  {source_of(f)}", flush=True)
 
 # ---- 4) manifest ----
 # 清单的表体由 gen_manifest.py 渲染（它持有编号 / 时长 / 起音数 / 来源四张表），这里不再维护第二份模板 ——

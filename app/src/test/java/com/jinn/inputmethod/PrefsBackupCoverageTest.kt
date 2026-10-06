@@ -31,7 +31,12 @@ class PrefsBackupCoverageTest {
         File("app/src/main/java/com/jinn/inputmethod/Prefs.kt"),
     ).firstOrNull { it.isFile } ?: error("找不到 Prefs.kt（当前工作目录=${File("").absolutePath}）")
 
-    private val source: String = sourceFile.readText()
+    /**
+     * 源码文本（**剥注释**后再对拍）：注释里的同名字符串不该能满足任何判据 —— 把 `put(KEY_X, …)`
+     * 注释掉时本文件全部用例都必须变红（L-116 / L-128 的纪律）。剥注释走仓库的共用助手，
+     * 别在这里自建（元守卫按实现形态点名，自建形态会被漏掉）。
+     */
+    private val source: String = TestSources.codeOf(sourceFile.readText())
 
     /**
      * 常量名 → 键名字符串。
@@ -54,18 +59,9 @@ class PrefsBackupCoverageTest {
         val cuts = listOf("\n    internal fun ", "\n    private fun ", "\n    internal class ")
             .map { tail.indexOf(it) }
             .filter { it > 0 }
-        // **先剥注释**再交给调用方：否则把 `put(KEY_X, ...)` 注释掉时，键名仍会命中下面的正则、
-        // 守卫照样绿（BUG.md L-50 —— 当初用「注释掉」做变异没变红、改用「删掉整行」才变红）。
-        return stripComments(tail.substring(0, cuts.minOrNull() ?: tail.length))
-    }
-
-    /** 去掉 `//` 行注释与 `/* … */` 块注释；其余文本原样保留（断言只做「键名 / 取值工具是否出现」） */
-    private fun stripComments(text: String): String {
-        val noBlock = text.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
-        return noBlock.lineSequence().joinToString("\n") { line ->
-            val i = line.indexOf("//")
-            if (i >= 0) line.substring(0, i) else line
-        }
+        // 注释在 [source] 那一层就剥掉了（L-50：当初用「注释掉」做变异没变红、改用「删掉整行」才变红），
+        // 这里只管截取范围。
+        return tail.substring(0, cuts.minOrNull() ?: tail.length)
     }
 
     @Test
@@ -258,10 +254,17 @@ class PrefsBackupCoverageTest {
         // 无条件导出会把「当时的默认」固化成显式值，将来调默认值这批人（恰恰是从没改过的那批）
         // 永远拿不到。两个开关的默认是 false，导出与否等价，故不在其列。
         val export = bodyOf("exportForBackup")
-        for (key in listOf("KEY_TAP_SOUND_VOLUME", "KEY_TAP_SOUND_MAP", "KEY_TAP_VIBRATE_STRENGTH")) {
+        for (key in listOf(
+            "KEY_TAP_SOUND_VOLUME", "KEY_TAP_SOUND_MAP", "KEY_TAP_VIBRATE_STRENGTH",
+            "KEY_SKIN_LIGHT", "KEY_SKIN_DARK", "KEY_THEME_MODE",
+        )) {
+            // 判据是「守卫**罩住**这次写入」，不是「文本里出现过 if (…)」—— 后者在「空守卫体 +
+            // 另起一行无条件写入」下仍然成立。换成 `sp.all` 快照写法（putIfSetXxx）同样算数。
             assertTrue(
-                "$key 的导出没有 sp.contains 守卫（缺键时会把当时的默认值写进备份）",
-                Regex("""if \(sp\.contains\($key\)\)""").containsMatchIn(export),
+                "$key 的导出没有守卫（缺键时会把当时的默认值写进备份）",
+                Regex("""if \(sp\.contains\($key\)\)[\s\S]{0,160}?put\($key""")
+                    .containsMatchIn(export) ||
+                    Regex("""putIfSet\w+\($key""").containsMatchIn(export),
             )
         }
     }

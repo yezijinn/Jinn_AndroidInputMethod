@@ -444,7 +444,7 @@ class DocsReferenceTest {
      *
      * 这份文档自称「逐条列出全部用户可见功能……一个不漏」，但此前**零守卫**：默认值写反、
      * 控件改了名它不知道、键位序号与它自己的面板清单互相矛盾 —— 三处都是发布之后才由人工审出来的。
-     * 这里只钉**能机械对拍**的三类；剩下没有权威来源的计数（「30 余个设置项」之类）仍靠人工，
+     * 这里只钉**能机械对拍**的四类；剩下没有权威来源的计数（「30 余个设置项」之类）仍靠人工，
      * 那是 L-473 留的口子。
      */
     @Test
@@ -483,14 +483,18 @@ class DocsReferenceTest {
         val claimed = Regex("""翻译（第 (\d+) 键""").find(items[pos - 1])?.groupValues?.get(1)?.toInt()
         assertEquals("功能总览里翻译键的序号与面板清单的顺序不一致", pos, claimed)
 
-        // ④ 音效库条数：删音效那批改了设置页与测试，这份文档漏了（BUG.md L-473 留的「计数归人工」口子）
-        val tap = readDoc("app/src/main/java/com/jinn/inputmethod/TapSound.kt")
-            ?: error("找不到 TapSound.kt")
-        val soundCount = Regex("""const val SOUND_COUNT\s*=\s*(\d+)""").find(tap)?.groupValues?.get(1)
-            ?: error("TapSound.kt 里找不到 SOUND_COUNT")
-        val soundClaim = Regex("""(\d+)\s*个真实键盘录音""").find(doc)?.groupValues?.get(1)
-            ?: error("功能总览里找不到「N 个真实键盘录音」那一句")
-        assertEquals("功能总览里的音效个数与 TapSound.SOUND_COUNT 不符", soundCount, soundClaim)
+        // ④ 音效库条数：删音效那批改了设置页与测试，这份文档漏了（BUG.md L-473 留的「计数归人工」口子）。
+        // 源码侧走**剥注释**的共用助手：注释里写一句同形常量不该能满足这条对拍；两侧都要求
+        // 「出现多处时必须一致」，免得只钉到第一处。
+        val tap = TestSources.codeSource("TapSound.kt")
+        val soundCounts = Regex("""const val SOUND_COUNT\s*=\s*(\d+)""").findAll(tap)
+            .map { it.groupValues[1] }.toList()
+        assertTrue("TapSound.kt 里找不到 SOUND_COUNT", soundCounts.isNotEmpty())
+        assertEquals("TapSound.kt 里 SOUND_COUNT 出现多处且不一致", 1, soundCounts.toSet().size)
+        val soundClaims = Regex("""(\d+)\s*个真实键盘录音""").findAll(doc).map { it.groupValues[1] }.toList()
+        assertTrue("功能总览里找不到「N 个真实键盘录音」那一句", soundClaims.isNotEmpty())
+        assertEquals("功能总览里「N 个真实键盘录音」出现多处且不一致", 1, soundClaims.toSet().size)
+        assertEquals("功能总览里的音效个数与 TapSound.SOUND_COUNT 不符", soundCounts[0], soundClaims[0])
     }
 
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */

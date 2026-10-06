@@ -212,6 +212,8 @@ class TestSourcesTest {
             "BuildToolGatesTest.kt",
             // 第四批（L-130 / L-131）：更新检查与设置页的源码钉
             "UpdateCheckerTest.kt",
+            // 第五批（L-963）：备份覆盖面那几条钉原先自建按行剥注释，元守卫的形态集合漏了它
+            "PrefsBackupCoverageTest.kt",
         )
         val lazy = mustDelegate.filterNot { name -> File(dir, name).readText().contains("TestSources.") }
         assertTrue("这些文件的源码装载/剥注释还没接到 TestSources（见 BUG.md L-116）：$lazy", lazy.isEmpty())

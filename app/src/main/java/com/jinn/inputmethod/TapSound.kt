@@ -54,8 +54,9 @@ internal object TapSound {
      *
      * 来源与授权见 `tools/sound_preview/keyboard_sounds_manifest.md`：
      * Freesound 条目为 CC0，Mixkit 条目为免费商用音效。
-     * ⚠ 增删资产后必须同步三处：本常量、[SOUND_DURATION_MS]、清单里的文件名 ——
-     * 编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
+     * ⚠ 增删资产后要同步的地方：本常量、[SOUND_DURATION_MS]，以及 `tools/sound_preview/gen_manifest.py`
+     * 里那四张表（编号与原始名、时长、起音数、来源与授权）—— 清单的表体由它渲染，表与资产对不上
+     * 时生成器直接非零退出。编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
      */
     const val SOUND_COUNT = 16
 
@@ -187,9 +188,10 @@ internal object TapSound {
      * 解析 `"7,3,0,14,13,2"` 形式的映射串。**不抛异常**，任何脏数据都收敛到合法值：
      *
      * - 串为空 → 整体回落 [DEFAULT_MAP]
-     * - 多余字段忽略、缺失字段留默认（不会因为多一个逗号把六组自定义一起清空）
-     * - 项数超长**且**出现空字段 → 整体回落 [DEFAULT_MAP]：空位右侧的字段无法判断是对齐在
-     *   分组序号上还是顺延过来的，按位读会把六个值整体后移一位
+     * - 多余字段忽略、缺失字段留默认（尾随的逗号 / 空字段同理，不会把六组自定义一起清空）
+     * - 项数超长**且前六项之内**出现空字段 → 整体回落 [DEFAULT_MAP]：空位右侧的字段无法判断
+     *   是对齐在分组序号上还是顺延过来的，按位读会把六个值整体后移一位；尾部的空字段已先剔掉，
+     *   不构成错位
      * - 单项非数字 → 该项留默认，**不牵连其余五项**
      * - 单项负数（连 [NONE] 之外的值）→「不播放」
      * - 单项上界外 → 回落该项默认音
@@ -204,11 +206,13 @@ internal object TapSound {
      */
     fun parseMap(raw: String?): IntArray {
         if (raw.isNullOrBlank()) return DEFAULT_MAP.copyOf()
-        val parts = raw.split(',')
-        // 串形如 ",7,3,0,14,13,2" 时按位读会解出 9,7,3,0,14,13 —— 六个值整体后移一位，
-        // 而页面照常显示「音效 XX · NNNms」，看不出错。本应用写不出这种串（formatMap 永远写
-        // 6 项），来源只能是外部，与其猜不如整体回落。
-        if (parts.size > GROUP_COUNT && parts.any { it.isBlank() }) return DEFAULT_MAP.copyOf()
+        // 尾随的空字段只是「多余字段」（按位读时落在末位之外，不会造成错位），先剔掉再判 —— 否则
+        // "0,1,2,3,4,5," 这种尾巴会被当成错位风险，六个值一起回落默认。
+        val parts = raw.split(',').dropLastWhile { it.isBlank() }
+        // 项数超长且**前六项之内**出现空字段：空位右侧的字段无法判断是对齐在分组序号上还是顺延
+        // 过来的（",7,3,0,14,13,2" 按位读会解出 9,7,3,0,14,13），本应用写不出这种串，来源只能是
+        // 外部，与其猜不如整体回落。
+        if (parts.size > GROUP_COUNT && parts.take(GROUP_COUNT).any { it.isBlank() }) return DEFAULT_MAP.copyOf()
         val out = DEFAULT_MAP.copyOf()
         for (i in 0 until minOf(parts.size, GROUP_COUNT)) {
             val v = parts[i].trim().toIntOrNull() ?: continue

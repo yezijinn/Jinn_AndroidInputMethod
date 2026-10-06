@@ -243,6 +243,13 @@ class TapSoundTest {
             intArrayOf(7, TapSound.DEFAULT_MAP[1], 0, 14, 13, 2),
             TapSound.parseMap("7,,0,14,13,2"),
         )
+        // 尾随的空字段只是「多余字段」：六个值必须原样留下（先剔尾再判，别把尾巴当错位）
+        assertArrayEquals(intArrayOf(0, 1, 2, 3, 4, 5), TapSound.parseMap("0,1,2,3,4,5,"))
+        assertArrayEquals(intArrayOf(0, 1, 2, 3, 4, 5), TapSound.parseMap("0,1,2,3,4,5, , "))
+        assertArrayEquals(
+            intArrayOf(7, 3, 0, 14, 13, 2),
+            TapSound.parseMap(" 7 , 3 , 0 , 14 , 13 , 2 , "),
+        )
     }
 
     @Test

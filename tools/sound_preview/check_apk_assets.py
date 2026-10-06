@@ -26,13 +26,14 @@ SUFFIX = '.ogg'
 
 
 def expected_names():
-    """从 TapSound.kt 的 SOUND_COUNT 推出应有的条目名（与发布对账同一口径）。"""
-    src = io.open(os.path.join(ROOT, 'app/src/main/java/com/jinn/inputmethod/TapSound.kt'),
-                  encoding='utf-8').read()
+    """从 TapSound.kt 的 SOUND_COUNT 推出应有的条目名（与发布对账同一口径）。取不到就退出。"""
+    path = os.path.join(ROOT, 'app/src/main/java/com/jinn/inputmethod/TapSound.kt')
+    if not os.path.isfile(path):
+        sys.exit('找不到 TapSound.kt: %s（工作目录变了？）' % path)
+    src = io.open(path, encoding='utf-8').read()
     m = re.search(r'const val SOUND_COUNT\s*=\s*(\d+)', src)
     if not m:
-        print('!! TapSound.kt 里找不到 SOUND_COUNT（改名了？）')
-        return None
+        sys.exit('TapSound.kt 里找不到 SOUND_COUNT（改名了？）—— 条目对拍不能静默跳过')
     return sorted('kbd_%02d.ogg' % (i + 1) for i in range(int(m.group(1))))
 
 
@@ -48,7 +49,7 @@ def check(apk):
         return False
     names = sorted(i.filename.rsplit('/', 1)[-1] for i in entries)
     want = expected_names()
-    if want is not None and names != want:
+    if names != want:
         print('   !! 条目与 SOUND_COUNT 不一致：缺 %s 多 %s'
               % ([n for n in want if n not in names], [n for n in names if n not in want]))
         return False

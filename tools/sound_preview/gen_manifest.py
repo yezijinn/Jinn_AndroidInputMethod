@@ -62,9 +62,12 @@ def rendered_rows():
 
 # ── 写盘之前把所有能失败的事做完 ───────────────────────────────────────────
 keys = [k for k, _, _ in SRC]
-if len(set(keys)) != len(keys) or len(keys) != len(DUR) or len(keys) != len(ON):
-    raise SystemExit('三张表的键不一致：SRC %d 条（去重后 %d）/ DUR %d / ON %d'
-                     % (len(keys), len(set(keys)), len(DUR), len(ON)))
+if len(set(keys)) != len(keys) or set(keys) != set(DUR) or set(keys) != set(ON):
+    raise SystemExit('表的键对不上：SRC %d 条（去重后 %d），DUR 多 %s，ON 多 %s'
+                     % (len(keys), len(set(keys)), sorted(set(DUR) - set(keys)),
+                        sorted(set(ON) - set(keys))))
+if not set(ROLE) <= set(keys):
+    raise SystemExit('角色表的键不在 SRC 里：%s' % sorted(set(ROLE) - set(keys)))
 
 if not os.path.isdir(ASSETS):
     raise SystemExit('资产目录不存在: %s' % ASSETS)
@@ -74,17 +77,27 @@ if ogg != want:
     raise SystemExit('资产与 SRC 不一致：缺 %s，多 %s'
                      % ([f for f in want if f not in ogg], [f for f in ogg if f not in want]))
 
-text = io.open(mp, encoding='utf-8').read()
+if not os.path.isfile(mp):
+    raise SystemExit('清单不存在: %s' % mp)
+# `newline=''`：换行风格自己判，别让通用换行把 \r\n 归一掉 —— 那样 eol 分支恒取 \n，
+# 在 CRLF 检出上会把整份文件改写成 LF。
+text = io.open(mp, encoding='utf-8', newline='').read()
 eol = '\r\n' if '\r\n' in text else '\n'
 lines = text.split(eol)
 if HEADER not in lines:
     raise SystemExit('清单里找不到表头（改过版式？）：%s' % HEADER)
 
-head = lines.index(HEADER) + 2          # 表头下面那行是分隔行
+head_at = lines.index(HEADER)
+if head_at + 1 >= len(lines) or not lines[head_at + 1].startswith('|---'):
+    raise SystemExit('表头下面那行不是分隔行（版式变了？）：%r'
+                     % (lines[head_at + 1] if head_at + 1 < len(lines) else None))
+head = head_at + 2
 end = head
 while end < len(lines) and lines[end].startswith('| '):
     end += 1
 old = lines[head:end]
+if not old:
+    raise SystemExit('清单表体一行都没读到（表头下面是空的？）')
 new = rendered_rows()
 same = old == new
 print('清单表体 %d 行 / 生成 %d 行：%s' % (len(old), len(new), '一致' if same else '不一致'))
@@ -97,10 +110,23 @@ for i in range(max(len(old), len(new))):
 if '--write' in sys.argv[1:]:
     if same:
         print('清单无变化')
-    else:
-        lines[head:end] = new
-        io.open(mp, 'w', encoding='utf-8', newline='').write(eol.join(lines))
-        print('清单已写回 ->', mp)
+        sys.exit(0)
+    lines[head:end] = new
+    # 替换后表体后面不该再跟着表格行 —— 表体中间夹了空行时扫描会提前停住、旧行留在原地。
+    if head + len(new) < len(lines) and lines[head + len(new)].startswith('| '):
+        raise SystemExit('替换后表体后面还跟着表格行（表体中间有空行？）—— 已中止，未写盘')
+    out = eol.join(lines)
+    tmp = mp + '.tmp.' + str(os.getpid())
+    try:
+        io.open(tmp, 'w', encoding='utf-8', newline='').write(out)
+        os.replace(tmp, mp)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise SystemExit('写回失败：%s' % e)
+    if io.open(mp, encoding='utf-8', newline='').read() != out:
+        raise SystemExit('写回后重读与内容不一致，请检查磁盘')
+    print('清单已写回 ->', mp)
     sys.exit(0)
 
 print('资产 %d 个 ogg / %d KB；要写回加 --write'
