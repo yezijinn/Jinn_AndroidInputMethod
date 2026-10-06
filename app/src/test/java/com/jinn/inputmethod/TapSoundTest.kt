@@ -25,11 +25,22 @@ class TapSoundTest {
     }
 
     @Test
-    fun `非数字或长度不符一律回落默认映射`() {
+    fun `非数字按该项回落、长度不符按位补齐`() {
+        // 旧实现对这两类脏数据整体回落六项，于是一个打错的字母 / 多一个逗号会把六组自定义
+        // 一起清空，而用户之后改任意一组时就把这串默认值写盘固化。改成按位处理。
         assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap("abc"))
-        assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap("1,2"))
-        assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap("0,1,2,3,4,5,6"))
-        assertArrayEquals(TapSound.DEFAULT_MAP, TapSound.parseMap("0,1,2,3,4,x"))
+        // 非数字只影响该项，其余按原值保留
+        assertArrayEquals(
+        intArrayOf(0, 1, 2, 3, 4, TapSound.DEFAULT_MAP[5]),
+        TapSound.parseMap("0,1,2,3,4,x"),
+        )
+        // 多余字段忽略
+        assertArrayEquals(intArrayOf(0, 1, 2, 3, 4, 5), TapSound.parseMap("0,1,2,3,4,5,6"))
+        // 缺失字段留默认
+        assertArrayEquals(
+            intArrayOf(1, 2, TapSound.DEFAULT_MAP[2], TapSound.DEFAULT_MAP[3], TapSound.DEFAULT_MAP[4], TapSound.DEFAULT_MAP[5]),
+            TapSound.parseMap("1,2"),
+        )
     }
 
     @Test
@@ -156,19 +167,39 @@ class TapSoundTest {
     }
 
     @Test
-    fun `双段触感的停顿与脉冲宽度同比例`() {
-        // 停顿与脉冲脱钩时弱档会退化成「一次带凹陷的震动」：10ms 脉冲配 20ms 停顿已在
-        // 人手指可辨的边缘。三档都按 2:1 取，形状才一致。
-        assertEquals(20L, TapSound.erasePulseGap(10L))   // 弱
+    fun `双段停顿有下限也有上限，弱档不再被比例吃掉`() {
+        // 下限 30ms：20ms 配 10ms 脉冲听不出是两下（弱档退化成「一次带凹陷的震动」）。
+        // 上限 40ms：间隔越大，后半段越靠后，越容易被下一键的 vibrate 替换掉。
+        assertEquals(30L, TapSound.erasePulseGap(10L))   // 弱：不再是 20
         assertEquals(30L, TapSound.erasePulseGap(15L))   // 中
-        assertEquals(40L, TapSound.erasePulseGap(20L))   // 强
-        // 2:1 的比例对三档都成立（VIB_OFF 的脉冲宽是 0ms —— 那是「关闭」，不是一档脉冲）
+        assertEquals(40L, TapSound.erasePulseGap(20L))   // 强：封顶
         for (tier in TapSound.VIB_WEAK..TapSound.VIB_STRONG) {
             val (ms, _) = TapSound.vibrationSpec(tier)
-            assertEquals("档位 $tier", 2 * ms, TapSound.erasePulseGap(ms))
+            val gap = TapSound.erasePulseGap(ms)
+            assertTrue("档位 $tier 的停顿 $gap 超出 [30,40]", gap in 30L..40L)
+            assertTrue("档位 $tier 的总时长 ${ms * 2 + gap}ms 过长", ms * 2 + gap <= 80L)
         }
-        // 档位为「关闭」时脉冲宽 0，停顿回到下限而不是 0 —— 波形不能出现 0 长度的段
-        assertEquals(20L, TapSound.erasePulseGap(0L))
+        // 档位为「关闭」时脉冲宽 0：停顿回到下限而不是 0（波形不能出现 0 长度段）
+        assertEquals(30L, TapSound.erasePulseGap(0L))
+        // 负值（脏数据）同样被下限抬起来，不会出现负的间隔
+        assertEquals(30L, TapSound.erasePulseGap(-5L))
+    }
+
+    @Test
+    fun `单个脏数据不牵连其余分组`() {
+        // 旧实现对「非数字」整体回落六项，于是一个打错的字母会把六组自定义一起清空，
+        // 且用户之后改任意一组时就把这串默认值写盘固化。
+        val map = TapSound.parseMap("7,x,0,14,13,2")
+        assertEquals(7, map[0])
+        assertEquals("数字组应回落到默认", TapSound.DEFAULT_MAP[1], map[1])
+        assertEquals("后面的分组不受牵连", 0, map[2])
+        assertEquals(14, map[3])
+        // 多余字段忽略、缺失字段留默认
+        assertArrayEquals(intArrayOf(1, 2, 3, 4, 5, 6), TapSound.parseMap("1,2,3,4,5,6,99"))
+        assertArrayEquals(
+            intArrayOf(1, 2, 3, 4, TapSound.DEFAULT_MAP[4], TapSound.DEFAULT_MAP[5]),
+            TapSound.parseMap("1,2,3,4"),
+        )
     }
 
     @Test

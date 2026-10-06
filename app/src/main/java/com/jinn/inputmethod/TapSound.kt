@@ -153,41 +153,58 @@ internal object TapSound {
     fun isDoublePulse(group: Int): Boolean = group == G_ERASE
 
     /**
-     * 双段触感两段之间的停顿，与脉冲宽度同比例。
+     * 双段触感两段之间的停顿（弱 30ms / 中 30ms / 强 40ms）。
      *
-     * 比例固定 2:1（弱 10/20、中 15/30、强 20/40），而不是三档共用一个常数：停顿一旦与脉冲
-     * 宽度脱钩，弱档会退化成「一次带凹陷的震动」—— 10ms 脉冲配 20ms 停顿已在人手指可辨的
-     * 边缘，而 20ms 脉冲配同样的 20ms 停顿又偏挤。取比例后三档的「哒-哒」形状一致。
+     * 两条约束在这里互相拉扯，改动前先看清：
      *
-     * 下限 20ms 是给弱档的：低于它 2:1 的比例就破了，而弱档没有更细的档位可退。
-     * 弱档究竟能否听出两下要实测波形才能定论，这里只保证三档比例一致。
+     * ① 停顿要**够大**才能听出是两下。20ms 配 10ms 脉冲已在人手指可辨的边缘（弱档因此
+     *    退化成「一次带凹陷的震动」），所以下限取 30ms —— 这一条是本次修掉的实际问题。
+     * ② 停顿**不能太大**。`Vibrator.vibrate(effect)` 是替换语义，后一次调用取消在途波形，
+     *    而删除键不占用普通通道的时间戳（`Throttle` 对删除组只写 `lastErase`），下一按键
+     *    可以在 +0ms 就触发 ⇒ 间隔越大，后半段落在越靠后的位置、被削掉的窗口就越大。
+     *
+     * 两条一起看就是：给一个够用的下限，再按脉冲宽度微调，且**总时长封顶**在能保住第二段
+     * 的范围内。强档脉冲本身最宽（20ms），停顿反而只比下限多 10ms。
+     *
+     * 弱档能否听出两下要实测波形才能定论，这里只保证下限不再被比例吃掉。
      */
-    fun erasePulseGap(pulseMs: Long): Long = maxOf(20L, pulseMs * 2)
+    fun erasePulseGap(pulseMs: Long): Long =
+        ERASE_PULSE_GAP_MIN.coerceAtLeast((pulseMs * 2).coerceAtMost(ERASE_PULSE_GAP_MAX))
+
+    /** 停顿下限：低于它弱档听不出两下 */
+    private const val ERASE_PULSE_GAP_MIN = 30L
+
+    /** 停顿上限：再大后半段就容易被下一键截断（替换语义，见上） */
+    private const val ERASE_PULSE_GAP_MAX = 40L
 
     // ── 映射串解析（脏数据防护）──────────────────────────────────
 
     /**
-     * 解析 `"7,3,0,14,13,2"` 形式的映射串。
+     * 解析 `"7,3,0,14,13,2"` 形式的映射串。**不抛异常**，任何脏数据都收敛到合法值：
      *
-      * 任何异常输入都**不抛异常**：长度不符 / 非数字 → 整体回落 [DEFAULT_MAP]；
-      *
-      * 上界外为什么不钳到末位：音效下架会让 [SOUND_COUNT] 变小，于是**旧版本里合法的索引变成
-      * 越界**。钳到末位会把用户精挑的音色静默换成另一个（而读写两侧都过本函数，落盘串随即被
-      * 覆写、原值不可恢复）；回落默认音至少是条明确规则，且该组没被改过时它的默认音本就是
-      * 用户自己的选择。
-      * 负数（连 [NONE] 之外的值）→「不播放」；**上界外 → 回落该组默认音**。
-     * 备份导入会把字符串原样写回来，没有这层防护就是一次越界崩溃。
+     * - 串为空 → 整体回落 [DEFAULT_MAP]
+     * - 多余字段忽略、缺失字段留默认（不会因为多一个逗号把六组自定义一起清空）
+     * - 单项非数字 → 该项留默认，**不牵连其余五项**
+     * - 单项负数（连 [NONE] 之外的值）→「不播放」
+     * - 单项上界外 → 回落该项默认音
+     *
+     * 越界为什么不钳到末位：音效下架会让 [SOUND_COUNT] 变小，于是**旧版本里合法的索引变成
+     * 越界**。钳到末位会把用户精挑的音色静默换成另一个（而读写两侧都过本函数，落盘串随即被
+     * 覆写、原值不可恢复）；回落默认音至少是条明确规则，且该组没被改过时它的默认音本就是
+     * 用户自己的选择。
+     *
+     * 末尾的 `coerceIn` 不是多余的：将来改小 [SOUND_COUNT] 而忘了同步 [DEFAULT_MAP] 时，
+     * 越界值会从这里原样漏出去，而调用方对越界索引的处理并不一致（有的静音、有的显示空白）。
      */
     fun parseMap(raw: String?): IntArray {
         if (raw.isNullOrBlank()) return DEFAULT_MAP.copyOf()
         val parts = raw.split(',')
-        if (parts.size != GROUP_COUNT) return DEFAULT_MAP.copyOf()
-        val out = IntArray(GROUP_COUNT)
-        for (i in 0 until GROUP_COUNT) {
-            val v = parts[i].trim().toIntOrNull() ?: return DEFAULT_MAP.copyOf()
+        val out = DEFAULT_MAP.copyOf()
+        for (i in 0 until minOf(parts.size, GROUP_COUNT)) {
+            val v = parts[i].trim().toIntOrNull() ?: continue
             out[i] = when {
                 v in 0 until SOUND_COUNT -> v
-                v >= SOUND_COUNT -> DEFAULT_MAP[i]
+                v >= SOUND_COUNT -> DEFAULT_MAP[i].coerceIn(NONE, SOUND_COUNT - 1)
                 else -> NONE
             }
         }
