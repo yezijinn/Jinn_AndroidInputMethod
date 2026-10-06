@@ -1148,12 +1148,13 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
             return
         }
-        // 选图期间前台可能被切换：宿主换了就不插 —— 图片落到别的应用不只是「插错地方」，
-        // 落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。任一侧取不到包名时放行，
-        // 不因缺信息丢掉用户的一次选择。
-        val current = currentInputEditorInfo?.packageName
-        if (picked.host != null && current != null && picked.host != current) {
-            Diagnostics.w(TAG, "图库快贴：宿主已切换（发起=${picked.host} 当前=$current），丢弃待插入图片")
+        // 选图期间前台可能被切换：输入框换了就不插 —— 只比包名不够（同一应用换个会话就是另一个
+        // 输入框），与 [flushPendingPaste] 同口径用 fieldKey。图片落到别的应用或别的会话都不只是
+        // 「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
+        // 任一侧取不到标识时放行，不因缺信息丢掉用户的一次选择。
+        val current = pendingPasteFieldKey(currentInputEditorInfo)
+        if (picked.hostKey != null && current != null && picked.hostKey != current) {
+            Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
             return
         }
         val ok = GalleryInsert.commit(this, picked.file, picked.mime)
@@ -1168,11 +1169,12 @@ class JinnIme : InputMethodService() {
      * 选图期间键盘让位给系统选择器，回来时 `onStartInputView` 重来一遍 —— 那正是提交通道。
      */
     private fun openGalleryPicker() {
-        // 带上发起宿主：选图期间前台可能被切换，回来时靠它核对（见 [flushPendingGalleryImage]）
-        val host = currentInputEditorInfo?.packageName
+        // 带上发起**输入框**的标识：选图期间前台可能被切换，哪怕同一个应用里换个会话也是另一个
+        // 输入框，回来时靠它核对（见 [flushPendingGalleryImage]）
+        val hostKey = pendingPasteFieldKey(currentInputEditorInfo)
         val intent = Intent(this, GalleryPickActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra(GalleryInsert.EXTRA_HOST, host)
+            .putExtra(GalleryInsert.EXTRA_HOST_KEY, hostKey)
         runCatching { startActivity(intent) }
             .onFailure { Diagnostics.w(TAG, "打开选图页失败: ${it.message}") }
     }

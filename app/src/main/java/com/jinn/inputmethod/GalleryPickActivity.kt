@@ -14,8 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
  * 拿不到 Activity 结果回调。于是本页负责「选图 → 复制进私有 cache → 交给
  * [GalleryInsert] 桥」，IME 回到前台（`onStartInputView`）后再落 `commitContent`。
  *
- * 发起宿主的包名经 [GalleryInsert.EXTRA_HOST] 带入并随桥保存：选图期间前台可能被切换，
- * 回来时由 IME 核对，避免把图插进别的输入框。
+ * 发起输入框的标识经 [GalleryInsert.EXTRA_HOST_KEY] 带入并随桥保存：选图期间前台可能被切换
+ * （同一个应用换个会话也是另一个输入框），回来时由 IME 核对，避免把图插进别的输入框。
  *
  * 零存储权限：`PickVisualMedia` 在 Android 13+ 走系统相册选择器（Photo Picker），
  * 低版本自动退回 SAF，全程不需要任何存储权限，与项目「不申请存储权限」的约定一致。
@@ -46,13 +46,13 @@ class GalleryPickActivity : ComponentActivity() {
                 finish() // 用户取消
                 return@registerForActivityResult
             }
-            val host = intent?.getStringExtra(GalleryInsert.EXTRA_HOST)
+            val hostKey = intent?.getStringExtra(GalleryInsert.EXTRA_HOST_KEY)
             // 复制原图可能几十 MB，放后台；完成后关页回原应用，IME 在下一个输入会话里插入
             BackgroundIo.run {
                 val result = GalleryInsert.copyToCache(this@GalleryPickActivity, uri)
                 val toast = when (result) {
                     is GalleryInsert.CopyResult.Ok -> {
-                        GalleryInsert.putPending(result.file, result.mime, host)
+                        GalleryInsert.putPending(result.file, result.mime, hostKey)
                         Diagnostics.i(TAG, "已备好待插入图片（${result.mime}）")
                         null
                     }

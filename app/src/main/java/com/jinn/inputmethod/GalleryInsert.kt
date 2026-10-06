@@ -24,8 +24,8 @@ import java.io.File
  */
 internal object GalleryInsert {
 
-    /** 选图页读取发起宿主的 Intent extra：选图期间前台可能被切换，回来时由 IME 核对 */
-    const val EXTRA_HOST = "com.jinn.inputmethod.extra.GALLERY_HOST"
+    /** 选图页读取发起输入框标识的 Intent extra（值是 `fieldKeyOf` 的结果，见 [Picked.hostKey]） */
+    const val EXTRA_HOST_KEY = "com.jinn.inputmethod.extra.GALLERY_HOST_KEY"
 
     /** 存放待插入图片的 cache 子目录（与 `res/xml/share_file_paths.xml` 的 cache-path 对应） */
     private const val DIR_NAME = "gallery_share"
@@ -42,6 +42,14 @@ internal object GalleryInsert {
     /** cache 里最多保留几张，超出清理最旧（防选图反复使用后堆积） */
     private const val KEEP_FILES = 5
 
+    /**
+     * 清理时无条件保留的最新张数。
+     *
+     * 取 2 而不是 1：`commitContent` 交给宿主的是文件 URI，宿主读取是异步的；用户连选多张时
+     * 「正在被读的」往往是最新那张与**上一轮插入的那张**（L-1003）。
+     */
+    private const val PROTECTED_RECENT = 2
+
     private const val TAG = "GalleryInsert"
 
     /** 选图复制的三种结果：失败要能区分原因，界面才好给准确提示 */
@@ -51,8 +59,14 @@ internal object GalleryInsert {
         object ReadFailed : CopyResult
     }
 
-    /** 待插入的一张图：文件、类型、发起选图时的宿主包名（null = 当时取不到，核对时放行） */
-    internal class Picked(val file: File, val mime: String, val host: String?)
+    /**
+     * 待插入的一张图。
+     *
+     * [hostKey] 是发起选图时的**输入框**标识（`fieldKeyOf(packageName, fieldId)`，与 `JinnIme.pendingPasteFieldKey` 同口径）——
+     * 只记包名不够：同一个应用里换个会话就是另一个输入框，图片会插进用户刚切过去的那个（L-1002）。
+     * 取不到时为 null，比对时放行。
+     */
+    internal class Picked(val file: File, val mime: String, val hostKey: String?)
 
     private class Pending(val picked: Picked, val atMs: Long)
 
@@ -69,8 +83,8 @@ internal object GalleryInsert {
         mimeTypes?.any { it == "*/*" || it.startsWith("image/") } == true
 
     /** 选图页复制完成后调用（覆盖式：只保留最后一次选择） */
-    fun putPending(file: File, mime: String, host: String?) {
-        pending = Pending(Picked(file, mime, host), System.currentTimeMillis())
+    fun putPending(file: File, mime: String, hostKey: String?) {
+        pending = Pending(Picked(file, mime, hostKey), System.currentTimeMillis())
         trimCache(file.parentFile)
     }
 
@@ -82,10 +96,16 @@ internal object GalleryInsert {
     }
 
     /**
-     * 执行插入。`false` 只代表本次没有提交成功（无连接 / Provider 出错 / 宿主返回 false）；
+     * 执行插入。`false` 只代表本次没有提交成功（文件已不在 / 无连接 / Provider 出错 / 宿主返回 false）；
      * 「宿主是否真的收下了」以宿主表现为准，方法返回值不作判据（见类注释）。
      */
     fun commit(ime: JinnIme, file: File, mime: String): Boolean {
+        // 文件可能已被系统清 cache 或清理逻辑删掉：URI 仍能构造、commitContent 也可能返回 true，
+        // 宿主却读到空内容且没有提示 —— 显式拦下，别让它变成一次无声假成功（L-1004）
+        if (!file.exists() || file.length() == 0L) {
+            Diagnostics.w(TAG, "待插入图片已不存在（${file.name}），跳过提交")
+            return false
+        }
         val ic: InputConnection = ime.currentInputConnection ?: return false
         val uri = runCatching {
             FileProvider.getUriForFile(ime, "${ime.packageName}.share", file)
@@ -132,19 +152,20 @@ internal object GalleryInsert {
     /**
      * 应清理的文件（纯函数，供守卫枚举场景）。
      *
-     * 入参按**最近使用在前**排序；保留最近 [keepFiles] 张、且保留集总字节不超过 [maxBytes]。
-     * 最新的那一张**永不删**：`commitContent` 交给宿主的是文件 URI，宿主读取是异步的
-     * （上传前可能重读），删掉会在界面上表现为「发出去的图裂了」。
+     * 入参按**最近使用在前**排序。最新 [protectRecent] 张无条件保留 —— 宿主读取是异步的，
+     * 刚提交与上一轮提交的都可能仍在被重读，删掉在界面上表现为「发出去的图裂了」（L-1003）；
+     * 其余按「保留 [keepFiles] 张 + 保留集总字节不超过 [maxBytes]」淘汰，超出即删最旧。
      */
     internal fun staleFilesForTrim(
         entries: List<Pair<File, Long>>,
         keepFiles: Int,
         maxBytes: Long,
+        protectRecent: Int = PROTECTED_RECENT,
     ): List<File> {
         val out = ArrayList<File>()
         var keptBytes = 0L
         entries.forEachIndexed { idx, (file, len) ->
-            if (idx == 0) {
+            if (idx < protectRecent) {
                 keptBytes += len
                 return@forEachIndexed
             }
@@ -155,7 +176,7 @@ internal object GalleryInsert {
         return out
     }
 
-    /** 目录内按「保留张数 + 总字节」清理（判据见 [staleFilesForTrim]） */
+    /** 目录内按「保护最近若干张 + 保留张数 + 总字节」清理（判据见 [staleFilesForTrim]） */
     private fun trimCache(dir: File?) {
         val files = dir?.listFiles() ?: return
         val entries = files.sortedByDescending { it.lastModified() }.map { it to it.length() }
