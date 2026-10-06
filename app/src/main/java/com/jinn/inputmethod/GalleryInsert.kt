@@ -95,20 +95,23 @@ internal object GalleryInsert {
         mimeTypes?.any { it == "*/*" || it.startsWith("image/") } == true
 
     /**
-     * **图库专用**的输入框标识：在包名与 `fieldId` 之外多带 `inputType` / `imeOptions` 与 `hintText` 摘要。
+     * **图库专用**的输入框标识：包名 + `fieldId` + 输入类型 + `imeOptions`，全部取自宿主给的静态属性。
      *
      * 为什么不与粘贴暂存（`fieldKeyOf`，只有包名 + fieldId）共用：`EditorInfo.fieldId` 由宿主自定，
      * 自绘输入框（微信聊天框等）常恒为同一个值 ⇒ 单靠包名 + fieldId 区分不出同一应用的不同会话，
      * 图片会被插进用户刚切过去的那个（L-1005）。图库的误插代价（图片进了别的会话，落在收到即发的
-     * 宿主上等于发出去）高于文本粘贴，故这里用更宽的判据。`hintText` 只取摘要、不落明文。
+     * 宿主上等于发出去）高于文本粘贴，故这里用更宽的判据。
+     *
+     * `hintText` **不参与**（L-1008）：它随输入状态变 —— 点「图库」时输入框已聚焦，placeholder 多半
+     * 已被宿主收起或换过文案，选完图回来是重新聚焦的一刻，两次采样对不上就会把同一个输入框判成
+     * 「换了框」，合法选图被丢弃。签名两侧一个在上面取、一个在 `flushPendingGalleryImage` 里取，
+     * 只能比稳定量。
      */
     internal fun galleryFieldKeyOf(info: EditorInfo?): String? {
         val i = info ?: return null
         val pkg = i.packageName ?: return null
         if (pkg.isEmpty()) return null
-        val hint = i.hintText?.toString().orEmpty()
-        val hintDigest = if (hint.isEmpty()) 0 else hint.hashCode()
-        return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}#$hintDigest"
+        return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}"
     }
 
     /** 选图页复制完成后调用（覆盖式：只保留最后一次选择） */
@@ -146,17 +149,21 @@ internal object GalleryInsert {
     }
 
     /**
-     * 把选中的图片复制进私有 cache。在后台线程调用（原图可能几十 MB）；
-     * mime 取真实类型（如 image/jpeg），拿不到时退回通配图片类型（宿主声明里两者通常都在）。
+     * 把选中的图片复制进私有 cache。在后台线程调用（原图可能几十 MB）。
+     *
+     * 类型优先取宿主声明的（`ContentResolver.getType`），取不到时按文件头嗅探；**不回退通配类型**
+     * —— `ClipDescription` 要求具体类型，通配属未定义用法（L-1009）。文件名带嗅探出的扩展名，
+     * 供按后缀判类型的宿主使用。
      */
     fun copyToCache(context: Context, uri: Uri): CopyResult {
         val resolver = context.contentResolver
-        val mime = resolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/*"
+        val declared = resolver.getType(uri)?.takeIf { it.startsWith("image/") }
         val dir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
-        val out = File(dir, "pick_${System.currentTimeMillis()}.img")
+        val stamp = System.currentTimeMillis()
+        val temp = File(dir, "pick_$stamp.tmp")
         return try {
             resolver.openInputStream(uri)?.use { input ->
-                out.outputStream().use { output ->
+                temp.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
                     var total = 0L
                     while (true) {
@@ -164,19 +171,62 @@ internal object GalleryInsert {
                         if (n <= 0) break
                         total += n
                         if (total > MAX_BYTES) {
-                            out.delete()
+                            temp.delete()
                             return CopyResult.TooLarge
                         }
                         output.write(buf, 0, n)
                     }
                 }
             } ?: return CopyResult.ReadFailed
-            if (out.length() > 0) CopyResult.Ok(out, mime) else CopyResult.ReadFailed
+            if (temp.length() == 0L) {
+                temp.delete()
+                return CopyResult.ReadFailed
+            }
+            val mime = declared ?: sniffImageMime(readHead(temp))
+            val named = File(dir, "pick_$stamp.${extOf(mime)}")
+            // 改名失败（少见）就沿用 .tmp：类型已定，扩展名只影响按后缀判类型的宿主
+            CopyResult.Ok(if (temp.renameTo(named)) named else temp, mime)
         } catch (t: Throwable) {
-            out.delete()
+            temp.delete()
             Diagnostics.w(TAG, "选图复制失败: ${t.javaClass.simpleName}:${t.message}")
             CopyResult.ReadFailed
         }
+    }
+
+    /** 读文件头供 [sniffImageMime] 用（读不到给空数组，嗅探自然走兜底） */
+    private fun readHead(file: File): ByteArray = runCatching {
+        val head = ByteArray(12)
+        val n = java.io.FileInputStream(file).use { it.read(head) }
+        if (n <= 0) ByteArray(0) else head.copyOf(n)
+    }.getOrDefault(ByteArray(0))
+
+    /**
+     * 按文件头判图片类型（纯函数，供守卫枚举格式）。
+     *
+     * 认 JPEG / PNG / GIF / WebP / HEIF 家族五种常见形态，都不是时兜底 `image/png` ——
+     * 兜底必须是**具体**类型：通配属性在 `ClipDescription` 里是无定义行为，严格解析的宿主会直接认不出。
+     * `ftyp` 在偏移 4，MP4 也有，但入口是 `PickVisualMedia.ImageOnly`，不会拿到视频。
+     */
+    internal fun sniffImageMime(head: ByteArray): String {
+        fun at(i: Int): Int = if (i < head.size) head[i].toInt() and 0xFF else -1
+        return when {
+            at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF -> "image/jpeg"
+            at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "image/png"
+            at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 -> "image/gif"
+            at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 &&
+                at(8) == 0x57 && at(9) == 0x45 && at(10) == 0x42 && at(11) == 0x50 -> "image/webp"
+            at(4) == 0x66 && at(5) == 0x74 && at(6) == 0x79 && at(7) == 0x70 -> "image/heic"
+            else -> "image/png"
+        }
+    }
+
+    /** 与 [sniffImageMime] 结果对应的扩展名 */
+    private fun extOf(mime: String): String = when (mime) {
+        "image/jpeg" -> "jpg"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        "image/heic" -> "heic"
+        else -> "png"
     }
 
     /**

@@ -92,20 +92,22 @@ class GalleryInsertTest {
     }
 
     /**
-     * 图库的输入框标识必须比粘贴暂存宽（L-1005）。
+     * 图库的输入框标识比粘贴暂存宽，但只取静态属性（L-1005 / L-1008）。
      *
      * `fieldKeyOf` 只有包名 + fieldId，而自绘输入框（微信聊天框等）的 fieldId 常恒为同一个值
-     * ⇒ 分不出同一应用的不同会话。图库的误插代价是「图片进了别的会话」，故多带
-     * `inputType` / `imeOptions` / hint 摘要；hint 只取摘要、不落明文。
+     * ⇒ 分不出同一应用的不同会话，故多带 `inputType` / `imeOptions`。
+     *
+     * `hintText` 不能参与：它随输入状态变（聚焦后 placeholder 常会被宿主收起或换文案），
+     * 而「点图库」与「回原应用」是两次采样，对不上就会把同一个输入框判成换了框，合法选图被丢弃。
      */
     @Test
-    fun 图库输入框标识比粘贴暂存更宽() {
+    fun 图库输入框标识更宽但只取静态属性() {
         val src = TestSources.codeSource("GalleryInsert.kt")
         val body = src.substringAfter("internal fun galleryFieldKeyOf(").substringBefore("fun putPending(")
-        for (field in listOf("fieldId", "inputType", "imeOptions", "hintText")) {
+        for (field in listOf("fieldId", "inputType", "imeOptions")) {
             assertTrue("标识要带 $field", field in body)
         }
-        assertTrue("hint 只取摘要、不落明文", "hintDigest" in body && "hashCode()" in body)
+        assertFalse("hint 随输入状态变，不能进标识", "hintText" in body)
         val mine = TestSources.codeSource("JinnIme.kt")
         val uses = Regex("""galleryFieldKeyOf\(currentInputEditorInfo\)""").findAll(mine).count()
         assertEquals("发起点与落库都要用图库口径", 2, uses)
@@ -156,4 +158,29 @@ class GalleryInsertTest {
         assertTrue("commit 要先判文件存在与长度", "!file.exists() || file.length() == 0L" in body)
         assertTrue("并回报 FileMissing 让调用方说话", "InsertResult.FileMissing" in body)
     }
+
+    /**
+     * 类型不给通配，按文件头嗅探出具体类型（L-1009）。
+     *
+     * `ClipDescription` 的 mimeTypes 要求具体类型，通配属无定义行为；文件名也不能停在 `.tmp` / `.img`
+     * 这类无意义后缀 —— 按后缀判类型的宿主会认不出这张图。
+     */
+    @Test
+    fun 图片类型按文件头嗅探且兜底不用通配() {
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        assertFalse("类型兜底不能用通配", "\"image/*\"" in src)
+        assertTrue("取不到声明时按文件头嗅探", "sniffImageMime(readHead(" in src)
+        assertTrue("文件名带嗅探出的扩展名", "extOf(mime)" in src)
+
+        assertEquals("JPEG", "image/jpeg", GalleryInsert.sniffImageMime(bytes(0xFF, 0xD8, 0xFF, 0xE0)))
+        assertEquals("PNG", "image/png", GalleryInsert.sniffImageMime(bytes(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A)))
+        assertEquals("GIF", "image/gif", GalleryInsert.sniffImageMime("GIF89a".toByteArray()))
+        assertEquals("WebP", "image/webp", GalleryInsert.sniffImageMime("RIFF????WEBPVP8 ".toByteArray()))
+        assertEquals("HEIF", "image/heic", GalleryInsert.sniffImageMime("????ftypheic".toByteArray()))
+        assertEquals("都不认时兜底具体类型", "image/png", GalleryInsert.sniffImageMime(bytes(0x01, 0x02)))
+        assertEquals("空头不炸", "image/png", GalleryInsert.sniffImageMime(ByteArray(0)))
+        assertEquals("截断的 JPEG 头不误判", "image/png", GalleryInsert.sniffImageMime(bytes(0xFF, 0xD8)))
+    }
+
+    private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }
