@@ -4,6 +4,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.MotionEvent
 import android.view.View
 import android.widget.AdapterView
@@ -222,6 +226,8 @@ class TranslationSettingsActivity : Activity() {
         } else {
             // 同上：onPause 是自动保存路径，弹 toast 会与失焦那次重复（L-728）
             saveCredentials(notify = false)
+            // 改动已经在这一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转）
+            credentialAutosave.removeCallbacks(autosaveCredentials)
             // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03 修复 L-774）：L-758 把它加在了 if/else 之外，
             // 而 L-405 的守卫只判「`importing` 字符串在 onPause 块里出现过」、不判「所有回写都在分支内」
             // ⇒ 一旦可达就是「界面旧值覆盖刚导入的值」。姊妹页 OpenAiSettingsActivity 的同类回写已整段在守卫内。
@@ -317,15 +323,43 @@ class TranslationSettingsActivity : Activity() {
         val save = View.OnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) saveCredentials(notify = false)
         }
-        editAliyunKeyId.setOnFocusChangeListener(save)
-        editAliyunKeySecret.setOnFocusChangeListener(save)
-        editAzureKey.setOnFocusChangeListener(save)
-        editAzureRegion.setOnFocusChangeListener(save)
-        editBaiduAppId.setOnFocusChangeListener(save)
-        editBaiduSecret.setOnFocusChangeListener(save)
-        editBaiduLlmAppId.setOnFocusChangeListener(save)
-        editBaiduLlmKey.setOnFocusChangeListener(save)
-        editDeeplKey.setOnFocusChangeListener(save)
+        // 输入停顿即落盘（BUG.md L-209）：只靠失焦 / onPause 时，用户在输入框里粘贴完凭据、
+        // 焦点还没移开就被系统回收（后台清理、内存压力），这一段配置**根本不会写盘**，
+        // 而页面上的提示写着「自动保存」。防抖到停顿后再写，字段没变时 [CredentialSaveGuard]
+        // 会把回写整条挡掉，所以连续输入不会反复加密落盘。
+        val autosave = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
+            override fun afterTextChanged(s: Editable?) = scheduleCredentialAutosave()
+        }
+        for (field in credentialFields()) {
+            field.setOnFocusChangeListener(save)
+            field.addTextChangedListener(autosave)
+        }
+    }
+
+    /** 本页凭据输入框清单：失焦暂存与输入即落盘共用，避免两份清单走散 */
+    private fun credentialFields(): List<EditText> = listOf(
+        editAliyunKeyId, editAliyunKeySecret,
+        editAzureKey, editAzureRegion,
+        editBaiduAppId, editBaiduSecret,
+        editBaiduLlmAppId, editBaiduLlmKey,
+        editDeeplKey,
+    )
+
+    /** 字段改动后延迟落盘；下一次改动把前一次排队顶掉（见 [bindCredentialFields]） */
+    private fun scheduleCredentialAutosave() {
+        credentialAutosave.removeCallbacks(autosaveCredentials)
+        credentialAutosave.postDelayed(autosaveCredentials, CREDENTIAL_AUTOSAVE_DEBOUNCE_MS)
+    }
+
+    private val credentialAutosave = Handler(Looper.getMainLooper())
+
+    private val autosaveCredentials = Runnable {
+        // 导入进行中不回写：界面旧值会盖掉刚导入的凭据（与 onPause 同一守卫）
+        if (!ConfigBackupManager.importing) saveCredentials(notify = false)
     }
 
     private val saveGuard = CredentialSaveGuard()
@@ -546,6 +580,15 @@ class TranslationSettingsActivity : Activity() {
     private companion object {
         const val TAG = "TranslationSettings"
 
+        /**
+         * 输入停顿多久后落盘（BUG.md L-209）。
+         *
+         * 取 0.8 秒：足够长到「连续粘贴 / 连续输入」只写一次，又短到聚焦状态下被回收也基本不会
+         * 落在窗口里。字段没变时回写被 [CredentialSaveGuard] 挡掉，所以这个值不是写盘次数的上界。
+         */
+        const val CREDENTIAL_AUTOSAVE_DEBOUNCE_MS = 800L
+
+
         const val TEXT_TITLE = "翻译设置"
         const val TEXT_DESC = "使用你申请的 API Key 和相关凭证 \n" +
             "有框选,原文消失,选中的内容直接用译文替换,原文消失 \n" +
@@ -584,7 +627,7 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_UNCONFIGURED = "未配置：还没填凭据"
 
         const val TEXT_SAVE = "保存"
-        const val TEXT_SAVE_IDLE = "点「保存」时 立即存入本机（即使不点,离开本页时,也会自动保存）"
+        const val TEXT_SAVE_IDLE = "点「保存」时 立即存入本机（不点也会自动保存：输入停顿后、离开本页时）"
         const val TEXT_SAVED = "已保存到本机"
         const val TEXT_SAVE_FAILED = "保存未完成，请重试"
         const val TEXT_SAVE_MISMATCH = "未写入的字段："

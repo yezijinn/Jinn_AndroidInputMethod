@@ -345,11 +345,33 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `七天清理必须覆盖导出用的 device-info`() {
-        val body = blockAfter(codeOf("Diagnostics.kt"), "private fun cleanupOldLogs")
+        // 锚点取真正干活的那半：清理现在分「试锁的外壳 + 干活的 Locked」两层（BUG.md L-174）
+        val body = blockAfter(codeOf("Diagnostics.kt"), "private fun cleanupOldLogsLocked")
         assertTrue(
             "cleanupOldLogs 要认 DEVICE_INFO_FILE：进程被杀留下的该文件不匹配 jinn- / logcat- 前缀，" +
                 "会永久留在日志目录并混进之后每次导出包",
             body.contains("DEVICE_INFO_FILE"),
+        )
+    }
+
+    /**
+     * `BUG.md` L-209：凭据页的落盘触发点。
+     *
+     * 只有「失焦 / onPause」两条时，用户在输入框里粘贴完凭据、焦点还没移开就被系统回收
+     * （后台清理、内存压力），这一段配置根本不会写盘，而页面提示写着「自动保存」。
+     */
+    @Test
+    fun `凭据页的输入停顿即落盘`() {
+        val text = codeOf("TranslationSettingsActivity.kt")
+        assertTrue("凭据字段要挂输入监听", "field.addTextChangedListener(autosave)" in text)
+        assertTrue("停顿后落盘的防抖任务", "postDelayed(autosaveCredentials, CREDENTIAL_AUTOSAVE_DEBOUNCE_MS)" in text)
+        assertTrue(
+            "导入进行中不回写（与 onPause 同一守卫）",
+            "if (!ConfigBackupManager.importing) saveCredentials(notify = false)" in text,
+        )
+        assertTrue(
+            "onPause 落盘后撤掉排队的任务（避免重复空转）",
+            "credentialAutosave.removeCallbacks(autosaveCredentials)" in text,
         )
     }
 

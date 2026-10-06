@@ -9,6 +9,7 @@ import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.withLock
 
 /**
  * 诊断日志系统。
@@ -31,13 +32,26 @@ object Diagnostics {
     private const val KEEP_DAYS = 7L
 
 /**
- * 日志目录的**体积**预算（BUG.md L-170）。
+ * 日志目录的**体积**预算（BUG.md L-170）：**100MB**。
  *
  * 年龄闸（[KEEP_DAYS]）保证「不超 7 天」，不保证「不超多少 MB」：崩溃循环下每次崩溃都会新增一份
  * 3000 行快照（文件名带毫秒），一天就能写出几百 MB。这里补一条总量闸：超预算时按**最旧先删**
  * 我们自己的文件（当天的文件不动 —— 那是正在追加的目标）。
+ *
+ * 上限取 100MB 而不是更小：整份日志目录都会进导出诊断包，预算同时是「一份包最多多大」。
+ * 打包侧另有 [BUNDLE_INMEM_MAX_BYTES] 限制单个文件读进内存的量 —— 预算放大后，
+ * 一个跑飞的当日日志足以吃掉整个堆。
  */
-private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
+private const val LOG_DIR_BUDGET_BYTES = 100L * 1024 * 1024
+
+/**
+ * 打包诊断包时单个文件读进内存的上限。
+ *
+ * 条目必须**先读进内存再写 zip**：边读边写时读失败会留下半截条目（见 [exportBundleLocked]）。
+ * 超过本上限的文件只取**末段**并在首行标出截断 —— 排障要的是最近的事件，而整份读进来
+ * 会在大日志上把进程 OOM 掉（比丢一段日志更糟）。
+ */
+private const val BUNDLE_INMEM_MAX_BYTES = 16L * 1024 * 1024
 
     /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按月反复补清（见 [maybeCleanupOldLogs]） */
     private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
@@ -81,14 +95,37 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     /** 脱敏用的掩码 */
     private const val MASK = "****"
 
-    /** 11 位大陆手机号（用数字边界避免切开更长的数字串） */
-    private val PHONE_RE = Regex("(?<!\\d)1[3-9]\\d{9}(?!\\d)")
+    /**
+     * 数字字符类：ASCII 之外再收**全角**（`１`）与**阿拉伯-印度数字**（`١`）。
+     *
+     * 本 App 自己是中文输入法，用户打得出全角数字；`\d` 只认 ASCII ⇒ 全角写的手机号 / 卡号
+     * 整条漏过脱敏（BUG.md L-169）。前后边界用同一个类，避免把更长的数字串切开。
+     */
+    private const val DIGIT = "[0-9０-９٠-٩]"
+
+    /**
+     * 手机号的头两位：`1` 与 `3-9`。
+     *
+     * 不能写成 ASCII 字面量 `1[3-9]` —— 全角写的 `１３８…` 头一位就匹配不上，整条号码照样漏过
+     * 脱敏（BUG.md L-169）。三种数字形态各列一份。
+     */
+    private const val PHONE_HEAD = "[1１١][3-9３-９٣-٩]"
+
+    /**
+     * 11 位大陆手机号（用数字边界避免切开更长的数字串）。
+     *
+     * 分隔写法（`138-1234-5678` / `138 1234 5678`）同样要遮：从通讯录、网页、聊天记录复制时
+     * 常带分隔符，只认连写形态等于漏掉一半（BUG.md L-169）。
+     */
+    private val PHONE_RE = Regex(
+        "(?<!$DIGIT)$PHONE_HEAD$DIGIT(?:[- ]?$DIGIT{4}){2}(?!$DIGIT)",
+    )
 
     /** 邮箱：只遮本地部分，保留域名便于辨认来源 */
     private val EMAIL_RE = Regex("[\\w.+-]+@([\\w-]+\\.[\\w.]+)")
 
-    /** ≥15 位纯数字串（银行卡 / 证件号一类的量级） */
-    private val LONG_DIGITS_RE = Regex("(?<!\\d)\\d{15,}(?!\\d)")
+    /** ≥15 位纯数字串（银行卡 / 证件号一类的量级）；数字类同上，含全角与阿拉伯-印度数字 */
+    private val LONG_DIGITS_RE = Regex("(?<!$DIGIT)$DIGIT{15,}(?!$DIGIT)")
 
     /**
      * 常见 API Key / 令牌形态（2026-09-30 审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
@@ -175,7 +212,6 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             inited = true
             installCrashHandler()
             cleanupOldLogs()
-            lastCleanupAt = System.currentTimeMillis()
             i(TAG, "日志目录: ${logDir?.absolutePath ?: "不可用"}")
             i(TAG, "设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} SDK=${android.os.Build.VERSION.SDK_INT}")
         }
@@ -196,7 +232,6 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
             val dir = resolveLogDir(context.applicationContext) ?: return
             logDir = dir
             cleanupOldLogs()
-            lastCleanupAt = System.currentTimeMillis()
             i(TAG, "日志目录: ${dir.absolutePath}（延迟解析成功）")
         }
     }
@@ -299,7 +334,9 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
      * 堆栈与正文共用；只改敏感片段，不做长度处理。
      */
     internal fun redactSensitive(body: String): String {
-        var s = PHONE_RE.replace(body) { m -> m.value.replaceRange(3, 7, MASK) }
+        // 留前 3 位与末 4 位：带分隔符的号码长度不定，按**下标**切会把分隔符算进去（保留段错位），
+        // 按首尾取则连写与分隔写法得到同一结果
+        var s = PHONE_RE.replace(body) { m -> m.value.take(3) + MASK + m.value.takeLast(4) }
         s = EMAIL_RE.replace(s) { m -> MASK + "@" + m.groupValues[1] }
         // 凭据形态**先跑**（2026-10-02 修复 L-440）：长数字规则会把 `LTAI0123456789012345`
         // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
@@ -454,7 +491,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
      * [waitMs] 是子进程等待上限（默认 10s；崩溃路径传 2s，见 [installCrashHandler]）。
      */
     fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? =
-        synchronized(snapshotLock) { dumpLogcatLocked(suffix, waitMs) }
+        dirLock.withLock { dumpLogcatLocked(suffix, waitMs) }
 
     /**
      * 跑一次 logcat（不经 shell，见 [dumpLogcat] 的命令注入说明）；返回退出码。
@@ -560,9 +597,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     private var lastCleanupAt = 0L
 
     private fun maybeCleanupOldLogs() {
-        val now = System.currentTimeMillis()
-        if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return
-        lastCleanupAt = now
+        if (System.currentTimeMillis() - lastCleanupAt < CLEANUP_INTERVAL_MS) return
         cleanupOldLogs()
     }
 
@@ -588,9 +623,30 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
         return victims
     }
 
-    /** 删除 KEEP_DAYS 天前的诊断日志（每日文件、logcat 快照与导出用的设备信息临时件） */
+    /**
+     * 删除 KEEP_DAYS 天前的诊断日志（每日文件、logcat 快照与导出用的设备信息临时件），
+     * 之后按体积预算再裁一遍。
+     *
+     * 全程持 [dirLock]（BUG.md L-174），但**拿不到就跳过**这一轮：本函数在写日志的路径上被调用，
+     * 等一次进行中的导出/快照会把业务调用一起拖住；跳过时不动 [lastCleanupAt]，下次落盘再试。
+     */
     private fun cleanupOldLogs() {
         val dir = logDir ?: return
+        if (!dirLock.tryLock()) {
+            // 裸 Log：走 Diagnostics 会再触发一次清理判定（本函数正是从那条路径进来的）
+            runCatching { Log.w(TAG, "日志清理跳过: 诊断包正在读写日志目录") }
+            return
+        }
+        try {
+            // 先推进时间闸：下面的日志调用会重进 [maybeCleanupOldLogs]，不推进就会递归
+            lastCleanupAt = System.currentTimeMillis()
+            cleanupOldLogsLocked(dir)
+        } finally {
+            dirLock.unlock()
+        }
+    }
+
+    private fun cleanupOldLogsLocked(dir: File) {
         val cutoff = System.currentTimeMillis() - KEEP_DAYS * 24 * 3600 * 1000L
         dir.listFiles()?.forEach { file ->
             val name = file.name
@@ -652,13 +708,43 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
     /**
-     * 快照与导出包的互斥锁。
+     * 日志目录的读写互斥锁：**快照、导出包与旧日志清理**共用这一把（BUG.md L-174）。
      *
-     * 两者都读写同一个日志目录，而快照是**就地写**的（删除 → 写入 → 过滤回写，非原子）：
-     * 并发时同名快照会互相删掉对方的产物，导出包也可能把半截快照打进去。串行化之后，
-     * 崩溃路径要多等一次进行中的导出，量级是秒级，且两者都由用户主动触发，可以接受。
+     * 三者碰的是同一批文件：快照是**就地写**的（删除 → 写入 → 过滤回写，非原子），导出正在逐个读，
+     * 而清理正在删。只把前两者串起来时，清理能在导出中途删掉文件（少打几个文件，最坏是把刚写好的
+     * 设备信息删掉）、也能在快照的「删旧 → 写新」之间插进来。
+     *
+     * 用可重入锁而不是 `synchronized`：清理走 [ReentrantLock.tryLock]，拿不到就**跳过这一轮**
+     * —— 它由写日志的路径调用，等一次十秒级的 logcat 抓取会把业务调用一起拖住；快照与导出则照旧
+     * 等待（都要完整跑完，崩溃路径多等一次进行中的导出，量级是秒级，可以接受）。
+     *
+     * 锁序：持本锁时才会去拿日志追加用的 `lock`（本对象内部的日志调用），反向没有 —— 清理拿不到锁
+     * 就直接返回，不在持 `lock` 时等待本锁。
      */
-    private val snapshotLock = Any()
+    private val dirLock = java.util.concurrent.locks.ReentrantLock()
+
+    /**
+     * 读一个文件用于打包：返回 null 表示读不出来（调用方跳过它并留一条 W）。
+     *
+     * 不超过 [BUNDLE_INMEM_MAX_BYTES] 时整份读进内存 —— 条目必须先读后写，边读边写时读失败会留下
+     * 半截条目。超过上限只取**末段**并在首行标出截断（预算 100MB 下，一个跑飞的当日日志足以在
+     * 整份读入时把进程 OOM 掉，而排障要的本来就是最近的事件）。
+     */
+    private fun readForBundle(f: File): ByteArray? {
+        val len = f.length()
+        if (len <= BUNDLE_INMEM_MAX_BYTES) return runCatching { f.readBytes() }.getOrNull()
+        val mark = (
+            "[诊断包] 本文件 ${len / 1024}KB 超过打包上限 ${BUNDLE_INMEM_MAX_BYTES / 1024 / 1024}MB，" +
+                "仅保留末段（末段自中间某行开始）\n"
+            ).toByteArray(Charsets.UTF_8)
+        val tail = runCatching {
+            java.io.RandomAccessFile(f, "r").use { raf ->
+                raf.seek(len - BUNDLE_INMEM_MAX_BYTES)
+                ByteArray(BUNDLE_INMEM_MAX_BYTES.toInt()).also { buf -> raf.readFully(buf) }
+            }
+        }.getOrNull() ?: return null
+        return mark + tail
+    }
 
     // ── 导出诊断包 ─────────────────────────────────────────
 
@@ -669,7 +755,7 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
      * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
      */
     fun exportBundle(context: Context): File? =
-        synchronized(snapshotLock) { exportBundleLocked(context) }
+        dirLock.withLock { exportBundleLocked(context) }
 
     private fun exportBundleLocked(context: Context): File? {
         val srcDir = logDir ?: return null
@@ -719,8 +805,8 @@ private const val LOG_DIR_BUDGET_BYTES = 32L * 1024 * 1024
                         if (!f.isFile) continue
                         // 先把内容读进内存再建条目：读失败（文件正被清理删掉 —— BUG.md L-170/L-174
                         // 的两条通道）时**跳过这一个**，而不是留下半截 zip 或让整包失败。
-                        // 单文件大小受 [LOG_DIR_BUDGET_BYTES] 与逐条截断约束，读进内存是安全的。
-                        val bytes = runCatching { f.readBytes() }.getOrNull()
+                        // 单个文件的**上限**见 [BUNDLE_INMEM_MAX_BYTES]：超限只打末段。
+                        val bytes = readForBundle(f)
                         if (bytes == null) {
                             Diagnostics.w(TAG, "导出诊断包: 跳过读不出的文件 ${f.name}")
                             continue

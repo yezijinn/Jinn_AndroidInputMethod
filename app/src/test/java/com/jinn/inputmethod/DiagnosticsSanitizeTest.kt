@@ -29,6 +29,24 @@ class DiagnosticsSanitizeTest {
         assertEquals("1234****45", Diagnostics.sanitizeForFile("123456789012345"))
     }
 
+    /**
+     * `BUG.md` L-169 的后半：脱敏表要认**分隔写法**与**全角 / 阿拉伯-印度数字**。
+     *
+     * 号码从通讯录、网页、聊天记录里复制时常带分隔符，而本 App 自己是中文输入法 —— 全角数字是
+     * 它的默认输出形态。两者都不认时，整条号码原样落盘并随导出诊断包外传。
+     */
+    @Test
+    fun `分隔写法与全角数字的号码同样要遮`() {
+        assertEquals("联系 138****5678 谢谢", Diagnostics.sanitizeForFile("联系 138-1234-5678 谢谢"))
+        assertEquals("联系 138****5678 谢谢", Diagnostics.sanitizeForFile("联系 138 1234 5678 谢谢"))
+        assertEquals("联系 １３８****５６７８ 谢谢", Diagnostics.sanitizeForFile("联系 １３８１２３４５６７８ 谢谢"))
+        assertEquals("卡号 ６２２２****２３", Diagnostics.sanitizeForFile("卡号 ６２２２０２１２３４５６７８９０１２３"))
+        val arabic = Diagnostics.sanitizeForFile("联系 ١٣٨١٢٣٤٥٦٧٨ 谢谢")
+        assertTrue("阿拉伯-印度数字也要遮: $arabic", arabic.contains("****"))
+        // 反向：日期与连写手机号不受牵连（分隔符规则不能把 `2026-10-06` 当成号码）
+        assertEquals("ts=2026-10-06", Diagnostics.sanitizeForFile("ts=2026-10-06"))
+    }
+
     @Test
     fun `短数字与十六进制串不受影响`() {
         // 13 位时间戳：长度不足 15，且 11 位手机号规则被数字边界挡住
@@ -156,6 +174,34 @@ class DiagnosticsSanitizeTest {
         assertTrue("导出必须先读后写、可跳过", "导出诊断包: 跳过读不出的文件" in src)
         assertFalse("不得再边读边写（失败会留下半截条目）", "f.inputStream().use { it.copyTo(zos) }" in src)
         assertTrue("体积预算必须接在清理路径上", "overBudgetVictims(entries, LOG_DIR_BUDGET_BYTES, nowName)" in src)
+    }
+
+    /**
+     * `BUG.md` L-174：清理、快照、导出碰的是同一批文件，必须共用一把目录锁。
+     *
+     * 清理走 tryLock：它在写日志的路径上被调用，等一次十秒级的抓取会把业务调用一起拖住；
+     * 拿不到锁就跳过这一轮（时间闸不推进，下次落盘再试）。
+     */
+    @Test
+    fun 清理与打包共用目录锁() {
+        val src = TestSources.codeSource("Diagnostics.kt")
+        assertTrue("清理必须试锁", "if (!dirLock.tryLock())" in src)
+        assertTrue("拿不到锁要留痕", "日志清理跳过" in src)
+        assertFalse("不得再各用一把锁", "private val snapshotLock" in src)
+        assertTrue("快照与导出共用同一把锁", "dirLock.withLock { dumpLogcatLocked(suffix, waitMs) }" in src)
+        assertTrue("导出同样共用", "dirLock.withLock { exportBundleLocked(context) }" in src)
+    }
+
+    /**
+     * `BUG.md` L-170：体积预算定点在 **100MB**，而打包侧对单个文件另有内存上限 ——
+     * 预算放大之后，一个跑飞的当日日志能在整份读入时把进程 OOM 掉（比丢一段日志更糟）。
+     */
+    @Test
+    fun 体积预算与打包单文件上限() {
+        val src = TestSources.codeSource("Diagnostics.kt")
+        assertTrue("预算为 100MB", "val LOG_DIR_BUDGET_BYTES = 100L * 1024 * 1024" in src)
+        assertTrue("超大文件只打末段", "BUNDLE_INMEM_MAX_BYTES" in src && "readForBundle(f)" in src)
+        assertFalse("不得把整份超大文件读进内存", "val bytes = runCatching { f.readBytes() }" in src)
     }
 
 }
