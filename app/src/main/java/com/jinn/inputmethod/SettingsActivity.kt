@@ -1246,7 +1246,10 @@ class SettingsActivity : ComponentActivity() {
         // 明文临时包不跨页面生命周期：页面销毁（含旋转重建）时一并清掉。
         // 但导入正在进行时不能删——后台线程还要按节重开它；这种残留由下次进设置页的清扫兜底
         if (!importInFlight) {
-            pendingImportZip?.delete()
+            pendingImportZip?.let {
+                it.delete()
+                ConfigBackupManager.releaseUnlockedTemp(it)
+            }
             pendingImportZip = null
         }
         Diagnostics.i(TAG, "onDestroy: 设置页销毁")
@@ -1501,7 +1504,10 @@ class SettingsActivity : ComponentActivity() {
             val info = zip?.let { runCatching { ConfigBackupManager.inspect(it) }.getOrNull() }
             runOnUiThread {
                 if (isFinishing || isDestroyed) {
-                    zip?.delete()
+                    zip?.let {
+                        it.delete()
+                        ConfigBackupManager.releaseUnlockedTemp(it)
+                    }
                     pendingNotice = "已通过密码校验，但页面被重建；请重新点「导入配置」。"
                     return@runOnUiThread
                 }
@@ -1609,9 +1615,10 @@ class SettingsActivity : ComponentActivity() {
             .setTitle(TEXT_IMPORT_CONFIG)
             .setView(box)
             .setNegativeButton("取消") { _, _ ->
-                // 取消也要删掉明文临时 zip，不让它在缓存里留着
+                // 取消也要删掉明文临时 zip，不让它在缓存里留着；同时注销在册登记（L-1086）
                 if (pendingImportZip === zip) pendingImportZip = null
                 zip.delete()
+                ConfigBackupManager.releaseUnlockedTemp(zip)
                 textConfigHint.text = TEXT_IMPORT_CANCELED
             }
             .setPositiveButton("开始导入") { _, _ ->
@@ -1634,6 +1641,7 @@ class SettingsActivity : ComponentActivity() {
         dialog.setOnCancelListener {
             if (pendingImportZip === zip) pendingImportZip = null
             zip.delete()
+            ConfigBackupManager.releaseUnlockedTemp(zip)
             // 与 negative 一致：否则提示行会永久停在上一句「正在解密…」
             textConfigHint.text = TEXT_IMPORT_CANCELED
         }

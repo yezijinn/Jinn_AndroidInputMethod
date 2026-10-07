@@ -456,9 +456,12 @@ internal object ConfigBackupManager {
         val db = ClipboardDb.get(context)
         var last: ClipPayload? = null
         repeat(EXPORT_CLIP_ATTEMPTS) { attempt ->
-            val before = db.count()
+            // 指纹取「条数 : 最大 id : 密文总长」而不是只看条数（BUG.md L-1085）：库到上限后
+            // 插入与淘汰成对发生、总数不变，只看条数会把「变了」判成「没变」，于是那一趟的载荷
+            // 漏掉刚复制的条目、重试也永不触发，界面照报「全部导出成功」。
+            val before = db.exportStamp()
             val payload = collectClipboardOnce(db, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())
-            if (db.count() == before) return payload
+            if (db.exportStamp() == before) return payload
             last = payload
             Diagnostics.w(TAG, "剪贴板导出: 库在导出期间发生变化，重试（第 ${attempt + 1} 趟）")
         }
@@ -551,11 +554,27 @@ internal object ConfigBackupManager {
      * 跨对话框 / Activity 重建都能自愈，不会让明文 zip 在缓存目录里越堆越多。
      */
     fun unlock(context: Context, uri: Uri, password: CharArray): UnlockResult {
+        var delivered: String? = null
         try {
-            return unlockLocked(context, uri, password)
+            val result = unlockLocked(context, uri, password)
+            // 交付给清单框的那份要继续在册（BUG.md L-1086）：用户在对话框上停留多久都不受清扫窗口限制，
+            // 它必须活到「开始导入」/ 取消 / 删除其中之一发生（见 releaseUnlockedTemp）。
+            if (result is UnlockResult.Ok) delivered = result.zip.name
+            return result
         } finally {
-            tempInFlight.removeIf { it.startsWith(DECRYPT_PREFIX) }
+            // 中间件与失败路径一律除名；只有交付给界面的产物例外
+            tempInFlight.removeIf { it.startsWith(DECRYPT_PREFIX) && it != delivered }
         }
+    }
+
+    /**
+     * 注销一份解锁产物：导入完成 / 对话框取消 / 删除文件之后调用。
+     *
+     * 与 [unlock] 配对（BUG.md L-1086）—— 产物在册期间不会被 [unlockLocked] 的残留清扫删掉；
+     * 集合是进程内的，进程退出即自然清空，之后残留件按时间窗回收。
+     */
+    fun releaseUnlockedTemp(zip: File) {
+        tempInFlight.remove(zip.name)
     }
 
     private fun unlockLocked(context: Context, uri: Uri, password: CharArray): UnlockResult {
@@ -777,6 +796,8 @@ internal object ConfigBackupManager {
             return importLocked(context, zip, mode, includeClipboard, includeDicts)
         } finally {
             endImport()
+            // 这份明文 zip 的用途到此为止：注销它在册登记，残留清扫才能按时间窗回收它（BUG.md L-1086）
+            releaseUnlockedTemp(zip)
         }
     }
 

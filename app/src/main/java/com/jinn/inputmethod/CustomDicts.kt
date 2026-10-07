@@ -273,7 +273,6 @@ internal object CustomDicts {
         var chars = 0L
         dir.mkdirs()
         val tmp = File(dir, sourceTempName())
-        val dest = File(dir, SOURCE_NAME)
         try {
             FileOutputStream(tmp).use { out ->
                 val w = java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8))
@@ -292,8 +291,10 @@ internal object CustomDicts {
                 w.flush()
                 out.fd.sync()
             }
-            if (!tmp.renameTo(dest)) error("改名失败")
-            return Pass1(Scan(collector.result(), chars), dest)
+            // 这里**不改名**（BUG.md L-1084）：改名是「生效」动作，必须晚于调用侧的三道闸 ——
+            // 此前在本函数里先 renameTo(dest)，闸位命中时调用侧删的就是正式源文本，用户既有草稿随被拒的
+            // 新内容一起消失。现在返回临时件，由 saveHuman 过闸后才改名。
+            return Pass1(Scan(collector.result(), chars), tmp)
         } catch (t: Throwable) {
             runCatching { tmp.delete() }
             Diagnostics.w(TAG, "自定义词库源文本写入失败: ${t.javaClass.simpleName}")
@@ -310,8 +311,8 @@ internal object CustomDicts {
     /**
      * [scanAndWriteSource] 的产物：[scan] 供判闸，[stagedSource] 为 null 表示源文本没写成。
      *
-     * 成功时 [stagedSource] 是**改名生效后的正式源文本**（不是临时件）；闸位命中时删掉它，
-     * 就是「这次保存不进磁盘」。
+     * 成功时 [stagedSource] 是**临时件**（`custom_user.src.txt.tmp`），闸位命中时删掉它，
+     * 正式源文本一个字节都不动；过闸之后由调用侧改名生效（BUG.md L-1084）。
      */
     internal class Pass1(val scan: Scan, val stagedSource: File?)
 
@@ -686,7 +687,7 @@ internal object CustomDicts {
             // 唯一一遍：逐行格式化 + 解析 + 写源文本临时件（判定与「formatHuman 再 parseHuman」逐项相同）
             val pass = scanAndWriteSource(dir, text, syllables)
             val scan = pass.scan
-            // 名字叫 staged 而不是 tmp：过闸即改名生效，闸位命中时删的是正式源文本（见 Pass1）
+            // 临时件：闸位命中时删掉它，正式源文本不动；过闸之后下面才改名生效（BUG.md L-1084）
             val staged = pass.stagedSource
             if (scan.formattedChars > MAX_INPUT_CHARS) {
                 staged?.delete()
@@ -708,7 +709,12 @@ internal object CustomDicts {
             // 先打包（顺带拿到同键丢弃数，L-864），再按「源文本失败 = 磁盘没变 / 包失败 = 文本已落」
             // 两档分别上报（L-861）
             val pack = toRawPackLines(parsed.entries)
-            if (staged == null) {
+            // 过闸才让源文本生效（BUG.md L-1084）。改名放在闸位之后：此前在写盘那一遍里就改名，
+            // 三道闸任一击中都执行 staged?.delete() —— 删的正是**正式源文本**，等于「这次保存被拒」
+            // 顺带把用户既有的草稿清掉，与 KDoc 的不变量①（源文本与包都不动）相反。
+            if (staged == null || !staged.renameTo(File(dir, SOURCE_NAME))) {
+                staged?.delete()
+                Diagnostics.w(TAG, "保存中止: 源文本改名失败（跳过 ${parsed.skipped} 行，磁盘未变）")
                 return SaveReport(SaveGate.WRITE_FAIL_SOURCE, n, parsed.skipped, 0, pack.dropped)
             }
             if (writePack(dir, pack) == null) {

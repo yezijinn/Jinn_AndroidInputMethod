@@ -678,11 +678,17 @@ class RecentFixesRegressionTest {
     @Test
     fun `剪贴板导出必须防并发位移`() {
         val body = blockAfter(codeOf("ConfigBackupManager.kt"), "private fun collectClipboard(context: Context)")
+        // 导出侧的分页游标是 SQL OFFSET：导出期间用户复制一条（插头 + 裁尾）会让后续页位移、
+        // 静默跳过若干行（既没导出也不进 dropped），所以必须比对并重来（面板侧已有同样防护）。
+        // 判据取「条数 + 最大 id + 密文总长」的指纹，而不是只看条数（BUG.md L-1085）：库到上限时
+        // 插入与淘汰成对发生、总数不变，只看条数会把「变了」判成「没变」，重来永不触发。
         assertTrue(
-            "导出侧的分页游标是 SQL OFFSET：导出期间用户复制一条（插头 + 裁尾）会让后续页位移、" +
-                "静默跳过若干行（既没导出也不进 dropped）。必须比对总数并重来（面板侧已有同样防护）",
-            body.contains("db.count() == before") && body.contains("EXPORT_CLIP_ATTEMPTS"),
+            "导出必须按指纹比对并重来",
+            body.contains("db.exportStamp() == before") && body.contains("EXPORT_CLIP_ATTEMPTS"),
         )
+        val stamp = codeOf("ClipboardDb.kt").substringAfter("fun exportStamp(): String").take(500)
+        assertTrue("指纹必须含最大 id（插入会抬它）", "MAX(id)" in stamp)
+        assertTrue("指纹必须含密文总长（删除 / 改写会动它）", "SUM(LENGTH(encrypted_content))" in stamp)
     }
 
     @Test
@@ -3650,6 +3656,51 @@ class RecentFixesRegressionTest {
         val history = codeOf("ClipboardHistoryActivity.kt")
         // L-995：只有条数触顶才够资格报「最多 N 条」，容量预算先触发时要说别的
         assertTrue("截断提示必须区分条数与容量两种来源", "cappedByCount" in history)
+    }
+
+    /**
+     * 第十一批的三条修复不得回退（BUG.md L-1085 / L-1086 / L-1067）。
+     *
+     * 三条都是「静默错结果」：导出的稳定性判据自相抵消（漏条却报成功）、解锁产物被自己的残留
+     * 清扫删掉后误报「包损坏」、备份里的空凭据删掉本机凭据还计成「已设置」。
+     * 判据都落在「哪个函数被调用 / 谁的闸门在挡」，字面量对拍比行为测试便宜。
+     */
+    @Test
+    fun 导出判据与解锁产物与空凭据的三条修复不得回退() {
+        val manager = codeOf("ConfigBackupManager.kt")
+        // L-1085：稳定性判据要用不会自相抵消的指纹（条数 + 最大 id + 密文总长）
+        val export = manager.substringAfter("fun collectClipboard(").substringBefore("private fun collectClipboardOnce")
+        assertTrue("导出必须用指纹判稳", "db.exportStamp()" in export)
+        assertFalse("只看条数会在「插入 + 裁剪成对发生」时判成没变", "db.count() == before" in export)
+        val stamp = codeOf("ClipboardDb.kt").substringAfter("fun exportStamp(): String").take(500)
+        assertTrue("指纹要含最大 id", "MAX(id)" in stamp)
+        assertTrue("指纹要含密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
+
+        // L-1086：交付给清单框的那份要继续在册，只有中间件与失败路径才除名；注销点要落在收尾路径上
+        val unlock = manager.substringAfter("fun unlock(context: Context").substringBefore("private fun unlockLocked")
+        assertTrue("交付的产物必须继续在册", "it != delivered" in unlock)
+        assertTrue("要有注销入口", "fun releaseUnlockedTemp(" in manager)
+        assertTrue("导入收尾要注销", "releaseUnlockedTemp(zip)" in manager)
+        val settings = codeOf("SettingsActivity.kt")
+        val releases = settings.split("releaseUnlockedTemp(").size - 1
+        assertTrue("取消 / 关闭 / 销毁三条路径都要注销（实见 $releases 处）", releases >= 3)
+
+        // L-1067：空凭据不进包、也不在导入端当删除执行
+        val prefs = codeOf("Prefs.kt")
+        val exportBody = prefs.substringAfter("fun exportForBackup(").substringBefore("fun importFromBackup(")
+        val importBody = prefs.substringAfter("fun importFromBackup(")
+        for (key in listOf(
+            "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
+            "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
+            "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY", "KEY_OPENAI_API_KEY",
+        )) {
+            assertTrue("$key 必须走 putCredential（空值不进包）", "putCredential($key)" in exportBody)
+            assertFalse("$key 不得再无条件导出", "put($key," in exportBody)
+            assertTrue(
+                "$key 的导入分支要挡空串（空串在写入侧等于删除）",
+                "$key -> asString(v)?.takeIf { it.isNotEmpty() }" in importBody,
+            )
+        }
     }
 
 }

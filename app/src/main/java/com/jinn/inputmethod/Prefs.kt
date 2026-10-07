@@ -1273,18 +1273,33 @@ class Prefs(context: Context) {
         putIfSetInt(KEY_TRANSLATE_MAX_BYTES_DEEPL, maxBytesKeyOf(TranslationProviderId.DEEPL))
         putIfSetString(KEY_TRANSLATE_SCOPE_OPENAI, scopeKeyOf(TranslationProviderId.OPENAI))
         putIfSetInt(KEY_TRANSLATE_MAX_BYTES_OPENAI, maxBytesKeyOf(TranslationProviderId.OPENAI))
-        put(KEY_AZURE_API_KEY, azureApiKey)
+        // 凭据：只有「本机配过**且**读得出来」的才进包（BUG.md L-1067）。此前无条件 `put(getter)`，
+        // 而 getter 在「没配过」与「密文解不开（换机 / Keystore 失效）」两种情况下都返回空串 ——
+        // 空串写进包后，导入侧 `writeCredential` 把空串定义成**删除**，于是「导入一份没配这把钥匙
+        // 的备份」会删掉目标机同名的可用凭据，还计成「已设置」。两侧各堵一半：这里不写空值，
+        // 导入侧对空串按「类型不符」计（见 importFromBackup 的凭据分支）。
+        fun putCredential(key: String) {
+            val value = readCredential(key)
+            if (value.isEmpty()) {
+                if (sp.contains(key)) {
+                    Diagnostics.w(TAG, "导出跳过读不出的凭据($key)：写进包会在导入端删掉目标机的同名凭据")
+                }
+                return
+            }
+            put(key, value)
+        }
+        putCredential(KEY_AZURE_API_KEY)
         put(KEY_AZURE_REGION, azureRegion)
-        put(KEY_BAIDU_APP_ID, baiduAppId)
-        put(KEY_BAIDU_SECRET_KEY, baiduSecretKey)
-        put(KEY_ALIYUN_ACCESS_KEY_ID, aliyunAccessKeyId)
-        put(KEY_ALIYUN_ACCESS_KEY_SECRET, aliyunAccessKeySecret)
-        put(KEY_DEEPL_API_KEY, deeplApiKey)
-        put(KEY_BAIDU_LLM_APP_ID, baiduLlmAppId)
-        put(KEY_BAIDU_LLM_API_KEY, baiduLlmApiKey)
+        putCredential(KEY_BAIDU_APP_ID)
+        putCredential(KEY_BAIDU_SECRET_KEY)
+        putCredential(KEY_ALIYUN_ACCESS_KEY_ID)
+        putCredential(KEY_ALIYUN_ACCESS_KEY_SECRET)
+        putCredential(KEY_DEEPL_API_KEY)
+        putCredential(KEY_BAIDU_LLM_APP_ID)
+        putCredential(KEY_BAIDU_LLM_API_KEY)
         put(KEY_OPENAI_NAME, openAiName)
         put(KEY_OPENAI_BASE_URL, openAiBaseUrl)
-        put(KEY_OPENAI_API_KEY, openAiApiKey)
+        putCredential(KEY_OPENAI_API_KEY)
         put(KEY_OPENAI_MODEL, openAiModel)
         put(KEY_OPENAI_CHAT_PATH, openAiChatPath)
         put(KEY_OPENAI_MODELS_PATH, openAiModelsPath)
@@ -1430,18 +1445,22 @@ class Prefs(context: Context) {
                 KEY_TRANSLATE_MAX_BYTES_OPENAI ->
                     asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.OPENAI, it); ok() }
                         ?: bad(key)
-                KEY_AZURE_API_KEY -> asString(v)?.let { azureApiKey = it; ok() } ?: bad(key)
+                // 其余凭据键同 OPENAI_API_KEY：空串不写入、按「类型不符」计（BUG.md L-1067）
+                KEY_AZURE_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { azureApiKey = it; ok() } ?: bad(key)
                 KEY_AZURE_REGION -> asString(v)?.let { azureRegion = it; ok() } ?: bad(key)
-                KEY_BAIDU_APP_ID -> asString(v)?.let { baiduAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_SECRET_KEY -> asString(v)?.let { baiduSecretKey = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
-                KEY_DEEPL_API_KEY -> asString(v)?.let { deeplApiKey = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_APP_ID -> asString(v)?.let { baiduLlmAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_API_KEY -> asString(v)?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_SECRET_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSecretKey = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
+                KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
                 KEY_OPENAI_NAME -> asString(v)?.let { openAiName = it; ok() } ?: bad(key)
                 KEY_OPENAI_BASE_URL -> asString(v)?.let { openAiBaseUrl = it; ok() } ?: bad(key)
-                KEY_OPENAI_API_KEY -> asString(v)?.let { openAiApiKey = it; ok() } ?: bad(key)
+                // 凭据键的空串一律按「类型不符」计、不写入（BUG.md L-1067）：写入侧把空串定义成删除，
+                // 照单执行会删掉本机的可用凭据，还把它算进「已设置」。导出侧同批已不再写空值，
+                // 这里再兜一道，老包 / 手改包也伤不到本机凭据。
+                KEY_OPENAI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { openAiApiKey = it; ok() } ?: bad(key)
                 KEY_OPENAI_MODEL -> asString(v)?.let { openAiModel = it; ok() } ?: bad(key)
                 KEY_OPENAI_CHAT_PATH -> asString(v)?.let { openAiChatPath = it; ok() } ?: bad(key)
                 KEY_OPENAI_MODELS_PATH -> asString(v)?.let { openAiModelsPath = it; ok() } ?: bad(key)

@@ -652,6 +652,32 @@ class CustomDictsTest {
     }
 
     @Test
+    fun `闸位命中不许动正式源文本`() {
+        // BUG.md L-1084：改名必须晚于三道闸。此前 scanAndWriteSource 内部先 renameTo(SOURCE_NAME)，
+        // 闸位命中时 staged?.delete() 删的是**正式源文本** —— 用户既有的草稿随被拒的新内容一起消失，
+        // 与 saveHuman 的 KDoc 不变量①（源文本与包都不动）方向相反。
+        val dir = File(tmp, "dicts-gate-keep").apply { mkdirs() }
+        assertEquals(CustomDicts.SaveGate.OK, CustomDicts.saveHuman(dir, "张三 zhang san\n", null).gate)
+        val src = File(dir, CustomDicts.SOURCE_NAME)
+        val before = src.readBytes()
+        // 两道真会命中的数据闸（超词条、无合法词条）各来一次
+        val tooMany = buildString {
+            repeat(CustomDicts.MAX_ENTRIES + 1) { append("w").append(it).append("\ti\n") }
+        }
+        assertEquals(CustomDicts.SaveGate.TOO_MANY, CustomDicts.saveHuman(dir, tooMany, null).gate)
+        assertArrayEquals("闸位命中后既有草稿必须原样留着", before, src.readBytes())
+        assertEquals(CustomDicts.SaveGate.NO_VALID, CustomDicts.saveHuman(dir, "只有词\n", null).gate)
+        assertArrayEquals("第二道闸同样不许动它", before, src.readBytes())
+        // 也不许留下半截临时件：目录里应只有正式源文本与包
+        val names = dir.listFiles().orEmpty().map { it.name }.sorted()
+        assertEquals(
+            "被拒后目录只该有正式源文本与包：<$names>",
+            listOf(CustomDicts.PACK_NAME, CustomDicts.SOURCE_NAME).sorted(),
+            names,
+        )
+    }
+
+    @Test
     fun `自定义词库改过后要跳过空闲等待`() {
         // 可选包默认只在息屏 / 收键盘 / 180s 兜底时才装载；自定义词库是刚写完的小包，跟着官方大包
         // 一起等，用户保存后马上打字就是「没有候选」（BUG.md L-888 / L-893）。范围判据本身在

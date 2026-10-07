@@ -754,6 +754,20 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 总条数（无过滤，等价 count(null, false)，供旧调用方兼容） */
     fun count(): Int = count(null, false)
 
+    /**
+     * 导出用的库指纹：条数 / 最大 id / 密文总长，一次查询取三样。
+     *
+     * 只比对条数会在**到上限后的插入 + 淘汰**（`upsert` → `trimTo` 成对发生、总数不变，其 KDoc 自述）
+     * 时判成「库没变」：那一趟导出的载荷既漏掉新复制的条目、也不会进丢弃计数，界面却按
+     * 「全部导出成功」上报（BUG.md L-1085）。三者任一变化都说明库在动 —— 插入抬最大 id、
+     * 删除或改写改总长，重复复制已有内容走 UPDATE 也会改总长。
+     */
+    fun exportStamp(): String =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*), IFNULL(MAX(id), 0), IFNULL(SUM(LENGTH(encrypted_content)), 0) FROM $TABLE_ITEMS",
+            null,
+        ).use { c -> if (c.moveToFirst()) "${c.getLong(0)}:${c.getLong(1)}:${c.getLong(2)}" else "0:0:0" }
+
     // ── 分组标签重算（存量迁移）───────────────────────────
 
     /**
