@@ -1187,45 +1187,57 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 落待插入图片：选图页（[GalleryPickActivity]）已把图片复制进 cache 并挂在
-     * [GalleryInsert] 桥上，回到本会话时提交给宿主。
+     * 落待插入图片：选图页（[GalleryPickActivity]）与键盘面板都已把图片复制进 cache 并排进
+     * [GalleryInsert] 的队列，回到本会话时**按顺序全部**提交给宿主（L-1041：连点两张不再丢一张）。
      *
      * 时机与 [flushPendingPaste] 同款：从选图页回来必定新起一次输入会话，在
-     * `onStartInputView` 调用即可。无连接时直接丢弃 —— 入口已按声明显隐，这里是兜底，
-     * 且桥本身带 60s 有效期，过期图片不会插到无关输入框。
+     * `onStartInputView` 调用即可；面板点图那条路另有一次即时调用。无连接时直接丢弃 ——
+     * 入口已按声明显隐，这里是兜底，且队里每一张都带 60s 有效期，过期图片不会插到无关输入框。
      */
     private fun flushPendingGalleryImage() {
-        val picked = when (val take = GalleryInsert.takePending()) {
-            GalleryInsert.TakeResult.None -> return
-            GalleryInsert.TakeResult.Expired -> {
-                // 过期此前不留任何痕迹，诊断包里分不清「没选图」与「选了但过期」（L-1014）
-                Diagnostics.w(TAG, "图库快贴：待插入图片已过期，丢弃")
+        // 一次 flush 要把队列里排着的每一张都落下去（L-1041）：桥改成队列后，连点两张的第二下
+        // 那次 `ui.post` 可能落在队已排空之后，只靠单次取用仍会漏掉一张
+        while (true) {
+            val picked = when (val take = GalleryInsert.takePending()) {
+                GalleryInsert.TakeResult.None -> return
+                GalleryInsert.TakeResult.Expired -> {
+                    // 过期此前不留任何痕迹，诊断包里分不清「没选图」与「选了但过期」（L-1014）
+                    Diagnostics.w(TAG, "图库快贴：待插入图片已过期，丢弃")
+                    // 队首过期只代表这一张该丢：继续看下一张，别把后面那张也一起咽掉
+                    continue
+                }
+                is GalleryInsert.TakeResult.Ready -> take.picked
+            }
+            // 选图期间前台可能被切换：输入框换了就不插。标识取包名 / fieldId / inputType / imeOptions
+            // 四项静态属性（见 [GalleryInsert.galleryFieldKeyOf]）—— hint 参与过标识，但它随输入状态变、
+            // 会把同一个输入框误判成换了框，已移除；会话级因此仍分不出（取舍见 L-1013）。
+            // 图落到别的应用或别的会话都不只是「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
+            // 任一侧取不到标识时放行，不因缺信息丢掉用户的一次选择。
+            val current = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+            if (picked.hostKey != null && current != null && picked.hostKey != current) {
+                Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
+                // 同批剩下的几张也属于那个旧输入框：一并丢掉，免得它们等下一次 flush 落到新框里
+                val dropped = GalleryInsert.clearPending()
+                if (dropped > 0) Diagnostics.w(TAG, "图库快贴：同批剩余 $dropped 张一并丢弃")
+                toast(TEXT_GALLERY_FIELD_CHANGED)
                 return
             }
-            is GalleryInsert.TakeResult.Ready -> take.picked
-        }
-        // 选图期间前台可能被切换：输入框换了就不插。标识取包名 / fieldId / inputType / imeOptions
-        // 四项静态属性（见 [GalleryInsert.galleryFieldKeyOf]）—— hint 参与过标识，但它随输入状态变、
-        // 会把同一个输入框误判成换了框，已移除；会话级因此仍分不出（取舍见 L-1013）。
-        // 图落到别的应用或别的会话都不只是「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
-        // 任一侧取不到标识时放行，不因缺信息丢掉用户的一次选择。
-        val current = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
-        if (picked.hostKey != null && current != null && picked.hostKey != current) {
-            Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
-            toast(TEXT_GALLERY_FIELD_CHANGED)
-            return
-        }
-        when (GalleryInsert.commit(this, picked.file, picked.mime)) {
-            GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "图库快贴：已提交")
-            GalleryInsert.InsertResult.FileMissing -> {
-                Diagnostics.w(TAG, "图库快贴：待插入图片已失效")
-                toast(TEXT_GALLERY_GONE)
+            when (GalleryInsert.commit(this, picked.file, picked.mime)) {
+                GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "图库快贴：已提交")
+                GalleryInsert.InsertResult.FileMissing -> {
+                    Diagnostics.w(TAG, "图库快贴：待插入图片已失效")
+                    toast(TEXT_GALLERY_GONE)
+                }
+                // 无连接说明输入会话已结束、宿主拒收多半意味着入口本不该出现：都不弹提示，免得变成噪音
+                GalleryInsert.InsertResult.NoConnection -> {
+                    Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
+                    // 队列里剩下的属于同一个已结束的会话：一并丢掉，别留到下次 flush 落到别的框
+                    GalleryInsert.clearPending()
+                    return
+                }
+                GalleryInsert.InsertResult.Rejected ->
+                    Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
             }
-            // 无连接说明输入会话已结束、宿主拒收多半意味着入口本不该出现：都不弹提示，免得变成噪音
-            GalleryInsert.InsertResult.NoConnection ->
-                Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
-            GalleryInsert.InsertResult.Rejected ->
-                Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
         }
     }
 

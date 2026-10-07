@@ -15,6 +15,71 @@ import java.io.File
  */
 class GalleryInsertTest {
 
+    /**
+     * 待插入桥按点击顺序排队（`BUG.md` L-1041）。
+     *
+     * 原先单槽被覆盖：连点两张时后一张把前一张挤掉，而 flush 只被触发一次 ⇒ 静默丢一张。
+     * 队列化要保证三件事：先进先出、超出上限丢最旧的、清队返回丢掉的张数。
+     */
+    @Test
+    fun 待插入桥按点击顺序排队() {
+        // 专用目录：putPending 会按 keep 规则清理它所在目录，别拿系统临时目录去测
+        val dir = java.nio.file.Files.createTempDirectory("gallery_queue").toFile()
+        fun img(name: String) = File(dir, name).apply { writeBytes(byteArrayOf(1)) }
+        val a = img("a.jpg")
+        val b = img("b.jpg")
+        val c = img("c.jpg")
+        val d = img("d.jpg")
+
+        GalleryInsert.clearPending()
+        GalleryInsert.putPending(a, "image/jpeg", "host")
+        GalleryInsert.putPending(b, "image/jpeg", "host")
+        GalleryInsert.putPending(c, "image/jpeg", "host")
+        assertEquals(listOf("a.jpg", "b.jpg", "c.jpg"), drainNames())
+
+        // 上限：连排四张，最旧那张被丢掉，其余按序取用
+        GalleryInsert.putPending(a, "image/jpeg", null)
+        GalleryInsert.putPending(b, "image/jpeg", null)
+        GalleryInsert.putPending(c, "image/jpeg", null)
+        GalleryInsert.putPending(d, "image/jpeg", null)
+        assertEquals(listOf("b.jpg", "c.jpg", "d.jpg"), drainNames())
+
+        // 清队：返回丢掉的张数，随后取到空
+        GalleryInsert.putPending(a, "image/jpeg", null)
+        GalleryInsert.putPending(b, "image/jpeg", null)
+        assertEquals("清队要回报张数", 2, GalleryInsert.clearPending())
+        assertTrue(GalleryInsert.takePending() === GalleryInsert.TakeResult.None)
+        dir.deleteRecursively()
+    }
+
+    /**
+     * IME 侧要一次把队列抽干（`BUG.md` L-1041）。
+     *
+     * 队列本身在上面那条用例里可测；「一次 flush 取空」这条只能钉源码 —— 连点两张时第二次
+     * `ui.post` 可能落在队已空之后，只取一次仍会漏一张。另钉两条收尾：换框或输入会话结束时
+     * 要把同批剩下的丢掉，别留到下一次 flush 落到别的框里。
+     */
+    @Test
+    fun 一次flush要把队列抽干() {
+        val src = TestSources.codeSource("JinnIme.kt")
+        val body = src.substringAfter("private fun flushPendingGalleryImage()")
+            .substringBefore("private fun openGalleryPicker()")
+        assertTrue("要循环取用", "while (true)" in body)
+        assertTrue("队首过期只丢这一张，继续取下一张", "continue" in body)
+        assertTrue("换框 / 无连接时丢掉同批剩下的", "GalleryInsert.clearPending()" in body)
+    }
+
+    /** 把桥取空并返回取到的文件名顺序（过期项会让强转失败，测试即红） */
+    private fun drainNames(): List<String> {
+        val out = ArrayList<String>()
+        while (true) {
+            val take = GalleryInsert.takePending()
+            if (take === GalleryInsert.TakeResult.None) break
+            out.add((take as GalleryInsert.TakeResult.Ready).picked.file.name)
+        }
+        return out
+    }
+
     @Test
     fun 入口判据只认图片类型与全通配() {
         assertTrue(GalleryInsert.canHostAccept(arrayOf("image/*")))

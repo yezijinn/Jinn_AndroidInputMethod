@@ -90,8 +90,25 @@ internal object GalleryInsert {
 
     private class Pending(val picked: Picked, val atMs: Long)
 
-    @Volatile
-    private var pending: Pending? = null
+    /**
+     * 排队上限（`BUG.md` L-1041）。
+     *
+     * 与缓存裁剪对齐：最新 [PROTECTED_RECENT] 张无条件保留，第 3 张也必定留着 ——
+     * 2 × [MAX_BYTES] + [MAX_BYTES] 正好等于 [MAX_CACHE_BYTES]，不触发字节淘汰。
+     * 所以队列里最多这三张对应的文件都还在，不会被 [trimCache] 删掉（再多就说不准了）。
+     */
+    private const val MAX_PENDING = 3
+
+    private val pendingLock = Any()
+
+    /**
+     * 待插入队列（`BUG.md` L-1041）。
+     *
+     * 原先是一个覆盖式单槽：连点两张时后一张把前一张挤掉，而 `flushPendingGalleryImage` 只被触发
+     * 一次（`ui.post`）⇒ 有一张被静默丢弃、连提示都没有。改成有界队列后按点击顺序逐张落下去。
+     * 写侧在 `BackgroundIo` 线程、读侧在主线程，故整体加锁。
+     */
+    private val pending = ArrayDeque<Pending>()
 
     /**
      * 宿主输入框是否声明可接收图片。
@@ -122,9 +139,12 @@ internal object GalleryInsert {
         return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}"
     }
 
-    /** 选图页复制完成后调用（覆盖式：只保留最后一次选择） */
+    /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（对应文件也已按 [KEEP_FILES] 淘汰） */
     fun putPending(file: File, mime: String, hostKey: String?) {
-        pending = Pending(Picked(file, mime, hostKey), System.currentTimeMillis())
+        synchronized(pendingLock) {
+            pending.addLast(Pending(Picked(file, mime, hostKey), System.currentTimeMillis()))
+            while (pending.size > MAX_PENDING) pending.removeFirst()
+        }
         trimCache(file.parentFile)
     }
 
@@ -145,11 +165,27 @@ internal object GalleryInsert {
         object Expired : TakeResult
     }
 
-    /** IME 回到前台时取（一次性：无论哪种结果都把桥清空） */
+    /**
+     * 取队首（一次性：无论哪种结果都把**这一项**移出）。
+     *
+     * 队首过期只代表这一张该丢，后面的照旧可取 —— 调用方拿到 [TakeResult.Expired] 后应当继续取
+     * （`flushPendingGalleryImage` 的循环就是这么做的），别把它当成「整队作废」。
+     */
     fun takePending(): TakeResult {
-        val p = pending ?: return TakeResult.None
-        pending = null
+        val p = synchronized(pendingLock) { pending.removeFirstOrNull() } ?: return TakeResult.None
         return if (System.currentTimeMillis() - p.atMs <= TTL_MS) TakeResult.Ready(p.picked) else TakeResult.Expired
+    }
+
+    /**
+     * 丢掉队列里剩下的，返回丢掉的张数（供调用方留痕）。
+     *
+     * 用在「这批图已经不该插了」的两个场合：输入框已变更、输入会话已结束 ——
+     * 剩下那几张同属那个旧框 / 旧会话，留着只会在下一次 flush 落到别处。
+     */
+    internal fun clearPending(): Int = synchronized(pendingLock) {
+        val n = pending.size
+        pending.clear()
+        n
     }
 
     /**
