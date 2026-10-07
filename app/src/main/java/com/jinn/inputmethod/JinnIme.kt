@@ -642,20 +642,20 @@ class JinnIme : InputMethodService() {
      *    退出拖选、光标停在 Focus 位置（不跳回 Anchor）
      *  - 激活时方向键/行首/行末：只移动 Focus，Anchor 固定不变，
      *    选区 = setSelection(min(Anchor,Focus), max(Anchor,Focus))
-     *  - 复制：复制选中文字，保持选区与拖选模式
-     *  - 粘贴：有选区 → 替换；无选区 → 光标处粘贴
+     *  - 到开头 / 到末尾：光标跳到全文两端（拖选激活时只搬 Focus）。
+     *    复制 / 粘贴不在这里 —— 功能面板各有一个入口，方向面板腾出两格做全文跳转。
      */
     private fun executeDirection(action: PinyinKeyboardView.DirectionAction) {
         when (action) {
             PinyinKeyboardView.DirectionAction.TOGGLE_SELECTION -> toggleSelection()
-            PinyinKeyboardView.DirectionAction.COPY -> copySelection()
-            PinyinKeyboardView.DirectionAction.PASTE -> pasteClipboard()
             PinyinKeyboardView.DirectionAction.UP,
             PinyinKeyboardView.DirectionAction.DOWN,
             PinyinKeyboardView.DirectionAction.LEFT,
             PinyinKeyboardView.DirectionAction.RIGHT,
             PinyinKeyboardView.DirectionAction.LINE_START,
-            PinyinKeyboardView.DirectionAction.LINE_END -> moveOrExtend(action)
+            PinyinKeyboardView.DirectionAction.LINE_END,
+            PinyinKeyboardView.DirectionAction.DOC_START,
+            PinyinKeyboardView.DirectionAction.DOC_END -> moveOrExtend(action)
         }
     }
 
@@ -730,6 +730,34 @@ class JinnIme : InputMethodService() {
     }
 
     /**
+     * 「到开头 / 到末尾」的目标绝对下标；其余动作返回 null。
+     *
+     * 不能按 [moveCursor] 那套「窗口内相对下标」算：长文档下 `range.text` 只是光标附近的窗口，
+     * 全文两端常常落在窗口之外，`toWindowOffset` 会判为「不在窗口内」而放弃本次操作。
+     *
+     * 「到末尾」要先知道光标之后还有多少字 —— 这里给 [DOC_JUMP_MAX_CHARS] 设了上限：
+     * 无上限的 `getTextAfterCursor` 在长文档下是一次跨进程大事务，会卡住主线程。超过上限的
+     * 超长文本（十几万字以上）里这一键会停在上限处，与真正的末尾有差距。
+     */
+    private fun absoluteDocTarget(
+        connection: android.view.inputmethod.InputConnection,
+        action: PinyinKeyboardView.DirectionAction,
+        range: SelectionRange,
+    ): Int? = when (action) {
+        PinyinKeyboardView.DirectionAction.DOC_START -> 0
+        PinyinKeyboardView.DirectionAction.DOC_END -> {
+            val after = runCatching { connection.getTextAfterCursor(DOC_JUMP_MAX_CHARS, 0) }.getOrNull()
+            if (after == null) {
+                Diagnostics.w(TAG, "到末尾: 读不到光标之后的文本")
+                null
+            } else {
+                range.end + after.length
+            }
+        }
+        else -> null
+    }
+
+    /**
      * 普通光标模式：只通过 InputConnection.setSelection 移动文本光标。
      *
      * 绝不发送 DPAD / MOVE_HOME / MOVE_END KeyEvent，那些会触发
@@ -739,6 +767,17 @@ class JinnIme : InputMethodService() {
      */
     private fun moveCursor(connection: android.view.inputmethod.InputConnection, action: PinyinKeyboardView.DirectionAction) {
         val range = currentSelectionRange(connection) ?: return
+        // 「到开头 / 到末尾」是全文端点，可能落在文本窗口之外（见 [absoluteDocTarget]）：
+        // 先按绝对下标处理掉，其余动作才走下面那套窗口内相对下标
+        val jump = absoluteDocTarget(connection, action, range)
+        if (jump != null) {
+            if (applySelection(connection, jump, jump)) {
+                Diagnostics.i(TAG, "光标移动: 全文端点 → $jump")
+            } else {
+                Diagnostics.w(TAG, "光标移动: 宿主未接受（目标 $jump）")
+            }
+            return
+        }
         // 全程按窗口内下标算，最后再加回 startOffset 交给宿主：selectionStart/End 是全文
         // 绝对下标，而 range.text 可能只是光标附近的窗口（见 [currentSelectionRange]）。
         val cursor = range.start - range.startOffset
@@ -777,6 +816,19 @@ class JinnIme : InputMethodService() {
         if (selectionAnchor < 0 || selectionFocus < 0) {
             Diagnostics.w(TAG, "拖选扩展: Anchor/Focus 无效（$selectionAnchor/$selectionFocus），退出拖选")
             clearSelectionState()
+            return
+        }
+        // 「到开头 / 到末尾」同样走绝对下标：Focus 搬到全文两端，Anchor 不动（见 [absoluteDocTarget]）
+        val jump = absoluteDocTarget(connection, action, range)
+        if (jump != null) {
+            selectionFocus = jump
+            val (jumpStart, jumpEnd) = TextSelection.normalizedSelection(selectionAnchor, selectionFocus)
+            if (applySelection(connection, jumpStart, jumpEnd)) {
+                Diagnostics.i(TAG, "拖选扩展: 全文端点 → Focus=$jump 选区[$jumpStart,$jumpEnd]")
+            } else {
+                Diagnostics.w(TAG, "拖选扩展: 宿主未接受（选区[$jumpStart,$jumpEnd]），退出拖选")
+                clearSelectionState()
+            }
             return
         }
         // 与 [moveCursor] 同一套坐标：端点先换算到窗口内，算完再加回 startOffset
@@ -3723,6 +3775,9 @@ class JinnIme : InputMethodService() {
 
     companion object {
         const val TAG = "JinnIme"
+
+        /** 「到末尾」读取光标之后文本的上限：长文档下避免一次跨进程大事务卡住主线程 */
+        const val DOC_JUMP_MAX_CHARS = 100_000
 
         /** 在线翻译（BYOK）的本机提示文案（文案在代码里下发，与文件内既有 Toast 写法一致） */
         const val TEXT_TRANSLATE_EMPTY = "光标前没有可翻译的文字"

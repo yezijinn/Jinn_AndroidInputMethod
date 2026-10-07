@@ -111,7 +111,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 方向控制动作（对齐 IME 侧执行逻辑）。
      * 底部栏已有的空格/回车不在此列（不重复），由 IME 内部处理拖选状态。
      */
-    enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, TOGGLE_SELECTION, COPY, PASTE }
+    enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, DOC_START, DOC_END, TOGGLE_SELECTION }
 
     var listener: Listener? = null
 
@@ -3590,11 +3590,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             center to 1f,
             directionKey("→", DirectionAction.RIGHT) to 1f,
         )))
-        // 行3：复制 下 粘贴
+        // 行3：到开头 下 到末尾（「复制 / 粘贴」撤掉：功能面板各有一个，这里换成全文跳转）
         panel.addView(directionRow(rowH, listOf(
-            directionKey("复制", DirectionAction.COPY) to 1f,
+            directionKey("到开头", DirectionAction.DOC_START) to 1f,
             directionKey("↓", DirectionAction.DOWN) to 1f,
-            directionKey("粘贴", DirectionAction.PASTE) to 1f,
+            directionKey("到末尾", DirectionAction.DOC_END) to 1f,
         )))
         directionPanel = panel
         Diagnostics.v(TAG, "ensureDirectionPanel: 构建完成 childCount=${panel.childCount}")

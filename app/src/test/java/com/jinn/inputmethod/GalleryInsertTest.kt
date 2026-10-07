@@ -436,5 +436,35 @@ class GalleryInsertTest {
         assertFalse("不许退回提交时算好的档位", "val sample = sampleFor(cols)" in panel)
     }
 
+    /**
+     * 方向面板第三行是「到开头 / 到末尾」（需求：把复制粘贴换成全文跳转）。
+     *
+     * 两个动作必须按**绝对下标**执行：长文档下文本窗口只是光标附近一段，全文两端常在窗口之外，
+     * 走 `moveCursor` 那套窗口内相对下标会被 `toWindowOffset` 判为「不在窗口内」而放弃。
+     */
+    @Test
+    fun 方向面板的到开头到末尾走绝对下标() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue("枚举含两个全文端点动作", "DOC_START" in view && "DOC_END" in view)
+        assertFalse("复制粘贴不再挂方向面板", "\"复制\", DirectionAction.COPY" in view)
+        val panel = view.substringAfter("private fun ensureDirectionPanel()")
+            .substringBefore("directionPanel = panel")
+        assertTrue("第三行是到开头", "\"到开头\", DirectionAction.DOC_START" in panel)
+        assertTrue("第三行是到末尾", "\"到末尾\", DirectionAction.DOC_END" in panel)
+
+        val ime = TestSources.codeSource("JinnIme.kt")
+        assertTrue("分发进移动逻辑", "DirectionAction.DOC_END -> moveOrExtend(action)" in ime)
+        val target = ime.substringAfter("private fun absoluteDocTarget(")
+            .substringBefore("private fun moveCursor(")
+        assertTrue("到开头 = 绝对 0", "DirectionAction.DOC_START -> 0" in target)
+        assertTrue("到末尾按剩余文本长度算", "range.end + after.length" in target)
+        assertTrue("读取带上限", "getTextAfterCursor(DOC_JUMP_MAX_CHARS, 0)" in target)
+        assertEquals(
+            "普通模式与拖选模式都要接上",
+            2,
+            ime.split("absoluteDocTarget(connection, action, range)").size - 1,
+        )
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }
