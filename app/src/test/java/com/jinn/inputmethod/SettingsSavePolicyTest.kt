@@ -40,6 +40,25 @@ class SettingsSavePolicyTest {
     }
 
     /**
+     * 未落盘提示在落盘成功后要撤回（L-1054）。
+     *
+     * 两个配置页的自动保存路径原先只会置位这一句：锁屏时录入 → 提示「凭据未写入本机」→
+     * 解锁后在同一输入框继续打并成功落盘，提示若仍停在旧态就与真实状态分叉，
+     * 用户会把刚输好的凭据再输一遍。唯一复位点是输入框重新获得焦点，停在同框里就不会触发。
+     */
+    @Test
+    fun 未落盘提示在落盘成功后要撤回() {
+        for (file in listOf("OpenAiSettingsActivity.kt", "TranslationSettingsActivity.kt")) {
+            val src = TestSources.codeSource(file)
+            assertTrue(
+                "$file：落盘成功要撤回未落盘提示",
+                "else if (textSaveHint.text == TEXT_SAVE_NOT_PERSISTED)" in src &&
+                    "textSaveHint.text = TEXT_SAVE_IDLE" in src,
+            )
+        }
+    }
+
+    /**
      * 收藏两个软上限的默认值不许比历史行为更紧（L-980）。
      *
      * 软上限是后加的，老库的收藏条数/体积可能早就超过旧默认值（200 条 / 5MB）——

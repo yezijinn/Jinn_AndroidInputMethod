@@ -228,6 +228,11 @@ class OpenAiSettingsActivity : Activity() {
             if (unpersisted.isNotEmpty()) {
                 Diagnostics.w(TAG, "凭据未落盘（输入停顿路径）: ${unpersisted.size} 项")
                 textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            } else if (textSaveHint.text == TEXT_SAVE_NOT_PERSISTED) {
+                // 落盘成功后要把这条提示撤回来（BUG.md L-1054）：解锁后在同一输入框里继续打并落盘成功，
+                // 提示若仍停在「凭据未写入本机」就与真实状态分叉，用户会把刚输好的凭据再输一遍。
+                // 只撤这一种态，别覆盖显式保存给出的「已保存 / 失败」结论。
+                textSaveHint.text = TEXT_SAVE_IDLE
             }
         }
     }

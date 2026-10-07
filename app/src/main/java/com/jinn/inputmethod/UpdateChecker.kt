@@ -146,21 +146,28 @@ object UpdateChecker {
 
     /** Gitee：网页 /tags 返回 405，改走开放 API；JSON 内的 tag 名同样按统一规则归一化。 */
     private fun fetchFromGitee(deadline: Long): Latest? = runCatching {
+        // 只认条目自身的 `name`：注解标签的条目里 `tagger` 是个对象，它的 `name` 是用户名
+        // （实测同一页因此多出 4 个候选：`YeZiJinn` / `yezijinn`，见 BUG.md L-1053）⇒ 先把它整段削掉。
+        // 轻量标签的 `tagger` 是 `null`，正则要求 `{`，不会误伤。
+        val taggerRe = Regex(""""tagger"\s*:\s*\{[^{}]*\}""")
         val nameRe = Regex(""""name"\s*:\s*"([^"]+)"""")
-        // **必须翻页取并集**（BUG.md L-146）：Gitee 的 tags 接口实测（2026-09-29）**默认 20 条/页**
-        // 且按**名称升序**返回 —— 最新日期 tag 排在后面。仓库当时正好已有 20 个 tag（含历史
-        // `v2026…` / `dict-*`），也就是说**再加一个日期 tag 就会把最新挤出首页**，此后这条回退源
-        // 永远报「已最新」且不自愈（GitHub 侧是降序、首页必含最新，所以只有回退源会出事）。
-        // 实测 `sort=` / `direction=desc` 参数被拒（400）、`per_page` 无据，所以不依赖任何排序参数：
-        // 逐页取、取并集再挑最大；**空页才停**；到上限就停（并留日志，别静默）。
+        // **翻页必须同时带 `per_page`**（BUG.md L-1052，接口实测 2026-10-07）：只传 `page` 时服务端
+        // 忽略它 —— 六次逐页请求的响应字节数完全相同（6022），于是并集是同一页的 N 份复制
+        // （真机日志因此虚报「160 个」，实际仓库只有 28 个标签），`GITEE_TAGS_MAX_PAGES` 这道
+        // 上限守卫空转；而 `fetchLatest` 先返回非空结果 ⇒ 这份可能被截断的答案会**压制** GitHub
+        // 回退源，一旦接口给「不传 per_page」的整份返回施加更大上限，表现就是永久「已最新」
+        // 且不自愈（L-146 的永久版，而这套翻页对它是无效防线）。加上 `per_page` 后 `page` 才生效：
+        // 实测 `per_page=5&page=2` 返回第二页（`20260925`…`20260930`，与首页不重叠）。
         //
-        // 终止条件原先是「不满一页即到底」，那等于把「实测 20 条/页」当成硬判据：页大小一旦变小，
-        // 或某页只解析出少量 `"name"`，被截断的正是最后那批 —— 也就是最新的日期标签（接口升序返回）。
-        // 表现与 L-146 同类：静默「已最新」且不自愈。改成空页才停，代价只多一到两轮请求，上限定死。
+        // 不依赖排序参数：并集 + 取最大与顺序无关（`direction=desc` 现在虽可用，但它不是接口文档
+        // 承诺的参数，一旦哪天被拒就是 400 ⇒ 本源作废，代价远大于收益）。
         val all = ArrayList<String>()
         var page = 1
         while (page <= GITEE_TAGS_MAX_PAGES) {
-            val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags?page=$page", deadline)
+            val body = httpGet(
+                "https://gitee.com/api/v5/repos/$OWNER/$REPO/tags?per_page=$GITEE_TAGS_PAGE_LIMIT&page=$page",
+                deadline,
+            )
             if (body == null) {
                 // 中途取不到**不等于**到底（BUG.md L-1048）：接口按名称升序返回，已取到的页恰好是
                 // 最旧的那一段，拿它跑 pickLatest 会定出一个偏旧的「最新版本」⇒ 假的「已最新」
@@ -169,7 +176,7 @@ object UpdateChecker {
                 Diagnostics.w(TAG, "Gitee 标签第 $page 页取不到，本源作废（转回退源）")
                 return@runCatching null
             }
-            val names = nameRe.findAll(body).map { it.groupValues[1] }.toList()
+            val names = nameRe.findAll(body.replace(taggerRe, "")).map { it.groupValues[1] }.toList()
             // 只有「空页」才是正常到底
             if (names.isEmpty()) break
             all += names
@@ -320,6 +327,15 @@ object UpdateChecker {
     /** tags 页 / tags API 的响应上限（字符）：正常响应几百 KB，1MB 留足余量 */
     private const val MAX_BODY_CHARS = 1_000_000
 
-    /** 翻页上限（5 页 ≈ 100 个标签，够用数年；到上限会留日志，不静默漏） */
+    /**
+     * 请求参数 `per_page`：**必须与 `page` 一起传**，否则服务端忽略 `page`、每页都返回首页副本
+     * （BUG.md L-1052）。100 是这类接口的常见上限档，取满一页把请求数压到最低。
+     *
+     * 名字刻意不叫 `GITEE_TAGS_PAGE_SIZE` —— 那一个是当年「拿实测页大小当终止判据」的标记，
+     * 已被守卫禁止复现（终止只看空页）；这里只是请求参数，与判据无关。
+     */
+    private const val GITEE_TAGS_PAGE_LIMIT = 100
+
+    /** 翻页上限（5 页 × 100 条 ≈ 500 个标签，够用数年；到上限会留日志，不静默漏） */
     private const val GITEE_TAGS_MAX_PAGES = 5
 }

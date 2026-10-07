@@ -185,7 +185,16 @@ class UpdateCheckerTest {
     fun `Gitee必须翻页且读取受总预算约束`() {
         val src = TestSources.codeSource("UpdateChecker.kt")
         assertTrue("Gitee 侧必须翻页（不然最新日期 tag 会掉出首页）", "GITEE_TAGS_MAX_PAGES" in src)
-        assertTrue("翻页请求必须带 page 参数", "tags?page=" in src)
+        assertTrue(
+            "翻页必须同时带 per_page 与 page（只传 page 时服务端忽略它，每页都返回首页副本）",
+            "tags?per_page=" in src && "&page=" in src,
+        )
+        assertTrue("单页条数要有常量（改名成 PAGE_LIMIT，与当年那个终止判据标记区分开）",
+            "GITEE_TAGS_PAGE_LIMIT" in src)
+        assertTrue(
+            "tagger 段要先削掉再取 name（那是用户名，不是标签名）",
+            "taggerRe" in src && "body.replace(taggerRe" in src,
+        )
         assertTrue("读取必须把 deadline 传进去（socket 超时管不住滴水响应）",
             "readCapped(it, MAX_BODY_CHARS, deadline)" in src)
         assertTrue("挑最新必须走顺序无关的 pickLatest", "pickLatest(" in src)

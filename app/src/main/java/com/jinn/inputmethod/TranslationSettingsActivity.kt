@@ -481,6 +481,10 @@ class TranslationSettingsActivity : Activity() {
             // 弹一次会变成十几次（2026-10-03 修复 L-717 的第二半）。
             textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
             if (notify) toast(TEXT_SAVE_NOT_PERSISTED)
+        } else if (textSaveHint.text == TEXT_SAVE_NOT_PERSISTED) {
+            // 落盘成功后撤回来（BUG.md L-1054，两页同款）：解锁后重新输入并成功落盘，提示若仍停在
+            // 「凭据未写入本机」就与真实状态分叉。只撤这一种态，别覆盖显式保存给出的结论。
+            textSaveHint.text = TEXT_SAVE_IDLE
         }
         // 全部落盘后才推基线（BUG.md L-970）。推了它，「粘贴 → 停顿落盘 → 全选删空 → 离开」
         // 那一次清空才不会再被当成「没改过」而漏写；而只要有一个字段没落盘就**一个都不推**，
