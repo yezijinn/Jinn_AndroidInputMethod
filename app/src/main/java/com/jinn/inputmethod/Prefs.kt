@@ -1777,15 +1777,20 @@ class Prefs(context: Context) {
         private const val KEY_GALLERY_COLUMNS = "gallery_columns"
         private const val KEY_GALLERY_CELL_HEIGHT_DP = "gallery_cell_height_dp"
 
-        /** 缩略图每行张数：默认 5，可调 3..8（面板宽度固定 ⇒ 张数即宽度档） */
-        private const val GALLERY_COLUMNS_DEFAULT = 5
-        private const val GALLERY_COLUMNS_MIN = 3
-        private const val GALLERY_COLUMNS_MAX = 8
+        /**
+         * 缩略图每行张数：默认 5，可调 3..8（面板宽度固定 ⇒ 张数即宽度档）。
+         *
+         * 上下限对 [GallerySettingsActivity] 的拖动条开放：SeekBar 的 progress 用「值 − 最小值」
+         * 这个线性映射，max 必须与这里同源，否则档位一改两处就对不上。
+         */
+        internal const val GALLERY_COLUMNS_DEFAULT = 5
+        internal const val GALLERY_COLUMNS_MIN = 3
+        internal const val GALLERY_COLUMNS_MAX = 8
 
-        /** 缩略图行高（dp）：默认 76，可调 40..120 */
-        private const val GALLERY_CELL_HEIGHT_DEFAULT = 76
-        private const val GALLERY_CELL_HEIGHT_MIN = 40
-        private const val GALLERY_CELL_HEIGHT_MAX = 120
+        /** 缩略图行高（dp）：默认 76，可调 40..120（上下限同上，供拖动条的 max 使用） */
+        internal const val GALLERY_CELL_HEIGHT_DEFAULT = 76
+        internal const val GALLERY_CELL_HEIGHT_MIN = 40
+        internal const val GALLERY_CELL_HEIGHT_MAX = 120
 
         /**
          * `favorite_symbols` 的导入长度上限（32K 字符 ≈ 百页符号，远超任何真实用法）。

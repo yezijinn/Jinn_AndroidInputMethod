@@ -82,26 +82,33 @@
 
                 <LinearLayout style="@style/SettingsCardRow">
 
+                    <!-- 与「键盘外观」页同款三件套：标题 + 拖动条 + 右对齐数值
+                         （配色与几何照 KeyAppearanceActivity，行高那一行同理） -->
                     <TextView
                         style="@style/SettingsLabel"
                         android:id="@+id/label_gallery_columns"
-                        android:layout_width="0dp"
-                        android:layout_weight="1" />
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="72dp" />
 
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_gallery_columns_minus"
+                    <SeekBar
+                        android:id="@+id/seek_gallery_columns"
                         android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
-                        android:minWidth="0dp" />
+                        android:progressBackgroundTint="@color/card_stroke"
+                        android:progressTint="@color/accent"
+                        android:thumbTint="@color/accent" />
 
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_gallery_columns_plus"
-                        android:layout_width="0dp"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp" />
+                    <TextView
+                        android:id="@+id/text_gallery_columns"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:minWidth="52dp"
+                        android:textColor="@color/accent"
+                        android:textSize="14sp" />
                 </LinearLayout>
 
                 <LinearLayout style="@style/SettingsCardRow">
@@ -109,23 +116,28 @@
                     <TextView
                         style="@style/SettingsLabel"
                         android:id="@+id/label_gallery_cell_height"
-                        android:layout_width="0dp"
-                        android:layout_weight="1" />
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="72dp" />
 
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_gallery_height_minus"
+                    <SeekBar
+                        android:id="@+id/seek_gallery_cell_height"
                         android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
-                        android:minWidth="0dp" />
+                        android:progressBackgroundTint="@color/card_stroke"
+                        android:progressTint="@color/accent"
+                        android:thumbTint="@color/accent" />
 
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_gallery_height_plus"
-                        android:layout_width="0dp"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp" />
+                    <TextView
+                        android:id="@+id/text_gallery_cell_height"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:minWidth="52dp"
+                        android:textColor="@color/accent"
+                        android:textSize="14sp" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>

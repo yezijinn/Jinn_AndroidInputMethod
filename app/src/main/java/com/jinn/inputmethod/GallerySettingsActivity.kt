@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +19,16 @@ import androidx.activity.result.contract.ActivityResultContracts
  * 不需要通知输入法进程：键盘面板每次展开（[GalleryPanelView.onPanelShown]）都会重读全部参数。
  */
 class GallerySettingsActivity : ComponentActivity() {
+
+    /**
+     * 两行的数值标签，在 [onCreate] 里取一次并缓存。
+     *
+     * ⚠ 拖动条的回调里**不再** `findViewById`：`setProgress` 会**同步**回调 `onProgressChanged`，
+     * 一旦那一刻取不到该 id 就直接在回调里 NPE（真机实测崩在 `SeekBar.onProgressRefresh` 里，
+     * 栈上只有混淆后的匿名类，完全看不出是哪个 id）。缓存 + 判空后，取不到也只留一条日志。
+     */
+    private var textColumns: TextView? = null
+    private var textCellHeight: TextView? = null
 
     /**
      * 图库目录：SAF 目录树授权。
@@ -69,21 +80,53 @@ class GallerySettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "自动返回: ${prefs.galleryAutoReturn}")
             render()
         }
-        findViewById<Button>(R.id.btn_gallery_columns_minus).apply {
-            text = TEXT_MINUS
-            setOnClickListener { stepColumns(-1) }
+
+        // 数值标签先取好：拖动条回调里要用，而回调可能在任何一次 setProgress 内同步触发
+        textColumns = findViewById(R.id.text_gallery_columns)
+        textCellHeight = findViewById(R.id.text_gallery_cell_height)
+        if (textColumns == null) Diagnostics.w(TAG, "布局里找不到 text_gallery_columns")
+        if (textCellHeight == null) Diagnostics.w(TAG, "布局里找不到 text_gallery_cell_height")
+
+        // 两个拖动条：与「键盘外观」页同一套做法 —— 上限先设好、监听后挂（初值由 render 写，
+        // 避免初始化本身触发一次无意义回调）。只在松手时打日志：拖动过程每格都写日志会变成
+        // 每秒几十次文件 IO。
+        findViewById<SeekBar>(R.id.seek_gallery_columns).apply {
+            max = Prefs.GALLERY_COLUMNS_MAX - Prefs.GALLERY_COLUMNS_MIN
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val value = Prefs.GALLERY_COLUMNS_MIN + progress
+                    Prefs(this@GallerySettingsActivity).galleryColumns = value
+                    textColumns?.text = TEXT_COLUMNS_VALUE.format(value)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    Diagnostics.i(
+                        TAG,
+                        "每行张数: ${Prefs(this@GallerySettingsActivity).galleryColumns}",
+                    )
+                }
+            })
         }
-        findViewById<Button>(R.id.btn_gallery_columns_plus).apply {
-            text = TEXT_PLUS
-            setOnClickListener { stepColumns(+1) }
-        }
-        findViewById<Button>(R.id.btn_gallery_height_minus).apply {
-            text = TEXT_MINUS
-            setOnClickListener { stepHeight(-HEIGHT_STEP_DP) }
-        }
-        findViewById<Button>(R.id.btn_gallery_height_plus).apply {
-            text = TEXT_PLUS
-            setOnClickListener { stepHeight(+HEIGHT_STEP_DP) }
+        findViewById<SeekBar>(R.id.seek_gallery_cell_height).apply {
+            max = Prefs.GALLERY_CELL_HEIGHT_MAX - Prefs.GALLERY_CELL_HEIGHT_MIN
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val value = Prefs.GALLERY_CELL_HEIGHT_MIN + progress
+                    Prefs(this@GallerySettingsActivity).galleryCellHeightDp = value
+                    textCellHeight?.text = TEXT_HEIGHT_VALUE.format(value)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    Diagnostics.i(
+                        TAG,
+                        "缩略图行高: ${Prefs(this@GallerySettingsActivity).galleryCellHeightDp}",
+                    )
+                }
+            })
         }
     }
 
@@ -120,42 +163,39 @@ class GallerySettingsActivity : ComponentActivity() {
             text = if (on) TEXT_AUTO_ON else TEXT_AUTO_OFF
             setTextColor(getColor(if (on) R.color.kb_key_hint_red else R.color.text_primary))
         }
-        findViewById<TextView>(R.id.label_gallery_columns).text =
-            TEXT_COLUMNS.format(prefs.galleryColumns)
-        findViewById<TextView>(R.id.label_gallery_cell_height).text =
-            TEXT_HEIGHT.format(prefs.galleryCellHeightDp)
+        // 两行都是「固定标题 + 右侧数值」（与「键盘外观」页同款三件套）
+        findViewById<TextView>(R.id.label_gallery_columns).text = TEXT_COLUMNS_TITLE
+        findViewById<TextView>(R.id.label_gallery_cell_height).text = TEXT_HEIGHT_TITLE
+        textColumns?.text = TEXT_COLUMNS_VALUE.format(prefs.galleryColumns)
+        textCellHeight?.text = TEXT_HEIGHT_VALUE.format(prefs.galleryCellHeightDp)
+        bindSeek(R.id.seek_gallery_columns, prefs.galleryColumns, Prefs.GALLERY_COLUMNS_MIN)
+        bindSeek(
+            R.id.seek_gallery_cell_height,
+            prefs.galleryCellHeightDp,
+            Prefs.GALLERY_CELL_HEIGHT_MIN,
+        )
     }
 
-    /** 每行张数 ±1（[Prefs.galleryColumns] 的 setter 会归一），改完立即重画 */
-    private fun stepColumns(delta: Int) {
-        val prefs = Prefs(this)
-        prefs.galleryColumns = prefs.galleryColumns + delta
-        render()
-    }
-
-    /** 行高 ±[HEIGHT_STEP_DP] dp（同上） */
-    private fun stepHeight(delta: Int) {
-        val prefs = Prefs(this)
-        prefs.galleryCellHeightDp = prefs.galleryCellHeightDp + delta
-        render()
+    /** 把档位值同步到拖动条；值没变就不写（SeekBar 在值相同时也回调，白跑一次落盘） */
+    private fun bindSeek(id: Int, value: Int, min: Int) {
+        val seek = findViewById<SeekBar>(id) ?: return
+        val progress = value - min
+        if (seek.progress != progress) seek.progress = progress
     }
 
     private companion object {
         const val TAG = "GallerySettings"
 
-        /** 行高步长：与键盘面板那个「布局」调节保持同一个值（面板侧见 GalleryPanelView 的 HEIGHT_STEP_DP） */
-        const val HEIGHT_STEP_DP = 4
-
         const val TEXT_TITLE = "图库快贴功能"
-        const val TEXT_DESC = "目录绑定、自动返回、缩略图布局都在这里。自动返回开着时，键盘里点一张图就直接回到打字键盘。"
+        const val TEXT_DESC = "图库目录:图库会读取这个位置的图片\n清除绑定:不再读取任何目录,可新增目录\n自动返回:开启时,点一张图后直接回到打字键盘"
         const val TEXT_DIR_PICK = "选择图库目录"
         const val TEXT_DIR_CHANGE = "更换图库目录"
         const val TEXT_DIR_CLEAR = "清除图库绑定"
         const val TEXT_AUTO_ON = "自动返回：开"
         const val TEXT_AUTO_OFF = "自动返回：关"
-        const val TEXT_COLUMNS = "每行张数：%d"
-        const val TEXT_HEIGHT = "缩略图行高：%d dp"
-        const val TEXT_MINUS = "−"
-        const val TEXT_PLUS = "+"
+        const val TEXT_COLUMNS_TITLE = "每行张数"
+        const val TEXT_HEIGHT_TITLE = "缩略图行高"
+        const val TEXT_COLUMNS_VALUE = "%d 张"
+        const val TEXT_HEIGHT_VALUE = "%d dp"
     }
 }
