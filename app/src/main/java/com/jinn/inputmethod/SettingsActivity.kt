@@ -943,13 +943,15 @@ class SettingsActivity : ComponentActivity() {
     /** 手动检查：结果由三段式对话框呈现（措辞属 unified-update-check 统一，不得改写） */
     private fun onUpdateChecked(result: UpdateChecker.Result) {
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
-        recordUpdateCheckTime(result)
         // 检查是后台线程 + 10s 网络超时：结果回来时页面可能已关闭或已重建。
         // 拿已销毁的 Activity 去 show() 会抛 BadTokenException（主线程崩溃）。
         if (isFinishing || isDestroyed) {
             Diagnostics.i(TAG, "检查更新结果已到达，但页面已销毁，跳过弹窗")
             return
         }
+        // 记账放在守卫之后：弹窗是「发现新版本」唯一的提示出口，页面销毁时它不会出现，
+        // 提前记账等于让用户什么都没看到却被静默七天（L-1047）
+        recordUpdateCheckTime(result)
         // 结果本身由对话框呈现：这里只需解锁（早先先赋 UpToDate/Available/NetworkError、
         // 紧接着又被 Idle 覆盖，是没有任何消费方的死代码，已随本次修复移除）。
         setUpdateState(UpdateState.Idle)
@@ -959,11 +961,12 @@ class SettingsActivity : ComponentActivity() {
     /** 自动检查：失败/已最新一律静默，只有检测到新版本才弹「有新版本，要更新吗？」 */
     private fun onAutoChecked(result: UpdateChecker.Result) {
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
-        recordUpdateCheckTime(result)
         if (isFinishing || isDestroyed) {
             Diagnostics.i(TAG, "自动检查更新结果已到达，但页面已销毁，跳过弹窗")
             return
         }
+        // 同上（L-1047）：只有这次结果真被呈现（弹窗或静默结论落日志）才记账，页面销毁时不记
+        recordUpdateCheckTime(result)
         setUpdateState(UpdateState.Idle)
         when (result) {
             is UpdateChecker.Result.Available -> showAskUpdateDialog(result)

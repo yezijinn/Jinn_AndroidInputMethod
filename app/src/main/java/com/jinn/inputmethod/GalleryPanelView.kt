@@ -233,6 +233,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     fun stopBackgroundWork() {
         generation++
         thumbPool.shutdownNow()
+        // 与剪贴板面板 / 搜索面板同款留一条：这条路径原先没有任何日志，
+        // 重建是否真的走到这里、旧池是否关掉，事后从日志里看不出来
+        Diagnostics.i(TAG, "图库面板: 视图重建，作废在途缩略图并关池")
     }
 
     /** 按当前皮肤重设面板配色：底、标题、状态行、每个按钮的文字与键面 */

@@ -70,7 +70,9 @@ internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditT
     /** 解码结果回主线程再贴上去（View 只能在主线程碰） */
     private fun attachDecoded(uri: Uri, bmp: Bitmap?) {
         if (bmp == null) {
-            Diagnostics.w(TAG, "图片解码失败 uri=$uri")
+            // 只记 provider：完整 content URI 的路径段可能是用户文件名，
+            // 而 w 级会 sanitizeForFile 后落盘、随「导出诊断数据」外带（L-1036 的同族漏面）
+            Diagnostics.w(TAG, "图片解码失败 provider=${uri.authority}")
             return
         }
         val drawable = BitmapDrawable(resources, bmp).apply { setBounds(0, 0, bmp.width, bmp.height) }

@@ -216,6 +216,30 @@ class UpdateCheckerTest {
         )
     }
 
+    /**
+     * 翻页判据与记账时机必须留在原位（`BUG.md` L-1046 / L-1047）。
+     *
+     * 两条同型：写错就静默失效。翻页判据错会漏掉最新那批标签（接口按名称升序返回，截断的正是末尾），
+     * 记账时机错会让用户什么都没看到却被静默七天。
+     */
+    @Test
+    fun `翻页判据与记账时机必须留在原位`() {
+        val src = TestSources.codeSource("UpdateChecker.kt")
+        assertTrue("空页才停是唯一终止条件", "if (names.isEmpty()) break" in src)
+        assertFalse("不再拿实测页大小当判据", "GITEE_TAGS_PAGE_SIZE" in src)
+        assertTrue("翻页上限仍在", "GITEE_TAGS_MAX_PAGES" in src)
+
+        val settings = TestSources.codeSource("SettingsActivity.kt")
+        for (mark in listOf(
+            "检查更新结果已到达，但页面已销毁，跳过弹窗",
+            "自动检查更新结果已到达，但页面已销毁，跳过弹窗",
+        )) {
+            val body = settings.substringAfter(mark).take(400)
+            val record = body.indexOf("recordUpdateCheckTime(result)")
+            assertTrue("销毁守卫之后必须紧跟记账：$mark", record in 1..400)
+        }
+    }
+
     /** 资源定位：与 `OptionalDictJunkTest` 同一口径（Gradle 的任务工作目录不止一种） */
     private fun resFile(relative: String): File =
         listOf(File("src/main/res/$relative"), File("app/src/main/res/$relative"))

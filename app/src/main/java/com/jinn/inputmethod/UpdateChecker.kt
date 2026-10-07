@@ -152,7 +152,11 @@ object UpdateChecker {
         // `v2026…` / `dict-*`），也就是说**再加一个日期 tag 就会把最新挤出首页**，此后这条回退源
         // 永远报「已最新」且不自愈（GitHub 侧是降序、首页必含最新，所以只有回退源会出事）。
         // 实测 `sort=` / `direction=desc` 参数被拒（400）、`per_page` 无据，所以不依赖任何排序参数：
-        // 逐页取、取并集再挑最大；不满一页即到底；到上限就停（并留日志，别静默）。
+        // 逐页取、取并集再挑最大；**空页才停**；到上限就停（并留日志，别静默）。
+        //
+        // 终止条件原先是「不满一页即到底」，那等于把「实测 20 条/页」当成硬判据：页大小一旦变小，
+        // 或某页只解析出少量 `"name"`，被截断的正是最后那批 —— 也就是最新的日期标签（接口升序返回）。
+        // 表现与 L-146 同类：静默「已最新」且不自愈。改成空页才停，代价只多一到两轮请求，上限定死。
         val all = ArrayList<String>()
         var page = 1
         while (page <= GITEE_TAGS_MAX_PAGES) {
@@ -161,7 +165,6 @@ object UpdateChecker {
             val names = nameRe.findAll(body).map { it.groupValues[1] }.toList()
             if (names.isEmpty()) break
             all += names
-            if (names.size < GITEE_TAGS_PAGE_SIZE) break
             page++
         }
         if (page > GITEE_TAGS_MAX_PAGES) {
@@ -307,9 +310,6 @@ object UpdateChecker {
 
     /** tags 页 / tags API 的响应上限（字符）：正常响应几百 KB，1MB 留足余量 */
     private const val MAX_BODY_CHARS = 1_000_000
-
-    /** Gitee tags 接口的**实测**页大小（2026-09-29：不带参数返回 20 条） */
-    private const val GITEE_TAGS_PAGE_SIZE = 20
 
     /** 翻页上限（5 页 ≈ 100 个标签，够用数年；到上限会留日志，不静默漏） */
     private const val GITEE_TAGS_MAX_PAGES = 5

@@ -1493,6 +1493,11 @@ class JinnIme : InputMethodService() {
                 },
             )
         }
+        // 覆盖字段之前先给旧视图收尾：它的缩略图线程池与在途查询要在这里停。
+        // `recreateKeyboardView` 那条路径会调 `stopPanelBackgroundWork`，框架自己调本函数时
+        // 不经过它 —— 漏掉与 L-1035 同型：每次重建漏三条常驻线程，在途任务还钉住旧视图树
+        // （含缩略图缓存）。顺序不能反，先覆盖字段就拿不到旧引用了。
+        pinyinKeyboard?.stopPanelBackgroundWork()
         pinyinKeyboard = pinyin
         // 视图态重放：**凡新建视图就重放 IME 侧持有的状态** —— 绑在"视图创建"这件事上，
         // 而不是绑在某个调用点（2026-10-03 审查 A2）。新视图的这两个字段一律是初值

@@ -521,6 +521,8 @@ class GalleryInsertTest {
             "JinnIme.kt" to "图库面板: 选中",
             "GalleryPanelView.kt" to "选中图片:",
             "GallerySettingsActivity.kt" to "目录: 已绑定",
+            // L-1045：收图控件的失败分支漏过一次，一并纳入免得再漏
+            "ReceivingEditText.kt" to "图片解码失败",
         )
         for ((file, marker) in targets) {
             val src = TestSources.codeSource(file)
@@ -529,6 +531,24 @@ class GalleryInsertTest {
             assertTrue("$file 的日志不得带 lastPathSegment", "lastPathSegment" !in line)
             assertTrue("$file 的日志不得整条打印 uri", "uri=\$uri" !in line)
         }
+    }
+
+    /**
+     * 框架自建输入视图这条路径也要给旧视图收尾（`BUG.md` L-1044）。
+     *
+     * `recreateKeyboardView` 会调 `stopPanelBackgroundWork`，而框架自己调
+     * `JinnIme.onCreateInputView()`（窗口 / 配置变更后重建输入视图）时不经过它 ——
+     * 漏掉的后果是每次重建漏三条常驻线程、在途任务还钉住旧视图树。
+     * 顺序也要钉住：收尾必须在覆盖 `pinyinKeyboard` 之前，否则拿不到旧引用。
+     */
+    @Test
+    fun 新建输入视图时要给旧视图收尾() {
+        val src = TestSources.codeSource("JinnIme.kt")
+        val body = src.substringAfter("override fun onCreateInputView(): View {")
+        val stop = body.indexOf("stopPanelBackgroundWork()")
+        val assign = body.indexOf("pinyinKeyboard = pinyin")
+        assertTrue("onCreateInputView 里要调收尾", stop > 0)
+        assertTrue("收尾必须在覆盖字段之前", assign > 0 && stop < assign)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
