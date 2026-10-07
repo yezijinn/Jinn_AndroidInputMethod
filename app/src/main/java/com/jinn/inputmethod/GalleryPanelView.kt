@@ -183,7 +183,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
         render(State.Loading)
         BackgroundIo.run {
-            val result = runCatching { listImages(Uri.parse(tree)) }
+            val result = runCatching { listImages(Uri.parse(tree), gen) }
             post {
                 if (gen != generation) return@post
                 result.fold(
@@ -407,6 +407,10 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             State.NeedsBinding -> TEXT_NEEDS_BINDING
             State.Unavailable -> TEXT_UNAVAILABLE
         }
+        // 「还没绑定」态没有目录名可显示，标题要复位（BUG.md L-1042）：否则解绑后重开面板，
+        // 状态行说「还没绑定」、标题却挂着上一次那个目录名，两处自相矛盾。
+        // 「空目录」「读不到」两态保留原标题 —— 那里目录名是有用的信息。
+        if (state == State.NeedsBinding) title.text = TEXT_TITLE_DEFAULT
         // 绑定出问题的两种状态才露出入口行 —— 常驻视图只切可见性（L-1025：以前是 addView，
         // 而 render 每次展开都会被调用，用户实测进 4 次就多出 4 个「去设置里绑定」）
         rebindRow.visibility =
@@ -506,7 +510,13 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                     val bmp = if (gen != generation) null else decodeThumb(uri, sampleFor(columns))
                     if (bmp != null) thumbCache.put(key, bmp)
                     inFlight.remove(key)
-                    if (bmp == null) return@execute
+                    if (bmp == null) {
+                        // 解不出来要留痕迹（BUG.md L-1040）：此前完全静默，格子永久空白，
+                        // 用户与排查者都分不清「还没解出来」「这张解不了」「图本身就是黑的」。
+                        // 只记序号与档位，不记路径（L-1036 的口径）。
+                        Diagnostics.w(TAG, "缩略图解码失败: 第 $i 张（每行 $columns 张）")
+                        return@execute
+                    }
                     post { if (gen == generation) bindThumb(uri, bmp) }
                 }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
@@ -555,7 +565,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * 全量列出（面板自己分页，见 [PAGE_SIZE]），只受 [MAX_LISTED] 这个安全阀约束；超限时由状态行说明，
      * 找具体某张也可以走「单选」（系统选择器）。查询走 `DocumentsContract`，零额外依赖。
      */
-    private fun listImages(tree: Uri): List<Uri> {
+    private fun listImages(tree: Uri, gen: Int): List<Uri> {
         val docId = DocumentsContract.getTreeDocumentId(tree)
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val found = ArrayList<Pair<String, Uri>>()
@@ -579,7 +589,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
         foundTotal = found.size
         val dirName = docId.substringAfterLast('/').substringAfterLast(':')
-        post { title.text = dirName.ifEmpty { TEXT_TITLE_DEFAULT } }
+        // 与列表回填同一条代际守卫（BUG.md L-1042）：收起面板或换目录后，旧查询的标题回填
+        // 仍会执行 —— 屏幕上就成了「状态行说还没绑定、标题写着上一个目录名」
+        post { if (gen == generation) title.text = dirName.ifEmpty { TEXT_TITLE_DEFAULT } }
         // 分页之后这里不再按「每页张数」截断，只受安全阀约束（见 MAX_LISTED）
         return found.sortedBy { it.first }.take(MAX_LISTED).map { it.second }
     }
@@ -663,7 +675,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_GO_SETTINGS = "去设置里绑定"
         const val TEXT_LOADING = "正在读取目录…"
         const val TEXT_EMPTY = "这个目录里没有图片"
-        const val TEXT_NEEDS_BINDING = "还没绑定图库目录：\n到「输入法主页设置 → 图库快贴目录」\n绑定一个文件夹，之后就能直接展开"
+        const val TEXT_NEEDS_BINDING = "还没绑定图库目录：\n到「输入法主页设置 → 图库快贴功能」\n里选一个文件夹，之后就能直接展开"
         const val TEXT_UNAVAILABLE = "读不到这个目录（授权可能已失效）：重绑一次\n或点「单选」用系统选择器"
         const val TEXT_TRUNCATED = "图太多，只列出前 $MAX_LISTED 张（共 %d 张）—— 找具体某张可用「单选」"
     }

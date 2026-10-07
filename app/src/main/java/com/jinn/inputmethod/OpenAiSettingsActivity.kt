@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -152,6 +154,7 @@ class OpenAiSettingsActivity : Activity() {
                         textSaveHint.text = TEXT_SAVE_IDLE
                     }
             }
+            f.addTextChangedListener(autosaveWatcher)
         }
         // 显式保存（2026-10-01）：固定在滚动区之外，任何位置都能点，点完给明确结果提示
         btnSave = findViewById(R.id.btn_ai_save)
@@ -198,6 +201,40 @@ class OpenAiSettingsActivity : Activity() {
     }
 
     /**
+     * 字段改动后延迟落盘（BUG.md L-967）。
+     *
+     * 与翻译设置页的 `scheduleCredentialAutosave`（L-209）同款：下一次改动把前一次排队顶掉，
+     * 连续输入只在停顿后写一次。`saveValues` 对未改动字段本就是空操作，Key 那条另有 `saveGuard`
+     * 挡着（避免把解不开的密文洗成空串）。
+     */
+    private fun scheduleAutosave() {
+        autosaveHandler.removeCallbacks(autosaveRunnable)
+        autosaveHandler.postDelayed(autosaveRunnable, AUTOSAVE_DEBOUNCE_MS)
+    }
+
+    private val autosaveHandler = Handler(Looper.getMainLooper())
+
+    /** 输入停顿后的回写：导入在途时跳过（与 `onPause` 同一条守卫） */
+    private val autosaveRunnable = Runnable {
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "输入停顿自动保存: 导入进行中，跳过配置回写")
+        } else {
+            saveValues()
+        }
+    }
+
+    private val autosaveWatcher = object : android.text.TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
+        override fun afterTextChanged(s: android.text.Editable?) {
+            // `loadValues()` 的程序化回填不算用户改动（同 L-367 用 `loading` 的口径）
+            if (!loading) scheduleAutosave()
+        }
+    }
+
+    /**
      * 离开页面即落盘，并显式等一次写入 —— 与翻译设置页同款两处坑：
      * EditText 失焦在返回时不一定派发回调；且必须写在 `onPause`（下一个页面的 onResume 早于它）。
      */
@@ -211,6 +248,8 @@ class OpenAiSettingsActivity : Activity() {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过配置回写（避免覆盖导入结果）")
         } else {
             saveValues()
+            // 改动已在上一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转，与翻译页同款）
+            autosaveHandler.removeCallbacks(autosaveRunnable)
             // ⚠ 自动保存路径也要消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-741）：
             // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
             // 而本页只有「保存」按钮那条路读这个集合 ⇒ 填完 Key 直接返回的用户看到的是
@@ -595,6 +634,9 @@ class OpenAiSettingsActivity : Activity() {
 
     private companion object {
         const val TAG = "OpenAiSettings"
+
+        /** 输入停顿多久后落盘（BUG.md L-967，与翻译设置页同一档） */
+        const val AUTOSAVE_DEBOUNCE_MS = 800L
 
         /** 标准目标语言（下拉项）；表外的值走「自定义语言」输入框 */
         val TARGET_LANGUAGES = listOf(

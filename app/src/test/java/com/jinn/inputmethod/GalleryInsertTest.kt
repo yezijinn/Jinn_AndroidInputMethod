@@ -551,5 +551,28 @@ class GalleryInsertTest {
         assertTrue("收尾必须在覆盖字段之前", assign > 0 && stop < assign)
     }
 
+    /**
+     * 本批三条低风险的收敛点（`BUG.md` L-1039 / L-1040 / L-1042）。
+     *
+     * 都是「界面上说不清」型：指路的入口名对不上、解不出图没有任何痕迹、标题与状态行互相矛盾。
+     */
+    @Test
+    fun 面板文案与解码痕迹的收敛点() {
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        // L-1039：指路要指向设置页真实存在的入口名
+        val binding = panel.substringAfter("const val TEXT_NEEDS_BINDING").substringBefore("\n")
+        assertTrue("指路要用设置页的入口名", "图库快贴功能" in binding)
+        assertFalse("不再出现已不存在的入口名", "图库快贴目录" in binding)
+        // L-1040：解码失败要留痕迹（只记序号与档位，不记路径）
+        val thumbs = panel.substringAfter("private fun loadThumbs(").substringBefore("private fun bindThumb(")
+        assertTrue("失败分支要记日志", "缩略图解码失败" in thumbs)
+        assertFalse("日志不得带路径", "lastPathSegment" in thumbs)
+        // L-1042：标题回填要有代际守卫，未绑定态要复位
+        val list = panel.substringAfter("private fun listImages(").substringBefore("private fun dp(")
+        assertTrue("标题回填要判代际", "if (gen == generation) title.text" in list)
+        val render = panel.substringAfter("private fun render(state: State?)").substringBefore("private fun showList(")
+        assertTrue("未绑定态复位标题", "if (state == State.NeedsBinding) title.text = TEXT_TITLE_DEFAULT" in render)
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }

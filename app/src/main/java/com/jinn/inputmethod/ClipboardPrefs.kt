@@ -36,14 +36,25 @@ class ClipboardPrefs(context: Context) {
     /** 历史体积上限（字节） */
     val maxTotalBytes: Long get() = maxTotalBytesMb * 1024L * 1024L
 
-    /** 收藏条数软上限：1 ~ [MAX_FAV_ITEMS_CAP]，默认 200；超限淘汰最旧收藏 */
+    /**
+     * 收藏条数软上限：1 ~ [MAX_FAV_ITEMS_CAP]，默认取上限（等于不按条数淘汰）；超限淘汰最旧收藏。
+     *
+     * 默认值定成上限而不是 200（BUG.md L-980）：软上限是 2026-10-06 才引入的，老库的收藏条数
+     * 可能早就超过旧默认值 —— 那样下次复制就会静默删掉最旧的收藏，与「收藏永不删」的既有口径
+     * 冲突。放宽只会少删，方向是单向安全的；要收紧可在剪贴板自定义页调小。
+     */
     var favoriteMaxItems: Int
-        get() = sp.getInt(KEY_FAV_MAX_ITEMS, DEFAULT_FAV_MAX_ITEMS).coerceIn(1, MAX_FAV_ITEMS_CAP)
+        get() = sp.getInt(KEY_FAV_MAX_ITEMS, MAX_FAV_ITEMS_CAP).coerceIn(1, MAX_FAV_ITEMS_CAP)
         set(value) = sp.edit { putInt(KEY_FAV_MAX_ITEMS, value.coerceIn(1, MAX_FAV_ITEMS_CAP)) }
 
-    /** 收藏体积软上限（MB）：1 ~ [favoriteBytesCapMb] 所容，默认 5 */
+    /**
+     * 收藏体积软上限（MB）：1 ~ [favoriteBytesCapMb] 所容；默认取到该上限（总量上限的四分之一）。
+     *
+     * 与条数上限同一理由（BUG.md L-980）：默认值不能比历史行为更紧，否则老库的收藏会被静默淘汰。
+     */
     var favoriteMaxBytesMb: Int
-        get() = sp.getInt(KEY_FAV_MAX_MB, DEFAULT_FAV_MAX_MB).coerceIn(1, favoriteBytesCapMb(maxTotalBytesMb))
+        get() = sp.getInt(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb))
+            .coerceIn(1, favoriteBytesCapMb(maxTotalBytesMb))
         set(value) = sp.edit { putInt(KEY_FAV_MAX_MB, value.coerceIn(1, favoriteBytesCapMb(maxTotalBytesMb))) }
 
     val favoriteMaxBytes: Long get() = favoriteMaxBytesMb * 1024L * 1024L
@@ -178,8 +189,8 @@ class ClipboardPrefs(context: Context) {
     companion object {
         const val DEFAULT_MAX_ITEMS = 500
         const val DEFAULT_MAX_TOTAL_MB = 100
-        const val DEFAULT_FAV_MAX_ITEMS = 200
-        const val DEFAULT_FAV_MAX_MB = 5
+        // 收藏两个上限不再有独立的默认常量（BUG.md L-980）：条数默认取 MAX_FAV_ITEMS_CAP，
+        // 体积默认取 favoriteBytesCapMb(maxTotalBytesMb)，都改成按现有上限动态取值
         const val DEFAULT_PANEL_PAGE = 50
         const val DEFAULT_MAX_SEARCH = 200
         const val DEFAULT_MAX_ITEM_KB = 256
