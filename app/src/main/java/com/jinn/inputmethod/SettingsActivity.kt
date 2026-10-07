@@ -261,27 +261,6 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * 图库快贴目录：SAF 目录树授权。
-     *
-     * 用户只在此处跳一次系统选择器；持久化授权拿到后，键盘内的图库面板直接列这个目录。
-     * 拿授权失败也先把 URI 记下 —— 可用性由面板侧的一次真实读取判定，不可用即提示重绑。
-     */
-    private val galleryDirLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri == null) {
-            Diagnostics.i(TAG, "galleryDir: 用户取消选择目录")
-            return@registerForActivityResult
-        }
-        val granted = runCatching {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }.isSuccess
-        prefs.galleryTreeUri = uri.toString()
-        Diagnostics.i(TAG, "galleryDir: 已绑定 persist=$granted uri=$uri")
-        updateGalleryDirUi()
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Diagnostics.init(this)
@@ -386,18 +365,13 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_CLIPBOARD_CUSTOMIZE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, ClipboardCustomizeActivity::class.java)) }
         }
-        // 图库快贴目录：绑一次，之后键盘内的「图库」面板直接展开它（不再每次跳系统选择器）
-        findViewById<Button>(R.id.btn_gallery_dir).apply {
-            setOnClickListener { galleryDirLauncher.launch(null) }
-        }
-        findViewById<Button>(R.id.btn_gallery_dir_clear).apply {
+        // 图库快贴：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在子页面里，这里只留一个入口
+        findViewById<Button>(R.id.btn_gallery_settings).apply {
+            text = TEXT_GALLERY_SETTINGS_ENTRY
             setOnClickListener {
-                prefs.galleryTreeUri = ""
-                Diagnostics.i(TAG, "galleryDir: 已清除绑定")
-                updateGalleryDirUi()
+                startActivity(Intent(this@SettingsActivity, GallerySettingsActivity::class.java))
             }
         }
-        updateGalleryDirUi()
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -666,23 +640,6 @@ class SettingsActivity : ComponentActivity() {
         // 剪贴板上限在「剪贴板自定义」页也能改：进页面按盘上值刷新，否则本页持有创建时的旧值，
         // 离开时的回写会把别处刚保存的值覆盖掉（L-991）
         refreshClipboardMax()
-        updateGalleryDirUi()
-    }
-
-    /**
-     * 图库目录那一行的文案与可用态。
-     *
-     * 未绑定显示「选择图库目录」，已绑定显示「更换图库目录」；「清除绑定」只在有绑定时可点。
-     * 换目录或撤销授权后，键盘面板下次展开会发现取不到内容并提示重绑。
-     */
-    private fun updateGalleryDirUi() {
-        val bound = prefs.galleryTreeUri.isNotEmpty()
-        findViewById<Button>(R.id.btn_gallery_dir).text =
-            if (bound) TEXT_GALLERY_DIR_CHANGE else TEXT_GALLERY_DIR_PICK
-        findViewById<Button>(R.id.btn_gallery_dir_clear).apply {
-            text = TEXT_GALLERY_DIR_CLEAR
-            isEnabled = bound
-        }
     }
 
     /**
@@ -1954,10 +1911,8 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_TAP_SOUND_ENTRY = "敲击音效反馈"
         const val TEXT_CLIPBOARD_CUSTOMIZE_ENTRY = "剪贴板自定义"
 
-        /** 图库快贴目录一行的文案（三态：未绑定 / 已绑定 / 清除） */
-        const val TEXT_GALLERY_DIR_PICK = "选择图库目录"
-        const val TEXT_GALLERY_DIR_CHANGE = "绑定图库目录"
-        const val TEXT_GALLERY_DIR_CLEAR = "清除图库绑定"
+        /** 图库快贴：设置页只留这一个入口，目录绑定 / 自动返回 / 缩略图布局都在子页面里 */
+        const val TEXT_GALLERY_SETTINGS_ENTRY = "图库快贴功能"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"

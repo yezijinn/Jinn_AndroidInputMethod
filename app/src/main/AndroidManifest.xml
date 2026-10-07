@@ -42,6 +42,11 @@
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- 图库快贴功能页：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局 -->
+        <activity
+            android:name=".GallerySettingsActivity"
+            android:exported="false" />
+
         <!-- 图库快贴：只对外开放 cache/gallery_share 下的选图（宿主经 commitContent 临时授权读） -->
         <provider
             android:name="androidx.core.content.FileProvider"

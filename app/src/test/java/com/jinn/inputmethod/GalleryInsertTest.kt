@@ -291,7 +291,11 @@ class GalleryInsertTest {
         val panel = TestSources.codeSource("GalleryPanelView.kt")
         assertTrue("面板按钮：刷新", "\"刷新\"" in panel)
         assertTrue("面板按钮：单选", "\"单选\"" in panel)
-        assertTrue("面板按钮：自返", "\"自返\"" in panel)
+        // 设置类项目不再散在键盘面板里：需要「自动返回」就去设置页的「图库快贴功能」页
+        assertFalse("面板里不再有自动返回开关", "galleryAutoReturn" in panel)
+        val page = TestSources.codeSource("GallerySettingsActivity.kt")
+        assertTrue("开关挪到了设置子页面", "galleryAutoReturn" in page)
+        assertTrue("开关态用提示红与普通前景色区分", "kb_key_hint_red" in page && "text_primary" in page)
         assertTrue("翻页控件与页码", "\"←\"" in panel && "\"→\"" in panel && "\"%d/%d\"" in panel)
         // L-1028：标题与按钮拆两行 —— 原先挤在一行，系统字体放大到 1.3 倍时末尾按钮会被挤出可视区
         val titleRow = panel.substringAfter("private fun buildTitleRow()")
@@ -300,7 +304,6 @@ class GalleryInsertTest {
         assertTrue("按钮另起一行", "val actions = LinearLayout(context)" in titleRow)
         assertTrue("按钮尺寸收紧一档", "textSize = 11f" in panel)
         assertFalse("面板里不再有独立的关闭按钮", "listener?.onClose()" in panel)
-        assertTrue("开关态用提示红与普通前景色区分", "galleryAutoReturn" in panel && "skin.hintRed" in panel)
 
         // L-1024：图库面板是 init 里最后 addView 的那个，同屏时盖在最上层 ——
         // 打开其它面板必须把它收起来，否则用户看到的是「点了没反应」、键还卡在红色「返回」态

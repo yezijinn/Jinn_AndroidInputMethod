@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图库快贴功能页：从设置页「图库快贴功能」按钮进入。
+     目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在这一页（原先散在设置页与键盘面板里）。
+     文案在 GallerySettingsActivity 里下发（不动 strings.xml），故此处不写 android:text -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_gallery_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_gallery_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_gallery_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:orientation="vertical">
+
+            <!-- 目录：绑一次，键盘内的图库面板直接展开它（SAF 目录树，不申请存储权限） -->
+            <LinearLayout style="@style/SettingsCard">
+
+                <LinearLayout style="@style/SettingsCardRow">
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_dir"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_dir_clear"
+                        android:layout_width="0dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 自动返回：开着时键盘里点一张图就直接回打字键盘 -->
+            <LinearLayout style="@style/SettingsCard">
+
+                <LinearLayout style="@style/SettingsCardRow">
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_auto_return"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 缩略图布局：每行张数（面板宽度固定 ⇒ 张数即宽度档）与行高 -->
+            <LinearLayout style="@style/SettingsCard">
+
+                <LinearLayout style="@style/SettingsCardRow">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:id="@+id/label_gallery_columns"
+                        android:layout_width="0dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_columns_minus"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_columns_plus"
+                        android:layout_width="0dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/SettingsCardRow">
+
+                    <TextView
+                        style="@style/SettingsLabel"
+                        android:id="@+id/label_gallery_cell_height"
+                        android:layout_width="0dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_height_minus"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_gallery_height_plus"
+                        android:layout_width="0dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:minWidth="0dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

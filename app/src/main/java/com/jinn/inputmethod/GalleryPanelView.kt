@@ -62,14 +62,6 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private val buttons = mutableListOf<TextView>()
 
     /**
-     * 「自动返回」开关按钮：开 = 提示红，关 = 普通前景色。
-     *
-     * ⚠ 它同样在 [buttons] 里（[smallButton] 会自动登记），所以 [applyPanelColors] 的统一上色
-     * 会把它刷成普通色 —— 每次的统一上色之后都必须再刷一遍它的状态色。
-     */
-    private val autoReturnButton = smallButton(TEXT_AUTO_RETURN) { toggleAutoReturn() }
-
-    /**
      * 未绑定 / 授权失效时的「去设置里绑定」行。**常驻视图，只切可见性**。
      *
      * ⚠ 它曾经是在 [render] 里 `addView` 的（L-1025）：而 [render] 每次展开都会被调用，
@@ -178,8 +170,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
 
     /** 面板每次展开时调用：重读目录（可能换了目录，或授权已被撤销） */
     fun onPanelShown() {
-        // 每次展开都按盘上现值刷一次开关字色与网格参数：可能在别处改过，也可能刚换过皮肤
-        applyAutoReturnFace()
+        // 每次展开都按盘上现值刷一次网格参数：设置页的「图库快贴功能」页也能改这两项
         readGridTuning()
         // 「布局」调节行是临时操作：每次进入都从收起态开始，不留在屏幕上（用户 2026-10-07 要求）
         tuneRow.visibility = GONE
@@ -254,24 +245,6 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                 context, surfaceAlpha, KEY_FACE_CORNER_DP, fill, keyFaceRipple(fill),
             )
         }
-        // 开关的状态色必须最后刷：上面那轮统一上色会把它盖成普通色
-        applyAutoReturnFace()
-    }
-
-    /** 「自动返回」的状态色：开 = 提示红（与键盘上「返回」「退出」同一套令牌），关 = 普通前景色 */
-    private fun applyAutoReturnFace() {
-        autoReturnButton.setTextColor(
-            if (Prefs(context).galleryAutoReturn) skinColor(context, skin.hintRed, R.color.kb_key_hint_red)
-            else skinColor(context, skin.functionGlyph, R.color.text_primary)
-        )
-    }
-
-    /** 点「自动返回」：翻转偏好并立即刷新字色 */
-    private fun toggleAutoReturn() {
-        val prefs = Prefs(context)
-        prefs.galleryAutoReturn = !prefs.galleryAutoReturn
-        applyAutoReturnFace()
-        Diagnostics.i(TAG, "自动返回: ${prefs.galleryAutoReturn}")
     }
 
     /** 点「布局」：展开 / 收起缩略图调节行（每行张数、行高） */
@@ -358,8 +331,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             addView(smallButton(TEXT_LAYOUT) { toggleTuneRow() })
             addView(smallButton(TEXT_REFRESH) { onPanelShown() })
             addView(smallButton(TEXT_OTHER) { listener?.onSystemPicker() })
-            // 退出口不在这里：键盘上那个「图库」键此刻已变成红色「返回」
-            addView(autoReturnButton)
+            // 退出口不在这里：键盘上那个「图库」键此刻已变成红色「返回」。
+            // 「自动返回」开关也不在这里 —— 它属于设置而非看图时的即时操作，已挪到设置页的
+            // 「图库快贴功能」子页面（见 GallerySettingsActivity）
         }
         addView(actions, LayoutParams(WRAP, WRAP))
     }
@@ -652,7 +626,6 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_LAYOUT = "布局"
         const val TEXT_REFRESH = "刷新"
         const val TEXT_OTHER = "单选"
-        const val TEXT_AUTO_RETURN = "自返"
         const val TEXT_PREV = "←"
         const val TEXT_NEXT = "→"
 
