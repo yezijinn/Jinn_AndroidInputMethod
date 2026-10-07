@@ -325,32 +325,43 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private fun keyFaceRipple(base: Int): Int =
         if (skin.isToken) context.getColor(R.color.key_ripple) else KeyboardSkins.rippleOn(base)
 
+    /**
+     * 面板顶部两行：第一行目录名，第二行翻页与操作按钮。
+     *
+     * 原先标题和 7 个按钮挤在同一行：标题是弹性的，被压到 0 之后按钮还会溢出屏幕 ——
+     * 系统字体放大到 1.3 倍时按钮合计就吃满面板宽度，末尾的「自返」被推出可视区（L-1028）。
+     * 拆成两行后标题独占一行、按钮按内容宽排，互不挤占。
+     */
     private fun buildTitleRow(): LinearLayout = LinearLayout(context).apply {
-        orientation = HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
+        orientation = VERTICAL
         title.apply {
             textSize = 13f
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        addView(title, LayoutParams(0, WRAP, 1f))
-        // 翻页：← 当前页/总数 →（用户 2026-10-07 指定的排布，紧邻标题）
-        addView(smallButton(TEXT_PREV) { stepPage(-1) })
-        pageLabel.apply {
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setPadding(dp(6), 0, dp(6), 0)
-            maxLines = 1
+        addView(title, LayoutParams(MATCH, WRAP))
+
+        val actions = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            // 翻页：← 当前页/总数 →
+            addView(smallButton(TEXT_PREV) { stepPage(-1) })
+            pageLabel.apply {
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setPadding(dp(6), 0, dp(6), 0)
+                maxLines = 1
+            }
+            addView(pageLabel)
+            addView(smallButton(TEXT_NEXT) { stepPage(1) })
+            addView(smallButton(TEXT_LAYOUT) { toggleTuneRow() })
+            addView(smallButton(TEXT_REFRESH) { onPanelShown() })
+            addView(smallButton(TEXT_OTHER) { listener?.onSystemPicker() })
+            // 退出口不在这里：键盘上那个「图库」键此刻已变成红色「返回」
+            addView(autoReturnButton)
         }
-        addView(pageLabel)
-        addView(smallButton(TEXT_NEXT) { stepPage(1) })
-        // 布局：展开 / 收起下面那条调节行（每行张数 / 行高）
-        addView(smallButton(TEXT_LAYOUT) { toggleTuneRow() })
-        addView(smallButton(TEXT_REFRESH) { onPanelShown() })
-        addView(smallButton(TEXT_OTHER) { listener?.onSystemPicker() })
-        // 退出口不在这里：键盘上那个「图库」键此刻已变成红色「返回」（用户 2026-10-07 指定）
-        addView(autoReturnButton)
+        addView(actions, LayoutParams(WRAP, WRAP))
     }
 
     /**
@@ -363,10 +374,12 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         TextView(context).apply {
             text = label
             gravity = Gravity.CENTER
-            textSize = 12f
+            // 11sp + 8dp 内边距：翻页那 7 个按钮要在一行里排下（系统字体放大时也要），
+            // 比剪贴板面板那套紧一档（L-1028）
+            textSize = 11f
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
             isClickable = true
             // 面板动作补反馈：与剪贴板面板同组（功能切换），否则用户听不出「点到了没有」
             setOnClickListener {

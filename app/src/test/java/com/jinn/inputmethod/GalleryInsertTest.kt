@@ -293,6 +293,12 @@ class GalleryInsertTest {
         assertTrue("面板按钮：单选", "\"单选\"" in panel)
         assertTrue("面板按钮：自返", "\"自返\"" in panel)
         assertTrue("翻页控件与页码", "\"←\"" in panel && "\"→\"" in panel && "\"%d/%d\"" in panel)
+        // L-1028：标题与按钮拆两行 —— 原先挤在一行，系统字体放大到 1.3 倍时末尾按钮会被挤出可视区
+        val titleRow = panel.substringAfter("private fun buildTitleRow()")
+            .substringBefore("private fun smallButton(")
+        assertTrue("标题行是纵向两行", "orientation = VERTICAL" in titleRow)
+        assertTrue("按钮另起一行", "val actions = LinearLayout(context)" in titleRow)
+        assertTrue("按钮尺寸收紧一档", "textSize = 11f" in panel)
         assertFalse("面板里不再有独立的关闭按钮", "listener?.onClose()" in panel)
         assertTrue("开关态用提示红与普通前景色区分", "galleryAutoReturn" in panel && "skin.hintRed" in panel)
 
