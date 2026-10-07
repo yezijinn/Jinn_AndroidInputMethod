@@ -1143,9 +1143,18 @@ class JinnIme : InputMethodService() {
      * 且桥本身带 60s 有效期，过期图片不会插到无关输入框。
      */
     private fun flushPendingGalleryImage() {
-        val picked = GalleryInsert.takePending() ?: return
-        // 选图期间前台可能被切换：输入框换了就不插。标识用图库专用的宽口径（带 inputType / imeOptions /
-        // hint 摘要）—— 自绘输入框的 fieldId 常恒为同一个值，只靠包名 + fieldId 分不出同一应用的不同会话。
+        val picked = when (val take = GalleryInsert.takePending()) {
+            GalleryInsert.TakeResult.None -> return
+            GalleryInsert.TakeResult.Expired -> {
+                // 过期此前不留任何痕迹，诊断包里分不清「没选图」与「选了但过期」（L-1014）
+                Diagnostics.w(TAG, "图库快贴：待插入图片已过期，丢弃")
+                return
+            }
+            is GalleryInsert.TakeResult.Ready -> take.picked
+        }
+        // 选图期间前台可能被切换：输入框换了就不插。标识取包名 / fieldId / inputType / imeOptions
+        // 四项静态属性（见 [GalleryInsert.galleryFieldKeyOf]）—— hint 参与过标识，但它随输入状态变、
+        // 会把同一个输入框误判成换了框，已移除；会话级因此仍分不出（取舍见 L-1013）。
         // 图落到别的应用或别的会话都不只是「插错地方」：落在收到即发出的宿主（Telegram 类）等于替用户把图发了出去。
         // 任一侧取不到标识时放行，不因缺信息丢掉用户的一次选择。
         val current = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)

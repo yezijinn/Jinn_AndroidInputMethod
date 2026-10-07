@@ -186,5 +186,22 @@ class GalleryInsertTest {
         assertTrue("未列出的类型取 MIME 子类型当扩展名", "substringAfter('/', \"\")" in src)
     }
 
+    /**
+     * 超时丢弃要能看见（L-1014）。
+     *
+     * 此前 `takePending` 把「没有待插入」与「有但过期」都返回 null，超时路径既无提示也无日志，
+     * 查诊断包时分不清两者。
+     */
+    @Test
+    fun 超时丢弃要与没有待插入区分开() {
+        val gallery = TestSources.codeSource("GalleryInsert.kt")
+        assertTrue("取桥结果要分三态", "sealed interface TakeResult" in gallery)
+        assertTrue("并回报 Expired", "TakeResult.Expired" in gallery)
+        val mine = TestSources.codeSource("JinnIme.kt")
+        val body = mine.substringAfter("private fun flushPendingGalleryImage()")
+            .substringBefore("private fun openGalleryPicker()")
+        assertTrue("过期要落日志", "TakeResult.Expired" in body && "已过期" in body)
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }

@@ -120,11 +120,28 @@ internal object GalleryInsert {
         trimCache(file.parentFile)
     }
 
-    /** IME 回到前台时取（一次性；超时或已被取走返回 null） */
-    fun takePending(): Picked? {
-        val p = pending ?: return null
+    /**
+     * 取桥的结果（三态）。
+     *
+     * 别把「没有待插入」与「有但过期」合并成一个 null：过期丢弃是**本地可判定**的失败，
+     * 调用方要能区分并留痕（L-1014）。
+     */
+    internal sealed interface TakeResult {
+        /** 桥里没有东西（用户没选图，或已被上一次取走） */
+        object None : TakeResult
+
+        /** 有待插入的图片且未过期 */
+        class Ready(val picked: Picked) : TakeResult
+
+        /** 有图片但已超过有效期，已丢弃 */
+        object Expired : TakeResult
+    }
+
+    /** IME 回到前台时取（一次性：无论哪种结果都把桥清空） */
+    fun takePending(): TakeResult {
+        val p = pending ?: return TakeResult.None
         pending = null
-        return if (System.currentTimeMillis() - p.atMs <= TTL_MS) p.picked else null
+        return if (System.currentTimeMillis() - p.atMs <= TTL_MS) TakeResult.Ready(p.picked) else TakeResult.Expired
     }
 
     /**
