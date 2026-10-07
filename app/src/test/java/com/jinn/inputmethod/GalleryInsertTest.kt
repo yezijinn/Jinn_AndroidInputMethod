@@ -273,13 +273,16 @@ class GalleryInsertTest {
     fun 图库面板的退出口落在图库键上() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         val body = view.substringAfter("if (hostImageCapable) {").substringBefore("// 「翻译」键")
-        assertTrue("面板打开时文案变「返回」", "if (galleryActive) \"返回\" else \"图库\"" in body)
-        assertTrue("并用红色提示色", "red = galleryActive" in body)
+        assertTrue("构建后立即同步一次状态", "refreshGalleryButton()" in body)
         assertTrue("点击时收起面板", "hideGalleryPanel()" in body)
         val refresh = view.substringAfter("private fun refreshGalleryButton()")
             .substringBefore("fun setTranslating")
         assertTrue("就地改文案", "\"返回\" else \"图库\"" in refresh)
         assertTrue("就地改颜色（提示红）", "skin.hintRed" in refresh)
+        assertTrue(
+            "展开态只留大号「返回」，底部小字整条收起",
+            "hintView?.visibility = if (active) View.GONE else View.VISIBLE" in refresh,
+        )
         assertTrue(
             "展开与收起都要刷一次（定义之外至少两处调用）",
             view.split("refreshGalleryButton()").size - 1 >= 3,

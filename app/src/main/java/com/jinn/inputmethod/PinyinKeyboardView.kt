@@ -2954,9 +2954,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 面板盖住字母区，退出口必须一眼可见，而且要落在用户刚点过的那一键上。
         if (hostImageCapable) {
             galleryButtonBox = buildFunctionButton(
-                label = if (galleryActive) "返回" else "图库",
-                hint = if (galleryActive) "退出快贴" else "快贴",
-                red = galleryActive,
+                label = "图库",
+                hint = "快贴",
                 onClick = {
                     if (galleryActive) {
                         Diagnostics.i(TAG, "功能面板: 点击图库面板的返回")
@@ -2967,6 +2966,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 },
             )
             viewCandidateList.addView(galleryButtonBox)
+            // 面板可能是重建的（候选栏刷新），而图库面板仍在展开 ⇒ 立即同步一次文案与红字
+            refreshGalleryButton()
         } else {
             galleryButtonBox = null
         }
@@ -3092,11 +3093,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 就地更新「图库」按钮的文案与颜色（[refreshDirectionButton] 的同一套做法，用户 2026-10-07 指定）。
+     * 就地更新「图库」按钮的文案与颜色（[refreshDirectionButton] 的同一套做法）。
      *
-     * 未展开时显示「图库 / 快贴」；面板展开后改为红色粗体「返回 / 退出快贴」，
-     * 让用户一眼看到退出口 —— 该按钮此时的作用就是收起面板、回到打字键盘。
-     * 只改两个 TextView 的文本与颜色，不重建整个功能面板。
+     * 未展开时显示「图库 / 快贴」；面板展开后**只留一个大号红色粗体「返回」**，底部那行小字
+     * 整条收掉（需求：退出口一眼可见，不夹带其它信息）。只改两个 TextView，不重建功能面板。
      */
     private fun refreshGalleryButton() {
         val box = galleryButtonBox as? android.view.ViewGroup ?: return
@@ -3109,7 +3109,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             else skinToken(skin.functionGlyph, R.color.text_primary)
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
-        hintView?.text = if (active) "退出快贴" else "快贴"
+        // 小字：静止态显示「快贴」，展开态整条 GONE（不留空位；按钮高度由 minimumHeight 兜底）
+        hintView?.text = "快贴"
+        hintView?.visibility = if (active) View.GONE else View.VISIBLE
     }
 
     /**
