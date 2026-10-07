@@ -505,9 +505,16 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             if (!inFlight.add(key)) continue
             try {
                 thumbPool.execute {
+                    // 代际作废（收起面板 / 换目录 / 视图重建）不是解码失败，直接退出（BUG.md L-1049）：
+                    // 这条路径与「真解不出来」此前共用一句 W 日志，收起一次面板就能刷出一串假故障，
+                    // 把 L-1040 想要的可观测性搅浑
+                    if (gen != generation) {
+                        inFlight.remove(key)
+                        return@execute
+                    }
                     // 档位在任务里现算（L-1027）：提交时算的那份可能已被「布局」改过，
                     // 用旧档解出来的图会写进刚清空的缓存、并在之后一直被命中
-                    val bmp = if (gen != generation) null else decodeThumb(uri, sampleFor(columns))
+                    val bmp = decodeThumb(uri, sampleFor(columns))
                     if (bmp != null) thumbCache.put(key, bmp)
                     inFlight.remove(key)
                     if (bmp == null) {

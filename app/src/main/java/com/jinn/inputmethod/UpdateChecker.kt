@@ -161,8 +161,16 @@ object UpdateChecker {
         var page = 1
         while (page <= GITEE_TAGS_MAX_PAGES) {
             val body = httpGet("https://gitee.com/api/v5/repos/$OWNER/$REPO/tags?page=$page", deadline)
-                ?: break
+            if (body == null) {
+                // 中途取不到**不等于**到底（BUG.md L-1048）：接口按名称升序返回，已取到的页恰好是
+                // 最旧的那一段，拿它跑 pickLatest 会定出一个偏旧的「最新版本」⇒ 假的「已最新」
+                // + 七天节流且不自愈（与 L-146 同型）。本源作废、交给调用方回退下一源，
+                // 宁可如实报网络异常，也不给一个错结论。
+                Diagnostics.w(TAG, "Gitee 标签第 $page 页取不到，本源作废（转回退源）")
+                return@runCatching null
+            }
             val names = nameRe.findAll(body).map { it.groupValues[1] }.toList()
+            // 只有「空页」才是正常到底
             if (names.isEmpty()) break
             all += names
             page++
@@ -172,6 +180,7 @@ object UpdateChecker {
             Diagnostics.w(TAG, "Gitee 标签翻页到上限 ${GITEE_TAGS_MAX_PAGES} 页（${all.size} 个），可能还有更靠后的标签")
         }
         val best = pickLatest(all, "gitee")
+        // 能走到这里说明至少有一页是真响应（取不到页的那条已在上面作废）⇒「有响应」这句才是准的
         if (best == null) Diagnostics.w(TAG, "Gitee 源有响应，但没有可解析的日期标签（tag 规范可能变了）")
         best
     }.onFailure { Diagnostics.w(TAG, "Gitee 源异常: ${it.message}") }.getOrNull()

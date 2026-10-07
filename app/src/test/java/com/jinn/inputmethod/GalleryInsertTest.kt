@@ -567,6 +567,10 @@ class GalleryInsertTest {
         val thumbs = panel.substringAfter("private fun loadThumbs(").substringBefore("private fun bindThumb(")
         assertTrue("失败分支要记日志", "缩略图解码失败" in thumbs)
         assertFalse("日志不得带路径", "lastPathSegment" in thumbs)
+        // L-1049：取消不是失败 —— 代际不符的任务先退出，别把收起面板刷成「解码失败」
+        val genCheck = thumbs.indexOf("if (gen != generation) {")
+        assertTrue("代际作废要提前返回", genCheck > 0)
+        assertTrue("先判代际再解码", genCheck < thumbs.indexOf("val bmp = decodeThumb("))
         // L-1042：标题回填要有代际守卫，未绑定态要复位
         val list = panel.substringAfter("private fun listImages(").substringBefore("private fun dp(")
         assertTrue("标题回填要判代际", "if (gen == generation) title.text" in list)

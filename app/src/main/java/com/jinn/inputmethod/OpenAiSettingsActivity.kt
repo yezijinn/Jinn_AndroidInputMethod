@@ -220,6 +220,15 @@ class OpenAiSettingsActivity : Activity() {
             Diagnostics.w(TAG, "输入停顿自动保存: 导入进行中，跳过配置回写")
         } else {
             saveValues()
+            // 第三条落盘路径也要消费未落盘集合（BUG.md L-1050）：`writeCredential` 在 Keystore
+            // 不可用时 fail-closed（删掉盘上旧密文），而本页此前只有「保存」按钮与 `onPause`
+            // 两条路会提示 ⇒ 填完 Key 停顿一下就不再动的用户全程零信号，重启后回到未配置。
+            // 三条路的口径必须一致。
+            val unpersisted = prefs.unpersistedCredentialKeys()
+            if (unpersisted.isNotEmpty()) {
+                Diagnostics.w(TAG, "凭据未落盘（输入停顿路径）: ${unpersisted.size} 项")
+                textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            }
         }
     }
 
@@ -457,18 +466,23 @@ class OpenAiSettingsActivity : Activity() {
             TARGET_LANGUAGES.getOrNull(spinnerTarget.selectedItemPosition)
                 ?: OpenAiTranslator.DEFAULT_TARGET_LANGUAGE
         }
-        // 日志只记长度（API Key / Prompt / JSON 一律不进日志）
-        Diagnostics.i(
-            TAG,
-            "OpenAI 兼容配置已保存（长度）: name=${prefs.openAiName.length} base=${prefs.openAiBaseUrl.length} " +
-                "key=${prefs.openAiApiKey.length} model=${prefs.openAiModel.length} " +
-                "prompt=${prefs.openAiSystemPrompt.length}/${prefs.openAiUserPrompt.length} " +
-                "extra=${prefs.openAiExtraJson.length} headers=${prefs.openAiExtraHeaders.length}",
-        )
+        // 日志只记长度（API Key / Prompt / JSON 一律不进日志）。落盘结论也必须如实（BUG.md L-1050）：
+        // 无条件写「已保存」会把 fail-closed 的落盘失败伪装成成功，排查时结论正好相反
+        // （`ClipboardController` 当初修的就是同型问题）。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        val sizes = "name=${prefs.openAiName.length} base=${prefs.openAiBaseUrl.length} " +
+            "key=${prefs.openAiApiKey.length} model=${prefs.openAiModel.length} " +
+            "prompt=${prefs.openAiSystemPrompt.length}/${prefs.openAiUserPrompt.length} " +
+            "extra=${prefs.openAiExtraJson.length} headers=${prefs.openAiExtraHeaders.length}"
+        if (unpersisted.isEmpty()) {
+            Diagnostics.i(TAG, "OpenAI 兼容配置已保存（长度）: $sizes")
+        } else {
+            Diagnostics.w(TAG, "OpenAI 兼容配置未完全落盘（${unpersisted.size} 项凭据未加密写入）: $sizes")
+        }
         // 写完统一推基线（BUG.md L-970）：推了它，「粘贴 Key → 落盘 → 删空」那一次清空才不会再被
         // 当成没改过；只有确认落盘才推 —— Keystore 锁住时写侧会删掉磁盘旧密文（fail-closed），
         // 基线一推就再也不重试，用户解锁后还得重新输入。
-        if (saveGuard.changed(editApiKey) && prefs.unpersistedCredentialKeys().isEmpty()) {
+        if (saveGuard.changed(editApiKey) && unpersisted.isEmpty()) {
             saveGuard.markWritten(editApiKey)
         }
     }

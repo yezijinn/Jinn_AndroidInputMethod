@@ -1790,7 +1790,8 @@ class RecentFixesRegressionTest {
         assertTrue("OpenAI 页的 Key 也要 guard（L-247）", "saveGuard.changed(editApiKey)" in openAiPage)
         assertTrue(
             "OpenAI 页同样要推写入基线（L-970），且只在确认落盘后推",
-            "saveGuard.markWritten(editApiKey)" in openAiPage && "prefs.unpersistedCredentialKeys().isEmpty()" in openAiPage,
+            "saveGuard.markWritten(editApiKey)" in openAiPage &&
+                "saveGuard.changed(editApiKey) && unpersisted.isEmpty()" in openAiPage,
         )
 
         val db = codeOf("ClipboardDb.kt")

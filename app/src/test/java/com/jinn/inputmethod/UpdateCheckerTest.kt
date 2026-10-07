@@ -193,6 +193,24 @@ class UpdateCheckerTest {
     }
 
     /**
+     * 翻页途中的取页失败必须与「空页到底」分开（`BUG.md` L-1048）。
+     *
+     * 两者都只终止循环，但语义完全不同：空页是正常到底，失败是**只拿到最旧的那段**（接口按名称
+     * 升序返回）⇒ 据此定论会判出偏旧的「最新版本」，表现为假的「已最新」加七天节流。
+     * 所以取不到页时本源作废、走回退源，而不是拿部分结果定论。
+     */
+    @Test
+    fun `Gitee翻页的中途失败不许折叠成到底`() {
+        val src = TestSources.codeSource("UpdateChecker.kt")
+        val loop = src.substringAfter("while (page <= GITEE_TAGS_MAX_PAGES)")
+            .substringBefore("if (page > GITEE_TAGS_MAX_PAGES)")
+        assertFalse("取页失败不许直接 break（那等于当成到底）", "?: break" in loop)
+        assertTrue("取不到页即本源作废", "return@runCatching null" in loop)
+        assertTrue("空页才是正常到底", "if (names.isEmpty()) break" in loop)
+        assertTrue("作废要留日志", "本源作废" in loop)
+    }
+
+    /**
      * 源顺序必须是 **Gitee 优先**，失败文案的域名顺序与之同序（统一规范 6.9）。
      *
      * 这条不能用「结果对不对」验证：两源都通时谁先谁后结果完全一样，只有在 GitHub 不可达的
