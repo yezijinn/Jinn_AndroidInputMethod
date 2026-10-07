@@ -199,7 +199,7 @@
     <!-- 键盘外观 -->
     <!-- 圆角 / 间隙 / 透明度作用于整块键盘，26 键区三行统一生效 -->
     <string name="key_appearance_title">键盘外观</string>
-    <string name="key_appearance_entry">键盘配色皮肤</string>
+    <string name="key_appearance_entry">键盘外观皮肤</string>
     <string name="key_corner_title">圆角</string>
     <string name="key_gap_title">间隙</string>
     <string name="key_transparency_title">透明</string>
