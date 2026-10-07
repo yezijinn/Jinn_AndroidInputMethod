@@ -28,8 +28,8 @@ internal object GalleryInsert {
     /** 选图页读取发起输入框标识的 Intent extra（值是 [galleryFieldKeyOf] 的结果） */
     const val EXTRA_HOST_KEY = "com.jinn.inputmethod.extra.GALLERY_HOST_KEY"
 
-    /** 存放待插入图片的 cache 子目录（与 `res/xml/share_file_paths.xml` 的 cache-path 对应） */
-    private const val DIR_NAME = "gallery_share"
+    /** 存放待插入图片的 cache 子目录（须与 `res/xml/share_file_paths.xml` 的 cache-path 一致，守卫对拍） */
+    internal const val DIR_NAME = "gallery_share"
 
     /** 单张上限：超过直接放弃（避免把几百 MB 的原图复制进 cache） */
     const val MAX_BYTES = 20L * 1024 * 1024

@@ -140,7 +140,8 @@ class GalleryInsertTest {
     @Test
     fun 复制失败的两条路径都要有界面提示() {
         val src = TestSources.codeSource("GalleryPickActivity.kt")
-        assertTrue("超限提示", "TEXT_TOO_LARGE" in src && "\"图片超过 20MB，未插入\"" in src)
+        assertTrue("超限提示由阈值拼出", "tooLargeText()" in src && "MAX_BYTES / 1024 / 1024" in src)
+        assertFalse("数字不能写死在文案里", "超过 20MB" in src)
         assertTrue("读失败提示", "TEXT_READ_FAILED" in src && "\"读取图片失败，未插入\"" in src)
         assertTrue("提示要真的弹出来", "Toast.makeText" in src)
     }
@@ -201,6 +202,36 @@ class GalleryInsertTest {
         val body = mine.substringAfter("private fun flushPendingGalleryImage()")
             .substringBefore("private fun openGalleryPicker()")
         assertTrue("过期要落日志", "TakeResult.Expired" in body && "已过期" in body)
+    }
+
+    /**
+     * 图片目录与 FileProvider 配置必须一致（L-1016）。
+     *
+     * 目录名在代码与 `res/xml` 里各写一遍，改一处忘另一处时 `getUriForFile` 抛异常，
+     * 而 `commit` 把它记成「宿主未接受本次提交」—— 排查方向跑偏，界面上还什么都没有。
+     */
+    @Test
+    fun 图片目录与提供者配置一致() {
+        val xml = listOf(
+            File("src/main/res/xml/share_file_paths.xml"),
+            File("app/src/main/res/xml/share_file_paths.xml"),
+        ).firstOrNull { it.isFile }
+        assertTrue("paths 配置要能找到（工作目录变了？）", xml != null)
+        val text = xml!!.readText()
+        assertTrue("配置要放行 cache 子目录", "cache-path" in text)
+        assertTrue("path 要等于 DIR_NAME", "path=\"${GalleryInsert.DIR_NAME}/\"" in text)
+    }
+
+    /**
+     * 超限提示的数字必须来自阈值（L-1017）。
+     *
+     * 写死数字时，调 `MAX_BYTES` 只改了日志、提示还在说旧值 —— 同一处代码两个口径。
+     */
+    @Test
+    fun 超限提示的数字取自阈值() {
+        val src = TestSources.codeSource("GalleryPickActivity.kt")
+        assertTrue("文案由 MAX_BYTES 拼出", "MAX_BYTES / 1024 / 1024" in src)
+        assertFalse("不能写死数字", "超过 20MB" in src)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
