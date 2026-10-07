@@ -1421,7 +1421,9 @@ class JinnIme : InputMethodService() {
                     pinyinKeyboard?.showGalleryPanel()
                 }
                 override fun onGalleryImagePicked(uri: android.net.Uri) {
-                    Diagnostics.i(TAG, "图库面板: 选中 ${uri.lastPathSegment}")
+                    // 只记来源维度：SAF 的路径段是 document id（形如 primary:DCIM/Camera/IMG_….jpg），
+                    // 写进 i 级日志会绕过 V 级闸落盘、并随「导出诊断数据」外带（L-1036）
+                    Diagnostics.i(TAG, "图库面板: 选中一张图 provider=${uri.authority}")
                     val hostKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
                     // 复制原图可能几十 MB，放后台；回来走同一套落地逻辑（校验输入框 → commitContent）
                     BackgroundIo.run {

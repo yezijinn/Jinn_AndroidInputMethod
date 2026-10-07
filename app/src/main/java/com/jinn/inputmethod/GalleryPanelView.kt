@@ -223,9 +223,16 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         applyPanelColors()
     }
 
-    /** 键盘重建 / 面板移除前停掉在途工作（缩略图任务按 [generation] 过期） */
+    /**
+     * 键盘重建 / 面板移除前停掉在途工作。
+     *
+     * 两件事都要做：`generation++` 作废在途任务的结果，`shutdownNow()` 结束 [thumbPool] ——
+     * 视图重建（换肤 / 符号布局变更 / 配置变化）会连面板一起换掉，而旧池的 core 线程不超时回收，
+     * 不关就是每次重建永久漏三条（L-1035；X-333 的反证只覆盖到进程生命周期这一层）。
+     */
     fun stopBackgroundWork() {
         generation++
+        thumbPool.shutdownNow()
     }
 
     /** 按当前皮肤重设面板配色：底、标题、状态行、每个按钮的文字与键面 */
@@ -254,16 +261,27 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "布局调节行: ${if (show) "展开" else "收起"}")
     }
 
-    /** 每行张数 ±1（[Prefs.galleryColumns] 的 setter 会归一），随后按当前 items 就地重排 */
+    /**
+     * 每行张数 ±1（[Prefs.galleryColumns] 的 setter 会归一），随后按当前 items 就地重排。
+     *
+     * 先判等再落盘：到边界后继续点按，值不会变 —— 那时若照旧走「写盘 + 清缓存 + 整页重铺」，
+     * 全是白工（缓存被清空、整页重解），而按钮看起来毫无反应（L-1043）。
+     */
     private fun stepColumns(delta: Int) {
-        Prefs(context).galleryColumns = columns + delta
+        val next = (columns + delta)
+            .coerceIn(Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX)
+        if (next == columns) return
+        Prefs(context).galleryColumns = next
         readGridTuning()
         rebuildGrid()
     }
 
-    /** 行高 ±[HEIGHT_STEP_DP] dp（同上） */
+    /** 行高 ±[HEIGHT_STEP_DP] dp（同上，到边界直接返回） */
     private fun stepHeight(delta: Int) {
-        Prefs(context).galleryCellHeightDp = cellHeightDp + delta
+        val next = (cellHeightDp + delta)
+            .coerceIn(Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX)
+        if (next == cellHeightDp) return
+        Prefs(context).galleryCellHeightDp = next
         readGridTuning()
         rebuildGrid()
     }
@@ -288,6 +306,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         // 目标像素随单元格变 ⇒ 旧缩略图尺寸不匹配了，整个丢掉重解（只在用户主动调布局时发生）
         thumbCache.evictAll()
         fillPage()
+        // 回到顶部：单元格尺寸已变，停在原滚动位置看起来像「跳到了别处」（L-1043，与 showList 同款处置）
+        scroll.scrollTo(0, 0)
         Diagnostics.i(TAG, "网格已重排: 每行 $columns 张，行高 ${cellHeightDp}dp")
     }
 
@@ -454,7 +474,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         thumbCache.get(uri.toString())?.let { setImageBitmap(it) }
         contentDescription = TEXT_CELL
         setOnClickListener {
-            Diagnostics.i(TAG, "选中图片: ${uri.lastPathSegment}")
+            // 只记 provider 维度：SAF 的路径段就是照片文件名（L-1036）
+            Diagnostics.i(TAG, "选中图片: provider=${uri.authority}")
             listener?.onPick(uri)
         }
     }

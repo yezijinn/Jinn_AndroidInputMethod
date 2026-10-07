@@ -475,5 +475,61 @@ class GalleryInsertTest {
         )
     }
 
+    /**
+     * 五处收敛点必须留在原位（`BUG.md` L-1034 / L-1035 / L-1038 / L-1043）。
+     *
+     * 这五条同型：改动本身都很小，价值全在「它必须正好在那个位置」—— 换框路径不走
+     * `onFinishInputView`、视图重建走的是 `stopBackgroundWork`、搜索态早退分支要和其它
+     * 清引用动作放在一起。钉住收敛点存在，而不是某次调用的结果。
+     */
+    @Test
+    fun 图库链路的收敛点必须留在原位() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        // L-1034：能力翻假与收起面板在同一处
+        val capable = view.substringAfter("fun setHostImageCapable(capable: Boolean)").take(700)
+        assertTrue("翻假时要判面板状态", "if (!capable && galleryActive)" in capable)
+        assertTrue("并且真的收起面板", "hideGalleryPanel()" in capable)
+        // L-1038：搜索态早退分支的三个同类字段要一并清
+        val beforeEarlyOut = view.substringBefore("功能面板(搜索态): 退出").takeLast(500)
+        assertTrue("早退分支清 translateButtonBox", "translateButtonBox = null" in beforeEarlyOut)
+        assertTrue("早退分支清 directionButtonBox", "directionButtonBox = null" in beforeEarlyOut)
+        assertTrue("早退分支清 galleryButtonBox", "galleryButtonBox = null" in beforeEarlyOut)
+
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        // L-1035：视图重建要关池（只作废令牌不算完成）
+        val stop = panel.substringAfter("fun stopBackgroundWork()").take(400)
+        assertTrue("作废在途任务", "generation++" in stop)
+        assertTrue("并关掉线程池", "thumbPool.shutdownNow()" in stop)
+        // L-1043：到边界不空转、重排后复位滚动
+        val cols = panel.substringAfter("private fun stepColumns(delta: Int)").take(500)
+        assertTrue("张数到边界直接返回", "if (next == columns) return" in cols)
+        val heights = panel.substringAfter("private fun stepHeight(delta: Int)").take(500)
+        assertTrue("行高到边界直接返回", "if (next == cellHeightDp) return" in heights)
+        val rebuild = panel.substringAfter("private fun rebuildGrid()").take(600)
+        assertTrue("重排后复位滚动", "scroll.scrollTo(0, 0)" in rebuild)
+    }
+
+    /**
+     * 图库日志不得带路径与文件名（`BUG.md` L-1036）。
+     *
+     * `Diagnostics` 的 `sanitizeForFile` 只脱敏手机号 / 邮箱 / 长数字串，路径原样留下；
+     * 而 `i` 级必然落盘、随「导出诊断数据」外带。所以这三条日志只能记 provider 维度。
+     */
+    @Test
+    fun 图库日志不得带路径与文件名() {
+        val targets = listOf(
+            "JinnIme.kt" to "图库面板: 选中",
+            "GalleryPanelView.kt" to "选中图片:",
+            "GallerySettingsActivity.kt" to "目录: 已绑定",
+        )
+        for ((file, marker) in targets) {
+            val src = TestSources.codeSource(file)
+            val line = src.lines().firstOrNull { marker in it && "Diagnostics" in it }
+                ?: error("$file 里找不到以「$marker」开头的那条日志")
+            assertTrue("$file 的日志不得带 lastPathSegment", "lastPathSegment" !in line)
+            assertTrue("$file 的日志不得整条打印 uri", "uri=\$uri" !in line)
+        }
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }

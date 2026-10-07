@@ -2904,6 +2904,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 容器摘下来，字段还指着旧按钮 —— `setTranslating` 之后会去改一个已脱离视图树的 View
             translateButtonBox = null
             directionButtonBox = null
+            // 图库键是第三个同类字段，早退分支原先漏了它（L-1038）
+            galleryButtonBox = null
             Diagnostics.v(TAG, "功能面板(搜索态): 退出")
             return
         }
@@ -3133,6 +3135,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun setHostImageCapable(capable: Boolean) {
         if (hostImageCapable == capable) return
         hostImageCapable = capable
+        // 能力翻假要先把面板收掉（L-1034）：图库键是那个面板唯一的退出口，
+        // 键被删而面板留着，用户看到的就是「面板盖住字母区、退不出去」。
+        // 触发路径是同会话换输入框（宿主声明逐框变化），那条路径不走 onFinishInputView。
+        if (!capable && galleryActive) hideGalleryPanel()
         refreshCandidateBar()
     }
 

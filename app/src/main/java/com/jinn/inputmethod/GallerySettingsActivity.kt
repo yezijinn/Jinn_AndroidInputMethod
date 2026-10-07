@@ -47,7 +47,8 @@ class GallerySettingsActivity : ComponentActivity() {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.isSuccess
         Prefs(this).galleryTreeUri = uri.toString()
-        Diagnostics.i(TAG, "目录: 已绑定 persist=$granted uri=$uri")
+        // 不记 uri 本身：SAF 树 URI 含用户目录路径，i 级日志会落盘并随诊断包外带（L-1036）
+        Diagnostics.i(TAG, "目录: 已绑定 persist=$granted provider=${uri.authority}")
         render()
     }
 
