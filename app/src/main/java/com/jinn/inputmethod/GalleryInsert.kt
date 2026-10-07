@@ -34,6 +34,14 @@ internal object GalleryInsert {
     /** 单张上限：超过直接放弃（避免把几百 MB 的原图复制进 cache） */
     const val MAX_BYTES = 20L * 1024 * 1024
 
+    /**
+     * 超限提示：数字由 [MAX_BYTES] 拼出，调阈值时不会与提示脱节（L-1017）。
+     *
+     * 放在这里而不是选图页的 `private companion`：那样守卫只能靠字符串钉，
+     * 断言不到实际输出（L-1021）。
+     */
+    internal fun tooLargeText(): String = "图片超过 ${MAX_BYTES / 1024 / 1024}MB，未插入"
+
     /** cache 总字节上限：与 [KEEP_FILES] 共同约束驻留量，单张上限再大也不会无界堆积 */
     private const val MAX_CACHE_BYTES = 60L * 1024 * 1024
 

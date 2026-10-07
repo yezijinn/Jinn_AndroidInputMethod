@@ -58,7 +58,7 @@ class GalleryPickActivity : ComponentActivity() {
                     }
                     GalleryInsert.CopyResult.TooLarge -> {
                         Diagnostics.w(TAG, "选图超过 ${GalleryInsert.MAX_BYTES / 1024 / 1024}MB，未插入")
-                        tooLargeText()
+                        GalleryInsert.tooLargeText()
                     }
                     GalleryInsert.CopyResult.ReadFailed -> {
                         Diagnostics.w(TAG, "选图读取失败，未插入")
@@ -83,9 +83,6 @@ class GalleryPickActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "GalleryPick"
-
-        /** 超限提示：数字由 `GalleryInsert.MAX_BYTES` 拼出，调阈值时不会与提示脱节（L-1017） */
-        fun tooLargeText(): String = "图片超过 ${GalleryInsert.MAX_BYTES / 1024 / 1024}MB，未插入"
 
         /** 读取失败提示 */
         const val TEXT_READ_FAILED = "读取图片失败，未插入"

@@ -140,7 +140,7 @@ class GalleryInsertTest {
     @Test
     fun 复制失败的两条路径都要有界面提示() {
         val src = TestSources.codeSource("GalleryPickActivity.kt")
-        assertTrue("超限提示由阈值拼出", "tooLargeText()" in src && "MAX_BYTES / 1024 / 1024" in src)
+        assertTrue("超限提示走同源函数", "GalleryInsert.tooLargeText()" in src)
         assertFalse("数字不能写死在文案里", "超过 20MB" in src)
         assertTrue("读失败提示", "TEXT_READ_FAILED" in src && "\"读取图片失败，未插入\"" in src)
         assertTrue("提示要真的弹出来", "Toast.makeText" in src)
@@ -217,7 +217,8 @@ class GalleryInsertTest {
             File("app/src/main/res/xml/share_file_paths.xml"),
         ).firstOrNull { it.isFile }
         assertTrue("paths 配置要能找到（工作目录变了？）", xml != null)
-        val text = xml!!.readText()
+        // 先剥注释再比：否则「删掉真配置、把 path 留在注释里」也能满足断言（L-1019，同 L-116）
+        val text = TestSources.codeOf(xml!!.readText())
         assertTrue("配置要放行 cache 子目录", "cache-path" in text)
         assertTrue("path 要等于 DIR_NAME", "path=\"${GalleryInsert.DIR_NAME}/\"" in text)
     }
@@ -232,6 +233,34 @@ class GalleryInsertTest {
         val src = TestSources.codeSource("GalleryPickActivity.kt")
         assertTrue("文案由 MAX_BYTES 拼出", "MAX_BYTES / 1024 / 1024" in src)
         assertFalse("不能写死数字", "超过 20MB" in src)
+    }
+
+    /**
+     * 超限提示必须真的由阈值算出来（L-1021）。
+     *
+     * 放在 `GalleryInsert` 而不是选图页的 `private companion`，就是为了能断言输出本身 ——
+     * 只看源码里有没有那段算式，算式写错照样蒙过。
+     */
+    @Test
+    fun 超限提示的数字与阈值同源() {
+        val mb = GalleryInsert.MAX_BYTES / 1024 / 1024
+        assertEquals("提示里的数字要等于阈值", "图片超过 ${mb}MB，未插入", GalleryInsert.tooLargeText())
+    }
+
+    /**
+     * 功能面板到 8 键必须收窄内边距（L-1020）。
+     *
+     * 这段逻辑删掉、或阈值改回 6，门禁都不会红，窄屏上的标签挤压（L-1010 修的现象）会悄悄回来。
+     */
+    @Test
+    fun 功能面板到八键要收窄内边距() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        val body = src.substringAfter("private fun renderFunctionPanel()")
+            .substringBefore("private fun buildFunctionButton(")
+        assertTrue("收窄逻辑要在面板渲染里", "PANEL_COMPACT_SLOTS" in body)
+        assertTrue("按实际按钮数判断", "childCount >= PANEL_COMPACT_SLOTS" in body)
+        assertTrue("内边距收到 4dp", "setPadding(dp(4), dp(4), dp(4), dp(4))" in body)
+        assertTrue("阈值常量要存在", "const val PANEL_COMPACT_SLOTS = 8" in src)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
