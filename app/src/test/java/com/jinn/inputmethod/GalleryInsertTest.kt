@@ -552,6 +552,24 @@ class GalleryInsertTest {
     }
 
     /**
+     * 目录授权的「还」侧（`BUG.md` L-1037）。
+     *
+     * 取授权只发生在图库设置页，而此前只有取没有还：换目录 / 清绑定之后旧目录仍对本应用可读，
+     * 换过几次就攒下几条再也不会用到的目录读权限。判据三条 —— 要有释放调用、清绑定要释放、
+     * 换目录只在**旧的不同**时释放（相同会把刚拿到的还掉）。
+     */
+    @Test
+    fun 换目录与清绑定要交出旧授权() {
+        val src = TestSources.codeSource("GallerySettingsActivity.kt")
+        assertTrue("要有释放接口的调用", "releasePersistableUriPermission" in src)
+        assertTrue("清绑定要一并释放", "releaseTreePermission(prefs.galleryTreeUri)" in src)
+        assertTrue(
+            "换目录时旧的不同才释放（相同会把刚拿到的还掉）",
+            "previous != uri.toString()" in src,
+        )
+    }
+
+    /**
      * 本批三条低风险的收敛点（`BUG.md` L-1039 / L-1040 / L-1042）。
      *
      * 都是「界面上说不清」型：指路的入口名对不上、解不出图没有任何痕迹、标题与状态行互相矛盾。

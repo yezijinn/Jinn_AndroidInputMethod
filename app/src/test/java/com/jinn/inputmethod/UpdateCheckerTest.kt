@@ -175,16 +175,19 @@ class UpdateCheckerTest {
     }
 
     /**
-     * 源码钉：Gitee 侧必须**翻页取并集**、读取必须把**总预算**传进去（`BUG.md` L-146 / L-145）。
+     * 源码钉：Gitee 侧必须**翻页取并集**、读取必须把**总预算**传进去（`BUG.md` L-146 / L-145 / L-1052）。
      *
-     * 背景：Gitee tags 接口实测（2026-09-29）默认 20 条/页、按名称升序，而仓库当时正好已有 20 个
-     * tag ⇒ 再加一个日期 tag，最新的就会掉出首页 ⇒ 这条回退源永远报「已最新」且不自愈；
-     * 而 `readTimeout` 只约束单次 read，滴水响应能把总时长拉到远超 25s 预算 ⇒ 看门狗提前解锁。
+     * 背景（2026-10-07 重新实测，取代此前「默认 20 条/页」那条旧结论）：接口按名称**升序**返回，
+     * 不传 `per_page` 时服务端**返回整份列表**（本仓库 28 条、大仓库 58 / 63 条都一次给全），
+     * 而 `page` 只在同时传 `per_page` 时才被采纳 —— 只传 `page` 会每页都拿到首页副本，
+     * 上限守卫形同虚设。所以这条判据钉两件事：翻页要真的翻（两个参数同时带）；一旦服务端对整份返回
+     * 设了上限，被截断的正是升序末尾、也就是最新的日期标签，守卫必须存在。
+     * 另一半是读取：`readTimeout` 只约束单次 read，滴水响应能把总时长拉到远超 25s 预算 ⇒ 看门狗提前解锁。
      */
     @Test
     fun `Gitee必须翻页且读取受总预算约束`() {
         val src = TestSources.codeSource("UpdateChecker.kt")
-        assertTrue("Gitee 侧必须翻页（不然最新日期 tag 会掉出首页）", "GITEE_TAGS_MAX_PAGES" in src)
+        assertTrue("Gitee 侧必须翻页（截断的正是升序末尾，也就是最新的日期标签）", "GITEE_TAGS_MAX_PAGES" in src)
         assertTrue(
             "翻页必须同时带 per_page 与 page（只传 page 时服务端忽略它，每页都返回首页副本）",
             "tags?per_page=" in src && "&page=" in src,

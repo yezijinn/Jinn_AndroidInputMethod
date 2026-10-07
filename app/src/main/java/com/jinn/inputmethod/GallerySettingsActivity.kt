@@ -43,13 +43,34 @@ class GallerySettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "目录: 用户取消选择")
             return@registerForActivityResult
         }
+        val prefs = Prefs(this)
+        val previous = prefs.galleryTreeUri
+        // 先取新的再还旧的（L-1037）：旧目录从此不再被本应用读到。同一条目录重绑时**不还** ——
+        // 还掉等于把刚拿到的那条授权撤销，图库面板会立刻读不到内容。
         val granted = runCatching {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.isSuccess
-        Prefs(this).galleryTreeUri = uri.toString()
+        if (previous.isNotEmpty() && previous != uri.toString()) releaseTreePermission(previous)
+        prefs.galleryTreeUri = uri.toString()
         // 不记 uri 本身：SAF 树 URI 含用户目录路径，i 级日志会落盘并随诊断包外带（L-1036）
         Diagnostics.i(TAG, "目录: 已绑定 persist=$granted provider=${uri.authority}")
         render()
+    }
+
+    /**
+     * 释放一条目录持久授权（BUG.md L-1037）。
+     *
+     * `takePersistableUriPermission` 拿到的读授权会跨重启一直留着，而这份代码长期只有「取」没有「还」：
+     * 换过几次目录就攒下几条再也不会用到的目录读权限，用户以为不用的目录早就不读了。
+     * 释放失败多半是这条授权本来就不在（或已被系统回收）：留痕即可，不必打扰用户。
+     */
+    private fun releaseTreePermission(raw: String) {
+        if (raw.isEmpty()) return
+        val uri = android.net.Uri.parse(raw)
+        val released = runCatching {
+            contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }.isSuccess
+        Diagnostics.i(TAG, "目录: 已释放旧授权 released=$released provider=${uri.authority}")
     }
 
     override fun attachBaseContext(newBase: Context) {
@@ -71,7 +92,10 @@ class GallerySettingsActivity : ComponentActivity() {
         }
         findViewById<Button>(R.id.btn_gallery_dir).setOnClickListener { dirLauncher.launch(null) }
         findViewById<Button>(R.id.btn_gallery_dir_clear).setOnClickListener {
-            Prefs(this).galleryTreeUri = ""
+            val prefs = Prefs(this)
+            // 清绑定要连同读授权一起交出去（L-1037）：只清偏好等于「界面说不读了，系统层面还留着」
+            releaseTreePermission(prefs.galleryTreeUri)
+            prefs.galleryTreeUri = ""
             Diagnostics.i(TAG, "目录: 已清除绑定")
             render()
         }
