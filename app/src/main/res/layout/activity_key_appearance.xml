@@ -44,8 +44,10 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <!-- 测试编辑框：点这里唤起键盘，方便对照着调圆角 / 间隙 -->
-        <EditText
+        <!-- 测试编辑框：点这里唤起键盘，方便对照着调圆角 / 间隙。
+             用 ReceivingEditText 与设置页的试用框一致 —— 声明可收图片后，键盘的「图库」键
+             在这里也会出现，收到的图以缩略图插进框里 -->
+        <com.jinn.inputmethod.ReceivingEditText
             android:layout_width="match_parent"
             android:layout_height="44dp"
             android:layout_marginTop="10dp"

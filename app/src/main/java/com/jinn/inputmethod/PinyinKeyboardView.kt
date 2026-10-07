@@ -83,6 +83,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onPasteClipboard()
         /** 功能面板：从相册选图并插入当前输入框（仅宿主声明可接收图片时出现该键，见 `JinnIme.applyHostImageCapability`） */
         fun onOpenGallery()
+
+        /** 图库面板：选中一张图（IME 侧复制进 cache 后插入当前输入框） */
+        fun onGalleryImagePicked(uri: android.net.Uri)
+
+        /** 图库面板：绑定缺失或授权失效时，用户要去设置里重绑 */
+        fun onOpenGallerySettings()
+
+        /**
+         * 图库面板：「文件单选」—— 用系统选择器从**绑定目录之外**选图。
+         *
+         * 与 [onOpenGallery] 的区别是这条会跳系统相册（焦点会短暂离开），回来走同一套
+         * 「复制进 cache → 校验输入框 → commitContent」链路；给「临时想贴别处的图」用。
+         */
+        fun onPickFromSystemGallery()
         /** 功能面板：全选当前输入框全部文本 */
         fun onSelectAll()
         /** 功能面板：复制选中文本到系统剪贴板 */
@@ -178,6 +192,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 剪贴板面板（与字母区互斥显示，见 init 挂载） */
     private val clipboardPanel: ClipboardPanelView
+
+    /** 图库快贴面板（绑定目录下的图片格子；与字母区互斥，见 init 挂载） */
+    private val galleryPanel: GalleryPanelView
+
+    /** 图库面板是否展开 */
+    private var galleryActive = false
 
     /** 顶部搜索面板（候选栏上方，见 init 挂载） */
     private val searchPanel: SearchPanelView
@@ -503,6 +523,39 @@ class PinyinKeyboardView @JvmOverloads constructor(
             ),
         )
 
+        // 图库快贴面板：同款预挂载（GONE），展开时替换字母区并接管 contentArea 高度。
+        // 选中图片交给 IME 复制进 cache 后插入（全程不跳 Activity，见 showGalleryPanel）。
+        galleryPanel = GalleryPanelView(context).apply {
+            listener = object : GalleryPanelView.Listener {
+                override fun onPick(uri: android.net.Uri) {
+                    this@PinyinKeyboardView.listener?.onGalleryImagePicked(uri)
+                    // 「自动返回」开着时点一张就回打字键盘（用户 2026-10-07 指定）：
+                    // 插入是 IME 侧的独立流程，不依赖面板是否还在，所以这里立即收起即可
+                    if (Prefs(context).galleryAutoReturn) {
+                        Diagnostics.i(TAG, "图库面板: 自动返回已开，收起面板")
+                        hideGalleryPanel()
+                    }
+                }
+                override fun onRebindRequested() {
+                    hideGalleryPanel()
+                    this@PinyinKeyboardView.listener?.onOpenGallerySettings()
+                }
+                override fun onSystemPicker() {
+                    hideGalleryPanel()
+                    // 「文件单选」走系统选择器，不是把面板重开一遍（L-1026）
+                    this@PinyinKeyboardView.listener?.onPickFromSystemGallery()
+                }
+            }
+            visibility = View.GONE
+        }
+        contentArea.addView(
+            galleryPanel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
         // 顶部搜索面板：挂在根布局候选栏上方（index 0 = 最顶部），
         // 显示时 IME 整体高度增加；隐藏 GONE 后不占空间，不影响 IME relayout 流程。
         searchPanel = SearchPanelView(context).apply {
@@ -741,6 +794,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun hidePanelForLayerSwitch() {
         if (clipboardActive) hideClipboardPanel()
+        // 图库面板同理：它也把字母区整个盖住，切层不收起就是「切了层仍看不到键」
+        if (galleryActive) hideGalleryPanel()
         // 方向面板同样挂在字母区里（`viewLetters` 的子视图全部 GONE 后才 addView 进来），
         // 而符号/数字层的键也在字母区：不收面板就会出现「切了层却看不到键」——
         // 面板还盖在上面吃触摸，候选栏又被符号分组标签顶替，红色「返回」根本没被创建，
@@ -1089,6 +1144,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 面板里的「键面」按钮（key_bg 是 drawable，颜色识别扫不到）：交给面板按当前档重建
         clipboardPanel.applySurfaceAlpha(keyFaceAlpha)
         searchPanel.applySurfaceAlpha(keyFaceAlpha)
+        galleryPanel.applySurfaceAlpha(keyFaceAlpha)
 
         // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描 ，
         // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
@@ -1136,6 +1192,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // applyKeyTransparency）下发，面板的纯色面才会被本次的透明度套档扫到。
         clipboardPanel.applySkin(s)
         searchPanel.applySkin(s)
+        galleryPanel.applySkin(s)
         Diagnostics.i(TAG, "键盘皮肤: $from -> ${s.id}（${s.label}）")
     }
 
@@ -1571,7 +1628,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * —— 用户以为改主题没生效，最长要等 5 分钟。同一件事被防了两遍，其中一遍有害。
      */
     val hasActiveOverlay: Boolean
-        get() = clipboardActive || searchPanel.isActive() || directionPanelVisible ||
+        get() = clipboardActive || galleryActive || searchPanel.isActive() || directionPanelVisible ||
             passwordPad
 
     /**
@@ -1584,6 +1641,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun stopPanelBackgroundWork() {
         clipboardPanel.stopBackgroundWork()
         searchPanel.stopBackgroundWork()
+        galleryPanel.stopBackgroundWork()
     }
 
     fun commitComposing() {
@@ -2892,12 +2950,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         // 「图库」键（2026-10-07 图库快贴）：只在宿主声明可接收图片时出现 —— 实测 QQ/TIM/抖音/
         // 邮箱/笔记的输入框声明为空且拒收，露键只会白点；声明逐输入框变化，由 IME 每次会话推送。
+        // 面板打开时这一键变成红色粗体「返回」（与剪贴板键、方向键同一套口径，用户 2026-10-07 指定）：
+        // 面板盖住字母区，退出口必须一眼可见，而且要落在用户刚点过的那一键上。
         if (hostImageCapable) {
-            viewCandidateList.addView(buildFunctionButton(
-                label = "图库",
-                hint = "快贴",
-                onClick = { listener?.onOpenGallery() },
-            ))
+            galleryButtonBox = buildFunctionButton(
+                label = if (galleryActive) "返回" else "图库",
+                hint = if (galleryActive) "退出快贴" else "快贴",
+                red = galleryActive,
+                onClick = {
+                    if (galleryActive) {
+                        Diagnostics.i(TAG, "功能面板: 点击图库面板的返回")
+                        hideGalleryPanel()
+                    } else {
+                        listener?.onOpenGallery()
+                    }
+                },
+            )
+            viewCandidateList.addView(galleryButtonBox)
+        } else {
+            galleryButtonBox = null
         }
         // 「翻译」键：只由总开关控制（2026-09-30 定），关掉后这个键不存在。
         // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[图库]/[翻译]/收起，**「收起」恒为最右端**
@@ -3021,6 +3092,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 就地更新「图库」按钮的文案与颜色（[refreshDirectionButton] 的同一套做法，用户 2026-10-07 指定）。
+     *
+     * 未展开时显示「图库 / 快贴」；面板展开后改为红色粗体「返回 / 退出快贴」，
+     * 让用户一眼看到退出口 —— 该按钮此时的作用就是收起面板、回到打字键盘。
+     * 只改两个 TextView 的文本与颜色，不重建整个功能面板。
+     */
+    private fun refreshGalleryButton() {
+        val box = galleryButtonBox as? android.view.ViewGroup ?: return
+        val active = galleryActive
+        val labelView = box.getChildAt(0) as? TextView ?: return
+        val hintView = box.getChildAt(1) as? TextView
+        labelView.text = if (active) "返回" else "图库"
+        labelView.setTextColor(
+            if (active) skinToken(skin.hintRed, R.color.kb_key_hint_red)
+            else skinToken(skin.functionGlyph, R.color.text_primary)
+        )
+        labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+        hintView?.text = if (active) "退出快贴" else "快贴"
+    }
+
+    /**
      * 翻译状态切换（IME 侧发起请求 / 收尾时调用）：就地改按钮文案与可用性，不重建面板。
      *
      * 「翻译中」期间按钮置灰 + 不可点，从 UI 层挡住连点；请求代际校验是 IME 侧的第二道闸门。
@@ -3107,6 +3199,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var directionButtonBox: View? = null
 
     /**
+     * 候选栏「图库」按钮的引用（宿主不声明收图时该键不存在，引用为 null）。
+     *
+     * 与 [directionButtonBox] 同一个理由：图库面板打开时它要就地变成红色粗体「返回」，
+     * 而面板的开关并不重建功能面板 —— [showGalleryPanel] / [hideGalleryPanel] 就地刷新。
+     */
+    private var galleryButtonBox: View? = null
+
+    /**
      * 候选栏「翻译」按钮的引用（总开关关闭时该键不存在，引用为 null）。
      *
      * 翻译是在途网络请求：按钮要能就地变「翻译中」并置灰（防连点），不重建整个功能面板 ——
@@ -3169,6 +3269,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 剪贴板打开时 viewLetters 整体是 GONE，方向面板加进去根本看不见，
         // 而 directionPanelVisible 已置 true，用户点方向键毫无反应。
         if (clipboardActive) hideClipboardPanel()
+        // 图库面板同理，且它是最上层（init 里最后 addView）：不收就是「点了方向键没反应」。
+        // ⚠ 反向由 showGalleryPanel 里那一段负责，两处必须成对（L-1024）。
+        hideGalleryPanel()
         // 字母区隐藏，方向面板显示
         Diagnostics.i(TAG, "字母区: 隐藏三行（原因=方向面板显示）")
         for (i in 0 until viewLetters.childCount) {
@@ -3279,6 +3382,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 仍会被 isPanelSearch() 路由到搜索框，按键实际作用的对象与用户看到的不一致。
             if (directionPanelVisible) hideDirectionPanel()
             hideSearchPanel()
+            // 图库面板也要收：它是 init 里最后 addView 的那个，同屏时盖在最上层，
+            // 不收就是「点了历史没反应」；键盘上「图库」键也会卡在红色「返回」态（L-1024）
+            hideGalleryPanel()
 
             // contentArea 高度 = 字母区 2 倍（用户验证过的 850px 方案）。
             // 关键：contentArea 的父是 LinearLayout（PinyinKeyboardView 根），
@@ -3330,6 +3436,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewLetters.visibility = View.VISIBLE
         restoreLetterRows()
         clipboardPanel.visibility = View.GONE
+        galleryPanel.visibility = View.GONE
         contentArea.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3345,6 +3452,59 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 红色「返回」还原成「历史」
         refreshCandidateBar()
         Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
+    }
+
+    /**
+     * 展开图库快贴面板：绑定目录（见 [Prefs.galleryTreeUri]）下的图片格子，点一下直接插入。
+     *
+     * 与 [showClipboardPanel] 同一套机制：字母区让位、contentArea 取固定高度、与其它面板互斥。
+     * 目录未绑定或授权失效时面板自己会说明，并给出「去设置里绑定 / 文件单选」两个出口。
+     */
+    fun showGalleryPanel() {
+        if (galleryActive) return
+        // 未上屏的拼音串先清掉（L-1032）：插入图片走的是 commitContent，不会像 commitText 那样
+        // 把它上屏或清掉，留着会在插完图后继续输入时被上屏到图片后面（与 showSearchPanel 同款）
+        clearComposingState()
+        try {
+            if (clipboardActive) hideClipboardPanel()
+            if (directionPanelVisible) hideDirectionPanel()
+            hideSearchPanel()
+
+            val density = resources.displayMetrics.density
+            val panelH = (162 * 2 * density).toInt()
+            contentArea.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                panelH,
+            )
+            galleryPanel.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            viewLetters.visibility = View.GONE
+            galleryPanel.visibility = View.VISIBLE
+            galleryPanel.onPanelShown()
+            galleryActive = true
+            refreshGalleryButton()
+            refreshCandidateBar()
+            Diagnostics.i(TAG, "图库面板: 显示 panelH=$panelH")
+        } catch (t: Throwable) {
+            Diagnostics.e(TAG, "showGalleryPanel 异常: ${t.message}")
+            // 与剪贴板面板同款回滚：不回滚会让 26 键永久消失（只能重启 IME 恢复）
+            runCatching { restoreLettersLayout() }
+                .onFailure { Diagnostics.e(TAG, "showGalleryPanel 回滚失败: ${it.message}") }
+            galleryActive = false
+        }
+    }
+
+    /** 收起图库面板，恢复 26 键字母布局 */
+    fun hideGalleryPanel() {
+        if (!galleryActive) return
+        galleryPanel.onPanelHidden()
+        restoreLettersLayout()
+        galleryActive = false
+        refreshGalleryButton()
+        refreshCandidateBar()
+        Diagnostics.i(TAG, "图库面板: 隐藏，恢复字母键盘")
     }
 
     // ── 顶部搜索面板（挂在根布局候选栏上方）────────────────
@@ -3379,6 +3539,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与方向面板互斥：两者同屏时方向键（箭头/复制/粘贴）会落到宿主输入框上，
         // 与「搜索态只作用于搜索框」的前提冲突（同 showClipboardPanel 的对称处理）。
         if (directionPanelVisible) hideDirectionPanel()
+        // 同一条口径：图库面板占着字母区且在最上层，不收就盖住搜索的输入区（L-1024）
+        hideGalleryPanel()
         // 必须在面板可见之后再刷一次候选栏：clearComposingState 内部那次刷新发生在
         // visibility 置位之前，isPanelSearch() 仍为 false，会渲染出宿主功能面板并残留。
         refreshCandidateBar()

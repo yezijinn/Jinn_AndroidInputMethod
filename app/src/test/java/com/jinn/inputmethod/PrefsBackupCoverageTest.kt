@@ -72,7 +72,11 @@ class PrefsBackupCoverageTest {
         // 2026-10-03 起 77 → 78：新增「候选字号」1 键（外观参数，整个候选栏按它派生）。
         // 2026-10-05 起 78 → 84：新增「敲击音效反馈」6 键（音效开关 / 强度 / 静音仍播 / 分组映射
         //                        + 震动开关 / 档位）—— 音色与档位是用户偏好，换机必须带走。
-        assertEquals("提取到的键常量应是 84 个（改键数请同步本断言）", 84, keyConstants.size)
+        // 2026-10-07 起 84 → 85：新增「图库快贴目录」1 键（SAF 目录树 URI；换机后授权通常失效，
+        //                        导入侧仍原样还原，由键盘面板检测并提示重绑）
+        // 2026-10-07 起 85 → 86：新增「图库快贴自动返回」1 键（面板里那个开关的用户偏好）
+        // 2026-10-07 起 86 → 88：新增「图库缩略图每行张数」「图库缩略图行高」2 键（「布局」调节）
+        assertEquals("提取到的键常量应是 88 个（改键数请同步本断言）", 88, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -242,6 +246,8 @@ class PrefsBackupCoverageTest {
             Triple("tapSoundVolume", "TapSound.clampVolume", "越界音量会算出非法播放增益"),
             Triple("tapSoundMap", "TapSound.parseMap", "越界音效索引会让数组访问直接崩"),
             Triple("tapVibrateStrength", "TapSound.clampVibrationTier", "未知档位会让震动规格取不到值"),
+            Triple("galleryColumns", "coerceIn", "越界张数会让每行格子宽度算出非法值"),
+            Triple("galleryCellHeightDp", "coerceIn", "越界行高会把面板撑破或缩成点不中"),
         )
         for ((prop, marker, why) in guards) {
             assertTrue("$prop 的归一（$marker）不见了：$why", propertyBlock(prop).contains(marker))

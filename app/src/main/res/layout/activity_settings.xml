@@ -56,18 +56,20 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- 输入法测试：纯粹的编辑框，点这里唤起键盘打字（保存后可直接验证）-->
+        <!-- 输入法测试：点这里唤起键盘打字；同时也是「能收图片的宿主」—— 声明 image/* 后键盘的「图库」键
+             在这里出现，收到的图直接插进框里（见 ReceivingEditText） -->
         <LinearLayout
             style="@style/SettingsCard">
 
-            <EditText
+            <com.jinn.inputmethod.ReceivingEditText
                 style="@style/SettingsField"
+                android:id="@+id/edit_ime_test"
                 android:layout_width="match_parent"
                 android:hint="@string/settings_ime_test_hint"
                 android:importantForAutofill="no"
                 android:imeOptions="actionDone"
-                android:inputType="text"
-                android:maxLines="1"/>
+                android:inputType="textMultiLine|textCapSentences"
+                android:maxLines="3"/>
         </LinearLayout>
 
         <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
@@ -193,6 +195,26 @@
             <Button
                 style="@style/SettingsButton"
                 android:id="@+id/btn_clipboard_customize"
+                android:layout_width="0dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+        </LinearLayout>
+
+        <!-- 图库快贴目录：绑定后键盘内的图库面板直接展开该目录（SAF 目录树，不申请存储权限） -->
+        <LinearLayout
+            style="@style/SettingsCardRow">
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_gallery_dir"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_gallery_dir_clear"
                 android:layout_width="0dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"

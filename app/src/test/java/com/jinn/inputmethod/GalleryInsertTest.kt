@@ -110,7 +110,7 @@ class GalleryInsertTest {
         assertFalse("hint 随输入状态变，不能进标识", "hintText" in body)
         val mine = TestSources.codeSource("JinnIme.kt")
         val uses = Regex("""galleryFieldKeyOf\(currentInputEditorInfo\)""").findAll(mine).count()
-        assertEquals("发起点与落库都要用图库口径", 2, uses)
+        assertEquals("发起点、落库与面板选图都要用图库口径", 3, uses)
     }
 
     /**
@@ -261,6 +261,176 @@ class GalleryInsertTest {
         assertTrue("按实际按钮数判断", "childCount >= PANEL_COMPACT_SLOTS" in body)
         assertTrue("内边距收到 4dp", "setPadding(dp(4), dp(4), dp(4), dp(4))" in body)
         assertTrue("阈值常量要存在", "const val PANEL_COMPACT_SLOTS = 8" in src)
+    }
+
+    /**
+     * 图库面板打开后，退出口落在「图库」键本身（用户 2026-10-07 指定，参考数字层 / 剪贴板的做法）。
+     *
+     * 面板里只剩三个按钮：刷新 / 文件单选 / 自动返回（开关）。原先那个独立的「返回」按钮撤掉 ——
+     * 面板盖住字母区，退出口要落在用户刚点过的那一键上，红色粗体一眼可见。
+     */
+    @Test
+    fun 图库面板的退出口落在图库键上() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val body = view.substringAfter("if (hostImageCapable) {").substringBefore("// 「翻译」键")
+        assertTrue("面板打开时文案变「返回」", "if (galleryActive) \"返回\" else \"图库\"" in body)
+        assertTrue("并用红色提示色", "red = galleryActive" in body)
+        assertTrue("点击时收起面板", "hideGalleryPanel()" in body)
+        val refresh = view.substringAfter("private fun refreshGalleryButton()")
+            .substringBefore("fun setTranslating")
+        assertTrue("就地改文案", "\"返回\" else \"图库\"" in refresh)
+        assertTrue("就地改颜色（提示红）", "skin.hintRed" in refresh)
+        assertTrue(
+            "展开与收起都要刷一次（定义之外至少两处调用）",
+            view.split("refreshGalleryButton()").size - 1 >= 3,
+        )
+
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        assertTrue("面板按钮：刷新", "\"刷新\"" in panel)
+        assertTrue("面板按钮：单选", "\"单选\"" in panel)
+        assertTrue("面板按钮：自返", "\"自返\"" in panel)
+        assertTrue("翻页控件与页码", "\"←\"" in panel && "\"→\"" in panel && "\"%d/%d\"" in panel)
+        assertFalse("面板里不再有独立的关闭按钮", "listener?.onClose()" in panel)
+        assertTrue("开关态用提示红与普通前景色区分", "galleryAutoReturn" in panel && "skin.hintRed" in panel)
+
+        // L-1024：图库面板是 init 里最后 addView 的那个，同屏时盖在最上层 ——
+        // 打开其它面板必须把它收起来，否则用户看到的是「点了没反应」、键还卡在红色「返回」态
+        val dir = view.substringAfter("private fun showDirectionPanel()").substringBefore("字母区: 隐藏三行")
+        val clip = view.substringAfter("fun showClipboardPanel()").substringBefore("fun hideClipboardPanel()")
+        val search = view.substringAfter("fun showSearchPanel()").substringBefore("fun hideSearchPanel()")
+        assertTrue("方向面板要收起图库面板", "hideGalleryPanel()" in dir)
+        assertTrue("剪贴板面板要收起图库面板", "hideGalleryPanel()" in clip)
+        assertTrue("搜索面板要收起图库面板", "hideGalleryPanel()" in search)
+    }
+
+    /** 「自动返回」开着时，点一张图就收起面板回打字键盘（用户 2026-10-07 指定） */
+    @Test
+    fun 自动返回开关接在选图上() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val pick = view.substringAfter("override fun onPick(uri: android.net.Uri)")
+            .substringBefore("override fun onRebindRequested")
+        assertTrue("先交付插入，再谈收不收面板", "onGalleryImagePicked(uri)" in pick)
+        assertTrue("开着才收起", "if (Prefs(context).galleryAutoReturn)" in pick)
+        assertTrue("收起动作就是已有那一个", "hideGalleryPanel()" in pick)
+
+        val prefs = TestSources.codeSource("Prefs.kt")
+        assertTrue("偏好项默认关", "boolOr(KEY_GALLERY_AUTO_RETURN, false)" in prefs)
+        assertTrue("导出侧带走", "put(KEY_GALLERY_AUTO_RETURN, galleryAutoReturn)" in prefs)
+        assertTrue("导入侧还原", "KEY_GALLERY_AUTO_RETURN -> asBool(v)" in prefs)
+    }
+
+    /**
+     * 绑定异常入口必须是**常驻行** —— 只切可见性，不再 addView（L-1025）。
+     *
+     * 它曾经在 render 里 addView，而 render 每次展开都跑一次，于是每进一次图库面板就多一个
+     * 「去设置里绑定」按钮（用户实测进 4 次出现 4 个）。改动这一处时别改回 addView。
+     */
+    @Test
+    fun 绑定入口行常驻不再累积() {
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        val render = panel.substringAfter("private fun render(state: State?)")
+            .substringBefore("private fun showList(")
+        assertFalse("render 里不得再往面板挂入口行", "addView(row" in render)
+        assertTrue("改成按状态切可见性", "rebindRow.visibility =" in render)
+        assertEquals("常驻行只在 init 里挂一次", 1, panel.split("addView(rebindRow").size - 1)
+    }
+
+    /** 缩略图布局：默认一行 5 张、行高 76dp，都能从面板的「布局」键调；读数两侧都归一 */
+    @Test
+    fun 缩略图布局可调且默认五张() {
+        val prefs = TestSources.codeSource("Prefs.kt")
+        assertTrue("默认一行 5 张", "GALLERY_COLUMNS_DEFAULT = 5" in prefs)
+        assertTrue("张数在 setter 里归一", "coerceIn(GALLERY_COLUMNS_MIN" in prefs)
+        assertTrue("行高同样归一", "coerceIn(GALLERY_CELL_HEIGHT_MIN" in prefs)
+        assertTrue("张数进导出白名单", "put(KEY_GALLERY_COLUMNS, galleryColumns)" in prefs)
+        assertTrue("行高进导入白名单", "KEY_GALLERY_CELL_HEIGHT_DP -> asInt(v)" in prefs)
+
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        assertTrue("标题行有「布局」键", "smallButton(TEXT_LAYOUT)" in panel)
+        assertEquals("调节行含两组 −/+", 2, panel.split("smallButton(TEXT_MINUS)").size - 1)
+        assertTrue("调完就地重排", "private fun rebuildGrid()" in panel && "fillPage()" in panel)
+        assertTrue("网格按可调参数铺", "page.chunked(columns)" in panel && "dp(cellHeightDp)" in panel)
+
+        // 「布局」是临时操作，不能永久赖在屏幕上（用户 2026-10-07 要求）：
+        // 收面板时收回，且每次重新展开都从收起态开始
+        val hidden = panel.substringAfter("fun onPanelHidden()").substringBefore("fun applySkin(")
+        assertTrue("收起面板时把调节行收回", "tuneRow.visibility = GONE" in hidden)
+        val shown = panel.substringAfter("fun onPanelShown()").substringBefore("val tree = Prefs")
+        assertTrue("每次展开也从收起态开始", "tuneRow.visibility = GONE" in shown)
+    }
+
+    /**
+     * 「文件单选」必须真的走系统选择器（L-1026）。
+     *
+     * 它原先接的是 `onOpenGallery`（= 展开键盘内面板），而按钮自身刚把面板收起来 ⇒
+     * 点了等于把面板重开一遍，什么都没发生 —— 用户直接问「这个按钮干嘛用的」。
+     */
+    @Test
+    fun 文件单选走系统选择器() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue("接口里有这个方法", "fun onPickFromSystemGallery()" in view)
+        val pick = view.substringAfter("override fun onSystemPicker()")
+            .substringBefore("visibility = View.GONE")
+        assertTrue("面板里的按钮接系统选择器回调", "onPickFromSystemGallery()" in pick)
+        assertFalse("不再接面板展开", "listener?.onOpenGallery()" in pick)
+
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val impl = ime.substringAfter("override fun onPickFromSystemGallery()")
+            .substringBefore("override fun onOpenGallerySettings()")
+        assertTrue("实现里真的打开选图页", "openGalleryPicker()" in impl)
+    }
+
+    /**
+     * 缩略图走「宁可糊、只要快」的路线（用户 2026-10-07：以最快速度优先，其他可以舍弃）。
+     *
+     * 这些都是刻意为之、且容易被当成「还能优化回去」的地方，逐条钉住：
+     *  - 一次输入流解完（**不**探尺寸）—— 那次多出来的 SAF 开流是首屏最贵的一步；
+     *  - `RGB_565` + 按每行张数两档采样；
+     *  - 只解可见行、并发解、在途去重、滚动防抖；
+     *  - 缓存够装整页（滚回去不重解）。
+     */
+    @Test
+    fun 缩略图按省算路线解码() {
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        assertTrue("用 RGB_565 解码", "inPreferredConfig = Bitmap.Config.RGB_565" in panel)
+        assertTrue("固定档一次解完", "private fun decodeThumb(uri: Uri, sample: Int)" in panel)
+        assertFalse("不许退回两段式探尺寸", "inJustDecodeBounds" in panel)
+        assertTrue("采样率按每行张数两档", "COMPACT_COLUMNS" in panel && "THUMB_SAMPLE_COMPACT" in panel)
+        assertTrue("并发解 + 在途去重", "thumbPool.execute" in panel && "inFlight.add(key)" in panel)
+        assertTrue("缓存够装整页", "THUMB_CACHE_BYTES = 12 * 1024 * 1024" in panel)
+        assertTrue("布局变化后丢掉旧尺寸缓存", "thumbCache.evictAll()" in panel)
+        assertTrue("一页就这么多张", "const val PAGE_SIZE = 24" in panel)
+        assertTrue("列表只受安全阀约束", "take(MAX_LISTED)" in panel)
+        assertTrue("解码范围是整页", "(pageIndex * PAGE_SIZE)" in panel)
+        assertFalse("不再有滚动补解那套", "scheduleVisibleThumbs" in panel)
+    }
+
+    /**
+     * 三条用户能感觉到、但不做也不会有人报警的地方（L-1031 / L-1032 / L-1027）。
+     *
+     *  - 插入图片的解码必须在后台：`commitContent` 的回调本来就在主线程；
+     *  - 图库面板打开时要清拼音缓冲：插入走 `commitContent`，不会替用户把拼音上屏；
+     *  - 缩略图档位要在任务内现算：提交时算好的那份会被「布局」改动作废。
+     */
+    @Test
+    fun 三条可感问题不许回退() {
+        val host = TestSources.codeSource("ReceivingEditText.kt")
+        val insert = host.substringAfter("private fun insertImage(uri: Uri)")
+            .substringBefore("private fun decodeSampledBitmap")
+        assertTrue("解码丢后台", "BackgroundIo.run" in insert)
+        assertTrue(
+            "解码调用要在后台块里面",
+            insert.indexOf("BackgroundIo.run") < insert.indexOf("decodeSampledBitmap"),
+        )
+        assertTrue("回主线程贴图", "post { attachDecoded(" in insert)
+
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val gallery = view.substringAfter("fun showGalleryPanel()").substringBefore("val density")
+        assertTrue("面板打开时清拼音缓冲", "clearComposingState()" in gallery)
+
+        val panel = TestSources.codeSource("GalleryPanelView.kt")
+        assertTrue("档位在任务内现算", "decodeThumb(uri, sampleFor(columns))" in panel)
+        assertFalse("不许退回提交时算好的档位", "val sample = sampleFor(cols)" in panel)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }

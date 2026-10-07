@@ -1363,8 +1363,38 @@ class JinnIme : InputMethodService() {
                 }
                 override fun onOpenGallery() {
                     if (rejectedBySearchPanel("图库")) return
-                    Diagnostics.i(TAG, "功能面板: 图库快贴")
+                    // 绑了目录就在键盘内展开，选图全程不跳 Activity（焦点不丢，也就没有「已切换输入框」那类提示）；
+                    // 没绑定同样展开 —— 面板里会说明怎么绑，并给「文件单选」这条系统选择器退路
+                    Diagnostics.i(TAG, "功能面板: 图库快贴（展开键盘内面板）")
+                    pinyinKeyboard?.showGalleryPanel()
+                }
+                override fun onGalleryImagePicked(uri: android.net.Uri) {
+                    Diagnostics.i(TAG, "图库面板: 选中 ${uri.lastPathSegment}")
+                    val hostKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+                    // 复制原图可能几十 MB，放后台；回来走同一套落地逻辑（校验输入框 → commitContent）
+                    BackgroundIo.run {
+                        when (val r = GalleryInsert.copyToCache(this@JinnIme, uri)) {
+                            is GalleryInsert.CopyResult.Ok -> {
+                                GalleryInsert.putPending(r.file, r.mime, hostKey)
+                                ui.post { flushPendingGalleryImage() }
+                            }
+                            GalleryInsert.CopyResult.TooLarge ->
+                                ui.post { toast(GalleryInsert.tooLargeText()) }
+                            GalleryInsert.CopyResult.ReadFailed ->
+                                ui.post { toast(TEXT_GALLERY_READ_FAILED) }
+                        }
+                    }
+                }
+                override fun onPickFromSystemGallery() {
+                    if (rejectedBySearchPanel("图库")) return
+                    // 「文件单选」= 绑定目录之外：跳系统相册选一张，回来走同一套插入链路。
+                    // 原先这里接的是 onOpenGallery（展开键盘内面板），等于把面板重开一遍 —— 白点（L-1026）
+                    Diagnostics.i(TAG, "图库面板: 文件单选（系统选择器）")
                     openGalleryPicker()
+                }
+                override fun onOpenGallerySettings() {
+                    Diagnostics.i(TAG, "图库面板: 去设置里绑定目录")
+                    openSettings()
                 }
                 override fun onSelectAll() {
                     if (rejectedBySearchPanel("全选")) return
@@ -1688,6 +1718,7 @@ class JinnIme : InputMethodService() {
         // 一直顶成真（定时换肤被无限延后），切回拼音后还会带着上一条历史原样弹出。
         // 与 `onFinishInputView` 的两行处置对齐（那两个面板一起收）。
         pinyinKeyboard?.hideClipboardPanel()
+        pinyinKeyboard?.hideGalleryPanel()
         keyboardMode = KeyboardMode.VOICE
         applyKeyboardMode()
     }
@@ -2036,6 +2067,8 @@ class JinnIme : InputMethodService() {
         // 剪贴板面板同理（BUG.md L-110）：键盘收起后再弹出，它会带着上一个输入框的历史条目
         // 一起回来，误点即把历史内容粘进新字段。上面那行是同族的既有处理，这条原先漏了。
         pinyinKeyboard?.hideClipboardPanel()
+        // 图库面板同理：它记着上一轮的目录与格子，跨会话留着重开会把图插进新输入框
+        pinyinKeyboard?.hideGalleryPanel()
         // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
         cancelTranslate(notify = true)
         ui.removeCallbacks(backspaceRunnable)
@@ -3706,6 +3739,9 @@ class JinnIme : InputMethodService() {
 
         /** 图库快贴：选图期间切换了输入框，为免插错地方丢弃这次选择 */
         const val TEXT_GALLERY_FIELD_CHANGED = "已切换输入框，图片未插入"
+
+        /** 图库面板：面板内选图后复制进 cache 失败（选图页那条路径有自己的提示） */
+        const val TEXT_GALLERY_READ_FAILED = "读取图片失败，未插入"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
         const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"

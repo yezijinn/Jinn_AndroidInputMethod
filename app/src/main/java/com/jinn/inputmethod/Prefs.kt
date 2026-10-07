@@ -313,6 +313,47 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putString(KEY_SYMBOL_ORDER, SymbolOrder.serialize(SymbolOrder.parse(value))) }
 
     /**
+     * 图库快贴绑定的相册目录（SAF 目录树 URI；空串 = 未绑定）。
+     *
+     * 由设置页经 `ACTION_OPEN_DOCUMENT_TREE` 取得并持久化授权后写入；键盘内的图库面板直接列这个目录，
+     * 不再每次跳系统选择器。授权被撤销或换机恢复后取不到内容，面板侧提示重绑并退回系统选择器。
+     */
+    var galleryTreeUri: String
+        get() = strOr(KEY_GALLERY_TREE_URI, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_GALLERY_TREE_URI, value) }
+
+    /**
+     * 图库快贴：点一张图插入后自动收起面板、回到打字键盘（默认关）。
+     *
+     * 宿主收到图之后的行为差别很大 —— 实测 Telegram 类直接发送、微信类只进草稿 —— 从输入法侧统一不了，
+     * 所以交给用户按习惯定：开着就是「点一张，回到键盘接着打字」，关着就留在面板里方便连贴几张。
+     */
+    var galleryAutoReturn: Boolean
+        get() = boolOr(KEY_GALLERY_AUTO_RETURN, false)
+        set(value) = sp.edit { putBoolean(KEY_GALLERY_AUTO_RETURN, value) }
+
+    /**
+     * 图库面板缩略图：每行张数（3..8，默认 5）。
+     *
+     * 面板宽度固定，张数越少每张越宽 —— 所以这一项同时就是「缩略图宽度」的档位，不必另设一项。
+     * 与其它外观参数同一条纪律：读写两侧都归一，外部构造的备份放什么值进来都只落进合法区间。
+     */
+    var galleryColumns: Int
+        get() = intOr(KEY_GALLERY_COLUMNS, GALLERY_COLUMNS_DEFAULT)
+            .coerceIn(GALLERY_COLUMNS_MIN, GALLERY_COLUMNS_MAX)
+        set(value) = sp.edit {
+            putInt(KEY_GALLERY_COLUMNS, value.coerceIn(GALLERY_COLUMNS_MIN, GALLERY_COLUMNS_MAX))
+        }
+
+    /** 图库面板缩略图行高（dp，40..120，默认 76）：面板高度固定，行高超限会在纵向溢出 */
+    var galleryCellHeightDp: Int
+        get() = intOr(KEY_GALLERY_CELL_HEIGHT_DP, GALLERY_CELL_HEIGHT_DEFAULT)
+            .coerceIn(GALLERY_CELL_HEIGHT_MIN, GALLERY_CELL_HEIGHT_MAX)
+        set(value) = sp.edit {
+            putInt(KEY_GALLERY_CELL_HEIGHT_DP, value.coerceIn(GALLERY_CELL_HEIGHT_MIN, GALLERY_CELL_HEIGHT_MAX))
+        }
+
+    /**
      * 「收藏」分组的内容（JSON 二维数组，见 [FavoriteSymbols]）。
      *
      * null（键不存在 = 从未编辑过）→ 上层按出厂预置（D I Y）处理；`"[]"` = 用户删光了，尊重之。
@@ -1285,6 +1326,13 @@ class Prefs(context: Context) {
         if (sp.contains(KEY_THEME_MODE)) put(KEY_THEME_MODE, themeMode)
         put(KEY_SYMBOL_ORDER, symbolGroupOrder)
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
+        // 图库目录：换机后这条授权通常已失效，导出侧仍原样带走，导入后由键盘面板检测并提示重绑
+        put(KEY_GALLERY_TREE_URI, galleryTreeUri)
+        // 图库快贴的「自动返回」是用户偏好（默认关），换机必须带走
+        put(KEY_GALLERY_AUTO_RETURN, galleryAutoReturn)
+        // 图库面板的缩略图布局（每行张数 / 行高）同为外观偏好，换机带走
+        put(KEY_GALLERY_COLUMNS, galleryColumns)
+        put(KEY_GALLERY_CELL_HEIGHT_DP, galleryCellHeightDp)
         put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)
         put(KEY_THEME_DARK_AT, themeDarkAtMinutes)
         put(KEY_UPDATE_LAST_CHECK_AT, updateLastCheckAt)
@@ -1440,6 +1488,11 @@ class Prefs(context: Context) {
                 }
                 KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
                 KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
+                KEY_GALLERY_TREE_URI -> asString(v)?.let { galleryTreeUri = it; ok() } ?: bad(key)
+                KEY_GALLERY_AUTO_RETURN -> asBool(v)?.let { galleryAutoReturn = it; ok() } ?: bad(key)
+                // 两个布局键都走 setter 归一，越界值落进合法区间
+                KEY_GALLERY_COLUMNS -> asInt(v)?.let { galleryColumns = it; ok() } ?: bad(key)
+                KEY_GALLERY_CELL_HEIGHT_DP -> asInt(v)?.let { galleryCellHeightDp = it; ok() } ?: bad(key)
                 // 键存在但值为 null = 从未编辑过：必须移除本机取值才能还原「出厂预置」态
                 KEY_FAVORITE_SYMBOLS -> if (v.kind == ConfigBackup.BackupValue.KIND_NULL) {
                     sp.edit { remove(KEY_FAVORITE_SYMBOLS) }
@@ -1713,6 +1766,26 @@ class Prefs(context: Context) {
         /** 符号分组顺序（label 串；空 = 默认，见 [SymbolOrder]） */
         private const val KEY_SYMBOL_ORDER = "symbol_group_order"
         private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
+
+        /** 图库快贴绑定的目录 URI（SAF 目录树；见 [galleryTreeUri]） */
+        private const val KEY_GALLERY_TREE_URI = "gallery_tree_uri"
+
+        /** 图库快贴：点图插入后自动收面板、回打字键盘（见 [galleryAutoReturn]） */
+        private const val KEY_GALLERY_AUTO_RETURN = "gallery_auto_return"
+
+        /** 图库面板缩略图布局（见 [galleryColumns]、[galleryCellHeightDp]） */
+        private const val KEY_GALLERY_COLUMNS = "gallery_columns"
+        private const val KEY_GALLERY_CELL_HEIGHT_DP = "gallery_cell_height_dp"
+
+        /** 缩略图每行张数：默认 5，可调 3..8（面板宽度固定 ⇒ 张数即宽度档） */
+        private const val GALLERY_COLUMNS_DEFAULT = 5
+        private const val GALLERY_COLUMNS_MIN = 3
+        private const val GALLERY_COLUMNS_MAX = 8
+
+        /** 缩略图行高（dp）：默认 76，可调 40..120 */
+        private const val GALLERY_CELL_HEIGHT_DEFAULT = 76
+        private const val GALLERY_CELL_HEIGHT_MIN = 40
+        private const val GALLERY_CELL_HEIGHT_MAX = 120
 
         /**
          * `favorite_symbols` 的导入长度上限（32K 字符 ≈ 百页符号，远超任何真实用法）。
