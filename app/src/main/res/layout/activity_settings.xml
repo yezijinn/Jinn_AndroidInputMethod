@@ -202,13 +202,19 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 图库快贴：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在子页面里 -->
-        <Button
-            style="@style/SettingsButton"
-            android:id="@+id/btn_gallery_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minWidth="0dp" />
+        <!-- 图库快贴：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在子页面里。
+             ⚠ 必须包在 SettingsCardRow 里 —— 卡片的圆角底板与边距都由它提供，
+             裸放一个 match_parent 的按钮会与上下邻居长得不一样（L-1029） -->
+        <LinearLayout
+            style="@style/SettingsCardRow">
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_gallery_settings"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+        </LinearLayout>
 
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
         <LinearLayout

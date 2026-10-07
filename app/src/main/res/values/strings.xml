@@ -185,7 +185,7 @@
     <string name="update_title_prompt">提示</string>
     <string name="update_local_version">你目前的版本：%1$d</string>
     <string name="update_latest_version">在线最新版本：%1$d</string>
-    <string name="update_latest_unreachable">在线最新版本：访问 github.com / gitee.com 失败</string>
+    <string name="update_latest_unreachable">在线最新版本：访问 gitee.com / github.com 失败</string>
     <string name="update_uptodate">已是最新版本 无需更新</string>
     <string name="update_btn_later">稍后</string>
     <string name="update_btn_go">去更新</string>

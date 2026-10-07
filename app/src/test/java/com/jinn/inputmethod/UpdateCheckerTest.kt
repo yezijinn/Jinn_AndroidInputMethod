@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 「打开设置页时自动检查更新」的节流判据单测（纯函数，不依赖 Android 运行时）。
@@ -190,6 +191,36 @@ class UpdateCheckerTest {
         assertTrue("挑最新必须走顺序无关的 pickLatest", "pickLatest(" in src)
         assertTrue("到翻页上限要留日志（不静默漏）", "可能还有更靠后的标签" in src)
     }
+
+    /**
+     * 源顺序必须是 **Gitee 优先**，失败文案的域名顺序与之同序（统一规范 6.9）。
+     *
+     * 这条不能用「结果对不对」验证：两源都通时谁先谁后结果完全一样，只有在 GitHub 不可达的
+     * 真实网络下才暴露 —— 那时把 GitHub 排前面，用户要白等一轮超时、甚至直接落到「网络异常」。
+     * 2026-10-07 审查发现顺序与文案都还是旧的 GitHub 优先，而上面所有测试都是绿的，正因为
+     * 缺的就是这一条。所以直接钉源码里的先后。
+     */
+    @Test
+    fun `源顺序必须Gitee优先且文案同序`() {
+        val src = TestSources.codeSource("UpdateChecker.kt")
+        val gitee = src.indexOf("fetchFromGitee(deadline)")
+        val github = src.indexOf("fetchFromGithub(deadline)")
+        assertTrue("两个源都要出现在取数主流程里", gitee > 0 && github > 0)
+        assertTrue("Gitee 必须排在 GitHub 之前", gitee < github)
+        assertTrue("回退提示要随之更新", "Gitee 源无可用标签，回退 GitHub" in src)
+
+        val xml = resFile("values/strings.xml").readText()
+        assertTrue(
+            "失败文案必须按同一优先级写：访问 gitee.com / github.com 失败",
+            "在线最新版本：访问 gitee.com / github.com 失败" in xml,
+        )
+    }
+
+    /** 资源定位：与 `OptionalDictJunkTest` 同一口径（Gradle 的任务工作目录不止一种） */
+    private fun resFile(relative: String): File =
+        listOf(File("src/main/res/$relative"), File("app/src/main/res/$relative"))
+            .firstOrNull { it.isFile }
+            ?: error("找不到资源文件: $relative")
 
     private companion object {
         const val DAY = 24L * 60 * 60 * 1000

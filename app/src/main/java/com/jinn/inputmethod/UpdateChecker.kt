@@ -12,8 +12,10 @@ import java.net.URL
  * 版本方案：versionCode 取构建当日日期（yyyyMMdd，纯整数），天然单调可比，
  * versionName 仅展示不参与比较。远程真源取仓库 tag 中的最大日期数字。
  *
- * 源策略：GitHub 优先，Gitee 备选；GitHub 失败自动回退 Gitee，两源皆失败才判网络异常。
- * Gitee 的网页 /tags 会返回 405，所以备选源改走它的开放 API，
+ * 源策略：**Gitee 优先，GitHub 备选**；Gitee 拉取失败才回退 GitHub，两源皆失败才判网络异常。
+ * 顺序如此定是因为国内网络下 GitHub 常常超时/被重置，把它当首选会让多数用户直接落到
+ * 「网络异常」（统一规范 6.9 定规）；Gitee 可直连，公开仓库的 tags API 匿名可访问。
+ * Gitee 的网页 /tags 会返回 405，所以它改走开放 API，
  * 返回的 JSON 里同样带 tag 名，标签解析规则与 GitHub 完全一致
  * （去 v 前缀、只保留 6 或 8 位 **ASCII** 数字、取最大；7 位与非 ASCII 数字见 BUG.md L-83 / L-126）。
  */
@@ -115,16 +117,19 @@ object UpdateChecker {
             .maxByOrNull { comparableVersion(it.date) }
 
     /**
-     * 取最大日期标签；GitHub 失败自动回退 Gitee；两源皆败抛异常。
+     * 取最大日期标签；**Gitee 优先**，失败才回退 GitHub；两源皆败抛异常。
      *
-     * 全程受 [TOTAL_BUDGET_MS] 总预算约束：没有它时「GitHub 超时 + 回退 + Gitee 再超时」
+     * 顺序不可颠倒（统一规范 6.9）：GitHub 在国内网络常不可达，把它排前面会让绝大多数用户
+     * 白等一轮超时、甚至直接落到「网络异常」，防护再完整也等于没有。
+     *
+     * 全程受 [TOTAL_BUDGET_MS] 总预算约束：没有它时「一源超时 + 回退 + 另一源再超时」
      * 会把调用方的看门狗远远甩在后面（见该常量的说明）。
      */
     private fun fetchLatest(): Latest {
         val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
-        fetchFromGithub(deadline)?.let { return it }
-        Diagnostics.i(TAG, "GitHub 源无可用标签，回退 Gitee")
         fetchFromGitee(deadline)?.let { return it }
+        Diagnostics.i(TAG, "Gitee 源无可用标签，回退 GitHub")
+        fetchFromGithub(deadline)?.let { return it }
         throw IOException("all update sources unreachable")
     }
 
