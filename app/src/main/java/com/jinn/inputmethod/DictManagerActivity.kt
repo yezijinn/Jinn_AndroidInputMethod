@@ -751,11 +751,19 @@ class DictManagerActivity : Activity() {
             // 本线程做「网络读 + 持续磁盘写」最长可活 600s（callTimeout），默认优先级会与前台输入争 CPU/IO。
             // 放在 for 之前，不影响 downloading 的复位时机。
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            // MEM-11：线程只持**进程级**引用（应用上下文 / 静态客户端 / 目标目录）。
+            // 原先直接用 `filesDir`、成员函数 `fetchToFile` / `copyCapped` 与 `runOnUiThread`，
+            // 匿名线程据此把整个 Activity（含整棵视图树）强引用到下载结束 —— 最长 600s（callTimeout），
+            // 用户「点了下载就返回」时旧实例一直回收不掉。收尾改静态 Handler：页面在不在，由
+            // [activePage] 弱引用在**收尾那一刻**判定（与原先同语义，但不再要求发起者还活着）。
+            val app = applicationContext
+            val dir = File(app.filesDir, PinyinEngine.OPT_DICT_DIR)
+            val client = httpClient
             var lastError = "未知错误"
             var ok = false
             // 空间预检（L-799）：下载前先确认磁盘可写、容量够得下，避免写到一半 ENOSPC
             // 才收到英文 IOException。需要量 = 压缩包 ×2 + 8MB 余量（解压/校验/移动都要临时空间）。
-            val stat = runCatching { android.os.StatFs(filesDir.absolutePath) }.getOrNull()
+            val stat = runCatching { android.os.StatFs(dir.absolutePath) }.getOrNull()
             val freeBytes = stat?.availableBytes ?: Long.MAX_VALUE
             val needBytes = (dict.sizeMb * 1024 * 1024 * 2).toLong() + 8L * 1024 * 1024
             if (freeBytes < needBytes) {
@@ -764,7 +772,7 @@ class DictManagerActivity : Activity() {
             } else {
             for (url in dict.urls) {
                 runCatching {
-                    val len = fetchToFile(url, dict.fileName, dict.checksum)
+                    val len = fetchToFile(client, dir, url, dict.fileName, dict.checksum)
                     Diagnostics.i(TAG, "分类词库下载成功: ${dict.fileName} ($len B) url=$url")
                     ok = true
                 }.onFailure {
@@ -774,7 +782,7 @@ class DictManagerActivity : Activity() {
                 if (ok) break
             }
             }
-            runOnUiThread {
+            Handler(Looper.getMainLooper()).post {
                 downloading = null
                 // 刷新「当前活着的页面」而不是发起下载的那个实例：下载期间用户可能旋转或
                 // 关闭重进本页，旧实例上的刷新会写进已 detach 的 View（原实现直接 return），
@@ -791,7 +799,7 @@ class DictManagerActivity : Activity() {
                     // 进程若在此期间自然结束，IME 重建时会直接加载 `dicts/` ⇒ 标记无需持久化。
                     Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），不重启（等用户回到本页）")
                     if (ok) pendingDictRestart = true
-                    return@runOnUiThread
+                    return@post
                 }
                 val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
                 else page.getString(R.string.dict_download_failed, lastError)
@@ -821,57 +829,6 @@ class DictManagerActivity : Activity() {
      * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时绝不改名，
      * 旧版本（若存在）保持不变，临时文件立即删除。
      */
-    private fun fetchToFile(url: String, fileName: String, checksum: String): Long {
-        val dir = File(filesDir, PinyinEngine.OPT_DICT_DIR).apply { mkdirs() }
-        val tmp = File(dir, OptionalDicts.tempNameOf(fileName))
-        val dst = File(dir, fileName)
-
-        try {
-            httpClient.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
-                if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                val body = resp.body ?: error("响应为空")
-                body.byteStream().use { input ->
-                    tmp.outputStream().use { out -> copyCapped(input, out) }
-                }
-            }
-            // 校验必须在改名之前：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。
-            val actual = OptionalDicts.sha256Of(tmp)
-            if (!OptionalDicts.matchesChecksum(actual, checksum)) {
-                error("文件校验失败（期望 $checksum，实际 $actual），已丢弃")
-            }
-            // 不先删旧包：POSIX 的 rename(2) 本身就是原子替换（目标已存在也直接覆盖），
-            // 而「先删 → 改名」在改名失败时会让用户同时失去旧包与新包
-            // （`UserFrequency.writeAtomically` 的注释把「先删目标」列为反例，同一形态）
-            if (!tmp.renameTo(dst)) error("写入失败")
-            return dst.length()
-        } catch (t: Throwable) {
-            // 半截文件清掉：否则一次失败就在用户存储里留 6MB 垃圾
-            runCatching { if (tmp.exists()) tmp.delete() }
-                .onFailure { Diagnostics.w(TAG, "清理临时文件失败: ${it.message}") }
-            throw t
-        }
-    }
-
-    /**
-     * 带上限的流拷贝，超过 [MAX_DOWNLOAD_BYTES] 立即抛错（临时文件由调用方清理）。
-     *
-     * 下载 URL 是固定的 Release 附件，但 `followRedirects(true)` 会把请求交给目标主机
-     * 继续指路：没有上限时，一个「一直有数据、永不结束」的响应足以写满用户存储。
-     * 上限取现役最大包（6.36MB）的约 10 倍，正常包碰不到线。
-     */
-    private fun copyCapped(input: java.io.InputStream, out: java.io.OutputStream) {
-        val buf = ByteArray(DEFAULT_BUFFER_SIZE)
-        var total = 0L
-        while (true) {
-            val n = input.read(buf)
-            if (n <= 0) break
-            total += n
-            if (total > MAX_DOWNLOAD_BYTES) {
-                error("响应超过上限 ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB，已中止")
-            }
-            out.write(buf, 0, n)
-        }
-    }
 
     /**
      * 删除已装词库。
@@ -1031,7 +988,6 @@ class DictManagerActivity : Activity() {
         const val TEXT_INDEX_PENDING =
             "索引未就绪：空闲时（息屏或收起键盘后）自动装载；若长时间没变化，请删除该包后重新下载。"
 
-        const val TAG = "DictManager"
 
         /**
          * 词库下载用的共享客户端（懒加载单例）。
@@ -1074,6 +1030,63 @@ class DictManagerActivity : Activity() {
         private var activePage: WeakReference<DictManagerActivity>? = null
 
         /** 单个词库包的下载上限（字节）：现役最大包 4.21MB（第 4 部分），取 64MB 留足余量 */
-        const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+    }
+}
+
+
+// ── 词库下载的文件级实现（MEM-11）────────────────────────────
+// 搬出类体的原因：下载线程不能碰任何实例成员，否则匿名线程会把 Activity 一起持久化；
+// 这些常量原先在 `private companion object` 里，顶层函数看不到，故一并搬出（同文件可见性不变）。
+private const val TAG = "DictManager"
+private const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File, url: String, fileName: String, checksum: String): Long {
+    dir.mkdirs()
+    val tmp = File(dir, OptionalDicts.tempNameOf(fileName))
+    val dst = File(dir, fileName)
+
+    try {
+        client.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val body = resp.body ?: error("响应为空")
+            body.byteStream().use { input ->
+                tmp.outputStream().use { out -> copyCapped(input, out) }
+            }
+        }
+        // 校验必须在改名之前：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。
+        val actual = OptionalDicts.sha256Of(tmp)
+        if (!OptionalDicts.matchesChecksum(actual, checksum)) {
+            error("文件校验失败（期望 $checksum，实际 $actual），已丢弃")
+        }
+        // 不先删旧包：POSIX 的 rename(2) 本身就是原子替换（目标已存在也直接覆盖），
+        // 而「先删 → 改名」在改名失败时会让用户同时失去旧包与新包
+        // （`UserFrequency.writeAtomically` 的注释把「先删目标」列为反例，同一形态）
+        if (!tmp.renameTo(dst)) error("写入失败")
+        return dst.length()
+    } catch (t: Throwable) {
+        // 半截文件清掉：否则一次失败就在用户存储里留 6MB 垃圾
+        runCatching { if (tmp.exists()) tmp.delete() }
+            .onFailure { Diagnostics.w(TAG, "清理临时文件失败: ${it.message}") }
+        throw t
+    }
+}
+
+/**
+ * 带上限的流拷贝，超过 [MAX_DOWNLOAD_BYTES] 立即抛错（临时文件由调用方清理）。
+ *
+ * 下载 URL 是固定的 Release 附件，但 `followRedirects(true)` 会把请求交给目标主机
+ * 继续指路：没有上限时，一个「一直有数据、永不结束」的响应足以写满用户存储。
+ * 上限取现役最大包（6.36MB）的约 10 倍，正常包碰不到线。
+ */
+private fun copyCapped(input: java.io.InputStream, out: java.io.OutputStream) {
+    val buf = ByteArray(DEFAULT_BUFFER_SIZE)
+    var total = 0L
+    while (true) {
+        val n = input.read(buf)
+        if (n <= 0) break
+        total += n
+        if (total > MAX_DOWNLOAD_BYTES) {
+            error("响应超过上限 ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB，已中止")
+        }
+        out.write(buf, 0, n)
     }
 }

@@ -287,7 +287,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         sourcePackage: String,
         sourceAppName: String,
         maxItems: Int,
-        category: String = "OTHER",
+        // MEM-28①：分类只在**插入分支**算（null = 还没算）。同一段内容分类结果恒定（纯函数），
+        // 重复复制（最常见路径）沿用库里那一行的值即可 —— 11 条正则 × 最多 8KB 的扫描不必每次做。
+        category: String? = null,
         isFavorite: Boolean = false,
     ): Long {
         if (content.isBlank()) return -1
@@ -309,7 +311,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             values.put("created_at", System.currentTimeMillis())
             values.put("source_package", sourcePackage)
             values.put("source_app_name", sourceAppName)
-            values.put("category", category)
+            // 没显式给分类就不动这一列（判重命中 = 同内容已在库，值必然一致；重分类另走 reclassifyAll）
+            if (category != null) values.put("category", category)
             val rows = writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(existingId.toString()))
             if (rows > 0) {
                 if (unreadable) {
@@ -324,6 +327,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
         // 到这一步才加密：上面的判重分支不需要密文（BUG.md L-182）
         val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
+        // 也是到这一步才分类（MEM-28①）：判重命中走不到这里，重复复制就不必白跑 11 条正则
+        val resolvedCategory = category ?: ClipboardClassifier.classify(content)
         val values = ContentValues().apply {
             put("encrypted_content", encrypted)
             put("content_type", contentType)
@@ -331,7 +336,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             put("source_package", sourcePackage)
             put("source_app_name", sourceAppName)
             put("content_hash", hash)
-            put("category", category)
+            put("category", resolvedCategory)
             put("is_favorite", if (isFavorite) 1 else 0)
         }
         val id = writableDatabase.insert(TABLE_ITEMS, null, values)

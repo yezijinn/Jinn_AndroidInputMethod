@@ -765,7 +765,56 @@ class RecentFixesRegressionTest {
             "fetchToFile 里不得 new OkHttpClient：每个 URL（含重试）各建一套连接池与调度线程池",
             body.contains("OkHttpClient.Builder()"),
         )
-        assertTrue("必须用共享单例", body.contains("httpClient.newCall"))
+        // MEM-11 起 `fetchToFile` 是**文件级**函数（线程不能碰实例成员），客户端与目录由调用方传入：
+        // 「复用同一个客户端」因此看两处 —— 下载线程从共享单例取（`val client = httpClient`），
+        // 且函数内用参数调 newCall。整条链路仍不得自建 OkHttpClient。
+        assertTrue("必须用共享单例", body.contains("client.newCall"))
+        val dictThread = blockAfter(codeOf("DictManagerActivity.kt"), "private fun download(")
+        assertTrue("下载线程必须取自共享单例", dictThread.contains("val client = httpClient"))
+        assertFalse("下载链路不得自建 OkHttpClient", dictThread.contains("OkHttpClient.Builder()"))
+    }
+
+    /**
+     * 内存与热路径两处「别再白付」不得退回去（2026-10-09，批 6 的 MEM-11 / MEM-28）。
+     *
+     * MEM-11：下载线程原先经 `filesDir` / 成员函数 / `runOnUiThread` 隐式持住整个 Activity，
+     *   用户「点下载就返回」时旧实例连同视图树要等 callTimeout（600s）才可回收；现在只持
+     *   应用上下文 / 静态客户端 / 目标目录，收尾走静态 Handler + 弱引用判活。
+     * MEM-28：剪贴板重复复制（最常见路径）不再白跑 11 条正则分类与来源应用 IPC。
+     */
+    @Test
+    fun `下载线程不得持 Activity 且复制热路径不得重复白付`() {
+        val dict = codeOf("DictManagerActivity.kt")
+        assertTrue(
+            "下载线程不得直接摸 filesDir（那会把 Activity 一起捕获）",
+            dict.contains("val dir = File(app.filesDir, PinyinEngine.OPT_DICT_DIR)"),
+        )
+        assertTrue(
+            "收尾必须走静态 Handler + 弱引用判活",
+            dict.contains("Handler(Looper.getMainLooper()).post {") && dict.contains("activePage?.get()"),
+        )
+        assertTrue(
+            "下载实现必须是文件级函数（成员函数会被线程捕获）",
+            dict.contains("private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File,"),
+        )
+
+        val ctl = codeOf("ClipboardController.kt")
+        assertTrue(
+            "分类必须下沉到 upsert 的插入分支（复制路径不得再调 classify）",
+            "ClipboardClassifier.classify" !in ctl,
+        )
+        assertTrue("来源应用名必须有进程内 memo", "appNameMemo[pkg]?.let { return it }" in ctl)
+        assertTrue("限长检查必须先做字符数快筛", "text.length.toLong() * 3L <= limit.toLong()" in ctl)
+
+        val db = codeOf("ClipboardDb.kt")
+        assertTrue(
+            "插入分支才算分类",
+            "val resolvedCategory = category ?: ClipboardClassifier.classify(content)" in db,
+        )
+        assertTrue(
+            "判重分支不得覆盖已有分类",
+            "if (category != null) values.put(\"category\", category)" in db,
+        )
     }
 
     @Test
@@ -3088,7 +3137,8 @@ class RecentFixesRegressionTest {
             // （自定义词库导入的回调），按全文第一个取会锚到那段、判据随锚点漂走
             val cb = blockAfter(
                 blockAfter(codeOf("DictManagerActivity.kt"), "private fun download("),
-                "runOnUiThread {",
+                // MEM-11 起收尾走静态 Handler（线程不再持有 Activity），锚点随之改名；判据不变
+                "Handler(Looper.getMainLooper()).post {",
             )
             val caught = cb.indexOf("runCatching")
             val refresh = cb.indexOf("page.refreshList()")
@@ -3165,7 +3215,7 @@ class RecentFixesRegressionTest {
         run {
             val dict = codeOf("DictManagerActivity.kt")
             // 与 L-800 同一锚点口径：取 download 函数体内那个回调，别锚到自定义词库导入的回调
-            val cb = blockAfter(blockAfter(dict, "private fun download("), "runOnUiThread {")
+            val cb = blockAfter(blockAfter(dict, "private fun download("), "Handler(Looper.getMainLooper()).post {")
             val refresh = cb.indexOf("page.refreshList()")
             val restart = cb.indexOf("page.restartImeForDict()")
             val caught = cb.indexOf(".onFailure")

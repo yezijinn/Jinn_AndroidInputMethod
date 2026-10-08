@@ -477,6 +477,10 @@ object ClipboardStore {
     fun exceedsItemLimit(text: String, limit: Int = MAX_ITEM_BYTES): Boolean {
         if (limit <= 0) return false
         if (text.length > limit) return true
+        // 第二道快筛（MEM-28③）：UTF-8 每字符最多 3 字节（BMP 之外是代理对，折算 2 字节/字符）
+        // ⇒ 3×字符数 ≤ 上限时字节数必然也在上限内，连编码都不必做；
+        // 只有落在 (上限/3, 上限] 区间的文本才真去编码（那一次是必须付的）。
+        if (text.length.toLong() * 3L <= limit.toLong()) return false
         return text.toByteArray(Charsets.UTF_8).size > limit
     }
 
@@ -538,20 +542,20 @@ object ClipboardStore {
             return null
         }
         val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
-        // 自动分类（URL / NUMBER / OTHER）；隐私分类绝不自动判断
-        val category = ClipboardClassifier.classify(text)
+        // 自动分类（URL / NUMBER / OTHER）下沉到 `ClipboardDb.upsert` 的**插入分支**（MEM-28①）：
+        // 这是每次复制都走的路径，而判重命中（重复复制，最常见）用不到新分类 —— 库里那一行的值
+        // 就是同一段内容的分类结果（纯函数）。隐私分类绝不自动判断的口径不变。
         val id = db.upsert(
             text, "text", sourcePackage, appName, maxItems,
-            category = category,
         )
         // 日志必须写在入库之后：upsert 返回 -1 表示加密/写库失败（`ClipboardDb.upsert`），
         // 先记「已保存」会把失败伪装成成功，排查时结论正好相反
         if (id > 0) {
             // MEM-14d：成功分支降为 V —— 这是「每次复制一条」的事件（连打测试时几十条/分钟），
             // 用 i 级会逐条落盘并随诊断包外传；失败分支保持 W（那才是要查的事）。
-            Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length} (分类=$category)")
+            Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length}")
         } else {
-            Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length} (分类=$category)")
+            Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length}")
         }
         return id
     }
@@ -559,9 +563,26 @@ object ClipboardStore {
     private fun readMaxItems(context: Context): Int =
         ClipboardPrefs.of(context).maxItems
 
-    private fun guessAppName(context: Context, pkg: String): String = runCatching {
-        val pm = context.packageManager
-        val appInfo = pm.getApplicationInfo(pkg, 0)
-        pm.getApplicationLabel(appInfo).toString()
-    }.getOrElse { pkg.substringAfterLast('.') }
+    /**
+ * 来源应用名的进程内缓存（MEM-28②）。
+ *
+ * `getApplicationInfo` 是一次**跨进程查询**，而连续复制往往来自同一个应用（浏览器里连着复制几段链接）。
+ * 标签只在应用安装 / 改名时才变，进程重启即失效，够用。容量给 8：来源包只有个位数（前台应用们），
+ * 超了就不再记新的 —— 宁可不缓存，也不为 8 个字符串引入淘汰逻辑。
+ */
+private val appNameMemo = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+/** [appNameMemo] 的容量上限 */
+private const val APP_NAME_MEMO_MAX = 8
+
+private fun guessAppName(context: Context, pkg: String): String {
+        appNameMemo[pkg]?.let { return it }
+        val name = runCatching {
+            val pm = context.packageManager
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        }.getOrElse { pkg.substringAfterLast('.') }
+        if (appNameMemo.size < APP_NAME_MEMO_MAX) appNameMemo[pkg] = name
+        return name
+    }
 }
