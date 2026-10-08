@@ -385,6 +385,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 方向面板的识别标记：恢复字母区时按它清理残留面板（不依赖子视图下标） */
     private val DIRECTION_PANEL_TAG = "jinn_direction_panel"
 
+    /** 字母区行数（「键高」只作用于这三行：10 + 9 + 9 = 28 键） */
+    private val LETTER_ROW_COUNT = 3
+
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
@@ -984,6 +987,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applyKeyTransparency()
         applySkinToKeys()
         applyKeyAppearance()
+        // 键面字形也要跟（「26 键常显大写」开关在现场切换；圆角 / 间隙刷新后 shift 键背景也走这里重建）
+        refreshKeyLabels()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
         // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
         // 6 个按钮仍是旧档）。
@@ -1023,11 +1028,42 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshBackspaceBackground()
         applyKeyInsets(btnShift)
         applyKeyInsets(btnBackspace)
-        val desc = "圆角=${KeyAppearance.formatDp(p.keyCornerDp)} 间隙=${KeyAppearance.formatDp(p.keyGapDp)}"
+        applyLetterRowHeight(p.keyHeightDp, density)
+        val desc = "圆角=${KeyAppearance.formatDp(p.keyCornerDp)} 间隙=${KeyAppearance.formatDp(p.keyGapDp)}" +
+            " 键高=${KeyAppearance.formatDp(p.keyHeightDp)}"
         if (desc != lastAppearanceDesc) {
             lastAppearanceDesc = desc
             Diagnostics.i(TAG, "键盘外观: $desc")
         }
+    }
+
+    /**
+     * 三行字母键的高度（键盘外观页的「键高」拖动条，定义域见 [KeyAppearance]）。
+     *
+     * 改的是三个**行容器**的 LayoutParams，而不是逐个键：键自己都是 `match_parent`，行高定全行，
+     * 26 键区（10 + 9 + 9 = 28 键）自然同高。
+     *
+     * 两个必须守住的点：
+     *  - **跳过方向面板**：它是运行时 `addView` 进字母区的（带 [DIRECTION_PANEL_TAG]），出现时三行已经 GONE；
+     *    把它当字母行改高度，九宫格与字母区就会各占一个高度。
+     *  - **面板高度不跟着变**：剪贴板 / 图库面板固定 162dp×2（列表内容 + 用户验证过的方案）；
+     *    跟随键高在最大档（80dp ⇒ 面板 456dp）会把小屏手机的键盘顶出可视区。
+     */
+    private fun applyLetterRowHeight(keyHeightDp: Float, density: Float) {
+        val px = (keyHeightDp * density).roundToInt()
+        var rows = 0
+        for (i in 0 until viewLetters.childCount) {
+            val row = viewLetters.getChildAt(i) ?: continue
+            if (row.tag == DIRECTION_PANEL_TAG) continue
+            row.layoutParams = (row.layoutParams ?: LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                px,
+            )).apply { height = px }
+            rows++
+            if (rows >= LETTER_ROW_COUNT) return
+        }
+        // 不足三行说明布局被改坏了：记一条 W，别静默（否则用户拖动滑杆「没反应」时无从查起）
+        Diagnostics.w(TAG, "键高: 只找到 $rows 行字母键（预期 $LETTER_ROW_COUNT）")
     }
 
     /**
@@ -2529,8 +2565,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshKeyLabels() {
-        // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高
-        val showUpper = capsMode && layer == LAYER_LETTER
+        // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高。
+        // 其次看外观页的「26 键常显大写」：只改字形、不改上屏（拼音串本来就是小写），
+        // 但**英文模式除外** —— 那里字母就是正文，显示大写而按出来是小写会前后不一致。
+        val showUpper = layer == LAYER_LETTER && (capsMode || (prefs.keyLetterUppercase && !englishMode))
         // 全拼模式：字母大字铺满；双拼模式：小字顶置 + 韵母提示；双拼关掉键面提示后同样铺满。
         // 大写键激活：统一全拼大字铺满。
         // 小写英文：统一「双拼切英文」的小字顶置样式（不随来源全拼/双拼变化）。
@@ -3640,9 +3678,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        // 3 行均分字母区总高（原 3 行字母 54dp×3=162dp）
-        // 每行按钮高 = (162dp - 行间距)/3，行间距 2dp×2
-        val totalDp = 162
+        // 3 行均分字母区总高：跟随「键高」拖动条 —— 九宫格顶替字母区，高度不一致的话
+        // 切到方向面板时键盘会突然变矮或变高（原为固定的 3 × 54dp = 162dp）。
+        // 每行按钮高 = (总高 - 行间距)/3，行间距 2dp×2
+        val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT
         val gapDp = 2
         val rowH = (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "ensureDirectionPanel: rowH=$rowH")

@@ -413,6 +413,32 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
 
     /**
+     * 26 键区三行字母键的**单行高度**（dp），见 [KeyAppearance] 的键高段。
+     *
+     * 定义域 40~80dp、默认 54dp（= 布局原始高度）；getter 也做一次钳位（与圆角 / 间隙 / 透明度同款）：
+     * 越界值会直达 `layoutParams.height` —— 过小把三行压成一条线、过大把键盘顶出屏幕。
+     *
+     * 只作用于字母三行（28 键）与「方向」九宫格（它顶替字母区，跟随同高）；
+     * 底栏、候选栏与剪贴板 / 图库面板各有自己的高度规则，不随本项变化。
+     */
+    var keyHeightDp: Float
+        get() = KeyAppearance.clampKeyHeightDp(
+            floatOr(KEY_KEY_HEIGHT_DP, KeyAppearance.DEFAULT_KEY_HEIGHT_DP)
+        )
+        set(value) = sp.edit { putFloat(KEY_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(value)) }
+
+    /**
+     * 拼音输入时 26 键是否**常显大写字母**（默认关 = 保持历史观感的小写）。
+     *
+     * 只改键面字形，不改上屏内容：按 A 键上屏的仍是小写 a（拼音串本来就是小写），
+     * 与「大写锁定」（capsMode，真上屏大写）是两件事。英文模式不套用本项 ——
+     * 那里字母就是正文，显示大写而上屏小写会变成「看到的与打出来的不一致」。
+     */
+    var keyLetterUppercase: Boolean
+        get() = boolOr(KEY_KEY_LETTER_UPPERCASE, false)
+        set(value) = sp.edit { putBoolean(KEY_KEY_LETTER_UPPERCASE, value) }
+
+    /**
      * 候选栏字距（dp）：**相邻两个候选词之间的水平间隔**（只影响水平方向，行高不动）。
      *
      * 与按键「间隙」同语义：实现上每个候选左右各内缩本值的一半（见 PinyinKeyboardView
@@ -1316,6 +1342,8 @@ class Prefs(context: Context) {
         put(KEY_OPENAI_MODELS_CACHE, openAiModelsCache)
         put(KEY_KEY_CORNER_DP, keyCornerDp)
         put(KEY_KEY_GAP_DP, keyGapDp)
+        put(KEY_KEY_HEIGHT_DP, keyHeightDp)
+        put(KEY_KEY_LETTER_UPPERCASE, keyLetterUppercase)
         put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
         put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
@@ -1477,6 +1505,8 @@ class Prefs(context: Context) {
                 KEY_OPENAI_MODELS_CACHE -> asString(v)?.let { openAiModelsCache = it; ok() } ?: bad(key)
                 KEY_KEY_CORNER_DP -> asFloat(v)?.let { keyCornerDp = it; ok() } ?: bad(key)
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
+                KEY_KEY_HEIGHT_DP -> asFloat(v)?.let { keyHeightDp = it; ok() } ?: bad(key)
+                KEY_KEY_LETTER_UPPERCASE -> asBool(v)?.let { keyLetterUppercase = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_SPACING_DP -> asFloat(v)?.let { candidateSpacingDp = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
@@ -1754,6 +1784,8 @@ class Prefs(context: Context) {
         internal const val TIMEOUT_MAX_SEC = 300
         private const val KEY_KEY_CORNER_DP = "key_corner_dp"
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
+        private const val KEY_KEY_HEIGHT_DP = "key_height_dp"
+        private const val KEY_KEY_LETTER_UPPERCASE = "key_letter_uppercase"
         private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"

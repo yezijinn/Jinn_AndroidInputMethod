@@ -76,7 +76,8 @@ class PrefsBackupCoverageTest {
         //                        导入侧仍原样还原，由键盘面板检测并提示重绑）
         // 2026-10-07 起 85 → 86：新增「图库快贴自动返回」1 键（面板里那个开关的用户偏好）
         // 2026-10-07 起 86 → 88：新增「图库缩略图每行张数」「图库缩略图行高」2 键（「布局」调节）
-        assertEquals("提取到的键常量应是 88 个（改键数请同步本断言）", 88, keyConstants.size)
+        // 2026-10-09 起 88 → 90：新增「键高」「26 键常显大写」2 键（外观参数；换机要带走）
+        assertEquals("提取到的键常量应是 90 个（改键数请同步本断言）", 90, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")

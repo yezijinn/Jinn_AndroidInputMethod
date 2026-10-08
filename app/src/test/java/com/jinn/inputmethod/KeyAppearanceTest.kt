@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 键盘外观参数（圆角 / 间隙）定义域测试，纯 JVM。
+ * 键盘外观参数（圆角 / 间隙 / 键高）定义域测试，纯 JVM。
  *
  * 这些值会被三方共用：设置页滑杆、[Prefs] 持久化、[PinyinKeyboardView] 换算成像素，
  * 任何一处越界都会直接进到 `drawRoundRect`（圆角为 NaN 时整个键面会画不出来，
@@ -34,6 +34,22 @@ class KeyAppearanceTest {
     }
 
     /**
+     * 键高（「键高」滑动条）：定义域 40~80dp、步进 2dp。
+     *
+     * 上下界是「还能用」的边界而不是美观边界：下界以下装不下韵母提示、上界以上 3 行会把键盘顶出小屏。
+     */
+    @Test
+    fun keyHeight_clampsToDomainAndSnapsToStep() {
+        assertEquals(KeyAppearance.MIN_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(-10f), 0f)
+        assertEquals(KeyAppearance.MAX_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(240f), 0f)
+        // 奇数对齐到最近的一格（步进 2dp）：53 → 54，55 → 56
+        assertEquals(54f, KeyAppearance.clampKeyHeightDp(53f), 0f)
+        assertEquals(56f, KeyAppearance.clampKeyHeightDp(55f), 0f)
+        // 越界优先于步进：39 落到下界 40（下界本身就在网格上）
+        assertEquals(40f, KeyAppearance.clampKeyHeightDp(39f), 0f)
+    }
+
+    /**
      * NaN / Infinity 必须退回默认值：`coerceIn` 对 NaN 的比较恒为 false，
      * 直接放行会让 NaN 一路传到绘制层。
      */
@@ -44,6 +60,8 @@ class KeyAppearanceTest {
         assertEquals(KeyAppearance.DEFAULT_GAP_DP, KeyAppearance.clampGapDp(Float.NaN), 0f)
         assertEquals(KeyAppearance.DEFAULT_GAP_DP, KeyAppearance.clampGapDp(Float.NEGATIVE_INFINITY), 0f)
         assertEquals(KeyAppearance.DEFAULT_SPACING_DP, KeyAppearance.clampSpacingDp(Float.NaN), 0f)
+        assertEquals(KeyAppearance.DEFAULT_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(Float.NaN), 0f)
+        assertEquals(KeyAppearance.DEFAULT_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(Float.NEGATIVE_INFINITY), 0f)
     }
 
     /**
@@ -66,6 +84,10 @@ class KeyAppearanceTest {
         assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
         // 字距默认 10dp（2026-10-02 定）
         assertEquals(10f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
+        // 键高默认 54dp：必须与 keyboard_pinyin.xml 三行容器的 54dp 一致，否则「没动过滑杆」的用户
+        // 在首次 configure() 后键盘会莫名变高/变矮（这条把两者钉在一起）
+        assertEquals(54f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
+        assertTrue(KeyAppearance.DEFAULT_KEY_HEIGHT_DP in KeyAppearance.MIN_KEY_HEIGHT_DP..KeyAppearance.MAX_KEY_HEIGHT_DP)
         assertTrue(KeyAppearance.DEFAULT_CORNER_DP in KeyAppearance.MIN_CORNER_DP..KeyAppearance.MAX_CORNER_DP)
         assertTrue(KeyAppearance.DEFAULT_GAP_DP in KeyAppearance.MIN_GAP_DP..KeyAppearance.MAX_GAP_DP)
         assertTrue(KeyAppearance.DEFAULT_SPACING_DP in KeyAppearance.MIN_SPACING_DP..KeyAppearance.MAX_SPACING_DP)
@@ -73,6 +95,7 @@ class KeyAppearanceTest {
         assertEquals(KeyAppearance.DEFAULT_CORNER_DP, KeyAppearance.clampCornerDp(KeyAppearance.DEFAULT_CORNER_DP), 0f)
         assertEquals(KeyAppearance.DEFAULT_GAP_DP, KeyAppearance.clampGapDp(KeyAppearance.DEFAULT_GAP_DP), 0f)
         assertEquals(KeyAppearance.DEFAULT_SPACING_DP, KeyAppearance.clampSpacingDp(KeyAppearance.DEFAULT_SPACING_DP), 0f)
+        assertEquals(KeyAppearance.DEFAULT_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(KeyAppearance.DEFAULT_KEY_HEIGHT_DP), 0f)
     }
 
     /** SeekBar 上限 = 定义域跨度 / 步进（圆角 24 格 × 1dp，间隙 16 格 × 0.5dp，字距 25 格 × 1dp） */
@@ -81,6 +104,7 @@ class KeyAppearanceTest {
         assertEquals(24, KeyAppearance.CORNER_PROGRESS_MAX)
         assertEquals(16, KeyAppearance.GAP_PROGRESS_MAX)
         assertEquals(25, KeyAppearance.SPACING_PROGRESS_MAX)
+        assertEquals(20, KeyAppearance.KEY_HEIGHT_PROGRESS_MAX)
         assertEquals(
             KeyAppearance.MAX_CORNER_DP,
             KeyAppearance.cornerProgressToDp(KeyAppearance.CORNER_PROGRESS_MAX),
@@ -94,6 +118,11 @@ class KeyAppearanceTest {
         assertEquals(
             KeyAppearance.MAX_SPACING_DP,
             KeyAppearance.spacingProgressToDp(KeyAppearance.SPACING_PROGRESS_MAX),
+            0f,
+        )
+        assertEquals(
+            KeyAppearance.MAX_KEY_HEIGHT_DP,
+            KeyAppearance.keyHeightProgressToDp(KeyAppearance.KEY_HEIGHT_PROGRESS_MAX),
             0f,
         )
         // 往返换算不漂：进度 → dp → 进度 必须回到原值（整数步进，不应有累积误差）
@@ -120,12 +149,23 @@ class KeyAppearanceTest {
         }
     }
 
+    /** 键高：进度 ↔ dp 全量往返不漂移（步进 2dp，整数运算不应有累积误差） */
+    @Test
+    fun keyHeightProgress_roundTripIsStable() {
+        for (p in 0..KeyAppearance.KEY_HEIGHT_PROGRESS_MAX) {
+            val dp = KeyAppearance.keyHeightProgressToDp(p)
+            assertEquals("进度 $p 往返", p, KeyAppearance.keyHeightDpToProgress(dp))
+        }
+    }
+
     @Test
     fun progress_outOfRangeIsClamped() {
         assertEquals(KeyAppearance.MAX_CORNER_DP, KeyAppearance.cornerProgressToDp(999), 0f)
         assertEquals(KeyAppearance.MIN_CORNER_DP, KeyAppearance.cornerProgressToDp(-3), 0f)
         assertEquals(KeyAppearance.MAX_GAP_DP, KeyAppearance.gapProgressToDp(999), 0f)
         assertEquals(KeyAppearance.MIN_GAP_DP, KeyAppearance.gapProgressToDp(-1), 0f)
+        assertEquals(KeyAppearance.MAX_KEY_HEIGHT_DP, KeyAppearance.keyHeightProgressToDp(999), 0f)
+        assertEquals(KeyAppearance.MIN_KEY_HEIGHT_DP, KeyAppearance.keyHeightProgressToDp(-2), 0f)
     }
 
     @Test

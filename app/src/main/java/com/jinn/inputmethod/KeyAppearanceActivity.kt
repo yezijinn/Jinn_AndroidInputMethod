@@ -11,6 +11,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 
 /**
@@ -98,6 +99,31 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 键高：三行字母键（10 + 9 + 9 = 28 键）的单行高度。标题与数值同「字距」走代码下发
+        // （strings.xml 默认禁改）；定义域与换算一律取自 KeyAppearance，本页不写死数值。
+        val labelKeyHeight = findViewById<TextView>(R.id.label_key_height)
+        val seekKeyHeight = findViewById<SeekBar>(R.id.seek_key_height)
+        val textKeyHeight = findViewById<TextView>(R.id.text_key_height)
+        labelKeyHeight.text = TEXT_KEY_HEIGHT_TITLE
+        seekKeyHeight.max = KeyAppearance.KEY_HEIGHT_PROGRESS_MAX
+        seekKeyHeight.progress = KeyAppearance.keyHeightDpToProgress(prefs.keyHeightDp)
+        textKeyHeight.text = KeyAppearance.formatDp(prefs.keyHeightDp)
+
+        seekKeyHeight.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = KeyAppearance.keyHeightProgressToDp(progress)
+                prefs.keyHeightDp = dp
+                textKeyHeight.text = KeyAppearance.formatDp(dp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "键高: ${KeyAppearance.formatDp(prefs.keyHeightDp)}")
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
         // 字距：候选栏里相邻候选词之间的水平间隔（标题在代码里下发 —— strings.xml 默认禁改，
         // 本页其余三行的标题仍在 strings.xml，属历史遗留）
         val labelSpacing = findViewById<TextView>(R.id.label_candidate_spacing)
@@ -174,6 +200,18 @@ class KeyAppearanceActivity : Activity() {
                 JinnIme.onKeyAppearanceChanged()
             }
         })
+
+        // 26 键常显大写：只改键面字形（拼音模式），不改上屏；文案同样代码下发（strings.xml 默认禁改）。
+        // 开关在切换瞬间落盘并即时刷键盘 —— 与滑杆同一套即时生效口径（JinnIme.onKeyAppearanceChanged）。
+        val switchLetterUpper = findViewById<Switch>(R.id.switch_letter_uppercase)
+        switchLetterUpper.text = TEXT_LETTER_UPPER_TITLE
+        findViewById<TextView>(R.id.text_letter_upper_desc).text = TEXT_LETTER_UPPER_DESC
+        switchLetterUpper.isChecked = prefs.keyLetterUppercase
+        switchLetterUpper.setOnCheckedChangeListener { _, checked ->
+            prefs.keyLetterUppercase = checked
+            Diagnostics.i(TAG, "26 键大写显示: $checked")
+            JinnIme.onKeyAppearanceChanged()
+        }
 
         initSkinSelector(prefs)
     }
@@ -351,6 +389,18 @@ class KeyAppearanceActivity : Activity() {
 
         /** 「候选字号」项的标题文案（同上：写在代码里，不进 strings.xml） */
         const val TEXT_TEXT_SIZE_TITLE = "候选字号"
+
+    /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
+    const val TEXT_KEY_HEIGHT_TITLE = "键高"
+
+    /**
+     * 「26 键常显大写」开关的标题与说明。
+     *
+     * 说明里写清「上屏内容不变」：这个开关改的是键面字形，很多用户会以为打开后打出来就是大写，
+     * 而拼音串本来就是小写（真正要上屏大写另有「大写锁定」键）。
+     */
+    const val TEXT_LETTER_UPPER_TITLE = "26 键显示大写字母"
+    const val TEXT_LETTER_UPPER_DESC = "中文输入时键面显示 A~Z（上屏内容不变）"
 
         /** 皮肤选择器每行个数（每段 16 套排成两行八个，两段共四行） */
         const val SKINS_PER_ROW = 8

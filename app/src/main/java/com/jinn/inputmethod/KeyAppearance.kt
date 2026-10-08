@@ -4,7 +4,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * 26 键区（3 行 28 键）的统一外观参数：按键圆角半径 + 按键间隙。
+ * 26 键区（3 行 28 键）的统一外观参数：按键圆角半径 + 按键间隙 + 按键高度。
  *
  * 「26 键区」在布局上是完整连在一起的一整块区域，共 28 个按键：
  *  - 第一行 10 个字母（qwertyuiop）
@@ -13,9 +13,9 @@ import kotlin.math.roundToInt
  *
  * 这 28 个键的绘制路径并不相同：26 个字母键由 [PinyinKey] 自绘圆角矩形，
  * 大写键/删除键是 XML 里的 ImageButton（外观由 drawable 背景 + 布局边距决定）。
- * 本对象把两组参数的定义域、默认值与 SeekBar 进度换算收敛到一处，
+ * 本对象把各项参数的定义域、默认值与 SeekBar 进度换算收敛到一处，
  * 让 [Prefs]、[PinyinKey]、[PinyinKeyboardView] 与键盘外观页共用同一套边界，
- * 不允许任何一处再写死圆角或间距数值。
+ * 不允许任何一处再写死圆角、间距或键高数值。
  *
  * 「间隙」的语义是相邻两键之间的空隙（左右与上下一致）：每个键四边各内缩
  * 半个间隙，两个相邻键的内缩量相加正好等于间隙值。0f 即无缝（键面连成一片）。
@@ -57,6 +57,48 @@ object KeyAppearance {
 
     /** SeekBar 最大进度（间隙：0~8dp，每格 0.5dp） */
     val GAP_PROGRESS_MAX: Int = progressSteps(MIN_GAP_DP, MAX_GAP_DP, GAP_STEP_DP)
+
+    // ── 按键高度（dp）──────────────────────────────────────────
+
+    /**
+     * 三行字母键的**单行高度**（26 键区 28 个键同高：10 + 9 + 9）。
+     *
+     * 语义就一条：它是 `keyboard_pinyin.xml` 里三个行容器的 `layout_height`。
+     * 键自己都是 `match_parent`，所以行高定全行；三行同时套同一个值，键盘不会出现「行高参差」。
+     */
+
+    /** 高度下界：再矮就放不下「字母 + 韵母提示」两行字，触控目标也低于常用基线 */
+    const val MIN_KEY_HEIGHT_DP = 40f
+
+    /** 高度上界：3 行 × 80dp = 240dp，加上候选栏与底栏也仍落在常见手机的可视区内 */
+    const val MAX_KEY_HEIGHT_DP = 80f
+
+    /** 高度步进：2dp（观感可辨的最小变化；再细会让 SeekBar 格数过多而难以点准） */
+    const val KEY_HEIGHT_STEP_DP = 2f
+
+    /**
+     * 默认键高：54dp。
+     *
+     * 与 `keyboard_pinyin.xml` 里三行的 54dp **刻意取同一个数**：默认值即「用户没动过滑杆时的原始观感」，
+     * 两者一旦分叉，从没打开过外观页的用户会在首次 `configure()` 后看到键盘莫名变高或变矮。
+     */
+    const val DEFAULT_KEY_HEIGHT_DP = 54f
+
+    /** SeekBar 最大进度（高度：40~80dp，每格 2dp ⇒ 20 格） */
+    val KEY_HEIGHT_PROGRESS_MAX: Int = progressSteps(MIN_KEY_HEIGHT_DP, MAX_KEY_HEIGHT_DP, KEY_HEIGHT_STEP_DP)
+
+    /** 把任意输入钳到高度定义域内，并对齐到 [KEY_HEIGHT_STEP_DP] 的整数倍 */
+    fun clampKeyHeightDp(dp: Float): Float =
+        snap(dp, MIN_KEY_HEIGHT_DP, MAX_KEY_HEIGHT_DP, DEFAULT_KEY_HEIGHT_DP, KEY_HEIGHT_STEP_DP)
+
+    /** 高度 dp → SeekBar 进度 */
+    fun keyHeightDpToProgress(dp: Float): Int =
+        ((clampKeyHeightDp(dp) - MIN_KEY_HEIGHT_DP) / KEY_HEIGHT_STEP_DP).roundToInt()
+            .coerceIn(0, KEY_HEIGHT_PROGRESS_MAX)
+
+    /** SeekBar 进度 → 高度 dp */
+    fun keyHeightProgressToDp(progress: Int): Float =
+        clampKeyHeightDp(MIN_KEY_HEIGHT_DP + progress.coerceIn(0, KEY_HEIGHT_PROGRESS_MAX) * KEY_HEIGHT_STEP_DP)
 
     // ── 候选栏字距（dp）────────────────────────────────────────
 

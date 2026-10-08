@@ -4090,4 +4090,46 @@ class RecentFixesRegressionTest {
         assertTrue("这些文件的后台优先级处数变少了（重活会与前台争 CPU）：$short", short.isEmpty())
     }
 
+    /**
+     * 「26 键常显大写」开关（2026-10-09）：只改键面字形，不改上屏；英文模式不套用。
+     *
+     * 为什么逐条钉：漏掉 `!englishMode` ⇒ 英文模式下「看到 A、打出 a」；
+     * 漏掉 `layer == LAYER_LETTER` ⇒ 符号层 / 数字层的标签被一起大写（符号层标签来自动态符号表，
+     * 大写化后会变成一堆对不上的标签）。
+     */
+    @Test
+    fun `26 键常显大写必须落在大写判定上且英文模式除外`() {
+        val text = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "「常显大写」没落进大写判定（开关会失效）",
+            text.contains("prefs.keyLetterUppercase && !englishMode"),
+        )
+        assertTrue(
+            "大写判定丢了 layer == LAYER_LETTER（符号层 / 数字层会被一起大写）",
+            text.contains(
+                "val showUpper = layer == LAYER_LETTER && (capsMode || (prefs.keyLetterUppercase && !englishMode))",
+            ),
+        )
+        val page = codeOf("KeyAppearanceActivity.kt")
+        assertTrue("外观页滑杆没写回 Prefs", page.contains("prefs.keyHeightDp = dp"))
+        assertTrue("键高滑杆上限必须取自定义域", page.contains("seekKeyHeight.max = KeyAppearance.KEY_HEIGHT_PROGRESS_MAX"))
+        assertTrue("大写开关没写回 Prefs", page.contains("prefs.keyLetterUppercase = checked"))
+    }
+
+    /**
+     * 「键高」拖动条（2026-10-09）：三行字母键的高度由 [KeyAppearance] 定义域驱动，且只落在字母三行上。
+     *
+     * 三条判据对应的都是「改错了只在真机某一种形态下才显形」的情形：不套用 ⇒ 拖滑杆没反应；
+     * 不跳过方向面板 ⇒ 九宫格被当成字母行改高；面板高度跟着键高走 ⇒ 最大档把小屏键盘顶出可视区
+     * （面板固定 162dp×2 是有意为之，见 applyLetterRowHeight 的说明）。
+     */
+    @Test
+    fun `键高必须只作用于字母三行`() {
+        val text = codeOf("PinyinKeyboardView.kt")
+        assertTrue("三行字母键没有按 keyHeightDp 套用高度", text.contains("applyLetterRowHeight(p.keyHeightDp, density)"))
+        assertTrue("行高扫描必须跳过方向面板", text.contains("if (row.tag == DIRECTION_PANEL_TAG) continue"))
+        assertTrue("键高只应改三行", text.contains("rows >= LETTER_ROW_COUNT"))
+        assertTrue("九宫格总高要跟随键高", text.contains("val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT"))
+    }
+
 }
