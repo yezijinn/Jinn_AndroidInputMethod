@@ -45,6 +45,34 @@ internal class ShuangpinTable(
     /** 该声母键对应的声母；非声母键返回 null */
     fun initialOf(key: Char): String? = initials[key]
 
+    /**
+     * [codes] 的**打包索引**（MEM-20，惰性建一次，1024 项 ≈ 4KB/方案）：
+     * `toQuanpin` 与 `displayQuanpin` 每两键各查一次码表，原先每次 `raw.substring(i, i + 2)`
+     * 只为当 Map 键 —— 一次查询下来是十几个短命 String。
+     *
+     * 键位数据本身与生成端都不动：这是同一张 [codes] 的派生视图（值仍是同一个 String 引用），
+     * 因此 `ShuangpinTest` 的键位期望与 `SHUANGPIN_TABLES` 生成物一模一样。
+     */
+    private val packedCodes: Array<String?> by lazy {
+        val t = arrayOfNulls<String>(PACKED_SIZE)
+        for ((code, syllable) in codes) {
+            if (code.length == 2) {
+                val p = packedIndexOf(code[0], code[1])
+                if (p >= 0) t[p] = syllable
+            }
+        }
+        t
+    }
+
+    /**
+     * 两键整查（免建 String）。非字母对（如搜狗/微软的分号 `ing`）回落字符串查表 ——
+     * 那条路径只在真按到分号键时才走。
+     */
+    fun codeOf(a: Char, b: Char): String? {
+        val p = packedIndexOf(a, b)
+        return if (p >= 0) packedCodes[p] else codes["" + a + b]
+    }
+
     /** 声母反查键（红字提示用）：zh → v */
     fun keyOfInitial(initial: String): Char? =
         initials.entries.firstOrNull { it.value == initial }?.key
@@ -90,6 +118,21 @@ internal class ShuangpinTable(
         if (list.size == 1) return list[0]
         val hasRedInitial = (initials[key]?.length ?: 0) > 1
         return if (hasRedInitial) list.joinToString(" ") else list.joinToString("\n")
+    }
+
+    /**
+     * 打包算式与容量：字母对压成 5+5 bit（`a`..`z` → 0..25），非字母对返回 -1。
+     *
+     * 表长取 32×32 而不是 26×26：`(x shl 5) or y` 直接就是下标，不必再做一次除法/取模。
+     */
+    private companion object {
+        const val PACKED_SIZE = 32 * 32
+
+        fun packedIndexOf(a: Char, b: Char): Int {
+            val x = a - 'a'
+            val y = b - 'a'
+            return if (x in 0..25 && y in 0..25) (x shl 5) or y else -1
+        }
     }
 }
 

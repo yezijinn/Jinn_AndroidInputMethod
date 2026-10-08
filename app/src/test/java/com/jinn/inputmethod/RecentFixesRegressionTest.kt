@@ -817,6 +817,42 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 按键链上两处「别再白付」不得退回去（2026-10-09，批 1 的 MEM-19 / MEM-20）。
+     *
+     * MEM-19：`filterRareChars` 一趟走完（原先是「扫一遍找坏词 + filter 再判一遍」）；
+     *   前缀键从最长起逐级削尾（原先每级 `take(k).joinToString("")` 重新拼一遍）；
+     *   出口只留一种容器（原先还要再建一个 LinkedHashSet 把四份合进去）。
+     *   缓冲区必须是 `query` 的**局部量** —— `PinyinEngine` 是 object，类级可变容器会被
+     *   JVM 用例的连续查询串状态（分析回执订正第 2 条）。
+     * MEM-20：双拼码表按 5+5 bit 打包成 Int 下标直查（原先每两键 `substring` 出一个 String 当键）。
+     *
+     * 产物等价由 PinyinEngineTest / ShuangpinTest / 候选顺序类用例与临时分配基准（记录见回执）把守。
+     */
+    @Test
+    fun `按键链不得退回逐级重拼与二次扫描`() {
+        val engine = codeOf("PinyinEngine.kt")
+        val filter = blockAfter(engine, "private fun filterRareChars(")
+        assertTrue("filterRareChars 必须单趟", "var kept: ArrayList<String>? = null" in filter)
+        assertTrue("filterRareChars 不得再先扫一遍找坏词", "needFilter" !in filter)
+
+        val query = blockAfter(engine, "fun query(input: String): Result {")
+        assertTrue("前缀键必须增量拼装（削尾）", "keyBuf.setLength(keyBuf.length - syllables[k - 1].length)" in query)
+        assertTrue("不得再逐级 joinToString 重拼", "joinToString(\"\")" !in query)
+        assertTrue("缓冲区必须是 query 的局部量", "val keyBuf = StringBuilder(raw.length)" in query)
+        assertTrue("出口只留一种容器", "val result = words" in query)
+
+        assertTrue("两个调用点都走 codeOf", "table.codeOf(raw[i], raw[i + 1])" in engine)
+        val toQuanpin = blockAfter(engine, "fun toQuanpin(input: String, scheme: ShuangpinScheme): String {")
+        assertTrue("toQuanpin 不得再 substring 出码表键", "raw.substring(i, i + 2)" !in toQuanpin)
+        val display = blockAfter(engine, "fun displayQuanpin(input: String, scheme: ShuangpinScheme): String {")
+        assertTrue("displayQuanpin 不得再 substring 出码表键", "raw.substring(i, i + 2)" !in display)
+        val table = codeOf("ShuangpinSchemes.kt")
+        assertTrue("双拼查表必须走打包下标（在表文件里）", "fun codeOf(a: Char, b: Char): String?" in table)
+        assertTrue("打包算式必须存在", "fun packedIndexOf(a: Char, b: Char): Int" in table)
+        assertTrue("键位数据本身不得改动（仍是同一张 codes）", "val codes: Map<String, String>" in table)
+    }
+
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {
         assertFalse(

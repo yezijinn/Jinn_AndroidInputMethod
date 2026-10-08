@@ -1886,14 +1886,20 @@ object PinyinEngine {
     private fun filterRareChars(raw: Array<String>): Array<String> {
         // 位图未就绪时整体不过滤，与 isLoadableWord 的判据保持一致
         if (commonChars == null) return raw
-        var needFilter = false
-        for (w in raw) {
-            if (!isLoadableWord(w)) {
-                needFilter = true
-                break
+        // 单趟（MEM-19）：原先先扫一遍「有没有要过滤的」，命中后再 `filter{}.toTypedArray()` 把**每个词
+        // 重判一次** —— 首个坏词之后的所有元素都过了两遍 isLoadableWord。现在一趟走完：第一个该丢的
+        // 词出现时才建新容器，把此前扫过的原样收进去；全是好词时仍返回**同一个数组**（语义不变）。
+        var kept: ArrayList<String>? = null
+        for (i in raw.indices) {
+            val w = raw[i]
+            if (isLoadableWord(w)) {
+                kept?.add(w)
+            } else if (kept == null) {
+                kept = ArrayList(raw.size)
+                for (j in 0 until i) kept.add(raw[j])
             }
         }
-        return if (needFilter) raw.filter { isLoadableWord(it) }.toTypedArray() else raw
+        return kept?.toTypedArray() ?: raw
     }
 
     /**
@@ -1993,9 +1999,16 @@ object PinyinEngine {
 
         // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
         //    词语与单字分成两个集合：模糊音的词要插在两者之间（见 2b）
+        // 前缀键增量拼装（MEM-19）：从最长前缀起**逐级削掉尾部**得到下一级，不再每级
+        // `take(k).joinToString("")`（那要新建一个 StringBuilder + 迭代器 + 中间串，累计 O(n²) 次 append）。
+        // 缓冲区是**局部量**、不跨查询复用：`PinyinEngine` 是 object，类级可变容器会被 JVM 用例的
+        // 连续查询串起状态（分析回执的订正第 2 条）。
+        val keyBuf = StringBuilder(raw.length)
+        for (s in syllables) keyBuf.append(s)
         val words = LinkedHashSet<String>()
         for (k in syllables.size downTo 1) {
-            val key = syllables.take(k).joinToString("")
+            val key = keyBuf.toString()     // 本轮前缀快照（Map / 二分查找要用真 String）
+            keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
             for (k2 in phraseKeysOf(key)) {
                 phrasesFor(k2)?.let { found ->
                     val shown = displayTake(found.asList(), MAX_PHRASES)
@@ -2014,8 +2027,12 @@ object PinyinEngine {
         val fuzzyChars = LinkedHashSet<String>()
         if (fuzzyMask != FuzzyPinyin.NONE) {
             val isLegal = { s: String -> validSyllables.contains(s) }
+            // 同一个缓冲区重建一次（上一循环结束时已被削空）；`take(k)` 仍留给 keyVariants ——
+            // 它要的是音节列表，不是拼接串。
+            for (s in syllables) keyBuf.append(s)
             for (k in syllables.size downTo 1) {
-                val typedKey = syllables.take(k).joinToString("")
+                val typedKey = keyBuf.toString()
+                keyBuf.setLength(keyBuf.length - syllables[k - 1].length)
                 for (variantKey in FuzzyPinyin.keyVariants(syllables.take(k), fuzzyMask, isLegal)) {
                     for (k2 in phraseKeysOf(variantKey)) {
                         phrasesFor(k2)?.let { found ->
@@ -2038,11 +2055,13 @@ object PinyinEngine {
             }
         }
 
-        val result = LinkedHashSet<String>()
-        result.addAll(words)
-        result.addAll(fuzzyWords)
-        result.addAll(chars)
-        result.addAll(fuzzyChars)
+        // 出口只留一种容器（MEM-19）：`words` 到这一步已无人再读，直接当结果集 —— 原先还要再建一个
+        // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序不变，仍是
+        // 「精确词 → 变体词 → 精确单字 → 变体单字」，与历史逐候选一致。
+        words.addAll(fuzzyWords)
+        words.addAll(chars)
+        words.addAll(fuzzyChars)
+        val result = words
 
         // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
         //    partial 非空；或末尾音节是「伪完整音节」（如 nim 的 m，本身合法但也是
@@ -2718,7 +2737,7 @@ object Shuangpin {
         val sb = StringBuilder()
         var i = 0
         while (i + 1 < raw.length) {
-            val syllable = table.codes[raw.substring(i, i + 2)] ?: break
+            val syllable = table.codeOf(raw[i], raw[i + 1]) ?: break
             sb.append(syllable)
             i += 2
         }
@@ -2750,7 +2769,7 @@ object Shuangpin {
         var i = 0
         while (i < raw.length) {
             // 每两键整查一次码表（与 toQuanpin 的合法路径同源）
-            val syllable = if (i + 1 < raw.length) table.codes[raw.substring(i, i + 2)] else null
+            val syllable = if (i + 1 < raw.length) table.codeOf(raw[i], raw[i + 1]) else null
             if (syllable != null) {
                 sb.append(syllable)
                 i += 2
