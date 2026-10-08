@@ -304,7 +304,11 @@ class DocsReferenceTest {
         // 采集面：标识符 + 可选的一对括号（`save()` 这类调用形态此前根本进不来，BUG.md L-1188）
         val tokenRe = Regex("""`([A-Za-z][A-Za-z0-9_.]*)\(?\)?`""")
         // 停用表：平台 / 框架侧的名字，源码里本就不该出现（如 `onCorruption` 是 SQLiteOpenHelper 的覆写点）
-        val stop = setOf("SQL", "HTTP", "JSON", "HTTP_STATUS", "UTF", "API", "ID", "URL", "IDEA", "JSONL", "onCorruption")
+        val stop = setOf(
+            "SQL", "HTTP", "JSON", "HTTP_STATUS", "UTF", "API", "ID", "URL", "IDEA", "JSONL",
+            // 平台 / 框架侧的名字：源码里本就不该出现，或只在注释里解释「为什么没用它」
+            "onCorruption", "accessibilityLiveRegion",
+        )
         val bad = mutableListOf<String>()
         for ((name, text) in ledgerPartFiles()) {
             if (name == "index" || name == "excluded" || name == "history" || name == "fixed" || name == "verify") continue
