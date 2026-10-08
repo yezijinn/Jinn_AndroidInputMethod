@@ -3973,8 +3973,11 @@ class RecentFixesRegressionTest {
                 "outState.putString(STATE_EDITOR_FILE, pending)" in edit,
         )
 
-        // L-1191：铺之前先判编辑器是否已有内容（两处：铺之前 + 首帧回调里）
-        assertTrue("铺前要判「编辑器已有内容」", "if (editor.text.isNotEmpty())" in apply)
+        // L-1191 / L-1196：让路只让给**用户真敲进去**的内容（程序回填不置 dirty，草稿要能盖掉它）
+        assertTrue(
+            "铺前要判「用户输入的已有内容」而不是「编辑器非空」",
+            "if (editor.text.isNotEmpty() && dirty)" in apply,
+        )
         assertTrue(
             "首帧回调里也要判（用户可能在这段窗口里敲字）",
             "TEXT_DRAFT_SKIPPED" in apply && "discardPendingDraft()" in apply,
@@ -3984,6 +3987,20 @@ class RecentFixesRegressionTest {
         val restore = edit.substringAfter("private fun startDraftRestore(", "").substringBefore("private fun applyDraft(")
         assertTrue("读盘必须放后台线程", "Thread {" in restore)
         assertTrue("读盘线程要降优先级", "THREAD_PRIORITY_BACKGROUND" in restore)
+        assertTrue(
+            "读盘一开始就要占住「草稿在途」（否则回填先铺，草稿到达时被丢掉）",
+            restore.indexOf("draftPending = true") in 1..restore.indexOf("Thread {"),
+        )
+        assertTrue(
+            "文件不在时令牌作废、提示另算（BUG.md L-1197）",
+            "TEXT_DRAFT_GONE" in restore && "pendingDraftFile = null" in restore,
+        )
+        assertTrue(
+            "收尾与放弃都要清「在途」标记（否则后续回填与保存使能被卡住）",
+            "draftPending = false" in
+                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft") &&
+                "draftPending = false" in edit.substringAfter("private fun discardPendingDraft(", ""),
+        )
     }
 
     /**

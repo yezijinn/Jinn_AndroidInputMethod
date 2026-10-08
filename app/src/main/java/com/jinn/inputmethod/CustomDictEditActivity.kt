@@ -354,22 +354,36 @@ class CustomDictEditActivity : Activity() {
         val draftName = state.getString(STATE_EDITOR_FILE) ?: return
         pendingDraftFile = draftName
         pendingDraftLen = state.getInt(STATE_DRAFT_LEN, 0)
+        // 文件路径一开读就算「草稿在途」（BUG.md L-1196）：读盘回来之前编辑器是空的，而源文本回填与
+        // 保存使能都按「草稿已经在里面」判断 —— 不先占住这一位，回填会把旧源文本铺进来，
+        // 草稿到达时反而被当成「用户已敲字」丢掉
+        draftPending = true
         for (tmp in listOf(DRAFT_FILE_TMP, DRAFT_FILE_SAVE_TMP)) runCatching { File(cacheDir, tmp).delete() }
         Thread {
             // 整份读盘与词库装载同一口径：降后台优先级，别和前台争 CPU
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val file = File(cacheDir, draftName)
+            val existed = file.isFile
             // 读一次不成就再读一次：I/O 抖动是暂时性的，而状态行只承诺「重建时自动再试」
-            val restored = if (file.isFile) {
+            val restored = if (existed) {
                 runCatching { file.readText() }.getOrNull() ?: runCatching { file.readText() }.getOrNull()
             } else {
                 null
             }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
+                draftPending = false
                 if (restored == null) {
-                    Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
-                    setStatus(TEXT_DRAFT_UNREADABLE)
+                    if (!existed) {
+                        // 文件不在了（系统清缓存 / 已被收尾删除）：令牌作废，别承诺「保留待重试」（BUG.md L-1197）
+                        pendingDraftFile = null
+                        pendingDraftLen = 0
+                        Diagnostics.w(TAG, "快捷补充：草稿文件已不在缓存里（$draftName）")
+                        setStatus(TEXT_DRAFT_GONE)
+                    } else {
+                        Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
+                        setStatus(TEXT_DRAFT_UNREADABLE)
+                    }
                     return@runOnUiThread
                 }
                 val expected = pendingDraftLen
@@ -391,8 +405,10 @@ class CustomDictEditActivity : Activity() {
      * （与「用户已开始输入就跳过回填」同一口径，BUG.md L-849）。
      */
     private fun applyDraft(draft: String, truncatedAt: Int, file: String?, restoredDirty: Boolean) {
-        if (editor.text.isNotEmpty()) {
-            Diagnostics.i(TAG, "快捷补充：草稿未铺入（编辑框已有 ${editor.text.length} 字符）")
+        // 让路只让给**用户真敲进去**的内容（BUG.md L-1196）：程序回填不会置 dirty，
+        // 读盘在途那段时间里被铺进来的旧源文本要能被草稿盖掉（改动前就是草稿优先）
+        if (editor.text.isNotEmpty() && dirty) {
+            Diagnostics.i(TAG, "快捷补充：草稿未铺入（编辑框已有你输入的 ${editor.text.length} 字符）")
             discardPendingDraft()
             setStatus(TEXT_DRAFT_SKIPPED)
             return
@@ -409,8 +425,8 @@ class CustomDictEditActivity : Activity() {
             editor.postOnAnimation {
                 draftPending = false
                 refilling = false
-                if (editor.text.isNotEmpty()) {
-                    Diagnostics.i(TAG, "快捷补充：草稿未铺入（铺之前编辑器已有 ${editor.text.length} 字符）")
+                if (editor.text.isNotEmpty() && dirty) {
+                    Diagnostics.i(TAG, "快捷补充：草稿未铺入（铺之前编辑器已有你输入的 ${editor.text.length} 字符）")
                     discardPendingDraft()
                     setStatus(TEXT_DRAFT_SKIPPED)
                     return@postOnAnimation
@@ -430,6 +446,7 @@ class CustomDictEditActivity : Activity() {
         if (file != null) runCatching { File(cacheDir, file).delete() }
         pendingDraftFile = null
         pendingDraftLen = 0
+        draftPending = false
         setStatus(if (truncatedAt > 0) TEXT_DRAFT_TRUNCATED.format(truncatedAt) else TEXT_DRAFT_RESTORED)
     }
 
@@ -439,6 +456,7 @@ class CustomDictEditActivity : Activity() {
         if (file != null) runCatching { File(cacheDir, file).delete() }
         pendingDraftFile = null
         pendingDraftLen = 0
+        draftPending = false
     }
 
     override fun onResume() {
@@ -816,6 +834,9 @@ class CustomDictEditActivity : Activity() {
 
         /** 草稿没铺进去：用户已经在编辑框里敲了字，那些输入优先（BUG.md L-1191） */
         const val TEXT_DRAFT_SKIPPED = "草稿未铺入：编辑框里已有你输入的内容"
+
+        /** 草稿文件已不在缓存里（系统清理 / 已收尾删除）：别再承诺「保留待重试」（BUG.md L-1197） */
+        const val TEXT_DRAFT_GONE = "未找到上次未保存的草稿（缓存已被系统清理），本次没有可恢复的内容"
         const val TEXT_TOO_BIG = "内容超过 800 万字符上限，请精简后重试"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
         const val TEXT_SKIP_REFILL = "已跳过回填：编辑框里已有你输入的内容"
