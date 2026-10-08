@@ -15,6 +15,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
+import java.util.Locale
 import java.io.FileOutputStream
 
 /**
@@ -147,6 +148,8 @@ class CustomDictEditActivity : Activity() {
             textSize = 12f
             setPadding(dp(16), dp(6), dp(16), 0)
             visibility = View.GONE
+            // 状态行是这页唯一的失败/进度反馈通道：读屏要能听见它变了（BUG.md L-1195）
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         root.addView(textStatus, matchWrap())
 
@@ -447,7 +450,7 @@ class CustomDictEditActivity : Activity() {
         pendingDraftFile = null
         pendingDraftLen = 0
         draftPending = false
-        setStatus(if (truncatedAt > 0) TEXT_DRAFT_TRUNCATED.format(truncatedAt) else TEXT_DRAFT_RESTORED)
+        setStatus(if (truncatedAt > 0) String.format(Locale.US, TEXT_DRAFT_TRUNCATED, truncatedAt) else TEXT_DRAFT_RESTORED)
     }
 
     /** 草稿不再铺了（用户抢先输入）：清令牌并删掉它，BUG.md L-1191。 */
@@ -545,7 +548,7 @@ class CustomDictEditActivity : Activity() {
                     // 改为指路「导入 .txt」。此时编辑器仍为空，点保存走「还没有内容」分支，不会误清词库。
                     !shouldRefill(text.length) -> {
                         Diagnostics.i(TAG, "快捷补充：源文本 ${text.length} 字符超过回填阈值，跳过铺入")
-                        setStatus(TEXT_TOO_LARGE_TO_REFILL.format(text.length / 10000))
+                        setStatus(String.format(Locale.US, TEXT_TOO_LARGE_TO_REFILL, text.length / 10000))
                         // 连保存一并停用（BUG.md L-871）：编辑器是空的，若允许保存，
                         // 用户补几条就会把整份大词表整体替换掉，且提示只显示「已保存 N 条」
                         refillSkipped = true
@@ -638,7 +641,7 @@ class CustomDictEditActivity : Activity() {
                 when (report.gate) {
                     CustomDicts.SaveGate.TOO_BIG -> TEXT_TOO_BIG
                     CustomDicts.SaveGate.TOO_MANY -> TEXT_TOO_MANY
-                    CustomDicts.SaveGate.NO_VALID -> TEXT_NO_VALID.format(report.skipped)
+                    CustomDicts.SaveGate.NO_VALID -> String.format(Locale.US, TEXT_NO_VALID, report.skipped)
                     // 两档写盘失败文案不同（BUG.md L-861）：前者磁盘没变，后者文本已落、只差词库
                     CustomDicts.SaveGate.WRITE_FAIL_SOURCE -> TEXT_WRITE_FAIL
                     CustomDicts.SaveGate.WRITE_FAIL_PACK -> TEXT_WRITE_FAIL_PACK

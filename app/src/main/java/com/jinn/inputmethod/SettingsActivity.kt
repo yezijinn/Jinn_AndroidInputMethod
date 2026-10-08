@@ -514,6 +514,8 @@ class SettingsActivity : ComponentActivity() {
         btnConfigExport = findViewById(R.id.btn_config_export)
         btnConfigImport = findViewById(R.id.btn_config_import)
         textConfigHint = findViewById(R.id.text_config_hint)
+        // 导出 / 导入 / 解密的结果都写在这行上：状态会变，读屏要能听见（BUG.md L-1195）
+        textConfigHint.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         btnConfigExport.text = TEXT_EXPORT_CONFIG
         btnConfigImport.text = TEXT_IMPORT_CONFIG
         textConfigHint.text = TEXT_CONFIG_HINT

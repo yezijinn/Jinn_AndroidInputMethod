@@ -8,6 +8,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import java.util.Locale
 
 /**
  * 「图库快贴功能」页：图库相关的设置都收在这一页。
@@ -121,7 +122,7 @@ class GallerySettingsActivity : ComponentActivity() {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = Prefs.GALLERY_COLUMNS_MIN + progress
                     Prefs(this@GallerySettingsActivity).galleryColumns = value
-                    textColumns?.text = TEXT_COLUMNS_VALUE.format(value)
+                    textColumns?.text = String.format(Locale.US, TEXT_COLUMNS_VALUE, value)
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -140,7 +141,7 @@ class GallerySettingsActivity : ComponentActivity() {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = Prefs.GALLERY_CELL_HEIGHT_MIN + progress
                     Prefs(this@GallerySettingsActivity).galleryCellHeightDp = value
-                    textCellHeight?.text = TEXT_HEIGHT_VALUE.format(value)
+                    textCellHeight?.text = String.format(Locale.US, TEXT_HEIGHT_VALUE, value)
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -191,8 +192,8 @@ class GallerySettingsActivity : ComponentActivity() {
         // 两行都是「固定标题 + 右侧数值」（与「键盘外观」页同款三件套）
         findViewById<TextView>(R.id.label_gallery_columns).text = TEXT_COLUMNS_TITLE
         findViewById<TextView>(R.id.label_gallery_cell_height).text = TEXT_HEIGHT_TITLE
-        textColumns?.text = TEXT_COLUMNS_VALUE.format(prefs.galleryColumns)
-        textCellHeight?.text = TEXT_HEIGHT_VALUE.format(prefs.galleryCellHeightDp)
+        textColumns?.text = String.format(Locale.US, TEXT_COLUMNS_VALUE, prefs.galleryColumns)
+        textCellHeight?.text = String.format(Locale.US, TEXT_HEIGHT_VALUE, prefs.galleryCellHeightDp)
         bindSeek(R.id.seek_gallery_columns, prefs.galleryColumns, Prefs.GALLERY_COLUMNS_MIN)
         bindSeek(
             R.id.seek_gallery_cell_height,

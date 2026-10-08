@@ -99,6 +99,8 @@ class DictManagerActivity : Activity() {
             setPadding(dp(16), dp(6), dp(16), 0)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            // 下载/导入/删除的结果都写在这行上：读屏要能听见（BUG.md L-1195）
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             visibility = View.GONE
         }
         root.addView(textStatus, matchWrap())
@@ -291,7 +293,7 @@ class DictManagerActivity : Activity() {
                 when (report.gate) {
                     CustomDicts.SaveGate.TOO_BIG -> TEXT_CUSTOM_TOO_BIG
                     CustomDicts.SaveGate.TOO_MANY -> TEXT_CUSTOM_TOO_MANY
-                    CustomDicts.SaveGate.NO_VALID -> TEXT_CUSTOM_EMPTY.format(report.skipped)
+                    CustomDicts.SaveGate.NO_VALID -> String.format(Locale.US, TEXT_CUSTOM_EMPTY, report.skipped)
                     // 两档写盘失败文案不同（BUG.md L-861）：前者磁盘没变，后者文本已落、只差词库
                     CustomDicts.SaveGate.WRITE_FAIL_SOURCE -> TEXT_CUSTOM_WRITE_FAIL
                     CustomDicts.SaveGate.WRITE_FAIL_PACK -> TEXT_CUSTOM_WRITE_FAIL_PACK
@@ -522,9 +524,9 @@ class DictManagerActivity : Activity() {
      */
     private fun customResultText(entries: Int, skipped: Int, filtered: Int, dropped: Int): String = when {
         // 同键超 100 被丢下（L-864）：比字表闸更该先说 —— 它是「提示条数与实际入包不符」的直接原因
-        dropped > 0 -> TEXT_CUSTOM_RESULT_DROPPED.format(entries, skipped, dropped)
-        filtered > 0 -> TEXT_CUSTOM_RESULT_FILTERED.format(entries, skipped, filtered)
-        else -> TEXT_CUSTOM_RESULT.format(entries, skipped)
+        dropped > 0 -> String.format(Locale.US, TEXT_CUSTOM_RESULT_DROPPED, entries, skipped, dropped)
+        filtered > 0 -> String.format(Locale.US, TEXT_CUSTOM_RESULT_FILTERED, entries, skipped, filtered)
+        else -> String.format(Locale.US, TEXT_CUSTOM_RESULT, entries, skipped)
     }
 
     /** 删除自定义词库前二次确认（没有下载源，删掉就得重新导入） */

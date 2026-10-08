@@ -3722,7 +3722,10 @@ class RecentFixesRegressionTest {
         )
 
         val gallery = TestSources.codeSource("GalleryPanelView.kt")
-        assertTrue("格子描述必须带序号", "contentDescription = TEXT_CELL_FMT.format(ordinal)" in gallery)
+        assertTrue(
+            "格子描述必须带序号（且钉 Locale，BUG.md L-1179）",
+            "contentDescription = String.format(Locale.US, TEXT_CELL_FMT, ordinal)" in gallery,
+        )
         assertTrue("格式串要含张数", "第 %d 张" in gallery)
         assertTrue("序号必须按整份列表编（跨页连续）", "var ordinal = from" in gallery)
     }
@@ -3849,7 +3852,10 @@ class RecentFixesRegressionTest {
         assertTrue("大稿恢复必须推迟到首帧之后", "editor.postOnAnimation {" in edit)
         assertTrue("恢复期间要有状态行", "TEXT_DRAFT_RESTORING" in edit)
         assertTrue("兜底截断必须记长度", "putInt(STATE_DRAFT_TRUNCATED, kept.length)" in edit)
-        assertTrue("截断恢复后必须有提示", "TEXT_DRAFT_TRUNCATED.format(truncatedAt)" in edit)
+        assertTrue(
+            "截断恢复后必须有提示（钉 Locale，BUG.md L-1179）",
+            "String.format(Locale.US, TEXT_DRAFT_TRUNCATED, truncatedAt)" in edit,
+        )
         val destroy = edit.substringAfter("override fun onDestroy()", "")
         assertTrue("只有不再重建时才清草稿", "if (!isChangingConfigurations)" in destroy)
         assertTrue(
@@ -4001,6 +4007,39 @@ class RecentFixesRegressionTest {
                 edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft") &&
                 "draftPending = false" in edit.substringAfter("private fun discardPendingDraft(", ""),
         )
+    }
+
+    /**
+     * 用户可见计数的格式化必须显式钉 Locale（2026-10-08 · L-1179），
+     * 动态状态行必须有读屏播报通道（同日 · L-1195）。
+     */
+    @Test
+    fun `计数文案的 Locale 与状态行的播报通道不得回退`() {
+        val dir = listOf(
+            File("app/src/main/java/com/jinn/inputmethod"),
+            File("src/main/java/com/jinn/inputmethod"),
+        ).first { it.isDirectory }
+        val files = dir.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".kt") }.map { it.name }
+        assertTrue("没读到主源码（工作目录变了？）：${files.size} 个", files.size > 50)
+        // L-1179：`TEXT_*.format(` 直接用默认 Locale，阿拉伯语 / 波斯语等地区会显示本地字形数字
+        val loose = mutableListOf<String>()
+        // L-1195：状态行把这些页面的失败/进度反馈承载在视觉上，读屏要能听见
+        val silent = mutableListOf<String>()
+        for (name in files) {
+            val src = TestSources.codeSource(name)
+            Regex("""TEXT_[A-Z0-9_]+\)?\.format\(""").findAll(src).forEach { m ->
+                loose += "$name：${src.substring(0, m.range.first).count { it == '\n' } + 1} 行"
+            }
+            val hasStatus = listOf(
+                "private fun setStatus(",
+                "textStatus = TextView(",
+                "status.apply {",
+                "textConfigHint = findViewById(",
+            ).any { it in src }
+            if (hasStatus && "accessibilityLiveRegion" !in src) silent += name
+        }
+        assertTrue("这些计数文案没钉 Locale（改成 String.format(Locale.US, …)）：$loose", loose.isEmpty())
+        assertTrue("这些页面有状态行却没有读屏播报通道（加 accessibilityLiveRegion）：$silent", silent.isEmpty())
     }
 
     /**

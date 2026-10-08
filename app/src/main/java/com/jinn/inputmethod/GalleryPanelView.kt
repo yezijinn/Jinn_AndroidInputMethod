@@ -14,6 +14,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.util.Locale
 
 /**
  * 图库快贴面板：绑定目录（SAF 目录树）下的图片格子，点一下直接插入当前输入框。
@@ -134,6 +135,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             textSize = 12f
             maxLines = 2
             setPadding(dp(2), dp(8), dp(2), dp(8))
+            // 目录切换 / 张数截断 / 绑定失败都写在这行：读屏要能听见（BUG.md L-1195）
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         addView(status, LayoutParams(MATCH, WRAP))
 
@@ -303,8 +306,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         val prefs = Prefs(context)
         columns = prefs.galleryColumns
         cellHeightDp = prefs.galleryCellHeightDp
-        rowCountLabel.text = TEXT_ROW_COUNT.format(columns)
-        rowHeightLabel.text = TEXT_ROW_HEIGHT.format(cellHeightDp)
+        rowCountLabel.text = String.format(Locale.US, TEXT_ROW_COUNT, columns)
+        rowHeightLabel.text = String.format(Locale.US, TEXT_ROW_HEIGHT, cellHeightDp)
     }
 
     /** 参数变了就地重排（用当前 items，不重新读目录；空目录没什么可排的） */
@@ -448,7 +451,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
 
     /** 页码标签「当前/总数」 */
     private fun applyPageLabel() {
-        pageLabel.text = TEXT_PAGE.format(pageIndex + 1, pageCount)
+        pageLabel.text = String.format(Locale.US, TEXT_PAGE, pageIndex + 1, pageCount)
     }
 
     /** 铺**当前页**的格子：每行 [columns] 个等分宽度、行高 [cellHeightDp]（都可从「布局」调） */
@@ -456,7 +459,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         grid.removeAllViews()
         if (foundTotal > items.size) {
             status.visibility = VISIBLE
-            status.text = TEXT_TRUNCATED.format(foundTotal)
+            status.text = String.format(Locale.US, TEXT_TRUNCATED, foundTotal)
         } else {
             status.visibility = GONE
         }
@@ -486,7 +489,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         tag = uri
         thumbCache.get(uri.toString())?.let { setImageBitmap(it) }
         // 带序号的描述：24 格同名时读屏无法定位（BUG.md L-1164）
-        contentDescription = TEXT_CELL_FMT.format(ordinal)
+        contentDescription = String.format(Locale.US, TEXT_CELL_FMT, ordinal)
         setOnClickListener {
             // 只记 provider 维度：SAF 的路径段就是照片文件名（L-1036）
             Diagnostics.i(TAG, "选中图片: provider=${uri.authority}")
