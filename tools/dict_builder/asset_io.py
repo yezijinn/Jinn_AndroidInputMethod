@@ -61,6 +61,10 @@ def write_bytes_atomically(path, data):
 
 def write_asset_text(path, text):
     """写资产文本；`.xz` 后缀自动压缩（参数与 APK 内一致）。落盘走 [write_bytes_atomically]。"""
+    if not text:
+        # 空文本一律报错（BUG-14）：过去会补成 "\n" 产出 1 字节文件，而 Kotlin 侧的 isNotBlank 又把这
+        # 一行丢掉 —— 结果是「生成成功、词库实际为空」，一路静默到用户发现打不出候选。
+        raise SystemExit("空文本不写盘（BUG-14）：%s 会产出只有换行的空资产" % path)
     if not text.endswith("\n"):
         text += "\n"
     if path.endswith(".xz"):

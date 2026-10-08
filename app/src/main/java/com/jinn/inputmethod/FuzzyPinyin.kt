@@ -115,11 +115,18 @@ object FuzzyPinyin {
         if (mask == NONE || syllables.isEmpty()) return emptyList()
         val out = LinkedHashSet<String>()
         val buf = ArrayList(syllables)
+        // 复用一个**局部** StringBuilder 拼键（MEM-36）：原先每产出一个变体就 `joinToString("")`
+        // （新建 sb + 逐个 append + toString），而变体数随音节数线性增长。
+        // 刻意不做类级（object 级）复用：FuzzyPinyin 是 object，类级可变容器会成为跨调用共享状态
+        // （JVM 测试里并发 query 会串键），局部复用收益相当、风险为零。
+        val sb = StringBuilder()
         for (i in syllables.indices) {
             val variants = variantsOf(syllables[i], mask, isLegal)
             for (variant in variants) {
                 buf[i] = variant
-                out.add(buf.joinToString(""))
+                sb.setLength(0)
+                for (s in buf) sb.append(s)
+                out.add(sb.toString())
                 if (out.size >= MAX_KEY_VARIANTS) return out.toList()
             }
             buf[i] = syllables[i]

@@ -140,6 +140,17 @@ object PinyinEngine {
     /** 分片大小：分片之间让出 CPU/IO，避免后台重活把前台打字挤成卡顿 */
     private const val CHUNK_BYTES = 256 * 1024
 
+    /** 合并结果缓存上限（超过就按 [trimMergedCache] 淘汰一小撮，不整表清） */
+    private const val MERGED_CACHE_MAX = 4096
+
+    /**
+     * 「最近一次查询」两张表的容量上限（MEM-29）。
+     *
+     * 它们只服务用户选词那一刻的消费区间与预测，与最后一次查询相距 1 次，4096 是白留的：
+     * 256 已远超需求（一次查询的候选数上限也就百来条），容量小到「几乎不可能触发整清」。
+     */
+    private const val RECENT_QUERY_KEYS_MAX = 256
+
     /**
      * 分片读完整条解压流，每攒够 1MB 主动睡 1ms 让出 CPU。
      *
@@ -1554,6 +1565,98 @@ object PinyinEngine {
         false
     }
 
+    /**
+     * 边解压边写索引缓存（MEM-01）：不再把整份解压结果攒在堆里。
+     *
+     * 原先的路径是 [readWithYields] 先攒出 16MB 定值缓冲（与真实大小无关的预分配）→ `toByteArray()`
+     * 再复制一份 → 交给 [writeIndexCacheAtomically]；峰值 ~23MB，其中两份都是「为写盘而存在的临时物」。
+     * 现在解压出的 256KB 分片直接进文件流，堆上只剩这一片。
+     *
+     * 两条既有约定必须保留（否则修掉内存换来卡顿或数据损坏）：
+     *  - **每 1MB 睡 1ms**（与 [readWithYields] 同款）：基础索引解压是 1.8s 级连续 CPU 冲击，
+     *    不让出会把前台打字的帧 p99 从 14ms 拉到 300ms；
+     *  - **临时件 + rename**（不先删目标）：见 [writeIndexCacheAtomically] 的说明 —— 缓存可能正被
+     *    内存映射使用，截断已映射文件会踩空洞页（Linux 上 SIGBUS）。
+     *
+     * @return 是否成功落盘（失败不抛，只返回 false：调用方据它退回堆内索引）
+     */
+    internal fun writeIndexCacheStreaming(
+        file: java.io.File,
+        stream: java.io.InputStream,
+    ): Boolean = runCatching {
+        val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
+        val buf = ByteArray(CHUNK_BYTES)
+        var sinceYield = 0
+        tmp.outputStream().use { out ->
+            while (true) {
+                val n = stream.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                sinceYield += n
+                if (sinceYield >= 1 shl 20) {
+                    sinceYield = 0
+                    runCatching { Thread.sleep(1) }
+                }
+            }
+            out.flush()
+        }
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            Diagnostics.w(TAG, "写索引缓存失败：改名失败 ${tmp.name} -> ${file.name}（本次退回堆内）")
+            return@runCatching false
+        }
+        true
+    }.getOrElse { e ->
+        // 写阶段抛异常时临时文件可能已经落地（可达十几 MB），必须清掉（与 writeIndexCacheAtomically 同款）
+        runCatching {
+            val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
+            if (tmp.exists()) tmp.delete()
+        }
+        Diagnostics.w(TAG, "流式写索引缓存失败（本次退回堆内，不影响可用性）: ${file.name} - ${e.message}")
+        false
+    }
+
+    /**
+     * 解压基础索引并流式写入磁盘缓存（MEM-01 落点 + MEM-40 的失败细分与重试）。
+     *
+     * 失败时做两件事，而不是一句「写失败」了事：
+     *  - **原因细分**（[cacheWriteDiagnosis]）：磁盘满 / 目录不可写 / 只是改名失败，三者处置完全不同；
+     *  - **重试一次**：首次失败可能只是瞬时状态（清扫线程刚删过同名临时件、目录项竞争），
+     *    重试的代价只有一次解压，而不重试的代价是「整份索引常驻堆内 ~14MB」。
+     */
+    private fun streamIndexCacheToDisk(context: Context, cache: java.io.File): Boolean {
+        fun attempt(): Boolean = context.assets.open(INDEX_ASSET_XZ).let { raw ->
+            org.tukaani.xz.XZInputStream(raw).use { xz -> writeIndexCacheStreaming(cache, xz) }
+        }
+        if (attempt()) return true
+        Diagnostics.w(TAG, "索引缓存首次写入失败：${cacheWriteDiagnosis(cache)}；重试一次")
+        return attempt()
+    }
+
+    /**
+     * 缓存写失败的原因细分（MEM-40）：目录可写性 + 可用空间 + 缓存名。
+     *
+     * `StatFs` 在纯 JVM 单测里不可用，故整段包在 `runCatching` 里（失败退化成「未知」而不是抛）。
+     */
+    internal fun cacheWriteDiagnosis(cache: java.io.File): String {
+        val dir = cache.parentFile
+        val writable = dir?.canWrite() == true
+        val freeKb = runCatching {
+            android.os.StatFs(dir!!.absolutePath).availableBytes / 1024
+        }.getOrDefault(-1L)
+        return "目录可写=$writable 可用空间=${if (freeKb >= 0) "${freeKb}KB" else "未知"} 缓存=${cache.name}"
+    }
+
+    /**
+     * 索引的**堆内回退路径**：把基础索引解压进 `ByteArray` 再解析。
+     *
+     * 只在「流式写盘失败」或「缓存映射失败」时走（磁盘不可写、mmap 不可用这类罕见情形）。
+     * 多解压一次换「这次会话仍能查到全部词语」是划算的；正常路径不该走到这里。
+     */
+    private fun loadIndexOfHeap(context: Context): PhraseIndex? = context.assets.open(INDEX_ASSET_XZ).let { raw ->
+        org.tukaani.xz.XZInputStream(raw).use { xz -> PhraseIndex.of(readWithYields(xz)) }
+    }
+
     /** 清掉旧版本（旧 APK mtime）留下的基础索引缓存，避免每更新一次留一份 14.4MB */
     private fun sweepStaleBaseCache(dir: java.io.File, keepName: String) {
         runCatching {
@@ -1637,21 +1740,18 @@ object PinyinEngine {
                     "基础索引: 复用磁盘缓存并内存映射（${idx.size} 键 / ${cache.length() / 1024}KB）",
                 )
             } else {
-                // 没命中（首次用，或 App 刚更新）：解压资产、原子落盘、再映射；映射失败就用堆内
-                val bytes = context.assets.open(INDEX_ASSET_XZ).let { raw ->
-                    org.tukaani.xz.XZInputStream(raw).use { xz -> readWithYields(xz) }
-                }
-                val written = writeIndexCacheAtomically(cache, bytes)
+                // 没命中（首次用，或 App 刚更新）：**边解压边落盘**（MEM-01）、再映射；写盘或映射失败就用堆内
+                val written = streamIndexCacheToDisk(context, cache)
                 val mapped = if (written) PhraseIndex.ofMapped(cache) else null
                 idx = mapped
-                    ?: PhraseIndex.of(bytes)
+                    ?: loadIndexOfHeap(context)
                     ?: error("索引结构异常（magic/版本/偏移不自洽）")
                 // 日志必须反映真实结果：之前无论落盘成败都打「已写入磁盘缓存」，
                 // 排查时会被彻底误导（本次就是因为这条日志，掩盖了缓存被误删的真实原因）。
                 if (written && mapped != null) {
                     Diagnostics.i(
                         TAG,
-                        "基础索引: 已解压并写入磁盘缓存（${idx.size} 键 / ${bytes.size / 1024}KB / " +
+                        "基础索引: 已解压并写入磁盘缓存（${idx.size} 键 / ${cache.length() / 1024}KB / " +
                             "${System.currentTimeMillis() - t0}ms）",
                     )
                 } else {
@@ -1684,8 +1784,9 @@ object PinyinEngine {
     private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
         // 任何词库变更都必须让「合并结果缓存」失效，否则同一个进程内换词库后会读到旧候选
         invalidateMergedCache()
-        // 容量已在声明处预分配（ConcurrentHashMap(600_000)），此处不再重建容器，
-        // 重建会让并发读取方拿到另一个实例，正在遍历的旧表被丢弃。
+        // 容量已在声明处预分配（ConcurrentHashMap(64_000)，见 phrasesByPinyin 声明 —— 那句 600_000
+        // 是旧版两段式加载时代的残留，与本表无关），此处不再重建容器：重建会让并发读取方拿到另一个实例，
+        // 正在遍历的旧表被丢弃。
         var line = reader.readLine()
         while (line != null) {
             if (line.isNotBlank()) {
@@ -1751,11 +1852,34 @@ object PinyinEngine {
         }
 
         val filtered = raw?.let { filterRareChars(it) }
-        if (mergedCache.size > 4096) mergedCache.clear()
+        trimMergedCache()
         // 世代号没变才回写：算这个键的过程中词库可能已经被改（加载线程走了失效入口），
         // 此时回写的是变更前的旧结果，而失效点已经过去，这个键会一直返回错误的候选。
         if (gen == dataGeneration) mergedCache[key] = filtered ?: EMPTY_WORDS
         return filtered
+    }
+
+    /**
+     * 合并缓存超限时**只淘汰一小撮**，不再整表 `clear()`（MEM-29）。
+     *
+     * 整清的代价：紧随其后的每次查询都要重新合并（基础索引 + 各可选包 + 去重），而那正是打字时的热路径 ——
+     * 用户看不到「缓存清了」，只感到「突然一顿」。
+     *
+     * 淘汰策略是**有界的**、不声称最优：`ConcurrentHashMap` 的迭代顺序是分桶顺序，与访问频率无关，
+     * 丢掉的更像「随机的 1/8」而不是「最冷的 1/8」。要精确 LRU 得换成带访问序的容器，而本表被并发查询读
+     * （见声明处的并发说明），换容器的风险远大于这点收益 —— 这里只保证一件事：别把整表一次打空。
+     */
+    private fun trimMergedCache() {
+        val over = mergedCache.size - MERGED_CACHE_MAX
+        if (over <= 0) return
+        val drop = maxOf(over, MERGED_CACHE_MAX / 8)
+        val it = mergedCache.keys.iterator()
+        var n = 0
+        while (n < drop && it.hasNext()) {
+            it.next()
+            it.remove()
+            n++
+        }
     }
 
     /** 查询期生僻字过滤（索引与运行时词一视同仁；**只管单字**，词组一律放行，见 [isLoadableWord]） */
@@ -1788,7 +1912,7 @@ object PinyinEngine {
         key: String,
         clearTrueKey: Boolean = true,
     ) {
-        if (candidatePinyin.size > 4_096) candidatePinyin.clear()
+        if (candidatePinyin.size > RECENT_QUERY_KEYS_MAX) candidatePinyin.clear()
         // 最新写入者胜（原为 putIfAbsent）：同一个词可能挂在多个拼音键下
         // （如「朝阳」= chaoyang / zhaoyang、「不了」= bule / buliao）。putIfAbsent
         // 让第一次记录的那个键粘住：用户换一种拼法打到同一个词时，消费区间与预测都按旧键算，
@@ -1900,7 +2024,7 @@ object PinyinEngine {
                             // 候选→拼音键登记的是「用户实际输入的键」而不是变体键：消费区间按输入算
                             noteCandidateKeys(shown, typedKey)
                             // 真实键另记一份供预测扫延续词（见 candidateTruePinyin 的 KDoc）
-                            if (candidateTruePinyin.size > 4_096) candidateTruePinyin.clear()
+                            if (candidateTruePinyin.size > RECENT_QUERY_KEYS_MAX) candidateTruePinyin.clear()
                             for (w in shown) candidateTruePinyin[w] = k2
                         }
                     }
@@ -1981,6 +2105,10 @@ object PinyinEngine {
 
     /** 精确匹配 + ue/ve 变体：词库同时存在 shenglue/shenglve 两种写法 */
     private fun phraseKeysOf(raw: String): Set<String> {
+        // 快路径（MEM-44）：不含 u / v 的键不可能有 ue/ve 对偶（两种写法都必须带 u 或 v），
+        // 直接给单元素集，省掉两次 `contains("ue"/"ve")` 子串扫描 + 一次 `replace`。
+        // 用 Char 版 contains（不同 String 版建 Pattern 对象），且绝大多数键走的就是这条。
+        if (!raw.contains('u') && !raw.contains('v')) return setOf(raw)
         val alt = ueVeVariant(raw) ?: return setOf(raw)
         return setOf(raw, alt)
     }
@@ -2124,24 +2252,26 @@ object PinyinEngine {
      */
     private fun dictionarySegmentation(input: String): List<String>? {
         if (input.isEmpty()) return null
+        // 整串只查一次词库（MEM-41）：**路径是 input 的一种划分，各路径 join 出来的 key 恒等于 input**，
+        // 所以原实现「每条路径各查一次 + 末尾再查一次」查的是同一个键。整串没命中就直接返回 null ——
+        // 此时所有路径的命中数都是 0、best 必为 null、末尾的 takeIf 也必拒，与逐条枚举后再返回 null 等价，
+        // 省掉整棵 DFS 枚举树（实测 `jintiantianqi` 有 18 种切分）。
+        val hit = phrasesFor(input) ?: return null
         // 候选切分路径（DFS 枚举，上限防爆炸）
         val paths = ArrayList<List<String>>()
         enumerateSegmentPaths(input, paths)
         if (paths.isEmpty()) return null
-        // 评分：整串拼词库短语数（词命中优先），其次音节数（多音节更自然）
+        // 评分：词命中数（同一个键，各路径相同）为主，其次音节数（多音节更自然）
         var best: List<String>? = null
         var bestScore = 0
         for (path in paths) {
-            val key = path.joinToString("")
-            val hit = phrasesFor(key)?.size ?: 0
-            val score = hit * 1000 - path.size  // 词命中为主，音节少略优
+            val score = hit.size * 1000 - path.size
             if (score > bestScore) {
                 bestScore = score
                 best = path
             }
         }
-        // 只有真实命中词库的切分才采用（否则贪心）
-        return best?.takeIf { phrasesFor(it.joinToString("")) != null }
+        return best
     }
 
     /**

@@ -4132,4 +4132,44 @@ class RecentFixesRegressionTest {
         assertTrue("九宫格总高要跟随键高", text.contains("val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT"))
     }
 
+    /**
+     * 分词链：整串只查一次词库，未命中先早退（MEM-41，2026-10-09）。
+     *
+     * 判据取的是「只查一次」而不是「又一次也没查」：各路径 join 出来的 key 恒等于整串输入
+     * （路径就是整串的一种划分），所以逐条枚举后再查属于纯重复；早退则省掉整棵 DFS 枚举树。
+     * 两句必须同时存在 —— 只加早退而保留循环里的查询，等于白改一半。
+     */
+    @Test
+    fun `分词先整串查一次再枚举`() {
+        val text = codeOf("PinyinEngine.kt")
+        // 「先…再…」用位置证明（BUG.md L-109）：两句都在时还要保证顺序，反了等于没早退
+        assertBefore(
+            text,
+            "val hit = phrasesFor(input) ?: return null",
+            "enumerateSegmentPaths(input, paths)",
+            "整串命中判定必须排在枚举之前（否则白枚举整棵切分树）",
+        )
+        assertTrue(
+            "路径循环里不许再逐条查词库（key 恒等于整串，属于重复查询）",
+            !text.contains("val hit = phrasesFor(key)?.size ?: 0"),
+        )
+    }
+
+    /**
+     * 按键链的两处「省分配」不能退回去（2026-10-09）：合并缓存超限只淘汰一小撮、ue/ve 变体先走快路径。
+     *
+     * - `mergedCache.clear()` 整表打空会让紧随其后的每次查询重新合并（打字热路径上的顿挫）；
+     * - `phraseKeysOf` 的两次 `contains("ue"/"ve")` 子串扫描在绝大多数键上是白花的（键里没有 u/v）。
+     */
+    @Test
+    fun `查询热路径不得整表清缓存或全量扫变体`() {
+        val text = codeOf("PinyinEngine.kt")
+        assertTrue("合并缓存超限要走 trimMergedCache（只淘汰一小撮）", text.contains("trimMergedCache()"))
+        assertTrue("不得整表 clear 合并缓存", !text.contains("mergedCache.size > 4096) mergedCache.clear()"))
+        assertTrue(
+            "phraseKeysOf 必须先走 u/v 快路径",
+            text.contains("if (!raw.contains('u') && !raw.contains('v')) return setOf(raw)"),
+        )
+    }
+
 }

@@ -133,7 +133,9 @@ class RecentChangesParityTest {
         for (size in sizes) {
             val data = ByteArray(size).also { rnd.nextBytes(it) }
             val compressed = xz(data)
-            // 生产调用是 XZInputStream(raw).use { readWithYields(it) }，XZ 包装在外面
+            // 生产调用有两条：基础索引首次构建走 writeIndexCacheStreaming（边解压边落盘，MEM-01），
+            // 写入失败后的堆内回退仍走 readWithYields（见 streamIndexCacheToDisk / loadIndexOfHeap）。
+            // 本用例盯的是**分片读取器本身**（读取语义），与它在哪条路径上被调用无关。
             val viaChunks = XZInputStream(ByteArrayInputStream(compressed)).use {
                 PinyinEngine.readWithYields(it)
             }
@@ -150,7 +152,45 @@ class RecentChangesParityTest {
         println("PARITY 分片解压 ${sizes.size} 个尺寸 + 真实资产(14.7MB) 逐字节一致")
     }
 
-    // ── ③ 已于 2026-09-20 移除 ─────────────────────────────────────
+    // ── ③ 流式写盘 vs 原字节（MEM-01）─────────────────────────────
+
+    /**
+     * 边解压边写盘的产物必须与解压结果**逐字节一致**（MEM-01）。
+     *
+     * 这条比读取器那条更要紧：缓存文件随后会被内存映射**当作索引用**（不是当文本读），
+     * 错一个字节就是另一份索引 —— 而「少写 / 多写 / 中途 flush 丢片」这类缺陷在功能测试里
+     * 只会表现为「候选少了一些」，不会报错。
+     */
+    @Test
+    fun 流式写盘产物与解压字节逐字节一致() {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "jinn-idx-" + System.nanoTime())
+        assertTrue("建临时目录失败", dir.mkdirs())
+        try {
+            val rnd = kotlin.random.Random(11)
+            val sizes = listOf(0, 1, 255, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 5)
+            for (size in sizes) {
+                val data = ByteArray(size).also { rnd.nextBytes(it) }
+                val out = java.io.File(dir, "s$size.idx")
+                val ok = XZInputStream(ByteArrayInputStream(xz(data))).use {
+                    PinyinEngine.writeIndexCacheStreaming(out, it)
+                }
+                assertTrue("落盘应成功 size=$size", ok)
+                assertTrue("落盘内容不一致 size=$size", out.readBytes().contentEquals(data))
+                assertTrue("改名成功后不许残留临时件 size=$size", !java.io.File(dir, out.name + ".tmp").exists())
+            }
+            // 失败路径：写不进去时返回 false 而不是抛（调用方据它退回堆内；抛出去会让整段加载失败）
+            val bad = java.io.File(dir, "missing/deep/x.idx")
+            val badOk = XZInputStream(ByteArrayInputStream(xz(ByteArray(16)))).use {
+                PinyinEngine.writeIndexCacheStreaming(bad, it)
+            }
+            assertTrue("写不进时应返回 false", !badOk)
+            println("PARITY 流式写盘 ${sizes.size} 个尺寸逐字节一致 + 失败路径返回 false")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    // ── ④ 已于 2026-09-20 移除 ─────────────────────────────────────
     // 原「长按退格整串清空拼音」判据（shouldClearComposingOnHold）及其配套闸门
     // （shouldStopRepeatOnExhaustedComposing）随该手势一并删除：清空候选改由候选栏
     // 右侧的 ✕ 按钮显式触发，删除键长按恢复为标准的「逐字连删、删空拼音后继续删已上屏」。

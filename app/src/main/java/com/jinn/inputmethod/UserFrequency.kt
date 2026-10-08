@@ -303,10 +303,22 @@ internal object UserFrequency {
      */
     fun rank(words: Array<String>, keyOf: (String) -> String): Array<String> {
         if (!enabled || entries.isEmpty() || words.size < 2) return words
+        // 一趟算完权重（MEM-43）：原先 anyKnown 循环与排序各调一次 keyOf，同一批词被转换两遍 ——
+        // 繁体模式下 keyOf 是 toSimplified，实打实的逐字查表（候选一批几十条，每次查询都要走）。
+        // 顺带保留「一个都没学过 ⇒ 原样返回」的零开销短路：权重全为 0 时不必排序。
+        val weights = DoubleArray(words.size)
         var anyKnown = false
-        for (w in words) if (entries.containsKey(keyOf(w))) { anyKnown = true; break }
+        for (i in words.indices) {
+            val w = entries[keyOf(words[i])]?.weight
+            if (w != null) {
+                weights[i] = w
+                anyKnown = true
+            }
+        }
         if (!anyKnown) return words
-        return words.sortedByDescending { entries[keyOf(it)]?.weight ?: 0.0 }.toTypedArray()
+        // 按下标做稳定排序（权重相同保持原顺序），再按序取出：与 sortedByDescending 的稳定性一致
+        val order = words.indices.sortedByDescending { weights[it] }
+        return Array(words.size) { words[order[it]] }
     }
 
     // ── 序列化（纯函数，便于单测）──────────────────────────────────────────
