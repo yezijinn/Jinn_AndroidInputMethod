@@ -87,8 +87,38 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /** 「布局」展开的调节行：每行张数 / 行高 各一组「−/+」（内容在 `init` 里填） */
     private val tuneRow = LinearLayout(context)
 
-    private val thumbCache = object : LruCache<String, Bitmap>(THUMB_CACHE_BYTES) {
+    /**
+     * 缩略图缓存：基准 [THUMB_CACHE_BYTES]（用户换来的「滚回去不重解」），**低内存档按 [DeviceTier] 折半**
+     * （MEM-04b / 契约 C-3）—— 12MB 的位图缓存正是低内存杀手最先挑的目标。
+     */
+    private val thumbCache = object : LruCache<String, Bitmap>(
+        DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong()).toInt(),
+    ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
+    /** 本页「uri → 格子」直取表（MEM-23）：解码回填原先对整页做双重循环比对 tag，最坏 24×24 次 */
+    private val cellByUri = java.util.HashMap<Uri, ImageView>()
+
+    /**
+     * 收起后延迟释放缓存的定时器（MEM-07）。
+     *
+     * 刻意**不**「收起即清」：那份「收起再开还是热的」即时性是用户明确换来的，改成延迟释放
+     * 既保住它，又把常驻时间限在 [CACHE_RELEASE_DELAY_MS] 内。任务只持本视图的弱引用，
+     * 且排程会被 [onPanelShown] 与 [stopBackgroundWork] 撤销。
+     */
+    private val cacheReleaseHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private val cacheReleaseTask = object : Runnable {
+        private val ref = java.lang.ref.WeakReference(this@GalleryPanelView)
+
+        override fun run() {
+            val v = ref.get() ?: return
+            if (v.visibility != View.GONE) return          // 又打开了：缓存留着
+            if (v.thumbCache.size() == 0) return
+            v.thumbCache.evictAll()
+            Diagnostics.i(TAG, "图库：收起 " + CACHE_RELEASE_DELAY_MS / 1000 + "s 后释放缩略图缓存")
+        }
     }
 
     /** 本帧列出的图片；缩略图回填时按它找格子 */
@@ -104,15 +134,18 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /** 面板收起后到达的缩略图要丢掉（每次显隐递增，在途任务据此自然失效） */
     private var generation = 0
 
+    /** 解码线程数（MEM-07）：低内存档 1 条；标准档沿用用户同意的 [THUMB_THREADS] 条 */
+    private val thumbThreadCount = if (DeviceTier.isLowRam(context)) 1 else THUMB_THREADS
+
     /**
-     * 缩略图专用小线程池（[THUMB_THREADS] 条）。
+     * 缩略图专用小线程池（[thumbThreadCount] 条）。
      *
      * 不借剪贴板那条 [BackgroundIo]：它是单线程串行，且是全应用共用 —— 图片解码插队会拖慢
      * 剪贴板保存，反之也一样。这里要的是「首屏十几张一起解」，代价（多两个常驻线程、内存峰值
      * 高一点）是用户 2026-10-07 明确同意让掉的。
      */
     private val thumbPool: java.util.concurrent.ExecutorService =
-        java.util.concurrent.Executors.newFixedThreadPool(THUMB_THREADS) { r ->
+        java.util.concurrent.Executors.newFixedThreadPool(thumbThreadCount) { r ->
             // 解码是满核的活，且与输入法同进程：在线程体内降后台优先级（BUG.md L-1194）
             Thread({
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
@@ -126,6 +159,12 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private var foundTotal = 0
 
     init {
+        // 生效值落日志（MEM-07 的验收口径）：事后才知道某次「缩略图变模糊 / 内存偏高」是哪一档
+        Diagnostics.i(
+            TAG,
+            "图库：缓存 " + DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong()) / (1024 * 1024) + "MB / " +
+                "解码线程 " + thumbThreadCount + "（" + DeviceTier.describe(context) + "）",
+        )
         orientation = VERTICAL
         setPadding(dp(8), dp(6), dp(8), dp(6))
 
@@ -177,6 +216,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
 
     /** 面板每次展开时调用：重读目录（可能换了目录，或授权已被撤销） */
     fun onPanelShown() {
+        // 又打开了：撤销待触发的缓存释放（MEM-07）
+        cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         // 每次展开都按盘上现值刷一次网格参数：设置页的「图库快贴功能」页也能改这两项
         readGridTuning()
         // 「布局」调节行是临时操作：每次进入都从收起态开始，不留在屏幕上（用户 2026-10-07 要求）
@@ -205,17 +246,35 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 面板收起：丢掉在途缩略图（递增 [generation] 即可），缩略图缓存留着下次用 */
+    /**
+     * 面板收起：丢掉在途缩略图（递增 [generation] 即可）；缩略图缓存**先留着**，
+     * 但排一次延迟释放（MEM-07）：[CACHE_RELEASE_DELAY_MS] 后仍然收起才清。
+     */
     fun onPanelHidden() {
         generation++
         grid.removeAllViews()
         items = emptyList()
+        // 格子要跟着页面一起没了：直取表不清会钉住已 removeAllViews 的 ImageView（MEM-23）
+        cellByUri.clear()
+        cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
+        cacheReleaseHandler.postDelayed(cacheReleaseTask, CACHE_RELEASE_DELAY_MS)
         // 收起面板的每条路径（键盘上那个红色「返回」、切到别的面板、收起键盘、换输入框）
         // 都汇到这里，所以调节行在这里收一次就够（用户 2026-10-07：展开的布局设置必须自动回收）
         tuneRow.visibility = GONE
         pageCount = 1
         pageIndex = 0
         applyPageLabel()
+    }
+
+    /**
+     * 视图脱离窗口（键盘重建 / 服务销毁）时的**自保**（MEM-07 第 4 条）：
+     * 延迟释放任务与解码线程池都在这里再收一次，不依赖调用点纪律。
+     * [stopBackgroundWork] 做的是同样两件事 —— 两条路径都走到时操作幂等。
+     */
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
+        thumbPool.shutdownNow()
     }
 
     /** 键盘换肤：面板内所有静态配色重设（与 [ClipboardPanelView] 同一入口，由键盘侧统一调用） */
@@ -240,6 +299,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      */
     fun stopBackgroundWork() {
         generation++
+        cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         thumbPool.shutdownNow()
         // 与剪贴板面板 / 搜索面板同款留一条：这条路径原先没有任何日志，
         // 重建是否真的走到这里、旧池是否关掉，事后从日志里看不出来
@@ -458,6 +518,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /** 铺**当前页**的格子：每行 [columns] 个等分宽度、行高 [cellHeightDp]（都可从「布局」调） */
     private fun fillPage() {
         grid.removeAllViews()
+        cellByUri.clear()
         if (foundTotal > items.size) {
             status.visibility = VISIBLE
             status.text = String.format(Locale.US, TEXT_TRUNCATED, foundTotal)
@@ -488,6 +549,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         scaleType = ImageView.ScaleType.CENTER_CROP
         setPadding(dp(CELL_PADDING_DP), dp(CELL_PADDING_DP), dp(CELL_PADDING_DP), dp(CELL_PADDING_DP))
         tag = uri
+        // 登记「uri → 格子」：解码完成时直取（MEM-23）
+        cellByUri[uri] = this
         thumbCache.get(uri.toString())?.let { setImageBitmap(it) }
         // 带序号的描述：24 格同名时读屏无法定位（BUG.md L-1164）
         contentDescription = String.format(Locale.US, TEXT_CELL_FMT, ordinal)
@@ -543,17 +606,14 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
+    /**
+     * 把解好的缩略图贴到对应格子（MEM-23）：走 [cellByUri] 直取，不再「行 × 格」双重循环比对 tag
+     * （整页 24 格时最坏 576 次比对，且每张缩略图回来都要走一遍）。
+     *
+     * 表里没有就丢弃：换页 / 收起都清过表，落不回来的那张图本来也不该贴到新页面上（串图）。
+     */
     private fun bindThumb(uri: Uri, bmp: Bitmap) {
-        for (i in 0 until grid.childCount) {
-            val row = grid.getChildAt(i) as? LinearLayout ?: continue
-            for (j in 0 until row.childCount) {
-                val cell = row.getChildAt(j) as? ImageView ?: continue
-                if (cell.tag == uri) {
-                    cell.setImageBitmap(bmp)
-                    return
-                }
-            }
-        }
+        cellByUri[uri]?.setImageBitmap(bmp)
     }
 
     /**
@@ -675,6 +735,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
          * 常驻进程 —— 宁可多占几 MB，也别让用户滚回去时重解（用户 2026-10-07 同意为速度让内存）。
          */
         const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
+
+        /** 收起后多久释放缩略图缓存（MEM-07）：够短到不常驻，够长到「收起再开」仍走缓存 */
+        const val CACHE_RELEASE_DELAY_MS = 60_000L
 
         const val TEXT_TITLE_DEFAULT = "图库快贴"
         const val TEXT_LAYOUT = "布局"

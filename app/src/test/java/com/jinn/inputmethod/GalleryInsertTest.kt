@@ -135,10 +135,13 @@ class GalleryInsertTest {
     @Test
     fun 保留张数由总字节与单张上限推导() {
         val src = TestSources.codeSource("GalleryInsert.kt")
+        // 上限按设备档位派生（MEM-04b）之后，保留张数仍必须由「生效字节 ÷ 单张上限 + 保护张数」推导，
+        // 不许写死：低内存档折半后要自然变成 3，与 MAX_PENDING 的对齐关系才不会破
         assertTrue(
-            "KEEP_FILES 必须由常量推导",
-            "private val KEEP_FILES = (MAX_CACHE_BYTES / MAX_BYTES).toInt() + PROTECTED_RECENT" in src,
+            "保留张数必须由生效字节与单张上限推导",
+            "(effectiveBytes / MAX_BYTES).toInt() + PROTECTED_RECENT" in src,
         )
+        assertFalse("不许写死张数", "KEEP_FILES = 3" in src)
     }
 
     /**
@@ -474,7 +477,12 @@ class GalleryInsertTest {
         assertFalse("不许退回两段式探尺寸", "inJustDecodeBounds" in panel)
         assertTrue("采样率按每行张数两档", "COMPACT_COLUMNS" in panel && "THUMB_SAMPLE_COMPACT" in panel)
         assertTrue("并发解 + 在途去重", "thumbPool.execute" in panel && "inFlight.add(key)" in panel)
-        assertTrue("缓存够装整页", "THUMB_CACHE_BYTES = 12 * 1024 * 1024" in panel)
+        assertTrue("缓存基准 12MB（够装整页）", "THUMB_CACHE_BYTES = 12 * 1024 * 1024" in panel)
+        // 低内存档折半（MEM-04b）：基准不变，生效值走档位入口
+        assertTrue(
+            "缓存上限按设备档位派生",
+            "DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong())" in panel,
+        )
         assertTrue("布局变化后丢掉旧尺寸缓存", "thumbCache.evictAll()" in panel)
         assertTrue("一页就这么多张", "const val PAGE_SIZE = 24" in panel)
         assertTrue("列表只受安全阀约束", "take(MAX_LISTED)" in panel)

@@ -42,7 +42,7 @@ internal object GalleryInsert {
      */
     internal fun tooLargeText(): String = "图片超过 ${MAX_BYTES / 1024 / 1024}MB，未插入"
 
-    /** cache 总字节上限：与 [KEEP_FILES] 共同约束驻留量，单张上限再大也不会无界堆积 */
+    /** cache 总字节上限（基准）：与保留张数共同约束驻留量，单张上限再大也不会无界堆积 */
     private const val MAX_CACHE_BYTES = 60L * 1024 * 1024
 
     /** 桥的有效期：选完图到回到原输入框之间可能隔一会儿，超时丢弃（同 `pendingPasteText` 思路） */
@@ -57,11 +57,22 @@ internal object GalleryInsert {
     private const val PROTECTED_RECENT = 2
 
     /**
-     * 保留张数上限：由总字节上限与单张上限反推（60MB ÷ 20MB = 3），再加受保护的最近两张。
+     * 生效的 cache 总字节上限：基准 [MAX_CACHE_BYTES]，低内存档按 [DeviceTier] 折半（MEM-04b / 契约 C-3）。
      *
-     * 不写死魔数：三者在单张上限下互斥，写死会让后来调参的人以为「放宽张数就能多留」（L-1007）。
+     * 由 [copyToCache] 在有 Context 时落定；[trimCache] 只读它 —— 裁剪路径（putPending）手上没有
+     * Context，而档位在进程存活期间不变，落定一次就够。
      */
-    private val KEEP_FILES = (MAX_CACHE_BYTES / MAX_BYTES).toInt() + PROTECTED_RECENT
+    @Volatile
+    private var effectiveCacheBytes = MAX_CACHE_BYTES
+
+    /**
+     * 保留张数上限：由**生效的**总字节上限与单张上限反推（标准档 60MB ÷ 20MB = 3），再加受保护的最近两张。
+     *
+     * 不写死魔数（L-1007）：三者在单张上限下互斥，写死会让后来调参的人以为「放宽张数就能多留」。
+     * 折半后仍是 3（30MB ÷ 20MB = 1，再加 2），与 [MAX_PENDING] 的对齐关系不破。
+     */
+    private fun keepFiles(effectiveBytes: Long = effectiveCacheBytes): Int =
+        (effectiveBytes / MAX_BYTES).toInt() + PROTECTED_RECENT
 
     private const val TAG = "GalleryInsert"
 
@@ -139,7 +150,7 @@ internal object GalleryInsert {
         return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}"
     }
 
-    /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（对应文件也已按 [KEEP_FILES] 淘汰） */
+    /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（对应文件也已按保留张数淘汰） */
     fun putPending(file: File, mime: String, hostKey: String?) {
         synchronized(pendingLock) {
             pending.addLast(Pending(Picked(file, mime, hostKey), System.currentTimeMillis()))
@@ -217,6 +228,8 @@ internal object GalleryInsert {
      * 供按后缀判类型的宿主使用。
      */
     fun copyToCache(context: Context, uri: Uri): CopyResult {
+        // 落定生效的 cache 上限（MEM-04b）：低内存档折半，裁剪与保留张数都跟着它走
+        effectiveCacheBytes = DeviceTier.budget(context, MAX_CACHE_BYTES)
         val resolver = context.contentResolver
         val declared = resolver.getType(uri)?.takeIf { it.startsWith("image/") }
         val dir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
@@ -348,6 +361,6 @@ internal object GalleryInsert {
     private fun trimCache(dir: File?) {
         val files = dir?.listFiles() ?: return
         val entries = files.sortedByDescending { it.lastModified() }.map { it to it.length() }
-        staleFilesForTrim(entries, KEEP_FILES, MAX_CACHE_BYTES).forEach { it.delete() }
+        staleFilesForTrim(entries, keepFiles(), effectiveCacheBytes).forEach { it.delete() }
     }
 }
