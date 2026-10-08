@@ -12,6 +12,39 @@ class ClipboardPrefs(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("jinn_clipboard", Context.MODE_PRIVATE)
 
+    /**
+     * 八键联动参数的**一致快照**（BUG-12）。字段与「剪贴板自定义」页的草稿一一对应。
+     */
+    internal data class Snapshot(
+        val enabled: Boolean,
+        val maxItems: Int,
+        val maxTotalMb: Int,
+        val favMaxItems: Int,
+        val favMaxMb: Int,
+        val maxItemKb: Int,
+        val panelPage: Int,
+        val maxSearch: Int,
+    )
+
+    /**
+     * 一次性取一组联动参数（BUG-12）。
+     *
+     * 逐键读八次会让「导入 / 批量保存正在进行」的读侧拿到**半新半旧**的组合；与 [applyDraft]、
+     * [importFromBackup] 共用同一把锁之后，读到的必然是同一次写入之后的完整状态。
+     */
+    internal fun snapshot(): Snapshot = synchronized(LOCK) {
+        Snapshot(
+            enabled = enabled,
+            maxItems = maxItems,
+            maxTotalMb = maxTotalBytesMb,
+            favMaxItems = favoriteMaxItems,
+            favMaxMb = favoriteMaxBytesMb,
+            maxItemKb = maxItemBytesKb,
+            panelPage = panelPageItems,
+            maxSearch = maxSearchResults,
+        )
+    }
+
     /** 剪贴板历史总开关 */
     var enabled: Boolean
         get() = sp.getBoolean(KEY_ENABLED, true)
@@ -129,17 +162,21 @@ class ClipboardPrefs(context: Context) {
         panelPage: Int,
         maxSearch: Int,
     ): Boolean {
-        val totalMb = maxTotalMb.coerceIn(10, 500)
-        val editor = sp.edit()
-        editor.putBoolean(KEY_ENABLED, enabled)
-        editor.putInt(KEY_MAX_ITEMS, maxItems.coerceIn(1, MAX_ITEMS_CAP))
-        editor.putInt(KEY_MAX_TOTAL_MB, totalMb)
-        editor.putInt(KEY_FAV_MAX_ITEMS, favMaxItems.coerceIn(1, MAX_FAV_ITEMS_CAP))
-        editor.putInt(KEY_FAV_MAX_MB, favMaxMb.coerceIn(1, favoriteBytesCapMb(totalMb)))
-        editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(4, MAX_ITEM_KB_CAP))
-        editor.putInt(KEY_PANEL_PAGE, panelPage.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX))
-        editor.putInt(KEY_MAX_SEARCH, maxSearch.coerceIn(2, MAX_SEARCH_CAP))
-        return runCatching { editor.commit() }.getOrDefault(false)
+        // 与 [snapshot] / [importFromBackup] 同一把锁（BUG-12）：读侧要么看到写入前的整组，
+        // 要么看到写入后的整组，不会取到两次写入之间的混合。
+        return synchronized(LOCK) {
+            val totalMb = maxTotalMb.coerceIn(10, 500)
+            val editor = sp.edit()
+            editor.putBoolean(KEY_ENABLED, enabled)
+            editor.putInt(KEY_MAX_ITEMS, maxItems.coerceIn(1, MAX_ITEMS_CAP))
+            editor.putInt(KEY_MAX_TOTAL_MB, totalMb)
+            editor.putInt(KEY_FAV_MAX_ITEMS, favMaxItems.coerceIn(1, MAX_FAV_ITEMS_CAP))
+            editor.putInt(KEY_FAV_MAX_MB, favMaxMb.coerceIn(1, favoriteBytesCapMb(totalMb)))
+            editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(4, MAX_ITEM_KB_CAP))
+            editor.putInt(KEY_PANEL_PAGE, panelPage.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX))
+            editor.putInt(KEY_MAX_SEARCH, maxSearch.coerceIn(2, MAX_SEARCH_CAP))
+            runCatching { editor.commit() }.getOrDefault(false)
+        }
     }
 
     // ── 备份导出 / 导入（见 ConfigBackup / ConfigBackupManager） ──
@@ -168,25 +205,69 @@ class ClipboardPrefs(context: Context) {
         return out
     }
 
-    /** 写入并返回成功应用的键数（越界值由 setter 钳位，与运行期一致） */
-    internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): Int {
+    /**
+     * 批量写入并返回成功应用的键数（越界值按**与 setter 相同**的钳位处理）。
+     *
+     * 三处口径（BUG-12）：
+     *  1. 落盘走**单次 `commit`** —— 原先逐个 setter 各做一次 `apply()`，八键不同批，中途进程被杀
+     *     就留下半套参数（体积上限生效了、收藏上限没生效）；
+     *  2. 与 [snapshot] / [applyDraft] 共用同一把锁，读侧不会再取到两次写入之间的混合；
+     *  3. 收藏体积的钳位按「**本次导入的** max_total_mb（给了就用）→ 否则当前值」算 —— 原先逐键写
+     *     时它读的是当时的当前值，会写出与「导入后的总量」不自洽的收藏上限（与 [applyDraft] 同口径）。
+     *
+     * 落盘结果不由本函数判定：调用方另有 `flush()` 复核并把失败计进忽略数（既有口径，见导入流程）。
+     */
+    internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): Int = synchronized(LOCK) {
         var applied = 0
+        val editor = sp.edit()
+        val totalMb = (values[KEY_MAX_TOTAL_MB]?.value as? Int)?.coerceIn(10, 500) ?: maxTotalBytesMb
         for ((key, v) in values) {
             when (key) {
-                KEY_MAX_ITEMS -> (v.value as? Int)?.let { maxItems = it; applied++ }
-                KEY_MAX_TOTAL_MB -> (v.value as? Int)?.let { maxTotalBytesMb = it; applied++ }
-                KEY_FAV_MAX_ITEMS -> (v.value as? Int)?.let { favoriteMaxItems = it; applied++ }
-                KEY_FAV_MAX_MB -> (v.value as? Int)?.let { favoriteMaxBytesMb = it; applied++ }
-                KEY_PANEL_PAGE -> (v.value as? Int)?.let { panelPageItems = it; applied++ }
-                KEY_MAX_SEARCH -> (v.value as? Int)?.let { maxSearchResults = it; applied++ }
-                KEY_MAX_ITEM_KB -> (v.value as? Int)?.let { maxItemBytesKb = it; applied++ }
-                KEY_HISTORY_PAGE_SIZE -> (v.value as? Int)?.let { historyPageSize = it; applied++ }
+                KEY_MAX_ITEMS -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_MAX_ITEMS, it.coerceIn(1, MAX_ITEMS_CAP)); applied++
+                }
+                KEY_MAX_TOTAL_MB -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_MAX_TOTAL_MB, it.coerceIn(10, 500)); applied++
+                }
+                KEY_FAV_MAX_ITEMS -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_FAV_MAX_ITEMS, it.coerceIn(1, MAX_FAV_ITEMS_CAP)); applied++
+                }
+                KEY_FAV_MAX_MB -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_FAV_MAX_MB, it.coerceIn(1, favoriteBytesCapMb(totalMb))); applied++
+                }
+                KEY_PANEL_PAGE -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_PANEL_PAGE, it.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)); applied++
+                }
+                KEY_MAX_SEARCH -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_MAX_SEARCH, it.coerceIn(2, MAX_SEARCH_CAP)); applied++
+                }
+                KEY_MAX_ITEM_KB -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_MAX_ITEM_KB, it.coerceIn(4, MAX_ITEM_KB_CAP)); applied++
+                }
+                KEY_HISTORY_PAGE_SIZE -> (v.value as? Int)?.let {
+                    editor.putInt(
+                        KEY_HISTORY_PAGE_SIZE,
+                        if (it in PAGE_SIZE_OPTIONS) it else DEFAULT_HISTORY_PAGE_SIZE,
+                    )
+                    applied++
+                }
             }
         }
-        return applied
+        // 一键都没认出来就不必落盘（每次导入都写一遍空 commit 是白付）
+        if (applied > 0) runCatching { editor.commit() }
+        applied
     }
 
     companion object {
+
+        /**
+         * 八键联动参数的读写互斥（BUG-12）。
+         *
+         * 挂在**伴生对象**上而不是实例上：锁的有效性不该依赖「`of()` 是否给出同一个实例」这个实现细节，
+         * 将来换成不缓存也照样成立。
+         */
+        private val LOCK = Any()
+
         const val DEFAULT_MAX_ITEMS = 500
         const val DEFAULT_MAX_TOTAL_MB = 100
         // 收藏两个上限不再有独立的默认常量（BUG.md L-980）：条数默认取 MAX_FAV_ITEMS_CAP，

@@ -178,4 +178,27 @@ class FavoriteSymbolsTest {
         )
         assertTrue("必须判为超容量", FavoriteSymbols.overCapacity(many))
     }
+
+    /**
+     * BUG-35：长度闸必须比**归一后**的长度。
+     *
+     * 运行期调用方（收藏页）传的就是 `serialize(parse(...))` 的归一串，而导入侧原先比备份原文 ⇒
+     * 一份「含冗余空白、原文超限、归一后不超限」的备份会被整键拒收，同一份内容在运行期却存得下。
+     */
+    @Test
+    fun 原文超限但归一不超限的收藏必须能通过长度闸() {
+        // 合法 JSON：一大段空白 + 一页一个符号；原文必超 32K，归一后是 [["D"]]
+        val raw = "[\n" + " ".repeat(Prefs.MAX_FAVORITE_SYMBOLS_CHARS) + "[\"D\"]\n]"
+        assertTrue(
+            "原文应超上限（否则测例无效）",
+            raw.length > Prefs.MAX_FAVORITE_SYMBOLS_CHARS,
+        )
+        val normalized = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))
+        assertTrue(
+            "归一后必须在闸内（比原文长度的旧口径会把它整键拒收）",
+            normalized.length <= Prefs.MAX_FAVORITE_SYMBOLS_CHARS,
+        )
+        assertEquals(listOf(listOf("D")), FavoriteSymbols.parse(normalized))
+        assertFalse("归一后不得判为超容量", FavoriteSymbols.overCapacity(FavoriteSymbols.parse(raw)))
+    }
 }

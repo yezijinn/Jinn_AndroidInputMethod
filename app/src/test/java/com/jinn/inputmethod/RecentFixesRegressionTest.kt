@@ -853,6 +853,43 @@ class RecentFixesRegressionTest {
         assertTrue("键位数据本身不得改动（仍是同一张 codes）", "val codes: Map<String, String>" in table)
     }
 
+    /**
+     * 联动参数的一致性与导入口径不得退回去（2026-10-09，批 6 的 BUG-12 / BUG-35）。
+     *
+     * BUG-12：八个联动参数（条数 / 体积 / 收藏两条 / 页宽 / 搜索上限 / 单条上限 / 历史页宽）
+     *   原先「逐键 apply + 逐键读」——导入进行中读到的会是半新半旧的组合，用户随后一保存就把
+     *   旧值写回。现在读侧走 `snapshot()` 一把锁取整组、写侧（applyDraft / importFromBackup）
+     *   同一把锁 + 单次 commit。
+     * BUG-35：收藏符号的长度闸必须比**归一后**的长度 —— 运行期调用方传的就是归一串，
+     *   导入侧却比备份原文，同一份收藏会「运行期能存、导入被整键拒收」。
+     */
+    @Test
+    fun `联动参数必须整组一致且导入口径与运行期相同`() {
+        val cp = codeOf("ClipboardPrefs.kt")
+        assertTrue("必须有一致快照入口", "internal fun snapshot(): Snapshot = synchronized(LOCK) {" in cp)
+        assertTrue("快照类型必须与页面草稿同组", "internal data class Snapshot(" in cp)
+        assertTrue("保存路径必须进同一把锁", "return synchronized(LOCK) {" in cp)
+        assertTrue(
+            "导入路径必须整组单次落盘",
+            "internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): Int = synchronized(LOCK) {" in cp,
+        )
+        val importBlock = blockAfter(cp, "internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): Int = synchronized(LOCK) {")
+        assertTrue("导入不得再逐键走 setter", "= it; applied++" !in importBlock)
+        assertTrue("导入必须写进同一个 editor", "val editor = sp.edit()" in importBlock)
+        assertTrue("导入必须单次 commit", "editor.commit()" in importBlock)
+
+        val page = codeOf("ClipboardCustomizeActivity.kt")
+        assertTrue("定制页必须取一致快照", "val s = prefs.snapshot()" in page)
+        assertTrue("定制页不得再逐键读", "maxItems = prefs.maxItems" !in page)
+
+        val prefs = codeOf("Prefs.kt")
+        assertTrue(
+            "收藏符号长度闸必须比归一后的串",
+            "val normalized = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))" in prefs &&
+                "if (normalized.length > MAX_FAVORITE_SYMBOLS_CHARS)" in prefs,
+        )
+    }
+
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {
         assertFalse(

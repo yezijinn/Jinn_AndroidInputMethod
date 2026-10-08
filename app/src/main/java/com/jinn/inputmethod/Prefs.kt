@@ -1548,14 +1548,21 @@ class Prefs(context: Context) {
                     ok()
                 } else {
                     val raw = asString(v)
-                    when {
-                        raw == null -> bad(key)
+                    if (raw == null) {
+                        bad(key)
+                    } else {
                         // 与 symbol_group_order 同理必须归一：解析在主线程（键盘视图构造时）执行，
                         // 十几 MB 的数组会让每次重建键盘都做百万级解析。归一后落盘的是规范结构，
                         // 符号集合与顺序不变（见 FavoriteSymbols 的结构规则）。
-                        raw.length > MAX_FAVORITE_SYMBOLS_CHARS -> bad(key)
-                        else -> {
-                            favoriteSymbols = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))
+                        //
+                        // 长度闸比的是**归一后**的长度（BUG-35）：原先比备份里的原文，而运行期调用方
+                        // （收藏页）传的就是归一串 ⇒ 同一份收藏（含冗余空白 / 旧格式）运行期能存、
+                        // 导入却被整键拒收，两侧口径不一致。
+                        val normalized = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))
+                        if (normalized.length > MAX_FAVORITE_SYMBOLS_CHARS) {
+                            bad(key)
+                        } else {
+                            favoriteSymbols = normalized
                             ok()
                         }
                     }

@@ -130,16 +130,26 @@ class ClipboardCustomizeActivity : Activity() {
 
     // ── 数据 ────────────────────────────────────────────────
 
-    private fun readPrefs(): Draft = Draft(
-        enabled = prefs.enabled,
-        maxItems = prefs.maxItems,
-        maxTotalMb = prefs.maxTotalBytesMb,
-        favMaxItems = prefs.favoriteMaxItems,
-        favMaxMb = prefs.favoriteMaxBytesMb,
-        maxItemKb = prefs.maxItemBytesKb,
-        panelPage = prefs.panelPageItems,
-        maxSearch = prefs.maxSearchResults,
-    )
+    /**
+     * 盘上取值 → 页面草稿。
+     *
+     * 走 [ClipboardPrefs.snapshot] 一次性取（BUG-12）：逐键读八次时，若导入 / 批量保存正在跑，
+     * 页面会拿到「半新半旧」的组合（例如总量上限已是新值、收藏上限还是旧值），用户随手一保存
+     * 就把旧值写回，抵消掉刚导入的配置。
+     */
+    private fun readPrefs(): Draft {
+        val s = prefs.snapshot()
+        return Draft(
+            enabled = s.enabled,
+            maxItems = s.maxItems,
+            maxTotalMb = s.maxTotalMb,
+            favMaxItems = s.favMaxItems,
+            favMaxMb = s.favMaxMb,
+            maxItemKb = s.maxItemKb,
+            panelPage = s.panelPage,
+            maxSearch = s.maxSearch,
+        )
+    }
 
     private fun restoreDraft(b: Bundle?): Draft {
         if (b == null || !b.containsKey(STATE_MAX_ITEMS)) return snapshot
