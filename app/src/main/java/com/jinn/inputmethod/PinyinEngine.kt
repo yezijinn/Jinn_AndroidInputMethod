@@ -806,10 +806,18 @@ object PinyinEngine {
      *
      * 4 个纯文本资产的统一入口：字典大小在压缩时按输入规模给（1MB），解压端按流头分配，
      * 不会因为小文件也吃大资产那档的 8MB。
+     *
+     * 顺带剥掉开头的 BOM：资产用带 BOM 的编辑器重生成时，首行会多出一个 `Cf` 类字符
+     * （`trim()` / `isBlank()` 都不认它），音节表 / 字表因此多出一条垃圾项、首项整键失效
+     * （BUG.md L-1156）。在这里剥一次，9 个调用点全覆盖。
      */
-    private fun openAssetText(context: Context, name: String): java.io.BufferedReader =
-        org.tukaani.xz.XZInputStream(context.assets.open(name))
+    private fun openAssetText(context: Context, name: String): java.io.BufferedReader {
+        val reader = org.tukaani.xz.XZInputStream(context.assets.open(name))
             .bufferedReader(StandardCharsets.UTF_8)
+        reader.mark(2)
+        if (reader.read() != 0xFEFF) reader.reset()
+        return reader
+    }
 
     /** 读取三张档位字表与简繁映射 asset（全部建档；放行与否由开关决定，见 [setRareTiers]） */
     private fun loadCharTiers(context: Context) {

@@ -47,6 +47,9 @@ class ClipboardHistoryActivity : Activity() {
     private var keyword: String = ""
     private var pageIndex = 0
 
+    /** 确认框已弹（防重入：连点「删除所选」/「清空」会堆叠多个框，BUG.md L-1165） */
+    private var confirming = false
+
     private fun pageSize(): Int = ClipboardPrefs.of(this).historyPageSize
     private fun pageItems(): List<ClipboardDb.Item> {
         val from = (pageIndex * pageSize()).coerceAtMost(items.size)
@@ -190,6 +193,16 @@ class ClipboardHistoryActivity : Activity() {
         list.divider = android.graphics.drawable.ColorDrawable(getColor(R.color.card_stroke))
         list.dividerHeight = dp(1)
 
+        // 重建（旋转 / 定时换色）后恢复筛选与多选：这几个字段都是实例态，页面又注册了
+        // 主题节拍器，不恢复就会出现「多选到一半旋转即丢选择」（BUG.md L-1165）
+        savedInstanceState?.let { st ->
+            categoryFilter = st.getString(STATE_FILTER)
+            keyword = st.getString(STATE_KEYWORD) ?: ""
+            pageIndex = st.getInt(STATE_PAGE, 0)
+            st.getLongArray(STATE_CHECKED)?.forEach { checkedIds.add(it) }
+            multiSelect = st.getBoolean(STATE_MULTI, false)
+            searchEdit.setText(keyword)
+        }
         buildFilterChips()
         buildActionRow()
         buildPagerRow()
@@ -228,6 +241,16 @@ class ClipboardHistoryActivity : Activity() {
     override fun onStop() {
         super.onStop()
         themeTicker.stop()
+    }
+
+    /** 跨重建保存筛选 / 搜索 / 页码 / 多选（BUG.md L-1165）。 */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_FILTER, categoryFilter)
+        outState.putString(STATE_KEYWORD, keyword)
+        outState.putInt(STATE_PAGE, pageIndex)
+        outState.putLongArray(STATE_CHECKED, checkedIds.toLongArray())
+        outState.putBoolean(STATE_MULTI, multiSelect)
     }
 
 
@@ -510,10 +533,18 @@ class ClipboardHistoryActivity : Activity() {
     }
 
     private fun confirm(msg: String, onYes: () -> Unit) {
+        // 防重入（BUG.md L-1165）：连点「删除所选」/「清空」会堆叠多个确认框，确定后重复执行；
+        // 三处回调都复位（确定 / 取消 / 关掉），与同族剪贴板自定义页同款
+        if (confirming) return
+        confirming = true
         AlertDialog.Builder(this)
             .setMessage(msg)
-            .setPositiveButton("确定") { _, _ -> onYes() }
-            .setNegativeButton("取消", null)
+            .setPositiveButton("确定") { _, _ ->
+                confirming = false
+                onYes()
+            }
+            .setNegativeButton("取消") { _, _ -> confirming = false }
+            .setOnDismissListener { confirming = false }
             .show()
     }
 
@@ -529,6 +560,13 @@ class ClipboardHistoryActivity : Activity() {
 
     private companion object {
         const val TAG = "ClipboardHistory"
+
+        /** 跨重建保存的实例态（BUG.md L-1165） */
+        private const val STATE_FILTER = "hist_filter"
+        private const val STATE_KEYWORD = "hist_keyword"
+        private const val STATE_PAGE = "hist_page"
+        private const val STATE_CHECKED = "hist_checked"
+        private const val STATE_MULTI = "hist_multi"
         const val TEXT_TITLE = "剪贴板历史管理"
         const val TEXT_COPIED = "已复制"
         const val TEXT_DELETE = "删除"

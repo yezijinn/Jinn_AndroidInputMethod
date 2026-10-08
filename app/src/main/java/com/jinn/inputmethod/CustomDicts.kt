@@ -745,7 +745,10 @@ internal object CustomDicts {
     fun loadSyllables(context: Context): Set<String>? = runCatching {
         context.assets.open(SYLLABLES_ASSET).use { raw ->
             XZInputStream(raw).bufferedReader(Charsets.UTF_8).use { reader ->
-                reader.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
+                // 与用户来源路径同口径剥 BOM（见 [readCapped]）：带 BOM 重生成资产时，
+                // 首行会多出一个 Cf 类字符，音节表因此多一条垃圾项、首项整键失效（BUG.md L-1156）
+                reader.readText().removePrefix("\uFEFF")
+                    .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
             }
         }
     }.getOrNull()?.takeIf { it.size > 100 }

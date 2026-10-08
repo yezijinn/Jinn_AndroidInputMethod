@@ -3727,4 +3727,41 @@ class RecentFixesRegressionTest {
         assertTrue("序号必须按整份列表编（跨页连续）", "var ordinal = from" in gallery)
     }
 
+    /**
+     * 重建态与资产读取的三条修复不得回退（2026-10-08 · L-1136 / L-1156 / L-1165）。
+     *
+     * 两页的状态都要跨 `recreate()` 存活（主题节拍器与系统深浅色都会重建）；
+     * 资产读取要与用户来源路径**同口径**剥 BOM，否则带 BOM 重生成资产会多出首项垃圾并让首键失效。
+     */
+    @Test
+    fun `历史页与收藏页的实例状态和资产剥 BOM 的三条修复不得回退`() {
+        val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertTrue("历史页必须实现 onSaveInstanceState", "override fun onSaveInstanceState(" in hist)
+        val restore = hist.substringAfter("savedInstanceState?.let", "")
+        for (k in listOf("STATE_FILTER", "STATE_KEYWORD", "STATE_PAGE", "STATE_CHECKED", "STATE_MULTI")) {
+            assertTrue("$k 必须写进实例状态", (k + ")" in hist) || (k + "," in hist))
+            assertTrue("$k 必须在重建后读回", (k + ")") in restore || (k + ",") in restore)
+        }
+        assertTrue(
+            "筛选与多选要在建 chips 之前恢复（否则界面与状态不一致）",
+            hist.indexOf("savedInstanceState?.let") < hist.indexOf("buildFilterChips()"),
+        )
+        assertTrue("确认框必须防重入", "if (confirming) return" in hist)
+
+        val fav = TestSources.codeSource("FavoriteSymbolsActivity.kt")
+        assertTrue("对话框输入必须写进实例状态", "putString(STATE_ADD_TEXT" in fav)
+        assertTrue(
+            "重建后要带初值重开对话框",
+            "showAddDialog(" in fav.substringAfter("getString(STATE_ADD_TEXT)", ""),
+        )
+
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("文本资产必须剥 BOM（首项失效那条）", "reader.read() != 0xFEFF" in engine)
+        val dicts = TestSources.codeSource("CustomDicts.kt")
+        assertTrue(
+            "音节表资产读取必须同口径剥 BOM",
+            "removePrefix(\"\\uFEFF\")" in dicts.substringAfter("fun loadSyllables", "").take(700),
+        )
+    }
+
 }

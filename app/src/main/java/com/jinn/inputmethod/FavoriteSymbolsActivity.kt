@@ -36,6 +36,9 @@ class FavoriteSymbolsActivity : Activity() {
     /** 「添加符号」对话框：代码创建的，旋转重建时不会自动恢复，必须自己登记并 dismiss */
     private var addDialog: AlertDialog? = null
 
+    /** 添加对话框的输入框（重建时把已输入 / 已粘贴的内容带回去，BUG.md L-1136） */
+    private var addInput: EditText? = null
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
@@ -56,6 +59,15 @@ class FavoriteSymbolsActivity : Activity() {
         themeTicker.stop()
     }
 
+    /**
+     * 跨重建保存对话框里已输入的内容（BUG.md L-1136）：本页无 `configChanges`，
+     * 旋转 / 定时换色会重建，不保存就得白打一遍（符号本身在偏好里，不会丢）。
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_ADD_TEXT, addInput?.text?.toString() ?: "")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_favorite_symbols)
@@ -72,6 +84,8 @@ class FavoriteSymbolsActivity : Activity() {
             setOnClickListener { showAddDialog() }
         }
         renderPages()
+        // 重建后把对话框连同已输入的内容一起恢复（BUG.md L-1136）
+        savedInstanceState?.getString(STATE_ADD_TEXT)?.takeIf { it.isNotEmpty() }?.let { showAddDialog(it) }
     }
 
     private companion object {
@@ -83,6 +97,9 @@ class FavoriteSymbolsActivity : Activity() {
         //   留在 strings.xml，所以标题由布局直接引用那条 string（与设置页各入口按钮同做法）。
         const val TEXT_DESC = "增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。"
         const val TEXT_ADD = "＋ 添加符号"
+
+        /** 跨重建保存的对话框输入（BUG.md L-1136） */
+        private const val STATE_ADD_TEXT = "favorite_add_text"
     }
 
     override fun onPause() {
@@ -217,12 +234,18 @@ class FavoriteSymbolsActivity : Activity() {
         return grid
     }
 
-    /** 添加对话框：仅一个输入框（自由键入/粘贴），确定后校验空/超长/重复 */
-    private fun showAddDialog() {
+    /**
+     * 添加对话框：仅一个输入框（自由键入/粘贴），确定后校验空/超长/重复。
+     *
+     * [initial] 供重建恢复：本页无 `configChanges`，旋转或定时换色会 `recreate()`，
+     * 对话框连同已输入的内容一起没了（BUG.md L-1136）。
+     */
+    private fun showAddDialog(initial: String = "") {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT
             hint = getString(R.string.favorite_dialog_hint)
             setSingleLine(true)
+            setText(initial)
         }
         val pad = PageStyle.dp(this, 16)
         val box = FrameLayout(this).apply {
@@ -237,6 +260,8 @@ class FavoriteSymbolsActivity : Activity() {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
         addDialog = dialog
+        addInput = input
+        dialog.setOnDismissListener { addInput = null }
         dialog.show()
     }
 
