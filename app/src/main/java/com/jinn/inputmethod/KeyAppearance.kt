@@ -29,8 +29,13 @@ object KeyAppearance {
     /** 圆角下界：0 为直角 */
     const val MIN_CORNER_DP = 0f
 
-    /** 圆角上界：再大就会把按键削成胶囊形，失去按键辨识度 */
-    const val MAX_CORNER_DP = 24f
+    /**
+     * 圆角上界：48dp（2026-10-09 由 24dp 扩两倍 —— 用户指定外观页所有滑杆定义域 ×2）。
+     *
+     * 超过键高一半后按键会自然收成胶囊形（绘制层对半径有钳位，不会画出畸形图形，也不会崩），
+     * 所以这里的安全性只与「形状是否还认得出来」有关，属用户自选的观感档。
+     */
+    const val MAX_CORNER_DP = 48f
 
     /** 圆角步进：键盘外观页 SeekBar 逐格 1dp */
     const val CORNER_STEP_DP = 1f
@@ -43,8 +48,14 @@ object KeyAppearance {
     /** 间隙下界：0 为无缝 */
     const val MIN_GAP_DP = 0f
 
-    /** 间隙上界：8dp 时键面已明显收窄，继续加大只会让按键更难点 */
-    const val MAX_GAP_DP = 8f
+    /**
+     * 间隙上界：16dp（2026-10-09 由 8dp 扩两倍）。
+     *
+     * 代价说清楚：360dp 宽屏上最窄的字母键约 36dp，最大档每键四边各内缩 8dp，仍有 20dp 可点
+     * （等于项目触控基线）；320dp 小屏的最窄键约 31dp，最大档只剩 15dp —— 那时需要用户自己拉回滑杆。
+     * 越界不会崩、不会夹到负数（有钳位），属自选极端档。
+     */
+    const val MAX_GAP_DP = 16f
 
     /** 间隙步进：0.5dp（够细，且 0.5 在二进制里可精确表示，往返换算不会漂） */
     const val GAP_STEP_DP = 0.5f
@@ -70,8 +81,14 @@ object KeyAppearance {
     /** 高度下界：再矮就放不下「字母 + 韵母提示」两行字，触控目标也低于常用基线 */
     const val MIN_KEY_HEIGHT_DP = 40f
 
-    /** 高度上界：3 行 × 80dp = 240dp，加上候选栏与底栏也仍落在常见手机的可视区内 */
-    const val MAX_KEY_HEIGHT_DP = 80f
+    /**
+     * 高度上界：120dp（2026-10-09 由 80dp 扩两倍）。
+     *
+     * 3 行 × 120dp = 360dp，加上候选栏（44dp）、拼音条（16dp）与底栏（56dp）约 476dp ——
+     * 640dp 高的小屏仍留有 160dp 以上给宿主输入区，故这是「挤但可用」的上界。
+     * 剪贴板 / 图库面板的高度不跟随键高（固定 162dp×2），所以本项放大不会把面板顶出屏幕。
+     */
+    const val MAX_KEY_HEIGHT_DP = 120f
 
     /** 高度步进：2dp（观感可辨的最小变化；再细会让 SeekBar 格数过多而难以点准） */
     const val KEY_HEIGHT_STEP_DP = 2f
@@ -110,8 +127,13 @@ object KeyAppearance {
      */
     const val MIN_SPACING_DP = 5f
 
-    /** 字距上界：30dp（2026-10-02 定） */
-    const val MAX_SPACING_DP = 30f
+    /**
+     * 字距上界：55dp（2026-10-09 由 30dp 扩两倍）。
+     *
+     * 只影响候选之间的水平间隔：越大候选越疏、越依赖横向滚动，行高与栏高都不变，
+     * 也不会把候选挤出屏幕外（容器是横向滚动的）。
+     */
+    const val MAX_SPACING_DP = 55f
 
     /** 字距步进：1dp（间隔是观感量，半格在候选栏上看不出来） */
     const val SPACING_STEP_DP = 1f

@@ -2600,8 +2600,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             shuangpin = shuangpinMode,
             enabled = showKeyHint,
         )
+        // 字母主字形字号微调（2026-10-09 指定）：大写字形比小写更宽更高，同号更挤，按「有无韵母提示 × 大小写」四档下调：
+        //   显示韵母 + A-Z ⇒ −3sp；显示韵母 + a-z ⇒ 不变；
+        //   不显示韵母 + A-Z ⇒ −5sp；不显示韵母 + a-z ⇒ −2sp。
+        // 只调主字形（提示行字号不动、也不加粗 —— 用加粗补偿会让字面变脏）；符号层 / 数字层显式归零。
+        // 按 sp 语义换算（乘 scaledDensity）而不是按键高比例：用户说的是「字号减少 3」，随系统字体缩放才一致。
+        val glyphDeltaPx = when {
+            showUpper && showHint -> -3f
+            showUpper -> -5f
+            showHint -> 0f
+            else -> -2f
+        } * resources.displayMetrics.scaledDensity
         for (c in 'a'..'z') {
             val key = keyViews[c] ?: continue
+            key.glyphSizeDeltaPx = if (layer == LAYER_LETTER) glyphDeltaPx else 0f
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
             // 符号层一律水平 + 垂直居中（不用字母层的小字顶置样式）
             key.uniformMeasureText = uniformSymbolText

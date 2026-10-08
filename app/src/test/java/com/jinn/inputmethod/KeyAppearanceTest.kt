@@ -23,7 +23,7 @@ class KeyAppearanceTest {
     @Test
     fun gap_clampsToDomain() {
         assertEquals(KeyAppearance.MIN_GAP_DP, KeyAppearance.clampGapDp(-0.5f), 0f)
-        assertEquals(KeyAppearance.MAX_GAP_DP, KeyAppearance.clampGapDp(12f), 0f)
+        assertEquals(KeyAppearance.MAX_GAP_DP, KeyAppearance.clampGapDp(20f), 0f)
     }
 
     @Test
@@ -66,7 +66,7 @@ class KeyAppearanceTest {
 
     /**
      * 候选字距（键盘外观页的「字距」滑杆，控制候选词之间的水平间隔）：
-     * 与圆角 / 间隙同一套边界约定 —— 定义域 **5~30dp**（2026-10-02 定）、整格 1dp。
+     * 与圆角 / 间隙同一套边界约定 —— 定义域 **5~55dp**（2026-10-02 定 5~30dp，2026-10-09 扩两倍）、整格 1dp。
      */
     @Test
     fun spacing_clampsToDomainAndSnapsToStep() {
@@ -98,13 +98,18 @@ class KeyAppearanceTest {
         assertEquals(KeyAppearance.DEFAULT_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(KeyAppearance.DEFAULT_KEY_HEIGHT_DP), 0f)
     }
 
-    /** SeekBar 上限 = 定义域跨度 / 步进（圆角 24 格 × 1dp，间隙 16 格 × 0.5dp，字距 25 格 × 1dp） */
+    /**
+     * SeekBar 上限 = 定义域跨度 / 步进。
+     *
+     * 2026-10-09（用户指定：外观页所有滑杆定义域 ×2）——圆角 24→48 格、间隙 16→32 格、
+     * 字距 25→50 格、键高 20→40 格。数值变化必须同步这条，否则滑杆要么拖不到上界、要么越界。
+     */
     @Test
     fun progressMax_matchesDomainAndStep() {
-        assertEquals(24, KeyAppearance.CORNER_PROGRESS_MAX)
-        assertEquals(16, KeyAppearance.GAP_PROGRESS_MAX)
-        assertEquals(25, KeyAppearance.SPACING_PROGRESS_MAX)
-        assertEquals(20, KeyAppearance.KEY_HEIGHT_PROGRESS_MAX)
+        assertEquals(48, KeyAppearance.CORNER_PROGRESS_MAX)
+        assertEquals(32, KeyAppearance.GAP_PROGRESS_MAX)
+        assertEquals(50, KeyAppearance.SPACING_PROGRESS_MAX)
+        assertEquals(40, KeyAppearance.KEY_HEIGHT_PROGRESS_MAX)
         assertEquals(
             KeyAppearance.MAX_CORNER_DP,
             KeyAppearance.cornerProgressToDp(KeyAppearance.CORNER_PROGRESS_MAX),
@@ -178,14 +183,26 @@ class KeyAppearanceTest {
     }
 
     /**
-     * 间隙上界必须仍然「按得动」：每键四边各内缩一半，8dp 间隙时最窄的键
-     * （10 键一行的字母键，320dp 屏幕上约 31dp 宽）内缩 4dp 后仍有 23dp 可点。
+     * 间隙上界要「按得动」：每键四边各内缩一半（= 间隙 / 2）。
+     *
+     * 2026-10-09 上界由 8dp 扩到 16dp（用户指定外观页滑杆定义域 ×2）。代价写清楚：
+     * 360dp 宽屏上最窄的字母键约 36dp，最大档内缩 8dp 后仍有 **20dp**（等于项目触控基线）；
+     * 而 320dp 宽的小屏（最窄键约 31dp）在最大档只剩 15dp —— 那时要用户自己把滑杆拉回。
+     * 本用例保证的是「常见宽度下不缺斤少两」，不是「任意宽度下都好用」，后者靠钳位保证不出负数。
      */
     @Test
     fun maxGap_keepsNarrowestKeyTappable() {
         val insetDp = KeyAppearance.MAX_GAP_DP / 2f
-        assertEquals(4f, insetDp, 0f)
-        val narrowestKeyDp = 31f
-        assertTrue("最窄键被间隙压没", narrowestKeyDp - insetDp * 2f > 20f)
+        assertEquals(8f, insetDp, 0f)
+        val narrowestKeyDp = 36f
+        assertTrue("360dp 屏上最窄键被间隙压没", narrowestKeyDp - insetDp * 2f >= 20f)
+        assertTrue("320dp 屏的最窄键宽度应为正（钳位不许出现负宽）", 31f - insetDp * 2f > 0f)
+    }
+
+    /** 键高上界 120dp 不能把键盘顶满屏：三行 + 候选栏 + 拼音条 + 底栏 ≤ 490dp */
+    @Test
+    fun maxKeyHeight_leavesRoomForHost() {
+        val totalDp = KeyAppearance.MAX_KEY_HEIGHT_DP * 3 + 44 + 16 + 56
+        assertTrue("键高上界会把键盘顶满屏：$totalDp dp", totalDp <= 490f)
     }
 }

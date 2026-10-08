@@ -239,6 +239,15 @@ import kotlin.math.min
          * 不绘制双拼提示；false 保持双拼布局（字母顶置 42% + 下方韵母提示）。
          */
         var fullPinyinStyle: Boolean = false
+
+    /**
+     * 字母主字形的**字号微调**（px，可负），由 [PinyinKeyboardView.refreshKeyLabels] 按
+     * 「有没有韵母提示 × 字形是不是大写」四档下发 —— 大写字形比小写更宽更高，同号更挤。
+     *
+     * 只作用于字母主字形那两个分支（铺满居中的全拼样式、小字顶置样式）；韵母提示行、
+     * 符号层与数字层都不受影响。默认 0f = 与历史观感逐像素一致。
+     */
+    var glyphSizeDeltaPx: Float = 0f
             set(value) {
                 field = value
                 invalidate()
@@ -361,7 +370,7 @@ import kotlin.math.min
             // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──
             if (fullPinyinStyle) {
                 textPaint.color = glyphColor
-                textPaint.textSize = h * FULL_TEXT_RATIO
+                textPaint.textSize = (h * FULL_TEXT_RATIO + glyphSizeDeltaPx).coerceAtLeast(h * MIN_LETTER_RATIO)
                 textPaint.textAlign = Paint.Align.CENTER
                 textPaint.getFontMetrics(glyphFm)
                 val baseline = (h - glyphFm.ascent - glyphFm.descent) / 2f
@@ -394,7 +403,8 @@ import kotlin.math.min
                 return
             }
             // 大写字母：置顶贴上边，占上方约 50%
-            textPaint.textSize = height * TEXT_RATIO
+            textPaint.textSize = (height * TEXT_RATIO + glyphSizeDeltaPx)
+                .coerceAtLeast(height * MIN_LETTER_RATIO)
             textPaint.getFontMetrics(glyphFm)
             val letterBaseline = (h * LETTER_TOP_RATIO - glyphFm.ascent - glyphFm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
             canvas.drawText(label, w / 2f, letterBaseline, textPaint)
@@ -510,6 +520,12 @@ import kotlin.math.min
 
             /** 表示大写字母字号占按键高度的比例 （0.5f 即字母高度为键高的 50%）。值越大字母越大 */
             const val TEXT_RATIO = 0.5f
+
+    /**
+     * 字母主字形的**防御性下界比例**（相对键高）：即使最小键高叠加最大下调量（[glyphSizeDeltaPx]），
+     * 字母也不该被压到看不清。正常取值远不会碰到这条。
+     */
+    const val MIN_LETTER_RATIO = 0.25f
 
             /** 超过该字符数按长文本处理：收缩字号并垂直居中（编程关键字、多字符符号） */
             const val LONG_TEXT_THRESHOLD = 2
