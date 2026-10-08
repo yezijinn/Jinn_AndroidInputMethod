@@ -3803,7 +3803,11 @@ class RecentFixesRegressionTest {
     fun `实例状态尺寸与历史页恢复语义的三条修复不得回退`() {
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")
         assertTrue("保存必须按 draftInBundle 分档", "if (draftInBundle(text.length))" in edit)
-        assertTrue("大稿要落到 cacheDir 的文件", "staged.writeText(text)" in edit && "DRAFT_FILE_SAVE_TMP" in edit)
+        // 兜底写入改走分段编码（BUG-27）：不再把整份文本一次编成约 48MB 的字节数组
+        assertTrue(
+            "大稿要落到 cacheDir 的文件",
+            "writeTextChunked(staged, text)" in edit && "DRAFT_FILE_SAVE_TMP" in edit,
+        )
         assertTrue("Bundle 里只留文件名", "putString(STATE_EDITOR_FILE, DRAFT_FILE)" in edit)
         val restore = edit.substringAfter("private fun startDraftRestore(", "")
         assertTrue("读回要先看状态再读文件", "state.getString(STATE_EDITOR_FILE)" in restore)

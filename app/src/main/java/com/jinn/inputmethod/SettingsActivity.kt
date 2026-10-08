@@ -918,6 +918,13 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "自动检查更新: 距上次 ${(now - last) / DAY_MS} 天，跳过")
             return
         }
+        // 网络与电量门控（MEM-17）：非 WiFi 且未充电时不做后台检查 —— 用户没在等它，
+        // 不该为一次版本检查付流量与唤醒。**不推进 `updateLastCheckAt`**：下次打开设置页还会再判，
+        // 一旦回到 WiFi / 开始充电就补上（推进了就等于把这次检查吞掉）
+        if (!UpdateChecker.autoCheckNetworkOk(this)) {
+            Diagnostics.i(TAG, "自动检查更新: 当前非 WiFi 且未充电，跳过（下次打开设置页再判）")
+            return
+        }
         // 与手动检查共用状态机：进行中不重入，避免并发请求与重复弹窗
         if (updateState == UpdateState.Checking) return
         val since = if (last <= 0L) "从未检查" else "${(now - last) / DAY_MS} 天前"

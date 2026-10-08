@@ -1,5 +1,9 @@
 package com.jinn.inputmethod
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import java.io.IOException
@@ -55,6 +59,9 @@ object UpdateChecker {
      */
     fun checkAsync(local: Int, onDone: (Result) -> Unit) {
         Thread {
+            // 后台优先级：这是一次网络抓取（最长可到超时上限），跑在用户刚打开设置页的时刻，
+            // 不该与前台输入/键盘弹出抢 CPU
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val result = runCatching { fetchLatest() }.fold(
                 onSuccess = { l ->
                     if (comparableVersion(l.date) > comparableVersion(local)) Result.Available(l.date, l.source, l.tag)
@@ -97,6 +104,23 @@ object UpdateChecker {
      * 两种脏数据都按「需要检查」处理，否则会把自动检查永久静默掉：
      * 0/负数（老版本未写入）与未来时间（系统时钟回拨或被外部改写）。
      */
+    /**
+     * 自动检查的网络与电量门控（MEM-17）：只在「不计费网络」或「正在充电」时跑。
+     *
+     * 自动检查是后台行为，用户没在等它；手机用流量、靠电池时不该为一次版本检查付流量与唤醒。
+     * 判定取不到服务时一律**放行**（宁可多跑一次，也不要让功能静默失效）。
+     * **手动检查不经过这里** —— 用户明确点了按钮，就该立刻发请求。
+     */
+    internal fun autoCheckNetworkOk(context: Context): Boolean = runCatching {
+        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? ConnectivityManager ?: return@runCatching true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return@runCatching false
+        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) return@runCatching true
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return@runCatching false
+        val bm = context.applicationContext.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        bm?.isCharging == true
+    }.getOrDefault(true)
+
     internal fun shouldAutoCheck(lastCheckAt: Long, now: Long): Boolean {
         if (lastCheckAt <= 0L) return true
         if (lastCheckAt > now) return true

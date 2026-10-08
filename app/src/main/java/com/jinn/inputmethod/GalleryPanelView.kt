@@ -189,7 +189,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             return
         }
         render(State.Loading)
-        BackgroundIo.run {
+        // 走长活池（契约 C-1）：SAF 列目录在目录条目多时要秒级，短活队列不该被它堵住
+        BackgroundIo.runLong {
             val result = runCatching { listImages(Uri.parse(tree), gen) }
             post {
                 if (gen != generation) return@post

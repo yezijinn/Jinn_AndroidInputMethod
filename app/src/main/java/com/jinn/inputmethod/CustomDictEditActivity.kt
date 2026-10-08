@@ -265,7 +265,7 @@ class CustomDictEditActivity : Activity() {
             synchronized(draftLock) { draftWriteGeneration++ }
             val staged = File(cacheDir, DRAFT_FILE_SAVE_TMP)
             val written = runCatching {
-                staged.writeText(text)
+                writeTextChunked(staged, text)
                 synchronized(draftLock) { staged.renameTo(File(cacheDir, DRAFT_FILE)) }
             }.getOrDefault(false)
             if (written) {
@@ -331,7 +331,7 @@ class CustomDictEditActivity : Activity() {
             val ok = runCatching {
                 // 第一块截断、其余追加（同一队列串行执行，顺序有保证）
                 FileOutputStream(File(cacheDir, DRAFT_FILE_TMP), from == 0)
-                    .use { it.write(text.substring(from, end).toByteArray(Charsets.UTF_8)) }
+                    .use { writeChunk(it, text, from, end) }
                 if (last) {
                     // 发布前再查一次世代（BUG.md L-1189）：本任务开头查过之后，保存侧可能已经自增世代
                     // 并写好了正式名 —— 此时再改名就等于用旧快照盖掉刚写的那份，而修订号已被标成最新。
@@ -412,7 +412,21 @@ class CustomDictEditActivity : Activity() {
             // 读一次就够（BUG-28）：草稿的发布是「临时名 → 正式名」的原子改名，同目录 rename 不存在
             // 读到半截的可能；失败再读一次只是把同一个 IO 错误重试一遍。失败时文件保持原样，
             // 状态行照旧承诺「重建时自动再试」。
-            val restored = if (existed) runCatching { file.readText() }.getOrNull() else null
+            //
+            // 带上限读（BUG-31）：上限取编辑器自身的界（与保存路径同源），超限时**不**当「读取失败」——
+            // 文件仍在、内容也完整，只是这一版不铺；把「过大」报成「损坏」会让用户以为稿子坏了，
+            // 而反复重读几十 MB 的文件又会在每次重建时挨一次主线程/内存。
+            val restoreLimit = CustomDicts.MAX_INPUT_CHARS * 2
+            var tooLarge = false
+            val restored = if (existed) {
+                runCatching {
+                    file.reader(Charsets.UTF_8).use { reader ->
+                        CustomDicts.readCapped(reader, restoreLimit) ?: run { tooLarge = true; null }
+                    }
+                }.getOrNull()
+            } else {
+                null
+            }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 draftPending = false
@@ -423,6 +437,10 @@ class CustomDictEditActivity : Activity() {
                         pendingDraftLen = 0
                         Diagnostics.w(TAG, "快捷补充：草稿文件已不在缓存里（$draftName）")
                         setStatus(TEXT_DRAFT_GONE)
+                    } else if (tooLarge) {
+                        // 超过恢复上限（BUG-31）：文件完好、只是这一版不铺；不删文件、也不说成「读取失败」
+                        Diagnostics.w(TAG, "快捷补充：草稿超过恢复上限（$restoreLimit 字符），保留原文件")
+                        setStatus(String.format(Locale.US, TEXT_DRAFT_TOO_LARGE, restoreLimit / 10000))
                     } else {
                         Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
                         setStatus(TEXT_DRAFT_UNREADABLE)
@@ -440,6 +458,32 @@ class CustomDictEditActivity : Activity() {
                 applyDraft(restored, truncatedAt, draftName, restoredDirty)
             }
         }.apply { isDaemon = true; name = "jinn-draft-restore" }.start()
+    }
+
+    /**
+     * 分段编码写一段文本（MEM-08② / BUG-27）。
+     *
+     * 原先两处各自「先 substring 再 toByteArray」：一次分块写要两份临时拷贝，兜底路径更是
+     * 把整份 16M 字符一次编成约 48MB 的字节数组（还跑在 onSaveInstanceState 的主线程上）。
+     * 这里直接按 CharBuffer 视图编码并写进信道：一次分配（约 192KB / 块）、无中间 String。
+     * 调用方负责块边界不劈开代理对（见 [enqueueDraftChunk] 的 end--）。
+     */
+    private fun writeChunk(out: FileOutputStream, text: CharSequence, from: Int, end: Int) {
+        val bytes = Charsets.UTF_8.encode(java.nio.CharBuffer.wrap(text, from, end))
+        while (bytes.hasRemaining()) out.channel.write(bytes)
+    }
+
+    /** 把整份文本按块写进 [dest]（覆盖写；兜底路径用，见 [writeChunk]） */
+    private fun writeTextChunked(dest: File, text: CharSequence) {
+        FileOutputStream(dest, false).use { out ->
+            var from = 0
+            while (from < text.length) {
+                var end = minOf(from + DRAFT_WRITE_CHUNK_CHARS, text.length)
+                if (end < text.length && Character.isHighSurrogate(text[end - 1])) end--
+                writeChunk(out, text, from, end)
+                from = end
+            }
+        }
     }
 
     /**
@@ -897,6 +941,9 @@ class CustomDictEditActivity : Activity() {
 
         /** 大稿草稿恢复完成（替换掉恢复期间的「正在恢复…」，否则那句话会一直挂在状态行上） */
         const val TEXT_DRAFT_RESTORED = "已恢复未保存的草稿"
+
+        /** 草稿超过恢复上限（%d = 万字；文件保留，不当作读取失败，BUG-31） */
+        const val TEXT_DRAFT_TOO_LARGE = "草稿太大（超过 %,d 万字），本次未铺入；原稿保留在缓存里"
 
         /** 草稿文件读取失败（保留文件，页面重建时自动再试，BUG.md L-1185） */
         const val TEXT_DRAFT_UNREADABLE = "草稿读取失败：原稿仍保留在缓存里（未删除），页面重建时会自动再试"

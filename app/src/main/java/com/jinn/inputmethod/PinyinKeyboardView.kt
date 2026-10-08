@@ -655,7 +655,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 // V 级埋点（不落盘）：排查"整块键失灵"时，用它区分
                 // 「触摸压根没送到键上（被上层吃掉）」与「送到了但抬起判定失败」
-                Diagnostics.v(TAG, "键触摸 DOWN: $c")
+                if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "键触摸 DOWN: $c")
                 keyTouchStartX = event.rawX
                 keyTouchConsumed = false
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
@@ -1659,7 +1659,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onCommitText(candidates[0])
             } else if (!englishMode) {
                 // 无候选（如未加载词库），直接丢拼音串
-                Diagnostics.v(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
+                if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
             }
             composing.clear()
         }
@@ -1685,7 +1685,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastPredictions = emptyList()
         refreshCandidateBar()
         // 原始按键串是用户输入正文：走 V 级（默认只进 logcat 不落盘）
-        Diagnostics.v(TAG, "回车输出英文原文: $raw")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "回车输出英文原文: $raw")
         return raw
     }
 
@@ -1760,7 +1760,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             shuangpinMode -> "双拼·${scheme.shortName}"
             else -> "全拼"
         }
-        Diagnostics.v(TAG, "拼音输入[$modeTag]: ${composing}")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "拼音输入[$modeTag]: ${composing}")
     }
 
     private fun onSpacePressed() {
@@ -1792,7 +1792,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 有候选取第一个（只消费其 Pinyin Span，残码保留继续匹配），否则丢拼音上空格
             if (lastCandidates.isNotEmpty()) {
                 val first = lastCandidates[0]
-                Diagnostics.v(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
+                if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
                 learnChoice(first)                      // 空格取首候选同样是明确选择
                 listener?.onCommitText(first)
                 if (consumePinyin(first)) {
@@ -1891,7 +1891,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 记录第二击时刻：清空手势的时间窗口由此起算。
                 // 不更新的话双击态永远「新鲜」，长按清空会在很久以后被误触发。
                 backspaceLastTapAt = now
-                Diagnostics.v(TAG, "退格双击已就绪，长按触发清空")
+                if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格双击已就绪，长按触发清空")
             } else {
                 backspaceTapCount = 1
                 backspaceLastTapAt = now
@@ -1948,7 +1948,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
-            Diagnostics.v(TAG, "退格删拼音: ${composing}")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删拼音: ${composing}")
         } else if (lastPredictions.isNotEmpty() && predictionsEnabled()) {
             // 预测态退格：清除预测，回到拼音态
             lastPredictions = emptyList()
@@ -2266,7 +2266,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 colorRes = R.color.kb_candidate_sel_text,
                 onClick = { onPredictionSelected(it) },
             )
-            Diagnostics.v(TAG, "智能预测: ${lastPredictions.take(4)}")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "智能预测: ${lastPredictions.take(4)}")
             return
         }
 
@@ -2285,7 +2285,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 绝不在这里再调一次 queryWithCompletion，PinyinEngine.query() 内部
         // 已经跑过补全召回，重复调用等于每次按键双倍查询，纯粹为了打日志。
         if (!shuangpinMode && result.partialSyllable.isNotEmpty()) {
-            Diagnostics.v(
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(
                 TAG,
                 "补全诊断: input=$queryInput syllables=${result.syllables} " +
                     "partial=${result.partialSyllable} candidates=${result.candidates.take(3)}",
@@ -2305,7 +2305,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
         // 需要看声韵的用「拼音显示为声韵」档：走 [Shuangpin.displayQuanpin]，残码逐键展开不丢键。
         showPinyin(displayText)
-        Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
         // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、
         // 93 个音节超过 60 字），而这里是「每条一个 TextView」且每次按键全量重建，
@@ -2493,13 +2493,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun onCandidateSelected(candidate: String) {
         // 搜索模式：候选上屏路由到剪贴板搜索词（不 commit 宿主）
         if (isPanelSearch()) {
-            Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
             searchPanel.appendSearch(candidate)
             consumePinyin(candidate)
             refreshCandidateBar()
             return
         }
-        Diagnostics.v(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
         learnChoice(candidate)          // 用户词频：这是**明确选择**，学习它
         listener?.onCommitText(candidate)
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
@@ -2533,7 +2533,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             composing.delete(0, consumption.quanpinChars)
         }
-        Diagnostics.v(
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(
             TAG,
             "残码保留: 消费=\"${fullInput.take(consumption.quanpinChars)}\" " +
                 "剩余拼音=${if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing}",
@@ -2561,13 +2561,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与 onCandidateSelected 保持一致：搜索模式下路由到搜索框。
         // 漏掉这个分支的话，搜索态里点预测词会把文本直接提交到宿主输入框（串到聊天内容里）
         if (isPanelSearch()) {
-            Diagnostics.v(TAG, "搜索预测: \"$pred\"")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索预测: \"$pred\"")
             searchPanel.appendSearch(pred)
             lastPredictions = emptyList()
             refreshCandidateBar()
             return
         }
-        Diagnostics.v(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
         // 用户词频：学习完整词（librime 的 UserDictionary 也是按整条 entry 记），
         // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
         val fullWord = lastCommittedWord + pred
@@ -2784,7 +2784,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun onSemicolonPressed() {
         composing.append(SEMICOLON_KEY)
         refreshCandidateBar()
-        Diagnostics.v(TAG, "分号键(ing): 拼音串=$composing")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "分号键(ing): 拼音串=$composing")
     }
 
     private fun handleSemicolonTouch(event: MotionEvent): Boolean {
@@ -2802,13 +2802,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 而按下后变 GONE 的键仍会收到本次手势的 ACTION_UP（框架对已缓存目标不复检可见性）：
                 // 不判可见性就会追加一个「看不见来源」的分号 —— 英文态下拼音串凭空多出 `;`
                 if (keySemicolon.visibility != View.VISIBLE) {
-                    Diagnostics.v(TAG, "分号键: 抬起时已隐藏，忽略")
+                    if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "分号键: 抬起时已隐藏，忽略")
                     return true
                 }
                 // 命中判定不可省（与字母键一致，见 isInsideKey 的 KDoc）：
                 // 手指从 `;` 滑到相邻字母键再抬起时，不应把用户并未按下的分号追加进拼音串。
                 if (!isInsideKey(keySemicolon, event)) {
-                    Diagnostics.v(TAG, "分号键: 抬起在键外，忽略")
+                    if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "分号键: 抬起在键外，忽略")
                     return true
                 }
                 onSemicolonPressed()
@@ -2910,7 +2910,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             directionButtonBox = null
             // 图库键是第三个同类字段，早退分支原先漏了它（L-1038）
             galleryButtonBox = null
-            Diagnostics.v(TAG, "功能面板(搜索态): 退出")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "功能面板(搜索态): 退出")
             return
         }
         // 剪贴板面板打开时这个键就是退出口：红色加粗「返回」，点击收起面板回键盘
@@ -3009,7 +3009,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 viewCandidateList.getChildAt(i).setPadding(dp(4), dp(4), dp(4), dp(4))
             }
         }
-        Diagnostics.v(
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(
             TAG,
             "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
                 (if (hostImageCapable) "/图库" else "") +
@@ -3269,7 +3269,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun showDirectionPanel() {
         if (directionPanelVisible) {
-            Diagnostics.v(TAG, "showDirectionPanel: 已显示，跳过")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "showDirectionPanel: 已显示，跳过")
             return
         }
         ensureDirectionPanel()
@@ -3385,7 +3385,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun showClipboardPanel() {
         Diagnostics.i(TAG, "showClipboardPanel called, clipboardActive=$clipboardActive")
         if (clipboardActive) {
-            Diagnostics.v(TAG, "showClipboardPanel: 已显示，跳过")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "showClipboardPanel: 已显示，跳过")
             return
         }
         try {
@@ -3573,7 +3573,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 构建方向面板（3×3 九宫格，与字母区总高一致） */
     private fun ensureDirectionPanel() {
         if (directionPanel != null) {
-            Diagnostics.v(TAG, "ensureDirectionPanel: 已存在，跳过")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "ensureDirectionPanel: 已存在，跳过")
             return
         }
         val panel = LinearLayout(context).apply {
@@ -3584,7 +3584,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val totalDp = 162
         val gapDp = 2
         val rowH = (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
-        Diagnostics.v(TAG, "ensureDirectionPanel: rowH=$rowH")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "ensureDirectionPanel: rowH=$rowH")
 
         // 行1：行首 上 行末
         panel.addView(directionRow(rowH, listOf(
@@ -3607,7 +3607,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             directionKey("到末尾", DirectionAction.DOC_END) to 1f,
         )))
         directionPanel = panel
-        Diagnostics.v(TAG, "ensureDirectionPanel: 构建完成 childCount=${panel.childCount}")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "ensureDirectionPanel: 构建完成 childCount=${panel.childCount}")
     }
 
     /** 构建一行方向键 */

@@ -47,8 +47,10 @@ class GalleryPickActivity : ComponentActivity() {
                 return@registerForActivityResult
             }
             val hostKey = intent?.getStringExtra(GalleryInsert.EXTRA_HOST_KEY)
-            // 复制原图可能几十 MB，放后台；完成后关页回原应用，IME 在下一个输入会话里插入
-            BackgroundIo.run {
+            // 复制原图可能几十 MB，放后台；完成后关页回原应用，IME 在下一个输入会话里插入。
+            // 走长活池（契约 C-1）：整份拷贝是秒级活，投进交互短活队列会把剪贴板保存与面板首屏
+            // 一起推后（用户此刻在选图页感知不到，但回到输入框立刻能感知）。
+            BackgroundIo.runLong {
                 val result = GalleryInsert.copyToCache(this@GalleryPickActivity, uri)
                 val toast = when (result) {
                     is GalleryInsert.CopyResult.Ok -> {

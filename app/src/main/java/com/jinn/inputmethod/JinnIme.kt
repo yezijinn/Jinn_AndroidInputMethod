@@ -975,10 +975,10 @@ class JinnIme : InputMethodService() {
             return AppendCheck.SELECTION_PRESENT
         }
         if (selected == null) {
-            Diagnostics.v(TAG, "翻译: getSelectedText 返回 null（官方契约 = 无选区），按「无选区」放行")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "翻译: getSelectedText 返回 null（官方契约 = 无选区），按「无选区」放行")
         }
         // 正常路径（WebView 类宿主每次翻译都会走到这里），用 V 级，别把诊断包的 W 段占满
-        Diagnostics.v(TAG, "翻译: 宿主不提供精确选区，按「无选区」放行（提交时仍逐字比对原文）")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "翻译: 宿主不提供精确选区，按「无选区」放行（提交时仍逐字比对原文）")
         return AppendCheck.OK
     }
 
@@ -1364,7 +1364,7 @@ class JinnIme : InputMethodService() {
                     // 同 L-716：退格也改宿主文本（这里走 KeyEvent，不经过 commit）⇒ 在途译文必然作废。
                     // 连按退格也只弹一次提示：`cancelTranslate` 仅在 wasInFlight 为真时弹。
                     if (translateInFlight) cancelTranslate(notify = true)
-                    Diagnostics.v(TAG, "退格删已上屏文本")
+                    if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删已上屏文本")
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
                 override fun onDeleteAll() = deleteAllText()
@@ -2670,7 +2670,7 @@ class JinnIme : InputMethodService() {
 
         if (!message.isFinal) {
             if (prefs.useComposing) connection.setComposingText(text, 1)
-            Diagnostics.v(TAG, "handleResult: 预编辑回显 ${message.duration.toInt()}s \"${text.take(40)}\"")
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 预编辑回显 ${message.duration.toInt()}s \"${text.take(40)}\"")
             setHint(getString(R.string.hint_progress, message.duration.toInt()))
             return
         }
@@ -3677,7 +3677,7 @@ class JinnIme : InputMethodService() {
         // `translateInFlight` 已是 false，连按退格也只弹一次。
         if (translateInFlight) cancelTranslate(notify = true)
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
-        Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
         // 打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
         // 这里【不能】调用 onOwnCommit()，否则标记会残留到下一次真实复制，
         // 导致用户复制的内容被误判为「自身操作」而跳过保存。
@@ -3860,7 +3860,7 @@ class JinnIme : InputMethodService() {
     // ── 状态渲染 ──────────────────────────────────────────────
 
     private fun renderLink(state: LinkState, detail: String?) {
-        Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
         val colorRes: Int
         val label: String
         when (state) {
