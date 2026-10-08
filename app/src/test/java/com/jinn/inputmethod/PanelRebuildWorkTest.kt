@@ -63,8 +63,12 @@ class PanelRebuildWorkTest {
     fun `键盘视图要暴露一个「两个面板一起收工」的入口`() {
         val src = codeOnly(sourceOf("PinyinKeyboardView.kt"))
         val body = src.substringAfter("fun stopPanelBackgroundWork()").substringBefore("\n    }")
-        assertTrue("未让剪贴板面板收工", "clipboardPanel.stopBackgroundWork()" in body)
-        assertTrue("未让搜索面板收工", "searchPanel.stopBackgroundWork()" in body)
+        // MEM-05 起三个面板都是「首次打开才创建」：这里的 `?.` 不是写法偷懒 ——
+        // 没建过的面板本来就没有在跑的后台任务可停（语义与原先一致，只是把「必然存在」放宽成「存在才停」）。
+        // 顺带把图库面板也钉上：它一直在这段里被停，只是此前没有断言。
+        assertTrue("未让剪贴板面板收工", "clipboardPanel?.stopBackgroundWork()" in body)
+        assertTrue("未让搜索面板收工", "searchPanel?.stopBackgroundWork()" in body)
+        assertTrue("未让图库面板收工", "galleryPanel?.stopBackgroundWork()" in body)
     }
 
     @Test

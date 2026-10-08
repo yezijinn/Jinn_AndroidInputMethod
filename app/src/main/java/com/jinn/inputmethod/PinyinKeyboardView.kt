@@ -190,17 +190,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
 
-    /** 剪贴板面板（与字母区互斥显示，见 init 挂载） */
-    private val clipboardPanel: ClipboardPanelView
+    /**
+     * 剪贴板面板（与字母区互斥显示）。**首次打开才创建**（MEM-05）：三棵面板树原先在键盘视图构造时
+     * 无条件 new + 挂载，从不打开面板的用户白付一份常驻内存，而 `recreateKeyboardView()` 还会把
+     * 三棵树全部重建一遍。改成 `null = 还没建过`，由 [ensureClipboardPanel] 在首次 show 时创建
+     * 并补齐皮肤与键面档。
+     */
+    private var clipboardPanel: ClipboardPanelView? = null
 
-    /** 图库快贴面板（绑定目录下的图片格子；与字母区互斥，见 init 挂载） */
-    private val galleryPanel: GalleryPanelView
+    /** 图库快贴面板（绑定目录下的图片格子；与字母区互斥）。**首次打开才创建**（MEM-05），见 [ensureGalleryPanel] */
+    private var galleryPanel: GalleryPanelView? = null
 
     /** 图库面板是否展开 */
     private var galleryActive = false
 
-    /** 顶部搜索面板（候选栏上方，见 init 挂载） */
-    private val searchPanel: SearchPanelView
+    /** 顶部搜索面板（候选栏上方）。**首次打开才创建**（MEM-05），见 [ensureSearchPanel] */
+    private var searchPanel: SearchPanelView? = null
 
     /** 剪贴板面板是否激活 */
     private var clipboardActive = false
@@ -504,83 +509,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             consumed
         }
 
-        // 剪贴板面板：预挂载到 contentArea（GONE），打开/关闭切 visibility + 高度。
-        // 显示时 viewLetters 置 GONE、contentArea 改为固定 162dp×2 高度（详见
-        // showClipboardPanel）。contentArea 是 FrameLayout，其父是 LinearLayout，
-        // 改 layoutParams 时类型必须匹配，用错会 ClassCastException。
-        clipboardPanel = ClipboardPanelView(context).apply {
-            listener = object : ClipboardPanelView.Listener {
-                override fun onPaste(text: String): Boolean =
-                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
-                override fun onClose() {
-                    hideClipboardPanel()
-                }
-                override fun onSearch() {
-                    // 请求搜索：退出剪贴板（恢复下方 26 键），顶部显示搜索面板
-                    hideClipboardPanel()
-                    showSearchPanel()
-                }
-            }
-            visibility = View.GONE
-        }
-        contentArea.addView(
-            clipboardPanel,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-
-        // 图库快贴面板：同款预挂载（GONE），展开时替换字母区并接管 contentArea 高度。
-        // 选中图片交给 IME 复制进 cache 后插入（全程不跳 Activity，见 showGalleryPanel）。
-        galleryPanel = GalleryPanelView(context).apply {
-            listener = object : GalleryPanelView.Listener {
-                override fun onPick(uri: android.net.Uri) {
-                    this@PinyinKeyboardView.listener?.onGalleryImagePicked(uri)
-                    // 「自动返回」开着时点一张就回打字键盘（用户 2026-10-07 指定）：
-                    // 插入是 IME 侧的独立流程，不依赖面板是否还在，所以这里立即收起即可
-                    if (prefs.galleryAutoReturn) {
-                        Diagnostics.i(TAG, "图库面板: 自动返回已开，收起面板")
-                        hideGalleryPanel()
-                    }
-                }
-                override fun onRebindRequested() {
-                    hideGalleryPanel()
-                    this@PinyinKeyboardView.listener?.onOpenGallerySettings()
-                }
-                override fun onSystemPicker() {
-                    hideGalleryPanel()
-                    // 「文件单选」走系统选择器，不是把面板重开一遍（L-1026）
-                    this@PinyinKeyboardView.listener?.onPickFromSystemGallery()
-                }
-            }
-            visibility = View.GONE
-        }
-        contentArea.addView(
-            galleryPanel,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-
-        // 顶部搜索面板：挂在根布局候选栏上方（index 0 = 最顶部），
-        // 显示时 IME 整体高度增加；隐藏 GONE 后不占空间，不影响 IME relayout 流程。
-        searchPanel = SearchPanelView(context).apply {
-            listener = object : SearchPanelView.Listener {
-                override fun onPaste(text: String): Boolean =
-                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
-                override fun onClose() {
-                    hideSearchPanel()
-                }
-            }
-            visibility = View.GONE
-        }
-        addView(
-            searchPanel,
-            0,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
+        // 三个面板（剪贴板 / 图库 / 顶部搜索）改为**首次打开时创建**（MEM-05）：装配体见
+        // ensureClipboardPanel / ensureGalleryPanel / ensureSearchPanel。原先在这里无条件
+        // new + addView —— 从不打开面板的用户白付一份常驻内存与布局参数，而每次
+        // recreateKeyboardView() 还会把三棵树整体重建一遍。
 
         bindLetterKeys(root)
         bindFunctionKeys()
@@ -966,12 +898,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnComma.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) "," else "，"
-            if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
+            if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
         }
         btnPeriod.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) "." else "。"
-            if (isPanelSearch()) searchPanel.appendSearch(text) else listener?.onCommitText(text)
+            if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
         }
     }
 
@@ -1152,9 +1084,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshBackspaceBackground()
         rebuildFunctionKeyBackgrounds()
         // 面板里的「键面」按钮（key_bg 是 drawable，颜色识别扫不到）：交给面板按当前档重建
-        clipboardPanel.applySurfaceAlpha(keyFaceAlpha)
-        searchPanel.applySurfaceAlpha(keyFaceAlpha)
-        galleryPanel.applySurfaceAlpha(keyFaceAlpha)
+        clipboardPanel?.applySurfaceAlpha(keyFaceAlpha)
+        searchPanel?.applySurfaceAlpha(keyFaceAlpha)
+        galleryPanel?.applySurfaceAlpha(keyFaceAlpha)
 
         // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描 ，
         // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
@@ -1199,9 +1131,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateBarColor = 0
         // 面板（剪贴板历史 / 搜索）与键盘同属一层皮肤：一并换色。必须在这里（早于
         // applyKeyTransparency）下发，面板的纯色面才会被本次的透明度套档扫到。
-        clipboardPanel.applySkin(s)
-        searchPanel.applySkin(s)
-        galleryPanel.applySkin(s)
+        clipboardPanel?.applySkin(s)
+        searchPanel?.applySkin(s)
+        galleryPanel?.applySkin(s)
         Diagnostics.i(TAG, "键盘皮肤: $from -> ${s.id}（${s.label}）")
     }
 
@@ -1639,7 +1571,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * —— 用户以为改主题没生效，最长要等 5 分钟。同一件事被防了两遍，其中一遍有害。
      */
     val hasActiveOverlay: Boolean
-        get() = clipboardActive || galleryActive || searchPanel.isActive() || directionPanelVisible ||
+        get() = clipboardActive || galleryActive || isSearchPanelActive() || directionPanelVisible ||
             passwordPad
 
     /**
@@ -1650,9 +1582,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * （见 `BUG.md` L-17）。由 [JinnIme] 在重建前调用。
      */
     fun stopPanelBackgroundWork() {
-        clipboardPanel.stopBackgroundWork()
-        searchPanel.stopBackgroundWork()
-        galleryPanel.stopBackgroundWork()
+        clipboardPanel?.stopBackgroundWork()
+        searchPanel?.stopBackgroundWork()
+        galleryPanel?.stopBackgroundWork()
     }
 
     fun commitComposing() {
@@ -1699,28 +1631,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 按键处理 ───────────────────────────────────────────
 
     /** 是否处于顶部搜索模式（26 键输入需路由到搜索框，不 commit 宿主） */
-    private fun isPanelSearch() = searchPanel.isActive()
+    private fun isPanelSearch() = isSearchPanelActive()
 
     private fun onLetterPressed(c: Char) {
         // 搜索模式：符号/数字/英文/大写 → 直接追加到搜索词；中文进拼音，选词时路由
         if (isPanelSearch()) {
             when (layer) {
                 LAYER_SYMBOL -> {
-                    searchPanel.appendSearch(symbolValueOf(c) ?: return)
+                    searchPanel?.appendSearch(symbolValueOf(c) ?: return)
                     return
                 }
                 LAYER_DIGIT -> {
-                    searchPanel.appendSearch(DIGIT_MAP[c] ?: return)
+                    searchPanel?.appendSearch(DIGIT_MAP[c] ?: return)
                     return
                 }
                 else -> Unit
             }
             if (englishMode) {
-                searchPanel.appendSearch(if (capsMode) c.uppercaseChar().toString() else c.toString())
+                searchPanel?.appendSearch(if (capsMode) c.uppercaseChar().toString() else c.toString())
                 return
             }
             if (capsMode) {
-                searchPanel.appendSearch(c.uppercaseChar().toString())
+                searchPanel?.appendSearch(c.uppercaseChar().toString())
                 return
             }
             composing.append(c)
@@ -1775,7 +1707,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (isPanelSearch()) {
             if (composing.isNotEmpty()) {
                 if (lastCandidates.isNotEmpty()) {
-                    searchPanel.appendSearch(lastCandidates[0])
+                    searchPanel?.appendSearch(lastCandidates[0])
                     // 残码保留：只消费首候选的 Pinyin Span
                     consumePinyin(lastCandidates[0])
                 } else {
@@ -1783,7 +1715,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 }
                 refreshCandidateBar()
             } else {
-                searchPanel.appendSearch(" ")
+                searchPanel?.appendSearch(" ")
             }
             return
         }
@@ -1933,7 +1865,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun onTripleBackspace() {
         clearComposingState()
         if (isPanelSearch()) {
-            searchPanel.clearSearch()
+            searchPanel?.clearSearch()
             Diagnostics.i(TAG, "退格双击+长按：清空搜索框（不动宿主输入框）")
             return
         }
@@ -1948,7 +1880,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 composing.deleteCharAt(composing.length - 1)
                 refreshCandidateBar()
             } else {
-                searchPanel.backspaceSearch()
+                searchPanel?.backspaceSearch()
             }
             return
         }
@@ -2424,7 +2356,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun commitPasswordDigit(digit: String) {
         if (isPanelSearch()) {
-            searchPanel.appendSearch(digit)
+            searchPanel?.appendSearch(digit)
             return
         }
         commitComposing()
@@ -2500,7 +2432,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 搜索模式：候选上屏路由到剪贴板搜索词（不 commit 宿主）
         if (isPanelSearch()) {
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
-            searchPanel.appendSearch(candidate)
+            searchPanel?.appendSearch(candidate)
             consumePinyin(candidate)
             refreshCandidateBar()
             return
@@ -2568,7 +2500,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 漏掉这个分支的话，搜索态里点预测词会把文本直接提交到宿主输入框（串到聊天内容里）
         if (isPanelSearch()) {
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索预测: \"$pred\"")
-            searchPanel.appendSearch(pred)
+            searchPanel?.appendSearch(pred)
             lastPredictions = emptyList()
             refreshCandidateBar()
             return
@@ -3415,15 +3347,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 panelH,
             )
-            // 面板 MATCH_PARENT 填满 contentArea 固定高度
-            clipboardPanel.layoutParams = FrameLayout.LayoutParams(
+            // 面板 MATCH_PARENT 填满 contentArea 固定高度。
+            // 到这里才建面板（MEM-05）：上面的互斥处理与高度计算都不需要面板存在
+            val panel = ensureClipboardPanel()
+            panel.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             // viewLetters GONE（contentArea 已是固定高度，不塌缩）
             viewLetters.visibility = View.GONE
-            clipboardPanel.visibility = View.VISIBLE
-            clipboardPanel.onPanelShown()
+            panel.visibility = View.VISIBLE
+            panel.onPanelShown()
             clipboardActive = true
             listener?.onClipboardStateChanged(true)
             // 功能面板的「历史」键此刻要变成红色「返回」（面板内没有退出口了）
@@ -3445,6 +3379,114 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 剪贴板面板：首次打开才创建（MEM-05），建完补齐皮肤与键面档。
+     *
+     * 为什么要补 `applySkin` / `applySurfaceAlpha`：那两项平时由 [syncKeyboardSkin] 与
+     * [applyKeyTransparency] 在会话开始时下发，而面板是在那之后才出生的 —— 不补的话，
+     * 用户第一次打开面板看到的是默认配色，要等下一次换肤或改透明度才对上。
+     */
+    private fun ensureClipboardPanel(): ClipboardPanelView {
+        clipboardPanel?.let { return it }
+        val panel = ClipboardPanelView(context).apply {
+            listener = object : ClipboardPanelView.Listener {
+                override fun onPaste(text: String): Boolean =
+                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
+                override fun onClose() {
+                    hideClipboardPanel()
+                }
+                override fun onSearch() {
+                    // 请求搜索：退出剪贴板（恢复下方 26 键），顶部显示搜索面板
+                    hideClipboardPanel()
+                    showSearchPanel()
+                }
+            }
+            visibility = View.GONE
+        }
+        contentArea.addView(
+            panel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        panel.applySkin(skin)
+        panel.applySurfaceAlpha(keyFaceAlpha)
+        clipboardPanel = panel
+        Diagnostics.i(TAG, "剪贴板面板: 已按需创建")
+        return panel
+    }
+
+    /** 图库快贴面板：首次打开才创建（MEM-05），补齐说明见 [ensureClipboardPanel] */
+    private fun ensureGalleryPanel(): GalleryPanelView {
+        galleryPanel?.let { return it }
+        val panel = GalleryPanelView(context).apply {
+            listener = object : GalleryPanelView.Listener {
+                override fun onPick(uri: android.net.Uri) {
+                    this@PinyinKeyboardView.listener?.onGalleryImagePicked(uri)
+                    // 「自动返回」开着时点一张就回打字键盘（用户 2026-10-07 指定）：
+                    // 插入是 IME 侧的独立流程，不依赖面板是否还在，所以这里立即收起即可
+                    if (prefs.galleryAutoReturn) {
+                        Diagnostics.i(TAG, "图库面板: 自动返回已开，收起面板")
+                        hideGalleryPanel()
+                    }
+                }
+                override fun onRebindRequested() {
+                    hideGalleryPanel()
+                    this@PinyinKeyboardView.listener?.onOpenGallerySettings()
+                }
+                override fun onSystemPicker() {
+                    hideGalleryPanel()
+                    // 「文件单选」走系统选择器，不是把面板重开一遍（L-1026）
+                    this@PinyinKeyboardView.listener?.onPickFromSystemGallery()
+                }
+            }
+            visibility = View.GONE
+        }
+        contentArea.addView(
+            panel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        panel.applySkin(skin)
+        panel.applySurfaceAlpha(keyFaceAlpha)
+        galleryPanel = panel
+        Diagnostics.i(TAG, "图库面板: 已按需创建")
+        return panel
+    }
+
+    /**
+     * 顶部搜索面板：首次打开才创建（MEM-05）。
+     *
+     * 挂载位置仍是根布局的 index 0（最顶部）—— 显示时 IME 整体高度增加，
+     * 隐藏 GONE 后不占空间，不影响 IME 的 relayout 流程。
+     */
+    private fun ensureSearchPanel(): SearchPanelView {
+        searchPanel?.let { return it }
+        val panel = SearchPanelView(context).apply {
+            listener = object : SearchPanelView.Listener {
+                override fun onPaste(text: String): Boolean =
+                    this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
+                override fun onClose() {
+                    hideSearchPanel()
+                }
+            }
+            visibility = View.GONE
+        }
+        addView(
+            panel,
+            0,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        panel.applySkin(skin)
+        panel.applySurfaceAlpha(keyFaceAlpha)
+        searchPanel = panel
+        Diagnostics.i(TAG, "顶部搜索面板: 已按需创建")
+        return panel
+    }
+
+    /**
      * 恢复 26 键字母区布局（关闭面板与异常回滚共用）。
      *
      * contentArea 的父容器是 LinearLayout，layoutParams 必须匹配，
@@ -3453,8 +3495,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun restoreLettersLayout() {
         viewLetters.visibility = View.VISIBLE
         restoreLetterRows()
-        clipboardPanel.visibility = View.GONE
-        galleryPanel.visibility = View.GONE
+        clipboardPanel?.visibility = View.GONE
+        galleryPanel?.visibility = View.GONE
         contentArea.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3494,13 +3536,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 panelH,
             )
-            galleryPanel.layoutParams = FrameLayout.LayoutParams(
+            // 到这里才建面板（MEM-05）
+            val panel = ensureGalleryPanel()
+            panel.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             viewLetters.visibility = View.GONE
-            galleryPanel.visibility = View.VISIBLE
-            galleryPanel.onPanelShown()
+            panel.visibility = View.VISIBLE
+            panel.onPanelShown()
             galleryActive = true
             refreshGalleryButton()
             refreshCandidateBar()
@@ -3517,7 +3561,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 收起图库面板，恢复 26 键字母布局 */
     fun hideGalleryPanel() {
         if (!galleryActive) return
-        galleryPanel.onPanelHidden()
+        galleryPanel?.onPanelHidden()
         restoreLettersLayout()
         galleryActive = false
         refreshGalleryButton()
@@ -3528,7 +3572,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 顶部搜索面板（挂在根布局候选栏上方）────────────────
 
     /** 是否处于顶部搜索模式 */
-    fun isSearchActive(): Boolean = searchPanel.isActive()
+    fun isSearchActive(): Boolean = isSearchPanelActive()
+
+/**
+     * 顶部搜索面板是否处于活跃态（MEM-05：面板按需创建，读之前先判存在）。
+     *
+     * 抽成函数而不是在 [hasActiveOverlay] 的 getter 里写 `?.isActive() == true`：那条 getter
+     * 有一条「只读状态、里面不许出现赋值」的守卫，`==` 会被它判成赋值形态。
+     */
+    private fun isSearchPanelActive(): Boolean = searchPanel?.isActive() == true
 
     /**
      * 清空拼音输入缓冲与候选 / 预测 / 已上屏词残留。
@@ -3550,10 +3602,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 显示顶部搜索面板：候选栏上方整体高度增加，下方 26 键恢复为可用输入 */
     fun showSearchPanel() {
-        if (searchPanel.isActive()) return
+        // 到这里才建面板（MEM-05）：搜索面板是三个里最轻的，但同样不必为从不用它的用户常驻
+        val panel = ensureSearchPanel()
+        if (panel.isActive()) return
         clearComposingState()
-        searchPanel.visibility = View.VISIBLE
-        searchPanel.onShown()
+        panel.visibility = View.VISIBLE
+        panel.onShown()
         // 与方向面板互斥：两者同屏时方向键（箭头/复制/粘贴）会落到宿主输入框上，
         // 与「搜索态只作用于搜索框」的前提冲突（同 showClipboardPanel 的对称处理）。
         if (directionPanelVisible) hideDirectionPanel()
@@ -3567,10 +3621,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 隐藏顶部搜索面板，恢复正常 26 键键盘 */
     fun hideSearchPanel() {
-        if (!searchPanel.isActive()) return
+        val panel = searchPanel ?: return
+        if (!panel.isActive()) return
         clearComposingState()
-        searchPanel.visibility = View.GONE
-        searchPanel.onHidden()
+        panel.visibility = View.GONE
+        panel.onHidden()
         // 对称于显示：置 GONE 之后再刷一次，候选栏从「退出搜索」恢复为常规功能面板
         refreshCandidateBar()
         Diagnostics.i(TAG, "顶部搜索面板: 隐藏")

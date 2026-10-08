@@ -546,7 +546,8 @@ class RecentFixesRegressionTest {
             "hasActiveOverlay 必须含 directionPanelVisible：方向面板也是视图内的临时状态，" +
                 "重建会连上一次的拖选一起丢，而 IME 侧的 Anchor/Focus 要到下次弹键盘才复位（状态分裂一整个会话）。" +
                 "galleryActive 同理（图库面板展开期间重建会丢目录与选中项）—— 新增面板时同步这一行",
-            text.contains("clipboardActive || galleryActive || searchPanel.isActive() || directionPanelVisible"),
+            // MEM-05 起搜索面板可为空（首次打开才创建）：判据读的是「存在且活跃」
+            text.contains("clipboardActive || galleryActive || isSearchPanelActive() || directionPanelVisible"),
         )
     }
 

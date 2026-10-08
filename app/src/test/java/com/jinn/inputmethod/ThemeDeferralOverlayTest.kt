@@ -30,7 +30,7 @@ class ThemeDeferralOverlayTest {
             .take(300)
         for ((state, why) in listOf(
             "clipboardActive" to "剪贴板面板",
-            "searchPanel.isActive()" to "顶部搜索面板",
+            "isSearchPanelActive()" to "顶部搜索面板（MEM-05 起按需创建，判定函数先判存在）",
             "directionPanelVisible" to "方向面板",
             "passwordPad" to "密码模式（复原三元组只活在旧视图上，重建后回不去）",
         )) {
