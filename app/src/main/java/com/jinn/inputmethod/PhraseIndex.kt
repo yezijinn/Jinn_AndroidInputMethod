@@ -341,25 +341,51 @@ internal class PhraseIndex private constructor(
             }
             flushPending()
 
-            val keys = keyBlob.toByteArray()
-            val kl = keyLens.toByteArray()
-            val words = wordBlob.toByteArray()
-            val wl = wordLens.toByteArray()
-            val out = ByteArray(HEADER_SIZE + keys.size + kl.size + words.size + wl.size)
+            // 组装（MEM-02）：按四段**已知尺寸**一次分配，再把各段用 writeTo 直接拷进去。
+            // 原先每段先 `toByteArray()` 再 `System.arraycopy` —— 那四份拷贝与最终数组同时驻留，
+            // 组装期峰值 ≈ 段缓冲 + 段拷贝 + out ≈ 3× 索引体积（可选包 8~10MB 索引时是十几 MB 白付）。
+            // 产物逐字节不变：写出顺序、各段起始位置与原先完全一致（IndexBuilderParityTest 对拍）。
+            val out = ByteArray(
+                HEADER_SIZE + keyBlob.size() + keyLens.size() + wordBlob.size() + wordLens.size(),
+            )
             out[0] = 'J'.code.toByte(); out[1] = 'N'.code.toByte()
             out[2] = 'I'.code.toByte(); out[3] = 'H'.code.toByte()
             writeU16(out, 4, 2)
             writeI32(out, 6, count)
-            writeI32(out, 10, keys.size)
-            writeI32(out, 14, words.size)
+            writeI32(out, 10, keyBlob.size())
+            writeI32(out, 14, wordBlob.size())
             writeI32(out, 18, 0)
             writeI64(out, 22, stamp)
             var p = HEADER_SIZE
-            System.arraycopy(keys, 0, out, p, keys.size); p += keys.size
-            System.arraycopy(kl, 0, out, p, kl.size); p += kl.size
-            System.arraycopy(words, 0, out, p, words.size); p += words.size
-            System.arraycopy(wl, 0, out, p, wl.size)
+            val sink = ByteArraySink(out, p)
+            for (section in arrayOf(keyBlob, keyLens, wordBlob, wordLens)) {
+                sink.pos = p
+                section.writeTo(sink)
+                p = sink.pos
+            }
             return out
+        }
+
+        /**
+         * 把 [java.io.ByteArrayOutputStream.writeTo] 的字节直接落进目标数组的小适配器（MEM-02）。
+         *
+         * 用它替掉「先 `toByteArray()` 再 `arraycopy`」：后者在组装期同时持有「段缓冲 + 段拷贝 + 最终数组」
+         * 三份同量级内存，而索引（段落总和几 MB ~ 十几 MB）正是可选包构建时的峰值来源。
+         *
+         * 只实现 [write]：`ByteArrayOutputStream.writeTo` 在 AOSP 上就是一次 `out.write(buf, 0, count)`，
+         * [write] 单字节版是 `OutputStream` 的抽象方法，留着以防上游改成逐字节写。
+         */
+        private class ByteArraySink(private val dest: ByteArray, start: Int) : java.io.OutputStream() {
+            var pos = start
+
+            override fun write(b: Int) {
+                dest[pos++] = b.toByte()
+            }
+
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                System.arraycopy(b, off, dest, pos, len)
+                pos += len
+            }
         }
 
         private fun stampOf(b: java.nio.ByteBuffer, off: Int): Long {

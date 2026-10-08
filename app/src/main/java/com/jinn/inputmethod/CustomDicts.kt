@@ -470,7 +470,18 @@ internal object CustomDicts {
         val tmp = File(dir, PACK_NAME + TMP_SUFFIX)
         return runCatching {
             FileOutputStream(tmp).use { out ->
-                out.write(encodePackLines(pack.lines))
+                // 压缩**直写**临时件（MEM-03）：原先先压进 ByteArrayOutputStream 再 `toByteArray()`，
+                // 一份压缩结果在堆里存两份（增长缓冲 + 末尾拷贝），大词库时是几十 MB 的白付；
+                // 这里 XZ 直接写文件流 —— 产物逐字节相同（同一套 LZMA2Options 与同一写出顺序）。
+                //
+                // 收尾用 `finish()` 而不是 `use{}`/`close()`：XZ 的 close 会连底层文件流一起关掉，
+                // 而紧随其后的 `fd.sync()` 在已关流上会抛「Stream Closed」（写盘因此整条失败）。
+                // finish 只写完 xz 尾部（索引 + 收尾标记），文件流由外层 use 关。
+                val xz = XZOutputStream(out, LZMA2Options())
+                val w = xz.bufferedWriter(Charsets.UTF_8)
+                for (line in pack.lines) w.write(line + "\n")
+                w.flush()
+                xz.finish()
                 out.fd.sync()
             }
             if (!tmp.renameTo(dest)) error("改名失败")
