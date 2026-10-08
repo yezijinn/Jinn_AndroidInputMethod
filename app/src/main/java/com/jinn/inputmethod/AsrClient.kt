@@ -54,6 +54,24 @@ class AsrClient(
     @Volatile
     private var timeStart = 0.0
 
+    /**
+     * 发送字段快照（MEM-42）：`prompt` / `language` 在**连接建立时**取一次，之后每包复用。
+     *
+     * 原先每包现读 `prefs.prompt` / `prefs.language`（两次 SharedPreferences 内存读），
+     * 而音频包每秒可达 10 条。更要紧的是**一致性**：用户在录音途中改配置，
+     * 若逐包现读，同一段听写会带着新旧两套 prompt 发出，服务端按最后一包的值处理整段 —— 结果错配却无迹可查。
+     *
+     * 刷新点放在 [connect] 与 [beginTask]（不是每包）：前者覆盖地址变更重连、`refreshConfig` 强重连与
+     * 配置导入三条改配置路径；后者兜住「已连接状态下改了 prompt」这一次听写。
+     * 采集线程读、主线程写，故 `@Volatile`。
+     */
+    @Volatile
+    private var snapPrompt: String = prefs.prompt
+
+    /** 见 [snapPrompt] */
+    @Volatile
+    private var snapLanguage: String = prefs.language
+
     @Volatile
     private var connectedUrl = ""
 
@@ -65,6 +83,15 @@ class AsrClient(
     private var userClosed = false
     private val reconnectRunnable = Runnable { tryReconnect() }
 
+    /** 空闲关闭是否已排程（仅用于日志与幂等判断，真正的仲裁是 runnable 自身） */
+    @Volatile
+    private var idleCloseScheduled = false
+
+    /** 空闲关闭因「在途任务未清」而后延的次数（上限见 [onIdleCloseDue]） */
+    private var idleCloseDeferrals = 0
+
+    private val idleCloseRunnable = Runnable { onIdleCloseDue() }
+
     val isOnline: Boolean get() = state == LinkState.ONLINE
 
     /**
@@ -72,6 +99,8 @@ class AsrClient(
      */
     fun connect(force: Boolean = false) {
         userClosed = false
+        cancelIdleClose()
+        refreshSendSnapshot()
         reconnectHandler.removeCallbacks(reconnectRunnable)
         val target = prefs.wsUrl
         if (!force && socket != null && target == connectedUrl &&
@@ -101,6 +130,9 @@ class AsrClient(
      * @return 任务 ID；连接未就绪时返回 null，并顺手触发一次重连
      */
     fun beginTask(): String? {
+        // 本次听写的字段快照：录音期间改配置不影响这一段（见 snapPrompt 注释）
+        refreshSendSnapshot()
+        cancelIdleClose()
         val target = prefs.wsUrl
         // 用户在设置页改了地址后保存，旧连接仍指向旧地址：检测到变化后强制重连，
         // 避免录音被发到旧服务器又收不到结果
@@ -157,12 +189,68 @@ class AsrClient(
 
     fun close() {
         userClosed = true
+        cancelIdleClose()
         reconnectHandler.removeCallbacks(reconnectRunnable)
         sendingTask = null
         acceptingTask = null
         closeSocket()
         updateState(LinkState.IDLE, null)
         Diagnostics.i(TAG, "close: 主动关闭连接")
+    }
+
+    /**
+     * 排一次「空闲关闭」：`delayMs` 后若仍无活动任务就主动 [close]，把待机唤醒降到零（MEM-13）。
+     *
+     * 为什么需要它：连接一旦建立就一直挂着，OkHttp 按 [PING_INTERVAL_SEC] 周期发 ping，
+     * 服务端（`websockets.serve` 未设 ping 参数）也按默认 20s 回 ping —— 键盘收起、息屏静置时
+     * 每 20 秒被唤醒一次，是输入法唯一的持续耗电源。只放宽客户端 ping 治不了（服务端那侧照旧），
+     * 唯有把连接**关掉**才能归零。
+     *
+     * 由调用方在「键盘收起 / 切回拼音」时排；[connect] 与 [beginTask] 会自动撤销（用户又要用了）。
+     * 关闭窗口必须 ≥ 识别兜底超时（60s），且在途任务未清时不关（见 [onIdleCloseDue]）——
+     * 这两条保证「松手后 1~3 秒才回的 final 结果」不会被关连接丢掉。
+     */
+    fun scheduleIdleClose(delayMs: Long = IDLE_CLOSE_MS) {
+        idleCloseScheduled = true
+        idleCloseDeferrals = 0
+        reconnectHandler.removeCallbacks(idleCloseRunnable)
+        reconnectHandler.postDelayed(idleCloseRunnable, delayMs)
+        Diagnostics.i(TAG, "scheduleIdleClose: ${delayMs}ms 无活动则关闭连接")
+    }
+
+    /** 撤销待触发的空闲关闭（正常使用路径一到就调；removeCallbacks 幂等且廉价） */
+    fun cancelIdleClose() {
+        idleCloseScheduled = false
+        reconnectHandler.removeCallbacks(idleCloseRunnable)
+    }
+
+    private fun onIdleCloseDue() {
+        idleCloseScheduled = false
+        if (userClosed) return
+        // 在途任务还没清：此刻关连接会把 final 结果丢掉。先延后重排，但**只延后有限次** ——
+        // `acceptingTask` 的清除权在调用方（它有 60s 兜底），若那条兜底没走到
+        // （例如结果被丢弃且没人复位），无限重排等于连接永生、待机唤醒照旧。
+        if (sendingTask != null || acceptingTask != null) {
+            if (idleCloseDeferrals >= IDLE_CLOSE_MAX_DEFERRALS) {
+                Diagnostics.w(
+                    TAG,
+                    "空闲关闭：在途标记残留（sending=$sendingTask accepting=$acceptingTask），强制关闭",
+                )
+            } else {
+                idleCloseDeferrals++
+                Diagnostics.i(TAG, "空闲关闭跳过：仍有在途任务，稍后再试（第 $idleCloseDeferrals 次）")
+                scheduleIdleClose()
+                return
+            }
+        }
+        close()
+        Diagnostics.i(TAG, "空闲关闭：连接已释放，待机不再有 ping 唤醒")
+    }
+
+    /** 见 [snapPrompt] */
+    private fun refreshSendSnapshot() {
+        snapPrompt = prefs.prompt
+        snapLanguage = prefs.language
     }
 
     private fun tryReconnect() {
@@ -202,8 +290,8 @@ class AsrClient(
             data = data,
             isFinal = isFinal,
             timeStart = timeStart,
-            prompt = prefs.prompt,
-            language = prefs.language,
+            prompt = snapPrompt,
+            language = snapLanguage,
         ).toJson()
         if (!current.send(message)) {
             Diagnostics.w(TAG, "send: 发送队列已满或连接关闭 taskId=$taskId size=${data.length}")
@@ -302,6 +390,24 @@ class AsrClient(
 
         /** 建连超时（秒） */
         const val CONNECT_TIMEOUT_SEC = 5L
+
+        /**
+         * 空闲关闭窗口（毫秒）：键盘收起后这么久没有活动就释放连接。
+         *
+         * 必须 ≥ `JinnIme.RECOGNIZE_TIMEOUT_MS`（60s）—— 松手后服务端 final 结果要 1~3 秒才回，
+         * 60s 是「等结果」的兜底上限；窗口比它短就会在用户还等着结果时把连接关掉。
+         * 90s 是留了余量的取值（多出来的 30 秒不影响「待机唤醒归零」这个目标：只在息屏静置时才关）。
+         */
+        const val IDLE_CLOSE_MS = 90_000L
+
+        /**
+         * 空闲关闭最多因「在途任务未清」后延几次（每次一个 [IDLE_CLOSE_MS] 窗口）。
+         *
+         * 3 次 ≈ 4.5 分钟：调用方对「等结果」有 60s 兜底，正常情况下第一二次就会让开；
+         * 超过上限仍不清（标记残留）就强制关闭 —— 否则连接永生、待机唤醒照旧，那等于白改。
+         * 强制关闭会丢一个在途结果，故记 W 级。
+         */
+        const val IDLE_CLOSE_MAX_DEFERRALS = 3
         /** WebSocket 心跳间隔（秒），长连接保鲜防 NAT 掐线 */
         const val PING_INTERVAL_SEC = 20L
         const val NORMAL_CLOSURE = 1000

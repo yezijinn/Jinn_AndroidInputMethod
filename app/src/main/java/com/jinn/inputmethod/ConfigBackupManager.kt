@@ -1018,21 +1018,40 @@ internal object ConfigBackupManager {
                 // 「仅并入」要先把内存里还没落盘的学习写下去：否则合并基准是旧文件，
                 // 防抖窗口内那几次学习会随替换被静默丢掉
                 if (mode != ImportMode.RESTORE) UserFrequency.flush()
-                val localText = if (mode == ImportMode.RESTORE) "" else runCatching {
-                    freqFile.takeIf { it.isFile }?.readText(Charsets.UTF_8)
-                }.getOrNull().orEmpty()
-                val merged = UserFrequency.mergeForBackup(localText, freqText, nowDay())
-                // 走 replaceFromBackup：它在写盘锁内完成「落盘 + 换内存态」，
-                // 避免运行期的防抖写盘把刚导入的词频用旧快照覆盖回去
-                if (UserFrequency.replaceFromBackup(freqFile, merged.text, prefs.userLearning)) {
-                    merged.mergedCount
+                // BUG-01（唯一「不可逆数据销毁」级）：读取失败 ≠ 文件不存在。
+                // 「不存在」⇒ 本机没有可丢的词频，空串是正确的合并基准；
+                // 「读取抛异常」（I/O 错、被占、权限）⇒ 本机词频还在文件里，若按空串去 merge，
+                // 紧接着的 replaceFromBackup 会把它们整份换掉（目标文件被覆盖，退不回来）。
+                // 故这里必须区分两者：后者中止词频段（跳过 replaceFromBackup），其余节照常导入。
+                val localText = when {
+                    mode == ImportMode.RESTORE -> ""   // 恢复 = 以备份为准，这是该模式的语义
+                    !freqFile.isFile -> ""              // 文件不存在：没有可丢的内容
+                    else -> runCatching { freqFile.readText(Charsets.UTF_8) }.getOrElse {
+                        Diagnostics.e(TAG, "导入: 读取本机词频失败，跳过词频导入（不做整份替换）", it)
+                        if (failedStage == null) failedStage = "词频读取失败（已跳过词频导入）"
+                        null
+                    }
+                }
+                if (localText == null) {
+                    null   // 读取失败：与「写入失败」同口径，别拿空基准去覆盖本机词频
                 } else {
-                    null
+                    val merged = UserFrequency.mergeForBackup(localText, freqText, nowDay())
+                    // 走 replaceFromBackup：它在写盘锁内完成「落盘 + 换内存态」，
+                    // 避免运行期的防抖写盘把刚导入的词频用旧快照覆盖回去
+                    if (UserFrequency.replaceFromBackup(freqFile, merged.text, prefs.userLearning)) {
+                        merged.mergedCount
+                    } else {
+                        null
+                    }
                 }
             }.getOrNull()
             if (mergedCount == null) {
-                Diagnostics.w(TAG, "导入: 词频写入失败")
-                failedStage = "词频写入失败"
+                // 读取失败时 [failedStage] 已写明「读取」，不要被这句覆盖成「写入」——
+                // 两者对用户的处置完全不同（前者是文件/权限问题，后者是空间或并发问题）
+                if (failedStage == null) {
+                    Diagnostics.w(TAG, "导入: 词频写入失败")
+                    failedStage = "词频写入失败"
+                }
             } else {
                 freqAfter = mergedCount
             }

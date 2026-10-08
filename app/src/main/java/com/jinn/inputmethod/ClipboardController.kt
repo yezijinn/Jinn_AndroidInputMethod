@@ -527,7 +527,9 @@ object ClipboardStore {
         // 日志必须写在入库之后：upsert 返回 -1 表示加密/写库失败（`ClipboardDb.upsert`），
         // 先记「已保存」会把失败伪装成成功，排查时结论正好相反
         if (id > 0) {
-            Diagnostics.i(TAG, "save: 已保存 #$id len=${text.length} (分类=$category)")
+            // MEM-14d：成功分支降为 V —— 这是「每次复制一条」的事件（连打测试时几十条/分钟），
+            // 用 i 级会逐条落盘并随诊断包外传；失败分支保持 W（那才是要查的事）。
+            Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length} (分类=$category)")
         } else {
             Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length} (分类=$category)")
         }

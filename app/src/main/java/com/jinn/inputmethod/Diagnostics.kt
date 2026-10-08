@@ -96,6 +96,24 @@ private const val LOG_SEGMENTS_KEPT = 2
     private const val VERBOSE_TO_FILE = false
 
     /**
+     * 按键 / 候选这类**高频热路径** V 级日志的编译期开关（跨批接口 C-2）。
+     *
+     * 为什么必须由**调用点**使用：Kotlin 的字符串模板在实参处就已求值 ——
+     * `Diagnostics.v(TAG, "键触摸 DOWN $key")` 即使内部不落盘，字符串与拼接也已经建好，
+     * 且 `Log.v` 是一次跨进程 logd 调用。只在 Diagnostics 内部判断无法省掉这两笔。
+     * 正确写法（放在调用点，包住整个调用）：
+     *
+     * ```kotlin
+     * if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "键触摸 DOWN $key")
+     * ```
+     *
+     * `const` 会被编译期内联；为 `false` 时整段（含字符串构造与 logd 调用）被编译器消除，零成本；
+     * 需要抓现场时改成 `true` 重新编译即可。**注意**：不要用 `VERBOSE_TO_FILE` 的逻辑去掐掉
+     * 整个 V 级 —— 那会把非热路径的 V 级现场（排障凭据）一起关掉，这里只关「按键级」噪音。
+     */
+    const val KEY_TRACE = false
+
+    /**
      * 单条落盘正文的长度上限（字符）。
      *
      * 正文写什么由调用点自撰（约定只写事件与计数），但约定没有机械约束 ——
@@ -239,13 +257,55 @@ private const val LOG_SEGMENTS_KEPT = 2
      * `DateTimeFormatter` 不可变、天然线程安全（minSdk 26 已支持 java.time）。
      */
     private val dateFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
-    private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /**
+     * 时间戳的**秒级部分**格式器。
+     *
+     * 整串格式（含 `.SSS`）原先是 `yyyy-MM-dd HH:mm:ss.SSS` 一次 format —— 每条日志一行也就
+     * 一次模板解析 + 一个 `LocalDateTime` + 一个结果串。这里把「秒以内不变」的前半段按秒缓存，
+     * 毫秒由 [now] 手拼，输出与旧格式**逐位相同**（同秒的多行各有各的毫秒，可读性不变）。
+     */
+    private val secondFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
+
+    /**
+     * `(epochSecond, 该秒的 "yyyy-MM-dd HH:mm:ss" 前缀)`。
+     *
+     * 必须是**单个 volatile 引用**：两个字段分别写会读到「新秒值 + 旧前缀」的错位组合；
+     * 成对更换则要么整套旧的、要么整套新的。每秒钟只写一次。
+     */
+    @Volatile
+    private var secondPrefix: Pair<Long, String>? = null
 
     /** 当前日期（文件名用） */
     private fun today(): String = dateFormat.format(java.time.LocalDate.now())
 
-    /** 当前时刻（日志行首用） */
-    private fun now(): String = timeFormat.format(java.time.LocalDateTime.now())
+    /**
+     * 当前时刻（日志行首用），格式 `yyyy-MM-dd HH:mm:ss.SSS`（本机时区）。
+     *
+     * 秒级前缀每秒只格式化一次（[secondPrefix]）；毫秒用 `ms % 1000` 手拼为三位。
+     * 前缀按**同一个毫秒基准**推导（`Instant.ofEpochMilli`），避免「前缀取自下一秒、
+     * 毫秒取自这一秒」的错位；`Locale.US` 与 [dateFormat] 同口径（固定 ASCII 数字，
+     * 不随系统地区变成本地数字）。
+     */
+    private fun now(): String {
+        val ms = System.currentTimeMillis()
+        val second = ms / 1000
+        val cached = secondPrefix
+        val prefix = if (cached != null && cached.first == second) {
+            cached.second
+        } else {
+            val p = secondFormat.format(
+                java.time.LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochMilli(ms),
+                    java.time.ZoneId.systemDefault(),
+                ),
+            )
+            secondPrefix = second to p
+            p
+        }
+        // (millis + 1000) 的十进制串去掉首位即三位补零：0→"000"、5→"005"、123→"123"
+        return prefix + '.' + (ms % 1000 + 1000).toString().substring(1)
+    }
 
     // ── 初始化 ──────────────────────────────────────────────
 
@@ -264,6 +324,8 @@ private const val LOG_SEGMENTS_KEPT = 2
             cleanupOldLogs()
             i(TAG, "日志目录: ${logDir?.absolutePath ?: "不可用"}")
             i(TAG, "设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} SDK=${android.os.Build.VERSION.SDK_INT}")
+            // 档位写诊断头（契约 C-3）：大缓冲上限按此折算，事后才知道某次 OOM / 拒绝大文件是不是低配档位所致
+            i(TAG, "内存档位: ${DeviceTier.describe(context)}")
         }
     }
 

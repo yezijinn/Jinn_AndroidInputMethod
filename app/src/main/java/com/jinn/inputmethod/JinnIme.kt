@@ -126,6 +126,17 @@ class JinnIme : InputMethodService() {
     private var hintLabel: TextView? = null
 
     private var pinyinKeyboard: PinyinKeyboardView? = null
+
+    /**
+     * 语音键盘树与拼音键盘树（MEM-06）。
+     *
+     * 语音那棵是**按需创建**的：`voiceView == null` 表示「语音关闭或默认拼音模式，从未需要过它」。
+     * 拼音那棵每次建视图都在，保存引用是为了让 [applyKeyboardMode] 不再依赖容器里的下标
+     * （下标法在语音树缺失时会把拼音树当成 voice 处理）。
+     */
+    private var voiceView: View? = null
+    private var pinyinView: View? = null
+
     /** 当前键盘模式。默认拼音，语音默认禁用，不能以语音键盘起步 */
     private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
@@ -472,7 +483,8 @@ class JinnIme : InputMethodService() {
         ensureVoiceReady()
 
         // 预加载拼音词库（约 1MB 文本，后台线程避免主线程卡顿）
-        Thread {
+        // 线程名照本文件既有写法（MEM-33）：诊断行头的 [Thread-n] 无法对应功能，命名后才可检索
+        Thread({
             // 后台优先级（BUG.md L-1154）：索引解压是启动期最重的 CPU 活（16MB 定值缓冲 + 结尾整份拷贝，
             // 见 L-1142），而它跑在默认优先级上，用户点开输入框后前台按键要跟它抢 CPU ——
             // 与可选包线程、双拼预热线程同一个写法
@@ -509,7 +521,7 @@ class JinnIme : InputMethodService() {
             // 原来固定「基础包就绪后 5 秒」开始，而那正是用户开始打字的时间点，重活抢 CPU/内存带宽
             // → 冷启动后「很卡」。改为等空闲信号（见 maybeLoadOptionalDict）。
             Diagnostics.i(TAG, "可选词库: 已改为空闲时加载（息屏 / 键盘收起后 / 兜底超时）")
-        }.apply { isDaemon = true }.start()
+        }, "jinn-pinyin-preload").apply { isDaemon = true }.start()
 
         // 剪贴板历史：启用时监听系统剪贴板，按策略加密保存
         syncClipboardController()
@@ -1147,9 +1159,17 @@ class JinnIme : InputMethodService() {
 
     /** 立即生效：强制按新地址重连 WebSocket + 重新同步键盘输入方案 */
     fun refreshConfig() {
-        // 地址/端口变化：旧连接指向旧服务器，强制断开重连
+        // 地址/端口变化：旧连接指向旧服务器，强制断开重连。
+        // ⚠ 懒连接（MEM-13）后这条路径会在「用户根本不用语音」时也把连接拉起来，而那时
+        // 键盘多半收着（用户在设置页）—— 若不补排空闲关闭，连接就再没人管，每 20 秒一次的
+        // 服务端 ping 照旧，等于回到改造前。判据与 onStartInputView 同口径。
         Diagnostics.i(TAG, "refreshConfig: 强制重连 ${prefs.wsUrl}")
-        asr?.connect(force = true)
+        runCatching { asr?.connect(force = true) }.onFailure {
+            Diagnostics.e(TAG, "refreshConfig: 重连失败 ${it.javaClass.simpleName} ${it.message}", it)
+        }
+        if (keyboardMode != KeyboardMode.VOICE && mode == Mode.NONE && !awaitingResult) {
+            asr?.scheduleIdleClose()
+        }
         // 双拼/中英文方案变化：立即重新套用，键盘无需重建
         pinyinKeyboard?.configure(
             scheme = prefs.effectiveShuangpinScheme,
@@ -1314,55 +1334,25 @@ class JinnIme : InputMethodService() {
         keyboardThemeCtx = themeCtx
         appliedThemeDark = ThemeManager.isDark(this, prefs)
 
-        // 语音键盘
-        val voice = LayoutInflater.from(themeCtx).inflate(R.layout.keyboard, null)
-        micButton = voice.findViewById(R.id.mic_button)
-        statusDot = voice.findViewById(R.id.status_dot)
-        statusLabel = voice.findViewById(R.id.status_label)
-        hintLabel = voice.findViewById(R.id.hint_label)
-        micButton?.setOnTouchListener { view, event ->
-            val consumed = onMicTouch(event)
-            // 无障碍：抬手时补 performClick。麦克风按钮没有 OnClickListener，
-            // performClick 只向无障碍服务补发一次点击事件，不影响手势判定与录音逻辑。
-            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
-            consumed
-        }
-        // ⚠ 语音键盘与拼音键盘是**两套 View**（`keyboard.xml` / `keyboard_pinyin.xml`），
-        // 同名 id 各自解析到自己的布局里，因此敲击反馈必须在两侧各自绑定，不能共用一次绑定。
-        // ⚠ 麦克风键（mic_button）**不挂钩**：按下即开始录音，此刻播按键音会被 AudioRecord
-        // 一并录进去、影响识别率。录音相关代码一行不改（2026-10-05 用户要求）。
-        voice.findViewById<View>(R.id.status_bar).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_FUNC)
-            openSettings()
-        }
-        voice.findViewById<View>(R.id.key_comma).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_SYMBOL)
-            commit("，")
-        }
-        voice.findViewById<View>(R.id.key_period).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_SYMBOL)
-            commit("。")
-        }
-        voice.findViewById<View>(R.id.key_space).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_CONFIRM)
-            commit(" ")
-        }
-        voice.findViewById<View>(R.id.key_enter).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_CONFIRM)
-            performEnter()
-        }
-        // 语音键盘的「键盘」键：切到拼音键盘；长按仍切输入法
-        voice.findViewById<View>(R.id.key_switch).setOnClickListener {
-            KeyFeedback.fire(TapSound.G_FUNC)
-            switchToPinyinKeyboard()
-        }
-        voice.findViewById<View>(R.id.key_switch).setOnLongClickListener {
-            // 长按不会触发短按的 click ⇒ 短按那份反馈也不会发，这里补一次（与短按同组）
-            KeyFeedback.fire(TapSound.G_FUNC)
-            showImePicker()
-            true
-        }
-        bindBackspace(voice.findViewById(R.id.key_backspace))
+        // 语音键盘：**按需创建**（MEM-06）——
+        // 语音关闭或默认拼音模式的用户根本不看这棵树，原先无条件 inflate 等于白付一份常驻内存
+        // （40+ 个 View、5 个点击监听、退格长按 Runnable）。装配体见 ensureVoiceView。
+        //
+        // ⚠ 先把两张视图档案清空：本函数既服务首次创建、也服务 [recreateKeyboardView] 的重建
+        // （`setInputView(onCreateInputView())`）。若留着旧引用，ensureVoiceView 会把**已脱离容器**
+        // 的旧语音树交回来，而下面挂进新容器的是新树 —— 可见性操作打到旧树上，新树永远停留初值。
+        // 语音子视图字段一并清：不创建语音树的会话里，它们不该继续钉着上一棵树（那是内存泄漏）。
+        voiceView = null
+        pinyinView = null
+        micButton = null
+        statusDot = null
+        statusLabel = null
+        hintLabel = null
+        voiceBackspaceView = null
+        val wantVoice = prefs.voiceInputEnabled &&
+            prefs.defaultKeyboardMode != DefaultKeyboardMode.PINYIN_CN &&
+            prefs.defaultKeyboardMode != DefaultKeyboardMode.PINYIN_EN
+        val voice = if (wantVoice) ensureVoiceView(themeCtx) else null
 
         // 拼音键盘（同样用决策后的 Context，见上）
         val pinyin = PinyinKeyboardView(themeCtx).apply {
@@ -1530,11 +1520,14 @@ class JinnIme : InputMethodService() {
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
         val container = FrameLayout(this)
         keyboardContainer = container
-        container.addView(voice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        voice?.let { v -> container.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
         container.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        pinyinView = pinyin
         // 键盘视图每次创建都重新套用默认模式（InputMethodService 可能复用实例，
         // 仅靠 onCreate 设置 keyboardMode 在复用场景下不生效）
         keyboardMode = when {
+            // 语音视图未创建（语音关闭 / 默认拼音模式）：只有拼音一棵树，模式不可能落语音
+            voice == null -> KeyboardMode.PINYIN
             !prefs.voiceInputEnabled -> KeyboardMode.PINYIN
             prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_CN ||
                 prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
@@ -1553,6 +1546,77 @@ class JinnIme : InputMethodService() {
         // 重建之后本会话剩余时间功能键又会回到「平台一声 + 引擎一声」。
         applyFeedbackSuppression()
         return container
+    }
+
+    /**
+     * 语音键盘视图：**按需创建**（MEM-06）。
+     *
+     * 类内不变量：`voiceView == null` ⟺ 语音视图未创建。三个消费方都必须按「可能为 null」处理：
+     *  - [applyKeyboardMode]：voice 缺失时只让拼音树可见；
+     *  - [applyTransparencyToVoicePanel]：缺失时直接返回 —— 这是原先漏掉的隐藏消费方，
+     *    它用 `getChildAt(0)` 当语音视图，视图缺失时会把**拼音树**按语音面板的参数重刷一遍
+     *    （`kb_bg` / `kb_divider` 命中即被改写，还白建 7 个 drawable）；
+     *  - [switchToVoiceKeyboard]：进入语音前补建（此刻才真正需要这棵树）。
+     */
+    private fun ensureVoiceView(themeCtx: Context): View {
+        voiceView?.let { return it }
+        val voice = LayoutInflater.from(themeCtx).inflate(R.layout.keyboard, null)
+        micButton = voice.findViewById(R.id.mic_button)
+        statusDot = voice.findViewById(R.id.status_dot)
+        statusLabel = voice.findViewById(R.id.status_label)
+        hintLabel = voice.findViewById(R.id.hint_label)
+        micButton?.setOnTouchListener { view, event ->
+            val consumed = onMicTouch(event)
+            // 无障碍：抬手时补 performClick。麦克风按钮没有 OnClickListener，
+            // performClick 只向无障碍服务补发一次点击事件，不影响手势判定与录音逻辑。
+            if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+            consumed
+        }
+        // ⚠ 语音键盘与拼音键盘是**两套 View**（`keyboard.xml` / `keyboard_pinyin.xml`），
+        // 同名 id 各自解析到自己的布局里，因此敲击反馈必须在两侧各自绑定，不能共用一次绑定。
+        // ⚠ 麦克风键（mic_button）**不挂钩**：按下即开始录音，此刻播按键音会被 AudioRecord
+        // 一并录进去、影响识别率。录音相关代码一行不改（2026-10-05 用户要求）。
+        voice.findViewById<View>(R.id.status_bar).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
+            openSettings()
+        }
+        voice.findViewById<View>(R.id.key_comma).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
+            commit("，")
+        }
+        voice.findViewById<View>(R.id.key_period).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_SYMBOL)
+            commit("。")
+        }
+        voice.findViewById<View>(R.id.key_space).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            commit(" ")
+        }
+        voice.findViewById<View>(R.id.key_enter).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            performEnter()
+        }
+        // 语音键盘的「键盘」键：切到拼音键盘；长按仍切输入法
+        voice.findViewById<View>(R.id.key_switch).setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
+            switchToPinyinKeyboard()
+        }
+        voice.findViewById<View>(R.id.key_switch).setOnLongClickListener {
+            // 长按不会触发短按的 click ⇒ 短按那份反馈也不会发，这里补一次（与短按同组）
+            KeyFeedback.fire(TapSound.G_FUNC)
+            showImePicker()
+            true
+        }
+        bindBackspace(voice.findViewById(R.id.key_backspace))
+        voiceView = voice
+        // 容器已存在（从拼音切进语音的场景）就补挂到最底层：与 onCreateInputView 里的挂载顺序一致
+        keyboardContainer?.let { c ->
+            if (voice.parent == null) {
+                c.addView(voice, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        }
+        applyTransparencyToVoicePanel()
+        return voice
     }
 
     /** 语音面板最小编辑键的 id（半透明键盘按档重建它们的键面背景；改 keyboard.xml 时同步） */
@@ -1596,13 +1660,14 @@ class JinnIme : InputMethodService() {
      *  - `mic_button`（MicButton）不参与（自绘）；其底盘已随 `mic_area` 一起处理。
      */
     private fun applyTransparencyToVoicePanel() {
-        val container = keyboardContainer ?: return
-        if (container.childCount < 1) return
+        // 用字段而不是 `container.getChildAt(0)`（MEM-06）：语音树按需创建后，容器里第 0 个
+        // 子视图在「语音缺失」时是**拼音树** —— 下标法会把语音面板的 plate/surface 参数
+        // （kb_bg / kb_divider 命中即改写）与 7 个新 drawable 全糊到拼音树上，纯属白干且破坏配色。
+        val voice = voiceView ?: return
         val ctx = keyboardThemeCtx ?: this
         val percent = prefs.keyTransparencyPercent
         val plateAlpha = KeyTransparency.plateAlpha(percent)
         val surfaceAlpha = KeyTransparency.surfaceAlpha(percent)
-        val voice = container.getChildAt(0)
         // 纯色面按档统一淡（与 26 键面板同一套识别规则）
         alphaFaces(
             voice,
@@ -1688,18 +1753,24 @@ class JinnIme : InputMethodService() {
     }
 
     private fun applyKeyboardMode() {
-        val container = keyboardContainer ?: return
-        if (container.childCount < 2) return
-        val voiceView = container.getChildAt(0)
-        val pinyinView = container.getChildAt(1)
+        val pinyin = pinyinView ?: return
+        val voice = voiceView
+        if (voice == null) {
+            // 语音树不存在（语音关闭 / 默认拼音模式）：只有拼音一棵树要管。
+            // 必须显式置 VISIBLE —— 上一次会话可能是语音模式（那是另一份视图，但复用同一容器语义），
+            // 不许把「不可见」的状态带过来。
+            pinyin.visibility = View.VISIBLE
+            Diagnostics.i(TAG, "applyKeyboardMode: $keyboardMode（无语音视图，仅拼音树）")
+            return
+        }
         when (keyboardMode) {
             KeyboardMode.VOICE -> {
-                voiceView.visibility = View.VISIBLE
-                pinyinView.visibility = View.GONE
+                voice.visibility = View.VISIBLE
+                pinyin.visibility = View.GONE
             }
             KeyboardMode.PINYIN -> {
-                voiceView.visibility = View.GONE
-                pinyinView.visibility = View.VISIBLE
+                voice.visibility = View.GONE
+                pinyin.visibility = View.VISIBLE
                 // 调试：拼音键盘刚变为可见，等一帧布局完成后输出按键坐标供自动化定位
                 ui.postDelayed({
                     if (pinyinKeyboard?.width != 0) {
@@ -1717,6 +1788,9 @@ class JinnIme : InputMethodService() {
         if (mode != Mode.NONE) stopRecording(commit = false)
         keyboardMode = KeyboardMode.PINYIN
         applyKeyboardMode()
+        // 离开语音面板：按「收起键盘」同口径排一次空闲关闭（MEM-13）——
+        // 否则用户切回拼音后长连接会一直挂着，直到下一次收键盘才排上
+        asr?.scheduleIdleClose()
     }
 
     /**
@@ -1751,10 +1825,11 @@ class JinnIme : InputMethodService() {
             onError = { message -> ui.post { onRecorderError(message) } },
             onSilence = { ui.post { onSilenceDetected() } },
         )
-        // 预热连接：首次弹键盘时 WebSocket 往往还没建好，
-        // 不加这一步用户第一次点麦克风会因 beginTask() 返回 null 而"没反应"，得再点一次
-        asr?.connect()
-        Diagnostics.i(TAG, "语音输入已启用：语音组件已装配并开始预热连接")
+        // 刻意**不在这里建连**（MEM-13 懒连接）：onCreate 时用户可能根本不用语音，
+        // 提前连上等于给整台手机挂了一条每 20 秒响一次的长连接（服务端 websockets 默认 ping）。
+        // 连接改由「进入语音键盘」与「语音面板可见时的弹键盘」触发（见 switchToVoiceKeyboard /
+        // onStartInputView）；首次点麦克风的握手延迟由「切进面板即开始连」覆盖。
+        Diagnostics.i(TAG, "语音输入已启用：语音组件已装配（连接推迟到进入语音面板）")
     }
 
     private fun switchToVoiceKeyboard() {
@@ -1767,7 +1842,17 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "语音输入已启用但语音组件未装配，拒绝进入语音功能")
             return
         }
-        if (client.state != LinkState.ONLINE) {
+        // 懒连接（MEM-13）：进入语音面板就是要用语音，此刻才建连。
+        // 闸门必须同时放行 CONNECTING —— 建连是异步的，若只认 ONLINE，用户会被自己刚触发的
+        // 连接挡在门外（「点进去说连不上」），而状态条其实正显示「连接中…」。
+        //
+        // 异常兜底：`prefs.wsUrl` 由用户填的 host 拼成，非法地址会让 Request.Builder().url() 抛
+        // IllegalArgumentException。懒连接把建连搬到了「用户动作」上，抛出去就是点语音面板时崩 IME，
+        // 故这里接住，落到下面的离线闸门同一套提示上。
+        runCatching { client.connect() }.onFailure {
+            Diagnostics.e(TAG, "语音连接建立失败: ${it.javaClass.simpleName} ${it.message}", it)
+        }
+        if (client.state != LinkState.ONLINE && client.state != LinkState.CONNECTING) {
             Diagnostics.i(TAG, "语音服务未连通(${client.state})，拒绝进入语音功能")
             runCatching {
                 Toast.makeText(
@@ -1794,6 +1879,9 @@ class JinnIme : InputMethodService() {
         // 与 `onFinishInputView` 的两行处置对齐（那两个面板一起收）。
         pinyinKeyboard?.hideClipboardPanel()
         pinyinKeyboard?.hideGalleryPanel()
+        // 语音树可能还没建（MEM-06：默认拼音模式的用户从没触发过它）——此刻才真正需要：
+        // 建好会顺带挂进容器第 0 位并刷一次面板透明度；已有则原样返回
+        ensureVoiceView(keyboardThemeCtx ?: ThemeManager.themedContext(this, prefs))
         keyboardMode = KeyboardMode.VOICE
         applyKeyboardMode()
     }
@@ -2049,7 +2137,14 @@ class JinnIme : InputMethodService() {
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
         ui.removeCallbacks(optionalIdleCheck)
-        asr?.connect()
+        // 语音连接生命周期（MEM-13）：**只在语音面板可见时保活**。
+        // 原先这里无条件 connect()，等于每弹一次键盘就给长连接续一次命：拼音用户从不进语音，
+        // 却一直替它付每 20 秒一次的无线电唤醒。判据含录音中与等在途结果两态 ——
+        // 它们与面板可见一样属于「正在用」。
+        if (keyboardMode == KeyboardMode.VOICE || mode != Mode.NONE || awaitingResult) {
+            asr?.cancelIdleClose()
+            asr?.connect()
+        }
         renderLink(asr?.state ?: LinkState.OFFLINE, null)
         micButton?.recording = false
         micButton?.cancelArmed = false
@@ -2165,9 +2260,10 @@ class JinnIme : InputMethodService() {
         // 键盘收起 = 用户大概率停止输入了；再等一小段（避免只是切了个应用马上回来）后加载可选词库
         ui.removeCallbacks(optionalIdleCheck)
         ui.postDelayed(optionalIdleCheck, OPTIONAL_IDLE_DELAY_MS)
-        // 不在这里关闭连接：输入法是常驻服务，WebSocket 应跨输入会话复用。
-        // 松手后服务端 final 结果往往还要 1~3 秒才回来，此刻关连接会把在途
-        // 结果丢掉，识别文本无法落地；连接统一在 onDestroy 里释放。
+        // 收起键盘 = 语音大概率不再用：排一次延迟关闭（MEM-13），把待机唤醒降到零。
+        // 不是立刻关 —— 松手后服务端 final 结果还要 1~3 秒，而窗口是 90s（>60s 兜底超时）；
+        // AsrClient 侧还有「在途任务未清不关」的兜底。用户再弹键盘 / 进语音面板时自动撤销（connect）。
+        asr?.scheduleIdleClose()
         super.onFinishInputView(finishingInput)
     }
 
@@ -2187,7 +2283,9 @@ class JinnIme : InputMethodService() {
 
     override fun onDestroy() {
         instance = null
-        // 用户词频：把未落盘的最后几次学习刷出去（内部走 BackgroundIo，不阻塞）
+        // 用户词频：把未落盘的最后几次学习刷出去（MEM-45 订正：这是**主线程同步写** ——
+        // UserFrequency.flush() 内部先判 dirty，未脏时直接返回；脏时整份重写，
+        // 文件上限 3000 行约 1~3ms，故不做异步）
         runCatching { PinyinEngine.flushUserFrequency() }
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，
@@ -2211,6 +2309,8 @@ class JinnIme : InputMethodService() {
         // 「视图引用断开」与实际不符。下面把这几个字段一并置空（顺序在 cancelTranslate 之后，
         // 因为它内部要调 `pinyinKeyboard.setTranslating`）。
         pinyinKeyboard = null
+        voiceView = null
+        pinyinView = null
         keyboardContainer = null
         keyboardThemeCtx = null
         micButton = null
@@ -2230,12 +2330,13 @@ class JinnIme : InputMethodService() {
         ringerModeReceiver = null
         abandonAudioFocus()
         // 采集线程的 stop 需要 join(300ms) + release；放在主线程阻塞会触发 ANR，
-        // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧
-        Thread {
+        // 抛到后台线程让它自己收尾，asr 的 socket close 也是异步发送 close 帧。
+        // 线程名（MEM-33）：进程销毁路径的日志靠它区分是谁的收尾输出
+        Thread({
             recorder?.stop()
             asr?.close()
             Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
-        }.apply { isDaemon = true }.start()
+        }, "jinn-ime-release").apply { isDaemon = true }.start()
         super.onDestroy()
     }
 
@@ -2386,9 +2487,17 @@ class JinnIme : InputMethodService() {
 
         if (asr?.beginTask() == null) {
             // 未连接：已请求的焦点要释放，避免占用却不录音
-            Diagnostics.w(TAG, "startRecording: beginTask 返回 null（未连接）")
+            // ⚠ 懒连接后要区分两种「未就绪」（MEM-13）：连接**正在进行**与确实连不上，
+            // 对用户的说法不同 —— 前者让他稍后再按一次（此刻多半已连上），后者才是故障。
+            // 混成一句「未连接」会让人以为功能坏了。
+            val connecting = asr?.state == LinkState.CONNECTING
+            Diagnostics.w(TAG, "startRecording: beginTask 返回 null（state=${asr?.state}）")
             abandonAudioFocus()
-            setHint(getString(R.string.hint_not_connected))
+            setHint(
+                getString(
+                    if (connecting) R.string.status_connecting else R.string.hint_not_connected,
+                ),
+            )
             return
         }
 

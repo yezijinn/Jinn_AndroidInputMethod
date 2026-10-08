@@ -5,7 +5,24 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
+import java.lang.ref.WeakReference
 import java.util.Calendar
+
+/**
+ * 进程级 [Prefs] 缓存（MEM-35）。
+ *
+ * [Prefs] 只持有 `applicationContext` 的 `SharedPreferences`（`Prefs.kt:31`），跨 Activity 复用安全，
+ * 且同一个 `SharedPreferences` 实例本来就会被框架按名缓存 —— 每次 `Prefs(context)` 新建的只是
+ * 一层薄包装，代价在「每次调用都走一遍 getSharedPreferences 查找」。本文件有三个默认参数 /
+ * 定时 ticker 点会反复构造它（键盘每次换肤、每个页面每次接入 ticker），收口到一处。
+ *
+ * 用成对读写的 volatile 引用发布：构造是幂等的，竞态下最坏只是多构造一个再被覆盖，不会读到半个对象。
+ */
+@Volatile
+private var processPrefs: Prefs? = null
+
+private fun sharedPrefs(context: Context): Prefs =
+    processPrefs ?: Prefs(context.applicationContext).also { processPrefs = it }
 
 /**
  * 亮白 / 暗黑主题的决策与应用。
@@ -116,8 +133,13 @@ object ThemeManager {
     /** 系统当前是否深色（读 Configuration 的 uiMode 掩码位） */
     fun isSystemDark(context: Context): Boolean = paletteIsDark(context)
 
-    /** 按 Prefs 解析「此刻是否深色」：强制模式看配置时刻，跟随系统看系统 */
-    fun isDark(context: Context, prefs: Prefs = Prefs(context)): Boolean = isDarkNow(
+    /**
+     * 按 Prefs 解析「此刻是否深色」：强制模式看配置时刻，跟随系统看系统。
+     *
+     * 默认值走进程级缓存（MEM-35）：本函数的默认参数是「每次调用都新建 Prefs」的最后几处之一，
+     * 而它被 `recreateIfPaletteStale`（定时换肤到点判一次）与 `themedContext` 反复走到。
+     */
+    fun isDark(context: Context, prefs: Prefs = sharedPrefs(context)): Boolean = isDarkNow(
         mode = prefs.themeMode,
         systemIsDark = isSystemDark(context),
         lightAtMin = prefs.themeLightAtMinutes,
@@ -161,7 +183,7 @@ object ThemeManager {
      * 按 Prefs 决策后的 Context：跟随系统时原样返回，让系统深浅色变化由系统自己驱动
      * （也避免无谓地再造一个 Context）；其余模式返回固定 uiMode 的覆盖 Context。
      */
-    fun themedContext(base: Context, prefs: Prefs = Prefs(base)): Context {
+    fun themedContext(base: Context, prefs: Prefs = sharedPrefs(base)): Context {
         if (prefs.themeMode == MODE_SYSTEM) return base
         return wrapContext(base, isDark(base, prefs))
     }
@@ -184,8 +206,16 @@ object ThemeManager {
      * 放 `onStop`」（由 `ThemeColorParityTest.每个设置页都必须接入定时换色` 机械对拍）——
      * 曾经只有设置页与键盘外观页各写了一份，其余 8 页没有，同一模式下「停在这页会到点换、停在另一页不会」。
      */
-    fun scheduledRebuildTicker(activity: Activity): ScheduledThemeTicker =
-        ScheduledThemeTicker(Prefs(activity)) { recreateIfPaletteStale(activity) }
+    fun scheduledRebuildTicker(activity: Activity): ScheduledThemeTicker {
+        // 弱引用（MEM-12）：ticker 可能被长期持有 —— 键盘侧是 `by lazy` 字段（跨会话复用），
+        // 页面侧由页面自己持有；而 lambda 强引用 Activity 时，旋转屏 / 重建后的旧页面会被
+        // 「一条最长 24h 的延时消息」按住不放（内存泄漏），到点还会在已销毁的页面上调 recreate()。
+        // 这里只弱引用页面本身，取不到就跳过这一次（下次 onStart 会对表重建 ticker）。
+        val ref = WeakReference(activity)
+        return ScheduledThemeTicker(sharedPrefs(activity)) {
+            ref.get()?.let { recreateIfPaletteStale(it) }
+        }
+    }
 
     /**
      * 定时换肤的准点定时器（**页面与键盘共用这一份**，见 `BUG.md` L-476）。
