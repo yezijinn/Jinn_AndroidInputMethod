@@ -769,7 +769,9 @@ class CustomDictsTest {
         assertTrue("有改动要弹确认", "TEXT_DISCARD_TITLE" in exit)
         val close = src.substringAfter("closeButton = TextView(this)").substringBefore("private fun")
         assertTrue("✕ 也要走确认出口", "confirmExit()" in close)
-        assertTrue("程序化回填不算用户改动", "if (!refilling) dirty = true" in src)
+        val watcher = src.substringAfter("afterTextChanged", "").take(240)
+        assertTrue("程序化回填不算用户改动", "if (refilling) return" in watcher)
+        assertTrue("真实改动要置脏", "dirty = true" in watcher)
     }
 
     @Test

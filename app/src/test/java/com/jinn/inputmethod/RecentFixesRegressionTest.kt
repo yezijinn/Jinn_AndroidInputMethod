@@ -3816,4 +3816,35 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 草稿的增量落盘、截断提示、收尾清理与页码保留四条不得回退（2026-10-08 · L-1173…L-1176）。
+     *
+     * 词库编辑页：大稿改成去抖落盘（走 [BackgroundIo]、临时名替换），保存侧只在文件不是最新时同步补一次，
+     * 恢复侧推迟到首帧之后并写出状态行，兜底截断留可见标记，收尾只在不再重建时删文件；
+     * 历史页：删除与收藏切换不再把用户弹回第 1 页。
+     */
+    @Test
+    fun `草稿增量落盘与页码保留四条修复不得回退`() {
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("落盘必须按去抖排", "postDelayed(draftWriteTask, DRAFT_WRITE_DEBOUNCE_MS)" in edit)
+        val writer = edit.substringAfter("private val draftWriteTask", "")
+        assertTrue("落盘必须交给单线程 IO 队列", "BackgroundIo.run {" in writer)
+        assertTrue("写文件必须临时名 + rename（避免读到写了一半的版本）", "staged.renameTo(dest)" in writer)
+        assertTrue("保存侧要按「文件是否最新」分档", "draftWrittenLength == text.length" in edit)
+        assertTrue("大稿恢复必须推迟到首帧之后", "editor.postOnAnimation {" in edit)
+        assertTrue("恢复期间要有状态行", "TEXT_DRAFT_RESTORING" in edit)
+        assertTrue("兜底截断必须记长度", "putInt(STATE_DRAFT_TRUNCATED, kept.length)" in edit)
+        assertTrue("截断恢复后必须有提示", "TEXT_DRAFT_TRUNCATED.format(truncatedAt)" in edit)
+        val destroy = edit.substringAfter("override fun onDestroy()", "")
+        assertTrue("只有不再重建时才清草稿", "if (!isChangingConfigurations)" in destroy)
+        assertTrue("正式名与临时名都要清", "DRAFT_FILE).delete()" in destroy && "DRAFT_FILE_TMP).delete()" in destroy)
+
+        val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertEquals(
+            "删除与收藏切换（含多选删除）四处都必须保留页码",
+            4,
+            Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count(),
+        )
+    }
+
 }

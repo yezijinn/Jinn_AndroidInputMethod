@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -71,6 +73,16 @@ class CustomDictEditActivity : Activity() {
     private var refilling = false
 
     /**
+     * 大稿的增量落盘（BUG.md L-1173）：输入停顿后由 [BackgroundIo] 写文件，重建时不必再同步写整份。
+     *
+     * [draftWrittenLength] 是「已经落盘的那份文本有多长」（-1 = 没有可用文件），
+     * 只在写盘成功后更新；[onSaveInstanceState] 拿当前长度与它比对，一致才只带令牌。
+     */
+    private val draftHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var draftWrittenLength = -1
+
+    /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
      * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
      */
@@ -132,7 +144,9 @@ class CustomDictEditActivity : Activity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: android.text.Editable?) {
-                if (!refilling) dirty = true
+                if (refilling) return
+                dirty = true
+                scheduleDraftWrite(s?.length ?: 0)
             }
         })
         root.addView(
@@ -153,10 +167,23 @@ class CustomDictEditActivity : Activity() {
         // 小稿在实例状态里、大稿在 cacheDir 临时文件里（BUG.md L-1169）
         val draft = savedInstanceState?.let { restoreDraft(it) }
         if (!draft.isNullOrEmpty()) {
-            refilling = true
-            editor.setText(draft)
-            refilling = false
             dirty = savedInstanceState.getBoolean(STATE_DIRTY, true)
+            val truncatedAt = savedInstanceState.getInt(STATE_DRAFT_TRUNCATED, 0)
+            refilling = true
+            if (draft.length > DRAFT_BUNDLE_MAX_CHARS) {
+                // 大稿的排版代价随长度走（真机实测 880k 行 / 8.1MB 让主线程卡 18 秒，见 MAX_REFILL_CHARS）：
+                // 推迟到首帧之后再铺，页面先可见，状态行说明发生了什么（BUG.md L-1173）
+                setStatus(TEXT_DRAFT_RESTORING)
+                editor.postOnAnimation {
+                    editor.setText(draft)
+                    refilling = false
+                    if (truncatedAt > 0) setStatus(TEXT_DRAFT_TRUNCATED.format(truncatedAt))
+                }
+            } else {
+                editor.setText(draft)
+                refilling = false
+                if (truncatedAt > 0) setStatus(TEXT_DRAFT_TRUNCATED.format(truncatedAt))
+            }
         }
 
         setContentView(root)
@@ -172,24 +199,77 @@ class CustomDictEditActivity : Activity() {
      *
      * **按长度分档**：小稿照旧进实例状态；大稿写 `cacheDir` 临时文件、Bundle 只留文件名 ——
      * 编辑框没有长度上限（保存路径给的界是 `MAX_INPUT_CHARS * 2` = 16M 字符），整份进 Bundle
-     * 会在系统侧事务上超限（约 1MB 量级），崩溃且草稿全丢。文件走**同步**写：`onSaveInstanceState`
-     * 之后新实例立刻要读它，而旋转时进程还活着，后台写会与新实例的读抢时序。
+     * 会在系统侧事务上超限（约 1MB 量级），崩溃且草稿全丢。
+     *
+     * 大稿平时由 [scheduleDraftWrite] 增量落盘，这里只在「文件不是最新」时才同步补一次
+     * （刚打完就重建的窄场景）；两种情况都要保证新实例读到的是完整文件（BUG.md L-1173）。
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         val text = editor.text?.toString() ?: ""
         if (draftInBundle(text.length)) {
             outState.putString(STATE_EDITOR_TEXT, text)
+        } else if (draftWrittenLength == text.length) {
+            // 增量落盘已是最新：Bundle 只带令牌，保存侧不再碰主线程
+            outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
         } else {
             val written = runCatching { File(cacheDir, DRAFT_FILE).writeText(text) }.isSuccess
             if (written) {
+                draftWrittenLength = text.length
                 outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
             } else {
-                // 落盘失败（空间不足等）时退一步：截断进 Bundle，至少不崩、也留住开头那部分
-                outState.putString(STATE_EDITOR_TEXT, text.take(DRAFT_BUNDLE_MAX_CHARS))
+                // 落盘失败（空间不足等）时退一步：截断进 Bundle，不崩、留住开头那部分；
+                // 同时留一个可见标记，恢复后由状态行说明（BUG.md L-1174）
+                val kept = text.take(DRAFT_BUNDLE_MAX_CHARS)
+                outState.putString(STATE_EDITOR_TEXT, kept)
+                outState.putInt(STATE_DRAFT_TRUNCATED, kept.length)
             }
         }
         outState.putBoolean(STATE_DIRTY, dirty)
+    }
+
+    /**
+     * 输入停顿 [DRAFT_WRITE_DEBOUNCE_MS] 后落一次盘（只对大稿；缩回上限以内则删掉旧件）。
+     *
+     * 写文件走 [BackgroundIo]（全应用唯一的单线程 IO 队列），`toString` 快照留在主线程但只做一次拷贝。
+     * 临时名 + `renameTo`：新实例读到的永远是完整文件，不会撞上写了一半的版本（BUG.md L-1173）。
+     */
+    private fun scheduleDraftWrite(length: Int) {
+        draftHandler.removeCallbacks(draftWriteTask)
+        if (length <= DRAFT_BUNDLE_MAX_CHARS && draftWrittenLength < 0) return
+        draftHandler.postDelayed(draftWriteTask, DRAFT_WRITE_DEBOUNCE_MS)
+    }
+
+    private val draftWriteTask = Runnable {
+        val text = editor.text?.toString() ?: ""
+        val dest = File(cacheDir, DRAFT_FILE)
+        if (text.length <= DRAFT_BUNDLE_MAX_CHARS) {
+            // 缩回上限以内：Bundle 那条链自己带得动，文件版草稿留着只会变成残留（BUG.md L-1176）
+            draftWrittenLength = -1
+            BackgroundIo.run { runCatching { dest.delete() } }
+            return@Runnable
+        }
+        val staged = File(cacheDir, DRAFT_FILE_TMP)
+        BackgroundIo.run {
+            val ok = runCatching {
+                staged.writeText(text)
+                staged.renameTo(dest)
+            }.getOrDefault(false)
+            draftWrittenLength = if (ok) text.length else -1
+        }
+    }
+
+    /**
+     * 草稿文件只在本实例**不再重建**时收尾删除（BUG.md L-1176）：重建时新实例还要读它，
+     * 而保存成功 / 放弃 / 直接关闭三条出口都不该把它留在 cacheDir 里。
+     */
+    override fun onDestroy() {
+        if (!isChangingConfigurations) {
+            draftHandler.removeCallbacks(draftWriteTask)
+            runCatching { File(cacheDir, DRAFT_FILE).delete() }
+            runCatching { File(cacheDir, DRAFT_FILE_TMP).delete() }
+        }
+        super.onDestroy()
     }
 
     /**
@@ -200,6 +280,7 @@ class CustomDictEditActivity : Activity() {
     private fun restoreDraft(state: Bundle): String? {
         state.getString(STATE_EDITOR_TEXT)?.takeIf { it.isNotEmpty() }?.let { return it }
         val name = state.getString(STATE_EDITOR_FILE) ?: return null
+        runCatching { File(cacheDir, DRAFT_FILE_TMP).delete() }
         val file = File(cacheDir, name)
         val restored = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
         file.delete()
@@ -525,8 +606,15 @@ class CustomDictEditActivity : Activity() {
         private const val STATE_EDITOR_FILE = "custom_editor_file"
         private const val STATE_DIRTY = "custom_editor_dirty"
 
-        /** 大稿临时件（`cacheDir` 下，读完即删） */
+        /** 大稿临时件（`cacheDir` 下，读完即删）与写盘用的临时名（rename 前） */
         private const val DRAFT_FILE = "custom_editor.draft.txt"
+        private const val DRAFT_FILE_TMP = "custom_editor.draft.txt.tmp"
+
+        /** 大稿增量落盘的去抖窗口（毫秒）：输入停顿后写一次 */
+        private const val DRAFT_WRITE_DEBOUNCE_MS = 1_500L
+
+        /** 兜底截断时记下的恢复长度（0 = 没截断，BUG.md L-1174） */
+        private const val STATE_DRAFT_TRUNCATED = "custom_editor_truncated"
 
         /** 草稿进实例状态的字符上限：Bundle 在系统侧约 1MB 量级，这里留足余量 */
         internal const val DRAFT_BUNDLE_MAX_CHARS = 100_000
@@ -547,6 +635,12 @@ class CustomDictEditActivity : Activity() {
         const val TEXT_SAVING = "正在保存并生成词库…"
         const val TEXT_READ_FAIL = "无法读取已保存的内容（文件过大或损坏）"
         const val TEXT_EMPTY_INPUT = "还没有内容：每行写「词 空格 拼音」后再保存"
+
+        /** 大稿恢复期间的状态行（排版代价随长度走，先让页面画出来，BUG.md L-1173） */
+        const val TEXT_DRAFT_RESTORING = "正在恢复未保存的草稿…"
+
+        /** 兜底截断后的状态行（%d = 已恢复的字符数，BUG.md L-1174） */
+        const val TEXT_DRAFT_TRUNCATED = "草稿过大且未能落盘，只恢复了前 %d 字符"
         const val TEXT_TOO_BIG = "内容超过 800 万字符上限，请精简后重试"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
         const val TEXT_SKIP_REFILL = "已跳过回填：编辑框里已有你输入的内容"

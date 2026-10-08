@@ -299,7 +299,8 @@ class ClipboardHistoryActivity : Activity() {
                             db.deleteAnyByIds(checkedIds.toList())
                             checkedIds.clear()
                             multiSelect = false
-                            loadAsync()
+                            // 同上：删完留在当前页（BUG.md L-1175）
+                            loadAsync(resetPage = false)
                         }
                     }
                 } else {
@@ -512,13 +513,15 @@ class ClipboardHistoryActivity : Activity() {
             android.widget.Toast.makeText(this, TEXT_COPIED, android.widget.Toast.LENGTH_SHORT).show()
         }
         addBtn(if (item.isFavorite) "取消收藏" else "收藏") {
-            BackgroundIo.run { db.setFavorite(item.id, !item.isFavorite); loadAsync() }
+            // 不归零：单条收藏切换 / 删除不该把用户从第 N 页弹回第 1 页（BUG.md L-1175），
+            // 列表收缩由分页控件的钳位收尾
+            BackgroundIo.run { db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false) }
             dlg.dismiss()
         }
         addBtn("删除") {
             dlg.dismiss()
             confirm("删除这条记录？") {
-                BackgroundIo.run { db.deleteAnyByIds(listOf(item.id)); loadAsync() }
+                BackgroundIo.run { db.deleteAnyByIds(listOf(item.id)); loadAsync(resetPage = false) }
             }
         }
         addBtn("关闭") { dlg.dismiss() }
