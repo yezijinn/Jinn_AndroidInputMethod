@@ -47,6 +47,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // 两条安装路径的 schema 必须一致，少了它，「同一内容不重复」就只剩 upsert 里
         // 的 findIdByHash 一处代码保证，库层本可以兜住；入库查找也会退化成全表扫描。
         db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
+        // v7：密文总长的表达式索引，让 trimByByteBudget 的全表 SUM 退化成索引扫描（见 DB_VERSION 注释）
+        db.execSQL(bytesIndexSql())
     }
 
     /**
@@ -136,7 +138,16 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             db.execSQL("DROP INDEX IF EXISTS idx_items_created")
             db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC, id DESC)")
         }
+        if (oldVersion < 7) {
+            // v7：密文总长的表达式索引（见 DB_VERSION 注释）。`IF NOT EXISTS` 兜住
+            // 「v3/v5 重建分支刚建过」与「旧库从未建过」两种情形
+            db.execSQL(bytesIndexSql())
+        }
     }
+
+    /** 密文总长的表达式索引（v7 起；`onCreate` 与迁移分支共用同一句，避免两处写法漂移） */
+    private fun bytesIndexSql(): String =
+        "CREATE INDEX IF NOT EXISTS idx_items_bytes ON $TABLE_ITEMS(LENGTH(encrypted_content))"
 
     /**
      * 空 content_hash 兜底：补成 `legacy:<id>`。
@@ -572,6 +583,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (maxTotalBytes <= 0) return
         // 先算总量再决定要不要细化：不超时直接返回，避免每次复制都把全表行拉到 Java 侧
         // （本方法是每次入库都走的 hot path，行数是 O(n)）。
+        // 这一句由 v7 的表达式索引兜着：走覆盖索引扫描（只读长度，不读内容页），
+        // 实测 2 万行从 17.55ms 降到 1.18ms（见 DB_VERSION 注释）。
         val total = readableDatabase.rawQuery(
             "SELECT SUM(LENGTH(encrypted_content)) FROM $TABLE_ITEMS", null
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
@@ -922,7 +935,17 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * （本机 SQLite 实测 9,999 行：深翻页 0.28 → 2.41ms，复合索引后回 0.75ms）。
          * 已装机库的索引同名已存在，改 `onCreate` 只影响全新安装 ⇒ 必须配一条迁移分支。
          */
-        private const val DB_VERSION = 6
+        /**
+         * v7：给「密文总长」加**表达式索引** `LENGTH(encrypted_content)`（性能优化清单 MEM-06）。
+         *
+         * `trimByByteBudget` 每次入库都要 `SELECT SUM(LENGTH(encrypted_content))`（hot path），
+         * 而该列是整条密文（base64），全表扫要读全部内容页。表达式索引只存长度（约十几字节一行）：
+         * 本机 SQLite 实测 2 万行 / 8.7MB 的表，同一条 SQL 从 `SCAN items` 17.55ms 降到
+         * `SCAN items USING COVERING INDEX idx_items_bytes` 1.18ms，库体积 +2.3%，插入无可测代价。
+         *
+         * 与 v6 同理：`onCreate` 只覆盖全新安装，已装机库必须配迁移分支。
+         */
+        private const val DB_VERSION = 7
         private const val TABLE_ITEMS = "clipboard_items"
 
         /** [verifiedReadable] 的上限：超过就整体清空（备忘只是加速，不是正确性依赖） */

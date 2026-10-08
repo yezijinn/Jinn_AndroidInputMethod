@@ -214,6 +214,22 @@ private const val LOG_SEGMENTS_KEPT = 2
     private val lock = Any()
 
     /**
+     * 常驻落盘句柄（[appendToFile]）：
+     * 每行日志原先要 open/write/close 三个系统调用，现在只留一次 write。
+     *
+     * 刻意**不做应用层缓冲**（不套 BufferedOutputStream、不排队）：日志最有用的时刻正是进程
+     * 被系统杀掉或崩溃的那一刻，攒在堆里的尾巴会连原因一起丢。直写内核页缓存既拿到句柄复用，
+     * 又保持「写出去就是写出去」。
+     *
+     * [openBytes] 是**本句柄自己**已写入的字节数（开句柄时以现有文件长度起算）：跨过单文件上限
+     * 说明下一行会触发滚动，那时文件会被改名换 inode，必须先放掉旧句柄，否则后续写入落进被
+     * 改名的那一份里（见 [rollDailyLogIfNeeded]）。
+     */
+    private var openFile: File? = null
+    private var openStream: FileOutputStream? = null
+    private var openBytes = 0L
+
+    /**
      * 时间戳格式器。
      *
      * 必须用 `java.time` 而不是 `SimpleDateFormat`：后者非线程安全，而本类的
@@ -392,19 +408,28 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 级别），排障时会被彻底带偏。
      */
     internal fun sanitizeForFile(body: String): String {
-        val flattened = redactSensitive(body).map { c ->
-            when {
-                c == '\n' -> '⏎'
-                c == '\r' -> '␍'
-                c.isISOControl() -> ' '
-                else -> c
+        // 单趟拼装：原先 `map { … }.joinToString("")` 每行要建一个装箱的 List<Char> 再加一个中间
+        // String，而这是每行日志都走的路径（正文字符与结果字符 1:1，长度口径不变）
+        val src = redactSensitive(body)
+        val sb = StringBuilder(minOf(src.length, MAX_FILE_BODY_CHARS + 16))
+        var truncated = false
+        for (c in src) {
+            if (sb.length >= MAX_FILE_BODY_CHARS) {
+                truncated = true
+                break
             }
-        }.joinToString("")
-        return if (flattened.length <= MAX_FILE_BODY_CHARS) {
-            flattened
-        } else {
-            flattened.take(MAX_FILE_BODY_CHARS) + "…(截断，共 ${flattened.length} 字)"
+            sb.append(
+                when {
+                    c == '\n' -> '⏎'
+                    c == '\r' -> '␍'
+                    c.isISOControl() -> ' '
+                    else -> c
+                },
+            )
         }
+        // 截断提示里报的是**原文长度**（含被截掉的部分）；未截断时两个数相等
+        val total = if (truncated) src.length else sb.length
+        return if (total <= MAX_FILE_BODY_CHARS) sb.toString() else sb.toString() + "…(截断，共 $total 字)"
     }
 
     private fun log(level: Char, tag: String, msg: String, tr: Throwable?) {
@@ -455,12 +480,36 @@ private const val LOG_SEGMENTS_KEPT = 2
     private fun appendToFile(dir: File, text: String) {
         synchronized(lock) {
             try {
+                // 本句柄已写满一份日志 ⇒ 这一行会触发滚动（改名换 inode），先放掉旧句柄
+                if (openStream != null && openBytes > LOG_FILE_MAX_BYTES) closeStream()
                 val file = rollDailyLogIfNeeded(dir, today(), LOG_FILE_MAX_BYTES, LOG_SEGMENTS_KEPT)
-                FileOutputStream(file, true).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                streamFor(file).write(bytes)
+                openBytes += bytes.size
             } catch (e: Exception) {
+                // 句柄可能已进入坏状态（磁盘满 / 文件被删）：丢掉它，下一次写自然会重开
+                closeStream()
                 Log.w(TAG, "写日志文件失败: ${e.message}")
             }
         }
+    }
+
+    /** 取当前可写的常驻句柄；文件换了（跨天或滚动后的新文件）就换句柄 */
+    private fun streamFor(file: File): FileOutputStream {
+        openStream?.let { if (openFile?.path == file.path) return it }
+        closeStream()
+        val stream = FileOutputStream(file, true)
+        openFile = file
+        openStream = stream
+        openBytes = runCatching { file.length() }.getOrDefault(0L)
+        return stream
+    }
+
+    private fun closeStream() {
+        runCatching { openStream?.close() }
+        openStream = null
+        openFile = null
+        openBytes = 0L
     }
 
     /**

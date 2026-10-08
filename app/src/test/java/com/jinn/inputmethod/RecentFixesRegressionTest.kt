@@ -1211,13 +1211,25 @@ class RecentFixesRegressionTest {
     @Test
     fun `分页排序键必须与索引同形`() {
         val code = codeOf("ClipboardDb.kt")
-        assertTrue("DB_VERSION 必须已抬到 6（复合索引需要一条迁移分支）", "DB_VERSION = 6" in code)
+        // 版本号只判下限：写死 `= 6` 会让「再加一条迁移」时误红，而这里真正要守的是
+        // 「每条库结构变更都配了迁移分支」，不是某个具体数字
+        val version = Regex("""DB_VERSION = (\d+)""").find(code)?.groupValues?.get(1)?.toInt()
+        assertTrue("DB_VERSION 必须 ≥ 6（v6 复合索引、v7 表达式索引各要一条迁移分支），当前 $version", (version ?: 0) >= 6)
         val composite = Regex("""CREATE INDEX idx_items_created ON \S+\(created_at DESC, id DESC\)""")
             .findAll(code).count()
         assertTrue("复合索引要同时出现在 onCreate 与迁移分支里（当前 $composite 处）", composite >= 2)
         assertTrue(
             "必须有 DROP + 重建的迁移分支（否则已装机库拿不到新索引）",
             "DROP INDEX IF EXISTS idx_items_created" in code,
+        )
+        // v7 的量长表达式索引：分页那条同样要守「全新安装 + 已装机库」两条路径
+        assertTrue(
+            "密文总长索引要同时覆盖 onCreate 与迁移分支（当前 ${Regex("bytesIndexSql\\(\\)").findAll(code).count()} 处）",
+            Regex("""bytesIndexSql\(\)""").findAll(code).count() >= 3,   // 定义 + onCreate + 迁移分支
+        )
+        assertTrue(
+            "索引必须建在 LENGTH(encrypted_content) 上（换成别的列就退回全表扫）",
+            "CREATE INDEX IF NOT EXISTS idx_items_bytes ON \$TABLE_ITEMS(LENGTH(encrypted_content))" in code,
         )
     }
 
