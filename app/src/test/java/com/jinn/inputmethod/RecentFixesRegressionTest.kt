@@ -3788,7 +3788,7 @@ class RecentFixesRegressionTest {
     fun `实例状态尺寸与历史页恢复语义的三条修复不得回退`() {
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")
         assertTrue("保存必须按 draftInBundle 分档", "if (draftInBundle(text.length))" in edit)
-        assertTrue("大稿要落到 cacheDir 的文件", "File(cacheDir, DRAFT_FILE).writeText(text)" in edit)
+        assertTrue("大稿要落到 cacheDir 的文件", "staged.writeText(text)" in edit && "DRAFT_FILE_SAVE_TMP" in edit)
         assertTrue("Bundle 里只留文件名", "putString(STATE_EDITOR_FILE, DRAFT_FILE)" in edit)
         val restore = edit.substringAfter("private fun restoreDraft(", "")
         assertTrue("读回要先看状态再读文件", "state.getString(STATE_EDITOR_FILE)" in restore)
@@ -3829,19 +3829,29 @@ class RecentFixesRegressionTest {
         assertTrue("落盘必须按去抖排", "postDelayed(draftWriteTask, DRAFT_WRITE_DEBOUNCE_MS)" in edit)
         val writer = edit.substringAfter("private val draftWriteTask", "")
         assertTrue("落盘必须交给单线程 IO 队列", "BackgroundIo.run {" in writer)
-        assertTrue("写文件必须临时名 + rename（避免读到写了一半的版本）", "staged.renameTo(dest)" in writer)
+        assertTrue(
+            "写文件必须临时名 + rename（避免读到写了一半的版本）",
+            "renameTo(File(cacheDir, DRAFT_FILE))" in edit,
+        )
         assertTrue("保存侧要按「文件是否最新」分档", "draftWrittenRevision == draftRevision" in edit)
         assertTrue("新鲜度必须按修订号，不是文本长度（同长度改写会漏）", "draftWrittenLength" !in edit)
         assertTrue("文本变化要自增修订号", "draftRevision++" in edit)
         val task = edit.substringAfter("private val draftWriteTask", "")
-        assertTrue("写入器要把当时的修订号记下来", "val revision = draftRevision" in task && "draftWrittenRevision = if (ok) revision else -1" in task)
+        assertTrue(
+            "写入器要把当时的修订号记下来（末块成功才认）",
+            "val revision = draftRevision" in task &&
+                "if (last) draftWrittenRevision = revision else enqueueDraftChunk" in edit,
+        )
         assertTrue("大稿恢复必须推迟到首帧之后", "editor.postOnAnimation {" in edit)
         assertTrue("恢复期间要有状态行", "TEXT_DRAFT_RESTORING" in edit)
         assertTrue("兜底截断必须记长度", "putInt(STATE_DRAFT_TRUNCATED, kept.length)" in edit)
         assertTrue("截断恢复后必须有提示", "TEXT_DRAFT_TRUNCATED.format(truncatedAt)" in edit)
         val destroy = edit.substringAfter("override fun onDestroy()", "")
         assertTrue("只有不再重建时才清草稿", "if (!isChangingConfigurations)" in destroy)
-        assertTrue("正式名与临时名都要清", "DRAFT_FILE).delete()" in destroy && "DRAFT_FILE_TMP).delete()" in destroy)
+        assertTrue(
+            "正式名与两个临时名都要清",
+            "listOf(DRAFT_FILE, DRAFT_FILE_TMP, DRAFT_FILE_SAVE_TMP)" in destroy,
+        )
         assertTrue(
             "去抖任务必须无条件撤销（重建时旧实例的写入会盖掉新实例那份）",
             destroy.indexOf("removeCallbacks(draftWriteTask)") < destroy.indexOf("if (!isChangingConfigurations)"),
@@ -3870,6 +3880,47 @@ class RecentFixesRegressionTest {
         assertTrue("JinnIme 里三处重活都要带这条（双拼预热 / 基础预加载 / 补试），实际 $inIme 处", inIme >= 3)
         val engine = TestSources.codeSource("PinyinEngine.kt")
         assertTrue("PinyinEngine 的可选包加载线程也要带（早就有，一并钉住）", needle in engine)
+    }
+
+    /**
+     * 草稿的「落盘分块 + 两端失败可见性 + 恢复期不停用保存」三条不得回退（2026-10-08 · L-1180 / L-1181 / L-1185）。
+     *
+     * 三条都在同一页、同一份大稿上：落盘要按块投递（串行队列不能被整份写堵住），
+     * 恢复端读失败或读到半截文件都不能把唯一副本删掉，恢复期也不该按「源文本太大」停用保存。
+     */
+    @Test
+    fun `草稿落盘分块与恢复失败可见性的三条修复不得回退`() {
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+
+        // L-1180：分块投递、世代号作废、代理对不劈开、下一块自投
+        assertTrue("落盘必须分块投递（每块一个 IO 任务）", "private fun enqueueDraftChunk(" in edit)
+        assertTrue("分块大小要有常量", "DRAFT_WRITE_CHUNK_CHARS" in edit)
+        assertTrue("在途任务靠世代号作废", "if (generation != draftWriteGeneration) return@run" in edit)
+        assertTrue("世代号在每批开始时自增", "++draftWriteGeneration" in edit)
+        assertTrue("不能把代理对劈成两半", "Character.isHighSurrogate(text[end - 1])" in edit)
+        assertTrue("第一块截断、其余追加", "FileOutputStream(File(cacheDir, DRAFT_FILE_TMP), from == 0)" in edit)
+        assertTrue("下一块由当前块续投（不让两代交错）", "else enqueueDraftChunk(text, revision, generation, end)" in edit)
+
+        // L-1185：同步补写走临时名 + 改名、随令牌记长度、两端都不删唯一副本
+        val save = edit.substringAfter("override fun onSaveInstanceState(", "")
+        assertTrue("同步补写也要走临时名", "DRAFT_FILE_SAVE_TMP" in save)
+        assertTrue("并且用改名发布", "staged.renameTo(File(cacheDir, DRAFT_FILE))" in save)
+        assertTrue("令牌要带上预期长度", "putInt(STATE_DRAFT_LEN, text.length)" in save)
+        val restore = edit.substringAfter("private fun restoreDraft(", "").substringBefore("override fun onResume")
+        assertTrue("读到内容才删文件", "file.delete()" in restore)
+        assertTrue(
+            "读失败与长度不足都不许删（两处 return 在删除之前）",
+            restore.indexOf("pendingDraftFile = name") < restore.indexOf("file.delete()") &&
+                restore.indexOf("draftTruncatedAt = restored.length") < restore.indexOf("file.delete()"),
+        )
+        assertTrue("读失败要给出可见提示", "TEXT_DRAFT_UNREADABLE" in restore)
+        assertTrue("长度不足要按截断提示", "draftTruncatedAt" in edit)
+        assertTrue("读失败的文件令牌要续带到下一次重建", "pendingDraftFile = name" in edit && "val pending = pendingDraftFile" in edit)
+
+        // L-1181：草稿在途时按「编辑框已有内容」处理，不停用保存、也不报「已跳过回填」
+        assertTrue("恢复期要有在途标记", "draftPending = true" in edit && "draftPending = false" in edit)
+        assertTrue("回填判据要认草稿在途", "draftPending || editor.text.isNotEmpty()" in edit)
+        assertTrue("草稿在途时不报「已跳过回填」", "if (!draftPending) setStatus(TEXT_SKIP_REFILL)" in edit)
     }
 
 }

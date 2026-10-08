@@ -275,6 +275,11 @@ class DocsReferenceTest {
      */
     @Test
     fun 条目判据点名的代码符号必须还在源码里() {
+        // 取材面＝源码 + 构建脚本 + 资源清单 + 工具脚本：判据里也点构建 DSL 的名字
+        // （`applicationId` / `applicationIdSuffix`）与脚本名（`gen_hot_dict.py`），只扫 Kotlin 会把它们全报成漂移。
+        // 刻意排除 `*.md`：台账自己就是 Markdown，把它算进来这条检查就恒真了
+        val skip = setOf(".git", "build", ".gradle", ".kotlin", ".wwlia-handoff", ".codebuddy", ".ppt-master", "docs", "artifacts")
+        val exts = listOf(".kt", ".kts", ".xml", ".py", ".json", ".properties", ".yml", ".pro")
         val sources = buildString {
             for (root in listOf("app/src", "src")) {
                 val dir = File("$root/main/java/com/jinn/inputmethod")
@@ -286,15 +291,20 @@ class DocsReferenceTest {
                 }
                 break
             }
-            // 判据也会点脚本与文档里的名字（`gen_hot_dict.py` / `build_apk.py`）：把仓库浅层的文件名一并算进取材面
+            File(".").walkTopDown()
+                .onEnter { it.name !in skip }
+                .filter { it.isFile && exts.any { e -> it.name.endsWith(e) } }
+                .forEach { append(it.readText()) }
             for (dir in listOf(File("."), File("tools"), File("scripts"))) {
                 if (!dir.isDirectory) continue
                 dir.listFiles()?.forEach { append(it.name) }
             }
         }
         assertTrue("没读到主源码（工作目录变了？）", sources.length > 100_000)
-        val tokenRe = Regex("""`([A-Za-z][A-Za-z0-9_.]*)`""")
-        val stop = setOf("SQL", "HTTP", "JSON", "HTTP_STATUS", "UTF", "API", "ID", "URL", "IDEA", "JSONL")
+        // 采集面：标识符 + 可选的一对括号（`save()` 这类调用形态此前根本进不来，BUG.md L-1188）
+        val tokenRe = Regex("""`([A-Za-z][A-Za-z0-9_.]*)\(?\)?`""")
+        // 停用表：平台 / 框架侧的名字，源码里本就不该出现（如 `onCorruption` 是 SQLiteOpenHelper 的覆写点）
+        val stop = setOf("SQL", "HTTP", "JSON", "HTTP_STATUS", "UTF", "API", "ID", "URL", "IDEA", "JSONL", "onCorruption")
         val bad = mutableListOf<String>()
         for ((name, text) in ledgerPartFiles()) {
             if (name == "index" || name == "excluded" || name == "history" || name == "fixed" || name == "verify") continue
@@ -308,7 +318,10 @@ class DocsReferenceTest {
                     val tok = m.groupValues[1]
                     val head = tok.substringBefore('.')
                     if (head.length < 5 || tok in stop || head in stop) continue
-                    if (!head[0].isUpperCase() && '_' !in head) continue
+                    // 首字母大写、含下划线，或含大写字母（小写驼峰）—— 后者是函数名的主力形态
+                    // （`trimFavorites` / `readCapped` 这类此前整类漏检，BUG.md L-1188）；
+                    // 全小写英文词仍不查，它们与散文同形
+                    if (!head[0].isUpperCase() && '_' !in head && head.none { it.isUpperCase() }) continue
                     if ("/" in tok || ".md" in tok || ".kt" in tok || ".json" in tok) continue
                     if (head in sources) continue
                     bad += "L?($name) 找不到 `$tok`"
@@ -333,7 +346,9 @@ class DocsReferenceTest {
         for ((name, text) in ledgerPartFiles()) {
             val lines = text.lines()
             for (i in lines.indices) {
-                val m = Regex("""^### (L|X)-(\d+) ·""").find(lines[i]) ?: continue
+                // `#{3,4}`：素材段（3.3）的 `#### L-` 块首行与在册块同形，早先只查三级，
+                // 于是一整段素材块删光也不会有判据变红（BUG.md L-1184）
+                val m = Regex("""^#{3,4} (L|X)-(\d+) ·""").find(lines[i]) ?: continue
                 val head = lines.drop(i + 1).firstOrNull { it.isNotBlank() } ?: ""
                 if (m.groupValues[1] == "L") {
                     if ("**风险**" !in head || "**主维度**" !in head) bad += "$name:${i + 1}（L 块首行缺字段行）"
@@ -544,6 +559,16 @@ class DocsReferenceTest {
                 .find(text)?.groupValues?.get(1)?.toInt()
             if (header != null && header != actual) bad.add("$name（页眉 $header / 实际 $actual）")
             if (titled != null && titled != actual) bad.add("$name（节标题 $titled / 实际 $actual）")
+            // 节标题把总数拆成「N 条在册 + M 条重建期素材块」时，两个分项各自对拍（BUG.md L-1184）：
+            // 只比总数时，删掉的材料块数量恰好等于在册块数量才报得出来 —— 那一次纯属巧合
+            val parts = Regex("""(?m)^## \d+\. 低风险（(\d+) 条：(\d+) 条在册 \+ (\d+) 条重建期素材块""")
+                .find(text)?.groupValues
+            if (parts != null) {
+                val inBooks = Regex("""(?m)^### L-\d+ ·""").findAll(text).count()
+                val fragments = Regex("""(?m)^#### L-\d+ ·""").findAll(text).count()
+                if (parts[2].toInt() != inBooks) bad.add("$name（节标题写在册 ${parts[2]} / 实际 $inBooks）")
+                if (parts[3].toInt() != fragments) bad.add("$name（节标题写素材 ${parts[3]} / 实际 $fragments）")
+            }
         }
         assertTrue("分册页眉块数与实际不一致：$bad", bad.isEmpty())
     }
