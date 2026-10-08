@@ -473,6 +473,10 @@ class JinnIme : InputMethodService() {
 
         // 预加载拼音词库（约 1MB 文本，后台线程避免主线程卡顿）
         Thread {
+            // 后台优先级（BUG.md L-1154）：索引解压是启动期最重的 CPU 活（16MB 定值缓冲 + 结尾整份拷贝，
+            // 见 L-1142），而它跑在默认优先级上，用户点开输入框后前台按键要跟它抢 CPU ——
+            // 与可选包线程、双拼预热线程同一个写法
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val start = System.currentTimeMillis()
             // 必须兜住异常：本线程是裸 Thread，load() 内部也没有 try/catch。
             // 一旦基础包解压失败（APK 安装不完整、存储故障等），异常会直接穿透到线程外，
@@ -1971,6 +1975,8 @@ class JinnIme : InputMethodService() {
         if (pinyinLoadAttempts >= MAX_PINYIN_LOAD_ATTEMPTS) return
         val attempt = ++pinyinLoadAttempts
         Thread({
+            // 同上（BUG.md L-1154）：补试与预加载是同一段重活，优先级要一致
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             runCatching { PinyinEngine.load(this) }
                 .onSuccess { Diagnostics.i(TAG, "词库补试加载成功（第 $attempt 次尝试）") }
                 .onFailure { Diagnostics.e(TAG, "词库补试加载失败（第 $attempt 次尝试）: ${it.message}", it) }

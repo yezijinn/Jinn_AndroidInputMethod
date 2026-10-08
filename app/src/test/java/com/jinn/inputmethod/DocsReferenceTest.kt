@@ -227,6 +227,102 @@ class DocsReferenceTest {
     }
 
     /**
+     * 索引行的标题必须**逐字等于**块的标题（BUG.md L-1182）。
+     *
+     * 索引第 6 列是块标题的镜像，此前只有行数 / 分册 / 状态三类对拍，没有一条比标题 ——
+     * 2026-10-08 的机械检查因此发现 6 处早已漂移（索引行丢了反引号：`listFiles` / `trimFavorites` /
+     * `BackgroundIo` / `FileProvider` / `@Volatile` / `ofMapped` 六条），而所有守卫与计数全绿。
+     */
+    @Test
+    fun 索引行的标题必须与块标题一致() {
+        val indexPart = ledgerPartFiles()["index"] ?: error("索引分册缺失")
+        val titles = mutableMapOf<String, String>()
+        for ((name, text) in ledgerPartFiles()) {
+            if (name == "index" || name == "excluded" || name == "history" || name == "fixed" || name == "verify") continue
+            Regex("""(?m)^### L-0*(\d+) · (.*)$""").findAll(text).forEach { m ->
+                titles[m.groupValues[1]] = m.groupValues[2].trim()
+            }
+        }
+        val bad = mutableListOf<String>()
+        Regex("""(?m)^\| L-0*(\d+) \|([^\n]*)$""").findAll(indexPart).forEach { m ->
+            val id = m.groupValues[1]
+            // 行尾那个 `|` 属于 Markdown 边框，去掉再切列 —— 否则最后一列恒为空串，检查恒真
+            val cells = m.groupValues[2].removeSuffix("|").split("|").map { it.trim() }
+            val claim = cells.lastOrNull() ?: ""
+            val real = titles[id] ?: return@forEach
+            if (claim != real) bad += "L-$id\n      索引：$claim\n      块  ：$real"
+        }
+        assertTrue(
+            "索引行的标题与块标题不一致（改标题时两处都要改，或让写入脚本从块里取）：\n    ${bad.joinToString("\n    ")}",
+            bad.isEmpty(),
+        )
+    }
+
+    /**
+     * 条目判据里点名的**代码符号**必须还在源码里（BUG.md L-1183）。
+     *
+     * 条目的「判断依据 / 详情」大量引用函数名、常量名、类名；这些名字随代码改名 / 搬迁会悄悄失效，
+     * 而结构与计数守卫看不见。2026-10-08 的人工复核就撞到一条（L-1154 的措辞早已过时）。
+     *
+     * 口径（宁窄勿误伤）：只查**反引号里**的令牌，且必须同时满足 ——
+     * 以大写字母或下划线开头、长度 ≥ 5、不含路径与扩展名（`/`、`.md`、`.kt`）、
+     * 不是纯大写短词（`SQL` / `HTTP` / `JSON` 这类协议名与文档同形）。
+     * 命中判据是「主源码 + 测试源码里出现过该串」；带点的取第一段（`Locale.US` → `Locale`）。
+     *
+     * 两处豁免都对应真实误报：**只查 `###` 在册块**（`####` 遗留区与回执里的类名可能指已删测试，
+     * `ConfigBackupKeyCoverageTest` 就是这样被清掉后仍留在历史记录里的），
+     * 且跳过「建议 / 修法」行（那里点的是**拟定名**，如 `UriFailed`，本来就不存在）。
+     */
+    @Test
+    fun 条目判据点名的代码符号必须还在源码里() {
+        val sources = buildString {
+            for (root in listOf("app/src", "src")) {
+                val dir = File("$root/main/java/com/jinn/inputmethod")
+                if (!dir.isDirectory) continue
+                dir.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.forEach { append(it.readText()) }
+                val tests = File("$root/test/java/com/jinn/inputmethod")
+                if (tests.isDirectory) {
+                    tests.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.forEach { append(it.readText()) }
+                }
+                break
+            }
+            // 判据也会点脚本与文档里的名字（`gen_hot_dict.py` / `build_apk.py`）：把仓库浅层的文件名一并算进取材面
+            for (dir in listOf(File("."), File("tools"), File("scripts"))) {
+                if (!dir.isDirectory) continue
+                dir.listFiles()?.forEach { append(it.name) }
+            }
+        }
+        assertTrue("没读到主源码（工作目录变了？）", sources.length > 100_000)
+        val tokenRe = Regex("""`([A-Za-z][A-Za-z0-9_.]*)`""")
+        val stop = setOf("SQL", "HTTP", "JSON", "HTTP_STATUS", "UTF", "API", "ID", "URL", "IDEA", "JSONL")
+        val bad = mutableListOf<String>()
+        for ((name, text) in ledgerPartFiles()) {
+            if (name == "index" || name == "excluded" || name == "history" || name == "fixed" || name == "verify") continue
+            // 只取 `###` 在册块：到下一个任意层级的标题为止（`####` 遗留区、回执、索引都不算）
+            val blocks = Regex("""(?ms)^### L-\d+ ·.*?(?=^#{3,4} |\z)""").findAll(text).map { it.value }
+            for (block in blocks) {
+                val body = block.lines()
+                    .filterNot { it.trimStart().startsWith("- **建议**") || it.trimStart().startsWith("- **修法**") }
+                    .joinToString("\n")
+                for (m in tokenRe.findAll(body)) {
+                    val tok = m.groupValues[1]
+                    val head = tok.substringBefore('.')
+                    if (head.length < 5 || tok in stop || head in stop) continue
+                    if (!head[0].isUpperCase() && '_' !in head) continue
+                    if ("/" in tok || ".md" in tok || ".kt" in tok || ".json" in tok) continue
+                    if (head in sources) continue
+                    bad += "L?($name) 找不到 `$tok`"
+                }
+            }
+        }
+        val uniq = bad.distinct().take(12)
+        assertTrue(
+            "这些判据点名的符号在源码里找不到（改名 / 搬迁后要同步条目）：\n    ${uniq.joinToString("\n    ")}",
+            uniq.isEmpty(),
+        )
+    }
+
+    /**
      * 块首行形态（`0.5` 规则 ⑦）：L 块首行是字段行、X 块首行是列表项。
      *
      * 机器可解析的前提：**同一类块的第一个内容行长得一样**。B 块（历史回执）逐字保留，不约束。

@@ -75,12 +75,15 @@ class CustomDictEditActivity : Activity() {
     /**
      * 大稿的增量落盘（BUG.md L-1173）：输入停顿后由 [BackgroundIo] 写文件，重建时不必再同步写整份。
      *
-     * [draftWrittenLength] 是「已经落盘的那份文本有多长」（-1 = 没有可用文件），
-     * 只在写盘成功后更新；[onSaveInstanceState] 拿当前长度与它比对，一致才只带令牌。
+     * 新鲜度按**修订号**判定（BUG.md L-1177）：[draftRevision] 每次文本变化自增，
+     * [draftWrittenRevision] 记下已落盘那份对应的修订号（-1 = 没有可用文件）。
+     * 此前比的是文本长度 —— 同长度改写（覆盖粘贴、替换一个字符）会让长度相等而内容不同，
+     * 重建时只带令牌，新实例读回的是改写前的草稿，最后一次编辑静默丢失。
      */
     private val draftHandler = Handler(Looper.getMainLooper())
+    private var draftRevision = 0
     @Volatile
-    private var draftWrittenLength = -1
+    private var draftWrittenRevision = -1
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
@@ -146,6 +149,7 @@ class CustomDictEditActivity : Activity() {
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (refilling) return
                 dirty = true
+                draftRevision++
                 scheduleDraftWrite(s?.length ?: 0)
             }
         })
@@ -209,13 +213,13 @@ class CustomDictEditActivity : Activity() {
         val text = editor.text?.toString() ?: ""
         if (draftInBundle(text.length)) {
             outState.putString(STATE_EDITOR_TEXT, text)
-        } else if (draftWrittenLength == text.length) {
+        } else if (draftWrittenRevision == draftRevision) {
             // 增量落盘已是最新：Bundle 只带令牌，保存侧不再碰主线程
             outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
         } else {
             val written = runCatching { File(cacheDir, DRAFT_FILE).writeText(text) }.isSuccess
             if (written) {
-                draftWrittenLength = text.length
+                draftWrittenRevision = draftRevision
                 outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
             } else {
                 // 落盘失败（空间不足等）时退一步：截断进 Bundle，不崩、留住开头那部分；
@@ -236,16 +240,18 @@ class CustomDictEditActivity : Activity() {
      */
     private fun scheduleDraftWrite(length: Int) {
         draftHandler.removeCallbacks(draftWriteTask)
-        if (length <= DRAFT_BUNDLE_MAX_CHARS && draftWrittenLength < 0) return
+        if (length <= DRAFT_BUNDLE_MAX_CHARS && draftWrittenRevision < 0) return
         draftHandler.postDelayed(draftWriteTask, DRAFT_WRITE_DEBOUNCE_MS)
     }
 
     private val draftWriteTask = Runnable {
+        // 修订号与文本在同一趟主线程里取，两者必然对应（BUG.md L-1177）
+        val revision = draftRevision
         val text = editor.text?.toString() ?: ""
         val dest = File(cacheDir, DRAFT_FILE)
         if (text.length <= DRAFT_BUNDLE_MAX_CHARS) {
             // 缩回上限以内：Bundle 那条链自己带得动，文件版草稿留着只会变成残留（BUG.md L-1176）
-            draftWrittenLength = -1
+            draftWrittenRevision = -1
             BackgroundIo.run { runCatching { dest.delete() } }
             return@Runnable
         }
@@ -255,7 +261,7 @@ class CustomDictEditActivity : Activity() {
                 staged.writeText(text)
                 staged.renameTo(dest)
             }.getOrDefault(false)
-            draftWrittenLength = if (ok) text.length else -1
+            draftWrittenRevision = if (ok) revision else -1
         }
     }
 
@@ -264,8 +270,11 @@ class CustomDictEditActivity : Activity() {
      * 而保存成功 / 放弃 / 直接关闭三条出口都不该把它留在 cacheDir 里。
      */
     override fun onDestroy() {
+        // 去抖任务**无条件**撤销（BUG.md L-1178）：重建时它捕获的是旧实例的编辑器，而落盘文件是全进程
+        // 共用的那一份 —— 主线程被占住（大稿恢复、图库解码）时它可能在新实例写完之后才跑，把旧内容盖上去。
+        // 文件本体则只在「不再重建」时删，重建时新实例还要读它。
+        draftHandler.removeCallbacks(draftWriteTask)
         if (!isChangingConfigurations) {
-            draftHandler.removeCallbacks(draftWriteTask)
             runCatching { File(cacheDir, DRAFT_FILE).delete() }
             runCatching { File(cacheDir, DRAFT_FILE_TMP).delete() }
         }

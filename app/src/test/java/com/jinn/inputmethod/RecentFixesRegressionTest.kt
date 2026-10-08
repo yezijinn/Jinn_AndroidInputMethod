@@ -3830,7 +3830,11 @@ class RecentFixesRegressionTest {
         val writer = edit.substringAfter("private val draftWriteTask", "")
         assertTrue("落盘必须交给单线程 IO 队列", "BackgroundIo.run {" in writer)
         assertTrue("写文件必须临时名 + rename（避免读到写了一半的版本）", "staged.renameTo(dest)" in writer)
-        assertTrue("保存侧要按「文件是否最新」分档", "draftWrittenLength == text.length" in edit)
+        assertTrue("保存侧要按「文件是否最新」分档", "draftWrittenRevision == draftRevision" in edit)
+        assertTrue("新鲜度必须按修订号，不是文本长度（同长度改写会漏）", "draftWrittenLength" !in edit)
+        assertTrue("文本变化要自增修订号", "draftRevision++" in edit)
+        val task = edit.substringAfter("private val draftWriteTask", "")
+        assertTrue("写入器要把当时的修订号记下来", "val revision = draftRevision" in task && "draftWrittenRevision = if (ok) revision else -1" in task)
         assertTrue("大稿恢复必须推迟到首帧之后", "editor.postOnAnimation {" in edit)
         assertTrue("恢复期间要有状态行", "TEXT_DRAFT_RESTORING" in edit)
         assertTrue("兜底截断必须记长度", "putInt(STATE_DRAFT_TRUNCATED, kept.length)" in edit)
@@ -3838,6 +3842,10 @@ class RecentFixesRegressionTest {
         val destroy = edit.substringAfter("override fun onDestroy()", "")
         assertTrue("只有不再重建时才清草稿", "if (!isChangingConfigurations)" in destroy)
         assertTrue("正式名与临时名都要清", "DRAFT_FILE).delete()" in destroy && "DRAFT_FILE_TMP).delete()" in destroy)
+        assertTrue(
+            "去抖任务必须无条件撤销（重建时旧实例的写入会盖掉新实例那份）",
+            destroy.indexOf("removeCallbacks(draftWriteTask)") < destroy.indexOf("if (!isChangingConfigurations)"),
+        )
 
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertEquals(
@@ -3845,6 +3853,23 @@ class RecentFixesRegressionTest {
             4,
             Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count(),
         )
+    }
+
+    /**
+     * 启动期词典线程必须降到后台（2026-10-08 · L-1154）。
+     *
+     * 索引解压是启动期最重的 CPU 活（16MB 定值缓冲 + 结尾整份拷贝），而它此前跑在默认优先级上：
+     * 用户点开输入框后，前台按键要跟它抢 CPU。服务里的三处重活（双拼预热 / 基础预加载 / 补试）
+     * 与 `PinyinEngine` 的可选包线程都要带 `THREAD_PRIORITY_BACKGROUND`，这条按**处数**钉住不回落。
+     */
+    @Test
+    fun `启动期词典线程必须降到后台`() {
+        val needle = "Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)"
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val inIme = Regex(Regex.escape(needle)).findAll(ime).count()
+        assertTrue("JinnIme 里三处重活都要带这条（双拼预热 / 基础预加载 / 补试），实际 $inIme 处", inIme >= 3)
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("PinyinEngine 的可选包加载线程也要带（早就有，一并钉住）", needle in engine)
     }
 
 }
