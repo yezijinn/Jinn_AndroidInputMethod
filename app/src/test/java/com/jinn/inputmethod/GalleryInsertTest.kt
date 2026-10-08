@@ -390,7 +390,9 @@ class GalleryInsertTest {
         val pick = view.substringAfter("override fun onPick(uri: android.net.Uri)")
             .substringBefore("override fun onRebindRequested")
         assertTrue("先交付插入，再谈收不收面板", "onGalleryImagePicked(uri)" in pick)
-        assertTrue("开着才收起", "if (Prefs(context).galleryAutoReturn)" in pick)
+        // MEM-25 起视图持一个 Prefs 包装（读的仍是进程内同一份 SharedPreferences，值不会滞后），
+        // 判据只换取值方式，不换语义
+        assertTrue("开着才收起", "if (prefs.galleryAutoReturn)" in pick)
         assertTrue("收起动作就是已有那一个", "hideGalleryPanel()" in pick)
 
         val prefs = TestSources.codeSource("Prefs.kt")

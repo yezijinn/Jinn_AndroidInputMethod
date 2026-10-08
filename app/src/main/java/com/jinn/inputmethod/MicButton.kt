@@ -43,6 +43,21 @@ class MicButton @JvmOverloads constructor(
 
     private var levelSmoothed = 0f
 
+    /**
+     * 径向渐变缓存（MEM-22）：录音时 [updateLevel] 每个音频帧都 invalidate，而原先每次 [onDraw]
+     * 都新建一个 RadialGradient（native 对象）。
+     *
+     * 缓存键是「几何 + 两个颜色」，几何取实际算出的中心与半径（尺寸变化自然反映）；
+     * 电平只影响外圈描边、不参与渐变颜色，所以音量变化不触发重建。取消态与空闲态同色，
+     * 故取消手势切换也不会重建（那一路的差异只体现在 [fillPaint] 的 alpha 上）。
+     */
+    private var cachedShader: android.graphics.Shader? = null
+    private var shaderX = Float.NaN
+    private var shaderY = Float.NaN
+    private var shaderRadius = Float.NaN
+    private var shaderCenterColor = 0
+    private var shaderBaseColor = 0
+
     var recording: Boolean = false
         set(value) {
             if (field == value) return
@@ -100,11 +115,25 @@ class MicButton @JvmOverloads constructor(
             centerColor = colorIdleCenter
             baseColor = colorIdle
         }
-        // 径向渐变：中心略亮，模拟受光面，比纯色更立体
-        fillPaint.shader = RadialGradient(
-            centerX, centerY - radius * 0.25f, radius * 1.15f,
-            centerColor, baseColor, Shader.TileMode.CLAMP,
-        )
+        // 径向渐变：中心略亮，模拟受光面，比纯色更立体。
+        // 参数没变就复用已建的 Shader（MEM-22）：录音期间这里是每帧一次，别按帧造 native 对象。
+        val gradX = centerX
+        val gradY = centerY - radius * 0.25f
+        val gradR = radius * 1.15f
+        if (cachedShader == null || gradX != shaderX || gradY != shaderY || gradR != shaderRadius ||
+            centerColor != shaderCenterColor || baseColor != shaderBaseColor
+        ) {
+            cachedShader = RadialGradient(
+                gradX, gradY, gradR,
+                centerColor, baseColor, Shader.TileMode.CLAMP,
+            )
+            shaderX = gradX
+            shaderY = gradY
+            shaderRadius = gradR
+            shaderCenterColor = centerColor
+            shaderBaseColor = baseColor
+        }
+        fillPaint.shader = cachedShader
         fillPaint.alpha = if (cancelArmed) CANCEL_ALPHA else 255
         canvas.drawCircle(centerX, centerY, radius, fillPaint)
         fillPaint.shader = null

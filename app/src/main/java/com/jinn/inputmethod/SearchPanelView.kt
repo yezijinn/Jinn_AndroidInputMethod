@@ -118,11 +118,17 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 v to newHolder
             }
             // 条目卡按当前透明度档 + 皮肤面色设色（ListView 复用 convertView，不每次重设会混新旧两档）
-            root.background = android.graphics.drawable.ColorDrawable(
-                KeyTransparency.withAlpha(
-                    skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
-                )
+            // 复用已有 ColorDrawable（MEM-24）：ListView 复用 convertView 时每次绑定都会走到这里，
+            // 原先每次都新建一个；只有背景不是纯色（被皮肤换成 drawable）时才重建
+            val cardColor = KeyTransparency.withAlpha(
+                skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
             )
+            val cardFace = root.background
+            if (cardFace is android.graphics.drawable.ColorDrawable) {
+                cardFace.color = cardColor
+            } else {
+                root.background = android.graphics.drawable.ColorDrawable(cardColor)
+            }
             // 条目文字同理：换皮肤后已渲染的行必须跟着变
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))

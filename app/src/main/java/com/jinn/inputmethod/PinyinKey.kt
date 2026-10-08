@@ -37,6 +37,16 @@ import kotlin.math.min
         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val subPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+        /**
+         * 复用的字形量度（MEM-21）：`paint.fontMetrics` 每次读都新建一个对象，而整屏 26 键重绘一次
+         * 最多要读 5 次（一次重绘上百个短命对象）。`getFontMetrics(fm)` 是有参重载 —— 写进这个实例，零分配。
+         *
+         * 用法约束：**必须在设完 textSize 之后立刻取**（每个分支各取一次，不跨分支复用值）——
+         * textSize 逐分支变（全拼 / 居中 / 长文本 / 双拼上下两段），旧值会让基线错位。
+         */
+        private val glyphFm = Paint.FontMetrics()
+        private val subFm = Paint.FontMetrics()
+
         private val colorKey = context.getColor(R.color.kb_key)
         private val colorKeyPressed = context.getColor(R.color.kb_key_pressed)
         private val colorText = context.getColor(R.color.kb_key_text)
@@ -353,8 +363,8 @@ import kotlin.math.min
                 textPaint.color = glyphColor
                 textPaint.textSize = h * FULL_TEXT_RATIO
                 textPaint.textAlign = Paint.Align.CENTER
-                val fm = textPaint.fontMetrics
-                val baseline = (h - fm.ascent - fm.descent) / 2f
+                textPaint.getFontMetrics(glyphFm)
+                val baseline = (h - glyphFm.ascent - glyphFm.descent) / 2f
                 canvas.drawText(label, w / 2f, baseline, textPaint)
                 return
             }
@@ -367,8 +377,8 @@ import kotlin.math.min
                 val measure = if (uniformMeasureText.isNotEmpty()) uniformMeasureText else label
                 val refWidth = if (uniformMeasureWidth > 0f) uniformMeasureWidth else w
                 textPaint.textSize = fitTextSize(measure, h * TEXT_RATIO, refWidth - inset * 2f, h * MIN_LONG_TEXT_RATIO)
-                val centerFm = textPaint.fontMetrics
-                canvas.drawText(label, w / 2f, (h - centerFm.ascent - centerFm.descent) / 2f, textPaint)
+                textPaint.getFontMetrics(glyphFm)
+                canvas.drawText(label, w / 2f, (h - glyphFm.ascent - glyphFm.descent) / 2f, textPaint)
                 return
             }
 
@@ -379,14 +389,14 @@ import kotlin.math.min
             // 沿用小字顶置样式会左右溢出、内容显示不完整。
             if (label.length > LONG_TEXT_THRESHOLD) {
                 textPaint.textSize = fitTextSize(label, h * LONG_TEXT_RATIO, w - inset * 2f, h * MIN_LONG_TEXT_RATIO)
-                val longFm = textPaint.fontMetrics
-                canvas.drawText(label, w / 2f, (h - longFm.ascent - longFm.descent) / 2f, textPaint)
+                textPaint.getFontMetrics(glyphFm)
+                canvas.drawText(label, w / 2f, (h - glyphFm.ascent - glyphFm.descent) / 2f, textPaint)
                 return
             }
             // 大写字母：置顶贴上边，占上方约 50%
             textPaint.textSize = height * TEXT_RATIO
-            val fm = textPaint.fontMetrics
-            val letterBaseline = (h * LETTER_TOP_RATIO - fm.ascent - fm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
+            textPaint.getFontMetrics(glyphFm)
+            val letterBaseline = (h * LETTER_TOP_RATIO - glyphFm.ascent - glyphFm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
             canvas.drawText(label, w / 2f, letterBaseline, textPaint)
 
             // 双拼提示：下半区，底部对齐（最后一行/单行贴按钮底边）。
@@ -398,7 +408,7 @@ import kotlin.math.min
             if (total > 0) {
                 subPaint.textSize = height * SUB_RATIO
                 subPaint.textAlign = Paint.Align.CENTER
-                val subFm = subPaint.fontMetrics
+                subPaint.getFontMetrics(subFm)
                 // 紧凑行距：略小于完整字高
                 val lineHeight = (subFm.bottom - subFm.top) * LINE_COMPACT_RATIO
                 // 最后一行基线：让文字底部贴 SUB_BOTTOM_RATIO 位置（近按钮底边）

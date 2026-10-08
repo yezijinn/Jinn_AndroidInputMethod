@@ -253,6 +253,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var lastTransparencyDesc = ""
 
     /**
+     * 视图级 [Prefs] 包装缓存（MEM-25）：`Prefs(context)` 每次都要「取一遍 SharedPreferences 再新建包装」，
+     * 而候选刷新、外观套档、弹键盘这几条路径会反复走到。
+     *
+     * 缓存的是**包装**而不是值 —— 它读的仍是进程内同一份 SharedPreferences（设置页一写完立刻可见），
+     * 所以设置项的即时生效语义不受影响（`Prefs` 只持 applicationContext，也不会钉住本视图）。
+     */
+    private val prefs = Prefs(context)
+
+    /**
      * 候选栏底**当前生效的颜色**（缓存键；0 是「未设置过」的哨兵，保证首次一定设置）。
      *
      * 判据用**颜色**而不是「档位」：候选栏底现在固定走内容面档（与功能面板按钮同档），
@@ -397,7 +406,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 视图里的所有分组索引都指这里的下标，顺序/内容变化通过重建键盘视图生效，不碰 [SYMBOL_GROUPS]。
      */
     private var symbolGroups: List<SymbolGroup> = run {
-        val prefs = Prefs(context)
         SymbolOrder.groupsInOrder(
             prefs.symbolGroupOrder,
             favoriteGroup(FavoriteSymbols.parse(prefs.favoriteSymbols)),
@@ -531,7 +539,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     this@PinyinKeyboardView.listener?.onGalleryImagePicked(uri)
                     // 「自动返回」开着时点一张就回打字键盘（用户 2026-10-07 指定）：
                     // 插入是 IME 侧的独立流程，不依赖面板是否还在，所以这里立即收起即可
-                    if (Prefs(context).galleryAutoReturn) {
+                    if (prefs.galleryAutoReturn) {
                         Diagnostics.i(TAG, "图库面板: 自动返回已开，收起面板")
                         hideGalleryPanel()
                     }
@@ -1072,7 +1080,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 参数定义域与换算见 [KeyAppearance]；本方法不校验取值，[Prefs] 读取时已钳位。
      */
     private fun applyKeyAppearance() {
-        val p = Prefs(context)
+        val p = prefs
         val density = resources.displayMetrics.density
         keyCornerPx = p.keyCornerDp * density
         // 内缩 = 间隙的一半：相邻两键各缩一半，合起来正好是用户设置的间隙
@@ -1105,7 +1113,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 0%（默认）时两档 alpha 都是 1f，与历史观感逐像素一致。
      */
     private fun applyKeyTransparency() {
-        val percent = Prefs(context).keyTransparencyPercent
+        val percent = prefs.keyTransparencyPercent
         keyFaceAlpha = KeyTransparency.surfaceAlpha(percent)
         val plateAlpha = KeyTransparency.plateAlpha(percent)
 
@@ -1176,7 +1184,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun syncKeyboardSkin() {
         // 换肤同样要让候选重建（颜色 token 变了）（L-796）
         resetCandidateRender()
-        val prefs = Prefs(context)
         // 档位取**本视图的色板快照**（[ThemeManager.paletteIsDark]），不取此刻的决策：视图的
         // `R.color.*` 是创建时刻定死的（JinnIme.onCreateInputView 用 themedContext 建视图），
         // 而换主题的重建可能被延后（有未上屏输入 / 剪贴板面板打开，见 JinnIme.applyThemeIfNeeded）。
@@ -1961,7 +1968,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 候选渲染 ───────────────────────────────────────────
 
     /** 设置页开关：关掉后不再产生预测，已显示的也会在下次刷新时清掉 */
-    private fun predictionsEnabled(): Boolean = Prefs(context).predictEnabled
+    private fun predictionsEnabled(): Boolean = prefs.predictEnabled
 
     /**
      * 候选栏几何落位（[Prefs.candidateRows] 档位）：栏高、拼音条高度与位置、本帧档位。
@@ -2123,7 +2130,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
         // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
         // （语义与按键「间隙」一致；定义域 5~30dp、默认 10dp）；垂直方向不受影响。
-        val spacingHalfPx = dpFloat(Prefs(context).candidateSpacingDp / 2f).toInt()
+        val spacingHalfPx = dpFloat(prefs.candidateSpacingDp / 2f).toInt()
         // 指纹命中就跳过整棵重建（2026-10-03 修复 L-796）：退格连删时 items 往往不变，只是选中项在移，
         // 而重建要付 36 个 TextView + 36 个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
         // items 一致（指纹已覆盖全部文本），所以跳过是安全的。
@@ -2204,7 +2211,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
         // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
-        val prefs = Prefs(context)
         val rows = prefs.candidateRows
         val candidateSp = prefs.candidateTextSp
         val perRow = applyCandidateRows(rows, candidateSp)
@@ -2597,7 +2603,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 大写键激活：统一全拼大字铺满。
         // 小写英文：统一「双拼切英文」的小字顶置样式（不随来源全拼/双拼变化）。
         // 开关在本帧只读一次并向下传，字母键与分号键不会出现两档错配。
-        val showKeyHint = Prefs(context).showKeyHint
+        val showKeyHint = prefs.showKeyHint
         val fullPinyin = KeyHint.fillLetter(
             english = englishMode,
             caps = capsMode,
@@ -2981,7 +2987,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[图库]/[翻译]/收起，**「收起」恒为最右端**
         // （2026-09-30 追加要求，两个键的先后不可颠倒）。
         // 本帧只读一次 translate_enabled（与 refreshCandidateBar 的「同键只读一遍」约定一致）。
-        if (Prefs(context).translateEnabled) {
+        if (prefs.translateEnabled) {
             translateButtonBox = buildFunctionButton(
                 label = if (translateInFlight) LABEL_TRANSLATING else LABEL_TRANSLATE,
                 hint = "网络",

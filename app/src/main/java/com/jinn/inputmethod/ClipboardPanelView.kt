@@ -223,11 +223,17 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             }
             // 条目卡按当前透明度档 + 皮肤面色设色：ListView 会复用 convertView，不每次重设的话，
             // 改档（拖滑杆）或换皮肤后再滚动列表会混着新旧两档的配色
-            root.background = android.graphics.drawable.ColorDrawable(
-                KeyTransparency.withAlpha(
-                    skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
-                )
+            // 复用已有 ColorDrawable（MEM-24）：滚动 / notifyDataSetChanged 都会走到这里，
+            // 原先每次都新建一个；只有背景不是纯色（被皮肤换成 drawable）时才重建
+            val cardColor = KeyTransparency.withAlpha(
+                skinColor(context, skin.functionFill, R.color.card_bg), surfaceAlpha,
             )
+            val cardFace = root.background
+            if (cardFace is android.graphics.drawable.ColorDrawable) {
+                cardFace.color = cardColor
+            } else {
+                root.background = android.graphics.drawable.ColorDrawable(cardColor)
+            }
             // 条目内文字同理：换皮肤后已渲染的行必须跟着变，不能只在首次构建时设一次
             holder.num.setTextColor(skinColor(context, skin.accent, R.color.accent))
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
