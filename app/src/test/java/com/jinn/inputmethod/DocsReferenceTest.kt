@@ -30,6 +30,19 @@ class DocsReferenceTest {
         assertTrue("文档里没解析出测试类（正则或文档结构变了？）", names.size >= 20)
         val missing = names.filterNot { testFile(it).isFile }
         assertTrue("AGENTS.md 提到了不存在的测试类：$missing", missing.isEmpty())
+        // 反向（BUG.md L-1152）：源码里有、文档没登记的测试类也要红 —— 单向检查时新增测试类
+        // 可以永远不进文档，而文档正是「现状说明」的入口。口径与上面的类数一致：含 @Test 的文件。
+        val dir = listOf(
+            File("src/test/java/com/jinn/inputmethod"),
+            File("app/src/test/java/com/jinn/inputmethod"),
+        ).first { it.isDirectory }
+        val onDisk = dir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { f -> Regex("""(?m)^\s*@Test\b""").containsMatchIn(TestSources.codeOf(f.readText())) }
+            .map { it.nameWithoutExtension }
+            .toSet()
+        val unlisted = onDisk.filterNot { it in names }.sorted()
+        assertTrue("源码里有、文档没登记的测试类（新增测试类要同时写进约定）：$unlisted", unlisted.isEmpty())
     }
 
     @Test
@@ -474,14 +487,42 @@ class DocsReferenceTest {
         assertTrue("SettingsActivity 里找不到「键盘内显韵母」", "键盘内显韵母" in settings)
         assertFalse("功能总览仍在用旧控件名「键盘内嵌韵母」", "键盘内嵌韵母" in doc)
 
-        // ③ 翻译键的序号必须与文档**自己的**面板清单一致
-        //    （此前「翻译（第 7 键）」与清单里的第 6 位自相矛盾，而改哪个数字都不会有测试变红）
+        // ③ 功能面板的清单与序号按**源码**推导（此前拿文档自己的清单对文档自己的序号 ——
+        //    挪按钮、改序号都不会红，BUG.md L-1146）
+        val panelSrc = TestSources.codeSource("PinyinKeyboardView.kt")
+        val translateLabel = Regex("const val LABEL_TRANSLATE = \"([^\"]+)\"")
+            .find(panelSrc)?.groupValues?.get(1) ?: error("PinyinKeyboardView 里找不到 LABEL_TRANSLATE")
+        // 面板体：renderFunctionPanel 的 `label = …` 按出现顺序即按钮顺序（条件键也在内）
+        val panelBody = panelSrc.substringAfter("private fun renderFunctionPanel()")
+            .substringBefore("private fun buildFunctionButton(")
+        val sourceOrder = Regex("""label = ([^\n]*)""").findAll(panelBody).mapNotNull { m ->
+            val tail = m.groupValues[1]
+            when {
+                "LABEL_TRANSLATE" in tail -> translateLabel
+                // 条件文案（剪贴板键的 返回 / 历史）：静止态是 else 分支那一个
+                "else" in tail -> Regex("\"([^\"]+)\"").findAll(tail).lastOrNull()?.groupValues?.get(1)
+                else -> Regex("\"([^\"]+)\"").find(tail)?.groupValues?.get(1)
+            }
+        }.filterNot { it == "退出" }.toList()   // 「退出」属搜索态的早退分支，不是常驻键
+        assertTrue("从源码里没解析出面板按钮（renderFunctionPanel 结构变了？）：$sourceOrder", sourceOrder.size >= 6)
+
         val items = doc.substringAfter("**功能面板按钮**").lines().drop(1)
             .takeWhile { it.startsWith("  ") && it.trimStart().startsWith("- ") }
-        val pos = items.indexOfFirst { "翻译（第" in it } + 1
-        assertTrue("功能总览的面板清单里找不到「翻译（第 N 键）」", pos > 0)
-        val claimed = Regex("""翻译（第 (\d+) 键""").find(items[pos - 1])?.groupValues?.get(1)?.toInt()
-        assertEquals("功能总览里翻译键的序号与面板清单的顺序不一致", pos, claimed)
+        val docLabels = items.map {
+            it.trim().removePrefix("- ").substringBefore("（").substringBefore(" /").substringBefore("：").trim()
+        }
+        assertEquals("功能总览的面板清单与源码顺序不一致（源码为准）", sourceOrder, docLabels)
+
+        // 序号：图库键由宿主决定是否出现，文档的「第 N 键」按**它缺席时**的源码位置算
+        val translateItem = items.firstOrNull { "翻译" in it }
+        assertTrue("功能总览的面板清单里找不到翻译键那一行", translateItem != null)
+        val claimed = Regex("""第 (\d+) 键""").find(translateItem!!)?.groupValues?.get(1)?.toInt()
+        assertTrue("翻译键那一行里找不到「第 N 键」：$translateItem", claimed != null)
+        assertEquals(
+            "翻译键的序号必须等于它在源码顺序里的位置（图库键缺席时）",
+            sourceOrder.filterNot { it == "图库" }.indexOf(translateLabel) + 1,
+            claimed,
+        )
 
         // ④ 音效库条数：删音效那批改了设置页与测试，这份文档漏了（BUG.md L-473 留的「计数归人工」口子）。
         // 源码侧走**剥注释**的共用助手：注释里写一句同形常量不该能满足这条对拍；两侧都要求
@@ -516,8 +557,13 @@ class DocsReferenceTest {
         val m = LinkedHashMap<String, String>()
         (listOf("entry" to "BUG.md") + LEDGER_PARTS.map { it to ".wwlia-handoff/ledger/$it.md" })
             .forEach { (name, rel) -> readDoc(rel)?.let { m[name] = it } }
-        // 入口必须在；分册至少要有「低风险 + 已排除 + 历史回执」三个，否则说明结构被移走（宁可红）
-        assertTrue("台账分册缺失（只找到 ${m.size} 个文件）：结构见 BUG.md 的 0.6 详情文件地图", m.size >= 4)
+        // 入口 + 六个分册一个都不能少：只断言「至少 N 个」时，删掉几个分册仍会在更小的集合上
+        // 自洽（计数、页眉、声明数全绿），BUG.md L-1152
+        val expected = setOf("entry") + LEDGER_PARTS
+        assertEquals(
+            "台账分册缺失（结构见 BUG.md 的 0.6 详情文件地图）：缺 ${expected - m.keys}",
+            expected, m.keys,
+        )
         return m
     }
 

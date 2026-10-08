@@ -80,10 +80,15 @@ internal class AzureTranslator(
          *
          * 401 = 密钥无效；403 = Azure 的**额度用尽**（免费层月度额度耗尽走 403，
          * 不是 401），所以 403 归 QUOTA；429 = 请求过于频繁，同样归 QUOTA。
+         *
+         * 404 = 区域 / 终结点填错（区域写成多服务资源名或别的档位时 Azure 返回 404）：
+         * 认证文案本就点着「密钥与 Azure 区域」，归 AUTH 才指向真正要改的字段 ——
+         * 落进 else 只给「服务异常」，用户按提示重试会反复失败（BUG.md L-1126；
+         * 同仓阿里云的 HTTP 表也是 404 → AUTH）。
          */
         internal fun errorOf(code: Int): TranslationError = when (code) {
             400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01 审查 L-273）
-            401 -> TranslationError.AUTH
+            401, 404 -> TranslationError.AUTH
             403, 429 -> TranslationError.QUOTA
             408 -> TranslationError.TIMEOUT
             in 500..599 -> TranslationError.SERVER

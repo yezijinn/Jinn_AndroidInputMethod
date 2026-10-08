@@ -134,6 +134,58 @@ class KeyboardSkinTest {
         }
     }
 
+    /**
+     * 几何与配对规则由**测试自己**再算一遍，不读 `issues` 的输出（BUG.md L-1140）。
+     *
+     * 上面那条问的是「实现自己认为有没有问题」—— 删掉实现里任意一条校验它照样绿。这里把判据
+     * 独立写在测试侧：改皮肤参数而不动校验，这条会红。
+     */
+    @Test
+    fun 皮肤几何与配对规则由测试独立复算() {
+        for (s in KeyboardSkins.ALL) {
+            assertTrue("${s.id}: 渐变角度越界 ${s.gradientAngle}", s.gradientAngle >= 0f && s.gradientAngle < 360f)
+            assertTrue("${s.id}: 描边宽度越界 ${s.strokeWidthDp}", s.strokeWidthDp in 0f..4f)
+            assertTrue("${s.id}: 厚度宽度越界 ${s.bottomThicknessDp}", s.bottomThicknessDp in 0f..4f)
+            assertEquals("${s.id}: 描边色与宽度必须同进同退", s.strokeColor != null, s.strokeWidthDp > 0f)
+            if (s.bottomThicknessDp > 0f) {
+                assertNotNull("${s.id}: 有厚度就必须自带厚度色（退化路径会取到描边色）", s.bottomThicknessColor)
+            }
+            s.rainbowHue?.let {
+                assertTrue("${s.id}: 彩虹色相越界 $it", it >= 0f && it < 360f)
+                assertTrue("${s.id}: 彩虹步长必须为正 ${s.rainbowStep}", s.rainbowStep > 0f)
+            }
+        }
+    }
+
+    /**
+     * 每条规则都要能被**故意违规**触发（BUG.md L-1140）。
+     *
+     * 违规由测试构造（`copy` 一个越界皮肤），要求生产代码报出来：oracle 在测试侧，
+     * 与实现是否还记得那条规则无关 —— 删规则、改判据都会红。
+     */
+    @Test
+    fun 皮肤自检的每条规则都必须能报出故意违规() {
+        val base = KeyboardSkins.ALL.first { !it.isToken }
+        val rainbow = KeyboardSkins.ALL.first { it.rainbowHue != null }
+        fun reported(mutated: KeyboardSkin, needle: String) {
+            val issues = KeyboardSkins.issues(mutated)
+            assertTrue("「$needle」没被报出 ⇒ 判据漏了这条规则：$issues", issues.any { needle in it })
+        }
+
+        reported(base.copy(id = ""), "id 为空")
+        reported(base.copy(label = ""), "label 为空")
+        reported(base.copy(gradientAngle = 360f), "gradientAngle 越界")
+        reported(base.copy(strokeWidthDp = 5f), "strokeWidthDp 越界")
+        reported(base.copy(bottomThicknessDp = -1f), "bottomThicknessDp 越界")
+        reported(rainbow.copy(rainbowHue = 360f), "rainbowHue 越界")
+        reported(rainbow.copy(rainbowStep = 0f), "rainbowStep 必须为正")
+        reported(base.copy(keyFill = 0x80FF0000.toInt()), "keyFill 需为不透明色")
+        reported(base.copy(keyFill = 0xFF112233.toInt(), keyFill2 = 0xFF112233.toInt()), "keyFill 与 keyFill2 相同")
+        reported(base.copy(strokeWidthDp = 0f, strokeColor = 0xFF000000.toInt()), "有描边色但 strokeWidthDp = 0")
+        reported(base.copy(strokeWidthDp = 1f, strokeColor = null), "有描边宽度但未给 strokeColor")
+        reported(base.copy(bottomThicknessDp = 1f, bottomThicknessColor = null), "有厚度宽度但未给 bottomThicknessColor")
+    }
+
     @Test
     fun 配色皮肤的填充色均不透明() {
         for (s in KeyboardSkins.ALL) {

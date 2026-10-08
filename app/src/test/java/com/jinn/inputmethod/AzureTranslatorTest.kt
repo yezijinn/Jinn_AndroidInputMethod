@@ -103,7 +103,7 @@ class AzureTranslatorTest {
     }
 
     @Test
-    fun `HTTP 错误码分类：401 认证、403-429 额度、400 参数、5xx 服务端`() {
+    fun `HTTP 错误码分类：401-404 认证、403-429 额度、400 参数、5xx 服务端`() {
         // 403 是 Azure 免费层额度耗尽的通道（不是 401），归类必须与 429 一致
         assertEquals(TranslationOutcome.Fail(TranslationError.AUTH), translator.parseResponse(401, null))
         assertEquals(TranslationOutcome.Fail(TranslationError.QUOTA), translator.parseResponse(403, null))
@@ -112,6 +112,10 @@ class AzureTranslatorTest {
         assertEquals(TranslationOutcome.Fail(TranslationError.TIMEOUT), translator.parseResponse(408, null))
         assertEquals(TranslationOutcome.Fail(TranslationError.SERVER), translator.parseResponse(500, null))
         assertEquals(TranslationOutcome.Fail(TranslationError.SERVER), translator.parseResponse(503, null))
+        // 404 = 区域 / 终结点填错：认证文案点着「密钥与 Azure 区域」，归 AUTH 才是可操作提示
+        // （落 SERVER 会让用户按「稍后重试」反复失败，BUG.md L-1126）
+        assertEquals(TranslationOutcome.Fail(TranslationError.AUTH), translator.parseResponse(404, null))
+        assertEquals(TranslationError.AUTH, AzureTranslator.errorOf(404))
     }
 
     private companion object {
