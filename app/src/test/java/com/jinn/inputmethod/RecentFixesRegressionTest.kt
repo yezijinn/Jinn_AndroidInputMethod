@@ -3715,10 +3715,10 @@ class RecentFixesRegressionTest {
         assertTrue("必须实现 onSaveInstanceState", "override fun onSaveInstanceState(" in edit)
         assertTrue("必须把编辑器文本写进状态", "putString(STATE_EDITOR_TEXT" in edit)
         assertTrue("必须把脏标记写进状态", "putBoolean(STATE_DIRTY" in edit)
-        assertTrue("onCreate 必须读回草稿", "restoreDraft(it)" in edit)
+        assertTrue("onCreate 必须读回草稿", "startDraftRestore(it)" in edit)
         assertTrue(
             "读回草稿必须排在 loadSource() 之前（回填分支据此跳过，否则草稿被盘上内容盖掉）",
-            edit.indexOf("restoreDraft(it)") < edit.indexOf("loadSource()"),
+            edit.indexOf("startDraftRestore(it)") < edit.indexOf("loadSource()"),
         )
 
         val gallery = TestSources.codeSource("GalleryPanelView.kt")
@@ -3790,9 +3790,13 @@ class RecentFixesRegressionTest {
         assertTrue("保存必须按 draftInBundle 分档", "if (draftInBundle(text.length))" in edit)
         assertTrue("大稿要落到 cacheDir 的文件", "staged.writeText(text)" in edit && "DRAFT_FILE_SAVE_TMP" in edit)
         assertTrue("Bundle 里只留文件名", "putString(STATE_EDITOR_FILE, DRAFT_FILE)" in edit)
-        val restore = edit.substringAfter("private fun restoreDraft(", "")
+        val restore = edit.substringAfter("private fun startDraftRestore(", "")
         assertTrue("读回要先看状态再读文件", "state.getString(STATE_EDITOR_FILE)" in restore)
-        assertTrue("文件读完即删", "file.delete()" in restore)
+        assertTrue(
+            "文件留到铺进编辑器之后才删（BUG.md L-1190）",
+            "File(cacheDir, file).delete()" in
+                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft"),
+        )
 
         val fav = TestSources.codeSource("FavoriteSymbolsActivity.kt")
         assertTrue(
@@ -3906,21 +3910,103 @@ class RecentFixesRegressionTest {
         assertTrue("同步补写也要走临时名", "DRAFT_FILE_SAVE_TMP" in save)
         assertTrue("并且用改名发布", "staged.renameTo(File(cacheDir, DRAFT_FILE))" in save)
         assertTrue("令牌要带上预期长度", "putInt(STATE_DRAFT_LEN, text.length)" in save)
-        val restore = edit.substringAfter("private fun restoreDraft(", "").substringBefore("override fun onResume")
-        assertTrue("读到内容才删文件", "file.delete()" in restore)
+        val restore = edit.substringAfter("private fun startDraftRestore(", "").substringBefore("private fun applyDraft(")
         assertTrue(
-            "读失败与长度不足都不许删（两处 return 在删除之前）",
-            restore.indexOf("pendingDraftFile = name") < restore.indexOf("file.delete()") &&
-                restore.indexOf("draftTruncatedAt = restored.length") < restore.indexOf("file.delete()"),
+            "读取阶段不许删草稿本体（两个临时名的清理不算；删除只发生在铺完或明确放弃时）",
+            "File(cacheDir, draftName).delete()" !in restore && "File(cacheDir, file).delete()" !in restore,
+        )
+        assertTrue(
+            "读失败要保留文件与令牌，下一次重建再试",
+            "pendingDraftFile = draftName" in restore &&
+                restore.indexOf("pendingDraftFile = draftName") < restore.indexOf("setStatus(TEXT_DRAFT_UNREADABLE)"),
         )
         assertTrue("读失败要给出可见提示", "TEXT_DRAFT_UNREADABLE" in restore)
-        assertTrue("长度不足要按截断提示", "draftTruncatedAt" in edit)
-        assertTrue("读失败的文件令牌要续带到下一次重建", "pendingDraftFile = name" in edit && "val pending = pendingDraftFile" in edit)
+        assertTrue(
+            "读盘必须放后台线程并降优先级（BUG.md L-1193）",
+            "Thread {" in restore && "THREAD_PRIORITY_BACKGROUND" in restore,
+        )
+        assertTrue(
+            "长度不足要按截断提示且不删文件",
+            "val truncatedAt = if (expected > 0 && restored.length < expected)" in restore,
+        )
+        assertTrue(
+            "令牌要带预期长度（BUG.md L-1192）",
+            "outState.putInt(STATE_DRAFT_LEN, pendingDraftLen)" in save,
+        )
+        assertTrue("读失败的文件令牌要续带到下一次重建", "val pending = pendingDraftFile" in edit)
 
         // L-1181：草稿在途时按「编辑框已有内容」处理，不停用保存、也不报「已跳过回填」
         assertTrue("恢复期要有在途标记", "draftPending = true" in edit && "draftPending = false" in edit)
         assertTrue("回填判据要认草稿在途", "draftPending || editor.text.isNotEmpty()" in edit)
         assertTrue("草稿在途时不报「已跳过回填」", "if (!draftPending) setStatus(TEXT_SKIP_REFILL)" in edit)
+    }
+
+    /**
+     * 草稿链路的五条收口不得回退（2026-10-08 · L-1189 ~ L-1193）。
+     *
+     * 一次改完的五条：发布前的世代二次校验、草稿文件「铺完才删」+ 令牌续传、
+     * 铺前判「编辑器已有内容」、令牌带预期长度、读盘移后台。
+     */
+    @Test
+    fun `草稿链路五条收口不得回退`() {
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+
+        // L-1189：末块改名发布前再查一次世代
+        assertTrue(
+            "发布前必须二次校验世代（否则旧快照会盖掉刚写好的正式名）",
+            "if (generation != draftWriteGeneration) return@run" in edit &&
+                edit.indexOf("if (generation != draftWriteGeneration) return@run") <
+                edit.indexOf("File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))"),
+        )
+
+        // L-1190：文件铺完才删；令牌在途期间照旧带下去
+        val apply = edit.substringAfter("private fun applyDraft(", "")
+        assertTrue(
+            "铺完收尾才删文件、并清令牌",
+            "private fun finishDraftApply(file: String?, truncatedAt: Int)" in edit &&
+                "File(cacheDir, file).delete()" in
+                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft"),
+        )
+        assertTrue(
+            "在途 / 读失败期间保存侧要接着带令牌与长度",
+            "if (pending != null && !dirty && draftWrittenRevision < 0)" in edit &&
+                "outState.putString(STATE_EDITOR_FILE, pending)" in edit,
+        )
+
+        // L-1191：铺之前先判编辑器是否已有内容（两处：铺之前 + 首帧回调里）
+        assertTrue("铺前要判「编辑器已有内容」", "if (editor.text.isNotEmpty())" in apply)
+        assertTrue(
+            "首帧回调里也要判（用户可能在这段窗口里敲字）",
+            "TEXT_DRAFT_SKIPPED" in apply && "discardPendingDraft()" in apply,
+        )
+
+        // L-1193：读盘在后台线程、带后台优先级
+        val restore = edit.substringAfter("private fun startDraftRestore(", "").substringBefore("private fun applyDraft(")
+        assertTrue("读盘必须放后台线程", "Thread {" in restore)
+        assertTrue("读盘线程要降优先级", "THREAD_PRIORITY_BACKGROUND" in restore)
+    }
+
+    /**
+     * 后台重活统一降优先级（2026-10-08 · L-1194）：按文件计处数，少一处就红。
+     */
+    @Test
+    fun `后台重活线程的降级处数不得减少`() {
+        val need = mapOf(
+            "CustomDictEditActivity.kt" to 3,   // 保存 / 源文本读取 / 草稿读回
+            "DictManagerActivity.kt" to 2,      // 导入后重建 / 导入解析
+            "SettingsActivity.kt" to 6,         // 诊断导出与落盘、配置导出与落盘、解锁、导入
+            "GalleryPanelView.kt" to 1,         // 缩略图池（线程体内设置）
+            "ClipboardController.kt" to 1,
+            "JinnIme.kt" to 3,
+            "PinyinEngine.kt" to 1,
+            "UserFrequency.kt" to 1,
+        )
+        val short = mutableListOf<String>()
+        for ((f, n) in need) {
+            val got = Regex("setThreadPriority").findAll(TestSources.codeSource(f)).count()
+            if (got < n) short += "$f（需要 $n，实际 $got）"
+        }
+        assertTrue("这些文件的后台优先级处数变少了（重活会与前台争 CPU）：$short", short.isEmpty())
     }
 
 }

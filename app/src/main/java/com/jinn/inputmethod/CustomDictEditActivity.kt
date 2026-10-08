@@ -94,16 +94,17 @@ class CustomDictEditActivity : Activity() {
     private var draftWriteGeneration = 0
 
     /**
-     * 上一次恢复没读到内容但文件还在（读取失败）：保存时把令牌继续带下去，
-     * 下一次重建再试一次（BUG.md L-1185）。读到内容就清掉。
+     * 草稿文件还在、编辑器里还没有它（读盘在途 / 读失败待重试 / 大稿等首帧铺）：
+     * 保存时把令牌与预期长度原样带下去，下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。
+     * 铺进编辑器之后由 [finishDraftApply] 清掉。
      */
     private var pendingDraftFile: String? = null
 
+    /** [pendingDraftFile] 对应的预期字符数（0 = 不知道；恢复端据此判「写到一半」，BUG.md L-1192） */
+    private var pendingDraftLen = 0
+
     /** 大稿草稿已排进首帧之后、还没铺进编辑器（BUG.md L-1181） */
     private var draftPending = false
-
-    /** 恢复出来的草稿比预期短（文件写到一半）：状态行按这个长度报截断（BUG.md L-1185） */
-    private var draftTruncatedAt = 0
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
@@ -188,32 +189,8 @@ class CustomDictEditActivity : Activity() {
         // 重建时恢复未保存的草稿（BUG.md L-1163）：编辑器是代码创建、无 android:id，系统不会
         // 替它保存内容；定时换色（主题节拍器）与系统深浅色切换都会重建本页。先铺回草稿，
         // loadSource() 的回填分支会因「编辑框已有内容」自动跳过，不会把草稿盖掉。
-        // 小稿在实例状态里、大稿在 cacheDir 临时文件里（BUG.md L-1169）
-        val draft = savedInstanceState?.let { restoreDraft(it) }
-        if (!draft.isNullOrEmpty()) {
-            dirty = savedInstanceState.getBoolean(STATE_DIRTY, true)
-            // 两条来源：Bundle 里的截断长度（写盘失败时截断进 Bundle），与恢复端实测的文件短读（L-1185）
-            val truncatedAt = savedInstanceState.getInt(STATE_DRAFT_TRUNCATED, 0).takeIf { it > 0 } ?: draftTruncatedAt
-            refilling = true
-            if (draft.length > DRAFT_BUNDLE_MAX_CHARS) {
-                // 大稿的排版代价随长度走（真机实测 880k 行 / 8.1MB 让主线程卡 18 秒，见 MAX_REFILL_CHARS）：
-                // 推迟到首帧之后再铺，页面先可见，状态行说明发生了什么（BUG.md L-1173）
-                setStatus(TEXT_DRAFT_RESTORING)
-                // 排进首帧之后到铺完之前，编辑器仍是空的：这段窗口里 loadSource() 的回填判据
-                // 会误判成「没有草稿」（BUG.md L-1181）
-                draftPending = true
-                editor.postOnAnimation {
-                    editor.setText(draft)
-                    refilling = false
-                    draftPending = false
-                    setStatus(if (truncatedAt > 0) TEXT_DRAFT_TRUNCATED.format(truncatedAt) else TEXT_DRAFT_RESTORED)
-                }
-            } else {
-                editor.setText(draft)
-                refilling = false
-                if (truncatedAt > 0) setStatus(TEXT_DRAFT_TRUNCATED.format(truncatedAt))
-            }
-        }
+        // 小稿在实例状态里、大稿在 cacheDir 临时文件里（BUG.md L-1169）；读盘放后台（L-1193）
+        savedInstanceState?.let { startDraftRestore(it) }
 
         setContentView(root)
         Diagnostics.i(TAG, "CustomDictEditActivity: 打开快捷补充页")
@@ -236,11 +213,13 @@ class CustomDictEditActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         val text = editor.text?.toString() ?: ""
-        // 上一次恢复读失败、用户又没改过任何东西：把文件令牌原样带下去，下一次重建再读一次
-        // （BUG.md L-1185）。用户一动手就作废这条支路 —— 他现在的编辑比那份草稿更要紧
+        // 文件还在、编辑器里没有它（读盘在途 / 读失败待重试 / 大稿等首帧铺）：令牌与预期长度原样带下去，
+        // 下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。用户一动手就作废这条支路 ——
+        // 他现在的编辑比那份草稿更要紧
         val pending = pendingDraftFile
         if (pending != null && !dirty && draftWrittenRevision < 0) {
             outState.putString(STATE_EDITOR_FILE, pending)
+            outState.putInt(STATE_DRAFT_LEN, pendingDraftLen)
             outState.putBoolean(STATE_DIRTY, dirty)
             return
         }
@@ -322,7 +301,12 @@ class CustomDictEditActivity : Activity() {
                 // 第一块截断、其余追加（同一队列串行执行，顺序有保证）
                 FileOutputStream(File(cacheDir, DRAFT_FILE_TMP), from == 0)
                     .use { it.write(text.substring(from, end).toByteArray(Charsets.UTF_8)) }
-                if (last) File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))
+                if (last) {
+                    // 发布前再查一次世代（BUG.md L-1189）：本任务开头查过之后，保存侧可能已经自增世代
+                    // 并写好了正式名 —— 此时再改名就等于用旧快照盖掉刚写的那份，而修订号已被标成最新
+                    if (generation != draftWriteGeneration) return@run
+                    File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))
+                }
                 true
             }.getOrDefault(false)
             if (!ok) {
@@ -351,38 +335,110 @@ class CustomDictEditActivity : Activity() {
     }
 
     /**
-     * 读回草稿：小稿在实例状态里，大稿在 [cacheDir] 的临时文件里（BUG.md L-1169）。
+     * 恢复未保存的草稿（BUG.md L-1163 / L-1169 / L-1193）。
      *
-     * 读到内容且长度对得上就删文件 —— 草稿已经铺进编辑器，留着只会让下次重建分不清新旧。
-     * 读取失败或长度不足时**不删**（BUG.md L-1185）：大稿只有这一份副本，删掉就没得追了；
-     * 前者把令牌挂到 [pendingDraftFile] 上让下一次重建再试，后者按截断提示（`STATE_DRAFT_TRUNCATED`）。
+     * 小稿在实例状态里，直接铺；大稿在 [cacheDir] 的临时文件里，**读盘放后台**：
+     * 整份上限 16M 字符，慢存储上单次读取要几百毫秒，此前同步做在 `onCreate` 里会挡住首屏。
+     *
+     * 文件**读到时不删**（BUG.md L-1190）：铺进编辑器之前它仍是唯一副本。这段窗口里再重建
+     * （首帧前、或者读盘还在途），[pendingDraftFile] / [pendingDraftLen] 会把令牌原样交给下一个实例。
+     * 读失败同样保留文件与令牌（BUG.md L-1185），下一次重建再试。
      */
-    private fun restoreDraft(state: Bundle): String? {
-        state.getString(STATE_EDITOR_TEXT)?.takeIf { it.isNotEmpty() }?.let { return it }
-        val name = state.getString(STATE_EDITOR_FILE) ?: return null
+    private fun startDraftRestore(state: Bundle) {
+        val inline = state.getString(STATE_EDITOR_TEXT)
+        val restoredDirty = state.getBoolean(STATE_DIRTY, true)
+        if (!inline.isNullOrEmpty()) {
+            applyDraft(inline, state.getInt(STATE_DRAFT_TRUNCATED, 0), null, restoredDirty)
+            return
+        }
+        val draftName = state.getString(STATE_EDITOR_FILE) ?: return
+        pendingDraftFile = draftName
+        pendingDraftLen = state.getInt(STATE_DRAFT_LEN, 0)
         for (tmp in listOf(DRAFT_FILE_TMP, DRAFT_FILE_SAVE_TMP)) runCatching { File(cacheDir, tmp).delete() }
-        val file = File(cacheDir, name)
-        if (!file.isFile) return null
-        val expected = state.getInt(STATE_DRAFT_LEN, 0)
-        // 读一次不成就再读一次：I/O 抖动是暂时性的，而下面那句提示只承诺「重建时再试」
-        val restored = runCatching { file.readText() }.getOrNull()
-            ?: runCatching { file.readText() }.getOrNull()
-        if (restored == null) {
-            // 读失败（低内存设备上的整份分配 / 存储 I/O 错误）：文件留着，话说清楚，下次重建再试
-            Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
-            pendingDraftFile = name
-            setStatus(TEXT_DRAFT_UNREADABLE)
-            return null
+        Thread {
+            // 整份读盘与词库装载同一口径：降后台优先级，别和前台争 CPU
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            val file = File(cacheDir, draftName)
+            // 读一次不成就再读一次：I/O 抖动是暂时性的，而状态行只承诺「重建时自动再试」
+            val restored = if (file.isFile) {
+                runCatching { file.readText() }.getOrNull() ?: runCatching { file.readText() }.getOrNull()
+            } else {
+                null
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (restored == null) {
+                    Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
+                    setStatus(TEXT_DRAFT_UNREADABLE)
+                    return@runOnUiThread
+                }
+                val expected = pendingDraftLen
+                val truncatedAt = if (expected > 0 && restored.length < expected) {
+                    // 比预期短 = 写到一半被杀 / 掉电（BUG.md L-1185）：不删文件，按截断提示
+                    Diagnostics.w(TAG, "快捷补充：草稿文件不完整（${restored.length} / $expected 字符）")
+                    restored.length
+                } else {
+                    0
+                }
+                applyDraft(restored, truncatedAt, draftName, restoredDirty)
+            }
+        }.apply { isDaemon = true; name = "jinn-draft-restore" }.start()
+    }
+
+    /**
+     * 把草稿铺进编辑器。铺之前先看编辑器里有没有东西（BUG.md L-1191）：读盘在途、
+     * 或大稿排在首帧之后铺的这段时间里用户可能已经敲了字 —— 那些输入优先，草稿不铺
+     * （与「用户已开始输入就跳过回填」同一口径，BUG.md L-849）。
+     */
+    private fun applyDraft(draft: String, truncatedAt: Int, file: String?, restoredDirty: Boolean) {
+        if (editor.text.isNotEmpty()) {
+            Diagnostics.i(TAG, "快捷补充：草稿未铺入（编辑框已有 ${editor.text.length} 字符）")
+            discardPendingDraft()
+            setStatus(TEXT_DRAFT_SKIPPED)
+            return
         }
-        if (expected > 0 && restored.length < expected) {
-            // 比预期短 = 写到一半被杀 / 掉电。不删文件，按截断处理，让状态行说明
-            Diagnostics.w(TAG, "快捷补充：草稿文件不完整（${restored.length} / $expected 字符）")
-            draftTruncatedAt = restored.length
-            return restored
+        if (!dirty) dirty = restoredDirty
+        refilling = true
+        if (draft.length > DRAFT_BUNDLE_MAX_CHARS) {
+            // 大稿的排版代价随长度走（真机实测 880k 行 / 8.1MB 让主线程卡 18 秒，见 MAX_REFILL_CHARS）：
+            // 推迟到首帧之后再铺，页面先可见，状态行说明发生了什么（BUG.md L-1173）
+            setStatus(TEXT_DRAFT_RESTORING)
+            // 排进首帧之后到铺完之前，编辑器仍是空的：这段窗口里 loadSource() 的回填判据
+            // 会误判成「没有草稿」（BUG.md L-1181）
+            draftPending = true
+            editor.postOnAnimation {
+                draftPending = false
+                refilling = false
+                if (editor.text.isNotEmpty()) {
+                    Diagnostics.i(TAG, "快捷补充：草稿未铺入（铺之前编辑器已有 ${editor.text.length} 字符）")
+                    discardPendingDraft()
+                    setStatus(TEXT_DRAFT_SKIPPED)
+                    return@postOnAnimation
+                }
+                editor.setText(draft)
+                finishDraftApply(file, truncatedAt)
+            }
+        } else {
+            editor.setText(draft)
+            refilling = false
+            finishDraftApply(file, truncatedAt)
         }
-        file.delete()
+    }
+
+    /** 铺完收尾：删文件、清令牌、给状态行 —— 文件留到这一刻才删（BUG.md L-1190）。 */
+    private fun finishDraftApply(file: String?, truncatedAt: Int) {
+        if (file != null) runCatching { File(cacheDir, file).delete() }
         pendingDraftFile = null
-        return restored
+        pendingDraftLen = 0
+        setStatus(if (truncatedAt > 0) TEXT_DRAFT_TRUNCATED.format(truncatedAt) else TEXT_DRAFT_RESTORED)
+    }
+
+    /** 草稿不再铺了（用户抢先输入）：清令牌并删掉它，BUG.md L-1191。 */
+    private fun discardPendingDraft() {
+        val file = pendingDraftFile
+        if (file != null) runCatching { File(cacheDir, file).delete() }
+        pendingDraftFile = null
+        pendingDraftLen = 0
     }
 
     override fun onResume() {
@@ -439,6 +495,8 @@ class CustomDictEditActivity : Activity() {
     private fun loadSource() {
         val app = applicationContext
         Thread {
+            // 整份源文本读盘是重活（上限 16M 字符），降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val file = CustomDicts.sourceFile(app)
             // 读前读后各取一次身份（BUG.md L-899）：只在读完后取一次的话，「读内容」与「取身份」
             // 之间被外部改名落盘时，记下的是新身份、铺的是旧内容 ⇒ 保存时比对相等、静默覆盖。
@@ -755,6 +813,9 @@ class CustomDictEditActivity : Activity() {
 
         /** 草稿文件读取失败（保留文件，页面重建时自动再试，BUG.md L-1185） */
         const val TEXT_DRAFT_UNREADABLE = "草稿读取失败：原稿仍保留在缓存里（未删除），页面重建时会自动再试"
+
+        /** 草稿没铺进去：用户已经在编辑框里敲了字，那些输入优先（BUG.md L-1191） */
+        const val TEXT_DRAFT_SKIPPED = "草稿未铺入：编辑框里已有你输入的内容"
         const val TEXT_TOO_BIG = "内容超过 800 万字符上限，请精简后重试"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
         const val TEXT_SKIP_REFILL = "已跳过回填：编辑框里已有你输入的内容"

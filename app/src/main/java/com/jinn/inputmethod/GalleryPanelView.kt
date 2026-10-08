@@ -112,7 +112,11 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      */
     private val thumbPool: java.util.concurrent.ExecutorService =
         java.util.concurrent.Executors.newFixedThreadPool(THUMB_THREADS) { r ->
-            Thread(r, "jinn-gallery-thumb").apply { isDaemon = true }
+            // 解码是满核的活，且与输入法同进程：在线程体内降后台优先级（BUG.md L-1194）
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }, "jinn-gallery-thumb").apply { isDaemon = true }
         }
 
     /** 在途解码的 key：并发下防同一张重复提交（滚动事件会连着来好几次） */

@@ -278,6 +278,8 @@ class DictManagerActivity : Activity() {
         refreshList()
         val app = applicationContext
         Thread {
+            // 读词表 + 解析 + xz 压缩是重活（上限 5 万条），降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             var restart = false
             val status = try {
                 val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_CHARS) }

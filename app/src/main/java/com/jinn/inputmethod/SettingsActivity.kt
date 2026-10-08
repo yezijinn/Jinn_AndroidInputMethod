@@ -747,6 +747,8 @@ class SettingsActivity : ComponentActivity() {
         btnExportDiag.isEnabled = false
         Diagnostics.i(TAG, "exportDiagnostics: 开始打包诊断包")
         Thread {
+            // 诊断包要打包日志与快照，降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val file = Diagnostics.exportBundle(this)
             runOnUiThread {
                 if (isFinishing || isDestroyed) {
@@ -777,6 +779,8 @@ class SettingsActivity : ComponentActivity() {
         // 提示里用自己生成的文件名：部分 provider 的 lastPathSegment 是文档 ID（如 "18"），对用户没有意义
         val displayName = src.name
         Thread {
+            // 写入整份包（上限随剪贴板数据走），降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val ok = runCatching {
                 openTruncatingOutput(uri)?.use { out ->
                     src.inputStream().use { it.copyTo(out) }
@@ -1329,6 +1333,8 @@ class SettingsActivity : ComponentActivity() {
         // 密码以 CharArray 传进加解密层，用完立刻清零；全程不写日志、不落盘
         val chars = password.toCharArray()
         Thread {
+            // 配置导出要打 zip + AES-GCM，降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             // 兜底：导出链路上还有 SQLite 与文件 IO（剪贴板分页、词库摘要），漏网异常会连带
             // 杀死同进程的输入法（设置页与 IME 同进程），所以这里必须整体包住
             val outcome = runCatching {
@@ -1393,6 +1399,8 @@ class SettingsActivity : ComponentActivity() {
         val displayName = src.name
         showBusy(TEXT_BUSY_WRITE)
         Thread {
+            // 写入整份包（上限随剪贴板数据走），降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val ok = runCatching {
                 openTruncatingOutput(uri)?.use { out ->
                     src.inputStream().use { it.copyTo(out) }
@@ -1496,6 +1504,8 @@ class SettingsActivity : ComponentActivity() {
         showBusy(TEXT_BUSY_DECRYPT)
         val chars = password.toCharArray()
         Thread {
+            // 解包 + 解锁是重活，降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val result = runCatching { ConfigBackupManager.unlock(this@SettingsActivity, uri, chars) }
                 .onFailure { Diagnostics.w(TAG, "importConfig: 解锁异常 ${it.javaClass.simpleName}") }
                 .getOrElse { ConfigBackupManager.UnlockResult.ReadFailed }
@@ -1668,6 +1678,8 @@ class SettingsActivity : ComponentActivity() {
         // 标记进行中：此时 onDestroy 不能删明文 zip（后台线程还要读它）
         importInFlight = true
         Thread {
+            // 配置导入要写库 / 词频 / prefs，降后台优先级（BUG.md L-1194）
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             // 兜底：导入会写 SQLite / 词频 / prefs，任一处漏网异常都会连带杀死同进程的输入法
             val r = runCatching {
                 ConfigBackupManager.import(
