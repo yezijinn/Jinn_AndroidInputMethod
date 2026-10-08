@@ -51,15 +51,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerLanguage: UserAwareSpinner
     private lateinit var spinnerDefaultMode: UserAwareSpinner
     private lateinit var spinnerShuangpin: UserAwareSpinner
-    private lateinit var spinnerCandidateRows: UserAwareSpinner
 
-    // 主题：亮色 / 暗色 / 跟随系统 / 定时（两档各自用哪套皮肤见 Prefs.skinLightId / skinDarkId）
-    private lateinit var spinnerTheme: UserAwareSpinner
-    private lateinit var btnThemeLightAt: Button
-    private lateinit var btnThemeDarkAt: Button
-    private lateinit var rowThemeSchedule: View
-    private lateinit var textThemeScheduleHint: TextView
-    private lateinit var textThemeDesc: TextView
     private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
@@ -80,8 +72,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchTranslate: Switch
     private lateinit var btnTranslateSettings: Button
     private lateinit var textTranslateState: TextView
-    private lateinit var switchKeyHint: Switch
-    private lateinit var switchPinyinQuanpin: Switch
+
 
     /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认不改动） */
     private lateinit var btnFuzzyPinyin: Button
@@ -145,8 +136,6 @@ class SettingsActivity : ComponentActivity() {
     private var tipDialog: Dialog? = null
 
     // 剪贴板
-    private lateinit var clipboardPrefs: ClipboardPrefs
-    private lateinit var editClipboardMax: EditText
 
     /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -274,8 +263,7 @@ class SettingsActivity : ComponentActivity() {
         spinnerLanguage = findViewById(R.id.spinner_language)
         spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
         spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
-        spinnerCandidateRows = findViewById(R.id.spinner_candidate_rows)
-        findViewById<TextView>(R.id.label_candidate_rows).text = "候选词的行数"
+
         editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
@@ -301,13 +289,7 @@ class SettingsActivity : ComponentActivity() {
                 .onFailure { Diagnostics.w(TAG, "打开翻译设置失败: ${it.message}") }
         }
         textTranslateState = findViewById(R.id.text_translate_state)
-        switchKeyHint = findViewById(R.id.switch_key_hint)
-        // 键面韵母提示文案（含关闭后的效果说明）：strings.xml 默认不改动，这里下发
-        switchKeyHint.text = "键盘内显韵母"
-        findViewById<TextView>(R.id.text_key_hint_desc).text = "关闭后键面只显示字母"
-        switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
-        switchPinyinQuanpin.text = "双拼候选全音"
-        findViewById<TextView>(R.id.text_pinyin_quanpin_desc).text = "关闭后显示按下的字母"
+
         // 只使用繁体字：候选里的简体字全部替换为繁体字（文案同样代码下发）
         switchUseTraditional = findViewById(R.id.switch_use_traditional)
         switchUseTraditional.text = TEXT_USE_TRADITIONAL
@@ -322,12 +304,7 @@ class SettingsActivity : ComponentActivity() {
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
-        // 剪贴板卡片
-        clipboardPrefs = ClipboardPrefs.of(this)
-        editClipboardMax = findViewById(R.id.edit_clipboard_max)
 
-        // 主题卡片：模式下拉 + 定时切换时刻；再记录本次生效的深浅色、排一次到点刷新
-        initThemeCard()
         // 收藏符号编辑：单按钮入口，打开独立编辑页
         findViewById<Button>(R.id.btn_edit_favorites).setOnClickListener {
             startActivity(Intent(this, FavoriteSymbolsActivity::class.java))
@@ -424,28 +401,6 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 候选词行数下拉：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，见 CandidateRows）。
-        // 只影响候选栏排版与高度，不必重启输入法：键盘下次弹出即按新档位渲染。
-        spinnerCandidateRows.adapter = ArrayAdapter(
-            this, R.layout.item_spinner, arrayOf("1 行", "2 行"),
-        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerCandidateRows.onItemSelectedListener =
-            object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-                ) {
-                    // 同「默认键盘模式」：初始化 setSelection 与恢复实例状态都会回调，
-                    // 不挡住就会把用户已选的行数静默改回第 0 项（单行档）。
-                    if (!spinnerCandidateRows.userInteracted) return
-                    val rows = position + 1
-                    if (rows != prefs.candidateRows) {
-                        prefs.candidateRows = rows
-                        Diagnostics.i(TAG, "候选词行数: $rows")
-                    }
-                }
-
-                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            }
 
         loadPrefs()
         // 之后 Spinner 若回调（含恢复实例状态），只有「用户触摸过」才会写配置
@@ -494,16 +449,7 @@ class SettingsActivity : ComponentActivity() {
             prefs.predictEnabled = checked
             Diagnostics.i(TAG, "候选预测词: ${if (checked) "开启" else "关闭"}（立即生效）")
         }
-        // 键面韵母提示（双拼）：勾选即写入；键盘下次弹出时按新设置渲染，不必重启输入法
-        switchKeyHint.setOnCheckedChangeListener { _, checked ->
-            prefs.showKeyHint = checked
-            Diagnostics.i(TAG, "键面韵母提示: ${if (checked) "开启" else "关闭"}")
-        }
-        // 拼音显示为声韵（双拼候选栏）：勾选即写入；键盘下次弹出时按新设置渲染
-        switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
-            prefs.showQuanpin = checked
-            Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
-        }
+
         // 保活相关（前台服务 / 无障碍互保 / ROOT 白名单 / 电池白名单）已全部移除：
         // 语音输入改为按需连接后，不再需要进程常驻，也就不需要这些保活手段。
 
@@ -538,82 +484,8 @@ class SettingsActivity : ComponentActivity() {
             textDiagDir.text = getString(R.string.settings_diag_dir_hint, it.absolutePath)
         }
 
-        // ── 剪贴板卡片 ──────────────────────────────────────────
-        initClipboardCard()
     }
 
-    /**
-     * 主题卡片：模式下拉（跟随系统 / 亮色 / 暗色 / 定时）+ 两档各自的皮肤说明 + 定时的两个切换时刻。
-     *
-     * 与另外两个下拉共用同一条「用户亲手操作过」的闸门（见 [UserAwareSpinner]）：初始化 `setSelection`
-     * 与实例状态恢复都会回调 `onItemSelected`，不挡住就会把用户配置写花。
-     * 任一改动都立即生效：写盘后 `recreate()`，`attachBaseContext` 会读到新主题重建整页颜色。
-     */
-    private fun initThemeCard() {
-        spinnerTheme = findViewById(R.id.spinner_theme)
-        btnThemeLightAt = findViewById(R.id.btn_theme_light_at)
-        btnThemeDarkAt = findViewById(R.id.btn_theme_dark_at)
-        rowThemeSchedule = findViewById(R.id.row_theme_schedule)
-        textThemeScheduleHint = findViewById(R.id.text_theme_schedule_hint)
-        textThemeDesc = findViewById(R.id.text_theme_desc)
-
-        spinnerTheme.adapter = ArrayAdapter.createFromResource(
-            this, R.array.theme_mode_entries, R.layout.item_spinner
-        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerTheme.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-            ) {
-                if (!spinnerTheme.userInteracted) return
-                val values = resources.getStringArray(R.array.theme_mode_values)
-                val mode = values.getOrNull(position)?.toIntOrNull() ?: return
-                if (mode != prefs.themeMode) {
-                    prefs.themeMode = mode
-                    Diagnostics.i(TAG, "主题模式: $mode")
-                    JinnIme.notifyThemeChanged() // 键盘正显示时同进程立即换肤（不必等下次弹出）
-                    recreate() // 写盘即生效：重建页面让 attachBaseContext 读到新主题
-                }
-            }
-
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
-
-        btnThemeLightAt.setOnClickListener {
-            pickThemeTime(prefs.themeLightAtMinutes) { minutes ->
-                prefs.themeLightAtMinutes = minutes
-                Diagnostics.i(TAG, "定时切换: 亮起 ${formatMinutes(minutes)}")
-                JinnIme.notifyThemeChanged()
-                recreate()
-            }
-        }
-        btnThemeDarkAt.setOnClickListener {
-            pickThemeTime(prefs.themeDarkAtMinutes) { minutes ->
-                prefs.themeDarkAtMinutes = minutes
-                Diagnostics.i(TAG, "定时切换: 暗起 ${formatMinutes(minutes)}")
-                JinnIme.notifyThemeChanged()
-                recreate()
-            }
-        }
-
-        // 回填当前值（recreate 之后走的也是这里）
-        val modeValues = resources.getStringArray(R.array.theme_mode_values)
-        spinnerTheme.setSelection(modeValues.indexOf(prefs.themeMode.toString()).coerceAtLeast(0))
-        refreshThemeScheduleRow()
-        refreshThemeDesc()
-    }
-
-    /**
-     * 刷新卡片说明：显示两档各自选定的皮肤（在「键盘外观」页选定）。
-     *
-     * 两档皮肤决定「明暗切换时键盘换哪一套」，与模式下拉是同一件事的两半，故并排显示。
-     */
-    private fun refreshThemeDesc() {
-        textThemeDesc.text = getString(
-            R.string.theme_card_desc,
-            KeyboardSkins.byId(prefs.skinLightId, SkinTone.LIGHT).label,
-            KeyboardSkins.byId(prefs.skinDarkId, SkinTone.DARK).label,
-        )
-    }
 
     /**
      * 定时换色：`onStart` 里对一次表并排下一次、`onStop` 里撤掉（见 [ThemeManager.ScheduledThemeTicker]）。
@@ -634,100 +506,16 @@ class SettingsActivity : ComponentActivity() {
     /** 从「键盘外观」页返回时两档皮肤可能已改：这里补一次刷新（本页其余状态不变，无需 recreate） */
     override fun onResume() {
         super.onResume()
-        if (::textThemeDesc.isInitialized) refreshThemeDesc()
+
         // 麦克风状态同理：从系统设置授权后返回，页面不能还显示「未授权」
         if (::textMicState.isInitialized) refreshMicState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
-        // 剪贴板上限在「剪贴板自定义」页也能改：进页面按盘上值刷新，否则本页持有创建时的旧值，
-        // 离开时的回写会把别处刚保存的值覆盖掉（L-991）
-        refreshClipboardMax()
+
     }
 
-    /**
-     * 离开页面时落盘「剪贴板数量上限」。
-     *
-     * 它平时只在输入框失焦时保存，而按返回键退出时输入框仍有焦点、失焦回调不保证触发
-     * ⇒ 改完上限直接返回会静默丢失（用户看到输入框里是新值，实际生效的还是旧值）。
-     */
-    override fun onPause() {
-        super.onPause()
-        // 导入进行中不回写（2026-10-02 修复 L-405）：本页只写一个字段，但导入线程同在写 Prefs，
-        // 且设置页正是导入的**发起页**（用户可能边导入边返回）—— 交错同样会把界面旧值写回去
-        if (ConfigBackupManager.importing) {
-            Diagnostics.w(TAG, "onPause: 导入进行中，跳过剪贴板上限回写（避免覆盖导入结果）")
-        } else if (::editClipboardMax.isInitialized) {
-            saveMaxItems()
-        }
-    }
 
-    /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
-    private fun refreshThemeScheduleRow() {
-        val scheduled = prefs.themeMode == ThemeManager.MODE_SCHEDULED
-        val visibility = if (scheduled) View.VISIBLE else View.GONE
-        rowThemeSchedule.visibility = visibility
-        textThemeScheduleHint.visibility = visibility
-        btnThemeLightAt.text = getString(R.string.theme_light_at_tpl, formatMinutes(prefs.themeLightAtMinutes))
-        btnThemeDarkAt.text = getString(R.string.theme_dark_at_tpl, formatMinutes(prefs.themeDarkAtMinutes))
-    }
 
-    /** 「当天第几分钟」→ `HH:mm`（脏值先 floorMod 归一，负值不会显示成 -1:-30） */
-    private fun formatMinutes(minutes: Int): String {
-        val m = Math.floorMod(minutes, ThemeManager.MINUTES_PER_DAY)
-        return String.format(java.util.Locale.US, "%02d:%02d", m / 60, m % 60)
-    }
-
-    /** 弹时间选择器；回调参数为「当天第几分钟」（0..1439） */
-    private fun pickThemeTime(initialMinutes: Int, onPicked: (Int) -> Unit) {
-        val m = Math.floorMod(initialMinutes, ThemeManager.MINUTES_PER_DAY)
-        showTipDialog(
-            android.app.TimePickerDialog(
-                this,
-                { _, hour, minute -> onPicked(hour * 60 + minute) },
-                m / 60,
-                m % 60,
-                true,
-            )
-        )
-    }
-
-    /**
-     * 剪贴板卡片初始化：绑定数量上限。
-     * 上限在失焦或「保存并重启」时落盘。开关已移至「剪贴板自定义」页。
-     */
-    private fun initClipboardCard() {
-        // 剪贴板历史开关由用户在「剪贴板自定义」页控制，设置页不再强制（2026-10-06）
-        refreshClipboardMax()
-        editClipboardMax.setOnFocusChangeListener { _, hasFocus ->
-            if (!hasFocus) saveMaxItems()
-        }
-
-        // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
-    }
-
-    private fun saveMaxItems() {
-        val v = editClipboardMax.text.toString().toIntOrNull()
-        if (v != null && v != clipboardPrefs.maxItems) {
-            // 值未变即早退：进页面看一眼再退出不该触发全库裁剪，更不该把本页的旧值写回去（L-991）
-            clipboardPrefs.maxItems = v
-            Diagnostics.i(TAG, "剪贴板历史数量上限: ${clipboardPrefs.maxItems}")
-            // 立即裁剪数据库（统一走 BackgroundIo 单线程，避免并发写库）
-            BackgroundIo.run { ClipboardDb.get(this).trimTo(clipboardPrefs.maxItems, clipboardPrefs.maxTotalBytes) }
-        }
-        // 输入越界（0 / 99999）会被 Prefs 钳到 1..ClipboardPrefs.MAX_ITEMS_CAP，非数字则完全忽略，
-        // 两种情况下输入框都回写为真实生效值，否则用户看到的和生效的不一致。
-        val effective = clipboardPrefs.maxItems.toString()
-        if (editClipboardMax.text.toString() != effective) {
-            editClipboardMax.setText(effective)
-        }
-    }
-
-    /** 「历史数量上限」输入框按盘上值刷新（该参数在「剪贴板自定义」页也能改） */
-    private fun refreshClipboardMax() {
-        if (!::editClipboardMax.isInitialized) return
-        val effective = clipboardPrefs.maxItems.toString()
-        if (editClipboardMax.text.toString() != effective) editClipboardMax.setText(effective)
-    }
 
     // 第三方 APP 访问权限管理已移除：规范要求 JinnIme 不提供第三方读取 History API。
     // 对应 ClipboardPermissionActivity / PermissionStore / Provider 已删除。
@@ -818,8 +606,7 @@ class SettingsActivity : ComponentActivity() {
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
-        switchKeyHint.isChecked = prefs.showKeyHint
-        switchPinyinQuanpin.isChecked = prefs.showQuanpin
+
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         val values = resources.getStringArray(R.array.language_values)
@@ -833,7 +620,7 @@ class SettingsActivity : ComponentActivity() {
             ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
         )
         // 候选词行数：档位 1/2 对应下拉下标 0/1（Prefs 已归一，下标必然合法）
-        spinnerCandidateRows.setSelection(prefs.candidateRows - 1)
+
     }
 
     /**
@@ -1221,10 +1008,7 @@ class SettingsActivity : ComponentActivity() {
         prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
-        // 剪贴板上限平时靠输入框失焦保存，但点「保存并重启」时失焦回调的时序不保证
-        // 早于本次保存（输入框仍有焦点时可能压根没触发）。这里显式再存一次（幂等），
-        // 避免用户改完上限点保存却发现没生效。
-        saveMaxItems()
+
 
         // 提示词是用户自己写的正文（可能含个人信息），只记长度不记内容
         Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} promptLen=${prefs.prompt.length}")

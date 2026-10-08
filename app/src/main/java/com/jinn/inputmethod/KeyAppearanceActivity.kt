@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -32,6 +33,20 @@ class KeyAppearanceActivity : Activity() {
      * [onStop] 撤掉。原先本页自带一份 Handler + `appliedDark` 字段，2026-10-02 收归共用实现（L-476）。
      */
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
+
+    // ── 2026-10-09 由设置页迁入的四组控件（外观相关集中在本页）──
+    private lateinit var spinnerCandidateRows: UserAwareSpinner
+    private lateinit var switchKeyHint: Switch
+    private lateinit var switchPinyinQuanpin: Switch
+    private lateinit var spinnerTheme: UserAwareSpinner
+    private lateinit var btnThemeLightAt: Button
+    private lateinit var btnThemeDarkAt: Button
+    private lateinit var rowThemeSchedule: View
+    private lateinit var textThemeScheduleHint: TextView
+    private lateinit var textThemeDesc: TextView
+
+    /** 时间选择器引用：本页退出时要撤掉，否则窗口泄漏（设置页用 showTipDialog 收口，本页单点管理） */
+    private var timePicker: android.app.TimePickerDialog? = null
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -213,7 +228,167 @@ class KeyAppearanceActivity : Activity() {
             JinnIme.onKeyAppearanceChanged()
         }
 
+        initInputDisplaySection(prefs)
+        initThemeCard(prefs)
+
         initSkinSelector(prefs)
+    }
+
+    /**
+     * 「输入与显示」四组控件（2026-10-09 由设置页迁来）。
+     *
+     * 全部即时生效：写盘后调 [JinnIme.onKeyAppearanceChanged] 让正显示的键盘立刻按新设置重绘
+     * （与滑杆、皮肤同一套口径）；键盘未显示时不用管 —— 下次 `configure()` 会读最新配置。
+     */
+    private fun initInputDisplaySection(prefs: Prefs) {
+        // 候选词行数：1 行（默认，横向滚动）/ 2 行（上排偶数项、下排奇数项，见 CandidateRows）
+        spinnerCandidateRows = findViewById(R.id.spinner_candidate_rows)
+        findViewById<TextView>(R.id.label_candidate_rows).text = TEXT_CANDIDATE_ROWS_TITLE
+        spinnerCandidateRows.adapter = ArrayAdapter(
+            this, R.layout.item_spinner, arrayOf("1 行", "2 行"),
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
+        spinnerCandidateRows.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+                ) {
+                    // 同本页其他下拉：初始化 setSelection 与恢复实例状态都会回调，不挡住会把用户选择改回第 0 项
+                    if (!spinnerCandidateRows.userInteracted) return
+                    val rows = position + 1
+                    if (rows != prefs.candidateRows) {
+                        prefs.candidateRows = rows
+                        Diagnostics.i(TAG, "候选词行数: $rows")
+                        JinnIme.onKeyAppearanceChanged()
+                    }
+                }
+
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            }
+        spinnerCandidateRows.setSelection(prefs.candidateRows - 1)
+
+        // 键面韵母提示（双拼）：关掉后键面只显示字母
+        switchKeyHint = findViewById(R.id.switch_key_hint)
+        switchKeyHint.text = TEXT_KEY_HINT_TITLE
+        findViewById<TextView>(R.id.text_key_hint_desc).text = TEXT_KEY_HINT_DESC
+        switchKeyHint.isChecked = prefs.showKeyHint
+        switchKeyHint.setOnCheckedChangeListener { _, checked ->
+            prefs.showKeyHint = checked
+            Diagnostics.i(TAG, "键面韵母提示: ${if (checked) "开启" else "关闭"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        // 双拼候选全拼：关掉后候选栏显示按下的字母
+        switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
+        switchPinyinQuanpin.text = TEXT_QUANPIN_TITLE
+        findViewById<TextView>(R.id.text_pinyin_quanpin_desc).text = TEXT_QUANPIN_DESC
+        switchPinyinQuanpin.isChecked = prefs.showQuanpin
+        switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
+            prefs.showQuanpin = checked
+            Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+    }
+
+    /**
+     * 界面明暗切换（2026-10-09 由设置页迁来）：模式下拉 + 两档皮肤说明 + 定时档的两个切换时刻。
+     *
+     * 任一改动都写盘 + `recreate()`：重建页面让 `attachBaseContext` 读到新主题，整页颜色跟着换。
+     * 与设置页版唯一差别是时间选择器由本页自己持有（见 [timePicker]）。
+     */
+    private fun initThemeCard(prefs: Prefs) {
+        spinnerTheme = findViewById(R.id.spinner_theme)
+        btnThemeLightAt = findViewById(R.id.btn_theme_light_at)
+        btnThemeDarkAt = findViewById(R.id.btn_theme_dark_at)
+        rowThemeSchedule = findViewById(R.id.row_theme_schedule)
+        textThemeScheduleHint = findViewById(R.id.text_theme_schedule_hint)
+        textThemeDesc = findViewById(R.id.text_theme_desc)
+        findViewById<TextView>(R.id.label_theme_mode).text = TEXT_THEME_TITLE
+
+        spinnerTheme.adapter = ArrayAdapter.createFromResource(
+            this, R.array.theme_mode_entries, R.layout.item_spinner
+        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
+        spinnerTheme.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
+            ) {
+                if (!spinnerTheme.userInteracted) return
+                val values = resources.getStringArray(R.array.theme_mode_values)
+                val mode = values.getOrNull(position)?.toIntOrNull() ?: return
+                if (mode != prefs.themeMode) {
+                    prefs.themeMode = mode
+                    Diagnostics.i(TAG, "主题模式: $mode")
+                    JinnIme.notifyThemeChanged() // 键盘正显示时同进程立即换肤（不必等下次弹出）
+                    recreate()
+                }
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        btnThemeLightAt.setOnClickListener {
+            pickThemeTime(prefs.themeLightAtMinutes, "亮起") { minutes -> prefs.themeLightAtMinutes = minutes }
+        }
+        btnThemeDarkAt.setOnClickListener {
+            pickThemeTime(prefs.themeDarkAtMinutes, "暗起") { minutes -> prefs.themeDarkAtMinutes = minutes }
+        }
+
+        // 回填当前值（recreate 之后走的也是这里）
+        val modeValues = resources.getStringArray(R.array.theme_mode_values)
+        spinnerTheme.setSelection(modeValues.indexOf(prefs.themeMode.toString()).coerceAtLeast(0))
+        refreshThemeScheduleRow(prefs)
+        refreshThemeDesc(prefs)
+    }
+
+    /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
+    private fun refreshThemeScheduleRow(prefs: Prefs) {
+        if (!::rowThemeSchedule.isInitialized) return
+        val scheduled = prefs.themeMode == ThemeManager.MODE_SCHEDULED
+        val visibility = if (scheduled) View.VISIBLE else View.GONE
+        rowThemeSchedule.visibility = visibility
+        textThemeScheduleHint.visibility = visibility
+        btnThemeLightAt.text = getString(R.string.theme_light_at_tpl, formatMinutes(prefs.themeLightAtMinutes))
+        btnThemeDarkAt.text = getString(R.string.theme_dark_at_tpl, formatMinutes(prefs.themeDarkAtMinutes))
+    }
+
+    /** 刷新说明行：显示两档各自选定的皮肤（就在本页选，换肤后同步刷新） */
+    private fun refreshThemeDesc(prefs: Prefs) {
+        if (!::textThemeDesc.isInitialized) return
+        textThemeDesc.text = getString(
+            R.string.theme_card_desc,
+            KeyboardSkins.byId(prefs.skinLightId, SkinTone.LIGHT).label,
+            KeyboardSkins.byId(prefs.skinDarkId, SkinTone.DARK).label,
+        )
+    }
+
+    /** 「当天第几分钟」→ `HH:mm`（脏值先 floorMod 归一，负值不会显示成 -1:-30） */
+    private fun formatMinutes(minutes: Int): String {
+        val m = Math.floorMod(minutes, ThemeManager.MINUTES_PER_DAY)
+        return String.format(java.util.Locale.US, "%02d:%02d", m / 60, m % 60)
+    }
+
+    /**
+     * 弹时间选择器并即时落盘（回调参数为「当天第几分钟」0..1439）。
+     *
+     * 写入后 `recreate()`：定时档的两个时刻决定键盘何时换肤，本页与设置页同款 —— 改完立刻按新模式重排。
+     */
+    private fun pickThemeTime(initialMinutes: Int, label: String, apply: (Int) -> Unit) {
+        val m = Math.floorMod(initialMinutes, ThemeManager.MINUTES_PER_DAY)
+        timePicker?.dismiss()
+        val picker = android.app.TimePickerDialog(
+            this,
+            { _, hour, minute ->
+                apply(hour * 60 + minute)
+                Diagnostics.i(TAG, "定时切换: $label ${formatMinutes(hour * 60 + minute)}")
+                JinnIme.notifyThemeChanged()
+                recreate()
+            },
+            m / 60,
+            m % 60,
+            true,
+        )
+        timePicker = picker
+        picker.setOnDismissListener { if (timePicker === picker) timePicker = null }
+        picker.show()
     }
 
     /**
@@ -231,6 +406,9 @@ class KeyAppearanceActivity : Activity() {
     override fun onStop() {
         super.onStop()
         themeTicker.stop()
+        // 页面退出时撤掉可能还开着的时间选择器（否则窗口泄漏）
+        timePicker?.dismiss()
+        timePicker = null
     }
 
     /**
@@ -327,6 +505,8 @@ class KeyAppearanceActivity : Activity() {
 
     /** 点选一套皮肤：按它自己的档位入槽（亮色皮肤进亮色档、暗色皮肤进暗色档），并刷新两个选中标记 */
     private fun pickSkin(prefs: Prefs, skin: KeyboardSkin, cells: List<SkinCell>) {
+        // 两档皮肤决定「明暗切换时键盘换哪一套」，本页的说明行显示的就是它 —— 选完立刻刷新
+        if (::textThemeDesc.isInitialized) refreshThemeDesc(prefs)
         val isLightSkin = skin.tone == SkinTone.LIGHT
         if (isLightSkin) prefs.skinLightId = skin.id else prefs.skinDarkId = skin.id
         Diagnostics.i(TAG, "键盘皮肤: ${if (isLightSkin) "亮色" else "暗色"}档 = ${skin.id}（${skin.label}）")
@@ -401,6 +581,14 @@ class KeyAppearanceActivity : Activity() {
      */
     const val TEXT_LETTER_UPPER_TITLE = "26 键显示大写字母"
     const val TEXT_LETTER_UPPER_DESC = "中文输入时键面显示 A~Z（上屏内容不变）"
+
+    /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
+    const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
+    const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
+    const val TEXT_KEY_HINT_DESC = "关闭后键面只显示字母"
+    const val TEXT_QUANPIN_TITLE = "双拼候选全音"
+    const val TEXT_QUANPIN_DESC = "关闭后显示按下的字母"
+    const val TEXT_THEME_TITLE = "界面明暗切换"
 
         /** 皮肤选择器每行个数（每段 16 套排成两行八个，两段共四行） */
         const val SKINS_PER_ROW = 8

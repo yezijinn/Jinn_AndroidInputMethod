@@ -2037,13 +2037,14 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `设置页 onPause 必须在导入期间跳过回写（第一百三十七回 · L-405）`() {
-        // 导入线程写 Prefs ↔ 设置页 onPause 的**无条件**回写是两条独立执行流：交错时界面旧值
-        // 覆盖刚导入的值，用户看到「导入成功」却发现配置没变（静默退回）。四个页面都有这个面。
+        // 导入线程写 Prefs ↔ 页面 onPause 的**无条件**回写是两条独立执行流：交错时界面旧值
+        // 覆盖刚导入的值，用户看到「导入成功」却发现配置没变（静默退回）。
+        // 2026-10-09：设置页那处回写（剪贴板上限输入框）连同控件一并移除 —— 功能已在「剪贴板自定义」页，
+        // 于是这里对它改判**否定式**（那条路径不许再出现），另外三页的回写仍在，闸门照旧。
         for (name in listOf(
             "TranslationSettingsActivity.kt",
             "OpenAiSettingsActivity.kt",
             "TranslationSourceActivity.kt",
-            "SettingsActivity.kt",
         )) {
             val body = blockAfter(codeOf(name), "override fun onPause()")
             assertTrue(
@@ -2051,6 +2052,11 @@ class RecentFixesRegressionTest {
                 "ConfigBackupManager.importing" in body,
             )
         }
+        val settings = codeOf("SettingsActivity.kt")
+        assertTrue(
+            "设置页不得再有「界面值回写 Prefs」的 onPause（剪贴板上限已迁出本页，真有回写就要补导入闸门）",
+            "override fun onPause()" !in settings,
+        )
     }
 
     @Test
@@ -3487,22 +3493,31 @@ class RecentFixesRegressionTest {
         )
 
         val settings = codeOf("SettingsActivity.kt")
-        for (spinner in listOf(
-            "spinnerLanguage", "spinnerDefaultMode", "spinnerShuangpin", "spinnerCandidateRows", "spinnerTheme",
-        )) {
+        for (spinner in listOf("spinnerLanguage", "spinnerDefaultMode", "spinnerShuangpin")) {
             assertTrue("$spinner 的闸门必须走用户操作探针", "$spinner.userInteracted" in settings)
+        }
+        // 2026-10-09：候选词行数与界面明暗两个下拉迁到「键盘外观」页 —— 探针闸门必须跟着控件走，
+        // 留在设置页等于外观页那两个下拉永远不落盘（`userInteracted` 没人读）。
+        val appearance = codeOf("KeyAppearanceActivity.kt")
+        for (spinner in listOf("spinnerCandidateRows", "spinnerTheme")) {
+            assertTrue("$spinner 的闸门必须走用户操作探针（随控件迁到外观页）", "$spinner.userInteracted" in appearance)
         }
         assertFalse("不得残留只认触摸的字段（SpinnerTouched）", "SpinnerTouched" in settings)
         assertFalse("不得再给下拉挂 OnTouchListener 当闸门", "setOnTouchListener" in settings)
 
-        val layout = listOf(
-            File("src/main/res/layout/activity_settings.xml"),
-            File("app/src/main/res/layout/activity_settings.xml"),
-        ).firstOrNull { it.isFile } ?: error("找不到 activity_settings.xml")
+        fun layoutOf(name: String): String = listOf(
+            File("src/main/res/layout/$name"),
+            File("app/src/main/res/layout/$name"),
+        ).firstOrNull { it.isFile }?.readText() ?: error("找不到 $name")
         assertEquals(
-            "设置页 5 个下拉必须都换成 UserAwareSpinner（退回普通 Spinner 时闸门静默失效：闸门永远为 false）",
-            5,
-            Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layout.readText()).count(),
+            "设置页剩余 3 个下拉必须都是 UserAwareSpinner（退回普通 Spinner 时闸门静默失效：闸门永远为 false）",
+            3,
+            Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_settings.xml")).count(),
+        )
+        assertEquals(
+            "外观页迁入的 2 个下拉同样必须是 UserAwareSpinner",
+            2,
+            Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_key_appearance.xml")).count(),
         )
 
         val openAi = codeOf("OpenAiSettingsActivity.kt")
@@ -3646,7 +3661,7 @@ class RecentFixesRegressionTest {
      * 界面表现几乎不变，靠人眼回归看不出来。字面量对拍比行为测试便宜，也更能抗重构。
      */
     @Test
-    fun 剪贴板参数入口的四条收口不得回退() {
+    fun 剪贴板参数入口的收口不得回退() {
         val page = codeOf("ClipboardCustomizeActivity.kt")
         // L-992：可用性只看解锁态。把草稿里的总开关算进来，「关掉历史」这条改动会连保存一起禁用
         assertTrue("参数区置灰必须只随解锁态", "val editable = unlocked" in page)
@@ -3661,10 +3676,12 @@ class RecentFixesRegressionTest {
             "val shown = min + ((value.coerceIn(min, max) - min) / step) * step" in page,
         )
 
+        // 2026-10-09：设置页那份「历史数量上限」输入框连同回写路径一并移除（功能已在「剪贴板自定义」页，
+        // 属重复入口）。L-991 的隐患（进页面拿旧值、离开时覆盖别处刚保存的值）随控件一起消失，
+        // 这里改判否定式：不得再把「第二处可写入口」加回设置页。
         val settings = codeOf("SettingsActivity.kt")
-        // L-991：进页面按盘上值刷新；值未变不写盘（否则本页旧值会覆盖别处刚保存的值）
-        assertTrue("onResume 必须刷新上限输入框", "refreshClipboardMax()" in settings)
-        assertTrue("值未变必须早退，不写盘也不裁剪", "v != null && v != clipboardPrefs.maxItems" in settings)
+        assertFalse("设置页不得再持有剪贴板上限（唯一入口是「剪贴板自定义」页）", "clipboardPrefs" in settings)
+        assertFalse("设置页不得再有上限回写路径", "saveMaxItems" in settings)
 
         val history = codeOf("ClipboardHistoryActivity.kt")
         // L-995：只有条数触顶才够资格报「最多 N 条」，容量预算先触发时要说别的

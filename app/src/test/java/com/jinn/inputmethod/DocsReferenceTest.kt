@@ -607,9 +607,11 @@ class DocsReferenceTest {
             expected in line,
         )
 
-        // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，
-        //    文案在代码里下发而非 strings.xml）
-        assertTrue("SettingsActivity 里找不到「键盘内显韵母」", "键盘内显韵母" in settings)
+        // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，文案在代码里下发
+        //    而非 strings.xml；2026-10-09 该开关迁到「键盘外观」页 —— 锚点跟着控件走）
+        val appearance = readDoc("app/src/main/java/com/jinn/inputmethod/KeyAppearanceActivity.kt")
+            ?: error("找不到 KeyAppearanceActivity.kt")
+        assertTrue("KeyAppearanceActivity 里找不到「键盘内显韵母」", "键盘内显韵母" in appearance)
         assertFalse("功能总览仍在用旧控件名「键盘内嵌韵母」", "键盘内嵌韵母" in doc)
 
         // ③ 功能面板的清单与序号按**源码**推导（此前拿文档自己的清单对文档自己的序号 ——

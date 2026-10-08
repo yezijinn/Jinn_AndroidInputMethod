@@ -310,6 +310,119 @@
                 android:textColor="@color/text_primary"
                 android:textSize="12sp" />
 
+            <!-- 输入与显示（2026-10-09 由设置页迁来：外观相关控件集中在本页，设置页不再重复） -->
+            <TextView
+                android:id="@+id/label_candidate_rows"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minWidth="32dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <com.jinn.inputmethod.UserAwareSpinner
+                android:id="@+id/spinner_candidate_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:spinnerMode="dropdown" />
+
+            <Switch
+                android:id="@+id/switch_key_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minHeight="40dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/text_key_hint_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <Switch
+                android:id="@+id/switch_pinyin_quanpin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:minHeight="40dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/text_pinyin_quanpin_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/label_theme_mode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minWidth="32dp"
+                android:text="@string/theme_card_title"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <com.jinn.inputmethod.UserAwareSpinner
+                android:id="@+id/spinner_theme"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:spinnerMode="dropdown" />
+
+            <TextView
+                android:id="@+id/text_theme_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/row_theme_schedule"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_theme_light_at"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_theme_dark_at"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_theme_schedule_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:text="@string/theme_schedule_hint"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:visibility="gone" />
             <!-- 皮肤：两段（亮色 / 暗色）各一个标题 + 一个竖向容器。
                  标题（带当前档位状态）与选项文案都在代码里给（选项名取自 KeyboardSkin.label），
                  避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。
