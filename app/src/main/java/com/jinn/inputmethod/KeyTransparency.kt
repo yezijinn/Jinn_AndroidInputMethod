@@ -65,9 +65,22 @@ object KeyTransparency {
     /** 数值文案（与 [KeyAppearance.formatDp] 同为固定格式，整数百分比） */
     fun formatPercent(percent: Int): String = "${clampPercent(percent)}%"
 
-    /** 给颜色套上 0..1 的不透明度：只改 alpha 通道，RGB 原样保留 */
+    /** 给颜色套上 0..1 的不透明度：只改 alpha 通道，RGB 原样保留（**替换**语义） */
     fun withAlpha(color: Int, alpha: Float): Int {
         val a = (alpha.coerceIn(0f, 1f) * 255f).roundToInt().coerceIn(0, 255)
         return (color and 0x00FFFFFF) or (a shl 24)
+    }
+
+    /**
+     * 按**原 alpha 比例**缩放颜色：与 [withAlpha] 的「替换」语义并列的另一种合成。
+     *
+     * 填充色只用 [withAlpha]：它们按约定是不透明的（见 `KeyboardSkins.issues`）。
+     * 而描边色是**刻意自带 alpha** 的半透明高光（磨砂 `0x33FFFFFF` = 20%、石墨 12%、极光 40%），
+     * 换成替换语义会在默认档（面 alpha = 1）把它抹成全不透明 —— 磨砂 / 石墨变成一圈实白硬边，
+     * 极光 / 霓虹 / 岩浆变成实色饱和描边，与「半透明高光描边」的设计相反（BUG.md 第 15 批 M1）。
+     */
+    fun scaleAlpha(color: Int, factor: Float): Int {
+        val base = ((color ushr 24) and 0xFF) / 255f
+        return withAlpha(color, base * factor)
     }
 }

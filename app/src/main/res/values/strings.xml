@@ -239,5 +239,6 @@
     <string name="favorite_dialog_hint">输入或粘贴符号（1~8 个字符）</string>
     <string name="favorite_exists">该符号已在收藏中</string>
     <string name="favorite_invalid">请输入 1~8 个字符</string>
+    <string name="favorite_full">收藏已达容量上限，未能保存；请先移除一些符号</string>
     <string name="favorite_page_fmt">第 %1$d 页（%2$d 个）</string>
 </resources>

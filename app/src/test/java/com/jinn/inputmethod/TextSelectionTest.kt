@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 文字拖选核心逻辑单测（纯 JVM，不依赖 Android）。
@@ -410,5 +411,37 @@ class TextSelectionTest {
                 hasLoneSurrogate(sel),
             )
         }
+    }
+
+    // ── 搜索框退格（SearchPanelView.backspaceSearch）────────────────
+
+    /**
+     * 搜索框退格必须按**码点**删：符号层会把 emoji 追加进搜索框（特殊组点一下即入框），
+     * 按 UTF-16 码元删会留下孤立代理项 —— 框里渲染成豆腐块，此后每次退格只删一个码元，
+     * 搜索词永远匹配不到任何条目、也删不干净（BUG.md 第 15 批 M4）。
+     */
+    @Test
+    fun 搜索框退格按码点_不留孤立代理() {
+        val emoji = "😀" // U+1F600，UTF-16 长度 2
+        val cur = StringBuilder("a$emoji")
+        cur.delete(TextSelection.stepByCodePoint(cur.toString(), cur.length, -1), cur.length)
+        assertEquals("必须整枚 emoji 一起删", "a", cur.toString())
+        assertFalse("不得留下孤立代理项", hasLoneSurrogate(cur.toString()))
+
+        // 对照：旧的按码元删必留高代理（这就是原缺陷形态）
+        val bad = StringBuilder("a$emoji").apply { delete(length - 1, length) }
+        assertTrue("按码元删必留孤立代理项", hasLoneSurrogate(bad.toString()))
+    }
+
+    @Test
+    fun 搜索框退格用的是码点安全删法() {
+        // backspaceSearch 跑在 Android 的 EditText 上，JVM 够不到 ⇒ 源码对拍（同 KeyboardSkinTest 的做法）
+        val f = listOf(
+            File("src/main/java/com/jinn/inputmethod/SearchPanelView.kt"),
+            File("app/src/main/java/com/jinn/inputmethod/SearchPanelView.kt"),
+        ).firstOrNull { it.isFile } ?: error("找不到 SearchPanelView.kt")
+        val body = f.readText().substringAfter("fun backspaceSearch()").substringBefore("\n    }")
+        assertTrue("必须复用 TextSelection.stepByCodePoint: $body", body.contains("stepByCodePoint("))
+        assertFalse("不得按 UTF-16 码元删（length - 1）", body.contains("length - 1"))
     }
 }

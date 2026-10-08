@@ -96,4 +96,18 @@ class KeyTransparencyTest {
         assertEquals("55%", KeyTransparency.formatPercent(55))
         assertEquals("100%", KeyTransparency.formatPercent(999))
     }
+
+    @Test
+    fun 描边缩放_按原alpha比例而非替换() {
+        // 描边色**刻意自带 alpha**（磨砂 0x33FFFFFF = 20%、石墨 12%、极光 40%）：滑杆必须按比例
+        // 缩放它。若有人把它改回「替换」语义（看起来像是统一化），默认档就会把半透明高光描边抹成
+        // 全不透明实色，24 套配色皮肤全部受影响（BUG.md 第 15 批 M1）。
+        assertEquals("默认档原样返回", 0x33FFFFFF, KeyTransparency.scaleAlpha(0x33FFFFFF, 1f))
+        assertEquals("比例减半：51 → 26", 0x1AFFFFFF, KeyTransparency.scaleAlpha(0x33FFFFFF, 0.5f))
+        assertEquals("factor = 0 → 全透", 0x00FFFFFF, KeyTransparency.scaleAlpha(0x33FFFFFF, 0f))
+        assertEquals("已成不透明时与替换等价", 0xFF123456.toInt(), KeyTransparency.scaleAlpha(0xFF123456.toInt(), 1f))
+        assertEquals("factor 上界钳位到 1", 0xFFFFFFFF.toInt(), KeyTransparency.scaleAlpha(0x80FFFFFF.toInt(), 2f))
+        // 对照：替换语义会把 20% 高光直接变成全不透明（原缺陷形态）
+        assertEquals(0xFFFFFFFF.toInt(), KeyTransparency.withAlpha(0x33FFFFFF, 1f))
+    }
 }

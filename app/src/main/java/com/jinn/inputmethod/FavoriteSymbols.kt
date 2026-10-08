@@ -12,12 +12,13 @@ import org.json.JSONArray
  * - 每页最多 [PER_PAGE]（26）个；追加时末页满 26 自动开新页；
  * - 追加全局去重（已存在返回 false，由调用方提示「已存在」）；
  * - 删除后后续符号前移补位（重排即天然满足「非末页恒 26 键」的全表规范），删空的页自动收起；
- * - 单项限长 [MAX_CHARS]（键面长文本会自动缩字号，但过长的可读性差）。
+ * - 单项限长 [MAX_CHARS]（键面长文本会自动缩字号，但过长的可读性差）；
+ * - 空串与超长项不算符号：[parse] 里滤掉，与写入侧 [append] 的两道闸同口径。
  *
  * 序列化容错：`null`（从未编辑过）→ 出厂预置 [DEFAULT_ITEMS]；损坏 JSON → 回退预置；
  * `"[]"`（用户删光）→ 空组，删光是用户的明确意愿，不回退预置。
  *
- * [parse] 的输出恒为规范结构（每页 ≤ [PER_PAGE]、非末页满页、无重复、无空页）：
+ * [parse] 的输出恒为规范结构（每页 ≤ [PER_PAGE]、非末页满页、无重复、无空页、无空白/超长项）：
  * 数据可能来自旧版本或被外部改写，不归一就会出现「编辑页看得到、键盘上看不到」
  * （[KeyboardLayouts.favoriteGroup] 只铺 26 个键位，超出的部分静默丢弃）。
  * 页边界属实现细节：归一可能合并非规范数据的页（如 `[[3 项],[1 项]]` → `[[4 项]]`），
@@ -48,17 +49,32 @@ object FavoriteSymbols {
         if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
-            // 一步完成「拉平 + 全局去重（保序）」；空页与超页在重新分页时自然消解
+            // 一步完成「拉平 + 去空白 + 全局去重（保序）」；空页与超页在重新分页时自然消解。
+            // 空白与超长项必须在这里滤掉：写入侧 [append] 有两道闸，而数据可能来自旧版本或被外部
+            // 改写（含备份导入）—— 不过滤就会出现「键面空白、按下无声」的空槽键
+            // （BUG.md 第 15 批 L7）。
             val flat = LinkedHashSet<String>()
             for (p in 0 until arr.length()) {
                 val page = arr.getJSONArray(p)
-                for (i in 0 until page.length()) flat.add(page.getString(i))
+                for (i in 0 until page.length()) {
+                    val s = page.getString(i).trim()
+                    if (s.isNotEmpty() && s.length <= MAX_CHARS) flat.add(s)
+                }
             }
             flat.toList().chunked(PER_PAGE)
         } catch (_: Exception) {
             listOf(DEFAULT_ITEMS)
         }
     }
+
+    /**
+     * 序列化后是否超出写入上限 [Prefs.MAX_FAVORITE_SYMBOLS_CHARS]。
+     *
+     * 写入侧（`Prefs.favoriteSymbols` 的 setter）超限会**静默丢弃**并保留旧值，因此调用方必须先
+     * 判一次并给用户可见提示，否则「刚添加的符号凭空消失」且零提示（BUG.md 第 15 批 M5）。
+     */
+    fun overCapacity(pages: List<List<String>>): Boolean =
+        serialize(pages).length > Prefs.MAX_FAVORITE_SYMBOLS_CHARS
 
     /** 页结构 → 持久化串（空组序列化为 `[]`） */
     fun serialize(pages: List<List<String>>): String {

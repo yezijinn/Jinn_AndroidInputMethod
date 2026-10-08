@@ -104,6 +104,12 @@ class FavoriteSymbolsActivity : Activity() {
         FavoriteSymbols.parse(Prefs(this).favoriteSymbols)
 
     private fun save(pages: List<List<String>>) {
+        // 超上限时 [Prefs.favoriteSymbols] 的 setter 会**静默丢弃**（保留旧值）：必须在这里自己
+        // 判一次并明说，否则「刚添加的符号凭空消失」且零提示（BUG.md 第 15 批 M5）。
+        if (FavoriteSymbols.overCapacity(pages)) {
+            Toast.makeText(this, R.string.favorite_full, Toast.LENGTH_LONG).show()
+            return
+        }
         Prefs(this).favoriteSymbols = FavoriteSymbols.serialize(pages)
         dirty = true
     }

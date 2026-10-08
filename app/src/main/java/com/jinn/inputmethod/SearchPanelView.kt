@@ -308,7 +308,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun backspaceSearch() {
         val cur = editSearch.text ?: return
         if (cur.isNotEmpty()) {
-            cur.delete(cur.length - 1, cur.length)
+            // 按**码点**删（复用 L-120 的 [TextSelection.stepByCodePoint]）：符号层会把 emoji 追加进
+            // 搜索框，按 UTF-16 码元删会留下孤立代理项 —— 搜索框渲染成豆腐块，此后每次退格只删一个码元，
+            // 搜索词永远匹配不到任何条目也删不干净（BUG.md 第 15 批 M4）。
+            cur.delete(TextSelection.stepByCodePoint(cur.toString(), cur.length, -1), cur.length)
         }
     }
 

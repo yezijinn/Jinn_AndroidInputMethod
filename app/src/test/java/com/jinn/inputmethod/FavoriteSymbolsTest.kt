@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -134,5 +135,32 @@ class FavoriteSymbolsTest {
             raw.length <= Prefs.MAX_FAVORITE_SYMBOLS_CHARS,
         )
         assertEquals(pages.flatten(), FavoriteSymbols.parse(raw).flatten())
+    }
+
+    @Test
+    fun 归一_空白与超长项被过滤_与写入侧同口径() {
+        // 数据可能来自被外部改写的备份或旧版本：写入侧 append 有两道闸（空、> MAX_CHARS），
+        // parse 不过滤就会出现「键面空白、按下无声」的空槽键（BUG.md 第 15 批 L7）。
+        assertEquals(
+            listOf(listOf("a", "b")),
+            FavoriteSymbols.parse("""[["a","","   ","abcdefghijkl","b"]]"""),
+        )
+        // 边界：恰好等于单项上限的保留；前后空白被归一
+        val max = "x".repeat(FavoriteSymbols.MAX_CHARS)
+        assertEquals(listOf(listOf(max, "c")), FavoriteSymbols.parse("""[["$max"," c "]]"""))
+        // 全是垃圾 ⇒ 空组（与「用户删光」同语义，不回退预置）
+        assertEquals(emptyList<List<String>>(), FavoriteSymbols.parse("""[["","  "]]"""))
+    }
+
+    @Test
+    fun 容量判据_与写入上限同源() {
+        assertFalse("出厂预置远未达上限", FavoriteSymbols.overCapacity(FavoriteSymbols.parse(null)))
+        // 每项 8 字符 × 4000 项：序列化约 44KB，必超 32K 上限（上限本身单独断言，防测例自己失效）
+        val many = List(4000) { "abcdefgh" }.chunked(FavoriteSymbols.PER_PAGE)
+        assertTrue(
+            "序列化长度应超上限（否则测例无效）",
+            FavoriteSymbols.serialize(many).length > Prefs.MAX_FAVORITE_SYMBOLS_CHARS,
+        )
+        assertTrue("必须判为超容量", FavoriteSymbols.overCapacity(many))
     }
 }

@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -451,5 +452,60 @@ class KeyboardSkinTest {
         assertEquals("脏值 → 双槽令牌基线", lightBase to darkBase, KeyboardSkins.migrateLegacySkin("no_such_skin"))
         assertEquals("旧暗色皮肤 → 暗色槽", lightBase to "amethyst", KeyboardSkins.migrateLegacySkin("amethyst"))
         assertEquals("旧亮色皮肤 → 亮色槽", "snow" to darkBase, KeyboardSkins.migrateLegacySkin("snow"))
+    }
+
+    /** PinyinKeyboardView 源码（源码对拍的公共入口：Android 侧的构建路径 JVM 单测够不到）。 */
+    private fun pinyinKeyboardViewSource(): String = listOf(
+        File("src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
+        File("app/src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
+    ).firstOrNull { it.isFile }?.readText() ?: error("找不到 PinyinKeyboardView.kt")
+
+    /**
+     * 描边色**自带 alpha** 是有意设计（磨砂 `0x33FFFFFF` = 20% 高光、石墨 12%、极光 40%），
+     * 面透明度必须**按比例缩放**它：换成替换语义会在默认档（面 alpha = 1）把半透明高光抹成
+     * 实色硬边（磨砂 / 石墨 → 实白硬边，极光 / 霓虹 / 岩浆 → 实色饱和描边），24 套配色皮肤全中。
+     */
+    @Test
+    fun 描边按原alpha比例缩放_不得被面透明度抹成实色() {
+        val fallback = 0xFFF2F4F8.toInt()
+        for (s in KeyboardSkins.ALL) {
+            val stroke = s.strokeColor ?: continue
+            val base = (stroke ushr 24) and 0xFF
+            fun strokeAlpha(face: Float): Int = (KeyboardSkins.visualFor(
+                s, 0, face, 1f, fallback, fallback,
+                0xFF101010.toInt(), 0xFF666666.toInt(), 0xFFFF0000.toInt(),
+            ).strokeColor ushr 24) and 0xFF
+
+            assertEquals("${s.id}: 默认档（面 alpha = 1）描边必须保持原 alpha", base, strokeAlpha(1f))
+            if (base < 0xFF) {
+                assertTrue("${s.id}: 半透明描边不得被抹成不透明（原 alpha = $base）", strokeAlpha(1f) < 0xFF)
+            }
+            // 面透明度 50% ⇒ 描边 alpha 按比例减半（±1 为舍入）
+            val half = strokeAlpha(0.5f)
+            val expect = base / 2
+            assertTrue("${s.id}: 描边 alpha 应按比例缩放（base=$base 实测 $half）", (half - expect) in -1..1)
+        }
+    }
+
+    @Test
+    fun 功能键描边同样按比例缩放() {
+        // 次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）的描边走 PinyinKeyboardView 的构建路径，
+        // JVM 单测够不到 ⇒ 源码对拍钉住（与「键盘选皮肤按视图色板快照」同款做法）。
+        val seg = pinyinKeyboardViewSource().substringAfter("val stroke = ").substringBefore("\n")
+        assertTrue("功能键描边必须按比例缩放（否则磨砂 / 石墨皮肤被抹成实色硬边）: $seg", seg.contains("scaleAlpha("))
+        assertFalse("功能键描边不得退回替换语义: $seg", seg.contains("withAlpha("))
+    }
+
+    @Test
+    fun 换肤必须无条件刷候选栏_方向面板展开也不例外() {
+        // 方向面板是运行时 addView 进字母区（viewLetters）的子视图，候选栏重建全链路都不碰
+        // viewLetters ⇒ 不存在「重建会把面板收回默认布局」的机制。恢复成「面板展开时跳过候选栏
+        // 重建」会让换肤留下半屏旧配色（BUG.md 第 15 批 M3）。
+        val body = pinyinKeyboardViewSource()
+        val fn = body.substringAfter("fun refreshAppearance()").substringBefore("\n    private fun ")
+        assertTrue("refreshAppearance 必须重建候选栏: $fn", fn.contains("refreshCandidateBar()"))
+        assertFalse("不得按方向面板展开态跳过候选栏重建", fn.contains("!directionPanelVisible"))
+        assertTrue("面板展开时仍要就地重刷面板键面", fn.contains("applySkinToDirectionPanel"))
+        assertTrue("源码对拍必须读到真实函数体", body.contains("fun refreshAppearance()"))
     }
 }

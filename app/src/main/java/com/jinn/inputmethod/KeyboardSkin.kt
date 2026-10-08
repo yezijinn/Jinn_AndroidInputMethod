@@ -32,7 +32,8 @@ enum class SkinTone {
  *  - **与半透明 / 圆角 / 间隙正交**：皮肤只提供基色与质感参数，面 alpha 仍由
  *    [KeyTransparency] 统一注入（[visualFor] 负责把 alpha 合成进最终色）；
  *  - 配色皮肤自带色值，不随亮色 / 暗色主题切换（与键盘外观页的固定极光同思路）；
- *  - 色值一律 8 位 ARGB，且配色皮肤要求 alpha = 255（不透明度交给透明度滑杆统一控制）。
+ *  - 色值一律 8 位 ARGB：**填充色**要求 alpha = 255（不透明度交给透明度滑杆统一控制），
+ *    描边色**允许自带 alpha**（半透明高光是有意设计，滑杆按比例缩放它，见 [KeyTransparency.scaleAlpha]）。
  */
 data class KeyboardSkin(
     val id: String,
@@ -1045,8 +1046,10 @@ object KeyboardSkins {
     /**
      * 解析一个键的运行时视觉参数。
      *
-     * @param faceAlpha 当前面不透明度（来自 [KeyTransparency.surfaceAlpha]，只作用于「面」，
-     *                  字色与提示色原样保留 —— 与半透明键盘的既有做法一致）
+     * @param faceAlpha 当前面不透明度（来自 [KeyTransparency.surfaceAlpha]）：作用于「面」（填充 /
+     *                  底边厚度）与**描边** —— 描边按原 alpha **比例缩放**（[KeyTransparency.scaleAlpha]）
+     *                  而非替换，否则默认档会把半透明高光描边抹成实色硬边；
+     *                  字色与提示色原样保留 —— 与半透明键盘的既有做法一致
      * @param density   屏幕密度（dp → px）
      */
     fun visualFor(
@@ -1076,7 +1079,7 @@ object KeyboardSkins {
             pressed = withAlpha(pressed, faceAlpha),
             gradientAngle = skin.gradientAngle,
             strokeWidthPx = skin.strokeWidthDp * density,
-            strokeColor = skin.strokeColor?.let { withAlpha(it, faceAlpha) } ?: 0,
+            strokeColor = skin.strokeColor?.let { KeyTransparency.scaleAlpha(it, faceAlpha) } ?: 0,
             thicknessPx = skin.bottomThicknessDp * density,
             thicknessColor = withAlpha(thicknessColor(skin, first), faceAlpha),
             glyph = glyph,
@@ -1089,7 +1092,8 @@ object KeyboardSkins {
      * 定义域自检（单测守卫，不在运行期调用）。
      *
      * 返回违规描述列表，空列表表示合法。判据：
-     *  - id / label 非空，且非默认皮肤必须提供 alpha = 255 的色值（不透明度由滑杆统一控制）；
+     *  - id / label 非空，且非默认皮肤的**填充色**必须 alpha = 255（不透明度由滑杆统一控制；
+ *    描边色允许自带 alpha，由 [visualFor] 按比例缩放）；
      *  - 渐变角度在 [0, 360)，描边与厚度在 [0, 4]dp；
      *  - 彩虹起始色相在 [0, 360) 且步长 > 0；
      *  - 首色与次色不同（相同则「渐变」实际是纯色，属配置错误）。
