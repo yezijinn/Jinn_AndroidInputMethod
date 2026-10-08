@@ -454,11 +454,8 @@ class KeyboardSkinTest {
         assertEquals("旧亮色皮肤 → 亮色槽", "snow" to darkBase, KeyboardSkins.migrateLegacySkin("snow"))
     }
 
-    /** PinyinKeyboardView 源码（源码对拍的公共入口：Android 侧的构建路径 JVM 单测够不到）。 */
-    private fun pinyinKeyboardViewSource(): String = listOf(
-        File("src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
-        File("app/src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
-    ).firstOrNull { it.isFile }?.readText() ?: error("找不到 PinyinKeyboardView.kt")
+    /** PinyinKeyboardView 的**代码**（剥注释）：Android 侧的构建路径 JVM 单测够不到，只能源码对拍。 */
+    private fun pinyinKeyboardViewSource(): String = TestSources.codeSource("PinyinKeyboardView.kt")
 
     /**
      * 描边色**自带 alpha** 是有意设计（磨砂 `0x33FFFFFF` = 20% 高光、石墨 12%、极光 40%），

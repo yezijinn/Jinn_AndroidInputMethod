@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * 文字拖选核心逻辑单测（纯 JVM，不依赖 Android）。
@@ -435,12 +434,9 @@ class TextSelectionTest {
 
     @Test
     fun 搜索框退格用的是码点安全删法() {
-        // backspaceSearch 跑在 Android 的 EditText 上，JVM 够不到 ⇒ 源码对拍（同 KeyboardSkinTest 的做法）
-        val f = listOf(
-            File("src/main/java/com/jinn/inputmethod/SearchPanelView.kt"),
-            File("app/src/main/java/com/jinn/inputmethod/SearchPanelView.kt"),
-        ).firstOrNull { it.isFile } ?: error("找不到 SearchPanelView.kt")
-        val body = f.readText().substringAfter("fun backspaceSearch()").substringBefore("\n    }")
+        // backspaceSearch 跑在 Android 的 EditText 上，JVM 够不到 ⇒ 源码对拍（剥注释走共用 TestSources）
+        val body = TestSources.codeSource("SearchPanelView.kt")
+            .substringAfter("fun backspaceSearch()").substringBefore("\n    }")
         assertTrue("必须复用 TextSelection.stepByCodePoint: $body", body.contains("stepByCodePoint("))
         assertFalse("不得按 UTF-16 码元删（length - 1）", body.contains("length - 1"))
     }
