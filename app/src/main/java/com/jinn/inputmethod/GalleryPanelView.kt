@@ -459,12 +459,14 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         val from = (pageIndex * PAGE_SIZE).coerceAtMost(items.size)
         val page = items.subList(from, minOf(from + PAGE_SIZE, items.size))
         val gen = generation
+        // 读屏序号按**整份列表**编（跨页连续），相邻两格不再同名（BUG.md L-1164）
+        var ordinal = from
         page.chunked(columns).forEach { rowUris ->
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
-            rowUris.forEach { uri -> row.addView(cell(uri), LayoutParams(0, dp(cellHeightDp), 1f)) }
+            rowUris.forEach { uri -> row.addView(cell(uri, ++ordinal), LayoutParams(0, dp(cellHeightDp), 1f)) }
             // 末行不足时补占位，避免最后一格被拉宽
             repeat(columns - rowUris.size) {
                 row.addView(View(context), LayoutParams(0, dp(cellHeightDp), 1f))
@@ -474,12 +476,13 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         scroll.post { if (gen == generation) loadThumbs(gen) }
     }
 
-    private fun cell(uri: Uri): View = ImageView(context).apply {
+    private fun cell(uri: Uri, ordinal: Int): View = ImageView(context).apply {
         scaleType = ImageView.ScaleType.CENTER_CROP
         setPadding(dp(CELL_PADDING_DP), dp(CELL_PADDING_DP), dp(CELL_PADDING_DP), dp(CELL_PADDING_DP))
         tag = uri
         thumbCache.get(uri.toString())?.let { setImageBitmap(it) }
-        contentDescription = TEXT_CELL
+        // 带序号的描述：24 格同名时读屏无法定位（BUG.md L-1164）
+        contentDescription = TEXT_CELL_FMT.format(ordinal)
         setOnClickListener {
             // 只记 provider 维度：SAF 的路径段就是照片文件名（L-1036）
             Diagnostics.i(TAG, "选中图片: provider=${uri.authority}")
@@ -678,7 +681,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_PLUS = "+"
         const val TEXT_ROW_COUNT = "每行 %d"
         const val TEXT_ROW_HEIGHT = "高 %d"
-        const val TEXT_CELL = "插入这张图片"
+        /** 格子读屏名（带序号）：24 格同名时读屏无法定位（BUG.md L-1164） */
+        const val TEXT_CELL_FMT = "第 %d 张，插入这张图片"
         const val TEXT_GO_SETTINGS = "去设置里绑定"
         const val TEXT_LOADING = "正在读取目录…"
         const val TEXT_EMPTY = "这个目录里没有图片"

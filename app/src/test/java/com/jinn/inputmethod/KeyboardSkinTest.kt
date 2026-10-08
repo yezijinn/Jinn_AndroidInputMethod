@@ -484,6 +484,53 @@ class KeyboardSkinTest {
         }
     }
 
+    /**
+     * 厚度色也要按原 alpha 比例缩放，尤其是**退化路径**（未给厚度色时取描边色）—— 那条路径拿到的
+     * 正是刻意自带 alpha 的半透明高光色（BUG.md L-1162）。
+     */
+    @Test
+    fun 厚度色同样按比例缩放_含退化到描边色的路径() {
+        val synthetic = KeyboardSkin(
+            id = "t", label = "t", tone = SkinTone.DARK,
+            strokeColor = 0x33FFFFFF, strokeWidthDp = 1f,
+            bottomThicknessDp = 2f,
+        )
+        fun thicknessAlpha(face: Float): Int = (
+            KeyboardSkins.visualFor(
+                synthetic, 0, face, 1f,
+                0xFF101010.toInt(), 0xFF202020.toInt(), 0xFFE8ECF5.toInt(),
+                0x8CE8ECF5.toInt(), 0xFFFF8A80.toInt(),
+            ).thicknessColor ushr 24
+            ) and 0xFF
+
+        assertEquals("默认档应保持描边色的原 alpha（0x33 = 51）", 51, thicknessAlpha(1f))
+        assertEquals("面透明度 50% ⇒ 按比例减半（±1 为舍入）", 26, thicknessAlpha(0.5f))
+        assertTrue("不得被抹成全不透明", thicknessAlpha(1f) < 0xFF)
+    }
+
+    /** 定义域自检的对称项：有厚度宽度就必须自带厚度色（BUG.md L-1162）。 */
+    @Test
+    fun 有厚度宽度却没给厚度色_定义域自检必须报出() {
+        val missing = KeyboardSkin(
+            id = "t", label = "t", tone = SkinTone.DARK,
+            strokeColor = 0x33FFFFFF, strokeWidthDp = 1f,
+            bottomThicknessDp = 2f,
+        )
+        assertTrue(
+            "必须报「有厚度宽度但未给 bottomThicknessColor」",
+            KeyboardSkins.issues(missing).any { it.contains("bottomThicknessColor") },
+        )
+        val complete = KeyboardSkin(
+            id = "t", label = "t", tone = SkinTone.DARK,
+            strokeColor = 0x33FFFFFF, strokeWidthDp = 1f,
+            bottomThicknessDp = 2f, bottomThicknessColor = 0xFF101010.toInt(),
+        )
+        assertTrue(
+            "补齐厚度色后不得再报这一条",
+            KeyboardSkins.issues(complete).none { it.contains("bottomThicknessColor") },
+        )
+    }
+
     @Test
     fun 功能键描边同样按比例缩放() {
         // 次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）的描边走 PinyinKeyboardView 的构建路径，

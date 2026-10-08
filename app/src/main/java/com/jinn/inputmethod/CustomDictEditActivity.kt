@@ -147,9 +147,31 @@ class CustomDictEditActivity : Activity() {
             },
         )
 
+        // 重建时恢复未保存的草稿（BUG.md L-1163）：编辑器是代码创建、无 android:id，系统不会
+        // 替它保存内容；定时换色（主题节拍器）与系统深浅色切换都会重建本页。先铺回草稿，
+        // loadSource() 的回填分支会因「编辑框已有内容」自动跳过，不会把草稿盖掉。
+        savedInstanceState?.getString(STATE_EDITOR_TEXT)?.takeIf { it.isNotEmpty() }?.let {
+            refilling = true
+            editor.setText(it)
+            refilling = false
+            dirty = savedInstanceState.getBoolean(STATE_DIRTY, true)
+        }
+
         setContentView(root)
         Diagnostics.i(TAG, "CustomDictEditActivity: 打开快捷补充页")
         loadSource()
+    }
+
+    /**
+     * 跨重建保存草稿（BUG.md L-1163）。
+     *
+     * 读屏 / 输入法之外的另一种丢失路径：`recreate()` 会把未保存的编辑连同 `dirty` 一起清掉，
+     * 而 `confirmExit()` 只在 `dirty` 为真时才问「放弃未保存的改动」⇒ 重建后连确认都不弹。
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_EDITOR_TEXT, editor.text?.toString() ?: "")
+        outState.putBoolean(STATE_DIRTY, dirty)
     }
 
     override fun onResume() {
@@ -465,6 +487,10 @@ class CustomDictEditActivity : Activity() {
         const val EXTRA_ENTRIES = "custom_entries"
         const val EXTRA_SKIPPED = "custom_skipped"
         const val EXTRA_FILTERED = "custom_filtered"
+
+        /** 跨重建保存的草稿与脏标记（BUG.md L-1163） */
+        private const val STATE_EDITOR_TEXT = "custom_editor_text"
+        private const val STATE_DIRTY = "custom_editor_dirty"
 
         /** 同键词表超 100 被丢下的条数（BUG.md L-864） */
         const val EXTRA_DROPPED = "custom_dropped"

@@ -1047,8 +1047,9 @@ object KeyboardSkins {
      * 解析一个键的运行时视觉参数。
      *
      * @param faceAlpha 当前面不透明度（来自 [KeyTransparency.surfaceAlpha]）：作用于「面」（填充 /
-     *                  底边厚度）与**描边** —— 描边按原 alpha **比例缩放**（[KeyTransparency.scaleAlpha]）
-     *                  而非替换，否则默认档会把半透明高光描边抹成实色硬边；
+     *                  底边厚度）与**描边** —— 两者的色值都可能自带 alpha（描边是半透明高光、
+     *                  厚度色在未覆盖时退化到描边色），因此按原 alpha **比例缩放**
+     *                  （[KeyTransparency.scaleAlpha]）而非替换，否则默认档会把它们抹成实色；
      *                  字色与提示色原样保留 —— 与半透明键盘的既有做法一致
      * @param density   屏幕密度（dp → px）
      */
@@ -1081,7 +1082,8 @@ object KeyboardSkins {
             strokeWidthPx = skin.strokeWidthDp * density,
             strokeColor = skin.strokeColor?.let { KeyTransparency.scaleAlpha(it, faceAlpha) } ?: 0,
             thicknessPx = skin.bottomThicknessDp * density,
-            thicknessColor = withAlpha(thicknessColor(skin, first), faceAlpha),
+            // 与描边同口径：厚度色可能走退化路径取到自带 alpha 的 strokeColor（BUG.md L-1162）
+            thicknessColor = KeyTransparency.scaleAlpha(thicknessColor(skin, first), faceAlpha),
             glyph = glyph,
             hint = hint,
             hintRed = skin.hintRed ?: fallbackHintRed,
@@ -1093,7 +1095,8 @@ object KeyboardSkins {
      *
      * 返回违规描述列表，空列表表示合法。判据：
      *  - id / label 非空，且非默认皮肤的**填充色**必须 alpha = 255（不透明度由滑杆统一控制；
- *    描边色允许自带 alpha，由 [visualFor] 按比例缩放）；
+     *    描边色与厚度色允许自带 alpha —— 描边由 [visualFor] 按比例缩放，厚度色则必须**显式给出**
+     *    （有厚度宽度却没给 `bottomThicknessColor` 属配置错误：退化路径会取到描边色）；
      *  - 渐变角度在 [0, 360)，描边与厚度在 [0, 4]dp；
      *  - 彩虹起始色相在 [0, 360) 且步长 > 0；
      *  - 首色与次色不同（相同则「渐变」实际是纯色，属配置错误）。
@@ -1126,6 +1129,10 @@ object KeyboardSkins {
             }
             if (skin.strokeColor != null && skin.strokeWidthDp <= 0f) out += "有描边色但 strokeWidthDp = 0"
             if (skin.strokeColor == null && skin.strokeWidthDp > 0f) out += "有描边宽度但未给 strokeColor"
+            // 与描边对称：有厚度就必须自带厚度色，否则退化路径会取到（可能半透明的）描边色（BUG.md L-1162）
+            if (skin.bottomThicknessColor == null && skin.bottomThicknessDp > 0f) {
+                out += "有厚度宽度但未给 bottomThicknessColor"
+            }
         }
         return out
     }

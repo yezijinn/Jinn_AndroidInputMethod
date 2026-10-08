@@ -3703,4 +3703,28 @@ class RecentFixesRegressionTest {
         }
     }
 
+    /**
+     * 重建态与无障碍的两条修复不得回退（2026-10-08 · L-1163 / L-1164）。
+     *
+     * 编辑页的草稿要跨重建存活（主题节拍器与系统深浅色都会 `recreate()`）；
+     * 图库格子的读屏名要带序号（24 格同名时读屏无法定位）。
+     */
+    @Test
+    fun `编辑页草稿与图库格子读屏名的两条修复不得回退`() {
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("必须实现 onSaveInstanceState", "override fun onSaveInstanceState(" in edit)
+        assertTrue("必须把编辑器文本写进状态", "putString(STATE_EDITOR_TEXT" in edit)
+        assertTrue("必须把脏标记写进状态", "putBoolean(STATE_DIRTY" in edit)
+        assertTrue("onCreate 必须读回草稿", "savedInstanceState?.getString(STATE_EDITOR_TEXT)" in edit)
+        assertTrue(
+            "读回草稿必须排在 loadSource() 之前（回填分支据此跳过，否则草稿被盘上内容盖掉）",
+            edit.indexOf("savedInstanceState?.getString(STATE_EDITOR_TEXT)") < edit.indexOf("loadSource()"),
+        )
+
+        val gallery = TestSources.codeSource("GalleryPanelView.kt")
+        assertTrue("格子描述必须带序号", "contentDescription = TEXT_CELL_FMT.format(ordinal)" in gallery)
+        assertTrue("格式串要含张数", "第 %d 张" in gallery)
+        assertTrue("序号必须按整份列表编（跨页连续）", "var ordinal = from" in gallery)
+    }
+
 }

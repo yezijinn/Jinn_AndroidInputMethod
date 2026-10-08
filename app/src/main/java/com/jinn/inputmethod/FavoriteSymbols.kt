@@ -15,7 +15,8 @@ import org.json.JSONArray
  * - 单项限长 [MAX_CHARS]（键面长文本会自动缩字号，但过长的可读性差）；
  * - 空串与超长项不算符号：[parse] 里滤掉，与写入侧 [append] 的两道闸同口径。
  *
- * 序列化容错：`null`（从未编辑过）→ 出厂预置 [DEFAULT_ITEMS]；损坏 JSON → 回退预置；
+ * 序列化容错：`null`（从未编辑过）→ 出厂预置 [DEFAULT_ITEMS]；**整份**读不出来（含非空数组里
+ * 一页都不成数组）→ 回退预置；**单页**坏掉只丢该页，其余原样保留（BUG.md L-1167）；
  * `"[]"`（用户删光）→ 空组，删光是用户的明确意愿，不回退预置。
  *
  * [parse] 的输出恒为规范结构（每页 ≤ [PER_PAGE]、非末页满页、无重复、无空页、无空白/超长项）：
@@ -47,24 +48,30 @@ object FavoriteSymbols {
     fun parse(raw: String?): List<List<String>> {
         if (raw == null) return listOf(DEFAULT_ITEMS)
         if (raw.isBlank()) return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            // 一步完成「拉平 + 去空白 + 全局去重（保序）」；空页与超页在重新分页时自然消解。
-            // 空白与超长项必须在这里滤掉：写入侧 [append] 有两道闸，而数据可能来自旧版本或被外部
-            // 改写（含备份导入）—— 不过滤就会出现「键面空白、按下无声」的空槽键
-            // （BUG.md 第 15 批 L7）。
-            val flat = LinkedHashSet<String>()
-            for (p in 0 until arr.length()) {
-                val page = arr.getJSONArray(p)
-                for (i in 0 until page.length()) {
-                    val s = page.getString(i).trim()
-                    if (s.isNotEmpty() && s.length <= MAX_CHARS) flat.add(s)
-                }
-            }
-            flat.toList().chunked(PER_PAGE)
+        // 只有**整份读不出来**才回退预置；单页坏掉只丢该页（BUG.md L-1167）——否则一页结构
+        // 不对就把用户攒的整份收藏换成出厂预置，且全程无提示。
+        val arr = try {
+            JSONArray(raw)
         } catch (_: Exception) {
-            listOf(DEFAULT_ITEMS)
+            return listOf(DEFAULT_ITEMS)
         }
+        // 一步完成「拉平 + 去空白 + 全局去重（保序）」；空页与超页在重新分页时自然消解。
+        // 空白与超长项必须在这里滤掉：写入侧 [append] 有两道闸，而数据可能来自旧版本或被外部
+        // 改写（含备份导入）—— 不过滤就会出现「键面空白、按下无声」的空槽键
+        // （BUG.md 第 15 批 L7）。
+        val flat = LinkedHashSet<String>()
+        var readablePages = 0
+        for (p in 0 until arr.length()) {
+            val page = runCatching { arr.getJSONArray(p) }.getOrNull() ?: continue
+            readablePages++
+            for (i in 0 until page.length()) {
+                val s = runCatching { page.getString(i) }.getOrNull()?.trim() ?: continue
+                if (s.isNotEmpty() && s.length <= MAX_CHARS) flat.add(s)
+            }
+        }
+        // 非空数组里一页都读不出来 = 结构整体不符（如 `[1,2,3]`）⇒ 与「整份损坏」同等处理
+        if (readablePages == 0 && arr.length() > 0) return listOf(DEFAULT_ITEMS)
+        return flat.toList().chunked(PER_PAGE)
     }
 
     /**

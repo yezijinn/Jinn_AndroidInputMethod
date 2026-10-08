@@ -153,6 +153,21 @@ class FavoriteSymbolsTest {
     }
 
     @Test
+    fun 单页损坏只丢该页_整份读不出来才回退预置() {
+        // 一页不是数组：其余页原样保留、顺序不变（BUG.md L-1167）
+        assertEquals(
+            listOf(listOf("a", "b")),
+            FavoriteSymbols.parse("""[["a"],{"x":1},["b"]]"""),
+        )
+        // 非空数组里一页都读不出来 = 结构整体不符 ⇒ 与「整份损坏」同等：回退出厂预置
+        assertEquals(listOf(FavoriteSymbols.DEFAULT_ITEMS), FavoriteSymbols.parse("[1,2,3]"))
+        // 整份不是 JSON ⇒ 回退预置（既有语义不变）
+        assertEquals(listOf(FavoriteSymbols.DEFAULT_ITEMS), FavoriteSymbols.parse("坏的{{{"))
+        // 用户删光仍是空组，不回退
+        assertEquals(emptyList<List<String>>(), FavoriteSymbols.parse("[]"))
+    }
+
+    @Test
     fun 容量判据_与写入上限同源() {
         assertFalse("出厂预置远未达上限", FavoriteSymbols.overCapacity(FavoriteSymbols.parse(null)))
         // 每项 8 字符 × 4000 项：序列化约 44KB，必超 32K 上限（上限本身单独断言，防测例自己失效）
