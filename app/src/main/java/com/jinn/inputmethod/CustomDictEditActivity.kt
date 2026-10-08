@@ -150,9 +150,11 @@ class CustomDictEditActivity : Activity() {
         // 重建时恢复未保存的草稿（BUG.md L-1163）：编辑器是代码创建、无 android:id，系统不会
         // 替它保存内容；定时换色（主题节拍器）与系统深浅色切换都会重建本页。先铺回草稿，
         // loadSource() 的回填分支会因「编辑框已有内容」自动跳过，不会把草稿盖掉。
-        savedInstanceState?.getString(STATE_EDITOR_TEXT)?.takeIf { it.isNotEmpty() }?.let {
+        // 小稿在实例状态里、大稿在 cacheDir 临时文件里（BUG.md L-1169）
+        val draft = savedInstanceState?.let { restoreDraft(it) }
+        if (!draft.isNullOrEmpty()) {
             refilling = true
-            editor.setText(it)
+            editor.setText(draft)
             refilling = false
             dirty = savedInstanceState.getBoolean(STATE_DIRTY, true)
         }
@@ -163,15 +165,45 @@ class CustomDictEditActivity : Activity() {
     }
 
     /**
-     * 跨重建保存草稿（BUG.md L-1163）。
+     * 跨重建保存草稿（BUG.md L-1163 / L-1169）。
      *
      * 读屏 / 输入法之外的另一种丢失路径：`recreate()` 会把未保存的编辑连同 `dirty` 一起清掉，
      * 而 `confirmExit()` 只在 `dirty` 为真时才问「放弃未保存的改动」⇒ 重建后连确认都不弹。
+     *
+     * **按长度分档**：小稿照旧进实例状态；大稿写 `cacheDir` 临时文件、Bundle 只留文件名 ——
+     * 编辑框没有长度上限（保存路径给的界是 `MAX_INPUT_CHARS * 2` = 16M 字符），整份进 Bundle
+     * 会在系统侧事务上超限（约 1MB 量级），崩溃且草稿全丢。文件走**同步**写：`onSaveInstanceState`
+     * 之后新实例立刻要读它，而旋转时进程还活着，后台写会与新实例的读抢时序。
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putString(STATE_EDITOR_TEXT, editor.text?.toString() ?: "")
+        val text = editor.text?.toString() ?: ""
+        if (draftInBundle(text.length)) {
+            outState.putString(STATE_EDITOR_TEXT, text)
+        } else {
+            val written = runCatching { File(cacheDir, DRAFT_FILE).writeText(text) }.isSuccess
+            if (written) {
+                outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
+            } else {
+                // 落盘失败（空间不足等）时退一步：截断进 Bundle，至少不崩、也留住开头那部分
+                outState.putString(STATE_EDITOR_TEXT, text.take(DRAFT_BUNDLE_MAX_CHARS))
+            }
+        }
         outState.putBoolean(STATE_DIRTY, dirty)
+    }
+
+    /**
+     * 读回草稿：小稿在实例状态里，大稿在 [cacheDir] 的临时文件里（BUG.md L-1169）。
+     *
+     * 文件读完即删 —— 草稿已经铺进编辑器，留着只会让下次重建分不清新旧。
+     */
+    private fun restoreDraft(state: Bundle): String? {
+        state.getString(STATE_EDITOR_TEXT)?.takeIf { it.isNotEmpty() }?.let { return it }
+        val name = state.getString(STATE_EDITOR_FILE) ?: return null
+        val file = File(cacheDir, name)
+        val restored = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
+        file.delete()
+        return restored
     }
 
     override fun onResume() {
@@ -488,9 +520,19 @@ class CustomDictEditActivity : Activity() {
         const val EXTRA_SKIPPED = "custom_skipped"
         const val EXTRA_FILTERED = "custom_filtered"
 
-        /** 跨重建保存的草稿与脏标记（BUG.md L-1163） */
+        /** 跨重建保存的草稿与脏标记（BUG.md L-1163）：小稿进状态、大稿进文件（L-1169） */
         private const val STATE_EDITOR_TEXT = "custom_editor_text"
+        private const val STATE_EDITOR_FILE = "custom_editor_file"
         private const val STATE_DIRTY = "custom_editor_dirty"
+
+        /** 大稿临时件（`cacheDir` 下，读完即删） */
+        private const val DRAFT_FILE = "custom_editor.draft.txt"
+
+        /** 草稿进实例状态的字符上限：Bundle 在系统侧约 1MB 量级，这里留足余量 */
+        internal const val DRAFT_BUNDLE_MAX_CHARS = 100_000
+
+        /** 草稿走实例状态还是走临时文件（纯函数，便于单测） */
+        internal fun draftInBundle(textLength: Int): Boolean = textLength <= DRAFT_BUNDLE_MAX_CHARS
 
         /** 同键词表超 100 被丢下的条数（BUG.md L-864） */
         const val EXTRA_DROPPED = "custom_dropped"

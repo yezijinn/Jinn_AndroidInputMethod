@@ -65,7 +65,9 @@ class FavoriteSymbolsActivity : Activity() {
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putString(STATE_ADD_TEXT, addInput?.text?.toString() ?: "")
+        // 按条目上限截断：更长的内容 [addItem] 本就拒收，而整份进实例状态会撑到系统侧事务上限
+        // （BUG.md L-1169）
+        outState.putString(STATE_ADD_TEXT, (addInput?.text?.toString() ?: "").take(FavoriteSymbols.MAX_CHARS))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -3715,10 +3715,10 @@ class RecentFixesRegressionTest {
         assertTrue("必须实现 onSaveInstanceState", "override fun onSaveInstanceState(" in edit)
         assertTrue("必须把编辑器文本写进状态", "putString(STATE_EDITOR_TEXT" in edit)
         assertTrue("必须把脏标记写进状态", "putBoolean(STATE_DIRTY" in edit)
-        assertTrue("onCreate 必须读回草稿", "savedInstanceState?.getString(STATE_EDITOR_TEXT)" in edit)
+        assertTrue("onCreate 必须读回草稿", "restoreDraft(it)" in edit)
         assertTrue(
             "读回草稿必须排在 loadSource() 之前（回填分支据此跳过，否则草稿被盘上内容盖掉）",
-            edit.indexOf("savedInstanceState?.getString(STATE_EDITOR_TEXT)") < edit.indexOf("loadSource()"),
+            edit.indexOf("restoreDraft(it)") < edit.indexOf("loadSource()"),
         )
 
         val gallery = TestSources.codeSource("GalleryPanelView.kt")
@@ -3759,8 +3759,60 @@ class RecentFixesRegressionTest {
         assertTrue("文本资产必须剥 BOM（首项失效那条）", "reader.read() != 0xFEFF" in engine)
         val dicts = TestSources.codeSource("CustomDicts.kt")
         assertTrue(
-            "音节表资产读取必须同口径剥 BOM",
-            "removePrefix(\"\\uFEFF\")" in dicts.substringAfter("fun loadSyllables", "").take(700),
+            "音节表资产读取必须限长（剥 BOM 收口在 readCapped 里）",
+            "readCapped(reader, SYLLABLES_MAX_CHARS)" in dicts.substringAfter("fun loadSyllables", "").take(700),
+        )
+    }
+
+    /** 草稿分档判据：Bundle 侧只收小稿，大稿走临时文件（BUG.md L-1169）。 */
+    @Test
+    fun `草稿进实例状态的判据必须按上限分档`() {
+        assertTrue("小稿走 Bundle", CustomDictEditActivity.draftInBundle(1_000))
+        assertTrue("刚好等于上限仍走 Bundle", CustomDictEditActivity.draftInBundle(CustomDictEditActivity.DRAFT_BUNDLE_MAX_CHARS))
+        assertTrue("超一个字符就该改走文件", !CustomDictEditActivity.draftInBundle(CustomDictEditActivity.DRAFT_BUNDLE_MAX_CHARS + 1))
+        assertTrue("空稿当然走 Bundle", CustomDictEditActivity.draftInBundle(0))
+        // 上限本身要远小于系统侧事务量级（约 1MB ⇒ UTF-16 下 50 万字符），留足余量
+        assertTrue(
+            "上限过大，起不到挡住事务超限的作用",
+            CustomDictEditActivity.DRAFT_BUNDLE_MAX_CHARS <= 200_000,
+        )
+    }
+
+    /**
+     * 实例状态尺寸与两处伴生修复不得回退（2026-10-08 · L-1169 / L-1171 / L-1172）。
+     *
+     * 词库草稿按长度分档（小稿进状态、大稿进 cacheDir 文件），另两处站点按各自上限截断；
+     * 历史页恢复出来的勾选集要按本次加载结果裁剪、页码不能被加载收尾归零。
+     */
+    @Test
+    fun `实例状态尺寸与历史页恢复语义的三条修复不得回退`() {
+        val edit = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("保存必须按 draftInBundle 分档", "if (draftInBundle(text.length))" in edit)
+        assertTrue("大稿要落到 cacheDir 的文件", "File(cacheDir, DRAFT_FILE).writeText(text)" in edit)
+        assertTrue("Bundle 里只留文件名", "putString(STATE_EDITOR_FILE, DRAFT_FILE)" in edit)
+        val restore = edit.substringAfter("private fun restoreDraft(", "")
+        assertTrue("读回要先看状态再读文件", "state.getString(STATE_EDITOR_FILE)" in restore)
+        assertTrue("文件读完即删", "file.delete()" in restore)
+
+        val fav = TestSources.codeSource("FavoriteSymbolsActivity.kt")
+        assertTrue(
+            "对话框输入要按条目上限截断",
+            "take(FavoriteSymbols.MAX_CHARS)" in fav.substringAfter("outState.putString(STATE_ADD_TEXT", ""),
+        )
+
+        val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertTrue("搜索词要按上限截断", "keyword.take(MAX_STATE_KEYWORD)" in hist)
+        assertTrue("勾选集要按本次加载结果裁剪", "checkedIds.retainAll(" in hist)
+        assertTrue("页码只在改条件时归零", "if (resetPage) pageIndex = 0" in hist)
+        assertTrue(
+            "重建 / 回前台的那次加载不得归零页码",
+            "loadAsync(resetPage = false)" in hist.substringAfter("override fun onStart()", "").take(300),
+        )
+
+        val dicts = TestSources.codeSource("CustomDicts.kt")
+        assertTrue(
+            "音节表资产读取必须限长",
+            "readCapped(reader, SYLLABLES_MAX_CHARS)" in dicts.substringAfter("fun loadSyllables", "").take(600),
         )
     }
 

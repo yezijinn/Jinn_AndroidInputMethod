@@ -235,7 +235,8 @@ class ClipboardHistoryActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
-        loadAsync()
+        // 不归零：页码可能是刚恢复出来的（BUG.md L-1172），回到前台时也应当停在原页
+        loadAsync(resetPage = false)
     }
 
     override fun onStop() {
@@ -247,7 +248,9 @@ class ClipboardHistoryActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_FILTER, categoryFilter)
-        outState.putString(STATE_KEYWORD, keyword)
+        // 搜索词按上限截断再进实例状态：搜索框没有长度上限，整份进 Bundle 会撑到系统侧事务上限
+        // （BUG.md L-1169）；超过上限的词本来就匹配不到任何条目
+        outState.putString(STATE_KEYWORD, keyword.take(MAX_STATE_KEYWORD))
         outState.putInt(STATE_PAGE, pageIndex)
         outState.putLongArray(STATE_CHECKED, checkedIds.toLongArray())
         outState.putBoolean(STATE_MULTI, multiSelect)
@@ -411,7 +414,13 @@ class ClipboardHistoryActivity : Activity() {
         })
     }
 
-    private fun loadAsync() {
+    /**
+     * 重新加载列表。
+     *
+     * [resetPage] = false 供「重建 / 回到前台」用：页码可能是从实例状态恢复的，
+     * 无条件归零会把恢复结果当场覆盖（BUG.md L-1172）。筛选与搜索改条件时必须归零。
+     */
+    private fun loadAsync(resetPage: Boolean = true) {
         val category = categoryFilter
         val keywordNow = keyword
         val favoritesOnly = category == "FAVORITE"
@@ -453,7 +462,10 @@ class ClipboardHistoryActivity : Activity() {
                 )
                 numberById.clear()
                 for ((idx, item) in allItems.withIndex()) numberById[item.id] = total - idx
-                pageIndex = 0
+                // 勾选集跨重建恢复，而重建期间库可能在变（采集在线、库到上限时插入与淘汰成对发生）⇒
+                // 按这次加载到的条目裁剪，免得确认文案的条数与实际勾着的行数不一致（BUG.md L-1171）
+                checkedIds.retainAll(allItems.mapTo(HashSet()) { it.id })
+                if (resetPage) pageIndex = 0
                 adapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
                 // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分
@@ -563,6 +575,9 @@ class ClipboardHistoryActivity : Activity() {
 
         /** 跨重建保存的实例态（BUG.md L-1165） */
         private const val STATE_FILTER = "hist_filter"
+
+        /** 进实例状态的搜索词上限（字符）：更长的词匹配不到任何条目（BUG.md L-1169） */
+        private const val MAX_STATE_KEYWORD = 256
         private const val STATE_KEYWORD = "hist_keyword"
         private const val STATE_PAGE = "hist_page"
         private const val STATE_CHECKED = "hist_checked"

@@ -745,13 +745,17 @@ internal object CustomDicts {
     fun loadSyllables(context: Context): Set<String>? = runCatching {
         context.assets.open(SYLLABLES_ASSET).use { raw ->
             XZInputStream(raw).bufferedReader(Charsets.UTF_8).use { reader ->
-                // 与用户来源路径同口径剥 BOM（见 [readCapped]）：带 BOM 重生成资产时，
-                // 首行会多出一个 Cf 类字符，音节表因此多一条垃圾项、首项整键失效（BUG.md L-1156）
-                reader.readText().removePrefix("\uFEFF")
-                    .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
+                // 与用户来源路径同口径：限长读 + 剥 BOM（见 [readCapped]）。带 BOM 重生成资产时，
+                // 首行会多出一个 Cf 类字符，音节表因此多一条垃圾项、首项整键失效（BUG.md L-1156）；
+                // 限长是防资产被整份替换时无界分配（BUG.md L-1170）
+                readCapped(reader, SYLLABLES_MAX_CHARS)?.lineSequence()
+                    ?.map { it.trim() }?.filter { it.isNotEmpty() }?.toHashSet()
             }
         }
     }.getOrNull()?.takeIf { it.size > 100 }
+
+    /** 音节表资产的读取上限（字符）：421 行的表用不到千分之一，只为挡住「资产被整份替换」 */
+    private const val SYLLABLES_MAX_CHARS = 1 shl 20
 
     private const val TAG = "CustomDicts"
 }
