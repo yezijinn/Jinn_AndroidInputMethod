@@ -3847,7 +3847,8 @@ class RecentFixesRegressionTest {
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")
         assertTrue("落盘必须按去抖排", "postDelayed(draftWriteTask, DRAFT_WRITE_DEBOUNCE_MS)" in edit)
         val writer = edit.substringAfter("private val draftWriteTask", "")
-        assertTrue("落盘必须交给单线程 IO 队列", "BackgroundIo.run {" in writer)
+        // MEM-30 起分块走长活池（同样是单线程，保序不变）：短活队列不再被秒级写入推后
+        assertTrue("落盘必须交给单线程长活队列", "BackgroundIo.runLong {" in writer)
         assertTrue(
             "写文件必须临时名 + rename（避免读到写了一半的版本）",
             "renameTo(File(cacheDir, DRAFT_FILE))" in edit,
@@ -3917,7 +3918,7 @@ class RecentFixesRegressionTest {
         // L-1180：分块投递、世代号作废、代理对不劈开、下一块自投
         assertTrue("落盘必须分块投递（每块一个 IO 任务）", "private fun enqueueDraftChunk(" in edit)
         assertTrue("分块大小要有常量", "DRAFT_WRITE_CHUNK_CHARS" in edit)
-        assertTrue("在途任务靠世代号作废", "if (generation != draftWriteGeneration) return@run" in edit)
+        assertTrue("在途任务靠世代号作废", "if (generation != draftWriteGeneration) return@runLong" in edit)
         assertTrue("世代号在每批开始时自增", "++draftWriteGeneration" in edit)
         assertTrue("不能把代理对劈成两半", "Character.isHighSurrogate(text[end - 1])" in edit)
         assertTrue("第一块截断、其余追加", "FileOutputStream(File(cacheDir, DRAFT_FILE_TMP), from == 0)" in edit)
@@ -3956,7 +3957,12 @@ class RecentFixesRegressionTest {
         // L-1181：草稿在途时按「编辑框已有内容」处理，不停用保存、也不报「已跳过回填」
         assertTrue("恢复期要有在途标记", "draftPending = true" in edit && "draftPending = false" in edit)
         assertTrue("回填判据要认草稿在途", "draftPending || editor.text.isNotEmpty()" in edit)
-        assertTrue("草稿在途时不报「已跳过回填」", "if (!draftPending) setStatus(TEXT_SKIP_REFILL)" in edit)
+        // 判据从「草稿在途」扩到「在途或刚铺完」：刚铺完草稿时编辑器非空的是**草稿**本身，
+        // 报「编辑框里已有你输入的内容」会把刚恢复的草稿说成用户的输入
+        assertTrue(
+            "草稿在途 / 刚铺完草稿时不报「已跳过回填」",
+            "if (!draftPending && !draftJustRestored) setStatus(TEXT_SKIP_REFILL)" in edit,
+        )
     }
 
     /**
@@ -3972,8 +3978,8 @@ class RecentFixesRegressionTest {
         // L-1189：末块改名发布前再查一次世代
         assertTrue(
             "发布前必须二次校验世代（否则旧快照会盖掉刚写好的正式名）",
-            "if (generation != draftWriteGeneration) return@run" in edit &&
-                edit.indexOf("if (generation != draftWriteGeneration) return@run") <
+            "if (generation != draftWriteGeneration) return@runLong" in edit &&
+                edit.indexOf("if (generation != draftWriteGeneration) return@runLong") <
                 edit.indexOf("File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))"),
         )
 
@@ -3987,7 +3993,9 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "在途 / 读失败期间保存侧要接着带令牌与长度",
-            "if (pending != null && !dirty && draftWrittenRevision < 0)" in edit &&
+            // 判据里不再含 `!dirty`（BUG-22）：读盘在途时用户先敲了字就不能把令牌丢掉 ——
+            // 大稿此刻编辑器是空的，丢令牌等于让那份草稿成为孤儿文件
+            "if (pending != null && draftWrittenRevision < 0)" in edit &&
                 "outState.putString(STATE_EDITOR_FILE, pending)" in edit,
         )
 

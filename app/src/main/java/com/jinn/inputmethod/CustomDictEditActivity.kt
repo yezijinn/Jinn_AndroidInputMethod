@@ -95,6 +95,15 @@ class CustomDictEditActivity : Activity() {
     private var draftWriteGeneration = 0
 
     /**
+     * 草稿发布锁：把「复核世代」与「临时名 → 正式名」的改名绑成一个原子步（BUG-25）。
+     *
+     * 两处参与：分块任务的末块发布、保存侧的同步补写。不锁的话，保存侧能挤进分块的
+     * 「复核通过」与「改名」之间自增世代并写完正式名，随后分块用旧快照盖回去 ——
+     * 正式名是旧内容，修订号却已被标成最新，重建时不再补写。
+     */
+    private val draftLock = Any()
+
+    /**
      * 草稿文件还在、编辑器里还没有它（读盘在途 / 读失败待重试 / 大稿等首帧铺）：
      * 保存时把令牌与预期长度原样带下去，下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。
      * 铺进编辑器之后由 [finishDraftApply] 清掉。
@@ -103,6 +112,15 @@ class CustomDictEditActivity : Activity() {
 
     /** [pendingDraftFile] 对应的预期字符数（0 = 不知道；恢复端据此判「写到一半」，BUG.md L-1192） */
     private var pendingDraftLen = 0
+
+    /**
+     * 编辑器里的内容是刚铺进来的草稿（而不是用户敲的，也不是源文本）。
+     *
+     * 只用于状态行（BUG-23）：草稿铺完会把「草稿已恢复」写上状态行，紧接着 `loadSource` 的回填
+     * 判据看到编辑器非空而跳过 —— 那句提示若照旧写成「编辑框里已有你输入的内容」，
+     * 就把刚刚恢复的草稿说成了用户自己的输入，用户会以为草稿没恢复成功。
+     */
+    private var draftJustRestored = false
 
     /** 大稿草稿已排进首帧之后、还没铺进编辑器（BUG.md L-1181） */
     private var draftPending = false
@@ -220,7 +238,11 @@ class CustomDictEditActivity : Activity() {
         // 下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。用户一动手就作废这条支路 ——
         // 他现在的编辑比那份草稿更要紧
         val pending = pendingDraftFile
-        if (pending != null && !dirty && draftWrittenRevision < 0) {
+        // BUG-22：判据里原先还有 `!dirty`，于是「读盘/铺稿在途时用户先敲了字」（dirty 置真、
+        // 编辑器里还没有草稿）会掉进下面的分支 —— 大稿此时 `text` 是空的，`draftInBundle(0)` 为真，
+        // Bundle 里只留下一个**空串**与「没有文件令牌」，新实例两头都拿不到 ⇒ 那份草稿成了孤儿文件。
+        // 去掉 `!dirty` 即可：文件还在、且没有比它更新的已落盘修订，就该把令牌带下去。
+        if (pending != null && draftWrittenRevision < 0) {
             outState.putString(STATE_EDITOR_FILE, pending)
             outState.putInt(STATE_DRAFT_LEN, pendingDraftLen)
             outState.putBoolean(STATE_DIRTY, dirty)
@@ -237,11 +259,14 @@ class CustomDictEditActivity : Activity() {
             // 文件，而恢复端此前会把它当完整草稿铺开、读完又删掉 —— 大稿只有这一份副本。
             // 临时名与增量落盘分开，并先行作废在途的分块任务（时间戳更强的世代号）
             draftHandler.removeCallbacks(draftWriteTask)
-            draftWriteGeneration++
+            // 自增与改名都进 [draftLock]（BUG-25）：只自增不锁，分块任务可能在复核通过之后、
+            // 改名之前被自增，然后照旧把旧快照发布出去。全文写入不进锁（那是 48MB 级的 IO，
+            // 锁内只做「自增」与「改名」两个瞬时动作）。
+            synchronized(draftLock) { draftWriteGeneration++ }
             val staged = File(cacheDir, DRAFT_FILE_SAVE_TMP)
             val written = runCatching {
                 staged.writeText(text)
-                staged.renameTo(File(cacheDir, DRAFT_FILE))
+                synchronized(draftLock) { staged.renameTo(File(cacheDir, DRAFT_FILE)) }
             }.getOrDefault(false)
             if (written) {
                 draftWrittenRevision = draftRevision
@@ -294,8 +319,11 @@ class CustomDictEditActivity : Activity() {
      * 世代自增，尚未开跑的分块直接返回，正在跑的那一块写完就停。
      */
     private fun enqueueDraftChunk(text: String, revision: Int, generation: Int, from: Int) {
-        BackgroundIo.run {
-            if (generation != draftWriteGeneration) return@run
+        // 走长活池（MEM-30）：分块写整份大稿是以秒计的活，投进交互短活队列会把剪贴板入库与
+        // 面板首屏压在后头。长活池同样是单线程，**保序不变**，世代校验与「每块一任务」的
+        // trampoline 形态也不变。
+        BackgroundIo.runLong {
+            if (generation != draftWriteGeneration) return@runLong
             var end = minOf(from + DRAFT_WRITE_CHUNK_CHARS, text.length)
             // 别把代理对劈成两半：分块各自编码，劈开会让半个字符变成替换符
             if (end < text.length && Character.isHighSurrogate(text[end - 1])) end--
@@ -306,15 +334,25 @@ class CustomDictEditActivity : Activity() {
                     .use { it.write(text.substring(from, end).toByteArray(Charsets.UTF_8)) }
                 if (last) {
                     // 发布前再查一次世代（BUG.md L-1189）：本任务开头查过之后，保存侧可能已经自增世代
-                    // 并写好了正式名 —— 此时再改名就等于用旧快照盖掉刚写的那份，而修订号已被标成最新
-                    if (generation != draftWriteGeneration) return@run
-                    File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))
+                    // 并写好了正式名 —— 此时再改名就等于用旧快照盖掉刚写的那份，而修订号已被标成最新。
+                    //
+                    // 复核与改名必须在**同一把锁**里（BUG-25）：分开做时，保存侧能挤在两者之间自增世代
+                    // 并写完正式名，随后这里再把旧快照改过去 —— 正式名成了旧内容，修订号却被标成最新。
+                    //
+                    // 返回**改名结果**（BUG-24）：原先块末尾是字面量 `true`，改名失败（空间不足 / 被占）
+                    // 也被当成成功，于是 `draftWrittenRevision` 被标成最新，之后重建只带令牌、不再补写，
+                    // 而正式名里其实是上一代内容。
+                    synchronized(draftLock) {
+                        if (generation != draftWriteGeneration) return@runLong
+                        File(cacheDir, DRAFT_FILE_TMP).renameTo(File(cacheDir, DRAFT_FILE))
+                    }
+                } else {
+                    true
                 }
-                true
             }.getOrDefault(false)
             if (!ok) {
                 draftWrittenRevision = -1
-                return@run
+                return@runLong
             }
             if (last) draftWrittenRevision = revision else enqueueDraftChunk(text, revision, generation, end)
         }
@@ -361,18 +399,20 @@ class CustomDictEditActivity : Activity() {
         // 保存使能都按「草稿已经在里面」判断 —— 不先占住这一位，回填会把旧源文本铺进来，
         // 草稿到达时反而被当成「用户已敲字」丢掉
         draftPending = true
-        for (tmp in listOf(DRAFT_FILE_TMP, DRAFT_FILE_SAVE_TMP)) runCatching { File(cacheDir, tmp).delete() }
+        // BUG-26：崩溃可能停在「同步补写写完临时名、改名还没做」那一瞬 —— 正式名要么不存在、
+        // 要么还是上一代。旧实现无条件删掉两个临时名，等于把用户唯一完整的那份一起删了。
+        // 改为把「比正式名新」或「正式名缺失时存在」的临时件**改名**成正式名再读；rename 是原子替换，
+        // 也不会撞「恢复阶段不许删草稿本体」那条守卫。
+        promoteNewestDraftTmp(draftName)
         Thread {
             // 整份读盘与词库装载同一口径：降后台优先级，别和前台争 CPU
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val file = File(cacheDir, draftName)
             val existed = file.isFile
-            // 读一次不成就再读一次：I/O 抖动是暂时性的，而状态行只承诺「重建时自动再试」
-            val restored = if (existed) {
-                runCatching { file.readText() }.getOrNull() ?: runCatching { file.readText() }.getOrNull()
-            } else {
-                null
-            }
+            // 读一次就够（BUG-28）：草稿的发布是「临时名 → 正式名」的原子改名，同目录 rename 不存在
+            // 读到半截的可能；失败再读一次只是把同一个 IO 错误重试一遍。失败时文件保持原样，
+            // 状态行照旧承诺「重建时自动再试」。
+            val restored = if (existed) runCatching { file.readText() }.getOrNull() else null
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 draftPending = false
@@ -400,6 +440,28 @@ class CustomDictEditActivity : Activity() {
                 applyDraft(restored, truncatedAt, draftName, restoredDirty)
             }
         }.apply { isDaemon = true; name = "jinn-draft-restore" }.start()
+    }
+
+    /**
+     * 发布崩溃残留的临时草稿：见 [startDraftRestore] 的 BUG-26 说明。
+     *
+     * 提升顺序按「完整度」排：`SAVE_TMP` 是保存侧一次写成的全文，`TMP` 是分块增量（可能只写到一半）。
+     * 只有比正式名更新的才提升；提升后正式名的时间戳跟着变，后面那个临时件自然输给它。
+     * 长度为零的临时件直接跳过（写到一半就被杀的那份没有恢复价值）。
+     */
+    private fun promoteNewestDraftTmp(draftName: String) {
+        val target = File(cacheDir, draftName)
+        for (tmp in listOf(DRAFT_FILE_SAVE_TMP, DRAFT_FILE_TMP)) {
+            val f = File(cacheDir, tmp)
+            if (!f.isFile || f.length() == 0L) continue
+            if (target.isFile && f.lastModified() <= target.lastModified()) {
+                runCatching { f.delete() }
+                continue
+            }
+            runCatching { f.renameTo(target) }.onSuccess {
+                Diagnostics.w(TAG, "快捷补充：草稿主体缺失或更旧，已把 $tmp 提升为 $draftName")
+            }
+        }
     }
 
     /**
@@ -450,6 +512,7 @@ class CustomDictEditActivity : Activity() {
         pendingDraftFile = null
         pendingDraftLen = 0
         draftPending = false
+        draftJustRestored = true
         setStatus(if (truncatedAt > 0) String.format(Locale.US, TEXT_DRAFT_TRUNCATED, truncatedAt) else TEXT_DRAFT_RESTORED)
     }
 
@@ -541,7 +604,9 @@ class CustomDictEditActivity : Activity() {
                     // 而编辑器里马上就要铺上用户自己的草稿
                     draftPending || editor.text.isNotEmpty() -> {
                         Diagnostics.i(TAG, "快捷补充：回填跳过（${if (draftPending) "草稿在途" else "编辑框已有 ${editor.text.length} 字符"}）")
-                        if (!draftPending) setStatus(TEXT_SKIP_REFILL)
+                        // BUG-23：草稿刚铺进来时编辑器非空是「草稿在编辑器里」，不是「用户已经输入」——
+                        // 照旧写「编辑框里已有你输入的内容」会把刚恢复的草稿说成用户的输入
+                        if (!draftPending && !draftJustRestored) setStatus(TEXT_SKIP_REFILL)
                     }
                     // 体验阈值（BUG.md L-870）：`EditText.setText` 在主线程同步排版，真机实测 8M 字符
                     // 会卡住主线程 18 秒（Skipped 1083 frames / Davey 18.067s）——超过阈值就不铺，
@@ -560,6 +625,7 @@ class CustomDictEditActivity : Activity() {
                         editor.setText(text)
                         refilling = false
                         dirty = false
+                        draftJustRestored = false
                     }
                 }
             }

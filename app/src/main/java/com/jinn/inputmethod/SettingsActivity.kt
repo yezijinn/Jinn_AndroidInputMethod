@@ -773,7 +773,7 @@ class SettingsActivity : ComponentActivity() {
                     textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-diag-export" }.start()
     }
 
     /** 把临时诊断包写入用户选定的位置（SAF），写完即删临时文件 */
@@ -802,7 +802,7 @@ class SettingsActivity : ComponentActivity() {
                     textDiagDir.text = getString(R.string.settings_diag_export_fail, "写入失败")
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-diag-copy" }.start()
     }
 
     private fun loadPrefs() {
@@ -1374,7 +1374,7 @@ class SettingsActivity : ComponentActivity() {
                     exportConfigLauncher.launch(outcome.file.name)
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-config-export" }.start()
     }
 
     /**
@@ -1429,7 +1429,7 @@ class SettingsActivity : ComponentActivity() {
                     )
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-config-copy" }.start()
     }
 
     /**
@@ -1558,7 +1558,7 @@ class SettingsActivity : ComponentActivity() {
                     }
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-config-unlock" }.start()
     }
 
     private fun showImportConfigDialog(zip: java.io.File, info: ConfigBackupManager.BackupInfo) {
@@ -1752,7 +1752,7 @@ class SettingsActivity : ComponentActivity() {
                 // 且重建后这次导入的结论无处可看
                 showTipDialog(dialog)
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-config-import" }.start()
     }
 
     /**

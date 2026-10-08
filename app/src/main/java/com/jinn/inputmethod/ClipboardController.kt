@@ -33,6 +33,15 @@ class ClipboardController(context: Context) {
     private val retryHandler = Handler(Looper.getMainLooper())
 
     private var listenerRegistered = false
+
+    /**
+     * 存量重算「本进程已发起」的原子标记（BUG-05）。
+     *
+     * 持久标记 `prefs.reclassified` 只在跑成功时置位，读它再起线程属 check-then-act：
+     * 并发入口会起两条全库解密线程。这个进程内标记先抢位，抢不到的直接返回；
+     * 跑失败或中途停用则放开，保留「下次启动/下次启用再试」的既有承诺。
+     */
+    private val reclassifyStarted = java.util.concurrent.atomic.AtomicBoolean(false)
     private val listener = ClipboardManager.OnPrimaryClipChangedListener {
         onClipboardChanged()
     }
@@ -65,6 +74,10 @@ class ClipboardController(context: Context) {
      */
     private fun reclassifyIfNeeded() {
         if (prefs.reclassified) return
+        // BUG-05：这是一段 check-then-act —— `prefs.reclassified` 是跨进程的持久标记，读它再起线程
+        // 不原子：启动路径与配置广播同时进来就会起两条全库解密线程（同一趟迁移跑两遍，
+        // 启动期 CPU 与 IO 双份）。进程内先用原子标记抢先，抢不到的直接返回。
+        if (!reclassifyStarted.compareAndSet(false, true)) return
         Thread {
             // 启动期任务必须显式降优先级（AGENTS.md 的约定：「不与词库加载抢 CPU」）：
             // 这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），跑在 onCreate 路径上、与词库加载同时发生，
@@ -76,6 +89,10 @@ class ClipboardController(context: Context) {
             if (changed != null) {
                 prefs.reclassified = true
                 Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
+            } else {
+                // 失败（runCatching 返回 null）：放开进程内标记，让下一次 start() 还能重试。
+                // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
+                reclassifyStarted.set(false)
             }
         }.apply { name = "jinn-clipboard-reclassify"; isDaemon = true }.start()
     }
@@ -86,6 +103,9 @@ class ClipboardController(context: Context) {
         clipboard.removePrimaryClipChangedListener(listener)
         listenerRegistered = false
         retryHandler.removeCallbacksAndMessages(null)
+        // 迁移未完成就停用（用户关掉剪贴板功能）：放开进程内标记，重新启用时还能再试一次
+        // （BUG-05：停用不放开的话，重新启用后这趟迁移在本进程内永远不会再跑）
+        if (!prefs.reclassified) reclassifyStarted.set(false)
         Diagnostics.i(TAG, "stop: 剪贴板监听已注销")
     }
 

@@ -37,10 +37,14 @@ object BackgroundIo {
      *  - 守护线程：随进程退出，不需要显式 shutdown。
      */
     private val longExec: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "jinn-long-io").apply {
-            isDaemon = true
+        // ⚠ 优先级必须在线程体**里**设（与 `GalleryPanelView` 的缩略图池同款）：线程工厂是在
+        // **提交方线程**上被调用的，`Process.setThreadPriority` 改的又是调用线程本身 ——
+        // 写成 `Thread(r).apply { setThreadPriority(...) }` 会把首次提交长活的那个线程
+        // （通常是主线程）降成后台优先级，而新建线程照旧是默认优先级，两条都落空。
+        Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        }
+            r.run()
+        }, "jinn-long-io").apply { isDaemon = true }
     }
 
     /** 提交一个后台任务（交互短活，默认优先级）；调度器关闭/拒绝时静默忽略（不抛异常） */

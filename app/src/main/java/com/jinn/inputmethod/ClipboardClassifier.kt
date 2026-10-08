@@ -32,12 +32,28 @@ object ClipboardClassifier {
     const val LABEL_SEPARATOR = ","
 
     /**
+     * 分类扫描的前缀上限（字符，见 [classify]）。
+     *
+     * 8192 远大于任何真实的一条网址 / 数字片段（最长也就几百字符），又远小于入库上限
+     * （256KB）—— 把最坏情况的扫描量从 11 × 256KB 压到 11 × 8KB。
+     */
+    private const val MAX_CLASSIFY_SCAN_CHARS = 8 * 1024
+
+    /**
      * 自动分类：含网址 → 带 URL 标签；含数字片段 → 带 NUMBER 标签；都没有 → OTHER。
      * 两者都有时为 `URL,NUMBER`（顺序固定，便于比较与测试）。不输出明文日志。
      */
     fun classify(text: String): String {
-        val url = firstUrl(text) != null
-        val number = firstNumber(text) != null
+        // MEM-27：分类只扫前缀。入库上限是 256KB（`ClipboardController.MAX_ITEM_BYTES`），
+        // 11 条规则（5 条 URL + 6 条数字）逐条 `find()` 就是 11 遍扫描；而标签只需要回答
+        // 「这份内容**开头**像不像网址/数字」—— 靠前的片段本来就是列表展示与粘贴用的那一段
+        // （见 [pieceFor]），扫到几万字符之后才出现的片段没人会看到。
+        //
+        // 只在 [classify] 内截断，不动 [firstUrl]/[firstNumber]：那两个函数还有展示与粘贴的
+        // 调用方（`pieceFor`），对它们截断会改变列表里显示与粘出去的原文片段。
+        val head = if (text.length > MAX_CLASSIFY_SCAN_CHARS) text.substring(0, MAX_CLASSIFY_SCAN_CHARS) else text
+        val url = firstUrl(head) != null
+        val number = firstNumber(head) != null
         return when {
             url && number -> "$CATEGORY_URL$LABEL_SEPARATOR$CATEGORY_NUMBER"
             url -> CATEGORY_URL

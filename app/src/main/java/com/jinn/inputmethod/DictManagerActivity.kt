@@ -319,7 +319,7 @@ class DictManagerActivity : Activity() {
                 refreshList()
                 if (restart) restartImeForDict()
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-dict-import" }.start()
     }
 
     private fun refreshList() {
@@ -808,7 +808,7 @@ class DictManagerActivity : Activity() {
                 }.onFailure { Diagnostics.w(TAG, "下载完成刷新界面失败: ${it.javaClass.simpleName}") }
                 if (ok) page.restartImeForDict()
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-dict-download" }.start()
     }
 
     /**

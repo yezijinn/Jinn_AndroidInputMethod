@@ -306,9 +306,26 @@ internal object ConfigBackupManager {
         // 词频是「内存态经 2 秒防抖落盘」的：不先 flush 就会漏掉窗口内的最后一次学习
         // （导入侧在同一处显式 flush，导出侧此前漏了）
         runCatching { UserFrequency.flush() }
-        val freqText = runCatching {
-            File(context.filesDir, USER_FREQ_FILE).takeIf { it.isFile }?.readText(Charsets.UTF_8)
-        }.getOrNull().orEmpty()
+            .onFailure { Diagnostics.w(TAG, "导出: 词频落盘失败（继续导出盘上已有内容）: ${it.message}") }
+        // MEM-10：先看文件大小再决定读不读。这一读是整份进堆，而词频正常只有几十 KB（上限 3000 行）；
+        // 文件异常膨胀时（旧版本残留 / 外部写入）没必要为一个注定超限的节先把内存吃满。
+        // 判据与下面的节上限**同源同单位**（都是字节），否则会出现「预检放过、字节闸拦下」两套口径。
+        val freqFile = File(context.filesDir, USER_FREQ_FILE)
+        val freqBytes = runCatching { freqFile.length() }.getOrDefault(0L)
+        if (freqBytes > EXPORT_SECTION_LIMIT_BYTES) {
+            lastError = "用户词频文件过大（${freqBytes / 1024 / 1024}MB），超出备份包单节上限，无法导出"
+            Diagnostics.w(TAG, "导出中止: 词频文件 $freqBytes 字节，未读入内存")
+            return null
+        }
+        // 读取失败同样中止（BUG-06 同链）：静默按「空节」导出会让用户以为备份完整，
+        // 换机后这部分数据全丢 —— 正是下面那段注释明令禁止的失败方式
+        val freqRead = runCatching { freqFile.takeIf { it.isFile }?.readText(Charsets.UTF_8) }
+        freqRead.exceptionOrNull()?.let {
+            Diagnostics.e(TAG, "导出中止: 读取词频失败", it)
+            lastError = "用户词频文件无法读取（${it.javaClass.simpleName}），未导出任何内容"
+            return null
+        }
+        val freqText = freqRead.getOrNull().orEmpty()
         val clip = if (options.includeClipboard) collectClipboard(context) else null
         val dicts = if (options.includeDicts) dictFiles(context) else emptyList()
         // 词库与导入侧同一组上限：超了必然导不回来（导入端限 16 文件 / 64MB），宁可在这里说清
@@ -1006,6 +1023,7 @@ internal object ConfigBackupManager {
             // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
             // 这里补一次，否则「导入成功」后历史仍超限，用户会以为上限没生效
             runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes) }
+                .onFailure { Diagnostics.w(TAG, "导入: 按新上限裁剪历史失败（上限已保存，下次入库仍会裁）: ${it.message}") }
         }
 
         val freqFile = File(context.filesDir, USER_FREQ_FILE)

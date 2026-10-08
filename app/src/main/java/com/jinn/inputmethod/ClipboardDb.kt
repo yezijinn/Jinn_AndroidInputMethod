@@ -372,6 +372,14 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 删除单条；返回是否真正删除。
      * 用可写库：getReadableDatabase 在磁盘满等异常场景会退回只读句柄，删除会静默失败。
      */
+    /**
+     * 写路径统一监视器（BUG-04）：本类此前只有 [upsert] 与 [insertRestored] 同步，其余写方法
+     * 各自「读一遍再改」（按条数 / 体积裁剪、按明文匹配删、收藏上限淘汰）—— 并发于入库时
+     * 会删掉刚插入的行、或在同一份预算上各算一次。所有改动行集的方法与入库共用同一把锁。
+     *（[reclassifyAll] 不长持锁：它的每条 UPDATE 自身原子，且整趟是全库解密级的秒级任务，
+     * 持锁会把用户此刻的复制保存一起拖住。）
+     */
+    @Synchronized
     fun delete(id: Long): Boolean =
         writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
 
@@ -379,6 +387,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
      * @return 删除的条数
      */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun deleteAll(): Int =
         writableDatabase.delete(
             TABLE_ITEMS,
@@ -398,6 +408,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * @return 删除条数（0 = 历史里没有这条）
      */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun deleteByPlaintext(text: String): Int {
         if (text.isEmpty()) return 0
         return writableDatabase.delete(
@@ -421,6 +433,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * @return 删除条数（0 = 历史里没有等价条目）
      */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun deleteByCleanedPlaintexts(targets: Collection<String>): Int {
         val wanted = targets
             .mapNotNull { it.cleanCredential().takeIf { s -> s.isNotEmpty() } }
@@ -506,6 +520,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
 
     /** 更新收藏状态 */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun setFavorite(id: Long, favorite: Boolean): Boolean {
         val values = ContentValues().apply { put("is_favorite", if (favorite) 1 else 0) }
         return writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(id.toString())) > 0
@@ -523,6 +539,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * [ClipboardPrefs.favoriteMaxItems]）超限时会淘汰最旧收藏 —— 那不是总预算的溢出，
      * 而是用户对「收藏能留多少」的直接约定，两条不变量不冲突。
      */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
@@ -632,6 +650,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /** 管理页专用：删除任意行（含收藏），不受「收藏不参与裁剪」那条不变量限制 */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun deleteAnyByIds(ids: List<Long>): Int {
         if (ids.isEmpty()) return 0
         var n = 0
@@ -646,6 +666,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /** 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行 */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun deleteByCategory(tag: String?): Int {
         val where = if (tag == null) "is_favorite = 0" else "is_favorite = 0 AND category LIKE ?"
         val args = if (tag == null) null else arrayOf("%$tag%")
