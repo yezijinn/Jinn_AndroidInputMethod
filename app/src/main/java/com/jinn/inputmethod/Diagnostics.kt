@@ -130,17 +130,18 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 数字字符类：ASCII 之外再收**全角**（`１`）与**阿拉伯-印度数字**（`١`）。
      *
      * 本 App 自己是中文输入法，用户打得出全角数字；`\d` 只认 ASCII ⇒ 全角写的手机号 / 卡号
-     * 整条漏过脱敏（BUG.md L-169）。前后边界用同一个类，避免把更长的数字串切开。
+     * 整条漏过脱敏（BUG.md L-169）。这里只用于**号码内部**的数字位；前后边界另用逐字形版本
+     * （见 [PHONE_HEAD_EDGE] / [DIGIT_TAIL_EDGE]），两者并集当边界会把混排写法整条否掉（L-971）。
      */
     private const val DIGIT = "[0-9０-９٠-٩]"
 
     /**
-     * 手机号的头两位：`1` 与 `3-9`。
+     * 手机号的**次位**：`3-9`，三种数字形态各列一份。
      *
-     * 不能写成 ASCII 字面量 `1[3-9]` —— 全角写的 `１３８…` 头一位就匹配不上，整条号码照样漏过
-     * 脱敏（BUG.md L-169）。三种数字形态各列一份。
+     * 不能写成 ASCII 字面量 —— 全角写的 `１３８…` 第二位就匹配不上，整条号码照样漏过脱敏
+     * （BUG.md L-169）。首位放在 [PHONE_HEAD_EDGE] 里，因为它要决定用哪一条逐字形边界。
      */
-    private const val PHONE_HEAD = "[1１١][3-9３-９٣-٩]"
+    private const val PHONE_SECOND = "[3-9３-９٣-٩]"
 
     /**
      * 号码里的分隔符：半角空格与连字符之外，再收**全角空格 / 全角连字符 / 短破折号**。
@@ -150,16 +151,40 @@ private const val LOG_SEGMENTS_KEPT = 2
      */
     private const val PHONE_SEP = "[- \u3000\uFF0D\u2013]"
 
+    /** 可选国际前缀（含可选分隔符）：`+86` / `86` / `0086` */
+    private const val PHONE_PREFIX = "(?:\\+?86$PHONE_SEP?|0086$PHONE_SEP?)?"
+
     /**
-     * 11 位大陆手机号（用数字边界避免切开更长的数字串），带可选国际前缀。
+     * 手机号的**逐字形**前边界 + 首位（BUG.md L-971）。
+     *
+     * 边界原先是「三种数字形态的并集」（`(?<!$DIGIT)`）：`１13812345678` 这种「全角一位紧贴半角
+     * 号码」会因为前一位是 `１` 而整条否掉 —— 号码原样落盘（放宽数字类之前用 ASCII 边界时反而是遮的，
+     * 属回退）。拆成三选一分支后：**同形**数字照旧挡得住（`138123456789` 不会被只遮前 11 位），
+     * 异形紧贴不再算「更长的同一个号」。前缀放进各分支里，`１+8613812345678` 也认得出。
+     */
+    private const val PHONE_HEAD_EDGE =
+        "(?:(?<![0-9])${PHONE_PREFIX}1|(?<![０-９])${PHONE_PREFIX}１|(?<![٠-٩])${PHONE_PREFIX}١)"
+
+    /** 逐字形前边界 + 一位任意形态数字（分组长串用，首位形态决定用哪条边界） */
+    private const val DIGIT_EDGE = "(?:(?<![0-9])[0-9]|(?<![０-９])[０-９]|(?<![٠-٩])[٠-٩])"
+
+    /**
+     * 逐字形后边界：末位之后不得紧跟**同形**数字。
+     *
+     * 与 [PHONE_HEAD_EDGE] 成对：只看同形，`13812345678１` 这类「号码后面粘一个全角数字」仍算
+     * 独立号码（遮），而 `138123456789` 是同形串，整条不匹配、留给 [LONG_DIGITS_RE] 或原样。
+     */
+    private const val DIGIT_TAIL_EDGE = "(?:[0-9](?![0-9])|[０-９](?![０-９])|[٠-٩](?![٠-٩]))"
+
+    /**
+     * 11 位大陆手机号（逐字形边界避免切开更长的同形数字串），带可选国际前缀。
      *
      * 分隔写法（`138-1234-5678` / `138 1234 5678`）同样要遮：从通讯录、网页、聊天记录复制时
      * 常带分隔符，只认连写形态等于漏掉一半（BUG.md L-169）。前缀不认的话，`+8613812345678`
      * 里 `1` 的前一位落在数字上，整条会被边界直接否掉（BUG.md L-968）。
      */
     private val PHONE_RE = Regex(
-        "(?<!$DIGIT)(?:\\+?86$PHONE_SEP?|0086$PHONE_SEP?)?$PHONE_HEAD$DIGIT" +
-            "(?:$PHONE_SEP?$DIGIT{4}){2}(?!$DIGIT)",
+        "$PHONE_HEAD_EDGE$PHONE_SECOND$DIGIT(?:$PHONE_SEP?$DIGIT{4})$PHONE_SEP?$DIGIT{3}$DIGIT_TAIL_EDGE",
     )
 
     /**
@@ -170,7 +195,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 是为了不把 `2026-10-06`（两组、每组 ≤4 位）与普通计数串卷进来。
      */
     private val GROUPED_DIGITS_RE = Regex(
-        "(?<!$DIGIT)$DIGIT{4}(?:$PHONE_SEP$DIGIT{4}){3,}(?!$DIGIT)",
+        "$DIGIT_EDGE$DIGIT{3}(?:$PHONE_SEP$DIGIT{4}){2,}$PHONE_SEP$DIGIT{3}$DIGIT_TAIL_EDGE",
     )
 
     /** 邮箱：只遮本地部分，保留域名便于辨认来源 */
@@ -448,18 +473,22 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 堆栈与正文共用；只改敏感片段，不做长度处理。
      */
     internal fun redactSensitive(body: String): String {
-        // 留前 3 位与末 4 位：带分隔符的号码长度不定，按**下标**切会把分隔符算进去（保留段错位），
-        // 按首尾取则连写与分隔写法得到同一结果
-        var s = PHONE_RE.replace(body) { m -> m.value.take(3) + MASK + m.value.takeLast(4) }
-        s = EMAIL_RE.replace(s) { m -> MASK + "@" + m.groupValues[1] }
-        // 凭据形态**先跑**（2026-10-02 修复 L-440）：长数字规则会把 `LTAI0123456789012345`
+        var s = EMAIL_RE.replace(body) { m -> MASK + "@" + m.groupValues[1] }
+        // 凭据形态**先跑**（2026-10-02 修复 L-440）：数字规则会把 `LTAI0123456789012345`
         // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
         // 本该整段替换的值反而露出前 4 位与末 2 位（fail-open 的方向）
         for (re in API_KEY_RES) s = re.replace(s, MASK)
-        // 分组写法排在连续形态之前：两者不重叠（一个要求分隔符在场、一个要求全连写），
-        // 但分组串若先被插进 `****`，长数字规则就再也拼不回完整的一段
-        s = GROUPED_DIGITS_RE.replace(s) { m -> m.value.take(4) + MASK + m.value.takeLast(4) }
+        // 长数字串**先于**手机号 / 分组规则（2026-10-10 修复 L-971）：边界改成逐字形之后，手机号规则
+        // 会在 `１２３４５６１３８１２３４５６７８` 这类混排串里只认后 11 位，插进去的 `****` 把整段
+        // 切开 ⇒ 长数字规则再也拼不回完整的一段（前 6 位裸奔）。先整段遮掉再落到真正的 11 位号码上。
+        // 代价一处：`008613812345678`（0086 + 11 位 = 15 位）现按长数字串遮（留 `0086` 与末 2 位），
+        // 不再按手机号留末 4 位 —— 遮得更多，`DiagnosticsSanitizeTest` 里那条期望已随之更新。
         s = LONG_DIGITS_RE.replace(s) { m -> m.value.replaceRange(4, m.value.length - 2, MASK) }
+        // 留前 3 位与末 4 位：带分隔符的号码长度不定，按**下标**切会把分隔符算进去（保留段错位），
+        // 按首尾取则连写与分隔写法得到同一结果
+        s = PHONE_RE.replace(s) { m -> m.value.take(3) + MASK + m.value.takeLast(4) }
+        // 分组写法与连续形态不重叠（一个要求分隔符在场、一个要求全连写），谁先谁后都一样
+        s = GROUPED_DIGITS_RE.replace(s) { m -> m.value.take(4) + MASK + m.value.takeLast(4) }
         return s
     }
 
