@@ -208,6 +208,30 @@ class DictManagerActivity : Activity() {
         if (downloading != null) return
         if (blockedByRestart()) return
         if (blockedByConfigImport()) return
+        // 已有自定义词库时先确认（BUG.md L-830）：导入是**整体替换**（固定名 `custom_user.txt.xz`），
+        // 用户自己攒的词表会被这个文件的内容换掉。同一张卡片上的「删除」早有二次确认，导入反倒没有 ——
+        // 空库时导入是纯新增，不加这道手续（「快捷补充」页不在此列：编辑器里回显的就是当前内容，
+        // 保存是显式编辑，不是拿陌生文件盖掉它）。
+        if (!CustomDicts.packFile(this).isFile) {
+            launchCustomPicker()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_CUSTOM_TITLE)
+            .setMessage(TEXT_CUSTOM_IMPORT_CONFIRM)
+            .setPositiveButton(TEXT_CONFIRM_OK) { _, _ -> launchCustomPicker() }
+            .setNegativeButton(TEXT_CONFIRM_CANCEL, null)
+            .show()
+    }
+
+    /**
+     * 真正打开 SAF 选文件（[openCustomPicker] 在「已有词库」时会先过一道确认）。
+     *
+     * ⚠ 类型保持通配（见下一行的取值）是**有意**的：`.txt` 在很多 provider 里报
+     * `application/octet-stream`，限成 `text/plain` 会把正常词表挡在门外；内容层的把关在解析侧
+     * （非法行计入跳过、无合法词条即拒存）。
+     */
+    private fun launchCustomPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "*/*"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
@@ -952,6 +976,8 @@ class DictManagerActivity : Activity() {
         const val TEXT_CUSTOM_RESULT_DROPPED =
             "已导入 %d 条（跳过 %d 行），另有 %d 条因同音超过 100 条未入包"
         const val TEXT_CUSTOM_CONFIRM = "删除后需要重新导入，确定删除自定义词库吗？"
+        /** 已有词库时导入前的二次确认（BUG.md L-830）：导入是整体替换，现有词条不会保留 */
+        const val TEXT_CUSTOM_IMPORT_CONFIRM = "导入会把自定义词库整份换成本文件的内容（现有词条不再保留），确定继续？"
         const val TEXT_CONFIG_IMPORTING = "配置恢复进行中，暂不可修改词库"
 
         /** 列表渲染异常时的兜底提示（BUG.md L-831：刷新失败不崩进程，重进本页即恢复） */

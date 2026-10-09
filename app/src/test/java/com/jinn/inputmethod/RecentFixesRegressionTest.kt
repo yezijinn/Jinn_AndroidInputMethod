@@ -4766,4 +4766,27 @@ class RecentFixesRegressionTest {
         }
     }
 
+    /**
+     * 已有自定义词库时，导入入口必须先确认（BUG.md L-830）。
+     *
+     * 导入是**整体替换**（固定名 `custom_user.txt.xz`）：用户自己攒的词表会被选中的那个文件换掉，
+     * 而同一张卡片上的「删除」早就有一道二次确认，导入反倒直接进选择器。
+     * 反向一并钉住：SAF 类型保持开放通配 —— 限成 `text/plain` 会把很多 provider 报成
+     * `application/octet-stream` 的正常 `.txt` 挡在门外，而内容层的把关在解析侧
+     * （非法行计入跳过、无合法词条即拒存），不靠文件类型。
+     */
+    @Test
+    fun `已有词库时导入必须先确认`() {
+        val d = codeOf("DictManagerActivity.kt")
+        val pick = blockAfter(d, "private fun openCustomPicker()")
+        assertTrue(
+            "已有词库时要先弹确认，不能直接进选择器",
+            "CustomDicts.packFile(this).isFile" in pick && "TEXT_CUSTOM_IMPORT_CONFIRM" in pick,
+        )
+        assertTrue("确认通过之后才打开选择器", "launchCustomPicker()" in pick)
+        val launch = blockAfter(d, "private fun launchCustomPicker()")
+        assertTrue("SAF 类型必须保持开放（provider 的 .txt 常报 octet-stream）", "type = \"*/*\"" in launch)
+        assertEquals("选择器只该有一个打开点", 1, Regex("""RC_CUSTOM_DICT\)""").findAll(d).count())
+    }
+
 }
