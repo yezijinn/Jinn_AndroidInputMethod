@@ -4,9 +4,11 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Test
 import org.tukaani.xz.XZInputStream
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Stage 2 护栏：
@@ -14,6 +16,12 @@ import java.io.File
  *     完全一致（同一格式、同一顺序），否则两类索引将无法互换读取；
  *  2. 逐段合并语义，「运行时 ∪ 基础索引 ∪ 可选索引」的结果必须与旧实现一致：
  *     先到先得 + 去重，基础在前、可选包追加。
+ *
+ * 对拍分两层（缺任一层就有假绿口子）：
+ *  - **冻结层**：与随仓库保存的 fixture 产物逐字节比 —— 不需要 Python，永远跑得了；
+ *  - **实跑层**：真去执行 `tools/dict_builder/build_dict_index.py`（只喂 tiny fixture，不产资产）
+ *    —— 脚本改了写盘顺序 / 字节序 / 长度数组宽度却不同步重生成 fixture 时，这一层会红。
+ * 本机没有 python 解释器时实跑层按 [Assume] 跳过（冻结层照跑）。
  */
 class IndexBuilderParityTest {
 
@@ -44,13 +52,101 @@ class IndexBuilderParityTest {
     private fun fixtureBytes(): ByteArray =
         XZInputStream(res("dict_index_fixture.bin.xz").inputStream()).use { it.readBytes() }
 
+    /** 冻结层：与仓库里保存的脚本产物逐字节比（不执行脚本，任何机器都跑得动） */
     @Test
-    fun 设备端构建器与构建脚本产出完全一致() {
+    fun 设备端构建器与冻结的脚本产物逐字节一致() {
         val pythonBuilt = fixtureBytes()
         val stamp = PhraseIndex.of(pythonBuilt)!!.sourceStamp      // 用同一摘要才能逐字节比对
         val kotlinBuilt = PhraseIndex.build(fixtureText().lineSequence(), stamp)
-        assertArrayEquals("Kotlin 构建器与 Python 构建脚本产出的索引必须逐字节一致",
+        assertArrayEquals("Kotlin 构建器与冻结的脚本产物必须逐字节一致",
             pythonBuilt, kotlinBuilt)
+    }
+
+    /**
+     * 实跑层（L-1141）：真执行构建脚本，对同一 fixture 文本现算一份索引。
+     *
+     * 两层断言各挡一类漂移：
+     *  ① 脚本产出 ≠ 冻结产物 ⇒ fixture 已过期（脚本改过而没重生成）；
+     *  ② 脚本产出 ≠ 设备端构建器 ⇒ 两端格式/顺序真的分叉。
+     * 只喂 tiny fixture（脚本侧只调纯函数 `build_index_bytes`），不写 `assets/`、不产全量词库。
+     */
+    @Test
+    fun 现跑构建脚本时两端产出仍逐字节一致() {
+        val dir = dictBuilderDir()
+        val py = pythonExe()
+        Assume.assumeTrue(
+            "未找到 tools/dict_builder 或 python 解释器，跳过脚本实跑对拍（冻结层仍已覆盖）",
+            dir != null && py != null,
+        )
+        val text = fixtureText()
+        val fresh = runPythonBuilder(py!!, dir!!, text)
+        assertArrayEquals(
+            "脚本对同一 fixture 的产出与冻结产物不一致 —— fixture 已过期，请用 --fixture 重新生成",
+            fixtureBytes(), fresh,
+        )
+        val stamp = PhraseIndex.of(fresh)?.sourceStamp ?: throw AssertionError("脚本产出无法解析")
+        assertArrayEquals(
+            "设备端构建器与本次脚本产出必须逐字节一致（格式 / 段序 / 长度数组宽度 / 摘要同源）",
+            fresh, PhraseIndex.build(text.lineSequence(), stamp),
+        )
+    }
+
+    // ── 实跑层的脚手架：进程调用只在本文件用，且一律落在系统临时目录 ──
+
+    /** `tools/dict_builder` 目录（测试工作目录可能是仓库根，也可能是 `app/`） */
+    private fun dictBuilderDir(): File? =
+        listOf("tools/dict_builder", "../tools/dict_builder")
+            .map { File(it) }
+            .firstOrNull { File(it, "build_dict_index.py").isFile }
+
+    /** 可用的 python 解释器（Windows 上通常是 `python`，部分环境只有 `py`） */
+    private fun pythonExe(): String? = listOf("python", "python3", "py").firstOrNull { exe ->
+        runCatching {
+            val p = ProcessBuilder(exe, "--version").redirectErrorStream(true).start()
+            p.inputStream.readBytes()
+            p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 跑一次脚本并取回它产出的索引字节。
+     *
+     * 用临时驱动脚本**只调纯函数**（不执行 `main()`）——`main()` 会写 `assets/pinyin_index.bin.xz`
+     * 与 `tools/dict_builder/out/`，测试绝不能碰资产。
+     */
+    private fun runPythonBuilder(py: String, dir: File, text: String): ByteArray {
+        val tmpTxt = File.createTempFile("jinn_parity_in", ".txt")
+        val tmpBin = File.createTempFile("jinn_parity_out", ".bin")
+        val driver = File.createTempFile("jinn_parity_driver", ".py")
+        try {
+            tmpTxt.writeText(text, Charsets.UTF_8)
+            driver.writeText(DRIVER, Charsets.UTF_8)
+            val proc = ProcessBuilder(
+                py, driver.absolutePath, dir.absolutePath, tmpTxt.absolutePath, tmpBin.absolutePath,
+            ).redirectErrorStream(true).start()
+            val log = proc.inputStream.readBytes().toString(Charsets.UTF_8)
+            if (!proc.waitFor(120, TimeUnit.SECONDS)) {
+                proc.destroy()
+                throw AssertionError("构建脚本超时（120s）")
+            }
+            if (proc.exitValue() != 0) {
+                throw AssertionError("构建脚本执行失败（exit=${proc.exitValue()}）：$log")
+            }
+            return tmpBin.readBytes()
+        } finally {
+            tmpTxt.delete(); tmpBin.delete(); driver.delete()
+        }
+    }
+
+    private companion object {
+        /** 驱动脚本：把 fixture 文本喂给脚本的纯函数，产出裸索引字节 */
+        val DRIVER = """
+            import io, sys
+            sys.path.insert(0, sys.argv[1])
+            from build_dict_index import build_index_bytes
+            text = io.open(sys.argv[2], encoding="utf-8").read().strip("\n")
+            io.open(sys.argv[3], "wb").write(build_index_bytes(text))
+        """.trimIndent()
     }
 
     @Test

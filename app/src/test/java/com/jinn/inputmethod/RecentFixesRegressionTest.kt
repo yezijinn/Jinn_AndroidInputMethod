@@ -4670,20 +4670,26 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 装配期两处「别再多存一份」不得退回去（2026-10-09，批 1 的 MEM-02 / MEM-03）。
+     * 装配期「别再多存一份」不得退回去（2026-10-09 批 1 的 MEM-02 / MEM-03；2026-10-10 收紧到 L-1143）。
      *
-     * - 索引组装：四段各自 `toByteArray()` 再 `arraycopy` 会让「段缓冲 + 段拷贝 + 最终数组」同时驻留，
-     *   组装期峰值约 3× 索引体积（可选包构建时十几 MB 白付）；改成按已知尺寸一次分配 + `writeTo` 直拷。
+     * - 索引组装（现行）：两段**大**段（键区 / 词区）边解析边写临时件，堆上只留两个长度数组与最终产物，
+     *   构建期峰值 ≈ 1× 索引体积；装配时两个长度数组用 `writeTo` 直拷进目标数组，不再出中间数组。
+     *   退回形态有两级：① 四段各留 `ByteArrayOutputStream`（峰值 ≈ 2×）；② 每段再 `toByteArray()` 再
+     *   `arraycopy`（峰值 ≈ 3×，即 MEM-02 修的原始形态）—— 两条都在禁止之列。
      * - 自定义词库落盘：先压进 `ByteArrayOutputStream` 再 `toByteArray()` 同样存两份压缩结果；
      *   改成 XZ 直写文件流，收尾用 `finish()`（`close()` 会连文件流一起关，紧随的 `fd.sync()` 会抛）。
      *
-     * 产物逐字节不变由 `IndexBuilderParityTest` / `IndexParityTest` 与 `CustomDictsTest` 的往返用例把守。
+     * 产物逐字节不变由 `IndexBuilderParityTest`（冻结产物 + 现跑脚本两层）与 `CustomDictsTest` 的往返用例把守。
      */
     @Test
     fun `装配与落盘不得再各存一份中间副本`() {
         val idx = codeOf("PhraseIndex.kt")
-        assertTrue("索引组装必须用 writeTo 直拷进目标数组", idx.contains("section.writeTo(sink)"))
-        assertTrue("必须保留「各段尺寸先算好」的写法", idx.contains("HEADER_SIZE + keyBlob.size() + keyLens.size()"))
+        assertTrue("两段大段必须经临时件落盘（堆内不留整段缓冲）", idx.contains("createTempFile(\"jinn_idx_keys\""))
+        assertTrue("临时件必须分片拷进目标数组", idx.contains("copyFileInto("))
+        assertTrue("长度数组必须 writeTo 直拷进目标数组", idx.contains(".writeTo(sink)"))
+        assertTrue("必须保留「尺寸先算好再分配」的写法", idx.contains("HEADER_SIZE + keyBytes + keyLens.size()"))
+        assertTrue("必须保留单份上限闸", idx.contains("MAX_INDEX_BYTES"))
+        assertTrue("不得再出现两个大段缓冲", !idx.contains("keyBlob") && !idx.contains("wordBlob"))
         assertTrue("不得再逐段 toByteArray 出中间数组", !idx.contains("val keys = keyBlob.toByteArray()"))
 
         val dicts = codeOf("CustomDicts.kt")

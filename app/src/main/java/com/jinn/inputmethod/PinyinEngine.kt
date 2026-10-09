@@ -154,12 +154,19 @@ object PinyinEngine {
     /**
      * 分片读完整条解压流，每攒够 1MB 主动睡 1ms 让出 CPU。
      *
-     * 不这么做的话，基础索引解压是一次 1.8 秒不给喘息的连续 CPU 冲击（还带一个 14.7MB 大分配）：
+     * 不这么做的话，基础索引解压是一次 1.8 秒不给喘息的连续 CPU 冲击（还带一个十几 MB 的大分配）：
      * 真机实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 300ms（janky 12%）。
      * 让出 CPU 后总耗时只多几十毫秒（都在后台），但前台打字不再被挤。
+     *
+     * ⚠ 这只是**兜底路径**（[loadIndexOfHeap]：流式写缓存与映射都失败时）；正常路径见
+     * [streamIndexCacheToDisk] —— 那边解压分片直接进文件流，堆上不留整份。
+     * 初始容量按**实测payload**留一档余量（`pinyin_index.bin.xz` 解压后 6.94MB，
+     * 见 `tools/dict_builder` 的产物统计）：原先写死 16MB 是旧 4.4MB 索引时代的残留
+     * （2026-10-10 复算，BUG.md L-1158）。索引将来长过 8MB 时 `ByteArrayOutputStream`
+     * 会自行翻倍，只是多一次拷贝，不会出错。
      */
     internal fun readWithYields(stream: java.io.InputStream): ByteArray {
-        val out = java.io.ByteArrayOutputStream(16 * 1024 * 1024)
+        val out = java.io.ByteArrayOutputStream(8 * 1024 * 1024)
         val buf = ByteArray(CHUNK_BYTES)
         var sinceYield = 0
         while (true) {

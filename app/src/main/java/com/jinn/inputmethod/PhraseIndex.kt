@@ -284,23 +284,54 @@ internal class PhraseIndex private constructor(
             fnv1a64("$length:$modified".toByteArray(Charsets.UTF_8))
 
         /**
+         * 单份索引的构建上限（字节）。超出即拒建并给出确切原因（调用方的失败分支会把原因带包名落盘）：
+         * 宁可「这一包不装」，也不要在 `ByteArray(total)` 上撞 OOM —— 后者以 `OutOfMemoryError` 形态
+         * 出现，被外层 catch 成「该包失败」，用户看到的是「装了却不生效」，排查看不到真因。
+         *
+         * 32MB 是「正常包（索引约 9MB）的 3 倍以上」：只挡异常输入，不挡任何一档现有词库包。
+         */
+        internal const val MAX_INDEX_BYTES = 32 shl 20
+
+        /**
          * 从「键 → 词表行」构建索引字节（设备端首次加载可选包时使用）。
          *
          * 与构建脚本产出完全同格式（同一套 header/偏移布局），因此可以互相读取；
-         * 已由 `IndexBuilderParityTest` 对拍钉住。
+         * 已由 `IndexBuilderParityTest` 的**两层**对拍钉住（冻结产物 + 现跑脚本）。
+         *
+         * 峰值（L-1143）：两段大段（键区 / 词区）**边解析边写临时件**，堆上只留两个长度数组
+         * （≤ keyCount 与 2×keyCount 字节，30 万键约 0.9MB）与最终产物一份 ⇒ 构建期堆峰值 ≈ 1× 索引体积。
+         * 原先四段各留一个 `ByteArrayOutputStream`：装配时它们与产物同时在堆上 ⇒ 峰值 ≈ 2×
+         * （part4 索引约 9MB 时白占 9MB，单段超 12MB 还会落进 ART 大对象空间）。
+         * 绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会顶爆堆）。
          *
          * @param lines 形如 `拼音<TAB>词1|词2` 的行；流水线已保证按键升序（乱序即抛错，
          *   由调用方回退到文本路径）；同键的连续多行会合并进同一个词表（与文本路径一致）。
          * @param stamp 写入头部的来源摘要（供复用校验）
          */
         fun build(lines: Sequence<String>, stamp: Long): ByteArray {
-            // 单趟流式：只累积「键区/键长/词区/词长」四个缓冲，不再维护偏移数组。
-            // 峰值 ≈ 索引体积，绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会顶爆堆）。
-            val keyBlob = java.io.ByteArrayOutputStream(1 shl 20)
+            // 两段大段落系统临时目录（不放缓存目录：那里的清扫线程按「源包是否还在」删文件）
+            val keyFile = java.io.File.createTempFile("jinn_idx_keys", ".bin")
+            val wordFile = java.io.File.createTempFile("jinn_idx_words", ".bin")
+            try {
+                return buildInto(lines, stamp, keyFile, wordFile)
+            } finally {
+                keyFile.delete()
+                wordFile.delete()
+            }
+        }
+
+        /** [build] 的主体：先把键区 / 词区写进两个临时件，再按已知长度一次装配成产物 */
+        private fun buildInto(
+            lines: Sequence<String>,
+            stamp: Long,
+            keyFile: java.io.File,
+            wordFile: java.io.File,
+        ): ByteArray {
             val keyLens = java.io.ByteArrayOutputStream(1 shl 16)
-            val wordBlob = java.io.ByteArrayOutputStream(1 shl 21)
             val wordLens = java.io.ByteArrayOutputStream(1 shl 17)
             var count = 0
+            var keyBytes = 0
+            var wordBytes = 0
             // 逐键写出：同键的连续多行合并进同一个词表（`词1|词2` 拼接，重复词只保留首个）。
             // 语义与文本路径对齐，`loadPhrasesReader(merge=true)` 对同键是
             // `existing + kept.filter { seen.add(it) }`（去重）；旧实现按行写出，
@@ -310,60 +341,81 @@ internal class PhraseIndex private constructor(
             // （不是整份词库，流式性质不变）；超 64KB 在写出该键时 require 抛错。
             var pendingKey: String? = null
             val pendingWords = LinkedHashSet<String>(8)
-            fun flushPending() {
-                val key = pendingKey ?: return
-                val kb = key.toByteArray(Charsets.UTF_8)
-                val wb = pendingWords.joinToString("|").toByteArray(Charsets.UTF_8)
-                require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
-                require(wb.size <= 65535) { "词表过长（>64KB），长度数组无法表示（同键合并后超限）" }
-                keyBlob.write(kb)
-                keyLens.write(kb.size)
-                wordBlob.write(wb)
-                wordLens.write(wb.size and 0xFF)
-                wordLens.write((wb.size ushr 8) and 0xFF)
-                count++
-                pendingWords.clear()
-            }
-            for (line in lines) {
-                val tab = line.indexOf('\t')
-                if (tab <= 0) continue
-                val key = line.substring(0, tab)
-                // 索引靠二分查找，必须按键升序；乱序时由调用方回退到旧路径（见 PinyinEngine）
-                val prev = pendingKey
-                check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
-                if (prev != null && key != prev) flushPending()
-                pendingKey = key
-                // 空词（`a||b`、行尾 `|` 等脏数据）直接丢弃：查询侧 wordsFor 也会解出空段，
-                // 空文本候选既无意义又占候选位。正常生成器产出的词库不会出现空词。
-                for (w in line.substring(tab + 1).split('|')) {
-                    if (w.isNotEmpty()) pendingWords.add(w)
+            java.io.BufferedOutputStream(keyFile.outputStream()).use { keyOut ->
+                java.io.BufferedOutputStream(wordFile.outputStream()).use { wordOut ->
+                    fun flushPending() {
+                        val key = pendingKey ?: return
+                        val kb = key.toByteArray(Charsets.UTF_8)
+                        val wb = pendingWords.joinToString("|").toByteArray(Charsets.UTF_8)
+                        require(kb.size <= 255) { "键过长（>255B），长度数组无法表示" }
+                        require(wb.size <= 65535) { "词表过长（>64KB），长度数组无法表示（同键合并后超限）" }
+                        keyOut.write(kb)
+                        keyLens.write(kb.size)
+                        wordOut.write(wb)
+                        wordLens.write(wb.size and 0xFF)
+                        wordLens.write((wb.size ushr 8) and 0xFF)
+                        keyBytes += kb.size
+                        wordBytes += wb.size
+                        count++
+                        pendingWords.clear()
+                    }
+                    for (line in lines) {
+                        val tab = line.indexOf('\t')
+                        if (tab <= 0) continue
+                        val key = line.substring(0, tab)
+                        // 索引靠二分查找，必须按键升序；乱序时由调用方回退到旧路径（见 PinyinEngine）
+                        val prev = pendingKey
+                        check(prev == null || key >= prev) { "词库键不是升序: $key < $prev" }
+                        if (prev != null && key != prev) flushPending()
+                        pendingKey = key
+                        // 空词（`a||b`、行尾 `|` 等脏数据）直接丢弃：查询侧 wordsFor 也会解出空段，
+                        // 空文本候选既无意义又占候选位。正常生成器产出的词库不会出现空词。
+                        for (w in line.substring(tab + 1).split('|')) {
+                            if (w.isNotEmpty()) pendingWords.add(w)
+                        }
+                    }
+                    flushPending()
                 }
             }
-            flushPending()
 
-            // 组装（MEM-02）：按四段**已知尺寸**一次分配，再把各段用 writeTo 直接拷进去。
-            // 原先每段先 `toByteArray()` 再 `System.arraycopy` —— 那四份拷贝与最终数组同时驻留，
-            // 组装期峰值 ≈ 段缓冲 + 段拷贝 + out ≈ 3× 索引体积（可选包 8~10MB 索引时是十几 MB 白付）。
-            // 产物逐字节不变：写出顺序、各段起始位置与原先完全一致（IndexBuilderParityTest 对拍）。
-            val out = ByteArray(
-                HEADER_SIZE + keyBlob.size() + keyLens.size() + wordBlob.size() + wordLens.size(),
-            )
+            // 组装（MEM-02 + L-1143）：先按**已知尺寸**一次分配产物，再把两段大段从临时件拷进来、
+            // 两个长度数组直接写进去。全过程堆上只有「产物 + 两个长度数组」——
+            // 产物逐字节不变：写出顺序、各段起始位置与原先完全一致（`IndexBuilderParityTest` 两层对拍）。
+            val total = HEADER_SIZE + keyBytes + keyLens.size() + wordBytes + wordLens.size()
+            require(total <= MAX_INDEX_BYTES) {
+                "索引超出单份上限（${total / 1024}KB > ${MAX_INDEX_BYTES / 1024}KB），拒绝构建"
+            }
+            val out = ByteArray(total)
             out[0] = 'J'.code.toByte(); out[1] = 'N'.code.toByte()
             out[2] = 'I'.code.toByte(); out[3] = 'H'.code.toByte()
             writeU16(out, 4, 2)
             writeI32(out, 6, count)
-            writeI32(out, 10, keyBlob.size())
-            writeI32(out, 14, wordBlob.size())
+            writeI32(out, 10, keyBytes)
+            writeI32(out, 14, wordBytes)
             writeI32(out, 18, 0)
             writeI64(out, 22, stamp)
-            var p = HEADER_SIZE
+            var p = copyFileInto(keyFile, out, HEADER_SIZE)
             val sink = ByteArraySink(out, p)
-            for (section in arrayOf(keyBlob, keyLens, wordBlob, wordLens)) {
-                sink.pos = p
-                section.writeTo(sink)
-                p = sink.pos
-            }
+            keyLens.writeTo(sink)
+            p = copyFileInto(wordFile, out, sink.pos)
+            sink.pos = p
+            wordLens.writeTo(sink)
             return out
+        }
+
+        /** 把 [src] 整份拷进 [dst] 的 [offset] 处，返回写到的下一个位置（16KB 分片，不整份读进堆） */
+        private fun copyFileInto(src: java.io.File, dst: ByteArray, offset: Int): Int {
+            var p = offset
+            val buf = ByteArray(1 shl 14)
+            src.inputStream().use { raw ->
+                while (true) {
+                    val n = raw.read(buf)
+                    if (n < 0) break
+                    System.arraycopy(buf, 0, dst, p, n)
+                    p += n
+                }
+            }
+            return p
         }
 
         /**
