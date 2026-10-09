@@ -1159,8 +1159,16 @@ class SettingsActivity : ComponentActivity() {
                     alert(TEXT_EXPORT_CONFIG, reason)
                 } else {
                     pendingConfigZip = outcome.file
-                    val extra =
-                        if (outcome.clipDropped > 0) "（剪贴板 ${outcome.clipDropped} 条因超限/超预算未导出）" else ""
+                    val extra = buildString {
+                        if (outcome.clipDropped > 0) {
+                            append("（剪贴板 ${outcome.clipDropped} 条因超限/超预算未导出）")
+                        }
+                        // 导出期间库一直在变、重试已耗尽：包完整可用，但这一份视图可能少了刚落库的条目。
+                        // 不许静默报「全部导出成功」（BUG-13）。
+                        if (outcome.clipUnstable) {
+                            append("（导出期间剪贴板持续变化，本次快照可能不完整；如需完整备份请稍后重试）")
+                        }
+                    }
                     textConfigHint.text = "已生成加密备份包，请选择保存位置$extra"
                     exportConfigLauncher.launch(outcome.file.name)
                 }

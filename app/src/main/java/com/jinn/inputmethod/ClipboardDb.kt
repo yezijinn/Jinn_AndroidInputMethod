@@ -795,6 +795,29 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun count(): Int = count(null, false)
 
     /**
+     * 这批 id 里还有多少行在库里（导入计数用，BUG-13）。
+     *
+     * 导入要报「实际进库多少」时不能用「前后总数之差」：采集常开，导入期间用户的每次复制
+     * 都会改动总数，差值会把**并发条目**算进本次导入（界面数字虚高）。只查本次插入的 id，
+     * 与并发无关；顺带把「刚插入就被裁剪掉」的那部分量出来（旧时间戳的行在本机库满时最旧）。
+     *
+     * 分块查询：SQLite 的变量上限是 999（老版本更低），块大小取 400 留足余量。
+     */
+    @Synchronized
+    fun countPresent(ids: List<Long>): Int {
+        if (ids.isEmpty()) return 0
+        var n = 0
+        for (chunk in ids.chunked(400)) {
+            val marks = chunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE id IN ($marks)",
+                chunk.map { it.toString() }.toTypedArray(),
+            ).use { c -> if (c.moveToFirst()) n += c.getInt(0) }
+        }
+        return n
+    }
+
+    /**
      * 导出用的库指纹：条数 / 最大 id / 密文总长，一次查询取三样。
      *
      * 只比对条数会在**到上限后的插入 + 淘汰**（`upsert` → `trimTo` 成对发生、总数不变，其 KDoc 自述）

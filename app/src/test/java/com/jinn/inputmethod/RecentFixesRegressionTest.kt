@@ -889,6 +889,43 @@ class RecentFixesRegressionTest {
                 "if (normalized.length > MAX_FAVORITE_SYMBOLS_CHARS)" in prefs,
         )
     }
+    /**
+     * 导入计数与导出回执不得退回去（2026-10-09，批 6 的 BUG-13）。
+     *
+     * ① 计数：导入报「剪贴板 +N」原先取 `db.count()` 的前后差，而采集常开 —— 导入期间用户的每次
+     *   复制都会改动总数，差值把并发条目算进本次导入（数字虚高）。现在只按**本次插入的 id** 复查。
+     * ② 回执：导出期间库一直变、重试耗尽时，原先只留一条 W 而界面照报「全部导出成功」——
+     *   包是完整可导入的，但那是**假成功**（少了几条却不说）。现在一路上报并由界面如实补一句。
+     */
+    @Test
+    fun `导入计数按本次插入复查且假成功必须上报`() {
+        val mgr = codeOf("ConfigBackupManager.kt")
+        val importBlock = blockAfter(mgr, "if (failedStage == null && includeClipboard &&")
+        assertTrue(
+            "导入计数必须按本次插入的 id 复查",
+            "val insertedIds = ArrayList<Long>(planned.size)" in importBlock &&
+                "val present = db.countPresent(insertedIds)" in importBlock,
+        )
+        assertTrue("导入不得再用前后总数差", "db.count() - before" !in importBlock)
+        assertTrue(
+            "跳过数必须由三项相加（结构上不超包内条数）",
+            "clipSkipped = dedupeSkipped + insertFailed + trimmedAway" in importBlock,
+        )
+
+        val collect = blockAfter(mgr, "private fun collectClipboard(context: Context): ClipPayload {")
+        assertTrue(
+            "重试耗尽必须标记快照不稳定",
+            "ClipPayload(last?.text ?: \"\", last?.dropped ?: 0, unstable = true)" in collect,
+        )
+        assertTrue("回执必须带上该标记", "clip?.unstable == true" in mgr)
+        val db = codeOf("ClipboardDb.kt")
+        assertTrue("按 id 复查的实现必须在", "fun countPresent(ids: List<Long>): Int" in db)
+        assertTrue(
+            "界面必须如实写出不稳定一句",
+            "outcome.clipUnstable" in codeOf("SettingsActivity.kt") &&
+                "本次快照可能不完整" in codeOf("SettingsActivity.kt"),
+        )
+    }
 
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {

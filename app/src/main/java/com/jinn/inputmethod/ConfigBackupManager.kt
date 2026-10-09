@@ -258,6 +258,13 @@ internal object ConfigBackupManager {
         val file: File,
         /** 未导出的剪贴板条数（0 = 全部导出）；要求见 [collectClipboard]：条数上限/单条上限/字节预算三类 */
         val clipDropped: Int,
+        /**
+         * 剪贴板快照不稳定（导出期间库持续变化、重试已耗尽）。
+         *
+         * 包本身是完整可导入的（每行都自洽、摘要校验也通过），但「这一份视图」可能少了刚落库的条目。
+         * 界面据此在回执里补一句，不许静默当成「全部导出成功」（BUG-13）。
+         */
+        val clipUnstable: Boolean,
     )
 
     /**
@@ -454,12 +461,13 @@ internal object ConfigBackupManager {
             TAG,
             "导出完成: ${dest.name} 节=${sections.keys} 词频=${lineCount(freqText)} 条 " +
                 "剪贴板=${clipSection?.let { s -> lineCount(s.text) } ?: 0} 条 词库=${dicts.size} 个 " +
-                "共 ${dest.length()} 字节（已加密）",
+                "共 ${dest.length()} 字节（已加密）" +
+                if (clip?.unstable == true) "（剪贴板快照不稳定）" else "",
         )
-        return ExportOutcome(dest, clip?.dropped ?: 0)
+        return ExportOutcome(dest, clip?.dropped ?: 0, clip?.unstable == true)
     }
 
-    private class ClipPayload(val text: String, val dropped: Int)
+    private class ClipPayload(val text: String, val dropped: Int, val unstable: Boolean = false)
 
     /**
      * 收集待导出的剪贴板条目。
@@ -482,8 +490,11 @@ internal object ConfigBackupManager {
             last = payload
             Diagnostics.w(TAG, "剪贴板导出: 库在导出期间发生变化，重试（第 ${attempt + 1} 趟）")
         }
-        Diagnostics.w(TAG, "剪贴板导出: 库仍在变化，采用最后一趟的结果")
-        return last ?: ClipPayload("", 0)
+        // 重试耗尽：库里一直在变，这一趟的快照**可能与最后一刻不一致**（会话期间被复制/删除过）。
+        // 不再只留一条 W 就让界面报「全部导出成功」（BUG-13）—— 由 [ClipPayload.unstable] 一路上报，
+        // 导出回执里如实写一句。
+        Diagnostics.w(TAG, "剪贴板导出: 库仍在变化，采用最后一趟的结果（标记为快照不稳定）")
+        return ClipPayload(last?.text ?: "", last?.dropped ?: 0, unstable = true)
     }
 
     private fun collectClipboardOnce(db: ClipboardDb, maxItemBytes: Int): ClipPayload {
@@ -1081,12 +1092,13 @@ internal object ConfigBackupManager {
             val ok = runCatching {
                 val incoming = ConfigBackup.decodeClipboard(clipText.orEmpty())
                 val db = ClipboardDb.get(context)
-                val before = db.count()
                 val planned = ConfigBackup.planClipboardImport(db.allHashes(), incoming)
                 // 「本机已有 / 批内重复」的跳过量与「插入失败」必须分账：下面的裁掉量只能减后者，
                 // 混成一笔会把去重数当插入失败算（少报跳过数），裁剪量还会算成负数被丢掉
                 val dedupeSkipped = incoming.size - planned.size
                 var insertFailed = 0
+                // 本次真正插进去的行 id：下面按 id 复查，而不是拿「前后总数之差」（BUG-13）
+                val insertedIds = ArrayList<Long>(planned.size)
                 for (e in planned) {
                     // 分类按本机当前规则重算，不采用包里的取值：那是「导出设备当时的规则」
                     // 算出来的，可能与本机不一致。落库时就算准，导入的这批行无需等下次启动重算，
@@ -1099,18 +1111,22 @@ internal object ConfigBackupManager {
                         category = ClipboardClassifier.classify(e.content),
                         favorite = e.favorite,
                     )
-                    if (id <= 0) insertFailed++
+                    if (id <= 0) insertFailed++ else insertedIds.add(id)
                 }
                 db.trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
-                // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）
-                val net = db.count() - before
-                clipAdded = net.coerceAtLeast(0)
-                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥（2026-09-30 审查）：
-                // `net < 0` 表示本机自己的旧条目也被多裁掉了更多，那部分**不能**再算进「刚插入又被裁掉」
-                // —— 否则跳过数会超过包内条数，界面出现「跳过 30 条」而包里只有 10 条。
-                val trimmedAway = if (net < 0) 0 else (planned.size - insertFailed) - clipAdded
-                clipSkipped = dedupeSkipped + insertFailed + (if (trimmedAway > 0) trimmedAway else 0)
+                // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）。
+                //
+                // 口径是**按本次插入的 id 复查**（BUG-13）：原先取 `db.count()` 的前后差，而采集常开 ——
+                // 导入期间用户的每次复制都会改动总数，差值会把并发条目算进本次导入，界面数字虚高。
+                // 按 id 复查只认自己插的行，与并发无关。
+                val present = db.countPresent(insertedIds)
+                clipAdded = present
+                // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥，且**结构上**不超包内条数：
+                // `present + insertFailed + trimmedAway == planned.size`（旧的「差值可能为负」分支
+                // 因此不再需要 —— 那是前后总数差被并发与自身裁剪混在一起才出现的现象）。
+                val trimmedAway = insertedIds.size - present
+                clipSkipped = dedupeSkipped + insertFailed + trimmedAway
                 true
             }.getOrDefault(false)
             if (!ok) {
