@@ -111,14 +111,17 @@ class SymbolOrderActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             row.addView(name)
-            row.addView(orderArrowButton(R.drawable.ic_arrow_up, getString(R.string.symbol_order_move_up), idx > 0) {
-                applyOrder(SymbolOrder.move(labels, idx, idx - 1))
-            })
+            row.addView(
+                orderArrowButton(R.drawable.ic_arrow_up, up = true, label = label, enabled = idx > 0) {
+                    applyOrder(SymbolOrder.move(labels, idx, idx - 1))
+                },
+            )
             row.addView(
                 orderArrowButton(
                     R.drawable.ic_arrow_down,
-                    getString(R.string.symbol_order_move_down),
-                    idx < labels.lastIndex,
+                    up = false,
+                    label = label,
+                    enabled = idx < labels.lastIndex,
                 ) {
                     applyOrder(SymbolOrder.move(labels, idx, idx + 1))
                 },
@@ -142,14 +145,17 @@ class SymbolOrderActivity : Activity() {
      */
     private fun orderArrowButton(
         iconRes: Int,
-        desc: String,
+        up: Boolean,
+        label: String,
         enabled: Boolean,
         onClick: () -> Unit,
     ): ImageButton {
         return ImageButton(this).apply {
             setImageResource(iconRes)
-            // 无障碍名沿用 strings.xml 里那两条（图标没有文字，没有它就只剩「按钮」）
-            contentDescription = desc
+            // 无障碍名 = 动作 + 对象（BUG.md L-1138）：图标没有文字，名字就是全部信息。
+            // 原先用的是 strings.xml 里那两条字形（「↑」/「↓」）⇒ 读屏只念「上箭头」，
+            // 听不出对哪一组做什么；那两条资源因此不再被引用（按 strings.xml 约定留着）。
+            contentDescription = SymbolOrder.moveDescription(up, label)
             background = null
             isEnabled = enabled
             alpha = if (enabled) 1f else 0.4f

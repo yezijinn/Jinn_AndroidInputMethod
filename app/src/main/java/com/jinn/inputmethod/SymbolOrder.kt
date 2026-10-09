@@ -67,6 +67,22 @@ object SymbolOrder {
         return list
     }
 
+    /** ↑ 按钮的读屏动词 */
+    private const val MOVE_UP = "上移"
+
+    /** ↓ 按钮的读屏动词 */
+    private const val MOVE_DOWN = "下移"
+
+    /**
+     * ↑↓ 按钮的读屏名（纯函数，便于单测）：**动作 + 对象**。
+     *
+     * 图标没有文字，名字就是全部信息（BUG.md L-1138）：原先直接拿 `strings.xml` 里那两条字形
+     * 「↑」/「↓」当无障碍名，读屏只念「上箭头」，听不出对哪一组做什么。分组名带引号，读屏读作
+     * 「上移『收藏』」，与动词本身分得开（那两条字形资源因此不再被引用，按 `strings.xml` 约定留着）。
+     */
+    fun moveDescription(up: Boolean, label: String): String =
+        (if (up) MOVE_UP else MOVE_DOWN) + "「" + label + "」"
+
     /**
      * 按持久化串取分组对象（顺序即用户自定义顺序）。
      * [favorite] 是从用户数据构建的「收藏」组（[KeyboardLayouts.favoriteGroup]），缺省不带入；

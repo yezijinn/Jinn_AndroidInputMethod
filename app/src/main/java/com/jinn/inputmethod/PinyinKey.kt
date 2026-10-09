@@ -311,13 +311,27 @@ import kotlin.math.min
          */
         var onActivate: (() -> Unit)? = null
 
+        /**
+         * 无障碍激活的**可用性判据**：为 null 表示「恒可用」；返回 false 时节点不声明可点击。
+         *
+         * 符号层的空槽键用它（BUG.md L-1139）：那样的格子没有可上屏的内容，而 [onActivate] 是按
+         * 物理键位统一挂上的 ⇒ 读屏里会出现一排「没有名字、双击也没反应」的按钮。判据必须与实际
+         * 行为同源 —— 与「空槽不报敲击反馈」共用同一条（见 `PinyinKeyboardView.bindLetterKeys`），
+         * 别在两处各判一次。
+         */
+        var canActivate: (() -> Boolean)? = null
+
+        /** 当前是否允许无障碍激活：回调在，且判据（若有）放行 */
+        private fun activateAvailable(): Boolean =
+            onActivate != null && (canActivate?.invoke() ?: true)
+
         override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
             super.onInitializeAccessibilityNodeInfo(info)
             // 声明成按钮并挂上 ACTION_CLICK，辅助服务才会把「双击」派发到
             // performAccessibilityAction —— 否则会走「注入手势」的兜底路径，
             // 而字母键的触摸被外层监听消费，注入手势的结果不可预期。
             info.className = "android.widget.Button"
-            if (onActivate != null) {
+            if (activateAvailable()) {
                 info.isClickable = true
                 // 用 AccessibilityAction 重载：addAction(Int) 自 API 21 起已弃用（编译会告警）
                 info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
@@ -326,7 +340,9 @@ import kotlin.math.min
 
         override fun performAccessibilityAction(action: Int, args: Bundle?): Boolean {
             val activate = onActivate
-            if (action == AccessibilityNodeInfo.ACTION_CLICK && activate != null) {
+            // 可点性判据这里再判一次：节点可能是切层之前建的（辅助服务手里那份还没刷新），
+            // 只靠 onInitializeAccessibilityNodeInfo 的声明挡不住那一次点击
+            if (action == AccessibilityNodeInfo.ACTION_CLICK && activate != null && activateAvailable()) {
                 activate()
                 sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED)
                 return true

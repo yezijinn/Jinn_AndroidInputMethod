@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -17,6 +18,24 @@ class SymbolOrderTest {
     fun 空串走默认顺序() {
         assertEquals(default, SymbolOrder.parse(""))
         assertEquals(default, SymbolOrder.parse("   "))
+    }
+
+    /**
+     * `BUG.md` L-1138：↑↓ 按钮的读屏名必须是「动作 + 对象」。
+     *
+     * 图标没有文字，名字就是全部信息。原先把 `strings.xml` 里的字形「↑」/「↓」当无障碍名，
+     * 读屏只念「上箭头」，听不出对哪一组做什么 —— 这里钉住两条：动作词对得上方向、
+     * 分组名确确实实在句子里（换行 / 缺名都算回退）。
+     */
+    @Test
+    fun 移动按钮的读屏名带动作与分组() {
+        assertEquals("上移「收藏」", SymbolOrder.moveDescription(up = true, label = "收藏"))
+        assertEquals("下移「变量」", SymbolOrder.moveDescription(up = false, label = "变量"))
+        // 分组名是句子的主体，不能被漏掉（只留「上移」等于没说是哪一组）
+        assertTrue(
+            "分组名必须在句子里",
+            SymbolOrder.moveDescription(up = true, label = "特殊").contains("特殊"),
+        )
     }
 
     @Test

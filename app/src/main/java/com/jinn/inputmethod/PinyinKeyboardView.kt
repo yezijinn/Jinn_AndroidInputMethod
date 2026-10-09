@@ -577,6 +577,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     if (layer != LAYER_SYMBOL || symbolKeyHasContent(c)) KeyFeedback.fire(currentTapGroup())
                     onLetterPressed(c)
                 }
+                // 同一个判据也决定「读屏里算不算按钮」（BUG.md L-1139）：空槽键在辅助服务里
+                // 既不该可点（双击只会得到「按了但什么都没有」），也不该是一排无名按钮。
+                // 判据是**惰性**求值的 —— 层与页都换得比节点重建快，取快照会读到过期结论。
+                key.canActivate = { layer != LAYER_SYMBOL || symbolKeyHasContent(c) }
                 // 用触摸监听统一处理「点击输入」与「符号层左右滑动翻页」
                 key.setOnTouchListener { view, event ->
                     val consumed = handleKeyTouch(c, event)
@@ -2687,6 +2691,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 else ->
                     if (showUpper) c.uppercaseChar().toString() else c.toString()
             }
+            // 空槽键（本页这一格没内容）给读屏一个名字（BUG.md L-1139）：标签的 setter 对空串
+            // 一律置 null（免得读出空白），于是它成了「无名按钮」；可点性那边已由 canActivate
+            // 关掉，这里补的是「它存在但没内容」这件事。非空标签走 setter 的赋值，不进这个分支。
+            if (layer == LAYER_SYMBOL && key.label.isEmpty()) key.contentDescription = TEXT_EMPTY_SLOT
             key.subLabel = if (showHint) shuangpinHint(c) else ""
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
@@ -3997,6 +4005,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
         const val PANEL_COMPACT_SLOTS = 8
+
+        /**
+         * 符号层空槽键的读屏名（BUG.md L-1139）。
+         *
+         * 不能叫「空」或「空格」：前者信息太少、后者会被听成空格键；「空槽」说的是「这一格没有内容」，
+         * 与「按下去会有输出」区分得开。字形仍是空的 —— 这一句只进 contentDescription。
+         */
+        const val TEXT_EMPTY_SLOT = "空槽"
 
         /** 功能面板「翻译」键的两种文案（在途请求时切换并置灰防连点） */
         const val LABEL_TRANSLATE = "翻译"

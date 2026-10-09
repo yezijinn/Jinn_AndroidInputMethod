@@ -4079,12 +4079,13 @@ class RecentFixesRegressionTest {
             "语音退格的按下态要在收起键盘时复位（拼音那份由 stopBackspaceRepeat 负责）",
             "voiceBackspaceView?.isPressed = false" in ime,
         )
-        // 反馈判据只判空、不展开动态值（expand 的默认参数会白跑一次时钟读取与格式化）。
-        // 断言**两处都在**而不是「文件里出现过」：`symbolKeyHasContent(c)` 在触摸抬起与无障碍两个
-        // 分支各出现一次，只改其中一处、另一处仍留着，「出现过」照样成立（变异验证实测过）。
+        // 反馈 / 可点性判据只判空、不展开动态值（expand 的默认参数会白跑一次时钟读取与格式化）。
+        // 断言**三处都在**而不是「文件里出现过」：`symbolKeyHasContent(c)` 在触摸抬起、无障碍激活
+        // 与无障碍可点性（`canActivate`，BUG.md L-1139）各出现一次，只改其中一处、另一处仍留着，
+        // 「出现过」照样成立（变异验证实测过）。
         val pkv = codeOf("PinyinKeyboardView.kt")
         val contentChecks = Regex("symbolKeyHasContent\\(c\\)").findAll(pkv).count()
-        assertTrue("符号层的反馈判据要覆盖触摸与无障碍两条路径，实际 $contentChecks 处", contentChecks == 2)
+        assertTrue("符号层的判据要覆盖触摸、无障碍反馈与无障碍可点性三处，实际 $contentChecks 处", contentChecks == 3)
         assertTrue(
             "符号层的反馈判据不得走 symbolValueOf",
             "symbolKeyHasContent" in pkv && "symbolValueOf(c) != null" !in pkv,
@@ -4988,6 +4989,43 @@ class RecentFixesRegressionTest {
             "自定义页要显示实际生效值",
             "effectiveFavoriteMaxMb(draft.favMaxMb, draft.maxTotalMb)" in page,
         )
+    }
+
+    // ── 第五十九批（2026-10-10）：符号层的两处读屏口径（L-1138 / L-1139）───────────────
+
+    /**
+     * 读屏口径的接线（BUG.md L-1138 / L-1139）。
+     *
+     * 两处都没法用纯函数测到底：一处是 `AccessibilityNodeInfo` 的声明（要框架才建得出节点），
+     * 一处是 ImageButton 的 `contentDescription`（要真机读屏才听得见）。钉住的是**判据同源**与
+     * **不再用字形当名字**这两件在源码上就能判的事。
+     */
+    @Test
+    fun `符号层的读屏名字与可点性必须同源`() {
+        val key = codeOf("PinyinKey.kt")
+        assertTrue("空槽键的判据要在节点声明处生效", "activateAvailable()" in key)
+        assertTrue(
+            "两个入口都要判（节点可能是切层前建的，辅助服务手里那份还没刷新）",
+            Regex("activateAvailable\\(\\)").findAll(key).count() >= 2,
+        )
+        assertTrue("判据本身要能判「回调在 + 判据放行」", "onActivate != null && (canActivate?.invoke()" in key)
+
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "可点性判据必须与「空槽不报反馈」用同一条（都看 symbolKeyHasContent）",
+            "key.canActivate = { layer != LAYER_SYMBOL || symbolKeyHasContent(c) }" in view,
+        )
+        assertTrue(
+            "空槽键在读屏里要有个名字（不能用 null 留成无名按钮）",
+            "key.contentDescription = TEXT_EMPTY_SLOT" in view,
+        )
+
+        val order = codeOf("SymbolOrderActivity.kt")
+        assertFalse(
+            "排序按钮不得再拿字形资源当无障碍名（读屏只会念「上箭头」）",
+            "getString(R.string.symbol_order_move" in order,
+        )
+        assertTrue("名字要走「动作 + 对象」的构造", "SymbolOrder.moveDescription(" in order)
     }
 
 }
