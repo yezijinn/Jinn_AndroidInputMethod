@@ -4866,4 +4866,30 @@ class RecentFixesRegressionTest {
         }
     }
 
+    /**
+     * `dumpLogcat` 的公开 KDoc 必须与实现同口径（BUG.md L-202）。
+     *
+     * 这段 KDoc 曾长期写着「无 root 时只给本进程、有 root 时是系统全量」「只剔本进程的 V 级行」，
+     * 而实现早已是「默认 `--pid` 限定本进程 + 失败或为空退回全量一次 + 退回时剔所有进程的 V 级 +
+     * 首行自证来源」。按旧 KDoc 读会把覆盖面判反：以为快照必然是系统全量（其实默认只有本进程），
+     * 或以为退回全量时 V 级还在（其实连别家的一起剔了）—— 这份快照是要随诊断包外传的。
+     */
+    @Test
+    fun `logcat 快照的 KDoc 必须与实现同口径`() {
+        // 读**原文**（`codeOf` 会把 KDoc 一起剥掉，那就没得判了）
+        val raw = TestSources.rawSourceOfShortName("Diagnostics.kt")
+        val at = raw.indexOf("fun dumpLogcat(")
+        assertTrue("找不到 dumpLogcat 的声明（改名后请同步本用例）", at > 0)
+        // 注释定界符**必须拼接**：写成字面量会在本文件里构成注释开关，让 `TestSources.codeOf`
+        // 把中间那段代码当注释吞掉（上批踩过同型：全仓例数当场少算 125 例）。
+        val kdoc = raw.substring(0, at)
+            .substringAfterLast("/" + "**")
+            .substringBeforeLast("*" + "/")
+        assertTrue("KDoc 必须写明默认带 --pid 抓", "--pid" in kdoc)
+        assertTrue("KDoc 必须写明「失败或为空则退回全量」这条退路", "退回" in kdoc)
+        assertTrue("KDoc 必须写明退回时连其它进程的 V 级一起剔", "其它进程" in kdoc)
+        assertTrue("KDoc 必须写明首行的来源标签", "full(" in kdoc)
+        assertFalse("KDoc 不得留着过时口径「有 root 时是系统全量」", "有 root 时是系统全量" in kdoc)
+    }
+
 }
