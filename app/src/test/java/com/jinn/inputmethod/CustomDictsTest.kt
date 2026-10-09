@@ -511,6 +511,16 @@ class CustomDictsTest {
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
         assertTrue("保存中必须冻结编辑器（L-866）", "editor.isEnabled = false" in src)
         assertTrue("保存结束后必须恢复可编辑", "editor.isEnabled = true" in src)
+        // 顺序钉（BUG-15）：原先只查两处字符串存在 —— 把冻结挪到异步保存之后、或把恢复写在冻结之前
+        // 都算过，而契约正是「冻结 → 取快照交后台 → 完成后恢复」：顺序错了用户仍能在等待里补敲字，
+        // 补的内容不进词库（L-866 的现场）。
+        val freezeAt = src.indexOf("editor.isEnabled = false")
+        val saveAt = src.indexOf("CustomDicts.saveHuman(")
+        val thawAt = src.indexOf("editor.isEnabled = true", saveAt)
+        assertTrue(
+            "三处锚点都要在且顺序为「冻结 → 后台保存 → 恢复」（freeze=$freezeAt save=$saveAt thaw=$thawAt）",
+            freezeAt in 0 until saveAt && saveAt in 0 until thawAt,
+        )
         val manifest = File("src/main/AndroidManifest.xml")
             .let { if (it.isFile) it else File("app/src/main/AndroidManifest.xml") }
             .readText()

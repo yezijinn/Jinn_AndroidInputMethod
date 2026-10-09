@@ -144,6 +144,11 @@ class OptionalDictMergeTest {
             dict.urls.forEach { url ->
                 assertTrue("${dict.name} 的下载源应以 .xz 结尾: $url", url.endsWith(".xz"))
             }
+            // 双源覆盖（BUG-15）：原先只查「URL 以 .xz 结尾」—— 少写一个下载源照样绿，
+            // 而只剩 GitHub 时国内网络经常拿不到包（更新检查早已按「Gitee 优先、GitHub 备选」走）。
+            val hosts = dict.urls.map { it.substringAfter("://").substringBefore('/') }.toSet()
+            assertTrue("${dict.name} 缺少 Gitee 源（国内默认可达的那个）", hosts.any { "gitee" in it })
+            assertTrue("${dict.name} 缺少 GitHub 源（备份源）", hosts.any { "github" in it })
             assertTrue("${dict.name} 体积应为正数", dict.sizeMb > 0)
             assertTrue("${dict.name} 启动耗时应为正数", dict.startupSec > 0)
             assertTrue("${dict.name} 说明不应为空", dict.descLines.isNotEmpty())

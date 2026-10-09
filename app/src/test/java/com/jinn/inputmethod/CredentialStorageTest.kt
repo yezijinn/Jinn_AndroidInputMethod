@@ -95,6 +95,15 @@ class CredentialStorageTest {
         for (f in listOf("TranslationSettingsActivity.kt", "OpenAiSettingsActivity.kt")) {
             val src = TestSources.codeSource(f)
             assertTrue("$f 必须设置 FLAG_SECURE", "FLAG_SECURE" in src)
+            // 作用域钉（BUG-15）：原先只查整份源码里出现过该符号 —— 写进注释、或在别的页面/别的时机
+            // 提一句都算过。真正的契约是「在 onCreate 里加到窗口」：晚了会有一帧明文进入最近任务缩略图，
+            // 而凭据页的 Key 就在输入框里。
+            val onCreate = TestSources.blockAfter(src, "override fun onCreate")
+            assertTrue("$f：FLAG_SECURE 必须在 onCreate 内", "FLAG_SECURE" in onCreate)
+            assertTrue(
+                "$f：必须真的把它设到窗口上（window.addFlags / setFlags 都算）",
+                "addFlags" in onCreate || "setFlags" in onCreate,
+            )
         }
     }
 

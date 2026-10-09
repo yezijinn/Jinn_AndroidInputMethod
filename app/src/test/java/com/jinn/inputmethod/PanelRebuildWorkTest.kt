@@ -59,10 +59,43 @@ class PanelRebuildWorkTest {
         )
     }
 
+    /**
+     * 三个面板必须**首次打开才构造**（MEM-05），且构造点唯一、入容器也在构造点内部（MEM-46 验收）。
+     *
+     * MEM-46 的原判据是「面板即使以 GONE 加入容器，仍占视图树节点与布局参数」，随 MEM-05 落地消解；
+     * 验收要复查的是「懒构造后没有留空容器占位、首次显示的状态重放没缺口」。重放侧：剪贴板与图库走
+     * `onPanelShown()`、搜索走 `onShown()`，都在各自的显示入口里；构造侧就是这条 —— 每个面板视图
+     * 只有一个构造点，且落在 `ensure*` 内（`contentArea.addView` 只出现在剪贴板与图库的 ensure 里）。
+     */
+    @Test
+    fun `三个面板必须首次打开才构造`() {
+        val v = TestSources.codeSource("PinyinKeyboardView.kt")
+        for ((field, ctor, ensure) in listOf(
+            Triple("clipboardPanel", "ClipboardPanelView(", "ensureClipboardPanel"),
+            Triple("galleryPanel", "GalleryPanelView(", "ensureGalleryPanel"),
+            Triple("searchPanel", "SearchPanelView(", "ensureSearchPanel"),
+        )) {
+            assertTrue(
+                "$field 必须是可空字段（null = 还没建过，MEM-05）",
+                Regex("""private var $field: \w+\? = null""").containsMatchIn(v),
+            )
+            assertTrue(
+                "$ctor 只该有一个构造点（首次打开时才建）",
+                Regex(Regex.escape(ctor)).findAll(v).count() == 1,
+            )
+            val body = TestSources.blockAfter(v, "private fun $ensure(): ")
+            assertTrue("$ensure 必须是那个构造点", ctor in body)
+        }
+        assertTrue(
+            "contentArea.addView 只该有两个面板装载点（剪贴板 / 图库）",
+            Regex("""contentArea\.addView\(""").findAll(v).count() == 2,
+        )
+    }
+
     @Test
     fun `键盘视图要暴露一个「两个面板一起收工」的入口`() {
         val src = codeOnly(sourceOf("PinyinKeyboardView.kt"))
-        val body = src.substringAfter("fun stopPanelBackgroundWork()").substringBefore("\n    }")
+        val body = TestSources.blockAfter(src, "fun stopPanelBackgroundWork()")
         // MEM-05 起三个面板都是「首次打开才创建」：这里的 `?.` 不是写法偷懒 ——
         // 没建过的面板本来就没有在跑的后台任务可停（语义与原先一致，只是把「必然存在」放宽成「存在才停」）。
         // 顺带把图库面板也钉上：它一直在这段里被停，只是此前没有断言。
@@ -74,7 +107,7 @@ class PanelRebuildWorkTest {
     @Test
     fun 重建视图必须先让旧面板收工并在之后复位诊断标记() {
         val src = codeOnly(sourceOf("JinnIme.kt"))
-        val body = src.substringAfter("private fun recreateKeyboardView()").substringBefore("\n    }")
+        val body = TestSources.blockAfter(src, "private fun recreateKeyboardView()")
         val stop = body.indexOf("stopPanelBackgroundWork()")
         val swap = body.indexOf("setInputView(onCreateInputView())")
         assertTrue("重建前没有让旧面板收工", stop >= 0)
@@ -91,7 +124,7 @@ class PanelRebuildWorkTest {
     @Test
     fun 搜索面板收起时必须作废在飞任务() {
         val src = codeOnly(sourceOf("SearchPanelView.kt"))
-        val body = src.substringAfter("fun onHidden()").substringBefore("\n    }")
+        val body = TestSources.blockAfter(src, "fun onHidden()")
         assertTrue(
             "搜索面板 onHidden 必须递增 refreshToken（收起即作废在飞任务）",
             "refreshToken++" in body,
