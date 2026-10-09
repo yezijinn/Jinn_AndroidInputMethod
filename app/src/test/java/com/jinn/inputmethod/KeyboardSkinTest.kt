@@ -471,21 +471,43 @@ class KeyboardSkinTest {
      */
     @Test
     fun 键盘选皮肤按视图色板快照而不是现算决策() {
-        val sourceFile = listOf(
-            File("src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
-            File("app/src/main/java/com/jinn/inputmethod/PinyinKeyboardView.kt"),
-        ).firstOrNull { it.isFile } ?: error("找不到 PinyinKeyboardView.kt")
-        val body = sourceFile.readText()
-            .substringAfter("private fun syncKeyboardSkin()")
-            .substringBefore("\n    /**")
+        // 两条纪律（BUG.md L-1144）：① 锚点先断言存在 —— substringAfter 找不到锚点时返回整串；
+        // ② 窗口按花括号配对截取而不是找下一个分隔符 —— 分隔符被改写/挪走同样会让判据放大到整份文件。
+        val code = pinyinKeyboardViewSource()
+        val anchor = "private fun syncKeyboardSkin()"
+        assertTrue("PinyinKeyboardView 里找不到 $anchor（锚点漂移会让下面的判据放大到整份文件）", anchor in code)
+        val body = bracedBody(code, anchor)
+        assertTrue(
+            "syncKeyboardSkin 的窗口截取失败（花括号不配对或函数被挪走）",
+            body.length in 40..4_000,
+        )
         assertTrue(
             "syncKeyboardSkin 必须用 paletteIsDark(context) 选档",
             body.contains("ThemeManager.paletteIsDark(context)"),
         )
         assertTrue(
             "syncKeyboardSkin 不得按现算决策选档：延后重建窗口里会与视图色板错档",
-            !body.contains("ThemeManager.isDark("),
+            "ThemeManager.isDark(" !in body,
         )
+    }
+
+    /** 从 [anchor] 起按花括号配对截出函数体；找不到或对不齐返回空串，由调用方的区间判据报出 */
+    private fun bracedBody(code: String, anchor: String): String {
+        val start = code.indexOf(anchor)
+        if (start < 0) return ""
+        val open = code.indexOf('{', start)
+        if (open < 0) return ""
+        var depth = 0
+        for (i in open until code.length) {
+            when (code[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return code.substring(open, i + 1)
+                }
+            }
+        }
+        return ""
     }
 
     /**

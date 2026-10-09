@@ -61,26 +61,53 @@ class PinyinDisplayTest {
         assertEquals("zhong", d("vs"))
         assertEquals("zhongg", d("vsg"))
         assertEquals("zh", d("v"))
-        // 非法组合之后的按键不许被吞：查询串在这里会截断（丢掉后面的键），显示串必须继续展开更多键；
-        // 同时显示串恒以查询串为前缀 —— 合法部分两者必须逐字节一致，多出来的只能是逐键展开的残码
+        // 坏码之后的按键不许被吞：两边都只丢这一键、游标继续（BUG.md L-1121 起查询串同款，
+        // 此前查询串在坏码处截断、丢掉后面所有键）。字母输入下两个函数必须逐字节一致。
         for (s in ShuangpinScheme.SHUANGPIN_ONLY) {
             val table = s.table ?: continue
-            val missing = ('a'..'z').flatMap { a -> ('a'..'z').map { b -> "$a$b" } }
-                .first { it !in table.codes }
-            for (illegal in listOf(missing, missing + "x", missing + "vs")) {
+            val missing = missingPair(table)
+            for (illegal in listOf(missing, missing + "x", "x$missing", missing + "vs", "$missing$missing")) {
                 val display = Shuangpin.displayQuanpin(illegal, s)
                 val query = Shuangpin.toQuanpin(illegal, s)
-                assertTrue(
-                    "${s.displayName} 的 $illegal 显示串没以查询串为前缀：display=$display query=$query",
-                    display.startsWith(query),
-                )
-                assertTrue(
-                    "${s.displayName} 的 $illegal 显示串没有比查询串多展开：display=$display query=$query",
-                    display.length > query.length,
+                assertEquals(
+                    "${s.displayName} 的 $illegal 两种转换不一致：display=$display query=$query",
+                    query,
+                    display,
                 )
             }
         }
     }
+
+    /**
+     * 查询串必须随按键变化（BUG.md L-1121）。
+     *
+     * 这是一条**用户可见**的回归：坏码处原先 `break` 并把游标留在原地，之后每按一键都在同一处再断，
+     * 查询串从此不动 —— 候选栏停在坏码前那几个音节的候选上，用户以为键盘坏了。
+     * 判据与显示侧的 `逐键推进_显示串一定变化` 同款，只换成查询用的 [Shuangpin.toQuanpin]。
+     */
+    @Test
+    fun 逐键推进_查询串也必须变化() {
+        for (s in ShuangpinScheme.SHUANGPIN_ONLY) {
+            val table = s.table ?: continue
+            val missing = missingPair(table)
+            for (seq in listOf(missing, missing + "x", "x$missing", "$missing$missing", "$missing" + "vsgo", "vs$missing")) {
+                var prev = ""
+                for (n in 1..seq.length) {
+                    val cur = Shuangpin.toQuanpin(seq.take(n), s)
+                    assertNotEquals(
+                        "${s.displayName} 的序列 $seq 第 $n 键后查询串未变化（prev=$prev）",
+                        prev,
+                        cur,
+                    )
+                    prev = cur
+                }
+            }
+        }
+    }
+
+    /** 该方案里第一个成不了音节的字母组合（坏码样本，各方案不同） */
+    private fun missingPair(table: ShuangpinTable): String =
+        ('a'..'z').flatMap { a -> ('a'..'z').map { b -> "$a$b" } }.first { it !in table.codes }
 
     @Test
     fun 逐键推进_显示串一定变化() {

@@ -255,6 +255,32 @@ class PrefsBackupCoverageTest {
         }
     }
 
+    /**
+     * 钳位不只是「有」，区间必须等于定义域（BUG.md L-1147）。
+     *
+     * 上一条只断言「实现里出现了钳位调用」—— 把上界从 3 改成 30 同样绿，而钳错界正是会出事的那种改法
+     * （脏备份的越界值照样进运行期）。这里改成行为判据：喂进远超定义域的值，回读必须落在定义域常量上；
+     * 期望值一律从常量读，不写死数字 —— 改定义域时两条一起动，改钳位区间而没动定义域才红。
+     */
+    @Test
+    fun `钳位区间必须等于定义域常量`() {
+        assertEquals(KeyAppearance.MIN_CORNER_DP, KeyAppearance.clampCornerDp(-1_000f), 0.001f)
+        assertEquals(KeyAppearance.MAX_CORNER_DP, KeyAppearance.clampCornerDp(1_000f), 0.001f)
+        assertEquals(KeyAppearance.MIN_GAP_DP, KeyAppearance.clampGapDp(-1_000f), 0.001f)
+        assertEquals(KeyAppearance.MAX_GAP_DP, KeyAppearance.clampGapDp(1_000f), 0.001f)
+        assertEquals(KeyAppearance.MIN_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(-1_000f), 0.001f)
+        assertEquals(KeyAppearance.MAX_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(1_000f), 0.001f)
+        assertEquals(KeyTransparency.MIN_PERCENT, KeyTransparency.clampPercent(-500))
+        assertEquals(KeyTransparency.MAX_PERCENT, KeyTransparency.clampPercent(500))
+        assertEquals(CandidateText.MIN_SP, CandidateText.clampSp(0f), 0.001f)
+        assertEquals(CandidateText.MAX_SP, CandidateText.clampSp(1_000f), 0.001f)
+        assertEquals(TapSound.VOLUME_MIN, TapSound.clampVolume(-500))
+        assertEquals(TapSound.VOLUME_MAX, TapSound.clampVolume(500))
+        // 掩码是位集合，区间即「只留已定义的位」：全 1 与带高位脏值的输入都必须归到 MASK_ALL
+        assertEquals(FuzzyPinyin.MASK_ALL, FuzzyPinyin.clampMask(-1))
+        assertEquals(FuzzyPinyin.MASK_ALL, FuzzyPinyin.clampMask(FuzzyPinyin.MASK_ALL or (1 shl 20)))
+    }
+
     @Test
     fun `非平凡默认值的键导出前必须问「用户改过没有」`() {
         // 这三个键的 getter 在缺键时回落的不是平凡默认（音量 50 / 六组统一用 kbd_10 / 中档）：

@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -350,10 +351,22 @@ class ShuangpinTest {
         assertEquals("guo", zr("go"))
     }
 
+    /**
+     * 全拼模式不转换（BUG.md L-1150）。
+     *
+     * 原先是 `assertEquals("nihao", zr("nihao").ifEmpty { "nihao" })` —— 调的是**双拼**入口，
+     * 期望值还被 `ifEmpty` 兜底：空结果恒相等、非空必不相等，等于没有覆盖。
+     * 现在直接走全拼方案：它没有键位表，转换必须原样返回（只做小写归一），不得套任何双拼规则。
+     */
     @Test
     fun 全拼模式不转换() {
-        // 全拼路径直接用原串：双拼转换只在双拼模式生效
-        assertEquals("nihao", zr("nihao").ifEmpty { "nihao" })
+        val scheme = ShuangpinScheme.QUANPIN
+        assertNull("全拼方案不该有键位表（有表就会套双拼规则）", scheme.table)
+        assertEquals("nihao", Shuangpin.toQuanpin("nihao", scheme))
+        assertEquals("nihao", Shuangpin.toQuanpin("NiHao", scheme))
+        // v / i 在自然码里是 zh / ch：全拼下必须原样保留，否则就是套了双拼规则
+        assertEquals("vi", Shuangpin.toQuanpin("vi", scheme))
+        assertEquals("", Shuangpin.toQuanpin("", scheme))
     }
 
     @Test

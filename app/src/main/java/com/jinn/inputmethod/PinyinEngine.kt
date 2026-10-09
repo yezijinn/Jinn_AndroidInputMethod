@@ -2722,7 +2722,7 @@ enum class ShuangpinScheme(
  *  - 每两键一个音节，查 [ShuangpinTable.codes]；
  *  - 末尾只剩一键时按「声母键」处理（`v` → `zh`，与旧实现一致）；非声母键原样保留
  *    （候选预显行为不变），非字母键（如分号）忽略；
- *  - 非法组合停止转换并返回已转换的前缀（容错，不抛异常）；
+ *  - 非法组合只丢这一键、继续转换后面的键（容错，不抛异常，也不会让查询串停在坏码处）；
  *  - 输出全部为 ASCII：撮口呼 ü 写作 u（jqxy 后）或 v（l/n 后），与词库键一致。
  *
  * 本类完全自包含（不依赖词库与 Android 资源），可脱离设备单测。
@@ -2734,31 +2734,43 @@ object Shuangpin {
         val table = scheme.table ?: return input.lowercase()
         val raw = input.lowercase()
         if (raw.isEmpty()) return ""
-        val sb = StringBuilder()
+        val sb = StringBuilder(raw.length * 2)
         var i = 0
         while (i + 1 < raw.length) {
-            val syllable = table.codeOf(raw[i], raw[i + 1]) ?: break
-            sb.append(syllable)
-            i += 2
+            val syllable = table.codeOf(raw[i], raw[i + 1])
+            if (syllable != null) {
+                sb.append(syllable)
+                i += 2
+                continue
+            }
+            // 成不了音节：只丢这一键，游标前进后接着扫（BUG.md L-1121）。
+            // 原先在这里 `break`，随后只补发一个键 —— 游标停在坏码处，之后每按一键都在同一处再断一次，
+            // 查询串从此不再变化（候选冻结），而候选栏的显示串逐键展开、每按一键都在变，
+            // 用户看到的是「拼音行在动、候选不动」。显示串（见 [displayQuanpin]）一直是「丢一键继续扫」，
+            // 这里与它对齐：残码处不吞后面的键，查询串随按键单调变化。
+            sb.append(singleKey(table, raw[i]))
+            i += 1
         }
-        if (i < raw.length) {
-            val key = raw[i]
-            sb.append(
-                table.initialOf(key) ?: if (key in 'a'..'z') key.toString() else ""
-            )
-        }
+        if (i < raw.length) sb.append(singleKey(table, raw[i]))
         return sb.toString()
     }
 
     /**
+     * 单键展开（查询语义）：声母键给声母，字母原样保留，非字母键丢弃。
+     *
+     * 与 [displayQuanpin] 的差别只有非字母键 —— 显示串要留着让用户看到响应（分号键），查询串里则无意义。
+     */
+    private fun singleKey(table: ShuangpinTable, key: Char): String =
+        table.initialOf(key) ?: if (key in 'a'..'z') key.toString() else ""
+
+    /**
      * 候选栏「声韵显示」用的全拼：与 [toQuanpin] 同一张表、同一套两键分组，但**绝不丢键**。
      *
-     * 为什么要独立一份：[toQuanpin] 面向查询，遇到无法成音节的组合即停止（只给已转换的前缀）；
-     * 而候选栏要求「每按一键都看得到变化」（2026-09-18 的「按键没反应」报告就是显示串被吞掉）。
-     * 因此这里对残余按键逐个展开 —— 声母键给声母、其余原样保留（含分号键），
-     * 保证追加按键时显示串一定变化。
+     * 候选栏要求「每按一键都看得到变化」（2026-09-18 的「按键没反应」报告就是显示串被吞掉），
+     * 所以对残余按键逐个展开 —— 声母键给声母、其余原样保留（含分号键），保证追加按键时显示串一定变化。
+     * 字母输入下与 [toQuanpin] 逐字节一致（两边都是「坏码只丢一键、游标继续」）；
+     * 只有非字母键不同：[toQuanpin] 丢弃（查询里无意义），这里保留（用户要看到响应）。
      *
-     * 合法输入的输出与 [toQuanpin] 逐字节一致，仅残码 / 非法组合的处理不同。
      * 例（自然码）：`vsgo` → `zhongguo`；残码 `vsg` → `zhongg`（不是 `zhong`）。
      */
     fun displayQuanpin(input: String, scheme: ShuangpinScheme): String {
