@@ -1258,7 +1258,7 @@ object PinyinEngine {
                 // （正常路径已在记账块里复位过一次，这里是异常路径的兜底。）
                 synchronized(optionalLock) { optionalLoading = false }
             }
-        }.apply { isDaemon = true }
+        }.apply { isDaemon = true; name = "jinn-optdict-merge" }
         try {
             thread.start()
         } catch (t: Throwable) {

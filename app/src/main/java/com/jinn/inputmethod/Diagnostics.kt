@@ -371,6 +371,8 @@ private const val LOG_SEGMENTS_KEPT = 2
                     val snapshot = Thread {
                         runCatching { dumpLogcat("crash-${System.currentTimeMillis()}", waitMs = 2_000L) }
                     }
+                    // 崩溃快照要能从日志里认出来（BUG-33）：诊断行头的线程名此前是 `[Thread-n]`
+                    snapshot.name = "jinn-crash-logcat"
                     snapshot.isDaemon = true
                     snapshot.start()
                     snapshot.join(2_500L)

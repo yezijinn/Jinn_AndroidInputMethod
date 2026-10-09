@@ -63,28 +63,60 @@ class PanelTimesTest {
     @Test
     fun 源码里的_SimpleDateFormat_都必须显式指定_Locale() {
         // 行为测试只覆盖 PanelTimes 一处；这条把面铺到整个项目：日期格式化一旦用默认 Locale，
-        // 在默认历法地区就会渲染错年份（与平台语义有关，单看代码很容易漏）
+        // 在默认历法地区就会渲染错年份（与平台语义有关，单看代码很容易漏）。
+        //
+        // 覆盖面按目录**递归**（BUG-16）：原先只扫顶层 —— 一旦有人建分包目录，覆盖会无声消失。
+        // 判据也在整份源码上做（不是逐行）：多行调用 `SimpleDateFormat(\n  PATTERN,\n  Locale.US)`
+        // 原先既可能漏判（少了 Locale 也不报）也可能误红（明明指定了却因不在同一行而报）。
         val dir = listOf(
             File("src/main/java/com/jinn/inputmethod"),
             File("app/src/main/java/com/jinn/inputmethod"),
         ).firstOrNull { it.isDirectory } ?: error("找不到生产源码目录（cwd=${File("").absolutePath}）")
-        val offenders = dir.listFiles().orEmpty()
-            .filter { it.name.endsWith(".kt") }
-            .flatMap { f ->
-                // 剥注释走共用 TestSources.codeOf（BUG.md L-116）：行数不变，行号仍可直接用
-                TestSources.codeOf(f.readText()).lines().withIndex()
-                    .map { (i, line) -> Triple(f.name, i + 1, line) }
+        val offenders = mutableListOf<String>()
+        var scanned = 0
+        for (f in dir.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }) {
+            scanned++
+            // 剥注释走共用 TestSources.codeOf（BUG.md L-116）：行数不变，行号仍可直接用
+            val code = TestSources.codeOf(f.readText())
+            var from = 0
+            while (true) {
+                val at = code.indexOf("SimpleDateFormat(", from)
+                if (at < 0) break
+                from = at + 1
+                // 取到配对的右括号（跳过字符串里的括号）：多行调用同样落到同一次判据里
+                var depth = 0
+                var inStr = false
+                var end = -1
+                var i = at + "SimpleDateFormat".length
+                while (i < code.length) {
+                    val c = code[i]
+                    when {
+                        c == '"' -> inStr = !inStr
+                        !inStr && c == '(' -> depth++
+                        !inStr && c == ')' -> {
+                            depth--
+                            if (depth == 0) {
+                                end = i
+                                break
+                            }
+                        }
+                    }
+                    i++
+                }
+                // 括号不配对（极端的截断代码）时退回定长窗口，别把整份文件当成一个调用
+                val args = code.substring(at, if (end > 0) end + 1 else minOf(code.length, at + 240))
+                if (!args.contains("Locale.US")) {
+                    val lineNo = code.take(at).count { it == '\n' } + 1
+                    offenders += "${f.name}:$lineNo " + code.substring(at, minOf(code.length, at + 80)).replace("\n", " ").trim()
+                }
             }
-            .filter { (_, _, line) ->
-                line.contains("SimpleDateFormat(") && !line.contains("Locale.US")
-            }
-            .map { (name, line, text) -> "$name:$line ${text.trim()}" }
+        }
         assertEquals(
             "SimpleDateFormat 必须显式指定 Locale.US（默认 Locale 在泰历等地区会渲染成佛历年份）: $offenders",
             emptyList<String>(),
             offenders,
         )
-        assertTrue("源码目录里应至少扫到 1 个文件", dir.listFiles().orEmpty().any { it.name.endsWith(".kt") })
+        assertTrue("源码目录里应至少扫到 1 个文件", scanned > 0)
     }
 
     @Test

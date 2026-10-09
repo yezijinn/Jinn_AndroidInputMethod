@@ -4684,4 +4684,62 @@ class RecentFixesRegressionTest {
         assertTrue("写包不得再经 encodePackLines 走内存压缩", !pack.contains("encodePackLines("))
     }
 
+    /**
+     * 后台线程都要有名字（2026-10-09 · BUG-33）。
+     *
+     * 诊断行头的 `[Thread-n]` 对应不到功能，拿日志查问题只能靠猜，崩溃快照里那些「谁在跑」的行同理。
+     * 三种合法写法：构造式 `Thread({ … }, "jinn-xxx")`、收尾式 `.apply { …; name = "jinn-xxx" }`、
+     * 先拿引用再 `thread.name = "jinn-xxx"`。
+     *
+     * 判据用**括号配对**定位线程 lambda 的收尾，不用固定行数窗口（那正是 L-1145 那族缺陷的形态：
+     * 窗口一挪就判错）。`BackgroundIo.backgroundThread` 自身排除在外 —— 它的名字来自调用方参数。
+     */
+    @Test
+    fun `后台线程都要有名字`() {
+        val dir = listOf(File("app/src/main/java/com/jinn/inputmethod"), File("src/main/java/com/jinn/inputmethod"))
+            .firstOrNull { it.isDirectory } ?: error("找不到生产源码目录")
+        val offenders = mutableListOf<String>()
+        for (file in dir.listFiles().orEmpty().filter { it.name.endsWith(".kt") }) {
+            // 剥注释走共用 TestSources.codeOf（行数不变，行号仍可直接用；注释行不参与判据）
+            val lines = TestSources.codeOf(file.readText()).split("\n")
+            lines.forEachIndexed { i, raw ->
+                val trimmed = raw.trim()
+                // 前一个字符是字母的不算（`runOnUiThread {`、`Threads` 之类）
+                val m = Regex("""(^|[^\w])Thread\s*[({]""").find(raw) ?: return@forEachIndexed
+                val openIdx = raw.indexOf('{', m.range.first)
+                var endLine = i
+                if (openIdx >= 0) {
+                    var depth = 0
+                    outer@ for (k in i until lines.size) {
+                        var inStr = false
+                        var j = if (k == i) openIdx else 0
+                        while (j < lines[k].length) {
+                            val c = lines[k][j]
+                            when {
+                                c == '"' -> inStr = !inStr
+                                !inStr && c == '/' && j + 1 < lines[k].length && lines[k][j + 1] == '/' -> break
+                                !inStr && c == '{' -> depth++
+                                !inStr && c == '}' -> {
+                                    depth--
+                                    if (depth == 0) {
+                                        endLine = k
+                                        break@outer
+                                    }
+                                }
+                            }
+                            j++
+                        }
+                    }
+                }
+                val window = lines.subList(i, minOf(lines.size, endLine + 6)).joinToString("\n")
+                val named = "\"jinn-" in window || Regex(""",\s*name\s*[,)]""").containsMatchIn(window)
+                if (!named) offenders += "${file.name}:${i + 1}  ${trimmed.take(72)}"
+            }
+        }
+        assertTrue(
+            "这些后台线程还没有名字（收尾处补 `name = \"jinn-xxx\"`）：\n    ${offenders.joinToString("\n    ")}",
+            offenders.isEmpty(),
+        )
+    }
+
 }

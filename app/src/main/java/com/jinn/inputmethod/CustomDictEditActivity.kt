@@ -724,7 +724,7 @@ class CustomDictEditActivity : Activity() {
                     }
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-dict-read" }.start()
     }
 
     /**
@@ -845,7 +845,7 @@ class CustomDictEditActivity : Activity() {
                     setStatus(status)
                 }
             }
-        }.apply { isDaemon = true }.start()
+        }.apply { isDaemon = true; name = "jinn-dict-save" }.start()
     }
 
     /** 词库目录（包与源文本都在这里；与词库页、备份侧同一处 `filesDir/dicts`） */
