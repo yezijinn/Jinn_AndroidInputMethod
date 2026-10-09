@@ -117,7 +117,11 @@ class ClipboardController(context: Context) {
         // Android 10+ 后台进程读 primaryClip 可能拿到 null（时序/权限边界）：
         // 监听回调触发时系统可能尚未完成写入，或本进程刚退到后台。
         // 延迟 250ms 重试一次，避免把真实复制误判为空。
-        if (clipboard.primaryClip == null) {
+        // 只读一次再判空：`primaryClip` 每次都走一趟到 system_server 的 Binder，读三次之间
+        // 内容可能已被改写（连续复制），而入库用的是后读到的值 —— 历史里那条「最新记录」
+        // 就不是触发这次回调的那一份，顺序与内容都对不上，日志里也看不出来。
+        val clip = clipboard.primaryClip
+        if (clip == null) {
             // 等待用主线程 Handler，不能在 BackgroundIo 里 sleep：那是单线程串行队列，
             // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
             retryHandler.postDelayed({
@@ -126,7 +130,6 @@ class ClipboardController(context: Context) {
             }, RETRY_DELAY_MS)
             return
         }
-        val clip = clipboard.primaryClip ?: return
         // 取文本一律放后台：URI 型条目要打开 content:// 流（**带预算**读，见
         // `ClipboardStore.readTextWithBudget` 与 BUG.md L-171），在主线程上就是一次文件读，
         // 输入法键盘卡顿甚至 ANR 的来源。回调里只做开销极小的 ClipData 快照读取。

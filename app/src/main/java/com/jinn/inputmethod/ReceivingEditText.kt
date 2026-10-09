@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ImageSpan
@@ -31,6 +33,9 @@ import androidx.core.view.inputmethod.InputConnectionCompat
  * 不换成 `AppCompatEditText` 是因为那要引整套 androidx.appcompat，而本模块只依赖 core。
  */
 internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditText(context, attrs) {
+
+    /** 解码结果回主线程的送信人：与视图附着状态无关，见 [insertImage] */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /** `commitContent` 的接收入口：返回 true 表示已消费 */
     private val receiver = InputConnectionCompat.OnCommitContentListener { info, _, _ ->
@@ -63,12 +68,22 @@ internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditT
         val target = (TARGET_HEIGHT_DP * resources.displayMetrics.density).toInt()
         BackgroundIo.run {
             val bmp = runCatching { decodeSampledBitmap(uri, target) }.getOrNull()
-            post { attachDecoded(uri, bmp) }
+            // 回主线程用**自己的** Handler，不用 `View.post`：解码这几十毫秒里视图可能已经
+            // 脱离窗口（换肤 / 收起键盘重建视图），`View.post` 会把任务压进视图私有的 attach
+            // 队列、等下一次 attach —— 而这一份实例不会再 attach，贴图与它那几条日志一起
+            // 石沉大海，用户看到的是「选了图没反应」。
+            mainHandler.post { attachDecoded(uri, bmp) }
         }
     }
 
     /** 解码结果回主线程再贴上去（View 只能在主线程碰） */
     private fun attachDecoded(uri: Uri, bmp: Bitmap?) {
+        if (!isAttachedToWindow) {
+            // 视图已不在窗口上（页面被销毁 / 重建）：这张图无处可贴，但要留一条记录，
+            // 否则排查「选了图没反应」时看不到任何痕迹
+            Diagnostics.w(TAG, "图片未插入：视图已脱离窗口 provider=${uri.authority}")
+            return
+        }
         if (bmp == null) {
             // 只记 provider：完整 content URI 的路径段可能是用户文件名，
             // 而 w 级会 sanitizeForFile 后落盘、随「导出诊断数据」外带（L-1036 的同族漏面）

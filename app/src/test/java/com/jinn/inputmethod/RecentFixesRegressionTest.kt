@@ -1007,6 +1007,7 @@ class RecentFixesRegressionTest {
      *
      * 「大写」「删除」两键的图标同时放大一倍（padding 13dp → 8dp：fitCenter 下图标被
      * 「键框减内缩」框死，13dp 只剩约 10dp）。同屏实测两键图标尺寸不变、图标盒 10dp → 20dp。
+     */
     /**
      * 键盘外观页的控件文案与结构（2026-10-09 指定）：
      *
@@ -1014,6 +1015,31 @@ class RecentFixesRegressionTest {
      * 滑杆标题与拖动条间距 0（同在一行、紧贴）；皮肤两段改成主标题「亮色 / 暗色」+ 状态行
      * （生效那段写「已激活，唤起键盘可预览」，另一段写「未激活，不可预览」）；键高定义域收到 40~90dp。
      */
+    /**
+     * 一条后台任务的生命周期（2026-10-09 审查）：
+     *
+     * ① 剪贴板监听一次事件只读一次 `primaryClip`：读三次之间内容可能已被改写，而入库用的
+     *   是后读到的值，「历史里最新一条」与触发事件的那一份对不上。
+     * ② 键盘那条 500ms 的铺底诊断必须能在 detach 时撤掉：已附着时 `postDelayed` 的任务
+     *   在 detach 后照样跑，那时整棵树尺寸归零，扫出来的是「一条视图都没有」的假结论。
+     */
+    @Test
+    fun `后台任务不再多次读剪贴板且延迟诊断可撤`() {
+        val clip = codeOf("ClipboardController.kt")
+        assertTrue("必须只读一次并存进局部量", "val clip = clipboard.primaryClip" in clip)
+        assertFalse(
+            "不得再先判空一次、之后又读一次",
+            "if (clipboard.primaryClip == null) {" in clip,
+        )
+
+        val kb = codeOf("PinyinKeyboardView.kt")
+        assertTrue("延迟诊断必须提成字段", "postDelayed(backgroundsLogTask, 500L)" in kb)
+        assertTrue(
+            "detach 必须撤掉它",
+            "removeCallbacks(backgroundsLogTask)" in kb,
+        )
+    }
+
     @Test
     fun `外观页控件只留主标题且键高上界收到九十`() {
         val layout = TestSources.rawSource(
@@ -1029,7 +1055,11 @@ class RecentFixesRegressionTest {
         assertEquals(
             "六个滑杆与标题的间距必须都是 0dp",
             6,
-            Regex(""""android:layout_marginStart=\"0dp\"\s*\n\s*android:layout_weight=\"1\"\s*\n\s*android:progressBackgroundTint"""").findAll(layout).count(),
+            "android:layout_marginStart=\"0dp\"".toRegex().findAll(layout).count(),
+        )
+        assertFalse(
+            "滑杆与标题之间不得再留 10dp 间距",
+            "android:layout_marginStart=\"10dp\"\n                    android:layout_weight=\"1\"" in layout,
         )
         assertTrue(
             "皮肤两段必须各有状态行",
@@ -1062,7 +1092,6 @@ class RecentFixesRegressionTest {
         assertEquals("键高上界必须是 90dp", 90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
     }
 
-     */
     @Test
     fun `26键大写字母按宽度收束且两键图标放大一倍`() {
         val key = codeOf("PinyinKey.kt")

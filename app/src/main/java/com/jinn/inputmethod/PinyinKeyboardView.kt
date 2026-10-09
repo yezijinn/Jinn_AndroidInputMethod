@@ -361,6 +361,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var lastCommittedWord: String = ""
 
     // ── 删除键三态：单击删一个 / 按住连续删 / 双击+长按清空输入框 ──
+    /**
+     * 透明度铺底诊断：延迟到布局完成再跑（否则尺寸全是 0）。提成字段是为了 detach 时能撤掉，
+     * 见 [onDetachedFromWindow] —— 已附着时 `postDelayed` 的任务在 detach 后照样会执行。
+     */
+    private val backgroundsLogTask = Runnable { logBackgrounds() }
+
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceHeld = false
     private var backspacePressStart = 0L
@@ -1153,8 +1159,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     "kbBg=${String.format(java.util.Locale.US, "#%08X", kbBg)} " +
                     "rootBg=${rootBg?.let { String.format(java.util.Locale.US, "#%08X", it) }}",
             )
-            // 布局完成后再诊断（否则尺寸全是 0）
-            postDelayed({ logBackgrounds() }, 500L)
+            // 布局完成后再诊断（否则尺寸全是 0）；任务提成字段，detach 时能撤掉（见 [onDetachedFromWindow]）
+            postDelayed(backgroundsLogTask, 500L)
         }
         // 扫描完成才记身份键：中途抛异常时下次仍会重扫（宁可多扫一遍，不能留下没扫过的状态）
         lastTransparencyKey = appearanceKey
@@ -3811,6 +3817,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     override fun onDetachedFromWindow() {
         stopBackspaceRepeat()
+        // 撤掉那条 500ms 的铺底诊断：view 已附着时 `postDelayed` 的任务在 detach 后照样会跑，
+        // 而那时整棵树尺寸已归零，扫出来的是「一条视图都没有」的假结论 —— 恰好把排查
+        // 「透明度不生效」的人带偏；顺带让这棵旧树能尽早回收，不必为空跑的任务再挂 500ms。
+        removeCallbacks(backgroundsLogTask)
         super.onDetachedFromWindow()
     }
 

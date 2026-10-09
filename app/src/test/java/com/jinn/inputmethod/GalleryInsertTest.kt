@@ -511,7 +511,10 @@ class GalleryInsertTest {
             "解码调用要在后台块里面",
             insert.indexOf("BackgroundIo.run") < insert.indexOf("decodeSampledBitmap"),
         )
-        assertTrue("回主线程贴图", "post { attachDecoded(" in insert)
+        // 回主线程必须走自带 Handler：贴图用的 `View.post` 在视图脱离窗口后要等下一次 attach，
+        // 而这一份实例不会再 attach ⇒ 贴图与日志一起丢（用户只看到「选了图没反应」）
+        assertTrue("回主线程贴图（与附着状态无关）", "mainHandler.post { attachDecoded(" in insert)
+        assertTrue("脱离窗口时要留一条记录", "视图已脱离窗口" in insert)
 
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         val gallery = view.substringAfter("fun showGalleryPanel()").substringBefore("val density")
