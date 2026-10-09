@@ -4843,6 +4843,18 @@ class RecentFixesRegressionTest {
         )
         assertTrue("原文范围页：值没变就不写", "val wrote = prefs.translateMaxBytesOf(currentId) != target" in src)
         assertTrue("原文范围页：flush 必须挂在「写过」上", "if (wrote && !prefs.flush())" in src)
+
+        // OpenAI 页的写入项有 14 个且语义各异（数字字段归一、下拉与自定义框择一），不逐个改成条件写，
+        // 而是**前后各取一次快照**比较：写入语义一字不动，只多一个「这次值有没有变」的结论。
+        // 快照漏项 = 漏判（写了但没被看见 ⇒ 那次改动不落盘），所以抽样钉住几项。
+        val oa = codeOf("OpenAiSettingsActivity.kt")
+        assertTrue("OpenAI 页：saveValues 必须报告是否改过值", "private fun saveValues(): Boolean" in oa)
+        assertTrue("OpenAI 页：结论必须来自前后快照比较", "return before != openAiSnapshot()" in oa)
+        assertTrue("OpenAI 页：flush 必须挂在「改过」上", "if (wrote && !prefs.flush())" in oa)
+        val snap = blockAfter(oa, "private fun openAiSnapshot()")
+        for (f in listOf("openAiName", "openAiModel", "openAiTimeoutSec", "openAiExtraJson", "openAiTargetLanguage")) {
+            assertTrue("快照必须覆盖 $f（漏项等于漏判）", f in snap)
+        }
     }
 
 }

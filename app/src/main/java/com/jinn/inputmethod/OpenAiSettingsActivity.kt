@@ -261,7 +261,7 @@ class OpenAiSettingsActivity : Activity() {
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过配置回写（避免覆盖导入结果）")
         } else {
-            saveValues()
+            val wrote = saveValues()
             // 改动已在上一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转，与翻译页同款）
             autosaveHandler.removeCallbacks(autosaveRunnable)
             // ⚠ 自动保存路径也要消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-741）：
@@ -273,9 +273,11 @@ class OpenAiSettingsActivity : Activity() {
                 Diagnostics.w(TAG, "凭据未落盘（自动保存路径）: ${unpersisted.size} 项")
                 textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
             }
+            // 只有真的改过值才同步落盘（BUG.md L-253）：`Prefs.flush` 是 `commit()`，无改动也照写
+            // 整份 XML。之前改过的值由 `apply()` 异步落盘（内存值立刻可见），平台也会在生命周期点
+            // 等排队的写入。flush 的布尔值就是「有没有真落盘」，不许丢（2026-10-02 修复 L-407）。
+            if (wrote && !prefs.flush()) Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
         }
-        // flush 的布尔值就是「有没有真落盘」，不许丢（2026-10-02 修复 L-407）
-        if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
         // 「凭据不留痕」（2026-09-30）：用户从云控制台复制的 API Key 已被剪贴板监听采集入库
         // （面板里明文可见、随备份导出），保存后把它从历史里删掉（精确匹配，收藏条目不动）
         purgeApiKeyFromClipboardHistory()
@@ -437,7 +439,10 @@ class OpenAiSettingsActivity : Activity() {
         }
     }
 
-    private fun saveValues() {
+    private fun saveValues(): Boolean {
+        // 前后各取一次快照，得出「这次是否真的改了值」（BUG.md L-253）：写入语义一字不动，
+        // 结论只用于 onPause 决定要不要同步落盘 —— `Prefs.flush` 是 `commit()`，无改动也照写整份 XML。
+        val before = openAiSnapshot()
         prefs.openAiName = editName.text.toString()
         prefs.openAiBaseUrl = editBaseUrl.text.toString()
         // 只回写真的改过的字段（2026-10-01 修复 L-247）：Key 解密失败时读出来是空串，
@@ -490,6 +495,22 @@ class OpenAiSettingsActivity : Activity() {
         if (saveGuard.changed(editApiKey) && unpersisted.isEmpty()) {
             saveGuard.markWritten(editApiKey)
         }
+        return before != openAiSnapshot()
+    }
+
+    /**
+     * [saveValues] 写入项的取值快照（顺序与写入项一一对应）。
+     *
+     * 只用于比较「值有没有变」——`Prefs` 的 getter 各自带钳位/默认值，读它们不影响任何状态；
+     * `openAiApiKey` 的读取会解密一次（亚毫秒级），与写入侧同源。
+     */
+    private fun openAiSnapshot(): List<Any?> {
+        return listOf(
+            prefs.openAiName, prefs.openAiBaseUrl, prefs.openAiApiKey, prefs.openAiModel,
+            prefs.openAiChatPath, prefs.openAiModelsPath, prefs.openAiSystemPrompt, prefs.openAiUserPrompt,
+            prefs.openAiTemperature, prefs.openAiTopP, prefs.openAiMaxTokens, prefs.openAiResponsePath,
+            prefs.openAiTimeoutSec, prefs.openAiExtraHeaders, prefs.openAiExtraJson, prefs.openAiTargetLanguage,
+        )
     }
 
     /**
