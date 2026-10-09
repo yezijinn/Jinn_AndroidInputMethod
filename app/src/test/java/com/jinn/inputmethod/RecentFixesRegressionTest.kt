@@ -4886,4 +4886,48 @@ class RecentFixesRegressionTest {
         )
     }
 
+    // ── 第五十四批（2026-10-10）：剪贴板搜索的判据与提示（L-1134 / L-1135 / L-984）─────────
+
+    /**
+     * 搜索的命中判据与截断提示必须走纯层（BUG.md L-1134 / L-1135 / L-984）。
+     *
+     * 判据写在视图的扫描循环里时，「全半角」「零宽字符」这些边界只能真机试，而「库比扫描止损大、
+     * 更旧的行根本没查」在界面上与「没找到」长得一模一样 —— 三处都由 `ClipboardSearch` 提供纯函数 +
+     * `ClipboardSearchTest` 定值覆盖，这里只钉「视图必须调它、别再长回手写判据」。
+     */
+    @Test
+    fun `搜索判据与截断提示必须走纯层`() {
+        val view = codeOf("SearchPanelView.kt")
+        assertTrue(
+            "命中判据必须调 ClipboardSearch.matches",
+            view.contains("ClipboardSearch.matches("),
+        )
+        assertFalse(
+            "不得再手写 `content.lowercase().contains(...)`：它拿不到全半角 / 零宽的等价形态",
+            view.contains(".lowercase().contains("),
+        )
+        assertTrue(
+            "收尾截断状态必须由 ClipboardSearch.capState 判：命中截断与扫描止损要分开",
+            view.contains("ClipboardSearch.capState("),
+        )
+        assertFalse(
+            "截断提示不得写死上限数字：先触顶的可能是条数，也可能是驻留字节预算（L-984）",
+            view.contains("只显示前 "),
+        )
+        assertTrue(
+            "扫描止损必须用 ClipboardSearch.SCAN_LIMIT（视图里再存一份常量就会与纯函数判据脱节）",
+            "ClipboardSearch.SCAN_LIMIT" in view && "SEARCH_SCAN_LIMIT" !in view,
+        )
+        // 管理页是第二个搜索入口：「与面板同口径」得真同源，别再各写一份过滤
+        val history = codeOf("ClipboardHistoryActivity.kt")
+        assertTrue(
+            "管理页的搜索过滤也必须走 ClipboardSearch.matches",
+            history.contains("ClipboardSearch.matches("),
+        )
+        assertFalse(
+            "不得回到 `contains(keywordNow, ignoreCase = true)`：大小写对了，全半角与零宽仍搜不到",
+            history.contains("contains(keywordNow, ignoreCase = true)"),
+        )
+    }
+
 }

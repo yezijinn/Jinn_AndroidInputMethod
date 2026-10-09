@@ -62,8 +62,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
 
     private var currentItems: List<ClipboardDb.Item> = emptyList()
 
-    /** 上一次搜索的结果是否被 `MAX_SEARCH_RESULTS` / 驻留字节预算截断（决定列表下要不要提示一行） */
-    private var resultsCapped = false
+    /**
+     * 上一次搜索的截断状态（决定列表下那一行提示说什么，见 [ClipboardSearch.Cap]）。
+     *
+     * 用状态而不是 Boolean：命中断在条数 / 驻留字节预算上，与「库太大、更旧的行没扫」是两回事，
+     * 文案要分开说（BUG.md L-1134 / L-984）。
+     */
+    private var cap = ClipboardSearch.Cap.NONE
 
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
@@ -261,7 +266,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         editSearch.setText("")
         searchHandler.removeCallbacksAndMessages(null)
         // 上次搜完后空态文案被改成了「未找到匹配内容」/ 截断提示，这里要退回提示语
-        resultsCapped = false
+        cap = ClipboardSearch.Cap.NONE
         textEmpty.text = TEXT_EMPTY_IDLE
         textEmpty.visibility = View.VISIBLE
         listView.visibility = View.GONE
@@ -354,28 +359,32 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = emptyList()
-                    resultsCapped = false
+                    cap = ClipboardSearch.Cap.NONE
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                 }
                 return@run
             }
-            val lower = q.lowercase()
+            // 查询词的所有等价写法（全半角、零宽都归一到同一组里比对，BUG.md L-1135）
+            val forms = ClipboardSearch.queryForms(q)
             val matches = ArrayList<ClipboardDb.Item>()
             // 扫描上限取真实行数：maxItems 只是配置项，而 trimTo 只裁非收藏，
             // 收藏多时实际行数会超过它，拿配置值当上限会漏搜尾部条目。
             // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
-            val total = db.count().coerceAtMost(SEARCH_SCAN_LIMIT)
+            val dbTotal = db.count()
+            val total = dbTotal.coerceAtMost(ClipboardSearch.SCAN_LIMIT)
             var lastPublishAt = 0L
             var publishedCount = -1
+            var publishedCap = ClipboardSearch.Cap.NONE
 
-            /** 发布一次结果快照（主线程）。capped 一并带过去：截断要显示，别让用户以为「就这些」 */
-            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean, capped: Boolean) {
+            /** 发布一次结果快照（主线程）。截断状态一并带过去：要显示，别让用户以为「就这些」 */
+            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean, cap: ClipboardSearch.Cap) {
                 publishedCount = items.size
+                publishedCap = cap
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = items
-                    resultsCapped = capped
+                    this@SearchPanelView.cap = cap
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底（与历史页一致）
@@ -384,19 +393,22 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             }
 
             var retainedBytes = 0L
-            var capped = false
+            var retainReached = false
+            // 扫到「这一窗一行都没扫到」= 库里没有再旧的行了。收尾判「扫描止损」要靠它区分
+            // 「被上界掐停」与「扫完了」（BUG.md L-1134）。
+            var exhausted = false
             var cursor: ClipboardCursor? = null
             var scannedTotal = 0
-            // 上界仍是「扫描过的行数」，不是位置：total 里含 SEARCH_SCAN_LIMIT 的止损（别丢它）
+            // 上界仍是「扫描过的行数」，不是位置：total 里含 ClipboardSearch.SCAN_LIMIT 的止损（别丢它）
             while (scannedTotal < total) {
                 // 键集游标（BUG.md L-92）：只认「上一块最后扫描过的行」。
                 // 不能用 SQL OFFSET —— 搜索期间别的应用改一次剪贴板（头部插一条 + 尾部裁一条，
                 // 总条数不变）就会让行位置整体位移，下一块重复扫描 / 永久漏掉尾部行。
                 val page = db.recentPageAfter(cursor, SEARCH_WINDOW_ITEMS)
                 for (item in page.items) {
-                    if (item.content.lowercase().contains(lower)) {
+                    if (ClipboardSearch.matches(item.content, forms)) {
                         if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes, maxResults = ClipboardPrefs.of(context).maxSearchResults)) {
-                            capped = true
+                            retainReached = true
                             break
                         }
                         matches.add(item)
@@ -407,10 +419,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 }
                 // 判停只看扫描行数：整窗解密失败时 items 为空、但游标仍在推进，
                 // 用 items.isEmpty() 判停会静默漏掉后面的有效条目。
-                if (page.scanned == 0) break
+                if (page.scanned == 0) {
+                    exhausted = true
+                    break
+                }
                 cursor = page.last
                 scannedTotal += page.scanned
-                if (capped) break
+                if (retainReached) break
                 if (reqToken != refreshToken) return@run
                 // 首帧兜底的判据必须在 post 之前提前取成值：lambda 捕获的是变量本身，
                 // 等它延迟执行时 cursor / scannedTotal 早已推进，「首块」永远判不成立。
@@ -418,16 +433,23 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 val now = System.currentTimeMillis()
                 // 发布节流：窗口细化到 50 条后，逐块发布会让大库搜索产生数百次布局
                 // （每次 updateEmpty 都会 requestLayout）。首块必发保首屏，其余按间隔合并。
+                // 「扫描止损」要等收尾才知道，中途只可能报「命中截断」，别提前下结论。
                 if (isFirstChunk || now - lastPublishAt >= PUBLISH_MIN_INTERVAL_MS) {
                     lastPublishAt = now
-                    publish(matches.toList(), relayout = isFirstChunk, capped = capped)
+                    val midCap = if (retainReached) ClipboardSearch.Cap.RETAIN else ClipboardSearch.Cap.NONE
+                    publish(matches.toList(), relayout = isFirstChunk, cap = midCap)
                 }
             }
-            // 收尾无条件补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，
-            // 否则用户会看到少于实际命中的结果（静默少给）。命中数没变时跳过，避免重复布局。
-            if (publishedCount != matches.size) publish(matches.toList(), relayout = false, capped = capped)
+            // 收尾判一次真实状态：命中截断优先，其次是「库比止损上限大且没扫完」（L-1134）
+            val finalCap = ClipboardSearch.capState(retainReached, exhausted, dbTotal)
+            // 收尾补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，否则用户会看到少于实际
+            // 命中的结果（静默少给）。命中数与截断状态都没变时跳过，避免重复布局 —— 但两者任一变了
+            // 都得发：截断状态决定提示行显不显示。
+            if (publishedCount != matches.size || publishedCap != finalCap) {
+                publish(matches.toList(), relayout = false, cap = finalCap)
+            }
             // 关键词是用户输入正文：走 V 级（默认只进 logcat 不落盘），与「日志禁出正文」一致
-            Diagnostics.v(TAG, "搜索完成: \"$q\" 命中=${matches.size} capped=$capped")
+            Diagnostics.v(TAG, "搜索完成: \"$q\" 命中=${matches.size} 截断=${finalCap.name}")
         }
     }
 
@@ -446,16 +468,22 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         val lp = textEmpty.layoutParams as LinearLayout.LayoutParams
         when {
             empty -> {
-                // 文案按「有没有输入」分两种：清空查询框回调到这里时是「还没开始搜」，
-                // 一律报「未找到匹配内容」会让人以为库里没有内容（与打开时的提示语矛盾）
-                textEmpty.text = if (editSearch.text.isNullOrBlank()) TEXT_EMPTY_IDLE else TEXT_EMPTY_NO_MATCH
+                // 文案按「有没有输入」分三种：清空查询框回调到这里时是「还没开始搜」，
+                // 一律报「未找到匹配内容」会让人以为库里没有内容（与打开时的提示语矛盾）；
+                // 而「库太大、更旧的行没扫」时连「没有」都不成立，单独一句话（BUG.md L-1134）。
+                textEmpty.text = when {
+                    editSearch.text.isNullOrBlank() -> TEXT_EMPTY_IDLE
+                    cap == ClipboardSearch.Cap.SCAN -> TEXT_EMPTY_NO_MATCH_SCAN
+                    else -> TEXT_EMPTY_NO_MATCH
+                }
                 lp.height = dp(RESULT_EMPTY_HEIGHT_DP)
                 textEmpty.visibility = View.VISIBLE
             }
-            resultsCapped -> {
-                // 命中被上限截断：留一行说明，否则用户以为「就这些」。高度改成一行，
-                // 不按空态整块占位（结果已经很长，提示再占 120dp 会把键盘顶掉一截）
-                textEmpty.text = "只显示前 ${ClipboardPrefs.of(context).maxSearchResults} 条匹配结果，可缩小关键词"
+            cap != ClipboardSearch.Cap.NONE -> {
+                // 截断要留一行说明，否则用户以为「就这些」。两种截断分开说（L-1134 / L-984），
+                // 且**不写死上限数字**：真正先触顶的可能是条数，也可能是驻留字节预算。
+                // 高度改成一行，不按空态整块占位（结果已经很长，提示再占 120dp 会把键盘顶掉一截）
+                textEmpty.text = if (cap == ClipboardSearch.Cap.SCAN) TEXT_CAP_SCAN else TEXT_CAP_RETAIN
                 lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
                 textEmpty.visibility = View.VISIBLE
             }
@@ -482,9 +510,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_EMPTY_IDLE = "输入关键词搜索剪贴板历史"
         /** 空态：有输入但没搜到 */
         const val TEXT_EMPTY_NO_MATCH = "未找到匹配内容\n换个关键词试试"
+        /** 空态：没搜到，但库比扫描止损大 —— 更旧的那批根本没查，不能说成「没有」 */
+        const val TEXT_EMPTY_NO_MATCH_SCAN = "最近的内容里没找到\n库里内容较多，只扫描了最近的一部分"
+        /** 截断提示：命中断在条数 / 驻留字节预算上（不写上限值：先触顶的可能是两者之一） */
+        const val TEXT_CAP_RETAIN = "命中太多，已截断；缩小关键词可看全"
+        /** 截断提示：库比扫描止损大，更旧的内容这轮没查 */
+        const val TEXT_CAP_SCAN = "库里内容较多，只扫描了最近一部分，缩小关键词可看全"
         const val DEBOUNCE_MS = 150L
-        /** 单次搜索最多扫描的行数（硬保护，防超大库把搜索拖成秒级） */
-        const val SEARCH_SCAN_LIMIT = 20_000
         /** 结果发布的最小间隔：窗口细化后逐块发布会产生数百次布局，按此间隔合并 */
         const val PUBLISH_MIN_INTERVAL_MS = 120L
         /** 结果列表固定高度（wrap_content 父下保证可滚动） */

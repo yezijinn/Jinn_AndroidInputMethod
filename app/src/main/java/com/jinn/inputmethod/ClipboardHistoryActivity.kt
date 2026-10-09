@@ -456,10 +456,13 @@ class ClipboardHistoryActivity : Activity() {
                 allItems.clear()
                 allItems.addAll(out)
                 items.clear()
-                // 与面板搜索同口径：忽略大小写（先前用 contains 区分大小写，搜小写英文搜不到大写内容）
+                // 与面板搜索同口径：忽略大小写、全半角与零宽也互认 —— 判据只用 ClipboardSearch 一份
+                // （先前这里是 `contains(keywordNow, ignoreCase = true)`：大小写对上了，符号层打的全角
+                // 标点、粘来的零宽字符仍然搜不到，两处口径会越走越远，BUG.md L-1135）
+                val forms = ClipboardSearch.queryForms(keywordNow)
                 items.addAll(
                     if (keywordNow.isEmpty()) allItems
-                    else allItems.filter { it.content.contains(keywordNow, ignoreCase = true) }
+                    else allItems.filter { ClipboardSearch.matches(it.content, forms) }
                 )
                 numberById.clear()
                 for ((idx, item) in allItems.withIndex()) numberById[item.id] = total - idx
