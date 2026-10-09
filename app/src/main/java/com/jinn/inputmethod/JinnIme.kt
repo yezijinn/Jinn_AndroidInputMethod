@@ -3070,6 +3070,25 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_EMPTY)
             return
         }
+        // ④ 原文已经是目标语言、且该语言没有对称对调（日 / 韩）⇒ **不发请求**（2026-10-10 修复 L-1131）：
+        //    再发一次只会原样返回原文 —— 用户等一轮、看到「翻译成功」而内容一字未变，并且真计费。
+        //    拦在置位之前还顺带免掉后面那一串状态收拾（按钮态、看门狗、指纹此刻都还没动）。
+        //    判定不出源语言（纯数字 / URL / 混写）时照发，不误拦正常请求（判据见 decideTranslateTarget）。
+        val mutualTarget = when (
+            val decision = if (id != TranslationProviderId.OPENAI) {
+                decideTranslateTarget(slice.text, target)
+            } else {
+                TranslateTarget.To(target)
+            }
+        ) {
+            is TranslateTarget.To -> decision.language
+
+            is TranslateTarget.AlreadyTarget -> {
+                Diagnostics.i(TAG, "翻译: 原文已是目标语言（${decision.language.name}），未发起")
+                toast(alreadyTargetMessage(decision.language))
+                return
+            }
+        }
         translateInFlight = true
         val generation = ++translateGeneration
         // 看门狗**紧跟置位**挂上（2026-10-03 审查 A5）：它此前排在置位之后的一串调用
@@ -3114,7 +3133,6 @@ class JinnIme : InputMethodService() {
         // OkHttp 在调用 onResponse **之前**就置了 `signalledCallback`，回调内部抛出的异常
         // **不会**回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
         // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
-        val mutualTarget = if (id != TranslationProviderId.OPENAI) mutualSwapTarget(slice.text, target) else target
         runCatching {
             // ���������ȡ����2026-10-03 �޸� L-494�����꽂�߽磨onFinishInput / onStartInput /
             // ������� / ��ת�������ߵ� finishTranslate���������;����� cancel()

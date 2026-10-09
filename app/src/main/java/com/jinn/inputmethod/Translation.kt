@@ -72,19 +72,51 @@ internal fun guessSourceScript(text: String): TranslationLanguage? {
 }
 
 /**
- * 互译目标：本地判定源与固定目标同语（例目标=英文但文本实为英文）时，
- * 翻向本目标的对立端（当前仅「中⇄英」对称互译），否则保持 target 原处。
- * OPENAI 兼容路径真正生效的是自由文本，命中目标为该枚举无差异，故调用方按 `id != OPENAI` 使用。
+ * 目标语言决策：本地脚本判定 + 对称对调的结果，一次说清（2026-10-10 修复 L-1131）。
+ *
+ * 为什么不只返回一个语言：日 / 韩没有对称对调，旧口径下「目标=日语、原文其实也是日语」会保持目标不动
+ * ⇒ **照发一次请求**，服务方原样返回原文 —— 用户等一轮、看到「翻译成功」而内容一字未变，并且真计费。
+ * 这类请求必须**在本地就被拦下**，所以决策得能把「别发」表达出来。
+ *
+ * OPENAI 兼容路径的目标语言落在提示词里（自由文本动作可能本来就要求同语，如「改写成更礼貌的日语」），
+ * 故调用方仍按 `id != OPENAI` 使用本函数。
  */
-internal fun mutualSwapTarget(text: String, target: TranslationLanguage): TranslationLanguage {
-    val guess = guessSourceScript(text) ?: return target
-    if (guess != target) return target
+internal sealed interface TranslateTarget {
+    /** 正常翻向 [language]（中⇄英 的对称对调已在这一层完成）。 */
+    data class To(val language: TranslationLanguage) : TranslateTarget
+
+    /** 源文本已是 [language]、且该语言没有对称对调 ⇒ 调用方**不发请求**，只给一句提示。 */
+    data class AlreadyTarget(val language: TranslationLanguage) : TranslateTarget
+}
+
+/**
+ * 决策：按 [target] 翻，还是「已经是目标语言」而不发。
+ *
+ * 脚本判定只做一次（[guessSourceScript]）：键盘翻译与屏幕翻译两条路径都必须走这里，
+ * 避免「一处判了、另一处再判一次」的口径漂移（两处各算一次正是 [TranslateTarget] 要收口的旧样子）。
+ * 判定不出源语言（纯数字 / URL / 混写）时一律照发 —— 宁可多发一次，也不误拦用户的正常请求。
+ */
+internal fun decideTranslateTarget(text: String, target: TranslationLanguage): TranslateTarget {
+    val guess = guessSourceScript(text) ?: return TranslateTarget.To(target)
+    if (guess != target) return TranslateTarget.To(target)
     return when (target) {
-        TranslationLanguage.CHINESE -> TranslationLanguage.ENGLISH
-        TranslationLanguage.ENGLISH -> TranslationLanguage.CHINESE
-        else -> target
+        TranslationLanguage.CHINESE -> TranslateTarget.To(TranslationLanguage.ENGLISH)
+        TranslationLanguage.ENGLISH -> TranslateTarget.To(TranslationLanguage.CHINESE)
+        else -> TranslateTarget.AlreadyTarget(target)
     }
 }
+
+/**
+ * 「已经是目标语言，未发送请求」的**唯一文案**（2026-10-10 修复 L-1131）。
+ *
+ * 两个消费方：键盘翻译（toast）与屏幕翻译（面板提示行）。成句走 [alreadyTargetMessage]，
+ * 别在两处各拼一次 —— 占位符与实参的顺序只在这里声明一遍。
+ */
+internal const val TEXT_ALREADY_TARGET_LANGUAGE = "这段文字已经是「%s」，未发送请求（换个目标语言再试）"
+
+/** [TEXT_ALREADY_TARGET_LANGUAGE] 的成句（带目标语言名）。 */
+internal fun alreadyTargetMessage(language: TranslationLanguage): String =
+    String.format(java.util.Locale.US, TEXT_ALREADY_TARGET_LANGUAGE, language.label)
 
 
 /**

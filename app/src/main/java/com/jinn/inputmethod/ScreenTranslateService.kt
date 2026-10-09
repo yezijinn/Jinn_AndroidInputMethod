@@ -281,7 +281,17 @@ internal class ScreenTranslateService : AccessibilityService() {
 
             pickedText = source.first
             truncated = source.second
-            val target = ScreenTranslateLogic.decideTarget(pickedText, id, prefs.translateTarget)
+            // 「原文已经是目标语言」⇒ 零请求（L-1131）：日 / 韩没有对称对调，再发一次只会原样返回原文，
+            // 用户看到「翻译成功」而内容一字未变，同时真计费。面板此时停在勾选态，只换提示行。
+            val target = when (val decision = ScreenTranslateLogic.decideTarget(pickedText, id, prefs.translateTarget)) {
+                is TranslateTarget.To -> decision.language
+
+                is TranslateTarget.AlreadyTarget -> {
+                    Diagnostics.i(TAG, "屏幕翻译: 原文已是目标语言（${decision.language.name}），未发请求")
+                    panel?.showHint(alreadyTargetMessage(decision.language))
+                    return
+                }
+            }
             val gen = ++generation
             inFlight?.cancel()
             panel?.renderLoading(truncated)

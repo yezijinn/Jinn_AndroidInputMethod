@@ -28,7 +28,7 @@ internal class BaiduTranslator(
     private val appId: String,
     private val secretKey: String,
     /** salt 源：生产用随机数；单测注入定值以断言签名（签名是纯函数） */
-    private val saltSource: () -> String = { Random.nextLong().toString() },
+    private val saltSource: () -> String = { nonNegativeSaltOf(Random.nextLong()) },
 ) : TranslationProvider {
 
     /** 通用版按输入行对齐返回（`trans_result` 靠顺序对应原文行）⇒ 参与出口的「少给行」对拍（L-483） */
@@ -101,6 +101,22 @@ internal class BaiduTranslator(
 
         const val ENDPOINT = "https://fanyi-api.baidu.com/api/trans/vip/translate"
         const val SOURCE_LANGUAGE_AUTO = "auto"
+
+        /**
+         * 重放防护随机数的**非负**化（2026-10-10 修复 L-1130）。
+         *
+         * 官方口径是「随机数字符串」，而 `Random.nextLong()` 是有符号的 —— 约一半概率以 `-` 开头，
+         * 不属于该口径（签名侧自洽：`md5(appId + text + salt + secretKey)` 与 query 用同一个串，
+         * 所以本机不会红；但把不合口径的字段交给服务端做重放防护本身就不该）。
+         *
+         * `Long.MIN_VALUE` 取反会溢出（仍是负数），单独回落 `"0"`。
+         * 抽成纯函数是为了**定值单测**：默认源是随机的，「没抽到负数」只能证明运气。
+         */
+        internal fun nonNegativeSaltOf(value: Long): String = when {
+            value == Long.MIN_VALUE -> "0"
+            value < 0 -> (-value).toString()
+            else -> value.toString()
+        }
 
         /** 常量 URL 必然可解析；解析失败属于字面量写错，构建期就该发现 */
         private val ENDPOINT_URL: HttpUrl = ENDPOINT.toHttpUrlOrNull()!!

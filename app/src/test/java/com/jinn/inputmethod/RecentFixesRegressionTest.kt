@@ -4855,4 +4855,35 @@ class RecentFixesRegressionTest {
         assertFalse("KDoc 不得留着过时口径「有 root 时是系统全量」", "有 root 时是系统全量" in kdoc)
     }
 
+    // ── 第五十三批（2026-10-10）：翻译成本与协议口径（L-1130 / L-1131）──────────────
+
+    /**
+     * 源文已是目标语言时必须在**发请求之前**拦下（BUG.md L-1131）。
+     *
+     * 判据不是「有没有这个分支」，而是**分支的位置**：拦在本地 ⇒ 零请求、零状态收拾；
+     * 位置一旦挪到请求之后，用户就会重新经历「等一轮 + 看到内容一字未变 + 真计费」——
+     * 这正是本条要修的现象，而只判 `contains("AlreadyTarget")` 时挪走也照样绿。
+     */
+    @Test
+    fun `已是目标语言必须在发请求前拦下`() {
+        val ime = codeOf("JinnIme.kt")
+        assertBefore(
+            ime, "is TranslateTarget.AlreadyTarget", "translateInFlight = true",
+            "键盘侧：判定要排在 translateInFlight 置位之前（排在后面还得收拾按钮态与看门狗）",
+        )
+        assertBefore(
+            ime, "is TranslateTarget.AlreadyTarget", "TranslationClient.translate(",
+            "键盘侧：判定要排在发请求之前，否则等于没拦",
+        )
+        val service = codeOf("ScreenTranslateService.kt")
+        assertBefore(
+            service, "is TranslateTarget.AlreadyTarget", "TranslationClient.translate(",
+            "屏幕翻译侧：判定要排在发请求之前，否则等于没拦",
+        )
+        assertTrue(
+            "两侧的提示必须是同一句（TEXT_ALREADY_TARGET_LANGUAGE 一处定义、成句走 alreadyTargetMessage）",
+            "alreadyTargetMessage(" in ime && "alreadyTargetMessage(" in service,
+        )
+    }
+
 }

@@ -120,6 +120,30 @@ class BaiduTranslatorTest {
         assertNotEquals(first, second)
     }
 
+    @Test
+    fun `salt 非负化：负数取绝对值，Long_MIN 回落 0`() {
+        // 官方口径是「随机数字符串」⇒ 负号不算（L-1130）。定值判据，不靠抽查随机数。
+        assertEquals("0", BaiduTranslator.nonNegativeSaltOf(0L))
+        assertEquals("5", BaiduTranslator.nonNegativeSaltOf(5L))
+        assertEquals("9223372036854775807", BaiduTranslator.nonNegativeSaltOf(-Long.MAX_VALUE))
+        // 取反会溢出（结果仍是 Long.MIN_VALUE ⇒ 仍是负数），必须单独回落
+        assertEquals("0", BaiduTranslator.nonNegativeSaltOf(Long.MIN_VALUE))
+    }
+
+    @Test
+    fun `默认 salt 源必须走非负化`() {
+        assertTrue(
+            "默认源必须是 nonNegativeSaltOf(Random.nextLong())：裸 nextLong() 约一半是负数（L-1130）",
+            "nonNegativeSaltOf(Random.nextLong())" in TestSources.codeSource("BaiduTranslator.kt"),
+        )
+        // 冒烟（判据是上面那条锚点，这里只证明接线确实生成了可用的 salt）
+        val salts = (1..20).map {
+            BaiduTranslator(APP_ID, SECRET)
+                .buildRequest("x", TranslationLanguage.ENGLISH).url.queryParameter("salt")!!
+        }
+        assertTrue("默认 salt 出现负号：$salts", salts.none { it.startsWith("-") })
+    }
+
     // ── 响应 ────────────────────────────────────────────────
 
     @Test

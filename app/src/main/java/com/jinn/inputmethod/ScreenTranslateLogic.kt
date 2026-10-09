@@ -53,10 +53,20 @@ internal object ScreenTranslateLogic {
         return if (cut.hasVisibleContent()) cut to truncated else null
     }
 
-    /** 目标语言：非 OpenAI 走对称互译（CHINESE⇄ENGLISH），OpenAI 自由文本不互换 —— 与 IME 侧同口径。 */
-    fun decideTarget(raw: String, id: TranslationProviderId, targetName: String): TranslationLanguage {
+    /**
+     * 目标语言：非 OpenAI 走 [decideTranslateTarget]（中⇄英对称对调，日 / 韩同语时报「已是目标语言」），
+     * OpenAI 自由文本不互换 —— 与 IME 侧同口径。
+     *
+     * 返回 [TranslateTarget] 而不是一个语言：日 / 韩同语时**不能发请求**（发了只会原样返回且真计费，
+     * L-1131），调用方必须处理 `AlreadyTarget` 这一支。
+     */
+    fun decideTarget(raw: String, id: TranslationProviderId, targetName: String): TranslateTarget {
         val base = TranslationLanguage.of(targetName)
-        return if (id != TranslationProviderId.OPENAI) mutualSwapTarget(raw, base) else base
+        return if (id != TranslationProviderId.OPENAI) {
+            decideTranslateTarget(raw, base)
+        } else {
+            TranslateTarget.To(base)
+        }
     }
 
     /**

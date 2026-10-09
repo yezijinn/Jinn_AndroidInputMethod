@@ -105,7 +105,7 @@ class ScreenTranslateLogicTest {
     @Test
     fun 英文文本配英文目标时互换为中文() {
         assertEquals(
-            TranslationLanguage.CHINESE,
+            TranslateTarget.To(TranslationLanguage.CHINESE),
             ScreenTranslateLogic.decideTarget("hello world", TranslationProviderId.ALIYUN, "ENGLISH"),
         )
     }
@@ -113,7 +113,7 @@ class ScreenTranslateLogicTest {
     @Test
     fun 中文文本配中文目标时互换为英文() {
         assertEquals(
-            TranslationLanguage.ENGLISH,
+            TranslateTarget.To(TranslationLanguage.ENGLISH),
             ScreenTranslateLogic.decideTarget("你好世界", TranslationProviderId.DEEPL, "CHINESE"),
         )
     }
@@ -121,7 +121,7 @@ class ScreenTranslateLogicTest {
     @Test
     fun OpenAI自由文本不互换() {
         assertEquals(
-            TranslationLanguage.ENGLISH,
+            TranslateTarget.To(TranslationLanguage.ENGLISH),
             ScreenTranslateLogic.decideTarget("hello world", TranslationProviderId.OPENAI, "ENGLISH"),
         )
     }
@@ -129,8 +129,42 @@ class ScreenTranslateLogicTest {
     @Test
     fun 无法判定源语言时保持目标不变() {
         assertEquals(
-            TranslationLanguage.JAPANESE,
+            TranslateTarget.To(TranslationLanguage.JAPANESE),
             ScreenTranslateLogic.decideTarget("123", TranslationProviderId.ALIYUN, "JAPANESE"),
+        )
+    }
+
+    @Test
+    fun 日文文本配日文目标时不发请求() {
+        // 日 / 韩没有对称对调：旧口径下会照发一次请求，服务端原样返回原文且真计费（L-1131）
+        assertEquals(
+            TranslateTarget.AlreadyTarget(TranslationLanguage.JAPANESE),
+            ScreenTranslateLogic.decideTarget("こんにちは世界", TranslationProviderId.ALIYUN, "JAPANESE"),
+        )
+    }
+
+    @Test
+    fun 韩文文本配韩文目标时不发请求() {
+        assertEquals(
+            TranslateTarget.AlreadyTarget(TranslationLanguage.KOREAN),
+            ScreenTranslateLogic.decideTarget("안녕하세요", TranslationProviderId.BAIDU, "KOREAN"),
+        )
+    }
+
+    @Test
+    fun 日文文本配英文目标时照发不误拦() {
+        // 只有「源 == 目标」才拦；判定出的是别的语言时一律照发，不能把正常请求挡掉
+        assertEquals(
+            TranslateTarget.To(TranslationLanguage.ENGLISH),
+            ScreenTranslateLogic.decideTarget("こんにちは世界", TranslationProviderId.ALIYUN, "ENGLISH"),
+        )
+    }
+
+    @Test
+    fun 已经是目标语言的提示带目标语言名() {
+        assertEquals(
+            "这段文字已经是「日本語」，未发送请求（换个目标语言再试）",
+            alreadyTargetMessage(TranslationLanguage.JAPANESE),
         )
     }
 
