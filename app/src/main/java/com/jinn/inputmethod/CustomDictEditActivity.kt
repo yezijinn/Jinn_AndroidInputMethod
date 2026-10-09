@@ -270,6 +270,9 @@ class CustomDictEditActivity : Activity() {
             }.getOrDefault(false)
             if (written) {
                 draftWrittenRevision = draftRevision
+                // 新草稿已落地 ⇒ 留档槽里的旧稿被更新的内容取代（BUG-30：只留最新一份，不堆积）。
+                // 放在成功分支里：块内最后一句会变成 runCatching 的返回值，且落盘失败时不该先丢留档。
+                runCatching { File(cacheDir, DRAFT_FILE_ARCHIVE).delete() }
                 outState.putString(STATE_EDITOR_FILE, DRAFT_FILE)
                 outState.putInt(STATE_DRAFT_LEN, text.length)
                 pendingDraftFile = null
@@ -418,7 +421,8 @@ class CustomDictEditActivity : Activity() {
             // 而反复重读几十 MB 的文件又会在每次重建时挨一次主线程/内存。
             val restoreLimit = CustomDicts.MAX_INPUT_CHARS * 2
             var tooLarge = false
-            val restored = if (existed) {
+            var fromArchive = false
+            var restored = if (existed) {
                 runCatching {
                     file.reader(Charsets.UTF_8).use { reader ->
                         CustomDicts.readCapped(reader, restoreLimit) ?: run { tooLarge = true; null }
@@ -426,6 +430,19 @@ class CustomDictEditActivity : Activity() {
                 }.getOrNull()
             } else {
                 null
+            }
+            // 本体不在了（系统清缓存 / 已被收尾删除）：看一眼留档槽（BUG-30）。
+            // 那是「上次草稿没铺进去、用户已抢先输入」时留下的旧稿 —— 用户手上最新的那份长文。
+            if (restored == null && !tooLarge) {
+                val archived = File(cacheDir, DRAFT_FILE_ARCHIVE)
+                if (archived.isFile) {
+                    restored = runCatching {
+                        archived.reader(Charsets.UTF_8).use { reader ->
+                            CustomDicts.readCapped(reader, restoreLimit) ?: run { tooLarge = true; null }
+                        }
+                    }.getOrNull()
+                    fromArchive = restored != null
+                }
             }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
@@ -445,6 +462,17 @@ class CustomDictEditActivity : Activity() {
                         Diagnostics.w(TAG, "快捷补充：草稿文件读取失败（${file.length()} 字节），保留待重试")
                         setStatus(TEXT_DRAFT_UNREADABLE)
                     }
+                    return@runOnUiThread
+                }
+                if (fromArchive) {
+                    // 铺的是留档稿：令牌换成留档槽名，收尾时由同一条路径把它消费掉（不再算「待恢复草稿」）
+                    pendingDraftFile = DRAFT_FILE_ARCHIVE
+                    pendingDraftLen = 0
+                    val willSkip = editor.text.isNotEmpty() && dirty
+                    applyDraft(restored, 0, DRAFT_FILE_ARCHIVE, restoredDirty)
+                    // 只有真铺进去才改状态行（未铺入时 applyDraft 已写明「未铺入」，不许被这句盖掉）；
+                    // 大稿走首帧后铺的分支，状态行由那条路径自己写。
+                    if (!willSkip && !draftPending) setStatus(TEXT_DRAFT_ARCHIVED)
                     return@runOnUiThread
                 }
                 val expected = pendingDraftLen
@@ -560,10 +588,30 @@ class CustomDictEditActivity : Activity() {
         setStatus(if (truncatedAt > 0) String.format(Locale.US, TEXT_DRAFT_TRUNCATED, truncatedAt) else TEXT_DRAFT_RESTORED)
     }
 
-    /** 草稿不再铺了（用户抢先输入）：清令牌并删掉它，BUG.md L-1191。 */
+    /**
+     * 草稿不再铺了（用户抢先输入）：清令牌，并把草稿**留档**而不是删掉（BUG-30）。
+     *
+     * 「恢复不覆盖编辑框里已有输入」是既有口径（L-1191），但那不该以丢掉用户旧长文为代价：
+     * 旧稿改名进 [DRAFT_FILE_ARCHIVE]（只留最新一份），下次打开本页且没有更新的草稿时会被铺回来。
+     * 改名失败（跨目录/被占）时退回旧的删除行为，不留下半截状态。
+     */
     private fun discardPendingDraft() {
         val file = pendingDraftFile
-        if (file != null) runCatching { File(cacheDir, file).delete() }
+        if (file != null) {
+            val src = File(cacheDir, file)
+            val dst = File(cacheDir, DRAFT_FILE_ARCHIVE)
+            val bytes = runCatching { src.length() }.getOrDefault(0L)
+            val archived = if (src.absolutePath == dst.absolutePath) {
+                true
+            } else {
+                runCatching { src.renameTo(dst) }.getOrDefault(false)
+            }
+            if (archived) {
+                Diagnostics.w(TAG, "快捷补充：草稿未铺入，已留档 $bytes 字节（下次编辑框为空时铺回）")
+            } else {
+                runCatching { src.delete() }
+            }
+        }
         pendingDraftFile = null
         pendingDraftLen = 0
         draftPending = false
@@ -900,6 +948,18 @@ class CustomDictEditActivity : Activity() {
         private const val DRAFT_FILE = "custom_editor.draft.txt"
         private const val DRAFT_FILE_TMP = "custom_editor.draft.txt.tmp"
         private const val DRAFT_FILE_SAVE_TMP = "custom_editor.draft.txt.save"
+
+        /**
+         * 未铺入的草稿**留档槽**（只留最新一份，天然不堆积；BUG-30）。
+         *
+         * 用户在草稿读盘在途时抢先敲了字 ⇒ 按既有口径「用户的输入优先、草稿不铺」，但旧长文
+         * 不该就此消失：改名为这一槽留档；下次打开本页若没有更新的草稿，就把它铺回来。
+         * 用户随后写的新草稿一旦落盘即清掉本槽（那时它已被更新的内容取代）。
+         */
+        private const val DRAFT_FILE_ARCHIVE = "custom_editor.draft.archive.txt"
+
+        /** 铺的是留档稿时的状态行文案 */
+        private const val TEXT_DRAFT_ARCHIVED = "已把上次未铺入的草稿留档并铺回（编辑框原为空）"
 
         /** 大稿增量落盘的去抖窗口（毫秒）：输入停顿后写一次 */
         private const val DRAFT_WRITE_DEBOUNCE_MS = 1_500L

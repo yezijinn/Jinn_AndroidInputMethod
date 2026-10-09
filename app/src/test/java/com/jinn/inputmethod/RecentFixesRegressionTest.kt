@@ -926,6 +926,25 @@ class RecentFixesRegressionTest {
                 "本次快照可能不完整" in codeOf("SettingsActivity.kt"),
         )
     }
+    /**
+     * 被「用户抢先输入」挤掉的草稿必须留档而不是删掉（2026-10-09，批 7 的 BUG-30）。
+     *
+     * 「恢复不覆盖编辑框里已有输入」是既有口径（L-1191），但旧长文不该就此消失：旧稿改名进留档槽
+     * （只留最新一份），下次打开本页且没有更新的草稿时会被铺回来；用户随后写的新草稿一旦落盘，
+     * 留档槽即被清掉（那时它已被更新的内容取代）。
+     */
+    @Test
+    fun `被挤掉的草稿必须留档而不是删掉`() {
+        val src = codeOf("CustomDictEditActivity.kt")
+        assertTrue("必须有留档槽常量", "private const val DRAFT_FILE_ARCHIVE" in src)
+        val discard = blockAfter(src, "private fun discardPendingDraft() {")
+        assertTrue("丢弃必须改成改名留档", "src.renameTo(dst)" in discard)
+        assertTrue("留档必须记事（可诊断）", "已留档" in discard)
+        assertFalse("不得再直接删草稿本体", "File(cacheDir, file).delete()" in discard)
+        assertTrue("读盘时必须回看留档槽", "val archived = File(cacheDir, DRAFT_FILE_ARCHIVE)" in src)
+        assertTrue("铺留档稿要有单独分支", "if (fromArchive) {" in src)
+        assertTrue("新草稿落盘后必须清留档槽", "File(cacheDir, DRAFT_FILE_ARCHIVE).delete()" in src)
+    }
 
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {
