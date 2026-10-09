@@ -70,6 +70,14 @@ private const val LOG_SEGMENTS_KEPT = 2
     private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
 
     /**
+     * 清理因「目录正忙」跳过后的退避间隔（BUG.md L-972①）。
+     *
+     * 跳过时不推进时间闸的话，导出 / 快照占锁期间**每一条**日志都会再试一次并打一条 W ——
+     * 十秒级的抓取能刷出几十条同样的告警；退避一分钟既压掉噪音，又保证导出结束后很快补上。
+     */
+    private const val CLEANUP_SKIP_BACKOFF_MS = 60 * 1000L
+
+    /**
      * 打包时清理旧诊断包的最小年龄。
      *
      * 上一次导出的包可能正被 SAF 复制线程读着（云盘目标上能跑好几秒），而本函数一进来就会
@@ -721,7 +729,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      * [waitMs] 是子进程等待上限（默认 10s；崩溃路径传 2s，见 [installCrashHandler]）。
      */
     fun dumpLogcat(suffix: String = "", waitMs: Long = 10_000L): File? =
-        dirLock.withLock { dumpLogcatLocked(suffix, waitMs) }
+        withDirLockBusy { dumpLogcatLocked(suffix, waitMs) }
 
     /**
      * 跑一次 logcat（不经 shell，见 [dumpLogcat] 的命令注入说明）；返回退出码。
@@ -828,7 +836,33 @@ private const val LOG_SEGMENTS_KEPT = 2
 
     private fun maybeCleanupOldLogs() {
         if (System.currentTimeMillis() - lastCleanupAt < CLEANUP_INTERVAL_MS) return
-        cleanupOldLogs()
+        // 兜底：清理是尽力而为，异常冒到写日志的业务调用点就违背了类 KDoc 的「绝不让日志异常
+        // 影响业务逻辑」（BUG.md L-973）。裸 Log 记异常类名 —— 走 Diagnostics 会再进一次清理判定。
+        runCatching { cleanupOldLogs() }.onFailure {
+            runCatching { Log.w(TAG, "日志清理失败: ${it.javaClass.simpleName}") }
+        }
+    }
+
+    /**
+     * 跳过一轮后该写回的「上次清理时间」（纯函数，便于单测）。
+     *
+     * 目标是让下一次尝试落在 `now + retryMs`：既不立刻重试（导出 / 快照期间的每一条日志都会来问
+     * 一次），也不等满一个 [intervalMs]（导出结束后要很快补上这一轮）。存进去的值 + [intervalMs]
+     * 正好等于 `now + retryMs`。
+     */
+    internal fun cleanupRetryAt(now: Long, intervalMs: Long, retryMs: Long): Long =
+        now - intervalMs + retryMs
+
+    /**
+     * 体积清理的结果文案（纯函数，便于单测）。
+     *
+     * 条数按**成功删除**计：删除可能整批失败（文件被占用 / 权限被撤），此时按候选数报「已删 N 个」
+     * 与事实相反（BUG.md L-972③）。失败个数分开说，别把它混进释放量里。
+     */
+    internal fun cleanupResultMessage(target: Int, failed: Int, freedBytes: Long): String {
+        val deleted = target - failed
+        val head = "日志体积超预算，已按最旧先删 $deleted 个（释放 ${freedBytes / 1024}KB）"
+        return if (failed > 0) "$head，$failed 个删除失败" else head
     }
 
     /**
@@ -858,13 +892,21 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 之后按体积预算再裁一遍。
      *
      * 全程持 [dirLock]（BUG.md L-174），但**拿不到就跳过**这一轮：本函数在写日志的路径上被调用，
-     * 等一次进行中的导出/快照会把业务调用一起拖住；跳过时不动 [lastCleanupAt]，下次落盘再试。
+     * 等一次进行中的导出/快照会把业务调用一起拖住。下面三种情况都跳过：目录正忙（[dirBusy]）、
+     * 锁被别的线程拿着、以及快照 / 导出在自己内部重入（那时 `tryLock` 会成功）。跳过一律做一次
+     * [CLEANUP_SKIP_BACKOFF_MS] 的短退避（BUG.md L-972①）—— 不推进闸的话，占锁期间每条日志
+     * 都会重试一次并打一条 W。
      */
     private fun cleanupOldLogs() {
         val dir = logDir ?: return
+        // 先看 busy 再看锁：快照 / 导出自己写日志时会**重入**本函数，那时 tryLock 照样成功，
+        // 只靠锁挡不住它们（BUG.md L-972②）
+        if (dirBusy) {
+            skipCleanupRound("诊断包正在读写日志目录")
+            return
+        }
         if (!dirLock.tryLock()) {
-            // 裸 Log：走 Diagnostics 会再触发一次清理判定（本函数正是从那条路径进来的）
-            runCatching { Log.w(TAG, "日志清理跳过: 诊断包正在读写日志目录") }
+            skipCleanupRound("诊断包正在读写日志目录")
             return
         }
         try {
@@ -876,18 +918,32 @@ private const val LOG_SEGMENTS_KEPT = 2
         }
     }
 
+    /** 跳过这一轮并做一次短退避（BUG.md L-972①）：裸 Log，走 Diagnostics 会再进一次清理判定 */
+    private fun skipCleanupRound(reason: String) {
+        lastCleanupAt = cleanupRetryAt(
+            System.currentTimeMillis(), CLEANUP_INTERVAL_MS, CLEANUP_SKIP_BACKOFF_MS,
+        )
+        runCatching { Log.w(TAG, "日志清理跳过: $reason") }
+    }
+
     private fun cleanupOldLogsLocked(dir: File) {
         val cutoff = System.currentTimeMillis() - KEEP_DAYS * 24 * 3600 * 1000L
-        dir.listFiles()?.forEach { file ->
-            val name = file.name
-            // device-info.txt 是导出时临时写的，正常路径在 finally 里删掉；进程中途被杀会留下，
-            // 而它不匹配上面两个前缀 —— 不在这里兜底就是永久垃圾，还会混进之后每次导出包
-            val ours = name.startsWith(LOG_FILE_PREFIX) ||
-                name.startsWith(LOGCAT_FILE_PREFIX) ||
-                name == DEVICE_INFO_FILE
-            if (ours && file.lastModified() < cutoff) {
-                runCatching { file.delete() }
+        // 年龄闸整段兜异常：`listFiles()` 自身会抛（目录权限被撤 / 不可读），原先只兜住了
+        // `delete()`（BUG.md L-973）。走裸 Log，异常类名足够定位，不带路径。
+        runCatching {
+            dir.listFiles()?.forEach { file ->
+                val name = file.name
+                // device-info.txt 是导出时临时写的，正常路径在 finally 里删掉；进程中途被杀会留下，
+                // 而它不匹配上面两个前缀 —— 不在这里兜底就是永久垃圾，还会混进之后每次导出包
+                val ours = name.startsWith(LOG_FILE_PREFIX) ||
+                    name.startsWith(LOGCAT_FILE_PREFIX) ||
+                    name == DEVICE_INFO_FILE
+                if (ours && file.lastModified() < cutoff) {
+                    runCatching { file.delete() }
+                }
             }
+        }.onFailure {
+            runCatching { Log.w(TAG, "日志年龄清理失败: ${it.javaClass.simpleName}") }
         }
         // 年龄闸之后再过一遍**体积**闸（BUG.md L-170）：崩溃循环能在一天内写出几百 MB，
         // 只按年龄删拦不住「当天写满」——那时导出会失败、同分区别的应用也跟着遭殃。
@@ -902,12 +958,13 @@ private const val LOG_SEGMENTS_KEPT = 2
             val victims = overBudgetVictims(entries, LOG_DIR_BUDGET_BYTES, nowName)
             if (victims.isNotEmpty()) {
                 var freed = 0L
+                var failed = 0
                 for (v in victims) {
                     val f = File(dir, v)
                     val len = f.length()
-                    if (runCatching { f.delete() }.getOrDefault(false)) freed += len
+                    if (runCatching { f.delete() }.getOrDefault(false)) freed += len else failed++
                 }
-                Diagnostics.i(TAG, "日志体积超预算，已按最旧先删 ${victims.size} 个（释放 ${freed / 1024}KB）")
+                Diagnostics.i(TAG, cleanupResultMessage(victims.size, failed, freed))
             }
         }.onFailure {
             // 清理是尽力而为，不该让日志写入路径因它抛异常；但也**不能静默**
@@ -954,6 +1011,32 @@ private const val LOG_SEGMENTS_KEPT = 2
     private val dirLock = java.util.concurrent.locks.ReentrantLock()
 
     /**
+     * 「日志目录正被整段流程占用」标志：快照 / 导出包在持锁期间置真，清理见到就整轮跳过。
+     *
+     * 为什么不能只靠 [dirLock]：它是**可重入**的，而快照与导出内部自己会写日志 —— 那些日志调用
+     * 进清理判定时再 `tryLock` 照样成功，于是清理会在导出**进行中**删文件（最坏把刚写好的
+     * `device-info.txt` 删掉，包内缺设备信息；BUG.md L-972②）。标志只在持锁的临界区里改，
+     * 与锁同生命周期。
+     */
+    @Volatile
+    private var dirBusy = false
+
+    /**
+     * 持 [dirLock] 跑一段读写日志目录的流程（快照 / 导出包），期间 [cleanupOldLogs] 整轮跳过。
+     *
+     * 与直接 `dirLock.withLock { … }` 的区别只有 [dirBusy] 的置位与复位 —— 复位放 `finally`，
+     * 流程抛异常也不会把标志留在原地（留下就等于**永久**停掉清理）。
+     */
+    private inline fun <T> withDirLockBusy(block: () -> T): T = dirLock.withLock {
+        dirBusy = true
+        try {
+            block()
+        } finally {
+            dirBusy = false
+        }
+    }
+
+    /**
      * 读一个文件用于打包：返回 null 表示读不出来（调用方跳过它并留一条 W）。
      *
      * 不超过 [BUNDLE_INMEM_MAX_BYTES] 时整份读进内存 —— 条目必须先读后写，边读边写时读失败会留下
@@ -985,7 +1068,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
      */
     fun exportBundle(context: Context): File? =
-        dirLock.withLock { exportBundleLocked(context) }
+        withDirLockBusy { exportBundleLocked(context) }
 
     private fun exportBundleLocked(context: Context): File? {
         val srcDir = logDir ?: return null

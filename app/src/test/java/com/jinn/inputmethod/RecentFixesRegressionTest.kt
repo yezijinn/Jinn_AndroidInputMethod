@@ -4930,4 +4930,32 @@ class RecentFixesRegressionTest {
         )
     }
 
+    // ── 第五十七批（2026-10-10）：日志清理的次序与异常兜底（L-972 / L-973）────────────
+
+    /**
+     * 清理与「目录正忙」的接线（BUG.md L-972 / L-973）。
+     *
+     * 这几处没法用纯函数测：能不能跳过得看锁与标志的时序（`dirLock` 可重入，快照 / 导出自己写日志时
+     * 会重入清理判定，`tryLock` 照样成功），异常兜底更只有真机路径才碰得到。钉住三件事：两个目录流程
+     * 都挂 busy 标志、清理先看标志再看锁、清理入口包住异常。
+     */
+    @Test
+    fun `日志清理必须避开目录正忙并兜住异常`() {
+        val code = codeOf("Diagnostics.kt")
+        assertTrue(
+            "清理必须先看 dirBusy（重入时 tryLock 挡不住自己人）",
+            "if (dirBusy)" in code,
+        )
+        assertTrue("快照流程要挂 busy 标志", "withDirLockBusy { dumpLogcatLocked(" in code)
+        assertTrue("导出流程要挂 busy 标志", "withDirLockBusy { exportBundleLocked(" in code)
+        assertTrue(
+            "跳过一轮要做短退避：占锁期间每条日志都重试一次并打一条 W（L-972①）",
+            "cleanupRetryAt(" in code && "CLEANUP_SKIP_BACKOFF_MS" in code,
+        )
+        assertTrue(
+            "清理入口必须包住异常：`listFiles()` 自身会抛，冒到业务调用点就违背「不影响业务」（L-973）",
+            "runCatching { cleanupOldLogs() }" in code,
+        )
+    }
+
 }

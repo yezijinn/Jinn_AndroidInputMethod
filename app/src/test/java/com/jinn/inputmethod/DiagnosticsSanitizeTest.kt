@@ -275,7 +275,8 @@ class DiagnosticsSanitizeTest {
      * `BUG.md` L-174：清理、快照、导出碰的是同一批文件，必须共用一把目录锁。
      *
      * 清理走 tryLock：它在写日志的路径上被调用，等一次十秒级的抓取会把业务调用一起拖住；
-     * 拿不到锁就跳过这一轮（时间闸不推进，下次落盘再试）。
+     * 拿不到锁就跳过这一轮，并做一次短退避（BUG.md L-972①）。快照与导出经 `withDirLockBusy`
+     * 进锁：除了共用这把锁，还要挂上「目录正忙」标志让清理整轮跳过（重入锁挡不住自己人，L-972②）。
      */
     @Test
     fun 清理与打包共用目录锁() {
@@ -283,8 +284,9 @@ class DiagnosticsSanitizeTest {
         assertTrue("清理必须试锁", "if (!dirLock.tryLock())" in src)
         assertTrue("拿不到锁要留痕", "日志清理跳过" in src)
         assertFalse("不得再各用一把锁", "private val snapshotLock" in src)
-        assertTrue("快照与导出共用同一把锁", "dirLock.withLock { dumpLogcatLocked(suffix, waitMs) }" in src)
-        assertTrue("导出同样共用", "dirLock.withLock { exportBundleLocked(context) }" in src)
+        assertTrue("快照走共用锁 + 挂忙标志", "withDirLockBusy { dumpLogcatLocked(suffix, waitMs) }" in src)
+        assertTrue("导出同样走共用锁 + 挂忙标志", "withDirLockBusy { exportBundleLocked(context) }" in src)
+        assertTrue("忙标志必须由共用锁那层统一置位", "private inline fun <T> withDirLockBusy(" in src)
     }
 
     /**
