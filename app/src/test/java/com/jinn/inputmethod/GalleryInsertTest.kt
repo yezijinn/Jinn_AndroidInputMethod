@@ -347,9 +347,11 @@ class GalleryInsertTest {
             .substringBefore("fun setTranslating")
         assertTrue("就地改文案", "\"返回\" else \"图库\"" in refresh)
         assertTrue("就地改颜色（提示红）", "skin.hintRed" in refresh)
+        // 2026-10-09 用户指定：工具栏按钮的第二行小字**整条删除**（不只展开态收起），
+        // 退出口仍然是这一键上的大号红字「返回」。
         assertTrue(
-            "展开态只留大号「返回」，底部小字整条收起",
-            "hintView?.visibility = if (active) View.GONE else View.VISIBLE" in refresh,
+            "展开态只留大号「返回」（第二行小字已整条删除）",
+            "\"返回\" else \"图库\"" in refresh && "hintView" !in refresh,
         )
         assertTrue(
             "展开与收起都要刷一次（定义之外至少两处调用）",

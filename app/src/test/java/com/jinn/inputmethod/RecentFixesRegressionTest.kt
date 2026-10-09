@@ -988,6 +988,41 @@ class RecentFixesRegressionTest {
         // 因此它没有源码钉 —— 想钉住就得改成代码形态（例如另存时间戳字段），那时再补。
     }
 
+    /**
+     * 两项外观需求（2026-10-09 用户指定）：
+     *
+     * ① 候选栏工具栏**不再有第二行小字**（原先主标 13f + 小字 9f：「控制 / 文本 / 编辑 / 网络 / 快贴」）。
+     *   小字整条去掉，但 hint 仍进 `contentDescription` —— 读屏用户照样听到「方向 控制」这种完整
+     *   语义，视觉上只剩大字；三条就地刷新（方向 / 图库 / 翻译）也不再摸 `getChildAt(1)`。
+     * ② 三行 28 键里「大写」「删除」改成**全宽 1/10**（= 第一行十个字母的宽度）：weight 由 1.4 改
+     *   0.875 —— 七个字母各 1 ⇒ 行内总权重 8.75，两键各占 0.875 / 8.75 = 10%。
+     */
+    @Test
+    fun `工具栏不再渲染第二行小字且大写删除为全宽十分之一`() {
+        val kb = codeOf("PinyinKeyboardView.kt")
+        assertTrue("工具键不得再渲染小字那一行", "text = hint" !in kb)
+        assertTrue("方向键就地刷新不得再改小字", "hintView?.text" !in kb)
+        assertTrue("图库键就地刷新不得再收小字", "hintView?.visibility" !in kb)
+        // 注：`getChildAt(1)` 不再作为反钉 —— 空格键的「主文字 + 顶部小字」仍是两段式（1250 行附近），
+        // 全文级反钉会误伤；工具键那两处由上面的 `hintView` 反钉覆盖。
+        assertTrue(
+            "小字语义必须留在无障碍名里",
+            "contentDescription = \"\$label \$hint\"" in kb &&
+                "\"返回 退出控制\"" in kb && "\"图库 快贴\"" in kb,
+        )
+        val xml = TestSources.rawSource(
+            "src/main/res/layout/keyboard_pinyin.xml",
+            "app/src/main/res/layout/keyboard_pinyin.xml",
+        )
+        assertEquals(
+            "「大写」「删除」两键必须是 0.875 权重（= 全宽 1/10）",
+            2,
+            Regex("layout_weight=\"0.875\"").findAll(xml).count(),
+        )
+        // 注：底部那一行的「回车」键仍是 1.4 权重（与本次需求无关、保持原样），
+        // 因此这里**不做**「全文不得出现 1.4」的反钉 —— 那会误伤它。
+    }
+
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {
         assertFalse(

@@ -3073,12 +3073,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        box.addView(TextView(context).apply {
-            text = hint
-            textSize = 9f
-            setTextColor(skinToken(skin.functionHint, R.color.text_secondary))
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // 第二行小字（9f 的「控制 / 文本 / 编辑 / 网络 / 快贴」等）已按需求整条去掉：
+        // 按钮只留主标一行。hint 不再上屏，但仍进 contentDescription —— 读屏用户听得到
+        // 「方向 控制」这种完整语义，视觉上则只剩大字。
         box.layoutParams = lp
         return box
     }
@@ -3094,14 +3091,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val box = directionButtonBox as? android.view.ViewGroup ?: return
         val active = directionPanelVisible
         val labelView = box.getChildAt(0) as? TextView ?: return
-        val hintView = box.getChildAt(1) as? TextView
         labelView.text = if (active) "返回" else "方向"
         labelView.setTextColor(
             if (active) skinToken(skin.hintRed, R.color.kb_key_hint_red)
             else skinToken(skin.functionGlyph, R.color.text_primary)
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
-        hintView?.text = "控制"
+        // 小字已删（只留主标）；无障碍名跟着主标走，面板态仍是「返回 退出控制」
+        box.contentDescription = if (active) "返回 退出控制" else "方向 控制"
     }
 
     /**
@@ -3114,16 +3111,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val box = galleryButtonBox as? android.view.ViewGroup ?: return
         val active = galleryActive
         val labelView = box.getChildAt(0) as? TextView ?: return
-        val hintView = box.getChildAt(1) as? TextView
         labelView.text = if (active) "返回" else "图库"
         labelView.setTextColor(
             if (active) skinToken(skin.hintRed, R.color.kb_key_hint_red)
             else skinToken(skin.functionGlyph, R.color.text_primary)
         )
         labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
-        // 小字：静止态显示「快贴」，展开态整条 GONE（不留空位；按钮高度由 minimumHeight 兜底）
-        hintView?.text = "快贴"
-        hintView?.visibility = if (active) View.GONE else View.VISIBLE
+        // 小字已删（只留主标）；面板态与静止态都不再需要「整条收掉」那一步
+        box.contentDescription = if (active) "返回 退出快贴" else "图库 快贴"
     }
 
     /**
@@ -3169,8 +3164,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         group.isClickable = !on
         group.isFocusable = true
         group.alpha = if (on) 0.5f else 1f
-        val hintView = group.getChildAt(1) as? TextView
-        group.contentDescription = if (on) LABEL_TRANSLATING else "${LABEL_TRANSLATE} ${hintView?.text ?: ""}"
+        // 小字已删：无障碍名直接由主标与状态拼出（原先是 label + 小字文本）
+        group.contentDescription = if (on) LABEL_TRANSLATING else "$LABEL_TRANSLATE 网络"
         if (on) group.announceForAccessibility(LABEL_TRANSLATING)
     }
 
