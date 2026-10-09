@@ -289,28 +289,13 @@ class RecentFixesRegressionTest {
     private fun codeOf(name: String): String = TestSources.codeSource(name)
 
     /**
-     * 截取 [marker] 之后那个花括号块（从 marker 后的第一个 `{` 起配对到对应 `}`）。
+     * 截取 [marker] 之后那个花括号块 —— 转调共用助手（BUG.md L-1145 / BUG-07：各测试文件原先各写一份，
+     * 收敛到 [TestSources.blockAfter]）。
      *
      * 不用「取 marker 之后 N 个字符」：窗口取小了会把修复点漏在外面（`saveAndRestart` 第一版就栽在
      * 1500 字符窗口上，函数实际 2500+ 字符），取大了又会把相邻函数的代码算进来 —— 花括号配对没有这个两难。
      */
-    private fun blockAfter(text: String, marker: String): String {
-        val i = text.indexOf(marker)
-        assertTrue("源码里找不到锚点「$marker」—— 改名/重构后请同步本用例", i >= 0)
-        val open = text.indexOf('{', i)
-        assertTrue("锚点「$marker」之后没有花括号块", open > i)
-        var depth = 0
-        for (j in open until text.length) {
-            when (text[j]) {
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return text.substring(open, j + 1)
-                }
-            }
-        }
-        error("锚点「$marker」的花括号不配对")
-    }
+    private fun blockAfter(text: String, marker: String): String = TestSources.blockAfter(text, marker)
 
     @Test
     fun `保存并重启必须先落盘再杀进程`() {

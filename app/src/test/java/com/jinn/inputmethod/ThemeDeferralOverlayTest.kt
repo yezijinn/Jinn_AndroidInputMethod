@@ -25,9 +25,13 @@ class ThemeDeferralOverlayTest {
 
     @Test
     fun `换肤延后判据必须覆盖密码模式与三种面板`() {
-        val getter = codeOnly(sourceOf("PinyinKeyboardView.kt"))
-            .substringAfter("val hasActiveOverlay: Boolean")
-            .take(300)
+        // 取整条属性：锚点先断言存在，再按空行边界收口并校验长度（BUG-10）。
+        // 原先只有 300 字符窗：合法重排布尔子句就能让某个状态滑到窗口外，而测试仍绿。
+        val viewSrc = codeOnly(sourceOf("PinyinKeyboardView.kt"))
+        val at = viewSrc.indexOf("val hasActiveOverlay: Boolean")
+        assertTrue("PinyinKeyboardView 里找不到 hasActiveOverlay（改名/搬迁后要同步本用例）", at >= 0)
+        val getter = viewSrc.substring(at).substringBefore("\n\n")
+        assertTrue("hasActiveOverlay 没取到整条属性（长度 ${getter.length}）", getter.length in 20..600)
         for ((state, why) in listOf(
             "clipboardActive" to "剪贴板面板",
             "isSearchPanelActive()" to "顶部搜索面板（MEM-05 起按需创建，判定函数先判存在）",
@@ -41,10 +45,9 @@ class ThemeDeferralOverlayTest {
             "=" !in getter.replace("get() =", ""),
         )
 
-        // 使用侧契约：重建前必须同时判「未上屏输入」与「临时态」，且延后要留日志（真机回归靠它取证）
-        val use = codeOnly(sourceOf("JinnIme.kt"))
-            .substringAfter("private fun applyThemeIfNeeded()")
-            .take(900)
+        // 使用侧契约：重建前必须同时判「未上屏输入」与「临时态」，且延后要留日志（真机回归靠它取证）。
+        // 整函数按花括号配对取（BUG-10）：原先 900 字符窗，分支一挪出窗户判据就形同没有。
+        val use = TestSources.blockAfter(codeOnly(sourceOf("JinnIme.kt")), "private fun applyThemeIfNeeded()")
         assertTrue(
             "换肤重建前必须判「未上屏输入 || 临时态」",
             "it.hasPendingInput || it.hasActiveOverlay" in use,

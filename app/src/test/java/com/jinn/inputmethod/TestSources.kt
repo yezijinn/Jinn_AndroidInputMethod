@@ -277,4 +277,32 @@ internal object TestSources {
         }
         return i
     }
+
+    /**
+     * 截取 [marker] 之后那个花括号块（从 marker 后的第一个 `{` 起配对到对应 `}`）。
+     *
+     * 为什么要有它：`substringAfter(A).substringBefore(B)` 在 B 不存在时返回整串剩余，
+     * 「取 marker 之后 N 个字符」的窗口取小了漏掉修复点、取大了把相邻函数算进来 —— 两者都会让判据
+     * 静默失真（BUG.md L-1145 / BUG-07 / BUG-10）。花括号配对没有这个两难，锚点缺失或括号不配对
+     * 都会当场报错，而不是悄悄放宽。
+     *
+     * 各测试文件原先各写一份私有实现（四份，行为略有出入），收敛到这里一份。
+     */
+    fun blockAfter(text: String, marker: String): String {
+        val i = text.indexOf(marker)
+        check(i >= 0) { "源码里找不到锚点「$marker」—— 改名/重构后请同步本用例" }
+        val open = text.indexOf('{', i)
+        check(open > i) { "锚点「$marker」之后没有花括号块" }
+        var depth = 0
+        for (j in open until text.length) {
+            when (text[j]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open, j + 1)
+                }
+            }
+        }
+        error("锚点「$marker」的花括号不配对")
+    }
 }

@@ -46,6 +46,15 @@ class CandidateCountBoundTest {
             "单字候选应可达数十条量级，实际=${result.candidates.size}",
             result.candidates.size >= 60,
         )
+        // 与渲染上限挂钩（BUG-11）：这条用例的用意是「候选多到必须截断」，那就得真的读到那个上限，
+        // 否则它只证明引擎给得多 —— 上限被删掉或被改成比 60 还大，这里也照样绿。
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        val cap = Regex("""const val MAX_RENDERED_CANDIDATES\s*=\s*(\d+)""").find(src)?.groupValues?.get(1)?.toInt()
+        assertTrue("没解析出 MAX_RENDERED_CANDIDATES（写法变了？）", cap != null)
+        assertTrue(
+            "渲染上限 $cap 必须小于引擎单字上限，否则渲染层不必截断（本条的前提不成立）",
+            result.candidates.size > cap!!,
+        )
     }
 
     /** 多音节输入时，词候选之外还会叠加各音节单字，总量更大 */

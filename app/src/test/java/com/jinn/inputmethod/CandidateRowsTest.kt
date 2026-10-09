@@ -50,10 +50,14 @@ class CandidateRowsTest {
 
     @Test
     fun 渲染上限条数下无重无漏() {
-        // 36 = PinyinKeyboardView.MAX_RENDERED_CANDIDATES，双行时正好 18 列
-        val items = (1..36).map { it.toString() }
+        // 上限从源码取（BUG-11）：原先写死 36，常量改成 8 也全绿 —— 守的其实是「按上限算列数」这件事
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        val cap = Regex("""const val MAX_RENDERED_CANDIDATES\s*=\s*(\d+)""").find(src)?.groupValues?.get(1)?.toInt()
+        assertTrue("没解析出 MAX_RENDERED_CANDIDATES（写法变了？）", cap != null)
+        assertTrue("渲染路径必须按该常量截断候选", "take(MAX_RENDERED_CANDIDATES)" in src)
+        val items = (1..cap!!).map { it.toString() }
         val cols = CandidateRows.columnsOf(items)
-        assertEquals(18, cols.size)
+        assertEquals((cap + 1) / 2, cols.size)
         assertEquals(items.filterIndexed { i, _ -> i % 2 == 1 }, cols.mapNotNull { it.first })
         assertEquals(items.filterIndexed { i, _ -> i % 2 == 0 }, cols.map { it.second })
         assertEquals(
