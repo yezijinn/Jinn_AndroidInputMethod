@@ -196,7 +196,16 @@ class RecentFixesRegressionTest {
             "substringBefore(", "assertBefore(", "assertStatementLine(", "blockAfter(", "assertFalse(",
         )
         val orderByIndex = Regex("""indexOf\([^\n]*\)[^\n]*<[^\n]*indexOf\(""")
-        val offenders = self.split(Regex("(?m)^\\s*@Test\\s*$")).drop(1).mapNotNull { b ->
+        // ⚠ 先在**剥注释**的文本上切块（BUG.md L-110）：`split` 停在下一个 `@Test` 之前，块的尾巴天然
+        // 包含**下一条用例的 KDoc**（实测 141 块里 62 块如此）—— 在原文上判「正文有没有位置判据」会被
+        // 那段注释满足（假绿），而注释里写成代码样子的句子（`fun 先删目标(`）又会被当成用例名（假红）。
+        // `TestSources.codeOf` 行数不变，用例名与判据都在代码里，剥掉注释不影响它们。
+        val code = TestSources.codeOf(self)
+        // 自证：判据必须在**剥注释后的副本**上跑。写成原文本（`code = self`）时本用例不会报错，
+        // 但块尾巴那段「下一条用例的 KDoc」又能满足正向钉 —— 正是本条要防的假绿。
+        assertTrue("判据必须在剥注释后的文本上切块（否则注释又能满足正向钉）", code != self)
+        val blocks = code.split(Regex("(?m)^\\s*@Test\\s*$")).drop(1)
+        val offenders = blocks.mapNotNull { b ->
             val name = Regex("fun `?([^`\\n(]+)`?\\(").find(b)?.groupValues?.get(1) ?: return@mapNotNull null
             // 「先 / 每次 / 之前」才是顺序或频率语义；单字「前」会把「当前」也算进来（误报）
             if (!Regex("先|每次|之前").containsMatchIn(name)) return@mapNotNull null
