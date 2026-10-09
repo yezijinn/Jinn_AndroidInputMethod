@@ -217,14 +217,17 @@ class JinnIme : InputMethodService() {
     private var translateCall: okhttp3.Call? = null
 
     /**
-     * 本次请求的**上下文**：起始时刻 / Provider 名 / 目标语言 / 关联 ID
-     * （2026-10-03 修复 L-615 + L-617）。
+     * 本次请求的**上下文**：起始时刻 / Provider 名 / 动作 / 目标语言 / 关联 ID
+     * （2026-10-03 修复 L-615 + L-617；动作维度 2026-10-09 补）。
      *
-     * 三者都只为日志服务：看门狗触发时要说清「哪一家、卡了多久、第几次」，而「翻译失败」这类
-     * 一句话报告需要一个能把「发起 → 响应 → 提交/拒绝」串起来的 ID —— 此前诊断包里只能靠时间戳猜。
+     * 都只为日志服务：看门狗触发时要说清「哪一家、什么动作、卡了多久、第几次」，而「翻译失败」
+     * 这类一句话报告需要一个能把「发起 → 响应 → 提交/拒绝」串起来的 ID —— 此前诊断包里只能靠时间戳猜。
      */
     private var translateStartedAtMs = 0L
     private var translateProviderName = ""
+
+    /** 本次动作 id（translate / polish / …）：日志用（2026-10-09） */
+    private var translateActionName = ""
 
     /**
      * 本次请求的**生效目标语言**（不是枚举名）：由 [effectiveTargetLabel] 给（BUG.md L-787）。
@@ -281,7 +284,7 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(
             TAG,
             "[$translateTraceId] 翻译: 记一次失败（进入冷却 ${failCooldownMs}ms）: $reason" +
-                " provider=$translateProviderName target=$translateTargetName",
+                " provider=$translateProviderName action=$translateActionName target=$translateTargetName",
         )
     }
 
@@ -1494,20 +1497,11 @@ class JinnIme : InputMethodService() {
                     runCatching { requestHideSelf(0) }
                         .onFailure { Diagnostics.w(TAG, "收起键盘失败: ${it.message}") }
                 }
-                override fun onTranslate() {
-                    if (rejectedBySearchPanel("翻译")) return
-                    // 剪贴板面板打开时也拦（2026-10-02 修复）：翻译读的是**宿主输入框**的原文，
-                    // 而面板里任点一条历史就是 `commitText` 改宿主文本 ⇒ 这次已经发出的（已计费的）
-                    // 请求回来必然被判「输入已变化」丢弃，提示还会说成用户自己改了输入（他并没有打字）。
-                    // 与搜索态同款：宁可当场拦下，也不发无谓请求。面板上本来就有「返回」键可退出。
-                    if (pinyinKeyboard?.isClipboardActive() == true) {
-                        Diagnostics.w(TAG, "剪贴板面板打开时忽略「翻译」（避免请求被随后的粘贴作废）")
-                        toast(TEXT_TRANSLATE_CLIPBOARD_OPEN)
-                        return
-                    }
-                    Diagnostics.i(TAG, "功能面板: 翻译")
-                    startTranslate()
-                }
+                // 单击与动作排共用同一段闸门（见 requestTranslate）：翻译键只此一个入口
+                override fun onTranslate() = requestTranslate(AiAction.DEFAULT)
+                override fun onAiAction(action: AiAction) = requestTranslate(action)
+                override fun supportsAiActions(): Boolean =
+                    TranslationProviderId.of(prefs.translateProvider).supportsActions
             }
             configure(
                 scheme = prefs.effectiveShuangpinScheme,
@@ -1938,6 +1932,10 @@ class JinnIme : InputMethodService() {
         super.onUpdateSelection(
             oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
         )
+        // 宿主文本 / 光标变化 ⇒ 用户已在输入：展开的动作排一并收起（2026-10-09）。
+        // 放在 super 之后第一行、所有早退之前 —— 英文 / 符号 / 数字层走 `onCommitText` 直出上屏，
+        // 不刷新候选栏，refreshCandidateBar 的兜底判据覆盖不到这条路径。
+        pinyinKeyboard?.resetActionPanel()
         // 先认领：命中任意一个在途期望值就是我们自己造的（乱序回调也能认出，见 SelectionExpectations）。
         // 认领要在 selectionActive 判断之前做 —— 不在拖选时同样要把期望消费掉，不能留着垫给外部变化。
         val ours = selectionExpectations.consumeIfOurs(newSelStart, newSelEnd)
@@ -2723,19 +2721,41 @@ class JinnIme : InputMethodService() {
     // ── 在线翻译（BYOK）────────────────────────────────────
 
     /**
-     * 翻译「原文范围」设置里取到的那段文本（默认：光标所在行、光标前面的内容），
-     * 译文插在光标处（通常即原文之后）并另起一行，原文一个字不动。
+     * 翻译键的唯一入口（2026-10-09）：单击 = [AiAction.DEFAULT]（翻译），
+     * 动作排 = 对应动作 —— 闸门只此一份，两条路不会分叉。
+     *
+     * 搜索态 / 剪贴板面板打开时都拦下（原 onTranslate 的拦截逐字搬来，只多了动作维度）：
+     * 前者会作用于宿主输入框；后者里任点一条历史就是 `commitText` 改宿主文本 ⇒ 这次已经发出的
+     * （已计费的）请求回来必然被判「输入已变化」丢弃，而用户其实没打字。
+     */
+    private fun requestTranslate(action: AiAction) {
+        if (rejectedBySearchPanel(action.id)) return
+        if (pinyinKeyboard?.isClipboardActive() == true) {
+            Diagnostics.w(TAG, "剪贴板面板打开时忽略「${action.id}」（避免请求被随后的粘贴作废）")
+            toast(TEXT_TRANSLATE_CLIPBOARD_OPEN)
+            return
+        }
+        Diagnostics.i(TAG, "功能面板: 翻译 action=${action.id}")
+        startTranslate(action)
+    }
+
+    /**
+     * 执行一次 AI 文本动作：处理「原文范围」设置里取到的那段文本（默认：光标所在行、
+     * 光标前面的内容），结果插在光标处（通常即原文之后）另起一行，原文一个字不动。
      *
      * 取值只读、不复制：主路径 `getTextBeforeCursor`，宿主不支持时兜底 `getExtractedText`；
      * 全程不碰系统剪贴板、不改输入框内容、不动光标。失败路径一个字都不写。
+     *
+     * @param action 默认 [AiAction.DEFAULT]（翻译，行为与改造前逐字一致）；
+     *   非翻译动作只可能来自 OpenAI 兼容（判据 [TranslationProviderId.supportsActions]）。
      */
-    private fun startTranslate() {
+    private fun startTranslate(action: AiAction = AiAction.DEFAULT) {
         if (translateInFlight) return
         translateTraceId = Diagnostics.traceId("TR")
         // ⚠ 闸门阶段也必须用它（2026-10-03 修复 L-769）：L-759 只把生成点提前了，20 个早退出口
         // 一条都没带上 ⇒ traceId 在闸门阶段是死变量，诊断包仍只能靠时间戳把面板那条日志与后续 W 级
         // 日志拼起来。面板那条已是 i 级（会落盘），所以此处补一条 i 级即可把「他点过」与本次尝试关联。
-        Diagnostics.i(TAG, "[$translateTraceId] 翻译: 面板点击进入翻译流程")
+        Diagnostics.i(TAG, "[$translateTraceId] 翻译: 面板点击进入翻译流程 action=${action.id}")
         // 与语音互斥（2026-10-03 审查 B-1）：录音中发翻译，译文的 `commitText` 会落在
         // 语音的预编辑区间上，把正在识别的字顶掉（最终结果会整段重放、不丢字，但屏上文本会抖 /
         // 错序）。与「密码框 / 无连接 / 行内两档」同款：在发请求**之前**零成本拒绝。
@@ -2805,7 +2825,19 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_NUMERIC_FIELD)
             return
         }
-        val provider = prefs.translationProvider()
+        // provider 按动作组装（2026-10-09）：id 提前到此处只求值一次（原在下面 scope/target 区）。
+        // 翻译保留用户自定义提示词（行为与改造前逐字一致）；其余动作强制内置模板
+        // （用户那两条提示词是为「翻译」写的，套到润色/提炼上语义错位）。
+        val id = TranslationProviderId.of(prefs.translateProvider)
+        val provider = if (action == AiAction.TRANSLATE) {
+            prefs.translationProvider(id)
+        } else {
+            val preset = OpenAiTranslator.defaultPromptOf(action)
+            prefs.translationProvider(
+                id,
+                prefs.openAiConfig.copy(systemPrompt = preset.system, userPrompt = preset.user),
+            )
+        }
         if (provider == null) {
             // ⚠ `null` 有**两种成因**（2026-10-03 修复 L-815）：凭据没填 / 端点不是 https。
             // 判据收敛（`isReady`）之后 `providerOf` 不再区分它们，而两者的用户动作完全相反 ——
@@ -2865,8 +2897,7 @@ class JinnIme : InputMethodService() {
                 }
             }
         }
-        // 原文范围与字节上限都按**当前 Provider**取（每家独立配置）
-        val id = TranslationProviderId.of(prefs.translateProvider)
+        // 原文范围与字节上限都按**当前 Provider**取（每家独立配置；id 已在上面 provider 构造处取好）
         val scope = TranslationScope.of(prefs.translateScopeOf(id))
         val maxBytes = prefs.translateMaxBytesOf(id)
         // 目标语言必须在**去重判据之前**取好：判据要把它算进请求指纹（2026-10-03 修复 L-655）。
@@ -2937,7 +2968,9 @@ class JinnIme : InputMethodService() {
         // 只对**非选区**生效：选区是用户明确重新框选的内容，不该被历史拦下。
         // 判据是**请求指纹**（服务方 + 目标语言 + 原文范围 + 原文）而不是裸原文：换了其中任何
         // 一项都是另一次合法请求，只比原文会把用户的第二次付费请求误拦成「刚刚翻译过」。
-        val repeatKey = translateRepeatKey(id, target, prefs.openAiTargetLanguage, scope, sent = slice.text)
+        val repeatKey = translateRepeatKey(
+            id, target, prefs.openAiTargetLanguage, scope, sent = slice.text, action = action,
+        )
         if (!replaceSelection && slice.text.isNotEmpty() &&
             repeatKey == lastSentKey &&
             System.currentTimeMillis() - lastSentAtMs < repeatGuardMs
@@ -3050,14 +3083,16 @@ class JinnIme : InputMethodService() {
         // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
         translateStartedAtMs = System.currentTimeMillis()
         translateProviderName = provider.javaClass.simpleName
+        translateActionName = action.id
         // 生效目标语言（不是枚举名）：与指纹同源，日志才与真实请求一致（BUG.md L-787）
         translateTargetName = effectiveTargetLabel(id, target, prefs.openAiTargetLanguage)
         pinyinKeyboard?.setTranslating(true)
         // 只记 provider / 语言 / 范围 / 字数与截断：待译正文与凭据都不进日志
         Diagnostics.i(
             TAG,
-            "翻译: ${provider.javaClass.simpleName} → $translateTargetName 范围=${scope.id} " +
-                "共${slice.text.length}字" + (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
+            "翻译: action=$translateActionName ${provider.javaClass.simpleName} → $translateTargetName " +
+                "范围=${scope.id} 共${slice.text.length}字" +
+                (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
         )
         // 插入模式下的截断必须说出来（2026-10-02 修复 L-485）：同一件事（原文超单次上限）此前
         // 两条路径口径相反 —— 选区模式发请求前就拒绝并说明（替换会丢掉尾部原文，不可逆），
@@ -3197,7 +3232,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(
                 TAG,
                 "[$translateTraceId] 翻译: 会话边界取消在途请求" +
-                    " provider=$translateProviderName target=$translateTargetName" +
+                    " provider=$translateProviderName action=$translateActionName target=$translateTargetName" +
                     if (notify) "（已提示用户）" else "（静默：进程销毁或紧随其后的边界）",
             )
             // 走到这里说明请求**已经出网**（60~300s 的大模型请求最容易被旋转 / 分屏 / 切框丢掉），
@@ -3205,6 +3240,10 @@ class JinnIme : InputMethodService() {
             // 「已取消」—— 两件事都成立，闸门必须一起补上（2026-10-03 修复 L-657）。
             markTranslateFailed("会话边界取消在途请求")
         }
+        // 会话边界一并收起动作排（2026-10-09）：本函数已被 onFinishInput / onStartInput /
+        // onStartInputView / onFinishInputView / switchToVoiceKeyboard / onDestroy 全部调用 ——
+        // 一处接线即全覆盖（键盘可能尚未创建或已销毁，判空兜住）。
+        pinyinKeyboard?.resetActionPanel()
     }
 
     /**
@@ -4274,7 +4313,12 @@ internal fun translateRepeatKey(
     openAiTarget: String,
     scope: TranslationScope,
     sent: String,
-): String = "${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
+    // 动作维度（2026-10-09）：同一段原文的「翻译」与「润色」是两次合法请求 ——
+    // 指纹不含动作时，第二次会被误判「刚刚翻译过」而静默丢弃。
+    // ⚠ 带默认值且放**末尾**：既有 6 处位置参数调用（RecentFixesRegressionTest）零改动。
+    action: AiAction = AiAction.DEFAULT,
+): String =
+    "${action.id}|${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
 
 /**
  * 「生效目标语言」的规范串：去重指纹与诊断日志共用的唯一口径（BUG.md L-787）。

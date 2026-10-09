@@ -22,6 +22,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -55,8 +56,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         layoutDirection = View.LAYOUT_DIRECTION_LTR
     }
 
-    /** 回调接口，全部在主线程调用 */
-    interface Listener {
+    /**
+     * 回调接口，全部在主线程调用。
+     *
+     * `internal`（2026-10-09）：方法参数用到 `internal` 的 [AiAction] —— 接口是 public 时
+     * Kotlin 会报「public function exposes its internal parameter type」。实现方只有同模块的
+     * [JinnIme]，收窄无副作用。
+     */
+    internal interface Listener {
         /** 上屏文本（中文字符或英文字母） */
         fun onCommitText(text: String)
         /** 上屏空格 */
@@ -105,6 +112,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onHideKeyboard()
         /** 功能面板：选中了文字就翻选中的那一段（译文原地替换），没选中则按「原文范围」取光标前后的文本、译文追加在下一行（总开关打开时才出现该键） */
         fun onTranslate()
+
+        /**
+         * 功能面板：执行一个 AI 文本动作（动作排的 8 个键都走这里，2026-10-09）。
+         *
+         * 与 [onTranslate] 共用 IME 侧同一段闸门（搜索态 / 剪贴板面板打开都会拦下）。
+         */
+        fun onAiAction(action: AiAction)
+
+        /** 功能面板：当前服务方能否执行「翻译之外」的 AI 动作（决定长按翻译键是否展开动作排） */
+        fun supportsAiActions(): Boolean
     }
 
     /**
@@ -113,7 +130,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     enum class DirectionAction { UP, DOWN, LEFT, RIGHT, LINE_START, LINE_END, DOC_START, DOC_END, TOGGLE_SELECTION }
 
-    var listener: Listener? = null
+    /** 回调方（同模块的 [JinnIme]；[Listener] 已收窄为 internal，这里必须同步） */
+    internal var listener: Listener? = null
 
     /** 当前拼音串（全拼或双拼原文） */
     private var composing = StringBuilder()
@@ -2198,6 +2216,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshCandidateBar() {
+        // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
+        // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
+        // `layer != LAYER_LETTER`，与 composing 长度无关。
+        // ⚠ 这条兜底**覆盖不到**英文 / 符号 / 数字层的 `onCommitText` 直出上屏（那条路不刷候选栏）
+        //   —— 它由 `JinnIme.onUpdateSelection` 里的 resetActionPanel 兜住。
+        if (actionPanelExpanded &&
+            (layer != LAYER_LETTER || passwordPad || composing.isNotEmpty() || lastPredictions.isNotEmpty())
+        ) {
+            actionPanelExpanded = false
+        }
         // 本帧用到的开关与外观参数共用一次 Prefs 实例（省掉多次实例化），并各自**只读一次**：
         // 要防的是**同一个键在一帧内被读两遍** —— 后台导入线程若恰在两次读取之间改键，
         // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
@@ -2911,6 +2939,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clearCandidateList()
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
         setClearButtonVisible(false)
+        // 动作排（长按翻译键展开，2026-10-09）：本帧整条切换为动作排，其余分支全不参与。
+        // ⚠ renderActionPanel 的定义必须在 buildFunctionButton **之后** —— DocsReferenceTest 用
+        //   「renderFunctionPanel → buildFunctionButton」之间的切片解析常驻按钮顺序并与
+        //   「功能总览.md」对拍，把动作排定义插进那段切片会污染常驻清单。
+        if (actionPanelExpanded) {
+            renderActionPanel()
+            return
+        }
         // 搜索态：功能面板只保留「退出搜索」。
         // 其余按钮都不能出现，历史/收起会打断搜索；而 全选/复制/方向/粘贴 都是
         // 作用于宿主输入框的动作：搜索态下 26 键只作用于搜索框（见 isPanelSearch 的各路由），
@@ -3005,7 +3041,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (prefs.translateEnabled) {
             translateButtonBox = buildFunctionButton(
                 label = if (translateInFlight) LABEL_TRANSLATING else LABEL_TRANSLATE,
-                hint = "网络",
+                // hint 只进 contentDescription（第二行小字早已删）⇒ 可发现性靠设置页说明，别当视觉提示
+                hint = "长按更多",
+                onLongClick = {
+                    when {
+                        // 在途：吃掉长按，不给第二个入口。
+                        // ⚠ 在途按钮只被置 isClickable=false（L-764：不能用 isEnabled，读屏会失去状态），
+                        //    而 setOnLongClickListener 会把 longClickable 置真 ⇒ 长按仍会触发，必须显式拦。
+                        translateInFlight -> true
+                        // 剪贴板面板打开：与 IME 侧 requestTranslate 的拦截口径一致（键还在，但点了会被拒）
+                        clipboardActive -> true
+                        listener?.supportsAiActions() != true -> {
+                            // ⚠ 必须返回 true：返回 false 时抬手会走 onClick ⇒ 用户「长按看看」
+                            //    直接发起一次真实（计费）的翻译，与「长按无效」的直觉完全相反。
+                            Toast.makeText(context, TEXT_ONLY_OPENAI_ACTIONS, Toast.LENGTH_SHORT).show()
+                            true
+                        }
+                        else -> {
+                            actionPanelExpanded = true
+                            refreshCandidateBar()   // 重画 → 走展开分支
+                            true
+                        }
+                    }
+                },
                 // ⚠ 面板上也记一笔（2026-10-03 修复 L-759）：同面板的「历史 / 方向 / 退出搜索」都有 i 级日志，
                 // 唯独翻译键没有 ⇒ 用户报「点了没反应」时，诊断包**证明不了他点过**。
                 onClick = {
@@ -3049,6 +3107,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         label: String,
         hint: String,
         red: Boolean = false,
+        /**
+         * 长按回调（2026-10-09）：返回 true = 吃掉事件（不触发 [onClick]）；
+         * 返回 false = 抬手仍会走 [onClick] —— 「长按无效果」的场景**必须**返回 true，
+         * 否则用户「长按看看」会直接触发一次真实动作（翻译 = 一次计费请求）。
+         */
+        onLongClick: (() -> Boolean)? = null,
         onClick: () -> Unit,
     ): View {
         val box = LinearLayout(context).apply {
@@ -3068,6 +3132,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setOnClickListener {
                 KeyFeedback.fire(TapSound.G_FUNC)
                 onClick()
+            }
+            // 长按反馈与单击同源：长按后抬手不会再触发 onClick（回调返回 true 时）
+            onLongClick?.let { handler ->
+                setOnLongClickListener {
+                    KeyFeedback.fire(TapSound.G_FUNC)
+                    handler()
+                }
             }
         }
         // 百分比均分：每个按钮 weight=1，均分候选栏宽度（基础 6 个，图库键按宿主声明增减、翻译键按总开关增减；
@@ -3093,6 +3164,64 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「方向 控制」这种完整语义，视觉上则只剩大字。
         box.layoutParams = lp
         return box
+    }
+
+    /**
+     * 动作排（长按翻译键展开，2026-10-09）。9 键：8 个动作 + 末尾「返回」红键。
+     *
+     * 槽位：各键 weight=1 平均分配；内边距统一收到 2dp 兜底窄屏溢出
+     * （9 键均分 + 8dp 内边距在 320dp 屏上只剩 ≈15dp 内容区，放不下 13sp 两字）。
+     *
+     * ⚠ 定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 用
+     *   `substringAfter("private fun renderFunctionPanel()").substringBefore("private fun buildFunctionButton(")`
+     *   解析常驻按钮顺序并与《功能总览.md》对拍，插进那段切片会把动作排的 label 算进常驻清单。
+     * ⚠ 本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：全仓只允许 2 处，
+     *   清容器由 renderFunctionPanel 开头的 clearCandidateList() 负责）。
+     */
+    private fun renderActionPanel() {
+        // 清掉上帧的按钮引用（与搜索态早退同款）：置 null 后 setTranslating 不会去改已脱离视图树的 View
+        translateButtonBox = null
+        directionButtonBox = null
+        galleryButtonBox = null
+        for (action in AiAction.EXPANDABLE) {
+            viewCandidateList.addView(buildFunctionButton(
+                label = action.label,
+                hint = "AI",
+                onClick = {
+                    Diagnostics.i(TAG, "动作面板: 点击 ${action.id}")
+                    actionPanelExpanded = false
+                    listener?.onAiAction(action)
+                    refreshCandidateBar()   // 显式重画：回到常规面板（不依赖 setTranslating 的时序）
+                },
+            ))
+        }
+        // 末尾「返回」红键：只收回，不执行任何动作
+        viewCandidateList.addView(buildFunctionButton(
+            label = "返回",
+            hint = "取消",
+            red = true,
+            onClick = {
+                Diagnostics.i(TAG, "动作面板: 返回")
+                actionPanelExpanded = false
+                refreshCandidateBar()
+            },
+        ))
+        // 9 键收 2dp（见本函数 KDoc）：4dp 档归 8 键的 PANEL_COMPACT_SLOTS 逻辑，两者不能互相顶替
+        for (i in 0 until viewCandidateList.childCount) {
+            viewCandidateList.getChildAt(i).setPadding(dp(2), dp(4), dp(2), dp(4))
+        }
+        if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "动作面板(${viewCandidateList.childCount} 按钮)")
+    }
+
+    /**
+     * 收起动作排（幂等，2026-10-09）：IME 在会话边界（`JinnIme.cancelTranslate`）与宿主
+     * 文本 / 光标变化（`JinnIme.onUpdateSelection`，覆盖英文 / 符号 / 数字层直出上屏）时调用；
+     * 键盘内部开面板时也调。换肤**不**调 —— 那会重刷候选栏，展开态原样保留并重渲染。
+     */
+    fun resetActionPanel() {
+        if (!actionPanelExpanded) return
+        actionPanelExpanded = false
+        refreshCandidateBar()
     }
 
     /**
@@ -3242,6 +3371,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private var translateButtonBox: View? = null
 
+    /**
+     * 动作排是否展开（2026-10-09）：长按翻译键进入；任何输入 / 换层 / 面板切换 / 会话边界都会收起
+     * （见 [resetActionPanel] 与 [refreshCandidateBar] 的兜底判据）。
+     */
+    private var actionPanelExpanded = false
+
     /** 是否有在途翻译请求（本视图的显示态；请求代际校验在 IME 侧，见 JinnIme.startTranslate） */
     private var translateInFlight = false
 
@@ -3284,6 +3419,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 面板含：行首/上/行末、左/●拖选开关/右、下、复制/粘贴。
      */
     private fun showDirectionPanel() {
+        // 与候选栏的语义一致（2026-10-09）：动作排展开时面板照旧可开，但先把候选栏收回常规态
+        resetActionPanel()
         if (directionPanelVisible) {
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "showDirectionPanel: 已显示，跳过")
             return
@@ -3399,6 +3536,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *   FrameLayout.LayoutParams 会 ClassCastException，曾导致键盘收起循环。
      */
     fun showClipboardPanel() {
+        // 动作排与面板互斥（2026-10-09）：面板盖住字母区，动作排留着会让候选栏语义错位
+        resetActionPanel()
         Diagnostics.i(TAG, "showClipboardPanel called, clipboardActive=$clipboardActive")
         if (clipboardActive) {
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "showClipboardPanel: 已显示，跳过")
@@ -3600,6 +3739,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     fun showGalleryPanel() {
         if (galleryActive) return
+        // 动作排与面板互斥（2026-10-09）：面板盖住字母区，动作排留着会让候选栏语义错位
+        resetActionPanel()
         // 未上屏的拼音串先清掉（L-1032）：插入图片走的是 commitContent，不会像 commitText 那样
         // 把它上屏或清掉，留着会在插完图后继续输入时被上屏到图片后面（与 showSearchPanel 同款）
         clearComposingState()
@@ -3680,6 +3821,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 显示顶部搜索面板：候选栏上方整体高度增加，下方 26 键恢复为可用输入 */
     fun showSearchPanel() {
+        // 动作排与面板互斥（2026-10-09）：搜索面板改的是键盘高度与 26 键路由，候选栏不能停在动作排
+        resetActionPanel()
         // 到这里才建面板（MEM-05）：搜索面板是三个里最轻的，但同样不必为从不用它的用户常驻
         val panel = ensureSearchPanel()
         if (panel.isActive()) return
@@ -3857,7 +4000,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 功能面板「翻译」键的两种文案（在途请求时切换并置灰防连点） */
         const val LABEL_TRANSLATE = "翻译"
-        const val LABEL_TRANSLATING = "翻译中"
+
+        /**
+         * 在途态文案（2026-10-09 由「翻译中」改）：在途的可能是润色 / 提炼等动作，不再是纯翻译。
+         */
+        const val LABEL_TRANSLATING = "处理中"
+
+        /** 长按翻译键但不支持 AI 动作时的提示（只有 OpenAI 兼容能承载自定义提示词） */
+        const val TEXT_ONLY_OPENAI_ACTIONS = "AI 动作仅支持 OpenAI 兼容服务方"
 
         /**
          * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ，

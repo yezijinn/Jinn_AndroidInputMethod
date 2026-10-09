@@ -1209,6 +1209,20 @@ class Prefs(context: Context) {
     }
 
     /**
+     * 带 config 覆盖的 Provider 组装（AI 文本动作专用，2026-10-09）。
+     *
+     * ⚠ 不做成 [translationProvider] 的默认参数：默认参数在**调用时**求值，会给每次翻译
+     * 白加一次 `openAiConfig` 组装（L-530 / L-531 的同款教训：应按 id 只读该家凭据）。
+     * 非 OpenAI 家忽略覆盖（动作根本到不了那里，见 [TranslationProviderId.supportsActions]）。
+     */
+    internal fun translationProvider(id: TranslationProviderId, openAi: OpenAiConfig): TranslationProvider? =
+        if (id == TranslationProviderId.OPENAI) {
+            TranslationClient.providerOf(id, openAi = openAi)
+        } else {
+            translationProvider(id)
+        }
+
+    /**
      * 等待所有已排队的 `apply()` 真正落盘。
      *
      * 导入结束后要 `killProcess` 重启输入法，而 `apply()` 是异步的、Activity 也不会走

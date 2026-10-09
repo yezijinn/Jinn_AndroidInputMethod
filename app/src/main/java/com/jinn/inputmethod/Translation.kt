@@ -109,6 +109,18 @@ internal enum class TranslationProviderId(val id: String, val label: String) {
 }
 
 /**
+ * 该 Provider 能否执行「翻译之外」的 AI 动作（靠自定义提示词驱动）。
+ *
+ * 专用翻译 API（阿里云 / Azure / 百度通用 / DeepL）接口只有一个 translate；
+ * [TranslationProviderId.BAIDU_LLM] 同样不带提示词（请求体固定 appid/from/to/q）——
+ * 只有 OpenAI 兼容能承载（messages 由 system / user 提示词组装）。
+ *
+ * 用在两处：翻译键**长按是否可展开**、以及是否渲染动作排。
+ */
+internal val TranslationProviderId.supportsActions: Boolean
+    get() = this == TranslationProviderId.OPENAI
+
+/**
  * 「端点必须以 https:// 开头」的**唯一文案**（2026-10-03 修复 L-816）。
  *
  * 此前同一件事在三处各写一遍且措辞不同：`TranslationError.INSECURE.message`（键盘 toast）、

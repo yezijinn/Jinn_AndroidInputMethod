@@ -214,6 +214,60 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
             ),
         )
 
+        /**
+         * 每个 AI 动作的默认 system / user 模板（2026-10-09 新增）。
+         *
+         * 约束：user 模板**必须含 [VAR_TEXT]**（[applyTemplateEnsuringText] 的兜底继续生效；
+         * 缺了会在运行时把原文追加到消息末尾并留 W 日志）。
+         * TRANSLATE 的 user 含 [VAR_TARGET]；其余动作不含（也不该含 —— 动作不是翻译）。
+         *
+         * 与 [PROMPT_PRESETS] 的分工：那是**翻译方向**预设（设置页下拉用），这里是**动作**模板，
+         * 只服务于非 TRANSLATE 动作 —— 翻译动作仍走用户自定义提示词（见 JinnIme.startTranslate）。
+         */
+        internal fun defaultPromptOf(action: AiAction): PromptPreset = when (action) {
+            AiAction.TRANSLATE -> PromptPreset("默认翻译", DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT)
+            AiAction.POLISH -> PromptPreset(
+                "润色",
+                "你是中文文字编辑。只输出润色后的文本，保持原意与信息量不变，只让表达更通顺自然；不加解释、不加引号、不加前后缀。",
+                "请润色以下文本，只返回润色结果：\n$VAR_TEXT",
+            )
+            AiAction.FORMAL -> PromptPreset(
+                "正式",
+                "你是正式书面语改写者。只输出改写后的文本，用词规范、语气正式礼貌；不加解释、不加前后缀。",
+                "请把以下文本改写为正式书面表达，只返回结果：\n$VAR_TEXT",
+            )
+            AiAction.CASUAL -> PromptPreset(
+                "口语",
+                "你是日常口语改写者。只输出改写后的文本，语气自然口语、贴近聊天；不加解释、不加前后缀。",
+                "请把以下文本改写为自然口语，只返回结果：\n$VAR_TEXT",
+            )
+            AiAction.SHORTEN -> PromptPreset(
+                "精简",
+                "你是文字压缩者。只输出精简后的文本，删冗余、留要点，不丢关键信息；不加解释。",
+                "请精简以下文本，只返回精简结果：\n$VAR_TEXT",
+            )
+            AiAction.EXPAND -> PromptPreset(
+                "扩写",
+                "你是内容扩写者。只输出扩写后的文本，补充细节使表达更完整，不改变原意；不加解释。",
+                "请扩写以下文本，只返回扩写结果：\n$VAR_TEXT",
+            )
+            AiAction.SUMMARY -> PromptPreset(
+                "提炼",
+                "你是要点提炼者。只输出要点，用简短分行列出；不加解释、不加开场白。",
+                "请提炼以下内容的要点，只返回要点：\n$VAR_TEXT",
+            )
+            AiAction.PROOFREAD -> PromptPreset(
+                "纠错",
+                "你是校对员。只输出改正后的文本，修正错别字、标点、语法错误，不改动原意与风格；不加解释。",
+                "请纠正以下文本的错别字与语法错误，只返回改正后的文本：\n$VAR_TEXT",
+            )
+            AiAction.REPLY -> PromptPreset(
+                "回复",
+                "你是回复助手。根据给定内容生成一段得体的回复，语气自然；只输出回复正文，不加解释、不加引号。",
+                "请针对以下内容生成一段回复：\n$VAR_TEXT",
+            )
+        }
+
         const val VAR_TEXT = "{{text}}"
 
 /**
