@@ -984,6 +984,14 @@ class RecentFixesRegressionTest {
         val act = codeOf("FavoriteSymbolsActivity.kt")
         assertTrue("页面入口必须走清洗", "val item = FavoriteSymbols.clean(raw)" in act)
         assertTrue("页面入口不得再自写字符清洗", "raw.trim().replace" !in act)
+        // 限长按码点数（BUG-37）：`String.length` 是码元数，一个 astral 字符算 2 ⇒ 5 个 emoji 被误拒。
+        // 写入与解析必须同口径，否则解析会把刚收下的项再滤掉。
+        assertTrue("限长必须走码点判据", "fun withinLimit(item: String): Boolean" in fs)
+        assertTrue("追加与解析都要用它", Regex("""withinLimit\(""").findAll(fs).count() >= 3)
+        assertTrue("不得再按码元数判限长", "s.length <= MAX_CHARS" !in fs && "s.length > MAX_CHARS" !in fs)
+        // 关键写同步落盘（BUG-34）：编辑页是收藏的唯一写入口，`apply()` 在进程被回收时会丢最后一步。
+        assertTrue("收藏写入口必须同步落盘", "prefs.flush()" in act)
+        assertTrue("落盘失败要留痕", "收藏落盘失败" in act)
         // 注：BUG-32 是**纯注释**改动（修订号实例内作用域），而 `TestSources.codeOf` 会剥掉注释，
         // 因此它没有源码钉 —— 想钉住就得改成代码形态（例如另存时间戳字段），那时再补。
     }

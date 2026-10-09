@@ -102,6 +102,9 @@ class FavoriteSymbolsActivity : Activity() {
 
         /** 跨重建保存的对话框输入（BUG.md L-1136） */
         private const val STATE_ADD_TEXT = "favorite_add_text"
+
+        /** 日志标签：收藏落盘失败要留痕（BUG-34） */
+        private const val TAG = "FavoriteSymbols"
     }
 
     override fun onPause() {
@@ -129,7 +132,12 @@ class FavoriteSymbolsActivity : Activity() {
             Toast.makeText(this, R.string.favorite_full, Toast.LENGTH_LONG).show()
             return
         }
-        Prefs(this).favoriteSymbols = FavoriteSymbols.serialize(pages)
+        val prefs = Prefs(this)
+        prefs.favoriteSymbols = FavoriteSymbols.serialize(pages)
+        // 关键写同步落盘（BUG-34）：setter 走 `apply()`，用户加完符号立刻切走、进程被系统回收时，
+        // 最后一次改动会安静地丢（存储不损坏，只是没写下去）。本页是收藏的唯一写入口，
+        // 一次提交代价是一份几 KB 的 XML —— 与「保存并重启」那条路同口径（见 Prefs.flush 的说明）。
+        if (!prefs.flush()) Diagnostics.w(TAG, "收藏落盘失败（改动可能回退）")
         dirty = true
     }
 

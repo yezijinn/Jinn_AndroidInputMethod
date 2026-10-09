@@ -66,7 +66,7 @@ object FavoriteSymbols {
             readablePages++
             for (i in 0 until page.length()) {
                 val s = runCatching { page.getString(i) }.getOrNull()?.let { clean(it) } ?: continue
-                if (s.isNotEmpty() && s.length <= MAX_CHARS) flat.add(s)
+                if (s.isNotEmpty() && withinLimit(s)) flat.add(s)
             }
         }
         // 非空数组里一页都读不出来 = 结构整体不符（如 `[1,2,3]`）⇒ 与「整份损坏」同等处理
@@ -99,6 +99,15 @@ object FavoriteSymbols {
     fun overCapacity(pages: List<List<String>>): Boolean =
         serialize(pages).length > Prefs.MAX_FAVORITE_SYMBOLS_CHARS
 
+    /**
+     * 单项是否在限长内 —— 按**码点**数判（BUG-37）。
+     *
+     * `String.length` 是 UTF-16 码元数：一个 astral 字符（emoji、星号外的小众符号）占 2 ——
+     * 5 个 emoji 就被算成 10 而拒收，用户看到的是「明明只打了 5 个字符」。写入（[append]）与
+     * 解析（[parse]）必须同口径，否则解析会把写入侧刚收下的项再滤掉。
+     */
+    fun withinLimit(item: String): Boolean = item.codePointCount(0, item.length) <= MAX_CHARS
+
     /** 页结构 → 持久化串（空组序列化为 `[]`） */
     fun serialize(pages: List<List<String>>): String {
         val arr = JSONArray()
@@ -116,7 +125,7 @@ object FavoriteSymbols {
      */
     fun append(pages: List<List<String>>, item: String): Pair<List<List<String>>, Boolean> {
         val s = clean(item)
-        if (s.isEmpty() || s.length > MAX_CHARS) return pages to false
+        if (s.isEmpty() || !withinLimit(s)) return pages to false
         if (pages.any { it.contains(s) }) return pages to false
         val last = pages.lastOrNull()
         val next = when {

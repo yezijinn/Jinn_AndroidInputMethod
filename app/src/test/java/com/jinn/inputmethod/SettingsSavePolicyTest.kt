@@ -22,6 +22,16 @@ class SettingsSavePolicyTest {
     fun OpenAI配置页必须有输入停顿自动保存() {
         val src = TestSources.codeSource("OpenAiSettingsActivity.kt")
         assertTrue("要有防抖窗口常量", "AUTOSAVE_DEBOUNCE_MS" in src)
+        // 值域钉（BUG-09）：只查符号时，把 800L 改成 0L（防抖消失 ⇒ 每敲一键写一次盘）照样全绿，
+        // 而那正是这条守卫要防的行为退化。下界防「形同没有防抖」，上界防「久到用户以为没保存」。
+        for (file in listOf("OpenAiSettingsActivity.kt", "TranslationSettingsActivity.kt")) {
+            val s = TestSources.codeSource(file)
+            val name = if (file.startsWith("OpenAi")) "AUTOSAVE_DEBOUNCE_MS" else "CREDENTIAL_AUTOSAVE_DEBOUNCE_MS"
+            val ms = Regex(name + """\s*[:=]\s*(\d+)L?""").find(s)?.groupValues?.get(1)?.toLong()
+            assertTrue("$name 没解析出数值（写法变了？）", ms != null)
+            assertTrue("$file：防抖窗口 $ms ms 太短（等于没有防抖，每次按键都写盘）", ms!! >= 200L)
+            assertTrue("$file：防抖窗口 $ms ms 太长（用户会以为保存没生效）", ms <= 5_000L)
+        }
         assertTrue("字段装配时挂上 watcher", "addTextChangedListener(autosaveWatcher)" in src)
         val watcher = src.substringAfter("autosaveWatcher = object").take(600)
         assertTrue("程序化回填不算改动（用 loading 抑制）", "if (!loading) scheduleAutosave()" in watcher)
