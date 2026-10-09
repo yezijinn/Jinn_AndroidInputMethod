@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """为 THUOCL 各分类词表注音，输出输入法拼音词库（每分类独立文件）。"""
+import os
 import os, re, json, sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from asset_io import read_asset_text  # noqa: E402
 
-BASE = r"C:\AI_WORKSPACE\PROJECTS\com.jinn.inputmethod"
+# 仓库根按**脚本自身位置**推导（BUG-20）：原先写死一台机器的绝对路径，换人/换系统就崩。
+# tools/dict_builder/x.py ⇒ 上溯三层即仓库根。
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME = os.path.join(BASE, "docs", "rime-ice", "cn_dicts")
 SYLL = os.path.join(BASE, "app", "src", "main", "assets", "pinyin_syllables.txt.xz")
 THUOCL_DIR = os.path.join(BASE, "tools", "dict_builder", "THUOCL-master", "data")

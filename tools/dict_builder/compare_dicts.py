@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """对比新旧词库覆盖情况"""
+import os
 import io, sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-out = r'<rime-ice 导出目录>\out2'
-cur = r'<仓库根>\app\src\main\assets'
+out = os.path.join('<rime-ice 导出目录>', 'out2')
+cur = os.path.join('<仓库根>', 'app', 'src', 'main', 'assets')
 
 def load_keys(path):
     s = set()
@@ -16,13 +17,13 @@ def load_keys(path):
                     s.add(line[:tab])
     return s
 
-new_k = load_keys(out + r'\pinyin_phrases.txt')
-old_k = load_keys(cur + r'\pinyin_phrases.txt')
+new_k = load_keys(os.path.join(out, 'pinyin_phrases.txt'))
+old_k = load_keys(os.path.join(cur, 'pinyin_phrases.txt'))
 print('新词库键:', len(new_k), ' 旧词库键:', len(old_k))
 print('新增键:', len(new_k - old_k), ' 旧有但新无:', len(old_k - new_k))
 print('新增示例:', list(new_k - old_k)[:8])
 
-with open(out + r'\pinyin_phrases.txt', encoding='utf-8') as f:
+with open(os.path.join(out, 'pinyin_phrases.txt'), encoding='utf-8') as f:
     data = {}
     for line in f:
         tab = line.find('\t')
