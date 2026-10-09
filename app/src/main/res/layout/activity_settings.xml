@@ -243,6 +243,7 @@
                         android:layout_marginTop="2dp"
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
+                        android:visibility="gone"
                         android:text="@string/settings_shuangpin_scheme_desc"/>
             </LinearLayout>
 

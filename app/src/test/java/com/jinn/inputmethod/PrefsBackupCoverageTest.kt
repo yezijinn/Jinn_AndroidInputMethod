@@ -464,4 +464,50 @@ class PrefsBackupCoverageTest {
             )
         }
     }
+
+    /**
+     * 高价值键的**键名不得改**（2026-10-09）。
+     *
+     * 键名就是用户数据的地址：把某个键的值改个写法（`"candidate_rows"` → 别的），等于「老用户那一项设置
+     * 清零」，同时旧备份里的同项被当未知键丢掉。编译器不报错，本类的备份覆盖面守卫也看不见 —— 它只比
+     * 常量名集合，常量与字符串一起改照样绿。
+     *
+     * 这张表是这些地址的登记册：确要改键，必须显式改本表**并**写一次性迁移（读旧键 → 写新键）。
+     *
+     * 取表口径：「用户调过一次就不希望丢」的设置 —— 键盘外观页一整套（六个滑杆 + 三个开关 + 两个下拉，
+     * 2026-10-09 由设置页迁入，键名刻意一个没动，见提交 `2629fbb`）+ 图库格子高 + 主题定时的三个键；
+     * `KEY_KEYBOARD_SKIN` 虽已退役，但旧用户的皮肤迁移仍读它，改名会让迁移读不到。
+     */
+    @Test
+    fun 高价值键的名字不得改() {
+        val golden = linkedMapOf(
+            // 2026-10-09 迁入外观页的四个开关 / 下拉（迁入时键名保持不变，老用户设置不受影响）
+            "KEY_CANDIDATE_ROWS" to "candidate_rows",
+            "KEY_SHOW_KEY_HINT" to "show_key_hint",
+            "KEY_SHOW_QUANPIN" to "show_quanpin",
+            "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
+            // 外观页的滑杆
+            "KEY_KEY_CORNER_DP" to "key_corner_dp",
+            "KEY_KEY_GAP_DP" to "key_gap_dp",
+            "KEY_KEY_HEIGHT_DP" to "key_height_dp",
+            "KEY_CANDIDATE_SPACING_DP" to "candidate_spacing_dp",
+            "KEY_KEY_TRANSPARENCY_PERCENT" to "key_transparency_percent",
+            // 皮肤与主题
+            "KEY_KEYBOARD_SKIN" to "keyboard_skin",
+            "KEY_SKIN_LIGHT" to "skin_light",
+            "KEY_SKIN_DARK" to "skin_dark",
+            "KEY_THEME_MODE" to "theme_mode",
+            "KEY_THEME_LIGHT_AT" to "theme_light_at",
+            "KEY_THEME_DARK_AT" to "theme_dark_at",
+            // 图库
+            "KEY_GALLERY_CELL_HEIGHT_DP" to "gallery_cell_height_dp",
+        )
+        val wrong = golden.filter { (name, value) -> keyConstants[name] != value }
+            .map { (name, value) -> "$name 期望 \"$value\"，实际 \"${keyConstants[name] ?: "（未定义）"}\"" }
+        assertTrue(
+            "这些键的名字变了 —— 等于老用户那项设置清零、旧备份里的同项被丢弃：\n    ${wrong.joinToString("\n    ")}\n" +
+                "确要改键，请同时改本表并写「读旧键 → 写新键」的一次性迁移。",
+            wrong.isEmpty(),
+        )
+    }
 }

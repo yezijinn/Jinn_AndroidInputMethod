@@ -1150,7 +1150,7 @@ class RecentFixesRegressionTest {
             "const val TEXT_SPACING_TITLE = \"候选字距\"",
             "const val TEXT_TEXT_SIZE_TITLE = \"候选字号\"",
             "const val TEXT_TRANSPARENCY_TITLE = \"面板透明\"",
-            "const val TEXT_LETTER_UPPER_TITLE = \"26键显示大写字母\"",
+            "const val TEXT_LETTER_UPPER_TITLE = \"拼音键盘大写\"",
             "const val TEXT_KEY_HINT_TITLE = \"键盘内显韵母\"",
             "const val TEXT_QUANPIN_TITLE = \"双拼候选全音\"",
             "const val TEXT_CANDIDATE_ROWS_TITLE = \"候选词的行数\"",

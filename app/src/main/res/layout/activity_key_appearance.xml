@@ -305,21 +305,6 @@
                 android:textSize="14sp" />
 
             <!-- 输入与显示（2026-10-09 由设置页迁来：外观相关控件集中在本页，设置页不再重复） -->
-            <TextView
-                android:id="@+id/label_candidate_rows"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:minWidth="32dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
-
-            <com.jinn.inputmethod.UserAwareSpinner
-                android:id="@+id/spinner_candidate_rows"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:spinnerMode="dropdown" />
-
             <Switch
                 android:id="@+id/switch_key_hint"
                 android:layout_width="match_parent"
@@ -337,6 +322,21 @@
                 android:minHeight="40dp"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/label_candidate_rows"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minWidth="32dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <com.jinn.inputmethod.UserAwareSpinner
+                android:id="@+id/spinner_candidate_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:spinnerMode="dropdown" />
 
             <TextView
                 android:id="@+id/label_theme_mode"

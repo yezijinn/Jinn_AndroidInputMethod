@@ -569,7 +569,7 @@ class KeyAppearanceActivity : Activity() {
      * 说明里写清「上屏内容不变」：这个开关改的是键面字形，很多用户会以为打开后打出来就是大写，
      * 而拼音串本来就是小写（真正要上屏大写另有「大写锁定」键）。
      */
-    const val TEXT_LETTER_UPPER_TITLE = "26键显示大写字母"
+    const val TEXT_LETTER_UPPER_TITLE = "拼音键盘大写"
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
