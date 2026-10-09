@@ -111,7 +111,14 @@ internal class AliyunTranslator(
         val errorCode = listOf("Code", "code", "errorCode")
             .mapNotNull { key -> json.opt(key)?.takeIf { it != JSONObject.NULL }?.toString() }
             .firstOrNull { it.isNotEmpty() && it != "200" && it != "0" }
-        if (errorCode != null) return TranslationOutcome.Fail(aliyunErrorOf(errorCode))
+        if (errorCode != null) {
+            val mapped = aliyunErrorOf(errorCode)
+            // 归服务端异常的**业务码**留痕（BUG.md L-1125）：这条路径文案只会说「服务异常，请稍后重试」，
+            // 日志里若也没有原始码，用户报「翻译不了」时就分不清是网关码、还是我们没收录的业务码
+            // （官方表外的码只会越来越多，留痕是让下一次补表有据可依，而不是凭记忆改）。
+            if (mapped == TranslationError.SERVER) Diagnostics.i(TAG, "业务码归服务端异常: $errorCode")
+            return TranslationOutcome.Fail(mapped)
+        }
         if (code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
         if (!json.optBoolean("success", true)) return TranslationOutcome.Fail(TranslationError.SERVER)
         // 译文取值：实测成功响应是 `{"Code":"200","Data":{"Translated":"…","WordCount":"11"}}`；
@@ -136,6 +143,7 @@ internal class AliyunTranslator(
     }
 
     companion object {
+        private const val TAG = "AliyunTranslator"
         const val ENDPOINT = "https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general"
         const val API_VERSION = "2019-01-02"
         const val SIGNATURE_METHOD = "HMAC-SHA1"
@@ -231,18 +239,39 @@ internal class AliyunTranslator(
         }
 
         /**
-         * 阿里云错误码 → 归一分类（按前缀匹配，实测见 `InvalidAccessKeyId.NotFound`）。
+         * 阿里云错误码 → 归一分类（数字码按官方表逐条列，英文码按前缀匹配，实测见 `InvalidAccessKeyId.NotFound`）。
+         *
+         * 数字码全部逐条写出、不再靠 else 兜：落进 else 就归 SERVER ⇒ 提示「稍后重试」，
+         * 而参数 / 语言方向 / 额度 / 欠费这几类重试**必然再失败、每次都真计费**
+         * （2026-10-09 修复 L-1125；表取自官方「机器翻译通用版调用指南」错误码一节，逐条核对）。
          *
          * `InvalidTimeStamp.Expired` 归 AUTH：它是设备时钟偏差导致的签名被拒，
          * 提示「检查凭据」同样有指向性（用户会顺带发现时间不对），归服务端异常则无从下手。
          */
         internal fun aliyunErrorOf(code: String): TranslationError = when {
-            // 通用版数字错误码（实测 10004 = 参数出错：缺 Scene / 参数不合法时 HTTP 200 返回它）
-            code == "10004" -> TranslationError.PARAM
+            // ── 超时 ──
+            code == "10001" -> TranslationError.TIMEOUT   // 请求超时
+            // ── 参数类：改写内容或换语言方向就能过 ──
+            code == "10003" -> TranslationError.PARAM     // 原文解码失败（未按 URL 编码传参）
+            code == "10004" -> TranslationError.PARAM     // 参数缺失（实测：缺 Scene，HTTP 200 承载）
+            code == "10005" -> TranslationError.PARAM     // 语项（语言方向）不支持
+            code == "10006" -> TranslationError.PARAM     // 语种识别失败
             // 超出单次字符上限 —— 设置页的说明里点名的就是它（「超出报错 10008」）。落进 else 会让
             // 「原文过长」显示成「服务异常」，用户按提示重试永远失败，而说明与行为互相矛盾
             // （2026-10-01 修复 L-328）。
             code == "10008" -> TranslationError.PARAM
+            // ── 账号 / 权限类：要去控制台处理，重试无用 ──
+            code == "10009" -> TranslationError.AUTH      // 子账号没有权限
+            code == "10010" -> TranslationError.AUTH      // 账号没有开通服务
+            // 「没有开通服务或欠费」：归额度而不是认证 —— QUOTA 的文案指向账户余额，
+            // 用户能顺势查到是没开通还是欠费
+            code == "10013" -> TranslationError.QUOTA
+            // ── 服务端类：显式列出，语义与 else 相同但可读、也便于以后单独调 ──
+            code == "10002" -> TranslationError.SERVER    // 系统错误
+            code == "10007" -> TranslationError.SERVER    // 翻译失败
+            code == "10011" -> TranslationError.SERVER    // 子账号服务失败
+            code == "10012" -> TranslationError.SERVER    // 翻译服务调用失败
+            code == "19999" -> TranslationError.SERVER    // 未知异常
             code.startsWith("InvalidAccessKeyId") -> TranslationError.AUTH
             code.startsWith("SignatureDoesNotMatch") -> TranslationError.AUTH
             code.startsWith("InvalidTimeStamp") -> TranslationError.AUTH

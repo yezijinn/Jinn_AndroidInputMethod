@@ -300,6 +300,42 @@ class AliyunTranslatorTest {
         assertEquals(TranslationOutcome.Fail(TranslationError.SERVER), translator.parseResponse(400, missingDate))
     }
 
+    /**
+     * 业务码表按官方文档分类（`BUG.md` L-1125）。
+     *
+     * 表取自官方「机器翻译通用版调用指南」错误码一节（2026-10-09 逐条核对）。此前的实现只认
+     * 10004 / 10008 两个数字码，其余全部落 `else -> SERVER` ⇒ 提示「稍后重试」，而参数 / 语言方向 /
+     * 额度 / 欠费这几类重试必然再失败、每次都真计费。这条把每一档都钉住，防止再退回「只收两个码」。
+     */
+    @Test
+    fun `业务码表按官方文档分类`() {
+        val expected = mapOf(
+            "10001" to TranslationError.TIMEOUT,   // 请求超时
+            "10002" to TranslationError.SERVER,    // 系统错误
+            "10003" to TranslationError.PARAM,     // 原文解码失败
+            "10004" to TranslationError.PARAM,     // 参数缺失
+            "10005" to TranslationError.PARAM,     // 语项不支持
+            "10006" to TranslationError.PARAM,     // 语种识别失败
+            "10007" to TranslationError.SERVER,    // 翻译失败
+            "10008" to TranslationError.PARAM,     // 字符长度过长
+            "10009" to TranslationError.AUTH,      // 子账号没有权限
+            "10010" to TranslationError.AUTH,      // 账号没有开通服务
+            "10011" to TranslationError.SERVER,    // 子账号服务失败
+            "10012" to TranslationError.SERVER,    // 翻译服务调用失败
+            "10013" to TranslationError.QUOTA,     // 没有开通服务或欠费
+            "19999" to TranslationError.SERVER,    // 未知异常
+        )
+        for ((code, want) in expected) {
+            assertEquals(
+                "业务码 $code 的分类与官方错误码表不符",
+                want,
+                AliyunTranslator.aliyunErrorOf(code),
+            )
+        }
+        // 表外的码仍归服务端异常（这条同时防止「随手把 else 改成 PARAM」这类反向改动）
+        assertEquals(TranslationError.SERVER, AliyunTranslator.aliyunErrorOf("99999"))
+    }
+
     @Test
     fun `请求不带 Region 之外的冗余头（Host 与 Content-Length 交给 OkHttp）`() {
         val request = translator.buildRequest("x", TranslationLanguage.ENGLISH)
