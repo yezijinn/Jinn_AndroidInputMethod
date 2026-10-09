@@ -1448,8 +1448,11 @@ class JinnIme : InputMethodService() {
                     // 写进 i 级日志会绕过 V 级闸落盘、并随「导出诊断数据」外带（L-1036）
                     Diagnostics.i(TAG, "图库面板: 选中一张图 provider=${uri.authority}")
                     val hostKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
-                    // 复制原图可能几十 MB，放后台；回来走同一套落地逻辑（校验输入框 → commitContent）
-                    BackgroundIo.run {
+                    // 复制原图上限 20MB（`GalleryInsert.MAX_BYTES`），走长活池（契约 C-1）：整份拷贝是秒级活，
+                    // 投进交互短活队列会把剪贴板保存与面板首屏一起推后 —— 而这里正是用户刚复制完、要粘贴的
+                    // 时刻（图库页那条同款链路一直是 `runLong`，见 GalleryPickActivity）。
+                    // 顺带：缓存裁剪（trimCache）只在自己任务里跑，两条链路同在长活池后不再交叉动同一个目录。
+                    BackgroundIo.runLong {
                         when (val r = GalleryInsert.copyToCache(this@JinnIme, uri)) {
                             is GalleryInsert.CopyResult.Ok -> {
                                 GalleryInsert.putPending(r.file, r.mime, hostKey)

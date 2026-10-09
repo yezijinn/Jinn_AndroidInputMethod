@@ -4742,4 +4742,28 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 图库整份拷贝的两条链路都必须走长活池（契约 C-1，2026-10-09）。
+     *
+     * 同一份 `GalleryInsert.copyToCache`（单张上限 20MB，见 `MAX_BYTES`）在两处被调用：图库选图页与
+     * 键盘内的图库面板。键盘那条原先投在交互短活队列上 —— 而它恰好发生在用户刚复制完、准备粘贴的时刻，
+     * 一次秒级拷贝会把剪贴板保存与面板首屏一起推后；图库页那条同款链路一直是 `runLong`，两条不一致。
+     */
+    @Test
+    fun `图库整份拷贝的两条链路都必须走长活池`() {
+        for (f in listOf("JinnIme.kt", "GalleryPickActivity.kt")) {
+            val src = codeOf(f)
+            val at = src.indexOf("GalleryInsert.copyToCache(")
+            assertTrue("$f 里找不到 GalleryInsert.copyToCache 调用点（改名 / 搬迁后请同步本用例）", at >= 0)
+            // 取调用点之前最近的一个 BackgroundIo 入口，必须是长活池那条。
+            // ⚠ 形态必须是「`BackgroundIo.runLong {`」（尾随 lambda，没有左括号）；也别用不带后缀的
+            // `BackgroundIo.run` 去比 —— 它是 `runLong` 的前缀，两个索引会落到同一处，判据恒假。
+            val back = src.substring(0, at)
+            assertTrue(
+                "$f 的图库拷贝必须投长活池（BackgroundIo.runLong）—— 秒级拷贝排在交互队列上会推后剪贴板保存",
+                back.lastIndexOf("BackgroundIo.runLong {") > back.lastIndexOf("BackgroundIo.run {"),
+            )
+        }
+    }
+
 }
