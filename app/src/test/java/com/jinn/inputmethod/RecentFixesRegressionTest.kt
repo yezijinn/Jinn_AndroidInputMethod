@@ -964,6 +964,29 @@ class RecentFixesRegressionTest {
             "fun appearanceKey(percent: Int, skinId: String): String" in codeOf("KeyTransparency.kt"),
         )
     }
+    /**
+     * 收藏符号的清洗口径必须覆盖 Unicode 空白与零宽字符（2026-10-09，批 7 的 BUG-36）。
+     *
+     * `String.trim()` 只去 ASCII ≤ 0x20：不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、
+     * BOM U+FEFF 都会留下 —— 它们在 26 键键面上看不见却占格子，用户看到「空槽键」、按下没反应、
+     * 也找不到那个字符去删。三条入口（页面输入 / append / parse）必须共用同一份清洗。
+     */
+    @Test
+    fun `收藏符号清洗必须共用同一口径`() {
+        val fs = codeOf("FavoriteSymbols.kt")
+        assertTrue("必须有清洗入口", "fun clean(text: String): String" in fs)
+        assertTrue("字符类必须含 C 与 Z 两类", "p{C}" in fs && "p{Z}" in fs)
+        val append = blockAfter(fs, "fun append(pages: List<List<String>>, item: String)")
+        assertTrue("追加必须走清洗", "val s = clean(item)" in append)
+        assertTrue("追加不得退回 trim", "item.trim()" !in append)
+        assertTrue("解析必须走清洗", "getOrNull()?.let { clean(it) }" in fs)
+        assertTrue("解析不得退回 trim 直读", "getOrNull()?.trim()" !in fs)
+        val act = codeOf("FavoriteSymbolsActivity.kt")
+        assertTrue("页面入口必须走清洗", "val item = FavoriteSymbols.clean(raw)" in act)
+        assertTrue("页面入口不得再自写字符清洗", "raw.trim().replace" !in act)
+        // 注：BUG-32 是**纯注释**改动（修订号实例内作用域），而 `TestSources.codeOf` 会剥掉注释，
+        // 因此它没有源码钉 —— 想钉住就得改成代码形态（例如另存时间戳字段），那时再补。
+    }
 
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {

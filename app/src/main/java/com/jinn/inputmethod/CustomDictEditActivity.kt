@@ -83,6 +83,9 @@ class CustomDictEditActivity : Activity() {
      * 重建时只带令牌，新实例读回的是改写前的草稿，最后一次编辑静默丢失。
      */
     private val draftHandler = Handler(Looper.getMainLooper())
+    // ⚠ 修订号是**实例内**单调计数器（重建后从 0 重新开始）：比较只发生在同一实例内
+    // （draftWrittenRevision 记录的那个号也是本实例写的），**禁止跨实例比较** ——
+    // 两个实例各自的 0/1/2 毫无关系。要跨实例判定新鲜度请另用时间戳 + 长度（BUG-32）。
     private var draftRevision = 0
     @Volatile
     private var draftWrittenRevision = -1

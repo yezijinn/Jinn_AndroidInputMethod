@@ -65,7 +65,7 @@ object FavoriteSymbols {
             val page = runCatching { arr.getJSONArray(p) }.getOrNull() ?: continue
             readablePages++
             for (i in 0 until page.length()) {
-                val s = runCatching { page.getString(i) }.getOrNull()?.trim() ?: continue
+                val s = runCatching { page.getString(i) }.getOrNull()?.let { clean(it) } ?: continue
                 if (s.isNotEmpty() && s.length <= MAX_CHARS) flat.add(s)
             }
         }
@@ -73,6 +73,22 @@ object FavoriteSymbols {
         if (readablePages == 0 && arr.length() > 0) return listOf(DEFAULT_ITEMS)
         return flat.toList().chunked(PER_PAGE)
     }
+
+    /** 清洗用的字符类：C（控制 / 格式 / 零宽 —— 含 U+200B、U+FEFF、方向控制）× Z（各类 Unicode 分隔符） */
+    private val CLEAN_PATTERN = Regex("[\\p{C}\\p{Z}]")
+
+    /**
+     * 符号清洗（写入 / 追加 / 解析**同一口径**，BUG-36）。
+     *
+     * `String.trim()` 只去 ASCII ≤ 0x20 的空白：不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、
+     * BOM U+FEFF 都会原样留下 —— 这些字符在 26 键的键面上**看不见**，却占着一个格子：用户看到
+     * 「空槽键」，按下去没反应，而且删不掉（他找不到那个字符）。粘贴文本、导入备份、手工改 prefs
+     * 三条路都可能带进来。
+     *
+     * 因此按 Unicode 类别清：`\p{C}`（控制 / 格式 / 代理 / 私用 / 未分配）+ `\p{Z}`（分隔符，含上面
+     * 两个空格），清完再 trim 一次（清出的空洞会让首尾露出普通空格）。
+     */
+    fun clean(text: String): String = text.replace(CLEAN_PATTERN, "").trim()
 
     /**
      * 序列化后是否超出写入上限 [Prefs.MAX_FAVORITE_SYMBOLS_CHARS]。
@@ -99,7 +115,7 @@ object FavoriteSymbols {
      * 返回 (新页结构, 是否成功)，空串/超长/已存在均为 false。
      */
     fun append(pages: List<List<String>>, item: String): Pair<List<List<String>>, Boolean> {
-        val s = item.trim()
+        val s = clean(item)
         if (s.isEmpty() || s.length > MAX_CHARS) return pages to false
         if (pages.any { it.contains(s) }) return pages to false
         val last = pages.lastOrNull()

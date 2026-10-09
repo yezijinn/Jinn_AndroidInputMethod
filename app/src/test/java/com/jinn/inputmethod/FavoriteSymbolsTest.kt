@@ -201,4 +201,31 @@ class FavoriteSymbolsTest {
         assertEquals(listOf(listOf("D")), FavoriteSymbols.parse(normalized))
         assertFalse("归一后不得判为超容量", FavoriteSymbols.overCapacity(FavoriteSymbols.parse(raw)))
     }
+
+    /**
+     * 清洗必须覆盖 Unicode 空白与零宽字符（BUG-36）。
+     *
+     * `String.trim()` 只去 ASCII ≤ 0x20 的空白：不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、
+     * BOM U+FEFF、方向控制 U+200F 都会留下 —— 它们在 26 键键面上**看不见**却占格子，
+     * 用户看到「空槽键」、按下去没反应、也找不到那个字符去删。
+     */
+    @Test
+    fun 清洗必须覆盖Unicode空白与零宽字符() {
+        assertEquals("不换行空格清空", "", FavoriteSymbols.clean("\u00A0"))
+        assertEquals("表意空格清空", "", FavoriteSymbols.clean("\u3000"))
+        assertEquals("零宽空格清空", "", FavoriteSymbols.clean("\u200B"))
+        assertEquals("BOM 清空", "", FavoriteSymbols.clean("\uFEFF"))
+        assertEquals("方向控制符清空", "", FavoriteSymbols.clean("\u200F"))
+        assertEquals("普通空格照旧清", "", FavoriteSymbols.clean("   "))
+        assertEquals("可见字符保留（两端与中间一并清）", "A", FavoriteSymbols.clean("\u200BA\u00A0"))
+        assertEquals("多字符符号的内部空白也清", "ab", FavoriteSymbols.clean("a b"))
+        // 三条路径同口径：脏字符不得留下「看不见的空槽键」
+        assertTrue("parse 必须把纯不可见项丢掉", FavoriteSymbols.parse("[[\"\u200B\"]]").isEmpty())
+        assertFalse("append 必须拒绝纯不可见项", FavoriteSymbols.append(emptyList(), "\u00A0\u200B").second)
+        assertEquals(
+            "parse 必须清掉可见项周围的不可见字符",
+            listOf(listOf("A")),
+            FavoriteSymbols.parse("[[\"\u200BA\u3000\"]]"),
+        )
+    }
 }

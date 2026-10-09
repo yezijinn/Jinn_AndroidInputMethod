@@ -268,8 +268,9 @@ class FavoriteSymbolsActivity : Activity() {
     }
 
     private fun addItem(raw: String) {
-        // 粘贴可能带换行/制表符（键面无法显示）：剥掉再校验
-        val item = raw.trim().replace(Regex("[\\n\\t\\r]"), "")
+        // 粘贴可能带换行 / 制表符 / 不换行空格 / 零宽字符（键面看不见却占格子）：统一走清洗再校验
+        // （口径收在 FavoriteSymbols.clean，与 append / parse 同一份，BUG-36）
+        val item = FavoriteSymbols.clean(raw)
         val pages = currentPages()
         when {
             item.isEmpty() || item.length > FavoriteSymbols.MAX_CHARS ->
