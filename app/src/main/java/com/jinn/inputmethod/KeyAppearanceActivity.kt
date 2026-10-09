@@ -42,8 +42,6 @@ class KeyAppearanceActivity : Activity() {
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
     private lateinit var rowThemeSchedule: View
-    private lateinit var textThemeScheduleHint: TextView
-    private lateinit var textThemeDesc: TextView
 
     /** 时间选择器引用：本页退出时要撤掉，否则窗口泄漏（设置页用 showTipDialog 收口，本页单点管理） */
     private var timePicker: android.app.TimePickerDialog? = null
@@ -192,6 +190,9 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        findViewById<TextView>(R.id.label_key_corner).text = TEXT_CORNER_TITLE
+        findViewById<TextView>(R.id.label_key_gap).text = TEXT_GAP_TITLE
+        findViewById<TextView>(R.id.label_key_transparency).text = TEXT_TRANSPARENCY_TITLE
         val seekTransparency = findViewById<SeekBar>(R.id.seek_key_transparency)
         val textTransparency = findViewById<TextView>(R.id.text_key_transparency)
         seekTransparency.max = KeyTransparency.PROGRESS_MAX
@@ -220,7 +221,6 @@ class KeyAppearanceActivity : Activity() {
         // 开关在切换瞬间落盘并即时刷键盘 —— 与滑杆同一套即时生效口径（JinnIme.onKeyAppearanceChanged）。
         val switchLetterUpper = findViewById<Switch>(R.id.switch_letter_uppercase)
         switchLetterUpper.text = TEXT_LETTER_UPPER_TITLE
-        findViewById<TextView>(R.id.text_letter_upper_desc).text = TEXT_LETTER_UPPER_DESC
         switchLetterUpper.isChecked = prefs.keyLetterUppercase
         switchLetterUpper.setOnCheckedChangeListener { _, checked ->
             prefs.keyLetterUppercase = checked
@@ -269,7 +269,6 @@ class KeyAppearanceActivity : Activity() {
         // 键面韵母提示（双拼）：关掉后键面只显示字母
         switchKeyHint = findViewById(R.id.switch_key_hint)
         switchKeyHint.text = TEXT_KEY_HINT_TITLE
-        findViewById<TextView>(R.id.text_key_hint_desc).text = TEXT_KEY_HINT_DESC
         switchKeyHint.isChecked = prefs.showKeyHint
         switchKeyHint.setOnCheckedChangeListener { _, checked ->
             prefs.showKeyHint = checked
@@ -280,7 +279,6 @@ class KeyAppearanceActivity : Activity() {
         // 双拼候选全拼：关掉后候选栏显示按下的字母
         switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
         switchPinyinQuanpin.text = TEXT_QUANPIN_TITLE
-        findViewById<TextView>(R.id.text_pinyin_quanpin_desc).text = TEXT_QUANPIN_DESC
         switchPinyinQuanpin.isChecked = prefs.showQuanpin
         switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
             prefs.showQuanpin = checked
@@ -300,8 +298,6 @@ class KeyAppearanceActivity : Activity() {
         btnThemeLightAt = findViewById(R.id.btn_theme_light_at)
         btnThemeDarkAt = findViewById(R.id.btn_theme_dark_at)
         rowThemeSchedule = findViewById(R.id.row_theme_schedule)
-        textThemeScheduleHint = findViewById(R.id.text_theme_schedule_hint)
-        textThemeDesc = findViewById(R.id.text_theme_desc)
         findViewById<TextView>(R.id.label_theme_mode).text = TEXT_THEME_TITLE
 
         spinnerTheme.adapter = ArrayAdapter.createFromResource(
@@ -336,7 +332,7 @@ class KeyAppearanceActivity : Activity() {
         val modeValues = resources.getStringArray(R.array.theme_mode_values)
         spinnerTheme.setSelection(modeValues.indexOf(prefs.themeMode.toString()).coerceAtLeast(0))
         refreshThemeScheduleRow(prefs)
-        refreshThemeDesc(prefs)
+        refreshSkinGroupState(prefs)
     }
 
     /** 定时行只在「定时」模式显示；两个按钮的文案随配置刷新 */
@@ -345,19 +341,25 @@ class KeyAppearanceActivity : Activity() {
         val scheduled = prefs.themeMode == ThemeManager.MODE_SCHEDULED
         val visibility = if (scheduled) View.VISIBLE else View.GONE
         rowThemeSchedule.visibility = visibility
-        textThemeScheduleHint.visibility = visibility
         btnThemeLightAt.text = getString(R.string.theme_light_at_tpl, formatMinutes(prefs.themeLightAtMinutes))
         btnThemeDarkAt.text = getString(R.string.theme_dark_at_tpl, formatMinutes(prefs.themeDarkAtMinutes))
     }
 
-    /** 刷新说明行：显示两档各自选定的皮肤（就在本页选，换肤后同步刷新） */
-    private fun refreshThemeDesc(prefs: Prefs) {
-        if (!::textThemeDesc.isInitialized) return
-        textThemeDesc.text = getString(
-            R.string.theme_card_desc,
-            KeyboardSkins.byId(prefs.skinLightId, SkinTone.LIGHT).label,
-            KeyboardSkins.byId(prefs.skinDarkId, SkinTone.DARK).label,
-        )
+    /**
+     * 皮肤两段的标题与状态行。
+     *
+     * 主标题只有「亮色」「暗色」两个词，生效与否写在下面一行：生效的那段提示可以直接预览
+     * （本页的「点这里唤起键盘」就能看到），另一段要等档位切过去才看得到。
+     */
+    @SuppressLint("SetTextI18n")
+    private fun refreshSkinGroupState(prefs: Prefs) {
+        val dark = ThemeManager.isDark(this, prefs)
+        findViewById<TextView>(R.id.text_skin_light_title).text = SKIN_TONE_LIGHT
+        findViewById<TextView>(R.id.text_skin_dark_title).text = SKIN_TONE_DARK
+        findViewById<TextView>(R.id.text_skin_light_desc).text =
+            if (dark) TEXT_SKIN_INACTIVE_DESC else TEXT_SKIN_ACTIVE_DESC
+        findViewById<TextView>(R.id.text_skin_dark_desc).text =
+            if (dark) TEXT_SKIN_ACTIVE_DESC else TEXT_SKIN_INACTIVE_DESC
     }
 
     /** 「当天第几分钟」→ `HH:mm`（脏值先 floorMod 归一，负值不会显示成 -1:-30） */
@@ -427,11 +429,7 @@ class KeyAppearanceActivity : Activity() {
      */
     @SuppressLint("SetTextI18n")
     private fun initSkinSelector(prefs: Prefs) {
-        val dark = ThemeManager.isDark(this, prefs)
-        findViewById<TextView>(R.id.text_skin_light_title).text =
-            skinGroupTitle("亮色皮肤", "亮色", active = !dark)
-        findViewById<TextView>(R.id.text_skin_dark_title).text =
-            skinGroupTitle("暗色皮肤", "暗色", active = dark)
+        refreshSkinGroupState(prefs)
         val density = resources.displayMetrics.density
         // 令牌皮肤（原白 / 原黑）不覆盖键面色，色值只能从色板令牌取：预览必须固定吃自己那一档，
         // 否则在亮色页面上看「原黑」会是一块白键面（与原白看不出区别）。
@@ -495,18 +493,10 @@ class KeyAppearanceActivity : Activity() {
         refreshSkinSelection(cells, prefs)
     }
 
-    /**
-     * 段标题：生效的那一段写「现为亮色 / 现为暗色」并提示可直接预览，另一段写未激活。
-     * 括号内容随当前档位实时变化（用户 2026-09-24 设计的提示方式，不改 `strings.xml`）。
-     */
-    private fun skinGroupTitle(name: String, toneName: String, active: Boolean): String =
-        if (active) "$name(界面明暗切换:现为$toneName,唤起键盘可直接预览)"
-        else "$name(界面明暗切换:未激活,不可预览)"
-
     /** 点选一套皮肤：按它自己的档位入槽（亮色皮肤进亮色档、暗色皮肤进暗色档），并刷新两个选中标记 */
     private fun pickSkin(prefs: Prefs, skin: KeyboardSkin, cells: List<SkinCell>) {
         // 两档皮肤决定「明暗切换时键盘换哪一套」，本页的说明行显示的就是它 —— 选完立刻刷新
-        if (::textThemeDesc.isInitialized) refreshThemeDesc(prefs)
+        refreshSkinGroupState(prefs)
         val isLightSkin = skin.tone == SkinTone.LIGHT
         if (isLightSkin) prefs.skinLightId = skin.id else prefs.skinDarkId = skin.id
         Diagnostics.i(TAG, "键盘皮肤: ${if (isLightSkin) "亮色" else "暗色"}档 = ${skin.id}（${skin.label}）")
@@ -565,13 +555,13 @@ class KeyAppearanceActivity : Activity() {
          * 写在代码里而不是 strings.xml：项目约定「strings.xml 默认禁改」（与各页 `TEXT_*` 同做法），
          * 新项不再往资源里加标题。
          */
-        const val TEXT_SPACING_TITLE = "字距"
+        const val TEXT_SPACING_TITLE = "候选字距"
 
         /** 「候选字号」项的标题文案（同上：写在代码里，不进 strings.xml） */
         const val TEXT_TEXT_SIZE_TITLE = "候选字号"
 
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
-    const val TEXT_KEY_HEIGHT_TITLE = "键高"
+    const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"
 
     /**
      * 「26 键常显大写」开关的标题与说明。
@@ -579,16 +569,24 @@ class KeyAppearanceActivity : Activity() {
      * 说明里写清「上屏内容不变」：这个开关改的是键面字形，很多用户会以为打开后打出来就是大写，
      * 而拼音串本来就是小写（真正要上屏大写另有「大写锁定」键）。
      */
-    const val TEXT_LETTER_UPPER_TITLE = "26 键显示大写字母"
-    const val TEXT_LETTER_UPPER_DESC = "中文输入时键面显示 A~Z（上屏内容不变）"
+    const val TEXT_LETTER_UPPER_TITLE = "26键显示大写字母"
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
     const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
-    const val TEXT_KEY_HINT_DESC = "关闭后键面只显示字母"
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
-    const val TEXT_QUANPIN_DESC = "关闭后显示按下的字母"
     const val TEXT_THEME_TITLE = "界面明暗切换"
+
+    /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */
+    const val TEXT_CORNER_TITLE = "按钮圆角"
+    const val TEXT_GAP_TITLE = "按钮间隙"
+    const val TEXT_TRANSPARENCY_TITLE = "面板透明"
+
+    /** 皮肤两段的主标题与状态行：生效的那段可直接预览，另一段要等档位切过去 */
+    const val SKIN_TONE_LIGHT = "亮色"
+    const val SKIN_TONE_DARK = "暗色"
+    const val TEXT_SKIN_ACTIVE_DESC = "已激活，唤起键盘可预览"
+    const val TEXT_SKIN_INACTIVE_DESC = "未激活，不可预览"
 
         /** 皮肤选择器每行个数（每段 16 套排成两行八个，两段共四行） */
         const val SKINS_PER_ROW = 8

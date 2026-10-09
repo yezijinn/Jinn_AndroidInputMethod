@@ -88,7 +88,7 @@ object KeyAppearance {
      * 640dp 高的小屏仍留有 160dp 以上给宿主输入区，故这是「挤但可用」的上界。
      * 剪贴板 / 图库面板的高度不跟随键高（固定 162dp×2），所以本项放大不会把面板顶出屏幕。
      */
-    const val MAX_KEY_HEIGHT_DP = 120f
+    const val MAX_KEY_HEIGHT_DP = 90f
 
     /** 高度步进：2dp（观感可辨的最小变化；再细会让 SeekBar 格数过多而难以点准） */
     const val KEY_HEIGHT_STEP_DP = 2f

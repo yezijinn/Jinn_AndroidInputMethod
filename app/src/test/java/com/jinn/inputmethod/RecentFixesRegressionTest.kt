@@ -1007,6 +1007,61 @@ class RecentFixesRegressionTest {
      *
      * 「大写」「删除」两键的图标同时放大一倍（padding 13dp → 8dp：fitCenter 下图标被
      * 「键框减内缩」框死，13dp 只剩约 10dp）。同屏实测两键图标尺寸不变、图标盒 10dp → 20dp。
+    /**
+     * 键盘外观页的控件文案与结构（2026-10-09 指定）：
+     *
+     * 每一项只留主标题 —— 三个开关的第二行说明、明暗切换的说明行、定时提示行整条删除；
+     * 滑杆标题与拖动条间距 0（同在一行、紧贴）；皮肤两段改成主标题「亮色 / 暗色」+ 状态行
+     * （生效那段写「已激活，唤起键盘可预览」，另一段写「未激活，不可预览」）；键高定义域收到 40~90dp。
+     */
+    @Test
+    fun `外观页控件只留主标题且键高上界收到九十`() {
+        val layout = TestSources.rawSource(
+            "src/main/res/layout/activity_key_appearance.xml",
+            "app/src/main/res/layout/activity_key_appearance.xml",
+        )
+        for (gone in listOf(
+            "text_letter_upper_desc", "text_key_hint_desc", "text_pinyin_quanpin_desc",
+            "text_theme_desc", "text_theme_schedule_hint",
+        )) {
+            assertFalse("第二行说明必须整条删除：$gone", gone in layout)
+        }
+        assertEquals(
+            "六个滑杆与标题的间距必须都是 0dp",
+            6,
+            Regex(""""android:layout_marginStart=\"0dp\"\s*\n\s*android:layout_weight=\"1\"\s*\n\s*android:progressBackgroundTint"""").findAll(layout).count(),
+        )
+        assertTrue(
+            "皮肤两段必须各有状态行",
+            "text_skin_light_desc" in layout && "text_skin_dark_desc" in layout,
+        )
+
+        val kt = codeOf("KeyAppearanceActivity.kt")
+        for (title in listOf(
+            "const val TEXT_CORNER_TITLE = \"按钮圆角\"",
+            "const val TEXT_GAP_TITLE = \"按钮间隙\"",
+            "const val TEXT_KEY_HEIGHT_TITLE = \"按钮键高\"",
+            "const val TEXT_SPACING_TITLE = \"候选字距\"",
+            "const val TEXT_TEXT_SIZE_TITLE = \"候选字号\"",
+            "const val TEXT_TRANSPARENCY_TITLE = \"面板透明\"",
+            "const val TEXT_LETTER_UPPER_TITLE = \"26键显示大写字母\"",
+            "const val TEXT_KEY_HINT_TITLE = \"键盘内显韵母\"",
+            "const val TEXT_QUANPIN_TITLE = \"双拼候选全音\"",
+            "const val TEXT_CANDIDATE_ROWS_TITLE = \"候选词的行数\"",
+            "const val TEXT_THEME_TITLE = \"界面明暗切换\"",
+        )) {
+            assertTrue("主标题必须与需求逐字一致：$title", title in kt)
+        }
+        assertTrue(
+            "皮肤两段的状态行文案",
+            "const val TEXT_SKIN_ACTIVE_DESC = \"已激活，唤起键盘可预览\"" in kt &&
+                "const val TEXT_SKIN_INACTIVE_DESC = \"未激活，不可预览\"" in kt,
+        )
+        assertFalse("旧的段标题拼接必须删除", "skinGroupTitle" in kt)
+        assertTrue("皮肤状态行必须由共用函数下发", "private fun refreshSkinGroupState(" in kt)
+        assertEquals("键高上界必须是 90dp", 90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
+    }
+
      */
     @Test
     fun `26键大写字母按宽度收束且两键图标放大一倍`() {
