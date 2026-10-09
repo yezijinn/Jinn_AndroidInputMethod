@@ -133,6 +133,41 @@ class ClipboardLimitsTest {
     // 分页/分块查询会把整个窗口逐条解密后才返回，故单次明文峰值 = 窗口条数 × 单条上限。
     // 这组护栏把「窗口 × 单条上限 ≤ 预算」钉住：调大任何一侧都会被拦下。
 
+    // ── 收藏体积上限：存原值、算生效值（BUG.md L-982 / L-988）──────────────────
+
+    @Test
+    fun 收藏体积存原值生效值另算() {
+        val raw = 100
+        assertEquals(
+            "历史体积调小：生效值被压到 1/4",
+            25,
+            ClipboardPrefs.effectiveFavoriteMaxMb(raw, totalMb = 100),
+        )
+        assertEquals(
+            "历史体积调回：原值还在（原先把原值也钳掉，这里是回不来的）",
+            100,
+            ClipboardPrefs.effectiveFavoriteMaxMb(raw, totalMb = 500),
+        )
+    }
+
+    @Test
+    fun 收藏体积没超动态上限时原样生效() {
+        assertEquals(5, ClipboardPrefs.effectiveFavoriteMaxMb(raw = 5, totalMb = 100))
+        assertEquals(1, ClipboardPrefs.effectiveFavoriteMaxMb(raw = 1, totalMb = 500))
+    }
+
+    @Test
+    fun 存储值只按静态上界钳位() {
+        assertEquals("低于下界兜到 1", 1, ClipboardPrefs.favoriteMaxMbStored(0))
+        assertEquals("正常值原样存", 64, ClipboardPrefs.favoriteMaxMbStored(64))
+        assertEquals(
+            "高于静态上界兜到总量上限的四分之一",
+            ClipboardPrefs.FAV_MAX_MB_HARD_CAP,
+            ClipboardPrefs.favoriteMaxMbStored(999),
+        )
+        assertEquals("静态上界 = 500 / 4", 125, ClipboardPrefs.FAV_MAX_MB_HARD_CAP)
+    }
+
     @Test
     fun 搜索窗口的最坏内存不超过预算() {
         val peak = ClipboardStore.decryptWindowPeakBytes(SEARCH_WINDOW_ITEMS)

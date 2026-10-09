@@ -4958,4 +4958,36 @@ class RecentFixesRegressionTest {
         )
     }
 
+    // ── 第五十八批（2026-10-10）：收藏体积「存原值、算生效值」（L-982 / L-988）──────────
+
+    /**
+     * 收藏体积软上限的**写侧**不得按动态上限（历史体积的 1/4）钳位（BUG.md L-982 / L-988）。
+     *
+     * 动态上限随历史体积变；它一旦参与写侧，用户「先调小历史体积、再调回」就再也拿不回原值 ——
+     * 值是真丢，而界面上看不出任何异常。判据就看三处写侧与一处读侧（淘汰必须用生效值）。
+     */
+    @Test
+    fun `收藏体积写侧不得按动态上限钳位`() {
+        val prefs = codeOf("ClipboardPrefs.kt")
+        assertFalse(
+            "setter / 批量保存 / 导入都不得再用 `coerceIn(1, favoriteBytesCapMb(...))`",
+            "coerceIn(1, favoriteBytesCapMb(" in prefs,
+        )
+        assertTrue("存储值统一走静态钳位", "favoriteMaxMbStored(" in prefs)
+        assertTrue("生效值单独算", "effectiveFavoriteMaxMb(" in prefs)
+        assertTrue(
+            "淘汰侧必须用生效值（原值可能大于 1/4，用它当预算等于把未生效的部分放行）",
+            "get() = effectiveFavoriteMaxMb(favoriteMaxBytesMb, maxTotalBytesMb)" in prefs,
+        )
+        val page = codeOf("ClipboardCustomizeActivity.kt")
+        assertFalse(
+            "自定义页不得在草稿层把收藏体积压到动态上限",
+            "minOf(draft.favMaxMb, cap)" in page,
+        )
+        assertTrue(
+            "自定义页要显示实际生效值",
+            "effectiveFavoriteMaxMb(draft.favMaxMb, draft.maxTotalMb)" in page,
+        )
+    }
+
 }

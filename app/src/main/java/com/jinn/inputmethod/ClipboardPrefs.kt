@@ -61,10 +61,10 @@ class ClipboardPrefs(context: Context) {
         }
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, MAX_ITEMS_CAP)) }
 
-    /** 历史体积上限（MB）：10 ~ 500，默认 100 */
+    /** 历史体积上限（MB）：[MIN_TOTAL_MB] ~ [MAX_TOTAL_MB]，默认 100 */
     var maxTotalBytesMb: Int
-        get() = sp.getInt(KEY_MAX_TOTAL_MB, DEFAULT_MAX_TOTAL_MB).coerceIn(10, 500)
-        set(value) = sp.edit { putInt(KEY_MAX_TOTAL_MB, value.coerceIn(10, 500)) }
+        get() = sp.getInt(KEY_MAX_TOTAL_MB, DEFAULT_MAX_TOTAL_MB).coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)
+        set(value) = sp.edit { putInt(KEY_MAX_TOTAL_MB, value.coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)) }
 
     /** 历史体积上限（字节） */
     val maxTotalBytes: Long get() = maxTotalBytesMb * 1024L * 1024L
@@ -81,16 +81,22 @@ class ClipboardPrefs(context: Context) {
         set(value) = sp.edit { putInt(KEY_FAV_MAX_ITEMS, value.coerceIn(1, MAX_FAV_ITEMS_CAP)) }
 
     /**
-     * 收藏体积软上限（MB）：1 ~ [favoriteBytesCapMb] 所容；默认取到该上限（总量上限的四分之一）。
+     * 收藏体积软上限（MB）的存储值；**默认**取到当前动态上限（总量上限的四分之一）。
      *
      * 与条数上限同一理由（BUG.md L-980）：默认值不能比历史行为更紧，否则老库的收藏会被静默淘汰。
      */
     var favoriteMaxBytesMb: Int
-        get() = sp.getInt(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb))
-            .coerceIn(1, favoriteBytesCapMb(maxTotalBytesMb))
-        set(value) = sp.edit { putInt(KEY_FAV_MAX_MB, value.coerceIn(1, favoriteBytesCapMb(maxTotalBytesMb))) }
+        get() = favoriteMaxMbStored(sp.getInt(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb)))
+        set(value) = sp.edit { putInt(KEY_FAV_MAX_MB, favoriteMaxMbStored(value)) }
 
-    val favoriteMaxBytes: Long get() = favoriteMaxBytesMb * 1024L * 1024L
+    /**
+     * 淘汰侧用的**生效**收藏体积（字节）：原值与动态上限取小。
+     *
+     * ⚠ 这里必须是生效值，不能退回 [favoriteMaxBytesMb]（原值）：原值可能大于 1/4，用它当预算等于
+     * 把尚未生效的那部分也放行。
+     */
+    val favoriteMaxBytes: Long
+        get() = effectiveFavoriteMaxMb(favoriteMaxBytesMb, maxTotalBytesMb) * 1024L * 1024L
 
     /** 面板单页条数：2 ~ [ClipboardStore.PANEL_PAGE_ITEMS_MAX]，默认 50 */
     var panelPageItems: Int
@@ -165,13 +171,14 @@ class ClipboardPrefs(context: Context) {
         // 与 [snapshot] / [importFromBackup] 同一把锁（BUG-12）：读侧要么看到写入前的整组，
         // 要么看到写入后的整组，不会取到两次写入之间的混合。
         return synchronized(LOCK) {
-            val totalMb = maxTotalMb.coerceIn(10, 500)
+            val totalMb = maxTotalMb.coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)
             val editor = sp.edit()
             editor.putBoolean(KEY_ENABLED, enabled)
             editor.putInt(KEY_MAX_ITEMS, maxItems.coerceIn(1, MAX_ITEMS_CAP))
             editor.putInt(KEY_MAX_TOTAL_MB, totalMb)
             editor.putInt(KEY_FAV_MAX_ITEMS, favMaxItems.coerceIn(1, MAX_FAV_ITEMS_CAP))
-            editor.putInt(KEY_FAV_MAX_MB, favMaxMb.coerceIn(1, favoriteBytesCapMb(totalMb)))
+            // 收藏体积按静态上界存原值：动态上限只决定生效值，这里钳掉它 = 用户的设定真丢（L-982）
+            editor.putInt(KEY_FAV_MAX_MB, favoriteMaxMbStored(favMaxMb))
             editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(4, MAX_ITEM_KB_CAP))
             editor.putInt(KEY_PANEL_PAGE, panelPage.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX))
             editor.putInt(KEY_MAX_SEARCH, maxSearch.coerceIn(2, MAX_SEARCH_CAP))
@@ -220,20 +227,21 @@ class ClipboardPrefs(context: Context) {
     internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): Int = synchronized(LOCK) {
         var applied = 0
         val editor = sp.edit()
-        val totalMb = (values[KEY_MAX_TOTAL_MB]?.value as? Int)?.coerceIn(10, 500) ?: maxTotalBytesMb
         for ((key, v) in values) {
             when (key) {
                 KEY_MAX_ITEMS -> (v.value as? Int)?.let {
                     editor.putInt(KEY_MAX_ITEMS, it.coerceIn(1, MAX_ITEMS_CAP)); applied++
                 }
                 KEY_MAX_TOTAL_MB -> (v.value as? Int)?.let {
-                    editor.putInt(KEY_MAX_TOTAL_MB, it.coerceIn(10, 500)); applied++
+                    editor.putInt(KEY_MAX_TOTAL_MB, it.coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)); applied++
                 }
                 KEY_FAV_MAX_ITEMS -> (v.value as? Int)?.let {
                     editor.putInt(KEY_FAV_MAX_ITEMS, it.coerceIn(1, MAX_FAV_ITEMS_CAP)); applied++
                 }
+                // 导入的收藏体积同样只按静态上界钳位：按动态上限钳会把包里的原值改掉，
+                // 而「总量 1/4」那条限制只该影响生效值（BUG.md L-982）
                 KEY_FAV_MAX_MB -> (v.value as? Int)?.let {
-                    editor.putInt(KEY_FAV_MAX_MB, it.coerceIn(1, favoriteBytesCapMb(totalMb))); applied++
+                    editor.putInt(KEY_FAV_MAX_MB, favoriteMaxMbStored(it)); applied++
                 }
                 KEY_PANEL_PAGE -> (v.value as? Int)?.let {
                     editor.putInt(KEY_PANEL_PAGE, it.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)); applied++
@@ -283,11 +291,37 @@ class ClipboardPrefs(context: Context) {
         const val MAX_SEARCH_CAP = 800
         const val MAX_ITEM_KB_CAP = 1024
 
+        /** 历史体积上限的定义域（MB）；下界也是自定义页滑块的 min */
+        const val MIN_TOTAL_MB = 10
+        const val MAX_TOTAL_MB = 500
+
+        /**
+         * 收藏体积**存储值**的静态上界（MB）：总量上限的四分之一 —— 历史上能设到的最大收藏体积。
+         *
+         * 有它兜着，「先调小总量再调回」才不会把用户的设定压丢：动态上限只决定**生效值**
+         * （[effectiveFavoriteMaxMb]），写侧一律按这条静态上界存原值（BUG.md L-982 / L-988）。
+         */
+        const val FAV_MAX_MB_HARD_CAP = MAX_TOTAL_MB / 4
+
         /** 历史管理页可选的单页条数（页面按此循环切换；定义域的唯一真源） */
         val PAGE_SIZE_OPTIONS = intArrayOf(10, 20, 50, 100)
 
         /** 收藏体积上限的联动钳位（纯函数）：不超过历史体积上限的 1/4，至少 1MB */
         fun favoriteBytesCapMb(maxTotalMb: Int): Int = (maxTotalMb / 4).coerceAtLeast(1)
+
+        /**
+         * 收藏体积软上限（MB）的**存储值**：只做静态合法性钳位（1 ~ [FAV_MAX_MB_HARD_CAP]），
+         * 不参与「历史体积的 1/4」那条动态上限。
+         *
+         * 动态上限随历史体积变，把它当写侧钳位就会**真丢用户的设定**：先把历史体积调小、再调回来，
+         * 收藏上限停在被压过的值上再也回不去（BUG.md L-982 / L-988）。所以存原值，生效值单独算
+         * （[effectiveFavoriteMaxMb]），界面把生效值标出来。
+         */
+        fun favoriteMaxMbStored(raw: Int): Int = raw.coerceIn(1, FAV_MAX_MB_HARD_CAP)
+
+        /** 收藏体积的**生效值**（MB）：原值与「历史体积的 1/4」取小（纯函数，便于单测） */
+        fun effectiveFavoriteMaxMb(raw: Int, totalMb: Int): Int =
+            favoriteMaxMbStored(raw).coerceAtMost(favoriteBytesCapMb(totalMb))
 
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MAX_ITEMS = "max_items"

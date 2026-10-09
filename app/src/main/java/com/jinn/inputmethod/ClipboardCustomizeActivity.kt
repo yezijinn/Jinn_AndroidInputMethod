@@ -197,12 +197,12 @@ class ClipboardCustomizeActivity : Activity() {
         ))
         sub.addView(makeSlider(
             TEXT_MAX_TOTAL,
-            draft.maxTotalMb, 10, 500, 10,
+            draft.maxTotalMb, ClipboardPrefs.MIN_TOTAL_MB, ClipboardPrefs.MAX_TOTAL_MB, 10,
             {
-                // 历史体积调小时，收藏体积草稿要同步落进新的 1/4 上限 ——
-                // 否则保存时被 applyDraft 的 coerceIn 静默改值（界面 5MB、实存 2MB）
-                val cap = ClipboardPrefs.favoriteBytesCapMb(it)
-                draft = draft.copy(maxTotalMb = it, favMaxMb = minOf(draft.favMaxMb, cap))
+                // 收藏体积草稿**不跟着钳位**（BUG.md L-982 / L-988）：原值留着，只有生效值随
+                // 「历史体积 1/4」这条动态限制变化（下面那行「实际生效」就是给它看的）。
+                // 原先在这里 minOf(...) 会把用户的设定直接压掉，把历史体积调回去也回不来。
+                draft = draft.copy(maxTotalMb = it)
             },
             { "$it MB" },
         ))
@@ -223,10 +223,16 @@ class ClipboardCustomizeActivity : Activity() {
         ))
         card2.addView(makeSlider(
             TEXT_FAV_BYTES,
-            draft.favMaxMb, 1, ClipboardPrefs.favoriteBytesCapMb(draft.maxTotalMb), 1,
+            // 上限用**静态**上界而不是当前的「历史体积 1/4」：滑块是设定原值的地方，
+            // 够不到原值就表示不出来（BUG.md L-982）；动态限制由下面那行「实际生效」说明
+            draft.favMaxMb, 1, ClipboardPrefs.FAV_MAX_MB_HARD_CAP, 1,
             { draft = draft.copy(favMaxMb = it) },
             { "$it MB" },
         ))
+        // 生效值按**草稿**算（含页宽联动）：拖动历史体积时能立刻看到收藏上限被压到多少
+        val effectiveFav = ClipboardPrefs.effectiveFavoriteMaxMb(draft.favMaxMb, draft.maxTotalMb)
+        val clampNote = if (effectiveFav < draft.favMaxMb) TEXT_FAV_CLAMPED_SUFFIX else ""
+        card2.addView(makeHint(TEXT_FAV_EFFECTIVE_PREFIX + effectiveFav + TEXT_FAV_EFFECTIVE_SUFFIX + clampNote))
         card2.addView(makeHint(TEXT_FAV_HINT))
         dim(card2, editable)
         PageStyle.addCard(list, card2)
@@ -541,6 +547,10 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_FAV_ITEMS = "收藏条数上限"
         const val TEXT_FAV_BYTES = "收藏体积上限"
         const val TEXT_FAV_HINT = "收藏体积上限不超过历史体积上限的 1/4。"
+        /** 收藏体积的生效值说明：原值留着，动态上限只压缩**生效**的那一份（BUG.md L-982 / L-988） */
+        const val TEXT_FAV_EFFECTIVE_PREFIX = "实际生效："
+        const val TEXT_FAV_EFFECTIVE_SUFFIX = " MB"
+        const val TEXT_FAV_CLAMPED_SUFFIX = "（受历史体积上限的四分之一限制；把历史体积调回去即可恢复本值）"
         const val TEXT_LIMIT_TITLE = "单条与分页"
         const val TEXT_MAX_ITEM = "单条上限"
         const val TEXT_EFFECTIVE_PREFIX = "生效单条上限："
