@@ -258,6 +258,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var lastTransparencyDesc = ""
 
     /**
+     * 上一次整树重扫面透明度时的身份键（见 [KeyTransparency.appearanceKey]；空串 = 还没扫过）。
+     *
+     * 只用于**跳过重复扫描**：档位与皮肤都没变时，[applyKeyTransparency] 不必再走一遍
+     * `alphaFaces` 递归 + 逐键下发 + 功能键背景重建 + 三个面板重建。
+     */
+    private var lastTransparencyKey = ""
+
+    /**
      * 视图级 [Prefs] 包装缓存（MEM-25）：`Prefs(context)` 每次都要「取一遍 SharedPreferences 再新建包装」，
      * 而候选刷新、外观套档、弹键盘这几条路径会反复走到。
      *
@@ -1085,6 +1093,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         keyFaceAlpha = KeyTransparency.surfaceAlpha(percent)
         val plateAlpha = KeyTransparency.plateAlpha(percent)
 
+        // 联合早退（MEM-26）：档位与皮肤都没变就不必整树重扫 —— 下面这一段是 alphaFaces 递归 +
+        // 逐键 setFaceAlpha + 三个功能键背景重建 + 三个面板重建（整树/整批动作），而本方法被
+        // configure / refreshAppearance 高频调用（改圆角、字距、字号、键高都走它们）。
+        // 判据必须带 skin.id：只比档位时「仅换肤」会早退，而底色已被 applySkin 改过
+        // （键面/面板 alpha 不刷新 = 静默外观错误）。
+        val appearanceKey = KeyTransparency.appearanceKey(percent, skin.id)
+        if (appearanceKey == lastTransparencyKey) return
+
         // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明，attachToRoot=true 时 inflate
         // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
         // 没有按键覆盖的背板带最明显（真机实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
@@ -1140,6 +1156,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 布局完成后再诊断（否则尺寸全是 0）
             postDelayed({ logBackgrounds() }, 500L)
         }
+        // 扫描完成才记身份键：中途抛异常时下次仍会重扫（宁可多扫一遍，不能留下没扫过的状态）
+        lastTransparencyKey = appearanceKey
     }
 
     /**

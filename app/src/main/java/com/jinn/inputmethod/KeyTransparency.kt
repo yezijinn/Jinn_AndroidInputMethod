@@ -68,6 +68,20 @@ object KeyTransparency {
     fun surfaceAlpha(percent: Int): Float =
         1f - clampPercent(percent) / MAX_PERCENT.toFloat() * (1f - MIN_SURFACE_ALPHA)
 
+    /**
+     * 「整树重扫一次面透明度」的身份键（MEM-26，纯函数）。
+     *
+     * 判据必须是**联合**的：只比档位时，「仅换肤」（档位没动、底色由 `applySkin` 改了）会命中早退，
+     * 键面与面板的 alpha 不再刷新 —— 静默外观错误（键面还带着上一套皮肤的底，没有日志也没有异常）。
+     *
+     * 用**原始 percent** 而不是 [formatPercent] 的文案：文案将来若改成「关 / 弱 / 强」这类档名，
+     * 两个不同档位会拼出同一个键，早退就会漏扫。
+     *
+     * 视图树被整体重建（IME 换视图 / 符号布局）走的是**新实例**，它一进来「上次的键」就是空串，
+     * 因此不需要额外的「面代数」。
+     */
+    fun appearanceKey(percent: Int, skinId: String): String = "${clampPercent(percent)}|$skinId"
+
     /** 数值文案（与 [KeyAppearance.formatDp] 同为固定格式，整数百分比） */
     fun formatPercent(percent: Int): String = "${clampPercent(percent)}%"
 

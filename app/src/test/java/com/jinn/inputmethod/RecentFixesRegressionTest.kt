@@ -945,6 +945,25 @@ class RecentFixesRegressionTest {
         assertTrue("铺留档稿要有单独分支", "if (fromArchive) {" in src)
         assertTrue("新草稿落盘后必须清留档槽", "File(cacheDir, DRAFT_FILE_ARCHIVE).delete()" in src)
     }
+    /**
+     * 面透明度「整树重扫」的早退判据必须是联合的（2026-10-09，批 3 的 MEM-26）。
+     *
+     * 判据只比档位时，「仅换肤」（档位没动、底色由 applySkin 改了）会命中早退：键面与面板的
+     * alpha 不再刷新，键面还带着上一套皮肤的底 —— 没有日志、没有异常，是**静默**外观错误。
+     * 身份键由「原始档位 + 皮肤 id」拼出（不取格式化后的文案：文案将来改成档名会撞键）。
+     */
+    @Test
+    fun `透明度重扫早退必须带上皮肤身份`() {
+        val kb = codeOf("PinyinKeyboardView.kt")
+        assertTrue("必须有身份键字段", "private var lastTransparencyKey = \"\"" in kb)
+        assertTrue("判据必须由档位 + 皮肤拼出", "KeyTransparency.appearanceKey(percent, skin.id)" in kb)
+        assertTrue("必须有早退", "if (appearanceKey == lastTransparencyKey) return" in kb)
+        assertTrue("扫描完成后必须置位", "lastTransparencyKey = appearanceKey" in kb)
+        assertTrue(
+            "身份键必须是纯函数（可单测）",
+            "fun appearanceKey(percent: Int, skinId: String): String" in codeOf("KeyTransparency.kt"),
+        )
+    }
 
     @Test
     fun `可选词库摘要的文档口径必须是压缩文件`() {

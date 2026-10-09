@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -109,5 +110,32 @@ class KeyTransparencyTest {
         assertEquals("factor 上界钳位到 1", 0xFFFFFFFF.toInt(), KeyTransparency.scaleAlpha(0x80FFFFFF.toInt(), 2f))
         // 对照：替换语义会把 20% 高光直接变成全不透明（原缺陷形态）
         assertEquals(0xFFFFFFFF.toInt(), KeyTransparency.withAlpha(0x33FFFFFF, 1f))
+    }
+
+    @Test
+    fun 重扫身份键_档位与皮肤都必须进判据() {
+        // MEM-26：整树重扫面透明度的早退判据漏掉 skin.id 时，「仅换肤」会命中早退，
+        // 键面/面板 alpha 不再刷新 —— 键面还带着上一套皮肤的底，是**静默**外观错误。
+        assertEquals(
+            "两者都没变：键相同（可早退）",
+            KeyTransparency.appearanceKey(20, "MOKA"),
+            KeyTransparency.appearanceKey(20, "MOKA"),
+        )
+        assertNotEquals(
+            "只换肤：键必须不同（不许早退）",
+            KeyTransparency.appearanceKey(20, "MOKA"),
+            KeyTransparency.appearanceKey(20, "GRAPHITE"),
+        )
+        assertNotEquals(
+            "只改档位：键必须不同",
+            KeyTransparency.appearanceKey(20, "MOKA"),
+            KeyTransparency.appearanceKey(21, "MOKA"),
+        )
+        // 原始数值进键：将来文案改成「关 / 弱 / 强」这类档名，也不会把相邻两档混成一个键
+        assertNotEquals(
+            "相邻档位不得撞键",
+            KeyTransparency.appearanceKey(0, "MOKA"),
+            KeyTransparency.appearanceKey(1, "MOKA"),
+        )
     }
 }
