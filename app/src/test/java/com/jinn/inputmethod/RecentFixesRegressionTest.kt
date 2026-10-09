@@ -171,51 +171,9 @@ class RecentFixesRegressionTest {
     // 单测与 lint 都看不见（真机崩溃、隐私留盘、丢设置都属于这类），所以用源码把**结论**钉住。
     // 断言失败先回 `BUG.md` 的「已修复」区看当初的判定依据，别直接把断言删掉。
 
-    /**
-     * 元守卫：用例名声明「先 / 前 / 每次」语义时，判据必须带**位置或范围**限定。
-     *
-     * 起因（BUG.md L-109）：`contains("名字")` 式判据在「调换顺序」「挪进死分支」两种语义回退下
-     * 依然通过（本轮已实证两例）。这里把它变成机械纪律：名字里有顺序 / 频率语义的用例，正文必须出现
-     * 位置比较（`indexOf(` / `substringBefore` / `assertBefore(` / `assertStatementLine(`）或范围限定
-     * （`blockAfter(`）—— 否则说明它只查了「名字出现」。
-     */
-    @Test
-    fun `顺序与频率语义的守卫必须带位置或范围判据`() {
-        val self = listOf(
-            File("src/test/java/com/jinn/inputmethod/RecentFixesRegressionTest.kt"),
-            File("app/src/test/java/com/jinn/inputmethod/RecentFixesRegressionTest.kt"),
-        ).firstOrNull { it.isFile }?.readText() ?: error("找不到本文件（cwd=${File("").absolutePath}）")
-        // 允许的判据形态：
-        //  - 位置比较 / 行锚定 / 前缀窗口：assertBefore( / assertStatementLine( / substringBefore(
-        //  - 范围限定：blockAfter(
-        //  - **否定式判据**：assertFalse(contains("禁止出现的模式")) —— 「不得先删目标」这类语义
-        //    用「该模式不得存在」表达比位置比较更严（首版规则漏了这条，误报了 2 例）
-        //  - **两个 indexOf 的比较**：`indexOf(a) ... < ... indexOf(b)` —— 只出现一个 indexOf
-        //    通常是在「取窗口」（首版把它当成位置判据 ⇒ 自测里假阴性，已收紧）
-        val allowed = listOf(
-            "substringBefore(", "assertBefore(", "assertStatementLine(", "blockAfter(", "assertFalse(",
-        )
-        val orderByIndex = Regex("""indexOf\([^\n]*\)[^\n]*<[^\n]*indexOf\(""")
-        // ⚠ 先在**剥注释**的文本上切块（BUG.md L-110）：`split` 停在下一个 `@Test` 之前，块的尾巴天然
-        // 包含**下一条用例的 KDoc**（实测 141 块里 62 块如此）—— 在原文上判「正文有没有位置判据」会被
-        // 那段注释满足（假绿），而注释里写成代码样子的句子（`fun 先删目标(`）又会被当成用例名（假红）。
-        // `TestSources.codeOf` 行数不变，用例名与判据都在代码里，剥掉注释不影响它们。
-        val code = TestSources.codeOf(self)
-        // 自证：判据必须在**剥注释后的副本**上跑。写成原文本（`code = self`）时本用例不会报错，
-        // 但块尾巴那段「下一条用例的 KDoc」又能满足正向钉 —— 正是本条要防的假绿。
-        assertTrue("判据必须在剥注释后的文本上切块（否则注释又能满足正向钉）", code != self)
-        val blocks = code.split(Regex("(?m)^\\s*@Test\\s*$")).drop(1)
-        val offenders = blocks.mapNotNull { b ->
-            val name = Regex("fun `?([^`\\n(]+)`?\\(").find(b)?.groupValues?.get(1) ?: return@mapNotNull null
-            // 「先 / 每次 / 之前」才是顺序或频率语义；单字「前」会把「当前」也算进来（误报）
-            if (!Regex("先|每次|之前").containsMatchIn(name)) return@mapNotNull null
-            if (allowed.any { it in b } || orderByIndex.containsMatchIn(b)) null else name
-        }
-        assertTrue(
-            "这些用例名声明了顺序 / 频率语义，判据里却没有位置比较或范围限定（BUG.md L-109）：$offenders",
-            offenders.isEmpty(),
-        )
-    }
+    // 顺序 / 频率语义的判据要求（L-109）已提升为**全仓元守卫**：见
+    // `TestSourcesTest.顺序语义用例必须带位置或范围判据`（L-1151）—— 原实现只扫本文件、
+    // 且方法体里出现任意一个 `assertFalse(` 即合规，两处都能绕（换文件 / 去掉用例名里的「先」）。
 
     /**
      * 断言 [call] 在 [body] 里**独占一行**（不是被包进 `if (…)` 或别的分支）。

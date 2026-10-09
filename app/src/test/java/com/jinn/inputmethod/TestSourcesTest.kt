@@ -270,6 +270,99 @@ class TestSourcesTest {
         )
     }
 
+    /**
+     * 元守卫（BUG.md L-1151）：用例名声明了**顺序或频率语义**时，判据必须落在「位置或范围」上。
+     *
+     * 起因（L-109）：`contains("名字")` 式判据在「调换顺序」「挪进死分支」两种语义回退下依然通过。
+     * 原守卫只扫 `RecentFixesRegressionTest` 自己一个文件，且方法体里出现任意一个 `assertFalse(` 即合规 ——
+     * 换到别的文件、或把用例名里的「先」字去掉，都能绕过（L-1151 的两条判据）。
+     *
+     * 现行口径（扫全量测试文件 + 逐个断言判据形态）：
+     *  - 位置比较：`assertBefore(` / `assertStatementLine(` / 两个 `indexOf(` 的大小比较；
+     *  - 范围限定：`blockAfter(` / `TestSources.window(` / `TestSources.lineOf(`（三种都断言锚点存在，
+     *    见 L-1145）。
+     * **`assertFalse(` 单独不算**：要「某个模式不得出现」这种**否定式判据**，必须把模式写进 `contains(...)`
+     * （`assertFalse("…" in src)` / `assertFalse(src.contains("…"))`）—— 光有一个 `assertFalse(flag)`
+     * 不能充当顺序判据（旧版正是被这一点绕过的）。
+     *
+     * 判据在**剥注释后的代码**上做（注释里写到这些形态不算实现），块按 `@Test` 切分。
+     *
+     * **只管读源码的用例**（含 `codeOf(` / `codeSource(` / `rawSource(` / `pyCode(`）：假绿口子只在
+     * 「对拍源码文本」时出现（名字落在注释里、实现搬走）。纯行为用例（跑两次比结果、验候选表顺序、
+     * 验文件删除顺序）的判据就是观察到的行为，没有这条问题，不在此处要求。
+     */
+    @Test
+    fun 顺序语义用例必须带位置或范围判据() {
+        val scopeForms = listOf(
+            "assertBefore(", "assertStatementLine(",
+            "blockAfter(", "TestSources.window(", "TestSources.lineOf(",
+        )
+        val sourceLoaders = listOf("codeOf(", "codeSource(", "rawSource(", "rawSourceOfShortName(", "pyCode(")
+        // 自证（BUG.md L-110）：判据必须在**剥注释后的文本**上切块 —— 否则注释里写一句
+        // `TestSources.blockAfter(` 就能满足「范围限定」。这条断言把「别把 codeOf 换成 readText」钉住。
+        val selfText = listOf(
+            File("src/test/java/com/jinn/inputmethod/TestSourcesTest.kt"),
+            File("app/src/test/java/com/jinn/inputmethod/TestSourcesTest.kt"),
+        ).firstOrNull { it.isFile }?.readText() ?: error("找不到本文件")
+        assertTrue(
+            "本守卫必须在剥注释后的文本上切块（BUG.md L-110）",
+            "TestSources.codeOf(f.readText())" in selfText,
+        )
+        // 位置比较：块里至少两处 indexOf(，且有一行在做大小比较（`indexOf(a)` 也可能先落到变量再比）
+        val hasIndexCompare = { b: String ->
+            Regex("""indexOf\(""").findAll(b).count() >= 2 && Regex("""(?m)^[^\n]*\s<\s[^\n]*$""").containsMatchIn(b)
+        }
+        // 否定式判据：把「不得出现的模式」写进 contains( —— 必须是**同一个 assertFalse 调用**里的
+        // contains(（用括号配对取出实参），不能靠块里别处有个 contains( 蒙过去（这正是旧版被绕过的方式）
+        val hasNegativeClaim = { b: String ->
+            callArgs(b, "assertFalse(").any { "contains(" in it }
+        }
+        val offenders = (testDir().listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
+            .filterNot { it.name == "TestSources.kt" || it.name == "TestSourcesTest.kt" }
+            .flatMap { f ->
+                val code = TestSources.codeOf(f.readText())
+                code.split(Regex("(?m)^\\s*@Test\\b.*$")).drop(1).mapNotNull { block ->
+                    val name = Regex("fun `?([^`\\n(]+)`?\\(").find(block)?.groupValues?.get(1)
+                        ?: return@mapNotNull null
+                    // 「先 / 之前 / 每次」才是顺序或频率语义；单字「前」会把「当前 / 向前」也算进来（误报）
+                    if (!Regex("先|之前|每次").containsMatchIn(name)) return@mapNotNull null
+                    if (sourceLoaders.none { it in block }) return@mapNotNull null
+                    val judged = scopeForms.any { it in block } || hasIndexCompare(block) || hasNegativeClaim(block)
+                    if (judged) null else "${f.name}：$name"
+                }
+            }
+            .sorted()
+        assertTrue(
+            "这些读源码的用例名声明了顺序 / 频率语义，判据里却没有位置比较 / 范围限定 / 否定式判据" +
+                "（BUG.md L-109 / L-1151）（共 ${offenders.size} 处）：${offenders.take(40)}",
+            offenders.isEmpty(),
+        )
+    }
+
+    /** 取出 [call]（如 `assertFalse(`）每次调用的实参文本（按括号配对，跨行也算一次调用） */
+    private fun callArgs(code: String, call: String): List<String> {
+        val out = mutableListOf<String>()
+        var i = code.indexOf(call)
+        while (i >= 0) {
+            val start = i + call.length
+            var depth = 1
+            var j = start
+            while (j < code.length && depth > 0) {
+                when (code[j]) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                if (depth == 0) {
+                    out += code.substring(start, j)
+                    break
+                }
+                j++
+            }
+            i = code.indexOf(call, i + call.length)
+        }
+        return out
+    }
+
     private fun testDir(): File =
         listOf(File("src/test/java/com/jinn/inputmethod"), File("app/src/test/java/com/jinn/inputmethod"))
             .firstOrNull { it.isDirectory }
