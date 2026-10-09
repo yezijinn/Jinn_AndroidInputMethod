@@ -610,6 +610,17 @@ class Prefs(context: Context) {
         set(value) = sp.edit { putBoolean(KEY_TRANSLATE_ENABLED, value) }
 
     /**
+     * 屏幕翻译总开关（无障碍，2026-10-10 起，默认关）。
+     *
+     * 与系统「无障碍」里的服务开关是**两件事**：系统开关决定「系统是否绑定服务」（不绑就收不到
+     * 任何触发），本键决定「绑定后是否干活」——关掉即磁贴置灰、`requestCapture` 直接拒绝。
+     * 服务本身不订阅任何事件，所以本键只需要在触发路径上判一次。
+     */
+    var screenTranslateEnabled: Boolean
+        get() = boolOr(KEY_SCREEN_TRANSLATE, false)
+        set(value) = sp.edit { putBoolean(KEY_SCREEN_TRANSLATE, value) }
+
+    /**
      * 翻译服务提供方 id（见 [TranslationProviderId]）。
      *
      * 键**缺失**（用户从未动过服务方下拉）时按「已填的凭据」推导，而不是直接回落当前默认 ——
@@ -1272,6 +1283,8 @@ class Prefs(context: Context) {
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
         put(KEY_TRANSLATE_ENABLED, translateEnabled)
+        // 屏幕翻译总开关：默认 false（平凡默认）⇒ 无条件导出不会把「当时的默认」固化成显式值
+        put(KEY_SCREEN_TRANSLATE, screenTranslateEnabled)
         // ⚠ 这两个键只在**用户真的设置过**时才导出（2026-10-03 修复 L-537）：`translateProvider`
         // 的 getter 在键缺失时按「谁有凭据」逐家推导、`translateTarget` 会回落默认 ⇒ 无条件导出
         // 会把「未设置」固化成显式值。后果：新机上先配好 DeepL，再导入一份旧包（导出时用户还没选过
@@ -1453,6 +1466,7 @@ class Prefs(context: Context) {
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
                 KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
                 KEY_TRANSLATE_ENABLED -> asBool(v)?.let { translateEnabled = it; ok() } ?: bad(key)
+                KEY_SCREEN_TRANSLATE -> asBool(v)?.let { screenTranslateEnabled = it; ok() } ?: bad(key)
                 // 三个枚举型取值都走 setter 里的 of() 归一：脏备份（未知 id / 未知语言）不会带进运行期
                 KEY_TRANSLATE_PROVIDER -> asString(v)?.let { translateProvider = it; ok() } ?: bad(key)
                 KEY_TRANSLATE_TARGET -> asString(v)?.let { translateTarget = it; ok() } ?: bad(key)
@@ -1748,6 +1762,14 @@ class Prefs(context: Context) {
         /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
+
+        /**
+         * 屏幕翻译（无障碍，2026-10-10 起）：应用内总开关。
+         *
+         * 纯 UI 偏好（换机必须带走），与系统「无障碍」里的服务开关互不替代：
+         * 前者决定「是否绑定服务」，本键决定「绑定后是否干活」。
+         */
+        private const val KEY_SCREEN_TRANSLATE = "screen_translate_enabled"
 
         /** 在线翻译（BYOK，2026-09-30 起）：开关 + Provider / 目标语言 + 六家各自的一组凭据 */
         private const val KEY_TRANSLATE_ENABLED = "translate_enabled"

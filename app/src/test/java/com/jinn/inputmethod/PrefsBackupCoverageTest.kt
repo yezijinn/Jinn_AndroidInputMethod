@@ -77,7 +77,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-07 起 85 → 86：新增「图库快贴自动返回」1 键（面板里那个开关的用户偏好）
         // 2026-10-07 起 86 → 88：新增「图库缩略图每行张数」「图库缩略图行高」2 键（「布局」调节）
         // 2026-10-09 起 88 → 90：新增「键高」「26 键常显大写」2 键（外观参数；换机要带走）
-        assertEquals("提取到的键常量应是 90 个（改键数请同步本断言）", 90, keyConstants.size)
+        // 2026-10-10 起 90 → 91：新增「屏幕翻译」1 键（无障碍功能的应用内总开关，纯 UI 偏好）
+        assertEquals("提取到的键常量应是 91 个（改键数请同步本断言）", 91, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -128,6 +129,8 @@ class PrefsBackupCoverageTest {
             "KEY_FUZZY_PINYIN" to "asInt(v)",
             "KEY_VOICE_INPUT" to "asBool(v)",
             "KEY_TRANSLATE_ENABLED" to "asBool(v)",
+            // 屏幕翻译（无障碍）：应用内总开关，类型 bool
+            "KEY_SCREEN_TRANSLATE" to "asBool(v)",
             "KEY_TRANSLATE_PROVIDER" to "asString(v)",
             "KEY_TRANSLATE_TARGET" to "asString(v)",
             // 「哪些算原文」12 键：范围模式是字符串（走 of() 归一），字节上限是整数（走 coerceIn 钳位）

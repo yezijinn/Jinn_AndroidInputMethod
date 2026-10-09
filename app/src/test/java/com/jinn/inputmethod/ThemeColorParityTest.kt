@@ -226,8 +226,31 @@ class ThemeColorParityTest {
             .sortedBy { it.name }
         // 防呆：路径写错时下面会因为「一个页面都没扫到」而假绿
         assertTrue("扫到的页面数异常（路径可能写错）: ${pages.size}", pages.size >= 10)
-        return pages.map { it.name to TestSources.codeOf(it.readText()) }
+        // 无界面页面不参与「必须跟随明暗 / 必须接入定时换色」两条：主题是给**看得见的像素**用的。
+        // ⚠ 豁免自带验证：被豁免的页面必须真的没有内容视图（一旦有人给它 setContentView，
+        //   这条立刻变红，豁免自动作废）—— 免得例外变成「把页面挂个名字绕开守卫」的后门。
+        for (name in noUiPages) {
+            val src = pages.firstOrNull { it.name == name }?.let { TestSources.codeOf(it.readText()) }
+                ?: error("$name 已在 noUiPages 里，但源码目录里找不到它（删了页面就同步删豁免）")
+            assertTrue(
+                "$name 被豁免了主题接入，却没有资格：它出现了 setContentView（说明它其实有界面）",
+                "setContentView(" !in src,
+            )
+        }
+        return pages
+            .filterNot { it.name in noUiPages }
+            .map { it.name to TestSources.codeOf(it.readText()) }
     }
+
+    /**
+     * 「根本不显示任何像素」的页面：豁免上面两条主题守卫。
+     *
+     * 判据不是「它叫 Activity 但不是设置页」，而是**它不会绘制内容**：
+     *  · `ScreenTranslateTriggerActivity`（2026-10-10）：透明主题 + `noHistory`，被磁贴拉起只为
+     *    **收起快捷设置遮罩**（`TileService` 只有这一条可靠路径），随即把采集请求转交服务并
+     *    `finish()`（约 0.2s），全程无内容视图、无交互。给它装主题定时器是纯死代码。
+     */
+    private val noUiPages = setOf("ScreenTranslateTriggerActivity.kt")
 
     /**
      * 取 `signature` 那个函数的**大括号配平**函数体（不含外层花括号）；找不到返回 null。
