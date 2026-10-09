@@ -17,6 +17,7 @@ import android.widget.Toast
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.Locale
+import java.io.FileOutputStream
 
 /**
  * 分类词库页：列出可选词库，按需下载 / 删除。
@@ -1049,7 +1050,15 @@ private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File, url: String, fi
             if (!resp.isSuccessful) error("HTTP ${resp.code}")
             val body = resp.body ?: error("响应为空")
             body.byteStream().use { input ->
-                tmp.outputStream().use { out -> copyCapped(input, out) }
+                // 落盘（fsync）必须早于改名：摘要是在**页缓存**上算的，不 sync 就 rename，
+                // 掉电后可能留下「名字合法、内容半截」的 .xz —— 引擎按后缀无条件扫 dicts/，
+                // 只会记一条加载失败并当作未装，而词库页按文件存在渲染成「已装」，
+                // 旧包又已被 rename 覆盖、无法回退。本仓其余 tmp→rename 都带这一步
+                // （CustomDicts / UserFrequency），这条此前漏了。
+                FileOutputStream(tmp).use { out ->
+                    copyCapped(input, out)
+                    out.fd.sync()
+                }
             }
         }
         // 校验必须在改名之前：一旦 rename 成 `.xz`，引擎下一次空闲加载就会扫到它。

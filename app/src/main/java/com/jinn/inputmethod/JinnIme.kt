@@ -2616,7 +2616,8 @@ class JinnIme : InputMethodService() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Diagnostics.i(TAG, "network: 网络恢复可用")
-                ui.post { if (asr?.state == LinkState.OFFLINE) asr?.connect() }
+                // 网络恢复自动重连同样不是用户发起：撤销空闲关闭会让息屏后的 ping 一直响下去（见 AsrClient.connect）
+        ui.post { if (asr?.state == LinkState.OFFLINE) asr?.connect(userInitiated = false) }
             }
 
             override fun onLost(network: Network) {

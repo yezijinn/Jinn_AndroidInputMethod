@@ -1016,7 +1016,7 @@ class RecentFixesRegressionTest {
      * （生效那段写「已激活，唤起键盘可预览」，另一段写「未激活，不可预览」）；键高定义域收到 40~90dp。
      */
     /**
-     * 一条后台任务的生命周期（2026-10-09 审查）：
+    一条后台任务的生命周期（2026-10-09 审查）：
      *
      * ① 剪贴板监听一次事件只读一次 `primaryClip`：读三次之间内容可能已被改写，而入库用的
      *   是后读到的值，「历史里最新一条」与触发事件的那一份对不上。
@@ -1040,6 +1040,41 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+    外部交互面的五处收口（2026-10-09 审查第二轮）：
+     *
+     * 自动重连不得撤销语音空闲关闭（撤了就永久保活、息屏后 ping 继续唤醒）；识别文本走
+     * JSON null 安全取值（`optString` 对显式 null 返回字面量 "null"，会被直接 commit 进输入框）；
+     * 词库下载改名之前必须 fsync（摘要是在页缓存上算的）；更新检查不得用无上限的 readLine；
+     * 翻译 POST 不得静默重发（服务端可能已计费）。
+     */
+    @Test
+    fun `外部交互面的五处收口不得回退`() {
+        val asr = codeOf("AsrClient.kt")
+        assertTrue("只有用户发起才撤销空闲关闭", "if (userInitiated) cancelIdleClose()" in asr)
+        assertTrue("自动重连不算用户发起", "connect(force = true, userInitiated = false)" in asr)
+        assertTrue("网络恢复重连同样不算用户发起", "asr?.connect(userInitiated = false)" in codeOf("JinnIme.kt"))
+
+        val proto = codeOf("Protocol.kt")
+        assertTrue("识别文本必须走 JSON null 安全取值", "jsonText(json, \"text\").orEmpty()" in proto)
+        assertFalse("不得再用 optString 取识别文本", "json.optString(\"text\", \"\")" in proto)
+
+        assertTrue("下载落盘必须在改名之前 fsync", "out.fd.sync()" in codeOf("DictManagerActivity.kt"))
+
+        val up = codeOf("UpdateChecker.kt")
+        assertTrue("响应必须按块读", "reader.read(buf)" in up)
+        assertFalse("不得再用无换行的 readLine", "reader.readLine()" in up)
+
+        assertTrue("翻译 POST 不得静默重发", "retryOnConnectionFailure(false)" in codeOf("TranslationClient.kt"))
+    }
+
+    /**
+    键盘外观页的控件文案与结构（2026-10-09 指定）：
+     *
+     * 每一项只留主标题 —— 三个开关的第二行说明、明暗切换的说明行、定时提示行整条删除；
+     * 滑杆标题与拖动条间距 0（同在一行、紧贴）；皮肤两段改成主标题「亮色 / 暗色」+ 状态行
+     * （生效那段写「已激活，唤起键盘可预览」，另一段写「未激活，不可预览」）；键高定义域收到 40~90dp。
+     */
     @Test
     fun `外观页控件只留主标题且键高上界收到九十`() {
         val layout = TestSources.rawSource(
@@ -1092,6 +1127,17 @@ class RecentFixesRegressionTest {
         assertEquals("键高上界必须是 90dp", 90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
     }
 
+    /**
+    26 键大写字母的字形尺寸（2026-10-09 指定）：
+     *
+     * 铺满分支原先**只按键高定字号**：键高 70dp ⇒ 字号 49dp，而 26 键每键宽 36dp ——
+     * 字母比键还宽，直观就是「太大、相邻字母相接」。现在补上与居中 / 长文本分支同源的
+     * 宽度收束（[PinyinKey.FULL_TEXT_FIT_RATIO]），基准由视图下发（最宽字母 W + q 键宽）
+     * 整页同号。实机同屏对拍：Q 排字形 122px → 75px、A 排 104px → 71px，其余各行不变。
+     *
+     * 「大写」「删除」两键的图标同时放大一倍（padding 13dp → 8dp：fitCenter 下图标被
+     * 「键框减内缩」框死，13dp 只剩约 10dp）。同屏实测两键图标尺寸不变、图标盒 10dp → 20dp。
+     */
     @Test
     fun `26键大写字母按宽度收束且两键图标放大一倍`() {
         val key = codeOf("PinyinKey.kt")
@@ -1123,6 +1169,7 @@ class RecentFixesRegressionTest {
             Regex("padding=\"8dp\"").findAll(xml).count(),
         )
     }
+
 
     @Test
     fun `工具栏不再渲染第二行小字且大写删除为全宽十分之一`() {

@@ -336,12 +336,17 @@ object UpdateChecker {
     ): String {
         val sb = StringBuilder(minOf(maxChars, 8192))
         var total = 0
+        val buf = CharArray(8192)
         while (true) {
             if (System.currentTimeMillis() > deadline) break
-            val line = reader.readLine() ?: break
-            total += line.length + 1
-            if (total > maxChars) break
-            sb.append(line).append('\n')
+            // 按块读，并把两个判据都放进循环：`readLine` 的单行长度没有上限，
+            // 一个无换行的超长响应（压缩后的单行 HTML / 网关改写页）会整行进堆，
+            // 1MB 上限与 25s 总预算都拦不住 —— 而本进程同时承载输入法服务，一次 OOM 连键盘一起带走。
+            val n = reader.read(buf)
+            if (n < 0) break
+            val take = minOf(n, maxChars - total)
+            if (take > 0) { sb.append(buf, 0, take); total += take }
+            if (total >= maxChars) break
         }
         return sb.toString()
     }

@@ -85,6 +85,11 @@ internal object TranslationClient {
             // —— 词库下载那个客户端早已出于同样的理由关掉了跨协议跳转。
             .followRedirects(false)
             .followSslRedirects(false)
+            // 关掉 OkHttp 的连接级自动重发：翻译请求是带正文的 POST，服务端可能已受理并计费，
+            // 客户端静默重发第二次就会重复扣费（BYOK 直接对应账单），用户还只看到一次结果。
+            // 「重定向会把正文转投第三方」这条已经用上面的 followRedirects(false) 关掉了，
+            // 重发是同一维度的另一条通道。失败按现有 NETWORK 文案提示，重试由用户决定。
+            .retryOnConnectionFailure(false)
             .build()
     }
 

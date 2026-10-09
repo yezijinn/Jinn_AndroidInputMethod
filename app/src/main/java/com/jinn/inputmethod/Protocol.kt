@@ -69,10 +69,13 @@ data class RecognitionMessage(
         fun parse(raw: String): RecognitionMessage? = runCatching {
             val json = JSONObject(raw)
             RecognitionMessage(
-                taskId = json.optString("task_id"),
+                // `optString` 的默认值只在**键缺失**时生效：字段存在而值为 JSON null 时它会返回
+                // 字符串 "null"，而这段文本会被直接 commit 进输入框（服务端把 None 序列化成 null 是常态）。
+                // 走翻译链那套 JSON null 安全的取值（Translation.kt 的 jsonText）。
+                taskId = jsonText(json, "task_id").orEmpty(),
                 isFinal = json.optBoolean("is_final", false),
                 duration = json.optDouble("duration", 0.0),
-                text = json.optString("text", ""),
+                text = jsonText(json, "text").orEmpty(),
             )
         }.getOrNull()
     }

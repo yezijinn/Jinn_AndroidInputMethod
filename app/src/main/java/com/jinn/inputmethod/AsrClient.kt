@@ -96,10 +96,16 @@ class AsrClient(
 
     /**
      * 建立连接。地址变化或 [force] 时重连，其余情况幂等。
+     *
+     * [userInitiated] 决定要不要撤销已排程的**空闲关闭**：只有「用户又要用了」才撤销它。
+     * 内部自动重连（[tryReconnect] / 网络恢复回调）撤销会带来一串后果 —— 那次排程永久失效，
+     * 而重连成功后没有任何地方会补排（排程点全在用户操作路径上），连接于是被复活并一直保活：
+     * 20s 一次的 ping 在息屏后继续唤醒，正是空闲关闭要消掉的那份耗电（MEM-13）。
+     * 自动重连不撤也不重排：原来的排程还在，到点照样关。
      */
-    fun connect(force: Boolean = false) {
+    fun connect(force: Boolean = false, userInitiated: Boolean = true) {
         userClosed = false
-        cancelIdleClose()
+        if (userInitiated) cancelIdleClose()
         refreshSendSnapshot()
         reconnectHandler.removeCallbacks(reconnectRunnable)
         val target = prefs.wsUrl
@@ -258,7 +264,8 @@ class AsrClient(
         if (state == LinkState.ONLINE || state == LinkState.CONNECTING) return
         Diagnostics.i(TAG, "tryReconnect: attempt=$reconnectAttempt")
         Log.i(TAG, "tryReconnect: attempt=$reconnectAttempt")
-        connect(force = true)
+        // 自动重连不是用户发起：不许撤销空闲关闭（见 [connect] 的说明）
+        connect(force = true, userInitiated = false)
     }
 
     private fun scheduleReconnect() {
