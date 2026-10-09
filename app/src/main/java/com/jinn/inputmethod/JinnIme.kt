@@ -137,6 +137,16 @@ class JinnIme : InputMethodService() {
     private var voiceView: View? = null
     private var pinyinView: View? = null
 
+    /**
+     * 语音面板上次套透明度的档位与目标视图（MEM-31）。
+     *
+     * [applyTransparencyToVoicePanel] 每次弹键盘都会被调到，而它要走一遍整棵语音树并重建 7 个
+     * drawable（麦克风底盘 + 6 个编辑键）；档位没变、视图也没重建时这趟活是白做的。
+     * 视图实例变化（换肤 / 改外观会重建树）或档位变化时照旧重涂。
+     */
+    private var voiceTransparencyPercent = -1
+    private var voiceTransparencyTarget: View? = null
+
     /** 当前键盘模式。默认拼音，语音默认禁用，不能以语音键盘起步 */
     private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
@@ -489,6 +499,13 @@ class JinnIme : InputMethodService() {
             // 见 L-1142），而它跑在默认优先级上，用户点开输入框后前台按键要跟它抢 CPU ——
             // 与可选包线程、双拼预热线程同一个写法
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            // 偏好文件预热（MEM-16）：`getSharedPreferences` 首次调用要同步解析整份 XML，
+            // 此前它可能落在按键、候选或弹键盘路径的第一次读取上（磁盘慢时就是一次主线程卡顿）。
+            // 这里只读一次，进程内缓存，之后所有读取都命中内存。
+            runCatching {
+                Prefs(this)
+                ClipboardPrefs.of(this)
+            }.onFailure { Diagnostics.w(TAG, "偏好预热失败: ${it.message}") }
             val start = System.currentTimeMillis()
             // 必须兜住异常：本线程是裸 Thread，load() 内部也没有 try/catch。
             // 一旦基础包解压失败（APK 安装不完整、存储故障等），异常会直接穿透到线程外，
@@ -1666,6 +1683,11 @@ class JinnIme : InputMethodService() {
         val voice = voiceView ?: return
         val ctx = keyboardThemeCtx ?: this
         val percent = prefs.keyTransparencyPercent
+        // 值未变且视图没重建过：整树遍历与 7 个 drawable 重建都白做（MEM-31）。视图一变（换肤 /
+        // 改外观会重建树）或档位一变，下面的重涂照走。
+        if (voice === voiceTransparencyTarget && percent == voiceTransparencyPercent) return
+        voiceTransparencyTarget = voice
+        voiceTransparencyPercent = percent
         val plateAlpha = KeyTransparency.plateAlpha(percent)
         val surfaceAlpha = KeyTransparency.surfaceAlpha(percent)
         // 纯色面按档统一淡（与 26 键面板同一套识别规则）

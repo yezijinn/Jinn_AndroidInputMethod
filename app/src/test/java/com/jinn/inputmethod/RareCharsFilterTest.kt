@@ -299,11 +299,9 @@ class RareCharsFilterTest {
      */
     @Test
     fun 档位页例字必须落在对应档里() {
-        val path = listOf(
-            File("src/main/java/com/jinn/inputmethod/RareCharsActivity.kt"),
-            File("app/src/main/java/com/jinn/inputmethod/RareCharsActivity.kt"),
-        ).firstOrNull { it.isFile } ?: error("找不到 RareCharsActivity.kt")
-        val src = path.readText()
+        // 走共用装载器（剥注释）：裸 readText 时，注释里出现常量名就能满足下面「常量里取例字」的判据
+        // （BUG.md L-1149）
+        val src = TestSources.codeSource("RareCharsActivity.kt")
         val t2 = charsOf(asset("tier2_chars.txt"))
         val t3 = charsOf(asset("tier3_chars.txt"))
         for ((key, allow, which) in listOf(

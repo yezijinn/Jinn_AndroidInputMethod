@@ -217,6 +217,23 @@ class TestSourcesTest {
         )
         val lazy = mustDelegate.filterNot { name -> File(dir, name).readText().contains("TestSources.") }
         assertTrue("这些文件的源码装载/剥注释还没接到 TestSources（见 BUG.md L-116）：$lazy", lazy.isEmpty())
+        // 只查「文件里提到过助手」不够（BUG.md L-1149）：提一次、另一处照旧裸读也算过。
+        // 逐个检查读**生产源码**的调用点 —— 路径落在 `src/main/java` 的 `File(...)` 后跟 `readText()`
+        // 即算自建；读本测试文件自身的对拍（元守卫要审自己的写法）不算。
+        val offenders = mutableListOf<String>()
+        for (name in mustDelegate) {
+            val lines = File(dir, name).readText().split('\n')
+            for ((i, line) in lines.withIndex()) {
+                if (!line.contains("File(") || !line.contains("src/main/java")) continue
+                if (line.contains(name)) continue          // 读自己：例外
+                val near = lines.subList(i, minOf(lines.size, i + 3)).joinToString(" ")
+                if (near.contains("readText(")) offenders += "$name:${i + 1}"
+            }
+        }
+        assertTrue(
+            "这些位置仍在用裸 readText 读生产源码（改用 TestSources.codeSource / rawSource）：$offenders",
+            offenders.isEmpty(),
+        )
     }
 
     private fun testDir(): File =

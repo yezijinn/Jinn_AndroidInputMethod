@@ -188,6 +188,14 @@ class PrefsBackupCoverageTest {
             "KEY_TAP_SOUND_MAP" to "asString(v)",
             "KEY_TAP_VIBRATE_ENABLED" to "asBool(v)",
             "KEY_TAP_VIBRATE_STRENGTH" to "asInt(v)",
+            // 键高 / 26 键大写 / 图库四键：这六项此前从未进过本表（BUG.md L-1148 的键集合断言
+            // 一落地就报出来）；取值工具逐一核对过类型，与各自 setter 的语义一致。
+            "KEY_KEY_HEIGHT_DP" to "asFloat(v)",
+            "KEY_KEY_LETTER_UPPERCASE" to "asBool(v)",
+            "KEY_GALLERY_TREE_URI" to "asString(v)",
+            "KEY_GALLERY_AUTO_RETURN" to "asBool(v)",
+            "KEY_GALLERY_COLUMNS" to "asInt(v)",
+            "KEY_GALLERY_CELL_HEIGHT_DP" to "asInt(v)",
         )
         for ((key, tool) in pairs) {
             assertTrue(
@@ -200,6 +208,21 @@ class PrefsBackupCoverageTest {
         assertTrue(
             "KEY_FAVORITE_SYMBOLS 未做归一（会绕过长度上限，导致主线程解析超大 JSON）",
             import.contains("FavoriteSymbols.serialize(FavoriteSymbols.parse("),
+        )
+        // 键集合必须覆盖导入侧：新增键时漏补这张表、或把类型写错，此前不会有任何断言报出来
+        // （BUG.md L-1148）。例外只有三类 —— 退役键、单独钉住的收藏、凭据（凭据不进备份，
+        // 只在导入侧兼容旧包）。
+        val importKeys = Regex("""(KEY_\w+)\s*->\s*as""").findAll(import).map { it.groupValues[1] }.toSet()
+        val credentialKeys = setOf(
+            "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
+            "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
+            "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY", "KEY_OPENAI_API_KEY",
+        )
+        val allowed = pairs.keys + "KEY_FAVORITE_SYMBOLS" + retiredKeys + credentialKeys
+        assertEquals(
+            "导入分支里有键没进配对表（新增键要在 pairs 里声明取值工具）",
+            emptySet<String>(),
+            importKeys - allowed,
         )
     }
 
@@ -342,11 +365,9 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `剪贴板白名单只认容量键：总开关是产品不变量，不进备份`() {
-        val clipSource = listOf(
-            File("src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt"),
-            File("app/src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt"),
-        ).firstOrNull { it.isFile } ?: error("找不到 ClipboardPrefs.kt")
-        val text = clipSource.readText()
+        // 走共用装载器（剥注释）：直接 readText 时，注释里写一句含某个键名的说明就能满足正向钉，
+        // 也能把「总开关不得进白名单」这条负向钉判红（BUG.md L-1149）
+        val text = TestSources.codeSource("ClipboardPrefs.kt")
         // ⚠ 只看 importFromBackup 的**函数体**：`substringAfter("importFromBackup")` 会一路吃到
         // companion object，而那里仍有 `private const val KEY_ENABLED`（声明，不是白名单）⇒
         // 用它判「导入白名单里没有 KEY_ENABLED」永远为假（2026-10-03 实测）。
