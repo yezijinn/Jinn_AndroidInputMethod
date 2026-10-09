@@ -118,8 +118,7 @@ class ScreenTranslateGuardTest {
     @Test
     fun 事件回调必须是空实现() {
         val src = TestSources.codeSource(SERVICE)
-        val body = src.substringAfter("override fun onAccessibilityEvent")
-            .substringBefore("private fun")
+        val body = TestSources.window(src, "override fun onAccessibilityEvent", "private fun")
         assertTrue("onAccessibilityEvent 应为空实现（= Unit）", "= Unit" in body)
         for (token in listOf("translate", "Traversal", "getText", "text")) {
             assertFalse("零订阅下事件回调不得出现「$token」（否则事件面会变成偷偷采集）", body.contains(token))
@@ -196,8 +195,7 @@ class ScreenTranslateGuardTest {
     @Test
     fun 替换必须在写入前重判闸门() {
         val src = TestSources.codeSource(SERVICE)
-        val replace = src.substringAfter("override fun onReplace()")
-            .substringBefore("override fun onOpenSettings")
+        val replace = TestSources.blockAfter(src, "override fun onReplace()")
         for (token in listOf("replaceable(", "windowId", "refreshAlive()", "text?.trim()", "performSetText(")) {
             assertTrue("替换路径缺少闸门：$token", replace.contains(token))
         }

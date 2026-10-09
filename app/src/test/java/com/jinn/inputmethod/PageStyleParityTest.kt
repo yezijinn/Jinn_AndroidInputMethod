@@ -131,7 +131,7 @@ class PageStyleParityTest {
     @Test
     fun 页面根底部不得留白() {
         val styles = res("values/styles.xml")
-        val root = styles.substringAfter("<style name=\"PageRoot\">").substringBefore("</style>")
+        val root = TestSources.window(styles, "<style name=\"PageRoot\">", "</style>")
         assertTrue("PageRoot 不许写整体 padding（会把底部一起带上）", "android:padding\"" !in root)
         assertTrue("PageRoot 不许写 paddingBottom（键盘弹出时会在候选栏上方露出底色带）",
             "paddingBottom" !in root)
@@ -198,7 +198,7 @@ class PageStyleParityTest {
     fun 行间距必须保持紧凑() {
         val bad = ArrayList<String>()
         val styles = res("values/styles.xml")
-        val card = styles.substringAfter("<style name=\"SettingsCard\"").substringBefore("</style>")
+        val card = TestSources.window(styles, "<style name=\"SettingsCard\"", "</style>")
         // ⚠ 样式表里是 `<item name="…">2dp</item>` 形式，不是 XML 属性形式
         val gap = Regex("<item name=\"android:layout_marginBottom\">(\\d+)dp</item>")
             .find(card)?.groupValues?.get(1)?.toInt()

@@ -28,7 +28,7 @@ class PanelRebuildWorkTest {
         )) {
             val src = codeOnly(sourceOf(name))
             assertTrue("$tag 缺少 stopBackgroundWork（视图重建时不会作废任务）", "fun stopBackgroundWork()" in src)
-            val body = src.substringAfter("fun stopBackgroundWork()").substringBefore("\n    }")
+            val body = TestSources.blockAfter(src, "fun stopBackgroundWork()")
             assertTrue("$tag 的 stopBackgroundWork 没有递增 refreshToken：任务不会被判停", "refreshToken++" in body)
         }
     }
@@ -146,7 +146,7 @@ class PanelRebuildWorkTest {
     fun `会话边界必须收起剪贴板面板`() {
         val view = codeOnly(sourceOf("PinyinKeyboardView.kt"))
         val configure = codeOnly(
-            view.substringAfter("fun configure(scheme: ShuangpinScheme").substringBefore("\n    }"),
+            TestSources.blockAfter(view, "fun configure(scheme: ShuangpinScheme"),
         )
         assertTrue(
             "configure 必须收起剪贴板面板（否则新输入框以面板弹出）",
@@ -158,7 +158,7 @@ class PanelRebuildWorkTest {
         )
         val ime = sourceOf("JinnIme.kt")
         val finish = codeOnly(
-            ime.substringAfter("override fun onFinishInputView(").substringBefore("\n    }"),
+            TestSources.blockAfter(ime, "override fun onFinishInputView("),
         )
         assertTrue("键盘收起时必须收起剪贴板面板", "hideClipboardPanel()" in finish)
         assertTrue("搜索面板的收起不得被删（同族既有契约）", "hideSearchPanel()" in finish)
@@ -179,13 +179,12 @@ class PanelRebuildWorkTest {
     @Test
     fun 长按操作条出现时必须复位滚动标志() {
         val src = codeOnly(sourceOf("ClipboardPanelView.kt"))
-        val show = src.substringAfter("private fun showItemMenu(item: ClipboardDb.Item) {")
-            .substringBefore("private fun hideActionBar()")
+        val show = TestSources.blockAfter(src, "private fun showItemMenu(item: ClipboardDb.Item) {")
         assertTrue(
             "显示操作条前必须复位 listScrolling（否则粘性标志会把它立刻收掉）",
             "listScrolling = false" in show,
         )
-        val hide = src.substringAfter("private fun hideActionBar() {").substringBefore("\n    }")
+        val hide = TestSources.blockAfter(src, "private fun hideActionBar() {")
         assertTrue("收起操作条时也要复位 listScrolling", "listScrolling = false" in hide)
     }
 
@@ -199,15 +198,14 @@ class PanelRebuildWorkTest {
     @Test
     fun 刷新失败必须把视图状态归位() {
         val src = codeOnly(sourceOf("ClipboardPanelView.kt"))
-        val fail = src.substringAfter("}.onFailure {").substringBefore("Diagnostics.e(")
+        val fail = TestSources.blockAfter(src, "}.onFailure {")
         assertTrue("失败分支必须清空列表快照", "currentItems = mutableListOf()" in fail)
         assertTrue("失败分支必须归位分页状态", "hasMorePages = false" in fail)
         assertTrue("失败分支必须让空态说真话（loadFailed）", "loadFailed = true" in fail)
         assertTrue("失败分支必须重绘空态", "updateEmpty()" in fail)
         assertTrue("空态要区分「读取失败」与「暂无历史」", "loadFailed -> TEXT_EMPTY_LOAD_FAILED" in src)
         assertTrue("成功分支要清掉失败标记（否则下次成功仍显示「读取失败」）",
-            src.substringAfter("scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < total")
-                .substringBefore("adapter.notifyDataSetChanged()").contains("loadFailed = false"))
+            TestSources.window(src, "scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < total", "adapter.notifyDataSetChanged()").contains("loadFailed = false"))
     }
 
     /**
@@ -221,14 +219,13 @@ class PanelRebuildWorkTest {
     fun 长按操作的回调必须带令牌() {
         val src = codeOnly(sourceOf("ClipboardPanelView.kt"))
         for (name in listOf("private fun toggleFavorite()", "private fun deleteItem()")) {
-            val body = src.substringAfter(name).substringBefore("private fun ")
+            val body = TestSources.blockAfter(src, name)
             assertTrue("$name 必须在进后台前抓令牌", "val token = actionToken" in body)
             assertTrue("$name 的回调必须按令牌决定要不要动界面", "token == actionToken" in body)
         }
-        val hide = src.substringAfter("private fun hideActionBar() {").substringBefore("\n    }")
+        val hide = TestSources.blockAfter(src, "private fun hideActionBar() {")
         assertTrue("收起操作条要作废在飞操作（切分类 / 收起后旧回调不得再动界面）", "actionToken++" in hide)
-        val show = src.substringAfter("private fun showItemMenu(item: ClipboardDb.Item) {")
-            .substringBefore("private fun hideActionBar()")
+        val show = TestSources.blockAfter(src, "private fun showItemMenu(item: ClipboardDb.Item) {")
         assertTrue("每次显示操作条都要换令牌", "actionToken++" in show)
     }
 

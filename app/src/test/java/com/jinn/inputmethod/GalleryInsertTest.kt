@@ -62,8 +62,7 @@ class GalleryInsertTest {
     @Test
     fun 一次flush要把队列抽干() {
         val src = TestSources.codeSource("JinnIme.kt")
-        val body = src.substringAfter("private fun flushPendingGalleryImage()")
-            .substringBefore("private fun openGalleryPicker()")
+        val body = TestSources.blockAfter(src, "private fun flushPendingGalleryImage()")
         assertTrue("要循环取用", "while (true)" in body)
         assertTrue("队首过期只丢这一张，继续取下一张", "continue" in body)
         assertTrue("换框 / 无连接时丢掉同批剩下的", "GalleryInsert.clearPending()" in body)
@@ -171,7 +170,7 @@ class GalleryInsertTest {
     @Test
     fun 图库输入框标识更宽但只取静态属性() {
         val src = TestSources.codeSource("GalleryInsert.kt")
-        val body = src.substringAfter("internal fun galleryFieldKeyOf(").substringBefore("fun putPending(")
+        val body = TestSources.blockAfter(src, "internal fun galleryFieldKeyOf(")
         for (field in listOf("fieldId", "inputType", "imeOptions")) {
             assertTrue("标识要带 $field", field in body)
         }
@@ -188,11 +187,10 @@ class GalleryInsertTest {
     @Test
     fun 落地失败的两类会上报界面() {
         val mine = TestSources.codeSource("JinnIme.kt")
-        val body = mine.substringAfter("private fun flushPendingGalleryImage()")
-            .substringBefore("private fun openGalleryPicker()")
+        val body = TestSources.blockAfter(mine, "private fun flushPendingGalleryImage()")
         assertTrue("文件失效要提示", "toast(TEXT_GALLERY_GONE)" in body)
         assertTrue("输入框已切换要提示", "toast(TEXT_GALLERY_FIELD_CHANGED)" in body)
-        val rejectedTail = body.substringAfter("InsertResult.Rejected", "").take(60)
+        val rejectedTail = TestSources.window(body, "InsertResult.Rejected", "}")
         assertFalse("宿主拒收不弹提示", "toast" in rejectedTail)
         val gallery = TestSources.codeSource("GalleryInsert.kt")
         for (state in listOf("Submitted", "Rejected", "NoConnection", "FileMissing")) {
@@ -223,7 +221,7 @@ class GalleryInsertTest {
     @Test
     fun 提交前拦截已消失的文件() {
         val src = TestSources.codeSource("GalleryInsert.kt")
-        val body = src.substringAfter("fun commit(").substringBefore("fun copyToCache(")
+        val body = TestSources.blockAfter(src, "fun commit(")
         assertTrue("commit 要先判文件存在与长度", "!file.exists() || file.length() == 0L" in body)
         assertTrue("并回报 FileMissing 让调用方说话", "InsertResult.FileMissing" in body)
     }
@@ -267,8 +265,7 @@ class GalleryInsertTest {
         assertTrue("取桥结果要分三态", "sealed interface TakeResult" in gallery)
         assertTrue("并回报 Expired", "TakeResult.Expired" in gallery)
         val mine = TestSources.codeSource("JinnIme.kt")
-        val body = mine.substringAfter("private fun flushPendingGalleryImage()")
-            .substringBefore("private fun openGalleryPicker()")
+        val body = TestSources.blockAfter(mine, "private fun flushPendingGalleryImage()")
         assertTrue("过期要落日志", "TakeResult.Expired" in body && "已过期" in body)
     }
 
@@ -323,8 +320,7 @@ class GalleryInsertTest {
     @Test
     fun 功能面板到八键要收窄内边距() {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
-        val body = src.substringAfter("private fun renderFunctionPanel()")
-            .substringBefore("private fun buildFunctionButton(")
+        val body = TestSources.blockAfter(src, "private fun renderFunctionPanel()")
         assertTrue("收窄逻辑要在面板渲染里", "PANEL_COMPACT_SLOTS" in body)
         assertTrue("按实际按钮数判断", "childCount >= PANEL_COMPACT_SLOTS" in body)
         assertTrue("内边距收到 4dp", "setPadding(dp(4), dp(4), dp(4), dp(4))" in body)
@@ -340,11 +336,10 @@ class GalleryInsertTest {
     @Test
     fun 图库面板的退出口落在图库键上() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
-        val body = view.substringAfter("if (hostImageCapable) {").substringBefore("// 「翻译」键")
+        val body = TestSources.blockAfter(view, "if (hostImageCapable) {")
         assertTrue("构建后立即同步一次状态", "refreshGalleryButton()" in body)
         assertTrue("点击时收起面板", "hideGalleryPanel()" in body)
-        val refresh = view.substringAfter("private fun refreshGalleryButton()")
-            .substringBefore("fun setTranslating")
+        val refresh = TestSources.blockAfter(view, "private fun refreshGalleryButton()")
         assertTrue("就地改文案", "\"返回\" else \"图库\"" in refresh)
         assertTrue("就地改颜色（提示红）", "skin.hintRed" in refresh)
         // 2026-10-09 用户指定：工具栏按钮的第二行小字**整条删除**（不只展开态收起），
@@ -368,8 +363,7 @@ class GalleryInsertTest {
         assertTrue("开关态用提示红与普通前景色区分", "kb_key_hint_red" in page && "text_primary" in page)
         assertTrue("翻页控件与页码", "\"←\"" in panel && "\"→\"" in panel && "\"%d/%d\"" in panel)
         // L-1028：标题与按钮拆两行 —— 原先挤在一行，系统字体放大到 1.3 倍时末尾按钮会被挤出可视区
-        val titleRow = panel.substringAfter("private fun buildTitleRow()")
-            .substringBefore("private fun smallButton(")
+        val titleRow = TestSources.blockAfter(panel, "private fun buildTitleRow()")
         assertTrue("标题行是纵向两行", "orientation = VERTICAL" in titleRow)
         assertTrue("按钮另起一行", "val actions = LinearLayout(context)" in titleRow)
         assertTrue("按钮尺寸收紧一档", "textSize = 11f" in panel)
@@ -377,9 +371,9 @@ class GalleryInsertTest {
 
         // L-1024：图库面板是 init 里最后 addView 的那个，同屏时盖在最上层 ——
         // 打开其它面板必须把它收起来，否则用户看到的是「点了没反应」、键还卡在红色「返回」态
-        val dir = view.substringAfter("private fun showDirectionPanel()").substringBefore("字母区: 隐藏三行")
-        val clip = view.substringAfter("fun showClipboardPanel()").substringBefore("fun hideClipboardPanel()")
-        val search = view.substringAfter("fun showSearchPanel()").substringBefore("fun hideSearchPanel()")
+        val dir = TestSources.window(view, "private fun showDirectionPanel()", "字母区: 隐藏三行")
+        val clip = TestSources.blockAfter(view, "fun showClipboardPanel()")
+        val search = TestSources.blockAfter(view, "fun showSearchPanel()")
         assertTrue("方向面板要收起图库面板", "hideGalleryPanel()" in dir)
         assertTrue("剪贴板面板要收起图库面板", "hideGalleryPanel()" in clip)
         assertTrue("搜索面板要收起图库面板", "hideGalleryPanel()" in search)
@@ -389,8 +383,7 @@ class GalleryInsertTest {
     @Test
     fun 自动返回开关接在选图上() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
-        val pick = view.substringAfter("override fun onPick(uri: android.net.Uri)")
-            .substringBefore("override fun onRebindRequested")
+        val pick = TestSources.blockAfter(view, "override fun onPick(uri: android.net.Uri)")
         assertTrue("先交付插入，再谈收不收面板", "onGalleryImagePicked(uri)" in pick)
         // MEM-25 起视图持一个 Prefs 包装（读的仍是进程内同一份 SharedPreferences，值不会滞后），
         // 判据只换取值方式，不换语义
@@ -412,8 +405,7 @@ class GalleryInsertTest {
     @Test
     fun 绑定入口行常驻不再累积() {
         val panel = TestSources.codeSource("GalleryPanelView.kt")
-        val render = panel.substringAfter("private fun render(state: State?)")
-            .substringBefore("private fun showList(")
+        val render = TestSources.blockAfter(panel, "private fun render(state: State?)")
         assertFalse("render 里不得再往面板挂入口行", "addView(row" in render)
         assertTrue("改成按状态切可见性", "rebindRow.visibility =" in render)
         assertEquals("常驻行只在 init 里挂一次", 1, panel.split("addView(rebindRow").size - 1)
@@ -437,9 +429,9 @@ class GalleryInsertTest {
 
         // 「布局」是临时操作，不能永久赖在屏幕上（用户 2026-10-07 要求）：
         // 收面板时收回，且每次重新展开都从收起态开始
-        val hidden = panel.substringAfter("fun onPanelHidden()").substringBefore("fun applySkin(")
+        val hidden = TestSources.blockAfter(panel, "fun onPanelHidden()")
         assertTrue("收起面板时把调节行收回", "tuneRow.visibility = GONE" in hidden)
-        val shown = panel.substringAfter("fun onPanelShown()").substringBefore("val tree = Prefs")
+        val shown = TestSources.window(panel, "fun onPanelShown()", "val tree = Prefs")
         assertTrue("每次展开也从收起态开始", "tuneRow.visibility = GONE" in shown)
     }
 
@@ -453,14 +445,12 @@ class GalleryInsertTest {
     fun 文件单选走系统选择器() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue("接口里有这个方法", "fun onPickFromSystemGallery()" in view)
-        val pick = view.substringAfter("override fun onSystemPicker()")
-            .substringBefore("visibility = View.GONE")
+        val pick = TestSources.window(view, "override fun onSystemPicker()", "visibility = View.GONE")
         assertTrue("面板里的按钮接系统选择器回调", "onPickFromSystemGallery()" in pick)
         assertFalse("不再接面板展开", "listener?.onOpenGallery()" in pick)
 
         val ime = TestSources.codeSource("JinnIme.kt")
-        val impl = ime.substringAfter("override fun onPickFromSystemGallery()")
-            .substringBefore("override fun onOpenGallerySettings()")
+        val impl = TestSources.blockAfter(ime, "override fun onPickFromSystemGallery()")
         assertTrue("实现里真的打开选图页", "openGalleryPicker()" in impl)
     }
 
@@ -504,8 +494,7 @@ class GalleryInsertTest {
     @Test
     fun 三条可感问题不许回退() {
         val host = TestSources.codeSource("ReceivingEditText.kt")
-        val insert = host.substringAfter("private fun insertImage(uri: Uri)")
-            .substringBefore("private fun decodeSampledBitmap")
+        val insert = TestSources.blockAfter(host, "private fun insertImage(uri: Uri)")
         assertTrue("解码丢后台", "BackgroundIo.run" in insert)
         assertTrue(
             "解码调用要在后台块里面",
@@ -514,10 +503,13 @@ class GalleryInsertTest {
         // 回主线程必须走自带 Handler：贴图用的 `View.post` 在视图脱离窗口后要等下一次 attach，
         // 而这一份实例不会再 attach ⇒ 贴图与日志一起丢（用户只看到「选了图没反应」）
         assertTrue("回主线程贴图（与附着状态无关）", "mainHandler.post { attachDecoded(" in insert)
-        assertTrue("脱离窗口时要留一条记录", "视图已脱离窗口" in insert)
+        // 「留一条记录」那句在 attachDecoded 里（不在 insertImage）—— 各自按自己的函数取块，
+        // 别靠窗口外溢把下一条函数的实现当成上一条的证据（BUG.md L-1145 的原型）
+        val attach = TestSources.blockAfter(host, "private fun attachDecoded(uri: Uri, bmp: Bitmap?)")
+        assertTrue("脱离窗口时要留一条记录", "视图已脱离窗口" in attach)
 
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
-        val gallery = view.substringAfter("fun showGalleryPanel()").substringBefore("val density")
+        val gallery = TestSources.window(view, "fun showGalleryPanel()", "val density")
         assertTrue("面板打开时清拼音缓冲", "clearComposingState()" in gallery)
 
         val panel = TestSources.codeSource("GalleryPanelView.kt")
@@ -536,15 +528,13 @@ class GalleryInsertTest {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue("枚举含两个全文端点动作", "DOC_START" in view && "DOC_END" in view)
         assertFalse("复制粘贴不再挂方向面板", "\"复制\", DirectionAction.COPY" in view)
-        val panel = view.substringAfter("private fun ensureDirectionPanel()")
-            .substringBefore("directionPanel = panel")
+        val panel = TestSources.window(view, "private fun ensureDirectionPanel()", "directionPanel = panel")
         assertTrue("第三行是到开头", "\"到开头\", DirectionAction.DOC_START" in panel)
         assertTrue("第三行是到末尾", "\"到末尾\", DirectionAction.DOC_END" in panel)
 
         val ime = TestSources.codeSource("JinnIme.kt")
         assertTrue("分发进移动逻辑", "DirectionAction.DOC_END -> moveOrExtend(action)" in ime)
-        val target = ime.substringAfter("private fun absoluteDocTarget(")
-            .substringBefore("private fun moveCursor(")
+        val target = TestSources.blockAfter(ime, "private fun absoluteDocTarget(")
         assertTrue("到开头 = 绝对 0", "DirectionAction.DOC_START -> 0" in target)
         assertTrue("到末尾按剩余文本长度算", "range.end + after.length" in target)
         assertTrue("读取带上限", "getTextAfterCursor(DOC_JUMP_MAX_CHARS, 0)" in target)
@@ -566,7 +556,7 @@ class GalleryInsertTest {
     fun 图库链路的收敛点必须留在原位() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         // L-1034：能力翻假与收起面板在同一处
-        val capable = view.substringAfter("fun setHostImageCapable(capable: Boolean)").take(700)
+        val capable = TestSources.blockAfter(view, "fun setHostImageCapable(capable: Boolean)")
         assertTrue("翻假时要判面板状态", "if (!capable && galleryActive)" in capable)
         assertTrue("并且真的收起面板", "hideGalleryPanel()" in capable)
         // L-1038：搜索态早退分支的三个同类字段要一并清
@@ -577,15 +567,15 @@ class GalleryInsertTest {
 
         val panel = TestSources.codeSource("GalleryPanelView.kt")
         // L-1035：视图重建要关池（只作废令牌不算完成）
-        val stop = panel.substringAfter("fun stopBackgroundWork()").take(400)
+        val stop = TestSources.blockAfter(panel, "fun stopBackgroundWork()")
         assertTrue("作废在途任务", "generation++" in stop)
         assertTrue("并关掉线程池", "thumbPool.shutdownNow()" in stop)
         // L-1043：到边界不空转、重排后复位滚动
-        val cols = panel.substringAfter("private fun stepColumns(delta: Int)").take(500)
+        val cols = TestSources.blockAfter(panel, "private fun stepColumns(delta: Int)")
         assertTrue("张数到边界直接返回", "if (next == columns) return" in cols)
-        val heights = panel.substringAfter("private fun stepHeight(delta: Int)").take(500)
+        val heights = TestSources.blockAfter(panel, "private fun stepHeight(delta: Int)")
         assertTrue("行高到边界直接返回", "if (next == cellHeightDp) return" in heights)
-        val rebuild = panel.substringAfter("private fun rebuildGrid()").take(600)
+        val rebuild = TestSources.blockAfter(panel, "private fun rebuildGrid()")
         assertTrue("重排后复位滚动", "scroll.scrollTo(0, 0)" in rebuild)
     }
 
@@ -658,11 +648,11 @@ class GalleryInsertTest {
     fun 面板文案与解码痕迹的收敛点() {
         val panel = TestSources.codeSource("GalleryPanelView.kt")
         // L-1039：指路要指向设置页真实存在的入口名
-        val binding = panel.substringAfter("const val TEXT_NEEDS_BINDING").substringBefore("\n")
+        val binding = TestSources.lineOf(panel, "const val TEXT_NEEDS_BINDING")
         assertTrue("指路要用设置页的入口名", "图库快贴功能" in binding)
         assertFalse("不再出现已不存在的入口名", "图库快贴目录" in binding)
         // L-1040：解码失败要留痕迹（只记序号与档位，不记路径）
-        val thumbs = panel.substringAfter("private fun loadThumbs(").substringBefore("private fun bindThumb(")
+        val thumbs = TestSources.blockAfter(panel, "private fun loadThumbs(")
         assertTrue("失败分支要记日志", "缩略图解码失败" in thumbs)
         assertFalse("日志不得带路径", "lastPathSegment" in thumbs)
         // L-1049：取消不是失败 —— 代际不符的任务先退出，别把收起面板刷成「解码失败」
@@ -670,9 +660,9 @@ class GalleryInsertTest {
         assertTrue("代际作废要提前返回", genCheck > 0)
         assertTrue("先判代际再解码", genCheck < thumbs.indexOf("val bmp = decodeThumb("))
         // L-1042：标题回填要有代际守卫，未绑定态要复位
-        val list = panel.substringAfter("private fun listImages(").substringBefore("private fun dp(")
+        val list = TestSources.blockAfter(panel, "private fun listImages(")
         assertTrue("标题回填要判代际", "if (gen == generation) title.text" in list)
-        val render = panel.substringAfter("private fun render(state: State?)").substringBefore("private fun showList(")
+        val render = TestSources.blockAfter(panel, "private fun render(state: State?)")
         assertTrue("未绑定态复位标题", "if (state == State.NeedsBinding) title.text = TEXT_TITLE_DEFAULT" in render)
     }
 

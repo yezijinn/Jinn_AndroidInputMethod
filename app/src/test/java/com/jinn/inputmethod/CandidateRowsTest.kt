@@ -149,7 +149,7 @@ class CandidateRowsTest {
 
         val text = xml.readText()
         fun attr(id: String, name: String): String {
-            val block = text.substringAfter("""android:id="@+id/$id"""").substringBefore("/>")
+            val block = TestSources.window(text, """android:id="@+id/$id"""", "/>")
             return Regex("""android:$name="([^"]+)"""").find(block)?.groupValues?.get(1)
                 ?: error("$id 上找不到 android:$name")
         }
@@ -206,7 +206,7 @@ class CandidateRowsTest {
         ).firstOrNull { it.isFile } ?: error("找不到 keyboard_pinyin.xml")
         val text = xml.readText()
 
-        val rootTag = text.substringAfter("<LinearLayout").substringBefore(">")
+        val rootTag = TestSources.window(text, "<LinearLayout", ">")
         assertFalse(
             "根布局不得有 android:paddingTop（候选栏底色要铺到键盘最顶，否则顶边露一条背板色）: $rootTag",
             rootTag.contains("paddingTop"),

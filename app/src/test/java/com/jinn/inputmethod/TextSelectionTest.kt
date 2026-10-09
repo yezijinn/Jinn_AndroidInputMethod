@@ -435,8 +435,7 @@ class TextSelectionTest {
     @Test
     fun 搜索框退格用的是码点安全删法() {
         // backspaceSearch 跑在 Android 的 EditText 上，JVM 够不到 ⇒ 源码对拍（剥注释走共用 TestSources）
-        val body = TestSources.codeSource("SearchPanelView.kt")
-            .substringAfter("fun backspaceSearch()").substringBefore("\n    }")
+        val body = TestSources.blockAfter(TestSources.codeSource("SearchPanelView.kt"), "fun backspaceSearch()")
         assertTrue("必须复用 TextSelection.stepByCodePoint: $body", body.contains("stepByCodePoint("))
         assertFalse("不得按 UTF-16 码元删（length - 1）", body.contains("length - 1"))
     }

@@ -305,4 +305,32 @@ internal object TestSources {
         }
         error("锚点「$marker」的花括号不配对")
     }
+
+    /**
+     * 取 [startAnchor] 与**其后**第一个 [endAnchor] 之间的正文（两端都断言存在）。
+     *
+     * 存在的理由与 [blockAfter] 同源，但适用面更宽：XML 元素（`<style …>` … `</style>`）、
+     * 以注释或语句为界的窗口、以及解析测试输入文本的场景 —— 这些没有花括号可配对。
+     *
+     * ⚠ 与裸 `substringAfter(A).substringBefore(B)` 的差别就在**断言**：后者在 A 缺失时返回整串、
+     * 在 B 缺失时返回 A 之后的全部剩余，两种都让判据静默放宽（BUG.md L-1145 的形态）。
+     * 这里 A / B 任一缺失、或 B 落在 A 之前，都当场抛错并点名锚点。
+     */
+    fun window(text: String, startAnchor: String, endAnchor: String): String {
+        val a = text.indexOf(startAnchor)
+        check(a >= 0) { "源码里找不到起始锚点「$startAnchor」—— 改名/重构后请同步本用例" }
+        val from = a + startAnchor.length
+        val b = text.indexOf(endAnchor, from)
+        check(b >= 0) { "起始锚点「$startAnchor」之后找不到结束锚点「$endAnchor」—— 锚点漂移会让窗口静默放宽" }
+        return text.substring(from, b)
+    }
+
+    /** 取 [marker] 所在的**整行**（含行内其余内容，不含换行符）；找不到锚点即抛错。 */
+    fun lineOf(text: String, marker: String): String {
+        val i = text.indexOf(marker)
+        check(i >= 0) { "源码里找不到锚点「$marker」—— 改名/重构后请同步本用例" }
+        val start = text.lastIndexOf('\n', i).let { if (it < 0) 0 else it + 1 }
+        val end = text.indexOf('\n', i).let { if (it < 0) text.length else it }
+        return text.substring(start, end)
+    }
 }

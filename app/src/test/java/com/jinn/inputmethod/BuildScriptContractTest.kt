@@ -23,7 +23,7 @@ class BuildScriptContractTest {
 
     @Test
     fun 安装失败必须非零退出() {
-        val block = src.substringAfter("if args.install:").substringBefore("\nif __name__")
+        val block = TestSources.window(src, "if args.install:", "\nif __name__")
         // 四条失败路径：adb 不可用 / 无设备 / 多设备未指定 / 指定设备不在位。
         // 第一条是 2026-10-02 补的：此前「adb 不在 PATH」与「没有设备」报同一句，
         // 会把「装 platform-tools、配 PATH」这种可行动的原因说成「没有设备」。

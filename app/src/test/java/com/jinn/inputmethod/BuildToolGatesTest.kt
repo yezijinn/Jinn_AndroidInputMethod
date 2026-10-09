@@ -68,7 +68,7 @@ class BuildToolGatesTest {
         assertTrue("分片核查必须早于写盘（check=$call write=$firstWrite）", call < firstWrite)
         assertTrue(
             "重叠 / 重复时必须中止（SystemExit），且检查要覆盖四片",
-            build.substringAfter("def check_parts_partition").substringBefore("def build_parts")
+            TestSources.window(build, "def check_parts_partition", "def build_parts")
                 .let { it.contains("raise SystemExit") && it.contains("(1, 2, 3, 4)") },
         )
     }

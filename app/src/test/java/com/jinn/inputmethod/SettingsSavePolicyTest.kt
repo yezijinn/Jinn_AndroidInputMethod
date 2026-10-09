@@ -33,19 +33,18 @@ class SettingsSavePolicyTest {
             assertTrue("$file：防抖窗口 $ms ms 太长（用户会以为保存没生效）", ms <= 5_000L)
         }
         assertTrue("字段装配时挂上 watcher", "addTextChangedListener(autosaveWatcher)" in src)
-        val watcher = src.substringAfter("autosaveWatcher = object").take(600)
+        val watcher = TestSources.blockAfter(src, "autosaveWatcher = object")
         assertTrue("程序化回填不算改动（用 loading 抑制）", "if (!loading) scheduleAutosave()" in watcher)
-        val pause = src.substringAfter("override fun onPause()").take(900)
+        val pause = TestSources.blockAfter(src, "override fun onPause()")
         assertTrue("离开页面要撤掉排队的任务", "removeCallbacks(autosaveRunnable)" in pause)
-        val runnable = src.substringAfter("autosaveRunnable = Runnable")
-            .substringBefore("private val autosaveWatcher")
+        val runnable = TestSources.window(src, "autosaveRunnable = Runnable", "private val autosaveWatcher")
         assertTrue("导入在途时跳过（与 onPause 同一条守卫）", "ConfigBackupManager.importing" in runnable)
         // L-1050：三条落盘路径口径一致 —— 停顿自动保存也要消费未落盘集合并给提示，
         // 否则 Keystore 锁住时填完 Key 就不再动的用户全程零信号，重启后回到未配置
         assertTrue("自动保存也要消费未落盘集合", "unpersistedCredentialKeys()" in runnable)
         assertTrue("未落盘要给提示", "textSaveHint.text = TEXT_SAVE_NOT_PERSISTED" in runnable)
         // 落盘结论如实记：无条件写「已保存」会把 fail-closed 的失败伪装成成功（L-1050）
-        val save = src.substringAfter("private fun saveValues()").substringBefore("private fun saveAndNotify")
+        val save = TestSources.blockAfter(src, "private fun saveValues()")
         assertTrue("失败要写成未落盘", "未完全落盘" in save)
     }
 

@@ -236,6 +236,40 @@ class TestSourcesTest {
         )
     }
 
+    /**
+     * 元守卫：源码对拍不得再用**固定字符窗**（BUG.md L-1145）。
+     *
+     * 三种禁止形态：`substringAfter(A).substringBefore(B)`、`substringAfter(A).take(N)`、
+     * `substringBefore("\n    }")`（按缩进猜方法体收尾）。它们共有的毛病是**锚点缺失时静默放宽**：
+     * 缺 A 返回整串、缺 B 返回 A 之后的全部剩余，按缩进猜的收尾在缩进一变就取到相邻函数或整段尾巴 ——
+     * 判据仍在绿，而被钉的实现可能早已搬走（这正是 L-1145 的原型）。
+     *
+     * 一律改用带断言的助手：方法体走 [TestSources.blockAfter]（花括号配对）、元素 / 注释 / 段落窗口走
+     * [TestSources.window]（两端锚点都断言存在）、整行走 [TestSources.lineOf]。
+     * 判据在**剥注释后的代码**上做：注释里写「别用 substringAfter(A).substringBefore(B)」这类说明不算违规。
+     *
+     * ⚠ 只查**同一条语句链**（允许跨一行）：跨多行去撞上后面的无关语句会造成误报。
+     */
+    @Test
+    fun 固定字符窗必须改用锚点助手() {
+        val chain = Regex("""substringAfter\([^\n;]*\n?[^\n;]*?\.\s*(substringBefore|take)\(""")
+        val braceWindow = Regex("""substringBefore\("\\n    \}"""")
+        val offenders = (testDir().listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
+            .filterNot { it.name == "TestSources.kt" || it.name == "TestSourcesTest.kt" }
+            .flatMap { f ->
+                val code = TestSources.codeOf(f.readText())
+                (chain.findAll(code) + braceWindow.findAll(code)).map { m ->
+                    "${f.name}:${code.substring(0, m.range.first).count { it == '\n' } + 1}"
+                }
+            }
+            .sorted()
+        assertTrue(
+            "这些位置还在用固定字符窗（共 ${offenders.size} 处）—— 改用 TestSources.blockAfter / window / lineOf" +
+                "（BUG.md L-1145）：${offenders.take(60)}",
+            offenders.isEmpty(),
+        )
+    }
+
     private fun testDir(): File =
         listOf(File("src/test/java/com/jinn/inputmethod"), File("app/src/test/java/com/jinn/inputmethod"))
             .firstOrNull { it.isDirectory }

@@ -374,8 +374,7 @@ class PrefsBackupCoverageTest {
         // ⚠ 只看 importFromBackup 的**函数体**：`substringAfter("importFromBackup")` 会一路吃到
         // companion object，而那里仍有 `private const val KEY_ENABLED`（声明，不是白名单）⇒
         // 用它判「导入白名单里没有 KEY_ENABLED」永远为假（2026-10-03 实测）。
-        val importBody = text.substringAfter("internal fun importFromBackup")
-            .substringBefore("companion object")
+        val importBody = TestSources.blockAfter(text, "internal fun importFromBackup")
         for (key in listOf("KEY_ENABLED", "KEY_MAX_ITEMS")) {
             assertTrue("$key 未在 ClipboardPrefs 中声明", text.contains("private const val $key"))
         }

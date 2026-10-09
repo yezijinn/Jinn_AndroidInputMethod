@@ -589,7 +589,7 @@ class KeyboardSkinTest {
     fun 功能键描边同样按比例缩放() {
         // 次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）的描边走 PinyinKeyboardView 的构建路径，
         // JVM 单测够不到 ⇒ 源码对拍钉住（与「键盘选皮肤按视图色板快照」同款做法）。
-        val seg = pinyinKeyboardViewSource().substringAfter("val stroke = ").substringBefore("\n")
+        val seg = TestSources.lineOf(pinyinKeyboardViewSource(), "val stroke = ")
         assertTrue("功能键描边必须按比例缩放（否则磨砂 / 石墨皮肤被抹成实色硬边）: $seg", seg.contains("scaleAlpha("))
         assertFalse("功能键描边不得退回替换语义: $seg", seg.contains("withAlpha("))
     }
@@ -600,7 +600,7 @@ class KeyboardSkinTest {
         // viewLetters ⇒ 不存在「重建会把面板收回默认布局」的机制。恢复成「面板展开时跳过候选栏
         // 重建」会让换肤留下半屏旧配色（BUG.md 第 15 批 M3）。
         val body = pinyinKeyboardViewSource()
-        val fn = body.substringAfter("fun refreshAppearance()").substringBefore("\n    private fun ")
+        val fn = TestSources.blockAfter(body, "fun refreshAppearance()")
         assertTrue("refreshAppearance 必须重建候选栏: $fn", fn.contains("refreshCandidateBar()"))
         assertFalse("不得按方向面板展开态跳过候选栏重建", fn.contains("!directionPanelVisible"))
         assertTrue("面板展开时仍要就地重刷面板键面", fn.contains("applySkinToDirectionPanel"))

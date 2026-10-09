@@ -262,12 +262,12 @@ class IndexCacheLifecycleTest {
         // BUG.md L-893：只装自定义词库这一遍如果按子集算 pending，闸门会以为「都装过了」而早退，
         // 官方大包再也等不到装载 —— 范围可以收窄，闸门必须按全部已装包算
         val engine = TestSources.codeSource("PinyinEngine.kt")
-        val fn = engine.substringAfter("fun loadOptionalAsync(").substringBefore("线程要活 21~34s")
+        val fn = TestSources.blockAfter(engine, "fun loadOptionalAsync(")
         assertTrue("loadOptionalAsync 锚点失效（源码结构变了）", fn.isNotEmpty() && fn.length < engine.length)
         assertTrue("这一遍按 onlyPacks 收窄", "val packs = if (onlyPacks == null) installed" in fn)
         assertTrue("闸门要按全部已装包算", "val pending = installed.any {" in fn)
         val jinn = TestSources.codeSource("JinnIme.kt")
-        val site = jinn.substringAfter("val targets = PinyinEngine.immediateLoadTargets(this)").substringBefore("onFailure")
+        val site = TestSources.window(jinn, "val targets = PinyinEngine.immediateLoadTargets(this)", "onFailure")
         assertTrue("空集就别触发", "if (targets.isNotEmpty())" in site)
         assertTrue("收窄的范围要传下去", "maybeLoadOptionalDict(\"索引就绪或只差自定义词库\", targets)" in site)
         assertTrue("日志要写清范围（L-894）", "可立即装载（" in site)
@@ -294,13 +294,12 @@ class IndexCacheLifecycleTest {
         // 取值与判定之间包被换掉时，旧缓存会被当成新包的索引复用 —— 用户看到「改过的词库不生效」
         // （BUG.md L-890）。判据本身由上一条行为用例覆盖，这里只钉接线
         val engine = TestSources.codeSource("PinyinEngine.kt")
-        val body = engine.substringAfter("private fun loadOptionalIndex(")
-            .substringBefore("判定「源包已被删除」")
+        val body = TestSources.blockAfter(engine, "private fun loadOptionalIndex(")
         assertTrue(
             "loadOptionalIndex 方法体锚点失效（源码结构变了）",
             body.isNotEmpty() && body.length < engine.length,
         )
-        val hit = body.substringAfter("if (cache.isFile)").substringBefore("val t0")
+        val hit = TestSources.window(body, "if (cache.isFile)", "val t0")
         assertTrue("命中要走统一的身份判据", "cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))" in hit)
         val build = body.substringAfter("PhraseIndex.build(reader.lineSequence(), stamp)")
         assertTrue("写缓存前要再核一次身份", "packStamp(src)" in build)

@@ -45,8 +45,8 @@ class BackupRulesTest {
         }
         // 云端与设备迁移是两段：只改一段会让另一条路径继续把缓存送出去
         val transfer = rules("data_extraction_rules.xml")
-        val cloud = transfer.substringAfter("<cloud-backup>").substringBefore("</cloud-backup>")
-        val device = transfer.substringAfter("<device-transfer>").substringBefore("</device-transfer>")
+        val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         assertTrue("cloud-backup 段缺索引排除", "index/" in cloud)
         assertTrue("device-transfer 段缺索引排除", "index/" in device)
     }
@@ -71,8 +71,8 @@ class BackupRulesTest {
             pattern.containsMatchIn(rules("backup_rules.xml")),
         )
         val transfer = rules("data_extraction_rules.xml")
-        val cloud = transfer.substringAfter("<cloud-backup>").substringBefore("</cloud-backup>")
-        val device = transfer.substringAfter("<device-transfer>").substringBefore("</device-transfer>")
+        val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         assertTrue("cloud-backup 段缺 external 域日志排除", pattern.containsMatchIn(cloud))
         assertTrue("device-transfer 段缺 external 域日志排除", pattern.containsMatchIn(device))
     }

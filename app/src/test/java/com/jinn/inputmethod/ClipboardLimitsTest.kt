@@ -122,7 +122,7 @@ class ClipboardLimitsTest {
     @Test
     fun 收藏裁剪必须走含收藏的删除入口() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        val body = src.substringAfter("private fun trimFavorites()").substringBefore("private fun trimByCount")
+        val body = TestSources.blockAfter(src, "private fun trimFavorites()")
         assertTrue("trimFavorites 必须走含收藏的删除入口", "deleteAnyByIds(ids)" in body)
         assertFalse("trimFavorites 不得复用只删非收藏的入口", "deleteNonFavoriteByIds" in body)
         assertTrue("普通裁剪入口必须带 non-favorite 语义名", "private fun deleteNonFavoriteByIds(" in src)
@@ -451,7 +451,7 @@ class ClipboardLimitsTest {
         )
 
         // 只在 upsert 的范围内比较次序（文件里另有一条导入路径也会加密，那条不做判重、不该被算进来）
-        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+        val upsert = TestSources.blockAfter(src, "fun upsert(")
         val hashAt = upsert.indexOf("stableHash(content)")
         val encAt = upsert.indexOf("ClipboardCrypto.encrypt(content)")
         assertTrue("upsert 里必须能定位到判重与加密两处", hashAt >= 0 && encAt >= 0)
@@ -471,7 +471,7 @@ class ClipboardLimitsTest {
     @Test
     fun 命中行消失不得返回幽灵id() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+        val upsert = TestSources.blockAfter(src, "fun upsert(")
 
         assertTrue(
             "命中分支必须看 update 的返回行数",
@@ -498,7 +498,7 @@ class ClipboardLimitsTest {
     @Test
     fun 重复复制不得重复解密() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        val upsert = src.substringAfter("fun upsert(").substringBefore("/** 按内容哈希查")
+        val upsert = TestSources.blockAfter(src, "fun upsert(")
 
         assertTrue(
             "试解必须有界：已在备忘里的哈希不再试解",

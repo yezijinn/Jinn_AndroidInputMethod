@@ -449,12 +449,11 @@ class ConfigBackupZipTest {
     fun `恢复被写盘锁挡下时导入侧给出「忙」的原因`() {
         // L-873 源码对拍：恢复失败的原因要落到 lastError（含「另有写入在进行」），UI 再读它显示
         val manager = TestSources.codeSource("ConfigBackupManager.kt")
-        val site = manager.substringAfter("restoreDicts(File(context.filesDir, DICT_DIR)")
-            .substringBefore("dictsWritten")
+        val site = TestSources.window(manager, "restoreDicts(File(context.filesDir, DICT_DIR)", "dictsWritten")
         assertTrue("恢复失败要写 lastImportError", "lastImportError =" in site)
         assertTrue("「忙」与「真失败」要分开", "CustomDicts.writing" in site)
         val settings = TestSources.codeSource("SettingsActivity.kt")
-        val fail = settings.substringAfter("if (r == null) {").substringBefore("return@runOnUiThread")
+        val fail = TestSources.window(settings, "if (r == null) {", "return@runOnUiThread")
         assertTrue("导入失败提示要优先用 lastImportError", "ConfigBackupManager.lastImportError" in fail)
     }
 
@@ -506,7 +505,7 @@ class ConfigBackupZipTest {
     fun `导入失败的每条拒绝分支都要留原因`() {
         // 只报一句「配置导入失败」时用户无从归因；判据是源码对拍：拒绝点与赋值点数量对齐
         val src = TestSources.codeSource("ConfigBackupManager.kt")
-        val locked = src.substringAfter("private fun importLocked(").substringBefore("internal fun restoreDicts(")
+        val locked = TestSources.blockAfter(src, "private fun importLocked(")
         assertTrue("importLocked 锚点失效", locked.isNotEmpty() && locked.length < src.length)
         val rejects = Regex("return null").findAll(locked).count()
         val reasons = Regex("lastImportError = ").findAll(locked).count()

@@ -136,7 +136,7 @@ class CustomDictsTest {
     fun `跳过回填时保存必须保持停用`() {
         // L-871：跳过回填后编辑器是空的，若保存可点，用户补几条再保存就会把整份大词表整体替换掉
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
-        val branch = src.substringAfter("!shouldRefill(text.length) ->").substringBefore("else ->")
+        val branch = TestSources.window(src, "!shouldRefill(text.length) ->", "else ->")
         assertTrue("跳过回填分支必须置 refillSkipped", "refillSkipped = true" in branch)
         assertTrue("跳过回填分支必须停用保存", "saveButton.isEnabled = false" in branch)
         // 锚点必须落在 save() 方法体里（BUG.md L-874）：`saving = false` 在字段声明处先出现一次，
@@ -144,7 +144,7 @@ class CustomDictsTest {
         // 锚点取 `private fun save(` 而不是带空括号的完整签名：L-900 给 save 加了
         // `force` 参数后，旧锚点找不到分隔符 ⇒ substringAfter 返回**整份源码**，
         // 断言范围被悄悄放大到全文件（守卫强度骤降）
-        val saveBody = src.substringAfter("private fun save(").substringBefore("\n    private fun ")
+        val saveBody = TestSources.blockAfter(src, "private fun save(")
         assertTrue("save() 方法体锚点失效（源码结构变了）", saveBody.isNotEmpty() && saveBody.length < src.length)
         val restore = saveBody.substringAfter("saving = false")
         assertTrue(
@@ -336,8 +336,7 @@ class CustomDictsTest {
     fun `快捷补充回填须避开用户已输入的内容`() {
         // 源码对拍（BUG.md L-849）：回填前必须判编辑框是否已被改动
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")
-        val body = edit.substringAfter("private fun loadSource(")
-            .substringBefore("private fun save(")
+        val body = TestSources.blockAfter(edit, "private fun loadSource(")
         assertTrue("loadSource 回填前要判 editor.text.isNotEmpty()", body.contains("editor.text.isNotEmpty()"))
     }
 
@@ -524,8 +523,7 @@ class CustomDictsTest {
         val manifest = File("src/main/AndroidManifest.xml")
             .let { if (it.isFile) it else File("app/src/main/AndroidManifest.xml") }
             .readText()
-        val block = manifest.substringAfter("android:name=\".CustomDictEditActivity\"")
-            .substringBefore("/>")
+        val block = TestSources.window(manifest, "android:name=\".CustomDictEditActivity\"", "/>")
         assertTrue(
             "编辑页必须声明 configChanges（L-867），否则旋转重建丢草稿",
             "android:configChanges=" in block,
@@ -556,10 +554,12 @@ class CustomDictsTest {
         // 少任何一个，保存中的 finish() 都会让写盘结果回执丢失（包已更新却不重启引擎）
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
         assertTrue("保存中必须禁用关闭按钮", "closeButton.isEnabled = false" in src)
-        val back = src.substringAfter("override fun onBackPressed()")
-            .substringBefore("super.onBackPressed()")
-        assertTrue("返回键必须在 saving 时早退", "if (saving)" in back)
-        assertTrue("返回键拦截要给出提示（否则用户以为点了没反应）", "TEXT_SAVING_WAIT" in back)
+        val back = TestSources.blockAfter(src, "override fun onBackPressed()")
+        assertTrue("返回键要走确认出口", "confirmExit()" in back)
+        // 早退与提示在 confirmExit 里：原先靠「取到文件末尾」的窗口把它的实现当成了 onBackPressed 的证据（L-1145）
+        val exit = TestSources.blockAfter(src, "private fun confirmExit()")
+        assertTrue("保存中必须在确认出口早退", "if (saving)" in exit)
+        assertTrue("拦截要给出提示（否则用户以为点了没反应）", "TEXT_SAVING_WAIT" in exit)
     }
 
     @Test
@@ -709,7 +709,7 @@ class CustomDictsTest {
     fun `保存路径不许再构造整份格式化副本`() {
         // L-858 / L-862 的守卫：formatHuman 返回整份副本，保存路径一旦回头用它，内存峰值立刻翻倍
         val src = TestSources.codeSource("CustomDicts.kt")
-        val body = src.substringAfter("fun saveHuman(").substringBefore("备份导入侧的源文本放行判据")
+        val body = TestSources.blockAfter(src, "fun saveHuman(")
         assertTrue("saveHuman 方法体锚点失效（源码结构变了）", body.isNotEmpty() && body.length < src.length)
         assertFalse("saveHuman 不得调用 formatHuman（会为全文再造一份副本）", "formatHuman(" in body)
         assertTrue("源文本必须逐行写出", "scanAndWriteSource(" in body)
@@ -737,7 +737,7 @@ class CustomDictsTest {
         // L-902：判据要钉**整句比较式（含极性）**。此前只查「出现过 forceSave」，把
         // `now != loadedSourceStamp` 写成 `==`（条件取反 ⇒ 每次都弹确认）守卫照样绿。
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
-        val save = src.substringAfter("private fun save(").substringBefore("val text = editor.text.toString()")
+        val save = TestSources.window(src, "private fun save(", "val text = editor.text.toString()")
         assertTrue("save() 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
         assertTrue("保存前要比对身份", "CustomDicts.sourceStamp(CustomDicts.sourceFile(this))" in save)
         assertTrue(
@@ -772,14 +772,14 @@ class CustomDictsTest {
     fun `编辑器返回与关闭都要走放弃确认`() {
         // BUG.md L-897：本页专门用来粘贴大词表，返回 / ✕ 都走同一个出口，有改动先问
         val src = TestSources.codeSource("CustomDictEditActivity.kt")
-        val back = src.substringAfter("override fun onBackPressed()").substringBefore("private fun confirmExit()")
+        val back = TestSources.blockAfter(src, "override fun onBackPressed()")
         assertTrue("返回键要走确认出口", "confirmExit()" in back)
-        val exit = src.substringAfter("private fun confirmExit()").substringBefore("private fun confirmOverwrite()")
+        val exit = TestSources.blockAfter(src, "private fun confirmExit()")
         assertTrue("没有改动就直接退出", "if (!dirty) {" in exit)
         assertTrue("有改动要弹确认", "TEXT_DISCARD_TITLE" in exit)
-        val close = src.substringAfter("closeButton = TextView(this)").substringBefore("private fun")
+        val close = TestSources.window(src, "closeButton = TextView(this)", "private fun")
         assertTrue("✕ 也要走确认出口", "confirmExit()" in close)
-        val watcher = src.substringAfter("afterTextChanged", "").take(240)
+        val watcher = TestSources.blockAfter(src, "afterTextChanged")
         assertTrue("程序化回填不算用户改动", "if (refilling) return" in watcher)
         assertTrue("真实改动要置脏", "dirty = true" in watcher)
     }
@@ -829,7 +829,7 @@ class CustomDictsTest {
         // 固定宽度的按钮行在字体放大或窄屏上会把「删除」挤出可用区域（折行、被裁到屏幕外）。
         // 真机复现成本高，这条用源码对拍兜住：三个入口都得走 weightedButtonLp
         val src = TestSources.codeSource("DictManagerActivity.kt")
-        val card = src.substringAfter("private fun buildCustomCard()").substringBefore("private fun customResultText(")
+        val card = TestSources.blockAfter(src, "private fun buildCustomCard()")
         assertTrue("自定义卡片锚点失效（源码结构变了）", card.isNotEmpty() && card.length < src.length)
         assertEquals("三个入口都要等宽", 3, Regex("weightedButtonLp\\(").findAll(card).count())
         assertFalse(

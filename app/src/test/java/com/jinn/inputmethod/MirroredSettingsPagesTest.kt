@@ -46,12 +46,8 @@ class MirroredSettingsPagesTest {
         }
     }
 
-    /** 取方法体（从签名到下一个 4 空格缩进的右花括号；两页的方法体都不到这一层嵌套之外） */
-    private fun bodyOf(src: String, signature: String): String {
-        val idx = src.indexOf(signature)
-        assertTrue("源码里找不到 $signature（签名变了？）", idx >= 0)
-        return src.substring(idx).substringBefore("\n    }")
-    }
+    /** 取方法体：花括号配对到对应收尾（锚点缺失或括号不配对本用例即红，见 BUG.md L-1145） */
+    private fun bodyOf(src: String, signature: String): String = TestSources.blockAfter(src, signature)
 
     private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
 

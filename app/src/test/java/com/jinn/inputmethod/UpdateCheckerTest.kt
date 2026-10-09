@@ -214,8 +214,7 @@ class UpdateCheckerTest {
     @Test
     fun `Gitee翻页的中途失败不许折叠成到底`() {
         val src = TestSources.codeSource("UpdateChecker.kt")
-        val loop = src.substringAfter("while (page <= GITEE_TAGS_MAX_PAGES)")
-            .substringBefore("if (page > GITEE_TAGS_MAX_PAGES)")
+        val loop = TestSources.window(src, "while (page <= GITEE_TAGS_MAX_PAGES)", "if (page > GITEE_TAGS_MAX_PAGES)")
         assertFalse("取页失败不许直接 break（那等于当成到底）", "?: break" in loop)
         assertTrue("取不到页即本源作废", "return@runCatching null" in loop)
         assertTrue("空页才是正常到底", "if (names.isEmpty()) break" in loop)
@@ -264,9 +263,10 @@ class UpdateCheckerTest {
             "检查更新结果已到达，但页面已销毁，跳过弹窗",
             "自动检查更新结果已到达，但页面已销毁，跳过弹窗",
         )) {
-            val body = settings.substringAfter(mark).take(400)
-            val record = body.indexOf("recordUpdateCheckTime(result)")
-            assertTrue("销毁守卫之后必须紧跟记账：$mark", record in 1..400)
+            val at = settings.indexOf(mark)
+            assertTrue("源码里找不到锚点（改名后请同步本用例）：$mark", at >= 0)
+            val record = settings.indexOf("recordUpdateCheckTime(result)", at)
+            assertTrue("销毁守卫之后必须紧跟记账：$mark", record - at in 1..400)
         }
     }
 

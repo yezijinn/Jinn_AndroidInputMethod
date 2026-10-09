@@ -51,7 +51,7 @@ class DocsReferenceTest {
         // 同时要求 工程约定 指明去哪读（否则等于把这条现状说明藏起来）。
         val docs = conventionWithDetails()
         assertTrue("工程约定 必须指向细节分册（`details:` 或指针表）", "agents-extras" in convention())
-        val sec = docs.substringAfter("## 冷启动与加载顺序").substringBefore("\n## ")
+        val sec = TestSources.window(docs, "## 冷启动与加载顺序", "\n## ")
         assertTrue("没取到「冷启动与加载顺序」一节（标题变了？）", sec.length > 200)
         assertTrue("该节没写「单段加载」（漂回旧的两段式了？）", "单段加载" in sec)
         for (stale in listOf("两段式加载（", "高频 4 万词", "60.4 万键", "两段合计")) {
@@ -620,8 +620,7 @@ class DocsReferenceTest {
         val translateLabel = Regex("const val LABEL_TRANSLATE = \"([^\"]+)\"")
             .find(panelSrc)?.groupValues?.get(1) ?: error("PinyinKeyboardView 里找不到 LABEL_TRANSLATE")
         // 面板体：renderFunctionPanel 的 `label = …` 按出现顺序即按钮顺序（条件键也在内）
-        val panelBody = panelSrc.substringAfter("private fun renderFunctionPanel()")
-            .substringBefore("private fun buildFunctionButton(")
+        val panelBody = TestSources.blockAfter(panelSrc, "private fun renderFunctionPanel()")
         val sourceOrder = Regex("""label = ([^\n]*)""").findAll(panelBody).mapNotNull { m ->
             val tail = m.groupValues[1]
             when {

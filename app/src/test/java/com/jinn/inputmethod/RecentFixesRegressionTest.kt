@@ -681,7 +681,7 @@ class RecentFixesRegressionTest {
             "导出必须按指纹比对并重来",
             body.contains("db.exportStamp() == before") && body.contains("EXPORT_CLIP_ATTEMPTS"),
         )
-        val stamp = codeOf("ClipboardDb.kt").substringAfter("fun exportStamp(): String").take(500)
+        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0:0\"")
         assertTrue("指纹必须含最大 id（插入会抬它）", "MAX(id)" in stamp)
         assertTrue("指纹必须含密文总长（删除 / 改写会动它）", "SUM(LENGTH(encrypted_content))" in stamp)
     }
@@ -1532,11 +1532,10 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "符号层必须与数字层共用同一枚「返回」标签（否则两处样式会各自漂移）",
-            code.substringAfter("btnSymbol.text = if (layer == LAYER_SYMBOL)")
-                .substringBefore("} else {").contains("backLabel()"),
+            TestSources.window(code, "btnSymbol.text = if (layer == LAYER_SYMBOL)", "} else {").contains("backLabel()"),
         )
         // 表达式函数体没有独立的花括号块，用「到下一个函数为止」切片（比 blockAfter 的锚点更贴切）
-        val helper = code.substringAfter("private fun backLabel").substringBefore("private fun buildLangLabel")
+        val helper = blockAfter(code, "private fun backLabel")
         assertTrue("返回标签必须加粗", helper.contains("StyleSpan(android.graphics.Typeface.BOLD)"))
         assertTrue(
             "返回标签必须用提示红（与候选栏「返回」同一令牌）",
@@ -1573,7 +1572,7 @@ class RecentFixesRegressionTest {
             File("app/src/main/res/values/styles.xml"),
             File("src/main/res/values/styles.xml"),
         ).first { it.isFile }.readText()
-        val base = styles.substringAfter("<style name=\"SettingsButton\"").substringBefore("</style>")
+        val base = TestSources.window(styles, "<style name=\"SettingsButton\"", "</style>")
         val baseSp = Regex("""android:textSize">(\d+)sp""").find(base)?.groupValues?.get(1)?.toFloat()
         assertEquals("SettingsButton 的基础字号变了：标点字号必须跟着改（基础 + 3）",
             3f, size!! - (baseSp ?: 0f), 0.01f)
@@ -4179,15 +4178,15 @@ class RecentFixesRegressionTest {
     fun 导出判据与解锁产物与空凭据的三条修复不得回退() {
         val manager = codeOf("ConfigBackupManager.kt")
         // L-1085：稳定性判据要用不会自相抵消的指纹（条数 + 最大 id + 密文总长）
-        val export = manager.substringAfter("fun collectClipboard(").substringBefore("private fun collectClipboardOnce")
+        val export = TestSources.blockAfter(manager, "fun collectClipboard(")
         assertTrue("导出必须用指纹判稳", "db.exportStamp()" in export)
         assertFalse("只看条数会在「插入 + 裁剪成对发生」时判成没变", "db.count() == before" in export)
-        val stamp = codeOf("ClipboardDb.kt").substringAfter("fun exportStamp(): String").take(500)
+        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0:0\"")
         assertTrue("指纹要含最大 id", "MAX(id)" in stamp)
         assertTrue("指纹要含密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
 
         // L-1086：交付给清单框的那份要继续在册，只有中间件与失败路径才除名；注销点要落在收尾路径上
-        val unlock = manager.substringAfter("fun unlock(context: Context").substringBefore("private fun unlockLocked")
+        val unlock = blockAfter(manager, "fun unlock(context: Context")
         assertTrue("交付的产物必须继续在册", "it != delivered" in unlock)
         assertTrue("要有注销入口", "fun releaseUnlockedTemp(" in manager)
         assertTrue("导入收尾要注销", "releaseUnlockedTemp(zip)" in manager)
@@ -4197,7 +4196,7 @@ class RecentFixesRegressionTest {
 
         // L-1067：空凭据不进包、也不在导入端当删除执行
         val prefs = codeOf("Prefs.kt")
-        val exportBody = prefs.substringAfter("fun exportForBackup(").substringBefore("fun importFromBackup(")
+        val exportBody = TestSources.blockAfter(prefs, "fun exportForBackup(")
         val importBody = prefs.substringAfter("fun importFromBackup(")
         for (key in listOf(
             "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
@@ -4273,7 +4272,7 @@ class RecentFixesRegressionTest {
         val dicts = TestSources.codeSource("CustomDicts.kt")
         assertTrue(
             "音节表资产读取必须限长（剥 BOM 收口在 readCapped 里）",
-            "readCapped(reader, SYLLABLES_MAX_CHARS)" in dicts.substringAfter("fun loadSyllables", "").take(700),
+            "readCapped(reader, SYLLABLES_MAX_CHARS)" in TestSources.blockAfter(dicts, "fun loadSyllables"),
         )
     }
 
@@ -4312,7 +4311,7 @@ class RecentFixesRegressionTest {
         assertTrue(
             "文件留到铺进编辑器之后才删（BUG.md L-1190）",
             "File(cacheDir, file).delete()" in
-                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft"),
+                blockAfter(edit, "private fun finishDraftApply("),
         )
 
         val fav = TestSources.codeSource("FavoriteSymbolsActivity.kt")
@@ -4327,13 +4326,13 @@ class RecentFixesRegressionTest {
         assertTrue("页码只在改条件时归零", "if (resetPage) pageIndex = 0" in hist)
         assertTrue(
             "重建 / 回前台的那次加载不得归零页码",
-            "loadAsync(resetPage = false)" in hist.substringAfter("override fun onStart()", "").take(300),
+            "loadAsync(resetPage = false)" in TestSources.blockAfter(hist, "override fun onStart()"),
         )
 
         val dicts = TestSources.codeSource("CustomDicts.kt")
         assertTrue(
             "音节表资产读取必须限长",
-            "readCapped(reader, SYLLABLES_MAX_CHARS)" in dicts.substringAfter("fun loadSyllables", "").take(600),
+            "readCapped(reader, SYLLABLES_MAX_CHARS)" in blockAfter(dicts, "fun loadSyllables"),
         )
     }
 
@@ -4431,7 +4430,7 @@ class RecentFixesRegressionTest {
         assertTrue("同步补写也要走临时名", "DRAFT_FILE_SAVE_TMP" in save)
         assertTrue("并且用改名发布", "staged.renameTo(File(cacheDir, DRAFT_FILE))" in save)
         assertTrue("令牌要带上预期长度", "putInt(STATE_DRAFT_LEN, text.length)" in save)
-        val restore = edit.substringAfter("private fun startDraftRestore(", "").substringBefore("private fun applyDraft(")
+        val restore = blockAfter(edit, "private fun startDraftRestore(")
         assertTrue(
             "读取阶段不许删草稿本体（两个临时名的清理不算；删除只发生在铺完或明确放弃时）",
             "File(cacheDir, draftName).delete()" !in restore && "File(cacheDir, file).delete()" !in restore,
@@ -4491,7 +4490,7 @@ class RecentFixesRegressionTest {
             "铺完收尾才删文件、并清令牌",
             "private fun finishDraftApply(file: String?, truncatedAt: Int)" in edit &&
                 "File(cacheDir, file).delete()" in
-                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft"),
+                blockAfter(edit, "private fun finishDraftApply("),
         )
         assertTrue(
             "在途 / 读失败期间保存侧要接着带令牌与长度",
@@ -4512,7 +4511,7 @@ class RecentFixesRegressionTest {
         )
 
         // L-1193：读盘在后台线程、带后台优先级
-        val restore = edit.substringAfter("private fun startDraftRestore(", "").substringBefore("private fun applyDraft(")
+        val restore = blockAfter(edit, "private fun startDraftRestore(")
         assertTrue("读盘必须放后台线程", "Thread {" in restore)
         assertTrue("读盘线程要降优先级", "THREAD_PRIORITY_BACKGROUND" in restore)
         assertTrue(
@@ -4526,7 +4525,7 @@ class RecentFixesRegressionTest {
         assertTrue(
             "收尾与放弃都要清「在途」标记（否则后续回填与保存使能被卡住）",
             "draftPending = false" in
-                edit.substringAfter("private fun finishDraftApply(", "").substringBefore("private fun discardPendingDraft") &&
+                blockAfter(edit, "private fun finishDraftApply(") &&
                 "draftPending = false" in edit.substringAfter("private fun discardPendingDraft(", ""),
         )
     }

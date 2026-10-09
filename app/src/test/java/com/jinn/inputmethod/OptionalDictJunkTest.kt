@@ -66,7 +66,7 @@ class OptionalDictJunkTest {
     @Test
     fun `旧包卡片不得复用前缀型资源`() {
         val src = sourceOf("DictManagerActivity.kt")
-        val card = src.substringAfter("private fun buildUnknownCard").substringBefore("\n    /**")
+        val card = TestSources.blockAfter(src, "private fun buildUnknownCard")
         assertTrue("没取到 buildUnknownCard 的函数体（结构变了？）", card.length > 200)
         // 两条钉都只判**代码**（剥注释，BUG.md L-116）：注释里说明「为什么不能用」「该用哪个文案」
         // 是应该留的，而「实现删掉、名字留在注释里」这种情况必须转红 —— 本条正是 L-116 的实证场景

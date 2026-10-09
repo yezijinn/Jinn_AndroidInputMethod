@@ -322,7 +322,7 @@ class RareCharsFilterTest {
     /** 取 `const val KEY = "...：甲 乙 丙 一类..."` 里「：」与「 一类」之间的例字 */
     private fun examplesOf(src: String, key: String): List<String> {
         val line = src.lineSequence().firstOrNull { it.contains("const val $key =") } ?: return emptyList()
-        return line.substringAfter("：").substringBefore(" 一类")
+        return TestSources.window(line, "：", " 一类")
             .split(" ").filter { it.isNotBlank() }
     }
 
@@ -377,8 +377,7 @@ class RareCharsFilterTest {
     @Test
     fun 关档2的级联关档3必须在挂起态里做() {
         val src = codeOf("RareCharsActivity.kt")
-        val body = src.substringAfter("checkTier2.setOnCheckedChangeListener")
-            .substringBefore("checkTier3.setOnCheckedChangeListener")
+        val body = TestSources.window(src, "checkTier2.setOnCheckedChangeListener", "checkTier3.setOnCheckedChangeListener")
         assertTrue("tier2 监听器里找不到级联关档 3 的代码（重构后请同步这条守卫）", "checkTier3.isChecked = false" in body)
         assertTrue(
             "级联关档 3 没有在挂起态里做：同一次拨动会写两遍盘、打两条日志",
