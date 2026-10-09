@@ -370,7 +370,19 @@ import kotlin.math.min
             // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──
             if (fullPinyinStyle) {
                 textPaint.color = glyphColor
-                textPaint.textSize = (h * FULL_TEXT_RATIO + glyphSizeDeltaPx).coerceAtLeast(h * MIN_LETTER_RATIO)
+                // 铺满分支此前**只按键高定字号、不按键宽收** —— 键高 70dp 时字号 49dp，而 26 键
+                // 每键宽只有 36dp，字母比键还宽，看上去又大又挤（相邻字母几乎相接）。这里补上与
+                // 居中 / 长文本分支同源的宽度收束，基准由视图下发（最宽字母 W + 最窄一排键宽）
+                // ⇒ 整页同号，不会出现「W 收、I 不收」的同排高低不齐。
+                val desired = (h * FULL_TEXT_RATIO + glyphSizeDeltaPx).coerceAtLeast(h * MIN_LETTER_RATIO)
+                val measure = if (uniformMeasureText.isNotEmpty()) uniformMeasureText else label
+                val refWidth = if (uniformMeasureWidth > 0f) uniformMeasureWidth else w
+                textPaint.textSize = fitTextSize(
+                    measure,
+                    desired,
+                    (refWidth - inset * 2f) * FULL_TEXT_FIT_RATIO,
+                    h * MIN_LETTER_RATIO,
+                )
                 textPaint.textAlign = Paint.Align.CENTER
                 textPaint.getFontMetrics(glyphFm)
                 val baseline = (h - glyphFm.ascent - glyphFm.descent) / 2f
@@ -531,6 +543,14 @@ import kotlin.math.min
             const val LONG_TEXT_THRESHOLD = 2
 
             /** 长文本基准字号比例（比 TEXT_RATIO 小一号，因为长文本占的空间更多） */
+        /**
+         * 铺满字母的字形**最多占键宽的比例**（[fullPinyinStyle] 分支）。
+         *
+         * 只按键高定字号会在高键上越界：键高 70dp ⇒ 字号 49dp，而 26 键每键宽 36dp，
+         * 字母比键还宽。0.8 给两侧留出可见余量，相邻字母不再相接。
+         */
+        const val FULL_TEXT_FIT_RATIO = 0.8f
+
             const val LONG_TEXT_RATIO = 0.30f
 
             /** 长文本收缩下限，避免极长字符串缩到无法辨认 */

@@ -2610,6 +2610,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             0f
         }
+        // 字母层同款：铺满字形的宽度收束（见 PinyinKey.FULL_TEXT_FIT_RATIO）也整页同号 ——
+        // 基准取最宽字母与最窄一排键（q 所在排），否则 W/M 比 I 先收，同排高低不齐。
+        val uniformLetterMeasure = if (layer == LAYER_LETTER) LETTER_FIT_SAMPLE else ""
+        val uniformLetterWidth = if (layer == LAYER_LETTER) {
+            (keyViews['q']?.width ?: 0).toFloat()
+        } else {
+            0f
+        }
         // 键面提示：仅中文双拼的字母层显示（英文态、大写锁定、关掉开关都不显示）
         val showHint = KeyHint.visible(
             letterLayer = layer == LAYER_LETTER,
@@ -2620,12 +2628,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         // 字母主字形字号微调（2026-10-09 指定）：大写字形比小写更宽更高，同号更挤，按「有无韵母提示 × 大小写」四档下调：
         //   显示韵母 + A-Z ⇒ −3sp；显示韵母 + a-z ⇒ 不变；
-        //   不显示韵母 + A-Z ⇒ −5sp；不显示韵母 + a-z ⇒ −2sp。
+        //   不显示韵母 + A-Z ⇒ −10sp；不显示韵母 + a-z ⇒ −2sp。
+        //   2026-10-09 再收 5sp：显韵母关闭时（26 键常态）A-Z 仍嫌撑满，按「当前显示字号 −5」下调。
         // 只调主字形（提示行字号不动、也不加粗 —— 用加粗补偿会让字面变脏）；符号层 / 数字层显式归零。
         // 按 sp 语义换算（乘 scaledDensity）而不是按键高比例：用户说的是「字号减少 3」，随系统字体缩放才一致。
         val glyphDeltaPx = when {
             showUpper && showHint -> -3f
-            showUpper -> -5f
+            showUpper -> -10f
             showHint -> 0f
             else -> -2f
         } * resources.displayMetrics.scaledDensity
@@ -2634,8 +2643,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             key.glyphSizeDeltaPx = if (layer == LAYER_LETTER) glyphDeltaPx else 0f
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
             // 符号层一律水平 + 垂直居中（不用字母层的小字顶置样式）
-            key.uniformMeasureText = uniformSymbolText
-            key.uniformMeasureWidth = uniformSymbolWidth
+            key.uniformMeasureText = if (layer == LAYER_LETTER) uniformLetterMeasure else uniformSymbolText
+            key.uniformMeasureWidth = if (layer == LAYER_LETTER) uniformLetterWidth else uniformSymbolWidth
             key.centeredStyle = layer == LAYER_SYMBOL
             key.label = when (layer) {
                 // 变量组是动态取值：键面只显示短名（去掉标记），上屏时才展开成时间
@@ -3824,6 +3833,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /**
+         * 字母层宽度收束的**基准字形**（[PinyinKey.FULL_TEXT_FIT_RATIO]）。
+         *
+         * 取最宽的大写字母：整排按它收，「I」这类窄字母自然留出更大边距，
+         * 但同一排的字号一致（逐键各自量宽会出现同排高低不齐）。
+         */
+        const val LETTER_FIT_SAMPLE = "W"
 
         /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
         const val PANEL_COMPACT_SLOTS = 8

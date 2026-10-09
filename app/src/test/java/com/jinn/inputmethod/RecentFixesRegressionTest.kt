@@ -997,6 +997,49 @@ class RecentFixesRegressionTest {
      * ② 三行 28 键里「大写」「删除」改成**全宽 1/10**（= 第一行十个字母的宽度）：weight 由 1.4 改
      *   0.875 —— 七个字母各 1 ⇒ 行内总权重 8.75，两键各占 0.875 / 8.75 = 10%。
      */
+    /**
+     * 26 键大写字母的字形尺寸（2026-10-09 指定）：
+     *
+     * 铺满分支原先**只按键高定字号**：键高 70dp ⇒ 字号 49dp，而 26 键每键宽 36dp ——
+     * 字母比键还宽，直观就是「太大、相邻字母相接」。现在补上与居中 / 长文本分支同源的
+     * 宽度收束（[PinyinKey.FULL_TEXT_FIT_RATIO]），基准由视图下发（最宽字母 W + q 键宽）
+     * 整页同号。实机同屏对拍：Q 排字形 122px → 75px、A 排 104px → 71px，其余各行不变。
+     *
+     * 「大写」「删除」两键的图标同时放大一倍（padding 13dp → 8dp：fitCenter 下图标被
+     * 「键框减内缩」框死，13dp 只剩约 10dp）。同屏实测两键图标尺寸不变、图标盒 10dp → 20dp。
+     */
+    @Test
+    fun `26键大写字母按宽度收束且两键图标放大一倍`() {
+        val key = codeOf("PinyinKey.kt")
+        assertTrue("铺满分支必须做宽度收束", "(refWidth - inset * 2f) * FULL_TEXT_FIT_RATIO" in key)
+        assertTrue("收束比例必须是有名常量", "const val FULL_TEXT_FIT_RATIO = 0.8f" in key)
+        assertFalse(
+            "不得退回「只按键高定字号」的老写法（高键上字母比键还宽）",
+            "textPaint.textSize = (h * FULL_TEXT_RATIO + glyphSizeDeltaPx)" in key,
+        )
+
+        val kb = codeOf("PinyinKeyboardView.kt")
+        assertTrue("基准字形必须是常量且取最宽字母", "const val LETTER_FIT_SAMPLE = \"W\"" in kb)
+        assertTrue(
+            "字母层必须改用字母基准，不能沿用符号层那一对",
+            "key.uniformMeasureText = if (layer == LAYER_LETTER) uniformLetterMeasure else uniformSymbolText" in kb,
+        )
+        assertTrue(
+            "26 键不显韵母档必须收到 −10sp",
+            "showUpper -> -10f" in kb && "showUpper && showHint -> -3f" in kb,
+        )
+
+        val xml = TestSources.rawSource(
+            "src/main/res/layout/keyboard_pinyin.xml",
+            "app/src/main/res/layout/keyboard_pinyin.xml",
+        )
+        assertEquals(
+            "大写与删除两键内缩必须是 8dp（13dp 只剩约 10dp 图标）",
+            2,
+            Regex("padding=\"8dp\"").findAll(xml).count(),
+        )
+    }
+
     @Test
     fun `工具栏不再渲染第二行小字且大写删除为全宽十分之一`() {
         val kb = codeOf("PinyinKeyboardView.kt")

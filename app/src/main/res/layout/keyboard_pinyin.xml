@@ -239,6 +239,9 @@
         </LinearLayout>
 
         <!-- 第三行：切换大写 + 7 个字母 + 删除键 -->
+        <!-- 两把功能键的图标走 fitCenter，绘制尺寸被「键框减 padding」框死：13dp 内缩在
+             360dp 宽屏上只剩约 10dp（键宽 36dp ⇒ 36-26），图标显得很小。改 8dp 后可用区
+             20dp×54dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="54dp"
@@ -252,7 +255,7 @@
                 android:background="@drawable/key_bg"
                 android:contentDescription="@string/cd_shift"
                 android:minWidth="0dp"
-                android:padding="13dp"
+                android:padding="8dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_shift" />
 
@@ -315,7 +318,7 @@
                 android:background="@drawable/key_bg"
                 android:contentDescription="@string/cd_backspace"
                 android:minWidth="0dp"
-                android:padding="13dp"
+                android:padding="8dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_backspace" />
         </LinearLayout>
