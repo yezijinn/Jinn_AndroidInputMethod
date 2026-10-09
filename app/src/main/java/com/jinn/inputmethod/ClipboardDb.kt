@@ -39,6 +39,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     private val appContext = context.applicationContext
 
     override fun onCreate(db: SQLiteDatabase) {
+        // 库是**新建**的：首次安装，或库损坏后平台删库重建（BUG.md L-260）。
+        // 后一种情况下历史里最大 id 从 1 重来，而「凭据不留痕」的水位记的是旧库里的 id ⇒
+        // 不清掉的话新 id 永远小于旧水位，「没有新条目才跳过」恒成立 ⇒ 该进程内凭据清理彻底失效，
+        // 用户之后再复制 API Key 会明文留在历史里（面板可见、随备份导出）。首次安装时那张表本来
+        // 就是空的，清一次无副作用。
+        CredentialTrace.clearWatermarks()
+        Diagnostics.i(TAG, "剪贴板库新建（首次安装或损坏后重建）：凭据清理水位已复位")
         db.execSQL(createTableSql())
         // 复合索引：分页 SQL 是 `ORDER BY created_at DESC, id DESC`（L-97 的 tie-breaker），
         // 索引必须同形，否则每次分页都要临时 B 树排序（BUG.md L-104）

@@ -190,11 +190,12 @@ class TranslationSourceActivity : Activity() {
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过原文范围/上限回写（避免覆盖导入结果）")
         } else {
-            saveMaxBytes()
+            // 只有真的写过才同步落盘（BUG.md L-253）：`Prefs.flush` 是 `commit()`，无改动也照写整份 XML
+            val wrote = saveMaxBytes()
+            // 落盘失败要留痕（2026-10-02 修复 L-407）：`commit()` 返回 false 是**正常返回值**
+            // （磁盘满 / 只读挂载），不抛异常 —— 丢弃返回值会让「看着改了、重启后回退」完全无声
+            if (wrote && !prefs.flush()) Diagnostics.w(TAG, "onPause: 原文范围/上限落盘失败（改动可能回退）")
         }
-        // 落盘失败要留痕（2026-10-02 修复 L-407）：`commit()` 返回 false 是**正常返回值**
-        // （磁盘满 / 只读挂载），不抛异常 —— 丢弃返回值会让「看着改了、重启后回退」完全无声
-        if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 原文范围/上限落盘失败（改动可能回退）")
     }
 
     /** 载入当前服务方的一份配置（程序化写入全部走 [loading] 闸门） */
@@ -217,16 +218,21 @@ class TranslationSourceActivity : Activity() {
      * 空串（用户清空输入框）按**出厂默认**处理而不是 0：0 会被 [Prefs.translateMaxBytesOf]
      * 钳到 1，等于把这家改成「什么都翻不了」—— 而用户的动作语义是「清掉手填值」。
      */
-    private fun saveMaxBytes() {
+    private fun saveMaxBytes(): Boolean {
         val raw = editMaxBytes.text?.toString()?.trim().orEmpty()
         // 0 / 负数视为「恢复默认」（2026-10-01 修复 L-257）：以前填 0 会被钳到 1，该家变成
         // 「每次只翻 1 字节」，界面只回填一个 1 且没有任何解释，用户难以归因
         val parsed = raw.toIntOrNull()?.takeIf { it >= TranslationText.MIN_MAX_BYTES }
-        prefs.setTranslateMaxBytesOf(currentId, parsed ?: currentId.defaultMaxBytes)
+        val target = parsed ?: currentId.defaultMaxBytes
+        // 值没变就不写（onPause 据此决定要不要同步落盘，BUG.md L-253）：比较的是**归一后的生效值**，
+        // 与 setter 的钳位同口径 ⇒ 跳过的写法与「照样写」在数据面等价
+        val wrote = prefs.translateMaxBytesOf(currentId) != target
+        if (wrote) prefs.setTranslateMaxBytesOf(currentId, target)
         // 回填**真实生效值**（2026-10-01 审查 L-225）：钳位后的数才是下次翻译真正用的；
         // 显示未生效的数会让用户以为「填 0 就是不限」（实际存 1）。
         val effective = prefs.translateMaxBytesOf(currentId).toString()
         if (editMaxBytes.text?.toString() != effective) editMaxBytes.setText(effective)
+        return wrote
     }
 
     /**

@@ -32,6 +32,18 @@ internal object CredentialTrace {
     private val purged = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * 丢掉全部水位（BUG.md L-260）。
+     *
+     * 库被**重建**时（平台对损坏库的默认处理就是删库重建）历史里最大 id 从 1 重来，而水位记的是旧库的 id ⇒
+     * 不清掉的话新 id 永远小于旧水位、「没有新条目才跳过」恒成立 ⇒ 该进程内凭据清理彻底失效：
+     * 用户之后再复制同一个 API Key，明文会一直留在剪贴板历史里（面板可见、随备份导出）。
+     * 由 [ClipboardDb.onCreate] 调用 —— 它是「库是全新的」这件事唯一的可靠信号。
+     */
+    internal fun clearWatermarks() {
+        purged.clear()
+    }
+
+    /**
      * 抹掉历史里与 [values] 等价的条目。有 DB 读 + 解密，**调用方放在后台线程**。
      *
      * @return 实际删除的条数（0 = 历史里没有等价条目，或这些目标在当前数据状态下已清理过）

@@ -4789,4 +4789,60 @@ class RecentFixesRegressionTest {
         assertEquals("选择器只该有一个打开点", 1, Regex("""RC_CUSTOM_DICT\)""").findAll(d).count())
     }
 
+    /**
+     * 库重建后必须复位「凭据不留痕」的水位（BUG.md L-260）。
+     *
+     * 平台对损坏库的默认处理是**删库重建**，历史里最大 id 从 1 重来；而水位记的是旧库的 id ⇒
+     * 不复位的话，新 id 永远小于旧水位、「没有新条目才跳过」恒成立 ⇒ 该进程内凭据清理彻底失效，
+     * 用户之后再复制的 API Key 会明文留在剪贴板历史里（面板可见、随备份导出）。
+     *
+     * 复位点选在 `onCreate`：`SQLiteOpenHelper` 没有可覆写的 `onCorruption`（错误处理是平台默认的
+     * `DefaultDatabaseErrorHandler`，会删掉整份库文件），而「库是全新的」这件事只有 `onCreate` 能作证 ——
+     * 首次安装时它是无副作用的空操作。
+     */
+    @Test
+    fun `库重建必须复位凭据清理水位`() {
+        val db = codeOf("ClipboardDb.kt")
+        val onCreate = blockAfter(db, "override fun onCreate(db: SQLiteDatabase)")
+        assertTrue(
+            "onCreate 必须复位凭据水位（库损坏重建后 id 从 1 重来）",
+            "CredentialTrace.clearWatermarks()" in onCreate,
+        )
+        val trace = codeOf("CredentialTrace.kt")
+        val clear = blockAfter(trace, "internal fun clearWatermarks()")
+        assertTrue("复位必须清的是水位表本身", "purged.clear()" in clear)
+        assertTrue(
+            "水位判定必须仍是「旧水位 < 当前最大 id」（方向反了等于永不重扫）",
+            "(purged[it] ?: -1L) < maxId" in trace,
+        )
+    }
+
+    /**
+     * 暂停时只在该页**真的写过**才同步落盘（BUG.md L-253）。
+     *
+     * `Prefs.flush` 是 `commit()`：无改动也照写整份 XML，且在**主线程**上等它写完 ——
+     * 「打开页面再返回」这种一字未改的 onPause 不该付这笔磁盘写。两个写入点本就精确的页面
+     * （凭据页、原文范围页）改走「写入结果参与判据」；OpenAI 页有 13 处无条件回写，要门控得先把
+     * 它们改成「值不同才写」，属另一类改动，此条不覆盖。
+     */
+    @Test
+    fun `暂停时只在该页真写过才同步落盘`() {
+        val tr = codeOf("TranslationSettingsActivity.kt")
+        assertTrue(
+            "凭据页：saveCredentials 必须报告是否写过",
+            "private fun saveCredentials(notify: Boolean): Boolean" in tr && "return wrote" in tr,
+        )
+        assertTrue(
+            "凭据页：flush 必须挂在「写过」上",
+            "if (wrote && !prefs.flush())" in tr,
+        )
+        val src = codeOf("TranslationSourceActivity.kt")
+        assertTrue(
+            "原文范围页：saveMaxBytes 必须报告是否写过",
+            "private fun saveMaxBytes(): Boolean" in src,
+        )
+        assertTrue("原文范围页：值没变就不写", "val wrote = prefs.translateMaxBytesOf(currentId) != target" in src)
+        assertTrue("原文范围页：flush 必须挂在「写过」上", "if (wrote && !prefs.flush())" in src)
+    }
+
 }

@@ -225,7 +225,7 @@ class TranslationSettingsActivity : Activity() {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过凭据回写（避免覆盖导入结果）")
         } else {
             // 同上：onPause 是自动保存路径，弹 toast 会与失焦那次重复（L-728）
-            saveCredentials(notify = false)
+            var wrote = saveCredentials(notify = false)
             // 改动已经在这一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转）
             credentialAutosave.removeCallbacks(autosaveCredentials)
             // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03 修复 L-774）：L-758 把它加在了 if/else 之外，
@@ -238,15 +238,21 @@ class TranslationSettingsActivity : Activity() {
             val pickedProvider = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
             if (pickedProvider != null && pickedProvider.id != prefs.translateProvider) {
                 prefs.translateProvider = pickedProvider.id
+                wrote = true
                 Diagnostics.i(TAG, "翻译服务(onPause 回写): ${pickedProvider.id}")
             }
             val pickedTarget = TranslationLanguage.entries.getOrNull(spinnerTarget.selectedItemPosition)
             if (pickedTarget != null && pickedTarget.name != prefs.translateTarget) {
                 prefs.translateTarget = pickedTarget.name
+                wrote = true
                 Diagnostics.i(TAG, "翻译目标语言(onPause 回写): ${pickedTarget.name}")
             }
+            // 只有真的写过才同步落盘（BUG.md L-253）：`Prefs.flush` 是 `commit()`，无改动也照写整份
+            // XML —— 「打开页面再返回」这种一字未改的 onPause 不该在主线程上做一次磁盘写。
+            // 之前写过的值由 `apply()` 异步落盘（内存值立刻可见，上级页面读到的是新值），
+            // 平台也会在生命周期点等排队的写入，不依赖这一次同步写。
+            if (wrote && !prefs.flush()) Diagnostics.w(TAG, "onPause: 凭据落盘失败（改动可能回退）")
         }
-        if (!prefs.flush()) Diagnostics.w(TAG, "onPause: 凭据落盘失败（改动可能回退）")
     }
 
     /**
@@ -441,21 +447,24 @@ class TranslationSettingsActivity : Activity() {
      * [saveCredentials] 末尾）：Keystore 锁住时写侧会删掉磁盘旧密文（fail-closed，
      * 见 L-665），那时若把基线推平，下一次自动保存就没有可回写的字段，用户解锁后也不会补上。
      */
-    private fun saveIfChanged(field: EditText, write: (String) -> Unit) {
-        if (!saveGuard.changed(field)) return
+    private fun saveIfChanged(field: EditText, write: (String) -> Unit): Boolean {
+        if (!saveGuard.changed(field)) return false
         write(field.text.toString())
+        return true
     }
 
-    private fun saveCredentials(notify: Boolean) {
-        saveIfChanged(editAliyunKeyId) { prefs.aliyunAccessKeyId = it }
-        saveIfChanged(editAliyunKeySecret) { prefs.aliyunAccessKeySecret = it }
-        saveIfChanged(editAzureKey) { prefs.azureApiKey = it }
-        saveIfChanged(editAzureRegion) { prefs.azureRegion = it }
-        saveIfChanged(editBaiduAppId) { prefs.baiduAppId = it }
-        saveIfChanged(editBaiduSecret) { prefs.baiduSecretKey = it }
-        saveIfChanged(editBaiduLlmAppId) { prefs.baiduLlmAppId = it }
-        saveIfChanged(editBaiduLlmKey) { prefs.baiduLlmApiKey = it }
-        saveIfChanged(editDeeplKey) { prefs.deeplApiKey = it }
+    /** @return 是否真的写了字段（onPause 据此决定要不要同步落盘，见那里的说明） */
+    private fun saveCredentials(notify: Boolean): Boolean {
+        var wrote = false
+        if (saveIfChanged(editAliyunKeyId) { prefs.aliyunAccessKeyId = it }) wrote = true
+        if (saveIfChanged(editAliyunKeySecret) { prefs.aliyunAccessKeySecret = it }) wrote = true
+        if (saveIfChanged(editAzureKey) { prefs.azureApiKey = it }) wrote = true
+        if (saveIfChanged(editAzureRegion) { prefs.azureRegion = it }) wrote = true
+        if (saveIfChanged(editBaiduAppId) { prefs.baiduAppId = it }) wrote = true
+        if (saveIfChanged(editBaiduSecret) { prefs.baiduSecretKey = it }) wrote = true
+        if (saveIfChanged(editBaiduLlmAppId) { prefs.baiduLlmAppId = it }) wrote = true
+        if (saveIfChanged(editBaiduLlmKey) { prefs.baiduLlmApiKey = it }) wrote = true
+        if (saveIfChanged(editDeeplKey) { prefs.deeplApiKey = it }) wrote = true
 
         Diagnostics.i(
             TAG,
@@ -492,6 +501,7 @@ class TranslationSettingsActivity : Activity() {
         if (unpersisted.isEmpty()) {
             for (f in credentialFields()) if (saveGuard.changed(f)) saveGuard.markWritten(f)
         }
+        return wrote
     }
 
     /** 执行同步落盘并回读校验，展示确认状态 */
