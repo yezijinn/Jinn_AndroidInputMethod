@@ -63,10 +63,10 @@ object KeyAppearance {
     /** 默认间隙：2dp（2026-09-23 定；4 个步进，此前的 0.5dp 已被取代） */
     const val DEFAULT_GAP_DP = 2f
 
-    /** SeekBar 最大进度（圆角：0~24dp，每格 1dp）。由边界与步进推导，测试守卫一致性 */
+    /** SeekBar 最大进度（圆角：见 [MIN_CORNER_DP]~[MAX_CORNER_DP]，步进 [CORNER_STEP_DP]）。由边界与步进推导，测试守卫一致性 */
     val CORNER_PROGRESS_MAX: Int = progressSteps(MIN_CORNER_DP, MAX_CORNER_DP, CORNER_STEP_DP)
 
-    /** SeekBar 最大进度（间隙：0~8dp，每格 0.5dp） */
+    /** SeekBar 最大进度（间隙：见 [MIN_GAP_DP]~[MAX_GAP_DP]，步进 [GAP_STEP_DP]） */
     val GAP_PROGRESS_MAX: Int = progressSteps(MIN_GAP_DP, MAX_GAP_DP, GAP_STEP_DP)
 
     // ── 按键高度（dp）──────────────────────────────────────────
@@ -82,10 +82,9 @@ object KeyAppearance {
     const val MIN_KEY_HEIGHT_DP = 40f
 
     /**
-     * 高度上界：120dp（2026-10-09 由 80dp 扩两倍）。
-     *
-     * 3 行 × 120dp = 360dp，加上候选栏（44dp）、拼音条（16dp）与底栏（56dp）约 476dp ——
-     * 640dp 高的小屏仍留有 160dp 以上给宿主输入区，故这是「挤但可用」的上界。
+     * 高度上界（dp）。挑值的约束是「三行加附件后仍给宿主留出输入区」：
+     * 3 × 本值 + 候选栏（44dp）+ 拼音条（16dp）+ 底栏（56dp）必须落在测试守卫的屏幕预算内
+     * （见 `KeyAppearanceTest` 的留白断言，改这里先跑测试）。
      * 剪贴板 / 图库面板的高度不跟随键高（固定 162dp×2），所以本项放大不会把面板顶出屏幕。
      */
     const val MAX_KEY_HEIGHT_DP = 90f
@@ -101,7 +100,7 @@ object KeyAppearance {
      */
     const val DEFAULT_KEY_HEIGHT_DP = 54f
 
-    /** SeekBar 最大进度（高度：40~80dp，每格 2dp ⇒ 20 格） */
+    /** SeekBar 最大进度（高度：见 [MIN_KEY_HEIGHT_DP]~[MAX_KEY_HEIGHT_DP]，步进 [KEY_HEIGHT_STEP_DP]） */
     val KEY_HEIGHT_PROGRESS_MAX: Int = progressSteps(MIN_KEY_HEIGHT_DP, MAX_KEY_HEIGHT_DP, KEY_HEIGHT_STEP_DP)
 
     /** 把任意输入钳到高度定义域内，并对齐到 [KEY_HEIGHT_STEP_DP] 的整数倍 */

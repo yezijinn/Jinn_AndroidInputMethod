@@ -171,7 +171,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         /** 默认配置名称（仅用于显示；多配置档在下一轮） */
         const val DEFAULT_PROFILE_NAME = "OpenAI 兼容"
 
-        /** 默认 Base URL（OpenAI 官方） */
+        /** 默认 Base URL：留空时请求发往这里（见 [Prefs.openAiBaseUrl] 与配置页提示，三处必须同一个来源） */
         const val DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
         const val DEFAULT_CHAT_PATH = "/chat/completions"
         const val DEFAULT_MODELS_PATH = "/models"

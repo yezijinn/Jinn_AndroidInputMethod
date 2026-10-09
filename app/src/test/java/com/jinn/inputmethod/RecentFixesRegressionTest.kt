@@ -1048,6 +1048,54 @@ class RecentFixesRegressionTest {
      * 词库下载改名之前必须 fsync（摘要是在页缓存上算的）；更新检查不得用无上限的 readLine；
      * 翻译 POST 不得静默重发（服务端可能已计费）。
      */
+    /**
+     * 配置存储面四处收口（2026-10-09 审查第三轮）：
+     *
+     * ① 导出只在**用户真的改过**时才写外观 / 图库 / 定时这些「不平凡默认」的键 —— 无条件导出会把
+     *   当前默认固化成显式值，将来调默认对这些用户永久失效；
+     * ② 外观量程的 KDoc 不再复述数字（改指常量，本仓有过注释与常量分叉的先例）；
+     * ③ 滑杆上界必须可达（步进除不尽时取上整，显示侧进度取整）；
+     * ④ 默认端点的注释不得再指向与常量不符的地址。
+     */
+    @Test
+    fun `配置存储面的四处收口不得回退`() {
+        val prefs = codeOf("Prefs.kt")
+        for (key in listOf(
+            "KEY_KEY_CORNER_DP", "KEY_KEY_GAP_DP", "KEY_KEY_HEIGHT_DP",
+            "KEY_CANDIDATE_SPACING_DP", "KEY_CANDIDATE_TEXT_SP",
+            "KEY_GALLERY_COLUMNS", "KEY_GALLERY_CELL_HEIGHT_DP",
+            "KEY_THEME_LIGHT_AT", "KEY_THEME_DARK_AT",
+        )) {
+            assertTrue("导出必须只在改过时才写 $key（否则默认被固化）", "if (sp.contains($key)) put($key," in prefs)
+        }
+
+        val prefsRaw = TestSources.rawSource(
+            "src/main/java/com/jinn/inputmethod/Prefs.kt",
+            "app/src/main/java/com/jinn/inputmethod/Prefs.kt",
+        )
+        for (old in listOf("0~24dp", "0~8dp", "40~80dp")) {
+            assertFalse("外观量程注释不得再复述旧数字：$old", old in prefsRaw)
+        }
+        val appearRaw = TestSources.rawSource(
+            "src/main/java/com/jinn/inputmethod/KeyAppearance.kt",
+            "app/src/main/java/com/jinn/inputmethod/KeyAppearance.kt",
+        )
+        assertFalse("键高上界注释不得再写 120dp", "上界：120dp" in appearRaw)
+        assertFalse("键高进度注释不得再写 20 格", "20 格）" in appearRaw)
+
+        val page = codeOf("ClipboardCustomizeActivity.kt")
+        assertTrue("滑杆上界必须可达（取上整）", "(((max - min) + step - 1) / step)" in page)
+        assertTrue("显示侧进度必须取整", "Math.round((value - min).toFloat() / step)" in page)
+
+        assertFalse(
+            "默认端点注释不得再指向与常量不符的地址",
+            "默认 Base URL（OpenAI 官方）" in TestSources.rawSource(
+                "src/main/java/com/jinn/inputmethod/OpenAiTranslator.kt",
+                "app/src/main/java/com/jinn/inputmethod/OpenAiTranslator.kt",
+            ),
+        )
+    }
+
     @Test
     fun `外部交互面的五处收口不得回退`() {
         val asr = codeOf("AsrClient.kt")

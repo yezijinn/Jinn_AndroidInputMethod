@@ -321,8 +321,12 @@ class ClipboardCustomizeActivity : Activity() {
             minWidth = dp(52)
         }
         val seek = SeekBar(this).apply {
-            this.max = ((max - min) / step).coerceAtLeast(1)
-            progress = ((value - min) / step).coerceIn(0, this.max)
+            // 上界必须可达：步进除不尽时（如 4~1024 / 每格 32、2~75 / 每格 2），整除会把最大进度
+            // 压到上界之下 —— 用户存着 1024 或 75 时滑杆选不出来，拖一下就静默变小。
+            // 取上整，最后一格落到上界之内由回调里的 coerceIn 收口。
+            this.max = (((max - min) + step - 1) / step).coerceAtLeast(1)
+            // 显示侧同样取整：存着上界时进度落在最后一格（否则会显示成一格之下，一拖就掉值）
+            progress = Math.round((value - min).toFloat() / step).coerceIn(0, this.max)
             contentDescription = label
             progressTintList = ColorStateList.valueOf(getColor(R.color.accent))
             thumbTintList = ColorStateList.valueOf(getColor(R.color.accent))

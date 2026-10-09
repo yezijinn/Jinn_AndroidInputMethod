@@ -392,7 +392,7 @@ class Prefs(context: Context) {
     /**
      * 26 键区（3 行 28 键：字母 + 大写 + 删除）的统一按键圆角半径（dp）。
      *
-     * 定义域与默认值见 [KeyAppearance]（0~24dp，默认 1dp 微圆角）。getter 也做一次钳位：
+     * 定义域与默认值**一律见 [KeyAppearance]**（不在这里复述数字：本仓有过注释与常量分叉的先例）。
      * 历史配置或外部写入可能带越界值，读出来必须是合法值才允许进绘制流程。
      */
     var keyCornerDp: Float
@@ -404,7 +404,7 @@ class Prefs(context: Context) {
     /**
      * 26 键区（3 行 28 键）的统一按键间隙（dp），相邻两键之间的空隙，左右与上下一致。
      *
-     * 定义域与默认值见 [KeyAppearance]（0~8dp，默认 0.5dp，步进 0.5dp）。
+     * 定义域与默认值一律见 [KeyAppearance]。
      */
     var keyGapDp: Float
         get() = KeyAppearance.clampGapDp(
@@ -415,7 +415,7 @@ class Prefs(context: Context) {
     /**
      * 26 键区三行字母键的**单行高度**（dp），见 [KeyAppearance] 的键高段。
      *
-     * 定义域 40~80dp、默认 54dp（= 布局原始高度）；getter 也做一次钳位（与圆角 / 间隙 / 透明度同款）：
+     * 定义域与默认值一律见 [KeyAppearance]（默认值刻意等于布局原始高度）；getter 也做一次钳位（与圆角 / 间隙 / 透明度同款）：
      * 越界值会直达 `layoutParams.height` —— 过小把三行压成一条线、过大把键盘顶出屏幕。
      *
      * 只作用于字母三行（28 键）与「方向」九宫格（它顶替字母区，跟随同高）；
@@ -1020,7 +1020,7 @@ class Prefs(context: Context) {
         set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME, multiline = true)
 
     /**
-     * OpenAI 兼容服务的 Base URL（默认官方 `https://api.openai.com/v1`）。
+     * OpenAI 兼容服务的 Base URL（留空即用 [OpenAiTranslator.DEFAULT_BASE_URL]，当前指向 DeepSeek 官方 ——
      *
      * 原样保存用户输入（只剥不可见字符，不补 `https://`、不剥尾部端点）：规范化放在
      * [OpenAiTranslator.joinUrl] 里做 —— 存归一后的值会让用户看不到自己填的是什么，出问题时无从对照。
@@ -1340,12 +1340,16 @@ class Prefs(context: Context) {
         put(KEY_OPENAI_RESPONSE_PATH, openAiResponsePath)
         put(KEY_OPENAI_TIMEOUT_SEC, openAiTimeoutSec)
         put(KEY_OPENAI_MODELS_CACHE, openAiModelsCache)
-        put(KEY_KEY_CORNER_DP, keyCornerDp)
-        put(KEY_KEY_GAP_DP, keyGapDp)
-        put(KEY_KEY_HEIGHT_DP, keyHeightDp)
+        // ⚠ 外观七键与下面两组同款：只在**用户真的改过**时才导出。无条件导出会把「没开过外观页的
+        // 那批用户」的当前默认固化成显式值 —— 将来调整默认圆角 / 键高 / 候选字号，对这些用户永久失效，
+        // 而且同一台机器上「清数据」与「导入备份」会得到两套观感。
+        // 两个平凡默认（字母开关 false、透明 0%）按既有口径不套守卫：缺键回落与显式同值。
+        if (sp.contains(KEY_KEY_CORNER_DP)) put(KEY_KEY_CORNER_DP, keyCornerDp)
+        if (sp.contains(KEY_KEY_GAP_DP)) put(KEY_KEY_GAP_DP, keyGapDp)
+        if (sp.contains(KEY_KEY_HEIGHT_DP)) put(KEY_KEY_HEIGHT_DP, keyHeightDp)
         put(KEY_KEY_LETTER_UPPERCASE, keyLetterUppercase)
-        put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
-        put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
+        if (sp.contains(KEY_CANDIDATE_SPACING_DP)) put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
+        if (sp.contains(KEY_CANDIDATE_TEXT_SP)) put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1374,10 +1378,12 @@ class Prefs(context: Context) {
         // 图库快贴的「自动返回」是用户偏好（默认关），换机必须带走
         put(KEY_GALLERY_AUTO_RETURN, galleryAutoReturn)
         // 图库面板的缩略图布局（每行张数 / 行高）同为外观偏好，换机带走
-        put(KEY_GALLERY_COLUMNS, galleryColumns)
-        put(KEY_GALLERY_CELL_HEIGHT_DP, galleryCellHeightDp)
-        put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)
-        put(KEY_THEME_DARK_AT, themeDarkAtMinutes)
+        // 图库两键同理：列数与格高都是「用户去过图库设置页才会显式写」的项
+        if (sp.contains(KEY_GALLERY_COLUMNS)) put(KEY_GALLERY_COLUMNS, galleryColumns)
+        if (sp.contains(KEY_GALLERY_CELL_HEIGHT_DP)) put(KEY_GALLERY_CELL_HEIGHT_DP, galleryCellHeightDp)
+        // 两个定时时刻的默认是 07:00 / 19:00，属不平凡默认：没设过就不带走
+        if (sp.contains(KEY_THEME_LIGHT_AT)) put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)
+        if (sp.contains(KEY_THEME_DARK_AT)) put(KEY_THEME_DARK_AT, themeDarkAtMinutes)
         put(KEY_UPDATE_LAST_CHECK_AT, updateLastCheckAt)
         return out
     }
