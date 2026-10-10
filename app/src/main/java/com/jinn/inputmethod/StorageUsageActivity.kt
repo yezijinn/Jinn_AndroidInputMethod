@@ -75,7 +75,10 @@ class StorageUsageActivity : ComponentActivity() {
 
     /** 统计放后台（目录遍历是 IO）；回主线程渲染，页面已销毁就丢弃结果 */
     private fun refresh() {
-        BackgroundIo.run {
+        // 投长活池（BUG.md L-1233）：统计要遍历词库目录与图片密文目录，文件量大时会把同一条
+        // 交互队列（采集 / 粘贴 / 面板查询）往后推 —— 短活池是单线程 FIFO，一个遍历排在前面，
+        // 用户看到的是「复制了没反应」
+        BackgroundIo.runLong {
             val report = runCatching { StorageUsage.survey(this@StorageUsageActivity) }
                 .onFailure { Diagnostics.w(TAG, "存储统计失败: ${it.javaClass.simpleName}") }
                 .getOrNull()

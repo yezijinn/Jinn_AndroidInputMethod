@@ -23,6 +23,12 @@ internal object ClipboardThumbLoader {
     private const val TAG = "ClipThumb"
 
     private const val THUMB_THREADS = 3
+
+    /** 解码失败的负结果存活时长（BUG.md L-1237）：坏图在这段时间内不再反复排队解码 */
+    private const val FAIL_TTL_MS = 10_000L
+
+    /** 解码失败的负缓存（键 → 失败时刻）：快速滚动 / 视图复用会把同一张坏图反复请求 */
+    private val failedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
 
     private val pool: ExecutorService = Executors.newFixedThreadPool(THUMB_THREADS) { r ->
@@ -54,6 +60,12 @@ internal object ClipboardThumbLoader {
             onReady(hash, it)
             return
         }
+        // 负缓存（BUG.md L-1237）：解不出的图在 TTL 内直接跳过 —— 失败路径原先没有任何缓存，
+        // 同一张坏图每被请求一次就重解一次（快速滚动 / cell 复用时最明显）
+        failedAt[key]?.let { at ->
+            if (System.currentTimeMillis() - at < FAIL_TTL_MS) return
+            failedAt.remove(key)
+        }
         runCatching {
             pool.execute {
                 val bmp = cache.get(key) ?: decode(context, hash, key, targetPx)
@@ -83,6 +95,8 @@ internal object ClipboardThumbLoader {
             // 这条属**预期**情形（尺寸读不出的图只存了占位字节）：记 V 不记 W ——
             // 每次滚动重渲染都会走到这里，W 会把诊断包刷满
             Diagnostics.v(TAG, "缩略图解码失败 ${hash.take(12)} target=$targetPx")
+            // 同时记负缓存（BUG.md L-1237）：短时间内不再为这张图排队解码
+            failedAt[key] = System.currentTimeMillis()
             return null
         }
         cache.put(key, bmp)

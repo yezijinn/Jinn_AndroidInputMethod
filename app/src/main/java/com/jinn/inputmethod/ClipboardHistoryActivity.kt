@@ -151,9 +151,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 override fun onMenu(item: ClipboardDb.Item) = showImageMenu(item)
             }
             // 没有收藏图片时收起自己：空态文案是给全屏网格写的，留在收藏列表上方会白占两行
-            onDataChanged = { empty, _ ->
+            onDataChanged = { empty, count ->
                 if (categoryFilter == FILTER_FAVORITE) {
                     visibility = if (empty) View.GONE else View.VISIBLE
+                    // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
+                    // 多时保持两行 + 「★ 只看收藏」全屏入口
+                    if (!empty) applyFavStripHeight(count)
                 }
             }
         }
@@ -477,12 +480,21 @@ class ClipboardHistoryActivity : ComponentActivity() {
             .show()
     }
 
-    /** 收藏图片条带的高度 = 图库行高 × [FAV_STRIP_ROWS]（行高在图库设置页 / 自定义页可改） */
-    private fun applyFavStripHeight() {
+    /**
+     * 收藏图片条带的高度 = 图库行高 × 行数。
+     *
+     * [imageCount] 给了就按实际行数取（1 ~ [FAV_STRIP_ROWS] 行，收藏图少时不白占空间）；
+     * 没给（布局变化的重排路径）就按上限 [FAV_STRIP_ROWS] 行。
+     */
+    private fun applyFavStripHeight(imageCount: Int? = null) {
         if (!::favImageGrid.isInitialized) return
+        val perRow = Prefs(this).galleryColumns.coerceAtLeast(MIN_GRID_COLUMNS)
+        val rows = imageCount
+            ?.let { ((it + perRow - 1) / perRow).coerceIn(1, FAV_STRIP_ROWS) }
+            ?: FAV_STRIP_ROWS
         favImageGrid.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(Prefs(this).galleryCellHeightDp * FAV_STRIP_ROWS),
+            dp(Prefs(this).galleryCellHeightDp * rows),
         )
     }
 

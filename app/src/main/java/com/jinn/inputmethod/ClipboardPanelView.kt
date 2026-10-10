@@ -440,9 +440,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 }
             }
             // 收藏分组的条带无图时收起自己：它的空态文案是给全屏网格写的，留在列表上方会白占两行
-            onDataChanged = { empty, _ ->
+            onDataChanged = { empty, count ->
                 if (currentCategory == CATEGORY_FAVORITE) {
                     visibility = if (empty) View.GONE else View.VISIBLE
+                    if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
             }
         }
@@ -571,13 +572,19 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 网格高度按分类分配：图片分类吃满面板（weight=1），收藏分类只占两行 ——
      * 下方还要放「收藏的文本列表」，两边都要看得见。
      */
-    private fun applyGridHeight(imageMode: Boolean) {
+    private fun applyGridHeight(imageMode: Boolean, imageCount: Int? = null) {
         imageGrid.layoutParams = if (imageMode) {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         } else {
+            // 收藏分组的条带：给了数量就按实际行数（1 ~ [STRIP_ROWS] 行，图少时不白占空间），
+            // 否则（切分类时的初次布局）按上限
+            val perRow = Prefs(context).galleryColumns.coerceAtLeast(1)
+            val rows = imageCount
+                ?.let { ((it + perRow - 1) / perRow).coerceIn(1, STRIP_ROWS) }
+                ?: STRIP_ROWS
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(Prefs(context).galleryCellHeightDp * STRIP_ROWS),
+                dp(Prefs(context).galleryCellHeightDp * rows),
             )
         }
     }

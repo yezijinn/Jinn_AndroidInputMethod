@@ -64,6 +64,9 @@ internal object ClipboardImageExport {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileNameOf(item, mime))
             put(MediaStore.Images.Media.MIME_TYPE, mime)
             put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$ALBUM_DIR")
+            // 写入中标记（BUG.md L-1238，API 29+ 的官方流程）：不设的话相册可能在流写完之前
+            // 就扫到这条 0 字节记录，用户看到「保存了但打不开」
+            put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         return runCatching {
             val resolver = context.contentResolver
@@ -74,6 +77,14 @@ internal object ClipboardImageExport {
                 return false
             }
             out.use { it.write(bytes) }
+            // 写完解除 pending：这条记录此时才对相册与其它应用可见
+            runCatching {
+                resolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                    null, null,
+                )
+            }.onFailure { Diagnostics.w(TAG, "相册条目解除写入中标记失败（图已落盘）") }
             true
         }.getOrElse {
             Diagnostics.w(TAG, "保存到相册失败: ${it.javaClass.simpleName}")
@@ -163,10 +174,15 @@ internal object ClipboardImageExport {
         return item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" } ?: sniffed
     }
 
-    /** 文件名：哈希前 12 位 + 入库时间 + 真实扩展名（`img:` 前缀与冒号不进文件名） */
+    /**
+     * 文件名：哈希前 12 位 + 入库时间（**到毫秒**）+ 真实扩展名（`img:` 前缀与冒号不进文件名）。
+     *
+     * 毫秒位是给「同一张图在同一秒内被重复保存」用的（BUG.md L-1238）：只到秒时，
+     * MediaStore / SAF 的同名行为未定（自动改名，或 `createDocument` 直接返回 null ⇒ 报失败）。
+     */
     private fun fileNameOf(item: ClipboardDb.Item, mime: String): String {
         val stem = ClipboardImageFiles.stem(item.contentHash).take(12)
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(item.createdAt))
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(item.createdAt))
         return "${stem}_$stamp.${GalleryInsert.extOf(mime)}"
     }
 

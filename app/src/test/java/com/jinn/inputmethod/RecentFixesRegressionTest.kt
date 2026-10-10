@@ -5077,4 +5077,31 @@ class RecentFixesRegressionTest {
         assertTrue("失败要提示", "TEXT_LAYOUT_SAVE_FAILED" in gallery)
     }
 
+    /**
+     * 存储统计、缩略图负缓存、相册写入与收藏条带的自适应（BUG.md L-1233 / L-1237 / L-1238）。
+     */
+    @Test
+    fun `存储统计与相册写入的收口`() {
+        // L-1233：统计不得投在交互短活池（单线程 FIFO，遍历会堵住采集与粘贴）
+        assertTrue("存储统计投长活池", "BackgroundIo.runLong {" in codeOf("StorageUsageActivity.kt"))
+        // L-1237：缩略图解码失败要记负缓存（同图短时间内不再反复排队）
+        assertTrue(
+            "解码失败记负缓存",
+            "failedAt[key] = System.currentTimeMillis()" in codeOf("ClipboardThumbLoader.kt"),
+        )
+        // L-1238：相册写入走「写入中」标记，文件名到毫秒
+        val exp = codeOf("ClipboardImageExport.kt")
+        assertTrue("相册写入有 pending 标记", "IS_PENDING, 1" in exp && "IS_PENDING, 0" in exp)
+        assertTrue("文件名精确到毫秒", "yyyyMMdd_HHmmss_SSS" in exp)
+        // 收藏条带按实际行数自适应（历史页与键盘面板两处）
+        assertTrue(
+            "历史页条带自适应",
+            "applyFavStripHeight(count)" in codeOf("ClipboardHistoryActivity.kt"),
+        )
+        assertTrue(
+            "面板条带自适应",
+            "applyGridHeight(imageMode = false, imageCount = count)" in codeOf("ClipboardPanelView.kt"),
+        )
+    }
+
 }
