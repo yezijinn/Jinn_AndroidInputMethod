@@ -617,43 +617,6 @@
                 android:layout_marginTop="4dp" />
         </LinearLayout>
 
-        <!-- 屏幕翻译（无障碍）：应用内开关 + 状态行 + 跳系统「无障碍」+ 用法引导。
-             采集由快捷磁贴触发（面板浮层在 ScreenTranslateService 里代码构建）；
-             文案全部代码下发（strings.xml 默认不改动），布局里不写 android:text -->
-        <LinearLayout
-            style="@style/SettingsCard">
-
-            <Switch
-                android:id="@+id/switch_screen_translate"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="2"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                style="@style/CardHint"
-                android:id="@+id/text_screen_translate_state"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp" />
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_screen_translate_a11y"
-                android:layout_width="match_parent"
-                android:layout_marginTop="4dp" />
-
-            <TextView
-                style="@style/CardHint"
-                android:id="@+id/text_screen_translate_guide"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp" />
-        </LinearLayout>
-
         <!-- 配置备份：导出 / 导入（跨设备迁移）。
              两个按钮的文本由代码下发：strings.xml 默认不改动，布局里留空避免硬编码文案进入资源 -->
         <LinearLayout

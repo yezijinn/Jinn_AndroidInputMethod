@@ -92,7 +92,7 @@ internal sealed interface TranslateTarget {
 /**
  * 决策：按 [target] 翻，还是「已经是目标语言」而不发。
  *
- * 脚本判定只做一次（[guessSourceScript]）：键盘翻译与屏幕翻译两条路径都必须走这里，
+ * 脚本判定只做一次（[guessSourceScript]）：所有翻译入口都必须走这里，
  * 避免「一处判了、另一处再判一次」的口径漂移（两处各算一次正是 [TranslateTarget] 要收口的旧样子）。
  * 判定不出源语言（纯数字 / URL / 混写）时一律照发 —— 宁可多发一次，也不误拦用户的正常请求。
  */
@@ -109,8 +109,7 @@ internal fun decideTranslateTarget(text: String, target: TranslationLanguage): T
 /**
  * 「已经是目标语言，未发送请求」的**唯一文案**（2026-10-10 修复 L-1131）。
  *
- * 两个消费方：键盘翻译（toast）与屏幕翻译（面板提示行）。成句走 [alreadyTargetMessage]，
- * 别在两处各拼一次 —— 占位符与实参的顺序只在这里声明一遍。
+ * 成句走 [alreadyTargetMessage]，别在多处各拼一次 —— 占位符与实参的顺序只在这里声明一遍。
  */
 internal const val TEXT_ALREADY_TARGET_LANGUAGE = "这段文字已经是「%s」，未发送请求（换个目标语言再试）"
 

@@ -64,8 +64,6 @@
     <string name="cd_backspace">退格</string>
     <string name="cd_enter">换行</string>
     <string name="cd_keyboard">切换到拼音键盘</string>
-    <!-- 屏幕翻译服务说明（系统「无障碍」设置页展示：只能引用资源，不能代码下发） -->
-    <string name="screen_translate_service_desc">点快捷磁贴读取当前屏幕文字，由你勾选后翻译，可复制或替换原文。不截屏、不后台监听、不上传你没勾选的内容。</string>
 
     <!-- 拼音键盘 -->
     <string name="key_cn">中</string>

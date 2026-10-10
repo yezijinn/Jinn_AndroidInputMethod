@@ -4876,14 +4876,9 @@ class RecentFixesRegressionTest {
             ime, "is TranslateTarget.AlreadyTarget", "TranslationClient.translate(",
             "键盘侧：判定要排在发请求之前，否则等于没拦",
         )
-        val service = codeOf("ScreenTranslateService.kt")
-        assertBefore(
-            service, "is TranslateTarget.AlreadyTarget", "TranslationClient.translate(",
-            "屏幕翻译侧：判定要排在发请求之前，否则等于没拦",
-        )
         assertTrue(
-            "两侧的提示必须是同一句（TEXT_ALREADY_TARGET_LANGUAGE 一处定义、成句走 alreadyTargetMessage）",
-            "alreadyTargetMessage(" in ime && "alreadyTargetMessage(" in service,
+            "提示要成句（TEXT_ALREADY_TARGET_LANGUAGE 一处定义、成句走 alreadyTargetMessage）",
+            "alreadyTargetMessage(" in ime,
         )
     }
 

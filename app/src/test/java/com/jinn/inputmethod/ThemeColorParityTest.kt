@@ -245,12 +245,10 @@ class ThemeColorParityTest {
     /**
      * 「根本不显示任何像素」的页面：豁免上面两条主题守卫。
      *
-     * 判据不是「它叫 Activity 但不是设置页」，而是**它不会绘制内容**：
-     *  · `ScreenTranslateTriggerActivity`（2026-10-10）：透明主题 + `noHistory`，被磁贴拉起只为
-     *    **收起快捷设置遮罩**（`TileService` 只有这一条可靠路径），随即把采集请求转交服务并
-     *    `finish()`（约 0.2s），全程无内容视图、无交互。给它装主题定时器是纯死代码。
+     * 判据不是「它叫 Activity 但不是设置页」，而是**它不会绘制内容**。当前没有这样的页面
+     * （曾经的屏幕翻译中转页已随功能移除），空集保留上面的自带验证 —— 将来再豁免谁，先证明它无内容视图。
      */
-    private val noUiPages = setOf("ScreenTranslateTriggerActivity.kt")
+    private val noUiPages = setOf<String>()
 
     /**
      * 取 `signature` 那个函数的**大括号配平**函数体（不含外层花括号）；找不到返回 null。

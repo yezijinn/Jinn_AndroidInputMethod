@@ -35,45 +35,6 @@
                 android:resource="@xml/method" />
         </service>
 
-        <!-- 屏幕翻译：点快捷磁贴读取当前窗口的文字 → 用户勾选 → 翻译；结果可复制或整节点替换。
-             仅系统可绑定（BIND_ACCESSIBILITY_SERVICE 为签名级权限）；应用内默认关闭，须在系统
-             「无障碍」里手动开启。零事件订阅：配置里不写 accessibilityEventTypes，系统不会因任何
-             界面变化唤醒本服务。不申请 SYSTEM_ALERT_WINDOW：浮层用无障碍专属的
-             TYPE_ACCESSIBILITY_OVERLAY。 -->
-        <service
-            android:name=".ScreenTranslateService"
-            android:exported="true"
-            android:label="精灵输入法 · 屏幕翻译"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/screen_translate_config" />
-        </service>
-
-        <!-- 屏幕翻译的触发入口：快捷磁贴。BIND_QUICK_SETTINGS_TILE 为签名级权限（仅系统持有）。 -->
-        <service
-            android:name=".ScreenTranslateTile"
-            android:exported="true"
-            android:icon="@drawable/ic_screen_translate_tile"
-            android:label="屏幕翻译"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-
-        <!-- 屏幕翻译的磁贴中转页：只负责收起快捷设置遮罩并把采集请求转交服务，随后立即 finish。
-             透明无 UI、noHistory、不入最近任务（采集按窗口类型与包名过滤，不依赖前台是谁）。 -->
-        <activity
-            android:name=".ScreenTranslateTriggerActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:noHistory="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
         <!-- 图库快贴：选图中转页（无界面；Photo Picker → 复制进 cache → 交 IME 插入） -->
         <activity
             android:name=".GalleryPickActivity"

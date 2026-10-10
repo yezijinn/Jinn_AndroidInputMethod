@@ -10,23 +10,6 @@
 -->
 <lint>
     <!--
-      屏幕翻译磁贴：Android 14 起 `startActivityAndCollapse(Intent)` 失效（必须换 PendingIntent 重载），
-      而本项目 minSdk 26 —— 14 以下**只有** Intent 重载可用，于是代码里必然保留一个版本分支。
-      lint 只看单次调用就判「该用新重载」，对本分支是误判（新重载在 26 上不存在）。
-    -->
-    <issue id="StartActivityAndCollapseDeprecated">
-        <ignore path="src/main/java/com/jinn/inputmethod/ScreenTranslateTile.kt" />
-    </issue>
-
-    <!--
-      屏幕翻译面板：根视图的 setOnTouchListener 只处理 `ACTION_OUTSIDE`（点面板外收起），
-      点击检测由面板内的按钮各自承担 —— 这里永远不会有「点到了但没回调」的情况，不需要 performClick。
-    -->
-    <issue id="ClickableViewAccessibility">
-        <ignore path="src/main/java/com/jinn/inputmethod/ScreenTranslatePanel.kt" />
-    </issue>
-
-    <!--
       项目约定：功能文案写代码里（`strings.xml` 默认不改）
       ⇒ 代码里拼接 setText 是刻意的，改写成字符串资源反而违反约定。
       同一个理由也出现在 KeyAppearanceActivity 的 @SuppressLint("SetTextI18n")。

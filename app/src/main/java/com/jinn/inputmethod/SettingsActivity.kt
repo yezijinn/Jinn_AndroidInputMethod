@@ -73,13 +73,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnTranslateSettings: Button
     private lateinit var textTranslateState: TextView
 
-    /** 屏幕翻译（无障碍）：总开关 + 状态行 + 跳系统「无障碍」的按钮 + 用法引导小字 */
-    private lateinit var switchScreenTranslate: Switch
-    private lateinit var textScreenTranslateState: TextView
-    private lateinit var btnScreenTranslateA11y: Button
-    private lateinit var textScreenTranslateGuide: TextView
-
-
     /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认不改动） */
     private lateinit var btnFuzzyPinyin: Button
 
@@ -295,14 +288,6 @@ class SettingsActivity : ComponentActivity() {
                 .onFailure { Diagnostics.w(TAG, "打开翻译设置失败: ${it.message}") }
         }
         textTranslateState = findViewById(R.id.text_translate_state)
-        // 屏幕翻译（无障碍）：开关 + 状态行 + 跳转 + 用法引导（文案全部代码下发）
-        switchScreenTranslate = findViewById(R.id.switch_screen_translate)
-        switchScreenTranslate.text = TEXT_SCREEN_TRANSLATE_SWITCH
-        textScreenTranslateState = findViewById(R.id.text_screen_translate_state)
-        btnScreenTranslateA11y = findViewById(R.id.btn_screen_translate_a11y)
-        btnScreenTranslateA11y.text = TEXT_SCREEN_TRANSLATE_A11Y
-        textScreenTranslateGuide = findViewById(R.id.text_screen_translate_guide)
-        textScreenTranslateGuide.text = TEXT_SCREEN_TRANSLATE_GUIDE
 
         // 只使用繁体字：候选里的简体字全部替换为繁体字（文案同样代码下发）
         switchUseTraditional = findViewById(R.id.switch_use_traditional)
@@ -525,8 +510,6 @@ class SettingsActivity : ComponentActivity() {
         if (::textMicState.isInitialized) refreshMicState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
-        // 屏幕翻译：用户可能刚去系统「无障碍」里开了服务（或刚关掉），回来必须重报状态
-        if (::textScreenTranslateState.isInitialized) refreshScreenTranslateState()
 
     }
 
@@ -618,7 +601,6 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
         bindVoiceInputSwitch()
         bindTranslateCard()
-        bindScreenTranslateCard()
 
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
@@ -895,38 +877,6 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "翻译功能: $checked")
         }
         refreshTranslateState()
-    }
-
-    /**
-     * 屏幕翻译卡片：应用内总开关（与系统「无障碍」里的服务开关是两件事）+ 状态行 + 跳转按钮。
-     *
-     * 开关只写 [Prefs.screenTranslateEnabled]（服务不订阅事件，所以不需要通知它改订阅）；
-     * 但**磁贴住在 SystemUI 进程里**，状态要请系统重新回调一次，故切开关后调
-     * [ScreenTranslateSettings.notifyTileStateChanged]（状态行同时重刷）。
-     */
-    private fun bindScreenTranslateCard() {
-        switchScreenTranslate.isChecked = prefs.screenTranslateEnabled
-        switchScreenTranslate.setOnCheckedChangeListener { _, checked ->
-            prefs.screenTranslateEnabled = checked
-            ScreenTranslateSettings.notifyTileStateChanged(this)
-            refreshScreenTranslateState()
-            Diagnostics.i(TAG, "屏幕翻译: ${if (checked) "开启" else "关闭"}（立即生效）")
-        }
-        btnScreenTranslateA11y.setOnClickListener {
-            Diagnostics.i(TAG, "设置页: 打开系统无障碍设置")
-            ScreenTranslateSettings.openSystemSettings(this)
-        }
-        refreshScreenTranslateState()
-    }
-
-    /**
-     * 状态行四态见 [ScreenTranslateSettings.statusText]；「去开启」按钮只在系统里没开时出现
-     * （系统已开却显示按钮会把用户送进一个「已经开着」的列表，白跑一趟）。
-     */
-    private fun refreshScreenTranslateState() {
-        textScreenTranslateState.text = ScreenTranslateSettings.statusText(this, prefs.screenTranslateEnabled)
-        val systemOn = ScreenTranslateSettings.isSystemServiceEnabled(this)
-        btnScreenTranslateA11y.visibility = if (systemOn) View.GONE else View.VISIBLE
     }
 
     private fun refreshTranslateState() {
@@ -1794,12 +1744,6 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_TRANSLATE_SWITCH = "启用翻译(需要联网,发送原文,接收译文)"
         const val TEXT_TRANSLATE_SETTINGS = "翻译设置"
 
-        // 屏幕翻译（无障碍）：开关 / 跳转按钮 / 用法引导（三处文案一并代码下发）
-        const val TEXT_SCREEN_TRANSLATE_SWITCH = "屏幕翻译(点快捷磁贴读取屏幕文字,勾选后翻译)"
-        const val TEXT_SCREEN_TRANSLATE_A11Y = "去系统「无障碍」里开启本服务"
-        const val TEXT_SCREEN_TRANSLATE_GUIDE =
-            "用法：下拉快捷设置 → 编辑磁贴 → 添加「屏幕翻译」；Android 13+ 若在无障碍列表里找不到本服务：" +
-                "应用详情 → 右上角菜单 → 允许受限制的设置"
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
             "（也可能是文件超过 256MB 上限）"
