@@ -38,8 +38,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 ) {
     private val appContext = context.applicationContext
 
-    /** 异步图片 GC 的防重投标记（BUG.md L-1248）：库里处于超限态时每次入库都会走到裁剪 */
-    private val imageGcScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** 待跑回收的次数（BUG.md L-1248 / L-1257）：库里处于超限态时每次入库都会走到裁剪 */
+    private val pendingGc = java.util.concurrent.atomic.AtomicInteger(0)
 
     override fun onCreate(db: SQLiteDatabase) {
         // 库是**新建**的：首次安装，或库损坏后平台删库重建（BUG.md L-260）。
@@ -707,22 +707,22 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪删掉图片行后的孤儿回收（BUG.md L-1229 / L-1248）：跳出写锁、异步跑、同一时刻只投一次。
+     * 裁剪删掉图片行后的孤儿回收（BUG.md L-1229 / L-1248 / L-1257）：跳出写锁、异步跑、按计数合并。
      *
      * 不在这里直接 `gc`：本方法由裁剪调用，而裁剪处在 `@Synchronized` 内，gc 要遍历图片目录 +
-     * 取全量图片行哈希，在写锁内做磁盘 IO 会把采集与粘贴一起堵住。异步 + 防重投让「超限态」
-     * 下每次入库的代价降到一次判重。
+     * 取全量图片行哈希，在写锁内做磁盘 IO 会把采集与粘贴一起堵住。用**待回收计数**而不是布尔开关：
+     * gc 跑的同时又删了图片行时，那次调度会累加计数，跑完再判一次 —— 布尔开关会把这一批孤儿
+     * 漏到下一次入库才收。
      */
     private fun scheduleImageGc() {
-        if (!imageGcScheduled.compareAndSet(false, true)) return
+        if (pendingGc.incrementAndGet() > 1) return  // 已有在跑：只记一笔，由在跑的那轮续跑
         BackgroundIo.runLong {
-            try {
+            // 先清零再跑：跑的过程中若有新删除，计数又被抬起，循环再来一轮
+            while (pendingGc.getAndSet(0) > 0) {
                 val reclaimed = ClipboardImageFiles.gc(
                     appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
                 )
                 if (reclaimed > 0) Diagnostics.i(TAG, "裁剪后回收孤儿文件: $reclaimed 个")
-            } finally {
-                imageGcScheduled.set(false)
             }
         }
     }

@@ -564,7 +564,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 收藏分组的网格取「收藏的图片」；文本列表走 refresh（各自取数、互不干扰）
             imageGrid.show(currentTraceId, favoritesOnly = true)
         }
-        refresh(resetScroll = true)
+        refresh(resetScroll = true, refreshFavStrip = false)
     }
 
     /**
@@ -588,13 +588,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     // ── 分页加载 ─────────────────────────────────────────
 
     /** 重新加载当前分类的列表（第一页）。查询与加解密在后台线程，主线程只提交快照。 */
-    private fun refresh(resetScroll: Boolean = false) {
+    private fun refresh(resetScroll: Boolean = false, refreshFavStrip: Boolean = true) {
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
         val category = currentCategory
         // 收藏分组的网格与列表同源：删除 / 取消收藏后两边都要跟着变，否则网格停在旧数据上，
-        // 点已删的图只会得到「已损坏」
-        if (category == CATEGORY_FAVORITE) imageGrid.show(tid, favoritesOnly = true)
+        // 点已删的图只会得到「已损坏」。切分类时已经 show 过一次（refreshFavStrip=false），
+        // 不重复取数（BUG.md L-1256）
+        if (refreshFavStrip && category == CATEGORY_FAVORITE) imageGrid.show(tid, favoritesOnly = true)
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {
@@ -1122,8 +1123,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /**
      * 每行张数 ±1（[Prefs.galleryColumns] 的 setter 会归一），随后网格按新参数重排。
      *
-     * 先判等再落盘：到边界后继续点按值不会变，那时照旧重排只是白工（缩略图缓存被清、
-     * 整页重解），而按钮看起来毫无反应（与图库面板同款处置）。
+     * 先判等再落盘：到边界后继续点按值不会变，那时照旧重排只是白工。
      */
     private fun stepColumns(delta: Int) {
         val cur = Prefs(context).galleryColumns
@@ -1131,7 +1131,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (next == cur) return
         Prefs(context).galleryColumns = next
         readGridTuning()
-        imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
+        // 只重排、不重新取数（BUG.md L-1243）：调布局时数据没变，重新 show 会丢滚动位置与已翻的页；
+        // 缩略图缓存按「哈希 + 目标像素」分键（BUG.md L-1245），重排后按新尺寸解码，不会拿到放大的旧位图
+        imageGrid.rerender()
     }
 
     /** 行高 ±[HEIGHT_STEP_DP] dp（同上，到边界直接返回） */
@@ -1141,7 +1143,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (next == cur) return
         Prefs(context).galleryCellHeightDp = next
         readGridTuning()
-        imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
+        imageGrid.rerender()
     }
 
     /**

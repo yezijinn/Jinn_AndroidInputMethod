@@ -241,6 +241,27 @@ class ClipboardImageTest {
         // BUG.md L-1251：只看收藏的空态必须分文案，不能沿用「暂无图片」
         assertTrue("空态按筛选态分文案", "if (favoritesOnly) TEXT_EMPTY_FAV else TEXT_EMPTY" in
             TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1255：空态文案不得点名该分支下隐藏的控件（「布局」只在图片分类可见）
+        assertTrue("空态不点名隐藏控件", "点上方「布局」" !in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1254：先清空 items 再读布局（否则 applyTuning 按旧数据重建、白解一屏）
+        assertTrue("先清空再读布局", "items = ArrayList()\n        applyTuning()" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1243：布局 ± 只重排（rerender），不重新取数
+        assertTrue("布局调节只重排", "imageGrid.rerender()" in
+            TestSources.codeSource("ClipboardPanelView.kt"))
+        // BUG.md L-1256：切到收藏分类不重复 show 条带
+        assertTrue("切分类不重复取条带", "refreshFavStrip = false" in
+            TestSources.codeSource("ClipboardPanelView.kt"))
+        // BUG.md L-1253：历史页停止时收尾收藏条带
+        assertTrue("历史页停止要收尾条带", "favImageGrid.stopWork()" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1245：缩略图缓存键要含目标尺寸
+        assertTrue("缓存键带目标尺寸", "private fun keyOf(hash: String, targetPx: Int)" in
+            TestSources.codeSource("ClipboardThumbLoader.kt"))
+        // BUG.md L-1257：回收按待跑计数合并，跑完再判一次
+        assertTrue("回收按计数合并", "pendingGc.getAndSet(0)" in
+            TestSources.codeSource("ClipboardDb.kt"))
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)

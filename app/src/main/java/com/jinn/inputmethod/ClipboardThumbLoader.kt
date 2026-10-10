@@ -31,7 +31,13 @@ internal object ClipboardThumbLoader {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    fun cached(hash: String): Bitmap? = cache.get(hash)
+    /**
+     * 缓存键 = 哈希 + 目标像素（BUG.md L-1245）：不带尺寸的话，调大行高 / 减少列数之后格子变大，
+     * 缓存里仍是按旧尺寸解出的位图，直接放大显示会发虚（要等视图被丢弃才恢复）。
+     */
+    private fun keyOf(hash: String, targetPx: Int): String = "$hash@$targetPx"
+
+    fun cached(hash: String, targetPx: Int): Bitmap? = cache.get(keyOf(hash, targetPx))
 
     /**
      * 异步取一张缩略图（解密 + 采样解码）。
@@ -41,13 +47,14 @@ internal object ClipboardThumbLoader {
      * 缓存命中时**同步**回调（在同一线程栈上），调用方需容忍这一点。
      */
     fun load(context: Context, hash: String, targetPx: Int, onReady: (String, Bitmap) -> Unit) {
-        cache.get(hash)?.let {
+        val key = keyOf(hash, targetPx)
+        cache.get(key)?.let {
             onReady(hash, it)
             return
         }
         runCatching {
             pool.execute {
-                val bmp = cache.get(hash) ?: decode(context, hash, targetPx)
+                val bmp = cache.get(key) ?: decode(context, hash, key, targetPx)
                 if (bmp != null) {
                     android.os.Handler(android.os.Looper.getMainLooper()).post { onReady(hash, bmp) }
                 }
@@ -60,12 +67,12 @@ internal object ClipboardThumbLoader {
         cache.evictAll()
     }
 
-    private fun decode(context: Context, hash: String, targetPx: Int): Bitmap? {
+    private fun decode(context: Context, hash: String, key: String, targetPx: Int): Bitmap? {
         val file = ClipboardImageFiles.thumbFile(context, hash)
         val enc = ClipboardImageFiles.readBytes(file) ?: return null
         val plain = ClipboardCrypto.decryptBytes(enc) ?: return null
         val bmp = ClipboardImageCodec.decodeForTarget(plain, targetPx) ?: return null
-        cache.put(hash, bmp)
+        cache.put(key, bmp)
         return bmp
     }
 }

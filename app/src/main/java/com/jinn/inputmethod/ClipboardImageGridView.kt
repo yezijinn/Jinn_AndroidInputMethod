@@ -118,14 +118,17 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     fun show(traceId: String, favoritesOnly: Boolean = false) {
         this.traceId = traceId
         this.favoritesOnly = favoritesOnly
-        applyTuning()
         // 重载即作废在飞查询（BUG.md L-1242）：本方法清空 items 后重新取数，而回调的判据是
         // `gen == generation`；不推进世代的话，上一次仍在飞的查询回来时判据照样成立 ⇒ 它那一页
         // 被追加进**新**列表（重复卡片、游标与分页错位）。切分类 / 开合面板 / 改布局 / 切筛选
         // 都会走到这里，连点「±」时最容易撞上。
         generation++
-        // 每次都重新取数（面板每次打开都刷列表，网格同款）：用户可能刚复制了图
+        // 先清空、再读布局参数（BUG.md L-1254）：applyTuning 会按**当时**的 items 整片重建 cell
+        // 并触发缩略图绑定；排在清空之前的话，这一屏是按旧数据重建的，解码结果必然被判过期丢弃
+        //（每次重载白解一屏缩略图，改列数时最明显）。
         items = ArrayList()
+        applyTuning()
+        // 每次都重新取数（面板每次打开都刷列表，网格同款）：用户可能刚复制了图
         cursor = null
         exhausted = false
         loading = false
@@ -150,12 +153,21 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         val prefs = Prefs(context)
         columns = prefs.galleryColumns.coerceAtLeast(1)
         cellHeightPx = (prefs.galleryCellHeightDp * resources.displayMetrics.density).toInt()
-        if (columns != renderedColumns && items.isNotEmpty()) {
-            // 列数变了：格子宽度全部失效 ⇒ 整片重建（数据不动，只重排）
-            renderedColumns = columns
-            column.removeAllViews()
-            appendCells(0)
-        }
+    }
+
+    /**
+     * 按当前布局参数**重排已加载的格子**（BUG.md L-1243）：列数 / 行高变化时数据没变，
+     * 只重建 cell、保留 items 与游标 —— 翻到第 5 页再调布局不会退回第一页，也不会把
+     * 刚解好的缩略图判为过期重解一遍。滚动位置尽力按原值恢复。
+     */
+    fun rerender() {
+        val keepY = scroll.scrollY
+        applyTuning()
+        if (items.isEmpty()) return
+        column.removeAllViews()
+        renderedColumns = columns
+        appendCells(0)
+        scroll.post { scroll.scrollTo(0, keepY) }
     }
 
     private fun load(reset: Boolean) {
@@ -315,8 +327,12 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
 
         const val TEXT_EMPTY = "暂无图片\n复制的图片会自动保存在这里"
 
-        /** 只看收藏时的空态（BUG.md L-1251）：说明出口在哪，避免被当成「收藏的图丢了」 */
-        const val TEXT_EMPTY_FAV = "还没有收藏的图片\n在图片上长按可以收藏，点上方「布局」可看全部"
+        /**
+         * 只看收藏时的空态（BUG.md L-1251 / L-1255）：出口只能指向**该分支下确实存在**的控件 ——
+         * 「布局」键只在图片分类可见（收藏分组的条带里它是隐藏的），提它等于给一个死出口。
+         * 「图片」分类的页签在面板与历史页都是常驻可见的，指向它两处都成立。
+         */
+        const val TEXT_EMPTY_FAV = "还没有收藏的图片\n在图片上长按可以收藏，切到「图片」分类可看全部"
         const val TEXT_CELL_DESC = "剪贴板图片"
 
         /** 网格 cell 的收藏角标（与历史页网格、收藏列表行的 ★ 同一符号） */

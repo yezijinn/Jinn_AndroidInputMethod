@@ -311,8 +311,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val thumb = cell.getChildAt(0) as ImageView
                 thumb.setImageDrawable(null)
                 (cell.getChildAt(1) as TextView).visibility = if (item.isFavorite) View.VISIBLE else View.GONE
-                val target = (resources.displayMetrics.widthPixels / prefs.galleryColumns.coerceAtLeast(1) - dp(8))
-                    .coerceAtLeast(MIN_IMAGE_TARGET_PX)
+                // 解码目标与面板网格同口径：min(列宽, 行高)（BUG.md L-1246）—— 只按列宽算会在
+                // 「矮行高」时解出大于实际显示尺寸的位图，白付内存与解码时间（输入法常驻，会累加）
+                val target = minOf(
+                    resources.displayMetrics.widthPixels / prefs.galleryColumns.coerceAtLeast(1) - dp(8),
+                    dp(prefs.galleryCellHeightDp),
+                ).coerceAtLeast(MIN_IMAGE_TARGET_PX)
                 ClipboardThumbLoader.load(this@ClipboardHistoryActivity, item.contentHash, target) { hash, bmp ->
                     if (cell.tag == hash) thumb.setImageBitmap(bmp)
                 }
@@ -408,6 +412,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         themeTicker.stop()
+        // 收藏图片条带也要在页面停止时作废在飞任务并释放缓存（BUG.md L-1253）：不调的话，
+        // 解码回调仍持有已 detach 的页面视图（轻则白跑，重则整页引用被任务持有），缓存也跨页累积；
+        // 键盘内面板那侧（ClipboardPanelView 收起时）已有对应的停止路径，两处要对齐
+        if (::favImageGrid.isInitialized) favImageGrid.stopWork()
     }
 
     /** 跨重建保存筛选 / 搜索 / 页码 / 多选（BUG.md L-1165）。 */
@@ -736,10 +744,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 grid.visibility = if (imageMode) View.VISIBLE else View.GONE
                 // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
                 searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
-                // 收藏分组：列表上方显示「收藏的图片」网格（两行），收藏的图不再只有折叠入口
+                // 收藏分组：列表上方显示「收藏的图片」网格（两行），收藏的图不再只有折叠入口。
+                // 只在重置到第一页时重取（BUG.md L-1253 后半）：翻页 / 加载更多不牵动收藏图，
+                // 否则「翻一页文本」会顺带把整条带重取一遍
                 val favMode = category == FILTER_FAVORITE
                 favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
-                if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
+                if (favMode && resetPage) favImageGrid.show(favGridTraceId, favoritesOnly = true)
                 adapter.notifyDataSetChanged()
                 gridAdapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
@@ -783,8 +793,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         item.image?.let { meta ->
             root.addView(TextView(this).apply {
-                // 尺寸读不出的图（HEIC 一类，BUG.md L-1228）宽高记为 0：不显示「0×0」
-                val dim = if (meta.width > 0 && meta.height > 0) "${meta.width}×${meta.height} · " else ""
+                // 尺寸读不出的图（HEIC 一类，BUG.md L-1228 / L-1252）宽高记为 0：不显示「0×0」，
+                // 但也不能只是少一截 —— 用户会不知道这张图有什么问题。写明状态与原图仍在的事实
+                val dim = if (meta.width > 0 && meta.height > 0) {
+                    "${meta.width}×${meta.height} · "
+                } else {
+                    TEXT_NO_DIM
+                }
                 text = "$dim${meta.bytes / 1024} KB · ${meta.mime}"
                 textSize = 11f
                 setTextColor(getColor(R.color.text_secondary))
@@ -838,8 +853,36 @@ class ClipboardHistoryActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         dlg.setView(root)
         dlg.show()
-        ClipboardThumbLoader.load(this, item.contentHash, dp(256)) { hash, bmp ->
-            if (dlg.isShowing && hash == item.contentHash) iv.setImageBitmap(bmp)
+        iv.tag = item.contentHash
+        if (ClipboardImageFiles.thumbFile(this, item.contentHash).isFile) {
+            ClipboardThumbLoader.load(this, item.contentHash, dp(256)) { hash, bmp ->
+                if (dlg.isShowing && hash == item.contentHash) iv.setImageBitmap(bmp)
+            }
+        } else {
+            // 缩略图不存在（尺寸读不出的图生成失败，BUG.md L-1252）：兜底读原图，否则预览是空白框
+            loadOriginalInto(iv, item)
+        }
+    }
+
+    /**
+     * 缩略图缺失时的预览兜底：读原图密文 → 解密 → 按预览尺寸采样解码（BUG.md L-1252）。
+     *
+     * 尺寸读不出的图生成不出缩略图（`ClipboardImageCodec` 拿不到宽高就产不出 JPEG），
+     * 只走 [ClipboardThumbLoader] 的话预览是一个永远空白的框 —— 而图其实还在（保存 / 转移都能用）。
+     * 原图可能很大（20MB 级），所以走长活池，且只在缩略图确实不存在时才走这条路。
+     */
+    private fun loadOriginalInto(iv: ImageView, item: ClipboardDb.Item) {
+        val hash = item.contentHash
+        val target = dp(256)
+        BackgroundIo.runLong {
+            val bmp = runCatching {
+                val enc = ClipboardImageFiles.readBytes(
+                    ClipboardImageFiles.encFile(this@ClipboardHistoryActivity, hash),
+                ) ?: return@runCatching null
+                val plain = ClipboardCrypto.decryptBytes(enc) ?: return@runCatching null
+                ClipboardImageCodec.decodeForTarget(plain, target)
+            }.getOrNull()
+            runOnUiThread { if (iv.tag == hash) iv.setImageBitmap(bmp) }
         }
     }
 
@@ -1244,6 +1287,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 收藏分组里图片网格占几行（下方还要放收藏的文本列表） */
         const val FAV_STRIP_ROWS = 2
+
+        /** 预览元信息里尺寸读不出时的前缀（BUG.md L-1252）：说明状态，别让用户以为元信息坏了 */
+        const val TEXT_NO_DIM = "尺寸读不出（原图已保存）· "
 
         const val TEXT_IMAGE_CELL = "剪贴板图片"
 
