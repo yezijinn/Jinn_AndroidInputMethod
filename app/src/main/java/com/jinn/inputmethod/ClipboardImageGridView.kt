@@ -49,7 +49,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
 
     private var columns = 0
     private var cellHeightPx = 0
-    private var renderedColumns = -1
 
     /** 网格可用宽度（布局后才有值）：格子按它 ÷ 列数取固定宽，见 [cellWidthPx] */
     private var contentWidthPx = 0
@@ -101,15 +100,15 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
             val child = scroll.getChildAt(0) ?: return@setOnScrollChangeListener
             if (child.height - (scroll.height + scrollY) < LOAD_AHEAD_PX) loadMore()
         }
-        // 宽度变化（首次布局 / 旋转 / 字体缩放）要按新宽度重切格子：格子宽是固定像素而非 weight
+        // 宽度变化（首次布局 / 旋转 / 分屏 / 字体缩放）要按新宽度重切格子：格子宽是固定像素而非 weight
         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             val w = width
             if (w > 0 && w != contentWidthPx) {
                 contentWidthPx = w
-                if (items.isNotEmpty()) {
-                    column.removeAllViews()
-                    appendCells(0)
-                }
+                // 列数上限依赖可用宽，宽度变了必须重算（BUG.md L-1266）；重建走 rerender ——
+                // 它按新参数重排并尽力恢复滚动位置，而原来那条「清空 + 重建」的路径会把人弹回顶部
+                applyTuning()
+                if (items.isNotEmpty()) rerender()
             }
         }
     }
@@ -133,7 +132,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         exhausted = false
         loading = false
         column.removeAllViews()
-        renderedColumns = columns
         renderEmpty()
         load(reset = true)
     }
@@ -171,7 +169,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         applyTuning()
         if (items.isEmpty()) return
         column.removeAllViews()
-        renderedColumns = columns
         appendCells(0)
         scroll.post { scroll.scrollTo(0, keepY) }
     }
@@ -209,6 +206,14 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
                 }
                 renderEmpty()
                 Diagnostics.i(TAG, "[$traceId] 图片网格: +${page.items.size} 共 ${items.size} 条（到底=$exhausted）")
+                // 首屏装不满时自动续取（BUG.md L-1265）：容器开了 isFillViewport（内容不足时拉伸），
+                // 内容放得下就不产生滚动 ⇒ 挂在滚动监听上的 loadMore 永不触发 ⇒ 第二页永远不取，
+                // 图片多于十余张时用户只能看到第一页。这里判断「内容高度 ≤ 视口 且 还没到底」就再取一页，
+                // 循环到填满或到底；高度要等布局完成，所以 post 一帧再测
+                scroll.post {
+                    if (gen != generation || exhausted || scroll.height <= 0) return@post
+                    if (column.height <= scroll.height) loadMore()
+                }
             }
         }
     }

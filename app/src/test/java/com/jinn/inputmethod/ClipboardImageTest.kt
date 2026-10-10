@@ -282,6 +282,18 @@ class ClipboardImageTest {
         // BUG.md L-1264：解码失败要留痕（灰块的三种原因分得清）
         assertTrue("解码失败留痕", "缩略图解码失败" in
             TestSources.codeSource("ClipboardThumbLoader.kt"))
+        // BUG.md L-1265：首屏装不满时要自动续取（否则滚动事件不产生 ⇒ 第二页永远不取）
+        assertTrue("首屏装不满自动续取", "column.height <= scroll.height" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1266：宽度变化要按新宽度重算列数（并走 rerender 保滚动位置）
+        assertTrue("宽度变化重算列数", "applyTuning()\n                if (items.isNotEmpty()) rerender()" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1267：「只看收藏」筛选态要随实例状态一起存
+        assertTrue("筛选态随实例保存", "outState.putBoolean(STATE_IMAGE_FAV, imageFavOnly)" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1268：页面停止后到达的回调要丢弃
+        assertTrue("停止后丢弃回调", "if (stopped) return@runOnUiThread" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)

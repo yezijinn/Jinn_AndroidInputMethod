@@ -101,6 +101,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private var imageFavOnly = false
 
     /**
+     * 页面已停止（`onStop` 置位、`onStart` 复位）：停止后到达的取数与 UI 回调直接丢弃，
+     * 否则「停止」形同虚设 —— 后到的写操作回调会把取数与解码重新拉起来（BUG.md L-1268）。
+     */
+    private var stopped = false
+
+    /**
      * 「收藏」分组上方的收藏图片网格（BUG.md L-1250）：与键盘面板同款，用的是图库快贴那套网格组件。
      * 与「图片」分类的 [grid] 并存 —— 那个是全屏网格配翻页行，这个是收藏分组独有的两行条带。
      */
@@ -346,6 +352,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             pageIndex = st.getInt(STATE_PAGE, 0)
             st.getLongArray(STATE_CHECKED)?.forEach { checkedIds.add(it) }
             multiSelect = st.getBoolean(STATE_MULTI, false)
+            imageFavOnly = st.getBoolean(STATE_IMAGE_FAV, false)
             searchEdit.setText(keyword)
         }
         buildFilterChips()
@@ -379,6 +386,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        stopped = false
         themeTicker.start()
         // 布局参数（列数 / 行高）可能刚在自定义页或键盘面板被改过：回到本页即时重排 ——
         // 否则列数还是旧的、行高已经是新的，同一处两个参数分裂（BUG.md L-1244）
@@ -415,6 +423,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        // 先置停止标记再收尾：此后到达的 UI 回调一律丢弃（BUG.md L-1268）—— 否则「停止」形同虚设，
+        // 后到的写操作回调会把取数与解码重新拉起来
+        stopped = true
         themeTicker.stop()
         // 收藏图片条带也要在页面停止时作废在飞任务并释放缓存（BUG.md L-1253）：不调的话，
         // 解码回调仍持有已 detach 的页面视图（轻则白跑，重则整页引用被任务持有），缓存也跨页累积；
@@ -432,6 +443,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         outState.putInt(STATE_PAGE, pageIndex)
         outState.putLongArray(STATE_CHECKED, checkedIds.toLongArray())
         outState.putBoolean(STATE_MULTI, multiSelect)
+        // 「只看收藏」也要存（BUG.md L-1267）：分类恢复了、筛选态却被静默重置，用户会发现自己
+        // 又回到了「全部图片」，而重建后的标签与 chip 看起来自洽 —— 没人会告诉他是状态丢了
+        outState.putBoolean(STATE_IMAGE_FAV, imageFavOnly)
     }
 
 
@@ -675,6 +689,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
      * 无条件归零会把恢复结果当场覆盖（BUG.md L-1172）。筛选与搜索改条件时必须归零。
      */
     private fun loadAsync(resetPage: Boolean = true) {
+        // 页面已停止就不再启动新查询（BUG.md L-1268）：onStart 先复位该标记，正常流程不受影响
+        if (stopped) return
         val category = categoryFilter
         // 图片分类与关键词互斥（D2「图片不进搜索」）：图片行的 content 恒为空串，任何关键词
         // 都会把图片全部滤掉 ⇒「在全部里搜着词再切图片」只看到「暂无图片」，像是图片丢了。
@@ -721,6 +737,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             }
             val total = db.count(catKey, favoritesOnly, contentType)
             runOnUiThread {
+                // 回调到达时页面可能已停止（BUG.md L-1268）：丢弃这一批，别把视图重新拉起来
+                if (stopped) return@runOnUiThread
                 allItems.clear()
                 allItems.addAll(out)
                 items.clear()
@@ -1239,6 +1257,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         private const val STATE_PAGE = "hist_page"
         private const val STATE_CHECKED = "hist_checked"
         private const val STATE_MULTI = "hist_multi"
+    private const val STATE_IMAGE_FAV = "hist_image_fav"
         const val TEXT_TITLE = "剪贴板历史管理"
         const val TEXT_COPIED = "已复制"
         const val TEXT_DELETE = "删除"
