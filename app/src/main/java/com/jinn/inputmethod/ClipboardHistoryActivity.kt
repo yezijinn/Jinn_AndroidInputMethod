@@ -721,7 +721,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         item.image?.let { meta ->
             root.addView(TextView(this).apply {
-                text = "${meta.width}×${meta.height} · ${meta.bytes / 1024} KB · ${meta.mime}"
+                // 尺寸读不出的图（HEIC 一类，BUG.md L-1228）宽高记为 0：不显示「0×0」
+                val dim = if (meta.width > 0 && meta.height > 0) "${meta.width}×${meta.height} · " else ""
+                text = "$dim${meta.bytes / 1024} KB · ${meta.mime}"
                 textSize = 11f
                 setTextColor(getColor(R.color.text_secondary))
                 setPadding(0, dp(4), 0, dp(6))

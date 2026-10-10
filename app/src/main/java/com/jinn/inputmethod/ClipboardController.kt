@@ -228,21 +228,19 @@ class ClipboardController(context: Context) {
                 return
             }
         }
+        // 尺寸读不出（HEIC / AVIF 一类）**不再整条丢弃**：与「缩略图写失败仍存原图」同一降级口径
+        // （BUG.md L-1228）—— 原字节照存，网格显示灰块，复制 / 保存 / 转移到图库都还能用。
         val size = ClipboardImageCodec.bounds(bytes)
-        if (size == null) {
-            Diagnostics.w(TAG, "图片解不出尺寸（不支持的格式或数据损坏），未入库")
-            return
-        }
+        if (size == null) Diagnostics.w(TAG, "图片解不出尺寸，按原字节入库（网格显示灰块）")
         // provider 报通配类型时按文件头嗅探（具体类型是 commitContent 的硬要求，见 GalleryInsert）
         val mime = if (declaredType == "image/*") ClipboardImageCodec.sniffMime(bytes) else declaredType
-        val thumb = ClipboardImageCodec.thumbJpeg(bytes)
         ClipboardStore.saveImage(
             context = appContext,
             db = db,
             bytes = bytes,
-            thumb = thumb,
-            width = size[0],
-            height = size[1],
+            thumb = if (size != null) ClipboardImageCodec.thumbJpeg(bytes) else null,
+            width = size?.get(0) ?: 0,
+            height = size?.get(1) ?: 0,
             mime = mime,
             sourcePackage = resolveSourcePackage(),
         )

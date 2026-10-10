@@ -131,6 +131,12 @@ class ClipboardImageTest {
         val src = TestSources.codeSource("ClipboardController.kt")
         assertTrue("入库失败必须删掉已写的文件", "ClipboardImageFiles.deleteFor(context, hash)" in src)
         assertTrue("入库成功后收孤儿", "ClipboardImageFiles.gc(context, db)" in src)
+        // BUG.md L-1228：尺寸读不出（HEIC / AVIF）不再整条丢弃，与「缩略图写失败仍存原图」同一降级口径
+        assertTrue(
+            "尺寸读不出要按原字节入库",
+            "if (size == null) Diagnostics.w(TAG, \"图片解不出尺寸，按原字节入库（网格显示灰块）\")" in src &&
+                "width = size?.get(0) ?: 0" in src,
+        )
         assertTrue("图片采集走长活池（不占短活队列）", "BackgroundIo.runLong { saveImageFromUri(uri, type) }" in src)
     }
 
