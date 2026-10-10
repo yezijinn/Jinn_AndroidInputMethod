@@ -648,6 +648,10 @@ class DictManagerActivity : Activity() {
     private fun buildCard(dict: OptionalDict): View {
         val file = dictFile(dict.fileName)
         val installed = file.isFile
+        // 旧包检测（2026-10-10 随下载包重切引入）：文件存在但大小与清单不符 = 上一个版本的包。
+        // 换发版时同名附件会被重切（如 2 级 40 万 → 90 万），不做这一步的话老用户看到
+        // 「已安装」就永远不会点更新，词库停在上一个版本。
+        val current = installed && OptionalDicts.isCurrentPack(file, dict)
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -677,12 +681,17 @@ class DictManagerActivity : Activity() {
         }
         row.addView(
             line(
-                text = if (installed) {
-                    getString(R.string.dict_status_installed, formatSize(file.length()))
-                } else {
-                    getString(R.string.dict_status_absent)
+                text = when {
+                    !installed -> getString(R.string.dict_status_absent)
+                    current -> getString(R.string.dict_status_installed, formatSize(file.length()))
+                    // 显式 Locale（与 formatSize 同口径；`TEXT_*.format(` 的默认 Locale 会触发守卫 L-1179）
+                    else -> String.format(Locale.US, TEXT_STATUS_STALE, formatSize(file.length()))
                 },
-                color = if (installed) getColor(R.color.ok) else getColor(R.color.text_secondary),
+                color = when {
+                    !installed -> getColor(R.color.text_secondary)
+                    current -> getColor(R.color.ok)
+                    else -> getColor(R.color.warn)
+                },
                 size = 13f,
             ),
             // weight = 1：状态文字长短不一时，按钮仍右对齐（wrap_content + weight 0 会紧贴状态、被顶到中间）
@@ -690,8 +699,11 @@ class DictManagerActivity : Activity() {
         )
         row.addView(
             actionButton(
-                text = if (installed) getString(R.string.dict_action_reinstall)
-                else getString(R.string.dict_action_download),
+                text = when {
+                    !installed -> getString(R.string.dict_action_download)
+                    current -> getString(R.string.dict_action_reinstall)
+                    else -> TEXT_ACTION_UPDATE
+                },
                 color = getColor(R.color.accent),
                 enabled = actionsEnabled(),
             ) { download(dict) },
@@ -919,11 +931,13 @@ class DictManagerActivity : Activity() {
 
     private fun dictFile(fileName: String) = File(dictDir(), fileName)
 
-    private fun formatSize(bytes: Long): String = when {
-        bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1048576.0)
-        bytes >= 1024 -> "${bytes / 1024} KB"
-        else -> "$bytes B"
-    }
+    /**
+     * 体积文案：口径收在 [ByteSize]（存储占用页要报 GB 量级，两页各写一套必然分叉）。
+     *
+     * 2026-10-10 起进制改为**十进制**（与 Android `Formatter`、清单 `sizeMb` 同口径）：
+     * 本页数字因此与卡片说明里的「5.89MB」对齐（旧文案按 1024 进制写 5.6 MB，对不上账）。
+     */
+    private fun formatSize(bytes: Long): String = ByteSize.text(bytes)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -985,6 +999,10 @@ class DictManagerActivity : Activity() {
 
         /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
         const val TEXT_RESUME_RESTART = "词库已下载完成，输入法将重启以加载"
+
+        /** 旧版包的状态行与按钮（2026-10-10 换包检测，判据 [OptionalDicts.isCurrentPack]） */
+        const val TEXT_STATUS_STALE = "需更新（本地为旧版 %s）"
+        const val TEXT_ACTION_UPDATE = "更新"
 
         /**
          * 下载完成时页面已关闭、因而**没有**重启进程（2026-10-03 修复 L-547）。
@@ -1056,7 +1074,7 @@ class DictManagerActivity : Activity() {
         @Volatile
         private var activePage: WeakReference<DictManagerActivity>? = null
 
-        /** 单个词库包的下载上限（字节）：现役最大包 4.21MB（第 4 部分），取 64MB 留足余量 */
+        /** 单个词库包的下载上限（字节）：现役最大包 5.89MB（第 2 部分，2026-10-10 重切后），取 64MB 留足余量 */
     }
 }
 

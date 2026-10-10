@@ -14,7 +14,7 @@ app/src/main/assets/{common,tier2,tier3}_chars.txt.xz   档 1 / 档 2 / 档 3 �
 app/src/main/assets/simp_trad.txt.xz           简繁映射（2,714 对，逐字；一简对多繁刻意不收）
 app/src/main/assets/simp_trad_words.txt.xz     简繁词级消歧（9,139 条，整词优先于逐字）
 app/src/main/assets/simplify.txt.xz            繁→简单字映射（2,965 项，源 OpenCC TSCharacters；折简体用）
-release/dict_part{2,3,4}.txt.xz                分类词库下载包（40 / 50 / 60 万条，Release 附件）
+release/dict_part{2,3,4}.txt.xz                分类词库下载包（90 / 70 / 21 万条，Release 附件 tag dict-parts-20261010-v1）
 ```
 
 运行时读二进制索引（`PhraseIndex` 二分查找 + 按需解码）；**加载是单段**（不再有高频子集）。
@@ -24,8 +24,8 @@ release/dict_part{2,3,4}.txt.xz                分类词库下载包（40 / 50 /
 1. 重跑 `build_dicts.py`（按改动范围用 `--only chars|parts|simp`）；
    `app/build.gradle.kts` 的 `noCompress += "xz"` 不可删（否则 APK 二次压缩）
 2. 真机验证加载与输入（索引加载含首次写 `.idx` 缓存约 1.2s）
-3. 下载包改动 → 重传双端 Release 附件（tag `dict-parts-20260927-v1`）→ 更新
-   `OptionalDicts.ALL` 的 checksum → 实测下载并比对 sha256
+3. 下载包改动 → 重传双端 Release 附件（**换新 tag**，勿覆盖旧 tag 同名附件，否则老 APK 的
+   checksum 校验失败）→ 更新 `OptionalDicts.ALL` 的 checksum / sizeMb / startupSec → 实测下载并比对 sha256
 
 ## 二、脚本一览
 

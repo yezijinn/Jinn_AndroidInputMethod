@@ -24,7 +24,14 @@ data class OptionalDict(
      * 所以按句主动分行，一行就是一句话。
      */
     val descLines: List<String>,
-    /** 压缩后体积（MB）—— **清单数据，卡片上不再显示**（2026-10-03 删掉那一行） */
+    /**
+     * 压缩后体积（MB，**十进制**口径：5.89 对应 5,890,000 字节）—— 卡片上不再显示（2026-10-03 删掉那一行）。
+     *
+     * ⚠ 换包时必须与实测字节对得上（差 ≤512KB），它有两个消费方：
+     *  - 下载前空间预检（`DictManagerActivity`，按 MiB 再放大一份，偏保守无害）；
+     *  - 旧包检测 [isCurrentPack]（同名附件重切后判「已装文件是不是当前版本」）。
+     * 折中口径不会误判：512KB 容差覆盖两种算法的最大差（≈5% × 5.89MB ≈ 290KB）。
+     */
     val sizeMb: Double,
     /**
      * 首次构建索引的耗时（秒）—— **清单实测数据，不再显示在卡片上**（2026-10-03）。
@@ -68,56 +75,60 @@ object OptionalDicts {
         "https://github.com/yezijinn/Jinn_AndroidInputMethod/releases/download"
 
     /**
-     * 分片短语库的 Release tag（2026-09-27 起）。
+     * 分片短语库的 Release tag（2026-10-10 起，B+ 重切）。
      *
      * 三个包与内置索引同源同格式（`docs/所有词库/短语/词库_第 2~4 部分.txt`，
      * 由 `tools/dict_builder/build_dicts.py` 产出），按词频从高到低切分、**逐级叠加**：
      * 内置已含第 1 部分（40 万条），装一个加一档，不需要按顺序（后装的包照常合并）。
+     *
+     * 2026-10-10 重切口径：第 2 片 = 旧 2+3 片（90 万条）；第 3 片 = 旧第 4 片 + 常用类新词
+     * （教材/诗词/地名/成语/名人等，70 万条）；第 4 片 = 专业长尾新词（联想/物品/医化药，21 万条）。
+     * ⚠ 换 tag 时**不能**复用旧 tag 下的同名附件（老 APK 的 checksum 会对新字节校验失败）。
      */
-    private const val TAG_PARTS = "dict-parts-20260927-v1"
+    private const val TAG_PARTS = "dict-parts-20261010-v1"
 
     val ALL: List<OptionalDict> = listOf(
         OptionalDict(
             fileName = "part2.xz",
-            name = "2级词库 +40万条短语",
+            name = "2级词库 +90万条短语",
             descLines = listOf(
-                "在内置 40 万条基础上再加 40 万\n软件的体积占用 +11.7 MiB",
+                "在内置 40 万条基础上再加 90 万\n软件的体积占用 +26 MiB",
             ),
-            sizeMb = 2.62,
-            startupSec = 5,          // 实测 4022ms（PACM00，2026-09-27）
+            sizeMb = 5.89,
+            startupSec = 20,         // 实测 19580ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 40 万条曾为 4022ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part2.txt.xz",
                 "$GITHUB/$TAG_PARTS/dict_part2.txt.xz",
             ),
-            checksum = "aa224cea041536a8e0a050aad8865c2abfb99c9fc893e037a117f93ef38c867a",
+            checksum = "7c712ef3a93a565fd2750a93554cd3fbda77860005a4303bc2556c32f6f638e6",
         ),
         OptionalDict(
             fileName = "part3.xz",
-            name = "3级词库 +50万条短语",
+            name = "3级词库 +70万条短语",
             descLines = listOf(
-                "再加 50 万条短语，总数约 130 万\n软件的体积占用 +14.4 MiB",
+                "再加 70 万条短语，总数约 200 万\n软件的体积占用 +24 MiB",
             ),
-            sizeMb = 3.30,
-            startupSec = 5,          // 实测 4859ms（PACM00，2026-09-27）
+            sizeMb = 5.29,
+            startupSec = 17,         // 实测 16168ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 50 万条曾为 4859ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part3.txt.xz",
                 "$GITHUB/$TAG_PARTS/dict_part3.txt.xz",
             ),
-            checksum = "619428b7c87f5183df72938c9661529f91ba5bd415e9e16a3889d966f98fc48f",
+            checksum = "96b5279c14c5fa95c4deda5019e88b91f6b60b9b1d4067292b42fdcb9a91fbb6",
         ),
         OptionalDict(
             fileName = "part4.xz",
-            name = "4级词库 +60万条短语",
+            name = "4级词库 +21万条短语",
             descLines = listOf(
-                "再加 60 万条短语，总数约 190 万\n软件的体积占用 +20.8 MiB",
+                "再加 21 万条专业词，总数约 221 万\n软件的体积占用 +9 MiB",
             ),
-            sizeMb = 4.21,
-            startupSec = 14,         // 实测 13978ms（PACM00，2026-09-27）—— 别按条数外推，会低报近 3 倍
+            sizeMb = 2.14,
+            startupSec = 6,          // 实测 5372ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 60 万条曾为 13978ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part4.txt.xz",
                 "$GITHUB/$TAG_PARTS/dict_part4.txt.xz",
             ),
-            checksum = "5e08d39e582765090574506b7dede461633cc8e876ee39494d6845bb5fbba639",
+            checksum = "fa5454f52036bcf1029cddcef8d4efc880aca8a19a8d9feae1d66c849532be81",
         ),
     )
 
@@ -234,4 +245,24 @@ object OptionalDicts {
     fun matchesChecksum(actual: String?, expected: String): Boolean =
         expected.length == 64 && expected.all { it.isDigit() || it in 'a'..'f' } &&
             actual != null && actual.equals(expected, ignoreCase = true)
+
+    /**
+     * 已装文件是否与**当前清单**一致（旧包检测；2026-10-10 随下载包重切引入）。
+     *
+     * 为什么需要：卡片原先只按「文件存在」判已安装（`DictManagerActivity.buildCard` 的
+     * `file.isFile`）。换包发版时（tag 更换 + 同名附件重切，如本次 2 级 40 万 → 90 万），
+     * 老用户本地仍是旧包，页面却显示「已安装」、按钮是「重新下载」⇒ 用户不会点，
+     * 词库永远停在上一个版本，旧包还白占空间。
+     *
+     * 判据 = 文件大小与 [OptionalDict.sizeMb] 相符（容差 ±512KB）：
+     *  - [OptionalDict.sizeMb] 按**十进制 MB** 填（5.89 对应 5,893,252 B），容差吸收两位小数的
+     *    舍入（≤5KB）与换版时的小幅增删；
+     *  - **不读文件内容**（sha256 每次刷新列表都要读 6MB×3，主线程代价不可接受）。
+     *    代价是「两版包大小恰好差在 512KB 内」会漏判 —— 发版时留意，必要时把 sizeMb 填细
+     *    （或临时改用摘要判据）。
+     */
+    fun isCurrentPack(file: java.io.File, dict: OptionalDict): Boolean {
+        val expected = dict.sizeMb * 1_000_000
+        return kotlin.math.abs(file.length() - expected) <= 512 * 1024
+    }
 }

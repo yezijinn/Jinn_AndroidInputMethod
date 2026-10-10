@@ -20,7 +20,7 @@ r"""一体化词库生成：分片短语库 + 三档单字表 + 简繁映射。
     app/src/main/assets/simp_trad.txt.xz      简繁映射（字级，OpenCC STCharacters + 人工覆盖）
     app/src/main/assets/simp_trad_words.txt.xz 简繁词级消歧（整词优先于逐字）
     app/src/main/assets/simplify.txt.xz       繁→简单字映射（折简体用，源 OpenCC TSCharacters）
-    release/dict_part2.txt.xz / _part3 / _part4   分类词库下载包（40 / 50 / 60 万条）
+    release/dict_part2.txt.xz / _part3 / _part4   分类词库下载包（90 / 70 / 21 万条，2026-10-10 重切）
 
 用法
     python tools/dict_builder/build_dicts.py                 # 全量重建
