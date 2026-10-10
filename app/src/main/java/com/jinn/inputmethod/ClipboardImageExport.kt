@@ -59,7 +59,7 @@ internal object ClipboardImageExport {
      */
     fun saveToAlbum(context: Context, item: ClipboardDb.Item, bytes: ByteArray): Boolean {
         if (!albumAvailable()) return false
-        val mime = mimeOf(item)
+        val mime = mimeOf(item, bytes)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileNameOf(item, mime))
             put(MediaStore.Images.Media.MIME_TYPE, mime)
@@ -90,7 +90,7 @@ internal object ClipboardImageExport {
         val tree = Prefs(context).galleryTreeUri
         if (tree.isEmpty()) return MoveResult.NeedBinding
         val treeUri = runCatching { Uri.parse(tree) }.getOrNull() ?: return MoveResult.NeedBinding
-        val mime = mimeOf(item)
+        val mime = mimeOf(item, bytes)
         return runCatching {
             val parent = DocumentsContract.buildDocumentUriUsingTree(
                 treeUri, DocumentsContract.getTreeDocumentId(treeUri),
@@ -123,7 +123,7 @@ internal object ClipboardImageExport {
      * （hash 已存在，不新增条目），用户预期之内。
      */
     fun copyToSystemClipboard(context: Context, item: ClipboardDb.Item, bytes: ByteArray): Boolean {
-        val mime = mimeOf(item)
+        val mime = mimeOf(item, bytes)
         val file = GalleryInsert.stageForInsert(context, bytes, mime) ?: return false
         val uri = runCatching {
             FileProvider.getUriForFile(context, "${context.packageName}.share", file)
@@ -139,8 +139,19 @@ internal object ClipboardImageExport {
         }
     }
 
-    private fun mimeOf(item: ClipboardDb.Item): String =
-        item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" } ?: "image/png"
+    /**
+     * 出库用的 MIME：**按字节嗅探优先**（BUG.md L-1277）。
+     *
+     * 原先只信条目记录的类型、取不到就回落 `image/png` —— HEIC / AVIF 一类内容若记录缺失
+     * （或入库当时就嗅探失败），会被存成 `.png`，相册与后续应用按扩展名解析就可能打不开或显示异常，
+     * 而用户不知道这张图被换了类型。嗅探与入库侧同一套（[GalleryInsert.sniffImageMime]）。
+     * 嗅探兜底回 `image/png` 只说明「头都不认识」，此时才回落到记录里的类型（它可能更准）。
+     */
+    private fun mimeOf(item: ClipboardDb.Item, bytes: ByteArray): String {
+        val sniffed = GalleryInsert.sniffImageMime(bytes)
+        if (sniffed != "image/png") return sniffed
+        return item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" } ?: sniffed
+    }
 
     /** 文件名：哈希前 12 位 + 入库时间 + 真实扩展名（`img:` 前缀与冒号不进文件名） */
     private fun fileNameOf(item: ClipboardDb.Item, mime: String): String {

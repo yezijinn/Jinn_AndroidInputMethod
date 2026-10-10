@@ -5028,4 +5028,25 @@ class RecentFixesRegressionTest {
         assertTrue("名字要走「动作 + 对象」的构造", "SymbolOrder.moveDescription(" in order)
     }
 
+    /**
+     * 词频落盘、导入预算闸、出库类型与符号缺组的四处收口
+     * （BUG.md L-1274 / L-1275 / L-1277 / L-1279）。
+     */
+    @Test
+    fun `词频与导入的四处收口`() {
+        val uf = codeOf("UserFrequency.kt")
+        assertTrue("关闭学习后不得落盘（防抖尾沿会把空表写回）", "if (!enabled) return@synchronized" in uf)
+        assertTrue("关闭学习后 flush 也不落盘", "if (!enabled) return" in uf)
+        val mgr = codeOf("ConfigBackupManager.kt")
+        assertTrue(
+            "导入预算闸必须在词库落盘之前",
+            mgr.indexOf("if (budget.exhausted)") < mgr.indexOf("restoreDicts(File("),
+        )
+        assertTrue(
+            "出库类型按字节嗅探",
+            "GalleryInsert.sniffImageMime(bytes)" in codeOf("ClipboardImageExport.kt"),
+        )
+        assertTrue("符号分组缺失要留痕", "无对应数据，已跳过" in codeOf("SymbolOrder.kt"))
+    }
+
 }

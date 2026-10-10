@@ -15,6 +15,8 @@ package com.jinn.inputmethod
  */
 object SymbolOrder {
 
+    private const val TAG = "SymbolOrder"
+
     /** 内置分组的默认顺序（不含「收藏」， 收藏是动态组，见 [KeyboardLayouts.favoriteGroup]） */
     private val BUILTIN: List<String> = SYMBOL_GROUPS.map { it.label }
 
@@ -92,6 +94,13 @@ object SymbolOrder {
         val byLabel = SYMBOL_GROUPS.associateBy { it.label }.let {
             if (favorite == null) it else it + (favorite.label to favorite)
         }
-        return parse(raw).mapNotNull { byLabel[it] }
+        // 缺组时留痕（BUG.md L-1279）：调用方没传「收藏」数据（或分组名对不上）时原先静默跳过，
+        // 界面上表现为这一组凭空消失、排查时也查不到为什么少了一组
+        return parse(raw).mapNotNull { label ->
+            byLabel[label] ?: run {
+                Diagnostics.w(TAG, "符号顺序: 分组「$label」无对应数据，已跳过")
+                null
+            }
+        }
     }
 }

@@ -933,6 +933,15 @@ internal object ConfigBackupManager {
             return null
         }
 
+        // 预算闸放在**任何写入之前**（BUG.md L-1275 的收口）：读到这一行时各节已经扫过一遍，
+        // 预算可能已经耗尽，早点失败比「改了词库才发现」清楚。恢复内部另有逐条判定
+        // （`stepEntry` / `drain`，失败即回滚临时件），两道闸共同保证「要么整包、要么不动」
+        if (budget.exhausted) {
+            Diagnostics.w(TAG, "导入: 包内解压量超过预算（写入之前），按不可用处理")
+            lastImportError = "包内解压量超出预算，按不可用处理"
+            return null
+        }
+
         // 词库先落盘：它写入失败会让整包作废，越早发现越好（且失败时不会留下半套配置）
         var dictsWritten = 0
         var dictsSkipped = 0

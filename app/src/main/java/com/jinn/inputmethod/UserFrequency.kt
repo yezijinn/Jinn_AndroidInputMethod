@@ -264,6 +264,10 @@ internal object UserFrequency {
                 // （测试的 setFileForTest、未来可能的重新 load），旧任务既不该写到旧路径，
                 // 更不该把新文件的 `dirty` 清掉（那会让新内容白白跳过一轮落盘）。
                 if (file !== f) return@synchronized
+                // 关闭学习后一律不写（BUG.md L-1274）：选词后的防抖尾沿任务可能在「关开关」之后才到，
+                // 而关闭时内存表已被清空 ⇒ 它会把**空表**写成文件（只剩表头），历史学习成果全丢，
+                // 进程重启也回不来 —— 与「关闭后既有记录留在文件里」的口径直接冲突
+                if (!enabled) return@synchronized
                 // 清 dirty 前核对版本（见 [version]）：渲染与清标记之间可能有并发学习进内存
                 val v = version
                 if (writeAtomically(f, render()) && version == v) dirty = false
@@ -274,6 +278,8 @@ internal object UserFrequency {
     /** 退出/切后台时调用（主线程），保证最后一次学习不丢 */
     fun flush() {
         val f = file ?: return
+        // 关闭学习后不写（BUG.md L-1274）：关闭时内存表已清空，此时写盘会把文件清成空表
+        if (!enabled) return
         if (!dirty) return
         // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
