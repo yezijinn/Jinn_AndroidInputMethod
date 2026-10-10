@@ -294,6 +294,26 @@ class ClipboardImageTest {
         // BUG.md L-1268：页面停止后到达的回调要丢弃
         assertTrue("停止后丢弃回调", "if (stopped) return@runOnUiThread" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1269：重排后同样要复检「是否填满」（同一根因的第二条路径）
+        assertTrue("重排后复检填满", "fillViewportIfNeeded(generation)" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1270：续页判据不得再用「已加载集合为空」（与取数侧「扫过的行数」同源）
+        assertTrue("续页判据不用集合为空", "exhausted || loading || items.isEmpty()" !in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1271：ClipboardPrefs 的读侧一律走 *Or 收口（裸读只允许出现在收口函数内部）
+        val cp = TestSources.codeSource("ClipboardPrefs.kt")
+        assertTrue("偏好读侧收口函数就位", "private fun intOr(key: String, def: Int): Int" in cp &&
+            "private fun boolOr(key: String, def: Boolean): Boolean" in cp)
+        assertTrue(
+            "裸读只剩收口函数内部",
+            cp.split("sp.getInt(").size == 2 && cp.split("sp.getBoolean(").size == 2,
+        )
+        // BUG.md L-1272：后台任务被拒要留痕
+        assertTrue("任务被拒留痕", "private fun rejected(pool: String" in
+            TestSources.codeSource("BackgroundIo.kt"))
+        // BUG.md L-1273：端口写侧也要钳位（与其余数值项同口径）
+        assertTrue("端口写侧钳位", "putInt(KEY_PORT, value.coerceIn(1, 65535))" in
+            TestSources.codeSource("Prefs.kt"))
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)

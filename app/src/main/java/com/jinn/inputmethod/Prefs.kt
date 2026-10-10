@@ -75,7 +75,9 @@ class Prefs(context: Context) {
      */
     var port: Int
         get() = intOr(KEY_PORT, DEFAULT_PORT).takeIf { it in 1..65535 } ?: DEFAULT_PORT
-        set(value) = sp.edit { putInt(KEY_PORT, value) }
+        // 写侧同样钳位（BUG.md L-1273）：读侧兜底只保证「生效值合法」，非法值仍会落在盘上 ——
+        // 备份导出会把它带到另一台机器，排查时看到的偏好也与实际生效值不一致
+        set(value) = sp.edit { putInt(KEY_PORT, value.coerceIn(1, 65535)) }
 
     /** 固定 NAS 地址与端口：勾选后设置页编辑框变灰不可编辑，防误触乱改（默认勾选） */
     var lockServer: Boolean

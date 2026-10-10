@@ -47,11 +47,12 @@ object BackgroundIo {
         }, "jinn-long-io").apply { isDaemon = true }
     }
 
-    /** 提交一个后台任务（交互短活，默认优先级）；调度器关闭/拒绝时静默忽略（不抛异常） */
+    /** 提交一个后台任务（交互短活，默认优先级）；调度器关闭/拒绝时不抛异常，但要留痕（[rejected]） */
     fun run(task: () -> Unit) {
         try {
             exec.execute(wrapped(task))
-        } catch (_: RejectedExecutionException) {
+        } catch (e: RejectedExecutionException) {
+            rejected("short", e)
         }
     }
 
@@ -64,8 +65,18 @@ object BackgroundIo {
     fun runLong(task: () -> Unit) {
         try {
             longExec.execute(wrapped(task))
-        } catch (_: RejectedExecutionException) {
+        } catch (e: RejectedExecutionException) {
+            rejected("long", e)
         }
+    }
+
+    /**
+     * 提交被拒时的统一出口（BUG.md L-1272）：池关闭后提交属正常路径，但不能无声无息 ——
+     * 任务整份丢失、日志里查不到 ⇒ 表现为「这次操作像没发生过」（一次裁剪 / 一次刷新没跑），
+     * 而 `loading` 一类只在回调里复位的标志还会永久卡在「进行中」，后续同类操作全被拦。
+     */
+    private fun rejected(pool: String, e: RejectedExecutionException) {
+        Diagnostics.w(TAG, "后台任务被拒（$pool 池），已丢弃: ${e.javaClass.simpleName}")
     }
 
     /**

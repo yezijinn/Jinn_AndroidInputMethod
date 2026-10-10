@@ -13,6 +13,18 @@ class ClipboardPrefs(context: Context) {
         .getSharedPreferences("jinn_clipboard", Context.MODE_PRIVATE)
 
     /**
+     * 读侧收口（BUG.md L-1271）：偏好值可能被外部写坏 —— 备份导入串了键、跨版本改名后旧类型残留、
+     * 其它进程改同一个文件 —— 裸 `getInt` / `getBoolean` 的 `ClassCastException` 会直达调用点，
+     * 而调用点分布在采集、面板刷新、备份导入这些主线程与常驻后台路径上（崩溃或采集静默停摆）。
+     * 口径与主 [Prefs] 的 `*Or` 一致：读不到 / 类型不对都退默认值。
+     */
+    private fun intOr(key: String, def: Int): Int = runCatching { sp.getInt(key, def) }.getOrDefault(def)
+
+    private fun boolOr(key: String, def: Boolean): Boolean =
+        runCatching { sp.getBoolean(key, def) }.getOrDefault(def)
+
+
+    /**
      * 联动参数的**一致快照**（BUG-12）。字段与「剪贴板自定义」页的草稿一一对应。
      *
      * 2026-10-10 起从八键扩到十二键（图片四项）。
@@ -57,7 +69,7 @@ class ClipboardPrefs(context: Context) {
 
     /** 剪贴板历史总开关 */
     var enabled: Boolean
-        get() = sp.getBoolean(KEY_ENABLED, true)
+        get() = boolOr(KEY_ENABLED, true)
         set(value) = sp.edit { putBoolean(KEY_ENABLED, value) }
 
     /** 历史数量上限：1 ~ [MAX_ITEMS_CAP]，默认 500 */
@@ -66,14 +78,14 @@ class ClipboardPrefs(context: Context) {
             // 读侧同样钳位：存档里的 0 / 负数（旧版本写入、手动改 prefs）会让
             // trimByCount 直接 return，条数上限形同虚设（只剩字节预算兜底）。
             // 写侧已经钳了，两侧算法必须一致，否则「读取的一定合法」这个前提是假的。
-            val v = sp.getInt(KEY_MAX_ITEMS, DEFAULT_MAX_ITEMS)
+            val v = intOr(KEY_MAX_ITEMS, DEFAULT_MAX_ITEMS)
             return v.coerceIn(1, MAX_ITEMS_CAP)
         }
         set(value) = sp.edit { putInt(KEY_MAX_ITEMS, value.coerceIn(1, MAX_ITEMS_CAP)) }
 
     /** 历史体积上限（MB）：[MIN_TOTAL_MB] ~ [MAX_TOTAL_MB]，默认 100 */
     var maxTotalBytesMb: Int
-        get() = sp.getInt(KEY_MAX_TOTAL_MB, DEFAULT_MAX_TOTAL_MB).coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)
+        get() = intOr(KEY_MAX_TOTAL_MB, DEFAULT_MAX_TOTAL_MB).coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)
         set(value) = sp.edit { putInt(KEY_MAX_TOTAL_MB, value.coerceIn(MIN_TOTAL_MB, MAX_TOTAL_MB)) }
 
     /** 历史体积上限（字节） */
@@ -87,7 +99,7 @@ class ClipboardPrefs(context: Context) {
      * 冲突。放宽只会少删，方向是单向安全的；要收紧可在剪贴板自定义页调小。
      */
     var favoriteMaxItems: Int
-        get() = sp.getInt(KEY_FAV_MAX_ITEMS, MAX_FAV_ITEMS_CAP).coerceIn(1, MAX_FAV_ITEMS_CAP)
+        get() = intOr(KEY_FAV_MAX_ITEMS, MAX_FAV_ITEMS_CAP).coerceIn(1, MAX_FAV_ITEMS_CAP)
         set(value) = sp.edit { putInt(KEY_FAV_MAX_ITEMS, value.coerceIn(1, MAX_FAV_ITEMS_CAP)) }
 
     /**
@@ -96,7 +108,7 @@ class ClipboardPrefs(context: Context) {
      * 与条数上限同一理由（BUG.md L-980）：默认值不能比历史行为更紧，否则老库的收藏会被静默淘汰。
      */
     var favoriteMaxBytesMb: Int
-        get() = favoriteMaxMbStored(sp.getInt(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb)))
+        get() = favoriteMaxMbStored(intOr(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb)))
         set(value) = sp.edit { putInt(KEY_FAV_MAX_MB, favoriteMaxMbStored(value)) }
 
     /**
@@ -110,12 +122,12 @@ class ClipboardPrefs(context: Context) {
 
     /** 面板单页条数：2 ~ [ClipboardStore.PANEL_PAGE_ITEMS_MAX]，默认 50 */
     var panelPageItems: Int
-        get() = sp.getInt(KEY_PANEL_PAGE, DEFAULT_PANEL_PAGE).coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)
+        get() = intOr(KEY_PANEL_PAGE, DEFAULT_PANEL_PAGE).coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)
         set(value) = sp.edit { putInt(KEY_PANEL_PAGE, value.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)) }
 
     /** 搜索结果条数上限：2 ~ [MAX_SEARCH_CAP]，默认 200 */
     var maxSearchResults: Int
-        get() = sp.getInt(KEY_MAX_SEARCH, DEFAULT_MAX_SEARCH).coerceIn(2, MAX_SEARCH_CAP)
+        get() = intOr(KEY_MAX_SEARCH, DEFAULT_MAX_SEARCH).coerceIn(2, MAX_SEARCH_CAP)
         set(value) = sp.edit { putInt(KEY_MAX_SEARCH, value.coerceIn(2, MAX_SEARCH_CAP)) }
 
     /**
@@ -125,17 +137,17 @@ class ClipboardPrefs(context: Context) {
      * 文本照常。图片会让历史多出截图 / 证件照一类的敏感面，给用户一个只关图片的出口。
      */
     var imageCaptureEnabled: Boolean
-        get() = sp.getBoolean(KEY_IMAGE_ENABLED, true)
+        get() = boolOr(KEY_IMAGE_ENABLED, true)
         set(value) = sp.edit { putBoolean(KEY_IMAGE_ENABLED, value) }
 
     /** 图片张数上限：1 ~ [MAX_IMAGE_ITEMS_CAP]，默认 300（与文本条数上限各自独立） */
     var imageMaxItems: Int
-        get() = sp.getInt(KEY_IMAGE_MAX_ITEMS, DEFAULT_IMAGE_MAX_ITEMS).coerceIn(1, MAX_IMAGE_ITEMS_CAP)
+        get() = intOr(KEY_IMAGE_MAX_ITEMS, DEFAULT_IMAGE_MAX_ITEMS).coerceIn(1, MAX_IMAGE_ITEMS_CAP)
         set(value) = sp.edit { putInt(KEY_IMAGE_MAX_ITEMS, value.coerceIn(1, MAX_IMAGE_ITEMS_CAP)) }
 
     /** 图片体积上限（MB）：[MIN_IMAGE_TOTAL_MB] ~ [MAX_IMAGE_TOTAL_MB]，默认 200 */
     var imageMaxTotalMb: Int
-        get() = sp.getInt(KEY_IMAGE_MAX_TOTAL_MB, DEFAULT_IMAGE_TOTAL_MB)
+        get() = intOr(KEY_IMAGE_MAX_TOTAL_MB, DEFAULT_IMAGE_TOTAL_MB)
             .coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB)
         set(value) = sp.edit {
             putInt(KEY_IMAGE_MAX_TOTAL_MB, value.coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB))
@@ -148,7 +160,7 @@ class ClipboardPrefs(context: Context) {
      * 可以被处理」给出同一个答案，避免「图库能贴、剪贴板历史收不下」的不一致。
      */
     var imageMaxItemMb: Int
-        get() = sp.getInt(KEY_IMAGE_MAX_ITEM_MB, DEFAULT_IMAGE_ITEM_MB)
+        get() = intOr(KEY_IMAGE_MAX_ITEM_MB, DEFAULT_IMAGE_ITEM_MB)
             .coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB)
         set(value) = sp.edit {
             putInt(KEY_IMAGE_MAX_ITEM_MB, value.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB))
@@ -163,7 +175,7 @@ class ClipboardPrefs(context: Context) {
     /** 历史管理页单页条数：[PAGE_SIZE_OPTIONS] 之一，默认 50 */
     var historyPageSize: Int
         get() {
-            val v = sp.getInt(KEY_HISTORY_PAGE_SIZE, DEFAULT_HISTORY_PAGE_SIZE)
+            val v = intOr(KEY_HISTORY_PAGE_SIZE, DEFAULT_HISTORY_PAGE_SIZE)
             return if (v in PAGE_SIZE_OPTIONS) v else DEFAULT_HISTORY_PAGE_SIZE
         }
         set(value) = sp.edit {
@@ -172,7 +184,7 @@ class ClipboardPrefs(context: Context) {
 
     /** 单条上限（KB）：4 ~ [MAX_ITEM_KB_CAP]，默认 256；生效值再受解密窗天花板约束 */
     var maxItemBytesKb: Int
-        get() = sp.getInt(KEY_MAX_ITEM_KB, DEFAULT_MAX_ITEM_KB).coerceIn(4, MAX_ITEM_KB_CAP)
+        get() = intOr(KEY_MAX_ITEM_KB, DEFAULT_MAX_ITEM_KB).coerceIn(4, MAX_ITEM_KB_CAP)
         set(value) = sp.edit { putInt(KEY_MAX_ITEM_KB, value.coerceIn(4, MAX_ITEM_KB_CAP)) }
 
     /**
@@ -190,7 +202,7 @@ class ClipboardPrefs(context: Context) {
      * 重算本身幂等，但全库解密有成本，用标记保证只跑一次；失败不置位，下次启动自动重试。
      */
     var reclassified: Boolean
-        get() = sp.getBoolean(KEY_RECLASSIFIED, false)
+        get() = boolOr(KEY_RECLASSIFIED, false)
         set(value) = sp.edit { putBoolean(KEY_RECLASSIFIED, value) }
 
     /**

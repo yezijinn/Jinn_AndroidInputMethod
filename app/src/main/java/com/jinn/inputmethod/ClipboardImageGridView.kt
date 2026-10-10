@@ -171,6 +171,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         column.removeAllViews()
         appendCells(0)
         scroll.post { scroll.scrollTo(0, keepY) }
+        // 重排后一屏可能装得下更多（列数 / 行高调小）：同样要复检填满（BUG.md L-1269），
+        // 否则停在已加载的那一批上，后面的图又变成「够不着」
+        fillViewportIfNeeded(generation)
     }
 
     private fun load(reset: Boolean) {
@@ -206,21 +209,33 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
                 }
                 renderEmpty()
                 Diagnostics.i(TAG, "[$traceId] 图片网格: +${page.items.size} 共 ${items.size} 条（到底=$exhausted）")
-                // 首屏装不满时自动续取（BUG.md L-1265）：容器开了 isFillViewport（内容不足时拉伸），
-                // 内容放得下就不产生滚动 ⇒ 挂在滚动监听上的 loadMore 永不触发 ⇒ 第二页永远不取，
-                // 图片多于十余张时用户只能看到第一页。这里判断「内容高度 ≤ 视口 且 还没到底」就再取一页，
-                // 循环到填满或到底；高度要等布局完成，所以 post 一帧再测
-                scroll.post {
-                    if (gen != generation || exhausted || scroll.height <= 0) return@post
-                    if (column.height <= scroll.height) loadMore()
-                }
+                // 首屏装不满时自动续取（BUG.md L-1265）：见 [fillViewportIfNeeded]
+                fillViewportIfNeeded(gen)
             }
         }
     }
 
     private fun loadMore() {
-        if (exhausted || loading || items.isEmpty()) return
+        // 不按「已加载集合为空」提前退出（BUG.md L-1270）：整页解密失败时集合仍为空，而取数侧判的是
+        // 「扫过的行数」—— 两边口径不同 ⇒ 一边判「还没到底」，一边停止续页，后面能读的图永远翻不到。
+        // 到底与否只由取数侧的 exhausted 决定
+        if (exhausted || loading) return
         load(reset = false)
+    }
+
+    /**
+     * 内容不足视口且还没到底时续取下一页（BUG.md L-1265 / L-1269）。
+     *
+     * 取数回调与重排末尾都要调：容器开了 isFillViewport（内容不足时拉伸），内容放得下就不产生滚动
+     * ⇒ 挂在滚动监听上的续页永不触发。重排路径（改列数 / 行高）也要复检 —— 调小列数或行高之后
+     * 一屏装得下更多，只在取数回调里补的话，同一条路径会复发「后面的图够不着」。
+     * 高度要等布局完成，所以 post 一帧再测；视口高度为 0（还没布局）时不判，免得空转连取。
+     */
+    private fun fillViewportIfNeeded(gen: Int) {
+        scroll.post {
+            if (gen != generation || exhausted || scroll.height <= 0) return@post
+            if (column.height <= scroll.height) loadMore()
+        }
     }
 
     /** 增量追加格子（从 [from] 起）；最后一行没满时接着塞 */

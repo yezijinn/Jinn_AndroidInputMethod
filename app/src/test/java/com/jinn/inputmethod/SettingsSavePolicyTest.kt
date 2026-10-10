@@ -79,11 +79,11 @@ class SettingsSavePolicyTest {
         val src = TestSources.codeSource("ClipboardPrefs.kt")
         assertTrue(
             "条数默认取上限",
-            "sp.getInt(KEY_FAV_MAX_ITEMS, MAX_FAV_ITEMS_CAP)" in src,
+            "intOr(KEY_FAV_MAX_ITEMS, MAX_FAV_ITEMS_CAP)" in src,
         )
         assertTrue(
             "体积默认取联动上限",
-            "sp.getInt(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb))" in src,
+            "intOr(KEY_FAV_MAX_MB, favoriteBytesCapMb(maxTotalBytesMb))" in src,
         )
         assertFalse("旧的独立默认常量不再存在", "DEFAULT_FAV_MAX_ITEMS" in src)
         assertFalse("旧的独立默认常量不再存在", "DEFAULT_FAV_MAX_MB" in src)
