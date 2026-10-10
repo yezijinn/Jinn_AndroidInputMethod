@@ -2078,7 +2078,7 @@ object PinyinEngine {
         if (partial.isNotEmpty() || lastIsFakeComplete) {
             // 3a. 词库短语补全召回（如 ni m → ni+men → 你们）：
             //    补全词插入 result 头部（优先于第 2 步已加入的单字）
-            val completionWords = queryWithCompletion(raw)
+            val completionWords = queryWithCompletion(raw, syllables, partial)
             // 拼音串是用户输入正文：走 V 级（默认只进 logcat 不落盘）。
             // 用 i 级时每敲一键都要在主线程 open/write/close 一次日志文件，既泄露输入又掉帧。
             Diagnostics.v(
@@ -2611,6 +2611,19 @@ object PinyinEngine {
     fun queryWithCompletion(input: String): List<String> {
         if (!loaded || input.isEmpty()) return emptyList()
         val (syllables, partial) = segment(input)
+        return queryWithCompletion(input, syllables, partial)
+    }
+
+    /**
+     * 复用调用方切分结果的重载（BUG.md L-1283）：[query] 已经对同一个输入切过一次，
+     * 补全路径不必再切 —— 切分是**有回溯的搜索**、不是常数操作，而它跑在输入热路径上
+     * （每敲一键一次，长拼音串下与 L-1282 的候选排序叠加会放大延迟）。
+     */
+    private fun queryWithCompletion(
+        input: String,
+        syllables: List<String>,
+        partial: String,
+    ): List<String> {
         if (syllables.isEmpty()) return emptyList() // 首音节就不完整：只做单字前缀联想
 
         // 末尾不完整前缀判定：

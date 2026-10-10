@@ -5060,4 +5060,21 @@ class RecentFixesRegressionTest {
         assertTrue("历史页有布局入口", "TEXT_IMAGE_LAYOUT" in codeOf("ClipboardHistoryActivity.kt"))
     }
 
+    /**
+     * 拼音查询热路径与图库设置页的落盘收口（BUG.md L-1283 / L-1284）。
+     */
+    @Test
+    fun `查询切分复用与设置页落盘`() {
+        // L-1283：补全路径复用主查询已切的音节，不得对同一输入二次 segment
+        val engine = codeOf("PinyinEngine.kt")
+        assertTrue("补全复用切分结果", "queryWithCompletion(raw, syllables, partial)" in engine)
+        assertTrue("重载接收切分结果", "partial: String,\n    ): List<String> {" in engine)
+        // L-1284：拖动只记草稿，松手 / 离开时统一落盘并核对（失败提示）
+        val gallery = codeOf("GallerySettingsActivity.kt")
+        assertTrue("拖动只记草稿（每行张数）", "draftColumns = value" in gallery)
+        assertTrue("拖动只记草稿（行高）", "draftHeight = value" in gallery)
+        assertTrue("落盘要核对结果", "prefs.flush()" in gallery)
+        assertTrue("失败要提示", "TEXT_LAYOUT_SAVE_FAILED" in gallery)
+    }
+
 }

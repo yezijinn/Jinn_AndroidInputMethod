@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import java.util.Locale
@@ -121,17 +122,15 @@ class GallerySettingsActivity : ComponentActivity() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = Prefs.GALLERY_COLUMNS_MIN + progress
-                    Prefs(this@GallerySettingsActivity).galleryColumns = value
+                    draftColumns = value      // 只记草稿：落盘统一走 commitDrafts（BUG.md L-1284）
                     textColumns?.text = String.format(Locale.US, TEXT_COLUMNS_VALUE, value)
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    Diagnostics.i(
-                        TAG,
-                        "每行张数: ${Prefs(this@GallerySettingsActivity).galleryColumns}",
-                    )
+                    commitDrafts()
+                    Diagnostics.i(TAG, "每行张数: ${prefs.galleryColumns}")
                 }
             })
         }
@@ -140,17 +139,15 @@ class GallerySettingsActivity : ComponentActivity() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = Prefs.GALLERY_CELL_HEIGHT_MIN + progress
-                    Prefs(this@GallerySettingsActivity).galleryCellHeightDp = value
+                    draftHeight = value       // 只记草稿：落盘统一走 commitDrafts（BUG.md L-1284）
                     textCellHeight?.text = String.format(Locale.US, TEXT_HEIGHT_VALUE, value)
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    Diagnostics.i(
-                        TAG,
-                        "缩略图行高: ${Prefs(this@GallerySettingsActivity).galleryCellHeightDp}",
-                    )
+                    commitDrafts()
+                    Diagnostics.i(TAG, "缩略图行高: ${prefs.galleryCellHeightDp}")
                 }
             })
         }
@@ -170,7 +167,37 @@ class GallerySettingsActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        // 拖动中直接退出时草稿还没提交：离开兜底一次（BUG.md L-1284）
+        commitDrafts()
         themeTicker.stop()
+    }
+
+    /** 本页共用的偏好对象：拖动回调原先每格都新建一个再提交（BUG.md L-1284） */
+    private val prefs by lazy { Prefs(this) }
+
+    /** 拖动中的草稿（松手或离开页面时统一落盘并核对，见 [commitDrafts]） */
+    private var draftColumns: Int? = null
+    private var draftHeight: Int? = null
+
+    /**
+     * 把拖动草稿落盘并**核对**（BUG.md L-1284）。
+     *
+     * 原先拖动每经过一格就写一次 `apply()`：进程被回收时可能回退，写入失败也没有任何痕迹
+     * （用户以为改了、实际没生效）。现在只在松手 / 离开页面时写一次，并用 `flush()`（`commit`）
+     * 确认结果，失败给提示 —— 与在线翻译设置页「只有真的写过才同步落盘」同一口径。
+     */
+    private fun commitDrafts() {
+        val cols = draftColumns
+        val height = draftHeight
+        if (cols == null && height == null) return
+        draftColumns = null
+        draftHeight = null
+        cols?.let { prefs.galleryColumns = it }
+        height?.let { prefs.galleryCellHeightDp = it }
+        if (!prefs.flush()) {
+            Diagnostics.w(TAG, "布局参数落盘失败（改动可能回退）")
+            Toast.makeText(this, TEXT_LAYOUT_SAVE_FAILED, Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** 按当前偏好刷新全部文案与状态色 */
@@ -222,6 +249,9 @@ class GallerySettingsActivity : ComponentActivity() {
         const val TEXT_COLUMNS_TITLE = "每行张数"
         const val TEXT_HEIGHT_TITLE = "缩略图行高"
         const val TEXT_COLUMNS_VALUE = "%d 张"
+
+        /** 落盘失败提示（BUG.md L-1284）：改完没生效要说出来，不能静默回退 */
+        const val TEXT_LAYOUT_SAVE_FAILED = "布局参数保存失败，请重试"
         const val TEXT_HEIGHT_VALUE = "%d dp"
     }
 }
