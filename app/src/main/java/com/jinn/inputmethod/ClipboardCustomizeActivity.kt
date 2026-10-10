@@ -31,7 +31,7 @@ import android.widget.TextView
  */
 class ClipboardCustomizeActivity : Activity() {
 
-    /** 页面参数草稿（渲染唯一真源） */
+    /** 页面参数草稿（渲染唯一真源）：2026-10-10 起从八项扩到十二项（图片四项） */
     private data class Draft(
         val enabled: Boolean,
         val maxItems: Int,
@@ -41,6 +41,10 @@ class ClipboardCustomizeActivity : Activity() {
         val maxItemKb: Int,
         val panelPage: Int,
         val maxSearch: Int,
+        val imageEnabled: Boolean,
+        val imageMaxItems: Int,
+        val imageMaxTotalMb: Int,
+        val imageMaxItemMb: Int,
     )
 
     private lateinit var prefs: ClipboardPrefs
@@ -119,6 +123,10 @@ class ClipboardCustomizeActivity : Activity() {
         outState.putInt(STATE_MAX_ITEM_KB, draft.maxItemKb)
         outState.putInt(STATE_PANEL_PAGE, draft.panelPage)
         outState.putInt(STATE_MAX_SEARCH, draft.maxSearch)
+        outState.putBoolean(STATE_IMAGE_ENABLED, draft.imageEnabled)
+        outState.putInt(STATE_IMAGE_MAX_ITEMS, draft.imageMaxItems)
+        outState.putInt(STATE_IMAGE_MAX_TOTAL_MB, draft.imageMaxTotalMb)
+        outState.putInt(STATE_IMAGE_MAX_ITEM_MB, draft.imageMaxItemMb)
         outState.putBoolean(STATE_UNLOCKED, unlocked)
     }
 
@@ -148,6 +156,10 @@ class ClipboardCustomizeActivity : Activity() {
             maxItemKb = s.maxItemKb,
             panelPage = s.panelPage,
             maxSearch = s.maxSearch,
+            imageEnabled = s.imageEnabled,
+            imageMaxItems = s.imageMaxItems,
+            imageMaxTotalMb = s.imageMaxTotalMb,
+            imageMaxItemMb = s.imageMaxItemMb,
         )
     }
 
@@ -162,6 +174,10 @@ class ClipboardCustomizeActivity : Activity() {
             maxItemKb = b.getInt(STATE_MAX_ITEM_KB, snapshot.maxItemKb),
             panelPage = b.getInt(STATE_PANEL_PAGE, snapshot.panelPage),
             maxSearch = b.getInt(STATE_MAX_SEARCH, snapshot.maxSearch),
+            imageEnabled = b.getBoolean(STATE_IMAGE_ENABLED, snapshot.imageEnabled),
+            imageMaxItems = b.getInt(STATE_IMAGE_MAX_ITEMS, snapshot.imageMaxItems),
+            imageMaxTotalMb = b.getInt(STATE_IMAGE_MAX_TOTAL_MB, snapshot.imageMaxTotalMb),
+            imageMaxItemMb = b.getInt(STATE_IMAGE_MAX_ITEM_MB, snapshot.imageMaxItemMb),
         )
     }
 
@@ -206,6 +222,11 @@ class ClipboardCustomizeActivity : Activity() {
             },
             { "$it MB" },
         ))
+        // 记录图片：与总开关独立（总开关关 = 文本图片全不采集；这里关 = 只不采集图片）
+        sub.addView(makeSwitch(TEXT_IMAGE_ENABLED, draft.imageEnabled) { v ->
+            draft = draft.copy(imageEnabled = v)
+            renderAll()
+        })
         dim(sub, editable)
         card1.addView(sub)
         PageStyle.addCard(list, card1)
@@ -265,6 +286,34 @@ class ClipboardCustomizeActivity : Activity() {
         ))
         dim(card3, editable)
         PageStyle.addCard(list, card3)
+
+        // ── 图片容量（2026-10-10 实施计划 §4.2：与文本预算完全分离，各自淘汰） ──
+        val card4 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        card4.addView(TextView(this).apply {
+            text = TEXT_IMAGE_TITLE
+            PageStyle.sectionTitle(this)
+        })
+        card4.addView(makeSlider(
+            TEXT_IMAGE_MAX_ITEMS,
+            draft.imageMaxItems, 1, ClipboardPrefs.MAX_IMAGE_ITEMS_CAP, 50,
+            { draft = draft.copy(imageMaxItems = it) },
+            { "$it 张" },
+        ))
+        card4.addView(makeSlider(
+            TEXT_IMAGE_MAX_TOTAL,
+            draft.imageMaxTotalMb, ClipboardPrefs.MIN_IMAGE_TOTAL_MB, ClipboardPrefs.MAX_IMAGE_TOTAL_MB, 10,
+            { draft = draft.copy(imageMaxTotalMb = it) },
+            { "$it MB" },
+        ))
+        card4.addView(makeSlider(
+            TEXT_IMAGE_MAX_ITEM,
+            draft.imageMaxItemMb, ClipboardPrefs.MIN_IMAGE_ITEM_MB, ClipboardPrefs.MAX_IMAGE_ITEM_MB, 1,
+            { draft = draft.copy(imageMaxItemMb = it) },
+            { "$it MB" },
+        ))
+        card4.addView(makeHint(TEXT_IMAGE_HINT))
+        dim(card4, editable)
+        PageStyle.addCard(list, card4)
 
         // 锁定 / 无改动时按钮不可点：一个只读页面里「保存」能按本身就是误导
         val dirty = isDirty()
@@ -396,6 +445,10 @@ class ClipboardCustomizeActivity : Activity() {
             maxItemKb = target.maxItemKb,
             panelPage = target.panelPage,
             maxSearch = target.maxSearch,
+            imageEnabled = target.imageEnabled,
+            imageMaxItems = target.imageMaxItems,
+            imageMaxTotalMb = target.imageMaxTotalMb,
+            imageMaxItemMb = target.imageMaxItemMb,
         )
         if (!ok) {
             // 盘上还是旧值：草稿原样留着让用户重试，绝不假报成功
@@ -469,6 +522,18 @@ class ClipboardCustomizeActivity : Activity() {
         if (draft.maxItemKb != snapshot.maxItemKb) items.add("$TEXT_MAX_ITEM：${snapshot.maxItemKb} → ${draft.maxItemKb} KB")
         if (draft.panelPage != snapshot.panelPage) items.add("$TEXT_PANEL_PAGE：${snapshot.panelPage} → ${draft.panelPage} 条/页")
         if (draft.maxSearch != snapshot.maxSearch) items.add("$TEXT_MAX_SEARCH：${snapshot.maxSearch} → ${draft.maxSearch} 条")
+        if (draft.imageEnabled != snapshot.imageEnabled) {
+            items.add("$TEXT_IMAGE_ENABLED：${onOff(snapshot.imageEnabled)} → ${onOff(draft.imageEnabled)}")
+        }
+        if (draft.imageMaxItems != snapshot.imageMaxItems) {
+            items.add("$TEXT_IMAGE_MAX_ITEMS：${snapshot.imageMaxItems} → ${draft.imageMaxItems} 张")
+        }
+        if (draft.imageMaxTotalMb != snapshot.imageMaxTotalMb) {
+            items.add("$TEXT_IMAGE_MAX_TOTAL：${snapshot.imageMaxTotalMb} → ${draft.imageMaxTotalMb} MB")
+        }
+        if (draft.imageMaxItemMb != snapshot.imageMaxItemMb) {
+            items.add("$TEXT_IMAGE_MAX_ITEM：${snapshot.imageMaxItemMb} → ${draft.imageMaxItemMb} MB")
+        }
         if (items.size <= DIFF_MAX_LINES) return items
         return items.take(DIFF_MAX_LINES) + listOf("…等 ${items.size} 项")
     }
@@ -480,7 +545,11 @@ class ClipboardCustomizeActivity : Activity() {
         draft.maxItems < snapshot.maxItems ||
             draft.maxTotalMb < snapshot.maxTotalMb ||
             draft.favMaxItems < snapshot.favMaxItems ||
-            draft.favMaxMb < snapshot.favMaxMb
+            draft.favMaxMb < snapshot.favMaxMb ||
+            // 图片预算收紧同样会真删图片（不可恢复）⇒ 确认框必须一起写明
+            draft.imageMaxItems < snapshot.imageMaxItems ||
+            draft.imageMaxTotalMb < snapshot.imageMaxTotalMb ||
+            draft.imageMaxItemMb < snapshot.imageMaxItemMb
 
     /**
      * 按**已落盘**的偏好立即裁剪一次库。
@@ -527,13 +596,17 @@ class ClipboardCustomizeActivity : Activity() {
         const val STATE_MAX_ITEM_KB = "draft_max_item_kb"
         const val STATE_PANEL_PAGE = "draft_panel_page"
         const val STATE_MAX_SEARCH = "draft_max_search"
+        const val STATE_IMAGE_ENABLED = "draft_image_enabled"
+        const val STATE_IMAGE_MAX_ITEMS = "draft_image_max_items"
+        const val STATE_IMAGE_MAX_TOTAL_MB = "draft_image_max_total_mb"
+        const val STATE_IMAGE_MAX_ITEM_MB = "draft_image_max_item_mb"
         const val STATE_UNLOCKED = "draft_unlocked"
 
         /** 保存确认框最多列几行改动（超出只报条数） */
         const val DIFF_MAX_LINES = 6
 
         const val TEXT_TITLE = "剪贴板自定义"
-        const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限。\n默认锁定：打开「解锁参数」后可调，改完点「保存」才生效。"
+        const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 图片容量。\n默认锁定：打开「解锁参数」后可调，改完点「保存」才生效。"
         const val TEXT_ENABLED = "剪贴板历史"
         const val TEXT_UNLOCK = "解锁参数"
         const val TEXT_SAVE = "保存"
@@ -558,6 +631,16 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_PANEL_PAGE = "面板单页条数"
         const val TEXT_MAX_SEARCH = "搜索结果上限"
         const val TEXT_HISTORY_ENTRY = "剪贴板历史管理"
+
+        // ── 图片容量（2026-10-10 实施计划 §4.2） ──
+        const val TEXT_IMAGE_ENABLED = "记录图片"
+        const val TEXT_IMAGE_TITLE = "图片容量（与文本预算各自独立）"
+        const val TEXT_IMAGE_MAX_ITEMS = "图片张数上限"
+        const val TEXT_IMAGE_MAX_TOTAL = "图片体积上限"
+        const val TEXT_IMAGE_MAX_ITEM = "单张图片上限"
+        const val TEXT_IMAGE_HINT =
+            "图片与文本各自统计 / 各自淘汰：调小这里只删最旧的非收藏图片，不动文本；" +
+                "超单张上限的图不入库。图片不进备份（换机前用「剪贴板历史管理 → 图片 → 导出全部图片」）。"
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"

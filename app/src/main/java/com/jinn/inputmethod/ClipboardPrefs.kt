@@ -13,7 +13,9 @@ class ClipboardPrefs(context: Context) {
         .getSharedPreferences("jinn_clipboard", Context.MODE_PRIVATE)
 
     /**
-     * 八键联动参数的**一致快照**（BUG-12）。字段与「剪贴板自定义」页的草稿一一对应。
+     * 联动参数的**一致快照**（BUG-12）。字段与「剪贴板自定义」页的草稿一一对应。
+     *
+     * 2026-10-10 起从八键扩到十二键（图片四项）。
      */
     internal data class Snapshot(
         val enabled: Boolean,
@@ -24,12 +26,16 @@ class ClipboardPrefs(context: Context) {
         val maxItemKb: Int,
         val panelPage: Int,
         val maxSearch: Int,
+        val imageEnabled: Boolean,
+        val imageMaxItems: Int,
+        val imageMaxTotalMb: Int,
+        val imageMaxItemMb: Int,
     )
 
     /**
      * 一次性取一组联动参数（BUG-12）。
      *
-     * 逐键读八次会让「导入 / 批量保存正在进行」的读侧拿到**半新半旧**的组合；与 [applyDraft]、
+     * 逐键读多次会让「导入 / 批量保存正在进行」的读侧拿到**半新半旧**的组合；与 [applyDraft]、
      * [importFromBackup] 共用同一把锁之后，读到的必然是同一次写入之后的完整状态。
      */
     internal fun snapshot(): Snapshot = synchronized(LOCK) {
@@ -42,6 +48,10 @@ class ClipboardPrefs(context: Context) {
             maxItemKb = maxItemBytesKb,
             panelPage = panelPageItems,
             maxSearch = maxSearchResults,
+            imageEnabled = imageCaptureEnabled,
+            imageMaxItems = imageMaxItems,
+            imageMaxTotalMb = imageMaxTotalMb,
+            imageMaxItemMb = imageMaxItemMb,
         )
     }
 
@@ -108,6 +118,48 @@ class ClipboardPrefs(context: Context) {
         get() = sp.getInt(KEY_MAX_SEARCH, DEFAULT_MAX_SEARCH).coerceIn(2, MAX_SEARCH_CAP)
         set(value) = sp.edit { putInt(KEY_MAX_SEARCH, value.coerceIn(2, MAX_SEARCH_CAP)) }
 
+    /**
+     * 是否采集图片（默认开）。
+     *
+     * 与 [enabled] 是**两级开关**：总开关关 = 文本图片全不采集；本开关关 = 只不采集图片，
+     * 文本照常。图片会让历史多出截图 / 证件照一类的敏感面，给用户一个只关图片的出口。
+     */
+    var imageCaptureEnabled: Boolean
+        get() = sp.getBoolean(KEY_IMAGE_ENABLED, true)
+        set(value) = sp.edit { putBoolean(KEY_IMAGE_ENABLED, value) }
+
+    /** 图片张数上限：1 ~ [MAX_IMAGE_ITEMS_CAP]，默认 300（与文本条数上限各自独立） */
+    var imageMaxItems: Int
+        get() = sp.getInt(KEY_IMAGE_MAX_ITEMS, DEFAULT_IMAGE_MAX_ITEMS).coerceIn(1, MAX_IMAGE_ITEMS_CAP)
+        set(value) = sp.edit { putInt(KEY_IMAGE_MAX_ITEMS, value.coerceIn(1, MAX_IMAGE_ITEMS_CAP)) }
+
+    /** 图片体积上限（MB）：[MIN_IMAGE_TOTAL_MB] ~ [MAX_IMAGE_TOTAL_MB]，默认 200 */
+    var imageMaxTotalMb: Int
+        get() = sp.getInt(KEY_IMAGE_MAX_TOTAL_MB, DEFAULT_IMAGE_TOTAL_MB)
+            .coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB)
+        set(value) = sp.edit {
+            putInt(KEY_IMAGE_MAX_TOTAL_MB, value.coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB))
+        }
+
+    /**
+     * 单张图片上限（MB）：[MIN_IMAGE_ITEM_MB] ~ [MAX_IMAGE_ITEM_MB]，默认 20。
+     *
+     * 默认值与 `GalleryInsert.MAX_BYTES` 同值（选图链路的既有上限）：两条链路对「一张多大的图
+     * 可以被处理」给出同一个答案，避免「图库能贴、剪贴板历史收不下」的不一致。
+     */
+    var imageMaxItemMb: Int
+        get() = sp.getInt(KEY_IMAGE_MAX_ITEM_MB, DEFAULT_IMAGE_ITEM_MB)
+            .coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB)
+        set(value) = sp.edit {
+            putInt(KEY_IMAGE_MAX_ITEM_MB, value.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB))
+        }
+
+    /** 图片体积上限（字节） */
+    val imageMaxBytes: Long get() = imageMaxTotalMb * 1024L * 1024L
+
+    /** 单张图片上限（字节） */
+    val imageMaxItemBytes: Long get() = imageMaxItemMb * 1024L * 1024L
+
     /** 历史管理页单页条数：[PAGE_SIZE_OPTIONS] 之一，默认 50 */
     var historyPageSize: Int
         get() {
@@ -167,6 +219,10 @@ class ClipboardPrefs(context: Context) {
         maxItemKb: Int,
         panelPage: Int,
         maxSearch: Int,
+        imageEnabled: Boolean = true,
+        imageMaxItems: Int = DEFAULT_IMAGE_MAX_ITEMS,
+        imageMaxTotalMb: Int = DEFAULT_IMAGE_TOTAL_MB,
+        imageMaxItemMb: Int = DEFAULT_IMAGE_ITEM_MB,
     ): Boolean {
         // 与 [snapshot] / [importFromBackup] 同一把锁（BUG-12）：读侧要么看到写入前的整组，
         // 要么看到写入后的整组，不会取到两次写入之间的混合。
@@ -182,6 +238,10 @@ class ClipboardPrefs(context: Context) {
             editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(4, MAX_ITEM_KB_CAP))
             editor.putInt(KEY_PANEL_PAGE, panelPage.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX))
             editor.putInt(KEY_MAX_SEARCH, maxSearch.coerceIn(2, MAX_SEARCH_CAP))
+            editor.putBoolean(KEY_IMAGE_ENABLED, imageEnabled)
+            editor.putInt(KEY_IMAGE_MAX_ITEMS, imageMaxItems.coerceIn(1, MAX_IMAGE_ITEMS_CAP))
+            editor.putInt(KEY_IMAGE_MAX_TOTAL_MB, imageMaxTotalMb.coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB))
+            editor.putInt(KEY_IMAGE_MAX_ITEM_MB, imageMaxItemMb.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB))
             runCatching { editor.commit() }.getOrDefault(false)
         }
     }
@@ -209,6 +269,12 @@ class ClipboardPrefs(context: Context) {
         ConfigBackup.BackupValue.of(maxSearchResults)?.let { out[KEY_MAX_SEARCH] = it }
         ConfigBackup.BackupValue.of(maxItemBytesKb)?.let { out[KEY_MAX_ITEM_KB] = it }
         ConfigBackup.BackupValue.of(historyPageSize)?.let { out[KEY_HISTORY_PAGE_SIZE] = it }
+        // 图片四项：同为用户偏好（历史容量语义的一部分），换机应当带走。
+        // ⚠ 图片**文件**不进备份（见实施计划 §1 U4），带走这三项只影响「新机器上后续采集」的额度。
+        ConfigBackup.BackupValue.of(imageCaptureEnabled)?.let { out[KEY_IMAGE_ENABLED] = it }
+        ConfigBackup.BackupValue.of(imageMaxItems)?.let { out[KEY_IMAGE_MAX_ITEMS] = it }
+        ConfigBackup.BackupValue.of(imageMaxTotalMb)?.let { out[KEY_IMAGE_MAX_TOTAL_MB] = it }
+        ConfigBackup.BackupValue.of(imageMaxItemMb)?.let { out[KEY_IMAGE_MAX_ITEM_MB] = it }
         return out
     }
 
@@ -259,6 +325,24 @@ class ClipboardPrefs(context: Context) {
                     )
                     applied++
                 }
+                KEY_IMAGE_ENABLED -> (v.value as? Boolean)?.let {
+                    editor.putBoolean(KEY_IMAGE_ENABLED, it); applied++
+                }
+                KEY_IMAGE_MAX_ITEMS -> (v.value as? Int)?.let {
+                    editor.putInt(KEY_IMAGE_MAX_ITEMS, it.coerceIn(1, MAX_IMAGE_ITEMS_CAP)); applied++
+                }
+                KEY_IMAGE_MAX_TOTAL_MB -> (v.value as? Int)?.let {
+                    editor.putInt(
+                        KEY_IMAGE_MAX_TOTAL_MB,
+                        it.coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB),
+                    ); applied++
+                }
+                KEY_IMAGE_MAX_ITEM_MB -> (v.value as? Int)?.let {
+                    editor.putInt(
+                        KEY_IMAGE_MAX_ITEM_MB,
+                        it.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB),
+                    ); applied++
+                }
             }
         }
         // 一键都没认出来就不必落盘（每次导入都写一遍空 commit 是白付）
@@ -278,6 +362,17 @@ class ClipboardPrefs(context: Context) {
 
         const val DEFAULT_MAX_ITEMS = 500
         const val DEFAULT_MAX_TOTAL_MB = 100
+
+        /**
+         * 图片三项的默认值（2026-10-10 实施计划 §4.2）。
+         *
+         * 300 张 / 200MB / 单张 20MB：单张对齐 `GalleryInsert.MAX_BYTES`（两条链路的「一张图
+         * 多大能处理」必须同答案）；总量与张数按「常态 100 张内、极端不失控」取值 ——
+         * 复制图片是低频动作，且超限只淘汰最旧的**非收藏图片**（不碰文本）。
+         */
+        const val DEFAULT_IMAGE_MAX_ITEMS = 300
+        const val DEFAULT_IMAGE_TOTAL_MB = 200
+        const val DEFAULT_IMAGE_ITEM_MB = 20
         // 收藏两个上限不再有独立的默认常量（BUG.md L-980）：条数默认取 MAX_FAV_ITEMS_CAP，
         // 体积默认取 favoriteBytesCapMb(maxTotalBytesMb)，都改成按现有上限动态取值
         const val DEFAULT_PANEL_PAGE = 50
@@ -294,6 +389,13 @@ class ClipboardPrefs(context: Context) {
         /** 历史体积上限的定义域（MB）；下界也是自定义页滑块的 min */
         const val MIN_TOTAL_MB = 10
         const val MAX_TOTAL_MB = 500
+
+        /** 图片三项的定义域上/下界（唯一真源：自定义页滑块的 min/max 也取自这里） */
+        const val MAX_IMAGE_ITEMS_CAP = 2000
+        const val MIN_IMAGE_TOTAL_MB = 10
+        const val MAX_IMAGE_TOTAL_MB = 1000
+        const val MIN_IMAGE_ITEM_MB = 1
+        const val MAX_IMAGE_ITEM_MB = 50
 
         /**
          * 收藏体积**存储值**的静态上界（MB）：总量上限的四分之一 —— 历史上能设到的最大收藏体积。
@@ -332,6 +434,12 @@ class ClipboardPrefs(context: Context) {
         private const val KEY_MAX_SEARCH = "max_search_results"
         private const val KEY_MAX_ITEM_KB = "max_item_kb"
         private const val KEY_HISTORY_PAGE_SIZE = "history_page_size"
+
+        /** 图片四项（2026-10-10 实施计划 §4.2） */
+        private const val KEY_IMAGE_ENABLED = "image_capture_enabled"
+        private const val KEY_IMAGE_MAX_ITEMS = "image_max_items"
+        private const val KEY_IMAGE_MAX_TOTAL_MB = "image_max_total_mb"
+        private const val KEY_IMAGE_MAX_ITEM_MB = "image_max_item_mb"
 
         /**
          * 分组标签重算完成标记（运行态）：**不进备份**（见 [exportForBackup]），

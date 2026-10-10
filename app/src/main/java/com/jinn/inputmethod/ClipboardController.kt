@@ -125,7 +125,14 @@ class ClipboardController(context: Context) {
             // 等待用主线程 Handler，不能在 BackgroundIo 里 sleep：那是单线程串行队列，
             // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
             retryHandler.postDelayed({
-                val retryClip = clipboard.primaryClip ?: return@postDelayed
+                val retryClip = clipboard.primaryClip
+                if (retryClip == null) {
+                    // 重试仍读不到：这是**静默失败**的常见形态（系统剪贴板访问限制：
+                    // 非前台 IME 读 primaryClip 会直接给 null 而不抛异常）。不留日志的话，
+                    // 排障时只能看到「复制了但历史里没有」（2026-10-10 实证）。
+                    Diagnostics.w(TAG, "剪贴板读不到（重试后仍为空）：系统访问限制或写入方未真正写入")
+                    return@postDelayed
+                }
                 BackgroundIo.run { extractAndSave(retryClip) }
             }, RETRY_DELAY_MS)
             return
@@ -158,6 +165,11 @@ class ClipboardController(context: Context) {
             Diagnostics.i(TAG, "跳过系统标记的敏感剪贴板条目")
             return
         }
+        // 图片条目走独立分支（文本链路一行不动）。判定用 item0 的 URI + getType：
+        // ClipDescription.hasMimeType("image/*") 在「图片 + 文本」混合条目上会给假阳性，
+        // 按实际类型过滤更准（MIME 取不到时落到文本路径，由 looksLikeText 兜底判否）。
+        val first = runCatching { clip.getItemAt(0) }.getOrNull() ?: return
+        if (handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
         // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
         val text = when (val r = ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)) {
@@ -171,6 +183,69 @@ class ClipboardController(context: Context) {
         if (text.isBlank()) return
         // upsert 在库层按 content_hash 去重，不会重复写入
         ClipboardStore.save(appContext, db, text, resolveSourcePackage())
+    }
+
+    /**
+     * 图片剪贴板条目的采集分支；返回 true 表示本条已按图片处理（调用方不再走文本路径）。
+     *
+     * IME 作为前台输入法读 `content://` 图片流**依赖系统给粘贴方授予的临时读权限**：
+     * 拿不到时 [saveImageFromUri] 按「流打不开」留 W 日志，不静默吞（实施计划 §3 的 Step 0 实测项）。
+     * 读流 + 解码 + 压缩是秒级活，投进 `BackgroundIo.runLong` 长活池 —— 短活池（`run`）
+     * 要留给面板首屏与粘贴，大图解码不能排在它们前面。
+     */
+    private fun handleImageClip(item: android.content.ClipData.Item): Boolean {
+        val uri = item.uri ?: return false
+        val type = runCatching { appContext.contentResolver.getType(uri) }.getOrNull() ?: return false
+        if (!type.startsWith("image/")) return false
+        if (!ClipboardPrefs.of(appContext).imageCaptureEnabled) {
+            Diagnostics.i(TAG, "跳过图片剪贴板条目（记录图片已关闭）")
+            return true
+        }
+        BackgroundIo.runLong { saveImageFromUri(uri, type) }
+        return true
+    }
+
+    /**
+     * 读一张剪贴板图片并入库（长活池线程）：带预算读流 → 读尺寸 → 缩略图 → 加密落盘 → 入库 → GC。
+     *
+     * 失败一律按原因留 W 日志（超限 / 流打不开 / 解不出像素 / 入库失败），不静默吞。
+     */
+    private fun saveImageFromUri(uri: android.net.Uri, declaredType: String) {
+        val prefs = ClipboardPrefs.of(appContext)
+        val read = runCatching {
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                ClipboardStore.readBytesWithBudget(input, prefs.imageMaxItemBytes.toInt())
+            }
+        }.getOrNull() ?: ClipboardStore.BytesResult.Failed
+        val bytes = when (read) {
+            is ClipboardStore.BytesResult.Ok -> read.bytes
+            ClipboardStore.BytesResult.TooLarge -> {
+                Diagnostics.w(TAG, "跳过超单张上限的图片（读入即止，上限 ${prefs.imageMaxItemMb}MB）")
+                return
+            }
+            ClipboardStore.BytesResult.Failed -> {
+                Diagnostics.w(TAG, "读剪贴板图片失败（流打不开 / 读取中断 / 空内容）")
+                return
+            }
+        }
+        val size = ClipboardImageCodec.bounds(bytes)
+        if (size == null) {
+            Diagnostics.w(TAG, "图片解不出尺寸（不支持的格式或数据损坏），未入库")
+            return
+        }
+        // provider 报通配类型时按文件头嗅探（具体类型是 commitContent 的硬要求，见 GalleryInsert）
+        val mime = if (declaredType == "image/*") ClipboardImageCodec.sniffMime(bytes) else declaredType
+        val thumb = ClipboardImageCodec.thumbJpeg(bytes)
+        ClipboardStore.saveImage(
+            context = appContext,
+            db = db,
+            bytes = bytes,
+            thumb = thumb,
+            width = size[0],
+            height = size[1],
+            mime = mime,
+            sourcePackage = resolveSourcePackage(),
+        )
     }
 
     /**
@@ -280,6 +355,50 @@ object ClipboardStore {
         maxEmptyReads: Int = MAX_EMPTY_READS,
         deadlineNanos: Long? = null,
     ): String? = (readBounded(input, budget, maxEmptyReads, deadlineNanos) as? ItemText.Ok)?.text
+
+    /** 字节读取的结果（图片路径：失败必须能分层，与 [ItemText] 同款理由） */
+    internal sealed interface BytesResult {
+        class Ok(val bytes: ByteArray) : BytesResult
+
+        /** 超过字节预算 —— 读入即止，**不返回半截内容**（与文本版同一口径） */
+        object TooLarge : BytesResult
+
+        /** 打不开流 / 读失败 / 预算非法 / 空内容 */
+        object Failed : BytesResult
+    }
+
+    /**
+     * 带预算把流读成**字节**（图片采集的唯一读入口）。
+     *
+     * 为什么不复用 [readBounded]：那个把结果按 UTF-8 解码成 `String`，二进制内容会被替换字符
+     * 破坏。循环语义（字节预算、连续空读上限、超限即止）与文本版**逐条对齐**，两版放在一起改，
+     * 避免两份循环漂移。
+     */
+    internal fun readBytesWithBudget(
+        input: java.io.InputStream,
+        budget: Int,
+        maxEmptyReads: Int = MAX_EMPTY_READS,
+    ): BytesResult {
+        if (budget <= 0) return BytesResult.Failed
+        val out = java.io.ByteArrayOutputStream(minOf(budget, 64 * 1024))
+        val chunk = ByteArray(16 * 1024)
+        var total = 0
+        var empty = 0
+        while (true) {
+            val n = runCatching { input.read(chunk) }.getOrNull() ?: return BytesResult.Failed
+            if (n < 0) break
+            if (n == 0) {
+                if (++empty > maxEmptyReads) return BytesResult.Failed
+                continue
+            }
+            empty = 0
+            total += n
+            if (total > budget) return BytesResult.TooLarge
+            out.write(chunk, 0, n)
+        }
+        val bytes = out.toByteArray()
+        return if (bytes.isEmpty()) BytesResult.Failed else BytesResult.Ok(bytes)
+    }
 
     /** 连续空读上限（非阻塞 provider 的兜底；本类不做重试，超限即放弃） */
     internal const val MAX_EMPTY_READS = 64
@@ -538,6 +657,9 @@ object ClipboardStore {
         sourcePackage: String,
         sourceAppName: String = "",
         maxItems: Int = readMaxItems(context),
+        // 批量导入（`ClipboardFileImporter`）逐条打 V 日志会淹掉诊断：由调用方合并成一条汇总。
+        // 失败分支的 W 不受它影响 —— 那才是要查的事
+        logPerItem: Boolean = true,
     ): Long? {
         // 单条体积上限：超出即丢弃（不截断，半截内容比不记更糟）
         if (exceedsItemLimit(text, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())) {
@@ -556,12 +678,85 @@ object ClipboardStore {
         if (id > 0) {
             // MEM-14d：成功分支降为 V —— 这是「每次复制一条」的事件（连打测试时几十条/分钟），
             // 用 i 级会逐条落盘并随诊断包外传；失败分支保持 W（那才是要查的事）。
-            Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length}")
+            // logPerItem=false（批量导入）时逐条 V 也免掉：两万行会淹掉诊断，导入侧合并成一条汇总
+            if (logPerItem) Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length}")
         } else {
             Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length}")
         }
         return id
     }
+
+    /**
+     * 图片保存流程（采集侧唯一入口，与 [save] 并列）。
+     *
+     * 顺序：加密原图与缩略图 → 写文件（同 hash 覆盖写 = 自愈）→ 入库 → 收尾 GC。
+     * 任何一步失败都把已写的文件清掉并返回 null：宁可这张图没入库，也不留一条**指向缺失文件的行**
+     * （那样的行会长期占序号与额度、点开必然失败）。异常一律不外抛（长活池线程不能崩）。
+     *
+     * @param thumb 缩略图 JPEG 字节；生成失败传 null（仍保存原图，网格里显示灰块）
+     * @return 条目 id；未入库返回 null
+     */
+    fun saveImage(
+        context: Context,
+        db: ClipboardDb,
+        bytes: ByteArray,
+        thumb: ByteArray?,
+        width: Int,
+        height: Int,
+        mime: String,
+        sourcePackage: String,
+        sourceAppName: String = "",
+        logPerItem: Boolean = true,
+    ): Long? {
+        if (bytes.isEmpty()) return null
+        val hash = ClipboardDb.imageHash(bytes)
+        val enc = ClipboardCrypto.encryptBytes(bytes) ?: run {
+            Diagnostics.w(TAG, "图片加密失败，未入库 ${hashTag(hash)}")
+            return null
+        }
+        if (!ClipboardImageFiles.writeAtomic(ClipboardImageFiles.encFile(context, hash), enc)) {
+            Diagnostics.w(TAG, "原图写盘失败，未入库 ${hashTag(hash)}")
+            return null
+        }
+        if (thumb != null) {
+            val encThumb = ClipboardCrypto.encryptBytes(thumb)
+            val written = encThumb != null &&
+                ClipboardImageFiles.writeAtomic(ClipboardImageFiles.thumbFile(context, hash), encThumb)
+            // 缩略图失败不致命（网格灰块、粘贴不受影响），但必须留痕：否则「为什么这张没有预览」无从查
+            if (!written) Diagnostics.w(TAG, "缩略图写盘失败（原图不受影响）${hashTag(hash)}")
+        }
+        val placeholder = ClipboardCrypto.encrypt(hash) ?: run {
+            ClipboardImageFiles.deleteFor(context, hash)
+            Diagnostics.w(TAG, "占位密文加密失败，未入库 ${hashTag(hash)}")
+            return null
+        }
+        val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
+        val id = db.upsertImage(
+            hash = hash,
+            placeholder = placeholder,
+            imageBytes = bytes.size.toLong(),
+            width = width,
+            height = height,
+            mime = mime,
+            sourcePackage = sourcePackage,
+            sourceAppName = appName,
+        )
+        if (id <= 0) {
+            Diagnostics.w(TAG, "图片入库失败：行未写入，已清理文件 ${hashTag(hash)}")
+            ClipboardImageFiles.deleteFor(context, hash)
+            return null
+        }
+        // 入库成功后再收孤儿（同线程，行已在库；GC 的保护窗兜住其它线程的在途写入）
+        ClipboardImageFiles.gc(context, db)
+        if (logPerItem) {
+            // 只记维度（尺寸 / 体积 / 哈希前 8 位），不记 URI、路径与内容
+            Diagnostics.i(TAG, "saveImage: 已保存 #$id ${width}x$height ${bytes.size / 1024}KB ${hashTag(hash)}")
+        }
+        return id
+    }
+
+    /** 日志用的哈希标记：只取前缀（不可逆、无隐私；避免整串刷屏） */
+    private fun hashTag(hash: String): String = "hash=${hash.take(12)}"
 
     private fun readMaxItems(context: Context): Int =
         ClipboardPrefs.of(context).maxItems

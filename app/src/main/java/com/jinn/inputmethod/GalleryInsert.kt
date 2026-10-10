@@ -267,6 +267,38 @@ internal object GalleryInsert {
         }
     }
 
+    /**
+     * 把一份**已在内存里**的图片字节落进 cache（剪贴板图片的两个出库路径用：点图插入、
+     * 「复制到剪贴板」的回退文件）。返回落盘文件；失败返回 null。
+     *
+     * 与 [copyToCache] 的分工：那条从外层 URI 拷贝（选图页场景，带 20MB 闸）；这条的字节来自
+     * 库内解密，体积在入库时已受过单张上限约束，不再设闸。落点与保留策略沿用同一目录
+     * （`share_file_paths.xml` 已暴露、`trimCache` 保护最近几张），命名用 `clip_` 前缀与选图不撞名。
+     *
+     * 调用方必须在后台线程（写盘是 IO）。
+     */
+    fun stageForInsert(context: Context, bytes: ByteArray, mime: String): File? {
+        if (bytes.isEmpty()) return null
+        val dir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
+        val stamp = System.currentTimeMillis()
+        val temp = File(dir, "clip_$stamp.tmp")
+        return try {
+            temp.outputStream().use { it.write(bytes) }
+            if (temp.length() == 0L) {
+                temp.delete()
+                return null
+            }
+            val named = File(dir, "clip_$stamp.${extOf(mime)}")
+            val staged = if (temp.renameTo(named)) named else temp
+            trimCache(dir)
+            staged
+        } catch (t: Throwable) {
+            temp.delete()
+            Diagnostics.w(TAG, "剪贴板图片落 cache 失败: ${t.javaClass.simpleName}")
+            null
+        }
+    }
+
     /** 读文件头供 [sniffImageMime] 用（读不到给空数组，嗅探自然走兜底） */
     private fun readHead(file: File): ByteArray = runCatching {
         val head = ByteArray(12)
@@ -316,12 +348,13 @@ internal object GalleryInsert {
     }
 
     /**
-     * 与 [sniffImageMime] 结果对应的扩展名。
+     * 与 [sniffImageMime] 结果对应的扩展名（internal：剪贴板图片的导出/转移命名同用，见
+     * `ClipboardImageExport`；两处必须同源，否则同一张图在图库链路与剪贴板链路的后缀可能不同）。
      *
      * 未列出的类型（`image/bmp`、`image/tiff` 等）取 MIME 子类型当扩展名，滤掉非字母数字 ——
      * 固定给 `png` 会让后缀与内容不符（L-1011）。
      */
-    private fun extOf(mime: String): String = when (mime) {
+    internal fun extOf(mime: String): String = when (mime) {
         "image/jpeg" -> "jpg"
         "image/gif" -> "gif"
         "image/webp" -> "webp"

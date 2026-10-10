@@ -29,6 +29,12 @@ object ClipboardCrypto {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val GCM_TAG_BITS = 128
 
+    /** GCM 标准 IV 长度（字节） */
+    private const val GCM_IV_BYTES = 12
+
+    /** 字节壳（[encryptBytes]/[decryptBytes]）的格式版本，占首字节 */
+    private const val BYTES_FORMAT_VERSION: Byte = 1
+
     private val keyStore by lazy {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     }
@@ -86,6 +92,50 @@ object ClipboardCrypto {
         String(cipher.doFinal(data), Charsets.UTF_8)
     }.getOrElse {
         Diagnostics.e(TAG, "解密失败: ${it.message}")
+        null
+    }
+
+    /**
+     * 字节版加密（图片原字节 / 缩略图，落盘用）：**二进制壳** `[1B ver][12B iv][ct]`。
+     *
+     * 为什么不复用字符串版（`base64(iv):base64(ct)`）：base64 让文件体积 +33%，而图片是本模块
+     * 体积最大的数据。两者**同一密钥、同一 AES-GCM 参数**，只是外层编码不同（互不兼容，
+     * 由首字节版本号兜底：读到不认识的首字节即判失败，不会把字符串密文当字节壳解）。
+     *
+     * @return 密文；空输入或加密失败返回 null（调用方记日志但不外抛）
+     */
+    fun encryptBytes(plain: ByteArray): ByteArray? = runCatching {
+        if (plain.isEmpty()) return null
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
+        val iv = cipher.iv
+        val ct = cipher.doFinal(plain)
+        // iv 由 Keystore 给出，GCM 下恒为 12 字节；仍按实际长度拼壳（与 decryptBytes 用同一常量校验）
+        val out = ByteArray(1 + iv.size + ct.size)
+        out[0] = BYTES_FORMAT_VERSION
+        System.arraycopy(iv, 0, out, 1, iv.size)
+        System.arraycopy(ct, 0, out, 1 + iv.size, ct.size)
+        out
+    }.getOrElse {
+        Diagnostics.e(TAG, "字节加密失败: ${it.message}")
+        null
+    }
+
+    /**
+     * 解密 [encryptBytes] 的产物；失败返回 null。
+     *
+     * 用 `doFinal(input, offset, len)` 而不是先 `copyOfRange` 出明文副本：单张图片最大 20MB，
+     * 少一次整份复制就少一份峰值内存（采集侧本就跑在内存敏感的解码链路上）。
+     */
+    fun decryptBytes(stored: ByteArray): ByteArray? = runCatching {
+        if (stored.size <= 1 + GCM_IV_BYTES) return null
+        if (stored[0] != BYTES_FORMAT_VERSION) return null
+        val iv = stored.copyOfRange(1, 1 + GCM_IV_BYTES)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
+    }.getOrElse {
+        Diagnostics.e(TAG, "字节解密失败: ${it.message}")
         null
     }
 }

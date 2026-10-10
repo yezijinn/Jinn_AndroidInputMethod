@@ -90,15 +90,35 @@
         android:layout_weight="1"
         android:divider="@null" />
 
+    <!-- 图片分类的网格（与 ListView 互斥显隐；列数 / 行高读图库布局偏好，见 ClipboardImageGridView 的类注释） -->
+    <GridView
+        android:id="@+id/hist_grid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone"
+        android:horizontalSpacing="2dp"
+        android:verticalSpacing="2dp"
+        android:stretchMode="columnWidth"
+        android:scrollbars="vertical" />
+
     <LinearLayout
         android:id="@+id/hist_pager"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal" />
 
-    <LinearLayout
-        android:id="@+id/hist_actions"
+    <!-- 操作行按钮数会随版本增长：外层横向滚动兜住窄屏（fillViewport 让内容窄时仍按 gravity 居中） -->
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal" />
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/hist_actions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 </LinearLayout>

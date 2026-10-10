@@ -56,6 +56,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         db.execSQL("CREATE UNIQUE INDEX idx_items_hash ON $TABLE_ITEMS(content_hash)")
         // v7：密文总长的表达式索引，让 trimByByteBudget 的全表 SUM 退化成索引扫描（见 DB_VERSION 注释）
         db.execSQL(bytesIndexSql())
+        // v8：内容类型索引 —— 图片行的全部查询（裁剪 / GC / 计数）都按 content_type 过滤，
+        // 无索引时每次图片入库都要全表扫（见 DB_VERSION 注释）
+        db.execSQL(contentTypeIndexSql())
     }
 
     /**
@@ -150,11 +153,37 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             // 「v3/v5 重建分支刚建过」与「旧库从未建过」两种情形
             db.execSQL(bytesIndexSql())
         }
+        if (oldVersion < 8) {
+            // v8：图片支持。四条元数据列全部带 NOT NULL DEFAULT，老行（全文本）天然合法，
+            // 无需 backfill；配套建内容类型索引（见 DB_VERSION 注释）。
+            // ⚠ 加列不删列：装回旧版 APK 时旧版按显式列名查询，新列被忽略（onDowngrade 只回写版本号）。
+            // ⚠ 必须按**列是否存在**决定加不加：v3/v5 的重建分支用的是**新版**建表 SQL（已含 image_* 列），
+            // 从那些版本一路升上来时列已存在，无条件 ALTER 会报 `duplicate column name` ⇒ 整库打不开。
+            if (!hasColumn(db, "image_bytes")) {
+                db.execSQL("ALTER TABLE $TABLE_ITEMS ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE $TABLE_ITEMS ADD COLUMN image_w     INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE $TABLE_ITEMS ADD COLUMN image_h     INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE $TABLE_ITEMS ADD COLUMN image_mime  TEXT    NOT NULL DEFAULT ''")
+            }
+            db.execSQL(contentTypeIndexSql())
+        }
     }
+
+    /** 该表当前是否已有某列（v8 的加列分支用它兜住 v3/v5 重建路径，见那里的注释） */
+    private fun hasColumn(db: SQLiteDatabase, name: String): Boolean =
+        db.rawQuery("PRAGMA table_info($TABLE_ITEMS)", null).use { c ->
+            val idx = c.getColumnIndex("name")
+            while (c.moveToNext()) if (c.getString(idx) == name) return true
+            false
+        }
 
     /** 密文总长的表达式索引（v7 起；`onCreate` 与迁移分支共用同一句，避免两处写法漂移） */
     private fun bytesIndexSql(): String =
         "CREATE INDEX IF NOT EXISTS idx_items_bytes ON $TABLE_ITEMS(LENGTH(encrypted_content))"
+
+    /** 内容类型索引（v8 起；同样 onCreate / 迁移共用一句） */
+    private fun contentTypeIndexSql(): String =
+        "CREATE INDEX IF NOT EXISTS idx_items_ctype ON $TABLE_ITEMS(content_type)"
 
     /**
      * 空 content_hash 兜底：补成 `legacy:<id>`。
@@ -225,14 +254,35 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             source_app_name TEXT NOT NULL DEFAULT '',
             content_hash TEXT NOT NULL DEFAULT '',
             category TEXT NOT NULL DEFAULT 'OTHER',
-            is_favorite INTEGER NOT NULL DEFAULT 0
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            image_bytes INTEGER NOT NULL DEFAULT 0,
+            image_w INTEGER NOT NULL DEFAULT 0,
+            image_h INTEGER NOT NULL DEFAULT 0,
+            image_mime TEXT NOT NULL DEFAULT ''
         )
         """.trimIndent()
+
+    /**
+     * 图片条目的元数据。
+     *
+     * 全部字段都不敏感（尺寸 / 体积 / MIME / 哈希），明文列存储；真正的内容（像素）在
+     * `filesDir/clipboard/<hex>.enc` 里加密保存，文件名由 [hash] 派生（见 [ClipboardImageFiles]）。
+     *
+     * 图片行的 `encrypted_content` 只存**占位密文**（加密后的 `img:<hex>` 串），其唯一作用是
+     * 让行在「坏行自愈 / 可读性备忘」机制下与文本行同构 —— 读路径对图片行**不解密**。
+     */
+    data class ImageMeta(
+        val hash: String,
+        val width: Int,
+        val height: Int,
+        val bytes: Long,
+        val mime: String,
+    )
 
     /** 剪贴板历史条目（明文仅在读取时存在，不长期驻留） */
     data class Item(
         val id: Long,
-        val content: String,      // 已解密明文（内存中）
+        val content: String,      // 已解密明文（内存中）；图片行恒为空串（见 ImageMeta 注释）
         val contentType: String,
         val createdAt: Long,
         val sourcePackage: String,
@@ -240,6 +290,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val contentHash: String,
         val category: String = "OTHER",   // URL / NUMBER / OTHER
         val isFavorite: Boolean = false,
+        /** 图片行非空；文本行恒为 null。新字段带默认值：既有构造点（含测试）无需改动 */
+        val image: ImageMeta? = null,
     )
 
     // ── 写入 ──────────────────────────────────────────────
@@ -353,6 +405,93 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
         }
         return id
+    }
+
+    /**
+     * 图片入库（去重置顶语义与 [upsert] 一致，@Synchronized 串行）。
+     *
+     * 与文本路径的三处关键差异：
+     *  - 正文不在列里：`encrypted_content` 只存**占位密文**（调用方加密好的 `img:<hex>` 串），
+     *    真正的内容在 `filesDir/clipboard/<hex>.enc`（调用方写），本方法只维护列；
+     *  - 不去试解既有行：图片行的可读性由文件决定、与 Keystore 状态无关，没有「坏行自愈」要判
+     *    （文件层的自愈是调用方按同路径覆盖写）；
+     *  - 占位密文与元数据列在命中与插入两条路径上都**整组覆盖**：重复复制即刷新（幂等）。
+     *
+     * @return 条目 id（既有行或新行）；入参非法 / 写库失败返回 -1
+     */
+    @Synchronized
+    fun upsertImage(
+        hash: String,
+        placeholder: String,
+        imageBytes: Long,
+        width: Int,
+        height: Int,
+        mime: String,
+        sourcePackage: String,
+        sourceAppName: String,
+    ): Long {
+        if (hash.isEmpty() || placeholder.isEmpty()) return -1
+        val values = ContentValues().apply {
+            put("content_type", CONTENT_TYPE_IMAGE)
+            put("encrypted_content", placeholder)
+            put("created_at", System.currentTimeMillis())
+            put("source_package", sourcePackage)
+            put("source_app_name", sourceAppName)
+            put("image_bytes", imageBytes)
+            put("image_w", width)
+            put("image_h", height)
+            put("image_mime", mime)
+        }
+        val existingId = findIdByHash(hash)
+        if (existingId != null) {
+            // 收藏标记是用户主动状态，重复复制不覆盖（与文本 upsert 同一条不变量）
+            val rows = writableDatabase.update(TABLE_ITEMS, values, "id = ?", arrayOf(existingId.toString()))
+            if (rows > 0) return existingId
+            // 命中哈希却一行未改 ⇒ 行已不在库里（外部改库 / 库被换）：落到插入路径重建（BUG.md L-200 同款）
+            Diagnostics.w(TAG, "图片命中哈希但行已消失: id=$existingId，改走插入")
+        }
+        values.put("content_hash", hash)
+        // 图片不进 URL/NUMBER 多标签体系（那是文本片段的分类，见 ClipboardClassifier）；
+        // 图片恒 OTHER，查询侧按 content_type 维度过滤
+        values.put("category", ClipboardClassifier.CATEGORY_OTHER)
+        values.put("is_favorite", 0)
+        val id = writableDatabase.insert(TABLE_ITEMS, null, values)
+        if (id > 0) {
+            val prefs = ClipboardPrefs.of(appContext)
+            trimTo(prefs.maxItems, prefs.maxTotalBytes)
+        }
+        return id
+    }
+
+    /**
+     * 全部图片行的哈希集（孤儿文件 GC 用；只读一列、不解密）。
+     *
+     * 走 `idx_items_ctype`（只扫图片行），常态几百条。
+     */
+    fun imageHashes(): Set<String> {
+        val out = HashSet<String>()
+        readableDatabase.rawQuery(
+            "SELECT content_hash FROM $TABLE_ITEMS WHERE content_type = ?",
+            arrayOf(CONTENT_TYPE_IMAGE),
+        ).use { c ->
+            while (c.moveToNext()) {
+                val h = c.getString(0)
+                if (!h.isNullOrEmpty()) out.add(h)
+            }
+        }
+        return out
+    }
+
+    /** 全部图片行的 (id, hash)（「有行无文件」死行清理用） */
+    fun imageRows(): List<Pair<Long, String>> {
+        val out = ArrayList<Pair<Long, String>>()
+        readableDatabase.rawQuery(
+            "SELECT id, content_hash FROM $TABLE_ITEMS WHERE content_type = ?",
+            arrayOf(CONTENT_TYPE_IMAGE),
+        ).use { c ->
+            while (c.moveToNext()) out.add(c.getLong(0) to (c.getString(1) ?: ""))
+        }
+        return out
     }
 
     /**
@@ -505,8 +644,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         readableDatabase.query(
             TABLE_ITEMS,
             arrayOf("encrypted_content"),
-            "is_favorite = 1",
-            null,
+            "is_favorite = 1 AND content_type = ?",
+            arrayOf(CONTENT_TYPE_TEXT),
             null,
             null,
             null,
@@ -556,7 +695,36 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
+        trimImages()
         trimFavorites()
+    }
+
+    /**
+     * 图片预算裁剪：张数 / 字节任一超限即淘汰**最旧的非收藏图片**（用户可调，见 [ClipboardPrefs]）。
+     *
+     * 与文本预算**完全分离**（实施计划 §2.4）：文本的条数/字节只统计与裁剪文本行
+     * （见 [trimByCount] / [trimByByteBudget]），图片同理只统计自己 —— 否则「复制几张图」
+     * 会把文本历史挤空，或反过来图片被文本预算连带删掉。
+     *
+     * 图片行常态只有几百条，直接全取（不像文本那条 hot path 需要先算总量短路）。
+     * 走 `idx_items_ctype`（只扫图片行）。
+     */
+    private fun trimImages() {
+        val prefs = ClipboardPrefs.of(appContext)
+        val rows = ArrayList<ClipboardRowSize>()
+        readableDatabase.rawQuery(
+            "SELECT id, image_bytes, is_favorite FROM $TABLE_ITEMS WHERE content_type = ? " +
+                "ORDER BY created_at ASC",   // 最旧在前：淘汰顺序即此序
+            arrayOf(CONTENT_TYPE_IMAGE),
+        ).use { c ->
+            while (c.moveToNext()) {
+                rows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), c.getInt(2) != 0, image = true))
+            }
+        }
+        val ids = imageOverflowIds(rows, prefs.imageMaxItems, prefs.imageMaxBytes)
+        if (ids.isEmpty()) return
+        deleteNonFavoriteByIds(ids)
+        Diagnostics.i(TAG, "按图片预算裁剪: 删除 ${ids.size} 条非收藏图片")
     }
 
     /**
@@ -569,9 +737,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     private fun trimFavorites() {
         val prefs = ClipboardPrefs.of(appContext)
         val favRows = ArrayList<ClipboardRowSize>()
+        // 字节口径：图片行按真实体积（image_bytes）算，文本行按密文长度 —— 否则一张收藏图
+        // 只占 ~百字节（占位密文），收藏字节上限对图片形同虚设。收藏行只有几条~千条量级，CASE 无性能顾虑。
         readableDatabase.rawQuery(
-            "SELECT id, LENGTH(encrypted_content) FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
-                "ORDER BY created_at ASC", null
+            "SELECT id, CASE WHEN content_type = ? THEN image_bytes " +
+                "ELSE LENGTH(encrypted_content) END FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
+                "ORDER BY created_at ASC",
+            arrayOf(CONTENT_TYPE_IMAGE),
         ).use { c -> while (c.moveToNext()) favRows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), true)) }
         val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
         if (ids.isEmpty()) return
@@ -580,10 +752,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         Diagnostics.i(TAG, "收藏软上限淘汰: 候选 ${ids.size} 条，实删 $deleted 条")
     }
 
-    /** 按条数裁剪（原有行为：只删最旧的非收藏记录） */
+    /** 按条数裁剪：只统计与删除**文本**行（图片有独立张数上限，见 [trimImages]） */
     private fun trimByCount(maxItems: Int) {
         if (maxItems <= 0) return
-        val count = count()
+        val count = countByContentType(CONTENT_TYPE_TEXT)
         if (count <= maxItems) return
         val overflow = count - maxItems
 
@@ -593,14 +765,21 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             if (ids.size >= overflow) break
             val need = overflow - ids.size
             readableDatabase.rawQuery(
-                "SELECT id FROM $TABLE_ITEMS WHERE $where " +
+                "SELECT id FROM $TABLE_ITEMS WHERE $where AND content_type = ? " +
                     "ORDER BY created_at ASC LIMIT $need",
-                null
+                arrayOf(CONTENT_TYPE_TEXT),
             ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
         if (ids.isEmpty()) return // 剩余全是收藏，不裁剪
         deleteNonFavoriteByIds(ids)
     }
+
+    /** 按类型计数（图片的条数/字节预算与文本分离，各自只统计自己那一类） */
+    private fun countByContentType(type: String): Int =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE content_type = ?",
+            arrayOf(type),
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
 
     /**
      * 按总体积裁剪：密文总量超过 [maxTotalBytes] 时，从最旧的非收藏记录开始删，直到落回预算内。
@@ -615,16 +794,29 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // （本方法是每次入库都走的 hot path，行数是 O(n)）。
         // 这一句由 v7 的表达式索引兜着：走覆盖索引扫描（只读长度，不读内容页），
         // 实测 2 万行从 17.55ms 降到 1.18ms（见 DB_VERSION 注释）。
+        // ⚠ 这一句**故意不加** `WHERE content_type = 'text'`：加了它 SQLite 会改走 idx_items_ctype
+        // 再逐行读内容页算长度，v7 那条覆盖索引就作废了（17.55ms 级）。图片行的 encrypted_content
+        // 只是 ~百字节的占位密文，计进总量可忽略；真正的图片体积在 image_bytes 列、由 trimImages 管，
+        // 下面的候选集把图片行**跳过**（不参与文本淘汰）。
         val total = readableDatabase.rawQuery(
             "SELECT SUM(LENGTH(encrypted_content)) FROM $TABLE_ITEMS", null
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
         if (total <= maxTotalBytes) return
         val rows = ArrayList<ClipboardRowSize>()
         readableDatabase.rawQuery(
-            "SELECT id, LENGTH(encrypted_content), is_favorite FROM $TABLE_ITEMS " +
+            "SELECT id, LENGTH(encrypted_content), is_favorite, content_type FROM $TABLE_ITEMS " +
                 "ORDER BY created_at ASC",   // 最旧在前：淘汰顺序即此序
             null
-        ).use { c -> while (c.moveToNext()) rows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), c.getInt(2) != 0)) }
+        ).use { c ->
+            while (c.moveToNext()) {
+                rows.add(
+                    ClipboardRowSize(
+                        c.getLong(0), c.getLong(1), c.getInt(2) != 0,
+                        image = c.getString(3) == CONTENT_TYPE_IMAGE,
+                    )
+                )
+            }
+        }
         val ids = overflowIdsForByteBudget(rows, maxTotalBytes)
         if (ids.isEmpty()) {
             // 可删的只剩收藏（收藏计入总量但不参与淘汰）⇒ 库会**长期停在预算之上**。
@@ -686,11 +878,36 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return writableDatabase.delete(TABLE_ITEMS, where, args)
     }
 
+    /**
+     * 按内容类型删（不动收藏）：历史页「删图片」用。
+     *
+     * 注意与 [deleteByCategory] 的分工：`deleteByCategory(null)`（清空）删的是**全部非收藏行**
+     * （文本 + 图片，用户预期「清空历史」就是清空）；本方法只删某一类的行。
+     * 两条路径删掉的图片文件：单条删除走 `deleteFor`（精准），批量走 `gc`（短保护窗）——
+     * 都不在本层做（DB 只管行、不碰文件）。
+     */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
+    fun deleteByContentType(type: String): Int {
+        if (type.isEmpty()) return 0
+        return writableDatabase.delete(
+            TABLE_ITEMS,
+            "is_favorite = 0 AND content_type = ?",
+            arrayOf(type),
+        )
+    }
+
     // ── 查询 ──────────────────────────────────────────────
 
-    /** SELECT 列清单（分页查询与历史接口共用） */
+    /**
+     * SELECT 列清单（分页查询与历史接口共用）。
+     *
+     * ⚠ [readItem] 的下标与本清单**同序**：追加列一律排在末尾（图片元数据 9–12），
+     * 中间插列会静默错位（读出来的是别的列的值）。
+     */
     private val selectCols = "id, encrypted_content, content_type, created_at, source_package, " +
-        "source_app_name, content_hash, category, is_favorite"
+        "source_app_name, content_hash, category, is_favorite, " +
+        "image_bytes, image_w, image_h, image_mime"
 
     /**
      * 组装过滤条件（分类 / 仅收藏），返回 WHERE 片段与参数。
@@ -703,9 +920,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     private fun whereClause(
         category: String?,
         favoritesOnly: Boolean = false,
+        contentType: String? = null,
     ): Pair<String, Array<String>> {
         val where = StringBuilder("1 = 1")
-        val args = ArrayList<String>(1)
+        val args = ArrayList<String>(2)
         if (favoritesOnly) where.append(" AND is_favorite = 1")
         if (category != null) {
             // 多标签（2026-09-25）：category 存的是「含哪些片段」（如 `URL,NUMBER`），
@@ -713,6 +931,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             // 所以 `LIKE '%URL%'` 不会误命中别的标签；旧库的单值（"URL"）同样被覆盖，无需迁移。
             where.append(" AND category LIKE ?")
             args.add("%$category%")
+        }
+        if (contentType != null) {
+            // 内容类型维度（图片分类 / 搜索排除图片）：与 category 正交，图片恒 category=OTHER
+            where.append(" AND content_type = ?")
+            args.add(contentType)
         }
         return where.toString() to args.toTypedArray()
     }
@@ -738,9 +961,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         limit: Int,
         category: String? = null,
         favoritesOnly: Boolean = false,
+        contentType: String? = null,
     ): KeyedPage {
         if (limit <= 0) return KeyedPage(emptyList(), 0, cursor)
-        val (where, args) = whereClause(category, favoritesOnly)
+        val (where, args) = whereClause(category, favoritesOnly, contentType)
         val cursorClause =
             if (cursor == null) "" else " AND (created_at < ? OR (created_at = ? AND id < ?))"
         val cursorArgs =
@@ -786,12 +1010,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 一页查询结果：[items] 为解密成功的条目，[nextOffset] 为**已扫描过的原始行数**（进度，不是 SQL OFFSET） */
     data class Page(val items: List<Item>, val nextOffset: Int)
 
-    /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏/隐私过滤） */
+    /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏/内容类型过滤） */
     fun count(
         category: String? = null,
         favoritesOnly: Boolean = false,
+        contentType: String? = null,
     ): Int {
-        val (where, args) = whereClause(category, favoritesOnly)
+        val (where, args) = whereClause(category, favoritesOnly, contentType)
         return readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE $where",
             args
@@ -863,9 +1088,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         while (true) {
             val rows = ArrayList<Triple<Long, String, String>>(RECLASSIFY_PAGE)
             readableDatabase.rawQuery(
-                "SELECT id, encrypted_content, content_hash FROM $TABLE_ITEMS WHERE id > ? ORDER BY id " +
-                    "LIMIT $RECLASSIFY_PAGE",
-                arrayOf(lastId.toString()),
+                // 只重算文本行：图片行的 category 恒 OTHER（图片不进 URL/NUMBER 标签体系），
+                // 且它的 encrypted_content 是占位密文 —— 解密它、再对 `img:<hex>` 跑分类纯属白付
+                "SELECT id, encrypted_content, content_hash FROM $TABLE_ITEMS " +
+                    "WHERE id > ? AND content_type = ? ORDER BY id LIMIT $RECLASSIFY_PAGE",
+                arrayOf(lastId.toString(), CONTENT_TYPE_TEXT),
             ).use { c -> while (c.moveToNext()) rows.add(Triple(c.getLong(0), c.getString(1), c.getString(2))) }
             if (rows.isEmpty()) return changed
             lastId = rows.last().first
@@ -958,8 +1185,33 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     private fun readItem(c: android.database.Cursor): Item? {
         val id = c.getLong(0)
-        val encrypted = c.getString(1)
+        val contentType = c.getString(2)
         val hash = c.getString(6)
+        // 图片行**不解密**（列里只是占位密文）：可显示性由「文件在不在」决定（文件按 hash 派生），
+        // 与 Keystore 状态解耦 —— 密钥失效后网格显示灰块，但行不会从列表里消失。
+        // `content` 恒为空串：搜索匹配 / 历史页渲染 / 备份导出 / 明文预算都把它当文本，空串让
+        // 这些既有路径自然降级（不命中、不占预算、不导出），见实施计划 §2.2 契约。
+        if (contentType == CONTENT_TYPE_IMAGE) {
+            return Item(
+                id = id,
+                content = "",
+                contentType = contentType,
+                createdAt = c.getLong(3),
+                sourcePackage = c.getString(4),
+                sourceAppName = c.getString(5),
+                contentHash = hash,
+                category = c.getString(7),
+                isFavorite = c.getInt(8) != 0,
+                image = ImageMeta(
+                    hash = hash,
+                    width = c.getInt(10),
+                    height = c.getInt(11),
+                    bytes = c.getLong(9),
+                    mime = c.getString(12) ?: "",
+                ),
+            )
+        }
+        val encrypted = c.getString(1)
         val content = ClipboardCrypto.decrypt(encrypted) ?: run {
             // 解不开就撤销备忘：否则下一次同内容复制会因「已验证」跳过试解，白丢一次自愈机会
             // （BUG.md L-173 与 L-199 的边界）
@@ -971,7 +1223,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return Item(
             id = id,
             content = content,
-            contentType = c.getString(2),
+            contentType = contentType,
             createdAt = c.getLong(3),
             sourcePackage = c.getString(4),
             sourceAppName = c.getString(5),
@@ -1002,7 +1254,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          *
          * 与 v6 同理：`onCreate` 只覆盖全新安装，已装机库必须配迁移分支。
          */
-        private const val DB_VERSION = 7
+        /**
+         * v8：图片支持。加四条图片元数据列（`image_bytes/w/h/mime`，全部 NOT NULL DEFAULT，
+         * 老行天然合法）+ 内容类型索引 `idx_items_ctype`。
+         *
+         * 索引的依据：图片的全部查询都按 `content_type` 过滤（条数计数 / 字节预算 / GC 取哈希集 /
+         * 死行清理），而图片行在库中占比很小 —— 无索引时每次图片入库的裁剪都要全表扫
+         * （2 万行量级，读 created_at / image_bytes / is_favorite 三列）。索引让这几条查询
+         * 退化成「只扫图片行」（本机实测图片行 300 条）。
+         *
+         * ⚠ 列名/索引名与 `onCreate` 必须同源：两处写法漂移会让「全新安装」与「升级安装」
+         * 的 schema 不一致（v4 的 content_hash 唯一索引就踩过，见 onCreate 里的注释）。
+         */
+        private const val DB_VERSION = 8
         private const val TABLE_ITEMS = "clipboard_items"
 
         /** [verifiedReadable] 的上限：超过就整体清空（备忘只是加速，不是正确性依赖） */
@@ -1043,8 +1307,39 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             for (row in rows) {
                 if (total <= maxBytes) break
                 if (row.favorite) continue
+                // 图片行不参与文本字节淘汰（体积走 image 预算；这里它的 bytes 只是占位密文长度）
+                if (row.image) continue
                 out.add(row.id)
                 total -= row.bytes
+            }
+            return out
+        }
+
+        /**
+         * 图片预算的淘汰候选（纯函数）。
+         *
+         * 与 [favoriteOverflowIds] 的分工：这里收藏**不参与**淘汰（与文本总预算同一条不变量：
+         * 收藏永不因容量被删）；与 [overflowIdsForByteBudget] 的分工：条数 / 字节两个上限
+         * **同时**生效（文本侧只有字节上限，条数走 [ClipboardDb.trimByCount]）。
+         *
+         * @param rows 必须按最旧在前传入（查询侧即 `ORDER BY created_at ASC`）
+         * @param maxItems 张数上限；`<= 0` 视为不限制
+         * @param maxBytes 体积上限；`<= 0` 视为不限制
+         */
+        fun imageOverflowIds(rows: List<ClipboardRowSize>, maxItems: Int, maxBytes: Long): List<Long> {
+            if (rows.isEmpty()) return emptyList()
+            val itemCap = if (maxItems > 0) maxItems else rows.size
+            val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
+            var kept = rows.size
+            var bytes = rows.sumOf { it.bytes }
+            if (kept <= itemCap && bytes <= byteCap) return emptyList()
+            val out = ArrayList<Long>()
+            for (row in rows) {
+                if (kept <= itemCap && bytes <= byteCap) break
+                if (row.favorite) continue
+                out.add(row.id)
+                kept--
+                bytes -= row.bytes
             }
             return out
         }
@@ -1194,11 +1489,37 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /** 迁移期给空哈希补的占位前缀（见 backfillBlankHashes）：稳定哈希是 64 位 hex，不会碰撞 */
         private const val LEGACY_HASH_PREFIX = "legacy:"
 
+        /** `content_type` 的两种取值（文本行 / 图片行；表的 DEFAULT 是文本） */
+        const val CONTENT_TYPE_TEXT = "text"
+        const val CONTENT_TYPE_IMAGE = "image"
+
+        /**
+         * 图片哈希前缀。
+         *
+         * 与文本哈希（裸 64 位 hex）**空间隔离**：两套哈希共用一个 `content_hash` 唯一索引，
+         * 前缀保证「图片不会与某段文本撞 hash」（且按前缀可一眼分辨行类型，见 `ClipboardFileImporter`）。
+         * 占位方案里的 `legacy:` 同款思路。
+         */
+        const val IMAGE_HASH_PREFIX = "img:"
+
         /** 稳定哈希：内容去重与来源追踪用（不暴露原文） */
-        fun stableHash(text: String): String {
-            val md = java.security.MessageDigest.getInstance("SHA-256")
-            return md.digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
-        }
+        fun stableHash(text: String): String = hex(sha256(text.toByteArray(Charsets.UTF_8)))
+
+        /**
+         * 图片哈希：对**入库原字节**取 sha256（带 [IMAGE_HASH_PREFIX]）。
+         *
+         * 「入库原字节」是唯一定义点：采集读到什么字节就哈希什么字节，粘贴/导出时也是这份字节 ——
+         * 同一张图重复复制（同一 provider 同一份数据）必然命中；不同来源的转码版（有损重压）
+         * 字节不同、各成一条，这是有意的（不做感知哈希，见实施计划 §8）。
+         */
+        fun imageHash(bytes: ByteArray): String =
+            IMAGE_HASH_PREFIX + hex(sha256(bytes))
+
+        private fun sha256(bytes: ByteArray): ByteArray =
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+
+        private fun hex(bytes: ByteArray): String =
+            bytes.joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
     }
 }
 
@@ -1225,12 +1546,21 @@ data class ClipboardCursor(val createdAt: Long, val id: Long) {
 }
 
 /**
- * 按体积淘汰时的一行信息：id、密文长度（base64 纯 ASCII，字符数即字节数）、是否收藏。
+ * 按体积淘汰时的一行信息：id、生效字节数、是否收藏、是否图片行。
  *
- * 与 [ClipboardFilter] 一样做成顶层类：它同时是 [ClipboardDb.overflowIdsForByteBudget]
- * 的入参类型，纯数据、可直接 JVM 单测。
+ * [bytes] 的含义按行类型分：文本行 = 密文长度（base64 纯 ASCII，字符数即字节数）；
+ * 图片行 = 真实文件体积（`image_bytes`）。
+ *
+ * 与 [ClipboardFilter] 一样做成顶层类：它同时是 [ClipboardDb.overflowIdsForByteBudget] /
+ * [ClipboardDb.imageOverflowIds] 的入参类型，纯数据、可直接 JVM 单测。
  */
-data class ClipboardRowSize(val id: Long, val bytes: Long, val favorite: Boolean)
+data class ClipboardRowSize(
+    val id: Long,
+    val bytes: Long,
+    val favorite: Boolean,
+    /** 图片行：文本的字节预算候选集里要跳过它（图片体积由 image 预算单独管） */
+    val image: Boolean = false,
+)
 
 /**
  * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
@@ -1244,9 +1574,16 @@ data class ClipboardRowSize(val id: Long, val bytes: Long, val favorite: Boolean
  * 各写一遍，现在收敛到这里：一来不用重复，二来它是纯函数、不依赖 Android，能直接 JVM 单测。
  */
 data class ClipboardFilter(
-    /** 传给 SQL 的 category 值；收藏/隐私这类伪分类此处为 null */
+    /** 传给 SQL 的 category 值；收藏/图片这类伪分类此处为 null */
     val category: String?,
     val favoritesOnly: Boolean,
+    /**
+     * 内容类型维度（`image` = 图片分类；null = 不限）。
+     *
+     * 与 [category] **正交**：图片恒 `category='OTHER'`（不进 URL/NUMBER 标签体系），
+     * 图片分类靠这一维过滤。搜索路径也用它（传 `text` 排除图片，见 SearchPanelView）。
+     */
+    val contentType: String? = null,
 
 ) {
     companion object {
@@ -1254,13 +1591,22 @@ data class ClipboardFilter(
         /** 伪分类：收藏（独立标签列，非 category 取值） */
         const val PSEUDO_FAVORITE = "FAVORITE"
 
+        /**
+         * 伪分类：图片（走 `content_type` 列，与 category 正交）。
+         *
+         * 与 [PSEUDO_FAVORITE] 同款职责：分类栏的选中值不能直接传给 category 列
+         * （`WHERE category = 'IMAGE'` 恒不成立，列表永远是空的）。
+         */
+        const val PSEUDO_IMAGE = "IMAGE"
+
 
         /**
          * 由分类栏选中的值解析筛选条件。
-         * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE=伪分类
+         * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/IMAGE=伪分类
          */
         fun of(raw: String?): ClipboardFilter = when (raw) {
             PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true)
+            PSEUDO_IMAGE -> ClipboardFilter(null, favoritesOnly = false, contentType = ClipboardDb.CONTENT_TYPE_IMAGE)
             else -> ClipboardFilter(raw, favoritesOnly = false)
         }
     }

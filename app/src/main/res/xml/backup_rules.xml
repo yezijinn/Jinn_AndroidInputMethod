@@ -26,6 +26,14 @@
     <exclude
         domain="file"
         path="user_freq.txt.tmp" />
+    <!-- 剪贴板图片目录（filesDir/clipboard/）：原图与缩略图都是密文，密钥（Keystore）本就不可备份，
+         恢复后一条也解不开；而它是本模块最重的数据（几十 MB 级），进了备份只会挤爆 25MB 配额、
+         连真正该备份的 dicts/ 都备不上（与 index/ 同款代价）。
+         三处规则必须同时排：本文件（full-backup）+ data_extraction_rules.xml 的 cloud-backup 与
+         device-transfer（2026-10-10 实施计划 §4.1 第 11 项）。 -->
+    <exclude
+        domain="file"
+        path="clipboard/" />
     <!-- 配置：含自建服务端地址/端口、提示词（用户自己写的正文）、双拼方案等，
          与剪贴板库、词频一样不该随备份出炉。 -->
     <exclude

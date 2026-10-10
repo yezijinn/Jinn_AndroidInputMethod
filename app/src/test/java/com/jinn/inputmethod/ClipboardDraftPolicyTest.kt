@@ -20,7 +20,9 @@ class ClipboardDraftPolicyTest {
         // 反向钉：任何 `prefs.<参数> =` 形式的直接赋值都意味着绕过草稿（读侧是 getter，不受影响）
         val directWrite = Regex(
             """prefs\.(enabled|maxItems|maxTotalBytesMb|favoriteMaxItems|favoriteMaxBytesMb|""" +
-                """maxItemBytesKb|panelPageItems|maxSearchResults|historyPageSize)\s*="""
+                """maxItemBytesKb|panelPageItems|maxSearchResults|historyPageSize|""" +
+                // 2026-10-10：图片四项（记录图片 / 张数 / 体积 / 单张）同样只能留在草稿里
+                """imageCaptureEnabled|imageMaxItems|imageMaxTotalMb|imageMaxItemMb)\s*="""
         )
         assertFalse("参数不得直接写盘（必须留在草稿，点保存才落盘）", directWrite.containsMatchIn(src))
         assertTrue("保存必须走原子入口 applyDraft", "prefs.applyDraft(" in src)

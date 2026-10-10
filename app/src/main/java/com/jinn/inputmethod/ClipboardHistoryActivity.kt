@@ -1,6 +1,5 @@
 package com.jinn.inputmethod
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -13,9 +12,13 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.GridView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,12 +30,14 @@ import java.util.Locale
  * 分类删除 / 清空非收藏 / 点行复制回系统剪贴板。
  *
  * 数据口径与面板一致：keyset 分页、读侧解密、搜索驻留预算（24MB + 条数上限），
- * 删除走 [ClipboardDb.deleteAnyByIds] / [ClipboardDb.deleteByCategory]。
+ * 删除走 [ClipboardDb.deleteAnyByIds] / [ClipboardDb.deleteByCategory]；
+ * 「导入文件」见 [ClipboardFileImporter]（逐条仍走 [ClipboardStore.save] 这条唯一入库入口）。
  */
-class ClipboardHistoryActivity : Activity() {
+class ClipboardHistoryActivity : ComponentActivity() {
 
     private lateinit var db: ClipboardDb
     private lateinit var list: ListView
+    private lateinit var grid: GridView
     private lateinit var emptyText: TextView
     private lateinit var searchEdit: EditText
     private lateinit var actionsRow: LinearLayout
@@ -43,9 +48,12 @@ class ClipboardHistoryActivity : Activity() {
     private val numberById = HashMap<Long, Int>()
     private val checkedIds = HashSet<Long>()
     private var multiSelect = false
-    private var categoryFilter: String? = null // null=全部, "URL", "NUMBER", "FAVORITE"
+    private var categoryFilter: String? = null // null=全部, "URL", "NUMBER", "FAVORITE", "IMAGE"
     private var keyword: String = ""
     private var pageIndex = 0
+
+    /** 当前是否处于图片分类（网格模式）：列表的多选与行渲染在此时全部让位 */
+    private fun inImageMode(): Boolean = categoryFilter == FILTER_IMAGE
 
     /** 确认框已弹（防重入：连点「删除所选」/「清空」会堆叠多个框，BUG.md L-1165） */
     private var confirming = false
@@ -60,7 +68,33 @@ class ClipboardHistoryActivity : Activity() {
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
     private val timeFmt = SimpleDateFormat("MM-dd HH:mm", Locale.US)
 
+    /**
+     * 「导入文件」的 SAF 选择器（OpenDocument，不申请存储权限，与配置包导入同款）。
+     *
+     * 选定后立刻转后台线程开始读：Uri 的临时读授权随本 Activity 生命周期存在，
+     * 在回调里就把它交出去，避免用户随即离开页面导致授权失效。
+     */
+    private val importLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) startImport(uri)
+    }
+
+    /**
+     * 导入进行中（防连点重复触发）。
+     *
+     * 跨重建（旋转 / 定时换肤）会复位成 false，但后台任务不依赖界面：重建后任务照常跑完落库，
+     * 只是那一次的回执框不再弹出（可接受边界，与「导入完成前离开页面」同一形态）。
+     */
+    private var importing = false
+
+    /** 导出全部图片进行中（防连点重复触发） */
+    private var exporting = false
+
     private lateinit var adapter: BaseAdapter
+
+    /** 图片分类的网格适配器（与 [adapter] 同源取数：都读 [pageItems]） */
+    private lateinit var gridAdapter: BaseAdapter
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -150,15 +184,30 @@ class ClipboardHistoryActivity : Activity() {
                     if (checked) checkedIds.add(item.id) else checkedIds.remove(item.id)
                 }
                 holder.number.text = (numberById[item.id] ?: "").toString()
-                holder.content.text = item.content
-                holder.meta.text = buildString {
-                    append(timeFmt.format(Date(item.createdAt)))
-                    append("  ")
-                    append(item.content.length).append(" 字")
-                    append("  ").append(item.category)
-                    if (item.isFavorite) append("  ★")
+                // 列表里的图片行 = **排序占位**（与键盘面板同款口径）：灰字、不可点、不可长按；
+                // 图片的浏览与操作都在「图片」分类的网格里做
+                val isImage = item.image != null
+                if (isImage) {
+                    holder.content.text = TEXT_IMAGE_PLACEHOLDER
+                    holder.content.setTextColor(getColor(R.color.text_secondary))
+                    holder.meta.text = buildString {
+                        append(timeFmt.format(Date(item.createdAt)))
+                        append("  图片")
+                        if (item.isFavorite) append("  ★")
+                    }
+                } else {
+                    holder.content.text = item.content
+                    holder.content.setTextColor(getColor(R.color.text_primary))
+                    holder.meta.text = buildString {
+                        append(timeFmt.format(Date(item.createdAt)))
+                        append("  ")
+                        append(item.content.length).append(" 字")
+                        append("  ").append(item.category)
+                        if (item.isFavorite) append("  ★")
+                    }
                 }
                 row.setOnClickListener {
+                    if (isImage) return@setOnClickListener
                     if (multiSelect) {
                         if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
                         notifyDataSetChanged()
@@ -167,6 +216,7 @@ class ClipboardHistoryActivity : Activity() {
                     }
                 }
                 row.setOnLongClickListener {
+                    if (isImage) return@setOnLongClickListener true
                     val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
                     AlertDialog.Builder(this@ClipboardHistoryActivity)
                         .setItems(arrayOf(TEXT_DELETE, favText)) { _, which ->
@@ -192,6 +242,73 @@ class ClipboardHistoryActivity : Activity() {
         list.adapter = adapter
         list.divider = android.graphics.drawable.ColorDrawable(getColor(R.color.card_stroke))
         list.dividerHeight = dp(1)
+
+        // 图片分类的网格（与列表互斥；列数 / 行高读图库布局偏好 —— 与键盘面板网格同一对键）
+        grid = findViewById(R.id.hist_grid)
+        gridAdapter = object : BaseAdapter() {
+            override fun getCount() = pageItems().size
+            override fun getItem(position: Int) = pageItems()[position]
+            override fun getItemId(position: Int) = pageItems()[position].id
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val item = pageItems()[position]
+                val prefs = Prefs(this@ClipboardHistoryActivity)
+                val cellHeight = (prefs.galleryCellHeightDp * resources.displayMetrics.density).toInt()
+                // cell = FrameLayout（缩略图 + 收藏角标）：网格里看不出哪张收藏过，只能靠长按菜单
+                // 的文案反推 —— 2026-10-10 补角标；child[0]=图、child[1]=★
+                val cell = (convertView as? android.widget.FrameLayout)
+                    ?: android.widget.FrameLayout(this@ClipboardHistoryActivity).apply {
+                        addView(ImageView(this@ClipboardHistoryActivity).apply {
+                            layoutParams = android.widget.FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            contentDescription = TEXT_IMAGE_CELL
+                            setPadding(dp(3), dp(3), dp(3), dp(3))
+                        })
+                        addView(TextView(this@ClipboardHistoryActivity).apply {
+                            layoutParams = android.widget.FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply {
+                                gravity = Gravity.TOP or Gravity.END
+                                topMargin = dp(2)
+                                marginEnd = dp(4)
+                            }
+                            text = TEXT_IMAGE_FAVORITE
+                            textSize = 14f
+                            setTextColor(getColor(R.color.accent))
+                        })
+                    }
+                cell.layoutParams = android.widget.AbsListView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, cellHeight,
+                )
+                // 身份绑定：cell 会被 GridView 复用，回调里必须按 hash 比对（见 ClipboardThumbLoader.load）
+                cell.tag = item.contentHash
+                val thumb = cell.getChildAt(0) as ImageView
+                thumb.setImageDrawable(null)
+                (cell.getChildAt(1) as TextView).visibility = if (item.isFavorite) View.VISIBLE else View.GONE
+                val target = (resources.displayMetrics.widthPixels / prefs.galleryColumns.coerceAtLeast(1) - dp(8))
+                    .coerceAtLeast(MIN_IMAGE_TARGET_PX)
+                ClipboardThumbLoader.load(this@ClipboardHistoryActivity, item.contentHash, target) { hash, bmp ->
+                    if (cell.tag == hash) thumb.setImageBitmap(bmp)
+                }
+                // ⚠ 点击 / 长按走 GridView 的 item 监听，**不**在 cell 上挂 OnClickListener：
+                // cell 自己 clickable=true 时 AbsListView 的手势分发在本机实测收不到事件
+                // （2026-10-10 真机：点缩略图与长按均无响应），改回 GridView 的标准用法
+                cell.isClickable = false
+                cell.isLongClickable = false
+                return cell
+            }
+        }
+        grid.adapter = gridAdapter
+        grid.numColumns = Prefs(this).galleryColumns.coerceAtLeast(1)
+        grid.setOnItemClickListener { _, _, position, _ ->
+            pageItems().getOrNull(position)?.takeIf { it.image != null }?.let { showImageDialog(it) }
+        }
+        grid.setOnItemLongClickListener { _, _, position, _ ->
+            pageItems().getOrNull(position)?.takeIf { it.image != null }?.let { showImageMenu(it) }
+            true
+        }
 
         // 重建（旋转 / 定时换色）后恢复筛选与多选：这几个字段都是实例态，页面又注册了
         // 主题节拍器，不恢复就会出现「多选到一半旋转即丢选择」（BUG.md L-1165）
@@ -270,7 +387,10 @@ class ClipboardHistoryActivity : Activity() {
         filterRow.removeAllViews()
         filterRow.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        val defs = listOf(null to "全部", "URL" to "网址", "NUMBER" to "数字", "FAVORITE" to "收藏")
+        val defs = listOf(
+            null to "全部", "URL" to "网址", "NUMBER" to "数字",
+            FILTER_IMAGE to "图片", FILTER_FAVORITE to "收藏",
+        )
         filterRow.gravity = Gravity.CENTER
         for ((key, label) in defs) {
             filterRow.addView(compactView().apply {
@@ -289,6 +409,34 @@ class ClipboardHistoryActivity : Activity() {
 
     private fun buildActionRow() {
         actionsRow.removeAllViews()
+        // 图片分类：操作行换成图片专用入口（多选 / 导入 / 删网址等文本功能不适用）
+        if (inImageMode()) {
+            actionsRow.addView(compactView().apply {
+                text = TEXT_IMAGE_EXPORT_ALL
+                setOnClickListener { exportAllImages() }
+            })
+            actionsRow.addView(compactView().apply {
+                text = TEXT_IMAGE_DELETE_ALL
+                setOnClickListener {
+                    confirm(TEXT_IMAGE_DELETE_CONFIRM) {
+                        BackgroundIo.run {
+                            db.deleteByContentType(ClipboardDb.CONTENT_TYPE_IMAGE)
+                            // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
+                        ClipboardImageFiles.gc(
+                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                        )
+                            loadAsync()
+                        }
+                    }
+                }
+            })
+            actionsRow.addView(compactView().apply {
+                text = "刷新"
+                setOnClickListener { loadAsync() }
+            })
+            layoutActionRow()
+            return
+        }
         actionsRow.addView(compactView().apply {
             text = if (multiSelect) "删除所选" else "多选"
             setOnClickListener {
@@ -297,6 +445,12 @@ class ClipboardHistoryActivity : Activity() {
                     confirm("删除选中的 ${checkedIds.size} 条？") {
                         BackgroundIo.run {
                             db.deleteAnyByIds(checkedIds.toList())
+                            // 「全部」分类的勾选集可能含图片行（多选框在占位行上仍可勾）：
+                            // 行删了、文件同步收一次，不必等下次启动 GC
+                            // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
+                        ClipboardImageFiles.gc(
+                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                        )
                             checkedIds.clear()
                             multiSelect = false
                             // 同上：删完留在当前页（BUG.md L-1175）
@@ -349,7 +503,15 @@ class ClipboardHistoryActivity : Activity() {
                 text = "清空"
                 setOnClickListener {
                     confirm("清空全部非收藏历史？") {
-                        BackgroundIo.run { db.deleteByCategory(null); loadAsync() }
+                        BackgroundIo.run {
+                            db.deleteByCategory(null)
+                            // 清空会删掉图片行（非收藏）：文件同步收一次（否则要等下次启动 GC）
+                            // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
+                        ClipboardImageFiles.gc(
+                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                        )
+                            loadAsync()
+                        }
                     }
                 }
             })
@@ -357,9 +519,28 @@ class ClipboardHistoryActivity : Activity() {
                 text = "刷新"
                 setOnClickListener { loadAsync() }
             })
+            // 外部文本文件按行导入（每行一条）：入口在管理页操作行 —— 用户找剪贴板管理功能的第一落点。
+            // 点按钮先弹说明窗（支持格式 + 示例 + 触发键），确认后才拉文件选择器
+            actionsRow.addView(compactView().apply {
+                text = TEXT_IMPORT
+                setOnClickListener {
+                    if (!ClipboardPrefs.of(this@ClipboardHistoryActivity).enabled) {
+                        message(TEXT_IMPORT_DISABLED)
+                    } else {
+                        showImportDialog()
+                    }
+                }
+            })
         }
-        // 同一行按钮等宽（不按文字长度撑开）
-        // 不回顶铺满：每个按钮紧贴文字，整行水平居中、相邻 4dp
+        layoutActionRow()
+    }
+
+    /**
+     * 操作行排版：每个按钮紧贴文字，整行水平居中、相邻 4dp（图片分类与文本分类两条分支共用一处）。
+     *
+     * 不回顶铺满（不按文字长度撑开）：按钮多时由外层 HorizontalScrollView 兜住窄屏。
+     */
+    private fun layoutActionRow() {
         actionsRow.gravity = Gravity.CENTER
         for (i in 0 until actionsRow.childCount) {
             val c = actionsRow.getChildAt(i)
@@ -424,8 +605,15 @@ class ClipboardHistoryActivity : Activity() {
     private fun loadAsync(resetPage: Boolean = true) {
         val category = categoryFilter
         val keywordNow = keyword
-        val favoritesOnly = category == "FAVORITE"
-        val catKey = if (category == "FAVORITE") null else category
+        val favoritesOnly = category == FILTER_FAVORITE
+        val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
+        // 内容类型维度：图片分类只看图片；**有关键词时只看文本**（图片的 content 恒为空串、
+        // 搜不到任何词，进入扫描窗口只会白解密）；其余（全部 / 网址 / 数字 / 收藏）不限类型
+        val contentType = when {
+            category == FILTER_IMAGE -> ClipboardDb.CONTENT_TYPE_IMAGE
+            keywordNow.isNotEmpty() -> ClipboardDb.CONTENT_TYPE_TEXT
+            else -> null
+        }
         val maxResults = ClipboardPrefs.of(this).maxSearchResults
         BackgroundIo.run {
             val out = ArrayList<ClipboardDb.Item>()
@@ -434,7 +622,7 @@ class ClipboardHistoryActivity : Activity() {
             var capped = false
             var cappedByCount = false
             while (true) {
-                val page = db.recentPageAfter(cursor, LOAD_PAGE_ITEMS, catKey, favoritesOnly)
+                val page = db.recentPageAfter(cursor, LOAD_PAGE_ITEMS, catKey, favoritesOnly, contentType)
                 if (page.scanned == 0) break
                 cursor = page.last
                 for (item in page.items) {
@@ -451,7 +639,7 @@ class ClipboardHistoryActivity : Activity() {
                 }
                 if (capped) break
             }
-            val total = db.count(catKey, favoritesOnly)
+            val total = db.count(catKey, favoritesOnly, contentType)
             runOnUiThread {
                 allItems.clear()
                 allItems.addAll(out)
@@ -470,10 +658,20 @@ class ClipboardHistoryActivity : Activity() {
                 // 按这次加载到的条目裁剪，免得确认文案的条数与实际勾着的行数不一致（BUG.md L-1171）
                 checkedIds.retainAll(allItems.mapTo(HashSet()) { it.id })
                 if (resetPage) pageIndex = 0
+                // 图片分类 = 网格模式：列表让位；多选在图片分类下不提供（批量入口有「删图片」「导出全部图片」）
+                val imageMode = inImageMode()
+                if (imageMode) {
+                    multiSelect = false
+                    checkedIds.clear()
+                }
+                list.visibility = if (imageMode) View.GONE else View.VISIBLE
+                grid.visibility = if (imageMode) View.VISIBLE else View.GONE
                 adapter.notifyDataSetChanged()
+                gridAdapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
                 // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分
                 val hint = when {
+                    imageMode && items.isEmpty() -> TEXT_IMAGE_EMPTY
                     cappedByCount -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
                     capped -> TEXT_TRUNCATED_GENERIC
                     items.isEmpty() -> TEXT_EMPTY
@@ -483,6 +681,201 @@ class ClipboardHistoryActivity : Activity() {
                 emptyText.visibility = if (hint.isEmpty()) View.GONE else View.VISIBLE
                 buildActionRow()
                 buildPagerRow()
+            }
+        }
+    }
+
+    // ── 图片条目（实施计划 §3 Step 4/5/6；与键盘面板同语义，动作走同一组工具） ──
+
+    /**
+     * 图片分类：单击弹预览（缩略图放大 + 动作）。
+     *
+     * 预览用**缩略图**而不是原图：对话框宽度只有几百像素，解码 20MB 原图纯属白付；
+     * 需要原图的动作（复制 / 保存 / 转移）各自解密。
+     */
+    private fun showImageDialog(item: ClipboardDb.Item) {
+        val dlg = AlertDialog.Builder(this).create()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val iv = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            minimumHeight = dp(96)
+            // 竖长图（1080×2280 等）按比例会撑满整个对话框、把动作行挤出屏幕（真机实测 2026-10-10）：
+            // 限高 360dp，图仍按 FIT_CENTER 缩放，按钮始终可见
+            maxHeight = dp(360)
+            contentDescription = TEXT_IMAGE_CELL
+        }
+        root.addView(iv, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        item.image?.let { meta ->
+            root.addView(TextView(this).apply {
+                text = "${meta.width}×${meta.height} · ${meta.bytes / 1024} KB · ${meta.mime}"
+                textSize = 11f
+                setTextColor(getColor(R.color.text_secondary))
+                setPadding(0, dp(4), 0, dp(6))
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        fun addBtn(text: String, onClick: () -> Unit) {
+            btnRow.addView(TextView(this@ClipboardHistoryActivity).apply {
+                this.text = text
+                textSize = 14f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(getColor(R.color.text_primary))
+                background = getDrawable(R.drawable.table_cell_border)
+                setPadding(dp(4), dp(3), dp(4), dp(3))
+                gravity = Gravity.CENTER
+                setOnClickListener { onClick() }
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            })
+        }
+        addBtn(TEXT_IMAGE_COPY) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Copy) }
+        if (ClipboardImageExport.albumAvailable()) {
+            addBtn(TEXT_IMAGE_SAVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Save) }
+        }
+        addBtn(TEXT_IMAGE_MOVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.MoveToGallery) }
+        addBtn(if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE) {
+            dlg.dismiss()
+            BackgroundIo.run { db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false) }
+        }
+        addBtn(TEXT_DELETE) {
+            dlg.dismiss()
+            confirm(TEXT_CONFIRM_DELETE_ONE) {
+                BackgroundIo.run {
+                    db.deleteAnyByIds(listOf(item.id))
+                    // 精准删自己的两个文件（走 GC 的话保护窗会把它当「在途写入」、留在盘上 ≤10 分钟）
+                    ClipboardImageFiles.deleteFor(this@ClipboardHistoryActivity, item.contentHash)
+                    loadAsync(resetPage = false)
+                }
+            }
+        }
+        addBtn("关闭") { dlg.dismiss() }
+        root.addView(btnRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        dlg.setView(root)
+        dlg.show()
+        ClipboardThumbLoader.load(this, item.contentHash, dp(256)) { hash, bmp ->
+            if (dlg.isShowing && hash == item.contentHash) iv.setImageBitmap(bmp)
+        }
+    }
+
+    /** 图片分类：长按出菜单（复制 / 保存 / 转移 / 收藏 / 删除） */
+    private fun showImageMenu(item: ClipboardDb.Item) {
+        val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
+        val entries = ArrayList<String>()
+        entries.add(TEXT_IMAGE_COPY)
+        if (ClipboardImageExport.albumAvailable()) entries.add(TEXT_IMAGE_SAVE)
+        entries.add(TEXT_IMAGE_MOVE)
+        entries.add(favText)
+        entries.add(TEXT_DELETE)
+        AlertDialog.Builder(this)
+            .setItems(entries.toTypedArray()) { _, which ->
+                when (entries[which]) {
+                    TEXT_IMAGE_COPY -> imageAction(item, ClipboardImageAction.Copy)
+                    TEXT_IMAGE_SAVE -> imageAction(item, ClipboardImageAction.Save)
+                    TEXT_IMAGE_MOVE -> imageAction(item, ClipboardImageAction.MoveToGallery)
+                    TEXT_DELETE -> confirm(TEXT_CONFIRM_DELETE_ONE) {
+                        BackgroundIo.run {
+                            db.deleteAnyByIds(listOf(item.id))
+                            // 单条删除：精准删自己的两个文件（GC 的保护窗会把它当「在途写入」留下）
+                            ClipboardImageFiles.deleteFor(this@ClipboardHistoryActivity, item.contentHash)
+                            loadAsync(resetPage = false)
+                        }
+                    }
+                    else -> BackgroundIo.run {
+                        db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false)
+                    }
+                }
+            }
+            .show()
+    }
+
+    /** 图片动作的执行方（历史页）：与键盘面板的 IME 实现同语义，共用 `ClipboardImageExport` */
+    private fun imageAction(item: ClipboardDb.Item, action: ClipboardImageAction) {
+        BackgroundIo.runLong {
+            val bytes = ClipboardImageExport.readOriginal(this, item)
+            if (bytes == null) {
+                runOnUiThread { message(TEXT_IMAGE_UNAVAILABLE) }
+                return@runLong
+            }
+            var refresh = false
+            val msg = when (action) {
+                ClipboardImageAction.Copy ->
+                    if (ClipboardImageExport.copyToSystemClipboard(this, item, bytes)) {
+                        TEXT_IMAGE_COPIED
+                    } else {
+                        TEXT_IMAGE_COPY_FAILED
+                    }
+                ClipboardImageAction.Save ->
+                    if (ClipboardImageExport.saveToAlbum(this, item, bytes)) TEXT_IMAGE_SAVED else TEXT_IMAGE_SAVE_FAILED
+                ClipboardImageAction.MoveToGallery ->
+                    when (ClipboardImageExport.moveToGalleryFolder(this, item, bytes)) {
+                        ClipboardImageExport.MoveResult.Ok -> {
+                            // 写成功才删历史（行 + 自己的两个文件；GC 的保护窗会留下 ≤10 分钟）
+                            db.delete(item.id)
+                            ClipboardImageFiles.deleteFor(this, item.contentHash)
+                            refresh = true
+                            TEXT_IMAGE_MOVED
+                        }
+                        ClipboardImageExport.MoveResult.NeedBinding -> TEXT_IMAGE_NEED_BIND
+                        ClipboardImageExport.MoveResult.Failed -> TEXT_IMAGE_MOVE_FAILED
+                    }
+            }
+            runOnUiThread {
+                message(msg)
+                if (refresh) loadAsync(resetPage = false)
+            }
+        }
+    }
+
+    /**
+     * 一键把库内全部图片导出到相册（29+）：逐张解密 → MediaStore 写入，收尾报成功 / 失败数。
+     *
+     * 这是图片**不进任何备份**（配置备份 / 云备份）之后的迁移出口：换机前导一次，新机上相册里就有。
+     * 过程中不阻塞界面（长活池），用不可取消的说明框表示进行中。
+     */
+    private fun exportAllImages() {
+        if (!ClipboardImageExport.albumAvailable()) {
+            message(TEXT_IMAGE_EXPORT_UNAVAILABLE)
+            return
+        }
+        if (exporting) return
+        exporting = true
+        val dlg = AlertDialog.Builder(this)
+            .setMessage(TEXT_IMAGE_EXPORTING)
+            .setCancelable(false)
+            .create()
+        dlg.show()
+        BackgroundIo.runLong {
+            var ok = 0
+            var fail = 0
+            var cursor: ClipboardCursor? = null
+            while (true) {
+                val page = runCatching {
+                    db.recentPageAfter(cursor, 50, null, false, ClipboardDb.CONTENT_TYPE_IMAGE)
+                }.getOrNull() ?: break
+                if (page.scanned == 0) break
+                cursor = page.last
+                for (item in page.items) {
+                    val bytes = ClipboardImageExport.readOriginal(this, item)
+                    if (bytes != null && ClipboardImageExport.saveToAlbum(this, item, bytes)) ok++ else fail++
+                }
+            }
+            runOnUiThread {
+                exporting = false
+                runCatching { dlg.dismiss() }
+                // 留痕：这个功能没有其它日志，出问题（0 张 / 部分失败）时只能靠它分辨
+                Diagnostics.i(TAG, "导出全部图片: 成功=$ok 失败=$fail")
+                // 文案代码下发：成功/失败分账（失败含「已损坏」与「系统拒写」两类，不细分到界面）
+                message(String.format(Locale.US, TEXT_IMAGE_EXPORT_DONE, ok, fail))
             }
         }
     }
@@ -550,6 +943,139 @@ class ClipboardHistoryActivity : Activity() {
         dlg.window?.setLayout(w, h)
     }
 
+    /**
+     * 导入前置说明窗：支持格式 + 完整示例 + 真正触发 SAF 的「选择文件导入」。
+     *
+     * 为什么不直接拉开文件选择器：用户不知道「什么文件能导、怎么排版、导入后长什么样」，
+     * 选错文件（二进制 / 整篇文档）只能靠失败回执事后解释。先把口径讲清、给一份可照抄的示例，
+     * 再让用户去选文件。
+     */
+    private fun showImportDialog() {
+        if (confirming) return
+        confirming = true
+        val limitKb = ClipboardPrefs.of(this).effectiveMaxItemBytes() / 1024
+        val desc = buildString {
+            append("支持纯文本文件（.txt / .md / .csv 等）；按行拆分，每行导入为一条历史记录：\n")
+            append("· 空行跳过，行首尾空白自动裁掉\n")
+            append("· 与库内重复的内容自动跳过（不改动原记录，可重复导入）\n")
+            append("· 单行超 ").append(limitKb).append("KB 整行跳过；文件上限 ")
+            append(ClipboardFileImporter.MAX_FILE_BYTES / 1024 / 1024).append("MB / ")
+            append(ClipboardFileImporter.MAX_IMPORT_LINES).append(" 行")
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(4))
+        }
+        root.addView(TextView(this).apply {
+            text = desc
+            textSize = 13f
+            setTextColor(getColor(R.color.text_primary))
+        })
+        // 完整示例：等宽字体 + 边框，视觉上就是一“份”文件内容（含一个空行，示范空行会被跳过）
+        root.addView(TextView(this).apply {
+            text = TEXT_IMPORT_SAMPLE
+            textSize = 13f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(getColor(R.color.text_primary))
+            background = getDrawable(R.drawable.table_cell_border)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        })
+        root.addView(TextView(this).apply {
+            text = TEXT_IMPORT_SAMPLE_NOTE
+            textSize = 11f
+            setTextColor(getColor(R.color.text_secondary))
+            setPadding(0, dp(6), 0, 0)
+        })
+        val dlg = AlertDialog.Builder(this)
+            .setTitle(TEXT_IMPORT)
+            .setView(android.widget.ScrollView(this).apply {
+                isFillViewport = true
+                addView(root, android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            })
+            .setPositiveButton(TEXT_IMPORT_PICK) { _, _ -> importLauncher.launch(arrayOf("*/*")) }
+            .setNegativeButton("取消", null)
+            .create()
+        dlg.setOnDismissListener { confirming = false }
+        dlg.show()
+        dlg.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
+    /**
+     * 导入选中的文本文件（后台线程解析 + 入库；完成后回执并刷新列表）。
+     *
+     * 总开关关着直接拒绝：关着导入没有意义（面板 / 搜索都不工作），也让开关语义保持一致
+     * （主拦截在入口按钮上，这里是兜底）。
+     */
+    private fun startImport(uri: android.net.Uri) {
+        if (importing) return
+        val prefs = ClipboardPrefs.of(this)
+        if (!prefs.enabled) {
+            message(TEXT_IMPORT_DISABLED)
+            return
+        }
+        importing = true
+        android.widget.Toast.makeText(this, TEXT_IMPORTING, android.widget.Toast.LENGTH_SHORT).show()
+        // 独立线程（不占 BackgroundIo 的短活 / 长活队列）：几千行的导入不该把采集保存、面板查询
+        // 这些交互短活排在后面等；与采集并发写库由 ClipboardDb 的 @Synchronized 兜底
+        BackgroundIo.backgroundThread(THREAD_IMPORT) {
+            val result = ClipboardFileImporter.importFromUri(applicationContext, uri, db, prefs)
+            runOnUiThread {
+                importing = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                message(describeImport(result))
+                // 与删除 / 收藏不同（那几处必须保留页码）：导入是往**列表头部**新增，
+                // 回第 1 页才能让用户直接看到刚导入的条目
+                loadAsync()
+            }
+        }
+    }
+
+    /** 导入回执文案：结构化统计逐项展示，任何一类跳过都不许静默 */
+    private fun describeImport(result: ClipboardFileImporter.Result): String {
+        val s = result.stream
+            ?: return if (result.openFailed) TEXT_IMPORT_OPEN_FAILED else TEXT_IMPORT_FAILED
+        if (s.lines == 0 && s.abort == null) return TEXT_IMPORT_EMPTY
+        val sb = StringBuilder("新增 ").append(s.added).append(" 条")
+        if (s.duplicate > 0) sb.append("\n重复跳过 ").append(s.duplicate).append(" 条")
+        if (s.tooLong > 0) {
+            sb.append("\n超单条上限（").append(ClipboardPrefs.of(this).effectiveMaxItemBytes() / 1024)
+                .append("KB）跳过 ").append(s.tooLong).append(" 条")
+        }
+        if (s.failed > 0) sb.append("\n入库失败 ").append(s.failed).append(" 条")
+        if (s.blank > 0) sb.append("\n空行跳过 ").append(s.blank).append(" 行")
+        when (s.abort) {
+            ClipboardFileImporter.Abort.FILE_TOO_LARGE ->
+                sb.append("\n文件超过 ").append(ClipboardFileImporter.MAX_FILE_BYTES / 1024 / 1024)
+                    .append("MB，已中止（已导入的部分保留）")
+
+            ClipboardFileImporter.Abort.TOO_MANY_LINES ->
+                sb.append("\n超过 ").append(ClipboardFileImporter.MAX_IMPORT_LINES)
+                    .append(" 行上限，已中止（已导入的部分保留）")
+
+            ClipboardFileImporter.Abort.NOT_TEXT -> sb.append("\n").append(TEXT_IMPORT_NOT_TEXT)
+            null -> {}
+        }
+        return sb.toString()
+    }
+
+    /** 单按钮提示框（导入回执 / 拒绝导入）；复用 [confirming] 防重入 —— 连点会让对话框堆叠 */
+    private fun message(msg: String) {
+        if (confirming) return
+        confirming = true
+        AlertDialog.Builder(this)
+            .setMessage(msg)
+            .setPositiveButton("确定") { _, _ -> confirming = false }
+            .setOnDismissListener { confirming = false }
+            .show()
+    }
+
     private fun confirm(msg: String, onYes: () -> Unit) {
         // 防重入（BUG.md L-1165）：连点「删除所选」/「清空」会堆叠多个确认框，确定后重复执行；
         // 三处回调都复位（确定 / 取消 / 关掉），与同族剪贴板自定义页同款
@@ -603,8 +1129,67 @@ class ClipboardHistoryActivity : Activity() {
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"
         const val TEXT_PAGE_SIZE_PREFIX = "每页 "
         const val TEXT_PAGE_SIZE_SUFFIX = " 条"
+        const val TEXT_IMPORT = "导入文件"
+        const val TEXT_IMPORTING = "正在导入…"
+        const val TEXT_IMPORT_DISABLED = "剪贴板历史已关闭：请先在「剪贴板自定义」页开启"
+        const val TEXT_IMPORT_OPEN_FAILED = "打不开所选文件"
+        const val TEXT_IMPORT_FAILED = "导入失败"
+        const val TEXT_IMPORT_EMPTY = "文件里没有可导入的文本"
+        const val TEXT_IMPORT_NOT_TEXT = "文件内容不是文本（疑似二进制），已中止导入"
+        const val TEXT_IMPORT_PICK = "选择文件导入"
+
+        /** 说明窗里的完整示例：含一个空行，示范「空行会跳过」（等宽字体 + 边框展示） */
+        const val TEXT_IMPORT_SAMPLE =
+            "北京南站南广场A口\n13800138000\n\n取件码 8848\nhttps://example.com/order/2026"
+        const val TEXT_IMPORT_SAMPLE_NOTE = "示例文件 5 行（含 1 空行）→ 导入 4 条；数字、网址会自动归入对应分类"
+
+        /** 导入线程名（BackgroundIo.backgroundThread 用：诊断行头能回溯到功能） */
+        const val THREAD_IMPORT = "jinn-clip-import"
 
         /** 加载分页的取页宽度（与面板页宽无关：驻留上限才是内存护栏） */
         const val LOAD_PAGE_ITEMS = 50
+
+        /**
+         * 分类栏的伪分类：定义只在 [ClipboardFilter]，这里取同一份常量 ——
+         * 三处（面板 / 历史页 / 数据层）各写一遍字符串是漂移的温床（`WHERE category = 'IMAGE'` 恒不成立的坑）
+         */
+        val FILTER_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
+        val FILTER_IMAGE = ClipboardFilter.PSEUDO_IMAGE
+
+        /** 列表里图片行的占位文案（与键盘面板同款；文案代码下发） */
+        const val TEXT_IMAGE_PLACEHOLDER = "（图片需在「图片」分类浏览）"
+
+        /** 图片网格：无图时的空态 */
+        const val TEXT_IMAGE_EMPTY = "暂无图片"
+
+        const val TEXT_IMAGE_CELL = "剪贴板图片"
+
+        /** 网格 cell 的收藏角标（与收藏列表行里的 ★ 同一符号） */
+        const val TEXT_IMAGE_FAVORITE = "★"
+
+        /** 图片条目的动作文案（长按菜单 / 预览对话框共用） */
+        const val TEXT_IMAGE_PREVIEW_TITLE = "图片"
+        const val TEXT_IMAGE_COPY = "复制到剪贴板"
+        const val TEXT_IMAGE_SAVE = "保存到相册"
+        const val TEXT_IMAGE_MOVE = "转移到图库目录"
+        const val TEXT_IMAGE_DELETE_ALL = "删图片"
+        const val TEXT_IMAGE_EXPORT_ALL = "导出全部图片"
+        const val TEXT_IMAGE_EXPORTING = "正在导出图片…"
+
+        /** 批量导出回执（成功 / 失败分账；`String.format` 两个整数参数） */
+        const val TEXT_IMAGE_EXPORT_DONE = "导出完成：成功 %1\$d 张，失败 %2\$d 张"
+        const val TEXT_IMAGE_EXPORT_UNAVAILABLE = "系统版本过低：请在相册里手动保存"
+        const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
+        const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
+        const val TEXT_IMAGE_DELETE_CONFIRM = "删除所有图片（收藏保留）？"
+        const val TEXT_IMAGE_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
+        const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
+        const val TEXT_IMAGE_SAVED = "已保存到相册"
+        const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
+        const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
+        const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
+
+        /** 网格缩略图的最小目标像素（窄屏 / 多列时的兜底，避免解码出 1px 图） */
+        const val MIN_IMAGE_TARGET_PX = 64
     }
 }

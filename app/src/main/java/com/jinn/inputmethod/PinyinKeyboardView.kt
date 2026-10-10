@@ -80,6 +80,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onOpenClipboard()
         /** 剪贴板面板：点击记录请求粘贴（IME 用当前 InputConnection commitText）。返回是否成功。 */
         fun onPasteText(text: String): Boolean
+
+        /**
+         * 剪贴板面板：点击一张图片请求上屏（IME 走 `commitContent`，宿主不支持时回退写剪贴板）。
+         * 返回「是否已受理」（true = 面板收起）。默认实现返回 false：既有实现方（含测试替身）
+         * 不必随接口扩展而改。
+         */
+        fun onPasteImage(item: ClipboardDb.Item): Boolean = false
+
+        /** 剪贴板面板：图片条目的长按动作（复制 / 保存 / 转移到图库目录）。返回是否已处理。 */
+        fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean = false
         /** 剪贴板面板状态变化（开/关，IME 侧同步拖选等状态） */
         fun onClipboardStateChanged(active: Boolean)
         /** 方向面板：执行方向控制动作（光标移动/拖选/复制/粘贴） */
@@ -3616,6 +3626,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             listener = object : ClipboardPanelView.Listener {
                 override fun onPaste(text: String): Boolean =
                     this@PinyinKeyboardView.listener?.onPasteText(text) ?: false
+                override fun onPasteImage(item: ClipboardDb.Item): Boolean =
+                    this@PinyinKeyboardView.listener?.onPasteImage(item) ?: false
+                override fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean =
+                    this@PinyinKeyboardView.listener?.onImageAction(item, action) ?: false
                 override fun onClose() {
                     hideClipboardPanel()
                 }

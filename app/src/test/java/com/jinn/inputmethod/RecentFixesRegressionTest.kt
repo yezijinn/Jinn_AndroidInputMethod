@@ -1948,9 +1948,11 @@ class RecentFixesRegressionTest {
                 "maxIdUncertain || keptUncertain" in trace,
             )
             assertTrue(
+                // 2026-10-10 起 selection 追加了 `AND content_type = ?`（图片行不参与凭据比对）⇒
+                // 判据放宽成前缀匹配：仍要求「只扫收藏行」这条语义，允许在其后追加过滤条件
                 "L-592 守卫缺失：ClipboardDb 必须只扫收藏行来数保留条数",
                 "fun favoriteKeptCounts(" in codeOf("ClipboardDb.kt") &&
-                    "\"is_favorite = 1\"" in codeOf("ClipboardDb.kt"),
+                    "\"is_favorite = 1" in codeOf("ClipboardDb.kt"),
             )
         }
     }
@@ -4341,10 +4343,13 @@ class RecentFixesRegressionTest {
         )
 
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
-        assertEquals(
-            "删除与收藏切换（含多选删除）四处都必须保留页码",
-            4,
-            Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count(),
+        // 判据是**下界**（2026-10-10）：图片条目的收藏 / 删除 / 转移（对话框与长按菜单两处入口）
+        // 同样保留页码，等值计数会把合规新增误报成回退。四条原始修复（收藏 / 删除 / 多选删除 /
+        // 单条删除）仍必须都在 —— 数量掉到 4 以下就是回退。
+        assertTrue(
+            "删除与收藏切换（含多选删除）必须保留页码（当前 ≥4 处，实测 " +
+                Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count() + " 处）",
+            Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count() >= 4,
         )
     }
 

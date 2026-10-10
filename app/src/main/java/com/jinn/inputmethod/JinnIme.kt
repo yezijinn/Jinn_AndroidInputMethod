@@ -446,6 +446,7 @@ class JinnIme : InputMethodService() {
             else -> KeyboardMode.VOICE
         }
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
+        maybeRunClipboardImageGc()
 
         // 可选词库包的三种「空闲」触发（见 maybeLoadOptionalDict）：
         // 息屏（用户锁屏）：最可靠的空闲信号
@@ -1286,6 +1287,96 @@ class JinnIme : InputMethodService() {
     }
 
     /**
+     * 剪贴板图片上屏（面板网格点图）。
+     *
+     * 判据顺序：宿主**未声明**图片能力 ⇒ 不白调 `commitContent`（声明为必要条件的实测结论见
+     * [GalleryInsert] 类注释），直接回退写系统剪贴板；声明了则解密 → 落 cache
+     * （[GalleryInsert.stageForInsert]）→ `commitContent`。
+     *
+     * 全链路异步（解密 + 写盘是 IO），返回 true = 已受理（面板收起），结果用 Toast 反馈 ——
+     * 与图库快贴同口径：`commitContent` 的返回值不可信，不作「宿主真收下了」的判据。
+     */
+    private fun pasteClipboardImage(item: ClipboardDb.Item): Boolean {
+        if (item.image == null) return false
+        val capable = GalleryInsert.canHostAccept(
+            currentInputEditorInfo?.let {
+                androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it)
+            }
+        )
+        BackgroundIo.runLong {
+            val bytes = ClipboardImageExport.readOriginal(this, item)
+            if (bytes == null) {
+                ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
+                return@runLong
+            }
+            if (!capable) {
+                // 回退：宿主不支持 commitContent（纯文本 / 部分 WebView），改成写剪贴板让用户长按粘贴
+                val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
+                ui.post { toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED) }
+                return@runLong
+            }
+            val mime = item.image?.mime?.takeIf { it.isNotBlank() } ?: "image/png"
+            val file = GalleryInsert.stageForInsert(this, bytes, mime) ?: run {
+                ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
+                return@runLong
+            }
+            ui.post {
+                when (GalleryInsert.commit(this, file, mime)) {
+                    GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "粘贴图片: 已提交")
+                    GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
+                    GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
+                    GalleryInsert.InsertResult.Rejected -> toast(TEXT_IMAGE_REJECTED)
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * 面板长按的三个图片动作（复制 / 保存 / 转移到图库目录）：全异步，结果 Toast。
+     *
+     * 三个动作都要先解密原图（在长活池里做，不占短活队列）；「转移到图库目录」只有写成功
+     * 才删历史（写失败却删历史是不可恢复的数据丢失）。
+     */
+    private fun handleClipboardImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean {
+        if (item.image == null) return false
+        Diagnostics.i(TAG, "剪贴板图片动作: $action id=${item.id}")
+        BackgroundIo.runLong {
+            val bytes = ClipboardImageExport.readOriginal(this, item)
+            if (bytes == null) {
+                ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
+                return@runLong
+            }
+            when (action) {
+                ClipboardImageAction.Copy -> {
+                    val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
+                    ui.post { toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED) }
+                }
+                ClipboardImageAction.Save -> {
+                    val ok = ClipboardImageExport.saveToAlbum(this, item, bytes)
+                    ui.post { toast(if (ok) TEXT_IMAGE_SAVED else TEXT_IMAGE_SAVE_FAILED) }
+                }
+                ClipboardImageAction.MoveToGallery -> {
+                    when (val r = ClipboardImageExport.moveToGalleryFolder(this, item, bytes)) {
+                        ClipboardImageExport.MoveResult.Ok -> {
+                            // 写成功才删历史（行 + 自己的两个文件；GC 的保护窗会留下 ≤10 分钟）
+                            val db = ClipboardDb.get(this)
+                            db.delete(item.id)
+                            ClipboardImageFiles.deleteFor(this, item.contentHash)
+                            ui.post { toast(TEXT_IMAGE_MOVED) }
+                        }
+                        ClipboardImageExport.MoveResult.NeedBinding ->
+                            ui.post { toast(TEXT_IMAGE_NEED_BIND) }
+                        ClipboardImageExport.MoveResult.Failed ->
+                            ui.post { toast(TEXT_IMAGE_MOVE_FAILED) }
+                    }
+                }
+            }
+        }
+        return true
+    }
+
+    /**
      * 打开系统选图页（[GalleryPickActivity]），选中的图片由 [flushPendingGalleryImage] 落进输入框。
      *
      * IME 是 Service，启动 Activity 必须带 `FLAG_ACTIVITY_NEW_TASK`（同 [openSettings]）。
@@ -1300,6 +1391,24 @@ class JinnIme : InputMethodService() {
             .putExtra(GalleryInsert.EXTRA_HOST_KEY, hostKey)
         runCatching { startActivity(intent) }
             .onFailure { Diagnostics.w(TAG, "打开选图页失败: ${it.message}") }
+    }
+
+    /**
+     * 剪贴板图片的启动 GC（一次性，低优先级线程）。
+     *
+     * 两件事：删「有行无文件」的死行（换机恢复 / 手动清理留下的壳）、删孤儿文件
+     * （删除路径有九条，集中 GC 兜底，见 [ClipboardImageFiles]）。
+     * 与 [ClipboardController.reclassifyIfNeeded] 同款：独立线程 + 降优先级，不与词库加载抢 CPU。
+     */
+    private fun maybeRunClipboardImageGc() {
+        Thread {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            runCatching {
+                val db = ClipboardDb.get(this)
+                ClipboardImageFiles.deleteMissingRows(this, db)
+                ClipboardImageFiles.gc(this, db)
+            }.onFailure { Diagnostics.w(TAG, "剪贴板图片启动 GC 失败: ${it.javaClass.simpleName}") }
+        }.apply { name = "jinn-clipimage-gc"; isDaemon = true }.start()
     }
 
     private fun syncClipboardController() {
@@ -1407,6 +1516,17 @@ class JinnIme : InputMethodService() {
                 override fun onPasteText(text: String): Boolean {
                     Diagnostics.i(TAG, "剪贴板面板: 请求粘贴 len=${text.length}")
                     return pasteClipboardTextInternal(text)
+                }
+                override fun onPasteImage(item: ClipboardDb.Item): Boolean {
+                    if (rejectedBySearchPanel("粘贴图片")) return false
+                    // 与 onOpenClipboard / onPasteText 同一套闸：粘贴改宿主内容 ⇒ 在途译文必然作废
+                    if (translateInFlight) cancelTranslate(notify = true)
+                    Diagnostics.i(TAG, "剪贴板面板: 请求粘贴图片 id=${item.id}")
+                    return pasteClipboardImage(item)
+                }
+                override fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean {
+                    if (rejectedBySearchPanel("图片操作")) return false
+                    return handleClipboardImageAction(item, action)
                 }
                 override fun onClipboardStateChanged(active: Boolean) {
                     Diagnostics.i(TAG, "剪贴板面板状态: active=$active")
@@ -4014,6 +4134,29 @@ class JinnIme : InputMethodService() {
 
         /** 图库面板：面板内选图后复制进 cache 失败（选图页那条路径有自己的提示） */
         const val TEXT_GALLERY_READ_FAILED = "读取图片失败，未插入"
+
+        // ── 剪贴板图片（2026-10-10 实施计划 §4.3；文案代码下发，不动 strings.xml） ──
+
+        /** 图片条目读不出原图（密钥失效 / 文件缺失 / 数据损坏） */
+        const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
+
+        /** 回退路径：图片已写进系统剪贴板，等用户去宿主里长按粘贴 */
+        const val TEXT_IMAGE_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
+
+        const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
+
+        const val TEXT_IMAGE_SAVED = "已保存到相册"
+
+        const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
+
+        /** 宿主声明支持图片却拒收（返回值不可信，只能如实说「没插进去」） */
+        const val TEXT_IMAGE_REJECTED = "当前输入框未接受图片"
+
+        const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
+
+        const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
+
+        const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
         const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"

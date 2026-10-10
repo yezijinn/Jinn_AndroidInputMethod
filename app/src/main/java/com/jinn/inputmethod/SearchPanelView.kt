@@ -404,7 +404,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 // 键集游标（BUG.md L-92）：只认「上一块最后扫描过的行」。
                 // 不能用 SQL OFFSET —— 搜索期间别的应用改一次剪贴板（头部插一条 + 尾部裁一条，
                 // 总条数不变）就会让行位置整体位移，下一块重复扫描 / 永久漏掉尾部行。
-                val page = db.recentPageAfter(cursor, SEARCH_WINDOW_ITEMS)
+                // 只搜文本：图片条目的 content 恒为空串（搜不到任何关键词），但它的行会白占
+                // 一次解密窗口的额度 —— 在 SQL 层排除比事后过滤更省（实施计划 §D2）
+                val page = db.recentPageAfter(
+                    cursor, SEARCH_WINDOW_ITEMS,
+                    contentType = ClipboardDb.CONTENT_TYPE_TEXT,
+                )
                 for (item in page.items) {
                     if (ClipboardSearch.matches(item.content, forms)) {
                         if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes, maxResults = ClipboardPrefs.of(context).maxSearchResults)) {

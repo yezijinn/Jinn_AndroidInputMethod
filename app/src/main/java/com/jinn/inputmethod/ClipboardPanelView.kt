@@ -35,14 +35,44 @@ import android.widget.TextView
  *
  * 安全：不输出任何剪贴板正文日志。
  */
+/**
+ * 图片条目的长按动作（面板与历史页共用一套语义）。
+ *
+ * 三个动作都涉及文件 IO / 系统服务（MediaStore、SAF、剪贴板），执行方是 IME 或页面侧，
+ * 面板只负责把意图递出去 —— 面板不持 Context 之外的能力，也不判断宿主是否可用。
+ */
+enum class ClipboardImageAction {
+    /** 复制到系统剪贴板（自家 FileProvider URI + 读权限）：给不支持 commitContent 的宿主长按粘贴用 */
+    Copy,
+
+    /** 保存到相册（MediaStore，API 29+；低版本不提供） */
+    Save,
+
+    /** 转移到图库快贴的绑定目录（成功才从历史删除） */
+    MoveToGallery,
+}
+
 class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 面板回调（全部主线程） */
     interface Listener {
         /** 点击记录：IME 用当前 InputConnection 粘贴文本。返回是否成功提交。 */
         fun onPaste(text: String): Boolean
+
+        /**
+         * 点击图片条目：IME 走 `commitContent` 上屏（宿主不支持时回退写系统剪贴板）。
+         * 返回「本次是否已处理完成」（true = 关面板；false = 保持面板）。
+         *
+         * 带默认实现：既有实现方（含测试替身）不必随接口扩展而改。
+         */
+        fun onPasteImage(item: ClipboardDb.Item): Boolean = false
+
+        /** 图片条目的长按动作（保存 / 转移 / 复制）。返回是否已处理。 */
+        fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean = false
+
         /** 关闭面板，恢复原输入法键盘 */
         fun onClose()
+
         /** 请求搜索：关闭剪贴板面板，显示顶部搜索面板（恢复正常 26 键） */
         fun onSearch()
     }
@@ -79,6 +109,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var btnCategoryUrl: TextView
     private lateinit var btnCategoryNumber: TextView
     private lateinit var btnCategoryFavorite: TextView
+    private lateinit var btnCategoryImage: TextView
+
+    /** 图片分类的网格视图（与 [listView] 互斥显隐；自己的取数与缩略图生命周期） */
+    private lateinit var imageGrid: ClipboardImageGridView
 
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
@@ -87,6 +121,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var actionBar: LinearLayout
     private lateinit var actionFavorite: TextView
     private lateinit var actionDelete: TextView
+
+    /** 图片条目专属的三个动作（文本条目时隐藏） */
+    private lateinit var actionCopy: TextView
+    private lateinit var actionSave: TextView
+    private lateinit var actionMove: TextView
     private var longPressItem: ClipboardDb.Item? = null
 
     /** 清空二次确认条（IME 内无窗口 token，用内联确认替代 AlertDialog） */
@@ -240,6 +279,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
+            if (item.image != null) {
+                // 「全部」列表里的图片行 = **排序占位**（2026-10-10 用户指定）：灰字、不可点、不可长按，
+                // 只为让序号与全局顺序对齐；浏览与操作都在「图片」分类的网格里做
+                holder.content.text = TEXT_IMAGE_PLACEHOLDER
+                holder.content.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+                holder.meta.text = buildString {
+                    append(PanelTimes.entryStamp(item.createdAt))
+                    append(" · 图片")
+                    if (item.isFavorite) append(" · 收藏")
+                }
+                return root
+            }
             // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
             holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
             holder.meta.text = buildString {
@@ -272,13 +323,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnCategoryAll = tabButton("全部") { selectCategory(null) }
         btnCategoryUrl = tabButton("网址") { selectCategory(ClipboardClassifier.CATEGORY_URL) }
         btnCategoryNumber = tabButton("数字") { selectCategory(ClipboardClassifier.CATEGORY_NUMBER) }
+        btnCategoryImage = tabButton("图片") { selectCategory(CATEGORY_IMAGE) }
         btnCategoryFavorite = tabButton("收藏") { selectCategory(CATEGORY_FAVORITE) }
         btnSearch = tabButton("搜索") { listener?.onSearch() }
         btnClear = tabButton("清空", TapSound.G_ERASE) { showClearConfirm() }
             .apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
         val cells = listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
-            btnCategoryFavorite, btnSearch, btnClear)
+            btnCategoryImage, btnCategoryFavorite, btnSearch, btnClear)
         for (cell in cells) {
             topRow.addView(cell, LinearLayout.LayoutParams(0, dp(36), 1f))
         }
@@ -307,6 +359,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         listView.setOnItemLongClickListener { _, view, pos, _ ->
             itemAt(pos, view)?.let {
+                // 图片行是占位（见 getView 的图片分支）：长按也不出操作条 —— 它没有「打开图片」的入口
+                if (it.image != null) return@setOnItemLongClickListener true
                 KeyFeedback.fire(TapSound.G_FUNC)
                 showItemMenu(it)
             }
@@ -341,6 +395,23 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         })
         addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        // ── 图片网格（与列表互斥；只有「图片」分类显示） ──
+        imageGrid = ClipboardImageGridView(context).apply {
+            visibility = GONE
+            listener = object : ClipboardImageGridView.Listener {
+                override fun onPaste(item: ClipboardDb.Item) {
+                    // 上屏由 IME 决定（commitContent / 回退写剪贴板）；返回 true = 已处理 ⇒ 收面板
+                    val handled = this@ClipboardPanelView.listener?.onPasteImage(item) ?: false
+                    if (handled) this@ClipboardPanelView.listener?.onClose()
+                }
+
+                override fun onMenu(item: ClipboardDb.Item) {
+                    showItemMenu(item)
+                }
+            }
+        }
+        addView(imageGrid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
         // ── 空状态 ──
         textEmpty = TextView(context).apply {
             text = TEXT_EMPTY_IDLE
@@ -368,8 +439,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         actionDelete = tabButton("删除", TapSound.G_ERASE) { deleteItem() }
         actionDelete.setTextColor(context.getColor(R.color.danger))
         dangerButtons += actionDelete
-        actionBar.addView(actionFavorite, LinearLayout.LayoutParams(0, dp(36), 1f))
-        actionBar.addView(actionDelete, LinearLayout.LayoutParams(0, dp(36), 1f))
+        // 图片条目的三个动作：文本条目时隐藏（同一排最多 5 键，每个约 1/5 面板宽，足够「转图库」四字）
+        actionCopy = tabButton("复制") { imageAction(ClipboardImageAction.Copy) }
+        actionSave = tabButton("保存") { imageAction(ClipboardImageAction.Save) }
+        actionMove = tabButton("转图库") { imageAction(ClipboardImageAction.MoveToGallery) }
+        val actions = listOf(actionFavorite, actionDelete, actionCopy, actionSave, actionMove)
+        for (a in actions) actionBar.addView(a, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
 
         // ── 清空二次确认条 ──
@@ -384,9 +459,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         val confirmOk = tabButton("确定", TapSound.G_ERASE) {
             hideConfirmBar()
+            // 清空会删掉非收藏图片行：① 文件要立刻收一次（否则要等下次启动 GC）；
+            // ② 图片分类必须刷网格（refresh 只刷文本列表，网格会停在旧数据上、
+            //    点已删的图只会得到「已损坏」提示）
+            val imageMode = inImageMode()
+            val tid = currentTraceId
             BackgroundIo.run {
                 db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
-                post { refresh(resetScroll = true) }
+                // 批量删除走 GC（收藏的图片文件不能删，不能按全库 hash 一刀切），用短保护窗立即回收
+                ClipboardImageFiles.gc(context, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS)
+                post { if (imageMode) imageGrid.show(tid) else refresh(resetScroll = true) }
             }
         }.apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
@@ -417,8 +499,21 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         hideActionBar()
         currentCategory = category
         applyTabFaces()
+        val imageMode = category == CATEGORY_IMAGE
+        imageGrid.visibility = if (imageMode) View.VISIBLE else View.GONE
+        listView.visibility = if (imageMode) View.GONE else View.VISIBLE
+        textEmpty.visibility = View.GONE
+        if (imageMode) {
+            // 网格自己取数（图片走文件 + 缩略图缓存，与列表的解密分页是两条路）
+            Diagnostics.i(TAG, "[$currentTraceId] 切到图片分类")
+            imageGrid.show(currentTraceId)
+            return
+        }
         refresh(resetScroll = true)
     }
+
+    /** 当前是否处于图片分类（网格模式）：文本列表的分页与空态在此时全部让位 */
+    private fun inImageMode(): Boolean = currentCategory == CATEGORY_IMAGE
 
     // ── 分页加载 ─────────────────────────────────────────
 
@@ -441,7 +536,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 // 而预取闸门要求 totalItemCount > 0 ⇒ 后面还能解密的历史永久翻不到。
                 // 见 ClipboardDb.fillFirstPage（健康库上仍只取一页，无额外开销）。
                 val tCount = SystemClock.elapsedRealtime()
-                val total = db.count(filter.category, filter.favoritesOnly)
+                val total = db.count(filter.category, filter.favoritesOnly, filter.contentType)
                 val countMs = SystemClock.elapsedRealtime() - tCount
                 // 键集游标（BUG.md L-92 / L-117）：取页器自己持有游标，交回 fillFirstPage 的 nextOffset 仍是
                 // 「已扫描行数」（`off` 只当进度基线）⇒ 两边口径一致。但 fillFirstPage 的字节预算是**取回之后**
@@ -455,7 +550,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val page = ClipboardDb.fillFirstPage(total, ClipboardPrefs.of(context).panelPageItems) { off, lim ->
                     // 又被调用一次 = 上一页已被接受（fillFirstPage 只在接受后仍需更多时才再取）
                     if (pending != null) accepted = pending
-                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
+                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly, filter.contentType)
                     pending = keyed.last
                     fetchOff = off
                     pendingScanned = keyed.scanned
@@ -586,6 +681,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      */
     fun stopBackgroundWork() {
         refreshToken++
+        // 网格的缩略图线程池与缓存也归这里收：视图被丢弃后「缩略图线程仍钉住旧视图树」
+        // 是 L-1035 同型的泄漏，释放点必须与列表的作废点同处
+        if (::imageGrid.isInitialized) imageGrid.stopWork()
         Diagnostics.i(TAG, "剪贴板面板: 视图重建，作废在飞的查询")
     }
 
@@ -606,7 +704,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             val filter = ClipboardFilter.of(category)
             val loaded = runCatching {
                 // 键集游标（BUG.md L-92）：与 loadNextPage 同策 —— 总数只刷新编号基准，不再中断续扫
-                val total = db.count(filter.category, filter.favoritesOnly)
+                val total = db.count(filter.category, filter.favoritesOnly, filter.contentType)
                 if (total != categoryTotal) {
                     Diagnostics.i(TAG, "续扫: 总数 $categoryTotal → $total（编号基准已刷新，继续扫）")
                 }
@@ -619,7 +717,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 var pendingScanned = 0
                 val filled = ClipboardDb.fillFirstPage(total, ClipboardPrefs.of(context).panelPageItems, startOffset = offset) { off, lim ->
                     if (pending != null) accepted = pending
-                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly)
+                    val keyed = db.recentPageAfter(accepted, lim, filter.category, filter.favoritesOnly, filter.contentType)
                     pending = keyed.last
                     fetchOff = off
                     pendingScanned = keyed.scanned
@@ -662,6 +760,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 空态与列表可见性切换（GONE→VISIBLE 后强制重布局，避免有高度有数据却显示空白） */
     private fun updateEmpty() {
+        // 图片分类的可见性由 [selectCategory] 与网格自己管：这里插手会把列表刷回前台
+        // （收藏 / 删除的异步回调都会走本函数）
+        if (inImageMode()) return
         val empty = currentItems.isEmpty()
         // 空态有四种含义，不能混用同一句话：读取失败 / 真没有历史 / 有行但解密不出来 /
         // 还有没扫完的行（可继续找）。前两种在 L-144 之前是**同一句**「暂无剪贴板历史」——
@@ -687,6 +788,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     // ── 点击粘贴 / 长按菜单 ────────────────────────────────
 
     private fun handleItemClick(item: ClipboardDb.Item) {
+        // 「全部」分类里的图片行只是**排序占位**（灰字、不可点）：图片的打开方式是点开大图，
+        // 那在「图片」分类（网格）里做；混在文本流里点它只能贴文本，语义不通（实施计划 §D3+U1）
+        if (item.image != null) return
         if (isPasting) return
         isPasting = true
         // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）
@@ -715,6 +819,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 那正是 L-127 的原症状（长按后什么都看不到）。复位点就是「保证判据不靠上一版手势的残余」。
         listScrolling = false
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
+        // 图片条目多三个动作（复制 / 保存 / 转图库）；文本条目把它们藏起来（同一排按钮，均分宽度）
+        val isImage = item.image != null
+        val imageOnly = listOf(actionCopy, actionSave, actionMove)
+        for (b in imageOnly) b.visibility = if (isImage) View.VISIBLE else View.GONE
+        // 低版本（<29）没有免权限的相册写入通道：不提供「保存」（实施计划 U5：不为 3 个老版本引 SAF 分支）
+        if (!ClipboardImageExport.albumAvailable()) actionSave.visibility = View.GONE
         actionBar.visibility = View.VISIBLE
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
     }
@@ -740,6 +850,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val favorite = !item.isFavorite
         val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
         val token = actionToken    // 抓令牌（BUG.md L-144）：只认「我这一条」的操作条
+        val imageMode = inImageMode()
         BackgroundIo.run {
             db.setFavorite(item.id, favorite)
             Diagnostics.i(TAG, "[$tid] 长按操作: 收藏切换 id=${item.id}")
@@ -747,7 +858,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val mine = token == actionToken
                 if (mine) hideActionBar()
                 else Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
-                refresh(resetScroll = mine)
+                if (mine && imageMode) imageGrid.show(tid) else refresh(resetScroll = mine)
                 // 与删除一致走 resetScroll：refresh 只取第一页，不重置滚动的话已加载的多页被
                 // 整体截回、ListView 的 firstPosition 又被钳到末尾，用户既不在原位置、
                 // 也找不到刚操作的那一条。回顶至少是明确、可预期的行为。
@@ -761,8 +872,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val item = longPressItem ?: return
         val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
         val token = actionToken    // 抓令牌（BUG.md L-144）
+        val imageMode = inImageMode()
         BackgroundIo.run {
             db.delete(item.id)
+            // 图片条目：行删了、文件还在 ⇒ 精准删掉自己的两个文件
+            // （走 GC 的话保护窗会把它当「在途写入」、留在盘上 ≤10 分钟）
+            if (item.image != null) ClipboardImageFiles.deleteFor(context, item.contentHash)
             Diagnostics.i(TAG, "[$tid] 长按操作: 删除 id=${item.id}")
             post {
                 val mine = token == actionToken
@@ -771,8 +886,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 } else {
                     Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
                 }
-                refresh(resetScroll = mine)
+                if (mine && imageMode) imageGrid.show(tid) else refresh(resetScroll = mine)
             }
+        }
+    }
+
+    /** 图片条目的长按动作：面板只递意图（能力判断与提示都在 IME / 页面侧） */
+    private fun imageAction(action: ClipboardImageAction) {
+        val item = longPressItem ?: return
+        if (item.image == null) return
+        hideActionBar()
+        if (listener?.onImageAction(item, action) != true) {
+            Diagnostics.w(TAG, "[$currentTraceId] 图片动作未处理: $action id=${item.id}")
         }
     }
 
@@ -825,6 +950,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val plate = skinColor(context, skin.plate, R.color.app_bg)
         setBackgroundColor(plate)
         listView.setBackgroundColor(plate)
+        if (::imageGrid.isInitialized) imageGrid.setBackgroundColor(plate)
         textEmpty.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
         for (b in tabButtons) {
             b.setTextColor(
@@ -870,6 +996,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             btnCategoryAll -> selected == null
             btnCategoryUrl -> selected == ClipboardClassifier.CATEGORY_URL
             btnCategoryNumber -> selected == ClipboardClassifier.CATEGORY_NUMBER
+            btnCategoryImage -> selected == CATEGORY_IMAGE
             btnCategoryFavorite -> selected == CATEGORY_FAVORITE
             else -> false
         }
@@ -912,6 +1039,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val KEY_FACE_CORNER_DP = 10f
         // 常量统一取自 ClipboardFilter，避免 UI 与数据层各定义一份而漂移
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
+        const val CATEGORY_IMAGE = ClipboardFilter.PSEUDO_IMAGE
+
+        /** 「全部」列表里图片行的占位文案（灰字、不可点；文案由代码下发，不动 strings.xml） */
+        const val TEXT_IMAGE_PLACEHOLDER = "（图片需在「图片」分类浏览）"
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 

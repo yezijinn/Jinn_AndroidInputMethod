@@ -32,7 +32,7 @@ internal object ConfigBackupManager {
     private const val TAG = "ConfigBackupManager"
 
     /** 与 [Diagnostics] 共用缓存目录（条目前缀不同，互不干扰清理） */
-    private const val CACHE_DIR = "JinnIme"
+    internal const val CACHE_DIR = "JinnIme"
 
     /** 词频文件名（与 [UserFrequency] 一致） */
     private const val USER_FREQ_FILE = "user_freq.txt"
@@ -504,7 +504,11 @@ internal object ConfigBackupManager {
         var cursor: ClipboardCursor? = null
         var taken = 0
         while (true) {
-            val page = db.recentPageAfter(cursor, CLIP_PAGE, null, false)
+            // 只导文本：图片不进配置备份（实施计划 §1 U4）—— 图片的迁移出口是历史页
+            // 「导出全部图片到本机存储」；图片行在这里取出来只会白占条数与字节额度
+            val page = db.recentPageAfter(
+                cursor, CLIP_PAGE, null, false, ClipboardDb.CONTENT_TYPE_TEXT,
+            )
             // 以「扫描行数」判结束（不是看 items 是否为空）：本页只要有解密失败的行（密钥轮换 /
             // 单行损坏），`items` 就会少于 limit，只有 items 判停会让整页解密失败时静默漏导其后
             // 所有更旧的条目。游标取「最后扫描过的行」（BUG.md L-92 的键集口径），位置位移不影响。
