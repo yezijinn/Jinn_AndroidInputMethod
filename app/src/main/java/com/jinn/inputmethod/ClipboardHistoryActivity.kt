@@ -97,6 +97,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /** 图片分类的网格适配器（与 [adapter] 同源取数：都读 [pageItems]） */
     private lateinit var gridAdapter: BaseAdapter
 
+    /** 图片分类是否只看收藏：收藏分类不再有图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240） */
+    private var imageFavOnly = false
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
@@ -399,25 +402,36 @@ class ClipboardHistoryActivity : ComponentActivity() {
         actionsRow.removeAllViews()
         // 图片分类：操作行换成图片专用入口（多选 / 导入 / 删网址等文本功能不适用）
         if (inImageMode()) {
+            // 「只看收藏」切换：收藏分类排除图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240）
+            actionsRow.addView(compactView().apply {
+                text = if (imageFavOnly) TEXT_IMAGE_FAV_ALL else TEXT_IMAGE_FAV_ONLY
+                setOnClickListener {
+                    imageFavOnly = !imageFavOnly
+                    loadAsync()
+                }
+            })
             actionsRow.addView(compactView().apply {
                 text = TEXT_IMAGE_EXPORT_ALL
                 setOnClickListener { exportAllImages() }
             })
-            actionsRow.addView(compactView().apply {
-                text = TEXT_IMAGE_DELETE_ALL
-                setOnClickListener {
-                    confirm(TEXT_IMAGE_DELETE_CONFIRM) {
-                        BackgroundIo.run {
-                            db.deleteByContentType(ClipboardDb.CONTENT_TYPE_IMAGE)
-                            // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
-                            ClipboardImageFiles.gc(
-                                this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
-                            )
-                            loadAsync()
+            // 「删图片」删的是**全部**图片（不走筛选）：只看收藏时先收起，免得被当成本次筛选的批量删除
+            if (!imageFavOnly) {
+                actionsRow.addView(compactView().apply {
+                    text = TEXT_IMAGE_DELETE_ALL
+                    setOnClickListener {
+                        confirm(TEXT_IMAGE_DELETE_CONFIRM) {
+                            BackgroundIo.run {
+                                db.deleteByContentType(ClipboardDb.CONTENT_TYPE_IMAGE)
+                                // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
+                                ClipboardImageFiles.gc(
+                                    this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                                )
+                                loadAsync()
+                            }
                         }
                     }
-                }
-            })
+                })
+            }
             actionsRow.addView(compactView().apply {
                 text = "刷新"
                 setOnClickListener { loadAsync() }
@@ -600,7 +614,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
             searchEdit.setText("")
         }
         val keywordNow = keyword
-        val favoritesOnly = category == FILTER_FAVORITE
+        // 图片分类的「只看收藏」是叠加筛选（BUG.md L-1240）：收藏分类里不再有图片行，
+        // 这里给收藏过的图片留一个入口
+        val favoritesOnly = category == FILTER_FAVORITE || (category == FILTER_IMAGE && imageFavOnly)
         val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
         // 内容类型维度：图片分类只看图片，其余分类一律只看文本 —— 图片统一走网格区
         // （「图片」分类的全屏网格，或「全部 / 收藏」上方的条带），不再混进文本列表
@@ -1157,6 +1173,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 图片网格：无图时的空态 */
         const val TEXT_IMAGE_EMPTY = "暂无图片"
+
+        /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
+        const val TEXT_IMAGE_FAV_ONLY = "★ 只看收藏"
+        const val TEXT_IMAGE_FAV_ALL = "★ 看全部图片"
 
         const val TEXT_IMAGE_CELL = "剪贴板图片"
 

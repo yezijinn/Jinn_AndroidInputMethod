@@ -188,6 +188,27 @@ class ClipboardImageTest {
         )
         assertTrue("调节行改每行张数", "Prefs(context).galleryColumns = next" in panel)
         assertTrue("调节行改行高", "Prefs(context).galleryCellHeightDp = next" in panel)
+        // BUG.md L-1239：分页取数必须与首屏同源过滤 —— 漏 contentType 会让第二页起图片混回文本列表
+        assertTrue(
+            "面板分页取数必须带内容类型",
+            "cursor, ClipboardPrefs.of(context).panelPageItems," in panel &&
+                "filter.category, filter.favoritesOnly, filter.contentType," in panel,
+        )
+        // BUG.md L-1240：收藏分类排除图片行后，网格必须能按收藏筛选，且有可见的切换入口
+        assertTrue("网格取数要能吃收藏筛选", "null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        assertTrue("面板要有只看收藏切换", "toggleFavOnly()" in panel)
+        assertTrue(
+            "历史页也要有只看收藏切换",
+            "text = if (imageFavOnly) TEXT_IMAGE_FAV_ALL else TEXT_IMAGE_FAV_ONLY" in
+                TestSources.codeSource("ClipboardHistoryActivity.kt"),
+        )
+        // BUG.md L-1229：裁剪删掉图片行后必须回收密文文件（行与文件是两套存储）
+        assertTrue(
+            "裁剪后要收孤儿文件",
+            "ClipboardImageFiles.gc(appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS)" in
+                TestSources.codeSource("ClipboardDb.kt"),
+        )
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)

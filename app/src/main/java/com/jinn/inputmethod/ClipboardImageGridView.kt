@@ -63,6 +63,17 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     private var exhausted = false
     private var traceId = ""
 
+    /**
+     * 只看收藏的图片（「图片」分类的收藏筛选用）：[show] 时指定。
+     *
+     * 存在的原因（BUG.md L-1240）：文本分类按 `content_type='text'` 取数后，收藏分类里不再有图片行；
+     * 若网格也不能按收藏过滤，用户收藏过的图片就**没有任何入口**可看（数据还在，够不着）。
+     */
+    private var favoritesOnly = false
+
+    /** 当前是否只看收藏的图片（宿主据此显示「看全部」的出口提示） */
+    val isFavoritesOnly: Boolean get() = favoritesOnly
+
     /** 当前是否有图（面板据此选空态文案） */
     val isEmpty: Boolean get() = items.isEmpty()
 
@@ -98,8 +109,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     }
 
     /** 面板打开 / 切到图片分类时调用：按当前布局参数重载第一页 */
-    fun show(traceId: String) {
+    fun show(traceId: String, favoritesOnly: Boolean = false) {
         this.traceId = traceId
+        this.favoritesOnly = favoritesOnly
         applyTuning()
         // 每次都重新取数（面板每次打开都刷列表，网格同款）：用户可能刚复制了图
         items = ArrayList()
@@ -141,7 +153,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         val gen = generation
         BackgroundIo.run {
             val page = runCatching {
-                db.recentPageAfter(cursor, PAGE_ITEMS, null, false, ClipboardDb.CONTENT_TYPE_IMAGE)
+                db.recentPageAfter(cursor, PAGE_ITEMS, null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE)
             }.getOrNull()
             post {
                 if (gen != generation) {

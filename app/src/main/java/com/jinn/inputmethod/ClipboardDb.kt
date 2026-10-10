@@ -695,8 +695,15 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
-        trimImages()
-        trimFavorites()
+        val imagesTrimmed = trimImages()
+        val favoritesTrimmed = trimFavorites()
+        if (imagesTrimmed > 0 || favoritesTrimmed > 0) {
+            // 裁剪删掉的**图片行**不会带走密文文件（BUG.md L-1229）：行在库里、文件在 filesDir，
+            // 两套存储。这里同步收一次孤儿（短保护窗，只跳过刚写入的在途文件）；不跑的话要等
+            // 下一次图片入库或进程重启 —— IME 常驻，可能几天都不触发，目录会长期超出图片体积预算。
+            val reclaimed = ClipboardImageFiles.gc(appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS)
+            Diagnostics.i(TAG, "裁剪后回收孤儿文件: $reclaimed 个")
+        }
     }
 
     /**
@@ -709,7 +716,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 图片行常态只有几百条，直接全取（不像文本那条 hot path 需要先算总量短路）。
      * 走 `idx_items_ctype`（只扫图片行）。
      */
-    private fun trimImages() {
+    private fun trimImages(): Int {
         val prefs = ClipboardPrefs.of(appContext)
         val rows = ArrayList<ClipboardRowSize>()
         readableDatabase.rawQuery(
@@ -722,9 +729,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             }
         }
         val ids = imageOverflowIds(rows, prefs.imageMaxItems, prefs.imageMaxBytes)
-        if (ids.isEmpty()) return
-        deleteNonFavoriteByIds(ids)
-        Diagnostics.i(TAG, "按图片预算裁剪: 删除 ${ids.size} 条非收藏图片")
+        if (ids.isEmpty()) return 0
+        val deleted = deleteNonFavoriteByIds(ids)
+        // 报**实删**条数（候选集是快照，这几毫秒里用户可能已取消收藏）
+        Diagnostics.i(TAG, "按图片预算裁剪: 删除 $deleted 条非收藏图片")
+        return deleted
     }
 
     /**
@@ -734,7 +743,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 后者的 SQL 固定带 `is_favorite = 0`，用它删收藏一行都删不掉，而日志却按候选集报
      * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06 审查实证，由守卫钉住）。
      */
-    private fun trimFavorites() {
+    private fun trimFavorites(): Int {
         val prefs = ClipboardPrefs.of(appContext)
         val favRows = ArrayList<ClipboardRowSize>()
         // 字节口径：图片行按真实体积（image_bytes）算，文本行按密文长度 —— 否则一张收藏图
@@ -746,10 +755,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             arrayOf(CONTENT_TYPE_IMAGE),
         ).use { c -> while (c.moveToNext()) favRows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), true)) }
         val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) return 0
         // 按**实际删除行数**记账：候选集是快照，这几毫秒里用户可能已取消收藏或删除该行
         val deleted = deleteAnyByIds(ids)
         Diagnostics.i(TAG, "收藏软上限淘汰: 候选 ${ids.size} 条，实删 $deleted 条")
+        return deleted
     }
 
     /** 按条数裁剪：只统计与删除**文本**行（图片有独立张数上限，见 [trimImages]） */
@@ -837,20 +847,22 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 名字把约束写进调用点：要删收藏走 [deleteAnyByIds]，误用本方法会静默删 0 行。
      */
-    private fun deleteNonFavoriteByIds(ids: List<Long>) {
-        if (ids.isEmpty()) return
+    private fun deleteNonFavoriteByIds(ids: List<Long>): Int {
+        if (ids.isEmpty()) return 0
+        var deleted = 0
         writableDatabase.beginTransaction()
         try {
             // 条件里再判一次收藏（2026-09-30 审查）：候选集是按快照算的，用户在这几毫秒里把某条
             // 标成收藏后，原写法仍会把它删掉 —— 而「收藏不参与裁剪」是本模块的不变量。少删一条无害
             // （下次入库会重新评估），删错一条则不可恢复。
             for (id in ids) {
-                writableDatabase.delete(TABLE_ITEMS, "id = ? AND is_favorite = 0", arrayOf(id.toString()))
+                deleted += writableDatabase.delete(TABLE_ITEMS, "id = ? AND is_favorite = 0", arrayOf(id.toString()))
             }
             writableDatabase.setTransactionSuccessful()
         } finally {
             writableDatabase.endTransaction()
         }
+        return deleted
     }
 
     /** 管理页专用：删除任意行（含收藏），不受「收藏不参与裁剪」那条不变量限制 */

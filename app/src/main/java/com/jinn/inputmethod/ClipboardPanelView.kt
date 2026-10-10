@@ -118,6 +118,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 图片分类的「布局」键（展开 [tuneRow]）；其余分类下隐藏，该位置让给「搜索」 */
     private lateinit var btnLayout: TextView
 
+    /** 图片分类的「只看收藏」切换键（住在调节行里，不占顶栏键位） */
+    private lateinit var btnFavOnly: TextView
+
+    /** 图片分类是否只看收藏：收藏分类不再有图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240） */
+    private var imageFavOnly = false
+
     /** 布局调节行：每行张数 / 行高 各一组「−/+」（图片分类下点「布局」才露出） */
     private val tuneRow = LinearLayout(context)
 
@@ -411,6 +417,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             addView(rowHeightLabel)
             addView(tabButton("-") { stepHeight(-HEIGHT_STEP_DP) })
             addView(tabButton("+") { stepHeight(HEIGHT_STEP_DP) })
+            // 只看收藏：文本分类排除图片后，这是「收藏过的图片」的唯一入口（BUG.md L-1240）
+            btnFavOnly = tabButton(TEXT_FAV_ONLY) { toggleFavOnly() }
+            addView(btnFavOnly)
             visibility = View.GONE
         }
         readGridTuning()
@@ -532,7 +541,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 网格自己取数（图片走文件 + 缩略图缓存，与列表的解密分页是两条路）
             Diagnostics.i(TAG, "[$currentTraceId] 切到图片分类")
             readGridTuning()
-            imageGrid.show(currentTraceId)
+            updateFavOnlyLabel()
+            imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
             return
         }
         refresh(resetScroll = true)
@@ -666,11 +676,17 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 // 面板打开期间可能又有新内容入库（用户复制）或条目被删：键集游标对位置位移免疫
                 // （BUG.md L-92）⇒ 不再需要「总数对不上就回首页重载」那套兜底（它会白白把列表弹回顶部），
                 // 总数只用来刷新编号基准。可读性上也一致：游标跟着「最后扫描过的行」走，不跟位置走。
-                val total = db.count(filter.category, filter.favoritesOnly)
+                // ⚠ 分页的两处取数必须与 [refresh] / [continueScan] 同源（含 contentType）：漏传会让
+                // `contentType` 缺省成 null（不限类型）⇒ 第二页起图片行混回文本列表（空串行）且
+                // 编号基准跳变（BUG-1239）
+                val total = db.count(filter.category, filter.favoritesOnly, filter.contentType)
                 if (total != categoryTotal) {
                     Diagnostics.i(TAG, "分页: 总数 $categoryTotal → $total（编号基准已刷新，继续翻页）")
                 }
-                total to db.recentPageAfter(cursor, ClipboardPrefs.of(context).panelPageItems, filter.category, filter.favoritesOnly)
+                total to db.recentPageAfter(
+                    cursor, ClipboardPrefs.of(context).panelPageItems,
+                    filter.category, filter.favoritesOnly, filter.contentType,
+                )
             }
             post {
                 if (reqToken != refreshToken) return@post
@@ -1078,7 +1094,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (next == cur) return
         Prefs(context).galleryColumns = next
         readGridTuning()
-        imageGrid.show(currentTraceId)
+        imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
     }
 
     /** 行高 ±[HEIGHT_STEP_DP] dp（同上，到边界直接返回） */
@@ -1088,7 +1104,26 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (next == cur) return
         Prefs(context).galleryCellHeightDp = next
         readGridTuning()
-        imageGrid.show(currentTraceId)
+        imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
+    }
+
+    /**
+     * 切换「只看收藏的图片」并重排网格（BUG.md L-1240）。
+     *
+     * 筛选状态**不随切分类重置**：用户显式开的筛选，回头看图片时不该被静默关掉；
+     * 键面文案始终显示「当前点它会切到什么」，所以状态是可见的。
+     */
+    private fun toggleFavOnly() {
+        imageFavOnly = !imageFavOnly
+        updateFavOnlyLabel()
+        imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
+    }
+
+    /** 刷新「只看收藏」键的文案（它标示的是**下一个动作**） */
+    private fun updateFavOnlyLabel() {
+        if (::btnFavOnly.isInitialized) {
+            btnFavOnly.text = if (imageFavOnly) TEXT_FAV_ALL else TEXT_FAV_ONLY
+        }
     }
 
     /** 读回布局参数并刷新两个数值标签（读的是 setter 归一之后的值，标签永远等于即将生效的档位） */
@@ -1114,6 +1149,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         /** 布局调节行的两个标签（与图库面板同款文案） */
         const val TEXT_ROW_COUNT = "每行 %d 张"
         const val TEXT_ROW_HEIGHT = "行高 %d dp"
+
+        /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
+        const val TEXT_FAV_ONLY = "★ 只看收藏"
+        const val TEXT_FAV_ALL = "★ 看全部"
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 
