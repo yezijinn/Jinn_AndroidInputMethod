@@ -262,6 +262,26 @@ class ClipboardImageTest {
         // BUG.md L-1257：回收按待跑计数合并，跑完再判一次
         assertTrue("回收按计数合并", "pendingGc.getAndSet(0)" in
             TestSources.codeSource("ClipboardDb.kt"))
+        // BUG.md L-1259：过期回调只 return（不复位共享 loading）；游标在主线程抓快照
+        assertTrue("过期回调不复位共享状态", "if (gen != generation) return@post" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        assertTrue("游标抓快照", "val cursorNow = cursor" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1262：stopWork 不再清共享缓存（缓存按字节上限自淘汰）
+        assertTrue("停止工作不清共享缓存", "ClipboardThumbLoader.clearCache()" !in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1263：解码目标用实测格宽（与布局同源）
+        assertTrue("解码目标用实测格宽", "minOf(cellWidthPx(), cellHeightPx)" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        // BUG.md L-1260：写操作后重取收藏条带（判据不再借用「是否重置页码」）
+        assertTrue("条带写操作后重取", "if (favMode) favImageGrid.show(" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
+        assertTrue("条带随布局重排", "favImageGrid.rerender()" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1264：解码失败要留痕（灰块的三种原因分得清）
+        assertTrue("解码失败留痕", "缩略图解码失败" in
+            TestSources.codeSource("ClipboardThumbLoader.kt"))
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)

@@ -20,6 +20,8 @@ import java.util.concurrent.Executors
  */
 internal object ClipboardThumbLoader {
 
+    private const val TAG = "ClipThumb"
+
     private const val THUMB_THREADS = 3
     private const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
 
@@ -62,16 +64,27 @@ internal object ClipboardThumbLoader {
         }
     }
 
-    /** 视图被丢弃 / 页面退出时清缓存（线程池常驻，进程级 3 线程，不必反复建销） */
-    fun clearCache() {
-        cache.evictAll()
-    }
-
     private fun decode(context: Context, hash: String, key: String, targetPx: Int): Bitmap? {
         val file = ClipboardImageFiles.thumbFile(context, hash)
-        val enc = ClipboardImageFiles.readBytes(file) ?: return null
-        val plain = ClipboardCrypto.decryptBytes(enc) ?: return null
-        val bmp = ClipboardImageCodec.decodeForTarget(plain, targetPx) ?: return null
+        val enc = ClipboardImageFiles.readBytes(file)
+        // 灰块有三种原因（没文件 / 解密失败 / 解不出图），不分清楚的话诊断包里查不到是哪种、
+        // 也不知道是哪个哈希，只能靠复现（BUG.md L-1264）
+        if (enc == null) {
+            Diagnostics.w(TAG, "缩略图读取失败 ${hash.take(12)}")
+            return null
+        }
+        val plain = ClipboardCrypto.decryptBytes(enc)
+        if (plain == null) {
+            Diagnostics.w(TAG, "缩略图解密失败 ${hash.take(12)}")
+            return null
+        }
+        val bmp = ClipboardImageCodec.decodeForTarget(plain, targetPx)
+        if (bmp == null) {
+            // 这条属**预期**情形（尺寸读不出的图只存了占位字节）：记 V 不记 W ——
+            // 每次滚动重渲染都会走到这里，W 会把诊断包刷满
+            Diagnostics.v(TAG, "缩略图解码失败 ${hash.take(12)} target=$targetPx")
+            return null
+        }
         cache.put(key, bmp)
         return bmp
     }

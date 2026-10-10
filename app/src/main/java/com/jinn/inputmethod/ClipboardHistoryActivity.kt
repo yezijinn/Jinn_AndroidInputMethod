@@ -395,9 +395,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private fun applyGridTuning() {
         if (!::gridAdapter.isInitialized) return
         val columns = Prefs(this).galleryColumns.coerceAtLeast(MIN_GRID_COLUMNS)
-        if (grid.numColumns == columns) return
-        grid.numColumns = columns
-        gridAdapter.notifyDataSetChanged()
+        if (grid.numColumns != columns) {
+            grid.numColumns = columns
+            gridAdapter.notifyDataSetChanged()
+        }
+        // 收藏条带与主网格同源（BUG.md L-1261）：它自己读同一组偏好，但列数变化时要重建格子 ——
+        // 只调主网格会让同一屏里的两个网格参数分裂
+        if (::favImageGrid.isInitialized) favImageGrid.rerender()
     }
 
     /** 收藏图片条带的高度 = 图库行高 × [FAV_STRIP_ROWS]（行高在图库设置页 / 自定义页可改） */
@@ -745,11 +749,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
                 searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
                 // 收藏分组：列表上方显示「收藏的图片」网格（两行），收藏的图不再只有折叠入口。
-                // 只在重置到第一页时重取（BUG.md L-1253 后半）：翻页 / 加载更多不牵动收藏图，
-                // 否则「翻一页文本」会顺带把整条带重取一遍
+                // 每次 loadAsync 都重取（BUG.md L-1260）：本方法只在切换筛选 / 搜索 / 清空 / **写操作**
+                // （删除、收藏切换、转图库）/ 回前台时被调 —— 翻页是纯本地操作（只换 pageIndex），
+                // 不经过这里。所以无条件重取不会带来翻页开销，而写操作后必须重取，
+                // 否则条带上还留着已删 / 已取消收藏的图，点开只会得到「已删除」
                 val favMode = category == FILTER_FAVORITE
                 favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
-                if (favMode && resetPage) favImageGrid.show(favGridTraceId, favoritesOnly = true)
+                if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
                 adapter.notifyDataSetChanged()
                 gridAdapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），

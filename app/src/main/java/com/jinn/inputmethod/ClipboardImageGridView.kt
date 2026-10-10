@@ -146,12 +146,18 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      */
     fun stopWork() {
         generation++
-        ClipboardThumbLoader.clearCache()
+        // 只作废在飞任务，**不清缓存**（BUG.md L-1262）：缓存是进程级共享的（键盘面板与历史页
+        // 共用同一份），而本方法是按实例调的 —— 一处退出就把整份清掉，另一处正在用的一屏要全部重解。
+        // 内存交由缓存的字节上限（LRU）自己淘汰，不需要在这里替别人做决定。
     }
 
     private fun applyTuning() {
         val prefs = Prefs(context)
-        columns = prefs.galleryColumns.coerceAtLeast(1)
+        val avail = if (contentWidthPx > 0) contentWidthPx else resources.displayMetrics.widthPixels
+        // 列数上限按可用宽回算（BUG.md L-1263）：极窄屏（折叠态 / 分屏）下「列数 × 格子宽下限」
+        // 会超出可用宽、末列被裁。下限兜底是 24px，正常屏不会触到这个上限
+        val maxFit = (avail / MIN_CELL_WIDTH_PX).coerceAtLeast(1)
+        columns = prefs.galleryColumns.coerceIn(1, maxFit)
         cellHeightPx = (prefs.galleryCellHeightDp * resources.displayMetrics.density).toInt()
     }
 
@@ -174,15 +180,17 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         if (loading) return
         loading = true
         val gen = generation
+        // 游标在主线程抓快照（BUG.md L-1259）：字段可能与主线程的写入竞争，后台读到旧值会从错误位置翻页
+        val cursorNow = cursor
         BackgroundIo.run {
             val page = runCatching {
-                db.recentPageAfter(cursor, PAGE_ITEMS, null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE)
+                db.recentPageAfter(cursorNow, PAGE_ITEMS, null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE)
             }.getOrNull()
             post {
-                if (gen != generation) {
-                    loading = false
-                    return@post
-                }
+                // 过期回调**只 return、不复位共享状态**（BUG.md L-1259）：loading 此刻可能属于新一代的
+                // 任务，复位它会让滚动到底的判断误以为「没在加载」⇒ 同一页被取两次。面板侧的纪律是
+                // 「过期即 return，绝不碰共享计数」，网格改成同款。
+                if (gen != generation) return@post
                 loading = false
                 if (page == null) {
                     Diagnostics.w(TAG, "[$traceId] 图片网格取数失败")
@@ -281,11 +289,14 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         return view
     }
 
-    /** 单元格目标像素：列宽与行高取小（解码尺寸不必超过实际显示面积） */
-    private fun resolveCellTargetPx(): Int {
-        val width = (resources.displayMetrics.widthPixels - dp(24)) / columns.coerceAtLeast(1)
-        return minOf(width, cellHeightPx).coerceAtLeast(MIN_TARGET_PX)
-    }
+    /**
+     * 单元格目标像素：**实测格宽**与行高取小（解码尺寸不必超过实际显示面积，BUG.md L-1263）。
+     *
+     * 原先按「屏幕宽 − 边距」推算，与格宽用的实测可用宽不是同源 —— 折叠屏展开 / 折叠、分屏、
+     * 横竖屏切换时两者不等：偏大就白付解码与内存，偏小就沿用偏小的缓存（显示发虚）。
+     */
+    private fun resolveCellTargetPx(): Int =
+        minOf(cellWidthPx(), cellHeightPx).coerceAtLeast(MIN_TARGET_PX)
 
     private fun bindThumb(cell: FrameLayout, item: ClipboardDb.Item, targetPx: Int) {
         val key = item.contentHash
