@@ -40,6 +40,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private lateinit var grid: GridView
     private lateinit var emptyText: TextView
     private lateinit var searchEdit: EditText
+    private lateinit var searchRow: View
     private lateinit var actionsRow: LinearLayout
     private lateinit var filterRow: LinearLayout
 
@@ -119,6 +120,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             setPadding(dp(8), dp(24), dp(8), dp(24))
         }
         searchEdit = findViewById<EditText>(R.id.edit_hist_search).apply { hint = TEXT_SEARCH_HINT }
+        searchRow = findViewById(R.id.hist_search_row)
         actionsRow = findViewById(R.id.hist_actions)
         filterRow = findViewById(R.id.hist_filter_row)
 
@@ -422,9 +424,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                         BackgroundIo.run {
                             db.deleteByContentType(ClipboardDb.CONTENT_TYPE_IMAGE)
                             // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
-                        ClipboardImageFiles.gc(
-                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
-                        )
+                            ClipboardImageFiles.gc(
+                                this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                            )
                             loadAsync()
                         }
                     }
@@ -445,12 +447,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     confirm("删除选中的 ${checkedIds.size} 条？") {
                         BackgroundIo.run {
                             db.deleteAnyByIds(checkedIds.toList())
-                            // 「全部」分类的勾选集可能含图片行（多选框在占位行上仍可勾）：
-                            // 行删了、文件同步收一次，不必等下次启动 GC
-                            // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
-                        ClipboardImageFiles.gc(
-                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
-                        )
+                            // 「全部」分类的勾选集可能含图片行（多选框在占位行上仍可勾）：行删了、
+                            // 文件同步收一次，不必等下次启动 GC；批量删除走 GC 是因为逐条
+                            // deleteFor 要先查 hash 表
+                            ClipboardImageFiles.gc(
+                                this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                            )
                             checkedIds.clear()
                             multiSelect = false
                             // 同上：删完留在当前页（BUG.md L-1175）
@@ -604,6 +606,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
      */
     private fun loadAsync(resetPage: Boolean = true) {
         val category = categoryFilter
+        // 图片分类与关键词互斥（D2「图片不进搜索」）：图片行的 content 恒为空串，任何关键词
+        // 都会把图片全部滤掉 ⇒「在全部里搜着词再切图片」只看到「暂无图片」，像是图片丢了。
+        // 切进图片分类时当场清掉残留关键词，界面上的搜索行也一并收起（见下方 imageMode 分支）。
+        if (category == FILTER_IMAGE && keyword.isNotEmpty()) {
+            keyword = ""
+            searchEdit.setText("")
+        }
         val keywordNow = keyword
         val favoritesOnly = category == FILTER_FAVORITE
         val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
@@ -666,6 +675,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 }
                 list.visibility = if (imageMode) View.GONE else View.VISIBLE
                 grid.visibility = if (imageMode) View.VISIBLE else View.GONE
+                // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
+                searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
                 adapter.notifyDataSetChanged()
                 gridAdapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），

@@ -248,6 +248,14 @@ class ClipboardImageTest {
             "grid.visibility = if (imageMode) View.VISIBLE else View.GONE" in hist,
         )
         assertTrue("历史页进图片分类要退出多选（图片分类不提供多选）", "multiSelect = false" in hist)
+        assertTrue(
+            "图片分类要收起搜索行（搜索范围只有文本，留着只会给出「暂无图片」）",
+            "searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE" in hist,
+        )
+        assertTrue(
+            "切进图片分类要清掉残留关键词（否则图片全被关键词滤掉）",
+            "if (category == FILTER_IMAGE && keyword.isNotEmpty())" in hist,
+        )
     }
 
     @Test
