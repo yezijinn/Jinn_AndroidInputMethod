@@ -126,7 +126,7 @@ object PinyinEngine {
     const val OPT_DICT_DIR = "dicts"
 
     /** 可选包的索引缓存目录（filesDir 下）：首次构建后落盘，后续启动直接读 */
-    private const val INDEX_CACHE_DIR = "index"
+    internal const val INDEX_CACHE_DIR = "index"
 
     /** 索引缓存文件后缀（源文件 `ext.xz` → 缓存 `ext.xz.idx`） */
     private const val INDEX_SUFFIX = ".idx"

@@ -28,7 +28,7 @@ object Diagnostics {
     const val TAG = "JinnDiag"
 
     private const val DIR_NAME = "JinnIme"
-    private const val LOG_DIR_NAME = "logs"
+    internal const val LOG_DIR_NAME = "logs"
     private const val KEEP_DAYS = 7L
 
 /**
@@ -94,9 +94,10 @@ private const val LOG_SEGMENTS_KEPT = 2
     /**
      * V 级（Verbose）日志是否写入文件，默认关闭。
      *
-     * 本类不持有持久输出流，每条日志都是「open → write → close」。
-     * V 级主要记录音频包收发这类每秒可达 10 条的高频噪音，全量落盘
-     * 等于持续做小文件 IO，对输入法毫无收益。
+     * V 级主要记录音频包收发这类每秒可达 10 条的高频噪音，全量落盘对输入法毫无收益。
+     * 落盘走**常驻文件句柄**（见 [streamFor]：一条日志 ≈ 一次 `write()` 进页缓存，不 fsync），
+     * 成本可忽略；关掉它的理由是**让文件只留可排障的事件**：高频噪音既淹诊断包，
+     * 也让「一天几百行」的现状退化成一秒十几行。
      *
      * V 级仍会输出到 logcat（`adb logcat -s PinyinKeyboard MicRecorder` 等随时可看），
      * 需要完整落盘排查时把这里改成 true 即可，其它级别不受影响。
@@ -542,8 +543,9 @@ private const val LOG_SEGMENTS_KEPT = 2
             'W' -> Log.w(tag, msg)
             else -> if (tr != null) Log.e(tag, msg, tr) else Log.e(tag, msg)
         }
-        // V 级默认不落盘：音频包这类日志每秒可达 10 条，而本类不持有持久流，
-        // 每次写日志都要 open/write/close 一次文件，累积开销不小（见 VERBOSE_TO_FILE）。
+        // V 级默认不落盘：音频包这类日志每秒可达 10 条，落盘会把诊断文件淹成噪音流
+        // （成本本身很低 —— 常驻句柄 + 页缓存，见 [streamFor]）；逐键级别的 V 级更是连字符串
+        // 构造都在调用点用 [KEY_TRACE] 编译期消除了，不欠这两笔。
         if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
         maybeCleanupOldLogs()

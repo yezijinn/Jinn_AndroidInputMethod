@@ -64,6 +64,11 @@
             android:exported="false"
             android:label="@string/dict_manager_title" />
 
+        <!-- 存储占用页：只读统计（分类/口径见 StorageUsage），从设置页进入 -->
+        <activity
+            android:name=".StorageUsageActivity"
+            android:exported="false" />
+
         <!-- 快捷补充：直接编辑自定义词库的源文本，保存即导入（与「导入 .txt」共用同一份文本）。
              旋转等配置变更**不重建**本页（BUG.md L-867）：编辑器是代码创建且无 id，系统不保存/恢复它的内容，
              重建就会让未保存的编辑静默丢失（真机实证：盘上改内容后旋转，编辑框显示的是盘上新内容），

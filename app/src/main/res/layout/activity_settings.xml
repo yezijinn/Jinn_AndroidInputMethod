@@ -674,6 +674,25 @@
                 android:ellipsize="middle"/>
         </LinearLayout>
 
+        <!-- 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少）。
+             按钮与提示文案由代码下发：strings.xml 默认不改动 -->
+        <LinearLayout
+            style="@style/SettingsCard">
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_storage_usage"
+                android:layout_width="match_parent"
+                android:minWidth="0dp" />
+
+            <TextView
+                style="@style/CardHint"
+                android:id="@+id/text_storage_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
         <!-- 使用说明纯文本（最底部） -->
         <TextView
             android:layout_width="match_parent"

@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 internal object UserFrequency {
 
     private const val TAG = "UserFrequency"
-    private const val FILE_NAME = "user_freq.txt"
+    internal const val FILE_NAME = "user_freq.txt"
     private const val HEADER = "# jinn user_freq v1"
     private const val MAX_ENTRIES = 3000
     private const val MIN_WEIGHT = 0.15

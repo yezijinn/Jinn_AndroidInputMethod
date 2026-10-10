@@ -348,6 +348,14 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, GallerySettingsActivity::class.java))
             }
         }
+        // 存储占用：只读统计页（用户问「存储由什么组成」——大头常是看不见的词库索引缓存）
+        findViewById<Button>(R.id.btn_storage_usage).apply {
+            text = TEXT_STORAGE_ENTRY
+            setOnClickListener {
+                startActivity(Intent(this@SettingsActivity, StorageUsageActivity::class.java))
+            }
+        }
+        findViewById<TextView>(R.id.text_storage_hint).text = TEXT_STORAGE_HINT
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -1705,7 +1713,8 @@ class SettingsActivity : ComponentActivity() {
             "禁止分享给不信任的人(即使它无法破解)\n" +
             "密码不保存在本机，忘记后无法解密 永久丢失"
         const val TEXT_INCLUDE_CLIPBOARD =
-            "额外导出:剪贴板历史 明文，靠压缩密码保护\n可能含身份地址、手机银行、账号密码"
+            "额外导出:剪贴板历史 明文，靠压缩密码保护\n可能含身份地址、手机银行、账号密码\n" +
+                "（不含图片：图片不进任何备份，换机前用「剪贴板历史 → 图片 → 导出全部图片」存到相册）"
         const val TEXT_INCLUDE_DICTS = "额外导出:已下载词库（没必要,可重复下）"
         const val TEXT_PWD_HINT = "备份密码（4~64 个不相同的汉字）"
         const val TEXT_PWD_HINT_CONFIRM = "再输一次备份密码"
@@ -1736,6 +1745,10 @@ class SettingsActivity : ComponentActivity() {
 
         /** 图库快贴：设置页只留这一个入口，目录绑定 / 自动返回 / 缩略图布局都在子页面里 */
         const val TEXT_GALLERY_SETTINGS_ENTRY = "图库快贴功能"
+
+        /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
+        const val TEXT_STORAGE_ENTRY = "存储占用"
+        const val TEXT_STORAGE_HINT = "看看安装包、词库索引缓存、剪贴板与日志各占多少"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
