@@ -315,6 +315,31 @@ class ClipboardCustomizeActivity : Activity() {
         dim(card4, editable)
         PageStyle.addCard(list, card4)
 
+        // ── 缩略图布局（与图库快贴共用同一组参数：本页、图库面板、剪贴板图片网格三处同步） ──
+        // 即时生效、不走草稿：这对参数住在 Prefs（图库偏好）里，与草稿机制管辖的剪贴板容量
+        // 不是同一套键空间；图库设置页同样是即时生效，两处手感保持一致
+        val card5 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        card5.addView(TextView(this).apply {
+            text = TEXT_LAYOUT_TITLE
+            PageStyle.sectionTitle(this)
+        })
+        val layoutPrefs = Prefs(this)
+        card5.addView(makeSlider(
+            TEXT_LAYOUT_COLUMNS,
+            layoutPrefs.galleryColumns, Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX, 1,
+            { layoutPrefs.galleryColumns = it },
+            { "$it 张/行" },
+        ))
+        card5.addView(makeSlider(
+            TEXT_LAYOUT_HEIGHT,
+            layoutPrefs.galleryCellHeightDp, Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX, 4,
+            { layoutPrefs.galleryCellHeightDp = it },
+            { "$it dp" },
+        ))
+        card5.addView(makeHint(TEXT_LAYOUT_HINT))
+        dim(card5, editable)
+        PageStyle.addCard(list, card5)
+
         // 锁定 / 无改动时按钮不可点：一个只读页面里「保存」能按本身就是误导
         val dirty = isDirty()
         saveButton.isEnabled = editable && dirty
@@ -606,7 +631,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val DIFF_MAX_LINES = 6
 
         const val TEXT_TITLE = "剪贴板自定义"
-        const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 图片容量。\n默认锁定：打开「解锁参数」后可调，改完点「保存」才生效。"
+        const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 图片容量 / 缩略图布局。\n" +
+            "默认锁定：打开「解锁参数」后可调，改完点「保存」才生效（缩略图布局即时生效）。"
         const val TEXT_ENABLED = "剪贴板历史"
         const val TEXT_UNLOCK = "解锁参数"
         const val TEXT_SAVE = "保存"
@@ -641,6 +667,13 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_IMAGE_HINT =
             "图片与文本各自统计 / 各自淘汰：调小这里只删最旧的非收藏图片，不动文本；" +
                 "超单张上限的图不入库。图片不进备份（换机前用「剪贴板历史管理 → 图片 → 导出全部图片」）。"
+
+        // ── 缩略图布局（2026-10-11）──
+        const val TEXT_LAYOUT_TITLE = "缩略图布局（与图库快贴共用）"
+        const val TEXT_LAYOUT_COLUMNS = "每行张数"
+        const val TEXT_LAYOUT_HEIGHT = "缩略图行高"
+        const val TEXT_LAYOUT_HINT =
+            "改完立即生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数。"
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"

@@ -8,6 +8,7 @@ import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import java.util.Locale
 
 /**
  * 输入法内剪贴板面板（重构版：替换 26 键字母区，候选栏/底部栏保持）。
@@ -113,6 +114,16 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 图片分类的网格视图（与 [listView] 互斥显隐；自己的取数与缩略图生命周期） */
     private lateinit var imageGrid: ClipboardImageGridView
+
+    /** 图片分类的「布局」键（展开 [tuneRow]）；其余分类下隐藏，该位置让给「搜索」 */
+    private lateinit var btnLayout: TextView
+
+    /** 布局调节行：每行张数 / 行高 各一组「−/+」（图片分类下点「布局」才露出） */
+    private val tuneRow = LinearLayout(context)
+
+    /** 调节行的两个数值标签 */
+    private val rowCountLabel = TextView(context)
+    private val rowHeightLabel = TextView(context)
 
     private lateinit var btnSearch: TextView
     private lateinit var btnClear: TextView
@@ -279,18 +290,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
-            if (item.image != null) {
-                // 「全部」列表里的图片行 = **排序占位**（2026-10-10 用户指定）：灰字、不可点、不可长按，
-                // 只为让序号与全局顺序对齐；浏览与操作都在「图片」分类的网格里做
-                holder.content.text = TEXT_IMAGE_PLACEHOLDER
-                holder.content.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
-                holder.meta.text = buildString {
-                    append(PanelTimes.entryStamp(item.createdAt))
-                    append(" · 图片")
-                    if (item.isFavorite) append(" · 收藏")
-                }
-                return root
-            }
             // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
             holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
             holder.meta.text = buildString {
@@ -326,11 +325,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         btnCategoryImage = tabButton("图片") { selectCategory(CATEGORY_IMAGE) }
         btnCategoryFavorite = tabButton("收藏") { selectCategory(CATEGORY_FAVORITE) }
         btnSearch = tabButton("搜索") { listener?.onSearch() }
+        // 「布局」与「搜索」互斥：图片不进搜索，图片分类下那个位置让给布局调节（见 selectCategory）
+        btnLayout = tabButton("布局") { toggleTuneRow() }
+        btnLayout.visibility = View.GONE
         btnClear = tabButton("清空", TapSound.G_ERASE) { showClearConfirm() }
             .apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
         val cells = listOf(btnCategoryAll, btnCategoryUrl, btnCategoryNumber,
-            btnCategoryImage, btnCategoryFavorite, btnSearch, btnClear)
+            btnCategoryImage, btnCategoryFavorite, btnSearch, btnLayout, btnClear)
         for (cell in cells) {
             topRow.addView(cell, LinearLayout.LayoutParams(0, dp(36), 1f))
         }
@@ -359,8 +361,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         listView.setOnItemLongClickListener { _, view, pos, _ ->
             itemAt(pos, view)?.let {
-                // 图片行是占位（见 getView 的图片分支）：长按也不出操作条 —— 它没有「打开图片」的入口
-                if (it.image != null) return@setOnItemLongClickListener true
                 KeyFeedback.fire(TapSound.G_FUNC)
                 showItemMenu(it)
             }
@@ -394,6 +394,27 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             }
         })
         addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // ── 布局调节行（图片分类）──
+        // 与图库快贴共用同一对偏好（Prefs.galleryColumns / galleryCellHeightDp）：这里调一次，
+        // 图库面板与「剪贴板自定义」页同步生效；改完立即重排网格
+        tuneRow.apply {
+            orientation = HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            rowCountLabel.textSize = 12f
+            rowCountLabel.setPadding(dp(2), 0, dp(4), 0)
+            rowHeightLabel.textSize = 12f
+            rowHeightLabel.setPadding(dp(10), 0, dp(4), 0)
+            addView(rowCountLabel)
+            addView(tabButton("-") { stepColumns(-1) })
+            addView(tabButton("+") { stepColumns(1) })
+            addView(rowHeightLabel)
+            addView(tabButton("-") { stepHeight(-HEIGHT_STEP_DP) })
+            addView(tabButton("+") { stepHeight(HEIGHT_STEP_DP) })
+            visibility = View.GONE
+        }
+        readGridTuning()
+        addView(tuneRow, lp())
 
         // ── 图片网格（与列表互斥；只有「图片」分类显示） ──
         imageGrid = ClipboardImageGridView(context).apply {
@@ -503,9 +524,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         imageGrid.visibility = if (imageMode) View.VISIBLE else View.GONE
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
         textEmpty.visibility = View.GONE
+        // 「布局」只在图片分类露面（该分类下搜索无意义，那个键位让给布局）：切出去时收起调节行
+        btnSearch.visibility = if (imageMode) View.GONE else View.VISIBLE
+        btnLayout.visibility = if (imageMode) View.VISIBLE else View.GONE
+        if (!imageMode) tuneRow.visibility = View.GONE
         if (imageMode) {
             // 网格自己取数（图片走文件 + 缩略图缓存，与列表的解密分页是两条路）
             Diagnostics.i(TAG, "[$currentTraceId] 切到图片分类")
+            readGridTuning()
             imageGrid.show(currentTraceId)
             return
         }
@@ -952,6 +978,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listView.setBackgroundColor(plate)
         if (::imageGrid.isInitialized) imageGrid.setBackgroundColor(plate)
         textEmpty.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+        rowCountLabel.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+        rowHeightLabel.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
         for (b in tabButtons) {
             b.setTextColor(
                 if (b in dangerButtons) context.getColor(R.color.danger)
@@ -1031,6 +1059,45 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     private fun lp() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
+    /** 点「布局」：展开 / 收起调节行（每行张数、行高） */
+    private fun toggleTuneRow() {
+        val show = tuneRow.visibility != View.VISIBLE
+        tuneRow.visibility = if (show) View.VISIBLE else View.GONE
+        Diagnostics.i(TAG, "布局调节行: ${if (show) "展开" else "收起"}")
+    }
+
+    /**
+     * 每行张数 ±1（[Prefs.galleryColumns] 的 setter 会归一），随后网格按新参数重排。
+     *
+     * 先判等再落盘：到边界后继续点按值不会变，那时照旧重排只是白工（缩略图缓存被清、
+     * 整页重解），而按钮看起来毫无反应（与图库面板同款处置）。
+     */
+    private fun stepColumns(delta: Int) {
+        val cur = Prefs(context).galleryColumns
+        val next = (cur + delta).coerceIn(Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX)
+        if (next == cur) return
+        Prefs(context).galleryColumns = next
+        readGridTuning()
+        imageGrid.show(currentTraceId)
+    }
+
+    /** 行高 ±[HEIGHT_STEP_DP] dp（同上，到边界直接返回） */
+    private fun stepHeight(delta: Int) {
+        val cur = Prefs(context).galleryCellHeightDp
+        val next = (cur + delta).coerceIn(Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX)
+        if (next == cur) return
+        Prefs(context).galleryCellHeightDp = next
+        readGridTuning()
+        imageGrid.show(currentTraceId)
+    }
+
+    /** 读回布局参数并刷新两个数值标签（读的是 setter 归一之后的值，标签永远等于即将生效的档位） */
+    private fun readGridTuning() {
+        val prefs = Prefs(context)
+        rowCountLabel.text = String.format(Locale.US, TEXT_ROW_COUNT, prefs.galleryColumns)
+        rowHeightLabel.text = String.format(Locale.US, TEXT_ROW_HEIGHT, prefs.galleryCellHeightDp)
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
@@ -1041,8 +1108,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val CATEGORY_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         const val CATEGORY_IMAGE = ClipboardFilter.PSEUDO_IMAGE
 
-        /** 「全部」列表里图片行的占位文案（灰字、不可点；文案由代码下发，不动 strings.xml） */
-        const val TEXT_IMAGE_PLACEHOLDER = "（图片需在「图片」分类浏览）"
+        /** 行高调节步进（dp）：与图库面板的步进同值，两处调参手感一致 */
+        const val HEIGHT_STEP_DP = 8
+
+        /** 布局调节行的两个标签（与图库面板同款文案） */
+        const val TEXT_ROW_COUNT = "每行 %d 张"
+        const val TEXT_ROW_HEIGHT = "行高 %d dp"
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 

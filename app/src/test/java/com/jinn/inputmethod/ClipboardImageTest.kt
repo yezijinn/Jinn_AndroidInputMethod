@@ -84,10 +84,10 @@ class ClipboardImageTest {
         assertNull("图片不是 category 取值（塞进 LIKE 体系会恒空）", img.category)
         assertFalse(img.favoritesOnly)
         assertEquals(ClipboardDb.CONTENT_TYPE_IMAGE, img.contentType)
-        // 收藏伪分类不受影响
+        // 收藏伪分类仍走独立标签列；内容类型收窄到文本（收藏的图片在收藏分类的网格区里）
         val fav = ClipboardFilter.of(ClipboardFilter.PSEUDO_FAVORITE)
         assertTrue(fav.favoritesOnly)
-        assertNull(fav.contentType)
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, fav.contentType)
     }
 
     // ── 编解码纯函数 ─────────────────────────────────────────
@@ -177,12 +177,21 @@ class ClipboardImageTest {
     fun 面板与历史页的图片入口就位() {
         val panel = TestSources.codeSource("ClipboardPanelView.kt")
         assertTrue("面板要有图片分类键", "btnCategoryImage" in panel)
-        assertTrue("面板要有占位文案", "TEXT_IMAGE_PLACEHOLDER" in panel)
-        assertTrue("占位行点击不响应", "if (item.image != null) return" in panel)
+        // 图片不进文本列表（2026-10-11）：文本分类按 content_type='text' 取数，图片只在「图片」分类的网格里
+        assertTrue("文本列表不再渲染图片占位行", "TEXT_IMAGE_PLACEHOLDER" !in panel)
         assertTrue("图片长按要出三个动作", "imageAction(ClipboardImageAction.Copy)" in panel)
+        // 「布局」键：图片分类下取代搜索（图片不进搜索，键位让给布局调节），可在面板内改每行张数 / 行高
+        assertTrue("面板要有布局键", "btnLayout = tabButton(\"布局\")" in panel)
+        assertTrue(
+            "布局键只在图片分类露面",
+            "btnLayout.visibility = if (imageMode) View.VISIBLE else View.GONE" in panel,
+        )
+        assertTrue("调节行改每行张数", "Prefs(context).galleryColumns = next" in panel)
+        assertTrue("调节行改行高", "Prefs(context).galleryCellHeightDp = next" in panel)
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)
+        assertTrue("历史页文本列表不再渲染图片占位行", "TEXT_IMAGE_PLACEHOLDER" !in hist)
         assertTrue("历史页要有导出全部图片", "TEXT_IMAGE_EXPORT_ALL" in hist)
         assertTrue("历史页要有删图片", "deleteByContentType" in hist)
         assertTrue("删图片后要收文件", "ClipboardImageFiles.gc" in hist)
@@ -239,8 +248,13 @@ class ClipboardImageTest {
             "if (imageMode) imageGrid.show(tid) else refresh(resetScroll = true)" in panel,
         )
         assertTrue(
-            "列表里的图片行不可长按（占位语义）",
-            "if (it.image != null) return@setOnItemLongClickListener true" in panel,
+            "布局调节行只在图片分类展开（切走要收起）",
+            "if (!imageMode) tuneRow.visibility = View.GONE" in panel,
+        )
+        val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "自定义页要有缩略图布局项（与图库 / 面板同一对参数）",
+            "TEXT_LAYOUT_COLUMNS" in page && "layoutPrefs.galleryColumns = it" in page,
         )
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue(

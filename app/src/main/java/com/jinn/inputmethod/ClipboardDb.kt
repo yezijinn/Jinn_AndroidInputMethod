@@ -1565,10 +1565,13 @@ data class ClipboardRowSize(
 /**
  * 剪贴板列表的筛选条件：把分类栏的「伪分类」翻译成 SQL 参数。
  *
- * 分类栏有 4 个 Tab：全部 / 网址 / 数字 / 收藏。其中网址、数字是真正的
- * `category` 列取值，而收藏是独立的标签列（is_favorite），
- * 绝不能当 category 传给 SQL，否则 `WHERE category = 'FAVORITE'` 恒不成立，
- * 列表会永远是空的。这个翻译必须显式做，是本项目最容易踩的坑之一。
+ * 分类栏有 5 个 Tab：全部 / 网址 / 数字 / 图片 / 收藏。网址、数字是真正的 `category`
+ * 列取值；收藏是独立的标签列（is_favorite）；图片走 `content_type` 列。伪分类绝不能当
+ * category 传给 SQL（`WHERE category = 'FAVORITE'` 恒不成立，列表永远是空的）。
+ * 这个翻译必须显式做，是本项目最容易踩的坑之一。
+ *
+ * 文本分类（全部 / 网址 / 数字 / 收藏）一律带 `content_type = 'text'`：图片只在图片分类
+ * 与网格区里出现，混进文本列表会让「点一条即上屏」的语义分叉。
  *
  * 该翻译原先在 5 处（Activity 的首页 / 下一页 / 搜索，Panel 的刷新 / 下一页）
  * 各写一遍，现在收敛到这里：一来不用重复，二来它是纯函数、不依赖 Android，能直接 JVM 单测。
@@ -1578,10 +1581,11 @@ data class ClipboardFilter(
     val category: String?,
     val favoritesOnly: Boolean,
     /**
-     * 内容类型维度（`image` = 图片分类；null = 不限）。
+     * 内容类型维度（`text` / `image`；null = 不限）。
      *
      * 与 [category] **正交**：图片恒 `category='OTHER'`（不进 URL/NUMBER 标签体系），
-     * 图片分类靠这一维过滤。搜索路径也用它（传 `text` 排除图片，见 SearchPanelView）。
+     * 图片分类靠这一维过滤。文本分类一律传 `text`（见 [ClipboardFilter.of]）；
+     * 搜索路径同样传 `text`（见 SearchPanelView）。
      */
     val contentType: String? = null,
 
@@ -1605,9 +1609,13 @@ data class ClipboardFilter(
          * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/IMAGE=伪分类
          */
         fun of(raw: String?): ClipboardFilter = when (raw) {
-            PSEUDO_FAVORITE -> ClipboardFilter(null, favoritesOnly = true)
+            // 「收藏」与「全部」等文本分类只列文本：图片由网格区（ClipboardImageGridView）承载，
+            // 不再以「占位行」混进文本列表（2026-10-11 布局口径）
+            PSEUDO_FAVORITE -> ClipboardFilter(
+                null, favoritesOnly = true, contentType = ClipboardDb.CONTENT_TYPE_TEXT,
+            )
             PSEUDO_IMAGE -> ClipboardFilter(null, favoritesOnly = false, contentType = ClipboardDb.CONTENT_TYPE_IMAGE)
-            else -> ClipboardFilter(raw, favoritesOnly = false)
+            else -> ClipboardFilter(raw, favoritesOnly = false, contentType = ClipboardDb.CONTENT_TYPE_TEXT)
         }
     }
 }

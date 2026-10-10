@@ -186,30 +186,17 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     if (checked) checkedIds.add(item.id) else checkedIds.remove(item.id)
                 }
                 holder.number.text = (numberById[item.id] ?: "").toString()
-                // 列表里的图片行 = **排序占位**（与键盘面板同款口径）：灰字、不可点、不可长按；
-                // 图片的浏览与操作都在「图片」分类的网格里做
-                val isImage = item.image != null
-                if (isImage) {
-                    holder.content.text = TEXT_IMAGE_PLACEHOLDER
-                    holder.content.setTextColor(getColor(R.color.text_secondary))
-                    holder.meta.text = buildString {
-                        append(timeFmt.format(Date(item.createdAt)))
-                        append("  图片")
-                        if (item.isFavorite) append("  ★")
-                    }
-                } else {
-                    holder.content.text = item.content
-                    holder.content.setTextColor(getColor(R.color.text_primary))
-                    holder.meta.text = buildString {
-                        append(timeFmt.format(Date(item.createdAt)))
-                        append("  ")
-                        append(item.content.length).append(" 字")
-                        append("  ").append(item.category)
-                        if (item.isFavorite) append("  ★")
-                    }
+                // 文本列表只承载文本：图片统一走上方条带或「图片」分类的全屏网格（2026-10-11 布局口径）
+                holder.content.text = item.content
+                holder.content.setTextColor(getColor(R.color.text_primary))
+                holder.meta.text = buildString {
+                    append(timeFmt.format(Date(item.createdAt)))
+                    append("  ")
+                    append(item.content.length).append(" 字")
+                    append("  ").append(item.category)
+                    if (item.isFavorite) append("  ★")
                 }
                 row.setOnClickListener {
-                    if (isImage) return@setOnClickListener
                     if (multiSelect) {
                         if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
                         notifyDataSetChanged()
@@ -218,7 +205,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     }
                 }
                 row.setOnLongClickListener {
-                    if (isImage) return@setOnLongClickListener true
                     val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
                     AlertDialog.Builder(this@ClipboardHistoryActivity)
                         .setItems(arrayOf(TEXT_DELETE, favText)) { _, which ->
@@ -303,7 +289,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             }
         }
         grid.adapter = gridAdapter
-        grid.numColumns = Prefs(this).galleryColumns.coerceAtLeast(1)
+        grid.numColumns = Prefs(this).galleryColumns.coerceAtLeast(MIN_GRID_COLUMNS)
         grid.setOnItemClickListener { _, _, position, _ ->
             pageItems().getOrNull(position)?.takeIf { it.image != null }?.let { showImageDialog(it) }
         }
@@ -616,12 +602,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val keywordNow = keyword
         val favoritesOnly = category == FILTER_FAVORITE
         val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
-        // 内容类型维度：图片分类只看图片；**有关键词时只看文本**（图片的 content 恒为空串、
-        // 搜不到任何词，进入扫描窗口只会白解密）；其余（全部 / 网址 / 数字 / 收藏）不限类型
+        // 内容类型维度：图片分类只看图片，其余分类一律只看文本 —— 图片统一走网格区
+        // （「图片」分类的全屏网格，或「全部 / 收藏」上方的条带），不再混进文本列表
         val contentType = when {
             category == FILTER_IMAGE -> ClipboardDb.CONTENT_TYPE_IMAGE
-            keywordNow.isNotEmpty() -> ClipboardDb.CONTENT_TYPE_TEXT
-            else -> null
+            else -> ClipboardDb.CONTENT_TYPE_TEXT
         }
         val maxResults = ClipboardPrefs.of(this).maxSearchResults
         BackgroundIo.run {
@@ -1167,8 +1152,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val FILTER_FAVORITE = ClipboardFilter.PSEUDO_FAVORITE
         val FILTER_IMAGE = ClipboardFilter.PSEUDO_IMAGE
 
-        /** 列表里图片行的占位文案（与键盘面板同款；文案代码下发） */
-        const val TEXT_IMAGE_PLACEHOLDER = "（图片需在「图片」分类浏览）"
+        /** 图片网格的列数下限（读图库布局偏好；见 ClipboardImageGridView 的类注释） */
+        const val MIN_GRID_COLUMNS = 1
 
         /** 图片网格：无图时的空态 */
         const val TEXT_IMAGE_EMPTY = "暂无图片"

@@ -51,6 +51,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     private var cellHeightPx = 0
     private var renderedColumns = -1
 
+    /** 网格可用宽度（布局后才有值）：格子按它 ÷ 列数取固定宽，见 [cellWidthPx] */
+    private var contentWidthPx = 0
+
     /** 视图世代令牌：视图被丢弃（键盘重建）后在飞任务不得再动界面 */
     private var generation = 0
 
@@ -80,6 +83,17 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         scroll.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             val child = scroll.getChildAt(0) ?: return@setOnScrollChangeListener
             if (child.height - (scroll.height + scrollY) < LOAD_AHEAD_PX) loadMore()
+        }
+        // 宽度变化（首次布局 / 旋转 / 字体缩放）要按新宽度重切格子：格子宽是固定像素而非 weight
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val w = width
+            if (w > 0 && w != contentWidthPx) {
+                contentWidthPx = w
+                if (items.isNotEmpty()) {
+                    column.removeAllViews()
+                    appendCells(0)
+                }
+            }
         }
     }
 
@@ -174,9 +188,21 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
                 }
                 column.addView(cur)
             }
-            cur.addView(cell(items[idx]))
+            cur.addView(cell(items[idx]), LayoutParams(cellWidthPx(), LayoutParams.MATCH_PARENT))
             row = cur
         }
+    }
+
+    /**
+     * 格子宽度：按列数等分网格可用宽度。
+     *
+     * 不用 `weight=1` 均分：那样**末行不满时剩下的格子会被拉宽**（三张图在「每行 5 张」下各占 1/3 宽），
+     * 与图库快贴的观感不一致 —— 图库是补空位、格子尺寸恒定。这里按固定像素切，行尾自然留白。
+     * 可用宽度取自布局后的实际宽度（首帧未布局时回退屏幕宽度）。
+     */
+    private fun cellWidthPx(): Int {
+        val avail = if (contentWidthPx > 0) contentWidthPx else resources.displayMetrics.widthPixels
+        return (avail / columns.coerceAtLeast(1)).coerceAtLeast(MIN_CELL_WIDTH_PX)
     }
 
     private fun cell(item: ClipboardDb.Item): View {
@@ -184,7 +210,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         // cell = FrameLayout（缩略图 + 收藏角标；child[0]=图、child[1]=★）：点击/长按挂在**根**上
         // （与历史页不同：这里的父是普通 LinearLayout，不涉及 AbsListView 的手势分发）
         val view = FrameLayout(context).apply {
-            layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
             tag = item.contentHash
             setOnClickListener {
                 KeyFeedback.fire(TapSound.G_TEXT)
@@ -257,6 +282,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
 
         const val CELL_PADDING_PX = 4
         const val MIN_TARGET_PX = 64
+
+        /** 格子宽度下限（列数极端时兜底，避免算出 0 宽） */
+        const val MIN_CELL_WIDTH_PX = 24
 
         const val TEXT_EMPTY = "暂无图片\n复制的图片会自动保存在这里"
         const val TEXT_CELL_DESC = "剪贴板图片"

@@ -13,15 +13,17 @@ import org.junit.Test
  * 若把 "FAVORITE" 当 category 传给 SQL，条件会变成 `WHERE category = 'FAVORITE'`（恒不成立），
  * 列表永远是空的。翻译规则收敛在 [ClipboardFilter.of] 后，用测试把它钉死。
  *
- * 分类栏共 4 个 Tab：全部 / 网址 / 数字 / 收藏。
+ * 分类栏共 5 个 Tab：全部 / 网址 / 数字 / 图片 / 收藏。文本分类一律带
+ * `content_type = 'text'`（图片只在图片分类与网格区出现，不混进文本列表）。
  */
 class ClipboardFilterTest {
 
     @Test
-    fun allCategory_passesThroughNull() {
+    fun allCategory_listsTextOnly() {
         val f = ClipboardFilter.of(null)
         assertNull(f.category)
         assertFalse(f.favoritesOnly)
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, f.contentType)
     }
 
     @Test
@@ -29,6 +31,7 @@ class ClipboardFilterTest {
         val f = ClipboardFilter.of(ClipboardClassifier.CATEGORY_URL)
         assertEquals("URL", f.category)
         assertFalse(f.favoritesOnly)
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, f.contentType)
     }
 
     @Test
@@ -36,6 +39,7 @@ class ClipboardFilterTest {
         val f = ClipboardFilter.of(ClipboardClassifier.CATEGORY_NUMBER)
         assertEquals("NUMBER", f.category)
         assertFalse(f.favoritesOnly)
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, f.contentType)
     }
 
     @Test
@@ -44,6 +48,8 @@ class ClipboardFilterTest {
         // 关键：category 必须为 null，否则 SQL 一行都查不到
         assertNull(f.category)
         assertTrue(f.favoritesOnly)
+        // 收藏列表同样只列文本：收藏的图片在收藏分类的网格区里
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, f.contentType)
     }
 
     @Test
@@ -52,5 +58,6 @@ class ClipboardFilterTest {
         val f = ClipboardFilter.of("SOMETHING")
         assertEquals("SOMETHING", f.category)
         assertFalse(f.favoritesOnly)
+        assertEquals(ClipboardDb.CONTENT_TYPE_TEXT, f.contentType)
     }
 }
