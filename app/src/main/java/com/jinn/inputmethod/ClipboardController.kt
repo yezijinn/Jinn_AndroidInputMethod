@@ -195,8 +195,21 @@ class ClipboardController(context: Context) {
      */
     private fun handleImageClip(item: android.content.ClipData.Item): Boolean {
         val uri = item.uri ?: return false
-        val type = runCatching { appContext.contentResolver.getType(uri) }.getOrNull() ?: return false
-        if (!type.startsWith("image/")) return false
+        val declared = runCatching { appContext.contentResolver.getType(uri) }.getOrNull()
+        // 类型不可靠时不直接判否（BUG.md L-1285）：有的应用写 `application/octet-stream`、
+        // 有的干脆不给类型 —— 原先这两类图片被静默拒收，诊断包里查不到任何痕迹，
+        // 用户只看到「复制了图、历史里没有」。现在先按字节嗅探，嗅探也认不出才算「不是图片」
+        val type = if (declared != null && declared.startsWith("image/")) {
+            declared
+        } else {
+            val sniffed = sniffImageFromUri(uri)
+            if (sniffed == null) {
+                Diagnostics.i(TAG, "跳过剪贴板条目：类型不是图片（declared=${declared ?: "null"}）")
+                return false
+            }
+            Diagnostics.i(TAG, "剪贴板类型不可靠（declared=${declared ?: "null"}），按字节嗅探为 $sniffed")
+            sniffed
+        }
         if (!ClipboardPrefs.of(appContext).imageCaptureEnabled) {
             Diagnostics.i(TAG, "跳过图片剪贴板条目（记录图片已关闭）")
             return true
@@ -204,6 +217,28 @@ class ClipboardController(context: Context) {
         BackgroundIo.runLong { saveImageFromUri(uri, type) }
         return true
     }
+
+    /**
+     * 从 content URI 读头部字节做图片嗅探（类型不可靠时的兜底，BUG.md L-1285）。
+     *
+     * 只读前 16 字节，读不到（流打不开 / 空）返回 null。注意 [GalleryInsert.sniffImageMime]
+     * 认不出时**回落 `image/png`** —— 返回 png 时必须核对魔数，否则任意二进制（zip / pdf）
+     * 都会被当成图片送进入库流程。
+     */
+    private fun sniffImageFromUri(uri: android.net.Uri): String? = runCatching {
+        appContext.contentResolver.openInputStream(uri)?.use { input ->
+            val head = ByteArray(16)
+            var n = 0
+            while (n < head.size) {
+                val r = input.read(head, n, head.size - n)
+                if (r < 0) break
+                n += r
+            }
+            if (n <= 0) return@use null
+            val mime = GalleryInsert.sniffImageMime(head.copyOf(n))
+            if (mime == "image/png" && (n < 4 || (head[0].toInt() and 0xFF) != 0x89)) null else mime
+        }
+    }.getOrNull()
 
     /**
      * 读一张剪贴板图片并入库（长活池线程）：带预算读流 → 读尺寸 → 缩略图 → 加密落盘 → 入库 → GC。

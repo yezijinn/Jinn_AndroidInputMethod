@@ -5047,6 +5047,17 @@ class RecentFixesRegressionTest {
             "GalleryInsert.sniffImageMime(bytes)" in codeOf("ClipboardImageExport.kt"),
         )
         assertTrue("符号分组缺失要留痕", "无对应数据，已跳过" in codeOf("SymbolOrder.kt"))
+
+        // L-1286：关开关之前必须先把「刚学的那一次」写下去（flush 要在置 false 之前）
+        assertTrue("关闭学习前先落盘", uf.indexOf("flush()") in 1 until uf.indexOf("enabled = value"))
+        // L-1287：写系统剪贴板失败的临时件要回收
+        assertTrue("失败分支清理临时件", "已清理临时件" in codeOf("ClipboardImageExport.kt"))
+        // L-1285：剪贴板类型不可靠时按字节嗅探兜底，并留痕
+        val ctrl = codeOf("ClipboardController.kt")
+        assertTrue("类型不可靠时嗅探兜底", "sniffImageFromUri" in ctrl)
+        assertTrue("类型被拒要留痕", "跳过剪贴板条目：类型不是图片" in ctrl)
+        // 历史页补上「布局」入口（与键盘面板的键同名同义）
+        assertTrue("历史页有布局入口", "TEXT_IMAGE_LAYOUT" in codeOf("ClipboardHistoryActivity.kt"))
     }
 
 }

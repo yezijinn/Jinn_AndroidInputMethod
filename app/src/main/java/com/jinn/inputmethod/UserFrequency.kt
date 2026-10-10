@@ -109,6 +109,13 @@ internal object UserFrequency {
      */
     fun setEnabled(value: Boolean) {
         if (enabled == value) return
+        if (!value) {
+            // 关之前先把「还没落盘的那一次学习」写下去（BUG.md L-1286，与 L-1274 的对偶）：
+            // 直接清内存会让它既进不了文件、重开也无从补写（内存表已空）。先 flush 再清，
+            // 「关闭后既有记录留在文件里」这句话才包含刚刚学的那一次。
+            // 注意顺序：必须在 enabled 置 false **之前**调，否则会被落盘入口的开关判据拦掉。
+            flush()
+        }
         enabled = value
         Diagnostics.i(TAG, "用户词频学习: ${if (value) "开启" else "关闭"}")
         if (value && entries.isEmpty()) {

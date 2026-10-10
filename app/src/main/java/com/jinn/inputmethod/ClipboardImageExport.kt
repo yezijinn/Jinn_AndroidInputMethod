@@ -125,10 +125,20 @@ internal object ClipboardImageExport {
     fun copyToSystemClipboard(context: Context, item: ClipboardDb.Item, bytes: ByteArray): Boolean {
         val mime = mimeOf(item, bytes)
         val file = GalleryInsert.stageForInsert(context, bytes, mime) ?: return false
+        // 失败分支同样要收尾（BUG.md L-1287）：临时件是本次刚生成的唯一名文件，不删就在缓存目录
+        // 留一份**明文**图片 —— 目录的保留策略只在成功路径上跑，失败多了会堆着没人收
         val uri = runCatching {
             FileProvider.getUriForFile(context, "${context.packageName}.share", file)
-        }.getOrNull() ?: return false
-        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+        }.getOrNull() ?: run {
+            file.delete()
+            Diagnostics.w(TAG, "复制图片到剪贴板失败：取分享 URI 失败，已清理临时件")
+            return false
+        }
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: run {
+            file.delete()
+            Diagnostics.w(TAG, "复制图片到剪贴板失败：剪贴板服务不可用，已清理临时件")
+            return false
+        }
         val clip = android.content.ClipData.newUri(context.contentResolver, CLIP_LABEL, uri)
         return runCatching {
             manager.setPrimaryClip(clip)

@@ -412,6 +412,71 @@ class ClipboardHistoryActivity : ComponentActivity() {
         if (::favImageGrid.isInitialized) favImageGrid.rerender()
     }
 
+    /**
+     * 历史页的布局调节入口（与键盘面板的「布局」键共用同一组参数）。
+     *
+     * 面板侧早就有这个键，历史页原先只能绕到「剪贴板自定义」页去调 —— 而用户此刻正看着这个网格，
+     * 调不了它说不过去。每次 ± 立即落盘并重排（主网格 + 收藏条带一起，见 [applyGridTuning]）。
+     */
+    private fun showLayoutDialog() {
+        val cols = TextView(this).apply { textSize = 14f; setPadding(0, dp(8), 0, dp(8)) }
+        val height = TextView(this).apply { textSize = 14f; setPadding(0, dp(8), 0, dp(8)) }
+        fun refresh() {
+            cols.text = "$TEXT_LAYOUT_COLS  ${Prefs(this).galleryColumns}"
+            height.text = "$TEXT_LAYOUT_HEIGHT  ${Prefs(this).galleryCellHeightDp} dp"
+        }
+        fun stepCols(delta: Int) {
+            val cur = Prefs(this).galleryColumns
+            val next = (cur + delta).coerceIn(Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX)
+            if (next == cur) return
+            Prefs(this).galleryColumns = next
+            refresh()
+            applyGridTuning()
+        }
+        fun stepHeight(delta: Int) {
+            val cur = Prefs(this).galleryCellHeightDp
+            val next = (cur + delta).coerceIn(Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX)
+            if (next == cur) return
+            Prefs(this).galleryCellHeightDp = next
+            refresh()
+            applyFavStripHeight()
+            applyGridTuning()
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), dp(4))
+        }
+        fun rowOf(label: TextView, onMinus: () -> Unit, onPlus: () -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(compactView().apply { text = "−"; setOnClickListener { onMinus() } })
+            row.addView(compactView().apply { text = "＋"; setOnClickListener { onPlus() } })
+            root.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+        refresh()
+        rowOf(cols, { stepCols(-1) }, { stepCols(1) })
+        rowOf(height, { stepHeight(-LAYOUT_HEIGHT_STEP_DP) }, { stepHeight(LAYOUT_HEIGHT_STEP_DP) })
+        root.addView(TextView(this).apply {
+            text = TEXT_LAYOUT_HINT
+            textSize = 11f
+            setTextColor(getColor(R.color.text_secondary))
+            setPadding(0, dp(8), 0, 0)
+        })
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_IMAGE_LAYOUT)
+            .setView(root)
+            .setPositiveButton("关闭", null)
+            .show()
+    }
+
     /** 收藏图片条带的高度 = 图库行高 × [FAV_STRIP_ROWS]（行高在图库设置页 / 自定义页可改） */
     private fun applyFavStripHeight() {
         if (!::favImageGrid.isInitialized) return
@@ -493,6 +558,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     imageFavOnly = !imageFavOnly
                     loadAsync()
                 }
+            })
+            actionsRow.addView(compactView().apply {
+                text = TEXT_IMAGE_LAYOUT
+                setOnClickListener { showLayoutDialog() }
             })
             actionsRow.addView(compactView().apply {
                 text = TEXT_IMAGE_EXPORT_ALL
@@ -1315,6 +1384,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 预览元信息里尺寸读不出时的前缀（BUG.md L-1252）：说明状态，别让用户以为元信息坏了 */
         const val TEXT_NO_DIM = "尺寸读不出（原图已保存）· "
+
+        /** 图片分类操作行里的布局入口（与键盘面板的「布局」键同名同义） */
+        const val TEXT_IMAGE_LAYOUT = "布局"
+        const val TEXT_LAYOUT_COLS = "每行张数："
+        const val TEXT_LAYOUT_HEIGHT = "缩略图行高："
+        const val TEXT_LAYOUT_HINT = "与图库快贴、键盘面板的「布局」键是同一组参数，改完立即生效。"
+        const val LAYOUT_HEIGHT_STEP_DP = 8
 
         const val TEXT_IMAGE_CELL = "剪贴板图片"
 
