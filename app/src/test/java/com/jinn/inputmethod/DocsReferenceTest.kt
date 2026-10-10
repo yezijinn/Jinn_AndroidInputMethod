@@ -444,8 +444,9 @@ class DocsReferenceTest {
     /**
      * README 的 APK 体积声明必须与本地发布包相符（`BUG.md` L-165）。
      *
-     * 对外写「约 2.6MB」而实际 2.71 MiB，用户按体积预估下载量会判错；这也是发布后最容易腐烂的一处数字
+     * 对外写「约 2.6MB」而实际 2.71 MB，用户按体积预估下载量会判错；这也是发布后最容易腐烂的一处数字
      * （每次改动都在长，而 README 没人回头改）。只在仓库根存在构建产物时判，干净检出 / CI 里没有这个包就跳过。
+     * 单位口径见下方注释（2026-10-10 起为十进制 MB）。
      *
      * ⚠ 产物名必须与 `build_apk.py` 一致 —— 改名时只改一处，这条守卫就会**静默跳过**，
      * README 的体积声明从此没人核对（2026-10-02 产物由 `jinn-release.apk` 改为
@@ -479,15 +480,18 @@ class DocsReferenceTest {
         )
         val apk = listOf(File(APK_FILE_NAME), File("../$APK_FILE_NAME"))
             .firstOrNull { it.isFile } ?: return
-        val mib = apk.length() / 1048576.0
+        // 2026-10-10：单位由 MiB（1024 进制）改为 **MB（十进制）** —— 与 `ByteSize`（应用内
+        // 体积文案）、`OptionalDicts.sizeMb`（清单）以及托管平台的下载体积展示同一口径；
+        // 同一只包按 MiB 写 2.95、按十进制写 3.10，README 若与页面/发布页各用一套，用户对不上账
+        val mb = apk.length() / 1e6
         for (name in listOf("README.md", "README_EN.md")) {
             val doc = readDoc(name) ?: continue
             val m = Regex("""(?i)APK[^\n]{0,12}?约?\s*~?\s*([0-9]+(?:\.[0-9]+)?)\s*MB""").find(doc)
                 ?: continue
             val claimed = m.groupValues[1].toDouble()
-            val actual = "%.1f".format(mib)      // 对外写的是「约 X.YMB」：取一位小数比
+            val actual = "%.1f".format(mb)      // 对外写的是「约 X.YMB」：取一位小数比
             assertEquals(
-                "$name 写「$claimed MB」与实际 ${"%.2f".format(mib)} MiB 不符（守卫要求 X.Y 位一致；" +
+                "$name 写「$claimed MB」与实际 ${"%.2f".format(mb)} MB 不符（守卫要求 X.Y 位一致；" +
                     "体积变大时请同步改 README）",
                 actual, "%.1f".format(claimed),
             )

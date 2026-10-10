@@ -1,7 +1,7 @@
 # 精灵输入法
 
 A lightweight Android IME: QWERTY full pinyin / Shuangpin (7 schemes), clipboard history, optional
-dictionaries. Everything core runs on-device, no server needed; APK ~3.0MB with no bundled speech datas.
+dictionaries. Everything core runs on-device, no server needed; APK ~3.1MB with no bundled speech datas.
 
 English ｜ [中文](README.md)
 
@@ -28,9 +28,10 @@ English ｜ [中文](README.md)
 - Copies are auto-saved, AES-256-GCM encrypted into a private local DB readable only by this IME
 - Categories All / URL / Number / Favorites; dynamic numbering, tap to paste, long-press to favorite or delete; clearing asks for confirmation and keeps favorites
 - Top search panel: filters history as you type, tap to paste
+- History manager page (from Clipboard settings): search / category filter / multi-select delete / import a .txt file line by line (duplicates skipped)
 
 **Dictionaries and learning**
-- Optional packs in Settings ("Supplement phrase dictionaries"): 400K entries built in, plus three downloadable packs — level 2 +400K (recommended), level 3 +500K, level 4 +600K; loaded only when idle, IME restarts automatically after add/removal
+- Optional packs in Settings ("Supplement phrase dictionaries"): 400K entries built in, plus three downloadable packs — level 2 900K (recommended), level 3 700K, level 4 210K (re-split 2026-10-10); loaded only when idle, IME restarts automatically after add/removal. First use of a pack builds an index cache (see the "Storage usage" page)
 - Custom dictionary (two entries on one page, sharing the same text): "Import .txt" picks your own file; "Quick add" opens an editable page and saving applies immediately. One entry per line, `word  pinyin` (e.g. `黄霄雲 huang xiao yun`) — any run of spaces, full-width spaces, NBSPs or TABs works, and the text is normalized to the standard form on import/save; 8M characters / 50K entries max; packed into `custom_user.txt.xz` and merged with the built-in lexicon, IME restarts after saving. Multi-character words are **not** filtered by the rare-character tier tables (traditional and rare characters work); single characters still follow the "More rare characters" switches. The source text travels with config backup, re-edit or delete from the dictionary page
 - User word frequency: remembers chosen candidates and ranks them higher; stored locally only, switchable
 
