@@ -708,49 +708,58 @@ object ClipboardStore {
     ): Long? {
         if (bytes.isEmpty()) return null
         val hash = ClipboardDb.imageHash(bytes)
-        val enc = ClipboardCrypto.encryptBytes(bytes) ?: run {
-            Diagnostics.w(TAG, "图片加密失败，未入库 ${hashTag(hash)}")
-            return null
+        // 在途登记（BUG.md L-1249）：从写盘到插行之间文件不在库里，回收若只按「修改时间是否落在
+        // 保护窗内」判断，20MB 级图片的加密写盘一旦超过窗口，另一条入库路径触发的 gc 就会把
+        // 「已写好、还没插行」的密文当孤儿删掉（rename 失败整图丢失，或行指向已删文件、点开只有灰块）。
+        // 登记后 gc 的保留集直接含它，不再靠时间猜。写盘流程任何出口（成功 / 各失败分支）都注销。
+        ClipboardImageFiles.beginWrite(hash)
+        try {
+            val enc = ClipboardCrypto.encryptBytes(bytes) ?: run {
+                Diagnostics.w(TAG, "图片加密失败，未入库 ${hashTag(hash)}")
+                return null
+            }
+            if (!ClipboardImageFiles.writeAtomic(ClipboardImageFiles.encFile(context, hash), enc)) {
+                Diagnostics.w(TAG, "原图写盘失败，未入库 ${hashTag(hash)}")
+                return null
+            }
+            if (thumb != null) {
+                val encThumb = ClipboardCrypto.encryptBytes(thumb)
+                val written = encThumb != null &&
+                    ClipboardImageFiles.writeAtomic(ClipboardImageFiles.thumbFile(context, hash), encThumb)
+                // 缩略图失败不致命（网格灰块、粘贴不受影响），但必须留痕：否则「为什么这张没有预览」无从查
+                if (!written) Diagnostics.w(TAG, "缩略图写盘失败（原图不受影响）${hashTag(hash)}")
+            }
+            val placeholder = ClipboardCrypto.encrypt(hash) ?: run {
+                ClipboardImageFiles.deleteFor(context, hash)
+                Diagnostics.w(TAG, "占位密文加密失败，未入库 ${hashTag(hash)}")
+                return null
+            }
+            val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
+            val id = db.upsertImage(
+                hash = hash,
+                placeholder = placeholder,
+                imageBytes = bytes.size.toLong(),
+                width = width,
+                height = height,
+                mime = mime,
+                sourcePackage = sourcePackage,
+                sourceAppName = appName,
+            )
+            if (id <= 0) {
+                Diagnostics.w(TAG, "图片入库失败：行未写入，已清理文件 ${hashTag(hash)}")
+                ClipboardImageFiles.deleteFor(context, hash)
+                return null
+            }
+            // 入库成功后再收孤儿（同线程、行已在库；在途集合与保护窗一起兜住其它线程的写入）
+            ClipboardImageFiles.gc(context, db)
+            if (logPerItem) {
+                // 只记维度（尺寸 / 体积 / 哈希前 8 位），不记 URI、路径与内容
+                Diagnostics.i(TAG, "saveImage: 已保存 #$id ${width}x$height ${bytes.size / 1024}KB ${hashTag(hash)}")
+            }
+            return id
+        } finally {
+            ClipboardImageFiles.endWrite(hash)
         }
-        if (!ClipboardImageFiles.writeAtomic(ClipboardImageFiles.encFile(context, hash), enc)) {
-            Diagnostics.w(TAG, "原图写盘失败，未入库 ${hashTag(hash)}")
-            return null
-        }
-        if (thumb != null) {
-            val encThumb = ClipboardCrypto.encryptBytes(thumb)
-            val written = encThumb != null &&
-                ClipboardImageFiles.writeAtomic(ClipboardImageFiles.thumbFile(context, hash), encThumb)
-            // 缩略图失败不致命（网格灰块、粘贴不受影响），但必须留痕：否则「为什么这张没有预览」无从查
-            if (!written) Diagnostics.w(TAG, "缩略图写盘失败（原图不受影响）${hashTag(hash)}")
-        }
-        val placeholder = ClipboardCrypto.encrypt(hash) ?: run {
-            ClipboardImageFiles.deleteFor(context, hash)
-            Diagnostics.w(TAG, "占位密文加密失败，未入库 ${hashTag(hash)}")
-            return null
-        }
-        val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
-        val id = db.upsertImage(
-            hash = hash,
-            placeholder = placeholder,
-            imageBytes = bytes.size.toLong(),
-            width = width,
-            height = height,
-            mime = mime,
-            sourcePackage = sourcePackage,
-            sourceAppName = appName,
-        )
-        if (id <= 0) {
-            Diagnostics.w(TAG, "图片入库失败：行未写入，已清理文件 ${hashTag(hash)}")
-            ClipboardImageFiles.deleteFor(context, hash)
-            return null
-        }
-        // 入库成功后再收孤儿（同线程，行已在库；GC 的保护窗兜住其它线程的在途写入）
-        ClipboardImageFiles.gc(context, db)
-        if (logPerItem) {
-            // 只记维度（尺寸 / 体积 / 哈希前 8 位），不记 URI、路径与内容
-            Diagnostics.i(TAG, "saveImage: 已保存 #$id ${width}x$height ${bytes.size / 1024}KB ${hashTag(hash)}")
-        }
-        return id
     }
 
     /** 日志用的哈希标记：只取前缀（不可逆、无隐私；避免整串刷屏） */

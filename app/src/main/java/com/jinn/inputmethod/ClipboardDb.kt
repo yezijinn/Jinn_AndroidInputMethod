@@ -38,6 +38,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 ) {
     private val appContext = context.applicationContext
 
+    /** 异步图片 GC 的防重投标记（BUG.md L-1248）：库里处于超限态时每次入库都会走到裁剪 */
+    private val imageGcScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+
     override fun onCreate(db: SQLiteDatabase) {
         // 库是**新建**的：首次安装，或库损坏后平台删库重建（BUG.md L-260）。
         // 后一种情况下历史里最大 id 从 1 重来，而「凭据不留痕」的水位记的是旧库里的 id ⇒
@@ -695,14 +698,32 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
+        // 只有**图片行**被删才需要收孤儿：`trimImages` 交回的是「实删的图片行数」。
+        // 别把 `trimFavorites` 也算进来 —— 它淘汰的多是文本收藏，而「收藏常年超限」是稳定态，
+        // 一旦入判据就变成每次入库（采集 / 粘贴 / 导入）都跑一轮完整 gc（BUG.md L-1248）。
         val imagesTrimmed = trimImages()
-        val favoritesTrimmed = trimFavorites()
-        if (imagesTrimmed > 0 || favoritesTrimmed > 0) {
-            // 裁剪删掉的**图片行**不会带走密文文件（BUG.md L-1229）：行在库里、文件在 filesDir，
-            // 两套存储。这里同步收一次孤儿（短保护窗，只跳过刚写入的在途文件）；不跑的话要等
-            // 下一次图片入库或进程重启 —— IME 常驻，可能几天都不触发，目录会长期超出图片体积预算。
-            val reclaimed = ClipboardImageFiles.gc(appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS)
-            Diagnostics.i(TAG, "裁剪后回收孤儿文件: $reclaimed 个")
+        trimFavorites()
+        if (imagesTrimmed > 0) scheduleImageGc()
+    }
+
+    /**
+     * 裁剪删掉图片行后的孤儿回收（BUG.md L-1229 / L-1248）：跳出写锁、异步跑、同一时刻只投一次。
+     *
+     * 不在这里直接 `gc`：本方法由裁剪调用，而裁剪处在 `@Synchronized` 内，gc 要遍历图片目录 +
+     * 取全量图片行哈希，在写锁内做磁盘 IO 会把采集与粘贴一起堵住。异步 + 防重投让「超限态」
+     * 下每次入库的代价降到一次判重。
+     */
+    private fun scheduleImageGc() {
+        if (!imageGcScheduled.compareAndSet(false, true)) return
+        BackgroundIo.runLong {
+            try {
+                val reclaimed = ClipboardImageFiles.gc(
+                    appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                )
+                if (reclaimed > 0) Diagnostics.i(TAG, "裁剪后回收孤儿文件: $reclaimed 个")
+            } finally {
+                imageGcScheduled.set(false)
+            }
         }
     }
 

@@ -209,12 +209,38 @@ class ClipboardImageTest {
             "text = if (imageFavOnly) TEXT_IMAGE_FAV_ALL else TEXT_IMAGE_FAV_ONLY" in
                 TestSources.codeSource("ClipboardHistoryActivity.kt"),
         )
-        // BUG.md L-1229：裁剪删掉图片行后必须回收密文文件（行与文件是两套存储）
+        // BUG.md L-1229 / L-1248：裁剪删掉图片行后回收密文文件；判据只看**图片行**且跳出写锁异步跑
+        val dbSrc = TestSources.codeSource("ClipboardDb.kt")
+        assertTrue("裁剪回收判据只看图片行", "if (imagesTrimmed > 0) scheduleImageGc()" in dbSrc)
+        assertTrue("回收跳出写锁异步跑", "BackgroundIo.runLong {" in dbSrc)
         assertTrue(
             "裁剪后要收孤儿文件",
-            "ClipboardImageFiles.gc(appContext, this, ClipboardImageFiles.DELETE_GC_PROTECT_MS)" in
-                TestSources.codeSource("ClipboardDb.kt"),
+            "ClipboardImageFiles.gc(" in dbSrc && "DELETE_GC_PROTECT_MS" in dbSrc,
         )
+        // BUG.md L-1242：网格重载必须作废在飞查询（否则上一页结果并入新列表）
+        assertTrue(
+            "网格重载要推进世代",
+            "generation++" in TestSources.codeSource("ClipboardImageGridView.kt"),
+        )
+        // BUG.md L-1249：写盘前登记在途哈希、gc 保留它，不再靠时间窗猜
+        val filesSrc = TestSources.codeSource("ClipboardImageFiles.kt")
+        assertTrue(
+            "写盘要有在途登记与注销",
+            "fun beginWrite(hash: String)" in filesSrc && "fun endWrite(hash: String)" in filesSrc,
+        )
+        assertTrue("gc 要保留在途文件", "for (hash in inFlight)" in filesSrc)
+        assertTrue(
+            "写盘流程成对注销",
+            "ClipboardImageFiles.endWrite(hash)" in TestSources.codeSource("ClipboardController.kt"),
+        )
+        // BUG.md L-1244：历史页回前台要重读布局参数（列数原先只在 onCreate 读一次）
+        assertTrue(
+            "历史页回前台重读布局",
+            "applyGridTuning()" in TestSources.codeSource("ClipboardHistoryActivity.kt"),
+        )
+        // BUG.md L-1251：只看收藏的空态必须分文案，不能沿用「暂无图片」
+        assertTrue("空态按筛选态分文案", "if (favoritesOnly) TEXT_EMPTY_FAV else TEXT_EMPTY" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页要有图片 chips", "FILTER_IMAGE to \"图片\"" in hist)
         assertTrue("历史页要有网格", "R.id.hist_grid" in hist)
@@ -227,7 +253,8 @@ class ClipboardImageTest {
     @Test
     fun 图片视图都已挂载到各自容器() {
         val panel = TestSources.codeSource("ClipboardPanelView.kt")
-        assertTrue("网格要挂进面板", "addView(imageGrid," in panel)
+        // 网格挂到列表**之前**：收藏分组是「网格在上、文本列表在下」（BUG.md L-1250）
+        assertTrue("网格要挂进面板且位于列表之前", "imageGrid, indexOfChild(listView)," in panel)
         assertTrue("网格回调要绑定", "ClipboardImageGridView.Listener" in panel)
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue("历史页网格要绑定适配器", "grid.adapter = gridAdapter" in hist)

@@ -77,6 +77,12 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     /** 当前是否有图（面板据此选空态文案） */
     val isEmpty: Boolean get() = items.isEmpty()
 
+    /**
+     * 数据变化回调（空的 / 条数）：**条带模式**（收藏分组上方的网格）据此在无图时收起自己 ——
+     * 条带里的空态文案是给全屏网格写的（「复制的图片会自动保存在这里」），留在分组上方会白占两行。
+     */
+    var onDataChanged: ((empty: Boolean, count: Int) -> Unit)? = null
+
     init {
         orientation = VERTICAL
         column.orientation = VERTICAL
@@ -113,6 +119,11 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         this.traceId = traceId
         this.favoritesOnly = favoritesOnly
         applyTuning()
+        // 重载即作废在飞查询（BUG.md L-1242）：本方法清空 items 后重新取数，而回调的判据是
+        // `gen == generation`；不推进世代的话，上一次仍在飞的查询回来时判据照样成立 ⇒ 它那一页
+        // 被追加进**新**列表（重复卡片、游标与分页错位）。切分类 / 开合面板 / 改布局 / 切筛选
+        // 都会走到这里，连点「±」时最容易撞上。
+        generation++
         // 每次都重新取数（面板每次打开都刷列表，网格同款）：用户可能刚复制了图
         items = ArrayList()
         cursor = null
@@ -277,8 +288,12 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
 
     private fun renderEmpty() {
         val empty = items.isEmpty()
+        // 空态按筛选态分文案（BUG.md L-1251）：只看收藏时若沿用「复制的图片会自动保存在这里」，
+        // 用户会以为收藏的图丢了（其实只是当前筛选下没有）
+        emptyText.text = if (favoritesOnly) TEXT_EMPTY_FAV else TEXT_EMPTY
         emptyText.visibility = if (empty) View.VISIBLE else View.GONE
         scroll.visibility = if (empty) View.GONE else View.VISIBLE
+        onDataChanged?.invoke(empty, items.size)
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -299,6 +314,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         const val MIN_CELL_WIDTH_PX = 24
 
         const val TEXT_EMPTY = "暂无图片\n复制的图片会自动保存在这里"
+
+        /** 只看收藏时的空态（BUG.md L-1251）：说明出口在哪，避免被当成「收藏的图丢了」 */
+        const val TEXT_EMPTY_FAV = "还没有收藏的图片\n在图片上长按可以收藏，点上方「布局」可看全部"
         const val TEXT_CELL_DESC = "剪贴板图片"
 
         /** 网格 cell 的收藏角标（与历史页网格、收藏列表行的 ★ 同一符号） */

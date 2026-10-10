@@ -337,7 +337,9 @@ class ClipboardCustomizeActivity : Activity() {
             { "$it dp" },
         ))
         card5.addView(makeHint(TEXT_LAYOUT_HINT))
-        dim(card5, editable)
+        // 这对参数是图库与剪贴板两个网格共享的布局偏好，与「剪贴板历史」总开关无关：
+        // 用 editable（含总开关关闭）会把只想调图库布局的人挡在门外（BUG.md L-1247）
+        dim(card5, unlocked)
         PageStyle.addCard(list, card5)
 
         // 锁定 / 无改动时按钮不可点：一个只读页面里「保存」能按本身就是误导
@@ -673,7 +675,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_LAYOUT_COLUMNS = "每行张数"
         const val TEXT_LAYOUT_HEIGHT = "缩略图行高"
         const val TEXT_LAYOUT_HINT =
-            "改完立即生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数。"
+            "改完立即生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数；" +
+                "本项与上面的「剪贴板历史」开关无关，关掉开关也照常可调。"
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"

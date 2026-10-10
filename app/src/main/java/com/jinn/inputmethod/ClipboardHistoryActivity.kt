@@ -100,6 +100,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /** 图片分类是否只看收藏：收藏分类不再有图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240） */
     private var imageFavOnly = false
 
+    /**
+     * 「收藏」分组上方的收藏图片网格（BUG.md L-1250）：与键盘面板同款，用的是图库快贴那套网格组件。
+     * 与「图片」分类的 [grid] 并存 —— 那个是全屏网格配翻页行，这个是收藏分组独有的两行条带。
+     */
+    private lateinit var favImageGrid: ClipboardImageGridView
+
+    /** 收藏图片网格的日志关联 ID（历史页没有面板那种「每次打开一个 trace」的口径） */
+    private val favGridTraceId by lazy { Diagnostics.traceId("HISTFAV") }
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
@@ -126,6 +135,30 @@ class ClipboardHistoryActivity : ComponentActivity() {
         searchRow = findViewById(R.id.hist_search_row)
         actionsRow = findViewById(R.id.hist_actions)
         filterRow = findViewById(R.id.hist_filter_row)
+
+        // 收藏分组上方的收藏图片网格（两行图库行高）：插在列表**之前** —— 收藏分组即
+        // 「收藏图片网格在上、收藏文本列表在下」，与键盘面板的同一分组保持一套布局
+        favImageGrid = ClipboardImageGridView(this).apply {
+            visibility = View.GONE
+            listener = object : ClipboardImageGridView.Listener {
+                override fun onPaste(item: ClipboardDb.Item) = showImageDialog(item)
+                override fun onMenu(item: ClipboardDb.Item) = showImageMenu(item)
+            }
+            // 没有收藏图片时收起自己：空态文案是给全屏网格写的，留在收藏列表上方会白占两行
+            onDataChanged = { empty, _ ->
+                if (categoryFilter == FILTER_FAVORITE) {
+                    visibility = if (empty) View.GONE else View.VISIBLE
+                }
+            }
+        }
+        // 插在筛选行**之后**、列表与空态**之前**：收藏分组要「网格在上、列表（或空态）在下」
+        (list.parent as ViewGroup).addView(
+            favImageGrid, (list.parent as ViewGroup).indexOfChild(filterRow) + 1,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(Prefs(this).galleryCellHeightDp * FAV_STRIP_ROWS),
+            ),
+        )
 
         adapter = object : BaseAdapter() {
             override fun getCount() = pageItems().size
@@ -343,8 +376,33 @@ class ClipboardHistoryActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
+        // 布局参数（列数 / 行高）可能刚在自定义页或键盘面板被改过：回到本页即时重排 ——
+        // 否则列数还是旧的、行高已经是新的，同一处两个参数分裂（BUG.md L-1244）
+        applyGridTuning()
+        applyFavStripHeight()
         // 不归零：页码可能是刚恢复出来的（BUG.md L-1172），回到前台时也应当停在原页
         loadAsync(resetPage = false)
+    }
+
+    /**
+     * 读回「图片」网格的列数并即时重排（BUG.md L-1244）：列数原先只在 `onCreate` 读一次，
+     * 从自定义页 / 键盘面板改完布局回来不生效，而同一网格的行高是每次重读的 ⇒ 两参数分裂。
+     */
+    private fun applyGridTuning() {
+        if (!::gridAdapter.isInitialized) return
+        val columns = Prefs(this).galleryColumns.coerceAtLeast(MIN_GRID_COLUMNS)
+        if (grid.numColumns == columns) return
+        grid.numColumns = columns
+        gridAdapter.notifyDataSetChanged()
+    }
+
+    /** 收藏图片条带的高度 = 图库行高 × [FAV_STRIP_ROWS]（行高在图库设置页 / 自定义页可改） */
+    private fun applyFavStripHeight() {
+        if (!::favImageGrid.isInitialized) return
+        favImageGrid.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(Prefs(this).galleryCellHeightDp * FAV_STRIP_ROWS),
+        )
     }
 
     override fun onStop() {
@@ -678,6 +736,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 grid.visibility = if (imageMode) View.VISIBLE else View.GONE
                 // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
                 searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
+                // 收藏分组：列表上方显示「收藏的图片」网格（两行），收藏的图不再只有折叠入口
+                val favMode = category == FILTER_FAVORITE
+                favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
+                if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
                 adapter.notifyDataSetChanged()
                 gridAdapter.notifyDataSetChanged()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
@@ -1179,6 +1241,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
         const val TEXT_IMAGE_FAV_ONLY = "★ 只看收藏"
         const val TEXT_IMAGE_FAV_ALL = "★ 看全部图片"
+
+        /** 收藏分组里图片网格占几行（下方还要放收藏的文本列表） */
+        const val FAV_STRIP_ROWS = 2
 
         const val TEXT_IMAGE_CELL = "剪贴板图片"
 

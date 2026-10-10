@@ -97,6 +97,23 @@ internal object ClipboardImageFiles {
     }
 
     /**
+     * 在途写盘的哈希（BUG.md L-1249）：从写盘到插行之间文件不在库里，回收若只按「文件修改时间
+     * 是否落在保护窗内」判断，大图加密写盘一旦超过窗口就会被当成孤儿删掉。登记后 gc 的保留集
+     * 直接含它，不再靠时间窗猜。
+     */
+    private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** 写盘开始前登记（与 [endWrite] 成对）：成功插行或失败清理后都要注销 */
+    fun beginWrite(hash: String) {
+        if (hash.isNotEmpty()) inFlight.add(hash)
+    }
+
+    /** 写盘流程收尾：文件已插行（或已被清理）后注销 */
+    fun endWrite(hash: String) {
+        inFlight.remove(hash)
+    }
+
+    /**
      * 应删除的孤儿文件名（纯函数，供守卫枚举场景）。
      *
      * @param existing 目录内现存文件（名字 → 最后修改毫秒）
@@ -125,6 +142,11 @@ internal object ClipboardImageFiles {
         val keep = HashSet<String>()
         for (hash in db.imageHashes()) {
             if (hash.isEmpty()) continue
+            keep.add(encName(hash))
+            keep.add(thumbName(hash))
+        }
+        // 在途写盘的哈希同样保留（BUG.md L-1249）：它的文件可能刚写好、行还没插进库
+        for (hash in inFlight) {
             keep.add(encName(hash))
             keep.add(thumbName(hash))
         }

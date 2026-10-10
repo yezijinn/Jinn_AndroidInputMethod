@@ -439,8 +439,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     showItemMenu(item)
                 }
             }
+            // 收藏分组的条带无图时收起自己：它的空态文案是给全屏网格写的，留在列表上方会白占两行
+            onDataChanged = { empty, _ ->
+                if (currentCategory == CATEGORY_FAVORITE) {
+                    visibility = if (empty) View.GONE else View.VISIBLE
+                }
+            }
         }
-        addView(imageGrid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // 插到列表**之前**：收藏分组是「网格在上、文本列表在下」（图片分类只有网格，顺序无影响）
+        addView(
+            imageGrid, indexOfChild(listView),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
 
         // ── 空状态 ──
         textEmpty = TextView(context).apply {
@@ -530,7 +540,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         currentCategory = category
         applyTabFaces()
         val imageMode = category == CATEGORY_IMAGE
-        imageGrid.visibility = if (imageMode) View.VISIBLE else View.GONE
+        // 「收藏」分组也给图片网格区（BUG.md L-1250）：收藏的图原先要「点布局 → 再点只看收藏」
+        // 两步才看得到，等于把入口藏了一半。现在收藏分组直接是「收藏图片网格（上，两行高）
+        // + 收藏文本列表（下）」，用的是与图库快贴同一套网格组件。
+        val favMode = category == CATEGORY_FAVORITE
+        imageGrid.visibility = if (imageMode || favMode) View.VISIBLE else View.GONE
+        applyGridHeight(imageMode)
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
         textEmpty.visibility = View.GONE
         // 「布局」只在图片分类露面（该分类下搜索无意义，那个键位让给布局）：切出去时收起调节行
@@ -545,7 +560,26 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
             return
         }
+        if (favMode) {
+            // 收藏分组的网格取「收藏的图片」；文本列表走 refresh（各自取数、互不干扰）
+            imageGrid.show(currentTraceId, favoritesOnly = true)
+        }
         refresh(resetScroll = true)
+    }
+
+    /**
+     * 网格高度按分类分配：图片分类吃满面板（weight=1），收藏分类只占两行 ——
+     * 下方还要放「收藏的文本列表」，两边都要看得见。
+     */
+    private fun applyGridHeight(imageMode: Boolean) {
+        imageGrid.layoutParams = if (imageMode) {
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        } else {
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(Prefs(context).galleryCellHeightDp * STRIP_ROWS),
+            )
+        }
     }
 
     /** 当前是否处于图片分类（网格模式）：文本列表的分页与空态在此时全部让位 */
@@ -558,6 +592,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
         val category = currentCategory
+        // 收藏分组的网格与列表同源：删除 / 取消收藏后两边都要跟着变，否则网格停在旧数据上，
+        // 点已删的图只会得到「已损坏」
+        if (category == CATEGORY_FAVORITE) imageGrid.show(tid, favoritesOnly = true)
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {
@@ -1153,6 +1190,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
         const val TEXT_FAV_ONLY = "★ 只看收藏"
         const val TEXT_FAV_ALL = "★ 看全部"
+
+        /** 收藏分组里图片网格占几行（下方还要放收藏的文本列表，两边都要看得见） */
+        const val STRIP_ROWS = 2
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 
