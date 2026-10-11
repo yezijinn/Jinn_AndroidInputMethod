@@ -993,12 +993,17 @@ class ClipboardHistoryActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        val btnRow = LinearLayout(this).apply {
+        // 动作分**两行**（2026-10-11 真机反馈）：一排放不下这些入口 —— 1080px 屏上第 4 个起被压成
+        // 一列一列的字，删除 / 关闭 直接挤出屏幕。按语义分组：上排「出库」（复制 / 保存 / 转移），
+        // 下排「管理」（收藏 / 删除 / 关闭）；每排最多 3 个，窄屏也能一眼读完
+        fun makeBtnRow(): LinearLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        fun addBtn(text: String, onClick: () -> Unit) {
-            btnRow.addView(TextView(this@ClipboardHistoryActivity).apply {
+        val rowOut = makeBtnRow()
+        val rowManage = makeBtnRow()
+        fun addBtn(row: LinearLayout, text: String, onClick: () -> Unit) {
+            row.addView(TextView(this@ClipboardHistoryActivity).apply {
                 this.text = text
                 textSize = 14f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -1014,16 +1019,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 marginEnd = dp(3)
             })
         }
-        addBtn(TEXT_IMAGE_COPY) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Copy) }
+        addBtn(rowOut, TEXT_IMAGE_COPY) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Copy) }
         if (ClipboardImageExport.albumAvailable()) {
-            addBtn(TEXT_IMAGE_SAVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Save) }
+            addBtn(rowOut, TEXT_IMAGE_SAVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.Save) }
         }
-        addBtn(TEXT_IMAGE_MOVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.MoveToGallery) }
-        addBtn(if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE) {
+        addBtn(rowOut, TEXT_IMAGE_MOVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.MoveToGallery) }
+        addBtn(rowManage, if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE) {
             dlg.dismiss()
             BackgroundIo.run { db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false) }
         }
-        addBtn(TEXT_DELETE) {
+        addBtn(rowManage, TEXT_DELETE) {
             dlg.dismiss()
             confirm(TEXT_CONFIRM_DELETE_ONE) {
                 BackgroundIo.run {
@@ -1034,9 +1039,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 }
             }
         }
-        addBtn("关闭") { dlg.dismiss() }
-        root.addView(btnRow, LinearLayout.LayoutParams(
+        addBtn(rowManage, "关闭") { dlg.dismiss() }
+        root.addView(rowOut, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(rowManage, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            // 两排之间留一点缝：按钮自带 3dp 内边距，紧贴会看成一块
+            topMargin = dp(6)
+        })
         dlg.setView(root)
         dlg.show()
         iv.tag = item.contentHash

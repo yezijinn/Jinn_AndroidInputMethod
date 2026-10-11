@@ -5104,6 +5104,12 @@ class RecentFixesRegressionTest {
             "\"导出全部图片: 成功=\$ok 失败=\$fail 目录可用=\${!dirBad}\"" in exportPage,
         )
         assertTrue("落点路径纯函数", "fun externalStoragePath(" in exp)
+        // 需求：图片预览的动作分两行（一排放不下：1080px 屏上第 4 个按钮起被压成一列竖字，
+        // 删除 / 关闭 直接挤出屏幕）—— 按语义分成「出库」与「管理」两排
+        assertTrue("出库一排", "val rowOut = makeBtnRow()" in exportPage)
+        assertTrue("管理一排", "val rowManage = makeBtnRow()" in exportPage)
+        // 图片弹层的动作必须落进某一排（旧写法是只带文案的 addBtn(...) 直塞单行）
+        assertFalse("图片动作不得再单行直塞", "addBtn(TEXT_IMAGE_COPY)" in exportPage)
         // L-1303：出库与交付共用一个判型入口
         assertTrue("判型入口可复用", "internal fun mimeOf" in exp)
         assertTrue(
