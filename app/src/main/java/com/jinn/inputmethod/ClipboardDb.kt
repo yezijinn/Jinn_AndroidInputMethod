@@ -353,6 +353,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // 重复复制（最常见路径）沿用库里那一行的值即可 —— 11 条正则 × 最多 8KB 的扫描不必每次做。
         category: String? = null,
         isFavorite: Boolean = false,
+        // 批量导入传 false（BUG.md L-1226）：逐条裁要跑四条全表聚合（文本字节 SUM、图片行、收藏行、
+        // 类型计数），两万行导入是分钟级；调用方攒一批自己裁（末尾必裁一次，上限照样成立）
+        trimAfterInsert: Boolean = true,
     ): Long {
         if (content.isBlank()) return -1
         val hash = stableHash(content)
@@ -405,7 +408,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (id > 0) {
             // 刚写入的行当然可解：登记备忘，下一次同内容复制不必再试解（BUG.md L-199）
             rememberReadable(hash)
-            trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
+            if (trimAfterInsert) trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
         }
         return id
     }

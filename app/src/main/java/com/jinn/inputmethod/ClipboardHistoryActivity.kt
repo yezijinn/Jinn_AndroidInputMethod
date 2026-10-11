@@ -1306,6 +1306,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
             ?: return if (result.openFailed) TEXT_IMPORT_OPEN_FAILED else TEXT_IMPORT_FAILED
         if (s.lines == 0 && s.abort == null) return TEXT_IMPORT_EMPTY
         val sb = StringBuilder("新增 ").append(s.added).append(" 条")
+        // 被容量上限裁掉的不能算「进了历史」（BUG.md L-1227）：用户会按回执判断「导完了」并删原文件
+        val retained = result.retained
+        if (retained != null && retained < s.added) {
+            sb.append("\n受 ").append(ClipboardPrefs.of(this).maxItems).append(" 条上限，实际保留 ")
+                .append(retained).append(" 条（最早导入的已被裁剪）")
+        }
         if (s.duplicate > 0) sb.append("\n重复跳过 ").append(s.duplicate).append(" 条")
         if (s.tooLong > 0) {
             sb.append("\n超单条上限（").append(ClipboardPrefs.of(this).effectiveMaxItemBytes() / 1024)

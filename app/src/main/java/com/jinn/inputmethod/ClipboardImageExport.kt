@@ -180,15 +180,19 @@ internal object ClipboardImageExport {
      *
      * 原先只信条目记录的类型、取不到就回落 `image/png` —— HEIC / AVIF 一类内容若记录缺失
      * （或入库当时就嗅探失败），会被存成 `.png`，相册与后续应用按扩展名解析就可能打不开或显示异常，
-     * 而用户不知道这张图被换了类型。嗅探与入库侧同一套（[GalleryInsert.sniffImageMime]）。
-     * 嗅探兜底回 `image/png` 只说明「头都不认识」，此时才回落到记录里的类型（它可能更准）。
+     * 而用户不知道这张图被换了类型。嗅探与出库 / 交付路径共用同一个入口
+     * （[ClipboardImageCodec.sniffMimeOrNull]：**认不出返回 null**）。
+     * 真 PNG 与「头都不认识」由此可分，后者才回落到记录里的类型（它可能更准）。
      */
-    internal fun mimeOf(item: ClipboardDb.Item, bytes: ByteArray): String =
-        // 嗅探用「认不出返回 null」的口径（BUG.md L-1303）：兜底 png 只说明「头都不认识」，
-        // 那时记录里的类型更可能准（入库时信了 provider 的声明），才轮到它
-        ClipboardImageCodec.sniffMimeOrNull(bytes)
-            ?: item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" }
-            ?: "image/png"
+    internal fun mimeOf(item: ClipboardDb.Item, bytes: ByteArray): String {
+        // 嗅探与记录冲突时留痕（BUG.md L-1280 的建议）：排查「导出扩展名不对」要看当时采信了哪一边
+        val recorded = item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" }
+        val sniffed = ClipboardImageCodec.sniffMimeOrNull(bytes)
+        if (sniffed != null && recorded != null && sniffed != recorded) {
+            Diagnostics.v(TAG, "类型不一致：字节=$sniffed 记录=$recorded，按字节为准")
+        }
+        return sniffed ?: recorded ?: "image/png"
+    }
 
     /**
      * 文件名：哈希前 12 位 + 入库时间（**到毫秒**）+ 真实扩展名（`img:` 前缀与冒号不进文件名）。

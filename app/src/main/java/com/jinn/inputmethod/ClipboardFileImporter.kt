@@ -46,6 +46,13 @@ internal object ClipboardFileImporter {
     /** 导入条目的来源显示名（面板「来源」列用；包名用真实包名，不伪造来源） */
     internal const val SOURCE_APP_NAME = "文件导入"
 
+    /**
+     * 每多少条插入裁一次（BUG.md L-1226）：裁剪要跑四条全表聚合，逐条裁在两万行导入时是分钟级；
+     * 攒批的代价是中间态最多多占 「本值 × 单条上限」的字节（上限 256KB × 100 ≈ 25MB），
+     * 末尾还有一次收尾裁剪兜住最终状态。
+     */
+    internal const val TRIM_EVERY = 100
+
     /** 中止原因（回执按此给用户一句话说明） */
     internal enum class Abort { FILE_TOO_LARGE, TOO_MANY_LINES, NOT_TEXT }
 
@@ -60,8 +67,18 @@ internal object ClipboardFileImporter {
         val abort: Abort?,
     )
 
-    /** 导入结果：打不开文件为 [openFailed]，否则 [stream] 非空（可能带 [Abort]） */
-    internal data class Result(val stream: StreamResult?, val openFailed: Boolean = false)
+    /**
+     * 导入结果：打不开文件为 [openFailed]，否则 [stream] 非空（可能带 [Abort]）。
+     *
+     * [retained]＝本批导入的条目在**收尾裁剪之后**仍留在库里的条数（BUG.md L-1227）：
+     * 容量上限（[ClipboardPrefs.maxItems]）会在导入过程中裁掉最早插入的那批，`added` 只表示
+     * 「插入成功」，两者不等时回执不能只报前者 —— 用户会据此删掉原文件。
+     */
+    internal data class Result(
+        val stream: StreamResult?,
+        val openFailed: Boolean = false,
+        val retained: Int? = null,
+    )
 
     /**
      * 从 SAF 选中的文件导入（无存储权限）。
@@ -91,13 +108,16 @@ internal object ClipboardFileImporter {
             Diagnostics.w(TAG, "打开导入文件失败: ${it.javaClass.simpleName}")
         }.getOrNull() ?: return Result(stream = null, openFailed = true)
 
+        // 本批插入成功的哈希与「距上次裁剪的条数」（L-1226 / L-1227）
+        val imported = ArrayList<String>()
+        var sinceTrim = 0
         val stream = input.use {
             importStream(
                 input = it,
                 limitBytes = limitBytes,
                 knownHashes = known,
                 onAccepted = { text ->
-                    ClipboardStore.save(
+                    val ok = ClipboardStore.save(
                         context = context,
                         db = db,
                         text = text,
@@ -106,17 +126,34 @@ internal object ClipboardFileImporter {
                         maxItems = maxItems,
                         // 逐条 V 日志合并为下面一条汇总 I：两万行导入逐条落盘会淹掉诊断
                         logPerItem = false,
+                        // 裁剪延后到批末（BUG.md L-1226）：逐条裁 = 每行四条全表聚合，
+                        // 两万行是分钟级，且全程持锁把用户的复制挤在门外
+                        trimAfterInsert = false,
                     ) != null
+                    if (ok) {
+                        imported.add(ClipboardDb.stableHash(text))
+                        // 每 TRIM_EVERY 条裁一次：既省掉绝大多数全表聚合，又把中间态的增长
+                        // 限制在「TRIM_EVERY × 单条上限」以内
+                        if (++sinceTrim >= TRIM_EVERY) {
+                            sinceTrim = 0
+                            db.trimTo(maxItems)
+                        }
+                    }
+                    ok
                 },
             )
         }
+        // 收尾必裁一次：批边界之后的尾巴也要落回上限内（L-1226）；这一步同时决定回执报多少（L-1227）
+        db.trimTo(maxItems)
+        val present = db.allHashes()
+        val retained = imported.count { it in present }
         Diagnostics.i(
             TAG,
             "文件导入完成: 行=${stream.lines} 新增=${stream.added} 重复=${stream.duplicate} " +
                 "超限=${stream.tooLong} 空行=${stream.blank} 失败=${stream.failed} " +
-                "中止=${stream.abort?.name ?: "无"}",
+                "保留=$retained 中止=${stream.abort?.name ?: "无"}",
         )
-        return Result(stream)
+        return Result(stream, retained = retained)
     }
 
     /**

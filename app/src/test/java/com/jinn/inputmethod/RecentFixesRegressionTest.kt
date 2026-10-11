@@ -5068,6 +5068,15 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // L-1226：批量导入的裁剪延后到批末（逐条裁 = 每行四条全表聚合），末尾必裁一次
+        val importer = codeOf("ClipboardFileImporter.kt")
+        assertTrue("导入延后裁剪", "trimAfterInsert = false" in importer)
+        assertTrue("攒批裁剪有常量", "internal const val TRIM_EVERY" in importer)
+        assertTrue("入库侧按开关裁", "if (trimAfterInsert) trimTo(" in codeOf("ClipboardDb.kt"))
+        // L-1227：回执要报「实际保留」而不是插入成功数
+        assertTrue("回执报实际保留", "实际保留 " in codeOf("ClipboardHistoryActivity.kt"))
+        // L-1280：嗅探与记录类型冲突要留痕（真 PNG 不再走回落分支）
+        assertTrue("类型冲突留痕", "类型不一致：" in codeOf("ClipboardImageExport.kt"))
         // L-1320：面板等首屏内容就绪再揭示（先出面板 = 一整块空面板，即「面板全屏化」瞬帧）
         assertTrue("面板揭示有等待机制", "private fun armPanelReveal(reveal: () -> Unit)" in
             codeOf("PinyinKeyboardView.kt"))

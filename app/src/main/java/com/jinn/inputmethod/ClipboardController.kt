@@ -728,6 +728,9 @@ object ClipboardStore {
         // 批量导入（`ClipboardFileImporter`）逐条打 V 日志会淹掉诊断：由调用方合并成一条汇总。
         // 失败分支的 W 不受它影响 —— 那才是要查的事
         logPerItem: Boolean = true,
+        // 批量导入传 false（BUG.md L-1226）：逐条入库各裁一次 = 每行跑四条全表聚合；
+        // 调用方攒一批后自己裁并在末尾统一裁一次，上限不变
+        trimAfterInsert: Boolean = true,
     ): Long? {
         // 单条体积上限：超出即丢弃（不截断，半截内容比不记更糟）
         if (exceedsItemLimit(text, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())) {
@@ -739,7 +742,7 @@ object ClipboardStore {
         // 这是每次复制都走的路径，而判重命中（重复复制，最常见）用不到新分类 —— 库里那一行的值
         // 就是同一段内容的分类结果（纯函数）。隐私分类绝不自动判断的口径不变。
         val id = db.upsert(
-            text, "text", sourcePackage, appName, maxItems,
+            text, "text", sourcePackage, appName, maxItems, trimAfterInsert = trimAfterInsert,
         )
         // 日志必须写在入库之后：upsert 返回 -1 表示加密/写库失败（`ClipboardDb.upsert`），
         // 先记「已保存」会把失败伪装成成功，排查时结论正好相反
