@@ -5104,4 +5104,20 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 图库目录授权的唯一入口与已装词库包的版本判据（BUG.md L-1056 / L-1234）。
+     */
+    @Test
+    fun `目录授权回收与包版本判据`() {
+        // L-1056：替换图库目录前必须先还旧授权 —— 收敛到 setter 后，设置页与配置导入三条路径一致
+        val prefs = codeOf("Prefs.kt")
+        assertTrue("换目录前先还旧授权", "releaseTreePermission(old)" in prefs)
+        assertTrue("释放要容错并留痕", "releasePersistableUriPermission" in prefs)
+        // L-1234：已装包版本判据的容差从 512KB 收到 64KB（漏判方向是「旧包永久留着」）
+        assertTrue(
+            "包体积容差收紧到 64KB",
+            "PACK_SIZE_TOLERANCE_BYTES = 64L * 1024" in codeOf("OptionalDicts.kt"),
+        )
+    }
+
 }

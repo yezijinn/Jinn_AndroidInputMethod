@@ -26,9 +26,9 @@ internal const val MAX_BACKUP_STRING_CHARS = 64 * 1024
 /**
  * 配置存储。只暴露真正需要用户改的项，其余走协议默认值。
  */
-class Prefs(context: Context) {
+class Prefs(private val appContext: Context) {
 
-    private val sp = context.applicationContext
+    private val sp = appContext.applicationContext
         .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
 
     /**
@@ -322,7 +322,32 @@ class Prefs(context: Context) {
      */
     var galleryTreeUri: String
         get() = strOr(KEY_GALLERY_TREE_URI, "").orEmpty()
-        set(value) = sp.edit { putString(KEY_GALLERY_TREE_URI, value) }
+        set(value) {
+            // 替换前先还旧授权（BUG.md L-1056）：写这个键原先有三条路径（设置页换目录 / 清除绑定 /
+            // 配置导入），释放授权只写在设置页那两条上 —— 导入一份带目录的配置会直接覆盖字段，
+            // 旧目录的持久授权永久挂着，而用户以为早就不读它了。收敛到 setter 后三条路径自动一致。
+            val old = strOr(KEY_GALLERY_TREE_URI, "").orEmpty()
+            if (old.isNotEmpty() && old != value) releaseTreePermission(old)
+            sp.edit { putString(KEY_GALLERY_TREE_URI, value) }
+        }
+
+    /**
+     * 释放一条图库目录的持久读授权（换目录 / 清除绑定时调用）。
+     *
+     * 释放失败多半是这条授权本来就不在（或已被系统回收）：留痕即可，不必打扰用户。
+     */
+    private fun releaseTreePermission(raw: String) {
+        if (raw.isEmpty()) return
+        val uri = runCatching { android.net.Uri.parse(raw) }.getOrNull() ?: return
+        runCatching {
+            appContext.contentResolver.releasePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }.onFailure {
+            Diagnostics.w(TAG, "释放图库目录授权失败（可能本就不在）: ${it.javaClass.simpleName}")
+        }
+    }
 
     /**
      * 图库快贴：点一张图插入后自动收起面板、回到打字键盘（默认关）。

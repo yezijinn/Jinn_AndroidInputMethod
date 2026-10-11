@@ -254,15 +254,22 @@ object OptionalDicts {
      * 老用户本地仍是旧包，页面却显示「已安装」、按钮是「重新下载」⇒ 用户不会点，
      * 词库永远停在上一个版本，旧包还白占空间。
      *
-     * 判据 = 文件大小与 [OptionalDict.sizeMb] 相符（容差 ±512KB）：
+     * 判据 = 文件大小与 [OptionalDict.sizeMb] 相符（容差 ±[PACK_SIZE_TOLERANCE_BYTES]）：
      *  - [OptionalDict.sizeMb] 按**十进制 MB** 填（5.89 对应 5,893,252 B），容差吸收两位小数的
      *    舍入（≤5KB）与换版时的小幅增删；
      *  - **不读文件内容**（sha256 每次刷新列表都要读 6MB×3，主线程代价不可接受）。
-     *    代价是「两版包大小恰好差在 512KB 内」会漏判 —— 发版时留意，必要时把 sizeMb 填细
-     *    （或临时改用摘要判据）。
+     *
+     * ⚠ 容差从 512KB 收到 64KB（BUG.md L-1234）：原值下「换版但体积差小于 512KB」会判成同一版，
+     * 用户「下了新版却还是旧的」且没有提示。两个方向的风险不对称 —— 误把当前包判成旧包只是让
+     * 用户重下一次（无害），漏判却让旧包永久留着，所以要往「宁可重下」的一侧压。
+     * 仍不读摘要：那需要每次刷新列表读 6MB×3，属主线程不可接受的代价（彻底消除漏判需把摘要
+     * 校验挪到后台并接受列表变慢，属另一笔账）。
      */
     fun isCurrentPack(file: java.io.File, dict: OptionalDict): Boolean {
         val expected = dict.sizeMb * 1_000_000
-        return kotlin.math.abs(file.length() - expected) <= 512 * 1024
+        return kotlin.math.abs(file.length() - expected) <= PACK_SIZE_TOLERANCE_BYTES
     }
+
+    /** 已装包与清单体积的允许偏差（BUG.md L-1234）：见 [isCurrentPack] 的风险不对称说明 */
+    internal const val PACK_SIZE_TOLERANCE_BYTES = 64L * 1024
 }
