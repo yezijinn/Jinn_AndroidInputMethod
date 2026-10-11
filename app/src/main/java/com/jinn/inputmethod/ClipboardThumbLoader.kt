@@ -81,13 +81,19 @@ internal object ClipboardThumbLoader {
         val enc = ClipboardImageFiles.readBytes(file)
         // 灰块有三种原因（没文件 / 解密失败 / 解不出图），不分清楚的话诊断包里查不到是哪种、
         // 也不知道是哪个哈希，只能靠复现（BUG.md L-1264）
+        // 负缓存三条失败路径**都要**记（BUG.md L-1330）：原先只有「解不出图」那条记，
+        // 于是换机 / 密钥失效（整库缩略图全走解密失败）与 `.thumb` 缺失这两种场景下，
+        // 每一格每次重新绑定（滚动、cell 复用、翻页）都重新排一次任务并各写一条 W 日志 ——
+        // 而这两种恰恰是排查时最该看清的，日志反被自己刷爆
         if (enc == null) {
             Diagnostics.w(TAG, "缩略图读取失败 ${hash.take(12)}")
+            markFailed(key)
             return null
         }
         val plain = ClipboardCrypto.decryptBytes(enc)
         if (plain == null) {
             Diagnostics.w(TAG, "缩略图解密失败 ${hash.take(12)}")
+            markFailed(key)
             return null
         }
         val bmp = ClipboardImageCodec.decodeForTarget(plain, targetPx)
@@ -95,11 +101,20 @@ internal object ClipboardThumbLoader {
             // 这条属**预期**情形（尺寸读不出的图只存了占位字节）：记 V 不记 W ——
             // 每次滚动重渲染都会走到这里，W 会把诊断包刷满
             Diagnostics.v(TAG, "缩略图解码失败 ${hash.take(12)} target=$targetPx")
-            // 同时记负缓存（BUG.md L-1237）：短时间内不再为这张图排队解码
-            failedAt[key] = System.currentTimeMillis()
+            markFailed(key)
             return null
         }
         cache.put(key, bmp)
         return bmp
+    }
+
+    /**
+     * 记一次失败（负缓存）：读取 / 解密 / 解码三条路径共用（BUG.md L-1237 / L-1330）。
+     *
+     * 只挡 [FAIL_TTL_MS]：窗口内不再为这张图排队，窗口外仍会再试一次 ——
+     * 密钥恢复、`.thumb` 被重新写出这类情形不必重启才能看到。
+     */
+    private fun markFailed(key: String) {
+        failedAt[key] = System.currentTimeMillis()
     }
 }

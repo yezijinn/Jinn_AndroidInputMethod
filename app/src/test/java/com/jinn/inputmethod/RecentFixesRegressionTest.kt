@@ -288,10 +288,13 @@ class RecentFixesRegressionTest {
     @Test
     fun `崩溃快照的原始中转件必须落在缓存目录且成对删除`() {
         val text = codeOf("Diagnostics.kt")
+        // 原先这条只断言「表达式里有 cacheDir」——`cacheDir ?: dir`（退回日志目录）也满足它，
+        // 于是守卫把缺陷一起钉住了（BUG.md L-1316）。改成：走缓存目录，或整次快照跳过
         assertTrue(
             "中转件是**未过滤** logcat 的唯一副本，不能落在会被导出诊断包整体打包的日志目录",
-            text.contains("File(cacheDir ?: dir"),
+            text.contains("val cache = cacheDir ?: run {"),
         )
+        assertFalse("兜底不得退回日志目录（宁可整次快照不产出）", text.contains("cacheDir ?: dir"))
         assertTrue("中转件成功 / 失败都要删（finally 里收口）", text.contains("runCatching { raw.delete() }"))
     }
 
@@ -5099,6 +5102,17 @@ class RecentFixesRegressionTest {
         assertTrue("导出据实记录词频状态", "val freqStale = !runCatching { UserFrequency.flush() }" in cbmSrc)
         assertTrue("导入失败即跳过词频段", "词频未落盘（已跳过词频导入）" in cbmSrc)
         assertTrue("回执带词频说明", "用户词频未能落盘" in codeOf("SettingsActivity.kt"))
+        // L-1330：缩略图的三条失败路径（读取 / 解密 / 解码）都要记负缓存，否则每格反复重试 + 刷日志
+        val thumb = codeOf("ClipboardThumbLoader.kt")
+        assertEquals("三条失败路径都要记负缓存", 3, Regex("""markFailed\(key\)""").findAll(thumb).count())
+        // L-1329：图库设置页重画前先提交草稿；两个拖动条都要忽略程序化同步（否则凭空落草稿）
+        val gal = codeOf("GallerySettingsActivity.kt")
+        assertTrue("重画前先提交草稿", "private fun render() {\n        commitDrafts()" in gal)
+        assertEquals(
+            "两个拖动条都要忽略程序化更新",
+            2,
+            Regex("""if \(!fromUser\) return""").findAll(gal).count(),
+        )
         // L-1333：面板里不得留无门控的布局探针（排查面板空窗那轮的遗留物）
         assertTrue("无遗留布局探针", "ImeLayoutProbe" !in codeOf("PinyinKeyboardView.kt"))
         assertTrue("无遗留布局探针(JinnIme)", "ImeLayoutProbe" !in codeOf("JinnIme.kt"))

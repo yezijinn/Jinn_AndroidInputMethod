@@ -136,6 +136,10 @@ class GallerySettingsActivity : ComponentActivity() {
             max = Prefs.GALLERY_COLUMNS_MAX - Prefs.GALLERY_COLUMNS_MIN
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    // 程序化同步（render 的 setProgress）不算用户改动（BUG.md L-1329）：
+                    // 放它进来会凭空落下一条草稿 —— 用户没碰过拖动条，草稿却记着盘上值，
+                    // 之后任何一次 commitDrafts 都会把它当成「用户的改动」写回去
+                    if (!fromUser) return
                     val value = Prefs.GALLERY_COLUMNS_MIN + progress
                     draftColumns = value      // 只记草稿：落盘统一走 commitDrafts（BUG.md L-1284）
                     textColumns?.text = String.format(Locale.US, TEXT_COLUMNS_VALUE, value)
@@ -153,6 +157,8 @@ class GallerySettingsActivity : ComponentActivity() {
             max = Prefs.GALLERY_CELL_HEIGHT_MAX - Prefs.GALLERY_CELL_HEIGHT_MIN
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    // 同列数那条：程序化同步不落草稿（BUG.md L-1329）
+                    if (!fromUser) return
                     val value = Prefs.GALLERY_CELL_HEIGHT_MIN + progress
                     draftHeight = value       // 只记草稿：落盘统一走 commitDrafts（BUG.md L-1284）
                     textCellHeight?.text = String.format(Locale.US, TEXT_HEIGHT_VALUE, value)
@@ -215,8 +221,16 @@ class GallerySettingsActivity : ComponentActivity() {
         }
     }
 
-    /** 按当前偏好刷新全部文案与状态色 */
+    /**
+     * 按当前偏好刷新全部文案与状态色。
+     *
+     * 重画前先把拖动草稿落盘（BUG.md L-1329）：页内按钮（自动返回 / 清除图库绑定、目录选择回调）
+     * 只调本方法，而重画读的是**盘上值** —— 草稿若还挂着（拖动刚结束但没走到提交点、
+     * 或别处改了值），界面会被画回旧值而草稿随后才落盘，于是「看到的」与「生效的」相反。
+     * 先提交再重画 ⇒ 两者同源（提交路径自带落盘核对与失败提示，见 [commitDrafts]）。
+     */
     private fun render() {
+        commitDrafts()
         val prefs = Prefs(this)
         val bound = prefs.galleryTreeUri.isNotEmpty()
         findViewById<Button>(R.id.btn_gallery_dir).text =
