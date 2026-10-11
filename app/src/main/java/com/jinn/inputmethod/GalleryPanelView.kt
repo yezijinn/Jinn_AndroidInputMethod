@@ -214,8 +214,26 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         render(null)
     }
 
+    /**
+     * 首屏内容就绪（BUG.md L-1320）：键盘侧据此决定何时把面板切成可见。
+     *
+     * 与剪贴板面板同款理由 —— 先切可见的话，用户看到的是一块「有表头、没图」的空面板
+     * （格子要等 SAF 列目录 + 解码）。判据取**第一张缩略图贴上格子**，那才是真的能看。
+     */
+    var onFirstContentReady: (() -> Unit)? = null
+
+    /** 本次展开是否已经报过「首屏就绪」（每次 [onPanelShown] 复位） */
+    private var firstContentReady = false
+
+    private fun markFirstContentReady() {
+        if (firstContentReady) return
+        firstContentReady = true
+        onFirstContentReady?.invoke()
+    }
+
     /** 面板每次展开时调用：重读目录（可能换了目录，或授权已被撤销） */
     fun onPanelShown() {
+        firstContentReady = false
         // 又打开了：撤销待触发的缓存释放（MEM-07）
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         // 每次展开都按盘上现值刷一次网格参数：设置页的「图库快贴功能」页也能改这两项
@@ -475,6 +493,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             State.NeedsBinding -> TEXT_NEEDS_BINDING
             State.Unavailable -> TEXT_UNAVAILABLE
         }
+        // 「空目录 / 还没绑定 / 读不到」这些态本身就是要给用户看的画面 ⇒ 直接算首屏就绪；
+        // 「载入中」不算（等目录列出来），要等列表或首图（BUG.md L-1320）
+        if (state != State.Loading) markFirstContentReady()
         // 「还没绑定」态没有目录名可显示，标题要复位（BUG.md L-1042）：否则解绑后重开面板，
         // 状态行说「还没绑定」、标题却挂着上一次那个目录名，两处自相矛盾。
         // 「空目录」「读不到」两态保留原标题 —— 那里目录名是有用的信息。
@@ -614,6 +635,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      */
     private fun bindThumb(uri: Uri, bmp: Bitmap) {
         cellByUri[uri]?.setImageBitmap(bmp)
+        // 第一张图贴上格子 = 面板「能看」了（BUG.md L-1320）：在此之前揭示面板，
+        // 用户看到的是一块空的深色网格区
+        markFirstContentReady()
     }
 
     /**

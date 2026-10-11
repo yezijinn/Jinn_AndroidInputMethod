@@ -3594,6 +3594,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "showClipboardPanel: 已显示，跳过")
             return
         }
+        // 上一次还没揭示的打开请求作废：新的一次打开说了算（连点、与图库来回切都会撞上）
+        cancelPendingPanelReveal()
         try {
             // 与方向面板、顶部搜索面板互斥：搜索面板挂在根布局 index 0（显示时 IME 变高），
             // 剪贴板面板替换字母区，两者同屏时上下两个列表都在，而底栏的空格/退格/回车
@@ -3611,10 +3613,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 固定确定高度：面板不受 IME 窗口初始测量影响（冷启动稳定）。
             val density = resources.displayMetrics.density
             val panelH = (162 * 2 * density).toInt()   // 162dp × 2 ≈ 850px
-            contentArea.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                panelH,
-            )
             // 面板 MATCH_PARENT 填满 contentArea 固定高度。
             // 到这里才建面板（MEM-05）：上面的互斥处理与高度计算都不需要面板存在
             val panel = ensureClipboardPanel()
@@ -3622,18 +3620,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            // viewLetters GONE（contentArea 已是固定高度，不塌缩）
-            viewLetters.visibility = View.GONE
-            panel.visibility = View.VISIBLE
+            // 取数照常先跑起来（面板此刻还不可见）：首屏就绪或超时后再整块切过去
             panel.onPanelShown()
-            clipboardActive = true
-            listener?.onClipboardStateChanged(true)
-            // 功能面板的「历史」键此刻要变成红色「返回」（面板内没有退出口了）
-            refreshCandidateBar()
-            Diagnostics.i(
-                TAG,
-                "剪贴板面板: 显示 panelH=$panelH contentArea=${contentArea.height}",
-            )
+            val reveal = {
+                // 高度与可见性必须**同一帧**改（BUG.md L-1320）：先改高度会让键盘先长高
+                // 432px 而面板还是空的，那一瞬就是用户看到的「面板全屏化」
+                contentArea.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    panelH,
+                )
+                // viewLetters GONE（contentArea 已是固定高度，不塌缩）
+                viewLetters.visibility = View.GONE
+                panel.visibility = View.VISIBLE
+                clipboardActive = true
+                listener?.onClipboardStateChanged(true)
+                // 功能面板的「历史」键此刻要变成红色「返回」（面板内没有退出口了）
+                refreshCandidateBar()
+                Diagnostics.i(
+                    TAG,
+                    "剪贴板面板: 显示 panelH=$panelH contentArea=${contentArea.height}",
+                )
+            }
+            if (panel.hasCachedContent()) {
+                // 上次打开留下的列表还在（可见性静置时不清）：直接切，不必为一次取数等一帧
+                reveal()
+            } else {
+                panel.onFirstContentReady = { revealSafely(pendingPanelReveal) }
+                armPanelReveal(reveal)
+            }
         } catch (t: Throwable) {
             Diagnostics.e(TAG, "showClipboardPanel 异常: ${t.message}")
             // 异常回滚：上面的代码可能已经隐藏了字母区、显示了面板。
@@ -3723,6 +3737,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         panel.applySkin(skin)
         panel.applySurfaceAlpha(keyFaceAlpha)
+        panel.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
+            Diagnostics.w(
+                "ImeLayoutProbe",
+                "galPanel h=${ob - ot}->${b - t} contentArea=${contentArea.height} root=${height} vis=${panel.visibility}",
+            )
+        }
         galleryPanel = panel
         Diagnostics.i(TAG, "图库面板: 已按需创建")
         return panel
@@ -3777,6 +3797,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 关闭剪贴板面板，恢复 26 键字母布局（contentArea 恢复字母区高度） */
     fun hideClipboardPanel() {
+        // 还没揭示的打开请求一并作废（面板都没亮出来，没有「恢复字母布局」这回事）
+        cancelPendingPanelReveal()
         if (!clipboardActive) return
         restoreLettersLayout()
         clipboardActive = false
@@ -3784,6 +3806,52 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 红色「返回」还原成「历史」
         refreshCandidateBar()
         Diagnostics.i(TAG, "剪贴板面板: 隐藏，恢复字母键盘")
+    }
+
+    /**
+     * 待揭示的面板显示动作（首屏就绪 / 超时后执行）；见 [armPanelReveal]。
+     *
+     * 只有一个：「同时打开两个面板」在这套互斥里不存在，新开的那次先 [cancelPendingPanelReveal]。
+     */
+    private var pendingPanelReveal: (() -> Unit)? = null
+
+    /** 首屏等待上限：到点还没就绪就照常揭示（面板自己会显示「载入中 / 读取失败」这类状态） */
+    private val panelRevealTimeout = Runnable {
+        if (pendingPanelReveal != null) {
+            Diagnostics.i(TAG, "面板首屏等待超时，先揭示（面板显示自身的载入态）")
+        }
+        revealSafely(pendingPanelReveal)
+    }
+
+    /**
+     * 记下「面板怎么切到可见」并按上限起一个超时（BUG.md L-1320）。
+     *
+     * 面板区是字母区的两倍高：原来把可见性与高度一起改完之后才去取数，于是键盘先长高
+     * 432px、面板里还是空的（冷开历史面板整块为空、图库面板只剩表头），要等一次后台
+     * 取数 / 解码才有内容 —— 那一瞬就是「输入法的面板全屏化」。现在改成：面板照常准备、
+     * 取数也照常先跑，但**揭示动作等首屏就绪**（或到 [PANEL_REVEAL_TIMEOUT_MS]）再执行，
+     * 于是高度变化与首屏内容出现在同一帧里，用户看不到空面板。
+     */
+    private fun armPanelReveal(reveal: () -> Unit) {
+        pendingPanelReveal = reveal
+        postDelayed(panelRevealTimeout, PANEL_REVEAL_TIMEOUT_MS)
+    }
+
+    /** 执行待揭示动作（幂等：执行过或没有待办时什么都不做） */
+    private fun revealSafely(reveal: (() -> Unit)?) {
+        removeCallbacks(panelRevealTimeout)
+        pendingPanelReveal = null
+        if (reveal == null) return
+        runCatching { reveal() }
+            .onFailure { Diagnostics.e(TAG, "面板揭示失败: ${it.message}") }
+    }
+
+    /** 作废待揭示的打开请求（收起面板 / 换开另一个面板 / 键盘收起时都要走一次） */
+    private fun cancelPendingPanelReveal() {
+        removeCallbacks(panelRevealTimeout)
+        pendingPanelReveal = null
+        clipboardPanel?.onFirstContentReady = null
+        galleryPanel?.onFirstContentReady = null
     }
 
     /**
@@ -3801,28 +3869,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
         clearComposingState()
         try {
             if (clipboardActive) hideClipboardPanel()
+            cancelPendingPanelReveal()
             if (directionPanelVisible) hideDirectionPanel()
             hideSearchPanel()
 
             val density = resources.displayMetrics.density
             val panelH = (162 * 2 * density).toInt()
-            contentArea.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                panelH,
-            )
             // 到这里才建面板（MEM-05）
             val panel = ensureGalleryPanel()
             panel.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            viewLetters.visibility = View.GONE
-            panel.visibility = View.VISIBLE
+            // 列目录与首图解码先跑起来（面板此刻还不可见）：首屏能看或超时后再揭示。
+            // 图库的格子是异步解码的，先把面板亮出来只会看到「有表头、没图」的空块（BUG.md L-1320）
             panel.onPanelShown()
-            galleryActive = true
-            refreshGalleryButton()
-            refreshCandidateBar()
-            Diagnostics.i(TAG, "图库面板: 显示 panelH=$panelH")
+            val reveal = {
+                contentArea.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    panelH,
+                )
+                viewLetters.visibility = View.GONE
+                panel.visibility = View.VISIBLE
+                galleryActive = true
+                refreshGalleryButton()
+                refreshCandidateBar()
+                Diagnostics.i(TAG, "图库面板: 显示 panelH=$panelH")
+            }
+            panel.onFirstContentReady = { revealSafely(pendingPanelReveal) }
+            armPanelReveal(reveal)
         } catch (t: Throwable) {
             Diagnostics.e(TAG, "showGalleryPanel 异常: ${t.message}")
             // 与剪贴板面板同款回滚：不回滚会让 26 键永久消失（只能重启 IME 恢复）
@@ -4017,6 +4092,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 而那时整棵树尺寸已归零，扫出来的是「一条视图都没有」的假结论 —— 恰好把排查
         // 「透明度不生效」的人带偏；顺带让这棵旧树能尽早回收，不必为空跑的任务再挂 500ms。
         removeCallbacks(backgroundsLogTask)
+        // 待揭示的面板请求同理（BUG.md L-1320）：键盘视图被换掉后还去揭示，操作的是旧树，
+        // 而且会把 contentArea 的高度改到没人看的视图上
+        cancelPendingPanelReveal()
         super.onDetachedFromWindow()
     }
 
@@ -4039,6 +4117,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         const val TAG = "PinyinKeyboard"
+
+        /**
+         * 面板首屏就绪的等待上限（毫秒）：到点就照常揭示面板（[panelRevealTimeout]）。
+         *
+         * 取值按「肉眼可感的等待」定：健康库上剪贴板首屏 10~30ms、图库首图解码 50~200ms，
+         * 都在这条线内；而目录在云盘 / 大目录时 SAF 列目录可能到秒级 —— 那时不能再等，
+         * 得让面板先带着自己的「载入中」状态出现。
+         */
+        const val PANEL_REVEAL_TIMEOUT_MS = 300L
 
         /**
          * 字母层宽度收束的**基准字形**（[PinyinKey.FULL_TEXT_FIT_RATIO]）。

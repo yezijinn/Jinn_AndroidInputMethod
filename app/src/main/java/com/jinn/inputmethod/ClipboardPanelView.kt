@@ -527,6 +527,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         addView(confirmBar, lp())
     }
 
+    /**
+     * 首屏内容就绪（BUG.md L-1320）：由键盘侧在打开面板时挂上，据此决定**何时把面板切成可见**。
+     *
+     * 面板区是字母区的两倍高，先切可见的话用户会先看到一整块空面板（列表与空态都还没画），
+     * 要等一次后台取数才有内容 —— 那一瞬就是「面板全屏化」。本回调在首屏提交后（成功或
+     * 失败都算）触发一次。
+     */
+    var onFirstContentReady: (() -> Unit)? = null
+
+    /** 现在就有可画的内容：上次打开留下的列表（见 [refresh] 的成功分支），无需等这一次取数 */
+    fun hasCachedContent(): Boolean = currentItems.isNotEmpty()
+
     /** 面板显示时刷新（每次打开立即读取 DB 生成快照，不做去重维护）。 */
     fun onPanelShown() {
         isPasting = false
@@ -537,6 +549,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}")
         // 规范：每次打开重置分类为「全部」，绝不残留上次状态
         selectCategory(null)
+        // 首屏取数期间先摆「正在载入」（BUG.md L-1320）：面板可能等不到数据就被揭示
+        // （键盘侧的等待有上限），那时没有这句用户看到的是一整块空白
+        if (currentItems.isEmpty()) updateEmpty()
     }
 
     // ── 分类 ──────────────────────────────────────────────
@@ -701,6 +716,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     updateEmpty()
                     Diagnostics.e(TAG, "[$tid] 列表刷新失败（视角已归位）: ${it.message}", it)
                 }
+                // 首屏已提交（成功 / 失败都算有内容可画）：等待揭示的面板这里可以切过去了
+                onFirstContentReady?.invoke()
             }
         }
     }
@@ -863,6 +880,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 查询失败时那句是假的，用户会以为历史被清空了。
         if (empty) {
             textEmpty.text = when {
+                // 取数中要**先查**（BUG.md L-1320）：面板可能在首屏到达前就被揭示，
+                // 此时既不是「没有历史」也不是「读不出」，说「正在载入」才是真话
+                loadingPage -> TEXT_EMPTY_LOADING
                 loadFailed -> TEXT_EMPTY_LOAD_FAILED
                 scanStoppedEarly -> TEXT_EMPTY_UNREADABLE_MORE
                 unreadableHistory -> TEXT_EMPTY_UNREADABLE
@@ -1216,6 +1236,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val STRIP_ROWS = 2
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
+
+        /** 首屏取数中（BUG.md L-1320）：面板可能在数据到达前就被揭示（键盘侧的等待有上限） */
+        const val TEXT_EMPTY_LOADING = "正在载入…"
 
         /** 空态：从未有过历史（或历史已被清空/裁剪干净） */
         const val TEXT_EMPTY_IDLE = "暂无剪贴板历史\n复制内容后将自动保存"

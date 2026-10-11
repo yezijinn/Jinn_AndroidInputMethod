@@ -5068,6 +5068,14 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // L-1320：面板等首屏内容就绪再揭示（先出面板 = 一整块空面板，即「面板全屏化」瞬帧）
+        assertTrue("面板揭示有等待机制", "private fun armPanelReveal(reveal: () -> Unit)" in
+            codeOf("PinyinKeyboardView.kt"))
+        assertTrue("收起要作废待揭示", "cancelPendingPanelReveal()" in
+            codeOf("PinyinKeyboardView.kt"))
+        assertTrue("剪贴板面板报首屏就绪", "hasCachedContent()" in codeOf("ClipboardPanelView.kt"))
+        assertTrue("取数中要说正在载入", "TEXT_EMPTY_LOADING" in codeOf("ClipboardPanelView.kt"))
+        assertTrue("图库首图即就绪", "markFirstContentReady()" in codeOf("GalleryPanelView.kt"))
         // L-1294：图片网格用当前页快照渲染与响应点击（翻页后不再停在旧页）
         val hist = codeOf("ClipboardHistoryActivity.kt")
         assertTrue("网格按快照取数", "private var gridPageItems" in hist)
