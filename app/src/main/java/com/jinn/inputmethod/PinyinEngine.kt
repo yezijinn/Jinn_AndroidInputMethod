@@ -2021,7 +2021,22 @@ object PinyinEngine {
         if (raw.isEmpty()) return Result(emptyList(), emptyList(), "")
 
         // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
-        val (syllables, partial) = segment(raw)
+        val (allSyllables, partial) = segment(raw)
+        // 音节数上限（BUG.md L-1282）：主查询原先**不限**，粘一串拼音进来时候选会按
+        // 「音节 × 每音节上限」累积到几千条再全量排序，而渲染只看前 [MAX_RENDERED_CANDIDATES] 条 ——
+        // 计算与内存纯白费，且这条路径在主线程上，表现为长输入时按键发卡。
+        // 上限取补全路径同一个常量（那里早就用它挡组合爆炸，口径一致）。
+        // 只取**前** [MAX_SYLLABLES] 个：词条候选来自「输入的前缀」，前缀语义不变；
+        // 后面那些音节的单字本来也落不到渲染窗口里（8 个音节的最坏情况已远超 36 条）。
+        val syllables = if (allSyllables.size > MAX_SYLLABLES) {
+            Diagnostics.i(
+                TAG,
+                "音节数超上限: 输入 ${allSyllables.size} 个，只取前 $MAX_SYLLABLES 个（防候选组合爆炸）",
+            )
+            allSyllables.take(MAX_SYLLABLES)
+        } else {
+            allSyllables
+        }
 
         // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
         //    词语与单字分成两个集合：模糊音的词要插在两者之间（见 2b）
@@ -2091,9 +2106,12 @@ object PinyinEngine {
 
         // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
         //    partial 非空；或末尾音节是「伪完整音节」（如 nim 的 m，本身合法但也是
-        //    更长音节前缀，用户意图是 ni+m… 补全）时也触发补全
-        val lastIsFakeComplete = syllables.isNotEmpty() &&
-            partial.isEmpty() && isTruePrefixOfSyllable(syllables.last())
+        //    更长音节前缀，用户意图是 ni+m… 补全）时也触发补全。
+        //    ⚠ 「末尾」一律取**截断前**的真实末尾：用户刚敲的是最后那个音节，
+        //    用被截断后的第 8 个会给出别的音节的单字（BUG.md L-1282）
+        val realLast = allSyllables.lastOrNull()
+        val lastIsFakeComplete = realLast != null &&
+            partial.isEmpty() && isTruePrefixOfSyllable(realLast)
         if (partial.isNotEmpty() || lastIsFakeComplete) {
             // 3a. 词库短语补全召回（如 ni m → ni+men → 你们）：
             //    补全词插入 result 头部（优先于第 2 步已加入的单字）
@@ -2114,9 +2132,9 @@ object PinyinEngine {
             // 会让 consumption / predict 的一级查表落空（BUG.md L-65）。
             result.addAll(completionWords)
             result.addAll(asList)
-            // 3b. 单字前缀联想（原有逻辑，保持）
-            if (syllables.isNotEmpty()) {
-                result.addAll(displayTake(charsFor(syllables.last()), MAX_CHARS))
+            // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）
+            if (realLast != null) {
+                result.addAll(displayTake(charsFor(realLast), MAX_CHARS))
             }
             result.addAll(displayTake(matchCharsByPrefix(partial), MAX_CHARS))
         }

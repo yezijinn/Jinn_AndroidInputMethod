@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -65,6 +66,43 @@ class CandidateCountBoundTest {
         assertTrue(
             "多音节候选($multi)不应少于单音节($single)",
             multi >= single,
+        )
+    }
+
+    /**
+     * 超长输入（粘一串拼音）时，候选量必须被**音节上限**挡住（BUG.md L-1282）。
+     *
+     * 主查询原先不限音节数：候选按「音节 × 每音节上限」线性膨胀后还要全量排序，而渲染只看
+     * 前 `MAX_RENDERED_CANDIDATES` 条 —— 计算与内存纯白费，且跑在输入主线程上（按键发卡）。
+     * 这里用 20 个**互不相同**的音节：它们各挂满 60 字，若上限失效，20 音节的候选量会明显
+     * 多于 8 音节（480 ⇒ 1200），断言「两者同量」即钉住上限。
+     */
+    @Test
+    fun longInputIsBoundedBySyllableCap() {
+        val syllables = listOf(
+            "ni", "hao", "ma", "xi", "huan", "chi", "fan", "shui", "wan", "tiao",
+            "jia", "you", "ren", "lai", "qu", "kan", "ting", "shuo", "xiao", "da",
+        )
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = syllables.mapIndexed { i, syl ->
+                // 每个音节一块互不重叠的 60 字（同一字挂两个音节会让去重后的量失真）
+                syl + "\t" + (0x4E00 + i * 60 until 0x4E00 + i * 60 + 60).joinToString(",") { it.toChar().toString() }
+            }.joinToString("\n"),
+            phrases = "",
+            syllables = syllables.joinToString("\n"),
+        )
+
+        val eight = PinyinEngine.query(syllables.take(8).joinToString(""))   // 正好在上限
+        val twenty = PinyinEngine.query(syllables.joinToString(""))          // 20 音节，超上限
+        assertTrue(
+            "8 音节应给出数百条候选（实际 ${eight.candidates.size}）",
+            eight.candidates.size >= 8 * 40,
+        )
+        assertEquals(
+            "超上限输入必须与 8 音节前缀同量（实际 ${twenty.candidates.size} vs ${eight.candidates.size}）",
+            eight.candidates.size,
+            twenty.candidates.size,
         )
     }
 
