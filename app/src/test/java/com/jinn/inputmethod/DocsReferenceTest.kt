@@ -295,6 +295,16 @@ class DocsReferenceTest {
                 .onEnter { it.name !in skip }
                 .filter { it.isFile && exts.any { e -> it.name.endsWith(e) } }
                 .forEach { append(it.readText()) }
+            // 仓库根的 CI / 发布脚本也要算进取材面：单测的 CWD 是模块目录（`app/`），
+            // 上面的 `File(".")` 扫不到 `.github/` —— 而条目也会点名脚本里的符号
+            // （`safe_url` / `api_request` / `URLError` …），不扫就会把它们全报成漂移
+            for (name in listOf("../.github", "../tools", "../scripts")) {
+                val dir = File(name)
+                if (!dir.isDirectory) continue
+                dir.walkTopDown()
+                    .filter { it.isFile && exts.any { e -> it.name.endsWith(e) } }
+                    .forEach { append(it.readText()) }
+            }
             for (dir in listOf(File("."), File("tools"), File("scripts"))) {
                 if (!dir.isDirectory) continue
                 dir.listFiles()?.forEach { append(it.name) }
