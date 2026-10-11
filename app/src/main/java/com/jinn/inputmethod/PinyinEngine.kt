@@ -1428,10 +1428,15 @@ object PinyinEngine {
         }
 
         val t0 = System.currentTimeMillis()
+        // 清掉上次构建残留（BUG.md L-1220）：进程在构建中被杀时 finally 跑不到，键区 / 词区
+        // 各可到 32MB，留在私有索引目录里没人再收
+        clearStaleBuildTemps(indexDir)
         return runCatching {
             val bytes = org.tukaani.xz.XZInputStream(src.inputStream())
                 .bufferedReader(StandardCharsets.UTF_8).use { reader ->
-                    PhraseIndex.build(reader.lineSequence(), stamp)
+                    // 临时件落**私有索引目录**而不是 `java.io.tmpdir`（BUG.md L-1220）：
+                    // Android 上那个属性不保证存在 / 可写，不可写即整包「装了却不生效」
+                    PhraseIndex.build(reader.lineSequence(), stamp, tempDir = indexDir)
                 }
             // 读完再核一次身份：读取期间源包被换掉时，这份索引贴的身份已经不对（内容是本进程读到的
             // 那一份，自己用没问题），不落盘 —— 否则下次启动按身份判为不符，白重建一遍（BUG.md L-890）
@@ -1540,6 +1545,20 @@ object PinyinEngine {
      *
      * @return 是否成功落盘（失败只是让本次退回堆内，不影响可用性）
      */
+    /**
+     * 清掉 [dir] 里构建期残留的临时件（BUG.md L-1220）：键区 / 词区各可到 32MB，正常路径由
+     * `finally` 删掉，但进程在构建中被杀时删不掉 —— 下次装载同一目录时顺手收掉。
+     */
+    private fun clearStaleBuildTemps(dir: java.io.File) {
+        val stale = runCatching {
+            dir.listFiles { f -> f.isFile && f.name.startsWith(PhraseIndex.BUILD_TEMP_PREFIX) }
+        }.getOrNull() ?: return
+        if (stale.isEmpty()) return
+        var removed = 0
+        for (f in stale) if (runCatching { f.delete() }.getOrDefault(false)) removed++
+        if (removed > 0) Diagnostics.i(TAG, "清理索引构建残留临时件: $removed 个")
+    }
+
     private fun writeIndexCacheAtomically(file: java.io.File, bytes: ByteArray): Boolean = runCatching {
         val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
         tmp.outputStream().use { out ->

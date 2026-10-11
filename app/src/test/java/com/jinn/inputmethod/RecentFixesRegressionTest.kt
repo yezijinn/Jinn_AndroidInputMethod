@@ -4647,7 +4647,12 @@ class RecentFixesRegressionTest {
     @Test
     fun `装配与落盘不得再各存一份中间副本`() {
         val idx = codeOf("PhraseIndex.kt")
-        assertTrue("两段大段必须经临时件落盘（堆内不留整段缓冲）", idx.contains("createTempFile(\"jinn_idx_keys\""))
+        // 前缀经常量拼装（BUG.md L-1220 加了 tempDir 入参），钉「仍走临时件」这一层
+        assertTrue(
+            "两段大段必须经临时件落盘（堆内不留整段缓冲）",
+            idx.contains("createBuildTemp(BUILD_TEMP_PREFIX + \"keys\"") &&
+                idx.contains("BUILD_TEMP_PREFIX = \"jinn_idx_\""),
+        )
         assertTrue("临时件必须分片拷进目标数组", idx.contains("copyFileInto("))
         assertTrue("长度数组必须 writeTo 直拷进目标数组", idx.contains(".writeTo(sink)"))
         assertTrue("必须保留「尺寸先算好再分配」的写法", idx.contains("HEADER_SIZE + keyBytes + keyLens.size()"))
@@ -5068,6 +5073,10 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // L-1220：索引构建的临时件落私有索引目录（不再依赖 java.io.tmpdir 的存在与可写），并清残留
+        assertTrue("构建可传临时目录", "tempDir: java.io.File? = null" in codeOf("PhraseIndex.kt"))
+        assertTrue("调用方传私有目录", "tempDir = indexDir" in codeOf("PinyinEngine.kt"))
+        assertTrue("启动清构建残留", "clearStaleBuildTemps" in codeOf("PinyinEngine.kt"))
         // L-1226：批量导入的裁剪延后到批末（逐条裁 = 每行四条全表聚合），末尾必裁一次
         val importer = codeOf("ClipboardFileImporter.kt")
         assertTrue("导入延后裁剪", "trimAfterInsert = false" in importer)

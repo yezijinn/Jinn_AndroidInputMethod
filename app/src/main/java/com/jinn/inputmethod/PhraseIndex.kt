@@ -308,10 +308,13 @@ internal class PhraseIndex private constructor(
          *   由调用方回退到文本路径）；同键的连续多行会合并进同一个词表（与文本路径一致）。
          * @param stamp 写入头部的来源摘要（供复用校验）
          */
-        fun build(lines: Sequence<String>, stamp: Long): ByteArray {
-            // 两段大段落系统临时目录（不放缓存目录：那里的清扫线程按「源包是否还在」删文件）
-            val keyFile = java.io.File.createTempFile("jinn_idx_keys", ".bin")
-            val wordFile = java.io.File.createTempFile("jinn_idx_words", ".bin")
+        fun build(lines: Sequence<String>, stamp: Long, tempDir: java.io.File? = null): ByteArray {
+            // 两段大段落盘承接。原来固定走 `java.io.tmpdir`（BUG.md L-1220）：Android 上该属性
+            // 不保证存在 / 可写 —— 不可写即构建抛 IOException，可选包表现为「装了却不生效」；
+            // 词库明文也会短暂落在那个目录。调用方传自己的私有目录（索引目录，与缓存落盘同一处），
+            // 单测传 null 仍走系统临时目录
+            val keyFile = createBuildTemp(BUILD_TEMP_PREFIX + "keys", tempDir)
+            val wordFile = createBuildTemp(BUILD_TEMP_PREFIX + "words", tempDir)
             try {
                 return buildInto(lines, stamp, keyFile, wordFile)
             } finally {
@@ -319,6 +322,17 @@ internal class PhraseIndex private constructor(
                 wordFile.delete()
             }
         }
+
+        /**
+         * 构建期临时件的前缀（与缓存 `.idx` / `.tmp` 区分）：调用方按此前缀清理上一个进程
+         * 被杀时留下的残留（BUG.md L-1220）。
+         */
+        internal const val BUILD_TEMP_PREFIX = "jinn_idx_"
+
+        /** 在 [dir] 里建构建临时件；[dir] 不可用时回落系统临时目录（单测与无目录的调用方） */
+        private fun createBuildTemp(prefix: String, dir: java.io.File?): java.io.File =
+            if (dir != null && dir.isDirectory) java.io.File.createTempFile(prefix, ".bin", dir)
+            else java.io.File.createTempFile(prefix, ".bin")
 
         /** [build] 的主体：先把键区 / 词区写进两个临时件，再按已知长度一次装配成产物 */
         private fun buildInto(

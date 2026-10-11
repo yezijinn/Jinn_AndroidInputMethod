@@ -301,7 +301,9 @@ class IndexCacheLifecycleTest {
         )
         val hit = TestSources.window(body, "if (cache.isFile)", "val t0")
         assertTrue("命中要走统一的身份判据", "cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))" in hit)
-        val build = body.substringAfter("PhraseIndex.build(reader.lineSequence(), stamp)")
+        // 构建调用锚点跟着实现走（BUG.md L-1220 给 build 加了 tempDir 入参）
+        val build = body.substringAfter("PhraseIndex.build(reader.lineSequence(), stamp")
+        assertTrue("构建调用锚点失效（源码结构变了）", build.length < body.length)
         assertTrue("写缓存前要再核一次身份", "packStamp(src)" in build)
         assertTrue("身份变了就不落缓存", "stampNow == stamp" in build)
     }
