@@ -216,19 +216,6 @@ class ClipboardController(context: Context) {
     }
 
     /**
-     * 头部字节 → 图片 MIME；**认不出返回 null**（BUG.md L-1285 的判据）。
-     *
-     * [GalleryInsert.sniffImageMime] 认不出时回落 `image/png` —— 返回 png 时必须核对魔数，
-     * 否则任意二进制（zip / pdf）都会被当成图片送进入库流程。
-     */
-    private fun sniffImageMimeOrNull(head: ByteArray): String? {
-        if (head.isEmpty()) return null
-        val mime = GalleryInsert.sniffImageMime(head)
-        if (mime == "image/png" && (head.size < 4 || (head[0].toInt() and 0xFF) != 0x89)) return null
-        return mime
-    }
-
-    /**
      * 开**一次**流完成「按需嗅探 + 带预算读全」（BUG.md L-1288 / L-1289）。
      *
      * 判否（[ImageRead.NotImage]）与读不到（[ImageRead.Failed]）必须分开：前者是该忽略的条目，
@@ -262,7 +249,7 @@ class ClipboardController(context: Context) {
                 if (n <= 0) return@use ImageRead.Failed
                 val headBytes = head.copyOf(n)
                 val sniffed = if (sniff) {
-                    sniffImageMimeOrNull(headBytes) ?: return@use ImageRead.NotImage
+                    ClipboardImageCodec.sniffMimeOrNull(headBytes) ?: return@use ImageRead.NotImage
                 } else {
                     null
                 }
@@ -285,7 +272,9 @@ class ClipboardController(context: Context) {
      */
     private fun saveImageFromUri(uri: android.net.Uri, declared: String?) {
         val prefs = ClipboardPrefs.of(appContext)
-        val reliable = declared != null && declared.startsWith("image/")
+        // 通配 `image/*` 不算可靠声明（BUG.md L-1302）：它恰恰是「provider 只知道是图、但不说哪种」
+        // 的那一类，跳过字节判定就会把非图片内容按兜底 png 收下（永久脏记录，哈希去重还无法自愈）
+        val reliable = declared != null && declared.startsWith("image/") && declared != "image/*"
         when (val read = readImageOnce(uri, prefs.imageMaxItemBytes.toInt(), sniff = !reliable)) {
             is ImageRead.Ok -> saveReadImage(prefs, read, declared)
             ImageRead.NotImage -> Diagnostics.i(
@@ -309,13 +298,9 @@ class ClipboardController(context: Context) {
         // （BUG.md L-1228）—— 原字节照存，网格显示灰块，复制 / 保存 / 转移到图库都还能用。
         val size = ClipboardImageCodec.bounds(bytes)
         if (size == null) Diagnostics.w(TAG, "图片解不出尺寸，按原字节入库（网格显示灰块）")
-        // 类型取三者之一：嗅探判出来的（类型不可靠时）→ 通配类型按文件头嗅探（具体类型是
-        // commitContent 的硬要求，见 GalleryInsert）→ 声明类型
-        val mime = when {
-            read.sniffedMime != null -> read.sniffedMime
-            declared == null || declared == "image/*" -> ClipboardImageCodec.sniffMime(bytes)
-            else -> declared
-        }
+        // 类型取三者之一（BUG.md L-1302 / L-1303）：字节判出来的（声明不可靠，含通配 `image/*`）
+        // → 声明类型（具体 image/*）→ 兜底。判型与出库 / 交付共用同一个入口
+        val mime = read.sniffedMime ?: declared ?: "image/png"
         ClipboardStore.saveImage(
             context = appContext,
             db = db,

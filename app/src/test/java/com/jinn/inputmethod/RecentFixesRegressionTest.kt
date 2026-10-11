@@ -5044,7 +5044,7 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "出库类型按字节嗅探",
-            "GalleryInsert.sniffImageMime(bytes)" in codeOf("ClipboardImageExport.kt"),
+            "ClipboardImageCodec.sniffMimeOrNull(bytes)" in codeOf("ClipboardImageExport.kt"),
         )
         assertTrue("符号分组缺失要留痕", "无对应数据，已跳过" in codeOf("SymbolOrder.kt"))
 
@@ -5052,10 +5052,43 @@ class RecentFixesRegressionTest {
         assertTrue("关闭学习前先落盘", uf.indexOf("flush()") in 1 until uf.indexOf("enabled = value"))
         // L-1287：写系统剪贴板失败的临时件要回收
         assertTrue("失败分支清理临时件", "已清理临时件" in codeOf("ClipboardImageExport.kt"))
-        // L-1285：剪贴板类型不可靠时按字节嗅探兜底，并留痕
+        // L-1285：剪贴板类型不可靠时按字节嗅探兜底，并留痕（判型收敛到规范入口，见 L-1302/1303）
         val ctrl = codeOf("ClipboardController.kt")
-        assertTrue("类型不可靠时嗅探兜底", "sniffImageMimeOrNull" in ctrl)
+        assertTrue("类型不可靠时嗅探兜底", "ClipboardImageCodec.sniffMimeOrNull(headBytes)" in ctrl)
         assertTrue("判否要留痕", "按字节嗅探不是图片" in ctrl)
+        // L-1302：通配 image/* 不算可靠声明（否则跳过字节判定、非图片内容按兜底 png 入库）
+        assertTrue("通配声明不算可靠", "declared != \"image/*\"" in ctrl)
+        // L-1300 / L-1301：导出写入中断要回收刚建的那一行 / 那个文档
+        val exp = codeOf("ClipboardImageExport.kt")
+        assertTrue("相册写入中断回收行", "保存到相册写入中断" in exp)
+        assertTrue("转移写入中断删文档", "转移到图库目录写入中断" in exp)
+        // L-1303：出库与交付共用一个判型入口
+        assertTrue("判型入口可复用", "internal fun mimeOf" in exp)
+        assertTrue(
+            "交付路径共用判型",
+            "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
+        )
+        // L-1294：图片网格用当前页快照渲染与响应点击（翻页后不再停在旧页）
+        val hist = codeOf("ClipboardHistoryActivity.kt")
+        assertTrue("网格按快照取数", "private var gridPageItems" in hist)
+        assertTrue("翻页要刷网格", "refreshPage()" in hist)
+        assertTrue("网格点击按快照", "gridPageItems.getOrNull(position)" in hist)
+        // L-1296：弹框前要判页面是否已销毁（图片动作回执来自长活池）
+        assertTrue("弹框判销毁", "if (isFinishing || isDestroyed) return\n" in hist)
+        // L-1297：导出中标志进程级、进度框随页面收起
+        assertTrue("导出标志进程级", "EXPORTING.compareAndSet(false, true)" in hist)
+        assertTrue("导出框随页面收起", "exportDlg?.dismiss()" in hist)
+        // L-1298：三处重载都要带当前筛选（默认参数是 false）
+        assertTrue(
+            "重载带筛选态",
+            "imageGrid.show(tid, favoritesOnly = imageFavOnly)" in codeOf("ClipboardPanelView.kt"),
+        )
+        // L-1299：失败态说真话 + 条带「空但没到底」不收起（续页判据按可见性）
+        val grid = codeOf("ClipboardImageGridView.kt")
+        assertTrue("失败态独立文案", "TEXT_LOAD_FAILED" in grid)
+        assertTrue("续页判据按可见性", "!isShown || width <= 0" in grid)
+        assertTrue("空但没到底不收起", "empty && exhausted" in hist)
+        assertTrue("面板同判据", "empty && exhausted" in codeOf("ClipboardPanelView.kt"))
         // L-1288：嗅探不得在剪贴板监听回调里开流（跨进程 IO 会拖主线程）——
         // 判定随声明类型交给长活池，同一次开流完成
         assertTrue("嗅探不在监听回调里开流", "sniffImageFromUri" !in ctrl)

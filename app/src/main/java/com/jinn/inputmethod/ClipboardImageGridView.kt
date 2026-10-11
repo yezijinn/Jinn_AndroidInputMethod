@@ -60,6 +60,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     private var cursor: ClipboardCursor? = null
     private var loading = false
     private var exhausted = false
+
+    /** 最近一次取数失败（BUG.md L-1299）：与「本来就没有图片」分开，空态据此说真话并给重试出口 */
+    private var loadFailed = false
     private var traceId = ""
 
     /**
@@ -80,7 +83,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      * 数据变化回调（空的 / 条数）：**条带模式**（收藏分组上方的网格）据此在无图时收起自己 ——
      * 条带里的空态文案是给全屏网格写的（「复制的图片会自动保存在这里」），留在分组上方会白占两行。
      */
-    var onDataChanged: ((empty: Boolean, count: Int) -> Unit)? = null
+    var onDataChanged: ((empty: Boolean, count: Int, exhausted: Boolean) -> Unit)? = null
 
     init {
         orientation = VERTICAL
@@ -94,6 +97,14 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
             textSize = 14f
             setTextColor(context.getColor(R.color.text_secondary))
             visibility = GONE
+            // 失败态下这块就是重试入口（BUG.md L-1299）：失败若只能干等下一次重载，
+            // 用户唯一的出路是关掉面板再打开 —— 那不叫出口
+            setOnClickListener {
+                if (!loadFailed) return@setOnClickListener
+                loadFailed = false
+                renderEmpty()
+                load(reset = true)
+            }
         }
         addView(emptyText, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         scroll.setOnScrollChangeListener { _, _, scrollY, _, _ ->
@@ -131,6 +142,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         cursor = null
         exhausted = false
         loading = false
+        loadFailed = false
         column.removeAllViews()
         renderEmpty()
         load(reset = true)
@@ -194,9 +206,11 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
                 loading = false
                 if (page == null) {
                     Diagnostics.w(TAG, "[$traceId] 图片网格取数失败")
+                    loadFailed = true
                     renderEmpty()
                     return@post
                 }
+                loadFailed = false
                 val start = items.size
                 items.addAll(page.items)
                 cursor = page.last
@@ -233,7 +247,15 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      */
     private fun fillViewportIfNeeded(gen: Int) {
         scroll.post {
-            if (gen != generation || exhausted || scroll.height <= 0) return@post
+            if (gen != generation || exhausted) return@post
+            // 视口高度为 0 有两种，处置相反（BUG.md L-1299）：
+            //  - 还没布局完（宽度已有、视图仍可见）⇒ 必须继续判，否则条带在「第一页整页不可读」
+            //    时会停摆 —— 那时 items 为空、宿主收起条带、高度恒 0，后面能读的图再也取不到；
+            //  - 宿主已把这块收起（切到别的分类 / 键盘收起）⇒ 不能续，否则会白读整库。
+            // 用「是否仍可见」区分这两者，别再用高度当唯一判据。
+            if (scroll.height <= 0) {
+                if (!isShown || width <= 0) return@post
+            }
             if (column.height <= scroll.height) loadMore()
         }
     }
@@ -331,12 +353,17 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
 
     private fun renderEmpty() {
         val empty = items.isEmpty()
-        // 空态按筛选态分文案（BUG.md L-1251）：只看收藏时若沿用「复制的图片会自动保存在这里」，
-        // 用户会以为收藏的图丢了（其实只是当前筛选下没有）
-        emptyText.text = if (favoritesOnly) TEXT_EMPTY_FAV else TEXT_EMPTY
+        // 空态按**真因**分文案（BUG.md L-1251 / L-1299）：失败要说真话并给出重试出口，
+        // 不能渲染成「复制的图片会自动保存在这里」—— 那会让用户以为图本来就不在，而图可能好好的
+        emptyText.text = when {
+            loadFailed && empty -> TEXT_LOAD_FAILED
+            favoritesOnly -> TEXT_EMPTY_FAV
+            else -> TEXT_EMPTY
+        }
+        emptyText.isClickable = loadFailed && empty
         emptyText.visibility = if (empty) View.VISIBLE else View.GONE
         scroll.visibility = if (empty) View.GONE else View.VISIBLE
-        onDataChanged?.invoke(empty, items.size)
+        onDataChanged?.invoke(empty, items.size, exhausted)
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -364,6 +391,9 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
          * 「图片」分类的页签在面板与历史页都是常驻可见的，指向它两处都成立。
          */
         const val TEXT_EMPTY_FAV = "还没有收藏的图片\n在图片上长按可以收藏，切到「图片」分类可看全部"
+
+        /** 取数失败（BUG.md L-1299）：必须与「暂无图片」分开 —— 说真因，并给出重试出口 */
+        const val TEXT_LOAD_FAILED = "图片加载失败\n点这里重试"
         const val TEXT_CELL_DESC = "剪贴板图片"
 
         /** 网格 cell 的收藏角标（与历史页网格、收藏列表行的 ★ 同一符号） */

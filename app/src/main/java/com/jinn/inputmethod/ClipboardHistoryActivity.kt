@@ -89,13 +89,38 @@ class ClipboardHistoryActivity : ComponentActivity() {
      */
     private var importing = false
 
-    /** 导出全部图片进行中（防连点重复触发） */
-    private var exporting = false
+    /** 导出全部图片的进度框：`onStop` 里收起（BUG.md L-1297）；「进行中」的标志是进程级的 [EXPORTING] */
+    private var exportDlg: AlertDialog? = null
 
     private lateinit var adapter: BaseAdapter
 
     /** 图片分类的网格适配器（与 [adapter] 同源取数：都读 [pageItems]） */
     private lateinit var gridAdapter: BaseAdapter
+
+    /**
+     * 图片网格当前显示的那一页（**快照**，BUG.md L-1294）。
+     *
+     * 不用 `pageItems()` 现取：`AbsListView` 只在收到 `notifyDataSetChanged()` 时才重跑
+     * `getView`，而翻页这条路径原先只刷了列表的适配器 ⇒ 网格继续显示上一页，点击 / 长按却按
+     * 新页下标取条目（打开的 / 删除的不是看到的那张图），新页更短时还会越界崩溃。
+     * 渲染与点击同读快照，两个问题一起消掉。
+     */
+    private var gridPageItems: List<ClipboardDb.Item> = emptyList()
+
+    /** 网格快照切到当前页并刷新（翻页 / 取数完成 / 改列数后都要调） */
+    private fun syncGridSnapshot() {
+        gridPageItems = pageItems()
+        if (::gridAdapter.isInitialized) gridAdapter.notifyDataSetChanged()
+    }
+
+    /**
+     * 翻页类操作后的统一刷新（BUG.md L-1294）：列表与图片网格各有适配器与数据源，
+     * 只刷列表会让网格停在旧页 —— 图片分类下翻页必须两个都刷。
+     */
+    private fun refreshPage() {
+        adapter.notifyDataSetChanged()
+        syncGridSnapshot()
+    }
 
     /** 图片分类是否只看收藏：收藏分类不再有图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240） */
     private var imageFavOnly = false
@@ -150,10 +175,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 override fun onPaste(item: ClipboardDb.Item) = showImageDialog(item)
                 override fun onMenu(item: ClipboardDb.Item) = showImageMenu(item)
             }
-            // 没有收藏图片时收起自己：空态文案是给全屏网格写的，留在收藏列表上方会白占两行
-            onDataChanged = { empty, count ->
+            // 没有收藏图片时收起自己：空态文案是给全屏网格写的，留在收藏列表上方会白占两行。
+            // 但「空」且**没到底**时留着（BUG.md L-1299）：第一页整页不可读时 items 为空、又不是
+            // 真没有图，收起会把视口高度置 0，网格的续页判据（按可见性）会跟着停摆
+            onDataChanged = { empty, count, exhausted ->
                 if (categoryFilter == FILTER_FAVORITE) {
-                    visibility = if (empty) View.GONE else View.VISIBLE
+                    visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
                     // 多时保持两行 + 「★ 只看收藏」全屏入口
                     if (!empty) applyFavStripHeight(count)
@@ -279,12 +306,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
         // 图片分类的网格（与列表互斥；列数 / 行高读图库布局偏好 —— 与键盘面板网格同一对键）
         grid = findViewById(R.id.hist_grid)
         gridAdapter = object : BaseAdapter() {
-            override fun getCount() = pageItems().size
-            override fun getItem(position: Int) = pageItems()[position]
-            override fun getItemId(position: Int) = pageItems()[position].id
+            override fun getCount() = gridPageItems.size
+            override fun getItem(position: Int) = gridPageItems[position]
+            override fun getItemId(position: Int) = gridPageItems[position].id
 
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val item = pageItems()[position]
+                val item = gridPageItems[position]
                 val prefs = Prefs(this@ClipboardHistoryActivity)
                 val cellHeight = (prefs.galleryCellHeightDp * resources.displayMetrics.density).toInt()
                 // cell = FrameLayout（缩略图 + 收藏角标）：网格里看不出哪张收藏过，只能靠长按菜单
@@ -339,11 +366,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
         }
         grid.adapter = gridAdapter
         grid.numColumns = Prefs(this).galleryColumns.coerceAtLeast(MIN_GRID_COLUMNS)
+        // 点击 / 长按按**快照**取条目（BUG.md L-1294）：与渲染同源 —— 若改回 `pageItems()` 现取，
+        // 网格视图与下标会在翻页后错位，导致「打开 / 删除的图不是看到的那张」
         grid.setOnItemClickListener { _, _, position, _ ->
-            pageItems().getOrNull(position)?.takeIf { it.image != null }?.let { showImageDialog(it) }
+            gridPageItems.getOrNull(position)?.takeIf { it.image != null }?.let { showImageDialog(it) }
         }
         grid.setOnItemLongClickListener { _, _, position, _ ->
-            pageItems().getOrNull(position)?.takeIf { it.image != null }?.let { showImageMenu(it) }
+            gridPageItems.getOrNull(position)?.takeIf { it.image != null }?.let { showImageMenu(it) }
             true
         }
 
@@ -508,6 +537,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
         // 解码回调仍持有已 detach 的页面视图（轻则白跑，重则整页引用被任务持有），缓存也跨页累积；
         // 键盘内面板那侧（ClipboardPanelView 收起时）已有对应的停止路径，两处要对齐
         if (::favImageGrid.isInitialized) favImageGrid.stopWork()
+        // 导出进度框是不可取消的，页面走了必须收起（BUG.md L-1297）：不收的话窗口无人 dismiss
+        // （WindowLeaked，还会盖在新页面上、用户点不掉）。导出本身继续跑，完成回执走 message() 的闸
+        runCatching { exportDlg?.dismiss() }
+        exportDlg = null
     }
 
     /** 跨重建保存筛选 / 搜索 / 页码 / 多选（BUG.md L-1165）。 */
@@ -728,7 +761,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         pager.addView(compactView().apply {
             text = "上一页"
             isEnabled = pageIndex > 0
-            setOnClickListener { pageIndex--; adapter.notifyDataSetChanged(); buildPagerRow() }
+            setOnClickListener { pageIndex--; refreshPage(); buildPagerRow() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(4), 0, dp(4), 0)
         })
@@ -741,7 +774,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val next = opts[(opts.indexOf(pageSize()) + 1) % opts.size]
                 ClipboardPrefs.of(this@ClipboardHistoryActivity).historyPageSize = next
                 pageIndex = 0
-                adapter.notifyDataSetChanged()
+                refreshPage()
                 buildPagerRow()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -757,7 +790,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         pager.addView(compactView().apply {
             text = "下一页"
             isEnabled = pageIndex < totalPages - 1
-            setOnClickListener { pageIndex++; adapter.notifyDataSetChanged(); buildPagerRow() }
+            setOnClickListener { pageIndex++; refreshPage(); buildPagerRow() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(4), 0, dp(4), 0)
         })
@@ -856,7 +889,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
                 if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
                 adapter.notifyDataSetChanged()
-                gridAdapter.notifyDataSetChanged()
+                // 快照与取数同源（BUG.md L-1294）：翻页 / 改页大小 / 切筛选后网格与列表一起刷新
+                syncGridSnapshot()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
                 // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分
                 val hint = when {
@@ -1071,12 +1105,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
             message(TEXT_IMAGE_EXPORT_UNAVAILABLE)
             return
         }
-        if (exporting) return
-        exporting = true
+        if (!EXPORTING.compareAndSet(false, true)) {
+            // 已有导出在跑（可能是重建前的实例发起的，BUG.md L-1297）：给一句反馈，不静默忽略
+            message(TEXT_IMAGE_EXPORTING)
+            return
+        }
         val dlg = AlertDialog.Builder(this)
             .setMessage(TEXT_IMAGE_EXPORTING)
             .setCancelable(false)
             .create()
+        exportDlg = dlg
         dlg.show()
         BackgroundIo.runLong {
             var ok = 0
@@ -1094,8 +1132,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 }
             }
             runOnUiThread {
-                exporting = false
+                EXPORTING.set(false)
                 runCatching { dlg.dismiss() }
+                exportDlg = null
                 // 留痕：这个功能没有其它日志，出问题（0 张 / 部分失败）时只能靠它分辨
                 Diagnostics.i(TAG, "导出全部图片: 成功=$ok 失败=$fail")
                 // 文案代码下发：成功/失败分账（失败含「已损坏」与「系统拒写」两类，不细分到界面）
@@ -1291,6 +1330,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     /** 单按钮提示框（导入回执 / 拒绝导入）；复用 [confirming] 防重入 —— 连点会让对话框堆叠 */
     private fun message(msg: String) {
+        // 页面已销毁就丢弃（BUG.md L-1296）：图片动作（保存 / 转移 / 复制）的回执来自长活池，
+        // 用户在其间返回或旋转后对失效 token 的窗口 show() 会抛 BadTokenException ——
+        // 未捕获即输入法进程崩溃（宿主当场失去输入法）。导入路径早就有这道闸，这里补齐
+        if (isFinishing || isDestroyed) return
         if (confirming) return
         confirming = true
         AlertDialog.Builder(this)
@@ -1328,6 +1371,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "ClipboardHistory"
+
+        /**
+         * 导出全部图片进行中（BUG.md L-1297）：**进程级** —— 原先是实例字段，导出期间旋转 /
+         * 定时换肤重建后新实例看到 false，同一批图会被再解一遍密、相册再多一份（文件名精确到
+         * 毫秒，不会互相覆盖）。跨重建仍能识别「有导出在跑」。
+         */
+        private val EXPORTING = java.util.concurrent.atomic.AtomicBoolean(false)
 
         /** 跨重建保存的实例态（BUG.md L-1165） */
         private const val STATE_FILTER = "hist_filter"

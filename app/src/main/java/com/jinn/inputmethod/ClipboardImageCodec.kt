@@ -44,9 +44,28 @@ internal object ClipboardImageCodec {
         return intArrayOf(o.outWidth, o.outHeight)
     }
 
-    /** 按文件头嗅探 MIME（12 字节足够；与图库选图共用 [GalleryInsert.sniffImageMime]） */
-    fun sniffMime(bytes: ByteArray): String =
-        GalleryInsert.sniffImageMime(if (bytes.size <= 12) bytes else bytes.copyOf(12))
+    /**
+     * 按文件头嗅探 MIME；**认不出返回 null**（BUG.md L-1302 / L-1303，12 字节足够）。
+     *
+     * 与 [GalleryInsert.sniffImageMime] 的差别只有兜底这一处：那个认不出时回落 `image/png`
+     * （选图入口必须给出**具体**类型，`ClipDescription` 不接受通配），而凡是「要不要收下 /
+     * 按什么类型交付这份字节」的判据都不能用兜底 —— 否则任意二进制（zip / pdf）都会被当成
+     * PNG 入库、导出或提交给宿主。真 PNG 与「头都不认识」由此可以区分。
+     */
+    fun sniffMimeOrNull(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        val head = if (bytes.size <= 12) bytes else bytes.copyOf(12)
+        val mime = GalleryInsert.sniffImageMime(head)
+        // 兜底值是 png：只有真的带**完整 PNG 魔数**（0x89 'P' 'N' 'G'）才采信 —— 只看首字节
+        // 会把「0x89 开头但不是 PNG」的文件也放行（那个返回值来自兜底，不是魔数命中）
+        val isPng = head.size >= 4 &&
+            (head[0].toInt() and 0xFF) == 0x89 &&
+            (head[1].toInt() and 0xFF) == 0x50 &&
+            (head[2].toInt() and 0xFF) == 0x4E &&
+            (head[3].toInt() and 0xFF) == 0x47
+        if (mime == "image/png" && !isPng) return null
+        return mime
+    }
 
     /**
      * 生成缩略图（JPEG 字节）；原图解不出像素（损坏 / 不支持的格式）返回 null ——

@@ -76,7 +76,14 @@ internal object ClipboardImageExport {
                 runCatching { resolver.delete(uri, null, null) }
                 return false
             }
-            out.use { it.write(bytes) }
+            // 写入异常同样回收这一行（BUG.md L-1300）：它带着 IS_PENDING=1，对相册与其它应用
+            // 都不可见 ⇒ 用户与开发者都看不到，只在存储紧张 / 远端断流时成批出现、长期占相册库
+            val wrote = runCatching { out.use { it.write(bytes) } }
+            if (wrote.isFailure) {
+                runCatching { resolver.delete(uri, null, null) }
+                Diagnostics.w(TAG, "保存到相册写入中断，已回收相册行: ${wrote.exceptionOrNull()?.javaClass?.simpleName}")
+                return false
+            }
             // 写完解除 pending：这条记录此时才对相册与其它应用可见
             runCatching {
                 resolver.update(
@@ -115,7 +122,15 @@ internal object ClipboardImageExport {
                 runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
                 return MoveResult.Failed
             }
-            out.use { it.write(bytes) }
+            // 写入异常同样删掉刚建的文档（BUG.md L-1301）：残留物在**用户自己的图库目录**里
+            // （不是私有缓存），提示却是「转移失败」⇒ 用户以为什么都没发生，实际每失败一次
+            // 就多一个打不开的半截文件（文件名精确到毫秒，不会互相覆盖）
+            val wrote = runCatching { out.use { it.write(bytes) } }
+            if (wrote.isFailure) {
+                runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
+                Diagnostics.w(TAG, "转移到图库目录写入中断，已删半截文档: ${wrote.exceptionOrNull()?.javaClass?.simpleName}")
+                return MoveResult.Failed
+            }
             MoveResult.Ok
         }.getOrElse {
             Diagnostics.w(TAG, "转移到图库目录失败: ${it.javaClass.simpleName}")
@@ -168,11 +183,12 @@ internal object ClipboardImageExport {
      * 而用户不知道这张图被换了类型。嗅探与入库侧同一套（[GalleryInsert.sniffImageMime]）。
      * 嗅探兜底回 `image/png` 只说明「头都不认识」，此时才回落到记录里的类型（它可能更准）。
      */
-    private fun mimeOf(item: ClipboardDb.Item, bytes: ByteArray): String {
-        val sniffed = GalleryInsert.sniffImageMime(bytes)
-        if (sniffed != "image/png") return sniffed
-        return item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" } ?: sniffed
-    }
+    internal fun mimeOf(item: ClipboardDb.Item, bytes: ByteArray): String =
+        // 嗅探用「认不出返回 null」的口径（BUG.md L-1303）：兜底 png 只说明「头都不认识」，
+        // 那时记录里的类型更可能准（入库时信了 provider 的声明），才轮到它
+        ClipboardImageCodec.sniffMimeOrNull(bytes)
+            ?: item.image?.mime?.takeIf { it.isNotBlank() && it != "image/*" }
+            ?: "image/png"
 
     /**
      * 文件名：哈希前 12 位 + 入库时间（**到毫秒**）+ 真实扩展名（`img:` 前缀与冒号不进文件名）。

@@ -242,8 +242,10 @@ class ClipboardImageTest {
             "历史页回前台重读布局",
             "applyGridTuning()" in TestSources.codeSource("ClipboardHistoryActivity.kt"),
         )
-        // BUG.md L-1251：只看收藏的空态必须分文案，不能沿用「暂无图片」
-        assertTrue("空态按筛选态分文案", "if (favoritesOnly) TEXT_EMPTY_FAV else TEXT_EMPTY" in
+        // BUG.md L-1251 / L-1299：空态按真因分文案（筛选态 / 取数失败），不能一律「暂无图片」
+        assertTrue("空态按筛选态分文案", "favoritesOnly -> TEXT_EMPTY_FAV" in
+            TestSources.codeSource("ClipboardImageGridView.kt"))
+        assertTrue("失败态独立文案", "loadFailed && empty -> TEXT_LOAD_FAILED" in
             TestSources.codeSource("ClipboardImageGridView.kt"))
         // BUG.md L-1255：空态文案不得点名该分支下隐藏的控件（「布局」只在图片分类可见）
         assertTrue("空态不点名隐藏控件", "点上方「布局」" !in
@@ -376,7 +378,7 @@ class ClipboardImageTest {
         )
         assertTrue(
             "面板清空在图片模式下要刷新网格并收文件（refresh 只刷文本列表）",
-            "if (imageMode) imageGrid.show(tid) else refresh(resetScroll = true)" in panel,
+            "if (imageMode) imageGrid.show(tid, favoritesOnly = imageFavOnly)" in panel,
         )
         assertTrue(
             "布局调节行只在图片分类展开（切走要收起）",

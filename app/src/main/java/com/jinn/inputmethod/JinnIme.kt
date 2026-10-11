@@ -1315,7 +1315,10 @@ class JinnIme : InputMethodService() {
                 ui.post { toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED) }
                 return@runLong
             }
-            val mime = item.image?.mime?.takeIf { it.isNotBlank() } ?: "image/png"
+            // 交付的类型与出库三动作（保存 / 转移 / 复制）同源（BUG.md L-1303）：原先这里直接信
+            // 记录类型，记录不准时 cache 文件名扩展名与 ClipDescription 都与实际字节不符 ——
+            // 严格按声明解析的宿主会打不开，而全链路没有任何提示
+            val mime = ClipboardImageExport.mimeOf(item, bytes)
             val file = GalleryInsert.stageForInsert(this, bytes, mime) ?: run {
                 ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
                 return@runLong

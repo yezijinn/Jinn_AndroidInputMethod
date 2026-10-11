@@ -439,10 +439,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     showItemMenu(item)
                 }
             }
-            // 收藏分组的条带无图时收起自己：它的空态文案是给全屏网格写的，留在列表上方会白占两行
-            onDataChanged = { empty, count ->
+            // 收藏分组的条带无图时收起自己：它的空态文案是给全屏网格写的，留在列表上方会白占两行。
+            // 但「空」且**没到底**时留着（BUG.md L-1299）：第一页整页不可读时 items 为空、又不是
+            // 真没有图，收起会把视口高度置 0 —— 网格的续页判据（按可见性）会跟着停摆
+            onDataChanged = { empty, count, exhausted ->
                 if (currentCategory == CATEGORY_FAVORITE) {
-                    visibility = if (empty) View.GONE else View.VISIBLE
+                    visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
             }
@@ -509,7 +511,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
                 // 批量删除走 GC（收藏的图片文件不能删，不能按全库 hash 一刀切），用短保护窗立即回收
                 ClipboardImageFiles.gc(context, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS)
-                post { if (imageMode) imageGrid.show(tid) else refresh(resetScroll = true) }
+                // 重载带上当前筛选（BUG.md L-1298）：show 的默认参数是 false，写死它会让
+                // 「只看收藏」下清空后网格切回全部图片，而键面文案仍是筛选态
+                post {
+                    if (imageMode) imageGrid.show(tid, favoritesOnly = imageFavOnly)
+                    else refresh(resetScroll = true)
+                }
             }
         }.apply { setTextColor(context.getColor(R.color.danger)) }
             .also { dangerButtons += it }
@@ -945,7 +952,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 val mine = token == actionToken
                 if (mine) hideActionBar()
                 else Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
-                if (mine && imageMode) imageGrid.show(tid) else refresh(resetScroll = mine)
+                // 带上当前筛选（BUG.md L-1298）：默认 false，写死它会让「只看收藏」下的
+                // 收藏 / 取消收藏把网格切回全部图片（内容与键面文案自相矛盾）
+                if (mine && imageMode) imageGrid.show(tid, favoritesOnly = imageFavOnly)
+                else refresh(resetScroll = mine)
                 // 与删除一致走 resetScroll：refresh 只取第一页，不重置滚动的话已加载的多页被
                 // 整体截回、ListView 的 firstPosition 又被钳到末尾，用户既不在原位置、
                 // 也找不到刚操作的那一条。回顶至少是明确、可预期的行为。
@@ -973,7 +983,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 } else {
                     Diagnostics.i(TAG, "[$tid] 长按操作回调已过期（用户已长按别的条目 / 切了分类），不动界面")
                 }
-                if (mine && imageMode) imageGrid.show(tid) else refresh(resetScroll = mine)
+                // 同上：删除后重载也要带当前筛选（BUG.md L-1298）
+                if (mine && imageMode) imageGrid.show(tid, favoritesOnly = imageFavOnly)
+                else refresh(resetScroll = mine)
             }
         }
     }
