@@ -259,6 +259,20 @@ class JinnIme : InputMethodService() {
     private var lastSentAtMs = 0L
 
     /**
+     * 上一次**真正写进输入框**的实发串与时刻（BUG.md L-1308 的结果侧指纹）。
+     *
+     * 请求指纹（[lastSentKey]）把原文算进键里，而落地后光标停在译文末尾 —— 默认档再点一次取到的
+     * 正是刚写入的译文，两次的键必然不同，拦不住，于是又发一次付费请求、正文多一段回译。
+     * 这条不看请求，只看「取到的片段是不是上次写进去的那串」。记的是**实发串**而不是模型返回的
+     * 原文：逐行模式会拼装、补标点，只有实发串与下次读到的内容逐字同形。
+     *
+     * ⚠ 与 [lastSentKey] / [lastSentAtMs] 一样，写点在 `ui.post` 的回调里、读点在按键回调里，
+     * **四个字段都只在主线程读写**（跨线程可见性不构成问题）—— 别在别处读写它们。
+     */
+    private var lastCommittedText = ""
+    private var lastCommittedAtMs = 0L
+
+    /**
      * 上一次**失败**的时刻（2026-10-03 修复 L-627 / L-657）。
      *
      * 失败后闸门立即重开，而超时 / 断连 / 落地失败 / 用户取消这几种情形里，
@@ -2232,6 +2246,8 @@ class JinnIme : InputMethodService() {
         // 去重指纹**跨输入框无意义**：A 框翻过的 "hello"，在 B 框输入 "hello" 后点翻译会被
         // 自己的去重挡回去，而提示让用户「改动原文」—— 在新框里改这句毫无意义（2026-10-03 修复 L-655）。
         lastSentKey = ""
+        // 结果侧指纹同理（BUG.md L-1308）：B 框里恰好有同一段文本时不该被 A 框的记录拦下
+        lastCommittedText = ""
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -3096,6 +3112,18 @@ class JinnIme : InputMethodService() {
         val repeatKey = translateRepeatKey(
             id, target, prefs.openAiTargetLanguage, scope, sent = slice.text, action = action,
         )
+        // 结果侧指纹（BUG.md L-1308）：落地后光标停在译文末尾，默认档再点一次取到的**就是刚写入的
+        // 译文** —— 请求指纹把原文算进键里，两次的键必然不同（中 / 英这对会走同语对调的尤其真），
+        // 拦不住，于是再发一次付费请求、正文里多出一段回译。这条只看「取到的片段是否逐字等于上次
+        // 写进去的实发串」：是就只提示、不发。
+        if (!replaceSelection && slice.text.isNotEmpty() &&
+            slice.text == lastCommittedText &&
+            System.currentTimeMillis() - lastCommittedAtMs < repeatGuardMs
+        ) {
+            Diagnostics.i(TAG, "翻译: 光标前就是上次写入的结果，未再次发送（去重）")
+            toast(TEXT_TRANSLATE_RESULT_REPEATED)
+            return
+        }
         if (!replaceSelection && slice.text.isNotEmpty() &&
             repeatKey == lastSentKey &&
             System.currentTimeMillis() - lastSentAtMs < repeatGuardMs
@@ -3200,7 +3228,11 @@ class JinnIme : InputMethodService() {
         //    拦在置位之前还顺带免掉后面那一串状态收拾（按钮态、看门狗、指纹此刻都还没动）。
         //    判定不出源语言（纯数字 / URL / 混写）时照发，不误拦正常请求（判据见 decideTranslateTarget）。
         val mutualTarget = when (
-            val decision = if (id != TranslationProviderId.OPENAI) {
+            // ⚠ 「原文已是目标语言 ⇒ 不发」只对**翻译**成立（BUG.md L-1310 复核顺手修）：这条闸的
+            // 理由是「再发一次只会原样返回原文，白等一轮还计费」，而润色 / 扩写这些动作的产出与
+            // 目标语言无关 —— 中文原文做「润色」照样有结果，按它拦下等于把用户的付费动作静默吞掉，
+            // 还回一句与动作不相干的「原文已是目标语言」。
+            val decision = if (id != TranslationProviderId.OPENAI && action == AiAction.TRANSLATE) {
                 decideTranslateTarget(slice.text, target)
             } else {
                 TranslateTarget.To(target)
@@ -3228,8 +3260,10 @@ class JinnIme : InputMethodService() {
         translateStartedAtMs = System.currentTimeMillis()
         translateProviderName = provider.javaClass.simpleName
         translateActionName = action.id
-        // 生效目标语言（不是枚举名）：与指纹同源，日志才与真实请求一致（BUG.md L-787）
-        translateTargetName = effectiveTargetLabel(id, target, prefs.openAiTargetLanguage)
+        // 生效目标语言（不是枚举名）：**与真实请求同源** —— 实际发出去的是对调后的 mutualTarget，
+        // 而日志 / 失败归因 / 看门狗都读这个字段，写成配置值就会出现「target=中文 却输出英文」
+        // 那种把排障引向反结论的行（BUG.md L-787，同语对调这一维见 L-1309）
+        translateTargetName = effectiveTargetLabel(id, mutualTarget, prefs.openAiTargetLanguage)
         pinyinKeyboard?.setTranslating(true)
         // 只记 provider / 语言 / 范围 / 字数与截断：待译正文与凭据都不进日志
         Diagnostics.i(
@@ -3671,7 +3705,17 @@ class JinnIme : InputMethodService() {
             // 提交被接受即算落地；`landed == false`（复核判否）也**不算**落地 ——
             // 那说明宿主的 InputFilter 把正文整段丢了，用户字段里一个字都没有，
             // 记成「已翻过」会让 30s 内的重试被去重挡回去（2026-10-03 修复 L-656）。
-            return landed != false
+            if (landed != false) {
+                // 结果侧记账（BUG.md L-1308）：记**实发串**（逐行模式会拼装、补标点，模型返回的原文
+                // 与它是两回事）与时刻，供下一次点击判「取到的是否就是刚写进去的这一串」。
+                // 选区模式不记账，理由与请求指纹那侧一致：用户明确重新框选的内容不该被历史拦下。
+                if (!snapshot.replaceSelection) {
+                    lastCommittedText = submit
+                    lastCommittedAtMs = System.currentTimeMillis()
+                }
+                return true
+            }
+            return false
         } else {
             // 失败时也带上长度：提交长度闸（256 KiB）与本机 Binder 事务上限不是同一把尺子，
             // 少了这个数字两者无法互相解释（2026-10-01 修复 L-326）
@@ -4122,8 +4166,8 @@ class JinnIme : InputMethodService() {
         const val DOC_JUMP_MAX_CHARS = 100_000
 
         /** 在线翻译（BYOK）的本机提示文案（文案在代码里下发，与文件内既有 Toast 写法一致） */
-        const val TEXT_TRANSLATE_EMPTY = "光标前没有可翻译的文字"
-        const val TEXT_TRANSLATE_PRIVATE_FIELD = "密码框不翻译（避免口令外发）"
+        const val TEXT_TRANSLATE_EMPTY = "光标前没有可处理的文字"
+        const val TEXT_TRANSLATE_PRIVATE_FIELD = "密码框不处理（避免口令外发）"
 
         /** 选区超单条上限时的复制提示（2026-10-02 修复 L-406：与粘贴链路同一道闸） */
         const val TEXT_COPY_TOO_LONG = "内容过大，未复制"
@@ -4167,13 +4211,13 @@ class JinnIme : InputMethodService() {
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中：请重新绑定图库目录"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
-        const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"
+        const val TEXT_TRANSLATE_STALE = "输入已变化，未写入结果"
 
         /** 译文超单条上限（与粘贴链路同一道闸，见 ClipboardStore.MAX_ITEM_BYTES） */
-        const val TEXT_TRANSLATE_TOO_LONG = "译文过大，未追加"
+        const val TEXT_TRANSLATE_TOO_LONG = "结果过大，未追加"
 
         /** 原文范围超出读取窗口、末尾位置无法确认（L-213）：丢弃必须说清原因 */
-        const val TEXT_TRANSLATE_RANGE_TOO_LONG = "范围过大，未确认原文末尾，未追加译文"
+        const val TEXT_TRANSLATE_RANGE_TOO_LONG = "范围过大，未确认原文末尾，未写入结果"
 
         /**
          * 宿主不提供选区信息（`getExtractedText` 不可用）：无法确认提交会不会覆盖选中内容。
@@ -4183,7 +4227,7 @@ class JinnIme : InputMethodService() {
          */
 
         /** 请求发起时已有选区（2026-10-01 复审 L-236）：选中的正文会随原文上传，且提交必被拒 */
-        const val TEXT_TRANSLATE_SELECTION_ACTIVE = "请先取消选中的内容再翻译"
+        const val TEXT_TRANSLATE_SELECTION_ACTIVE = "请先取消选中的内容再试"
 
         /**
          * 宿主既不提供精确选区、又答不出「有没有选中内容」（`getSelectedText` 抛异常）——
@@ -4195,7 +4239,7 @@ class JinnIme : InputMethodService() {
             "当前输入框不支持选区检测，无法确认能否安全写入（换一个输入框再试）"
 
         /** 译文没能写进输入框（宿主拒绝 / 连接已失效）；此前这条路径只落日志、用户端静默（L-320） */
-        const val TEXT_TRANSLATE_COMMIT_FAILED = "译文未能写入输入框（当前输入框可能已失效）"
+        const val TEXT_TRANSLATE_COMMIT_FAILED = "结果未能写入输入框（当前输入框可能已失效）"
 
         /**
          * 提交阶段读不到文本、只能丢弃结果（2026-10-01 修复 L-327）。
@@ -4203,16 +4247,16 @@ class JinnIme : InputMethodService() {
          * 不能复用发起前那两条 —— 它们写着「**未发起**翻译」，而此刻请求早已发出、原文早已上传，
          * 会让用户误以为什么都没外发（L-264 为选区模式立下的同一判据）。
          */
-        const val TEXT_TRANSLATE_DISCARDED_UNREADABLE = "当前输入框读不到内容，译文未写入"
+        const val TEXT_TRANSLATE_DISCARDED_UNREADABLE = "当前输入框读不到内容，结果未写入"
 
         /** 剪贴板面板打开时不许翻译（2026-10-02 修复）：随后的粘贴必然让这次请求作废 */
-        const val TEXT_TRANSLATE_CLIPBOARD_OPEN = "剪贴板面板打开时不能翻译，请先按「返回」"
+        const val TEXT_TRANSLATE_CLIPBOARD_OPEN = "剪贴板面板打开时不能处理，请先按「返回」"
 
         /** 追加位置无法确认（宿主不支持 getExtractedText，或忽略了光标移动）：宿主问题，别说成「输入已变化」（L-327） */
-        const val TEXT_TRANSLATE_APPEND_UNKNOWN = "无法确认追加位置，译文未写入"
+        const val TEXT_TRANSLATE_APPEND_UNKNOWN = "无法确认追加位置，结果未写入"
 
         /** 光标后内容读不到（2026-10-01 复审 L-237）：整行 / 整篇无法确定原文末尾，不发起 */
-        const val TEXT_TRANSLATE_AFTER_UNREADABLE = "当前输入框读不到光标后内容，未发起翻译"
+        const val TEXT_TRANSLATE_AFTER_UNREADABLE = "当前输入框读不到光标后内容，未发起"
 
         /**
          * 选区模式专用：提交阶段读不到或读不回选中的内容（2026-10-01 审查 L-264）。
@@ -4225,11 +4269,11 @@ class JinnIme : InputMethodService() {
 
         /** 「光标前全部」在读取窗口被截断时取不到文首（2026-10-01 审查 L-277） */
         const val TEXT_TRANSLATE_BEFORE_TOO_LONG =
-            "光标前内容超出读取上限，无法翻「从文首」的全部（可改用「光标前本行」）"
+            "光标前内容超出读取上限，取不到文首的全部（可改用「光标前本行」）"
 
         /** 选区模式专用：选中内容超上限时替换会丢掉尾部原文，宁可拒绝（2026-10-01 审查 L-261） */
         const val TEXT_TRANSLATE_SELECTION_TOO_LONG =
-            "选中内容超出单次上限，未翻译（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
+            "选中内容超出单次上限，未处理（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
         /**
          * 在途翻译被会话边界取消（2026-10-03 修复 L-603）。
@@ -4237,7 +4281,7 @@ class JinnIme : InputMethodService() {
          * 与各条「未写入」文案并列：那些说的是**结果**没落进正文，这条说的是**请求**被取消
          * —— 用户需要知道「刚才那次点击已经作废、要重来得再点一次（会重新计费）」。
          */
-        const val TEXT_TRANSLATE_CANCELLED = "翻译已取消（输入框已切换或键盘已收起）"
+        const val TEXT_TRANSLATE_CANCELLED = "本次处理已取消（输入框已切换或键盘已收起）"
 
         /**
          * 数字 / 日期类输入框拒绝翻译（2026-10-03 修复 L-720）。
@@ -4246,7 +4290,7 @@ class JinnIme : InputMethodService() {
          * `DateTimeKeyListener`），而 `commitText` 不报错 —— 用户看到的是「提交后未在输入框找到
          * 译文尾部」，完全看不出「这个框根本不接受译文」。所以在**发请求前**就说清。
          */
-        const val TEXT_TRANSLATE_NUMERIC_FIELD = "数字/日期输入框不接受译文，未发起翻译"
+        const val TEXT_TRANSLATE_NUMERIC_FIELD = "数字/日期输入框不接受处理结果，未发起"
 
         /**
          * 看门狗超时的提示（2026-10-03 修复 L-660）。
@@ -4255,7 +4299,7 @@ class JinnIme : InputMethodService() {
          * 看到的是「按钮自己好了、什么也没发生」，既不知道成没成，也随时可以再点（= 再计费）。
          * 文案要把「可能已计费」说出来，因为这与「取消」不同：取消是用户主动的，超时不是。
          */
-        const val TEXT_TRANSLATE_TIMEOUT = "翻译等待超时，已自动取消（该请求可能已送往服务方）"
+        const val TEXT_TRANSLATE_TIMEOUT = "处理等待超时，已自动取消（该请求可能已送往服务方）"
 
         /**
          * 总开关关闭时的点击提示（2026-10-03 修复 L-648）。
@@ -4263,7 +4307,7 @@ class JinnIme : InputMethodService() {
          * 面板上的键还是亮的、可点的（关开关不是面板重绘入口），只写日志用户只会以为键盘坏了 ——
          * 同族闸门（录音中 / 密码框）都有提示，这条不该例外。
          */
-        const val TEXT_TRANSLATE_DISABLED = "翻译功能已关闭（设置 → 翻译设置）"
+        const val TEXT_TRANSLATE_DISABLED = "此功能已关闭（设置 → 翻译设置）"
 
         /**
          * 同一段文本刚翻过（2026-10-03 修复 L-628）。
@@ -4271,7 +4315,17 @@ class JinnIme : InputMethodService() {
          * 译文追加后光标停在插入文本末尾，默认档取「光标前本行」⇒ 用户不再输入就再点一次时，
          * 取到的正是**刚写入的译文**：既会二次付费，又会把译文再翻一遍写进正文（回译污染）。
          */
-        const val TEXT_TRANSLATE_REPEATED = "这段刚刚翻译过，未重复发送（如需再翻可先改动原文）"
+        const val TEXT_TRANSLATE_REPEATED = "这段刚刚处理过，未重复发送（如需再处理可先改动原文）"
+
+        /**
+         * 光标前就是上次写入的结果（BUG.md L-1308）。
+         *
+         * 与上一条是**两条不同的判据**：上一条比的是「同一请求」（服务方 / 目标 / 范围 / 原文全同），
+         * 这一条比的是「取到的内容就是上次写进去的那串」—— 译文落地后光标停在它末尾，默认档再点
+         * 一次时原文已经换了（变成译文），请求指纹必然不同，只有结果侧才认得出。
+         */
+        const val TEXT_TRANSLATE_RESULT_REPEATED =
+            "光标前就是上次写入的结果，未重复发送（如需再处理可先改动原文）"
 
         /**
          * 上次失败后的冷却提示（2026-10-03 修复 L-627）。
@@ -4279,7 +4333,7 @@ class JinnIme : InputMethodService() {
          * 超时 / 断连 / 落地失败 / 用户取消这几种情形里，**服务端可能已经处理并计费** ——
          * 连点即连付，而用户看不到任何账目。冷却期内只提示、不发送。
          */
-        const val TEXT_TRANSLATE_FAIL_COOLDOWN = "上次翻译刚失败，稍候再试（该请求可能已送往服务方）"
+        const val TEXT_TRANSLATE_FAIL_COOLDOWN = "上次操作刚失败，稍候再试（该请求可能已送往服务方）"
 
         /**
          * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02 修复 L-485）。
@@ -4289,7 +4343,7 @@ class JinnIme : InputMethodService() {
          * 但不告知的话，用户会以为服务端漏译并反复重试 —— 每次都真计费。
          */
         const val TEXT_TRANSLATE_TRUNCATED =
-            "原文超出单次上限，已按上限截断（仅翻译前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
+            "原文超出单次上限，已按上限截断（仅处理前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
         /** 语译互斥：录音中不发起翻译（2026-10-03 审查 B-1） */
         const val TEXT_RECORDING_PLEASE_WAIT = "正在录音，请先结束录音再翻译"
@@ -4313,10 +4367,10 @@ class JinnIme : InputMethodService() {
          * 所以只说「未能确认」，不指示任何动作；真被过滤掉时用户自己能看出来（框里没字）。
          */
         const val TEXT_TRANSLATE_COMMIT_UNVERIFIED =
-            "未能确认译文已写入（部分输入框会过滤或改写内容），请查看输入框"
+            "未能确认结果已写入（部分输入框会过滤或改写内容），请查看输入框"
 
         /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
-        const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起翻译"
+        const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起"
 
         /**
          * 看门狗预算（毫秒）：覆盖最慢一家的整体超时上限（300s）再留 30s 余量（L-217）。

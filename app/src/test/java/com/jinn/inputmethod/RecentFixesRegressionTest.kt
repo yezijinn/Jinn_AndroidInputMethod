@@ -5337,6 +5337,57 @@ class RecentFixesRegressionTest {
      * 贴图插入保留输入法组合态（BUG.md L-1099）。
      */
     @Test
+    fun `AI 动作不得撞上翻译专属的判据与措辞`() {
+        val ime = codeOf("JinnIme.kt")
+        // 文案里指路用的设置页名（「翻译设置」页 → 「翻译原文范围」页）是合规内容：
+        // 去掉它们之后仍不得出现「翻译」二字，才算没说死动作
+        fun cleanUiPaths(s: String): String =
+            s.replace("翻译设置", "").replace("翻译原文范围", "")
+
+        // L-1310：与 8 个 AI 动作共用的出口文案不得写死「翻译 / 译文」—— 点「润色」的用户收到
+        // 「翻译已取消」会以为点错了按钮。唯一合法的例外是指路用的设置页名「翻译设置」。
+        val defs = Regex("const val TEXT_TRANSLATE_[A-Z_]+ =[^\\n]*(\\n\\s+\"[^\"]*\")?")
+            .findAll(ime).map { it.value }.toList()
+        assertTrue("共用文案定义取到了（提取器失效会让本守卫假绿）", defs.size >= 15)
+        val literals = defs.flatMap { d ->
+            Regex("\"([^\"]*)\"").findAll(d).map { it.groupValues[1] }.toList()
+        }
+        assertTrue("共用文案不得出现「译文」", literals.none { it.contains("译文") })
+        assertTrue(
+            "共用文案不得写死「翻译」（设置页名除外）",
+            literals.none { cleanUiPaths(it).contains("翻译") },
+        )
+        // 错误文案会直接 toast 给用户：同一条口径
+        val errBlock = TestSources.window(
+            codeOf("Translation.kt"), "enum class TranslationError", "enum class",
+        )
+        val errLiterals = Regex("\"([^\"]*)\"").findAll(errBlock).map { it.groupValues[1] }.toList()
+        assertTrue("错误文案取到了", errLiterals.size >= 8)
+        assertTrue("错误文案不得出现「译文」", errLiterals.none { it.contains("译文") })
+        assertTrue(
+            "错误文案不得写死「翻译」（设置页名除外）",
+            errLiterals.none { cleanUiPaths(it).contains("翻译") },
+        )
+
+        // L-1309：日志 / 失败归因 / 看门狗读的目标名必须与真实请求同源（同语对调后是 mutualTarget）
+        assertTrue(
+            "目标名与请求同源",
+            "translateTargetName = effectiveTargetLabel(id, mutualTarget, prefs.openAiTargetLanguage)" in ime,
+        )
+        // 「原文已是目标语言 ⇒ 不发」只对翻译成立：润色等动作的产出与目标语言无关，
+        // 按它拦下等于把用户的付费动作静默吞掉（还回一句与动作不相干的话）
+        assertTrue(
+            "已是目标语言的闸只对翻译",
+            "if (id != TranslationProviderId.OPENAI && action == AiAction.TRANSLATE) {" in ime,
+        )
+        // L-1308：请求侧指纹（比键）与结果侧指纹（比内容）是两条判据，缺一条就会白花一次请求
+        assertTrue("结果侧去重判据", "slice.text == lastCommittedText" in ime)
+        assertTrue("结果侧记账用实发串", "lastCommittedText = submit" in ime)
+        assertTrue("提示与请求侧分开", "TEXT_TRANSLATE_RESULT_REPEATED" in ime)
+        assertTrue("跨输入框一并复位", "lastCommittedText = \"\"" in ime)
+    }
+
+    @Test
     fun `贴图走区间追加而非整段重建`() {
         val ret = codeOf("ReceivingEditText.kt")
         // setText 会替换整份文本、顺带清掉 IME 组合态 ⇒ 改为在 Editable 上区间追加

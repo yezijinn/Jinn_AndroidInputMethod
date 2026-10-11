@@ -174,7 +174,7 @@ internal enum class TranslationError(val message: String) {
     // 补全文路径（2026-10-03 修复 L-538）：键盘上点翻译时这是**唯一**的提示，而实际路径是
     // 「系统设置 → 语言与输入法 → 本输入法 → 设置 → 翻译设置」四级 —— 只说「设置里」会让
     // 新用户在这一步卡死。设置页摘要早已写全落点，这里对齐。
-    NOT_CONFIGURED("请先在「设置 → 翻译设置」里填写翻译 API 凭据"),
+    NOT_CONFIGURED("请先在「设置 → 翻译设置」里填写 API 凭据"),
 
     /**
      * 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上。
@@ -195,7 +195,7 @@ internal enum class TranslationError(val message: String) {
      */
     CREDENTIAL("凭据含不可见字符，未发送请求（请重新粘贴 Key）"),
     NETWORK("网络错误，请检查网络后重试"),
-    TIMEOUT("翻译请求超时，请重试"),
+    TIMEOUT("请求超时，请重试"),
     AUTH("认证失败：请检查凭据（API Key / AppID / SecretKey / AccessKey）与 Azure 区域"),
     QUOTA("额度不足或请求过于频繁，请稍后重试"),
     PARAM("服务端拒绝了这次请求的参数（语言方向 / 模型名 / 路径 / 原文长度），请对照服务方文档核对"),
@@ -207,7 +207,7 @@ internal enum class TranslationError(val message: String) {
      * 路径 / 原文长度」，而真因是**输出上限**（Max Tokens 或网关自带上限）—— 按 PARAM 的提示
      * 逐项核对必然无果。
      */
-    TRUNCATED("译文被输出上限截断（可在该服务商设置里调大 Max Tokens，或改用非推理模型）"),
+    TRUNCATED("结果被输出上限截断（可在该服务商设置里调大 Max Tokens，或改用非推理模型）"),
 
     /**
      * 服务端「少给行」：译文行数 < 原文非空行数（按行对齐的 Provider，如百度系）。
@@ -226,10 +226,10 @@ internal enum class TranslationError(val message: String) {
      * 路径补全」这类**用户可修**的配置问题被显示成「翻译服务异常，请稍后重试」，
      * 用户只会反复重试（每次真计费）而永远不会去改 Base URL。
      */
-    REDIRECT("翻译端点返回了重定向，请检查 Base URL 的路径与结尾斜杠"),
+    REDIRECT("服务端点返回了重定向，请检查 Base URL 的路径与结尾斜杠"),
 
-    SERVER("翻译服务异常，请稍后重试"),
-    EMPTY("翻译结果为空"),
+    SERVER("服务异常，请稍后重试"),
+    EMPTY("服务返回结果为空"),
 }
 
 /** 翻译结果：要么拿到译文，要么是一个归一后的失败分类 */
