@@ -135,6 +135,21 @@ object OptionalDicts {
     /** 按落地文件名查清单项（用于已装列表回显名称） */
     fun byFileName(fileName: String): OptionalDict? = ALL.firstOrNull { it.fileName == fileName }
 
+    /** 2 级词库（清单第一条）：设置页那个入口的提醒态看它是否就位 */
+    val LEVEL2: OptionalDict = ALL.first()
+
+    /**
+     * 落地包是否**就位**：文件在场，且与当前清单相符（[isCurrentPack]）。
+     *
+     * 判据收到一处，是因为它有两个使用方 —— 分类词库页的「已安装」与设置页入口的提醒态。
+     * 各写一份必然分叉成「这边说已装、那边催你装」。**旧包也算没就位**：换发版后同名附件会重切，
+     * 老用户本地停在上一个版本，那同样是该提醒的状态（见 [isCurrentPack]）。
+     */
+    fun isInstalled(dir: java.io.File, dict: OptionalDict): Boolean {
+        val f = java.io.File(dir, dict.fileName)
+        return f.isFile && isCurrentPack(f, dict)
+    }
+
     /**
      * 从 `dicts/` 的文件名里挑出「清单外的包」（旧版遗留、手工放入）。
      *

@@ -651,7 +651,8 @@ class DictManagerActivity : Activity() {
         // 旧包检测（2026-10-10 随下载包重切引入）：文件存在但大小与清单不符 = 上一个版本的包。
         // 换发版时同名附件会被重切（如 2 级 40 万 → 90 万），不做这一步的话老用户看到
         // 「已安装」就永远不会点更新，词库停在上一个版本。
-        val current = installed && OptionalDicts.isCurrentPack(file, dict)
+        // 判据与设置页入口的提醒态同一句（OptionalDicts.isInstalled），两页不会各说各话
+        val current = OptionalDicts.isInstalled(dictDir(), dict)
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

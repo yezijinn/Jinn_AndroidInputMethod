@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -27,6 +28,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import java.io.File
 
 /**
  * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
@@ -78,6 +80,14 @@ class SettingsActivity : ComponentActivity() {
 
     /** 「只使用繁体字」胶囊开关（2026-09-27 起：候选里的简体字全部替换为繁体字；与「自动唤起键盘」同行） */
     private lateinit var switchUseTraditional: Switch
+
+    /**
+     * 「补充短语词库」入口当前是不是提醒态（2 级词库未就位）。
+     *
+     * null = 还没应用过（首次进页面前）。只用来省掉重复的视图改动与日志 —— `onResume` 每次
+     * 回来都会调 [refreshDictEntryEmphasis]，状态没变就不该动视图。
+     */
+    private var dictEntryEmphasized: Boolean? = null
 
     // 检查更新：版本号取构建日期，与远程 tag 比较
     private lateinit var btnCheckUpdate: Button
@@ -318,6 +328,9 @@ class SettingsActivity : ComponentActivity() {
             runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
                 .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
         }
+        // 需求：2 级词库没就位时，这个入口要比旁边那个更显眼 —— 词库直接决定能打出多少词，
+        // 而原先它只是一行同款普通按钮，下没下载过看起来一模一样
+        refreshDictEntryEmphasis()
         // 按钮圆角间隙（键盘外观）：独立页面
         findViewById<Button>(R.id.btn_key_appearance).setOnClickListener {
             startActivity(Intent(this, KeyAppearanceActivity::class.java))
@@ -518,7 +531,40 @@ class SettingsActivity : ComponentActivity() {
         if (::textMicState.isInitialized) refreshMicState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
+        // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
+        refreshDictEntryEmphasis()
+    }
 
+    /**
+     * 「补充短语词库」入口的提醒态：2 级词库没就位时换成主按钮外观（极光渐变填充 + 加粗 + 反差字色），
+     * 就位后回到次级外观。
+     *
+     * 为什么值得这么显眼：词库直接决定能打出多少词，而「没下载」在一排同款按钮里看不出任何差别，
+     * 用户也就不会去点。判据与分类词库页的「已安装」同一句（[OptionalDicts.isInstalled]），
+     * **旧包也算没就位**（换发版后老用户停在上一个版本，同样该提醒）。
+     *
+     * 不拿「索引就绪」（[PinyinEngine.isOptionalIndexReady]）当判据：它受首次加载时机影响，
+     * 装好了也可能有几秒显示成未装，按钮会闪一下再收回去。
+     */
+    private fun refreshDictEntryEmphasis() {
+        val btn = findViewById<Button>(R.id.btn_dict_expand) ?: return
+        val ready = OptionalDicts.isInstalled(
+            File(filesDir, PinyinEngine.OPT_DICT_DIR),
+            OptionalDicts.LEVEL2,
+        )
+        val emphasized = !ready
+        // 只在状态真的变了时改视图与写日志：onResume 每回来一次都调，重复改会白重绘
+        if (dictEntryEmphasized == emphasized) return
+        dictEntryEmphasized = emphasized
+        btn.setBackgroundResource(
+            if (emphasized) R.drawable.btn_aurora_primary else R.drawable.btn_aurora_secondary,
+        )
+        btn.setTextColor(getColor(if (emphasized) R.color.text_on_accent else R.color.text_primary))
+        btn.setTypeface(null, if (emphasized) Typeface.BOLD else Typeface.NORMAL)
+        Diagnostics.i(
+            TAG,
+            "补充短语词库入口: ${if (emphasized) "提醒态（2 级词库未就位）" else "常规态"}",
+        )
     }
 
 

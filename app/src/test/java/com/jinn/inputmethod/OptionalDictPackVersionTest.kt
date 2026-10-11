@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,6 +50,36 @@ class OptionalDictPackVersionTest {
         } finally {
             f.delete()
         }
+    }
+
+    /**
+     * 就位判据（[OptionalDicts.isInstalled]）：文件缺席 / 空壳 / 旧包都不算就位。
+     *
+     * 它是两处的共同判据 —— 分类词库页的「已安装」与设置页「补充短语词库」入口的提醒态。
+     * 判错的方向不对称：把当前包误判成没就位只是让入口多亮一次（无害），漏判却让提醒永远不出现。
+     */
+    @Test
+    fun 就位判据要求文件在场且与清单相符() {
+        val dir = java.nio.file.Files.createTempDirectory("dicts").toFile()
+        try {
+            val dict = pack(5.89)
+            assertFalse("文件缺席 = 没就位", OptionalDicts.isInstalled(dir, dict))
+            val f = File(dir, dict.fileName)
+            assertFalse("空文件 = 没就位", f.createNewFile() && OptionalDicts.isInstalled(dir, dict))
+            RandomAccessFile(f, "rw").use { it.setLength(2_747_068) }
+            assertFalse("旧包 = 没就位", OptionalDicts.isInstalled(dir, dict))
+            RandomAccessFile(f, "rw").use { it.setLength(5_893_252) }
+            assertTrue("当前包 = 就位", OptionalDicts.isInstalled(dir, dict))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /** 提醒态盯的是 2 级词库：清单重排时这条要跟着改，不能悄悄把提醒挪到别的包上 */
+    @Test
+    fun 提醒态盯的是2级词库() {
+        assertEquals("part2.xz", OptionalDicts.LEVEL2.fileName)
+        assertEquals(OptionalDicts.ALL.first(), OptionalDicts.LEVEL2)
     }
 
     @Test

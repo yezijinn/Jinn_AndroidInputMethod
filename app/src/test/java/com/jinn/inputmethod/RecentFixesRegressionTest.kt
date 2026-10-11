@@ -5078,6 +5078,17 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // 需求：2 级词库未就位时，「补充短语词库」入口要比旁边那个更显眼（词库决定能打出多少词）
+        val settingsSrc = codeOf("SettingsActivity.kt")
+        assertTrue("入口有提醒态", "private fun refreshDictEntryEmphasis()" in settingsSrc)
+        assertTrue("提醒态换成主按钮底图", "R.drawable.btn_aurora_primary" in settingsSrc)
+        assertTrue("常规态回到次级底图", "R.drawable.btn_aurora_secondary" in settingsSrc)
+        assertTrue("判据与词库页同源", "OptionalDicts.isInstalled(" in settingsSrc)
+        assertTrue("进页面就要应用", "refreshDictEntryEmphasis()" in settingsSrc)
+        assertTrue(
+            "词库页用同一判据",
+            "OptionalDicts.isInstalled(dictDir(), dict)" in codeOf("DictManagerActivity.kt"),
+        )
         // L-1333：面板里不得留无门控的布局探针（排查面板空窗那轮的遗留物）
         assertTrue("无遗留布局探针", "ImeLayoutProbe" !in codeOf("PinyinKeyboardView.kt"))
         assertTrue("无遗留布局探针(JinnIme)", "ImeLayoutProbe" !in codeOf("JinnIme.kt"))
