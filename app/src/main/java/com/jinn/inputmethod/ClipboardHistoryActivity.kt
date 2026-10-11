@@ -216,7 +216,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             // 但「空」且**没到底**时留着（BUG.md L-1299）：第一页整页不可读时 items 为空、又不是
             // 真没有图，收起会把视口高度置 0，网格的续页判据（按可见性）会跟着停摆
             onDataChanged = { empty, count, exhausted ->
-                if (categoryFilter == FILTER_FAVORITE) {
+                // 收藏与「全部」两个分组都用它（收藏分组只看收藏图片，全部分组看全部图片）
+                if (categoryFilter == FILTER_FAVORITE || categoryFilter == null) {
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
                     // 多时保持两行 + 「★ 只看收藏」全屏入口
@@ -920,14 +921,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 grid.visibility = if (imageMode) View.VISIBLE else View.GONE
                 // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
                 searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
-                // 收藏分组：列表上方显示「收藏的图片」网格（两行），收藏的图不再只有折叠入口。
+                // 收藏与「全部」分组：列表上方都显示图片网格（收藏分组显示收藏的图，全部分组显示全部图）。
+                // 文本分类只列文本，图片不进列表 ⇒ 「全部」不给网格的话，图片在这一屏完全不可见。
                 // 每次 loadAsync 都重取（BUG.md L-1260）：本方法只在切换筛选 / 搜索 / 清空 / **写操作**
                 // （删除、收藏切换、转图库）/ 回前台时被调 —— 翻页是纯本地操作（只换 pageIndex），
                 // 不经过这里。所以无条件重取不会带来翻页开销，而写操作后必须重取，
                 // 否则条带上还留着已删 / 已取消收藏的图，点开只会得到「已删除」
                 val favMode = category == FILTER_FAVORITE
-                favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
-                if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
+                val stripMode = favMode || category == null
+                favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
+                if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
                 // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
                 // 后若正好停在越界页，刷新那一刻 `pageItems()` 取到空页 ⇒ `AbsListView` 记住
                 // `getCount() == 0`，之后再改页号没人重新取数 ⇒ 整页空白而分页行显示 1/1

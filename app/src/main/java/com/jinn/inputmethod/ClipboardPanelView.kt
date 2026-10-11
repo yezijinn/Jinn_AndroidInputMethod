@@ -443,7 +443,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 但「空」且**没到底**时留着（BUG.md L-1299）：第一页整页不可读时 items 为空、又不是
             // 真没有图，收起会把视口高度置 0 —— 网格的续页判据（按可见性）会跟着停摆
             onDataChanged = { empty, count, exhausted ->
-                if (currentCategory == CATEGORY_FAVORITE) {
+                // 条带服务于「收藏」与「全部」两个分组（图片分组走全屏网格，不受这里影响）
+                if (currentCategory == CATEGORY_FAVORITE || currentCategory == null) {
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
@@ -563,11 +564,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         currentCategory = category
         applyTabFaces()
         val imageMode = category == CATEGORY_IMAGE
-        // 「收藏」分组也给图片网格区（BUG.md L-1250）：收藏的图原先要「点布局 → 再点只看收藏」
-        // 两步才看得到，等于把入口藏了一半。现在收藏分组直接是「收藏图片网格（上，两行高）
-        // + 收藏文本列表（下）」，用的是与图库快贴同一套网格组件。
+        // 「收藏」与「全部」分组都给图片网格区（BUG.md L-1250）：收藏的图原先要「点布局 → 再点只看收藏」
+        // 两步才看得到，等于把入口藏了一半；「全部」同理 —— 文本分类只列文本，不给网格的话图片
+        // 在这一屏完全不可见。两者都是「图片网格（上，两行高）+ 文本列表（下）」，与图库快贴同一套组件。
         val favMode = category == CATEGORY_FAVORITE
-        imageGrid.visibility = if (imageMode || favMode) View.VISIBLE else View.GONE
+        val stripMode = favMode || category == null
+        imageGrid.visibility = if (imageMode || stripMode) View.VISIBLE else View.GONE
         applyGridHeight(imageMode)
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
         textEmpty.visibility = View.GONE
@@ -583,9 +585,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             imageGrid.show(currentTraceId, favoritesOnly = imageFavOnly)
             return
         }
-        if (favMode) {
-            // 收藏分组的网格取「收藏的图片」；文本列表走 refresh（各自取数、互不干扰）
-            imageGrid.show(currentTraceId, favoritesOnly = true)
+        if (stripMode) {
+            // 收藏分组取「收藏的图片」，全部分组取全部图片；文本列表走 refresh（各自取数、互不干扰）
+            imageGrid.show(currentTraceId, favoritesOnly = favMode)
         }
         refresh(resetScroll = true, refreshFavStrip = false)
     }
@@ -624,7 +626,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 收藏分组的网格与列表同源：删除 / 取消收藏后两边都要跟着变，否则网格停在旧数据上，
         // 点已删的图只会得到「已损坏」。切分类时已经 show 过一次（refreshFavStrip=false），
         // 不重复取数（BUG.md L-1256）
-        if (refreshFavStrip && category == CATEGORY_FAVORITE) imageGrid.show(tid, favoritesOnly = true)
+        if (refreshFavStrip && (category == CATEGORY_FAVORITE || category == null)) {
+            imageGrid.show(tid, favoritesOnly = category == CATEGORY_FAVORITE)
+        }
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {

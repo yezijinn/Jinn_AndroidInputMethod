@@ -303,9 +303,15 @@ class ClipboardImageTest {
         // BUG.md L-1263：解码目标用实测格宽（与布局同源）
         assertTrue("解码目标用实测格宽", "minOf(cellWidthPx(), cellHeightPx)" in
             TestSources.codeSource("ClipboardImageGridView.kt"))
-        // BUG.md L-1260：写操作后重取收藏条带（判据不再借用「是否重置页码」）
-        assertTrue("条带写操作后重取", "if (favMode) favImageGrid.show(" in
+        // BUG.md L-1260：写操作后重取条带（判据不再借用「是否重置页码」）
+        assertTrue("条带写操作后重取", "if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // 「全部」分组也给条带：文本分类只列文本，不给网格的话图片在这一屏完全不可见
+        assertTrue("历史页全部分组也给条带", "val stripMode = favMode || category == null" in
+            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        assertTrue("面板全部分组也给条带",
+            "if (refreshFavStrip && (category == CATEGORY_FAVORITE || category == null))" in
+                TestSources.codeSource("ClipboardPanelView.kt"))
         // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
         assertTrue("条带随布局重排", "favImageGrid.rerender()" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
