@@ -111,6 +111,13 @@ jobs:
           set -euo pipefail
           tag="${INPUT_TAG:-$VCODE}"
           [[ "$tag" =~ ^[0-9]{8}$ ]] || { echo "tag 必须是纯日期 8 位数字: $tag"; exit 1; }
+          # tag 与包内 versionCode 必须一致（BUG.md L-1307）：版本号就是构建日期，而「检查更新」
+          # 按 versionCode 比对、下载页按 tag 取包 —— 手滑填成别的日期会发布出对不上的包，
+          # 同日覆盖的规则还会让它一直留着（用户无从判断拿到的是哪版）
+          if [ "$tag" != "$VCODE" ]; then
+            echo "tag $tag 与 APK 的 versionCode $VCODE 不一致：tag 只能取构建日期（留空即自动取）"
+            exit 1
+          fi
           file="$RUNNER_TEMP/notes.md"
           if [ -n "$INPUT_NOTES" ]; then
             printf '%s\n' "$INPUT_NOTES" > "$file"
@@ -155,7 +162,11 @@ jobs:
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK_NAME"
           remote=""
           for attempt in 1 2 3; do
-            remote=$(curl -sSL "$url" | sha256sum | cut -d' ' -f1)
+            # curl 失败（DNS 抖动 / 连接重置 / 5xx）不能让 `set -e` 直接掀掉整步（BUG.md L-1304）：
+            # 发布其实已经完成（上传与覆盖都在前面），这里该走的是退避重试 ——
+            # 原先 `remote=$(curl … | sha256sum | cut …)` 在 pipefail 下取到非 0 就直接退出脚本，
+            # 重试只在「curl 成功但内容不对」时才轮得到
+            remote=$(curl -sSL "$url" | sha256sum | cut -d' ' -f1 || true)
             if [ "$remote" = "$SHA256" ]; then break; fi
             echo "第 $attempt 次校验未通过（$remote），3s 后重试"
             sleep 3
@@ -181,4 +192,5 @@ jobs:
             --tag "$TAG" \
             --apk "$APK_NAME" \
             --sha256 "$SHA256" \
-            --notes-file "$NOTES_FILE"
+            --notes-file "$NOTES_FILE" \
+            --target "$GITHUB_SHA"

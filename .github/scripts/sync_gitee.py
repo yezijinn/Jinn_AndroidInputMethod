@@ -26,6 +26,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -44,6 +45,17 @@ RETRIES = 3
 
 def log(message):
     print(message, flush=True)
+
+
+def safe_url(url):
+    """只留 `scheme://host/path`：查询串里有 access_token，而失败消息会进公开仓库的
+    Actions 日志（BUG.md L-1295）—— 令牌泄露即可写仓库、发 Release。"""
+    return url.split("?", 1)[0]
+
+
+def scrub(text):
+    """把文本里可能出现的 `access_token=<值>` 遮掉（响应体、异常消息都可能带上）。"""
+    return re.sub(r"access_token=[^&\s\"']+", "access_token=***", text)
 
 
 def api_request(method, url, *, params=None, form=None, retries=RETRIES):
@@ -68,11 +80,13 @@ def api_request(method, url, *, params=None, form=None, retries=RETRIES):
             if exc.code == 404:
                 return None
             if exc.code in (502, 503, 504) and attempt < retries:
-                error = f"HTTP {exc.code}: {text[:200]}"
+                error = f"HTTP {exc.code}: {scrub(text[:200])}"
                 log(f"  Gitee 接口 {exc.code}，第 {attempt}/{retries} 次重试…")
                 time.sleep(2 * attempt)
                 continue
-            raise SystemExit(f"Gitee 接口失败 [{method} {url}] HTTP {exc.code}: {text[:500]}")
+            raise SystemExit(
+                f"Gitee 接口失败 [{method} {safe_url(url)}] HTTP {exc.code}: {scrub(text[:500])}"
+            )
     raise SystemExit(f"Gitee 接口重试仍失败: {error}")
 
 
@@ -125,7 +139,7 @@ def upload_attachment(repo, release_id, token, apk_path):
             response.read()
     except urllib.error.HTTPError as exc:
         text = exc.read().decode("utf-8", "replace")
-        raise SystemExit(f"Gitee 附件上传失败 HTTP {exc.code}: {text[:500]}")
+        raise SystemExit(f"Gitee 附件上传失败 HTTP {exc.code}: {scrub(text[:500])}")
 
 
 def list_releases(repo, token):
@@ -171,6 +185,11 @@ def main():
     parser.add_argument("--apk", required=True, help="本地 APK 路径")
     parser.add_argument("--sha256", required=True, help="本地 APK 的 sha256")
     parser.add_argument("--notes-file", required=True, help="发布说明文件")
+    parser.add_argument(
+        "--target",
+        default="main",
+        help="Release 指向的提交（BUG.md L-1305：与 GitHub 侧对齐，工作流传 GITHUB_SHA；缺省 main）",
+    )
     args = parser.parse_args()
 
     token = (os.environ.get("GITEE_TOKEN") or "").strip()
@@ -204,7 +223,7 @@ def main():
                 "tag_name": args.tag,
                 "name": args.tag,
                 "body": notes,
-                "target_commitish": "main",
+                "target_commitish": args.target,
             },
         )
         log(f"已更新 Gitee Release {args.tag} (id={release_id})")
@@ -217,7 +236,7 @@ def main():
                 "tag_name": args.tag,
                 "name": args.tag,
                 "body": notes,
-                "target_commitish": "main",
+                "target_commitish": args.target,
             },
         )
         release_id = release["id"]
