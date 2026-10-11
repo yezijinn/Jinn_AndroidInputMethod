@@ -308,4 +308,35 @@ class IndexCacheLifecycleTest {
         assertTrue("身份变了就不落缓存", "stampNow == stamp" in build)
     }
 
+    /**
+     * `BUG.md` L-1317 / L-1318：删包之后索引缓存必须能回收；「并入成功」不能被当成「没读进来」。
+     *
+     * 两条都出在「同一份状态的两个口径」上：前者是清理只挂在加载路径里，而包**删光**之后
+     * 再没有下一次加载（十几 MB 缓存永久占着，与存储占用页的承诺相反）；后者是回退并入成功后
+     * 仍返回失败哨兵 —— 对外说没读进来，还会按失败把整份解压重试一遍（同一份字节失败是确定性的）。
+     */
+    @Test
+    fun 删包要能立刻回收缓存且并入成功不算失败() {
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        val dict = TestSources.codeSource("DictManagerActivity.kt")
+        // L-1317①：清理提成可复用函数，三种删除路径都接上（官方包 / 遗留包 / 自定义包）
+        assertTrue("清理必须提成函数", "internal fun cleanStaleOptionalCache(" in src)
+        assertEquals(
+            "三种删除路径都要接上（缺一条就有一条路径留缓存）",
+            3,
+            Regex("""if \(ok\) cleanPackCacheAfterDelete\(\)""").findAll(dict).count(),
+        )
+        // L-1317②：包删光时的早退分支也要清理 —— 那是删光之后唯一还会到达的地方
+        assertTrue("早退前也要清理", "BackgroundIo.run { cleanStaleOptionalCache(app) }" in src)
+        val early = TestSources.blockAfter(src, "if (packs.isEmpty()) {")
+        assertTrue("早退分支锚点失效（源码结构变了）", early.isNotEmpty() && early.length < src.length)
+        assertTrue("早退分支要真的调清理", "cleanStaleOptionalCache(app)" in early)
+        // L-1318：三态结果 —— 并入成功既不计失败、也不触发重试，且算「装上了」
+        assertTrue("要有第三态", "object Merged : PackLoad" in src)
+        assertTrue("并入要单独记账", "PackLoad.Merged -> merged.add(f.name)" in src)
+        assertTrue("并入也算装上了", "extensionLoaded = loaded.isNotEmpty() || merged.isNotEmpty()" in src)
+        assertFalse("并入不得落进失败集合", "PackLoad.Merged -> failed.add" in src)
+        assertFalse("并入不得落进索引列表（它没有索引）", "PackLoad.Merged -> loaded.add" in src)
+    }
+
 }

@@ -584,6 +584,7 @@ class DictManagerActivity : Activity() {
             if (ok) getString(R.string.dict_removed, TEXT_CUSTOM_TITLE)
             else getString(R.string.dict_remove_failed),
         )
+        if (ok) cleanPackCacheAfterDelete()
         refreshList()
         if (ok) promptRestart()
     }
@@ -641,6 +642,7 @@ class DictManagerActivity : Activity() {
             if (ok) getString(R.string.dict_removed, legacyName(fileName))
             else getString(R.string.dict_remove_failed),
         )
+        if (ok) cleanPackCacheAfterDelete()
         refreshList()
         if (ok) promptRestart()
     }
@@ -890,8 +892,22 @@ class DictManagerActivity : Activity() {
         } else {
             getString(R.string.dict_remove_failed)
         })
+        if (ok) cleanPackCacheAfterDelete()
         refreshList()
         if (ok) promptRestart()
+    }
+
+    /**
+     * 删掉包之后立刻回收它的索引缓存（BUG.md L-1317）。
+     *
+     * 存储占用页承诺「在词库页删除对应词库包后自动清理，需要时重建」，而引擎侧那条清理挂在
+     * 「下一次可选词库加载」里 —— 包删光之后再没有下一次加载，十几 MB 的 `.idx` 会永久留着
+     * （用户只能清应用数据或卸载）。删除本身是 unlink（毫秒级）、目录里也只有几项，
+     * 同步做掉即可（与本页其它删除同口径）。
+     */
+    private fun cleanPackCacheAfterDelete() {
+        runCatching { PinyinEngine.cleanStaleOptionalCache(applicationContext) }
+            .onFailure { Diagnostics.w(TAG, "清理词库索引缓存失败: ${it.javaClass.simpleName}") }
     }
 
     /**

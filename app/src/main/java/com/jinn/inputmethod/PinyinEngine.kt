@@ -1190,7 +1190,15 @@ object PinyinEngine {
         // BUG.md L-893）。闸门的 pending 仍按**全部已装包**算 —— 只按子集算的话，小包装完就以为
         // 「都装过了」，官方大包再也等不到装载。
         val packs = if (onlyPacks == null) installed else installed.filter { it.name in onlyPacks }
-        if (packs.isEmpty()) return false
+        if (packs.isEmpty()) {
+            // 没有包要装 ≠ 无事可做（BUG.md L-1317）：清理失效索引缓存原先只挂在 [loadExtensionDict] 里，
+            // 而那条路径要求「有包要装」—— 用户把可选包**删光**之后，就再没有下一次加载，
+            // 十几 MB 的 `.idx` 永久占着（与存储占用页「在词库页删除对应词库包后自动清理」的承诺相反）。
+            // 这一遍是删光之后唯一还会到达的地方，把清理做掉。文件 IO 交给后台池：本方法在主线程被调。
+            val app = context.applicationContext
+            BackgroundIo.run { cleanStaleOptionalCache(app) }
+            return false
+        }
         synchronized(optionalLock) {
             if (optionalLoading) return false
             // 两道判据（见 packShouldRetry）：包的**身份变过**（新装 / 重下 / 换包）要试；
@@ -1350,46 +1358,35 @@ object PinyinEngine {
      * 未安装任何可选包不算错误：基础包已覆盖日常输入，仅记一条日志。
      */
     private fun loadExtensionDict(context: Context, packs: List<java.io.File>): Set<String> {
-        // 清扫按**全部已装包**算：只按这一遍要装的子集算，会把没参与本遍的包索引缓存
-        // 当成「源包已被删除」删掉
         val alive = installedOptionalPacks(context).map { it.name }.toSet()
-
         val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR).apply { mkdirs() }
 
         // 清理：源包已被删除的索引缓存（用户可能只删了词库文件）
-        runCatching {
-            // 带上 mtime：源包仍在的 `.idx.tmp` 也要按保护窗回收（BUG.md L-869）
-            val byName = indexDir.listFiles()?.filter { it.isFile }
-                ?.associate { it.name to it.lastModified() }.orEmpty()
-            val stale = staleOptionalCacheNames(
-                byName.keys.toList(),
-                alive,
-                System.currentTimeMillis(),
-            ) { byName[it] ?: 0L }
-            stale.forEach { name ->
-                if (java.io.File(indexDir, name).delete()) {
-                    Diagnostics.i(TAG, "清理失效索引缓存: $name")
-                }
-            }
-        }
+        cleanStaleOptionalCache(context)
 
         val loaded = ArrayList<PhraseIndex>(packs.size)
         // 「找到文件但没读进来」的包：返回给调用方记账（原先只留一条 W 级日志，UI 看不出区别）
         val failed = LinkedHashSet<String>()
+        // 「索引建不出、但旧路径已把词并入内存」的包：词真的会出，只是没有索引（BUG.md L-1318）
+        val merged = LinkedHashSet<String>()
         var loadedBytes = 0L
         for (f in packs) {
-            val idx = loadOptionalIndex(f, indexDir)
-            if (idx != null) {
-                loaded.add(idx)
-                loadedBytes += f.length()
-            } else {
-                failed.add(f.name)
+            when (val r = loadOptionalIndex(f, indexDir)) {
+                is PackLoad.Indexed -> {
+                    loaded.add(r.index)
+                    loadedBytes += f.length()
+                }
+                PackLoad.Merged -> merged.add(f.name)
+                PackLoad.Failed -> failed.add(f.name)
             }
         }
         optionalIndexes = loaded            // 原子整体替换（查询侧并发读旧表安全）
         invalidateMergedCache()
-        extensionLoaded = loaded.isNotEmpty()
-        if (loaded.isEmpty()) {
+        // 并入成功的包也算「装上了」：词已经进了内存，候选里真的会出（BUG.md L-1318）。
+        // 不算进去的话，对外状态说「没读进来」、onReady 不上报，还按失败重试整份解压一遍 ——
+        // 而同一份字节的索引构建失败是确定性的，重试只是白花十几秒
+        extensionLoaded = loaded.isNotEmpty() || merged.isNotEmpty()
+        if (loaded.isEmpty() && merged.isEmpty()) {
             // 区分「没装」与「装了但一个都没读进来」：后者原先也打这句 I 级日志，
             // 「词库装了却不生效」的排查会被直接带偏（包损坏 / 解压失败只有上文一条 W 级日志）
             if (alive.isEmpty()) {
@@ -1398,9 +1395,57 @@ object PinyinEngine {
                 Diagnostics.w(TAG, "可选词库全部加载失败: 这一遍的 ${packs.size} 个包无一可用（长词不可用）")
             }
         } else {
-            Diagnostics.i(TAG, "可选词库已加载 ${loaded.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）")
+            val mergedNote = if (merged.isEmpty()) "" else "，其中 ${merged.size} 个按旧路径并入（无索引）"
+            Diagnostics.i(
+                TAG,
+                "可选词库已加载 ${loaded.size + merged.size} 个包，共 ${loadedBytes / 1024}KB（索引模式）$mergedNote",
+            )
         }
         return failed
+    }
+
+    /**
+     * 回收「源包已不存在」的索引缓存（BUG.md L-869 / L-1317）。
+     *
+     * 清扫按**全部已装包**算：只按某一遍要装的子集算，会把没参与本遍的包索引缓存当成
+     * 「源包已被删除」删掉。带上 mtime：源包仍在的 `.idx.tmp` 也要按保护窗回收（L-869）。
+     *
+     * 从 [loadExtensionDict] 提出来，因为**删除路径**也要立刻调它（见 `DictManagerActivity`）：
+     * 原先唯一的调用点在「下一次可选词库加载」里，而包删光之后那次加载会直接早退。
+     *
+     * @return 删掉的缓存文件名（供日志与守卫读取）
+     */
+    internal fun cleanStaleOptionalCache(context: Context): List<String> {
+        val alive = installedOptionalPacks(context).map { it.name }.toSet()
+        val indexDir = java.io.File(context.filesDir, INDEX_CACHE_DIR)
+        val deleted = ArrayList<String>()
+        runCatching {
+            val byName = indexDir.listFiles()?.filter { it.isFile }
+                ?.associate { it.name to it.lastModified() }.orEmpty()
+            val stale = staleOptionalCacheNames(
+                byName.keys.toList(),
+                alive,
+                System.currentTimeMillis(),
+            ) { byName[it] ?: 0L }
+            for (name in stale) {
+                if (java.io.File(indexDir, name).delete()) {
+                    Diagnostics.i(TAG, "清理失效索引缓存: $name")
+                    deleted.add(name)
+                }
+            }
+        }.onFailure { Diagnostics.w(TAG, "清理失效索引缓存失败: ${it.javaClass.simpleName}") }
+        return deleted
+    }
+
+    /** 单个可选包的装载结果（BUG.md L-1318：「并入成功但没有索引」既不是失败也不是索引命中） */
+    private sealed interface PackLoad {
+        class Indexed(val index: PhraseIndex) : PackLoad
+
+        /** 索引构建失败、旧路径已把词并入内存：可用，但重试也不会建出索引（同一份字节失败是确定性的） */
+        object Merged : PackLoad
+
+        /** 真的没读进来（解压 / 读取失败） */
+        object Failed : PackLoad
     }
 
     /**
@@ -1410,7 +1455,7 @@ object PinyinEngine {
      * - 否则流式构建索引（单趟，不把百万行读进内存）并落盘
      * - 构建失败（键序异常等）就回退到旧的「运行时并入」路径，功能不丢
      */
-    private fun loadOptionalIndex(src: java.io.File, indexDir: java.io.File): PhraseIndex? {
+    private fun loadOptionalIndex(src: java.io.File, indexDir: java.io.File): PackLoad {
         val stamp = PhraseIndex.stampOfFile(src.length(), src.lastModified())
         val cache = java.io.File(indexDir, src.name + INDEX_SUFFIX)
 
@@ -1422,7 +1467,7 @@ object PinyinEngine {
                 // 复用，用户看到的是「改过的词库不生效」（BUG.md L-890）
                 if (cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))) {
                     Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
-                    return idx
+                    return PackLoad.Indexed(idx)
                 }
             }
         }
@@ -1453,15 +1498,25 @@ object PinyinEngine {
                 "已构建词库包索引: ${src.name}（${idx.size} 键 / ${bytes.size / 1024}KB / " +
                     "${System.currentTimeMillis() - t0}ms）",
             )
-            idx
+            PackLoad.Indexed(idx)
         }.getOrElse { e ->
             Diagnostics.w(TAG, "索引构建失败，回退为运行时并入: ${src.name} - ${e.message}")
-            runCatching {
+            val merged = runCatching {
                 org.tukaani.xz.XZInputStream(src.inputStream())
                     .bufferedReader(StandardCharsets.UTF_8).use { loadPhrasesReader(it, merge = true) }
-                Diagnostics.i(TAG, "已按旧路径并入词库包: ${src.name}")
-            }.onFailure { Diagnostics.e(TAG, "词库包加载失败（忽略）: ${src.name} - ${it.message}") }
-            null
+            }
+            if (merged.isSuccess) {
+                // 词已进内存（候选里真的会出），只是没有索引：记为**并入**而不是失败（BUG.md L-1318）。
+                // 记为失败会让调用方当成「没读进来」并重试整份解压 —— 而同一份字节的构建失败是确定性的
+                Diagnostics.i(TAG, "已按旧路径并入词库包: ${src.name}（无索引，不再重试构建）")
+                PackLoad.Merged
+            } else {
+                Diagnostics.e(
+                    TAG,
+                    "词库包加载失败（忽略）: ${src.name} - ${merged.exceptionOrNull()?.message}",
+                )
+                PackLoad.Failed
+            }
         }
     }
 
