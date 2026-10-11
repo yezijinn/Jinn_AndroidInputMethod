@@ -1,0 +1,183 @@
+# 在线构建 APK：网页 Actions 一键编译 → 正式签名 → 下载 artifact；
+# 勾选「发布到 Release」时按纯日期 tag（= APK 的 versionCode，即编译日期）发布，附件覆盖式更新。
+#
+# 依赖的仓库 Secrets（网页 Settings → Secrets and variables → Actions）：
+#   JINN_KEYSTORE_JKS_BASE64   release.jks 的 base64（本机生成：base64 -w0 release.jks）
+#   JINN_KEYSTORE_PASSWORD     密钥库口令（JinnPassword.md 的 -storepass）
+#   JINN_KEY_PASSWORD          密钥口令（JinnPassword.md 的 -keypass）
+#   GITEE_TOKEN                可选；配了才把发布同步到 Gitee Release
+name: 构建 APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 发布到 Release（tag 取 APK 的 versionCode）
+        type: boolean
+        default: false
+      tag:
+        description: 指定发布 tag（纯日期 8 位数字；留空自动取 versionCode）
+        type: string
+        default: ""
+      notes:
+        description: 发布说明（≤10 行且 ≤200 字；留空用模板）
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APK_NAME: com.jinn.inputmethod.apk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: 写入签名密钥
+        env:
+          JKS_B64: ${{ secrets.JINN_KEYSTORE_JKS_BASE64 }}
+          STORE_PASS: ${{ secrets.JINN_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.JINN_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "$JKS_B64" ] || { echo "缺少 secret: JINN_KEYSTORE_JKS_BASE64"; exit 1; }
+          [ -n "$STORE_PASS" ] || { echo "缺少 secret: JINN_KEYSTORE_PASSWORD"; exit 1; }
+          [ -n "$KEY_PASS" ] || { echo "缺少 secret: JINN_KEY_PASSWORD"; exit 1; }
+          root="$RUNNER_TEMP/JinnKeyStores"
+          mkdir -p "$root/com.jinn.inputmethod"
+          printf '%s' "$JKS_B64" | tr -d ' \t\r\n' | base64 -d > "$root/com.jinn.inputmethod/release.jks"
+          # build_apk.py 从 JinnPassword.md 的 markdown 表格行取口令
+          printf '| `-storepass` | %s |\n| `-keypass` | %s |\n' "$STORE_PASS" "$KEY_PASS" > "$root/JinnPassword.md"
+          chmod 600 "$root/com.jinn.inputmethod/release.jks" "$root/JinnPassword.md"
+
+      - name: 编译 + 签名
+        env:
+          JINN_KEYSTORE_ROOT: ${{ runner.temp }}/JinnKeyStores
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          python3 build_apk.py
+
+      - name: 校验产物
+        id: apk
+        run: |
+          set -euo pipefail
+          apk="$APK_NAME"
+          [ -f "$apk" ] || { echo "缺少产物 $apk"; exit 1; }
+          size=$(stat -c%s "$apk")
+          [ "$size" -lt 5242880 ] || { echo "APK 体积超限（≥5MB）: $size 字节"; exit 1; }
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Android SDK 未就绪}}"
+          # 只在纯数字版本目录里挑最新 aapt2，避开 rc 预览目录
+          aapt2=$(ls -d "$sdk"/build-tools/*/aapt2 | grep -E '/[0-9]+(\.[0-9]+)*/aapt2$' | sort -V | tail -1)
+          vcode=$("$aapt2" dump badging "$apk" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
+          [ -n "$vcode" ] || { echo "未能从 APK 读出 versionCode"; exit 1; }
+          {
+            echo "version_code=$vcode"
+            echo "sha256=$sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "体积 $size 字节 / versionCode $vcode / sha256 $sha"
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ steps.apk.outputs.version_code }}
+          path: com.jinn.inputmethod.apk
+          if-no-files-found: error
+
+      - name: 生成发布说明
+        if: ${{ inputs.publish }}
+        id: notes
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NOTES: ${{ inputs.notes }}
+          SHA256: ${{ steps.apk.outputs.sha256 }}
+          VCODE: ${{ steps.apk.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$VCODE}"
+          [[ "$tag" =~ ^[0-9]{8}$ ]] || { echo "tag 必须是纯日期 8 位数字: $tag"; exit 1; }
+          file="$RUNNER_TEMP/notes.md"
+          if [ -n "$INPUT_NOTES" ]; then
+            printf '%s\n' "$INPUT_NOTES" > "$file"
+          else
+            printf '网页构建 · 编译日期 %s\nSHA256 %s\n详细变更见仓库 更新日志.md\n' "$tag" "$SHA256" > "$file"
+          fi
+          # 发布说明硬约束：≤10 行且 ≤200 字
+          lines=$(awk 'END{print NR}' "$file")
+          chars=$(wc -m < "$file")
+          if [ "$lines" -gt 10 ] || [ "$chars" -gt 200 ]; then
+            echo "发布说明超限: $lines 行 / $chars 字（上限 10 行 / 200 字）"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "notes_file=$file"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=$tag / $lines 行 / $chars 字"
+
+      - name: 发布到 GitHub Release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          SHA256: ${{ steps.apk.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" "$APK_NAME" --clobber
+          # 只保留最新一版：删掉其它 Release 的同名附件（Release 与 tag 保留）
+          # ⚠ 条件一律写 if，不用 `[ ... ] && continue`（set -e 下 AND 列表失败会提前退出脚本）
+          gh release list --limit 200 --json tagName -q '.[].tagName' | while read -r t; do
+            if [ "$t" = "$TAG" ]; then continue; fi
+            gh release delete-asset "$t" "$APK_NAME" --yes >/dev/null 2>&1 || true
+          done
+          # 双端一致的前提：远端下载哈希与本地比对（刚上传时给 CDN 一点时间）
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$APK_NAME"
+          remote=""
+          for attempt in 1 2 3; do
+            remote=$(curl -sSL "$url" | sha256sum | cut -d' ' -f1)
+            if [ "$remote" = "$SHA256" ]; then break; fi
+            echo "第 $attempt 次校验未通过（$remote），3s 后重试"
+            sleep 3
+          done
+          [ "$remote" = "$SHA256" ] || { echo "GitHub 下载哈希不一致: $remote"; exit 1; }
+          echo "已发布 $url"
+
+      - name: 同步到 Gitee Release
+        if: ${{ inputs.publish }}
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          SHA256: ${{ steps.apk.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "未配置 GITEE_TOKEN，跳过 Gitee 同步"
+            exit 0
+          fi
+          python3 .github/scripts/sync_gitee.py \
+            --repo yezijinn/Jinn_AndroidInputMethod \
+            --tag "$TAG" \
+            --apk "$APK_NAME" \
+            --sha256 "$SHA256" \
+            --notes-file "$NOTES_FILE"
