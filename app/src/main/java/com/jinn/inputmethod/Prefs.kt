@@ -469,7 +469,8 @@ class Prefs(private val appContext: Context) {
      * 候选栏字距（dp）：**相邻两个候选词之间的水平间隔**（只影响水平方向，行高不动）。
      *
      * 与按键「间隙」同语义：实现上每个候选左右各内缩本值的一半（见 PinyinKeyboardView
-     * 的候选渲染）。定义域 5~30dp、默认 10dp（用户 2026-10-02 指定）。
+     * 的候选渲染）。定义域与默认值见 [KeyAppearance.MIN_SPACING_DP] / [KeyAppearance.MAX_SPACING_DP] /
+     * [KeyAppearance.DEFAULT_SPACING_DP]（不写死数字：BUG.md L-1291，定义域翻倍后旧数字会变成错依据）。
      */
     var candidateSpacingDp: Float
         // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02 第二轮审查）：

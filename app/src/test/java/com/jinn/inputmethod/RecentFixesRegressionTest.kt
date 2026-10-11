@@ -5054,8 +5054,15 @@ class RecentFixesRegressionTest {
         assertTrue("失败分支清理临时件", "已清理临时件" in codeOf("ClipboardImageExport.kt"))
         // L-1285：剪贴板类型不可靠时按字节嗅探兜底，并留痕
         val ctrl = codeOf("ClipboardController.kt")
-        assertTrue("类型不可靠时嗅探兜底", "sniffImageFromUri" in ctrl)
-        assertTrue("类型被拒要留痕", "跳过剪贴板条目：类型不是图片" in ctrl)
+        assertTrue("类型不可靠时嗅探兜底", "sniffImageMimeOrNull" in ctrl)
+        assertTrue("判否要留痕", "按字节嗅探不是图片" in ctrl)
+        // L-1288：嗅探不得在剪贴板监听回调里开流（跨进程 IO 会拖主线程）——
+        // 判定随声明类型交给长活池，同一次开流完成
+        assertTrue("嗅探不在监听回调里开流", "sniffImageFromUri" !in ctrl)
+        assertTrue("声明类型传后台", "BackgroundIo.runLong { saveImageFromUri(uri, declared) }" in ctrl)
+        // L-1289：「不是图片」与「读不到」必须分开记（否则排障会怀疑用户复制的不是图）
+        assertTrue("读不到单独归因", "读剪贴板图片失败" in ctrl)
+        assertTrue("一次开流读头部", "private fun readImageOnce" in ctrl)
         // 历史页补上「布局」入口（与键盘面板的键同名同义）
         assertTrue("历史页有布局入口", "TEXT_IMAGE_LAYOUT" in codeOf("ClipboardHistoryActivity.kt"))
     }
@@ -5118,6 +5125,21 @@ class RecentFixesRegressionTest {
             "包体积容差收紧到 64KB",
             "PACK_SIZE_TOLERANCE_BYTES = 64L * 1024" in codeOf("OptionalDicts.kt"),
         )
+    }
+
+    /**
+     * 方向面板行高跟随键高、外观注释不写死旧定义域（BUG.md L-1290 / L-1291）。
+     */
+    @Test
+    fun `方向面板行高与外观注释`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        // L-1290：展开期间改键高也要重算面板行高（构建路径只覆盖「展开前已改好」）
+        assertTrue("展开期间重算行高", "applyDirectionRowHeights(it)" in view)
+        assertTrue("行高算式抽成函数", "private fun directionRowHeightPx()" in view)
+        // L-1291：注释里的定义域不得写死旧数字（翻倍后旧值会变成估预算的错依据）
+        assertTrue("字距注释不再写死旧域", "5~30dp" !in codeOf("KeyAppearance.kt"))
+        assertTrue("字号注释不再写死旧域", "14~28sp" !in codeOf("CandidateText.kt"))
+        assertTrue("键高注释不再写死旧档", "最大档（80dp" !in view)
     }
 
     /**

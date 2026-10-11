@@ -137,7 +137,11 @@ class ClipboardImageTest {
             "if (size == null) Diagnostics.w(TAG, \"图片解不出尺寸，按原字节入库（网格显示灰块）\")" in src &&
                 "width = size?.get(0) ?: 0" in src,
         )
-        assertTrue("图片采集走长活池（不占短活队列）", "BackgroundIo.runLong { saveImageFromUri(uri, type) }" in src)
+        // 声明类型（可能为 null）一并传下去：判定与嗅探都在后台同一处做（BUG.md L-1288）
+        assertTrue(
+            "图片采集走长活池（不占短活队列）",
+            "BackgroundIo.runLong { saveImageFromUri(uri, declared) }" in src,
+        )
     }
 
     @Test

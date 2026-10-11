@@ -140,7 +140,12 @@ object KeyAppearance {
     /** 默认字距：10dp（2026-10-02 定；此前的 0~20dp 定义域与 4dp 默认值已被取代） */
     const val DEFAULT_SPACING_DP = 10f
 
-    /** SeekBar 最大进度（字距：5~30dp，每格 1dp ⇒ 25 格） */
+    /**
+     * SeekBar 最大进度：[MIN_SPACING_DP]~[MAX_SPACING_DP]、每格 [SPACING_STEP_DP]。
+     *
+     * 写法从常量推导、不写死数字（BUG.md L-1291）：定义域 2026-10-09 翻倍过一次，
+     * 而注释里的旧数字没跟着改，反而成了后续估预算的错依据。
+     */
     val SPACING_PROGRESS_MAX: Int = progressSteps(MIN_SPACING_DP, MAX_SPACING_DP, SPACING_STEP_DP)
 
     /** 把任意输入钳到字距定义域内，并对齐到 [SPACING_STEP_DP] 的整数倍 */

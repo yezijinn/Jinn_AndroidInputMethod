@@ -1047,6 +1047,37 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // RippleDrawable，`applyKeyTransparency` 扫不到，不重刷就会出现「改完皮肤 / 拖完
             // 透明度，面板里还是上一套配色，收起再展开才自愈」（与 2026-09-23 修中心键激活态同源）。
             directionPanel?.let { applySkinToDirectionPanel(it) }
+            // 行高也按当前键高重算（BUG.md L-1290）：展开期间键高也可能变（后台配置导入、
+            // 外观页松手），字母行已经按新高度排好、面板仍是构建时的旧行高 ⇒ 收起面板时
+            // 键盘高度会突跳。构建那条路径只覆盖「展开之前就已改好」的情形
+            directionPanel?.let { applyDirectionRowHeights(it) }
+        }
+    }
+
+    /**
+     * 方向面板的每行键高：3 行均分字母区总高（每行再扣掉 2dp × 2 的行内边距）。
+     *
+     * 抽成函数是因为**展开期间**也要能按新键高重算（[applyDirectionRowHeights]，BUG.md L-1290）——
+     * 原先这条算式只写在构建处，改键高时面板停在旧行高。
+     */
+    private fun directionRowHeightPx(): Int {
+        val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT
+        val gapDp = 2
+        return (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
+    }
+
+    /** 按当前键高重排方向面板各键（BUG.md L-1290）：展开期间改键高时与字母行保持一致 */
+    private fun applyDirectionRowHeights(panel: ViewGroup) {
+        val rowH = directionRowHeightPx()
+        for (i in 0 until panel.childCount) {
+            val row = panel.getChildAt(i) as? ViewGroup ?: continue
+            for (j in 0 until row.childCount) {
+                val key = row.getChildAt(j) ?: continue
+                val lp = key.layoutParams as? LinearLayout.LayoutParams ?: continue
+                if (lp.height == rowH) continue
+                lp.height = rowH
+                key.layoutParams = lp
+            }
         }
     }
 
@@ -1093,7 +1124,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - **跳过方向面板**：它是运行时 `addView` 进字母区的（带 [DIRECTION_PANEL_TAG]），出现时三行已经 GONE；
      *    把它当字母行改高度，九宫格与字母区就会各占一个高度。
      *  - **面板高度不跟着变**：剪贴板 / 图库面板固定 162dp×2（列表内容 + 用户验证过的方案）；
-     *    跟随键高在最大档（80dp ⇒ 面板 456dp）会把小屏手机的键盘顶出可视区。
+     *    若跟随键高，最大档（[KeyAppearance.MAX_KEY_HEIGHT_DP]，数字从常量读、不写死 ——
+     *    BUG.md L-1291）下三行会把小屏手机的键盘顶出可视区。
      */
     private fun applyLetterRowHeight(keyHeightDp: Float, density: Float) {
         val px = (keyHeightDp * density).roundToInt()
@@ -2153,7 +2185,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     ) {
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
         // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
-        // （语义与按键「间隙」一致；定义域 5~30dp、默认 10dp）；垂直方向不受影响。
+        // （语义与按键「间隙」一致；定义域见 KeyAppearance.MIN_SPACING_DP~MAX_SPACING_DP，
+        // 不写死数字 —— BUG.md L-1291：定义域翻倍后旧数字会变成错依据）；垂直方向不受影响。
         val spacingHalfPx = dpFloat(prefs.candidateSpacingDp / 2f).toInt()
         // 指纹命中就跳过整棵重建（2026-10-03 修复 L-796）：退格连删时 items 往往不变，只是选中项在移，
         // 而重建要付 36 个 TextView + 36 个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
@@ -3885,10 +3918,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 3 行均分字母区总高：跟随「键高」拖动条 —— 九宫格顶替字母区，高度不一致的话
         // 切到方向面板时键盘会突然变矮或变高（原为固定的 3 × 54dp = 162dp）。
-        // 每行按钮高 = (总高 - 行间距)/3，行间距 2dp×2
-        val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT
-        val gapDp = 2
-        val rowH = (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
+        // 算式见 [directionRowHeightPx]；展开期间键高变了由 [applyDirectionRowHeights] 补
+        val rowH = directionRowHeightPx()
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "ensureDirectionPanel: rowH=$rowH")
 
         // 行1：行首 上 行末

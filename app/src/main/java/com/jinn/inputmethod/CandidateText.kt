@@ -9,8 +9,10 @@ import kotlin.math.roundToInt
  * （默认档 20sp → 14sp，与历史观感一致）；栏高、行高、拼音条高度一律由 [CandidateRows]
  * 按本值算 —— 字号与栏高同源，调大不裁字、调小栏高跟着收。
  *
- * 定义域 14~28sp、步进 1sp、默认 20sp。下界是「再小就点不中」；上界按**双行档**定：
- * 28sp 时双行栏高 ≈ 89dp，键盘整体相应长高（键区高度不变）。
+ * 定义域 [MIN_SP]~[MAX_SP]sp、步进 [STEP_SP]sp、默认 [DEFAULT_SP]sp。下界是「再小就点不中」；
+ * 上界按**双行档**定：栏高由 [CandidateRows] 按字号派生（行高 = 字号 × 系数），两行加拼音条
+ * 即候选栏总高，键盘整体相应长高（键区高度不变）。数字一律不写死（BUG.md L-1291：
+ * 定义域 2026-10-09 翻倍过，注释里的旧数字会变成后续估预算的错依据）。
  *
  * 与系统「字体大小」的关系：本值单位是 sp，系统放大时两者相乘（20sp × 1.5 = 30sp），
  * 高度由 [CandidateRows] 的行高规则兜住，不会裁字。
@@ -42,7 +44,7 @@ object CandidateText {
     /** 拼音字号下界（sp）：拼音只是提示行，太小会看不清残码 */
     const val MIN_PINYIN_SP = 12f
 
-    /** SeekBar 最大进度（14~28sp，每格 1sp ⇒ 14 格） */
+    /** SeekBar 最大进度：[MIN_SP]~[MAX_SP]、每格 [STEP_SP]（数字从常量推导，见 BUG.md L-1291） */
     val PROGRESS_MAX: Int = ((MAX_SP - MIN_SP) / STEP_SP).roundToInt()
 
     /** 把任意输入钳到定义域内，并对齐到 [STEP_SP] 的整数倍 */

@@ -192,83 +192,130 @@ class ClipboardController(context: Context) {
      * 拿不到时 [saveImageFromUri] 按「流打不开」留 W 日志，不静默吞（实施计划 §3 的 Step 0 实测项）。
      * 读流 + 解码 + 压缩是秒级活，投进 `BackgroundIo.runLong` 长活池 —— 短活池（`run`）
      * 要留给面板首屏与粘贴，大图解码不能排在它们前面。
+     *
+     * 类型判定**不在本回调里做**（BUG.md L-1288）：本方法跑在系统剪贴板的监听线程上，而嗅探要
+     * `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，每个图片条目都要
+     * 先来这么一次，复制瞬间因此可能卡顿甚至 ANR。现在把**声明类型**原样传下去，由长活池在读到
+     * 头部时就地判：同一次开流，监听线程零 IO。
      */
     private fun handleImageClip(item: android.content.ClipData.Item): Boolean {
         val uri = item.uri ?: return false
         val declared = runCatching { appContext.contentResolver.getType(uri) }.getOrNull()
-        // 类型不可靠时不直接判否（BUG.md L-1285）：有的应用写 `application/octet-stream`、
-        // 有的干脆不给类型 —— 原先这两类图片被静默拒收，诊断包里查不到任何痕迹，
-        // 用户只看到「复制了图、历史里没有」。现在先按字节嗅探，嗅探也认不出才算「不是图片」
-        val type = if (declared != null && declared.startsWith("image/")) {
-            declared
-        } else {
-            val sniffed = sniffImageFromUri(uri)
-            if (sniffed == null) {
-                Diagnostics.i(TAG, "跳过剪贴板条目：类型不是图片（declared=${declared ?: "null"}）")
-                return false
-            }
-            Diagnostics.i(TAG, "剪贴板类型不可靠（declared=${declared ?: "null"}），按字节嗅探为 $sniffed")
-            sniffed
+        if (declared == null || !declared.startsWith("image/")) {
+            // 类型不可靠不直接判否（BUG.md L-1285）：有的应用写 `application/octet-stream`、
+            // 有的干脆不给类型 —— 原先这两类图片被静默拒收，诊断包里查不到任何痕迹。
+            // 判定与归因都挪到后台（L-1288 / L-1289）
+            Diagnostics.i(TAG, "剪贴板类型不可靠（declared=${declared ?: "null"}），转后台按字节判定")
         }
         if (!ClipboardPrefs.of(appContext).imageCaptureEnabled) {
             Diagnostics.i(TAG, "跳过图片剪贴板条目（记录图片已关闭）")
             return true
         }
-        BackgroundIo.runLong { saveImageFromUri(uri, type) }
+        BackgroundIo.runLong { saveImageFromUri(uri, declared) }
         return true
     }
 
     /**
-     * 从 content URI 读头部字节做图片嗅探（类型不可靠时的兜底，BUG.md L-1285）。
+     * 头部字节 → 图片 MIME；**认不出返回 null**（BUG.md L-1285 的判据）。
      *
-     * 只读前 16 字节，读不到（流打不开 / 空）返回 null。注意 [GalleryInsert.sniffImageMime]
-     * 认不出时**回落 `image/png`** —— 返回 png 时必须核对魔数，否则任意二进制（zip / pdf）
-     * 都会被当成图片送进入库流程。
+     * [GalleryInsert.sniffImageMime] 认不出时回落 `image/png` —— 返回 png 时必须核对魔数，
+     * 否则任意二进制（zip / pdf）都会被当成图片送进入库流程。
      */
-    private fun sniffImageFromUri(uri: android.net.Uri): String? = runCatching {
-        appContext.contentResolver.openInputStream(uri)?.use { input ->
-            val head = ByteArray(16)
-            var n = 0
-            while (n < head.size) {
-                val r = input.read(head, n, head.size - n)
-                if (r < 0) break
-                n += r
+    private fun sniffImageMimeOrNull(head: ByteArray): String? {
+        if (head.isEmpty()) return null
+        val mime = GalleryInsert.sniffImageMime(head)
+        if (mime == "image/png" && (head.size < 4 || (head[0].toInt() and 0xFF) != 0x89)) return null
+        return mime
+    }
+
+    /**
+     * 开**一次**流完成「按需嗅探 + 带预算读全」（BUG.md L-1288 / L-1289）。
+     *
+     * 判否（[ImageRead.NotImage]）与读不到（[ImageRead.Failed]）必须分开：前者是该忽略的条目，
+     * 后者才要排查（URI 授权失效 / 宿主没写好 / 空内容）。头部读完就能判否，此时**不再读整份**
+     * —— 一个被误判进这条路径的大文件不会先被读进内存。
+     */
+    private sealed interface ImageRead {
+        /** [sniffedMime] 非空 = 类型不可靠、由字节判出来的类型 */
+        class Ok(val bytes: ByteArray, val sniffedMime: String?) : ImageRead
+
+        /** 按字节嗅探认定不是图片（类型又不可靠） */
+        object NotImage : ImageRead
+
+        /** 超过单张字节预算 */
+        object TooLarge : ImageRead
+
+        /** 流打不开 / 读取中断 / 空内容 */
+        object Failed : ImageRead
+    }
+
+    private fun readImageOnce(uri: android.net.Uri, budget: Int, sniff: Boolean): ImageRead =
+        runCatching {
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                val head = ByteArray(SNIFF_HEAD_BYTES)
+                var n = 0
+                while (n < head.size) {
+                    val r = input.read(head, n, head.size - n)
+                    if (r < 0) break
+                    n += r
+                }
+                if (n <= 0) return@use ImageRead.Failed
+                val headBytes = head.copyOf(n)
+                val sniffed = if (sniff) {
+                    sniffImageMimeOrNull(headBytes) ?: return@use ImageRead.NotImage
+                } else {
+                    null
+                }
+                when (val rest = ClipboardStore.readBytesWithBudget(input, budget - n)) {
+                    is ClipboardStore.BytesResult.Ok -> ImageRead.Ok(headBytes + rest.bytes, sniffed)
+                    ClipboardStore.BytesResult.TooLarge -> ImageRead.TooLarge
+                    ClipboardStore.BytesResult.Failed -> ImageRead.Failed
+                }
             }
-            if (n <= 0) return@use null
-            val mime = GalleryInsert.sniffImageMime(head.copyOf(n))
-            if (mime == "image/png" && (n < 4 || (head[0].toInt() and 0xFF) != 0x89)) null else mime
-        }
-    }.getOrNull()
+        }.getOrNull() ?: ImageRead.Failed
 
     /**
      * 读一张剪贴板图片并入库（长活池线程）：带预算读流 → 读尺寸 → 缩略图 → 加密落盘 → 入库 → GC。
      *
+     * 读流与「按需判类型」合并成同一次开流（BUG.md L-1288 / L-1289）：头部读出来就地判，
+     * 判否即止（不再把整份无关文件读进内存），且判否与读不到**分开记** —— 前者是该忽略的条目，
+     * 后者才要排查（授权失效 / 宿主没写好）。
+     *
      * 失败一律按原因留 W 日志（超限 / 流打不开 / 解不出像素 / 入库失败），不静默吞。
      */
-    private fun saveImageFromUri(uri: android.net.Uri, declaredType: String) {
+    private fun saveImageFromUri(uri: android.net.Uri, declared: String?) {
         val prefs = ClipboardPrefs.of(appContext)
-        val read = runCatching {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                ClipboardStore.readBytesWithBudget(input, prefs.imageMaxItemBytes.toInt())
-            }
-        }.getOrNull() ?: ClipboardStore.BytesResult.Failed
-        val bytes = when (read) {
-            is ClipboardStore.BytesResult.Ok -> read.bytes
-            ClipboardStore.BytesResult.TooLarge -> {
-                Diagnostics.w(TAG, "跳过超单张上限的图片（读入即止，上限 ${prefs.imageMaxItemMb}MB）")
-                return
-            }
-            ClipboardStore.BytesResult.Failed -> {
-                Diagnostics.w(TAG, "读剪贴板图片失败（流打不开 / 读取中断 / 空内容）")
-                return
-            }
+        val reliable = declared != null && declared.startsWith("image/")
+        when (val read = readImageOnce(uri, prefs.imageMaxItemBytes.toInt(), sniff = !reliable)) {
+            is ImageRead.Ok -> saveReadImage(prefs, read, declared)
+            ImageRead.NotImage -> Diagnostics.i(
+                TAG,
+                "跳过剪贴板条目：按字节嗅探不是图片（declared=${declared ?: "null"}）",
+            )
+            ImageRead.TooLarge -> Diagnostics.w(
+                TAG,
+                "跳过超单张上限的图片（读入即止，上限 ${prefs.imageMaxItemMb}MB）",
+            )
+            // 与上面那条分开（BUG.md L-1289）：这条才是要排查的（授权失效 / 宿主没写好 / 空内容），
+            // 原先两者都记成「类型不是图片」，排障时会去怀疑「用户复制的本来就不是图」
+            ImageRead.Failed -> Diagnostics.w(TAG, "读剪贴板图片失败（流打不开 / 读取中断 / 空内容）")
         }
+    }
+
+    /** [readImageOnce] 成功后的入库段：尺寸 → 缩略图 → 加密落盘 → 入库（拆开只为让上面的分流读得清） */
+    private fun saveReadImage(prefs: ClipboardPrefs, read: ImageRead.Ok, declared: String?) {
+        val bytes = read.bytes
         // 尺寸读不出（HEIC / AVIF 一类）**不再整条丢弃**：与「缩略图写失败仍存原图」同一降级口径
         // （BUG.md L-1228）—— 原字节照存，网格显示灰块，复制 / 保存 / 转移到图库都还能用。
         val size = ClipboardImageCodec.bounds(bytes)
         if (size == null) Diagnostics.w(TAG, "图片解不出尺寸，按原字节入库（网格显示灰块）")
-        // provider 报通配类型时按文件头嗅探（具体类型是 commitContent 的硬要求，见 GalleryInsert）
-        val mime = if (declaredType == "image/*") ClipboardImageCodec.sniffMime(bytes) else declaredType
+        // 类型取三者之一：嗅探判出来的（类型不可靠时）→ 通配类型按文件头嗅探（具体类型是
+        // commitContent 的硬要求，见 GalleryInsert）→ 声明类型
+        val mime = when {
+            read.sniffedMime != null -> read.sniffedMime
+            declared == null || declared == "image/*" -> ClipboardImageCodec.sniffMime(bytes)
+            else -> declared
+        }
         ClipboardStore.saveImage(
             context = appContext,
             db = db,
@@ -295,6 +342,9 @@ class ClipboardController(context: Context) {
 
         /** 空剪贴板的重试延时：等系统把 primaryClip 写完 */
         const val RETRY_DELAY_MS = 250L
+
+        /** 嗅探读取的头部字节数：16 够认出全部受支持魔数（ISO-BMFF 的 brand 在偏移 8） */
+        internal const val SNIFF_HEAD_BYTES = 16
     }
 }
 
