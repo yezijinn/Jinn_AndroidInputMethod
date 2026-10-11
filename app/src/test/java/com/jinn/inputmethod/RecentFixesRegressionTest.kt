@@ -4589,7 +4589,12 @@ class RecentFixesRegressionTest {
         assertTrue("三行字母键没有按 keyHeightDp 套用高度", text.contains("applyLetterRowHeight(p.keyHeightDp, density)"))
         assertTrue("行高扫描必须跳过方向面板", text.contains("if (row.tag == DIRECTION_PANEL_TAG) continue"))
         assertTrue("键高只应改三行", text.contains("rows >= LETTER_ROW_COUNT"))
-        assertTrue("九宫格总高要跟随键高", text.contains("val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT"))
+        // 九宫格总高要跟随键高（BUG.md L-1332：行高与字母行同源，不再各算一份 dp 口径）
+        assertTrue(
+            "九宫格总高要跟随键高",
+            text.contains("(prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()") &&
+                text.contains("rowPx - dp(2) * 2"),
+        )
     }
 
     /**
@@ -5073,6 +5078,24 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // L-1333：面板里不得留无门控的布局探针（排查面板空窗那轮的遗留物）
+        assertTrue("无遗留布局探针", "ImeLayoutProbe" !in codeOf("PinyinKeyboardView.kt"))
+        assertTrue("无遗留布局探针(JinnIme)", "ImeLayoutProbe" !in codeOf("JinnIme.kt"))
+        // L-1325：导入中途异常也要保住已累计统计（回执说「已导入的部分保留」）
+        val impSrc = codeOf("ClipboardFileImporter.kt")
+        assertTrue("中途异常单独归因", "Abort.INTERRUPTED" in impSrc)
+        assertTrue("回执说部分保留", "中途出错，已中止（已导入的部分保留）" in codeOf("ClipboardHistoryActivity.kt"))
+        // L-1326：搜索态下导入要清搜索并说明（否则新条目被旧关键词整批滤掉）
+        val histNow = codeOf("ClipboardHistoryActivity.kt")
+        assertTrue("导入后清搜索", "已清空搜索，便于看到刚导入的条目" in histNow)
+        // L-1327 / L-1328：截断判据要含总数；「有行但读不出」要有独立文案
+        assertTrue("截断判据含总数", "cappedByCount && total > maxResults" in histNow)
+        assertTrue("不可读独立文案", "TEXT_UNREADABLE" in histNow)
+        // L-1331 / L-1332：候选栏与方向面板的几何都从单一来源派生（不手写同式子）
+        val pv2 = codeOf("PinyinKeyboardView.kt")
+        assertTrue("栏高走派生函数", "CandidateRows.barHeightPx(rows, dm.density, fontScale, candidateSp)" in pv2)
+        assertTrue("复用块走 px 派生", "CandidateRows.barHeightPx(\n            CandidateRows.SINGLE," in pv2)
+        assertTrue("方向面板行高同源", "rowPx - dp(2) * 2" in pv2)
         // L-1321：图库收起也必须作废待揭示（否则 300ms 后面板自己亮出来 / 跨会话残留）
         val view = codeOf("PinyinKeyboardView.kt")
         val galHide = view.substringAfter("fun hideGalleryPanel()")

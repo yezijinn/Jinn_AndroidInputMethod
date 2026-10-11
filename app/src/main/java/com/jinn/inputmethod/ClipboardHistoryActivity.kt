@@ -856,7 +856,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                             maxResults = maxResults,
                             maxBytes = ClipboardStore.SEARCH_RETAIN_BUDGET_BYTES)) {
                         capped = true
-                        // 只有条数触顶才够资格报「最多 N 条」；字节预算先触发时实际远小于 N（L-995）
+                        // 只有条数触顶才够资格报「最多 N 条」；字节预算先触发时实际远小于 N（L-995）。
+                        // 且必须**库里的行真的比上限多**（BUG.md L-1327）：条目恰好等于上限时全部行
+                        // 都已扫完，再报「只加载最多 N 条」是在暗示还有没显示的内容
                         cappedByCount = out.size >= maxResults
                         break
                     }
@@ -910,11 +912,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 快照与取数同源（BUG.md L-1294）：翻页 / 改页大小 / 切筛选后网格与列表一起刷新
                 syncGridSnapshot()
                 // 加载被上限截断时要留一行说明（面板搜索的 resultsCapped 同款），
-                // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分
+                // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分。
+                // 空态则要分真因（BUG.md L-1328）：库里有行却一条都解不出时不能说「暂无记录」
+                val unreadable = items.isEmpty() && total > 0 && keywordNow.isEmpty()
                 val hint = when {
                     imageMode && items.isEmpty() -> TEXT_IMAGE_EMPTY
-                    cappedByCount -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
+                    cappedByCount && total > maxResults -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
                     capped -> TEXT_TRUNCATED_GENERIC
+                    unreadable -> TEXT_UNREADABLE
                     items.isEmpty() -> TEXT_EMPTY
                     else -> ""
                 }
@@ -1312,7 +1317,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
             runOnUiThread {
                 importing = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                message(describeImport(result))
+                // 搜索态下导入的新条目会被旧关键词整批过滤掉（BUG.md L-1326）：回执说「新增 N 条」
+                // 而列表里一条都看不到（没命中时还会同时显示「暂无记录」）。清掉搜索再刷新，
+                // 并把这一步写进回执 —— 静默改掉用户的搜索状态同样不可取
+                val hadKeyword = keyword.isNotEmpty()
+                if (hadKeyword) {
+                    keyword = ""
+                    searchEdit.setText("")
+                }
+                val receipt = describeImport(result)
+                message(if (hadKeyword) "$receipt\n（已清空搜索，便于看到刚导入的条目）" else receipt)
                 // 与删除 / 收藏不同（那几处必须保留页码）：导入是往**列表头部**新增，
                 // 回第 1 页才能让用户直接看到刚导入的条目
                 loadAsync()
@@ -1349,6 +1363,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     .append(" 行上限，已中止（已导入的部分保留）")
 
             ClipboardFileImporter.Abort.NOT_TEXT -> sb.append("\n").append(TEXT_IMPORT_NOT_TEXT)
+            // 中途抛异常时上面的统计仍然有效（BUG.md L-1325）：要说清「已导入的部分保留」，
+            // 否则用户按「导入失败」判断一条都没进，会再导一轮
+            ClipboardFileImporter.Abort.INTERRUPTED ->
+                sb.append("\n中途出错，已中止（已导入的部分保留）")
+
             null -> {}
         }
         return sb.toString()
@@ -1425,6 +1444,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_SEARCH = "搜索"
         const val TEXT_RESET = "重置"
         const val TEXT_EMPTY = "暂无记录"
+
+        /**
+         * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为
+         * 历史被清空了，而真相是密钥失效 / 密文损坏（新复制的内容仍会正常记录）。
+         * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，同一场景两种入口说同样的话
+         */
+        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
         const val TEXT_TRUNCATED_PREFIX = "只加载最多 "
         const val TEXT_TRUNCATED_SUFFIX = " 条（超出请用搜索缩小范围）"
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"

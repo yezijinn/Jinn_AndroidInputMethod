@@ -1061,9 +1061,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 原先这条算式只写在构建处，改键高时面板停在旧行高。
      */
     private fun directionRowHeightPx(): Int {
-        val totalDp = prefs.keyHeightDp * LETTER_ROW_COUNT
-        val gapDp = 2
-        return (resources.displayMetrics.density * (totalDp - gapDp * 2 * 3) / 3).toInt()
+        // 与字母行**同源**（BUG.md L-1332）：字母行是「每行 round(键高 × density)」（见
+        // [applyLetterRowHeight]），而面板一行顶替字母一行、行内自带上下各 2dp 内边距
+        // （见 [directionRow]）⇒ 键高 = 行高 − 4dp。原先按「(总 dp − 12dp) / 3 截断 × density」算，
+        // 与逐行四舍五入不同源：默认档就差约 6px，展开 / 收起方向面板时键盘高度仍会跳
+        //（L-1290 修的是「行高锁死」，这条修的是「跟随出来的值不相等」）
+        val rowPx = (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+        return (rowPx - dp(2) * 2).coerceAtLeast(1)
     }
 
     /** 按当前键高重排方向面板各键（BUG.md L-1290）：展开期间改键高时与字母行保持一致 */
@@ -2051,7 +2055,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
         // ⚠ 别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
         // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
-        val barHeight = pinyinBarPx + perRow * if (rows == CandidateRows.DOUBLE) 2 else 1
+        // 算式走 CandidateRows 的派生函数（BUG.md L-1331）：这里原先手写了同一个加法，
+        // 与 [CandidateRows.barHeightPx] 是两份实现，改系数时会分叉
+        val barHeight = CandidateRows.barHeightPx(rows, dm.density, fontScale, candidateSp)
         (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
             if (lp.height != barHeight) {
                 lp.height = barHeight
@@ -3737,12 +3743,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         panel.applySkin(skin)
         panel.applySurfaceAlpha(keyFaceAlpha)
-        panel.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
-            Diagnostics.w(
-                "ImeLayoutProbe",
-                "galPanel h=${ob - ot}->${b - t} contentArea=${contentArea.height} root=${height} vis=${panel.visibility}",
-            )
-        }
         galleryPanel = panel
         Diagnostics.i(TAG, "图库面板: 已按需创建")
         return panel
@@ -4077,8 +4077,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 实际高度取「内容与本值」的较大者：用 `MATCH_PARENT` 会被双行档的整栏高度拉成瘦高长条，
      * 固定成一个死值又会在系统字体放大时裁掉第二行小字（实测 1.5 倍即已裁）。三处构建点共用本方法，
      * 避免规则漂移；字号由用户参数决定，故跟着 [currentCandidateSp]（本帧值）走。
+     *
+     * **走 px 派生、与候选栏同一处取值**（BUG.md L-1331）：原先用 `dp(singleBarHeightDp(...))` ——
+     * 那是「先四舍五入到 dp、再截断到 px」另一条路径，还不含字体缩放，与候选栏实算能差约 2px，
+     * 与「与整栏高度同值」的承诺不符。
      */
-    private fun reuseBlockMinPx(): Int = dp(CandidateRows.singleBarHeightDp(currentCandidateSp))
+    private fun reuseBlockMinPx(): Int {
+        val dm = resources.displayMetrics
+        return CandidateRows.barHeightPx(
+            CandidateRows.SINGLE,
+            dm.density,
+            resources.configuration.fontScale,
+            currentCandidateSp,
+        )
+    }
 
     /**
      * 视图被移除时的收尾。

@@ -54,7 +54,14 @@ internal object ClipboardFileImporter {
     internal const val TRIM_EVERY = 100
 
     /** 中止原因（回执按此给用户一句话说明） */
-    internal enum class Abort { FILE_TOO_LARGE, TOO_MANY_LINES, NOT_TEXT }
+    internal enum class Abort {
+        FILE_TOO_LARGE,
+        TOO_MANY_LINES,
+        NOT_TEXT,
+
+        /** 中途抛异常（断流 / 解码 / 写库）：前面的行已经入库，回执要说「部分保留」（BUG.md L-1325） */
+        INTERRUPTED,
+    }
 
     /** 流级统计（纯数据，便于单测断言） */
     internal data class StreamResult(
@@ -189,50 +196,57 @@ internal object ClipboardFileImporter {
         var badChars = 0L
         var abort: Abort? = null
 
-        while (true) {
-            // 字节闸按底层已读字节计（含解码器预读）：只保证「文件级拦截」，不保证恰好卡在第 N 行
-            // （多读的那点到不了入库路径）；行内另有抽样早退（见 BoundedLineReader.overBudget），
-            // 无换行的巨行也不会把整份文件读完
-            if (counted.bytesRead > maxFileBytes) {
-                abort = Abort.FILE_TOO_LARGE
-                break
-            }
-            val line = reader.nextLine() ?: break
-            lines++
-            // 行数闸放在读行之后判：正好 [maxLines] 行的文件读完即正常结束，不算超限
-            if (lines > maxLines) {
-                abort = Abort.TOO_MANY_LINES
-                break
-            }
-            when (line) {
-                is BoundedLineReader.Line.TooLong -> tooLong++
+        // 半途异常（断流 / 解码抛 / 写库抛）也要留下已累计的统计（BUG.md L-1325）：库里已经
+        // 逐条提交了 added 条，回执若只报一句「导入失败」，用户会以为一条都没进、白导一轮
+        try {
+            while (true) {
+                // 字节闸按底层已读字节计（含解码器预读）：只保证「文件级拦截」，不保证恰好卡在第 N 行
+                // （多读的那点到不了入库路径）；行内另有抽样早退（见 BoundedLineReader.overBudget），
+                // 无换行的巨行也不会把整份文件读完
+                if (counted.bytesRead > maxFileBytes) {
+                    abort = Abort.FILE_TOO_LARGE
+                    break
+                }
+                val line = reader.nextLine() ?: break
+                lines++
+                // 行数闸放在读行之后判：正好 [maxLines] 行的文件读完即正常结束，不算超限
+                if (lines > maxLines) {
+                    abort = Abort.TOO_MANY_LINES
+                    break
+                }
+                when (line) {
+                    is BoundedLineReader.Line.TooLong -> tooLong++
 
-                is BoundedLineReader.Line.Text -> {
-                    val text = line.value.trim()
-                    if (text.isEmpty()) {
-                        blank++
-                        continue
-                    }
-                    // 文件级「像不像文本」：NUL 立即中止；替换字符占比 >1% 中止
-                    totalChars += text.length
-                    badChars += text.count { it == '\uFFFD' }
-                    if (text.indexOf('\u0000') >= 0 || badChars * 100 > totalChars) {
-                        abort = Abort.NOT_TEXT
-                        break
-                    }
-                    val hash = ClipboardDb.stableHash(text)
-                    if (!knownHashes.add(hash)) {
-                        duplicate++
-                        continue
-                    }
-                    if (onAccepted(text)) {
-                        added++
-                    } else {
-                        failed++
-                        knownHashes.remove(hash)
+                    is BoundedLineReader.Line.Text -> {
+                        val text = line.value.trim()
+                        if (text.isEmpty()) {
+                            blank++
+                            continue
+                        }
+                        // 文件级「像不像文本」：NUL 立即中止；替换字符占比 >1% 中止
+                        totalChars += text.length
+                        badChars += text.count { it == '\uFFFD' }
+                        if (text.indexOf('\u0000') >= 0 || badChars * 100 > totalChars) {
+                            abort = Abort.NOT_TEXT
+                            break
+                        }
+                        val hash = ClipboardDb.stableHash(text)
+                        if (!knownHashes.add(hash)) {
+                            duplicate++
+                            continue
+                        }
+                        if (onAccepted(text)) {
+                            added++
+                        } else {
+                            failed++
+                            knownHashes.remove(hash)
+                        }
                     }
                 }
             }
+        } catch (t: Throwable) {
+            abort = Abort.INTERRUPTED
+            Diagnostics.w(TAG, "导入中途异常: ${t.javaClass.simpleName}")
         }
         // 早退（无换行巨行越预算）在读行器里表现为 EOF：这里把中止原因认回来，
         // 否则会伪装成「正常读完」（用户看不到任何中止说明）
