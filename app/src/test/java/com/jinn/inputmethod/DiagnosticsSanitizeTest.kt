@@ -292,9 +292,10 @@ class DiagnosticsSanitizeTest {
         assertFalse("千分位分组不得原样落盘: $thousands", thousands.contains("222,021,234"))
         val european = Diagnostics.sanitizeForFile("编号 1.234.567.890.123 结束")
         assertFalse("欧式点分组不得原样落盘: $european", european.contains("234.567.890"))
-        // 反向：日期与版本号不受牵连（组数 / 组内位数都不够）
+        // 反向：日期与版本号不受牵连（组数 / 组内位数都不够），IPv4 恰好三个分隔符同样要在外面
         assertEquals("ts=2026.10.11", Diagnostics.sanitizeForFile("ts=2026.10.11"))
         assertEquals("ver 10.2.3", Diagnostics.sanitizeForFile("ver 10.2.3"))
+        assertEquals("连接 192.168.100.200:8080 失败", Diagnostics.sanitizeForFile("连接 192.168.100.200:8080 失败"))
 
         // L-1313：本地部分是非 ASCII（中文输入法用户的现实形态）——整条漏遮最坏
         assertEquals("发给 ****@example.com", Diagnostics.sanitizeForFile("发给 张三@example.com"))
