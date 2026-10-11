@@ -7,10 +7,12 @@ import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ImageSpan
 import android.util.AttributeSet
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.EditText
@@ -91,16 +93,33 @@ internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditT
             return
         }
         val drawable = BitmapDrawable(resources, bmp).apply { setBounds(0, 0, bmp.width, bmp.height) }
-        // 对象替换符（\uFFFC）：EditText 靠它给 ImageSpan 占位
-        val text = SpannableStringBuilder(getText()).append(OBJECT_REPLACEMENT)
-        text.setSpan(
-            ImageSpan(drawable),
-            text.length - 1, text.length,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
-        text.append(" ")
-        setText(text)
-        setSelection(text.length)
+        // 对象替换符（\uFFFC）：EditText 靠它给 ImageSpan 占位。
+        //
+        // 用**区间追加**而不是整段重建（BUG.md L-1099）：`setText` 会替换掉整份文本，顺带清掉
+        // 输入法的组合态 —— 用户正在拼音未上屏时贴图，组合串会丢、而 IME 仍按旧光标偏移处理后续提交。
+        // 追加只动尾部这一段，连接状态原样保留；追加前先让组合区收尾，免得图被算进组合串里。
+        val editable = getText() as? Editable
+        if (editable != null) {
+            BaseInputConnection.removeComposingSpans(editable)
+            val start = editable.length
+            editable.append(OBJECT_REPLACEMENT)
+            editable.setSpan(
+                ImageSpan(drawable), start, start + 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            editable.append(" ")
+            setSelection(editable.length)
+        } else {
+            // 保底：宿主塞进来的若不是 Editable，仍走整段重建（此时也无组合态可保）
+            val sb = SpannableStringBuilder(getText()).append(OBJECT_REPLACEMENT)
+            sb.setSpan(
+                ImageSpan(drawable), sb.length - 1, sb.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            sb.append(" ")
+            setText(sb)
+            setSelection(sb.length)
+        }
         Diagnostics.i(TAG, "已插入图片 ${bmp.width}x${bmp.height}")
     }
 

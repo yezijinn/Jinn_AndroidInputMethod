@@ -122,6 +122,9 @@ class DiagnosticsSanitizeTest {
         assertTrue(Diagnostics.redactSensitive("key=sk-proj-Ab12cd34EF56gh78").contains("****"))
         assertTrue(Diagnostics.redactSensitive("k=abcdefghijklmnopqrst:fx").contains("****"))
         assertTrue(Diagnostics.redactSensitive("Authorization: Bearer abcdef1234567890").contains("****"))
+        // 凭据串里含手机号形态时也必须**整段**替换：凭据规则排在号码规则之前（2026-10-02 起），
+        // 号码规则插进去的 `****` 不会再截断凭据串、让尾部明文漏下（BUG.md L-1071 的复核锚点）
+        assertEquals("key=****", Diagnostics.redactSensitive("key=sk-abc13812345678defghijklmnopqr"))
         // 32 位纯 hex 与哈希同形：刻意不脱敏（误伤面大，见 API_KEY_RES 的说明）
         val hex = "aaaaaaaaaaaaaaaa0123456789abcdef"
         assertEquals("hash=$hex", Diagnostics.redactSensitive("hash=$hex"))

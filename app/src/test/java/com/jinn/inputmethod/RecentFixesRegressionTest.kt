@@ -5120,4 +5120,17 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 贴图插入保留输入法组合态（BUG.md L-1099）。
+     */
+    @Test
+    fun `贴图走区间追加而非整段重建`() {
+        val ret = codeOf("ReceivingEditText.kt")
+        // setText 会替换整份文本、顺带清掉 IME 组合态 ⇒ 改为在 Editable 上区间追加
+        assertTrue("贴图取 Editable 走追加", "val editable = getText() as? Editable" in ret)
+        assertTrue("追加前先收尾组合区", "BaseInputConnection.removeComposingSpans(editable)" in ret)
+        // 保底分支仍在（宿主塞非 Editable 时）
+        assertTrue("保底分支保留", "SpannableStringBuilder(getText()).append(OBJECT_REPLACEMENT)" in ret)
+    }
+
 }
