@@ -150,6 +150,21 @@ class ClipboardLimitsTest {
         )
     }
 
+    /**
+     * `BUG.md` L-1221 的前提：原值不同、**生效值**可以相同（原值被「总量 1/4」压住）。
+     *
+     * 收紧确认框若按**原值**比较（100 → 50）就会误弹「会删除、不可恢复」，而实际一个字节都不会删；
+     * 这条用例把那个前提钉住 —— 哪天生效值改为不受总量压制，这里的判据要跟着重新审视。
+     */
+    @Test
+    fun 生效值可以被总量压到同一个数() {
+        assertEquals(
+            "原值 100 与 50 在总量 10MB 下生效值相同",
+            ClipboardPrefs.effectiveFavoriteMaxMb(raw = 100, totalMb = 10),
+            ClipboardPrefs.effectiveFavoriteMaxMb(raw = 50, totalMb = 10),
+        )
+    }
+
     @Test
     fun 收藏体积没超动态上限时原样生效() {
         assertEquals(5, ClipboardPrefs.effectiveFavoriteMaxMb(raw = 5, totalMb = 100))

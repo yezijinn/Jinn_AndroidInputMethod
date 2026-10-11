@@ -16,8 +16,13 @@ class ByteSizeTest {
     fun 分档阈值与格式() {
         assertEquals("0 B", ByteSize.text(0))
         assertEquals("999 B", ByteSize.text(999))
-        assertEquals("1 KB", ByteSize.text(1000))
-        assertEquals("999 KB", ByteSize.text(1_000_000L - 1))
+        // 10KB 以下保留一位小数（BUG.md L-1235）：整数档会把 1499 B 说成「1 KB」
+        assertEquals("1.0 KB", ByteSize.text(1000))
+        assertEquals("1.5 KB", ByteSize.text(1499))
+        assertEquals("10.0 KB", ByteSize.text(9999))
+        // 10KB 起整数档，且**四舍五入**：截断会把 999 999 B 写成「999 KB」（看着还没到 1MB）
+        assertEquals("10 KB", ByteSize.text(10_000))
+        assertEquals("1000 KB", ByteSize.text(1_000_000L - 1))
         assertEquals("1.0 MB", ByteSize.text(1_000_000L))
         assertEquals("1.0 GB", ByteSize.text(1_000_000_000L))
     }

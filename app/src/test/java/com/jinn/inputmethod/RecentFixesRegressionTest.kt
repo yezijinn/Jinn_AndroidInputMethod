@@ -5002,6 +5002,12 @@ class RecentFixesRegressionTest {
             "自定义页要显示实际生效值",
             "effectiveFavoriteMaxMb(draft.favMaxMb, draft.maxTotalMb)" in page,
         )
+        // L-1221：收紧确认框也要按**生效值**比（原值 100→50 而生效值同为 2MB 时不该弹「会删除」）
+        assertTrue("收紧判据按生效值", "effectiveFavMb(draft) < effectiveFavMb(snapshot)" in page)
+        assertFalse(
+            "不得按原值判收紧（原值差而生效率可能相同）",
+            "draft.favMaxMb < snapshot.favMaxMb" in page,
+        )
     }
 
     // ── 第五十九批（2026-10-10）：符号层的两处读屏口径（L-1138 / L-1139）───────────────
@@ -5113,6 +5119,23 @@ class RecentFixesRegressionTest {
             2,
             Regex("""if \(!fromUser\) return""").findAll(gal).count(),
         )
+        // L-1315：日志清理失败也要**短退避**（原先只有裸 logcat，时间闸已推进 ⇒ 跑到 24 小时后）
+        val diagSrc = codeOf("Diagnostics.kt")
+        assertTrue(
+            "失败路径写回短退避",
+            "lastCleanupAt = cleanupRetryAt(now, CLEANUP_INTERVAL_MS, CLEANUP_SKIP_BACKOFF_MS)" in diagSrc,
+        )
+        // 顺序有讲究：下面那行日志会重进本函数，先写回时间闸才不会多跑一轮判定
+        assertTrue(
+            "先写回时间闸再记日志",
+            diagSrc.indexOf("lastCleanupAt = cleanupRetryAt(now,") in 1..<diagSrc.indexOf("日志清理失败: "),
+        )
+        // L-1311：`ui.post` 返回 false 只在主 Looper 已退出时发生 —— 不得在 IO 线程就地改状态，
+        // 注释里的旧模型（「视图分离 ⇒ 队列不再 drain」）也要清掉
+        val imeSrc = codeOf("JinnIme.kt")
+        assertFalse("不得再在 IO 线程就地收尾", "markTranslateFailed(\"回调未入队" in imeSrc)
+        assertFalse("旧模型的说法要清掉", "消息进了不会再 drain 的队列" in imeSrc)
+        assertTrue("保留一行痕迹即可", "回调未能入队（主 Looper 已退出）" in imeSrc)
         // L-1333：面板里不得留无门控的布局探针（排查面板空窗那轮的遗留物）
         assertTrue("无遗留布局探针", "ImeLayoutProbe" !in codeOf("PinyinKeyboardView.kt"))
         assertTrue("无遗留布局探针(JinnIme)", "ImeLayoutProbe" !in codeOf("JinnIme.kt"))

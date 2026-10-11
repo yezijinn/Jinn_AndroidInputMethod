@@ -3330,14 +3330,14 @@ class JinnIme : InputMethodService() {
                         finishTranslate()
                     }
                 }
-                // ⚠ `ui.post` 返回 false（视图已 detach、消息进了不会再 drain 的队列）时，上面那段
-                // 业务代码**根本不会执行** —— 而 `translateCall` / `translateInFlight` / 按钮态
-                // 全靠它复位：看门狗用的是**同一条队列**的 postDelayed，两者同生共死，「兜底」与
-                // 「被兜底者」一起失效 ⇒ 永久停在「翻译中」（2026-10-03 修复 L-691）。
+                // `ui.post` 只在**主 Looper 已退出**（进程正在收尾）时才返回 false（BUG.md L-1311）：
+                // 视图 detach **不会**让主队列停止派发，原先那句「消息进了不会再 drain 的队列」是错的
+                // 模型 —— 后人照它省掉真正的兜底就会留洞。而看门狗用的是**同一条队列**的 postDelayed，
+                // 两者同生共死：真到那一步，本进程里已没有任何代码还能跑，也就不存在「就地收尾」可做。
+                // 原先这里在 OkHttp 线程上直接调 markTranslateFailed / finishTranslate（动键盘状态与
+                // 视图），万一真执行就是跨线程改状态。只留一行日志作痕迹，复位交给主线程侧的正常路径。
                 if (!posted) {
-                    Diagnostics.w(TAG, "[$translateTraceId] 翻译: 回调未能入队（视图已分离），就地收尾")
-                    markTranslateFailed("回调未入队（视图已分离）")
-                    finishTranslate()
+                    Diagnostics.w(TAG, "[$translateTraceId] 翻译: 回调未能入队（主 Looper 已退出）")
                 }
             }
         }.onFailure {

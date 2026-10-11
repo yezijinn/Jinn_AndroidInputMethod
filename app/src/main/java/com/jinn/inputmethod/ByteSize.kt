@@ -15,14 +15,18 @@ import java.util.Locale
  *    （实测同一块分区：十进制 90.8 GB ↔ 二进制 84.5 GiB，写成 84.5 GB 会被当成算错）；
  *  - `OptionalDicts.sizeMb` 也是十进制（5.89 = 5,890,000 字节），词库页因此与清单一致。
  *
- * 口径：`>= 1GB → %.1f GB`；`>= 1MB → %.1f MB`；`>= 1KB → N KB`（整数）；否则 `N B`。
+ * 口径：`>= 1GB → %.1f GB`；`>= 1MB → %.1f MB`；`>= 10KB → N KB`（**四舍五入**）；
+ * `>= 1KB → %.1f KB`（10KB 以下保留一位小数，见 [text]）；否则 `N B`。
  */
 internal object ByteSize {
 
     fun text(bytes: Long): String = when {
-        bytes >= 1000L * 1000 * 1000 -> String.format(Locale.US, "%.1f GB", bytes / 1e9)
-        bytes >= 1000L * 1000 -> String.format(Locale.US, "%.1f MB", bytes / 1e6)
-        bytes >= 1000L -> "${bytes / 1000} KB"
+        bytes >= 1_000_000_000L -> String.format(Locale.US, "%.1f GB", bytes / 1e9)
+        bytes >= 1_000_000L -> String.format(Locale.US, "%.1f MB", bytes / 1e6)
+        // 10KB 以下保留一位小数（BUG.md L-1235）：整数档会把 1499 B 显示成「1 KB」，
+        // 而存储占用页正是靠这些数字让用户判断「谁占得多」，小项之间比大小就在这个量级
+        bytes >= 10_000L -> "${(bytes + 500) / 1000} KB"   // 四舍五入：截断会把 999 999 B 写成「999 KB」
+        bytes >= 1_000L -> String.format(Locale.US, "%.1f KB", bytes / 1000.0)
         else -> "$bytes B"
     }
 }

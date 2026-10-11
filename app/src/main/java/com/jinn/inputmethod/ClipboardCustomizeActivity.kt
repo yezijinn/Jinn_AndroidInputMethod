@@ -567,16 +567,28 @@ class ClipboardCustomizeActivity : Activity() {
 
     private fun onOff(v: Boolean): String = if (v) TEXT_ON else TEXT_OFF
 
-    /** 是否收紧了上限：收紧会在保存后真删记录（不可恢复）⇒ 确认框必须写明 */
+    /**
+     * 是否收紧了上限：收紧会在保存后真删记录（不可恢复）⇒ 确认框必须写明。
+     *
+     * 收藏体积比的是**生效值**（BUG.md L-1221）：这一项自 2026-10-10 起「存原值、生效值另算」
+     * （见 [ClipboardPrefs.effectiveFavoriteMaxMb]，受「历史总量 1/4」压制）。原值 100 → 50 时
+     * 生效值可能同为 2 MB、一个字节都不会删，按原值比却照弹「会删除、不可恢复」—— 既误导用户，
+     * 也稀释这条确认框的警示力（真会删的时候反而不被当回事）。同理，只把**历史总量**调小时
+     * 生效值也会跟着缩，那条路径原先同样漏报。
+     */
     private fun isTightened(): Boolean =
         draft.maxItems < snapshot.maxItems ||
             draft.maxTotalMb < snapshot.maxTotalMb ||
             draft.favMaxItems < snapshot.favMaxItems ||
-            draft.favMaxMb < snapshot.favMaxMb ||
+            effectiveFavMb(draft) < effectiveFavMb(snapshot) ||
             // 图片预算收紧同样会真删图片（不可恢复）⇒ 确认框必须一起写明
             draft.imageMaxItems < snapshot.imageMaxItems ||
             draft.imageMaxTotalMb < snapshot.imageMaxTotalMb ||
             draft.imageMaxItemMb < snapshot.imageMaxItemMb
+
+    /** 收藏体积的生效值（受「历史总量 1/4」压制）：与页面上那行「实际生效」同一处取值 */
+    private fun effectiveFavMb(d: Draft): Int =
+        ClipboardPrefs.effectiveFavoriteMaxMb(d.favMaxMb, d.maxTotalMb)
 
     /**
      * 按**已落盘**的偏好立即裁剪一次库。

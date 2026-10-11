@@ -893,10 +893,17 @@ private const val LOG_SEGMENTS_KEPT = 2
     private var lastCleanupAt = 0L
 
     private fun maybeCleanupOldLogs() {
-        if (System.currentTimeMillis() - lastCleanupAt < CLEANUP_INTERVAL_MS) return
+        val now = System.currentTimeMillis()
+        if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return
         // 兜底：清理是尽力而为，异常冒到写日志的业务调用点就违背了类 KDoc 的「绝不让日志异常
-        // 影响业务逻辑」（BUG.md L-973）。裸 Log 记异常类名 —— 走 Diagnostics 会再进一次清理判定。
+        // 影响业务逻辑」（BUG.md L-973）。
         runCatching { cleanupOldLogs() }.onFailure {
+            // 失败也要退回**短退避**（BUG.md L-1315）：[cleanupOldLogs] 在动手前就把时间闸推进了
+            // 一个完整间隔（防递归），一次 `listFiles()` 抛出（存储被卸 / 权限瞬断，正是 L-973 那类）
+            // 会让年龄闸与体积闸一起停摆 24 小时 —— 而崩溃循环期间快照按毫秒唯一名新建、不受滚动闸
+            // 约束，那正是目录跑飞的时候。走 [skipCleanupRound] 同一句纯函数，口径不另写一份。
+            // ⚠ 先写回时间闸再记日志：日志本身会重进本函数，顺序反了就会多跑一轮判定。
+            lastCleanupAt = cleanupRetryAt(now, CLEANUP_INTERVAL_MS, CLEANUP_SKIP_BACKOFF_MS)
             runCatching { Log.w(TAG, "日志清理失败: ${it.javaClass.simpleName}") }
         }
     }
