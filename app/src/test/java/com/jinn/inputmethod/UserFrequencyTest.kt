@@ -22,6 +22,55 @@ class UserFrequencyTest {
     /** 当天 tick（与 UserFrequency 内部一致）：测试数据若用很旧的天计数，会被按天衰减过滤掉 */
     private fun today(): Int = (System.currentTimeMillis() / 86_400_000L).toInt()
 
+    // ── 补载与替换的时序（BUG.md L-1281）────────────────────────────────────
+
+    /**
+     * 补载的读盘在锁外、入内存才进锁：读与写之间可能正好跨过一次备份导入的整份替换。
+     * 那时补载读到的是**替换之前**的旧文件，若照旧并入，就把已删掉的词填回了内存表 ——
+     * 用户以为「还原成备份里的样子」，实际是新旧两份合一，下次落盘还把混合结果写死。
+     *
+     * 时序是直接构造的：拿到换代前的版本号 + 旧文本的解析结果，再让替换先跑，最后才走
+     * 「入内存」那一步（[UserFrequency.applyReload]）。
+     */
+    @Test
+    fun 补载读到替换前的文本时不得填回内存() {
+        val f = File.createTempFile("jinn-user-freq", ".txt").apply { deleteOnExit() }
+        f.writeText("# jinn user_freq v1\n旧词\t9.000\t${today()}\n")
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(f)
+
+        // ① 补载阶段：读盘（此时文件里还有旧词），记下当时的版本号
+        val staleVersion = UserFrequency.versionForTest()
+        val stale = UserFrequency.parse(f.readText(), today(), PinyinEngine::toSimplified)
+        assertEquals(1, stale.size)
+
+        // ② 期间备份导入把词频整份替换（内存换代、文件也被覆盖）
+        val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
+        assertTrue(UserFrequency.replaceFromBackup(f, merged, true))
+
+        // ③ 补载现在才走到「入内存」：整份作废，旧词不得复活
+        assertFalse("换代后的补载必须作废", UserFrequency.applyReload(f, staleVersion, stale))
+        assertNull("旧词不得被填回", UserFrequency.weightForTest("旧词"))
+        assertEquals(1, UserFrequency.sizeForTest())
+
+        // 对照：版本号没变时照常并入（否则「开关打开后补载」就再也不工作了）。
+        // 这里往文件里补一个内存中没有的词，能真正证明并入发生过
+        f.writeText("# jinn user_freq v1\n新词\t2.500\t${today()}\n补载词\t1.500\t${today()}\n")
+        val fresh = UserFrequency.parse(f.readText(), today(), PinyinEngine::toSimplified)
+        assertTrue("未换代时补载正常并入", UserFrequency.applyReload(f, UserFrequency.versionForTest(), fresh))
+        assertEquals(1.5, UserFrequency.weightForTest("补载词")!!, 1e-6)
+    }
+
+    /** 没有待写内容时 [UserFrequency.flush] 也算成功（盘上本来就是当前真值） */
+    @Test
+    fun 无待写内容时flush算成功() {
+        UserFrequency.resetForTest()
+        assertTrue("未装载文件", UserFrequency.flush())
+        UserFrequency.loadForTest(false)
+        UserFrequency.setFileForTest(File.createTempFile("jinn-user-freq", ".txt").apply { deleteOnExit() })
+        assertTrue("学习已关闭", UserFrequency.flush())
+    }
+
     // ── 备份导入：加锁替换 ──────────────────────────────────────────────────
 
     @Test
@@ -313,7 +362,8 @@ class UserFrequencyTest {
         // 目标父目录不存在 → writeAtomically 必然失败（不依赖平台的权限语义）
         val missing = File(System.getProperty("java.io.tmpdir"), "jinn-uf-missing-${System.nanoTime()}")
         UserFrequency.setFileForTest(File(missing, "user_freq.txt"))
-        UserFrequency.flush()
+        // BUG.md L-1319：失败必须能被调用方看见（导出 / 导入据此如实说明）
+        assertFalse("写盘失败必须返回 false", UserFrequency.flush())
         assertTrue("写盘失败后必须保留 dirty，否则这次学习永久丢失", UserFrequency.isDirtyForTest())
 
         // 可写路径：flush 成功后 dirty 清除、文件写出
@@ -321,7 +371,7 @@ class UserFrequencyTest {
         dir.mkdirs()
         val ok = File(dir, "user_freq.txt")
         UserFrequency.setFileForTest(ok)
-        UserFrequency.flush()
+        assertTrue("写盘成功要返回 true", UserFrequency.flush())
         assertTrue("写盘成功后 dirty 应清除", !UserFrequency.isDirtyForTest())
         assertTrue("文件应已写出", ok.isFile)
         dir.deleteRecursively()

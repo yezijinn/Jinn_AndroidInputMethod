@@ -265,6 +265,13 @@ internal object ConfigBackupManager {
          * 界面据此在回执里补一句，不许静默当成「全部导出成功」（BUG-13）。
          */
         val clipUnstable: Boolean,
+        /**
+         * 用户词频没能落盘（[UserFrequency.flush] 返回 false），包内是**盘上旧版本**。
+         *
+         * 包可用，但少了防抖窗口内那几次学习。与 [clipUnstable] 同款：回执补一句，不许静默
+         * 当成「全部导出成功」（BUG.md L-1319）。
+         */
+        val freqStale: Boolean = false,
     )
 
     /**
@@ -311,9 +318,18 @@ internal object ConfigBackupManager {
             )
         )
         // 词频是「内存态经 2 秒防抖落盘」的：不先 flush 就会漏掉窗口内的最后一次学习
-        // （导入侧在同一处显式 flush，导出侧此前漏了）
-        runCatching { UserFrequency.flush() }
-            .onFailure { Diagnostics.w(TAG, "导出: 词频落盘失败（继续导出盘上已有内容）: ${it.message}") }
+        // （导入侧在同一处显式 flush，导出侧此前漏了）。
+        // flush 返回写盘结果（BUG.md L-1319）：失败时包里就是盘上旧版本，回执要如实说明 ——
+        // 原先的 `runCatching { flush() }.onFailure { … }` 是死分支（flush 从不抛异常），
+        // 失败被吞掉，用户以为「刚学的那几次都在包里」
+        val freqStale = !runCatching { UserFrequency.flush() }.getOrElse {
+            // flush 内部已自吞写盘异常，这一层只为「真出现意外时别把整次导出打挂」
+            Diagnostics.w(TAG, "导出: 词频落盘抛异常（按未落盘处理）: ${it.javaClass.simpleName}")
+            false
+        }
+        if (freqStale) {
+            Diagnostics.w(TAG, "导出: 词频落盘失败，包内是盘上旧版本（缺窗口内最近几次学习）")
+        }
         // MEM-10：先看文件大小再决定读不读。这一读是整份进堆，而词频正常只有几十 KB（上限 3000 行）；
         // 文件异常膨胀时（旧版本残留 / 外部写入）没必要为一个注定超限的节先把内存吃满。
         // 判据与下面的节上限**同源同单位**（都是字节），否则会出现「预检放过、字节闸拦下」两套口径。
@@ -464,7 +480,7 @@ internal object ConfigBackupManager {
                 "共 ${dest.length()} 字节（已加密）" +
                 if (clip?.unstable == true) "（剪贴板快照不稳定）" else "",
         )
-        return ExportOutcome(dest, clip?.dropped ?: 0, clip?.unstable == true)
+        return ExportOutcome(dest, clip?.dropped ?: 0, clip?.unstable == true, freqStale)
     }
 
     private class ClipPayload(val text: String, val dropped: Int, val unstable: Boolean = false)
@@ -1058,8 +1074,15 @@ internal object ConfigBackupManager {
         if (failedStage == null && freqText != null) {
             val mergedCount = runCatching {
                 // 「仅并入」要先把内存里还没落盘的学习写下去：否则合并基准是旧文件，
-                // 防抖窗口内那几次学习会随替换被静默丢掉
-                if (mode != ImportMode.RESTORE) UserFrequency.flush()
+                // 防抖窗口内那几次学习会随替换被静默丢掉。
+                // flush 现在返回写盘结果（BUG.md L-1319）：失败时基准仍是旧文件，
+                // 再往下走就是「用旧基准覆盖并丢掉那几次学习」，所以与「本机词频读不出来」同口径
+                // ——中止词频段（跳过 replaceFromBackup），其余节照常导入
+                if (mode != ImportMode.RESTORE && !UserFrequency.flush()) {
+                    Diagnostics.w(TAG, "导入: 词频落盘失败，跳过词频导入（不做整份替换）")
+                    if (failedStage == null) failedStage = "词频未落盘（已跳过词频导入）"
+                    return@runCatching null
+                }
                 // BUG-01（唯一「不可逆数据销毁」级）：读取失败 ≠ 文件不存在。
                 // 「不存在」⇒ 本机没有可丢的词频，空串是正确的合并基准；
                 // 「读取抛异常」（I/O 错、被占、权限）⇒ 本机词频还在文件里，若按空串去 merge，

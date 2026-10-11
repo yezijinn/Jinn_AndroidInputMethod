@@ -5089,6 +5089,16 @@ class RecentFixesRegressionTest {
             "词库页用同一判据",
             "OptionalDicts.isInstalled(dictDir(), dict)" in codeOf("DictManagerActivity.kt"),
         )
+        // L-1281 / L-1319：词频补载进写锁并做换代校验；flush 有失败出口，导出 / 导入据此如实说明
+        val ufSrc = codeOf("UserFrequency.kt")
+        assertTrue("补载有换代校验", "internal fun applyReload(" in ufSrc)
+        assertTrue("补载在锁内并入", "synchronized(saveLock)" in ufSrc)
+        assertTrue("替换时换代", "version++" in ufSrc)
+        assertTrue("flush 返回写盘结果", "fun flush(): Boolean" in ufSrc)
+        val cbmSrc = codeOf("ConfigBackupManager.kt")
+        assertTrue("导出据实记录词频状态", "val freqStale = !runCatching { UserFrequency.flush() }" in cbmSrc)
+        assertTrue("导入失败即跳过词频段", "词频未落盘（已跳过词频导入）" in cbmSrc)
+        assertTrue("回执带词频说明", "用户词频未能落盘" in codeOf("SettingsActivity.kt"))
         // L-1333：面板里不得留无门控的布局探针（排查面板空窗那轮的遗留物）
         assertTrue("无遗留布局探针", "ImeLayoutProbe" !in codeOf("PinyinKeyboardView.kt"))
         assertTrue("无遗留布局探针(JinnIme)", "ImeLayoutProbe" !in codeOf("JinnIme.kt"))

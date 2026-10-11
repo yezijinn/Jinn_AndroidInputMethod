@@ -135,14 +135,41 @@ internal object UserFrequency {
     private fun reload(f: File) {
         if (!f.isFile) return
         runCatching {
+            // 读盘**前**记下版本号：读与写之间可能正好跨过一次备份导入替换（见 [applyReload]）
+            val versionBeforeRead = version
             val parsed = parse(f.readText(), today(), PinyinEngine::toSimplified)
             if (parsed.isEmpty()) return
-            for ((word, v) in parsed) entries.putIfAbsent(word, Entry(v.first, v.second))
-            Diagnostics.i(TAG, "用户词频: 开关打开后补载 ${parsed.size} 条")
+            if (!applyReload(f, versionBeforeRead, parsed)) {
+                Diagnostics.i(TAG, "用户词频: 补载结果已作废（期间词频被替换），丢弃 ${parsed.size} 条")
+            }
         }.onFailure {
             Diagnostics.w(TAG, "用户词频补载失败（按未学习处理）: ${it.message}")
         }
     }
+
+    /**
+     * 补载的「入内存」一步（拆出来是为了能单测「读到旧文本、应用时已换代」的时序，BUG.md L-1281）。
+     *
+     * 必须进写锁、且核对两件事，否则会把旧记录复活：
+     *  - `file` 还是本次读的那个文件；
+     *  - 内存态没换过代（[version] 未变）——
+     *    备份导入的「清空 → 重填」在锁内完成，而补载的读盘在锁外，读到的可能是**替换之前**
+     *    的旧文件；照旧 `putIfAbsent` 就会把已删掉的词填回内存表，用户看到的是新旧两份合一
+     *    （下次落盘把混合结果写死）。换过代就整份作废，等下一次补载或重启。
+     *
+     * @return 是否真的并入
+     */
+    internal fun applyReload(f: File, versionBeforeRead: Long, parsed: Map<String, Pair<Double, Int>>): Boolean {
+        synchronized(saveLock) {
+            if (file !== f || version != versionBeforeRead) return false
+            for ((word, v) in parsed) entries.putIfAbsent(word, Entry(v.first, v.second))
+            Diagnostics.i(TAG, "用户词频: 开关打开后补载 ${parsed.size} 条")
+            return true
+        }
+    }
+
+    /** 测试用：当前内存态版本号（[applyReload] 的换代校验依据） */
+    internal fun versionForTest(): Long = version
 
     /** 测试/复位用：清空内存态（不删文件） */
     internal fun resetForTest() {
@@ -282,12 +309,18 @@ internal object UserFrequency {
         }
     }
 
-    /** 退出/切后台时调用（主线程），保证最后一次学习不丢 */
-    fun flush() {
-        val f = file ?: return
+    /**
+     * 退出/切后台时调用（主线程），保证最后一次学习不丢。
+     *
+     * @return 盘上内容是否已经是最新的：**没有待写内容**（未装载 / 已关闭 / 不脏）也算 true ——
+     *   那几种情形下文件本来就是当前真值；只有「确实要写而写失败」才 false。
+     *   调用方（配置导出 / 导入）据此如实说明，而不是把失败当成「已落盘」（BUG.md L-1319）
+     */
+    fun flush(): Boolean {
+        val f = file ?: return true
         // 关闭学习后不写（BUG.md L-1274）：关闭时内存表已清空，此时写盘会把文件清成空表
-        if (!enabled) return
-        if (!dirty) return
+        if (!enabled) return true
+        if (!dirty) return true
         // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
         // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。渲染同样放在锁内（见 [saveNow]）。
@@ -295,9 +328,11 @@ internal object UserFrequency {
         // 只有写盘成功才清 dirty：若先清再写，写失败（磁盘满 / IO 错误）后这次学习
         // 再没有任何路径会重试（下一次 flush 直接因 `!dirty` 返回），等于静默丢失，
         // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
-        synchronized(saveLock) {
+        return synchronized(saveLock) {
             val v = version
-            if (writeAtomically(f, render()) && version == v) dirty = false
+            val written = writeAtomically(f, render())
+            if (written && version == v) dirty = false
+            written
         }
     }
 
@@ -473,9 +508,13 @@ internal object UserFrequency {
             }
             entries.clear()
             for ((word, e) in parse(mergedText, today(), PinyinEngine::toSimplified)) entries[word] = Entry(e.first, e.second)
+            // 换代（BUG.md L-1281）：并发的补载（[applyReload]）若读的是替换前的文件，其内容已作废，
+            // 靠这里自增的版本号把它挡在内存之外。放在重填**之后**：重填期间进入内存的并发学习
+            // 也要算进 version 变化（下面的 dirty 判据与它同一口径）
+            version++
             // 重填期间若有并发学习进入内存（version 变了，见 [remember] 的锁），就保持 dirty，
             // 让后续落盘把这份内存态（含那次学习）写回文件；无条件清掉等于把它永久跳过
-            dirty = version != v
+            dirty = version != v + 1
             true
         }
         if (written && dirty) scheduleSave()

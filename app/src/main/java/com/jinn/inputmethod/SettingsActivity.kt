@@ -1221,6 +1221,11 @@ class SettingsActivity : ComponentActivity() {
                         if (outcome.clipUnstable) {
                             append("（导出期间剪贴板持续变化，本次快照可能不完整；如需完整备份请稍后重试）")
                         }
+                        // 词频没落盘（BUG.md L-1319）：包里是盘上旧版本，少的是防抖窗口内那几次学习。
+                        // 与上一条同款——如实说，别让用户以为刚背下来的词都在包里
+                        if (outcome.freqStale) {
+                            append("（用户词频未能落盘，包内是盘上旧版本，缺最近几次学习记录）")
+                        }
                     }
                     textConfigHint.text = "已生成加密备份包，请选择保存位置$extra"
                     exportConfigLauncher.launch(outcome.file.name)
