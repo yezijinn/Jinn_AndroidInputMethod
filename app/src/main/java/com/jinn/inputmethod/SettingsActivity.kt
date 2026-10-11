@@ -1523,6 +1523,12 @@ class SettingsActivity : ComponentActivity() {
                 // 设置已落盘：先把「即时生效」的那几项同步给引擎，再走下面的「需重启」提示
                 // （用户点「稍后」时，繁体 / 档位 / 模糊音 / 学习这些不必等重启就该生效）
                 syncImmediateSettings()
+                // 外观与主题也要同步（BUG.md L-1324）：导入一次性改写了候选字号 / 键高 / 圆角 / 间隙 /
+                // 透明度 / 明暗档 / 皮肤 / 候选行数 / 大写显示 —— 这些既不走引擎，全仓也没有偏好变更
+                // 监听通道。不同步的话用户点「稍后」后键盘毫无变化（外观页承诺「改完即生效」），
+                // 要等下一次弹键盘才自愈。两个入口自身都做了「实例不在就当无事」与幂等处理
+                JinnIme.onKeyAppearanceChanged()
+                JinnIme.notifyThemeChanged()
                 val parts = ArrayList<String>()
                 if (mode == ConfigBackupManager.ImportMode.RESTORE) parts.add("设置 ${r.prefsApplied} 项")
                 parts.add("词频 ${r.freqBefore}→${r.freqAfter} 条")

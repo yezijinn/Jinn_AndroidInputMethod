@@ -37,6 +37,12 @@ internal object ClipboardImageExport {
         /** 未绑定图库目录（或授权已被系统回收） —— 提示去设置里绑定 */
         object NeedBinding : MoveResult
 
+        /**
+         * 有读授权但没有**写**授权（BUG.md L-1322）：目录是在「只 take 读位」的年代绑的
+         * （或 provider 只给读位）。与 [Failed] 分开 —— 用户要的动作是重绑目录，不是「重试」。
+         */
+        object Denied : MoveResult
+
         object Failed : MoveResult
     }
 
@@ -134,7 +140,9 @@ internal object ClipboardImageExport {
             MoveResult.Ok
         }.getOrElse {
             Diagnostics.w(TAG, "转移到图库目录失败: ${it.javaClass.simpleName}")
-            MoveResult.Failed
+            // 写出「没有写授权」这一类（BUG.md L-1322）：绑定只 take 读位时，当次进程靠临时授权
+            // 尚可写，进程重建后必然 SecurityException —— 界面要说清该去重绑目录，而不是「重试」
+            if (it is SecurityException) MoveResult.Denied else MoveResult.Failed
         }
     }
 

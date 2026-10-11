@@ -1370,6 +1370,8 @@ class JinnIme : InputMethodService() {
                         }
                         ClipboardImageExport.MoveResult.NeedBinding ->
                             ui.post { toast(TEXT_IMAGE_NEED_BIND) }
+                        ClipboardImageExport.MoveResult.Denied ->
+                            ui.post { toast(TEXT_IMAGE_MOVE_DENIED) }
                         ClipboardImageExport.MoveResult.Failed ->
                             ui.post { toast(TEXT_IMAGE_MOVE_FAILED) }
                     }
@@ -4160,6 +4162,9 @@ class JinnIme : InputMethodService() {
         const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
 
         const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
+
+        /** 目录只有读授权（BUG.md L-1322）：给可完成的动作（重绑目录），别让用户反复重试 */
+        const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中：请重新绑定图库目录"
 
         /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
         const val TEXT_TRANSLATE_STALE = "输入已变化，未追加译文"

@@ -49,9 +49,20 @@ class GallerySettingsActivity : ComponentActivity() {
         val previous = prefs.galleryTreeUri
         // 先取新的再还旧的（L-1037）：旧目录从此不再被本应用读到。同一条目录重绑时**不还** ——
         // 还掉等于把刚拿到的那条授权撤销，图库面板会立刻读不到内容。
-        val granted = runCatching {
+        // 读 + 写两个位都要 take（BUG.md L-1322）：图库快贴只读图，而「转移到图库目录」要用
+        // 同一棵树 createDocument。只 take 读位时当次进程靠临时授权尚可写，进程重建后写必然
+        // SecurityException（界面只说「转移失败」，用户无从下手）。provider 只给读位时降级为
+        // 只读并留痕，不假装拿到了写。
+        val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val readWrite = runCatching {
+            contentResolver.takePersistableUriPermission(uri, rwFlags)
+        }.isSuccess
+        val granted = readWrite || runCatching {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.isSuccess
+        if (granted && !readWrite) {
+            Diagnostics.w(TAG, "目录授权只拿到读位，转图库不可用 provider=${uri.authority}")
+        }
         if (previous.isNotEmpty() && previous != uri.toString()) releaseTreePermission(previous)
         prefs.galleryTreeUri = uri.toString()
         // 不记 uri 本身：SAF 树 URI 含用户目录路径，i 级日志会落盘并随诊断包外带（L-1036）
@@ -69,7 +80,11 @@ class GallerySettingsActivity : ComponentActivity() {
     private fun releaseTreePermission(raw: String) {
         if (raw.isEmpty()) return
         val uri = android.net.Uri.parse(raw)
+        // 释放也按读 + 写两个位来（BUG.md L-1322）：老绑定只有读位，整体释放会抛异常 ⇒ 回落单读位
+        val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val released = runCatching {
+            contentResolver.releasePersistableUriPermission(uri, rwFlags)
+        }.isSuccess || runCatching {
             contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.isSuccess
         Diagnostics.i(TAG, "目录: 已释放旧授权 released=$released provider=${uri.authority}")

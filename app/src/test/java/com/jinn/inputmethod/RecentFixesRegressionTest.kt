@@ -5073,6 +5073,28 @@ class RecentFixesRegressionTest {
             "交付路径共用判型",
             "ClipboardImageExport.mimeOf(item, bytes)" in codeOf("JinnIme.kt"),
         )
+        // L-1321：图库收起也必须作废待揭示（否则 300ms 后面板自己亮出来 / 跨会话残留）
+        val view = codeOf("PinyinKeyboardView.kt")
+        val galHide = view.substringAfter("fun hideGalleryPanel()")
+        assertTrue(
+            "图库收起要作废待揭示",
+            galHide.substringBefore("if (!galleryActive) return").contains("cancelPendingPanelReveal()"),
+        )
+        // L-1322：树授权要拿「读 + 写」两个位，且缺写授权时如实告知（用户要的动作是重绑目录）
+        val histSrc = codeOf("ClipboardHistoryActivity.kt")
+        assertTrue("绑定申请写位", "FLAG_GRANT_WRITE_URI_PERMISSION" in codeOf("GallerySettingsActivity.kt"))
+        assertTrue("释放也按读写位", "FLAG_GRANT_WRITE_URI_PERMISSION" in codeOf("Prefs.kt"))
+        assertTrue("缺写授权单独归因", "MoveResult.Denied" in codeOf("ClipboardImageExport.kt"))
+        assertTrue("缺写授权有文案", "TEXT_IMAGE_MOVE_DENIED" in histSrc)
+        // L-1323：页号钳位必须排在适配器刷新之前（刷新时越界 ⇒ getCount()==0 被记住，页面空白）
+        assertTrue(
+            "钳位在刷新之前",
+            "clampPageIndex()\n                adapter.notifyDataSetChanged()" in histSrc,
+        )
+        // L-1324：配置导入后要刷「正在显示」的外观与主题（导入绕过监听器直接写 prefs）
+        val settings = codeOf("SettingsActivity.kt")
+        assertTrue("导入后刷外观", "JinnIme.onKeyAppearanceChanged()" in settings)
+        assertTrue("导入后刷主题", "JinnIme.notifyThemeChanged()" in settings)
         // L-1220：索引构建的临时件落私有索引目录（不再依赖 java.io.tmpdir 的存在与可写），并清残留
         assertTrue("构建可传临时目录", "tempDir: java.io.File? = null" in codeOf("PhraseIndex.kt"))
         assertTrue("调用方传私有目录", "tempDir = indexDir" in codeOf("PinyinEngine.kt"))

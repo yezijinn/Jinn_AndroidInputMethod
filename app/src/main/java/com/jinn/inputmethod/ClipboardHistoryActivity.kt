@@ -114,6 +114,19 @@ class ClipboardHistoryActivity : ComponentActivity() {
     }
 
     /**
+     * 页号钳进有效范围（BUG.md L-1323）：条目变少后停在越界页时，`pageItems()` 会取到空页。
+     *
+     * **必须在适配器刷新之前调**：`AbsListView` 只在收到 `notifyDataSetChanged()` 时才重跑
+     * `getView`，刷新时若已越界，那一刻 `getCount() == 0` 就被记住 —— 之后 `buildPagerRow()`
+     * 里再钳页号也不会有人重新取数，界面整页空白、分页行却显示「1/1」，而 `items` 非空
+     * 连空态文案都不显示。
+     */
+    private fun clampPageIndex() {
+        val totalPages = ((items.size + pageSize() - 1) / pageSize()).coerceAtLeast(1)
+        pageIndex = pageIndex.coerceIn(0, totalPages - 1)
+    }
+
+    /**
      * 翻页类操作后的统一刷新（BUG.md L-1294）：列表与图片网格各有适配器与数据源，
      * 只刷列表会让网格停在旧页 —— 图片分类下翻页必须两个都刷。
      */
@@ -755,7 +768,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val pager = findViewById<LinearLayout>(R.id.hist_pager)
         pager.removeAllViews()
         val totalPages = ((items.size + pageSize() - 1) / pageSize()).coerceAtLeast(1)
-        pageIndex = pageIndex.coerceIn(0, totalPages - 1)
+        // 这里再钳一次是兜底（要紧的那次在 loadAsync 刷新适配器**之前**，见 [clampPageIndex]）
+        clampPageIndex()
         // 不回顶铺满：每个按钮紧贴文字，整行水平居中、相邻 4dp
         pager.gravity = Gravity.CENTER
         pager.addView(compactView().apply {
@@ -888,6 +902,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val favMode = category == FILTER_FAVORITE
                 favImageGrid.visibility = if (favMode) View.VISIBLE else View.GONE
                 if (favMode) favImageGrid.show(favGridTraceId, favoritesOnly = true)
+                // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
+                // 后若正好停在越界页，刷新那一刻 `pageItems()` 取到空页 ⇒ `AbsListView` 记住
+                // `getCount() == 0`，之后再改页号没人重新取数 ⇒ 整页空白而分页行显示 1/1
+                clampPageIndex()
                 adapter.notifyDataSetChanged()
                 // 快照与取数同源（BUG.md L-1294）：翻页 / 改页大小 / 切筛选后网格与列表一起刷新
                 syncGridSnapshot()
@@ -1084,6 +1102,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                             TEXT_IMAGE_MOVED
                         }
                         ClipboardImageExport.MoveResult.NeedBinding -> TEXT_IMAGE_NEED_BIND
+                        // 写授权缺失单独给话（BUG.md L-1322）：用户要的动作是重绑目录，不是「重试」
+                        ClipboardImageExport.MoveResult.Denied -> TEXT_IMAGE_MOVE_DENIED
                         ClipboardImageExport.MoveResult.Failed -> TEXT_IMAGE_MOVE_FAILED
                     }
             }
@@ -1486,6 +1506,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
         const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
         const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
+
+        /** 目录只有读授权（BUG.md L-1322）：给出可完成的动作，别让用户反复重试 */
+        const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中\n请到「设置 → 图库快贴」重新绑定目录后再试"
 
         /** 网格缩略图的最小目标像素（窄屏 / 多列时的兜底，避免解码出 1px 图） */
         const val MIN_IMAGE_TARGET_PX = 64

@@ -3909,6 +3909,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 收起图库面板，恢复 26 键字母布局 */
     fun hideGalleryPanel() {
+        // 还没揭示的打开请求一并作废（BUG.md L-1321）：面板没亮出来时 galleryActive 仍是 false，
+        // 上面那句早退会放行 —— 留着待揭示动作会在 300ms 后把面板自己亮出来（刚点开方向面板、
+        // 或键盘已收起时），且 onPanelHidden 没跑 ⇒ 下一会话带着旧目录与格子弹出
+        cancelPendingPanelReveal()
         if (!galleryActive) return
         galleryPanel?.onPanelHidden()
         restoreLettersLayout()

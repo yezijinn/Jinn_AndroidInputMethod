@@ -339,14 +339,19 @@ class Prefs(private val appContext: Context) {
     private fun releaseTreePermission(raw: String) {
         if (raw.isEmpty()) return
         val uri = runCatching { android.net.Uri.parse(raw) }.getOrNull() ?: return
-        runCatching {
+        // 读 + 写两个位都释放（BUG.md L-1322）：绑定侧现在两个位都 take，只释放读位会留下写授权；
+        // 老绑定只有读位时整体释放会抛 ⇒ 回落单读位
+        val rwFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val released = runCatching {
+            appContext.contentResolver.releasePersistableUriPermission(uri, rwFlags)
+        }.isSuccess || runCatching {
             appContext.contentResolver.releasePersistableUriPermission(
                 uri,
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
-        }.onFailure {
-            Diagnostics.w(TAG, "释放图库目录授权失败（可能本就不在）: ${it.javaClass.simpleName}")
-        }
+        }.isSuccess
+        if (!released) Diagnostics.w(TAG, "释放图库目录授权失败（可能本就不在）")
     }
 
     /**
