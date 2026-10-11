@@ -275,6 +275,43 @@ class DiagnosticsSanitizeTest {
     }
 
     /**
+     * `BUG.md` L-1219 / L-1313 / L-1314 / L-1071 / L-1072：脱敏链剩下的五处 fail-open 缺口。
+     *
+     * 复现串逐字取自条目：这些内容一旦漏遮就随诊断包**出厂外传**，是隐私面而不是显示问题。
+     * 用例都写成「原样串不得留下任何片段」的形状 —— 改回旧规则必然变红。
+     */
+    @Test
+    fun 混排数字与分组形态的长号码都要遮() {
+        // L-1219：全角一位紧贴 19 位半角 —— 并集边界会把整段否掉（卡号原样落盘）
+        val mixed = Diagnostics.sanitizeForFile("卡号 １622202123456789012 结束")
+        assertFalse("混排长数字不得整条落盘: $mixed", mixed.contains("622202123456789"))
+        assertTrue("混排长数字要遮: $mixed", mixed.contains("****"))
+
+        // L-1314：千分位（半角逗号）与欧式点分组
+        val thousands = Diagnostics.sanitizeForFile("金额 6,222,021,234,567,890 元")
+        assertFalse("千分位分组不得原样落盘: $thousands", thousands.contains("222,021,234"))
+        val european = Diagnostics.sanitizeForFile("编号 1.234.567.890.123 结束")
+        assertFalse("欧式点分组不得原样落盘: $european", european.contains("234.567.890"))
+        // 反向：日期与版本号不受牵连（组数 / 组内位数都不够）
+        assertEquals("ts=2026.10.11", Diagnostics.sanitizeForFile("ts=2026.10.11"))
+        assertEquals("ver 10.2.3", Diagnostics.sanitizeForFile("ver 10.2.3"))
+
+        // L-1313：本地部分是非 ASCII（中文输入法用户的现实形态）——整条漏遮最坏
+        assertEquals("发给 ****@example.com", Diagnostics.sanitizeForFile("发给 张三@example.com"))
+        assertEquals("发给 ****@例子.com", Diagnostics.sanitizeForFile("发给 user@例子.com"))
+
+        // L-1071：凭据串里含手机号形态 —— 凭据规则必须先跑（整段替换，不留尾部明文）
+        val key = Diagnostics.sanitizeForFile("key=sk-abc13812345678defghijklmnopqr")
+        assertFalse("凭据尾部不得露出: $key", key.contains("defghijklmnopqr"))
+
+        // L-1072：兜底头名表要含项目自己在发的 Azure 订阅头
+        val azure = Diagnostics.sanitizeForFile("Ocp-Apim-Subscription-Key: abcdefgh12345678")
+        assertFalse("Azure 订阅头值不得落盘: $azure", azure.contains("abcdefgh12345678"))
+        val sub = Diagnostics.sanitizeForFile("X-Subscription-Key: abcdefgh12345678")
+        assertFalse("X-Subscription-Key 值不得落盘: $sub", sub.contains("abcdefgh12345678"))
+    }
+
+    /**
      * `BUG.md` L-174：清理、快照、导出碰的是同一批文件，必须共用一把目录锁。
      *
      * 清理走 tryLock：它在写日志的路径上被调用，等一次十秒级的抓取会把业务调用一起拖住；

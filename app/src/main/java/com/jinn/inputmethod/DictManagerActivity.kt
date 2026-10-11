@@ -810,11 +810,12 @@ class DictManagerActivity : Activity() {
             for (url in dict.urls) {
                 runCatching {
                     val len = fetchToFile(client, dir, url, dict.fileName, dict.checksum)
-                    Diagnostics.i(TAG, "分类词库下载成功: ${dict.fileName} ($len B) url=$url")
+                    // 只记到 `?` 之前（BUG.md L-1072）：下载地址来自外部词库索引，query 内容无法预期
+                    Diagnostics.i(TAG, "分类词库下载成功: ${dict.fileName} ($len B) url=${url.substringBefore('?')}")
                     ok = true
                 }.onFailure {
                     lastError = it.message ?: it.toString()
-                    Diagnostics.w(TAG, "分类词库下载失败 url=$url : $lastError")
+                    Diagnostics.w(TAG, "分类词库下载失败 url=${url.substringBefore('?')} : $lastError")
                 }
                 if (ok) break
             }

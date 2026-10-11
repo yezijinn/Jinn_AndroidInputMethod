@@ -186,6 +186,16 @@ private const val LOG_SEGMENTS_KEPT = 2
     private const val DIGIT_TAIL_EDGE = "(?:[0-9](?![0-9])|[０-９](?![０-９])|[٠-٩](?![٠-٩]))"
 
     /**
+     * 逐字形后边界的**零宽**版本：末位之后不得紧跟同形数字，但**不由它占位**。
+     *
+     * 与 [DIGIT_TAIL_EDGE] 的差别只在「是否吃掉一个字符」：那一个用于「末组 4 位」的分组式
+     * （位数要算进匹配里），这一个用于「总数固定」的长数字式 —— 换成吃位版会把 19 位串只匹配
+     * 到第 19 位之前、留一位裸奔。形状由**末位自身**决定（三条 lookbehind + lookahead 各管一形）。
+     */
+    private const val DIGIT_TAIL_ZERO =
+        "(?:(?<=[0-9])(?![0-9])|(?<=[０-９])(?![０-９])|(?<=[٠-٩])(?![٠-٩]))"
+
+    /**
      * 11 位大陆手机号（逐字形边界避免切开更长的同形数字串），带可选国际前缀。
      *
      * 分隔写法（`138-1234-5678` / `138 1234 5678`）同样要遮：从通讯录、网页、聊天记录复制时
@@ -207,11 +217,38 @@ private const val LOG_SEGMENTS_KEPT = 2
         "$DIGIT_EDGE$DIGIT{3}(?:$PHONE_SEP$DIGIT{4}){2,}$PHONE_SEP$DIGIT{3}$DIGIT_TAIL_EDGE",
     )
 
-    /** 邮箱：只遮本地部分，保留域名便于辨认来源 */
-    private val EMAIL_RE = Regex("[\\w.+-]+@([\\w-]+\\.[\\w.]+)")
+    /**
+     * 邮箱：只遮本地部分，保留域名便于辨认来源。
+     *
+     * 本地部分用 `[^@\s]+` 而不是 `[\w.+-]+`（BUG.md L-1313）：Java 的 `\w` 默认只含 ASCII，
+     * 而中文输入法用户写得出「张三@example.com」—— 那种形态原先整条不匹配、本地部分与域名
+     * **一起**落盘并随诊断包外传。域名同样放宽到 Unicode 字母数字（`例子.com` 也认），
+     * 形状仍按「标签.标签」约束，避免把 `@` 之后整句话都算进域名。
+     */
+    private val EMAIL_RE = Regex(
+        "([^@\\s]+)@((?:[\\p{L}\\p{N}](?:[\\p{L}\\p{N}\\-]*[\\p{L}\\p{N}])?\\.)+" +
+            "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}\\-]*[\\p{L}\\p{N}])?)",
+    )
 
-    /** ≥15 位纯数字串（银行卡 / 证件号一类的量级）；数字类同上，含全角与阿拉伯-印度数字 */
-    private val LONG_DIGITS_RE = Regex("(?<!$DIGIT)$DIGIT{15,}(?!$DIGIT)")
+    /**
+     * ≥15 位纯数字串（银行卡 / 证件号一类的量级）；数字类同上，含全角与阿拉伯-印度数字。
+     *
+     * 边界**逐字形**（BUG.md L-1219）：原先用「三种数字形态的并集」（`(?<!$DIGIT)` / `(?!$DIGIT)`），
+     * 语义是「前面有任意形态数字就不算起点」⇒ `１622202123456789012`（全角一位紧贴 19 位半角）
+     * 被整段否掉，卡号原样落盘。这里与 [PHONE_HEAD_EDGE] 对齐：形状由**首位自身**决定。
+     */
+    private val LONG_DIGITS_RE = Regex("$DIGIT_EDGE$DIGIT{14,}$DIGIT_TAIL_ZERO")
+
+    /**
+     * 千分位 / 欧式点分组的长号码（BUG.md L-1314）：`6,222,021,234,567,890`、`1.234.567.890.123`。
+     *
+     * 与 [GROUPED_DIGITS_RE] 是两种不同写法（那里是「每组 4 位、空格 / 连字符分隔」），
+     * 这里要求「组内 3 位、`. ,` 分隔、至少 4 组」：英文千分位与欧式小数点分组都是 3 位一组，
+     * 首组 1~3 位。日期 `2026.10.11`（两组）与版本号 `10.2.3`（组内不足 3 位）天然不命中。
+     */
+    private val THOUSANDS_GROUPED_RE = Regex(
+        "$DIGIT_EDGE$DIGIT{0,2}(?:[.,]$DIGIT{3}){3,}$DIGIT_TAIL_ZERO",
+    )
 
     /**
      * 常见 API Key / 令牌形态（2026-09-30 审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
@@ -239,7 +276,13 @@ private const val LOG_SEGMENTS_KEPT = 2
         Regex("(?i)[?&](sign|signature|sig|appid|app_id|accesskeyid|access_key_id|secret|secretkey|api_key|apikey|key|token|access_token|password|pwd)=[^&\\s]{4,}"),
         // 「Authorization: <token>」的**非 Bearer** 形态（部分网关用 `Authorization: <key>` 或
         // `X-Api-Key: <key>`，压根不带 Bearer 前缀）—— 原表只认 `Bearer\s+\S{12,}`（2026-10-03 修复 L-668）
-        Regex("(?i)\\b(authorization|proxy-authorization|x-api-key)\\s*[:=]\\s*(?!bearer\\s)\\S{8,}"),
+        // 头名把项目自己在用的也列全（BUG.md L-1072）：AzureTranslator 发的是
+        // `Ocp-Apim-Subscription-Key`，原先不在表内 —— 兜底表的存在前提就是「将来有人打印整行」，
+        // 自家在用的头名缺一个就是一处确定性的漏网（`api-key` 兜住各家自定名）
+        Regex(
+            "(?i)\\b(authorization|proxy-authorization|x-api-key|x-subscription-key|" +
+                "ocp-apim-subscription-key|api-key)\\s*[:=]\\s*(?!bearer\\s)\\S{8,}",
+        ),
         // URL 的 userinfo 形态（`https://user:pass@host/`）—— 凭据藏在 URL 里，任何一处打印完整 URL 都会带走它
         Regex("(?i)https?://[^/\\s:@]+:[^/\\s@]+@"),
         )
@@ -482,7 +525,8 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 堆栈与正文共用；只改敏感片段，不做长度处理。
      */
     internal fun redactSensitive(body: String): String {
-        var s = EMAIL_RE.replace(body) { m -> MASK + "@" + m.groupValues[1] }
+        // 域名在第 2 组（本地部分放宽成 `[^@\s]+`，见 EMAIL_RE，BUG.md L-1313）
+        var s = EMAIL_RE.replace(body) { m -> MASK + "@" + m.groupValues[2] }
         // 凭据形态**先跑**（2026-10-02 修复 L-440）：数字规则会把 `LTAI0123456789012345`
         // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
         // 本该整段替换的值反而露出前 4 位与末 2 位（fail-open 的方向）
@@ -498,6 +542,8 @@ private const val LOG_SEGMENTS_KEPT = 2
         s = PHONE_RE.replace(s) { m -> m.value.take(3) + MASK + m.value.takeLast(4) }
         // 分组写法与连续形态不重叠（一个要求分隔符在场、一个要求全连写），谁先谁后都一样
         s = GROUPED_DIGITS_RE.replace(s) { m -> m.value.take(4) + MASK + m.value.takeLast(4) }
+        // 千分位 / 欧式点分组（BUG.md L-1314）：与上面那条也互斥（分隔符集不同），同样按首尾取
+        s = THOUSANDS_GROUPED_RE.replace(s) { m -> m.value.take(4) + MASK + m.value.takeLast(4) }
         return s
     }
 

@@ -292,12 +292,14 @@ object UpdateChecker {
         }
         return try {
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                Diagnostics.w(TAG, "HTTP ${conn.responseCode}: $url")
+                // 打印口径与同文件其它几处一致：只到 `?` 之前（BUG.md L-1072 顺手收口）——
+                // 本方法拿到的 url 可能来自用户填的镜像地址，query 里带什么无法预期
+                Diagnostics.w(TAG, "HTTP ${conn.responseCode}: ${url.substringBefore('?')}")
                 null
             } else if (!conn.url.protocol.equals("https", ignoreCase = true)) {
                 // HttpURLConnection 默认跟随跨协议重定向，https 起点也可能被
                 // 带到 http 终点（内容可被中间人改写）。更新检查只认 https 终态。
-                Diagnostics.w(TAG, "重定向后非 HTTPS，拒绝: ${conn.url}")
+                Diagnostics.w(TAG, "重定向后非 HTTPS，拒绝: ${conn.url.host}${conn.url.path}")
                 null
             } else {
                 // 限长读取：响应体没有上限时，一个「一直有数据、永不结束」的响应
