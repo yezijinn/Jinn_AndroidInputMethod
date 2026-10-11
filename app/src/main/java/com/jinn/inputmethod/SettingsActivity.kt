@@ -1771,7 +1771,7 @@ class SettingsActivity : ComponentActivity() {
             "密码不保存在本机，忘记后无法解密 永久丢失"
         const val TEXT_INCLUDE_CLIPBOARD =
             "额外导出:剪贴板历史 明文，靠压缩密码保护\n可能含身份地址、手机银行、账号密码\n" +
-                "（不含图片：图片不进任何备份，换机前用「剪贴板历史 → 图片 → 导出全部图片」存到相册）"
+                "（不含图片：图片不进任何备份，换机前用「剪贴板历史 → 图片 → 导出全部图片」导出到你选定的文件夹）"
         const val TEXT_INCLUDE_DICTS = "额外导出:已下载词库（没必要,可重复下）"
         const val TEXT_PWD_HINT = "备份密码（4~64 个不相同的汉字）"
         const val TEXT_PWD_HINT_CONFIRM = "再输一次备份密码"

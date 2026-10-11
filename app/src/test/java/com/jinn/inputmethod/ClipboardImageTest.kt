@@ -37,6 +37,30 @@ class ClipboardImageTest {
         assertFalse("冒号不能进文件名", ClipboardImageFiles.encName(hash).contains(':'))
     }
 
+    // ── 导出落点的可读路径（2026-10-11）───────────────────────
+
+    /**
+     * 回执里那句「位置：…」背后的映射（导出全部图片的落点）。
+     *
+     * 只有外部存储提供方的 id 是这个形态（`卷:相对路径`），所以调用方按 authority 收窄之后才用它；
+     * 这里钉住两个方向：`primary` 说「内部存储」、其余卷说「外置存储」（拿不到卷标签时不猜「SD 卡」，
+     * 猜错比笼统更糟 —— 用户会照着错的名字去找）。
+     */
+    @Test
+    fun 外部存储的落点路径按卷与相对路径拼() {
+        assertEquals(
+            "内部存储/Download/剪贴板图片",
+            ClipboardImageExport.externalStoragePath("primary:Download/剪贴板图片"),
+        )
+        assertEquals("内部存储", ClipboardImageExport.externalStoragePath("primary:"))
+        assertEquals("外置存储/MyPhotos", ClipboardImageExport.externalStoragePath("1A2B-3C4D:MyPhotos"))
+        // 相对路径两端的斜杠归一到没有
+        assertEquals("内部存储/Pictures", ClipboardImageExport.externalStoragePath("primary://Pictures/"))
+        // 不是这个提供方的形态（没有卷）：返回 null，让调用方回落到「提供方名 / 文件夹名」
+        assertNull(ClipboardImageExport.externalStoragePath("no-volume-here"))
+        assertNull(ClipboardImageExport.externalStoragePath(":leading"))
+    }
+
     // ── 文件 GC ──────────────────────────────────────────────
 
     @Test

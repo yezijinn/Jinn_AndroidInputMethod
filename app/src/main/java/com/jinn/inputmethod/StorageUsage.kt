@@ -146,7 +146,7 @@ internal object StorageUsage {
         item(
             "剪贴板图片",
             "复制的图片（原图与缩略图都加密）；容量上限见「剪贴板自定义」页；" +
-                "换机前用「剪贴板历史 → 图片 → 导出全部图片」存到相册（图片不进任何备份）",
+                "换机前用「剪贴板历史 → 图片 → 导出全部图片」导出到你选定的文件夹（图片不进任何备份）",
             scan(File(files, ClipboardImageFiles.DIR_NAME), claimed),
         )
         item("设置与偏好", "各页面的开关与参数", scan(File(data, "shared_prefs"), claimed))

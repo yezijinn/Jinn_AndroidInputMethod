@@ -20,10 +20,12 @@ import java.util.Locale
  * 不持有目录布局知识（文件名委托 [ClipboardImageFiles.stem] 与 [GalleryInsert.extOf]）。
  *
  * 权限口径（minSdk 26）：
- *  - 相册写入走 `MediaStore` + `RELATIVE_PATH`，**API 29+ 免权限**；26–28 需
+ *  - 单张「保存到相册」走 `MediaStore` + `RELATIVE_PATH`，**API 29+ 免权限**；26–28 需
  *    `WRITE_EXTERNAL_STORAGE`，本应用不申请 ⇒ [albumAvailable] 为 false 时界面不提供「保存」；
- *  - 转移到图库目录走 SAF（`Prefs.galleryTreeUri` 的持久授权）—— 未绑定 / 授权失效都归
- *    [MoveResult.NeedBinding] 或 [MoveResult.Failed]，**绝不删历史**（只有写成功才删，见调用方）。
+ *  - 一切**写用户目录**的动作都走 SAF 目录树（「转移到图库目录」用 `Prefs.galleryTreeUri`，
+ *    「导出全部图片」用 `Prefs.clipExportTreeUri`），两者共用 [writeToTree]，全 API 级别可用；
+ *    未绑定 / 授权失效归 [MoveResult.NeedBinding] / [MoveResult.Denied]，**绝不删历史**
+ *    （只有写成功才删，见调用方）。
  *
  * 线程：全部是文件 / provider IO，调用方必须放后台（`BackgroundIo.runLong`）。
  * 日志：只记结果与异常类名，不记路径与 URI（L-1036 口径）。
@@ -106,14 +108,22 @@ internal object ClipboardImageExport {
     }
 
     /**
-     * 转移到图库快贴的绑定目录（SAF 写文件）。返回 [MoveResult]。
+     * 把一条图片写进 SAF 目录树（「转移到图库目录」与「导出全部图片」共用这一处）。
      *
-     * 只有返回 [MoveResult.Ok] 时调用方才删历史 —— 「文件没写成功却把历史删了」是不可恢复的数据丢失。
+     * 两条出库路径踩的是同一批坑：`createDocument` 返回 null / 流打不开 / 写入中途失败，
+     * **都要删掉刚建的半截文档**（BUG.md L-1301）—— 残留物在用户自己的目录里（不是私有缓存），
+     * 提示却说「失败」，用户以为什么都没发生，实际每失败一次就多一个打不开的文件
+     * （文件名精确到毫秒，不会互相覆盖）。
+     *
+     * 返回 [MoveResult.Ok] / [MoveResult.Denied]（没有写授权：绑定年代只 take 了读位，见 L-1322，
+     * 界面该请用户重选目录而不是「重试」）/ [MoveResult.Failed]。
      */
-    fun moveToGalleryFolder(context: Context, item: ClipboardDb.Item, bytes: ByteArray): MoveResult {
-        val tree = Prefs(context).galleryTreeUri
-        if (tree.isEmpty()) return MoveResult.NeedBinding
-        val treeUri = runCatching { Uri.parse(tree) }.getOrNull() ?: return MoveResult.NeedBinding
+    internal fun writeToTree(
+        context: Context,
+        treeUri: Uri,
+        item: ClipboardDb.Item,
+        bytes: ByteArray,
+    ): MoveResult {
         val mime = mimeOf(item, bytes)
         return runCatching {
             val parent = DocumentsContract.buildDocumentUriUsingTree(
@@ -128,22 +138,81 @@ internal object ClipboardImageExport {
                 runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
                 return MoveResult.Failed
             }
-            // 写入异常同样删掉刚建的文档（BUG.md L-1301）：残留物在**用户自己的图库目录**里
-            // （不是私有缓存），提示却是「转移失败」⇒ 用户以为什么都没发生，实际每失败一次
-            // 就多一个打不开的半截文件（文件名精确到毫秒，不会互相覆盖）
             val wrote = runCatching { out.use { it.write(bytes) } }
             if (wrote.isFailure) {
                 runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
-                Diagnostics.w(TAG, "转移到图库目录写入中断，已删半截文档: ${wrote.exceptionOrNull()?.javaClass?.simpleName}")
+                Diagnostics.w(TAG, "目录树写入中断，已删半截文档: ${wrote.exceptionOrNull()?.javaClass?.simpleName}")
                 return MoveResult.Failed
             }
             MoveResult.Ok
         }.getOrElse {
-            Diagnostics.w(TAG, "转移到图库目录失败: ${it.javaClass.simpleName}")
-            // 写出「没有写授权」这一类（BUG.md L-1322）：绑定只 take 读位时，当次进程靠临时授权
-            // 尚可写，进程重建后必然 SecurityException —— 界面要说清该去重绑目录，而不是「重试」
+            // 「没有写授权」单列一类（BUG.md L-1322）：只 take 读位的绑定，当次进程靠临时授权
+            // 尚可写，进程重建后必然 SecurityException —— 界面要说清该去重选目录，而不是「重试」
             if (it is SecurityException) MoveResult.Denied else MoveResult.Failed
         }
+    }
+
+    /**
+     * 转移到图库快贴的绑定目录（SAF 写文件）。返回 [MoveResult]。
+     *
+     * 只有返回 [MoveResult.Ok] 时调用方才删历史 —— 「文件没写成功却把历史删了」是不可恢复的数据丢失。
+     */
+    fun moveToGalleryFolder(context: Context, item: ClipboardDb.Item, bytes: ByteArray): MoveResult {
+        val tree = Prefs(context).galleryTreeUri
+        if (tree.isEmpty()) return MoveResult.NeedBinding
+        val treeUri = runCatching { Uri.parse(tree) }.getOrNull() ?: return MoveResult.NeedBinding
+        return writeToTree(context, treeUri, item, bytes).also {
+            if (it != MoveResult.Ok) Diagnostics.w(TAG, "转移到图库目录未成功: $it")
+        }
+    }
+
+    /**
+     * 目录树的**可读落点**（导出回执要告诉用户文件去了哪）。
+     *
+     * 能拿到「卷 + 相对路径」时（外部存储提供方）说「内部存储/Download/剪贴板图片」；其余提供方
+     * （云端盘、第三方文件管理器）拿不到真实路径，退回到「提供方名字 / 文件夹名」—— 宁可不精确，
+     * 也不能编一条用户照着找会扑空的路径。
+     */
+    internal fun displayPath(context: Context, treeUri: Uri): String {
+        val docId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+        if (docId != null && treeUri.authority == EXTERNAL_STORAGE_AUTHORITY) {
+            externalStoragePath(docId)?.let { return it }
+        }
+        val name = runCatching {
+            val parent = DocumentsContract.buildDocumentUriUsingTree(
+                treeUri, DocumentsContract.getTreeDocumentId(treeUri),
+            )
+            context.contentResolver.query(
+                parent, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null,
+            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+        val provider = runCatching {
+            context.packageManager
+                .resolveContentProvider(treeUri.authority.orEmpty(), 0)
+                ?.loadLabel(context.packageManager)?.toString()
+        }.getOrNull()
+        return when {
+            !name.isNullOrBlank() && !provider.isNullOrBlank() -> "$provider / $name"
+            !name.isNullOrBlank() -> name
+            !provider.isNullOrBlank() -> provider
+            else -> PICKED_FOLDER_ALIAS
+        }
+    }
+
+    /**
+     * 外部存储提供方的文档 id（`卷:相对路径`）转可读路径（纯函数，便于单测）：
+     * `primary:Download/x` → `内部存储/Download/x`；没有卷分隔符（不是这个提供方的形态）返回 null。
+     *
+     * 非 `primary` 的卷是外置存储（SD 卡 / U 盘），本应用拿不到卷标签，写「外置存储」而不猜
+     * 「SD 卡」—— 猜错比笼统更糟，用户会照着错的名字去找。
+     */
+    internal fun externalStoragePath(docId: String): String? {
+        val i = docId.indexOf(':')
+        if (i <= 0) return null
+        val volume = docId.substring(0, i)
+        val rel = docId.substring(i + 1).trim('/')
+        val root = if (volume.equals("primary", ignoreCase = true)) "内部存储" else "外置存储"
+        return if (rel.isEmpty()) root else "$root/$rel"
     }
 
     /**
@@ -216,6 +285,12 @@ internal object ClipboardImageExport {
 
     /** 相册里的子目录名（与图库选图链路的目录命名哲学一致：用户能一眼认出是自己存的） */
     const val ALBUM_DIR = "精灵输入法"
+
+    /** 外部存储提供方（`DocumentsContract` 的 `primary:` / `XXXX-XXXX:` 形态只出现在这里） */
+    private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+
+    /** 连文件夹名都取不到时的兜底说法（回执仍要给出一个「去哪找」的指向） */
+    private const val PICKED_FOLDER_ALIAS = "你选择的文件夹"
 
     private const val CLIP_LABEL = "jinn-image"
     private const val TAG = "ClipboardImageExport"

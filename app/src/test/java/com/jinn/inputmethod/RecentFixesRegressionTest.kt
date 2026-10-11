@@ -5080,7 +5080,30 @@ class RecentFixesRegressionTest {
         // L-1300 / L-1301：导出写入中断要回收刚建的那一行 / 那个文档
         val exp = codeOf("ClipboardImageExport.kt")
         assertTrue("相册写入中断回收行", "保存到相册写入中断" in exp)
-        assertTrue("转移写入中断删文档", "转移到图库目录写入中断" in exp)
+        // L-1301：写目录树中断要删半截文档（文案随「转移到图库 / 导出全部」共用一处而改口径）
+        assertTrue("写树中断删文档", "目录树写入中断，已删半截文档" in exp)
+        // 需求：导出全部图片的目录由用户选（SAF 树），回执用阻断式弹框写明落点
+        val exportPage = codeOf("ClipboardHistoryActivity.kt")
+        assertTrue("目录可选", "ActivityResultContracts.OpenDocumentTree()" in exportPage)
+        assertTrue(
+            "取持久读写授权",
+            "Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION" in exportPage,
+        )
+        assertTrue("记住所选目录", "Prefs(this).clipExportTreeUri = uri.toString()" in exportPage)
+        assertTrue("回执写明落点", "showExportReceipt(ok, fail, path)" in exportPage)
+        assertTrue("落点走可读路径函数", "ClipboardImageExport.displayPath(this, treeUri)" in exportPage)
+        assertTrue("回执阻断式", ".setCancelable(false)" in exportPage)
+        assertTrue("写树共用一处", "ClipboardImageExport.writeToTree(this, treeUri, item, bytes)" in exportPage)
+        // 记住的目录写不进时**第一张即中止**：否则会把「换个目录」报成「图片都坏了」
+        assertTrue("首张当探针", "if (attempts == 0) {" in exportPage)
+        // SAF 目录树全 API 可用 ⇒ 该页不再有「系统版本过低」这条闸（单张保存到相册仍受它约束）
+        assertFalse("导出不再有版本闸", "TEXT_IMAGE_EXPORT_UNAVAILABLE" in exportPage)
+        // 日志只记计数：落点路径会随诊断包外带（L-1036 口径）
+        assertTrue(
+            "导出日志不记路径",
+            "\"导出全部图片: 成功=\$ok 失败=\$fail 目录可用=\${!dirBad}\"" in exportPage,
+        )
+        assertTrue("落点路径纯函数", "fun externalStoragePath(" in exp)
         // L-1303：出库与交付共用一个判型入口
         assertTrue("判型入口可复用", "internal fun mimeOf" in exp)
         assertTrue(

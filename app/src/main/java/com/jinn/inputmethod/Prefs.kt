@@ -332,7 +332,25 @@ class Prefs(private val appContext: Context) {
         }
 
     /**
-     * 释放一条图库目录的持久读授权（换目录 / 清除绑定时调用）。
+     * 「导出全部图片」的目标目录（SAF 目录树 URI；空串 = 还没选过）。
+     *
+     * 与 [galleryTreeUri] 分开：那个是键盘内图库面板的**工作目录**，这个是导出落点，互不影响。
+     * 空串时点导出先弹系统选择器；选过一次就记住并直接导，回执弹框里带「改目录」出口。
+     *
+     * 与 [galleryTreeUri] 一样进配置备份（换机带走一条多半已失效的授权）：新机上第一次点导出
+     * 会以「第一张写不进」暴露出来 —— 那时清掉记住的目录并请用户重选，不会静默写错地方。
+     */
+    var clipExportTreeUri: String
+        get() = strOr(KEY_CLIP_EXPORT_TREE_URI, "").orEmpty()
+        set(value) {
+            // 与 [galleryTreeUri] 同款：替换前先还旧授权，否则旧目录的持久授权永久挂着
+            val old = strOr(KEY_CLIP_EXPORT_TREE_URI, "").orEmpty()
+            if (old.isNotEmpty() && old != value) releaseTreePermission(old)
+            sp.edit { putString(KEY_CLIP_EXPORT_TREE_URI, value) }
+        }
+
+    /**
+     * 释放一条目录的持久读授权（换目录 / 清除绑定时调用）。
      *
      * 释放失败多半是这条授权本来就不在（或已被系统回收）：留痕即可，不必打扰用户。
      */
@@ -1422,6 +1440,8 @@ class Prefs(private val appContext: Context) {
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
         // 图库目录：换机后这条授权通常已失效，导出侧仍原样带走，导入后由键盘面板检测并提示重绑
         put(KEY_GALLERY_TREE_URI, galleryTreeUri)
+        // 导出目录同理：带过去多半也失效，由导出侧「第一张写不进」暴露并请用户重选
+        put(KEY_CLIP_EXPORT_TREE_URI, clipExportTreeUri)
         // 图库快贴的「自动返回」是用户偏好（默认关），换机必须带走
         put(KEY_GALLERY_AUTO_RETURN, galleryAutoReturn)
         // 图库面板的缩略图布局（每行张数 / 行高）同为外观偏好，换机带走
@@ -1591,6 +1611,8 @@ class Prefs(private val appContext: Context) {
                 KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
                 KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
                 KEY_GALLERY_TREE_URI -> asString(v)?.let { galleryTreeUri = it; ok() } ?: bad(key)
+                // 导出目录走 setter：换目录时旧授权一并还掉（与图库目录同一条路径）
+                KEY_CLIP_EXPORT_TREE_URI -> asString(v)?.let { clipExportTreeUri = it; ok() } ?: bad(key)
                 KEY_GALLERY_AUTO_RETURN -> asBool(v)?.let { galleryAutoReturn = it; ok() } ?: bad(key)
                 // 两个布局键都走 setter 归一，越界值落进合法区间
                 KEY_GALLERY_COLUMNS -> asInt(v)?.let { galleryColumns = it; ok() } ?: bad(key)
@@ -1880,6 +1902,9 @@ class Prefs(private val appContext: Context) {
 
         /** 图库快贴绑定的目录 URI（SAF 目录树；见 [galleryTreeUri]） */
         private const val KEY_GALLERY_TREE_URI = "gallery_tree_uri"
+
+        /** 「导出全部图片」的目标目录 URI（SAF 目录树；见 [clipExportTreeUri]） */
+        private const val KEY_CLIP_EXPORT_TREE_URI = "clip_export_tree_uri"
 
         /** 图库快贴：点图插入后自动收面板、回打字键盘（见 [galleryAutoReturn]） */
         private const val KEY_GALLERY_AUTO_RETURN = "gallery_auto_return"

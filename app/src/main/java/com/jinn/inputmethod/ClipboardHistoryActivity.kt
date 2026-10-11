@@ -4,6 +4,8 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -79,6 +81,28 @@ class ClipboardHistoryActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) startImport(uri)
+    }
+
+    /**
+     * 「导出全部图片」的目录选择器（SAF 目录树，与图库绑定同款）。
+     *
+     * 拿到结果先取**持久读写**授权再开导：只拿到读位的目录写不进去，宁可当场说清让用户换一个
+     * （图库绑定那边是「回落只读 + 提示重绑」，这里没有只读的用途）。取消不改已记住的目录。
+     */
+    private val exportDirLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val granted = runCatching { contentResolver.takePersistableUriPermission(uri, flags) }.isSuccess
+        if (!granted) {
+            // 不记 uri 本身（目录路径会随诊断包外带，L-1036），只记提供方
+            Diagnostics.w(TAG, "导出目录未取得写授权 provider=${uri.authority}")
+            message(TEXT_IMAGE_EXPORT_DIR_READONLY)
+            return@registerForActivityResult
+        }
+        Prefs(this).clipExportTreeUri = uri.toString()
+        startExport(uri)
     }
 
     /**
@@ -1120,21 +1144,44 @@ class ClipboardHistoryActivity : ComponentActivity() {
     }
 
     /**
-     * 一键把库内全部图片导出到相册（29+）：逐张解密 → MediaStore 写入，收尾报成功 / 失败数。
+     * 一键把库内全部图片导出到**用户选定的目录**：逐张解密 → 写 SAF 文档，收尾用阻断式回执
+     * 说明落点。这是图片**不进任何备份**（配置备份 / 云备份）之后的迁移出口。
      *
-     * 这是图片**不进任何备份**（配置备份 / 云备份）之后的迁移出口：换机前导一次，新机上相册里就有。
-     * 过程中不阻塞界面（长活池），用不可取消的说明框表示进行中。
+     * 没选过目录（或记住的那条已解析不出）就先弹系统选择器：选择器是异步的，等待期间**不算
+     * 「导出中」**—— 否则用户再点一次会被答复「正在导出图片…」，而其实只是在等他选目录。
      */
     private fun exportAllImages() {
-        if (!ClipboardImageExport.albumAvailable()) {
-            message(TEXT_IMAGE_EXPORT_UNAVAILABLE)
-            return
-        }
         if (!EXPORTING.compareAndSet(false, true)) {
             // 已有导出在跑（可能是重建前的实例发起的，BUG.md L-1297）：给一句反馈，不静默忽略
             message(TEXT_IMAGE_EXPORTING)
             return
         }
+        val remembered = Prefs(this).clipExportTreeUri
+        val uri = if (remembered.isEmpty()) null else runCatching { Uri.parse(remembered) }.getOrNull()
+        if (uri == null || uri.scheme.isNullOrEmpty()) {
+            EXPORTING.set(false)
+            pickExportDir()
+            return
+        }
+        startExport(uri)
+    }
+
+    /** 打开目录选择器；设备上没有文件选择器时给一句明确答复（极少见，但静默失败最难查） */
+    private fun pickExportDir() {
+        runCatching { exportDirLauncher.launch(null) }.onFailure {
+            Diagnostics.w(TAG, "导出目录选择器不可用: ${it.javaClass.simpleName}")
+            message(TEXT_IMAGE_EXPORT_NO_PICKER)
+        }
+    }
+
+    /**
+     * 导出到指定目录树，收尾弹阻断式回执（路径要真的被看到）。
+     *
+     * **第一张当探针**：记住的目录可能已经写不进去（授权被系统收回 / 目录被删 / 存储卡拔出），
+     * 那时后面每张都会以同一个原因失败，报「成功 0 张，失败 137 张」等于把「换个目录」说成了
+     * 「图片都坏了」。第一张就写不进 ⇒ 中止、清掉记住的目录、请用户重选 —— 此时一个文件都没写进去。
+     */
+    private fun startExport(treeUri: Uri) {
         val dlg = AlertDialog.Builder(this)
             .setMessage(TEXT_IMAGE_EXPORTING)
             .setCancelable(false)
@@ -1144,6 +1191,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
         BackgroundIo.runLong {
             var ok = 0
             var fail = 0
+            var attempts = 0
+            var dirBad = false
             var cursor: ClipboardCursor? = null
             while (true) {
                 val page = runCatching {
@@ -1153,19 +1202,71 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 cursor = page.last
                 for (item in page.items) {
                     val bytes = ClipboardImageExport.readOriginal(this, item)
-                    if (bytes != null && ClipboardImageExport.saveToAlbum(this, item, bytes)) ok++ else fail++
+                    if (bytes == null) {
+                        fail++
+                        continue
+                    }
+                    val wrote = ClipboardImageExport.writeToTree(this, treeUri, item, bytes)
+                    if (wrote == ClipboardImageExport.MoveResult.Ok) {
+                        ok++
+                        attempts++
+                    } else {
+                        if (attempts == 0) {
+                            dirBad = true
+                            break
+                        }
+                        fail++
+                    }
                 }
+                if (dirBad) break
             }
+            val path = ClipboardImageExport.displayPath(this, treeUri)
             runOnUiThread {
                 EXPORTING.set(false)
                 runCatching { dlg.dismiss() }
                 exportDlg = null
-                // 留痕：这个功能没有其它日志，出问题（0 张 / 部分失败）时只能靠它分辨
-                Diagnostics.i(TAG, "导出全部图片: 成功=$ok 失败=$fail")
-                // 文案代码下发：成功/失败分账（失败含「已损坏」与「系统拒写」两类，不细分到界面）
-                message(String.format(Locale.US, TEXT_IMAGE_EXPORT_DONE, ok, fail))
+                // 留痕（**不记路径**，L-1036）：这个功能没有其它日志，出问题（0 张 / 部分失败）时靠它分辨
+                Diagnostics.i(TAG, "导出全部图片: 成功=$ok 失败=$fail 目录可用=${!dirBad}")
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when {
+                    dirBad -> {
+                        Prefs(this).clipExportTreeUri = ""
+                        showExportDirProblem()
+                    }
+
+                    ok == 0 && fail == 0 -> message(TEXT_IMAGE_EXPORT_EMPTY)
+                    else -> showExportReceipt(ok, fail, path)
+                }
             }
         }
+    }
+
+    /** 导出回执（阻断式）：成功 / 失败分账 + **落点路径**，并给一个改目录的出口 */
+    private fun showExportReceipt(ok: Int, fail: Int, path: String) {
+        val text = buildString {
+            append(String.format(Locale.US, TEXT_IMAGE_EXPORT_DONE, ok, fail))
+            append('\n').append(String.format(Locale.US, TEXT_IMAGE_EXPORT_PATH, path))
+            // 失败的仍留在历史里（导出不删历史），说清这一点用户才知道还能再导一次
+            if (fail > 0) append('\n').append(TEXT_IMAGE_EXPORT_FAIL_HINT)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_IMAGE_EXPORT_TITLE)
+            .setMessage(text)
+            .setCancelable(false)
+            .setPositiveButton(TEXT_IMAGE_EXPORT_ACK, null)
+            .setNeutralButton(TEXT_IMAGE_EXPORT_CHANGE_DIR) { _, _ -> pickExportDir() }
+            .show()
+    }
+
+    /** 目录写不进去时的阻断式说明：强调「一张没导、历史也没少」，再让用户重选 */
+    private fun showExportDirProblem() {
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_IMAGE_EXPORT_TITLE)
+            .setMessage(TEXT_IMAGE_EXPORT_DIR_BAD)
+            .setCancelable(false)
+            .setPositiveButton(TEXT_IMAGE_EXPORT_REPICK) { _, _ -> pickExportDir() }
+            .setNegativeButton(TEXT_IMAGE_EXPORT_LATER, null)
+            .show()
     }
 
     /** 单击历史：弹层展示完整内容，上方 复制 / 收藏 / 删除 / 关闭，两侧距屏幕边各 10% */
@@ -1522,7 +1623,23 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 批量导出回执（成功 / 失败分账；`String.format` 两个整数参数） */
         const val TEXT_IMAGE_EXPORT_DONE = "导出完成：成功 %1\$d 张，失败 %2\$d 张"
-        const val TEXT_IMAGE_EXPORT_UNAVAILABLE = "系统版本过低：请在相册里手动保存"
+
+        /** 回执标题（与按钮同名：用户点的是它，回执也报它） */
+        const val TEXT_IMAGE_EXPORT_TITLE = "导出全部图片"
+
+        /** 回执里的落点（`String.format` 一个字符串参数；路径可能含 `%`，只能走参数位） */
+        const val TEXT_IMAGE_EXPORT_PATH = "位置：%1\$s"
+        const val TEXT_IMAGE_EXPORT_FAIL_HINT = "失败的图片仍留在历史里，可以再导一次"
+        const val TEXT_IMAGE_EXPORT_ACK = "好"
+        const val TEXT_IMAGE_EXPORT_CHANGE_DIR = "改目录"
+        const val TEXT_IMAGE_EXPORT_REPICK = "重新选择"
+        const val TEXT_IMAGE_EXPORT_LATER = "稍后"
+        const val TEXT_IMAGE_EXPORT_EMPTY = "没有可导出的图片"
+        const val TEXT_IMAGE_EXPORT_NO_PICKER = "这台设备没有文件选择器，无法选择导出目录"
+        const val TEXT_IMAGE_EXPORT_DIR_READONLY = "该目录不可写，请换一个（有些位置只允许读取）"
+        const val TEXT_IMAGE_EXPORT_DIR_BAD =
+            "这个目录写不进去（可能已被删除，或授权被系统收回）。\n" +
+                "一张图片都没有导出，历史里的图片都还在。请换一个目录再试。"
         const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
         const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
         const val TEXT_IMAGE_DELETE_CONFIRM = "删除所有图片（收藏保留）？"
