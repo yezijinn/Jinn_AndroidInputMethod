@@ -823,13 +823,15 @@ class DocsReferenceTest {
         val dSearch = constOf("DEFAULT_MAX_SEARCH")
         val dImgItems = constOf("DEFAULT_IMAGE_MAX_ITEMS")
         val dImgTotalMb = constOf("DEFAULT_IMAGE_TOTAL_MB")
-        val dPageSize = constOf("DEFAULT_HISTORY_PAGE_SIZE")
+        // 「面板单页条数」的真值是 `panelPage`（2 ~ PANEL_PAGE_ITEMS_MAX），**不是**历史管理页那档
+        // `PAGE_SIZE_OPTIONS` —— 两个参数的默认值都是 50，取错常量照样能过（2026-10-13 复核指出）
+        val dPanelPage = constOf("DEFAULT_PANEL_PAGE")
         val readme = readDoc("README.md") ?: error("找不到 README.md")
         assertTrue("README 缺历史容量默认值（源码 $dItems 条 / ${dTotalMb}MB）", "（默认 $dItems 条 / ${dTotalMb}MB）" in readme)
-        assertTrue("README 缺面板单页条数（源码 $dPageSize）", "面板单页条数（$dPageSize）" in readme)
+        assertTrue("README 缺面板单页条数（源码 $dPanelPage）", "面板单页条数（$dPanelPage）" in readme)
         assertTrue("README 缺搜索结果上限（源码 $dSearch）", "搜索结果上限（$dSearch）" in readme)
         // 反向：同一参数在别处再写一次（或写）另一个值就是「改一处漏一处」——只在声明位做正向包含会漏
-        for ((label, want) in listOf("面板单页条数" to dPageSize, "搜索结果上限" to dSearch)) {
+        for ((label, want) in listOf("面板单页条数" to dPanelPage, "搜索结果上限" to dSearch)) {
             val abroad = Regex("""$label（(\d+)）""").findAll(readme + overview).map { it.groupValues[1] }
                 .filter { it != want.toString() }.toSet()
             assertTrue("文档里「$label」写着非当前值 ${abroad.sorted().joinToString("/")}（源码 $want）", abroad.isEmpty())
@@ -839,18 +841,34 @@ class DocsReferenceTest {
             "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
-        // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest 的 `<activity` 条数；「无界面」的那一项不计入页面数）
+        // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`；
+        //    「无界面」项按透明主题标记数出来，不用魔法值 —— 2026-10-13 复核指出）
         val manifest = readDoc("app/src/main/AndroidManifest.xml") ?: error("找不到 AndroidManifest.xml")
-        val activities = Regex("""<activity\b""").findAll(manifest).count()
+        val activities = Regex("""<activity\s""").findAll(manifest).count()
+        val headless = Regex("""Theme\.Translucent\.NoTitleBar""").findAll(manifest).count()
         assertTrue(
             "功能总览的 Activity 数与 AndroidManifest 不一致（源码 $activities 个）",
             "（$activities 个 Activity" in overview,
         )
         assertTrue(
-            "功能总览的页面数与 AndroidManifest 不一致（源码 $activities 个 Activity 减去无界面的选图回调，" +
-                "新增无界面 Activity 时要同时改这里的 1 与文档）：${activities - 1}",
-            "**${activities - 1} 个页面**" in overview,
+            "功能总览的页面数与 AndroidManifest 不一致（源码 $activities 个 Activity 里 $headless 个无界面）：" +
+                "${activities - headless}",
+            "**${activities - headless} 个页面**" in overview,
         )
+    }
+
+    /**
+     * 索引行编号不得重复（块的唯一性由 `块编号必须全册唯一` 把守；行这边此前没人看）。
+     *
+     * 两个会话同时补同一批行时会静默出现两份，而计数守卫只对拍**总数** ⇒ 137 行里有两行同号也照样绿
+     * （2026-10-13 补：当天两处「有块无行」刚被补上，正好是需要这条的时刻）。
+     */
+    @Test
+    fun 索引行编号不得重复() {
+        val part = ledgerPartFiles()["index"] ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        val ids = Regex("""(?m)^\| (L-\d+) \|""").findAll(part).map { it.groupValues[1] }.toList()
+        val dup = ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        assertTrue("索引行编号重复（同一编号只能有一行）：$dup", dup.isEmpty())
     }
 
     /**
