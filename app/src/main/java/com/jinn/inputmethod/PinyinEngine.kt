@@ -2362,7 +2362,7 @@ object PinyinEngine {
      *  - 因此它不是「按词库短语数打分」的分词，也不要按那个思路去改：
      *    实测把打分改成「Σ 各前缀命中数」会退化（每个音节边界都加分 → 切得越碎分越高），
      *    真实词库下会切出 `tianqi → ti-a-n-qi`、`beijingdaxue → bei-ji-ng-da-xue` 这类坏结果。
-     *    详见 `docs/从 librime 可吸收的设计.md` 第二节。
+     *    详见 `docs/从librime可吸收的设计.md` 第二节。
      *  - 原 KDoc 举的例子 `xuni → [xu, ni]` 本身不成立：`xun-i` 里的 `i` 不是合法音节，
      *    实测 `xuni` 只有一种合法切分（[xu, ni]）。
      *
