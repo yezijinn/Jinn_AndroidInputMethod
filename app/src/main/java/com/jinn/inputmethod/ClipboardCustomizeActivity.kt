@@ -52,6 +52,8 @@ class ClipboardCustomizeActivity : Activity() {
         val imageMaxItemMb: Int,
         val galleryColumns: Int,
         val galleryCellHeightDp: Int,
+        val imageInAllGroup: Boolean,
+        val favoriteImageMoveOut: Boolean,
     )
 
     private lateinit var prefs: ClipboardPrefs
@@ -141,6 +143,8 @@ class ClipboardCustomizeActivity : Activity() {
         outState.putInt(STATE_IMAGE_MAX_ITEM_MB, draft.imageMaxItemMb)
         outState.putInt(STATE_GALLERY_COLUMNS, draft.galleryColumns)
         outState.putInt(STATE_GALLERY_CELL_HEIGHT, draft.galleryCellHeightDp)
+        outState.putBoolean(STATE_IMAGE_IN_ALL_GROUP, draft.imageInAllGroup)
+        outState.putBoolean(STATE_FAV_IMAGE_MOVE_OUT, draft.favoriteImageMoveOut)
         outState.putBoolean(STATE_UNLOCKED, unlocked)
     }
 
@@ -176,6 +180,8 @@ class ClipboardCustomizeActivity : Activity() {
             imageMaxItemMb = s.imageMaxItemMb,
             galleryColumns = layoutPrefs.galleryColumns,
             galleryCellHeightDp = layoutPrefs.galleryCellHeightDp,
+            imageInAllGroup = s.imageInAllGroup,
+            favoriteImageMoveOut = s.favoriteImageMoveOut,
         )
     }
 
@@ -196,6 +202,8 @@ class ClipboardCustomizeActivity : Activity() {
             imageMaxItemMb = b.getInt(STATE_IMAGE_MAX_ITEM_MB, snapshot.imageMaxItemMb),
             galleryColumns = b.getInt(STATE_GALLERY_COLUMNS, snapshot.galleryColumns),
             galleryCellHeightDp = b.getInt(STATE_GALLERY_CELL_HEIGHT, snapshot.galleryCellHeightDp),
+            imageInAllGroup = b.getBoolean(STATE_IMAGE_IN_ALL_GROUP, snapshot.imageInAllGroup),
+            favoriteImageMoveOut = b.getBoolean(STATE_FAV_IMAGE_MOVE_OUT, snapshot.favoriteImageMoveOut),
         )
     }
 
@@ -332,6 +340,24 @@ class ClipboardCustomizeActivity : Activity() {
         card4.addView(makeHint(TEXT_IMAGE_HINT))
         dim(card4, editable)
         PageStyle.addCard(list, card4)
+
+        // ── 图片显示与收藏（两个可选行为，同走草稿） ──
+        val card4b = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        card4b.addView(TextView(this).apply {
+            text = TEXT_IMAGE_BEHAVIOR_TITLE
+            PageStyle.sectionTitle(this)
+        })
+        card4b.addView(makeSwitch(TEXT_IMAGE_IN_ALL, draft.imageInAllGroup) { v ->
+            draft = draft.copy(imageInAllGroup = v)
+            renderAll()
+        })
+        card4b.addView(makeSwitch(TEXT_FAV_MOVE_OUT, draft.favoriteImageMoveOut) { v ->
+            draft = draft.copy(favoriteImageMoveOut = v)
+            renderAll()
+        })
+        card4b.addView(makeHint(TEXT_IMAGE_BEHAVIOR_HINT))
+        dim(card4b, editable)
+        PageStyle.addCard(list, card4b)
 
         // ── 缩略图布局（与图库快贴共用同一组参数：本页、图库面板、剪贴板图片网格三处同步） ──
         // 走草稿：与页面上其它参数一样「改完点保存才生效」，否则改完布局草稿没变化，
@@ -499,6 +525,8 @@ class ClipboardCustomizeActivity : Activity() {
             imageMaxItems = target.imageMaxItems,
             imageMaxTotalMb = target.imageMaxTotalMb,
             imageMaxItemMb = target.imageMaxItemMb,
+            imageInAllGroup = target.imageInAllGroup,
+            favoriteImageMoveOut = target.favoriteImageMoveOut,
         )
         if (!ok) {
             // 盘上还是旧值：草稿原样留着让用户重试，绝不假报成功
@@ -594,6 +622,12 @@ class ClipboardCustomizeActivity : Activity() {
         if (draft.galleryCellHeightDp != snapshot.galleryCellHeightDp) {
             items.add("$TEXT_LAYOUT_HEIGHT：${snapshot.galleryCellHeightDp} → ${draft.galleryCellHeightDp} dp")
         }
+        if (draft.imageInAllGroup != snapshot.imageInAllGroup) {
+            items.add("$TEXT_IMAGE_IN_ALL：${onOff(snapshot.imageInAllGroup)} → ${onOff(draft.imageInAllGroup)}")
+        }
+        if (draft.favoriteImageMoveOut != snapshot.favoriteImageMoveOut) {
+            items.add("$TEXT_FAV_MOVE_OUT：${onOff(snapshot.favoriteImageMoveOut)} → ${onOff(draft.favoriteImageMoveOut)}")
+        }
         if (items.size <= DIFF_MAX_LINES) return items
         return items.take(DIFF_MAX_LINES) + listOf("…等 ${items.size} 项")
     }
@@ -674,6 +708,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val STATE_IMAGE_MAX_ITEM_MB = "draft_image_max_item_mb"
         const val STATE_GALLERY_COLUMNS = "draft_gallery_columns"
         const val STATE_GALLERY_CELL_HEIGHT = "draft_gallery_cell_height"
+        const val STATE_IMAGE_IN_ALL_GROUP = "draft_image_in_all_group"
+        const val STATE_FAV_IMAGE_MOVE_OUT = "draft_fav_image_move_out"
         const val STATE_UNLOCKED = "draft_unlocked"
 
         /** 保存确认框最多列几行改动（超出只报条数） */
@@ -716,6 +752,16 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_IMAGE_HINT =
             "图片与文本各自统计 / 各自淘汰：调小这里只删最旧的非收藏图片，不动文本；" +
                 "超单张上限的图不入库。图片不进备份（换机前用「剪贴板历史管理 → 图片 → 导出全部图片」）。"
+
+        // ── 图片显示与收藏（2026-10-12）──
+        const val TEXT_IMAGE_BEHAVIOR_TITLE = "图片显示与收藏"
+        const val TEXT_IMAGE_IN_ALL = "图片显示在「全部」分组"
+        const val TEXT_FAV_MOVE_OUT = "收藏图片时移到图库目录（明文）"
+        const val TEXT_IMAGE_BEHAVIOR_HINT =
+            "「全部」分组：开启则图片网格在「全部」里照样出现；关闭（默认）则图片只在「图片」分组浏览，" +
+                "「全部」列表里给图片留序号占位行。\n" +
+                "收藏处理：开启后收藏一张图片，会把原图以明文写入「图库快贴」绑定的相册目录，" +
+                "应用内不再保留加密副本（未绑定目录时会先引导去绑定）；关闭（默认）则收藏仍加密保存在应用内。"
 
         // ── 缩略图布局（2026-10-11）──
         const val TEXT_LAYOUT_TITLE = "缩略图布局（与图库快贴共用）"

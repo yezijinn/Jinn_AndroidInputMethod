@@ -305,17 +305,33 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     if (checked) checkedIds.add(item.id) else checkedIds.remove(item.id)
                 }
                 holder.number.text = (numberById[item.id] ?: "").toString()
-                // 文本列表只承载文本：图片统一走上方条带或「图片」分类的全屏网格（2026-10-11 布局口径）
-                holder.content.text = item.content
-                holder.content.setTextColor(getColor(R.color.text_primary))
+                // 图片行走**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
+                // 图片的浏览入口是「图片」分组（网格），混在文本流里点它只能贴文本，语义不通
+                val img = item.image
+                if (img != null) {
+                    holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER
+                    holder.content.setTextColor(getColor(R.color.text_secondary))
+                } else {
+                    holder.content.text = item.content
+                    holder.content.setTextColor(getColor(R.color.text_primary))
+                }
                 holder.meta.text = buildString {
                     append(timeFmt.format(Date(item.createdAt)))
                     append("  ")
-                    append(item.content.length).append(" 字")
-                    append("  ").append(item.category)
+                    if (img != null) {
+                        append(if (img.bytes > 0) "${img.bytes / 1024} KB" else TEXT_IMAGE_ROW_META)
+                        append("  ").append(img.mime)
+                    } else {
+                        append(item.content.length).append(" 字")
+                        append("  ").append(item.category)
+                    }
                     if (item.isFavorite) append("  ★")
                 }
                 row.setOnClickListener {
+                    // 「全部」列表里的图片行只是**序号占位**（仅当偏好关闭时出现）：点它不弹文本
+                    // 对话框（content 恒空串，弹出来是个空框）；图片的浏览入口是「图片」分组网格。
+                    // 长按菜单仍可用 —— 收藏 / 删除是占位行上依然说得通的动作
+                    if (item.image != null) return@setOnClickListener
                     if (multiSelect) {
                         if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
                         notifyDataSetChanged()
@@ -866,13 +882,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
         // 这里给收藏过的图片留一个入口
         val favoritesOnly = category == FILTER_FAVORITE || (category == FILTER_IMAGE && imageFavOnly)
         val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
-        // 内容类型维度：图片分类只看图片，其余分类一律只看文本 —— 图片统一走网格区
-        // （「图片」分类的全屏网格，或「全部 / 收藏」上方的条带），不再混进文本列表
+        // 内容类型维度：图片分类只看图片；「全部」分组按偏好决定列表是否纳进图片行
+        // （渲染成序号占位，见「图片显示在「全部」分组」设置项）；其余分类一律只看文本
+        val clipPrefs = ClipboardPrefs.of(this)
+        val imageInAll = category == null && clipPrefs.imageInAllGroup
         val contentType = when {
             category == FILTER_IMAGE -> ClipboardDb.CONTENT_TYPE_IMAGE
+            imageInAll -> null
             else -> ClipboardDb.CONTENT_TYPE_TEXT
         }
-        val maxResults = ClipboardPrefs.of(this).maxSearchResults
+        val maxResults = clipPrefs.maxSearchResults
         BackgroundIo.run {
             val out = ArrayList<ClipboardDb.Item>()
             var cursor: ClipboardCursor? = null
@@ -903,7 +922,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             // 条带是否有图：跟着列表这次取数一起查（空态文案据此把「没有文本」与「什么都没有」分开；
             // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
             val stripImages = when (category) {
-                null -> db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                // 「全部」分组仅在偏好开启时才有条带（关闭时图片行以序号占位留在列表里）
+                null -> imageInAll && db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
                 FILTER_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
                 else -> false
             }
@@ -945,7 +965,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 不经过这里。所以无条件重取不会带来翻页开销，而写操作后必须重取，
                 // 否则条带上还留着已删 / 已取消收藏的图，点开只会得到「已删除」
                 val favMode = category == FILTER_FAVORITE
-                val stripMode = favMode || category == null
+                // 「全部」分组的条带只在偏好开启时显示（关闭 = 图片只在「图片」分组浏览，
+                // 「全部」列表里以序号占位行代替，见设置项「图片显示在「全部」分组」）
+                val stripMode = favMode || (category == null && imageInAll)
                 favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
                 if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
                 // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
@@ -1129,11 +1151,60 @@ class ClipboardHistoryActivity : ComponentActivity() {
                             loadAsync(resetPage = false)
                         }
                     }
-                    else -> BackgroundIo.run {
-                        db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false)
-                    }
+                    else -> toggleImageFavorite(item)
                 }
             }
+            .show()
+    }
+
+    /**
+     * 图片的收藏切换（长按菜单的「收藏 / 取消收藏」）。
+     *
+     * 收藏时按设置项「收藏图片时移到图库目录」决定是否把原图**移出**：开启且已绑定目录 →
+     * 明文写进相册目录、删应用内密文（**行与缩略图保留** —— 收藏标记、网格缩略图都要靠
+     * 这条行还在）；未绑定 → 弹框引导去绑定，本次按加密方式收藏。
+     * 取消收藏只改标记：已经移进相册的图片移不回来（移动不可逆，设置项里写明了）。
+     */
+    private fun toggleImageFavorite(item: ClipboardDb.Item) {
+        if (item.isFavorite) {
+            BackgroundIo.run { db.setFavorite(item.id, false); loadAsync(resetPage = false) }
+            return
+        }
+        if (!ClipboardPrefs.of(this).favoriteImageMoveOut) {
+            BackgroundIo.run { db.setFavorite(item.id, true); loadAsync(resetPage = false) }
+            return
+        }
+        BackgroundIo.runLong {
+            val bytes = ClipboardImageExport.readOriginal(this, item)
+            if (bytes == null) {
+                // 原图读不出（异常情形）：照常加密收藏，别把收藏动作整个吞掉
+                db.setFavorite(item.id, true)
+                runOnUiThread { message(TEXT_IMAGE_UNAVAILABLE); loadAsync(resetPage = false) }
+                return@runLong
+            }
+            val result = ClipboardImageExport.moveOutForFavorite(this, item, bytes)
+            db.setFavorite(item.id, true)
+            runOnUiThread {
+                when (result) {
+                    ClipboardImageExport.MoveResult.Ok -> message(TEXT_IMAGE_FAV_MOVED)
+                    ClipboardImageExport.MoveResult.NeedBinding -> showFavBindDialog()
+                    ClipboardImageExport.MoveResult.Denied -> message(TEXT_IMAGE_MOVE_DENIED)
+                    ClipboardImageExport.MoveResult.Failed -> message(TEXT_IMAGE_FAV_MOVE_FAILED)
+                }
+                loadAsync(resetPage = false)
+            }
+        }
+    }
+
+    /** 收藏时未绑定图库目录的引导框（本次收藏已按加密方式完成） */
+    private fun showFavBindDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(TEXT_IMAGE_FAV_NEED_BIND_TITLE)
+            .setMessage(TEXT_IMAGE_FAV_NEED_BIND)
+            .setPositiveButton(TEXT_IMAGE_GO_BIND) { _, _ ->
+                runCatching { startActivity(Intent(this, GallerySettingsActivity::class.java)) }
+            }
+            .setNegativeButton(TEXT_LATER, null)
             .show()
     }
 
@@ -1142,7 +1213,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         BackgroundIo.runLong {
             val bytes = ClipboardImageExport.readOriginal(this, item)
             if (bytes == null) {
-                runOnUiThread { message(TEXT_IMAGE_UNAVAILABLE) }
+                // 「已移出到图库目录」是正常状态，与「损坏」分开说（ClipboardImageFiles.isMovedOut）
+                val movedOut = ClipboardImageFiles.isMovedOut(this, item.contentHash)
+                runOnUiThread { message(if (movedOut) TEXT_IMAGE_MOVED_OUT else TEXT_IMAGE_UNAVAILABLE) }
                 return@runLong
             }
             var refresh = false
@@ -1627,6 +1700,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
         /** 图片网格：无图时的空态 */
         const val TEXT_IMAGE_EMPTY = "暂无图片"
 
+        /**
+         * 「全部」列表里图片行的占位正文（见设置项「图片显示在「全部」分组」）。
+         *
+         * 图片行只在偏好**关闭**（默认）时进列表：序号照常占位、正文换成这句，点它不弹对话框。
+         */
+        const val TEXT_IMAGE_ROW_PLACEHOLDER = "图片仅显示在「图片」分组"
+
+        /** 占位行的元信息里体积读不出时（`bytes == 0`）显示的类别词 */
+        const val TEXT_IMAGE_ROW_META = "图片"
+
         /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
         const val TEXT_IMAGE_FAV_ONLY = "★ 只看收藏"
         const val TEXT_IMAGE_FAV_ALL = "★ 看全部图片"
@@ -1685,6 +1768,17 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_SAVED = "已保存到相册"
         const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
         const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
+
+        /** 收藏移出（设置项「收藏图片时移到图库目录」）的回执与引导 */
+        const val TEXT_IMAGE_FAV_MOVED = "已收藏，原图已移到图库目录（明文）"
+        const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
+        const val TEXT_IMAGE_FAV_NEED_BIND_TITLE = "未绑定图库目录"
+        const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"
+        const val TEXT_IMAGE_GO_BIND = "去绑定"
+        const val TEXT_LATER = "稍后"
+
+        /** 原图已被移到图库目录（不是损坏）：动作读不到图时给准确说法 */
+        const val TEXT_IMAGE_MOVED_OUT = "原图已移到图库目录（相册里可看）"
         const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
 
         /** 目录只有读授权（BUG.md L-1322）：给出可完成的动作，别让用户反复重试 */

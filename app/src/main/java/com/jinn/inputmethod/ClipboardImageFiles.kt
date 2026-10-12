@@ -94,6 +94,15 @@ internal object ClipboardImageFiles {
         null
     }
 
+    /**
+     * 原图已被**移出**到图库目录（设置项「收藏图片时移到图库目录」的收藏项）：密文不在、缩略图还在。
+     *
+     * 与「损坏」区分开：损坏是两个文件都可能缺或解密失败，这里是一个**正常状态**，
+     * 界面该说「原图在相册里」而不是「已损坏」。
+     */
+    fun isMovedOut(context: Context, hash: String): Boolean =
+        !encFile(context, hash).isFile && thumbFile(context, hash).isFile
+
     /** 删除一条图片的两个文件；返回实际删除数（0~2） */
     fun deleteFor(context: Context, hash: String): Int {
         val a = if (encFile(context, hash).delete()) 1 else 0

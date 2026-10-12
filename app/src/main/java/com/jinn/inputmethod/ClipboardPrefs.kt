@@ -42,6 +42,8 @@ class ClipboardPrefs(context: Context) {
         val imageMaxItems: Int,
         val imageMaxTotalMb: Int,
         val imageMaxItemMb: Int,
+        val imageInAllGroup: Boolean,
+        val favoriteImageMoveOut: Boolean,
     )
 
     /**
@@ -64,6 +66,8 @@ class ClipboardPrefs(context: Context) {
             imageMaxItems = imageMaxItems,
             imageMaxTotalMb = imageMaxTotalMb,
             imageMaxItemMb = imageMaxItemMb,
+            imageInAllGroup = imageInAllGroup,
+            favoriteImageMoveOut = favoriteImageMoveOut,
         )
     }
 
@@ -166,6 +170,28 @@ class ClipboardPrefs(context: Context) {
             putInt(KEY_IMAGE_MAX_ITEM_MB, value.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB))
         }
 
+    /**
+     * 图片是否显示在「全部」分组（默认**否**）。
+     *
+     * 关（默认）＝图片只进「图片」分组浏览，「全部」列表里给图片留**序号占位行**
+     * （内容写「图片仅显示在「图片」分组」，灰字、不可点）；开＝「全部」分组照样出图片网格。
+     * 默认取「仅图片分组」：全部列表是文本流的阅读节奏，整块图片插在其中会打断它。
+     */
+    var imageInAllGroup: Boolean
+        get() = boolOr(KEY_IMAGE_IN_ALL_GROUP, false)
+        set(value) = sp.edit { putBoolean(KEY_IMAGE_IN_ALL_GROUP, value) }
+
+    /**
+     * 收藏的图片是否**移出**到「图库快贴」绑定目录（默认**否**，即加密存储）。
+     *
+     * 开＝收藏一张图片时把原图**明文**写入绑定的相册目录（应用侧不再留密文副本），
+     * 未绑定目录则先引导去绑定；关＝收藏仍按原样加密留在应用私有目录。
+     * ⚠ 开这一项等于把该图片交给相册的可见性，是用户显式选择（设置项上有提醒）。
+     */
+    var favoriteImageMoveOut: Boolean
+        get() = boolOr(KEY_FAV_IMAGE_MOVE_OUT, false)
+        set(value) = sp.edit { putBoolean(KEY_FAV_IMAGE_MOVE_OUT, value) }
+
     /** 图片体积上限（字节） */
     val imageMaxBytes: Long get() = imageMaxTotalMb * 1024L * 1024L
 
@@ -235,6 +261,8 @@ class ClipboardPrefs(context: Context) {
         imageMaxItems: Int = DEFAULT_IMAGE_MAX_ITEMS,
         imageMaxTotalMb: Int = DEFAULT_IMAGE_TOTAL_MB,
         imageMaxItemMb: Int = DEFAULT_IMAGE_ITEM_MB,
+        imageInAllGroup: Boolean = false,
+        favoriteImageMoveOut: Boolean = false,
     ): Boolean {
         // 与 [snapshot] / [importFromBackup] 同一把锁（BUG-12）：读侧要么看到写入前的整组，
         // 要么看到写入后的整组，不会取到两次写入之间的混合。
@@ -254,6 +282,8 @@ class ClipboardPrefs(context: Context) {
             editor.putInt(KEY_IMAGE_MAX_ITEMS, imageMaxItems.coerceIn(1, MAX_IMAGE_ITEMS_CAP))
             editor.putInt(KEY_IMAGE_MAX_TOTAL_MB, imageMaxTotalMb.coerceIn(MIN_IMAGE_TOTAL_MB, MAX_IMAGE_TOTAL_MB))
             editor.putInt(KEY_IMAGE_MAX_ITEM_MB, imageMaxItemMb.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB))
+            editor.putBoolean(KEY_IMAGE_IN_ALL_GROUP, imageInAllGroup)
+            editor.putBoolean(KEY_FAV_IMAGE_MOVE_OUT, favoriteImageMoveOut)
             runCatching { editor.commit() }.getOrDefault(false)
         }
     }
@@ -287,6 +317,9 @@ class ClipboardPrefs(context: Context) {
         ConfigBackup.BackupValue.of(imageMaxItems)?.let { out[KEY_IMAGE_MAX_ITEMS] = it }
         ConfigBackup.BackupValue.of(imageMaxTotalMb)?.let { out[KEY_IMAGE_MAX_TOTAL_MB] = it }
         ConfigBackup.BackupValue.of(imageMaxItemMb)?.let { out[KEY_IMAGE_MAX_ITEM_MB] = it }
+        // 展示 / 收藏行为两项：同为用户偏好，跟着走（新机上接着用同一套行为）
+        ConfigBackup.BackupValue.of(imageInAllGroup)?.let { out[KEY_IMAGE_IN_ALL_GROUP] = it }
+        ConfigBackup.BackupValue.of(favoriteImageMoveOut)?.let { out[KEY_FAV_IMAGE_MOVE_OUT] = it }
         return out
     }
 
@@ -354,6 +387,12 @@ class ClipboardPrefs(context: Context) {
                         KEY_IMAGE_MAX_ITEM_MB,
                         it.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB),
                     ); applied++
+                }
+                KEY_IMAGE_IN_ALL_GROUP -> (v.value as? Boolean)?.let {
+                    editor.putBoolean(KEY_IMAGE_IN_ALL_GROUP, it); applied++
+                }
+                KEY_FAV_IMAGE_MOVE_OUT -> (v.value as? Boolean)?.let {
+                    editor.putBoolean(KEY_FAV_IMAGE_MOVE_OUT, it); applied++
                 }
             }
         }
@@ -452,6 +491,12 @@ class ClipboardPrefs(context: Context) {
         private const val KEY_IMAGE_MAX_ITEMS = "image_max_items"
         private const val KEY_IMAGE_MAX_TOTAL_MB = "image_max_total_mb"
         private const val KEY_IMAGE_MAX_ITEM_MB = "image_max_item_mb"
+
+    /** 图片是否显示在「全部」分组（见 [imageInAllGroup]） */
+    private const val KEY_IMAGE_IN_ALL_GROUP = "image_in_all_group"
+
+    /** 收藏的图片是否移出到图库绑定目录（见 [favoriteImageMoveOut]） */
+    private const val KEY_FAV_IMAGE_MOVE_OUT = "fav_image_move_out"
 
         /**
          * 分组标签重算完成标记（运行态）：**不进备份**（见 [exportForBackup]），

@@ -302,12 +302,25 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
             holder.num.text = (categoryTotal - pos).toString()
-            // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
-            holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
+            // 图片行是**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
+            // 点它不粘贴（见 handleItemClick），正文写明去哪看这张图
+            val img = item.image
+            if (img != null) {
+                holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER
+                holder.content.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
+            } else {
+                // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
+                holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
+            }
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
-                val labels = ClipboardClassifier.labelText(item.category)
-                if (labels.isNotEmpty()) append(" · ").append(labels)
+                if (img != null) {
+                    append(" · ").append(TEXT_IMAGE_ROW_META)
+                    if (img.bytes > 0) append(" ").append(img.bytes / 1024).append(" KB")
+                } else {
+                    val labels = ClipboardClassifier.labelText(item.category)
+                    if (labels.isNotEmpty()) append(" · ").append(labels)
+                }
                 if (item.isFavorite) append(" · 收藏")
             }
             return root
@@ -576,7 +589,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 两步才看得到，等于把入口藏了一半；「全部」同理 —— 文本分类只列文本，不给网格的话图片
         // 在这一屏完全不可见。两者都是「图片网格（上，两行高）+ 文本列表（下）」，与图库快贴同一套组件。
         val favMode = category == CATEGORY_FAVORITE
-        val stripMode = favMode || category == null
+        // 「全部」只在图片行不进列表时才给网格（见 imageRowsInAll：关闭时图片行以序号占位留在列表里）
+        val stripMode = favMode || (category == null && !imageRowsInAll())
         imageGrid.visibility = if (imageMode || stripMode) View.VISIBLE else View.GONE
         applyGridHeight(imageMode)
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
@@ -627,6 +641,20 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     // ── 分页加载 ─────────────────────────────────────────
 
     /** 重新加载当前分类的列表（第一页）。查询与加解密在后台线程，主线程只提交快照。 */
+    /**
+     * 「全部」分类是否把图片行纳进文本列表（渲染为序号占位）。
+     *
+     * 见设置项「图片显示在「全部」分组」：关闭（默认）时「全部」不再是「网格 + 纯文本列表」，
+     * 而是把图片行以占位形式留在列表里 —— 图片的浏览入口是「图片」分类网格。
+     */
+    private fun imageRowsInAll(): Boolean = !ClipboardPrefs.of(context).imageInAllGroup
+
+    /** 分类 → 过滤条件；「全部」分类按 [imageRowsInAll] 决定列表是否含图片行 */
+    private fun filterFor(category: String?): ClipboardFilter {
+        val base = ClipboardFilter.of(category)
+        return if (category == null && imageRowsInAll()) base.copy(contentType = null) else base
+    }
+
     private fun refresh(resetScroll: Boolean = false, refreshFavStrip: Boolean = true) {
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
@@ -634,20 +662,23 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 收藏分组的网格与列表同源：删除 / 取消收藏后两边都要跟着变，否则网格停在旧数据上，
         // 点已删的图只会得到「已损坏」。切分类时已经 show 过一次（refreshFavStrip=false），
         // 不重复取数（BUG.md L-1256）
-        if (refreshFavStrip && (category == CATEGORY_FAVORITE || category == null)) {
+        // 「全部」只在图片行不进列表时才重取条带（图片行在列表里时它不再露面，见 imageRowsInAll）
+        if (refreshFavStrip &&
+            (category == CATEGORY_FAVORITE || (category == null && !imageRowsInAll()))
+        ) {
             imageGrid.show(tid, favoritesOnly = category == CATEGORY_FAVORITE)
         }
         val reqToken = ++refreshToken
         loadingPage = true
         BackgroundIo.run {
             // 分页加载：COUNT 不解密，解密只覆盖第一页（ClipboardPrefs.of(context).panelPageItems）
-            val filter = ClipboardFilter.of(category)
+            val filter = filterFor(category)
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
             // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
             // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
             val stripImages = when (category) {
-                null -> db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                null -> !imageRowsInAll() && db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
                 CATEGORY_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
                 else -> false
             }
@@ -759,7 +790,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val reqToken = refreshToken
         loadingPage = true
         BackgroundIo.run {
-            val filter = ClipboardFilter.of(category)
+            val filter = filterFor(category)
             // 与 refresh 一致：查询异常也要复位 loadingPage（否则分页永久停摆）
             val loaded = runCatching {
                 // 面板打开期间可能又有新内容入库（用户复制）或条目被删：键集游标对位置位移免疫
@@ -832,7 +863,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val reqToken = refreshToken
         loadingPage = true
         BackgroundIo.run {
-            val filter = ClipboardFilter.of(category)
+            val filter = filterFor(category)
             val loaded = runCatching {
                 // 键集游标（BUG.md L-92）：与 loadNextPage 同策 —— 总数只刷新编号基准，不再中断续扫
                 val total = db.count(filter.category, filter.favoritesOnly, filter.contentType)
@@ -966,6 +997,40 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
     }
 
+    /**
+     * 面板里的「收藏图片并移出到图库目录」。
+     *
+     * 面板挂在 IME 窗口里（没有 Activity 窗口 token，用不了 AlertDialog）：未绑定目录时按加密
+     * 方式收藏，只用一条 Toast 说明去哪绑 —— 与历史页的弹框同语义，只是呈现随宿主。
+     */
+    private fun favoriteImageMoveOut(item: ClipboardDb.Item) {
+        val tid = currentTraceId
+        val token = actionToken    // 抓令牌（BUG.md L-144）：只认「我这一条」的操作条
+        BackgroundIo.runLong {
+            val bytes = ClipboardImageExport.readOriginal(context, item)
+            val result = if (bytes == null) null else {
+                ClipboardImageExport.moveOutForFavorite(context, item, bytes)
+            }
+            // 无论移出与否，收藏本身要落地（读不出原图 = 异常情形，不能连收藏一起丢）
+            db.setFavorite(item.id, true)
+            post {
+                val mine = token == actionToken
+                if (mine) hideActionBar()
+                else Diagnostics.i(TAG, "[$tid] 收藏移出回调已过期（用户已长按别的条目），只提示不动界面")
+                val msg = when (result) {
+                    null -> TEXT_IMAGE_UNAVAILABLE
+                    ClipboardImageExport.MoveResult.Ok -> TEXT_IMAGE_FAV_MOVED
+                    ClipboardImageExport.MoveResult.NeedBinding -> TEXT_IMAGE_FAV_NEED_BIND
+                    ClipboardImageExport.MoveResult.Denied -> TEXT_IMAGE_MOVE_DENIED
+                    ClipboardImageExport.MoveResult.Failed -> TEXT_IMAGE_FAV_MOVE_FAILED
+                }
+                // 面板贴在 IME 上，Toast 是唯一稳妥的提示通道（自绘条会跟长按菜单抢位置）
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                if (mine) refresh(resetScroll = true)
+            }
+        }
+    }
+
     private fun hideActionBar() {
         actionBar.visibility = View.GONE
         longPressItem = null
@@ -985,6 +1050,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun toggleFavorite() {
         val item = longPressItem ?: return
         val favorite = !item.isFavorite
+        // 图片 + 收藏 + 「收藏图片时移到图库目录」：原图明文写进图库目录（行与缩略图保留，
+        // 见 ClipboardImageExport.moveOutForFavorite）—— 与历史页的收藏路径同语义
+        if (item.image != null && favorite && ClipboardPrefs.of(context).favoriteImageMoveOut) {
+            favoriteImageMoveOut(item)
+            return
+        }
         val tid = currentTraceId   // 主线程取值后再进后台，避免跨线程读视图字段
         val token = actionToken    // 抓令牌（BUG.md L-144）：只认「我这一条」的操作条
         val imageMode = inImageMode()
@@ -1257,6 +1328,24 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         /** 收藏分组里图片网格占几行（下方还要放收藏的文本列表，两边都要看得见） */
         const val STRIP_ROWS = 2
+
+        /**
+         * 「全部」列表里图片行的占位正文（见设置项「图片显示在「全部」分组」）。
+         *
+         * 图片行只在偏好**关闭**（默认）时进列表：序号照常占位、正文换成这句，点它不粘贴。
+         * 文案与历史页的同名常量保持一致（两处都钉在守卫里）。
+         */
+        const val TEXT_IMAGE_ROW_PLACEHOLDER = "图片仅显示在「图片」分组"
+
+        /** 占位行元信息里的类别词（历史页同名常量同款） */
+        const val TEXT_IMAGE_ROW_META = "图片"
+
+        /** 收藏移出（「收藏图片时移到图库目录」）在面板上的提示：与历史页同一套措辞 */
+        const val TEXT_IMAGE_FAV_MOVED = "已收藏，原图已移到图库目录（明文）"
+        const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
+        const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录"
+        const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，已按加密方式收藏\n请到「设置 → 图库快贴」重新绑定目录后再试"
+        const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 

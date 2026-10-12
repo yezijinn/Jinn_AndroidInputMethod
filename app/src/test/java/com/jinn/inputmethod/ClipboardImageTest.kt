@@ -322,12 +322,16 @@ class ClipboardImageTest {
         // BUG.md L-1260：写操作后重取条带（判据不再借用「是否重置页码」）
         assertTrue("条带写操作后重取", "if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
-        // 「全部」分组也给条带：文本分类只列文本，不给网格的话图片在这一屏完全不可见
-        assertTrue("历史页全部分组也给条带", "val stripMode = favMode || category == null" in
-            TestSources.codeSource("ClipboardHistoryActivity.kt"))
-        assertTrue("面板全部分组也给条带",
-            "if (refreshFavStrip && (category == CATEGORY_FAVORITE || category == null))" in
+        // 「全部」分组的条带由偏好决定（设置项「图片显示在「全部」分组」，默认关）：
+        // 关时图片行以序号占位留在列表里，条带不再露面（2026-10-12）
+        assertTrue("历史页全部分组条带受偏好控制",
+            "val stripMode = favMode || (category == null && imageInAll)" in
+                TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        assertTrue("面板全部分组条带受偏好控制",
+            "val stripMode = favMode || (category == null && !imageRowsInAll())" in
                 TestSources.codeSource("ClipboardPanelView.kt"))
+        assertTrue("面板条带重取同受偏好控制",
+            "category == null && !imageRowsInAll()" in TestSources.codeSource("ClipboardPanelView.kt"))
         // 「有图片、无文本」时列表空态要与图片网格同源：说「暂无记录」会和眼前的网格自相矛盾
         assertTrue("历史页空态要区分只有图片的情形",
             "TEXT_EMPTY_TEXT_ONLY" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
@@ -338,6 +342,49 @@ class ClipboardImageTest {
             "val stripImages = when (category)" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
         assertTrue("面板的图片有无与列表同源",
             "val stripImages = when (category)" in TestSources.codeSource("ClipboardPanelView.kt"))
+        // ── 「图片显示在「全部」分组」偏好（2026-10-12）──
+        // 默认关 ⇒ 「全部」列表里图片行以**序号占位**出现（点它不弹框 / 不粘贴），条带让位
+        val prefsSrc = TestSources.codeSource("ClipboardPrefs.kt")
+        assertTrue("偏好必须默认关（仅「图片」分组）",
+            "boolOr(KEY_IMAGE_IN_ALL_GROUP, false)" in prefsSrc)
+        val histSrc = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertTrue("历史页全部分组按偏好纳入图片行", "imageInAll -> null" in histSrc)
+        assertTrue("历史页图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in histSrc)
+        assertTrue("历史页图片行不弹文本对话框", "if (item.image != null) return@setOnClickListener" in histSrc)
+        val panelSrc = TestSources.codeSource("ClipboardPanelView.kt")
+        assertTrue("面板图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in panelSrc)
+        assertTrue("面板占位行不粘贴（既有防护）", "if (item.image != null) return\n" in panelSrc ||
+            "if (item.image != null) return" in panelSrc)
+        // 面板三处取数（首屏 / 分页 / 续扫）必须同源：BUG-1239 的教训 —— 漏一处会让
+        // 第二页起图片行混回文本列表。全部调用都过 filterFor 才算同源
+        assertEquals("面板三处取数都走 filterFor", 3, Regex("filterFor\\(category\\)").findAll(panelSrc).count())
+        assertTrue("两处占位文案必须同名同值",
+            "const val TEXT_IMAGE_ROW_PLACEHOLDER = \"图片仅显示在「图片」分组\"" in histSrc &&
+                "const val TEXT_IMAGE_ROW_PLACEHOLDER = \"图片仅显示在「图片」分组\"" in panelSrc)
+        // ── 「收藏图片时移到图库目录」偏好（2026-10-12）──
+        assertTrue("收藏移出偏好必须默认关（默认加密存储）",
+            "boolOr(KEY_FAV_IMAGE_MOVE_OUT, false)" in prefsSrc)
+        val exportSrc = TestSources.codeSource("ClipboardImageExport.kt")
+        // 关键不变量：只在写外部**成功**之后才删密文 —— 没写成功就删是不可恢复的数据丢失
+        assertTrue("移出必须先写成功再删密文",
+            "fun moveOutForFavorite(context: Context, item: ClipboardDb.Item, bytes: ByteArray): MoveResult ="
+                in exportSrc && "if (it == MoveResult.Ok) {" in exportSrc)
+        // 只删密文（enc）：缩略图与库行都要留着 —— 网格显示与「收藏优先排序」都依赖它们
+        assertTrue("移出只删密文（缩略图与行保留）",
+            "ClipboardImageFiles.encFile(context, item.contentHash).delete()" in exportSrc &&
+                "ClipboardImageFiles.deleteFor(context, item.contentHash)" !in exportSrc)
+        assertTrue("历史页收藏图片走移出路径", "toggleImageFavorite(item)" in histSrc)
+        assertTrue("面板收藏图片走移出路径",
+            "ClipboardPrefs.of(context).favoriteImageMoveOut" in panelSrc &&
+                "favoriteImageMoveOut(item)" in panelSrc)
+        assertTrue("未绑定要引导去绑定（历史页有弹框、去向是图库设置页）",
+            "TEXT_IMAGE_FAV_NEED_BIND" in histSrc && "GallerySettingsActivity::class.java" in histSrc)
+        // 「已移出」与「损坏」必须分开说：前者是正常状态，提示不能报「已损坏」
+        val movedOutSrc = TestSources.codeSource("ClipboardImageFiles.kt")
+        assertTrue("已移出的判据（密文不在、缩略图在）",
+            "fun isMovedOut(context: Context, hash: String): Boolean" in movedOutSrc)
+        assertTrue("历史页对已移出的图片给准确提示",
+            "TEXT_IMAGE_MOVED_OUT" in histSrc && "isMovedOut" in histSrc)
         // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
         assertTrue("条带随布局重排", "favImageGrid.rerender()" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))

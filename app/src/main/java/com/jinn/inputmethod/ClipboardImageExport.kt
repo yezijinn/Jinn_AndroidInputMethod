@@ -167,6 +167,22 @@ internal object ClipboardImageExport {
     }
 
     /**
+     * 收藏图片时的「移出」动作（设置项「收藏图片时移到图库目录」开启时走）。
+     *
+     * 与 [moveToGalleryFolder] 的区别是**行与缩略图都保留**：收藏标记、网格里的缩略图、
+     * 「已收藏优先排序」都要靠这条行还在。所以成功时只删**密文原图**（enc 文件），
+     * 缩略图留着 —— `ClipboardImageFiles.deleteMissingRows` 只在两个文件都缺时才清行，不会误删。
+     * 想重新看到原图就在相册目录里（明文，应用内不再有副本；这是用户显式选择的行为）。
+     */
+    fun moveOutForFavorite(context: Context, item: ClipboardDb.Item, bytes: ByteArray): MoveResult =
+        moveToGalleryFolder(context, item, bytes).also {
+            if (it == MoveResult.Ok) {
+                ClipboardImageFiles.encFile(context, item.contentHash).delete()
+                Diagnostics.i(TAG, "收藏移出：原图已写入图库目录，密文副本已删（行与缩略图保留）")
+            }
+        }
+
+    /**
      * 目录树的**可读落点**（导出回执要告诉用户文件去了哪）。
      *
      * 能拿到「卷 + 相对路径」时（外部存储提供方）说「内部存储/Download/剪贴板图片」；其余提供方
