@@ -229,7 +229,25 @@ class ClipboardImageTest {
         assertTrue("面板要有图片分类键", "btnCategoryImage" in panel)
         // 图片不进文本列表（2026-10-11）：文本分类按 content_type='text' 取数，图片只在「图片」分类的网格里
         assertTrue("文本列表不再渲染图片占位行", "TEXT_IMAGE_PLACEHOLDER" !in panel)
-        assertTrue("图片长按要出三个动作", "imageAction(ClipboardImageAction.Copy)" in panel)
+        // 图片长按只出三个动作（转图库 / 收藏 / 删除）：复制与保存从菜单撤掉 ——
+        // 点条目即上屏、转移已覆盖「存到相册」
+        assertTrue(
+            "面板图片长按只留转图库",
+            "actionMove.visibility = if (isImage) View.VISIBLE else View.GONE" in panel,
+        )
+        assertTrue(
+            "面板不再有复制 / 保存两个图片按钮",
+            "actionCopy" !in panel && "actionSave" !in panel,
+        )
+        assertTrue(
+            "面板三个动作的顺序：转图库在前",
+            "val actions = listOf(actionMove, actionFavorite, actionDelete)" in panel,
+        )
+        val histMenu = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertTrue(
+            "历史页图片长按也只留三项",
+            "entries.add(TEXT_IMAGE_MOVE)" in histMenu && "entries.add(TEXT_IMAGE_COPY)" !in histMenu,
+        )
         // 「布局」键：图片分类下取代搜索（图片不进搜索，键位让给布局调节），可在面板内改每行张数 / 行高
         assertTrue("面板要有布局键", "btnLayout = tabButton(\"布局\")" in panel)
         assertTrue(

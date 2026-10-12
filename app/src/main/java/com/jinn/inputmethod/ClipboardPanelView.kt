@@ -155,8 +155,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var actionDelete: TextView
 
     /** 图片条目专属的三个动作（文本条目时隐藏） */
-    private lateinit var actionCopy: TextView
-    private lateinit var actionSave: TextView
     private lateinit var actionMove: TextView
     private var longPressItem: ClipboardDb.Item? = null
 
@@ -509,15 +507,15 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             visibility = GONE
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
+        // 图片条目的动作排在最前（转图库 / 收藏 / 删除），文本条目时隐藏「转图库」。
+        // 菜单只出这三个：复制与保存不再露面（点击条目本身就是上屏，转移已覆盖「存到相册」），
+        // 三个键各占 1/3 面板宽，比原先挤五个好按
+        actionMove = tabButton("转图库") { imageAction(ClipboardImageAction.MoveToGallery) }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
         actionDelete = tabButton("删除", TapSound.G_ERASE) { deleteItem() }
         actionDelete.setTextColor(context.getColor(R.color.danger))
         dangerButtons += actionDelete
-        // 图片条目的三个动作：文本条目时隐藏（同一排最多 5 键，每个约 1/5 面板宽，足够「转图库」四字）
-        actionCopy = tabButton("复制") { imageAction(ClipboardImageAction.Copy) }
-        actionSave = tabButton("保存") { imageAction(ClipboardImageAction.Save) }
-        actionMove = tabButton("转图库") { imageAction(ClipboardImageAction.MoveToGallery) }
-        val actions = listOf(actionFavorite, actionDelete, actionCopy, actionSave, actionMove)
+        val actions = listOf(actionMove, actionFavorite, actionDelete)
         for (a in actions) actionBar.addView(a, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
 
@@ -1022,11 +1020,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listScrolling = false
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
         // 图片条目多三个动作（复制 / 保存 / 转图库）；文本条目把它们藏起来（同一排按钮，均分宽度）
+        // 图片条目才出「转图库」；收藏与删除两类条目共用
         val isImage = item.image != null
-        val imageOnly = listOf(actionCopy, actionSave, actionMove)
-        for (b in imageOnly) b.visibility = if (isImage) View.VISIBLE else View.GONE
-        // 低版本（<29）没有免权限的相册写入通道：不提供「保存」（实施计划 U5：不为 3 个老版本引 SAF 分支）
-        if (!ClipboardImageExport.albumAvailable()) actionSave.visibility = View.GONE
+        actionMove.visibility = if (isImage) View.VISIBLE else View.GONE
+
         actionBar.visibility = View.VISIBLE
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
     }
