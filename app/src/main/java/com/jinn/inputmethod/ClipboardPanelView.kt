@@ -393,6 +393,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         listView.setOnItemLongClickListener { _, view, pos, _ ->
             itemAt(pos, view)?.let {
+                // 「全部 / 收藏」列表里的图片行只是序号占位：这一列不给操作，只提示去哪办。
+                // 防护放在**列表入口**而不是 showItemMenu 里 —— 后者是列表与图片网格共用的，
+                // 写在那里会把「图片」分类网格的长按也一起挡掉（那正是图片唯一该被操作的地方）
+                if (it.image != null) {
+                    hint(TEXT_IMAGE_ROW_HINT)
+                    return@setOnItemLongClickListener true
+                }
                 KeyFeedback.fire(TapSound.G_FUNC)
                 showItemMenu(it)
             }
@@ -1002,12 +1009,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 长按条目：显示内联操作条（收藏/删除）。IME 内无窗口 token，不用 AlertDialog。 */
     private fun showItemMenu(item: ClipboardDb.Item) {
-        // 占位行（「全部」分类里的图片行）不给长按菜单：图片不该在这一列上可操作，
-        // 一句提示把人引到「图片」分类
-        if (item.image != null) {
-            hint(TEXT_IMAGE_ROW_HINT)
-            return
-        }
         // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
         hideConfirmBar()
         // 换令牌：此后任何**旧**的长按回调都不得再动界面（BUG.md L-144）
