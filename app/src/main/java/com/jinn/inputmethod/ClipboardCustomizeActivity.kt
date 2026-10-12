@@ -31,7 +31,12 @@ import android.widget.TextView
  */
 class ClipboardCustomizeActivity : Activity() {
 
-    /** 页面参数草稿（渲染唯一真源）：2026-10-10 起从八项扩到十二项（图片四项） */
+    /**
+     * 页面参数草稿（渲染唯一真源）：从八项扩到十二项（图片四项），再纳入缩略图布局两项。
+     *
+     * 布局两项原先直写 `Prefs`（即时生效），与页面「改完点保存」的手感不一致 —— 改完布局后
+     * 草稿没有任何变化，保存 / 重置按钮仍是灰的，用户点了以为没反应。
+     */
     private data class Draft(
         val enabled: Boolean,
         val maxItems: Int,
@@ -45,9 +50,15 @@ class ClipboardCustomizeActivity : Activity() {
         val imageMaxItems: Int,
         val imageMaxTotalMb: Int,
         val imageMaxItemMb: Int,
+        val galleryColumns: Int,
+        val galleryCellHeightDp: Int,
     )
 
     private lateinit var prefs: ClipboardPrefs
+
+    /** 缩略图布局偏好的键空间（与图库快贴共用），保存时才写盘 */
+    private lateinit var layoutPrefs: Prefs
+
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var saveButton: Button
@@ -75,6 +86,7 @@ class ClipboardCustomizeActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_clipboard_customize)
         prefs = ClipboardPrefs.of(this)
+        layoutPrefs = Prefs(this)
         snapshot = readPrefs()
         draft = restoreDraft(savedInstanceState)
         unlocked = savedInstanceState?.getBoolean(STATE_UNLOCKED) ?: false
@@ -127,6 +139,8 @@ class ClipboardCustomizeActivity : Activity() {
         outState.putInt(STATE_IMAGE_MAX_ITEMS, draft.imageMaxItems)
         outState.putInt(STATE_IMAGE_MAX_TOTAL_MB, draft.imageMaxTotalMb)
         outState.putInt(STATE_IMAGE_MAX_ITEM_MB, draft.imageMaxItemMb)
+        outState.putInt(STATE_GALLERY_COLUMNS, draft.galleryColumns)
+        outState.putInt(STATE_GALLERY_CELL_HEIGHT, draft.galleryCellHeightDp)
         outState.putBoolean(STATE_UNLOCKED, unlocked)
     }
 
@@ -160,6 +174,8 @@ class ClipboardCustomizeActivity : Activity() {
             imageMaxItems = s.imageMaxItems,
             imageMaxTotalMb = s.imageMaxTotalMb,
             imageMaxItemMb = s.imageMaxItemMb,
+            galleryColumns = layoutPrefs.galleryColumns,
+            galleryCellHeightDp = layoutPrefs.galleryCellHeightDp,
         )
     }
 
@@ -178,6 +194,8 @@ class ClipboardCustomizeActivity : Activity() {
             imageMaxItems = b.getInt(STATE_IMAGE_MAX_ITEMS, snapshot.imageMaxItems),
             imageMaxTotalMb = b.getInt(STATE_IMAGE_MAX_TOTAL_MB, snapshot.imageMaxTotalMb),
             imageMaxItemMb = b.getInt(STATE_IMAGE_MAX_ITEM_MB, snapshot.imageMaxItemMb),
+            galleryColumns = b.getInt(STATE_GALLERY_COLUMNS, snapshot.galleryColumns),
+            galleryCellHeightDp = b.getInt(STATE_GALLERY_CELL_HEIGHT, snapshot.galleryCellHeightDp),
         )
     }
 
@@ -316,24 +334,29 @@ class ClipboardCustomizeActivity : Activity() {
         PageStyle.addCard(list, card4)
 
         // ── 缩略图布局（与图库快贴共用同一组参数：本页、图库面板、剪贴板图片网格三处同步） ──
-        // 即时生效、不走草稿：这对参数住在 Prefs（图库偏好）里，与草稿机制管辖的剪贴板容量
-        // 不是同一套键空间；图库设置页同样是即时生效，两处手感保持一致
+        // 走草稿：与页面上其它参数一样「改完点保存才生效」，否则改完布局草稿没变化，
+        // 保存 / 重置按钮仍是灰的，用户点了以为没反应（2026-10-12 修正）
         val card5 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         card5.addView(TextView(this).apply {
             text = TEXT_LAYOUT_TITLE
             PageStyle.sectionTitle(this)
         })
-        val layoutPrefs = Prefs(this)
         card5.addView(makeSlider(
             TEXT_LAYOUT_COLUMNS,
-            layoutPrefs.galleryColumns, Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX, 1,
-            { layoutPrefs.galleryColumns = it },
+            draft.galleryColumns, Prefs.GALLERY_COLUMNS_MIN, Prefs.GALLERY_COLUMNS_MAX, 1,
+            {
+                draft = draft.copy(galleryColumns = it)
+                renderAll()
+            },
             { "$it 张/行" },
         ))
         card5.addView(makeSlider(
             TEXT_LAYOUT_HEIGHT,
-            layoutPrefs.galleryCellHeightDp, Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX, 4,
-            { layoutPrefs.galleryCellHeightDp = it },
+            draft.galleryCellHeightDp, Prefs.GALLERY_CELL_HEIGHT_MIN, Prefs.GALLERY_CELL_HEIGHT_MAX, 4,
+            {
+                draft = draft.copy(galleryCellHeightDp = it)
+                renderAll()
+            },
             { "$it dp" },
         ))
         card5.addView(makeHint(TEXT_LAYOUT_HINT))
@@ -483,6 +506,10 @@ class ClipboardCustomizeActivity : Activity() {
             toast(TEXT_SAVE_FAILED)
             return
         }
+        // 布局两项住在图库偏好（Prefs）里，与剪贴板参数的 commit 不是同一套键空间，单独写；
+        // 放在这里而不是 applyDraft 里，是为了让布局改动也走同一次保存确认与回执
+        layoutPrefs.galleryColumns = target.galleryColumns
+        layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp
         if (wasEnabled != target.enabled) {
             // 采集器跑在输入法进程里，不读本页状态：发轻量广播让它立刻启停（见 JinnIme.configReceiver）
             sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_CONFIG_UPDATED).setPackage(packageName))
@@ -560,6 +587,12 @@ class ClipboardCustomizeActivity : Activity() {
         }
         if (draft.imageMaxItemMb != snapshot.imageMaxItemMb) {
             items.add("$TEXT_IMAGE_MAX_ITEM：${snapshot.imageMaxItemMb} → ${draft.imageMaxItemMb} MB")
+        }
+        if (draft.galleryColumns != snapshot.galleryColumns) {
+            items.add("$TEXT_LAYOUT_COLUMNS：${snapshot.galleryColumns} → ${draft.galleryColumns} 张/行")
+        }
+        if (draft.galleryCellHeightDp != snapshot.galleryCellHeightDp) {
+            items.add("$TEXT_LAYOUT_HEIGHT：${snapshot.galleryCellHeightDp} → ${draft.galleryCellHeightDp} dp")
         }
         if (items.size <= DIFF_MAX_LINES) return items
         return items.take(DIFF_MAX_LINES) + listOf("…等 ${items.size} 项")
@@ -639,6 +672,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val STATE_IMAGE_MAX_ITEMS = "draft_image_max_items"
         const val STATE_IMAGE_MAX_TOTAL_MB = "draft_image_max_total_mb"
         const val STATE_IMAGE_MAX_ITEM_MB = "draft_image_max_item_mb"
+        const val STATE_GALLERY_COLUMNS = "draft_gallery_columns"
+        const val STATE_GALLERY_CELL_HEIGHT = "draft_gallery_cell_height"
         const val STATE_UNLOCKED = "draft_unlocked"
 
         /** 保存确认框最多列几行改动（超出只报条数） */
@@ -646,7 +681,7 @@ class ClipboardCustomizeActivity : Activity() {
 
         const val TEXT_TITLE = "剪贴板自定义"
         const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 图片容量 / 缩略图布局。\n" +
-            "默认锁定：打开「解锁参数」后可调，改完点「保存」才生效（缩略图布局即时生效）。"
+            "默认锁定：打开「解锁参数」后可调，改完点「保存」才生效。"
         const val TEXT_ENABLED = "剪贴板历史"
         const val TEXT_UNLOCK = "解锁参数"
         const val TEXT_SAVE = "保存"
@@ -687,8 +722,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_LAYOUT_COLUMNS = "每行张数"
         const val TEXT_LAYOUT_HEIGHT = "缩略图行高"
         const val TEXT_LAYOUT_HINT =
-            "改完立即生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数；" +
-                "本项与上面的「剪贴板历史」开关无关，关掉开关也照常可调。"
+            "改完点「保存」生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数；" +
+            "本项与上面的「剪贴板历史」开关无关，关掉开关也照常可调。"
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"

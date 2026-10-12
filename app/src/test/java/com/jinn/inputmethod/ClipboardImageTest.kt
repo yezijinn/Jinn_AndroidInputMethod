@@ -442,8 +442,8 @@ class ClipboardImageTest {
         )
         val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
         assertTrue(
-            "自定义页要有缩略图布局项（与图库 / 面板同一对参数）",
-            "TEXT_LAYOUT_COLUMNS" in page && "layoutPrefs.galleryColumns = it" in page,
+            "自定义页要有缩略图布局项（与图库 / 面板同一对参数，走草稿）",
+            "TEXT_LAYOUT_COLUMNS" in page && "draft = draft.copy(galleryColumns = it)" in page,
         )
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
         assertTrue(

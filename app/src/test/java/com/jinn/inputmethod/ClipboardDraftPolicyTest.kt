@@ -18,8 +18,8 @@ class ClipboardDraftPolicyTest {
     fun 参数改动必须留在草稿不得回退到实时落盘() {
         val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
         // 反向钉：任何 `prefs.<参数> =` 形式的直接赋值都意味着绕过草稿（读侧是 getter，不受影响）。
-        // 范围之外还有一项「缩略图布局」（每行张数 / 行高）是**有意**即时生效的：它住在 Prefs
-        // （图库偏好）里，与图库设置页共用同一套键，改完立即生效（见该页 TEXT_LAYOUT_HINT）
+        // 「缩略图布局」（每行张数 / 行高）同样走草稿，只是键空间在 Prefs（图库偏好）里 ——
+        // 滑块回调只改草稿，落盘唯一出现在保存路径（下面四条断言分别钉住两侧）
         val directWrite = Regex(
             """prefs\.(enabled|maxItems|maxTotalBytesMb|favoriteMaxItems|favoriteMaxBytesMb|""" +
                 """maxItemBytesKb|panelPageItems|maxSearchResults|historyPageSize|""" +
@@ -29,6 +29,22 @@ class ClipboardDraftPolicyTest {
         assertFalse("参数不得直接写盘（必须留在草稿，点保存才落盘）", directWrite.containsMatchIn(src))
         assertTrue("保存必须走原子入口 applyDraft", "prefs.applyDraft(" in src)
         assertTrue("渲染必须读草稿", "draft = draft.copy(" in src)
+        // 布局两项：滑块回调只改草稿，落盘只允许在保存路径
+        assertTrue(
+            "布局滑块必须改草稿",
+            "draft = draft.copy(galleryColumns = it)" in src &&
+                "draft = draft.copy(galleryCellHeightDp = it)" in src,
+        )
+        assertTrue(
+            "布局两项必须随保存落盘",
+            "layoutPrefs.galleryColumns = target.galleryColumns" in src &&
+                "layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp" in src,
+        )
+        assertTrue(
+            "布局两项必须进改动清单",
+            "TEXT_LAYOUT_COLUMNS：\${snapshot.galleryColumns}" in src &&
+                "TEXT_LAYOUT_HEIGHT：\${snapshot.galleryCellHeightDp}" in src,
+        )
     }
 
     @Test
