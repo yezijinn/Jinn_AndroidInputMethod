@@ -196,7 +196,12 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         val cursorNow = cursor
         BackgroundIo.run {
             val page = runCatching {
-                db.recentPageAfter(cursorNow, PAGE_ITEMS, null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE)
+                // 收藏优先（2026-10-12）：收藏过的图片排在最前 —— 收藏动作往往是把图存到相册 /
+                // 记下来，之后多半要回头找它。排序键与游标双双升为三元组，见 recentPageAfter
+                db.recentPageAfter(
+                    cursorNow, PAGE_ITEMS, null, favoritesOnly, ClipboardDb.CONTENT_TYPE_IMAGE,
+                    favoritesFirst = true,
+                )
             }.getOrNull()
             post {
                 // 过期回调**只 return、不复位共享状态**（BUG.md L-1259）：loading 此刻可能属于新一代的

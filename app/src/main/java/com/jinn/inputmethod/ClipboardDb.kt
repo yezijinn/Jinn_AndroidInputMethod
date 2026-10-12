@@ -998,21 +998,39 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         category: String? = null,
         favoritesOnly: Boolean = false,
         contentType: String? = null,
+        favoritesFirst: Boolean = false,
     ): KeyedPage {
         if (limit <= 0) return KeyedPage(emptyList(), 0, cursor)
         val (where, args) = whereClause(category, favoritesOnly, contentType)
-        val cursorClause =
-            if (cursor == null) "" else " AND (created_at < ? OR (created_at = ? AND id < ?))"
-        val cursorArgs =
-            if (cursor == null) emptyArray()
-            else arrayOf(
+        // 「收藏优先」（图片网格）：排序键升为三元组，游标判据同步升为三元 —— 少改一边就是跨页
+        // 重复 / 漏行。文本列表不传它，仍按二元组走（既有口径不变）
+        val order =
+            if (favoritesFirst) "is_favorite DESC, created_at DESC, id DESC"
+            else "created_at DESC, id DESC"
+        val cursorClause = when {
+            cursor == null -> ""
+            favoritesFirst ->
+                " AND (is_favorite < ? OR (is_favorite = ? AND (created_at < ? OR (created_at = ? AND id < ?))))"
+            else -> " AND (created_at < ? OR (created_at = ? AND id < ?))"
+        }
+        val cursorArgs = when {
+            cursor == null -> emptyArray()
+            favoritesFirst -> arrayOf(
+                if (cursor.favorite) "1" else "0",
+                if (cursor.favorite) "1" else "0",
                 cursor.createdAt.toString(),
                 cursor.createdAt.toString(),
                 cursor.id.toString(),
             )
+            else -> arrayOf(
+                cursor.createdAt.toString(),
+                cursor.createdAt.toString(),
+                cursor.id.toString(),
+            )
+        }
         val c = readableDatabase.rawQuery(
             "SELECT $selectCols FROM $TABLE_ITEMS WHERE $where$cursorClause " +
-                "ORDER BY created_at DESC, id DESC LIMIT $limit",
+                "ORDER BY $order LIMIT $limit",
             args + cursorArgs,
         )
         c.use { cur ->
@@ -1023,7 +1041,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 scanned++
                 // 游标取「扫描过的行」而不是「解密成功的条目」：整页解密失败时也必须能前进，
                 // 否则下一页会原地重扫同一批行（列表路径与导出 / 搜索路径都靠这条）。
-                last = ClipboardCursor(cur.getLong(3), cur.getLong(0))
+                last = if (favoritesFirst) {
+                    ClipboardCursor(cur.getLong(3), cur.getLong(0), cur.getInt(8) != 0)
+                } else {
+                    ClipboardCursor(cur.getLong(3), cur.getLong(0))
+                }
                 readItem(cur)?.let { out.add(it) }
             }
             return KeyedPage(out, scanned, if (scanned > 0) last else cursor)
@@ -1560,25 +1582,31 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 }
 
 /**
- * 分页键集游标：`(created_at, id)` 二元组，与 `ORDER BY created_at DESC, id DESC` 同序（BUG.md L-92）。
+ * 分页键集游标：`(收藏, created_at, id)` 三元组 —— [favorite] 只在「收藏优先」的取页里参与排序
+ * （`ORDER BY is_favorite DESC, created_at DESC, id DESC`，图片网格用）；文本列表仍按二元组走
+ * `ORDER BY created_at DESC, id DESC`（BUG.md L-92）。
  *
  * 为什么不是 SQL OFFSET：面板打开期间外部改一次剪贴板就是「头部插一条 + 尾部裁一条」（到上限时
  * `insertItem` → `trimTo` 成对发生，总条数不变）⇒ 行位置整体位移，OFFSET 分页会重复 / 跳过一行。
  * 键集游标只认「上一页最后扫描过的那一行的键」，位移免疫。
  *
  * 做成顶层纯数据：它同时是 [ClipboardDb.recentPageAfter] 的入参 / 出参，且 [isOlderThan] 与 SQL 里的
- * `(created_at < ? OR (created_at = ? AND id < ?))` 是同一口径 —— 两边必须一起改，单测就钉在它身上。
+ * `(created_at < ? OR (created_at = ? AND id < ?))` / 三元组版本是同一口径 —— 两边必须一起改，
+ * 单测就钉在它身上。
  */
-data class ClipboardCursor(val createdAt: Long, val id: Long) {
+data class ClipboardCursor(val createdAt: Long, val id: Long, val favorite: Boolean = false) {
 
     /**
      * 是否排在 [other] **之后**（更旧，即分页方向上的下一个）。
      *
-     * 先比 created_at，等值再比 id —— 等值组（同毫秒）内不靠 id 兜序的话，跨页边界会重复或漏行
-     * （与 BUG.md L-97 补的 `, id DESC` 是同一件事的两端）。
+     * 先比收藏（收藏在前 ⇒ 非收藏排在收藏之后），再比 created_at，等值再比 id —— 等值组（同毫秒）
+     * 内不靠 id 兜序的话，跨页边界会重复或漏行（与 BUG.md L-97 补的 `, id DESC` 是同一件事的两端）。
      */
-    fun isOlderThan(other: ClipboardCursor): Boolean =
-        createdAt < other.createdAt || (createdAt == other.createdAt && id < other.id)
+    fun isOlderThan(other: ClipboardCursor): Boolean = when {
+        favorite != other.favorite -> !favorite
+        createdAt != other.createdAt -> createdAt < other.createdAt
+        else -> id < other.id
+    }
 }
 
 /**

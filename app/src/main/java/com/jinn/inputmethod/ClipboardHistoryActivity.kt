@@ -902,7 +902,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
             var capped = false
             var cappedByCount = false
             while (true) {
-                val page = db.recentPageAfter(cursor, LOAD_PAGE_ITEMS, catKey, favoritesOnly, contentType)
+                // 图片分类启用「收藏优先」（与条带、面板网格同一口径）：收藏过的图排最前 ——
+                // 收藏动作多半是「存下来、待会儿要回头找」的语义，埋在几十张之后等于没有
+                val page = db.recentPageAfter(
+                    cursor, LOAD_PAGE_ITEMS, catKey, favoritesOnly, contentType,
+                    favoritesFirst = category == FILTER_IMAGE,
+                )
                 if (page.scanned == 0) break
                 cursor = page.last
                 for (item in page.items) {

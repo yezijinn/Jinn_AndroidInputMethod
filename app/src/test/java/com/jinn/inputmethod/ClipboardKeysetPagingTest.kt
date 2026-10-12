@@ -24,9 +24,13 @@ class ClipboardKeysetPagingTest {
     // ── 假库：一串 (游标, 内容) 行，用生产比较器做键集取页 ──────────────
 
     private class FakeDb(rows: List<Pair<ClipboardCursor, String>>) {
-        /** 新→旧（与 SQL 的 `ORDER BY created_at DESC, id DESC` 同序） */
+        /**
+         * 新→旧，与 SQL 同序：`is_favorite DESC, created_at DESC, id DESC`（收藏优先的三元组）。
+         * 全是非收藏时等价于原来的 `created_at DESC, id DESC`。
+         */
         val rows: MutableList<Pair<ClipboardCursor, String>> = rows.sortedWith(
-            compareByDescending<Pair<ClipboardCursor, String>> { it.first.createdAt }
+            compareByDescending<Pair<ClipboardCursor, String>> { it.first.favorite }
+                .thenByDescending { it.first.createdAt }
                 .thenByDescending { it.first.id },
         ).toMutableList()
 
@@ -72,6 +76,46 @@ class ClipboardKeysetPagingTest {
         assertTrue(ClipboardCursor(100, 8).isOlderThan(ClipboardCursor(100, 9)))
         assertFalse(ClipboardCursor(100, 9).isOlderThan(ClipboardCursor(100, 8)))
         assertFalse(ClipboardCursor(100, 9).isOlderThan(ClipboardCursor(100, 9)))
+    }
+
+    // ── 1b. 三元组（收藏优先）：三个键都要兜住 ──────────────
+
+    @Test
+    fun 游标比较器_收藏优先时收藏恒在前() {
+        // 收藏视为「更新」：非收藏不因时间更晚就排到收藏前面
+        assertTrue(ClipboardCursor(100, 9, favorite = false).isOlderThan(ClipboardCursor(1, 1, favorite = true)))
+        assertFalse(ClipboardCursor(1, 1, favorite = true).isOlderThan(ClipboardCursor(100, 9, favorite = false)))
+        // 同为收藏：回落到时间 → id
+        assertTrue(ClipboardCursor(100, 8, favorite = true).isOlderThan(ClipboardCursor(100, 9, favorite = true)))
+        assertFalse(ClipboardCursor(100, 9, favorite = true).isOlderThan(ClipboardCursor(100, 9, favorite = true)))
+        // 同为非收藏：同款
+        assertTrue(ClipboardCursor(99, 2, favorite = false).isOlderThan(ClipboardCursor(100, 1, favorite = false)))
+    }
+
+    @Test
+    fun 收藏优先翻页不重不漏() {
+        // 收藏与非收藏交错，且带等值时间戳：三元组的三个键都要被用到
+        val keys = listOf(
+            ClipboardCursor(100, 9, favorite = true),
+            ClipboardCursor(100, 8, favorite = false),
+            ClipboardCursor(99, 7, favorite = true),
+            ClipboardCursor(99, 6, favorite = false),
+            ClipboardCursor(98, 5, favorite = false),
+            ClipboardCursor(98, 4, favorite = true),
+        )
+        val db = FakeDb(keys.map { it to "行${it.id}" })
+        val seen = ArrayList<Long>()
+        var cursor: ClipboardCursor? = null
+        while (true) {
+            val page = db.page(cursor, 2)
+            if (page.scanned == 0) break
+            seen.addAll(page.items.map { it.id })
+            cursor = page.last
+        }
+        assertTrue("每行恰好扫到一次", seen.size == keys.size)
+        assertTrue("不可重复", seen.size == seen.toSet().size)
+        assertTrue("收藏排在最前（前两条都是收藏）", seen.take(2) == listOf(9L, 7L))
+        assertTrue("非收藏殿后", seen.takeLast(1) == listOf(5L))
     }
 
     // ── 2. 等量增删（+1 / -1）下翻页不重复、不跳过 ──────────────────
@@ -161,7 +205,14 @@ class ClipboardKeysetPagingTest {
             "游标判据必须带等值组的 id 兜序（与 `, id DESC` 同一件事的两端）",
             "(created_at < ? OR (created_at = ? AND id < ?))" in code,
         )
-        assertTrue("排序键必须补全", "ORDER BY created_at DESC, id DESC" in code)
+        assertTrue("排序键必须补全", "\"created_at DESC, id DESC\"" in code)
+        // 「收藏优先」（图片网格）：排序与游标判据**双双**升为三元组 —— 单改一边就是跨页重复 / 漏行
+        assertTrue("收藏优先的排序键", "\"is_favorite DESC, created_at DESC, id DESC\"" in code)
+        assertTrue(
+            "收藏优先的游标判据（三元组）",
+            "is_favorite < ? OR (is_favorite = ? AND (created_at < ? OR (created_at = ? AND id < ?)))" in code,
+        )
+        assertTrue("收藏优先的游标取值要带收藏标记", "cur.getInt(8) != 0" in code)
         assertFalse("不得再保留 OFFSET 分页器（它正是 L-92 的根因）", "recentPageWithOffset" in code)
         assertFalse("分页 SQL 里不得再出现 OFFSET", "OFFSET" in code)
     }
