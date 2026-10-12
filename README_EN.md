@@ -18,7 +18,7 @@ English ｜ [中文](README.md)
 - "Traditional Chinese only" (Settings): candidates are replaced with their traditional forms on commit (爱 → 愛, 碍 → 礙), applied instantly; learning is still stored in simplified form, shared by both modes
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)
 - Candidate bar: the pinyin line sits across the top (keys pressed, or optionally the expanded pinyin, e.g. `vsgo` → `zhongguo`) with candidates below; single or double row layout (in double row the pinyin bar sits between the two rows); next-word prediction (off by default); one-tap CN/EN
-- Corner radius / gap / candidate text size / candidate spacing / transparency in Settings (0~24dp / 0~8dp / 14~28sp / 5~30dp / 0~100%), applied instantly on release; the whole candidate bar grows or shrinks with the text size
+- Corner radius / gap / key height / candidate text size / candidate spacing / transparency in Settings → Keyboard appearance (0~48dp / 0~16dp / 40~90dp / 14~42sp / 5~55dp / 0~100%), applied instantly while dragging; the whole candidate bar grows or shrinks with the text size
 - 32 keyboard skins (original dark / original light + 30 colour schemes; 16 light, 16 dark) — colours and texture only, drawn entirely in code, independent of the three sliders
 - Light/dark switching: follow system / light / dark / scheduled; each of the two slots keeps its own chosen skin, and the keyboard skin follows the switch
 - Fuzzy pinyin (off by default): 11 optional accent equivalence groups (zh⇄z, n⇄l, en⇄eng, …); when a sound misses, its alternative readings are added as extra candidates (precise candidates stay untouched and in their original order)
@@ -27,6 +27,7 @@ English ｜ [中文](README.md)
 **Clipboard history** (embedded panel)
 - Copies are auto-saved, AES-256-GCM encrypted into a private local DB readable only by this IME
 - Categories All / URL / Number / Favorites; dynamic numbering, tap to paste, long-press to favorite or delete; clearing asks for confirmation and keeps favorites
+- Images: copied images are encrypted and stored like text; browse them as a grid in the "Images" category (favorites first) and tap to insert via `commitContent` (hosts that refuse get the image on the system clipboard plus a paste attempt). Long-press offers Move to gallery folder / Favorite / Delete, with copy and save-to-album (Android 10+) in the preview. The "All" list keeps a numbered placeholder row for images by default; the Clipboard settings page can show them inline instead, and can move a favorited image's plaintext original into the bound gallery folder. Images are excluded from every backup — export them to the album via "Images → Export all images"
 - Top search panel: filters history as you type, tap to paste
 - History manager page (from Clipboard settings): search / category filter / multi-select delete / import a .txt file line by line (duplicates skipped)
 
