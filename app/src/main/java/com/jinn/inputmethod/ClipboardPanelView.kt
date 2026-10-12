@@ -976,6 +976,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 长按条目：显示内联操作条（收藏/删除）。IME 内无窗口 token，不用 AlertDialog。 */
     private fun showItemMenu(item: ClipboardDb.Item) {
+        // 占位行（「全部」分类里的图片行）不给长按菜单：图片不该在这一列上可操作，
+        // 一句提示把人引到「图片」分类
+        if (item.image != null) {
+            android.widget.Toast.makeText(context, TEXT_IMAGE_ROW_HINT, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
         hideConfirmBar()
         // 换令牌：此后任何**旧**的长按回调都不得再动界面（BUG.md L-144）
@@ -1339,6 +1345,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         /** 占位行元信息里的类别词（历史页同名常量同款） */
         const val TEXT_IMAGE_ROW_META = "图片"
+
+        /** 点 / 长按占位行时的提示（与历史页同名常量同值，守卫钉一致性） */
+        const val TEXT_IMAGE_ROW_HINT = "请在「图片」分组里操作"
 
         /** 收藏移出（「收藏图片时移到图库目录」）在面板上的提示：与历史页同一套措辞 */
         const val TEXT_IMAGE_FAV_MOVED = "已收藏，原图已移到图库目录（明文）"

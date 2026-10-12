@@ -328,10 +328,18 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     if (item.isFavorite) append("  ★")
                 }
                 row.setOnClickListener {
-                    // 「全部」列表里的图片行只是**序号占位**（仅当偏好关闭时出现）：点它不弹文本
-                    // 对话框（content 恒空串，弹出来是个空框）；图片的浏览入口是「图片」分组网格。
-                    // 长按菜单仍可用 —— 收藏 / 删除是占位行上依然说得通的动作
-                    if (item.image != null) return@setOnClickListener
+                    // 「全部」列表里的图片行只是**序号占位**：不在这一列上做任何操作 —— 内容对话框
+                    // 对空串毫无意义，收藏 / 删除也一律去「图片」分组办。多选态例外：勾选是「批量
+                    // 清理」的通道，不是针对这张图的单条操作
+                    if (item.image != null) {
+                        if (multiSelect) {
+                            if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
+                            notifyDataSetChanged()
+                        } else {
+                            message(TEXT_IMAGE_ROW_HINT)
+                        }
+                        return@setOnClickListener
+                    }
                     if (multiSelect) {
                         if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
                         notifyDataSetChanged()
@@ -340,6 +348,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     }
                 }
                 row.setOnLongClickListener {
+                    // 占位行不给任何长按菜单（图片不该在「全部」里可操作），只提示去哪操作，
+                    // 并消费掉事件 —— return true 才不会被后续监听器再吃一遍
+                    if (item.image != null) {
+                        message(TEXT_IMAGE_ROW_HINT)
+                        return@setOnLongClickListener true
+                    }
                     val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
                     AlertDialog.Builder(this@ClipboardHistoryActivity)
                         .setItems(arrayOf(TEXT_DELETE, favText)) { _, which ->
@@ -1731,6 +1745,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 占位行的元信息里体积读不出时（`bytes == 0`）显示的类别词 */
         const val TEXT_IMAGE_ROW_META = "图片"
+
+        /**
+         * 点 / 长按占位行时的提示：图片在「全部」列表里不做任何操作，统一去「图片」分组。
+         * 与面板的同名常量保持一致（守卫钉两处同值）。
+         */
+        const val TEXT_IMAGE_ROW_HINT = "请在「图片」分组里操作"
 
         /** 「只看收藏」切换键的两种文案（显示的是**下一个动作**） */
         const val TEXT_IMAGE_FAV_ONLY = "★ 只看收藏"

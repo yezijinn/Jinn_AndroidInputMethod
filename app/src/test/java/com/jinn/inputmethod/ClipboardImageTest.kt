@@ -348,13 +348,28 @@ class ClipboardImageTest {
         assertTrue("偏好必须默认关（仅「图片」分组）",
             "boolOr(KEY_IMAGE_IN_ALL_GROUP, false)" in prefsSrc)
         val histSrc = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        val panelSrc = TestSources.codeSource("ClipboardPanelView.kt")
         // 偏好**关闭**（默认）时列表要含图片行 → 渲染成占位；条带让位。方向钉死：
         // 写反了占位行根本不出现，而「有图片行」正是这条偏好的默认口径
         assertTrue("历史页全部分组在偏好关闭时纳入图片行",
             "category == null && !imageInAll -> null" in histSrc)
         assertTrue("历史页图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in histSrc)
-        assertTrue("历史页图片行不弹文本对话框", "if (item.image != null) return@setOnClickListener" in histSrc)
-        val panelSrc = TestSources.codeSource("ClipboardPanelView.kt")
+        // 图片行不做文本动作：点击只提示（多选态下只切换勾选），绝不走到内容对话框
+        assertTrue(
+            "历史页图片行不做文本动作",
+            "if (item.image != null) {" in histSrc &&
+                "return@setOnClickListener" in histSrc &&
+                "showContentDialog(item)" in histSrc,
+        )
+        // 占位行不给任何操作：点与长按都只提示「去「图片」分组操作」，长按必须消费事件
+        assertTrue("历史页占位行点 / 长按只提示", "message(TEXT_IMAGE_ROW_HINT)" in histSrc)
+        assertTrue("历史页占位行长按要消费事件", "return@setOnLongClickListener true" in histSrc)
+        assertTrue("面板占位行点 / 长按只提示", "TEXT_IMAGE_ROW_HINT" in panelSrc)
+        assertTrue(
+            "两处占位行提示文案必须同名同值",
+            "const val TEXT_IMAGE_ROW_HINT = \"请在「图片」分组里操作\"" in histSrc &&
+                "const val TEXT_IMAGE_ROW_HINT = \"请在「图片」分组里操作\"" in panelSrc,
+        )
         assertTrue("面板图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in panelSrc)
         assertTrue("面板占位行不粘贴（既有防护）", "if (item.image != null) return\n" in panelSrc ||
             "if (item.image != null) return" in panelSrc)
