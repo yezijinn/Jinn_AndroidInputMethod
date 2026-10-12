@@ -823,17 +823,34 @@ class DocsReferenceTest {
         val dSearch = constOf("DEFAULT_MAX_SEARCH")
         val dImgItems = constOf("DEFAULT_IMAGE_MAX_ITEMS")
         val dImgTotalMb = constOf("DEFAULT_IMAGE_TOTAL_MB")
-        val dPageSize = Regex("""单页条数.*?默认 (\d+)""").find(prefsSrc)?.groupValues?.get(1)?.toInt()
-            ?: error("单页条数默认值的写法变了（本守卫要跟着改）")
+        val dPageSize = constOf("DEFAULT_HISTORY_PAGE_SIZE")
         val readme = readDoc("README.md") ?: error("找不到 README.md")
         assertTrue("README 缺历史容量默认值（源码 $dItems 条 / ${dTotalMb}MB）", "（默认 $dItems 条 / ${dTotalMb}MB）" in readme)
         assertTrue("README 缺面板单页条数（源码 $dPageSize）", "面板单页条数（$dPageSize）" in readme)
         assertTrue("README 缺搜索结果上限（源码 $dSearch）", "搜索结果上限（$dSearch）" in readme)
+        // 反向：同一参数在别处再写一次（或写）另一个值就是「改一处漏一处」——只在声明位做正向包含会漏
+        for ((label, want) in listOf("面板单页条数" to dPageSize, "搜索结果上限" to dSearch)) {
+            val abroad = Regex("""$label（(\d+)）""").findAll(readme + overview).map { it.groupValues[1] }
+                .filter { it != want.toString() }.toSet()
+            assertTrue("文档里「$label」写着非当前值 ${abroad.sorted().joinToString("/")}（源码 $want）", abroad.isEmpty())
+        }
         assertTrue(
             "README 缺图片张数 / 体积默认值（源码 $dImgItems 张 / ${dImgTotalMb}MB）",
             "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
+        // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest 的 `<activity` 条数；「无界面」的那一项不计入页面数）
+        val manifest = readDoc("app/src/main/AndroidManifest.xml") ?: error("找不到 AndroidManifest.xml")
+        val activities = Regex("""<activity\b""").findAll(manifest).count()
+        assertTrue(
+            "功能总览的 Activity 数与 AndroidManifest 不一致（源码 $activities 个）",
+            "（$activities 个 Activity" in overview,
+        )
+        assertTrue(
+            "功能总览的页面数与 AndroidManifest 不一致（源码 $activities 个 Activity 减去无界面的选图回调，" +
+                "新增无界面 Activity 时要同时改这里的 1 与文档）：${activities - 1}",
+            "**${activities - 1} 个页面**" in overview,
+        )
     }
 
     /**
