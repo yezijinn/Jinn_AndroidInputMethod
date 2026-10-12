@@ -66,19 +66,24 @@ internal object ClipboardImageFiles {
      * 直接覆盖写会在写一半时被读到（渲染出半张图）。改名在同一文件系统内是原子的；
      * 目标已存在（重复复制刷新同 hash）时先删再改名 —— rename 不保证覆盖语义。
      */
-    fun writeAtomic(file: File, bytes: ByteArray): Boolean = runCatching {
+    fun writeAtomic(file: File, bytes: ByteArray): Boolean {
         val parent = file.parentFile ?: return false
         parent.mkdirs()
         val tmp = File(parent, file.name + TMP_SUFFIX)
-        tmp.outputStream().use { it.write(bytes) }
-        if (tmp.renameTo(file)) return true
-        file.delete()
-        if (tmp.renameTo(file)) return true
-        tmp.delete()
-        false
-    }.getOrElse {
-        Diagnostics.w(TAG, "图片文件写入失败: ${it.javaClass.simpleName}")
-        false
+        return runCatching {
+            tmp.outputStream().use { it.write(bytes) }
+            if (tmp.renameTo(file)) return true
+            file.delete()
+            if (tmp.renameTo(file)) return true
+            tmp.delete()
+            false
+        }.getOrElse {
+            // 磁盘满 / IO 错误时 tmp 只写了一半：当场删掉。不删就要等保护窗过后的 gc 才收，
+            // 期间白占磁盘、连错几次就堆几份（BUG.md L-1231）
+            runCatching { tmp.delete() }
+            Diagnostics.w(TAG, "图片文件写入失败: ${it.javaClass.simpleName}")
+            false
+        }
     }
 
     fun readBytes(file: File): ByteArray? = runCatching {

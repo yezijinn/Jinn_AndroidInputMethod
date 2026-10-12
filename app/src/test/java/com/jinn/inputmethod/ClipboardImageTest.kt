@@ -117,6 +117,22 @@ class ClipboardImageTest {
     // ── 编解码纯函数 ─────────────────────────────────────────
 
     @Test
+    fun 方向标记映射为顺时针旋转角度() {
+        assertEquals(0, ClipboardImageCodec.rotationDegreesFor(0))
+        assertEquals(0, ClipboardImageCodec.rotationDegreesFor(1))    // NORMAL
+        assertEquals(180, ClipboardImageCodec.rotationDegreesFor(3))  // 倒置
+        assertEquals(180, ClipboardImageCodec.rotationDegreesFor(4))
+        assertEquals(90, ClipboardImageCodec.rotationDegreesFor(6))   // 竖拍最常见
+        assertEquals(270, ClipboardImageCodec.rotationDegreesFor(8))
+        assertEquals(0, ClipboardImageCodec.rotationDegreesFor(99))   // 非法值不崩
+        val codec = TestSources.codeSource("ClipboardImageCodec.kt")
+        assertTrue("入库宽高要按方向横竖对调",
+            "rotationDegreesFor(exifOrientation(bytes)) % 180 == 90" in codec)
+        assertTrue("缩略图要按方向摆正",
+            "rotate(decoded, rotationDegreesFor(exifOrientation(bytes)))" in codec)
+    }
+
+    @Test
     fun 缩略图采样率是二的幂且不小于目标() {
         assertEquals(1, ClipboardImageCodec.sampleSizeFor(512, 384, 512))
         assertEquals(2, ClipboardImageCodec.sampleSizeFor(1024, 768, 512))
@@ -317,6 +333,11 @@ class ClipboardImageTest {
             "TEXT_EMPTY_TEXT_ONLY" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
         assertTrue("面板空态要区分只有图片的情形",
             "TEXT_EMPTY_TEXT_ONLY" in TestSources.codeSource("ClipboardPanelView.kt"))
+        // 「是否有图」必须与列表同一次取数：放网格的异步回调里更新，空态会先读到上一轮的旧值
+        assertTrue("历史页的图片有无与列表同源",
+            "val stripImages = when (category)" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        assertTrue("面板的图片有无与列表同源",
+            "val stripImages = when (category)" in TestSources.codeSource("ClipboardPanelView.kt"))
         // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
         assertTrue("条带随布局重排", "favImageGrid.rerender()" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))

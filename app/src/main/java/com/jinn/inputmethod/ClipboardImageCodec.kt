@@ -35,13 +35,44 @@ internal object ClipboardImageCodec {
         return sample
     }
 
-    /** 读图片尺寸（不解码像素）；读不出返回 null */
+    /**
+     * EXIF 方向标记 → 顺时针旋转角度（0 / 90 / 180 / 270）；正常或读不出都返回 0。
+     *
+     * 只旋转、不做镜像（orientation 5 / 7 理论上还带水平翻转）：手机竖拍基本只产出 6 / 8，
+     * 而网格缩略图里看不出镜像，为它把像素逐点翻一遍不划算。
+     */
+    fun rotationDegreesFor(orientation: Int): Int = when (orientation) {
+        3, 4 -> 180
+        5, 6 -> 90
+        7, 8 -> 270
+        else -> 0
+    }
+
+    /** 读 EXIF 方向标记；非 JPEG / 无标记 / 解析失败一律按「正常」处理（不抛） */
+    private fun exifOrientation(bytes: ByteArray): Int = runCatching {
+        android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
+            .getAttributeInt(
+                android.media.ExifInterface.TAG_ORIENTATION,
+                android.media.ExifInterface.ORIENTATION_NORMAL,
+            )
+    }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
+
+    /**
+     * 读图片尺寸（不解码像素）；读不出返回 null。
+     *
+     * 方向为 90 / 270 时**横竖对调**：`outWidth / outHeight` 是未旋转的原始尺寸，直接当宽高入库
+     * 会让 `image_w / image_h` 与缩略图一起横躺（BUG.md L-1230）。
+     */
     fun bounds(bytes: ByteArray): IntArray? {
         if (bytes.isEmpty()) return null
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o) }
         if (o.outWidth <= 0 || o.outHeight <= 0) return null
-        return intArrayOf(o.outWidth, o.outHeight)
+        return if (rotationDegreesFor(exifOrientation(bytes)) % 180 == 90) {
+            intArrayOf(o.outHeight, o.outWidth)
+        } else {
+            intArrayOf(o.outWidth, o.outHeight)
+        }
     }
 
     /**
@@ -78,10 +109,13 @@ internal object ClipboardImageCodec {
             inPreferredConfig = Bitmap.Config.RGB_565
         }
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
-        val scaled = scaleToLongEdge(decoded, THUMB_LONG_EDGE)
-        // 缩放会产出**新位图**：中间那张立刻回收 —— 采样后仍可能有几 MB（4000px 档 ≈ 4MB），
+        // 先按 EXIF 方向摆正再缩放：竖拍照片的像素本身是横的，缩略图要转过来才不横躺（BUG.md L-1230）
+        val upright = rotate(decoded, rotationDegreesFor(exifOrientation(bytes)))
+        val scaled = scaleToLongEdge(upright, THUMB_LONG_EDGE)
+        // 缩放 / 旋转都会产出**新位图**：中间那些立刻回收 —— 采样后仍可能有几 MB（4000px 档 ≈ 4MB），
         // 采集线程是长活池，容不得它等到下一次 GC（与「常驻进程内存纪律」同口径）
-        if (scaled !== decoded) decoded.recycle()
+        if (upright !== decoded) decoded.recycle()
+        if (scaled !== upright) upright.recycle()
         val out = ByteArrayOutputStream(64 * 1024)
         if (!scaled.compress(Bitmap.CompressFormat.JPEG, THUMB_QUALITY, out)) return null
         out.toByteArray()
@@ -103,6 +137,18 @@ internal object ClipboardImageCodec {
         }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }.getOrNull()
+
+    /** 按顺时针角度旋转位图；0 度直接返回入参（调用方据此判断要不要回收） */
+    private fun rotate(src: Bitmap, degrees: Int): Bitmap {
+        if (degrees == 0) return src
+        return runCatching {
+            Bitmap.createBitmap(
+                src, 0, 0, src.width, src.height,
+                android.graphics.Matrix().apply { postRotate(degrees.toFloat()) },
+                true,
+            )
+        }.getOrDefault(src)
+    }
 
     private fun scaleToLongEdge(src: Bitmap, target: Int): Bitmap {
         val longEdge = maxOf(src.width, src.height)

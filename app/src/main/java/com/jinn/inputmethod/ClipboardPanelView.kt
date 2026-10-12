@@ -451,7 +451,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             onDataChanged = { empty, count, exhausted ->
                 // 条带服务于「收藏」与「全部」两个分组（图片分组走全屏网格，不受这里影响）
                 if (currentCategory == CATEGORY_FAVORITE || currentCategory == null) {
-                    stripHasImages = !(empty && exhausted)
+                    // 「是否有图」由列表那次快照一并取（见 refresh）：放在这里异步更新会让
+                    // 列表空态读到上一轮的旧值（删空图片后仍说「暂无文本记录」）
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
@@ -577,8 +578,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val favMode = category == CATEGORY_FAVORITE
         val stripMode = favMode || category == null
         imageGrid.visibility = if (imageMode || stripMode) View.VISIBLE else View.GONE
-        // 非条带分组（网址 / 数字 / 图片）没有条带，空态文案回到「暂无剪贴板历史」
-        if (!stripMode) stripHasImages = false
         applyGridHeight(imageMode)
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
         textEmpty.visibility = View.GONE
@@ -645,6 +644,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             val filter = ClipboardFilter.of(category)
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
+            // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
+            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
+            val stripImages = when (category) {
+                null -> db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                CATEGORY_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                else -> false
+            }
             val loaded = runCatching {
                 // 分页加载：COUNT 不解密，解密只覆盖首屏要显示的那些条目。
                 // 首屏必须连续填页（不是只取一页）：解密失败的行对用户不可见，若它们
@@ -692,6 +698,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 loadingPage = false
                 loaded.onSuccess { (total, page, cursor) ->
                     categoryTotal = total
+                    stripHasImages = stripImages
                     currentItems = page.items.toMutableList()
                     nextPageOffset = page.nextOffset
                     nextCursor = cursor
@@ -899,7 +906,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 loadFailed -> TEXT_EMPTY_LOAD_FAILED
                 scanStoppedEarly -> TEXT_EMPTY_UNREADABLE_MORE
                 unreadableHistory -> TEXT_EMPTY_UNREADABLE
-                // 条带有图时列表空 = 还没复制过文本，说「暂无剪贴板历史」会与眼前的图片网格矛盾
+                // 条带有图时列表空 = 还没复制过文本，说「暂无剪贴板历史」会与眼前的图片网格矛盾。
+                // 这里不判关键词：搜索走独立面板（SearchPanelView），本面板没有搜索态
                 stripHasImages -> TEXT_EMPTY_TEXT_ONLY
                 else -> TEXT_EMPTY_IDLE
             }

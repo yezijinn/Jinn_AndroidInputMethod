@@ -225,7 +225,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             onDataChanged = { empty, count, exhausted ->
                 // 收藏与「全部」两个分组都用它（收藏分组只看收藏图片，全部分组看全部图片）
                 if (categoryFilter == FILTER_FAVORITE || categoryFilter == null) {
-                    stripHasImages = !(empty && exhausted)
+                    // 「是否有图」由列表那次快照一并取（见 loadAsync）：放在这里异步更新会让
+                    // 列表空态读到上一轮的旧值（删空图片后仍说「暂无文本记录」）
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
                     // 多时保持两行 + 「★ 只看收藏」全屏入口
@@ -899,9 +900,17 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 if (capped) break
             }
             val total = db.count(catKey, favoritesOnly, contentType)
+            // 条带是否有图：跟着列表这次取数一起查（空态文案据此把「没有文本」与「什么都没有」分开；
+            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
+            val stripImages = when (category) {
+                null -> db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                FILTER_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                else -> false
+            }
             runOnUiThread {
                 // 回调到达时页面可能已停止（BUG.md L-1268）：丢弃这一批，别把视图重新拉起来
                 if (stopped) return@runOnUiThread
+                stripHasImages = stripImages
                 allItems.clear()
                 allItems.addAll(out)
                 items.clear()
@@ -938,8 +947,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val favMode = category == FILTER_FAVORITE
                 val stripMode = favMode || category == null
                 favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
-                // 非条带分组（网址 / 数字）没有图片区，空态文案回到「暂无记录」
-                if (!stripMode) stripHasImages = false
                 if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
                 // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
                 // 后若正好停在越界页，刷新那一刻 `pageItems()` 取到空页 ⇒ `AbsListView` 记住
