@@ -90,6 +90,13 @@ class DocsReferenceTest {
             Regex("""(?m)^\s*@Ignore\b""").findAll(TestSources.codeOf(f.readText())).count()
         }
         assertEquals("有 @Ignore 的用例（带 @Test 却不跑 ⇒ 计数虚高，BUG.md L-139）", 0, ignored)
+        // front-matter 的 `numbers:` 是同一份文件里**第二处**门禁数字，原先没人对拍 ⇒ 正文与它各改一半
+        // 就互相矛盾（2026-10-13 实测：正文 1413 / front-matter 1410，BUG.md L-1340）。两份都按源码对拍。
+        val fm = readDoc("AGENTS.md")
+            ?.let { Regex("""(?m)^numbers: .*?(\d+)\s*类\s*/\s*(\d+)\s*例""").find(it) }
+            ?: error("AGENTS.md 的 front-matter `numbers:` 没写「N 类 / M 例」（措辞变了？）")
+        assertEquals("AGENTS.md front-matter 的类数与正文 / 源码不一致", classes, fm.groupValues[1].toInt())
+        assertEquals("AGENTS.md front-matter 的例数与正文 / 源码不一致", total, fm.groupValues[2].toInt())
     }
 
     /**
