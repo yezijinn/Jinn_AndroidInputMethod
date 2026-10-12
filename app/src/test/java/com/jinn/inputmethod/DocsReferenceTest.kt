@@ -716,6 +716,15 @@ class DocsReferenceTest {
             ?: error("README_EN 的包条数行换了写法（本守卫要跟着改）")
         assertEquals("README_EN 的包条数与源码不一致", kCounts, packs.groupValues.drop(1))
         for (k in kCounts) assertTrue("README_EN 缺当前包条数 ${k}K", "${k}K" in en)
+        // 同一条数字在四处的写法各异，只钉其中几处仍会「改一处漏一处」（2026-10-12 的真实缺陷）：
+        // 中文 README 的附录按「万条」写、英文 README 的功能说明按 K 写 —— 两处一起按结构钉住
+        val cnReadme = readDoc("README.md") ?: error("找不到 README.md")
+        val cnPart = Regex("""第 2 / 3 / 4 部分，\s*(\d+) / (\d+) / (\d+) 万条""").find(cnReadme)
+            ?: error("README 的包条数行换了写法（本守卫要跟着改）")
+        assertEquals("README 的「第 2 / 3 / 4 部分」条数与源码不一致", counts, cnPart.groupValues.drop(1))
+        val enLevels = Regex("""level 2 (\d+)K \(recommended\), level 3 (\d+)K, level 4 (\d+)K""").find(en)
+            ?: error("README_EN 的功能说明行换了写法（本守卫要跟着改）")
+        assertEquals("README_EN 的 level 2/3/4 条数与源码不一致", kCounts, enLevels.groupValues.drop(1))
     }
 
     /**
@@ -778,6 +787,26 @@ class DocsReferenceTest {
         val strayMb = Regex("""默认\s*(\d+)\s*MB""").findAll(overview).map { it.groupValues[1] }
             .filter { it != imageMb.toString() }.toSet()
         assertTrue("功能总览写着非当前图片默认上限 ${strayMb.sorted().joinToString("/")}MB（源码 ${imageMb}MB）", strayMb.isEmpty())
+        // ⑤ 自定义词库上限：字符数按源码精确值写（原先写「800 万」，比 8,388,608 少报 388,608）
+        val dictSrc = readDoc("app/src/main/java/com/jinn/inputmethod/CustomDicts.kt")
+            ?: error("找不到 CustomDicts.kt")
+        val dictChars = Regex("""MAX_INPUT_CHARS = (\d+) \* 1024 \* 1024""").find(dictSrc)
+            ?.groupValues?.get(1)?.toInt()?.times(1024 * 1024)
+            ?: error("MAX_INPUT_CHARS 的写法变了（本守卫要跟着改）")
+        val dictEntries = Regex("""MAX_ENTRIES = (\d+)""").find(dictSrc)?.groupValues?.get(1)?.toInt()
+            ?: error("MAX_ENTRIES 的写法变了（本守卫要跟着改）")
+        for (name in listOf("README.md", "功能总览.md")) {
+            val text = (readDoc(name) ?: continue).replace(",", "")
+            assertTrue("$name 缺自定义词库字符上限 $dictChars（源码 MAX_INPUT_CHARS）", dictChars.toString() in text)
+            assertTrue("$name 缺自定义词库条数上限（源码 MAX_ENTRIES = $dictEntries）", "${dictEntries / 10000} 万条" in text)
+        }
+        // ⑥ 英文 README 的皮肤计数（中英同源；英文侧是已腐烂过两次的文件，单独钉）
+        val enDoc = readDoc("README_EN.md") ?: error("找不到 README_EN.md")
+        assertTrue("README_EN 缺皮肤总数（源码 $skinTotal 套）", "$skinTotal keyboard skins" in enDoc)
+        assertTrue(
+            "README_EN 的皮肤明暗分档与源码不符（源码 亮 $skinLight / 暗 $skinDark）",
+            Regex("""$skinLight light,\s*$skinDark dark""").containsMatchIn(enDoc),
+        )
     }
 
     /**
