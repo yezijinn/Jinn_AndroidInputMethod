@@ -1132,7 +1132,21 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val plain = ClipboardCrypto.decryptBytes(enc) ?: return@runCatching null
                 ClipboardImageCodec.decodeForTarget(plain, target)
             }.getOrNull()
-            runOnUiThread { if (iv.tag == hash) iv.setImageBitmap(bmp) }
+            runOnUiThread {
+                if (iv.tag != hash) return@runOnUiThread
+                if (bmp == null) {
+                    // 原图不在：最常见的原因是「收藏时移到了图库目录」——那是正常状态，
+                    // 要说清去哪看，不能留一个空白框让用户以为坏了
+                    message(
+                        if (ClipboardImageFiles.isMovedOut(this@ClipboardHistoryActivity, hash)) {
+                            TEXT_IMAGE_MOVED_OUT
+                        } else {
+                            TEXT_IMAGE_UNAVAILABLE
+                        },
+                    )
+                }
+                iv.setImageBitmap(bmp)
+            }
         }
     }
 
