@@ -1391,7 +1391,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_IMAGE_ROW_HINT = "请在「图片」分组里操作"
 
         /** 收藏移出（「收藏图片时移到图库目录」）在面板上的提示：与历史页同一套措辞 */
-        const val TEXT_IMAGE_FAV_MOVED = "已收藏，原图已移到图库目录（明文）"
+        // 与历史页共用一处字面量（BUG.md L-1335）：原先这里少了「并从历史移除」，用户以为记录还在
+        const val TEXT_IMAGE_FAV_MOVED = ClipboardImageExport.TEXT_FAV_MOVED
         const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
         const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录"
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，已按加密方式收藏\n请到「设置 → 图库快贴」重新绑定目录后再试"

@@ -286,6 +286,14 @@ internal object ClipboardImageExport {
     /** 相册里的子目录名（与图库选图链路的目录命名哲学一致：用户能一眼认出是自己存的） */
     const val ALBUM_DIR = "精灵输入法"
 
+    /**
+     * 「收藏并移出」成功的回执文案（收藏 + 移出 + 从历史移除三件事都说全）。
+     *
+     * 面板与历史页**共用这一处字面量**：两份各写一份时会「改一处漏一处」——面板那句原先少了
+     * 「并从历史移除」，用户以为记录还在（`BUG.md` L-1335）。
+     */
+    const val TEXT_FAV_MOVED = "已收藏，原图已移到图库目录（明文），并从历史移除"
+
     /** 外部存储提供方（`DocumentsContract` 的 `primary:` / `XXXX-XXXX:` 形态只出现在这里） */
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 

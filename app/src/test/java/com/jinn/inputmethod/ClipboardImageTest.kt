@@ -660,4 +660,27 @@ class ClipboardImageTest {
         assertTrue("保存仍走原子入口", "imageMaxTotalMb = target.imageMaxTotalMb," in page)
         assertTrue("收紧判定要含图片预算（保存会真删）", "draft.imageMaxTotalMb < snapshot.imageMaxTotalMb" in page)
     }
+
+    /**
+     * 「收藏并移出」的回执文案只允许有一处字面量（`BUG.md` L-1335）。
+     *
+     * 面板与历史页各写一份时「改一处漏一处」——面板那句就少过「并从历史移除」，
+     * 用户以为记录还在。现在两处都引用 `ClipboardImageExport.TEXT_FAV_MOVED`，字面量只留在导出模块。
+     */
+    @Test
+    fun 收藏移出的回执文案只允许一处字面量() {
+        val literal = "已收藏，原图已移到图库目录（明文），并从历史移除"
+        assertTrue(
+            "回执文案的字面量必须定义在 ClipboardImageExport",
+            literal in TestSources.codeSource("ClipboardImageExport.kt"),
+        )
+        for (f in listOf("ClipboardPanelView.kt", "ClipboardHistoryActivity.kt")) {
+            val src = TestSources.codeSource(f)
+            assertFalse("$f 又写了一份回执文案字面量（改用 ClipboardImageExport.TEXT_FAV_MOVED）", literal in src)
+            assertTrue(
+                "$f 的回执常量应引用共享常量",
+                "TEXT_IMAGE_FAV_MOVED = ClipboardImageExport.TEXT_FAV_MOVED" in src,
+            )
+        }
+    }
 }

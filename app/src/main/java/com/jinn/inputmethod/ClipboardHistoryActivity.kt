@@ -1824,7 +1824,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
 
         /** 收藏移出（设置项「收藏图片时移到图库目录」）的回执与引导 */
-        const val TEXT_IMAGE_FAV_MOVED = "已移到图库目录（明文），并从历史移除"
+        // 与面板共用一处字面量（BUG.md L-1335）
+        const val TEXT_IMAGE_FAV_MOVED = ClipboardImageExport.TEXT_FAV_MOVED
         const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
         const val TEXT_IMAGE_FAV_NEED_BIND_TITLE = "未绑定图库目录"
         const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"
