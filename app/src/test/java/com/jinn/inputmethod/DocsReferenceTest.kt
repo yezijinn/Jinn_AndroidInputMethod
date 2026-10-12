@@ -718,6 +718,27 @@ class DocsReferenceTest {
         for (k in kCounts) assertTrue("README_EN 缺当前包条数 ${k}K", "${k}K" in en)
     }
 
+    /**
+     * 块编号必须**全册唯一**（2026-10-12 复核发现 30 处撞号：剪贴板族复用了音效族已占的
+     * `X-295`…`X-323`，按编号检索会得到两条不同内容；那批已改号为 `X-470`…`X-499`）。
+     *
+     * 编号不复用是 `0.5` 的规则，但此前只有「取最大编号 +1」靠自觉 —— 撞号之后引用、
+     * 同族簇、索引对拍全都会指不准。`L-` / `X-` / `B-` 三族各自独立编号。
+     */
+    @Test
+    fun 块编号必须全册唯一() {
+        val seen = HashMap<String, String>()
+        val bad = ArrayList<String>()
+        for ((name, text) in ledgerPartFiles()) {
+            for (m in Regex("""(?m)^#{3,4} ([LXB]-\d+) ·""").findAll(text)) {
+                val id = m.groupValues[1]
+                val prev = seen.put(id, name)
+                if (prev != null) bad.add("$id（$prev 与本册都用了）")
+            }
+        }
+        assertEquals("台账块编号重复（新条目取未用过的号，见 0.5 ①）：$bad", 0, bad.size)
+    }
+
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */
     private fun ledger(): String =
         listOf("BUG.md", "../BUG.md").map(::File).firstOrNull { it.isFile }?.readText()
