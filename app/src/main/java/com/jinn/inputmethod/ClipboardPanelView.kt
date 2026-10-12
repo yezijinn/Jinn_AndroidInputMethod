@@ -1345,7 +1345,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
         const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录"
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，已按加密方式收藏\n请到「设置 → 图库快贴」重新绑定目录后再试"
-        const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
+        const val TEXT_IMAGE_UNAVAILABLE =
+            "该图片读不出原图：可能已损坏，也可能已移到图库目录（相册里可看）"
         /** 距底部还有多少条时预取下一页 */
         const val LOAD_AHEAD = 10
 

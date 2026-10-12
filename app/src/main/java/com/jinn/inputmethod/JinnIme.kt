@@ -4187,7 +4187,8 @@ class JinnIme : InputMethodService() {
         // ── 剪贴板图片（2026-10-10 实施计划 §4.3；文案代码下发，不动 strings.xml） ──
 
         /** 图片条目读不出原图（密钥失效 / 文件缺失 / 数据损坏） */
-        const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
+        const val TEXT_IMAGE_UNAVAILABLE =
+        "该图片读不出原图：可能已损坏，也可能已移到图库目录（相册里可看）"
 
         /** 回退路径：图片已写进系统剪贴板，等用户去宿主里长按粘贴 */
         const val TEXT_IMAGE_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
