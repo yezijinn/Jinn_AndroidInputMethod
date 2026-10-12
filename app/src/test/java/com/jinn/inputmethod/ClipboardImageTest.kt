@@ -348,7 +348,10 @@ class ClipboardImageTest {
         assertTrue("偏好必须默认关（仅「图片」分组）",
             "boolOr(KEY_IMAGE_IN_ALL_GROUP, false)" in prefsSrc)
         val histSrc = TestSources.codeSource("ClipboardHistoryActivity.kt")
-        assertTrue("历史页全部分组按偏好纳入图片行", "imageInAll -> null" in histSrc)
+        // 偏好**关闭**（默认）时列表要含图片行 → 渲染成占位；条带让位。方向钉死：
+        // 写反了占位行根本不出现，而「有图片行」正是这条偏好的默认口径
+        assertTrue("历史页全部分组在偏好关闭时纳入图片行",
+            "category == null && !imageInAll -> null" in histSrc)
         assertTrue("历史页图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in histSrc)
         assertTrue("历史页图片行不弹文本对话框", "if (item.image != null) return@setOnClickListener" in histSrc)
         val panelSrc = TestSources.codeSource("ClipboardPanelView.kt")

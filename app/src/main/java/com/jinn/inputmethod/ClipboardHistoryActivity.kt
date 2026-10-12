@@ -888,7 +888,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val imageInAll = category == null && clipPrefs.imageInAllGroup
         val contentType = when {
             category == FILTER_IMAGE -> ClipboardDb.CONTENT_TYPE_IMAGE
-            imageInAll -> null
+            // 「全部」在偏好关闭（仅「图片」分组）时**要**把图片行纳进列表：它们渲染成序号占位
+            // （见 TEXT_IMAGE_ROW_PLACEHOLDER），条带让位；开启时反过来 —— 图片走网格条带，
+            // 列表只列文本
+            category == null && !imageInAll -> null
             else -> ClipboardDb.CONTENT_TYPE_TEXT
         }
         val maxResults = clipPrefs.maxSearchResults
