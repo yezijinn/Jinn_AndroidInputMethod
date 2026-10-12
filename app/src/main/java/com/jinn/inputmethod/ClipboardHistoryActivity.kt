@@ -1196,9 +1196,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /**
      * 图片的收藏切换（长按菜单的「收藏 / 取消收藏」）。
      *
-     * 收藏时按设置项「收藏图片时移到图库目录」决定是否把原图**移出**：开启且已绑定目录 →
-     * 明文写进相册目录、删应用内密文（**行与缩略图保留** —— 收藏标记、网格缩略图都要靠
-     * 这条行还在）；未绑定 → 弹框引导去绑定，本次按加密方式收藏。
+     * 收藏时按设置项「收藏图片时移到图库目录」决定：开启且已绑定目录 → 原图**明文**写进相册目录，
+     * 写成功才删掉历史这条（行 + 两个文件）—— 图片只留相册那一份，历史里不留点不开的项；
+     * 未绑定 / 没写授权 / 写失败 → 按加密方式收藏（用户点的收藏不白做），并给出提示或绑定引导。
      * 取消收藏只改标记：已经移进相册的图片移不回来（移动不可逆，设置项里写明了）。
      */
     private fun toggleImageFavorite(item: ClipboardDb.Item) {
@@ -1218,16 +1218,27 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 runOnUiThread { message(TEXT_IMAGE_UNAVAILABLE); loadAsync(resetPage = false) }
                 return@runLong
             }
-            val result = ClipboardImageExport.moveOutForFavorite(this, item, bytes)
-            db.setFavorite(item.id, true)
-            runOnUiThread {
-                when (result) {
-                    ClipboardImageExport.MoveResult.Ok -> message(TEXT_IMAGE_FAV_MOVED)
-                    ClipboardImageExport.MoveResult.NeedBinding -> showFavBindDialog()
-                    ClipboardImageExport.MoveResult.Denied -> message(TEXT_IMAGE_MOVE_DENIED)
-                    ClipboardImageExport.MoveResult.Failed -> message(TEXT_IMAGE_FAV_MOVE_FAILED)
+            when (ClipboardImageExport.moveToGalleryFolder(this, item, bytes)) {
+                ClipboardImageExport.MoveResult.Ok -> {
+                    // 写成功才删历史（行 + 自己的两个文件）：图片只留相册里那一份明文，历史里不再
+                    // 留一条点不开的项 —— 移出与列表刷新同步完成（原图都没了，留着只会误导）
+                    db.deleteAnyByIds(listOf(item.id))
+                    ClipboardImageFiles.deleteFor(this, item.contentHash)
+                    runOnUiThread { message(TEXT_IMAGE_FAV_MOVED); loadAsync(resetPage = false) }
                 }
-                loadAsync(resetPage = false)
+                ClipboardImageExport.MoveResult.NeedBinding -> {
+                    // 没移成：按加密方式收藏 —— 用户显式点了收藏，这个动作不能白做
+                    db.setFavorite(item.id, true)
+                    runOnUiThread { showFavBindDialog(); loadAsync(resetPage = false) }
+                }
+                ClipboardImageExport.MoveResult.Denied -> {
+                    db.setFavorite(item.id, true)
+                    runOnUiThread { message(TEXT_IMAGE_MOVE_DENIED); loadAsync(resetPage = false) }
+                }
+                ClipboardImageExport.MoveResult.Failed -> {
+                    db.setFavorite(item.id, true)
+                    runOnUiThread { message(TEXT_IMAGE_FAV_MOVE_FAILED); loadAsync(resetPage = false) }
+                }
             }
         }
     }
@@ -1812,7 +1823,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
 
         /** 收藏移出（设置项「收藏图片时移到图库目录」）的回执与引导 */
-        const val TEXT_IMAGE_FAV_MOVED = "已收藏，原图已移到图库目录（明文）"
+        const val TEXT_IMAGE_FAV_MOVED = "已移到图库目录（明文），并从历史移除"
         const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
         const val TEXT_IMAGE_FAV_NEED_BIND_TITLE = "未绑定图库目录"
         const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"

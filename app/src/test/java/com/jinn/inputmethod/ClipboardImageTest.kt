@@ -400,14 +400,23 @@ class ClipboardImageTest {
         assertTrue("收藏移出偏好必须默认关（默认加密存储）",
             "boolOr(KEY_FAV_IMAGE_MOVE_OUT, false)" in prefsSrc)
         val exportSrc = TestSources.codeSource("ClipboardImageExport.kt")
-        // 关键不变量：只在写外部**成功**之后才删密文 —— 没写成功就删是不可恢复的数据丢失
-        assertTrue("移出必须先写成功再删密文",
-            "fun moveOutForFavorite(context: Context, item: ClipboardDb.Item, bytes: ByteArray): MoveResult ="
-                in exportSrc && "if (it == MoveResult.Ok) {" in exportSrc)
-        // 只删密文（enc）：缩略图与库行都要留着 —— 网格显示与「收藏优先排序」都依赖它们
-        assertTrue("移出只删密文（缩略图与行保留）",
-            "ClipboardImageFiles.encFile(context, item.contentHash).delete()" in exportSrc &&
-                "ClipboardImageFiles.deleteFor(context, item.contentHash)" !in exportSrc)
+        // 关键不变量：写外部**成功**才删历史（行 + 两个文件）—— 没写成功就删是不可恢复的数据丢失
+        assertTrue("移出成功才删历史行", "db.deleteAnyByIds(listOf(item.id))" in histSrc)
+        assertTrue(
+            "移出成功才删历史文件",
+            "ClipboardImageFiles.deleteFor(this, item.contentHash)" in histSrc,
+        )
+        assertTrue("没移成要按加密方式收藏（动作不白做）", "db.setFavorite(item.id, true)" in histSrc)
+        assertTrue("不得再保留「只删密文、留行」的旧路径", "moveOutForFavorite" !in exportSrc)
+        // 图片上屏兜底：写剪贴板后替宿主触发一次粘贴（只认系统级粘贴的宿主才能一步到位），
+        // 提示同时给长按出口 —— performContextMenuAction 的返回值多数宿主恒为 true，不可当成功
+        val imeSrc = TestSources.codeSource("JinnIme.kt")
+        assertTrue("兜底要替宿主触发粘贴", "performContextMenuAction(android.R.id.paste)" in imeSrc)
+        assertTrue(
+            "兜底提示要给出长按出口",
+            "TEXT_IMAGE_COPIED = \"已复制到剪贴板（未自动上屏时请在输入框长按粘贴）\"" in imeSrc,
+        )
+        assertTrue("宿主拒收也要兜底", "宿主拒收，退回剪贴板" in imeSrc)
         assertTrue("历史页收藏图片走移出路径", "toggleImageFavorite(item)" in histSrc)
         assertTrue("面板收藏图片走移出路径",
             "ClipboardPrefs.of(context).favoriteImageMoveOut" in panelSrc &&

@@ -1324,9 +1324,8 @@ class JinnIme : InputMethodService() {
                 return@runLong
             }
             if (!capable) {
-                // 回退：宿主不支持 commitContent（纯文本 / 部分 WebView），改成写剪贴板让用户长按粘贴
-                val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
-                ui.post { toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED) }
+                // 回退：宿主不支持 commitContent（纯文本 / 部分 WebView）⇒ 走剪贴板兜底通道
+                fallbackToClipboard(item, bytes)
                 return@runLong
             }
             // 交付的类型与出库三动作（保存 / 转移 / 复制）同源（BUG.md L-1303）：原先这里直接信
@@ -1342,11 +1341,36 @@ class JinnIme : InputMethodService() {
                     GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "粘贴图片: 已提交")
                     GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
                     GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
-                    GalleryInsert.InsertResult.Rejected -> toast(TEXT_IMAGE_REJECTED)
+                    GalleryInsert.InsertResult.Rejected -> {
+                        // 宿主声明支持却拒收（部分 WebView / 自绘输入框）也要给出口：只报
+                        // 「未接受图片」会让人面对「点了没反应」，而系统级粘贴往往是通的
+                        Diagnostics.w(TAG, "粘贴图片: 宿主拒收，退回剪贴板")
+                        fallbackToClipboard(item, bytes)
+                    }
                 }
             }
         }
         return true
+    }
+
+    /**
+     * 图片上屏的兜底通道：写系统剪贴板，并**替宿主触发一次粘贴动作**。
+     *
+     * 宿主对「粘贴」的处理就是读系统剪贴板，刚写进去的图片能一步上屏 —— 对只认系统级粘贴的宿主
+     * （豆包实测如此），这是唯一能真正把图片送进去的路径，`commitContent` 它们不认。
+     * 两条路都给出口：`performContextMenuAction` 的返回值多数宿主恒为 true（不表示真粘贴了），
+     * 所以提示照发，让用户知道还可以长按。
+     */
+    private fun fallbackToClipboard(item: ClipboardDb.Item, bytes: ByteArray) {
+        val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
+        ui.post {
+            if (ok) {
+                currentInputConnection?.let { connection ->
+                    runCatching { connection.performContextMenuAction(android.R.id.paste) }
+                }
+            }
+            toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED)
+        }
     }
 
     /**
@@ -4196,7 +4220,7 @@ class JinnIme : InputMethodService() {
         "该图片读不出原图：可能已损坏，也可能已移到图库目录（相册里可看）"
 
         /** 回退路径：图片已写进系统剪贴板，等用户去宿主里长按粘贴 */
-        const val TEXT_IMAGE_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
+        const val TEXT_IMAGE_COPIED = "已复制到剪贴板（未自动上屏时请在输入框长按粘贴）"
 
         const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
 

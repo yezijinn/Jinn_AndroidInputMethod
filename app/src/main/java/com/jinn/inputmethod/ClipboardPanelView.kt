@@ -1042,17 +1042,30 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val token = actionToken    // 抓令牌（BUG.md L-144）：只认「我这一条」的操作条
         BackgroundIo.runLong {
             val bytes = ClipboardImageExport.readOriginal(context, item)
-            val result = if (bytes == null) null else {
-                ClipboardImageExport.moveOutForFavorite(context, item, bytes)
+            if (bytes == null) {
+                // 读不出原图（异常情形）：照常加密收藏，别把收藏动作整个吞掉
+                db.setFavorite(item.id, true)
+                post {
+                    if (token == actionToken) hideActionBar()
+                    hint(TEXT_IMAGE_UNAVAILABLE)
+                    if (token == actionToken) refresh(resetScroll = true)
+                }
+                return@runLong
             }
-            // 无论移出与否，收藏本身要落地（读不出原图 = 异常情形，不能连收藏一起丢）
-            db.setFavorite(item.id, true)
+            val result = ClipboardImageExport.moveToGalleryFolder(context, item, bytes)
+            if (result == ClipboardImageExport.MoveResult.Ok) {
+                // 写成功才删历史（行 + 两个文件）：图片只留相册那一份明文，历史里不留点不开的项
+                db.deleteAnyByIds(listOf(item.id))
+                ClipboardImageFiles.deleteFor(context, item.contentHash)
+            } else {
+                // 没移成：按加密方式收藏（用户显式点了收藏，动作不能白做）
+                db.setFavorite(item.id, true)
+            }
             post {
                 val mine = token == actionToken
                 if (mine) hideActionBar()
                 else Diagnostics.i(TAG, "[$tid] 收藏移出回调已过期（用户已长按别的条目），只提示不动界面")
                 val msg = when (result) {
-                    null -> TEXT_IMAGE_UNAVAILABLE
                     ClipboardImageExport.MoveResult.Ok -> TEXT_IMAGE_FAV_MOVED
                     ClipboardImageExport.MoveResult.NeedBinding -> TEXT_IMAGE_FAV_NEED_BIND
                     ClipboardImageExport.MoveResult.Denied -> TEXT_IMAGE_MOVE_DENIED
