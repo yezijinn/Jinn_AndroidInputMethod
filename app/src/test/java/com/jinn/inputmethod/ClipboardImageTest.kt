@@ -394,6 +394,17 @@ class ClipboardImageTest {
             "面板占位行点击 / 长按都只提示",
             "hint(TEXT_IMAGE_ROW_HINT)" in panelSrc && "private fun hint(msg: String)" in panelSrc,
         )
+        // 防回归：占位行的防护必须留在**列表入口** —— 写进 showItemMenu 会把「图片」分类网格的
+        // 长按一起挡掉（2026-10-12 修过的真缺陷：菜单整个不弹）
+        assertTrue(
+            "面板占位行防护在列表入口",
+            "if (it.image != null) {" in panelSrc &&
+                "return@setOnItemLongClickListener true" in panelSrc,
+        )
+        assertFalse(
+            "防护不得回到 showItemMenu（那会连图片网格的长按一起挡掉）",
+            "private fun showItemMenu(item: ClipboardDb.Item) {\n        if (item.image != null)" in panelSrc,
+        )
         // 提示必须走宿主通道：面板裸弹 Toast 会在窗口切换瞬间抛 BadTokenException（L-686）；
         // listener 缺失时的本地兜底也必须包 runCatching
         assertTrue(
