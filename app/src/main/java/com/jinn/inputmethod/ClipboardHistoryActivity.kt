@@ -174,8 +174,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
      */
     private lateinit var favImageGrid: ClipboardImageGridView
 
-    /** 收藏图片网格的日志关联 ID（历史页没有面板那种「每次打开一个 trace」的口径） */
+    /** 条带（收藏 / 全部两个分组共用）的日志关联 ID（历史页没有面板那种「每次打开一个 trace」的口径） */
     private val favGridTraceId by lazy { Diagnostics.traceId("HISTFAV") }
+
+    /**
+     * 上方条带当前是否有图片（只在条带分组由网格的 onDataChanged 更新，非条带分组在 loadAsync 里复位）。
+     * 文本列表为空时据此区分「库里什么都没有」与「有图片但一段文本都没有」——
+     * 后者说「暂无记录」会与眼前的图片网格自相矛盾。
+     */
+    private var stripHasImages = false
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -218,6 +225,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             onDataChanged = { empty, count, exhausted ->
                 // 收藏与「全部」两个分组都用它（收藏分组只看收藏图片，全部分组看全部图片）
                 if (categoryFilter == FILTER_FAVORITE || categoryFilter == null) {
+                    stripHasImages = !(empty && exhausted)
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
                     // 多时保持两行 + 「★ 只看收藏」全屏入口
@@ -930,6 +938,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val favMode = category == FILTER_FAVORITE
                 val stripMode = favMode || category == null
                 favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
+                // 非条带分组（网址 / 数字）没有图片区，空态文案回到「暂无记录」
+                if (!stripMode) stripHasImages = false
                 if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
                 // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
                 // 后若正好停在越界页，刷新那一刻 `pageItems()` 取到空页 ⇒ `AbsListView` 记住
@@ -947,6 +957,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     cappedByCount && total > maxResults -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
                     capped -> TEXT_TRUNCATED_GENERIC
                     unreadable -> TEXT_UNREADABLE
+                    // 条带有图而列表空 = 还没复制过文本，说「暂无记录」会与眼前的图片网格自相矛盾
+                    // （搜索态另行判断：那是「没有匹配」，不是「没有文本」）
+                    items.isEmpty() && stripHasImages && keywordNow.isEmpty() -> TEXT_EMPTY_TEXT_ONLY
                     items.isEmpty() -> TEXT_EMPTY
                     else -> ""
                 }
@@ -1559,6 +1572,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_SEARCH = "搜索"
         const val TEXT_RESET = "重置"
         const val TEXT_EMPTY = "暂无记录"
+
+        /** 条带里有图片、但一段文本都没有时的列表空态（与「暂无记录」区分，见 stripHasImages） */
+        const val TEXT_EMPTY_TEXT_ONLY = "暂无文本记录"
 
         /**
          * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为

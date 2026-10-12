@@ -312,6 +312,11 @@ class ClipboardImageTest {
         assertTrue("面板全部分组也给条带",
             "if (refreshFavStrip && (category == CATEGORY_FAVORITE || category == null))" in
                 TestSources.codeSource("ClipboardPanelView.kt"))
+        // 「有图片、无文本」时列表空态要与图片网格同源：说「暂无记录」会和眼前的网格自相矛盾
+        assertTrue("历史页空态要区分只有图片的情形",
+            "TEXT_EMPTY_TEXT_ONLY" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        assertTrue("面板空态要区分只有图片的情形",
+            "TEXT_EMPTY_TEXT_ONLY" in TestSources.codeSource("ClipboardPanelView.kt"))
         // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
         assertTrue("条带随布局重排", "favImageGrid.rerender()" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))

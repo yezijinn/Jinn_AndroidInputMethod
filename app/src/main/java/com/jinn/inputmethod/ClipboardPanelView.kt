@@ -124,6 +124,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 图片分类是否只看收藏：收藏分类不再有图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240） */
     private var imageFavOnly = false
 
+    /**
+     * 条带（收藏 / 全部两个分组）当前是否有图片（只由网格的 onDataChanged 更新，非条带分组在
+     * selectCategory 里复位）—— 文本列表为空时据此区分「库里什么都没有」与「有图片但一段文本都没有」。
+     */
+    private var stripHasImages = false
+
     /** 布局调节行：每行张数 / 行高 各一组「−/+」（图片分类下点「布局」才露出） */
     private val tuneRow = LinearLayout(context)
 
@@ -445,6 +451,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             onDataChanged = { empty, count, exhausted ->
                 // 条带服务于「收藏」与「全部」两个分组（图片分组走全屏网格，不受这里影响）
                 if (currentCategory == CATEGORY_FAVORITE || currentCategory == null) {
+                    stripHasImages = !(empty && exhausted)
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
@@ -570,6 +577,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         val favMode = category == CATEGORY_FAVORITE
         val stripMode = favMode || category == null
         imageGrid.visibility = if (imageMode || stripMode) View.VISIBLE else View.GONE
+        // 非条带分组（网址 / 数字 / 图片）没有条带，空态文案回到「暂无剪贴板历史」
+        if (!stripMode) stripHasImages = false
         applyGridHeight(imageMode)
         listView.visibility = if (imageMode) View.GONE else View.VISIBLE
         textEmpty.visibility = View.GONE
@@ -890,6 +899,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 loadFailed -> TEXT_EMPTY_LOAD_FAILED
                 scanStoppedEarly -> TEXT_EMPTY_UNREADABLE_MORE
                 unreadableHistory -> TEXT_EMPTY_UNREADABLE
+                // 条带有图时列表空 = 还没复制过文本，说「暂无剪贴板历史」会与眼前的图片网格矛盾
+                stripHasImages -> TEXT_EMPTY_TEXT_ONLY
                 else -> TEXT_EMPTY_IDLE
             }
         }
@@ -1246,6 +1257,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         /** 空态：从未有过历史（或历史已被清空/裁剪干净） */
         const val TEXT_EMPTY_IDLE = "暂无剪贴板历史\n复制内容后将自动保存"
+
+        /** 空态：条带里有图片、但一段文本都没有（与 [TEXT_EMPTY_IDLE] 区分，见 stripHasImages） */
+        const val TEXT_EMPTY_TEXT_ONLY = "暂无文本记录"
 
         /**
          * 空态：库里有行但一条都读不出来。
