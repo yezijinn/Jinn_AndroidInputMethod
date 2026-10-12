@@ -719,6 +719,68 @@ class DocsReferenceTest {
     }
 
     /**
+     * 用户可见的几处计数必须与源码一致（2026-10-12 逐条人工核过，当天补成守卫）。
+     *
+     * 这四类都是「文档声明一个数、源码里另有真值」——英文 README 就出过一次「技术附录留着旧包条数、
+     * 功能说明已更新」的静默腐烂。源码换了写法一律 `error` 提示改守卫，不静默放行。
+     */
+    @Test
+    fun 用户可见计数必须与源码一致() {
+        // ① 皮肤：定义条数与明暗分档（README / 功能总览都对外声明）
+        val skinSrc = readDoc("app/src/main/java/com/jinn/inputmethod/KeyboardSkin.kt")
+            ?: error("找不到 KeyboardSkin.kt")
+        val skinTotal = Regex("""(?m)^\s*val [A-Z_]+ = KeyboardSkin\(""").findAll(skinSrc).count()
+        val skinDark = Regex("""tone = SkinTone\.DARK""").findAll(skinSrc).count()
+        val skinLight = Regex("""tone = SkinTone\.LIGHT""").findAll(skinSrc).count()
+        assertTrue(
+            "KeyboardSkin 的写法变了（本守卫要跟着改）：共 $skinTotal / 暗 $skinDark / 亮 $skinLight",
+            skinTotal > 0 && skinTotal == skinDark + skinLight,
+        )
+        // ② AI 动作：枚举里的中文名去掉「翻译」本身（它是长按翻译键的直连动作，不在展开清单里）
+        val aiSrc = readDoc("app/src/main/java/com/jinn/inputmethod/AiAction.kt")
+            ?: error("找不到 AiAction.kt")
+        val aiLabels = Regex("""(?m)^\s*[A-Z_]+\("[a-z]+", "([^"]+)"\)""").findAll(aiSrc)
+            .map { it.groupValues[1] }.toList()
+        assertTrue("AiAction 的写法变了（本守卫要跟着改）：$aiLabels", aiLabels.size >= 2 && "翻译" in aiLabels)
+        val aiExtras = aiLabels.filterNot { it == "翻译" }
+        // ③ 文本单条上限（KB）；④ 图片单张默认上限（MB）
+        val ctrlSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardController.kt")
+            ?: error("找不到 ClipboardController.kt")
+        val textKb = Regex("""MAX_ITEM_BYTES = (\d+) \* 1024""").find(ctrlSrc)?.groupValues?.get(1)?.toInt()
+            ?: error("MAX_ITEM_BYTES 的写法变了（本守卫要跟着改）")
+        val prefsSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt")
+            ?: error("找不到 ClipboardPrefs.kt")
+        val imageMb = Regex("""DEFAULT_IMAGE_ITEM_MB = (\d+)""").find(prefsSrc)?.groupValues?.get(1)?.toInt()
+            ?: error("DEFAULT_IMAGE_ITEM_MB 的写法变了（本守卫要跟着改）")
+
+        for (name in listOf("README.md", "功能总览.md")) {
+            val text = readDoc(name) ?: continue
+            assertTrue("$name 缺皮肤总数（源码 $skinTotal 套）", "$skinTotal 套" in text)
+            assertTrue(
+                "$name 的亮 / 暗分档与源码不符（源码 亮 $skinLight / 暗 $skinDark）",
+                Regex("""亮色?\s*$skinLight\s*/\s*暗色?\s*$skinDark""").containsMatchIn(text),
+            )
+            // 反向：「单条上限」的每一处声明都必须是当前值 —— 只查「有没有写对」会漏掉改一半的
+            // （2026-10-12 实测：把一处 256KB 改成 512KB，只查正向时守卫照样绿）。
+            // 只扫这一种声明位，不扫全篇 NKB：功能总览那句「单条上限（256KB / 4KB~1MB，受解密窗自动收缩）」
+            // 里的 4KB 是**可调范围**，属正当写法，全扫会误伤。
+            val strayKb = Regex("""单条(?:上限)?[^\d]{0,6}(\d+)KB""").findAll(text)
+                .map { it.groupValues[1] }.filter { it != textKb.toString() }.toSet()
+            assertTrue("$name 的「单条上限」写着 ${strayKb.sorted().joinToString("/")}KB（源码 ${textKb}KB）", strayKb.isEmpty())
+            val actionLine = text.lineSequence().firstOrNull { "长按翻译键" in it }
+                ?: error("$name 找不到 AI 动作那一行（改了措辞？）")
+            assertTrue("$name 的「N 个动作」与 AiAction 不一致（源码 ${aiExtras.size} 个）", "${aiExtras.size} 个动作" in actionLine)
+            for (label in aiExtras) assertTrue("$name 的 AI 动作一行缺「$label」", label in actionLine)
+        }
+        val overview = readDoc("功能总览.md") ?: error("找不到 功能总览.md")
+        assertTrue("功能总览缺「文本 ${textKb}KB」（源码 MAX_ITEM_BYTES）", "${textKb}KB" in overview)
+        assertTrue("功能总览缺图片单张默认「${imageMb}MB」（源码 DEFAULT_IMAGE_ITEM_MB）", "默认 ${imageMb}MB" in overview)
+        val strayMb = Regex("""默认\s*(\d+)\s*MB""").findAll(overview).map { it.groupValues[1] }
+            .filter { it != imageMb.toString() }.toSet()
+        assertTrue("功能总览写着非当前图片默认上限 ${strayMb.sorted().joinToString("/")}MB（源码 ${imageMb}MB）", strayMb.isEmpty())
+    }
+
+    /**
      * 块编号必须**全册唯一**（2026-10-12 复核发现 30 处撞号：剪贴板族复用了音效族已占的
      * `X-295`…`X-323`，按编号检索会得到两条不同内容；那批已改号为 `X-470`…`X-499`）。
      *
