@@ -678,6 +678,33 @@ class DocsReferenceTest {
         assertEquals("功能总览里的音效个数与 TapSound.SOUND_COUNT 不符", soundCounts[0], soundClaims[0])
     }
 
+    /**
+     * 可选词库包的条数必须与源码一致（2026-10-12 复核：重切包后 README 与功能总览还写着旧值）。
+     *
+     * 真值来自 `OptionalDicts` 的展示名（`"2级词库 +90万条短语"`）：换包时改名，真值随之更新；
+     * 两份面向用户的文档必须跟上 —— README 是外部读者的唯一依据，功能总览是全量清单。
+     */
+    @Test
+    fun 可选词库包条数必须与源码一致() {
+        val src = readDoc("app/src/main/java/com/jinn/inputmethod/OptionalDicts.kt")
+            ?: error("找不到 OptionalDicts.kt")
+        val counts = Regex("""name = "\d级词库 \+(\d+)万条短语"""").findAll(src)
+            .map { it.groupValues[1] }.toList()
+        assertEquals("OptionalDicts 的包名换了写法（本守卫要跟着改）", listOf("90", "70", "21"), counts)
+        for (name in listOf("README.md", "功能总览.md")) {
+            val text = readDoc(name) ?: continue
+            for (n in counts) {
+                assertTrue(
+                    "$name 缺当前包条数 +$n 万（重切包后要同步文档）",
+                    "+$n 万" in text || "+${n}万" in text,
+                )
+            }
+            for (old in listOf("40", "50", "60")) {
+                assertFalse("$name 仍写着旧包条数 +$old 万", "+$old 万" in text)
+            }
+        }
+    }
+
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */
     private fun ledger(): String =
         listOf("BUG.md", "../BUG.md").map(::File).firstOrNull { it.isFile }?.readText()
