@@ -90,6 +90,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 剪贴板面板：图片条目的长按动作（复制 / 保存 / 转移到图库目录）。返回是否已处理。 */
         fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean = false
+
+        /**
+         * 剪贴板面板：面板侧的短提示（占位行提示等）。IME 用自己那层包过 runCatching 的 toast 出。
+         * 带默认实现：既有实现方（含测试替身）不必随接口扩展而改。
+         */
+        fun onHint(msg: String) = Unit
         /** 剪贴板面板状态变化（开/关，IME 侧同步拖选等状态） */
         fun onClipboardStateChanged(active: Boolean)
         /** 方向面板：执行方向控制动作（光标移动/拖选/复制/粘贴） */
@@ -3683,6 +3689,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     this@PinyinKeyboardView.listener?.onPasteImage(item) ?: false
                 override fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean =
                     this@PinyinKeyboardView.listener?.onImageAction(item, action) ?: false
+                override fun onHint(msg: String) {
+                    this@PinyinKeyboardView.listener?.onHint(msg)
+                }
                 override fun onClose() {
                     hideClipboardPanel()
                 }

@@ -1547,6 +1547,11 @@ class JinnIme : InputMethodService() {
                     if (rejectedBySearchPanel("图片操作")) return false
                     return handleClipboardImageAction(item, action)
                 }
+                override fun onHint(msg: String) {
+                    // 面板侧的短提示（占位行等）统一从这里出：走本类的 toast（那层包了 runCatching，
+                    // 面板自己裸弹会踩 BadTokenException，见 toast 的注释）
+                    toast(msg)
+                }
                 override fun onClipboardStateChanged(active: Boolean) {
                     Diagnostics.i(TAG, "剪贴板面板状态: active=$active")
                     if (!active) {

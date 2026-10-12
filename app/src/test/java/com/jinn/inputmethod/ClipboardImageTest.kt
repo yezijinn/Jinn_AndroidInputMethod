@@ -371,8 +371,25 @@ class ClipboardImageTest {
                 "const val TEXT_IMAGE_ROW_HINT = \"请在「图片」分组里操作\"" in panelSrc,
         )
         assertTrue("面板图片行渲染占位", "holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER" in panelSrc)
-        assertTrue("面板占位行不粘贴（既有防护）", "if (item.image != null) return\n" in panelSrc ||
-            "if (item.image != null) return" in panelSrc)
+        // 占位行：点击与长按都不给操作，只走宿主提示（hint → Listener.onHint → IME.toast）
+        assertTrue(
+            "面板占位行点击 / 长按都只提示",
+            "hint(TEXT_IMAGE_ROW_HINT)" in panelSrc && "private fun hint(msg: String)" in panelSrc,
+        )
+        // 提示必须走宿主通道：面板裸弹 Toast 会在窗口切换瞬间抛 BadTokenException（L-686）；
+        // listener 缺失时的本地兜底也必须包 runCatching
+        assertTrue(
+            "面板本地兜底 Toast 必须包 runCatching",
+            "runCatching {" in panelSrc && "android.widget.Toast.makeText(context, msg" in panelSrc,
+        )
+        assertTrue(
+            "键盘 View 要把提示转发给 IME",
+            "override fun onHint(msg: String)" in TestSources.codeSource("PinyinKeyboardView.kt"),
+        )
+        assertTrue(
+            "IME 要用自己那层 toast 出提示",
+            "override fun onHint(msg: String)" in TestSources.codeSource("JinnIme.kt"),
+        )
         // 面板三处取数（首屏 / 分页 / 续扫）必须同源：BUG-1239 的教训 —— 漏一处会让
         // 第二页起图片行混回文本列表。全部调用都过 filterFor 才算同源
         assertEquals("面板三处取数都走 filterFor", 3, Regex("filterFor\\(category\\)").findAll(panelSrc).count())

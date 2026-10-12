@@ -71,6 +71,15 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         /** 图片条目的长按动作（保存 / 转移 / 复制）。返回是否已处理。 */
         fun onImageAction(item: ClipboardDb.Item, action: ClipboardImageAction): Boolean = false
 
+        /**
+         * 面板侧的短提示（占位行提示、收藏移出回执等）。
+         *
+         * 交给宿主出：输入法的 toast 有 runCatching 兜 BadTokenException（窗口切换瞬间裸弹会抛，
+         * 见 JinnIme.toast 的 L-686 一段），面板自己裸弹会踩同一个坑。
+         * 带默认实现：既有实现方（含测试替身）不必随接口扩展而改。
+         */
+        fun onHint(msg: String) = Unit
+
         /** 关闭面板，恢复原输入法键盘 */
         fun onClose()
 
@@ -955,10 +964,29 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     // ── 点击粘贴 / 长按菜单 ────────────────────────────────
 
+    /**
+     * 面板侧提示：一律走宿主的 toast（那层包了 runCatching，见 [Listener.onHint]）。
+     * 只有 listener 缺失（独立预览等场景）才退回本地 Toast，同样包住 —— 面板挂在 IME 窗口里，
+     * 窗口切换瞬间裸弹会抛 BadTokenException（同 L-686 一段）。
+     */
+    private fun hint(msg: String) {
+        val l = listener
+        if (l != null) {
+            l.onHint(msg)
+        } else {
+            runCatching {
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun handleItemClick(item: ClipboardDb.Item) {
-        // 「全部」分类里的图片行只是**排序占位**（灰字、不可点）：图片的打开方式是点开大图，
-        // 那在「图片」分类（网格）里做；混在文本流里点它只能贴文本，语义不通（实施计划 §D3+U1）
-        if (item.image != null) return
+        // 「全部」分类里的图片行只是**序号占位**：这一列不给任何操作（打开大图 / 长按菜单都在
+        // 「图片」分类的网格里做），只提示去哪操作
+        if (item.image != null) {
+            hint(TEXT_IMAGE_ROW_HINT)
+            return
+        }
         if (isPasting) return
         isPasting = true
         // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）
@@ -979,7 +1007,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 占位行（「全部」分类里的图片行）不给长按菜单：图片不该在这一列上可操作，
         // 一句提示把人引到「图片」分类
         if (item.image != null) {
-            android.widget.Toast.makeText(context, TEXT_IMAGE_ROW_HINT, android.widget.Toast.LENGTH_SHORT).show()
+            hint(TEXT_IMAGE_ROW_HINT)
             return
         }
         // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
@@ -1030,8 +1058,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     ClipboardImageExport.MoveResult.Denied -> TEXT_IMAGE_MOVE_DENIED
                     ClipboardImageExport.MoveResult.Failed -> TEXT_IMAGE_FAV_MOVE_FAILED
                 }
-                // 面板贴在 IME 上，Toast 是唯一稳妥的提示通道（自绘条会跟长按菜单抢位置）
-                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                // 提示并入宿主通道（见 hint）：面板贴在 IME 上，自绘条会跟长按菜单抢位置
+                hint(msg)
                 if (mine) refresh(resetScroll = true)
             }
         }
