@@ -690,7 +690,7 @@ class DocsReferenceTest {
             ?: error("找不到 OptionalDicts.kt")
         val counts = Regex("""name = "\d级词库 \+(\d+)万条短语"""").findAll(src)
             .map { it.groupValues[1] }.toList()
-        assertEquals("OptionalDicts 的包名换了写法（本守卫要跟着改）", listOf("90", "70", "21"), counts)
+        assertEquals("OptionalDicts 的包名换了写法（本守卫要跟着改）", listOf("90", "70", "21").sorted(), counts.sorted())
         for (name in listOf("README.md", "功能总览.md")) {
             val text = readDoc(name) ?: continue
             for (n in counts) {
@@ -699,10 +699,23 @@ class DocsReferenceTest {
                     "+$n 万" in text || "+${n}万" in text,
                 )
             }
-            for (old in listOf("40", "50", "60")) {
-                assertFalse("$name 仍写着旧包条数 +$old 万", "+$old 万" in text)
-            }
+            // 反向不写死旧值：文档里任何**非当前**的 `+N 万` 都是重切包后的残留。
+            // 内置 40 万 / 29.9 万键这类不带 `+`，不会误伤（写死 40/50/60 则漏下一次重切的新旧值）
+            val stray = Regex("""\+(\d+)\s*万""").findAll(text).map { it.groupValues[1] }
+                .filter { it !in counts }.toSet()
+            assertTrue(
+                "$name 还写着旧包条数 +${stray.sorted().joinToString(" / ")} 万（当前 ${counts.joinToString(" / ")}）",
+                stray.isEmpty(),
+            )
         }
+        // 英文 README 按 K 计数，钉住整句结构：只查中文文档会漏 —— 2026-10-12 复核时
+        // 它的技术附录里仍留着重切前的 400K / 500K / 600K（功能说明那段早已是 900K / 700K / 210K）
+        val en = readDoc("README_EN.md") ?: return
+        val kCounts = counts.map { (it.toInt() * 10).toString() }
+        val packs = Regex("""parts 2 / 3 / 4: (\d+)K / (\d+)K / (\d+)K""").find(en)
+            ?: error("README_EN 的包条数行换了写法（本守卫要跟着改）")
+        assertEquals("README_EN 的包条数与源码不一致", kCounts, packs.groupValues.drop(1))
+        for (k in kCounts) assertTrue("README_EN 缺当前包条数 ${k}K", "${k}K" in en)
     }
 
     /** 台账**入口**（`BUG.md`：协议 + 待办 + 索引 + front-matter），工作目录不同时回退上一级。 */
