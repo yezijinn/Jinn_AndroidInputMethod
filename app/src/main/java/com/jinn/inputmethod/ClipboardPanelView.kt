@@ -1060,7 +1060,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 }
                 // 提示并入宿主通道（见 hint）：面板贴在 IME 上，自绘条会跟长按菜单抢位置
                 hint(msg)
-                if (mine) refresh(resetScroll = true)
+                // 与 toggleFavorite 同款：图片分类下要刷网格（refresh 只管列表，网格会停在旧数据）
+                if (mine && inImageMode()) imageGrid.show(tid, favoritesOnly = imageFavOnly)
+                else if (mine) refresh(resetScroll = true)
             }
         }
     }
