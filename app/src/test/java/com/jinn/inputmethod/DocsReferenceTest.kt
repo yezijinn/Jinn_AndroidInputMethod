@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.tukaani.xz.XZInputStream
 import java.io.File
 
 /**
@@ -833,6 +834,63 @@ class DocsReferenceTest {
             "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
+    }
+
+    /**
+     * 字表 / 音节表的条数必须与 `assets` 里的 `*.xz` 实测一致（README 与功能总览都对外写这几数）。
+     *
+     * 手法同 `SimpTradWordBackTest.资产条数必须与公开文档一致`：**先在测试里数资产**，再要求文档写出同一个数。
+     * ⚠ 计数口径必须与运行期一致（`RareCharsFilterTest` 的 `isHan`）：**扩展 A（0x3400–0x4DBF）+ 基本区
+     * （0x4E00–0x9FFF）+ 非 BMP（0x20000–0x3FFFF）** —— 只数基本区会漏扩展 A 的字，把**正确**的文档数
+     * 判成漂移（2026-10-13 实测踩过一次：误判 5,613 → 5,606）。
+     */
+    @Test
+    fun 字表与音节表条数必须与资产一致() {
+        fun assetText(name: String): String {
+            val file = listOf("src/main/assets", "app/src/main/assets")
+                .map { File("$it/$name.txt.xz") }.firstOrNull { it.isFile }
+                ?: error("未找到 $name.txt.xz（路径或改名变了？）")
+            return XZInputStream(file.inputStream()).use { String(it.readBytes(), Charsets.UTF_8) }
+        }
+
+        fun commafy(n: Int): String = n.toString().reversed().chunked(3).joinToString(",").reversed()
+        fun stripped(name: String) = assetText(name).lineSequence().filterNot { it.trimStart().startsWith("#") }
+
+        fun isHan(cp: Int): Boolean =
+            cp in 0x3400..0x4DBF || cp in 0x4E00..0x9FFF || cp in 0x20000..0x3FFFF
+
+        /** 按**码点**收集汉字（不能用 `[\u4e00-\u9fff]` 正则：非 BMP 是代理对，且扩展 A 在基本区之外） */
+        fun hanCodes(name: String): List<Int> {
+            val out = ArrayList<Int>()
+            for (line in stripped(name)) {
+                var i = 0
+                while (i < line.length) {
+                    val cp = line.codePointAt(i)
+                    i += Character.charCount(cp)
+                    if (isHan(cp)) out.add(cp)
+                }
+            }
+            return out
+        }
+
+        val tiers = listOf("common_chars", "tier2_chars", "tier3_chars").map { hanCodes(it).distinct().size }
+        val chars = hanCodes("pinyin_chars")
+        val readings = chars.size
+        val distinct = chars.distinct().size
+        val syllables = stripped("pinyin_syllables").joinToString(" ").split(Regex("""\s+"""))
+            .count { it.matches(Regex("""[a-z]+""")) }
+
+        val readme = readDoc("README.md") ?: error("找不到 README.md")
+        assertTrue("README 缺常用字字表条数（资产实测 ${commafy(tiers[0])}）", "常用字 ${commafy(tiers[0])}" in readme)
+        assertTrue("README 缺档 2 字表条数（资产实测 ${commafy(tiers[1])}）", "${commafy(tiers[1])} 字" in readme)
+        assertTrue("README 缺档 3 字表条数（资产实测 ${commafy(tiers[2])}）", "${commafy(tiers[2])} 字" in readme)
+        assertTrue("README 缺单字表字数（资产实测 ${commafy(distinct)}）", "${commafy(distinct)} 字" in readme)
+        assertTrue("README 缺单字表读音数（资产实测 ${commafy(readings)}）", "${commafy(readings)} 条读音" in readme)
+        assertTrue("README 缺合法音节数（资产实测 $syllables）", "$syllables 个" in readme)
+        val overview = readDoc("功能总览.md") ?: error("找不到 功能总览.md")
+        assertTrue("功能总览缺常用字字表条数（资产实测 ${commafy(tiers[0])}）", "常用字 ${commafy(tiers[0])}" in overview)
+        assertTrue("功能总览缺档 2 字表条数（资产实测 ${commafy(tiers[1])}）", "${commafy(tiers[1])} 字" in overview)
+        assertTrue("功能总览缺档 3 字表条数（资产实测 ${commafy(tiers[2])}）", "${commafy(tiers[2])} 字" in overview)
     }
 
     /**
