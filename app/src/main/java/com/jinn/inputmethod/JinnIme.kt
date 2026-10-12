@@ -1391,7 +1391,7 @@ class JinnIme : InputMethodService() {
             when (action) {
                 ClipboardImageAction.Copy -> {
                     val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
-                    ui.post { toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED) }
+                    ui.post { toast(if (ok) TEXT_IMAGE_COPIED_PLAIN else TEXT_IMAGE_COPY_FAILED) }
                 }
                 ClipboardImageAction.Save -> {
                     val ok = ClipboardImageExport.saveToAlbum(this, item, bytes)
@@ -4219,8 +4219,11 @@ class JinnIme : InputMethodService() {
         const val TEXT_IMAGE_UNAVAILABLE =
         "该图片读不出原图：可能已损坏，也可能已移到图库目录（相册里可看）"
 
-        /** 回退路径：图片已写进系统剪贴板，等用户去宿主里长按粘贴 */
+        /** 回退路径：图片已写进系统剪贴板，并已替宿主尝试过粘贴（见 fallbackToClipboard） */
         const val TEXT_IMAGE_COPIED = "已复制到剪贴板（未自动上屏时请在输入框长按粘贴）"
+
+        /** 纯复制（长按菜单的「复制」）：这里不尝试自动粘贴，提示用户自己去宿主里粘贴 */
+        const val TEXT_IMAGE_COPIED_PLAIN = "已复制到剪贴板，请在输入框长按粘贴"
 
         const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
 
