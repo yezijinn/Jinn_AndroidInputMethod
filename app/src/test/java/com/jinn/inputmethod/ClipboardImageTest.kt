@@ -447,6 +447,17 @@ class ClipboardImageTest {
         )
         assertTrue("宿主拒收也要兜底", "宿主拒收，退回剪贴板" in imeSrc)
         assertTrue("历史页收藏图片走移出路径", "toggleImageFavorite(item)" in histSrc)
+        // 预览框（showImageDialog）的「收藏」也必须同源（2026-10-12）：原先直连 setFavorite ——
+        // 开着「收藏图片时移到图库目录」时，同一个「收藏」在预览框里不移出、在长按菜单里才移出
+        val previewFav = histSrc.indexOf(
+            "addBtn(rowManage, if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE) {",
+        )
+        assertTrue("预览框收藏按钮必须还在（防误删）", previewFav > 0)
+        assertTrue(
+            "预览框收藏必须走 toggleImageFavorite（不得直连 setFavorite）",
+            histSrc.substring(previewFav, (previewFav + 400).coerceAtMost(histSrc.length))
+                .contains("toggleImageFavorite(item)"),
+        )
         assertTrue("面板收藏图片走移出路径",
             "ClipboardPrefs.of(context).favoriteImageMoveOut" in panelSrc &&
                 "favoriteImageMoveOut(item)" in panelSrc)

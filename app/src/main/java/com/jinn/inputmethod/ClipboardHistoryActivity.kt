@@ -1093,7 +1093,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
         addBtn(rowOut, TEXT_IMAGE_MOVE) { dlg.dismiss(); imageAction(item, ClipboardImageAction.MoveToGallery) }
         addBtn(rowManage, if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE) {
             dlg.dismiss()
-            BackgroundIo.run { db.setFavorite(item.id, !item.isFavorite); loadAsync(resetPage = false) }
+            // 与长按菜单 / 面板同源：收藏走 toggleImageFavorite（按「收藏图片时移到图库目录」
+            // 设置决定是否移出）。原先直连 setFavorite —— 同一个「收藏」在预览框里不移出、
+            // 在长按菜单里才移出，一个动作两种结果（2026-10-12 修正）
+            toggleImageFavorite(item)
         }
         addBtn(rowManage, TEXT_DELETE) {
             dlg.dismiss()

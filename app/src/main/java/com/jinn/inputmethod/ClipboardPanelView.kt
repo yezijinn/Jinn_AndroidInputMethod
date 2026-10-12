@@ -1097,8 +1097,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun toggleFavorite() {
         val item = longPressItem ?: return
         val favorite = !item.isFavorite
-        // 图片 + 收藏 + 「收藏图片时移到图库目录」：原图明文写进图库目录（行与缩略图保留，
-        // 见 ClipboardImageExport.moveOutForFavorite）—— 与历史页的收藏路径同语义
+        // 图片 + 收藏 + 「收藏图片时移到图库目录」：原图明文写进图库目录，写成功才删历史这条
+        // （行 + 两个文件），见 ClipboardImageExport.moveToGalleryFolder —— 与历史页同语义
         if (item.image != null && favorite && ClipboardPrefs.of(context).favoriteImageMoveOut) {
             favoriteImageMoveOut(item)
             return
