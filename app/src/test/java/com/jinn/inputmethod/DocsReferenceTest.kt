@@ -814,6 +814,25 @@ class DocsReferenceTest {
             "README_EN 的皮肤明暗分档与源码不符（源码 亮 $skinLight / 暗 $skinDark）",
             Regex("""$skinLight light,\s*$skinDark dark""").containsMatchIn(enDoc),
         )
+        // ⑦ 剪贴板容量类默认值（README 那句「10 个参数」与功能总览的容量行都在对外写数）
+        fun constOf(name: String): Int = Regex("""const val $name = (\d+)""").find(prefsSrc)
+            ?.groupValues?.get(1)?.toInt() ?: error("$name 的写法变了（本守卫要跟着改）")
+        val dItems = constOf("DEFAULT_MAX_ITEMS")
+        val dTotalMb = constOf("DEFAULT_MAX_TOTAL_MB")
+        val dSearch = constOf("DEFAULT_MAX_SEARCH")
+        val dImgItems = constOf("DEFAULT_IMAGE_MAX_ITEMS")
+        val dImgTotalMb = constOf("DEFAULT_IMAGE_TOTAL_MB")
+        val dPageSize = Regex("""单页条数.*?默认 (\d+)""").find(prefsSrc)?.groupValues?.get(1)?.toInt()
+            ?: error("单页条数默认值的写法变了（本守卫要跟着改）")
+        val readme = readDoc("README.md") ?: error("找不到 README.md")
+        assertTrue("README 缺历史容量默认值（源码 $dItems 条 / ${dTotalMb}MB）", "（默认 $dItems 条 / ${dTotalMb}MB）" in readme)
+        assertTrue("README 缺面板单页条数（源码 $dPageSize）", "面板单页条数（$dPageSize）" in readme)
+        assertTrue("README 缺搜索结果上限（源码 $dSearch）", "搜索结果上限（$dSearch）" in readme)
+        assertTrue(
+            "README 缺图片张数 / 体积默认值（源码 $dImgItems 张 / ${dImgTotalMb}MB）",
+            "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
+        )
+        assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
     }
 
     /**
