@@ -294,6 +294,35 @@ internal object ClipboardImageExport {
      */
     const val TEXT_FAV_MOVED = "已收藏，原图已移到图库目录（明文），并从历史移除"
 
+    /**
+     * 「收藏并移出」**失败**的回执（动作没白做：原图仍加密保存在历史里）。
+     *
+     * 与 [TEXT_FAV_MOVED] 同源：面板与历史页**共用这一处字面量**，避免「改一处漏一处」（`BUG.md` L-1346）。
+     */
+    const val TEXT_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
+
+    /**
+     * 「收藏并移出」**未绑定目录**的回执（收藏已加密完成，引导用户去绑定目录）。
+     *
+     * 同样面板与历史页共用一处字面量（`BUG.md` L-1346）。
+     */
+    const val TEXT_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"
+
+    /**
+     * 普通图片动作（复制 / 保存到相册 / 转移到图库目录）的回执。
+     *
+     * IME 的图片动作与历史管理页的图片动作是同一套语义，两份各写一份时「改一处漏一处」
+     * （与 [TEXT_FAV_MOVED] 同类，见 `BUG.md` L-1346 的处理口径）：字面量只留在本模块，
+     * 两处引用同一常量。
+     */
+    const val TEXT_ACTION_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
+    const val TEXT_ACTION_COPY_FAILED = "复制图片失败，请重试"
+    const val TEXT_ACTION_SAVED = "已保存到相册"
+    const val TEXT_ACTION_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
+    const val TEXT_ACTION_MOVED = "已转移到图库目录，并从历史删除"
+    const val TEXT_ACTION_MOVE_FAILED = "转移失败，图片仍在历史中"
+    const val TEXT_ACTION_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
+
     /** 外部存储提供方（`DocumentsContract` 的 `primary:` / `XXXX-XXXX:` 形态只出现在这里） */
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
 

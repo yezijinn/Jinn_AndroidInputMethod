@@ -852,11 +852,21 @@ class DocsReferenceTest {
             "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
-        // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`；
-        //    「无界面」项按透明主题标记数出来，不用魔法值 —— 2026-10-13 复核指出）
+        // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`）
+        //    「无界面」按**显式白名单**（android:name）判定 —— 2026-10-13 L-1347：只认某一种透明主题串
+        //    会漏计异类无界面页（Theme.Translucent / Dialog 主题 / 自定义透明主题），页面数会多算且不红。
         val manifest = readDoc("app/src/main/AndroidManifest.xml") ?: error("找不到 AndroidManifest.xml")
-        val activities = Regex("""<activity\s""").findAll(manifest).count()
-        val headless = Regex("""Theme\.Translucent\.NoTitleBar""").findAll(manifest).count()
+        val activityTags = Regex("""<activity\s[^>]*>""").findAll(manifest).map { it.value }.toList()
+        val activities = activityTags.size
+        val declaredNames = activityTags.mapNotNull {
+            Regex("""android:name="([^"]+)"""").find(it)?.groupValues?.get(1)
+        }.toSet()
+        val headlessNames = setOf(".GalleryPickActivity") // 选图中转页（无布局）
+        assertTrue(
+            "页面数白名单里的无界面 Activity 在 manifest 里找不到：${headlessNames - declaredNames}",
+            declaredNames.containsAll(headlessNames),
+        )
+        val headless = declaredNames.count { it in headlessNames }
         assertTrue(
             "功能总览的 Activity 数与 AndroidManifest 不一致（源码 $activities 个）",
             "（$activities 个 Activity" in overview,

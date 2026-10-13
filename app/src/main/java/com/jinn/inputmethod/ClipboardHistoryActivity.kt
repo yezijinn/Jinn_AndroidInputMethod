@@ -1819,27 +1819,27 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_EXPORT_DIR_BAD =
             "这个目录写不进去（可能已被删除，或授权被系统收回）。\n" +
                 "一张图片都没有导出，历史里的图片都还在。请换一个目录再试。"
-        const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
+        const val TEXT_IMAGE_NEED_BIND = ClipboardImageExport.TEXT_ACTION_NEED_BIND
         const val TEXT_IMAGE_UNAVAILABLE = "该图片已损坏或密钥失效"
         const val TEXT_IMAGE_DELETE_CONFIRM = "删除所有图片（收藏保留）？"
-        const val TEXT_IMAGE_COPIED = "已复制到剪贴板，请在输入框长按粘贴"
-        const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
-        const val TEXT_IMAGE_SAVED = "已保存到相册"
-        const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
-        const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
+        const val TEXT_IMAGE_COPIED = ClipboardImageExport.TEXT_ACTION_COPIED
+        const val TEXT_IMAGE_COPY_FAILED = ClipboardImageExport.TEXT_ACTION_COPY_FAILED
+        const val TEXT_IMAGE_SAVED = ClipboardImageExport.TEXT_ACTION_SAVED
+        const val TEXT_IMAGE_SAVE_FAILED = ClipboardImageExport.TEXT_ACTION_SAVE_FAILED
+        const val TEXT_IMAGE_MOVED = ClipboardImageExport.TEXT_ACTION_MOVED
 
         /** 收藏移出（设置项「收藏图片时移到图库目录」）的回执与引导 */
         // 与面板共用一处字面量（BUG.md L-1335）
         const val TEXT_IMAGE_FAV_MOVED = ClipboardImageExport.TEXT_FAV_MOVED
-        const val TEXT_IMAGE_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
+        const val TEXT_IMAGE_FAV_MOVE_FAILED = ClipboardImageExport.TEXT_FAV_MOVE_FAILED
         const val TEXT_IMAGE_FAV_NEED_BIND_TITLE = "未绑定图库目录"
-        const val TEXT_IMAGE_FAV_NEED_BIND = "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"
+        const val TEXT_IMAGE_FAV_NEED_BIND = ClipboardImageExport.TEXT_FAV_NEED_BIND
         const val TEXT_IMAGE_GO_BIND = "去绑定"
         const val TEXT_LATER = "稍后"
 
         /** 原图已被移到图库目录（不是损坏）：动作读不到图时给准确说法 */
         const val TEXT_IMAGE_MOVED_OUT = "原图已移到图库目录（相册里可看）"
-        const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
+        const val TEXT_IMAGE_MOVE_FAILED = ClipboardImageExport.TEXT_ACTION_MOVE_FAILED
 
         /** 目录只有读授权（BUG.md L-1322）：给出可完成的动作，别让用户反复重试 */
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中\n请到「设置 → 图库快贴」重新绑定目录后再试"

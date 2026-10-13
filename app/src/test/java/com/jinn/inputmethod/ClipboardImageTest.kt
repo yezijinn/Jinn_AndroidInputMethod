@@ -671,25 +671,60 @@ class ClipboardImageTest {
     }
 
     /**
-     * 「收藏并移出」的回执文案只允许有一处字面量（`BUG.md` L-1335）。
+     * 收藏移出的三处回执文案（成功 / 失败 / 未绑定）各只允许有一处字面量（`BUG.md` L-1335 / L-1346）。
      *
-     * 面板与历史页各写一份时「改一处漏一处」——面板那句就少过「并从历史移除」，
-     * 用户以为记录还在。现在两处都引用 `ClipboardImageExport.TEXT_FAV_MOVED`，字面量只留在导出模块。
+     * 面板与历史页各写一份时「改一处漏一处」：成功句、失败句、引导句任一处修订只改一面，
+     * 两处反馈就脱节。现在三处都引用 `ClipboardImageExport` 的共享常量，字面量只留在导出模块。
      */
     @Test
     fun 收藏移出的回执文案只允许一处字面量() {
-        val literal = "已收藏，原图已移到图库目录（明文），并从历史移除"
-        assertTrue(
-            "回执文案的字面量必须定义在 ClipboardImageExport",
-            literal in TestSources.codeSource("ClipboardImageExport.kt"),
+        // 导出模块常量名 → 面板 / 历史页别名 → 字面量
+        val cases = listOf(
+            Triple("TEXT_FAV_MOVED", "TEXT_IMAGE_FAV_MOVED", "已收藏，原图已移到图库目录（明文），并从历史移除"),
+            Triple("TEXT_FAV_MOVE_FAILED", "TEXT_IMAGE_FAV_MOVE_FAILED", "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"),
+            Triple("TEXT_FAV_NEED_BIND", "TEXT_IMAGE_FAV_NEED_BIND", "已收藏（加密保存）。要按设置把原图移到图库目录，请先绑定目录。"),
         )
+        val export = TestSources.codeSource("ClipboardImageExport.kt")
+        for ((exportName, _, literal) in cases) {
+            assertTrue("回执文案 $exportName 的字面量必须定义在 ClipboardImageExport", literal in export)
+        }
         for (f in listOf("ClipboardPanelView.kt", "ClipboardHistoryActivity.kt")) {
             val src = TestSources.codeSource(f)
-            assertFalse("$f 又写了一份回执文案字面量（改用 ClipboardImageExport.TEXT_FAV_MOVED）", literal in src)
-            assertTrue(
-                "$f 的回执常量应引用共享常量",
-                "TEXT_IMAGE_FAV_MOVED = ClipboardImageExport.TEXT_FAV_MOVED" in src,
-            )
+            for ((exportName, uiName, literal) in cases) {
+                assertFalse("$f 又写了一份回执文案字面量（改用 ClipboardImageExport.$exportName）", literal in src)
+                assertTrue("$f 的 $uiName 应引用共享常量", "$uiName = ClipboardImageExport.$exportName" in src)
+            }
+        }
+    }
+
+    /**
+     * 普通图片动作（复制 / 保存到相册 / 转移到图库目录）的回执同样只允许一处字面量
+     * （与收藏移出同类，`BUG.md` L-1346 的处理口径）。
+     *
+     * IME 的图片动作与历史管理页的图片动作是同一套语义：任一句修订只改一面就会两处脱节，
+     * 而这两句在改动前各写一份、逐字相同，靠人工比对迟早漏。现在都引用
+     * `ClipboardImageExport.TEXT_ACTION_*`。
+     */
+    @Test
+    fun 普通图片动作回执文案只允许一处字面量() {
+        val cases = listOf(
+            "TEXT_ACTION_COPIED" to "已复制到剪贴板，请在输入框长按粘贴",
+            "TEXT_ACTION_COPY_FAILED" to "复制图片失败，请重试",
+            "TEXT_ACTION_SAVED" to "已保存到相册",
+            "TEXT_ACTION_SAVE_FAILED" to "保存失败（图片已损坏或系统拒绝写入）",
+            "TEXT_ACTION_MOVED" to "已转移到图库目录，并从历史删除",
+            "TEXT_ACTION_MOVE_FAILED" to "转移失败，图片仍在历史中",
+            "TEXT_ACTION_NEED_BIND" to "未绑定图库目录：设置 → 图库快贴",
+        )
+        val export = TestSources.codeSource("ClipboardImageExport.kt")
+        for ((name, literal) in cases) {
+            assertTrue("$name 的字面量必须定义在 ClipboardImageExport", literal in export)
+        }
+        for (f in listOf("JinnIme.kt", "ClipboardHistoryActivity.kt")) {
+            val src = TestSources.codeSource(f)
+            for ((name, literal) in cases) {
+                assertFalse("$f 又写了一份普通图片动作回执字面量（改用 ClipboardImageExport.$name）", literal in src)
+            }
         }
     }
 }

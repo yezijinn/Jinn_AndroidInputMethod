@@ -4223,22 +4223,22 @@ class JinnIme : InputMethodService() {
         const val TEXT_IMAGE_COPIED = "已复制到剪贴板（未自动上屏时请在输入框长按粘贴）"
 
         /** 纯复制（长按菜单的「复制」）：这里不尝试自动粘贴，提示用户自己去宿主里粘贴 */
-        const val TEXT_IMAGE_COPIED_PLAIN = "已复制到剪贴板，请在输入框长按粘贴"
+        const val TEXT_IMAGE_COPIED_PLAIN = ClipboardImageExport.TEXT_ACTION_COPIED
 
-        const val TEXT_IMAGE_COPY_FAILED = "复制图片失败，请重试"
+        const val TEXT_IMAGE_COPY_FAILED = ClipboardImageExport.TEXT_ACTION_COPY_FAILED
 
-        const val TEXT_IMAGE_SAVED = "已保存到相册"
+        const val TEXT_IMAGE_SAVED = ClipboardImageExport.TEXT_ACTION_SAVED
 
-        const val TEXT_IMAGE_SAVE_FAILED = "保存失败（图片已损坏或系统拒绝写入）"
+        const val TEXT_IMAGE_SAVE_FAILED = ClipboardImageExport.TEXT_ACTION_SAVE_FAILED
 
         /** 宿主声明支持图片却拒收（返回值不可信，只能如实说「没插进去」） */
         const val TEXT_IMAGE_REJECTED = "当前输入框未接受图片"
 
-        const val TEXT_IMAGE_MOVED = "已转移到图库目录，并从历史删除"
+        const val TEXT_IMAGE_MOVED = ClipboardImageExport.TEXT_ACTION_MOVED
 
-        const val TEXT_IMAGE_MOVE_FAILED = "转移失败，图片仍在历史中"
+        const val TEXT_IMAGE_MOVE_FAILED = ClipboardImageExport.TEXT_ACTION_MOVE_FAILED
 
-        const val TEXT_IMAGE_NEED_BIND = "未绑定图库目录：设置 → 图库快贴"
+        const val TEXT_IMAGE_NEED_BIND = ClipboardImageExport.TEXT_ACTION_NEED_BIND
 
         /** 目录只有读授权（BUG.md L-1322）：给可完成的动作（重绑目录），别让用户反复重试 */
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中：请重新绑定图库目录"
