@@ -592,27 +592,27 @@ class SettingsActivity : ComponentActivity() {
         Thread {
             // 诊断包要打包日志与快照，降后台优先级（BUG.md L-1194）
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            val file = Diagnostics.exportBundle(this)
+            val outcome = Diagnostics.exportBundleChecked(this)
             runOnUiThread {
                 if (isFinishing || isDestroyed) {
-                    // 与配置导出（doExportConfig）同一条兜底：页面被重建时把结论留下，
-                    // 新页面进入时补提示 —— 否则用户点了导出、界面上什么都没发生，
-                    // 只会以为按钮坏了（打包好的临时包留在缓存目录无人认领）
-                    pendingNotice = if (file == null) {
-                        "导出诊断包失败（页面被重建），请重试"
-                    } else {
-                        "诊断包已生成，但页面被重建，请重新点「导出诊断数据」选择保存位置。"
+                    pendingNotice = when (outcome) {
+                        is Diagnostics.ExportOutcome.Ok ->
+                            "诊断包已生成，但页面被重建，请重新点「导出诊断数据」选择保存位置。"
+                        is Diagnostics.ExportOutcome.Failed ->
+                            "导出诊断包失败（页面被重建），请重试"
                     }
                     return@runOnUiThread
                 }
                 btnExportDiag.isEnabled = true
-                if (file != null) {
-                    pendingDiagZip = file
-                    exportDiagLauncher.launch(file.name)
-                } else {
-                    Diagnostics.w(TAG, "exportDiagnostics: 打包失败")
-                    textDiagDir.text =
-                        getString(R.string.settings_diag_export_fail, Diagnostics.lastBundleFailure ?: "请重试")
+                when (outcome) {
+                    is Diagnostics.ExportOutcome.Ok -> {
+                        pendingDiagZip = outcome.file
+                        exportDiagLauncher.launch(outcome.file.name)
+                    }
+                    is Diagnostics.ExportOutcome.Failed -> {
+                        Diagnostics.w(TAG, "exportDiagnostics: 打包失败 - ${outcome.reason}")
+                        textDiagDir.text = getString(R.string.settings_diag_export_fail, outcome.reason)
+                    }
                 }
             }
         }.apply { isDaemon = true; name = "jinn-diag-export" }.start()

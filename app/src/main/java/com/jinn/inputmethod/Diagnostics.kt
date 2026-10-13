@@ -1132,24 +1132,27 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 调用方（设置页）随后经系统文件选择器把内容交给用户自选位置，写完即删临时包。
      * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
      */
+    /** 诊断包导出结果：成功带文件；失败带**可读真因**（由返回值传递，不用共享可变状态）。 */
+    internal sealed interface ExportOutcome {
+        data class Ok(val file: File) : ExportOutcome
+        data class Failed(val reason: String) : ExportOutcome
+    }
+
+    /** 只关心成功与否时的便捷入口（旧签名保持不变）。 */
     fun exportBundle(context: Context): File? =
-        withDirLockBusy { exportBundleLocked(context) }
+        (exportBundleChecked(context) as? ExportOutcome.Ok)?.file
 
     /**
-     * 最近一次 [exportBundle] 返回 null 的原因（异常类名 / 目录不可读 / 无内容 / 写入失败）。
+     * 打包日志目录并返回结果（成功带文件、失败带真因）。
      *
-     * 供设置页按**真因**给提示 —— 先前界面把一切失败都写成「日志目录不可读」，而常见原因
-     * 其实是「本就没有日志」「文件读不出」或写入异常（`BUG.md` L-1312）。成功时清空。
+     * 真因**随返回值传递**，不落共享状态 —— 先前用 `@Volatile lastBundleFailure` 记录，快速重复
+     * 导出时 UI 回调可能读到**他次**的结果（`BUG.md` L-1354）。
      */
-    @Volatile
-    var lastBundleFailure: String? = null
-        private set
+    internal fun exportBundleChecked(context: Context): ExportOutcome =
+        withDirLockBusy { exportBundleLocked(context) }
 
-    private fun exportBundleLocked(context: Context): File? {
-        val srcDir = logDir ?: run {
-            lastBundleFailure = "日志目录不可读"
-            return null
-        }
+    private fun exportBundleLocked(context: Context): ExportOutcome {
+        val srcDir = logDir ?: return ExportOutcome.Failed("日志目录不可读")
         // 设备信息是临时给本次导出用的：用完必须删，否则会留在日志目录里并混进之后每一次导出包
         // （进程被杀留下的残件由 [cleanupOldLogs] 按年龄兜底）
         val meta = File(srcDir, DEVICE_INFO_FILE)
@@ -1188,10 +1191,7 @@ private const val LOG_SEGMENTS_KEPT = 2
                 }
                 val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
                 val files = srcDir.listFiles()?.toList().orEmpty()
-                if (files.isEmpty()) {
-                    lastBundleFailure = "无日志可打包"
-                    return@runCatching null
-                }
+                if (files.isEmpty()) return@runCatching ExportOutcome.Failed("无日志可打包")
                 // 原子写：先写临时文件再改名。导出包是要交给别人排查的，半截 zip（进程被杀 /
                 // 并发导出撞同一路径）等于白导；临时名带纳秒，两次导出各写各的、改名原子生效。
                 val t = File(outDir, "jinn-diagnostics-$stamp-${System.nanoTime()}.zip.tmp")
@@ -1219,25 +1219,22 @@ private const val LOG_SEGMENTS_KEPT = 2
                 // 才知道里面什么都没有（日志里的 `files.size` 还是目录条目数，看着更像成功了）。
                 if (written == 0) {
                     Diagnostics.w(TAG, "导出诊断包: 所有文件都读不出（目录条目 ${files.size} 个），放弃导出")
-                    lastBundleFailure = "日志文件均读不出"
-                    return@runCatching null
+                    return@runCatching ExportOutcome.Failed("日志文件均读不出")
                 }
                 if (dest.exists()) dest.delete()
                 if (!t.renameTo(dest)) {
                     Diagnostics.w(TAG, "导出诊断包: 改名失败 ${dest.absolutePath}")
-                    lastBundleFailure = "写入失败"
-                    return@runCatching null
+                    return@runCatching ExportOutcome.Failed("写入失败")
                 }
                 // 记**实际写入**的条目数（此前是目录条目数 `files.size`：有文件被跳过时数字偏大，
                 // 排障时看不出来 —— 2026-10-02 修复 L-449）
                 i(TAG, "导出诊断包: ${dest.absolutePath} ($written 个文件)")
-                lastBundleFailure = null
-                dest
-            }.onFailure {
+                ExportOutcome.Ok(dest)
+            }.getOrElse {
                 // 绝不静默吞异常：异常类名落盘，界面据此提示真因（BUG.md L-1312）
                 Diagnostics.w(TAG, "导出诊断包异常: ${it.javaClass.simpleName}")
-                lastBundleFailure = it.javaClass.simpleName
-            }.getOrNull()
+                ExportOutcome.Failed(it.javaClass.simpleName)
+            }
         } finally {
             meta.delete()
             tmp?.delete()

@@ -4986,10 +4986,11 @@ class RecentFixesRegressionTest {
             "异常必须记类名，不得静默吞",
             "导出诊断包异常: \${it.javaClass.simpleName}" in src,
         )
-        assertTrue("导出结果要带真因供界面分档", "var lastBundleFailure" in src)
+        assertTrue("失败真因随返回值传递", "sealed interface ExportOutcome" in src)
+        assertFalse("不得再用跨次共享的 lastBundleFailure（L-1354）", "lastBundleFailure" in src)
         val settings = codeOf("SettingsActivity.kt")
         assertFalse("界面不得再把失败写死成「日志目录不可读」", "\"日志目录不可读\"" in settings)
-        assertTrue("界面要按真因提示", "Diagnostics.lastBundleFailure" in settings)
+        assertTrue("界面按返回的真因分档", "outcome.reason" in settings)
     }
 
     // ── 第五十八批（2026-10-10）：收藏体积「存原值、算生效值」（L-982 / L-988）──────────
