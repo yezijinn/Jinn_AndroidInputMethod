@@ -590,8 +590,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * @return 删除条数（0 = 历史里没有等价条目）
      */
-    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
-    @Synchronized
+    // 读 + 全表解密**不持**写监视器（与 reclassifyAll 同口径，BUG.md L-1361）：大历史下这是秒级
+    // 全表解密，持锁会把用户此刻的复制 / 粘贴 / 裁剪 / 删除一起阻塞。只有「按 id 删除」那段进锁。
     fun deleteByCleanedPlaintexts(targets: Collection<String>): Int {
         val wanted = targets
             .mapNotNull { it.cleanCredential().takeIf { s -> s.isNotEmpty() } }
@@ -613,21 +613,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             }
         }
         if (ids.isEmpty()) return 0
-        var removed = 0
-        writableDatabase.beginTransaction()
-        try {
-            for (id in ids) {
-                removed += writableDatabase.delete(
-                    TABLE_ITEMS,
-                    "id = ? AND is_favorite = 0",
-                    arrayOf(id.toString()),
-                )
+        return synchronized(this) {
+            var removed = 0
+            writableDatabase.beginTransaction()
+            try {
+                for (id in ids) {
+                    removed += writableDatabase.delete(
+                        TABLE_ITEMS,
+                        "id = ? AND is_favorite = 0",
+                        arrayOf(id.toString()),
+                    )
+                }
+                writableDatabase.setTransactionSuccessful()
+            } finally {
+                writableDatabase.endTransaction()
             }
-            writableDatabase.setTransactionSuccessful()
-        } finally {
-            writableDatabase.endTransaction()
+            removed
         }
-        return removed
     }
 
     /**

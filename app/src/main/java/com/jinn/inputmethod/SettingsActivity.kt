@@ -1193,7 +1193,7 @@ class SettingsActivity : ComponentActivity() {
                 Diagnostics.w(TAG, "exportConfig: 打包异常 ${it.javaClass.simpleName}")
             }.getOrNull()
             chars.fill('\u0000')
-            // 本次结果在后台线程取出（原因随返回值，不读 Manager 的共享字段）——避免快速连点串读（AI2-BUG.md A-01）
+            // 本次结果在后台线程取出（原因随返回值，不读 Manager 的共享字段）——避免快速连点串读（BUG.md L-1358）
             val outcome = result?.value
             val reason = result?.reason ?: TEXT_EXPORT_FAIL
             runOnUiThread {
@@ -1554,7 +1554,7 @@ class SettingsActivity : ComponentActivity() {
             zip.delete()
             if (pendingImportZip === zip) pendingImportZip = null
             importInFlight = false
-            // 本次结果在后台线程取出（原因随返回值，不读共享字段）——避免快速连点串读（AI2-BUG.md A-01）
+            // 本次结果在后台线程取出（原因随返回值，不读共享字段）——避免快速连点串读（BUG.md L-1358）
             val r = result?.value
             val reason = result?.reason ?: TEXT_IMPORT_FAIL
             runOnUiThread {

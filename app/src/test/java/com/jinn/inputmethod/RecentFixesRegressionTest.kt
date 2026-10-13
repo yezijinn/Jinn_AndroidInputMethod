@@ -4973,7 +4973,7 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 配置导出 / 导入的失败原因不得走模块级共享字段（`AI2-BUG.md` A-01，与 L-1354 同根）。
+     * 配置导出 / 导入的失败原因不得走模块级共享字段（`BUG.md` L-1358，与 L-1354 同根）。
      *
      * 共享字段由后台线程写、主线程 UI 回调读，快速重复操作时会跨次串读：第 1 次的回调读到第 2 次的
      * 原因。现在原因随 `BackupResult.reason` 按本次调用返回，删掉 `lastError` / `lastImportError`。
@@ -5012,6 +5012,22 @@ class RecentFixesRegressionTest {
         val settings = codeOf("SettingsActivity.kt")
         assertFalse("界面不得再把失败写死成「日志目录不可读」", "\"日志目录不可读\"" in settings)
         assertTrue("界面按返回的真因分档", "outcome.reason" in settings)
+    }
+
+    /**
+     * 凭据清理的全表解密不得持写监视器（`BUG.md` L-1361）：大历史下秒级全表解密若在
+     * `@Synchronized` 内，会阻塞此刻的复制 / 粘贴 / 裁剪 / 删除。与 `reclassifyAll` 同口径 ——
+     * 读+解密在锁外，只有「按 id 删除」段进锁。
+     */
+    @Test
+    fun `凭据清理的全表解密不得持写监视器`() {
+        val db = codeOf("ClipboardDb.kt")
+        val at = db.indexOf("fun deleteByCleanedPlaintexts(")
+        assertTrue("找不到 deleteByCleanedPlaintexts（改名了？）", at >= 0)
+        val head = db.substring((at - 60).coerceAtLeast(0), at)
+        assertFalse("全表解密不得整体 @Synchronized（A-26）", "@Synchronized" in head)
+        val body = db.substring(at, (at + 1400).coerceAtMost(db.length))
+        assertTrue("按 id 删除段仍须进写监视器", "synchronized(this)" in body)
     }
 
     /**

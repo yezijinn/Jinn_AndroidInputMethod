@@ -149,7 +149,7 @@ internal object ConfigBackupManager {
      * 导出 / 导入结果：成功带产物，失败带可读原因。
      *
      * 原因随**本次调用**经返回值传递，不用模块级共享字段 —— 共享字段由后台线程写、主线程 UI 回调读，
-     * 快速重复操作时会跨次串读（`AI2-BUG.md` A-01，与 L-1354 同口径）。
+     * 快速重复操作时会跨次串读（`BUG.md` L-1358，与 L-1354 同口径）。
      */
     data class BackupResult<out T>(val value: T?, val reason: String?)
 

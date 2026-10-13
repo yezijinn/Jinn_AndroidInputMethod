@@ -898,7 +898,7 @@ class DocsReferenceTest {
             Regex("""单张图片上限（(\d+)MB""") to imageMb,
         )
         for ((pat, want) in overviewDecls) {
-            // 全量断言（`AI2-BUG.md` A-10）：该声明位的**所有**命中都必须等于源码值 ——
+            // 全量断言（`BUG.md` L-1360）：该声明位的**所有**命中都必须等于源码值 ——
             // 只取首个匹配时，同一声明位「旧值 + 新值」并存会静默放过旧值。
             val got = pat.findAll(overview).map { it.groupValues[1].toInt() }.toSet()
             assertEquals(
@@ -908,14 +908,14 @@ class DocsReferenceTest {
             )
         }
         assertEquals(
-            "README 历史容量声明位与源码不一致",
-            listOf(dItems.toString(), dTotalMb.toString()),
-            Regex("""默认 (\d+) 条 / (\d+)MB）""").find(readme)?.groupValues?.drop(1),
+            "README 历史容量声明位与源码不一致（应恰为一处且取值等于源码）",
+            setOf(listOf(dItems.toString(), dTotalMb.toString())),
+            Regex("""默认 (\d+) 条 / (\d+)MB）""").findAll(readme).map { it.groupValues.drop(1) }.toSet(),
         )
         assertEquals(
-            "README 图片容量声明位与源码不一致",
-            listOf(dImgItems.toString(), dImgTotalMb.toString(), imageMb.toString()),
-            Regex("""(\d+) 张 / (\d+)MB / (\d+)MB）""").find(readme)?.groupValues?.drop(1),
+            "README 图片容量声明位与源码不一致（应恰为一处且取值等于源码）",
+            setOf(listOf(dImgItems.toString(), dImgTotalMb.toString(), imageMb.toString())),
+            Regex("""(\d+) 张 / (\d+)MB / (\d+)MB）""").findAll(readme).map { it.groupValues.drop(1) }.toSet(),
         )
         // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`）
         //    「无界面」= **透明 / 无显示主题派生** + 显式白名单兜底（`BUG.md` L-1353）：纯硬编码名单
