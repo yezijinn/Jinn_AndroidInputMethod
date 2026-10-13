@@ -73,6 +73,10 @@ internal object ClipboardThumbLoader {
                     android.os.Handler(android.os.Looper.getMainLooper()).post { onReady(hash, bmp) }
                 }
             }
+        }.onFailure {
+            // 池关闭 / 饱和时 execute 抛 RejectedExecutionException，任务整份丢失：必须留痕，
+            // 否则表现为「某一格一直是灰块」且诊断包里查不到任何线索（与 BackgroundIo.rejected 同口径，BUG.md L-1369）
+            Diagnostics.w(TAG, "缩略图任务提交被拒（池已关闭/饱和）: ${it.javaClass.simpleName}")
         }
     }
 

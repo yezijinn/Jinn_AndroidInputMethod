@@ -791,7 +791,7 @@ class DocsReferenceTest {
             .map { it.groupValues[1] }.toList()
         assertTrue("AiAction 的写法变了（本守卫要跟着改）：$aiLabels", aiLabels.size >= 2 && "翻译" in aiLabels)
         val aiExtras = aiLabels.filterNot { it == "翻译" }
-        // 源码常量取值：命中必须**恰 1 处**（`AI2-BUG.md` A-68）：同名旧声明残留 / 取到旧值时不再静默
+        // 源码常量取值：命中必须**恰 1 处**（`BUG.md` L-1367）：同名旧声明残留 / 取到旧值时不再静默
         fun uniqueConst(src: String, pattern: String, tag: String): Int {
             val vals = Regex(pattern).findAll(src).map { it.groupValues[1].replace("_", "") }.toSet()
             if (vals.size != 1) error("$tag 在源码命中 ${vals.size} 处（应恰 1）——旧声明未删 / 写法变了？")

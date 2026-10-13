@@ -125,6 +125,10 @@ class DiagnosticsSanitizeTest {
         // 凭据串里含手机号形态时也必须**整段**替换：凭据规则排在号码规则之前（2026-10-02 起），
         // 号码规则插进去的 `****` 不会再截断凭据串、让尾部明文漏下（BUG.md L-1071 的复核锚点）
         assertEquals("key=****", Diagnostics.redactSensitive("key=sk-abc13812345678defghijklmnopqr"))
+        // 阿里云 AccessKeyId（`LTAI` + 长字母数字）：凭据规则必须排在长数字规则**之前**，否则
+        // `LTAI0123…` 先被长数字规则遮成 `LTAI0123****45`——插入的 **** 截断字母数字串，令 LTAI
+        // 规则再也匹配不上，反而露出前 4 位与末 2 位（脱敏铁律第一条；BUG.md L-1369）
+        assertEquals("k=****", Diagnostics.redactSensitive("k=LTAI5tAbcDef0123456789"))
         // 32 位纯 hex 与哈希同形：刻意不脱敏（误伤面大，见 API_KEY_RES 的说明）
         val hex = "aaaaaaaaaaaaaaaa0123456789abcdef"
         assertEquals("hash=$hex", Diagnostics.redactSensitive("hash=$hex"))
