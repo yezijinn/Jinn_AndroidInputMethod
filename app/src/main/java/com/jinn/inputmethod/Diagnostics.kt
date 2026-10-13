@@ -1135,24 +1135,40 @@ private const val LOG_SEGMENTS_KEPT = 2
     fun exportBundle(context: Context): File? =
         withDirLockBusy { exportBundleLocked(context) }
 
+    /**
+     * 最近一次 [exportBundle] 返回 null 的原因（异常类名 / 目录不可读 / 无内容 / 写入失败）。
+     *
+     * 供设置页按**真因**给提示 —— 先前界面把一切失败都写成「日志目录不可读」，而常见原因
+     * 其实是「本就没有日志」「文件读不出」或写入异常（`BUG.md` L-1312）。成功时清空。
+     */
+    @Volatile
+    var lastBundleFailure: String? = null
+        private set
+
     private fun exportBundleLocked(context: Context): File? {
-        val srcDir = logDir ?: return null
+        val srcDir = logDir ?: run {
+            lastBundleFailure = "日志目录不可读"
+            return null
+        }
         // 设备信息是临时给本次导出用的：用完必须删，否则会留在日志目录里并混进之后每一次导出包
         // （进程被杀留下的残件由 [cleanupOldLogs] 按年龄兜底）
         val meta = File(srcDir, DEVICE_INFO_FILE)
         var tmp: File? = null
         try {
             return runCatching {
-                // 先补一份最新的设备信息
-                meta.writeText(
-                    buildString {
-                        appendLine("时间: ${now()}")
-                        appendLine("设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                        appendLine("系统: Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
-                        appendLine("版本: ${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
-                        appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
-                    }
-                )
+                // 先补一份最新的设备信息。**单独兜住**：它只是附带元数据，写失败不该拖垮整包
+                // （日志本身仍可读可打包）——`BUG.md` L-1312
+                runCatching {
+                    meta.writeText(
+                        buildString {
+                            appendLine("时间: ${now()}")
+                            appendLine("设备: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                            appendLine("系统: Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+                            appendLine("版本: ${context.packageManager.getPackageInfo(context.packageName, 0).versionName}")
+                            appendLine("进程: uid=${Process.myUid()} pid=${Process.myPid()}")
+                        }
+                    )
+                }.onFailure { Diagnostics.w(TAG, "写设备信息失败（跳过该条目）: ${it.javaClass.simpleName}") }
                 // 毫秒精度：秒级精度下同一秒的两次导出会同名，`dest.exists()` 的删除会撞上
                 // 前一次正在复制的包
                 val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.US)
@@ -1172,7 +1188,10 @@ private const val LOG_SEGMENTS_KEPT = 2
                 }
                 val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
                 val files = srcDir.listFiles()?.toList().orEmpty()
-                if (files.isEmpty()) return@runCatching null
+                if (files.isEmpty()) {
+                    lastBundleFailure = "无日志可打包"
+                    return@runCatching null
+                }
                 // 原子写：先写临时文件再改名。导出包是要交给别人排查的，半截 zip（进程被杀 /
                 // 并发导出撞同一路径）等于白导；临时名带纳秒，两次导出各写各的、改名原子生效。
                 val t = File(outDir, "jinn-diagnostics-$stamp-${System.nanoTime()}.zip.tmp")
@@ -1200,17 +1219,24 @@ private const val LOG_SEGMENTS_KEPT = 2
                 // 才知道里面什么都没有（日志里的 `files.size` 还是目录条目数，看着更像成功了）。
                 if (written == 0) {
                     Diagnostics.w(TAG, "导出诊断包: 所有文件都读不出（目录条目 ${files.size} 个），放弃导出")
+                    lastBundleFailure = "日志文件均读不出"
                     return@runCatching null
                 }
                 if (dest.exists()) dest.delete()
                 if (!t.renameTo(dest)) {
                     Diagnostics.w(TAG, "导出诊断包: 改名失败 ${dest.absolutePath}")
+                    lastBundleFailure = "写入失败"
                     return@runCatching null
                 }
                 // 记**实际写入**的条目数（此前是目录条目数 `files.size`：有文件被跳过时数字偏大，
                 // 排障时看不出来 —— 2026-10-02 修复 L-449）
                 i(TAG, "导出诊断包: ${dest.absolutePath} ($written 个文件)")
+                lastBundleFailure = null
                 dest
+            }.onFailure {
+                // 绝不静默吞异常：异常类名落盘，界面据此提示真因（BUG.md L-1312）
+                Diagnostics.w(TAG, "导出诊断包异常: ${it.javaClass.simpleName}")
+                lastBundleFailure = it.javaClass.simpleName
             }.getOrNull()
         } finally {
             meta.delete()

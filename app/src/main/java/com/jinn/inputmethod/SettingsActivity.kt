@@ -611,7 +611,8 @@ class SettingsActivity : ComponentActivity() {
                     exportDiagLauncher.launch(file.name)
                 } else {
                     Diagnostics.w(TAG, "exportDiagnostics: 打包失败")
-                    textDiagDir.text = getString(R.string.settings_diag_export_fail, "日志目录不可读")
+                    textDiagDir.text =
+                        getString(R.string.settings_diag_export_fail, Diagnostics.lastBundleFailure ?: "请重试")
                 }
             }
         }.apply { isDaemon = true; name = "jinn-diag-export" }.start()

@@ -4972,6 +4972,26 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 诊断导出失败必须留因、设备信息写入不得拖垮整包、界面按真因提示（`BUG.md` L-1312）。
+     *
+     * 先前 `exportBundleLocked` 整段 `runCatching{}.getOrNull()` 吞异常，`meta.writeText` 失败连累整包，
+     * 而界面把所有失败都写成「日志目录不可读」——与「绝不静默吞异常」相抵，也给排障指错方向。
+     */
+    @Test
+    fun `诊断导出失败必须留因且设备信息写入不得拖垮整包`() {
+        val src = codeOf("Diagnostics.kt")
+        assertTrue("设备信息写入必须单独兜住（失败只跳该条目）", "写设备信息失败（跳过该条目）" in src)
+        assertTrue(
+            "异常必须记类名，不得静默吞",
+            "导出诊断包异常: \${it.javaClass.simpleName}" in src,
+        )
+        assertTrue("导出结果要带真因供界面分档", "var lastBundleFailure" in src)
+        val settings = codeOf("SettingsActivity.kt")
+        assertFalse("界面不得再把失败写死成「日志目录不可读」", "\"日志目录不可读\"" in settings)
+        assertTrue("界面要按真因提示", "Diagnostics.lastBundleFailure" in settings)
+    }
+
     // ── 第五十八批（2026-10-10）：收藏体积「存原值、算生效值」（L-982 / L-988）──────────
 
     /**
