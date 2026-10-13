@@ -888,6 +888,30 @@ class DocsReferenceTest {
             "（$dImgItems 张 / ${dImgTotalMb}MB / ${imageMb}MB）" in readme,
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
+        // 结构对拍：两份文档的容量声明位都要与源码一致（`BUG.md` L-1344 残留）—— 原先只钉 README 的
+        // 正向串与功能总览的速览行，功能总览那句「历史数量（默认 500 / 上限 20000）…」没人查。
+        val overviewDecls = listOf(
+            Regex("""历史数量（默认 (\d+)""") to dItems,
+            Regex("""历史体积（(\d+)MB""") to dTotalMb,
+            Regex("""图片张数上限（(\d+)""") to dImgItems,
+            Regex("""图片体积上限（(\d+)MB""") to dImgTotalMb,
+            Regex("""单张图片上限（(\d+)MB""") to imageMb,
+        )
+        for ((pat, want) in overviewDecls) {
+            val got = pat.find(overview)?.groupValues?.get(1)?.toInt()
+            assertTrue("功能总览缺容量声明位（写法变了？）：${pat.pattern}", got != null)
+            assertEquals("功能总览该声明位的默认值与源码不一致（源码 $want）", want, got)
+        }
+        assertEquals(
+            "README 历史容量声明位与源码不一致",
+            listOf(dItems.toString(), dTotalMb.toString()),
+            Regex("""默认 (\d+) 条 / (\d+)MB）""").find(readme)?.groupValues?.drop(1),
+        )
+        assertEquals(
+            "README 图片容量声明位与源码不一致",
+            listOf(dImgItems.toString(), dImgTotalMb.toString(), imageMb.toString()),
+            Regex("""(\d+) 张 / (\d+)MB / (\d+)MB）""").find(readme)?.groupValues?.drop(1),
+        )
         // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`）
         //    「无界面」= **透明 / 无显示主题派生** + 显式白名单兜底（`BUG.md` L-1353）：纯硬编码名单
         //    在新增无界面页忘改名单时会静默；纯主题串又漏异类。取并集（Dialog 主题可见，不算）。
