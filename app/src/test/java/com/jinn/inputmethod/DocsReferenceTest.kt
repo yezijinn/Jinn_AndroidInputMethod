@@ -267,6 +267,38 @@ class DocsReferenceTest {
     }
 
     /**
+     * `0.3 待办视图` 与 `0.7 同族簇` 引用的编号必须在册（`BUG.md` L-1341）。
+     *
+     * 这两节是「挑活入口」与「改一处先看同族」的入口；指向已移出的条目时按编号只能检索到
+     * fixed / history / excluded 里的旁证行、拿不到条目本身 ⇒ 挑活走空路。原先无守卫，
+     * 每移出一条就可能留一处。判据：两节里出现的每个 `L-NNN` 都要落在「索引行 ∪ 详情块」内。
+     */
+    @Test
+    fun 待办与同族簇引用的编号必须在册() {
+        val entry = ledger()
+        val inBook = mutableSetOf<String>()
+        Regex("""(?m)^\| L-0*(\d+) \|""").findAll(ledgerPartFiles()["index"].orEmpty())
+            .forEach { inBook += it.groupValues[1] }
+        Regex("""(?m)^### L-0*(\d+) ·""").findAll(ledgerAll()).forEach { inBook += it.groupValues[1] }
+        assertTrue("在册集合为空（索引 / 块取材失效）", inBook.size > 50)
+        fun section(start: String): String {
+            val from = Regex("(?m)^" + Regex.escape(start) + ".*$").find(entry)
+                ?: error("台账里找不到 $start")
+            val rest = entry.substring(from.range.last + 1)
+            val end = Regex("""(?m)^### 0\.""").find(rest)?.range?.first ?: rest.length
+            return rest.substring(0, end)
+        }
+        val bad = mutableListOf<String>()
+        for (sec in listOf("### 0.3 待办视图", "### 0.7 同族簇")) {
+            Regex("""L-0*(\d+)""").findAll(section(sec)).forEach { m ->
+                val id = m.groupValues[1]
+                if (id !in inBook) bad += "$sec 引用了不在册的 L-$id"
+            }
+        }
+        assertTrue("待办 / 同族簇引用了已移出的编号（改指现存条目或删引用）：\n    ${bad.joinToString("\n    ")}", bad.isEmpty())
+    }
+
+    /**
      * 条目判据里点名的**代码符号**必须还在源码里（BUG.md L-1183）。
      *
      * 条目的「判断依据 / 详情」大量引用函数名、常量名、类名；这些名字随代码改名 / 搬迁会悄悄失效，
