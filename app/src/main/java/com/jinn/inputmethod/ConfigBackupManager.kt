@@ -837,7 +837,9 @@ internal object ConfigBackupManager {
             return BackupResult(null, reason.reason)
         }
         try {
-            return BackupResult(importLocked(context, zip, mode, includeClipboard, includeDicts, reason), reason.reason)
+            val outcome = importLocked(context, zip, mode, includeClipboard, includeDicts, reason)
+            // 部分成功时真因在 outcome.failedStage：同步进 reason，令「value 非空也能从 reason 取因」契约对称（BUG.md L-1365）
+            return BackupResult(outcome, reason.reason ?: outcome?.failedStage)
         } finally {
             endImport()
             // 这份明文 zip 的用途到此为止：注销它在册登记，残留清扫才能按时间窗回收它（BUG.md L-1086）

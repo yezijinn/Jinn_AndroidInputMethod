@@ -5030,6 +5030,15 @@ class RecentFixesRegressionTest {
         assertTrue("按 id 删除段仍须进写监视器", "synchronized(this)" in body)
     }
 
+    /**
+     * 配置导入部分成功时 `reason` 也要带真因（`BUG.md` L-1365）：否则消费者按 `reason` 取值会丢具体阶段。
+     */
+    @Test
+    fun `配置导入部分成功时原因也要带出`() {
+        val cfg = codeOf("ConfigBackupManager.kt")
+        assertTrue("import 的结果要把 failedStage 兜进 reason", "reason.reason ?: outcome?.failedStage" in cfg)
+    }
+
     // ── 第五十八批（2026-10-10）：收藏体积「存原值、算生效值」（L-982 / L-988）──────────
 
     /**
