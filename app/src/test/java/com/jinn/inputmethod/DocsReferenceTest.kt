@@ -752,19 +752,19 @@ class DocsReferenceTest {
         // 它的技术附录里仍留着重切前的 400K / 500K / 600K（功能说明那段早已是 900K / 700K / 210K）
         val en = readDoc("README_EN.md") ?: return
         val kCounts = counts.map { (it.toInt() * 10).toString() }
-        val packs = Regex("""parts 2 / 3 / 4: (\d+)K / (\d+)K / (\d+)K""").find(en)
-            ?: error("README_EN 的包条数行换了写法（本守卫要跟着改）")
-        assertEquals("README_EN 的包条数与源码不一致", kCounts, packs.groupValues.drop(1))
+        val packs = Regex("""parts 2 / 3 / 4: (\d+)K / (\d+)K / (\d+)K""").findAll(en)
+            .map { it.groupValues.drop(1) }.toSet()
+        assertEquals("README_EN 的包条数行应恰为源码值（写法变了 / 改一处漏一处？）", setOf(kCounts), packs)
         for (k in kCounts) assertTrue("README_EN 缺当前包条数 ${k}K", "${k}K" in en)
         // 同一条数字在四处的写法各异，只钉其中几处仍会「改一处漏一处」（2026-10-12 的真实缺陷）：
         // 中文 README 的附录按「万条」写、英文 README 的功能说明按 K 写 —— 两处一起按结构钉住
         val cnReadme = readDoc("README.md") ?: error("找不到 README.md")
-        val cnPart = Regex("""第 2 / 3 / 4 部分，\s*(\d+) / (\d+) / (\d+) 万条""").find(cnReadme)
-            ?: error("README 的包条数行换了写法（本守卫要跟着改）")
-        assertEquals("README 的「第 2 / 3 / 4 部分」条数与源码不一致", counts, cnPart.groupValues.drop(1))
-        val enLevels = Regex("""level 2 (\d+)K \(recommended\), level 3 (\d+)K, level 4 (\d+)K""").find(en)
-            ?: error("README_EN 的功能说明行换了写法（本守卫要跟着改）")
-        assertEquals("README_EN 的 level 2/3/4 条数与源码不一致", kCounts, enLevels.groupValues.drop(1))
+        val cnPart = Regex("""第 2 / 3 / 4 部分，\s*(\d+) / (\d+) / (\d+) 万条""").findAll(cnReadme)
+            .map { it.groupValues.drop(1) }.toSet()
+        assertEquals("README 的「第 2 / 3 / 4 部分」条数应恰为源码值（写法变了 / 改一处漏一处？）", setOf(counts), cnPart)
+        val enLevels = Regex("""level 2 (\d+)K \(recommended\), level 3 (\d+)K, level 4 (\d+)K""").findAll(en)
+            .map { it.groupValues.drop(1) }.toSet()
+        assertEquals("README_EN 的 level 2/3/4 条数应恰为源码值", setOf(kCounts), enLevels)
     }
 
     /**
