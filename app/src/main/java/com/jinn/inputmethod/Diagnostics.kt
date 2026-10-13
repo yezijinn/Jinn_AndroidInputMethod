@@ -1127,27 +1127,18 @@ private const val LOG_SEGMENTS_KEPT = 2
     // ── 导出诊断包 ─────────────────────────────────────────
 
     /**
-     * 把日志目录打包成 zip，写到应用缓存目录并返回该文件（零权限）。
+     * 把日志目录打包成 zip，写到应用缓存目录（零权限）。调用方（设置页）随后经系统文件选择器
+     * 把内容交给用户自选位置，写完即删临时包。
      *
-     * 调用方（设置页）随后经系统文件选择器把内容交给用户自选位置，写完即删临时包。
-     * 返回 null 表示无可导出内容或写入失败。包含：全部日志、最近的 logcat 快照、设备信息文本。
+     * 返回 [ExportOutcome]：成功带文件、失败带**可读真因**（随返回值传递，不落共享状态 —— 先前
+     * 用模块级 `@Volatile lastBundleFailure`，快速重复导出时 UI 回调会串读到**他次**结果，
+     * `BUG.md` L-1354）。
      */
-    /** 诊断包导出结果：成功带文件；失败带**可读真因**（由返回值传递，不用共享可变状态）。 */
     internal sealed interface ExportOutcome {
         data class Ok(val file: File) : ExportOutcome
         data class Failed(val reason: String) : ExportOutcome
     }
 
-    /** 只关心成功与否时的便捷入口（旧签名保持不变）。 */
-    fun exportBundle(context: Context): File? =
-        (exportBundleChecked(context) as? ExportOutcome.Ok)?.file
-
-    /**
-     * 打包日志目录并返回结果（成功带文件、失败带真因）。
-     *
-     * 真因**随返回值传递**，不落共享状态 —— 先前用 `@Volatile lastBundleFailure` 记录，快速重复
-     * 导出时 UI 回调可能读到**他次**的结果（`BUG.md` L-1354）。
-     */
     internal fun exportBundleChecked(context: Context): ExportOutcome =
         withDirLockBusy { exportBundleLocked(context) }
 

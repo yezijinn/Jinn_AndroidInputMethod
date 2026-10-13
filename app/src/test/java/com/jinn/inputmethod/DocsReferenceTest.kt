@@ -898,9 +898,14 @@ class DocsReferenceTest {
             Regex("""单张图片上限（(\d+)MB""") to imageMb,
         )
         for ((pat, want) in overviewDecls) {
-            val got = pat.find(overview)?.groupValues?.get(1)?.toInt()
-            assertTrue("功能总览缺容量声明位（写法变了？）：${pat.pattern}", got != null)
-            assertEquals("功能总览该声明位的默认值与源码不一致（源码 $want）", want, got)
+            // 全量断言（`AI2-BUG.md` A-10）：该声明位的**所有**命中都必须等于源码值 ——
+            // 只取首个匹配时，同一声明位「旧值 + 新值」并存会静默放过旧值。
+            val got = pat.findAll(overview).map { it.groupValues[1].toInt() }.toSet()
+            assertEquals(
+                "功能总览的容量声明位应恰为源码值 $want（旧值残留 / 写法变了？）：${pat.pattern}",
+                setOf(want),
+                got,
+            )
         }
         assertEquals(
             "README 历史容量声明位与源码不一致",
