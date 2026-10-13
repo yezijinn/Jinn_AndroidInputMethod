@@ -447,14 +447,16 @@ class ConfigBackupZipTest {
 
     @Test
     fun `恢复被写盘锁挡下时导入侧给出「忙」的原因`() {
-        // L-873 源码对拍：恢复失败的原因要落到 lastError（含「另有写入在进行」），UI 再读它显示
+        // L-873 源码对拍：恢复失败的原因要落进**本次调用**的原因容器（含「另有写入在进行」），UI 再读结果
         val manager = TestSources.codeSource("ConfigBackupManager.kt")
         val site = TestSources.window(manager, "restoreDicts(File(context.filesDir, DICT_DIR)", "dictsWritten")
-        assertTrue("恢复失败要写 lastImportError", "lastImportError =" in site)
+        assertTrue("恢复失败要把原因写进本次容器", "reason.reason =" in site)
         assertTrue("「忙」与「真失败」要分开", "CustomDicts.writing" in site)
         val settings = TestSources.codeSource("SettingsActivity.kt")
         val fail = TestSources.window(settings, "if (r == null) {", "return@runOnUiThread")
-        assertTrue("导入失败提示要优先用 lastImportError", "ConfigBackupManager.lastImportError" in fail)
+        assertTrue("导入失败提示要用本次结果的原因", "reason" in fail)
+        assertFalse("不得再读 Manager 共享字段", "ConfigBackupManager.lastImportError" in fail)
+        assertTrue("原因随返回值取出", "result?.reason" in settings)
     }
 
     @Test
@@ -508,7 +510,7 @@ class ConfigBackupZipTest {
         val locked = TestSources.blockAfter(src, "private fun importLocked(")
         assertTrue("importLocked 锚点失效", locked.isNotEmpty() && locked.length < src.length)
         val rejects = Regex("return null").findAll(locked).count()
-        val reasons = Regex("lastImportError = ").findAll(locked).count()
+        val reasons = Regex("reason.reason = ").findAll(locked).count()
         assertTrue("拒绝点数量异常（源码结构变了？）：$rejects", rejects >= 12)
         assertTrue("每个拒绝点都要留原因：rejects=$rejects reasons=$reasons", reasons >= rejects)
     }

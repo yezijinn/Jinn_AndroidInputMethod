@@ -4973,6 +4973,27 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * 配置导出 / 导入的失败原因不得走模块级共享字段（`AI2-BUG.md` A-01，与 L-1354 同根）。
+     *
+     * 共享字段由后台线程写、主线程 UI 回调读，快速重复操作时会跨次串读：第 1 次的回调读到第 2 次的
+     * 原因。现在原因随 `BackupResult.reason` 按本次调用返回，删掉 `lastError` / `lastImportError`。
+     */
+    @Test
+    fun `配置导出导入失败原因不得走跨线程共享字段`() {
+        val cfg = codeOf("ConfigBackupManager.kt")
+        assertFalse("不得留模块级 lastError 共享字段", "var lastError" in cfg)
+        assertFalse("不得留模块级 lastImportError 共享字段", "var lastImportError" in cfg)
+        assertTrue(
+            "export 要返回带原因的结果",
+            "fun export(context: Context, options: ExportOptions): BackupResult<ExportOutcome>" in cfg,
+        )
+        assertTrue("import 要返回带原因的结果", "): BackupResult<ImportOutcome>" in cfg)
+        val settings = codeOf("SettingsActivity.kt")
+        assertFalse("UI 不得读 ConfigBackupManager.lastError", "ConfigBackupManager.lastError" in settings)
+        assertFalse("UI 不得读 ConfigBackupManager.lastImportError", "ConfigBackupManager.lastImportError" in settings)
+    }
+
+    /**
      * 诊断导出失败必须留因、设备信息写入不得拖垮整包、界面按真因提示（`BUG.md` L-1312）。
      *
      * 先前 `exportBundleLocked` 整段 `runCatching{}.getOrNull()` 吞异常，`meta.writeText` 失败连累整包，

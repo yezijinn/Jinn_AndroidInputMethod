@@ -66,7 +66,7 @@ internal object ConfigBackupManager {
      * 刻意比 [MAX_TEXT_SECTION_BYTES]（读入上限）低一档：序列化成 jsonl 后还要加上字段名与转义，
      * 若两边取同一个数，接近上限的包会在导入端被判「节不可用」而**整包拒绝** —— 用户刚导出的
      * 备份自己导不回来。注意转义最坏可达 2 倍（换行/引号密集的文本），所以预算不是硬保证：
-     * 序列化结果一旦越过单节上限，导出会**中止并说明原因**（`lastError`），不会静默丢数据。
+     * 序列化结果一旦越过单节上限，导出会**中止并说明原因**（经 [BackupResult.reason] 返回），不会静默丢数据。
      */
     internal const val CLIP_EXPORT_BYTE_BUDGET = 12L * 1024 * 1024
 
@@ -146,22 +146,17 @@ internal object ConfigBackupManager {
     private val tempInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * 上一次导出失败的可读原因（null = 没有已知的具体原因）。
+     * 导出 / 导入结果：成功带产物，失败带可读原因。
      *
-     * 存在的意义：导出失败的原因对用户是有价值的信息（「剪贴板历史过大」与「磁盘满」的处置
-     * 完全不同），而 `export` 只返回 null。UI 在拿到 null 时读它，为空则退回通用文案。
+     * 原因随**本次调用**经返回值传递，不用模块级共享字段 —— 共享字段由后台线程写、主线程 UI 回调读，
+     * 快速重复操作时会跨次串读（`AI2-BUG.md` A-01，与 L-1354 同口径）。
      */
-    @Volatile
-    var lastError: String? = null
-        private set
+    data class BackupResult<out T>(val value: T?, val reason: String?)
 
-    /**
-     * 导入失败的原因。与 [lastError] **分开**：设置页上导出与导入是两个入口，两条流程各跑各的，
-     * 共用一只字段时只要时间上挨近，用户看到的原因就可能张冠李戴（导出报的是导入的错）。
-     */
-    @Volatile
-    var lastImportError: String? = null
-        private set
+    /** 单次导出 / 导入共用的失败原因容器：随调用创建，只经返回值外传（不共享）。 */
+    private class ReasonBox {
+        var reason: String? = null
+    }
 
     /** 导出互斥（见 [export]）：进程级，跨 Activity 重建也有效 */
     private val exportInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -275,31 +270,32 @@ internal object ConfigBackupManager {
     )
 
     /**
-     * 按 [options] 导出一个加密备份包到缓存目录，返回包与未导出的剪贴板条数。
+     * 按 [options] 导出一个加密备份包到缓存目录。
      *
-     * 返回 `null` 表示**没产出包**（正在导入、或写入失败），原因在 [lastError]；
-     * 调用方据此决定提示文案，不要把 null 当成「导出成功但没内容」。
+     * 返回 [BackupResult]：`value` 非空为成功（包与未导出的剪贴板条数），为空表示**没产出包**
+     * （正在导入、或写入失败），此时 `reason` 是本次的失败原因。原因随返回值外传，UI 取本次结果，
+     * 不读任何共享字段。
      */
-    fun export(context: Context, options: ExportOptions): ExportOutcome? {
-        lastError = null
+    fun export(context: Context, options: ExportOptions): BackupResult<ExportOutcome> {
+        val reason = ReasonBox()
         // 导入进行中不导出（2026-10-02 修复 L-452）：两条流写/读同一份 Prefs 与各节，交错时产出的
         // 包是导入的**中间态**（部分节已更新、部分未更新），而用户以为拿到了一份完整备份 ——
         // 换机恢复时才发现缺项。两把锁此前各自为政（`exportInFlight` / `importInFlight`），
         // 而导入跑在裸线程上、页面重建后导出按钮会重新可点，所以这条路径是可达的。
         if (importing) {
-            lastError = "正在导入配置，请等导入结束后再导出"
+            reason.reason = "正在导入配置，请等导入结束后再导出"
             Diagnostics.w(TAG, "导出中止: 导入进行中（避免产出中间态备份）")
-            return null
+            return BackupResult(null, reason.reason)
         }
         // 进程级互斥：页面被重建后，旧实例的导出线程可能仍在跑，而导出一开始就会清掉同前缀的
         // 遗留包（见 [exportLocked] 内）——两次并行必然互相删中间件，让后来者明确失败更安全
         if (!exportInFlight.compareAndSet(false, true)) {
-            lastError = "已有一次导出正在进行，请稍候再试"
+            reason.reason = "已有一次导出正在进行，请稍候再试"
             Diagnostics.w(TAG, "导出中止: 上一次导出仍在进行")
-            return null
+            return BackupResult(null, reason.reason)
         }
         try {
-            return exportLocked(context, options)
+            return BackupResult(exportLocked(context, options, reason), reason.reason)
         } finally {
             exportInFlight.set(false)
             // 前缀批量注销：互斥保证同前缀只有一个流程，不必逐个记名字
@@ -307,7 +303,7 @@ internal object ConfigBackupManager {
         }
     }
 
-    private fun exportLocked(context: Context, options: ExportOptions): ExportOutcome? {
+    private fun exportLocked(context: Context, options: ExportOptions, reason: ReasonBox): ExportOutcome? {
         val prefs = Prefs(context)
         val clipPrefs = ClipboardPrefs.of(context)
 
@@ -336,7 +332,7 @@ internal object ConfigBackupManager {
         val freqFile = File(context.filesDir, USER_FREQ_FILE)
         val freqBytes = runCatching { freqFile.length() }.getOrDefault(0L)
         if (freqBytes > EXPORT_SECTION_LIMIT_BYTES) {
-            lastError = "用户词频文件过大（${freqBytes / 1024 / 1024}MB），超出备份包单节上限，无法导出"
+            reason.reason = "用户词频文件过大（${freqBytes / 1024 / 1024}MB），超出备份包单节上限，无法导出"
             Diagnostics.w(TAG, "导出中止: 词频文件 $freqBytes 字节，未读入内存")
             return null
         }
@@ -345,7 +341,7 @@ internal object ConfigBackupManager {
         val freqRead = runCatching { freqFile.takeIf { it.isFile }?.readText(Charsets.UTF_8) }
         freqRead.exceptionOrNull()?.let {
             Diagnostics.e(TAG, "导出中止: 读取词频失败", it)
-            lastError = "用户词频文件无法读取（${it.javaClass.simpleName}），未导出任何内容"
+            reason.reason = "用户词频文件无法读取（${it.javaClass.simpleName}），未导出任何内容"
             return null
         }
         val freqText = freqRead.getOrNull().orEmpty()
@@ -353,14 +349,14 @@ internal object ConfigBackupManager {
         val dicts = if (options.includeDicts) dictFiles(context) else emptyList()
         // 词库与导入侧同一组上限：超了必然导不回来（导入端限 16 文件 / 64MB），宁可在这里说清
         if (dicts.size > MAX_DICT_FILES) {
-            lastError = "已下载词库过多（${dicts.size} 个，备份包最多 $MAX_DICT_FILES 个）：" +
+            reason.reason = "已下载词库过多（${dicts.size} 个，备份包最多 $MAX_DICT_FILES 个）：" +
                 "请取消勾选「包含已下载词库」"
             Diagnostics.w(TAG, "导出中止: 词库文件过多 ${dicts.size}")
             return null
         }
         val dictTotalBytes = dicts.sumOf { it.length() }
         if (dictTotalBytes > MAX_DICT_BYTES) {
-            lastError = "已下载词库过大（${dictTotalBytes / 1024 / 1024}MB，上限 " +
+            reason.reason = "已下载词库过大（${dictTotalBytes / 1024 / 1024}MB，上限 " +
                 "${MAX_DICT_BYTES / 1024 / 1024}MB）：请取消勾选「包含已下载词库」"
             Diagnostics.w(TAG, "导出中止: 词库总量过大 $dictTotalBytes")
             return null
@@ -375,20 +371,20 @@ internal object ConfigBackupManager {
         val sectionLimit = EXPORT_SECTION_LIMIT_BYTES
         val freqData = freqText.toByteArray(Charsets.UTF_8)
         if (freqText.isNotEmpty() && freqData.size.toLong() > sectionLimit) {
-            lastError = "用户词频文件过大（${freqData.size / 1024 / 1024}MB），超出备份包单节上限，无法导出"
+            reason.reason = "用户词频文件过大（${freqData.size / 1024 / 1024}MB），超出备份包单节上限，无法导出"
             Diagnostics.w(TAG, "导出中止: 词频节过大 ${freqData.size}")
             return null
         }
         val prefsData = prefsText.toByteArray(Charsets.UTF_8)
         if (prefsData.size.toLong() > sectionLimit) {
-            lastError = "设置项内容过大（${prefsData.size / 1024 / 1024}MB，通常是有超长的语音提示词），无法导出"
+            reason.reason = "设置项内容过大（${prefsData.size / 1024 / 1024}MB，通常是有超长的语音提示词），无法导出"
             Diagnostics.w(TAG, "导出中止: prefs 节过大 ${prefsData.size}")
             return null
         }
         val clipSection = clip?.takeIf { it.text.isNotEmpty() }
         val clipData = clipSection?.text?.toByteArray(Charsets.UTF_8)
         if (clipData != null && clipData.size.toLong() > sectionLimit) {
-            lastError = "剪贴板历史过大（${clipData.size / 1024 / 1024}MB）：请取消勾选「包含剪贴板历史」，" +
+            reason.reason = "剪贴板历史过大（${clipData.size / 1024 / 1024}MB）：请取消勾选「包含剪贴板历史」，" +
                 "或先在剪贴板面板里清理条目后重试"
             Diagnostics.w(TAG, "导出中止: 剪贴板节过大 ${clipData.size}")
             return null
@@ -465,7 +461,7 @@ internal object ConfigBackupManager {
         // 与导入端的 256MB 硬限对齐：自产的包必须自己导得回来（否则用户拿到的是「读不到文件」）
         if (dest.length() > MAX_PACKAGE_BYTES) {
             dest.delete()
-            lastError = "备份包超过 ${MAX_PACKAGE_BYTES / 1024 / 1024}MB 上限（多为词库过大）：" +
+            reason.reason = "备份包超过 ${MAX_PACKAGE_BYTES / 1024 / 1024}MB 上限（多为词库过大）：" +
                 "请取消勾选词库后重试"
             Diagnostics.w(TAG, "导出中止: 包体过大 ${dest.length()}")
             return null
@@ -820,9 +816,9 @@ internal object ConfigBackupManager {
     /**
      * 导入一个备份包：解密 → 校验各节摘要 → 按 [mode] 覆盖或合并写回。
      *
-     * 返回 `null` 表示这次导入没有落地（已在导入中、包损坏、密码不对，或某一段读不出来 / 校验不符），
-     * 原因记在 [lastImportError]，调用侧据此提示；进了流程但中途失败则返回带
-     * [ImportOutcome.failedStage] 的结果，重试是幂等的。
+     * 返回 [BackupResult]：`value` 为空表示这次导入没有落地（已在导入中、包损坏、密码不对，或某一段
+     * 读不出来 / 校验不符），此时 `reason` 是本次原因；进了流程但中途失败则 `value` 非空且带
+     * [ImportOutcome.failedStage]，重试是幂等的。原因随返回值外传，不读共享字段。
      */
     fun import(
         context: Context,
@@ -830,18 +826,18 @@ internal object ConfigBackupManager {
         mode: ImportMode,
         includeClipboard: Boolean,
         includeDicts: Boolean,
-    ): ImportOutcome? {
-        // 上一次的失败原因不许挂到本次导入上
-        lastImportError = null
+    ): BackupResult<ImportOutcome> {
+        val reason = ReasonBox()
         // 进程级互斥：导入跑在设置页的裸线程上，页面重建后按钮会重新可点 —— 不拦的话
         // 两路流程会并发写 prefs / 词频 / 剪贴板（各有锁不会损坏，但报数会失真，
         // 来自不同包时还会各阶段各留一份）
         if (!beginImport()) {
             Diagnostics.w(TAG, "导入: 已有导入在进行中，忽略本次")
-            return null
+            reason.reason = "已有导入正在进行，请稍候再试"
+            return BackupResult(null, reason.reason)
         }
         try {
-            return importLocked(context, zip, mode, includeClipboard, includeDicts)
+            return BackupResult(importLocked(context, zip, mode, includeClipboard, includeDicts, reason), reason.reason)
         } finally {
             endImport()
             // 这份明文 zip 的用途到此为止：注销它在册登记，残留清扫才能按时间窗回收它（BUG.md L-1086）
@@ -855,6 +851,7 @@ internal object ConfigBackupManager {
         mode: ImportMode,
         includeClipboard: Boolean,
         includeDicts: Boolean,
+        reason: ReasonBox,
     ): ImportOutcome? {
         // 一次导入共用一份解压预算（见 [ScanBudget]）：每个节都要从包首顺序扫一遍
         val budget = ScanBudget()
@@ -862,17 +859,17 @@ internal object ConfigBackupManager {
         // 用户拿一个截断/损坏包求助时，诊断包里分不清「manifest 条目读不到」与「清单解析失败」
         val manifestText = readEntry(zip, ConfigBackup.ENTRY_MANIFEST, budget = budget) ?: run {
             Diagnostics.w(TAG, "导入: manifest 条目读不到（包被截断或损坏）")
-            lastImportError = "备份包不完整或已损坏"
+            reason.reason = "备份包不完整或已损坏"
             return null
         }
         val manifest = ConfigBackup.parseManifest(manifestText) ?: run {
             Diagnostics.w(TAG, "导入: manifest 无法解析（不是本程序导出的包）")
-            lastImportError = "不是本程序导出的备份包"
+            reason.reason = "不是本程序导出的备份包"
             return null
         }
         if (ConfigBackup.checkVersion(manifest.formatVersion) == ConfigBackup.VersionCompat.TOO_NEW) {
             Diagnostics.w(TAG, "导入: 包格式版本 ${manifest.formatVersion} 高于本版 ${ConfigBackup.FORMAT_VERSION}，已拒绝")
-            lastImportError = "备份包由更新版本生成，本机无法导入"
+            reason.reason = "备份包由更新版本生成，本机无法导入"
             return null
         }
 
@@ -896,19 +893,19 @@ internal object ConfigBackupManager {
             is SectionRead.Ok -> r.text
             SectionRead.Missing -> {
                 Diagnostics.w(TAG, "导入: 缺少 prefs 节")
-                lastImportError = "备份包缺少设置节，判包不完整"
+                reason.reason = "备份包缺少设置节，判包不完整"
                 return null
             }
             else -> {
                 // TooLarge / Failed：读不出来就不许假装成功
                 Diagnostics.w(TAG, "导入: prefs 节不可用（$r）")
-                lastImportError = "设置节过大或损坏，无法导入"
+                reason.reason = "设置节过大或损坏，无法导入"
                 return null
             }
         }
         if (!verify(manifest, ConfigBackup.SEC_PREFS, prefsText)) {
             Diagnostics.w(TAG, "导入: prefs 节校验失败")
-            lastImportError = "设置节校验不符（包被改动过）"
+            reason.reason = "设置节校验不符（包被改动过）"
             return null
         }
         // 词频是可选节；存在即摘要必须对得上，且「读不出来（超限）」必须拒绝而不是当成「没有」
@@ -917,13 +914,13 @@ internal object ConfigBackupManager {
             SectionRead.Missing -> null
             else -> {
                 Diagnostics.w(TAG, "导入: 词频节不可用（$r）")
-                lastImportError = "词频节损坏，无法导入"
+                reason.reason = "词频节损坏，无法导入"
                 return null
             }
         }
         if (freqText != null && !verify(manifest, ConfigBackup.SEC_USER_FREQ, freqText)) {
             Diagnostics.w(TAG, "导入: 词频节校验失败")
-            lastImportError = "词频节校验不符（包被改动过）"
+            reason.reason = "词频节校验不符（包被改动过）"
             return null
         }
         // 剪贴板同为可选节；同上
@@ -932,20 +929,20 @@ internal object ConfigBackupManager {
             SectionRead.Missing -> null
             else -> {
                 Diagnostics.w(TAG, "导入: 剪贴板节不可用（$r）")
-                lastImportError = "剪贴板节损坏，无法导入"
+                reason.reason = "剪贴板节损坏，无法导入"
                 return null
             }
         }
         if (clipText != null && !verify(manifest, ConfigBackup.SEC_CLIPBOARD, clipText)) {
             Diagnostics.w(TAG, "导入: 剪贴板节校验失败")
-            lastImportError = "剪贴板节校验不符（包被改动过）"
+            reason.reason = "剪贴板节校验不符（包被改动过）"
             return null
         }
         // manifest 登记了摘要却没有对应节 ⇒ 包被裁剪过，按不完整拒绝（见 [firstMissingDeclaredSection]）
         val missingDeclared = firstMissingDeclaredSection(manifest, sections)
         if (missingDeclared != null) {
             Diagnostics.w(TAG, "导入: manifest 登记了 $missingDeclared 但没有对应节，判包不完整")
-            lastImportError = "备份包缺少登记的 ${missingDeclared} 节，判不完整"
+            reason.reason = "备份包缺少登记的 ${missingDeclared} 节，判不完整"
             return null
         }
 
@@ -954,7 +951,7 @@ internal object ConfigBackupManager {
         // （`stepEntry` / `drain`，失败即回滚临时件），两道闸共同保证「要么整包、要么不动」
         if (budget.exhausted) {
             Diagnostics.w(TAG, "导入: 包内解压量超过预算（写入之前），按不可用处理")
-            lastImportError = "包内解压量超出预算，按不可用处理"
+            reason.reason = "包内解压量超出预算，按不可用处理"
             return null
         }
 
@@ -967,7 +964,7 @@ internal object ConfigBackupManager {
             // 旧写法会静默跳过，用户勾了「导入词库」却什么都没发生（而清单里明明显示着词库数量）
             if (dictSection == null && hasDictEntry(zip, budget)) {
                 Diagnostics.w(TAG, "导入: 包内有词库条目但 manifest 未登记摘要，判包不完整")
-                lastImportError = "包内有词库条目但未登记摘要，判包不完整"
+                reason.reason = "包内有词库条目但未登记摘要，判包不完整"
                 return null
             }
             if (dictSection != null) {
@@ -978,8 +975,8 @@ internal object ConfigBackupManager {
                     .onFailure { Diagnostics.w(TAG, "导入: 词库恢复异常 ${it.javaClass.simpleName}") }
                     .getOrNull() ?: run {
                         // 「另有写入在进行」与「恢复本身失败」分开报（BUG.md L-873）：前者等几秒重试即可，
-                        // 笼统一句「导入失败」会让用户以为备份包坏了。原因经 [lastError] 传给调用侧
-                        lastImportError = if (CustomDicts.writing) {
+                        // 笼统一句「导入失败」会让用户以为备份包坏了。原因经返回值传给调用侧
+                        reason.reason = if (CustomDicts.writing) {
                             "词库正在写入，请稍后重试"
                         } else {
                             "词库恢复失败，原有词库未动；请重试"
@@ -995,7 +992,7 @@ internal object ConfigBackupManager {
         // 位置必须在写入之前：要么整包收下，要么什么都不动
         if (budget.exhausted) {
             Diagnostics.w(TAG, "导入: 包内解压量超过预算，按不可用处理")
-            lastImportError = "包内解压量超出预算，按不可用处理"
+            reason.reason = "包内解压量超出预算，按不可用处理"
             return null
         }
 

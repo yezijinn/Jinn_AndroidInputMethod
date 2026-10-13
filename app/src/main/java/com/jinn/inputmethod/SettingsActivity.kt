@@ -1184,7 +1184,7 @@ class SettingsActivity : ComponentActivity() {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             // 兜底：导出链路上还有 SQLite 与文件 IO（剪贴板分页、词库摘要），漏网异常会连带
             // 杀死同进程的输入法（设置页与 IME 同进程），所以这里必须整体包住
-            val outcome = runCatching {
+            val result = runCatching {
                 ConfigBackupManager.export(
                     this@SettingsActivity,
                     ConfigBackupManager.ExportOptions(includeClipboard, includeDicts, chars),
@@ -1193,11 +1193,14 @@ class SettingsActivity : ComponentActivity() {
                 Diagnostics.w(TAG, "exportConfig: 打包异常 ${it.javaClass.simpleName}")
             }.getOrNull()
             chars.fill('\u0000')
+            // 本次结果在后台线程取出（原因随返回值，不读 Manager 的共享字段）——避免快速连点串读（AI2-BUG.md A-01）
+            val outcome = result?.value
+            val reason = result?.reason ?: TEXT_EXPORT_FAIL
             runOnUiThread {
                 if (isFinishing || isDestroyed) {
                     // 页面已销毁：把结论留下，重建后补提示（否则用户不知道这次导出到底成没成）
                     pendingNotice = if (outcome == null) {
-                        ConfigBackupManager.lastError ?: TEXT_EXPORT_FAIL
+                        reason
                     } else {
                         "配置包已生成，但页面被重建，请重新点「导出配置」选择保存位置。"
                     }
@@ -1206,8 +1209,7 @@ class SettingsActivity : ComponentActivity() {
                 dismissBusy()
                 btnConfigExport.isEnabled = true
                 if (outcome == null) {
-                    // 具体原因由 Manager 记在 lastError（如「剪贴板历史过大」），比通用文案有用得多
-                    val reason = ConfigBackupManager.lastError ?: TEXT_EXPORT_FAIL
+                    // 具体原因随本次结果返回（如「剪贴板历史过大」），比通用文案有用得多
                     Diagnostics.w(TAG, "exportConfig: 打包或加密失败（$reason）")
                     textConfigHint.text = reason
                     alert(TEXT_EXPORT_CONFIG, reason)
@@ -1541,7 +1543,7 @@ class SettingsActivity : ComponentActivity() {
             // 配置导入要写库 / 词频 / prefs，降后台优先级（BUG.md L-1194）
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             // 兜底：导入会写 SQLite / 词频 / prefs，任一处漏网异常都会连带杀死同进程的输入法
-            val r = runCatching {
+            val result = runCatching {
                 ConfigBackupManager.import(
                     this@SettingsActivity, zip, mode, includeClipboard, includeDicts,
                 )
@@ -1552,11 +1554,14 @@ class SettingsActivity : ComponentActivity() {
             zip.delete()
             if (pendingImportZip === zip) pendingImportZip = null
             importInFlight = false
+            // 本次结果在后台线程取出（原因随返回值，不读共享字段）——避免快速连点串读（AI2-BUG.md A-01）
+            val r = result?.value
+            val reason = result?.reason ?: TEXT_IMPORT_FAIL
             runOnUiThread {
                 if (isFinishing || isDestroyed) {
                     // 最危险的一种：导入其实已经落盘，用户却什么都没看到，多半会以为失败再导一次
                     pendingNotice = if (r == null) {
-                        ConfigBackupManager.lastImportError ?: TEXT_IMPORT_FAIL
+                        reason
                     } else {
                         "配置导入已完成（写入的设置与词库需重启输入法后生效）。"
                     }
@@ -1565,8 +1570,7 @@ class SettingsActivity : ComponentActivity() {
                 dismissBusy()
                 btnConfigImport.isEnabled = true
                 if (r == null) {
-                    // 具体原因由 Manager 记在 lastImportError（如「词库正在写入，请稍后重试」），比通用文案有用
-                    val reason = ConfigBackupManager.lastImportError ?: TEXT_IMPORT_FAIL
+                    // 具体原因随本次结果返回（如「词库正在写入，请稍后重试」），比通用文案有用
                     Diagnostics.w(TAG, "importConfig: 导入失败（$reason）")
                     textConfigHint.text = reason
                     alert(TEXT_IMPORT_CONFIG, reason)
