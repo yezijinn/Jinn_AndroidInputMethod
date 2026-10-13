@@ -716,25 +716,24 @@ class ClipboardCustomizeActivity : Activity() {
         const val DIFF_MAX_LINES = 6
 
         const val TEXT_TITLE = "剪贴板自定义"
-        const val TEXT_DESC = "调节历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 图片容量 / 缩略图布局。\n" +
-            "默认锁定：打开「解锁参数」后可调，改完点「保存」才生效。"
+        const val TEXT_DESC = "默认锁定：打开「解锁参数」后可调，改完点「保存」才生效"
         const val TEXT_ENABLED = "剪贴板历史"
         const val TEXT_UNLOCK = "解锁参数"
         const val TEXT_SAVE = "保存"
         const val TEXT_RESET = "重置"
-        const val TEXT_HINT_HISTORY_OFF = "剪贴板历史将关闭：点「保存」后停止采集，参数改动一并生效。"
-        const val TEXT_HINT_LOCKED = "参数已锁定：打开上方「解锁参数」后可调节。"
-        const val TEXT_HINT_EDITING = "编辑中：点「保存」才生效，「重置」可撤销本次修改。"
+        const val TEXT_HINT_HISTORY_OFF = "剪贴板历史将关闭：点「保存」后停止采集，参数改动一并生效"
+        const val TEXT_HINT_LOCKED = "参数已锁定：打开上方「解锁参数」后可调节"
+        const val TEXT_HINT_EDITING = "编辑中：点「保存」才生效，「重置」可撤销本次修改"
         const val TEXT_MAX_ITEMS = "历史数量上限"
         const val TEXT_MAX_TOTAL = "历史体积上限"
         const val TEXT_FAV_TITLE = "收藏软上限（超限淘汰最旧收藏）"
         const val TEXT_FAV_ITEMS = "收藏条数上限"
         const val TEXT_FAV_BYTES = "收藏体积上限"
-        const val TEXT_FAV_HINT = "收藏体积上限不超过历史体积上限的 1/4。"
+        const val TEXT_FAV_HINT = "收藏体积上限不超过历史体积上限的 1/4"
         /** 收藏体积的生效值说明：原值留着，动态上限只压缩**生效**的那一份（BUG.md L-982 / L-988） */
         const val TEXT_FAV_EFFECTIVE_PREFIX = "实际生效："
         const val TEXT_FAV_EFFECTIVE_SUFFIX = " MB"
-        const val TEXT_FAV_CLAMPED_SUFFIX = "（受历史体积上限的四分之一限制；把历史体积调回去即可恢复本值）"
+        const val TEXT_FAV_CLAMPED_SUFFIX = "（受历史体积1/4限制；把历史体积增大即可恢复本值）"
         const val TEXT_LIMIT_TITLE = "单条与分页"
         const val TEXT_MAX_ITEM = "单条上限"
         const val TEXT_EFFECTIVE_PREFIX = "生效单条上限："
@@ -750,26 +749,22 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_IMAGE_MAX_TOTAL = "图片体积上限"
         const val TEXT_IMAGE_MAX_ITEM = "单张图片上限"
         const val TEXT_IMAGE_HINT =
-            "图片与文本各自统计 / 各自淘汰：调小这里只删最旧的非收藏图片，不动文本；" +
-                "超单张上限的图不入库。图片不进备份（换机前用「剪贴板历史管理 → 图片 → 导出全部图片」）。"
+            "图片文本独立统计淘汰：调小只删最旧非收藏图片，不动文本" +
+                "图片独立备份「剪贴板历史管理→图片→导出全部图片」"
 
         // ── 图片显示与收藏（2026-10-12）──
         const val TEXT_IMAGE_BEHAVIOR_TITLE = "图片显示与收藏"
-        const val TEXT_IMAGE_IN_ALL = "图片显示在「全部」分组"
-        const val TEXT_FAV_MOVE_OUT = "收藏图片时移到图库目录（明文）"
+        const val TEXT_IMAGE_IN_ALL = "图片允许显示在「全部」分组"
+        const val TEXT_FAV_MOVE_OUT = "收藏图片时移到「图库」目录"
         const val TEXT_IMAGE_BEHAVIOR_HINT =
-            "「全部」分组：开启则图片网格在「全部」里照样出现；关闭（默认）则图片只在「图片」分组浏览，" +
-                "「全部」列表里给图片留序号占位行。\n" +
-                "收藏处理：开启后收藏一张图片，会把原图以明文写入「图库快贴」绑定的相册目录，" +
-                "应用内不再保留加密副本（未绑定目录时会先引导去绑定）；关闭（默认）则收藏仍加密保存在应用内。"
+                "收藏图移动：收藏图片时把原图放入「图库快贴」绑定目录" +
+                "关闭（默认）则收藏图仍加密保存在本输入法内部,外部不可见"
 
         // ── 缩略图布局（2026-10-11）──
         const val TEXT_LAYOUT_TITLE = "缩略图布局（与图库快贴共用）"
         const val TEXT_LAYOUT_COLUMNS = "每行张数"
         const val TEXT_LAYOUT_HEIGHT = "缩略图行高"
-        const val TEXT_LAYOUT_HINT =
-            "改完点「保存」生效：本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用同一组参数；" +
-            "本项与上面的「剪贴板历史」开关无关，关掉开关也照常可调。"
+        const val TEXT_LAYOUT_HINT = "本页、图库快贴面板的「布局」键、剪贴板图片网格三处共用"
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"

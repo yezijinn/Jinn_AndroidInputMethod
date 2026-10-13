@@ -130,12 +130,12 @@ internal object StorageUsage {
             val entry = Entry(f.name, f.length())
             if (f.name.startsWith(CUSTOM_PREFIX)) customEntries += entry else packEntries += entry
         }
-        item("下载词库包", "在「分类词库」页下载或删除（词库的数据源；删包会连同它的索引缓存一起释放）", packEntries)
+        item("下载词库包", "在「分类词库」页下载或删除（短语词组的数据源）", packEntries)
         item("自定义词库", "在「快捷补充」页添加的词（打包副本与原文）", customEntries)
 
         // 词库索引缓存（dicts 之外的第二大项，也是用户最看不见的一项）
         item(
-            "词库索引缓存", "词库包首次使用时生成；在词库页删除对应词库包后自动清理，需要时重建",
+            "词库索引缓存", "词库包首次使用时生成,短语必须的索引",
             scan(File(files, PinyinEngine.INDEX_CACHE_DIR), claimed),
         )
 
@@ -145,8 +145,8 @@ internal object StorageUsage {
         // （单张上限默认 20MB、总上限 200MB）—— 不单列的话它会混进「其他」，用户既看不到也管不了
         item(
             "剪贴板图片",
-            "复制的图片（原图与缩略图都加密）；容量上限见「剪贴板自定义」页；" +
-                "换机前用「剪贴板历史 → 图片 → 导出全部图片」导出到你选定的文件夹（图片不进任何备份）",
+            "复制的图片（原图与缩略图都加密）" +
+                "「剪贴板历史 → 图片 → 导出全部图片」可导出原图",
             scan(File(files, ClipboardImageFiles.DIR_NAME), claimed),
         )
         item("设置与偏好", "各页面的开关与参数", scan(File(data, "shared_prefs"), claimed))

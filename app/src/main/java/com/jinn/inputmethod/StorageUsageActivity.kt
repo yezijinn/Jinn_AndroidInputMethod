@@ -255,12 +255,12 @@ class StorageUsageActivity : ComponentActivity() {
         const val TEXT_FREE = "设备剩余空间 "
         const val TEXT_BIGGEST = "其中最大一项："
         const val TEXT_APK = "安装包"
-        const val TEXT_APK_NOTE = "内置词库与按键音都在安装包里 —— 不占上面这些空间，卸载时才释放"
+        const val TEXT_APK_NOTE = "内置词库与按键音都在.APK安装包里"
         const val TEXT_FAILED = "统计失败：读不到应用目录（可返回后重试）"
 
         val HINTS = listOf(
-            "统计本机实际占用：词库包与索引缓存、剪贴板、日志等。",
-            "索引缓存由词库包首次使用时生成；删除对应词库包后会自动清理。",
+            "统计实际占用：词库包与索引缓存、剪贴板、日志...",
+            "索引缓存由词库包首次使用时生成\n删除对应词库包后会自动清理。",
         )
     }
 }
