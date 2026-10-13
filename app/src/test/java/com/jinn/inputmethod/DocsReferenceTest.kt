@@ -694,8 +694,8 @@ class DocsReferenceTest {
      */
     @Test
     fun 可选词库包条数必须与源码一致() {
-        val src = readDoc("app/src/main/java/com/jinn/inputmethod/OptionalDicts.kt")
-            ?: error("找不到 OptionalDicts.kt")
+        // 剥注释后再取（`BUG.md` L-1339）：拿原文对拍时，注释里一句同形样例就能骗过这条计数
+        val src = TestSources.codeSource("OptionalDicts.kt")
         val counts = Regex("""name = "\d级词库 \+(\d+)万条短语"""").findAll(src)
             .map { it.groupValues[1] }.toList()
         assertEquals("OptionalDicts 的包名换了写法（本守卫要跟着改）", listOf("90", "70", "21").sorted(), counts.sorted())
@@ -826,6 +826,10 @@ class DocsReferenceTest {
             "README_EN 的皮肤明暗分档与源码不符（源码 亮 $skinLight / 暗 $skinDark）",
             Regex("""$skinLight light,\s*$skinDark dark""").containsMatchIn(enDoc),
         )
+        // 英文 README 的自定义词库上限也纳入视野（`BUG.md` L-1342 残留）：中文写精确值、英文按 M / K，
+        // 两边都改到才跟随源码 —— 英文侧是已腐烂过两次的文件，单独立钉
+        assertTrue("README_EN 缺自定义词库字符上限（源码 $dictChars）", "${dictChars / (1024 * 1024)}M characters" in enDoc)
+        assertTrue("README_EN 缺自定义词库条数上限（源码 $dictEntries）", "${dictEntries / 1000}K entries" in enDoc)
         // ⑦ 剪贴板容量类默认值（README 那句「10 个参数」与功能总览的容量行都在对外写数）
         fun constOf(name: String): Int = Regex("""const val $name = (\d+)""").find(prefsSrc)
             ?.groupValues?.get(1)?.toInt() ?: error("$name 的写法变了（本守卫要跟着改）")
