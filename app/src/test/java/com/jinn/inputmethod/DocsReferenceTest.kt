@@ -889,20 +889,20 @@ class DocsReferenceTest {
         )
         assertTrue("功能总览缺容量行（源码 $dItems / ${dTotalMb}MB）", "容量 $dItems" in overview && "总 ${dTotalMb}MB" in overview)
         // ⑧ 独立界面数与 Activity 数（真值 = AndroidManifest；`<activity\s` 排除 `<activity-alias`）
-        //    「无界面」按**显式白名单**（android:name）判定 —— 2026-10-13 L-1347：只认某一种透明主题串
-        //    会漏计异类无界面页（Theme.Translucent / Dialog 主题 / 自定义透明主题），页面数会多算且不红。
+        //    「无界面」= **透明 / 无显示主题派生** + 显式白名单兜底（`BUG.md` L-1353）：纯硬编码名单
+        //    在新增无界面页忘改名单时会静默；纯主题串又漏异类。取并集（Dialog 主题可见，不算）。
         val manifest = readDoc("app/src/main/AndroidManifest.xml") ?: error("找不到 AndroidManifest.xml")
         val activityTags = Regex("""<activity\s[^>]*>""").findAll(manifest).map { it.value }.toList()
         val activities = activityTags.size
         val declaredNames = activityTags.mapNotNull {
             Regex("""android:name="([^"]+)"""").find(it)?.groupValues?.get(1)
         }.toSet()
-        val headlessNames = setOf(".GalleryPickActivity") // 选图中转页（无布局）
+        val headlessWhitelist = setOf(".GalleryPickActivity") // 选图中转页（无布局）
         assertTrue(
-            "页面数白名单里的无界面 Activity 在 manifest 里找不到：${headlessNames - declaredNames}",
-            declaredNames.containsAll(headlessNames),
+            "页面数白名单里的无界面 Activity 在 manifest 里找不到：${headlessWhitelist - declaredNames}",
+            declaredNames.containsAll(headlessWhitelist),
         )
-        val headless = declaredNames.count { it in headlessNames }
+        val headless = headlessActivities(manifest, headlessWhitelist).size
         assertTrue(
             "功能总览的 Activity 数与 AndroidManifest 不一致（源码 $activities 个）",
             "（$activities 个 Activity" in overview,
@@ -912,6 +912,34 @@ class DocsReferenceTest {
                 "${activities - headless}",
             "**${activities - headless} 个页面**" in overview,
         )
+    }
+
+    /**
+     * 「无界面 Activity」集合（`BUG.md` L-1353）：`Theme.Translucent*` / `NoDisplay` 主题**派生**，
+     * 加显式白名单兜底；Dialog 主题是可见界面，不算。只收 manifest 里确实声明的名字。
+     */
+    private fun headlessActivities(manifest: String, whitelist: Set<String>): Set<String> {
+        val tags = Regex("""<activity\s[^>]*>""").findAll(manifest).map { it.value }
+        val declared = tags.mapNotNull {
+            Regex("""android:name="([^"]+)"""").find(it)?.groupValues?.get(1)
+        }.toSet()
+        val derived = tags.filter {
+            Regex("""android:theme="[^"]*(Translucent|NoDisplay)""").containsMatchIn(it)
+        }.mapNotNull {
+            Regex("""android:name="([^"]+)"""").find(it)?.groupValues?.get(1)
+        }
+        return (derived.toSet() + whitelist).filter { it in declared }.toSet()
+    }
+
+    /** 「无界面」判定要认透明主题、不认可见的对话框主题（`BUG.md` L-1353 的自证用例）。 */
+    @Test
+    fun 无界面判定要认透明主题不认对话框() {
+        val m = listOf(
+            """<activity android:name=".A" android:theme="@android:style/Theme.Translucent.NoTitleBar" />""",
+            """<activity android:name=".B" android:theme="@android:style/Theme.DeviceDefault.Dialog" />""",
+            """<activity android:name=".C" />""",
+        ).joinToString("\n")
+        assertEquals("透明主题 + 白名单算无界面，Dialog 不算", setOf(".A", ".C"), headlessActivities(m, setOf(".C")))
     }
 
     /**
