@@ -285,7 +285,7 @@ class DocsReferenceTest {
             val from = Regex("(?m)^" + Regex.escape(start) + ".*$").find(entry)
                 ?: error("台账里找不到 $start")
             val rest = entry.substring(from.range.last + 1)
-            val end = Regex("""(?m)^### 0\.""").find(rest)?.range?.first ?: rest.length
+            val end = Regex("""(?m)^#{2,3} """).find(rest)?.range?.first ?: rest.length
             return rest.substring(0, end)
         }
         val bad = mutableListOf<String>()
