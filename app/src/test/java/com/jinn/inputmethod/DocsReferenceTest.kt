@@ -796,15 +796,19 @@ class DocsReferenceTest {
             .map { it.groupValues[1] }.toList()
         assertTrue("AiAction 的写法变了（本守卫要跟着改）：$aiLabels", aiLabels.size >= 2 && "翻译" in aiLabels)
         val aiExtras = aiLabels.filterNot { it == "翻译" }
+        // 源码常量取值：命中必须**恰 1 处**（`AI2-BUG.md` A-68）：同名旧声明残留 / 取到旧值时不再静默
+        fun uniqueConst(src: String, pattern: String, tag: String): Int {
+            val vals = Regex(pattern).findAll(src).map { it.groupValues[1].replace("_", "") }.toSet()
+            if (vals.size != 1) error("$tag 在源码命中 ${vals.size} 处（应恰 1）——旧声明未删 / 写法变了？")
+            return vals.first().toInt()
+        }
         // ③ 文本单条上限（KB）；④ 图片单张默认上限（MB）
         val ctrlSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardController.kt")
             ?: error("找不到 ClipboardController.kt")
-        val textKb = Regex("""MAX_ITEM_BYTES = (\d+) \* 1024""").find(ctrlSrc)?.groupValues?.get(1)?.toInt()
-            ?: error("MAX_ITEM_BYTES 的写法变了（本守卫要跟着改）")
+        val textKb = uniqueConst(ctrlSrc, """MAX_ITEM_BYTES = (\d+) \* 1024""", "MAX_ITEM_BYTES")
         val prefsSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt")
             ?: error("找不到 ClipboardPrefs.kt")
-        val imageMb = Regex("""DEFAULT_IMAGE_ITEM_MB = (\d+)""").find(prefsSrc)?.groupValues?.get(1)?.toInt()
-            ?: error("DEFAULT_IMAGE_ITEM_MB 的写法变了（本守卫要跟着改）")
+        val imageMb = uniqueConst(prefsSrc, """DEFAULT_IMAGE_ITEM_MB = (\d+)""", "DEFAULT_IMAGE_ITEM_MB")
 
         for (name in listOf("README.md", "功能总览.md")) {
             val text = readDoc(name) ?: continue
@@ -834,14 +838,10 @@ class DocsReferenceTest {
         // ⑤ 自定义词库上限：字符数按源码精确值写（原先写「800 万」，比 8,388,608 少报 388,608）
         val dictSrc = readDoc("app/src/main/java/com/jinn/inputmethod/CustomDicts.kt")
             ?: error("找不到 CustomDicts.kt")
-        val dictChars = Regex("""MAX_INPUT_CHARS = (\d+) \* 1024 \* 1024""").find(dictSrc)
-            ?.groupValues?.get(1)?.toInt()?.times(1024 * 1024)
-            ?: error("MAX_INPUT_CHARS 的写法变了（本守卫要跟着改）")
+        val dictChars = uniqueConst(dictSrc, """MAX_INPUT_CHARS = (\d+) \* 1024 \* 1024""", "MAX_INPUT_CHARS") * (1024 * 1024)
         // 源码写作 `50_000`（带下划线）：`(\d+)` 只会吃到 `50`，算出「0 万条」——而 `"0 万条"` 又是
-        // `"40 万条"` 的**子串** ⇒ 断言恒绿（BUG.md L-1343）。这里吃下划线并去掉，断言也补定界。
-        val dictEntries = Regex("""MAX_ENTRIES = ([\d_]+)""").find(dictSrc)
-            ?.groupValues?.get(1)?.replace("_", "")?.toInt()
-            ?: error("MAX_ENTRIES 的写法变了（本守卫要跟着改）")
+        // `"40 万条"` 的**子串** ⇒ 断言恒绿（BUG.md L-1343）。uniqueConst 已去下划线；断言也补定界。
+        val dictEntries = uniqueConst(dictSrc, """MAX_ENTRIES = ([\d_]+)""", "MAX_ENTRIES")
         for (name in listOf("README.md", "功能总览.md")) {
             val text = (readDoc(name) ?: continue).replace(",", "")
             assertTrue("$name 缺自定义词库字符上限 $dictChars（源码 MAX_INPUT_CHARS）", dictChars.toString() in text)
@@ -863,8 +863,7 @@ class DocsReferenceTest {
         assertTrue("README_EN 缺自定义词库字符上限（源码 $dictChars）", "${dictChars / (1024 * 1024)}M characters" in enDoc)
         assertTrue("README_EN 缺自定义词库条数上限（源码 $dictEntries）", "${dictEntries / 1000}K entries" in enDoc)
         // ⑦ 剪贴板容量类默认值（README 那句「10 个参数」与功能总览的容量行都在对外写数）
-        fun constOf(name: String): Int = Regex("""const val $name = (\d+)""").find(prefsSrc)
-            ?.groupValues?.get(1)?.toInt() ?: error("$name 的写法变了（本守卫要跟着改）")
+        fun constOf(name: String): Int = uniqueConst(prefsSrc, """const val $name = (\d+)""", name)
         val dItems = constOf("DEFAULT_MAX_ITEMS")
         val dTotalMb = constOf("DEFAULT_MAX_TOTAL_MB")
         val dSearch = constOf("DEFAULT_MAX_SEARCH")
