@@ -805,12 +805,19 @@ class DocsReferenceTest {
         val dictChars = Regex("""MAX_INPUT_CHARS = (\d+) \* 1024 \* 1024""").find(dictSrc)
             ?.groupValues?.get(1)?.toInt()?.times(1024 * 1024)
             ?: error("MAX_INPUT_CHARS 的写法变了（本守卫要跟着改）")
-        val dictEntries = Regex("""MAX_ENTRIES = (\d+)""").find(dictSrc)?.groupValues?.get(1)?.toInt()
+        // 源码写作 `50_000`（带下划线）：`(\d+)` 只会吃到 `50`，算出「0 万条」——而 `"0 万条"` 又是
+        // `"40 万条"` 的**子串** ⇒ 断言恒绿（BUG.md L-1343）。这里吃下划线并去掉，断言也补定界。
+        val dictEntries = Regex("""MAX_ENTRIES = ([\d_]+)""").find(dictSrc)
+            ?.groupValues?.get(1)?.replace("_", "")?.toInt()
             ?: error("MAX_ENTRIES 的写法变了（本守卫要跟着改）")
         for (name in listOf("README.md", "功能总览.md")) {
             val text = (readDoc(name) ?: continue).replace(",", "")
             assertTrue("$name 缺自定义词库字符上限 $dictChars（源码 MAX_INPUT_CHARS）", dictChars.toString() in text)
-            assertTrue("$name 缺自定义词库条数上限（源码 MAX_ENTRIES = $dictEntries）", "${dictEntries / 10000} 万条" in text)
+            // 定界锚：`"5 万条"` 是 `"45 万条"` 的子串，裸子串判定会漏（BUG.md L-1343）
+            assertTrue(
+                "$name 缺自定义词库条数上限（源码 MAX_ENTRIES = $dictEntries，应写「/ ${dictEntries / 10000} 万条」）",
+                "/ ${dictEntries / 10000} 万条" in text,
+            )
         }
         // ⑥ 英文 README 的皮肤计数（中英同源；英文侧是已腐烂过两次的文件，单独钉）
         val enDoc = readDoc("README_EN.md") ?: error("找不到 README_EN.md")
@@ -870,7 +877,9 @@ class DocsReferenceTest {
     @Test
     fun 索引行编号不得重复() {
         val part = ledgerPartFiles()["index"] ?: error("索引分册缺失（见 BUG.md 的 0.6 详情文件地图）")
-        val ids = Regex("""(?m)^\| (L-\d+) \|""").findAll(part).map { it.groupValues[1] }.toList()
+        // 用 `[|]` 而不是 `\|`：后者紧挨 `"""` 时会被写成转义引号，正则永不匹配 ⇒ 守卫静默恒绿（BUG.md L-1348）
+        val ids = Regex("""(?m)^[|] (L-\d+) [|]""").findAll(part).map { it.groupValues[1] }.toList()
+        assertTrue("索引行正则没取到编号（写法变了？行数=${ids.size}）", ids.isNotEmpty())
         val dup = ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         assertTrue("索引行编号重复（同一编号只能有一行）：$dup", dup.isEmpty())
     }

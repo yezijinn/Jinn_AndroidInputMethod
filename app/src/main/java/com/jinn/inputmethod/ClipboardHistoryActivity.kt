@@ -1170,15 +1170,20 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /** 图片分类：长按出菜单（复制 / 保存 / 转移 / 收藏 / 删除） */
     private fun showImageMenu(item: ClipboardDb.Item) {
         val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
-        // 只出三个动作（转图库 / 收藏 / 删除）：复制与保存不再进菜单 —— 点条目即上屏、
-        // 转移已覆盖「存到相册」；预览对话框里仍留着复制 / 保存两个出口
+        // 本页是**管理界面**，出五个动作：复制 / 保存 / 转移到图库目录 / 收藏 / 删除。
+        // 键盘面板那套只出三个（转图库 / 收藏 / 删除）——面板贴着输入法窗口、点条目本身就是上屏，
+        // 复制与保存留给预览对话框；两处的取舍不同源，改动时别互相「对齐」
         val entries = ArrayList<String>()
+        entries.add(TEXT_IMAGE_COPY)
+        if (ClipboardImageExport.albumAvailable()) entries.add(TEXT_IMAGE_SAVE)
         entries.add(TEXT_IMAGE_MOVE)
         entries.add(favText)
         entries.add(TEXT_DELETE)
         AlertDialog.Builder(this)
             .setItems(entries.toTypedArray()) { _, which ->
                 when (entries[which]) {
+                    TEXT_IMAGE_COPY -> imageAction(item, ClipboardImageAction.Copy)
+                    TEXT_IMAGE_SAVE -> imageAction(item, ClipboardImageAction.Save)
                     TEXT_IMAGE_MOVE -> imageAction(item, ClipboardImageAction.MoveToGallery)
                     TEXT_DELETE -> confirm(TEXT_CONFIRM_DELETE_ONE) {
                         BackgroundIo.run {

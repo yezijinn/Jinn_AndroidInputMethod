@@ -244,9 +244,18 @@ class ClipboardImageTest {
             "val actions = listOf(actionMove, actionFavorite, actionDelete)" in panel,
         )
         val histMenu = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        // BUG.md L-1336：两处菜单**不同源是有意的** —— 面板三项（贴着输入法、点条目即上屏，复制 / 保存留在预览对话框），
+        // 历史管理页五项（管理界面，多「复制到剪贴板 / 保存到相册」）。改动时别互相「对齐」。
         assertTrue(
-            "历史页图片长按也只留三项",
-            "entries.add(TEXT_IMAGE_MOVE)" in histMenu && "entries.add(TEXT_IMAGE_COPY)" !in histMenu,
+            "历史页图片长按菜单要含复制 / 保存 / 转移",
+            "entries.add(TEXT_IMAGE_COPY)" in histMenu &&
+                "entries.add(TEXT_IMAGE_SAVE)" in histMenu &&
+                "entries.add(TEXT_IMAGE_MOVE)" in histMenu,
+        )
+        assertTrue(
+            "历史页的复制 / 保存要真的派发（不能只挂菜单）",
+            "TEXT_IMAGE_COPY -> imageAction(item, ClipboardImageAction.Copy)" in histMenu &&
+                "TEXT_IMAGE_SAVE -> imageAction(item, ClipboardImageAction.Save)" in histMenu,
         )
         // 「布局」键：图片分类下取代搜索（图片不进搜索，键位让给布局调节），可在面板内改每行张数 / 行高
         assertTrue("面板要有布局键", "btnLayout = tabButton(\"布局\")" in panel)
