@@ -124,8 +124,13 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         }
     }
 
-    /** 面板打开 / 切到图片分类时调用：按当前布局参数重载第一页 */
-    fun show(traceId: String, favoritesOnly: Boolean = false) {
+    /**
+     * 面板打开 / 切到图片分类时调用：按当前布局参数重载第一页。
+     *
+     * [favoritesOnly] **不给默认值**（BUG.md L-1258）：默认值会让写操作（删除 / 收藏 / 清空）的
+     * 回调漏传筛选态、把「只看收藏」悄悄切回全部图片，而调用点的意图在签名里看不出来。强制显式。
+     */
+    fun show(traceId: String, favoritesOnly: Boolean) {
         this.traceId = traceId
         this.favoritesOnly = favoritesOnly
         // 重载即作废在飞查询（BUG.md L-1242）：本方法清空 items 后重新取数，而回调的判据是

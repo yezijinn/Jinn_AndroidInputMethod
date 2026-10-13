@@ -565,6 +565,26 @@ class ClipboardImageTest {
         assertTrue("缩略图必须先解密（密文落盘）", "ClipboardCrypto.decryptBytes(enc)" in loader)
     }
 
+    /**
+     * 图片网格重载必须显式声明筛选态（`BUG.md` L-1258）。
+     *
+     * `show()` 一旦保留默认值 `favoritesOnly = false`，写操作（删除 / 收藏 / 清空）的回调漏传
+     * 就会把「只看收藏」悄悄切回全部图片，而调用点的意图在签名里看不出来 —— 默认值在多入口控件上
+     * 最容易漏，去掉默认值让编译器逼每个调用点表态。
+     */
+    @Test
+    fun 图片网格重载必须显式声明筛选态() {
+        val grid = TestSources.codeSource("ClipboardImageGridView.kt")
+        assertTrue(
+            "show() 的 favoritesOnly 不得留默认值",
+            "fun show(traceId: String, favoritesOnly: Boolean) {" in grid,
+        )
+        assertFalse(
+            "show() 签名里不得再出现 favoritesOnly 的默认值",
+            "favoritesOnly: Boolean = false" in grid,
+        )
+    }
+
     @Test
     fun 图片模式不被文本列表路径抢回前台() {
         val panel = TestSources.codeSource("ClipboardPanelView.kt")
