@@ -642,10 +642,8 @@ class DocsReferenceTest {
     @Test
     fun 功能总览的事实必须与源码一致() {
         val doc = readDoc("功能总览.md") ?: error("找不到 功能总览.md（改名或移位了？）")
-        val prefs = readDoc("app/src/main/java/com/jinn/inputmethod/Prefs.kt")
-            ?: error("找不到 Prefs.kt")
-        val settings = readDoc("app/src/main/java/com/jinn/inputmethod/SettingsActivity.kt")
-            ?: error("找不到 SettingsActivity.kt")
+        val prefs = TestSources.codeSource("Prefs.kt")
+        val settings = TestSources.codeSource("SettingsActivity.kt")
 
         // ① 默认值：从 Prefs 读真值，再要求文档写对（曾写「双拼候选全音……默认开」，实际默认关）
         // 读侧收口后（BUG.md L-653）默认值写在 `boolOr(KEY_SHOW_QUANPIN, …)` 里：两种形态都认，
@@ -663,8 +661,7 @@ class DocsReferenceTest {
 
         // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，文案在代码里下发
         //    而非 strings.xml；2026-10-09 该开关迁到「键盘外观」页 —— 锚点跟着控件走）
-        val appearance = readDoc("app/src/main/java/com/jinn/inputmethod/KeyAppearanceActivity.kt")
-            ?: error("找不到 KeyAppearanceActivity.kt")
+        val appearance = TestSources.codeSource("KeyAppearanceActivity.kt")
         assertTrue("KeyAppearanceActivity 里找不到「键盘内显韵母」", "键盘内显韵母" in appearance)
         assertFalse("功能总览仍在用旧控件名「键盘内嵌韵母」", "键盘内嵌韵母" in doc)
 
@@ -780,8 +777,7 @@ class DocsReferenceTest {
     @Test
     fun 用户可见计数必须与源码一致() {
         // ① 皮肤：定义条数与明暗分档（README / 功能总览都对外声明）
-        val skinSrc = readDoc("app/src/main/java/com/jinn/inputmethod/KeyboardSkin.kt")
-            ?: error("找不到 KeyboardSkin.kt")
+        val skinSrc = TestSources.codeSource("KeyboardSkin.kt")
         val skinTotal = Regex("""(?m)^\s*val [A-Z_]+ = KeyboardSkin\(""").findAll(skinSrc).count()
         val skinDark = Regex("""tone = SkinTone\.DARK""").findAll(skinSrc).count()
         val skinLight = Regex("""tone = SkinTone\.LIGHT""").findAll(skinSrc).count()
@@ -790,8 +786,7 @@ class DocsReferenceTest {
             skinTotal > 0 && skinTotal == skinDark + skinLight,
         )
         // ② AI 动作：枚举里的中文名去掉「翻译」本身（它是长按翻译键的直连动作，不在展开清单里）
-        val aiSrc = readDoc("app/src/main/java/com/jinn/inputmethod/AiAction.kt")
-            ?: error("找不到 AiAction.kt")
+        val aiSrc = TestSources.codeSource("AiAction.kt")
         val aiLabels = Regex("""(?m)^\s*[A-Z_]+\("[a-z]+", "([^"]+)"\)""").findAll(aiSrc)
             .map { it.groupValues[1] }.toList()
         assertTrue("AiAction 的写法变了（本守卫要跟着改）：$aiLabels", aiLabels.size >= 2 && "翻译" in aiLabels)
@@ -803,11 +798,9 @@ class DocsReferenceTest {
             return vals.first().toInt()
         }
         // ③ 文本单条上限（KB）；④ 图片单张默认上限（MB）
-        val ctrlSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardController.kt")
-            ?: error("找不到 ClipboardController.kt")
+        val ctrlSrc = TestSources.codeSource("ClipboardController.kt")
         val textKb = uniqueConst(ctrlSrc, """MAX_ITEM_BYTES = (\d+) \* 1024""", "MAX_ITEM_BYTES")
-        val prefsSrc = readDoc("app/src/main/java/com/jinn/inputmethod/ClipboardPrefs.kt")
-            ?: error("找不到 ClipboardPrefs.kt")
+        val prefsSrc = TestSources.codeSource("ClipboardPrefs.kt")
         val imageMb = uniqueConst(prefsSrc, """DEFAULT_IMAGE_ITEM_MB = (\d+)""", "DEFAULT_IMAGE_ITEM_MB")
 
         for (name in listOf("README.md", "功能总览.md")) {
@@ -836,8 +829,7 @@ class DocsReferenceTest {
             .filter { it != imageMb.toString() }.toSet()
         assertTrue("功能总览写着非当前图片默认上限 ${strayMb.sorted().joinToString("/")}MB（源码 ${imageMb}MB）", strayMb.isEmpty())
         // ⑤ 自定义词库上限：字符数按源码精确值写（原先写「800 万」，比 8,388,608 少报 388,608）
-        val dictSrc = readDoc("app/src/main/java/com/jinn/inputmethod/CustomDicts.kt")
-            ?: error("找不到 CustomDicts.kt")
+        val dictSrc = TestSources.codeSource("CustomDicts.kt")
         val dictChars = uniqueConst(dictSrc, """MAX_INPUT_CHARS = (\d+) \* 1024 \* 1024""", "MAX_INPUT_CHARS") * (1024 * 1024)
         // 源码写作 `50_000`（带下划线）：`(\d+)` 只会吃到 `50`，算出「0 万条」——而 `"0 万条"` 又是
         // `"40 万条"` 的**子串** ⇒ 断言恒绿（BUG.md L-1343）。uniqueConst 已去下划线；断言也补定界。
