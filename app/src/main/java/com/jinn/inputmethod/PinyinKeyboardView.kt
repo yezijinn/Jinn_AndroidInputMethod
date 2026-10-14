@@ -322,8 +322,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 此前每按一次键（含退格连删 18 次/秒）都 `removeAllViews()` 后逐条新建 TextView + 闭包，
      * ≈900 个短命对象/秒；而同文件所有外观类重建都带缓存判据，唯独候选条目没有。
      *
-     * 指纹用 `items.hashCode()` —— `List.hashCode` 逐元素参与，36 个字符串的哈希远比建 36 个 View 便宜，
-     * 且**覆盖全部候选文本**（只取首项会在中间项变化时漏判）。
+     * 指纹用 `shown.hashCode()` —— `List.hashCode` 逐元素参与，几十个字符串的哈希远比建几十个 View 便宜，
+     * 且**覆盖全部候选文本**（只取首项会在中间项变化时漏判）。分页追加后 `shown` 变长，指纹随之变化、照常重建。
      *
      * ⚠ 外观变化（字号 / 字距 / 主题色）必须复位，否则换肤后候选不重建。
      *
@@ -338,6 +338,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * `null` 不在取值域内，碰撞不可能发生。
      */
     private var candidateRenderKey: Long? = null
+
+    /**
+     * 候选栏分页渲染的当前窗口条数：首屏 [INITIAL_RENDERED_CANDIDATES]，用户横滑到末尾时
+     * 按 [RENDERED_CANDIDATES_STEP] 递增（见 [maybeAppendMoreCandidates]）；候选集变了
+     * 就复位回首屏（见 [renderCandidateItems]）。
+     */
+    private var candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
+
+    /** 上次渲染的完整候选源：与本次不同即说明换了一批候选，窗口条数复位首屏 */
+    private var candidateRenderSource: List<String> = emptyList()
+
+    /** 上次渲染的入参：横滑到末尾追加渲染时据此重放（见 [CandidateRenderArgs]） */
+    private var candidateRenderArgs: CandidateRenderArgs? = null
 
     /**
      * 复位候选渲染指纹（2026-10-03 修复 L-809 / L-818）：下一次 [renderCandidateItems] 必须重建整棵树。
@@ -514,6 +527,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
         candidateScroll = root.findViewById(R.id.candidate_scroll)
+        // 分页渲染：横滑到末尾追加更多候选。只要「向右」的滚动（scrollX 增大）——
+        // 换候选时容器重建会把 scrollX 夹小并发出一次回调，方向判据把那种情况挡在外面。
+        candidateScroll.setOnScrollChangeListener { _, scrollX, _, oldScrollX, _ ->
+            if (scrollX > oldScrollX) maybeAppendMoreCandidates()
+        }
         pinyinBar = root.findViewById(R.id.pinyin_bar)
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
@@ -2171,6 +2189,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /** [renderCandidateItems] 的入参快照：横滑到末尾追加渲染时据此重放（见 [maybeAppendMoreCandidates]） */
+    private data class CandidateRenderArgs(
+        val items: List<String>,
+        val rows: Int,
+        val rowHeightPx: Int,
+        val colorToken: Int?,
+        val colorRes: Int,
+        val onClick: (String) -> Unit,
+    )
+
     /**
      * 渲染候选 / 预测条目：两者只差字色与点击回调。
      *
@@ -2184,6 +2212,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 双行档的列用 FrameLayout + gravity 定位置，列内**先加下排、后加上排**：视图树顺序即
      * 无障碍遍历顺序，TalkBack 因此按 1、2、3、4… 朗读，与「第 1 个候选在下排首列」一致。
      *
+     * 渲染条数是分页的：首屏 [INITIAL_RENDERED_CANDIDATES] 条，余下的由
+     * [maybeAppendMoreCandidates] 在用户横滑到末尾时追加 —— `items` 传**完整**候选，
+     * 截断只发生在本函数内；[CandidateRenderArgs] 记下完整入参供追加时重放。
+     *
      * @param rows 本帧档位，由 [refreshCandidateBar] 读出后传入（与候选栏高度同源）
      * @param rowHeightPx 本帧每排行高，取自 [applyCandidateRows] 的返回值（同源、不重算）
      */
@@ -2195,6 +2227,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         colorRes: Int,
         onClick: (String) -> Unit,
     ) {
+        // 分页渲染：候选集变了就复位首屏条数；否则沿用当前窗口（用户已滑到底追加过的条数）。
+        // 用**结构相等**比对：同一串拼音被重复查询时引擎会给出一份内容相同的新 list，
+        // 按引用比对会把它当「新候选」复位 —— 用户滑到底刚展开的候选会被打回收起。
+        if (items != candidateRenderSource) {
+            candidateRenderSource = items
+            candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
+        }
+        val shown = if (items.size > candidateRenderLimit) items.subList(0, candidateRenderLimit) else items
+        candidateRenderArgs = CandidateRenderArgs(items, rows, rowHeightPx, colorToken, colorRes, onClick)
+
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
         // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
         // （语义与按键「间隙」一致；定义域见 KeyAppearance.MIN_SPACING_DP~MAX_SPACING_DP，
@@ -2212,7 +2254,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // items / 字号 / 字距都没变时命中旧指纹 ⇒ 子项保留旧行高、与已重算的栏高错配（放大即裁字）。
         val sizeSp = currentCandidateSp
         val fontScaleToken = (resources.configuration.fontScale * 100f).toInt()
-        val renderKey = items.hashCode().toLong() * 31 + rows * 7 + spacingHalfPx * 13 +
+        val renderKey = shown.hashCode().toLong() * 31 + rows * 7 + spacingHalfPx * 13 +
             (colorToken?.hashCode()?.toLong() ?: 0L) + colorRes + sizeSp.toInt() * 17 +
             fontScaleToken * 23
         if (renderKey == candidateRenderKey) return
@@ -2236,7 +2278,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         }
         if (rows != CandidateRows.DOUBLE) {
-            for (text in items) {
+            for (text in shown) {
                 viewCandidateList.addView(build(text))
             }
             return
@@ -2244,7 +2286,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 行高与候选栏高度同源（[applyCandidateRows] 已按同一密度/字号算过），两排各贴上下边、
         // 中缝恰好 = 拼音条高；这里直接用本帧传进来的值，不重复计算
         val rowHeight = rowHeightPx
-        for ((top, bottom) in CandidateRows.columnsOf(items)) {
+        for ((top, bottom) in CandidateRows.columnsOf(shown)) {
             // 列用 FrameLayout + gravity 定位置，添加顺序因此可以先「下排」后「上排」：
             // 无障碍遍历默认按视图树顺序，这样 TalkBack 的朗读 / 焦点顺序是 1、2、3、4…，
             // 与语义一致（第 1 个候选在下排首列，空格取的就是它）；视觉位置由 gravity 决定，
@@ -2272,6 +2314,38 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT),
             )
         }
+    }
+
+    /**
+     * 候选栏横滑到末尾时追加渲染更多候选（分页渲染的「翻页」动作，见 [INITIAL_RENDERED_CANDIDATES]）。
+     *
+     * 只有在「可见区已推到右端」（距末尾 [RENDER_EDGE_DP] 以内）且还有未渲染候选时才动作。
+     * 追加后剩下的候选更靠右，当前位置不再算末尾，因此不会连环触发；追加是一次局部重建
+     * （前缀不变、只多出尾部若干条），随后复原滚动位置。
+     *
+     * ⚠ 只由**向右**的用户滚动触发（见 `init` 里监听器的 `scrollX > oldScrollX` 判据）：
+     *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把 scrollX 夹回、发出一次
+     *   scrollX **变小**的回调 —— 若不加方向判据，这里会凭空把首屏 32 条一次铺到满。
+     */
+    private fun maybeAppendMoreCandidates() {
+        val args = candidateRenderArgs ?: return
+        if (candidateRenderLimit >= args.items.size) return
+        val maxScroll = viewCandidateList.width - candidateScroll.width +
+            candidateScroll.paddingLeft + candidateScroll.paddingRight
+        if (candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
+        val keepX = candidateScroll.scrollX
+        candidateRenderLimit = minOf(args.items.size, candidateRenderLimit + RENDERED_CANDIDATES_STEP)
+        Diagnostics.i(TAG, "候选分页: 追加渲染至 ${candidateRenderLimit}/${args.items.size} 条")
+        renderCandidateItems(
+            items = args.items,
+            rows = args.rows,
+            rowHeightPx = args.rowHeightPx,
+            colorToken = args.colorToken,
+            colorRes = args.colorRes,
+            onClick = args.onClick,
+        )
+        // 重建会 removeAllViews 再重填，个别情况下 scrollX 会被拽动；下一帧复原到用户当前位置。
+        candidateScroll.post { if (candidateScroll.scrollX != keepX) candidateScroll.scrollTo(keepX, 0) }
     }
 
     private fun refreshCandidateBar() {
@@ -2392,13 +2466,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         showPinyin(displayText)
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
-        // 只渲染前若干条：单字候选可达 MAX_CHARS(60) 条（真实单字表里 `yi` 有 326 字、
-        // 93 个音节超过 60 字），而这里是「每条一个 TextView」且每次按键全量重建，
-        // 一次按键创建 60 个 View 在低端机上会明显掉帧。用户实际只点最前面几个
-        // （单字候选按常用度排序），因此截断渲染量。
+        // 分页渲染：首屏只铺 INITIAL_RENDERED_CANDIDATES 条（单字候选可达 MAX_CHARS(60) 条，
+        // 真实单字表里 `yi` 有 326 字、93 个音节超过 60 字；这里是「每条一个 TextView」且
+        // 每次按键全量重建，一次铺几十个 View 在低端机会掉帧），横滑到末尾时再自动追加。
+        // 截断在 renderCandidateItems 内完成 —— 这里传**完整**候选，追加时才能取到后面的条目。
         // 这只影响渲染，[lastCandidates] 仍保存完整候选，空格/回车取首候选不受影响。
         renderCandidateItems(
-            items = result.candidates.take(MAX_RENDERED_CANDIDATES),
+            items = result.candidates,
             rows = rows,
             rowHeightPx = perRow,
             colorToken = skin.functionGlyph,
@@ -4193,18 +4267,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val BUTTON_STROKE_DP = 1f
 
         /**
-         * 候选栏最多渲染多少个候选条目。
+         * 候选栏**分页渲染**：首屏渲染条数、每次追加条数。
          *
-         * 候选数由引擎的 MAX_CHARS(60) 决定上限，而真实单字表里 `yi` 有 326 字、
-         * 93 个音节超过 60 字，即常用音节经常给出满额候选。渲染是「每条一个
-         * TextView」且每次按键全量重建，故截断渲染量；但截得太狠会让后面的候选
-         * 完全点不到 —— 滚动区里根本没创建那个条目。
+         * 候选数由引擎的 MAX_CHARS(60) 决定上限，真实单字表里 `yi` 有 326 字、
+         * 93 个音节超过 60 字，常用音节经常给出满额候选；渲染是「每条一个 TextView」
+         * 且每次按键全量重建，一次创建几十个 View 在低端机会掉帧。
          *
-         * 取 36：双行档一列 3 个 View ⇒ 单帧 54 个 View，帧统计实测与 24 时的
-         * 36 个 View 无差异（0 janky、90th 11ms），单音节靠后候选的可达范围比
-         * 24 时多一半。仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
+         * 早先按固定条数硬截（36）：靠后的候选在滚动区里**根本不存在**（点不到），
+         * 且换一个词库规模这个数字就没了依据。现改为分页：首屏
+         * [INITIAL_RENDERED_CANDIDATES] 条，用户横滑到末尾（[RENDER_EDGE_DP] 内）时按
+         * [RENDERED_CANDIDATES_STEP] 追加，直到候选全部可达 —— 既守住首屏渲染量，
+         * 又让任何候选都点得到。仅影响渲染，不影响 [lastCandidates] 中保存的完整候选与上屏行为。
          */
-        const val MAX_RENDERED_CANDIDATES = 36
+        const val INITIAL_RENDERED_CANDIDATES = 32
+
+        /** 横滑到末尾时每次追加渲染的候选条数（见 [INITIAL_RENDERED_CANDIDATES]） */
+        const val RENDERED_CANDIDATES_STEP = 32
+
+        /** 距候选滚动区右端多少 dp 内算「已滑到末尾」，触发追加渲染 */
+        const val RENDER_EDGE_DP = 24
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f

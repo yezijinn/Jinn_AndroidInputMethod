@@ -6,12 +6,12 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 候选数量的量级边界测试，守护「渲染必须截断」这个前提。
+ * 候选数量的量级边界测试，守护「渲染必须分页截断」这个前提。
  *
  * 候选栏渲染是「每条一个 TextView」且每次按键全量重建。
  * 引擎侧单字候选上限为 MAX_CHARS(60)，而真实单字表里 `yi` 有 326 字、
  * 93 个音节超过 60 字，即常用音节经常给出满额候选。
- * 因此 `PinyinKeyboardView` 只渲染前 `MAX_RENDERED_CANDIDATES` 条。
+ * 因此 `PinyinKeyboardView` 首屏只渲染前 `INITIAL_RENDERED_CANDIDATES` 条，其余横滑到末尾再分页追加。
  *
  * 这里锁定「候选可达数十条」：若将来有人以为候选总是个位数、
  * 把渲染截断当冗余代码删掉，测试会先挂。
@@ -47,14 +47,15 @@ class CandidateCountBoundTest {
             "单字候选应可达数十条量级，实际=${result.candidates.size}",
             result.candidates.size >= 60,
         )
-        // 与渲染上限挂钩（BUG-11）：这条用例的用意是「候选多到必须截断」，那就得真的读到那个上限，
-        // 否则它只证明引擎给得多 —— 上限被删掉或被改成比 60 还大，这里也照样绿。
+        // 与首屏渲染条数挂钩（BUG-11）：这条用例的用意是「候选多到首屏装不下、必须分页」，
+        // 那就得真的读到那个常量，否则它只证明引擎给得多 —— 常量被删掉或被改成比候选数还大，这里也照样绿。
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
-        val cap = Regex("""const val MAX_RENDERED_CANDIDATES\s*=\s*(\d+)""").find(src)?.groupValues?.get(1)?.toInt()
-        assertTrue("没解析出 MAX_RENDERED_CANDIDATES（写法变了？）", cap != null)
+        val initial = Regex("""const val INITIAL_RENDERED_CANDIDATES\s*=\s*(\d+)""")
+            .find(src)?.groupValues?.get(1)?.toInt()
+        assertTrue("没解析出 INITIAL_RENDERED_CANDIDATES（写法变了？）", initial != null)
         assertTrue(
-            "渲染上限 $cap 必须小于引擎单字上限，否则渲染层不必截断（本条的前提不成立）",
-            result.candidates.size > cap!!,
+            "首屏渲染条数 $initial 必须小于本次候选数，否则分页渲染的前提不成立",
+            result.candidates.size > initial!!,
         )
     }
 
@@ -72,8 +73,8 @@ class CandidateCountBoundTest {
     /**
      * 超长输入（粘一串拼音）时，候选量必须被**音节上限**挡住（BUG.md L-1282）。
      *
-     * 主查询原先不限音节数：候选按「音节 × 每音节上限」线性膨胀后还要全量排序，而渲染只看
-     * 前 `MAX_RENDERED_CANDIDATES` 条 —— 计算与内存纯白费，且跑在输入主线程上（按键发卡）。
+     * 主查询原先不限音节数：候选按「音节 × 每音节上限」线性膨胀后还要全量排序，而渲染首屏只看
+     * 前 `INITIAL_RENDERED_CANDIDATES` 条（其余横滑分页追加）—— 计算与内存纯白费，且跑在输入主线程上（按键发卡）。
      * 这里用 20 个**互不相同**的音节：它们各挂满 60 字，若上限失效，20 音节的候选量会明显
      * 多于 8 音节（480 ⇒ 1200），断言「两者同量」即钉住上限。
      */

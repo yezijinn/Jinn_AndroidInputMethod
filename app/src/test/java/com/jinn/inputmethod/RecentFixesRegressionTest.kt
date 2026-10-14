@@ -1252,15 +1252,26 @@ class RecentFixesRegressionTest {
     }
 
     @Test
-    fun `候选渲染上限不得回退`() {
-        val m = Regex("const val MAX_RENDERED_CANDIDATES = (\\d+)")
-            .find(codeOf("PinyinKeyboardView.kt"))
-        assertTrue("常量必须存在", m != null)
-        val n = m!!.groupValues[1].toInt()
+    fun `候选渲染分页不得回退`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val initial = Regex("const val INITIAL_RENDERED_CANDIDATES = (\\d+)")
+            .find(src)?.groupValues?.get(1)?.toInt()
+        val step = Regex("const val RENDERED_CANDIDATES_STEP = (\\d+)")
+            .find(src)?.groupValues?.get(1)?.toInt()
+        assertTrue("首屏条数常量必须存在", initial != null)
+        assertTrue("追加步长常量必须存在", step != null)
         assertTrue(
-            "渲染上限不得低于 36（当前 $n）：单音节候选可达 60 条，截断过狠时靠后的候选在滚动区里" +
-                "根本不存在（点不到）；帧统计实测 54 个 View 与 36 个无差异",
-            n >= 36,
+            "首屏不得少于 24（当前 $initial）：单音节候选可达 60 条，首屏太短时用户要多滑好几下才够到靠后的候选",
+            initial!! >= 24,
+        )
+        assertTrue("追加步长必须为正（当前 $step）", step!! >= 1)
+        assertTrue(
+            "渲染路径必须按窗口条数截断候选（subList(0, candidateRenderLimit)）",
+            "subList(0, candidateRenderLimit)" in src,
+        )
+        assertTrue(
+            "必须有「横滑到末尾追加更多候选」的滚动监听",
+            "setOnScrollChangeListener" in src && "maybeAppendMoreCandidates" in src,
         )
     }
 

@@ -50,11 +50,14 @@ class CandidateRowsTest {
 
     @Test
     fun 渲染上限条数下无重无漏() {
-        // 上限从源码取（BUG-11）：原先写死 36，常量改成 8 也全绿 —— 守的其实是「按上限算列数」这件事
+        // 条数从源码取（BUG-11）：原先写死 36，常量改成 8 也全绿 —— 守的其实是「按窗口条数算列数」这件事
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
-        val cap = Regex("""const val MAX_RENDERED_CANDIDATES\s*=\s*(\d+)""").find(src)?.groupValues?.get(1)?.toInt()
-        assertTrue("没解析出 MAX_RENDERED_CANDIDATES（写法变了？）", cap != null)
-        assertTrue("渲染路径必须按该常量截断候选", "take(MAX_RENDERED_CANDIDATES)" in src)
+        val cap = Regex("""const val INITIAL_RENDERED_CANDIDATES\s*=\s*(\d+)""").find(src)?.groupValues?.get(1)?.toInt()
+        assertTrue("没解析出 INITIAL_RENDERED_CANDIDATES（写法变了？）", cap != null)
+        assertTrue(
+            "渲染路径必须按窗口条数截断候选（candidateRenderLimit）",
+            "subList(0, candidateRenderLimit)" in src,
+        )
         val items = (1..cap!!).map { it.toString() }
         val cols = CandidateRows.columnsOf(items)
         assertEquals((cap + 1) / 2, cols.size)
