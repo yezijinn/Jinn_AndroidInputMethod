@@ -565,4 +565,22 @@ class ClipboardLimitsTest {
         assertTrue("备份恢复后市进程内的「已验证」结论整批作废", "if (id > 0) verifiedReadable.clear()" in src)
     }
 
+    /**
+     * 淘汰查询必须带 `id` 兜序（BUG.md L-1093）。
+     *
+     * `created_at` 是毫秒时间戳，同毫秒入库的两条会并列 —— 分页与去重查询早已用
+     * `created_at DESC, id DESC`；淘汰侧是不可恢复的删除，缺兜序时同毫秒落在裁剪边界的两条
+     * 谁先删不确定，可能删掉较新的那条。
+     */
+    @Test
+    fun 淘汰查询必须带id兜序() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val hits = Regex("""ORDER BY created_at ASC(, id ASC)?""").findAll(src).map { it.value }.toList()
+        assertTrue("没找到淘汰侧 `ORDER BY created_at ASC`（写法变了？）", hits.size >= 4)
+        assertTrue(
+            "淘汰查询的 `ORDER BY created_at` 必须接 `, id ASC` 兜序（BUG.md L-1093），实际：$hits",
+            hits.all { it.contains(", id ASC") },
+        )
+    }
+
 }

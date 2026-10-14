@@ -747,7 +747,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val rows = ArrayList<ClipboardRowSize>()
         readableDatabase.rawQuery(
             "SELECT id, image_bytes, is_favorite FROM $TABLE_ITEMS WHERE content_type = ? " +
-                "ORDER BY created_at ASC",   // 最旧在前：淘汰顺序即此序
+                "ORDER BY created_at ASC, id ASC",   // 最旧在前：淘汰顺序即此序（id 兜序，同毫秒也确定 —— BUG.md L-1093）
             arrayOf(CONTENT_TYPE_IMAGE),
         ).use { c ->
             while (c.moveToNext()) {
@@ -777,7 +777,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         readableDatabase.rawQuery(
             "SELECT id, CASE WHEN content_type = ? THEN image_bytes " +
                 "ELSE LENGTH(encrypted_content) END FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
-                "ORDER BY created_at ASC",
+                "ORDER BY created_at ASC, id ASC",
             arrayOf(CONTENT_TYPE_IMAGE),
         ).use { c -> while (c.moveToNext()) favRows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), true)) }
         val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
@@ -802,7 +802,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             val need = overflow - ids.size
             readableDatabase.rawQuery(
                 "SELECT id FROM $TABLE_ITEMS WHERE $where AND content_type = ? " +
-                    "ORDER BY created_at ASC LIMIT $need",
+                    "ORDER BY created_at ASC, id ASC LIMIT $need",
                 arrayOf(CONTENT_TYPE_TEXT),
             ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
@@ -841,7 +841,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val rows = ArrayList<ClipboardRowSize>()
         readableDatabase.rawQuery(
             "SELECT id, LENGTH(encrypted_content), is_favorite, content_type FROM $TABLE_ITEMS " +
-                "ORDER BY created_at ASC",   // 最旧在前：淘汰顺序即此序
+                "ORDER BY created_at ASC, id ASC",   // 最旧在前：淘汰顺序即此序（id 兜序，同毫秒也确定 —— BUG.md L-1093）
             null
         ).use { c ->
             while (c.moveToNext()) {
