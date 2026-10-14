@@ -38,6 +38,7 @@ class KeyAppearanceActivity : Activity() {
     private lateinit var spinnerCandidateRows: UserAwareSpinner
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
+    private lateinit var switchCandidatePaging: Switch
     private lateinit var spinnerTheme: UserAwareSpinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
@@ -283,6 +284,16 @@ class KeyAppearanceActivity : Activity() {
         switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
             prefs.showQuanpin = checked
             Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        // 候选浏览方式：勾选 = 左右跟手滑动；不勾 = 左右整屏翻页
+        switchCandidatePaging = findViewById(R.id.switch_candidate_paging)
+        switchCandidatePaging.text = TEXT_CANDIDATE_PAGING_TITLE
+        switchCandidatePaging.isChecked = !prefs.candidatePaging
+        switchCandidatePaging.setOnCheckedChangeListener { _, checked ->
+            prefs.candidatePaging = !checked
+            Diagnostics.i(TAG, "候选浏览方式: ${if (checked) "滑动" else "翻页"}")
             JinnIme.onKeyAppearanceChanged()
         }
     }
@@ -575,6 +586,9 @@ class KeyAppearanceActivity : Activity() {
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
     const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
+
+    /** 候选浏览方式开关标题：勾选 = 左右跟手滑动，不勾 = 左右整屏翻页 */
+    const val TEXT_CANDIDATE_PAGING_TITLE = "候选浏览方式"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */

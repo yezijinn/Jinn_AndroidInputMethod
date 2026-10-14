@@ -79,7 +79,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-09 起 88 → 90：新增「键高」「26 键常显大写」2 键（外观参数；换机要带走）
         // 2026-10-11 起 90 → 91：新增「导出全部图片的目标目录」1 键（与图库目录同款：带走后由
         //                      导出侧的第一张探针检测失效并请用户重选）
-        assertEquals("提取到的键常量应是 91 个（改键数请同步本断言）", 91, keyConstants.size)
+        // 2026-10-14 起 91 → 92：新增「候选浏览方式（滑动 / 翻页）」1 键（外观页控件，换机要带走）
+        assertEquals("提取到的键常量应是 92 个（改键数请同步本断言）", 92, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -123,6 +124,7 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_ROWS" to "asInt(v)",
             "KEY_SHOW_KEY_HINT" to "asBool(v)",
             "KEY_SHOW_QUANPIN" to "asBool(v)",
+            "KEY_CANDIDATE_PAGING" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
             "KEY_RARE_TIER2" to "asBool(v)",
             "KEY_RARE_TIER3" to "asBool(v)",
@@ -487,6 +489,7 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_ROWS" to "candidate_rows",
             "KEY_SHOW_KEY_HINT" to "show_key_hint",
             "KEY_SHOW_QUANPIN" to "show_quanpin",
+            "KEY_CANDIDATE_PAGING" to "candidate_paging",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
             // 外观页的滑杆
             "KEY_KEY_CORNER_DP" to "key_corner_dp",
