@@ -477,6 +477,10 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
 
     private fun render(state: State?) {
         grid.removeAllViews()
+        // 清掉上一份列表：本函数只渲染「状态 / 空」画面，网格里不该再留旧目录的条目 ——
+        // 否则载入中（刷新 / 换目录）时调「布局 → +/-」会经 rebuildGrid → fillPage 用旧 items
+        // 重铺上一目录的缩略图，与状态行「正在读取目录…」自相矛盾（BUG.md L-1075）。
+        items = emptyList()
         // 没有列表可翻：页码回到 1/1
         pageCount = 1
         pageIndex = 0
