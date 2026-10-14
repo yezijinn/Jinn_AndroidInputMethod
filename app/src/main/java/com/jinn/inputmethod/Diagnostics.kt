@@ -264,13 +264,13 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 就钉着一条「十六进制串不受影响」），而凭据进日志的前提本身已被多处自律挡住 —— 精确优先。
      */
     private val API_KEY_RES = listOf(
-        Regex("\\bsk-[A-Za-z0-9_\\-]{12,}"),
-        Regex("[A-Za-z0-9\\-]{16,}:fx\\b"),
-        Regex("(?i)\\bBearer\\s+\\S{12,}"),
+        Regex("(?<![A-Za-z0-9_])sk-[A-Za-z0-9_\\-]{12,}"),
+        Regex("[A-Za-z0-9\\-]{16,}:fx(?![A-Za-z0-9_])"),
+        Regex("(?i)(?<![A-Za-z0-9_])Bearer\\s+\\S{12,}"),
         // 阿里云 AccessKeyId 固定以 `LTAI` 开头（如 `LTAI5t…`）：前缀独特、误伤面极小
         // （2026-10-02 修复 L-312 未覆盖的第三种形态）。AccessKey**Secret** 是高熵随机串，
         // 与哈希同形，仍按上面的原口径不覆盖 —— 靠调用点自律 + 失败体只记结构化摘要挡住。
-        Regex("\\bLTAI[A-Za-z0-9]{8,}"),
+        Regex("(?<![A-Za-z0-9_])LTAI[A-Za-z0-9]{8,}"),
         // URL query 里的签名 / 凭据参数形态（2026-10-03 修复 L-497）：百度系把 `appid` / `sign`
         // 直接放在 query 上（同一条 query 里的 `q` 还是**用户正文**），阿里云用 `AccessKeyId` ——
         // 脱敏表不认这些形态时，任何一处打印 URL（或异常 message 内嵌 URL）都会把签名与正文带出去。
@@ -282,7 +282,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         // `Ocp-Apim-Subscription-Key`，原先不在表内 —— 兜底表的存在前提就是「将来有人打印整行」，
         // 自家在用的头名缺一个就是一处确定性的漏网（`api-key` 兜住各家自定名）
         Regex(
-            "(?i)\\b(authorization|proxy-authorization|x-api-key|x-subscription-key|" +
+            "(?i)(?<![A-Za-z0-9_])(authorization|proxy-authorization|x-api-key|x-subscription-key|" +
                 "ocp-apim-subscription-key|api-key)\\s*[:=]\\s*(?!bearer\\s)\\S{8,}",
         ),
         // URL 的 userinfo 形态（`https://user:pass@host/`）—— 凭据藏在 URL 里，任何一处打印完整 URL 都会带走它

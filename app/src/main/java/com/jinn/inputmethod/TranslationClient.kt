@@ -581,7 +581,7 @@ internal object TranslationClient {
      * `Diagnostics.API_KEY_RES` **刻意不含**这一形态（避免误伤哈希与摘要），所以它挡住「打印响应头」
      * 这条通道的唯一办法是在调用点判（2026-10-03 修复 L-620）。
      */
-    private val HEX_CREDENTIAL_RE = Regex("\\b[0-9a-fA-F]{32,64}\\b")
+    private val HEX_CREDENTIAL_RE = Regex("(?<![0-9A-Za-z])[0-9a-fA-F]{32,64}(?![0-9A-Za-z])")
 
     /**
      * 响应头的**安全摘要**（2026-10-03 修复 L-620）。
