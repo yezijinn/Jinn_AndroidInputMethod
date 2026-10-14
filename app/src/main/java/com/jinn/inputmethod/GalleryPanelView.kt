@@ -622,6 +622,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                     post { if (gen == generation) bindThumb(uri, bmp) }
                 }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
+                // 池关闭 / 饱和时任务被拒、整份丢失：必须留痕（与 BackgroundIo.rejected / ClipboardThumbLoader 同口径，BUG.md L-1372）
+                Diagnostics.w(TAG, "图库缩略图任务提交被拒（池已关闭/饱和）")
                 inFlight.remove(key)
             }
         }
