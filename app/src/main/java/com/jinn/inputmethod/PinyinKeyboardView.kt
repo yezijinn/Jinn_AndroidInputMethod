@@ -372,6 +372,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun clearCandidateList() {
         resetCandidateRender()
+        // 容器被**非候选形态**（功能面板 / 符号分组 / 密码数字条 / 内联提示 / 空态）接管：
+        // 分页状态一并复位，避免①已排队的追加回调把候选视图插到这些形态上（它们各自清容器后重填）；
+        // ②下次候选渲染沿用旧的窗口条数 / 滚动位（看起来像没刷新）。
+        candidateRenderArgs = null
+        candidateRenderSource = emptyList()
+        candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
         viewCandidateList.removeAllViews()
     }
 
@@ -2405,7 +2411,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 否则剩余候选既滚不到、也不会触发本方法。
      */
     private fun maybeAppendMoreCandidates() {
+        // 容器被非候选形态接管过（[clearCandidateList] 会清掉 args、[resetCandidateRender] 会置空指纹）：
+        // 此时绝不能再往容器尾部追加候选视图 —— 那会把候选插到功能面板 / 符号 / 密码条上。
         val args = candidateRenderArgs ?: return
+        if (candidateRenderKey == null) return
         if (candidateRenderLimit >= args.items.size) return
         val maxScroll = viewCandidateList.width - candidateScroll.width +
             candidateScroll.paddingLeft + candidateScroll.paddingRight

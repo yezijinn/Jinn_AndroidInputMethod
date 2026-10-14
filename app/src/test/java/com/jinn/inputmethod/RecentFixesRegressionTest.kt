@@ -1281,6 +1281,14 @@ class RecentFixesRegressionTest {
             "内容没撑满视口时也要继续追加（否则剩余候选滚不到、永久不可达）",
             "maxScroll > 0 &&" in src,
         )
+        assertTrue(
+            "追加渲染前必须确认容器仍是候选形态（否则会把候选追加到功能面板 / 符号 / 密码条上）",
+            "if (candidateRenderKey == null) return" in src,
+        )
+        assertTrue(
+            "清空候选容器必须一并复位分页状态（args 置空），避免已排队的追加回调用到陈旧入参",
+            "candidateRenderArgs = null" in src,
+        )
     }
 
     @Test
