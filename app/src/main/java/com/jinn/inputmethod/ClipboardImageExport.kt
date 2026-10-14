@@ -231,7 +231,7 @@ internal object ClipboardImageExport {
         // 失败分支同样要收尾（BUG.md L-1287）：临时件是本次刚生成的唯一名文件，不删就在缓存目录
         // 留一份**明文**图片 —— 目录的保留策略只在成功路径上跑，失败多了会堆着没人收
         val uri = runCatching {
-            FileProvider.getUriForFile(context, "${context.packageName}.share", file)
+            FileProvider.getUriForFile(context, "${context.packageName}${GalleryInsert.FILE_PROVIDER_AUTHORITY_SUFFIX}", file)
         }.getOrNull() ?: run {
             file.delete()
             Diagnostics.w(TAG, "复制图片到剪贴板失败：取分享 URI 失败，已清理临时件")

@@ -76,6 +76,9 @@ internal object GalleryInsert {
 
     private const val TAG = "GalleryInsert"
 
+    /** FileProvider authority 后缀：与 `AndroidManifest.xml` 的 `android:authorities` 后缀一致（BUG.md L-1022） */
+    internal const val FILE_PROVIDER_AUTHORITY_SUFFIX = ".share"
+
     /** 选图复制的三种结果：失败要能区分原因，界面才好给准确提示 */
     internal sealed interface CopyResult {
         class Ok(val file: File, val mime: String) : CopyResult
@@ -212,7 +215,7 @@ internal object GalleryInsert {
         }
         val ic: InputConnection = ime.currentInputConnection ?: return InsertResult.NoConnection
         val uri = runCatching {
-            FileProvider.getUriForFile(ime, "${ime.packageName}.share", file)
+            FileProvider.getUriForFile(ime, "${ime.packageName}$FILE_PROVIDER_AUTHORITY_SUFFIX", file)
         }.getOrNull() ?: run {
             // 本地构造失败（文件落在 cache 外 / authority 不匹配）：与「宿主拒收」分开成一档 ——
             // 混在一起时两种原因在诊断包里长得一样、界面也无提示（BUG.md L-1074）
