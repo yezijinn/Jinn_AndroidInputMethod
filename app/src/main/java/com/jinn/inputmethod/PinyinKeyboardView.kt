@@ -2233,6 +2233,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (items != candidateRenderSource) {
             candidateRenderSource = items
             candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
+            // 换了一批候选：横滑位置也回到最左。否则新候选会停在旧滚动位（前一批更长时尤其明显），
+            // 第一个候选被推到屏外，看起来像「候选没刷新」。
+            candidateScroll.scrollTo(0, 0)
         }
         val shown = if (items.size > candidateRenderLimit) items.subList(0, candidateRenderLimit) else items
         candidateRenderArgs = CandidateRenderArgs(items, rows, rowHeightPx, colorToken, colorRes, onClick)
@@ -2243,7 +2246,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 不写死数字 —— BUG.md L-1291：定义域翻倍后旧数字会变成错依据）；垂直方向不受影响。
         val spacingHalfPx = dpFloat(prefs.candidateSpacingDp / 2f).toInt()
         // 指纹命中就跳过整棵重建（2026-10-03 修复 L-796）：退格连删时 items 往往不变，只是选中项在移，
-        // 而重建要付 36 个 TextView + 36 个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
+        // 而重建要付几十个 TextView + 几十个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
         // items 一致（指纹已覆盖全部文本），所以跳过是安全的。
         // ⚠ 用 Long 做线性和（L-818）：Int 线性和的取值域与「无缓存」哨兵重叠，改为 `Long? = null` 后
         // 碰撞不可能发生 —— 指纹相等就跳过重建，撞上就是候选栏空白。
@@ -2260,6 +2263,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (renderKey == candidateRenderKey) return
         candidateRenderKey = renderKey
         viewCandidateList.removeAllViews()
+        // 布局完成后兜一次「内容没撑满、但还有候选没渲染」的情况（见 [maybeAppendMoreCandidates]）：
+        // 这时滚不动、触发不了滚动回调，必须主动补足，否则后面的候选永远不可达。
+        candidateScroll.post { maybeAppendMoreCandidates() }
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         fun build(text: String): TextView = TextView(context).apply {
@@ -2326,13 +2332,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * ⚠ 只由**向右**的用户滚动触发（见 `init` 里监听器的 `scrollX > oldScrollX` 判据）：
      *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把 scrollX 夹回、发出一次
      *   scrollX **变小**的回调 —— 若不加方向判据，这里会凭空把首屏 32 条一次铺到满。
+     *
+     * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足，
+     * 否则剩余候选既滚不到、也不会触发本方法。
      */
     private fun maybeAppendMoreCandidates() {
         val args = candidateRenderArgs ?: return
         if (candidateRenderLimit >= args.items.size) return
         val maxScroll = viewCandidateList.width - candidateScroll.width +
             candidateScroll.paddingLeft + candidateScroll.paddingRight
-        if (candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
+        // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」，直接继续追加：这种情况滚不动，
+        // 触发不了滚动回调，后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
+        if (maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
         val keepX = candidateScroll.scrollX
         candidateRenderLimit = minOf(args.items.size, candidateRenderLimit + RENDERED_CANDIDATES_STEP)
         Diagnostics.i(TAG, "候选分页: 追加渲染至 ${candidateRenderLimit}/${args.items.size} 条")

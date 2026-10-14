@@ -1273,6 +1273,14 @@ class RecentFixesRegressionTest {
             "必须有「横滑到末尾追加更多候选」的滚动监听",
             "setOnScrollChangeListener" in src && "maybeAppendMoreCandidates" in src,
         )
+        assertTrue(
+            "换候选必须把横滑位置复位（否则新候选停在旧滚动位，第一候选被推到屏外）",
+            "candidateScroll.scrollTo(0, 0)" in src,
+        )
+        assertTrue(
+            "内容没撑满视口时也要继续追加（否则剩余候选滚不到、永久不可达）",
+            "maxScroll > 0 &&" in src,
+        )
     }
 
     @Test

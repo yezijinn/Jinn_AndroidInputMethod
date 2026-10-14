@@ -20,6 +20,7 @@ r"""一体化词库生成：分片短语库 + 三档单字表 + 简繁映射。
     app/src/main/assets/simp_trad.txt.xz      简繁映射（字级，OpenCC STCharacters + 人工覆盖）
     app/src/main/assets/simp_trad_words.txt.xz 简繁词级消歧（整词优先于逐字）
     app/src/main/assets/simplify.txt.xz       繁→简单字映射（折简体用，源 OpenCC TSCharacters）
+    app/src/main/assets/pinyin_mix.txt.xz     单音节候选混合序（字频 + 词频按 rime 同尺度交错，见 build_mix_order.py）
     release/dict_part2.txt.xz / _part3 / _part4   分类词库下载包（90 / 70 / 21 万条，2026-10-10 重切）
 
 用法
@@ -50,6 +51,7 @@ from asset_io import (  # noqa: E402
     write_bytes_atomically,
 )
 from build_dict_index import build_index_bytes  # noqa: E402
+from build_mix_order import main as build_mix_order  # noqa: E402
 from convert_rime_ice import XZ_FILTERS  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -610,6 +612,10 @@ def main():
         build_parts(all_chars)
     if do("simp"):
         build_simp_trad()
+    # 单音节候选混合序依赖「字表 + 索引」两者（见 build_mix_order.py）：任一方重建就跟着重算，
+    # 否则新字表 / 新索引配旧混合表，单音节候选会按过期次序排。
+    if args.only in (None, "chars", "parts"):
+        build_mix_order()
     log("assets 合计：%d 字节" % sum(
         os.path.getsize(os.path.join(A, f)) for f in os.listdir(A)))
 
