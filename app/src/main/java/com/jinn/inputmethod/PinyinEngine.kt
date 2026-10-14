@@ -2267,18 +2267,29 @@ object PinyinEngine {
     }
 
     /**
-     * 按单音节混合序把 [items] **稳定**重排；任一 token 不在 [rank] 里就返回 `null`（调用方保持原序）。
+     * 按单音节混合序重排 [items]：**已登记**（表内）的按名次稳定排序，**未登记**的挪到末尾。
      *
      * 比对用简体形：候选在「只使用繁体字」下是繁体，而混合表按简体建（与 consumption / predict 同口径）。
-     * 稳定排序（`sortedBy` 走 TimSort）：同名次的候选保持原来的相对次序。
+     *
+     * 未登记项是「混合表没收录、又没有可比词频权重」的候选：**可选词库补入的词**（分类词库下载包按
+     * 单独资产装载，不进内置混合表）、模糊音变体、ue-ve 合并字等。它们统一挪到末尾并保持原有相对
+     * 次序 —— 既不参与混合、也不丢候选。⚠ 早先的**全有或全无**（任一候选不在表内就整体不排）会让
+     * 「装了分类词库」的用户在最常见的键上完全不混合（实测 xian/jian/jie/zhuan… 全被跳过）。
+     *
+     * 一个都没命中（表口径整块对不上）时返回 `null`，让调用方保持原序，避免口径错位时乱排。
      */
     private fun reorderByMix(items: Collection<String>, rank: Map<String, Int>): List<String>? {
         val arr = items.toList()
-        val keys = IntArray(arr.size)
-        for (i in arr.indices) {
-            keys[i] = rank[toSimplified(arr[i])] ?: return null
+        val matched = ArrayList<Pair<Int, String>>(arr.size)
+        val unmatched = ArrayList<String>()
+        for (t in arr) {
+            val r = rank[toSimplified(t)]
+            if (r != null) matched.add(r to t) else unmatched.add(t)
         }
-        return arr.indices.sortedBy { keys[it] }.map { arr[it] }
+        if (matched.isEmpty()) return null
+        matched.sortBy { it.first }
+        if (unmatched.isEmpty()) return matched.map { it.second }
+        return matched.map { it.second } + unmatched
     }
 
     /**

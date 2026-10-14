@@ -41,17 +41,34 @@ class PinyinMixOrderTest {
     }
 
     @Test
-    fun 有候选不在混合表内则整体不排() {
+    fun 未登记的候选挪到末尾() {
         PinyinEngine.loadFromTexts(
             chars = "qie\t且,切",
             phrases = "qie\t企鹅",
             syllables = "qie",
         )
-        // 表里没有「切」⇒ 不能把未登记的候选乱序，整体保持原序（词先于字）
+        // 表里没有「切」⇒ 已登记的按混合序排（「且」在「企鹅」前），未登记的「切」挪到末尾、不丢候选
         PinyinEngine.setMixOrderForTest("qie\t且|企鹅")
         assertEquals(
-            listOf("企鹅", "且", "切"),
+            listOf("且", "企鹅", "切"),
             PinyinEngine.query("qie").candidates,
+        )
+    }
+
+    @Test
+    fun 可选词库补入的词不阻断该键的混合() {
+        // 实测缺陷（装了分类词库的机器）：可选词不在内置混合表内，若「任一候选不在表内就不排」，
+        // 该键会完全不混合。修法是未登记项挪到末尾，混合照常生效。
+        PinyinEngine.loadFromTexts(
+            chars = "xian\t先,现,贤",
+            phrases = "xian\t西安|西岸|锡安",
+            syllables = "xian",
+        )
+        // 「西岸 / 锡安」不在表内（模拟可选词库补入的词）⇒ 混合序在前，二者落末尾、保持原相对序
+        PinyinEngine.setMixOrderForTest("xian\t先|现|西安|贤")
+        assertEquals(
+            listOf("先", "现", "西安", "贤", "西岸", "锡安"),
+            PinyinEngine.query("xian").candidates,
         )
     }
 

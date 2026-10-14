@@ -2189,13 +2189,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** [renderCandidateItems] 的入参快照：横滑到末尾追加渲染时据此重放（见 [maybeAppendMoreCandidates]） */
+    /** [renderCandidateItems] 的入参快照：追加渲染时据此**增量**补齐尾部若干条（见 [maybeAppendMoreCandidates]） */
     private data class CandidateRenderArgs(
         val items: List<String>,
         val rows: Int,
         val rowHeightPx: Int,
         val colorToken: Int?,
         val colorRes: Int,
+        val sizeSp: Float,
+        val spacingHalfPx: Int,
+        val appearanceKey: Long,
         val onClick: (String) -> Unit,
     )
 
@@ -2238,7 +2241,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             candidateScroll.scrollTo(0, 0)
         }
         val shown = if (items.size > candidateRenderLimit) items.subList(0, candidateRenderLimit) else items
-        candidateRenderArgs = CandidateRenderArgs(items, rows, rowHeightPx, colorToken, colorRes, onClick)
 
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
         // 每个候选左右各内缩「字距的一半」—— 相邻两个候选的内缩相加正好等于用户设的字距
@@ -2257,9 +2259,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // items / 字号 / 字距都没变时命中旧指纹 ⇒ 子项保留旧行高、与已重算的栏高错配（放大即裁字）。
         val sizeSp = currentCandidateSp
         val fontScaleToken = (resources.configuration.fontScale * 100f).toInt()
-        val renderKey = shown.hashCode().toLong() * 31 + rows * 7 + spacingHalfPx * 13 +
+        // 外观相关的指纹部分（不含候选文本）：追加渲染后据此把指纹更新成「新窗口」的样子，
+        // 下一次同内容刷新因此仍能命中、不整棵重建。
+        val appearanceKey = rows * 7L + spacingHalfPx * 13 +
             (colorToken?.hashCode()?.toLong() ?: 0L) + colorRes + sizeSp.toInt() * 17 +
             fontScaleToken * 23
+        candidateRenderArgs = CandidateRenderArgs(
+            items, rows, rowHeightPx, colorToken, colorRes, sizeSp, spacingHalfPx, appearanceKey, onClick,
+        )
+        val renderKey = shown.hashCode().toLong() * 31 + appearanceKey
         if (renderKey == candidateRenderKey) return
         candidateRenderKey = renderKey
         viewCandidateList.removeAllViews()
@@ -2268,21 +2276,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateScroll.post { maybeAppendMoreCandidates() }
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
-        fun build(text: String): TextView = TextView(context).apply {
-            this.text = text
-            textSize = sizeSp
-            gravity = android.view.Gravity.CENTER
-            setTextColor(skinToken(colorToken, colorRes))
-            // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
-            setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
-            isClickable = true
-            // 候选词 / 预测词走 Click 语义（**不是** ACTION_DOWN）：候选栏是横向滚动容器，
-            // 在 DOWN 触发的话，用户横滑候选列表会先响一声。走点击则只有真正选中才响。
-            setOnClickListener {
-                KeyFeedback.fire(TapSound.G_TEXT)
-                onClick(text)
-            }
-        }
+        val candidateColor = skinToken(colorToken, colorRes)
+        fun build(text: String): TextView =
+            buildCandidateView(text, sizeSp, spacingHalfPx, candidateColor, onClick)
         if (rows != CandidateRows.DOUBLE) {
             for (text in shown) {
                 viewCandidateList.addView(build(text))
@@ -2322,16 +2318,88 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /** 单个候选条目视图（[renderCandidateItems] 与 [appendCandidateViews] 共用；字色 / 字号 / 回调由调用方给）。 */
+    private fun buildCandidateView(
+        text: String,
+        sizeSp: Float,
+        spacingHalfPx: Int,
+        color: Int,
+        onClick: (String) -> Unit,
+    ): TextView = TextView(context).apply {
+        this.text = text
+        textSize = sizeSp
+        gravity = android.view.Gravity.CENTER
+        setTextColor(color)
+        // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
+        setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
+        isClickable = true
+        // 候选词 / 预测词走 Click 语义（**不是** ACTION_DOWN）：候选栏是横向滚动容器，
+        // 在 DOWN 触发的话，用户横滑候选列表会先响一声。走点击则只有真正选中才响。
+        setOnClickListener {
+            KeyFeedback.fire(TapSound.G_TEXT)
+            onClick(text)
+        }
+    }
+
+    /**
+     * **增量**把 [CandidateRenderArgs.items] 的 `[from, to)` 区间接到候选容器**尾部**
+     * （追加渲染用，见 [maybeAppendMoreCandidates]）。
+     *
+     * 只 `addView`、**不** clear、**不**动滚动位置 —— 这正是「划到末尾追加候选」不再整栏重建 +
+     * 回滚 scrollX（用户看到的就是回弹抖动）的关键。双行档按**绝对序号**成列：`from` 恒为偶数
+     * （初值 [INITIAL_RENDERED_CANDIDATES]、步长 [RENDERED_CANDIDATES_STEP] 皆为偶，到末尾封顶后
+     * 不再追加），故 `(from, from+1), (from+2, from+3)…` 的配对与整棵渲染 `columnsOf` 完全一致。
+     */
+    private fun appendCandidateViews(args: CandidateRenderArgs, from: Int, to: Int) {
+        val color = skinToken(args.colorToken, args.colorRes)
+        if (args.rows != CandidateRows.DOUBLE) {
+            for (i in from until to) {
+                viewCandidateList.addView(
+                    buildCandidateView(args.items[i], args.sizeSp, args.spacingHalfPx, color, args.onClick),
+                )
+            }
+            return
+        }
+        val rowHeight = args.rowHeightPx
+        var i = from
+        while (i < to) {
+            val bottom = args.items[i]
+            val top = if (i + 1 < to) args.items[i + 1] else null
+            // 列内先下排后上排：视图树顺序即无障碍顺序（与 renderCandidateItems 的说明一致）
+            val column = FrameLayout(context)
+            column.addView(
+                buildCandidateView(bottom, args.sizeSp, args.spacingHalfPx, color, args.onClick),
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
+                    android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.BOTTOM),
+            )
+            column.addView(
+                top?.let { buildCandidateView(it, args.sizeSp, args.spacingHalfPx, color, args.onClick) }
+                    ?: View(context),
+                FrameLayout.LayoutParams(
+                    if (top == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
+                    android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.TOP),
+            )
+            viewCandidateList.addView(
+                column,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            )
+            i += 2
+        }
+    }
+
     /**
      * 候选栏横滑到末尾时追加渲染更多候选（分页渲染的「翻页」动作，见 [INITIAL_RENDERED_CANDIDATES]）。
      *
-     * 只有在「可见区已推到右端」（距末尾 [RENDER_EDGE_DP] 以内）且还有未渲染候选时才动作。
-     * 追加后剩下的候选更靠右，当前位置不再算末尾，因此不会连环触发；追加是一次局部重建
-     * （前缀不变、只多出尾部若干条），随后复原滚动位置。
+     * 只有在「可见区已推到右端」（距末尾 [RENDER_EDGE_DP] 以内）或「内容还没撑满视口」且还有
+     * 未渲染候选时才动作。追加是**增量**的（[appendCandidateViews] 只往尾部接视图）：不动已有
+     * 子项、不动 scrollX ⇒ 候选栏平滑衔接，不出现回弹抖动。追加后剩下的候选更靠右，当前位置
+     * 不再算末尾，因此不会连环触发。
      *
      * ⚠ 只由**向右**的用户滚动触发（见 `init` 里监听器的 `scrollX > oldScrollX` 判据）：
      *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把 scrollX 夹回、发出一次
-     *   scrollX **变小**的回调 —— 若不加方向判据，这里会凭空把首屏 32 条一次铺到满。
+     *   scrollX **变小**的回调 —— 若不加方向判据，这里会凭空把首屏铺到满。
      *
      * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足，
      * 否则剩余候选既滚不到、也不会触发本方法。
@@ -2344,19 +2412,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」，直接继续追加：这种情况滚不动，
         // 触发不了滚动回调，后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
         if (maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
-        val keepX = candidateScroll.scrollX
-        candidateRenderLimit = minOf(args.items.size, candidateRenderLimit + RENDERED_CANDIDATES_STEP)
-        Diagnostics.i(TAG, "候选分页: 追加渲染至 ${candidateRenderLimit}/${args.items.size} 条")
-        renderCandidateItems(
-            items = args.items,
-            rows = args.rows,
-            rowHeightPx = args.rowHeightPx,
-            colorToken = args.colorToken,
-            colorRes = args.colorRes,
-            onClick = args.onClick,
-        )
-        // 重建会 removeAllViews 再重填，个别情况下 scrollX 会被拽动；下一帧复原到用户当前位置。
-        candidateScroll.post { if (candidateScroll.scrollX != keepX) candidateScroll.scrollTo(keepX, 0) }
+        val from = candidateRenderLimit
+        val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
+        appendCandidateViews(args, from, to)
+        candidateRenderLimit = to
+        // 指纹更新成「新窗口」的样子：下一次同内容刷新仍命中、不整棵重建
+        val shownNew = if (args.items.size > to) args.items.subList(0, to) else args.items
+        candidateRenderKey = shownNew.hashCode().toLong() * 31 + args.appearanceKey
+        Diagnostics.i(TAG, "候选分页: 追加渲染至 $to/${args.items.size} 条")
+        // 追加后若仍撑不满视口 / 还没到底，继续补（撑满或到底后自然不再动作）
+        candidateScroll.post { maybeAppendMoreCandidates() }
     }
 
     private fun refreshCandidateBar() {
