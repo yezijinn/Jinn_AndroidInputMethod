@@ -533,6 +533,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
         candidateScroll = root.findViewById(R.id.candidate_scroll)
+        // 关掉内容边缘的 overscroll 效果：本机（ColorOS 等）把边缘效果做成「拉伸回弹」，
+        // 而候选栏滑到末尾的那一刻正好触发追加渲染 —— 用户看到的「文字回弹 / 回退」正是它。
+        // 候选栏本就 `scrollbars=none`、不靠光晕反馈，这里统一禁掉最干净，追加衔接即无感。
+        candidateScroll.overScrollMode = View.OVER_SCROLL_NEVER
         // 分页渲染：横滑到末尾追加更多候选。只要「向右」的滚动（scrollX 增大）——
         // 换候选时容器重建会把 scrollX 夹小并发出一次回调，方向判据把那种情况挡在外面。
         candidateScroll.setOnScrollChangeListener { _, scrollX, _, oldScrollX, _ ->
