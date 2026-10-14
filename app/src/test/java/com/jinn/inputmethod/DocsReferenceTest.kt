@@ -536,14 +536,15 @@ class DocsReferenceTest {
         val mb = apk.length() / 1e6
         for (name in listOf("README.md", "README_EN.md")) {
             val doc = readDoc(name) ?: continue
-            val m = Regex("""(?i)APK[^\n]{0,12}?约?\s*~?\s*([0-9]+(?:\.[0-9]+)?)\s*MB""").find(doc)
-                ?: continue
-            val claimed = m.groupValues[1].toDouble()
+            val claims = Regex("""(?i)APK[^\n]{0,12}?约?\s*~?\s*([0-9]+(?:\.[0-9]+)?)\s*MB""")
+                .findAll(doc).map { it.groupValues[1] }.toList()
+            if (claims.isEmpty()) continue
             val actual = "%.1f".format(mb)      // 对外写的是「约 X.YMB」：取一位小数比
+            // 全量集合：文档里**每处** APK 体积声明都必须等于当前值 —— 只取首个匹配会漏掉
+            // 「历史段残留旧值」（AI2 只读审查 A-270）
             assertEquals(
-                "$name 写「$claimed MB」与实际 ${"%.2f".format(mb)} MB 不符（守卫要求 X.Y 位一致；" +
-                    "体积变大时请同步改 README）",
-                actual, "%.1f".format(claimed),
+                "$name 的 APK 体积声明应全部等于实际 ${"%.2f".format(mb)} MB（历史段残留旧值？体积变大时请同步改 README）",
+                setOf(actual), claims.map { "%.1f".format(it.toDouble()) }.toSet(),
             )
         }
     }
