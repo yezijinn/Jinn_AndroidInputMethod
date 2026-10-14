@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import java.text.Normalizer
+import java.util.Locale
 
 /**
  * 剪贴板搜索的纯匹配层（BUG.md L-1134 / L-1135 / L-984）。
@@ -52,8 +53,8 @@ internal object ClipboardSearch {
      * （`hasVisibleContent` 也正是全仓判「有没有内容」的那一份，别另写一套）。
      */
     fun queryForms(raw: String): List<String> {
-        val lower = raw.lowercase()
-        val cleaned = FavoriteSymbols.clean(raw).lowercase()
+        val lower = raw.lowercase(Locale.ROOT)
+        val cleaned = FavoriteSymbols.clean(raw).lowercase(Locale.ROOT)
         val forms = LinkedHashSet<String>()
         for (form in listOf(lower, cleaned, fold(lower), fold(cleaned))) {
             if (form.hasVisibleContent()) forms += form
@@ -70,7 +71,7 @@ internal object ClipboardSearch {
      */
     fun matches(content: String, forms: List<String>): Boolean {
         if (forms.isEmpty()) return false
-        val lower = content.lowercase()
+        val lower = content.lowercase(Locale.ROOT)
         if (forms.any { lower.contains(it) }) return true
         if (!needsFold(lower)) return false
         val folded = fold(FavoriteSymbols.clean(lower))
