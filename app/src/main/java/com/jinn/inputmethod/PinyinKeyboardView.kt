@@ -2898,10 +2898,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val key = keyViews[c] ?: continue
             key.glyphSizeDeltaPx = if (layer == LAYER_LETTER) glyphDeltaPx else 0f
             key.fullPinyinStyle = fullPinyin && layer == LAYER_LETTER
-            // 符号层一律水平 + 垂直居中（不用字母层的小字顶置样式）
+            // 符号层 / 数字层一律水平 + 垂直居中（不用字母层的小字顶置样式）
             key.uniformMeasureText = if (layer == LAYER_LETTER) uniformLetterMeasure else uniformSymbolText
             key.uniformMeasureWidth = if (layer == LAYER_LETTER) uniformLetterWidth else uniformSymbolWidth
-            key.centeredStyle = layer == LAYER_SYMBOL
+            key.centeredStyle = layer == LAYER_SYMBOL || layer == LAYER_DIGIT
             key.label = when (layer) {
                 // 变量组是动态取值：键面只显示短名（去掉标记），上屏时才展开成时间
                 LAYER_SYMBOL -> currentSymbolMap()[c]?.let(DynamicSymbols::labelOf) ?: ""
