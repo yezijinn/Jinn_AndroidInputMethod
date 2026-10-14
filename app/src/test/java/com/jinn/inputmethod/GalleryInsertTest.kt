@@ -181,8 +181,8 @@ class GalleryInsertTest {
     }
 
     /**
-     * 落地阶段的**本地可判定**失败要上报（L-1006）：文件失效与输入框已切换各给一次提示；
-     * 宿主拒收与无连接保持静默，免得变成噪音。
+     * 落地阶段的**本地可判定**失败要上报（L-1006 / L-1074）：文件失效、输入框已切换、本地 URI
+     * 构造失败各给一次提示；宿主拒收与无连接保持静默，免得变成噪音。
      */
     @Test
     fun 落地失败的两类会上报界面() {
@@ -190,10 +190,10 @@ class GalleryInsertTest {
         val body = TestSources.blockAfter(mine, "private fun flushPendingGalleryImage()")
         assertTrue("文件失效要提示", "toast(TEXT_GALLERY_GONE)" in body)
         assertTrue("输入框已切换要提示", "toast(TEXT_GALLERY_FIELD_CHANGED)" in body)
-        val rejectedTail = TestSources.window(body, "InsertResult.Rejected", "}")
+        val rejectedTail = TestSources.window(body, "InsertResult.Rejected", "InsertResult.UriFailed")
         assertFalse("宿主拒收不弹提示", "toast" in rejectedTail)
         val gallery = TestSources.codeSource("GalleryInsert.kt")
-        for (state in listOf("Submitted", "Rejected", "NoConnection", "FileMissing")) {
+        for (state in listOf("Submitted", "Rejected", "NoConnection", "FileMissing", "UriFailed")) {
             assertTrue("提交结果要有 $state 态", state in gallery)
         }
     }

@@ -90,7 +90,7 @@ internal object GalleryInsert {
      * 调用方不可把它当成成功承诺；`FileMissing` / `NoConnection` 是本地可判定的失败，
      * 调用方据此给用户可见反馈（L-1006）。
      */
-    internal enum class InsertResult { Submitted, Rejected, NoConnection, FileMissing }
+    internal enum class InsertResult { Submitted, Rejected, NoConnection, FileMissing, UriFailed }
 
     /**
      * 待插入的一张图。
@@ -213,7 +213,12 @@ internal object GalleryInsert {
         val ic: InputConnection = ime.currentInputConnection ?: return InsertResult.NoConnection
         val uri = runCatching {
             FileProvider.getUriForFile(ime, "${ime.packageName}.share", file)
-        }.getOrNull() ?: return InsertResult.Rejected
+        }.getOrNull() ?: run {
+            // 本地构造失败（文件落在 cache 外 / authority 不匹配）：与「宿主拒收」分开成一档 ——
+            // 混在一起时两种原因在诊断包里长得一样、界面也无提示（BUG.md L-1074）
+            Diagnostics.w(TAG, "图片 URI 构造失败: ${file.name}")
+            return InsertResult.UriFailed
+        }
         val item = InputContentInfo(uri, ClipDescription("jinn-gallery", arrayOf(mime)), null)
         val flags = InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION
         val submitted = runCatching { ic.commitContent(item, flags, null) }.getOrDefault(false)

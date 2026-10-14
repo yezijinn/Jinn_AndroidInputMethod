@@ -1296,6 +1296,11 @@ class JinnIme : InputMethodService() {
                 }
                 GalleryInsert.InsertResult.Rejected ->
                     Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
+                // 本地 URI 构造失败：与宿主拒收分开，沿用「图片已失效」提示（BUG.md L-1074）
+                GalleryInsert.InsertResult.UriFailed -> {
+                    Diagnostics.w(TAG, "图库快贴：图片 URI 构造失败")
+                    toast(TEXT_GALLERY_GONE)
+                }
             }
         }
     }
@@ -1341,6 +1346,10 @@ class JinnIme : InputMethodService() {
                     GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "粘贴图片: 已提交")
                     GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
                     GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
+                    GalleryInsert.InsertResult.UriFailed -> {
+                        Diagnostics.w(TAG, "粘贴图片: URI 构造失败")
+                        toast(TEXT_IMAGE_UNAVAILABLE)
+                    }
                     GalleryInsert.InsertResult.Rejected -> {
                         // 宿主声明支持却拒收（部分 WebView / 自绘输入框）也要给出口：只报
                         // 「未接受图片」会让人面对「点了没反应」，而系统级粘贴往往是通的
