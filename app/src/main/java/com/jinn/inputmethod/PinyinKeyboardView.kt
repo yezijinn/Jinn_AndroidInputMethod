@@ -18,7 +18,6 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -195,7 +194,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidateList: LinearLayout
 
     /** 候选区视口：两排共用一个横滑容器（天然同步）；✕ 可见时右内边距让出按钮宽度 */
-    private val candidateScroll: HorizontalScrollView
+    private val candidateScroll: CandidateScrollView
 
     /**
      * 拼音条：**叠放层**，位于候选区之上。单行档贴顶（候选区随之下移一条），双行档垂直居中
@@ -354,12 +353,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /**
      * 候选浏览方式（[Prefs.candidatePaging]）：true = 左右整屏翻页，false = 左右跟手滑动。
-     * 由 [refreshCandidateBar] 每帧刷新；翻页模式下 [_candidateSnapTask] 在滑动/惯性停下后吸附到整屏页边界。
+     * 由 [refreshCandidateBar] 每帧下发到 [candidateScroll]（见 [CandidateScrollView]）。
      */
     private var candidatePaging = false
-
-    /** 翻页模式的「滑停吸附」延迟任务：滚动事件每次都重排，停稳后才真正吸附一页 */
-    private val _candidateSnapTask = Runnable { snapCandidatesToPage() }
 
     /**
      * 复位候选渲染指纹（2026-10-03 修复 L-809 / L-818）：下一次 [renderCandidateItems] 必须重建整棵树。
@@ -550,15 +546,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 换候选时容器重建会把 scrollX 夹小并发出一次回调，方向判据把那种情况挡在外面。
         candidateScroll.setOnScrollChangeListener { _, scrollX, _, oldScrollX, _ ->
             if (scrollX > oldScrollX) maybeAppendMoreCandidates()
-            // 翻页模式：滑动 / 惯性期间不断重排吸附任务，停稳后才吸附到整屏页边界
-            scheduleCandidateSnap()
-        }
-        // 翻页模式：抬手 / 取消时也排一次吸附（惯性结束后生效）
-        candidateScroll.setOnTouchListener { _, e ->
-            if (e.action == MotionEvent.ACTION_UP || e.action == MotionEvent.ACTION_CANCEL) {
-                scheduleCandidateSnap()
-            }
-            false
         }
         pinyinBar = root.findViewById(R.id.pinyin_bar)
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
@@ -2455,28 +2442,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateScroll.post { maybeAppendMoreCandidates() }
     }
 
-    /** 翻页模式：滑动 / 惯性停稳后吸附到最近的整屏页边界（见 [candidatePaging]）。非翻页模式空操作。 */
-    private fun scheduleCandidateSnap() {
-        if (!candidatePaging) return
-        candidateScroll.removeCallbacks(_candidateSnapTask)
-        candidateScroll.postDelayed(_candidateSnapTask, CANDIDATE_SNAP_DELAY_MS)
-    }
-
-    /**
-     * 把候选栏吸附到整屏页边界：页宽 = 视口可见宽（[candidateScroll] 内容区），
-     * 目标 = 离当前 `scrollX` 最近的一页（四舍五入）并夹在 `[0, maxScroll]` 内。
-     *
-     * 只 `smoothScrollTo`、不动子视图 —— 翻页模式下追加的候选落在新的一页，翻页是一整屏的离散过渡。
-     */
-    private fun snapCandidatesToPage() {
-        if (!candidatePaging) return
-        val page = candidateScroll.width - candidateScroll.paddingLeft - candidateScroll.paddingRight
-        if (page <= 0) return
-        val maxScroll = (viewCandidateList.width - page).coerceAtLeast(0)
-        val target = (((candidateScroll.scrollX + page / 2) / page) * page).coerceIn(0, maxScroll)
-        if (target != candidateScroll.scrollX) candidateScroll.smoothScrollTo(target, 0)
-    }
-
     private fun refreshCandidateBar() {
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
@@ -2495,8 +2460,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val rows = prefs.candidateRows
         val candidateSp = prefs.candidateTextSp
-        // 候选浏览方式（滑动 / 翻页）：本帧只读一次，供滚动监听与吸附任务用
+        // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器
         candidatePaging = prefs.candidatePaging
+        candidateScroll.paging = candidatePaging
         val perRow = applyCandidateRows(rows, candidateSp)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
@@ -4417,9 +4383,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 距候选滚动区右端多少 dp 内算「已滑到末尾」，触发追加渲染 */
         const val RENDER_EDGE_DP = 24
-
-        /** 翻页模式「滑停吸附」的延迟（ms）：滚动 / 惯性期间不断重排，静默这么久才吸附一页 */
-        const val CANDIDATE_SNAP_DELAY_MS = 120L
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f
