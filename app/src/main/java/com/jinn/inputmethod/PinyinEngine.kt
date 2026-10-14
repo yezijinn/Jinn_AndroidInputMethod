@@ -121,6 +121,15 @@ object PinyinEngine {
      */
     private const val INDEX_ASSET_XZ = "pinyin_index.bin.xz"
 
+    /**
+     * 单音节候选混合序资产（`tools/dict_builder/build_mix_order.py` 构建期产出）。
+     *
+     * 单音节键（qie / xian / zuan…）下同时有单字与连写双音词（企鹅 = qi+e、西安 = xi+an）。
+     * 运行时原先一律「词先于字」，本资产给出按**同尺度词频**（rime 字频 + 词频）交错后的次序，
+     * 供 [query] 对单音节结果重排。仅 60 键、xz 约 4KB。
+     */
+    private const val MIX_ORDER_ASSET = "pinyin_mix.txt.xz"
+
     /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
     /** 可选词库目录名（filesDir 下）：每类词库一个 xz 文件，供「分类词库」页按需下载 */
     const val OPT_DICT_DIR = "dicts"
@@ -412,6 +421,15 @@ object PinyinEngine {
     private var tier3Chars: BooleanArray? = null
 
     /**
+     * 单音节候选混合序：音节 → (候选 token → 名次序)。来源见 [MIX_ORDER_ASSET]。
+     *
+     * 为 `null` 表示未加载（测试注入路径不设它）—— 此时 [query] 保持历史行为（词先于字），
+     * 既有用例因此完全不受影响；仅真机加载 [MIX_ORDER_ASSET] 后才生效。
+     */
+    @Volatile
+    private var mixOrder: HashMap<String, HashMap<String, Int>>? = null
+
+    /**
      * 可选字档开关（设置页「加更多生僻字」页内两个开关，[Prefs.rareTier2] / [Prefs.rareTier3]）。
      *
      * 位图**总是**加载（两档合计 3,760 字，成本可忽略），开关只决定查询期是否放行 ——
@@ -669,6 +687,7 @@ object PinyinEngine {
             commonChars = null
             tier2Chars = null
             tier3Chars = null
+            mixOrder = null
             rareTier2 = false
             rareTier3 = false
             clearSimpTrad()
@@ -712,6 +731,7 @@ object PinyinEngine {
             commonChars = null
             tier2Chars = null
             tier3Chars = null
+            mixOrder = null
             clearSimpTrad()
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
             if (tier2CharsText != null) setTier2CharsText(tier2CharsText)
@@ -758,6 +778,7 @@ object PinyinEngine {
             commonChars = null
             tier2Chars = null
             tier3Chars = null
+            mixOrder = null
             clearSimpTrad()
             if (commonCharsText != null) setCommonCharsText(commonCharsText)
             if (tier2CharsText != null) setTier2CharsText(tier2CharsText)
@@ -847,6 +868,9 @@ object PinyinEngine {
         // 顺序与结果无关（简化表的源文本会被重放，见 setSimplifyText 的 KDoc）：仍按
         // 「字级 → 词级 → 简化」的阅读顺序排列，别据此推断出依赖关系。
         openAssetText(context, SIMPLIFY_ASSET).use { setSimplifyText(it.readText()) }
+        // 单音节候选混合序：缺失 / 损坏都退回「不重排」，绝不影响词库加载本身
+        runCatching { openAssetText(context, MIX_ORDER_ASSET).use { setMixOrderText(it.readText()) } }
+            .onFailure { Diagnostics.w(TAG, "混合序资产加载失败，单音节候选保持原序: ${it.message}") }
     }
 
     /**
@@ -912,6 +936,30 @@ object PinyinEngine {
     /** 档 3 字表：格式同上 */
     internal fun setTier3CharsText(text: String) {
         tier3Chars = charsToBitmap(text)
+    }
+
+    /**
+     * 解析单音节候选混合序文本（[MIX_ORDER_ASSET]）：`音节<TAB>候选1|候选2|...`，`#` 开头为注释行。
+     *
+     * 同音节内重复 token 只记首次出现的名次（[putIfAbsent]）。
+     */
+    private fun setMixOrderText(text: String) {
+        val map = HashMap<String, HashMap<String, Int>>()
+        for (line in text.lineSequence()) {
+            if (line.isEmpty() || line[0] == '#') continue
+            val tab = line.indexOf('\t')
+            if (tab <= 0) continue
+            val toks = line.substring(tab + 1).split('|')
+            val rank = HashMap<String, Int>(toks.size * 2)
+            for (i in toks.indices) rank.putIfAbsent(toks[i], i)
+            map[line.substring(0, tab)] = rank
+        }
+        mixOrder = map
+    }
+
+    /** 测试注入：设置单音节候选混合序表（与 [load] 读 [MIX_ORDER_ASSET] 同语义）。 */
+    internal fun setMixOrderForTest(text: String) {
+        setMixOrderText(text)
     }
 
     /**
@@ -2194,6 +2242,21 @@ object PinyinEngine {
             result.addAll(displayTake(matchCharsByPrefix(partial), MAX_CHARS))
         }
 
+        // 单音节候选按「词频混合序」重排（[MIX_ORDER_ASSET]）：词与字不再固定「词先于字」，
+        // 而是按构建期用 rime 同尺度权重算好的次序交错（如 qie → 且 切 窃 怯 企鹅 …）。
+        // 仅单音节、且该音节有混合表时生效；任一候选不在表内（模糊变体 / ue-ve 合并字 / 补全词）
+        // 就整体不排，保持历史行为 —— 宁可不动，也不把没登记的候选乱序。
+        // 用户词频排序仍在其后（[UserFrequency.rank] 稳定排序）：学过的词照样被提到更前。
+        if (syllables.size == 1) {
+            val mix = mixOrder?.get(syllables[0])
+            if (mix != null && result.size > 1) {
+                reorderByMix(result, mix)?.let {
+                    result.clear()
+                    result.addAll(it)
+                }
+            }
+        }
+
         // 用户词频学习：把「用户实际选过」的词稳定提到前面（未学习时零开销、零行为变化）。
         // 繁体模式下候选是繁体、词频表按简体存储（[rememberChoice] 同口径），因此按简体形式打分、
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
@@ -2201,6 +2264,21 @@ object PinyinEngine {
         val token = result.toTypedArray()
         val ordered = UserFrequency.rank(token) { toSimplified(it) }.toList()
         return Result(ordered, syllables, partial)
+    }
+
+    /**
+     * 按单音节混合序把 [items] **稳定**重排；任一 token 不在 [rank] 里就返回 `null`（调用方保持原序）。
+     *
+     * 比对用简体形：候选在「只使用繁体字」下是繁体，而混合表按简体建（与 consumption / predict 同口径）。
+     * 稳定排序（`sortedBy` 走 TimSort）：同名次的候选保持原来的相对次序。
+     */
+    private fun reorderByMix(items: Collection<String>, rank: Map<String, Int>): List<String>? {
+        val arr = items.toList()
+        val keys = IntArray(arr.size)
+        for (i in arr.indices) {
+            keys[i] = rank[toSimplified(arr[i])] ?: return null
+        }
+        return arr.indices.sortedBy { keys[it] }.map { arr[it] }
     }
 
     /**
