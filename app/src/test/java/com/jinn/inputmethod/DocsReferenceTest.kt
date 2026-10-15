@@ -1034,6 +1034,17 @@ class DocsReferenceTest {
         assertTrue("功能总览缺常用字字表条数（资产实测 ${commafy(tiers[0])}）", "常用字 ${commafy(tiers[0])}" in overview)
         assertTrue("功能总览缺档 2 字表条数（资产实测 ${commafy(tiers[1])}）", "${commafy(tiers[1])} 字" in overview)
         assertTrue("功能总览缺档 3 字表条数（资产实测 ${commafy(tiers[2])}）", "${commafy(tiers[2])} 字" in overview)
+        // 反向 stray（A-270 余留的一半）：`常用字` 是**独有**声明位（不像 `N 字` 那样过泛、会误命中
+        // 无关数字），故可安全全量扫描 —— 两文档里任何一处 `常用字 <数字>` 都必须是当前值，
+        // 「改一处漏一处」即红
+        for ((name, doc) in listOf("README.md" to readme, "功能总览.md" to overview)) {
+            val stray = Regex("""常用字\s*([\d,]+)""").findAll(doc).map { it.groupValues[1] }
+                .filter { it != commafy(tiers[0]) }.toSet()
+            assertTrue(
+                "$name 的「常用字」写着非当前值 ${stray.sorted().joinToString("/")}（源码 ${commafy(tiers[0])}）",
+                stray.isEmpty(),
+            )
+        }
     }
 
     /**
