@@ -134,6 +134,32 @@ class DiagnosticsSanitizeTest {
         assertEquals("hash=$hex", Diagnostics.redactSensitive("hash=$hex"))
     }
 
+    // CJK 紧贴形态（BUG.md L-1377 / AI2 A-258）：Android 的 Pattern 走 ICU，**汉字算单词字符**，
+    // 于是「密钥sk-…」这类紧贴用例在 `\b` 时代会静默漏遮（而 JVM 单测的 ASCII 语义永远看不出来）。
+    // 现有四形态修好后仍只是源码层面的事实 —— 这里把「CJK 紧贴必须遮住」钉成行为契约：
+    // 将来把 `(?<![A-Za-z0-9_])` 换成别的语义（如 `(?<=^|[ =])`）或直接删掉前视，本用例当场红。
+    @Test
+    fun `CJK 紧贴凭据仍被脱敏`() {
+        assertTrue(Diagnostics.redactSensitive("密钥sk-proj-Ab12cd34EF56gh78").contains("****"))
+        assertTrue(Diagnostics.redactSensitive("令牌LTAI5tAbcDef0123456789").contains("****"))
+        assertTrue(Diagnostics.redactSensitive("认证 Bearer abcdef1234567890").contains("****"))
+        assertTrue(Diagnostics.redactSensitive("key=sk-proj-Ab12cd34EF56gh78尾部/base").contains("****"))
+    }
+
+    // 反向：不能为了补 CJK 边界而**削弱**原有的 ASCII 侧边界
+    // （`xxsk-…` / `xxBearer …` 属「更长的键名恰好以凭据前缀开头」，本就不该匹配）
+    @Test
+    fun `ASCII 紧贴前缀不误伤`() {
+        assertFalse(
+            "ASCII 紧贴应不匹配",
+            Diagnostics.redactSensitive("xxsk-proj-Ab12cd34EF56gh78").contains("****"),
+        )
+        assertFalse(
+            "ASCII 紧贴应不匹配",
+            Diagnostics.redactSensitive("xxBearer abcdef1234567890").contains("****"),
+        )
+    }
+
     @Test
     fun `落盘时换行与控制字符被替换（防伪造日志行）`() {
         // 日志行以换行分界：用户可控串（Base URL / host / 包内设备名）带换行就能伪造完整假日志行

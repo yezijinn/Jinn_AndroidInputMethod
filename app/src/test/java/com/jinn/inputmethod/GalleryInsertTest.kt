@@ -580,6 +580,32 @@ class GalleryInsertTest {
     }
 
     /**
+     * 宿主声明的**具体**类型要逐张比对（BUG.md L-1058）。
+     *
+     * 入口判据 [GalleryInsert.canHostAccept] 把整张声明表压成一个布尔：宿主只收 png 时它照样 true，
+     * 于是选一张 WebP 会被静默拒收（图上不去、界面零反馈）。这里正向钉住解析层的契约 ——
+     * 声明过的才收、没挑明的（通配）才放行，并反向钉住两条出库路径都真的问过它。
+     */
+    @Test
+    fun 宿主声明的类型要逐张比对() {
+        val onlyPng = arrayOf("image/png")
+        assertTrue("声明 png 就该收 png", GalleryInsert.acceptsMime(onlyPng, "image/png"))
+        assertFalse("只声明 png 不收 webp", GalleryInsert.acceptsMime(onlyPng, "image/webp"))
+        assertFalse("声明为空一律不收", GalleryInsert.acceptsMime(emptyArray(), "image/png"))
+        assertFalse("无声明不收", GalleryInsert.acceptsMime(null, "image/png"))
+        // 宿主没挑明具体类型时无从预判 ⇒ 交回「声明了也不一定可用」的既有口径
+        assertTrue("image 通配放行", GalleryInsert.acceptsMime(arrayOf("image/*"), "image/webp"))
+        assertTrue("全通配放行", GalleryInsert.acceptsMime(arrayOf("*/*"), "image/heic"))
+
+        val src = TestSources.codeSource("JinnIme.kt")
+        assertTrue("会话要留住声明列表", "hostImageMimeTypes" in src)
+        val flush = TestSources.blockAfter(src, "private fun flushPendingGalleryImage()")
+        assertTrue("flush 要按具体类型过滤", "acceptsMime(" in flush)
+        val paste = TestSources.blockAfter(src, "private fun pasteClipboardImage(item: ClipboardDb.Item)")
+        assertTrue("剪贴板点图也要过滤", "acceptsMime(" in paste)
+    }
+
+    /**
      * 图库日志不得带路径与文件名（`BUG.md` L-1036）。
      *
      * `Diagnostics` 的 `sanitizeForFile` 只脱敏手机号 / 邮箱 / 长数字串，路径原样留下；
