@@ -1230,6 +1230,9 @@ class JinnIme : InputMethodService() {
      */
     private var hostImageCapableForSession = false
 
+    /** 本次输入会话里宿主声明的**具体**图片类型（[GalleryInsert.acceptsMime] 用；未声明/不支持为 null） */
+    private var hostImageMimeTypes: Array<String>? = null
+
     /**
      * 图库快贴：按宿主声明决定键盘上「图库」入口的显隐。
      *
@@ -1240,6 +1243,9 @@ class JinnIme : InputMethodService() {
      */
     private fun applyHostImageCapability(info: EditorInfo?) {
         val mimes = info?.let { androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it) }
+        // 声明列表本身要留到提交时刻：只压成一个布尔就丢了「宿主到底收哪几种」，
+        // 图上不去时既说不清原因也给不出提示（BUG.md L-1058）
+        hostImageMimeTypes = if (GalleryInsert.canHostAccept(mimes)) mimes else null
         val capable = GalleryInsert.canHostAccept(mimes)
         hostImageCapableForSession = capable
         pinyinKeyboard?.setHostImageCapable(capable)
@@ -1281,6 +1287,13 @@ class JinnIme : InputMethodService() {
                 toast(TEXT_GALLERY_FIELD_CHANGED)
                 return
             }
+            // 类型不在宿主声明里的（宿主只收 png 却选了 WebP）不必等它拒收：直接说清原因，
+            // 否则图上不去而界面零反馈、诊断包只剩一行「未接受」（BUG.md L-1058）
+            if (!GalleryInsert.acceptsMime(hostImageMimeTypes, picked.mime)) {
+                Diagnostics.w(TAG, "图库快贴：宿主未声明本图类型（${picked.mime}），不提交")
+                toast(TEXT_IMAGE_REJECTED)
+                continue
+            }
             when (GalleryInsert.commit(this, picked.file, picked.mime)) {
                 GalleryInsert.InsertResult.Submitted -> Diagnostics.i(TAG, "图库快贴：已提交")
                 GalleryInsert.InsertResult.FileMissing -> {
@@ -1317,26 +1330,26 @@ class JinnIme : InputMethodService() {
      */
     private fun pasteClipboardImage(item: ClipboardDb.Item): Boolean {
         if (item.image == null) return false
-        val capable = GalleryInsert.canHostAccept(
-            currentInputEditorInfo?.let {
-                androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it)
-            }
-        )
         BackgroundIo.runLong {
             val bytes = ClipboardImageExport.readOriginal(this, item)
             if (bytes == null) {
                 ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
                 return@runLong
             }
-            if (!capable) {
-                // 回退：宿主不支持 commitContent（纯文本 / 部分 WebView）⇒ 走剪贴板兜底通道
-                fallbackToClipboard(item, bytes)
-                return@runLong
-            }
             // 交付的类型与出库三动作（保存 / 转移 / 复制）同源（BUG.md L-1303）：原先这里直接信
             // 记录类型，记录不准时 cache 文件名扩展名与 ClipDescription 都与实际字节不符 ——
             // 严格按声明解析的宿主会打不开，而全链路没有任何提示
             val mime = ClipboardImageExport.mimeOf(item, bytes)
+            // 类型不符不该等到被拒：宿主只收 png 时这张 WebP 走同一条回退通道，
+            // 比「提交被拒后图上不去且零反馈」体感一致（BUG.md L-1058）
+            val types = hostImageMimeTypes
+            val capable =
+                GalleryInsert.canHostAccept(types) && GalleryInsert.acceptsMime(types, mime)
+            if (!capable) {
+                // 回退：宿主不支持 commitContent（纯文本 / 部分 WebView）或不收本类型 ⇒ 走剪贴板兜底通道
+                fallbackToClipboard(item, bytes)
+                return@runLong
+            }
             val file = GalleryInsert.stageForInsert(this, bytes, mime) ?: run {
                 ui.post { toast(TEXT_IMAGE_UNAVAILABLE) }
                 return@runLong

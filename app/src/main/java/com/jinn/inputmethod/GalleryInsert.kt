@@ -134,6 +134,22 @@ internal object GalleryInsert {
         mimeTypes?.any { it == "*/*" || it.startsWith("image/") } == true
 
     /**
+     * 声明列表里**是否收得下**某一种具体类型（[canHostAccept] 只回答「有没有声明过任一种」，
+     * 判不了某张具体图 —— 宿主只声明 png 时它照样 true，L-1058）。
+     *
+     * 全通配与 image 通配视作放行：宿主自己没挑明具体类型，无从预判，
+     * 交回「声明了也不一定可用」的口径。其余按**精确相等**比对 —— 这一层是收紧过滤
+     * （多挡一次并给出可见提示，好过图上不去而毫无反应），不做家族推断。
+     */
+    fun acceptsMime(mimeTypes: Array<String>?, mime: String): Boolean {
+        if (mimeTypes.isNullOrEmpty()) return false
+        // 宿主没挑明具体类型（全通配 / image 通配）：不写通配字面量 —— 「提交出去的类型必须是具体的」
+        // 是另一条口径（GalleryInsertTest.图片类型按文件头嗅探且兜底不用通配 钉着提交侧）
+        if (mimeTypes.any { it.endsWith("/*") }) return true
+        return mimeTypes.any { it == mime }
+    }
+
+    /**
      * **图库专用**的输入框标识：包名 + `fieldId` + 输入类型 + `imeOptions`，全部取自宿主给的静态属性。
      *
      * 为什么不与粘贴暂存（`fieldKeyOf`，只有包名 + fieldId）共用：`EditorInfo.fieldId` 由宿主自定，
