@@ -96,4 +96,31 @@ class LunarDateTest {
         }
         assertTrue("遍历天数不对: $count", count > 18_000)
     }
+
+    // 生肖降级口径（BUG.md L-1376）：zodiacOf 的契约是**农历年**，表外年份没有春节锚点，
+    // 调用方拿公历年硬算会在春节前多进一位（错位一年）。近似口径收在模块内，这里钉住
+    // 「1 月 20 日及以前 = 农历年还没翻篇」，并反向钉住源码里不许再有 zodiacOf(公历年) 式硬算。
+    @Test
+    fun 生肖降级按春节区间修正农历年() {
+        // 春节最早 1/21 ⇒ 1/20 及更早必定仍属上一农历年
+        assertEquals("蛇年", LunarDate.zodiacApprox(d(2026, 1, 20)))
+        assertEquals("蛇年", LunarDate.zodiacApprox(d(2026, 1, 10)))
+        assertEquals("蛇年", LunarDate.zodiacApprox(d(2026, 1, 1)))
+        // 跨春节可能位置的日期无从判定 ⇒ 维持公历年（不劣于修正前）
+        assertEquals("马年", LunarDate.zodiacApprox(d(2026, 1, 25)))
+        assertEquals("马年", LunarDate.zodiacApprox(d(2026, 3, 1)))
+        // 非 1 月（春节不可能落到的月份）不修正；2025-12-31 在 2025 春节（1/29）之后 ⇒ 仍是乙巳蛇年
+        assertEquals("蛇年", LunarDate.zodiacApprox(d(2025, 12, 31)))
+        assertEquals("蛇年", LunarDate.zodiacApprox(d(2025, 6, 15)))
+    }
+
+    @Test
+    fun 生肖降级不得再用公历年硬算() {
+        val src = TestSources.codeSource("DynamicSymbols.kt")
+        assertFalse(
+            "DynamicSymbols 里仍有 zodiacOf(公历年) 式硬算 —— 春节前会错位一年（L-1376）",
+            Regex("""zodiacOf\s*\(\s*[^\n]*\.year""").containsMatchIn(src),
+        )
+        assertTrue("DynamicSymbols 应改用 zodiacApprox", "zodiacApprox" in src)
+    }
 }

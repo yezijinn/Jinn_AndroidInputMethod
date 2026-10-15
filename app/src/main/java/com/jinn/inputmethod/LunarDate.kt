@@ -96,6 +96,18 @@ object LunarDate {
     /** 「马年」：直接按年份取生肖（表覆盖不到时供调用方降级使用） */
     fun zodiacOf(lunarYear: Int): String = ZODIAC[(lunarYear - 4).mod(12)] + "年"
 
+    /**
+     * 「马年」：表覆盖不到（[zodiac] 返 null）时的近似降级，供调用方使用，**不返回 null**。
+     *
+     * 春节落在公历 1/21–2/21，故只在**可确定的区间**做修正：1 月 20 日及以前农历年必然还没翻篇
+     * （取公历年 − 1）；其余日期跨了春节的可能位置，无从判定，维持公历年（与修正前等价，不劣化）。
+     * 近似口径收在模块内，避免调用方各自按公历年硬算。
+     */
+    fun zodiacApprox(gregorian: LocalDate): String {
+        val y = if (gregorian.monthValue == 1 && gregorian.dayOfMonth <= 20) gregorian.year - 1 else gregorian.year
+        return zodiacOf(y)
+    }
+
     /** 春节（该农历年的正月初一） */
     private fun newYearOf(lunarYear: Int): LocalDate? {
         val info = infoOf(lunarYear) ?: return null

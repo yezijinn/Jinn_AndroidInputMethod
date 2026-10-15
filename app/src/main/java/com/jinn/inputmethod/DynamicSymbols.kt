@@ -99,7 +99,7 @@ object DynamicSymbols {
             "毫秒戳" -> at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli().toString()
             "星期" -> WEEKDAYS.getValue(at.dayOfWeek)
             "农历" -> LunarDate.text(at.toLocalDate())?.let { "农历$it" } ?: at.format(FMT_DATE_CN)
-            "生肖" -> LunarDate.zodiac(at.toLocalDate()) ?: LunarDate.zodiacOf(at.year)
+            "生肖" -> LunarDate.zodiac(at.toLocalDate()) ?: LunarDate.zodiacApprox(at.toLocalDate())
             "季度" -> quarterText(at)
             "财年" -> fiscalText(at)
             "天数" -> dayCountText(at)
