@@ -600,9 +600,16 @@ class GalleryInsertTest {
         val src = TestSources.codeSource("JinnIme.kt")
         assertTrue("会话要留住声明列表", "hostImageMimeTypes" in src)
         val flush = TestSources.blockAfter(src, "private fun flushPendingGalleryImage()")
-        assertTrue("flush 要按具体类型过滤", "acceptsMime(" in flush)
+        // 钉**真实调用形态**而非子串：只判 `acceptsMime(` 的话，注释里写一句同样字样就能骗过
+        assertTrue(
+            "flush 要按具体类型过滤",
+            Regex("""GalleryInsert\.acceptsMime\(hostImageMimeTypes, picked\.mime\)""").containsMatchIn(flush),
+        )
         val paste = TestSources.blockAfter(src, "private fun pasteClipboardImage(item: ClipboardDb.Item)")
-        assertTrue("剪贴板点图也要过滤", "acceptsMime(" in paste)
+        assertTrue(
+            "剪贴板点图也要过滤",
+            Regex("""GalleryInsert\.acceptsMime\(types, mime\)""").containsMatchIn(paste),
+        )
     }
 
     /**
