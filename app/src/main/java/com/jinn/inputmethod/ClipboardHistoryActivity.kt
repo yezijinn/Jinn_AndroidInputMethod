@@ -1289,6 +1289,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     /** 收藏时未绑定图库目录的引导框（本次收藏已按加密方式完成） */
     private fun showFavBindDialog() {
+        // 本框只由**长活池**的回调经 `runOnUiThread` 触发（解密 + 写盘可达数秒）：期间旋转或返回，
+        // 回调落到已销毁的实例上，对失效窗口 show() 会抛未捕获 BadTokenException 把**整个进程**
+        // 带走（输入法与设置页同进程，输入法一并倒）。与 `message()` 同款守卫（BUG.md L-1386）。
+        if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle(TEXT_IMAGE_FAV_NEED_BIND_TITLE)
             .setMessage(TEXT_IMAGE_FAV_NEED_BIND)
