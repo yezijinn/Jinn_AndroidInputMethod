@@ -108,6 +108,11 @@
             android:exported="false"
             android:label="@string/key_appearance_entry" />
 
+        <!-- 底栏标点输出页：从设置页「空格左右按钮」按钮进入（逗号/句号字符，中文态与英文态分开，各限一个） -->
+        <activity
+            android:name=".PunctOutputActivity"
+            android:exported="false" />
+
         <!-- 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧进入（数量/体积/收藏/单条/分页/搜索上限） -->
         <activity
             android:name=".ClipboardCustomizeActivity"

@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底栏标点输出页：从设置页「空格左右按钮」按钮进入。逗号 / 句号两枚底栏固定键各自可自定义上屏字符，
+     中文态与英文态分开，各限一个字符（多输入的字符由 PunctOutput.sanitizeField 裁到最后一个码点）。
+     文案与取值全在 PunctOutputActivity 里下发（strings.xml 默认不改动），故此处不写 android:text。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_punct_output_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_punct_output_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_punct_output_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 中文态：逗号 / 句号 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsFieldTitle"
+                        android:id="@+id/label_punct_comma_cn"
+                        android:layout_height="wrap_content" />
+
+                    <EditText
+                        style="@style/SettingsField"
+                        android:id="@+id/edit_punct_comma_cn"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsFieldTitle"
+                        android:id="@+id/label_punct_period_cn"
+                        android:layout_height="wrap_content" />
+
+                    <EditText
+                        style="@style/SettingsField"
+                        android:id="@+id/edit_punct_period_cn"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 英文态：逗号 / 句号 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsFieldTitle"
+                        android:id="@+id/label_punct_comma_en"
+                        android:layout_height="wrap_content" />
+
+                    <EditText
+                        style="@style/SettingsField"
+                        android:id="@+id/edit_punct_comma_en"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SettingsFieldTitle"
+                        android:id="@+id/label_punct_period_en"
+                        android:layout_height="wrap_content" />
+
+                    <EditText
+                        style="@style/SettingsField"
+                        android:id="@+id/edit_punct_period_en"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 空格键左右滑动移动光标：原设置页的开关迁入本页 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:orientation="vertical">
+
+                <Switch
+                    android:id="@+id/switch_space_cursor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

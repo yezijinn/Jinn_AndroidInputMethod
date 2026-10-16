@@ -363,14 +363,12 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, GallerySettingsActivity::class.java))
             }
         }
-        // 空格左右按钮：控制「空格键左右滑动移动光标」的开关（与图库入口同行）。
-        // 用开关而不是普通按钮 —— 用户要的是「控制…的开关」，而定值文案按钮看不出当前状态。
-        findViewById<Switch>(R.id.switch_space_cursor).apply {
+        // 空格左右按钮：入口按钮（与图库入口同行），点击进入「底栏标点输出」独立页
+        // （逗号/句号字符自定义 + 空格键左右滑动移动光标开关都收在那一页里）。
+        findViewById<Button>(R.id.btn_space_cursor).apply {
             text = TEXT_SPACE_CURSOR
-            isChecked = prefs.spaceCursorMove
-            setOnCheckedChangeListener { _, checked ->
-                prefs.spaceCursorMove = checked
-                Diagnostics.i(TAG, "空格左右滑动移动光标: ${if (checked) "开启" else "关闭"}")
+            setOnClickListener {
+                startActivity(Intent(this@SettingsActivity, PunctOutputActivity::class.java))
             }
         }
         // 存储占用：只读统计页（用户问「存储由什么组成」——大头常是看不见的词库索引缓存）
@@ -1823,7 +1821,7 @@ class SettingsActivity : ComponentActivity() {
         /** 键盘外观入口（布局仍引用 `@string/key_appearance_entry`，这里覆盖成新文案） */
         const val TEXT_KEY_APPEARANCE_ENTRY = "键盘外观自选"
 
-        /** 空格键左右滑动移动光标的开关（与「图库快贴功能」同行） */
+        /** 底栏标点输出入口按钮（与「图库快贴功能」同行；页面内文案在 PunctOutputActivity 里下发） */
         const val TEXT_SPACE_CURSOR = "空格左右按钮"
 
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */

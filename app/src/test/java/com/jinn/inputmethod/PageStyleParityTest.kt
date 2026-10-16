@@ -28,6 +28,7 @@ class PageStyleParityTest {
         "activity_favorite_symbols.xml",
         "activity_fuzzy_pinyin.xml",
         "activity_openai_settings.xml",
+        "activity_punct_output.xml",
         "activity_rare_chars.xml",
         "activity_symbol_order.xml",
         "activity_settings.xml",
