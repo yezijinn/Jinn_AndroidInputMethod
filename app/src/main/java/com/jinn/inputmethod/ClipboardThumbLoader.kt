@@ -31,9 +31,28 @@ internal object ClipboardThumbLoader {
     private val failedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
 
-    private val pool: ExecutorService = Executors.newFixedThreadPool(THUMB_THREADS) { r ->
-        Thread(r, "jinn-clipthumb").apply { isDaemon = true }
-    }
+    /** 在途解码的 key：并发下防同一张重复提交（与图库池同款，BUG.md L-1390） */
+    private val inFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 主线程投递用的 Handler：提到字段，不再每次解码完成都新建（与图库池同款） */
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** 按机型折半后的缓存上限（与图库池同款，BUG.md L-1390）：首次用到时按档位落定一次 */
+    private fun thumbCacheBytes(context: Context) =
+        DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong()).toInt()
+
+    /** 缓存是否已按当前档位设过上限（避免每次 load 都重设、把已有图清掉） */
+    private val cacheSized = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val pool: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newFixedThreadPool(THUMB_THREADS) { r ->
+            // 解码是满核的活，且与输入法同进程：在线程体内降后台优先级（BUG.md L-1194，
+            // 与图库缩略图池同款 —— 剪贴板面板铺图时不与主线程打字抢 CPU）
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }, "jinn-clipthumb").apply { isDaemon = true }
+        }
 
     private val cache = object : LruCache<String, Bitmap>(THUMB_CACHE_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
@@ -55,6 +74,11 @@ internal object ClipboardThumbLoader {
      * 缓存命中时**同步**回调（在同一线程栈上），调用方需容忍这一点。
      */
     fun load(context: Context, hash: String, targetPx: Int, onReady: (String, Bitmap) -> Unit) {
+        // 低内存档把缓存折半（与图库池同款）：只做一次，避免每帧重设把已有缩略图清掉
+        if (cacheSized.compareAndSet(false, true)) {
+            val budget = thumbCacheBytes(context)
+            if (budget != THUMB_CACHE_BYTES) cache.resize(budget)
+        }
         val key = keyOf(hash, targetPx)
         cache.get(key)?.let {
             onReady(hash, it)
@@ -66,16 +90,23 @@ internal object ClipboardThumbLoader {
             if (System.currentTimeMillis() - at < FAIL_TTL_MS) return
             failedAt.remove(key)
         }
+        // 在途去重（BUG.md L-1390）：cell 复用 / 快速滚动会把同一张连着提交好几次，
+        // 3 条线程可能对同一张各解一次（每张含一次 Keystore 解密 + 位图解码）
+        if (!inFlight.add(key)) return
         runCatching {
             pool.execute {
                 val bmp = cache.get(key) ?: decode(context, hash, key, targetPx)
                 if (bmp != null) {
-                    android.os.Handler(android.os.Looper.getMainLooper()).post { onReady(hash, bmp) }
+                    uiHandler.post { inFlight.remove(key); onReady(hash, bmp) }
+                } else {
+                    inFlight.remove(key)
                 }
             }
         }.onFailure {
             // 池关闭 / 饱和时 execute 抛 RejectedExecutionException，任务整份丢失：必须留痕，
             // 否则表现为「某一格一直是灰块」且诊断包里查不到任何线索（与 BackgroundIo.rejected 同口径，BUG.md L-1369）
+            // ⚠ 同时清在途标记：否则该 key 永久留在集合里，之后再也排不进去（比重复解码更糟）
+            inFlight.remove(key)
             Diagnostics.w(TAG, "缩略图任务提交被拒（池已关闭/饱和）: ${it.javaClass.simpleName}")
         }
     }

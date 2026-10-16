@@ -332,6 +332,16 @@ class ClipboardImageTest {
         // BUG.md L-1245：缩略图缓存键要含目标尺寸
         assertTrue("缓存键带目标尺寸", "private fun keyOf(hash: String, targetPx: Int)" in
             TestSources.codeSource("ClipboardThumbLoader.kt"))
+        // BUG.md L-1390：剪贴板缩略图池对齐图库池 —— 在途去重 + 提交被拒也要清标记
+        // ⚠ 必须钉「移除」：只加不删会让该 key 永远排不进去（比重复解码更糟）
+        val thumb = TestSources.codeSource("ClipboardThumbLoader.kt")
+        assertTrue("同张图要防重复提交", "inFlight.add(key)" in thumb)
+        assertTrue("解码完成要清在途标记", "inFlight.remove(key)" in thumb)
+        assertTrue("提交被拒也要清在途标记", "inFlight.remove(key)\n" in thumb ||
+            Regex("""onFailure[\s\S]{0,200}inFlight\.remove\(key\)""").containsMatchIn(thumb))
+        // 解码线程要降后台优先级（与图库池同款），且低内存档把缓存折半
+        assertTrue("解码线程降后台优先级", "THREAD_PRIORITY_BACKGROUND" in thumb)
+        assertTrue("缓存按机型折半", "DeviceTier.budget(context, THUMB_CACHE_BYTES" in thumb)
         // BUG.md L-1257：回收按待跑计数合并，跑完再判一次
         assertTrue("回收按计数合并", "pendingGc.getAndSet(0)" in
             TestSources.codeSource("ClipboardDb.kt"))
