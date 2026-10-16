@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * 符号分组排序页：从设置页「符号分组顺序」按钮进入。
@@ -79,14 +80,23 @@ class SymbolOrderActivity : Activity() {
         const val ROW_PADDING_DP = 5
         const val ARROW_HEIGHT_DP = 32
 
+        /** 日志 TAG（本页是纯 JVM 之外的 Activity，日志走 [Diagnostics]） */
+        const val TAG = "SymbolOrder"
+
+        /** 禁用态下行文字的降透明度（该分组已从符号面板移出） */
+        const val DISABLED_ALPHA = 0.4f
+
         // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认不改动）—— 与其余页面一致。
         // 这两页（本页与收藏符号页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
         // （2026-10-02 统一，见 B-152）。
         // ⚠ 标题**不在**这里：`symbol_order_title` 同时是 `AndroidManifest` 里本 activity 的
         //   `android:label`，必须与 `app_name` / `settings_title` 一样留在 strings.xml，
         //   所以标题由布局直接引用那条 string（设置页的入口按钮也用它）。
-        const val TEXT_DESC = "改变符号面板分组的排序，收起键盘即生效"
+        const val TEXT_DESC = "改变符号面板分组的排序，收起键盘即生效；点「X」可禁用某一分组"
         const val TEXT_RESET = "恢复默认顺序"
+
+        /** 至少保留一个可用分组时的提示（不写死「最后一个」以外的细节） */
+        const val TEXT_KEEP_ONE = "至少保留一个符号分组"
     }
 
     override fun onPause() {
@@ -97,9 +107,12 @@ class SymbolOrderActivity : Activity() {
     }
 
     private fun renderRows() {
-        val labels = SymbolOrder.parse(Prefs(this).symbolGroupOrder)
+        val prefs = Prefs(this)
+        val labels = SymbolOrder.parse(prefs.symbolGroupOrder)
+        val disabled = SymbolOrder.disabledParse(prefs.symbolDisabledGroups)
         orderList.removeAllViews()
         labels.forEachIndexed { idx, label ->
+            val off = label in disabled
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
@@ -108,6 +121,8 @@ class SymbolOrderActivity : Activity() {
                 text = "${idx + 1}. $label"
                 textSize = 14f
                 setTextColor(getColor(R.color.text_primary))
+                // 禁用态视觉：该分组在符号面板里不再出现，整行文字压暗以示区别（可再次点击 X 恢复）
+                alpha = if (off) DISABLED_ALPHA else 1f
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             row.addView(name)
@@ -126,8 +141,53 @@ class SymbolOrderActivity : Activity() {
                     applyOrder(SymbolOrder.move(labels, idx, idx + 1))
                 },
             )
+            row.addView(toggleButton(label, off))
             PageStyle.addCard(orderList, row, ROW_PADDING_DP)
         }
+    }
+
+    /**
+     * 「X」禁用 / 启用按钮：点击后该分组从符号面板移出（再点恢复），状态即时落盘。
+     *
+     * 与 ↑↓ 同款纯图标按钮（无底色），只把字形换成叉号；禁用态下动作变成「启用」，
+     * 所以图标本身不压暗 —— 压暗的是该行文字（见 [renderRows]）。
+     */
+    private fun toggleButton(label: String, disabled: Boolean): ImageButton = ImageButton(this).apply {
+        setImageResource(R.drawable.ic_symbol_close)
+        // 图标没有文字，名字就是全部信息：动作随当前状态取「禁用××」/「启用××」
+        contentDescription = SymbolOrder.toggleDescription(disabled, label)
+        background = null
+        setOnClickListener { toggleDisabled(label) }
+        layoutParams = LinearLayout.LayoutParams(
+            PageStyle.dp(context, 40), PageStyle.dp(context, ARROW_HEIGHT_DP),
+        ).apply {
+            marginStart = PageStyle.dp(context, 6)
+        }
+    }
+
+    /**
+     * 切换某分组的禁用态并落盘。
+     *
+     * 不允许把**最后一个**可用分组也禁用：符号面板至少要有内容可显示（脏备份里的「全禁用」
+     * 由 [SymbolOrder.groupsInOrder] 的另一道回退兜底，这里只是让界面行为与之一致）。
+     */
+    private fun toggleDisabled(label: String) {
+        val prefs = Prefs(this)
+        val all = SymbolOrder.parse(prefs.symbolGroupOrder)
+        val disabled = SymbolOrder.disabledParse(prefs.symbolDisabledGroups).toMutableSet()
+        if (label in disabled) {
+            disabled.remove(label)
+        } else {
+            if (all.none { it != label && it !in disabled }) {
+                Toast.makeText(this, TEXT_KEEP_ONE, Toast.LENGTH_SHORT).show()
+                return
+            }
+            disabled.add(label)
+        }
+        prefs.symbolDisabledGroups = SymbolOrder.disabledSerialize(disabled)
+        dirty = true
+        Diagnostics.i(TAG, "符号分组${if (label in disabled) "禁用" else "启用"}: $label")
+        renderRows()
     }
 
     private fun applyOrder(labels: List<String>) {

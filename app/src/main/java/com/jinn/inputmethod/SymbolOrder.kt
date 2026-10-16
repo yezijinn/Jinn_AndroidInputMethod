@@ -76,6 +76,34 @@ object SymbolOrder {
     private const val MOVE_DOWN = "下移"
 
     /**
+     * 禁用集合的持久化串（label 逗号分隔；空串 = 全部启用）。
+     *
+     * 与顺序串分开存（各自一个键）：两者语义独立 —— 挪动位置不该把禁用态一起写一遍，
+     * 反之亦然。归一（[disabledParse] / [disabledSerialize]）保证脏值只留有效 label。
+     */
+    fun disabledParse(raw: String?): Set<String> =
+        raw.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    /** 禁用集合 → 持久化串（去空白 / 去空项 / 去重，保持输入顺序） */
+    fun disabledSerialize(disabled: Collection<String>): String =
+        disabled.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString(",")
+
+    /** 禁用 / 启用的读屏动词（禁用态下那一键的名字） */
+    private const val DISABLE_VERB = "禁用"
+
+    /** 恢复可用时的读屏动词 */
+    private const val ENABLE_VERB = "启用"
+
+    /**
+     * 禁用 / 启用按钮的读屏名（纯函数，便于单测）：**动作 + 对象**。
+     *
+     * 与 [moveDescription] 同一口径：[label] 是当前是否已禁用决定的动作对象 ——
+     * 已禁用时报「启用××」（点一下恢复），未禁用时报「禁用××」。
+     */
+    fun toggleDescription(disabled: Boolean, label: String): String =
+        (if (disabled) ENABLE_VERB else DISABLE_VERB) + "「" + label + "」"
+
+    /**
      * ↑↓ 按钮的读屏名（纯函数，便于单测）：**动作 + 对象**。
      *
      * 图标没有文字，名字就是全部信息（BUG.md L-1138）：原先直接拿 `strings.xml` 里那两条字形
@@ -88,19 +116,31 @@ object SymbolOrder {
     /**
      * 按持久化串取分组对象（顺序即用户自定义顺序）。
      * [favorite] 是从用户数据构建的「收藏」组（[KeyboardLayouts.favoriteGroup]），缺省不带入；
+     * [disabledRaw] 是被禁用的分组 label 串（空串 = 全部启用）。
+     *
+     * 被禁用的分组在这里就被滤掉 —— 符号面板、排序页之外的消费方（[PinyinKeyboardView]）
+     * 拿到的就是「可直接渲染」的列表，不必各自再判一遍禁用。
+     * ⚠ 全部被禁用时回退为**不过滤**：符号面板不能没有任何可显示的分组（脏备份 / 手工构造的
+     * 键值都可能落成全禁用）。
      * internal：返回 internal 类型的 [SymbolGroup]。
      */
-    internal fun groupsInOrder(raw: String, favorite: SymbolGroup? = null): List<SymbolGroup> {
+    internal fun groupsInOrder(
+        raw: String,
+        favorite: SymbolGroup? = null,
+        disabledRaw: String = "",
+    ): List<SymbolGroup> {
         val byLabel = SYMBOL_GROUPS.associateBy { it.label }.let {
             if (favorite == null) it else it + (favorite.label to favorite)
         }
         // 缺组时留痕（BUG.md L-1279）：调用方没传「收藏」数据（或分组名对不上）时原先静默跳过，
         // 界面上表现为这一组凭空消失、排查时也查不到为什么少了一组
-        return parse(raw).mapNotNull { label ->
+        val all = parse(raw).mapNotNull { label ->
             byLabel[label] ?: run {
                 Diagnostics.w(TAG, "符号顺序: 分组「$label」无对应数据，已跳过")
                 null
             }
         }
+        val disabled = disabledParse(disabledRaw)
+        return all.filterNot { it.label in disabled }.ifEmpty { all }
     }
 }

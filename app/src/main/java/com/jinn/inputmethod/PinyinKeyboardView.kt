@@ -489,6 +489,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         SymbolOrder.groupsInOrder(
             prefs.symbolGroupOrder,
             favoriteGroup(FavoriteSymbols.parse(prefs.favoriteSymbols)),
+            prefs.symbolDisabledGroups,
         )
     }
 
@@ -656,6 +657,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val touchSlop: Float =
         android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
+    /**
+     * 空格键左右滑动移动光标（开关见 [Prefs.spaceCursorMove]）的滑动状态。
+     *
+     * [spaceTouchLastX] 是**上一次触发**光标移动的横坐标（不是按下点）：每次位移累计到一个步长
+     * 就移动一格并把基准前移，长距离滑动才能连续多格。单位是 rawX，与按下时同源。
+     */
+    private var spaceTouchLastX = 0f
+
+    /** 本次手指按压是否已由滑动消费（消费后抬起不再当作点击，避免滑动结束又上了一个空格） */
+    private var spaceTouchConsumed = false
+
     private fun dpFloat(v: Float): Float = v * resources.displayMetrics.density
 
     /**
@@ -782,6 +794,47 @@ class PinyinKeyboardView @JvmOverloads constructor(
             height = key.height,
             pad = dpFloat(KEY_HIT_PADDING_DP),
         )
+    }
+
+    /**
+     * 空格键触摸：开关打开时，横向滑动按步长逐格移动宿主光标（左滑左移、右滑右移）。
+     *
+     * 三处刻意的设计：
+     *  - **不消费 DOWN**（返回 false）：让 `View.onTouchEvent` 照常处理短按与长按 —— 前者靠
+     *    OnClickListener 上空格、后者靠 OnLongClickListener 切语音，二者不能因这个开关失效；
+     *  - 一旦滑够一个步长就置 [spaceTouchConsumed]，此后（含 ACTION_UP）一律返回 true：抬起若放行，
+     *    `View.onTouchEvent` 会把手势判成点击，滑动结束又多上一个空格；
+     *  - 滑动确认时先 `cancelLongPress()`：慢速横滑到 500ms 会触发空格长按（切语音），
+     *    用户只是想移光标。
+     */
+    private fun handleSpaceTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                spaceTouchLastX = event.rawX
+                spaceTouchConsumed = false
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                // 开关关闭、或本次手势已消费过：消费过就继续吃掉余下事件（抬起不许当点击）
+                if (!prefs.spaceCursorMove) return false
+                if (spaceTouchConsumed) return true
+                val dx = event.rawX - spaceTouchLastX
+                if (Math.abs(dx) < dpFloat(SPACE_CURSOR_STEP_DP)) return false
+                spaceTouchLastX = event.rawX
+                spaceTouchConsumed = true
+                btnSpace.cancelLongPress()
+                listener?.onDirectionAction(
+                    if (dx < 0) DirectionAction.LEFT else DirectionAction.RIGHT,
+                )
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val consumed = spaceTouchConsumed
+                spaceTouchConsumed = false
+                return consumed
+            }
+        }
+        return false
     }
 
     private fun letterKeyId(c: Char): Int = when (c) {
@@ -942,6 +995,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             listener?.onVoiceRequested()
             true
         }
+        // 空格左右滑动移动光标（开关见 Prefs.spaceCursorMove）：关闭时监听器原样返回 false，
+        // 短按上空格与长按语音完全不受影响（见 [handleSpaceTouch]）
+        btnSpace.setOnTouchListener { _, event -> handleSpaceTouch(event) }
         btnBackspace.setOnTouchListener { view, event ->
             val consumed = handleBackspaceTouch(event)
             // 无障碍：抬手时补 performClick，退格键只有「点击 / 长按连删」，
@@ -982,15 +1038,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             listener?.onEnter()
         }
-        // 逗号/句号：英文模式上 ASCII，中文模式上全角
+        // 逗号/句号：默认英文模式上 ASCII，中文模式上全角；用户可在外观页自定义成任意单字符
         btnComma.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
-            val text = if (englishMode) "," else "，"
+            val text = if (englishMode) prefs.punctCommaEn else prefs.punctCommaCn
             if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
         }
         btnPeriod.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
-            val text = if (englishMode) "." else "。"
+            val text = if (englishMode) prefs.punctPeriodEn else prefs.punctPeriodCn
             if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
         }
     }
@@ -2957,9 +3013,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             btnDigit.setTypeface(android.graphics.Typeface.DEFAULT)
             btnDigit.setTextColor(skinToken(skin.functionGlyph, R.color.text_primary))
         }
-        // 底部逗号 / 句号：拼音态全角（，。）、英文态半角（,.），样式见 applyPunctuationLabel
-        applyPunctuationLabel(btnComma, cn = "，", en = ",")
-        applyPunctuationLabel(btnPeriod, cn = "。", en = ".")
+        // 底部逗号 / 句号：默认拼音态全角（，。）、英文态半角（,.），用户可在「键盘外观自选」页
+        // 自定义成任意单字符（中文 / 英文两套分开，见 [Prefs] 的四个标点键）；样式见 applyPunctuationLabel
+        applyPunctuationLabel(btnComma, cn = prefs.punctCommaCn, en = prefs.punctCommaEn)
+        applyPunctuationLabel(btnPeriod, cn = prefs.punctPeriodCn, en = prefs.punctPeriodEn)
         // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）；
         // 符号层大写键不参与操作：isEnabled=false（无障碍也报「不可用」）+ 置灰，
         // 点击路径另有层守卫（见 bindFunctionKeys），二者互为兜底。
@@ -4386,6 +4443,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 按键命中判定的边界外扩（dp）：贴边点击时手指会有小幅抖动 */
         const val KEY_HIT_PADDING_DP = 8f
+
+        /**
+         * 空格左右滑动移动光标的步长（dp）：每累计这么多水平位移移动一格光标。
+         *
+         * 不宜太小（轻触抖动会误移光标），也不宜太大（长文档里移一格要滑很久）。
+         */
+        const val SPACE_CURSOR_STEP_DP = 22f
 
         /** 分号键：搜狗 / 微软 / 紫光 方案里 `ing` 的韵母键 */
         const val SEMICOLON_KEY = ';'

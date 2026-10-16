@@ -92,4 +92,41 @@ class SymbolOrderTest {
         // 不带收藏（缺省）：收藏 label 被丢弃，其余照常
         assertEquals(default.size - 1, SymbolOrder.groupsInOrder(raw).size)
     }
+
+    /**
+     * 禁用集合（2026-10-16）的归一与过滤：脏串只留有效项，被禁用的分组从面板列表里消失，
+     * 但**顺序仍由顺序串决定**（两者独立存储）。
+     */
+    @Test
+    fun 禁用集合归一且过滤掉禁用分组() {
+        assertEquals(setOf("半角", "变量"), SymbolOrder.disabledParse(" 半角 , ,变量,"))
+        assertEquals("半角,变量", SymbolOrder.disabledSerialize(listOf("半角", " 变量 ", "半角", "")))
+        assertEquals("", SymbolOrder.disabledSerialize(emptyList()))
+
+        val fav = favoriteGroup(FavoriteSymbols.parse(null))
+        val all = SymbolOrder.groupsInOrder("", fav)
+        val enabled = SymbolOrder.groupsInOrder("", fav, "半角")
+        assertEquals(all.size - 1, enabled.size)
+        assertEquals(false, enabled.any { it.label == "半角" })
+        // 顺序串未变，其余分组相对次序不动
+        assertEquals(all.filterNot { it.label == "半角" }.map { it.label }, enabled.map { it.label })
+    }
+
+    /**
+     * 全部禁用时回退为**不过滤**：符号面板不能没有任何可显示的分组
+     * （脏备份 / 手工构造的键值都可能落成全禁用）。
+     */
+    @Test
+    fun 全禁用时回退为不过滤() {
+        val fav = favoriteGroup(FavoriteSymbols.parse(null))
+        val all = SymbolOrder.groupsInOrder("", fav)
+        val allDisabled = SymbolOrder.disabledSerialize(all.map { it.label })
+        assertEquals(all.size, SymbolOrder.groupsInOrder("", fav, allDisabled).size)
+    }
+
+    @Test
+    fun 禁用按钮的读屏名随状态取动作() {
+        assertEquals("禁用「半角」", SymbolOrder.toggleDescription(disabled = false, label = "半角"))
+        assertEquals("启用「半角」", SymbolOrder.toggleDescription(disabled = true, label = "半角"))
+    }
 }

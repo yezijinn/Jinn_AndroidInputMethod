@@ -1545,9 +1545,17 @@ class RecentFixesRegressionTest {
     fun `逗号句号必须是全角半角加粗且字号加三`() {
         // 用户 2026-09-28 指定：拼音态全角（，。）、英文态半角（,.），居中 + 粗体 + 字号 +3。
         val code = codeOf("PinyinKeyboardView.kt")
-        assertTrue("两个键的全角 / 半角映射必须成对出现在标签刷新里",
-            code.contains("applyPunctuationLabel(btnComma, cn = \"，\", en = \",\")") &&
-                code.contains("applyPunctuationLabel(btnPeriod, cn = \"。\", en = \".\")"))
+        assertTrue("两个键的标签必须走用户可配置的取值（中文 / 英文两套，见 Prefs 的标点四键）",
+            code.contains("applyPunctuationLabel(btnComma, cn = prefs.punctCommaCn, en = prefs.punctCommaEn)") &&
+                code.contains("applyPunctuationLabel(btnPeriod, cn = prefs.punctPeriodCn, en = prefs.punctPeriodEn)"))
+        // 全角 / 半角默认值仍必须钉住：它是自定义功能的底座，改了它等于改了所有「没设过」的用户的行为
+        val punctDefaults = codeOf("PunctOutput.kt")
+        for (d in listOf(
+            "DEFAULT_COMMA_CN = \"，\"", "DEFAULT_COMMA_EN = \",\"",
+            "DEFAULT_PERIOD_CN = \"。\"", "DEFAULT_PERIOD_EN = \".\"",
+        )) {
+            assertTrue("PunctOutput 缺默认值 $d", d in punctDefaults)
+        }
         val helper = blockAfter(code, "private fun applyPunctuationLabel")
         for (need in listOf("gravity = android.view.Gravity.CENTER", "Typeface.DEFAULT_BOLD",
                             "includeFontPadding = false", "textSize = PUNCTUATION_TEXT_SP")) {

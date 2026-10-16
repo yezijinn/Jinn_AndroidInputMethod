@@ -331,9 +331,11 @@ class SettingsActivity : ComponentActivity() {
         // 需求：2 级词库没就位时，这个入口要比旁边那个更显眼 —— 词库直接决定能打出多少词，
         // 而原先它只是一行同款普通按钮，下没下载过看起来一模一样
         refreshDictEntryEmphasis()
-        // 按钮圆角间隙（键盘外观）：独立页面
-        findViewById<Button>(R.id.btn_key_appearance).setOnClickListener {
-            startActivity(Intent(this, KeyAppearanceActivity::class.java))
+        // 按钮圆角间隙（键盘外观）：独立页面。入口文案随需求改为「键盘外观自选」（在代码里下发，
+        // strings.xml 默认不改动 —— 布局仍引用原 string，运行时被这里的文本覆盖）
+        findViewById<Button>(R.id.btn_key_appearance).apply {
+            text = TEXT_KEY_APPEARANCE_ENTRY
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, KeyAppearanceActivity::class.java)) }
         }
         // 模糊音容错：独立全屏页（页面内每组一个勾选框，勾选即落盘并即时生效）。
         // 入口文案固定，不显示「（N 组）」——用户要的是一句话说明入口，当前勾选进页面看
@@ -359,6 +361,16 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_GALLERY_SETTINGS_ENTRY
             setOnClickListener {
                 startActivity(Intent(this@SettingsActivity, GallerySettingsActivity::class.java))
+            }
+        }
+        // 空格左右按钮：控制「空格键左右滑动移动光标」的开关（与图库入口同行）。
+        // 用开关而不是普通按钮 —— 用户要的是「控制…的开关」，而定值文案按钮看不出当前状态。
+        findViewById<Switch>(R.id.switch_space_cursor).apply {
+            text = TEXT_SPACE_CURSOR
+            isChecked = prefs.spaceCursorMove
+            setOnCheckedChangeListener { _, checked ->
+                prefs.spaceCursorMove = checked
+                Diagnostics.i(TAG, "空格左右滑动移动光标: ${if (checked) "开启" else "关闭"}")
             }
         }
         // 存储占用：只读统计页（用户问「存储由什么组成」——大头常是看不见的词库索引缓存）
@@ -1807,6 +1819,12 @@ class SettingsActivity : ComponentActivity() {
 
         /** 图库快贴：设置页只留这一个入口，目录绑定 / 自动返回 / 缩略图布局都在子页面里 */
         const val TEXT_GALLERY_SETTINGS_ENTRY = "图库快贴功能"
+
+        /** 键盘外观入口（布局仍引用 `@string/key_appearance_entry`，这里覆盖成新文案） */
+        const val TEXT_KEY_APPEARANCE_ENTRY = "键盘外观自选"
+
+        /** 空格键左右滑动移动光标的开关（与「图库快贴功能」同行） */
+        const val TEXT_SPACE_CURSOR = "空格左右按钮"
 
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
         const val TEXT_STORAGE_ENTRY = "存储占用"

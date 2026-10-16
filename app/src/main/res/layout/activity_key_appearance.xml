@@ -24,6 +24,7 @@
             android:orientation="horizontal">
 
             <TextView
+                android:id="@+id/text_key_appearance_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -294,74 +295,112 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 26 键常显大写：拼音输入时的键面字形开关（只改字形不改上屏），文案由代码下发 -->
-            <Switch
-                android:id="@+id/switch_letter_uppercase"
+            <!-- 输入与显示（2026-10-09 由设置页迁来；2026-10-16 起改为两列网格，每行两个各占一半）：
+                 第 1 行 拼音键盘大写 / 键盘内显韵母；第 2 行 双拼候选全音 / 候选滑动；
+                 第 3 行 候选词的行数 / 界面明暗切换。文案全部由代码下发（strings.xml 默认禁改）。 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:baselineAligned="false"
+                android:orientation="horizontal">
 
-            <!-- 输入与显示（2026-10-09 由设置页迁来：外观相关控件集中在本页，设置页不再重复） -->
-            <Switch
-                android:id="@+id/switch_key_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                <Switch
+                    android:id="@+id/switch_letter_uppercase"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
 
-            <Switch
-                android:id="@+id/switch_pinyin_quanpin"
+                <Switch
+                    android:id="@+id/switch_key_hint"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:baselineAligned="false"
+                android:orientation="horizontal">
 
-            <Switch
-                android:id="@+id/switch_candidate_paging"
+                <Switch
+                    android:id="@+id/switch_pinyin_quanpin"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+
+                <Switch
+                    android:id="@+id/switch_candidate_paging"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:baselineAligned="false"
+                android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/label_candidate_rows"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:minWidth="32dp"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
 
-            <com.jinn.inputmethod.UserAwareSpinner
-                android:id="@+id/spinner_candidate_rows"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:spinnerMode="dropdown" />
+                    <TextView
+                        android:id="@+id/label_candidate_rows"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
 
-            <TextView
-                android:id="@+id/label_theme_mode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:minWidth="32dp"
-                android:text="@string/theme_card_title"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                    <com.jinn.inputmethod.UserAwareSpinner
+                        android:id="@+id/spinner_candidate_rows"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:spinnerMode="dropdown" />
+                </LinearLayout>
 
-            <com.jinn.inputmethod.UserAwareSpinner
-                android:id="@+id/spinner_theme"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:spinnerMode="dropdown" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/label_theme_mode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_card_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <com.jinn.inputmethod.UserAwareSpinner
+                        android:id="@+id/spinner_theme"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:spinnerMode="dropdown" />
+                </LinearLayout>
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/row_theme_schedule"
@@ -392,26 +431,33 @@
                  标题（带当前档位状态）与选项文案都在代码里给（选项名取自 KeyboardSkin.label），
                  避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。
                  容器竖向、每行八个由代码插入（32 套皮肤、每段两整行）。 -->
-            <TextView
-                android:id="@+id/text_skin_light_title"
+            <!-- 皮肤两段：名称与说明同一行（2026-10-16 起），说明紧跟名称右侧、不再各占一行 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:autoSizeMaxTextSize="13sp"
-                android:autoSizeMinTextSize="9sp"
-                android:autoSizeTextType="uniform"
-                android:maxLines="1"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/text_skin_light_desc"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:textColor="@color/text_primary"
-                android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/text_skin_light_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/text_skin_light_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/skin_row_light"
@@ -420,26 +466,32 @@
                 android:layout_marginTop="6dp"
                 android:orientation="vertical" />
 
-            <TextView
-                android:id="@+id/text_skin_dark_title"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:autoSizeMaxTextSize="13sp"
-                android:autoSizeMinTextSize="9sp"
-                android:autoSizeTextType="uniform"
-                android:maxLines="1"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/text_skin_dark_desc"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp"
-                android:textColor="@color/text_primary"
-                android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/text_skin_dark_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/text_skin_dark_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/skin_row_dark"
@@ -448,6 +500,168 @@
                 android:layout_marginTop="6dp"
                 android:orientation="vertical" />
 
+        </LinearLayout>
+
+        <!-- 底栏标点输出（2026-10-16）：逗号 / 句号两枚固定键可自定义上屏字符，中文态与英文态分开，
+             各限一个字符（多输入的字符由 PunctOutput.sanitizeField 裁到最后一个码点）。
+             文案与取值全在代码里下发（strings.xml 默认禁改）。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/card_aurora"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/label_punct_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/text_punct_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/label_punct_comma_cn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <EditText
+                        android:id="@+id/edit_punct_comma_cn"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="2dp"
+                        android:background="@drawable/field_aurora"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/label_punct_comma_en"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <EditText
+                        android:id="@+id/edit_punct_comma_en"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="2dp"
+                        android:background="@drawable/field_aurora"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/label_punct_period_cn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <EditText
+                        android:id="@+id/edit_punct_period_cn"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="2dp"
+                        android:background="@drawable/field_aurora"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/label_punct_period_en"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <EditText
+                        android:id="@+id/edit_punct_period_en"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="2dp"
+                        android:background="@drawable/field_aurora"
+                        android:gravity="center"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLength="4"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

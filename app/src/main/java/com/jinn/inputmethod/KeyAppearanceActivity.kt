@@ -67,6 +67,8 @@ class KeyAppearanceActivity : Activity() {
         val prefs = Prefs(this)
 
         findViewById<Button>(R.id.btn_key_appearance_close).setOnClickListener { finish() }
+        // 页面大标题（需求 2026-10-16 定稿）：布局仍引用 @string/key_appearance_title，这里覆盖成新文案
+        findViewById<TextView>(R.id.text_key_appearance_title).text = TEXT_PAGE_TITLE
 
         val seekCorner = findViewById<SeekBar>(R.id.seek_key_corner)
         val textCorner = findViewById<TextView>(R.id.text_key_corner)
@@ -233,6 +235,88 @@ class KeyAppearanceActivity : Activity() {
         initThemeCard(prefs)
 
         initSkinSelector(prefs)
+
+        initPunctSection(prefs)
+    }
+
+    /**
+     * 底栏标点输出（2026-10-16）：逗号 / 句号两枚固定键各自可自定义上屏字符，中文态与英文态分开。
+     *
+     * 与滑杆 / 开关一样即时落盘（[Prefs] 的四个标点键），键盘每次弹出重读即生效 —— 本页不广播、
+     * 不重启进程。字段限一个字符：多输入的字由 [PunctOutput.sanitizeField] 裁到最后一个码点并回写
+     * 输入框，保证「屏幕上看到的」就是「会打出来的」。
+     */
+    private fun initPunctSection(prefs: Prefs) {
+        findViewById<TextView>(R.id.label_punct_output).text = TEXT_PUNCT_TITLE
+        findViewById<TextView>(R.id.text_punct_hint).text = TEXT_PUNCT_HINT
+        bindPunctField(
+            editId = R.id.edit_punct_comma_cn,
+            labelId = R.id.label_punct_comma_cn,
+            labelText = TEXT_PUNCT_COMMA_CN,
+            fallback = PunctOutput.DEFAULT_COMMA_CN,
+            getValue = { prefs.punctCommaCn },
+            setValue = { prefs.punctCommaCn = it },
+        )
+        bindPunctField(
+            editId = R.id.edit_punct_comma_en,
+            labelId = R.id.label_punct_comma_en,
+            labelText = TEXT_PUNCT_COMMA_EN,
+            fallback = PunctOutput.DEFAULT_COMMA_EN,
+            getValue = { prefs.punctCommaEn },
+            setValue = { prefs.punctCommaEn = it },
+        )
+        bindPunctField(
+            editId = R.id.edit_punct_period_cn,
+            labelId = R.id.label_punct_period_cn,
+            labelText = TEXT_PUNCT_PERIOD_CN,
+            fallback = PunctOutput.DEFAULT_PERIOD_CN,
+            getValue = { prefs.punctPeriodCn },
+            setValue = { prefs.punctPeriodCn = it },
+        )
+        bindPunctField(
+            editId = R.id.edit_punct_period_en,
+            labelId = R.id.label_punct_period_en,
+            labelText = TEXT_PUNCT_PERIOD_EN,
+            fallback = PunctOutput.DEFAULT_PERIOD_EN,
+            getValue = { prefs.punctPeriodEn },
+            setValue = { prefs.punctPeriodEn = it },
+        )
+    }
+
+    /**
+     * 绑定一个标点输入框：写标题、回填当前值，并在每次文本变化后归一为单字符。
+     *
+     * 归一后若与框内文本不同就回写（用 [updating] 挡住自触发的下一轮）—— 否则用户看到 2 个字符、
+     * 实际只会上屏 1 个，界面与行为对不上。
+     */
+    private fun bindPunctField(
+        editId: Int,
+        labelId: Int,
+        labelText: String,
+        fallback: String,
+        getValue: () -> String,
+        setValue: (String) -> Unit,
+    ) {
+        findViewById<TextView>(labelId).text = labelText
+        val edit = findViewById<android.widget.EditText>(editId)
+        var updating = false
+        edit.setText(getValue())
+        edit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (updating) return
+                val raw = s?.toString().orEmpty()
+                val one = PunctOutput.sanitizeField(raw, fallback)
+                setValue(one)
+                if (raw != one) {
+                    updating = true
+                    edit.setText(one)
+                    edit.setSelection(one.length)
+                    updating = false
+                }
+            }
+        })
     }
 
     /**
@@ -568,6 +652,22 @@ class KeyAppearanceActivity : Activity() {
          */
         const val TEXT_SPACING_TITLE = "候选字距"
 
+        /**
+         * 页面大标题（2026-10-16 需求定稿）。
+         *
+         * 布局仍引用 `@string/key_appearance_title`（保持资源被引用，不新增无用字符串），
+         * 运行时由 [onCreate] 覆盖成本值。
+         */
+        const val TEXT_PAGE_TITLE = "键盘可视化的自定义方案"
+
+        /** 底栏标点输出卡片：标题 + 说明（四格文案见下） */
+        const val TEXT_PUNCT_TITLE = "底栏标点输出"
+        const val TEXT_PUNCT_HINT = "逗号 / 句号键的字符，各限一个；中文态与英文态分开设置"
+        const val TEXT_PUNCT_COMMA_CN = "中文逗号"
+        const val TEXT_PUNCT_COMMA_EN = "英文逗号"
+        const val TEXT_PUNCT_PERIOD_CN = "中文句号"
+        const val TEXT_PUNCT_PERIOD_EN = "英文句号"
+
         /** 「候选字号」项的标题文案（同上：写在代码里，不进 strings.xml） */
         const val TEXT_TEXT_SIZE_TITLE = "候选字号"
 
@@ -588,7 +688,7 @@ class KeyAppearanceActivity : Activity() {
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
 
     /** 候选浏览方式开关标题：勾选 = 左右跟手滑动，不勾 = 左右整屏翻页 */
-    const val TEXT_CANDIDATE_PAGING_TITLE = "候选浏览方式"
+    const val TEXT_CANDIDATE_PAGING_TITLE = "候选滑动"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */

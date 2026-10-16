@@ -325,6 +325,66 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putString(KEY_SYMBOL_ORDER, SymbolOrder.serialize(SymbolOrder.parse(value))) }
 
     /**
+     * 被禁用的符号分组 label 串（逗号分隔；空串 = 全部启用，见 [SymbolOrder]）。
+     *
+     * 由排序页（[SymbolOrderActivity]）的「X」键写入；键盘视图构造时读它过滤 [SymbolOrder]，
+     * 因此禁用 / 恢复都靠重建键盘视图生效（与顺序改动同一条路径）。
+     * 写入即归一（[SymbolOrder.disabledSerialize]）：落盘的恒为干净串。
+     */
+    var symbolDisabledGroups: String
+        get() = strOr(KEY_SYMBOL_DISABLED_GROUPS, "").orEmpty()
+        set(value) = sp.edit {
+            putString(
+                KEY_SYMBOL_DISABLED_GROUPS,
+                SymbolOrder.disabledSerialize(SymbolOrder.disabledParse(value)),
+            )
+        }
+
+    /**
+     * 底栏逗号键在**中文态**的输出内容（限一个字符；空 / 空白回落全角逗号，见 [PunctOutput]）。
+     *
+     * 只改「逗号 / 句号」这两个固定键上屏的字符，不改其余键位；四套取值（中英 × 逗句）互相独立。
+     * 键盘每次弹出（`configure`）都会重读，因此改完收起再弹出即生效。
+     */
+    var punctCommaCn: String
+        get() = PunctOutput.sanitize(strOr(KEY_PUNCT_COMMA_CN, null), PunctOutput.DEFAULT_COMMA_CN)
+        set(value) = sp.edit {
+            putString(KEY_PUNCT_COMMA_CN, PunctOutput.sanitize(value, PunctOutput.DEFAULT_COMMA_CN))
+        }
+
+    /** 底栏逗号键在**英文态**的输出内容（限一个字符；空 / 空白回落半角逗号） */
+    var punctCommaEn: String
+        get() = PunctOutput.sanitize(strOr(KEY_PUNCT_COMMA_EN, null), PunctOutput.DEFAULT_COMMA_EN)
+        set(value) = sp.edit {
+            putString(KEY_PUNCT_COMMA_EN, PunctOutput.sanitize(value, PunctOutput.DEFAULT_COMMA_EN))
+        }
+
+    /** 底栏句号键在**中文态**的输出内容（限一个字符；空 / 空白回落全角句号） */
+    var punctPeriodCn: String
+        get() = PunctOutput.sanitize(strOr(KEY_PUNCT_PERIOD_CN, null), PunctOutput.DEFAULT_PERIOD_CN)
+        set(value) = sp.edit {
+            putString(KEY_PUNCT_PERIOD_CN, PunctOutput.sanitize(value, PunctOutput.DEFAULT_PERIOD_CN))
+        }
+
+    /** 底栏句号键在**英文态**的输出内容（限一个字符；空 / 空白回落半角句号） */
+    var punctPeriodEn: String
+        get() = PunctOutput.sanitize(strOr(KEY_PUNCT_PERIOD_EN, null), PunctOutput.DEFAULT_PERIOD_EN)
+        set(value) = sp.edit {
+            putString(KEY_PUNCT_PERIOD_EN, PunctOutput.sanitize(value, PunctOutput.DEFAULT_PERIOD_EN))
+        }
+
+    /**
+     * 空格键左右滑动移动光标（默认关）。
+     *
+     * 打开后：按住空格键横向滑动即按位移逐格移动宿主光标（左滑左移、右滑右移，见
+     * [PinyinKeyboardView]）；关闭时空格只有「上空格」与「长按语音」两个原有动作。
+     * 键盘每次弹出即重读，无需重启进程。
+     */
+    var spaceCursorMove: Boolean
+        get() = boolOr(KEY_SPACE_CURSOR_MOVE, false)
+        set(value) = sp.edit { putBoolean(KEY_SPACE_CURSOR_MOVE, value) }
+
+    /**
      * 图库快贴绑定的相册目录（SAF 目录树 URI；空串 = 未绑定）。
      *
      * 由设置页经 `ACTION_OPEN_DOCUMENT_TREE` 取得并持久化授权后写入；键盘内的图库面板直接列这个目录，
@@ -1448,6 +1508,15 @@ class Prefs(private val appContext: Context) {
         if (sp.contains(KEY_SKIN_DARK)) put(KEY_SKIN_DARK, darkSkin)
         if (sp.contains(KEY_THEME_MODE)) put(KEY_THEME_MODE, themeMode)
         put(KEY_SYMBOL_ORDER, symbolGroupOrder)
+        put(KEY_SYMBOL_DISABLED_GROUPS, symbolDisabledGroups)
+        // 底栏标点输出四键：默认值不平凡（全角 / 半角标点），与外观七键同款 —— 只在用户真的改过
+        // 时才导出，避免把「当时的缺省」固化成显式值（否则将来调默认对这批人永久失效）。
+        if (sp.contains(KEY_PUNCT_COMMA_CN)) put(KEY_PUNCT_COMMA_CN, punctCommaCn)
+        if (sp.contains(KEY_PUNCT_COMMA_EN)) put(KEY_PUNCT_COMMA_EN, punctCommaEn)
+        if (sp.contains(KEY_PUNCT_PERIOD_CN)) put(KEY_PUNCT_PERIOD_CN, punctPeriodCn)
+        if (sp.contains(KEY_PUNCT_PERIOD_EN)) put(KEY_PUNCT_PERIOD_EN, punctPeriodEn)
+        // 空格左右滑动移动光标：默认 false（平凡默认），导出与否等价，故不套守卫
+        put(KEY_SPACE_CURSOR_MOVE, spaceCursorMove)
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
         // 图库目录：换机后这条授权通常已失效，导出侧仍原样带走，导入后由键盘面板检测并提示重绑
         put(KEY_GALLERY_TREE_URI, galleryTreeUri)
@@ -1622,6 +1691,13 @@ class Prefs(private val appContext: Context) {
                 }
                 KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
                 KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
+                KEY_SYMBOL_DISABLED_GROUPS -> asString(v)?.let { symbolDisabledGroups = it; ok() } ?: bad(key)
+                // 标点输出：脏值（多字符 / 空白 / 未知）由 PunctOutput 归一，不会带进运行期键面
+                KEY_PUNCT_COMMA_CN -> asString(v)?.let { punctCommaCn = it; ok() } ?: bad(key)
+                KEY_PUNCT_COMMA_EN -> asString(v)?.let { punctCommaEn = it; ok() } ?: bad(key)
+                KEY_PUNCT_PERIOD_CN -> asString(v)?.let { punctPeriodCn = it; ok() } ?: bad(key)
+                KEY_PUNCT_PERIOD_EN -> asString(v)?.let { punctPeriodEn = it; ok() } ?: bad(key)
+                KEY_SPACE_CURSOR_MOVE -> asBool(v)?.let { spaceCursorMove = it; ok() } ?: bad(key)
                 KEY_GALLERY_TREE_URI -> asString(v)?.let { galleryTreeUri = it; ok() } ?: bad(key)
                 // 导出目录走 setter：换目录时旧授权一并还掉（与图库目录同一条路径）
                 KEY_CLIP_EXPORT_TREE_URI -> asString(v)?.let { clipExportTreeUri = it; ok() } ?: bad(key)
@@ -1913,6 +1989,19 @@ class Prefs(private val appContext: Context) {
 
         /** 符号分组顺序（label 串；空 = 默认，见 [SymbolOrder]） */
         private const val KEY_SYMBOL_ORDER = "symbol_group_order"
+
+        /** 被禁用的符号分组（label 串；空 = 全部启用，见 [SymbolOrder]） */
+        private const val KEY_SYMBOL_DISABLED_GROUPS = "symbol_disabled_groups"
+
+        /** 底栏标点输出四键（中文/英文 × 逗号/句号，限一个字符，见 [PunctOutput]） */
+        private const val KEY_PUNCT_COMMA_CN = "punct_comma_cn"
+        private const val KEY_PUNCT_COMMA_EN = "punct_comma_en"
+        private const val KEY_PUNCT_PERIOD_CN = "punct_period_cn"
+        private const val KEY_PUNCT_PERIOD_EN = "punct_period_en"
+
+        /** 空格键左右滑动移动光标（见 [spaceCursorMove]） */
+        private const val KEY_SPACE_CURSOR_MOVE = "space_cursor_move"
+
         private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
 
         /** 图库快贴绑定的目录 URI（SAF 目录树；见 [galleryTreeUri]） */
