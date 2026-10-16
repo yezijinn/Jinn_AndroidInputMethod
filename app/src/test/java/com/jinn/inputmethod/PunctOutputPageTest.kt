@@ -63,7 +63,10 @@ class PunctOutputPageTest {
         )) {
             assertTrue("标点页缺少输入项 $id", id in code)
         }
-        assertTrue("输入必须走 PunctOutput 的单字符归一", "PunctOutput.sanitizeField(" in code)
+        assertTrue(
+            "输入框要走光标感知归一（BUG.md L-1382）",
+            Regex("""PunctOutput\.sanitizeFieldAt\(raw, caret, fallback\)""").containsMatchIn(code),
+        )
     }
 
     @Test

@@ -712,9 +712,15 @@ class GalleryInsertTest {
         assertTrue("首次创建要拉起选择器", "picker.launch(" in create)
         // 收尾必须**受「复制在飞」约束**（BUG.md L-1381）：无条件 finish() 会收掉仍待投递的
         // 选择结果（重建发生在选择器还没返回时），把用户刚选的图静默丢掉
+        // 结构式正则（BUG.md L-1384）：原先拆成「else if (copyInFlight)」+「finish()」两个独立子串，
+        // 把 finish() 挪出分支（放到 onCreate 末尾无条件执行）仍会绿 —— 而那会让首次创建拉起
+        // 选择器后立刻收尾、每次都丢图
         assertTrue(
             "重建分支只在复制在飞时收尾（否则会丢掉待投递的选择结果）",
-            "else if (copyInFlight)" in create && "finish()" in create,
+            Regex(
+                """else if \(copyInFlight\)[^{]*\{[^}]*finish\(\)""",
+                RegexOption.DOT_MATCHES_ALL,
+            ).containsMatchIn(create),
         )
         assertTrue("复制开始前要置「在飞」标记", "copyInFlight = true" in src)
         assertTrue("复制收尾要清「在飞」标记", "copyInFlight = false" in src)

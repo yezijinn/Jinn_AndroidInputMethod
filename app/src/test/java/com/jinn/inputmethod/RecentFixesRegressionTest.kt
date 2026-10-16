@@ -4410,7 +4410,15 @@ class RecentFixesRegressionTest {
             "续扫必须受扫描预算约束",
             Regex("""if \(searching && scanned > SEARCH_SCAN_BUDGET\)""").containsMatchIn(load),
         )
-        assertTrue("预算触顶要落进「列表不完整」提示", "capped = true" in load)
+        // 钉**分支体**，而不是「同块里出现过 capped = true」——后者被同块的条数/字节预算分支
+        // 一并满足，掏空本分支仍全绿（AI2/审查通道已实证，BUG.md L-1383）
+        assertTrue(
+            "预算触顶要落进「列表不完整」提示",
+            Regex(
+                """if \(searching && scanned > SEARCH_SCAN_BUDGET\) \{[^}]*capped = true[^}]*break""",
+                RegexOption.DOT_MATCHES_ALL,
+            ).containsMatchIn(load),
+        )
         assertTrue(
             "预算常量要有界且远小于库上限",
             Regex("""const val SEARCH_SCAN_BUDGET = (\d+)""").find(hist)?.groupValues?.get(1)?.toInt()
