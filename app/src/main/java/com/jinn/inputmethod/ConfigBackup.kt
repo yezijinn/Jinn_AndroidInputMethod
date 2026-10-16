@@ -287,11 +287,26 @@ internal object ConfigBackup {
         val root = JSONObject(text)
         val out = LinkedHashMap<String, Map<String, BackupValue>>()
         for (fileName in root.keys()) {
-            val entries = root.optJSONObject(fileName) ?: continue
+            // 结构不符的条目也要**如实计入「忽略」**（BUG.md L-235 口径）：此前三处裸 continue
+            // 让「文件段不是对象 / 条目不是对象 / 缺 t 字段」全部静默丢弃，界面只报「设置 0 项」，
+            // 用户无从分辨「包是空的」与「包结构与本程序不符」。
+            val entries = root.optJSONObject(fileName)
+            if (entries == null) {
+                skipped?.add(fileName)
+                continue
+            }
             val values = LinkedHashMap<String, BackupValue>()
             for (key in entries.keys()) {
-                val item = entries.optJSONObject(key) ?: continue
-                val kind = item.optString("t").firstOrNull() ?: continue
+                val item = entries.optJSONObject(key)
+                if (item == null) {
+                    skipped?.add("$fileName.$key")
+                    continue
+                }
+                val kind = item.optString("t").firstOrNull()
+                if (kind == null) {
+                    skipped?.add("$fileName.$key")
+                    continue
+                }
                 val v = item.opt("v")
                 val value: Any? = when (kind) {
                     BackupValue.KIND_STRING -> v as? String
