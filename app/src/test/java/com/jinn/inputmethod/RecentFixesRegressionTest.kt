@@ -4391,6 +4391,14 @@ class RecentFixesRegressionTest {
         )
         assertTrue("序号要按绝对序位算", "outOrdinal.add(scanned)" in load)
         assertTrue("序号映射要读绝对序位", "outOrdinal.getOrNull(idx)" in load)
+        // 并发覆盖（本轮新增）：慢的那次加载后落地会把新筛选的列表覆盖成旧数据。
+        // 判据：世代令牌必须存在、发起时自增、扫描循环与 UI 落地各自校验一次。
+        assertTrue("必须有加载代际令牌", "loadGeneration.incrementAndGet()" in load)
+        assertTrue("扫描循环要按代际早退", "gen != loadGeneration.get()" in load)
+        assertTrue(
+            "UI 落地要按代际丢弃陈旧结果",
+            Regex("""if \(stopped \|\| gen != loadGeneration\.get\(\)\) return@runOnUiThread""").containsMatchIn(load),
+        )
     }
 
     /**

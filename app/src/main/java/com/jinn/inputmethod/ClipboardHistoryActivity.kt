@@ -169,6 +169,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private var stopped = false
 
     /**
+     * 加载代际：每次真正发起加载自增，回调按最新代际校验后再落地。
+     *
+     * 同一时间可以有好几次加载在跑（连续切分类、搜完再切分类），而扫描耗时不固定 ——
+     * 慢的那次若后落地就会覆盖新的筛选结果，界面变成「选了 A 却列着 B」。`BackgroundIo.run`
+     * 里的删除路径也会调 `loadAsync`（不在主线程），故用原子量。
+     */
+    private val loadGeneration = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
      * 「收藏」分组上方的收藏图片网格（BUG.md L-1250）：与键盘面板同款，用的是图库快贴那套网格组件。
      * 与「图片」分类的 [grid] 并存 —— 那个是全屏网格配翻页行，这个是收藏分组独有的两行条带。
      */
@@ -883,6 +892,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private fun loadAsync(resetPage: Boolean = true) {
         // 页面已停止就不再启动新查询（BUG.md L-1268）：onStart 先复位该标记，正常流程不受影响
         if (stopped) return
+        // 本轮加载的代际：后面所有落地都要先验它（见 loadGeneration 的说明）
+        val gen = loadGeneration.incrementAndGet()
         val category = categoryFilter
         // 图片分类与关键词互斥（D2「图片不进搜索」）：图片行的 content 恒为空串，任何关键词
         // 都会把图片全部滤掉 ⇒「在全部里搜着词再切图片」只看到「暂无图片」，像是图片丢了。
@@ -922,6 +933,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             var capped = false
             var cappedByCount = false
             while (true) {
+                // 已有更新的加载在跑：本轮整套作废，别再扫（历史页可能扫到库尾，白扫代价不小）
+                if (gen != loadGeneration.get()) return@run
                 // 图片分类启用「收藏优先」（与条带、面板网格同一口径）：收藏过的图排最前 ——
                 // 收藏动作多半是「存下来、待会儿要回头找」的语义，埋在几十张之后等于没有
                 val page = db.recentPageAfter(
@@ -962,8 +975,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 else -> false
             }
             runOnUiThread {
-                // 回调到达时页面可能已停止（BUG.md L-1268）：丢弃这一批，别把视图重新拉起来
-                if (stopped) return@runOnUiThread
+                // 回调到达时页面可能已停止（BUG.md L-1268）：丢弃这一批，别把视图重新拉起来；
+                // 同理，代际不是最新的说明已有更新的加载在跑 —— 落地就会用旧筛选覆盖新结果
+                if (stopped || gen != loadGeneration.get()) return@runOnUiThread
                 stripHasImages = stripImages
                 allItems.clear()
                 allItems.addAll(out)

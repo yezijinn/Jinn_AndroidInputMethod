@@ -494,8 +494,13 @@ class ClipboardImageTest {
         assertTrue("筛选态随实例保存", "outState.putBoolean(STATE_IMAGE_FAV, imageFavOnly)" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
         // BUG.md L-1268：页面停止后到达的回调要丢弃
-        assertTrue("停止后丢弃回调", "if (stopped) return@runOnUiThread" in
-            TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // BUG.md L-1268：页面停止后到达的回调要丢弃
+        // （判据取意图 —— 条件里必须仍含 `stopped` 与同一返回标签，允许并列世代令牌等新增条件）
+        assertTrue(
+            "停止后丢弃回调",
+            Regex("""if \(stopped(\s*\|\|[^\n]*)?\) return@runOnUiThread""")
+                .containsMatchIn(TestSources.codeSource("ClipboardHistoryActivity.kt")),
+        )
         // BUG.md L-1269：重排后同样要复检「是否填满」（同一根因的第二条路径）
         assertTrue("重排后复检填满", "fillViewportIfNeeded(generation)" in
             TestSources.codeSource("ClipboardImageGridView.kt"))
