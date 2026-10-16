@@ -40,9 +40,23 @@ class CandidateScrollView @JvmOverloads constructor(
         return ((contentWidth + pageWidth() - 1) / pageWidth()).coerceAtLeast(1)
     }
 
-    /** 当前页号（按滚动位四舍五入；翻页态下滚动位总是落在页边界上） */
-    private fun currentPage(): Int =
-        Math.round(scrollX.toFloat() / pageWidth()).coerceIn(0, pageCount() - 1)
+    /**
+     * 当前页号。
+     *
+     * ⚠ 必须特判**钳位态**（BUG.md L-1388）：`HorizontalScrollView.scrollTo` 把 x 钳在 `[0, C−页宽]`，
+     * 而末页起点 `(总页数−1)×页宽` **大于** `C−页宽`（除非内容恰为页宽整数倍）⇒ 停在末页时
+     * `scrollX = C−页宽`，用它四舍五入会算成**倒数第二页**，回翻于是多退一页（末页不足半屏时
+     * 甚至直接跳回第一页）—— 这正是「翻到最后一页再翻回来会少一页」那一族。
+     */
+    private fun currentPage(): Int {
+        val max = ((getChildAt(0)?.width ?: 0) - pageWidth()).coerceAtLeast(0)
+        val page = if (max > 0 && scrollX >= max) {
+            pageCount() - 1
+        } else {
+            Math.round(scrollX.toFloat() / pageWidth())
+        }
+        return page.coerceIn(0, pageCount() - 1)
+    }
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         if (!paging) return super.onInterceptTouchEvent(ev)
