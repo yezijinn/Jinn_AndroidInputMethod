@@ -4391,6 +4391,12 @@ class RecentFixesRegressionTest {
         )
         assertTrue("序号要按绝对序位算", "outOrdinal.add(scanned)" in load)
         assertTrue("序号映射要读绝对序位", "outOrdinal.getOrNull(idx)" in load)
+        // 公式值也要钉（AI2 A-431 指出「只钉表达式存在」拦不住 off-by-one）：`scanned` 是 1 基，
+        // 必须 −序位+1；漏掉 +1 就是整列序号少 1（BUG.md L-1379 / A-415）
+        assertTrue(
+            "序号换算必须带 +1（1 基序位）",
+            "total - (outOrdinal.getOrNull(idx) ?: (idx + 1)) + 1" in load,
+        )
         // 并发覆盖（本轮新增）：慢的那次加载后落地会把新筛选的列表覆盖成旧数据。
         // 判据：世代令牌必须存在、发起时自增、扫描循环与 UI 落地各自校验一次。
         assertTrue("必须有加载代际令牌", "loadGeneration.incrementAndGet()" in load)

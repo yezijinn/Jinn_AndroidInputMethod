@@ -992,9 +992,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 )
                 numberById.clear()
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
-                // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）
+                // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）。
+                // `scanned` 是 **1 基**（自增在跳过判定之前）⇒ 要 −(序位)+1 才等于原来的 `total − 下标`
+                // （最新行 = total）。漏掉 +1 会让整列序号少 1（BUG.md L-1379 / AI2 A-415）
                 for ((idx, item) in allItems.withIndex()) {
-                    numberById[item.id] = total - (outOrdinal.getOrNull(idx) ?: (idx + 1))
+                    numberById[item.id] = total - (outOrdinal.getOrNull(idx) ?: (idx + 1)) + 1
                 }
                 // 勾选集跨重建恢复，而重建期间库可能在变（采集在线、库到上限时插入与淘汰成对发生）⇒
                 // 按这次加载到的条目裁剪，免得确认文案的条数与实际勾着的行数不一致（BUG.md L-1171）
