@@ -95,7 +95,10 @@ class PunctOutputActivity : Activity() {
             override fun afterTextChanged(s: Editable?) {
                 if (updating) return
                 val raw = s?.toString().orEmpty()
-                val one = PunctOutput.sanitizeField(raw, fallback)
+                // 光标感知（BUG.md L-1382）：取插入点那个码点，而不是恒取整串末位 ——
+                // 光标停在字符左侧时后者会把用户刚敲的字回写掉（首击丢失、无提示）
+                val caret = edit.selectionEnd
+                val one = PunctOutput.sanitizeFieldAt(raw, caret, fallback)
                 setValue(one)
                 if (raw != one) {
                     updating = true

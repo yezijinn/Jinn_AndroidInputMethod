@@ -49,4 +49,26 @@ object PunctOutput {
         if (t.isBlank()) return fallback
         return String(Character.toChars(t.codePointBefore(t.length)))
     }
+
+    /**
+     * **光标感知**的输入框归一（[sanitizeField] 的修正版，BUG.md L-1382）。
+     *
+     * 原实现恒取**整串末位**码点：光标停在字符**左侧**时（单码点框里点左半区即落在 0），
+     * 用户新插进来的字符在光标处、而末位仍是旧字符 ⇒ 回写旧值，**刚敲的字被无声吞掉**。
+     * 这里改成取「插入点」那个码点：光标前一个码点；光标在开头时取第一个码点。
+     *
+     * 直写 UTF-16 单元会切出孤立代理项，故先按代理对回退一格再取码点。
+     */
+    fun sanitizeFieldAt(raw: String?, caret: Int, fallback: String): String {
+        val t = raw.orEmpty()
+        if (t.isBlank()) return fallback
+        val i = caret.coerceIn(0, t.length)
+        var start = i - 1
+        if (start <= 0) {
+            start = 0
+        } else if (Character.isLowSurrogate(t[start]) && Character.isHighSurrogate(t[start - 1])) {
+            start -= 1
+        }
+        return String(Character.toChars(t.codePointAt(start)))
+    }
 }
