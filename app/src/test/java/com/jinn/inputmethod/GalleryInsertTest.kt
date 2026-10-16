@@ -692,5 +692,22 @@ class GalleryInsertTest {
         assertTrue("未绑定态复位标题", "if (state == State.NeedsBinding) title.text = TEXT_TITLE_DEFAULT" in render)
     }
 
+    /**
+     * 选图中转页的重建分支必须自己收尾（BUG.md L-1062）。
+     *
+     * 复制进行中（上限 20MB，可达数秒）旋转屏幕或定时换色触发 `recreate()` 时，新实例若既不重拉
+     * 选择器也不 finish，就留下一个透明页常驻前台；而旧实例上那句收尾 `finish()` 是空操作。
+     */
+    @Test
+    fun `选图中转页重建后必须收尾`() {
+        val src = TestSources.codeSource("GalleryPickActivity.kt")
+        val create = TestSources.blockAfter(src, "override fun onCreate(savedInstanceState: Bundle?)")
+        assertTrue("首次创建要拉起选择器", "picker.launch(" in create)
+        assertTrue(
+            "重建分支必须 finish（否则透明页常驻前台）",
+            Regex("""else \{[^}]*finish\(\)""", RegexOption.DOT_MATCHES_ALL).containsMatchIn(create),
+        )
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }

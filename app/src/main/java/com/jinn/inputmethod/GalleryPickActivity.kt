@@ -80,6 +80,12 @@ class GalleryPickActivity : ComponentActivity() {
         // 只在首次创建时拉起选择器（旋转/重建不重复拉）
         if (savedInstanceState == null) {
             picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } else {
+            // 重建分支必须自己收尾（BUG.md L-1062）：复制进行中触发 recreate() 时，新实例既拉不起
+            // 选择器也不 finish ⇒ 透明页常驻前台（用户看到「点了图库之后界面卡住」），而收尾的
+            // finish() 落在**已销毁**的旧实例上是空操作。图不会丢：putPending 是进程级的，
+            // 回到应用后 IME 仍会把它插进原输入框（桥带 60s 有效期）。
+            finish()
         }
     }
 
