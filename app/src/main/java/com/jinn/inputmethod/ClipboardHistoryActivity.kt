@@ -920,7 +920,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
             else -> ClipboardDb.CONTENT_TYPE_TEXT
         }
         val maxResults = clipPrefs.maxSearchResults
-        BackgroundIo.run {
+        // 扫库可能累计到扫描预算行（逐行解密，实测约 16ms/行 ⇒ 最坏数十秒）：放**长活池**，
+        // 别占短活池 —— 短活池还排着剪贴板采集入库、面板首屏、粘贴取正文，被长任务顶住时用户
+        // 看到的是「复制了没反应 / 面板白屏」（BUG.md L-1389）。长活池同样是单线程 FIFO、
+        // 后台优先级；本页已有代际令牌（`loadGeneration`）保证后发起的结果不覆盖先前状态。
+        BackgroundIo.runLong {
             // 判据只用 ClipboardSearch 一份（与面板同口径）；有搜索词时它决定哪些行占窗口
             val forms = ClipboardSearch.queryForms(keywordNow)
             val searching = keywordNow.isNotEmpty()
@@ -934,7 +938,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             var cappedByCount = false
             while (true) {
                 // 已有更新的加载在跑：本轮整套作废，别再扫（历史页可能扫到库尾，白扫代价不小）
-                if (gen != loadGeneration.get()) return@run
+                if (gen != loadGeneration.get()) return@runLong
                 // 图片分类启用「收藏优先」（与条带、面板网格同一口径）：收藏过的图排最前 ——
                 // 收藏动作多半是「存下来、待会儿要回头找」的语义，埋在几十张之后等于没有
                 val page = db.recentPageAfter(
@@ -1764,12 +1768,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
         /**
          * 搜索态续扫的**扫描预算**（行数，BUG.md L-1380）。
          *
+         * 与面板侧 [ClipboardSearch.SCAN_LIMIT] **取同一个量**：两个入口对同一次搜索给不同覆盖面
+         * 会让用户困惑（面板能搜到的老记录，历史页却报「列表不完整」）。直接引用单一真源，避免漂移。
+         *
          * 续扫是为了让「比上限更老的记录也能搜到」，但不能让共享的 `BackgroundIo` 单线程被占住
          * （剪贴板采集与图片复制同队列，见 L-1057）：每行还要走 `ClipboardSearch.matches` 的
          * 归一化比对，所以按**行数**设预算而非时间。触顶时走 [TEXT_TRUNCATED_GENERIC] ——
          * 关键是让用户知道「列表不完整」，别把「这轮没扫完」当成「库里没有」。
          */
-        const val SEARCH_SCAN_BUDGET = 2_000
+        const val SEARCH_SCAN_BUDGET = ClipboardSearch.SCAN_LIMIT
         const val TEXT_PAGE_SIZE_PREFIX = "每页 "
         const val TEXT_PAGE_SIZE_SUFFIX = " 条"
         const val TEXT_IMPORT = "导入文件"

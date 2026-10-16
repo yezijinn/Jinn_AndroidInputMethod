@@ -4419,10 +4419,22 @@ class RecentFixesRegressionTest {
                 RegexOption.DOT_MATCHES_ALL,
             ).containsMatchIn(load),
         )
+        // 预算必须有界：**既要**常量声明存在，**又要**它落在 1..5000。
+        // 两种合法形态都接受：① 直接写数字；② 引用 `ClipboardSearch.SCAN_LIMIT` 单一真源
+        // （此时取 ClipboardSearch.SCAN_LIMIT 的实际值来判有界 —— 防止某天把它调成 20000）。
+        val literal = Regex("""const val SEARCH_SCAN_BUDGET = (\d+)""").find(hist)
+            ?.groupValues?.get(1)?.toInt()
+        val budget = literal
+            ?: if ("const val SEARCH_SCAN_BUDGET = ClipboardSearch.SCAN_LIMIT" in hist) {
+                Regex("""const val SCAN_LIMIT = (\d+)""")
+                    .find(TestSources.codeSource("ClipboardSearch.kt"))
+                    ?.groupValues?.get(1)?.toInt()
+            } else {
+                null
+            }
         assertTrue(
-            "预算常量要有界且远小于库上限",
-            Regex("""const val SEARCH_SCAN_BUDGET = (\d+)""").find(hist)?.groupValues?.get(1)?.toInt()
-                ?.let { it in 1..5_000 } == true,
+            "预算常量要有界且远小于库上限（实测 $budget）",
+            budget?.let { it in 1..5_000 } == true,
         )
         // 并发覆盖（本轮新增）：慢的那次加载后落地会把新筛选的列表覆盖成旧数据。
         // 判据：世代令牌必须存在、发起时自增、扫描循环与 UI 落地各自校验一次。

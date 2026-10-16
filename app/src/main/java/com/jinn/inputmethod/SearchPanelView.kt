@@ -354,7 +354,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private fun runSearch() {
         val q = editSearch.text?.toString()?.trim() ?: ""
         val reqToken = ++refreshToken
-        BackgroundIo.run {
+        // 扫库可能扫到 `SCAN_LIMIT`（逐行解密，实测约 16ms/行）：放**长活池**，别占短活池 ——
+        // 短活池还排着剪贴板采集入库、面板首屏、粘贴取正文，被长任务顶住时用户看到的是
+        // 「复制了没反应 / 面板白屏」（BUG.md L-1389）。长活池同样是单线程 FIFO、后台优先级；
+        // 本处已有 `reqToken` 作废机制保证后发起的结果不覆盖先前状态。
+        BackgroundIo.runLong {
             if (q.isEmpty()) {
                 post {
                     if (reqToken != refreshToken) return@post
@@ -363,7 +367,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                 }
-                return@run
+                return@runLong
             }
             // 查询词的所有等价写法（全半角、零宽都归一到同一组里比对，BUG.md L-1135）
             val forms = ClipboardSearch.queryForms(q)
@@ -431,7 +435,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 cursor = page.last
                 scannedTotal += page.scanned
                 if (retainReached) break
-                if (reqToken != refreshToken) return@run
+                if (reqToken != refreshToken) return@runLong
                 // 首帧兜底的判据必须在 post 之前提前取成值：lambda 捕获的是变量本身，
                 // 等它延迟执行时 cursor / scannedTotal 早已推进，「首块」永远判不成立。
                 val isFirstChunk = scannedTotal <= SEARCH_WINDOW_ITEMS

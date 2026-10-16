@@ -24,7 +24,7 @@ internal object ClipboardSearch {
      * 「命中太多被截断」是两种不同的截断：一个是「结果太多」，一个是「更早的内容没查」，
      * 界面必须分开说，否则用户会把「没查到」当成「库里没有」。
      */
-    const val SCAN_LIMIT = 20_000
+    const val SCAN_LIMIT = 2_000
 
     /** 一轮搜索收尾时的截断状态。 */
     enum class Cap {
