@@ -4397,6 +4397,17 @@ class RecentFixesRegressionTest {
             "序号换算必须带 +1（1 基序位）",
             "total - (outOrdinal.getOrNull(idx) ?: (idx + 1)) + 1" in load,
         )
+        // 扫描预算（BUG.md L-1380）：续扫必须受行数预算约束，触顶走「列表不完整」提示
+        assertTrue(
+            "续扫必须受扫描预算约束",
+            Regex("""if \(searching && scanned > SEARCH_SCAN_BUDGET\)""").containsMatchIn(load),
+        )
+        assertTrue("预算触顶要落进「列表不完整」提示", "capped = true" in load)
+        assertTrue(
+            "预算常量要有界且远小于库上限",
+            Regex("""const val SEARCH_SCAN_BUDGET = (\d+)""").find(hist)?.groupValues?.get(1)?.toInt()
+                ?.let { it in 1..5_000 } == true,
+        )
         // 并发覆盖（本轮新增）：慢的那次加载后落地会把新筛选的列表覆盖成旧数据。
         // 判据：世代令牌必须存在、发起时自增、扫描循环与 UI 落地各自校验一次。
         assertTrue("必须有加载代际令牌", "loadGeneration.incrementAndGet()" in load)

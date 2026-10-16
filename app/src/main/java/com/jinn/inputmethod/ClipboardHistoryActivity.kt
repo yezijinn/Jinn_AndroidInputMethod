@@ -945,6 +945,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 cursor = page.last
                 for (item in page.items) {
                     scanned++
+                    // 扫描预算（BUG.md L-1380）：续扫不能让共享后台线程长时间被占住。
+                    // 触顶即停并按「列表不完整」提示（capped=true、cappedByCount 保持 false）
+                    if (searching && scanned > SEARCH_SCAN_BUDGET) {
+                        capped = true
+                        break
+                    }
                     // 有搜索词时**不匹配的行不占窗口**（BUG.md L-1059）：窗口原先被「搜索结果上限」
                     // 截断，比窗口更老的记录任何关键词都搜不到（本来存在却搜不到，界面无从表达）。
                     // 续扫到命中足够或库扫完为止 —— 扫描量仍由后台线程承担，内存只留命中行。
@@ -1750,6 +1756,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_TRUNCATED_PREFIX = "只加载最多 "
         const val TEXT_TRUNCATED_SUFFIX = " 条（超出请用搜索缩小范围）"
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"
+
+        /**
+         * 搜索态续扫的**扫描预算**（行数，BUG.md L-1380）。
+         *
+         * 续扫是为了让「比上限更老的记录也能搜到」，但不能让共享的 `BackgroundIo` 单线程被占住
+         * （剪贴板采集与图片复制同队列，见 L-1057）：每行还要走 `ClipboardSearch.matches` 的
+         * 归一化比对，所以按**行数**设预算而非时间。触顶时走 [TEXT_TRUNCATED_GENERIC] ——
+         * 关键是让用户知道「列表不完整」，别把「这轮没扫完」当成「库里没有」。
+         */
+        const val SEARCH_SCAN_BUDGET = 2_000
         const val TEXT_PAGE_SIZE_PREFIX = "每页 "
         const val TEXT_PAGE_SIZE_SUFFIX = " 条"
         const val TEXT_IMPORT = "导入文件"
