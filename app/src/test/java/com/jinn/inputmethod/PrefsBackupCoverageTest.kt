@@ -82,7 +82,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-14 起 91 → 92：新增「候选浏览方式（滑动 / 翻页）」1 键（外观页控件，换机要带走）
         // 2026-10-16 起 92 → 98：新增「符号分组禁用」1 键、「底栏标点输出」4 键、「空格左右滑动移动
         //                       光标」1 键（都是用户偏好，换机必须带走）
-        assertEquals("提取到的键常量应是 98 个（改键数请同步本断言）", 98, keyConstants.size)
+        // 2026-10-16 起 98 → 97：移除「空格左右滑动移动光标」1 键（该功能整体下线）
+        assertEquals("提取到的键常量应是 97 个（改键数请同步本断言）", 97, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -203,13 +204,12 @@ class PrefsBackupCoverageTest {
             "KEY_GALLERY_AUTO_RETURN" to "asBool(v)",
             "KEY_GALLERY_COLUMNS" to "asInt(v)",
             "KEY_GALLERY_CELL_HEIGHT_DP" to "asInt(v)",
-            // 2026-10-16：符号分组禁用（串）/ 底栏标点输出四键（串）/ 空格左右滑动（布尔）
+            // 2026-10-16：符号分组禁用（串）/ 底栏标点输出四键（串）
             "KEY_SYMBOL_DISABLED_GROUPS" to "asString(v)",
             "KEY_PUNCT_COMMA_CN" to "asString(v)",
             "KEY_PUNCT_COMMA_EN" to "asString(v)",
             "KEY_PUNCT_PERIOD_CN" to "asString(v)",
             "KEY_PUNCT_PERIOD_EN" to "asString(v)",
-            "KEY_SPACE_CURSOR_MOVE" to "asBool(v)",
         )
         for ((key, tool) in pairs) {
             assertTrue(

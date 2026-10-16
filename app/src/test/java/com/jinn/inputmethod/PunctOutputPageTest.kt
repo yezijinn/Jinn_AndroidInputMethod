@@ -32,6 +32,29 @@ class PunctOutputPageTest {
     }
 
     @Test
+    fun `空格移光标开关已彻底移除`() {
+        // 该功能整体下线（作者明确不要）：源码与布局都不许再残留任何痕迹，
+        // 用原文对拍（连注释也不许再提），反向钉静默方向才守得住。
+        val punct = TestSources.rawSourceOfShortName("PunctOutputActivity.kt")
+        assertFalse("标点页仍在接线空格移光标开关", "switch_space_cursor" in punct)
+        assertFalse("标点页仍残留开关文案常量", "TEXT_SPACE_CURSOR" in punct)
+
+        val layout = File("src/main/res/layout/activity_punct_output.xml").let {
+            if (it.isFile) it else File("app/src/main/res/layout/activity_punct_output.xml")
+        }.readText()
+        assertFalse("标点页布局仍留着开关", "switch_space_cursor" in layout)
+
+        val prefs = TestSources.rawSourceOfShortName("Prefs.kt")
+        assertFalse("Prefs 仍残留 spaceCursorMove 属性", "spaceCursorMove" in prefs)
+        assertFalse("Prefs 仍残留 KEY_SPACE_CURSOR_MOVE 常量", "KEY_SPACE_CURSOR_MOVE" in prefs)
+
+        val kb = TestSources.rawSourceOfShortName("PinyinKeyboardView.kt")
+        assertFalse("键盘仍残留 handleSpaceTouch", "handleSpaceTouch" in kb)
+        assertFalse("键盘仍残留 SPACE_CURSOR_STEP_DP", "SPACE_CURSOR_STEP_DP" in kb)
+        assertFalse("键盘仍残留空格滑动状态字段", "spaceTouchLastX" in kb || "spaceTouchConsumed" in kb)
+    }
+
+    @Test
     fun `标点页绑定四个输入项`() {
         val code = TestSources.codeSource("PunctOutputActivity.kt")
         for (id in listOf(

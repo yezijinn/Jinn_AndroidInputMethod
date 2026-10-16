@@ -374,17 +374,6 @@ class Prefs(private val appContext: Context) {
         }
 
     /**
-     * 空格键左右滑动移动光标（默认关）。
-     *
-     * 打开后：按住空格键横向滑动即按位移逐格移动宿主光标（左滑左移、右滑右移，见
-     * [PinyinKeyboardView]）；关闭时空格只有「上空格」与「长按语音」两个原有动作。
-     * 键盘每次弹出即重读，无需重启进程。
-     */
-    var spaceCursorMove: Boolean
-        get() = boolOr(KEY_SPACE_CURSOR_MOVE, false)
-        set(value) = sp.edit { putBoolean(KEY_SPACE_CURSOR_MOVE, value) }
-
-    /**
      * 图库快贴绑定的相册目录（SAF 目录树 URI；空串 = 未绑定）。
      *
      * 由设置页经 `ACTION_OPEN_DOCUMENT_TREE` 取得并持久化授权后写入；键盘内的图库面板直接列这个目录，
@@ -1515,8 +1504,6 @@ class Prefs(private val appContext: Context) {
         if (sp.contains(KEY_PUNCT_COMMA_EN)) put(KEY_PUNCT_COMMA_EN, punctCommaEn)
         if (sp.contains(KEY_PUNCT_PERIOD_CN)) put(KEY_PUNCT_PERIOD_CN, punctPeriodCn)
         if (sp.contains(KEY_PUNCT_PERIOD_EN)) put(KEY_PUNCT_PERIOD_EN, punctPeriodEn)
-        // 空格左右滑动移动光标：默认 false（平凡默认），导出与否等价，故不套守卫
-        put(KEY_SPACE_CURSOR_MOVE, spaceCursorMove)
         put(KEY_FAVORITE_SYMBOLS, favoriteSymbols)
         // 图库目录：换机后这条授权通常已失效，导出侧仍原样带走，导入后由键盘面板检测并提示重绑
         put(KEY_GALLERY_TREE_URI, galleryTreeUri)
@@ -1697,7 +1684,6 @@ class Prefs(private val appContext: Context) {
                 KEY_PUNCT_COMMA_EN -> asString(v)?.let { punctCommaEn = it; ok() } ?: bad(key)
                 KEY_PUNCT_PERIOD_CN -> asString(v)?.let { punctPeriodCn = it; ok() } ?: bad(key)
                 KEY_PUNCT_PERIOD_EN -> asString(v)?.let { punctPeriodEn = it; ok() } ?: bad(key)
-                KEY_SPACE_CURSOR_MOVE -> asBool(v)?.let { spaceCursorMove = it; ok() } ?: bad(key)
                 KEY_GALLERY_TREE_URI -> asString(v)?.let { galleryTreeUri = it; ok() } ?: bad(key)
                 // 导出目录走 setter：换目录时旧授权一并还掉（与图库目录同一条路径）
                 KEY_CLIP_EXPORT_TREE_URI -> asString(v)?.let { clipExportTreeUri = it; ok() } ?: bad(key)
@@ -1998,9 +1984,6 @@ class Prefs(private val appContext: Context) {
         private const val KEY_PUNCT_COMMA_EN = "punct_comma_en"
         private const val KEY_PUNCT_PERIOD_CN = "punct_period_cn"
         private const val KEY_PUNCT_PERIOD_EN = "punct_period_en"
-
-        /** 空格键左右滑动移动光标（见 [spaceCursorMove]） */
-        private const val KEY_SPACE_CURSOR_MOVE = "space_cursor_move"
 
         private const val KEY_FAVORITE_SYMBOLS = "favorite_symbols"
 

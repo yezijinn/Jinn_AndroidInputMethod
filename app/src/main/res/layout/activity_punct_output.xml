@@ -139,20 +139,6 @@
                         android:maxLength="4" />
                 </LinearLayout>
             </LinearLayout>
-
-            <!-- 空格键左右滑动移动光标：原设置页的开关迁入本页 -->
-            <LinearLayout
-                style="@style/SettingsCard"
-                android:orientation="vertical">
-
-                <Switch
-                    android:id="@+id/switch_space_cursor"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

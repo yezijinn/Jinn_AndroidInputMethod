@@ -7,7 +7,6 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Switch
 import android.widget.TextView
 
 /**
@@ -17,8 +16,6 @@ import android.widget.TextView
  * 多输入的字符由 [PunctOutput.sanitizeField] 裁到最后一个码点并回写输入框，保证「屏幕上看到的」
  * 就是「会打出来的」。取值即时落盘（[Prefs] 的四个标点键），键盘每次弹出重读即生效：
  * 本页不广播、不重启进程。
- *
- * 页内另承载「空格键左右滑动移动光标」开关（原设置页那个开关迁入本页，功能不变）。
  */
 class PunctOutputActivity : Activity() {
 
@@ -62,16 +59,6 @@ class PunctOutputActivity : Activity() {
             R.id.edit_punct_period_en, R.id.label_punct_period_en, TEXT_PUNCT_PERIOD_EN,
             PunctOutput.DEFAULT_PERIOD_EN, { prefs.punctPeriodEn }, { prefs.punctPeriodEn = it },
         )
-
-        // 空格键左右滑动移动光标：原设置页的开关迁入本页，切换即落盘（键盘下次弹出读新值）。
-        findViewById<Switch>(R.id.switch_space_cursor).apply {
-            text = TEXT_SPACE_CURSOR
-            isChecked = prefs.spaceCursorMove
-            setOnCheckedChangeListener { _, checked ->
-                prefs.spaceCursorMove = checked
-                Diagnostics.i(TAG, "空格左右滑动移动光标: ${if (checked) "开启" else "关闭"}")
-            }
-        }
     }
 
     override fun onStart() {
@@ -132,8 +119,5 @@ class PunctOutputActivity : Activity() {
         const val TEXT_PUNCT_PERIOD_CN = "中文句号"
         const val TEXT_PUNCT_COMMA_EN = "英文逗号"
         const val TEXT_PUNCT_PERIOD_EN = "英文句号"
-
-        /** 空格键左右滑动移动光标开关（原设置页开关迁入本页） */
-        const val TEXT_SPACE_CURSOR = "空格键左右移动光标"
     }
 }
