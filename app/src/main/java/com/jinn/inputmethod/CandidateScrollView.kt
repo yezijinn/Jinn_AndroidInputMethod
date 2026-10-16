@@ -34,8 +34,15 @@ class CandidateScrollView @JvmOverloads constructor(
     /** 一页宽 = 视口可见宽（内容区），至少 1px 防除零 */
     private fun pageWidth(): Int = (width - paddingLeft - paddingRight).coerceAtLeast(1)
 
-    private fun maxScroll(): Int =
-        ((getChildAt(0)?.width ?: 0) - pageWidth()).coerceAtLeast(0)
+    /** 内容总页数（向上取整；末页不满也算一页） */
+    private fun pageCount(): Int {
+        val contentWidth = getChildAt(0)?.width ?: 0
+        return ((contentWidth + pageWidth() - 1) / pageWidth()).coerceAtLeast(1)
+    }
+
+    /** 当前页号（按滚动位四舍五入；翻页态下滚动位总是落在页边界上） */
+    private fun currentPage(): Int =
+        Math.round(scrollX.toFloat() / pageWidth()).coerceIn(0, pageCount() - 1)
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         if (!paging) return super.onInterceptTouchEvent(ev)
@@ -71,7 +78,11 @@ class CandidateScrollView @JvmOverloads constructor(
                 val dx = ev.x - downX
                 if (abs(dx) > slop) {
                     val dir = if (dx < 0f) 1 else -1 // 左划看后面的候选
-                    val target = (scrollX + dir * pageWidth()).coerceIn(0, maxScroll())
+                    // 按**页号**翻页，而不是 `scrollX ± pageWidth`（BUG.md L-1387）：相对位移在
+                    // 「末页不满」时会被 maxScroll 钳位、产生累计偏移，页边界越翻越歪；真实症状是
+                    // 「翻到最后一页再翻回来会少一页」。页号制下每页起点恒为 `页号 × 页宽`，
+                    // 且内容被追加后页数自然重算。
+                    val target = (currentPage() + dir).coerceIn(0, pageCount() - 1) * pageWidth()
                     if (target != scrollX) smoothScrollTo(target, 0)
                 }
                 dragging = false
