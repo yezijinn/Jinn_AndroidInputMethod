@@ -610,14 +610,16 @@ private const val LOG_SEGMENTS_KEPT = 2
         // 帧行（`at …`）由编译器生成、不含用户内容，保持原样才可读；整体仍不截断（截断会砍掉关键帧）。
         tr?.let {
             val stack = redactSensitive(stackTraceOf(it))
-            val nl = stack.indexOf('\n')
+            // 只护「首行」不够（BUG.md L-1385）：`printStackTrace` 的完整形态是
+            // `类名: message` + 帧行，而 **message 自身可含换行** —— 那些行落在首个 `\n` 之后、
+            // 首个 `\n\tat ` 之前，仍是用户可控内容，照样能伪造完整日志行。
+            // 故按段处理：**message 段整体平坦化**（不截断），帧段原样保留（编译器生成、可读性需要）。
+            val framesAt = stack.indexOf("\n\tat ")
+            val head = if (framesAt >= 0) stack.substring(0, framesAt) else stack
+            val tail = if (framesAt >= 0) stack.substring(framesAt) else ""
             sb.append(
-                if (nl < 0) {
-                    sanitizeForFile(stack)
-                } else {
-                    sanitizeForFile(stack.substring(0, nl)) + stack.substring(nl)
-                },
-            ).append('\n')
+                head.replace('\n', '\u23CE').replace('\r', ' ').replace('\u0000', ' '),
+            ).append(tail).append('\n')
         }
         appendToFile(dir, sb.toString())
     }
