@@ -598,7 +598,7 @@ class KeyAppearanceActivity : Activity() {
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
 
     /** 候选浏览方式开关标题：勾选 = 左右跟手滑动，不勾 = 左右整屏翻页 */
-    const val TEXT_CANDIDATE_PAGING_TITLE = "候选滑动"
+    const val TEXT_CANDIDATE_PAGING_TITLE = "候选不用翻页"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */

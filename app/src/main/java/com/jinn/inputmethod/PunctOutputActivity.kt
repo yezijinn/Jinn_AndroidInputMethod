@@ -114,13 +114,13 @@ class PunctOutputActivity : Activity() {
         const val TAG = "PunctOutput"
 
         /** 页面标题与说明（strings.xml 默认禁改，文案在代码里下发） */
-        const val TEXT_TITLE = "底栏标点输出"
-        const val TEXT_HINT = "逗号/句号键的字符，各限一个；中文态与英文态分开设置"
+        const val TEXT_TITLE = "空格左右两边的按钮输出自定义"
+        const val TEXT_HINT = "仅限一个字符"
 
         /** 四个输入项的栏标题（各限一个字符） */
-        const val TEXT_PUNCT_COMMA_CN = "中文逗号"
-        const val TEXT_PUNCT_PERIOD_CN = "中文句号"
-        const val TEXT_PUNCT_COMMA_EN = "英文逗号"
-        const val TEXT_PUNCT_PERIOD_EN = "英文句号"
+        const val TEXT_PUNCT_COMMA_CN = "左侧(中文输入时)"
+        const val TEXT_PUNCT_PERIOD_CN = "右侧(中文输入时)"
+        const val TEXT_PUNCT_COMMA_EN = "左侧(英文输入时)"
+        const val TEXT_PUNCT_PERIOD_EN = "右侧(英文输入时)"
     }
 }
