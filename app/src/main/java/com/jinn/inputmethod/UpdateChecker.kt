@@ -207,8 +207,11 @@ object UpdateChecker {
             page++
         }
         if (page > GITEE_TAGS_MAX_PAGES) {
-            // 到上限不等于到底（可能有更多 tag 且更新的还在后面）⇒ 说出来，别让它变成静默漏报
-            Diagnostics.w(TAG, "Gitee 标签翻页到上限 ${GITEE_TAGS_MAX_PAGES} 页（${all.size} 个），可能还有更靠后的标签")
+            // 到上限**不等于**到底（接口按名称升序，截断的正是末尾那批最新标签）⇒ 与「取页失败」
+            // 同口径作废本源、交回退源（BUG.md L-1061 / L-1048）。只留日志照旧定论会给出偏旧的
+            // 「最新版本」——假的「已最新」+ 七天节流不自愈，比如实报网络异常更糟。
+            Diagnostics.w(TAG, "Gitee 标签翻页到上限 ${GITEE_TAGS_MAX_PAGES} 页（${all.size} 个），可能还有更靠后的标签，本源作废")
+            return@runCatching null
         }
         val best = pickLatest(all, "gitee")
         // 能走到这里说明至少有一页是真响应（取不到页的那条已在上面作废）⇒「有响应」这句才是准的

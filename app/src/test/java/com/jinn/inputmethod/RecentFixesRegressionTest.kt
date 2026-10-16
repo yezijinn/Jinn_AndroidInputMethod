@@ -4419,6 +4419,27 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * Gitee 取数的**两条截断路径必须同口径**（BUG.md L-1061）：取页失败（L-1048）与翻页到上限
+     * 都要作废本源、交回退源。只留日志照旧定论会给出偏旧的「最新版本」——假的「已最新」
+     * 加七天节流且不自愈，比如实报网络异常更糟。
+     */
+    @Test
+    fun `Gitee 两条截断路径都要作废本源`() {
+        val gitee = TestSources.blockAfter(
+            TestSources.codeSource("UpdateChecker.kt"),
+            "private fun fetchFromGitee(deadline: Long)",
+        )
+        assertTrue(
+            "取页失败必须作废本源",
+            Regex("""取不到，本源作废[^\n]*\n\s*return@runCatching null""").containsMatchIn(gitee),
+        )
+        assertTrue(
+            "翻页到上限也必须作废本源（不能只留日志照旧定论）",
+            Regex("""翻页到上限[^\n]*\n\s*return@runCatching null""").containsMatchIn(gitee),
+        )
+    }
+
+    /**
      * 启动期词典线程必须降到后台（2026-10-08 · L-1154）。
      *
      * 索引解压是启动期最重的 CPU 活（16MB 定值缓冲 + 结尾整份拷贝），而它此前跑在默认优先级上：
