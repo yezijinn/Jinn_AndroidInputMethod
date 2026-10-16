@@ -4381,6 +4381,16 @@ class RecentFixesRegressionTest {
                 Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count() + " 处）",
             Regex("""loadAsync\(resetPage = false\)""").findAll(hist).count() >= 4,
         )
+        // 搜索窗口不得被「搜索结果上限」截断（BUG.md L-1059）：loadAsync 原来把 maxResults
+        // 当驻留窗口用、关键字过滤在窗口之后做 —— 比窗口更老的记录任何关键词都搜不到。
+        // 判据：有搜索词时**不匹配的行不占窗口**（续扫到命中足够），且序号按绝对序位算。
+        val load = TestSources.blockAfter(hist, "private fun loadAsync(resetPage: Boolean = true)")
+        assertTrue(
+            "有搜索词时不匹配的行不得占窗口（原样会把更老的记录挡在窗口外）",
+            Regex("""if \(searching && !ClipboardSearch\.matches\([^\n]*\)\) continue""").containsMatchIn(load),
+        )
+        assertTrue("序号要按绝对序位算", "outOrdinal.add(scanned)" in load)
+        assertTrue("序号映射要读绝对序位", "outOrdinal.getOrNull(idx)" in load)
     }
 
     /**

@@ -910,7 +910,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
         }
         val maxResults = clipPrefs.maxSearchResults
         BackgroundIo.run {
+            // 判据只用 ClipboardSearch 一份（与面板同口径）；有搜索词时它决定哪些行占窗口
+            val forms = ClipboardSearch.queryForms(keywordNow)
+            val searching = keywordNow.isNotEmpty()
             val out = ArrayList<ClipboardDb.Item>()
+            // 每行在「全部已扫文本行」里的绝对序位：序号要按它算，不能按窗口下标（BUG.md L-1059）
+            val outOrdinal = ArrayList<Int>()
+            var scanned = 0
             var cursor: ClipboardCursor? = null
             var retainedBytes = 0L
             var capped = false
@@ -925,7 +931,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 if (page.scanned == 0) break
                 cursor = page.last
                 for (item in page.items) {
+                    scanned++
+                    // 有搜索词时**不匹配的行不占窗口**（BUG.md L-1059）：窗口原先被「搜索结果上限」
+                    // 截断，比窗口更老的记录任何关键词都搜不到（本来存在却搜不到，界面无从表达）。
+                    // 续扫到命中足够或库扫完为止 —— 扫描量仍由后台线程承担，内存只留命中行。
+                    if (searching && !ClipboardSearch.matches(item.content, forms)) continue
                     out.add(item)
+                    outOrdinal.add(scanned)
                     retainedBytes += ClipboardStore.utf8ByteSize(item.content)
                     if (ClipboardStore.searchRetainLimitReached(out.size, retainedBytes,
                             maxResults = maxResults,
@@ -965,7 +977,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     else allItems.filter { ClipboardSearch.matches(it.content, forms) }
                 )
                 numberById.clear()
-                for ((idx, item) in allItems.withIndex()) numberById[item.id] = total - idx
+                // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
+                // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）
+                for ((idx, item) in allItems.withIndex()) {
+                    numberById[item.id] = total - (outOrdinal.getOrNull(idx) ?: (idx + 1))
+                }
                 // 勾选集跨重建恢复，而重建期间库可能在变（采集在线、库到上限时插入与淘汰成对发生）⇒
                 // 按这次加载到的条目裁剪，免得确认文案的条数与实际勾着的行数不一致（BUG.md L-1171）
                 checkedIds.retainAll(allItems.mapTo(HashSet()) { it.id })
