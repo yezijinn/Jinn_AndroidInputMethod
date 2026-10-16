@@ -703,10 +703,14 @@ class GalleryInsertTest {
         val src = TestSources.codeSource("GalleryPickActivity.kt")
         val create = TestSources.blockAfter(src, "override fun onCreate(savedInstanceState: Bundle?)")
         assertTrue("首次创建要拉起选择器", "picker.launch(" in create)
+        // 收尾必须**受「复制在飞」约束**（BUG.md L-1381）：无条件 finish() 会收掉仍待投递的
+        // 选择结果（重建发生在选择器还没返回时），把用户刚选的图静默丢掉
         assertTrue(
-            "重建分支必须 finish（否则透明页常驻前台）",
-            Regex("""else \{[^}]*finish\(\)""", RegexOption.DOT_MATCHES_ALL).containsMatchIn(create),
+            "重建分支只在复制在飞时收尾（否则会丢掉待投递的选择结果）",
+            "else if (copyInFlight)" in create && "finish()" in create,
         )
+        assertTrue("复制开始前要置「在飞」标记", "copyInFlight = true" in src)
+        assertTrue("复制收尾要清「在飞」标记", "copyInFlight = false" in src)
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
