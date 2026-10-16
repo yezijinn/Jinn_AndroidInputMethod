@@ -1508,15 +1508,21 @@ object PinyinEngine {
         val cache = java.io.File(indexDir, src.name + INDEX_SUFFIX)
 
         if (cache.isFile) {
-            // 内存映射：不再把整块 .idx 读进堆（可选包两个缓存合计 34MB）
-            PhraseIndex.ofMapped(cache)?.let { idx ->
-                // 命中要求三处身份一致：缓存头记的、入口取到的、**此刻再取一次的**。入口取值与这次
-                // 判定之间源包可能被换掉（保存 / 恢复都是改名落盘），那时旧缓存会被当成新包的索引
-                // 复用，用户看到的是「改过的词库不生效」（BUG.md L-890）
-                if (cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))) {
-                    Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
-                    return PackLoad.Indexed(idx)
+            // 先**读头部**判身份，命中才做内存映射与解析（算法面 A3）：
+            // 此前是先 `ofMapped(cache)` 全解析（临时分配约 6.8MB + O(n) 遍历）**之后**才判 stamp，
+            // 缓存陈旧时这份解析结果直接丢弃，白付一次尖峰分配与遍历。
+            // 命中要求三处身份一致：缓存头记的、入口取到的、**此刻再取一次的**。入口取值与这次
+            // 判定之间源包可能被换掉（保存 / 恢复都是改名落盘），那时旧缓存会被当成新包的索引
+            // 复用，用户看到的是「改过的词库不生效」（BUG.md L-890）
+            if (PhraseIndex.cacheMatchesSource(cache, src)) {
+                PhraseIndex.ofMapped(cache)?.let { idx ->
+                    if (cacheStampMatches(idx.sourceStamp, stamp, packStamp(src))) {
+                        Diagnostics.i(TAG, "复用索引缓存(映射): ${src.name}（${idx.size} 键）")
+                        return PackLoad.Indexed(idx)
+                    }
                 }
+                // stamp 命中但结构损坏：落到下面的构建路径（与旧行为一致）
+                Diagnostics.w(TAG, "索引缓存命中但解析失败，改为重新构建: ${src.name}")
             }
         }
 
