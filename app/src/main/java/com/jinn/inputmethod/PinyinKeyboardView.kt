@@ -205,6 +205,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidatePinyin: TextView
     private val viewCandidateList: LinearLayout
 
+    /** 候选条目视图复用池：整棵重建前回收、重建时取用，省掉每次按键几十个 TextView 与闭包 */
+    private val candidateViewPool = ArrayList<TextView>(64)
+
     /** 候选区视口：两排共用一个横滑容器（天然同步）；✕ 可见时右内边距让出按钮宽度 */
     private val candidateScroll: CandidateScrollView
 
@@ -449,7 +452,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         onClick: (String) -> Unit,
     ) {
         fun build(text: String): TextView =
-            buildCandidateView(text, sizeSp, spacingHalfPx, color, onClick)
+            buildCandidateView(text, sizeSp, spacingHalfPx, color, onClick, obtainCandidateView())
         for (column in CandidateRows.columnsOfN(shown, rows)) {
             val cell = FrameLayout(context)
             column.forEachIndexed { index, text ->
@@ -677,6 +680,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateRenderSource = emptyList()
         candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
         viewCandidateList.removeAllViews()
+        // 池里的条目成形于另一种形态（候选 / 功能面板 / 符号分组 / 密码数字条），一并作废
+        candidateViewPool.clear()
     }
 
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
@@ -2697,7 +2702,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val renderKey = shown.hashCode().toLong() * 31 + appearanceKey
         if (renderKey == candidateRenderKey) return
         candidateRenderKey = renderKey
-        viewCandidateList.removeAllViews()
+        // 先回收旧条目（进复用池）再重建：退格连删时池子命中率高，省掉几十个 TextView 的分配与测量
+        recycleCandidateViews()
         // 布局完成后兜一次「内容没撑满、但还有候选没渲染」的情况（见 [maybeAppendMoreCandidates]）：
         // 这时滚不动、触发不了滚动回调，必须主动补足，否则后面的候选永远不可达。
         candidateScroll.post { maybeAppendMoreCandidates() }
@@ -2705,7 +2711,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         val candidateColor = skinToken(colorToken, colorRes)
         fun build(text: String): TextView =
-            buildCandidateView(text, sizeSp, spacingHalfPx, candidateColor, onClick)
+            buildCandidateView(text, sizeSp, spacingHalfPx, candidateColor, onClick, obtainCandidateView())
         // 展开态：按 N 排一列分组（列内自上而下 = 候选原序 ⇒ 第一列第一条仍是最高词频）。
         // 每列占满整栏高（行高 × 排数），排数由调用方按可用高度夹取后传进来。
         if (candidatesExpanded) {
@@ -2751,20 +2757,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** 单个候选条目视图（[renderCandidateItems] 与 [appendCandidateViews] 共用；字色 / 字号 / 回调由调用方给）。 */
+    /**
+     * 单个候选条目视图（[renderCandidateItems] 与 [appendCandidateViews] 共用；字色 / 字号 / 回调由调用方给）。
+     *
+     * [reuse] 来自 [candidateViewPool]：复用**必须**重设全部可变属性（文本 / 字号 / 字色 / 内边距 / 点击闭包 /
+     * 布局参数），否则会残留上一个候选的样式 —— 尤其是双行档留下的 `EXACTLY` 行高，拿来当单行档会裁字。
+     */
     private fun buildCandidateView(
         text: String,
         sizeSp: Float,
         spacingHalfPx: Int,
         color: Int,
         onClick: (String) -> Unit,
-    ): TextView = TextView(context).apply {
+        reuse: TextView? = null,
+    ): TextView = (reuse ?: TextView(context)).apply {
         this.text = text
         textSize = sizeSp
         gravity = android.view.Gravity.CENTER
         setTextColor(color)
         // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
         setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
+        // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含行高 / topMargin）：清空后由新容器重新生成
+        layoutParams = null
         isClickable = true
         // 候选词 / 预测词走 Click 语义（**不是** ACTION_DOWN）：候选栏是横向滚动容器，
         // 在 DOWN 触发的话，用户横滑候选列表会先响一声。走点击则只有真正选中才响。
@@ -2773,6 +2787,35 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onClick(text)
         }
     }
+
+    /** 把候选容器里的子项全部回收进 [candidateViewPool]（整棵重建前调用） */
+    private fun recycleCandidateViews() {
+        for (i in 0 until viewCandidateList.childCount) {
+            if (candidateViewPool.size >= CANDIDATE_VIEW_POOL_MAX) break
+            val child = viewCandidateList.getChildAt(i)
+            if (child is TextView) {
+                candidateViewPool.add(child)
+                continue
+            }
+            // 双行档 / 展开档的子项是列容器（FrameLayout），逐条候选在里面；列容器不复用，只回收叶子。
+            // 叶子必须先摘下来：带着 parent 进池，下次 addView 会抛「already has a parent」。
+            if (child is android.view.ViewGroup) {
+                val leaves = ArrayList<TextView>(child.childCount)
+                for (j in 0 until child.childCount) {
+                    (child.getChildAt(j) as? TextView)?.let { leaves.add(it) }
+                }
+                child.removeAllViews()
+                for (leaf in leaves) {
+                    if (candidateViewPool.size >= CANDIDATE_VIEW_POOL_MAX) break
+                    candidateViewPool.add(leaf)
+                }
+            }
+        }
+        viewCandidateList.removeAllViews()
+    }
+
+    /** 取一个候选条目视图：池里有就复用并重设，没有才新建 */
+    private fun obtainCandidateView(): TextView = candidateViewPool.removeLastOrNull() ?: TextView(context)
 
     /**
      * **增量**把 [CandidateRenderArgs.items] 的 `[from, to)` 区间接到候选容器**尾部**
@@ -2788,7 +2831,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (args.rows != CandidateRows.DOUBLE) {
             for (i in from until to) {
                 viewCandidateList.addView(
-                    buildCandidateView(args.items[i], args.sizeSp, args.spacingHalfPx, color, args.onClick),
+                    buildCandidateView(
+                        args.items[i], args.sizeSp, args.spacingHalfPx, color, args.onClick,
+                        obtainCandidateView(),
+                    ),
                 )
             }
             return
@@ -2803,14 +2849,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 列内先下排后上排：视图树顺序即无障碍顺序（与 renderCandidateItems 的说明一致）
             val column = FrameLayout(context)
             column.addView(
-                buildCandidateView(bottom, args.sizeSp, args.spacingHalfPx, color, args.onClick),
+                buildCandidateView(
+                    bottom, args.sizeSp, args.spacingHalfPx, color, args.onClick, obtainCandidateView(),
+                ),
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
                     android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.BOTTOM),
             )
             column.addView(
-                top?.let { buildCandidateView(it, args.sizeSp, args.spacingHalfPx, color, args.onClick) }
-                    ?: View(context),
+                top?.let {
+                    buildCandidateView(
+                        it, args.sizeSp, args.spacingHalfPx, color, args.onClick, obtainCandidateView(),
+                    )
+                } ?: View(context),
                 FrameLayout.LayoutParams(
                     if (top == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT, rowHeight,
                     android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.TOP),
@@ -4867,6 +4918,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
         const val PANEL_COMPACT_SLOTS = 8
+
+        /**
+         * 候选条目复用池的容量上限（条）：首屏 32 条 + 一次追加 32 条覆盖常见一轮按键，
+         * 到顶就不再收，防止长列表滑到底后把几百个视图一直养在池里。
+         */
+        const val CANDIDATE_VIEW_POOL_MAX = 64
 
         /**
          * 符号层空槽键的读屏名（BUG.md L-1139）。

@@ -5764,4 +5764,32 @@ class RecentFixesRegressionTest {
         assertFalse("不得再有裸 cachedKey 参与解密 init", "cipher.init(Cipher.DECRYPT_MODE, cachedKey" in src)
     }
 
+    /**
+     * 候选条目必须按行复用（每次按键整棵重建曾要新建最多 32 个 TextView + 32 个点击闭包）。
+     *
+     * 判据只钉接线的三处：池字段在、回收入口在、`renderCandidateItems` 里不再有裸 `removeAllViews()`
+     * （绕过回收直接清容器 = 池永远取不到货，等于没复用）。
+     */
+    @Test
+    fun `候选条目必须复用视图`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        assertTrue("必须有复用池字段", "private val candidateViewPool" in src)
+        assertTrue("必须先把旧条目回收进池", "private fun recycleCandidateViews()" in src)
+        // 只取 renderCandidateItems 的函数体（下一个函数是 buildCandidateView）
+        val start = src.indexOf("private fun renderCandidateItems(")
+        assertTrue("找不到 renderCandidateItems（改名后请同步本用例）", start > 0)
+        val end = src.indexOf("private fun buildCandidateView(", start)
+        assertTrue("找不到 renderCandidateItems 的结尾（改名后请同步本用例）", end > start)
+        val body = src.substring(start, end)
+        assertTrue("整棵重建必须走回收入口", "recycleCandidateViews()" in body)
+        assertEquals(
+            "不得再裸清容器：绕过回收等于池里永远取不到货",
+            0,
+            Regex("""viewCandidateList\.removeAllViews\(\)""").findAll(body).count(),
+        )
+        // 切到别的形态（功能面板 / 符号 / 密码条）时池要作废，否则候选 TextView 会被复用到那些形态上
+        val clear = blockAfter(src, "private fun clearCandidateList()")
+        assertTrue("切形态时要清空池", "candidateViewPool.clear()" in clear)
+    }
+
 }
