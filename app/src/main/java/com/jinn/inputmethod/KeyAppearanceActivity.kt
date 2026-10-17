@@ -36,11 +36,9 @@ class KeyAppearanceActivity : Activity() {
 
     // ── 2026-10-09 由设置页迁入的四组控件（外观相关集中在本页）──
     private lateinit var spinnerCandidateRows: UserAwareSpinner
-    private lateinit var spinnerCandidateAppend: UserAwareSpinner
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
     private lateinit var switchCandidatePaging: Switch
-    private lateinit var switchPinyinMark: Switch
     private lateinit var spinnerTheme: UserAwareSpinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
@@ -353,31 +351,6 @@ class KeyAppearanceActivity : Activity() {
             }
         spinnerCandidateRows.setSelection(prefs.candidateRows - 1)
 
-        // 候选追加方式：滑到末尾只追加一批（默认）/ 连续追加到全部候选
-        spinnerCandidateAppend = findViewById(R.id.spinner_candidate_append)
-        findViewById<TextView>(R.id.label_candidate_append).text = TEXT_CANDIDATE_APPEND_TITLE
-        spinnerCandidateAppend.adapter = ArrayAdapter(
-            this, R.layout.item_spinner, arrayOf("追加一次", "追加无限"),
-        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerCandidateAppend.onItemSelectedListener =
-            object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-                ) {
-                    // 初始化 setSelection 与恢复实例状态都会回调，不挡住会把用户选择改回第 0 项
-                    if (!spinnerCandidateAppend.userInteracted) return
-                    val all = position == 1
-                    if (all != prefs.candidateAppendAll) {
-                        prefs.candidateAppendAll = all
-                        Diagnostics.i(TAG, "候选追加: ${if (all) "无限" else "一次"}")
-                        JinnIme.onKeyAppearanceChanged()
-                    }
-                }
-
-                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            }
-        spinnerCandidateAppend.setSelection(if (prefs.candidateAppendAll) 1 else 0)
-
         // 键面韵母提示（双拼）：关掉后键面只显示字母
         switchKeyHint = findViewById(R.id.switch_key_hint)
         switchKeyHint.text = TEXT_KEY_HINT_TITLE
@@ -395,16 +368,6 @@ class KeyAppearanceActivity : Activity() {
         switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
             prefs.showQuanpin = checked
             Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
-            JinnIme.onKeyAppearanceChanged()
-        }
-
-        // 拼音打标：拼音行按音节加 ' 分隔（只改显示，composing / 查询 / 上屏不变）
-        switchPinyinMark = findViewById(R.id.switch_pinyin_mark)
-        switchPinyinMark.text = TEXT_PINYIN_MARK_TITLE
-        switchPinyinMark.isChecked = prefs.pinyinSyllableMark
-        switchPinyinMark.setOnCheckedChangeListener { _, checked ->
-            prefs.pinyinSyllableMark = checked
-            Diagnostics.i(TAG, "拼音打标: ${if (checked) "开" else "关"}")
             JinnIme.onKeyAppearanceChanged()
         }
 
@@ -723,9 +686,6 @@ class KeyAppearanceActivity : Activity() {
     /** 「长按小写转大写」开关标题：小写英文键盘上长按字母输出大写 */
     const val TEXT_LONGPRESS_UPPER_TITLE = "长按小写转大写"
 
-    /** 「拼音打标」开关标题：拼音行按音节用 ' 分隔显示（只改显示，不改输入与上屏） */
-    const val TEXT_PINYIN_MARK_TITLE = "拼音打标"
-
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
     const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
@@ -734,9 +694,6 @@ class KeyAppearanceActivity : Activity() {
     /** 候选浏览方式开关标题：勾选 = 左右跟手滑动，不勾 = 左右整屏翻页 */
     const val TEXT_CANDIDATE_PAGING_TITLE = "候选不用翻页"
     const val TEXT_THEME_TITLE = "界面明暗切换"
-
-    /** 候选追加方式下拉的标题：滑到候选末尾时追加一批 / 追加到全部候选 */
-    const val TEXT_CANDIDATE_APPEND_TITLE = "候选追加"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */
     const val TEXT_CORNER_TITLE = "按钮圆角"

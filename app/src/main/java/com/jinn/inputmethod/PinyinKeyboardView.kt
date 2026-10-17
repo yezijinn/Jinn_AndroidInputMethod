@@ -2803,10 +2803,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 候选栏滑到末尾时追加渲染更多候选（分页渲染的「翻页」动作，见 [INITIAL_RENDERED_CANDIDATES]）。
      *
-     * 两档语义（[Prefs.candidateAppendAll]）：
-     * - **追加一次**（默认）：用户触底只追加一批 [RENDERED_CANDIDATES_STEP] 条；内容仍没撑满视口时
-     *   继续补到撑满（不补的话后面的候选既滚不到、也触发不了本方法）；
-     * - **追加无限**：触底后连续追到全部候选都渲染出来（[CandidateRenderArgs.items] 全量）。
+     * 滑到末尾追加一批 [RENDERED_CANDIDATES_STEP] 条；内容没撑满时补到撑满
+     * （不补的话后面的候选既滚不到、也触发不了本方法）。
      *
      * 触底判据按展开态分轴：未展开看横向（[candidateScroll] 的 scrollX，距末尾 [RENDER_EDGE_DP] 以内）；
      * 展开态（3/4 排）看纵向（[candidateRowsScroll] 的 scrollY），内容高度取内层滚动视图的高度
@@ -2821,7 +2819,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足。
      *
-     * @param force 由追加自身的重入链带入：跳过「已在末尾」判据，只受「追加一次 = 补到撑满」约束
+     * @param force 由追加自身的重入链带入：跳过「已在末尾」判据，只在内容没撑满时继续补
      */
     private fun maybeAppendMoreCandidates(force: Boolean = false) {
         // 容器被非候选形态接管过（[clearCandidateList] 会清掉 args、[resetCandidateRender] 会置空指纹）：
@@ -2829,8 +2827,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val args = candidateRenderArgs ?: return
         if (candidateRenderKey == null) return
         if (candidateRenderLimit >= args.items.size) return
-        // 本帧只读一次：两档的判据与目标条数必须同源，否则中途改键会出现「判据按新档、目标按旧档」
-        val appendAll = prefs.candidateAppendAll
         // 滚动度量：展开态是纵轴（内层 = 内容、外层 = 视口），未展开是横轴（容器宽 - 视口宽）
         val maxScroll: Int
         val pos: Int
@@ -2845,18 +2841,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」：这种情况滚不动，触发不了滚动回调，
         // 否则后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
         if (!force && maxScroll > 0 && pos < maxScroll - dp(RENDER_EDGE_DP)) return
-        // 续补（force）且「追加一次」：只在内容仍没撑满时继续 —— 这就是「补到撑满」的停止条件。
-        // 「追加无限」不判末尾，一直补到全部候选。
-        if (force && !appendAll && maxScroll > 0) return
+        // 续补（force）：只在内容仍没撑满时继续 —— 这就是「补到撑满」的停止条件。
+        if (force && maxScroll > 0) return
         val filledBefore = maxScroll <= 0
         val from = candidateRenderLimit
-        // 展开态只能整栏重建，一次补到全部；非展开态按步长增量续补（「追加无限」= 连续补到全量，
-        // 不是一帧塞几百个 View —— 那会在低端机上掉帧）。
-        val to = if (appendAll && candidatesExpanded) {
-            args.items.size
-        } else {
-            minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
-        }
+        val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
         // 展开态（3/4 排）不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认「逐条」与
         // 「两排一列」，展开态按 3/4 排成列，`from` 又未必是排数的整数倍 —— 增量拼出来的列会
         // **整体竖向错位**（实测：第 9 列四个字被当成一列裸 TextView，落成竖直居中的错块）。
@@ -2868,8 +2857,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshCandidateBar()
             candidateRowsScroll.post { candidateRowsScroll.scrollTo(0, keepY) }
             Diagnostics.i(TAG, "候选分页(展开态): 重建至 $to/${args.items.size} 条")
-            // 「追加无限」一下补到全部（to 已是总数则不再重入）；「追加一次」只在没撑满时补
-            if (to < args.items.size && (appendAll || filledBefore)) {
+            if (to < args.items.size && filledBefore) {
                 candidateRowsScroll.post { maybeAppendMoreCandidates(force = true) }
             }
             return
@@ -2880,9 +2868,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val shownNew = if (args.items.size > to) args.items.subList(0, to) else args.items
         candidateRenderKey = shownNew.hashCode().toLong() * 31 + args.appearanceKey
         Diagnostics.i(TAG, "候选分页: 追加渲染至 $to/${args.items.size} 条")
-        // 续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据；「追加无限」连到全量，
-        // 「追加一次」只在追加前没撑满时继续（补到撑满即止）。
-        if (to < args.items.size && (appendAll || filledBefore)) {
+        // 续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据，只在追加前没撑满时继续（补到撑满即止）。
+        if (to < args.items.size && filledBefore) {
             candidateScroll.post { maybeAppendMoreCandidates(force = true) }
         }
     }
@@ -2964,15 +2951,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         val input = composing.toString()
-        // 拼音行显示方式本帧只读一次并向下传（下方三处赋值必须同档）：
-        // 默认显示按下的英文字母；「拼音显示为声韵」打开后按声母/韵母展开成全拼（残码也不丢键）
+        // 拼音行固定按音节打标（内置常开，无开关）：双拼先展开成全拼，再按音节分隔
+        // （残码也不丢键）。只改显示，composing / 查询 / 上屏都用未打标的串。
         val baseDisplay = if (shuangpinMode) Shuangpin.displayQuanpin(input, scheme) else input
-        // 打标优先：开着时双拼也直接显示「带分隔的全拼」（不再看 showQuanpin）；关掉才回到旧两档。
-        val displayText = when {
-            prefs.pinyinSyllableMark -> PinyinEngine.markSyllables(baseDisplay)
-            shuangpinMode && prefs.showQuanpin -> baseDisplay
-            else -> input
-        }
+        val displayText = PinyinEngine.markSyllables(baseDisplay)
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
         // 双行档的面板态也保持整栏 72dp —— 用户 2026-10-02 明确要求「2 行候选恒定增高，

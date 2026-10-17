@@ -288,17 +288,6 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_CANDIDATE_PAGING, value) }
 
     /**
-     * 滑到候选末尾时的追加方式：false（默认）= 只追加一批（[PinyinKeyboardView.RENDERED_CANDIDATES_STEP] 条，
-     * 内容没撑满视口时继续补到撑满）；true = 连续追加，直到全部候选都渲染出来。
-     *
-     * 两档都只是「渲染窗口」的策略，不改候选顺序与查询结果；展开态同样受它控制
-     * （见 [PinyinKeyboardView] 的 maybeAppendMoreCandidates）。
-     */
-    var candidateAppendAll: Boolean
-        get() = boolOr(KEY_CANDIDATE_APPEND_ALL, false)
-        set(value) = sp.edit { putBoolean(KEY_CANDIDATE_APPEND_ALL, value) }
-
-    /**
      * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
@@ -615,15 +604,6 @@ class Prefs(private val appContext: Context) {
     var pinyinTextSp: Float
         get() = CandidateText.clampPinyinSp(floatOr(KEY_PINYIN_TEXT_SP, CandidateText.PINYIN_DEFAULT_AUTO))
         set(value) = sp.edit { putFloat(KEY_PINYIN_TEXT_SP, CandidateText.clampPinyinSp(value)) }
-
-    /**
-     * 拼音行按音节打标（默认开）：显示时用 `'` 分隔，如 `nihaoma` → `ni'hao'ma`。
-     *
-     * 只影响拼音行的显示文本；composing、查询串与上屏都不变（见 `PinyinEngine.markSyllables`）。
-     */
-    var pinyinSyllableMark: Boolean
-        get() = boolOr(KEY_PINYIN_SYLLABLE_MARK, true)
-        set(value) = sp.edit { putBoolean(KEY_PINYIN_SYLLABLE_MARK, value) }
 
     /**
      * 拼音行间隔（dp，默认 0）：拼音行底部到候选行之间的空隙，计入候选栏总高。
@@ -1440,7 +1420,6 @@ class Prefs(private val appContext: Context) {
         put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_SHOW_QUANPIN, showQuanpin)
         put(KEY_CANDIDATE_PAGING, candidatePaging)
-        put(KEY_CANDIDATE_APPEND_ALL, candidateAppendAll)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_RARE_TIER2, rareTier2)
         put(KEY_RARE_TIER3, rareTier3)
@@ -1548,7 +1527,6 @@ class Prefs(private val appContext: Context) {
         // 否则「自动」会被固化成当时的派生值，改候选字号后拼音不再跟随）
         if (sp.contains(KEY_PINYIN_TEXT_SP)) put(KEY_PINYIN_TEXT_SP, pinyinTextSp)
         if (sp.contains(KEY_PINYIN_LINE_GAP_DP)) put(KEY_PINYIN_LINE_GAP_DP, pinyinLineGapDp)
-        put(KEY_PINYIN_SYLLABLE_MARK, pinyinSyllableMark)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1633,7 +1611,6 @@ class Prefs(private val appContext: Context) {
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_PAGING -> asBool(v)?.let { candidatePaging = it; ok() } ?: bad(key)
-                KEY_CANDIDATE_APPEND_ALL -> asBool(v)?.let { candidateAppendAll = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_RARE_TIER2 -> asBool(v)?.let { rareTier2 = it; ok() } ?: bad(key)
                 KEY_RARE_TIER3 -> asBool(v)?.let { rareTier3 = it; ok() } ?: bad(key)
@@ -1730,8 +1707,6 @@ class Prefs(private val appContext: Context) {
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_TEXT_SP -> asFloat(v)?.let { pinyinTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_LINE_GAP_DP -> asFloat(v)?.let { pinyinLineGapDp = it; ok() } ?: bad(key)
-                KEY_PINYIN_SYLLABLE_MARK ->
-                    asBool(v)?.let { pinyinSyllableMark = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 // 敲击音效反馈 6 键：setter 里已有钳位（TapSound.clampVolume / parseMap /
@@ -1946,8 +1921,6 @@ class Prefs(private val appContext: Context) {
 
     /** 候选浏览方式：false = 跟手滑动 / true = 整屏翻页（见 [Prefs.candidatePaging]） */
     private const val KEY_CANDIDATE_PAGING = "candidate_paging"
-    /** 候选追加方式：false = 触底追加一批 / true = 追加到全部候选（见 [Prefs.candidateAppendAll]） */
-    private const val KEY_CANDIDATE_APPEND_ALL = "candidate_append_all"
     private const val KEY_USER_LEARNING = "user_learning"
     /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
     private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
@@ -2035,8 +2008,6 @@ class Prefs(private val appContext: Context) {
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_PINYIN_TEXT_SP = "pinyin_text_sp"
         private const val KEY_PINYIN_LINE_GAP_DP = "pinyin_line_gap_dp"
-        /** 拼音行按音节打标（显示用，见 [pinyinSyllableMark]） */
-        private const val KEY_PINYIN_SYLLABLE_MARK = "pinyin_syllable_mark"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
 
         /**
