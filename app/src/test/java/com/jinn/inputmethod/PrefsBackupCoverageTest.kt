@@ -83,7 +83,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-16 起 92 → 98：新增「符号分组禁用」1 键、「底栏标点输出」4 键、「空格左右滑动移动
         //                       光标」1 键（都是用户偏好，换机必须带走）
         // 2026-10-16 起 98 → 97：移除「空格左右滑动移动光标」1 键（该功能整体下线）
-        assertEquals("提取到的键常量应是 97 个（改键数请同步本断言）", 97, keyConstants.size)
+        // 2026-10-17 起 97 → 98：新增「候选追加方式」1 键（一次 / 无限，外观页控件，换机要带走）
+        assertEquals("提取到的键常量应是 98 个（改键数请同步本断言）", 98, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -128,6 +129,7 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_KEY_HINT" to "asBool(v)",
             "KEY_SHOW_QUANPIN" to "asBool(v)",
             "KEY_CANDIDATE_PAGING" to "asBool(v)",
+            "KEY_CANDIDATE_APPEND_ALL" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
             "KEY_RARE_TIER2" to "asBool(v)",
             "KEY_RARE_TIER3" to "asBool(v)",
@@ -499,6 +501,7 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_KEY_HINT" to "show_key_hint",
             "KEY_SHOW_QUANPIN" to "show_quanpin",
             "KEY_CANDIDATE_PAGING" to "candidate_paging",
+            "KEY_CANDIDATE_APPEND_ALL" to "candidate_append_all",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
             // 外观页的滑杆
             "KEY_KEY_CORNER_DP" to "key_corner_dp",

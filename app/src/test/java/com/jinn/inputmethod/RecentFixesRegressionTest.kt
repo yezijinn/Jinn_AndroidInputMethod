@@ -1292,6 +1292,24 @@ class RecentFixesRegressionTest {
     }
 
     @Test
+    fun `候选追加两档`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "追加渲染必须按用户设置分叉（追加一次 / 追加无限）",
+            "candidateAppendAll" in view,
+        )
+        assertTrue(
+            "候选追加方式必须持久化（换机备份要带走）",
+            "KEY_CANDIDATE_APPEND_ALL" in codeOf("Prefs.kt"),
+        )
+        val appearance = codeOf("KeyAppearanceActivity.kt")
+        assertTrue(
+            "外观页必须提供两档选项",
+            "追加一次" in appearance && "追加无限" in appearance,
+        )
+    }
+
+    @Test
     fun `收尾包未送出时不得挂等待态`() {
         val asr = codeOf("AsrClient.kt")
         assertTrue(
@@ -3976,7 +3994,7 @@ class RecentFixesRegressionTest {
         // 2026-10-09：候选词行数与界面明暗两个下拉迁到「键盘外观」页 —— 探针闸门必须跟着控件走，
         // 留在设置页等于外观页那两个下拉永远不落盘（`userInteracted` 没人读）。
         val appearance = codeOf("KeyAppearanceActivity.kt")
-        for (spinner in listOf("spinnerCandidateRows", "spinnerTheme")) {
+        for (spinner in listOf("spinnerCandidateRows", "spinnerCandidateAppend", "spinnerTheme")) {
             assertTrue("$spinner 的闸门必须走用户操作探针（随控件迁到外观页）", "$spinner.userInteracted" in appearance)
         }
         assertFalse("不得残留只认触摸的字段（SpinnerTouched）", "SpinnerTouched" in settings)
@@ -3992,8 +4010,8 @@ class RecentFixesRegressionTest {
             Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_settings.xml")).count(),
         )
         assertEquals(
-            "外观页迁入的 2 个下拉同样必须是 UserAwareSpinner",
-            2,
+            "外观页迁入的 3 个下拉（候选行数 / 候选追加 / 界面明暗）同样必须是 UserAwareSpinner",
+            3,
             Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_key_appearance.xml")).count(),
         )
 

@@ -666,6 +666,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateScroll.setOnScrollChangeListener { _, scrollX, _, oldScrollX, _ ->
             if (scrollX > oldScrollX) maybeAppendMoreCandidates()
         }
+        // 展开态的追加靠**纵向**触底：横向那一层此时只负责换列，纵向滚到底才是「看到末尾」。
+        // 未展开时本层不滚动（内容高度 = 视口），监听不会触发，无副作用。
+        candidateRowsScroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+            if (scrollY > oldScrollY) maybeAppendMoreCandidates()
+        }
         pinyinBar = root.findViewById(R.id.pinyin_bar)
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
@@ -2363,7 +2368,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 无障碍遍历顺序，TalkBack 因此按 1、2、3、4… 朗读，与「第 1 个候选在下排首列」一致。
      *
      * 渲染条数是分页的：首屏 [INITIAL_RENDERED_CANDIDATES] 条，余下的由
-     * [maybeAppendMoreCandidates] 在用户横滑到末尾时追加 —— `items` 传**完整**候选，
+     * [maybeAppendMoreCandidates] 在用户滑到末尾（未展开 = 横滑 / 展开 = 纵滑）时追加 —— `items` 传**完整**候选，
      * 截断只发生在本函数内；[CandidateRenderArgs] 记下完整入参供追加时重放。
      *
      * @param rows 本帧档位，由 [refreshCandidateBar] 读出后传入（与候选栏高度同源）
@@ -2543,19 +2548,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 候选栏横滑到末尾时追加渲染更多候选（分页渲染的「翻页」动作，见 [INITIAL_RENDERED_CANDIDATES]）。
+     * 候选栏滑到末尾时追加渲染更多候选（分页渲染的「翻页」动作，见 [INITIAL_RENDERED_CANDIDATES]）。
      *
-     * 只有在「可见区已推到右端」（距末尾 [RENDER_EDGE_DP] 以内）或「内容还没撑满视口」且还有
-     * 未渲染候选时才动作。追加是**增量**的（[appendCandidateViews] 只往尾部接视图）：不动已有
-     * 子项、不动 scrollX ⇒ 候选栏平滑衔接，不出现回弹抖动。追加后剩下的候选更靠右，当前位置
-     * 不再算末尾，因此不会连环触发。
+     * 两档语义（[Prefs.candidateAppendAll]）：
+     * - **追加一次**（默认）：用户触底只追加一批 [RENDERED_CANDIDATES_STEP] 条；内容仍没撑满视口时
+     *   继续补到撑满（不补的话后面的候选既滚不到、也触发不了本方法）；
+     * - **追加无限**：触底后连续追到全部候选都渲染出来（[CandidateRenderArgs.items] 全量）。
      *
-     * ⚠ 只由**向右**的用户滚动触发（见 `init` 里监听器的 `scrollX > oldScrollX` 判据）：
-     *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把 scrollX 夹回、发出一次
-     *   scrollX **变小**的回调 —— 若不加方向判据，这里会凭空把首屏铺到满。
+     * 触底判据按展开态分轴：未展开看横向（[candidateScroll] 的 scrollX，距末尾 [RENDER_EDGE_DP] 以内）；
+     * 展开态（3/4 排）看纵向（[candidateRowsScroll] 的 scrollY），内容高度取内层滚动视图的高度
+     * （[candidateScroll] 在展开态按内容撑高，外层才是视口）。
      *
-     * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足，
-     * 否则剩余候选既滚不到、也不会触发本方法。
+     * 未展开时追加是**增量**的（[appendCandidateViews] 只往尾部接视图）：不动已有子项、不动 scrollX
+     * ⇒ 候选栏平滑衔接，不出现回弹抖动。展开态则整栏重建（列数按排数重算，见下方说明）。
+     *
+     * ⚠ 只由**正向**的用户滚动触发（横向 `scrollX > oldScrollX` / 纵向 `scrollY > oldScrollY`）：
+     *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把滚动位置夹回、发出一次**变小**的回调 ——
+     *   若不加方向判据，这里会凭空把首屏铺到满。
+     *
+     * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足。
+     *
+     * @param force 由追加自身的重入链带入：跳过「已在末尾」判据，只受「追加一次 = 补到撑满」约束
      */
     private fun maybeAppendMoreCandidates(force: Boolean = false) {
         // 容器被非候选形态接管过（[clearCandidateList] 会清掉 args、[resetCandidateRender] 会置空指纹）：
@@ -2563,20 +2576,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val args = candidateRenderArgs ?: return
         if (candidateRenderKey == null) return
         if (candidateRenderLimit >= args.items.size) return
-        // 链式续补（BUG.md L-1395）：追加后内容变长而 scrollX 不变，重入时「必须已在末尾」会把
-        // 后续追加全部挡掉 ⇒ 用户感觉「每次滑到底只多一批、后面接不上」（实测 五湖→四海 后断掉）。
-        // force = 由追加自身的重入链带入：跳过「已在末尾」，但保留**一屏前瞻**的停止条件。
-        val maxScroll = viewCandidateList.width - candidateScroll.width +
-            candidateScroll.paddingLeft + candidateScroll.paddingRight
-        if (force) {
-            // 已经缓冲了「一屏未读内容」就停：既保证用户一划就能看到新内容，又不把全部候选一次性铺满
-            if (maxScroll - candidateScroll.scrollX >= candidateScroll.width) return
+        // 本帧只读一次：两档的判据与目标条数必须同源，否则中途改键会出现「判据按新档、目标按旧档」
+        val appendAll = prefs.candidateAppendAll
+        // 滚动度量：展开态是纵轴（内层 = 内容、外层 = 视口），未展开是横轴（容器宽 - 视口宽）
+        val maxScroll: Int
+        val pos: Int
+        if (candidatesExpanded) {
+            maxScroll = candidateScroll.height - candidateRowsScroll.height
+            pos = candidateRowsScroll.scrollY
+        } else {
+            maxScroll = viewCandidateList.width - candidateScroll.width +
+                candidateScroll.paddingLeft + candidateScroll.paddingRight
+            pos = candidateScroll.scrollX
         }
-        // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」，直接继续追加：这种情况滚不动，
-        // 触发不了滚动回调，后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
-        if (!force && maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
+        // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」：这种情况滚不动，触发不了滚动回调，
+        // 否则后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
+        if (!force && maxScroll > 0 && pos < maxScroll - dp(RENDER_EDGE_DP)) return
+        // 续补（force）且「追加一次」：只在内容仍没撑满时继续 —— 这就是「补到撑满」的停止条件。
+        // 「追加无限」不判末尾，一直补到全部候选。
+        if (force && !appendAll && maxScroll > 0) return
+        val filledBefore = maxScroll <= 0
         val from = candidateRenderLimit
-        val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
+        // 展开态只能整栏重建，一次补到全部；非展开态按步长增量续补（「追加无限」= 连续补到全量，
+        // 不是一帧塞几百个 View —— 那会在低端机上掉帧）。
+        val to = if (appendAll && candidatesExpanded) {
+            args.items.size
+        } else {
+            minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
+        }
         // 展开态（3/4 排）不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认「逐条」与
         // 「两排一列」，展开态按 3/4 排成列，`from` 又未必是排数的整数倍 —— 增量拼出来的列会
         // **整体竖向错位**（实测：第 9 列四个字被当成一列裸 TextView，落成竖直居中的错块）。
@@ -2588,7 +2615,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshCandidateBar()
             candidateRowsScroll.post { candidateRowsScroll.scrollTo(0, keepY) }
             Diagnostics.i(TAG, "候选分页(展开态): 重建至 $to/${args.items.size} 条")
-            candidateScroll.post { maybeAppendMoreCandidates(force = true) }
+            // 「追加无限」一下补到全部（to 已是总数则不再重入）；「追加一次」只在没撑满时补
+            if (to < args.items.size && (appendAll || filledBefore)) {
+                candidateRowsScroll.post { maybeAppendMoreCandidates(force = true) }
+            }
             return
         }
         appendCandidateViews(args, from, to)
@@ -2597,9 +2627,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val shownNew = if (args.items.size > to) args.items.subList(0, to) else args.items
         candidateRenderKey = shownNew.hashCode().toLong() * 31 + args.appearanceKey
         Diagnostics.i(TAG, "候选分页: 追加渲染至 $to/${args.items.size} 条")
-        // 链式续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据，改由「一屏前瞻」停止，
-        // 这样一次触底会把后续批次连续补上，用户不必反复滑到底。
-        candidateScroll.post { maybeAppendMoreCandidates(force = true) }
+        // 续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据；「追加无限」连到全量，
+        // 「追加一次」只在追加前没撑满时继续（补到撑满即止）。
+        if (to < args.items.size && (appendAll || filledBefore)) {
+            candidateScroll.post { maybeAppendMoreCandidates(force = true) }
+        }
     }
 
     private fun refreshCandidateBar() {
