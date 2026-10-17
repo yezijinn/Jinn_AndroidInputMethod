@@ -246,4 +246,67 @@ class CandidateRowsTest {
         // 漏掉它时 fontScale 变了而候选没变 ⇒ 命中旧指纹、保留旧行高，与已重算的栏高错配（放大即裁字）
         assertTrue("renderKey 必须把 fontScale 算进去（L-824）", "fontScaleToken * 23" in code)
     }
+
+    // 展开态（BUG.md L-1393，作者 2026-10-17 指定）
+
+    @Test
+    fun 展开态排数按候选量与上限四排夹取() {
+        assertEquals(4, CandidateRows.MAX_EXPANDED_ROWS)
+        assertEquals(1, CandidateRows.visibleRows(1, perColumn = 1))
+        assertEquals(3, CandidateRows.visibleRows(3, perColumn = 1))
+        assertEquals(4, CandidateRows.visibleRows(4, perColumn = 1))
+        assertEquals(4, CandidateRows.visibleRows(9, perColumn = 1))
+        assertEquals(3, CandidateRows.visibleRows(9, perColumn = 3))
+        assertEquals(4, CandidateRows.visibleRows(10, perColumn = 3))
+        assertEquals(4, CandidateRows.visibleRows(13, perColumn = 3))
+        assertEquals(1, CandidateRows.visibleRows(2, perColumn = 3))
+        assertEquals(2, CandidateRows.visibleRows(4, perColumn = 3))
+        assertEquals(2, CandidateRows.visibleRows(20, perColumn = 3, maxRowsByHeight = 2))
+        assertEquals(1, CandidateRows.visibleRows(20, perColumn = 3, maxRowsByHeight = 1))
+        assertEquals(1, CandidateRows.visibleRows(0, perColumn = 3))
+    }
+
+    @Test
+    fun 展开态按N排一列且列内自上而下保持词频顺序() {
+        val items = listOf("a", "b", "c", "d", "e")
+        val cols = CandidateRows.columnsOfN(items, 4)
+        assertEquals(2, cols.size)
+        assertEquals(listOf("a", "b", "c", "d"), cols[0])
+        assertEquals(listOf("e", null, null, null), cols[1])
+        // 排数被夹到 [1, 4]：传 0 ⇒ 按 1 排 ⇒ 每列 1 条 ⇒ 5 列
+        assertEquals(5, CandidateRows.columnsOfN(items, 0).size)
+        // 传超上限 ⇒ 按 4 排 ⇒ 5 条只需 2 列，首列自上而下是前 4 条
+        val capped = CandidateRows.columnsOfN(items, 99)
+        assertEquals(2, capped.size)
+        assertEquals(listOf("a", "b", "c", "d"), capped[0])
+        val grid = CandidateRows.columnsOfN((1..12).map { it.toString() }, 4)
+        assertEquals(3, grid.size)
+        assertEquals("1", grid[0][0])
+        assertEquals("12", grid[2][3])
+    }
+
+    @Test
+    fun 展开态四处收起与只单行档显示() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue("再点三角要能收起", "toggleCandidateExpanded()" in src)
+        assertTrue(
+            "选中候选要收起",
+            Regex("""fun onCandidateSelected[\s\S]{0,200}collapseCandidates\(\)""").containsMatchIn(src),
+        )
+        assertTrue(
+            "按 ✕ 要收起",
+            Regex("""btnClearCandidates\.setOnClickListener[\s\S]{0,900}collapseCandidates\(\)""").containsMatchIn(src),
+        )
+        assertTrue("候选集变化要收起", "lastCandidatesToken != token" in src)
+        assertTrue(
+            "无内容（会话结束）要收起",
+            Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,300}collapseCandidates\(\)""")
+                .containsMatchIn(src),
+        )
+        assertTrue(
+            "三角只在单行档出现",
+            Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
+        )
+        assertTrue("展开态横向强制跟手", "prefs.candidatePaging && !candidatesExpanded" in src)
+    }
 }

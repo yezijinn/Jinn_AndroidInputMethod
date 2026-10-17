@@ -26,6 +26,13 @@ class CandidateScrollView @JvmOverloads constructor(
     /** 翻页模式开关（PinyinKeyboardView 每帧下发） */
     var paging: Boolean = false
 
+    /**
+     * 展开态（多行候选，BUG.md L-1393）：横向仍走列滑动（展开态强制跟手），
+     * **纵向**交给父级滚动 —— 内容按列排布后，行数超过一屏可见排数时由父级纵向跟手滚动。
+     * 本容器是 HorizontalScrollView，纵向不消费事件（展开态父级负责）。
+     */
+    var expanded: Boolean = false
+
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f
     private var downY = 0f

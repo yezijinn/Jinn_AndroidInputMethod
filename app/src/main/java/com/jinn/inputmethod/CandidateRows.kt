@@ -89,9 +89,59 @@ internal object CandidateRows {
      * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
      * 一帧错配（列底被裁或留缝）。
      */
+    /** 展开态一屏最多显示的行数（作者 2026-10-17 指定上限为四行） */
+    const val MAX_EXPANDED_ROWS = 4
+
+    /**
+     * 候选栏总高度（px）：拼音条 + 排数 × 单排 —— 高度的**唯一来源**。
+     *
+     * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
+     * 一帧错配（列底被裁或留缝）。
+     *
+     * 排数扩展到 1..[MAX_EXPANDED_ROWS]（原只认 1 / 2）：展开态最多四排。
+     */
     fun barHeightPx(rows: Int, density: Float, fontScale: Float, candidateSp: Float): Int =
         pinyinBarHeightPx(density, fontScale, candidateSp) +
-            rowHeightPx(density, fontScale, candidateSp) * if (rows == DOUBLE) 2 else 1
+            rowHeightPx(density, fontScale, candidateSp) * clampRows(rows)
+
+    /** 把排数夹到合法区间 [1, MAX_EXPANDED_ROWS]（纯函数，供各处复用同一口径） */
+    fun clampRows(rows: Int): Int = rows.coerceIn(1, MAX_EXPANDED_ROWS)
+
+    /**
+     * 展开态**可见**排数：按实际候选量算，再被上限与可用高度夹取（BUG.md L-1393）。
+     *
+     * @param count 本帧候选条数
+     * @param perColumn 一列能放几条（= 该排能显示几列 ⇒ 由栏宽 ÷ 列宽得出；≤1 时按 1 处理）
+     * @param maxRowsByHeight 可用高度允许的最大排数（屏幕不够时由调用方给出；传 ≥上限表示不夹）
+     * @return 实际可见排数，恒在 1..[MAX_EXPANDED_ROWS]
+     */
+    fun visibleRows(count: Int, perColumn: Int, maxRowsByHeight: Int = MAX_EXPANDED_ROWS): Int {
+        if (count <= 0) return 1
+        val cols = perColumn.coerceAtLeast(1)
+        val needed = (count + cols - 1) / cols // 向上取整
+        return clampRows(minOf(needed, maxRowsByHeight))
+    }
+
+    /**
+     * 把候选切成 N 排一列的若干列（展开态用；N = [rows]）。
+     *
+     * 与 [columnsOf] 同思路但支持任意排数：**列内自上而下 = 候选原序**，故「第一列第一条」就是
+     * 最高词频；列数不足时补 null 占位（渲染侧用等高占位补齐，否则该列会塌缩、位置错乱）。
+     *
+     * @return 每列一个长度固定为 [rows] 的列表，顺序从左到右；列内自上而下。
+     */
+    fun columnsOfN(candidates: List<String>, rows: Int): List<List<String?>> {
+        val n = clampRows(rows)
+        if (candidates.isEmpty()) return emptyList()
+        val columnCount = (candidates.size + n - 1) / n
+        val out = ArrayList<List<String?>>(columnCount)
+        for (c in 0 until columnCount) {
+            val column = ArrayList<String?>(n)
+            for (r in 0 until n) column.add(candidates.getOrNull(c * n + r))
+            out.add(column)
+        }
+        return out
+    }
 
     /**
      * 把候选序列按「上偶下奇」切成若干列。

@@ -196,6 +196,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 候选区视口：两排共用一个横滑容器（天然同步）；✕ 可见时右内边距让出按钮宽度 */
     private val candidateScroll: CandidateScrollView
 
+    /** 候选区纵向滚动容器（展开态看第 5 行起；未展开不消费纵向手势，BUG.md L-1393） */
+    private val candidateRowsScroll: CandidateRowsScrollView
+
     /**
      * 拼音条：**叠放层**，位于候选区之上。单行档贴顶（候选区随之下移一条），双行档垂直居中
      * （正好落在两排候选之间的中缝，不遮候选）；无拼音时 GONE，候选区占满整栏。
@@ -205,6 +208,118 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 候选栏最右侧的「✕」清空候选按钮（2026-09-20 起，绑定见 init） */
     private val btnClearCandidates: TextView
+
+    /**
+     * 「✕」左侧的展开 / 收起三角（▲ / ▾），绑定见 init。
+     *
+     * 只在**单行档**且候选多到需要展开时出现；展开态下再点即收起（BUG.md L-1393）。
+     */
+    private val btnExpandCandidates: TextView
+
+    /**
+     * 候选栏是否处于展开态（会话内有效，**不落盘**）。
+     *
+     * 收起时机：再点三角 / 选中候选 / 按 ✕ / 候选集变化（新一次查询）/ 输入会话结束。
+     */
+    private var candidatesExpanded = false
+
+    /** 上一帧候选集指纹：用于「候选集变了就收起展开态」（BUG.md L-1393） */
+    private var lastCandidatesToken: Int? = null
+
+    /**
+     * 切换候选栏展开态（▲ / ▾）（BUG.md L-1393）。
+     *
+     * 展开后一屏最多 [CandidateRows.MAX_EXPANDED_ROWS] 排；排数按实际候选量算，并被可用高度夹取
+     * （屏幕不够时静默按实际排数显示）。展开态横向固定为**跟手按列滑动**，纵向让给换行。
+     */
+    private fun toggleCandidateExpanded() {
+        candidatesExpanded = !candidatesExpanded
+        Diagnostics.i(TAG, "候选栏展开态：$candidatesExpanded")
+        refreshCandidateBar()
+    }
+
+    /**
+     * 展开态的实际排数：按候选量算，被上限与**可用高度**夹取（BUG.md L-1393）。
+     *
+     * 一排的行高按同档字号派生（与 [applyCandidateRows] 同源），故「可用高度 ÷ 行高」即最多能放几排；
+     * 屏幕不够高时**静默按实际排数显示**（不给死按钮、不弹提示）。
+     */
+    private fun expandedRowsFor(count: Int, candidateSp: Float): Int {
+        val dm = resources.displayMetrics
+        val fontScale = resources.configuration.fontScale
+        val rowPx = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
+        val pinyinPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, candidateSp)
+        // 可用高度：用本视图高度而不是栏高（栏高正是要算的量，会自指）；键盘视图未布局时
+        // 取不到 ⇒ 退化成「不按高度夹取」，仍被四排上限夹住。
+        val usable = (height.takeIf { it > 0 } ?: parent.let { (it as? android.view.View)?.height }
+            ?: 0) - pinyinPx
+        val byHeight = if (rowPx > 0 && usable > 0) (usable / rowPx).coerceAtLeast(1)
+        else CandidateRows.MAX_EXPANDED_ROWS
+        // 每列能放几条：展开态一屏显示的就是「排数 × 列数」个候选，这里按栏宽 ÷ 单条宽估算；
+        // 取不到宽度时退化为 1（⇒ 排数 = 候选数，仍被上限夹住）。
+        val perColumn = estimateColumnsPerRow()
+        return CandidateRows.visibleRows(count, perColumn, maxRowsByHeight = byHeight)
+    }
+
+    /** 估算一屏能并排放几列候选（展开态排数换算用；取不到就按 1） */
+    private fun estimateColumnsPerRow(): Int {
+        val width = candidateBar.width.takeIf { it > 0 } ?: return 1
+        val child = viewCandidateList.getChildAt(0)?.width?.takeIf { it > 0 } ?: return 1
+        return (width / child).coerceAtLeast(1)
+    }
+
+    /** 展开三角的显隐与朝向：仅单行档 + 有候选时可见 */
+    private fun updateExpandButton(rowsSetting: Int) {
+        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1
+        btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
+        btnExpandCandidates.text = if (candidatesExpanded) "▾" else "▲"
+    }
+
+    /** 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里 */
+    /**
+     * 展开态渲染：候选按「N 排一列」切分，**列内自上而下 = 候选原序**。
+     *
+     * 这样「第一列第一条」就是最高词频（与未展开时完全一致，**不重排**）；列数 = ceil(总数 / 排数)。
+     * 每列固定为 `排数 × 行高`，缺项（末列不满）用**等高等宽 0 宽占位**补齐 —— 与双行档同款理由：
+     * 少了占位那一列会塌缩、把候选拉到栏中间（实测单候选时宽达半屏）。
+     */
+    private fun renderExpandedRows(
+        shown: List<String>,
+        rows: Int,
+        rowHeightPx: Int,
+        sizeSp: Float,
+        spacingHalfPx: Int,
+        color: Int,
+        onClick: (String) -> Unit,
+    ) {
+        fun build(text: String): TextView =
+            buildCandidateView(text, sizeSp, spacingHalfPx, color, onClick)
+        for (column in CandidateRows.columnsOfN(shown, rows)) {
+            val cell = FrameLayout(context)
+            column.forEachIndexed { index, text ->
+                // 自上而下：第 r 排的 top = r × 行高。用 topMargin 定位，避免列内 gravity 互斥
+                val lp = FrameLayout.LayoutParams(
+                    if (text == null) 0 else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    rowHeightPx,
+                    android.view.Gravity.CENTER_HORIZONTAL or android.view.Gravity.TOP,
+                )
+                lp.topMargin = index * rowHeightPx
+                cell.addView(text?.let { build(it) } ?: View(context), lp)
+            }
+            viewCandidateList.addView(
+                cell,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    rowHeightPx * CandidateRows.clampRows(rows),
+                ),
+            )
+        }
+    }
+
+    private fun collapseCandidates() {
+        if (!candidatesExpanded) return
+        candidatesExpanded = false
+    }
 
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
     private var currentRows = CandidateRows.SINGLE
@@ -539,6 +654,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
         candidateScroll = root.findViewById(R.id.candidate_scroll)
+        candidateRowsScroll = root.findViewById(R.id.candidate_rows_scroll)
+        // 纵向层同样禁掉边缘拉伸回弹（与横向同款理由：滑到末尾那一刻正好触发追加渲染）
+        candidateRowsScroll.overScrollMode = View.OVER_SCROLL_NEVER
         // 关掉内容边缘的 overscroll 效果：本机（ColorOS 等）把边缘效果做成「拉伸回弹」，
         // 而候选栏滑到末尾的那一刻正好触发追加渲染 —— 用户看到的「文字回弹 / 回退」正是它。
         // 候选栏本就 `scrollbars=none`、不靠光晕反馈，这里统一禁掉最干净，追加衔接即无感。
@@ -562,7 +680,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 "候选栏 ✕：清空候选（拼音=${composing.length} 候选=${lastCandidates.size} " +
                     "预测=${lastPredictions.size}）",
             )
+            // ✕ 同时收起展开态（作者 2026-10-17 指定：选中候选或按 ✕ 都回到一行）
+            collapseCandidates()
             clearComposingState()
+        }
+        // 展开 / 收起候选栏（▲/▾）：仅在单行档、且候选多到需要展开时出现（BUG.md L-1393）
+        btnExpandCandidates = root.findViewById(R.id.btn_expand_candidates)
+        btnExpandCandidates.contentDescription = TEXT_EXPAND_DESC
+        btnExpandCandidates.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_FUNC)
+            toggleCandidateExpanded()
         }
         viewLetters = root.findViewById(R.id.keyboard_letters)
         contentArea = root.findViewById(R.id.keyboard_content_area)
@@ -2295,6 +2422,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val candidateColor = skinToken(colorToken, colorRes)
         fun build(text: String): TextView =
             buildCandidateView(text, sizeSp, spacingHalfPx, candidateColor, onClick)
+        // 展开态：按 N 排一列分组（列内自上而下 = 候选原序 ⇒ 第一列第一条仍是最高词频）。
+        // 每列占满整栏高（行高 × 排数），排数由调用方按可用高度夹取后传进来。
+        if (candidatesExpanded) {
+            renderExpandedRows(shown, rows, rowHeightPx, sizeSp, spacingHalfPx, candidateColor, onClick)
+            return
+        }
         if (rows != CandidateRows.DOUBLE) {
             for (text in shown) {
                 viewCandidateList.addView(build(text))
@@ -2459,11 +2592,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
         // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
-        val rows = prefs.candidateRows
+        val rowsSetting = prefs.candidateRows
         val candidateSp = prefs.candidateTextSp
-        // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器
-        candidatePaging = prefs.candidatePaging
+        // 候选集变了就收起展开态（新一次查询 ⇒ 回到一行，作者 2026-10-17 指定）
+        val token = lastCandidates.hashCode()
+        if (lastCandidatesToken != null && lastCandidatesToken != token) collapseCandidates()
+        lastCandidatesToken = token
+        // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器。
+        // ⚠ 展开态**强制跟手滑动**：纵向要让给「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
+        candidatePaging = prefs.candidatePaging && !candidatesExpanded
         candidateScroll.paging = candidatePaging
+        candidateScroll.expanded = candidatesExpanded
+        candidateRowsScroll.expanded = candidatesExpanded
+        // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档
+        // 且候选多到需要展开时才出现 —— 候选不满一行时给个死按钮是噪音。
+        val rows = if (candidatesExpanded) {
+            expandedRowsFor(lastCandidates.size, candidateSp)
+        } else {
+            rowsSetting
+        }
+        updateExpandButton(rowsSetting)
         val perRow = applyCandidateRows(rows, candidateSp)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
@@ -2497,6 +2645,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 不要随内容动态变化」。（曾按单排收缩，导致键盘高度来回跳，已撤销。）
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
+            // 无内容 ⇒ 收起展开态（输入会话结束 / 清空都走这里；作者 2026-10-17 指定）
+            collapseCandidates()
             showPinyin(null)
             // ⚠ 必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
             // 若不复位，「清空后再打同一串拼音」会命中旧指纹而跳过重建。
@@ -2748,6 +2898,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun onCandidateSelected(candidate: String) {
+        // 选中候选要收起展开态（作者 2026-10-17 指定：选中候选或按 ✕ 都回到一行状态）
+        collapseCandidates()
         // 搜索模式：候选上屏路由到剪贴板搜索词（不 commit 宿主）
         if (isPanelSearch()) {
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
@@ -4391,6 +4543,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 分号键：搜狗 / 微软 / 紫光 方案里 `ing` 的韵母键 */
         const val SEMICOLON_KEY = ';'
+
+        /**
+         * 展开 / 收起三角的读屏描述（strings.xml 默认禁改 ⇒ 代码下发）。
+         *
+         * 不写具体朝向：展开 / 收起是同一键的两态，读屏念固定名字比念会变的 ▲/▾ 更稳定。
+         */
+        const val TEXT_EXPAND_DESC = "展开或收起候选栏"
 
         const val LAYER_LETTER = 0
         const val LAYER_SYMBOL = 1

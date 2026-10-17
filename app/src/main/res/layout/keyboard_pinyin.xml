@@ -33,21 +33,32 @@
         <!-- 候选滚动区。**必须排在拼音条之前**：FrameLayout 里后加的子项绘制与触摸都在上层，
              候选区虽然透明却铺满整栏 —— 排在后面会把拼音条里的 ✕ 挡到点不动（2026-09-25 真机复现）。
              无障碍遍历顺序由 accessibilityTraversalAfter 拉正（语义上先读拼音串再读候选）。 -->
-        <com.jinn.inputmethod.CandidateScrollView
-            android:id="@+id/candidate_scroll"
+        <!-- 候选区的**纵向**滚动层（展开态专用）：横向由内层 CandidateScrollView 负责，
+             纵向（看第 5 行起）由本层跟手滚动。平时纵向不滚动、高度跟随栏高（wrap 行为不变）。
+             ⚠ 必须排在内层之前：FrameLayout 里后加的子项在上层，纵向层若在后会把候选挡住点不到。 -->
+        <com.jinn.inputmethod.CandidateRowsScrollView
+            android:id="@+id/candidate_rows_scroll"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:accessibilityTraversalAfter="@id/pinyin_bar"
             android:fillViewport="true"
             android:scrollbars="none">
 
-            <LinearLayout
-                android:id="@+id/candidate_list"
+            <com.jinn.inputmethod.CandidateScrollView
+                android:id="@+id/candidate_scroll"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:gravity="center_vertical"
-                android:orientation="horizontal" />
-        </com.jinn.inputmethod.CandidateScrollView>
+                android:accessibilityTraversalAfter="@id/pinyin_bar"
+                android:fillViewport="true"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/candidate_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal" />
+            </com.jinn.inputmethod.CandidateScrollView>
+        </com.jinn.inputmethod.CandidateRowsScrollView>
 
         <!-- 拼音条（叠放层，最后添加 ⇒ 在候选之上）：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），
              高度与位置由 applyCandidateRows 落位、显隐由 showPinyin 落位。 -->
@@ -73,6 +84,22 @@
                 android:paddingEnd="40dp"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
+
+            <!-- 展开候选栏（▲/▾）：位于 ✕ **左侧**，与它同高、紧挨但不重叠（✕ 占 end 40dp，
+                 本键再退 40dp）。仅在「候选行数 = 1 行」档、且候选多到需要展开时出现（BUG.md L-1393）。
+                 展开 = 候选栏向上增高，一屏最多四排拼音条+候选；再点 = 收起（点 ✕ 或选中候选同样收起）。
+                 图标用字符，不新增可见文案（文案属作者域、strings.xml 不动）。 -->
+            <TextView
+                android:id="@+id/btn_expand_candidates"
+                android:layout_width="40dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="end"
+                android:layout_marginEnd="40dp"
+                android:gravity="center"
+                android:text="▲"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:visibility="gone" />
 
             <!-- 清空候选（✕）：与拼音条同高、贴其右端 —— 单行档在顶部那一行、双行档在中间那行，
                  **都不与候选文字重叠**（用户 2026-09-25 要求），因此候选区不再为它让出右边距。
