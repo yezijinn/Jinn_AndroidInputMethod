@@ -656,7 +656,12 @@ class SettingsActivity : ComponentActivity() {
                 openTruncatingOutput(uri)?.use { out ->
                     src.inputStream().use { it.copyTo(out) }
                 } != null
-            }.getOrDefault(false)
+            }.getOrElse {
+                // 异常会转成用户可见的「写入失败」，但类名必须留痕：权限 / 空间 / provider 三类的
+                // 处置完全不同，只看一句「写入失败」无从判断
+                Diagnostics.w(TAG, "exportDiagnostics: 写包异常 ${it.javaClass.simpleName}")
+                false
+            }
             // 失败时把刚写的半截文件删掉：覆盖写一开始就把目标清空，留下一份 0 字节或截断的文件
             // 只会让用户误以为是有效产物（配置包拿去导入必然得到「密码错误或文件已损坏」，把排查带偏）
             if (!ok) runCatching { contentResolver.delete(uri, null, null) }
@@ -1040,8 +1045,16 @@ class SettingsActivity : ComponentActivity() {
      * 用户无法确认自己做对没有，只会重复点按钮或以为坏了。判据直接读系统值，不缓存偏好。
      */
     private fun refreshImeState() {
-        val enabled = runCatching { isImeEnabled(this) }.getOrDefault(false)
-        val isDefault = runCatching { isImeDefault(this) }.getOrDefault(false)
+        // 读系统值失败时按「未启用 / 未默认」渲染，但必须留痕 —— 静默吞成 false 会让界面显示
+        // 错误状态，用户照着提示重复操作也做不成（项目口径：runCatching 必须带 onFailure 留痕）
+        val enabled = runCatching { isImeEnabled(this) }.getOrElse {
+            Diagnostics.w(TAG, "读输入法启用状态失败，按未启用渲染: ${it.javaClass.simpleName}")
+            false
+        }
+        val isDefault = runCatching { isImeDefault(this) }.getOrElse {
+            Diagnostics.w(TAG, "读默认输入法失败，按未默认渲染: ${it.javaClass.simpleName}")
+            false
+        }
         val enableText = imeEnableLabel(enabled)
         val pickText = imePickLabel(isDefault)
         val state = enableText to pickText
@@ -1329,7 +1342,11 @@ class SettingsActivity : ComponentActivity() {
                 openTruncatingOutput(uri)?.use { out ->
                     src.inputStream().use { it.copyTo(out) }
                 } != null
-            }.getOrDefault(false)
+            }.getOrElse {
+                // 同诊断包：异常转成用户可见的「写入失败」，类名仍要留痕
+                Diagnostics.w(TAG, "exportConfig: 写包异常 ${it.javaClass.simpleName}")
+                false
+            }
             // 失败时把刚写的半截文件删掉：覆盖写一开始就把目标清空，留下一份 0 字节或截断的文件
             // 只会让用户误以为是有效产物（配置包拿去导入必然得到「密码错误或文件已损坏」，把排查带偏）
             if (!ok) runCatching { contentResolver.delete(uri, null, null) }
