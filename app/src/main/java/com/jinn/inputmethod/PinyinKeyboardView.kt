@@ -301,7 +301,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         candidatesExpanded = expand
         candidateAnimating = true
-        refreshCandidateBar() // 先把目标内容渲染好、拿到目标高度
+        // 目标高度：先在**目标态**下刷新一次拿到它，再决定这一帧要不要真的换成目标内容。
+        refreshCandidateBar()
         if (candidatesExpanded != expand) { // 刷新途中被收起（候选集变化 / 会话结束）
             candidateAnimating = false
             return
@@ -309,13 +310,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 刷新只改了 LayoutParams、尚未走 layout 遍，`height` 还是起点值 ⇒ 目标高度读 LayoutParams
         val targetH = (candidateBar.layoutParams as? LinearLayout.LayoutParams)
             ?.height?.takeIf { it > 0 } ?: startH
-        // 回到起点高度，动画从当前值开始（反向点击时 startH 已是「此刻的瞬时高度」）
-        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
-            it.height = startH
-            candidateBar.layoutParams = it
+        if (expand) {
+            // 展开：内容已是网格，高度从 startH 补起。栏一变高，网格就一行行露出来，
+            // 内容与高度天然同步（网格按 top 对齐，长高即露出）。
+            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+                it.height = startH
+                candidateBar.layoutParams = it
+            }
+        } else {
+            // 收起：**不**用刚刷出来的单行内容 —— 那会让栏在第 1 帧就「清空再合盖」
+            // （实测收起到 40% 时下方一整块空白）。回到展开态内容，让它随栏高一起被裁掉，
+            // 单行内容留到 [finishCandidateToggle] 再换。
+            candidatesExpanded = true
+            refreshCandidateBar()
+            if (candidatesExpanded != expand) { // 这一轮又被中途收起
+                candidateAnimating = false
+                return
+            }
+            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+                it.height = startH
+                candidateBar.layoutParams = it
+            }
+            // 真正的收起标志留到收尾：中途任何 refresh 都按「仍是展开态」渲染，高度由动画给。
+            candidatesExpanded = false
         }
+        // 淡入淡出：收起时内容是被栏高裁掉的那一块，随它一起淡出才不显得「凭空少一块」。
         val startAlpha = if (expand) 0.72f else 1f
-        val endAlpha = if (expand) 1f else 0.72f
+        val endAlpha = if (expand) 1f else 0.35f
         candidateScroll.alpha = startAlpha
         // 三角：文字固定 ▲，用 rotation 表示方向
         val startRot = if (expand) 0f else 180f
@@ -2771,8 +2792,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             return
         }
+        // 双行档的配对要求起点恒偶。这里直接对齐，不再依赖两个常量「恰好都是偶数」：
+        // 初值或步长一旦被改成奇数，按奇数起点配对会让两排错开一列（AI2-BUG A-274）。
+        var i = from - (from and 1)
         val rowHeight = args.rowHeightPx
-        var i = from
         while (i < to) {
             val bottom = args.items[i]
             val top = if (i + 1 < to) args.items[i + 1] else null
