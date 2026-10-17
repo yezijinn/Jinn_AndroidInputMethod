@@ -280,7 +280,23 @@ internal object GalleryInsert {
                 temp.delete()
                 return CopyResult.ReadFailed
             }
-            val mime = declared ?: sniffImageMime(readHead(temp))
+            // 头部嗅探优先于声明（BUG.md L-1060）：SAF 源常按扩展名报类型（改名文件同理），
+            // 声明是 image/* 与内容是什么之间原本没有任何核对，任意二进制都能以「图片」名义
+            // 被交给收到即发的宿主。这里读一次 12 字节头：嗅探得出具体类型就以它为准，
+            // 声明只在嗅探认不出时兜底（BMP / TIFF 等本项目不嗅探的真实图片仍走得通）。
+            val head = readHead(temp)
+            val sniffed = ClipboardImageCodec.sniffMimeOrNull(head)
+            if (sniffed != null && declared != null && sniffed != declared) {
+                Diagnostics.w(TAG, "选图类型不一致：声明=$declared 字节=$sniffed，按字节为准")
+            }
+            // 嗅探认不出、而字节明显是别的东西（PDF / ZIP / 可执行等）时拒收 —— 声明为
+            // image/* 不足以放行，入口是 ImageOnly 选择器，这种「名实不符」只会来自不可信源
+            if (sniffed == null && declared != null && looksLikeNonImage(head)) {
+                temp.delete()
+                Diagnostics.w(TAG, "选图内容不是图片（声明=$declared），已拒收")
+                return CopyResult.ReadFailed
+            }
+            val mime = sniffed ?: declared ?: sniffImageMime(head)
             val named = File(dir, "pick_$stamp.${extOf(mime)}")
             // 改名失败（少见）就沿用 .tmp：类型已定，扩展名只影响按后缀判类型的宿主
             CopyResult.Ok(if (temp.renameTo(named)) named else temp, mime)
@@ -320,6 +336,34 @@ internal object GalleryInsert {
             temp.delete()
             Diagnostics.w(TAG, "剪贴板图片落 cache 失败: ${t.javaClass.simpleName}")
             null
+        }
+    }
+
+    /**
+     * 字节头是否明显**不是**图片（纯函数，供守卫枚举格式）。
+     *
+     * 只列「一眼能认出的非图片容器」：PDF / ZIP 系（含 docx、apk、jar）/ RAR / 7z / gzip /
+     * PE（MZ）/ ELF。BMP（"BM"）、TIFF 等真图片**不在此列** —— 它们只是本项目不嗅探，
+     * 声明为图片类型时仍照常放行（[sniffImageMime] 的 png 兜底不参与这里的分支）。
+     */
+    internal fun looksLikeNonImage(head: ByteArray): Boolean {
+        fun at(i: Int): Int = if (i < head.size) head[i].toInt() and 0xFF else -1
+        return when {
+            // %PDF
+            at(0) == 0x25 && at(1) == 0x50 && at(2) == 0x44 && at(3) == 0x46 -> true
+            // PK\x03\x04（ZIP / jar / docx / apk）
+            at(0) == 0x50 && at(1) == 0x4B && at(2) == 0x03 && at(3) == 0x04 -> true
+            // Rar!
+            at(0) == 0x52 && at(1) == 0x61 && at(2) == 0x72 && at(3) == 0x21 -> true
+            // 7z\xBC\xAF
+            at(0) == 0x37 && at(1) == 0x7A && at(2) == 0xBC && at(3) == 0xAF -> true
+            // \x1f\x8b（gzip）
+            at(0) == 0x1F && at(1) == 0x8B -> true
+            // MZ（PE 可执行）
+            at(0) == 0x4D && at(1) == 0x5A -> true
+            // \x7fELF
+            at(0) == 0x7F && at(1) == 0x45 && at(2) == 0x4C && at(3) == 0x46 -> true
+            else -> false
         }
     }
 

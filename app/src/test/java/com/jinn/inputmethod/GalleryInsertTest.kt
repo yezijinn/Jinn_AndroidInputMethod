@@ -231,12 +231,17 @@ class GalleryInsertTest {
      *
      * `ClipDescription` 的 mimeTypes 要求具体类型，通配属无定义行为；文件名也不能停在 `.tmp` / `.img`
      * 这类无意义后缀 —— 按后缀判类型的宿主会认不出这张图。
+     *
+     * 2026-10-18（L-1060）：嗅探从「声明取不到时才做」改为**总是先做**，且改用
+     * `ClipboardImageCodec.sniffMimeOrNull`（认不出返回 null）—— 那个的 png 兜底只认真魔数，
+     * 才能与「头都不认识」区分开。声明退为兜底。
      */
     @Test
     fun 图片类型按文件头嗅探且兜底不用通配() {
         val src = TestSources.codeSource("GalleryInsert.kt")
         assertFalse("类型兜底不能用通配", "\"image/*\"" in src)
-        assertTrue("取不到声明时按文件头嗅探", "sniffImageMime(readHead(" in src)
+        assertTrue("必须总先按文件头嗅探", "ClipboardImageCodec.sniffMimeOrNull(head)" in src)
+        assertTrue("声明只作兜底", "sniffed ?: declared" in src)
         assertTrue("文件名带嗅探出的扩展名", "extOf(mime)" in src)
 
         assertEquals("JPEG", "image/jpeg", GalleryInsert.sniffImageMime(bytes(0xFF, 0xD8, 0xFF, 0xE0)))
