@@ -41,6 +41,12 @@ class PinyinEngineTest {
             shen	什,身,深,神
             me	么,嘛
             men	们,门
+            wu	无,五,物
+            hu	乎,湖,胡
+            si	死,四,思
+            hai	还,海,孩
+            wei	为,位,未
+            jia	家,加,假
         """.trimIndent()
         val phrases = """
             nihao	你好
@@ -62,6 +68,11 @@ class PinyinEngineTest {
             shuode	说的
             shenme	什么
             nimen	你们
+            wuhu	芜湖|五湖
+            sihai	四海
+            weijia	为佳|为家
+            wuhusihai	五湖四海
+            sihaiweijia	四海为家
         """.trimIndent()
         val syllables = """
             a
@@ -99,6 +110,12 @@ class PinyinEngineTest {
             shen
             me
             men
+            wu
+            hu
+            si
+            hai
+            wei
+            jia
         """.trimIndent()
         PinyinEngine.loadFromTexts(chars, phrases, syllables)
     }
@@ -375,5 +392,30 @@ class PinyinEngineTest {
             listOf("头发" to "頭髮", "头发" to "頭髮"),
         )
         assertEquals("重复行不改变胜者（旧实现靠「最后一行」定胜负）", "头发", dup["頭髮"])
+    }
+
+    // ── 词图整句候选（SentenceComposer）────────────────────
+
+    @Test
+    fun `整句候选_词图拼出五湖四海为家`() {
+        val c = PinyinEngine.query("wuhusihaiweijia").candidates
+        val sentence = c.indexOf("五湖四海为家")
+        val word = c.indexOf("五湖四海")
+        assertTrue("应出整句 五湖四海为家: $c", sentence >= 0)
+        assertTrue("整句应追加在词候选之后: $c", word >= 0 && sentence > word)
+    }
+
+    @Test
+    fun `整句候选_消费全部输入`() {
+        PinyinEngine.query("wuhusihaiweijia")
+        val c = PinyinEngine.consumption("wuhusihaiweijia", "五湖四海为家")
+        assertEquals(PinyinEngine.Consumption(15, 6), c)
+    }
+
+    @Test
+    fun `整句候选_无词条时不拼首字`() {
+        // haijia 只有单字边（还/家…）、没有任何多字词 ⇒ 整条路径没有多字词，不出整句
+        val c = PinyinEngine.query("haijia").candidates
+        assertTrue("单字边不应拼成 还家: $c", !c.contains("还家"))
     }
 }

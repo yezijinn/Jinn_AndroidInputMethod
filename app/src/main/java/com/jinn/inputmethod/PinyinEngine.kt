@@ -2207,8 +2207,27 @@ object PinyinEngine {
 
         // 出口只留一种容器（MEM-19）：`words` 到这一步已无人再读，直接当结果集 —— 原先还要再建一个
         // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序不变，仍是
-        // 「精确词 → 变体词 → 精确单字 → 变体单字」，与历史逐候选一致。
+        // 「精确词 → 变体词 → 整句 → 精确单字 → 变体单字」；整句为新增项，其余相对次序不变。
         words.addAll(fuzzyWords)
+        // 3b. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
+        // 每个可达位置枚举音节跨度取词，逐词罚分后取 top-k 路径。
+        // 位置在全部词候选之后、单字之前：不抢短词，又不必滑过几百条单字才够得着。
+        if (syllables.size >= 2 && partial.isEmpty()) {
+            val coveredKey = buildString { for (s in syllables) append(s) }
+            val sentences = SentenceComposer.compose(
+                coveredKey,
+                { validSyllables.contains(it) },
+                { key -> phrasesFor(key)?.asList() },
+                { key -> charsFor(key) },
+            )
+            for (sentence in sentences) {
+                val shown = displayTake(listOf(sentence), 1)
+                if (shown.isNotEmpty() && words.add(shown[0])) {
+                    // 整句按键 = coveredKey（>8 音节时只覆盖前 8 个，残码保留）
+                    noteCandidateKeys(shown, coveredKey)
+                }
+            }
+        }
         words.addAll(chars)
         words.addAll(fuzzyChars)
         val result = words
