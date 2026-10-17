@@ -215,7 +215,14 @@ class ConfigBackupTest {
         val src = prefsFiles("b" to bv(1), "a" to bv(2), "c" to bv(3))
         assertEquals(ConfigBackup.encodePrefs(src), ConfigBackup.encodePrefs(src))
         val text = ConfigBackup.encodePrefs(src)
-        assertTrue(text.indexOf("\"b\"") < text.indexOf("\"a\""))
+        // ⚠ 位置比较必须先证两边都存在：indexOf 未命中返回 -1，
+        // 只写「indexOf(b) < indexOf(a)」在 b 缺失、a 存在时是 -1 < 0 ⇒ 恒真（假绿）。
+        val bAt = text.indexOf("\"b\"")
+        val aAt = text.indexOf("\"a\"")
+        assertTrue("b 必须出现在编码结果里（否则下面的位置比较恒真）: $text", bAt >= 0)
+        assertTrue("a 必须出现在编码结果里: $text", aAt >= 0)
+        // 键序稳定即可用于 diff：这里按**编码顺序**（b、a、c）校验，与 [encodePrefs] 的排序口径一致
+        assertTrue("键序应稳定输出（b 排在 a 之前）: b=$bAt a=$aAt", bAt < aAt)
     }
 
     @Test

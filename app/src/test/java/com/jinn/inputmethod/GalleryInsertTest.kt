@@ -501,10 +501,13 @@ class GalleryInsertTest {
         val host = TestSources.codeSource("ReceivingEditText.kt")
         val insert = TestSources.blockAfter(host, "private fun insertImage(uri: Uri)")
         assertTrue("解码丢后台", "BackgroundIo.run" in insert)
-        assertTrue(
-            "解码调用要在后台块里面",
-            insert.indexOf("BackgroundIo.run") < insert.indexOf("decodeSampledBitmap"),
-        )
+        // 位置比较先各自取下标并断言非负：indexOf 未命中返回 -1，
+        // 只写「indexOf(A) < indexOf(B)」在 B 缺失时是 x < -1 ⇒ 恒假，A 缺失时是 -1 < x ⇒ 恒真
+        val bgAt = insert.indexOf("BackgroundIo.run")
+        val decodeAt = insert.indexOf("decodeSampledBitmap")
+        assertTrue("BackgroundIo.run 必须在块内: $insert", bgAt >= 0)
+        assertTrue("decodeSampledBitmap 必须在块内: $insert", decodeAt >= 0)
+        assertTrue("解码调用要在后台块里面", bgAt < decodeAt)
         // 回主线程必须走自带 Handler：贴图用的 `View.post` 在视图脱离窗口后要等下一次 attach，
         // 而这一份实例不会再 attach ⇒ 贴图与日志一起丢（用户只看到「选了图没反应」）
         assertTrue("回主线程贴图（与附着状态无关）", "mainHandler.post { attachDecoded(" in insert)

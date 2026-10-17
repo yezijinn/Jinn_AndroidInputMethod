@@ -174,10 +174,12 @@ class OptionalDictJunkTest {
         // L-801：1.5s 重启窗口内不得再接受改 dicts/ 的操作
         val restart = block(src, "private fun restartImeForDict")
         assertTrue("重启窗口必须先置位 restartPending", "restartPending = true" in restart)
-        assertTrue(
-            "置位必须排在 postDelayed 之前（否则窗口内按钮仍可点）",
-            restart.indexOf("restartPending = true") < restart.indexOf("postDelayed"),
-        )
+        // 位置比较先各自取下标并断言非负（同 GalleryInsertTest：未命中返回 -1 会让比较失去意义）
+        val setAt = restart.indexOf("restartPending = true")
+        val delayedAt = restart.indexOf("postDelayed")
+        assertTrue("restartPending = true 必须在块内: $restart", setAt >= 0)
+        assertTrue("postDelayed 必须在块内: $restart", delayedAt >= 0)
+        assertTrue("置位必须排在 postDelayed 之前（否则窗口内按钮仍可点）", setAt < delayedAt)
         for (entry in listOf(
             "private fun download", "private fun remove", "private fun confirmRemoveLegacy",
             "private fun removeLegacy",

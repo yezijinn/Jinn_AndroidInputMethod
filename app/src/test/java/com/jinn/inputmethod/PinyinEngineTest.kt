@@ -139,8 +139,13 @@ class PinyinEngineTest {
         assertTrue("应含 2 字词 你好: $c", c.contains("你好"))
         assertTrue("应含 单字 你: $c", c.contains("你"))
         assertTrue("应含 单字 好: $c", c.contains("好"))
-        // 2 字词排在单字前
-        assertTrue("你好 应在 你 之前: $c", c.indexOf("你好") < c.indexOf("你"))
+        // 2 字词排在单字前。位置比较先各自取下标并断言非负：
+        // 只写「indexOf(A) < indexOf(B)」在 A 缺失、B 存在时是 -1 < 0 ⇒ 恒真（假绿）。
+        val niHaoAt = c.indexOf("你好")
+        val niAt = c.indexOf("你")
+        assertTrue("你好 必须在候选里: $c", niHaoAt >= 0)
+        assertTrue("你 必须在候选里: $c", niAt >= 0)
+        assertTrue("你好 应在 你 之前: $c", niHaoAt < niAt)
         // 输入只有 2 个音节：不应显示 3 字词 你好吗
         assertTrue("不应显示 3 字词 你好吗: $c", !c.contains("你好吗"))
     }
@@ -153,9 +158,15 @@ class PinyinEngineTest {
         assertTrue("应含 3 字词 你好吗: $c", c.contains("你好吗"))
         assertTrue("应含 2 字词 你好: $c", c.contains("你好"))
         assertTrue("应含 单字 你: $c", c.contains("你"))
-        // 3 字 > 2 字 > 1 字
-        assertTrue("你好吗 应在 你好 前: $c", c.indexOf("你好吗") < c.indexOf("你好"))
-        assertTrue("你好 应在 你 前: $c", c.indexOf("你好") < c.indexOf("你"))
+        // 3 字 > 2 字 > 1 字。同样先取下标再比较，避免「缺失 ⇒ -1 < 0 ⇒ 恒真」
+        val sanAt = c.indexOf("你好吗")
+        val erAt = c.indexOf("你好")
+        val yiAt = c.indexOf("你")
+        assertTrue("你好吗 必须在候选里: $c", sanAt >= 0)
+        assertTrue("你好 必须在候选里: $c", erAt >= 0)
+        assertTrue("你 必须在候选里: $c", yiAt >= 0)
+        assertTrue("你好吗 应在 你好 前: $c", sanAt < erAt)
+        assertTrue("你好 应在 你 前: $c", erAt < yiAt)
     }
 
     @Test
@@ -172,7 +183,11 @@ class PinyinEngineTest {
         UserFrequency.putForTest("你毫", 5.0, 20000)
         val c = PinyinEngine.query("nihao").candidates
         assertTrue("学过的长尾词必须进池: $c", "你毫" in c)
-        assertTrue("学过的词应排在未学词之前: $c", c.indexOf("你毫") < c.indexOf("你好"))
+        val learnedAt = c.indexOf("你毫")
+        val plainAt = c.indexOf("你好")
+        assertTrue("你毫 必须在候选里: $c", learnedAt >= 0)
+        assertTrue("你好 必须在候选里: $c", plainAt >= 0)
+        assertTrue("学过的词应排在未学词之前: $c", learnedAt < plainAt)
     }
 
     @Test

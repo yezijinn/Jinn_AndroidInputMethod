@@ -213,9 +213,15 @@ class CandidateRowsTest {
 
         // FrameLayout 里后加的子项绘制 / 触摸都在上层：拼音条（内含 ✕）必须排在候选滚动区**之后**，
         // 否则铺满整栏的候选区会把 ✕ 挡到点不动（2026-09-25 真机复现的 BUG，别为无障碍顺序再调回去）。
+        // 先各自取下标并断言非负：indexOf 未命中返回 -1，只写「indexOf(A) > indexOf(B)」
+        // 在 B 缺失时是 x > -1 ⇒ 恒真（假绿）
+        val pinyinBarAt = text.indexOf("@+id/pinyin_bar")
+        val scrollAt = text.indexOf("@+id/candidate_scroll")
+        assertTrue("布局里必须有 @+id/pinyin_bar", pinyinBarAt >= 0)
+        assertTrue("布局里必须有 @+id/candidate_scroll", scrollAt >= 0)
         assertTrue(
             "pinyin_bar 必须排在 candidate_scroll 之后（否则 ✕ 被候选区挡住点击）",
-            text.indexOf("@+id/pinyin_bar") > text.indexOf("@+id/candidate_scroll"),
+            pinyinBarAt > scrollAt,
         )
     }
 
