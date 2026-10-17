@@ -79,7 +79,7 @@ class CandidateRowsTest {
         assertEquals(20f, sp, 0f)
         assertEquals(14f, CandidateText.pinyinSpOf(sp), 0f)
         // 拼音条比候选行矮：只给字形、不给行框余量（默认字体下两者 px 高度见 `默认字体下行高与拼音条就是紧凑档`）
-        assertTrue(CandidateRows.pinyinBarHeightDp(sp) < CandidateRows.rowHeightDp(sp))
+        assertTrue(CandidateRows.pinyinBarHeightDp(CandidateText.pinyinSpOf(sp)) < CandidateRows.rowHeightDp(sp))
         // 候选行高就是字号的行框本身（1.4 系数），不留额外留白
         assertEquals(28f, CandidateRows.rowHeightDp(sp), 0.01f)
         // 字号是栏高的自变量：调大跟着涨、调小跟着收（这是本参数的意义所在）
@@ -94,18 +94,18 @@ class CandidateRowsTest {
         val d = 3f
         val sp = CandidateText.DEFAULT_SP
         val perRow = CandidateRows.rowHeightPx(d, fontScale = 1f, candidateSp = sp)
-        val bar = CandidateRows.pinyinBarHeightPx(d, fontScale = 1f, candidateSp = sp)
+        val bar = CandidateRows.pinyinBarHeightPx(d, fontScale = 1f, pinyinSp = CandidateText.pinyinSpOf(sp))
         assertEquals(bar + perRow, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
         assertEquals(bar + perRow * 2, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
     }
 
     @Test
     fun 默认字体下行高与拼音条就是紧凑档() {
-        // density=3 / 20sp ⇒ 候选行框 84px；拼音 14sp ⇒ 字形 48px
+        // density=3 / 20sp ⇒ 候选行框 84px；拼音 14sp ⇒ 字形 48px（条高参数是**拼音字号**）
         assertEquals(84, CandidateRows.rowHeightPx(density = 3f, fontScale = 1f, candidateSp = 20f))
-        assertEquals(48, CandidateRows.pinyinBarHeightPx(density = 3f, fontScale = 1f, candidateSp = 20f))
+        assertEquals(48, CandidateRows.pinyinBarHeightPx(density = 3f, fontScale = 1f, pinyinSp = 14f))
         // 拼音条必须比候选行矮（只给字形不给行框），否则「拼音行比自己的字高出一圈」
-        assertTrue(CandidateRows.pinyinBarHeightDp(20f) < CandidateRows.rowHeightDp(20f))
+        assertTrue(CandidateRows.pinyinBarHeightDp(14f) < CandidateRows.rowHeightDp(20f))
     }
 
     @Test
@@ -115,8 +115,8 @@ class CandidateRowsTest {
         assertTrue("字体放大后行高必须变高，否则固定 28dp 会裁掉文字下半", largeRow > normalRow)
         assertTrue("行高至少要盖得住文字本身", largeRow >= 90)
 
-        val normalBar = CandidateRows.pinyinBarHeightPx(3f, fontScale = 1f, candidateSp = 20f)
-        val largeBar = CandidateRows.pinyinBarHeightPx(3f, fontScale = 1.5f, candidateSp = 20f)
+        val normalBar = CandidateRows.pinyinBarHeightPx(3f, fontScale = 1f, pinyinSp = 14f)
+        val largeBar = CandidateRows.pinyinBarHeightPx(3f, fontScale = 1.5f, pinyinSp = 14f)
         assertTrue("字体放大后拼音条必须变高，否则字形会被裁", largeBar > normalBar)
         assertTrue("拼音条至少要盖得住字形", largeBar >= 63)
     }
@@ -124,7 +124,31 @@ class CandidateRowsTest {
     @Test
     fun 字体缩小也不低于紧凑档() {
         assertEquals("行高不得低于 28dp", 84, CandidateRows.rowHeightPx(3f, fontScale = 0.85f, candidateSp = 20f))
-        assertEquals("拼音条不得低于 16dp", 48, CandidateRows.pinyinBarHeightPx(3f, fontScale = 0.85f, candidateSp = 20f))
+        assertEquals("拼音条不得低于 16dp", 48, CandidateRows.pinyinBarHeightPx(3f, fontScale = 0.85f, pinyinSp = 14f))
+    }
+
+    /** 拼音字号是独立参数：它变则栏高变，与候选字号无关 */
+    @Test
+    fun 拼音字号改变栏高() {
+        val big = CandidateRows.barHeightPx(
+            CandidateRows.SINGLE, 3f, 1f, 20f, 28f, 0f,
+        )
+        val base = CandidateRows.barHeightPx(
+            CandidateRows.SINGLE, 3f, 1f, 20f, 14f, 0f,
+        )
+        assertTrue("拼音字号调到 28sp 后栏高必须变高（$big vs $base）", big > base)
+    }
+
+    /** 拼音行间隔计入栏高：8dp × density 3 = 24px 的净增量 */
+    @Test
+    fun 拼音行间隔计入栏高() {
+        val withGap = CandidateRows.barHeightPx(
+            CandidateRows.SINGLE, 3f, 1f, 20f, 14f, 8f,
+        )
+        val noGap = CandidateRows.barHeightPx(
+            CandidateRows.SINGLE, 3f, 1f, 20f, 14f, 0f,
+        )
+        assertEquals(24, withGap - noGap)
     }
 
     @Test
@@ -164,7 +188,7 @@ class CandidateRowsTest {
             attr("candidate_bar", "layout_height"),
         )
         assertEquals(
-            "${CandidateRows.pinyinBarHeightDp(CandidateText.DEFAULT_SP).roundToInt()}dp",
+            "${CandidateRows.pinyinBarHeightDp(CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP)).roundToInt()}dp",
             attr("pinyin_bar", "layout_height"),
         )
         assertEquals(

@@ -559,6 +559,26 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_KEY_LETTER_UPPERCASE, value) }
 
     /**
+     * 大写键「只生效一次」（默认关 = 历史行为：持续锁定，再点大写键才解锁）。
+     *
+     * 开着时点一次大写键只锁一个大写字母，上屏后自动回小写；已锁定时再点则全关。
+     * 英文模式与中文模式（caps 直出大写）同口径，见 PinyinKeyboardView 的 releaseCapsOneShot。
+     */
+    var capsOneShot: Boolean
+        get() = boolOr(KEY_CAPS_ONE_SHOT, false)
+        set(value) = sp.edit { putBoolean(KEY_CAPS_ONE_SHOT, value) }
+
+    /**
+     * 小写英文键盘上长按字母输出大写（默认关）。
+     *
+     * 只在字母层 + 英文模式 + 非大写锁定 + 键为 a..z 时生效：中文拼音 composing 里长按会打断
+     * 拼音串，符号 / 数字层没有大小写。上屏一个大写字母，不改变之后按键的大小写状态。
+     */
+    var longPressLowerUppercase: Boolean
+        get() = boolOr(KEY_LONGPRESS_LOWER_UPPERCASE, false)
+        set(value) = sp.edit { putBoolean(KEY_LONGPRESS_LOWER_UPPERCASE, value) }
+
+    /**
      * 候选栏字距（dp）：**相邻两个候选词之间的水平间隔**（只影响水平方向，行高不动）。
      *
      * 与按键「间隙」同语义：实现上每个候选左右各内缩本值的一半（见 PinyinKeyboardView
@@ -585,6 +605,30 @@ class Prefs(private val appContext: Context) {
     var candidateTextSp: Float
         get() = CandidateText.clampSp(floatOr(KEY_CANDIDATE_TEXT_SP, CandidateText.DEFAULT_SP))
         set(value) = sp.edit { putFloat(KEY_CANDIDATE_TEXT_SP, CandidateText.clampSp(value)) }
+
+    /**
+     * 拼音字号（sp，默认 0 = 自动）：**与候选字号解耦**的独立参数。
+     *
+     * 0 沿用 [CandidateText.pinyinSpOf] 的派生口径（老用户观感不变）；用户动过滑杆后写具体值，
+     * 归一在 [CandidateText.clampPinyinSp]（12~30sp、1sp 对齐）。读写两侧同一套边界。
+     */
+    var pinyinTextSp: Float
+        get() = CandidateText.clampPinyinSp(floatOr(KEY_PINYIN_TEXT_SP, CandidateText.PINYIN_DEFAULT_AUTO))
+        set(value) = sp.edit { putFloat(KEY_PINYIN_TEXT_SP, CandidateText.clampPinyinSp(value)) }
+
+    /**
+     * 拼音行间隔（dp，默认 0）：拼音行底部到候选行之间的空隙，计入候选栏总高。
+     *
+     * 定义域与默认值在 [CandidateRows]（[CandidateRows.PINYIN_GAP_MIN_DP]~[CandidateRows.PINYIN_GAP_MAX_DP]），
+     * 不在这里写死数字。
+     */
+    var pinyinLineGapDp: Float
+        get() = CandidateRows.clampPinyinGapDp(
+            floatOr(KEY_PINYIN_LINE_GAP_DP, CandidateRows.PINYIN_GAP_MIN_DP),
+        )
+        set(value) = sp.edit {
+            putFloat(KEY_PINYIN_LINE_GAP_DP, CandidateRows.clampPinyinGapDp(value))
+        }
 
     /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
@@ -1485,8 +1529,16 @@ class Prefs(private val appContext: Context) {
         if (sp.contains(KEY_KEY_GAP_DP)) put(KEY_KEY_GAP_DP, keyGapDp)
         if (sp.contains(KEY_KEY_HEIGHT_DP)) put(KEY_KEY_HEIGHT_DP, keyHeightDp)
         put(KEY_KEY_LETTER_UPPERCASE, keyLetterUppercase)
+        // 大写只生效一次 / 小写长按转大写：两个开关默认 false，缺键回落与显式同值，
+        // 按既有口径不套「用户改过才导出」的守卫
+        put(KEY_CAPS_ONE_SHOT, capsOneShot)
+        put(KEY_LONGPRESS_LOWER_UPPERCASE, longPressLowerUppercase)
         if (sp.contains(KEY_CANDIDATE_SPACING_DP)) put(KEY_CANDIDATE_SPACING_DP, candidateSpacingDp)
         if (sp.contains(KEY_CANDIDATE_TEXT_SP)) put(KEY_CANDIDATE_TEXT_SP, candidateTextSp)
+        // 拼音字号 / 行间隔同款：只在用户真的动过滑杆时才导出（0 = 自动必须原样带走，
+        // 否则「自动」会被固化成当时的派生值，改候选字号后拼音不再跟随）
+        if (sp.contains(KEY_PINYIN_TEXT_SP)) put(KEY_PINYIN_TEXT_SP, pinyinTextSp)
+        if (sp.contains(KEY_PINYIN_LINE_GAP_DP)) put(KEY_PINYIN_LINE_GAP_DP, pinyinLineGapDp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1661,8 +1713,13 @@ class Prefs(private val appContext: Context) {
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
                 KEY_KEY_HEIGHT_DP -> asFloat(v)?.let { keyHeightDp = it; ok() } ?: bad(key)
                 KEY_KEY_LETTER_UPPERCASE -> asBool(v)?.let { keyLetterUppercase = it; ok() } ?: bad(key)
+                KEY_CAPS_ONE_SHOT -> asBool(v)?.let { capsOneShot = it; ok() } ?: bad(key)
+                KEY_LONGPRESS_LOWER_UPPERCASE ->
+                    asBool(v)?.let { longPressLowerUppercase = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_SPACING_DP -> asFloat(v)?.let { candidateSpacingDp = it; ok() } ?: bad(key)
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
+                KEY_PINYIN_TEXT_SP -> asFloat(v)?.let { pinyinTextSp = it; ok() } ?: bad(key)
+                KEY_PINYIN_LINE_GAP_DP -> asFloat(v)?.let { pinyinLineGapDp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 // 敲击音效反馈 6 键：setter 里已有钳位（TapSound.clampVolume / parseMap /
@@ -1960,8 +2017,12 @@ class Prefs(private val appContext: Context) {
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         private const val KEY_KEY_HEIGHT_DP = "key_height_dp"
         private const val KEY_KEY_LETTER_UPPERCASE = "key_letter_uppercase"
+        private const val KEY_CAPS_ONE_SHOT = "caps_one_shot"
+        private const val KEY_LONGPRESS_LOWER_UPPERCASE = "longpress_lower_uppercase"
         private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
+        private const val KEY_PINYIN_TEXT_SP = "pinyin_text_sp"
+        private const val KEY_PINYIN_LINE_GAP_DP = "pinyin_line_gap_dp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
 
         /**

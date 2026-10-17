@@ -68,4 +68,29 @@ class CandidateTextTest {
         assertEquals("20 sp", CandidateText.formatSp(20f))
         assertEquals("14 sp", CandidateText.formatSp(9f)) // 越界 → 钳到 14
     }
+
+    @Test
+    fun 拼音字号归一与滑杆往返() {
+        // 0 = 自动，必须原样保留（NaN / Inf 同样退回自动，不放进布局）
+        assertEquals(CandidateText.PINYIN_DEFAULT_AUTO, CandidateText.clampPinyinSp(0f), 0f)
+        assertEquals(CandidateText.PINYIN_DEFAULT_AUTO, CandidateText.clampPinyinSp(Float.NaN), 0f)
+        assertEquals(CandidateText.PINYIN_DEFAULT_AUTO, CandidateText.clampPinyinSp(Float.NEGATIVE_INFINITY), 0f)
+        // 定义域 12~30sp，越界钳位、步进 1sp
+        assertEquals(CandidateText.MIN_PINYIN_SP, CandidateText.clampPinyinSp(5f), 0f)
+        assertEquals(CandidateText.MIN_PINYIN_SP, CandidateText.clampPinyinSp(12f), 0f)
+        assertEquals(CandidateText.MAX_PINYIN_SP, CandidateText.clampPinyinSp(99f), 0f)
+        assertEquals(22f, CandidateText.clampPinyinSp(21.6f), 0f)
+        assertEquals(18, CandidateText.PINYIN_PROGRESS_MAX)
+        // 进度往返不漂
+        for (sp in 12..30) {
+            val progress = CandidateText.pinyinSpToProgress(sp.toFloat())
+            assertEquals("${sp}sp 的滑杆进度", sp - 12, progress)
+            assertEquals("${sp}sp 往返", sp.toFloat(), CandidateText.pinyinProgressToSp(progress), 0f)
+        }
+        assertEquals(CandidateText.MIN_PINYIN_SP, CandidateText.pinyinProgressToSp(-3), 0f)
+        assertEquals(CandidateText.MAX_PINYIN_SP, CandidateText.pinyinProgressToSp(99), 0f)
+        // 文案：自动档显示派生值，显式档显示具体值
+        assertEquals("14 sp", CandidateText.formatPinyinSp(0f, 14f))
+        assertEquals("22 sp", CandidateText.formatPinyinSp(22f, 14f))
+    }
 }

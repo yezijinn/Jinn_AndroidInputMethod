@@ -84,7 +84,9 @@ class PrefsBackupCoverageTest {
         //                       光标」1 键（都是用户偏好，换机必须带走）
         // 2026-10-16 起 98 → 97：移除「空格左右滑动移动光标」1 键（该功能整体下线）
         // 2026-10-17 起 97 → 98：新增「候选追加方式」1 键（一次 / 无限，外观页控件，换机要带走）
-        assertEquals("提取到的键常量应是 98 个（改键数请同步本断言）", 98, keyConstants.size)
+        // 2026-10-17 起 98 → 100：新增「拼音字号」「拼音行间隔」2 键（外观页滑杆，换机要带走）
+        // 2026-10-17 起 100 → 102：新增「大写仅一次」「长按小写转大写」2 键（外观页开关，换机要带走）
+        assertEquals("提取到的键常量应是 102 个（改键数请同步本断言）", 102, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -182,6 +184,9 @@ class PrefsBackupCoverageTest {
             "KEY_KEY_GAP_DP" to "asFloat(v)",
             "KEY_CANDIDATE_SPACING_DP" to "asFloat(v)",
             "KEY_CANDIDATE_TEXT_SP" to "asFloat(v)",
+            // 拼音字号（0 = 自动）/ 拼音行间隔：外观页滑杆，两个浮点
+            "KEY_PINYIN_TEXT_SP" to "asFloat(v)",
+            "KEY_PINYIN_LINE_GAP_DP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
             "KEY_SKIN_LIGHT" to "asString(v)",
             "KEY_SKIN_DARK" to "asString(v)",
@@ -201,6 +206,9 @@ class PrefsBackupCoverageTest {
             // 一落地就报出来）；取值工具逐一核对过类型，与各自 setter 的语义一致。
             "KEY_KEY_HEIGHT_DP" to "asFloat(v)",
             "KEY_KEY_LETTER_UPPERCASE" to "asBool(v)",
+            // 大写仅一次 / 长按小写转大写：外观页两个开关
+            "KEY_CAPS_ONE_SHOT" to "asBool(v)",
+            "KEY_LONGPRESS_LOWER_UPPERCASE" to "asBool(v)",
             "KEY_GALLERY_TREE_URI" to "asString(v)",
             "KEY_CLIP_EXPORT_TREE_URI" to "asString(v)",
             "KEY_GALLERY_AUTO_RETURN" to "asBool(v)",
@@ -503,11 +511,16 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_PAGING" to "candidate_paging",
             "KEY_CANDIDATE_APPEND_ALL" to "candidate_append_all",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
+            "KEY_CAPS_ONE_SHOT" to "caps_one_shot",
+            "KEY_LONGPRESS_LOWER_UPPERCASE" to "longpress_lower_uppercase",
             // 外观页的滑杆
             "KEY_KEY_CORNER_DP" to "key_corner_dp",
             "KEY_KEY_GAP_DP" to "key_gap_dp",
             "KEY_KEY_HEIGHT_DP" to "key_height_dp",
             "KEY_CANDIDATE_SPACING_DP" to "candidate_spacing_dp",
+            "KEY_CANDIDATE_TEXT_SP" to "candidate_text_sp",
+            "KEY_PINYIN_TEXT_SP" to "pinyin_text_sp",
+            "KEY_PINYIN_LINE_GAP_DP" to "pinyin_line_gap_dp",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "key_transparency_percent",
             // 皮肤与主题
             "KEY_KEYBOARD_SKIN" to "keyboard_skin",

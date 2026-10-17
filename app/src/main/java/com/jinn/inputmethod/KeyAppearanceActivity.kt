@@ -194,6 +194,69 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 拼音字号：与候选字号解耦（0 = 自动，沿用 `候选字号 × 0.7` 的派生口径）。
+        // 只有拼音行三件（拼音文字 / ✕ / ▲）跟它变；栏高与顶部避让由 CandidateRows 派生。
+        val labelPinyinSize = findViewById<TextView>(R.id.label_pinyin_text_size)
+        val seekPinyinSize = findViewById<SeekBar>(R.id.seek_pinyin_text_size)
+        val textPinyinSize = findViewById<TextView>(R.id.text_pinyin_text_size)
+        labelPinyinSize.text = TEXT_PINYIN_TEXT_SIZE_TITLE
+        seekPinyinSize.max = CandidateText.PINYIN_PROGRESS_MAX
+        val autoPinyinSp = CandidateText.pinyinSpOf(prefs.candidateTextSp)
+        val rawPinyinSp = prefs.pinyinTextSp
+        seekPinyinSize.progress = CandidateText.pinyinSpToProgress(
+            if (rawPinyinSp > 0f) rawPinyinSp else autoPinyinSp,
+        )
+        textPinyinSize.text = CandidateText.formatPinyinSp(rawPinyinSp, autoPinyinSp)
+
+        seekPinyinSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sp = CandidateText.pinyinProgressToSp(progress)
+                prefs.pinyinTextSp = sp
+                textPinyinSize.text = CandidateText.formatPinyinSp(
+                    sp,
+                    CandidateText.pinyinSpOf(prefs.candidateTextSp),
+                )
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(
+                    TAG,
+                    "拼音字号: " + CandidateText.formatPinyinSp(
+                        prefs.pinyinTextSp,
+                        CandidateText.pinyinSpOf(prefs.candidateTextSp),
+                    ),
+                )
+                // 与候选字号同一条即时生效路径：松手后 applyCandidateRows 重落拼音条与栏高
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
+        // 拼音行间隔（0~16dp）：拼音行底部到候选行之间的空隙，计入候选栏总高
+        val labelPinyinGap = findViewById<TextView>(R.id.label_pinyin_line_gap)
+        val seekPinyinGap = findViewById<SeekBar>(R.id.seek_pinyin_line_gap)
+        val textPinyinGap = findViewById<TextView>(R.id.text_pinyin_line_gap)
+        labelPinyinGap.text = TEXT_PINYIN_LINE_GAP_TITLE
+        seekPinyinGap.max = CandidateRows.PINYIN_GAP_MAX_DP.toInt()
+        seekPinyinGap.progress = CandidateRows.clampPinyinGapDp(prefs.pinyinLineGapDp).toInt()
+        textPinyinGap.text = "${CandidateRows.clampPinyinGapDp(prefs.pinyinLineGapDp).toInt()} dp"
+
+        seekPinyinGap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = CandidateRows.clampPinyinGapDp(progress.toFloat())
+                prefs.pinyinLineGapDp = dp
+                textPinyinGap.text = "${dp.toInt()} dp"
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "拼音行间隔: ${CandidateRows.clampPinyinGapDp(prefs.pinyinLineGapDp).toInt()} dp")
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
         findViewById<TextView>(R.id.label_key_corner).text = TEXT_CORNER_TITLE
         findViewById<TextView>(R.id.label_key_gap).text = TEXT_GAP_TITLE
         findViewById<TextView>(R.id.label_key_transparency).text = TEXT_TRANSPARENCY_TITLE
@@ -229,6 +292,25 @@ class KeyAppearanceActivity : Activity() {
         switchLetterUpper.setOnCheckedChangeListener { _, checked ->
             prefs.keyLetterUppercase = checked
             Diagnostics.i(TAG, "26 键大写显示: $checked")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        // 大写键「只生效一次」/ 小写英文长按转大写：同上，切换即落盘并即时刷键盘
+        val switchCapsOneShot = findViewById<Switch>(R.id.switch_caps_oneshot)
+        switchCapsOneShot.text = TEXT_CAPS_ONESHOT_TITLE
+        switchCapsOneShot.isChecked = prefs.capsOneShot
+        switchCapsOneShot.setOnCheckedChangeListener { _, checked ->
+            prefs.capsOneShot = checked
+            Diagnostics.i(TAG, "大写仅一次: ${if (checked) "开启" else "关闭"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        val switchLongPressUpper = findViewById<Switch>(R.id.switch_longpress_lower_uppercase)
+        switchLongPressUpper.text = TEXT_LONGPRESS_UPPER_TITLE
+        switchLongPressUpper.isChecked = prefs.longPressLowerUppercase
+        switchLongPressUpper.setOnCheckedChangeListener { _, checked ->
+            prefs.longPressLowerUppercase = checked
+            Diagnostics.i(TAG, "长按小写转大写: ${if (checked) "开启" else "关闭"}")
             JinnIme.onKeyAppearanceChanged()
         }
 
@@ -607,6 +689,12 @@ class KeyAppearanceActivity : Activity() {
         /** 「候选字号」项的标题文案（同上：写在代码里，不进 strings.xml） */
         const val TEXT_TEXT_SIZE_TITLE = "候选字号"
 
+        /** 「拼音字号」项的标题文案（与候选字号解耦的独立参数，0 = 自动派生） */
+        const val TEXT_PINYIN_TEXT_SIZE_TITLE = "拼音字号"
+
+        /** 「拼音行间隔」项的标题文案（拼音行底部到候选行之间的空隙，计入候选栏总高） */
+        const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音行间隔"
+
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"
 
@@ -617,6 +705,12 @@ class KeyAppearanceActivity : Activity() {
      * 而拼音串本来就是小写（真正要上屏大写另有「大写锁定」键）。
      */
     const val TEXT_LETTER_UPPER_TITLE = "拼音键盘大写"
+
+    /** 「大写仅一次」开关标题：点一次大写键只打一个大写字母，上屏后自动回小写 */
+    const val TEXT_CAPS_ONESHOT_TITLE = "大写仅一次"
+
+    /** 「长按小写转大写」开关标题：小写英文键盘上长按字母输出大写 */
+    const val TEXT_LONGPRESS_UPPER_TITLE = "长按小写转大写"
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"

@@ -1099,8 +1099,8 @@ class RecentFixesRegressionTest {
             assertFalse("第二行说明必须整条删除：$gone", gone in layout)
         }
         assertEquals(
-            "六个滑杆与标题的间距必须都是 0dp",
-            6,
+            "八个滑杆与标题的间距必须都是 0dp",
+            8,
             "android:layout_marginStart=\"0dp\"".toRegex().findAll(layout).count(),
         )
         assertFalse(
@@ -2599,9 +2599,10 @@ class RecentFixesRegressionTest {
         // 钉住：几何入口只收「档位」一个参数，且不得再有按内容排数收缩的写法。
         assertTrue(
             "候选栏高度必须只按档位算（双行档恒定增高，不随内容变化）",
-            // 入参只有「档位 + 候选字号」两个**帧内稳定**的值（2026-10-03 起字号也是参数），
-            // 都不是「本帧内容排数」——按内容收缩的写法仍被这条钉挡住
-            "fun applyCandidateRows(rows: Int, candidateSp: Float): Int" in view &&
+            // 入参只有「档位 + 候选字号 + 拼音字号 + 行间隔」四个**帧内稳定**的值
+            Regex(
+                """fun applyCandidateRows\(\s*rows: Int,\s*candidateSp: Float,\s*pinyinSp: Float,\s*gapDp: Float,\s*\): Int""",
+            ).containsMatchIn(view) &&
                 "functionPanel" !in view,
         )
         // L-478 的延续（2026-10-02，用户选「方案 A」）：候选栏底必须与功能面板按钮**同档**
@@ -4709,6 +4710,33 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * 「大写仅一次」与「长按小写转大写」（2026-10-17）：两个默认关闭的输入行为开关。
+     *
+     * 前者：点一次大写键只锁一个大写字母，上屏即回落（英文 / 中文 caps / 搜索三条上屏分支都要复位）；
+     * 开关关 = 历史行为（持续锁定到大写键再点一次）。后者：字母层 + 英文 + 非大写锁定时长按字母
+     * 上大写，移动超阈值即取消。钉住字段名与外观页控件 id，防止「开关在、行为没接上」或反向。
+     */
+    @Test
+    fun `大写一次性与长按转大写`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        val layout = TestSources.rawSource(
+            "src/main/res/layout/activity_key_appearance.xml",
+            "app/src/main/res/layout/activity_key_appearance.xml",
+        )
+        assertTrue("大写一次性状态字段丢失", "capsOneShotActive" in view)
+        assertTrue("长按转大写没接进触摸处理", "longPressLowerUppercase" in view)
+        assertTrue("外观页缺「大写仅一次」开关", "switch_caps_oneshot" in layout)
+        assertTrue("外观页缺「长按小写转大写」开关", "switch_longpress_lower_uppercase" in layout)
+        assertTrue("大写一次性没有上屏后的复位入口", "releaseCapsOneShot()" in view)
+        val prefs = codeOf("Prefs.kt")
+        assertTrue(
+            "两个开关默认必须关闭（缺省真值即现状行为）",
+            "boolOr(KEY_CAPS_ONE_SHOT, false)" in prefs &&
+                "boolOr(KEY_LONGPRESS_LOWER_UPPERCASE, false)" in prefs,
+        )
+    }
+
+    /**
      * 「键高」拖动条（2026-10-09）：三行字母键的高度由 [KeyAppearance] 定义域驱动，且只落在字母三行上。
      *
      * 三条判据对应的都是「改错了只在真机某一种形态下才显形」的情形：不套用 ⇒ 拖滑杆没反应；
@@ -5376,7 +5404,7 @@ class RecentFixesRegressionTest {
         assertTrue("不可读独立文案", "TEXT_UNREADABLE" in histNow)
         // L-1331 / L-1332：候选栏与方向面板的几何都从单一来源派生（不手写同式子）
         val pv2 = codeOf("PinyinKeyboardView.kt")
-        assertTrue("栏高走派生函数", "CandidateRows.barHeightPx(rows, dm.density, fontScale, candidateSp)" in pv2)
+        assertTrue("栏高走派生函数", "CandidateRows.barHeightPx(\n            rows," in pv2)
         assertTrue("复用块走 px 派生", "CandidateRows.barHeightPx(\n            CandidateRows.SINGLE," in pv2)
         assertTrue("方向面板行高同源", "rowPx - dp(2) * 2" in pv2)
         // L-1321：图库收起也必须作废待揭示（否则 300ms 后面板自己亮出来 / 跨会话残留）

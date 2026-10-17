@@ -172,6 +172,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var capsMode = false
 
     /**
+     * 「大写只生效一次」当前是否在生效（本次大写来自一次点击）。
+     *
+     * 只在 [Prefs.capsOneShot] 打开时置位；上屏一个大写字母后由 [releaseCapsOneShot] 复位。
+     * 开关关闭时恒为 false，即历史行为（持续锁定到大写键再点一次）。
+     */
+    private var capsOneShotActive = false
+
+    /**
      * 当前输入框是否应暂停用户词频学习（密码框 / 显式不联想的框）。
      *
      * 由 IME 在每次 [android.inputmethodservice.InputMethodService.onStartInputView]
@@ -244,11 +252,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 一排的行高按同档字号派生（与 [applyCandidateRows] 同源），故「可用高度 ÷ 行高」即最多能放几排；
      * 屏幕不够高时**静默按实际排数显示**（不给死按钮、不弹提示）。
      */
-    private fun expandedRowsFor(count: Int, candidateSp: Float): Int {
+    private fun expandedRowsFor(count: Int, candidateSp: Float, pinyinSp: Float, gapDp: Float): Int {
         val dm = resources.displayMetrics
         val fontScale = resources.configuration.fontScale
         val rowPx = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
-        val pinyinPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, candidateSp)
+        val pinyinPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp) +
+            CandidateRows.pinyinGapPx(dm.density, gapDp)
         // 可用高度：用本视图高度而不是栏高（栏高正是要算的量，会自指）；键盘视图未布局时
         // 取不到 ⇒ 退化成「不按高度夹取」，仍被四排上限夹住。
         val usable = (height.takeIf { it > 0 } ?: parent.let { (it as? android.view.View)?.height }
@@ -331,6 +340,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 保证「栏高 / 行高 / 字号」同帧同源（中途被后台导入改值也不会一半新一半旧）。
      */
     private var currentCandidateSp = CandidateText.DEFAULT_SP
+
+    /**
+     * 本帧拼音条高度（px）= 拼音字号字形高 + 拼音行间隔（[applyCandidateRows] 落位）。
+     *
+     * 单行档候选区顶部避让直接读它（[syncCandidatePadding]），不再拿字号重算一遍 ——
+     * 「栏高 / 避让 / 拼音条布局高度」三处必须同源，否则调间隔后会出现一条缝。
+     */
+    private var currentPinyinBarPx = 0
+
+    /** 本帧生效的拼音字号（sp，用户参数 [Prefs.pinyinTextSp] 归一后的有效值） */
+    private var currentPinyinSp = 0f
+
+    /** 本帧生效的拼音行间隔（dp）：复用块最小高度与栏高同源用 */
+    private var currentPinyinGapDp = CandidateRows.PINYIN_GAP_MIN_DP
 
     /** 已下发到拼音条与 ✕ 的字号（sp）：避免每次刷新重复 setTextSize（会多触发一次 requestLayout） */
     private var appliedPinyinTextSp = -1f
@@ -783,7 +806,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 字母键手势状态 */
     private var keyTouchStartX = 0f
+
+    /** 按下点的屏幕纵坐标（与 [keyTouchStartX] 同源）：长按转大写的移动取消判据 */
+    private var keyTouchStartY = 0f
     private var keyTouchConsumed = false
+
+    /** 待触发的小写长按转大写；移动超阈值 / 抬手 / 取消 / 多指时移除并置 null */
+    private var keyLongPressRunnable: Runnable? = null
 
     /** 系统触摸斜率阈值：位移小于它才算「点击」而非滑动（用于无障碍 performClick 判定） */
     private val touchSlop: Float =
@@ -808,6 +837,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 小写英文长按转大写是否对本次按下生效（[Prefs.longPressLowerUppercase]）。
+     *
+     * 四条判据缺一不可：字母层（符号 / 数字层没有大小写）、英文模式（中文 composing 里长按
+     * 会打断拼音串）、非大写锁定（此时已是全大写）、键是 a..z。默认关闭 = 不改变历史手感。
+     */
+    private fun canLongPressUpper(c: Char): Boolean =
+        prefs.longPressLowerUppercase &&
+            layer == LAYER_LETTER && englishMode && !capsMode &&
+            c in 'a'..'z'
+
+    /** 移除待触发的小写长按转大写（未触发时什么都不做） */
+    private fun cancelLongPressUppercase() {
+        keyLongPressRunnable?.let { removeCallbacks(it) }
+        keyLongPressRunnable = null
+    }
+
+    /**
      * 字母键触摸：正常点击上屏；符号层左右滑动切换符号页。
      * 左滑（dx<0）下一页、右滑（dx>0）上一页，滑动后本次按下不再触发点击。
      */
@@ -818,7 +864,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 「触摸压根没送到键上（被上层吃掉）」与「送到了但抬起判定失败」
                 if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "键触摸 DOWN: $c")
                 keyTouchStartX = event.rawX
+                keyTouchStartY = event.rawY
                 keyTouchConsumed = false
+                // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况）
+                cancelLongPressUppercase()
+                // 小写英文长按转大写：到系统长按时长仍没抬手才上一个大写字母。
+                // 只在 DOWN 起计时（符号层的滑动翻页在 MOVE 里按 24dp 判定，两条手势互不打扰）。
+                if (canLongPressUpper(c)) {
+                    val runnable = Runnable {
+                        if (!keyTouchConsumed) {
+                            keyTouchConsumed = true
+                            listener?.onCommitText(c.uppercaseChar().toString())
+                        }
+                    }
+                    keyLongPressRunnable = runnable
+                    postDelayed(runnable, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                }
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
                 // 必须显式驱动按压态，否则按键没有任何视觉反馈（按压高亮是死代码）
                 keyViews[c]?.setPressedVisual(true)
@@ -832,6 +893,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                // 长按转大写只在「手指基本不动」时成立：移动超阈值即取消，
+                // 免得用户其实是在划动 / 修正按错的键，却在上抬前被塞进一个大写字母
+                if (keyLongPressRunnable != null &&
+                    (abs(event.rawX - keyTouchStartX) > touchSlop ||
+                        abs(event.rawY - keyTouchStartY) > touchSlop)
+                ) {
+                    cancelLongPressUppercase()
+                }
                 // 符号层：水平滑动在「当前分组内」翻页（不切换分组）
                 if (layer == LAYER_SYMBOL && !keyTouchConsumed) {
                     val group = currentSymbolGroup()
@@ -859,6 +928,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 两者都不处理的话，POINTER_UP 分支既不复位按压态也不上字，键会一直高亮
             // 到下次被触摸，且该次输入被静默丢掉。
             MotionEvent.ACTION_POINTER_DOWN -> {
+                cancelLongPressUppercase()
                 keyViews[c]?.setPressedVisual(true)
                 return true
             }
@@ -871,6 +941,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                // 抬手即作废待触发的大写：长按成功的场合 keyTouchConsumed 已被置位，
+                // 下面不会再上小写；没到时长就抬手则按普通点击走
+                cancelLongPressUppercase()
                 keyViews[c]?.setPressedVisual(false)
                 // 未滑动（或非符号层）且抬起点仍落在本键内才输入。
                 // 命中判定不可省：手指从 Q 滑到 W 抬起时，UP 依然回调到 Q 的监听器，
@@ -887,6 +960,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                cancelLongPressUppercase()
                 keyViews[c]?.setPressedVisual(false)
                 keyTouchConsumed = false
                 return true
@@ -1053,7 +1127,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 return@setOnClickListener
             }
             KeyFeedback.fire(TapSound.G_FUNC)
-            capsMode = !capsMode
+            if (prefs.capsOneShot) {
+                // 大写只生效一次：再点一次全关；每次开启都从「一次性」起步（上屏一个大写即回落）
+                if (capsMode) {
+                    capsMode = false
+                    capsOneShotActive = false
+                } else {
+                    capsMode = true
+                    capsOneShotActive = true
+                }
+            } else {
+                capsMode = !capsMode
+                capsOneShotActive = false
+            }
             // 大写锁定切换的是「字母直通」模式，与切中英文同理：
             // 不清残留拼音的话，切回小写后按退格会先删这些看不见的拼音，
             // 而用户想删的是刚打出来的大写字母。
@@ -1933,6 +2019,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否处于顶部搜索模式（26 键输入需路由到搜索框，不 commit 宿主） */
     private fun isPanelSearch() = isSearchPanelActive()
 
+    /**
+     * 「大写只生效一次」的复位：一个大写字母上屏后立即回小写。
+     *
+     * 只在 [capsOneShotActive]（本次大写来自点一次大写键）时动手；持续锁定（开关关）下是空操作 ——
+     * 否则会用「点一次只打一个大写」悄悄替掉用户选的历史行为。
+     */
+    private fun releaseCapsOneShot() {
+        if (!capsOneShotActive) return
+        capsOneShotActive = false
+        capsMode = false
+        refreshKeyLabels()
+    }
+
     private fun onLetterPressed(c: Char) {
         // 搜索模式：符号/数字/英文/大写 → 直接追加到搜索词；中文进拼音，选词时路由
         if (isPanelSearch()) {
@@ -1949,10 +2048,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             if (englishMode) {
                 searchPanel?.appendSearch(if (capsMode) c.uppercaseChar().toString() else c.toString())
+                releaseCapsOneShot()
                 return
             }
             if (capsMode) {
                 searchPanel?.appendSearch(c.uppercaseChar().toString())
+                releaseCapsOneShot()
                 return
             }
             composing.append(c)
@@ -1982,11 +2083,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (englishMode) {
             // 英文模式：按大写状态上屏
             listener?.onCommitText(if (capsMode) c.uppercaseChar().toString() else c.toString())
+            releaseCapsOneShot()
             return
         }
         // 中文模式 + 大写锁定：直接上屏大写字母（等价于临时英文）
         if (capsMode) {
             listener?.onCommitText(c.uppercaseChar().toString())
+            releaseCapsOneShot()
             return
         }
         // 中文模式：追加到拼音串并查候选
@@ -2214,14 +2317,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * @return 本帧每排候选的行高（px）：同帧的 [renderCandidateItems] 直接复用，
      *   不再各算一遍（`BUG.md` L-35）。
      */
-    private fun applyCandidateRows(rows: Int, candidateSp: Float): Int {
+    private fun applyCandidateRows(
+        rows: Int,
+        candidateSp: Float,
+        pinyinSp: Float,
+        gapDp: Float,
+    ): Int {
         val dm = resources.displayMetrics
         val fontScale = resources.configuration.fontScale
         val perRow = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
-        val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, candidateSp)
+        val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp)
         currentRows = rows
         currentCandidateSp = candidateSp
-        applyPinyinTextSize(candidateSp)
+        currentPinyinSp = pinyinSp
+        currentPinyinGapDp = gapDp
+        // 拼音条自身高度 = 字形高 + 行间隔：间隔落在条内，单行档的顶部避让（syncCandidatePadding）
+        // 与双行档的中缝高度都自动跟着涨，不会出现「栏高了但拼音条没长」的缝。
+        currentPinyinBarPx = pinyinBarPx + CandidateRows.pinyinGapPx(dm.density, gapDp)
+        applyPinyinTextSize(pinyinSp)
 
         // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 44dp；双行 = 拼音条 + 两排 = 72dp），
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
@@ -2229,7 +2342,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
         // 算式走 CandidateRows 的派生函数（BUG.md L-1331）：这里原先手写了同一个加法，
         // 与 [CandidateRows.barHeightPx] 是两份实现，改系数时会分叉
-        val barHeight = CandidateRows.barHeightPx(rows, dm.density, fontScale, candidateSp)
+        val barHeight = CandidateRows.barHeightPx(
+            rows,
+            dm.density,
+            fontScale,
+            candidateSp,
+            pinyinSp,
+            gapDp,
+        )
         (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
             if (lp.height != barHeight) {
                 lp.height = barHeight
@@ -2243,8 +2363,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             } else {
                 android.view.Gravity.TOP
             }
-            if (lp.height != pinyinBarPx || lp.gravity != gravity) {
-                lp.height = pinyinBarPx
+            if (lp.height != currentPinyinBarPx || lp.gravity != gravity) {
+                lp.height = currentPinyinBarPx
                 lp.gravity = gravity
                 pinyinBar.layoutParams = lp
             }
@@ -2255,16 +2375,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 拼音条与 ✕ 的字号按候选字号派生（[CandidateText.pinyinSpOf]）：两者同处一行，字号必须同步。
+     * 拼音行三件的字号（拼音文字 / ✕ / ▲）按本帧拼音字号落位（[Prefs.pinyinTextSp]，
+     * 0 = 自动时由调用方派生出 [CandidateText.pinyinSpOf] 的值传入）：三者同处一行，字号必须同步。
      *
      * 只在真的变了时才写：`setTextSize` 会触发一次 requestLayout，而本方法每次刷新都调。
      */
-    private fun applyPinyinTextSize(candidateSp: Float) {
-        val sp = CandidateText.pinyinSpOf(candidateSp)
+    private fun applyPinyinTextSize(pinyinSp: Float) {
+        // 显式值原样下发（自动档的派生值也走这里，保留 29.4 这类小数，观感与改造前逐像素一致）；
+        // 只有缺省（≤0，理论上不会出现）才回落到默认派生值
+        val sp = if (pinyinSp > 0f) pinyinSp else CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP)
         if (sp == appliedPinyinTextSp) return
         appliedPinyinTextSp = sp
         viewCandidatePinyin.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
         btnClearCandidates.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
+        btnExpandCandidates.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
     }
 
     /** 与 XML 资源同口径的 dp → px（[dp] 是截断，资源走 `complexToDimensionPixelSize` 的四舍五入） */
@@ -2323,13 +2447,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun syncCandidatePadding() {
         val left = dpExact(CandidateRows.SIDE_PAD_DP)
-        // 单行档让出一条拼音条（拼音与候选之间不留间隔）；双行档的拼音条叠在中缝上，不让位
+        // 单行档让出一条拼音条（含拼音行间隔，与栏高同源）；双行档的拼音条叠在中缝上，不让位
         val top = if (pinyinBar.visibility == View.VISIBLE && currentRows != CandidateRows.DOUBLE) {
-            CandidateRows.pinyinBarHeightPx(
-                resources.displayMetrics.density,
-                resources.configuration.fontScale,
-                currentCandidateSp,
-            )
+            currentPinyinBarPx
         } else {
             0
         }
@@ -2652,6 +2772,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val rowsSetting = prefs.candidateRows
         val candidateSp = prefs.candidateTextSp
+        // 拼音字号 / 行间隔本帧各只读一次；0 = 自动，沿用候选字号的派生口径（老用户观感不变）
+        val rawPinyinSp = prefs.pinyinTextSp
+        val pinyinGap = prefs.pinyinLineGapDp
+        val pinyinSp = if (rawPinyinSp > 0f) {
+            CandidateText.clampPinyinSp(rawPinyinSp)
+        } else {
+            CandidateText.pinyinSpOf(candidateSp)
+        }
         // 候选集变了就收起展开态（新一次查询 ⇒ 回到一行，作者 2026-10-17 指定）
         val token = lastCandidates.hashCode()
         if (lastCandidatesToken != null && lastCandidatesToken != token) collapseCandidates()
@@ -2665,7 +2793,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档
         // 且候选多到需要展开时才出现 —— 候选不满一行时给个死按钮是噪音。
         val rows = if (candidatesExpanded) {
-            expandedRowsFor(lastCandidates.size, candidateSp)
+            expandedRowsFor(lastCandidates.size, candidateSp, pinyinSp, pinyinGap)
         } else {
             rowsSetting
         }
@@ -2678,7 +2806,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (candidateRenderLimit < target) candidateRenderLimit = target
         }
         updateExpandButton(rowsSetting)
-        val perRow = applyCandidateRows(rows, candidateSp)
+        val perRow = applyCandidateRows(rows, candidateSp, pinyinSp, pinyinGap)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
         // 开关刚被关掉时，把上一次留下的预测清掉，否则已显示的预测会一直挂在候选栏
@@ -2824,6 +2952,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         passwordPad = true
         englishMode = true
         capsMode = false
+        capsOneShotActive = false
         layer = LAYER_LETTER
         // 与切中英 / 切符号层同一条清理口径：残留预测会在退出后第一次选词时学错词频
         lastPredictions = emptyList()
@@ -2844,6 +2973,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val saved = passwordPadRestore
         passwordPad = false
         passwordPadRestore = null
+        // 一次性大写的计时态不进密码模式的「复原」三元组：复原只还原锁定本身，
+        // 「只生效一次」永远从复位状态重新起步，免得退出后打出第一个字母就无声回小写
+        capsOneShotActive = false
         if (saved != null) {
             if (restoreLanguage) englishMode = saved.first
             layer = saved.second
@@ -4498,6 +4630,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             dm.density,
             resources.configuration.fontScale,
             currentCandidateSp,
+            currentPinyinSp,
+            currentPinyinGapDp,
         )
     }
 
