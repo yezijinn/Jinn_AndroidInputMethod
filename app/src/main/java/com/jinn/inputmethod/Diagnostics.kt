@@ -120,7 +120,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 需要抓现场时改成 `true` 重新编译即可。**注意**：不要用 `VERBOSE_TO_FILE` 的逻辑去掐掉
      * 整个 V 级 —— 那会把非热路径的 V 级现场（排障凭据）一起关掉，这里只关「按键级」噪音。
      */
-    const val KEY_TRACE = false
+    val KEY_TRACE = BuildConfig.DEBUG
 
     /**
      * 单条落盘正文的长度上限（字符）。
