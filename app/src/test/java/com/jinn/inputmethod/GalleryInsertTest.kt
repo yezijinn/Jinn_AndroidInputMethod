@@ -38,17 +38,23 @@ class GalleryInsertTest {
         assertEquals(listOf("a.jpg", "b.jpg", "c.jpg"), drainNames())
 
         // 上限：连排四张，最旧那张被丢掉，其余按序取用
-        GalleryInsert.putPending(a, "image/jpeg", null)
-        GalleryInsert.putPending(b, "image/jpeg", null)
-        GalleryInsert.putPending(c, "image/jpeg", null)
-        GalleryInsert.putPending(d, "image/jpeg", null)
-        assertEquals(listOf("b.jpg", "c.jpg", "d.jpg"), drainNames())
+        val a2 = img("a2.jpg"); val b2 = img("b2.jpg"); val c2 = img("c2.jpg"); val d2 = img("d2.jpg")
+        GalleryInsert.putPending(a2, "image/jpeg", null)
+        GalleryInsert.putPending(b2, "image/jpeg", null)
+        GalleryInsert.putPending(c2, "image/jpeg", null)
+        GalleryInsert.putPending(d2, "image/jpeg", null)
+        assertEquals(listOf("b2.jpg", "c2.jpg", "d2.jpg"), drainNames())
+        // 被挤掉的那张的明文件必须当场删掉（AI2 A-193）：只等下次 trimCache 的话，
+        // 用户此后不再选图就一直占着明文
+        assertFalse("挤掉的暂存件要当场删", a2.exists())
 
-        // 清队：返回丢掉的张数，随后取到空
-        GalleryInsert.putPending(a, "image/jpeg", null)
-        GalleryInsert.putPending(b, "image/jpeg", null)
+        // 清队：返回丢掉的张数，随后取到空；明文件一并删
+        val a3 = img("a3.jpg"); val b3 = img("b3.jpg")
+        GalleryInsert.putPending(a3, "image/jpeg", null)
+        GalleryInsert.putPending(b3, "image/jpeg", null)
         assertEquals("清队要回报张数", 2, GalleryInsert.clearPending())
         assertTrue(GalleryInsert.takePending() === GalleryInsert.TakeResult.None)
+        assertFalse("清队丢弃的暂存件要删", a3.exists() || b3.exists())
         dir.deleteRecursively()
     }
 

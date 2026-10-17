@@ -169,12 +169,18 @@ internal object GalleryInsert {
         return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}"
     }
 
-    /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（对应文件也已按保留张数淘汰） */
+    /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（连带删掉它的明文暂存件） */
     fun putPending(file: File, mime: String, hostKey: String?) {
+        val dropped = ArrayList<File>(1)
         synchronized(pendingLock) {
             pending.addLast(Pending(Picked(file, mime, hostKey), System.currentTimeMillis()))
-            while (pending.size > MAX_PENDING) pending.removeFirst()
+            while (pending.size > MAX_PENDING) {
+                pending.removeFirst().picked.file.let { dropped.add(it) }
+            }
         }
+        // 丢弃即删（AI2 A-193）：队列里的图还没提交给宿主，留着没人会用；
+        // 只等下次选图的 trimCache 回收的话，用户此后不再选图就一直占着明文。
+        dropped.forEach { runCatching { it.delete() } }
         trimCache(file.parentFile)
     }
 
@@ -203,7 +209,13 @@ internal object GalleryInsert {
      */
     fun takePending(): TakeResult {
         val p = synchronized(pendingLock) { pending.removeFirstOrNull() } ?: return TakeResult.None
-        return if (System.currentTimeMillis() - p.atMs <= TTL_MS) TakeResult.Ready(p.picked) else TakeResult.Expired
+        return if (System.currentTimeMillis() - p.atMs <= TTL_MS) {
+            TakeResult.Ready(p.picked)
+        } else {
+            // 过期丢弃同样是「这张再也不用了」，明文件一并删（AI2 A-193，与 putPending / clearPending 同口径）
+            runCatching { p.picked.file.delete() }
+            TakeResult.Expired
+        }
     }
 
     /**
@@ -212,10 +224,16 @@ internal object GalleryInsert {
      * 用在「这批图已经不该插了」的两个场合：输入框已变更、输入会话已结束 ——
      * 剩下那几张同属那个旧框 / 旧会话，留着只会在下一次 flush 落到别处。
      */
-    internal fun clearPending(): Int = synchronized(pendingLock) {
-        val n = pending.size
-        pending.clear()
-        n
+    internal fun clearPending(): Int {
+        val dropped = ArrayList<File>()
+        val n = synchronized(pendingLock) {
+            val size = pending.size
+            while (pending.isNotEmpty()) dropped.add(pending.removeFirst().picked.file)
+            size
+        }
+        // 同 [putPending]：整队作废时明文件一并删掉，不留给下一次 trimCache（AI2 A-193）
+        dropped.forEach { runCatching { it.delete() } }
+        return n
     }
 
     /**
