@@ -222,6 +222,9 @@ class SettingsActivity : ComponentActivity() {
             }
             src == null || !src.isFile -> {
                 Diagnostics.w(TAG, "exportDiagnostics: 临时包不存在（导出被中断）")
+                // 目标文件此时已被 CreateDocument 创建为空壳：不删就留下一个「外观与有效包无异」
+                // 的 0 字节文件，用户拿去发给维护者才发现里面什么都没有（BUG.md L-1098）
+                deleteEmptyTarget(uri)
                 textDiagDir.text = getString(R.string.settings_diag_export_fail, "导出被中断，请重试")
             }
             else -> copyDiagZipTo(uri, src)
@@ -247,6 +250,8 @@ class SettingsActivity : ComponentActivity() {
             }
             src == null || !src.isFile -> {
                 Diagnostics.w(TAG, "exportConfig: 临时包不存在（导出被中断）")
+                // 同诊断包：删掉 CreateDocument 建出的空壳（BUG.md L-1098）
+                deleteEmptyTarget(uri)
                 textConfigHint.text = TEXT_EXPORT_FAIL
             }
             else -> copyConfigZipTo(uri, src)
@@ -1289,6 +1294,18 @@ class SettingsActivity : ComponentActivity() {
      * 旧文件时会在尾部留下残骸 —— 用户看到的是「密码错误或文件已损坏」这种完全误导的提示。
      * 少数 provider 不认 `"wt"`，退回默认 mode（行为与从前一致，不会更差）。
      */
+    /**
+     * 删除一个「已创建但没写进任何内容」的 SAF 目标（[ActivityResultContracts.CreateDocument] 会先建空文件）。
+     *
+     * 导出在中途失败时，目标位置那份 0 字节文件外观与有效包一模一样，用户拿去用只会得到
+     * 「密码错误或文件已损坏」，把排查带偏（BUG.md L-1098）。删失败不抛：目标可能被 provider
+     * 收回授权，此时留个空壳也比崩掉强。
+     */
+    private fun deleteEmptyTarget(uri: Uri) {
+        runCatching { contentResolver.delete(uri, null, null) }
+            .onFailure { Diagnostics.w(TAG, "删除空壳目标失败: ${it.javaClass.simpleName}") }
+    }
+
     private fun openTruncatingOutput(uri: Uri): java.io.OutputStream? =
         runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
             ?: runCatching { contentResolver.openOutputStream(uri) }.getOrNull()

@@ -5665,6 +5665,30 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * L-1098：SAF 导出回调在「临时包不存在」时必须删掉 CreateDocument 建出的空壳。
+     *
+     * `CreateDocument` 是**先建文件再回传 uri**，所以任何一条早退分支都会在用户选定的目录里
+     * 留下 0 字节空壳。空壳外观与有效包一模一样，用户拿去导入只会得到「密码错误或文件已损坏」，
+     * 把排查带偏。判据：两个导出回调的早退分支都调同一个删除助手，且助手本身不外抛。
+     */
+    @Test
+    fun `导出早退必须删掉空壳目标`() {
+        val src = codeOf("SettingsActivity.kt")
+        assertTrue("必须有删空壳的助手", "private fun deleteEmptyTarget(uri: Uri)" in src)
+        // 两个导出回调（诊断包 / 配置包）的「临时包不存在」分支都要删
+        assertEquals(
+            "两个导出回调的早退分支都必须删空壳（诊断包 + 配置包）",
+            2,
+            Regex("""deleteEmptyTarget\(uri\)""").findAll(src).count(),
+        )
+        // 删除失败只记日志，不得外抛（provider 可能已收回授权）
+        assertTrue(
+            "删空壳失败必须兜住",
+            "runCatching { contentResolver.delete(uri, null, null) }" in src,
+        )
+    }
+
+    /**
      * 首次使用者重放（2026-10-18）：设置页必须如实显示「输入法已启用 / 已是默认」。
      *
      * 首次使用的头两步都在系统设置里完成（勾选输入法 → 选默认），返回本页若毫无变化，
