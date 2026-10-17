@@ -41,6 +41,9 @@ object PinyinEngine {
     /** 前缀补全最多扫多少个索引键（短前缀下键区可达数千个，防全量解码） */
     private const val MAX_COMPLETION_KEYS = 200
 
+    /** 前缀补全最多收集多少条再排序（2 倍上限：留出「短扩展优先」的排序空间，又不无限解码） */
+    private const val MAX_COMPLETION_COLLECT = 120
+
     /**
      * 模糊音变体的单字上限：比精确单字的 [MAX_CHARS] 小得多。
      *
@@ -2130,6 +2133,10 @@ object PinyinEngine {
      * 模糊音容错（默认关，见 [FuzzyPinyin]）：打开后额外派生变体键，顺序契约是
      * **精确词 → 变体词 → 精确单字 → 变体单字** —— 变体只作补充，永不挤占精确结果，
      * 所以关掉开关时结果与历史逐候选一致。
+     *
+     * 词条入池前先做用户词频重排、再截 [MAX_PHRASES]（见下两处 `phrasesFor`）：
+     * 截断若在重排之前，学过的长尾词（原序 13 名之后）永远进不了候选，末尾的
+     * [UserFrequency.rank] 也就无从置顶。
      */
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
@@ -2168,7 +2175,10 @@ object PinyinEngine {
             keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
             for (k2 in phraseKeysOf(key)) {
                 phrasesFor(k2)?.let { found ->
-                    val shown = displayTake(found.asList(), MAX_PHRASES)
+                    // 先按用户权重整表稳定重排，再截 12：学过但原本排在 13 名之后的词才能进池
+                    // （未学习时 rank 原样返回，零行为变化）。
+                    val ranked = UserFrequency.rank(found) { toSimplified(it) }
+                    val shown = displayTake(ranked.asList(), MAX_PHRASES)
                     words.addAll(shown)
                     noteCandidateKeys(shown, k2)
                 }
@@ -2193,7 +2203,9 @@ object PinyinEngine {
                 for (variantKey in FuzzyPinyin.keyVariants(syllables.take(k), fuzzyMask, isLegal)) {
                     for (k2 in phraseKeysOf(variantKey)) {
                         phrasesFor(k2)?.let { found ->
-                            val shown = displayTake(found.asList(), MAX_PHRASES)
+                            // 模糊分支同口径：先整表按用户权重重排，再截 12
+                            val ranked = UserFrequency.rank(found) { toSimplified(it) }
+                            val shown = displayTake(ranked.asList(), MAX_PHRASES)
                             fuzzyWords.addAll(shown)
                             // 候选→拼音键登记的是「用户实际输入的键」而不是变体键：消费区间按输入算
                             noteCandidateKeys(shown, typedKey)
@@ -2494,51 +2506,68 @@ object PinyinEngine {
      *
      * 只保留以 [anchor]（精确首词，简体）开头的词，避免「shanghai → 伤害案」这类
      * 另一条切分的词混进来：同样的拼音前缀会命中不同分词的键区。
-     * 按索引键的字典序遍历，最多扫 [MAX_COMPLETION_KEYS] 个键、收 [limit] 条；返回简体词。
+     * 按索引键的字典序遍历，最多扫 [MAX_COMPLETION_KEYS] 个键；返回简体词，最多 [limit] 条。
+     *
+     * 排序按**扩展长度**升序（扩展汉字数 = 词长 − 锚点长，同分保持插入序）：
+     * 短扩展先给 —— `中国版`（+1）排在 `中国澳门`（+2）之前。按索引键字典序收集时
+     * `aomen` 在 `ban` 前，恰好会把长扩展顶到前面。
+     * 语义排序（我们把 / 我们爱 一类）需要上下文与词频模型，本轮只做「短扩展优先」。
      */
     private fun completionWords(prefix: String, anchor: String, limit: Int): List<String> {
-        val out = LinkedHashSet<String>(limit * 2)
+        // 收集「词 → 扩展汉字数」，收集完再按扩展长度排序（去重保持首次插入）
+        val out = ArrayList<Pair<String, Int>>(MAX_COMPLETION_COLLECT)
+        val seen = HashSet<String>(MAX_COMPLETION_COLLECT)
         val prefixBytes = prefix.toByteArray(Charsets.UTF_8).size
         var scanned = 0
+        val addWord = { w: String ->
+            // 补全词 = 锚点 + 扩展，汉字数差即扩展长度
+            if (w.length > anchor.length && w.startsWith(anchor) && seen.add(w)) {
+                out.add(w to (w.length - anchor.length))
+            }
+        }
         // 索引侧：只解码命中键的词表，不实例化键字符串（与 predict 的前缀扫描同路数）
         for (idx in baseAndOptionalIndexes()) {
-            if (out.size >= limit) break
+            if (out.size >= MAX_COMPLETION_COLLECT) break
             idx.forEachRangeWithPrefix(prefix) { keyByteLen, wordsFrom, wordsTo ->
                 if (keyByteLen <= prefixBytes) {
                     // 精确键本身及其更短的键：词条已作为精确候选给出
                     true
                 } else {
                     scanned++
-                    if (scanned > MAX_COMPLETION_KEYS || out.size >= limit) {
+                    if (scanned > MAX_COMPLETION_KEYS) {
                         false
                     } else {
                         val words = ArrayList<String>(4)
                         idx.collectWords(wordsFrom, wordsTo, words)
                         for (w in words) {
-                            if (w.length > anchor.length && w.startsWith(anchor)) out.add(w)
-                            if (out.size >= limit) break
+                            addWord(w)
+                            if (out.size >= MAX_COMPLETION_COLLECT) {
+                                return@forEachRangeWithPrefix false
+                            }
                         }
-                        out.size < limit
+                        true
                     }
                 }
             }
         }
         // 运行时表（可选包并入项）：键数量小，沿用有序 List 二分定位前缀区
         var lo = lowerBound(sortedPhraseKeys, prefix)
-        while (lo < sortedPhraseKeys.size && out.size < limit) {
+        while (lo < sortedPhraseKeys.size && out.size < MAX_COMPLETION_COLLECT) {
             val key = sortedPhraseKeys[lo]
             if (!key.startsWith(prefix)) break
             if (key.length > prefix.length) {
                 for (w in phrasesFor(key).orEmpty()) {
-                    if (w.length > anchor.length && w.startsWith(anchor)) out.add(w)
-                    if (out.size >= limit) break
+                    addWord(w)
+                    if (out.size >= MAX_COMPLETION_COLLECT) break
                 }
             }
             lo++
         }
+        // 短扩展先给；同分保持插入序（sortedBy 稳定）
+        val ordered = out.sortedBy { it.second }.take(limit).map { it.first }
         // 出口过一遍档位过滤：索引路径绕过了 phrasesFor 内的 filterRareChars，
         // 与 predict 的出口同一处理（档位关着时补全也不许带出档外词）
-        return filterRareChars(out.toTypedArray()).toList()
+        return filterRareChars(ordered.toTypedArray()).toList()
     }
 
     /**

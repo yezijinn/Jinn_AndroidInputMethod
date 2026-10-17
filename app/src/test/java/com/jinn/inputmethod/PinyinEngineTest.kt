@@ -18,6 +18,9 @@ class PinyinEngineTest {
 
     @Before
     fun setUp() {
+        // 每个用例都从干净的用户词频开始（不读盘、开关打开）
+        UserFrequency.resetForTest()
+        UserFrequency.loadForTest(true)
         val chars = """
             ni	你,尼,泥,呢,逆
             hao	好,号,浩,耗,毫
@@ -50,7 +53,7 @@ class PinyinEngineTest {
             shang	上,商,伤
         """.trimIndent()
         val phrases = """
-            nihao	你好
+            nihao	你好|拟好|泥蒿|你号|你浩|你耗|你豪|你壕|你嚎|你皓|你昊|你灏|你毫
             nihaoma	你好吗
             nihaoa	你好啊
             nihaobu	你好不
@@ -59,6 +62,8 @@ class PinyinEngineTest {
             nianji	年纪
             nianqing	年轻
             zhongguo	中国
+            zhongguoban	中国版
+            zhongguoaomen	中国澳门
             shenglue	省略
             shenglve	省略
             lvse	绿色
@@ -168,6 +173,24 @@ class PinyinEngineTest {
         assertTrue("应含补全长词 你好啊: $c", c.contains("你好啊"))
         assertTrue("应含补全长词 你好吗: $c", c.contains("你好吗"))
         assertTrue("补全长词应排在单字之前: $c", c.indexOf("你好吗") < c.indexOf("你"))
+    }
+
+    @Test
+    fun 学过的词在十二名之后也能进候选() {
+        // 你毫 在 nihao 词表第 13 位：用户权重重排必须发生在「截 12」之前
+        UserFrequency.putForTest("你毫", 5.0, 20000)
+        val c = PinyinEngine.query("nihao").candidates
+        assertTrue("学过的长尾词必须进池: $c", "你毫" in c)
+        assertTrue("学过的词应排在未学词之前: $c", c.indexOf("你毫") < c.indexOf("你好"))
+    }
+
+    @Test
+    fun 补全按扩展长度排序() {
+        // zhongguoaomen 字典序在 zhongguoban 之前，按扩展汉字数排序后短扩展先给
+        val c = PinyinEngine.query("zhongguo").candidates
+        assertTrue("应含 中国版: $c", "中国版" in c)
+        assertTrue("应含 中国澳门: $c", "中国澳门" in c)
+        assertTrue("短扩展应排在长扩展之前: $c", c.indexOf("中国版") < c.indexOf("中国澳门"))
     }
 
     @Test
