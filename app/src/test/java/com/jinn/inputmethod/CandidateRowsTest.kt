@@ -324,7 +324,9 @@ class CandidateRowsTest {
             "按 ✕ 要收起",
             Regex("""btnClearCandidates\.setOnClickListener[\s\S]{0,900}collapseCandidates\(\)""").containsMatchIn(src),
         )
-        assertTrue("候选集变化要收起", "lastCandidatesToken != token" in src)
+        assertTrue("候选集变化且输入变了才收起（同输入下的词库合并不得收起）", "lastCandidatesToken != token" in src)
+        assertTrue("判据要收紧到输入串", "lastCandidatesInput != inputNow" in src)
+        assertTrue("输入串每帧更新", "lastCandidatesInput = inputNow" in src)
         assertTrue(
             "无内容（会话结束）要收起",
             Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,300}collapseCandidates\(\)""")

@@ -232,12 +232,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 候选栏是否处于展开态（会话内有效，**不落盘**）。
      *
-     * 收起时机：再点三角 / 选中候选 / 按 ✕ / 候选集变化（新一次查询）/ 输入会话结束。
+     * 收起时机：再点三角 / 选中候选 / 按 ✕ / 候选集变化**且换了一次输入**（新一次查询）/ 输入会话结束。
+     * 同一次输入下的词库加载与学习重排只改候选内容，不收展开态。
      */
     private var candidatesExpanded = false
 
-    /** 上一帧候选集指纹：用于「候选集变了就收起展开态」（BUG.md L-1393） */
+    /** 上一帧候选集指纹：与 [lastCandidatesInput] 合用，判「候选集变化且输入变了才收起」（BUG.md L-1393） */
     private var lastCandidatesToken: Int? = null
+
+    /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
+    private var lastCandidatesInput: String? = null
 
     /** 展开 / 收起的高度补间（同时在跑只会有最后一个，见 [cancelCandidateAnimation]） */
     private var candidateHeightAnimator: ValueAnimator? = null
@@ -2905,10 +2909,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             CandidateText.pinyinSpOf(candidateSp)
         }
-        // 候选集变了就收起展开态（新一次查询 ⇒ 回到一行，作者 2026-10-17 指定）
+        // 候选集变化且输入变了才收起（同输入下的词库合并、学习重排不得收起展开态）；
+        // 「新一次查询 / 选词上屏 / 清空 / 会话结束」输入串都会变或清空，收起语义不变（作者 2026-10-17 指定）
         val token = lastCandidates.hashCode()
-        if (lastCandidatesToken != null && lastCandidatesToken != token) collapseCandidates()
+        val inputNow = composing.toString()
+        if (lastCandidatesToken != null &&
+            lastCandidatesToken != token &&
+            lastCandidatesInput != null &&
+            lastCandidatesInput != inputNow
+        ) {
+            Diagnostics.i(TAG, "候选集变化且输入已变，收起展开态: '$lastCandidatesInput' → '$inputNow'")
+            collapseCandidates()
+        }
         lastCandidatesToken = token
+        lastCandidatesInput = inputNow
         // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器。
         // ⚠ 展开态**强制跟手滑动**：纵向要让给「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
         candidatePaging = prefs.candidatePaging && !candidatesExpanded
