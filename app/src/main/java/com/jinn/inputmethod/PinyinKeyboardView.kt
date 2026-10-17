@@ -1,5 +1,8 @@
 package com.jinn.inputmethod
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -16,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -218,9 +222,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnClearCandidates: TextView
 
     /**
-     * 「✕」左侧的展开 / 收起三角（▲ / ▾），绑定见 init。
+     * 「✕」左侧的展开 / 收起三角，绑定见 init。
      *
-     * 只在**单行档**且候选多到需要展开时出现；展开态下再点即收起（BUG.md L-1393）。
+     * 文字固定 `▲`，方向由 `rotation` 表达（展开 180°）；只在**单行档**且候选多到需要展开时出现，
+     * 展开态下再点即收起（BUG.md L-1393）。
      */
     private val btnExpandCandidates: TextView
 
@@ -234,16 +239,134 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上一帧候选集指纹：用于「候选集变了就收起展开态」（BUG.md L-1393） */
     private var lastCandidatesToken: Int? = null
 
+    /** 展开 / 收起的高度补间（同时在跑只会有最后一个，见 [cancelCandidateAnimation]） */
+    private var candidateHeightAnimator: ValueAnimator? = null
+
+    /** 过渡进行中：此间 [updateExpandButton] 不重置三角方向（动画自己按帧转） */
+    private var candidateAnimating = false
+
     /**
-     * 切换候选栏展开态（▲ / ▾）（BUG.md L-1393）。
+     * 切换候选栏展开态（BUG.md L-1393），走 180ms 过渡（高度补间 + 候选区淡入淡出 + 三角旋转）。
      *
      * 展开后一屏最多 [CandidateRows.MAX_EXPANDED_ROWS] 排；排数按实际候选量算，并被可用高度夹取
      * （屏幕不够时静默按实际排数显示）。展开态横向固定为**跟手按列滑动**，纵向让给换行。
      */
     private fun toggleCandidateExpanded() {
-        candidatesExpanded = !candidatesExpanded
-        Diagnostics.i(TAG, "候选栏展开态：$candidatesExpanded")
-        refreshCandidateBar()
+        val expand = !candidatesExpanded
+        Diagnostics.i(TAG, "候选栏展开态：$expand")
+        animateCandidateToggle(expand)
+    }
+
+    /**
+     * 断开进行中的过渡。
+     *
+     * ⚠ 必须先摘引用再 `cancel()`：`cancel()` 会**同步**回调 `onAnimationEnd`，收尾判据
+     * （[animateCandidateToggle] 里的 `candidateHeightAnimator !== animator`）靠「引用已不在」才挡得住，
+     * 否则半截动画会被当成正常结束、直接跳到终态。
+     */
+    private fun cancelCandidateAnimation() {
+        val animator = candidateHeightAnimator
+        candidateHeightAnimator = null
+        candidateAnimating = false
+        animator?.cancel()
+    }
+
+    /**
+     * 展开 / 收起过渡：高度补间 + 候选区淡入淡出 + 三角旋转，180ms（Material 标准缓动）。
+     *
+     * 内容由 [refreshCandidateBar] 一次性渲染到目标态，再从**当前高度**补间到目标高度 ——
+     * 反向点击（过渡途中再点）因此天然从「此刻的高度」往回走，不需要记方向。
+     * 系统「移除动画」时直接跳变。
+     */
+    private fun animateCandidateToggle(expand: Boolean) {
+        val startH = candidateBar.height
+        cancelCandidateAnimation()
+        if (startH <= 0) { // 未布局：直接切
+            candidatesExpanded = expand
+            refreshCandidateBar()
+            return
+        }
+        candidatesExpanded = expand
+        candidateAnimating = true
+        val targetH: Int
+        if (expand) {
+            refreshCandidateBar() // 先把目标内容渲染好、拿到目标高度
+            if (candidatesExpanded != expand) { // 刷新途中被收起（候选集变化 / 会话结束）
+                candidateAnimating = false
+                return
+            }
+            // 刷新只改了 LayoutParams、尚未走 layout 遍，`height` 还是起点值 ⇒ 目标高度读 LayoutParams
+            targetH = (candidateBar.layoutParams as? LinearLayout.LayoutParams)
+                ?.height?.takeIf { it > 0 } ?: startH
+        } else {
+            // 收起：内容保持展开态，动画结束再回单行（否则中途露底）；目标高度按当前单行/双行档算
+            val dm = resources.displayMetrics
+            targetH = CandidateRows.barHeightPx(
+                prefs.candidateRows,
+                dm.density,
+                resources.configuration.fontScale,
+                currentCandidateSp,
+                currentPinyinSp,
+                currentPinyinGapDp,
+            )
+        }
+        // 回到起点高度，动画从当前值开始
+        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.height = startH
+            candidateBar.layoutParams = it
+        }
+        val startAlpha = if (expand) 0.55f else 1f
+        val endAlpha = if (expand) 1f else 0.35f
+        candidateScroll.alpha = startAlpha
+        // 三角：文字固定 ▲，用 rotation 表示方向
+        val startRot = if (expand) 0f else 180f
+        val endRot = if (expand) 180f else 0f
+        btnExpandCandidates.rotation = startRot
+        if (!ValueAnimator.areAnimatorsEnabled() || startH == targetH) {
+            finishCandidateToggle(expand, targetH)
+            return
+        }
+        // 180ms / cubic-bezier(0.4, 0, 0.2, 1) 是 Material 标准缓动，时长不开放给用户调 ⇒ 不进资源
+        val animator = ValueAnimator.ofInt(startH, targetH).setDuration(180L)
+        animator.interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f)
+        animator.addUpdateListener { a ->
+            val f = a.animatedFraction
+            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+                it.height = a.animatedValue as Int
+                candidateBar.layoutParams = it
+            }
+            candidateScroll.alpha = startAlpha + (endAlpha - startAlpha) * f
+            btnExpandCandidates.rotation = startRot + (endRot - startRot) * f
+        }
+        animator.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                if (candidateHeightAnimator !== animator) return // 已被取消 / 替换
+                finishCandidateToggle(expand, targetH)
+            }
+        })
+        candidateHeightAnimator = animator
+        animator.start()
+    }
+
+    /**
+     * 过渡收尾：落回目标高度、恢复不透明与三角终态。
+     *
+     * 收起时内容**等动画结束再回单行**（否则中途被换成一行会提前露底）；展开时内容已是展开态。
+     */
+    private fun finishCandidateToggle(expand: Boolean, targetH: Int) {
+        // 先摘引用再刷：refreshCandidateBar 见到非空会再取消一次（会重进本函数）
+        candidateHeightAnimator = null
+        candidateAnimating = false
+        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.height = targetH
+            candidateBar.layoutParams = it
+        }
+        if (!expand) {
+            candidatesExpanded = false
+            refreshCandidateBar()
+        }
+        candidateScroll.alpha = 1f
+        btnExpandCandidates.rotation = if (expand) 180f else 0f
     }
 
     /**
@@ -281,7 +404,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun updateExpandButton(rowsSetting: Int) {
         val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
-        btnExpandCandidates.text = if (candidatesExpanded) "▾" else "▲"
+        // 文字固定 ▲、方向靠 rotation（展开 180°）；过渡进行中不重置 —— 那一帧的方向归动画自己管
+        btnExpandCandidates.text = "▲"
+        if (!candidateAnimating) btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
     }
 
     /** 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里 */
@@ -325,7 +450,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里。
+     *
+     * 过渡途中收起也要先断动画（否则旧动画的收尾会把高度改回目标值），并把淡出残留复位。
+     */
     private fun collapseCandidates() {
+        cancelCandidateAnimation()
+        candidateScroll.alpha = 1f
+        btnExpandCandidates.rotation = 0f
         if (!candidatesExpanded) return
         candidatesExpanded = false
     }
@@ -712,7 +845,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             collapseCandidates()
             clearComposingState()
         }
-        // 展开 / 收起候选栏（▲/▾）：仅在单行档、且候选多到需要展开时出现（BUG.md L-1393）
+        // 展开 / 收起候选栏（文字固定 ▲、rotation 表方向）：仅在单行档、且候选多到需要展开时出现（BUG.md L-1393）
         btnExpandCandidates = root.findViewById(R.id.btn_expand_candidates)
         btnExpandCandidates.contentDescription = TEXT_EXPAND_DESC
         btnExpandCandidates.setOnClickListener {
@@ -2755,6 +2888,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshCandidateBar() {
+        // 过渡期间被别的路径重刷（候选集变化 / 切层 / 面板开合）：先断动画，否则 applyCandidateRows
+        // 落下的目标高度会被动画器的下一帧改回去（半截高度 + 已切内容）
+        if (candidateHeightAnimator != null) cancelCandidateAnimation()
+        // 无动画的常规刷新一律回到不透明：收起过渡会把 alpha 留在 0.35
+        if (!candidateAnimating) candidateScroll.alpha = 1f
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
         // `layer != LAYER_LETTER`，与 composing 长度无关。

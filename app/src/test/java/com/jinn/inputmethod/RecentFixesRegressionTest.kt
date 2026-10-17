@@ -5621,4 +5621,27 @@ class RecentFixesRegressionTest {
         assertTrue("保底分支保留", "SpannableStringBuilder(getText()).append(OBJECT_REPLACEMENT)" in ret)
     }
 
+    /**
+     * 候选栏展开 / 收起的过渡（高度补间 + 淡入淡出 + 三角旋转）。
+     *
+     * 原先是改完布尔直接重刷：栏高与三角一帧跳变，展开的候选像「凭空出现」。几件事必须同时在：
+     * 补间从**当前高度**起算（反向点击 / 中途打断才不会跳）、有淡入淡出遮住内容切换、三角由 rotation
+     * 转、系统「移除动画」时要能直接跳变。收尾收敛到一个入口，取消动画时不得再走它。
+     */
+    @Test
+    fun `候选展开收起必须有过渡动画`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        assertTrue("高度补间从当前高度到目标高度", "ValueAnimator.ofInt(startH, targetH)" in src)
+        assertTrue("时长 180ms", ".setDuration(180L)" in src)
+        assertTrue("Material 标准缓动", "PathInterpolator(0.4f" in src)
+        assertTrue("系统关闭动画时直接跳变", "areAnimatorsEnabled" in src)
+        assertTrue("候选区要淡入淡出", "candidateScroll.alpha" in src)
+        assertTrue("收尾收敛到一个入口", "finishCandidateToggle" in src)
+        // cancel() 会同步回调 onAnimationEnd ⇒ 旧动画的收尾必须自我否掉，否则半截动画被当成正常结束
+        assertTrue(
+            "旧动画的收尾必须自我否掉",
+            "if (candidateHeightAnimator !== animator) return" in src,
+        )
+    }
+
 }
