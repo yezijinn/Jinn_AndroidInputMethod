@@ -326,6 +326,22 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
+     * 单调递增的「现在」：`max(墙钟, 库中最大 created_at + 1)`。
+     *
+     * 只用于入库置顶（[upsert] / [upsertImage]）。墙钟会被用户改时间或网络对时往后拨，
+     * 那时新行的 created_at 反而小于库里已有行 ⇒ 它排不到最前，还会被裁剪当成「最旧一条」
+     * 优先删掉 —— 表现是「刚复制的内容立刻消失」，且极难归因（BUG.md L-1092）。
+     */
+    private fun monotonicNow(): Long {
+        val wall = System.currentTimeMillis()
+        val max = readableDatabase.rawQuery(
+            "SELECT MAX(created_at) FROM $TABLE_ITEMS",
+            null,
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+        return maxOf(wall, max + 1)
+    }
+
+    /**
      * 入库去重写入（原子，@Synchronized 串行）：同一内容（content_hash 相同）已存在时
      * 只更新必要元数据并重新置顶（created_at=now），绝不产生重复记录；
      * 收藏标记是用户主动状态，重复复制时不覆盖。
@@ -360,6 +376,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (content.isBlank()) return -1
         val hash = stableHash(content)
         val existingId = findIdByHash(hash)
+        // 单调钳位（BUG.md L-1092）：置顶用的 created_at 取墙钟，系统时钟回拨（用户改时间 / 网络对时）
+        // 会让刚复制的这条比库里旧的还小 —— 它既不再置顶，还会被裁剪当成「最旧一条」先删掉，
+        // 用户看到的是「刚复制的内容没了」。取「现在」与「库里最大 +1」的较大者即可免疫。
+        val now = monotonicNow()
         if (existingId != null) {
             // 试解只在「本进程还没验证过这一行」时做（BUG.md L-199）：命中哈希是重复复制
             // 最常见的路径，为发现极少数坏行让每次都整行解密不划算。没验证过的行仍会真解一次，
@@ -373,7 +393,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             }
             // 可解与否都要更新元数据 + 置顶；收藏标记是用户主动状态，不覆盖
             values.put("content_type", contentType)
-            values.put("created_at", System.currentTimeMillis())
+            values.put("created_at", now)
             values.put("source_package", sourcePackage)
             values.put("source_app_name", sourceAppName)
             // 没显式给分类就不动这一列（判重命中 = 同内容已在库，值必然一致；重分类另走 reclassifyAll）
@@ -397,7 +417,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val values = ContentValues().apply {
             put("encrypted_content", encrypted)
             put("content_type", contentType)
-            put("created_at", System.currentTimeMillis())
+            put("created_at", now)
             put("source_package", sourcePackage)
             put("source_app_name", sourceAppName)
             put("content_hash", hash)

@@ -5657,4 +5657,30 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * L-1095：Keystore 密钥句柄必须**可失效**。
+     *
+     * `by lazy` 的语义是「算一次即固定」，而句柄是可失效资源（Keystore 服务异常 / 用户清除凭据）：
+     * 一旦失效，`Cipher.init` 恒抛，采集与解密在本进程内永久静默，只能靠重启恢复。
+     * 判据分三层：① 不得再用 `by lazy` 持有句柄；② 有重建入口；③ 只在密钥类异常时重试一次
+     * （密文损坏的 `AEADBadTagException` 不触发，否则 200 条批量解密每条都白跑一次 Keystore）。
+     */
+    @Test
+    fun `剪贴板密钥句柄必须可失效重建`() {
+        val src = codeOf("ClipboardCrypto.kt")
+        assertFalse(
+            "句柄不得再用 by lazy（算一次即固定，失效后无法重建）",
+            "cachedKey: SecretKey by lazy" in src,
+        )
+        assertTrue("必须有可重建的取句柄入口", "private fun key(): SecretKey" in src)
+        assertTrue("必须有清句柄的入口", "private fun invalidateKey()" in src)
+        assertTrue("必须识别密钥失效类异常", "private fun isKeyFailure" in src)
+        assertFalse(
+            "密文损坏（AEADBadTagException）不得触发重建重试",
+            "AEADBadTagException" in src,
+        )
+        assertFalse("不得再有裸 cachedKey 参与加密 init", "cipher.init(Cipher.ENCRYPT_MODE, cachedKey)" in src)
+        assertFalse("不得再有裸 cachedKey 参与解密 init", "cipher.init(Cipher.DECRYPT_MODE, cachedKey" in src)
+    }
+
 }

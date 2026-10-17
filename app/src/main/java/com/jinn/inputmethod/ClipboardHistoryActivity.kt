@@ -737,10 +737,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
                             ClipboardImageFiles.gc(
                                 this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
                             )
-                            checkedIds.clear()
-                            multiSelect = false
-                            // 同上：删完留在当前页（BUG.md L-1175）
-                            loadAsync(resetPage = false)
+                            // 勾选集与多选态是**界面状态**，只能在主线程动：后台线程改它们时
+                            // 用户可能正在勾别的行（HashSet 并发写可能丢更新 / 抛异常），
+                            // 而 [loadAsync] 内部又会读同一份集合（BUG.md L-1065）。
+                            post {
+                                checkedIds.clear()
+                                multiSelect = false
+                                // 同上：删完留在当前页（BUG.md L-1175）
+                                loadAsync(resetPage = false)
+                            }
                         }
                     }
                 } else {

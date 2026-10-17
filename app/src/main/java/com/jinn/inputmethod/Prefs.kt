@@ -1051,6 +1051,13 @@ class Prefs(private val appContext: Context) {
             sp.edit { remove(key) }
             return
         }
+        // 已经是密文就别再加密一次：二次加密的密文解不开（AUTH 失败）却仍被判成「已配置」，
+        // 用户只会看到该家翻译莫名失败、日志里也认不出是数据被写坏了（L-1069）。
+        // 正常写入的是用户手填的明文凭据，密文形态只可能来自外部导入 / 异常回写 ⇒ 直接拒收。
+        if (CredentialCrypto.looksEncrypted(cleaned)) {
+            Diagnostics.w(TAG, "凭据写入被拒：入参已是密文形态（拒绝二次加密）")
+            return
+        }
         val encrypted = CredentialCrypto.encrypt(cleaned)
         if (encrypted == null) {
             Diagnostics.w(TAG, "凭据加密失败，未落盘（重启后需重新填写）")
