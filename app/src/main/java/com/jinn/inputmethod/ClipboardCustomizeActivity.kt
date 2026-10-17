@@ -119,6 +119,15 @@ class ClipboardCustomizeActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
+        // 回前台时重读盘上值，**只同步「本页没动过」的键**（BUG.md L-1392）：
+        // 本页是「草稿 + 保存」模型，但 `galleryColumns` / `galleryCellHeightDp` 这两个布局键还有
+        // 另外两个写方（历史页网格、键盘面板「布局」键）都是**即时落盘**。于是：用户先在别处改了
+        // 布局 → 回到本页（Activity 未重建，草稿仍是旧值）→ 改别的项并保存 ⇒ 布局被静默写回旧值。
+        // 只同步未编辑的键，既让外部改动回流，又不会冲掉用户在本页尚未保存的编辑。
+        val fresh = readPrefs()
+        val before = snapshot
+        snapshot = fresh
+        draft = syncUntouchedFrom(draft, before, fresh)
         renderAll()
     }
 
@@ -182,6 +191,43 @@ class ClipboardCustomizeActivity : Activity() {
             galleryCellHeightDp = layoutPrefs.galleryCellHeightDp,
             imageInAllGroup = s.imageInAllGroup,
             favoriteImageMoveOut = s.favoriteImageMoveOut,
+        )
+    }
+
+    /**
+     * 把盘上**新值**同步进草稿，但**只动「本页没编辑过」的键**（BUG.md L-1392）。
+     *
+     * 判据：草稿某键仍等于**旧快照**（进入页面时的盘上值）⇒ 用户没碰过它 ⇒ 跟随新盘上值；
+     * 不等 ⇒ 用户在本页改过 ⇒ **保留草稿**，绝不覆盖，否则会冲掉还没保存的编辑。
+     *
+     * 与 [confirmReset] 的区别：重置是「丢弃全部编辑、回到进入时的快照」，这里是「保留编辑」。
+     *
+     * 纯函数（JVM 可单测）；`before` 传 null 表示无旧快照（不应发生）⇒ 原样返回草稿。
+     */
+    private fun syncUntouchedFrom(draft: Draft, before: Draft?, fresh: Draft): Draft {
+        if (before == null) return draft
+        fun <T> pick(cur: T, old: T, now: T): T = if (cur == old) now else cur
+        return draft.copy(
+            enabled = pick(draft.enabled, before.enabled, fresh.enabled),
+            maxItems = pick(draft.maxItems, before.maxItems, fresh.maxItems),
+            maxTotalMb = pick(draft.maxTotalMb, before.maxTotalMb, fresh.maxTotalMb),
+            favMaxItems = pick(draft.favMaxItems, before.favMaxItems, fresh.favMaxItems),
+            favMaxMb = pick(draft.favMaxMb, before.favMaxMb, fresh.favMaxMb),
+            maxItemKb = pick(draft.maxItemKb, before.maxItemKb, fresh.maxItemKb),
+            panelPage = pick(draft.panelPage, before.panelPage, fresh.panelPage),
+            maxSearch = pick(draft.maxSearch, before.maxSearch, fresh.maxSearch),
+            imageEnabled = pick(draft.imageEnabled, before.imageEnabled, fresh.imageEnabled),
+            imageMaxItems = pick(draft.imageMaxItems, before.imageMaxItems, fresh.imageMaxItems),
+            imageMaxTotalMb = pick(draft.imageMaxTotalMb, before.imageMaxTotalMb, fresh.imageMaxTotalMb),
+            imageMaxItemMb = pick(draft.imageMaxItemMb, before.imageMaxItemMb, fresh.imageMaxItemMb),
+            galleryColumns = pick(draft.galleryColumns, before.galleryColumns, fresh.galleryColumns),
+            galleryCellHeightDp = pick(
+                draft.galleryCellHeightDp, before.galleryCellHeightDp, fresh.galleryCellHeightDp,
+            ),
+            imageInAllGroup = pick(draft.imageInAllGroup, before.imageInAllGroup, fresh.imageInAllGroup),
+            favoriteImageMoveOut = pick(
+                draft.favoriteImageMoveOut, before.favoriteImageMoveOut, fresh.favoriteImageMoveOut,
+            ),
         )
     }
 

@@ -79,4 +79,31 @@ class ClipboardDraftPolicyTest {
         assertEquals(25, ClipboardPrefs.favoriteBytesCapMb(100))
         assertEquals(125, ClipboardPrefs.favoriteBytesCapMb(500))
     }
+
+    /**
+     * 回前台要重读盘上值，且**只同步本页没编辑过的键**（BUG.md L-1392）。
+     *
+     * 本页是「草稿 + 保存」模型，但布局两键（列数 / 行高）还有两个**即时落盘**的写方
+     * （历史页网格、键盘面板「布局」键）。用户先在别处改布局 → 回本页 → 改别项并保存
+     * ⇒ 旧草稿会把新布局**静默写回**。故 `onStart` 必须重读；同时不能冲掉本页未保存的编辑。
+     */
+    @Test
+    fun 回前台要重读且只同步未编辑项() {
+        val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "回前台要重读盘上值（onStart 里取快照 + 同步 + 重渲染）",
+            Regex("""override fun onStart\(\)[\s\S]{0,400}readPrefs\(\)[\s\S]{0,200}renderAll\(\)""")
+                .containsMatchIn(src),
+        )
+        assertTrue(
+            "同步必须走 syncUntouchedFrom（只动未编辑的键）",
+            "syncUntouchedFrom(draft, before, fresh)" in src,
+        )
+        // 判据本身也要钉：草稿 == 旧快照 才跟随新值，否则保留草稿
+        assertTrue(
+            "判据是「等于旧快照才跟随」",
+            Regex("""fun <T> pick\(cur: T, old: T, now: T\): T = if \(cur == old\) now else cur""")
+                .containsMatchIn(src),
+        )
+    }
 }
