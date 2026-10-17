@@ -2566,6 +2566,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
         val from = candidateRenderLimit
         val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
+        // 展开态（3/4 排）不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认「逐条」与
+        // 「两排一列」，展开态按 3/4 排成列，`from` 又未必是排数的整数倍 —— 增量拼出来的列会
+        // **整体竖向错位**（实测：第 9 列四个字被当成一列裸 TextView，落成竖直居中的错块）。
+        // 故展开态整栏重建（只重排几十个 TextView，且不在逐键热路径上），并保住纵向滚动位。
+        if (candidatesExpanded) {
+            val keepY = candidateRowsScroll.scrollY
+            candidateRenderLimit = to
+            candidateRenderKey = null
+            refreshCandidateBar()
+            candidateRowsScroll.post { candidateRowsScroll.scrollTo(0, keepY) }
+            Diagnostics.i(TAG, "候选分页(展开态): 重建至 $to/${args.items.size} 条")
+            candidateScroll.post { maybeAppendMoreCandidates() }
+            return
+        }
         appendCandidateViews(args, from, to)
         candidateRenderLimit = to
         // 指纹更新成「新窗口」的样子：下一次同内容刷新仍命中、不整棵重建
@@ -2610,6 +2624,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
             expandedRowsFor(lastCandidates.size, candidateSp)
         } else {
             rowsSetting
+        }
+        // 展开态一次性把窗口放大到「够铺满可见网格」的量（BUG.md L-1394）：否则首次只渲染 32 条，
+        // 余下的全走追加路径 —— 而那正是列错位的来源（见 maybeAppendMoreCandidates）。
+        if (candidatesExpanded) {
+            val perCol = estimateColumnsPerRow().coerceAtLeast(1)
+            val need = rows * perCol * 2 // 两屏的量：一次滚动/一次上滑都够用
+            val target = minOf(lastCandidates.size, maxOf(CandidateRows.MAX_EXPANDED_ROWS * perCol, need))
+            if (candidateRenderLimit < target) candidateRenderLimit = target
         }
         updateExpandButton(rowsSetting)
         val perRow = applyCandidateRows(rows, candidateSp)
