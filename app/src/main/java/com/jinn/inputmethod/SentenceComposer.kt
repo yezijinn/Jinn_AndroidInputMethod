@@ -26,7 +26,12 @@ internal object SentenceComposer {
     /** 每个词的固定罚分：`ln(1e-6)`，对应 librime `grammar.h` 无 grammar 时的权重 */
     private const val PER_WORD_PENALTY = -13.815510557964274
     private const val MAX_SYLLABLE_LEN = 6
-    private const val MAX_HOMOPHONES = 3
+
+    /**
+     * 每个跨度最多取几个同音词。6 是本机热路径与召回折中（librime 默认 1，我们词库小）：
+     * 再多会让长输入的路径枚举平方级涨，整句候选却没明显变好。
+     */
+    private const val MAX_HOMOPHONES = 6
     private const val MAX_INPUT_CHARS = 64
 
     /** 每条输入最多交出几条整句（librime `max_sentences` 的 beam 宽度） */

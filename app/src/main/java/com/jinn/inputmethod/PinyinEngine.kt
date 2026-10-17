@@ -2213,14 +2213,18 @@ object PinyinEngine {
         }
 
         // 出口只留一种容器（MEM-19）：`words` 到这一步已无人再读，直接当结果集 —— 原先还要再建一个
-        // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序不变，仍是
-        // 「精确词 → 变体词 → 整句 → 补全长词 → 精确单字 → 变体单字」；整句与补全是新增项，其余相对次序不变。
+        // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序：短输入（1~3 音节）是
+        // 「精确词 → 变体词 → 整句 → 补全长词 → 精确单字 → 变体单字」；≥4 音节时整句提到最前
+        // （「整句 → 精确词 → 变体词 → 补全长词 → 单字 → 变体单字」），其余相对次序不变。
         words.addAll(fuzzyWords)
         // 整串键（逐音节拼接）：3b 整句与 3c 补全共用同一个值，别各建一次
         val coveredKey = buildString { for (s in syllables) append(s) }
+        // 补全锚点必须取**精确首词**：长输入下 3b 会把整句排到最前，那时再取 firstOrNull 就是拿整句去补全
+        val anchor = words.firstOrNull()?.let { toSimplified(it) }
         // 3b. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
         // 每个可达位置枚举音节跨度取词，逐词罚分后取 top-k 路径。
-        // 位置在全部词候选之后、单字之前：不抢短词，又不必滑过几百条单字才够得着。
+        // 短输入落在词候选之后、单字之前：不抢短词，又不必滑过几百条单字才够得着；
+        // ≥4 音节时整句才是主路径，提到精确词之前（长输入本来就没有 word 能覆盖全串）。
         if (syllables.size >= 2 && partial.isEmpty()) {
             val sentences = SentenceComposer.compose(
                 coveredKey,
@@ -2228,18 +2232,27 @@ object PinyinEngine {
                 { key -> phrasesFor(key)?.asList() },
                 { key -> charsFor(key) },
             )
+            val sentenceViews = ArrayList<String>(3)
             for (sentence in sentences) {
                 val shown = displayTake(listOf(sentence), 1)
-                if (shown.isNotEmpty() && words.add(shown[0])) {
-                    // 整句按键 = coveredKey（>8 音节时只覆盖前 8 个，残码保留）
-                    noteCandidateKeys(shown, coveredKey)
-                }
+                if (shown.isEmpty()) continue
+                sentenceViews.add(shown[0])
+                // 整句按键 = coveredKey（>8 音节时只覆盖前 8 个，残码保留）
+                noteCandidateKeys(listOf(shown[0]), coveredKey)
+            }
+            if (syllables.size >= 4 && sentenceViews.isNotEmpty()) {
+                val ordered = LinkedHashSet<String>(sentenceViews.size + words.size)
+                ordered.addAll(sentenceViews)
+                ordered.addAll(words)
+                words.clear()
+                words.addAll(ordered)
+            } else {
+                words.addAll(sentenceViews)
             }
         }
         // 3c. 前缀补全长词（对应 librime completion / rime-ice enable_word_completion）：
         // 精确首词之后继续给更长的词；排在单字之前，长词不用翻过几百个单字才够得着。
         if (syllables.size >= 2 && partial.isEmpty()) {
-            val anchor = words.firstOrNull()?.let { toSimplified(it) }
             if (anchor != null) {
                 val limit = MAX_COMPLETIONS
                 for (w in completionWords(coveredKey, anchor, limit)) {

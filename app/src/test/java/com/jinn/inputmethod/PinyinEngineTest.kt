@@ -410,7 +410,23 @@ class PinyinEngineTest {
         val sentence = c.indexOf("五湖四海为家")
         val word = c.indexOf("五湖四海")
         assertTrue("应出整句 五湖四海为家: $c", sentence >= 0)
-        assertTrue("整句应追加在词候选之后: $c", word >= 0 && sentence > word)
+        // 6 音节属长输入：整句在主路径（top-3），精确词被排到其后
+        assertTrue("整句应落在 top-3: $c", sentence < 3)
+        assertTrue("整句应排在精确词之前: $c", word > sentence)
+    }
+
+    @Test
+    fun `长输入整句排在精确词前`() {
+        val c = PinyinEngine.query("wuhusihaiweijia").candidates
+        val sentences = listOf("五湖四海为佳", "芜湖四海为家", "五湖四海为家")
+        assertTrue("首条应是三条整句之一: $c", c.first() in sentences)
+        assertTrue("精确词应被整句顶到后面: $c", c.indexOf("五湖四海") > 0)
+    }
+
+    @Test
+    fun `短输入整句不抢精确词`() {
+        val c = PinyinEngine.query("nihao").candidates
+        assertEquals("短输入精确词仍是首条: $c", "你好", c.first())
     }
 
     @Test
