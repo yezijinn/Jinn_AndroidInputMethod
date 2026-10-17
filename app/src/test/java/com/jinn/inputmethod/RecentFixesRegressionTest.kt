@@ -5640,11 +5640,16 @@ class RecentFixesRegressionTest {
     fun `候选展开收起必须有过渡动画`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue("高度补间从当前高度到目标高度", "ValueAnimator.ofInt(startH, targetH)" in src)
-        assertTrue("时长 180ms", ".setDuration(180L)" in src)
+        assertTrue("时长 220ms（180ms 只有 11 帧，观感是跳一下）", ".setDuration(220L)" in src)
         assertTrue("Material 标准缓动", "PathInterpolator(0.4f" in src)
         assertTrue("系统关闭动画时直接跳变", "areAnimatorsEnabled" in src)
         assertTrue("候选区要淡入淡出", "candidateScroll.alpha" in src)
         assertTrue("收尾收敛到一个入口", "finishCandidateToggle" in src)
+        // 分页追加在展开态走整栏重建 ⇒ 会 refreshCandidateBar，后者一见动画在跑就取消它，
+        // 补间只跑一帧就定格（长候选列表「完全没动画」）⇒ 过渡期间必须跳过追加。
+        assertTrue("过渡期间不得再做分页追加", "if (candidateAnimating) return" in src)
+        // 被中途取消的动画会把三角冻在半路，而符号层 / 密码层分支会早退、走不到 updateExpandButton
+        assertTrue("层切换早退前必须复位三角", "btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f" in src)
         // cancel() 会同步回调 onAnimationEnd ⇒ 旧动画的收尾必须自我否掉，否则半截动画被当成正常结束
         assertTrue(
             "旧动画的收尾必须自我否掉",
