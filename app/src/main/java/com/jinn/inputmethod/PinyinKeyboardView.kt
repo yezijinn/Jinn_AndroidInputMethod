@@ -2303,6 +2303,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 「✕ 清空候选」显隐（唯一入口）：按钮与拼音条同高、贴其右端，候选区不需要为它让位 */
     private fun setClearButtonVisible(visible: Boolean) {
         btnClearCandidates.visibility = if (visible) View.VISIBLE else View.GONE
+        // 三角与 ✕ 同生同灭（BUG.md L-1394）：没有候选可清时也就没有可展开的内容 ——
+        // 否则会出现「空候选栏上挂着一个 ▲」，用户点它得到一个什么都没有的展开态。
+        // 真正的显隐判据仍由 [updateExpandButton] 每帧按「单行档 + 候选多到需要展开」重算。
+        if (!visible) btnExpandCandidates.visibility = View.GONE
     }
 
     /**
