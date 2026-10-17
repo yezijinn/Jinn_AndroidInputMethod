@@ -5665,6 +5665,29 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * L-1060：选图入库必须**头部嗅探优先于声明**，并拒收名实不符的非图片字节。
+     *
+     * SAF 源常按扩展名报类型（改名文件同理），声明是 `image/*` 与内容是什么之间原本没有
+     * 任何核对 ⇒ 任意二进制都能以「图片」名义被交给收到即发的宿主（Telegram 类），不可逆。
+     */
+    @Test
+    fun `选图必须按字节核对类型`() {
+        val src = codeOf("GalleryInsert.kt")
+        // 嗅探先于声明：declared 只在 sniffed 为 null 时兜底
+        assertTrue("必须先嗅探", "val sniffed = ClipboardImageCodec.sniffMimeOrNull(head)" in src)
+        assertTrue("声明只在嗅探认不出时兜底", "val mime = sniffed ?: declared ?: sniffImageMime(head)" in src)
+        assertTrue("不一致要留痕", "选图类型不一致" in src)
+        assertTrue("名实不符要拒收", "looksLikeNonImage(head)" in src)
+        assertTrue("必须有非图片形态判据", "internal fun looksLikeNonImage(head: ByteArray)" in src)
+        // 纯函数判据：PDF / ZIP / RAR / 7z / gzip / PE / ELF 七类
+        for (magic in listOf("0x25", "0x50 && at(1) == 0x4B", "0x52", "0x37", "0x1F", "0x4D", "0x7F")) {
+            assertTrue("非图片魔数必须覆盖 $magic", magic in src)
+        }
+        // BMP / TIFF 是真图片，只不嗅探 ⇒ 不得被拒
+        assertFalse("BMP 不得被当成非图片", "\"BM\"" in src)
+    }
+
+    /**
      * L-1098：SAF 导出回调在「临时包不存在」时必须删掉 CreateDocument 建出的空壳。
      *
      * `CreateDocument` 是**先建文件再回传 uri**，所以任何一条早退分支都会在用户选定的目录里
