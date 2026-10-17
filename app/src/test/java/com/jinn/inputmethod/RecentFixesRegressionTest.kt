@@ -5790,6 +5790,12 @@ class RecentFixesRegressionTest {
         // 切到别的形态（功能面板 / 符号 / 密码条）时池要作废，否则候选 TextView 会被复用到那些形态上
         val clear = blockAfter(src, "private fun clearCandidateList()")
         assertTrue("切形态时要清空池", "candidateViewPool.clear()" in clear)
+        // ⚠ 不得用 `layoutParams = null` 清残留：setLayoutParams 拒绝 null，会抛
+        // NPE「Layout parameters cannot be null」，每次按键必崩（2026-10-18 真机实测）
+        assertFalse(
+            "复用条目不得把 layoutParams 置 null（View 拒绝 null，必崩）",
+            "layoutParams = null" in src,
+        )
     }
 
 }

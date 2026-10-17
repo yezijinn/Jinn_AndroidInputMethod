@@ -2777,8 +2777,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         setTextColor(color)
         // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
         setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
-        // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含行高 / topMargin）：清空后由新容器重新生成
-        layoutParams = null
+        // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含固定行高）：换成默认的 wrap_content
+        // 布局参数，由新容器按需重新下发。
+        // ⚠ **不能**写成 `layoutParams = null`：`View.setLayoutParams` 拒绝 null，会抛
+        // `NullPointerException: Layout parameters cannot be null`，每次按键必崩（2026-10-18 真机实测）。
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
         isClickable = true
         // 候选词 / 预测词走 Click 语义（**不是** ACTION_DOWN）：候选栏是横向滚动容器，
         // 在 DOWN 触发的话，用户横滑候选列表会先响一声。走点击则只有真正选中才响。
