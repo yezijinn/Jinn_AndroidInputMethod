@@ -40,6 +40,7 @@ class KeyAppearanceActivity : Activity() {
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
     private lateinit var switchCandidatePaging: Switch
+    private lateinit var switchPinyinMark: Switch
     private lateinit var spinnerTheme: UserAwareSpinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
@@ -252,7 +253,7 @@ class KeyAppearanceActivity : Activity() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                Diagnostics.i(TAG, "拼音行间隔: ${CandidateRows.clampPinyinGapDp(prefs.pinyinLineGapDp).toInt()} dp")
+                Diagnostics.i(TAG, "拼音占高: ${CandidateRows.clampPinyinGapDp(prefs.pinyinLineGapDp).toInt()} dp")
                 JinnIme.onKeyAppearanceChanged()
             }
         })
@@ -394,6 +395,16 @@ class KeyAppearanceActivity : Activity() {
         switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
             prefs.showQuanpin = checked
             Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        // 拼音打标：拼音行按音节加 ' 分隔（只改显示，composing / 查询 / 上屏不变）
+        switchPinyinMark = findViewById(R.id.switch_pinyin_mark)
+        switchPinyinMark.text = TEXT_PINYIN_MARK_TITLE
+        switchPinyinMark.isChecked = prefs.pinyinSyllableMark
+        switchPinyinMark.setOnCheckedChangeListener { _, checked ->
+            prefs.pinyinSyllableMark = checked
+            Diagnostics.i(TAG, "拼音打标: ${if (checked) "开" else "关"}")
             JinnIme.onKeyAppearanceChanged()
         }
 
@@ -692,8 +703,8 @@ class KeyAppearanceActivity : Activity() {
         /** 「拼音字号」项的标题文案（与候选字号解耦的独立参数，0 = 自动派生） */
         const val TEXT_PINYIN_TEXT_SIZE_TITLE = "拼音字号"
 
-        /** 「拼音行间隔」项的标题文案（拼音行底部到候选行之间的空隙，计入候选栏总高） */
-        const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音行间隔"
+        /** 「拼音占高」项的标题文案（拼音行底部到候选行之间的空隙，计入候选栏总高） */
+        const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音占高"
 
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"
@@ -711,6 +722,9 @@ class KeyAppearanceActivity : Activity() {
 
     /** 「长按小写转大写」开关标题：小写英文键盘上长按字母输出大写 */
     const val TEXT_LONGPRESS_UPPER_TITLE = "长按小写转大写"
+
+    /** 「拼音打标」开关标题：拼音行按音节用 ' 分隔显示（只改显示，不改输入与上屏） */
+    const val TEXT_PINYIN_MARK_TITLE = "拼音打标"
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"

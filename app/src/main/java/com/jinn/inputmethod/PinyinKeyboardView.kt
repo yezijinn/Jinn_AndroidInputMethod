@@ -2966,10 +2966,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val input = composing.toString()
         // 拼音行显示方式本帧只读一次并向下传（下方三处赋值必须同档）：
         // 默认显示按下的英文字母；「拼音显示为声韵」打开后按声母/韵母展开成全拼（残码也不丢键）
-        val displayText = if (shuangpinMode && prefs.showQuanpin) {
-            Shuangpin.displayQuanpin(input, scheme)
-        } else {
-            input
+        val baseDisplay = if (shuangpinMode) Shuangpin.displayQuanpin(input, scheme) else input
+        // 打标优先：开着时双拼也直接显示「带分隔的全拼」（不再看 showQuanpin）；关掉才回到旧两档。
+        val displayText = when {
+            prefs.pinyinSyllableMark -> PinyinEngine.markSyllables(baseDisplay)
+            shuangpinMode && prefs.showQuanpin -> baseDisplay
+            else -> input
         }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），

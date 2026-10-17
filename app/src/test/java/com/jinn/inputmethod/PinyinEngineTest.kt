@@ -447,4 +447,13 @@ class PinyinEngineTest {
         val c = PinyinEngine.query("haijia").candidates
         assertTrue("单字边不应拼成 还家: $c", !c.contains("还家"))
     }
+
+    @Test
+    fun `拼音打标按音节加分隔符`() {
+        assertEquals("ni'hao'ma", PinyinEngine.markSyllables("nihaoma"))
+        // 末段未完成音节也照常接出，原样保留用户按下的字母
+        assertEquals("ni'h", PinyinEngine.markSyllables("nih"))
+        assertEquals("ni", PinyinEngine.markSyllables("ni"))
+        assertEquals("", PinyinEngine.markSyllables(""))
+    }
 }

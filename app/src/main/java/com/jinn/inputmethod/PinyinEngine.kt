@@ -2476,6 +2476,24 @@ object PinyinEngine {
     }
 
     /**
+     * 拼音行显示用：按音节切分后用 `'` 连接（如 `nihaoma` → `ni'hao'ma`）；只用于显示，不改输入/查询。
+     *
+     * 切分沿用 [segment]（词库约束 + 贪心兜底），末段未完成的音节也照常接出（`nih` → `ni'h`）。
+     * 去掉分隔符后必须与入参逐字相等，异常切分一律原样返回 —— 显示层不允许吞掉用户按下的字母。
+     * 双拼先转全拼再调用（见 `PinyinKeyboardView` 的 displayText）。
+     */
+    fun markSyllables(input: String): String {
+        if (input.isEmpty()) return input
+        val (syllables, partial) = segment(input)
+        if (syllables.isEmpty()) return input
+        val marked = buildString {
+            append(syllables.joinToString("'"))
+            if (partial.isNotEmpty()) append("'").append(partial)
+        }
+        return if (marked.replace("'", "") == input) marked else input
+    }
+
+    /**
      * 将拼音串切分为合法音节序列，最后一个音节可能不完整。
      *
      * 先尝试「词库约束分词」：枚举所有合法切分路径，优先选择能拼出词库短语的切分

@@ -5621,6 +5621,17 @@ class RecentFixesRegressionTest {
         assertTrue("保底分支保留", "SpannableStringBuilder(getText()).append(OBJECT_REPLACEMENT)" in ret)
     }
 
+    @Test
+    fun `拼音打标只改显示`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue("拼音行必须走打标", "PinyinEngine.markSyllables(baseDisplay)" in view)
+        assertTrue("打标只能有一处调用（显示层）", view.split("markSyllables").size == 2)
+        // 拼音串本身不带分隔符：composing 仍是逐键追加，查询走 queryInput
+        assertTrue("composing 不得被插入分隔符", "composing.append(c)" in view)
+        assertTrue("查询仍用未打标的串", "queryInput" in view)
+        assertTrue("开关必须挂在外观页", "switch_pinyin_mark" in codeOf("KeyAppearanceActivity.kt"))
+    }
+
     /**
      * 候选栏展开 / 收起的过渡（高度补间 + 淡入淡出 + 三角旋转）。
      *
