@@ -7,7 +7,7 @@ import kotlin.math.roundToInt
  *
  * 布局（2026-09-25 定的分布；字号由用户参数 [CandidateText] 决定，默认档是拼音 14sp、汉字 20sp）：
  * ```
- *   单行档：拼音条（默认 16dp）              ← 顶部一条
+ *   单行档：拼音条（默认 18dp）              ← 顶部一条
  *          候选 1 3 5 …（横向滚动，默认 28dp）
  *
  *   双行档：上排 2 4 6 …（横向滚动，默认 28dp）
@@ -37,8 +37,8 @@ internal object CandidateRows {
     /** 候选行高系数：字号的 1.4 倍（含行距与降部余量，整行框） */
     const val LINE_HEIGHT_RATIO = 1.4f
 
-    /** 拼音条系数：拼音字号的 1.15 倍（只保证字形，行框余量允许溢出条外） */
-    const val PINYIN_GLYPH_RATIO = 1.15f
+    /** 拼音条系数：拼音字号的 1.3 倍（盖住字形下伸部 `g / q / p`，行框余量允许溢出条外） */
+    const val PINYIN_GLYPH_RATIO = 1.3f
 
     /** 拼音行间隔下界（dp）：0 = 拼音条与候选行之间不留空隙（历史观感） */
     const val PINYIN_GAP_MIN_DP = 0f
@@ -57,14 +57,14 @@ internal object CandidateRows {
         CandidateText.clampSp(candidateSp) * LINE_HEIGHT_RATIO
 
     /**
-     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 14sp → 16.1dp）。
+     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 14sp → 18.2dp）。
      *
      * @param pinyinSp 拼音字号（sp，用户参数经 [CandidateText.clampPinyinSp] 归一后的**有效值**）；
      *   传 0 / 负数时回落 [CandidateText.pinyinSpOf] 的默认派生值，避免首帧算成 0 高。
      *
-     * 比候选行口径更紧：字形之外的字体行框余量可以直接溢出条外（被候选栏裁掉的是空白，不是笔画），
-     * 因此条高不再按行框系数算 —— 否则拼音行会「比自己的字高出一圈」（用户 2026-09-25 明确要求
-     * 拼音与候选的留白为 0）。
+     * 比候选行口径更紧：只按字形给高，字体行框余量仍可溢出条外（裁的只是空白）。系数取 1.3 是为了
+     * 盖住 `g / q / p` 的下伸部 —— 1.15 时下伸部被条底切掉；再按行框系数算则拼音行会「比自己的字
+     * 高出一圈」（用户 2026-09-25 明确要求拼音与候选的留白为 0）。
      */
     fun pinyinBarHeightDp(pinyinSp: Float): Float =
         effectivePinyinSp(pinyinSp) * PINYIN_GLYPH_RATIO
@@ -84,7 +84,7 @@ internal object CandidateRows {
         if (pinyinSp > 0f) CandidateText.clampPinyinSp(pinyinSp)
         else CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP)
 
-    /** 档位对应的候选栏高度（dp，默认字体下；默认档单行 44 / 双行 72） */
+    /** 档位对应的候选栏高度（dp，默认字体下；默认档单行 46 / 双行 74） */
     fun heightDp(
         rows: Int,
         candidateSp: Float,

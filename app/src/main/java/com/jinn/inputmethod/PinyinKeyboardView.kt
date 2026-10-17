@@ -2336,7 +2336,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         currentPinyinBarPx = pinyinBarPx + CandidateRows.pinyinGapPx(dm.density, gapDp)
         applyPinyinTextSize(pinyinSp)
 
-        // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 44dp；双行 = 拼音条 + 两排 = 72dp），
+        // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 46dp；双行 = 拼音条 + 两排 = 74dp），
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
         // ⚠ 别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
         // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。

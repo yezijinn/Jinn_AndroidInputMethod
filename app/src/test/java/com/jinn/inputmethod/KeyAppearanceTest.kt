@@ -204,7 +204,7 @@ class KeyAppearanceTest {
     /** 键高上界 120dp 不能把键盘顶满屏：三行 + 候选栏 + 拼音条 + 底栏 ≤ 490dp */
     @Test
     fun maxKeyHeight_leavesRoomForHost() {
-        val totalDp = KeyAppearance.MAX_KEY_HEIGHT_DP * 3 + 44 + 16 + 56
+        val totalDp = KeyAppearance.MAX_KEY_HEIGHT_DP * 3 + 46 + 18 + 56
         assertTrue("键高上界会把键盘顶满屏：$totalDp dp", totalDp <= 490f)
     }
 }

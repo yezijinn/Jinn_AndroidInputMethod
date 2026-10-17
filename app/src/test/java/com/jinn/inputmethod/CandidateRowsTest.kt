@@ -73,8 +73,8 @@ class CandidateRowsTest {
     fun 高度与字号按档位() {
         val sp = CandidateText.DEFAULT_SP
         // 单行 = 拼音条 + 一排候选（拼音与候选之间不留间隔，用户 2026-09-25 要求「间距缩小为 0」）
-        assertEquals(44, CandidateRows.heightDp(CandidateRows.SINGLE, sp))
-        assertEquals(72, CandidateRows.heightDp(CandidateRows.DOUBLE, sp))
+        assertEquals(46, CandidateRows.heightDp(CandidateRows.SINGLE, sp))
+        assertEquals(74, CandidateRows.heightDp(CandidateRows.DOUBLE, sp))
         // 默认档：候选 20sp、拼音 14sp（20 × 0.7，字号两档统一的历史口径）
         assertEquals(20f, sp, 0f)
         assertEquals(14f, CandidateText.pinyinSpOf(sp), 0f)
@@ -97,13 +97,16 @@ class CandidateRowsTest {
         val bar = CandidateRows.pinyinBarHeightPx(d, fontScale = 1f, pinyinSp = CandidateText.pinyinSpOf(sp))
         assertEquals(bar + perRow, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
         assertEquals(bar + perRow * 2, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
+        // 默认档具体 px（density 3）：拼音条 54 + 单排 84 = 138；双排 54 + 168 = 222
+        assertEquals(138, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
+        assertEquals(222, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
     }
 
     @Test
     fun 默认字体下行高与拼音条就是紧凑档() {
-        // density=3 / 20sp ⇒ 候选行框 84px；拼音 14sp ⇒ 字形 48px（条高参数是**拼音字号**）
+        // density=3 / 20sp ⇒ 候选行框 84px；拼音 14sp ⇒ 字形 54px（条高参数是**拼音字号**）
         assertEquals(84, CandidateRows.rowHeightPx(density = 3f, fontScale = 1f, candidateSp = 20f))
-        assertEquals(48, CandidateRows.pinyinBarHeightPx(density = 3f, fontScale = 1f, pinyinSp = 14f))
+        assertEquals(54, CandidateRows.pinyinBarHeightPx(density = 3f, fontScale = 1f, pinyinSp = 14f))
         // 拼音条必须比候选行矮（只给字形不给行框），否则「拼音行比自己的字高出一圈」
         assertTrue(CandidateRows.pinyinBarHeightDp(14f) < CandidateRows.rowHeightDp(20f))
     }
@@ -124,7 +127,7 @@ class CandidateRowsTest {
     @Test
     fun 字体缩小也不低于紧凑档() {
         assertEquals("行高不得低于 28dp", 84, CandidateRows.rowHeightPx(3f, fontScale = 0.85f, candidateSp = 20f))
-        assertEquals("拼音条不得低于 16dp", 48, CandidateRows.pinyinBarHeightPx(3f, fontScale = 0.85f, pinyinSp = 14f))
+        assertEquals("拼音条不得低于 18dp", 54, CandidateRows.pinyinBarHeightPx(3f, fontScale = 0.85f, pinyinSp = 14f))
     }
 
     /** 拼音字号是独立参数：它变则栏高变，与候选字号无关 */
@@ -155,9 +158,9 @@ class CandidateRowsTest {
     fun 越界行数落回单行档() {
         // Prefs 已做归一，这里守的是兜底：任何非 2 的值都不得算成双行
         val sp = CandidateText.DEFAULT_SP
-        assertEquals(44, CandidateRows.heightDp(0, sp))
-        assertEquals(44, CandidateRows.heightDp(3, sp))
-        assertEquals(44, CandidateRows.heightDp(-1, sp))
+        assertEquals(46, CandidateRows.heightDp(0, sp))
+        assertEquals(46, CandidateRows.heightDp(3, sp))
+        assertEquals(46, CandidateRows.heightDp(-1, sp))
     }
 
     /**
