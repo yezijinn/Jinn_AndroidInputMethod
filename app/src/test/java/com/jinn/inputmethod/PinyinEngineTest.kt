@@ -50,7 +50,6 @@ class PinyinEngineTest {
             hai	还,海,孩
             wei	为,位,未
             jia	家,加,假
-            shang	上,商,伤
         """.trimIndent()
         val phrases = """
             nihao	你好|拟好|泥蒿|你号|你浩|你耗|你豪|你壕|你嚎|你皓|你昊|你灏|你毫
@@ -62,8 +61,6 @@ class PinyinEngineTest {
             nianji	年纪
             nianqing	年轻
             zhongguo	中国
-            zhongguoban	中国版
-            zhongguoaomen	中国澳门
             shenglue	省略
             shenglve	省略
             lvse	绿色
@@ -80,9 +77,6 @@ class PinyinEngineTest {
             weijia	为佳|为家
             wuhusihai	五湖四海
             sihaiweijia	四海为家
-            shanghai	上海
-            shanghaiban	上海班
-            shanghaian	伤害案
         """.trimIndent()
         val syllables = """
             a
@@ -126,7 +120,6 @@ class PinyinEngineTest {
             hai
             wei
             jia
-            shang
         """.trimIndent()
         PinyinEngine.loadFromTexts(chars, phrases, syllables)
     }
@@ -148,8 +141,8 @@ class PinyinEngineTest {
         assertTrue("应含 单字 好: $c", c.contains("好"))
         // 2 字词排在单字前
         assertTrue("你好 应在 你 之前: $c", c.indexOf("你好") < c.indexOf("你"))
-        // 超出拼音数量的词只作补全长词出现（3c），排在整词之后，不抢整词的位置
-        assertTrue("你好吗 应在 你好 之后: $c", c.indexOf("你好") < c.indexOf("你好吗"))
+        // 输入只有 2 个音节：不应显示 3 字词 你好吗
+        assertTrue("不应显示 3 字词 你好吗: $c", !c.contains("你好吗"))
     }
 
     @Test
@@ -166,13 +159,11 @@ class PinyinEngineTest {
     }
 
     @Test
-    fun 超出拼音数量的词只作补全长词出现() {
-        // 输入 nihao（2 音节）：3 字词不再一律丢弃，而是作为「以精确首词 你好 为锚」的补全长词
-        // 追加在整词之后（3c）；仍然排在单字之前，不用翻过几百条单字才够得着
+    fun 不显示超出拼音数量的词() {
+        // 输入 nihao（2 音节）：候选的音节数恒等于输入，3 字词一律不出现
         val c = PinyinEngine.query("nihao").candidates
-        assertTrue("应含补全长词 你好啊: $c", c.contains("你好啊"))
-        assertTrue("应含补全长词 你好吗: $c", c.contains("你好吗"))
-        assertTrue("补全长词应排在单字之前: $c", c.indexOf("你好吗") < c.indexOf("你"))
+        assertTrue("不应显示 你好啊: $c", !c.contains("你好啊"))
+        assertTrue("不应显示 你好吗: $c", !c.contains("你好吗"))
     }
 
     @Test
@@ -182,15 +173,6 @@ class PinyinEngineTest {
         val c = PinyinEngine.query("nihao").candidates
         assertTrue("学过的长尾词必须进池: $c", "你毫" in c)
         assertTrue("学过的词应排在未学词之前: $c", c.indexOf("你毫") < c.indexOf("你好"))
-    }
-
-    @Test
-    fun 补全按扩展长度排序() {
-        // zhongguoaomen 字典序在 zhongguoban 之前，按扩展汉字数排序后短扩展先给
-        val c = PinyinEngine.query("zhongguo").candidates
-        assertTrue("应含 中国版: $c", "中国版" in c)
-        assertTrue("应含 中国澳门: $c", "中国澳门" in c)
-        assertTrue("短扩展应排在长扩展之前: $c", c.indexOf("中国版") < c.indexOf("中国澳门"))
     }
 
     @Test
@@ -464,28 +446,5 @@ class PinyinEngineTest {
         // haijia 只有单字边（还/家…）、没有任何多字词 ⇒ 整条路径没有多字词，不出整句
         val c = PinyinEngine.query("haijia").candidates
         assertTrue("单字边不应拼成 还家: $c", !c.contains("还家"))
-    }
-
-    // ── 前缀补全长词（librime completion）──────────────────
-
-    @Test
-    fun 前缀补全_长词排在单字前() {
-        val c = PinyinEngine.query("nihao").candidates
-        assertTrue("应含补全长词: $c", c.containsAll(listOf("你好啊", "你好吗", "你好不")))
-        assertTrue("补全长词应排在单字之前: $c", c.indexOf("你好啊") < c.indexOf("你"))
-    }
-
-    @Test
-    fun 前缀补全_只取同一首词的延伸() {
-        // 首词是 上海 ⇒ 只收 上海班；shanghaian 是另一条切分（伤害+案），不混进来
-        val c = PinyinEngine.query("shanghai").candidates
-        assertTrue("应含同一首词的延伸 上海班: $c", c.contains("上海班"))
-        assertTrue("另一条切分的 伤害案 不应混进来: $c", !c.contains("伤害案"))
-    }
-
-    @Test
-    fun 前缀补全_消费全部输入() {
-        PinyinEngine.query("nihao")
-        assertEquals(PinyinEngine.Consumption(5, 2), PinyinEngine.consumption("nihao", "你好啊"))
     }
 }

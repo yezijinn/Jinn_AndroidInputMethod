@@ -84,7 +84,7 @@ class OptionalDictMergeTest {
         )
     }
 
-    /** 合并后新增的键要参与前缀补全（finalizeLoad 必须重建有序键表） */
+    /** 合并后新增的键必须能查到（finalizeLoad 重建有序键表） */
     @Test
     fun mergeRebuildsSortedKeysForCompletion() {
         loadBase("ni\t你")

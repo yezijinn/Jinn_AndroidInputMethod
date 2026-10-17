@@ -76,27 +76,6 @@ internal class PhraseIndex private constructor(
     }
 
     /**
-     * 把一个键的词表区间逐词解码追加到 [out]，返回追加条数（与 [wordsFor] 同一切词规则）。
-     *
-     * 供「按前缀区间批量取词」的调用方使用（如 [PinyinEngine] 的前缀补全长词）：
-     * 它们拿到的是 [forEachRangeWithPrefix] 给出的词区区间，没有键字符串可走 [wordsFor]。
-     */
-    fun collectWords(wordsFrom: Int, wordsTo: Int, out: MutableCollection<String>): Int {
-        var added = 0
-        var segStart = wordsFrom
-        for (p in wordsFrom until wordsTo) {
-            if (buf.get(p) == SEP) {
-                out.add(decode(segStart, p - segStart)); added++
-                segStart = p + 1
-            }
-        }
-        if (segStart < wordsTo) {
-            out.add(decode(segStart, wordsTo - segStart)); added++
-        }
-        return added
-    }
-
-    /**
      * 前缀扫描：返回以 [prefix] 开头的键（字典序）。
      *
      * 供智能预测使用（旧实现遍历 `sortedPhraseKeys`，那是一份 60 万个 String 的快照，
