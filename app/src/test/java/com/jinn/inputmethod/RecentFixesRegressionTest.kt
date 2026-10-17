@@ -1265,6 +1265,13 @@ class RecentFixesRegressionTest {
             initial!! >= 24,
         )
         assertTrue("追加步长必须为正（当前 $step）", step!! >= 1)
+        // 增量追加按「绝对序号」两两成列 ⇒ 起点必须恒偶，否则双行档两排会错开一列。
+        // 现在靠 [appendCandidateViews] 入口把起点对齐到偶数，不再依赖两个常量恰好都是偶数
+        // （改参即静默劣化的面，AI2-BUG A-274）。
+        assertTrue(
+            "增量追加必须自己把起点对齐到偶数",
+            "var i = from - (from and 1)" in src,
+        )
         assertTrue(
             "渲染路径必须按窗口条数截断候选（subList(0, candidateRenderLimit)）",
             "subList(0, candidateRenderLimit)" in src,
@@ -5655,6 +5662,33 @@ class RecentFixesRegressionTest {
             "旧动画的收尾必须自我否掉",
             "if (candidateHeightAnimator !== animator) return" in src,
         )
+    }
+
+    /**
+     * 首次使用者重放（2026-10-18）：设置页必须如实显示「输入法已启用 / 已是默认」。
+     *
+     * 首次使用的头两步都在系统设置里完成（勾选输入法 → 选默认），返回本页若毫无变化，
+     * 用户无法确认自己做对没有，只会重复点按钮或以为坏了。判据分三层：
+     * ① `onResume` 与 `onCreate` 都要刷新（从系统设置返回是主路径）；
+     * ② 判据读系统的 `enabledInputMethodList` / `DEFAULT_INPUT_METHOD`，不读本方偏好
+     *    （用户可能在系统侧停用，本应用无从得知）；
+     * ③ 文案按状态分档，且不得用裸子串匹配包名（会被别的输入法误命中）。
+     */
+    @Test
+    fun `设置页必须显示输入法启用与默认状态`() {
+        val src = codeOf("SettingsActivity.kt")
+        assertTrue("onResume 必须刷新输入法状态", "if (::btnEnable.isInitialized) refreshImeState()" in src)
+        assertTrue("onCreate 首次进入也必须刷新一次", "refreshImeState()\n" in src)
+        assertTrue("必须有刷新入口", "private fun refreshImeState()" in src)
+        // 判据来源：系统的已启用列表 / 默认输入法，而非本方偏好
+        assertTrue("判据取系统的已启用列表", "enabledInputMethodList" in src)
+        assertTrue("判据取系统的默认输入法", "Settings.Secure.DEFAULT_INPUT_METHOD" in src)
+        assertTrue("启用判据按包名精确比对", "it.packageName == context.packageName" in src)
+        // 文案按状态分档：纯函数便于钉住两种状态各说各的
+        assertTrue("启用文案分档", "internal fun imeEnableLabel(enabled: Boolean)" in src)
+        assertTrue("默认文案分档", "internal fun imePickLabel(isDefault: Boolean)" in src)
+        // 已是默认时切换键置灰（点了也只会重弹同一个选择器）
+        assertTrue("已是默认时切换键置灰", "btnPick.isEnabled = !isDefault" in src)
     }
 
     /**
