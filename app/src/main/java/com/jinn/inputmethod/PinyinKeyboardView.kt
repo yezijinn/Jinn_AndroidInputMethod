@@ -370,9 +370,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 过渡收尾：落回目标高度、恢复不透明与三角终态。
+     * 过渡收尾：落回目标高度、换上单行内容（收起）、恢复不透明与三角终态。
      *
-     * 收起时内容**等动画结束再回单行**（否则中途被换成一行会提前露底）；展开时内容已是展开态。
+     * 收起过程中 [candidatesExpanded] 一直保持 true（内容随栏高被裁掉，不提前清空），
+     * 到这里栏已经收拢，才换单行 —— 全程内容与高度同步，不会出现「先清空再合盖」。
      */
     private fun finishCandidateToggle(expand: Boolean, targetH: Int) {
         // 先摘引用再刷：refreshCandidateBar 见到非空会再取消一次（会重进本函数）
@@ -382,11 +383,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             it.height = targetH
             candidateBar.layoutParams = it
         }
+        candidateScroll.alpha = 1f
         if (!expand) {
             candidatesExpanded = false
             refreshCandidateBar()
         }
-        candidateScroll.alpha = 1f
         btnExpandCandidates.rotation = if (expand) 180f else 0f
     }
 
