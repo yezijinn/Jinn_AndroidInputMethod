@@ -1504,9 +1504,26 @@ class ClipboardHistoryActivity : ComponentActivity() {
             })
         }
         addBtn("复制") {
+            // 与 IME 侧 copySelection 同款待遇（AI2 A-186）：同一「写系统剪贴板」操作，
+            // 那边有尺寸闸 + runCatching，这里原本裸调 —— 超长条目或剪贴板服务瞬断时
+            // 会抛未捕获异常，而本页与 IME 同进程，崩溃一并带走输入法。
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("clip", item.content))
-            android.widget.Toast.makeText(this, TEXT_COPIED, android.widget.Toast.LENGTH_SHORT).show()
+            val limit = ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt()
+            if (ClipboardStore.exceedsItemLimit(item.content, limit)) {
+                Diagnostics.w(TAG, "复制: 单条超过 $limit 字节上限，已跳过 len=${item.content.length}")
+                // 文案与 IME 侧同源（JinnIme.TEXT_COPY_TOO_LONG）：两处各写一份会「改一处漏一处」
+                android.widget.Toast.makeText(this, JinnIme.TEXT_COPY_TOO_LONG, android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                val clip = ClipData.newPlainText("clip", item.content)
+                runCatching { cm.setPrimaryClip(clip) }
+                    .onSuccess {
+                        android.widget.Toast.makeText(this, TEXT_COPIED, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    .onFailure {
+                        Diagnostics.w(TAG, "复制失败: ${it.javaClass.simpleName}")
+                        android.widget.Toast.makeText(this, JinnIme.TEXT_COPY_FAILED, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+            }
         }
         addBtn(if (item.isFavorite) "取消收藏" else "收藏") {
             // 不归零：单条收藏切换 / 删除不该把用户从第 N 页弹回第 1 页（BUG.md L-1175），

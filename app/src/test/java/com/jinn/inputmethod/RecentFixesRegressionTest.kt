@@ -5798,4 +5798,41 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * AI2 A-185 / A-186 / A-190：三处「失败分支待遇不一致」。
+     *
+     * 共同点是「同一个动作，某条失败路径忘了收尾」—— 兄弟分支都做了，唯独一处漏掉，
+     * 单看那一处代码并不显眼。三条都由 AI2 只读审查提出，此处合并钉住。
+     */
+    @Test
+    fun `剪贴板写入失败分支必须同款收尾`() {
+        // A-185：图片写系统剪贴板，setPrimaryClip 抛异常时也要删明文临时件
+        val exportSrc = codeOf("ClipboardImageExport.kt")
+        val copyBody = blockAfter(exportSrc, "fun copyToSystemClipboard(")
+        assertEquals(
+            "三条失败分支（取 URI / 服务不可用 / setPrimaryClip 抛）都要删临时件",
+            3,
+            Regex("""file.delete()""").findAll(copyBody).count(),
+        )
+        assertTrue("删临时件必须带留痕", "已清理临时件" in copyBody)
+
+        // A-186：历史页「复制」与 IME 侧同款 —— 尺寸闸 + runCatching
+        val histSrc = codeOf("ClipboardHistoryActivity.kt")
+        val btnAt = histSrc.indexOf("addBtn(\"复制\")")
+        assertTrue("找不到历史页「复制」按钮（改名后请同步本用例）", btnAt > 0)
+        val btnBody = histSrc.substring(btnAt, minOf(btnAt + 1200, histSrc.length))
+        assertTrue("历史页复制必须过尺寸闸", "ClipboardStore.exceedsItemLimit" in btnBody)
+        assertTrue("历史页复制必须捕获异常", "runCatching { cm.setPrimaryClip(clip) }" in btnBody)
+        // 与 IME 同源文案（各写一份会改一处漏一处）
+        assertTrue("超长提示取 IME 的常量", "JinnIme.TEXT_COPY_TOO_LONG" in btnBody)
+        assertTrue("失败提示取 IME 的常量", "JinnIme.TEXT_COPY_FAILED" in btnBody)
+
+        // A-190：UriFailed 不得丢掉剪贴板兜底
+        val imeSrc = codeOf("JinnIme.kt")
+        val pasteAt = imeSrc.indexOf("粘贴图片: URI 构造失败")
+        assertTrue("找不到 UriFailed 分支（改名后请同步本用例）", pasteAt > 0)
+        val branch = imeSrc.substring(pasteAt, minOf(pasteAt + 400, imeSrc.length))
+        assertTrue("UriFailed 必须退回剪贴板兜底（拆因不等于取消兜底）", "fallbackToClipboard(item, bytes)" in branch)
+    }
+
 }

@@ -1360,8 +1360,11 @@ class JinnIme : InputMethodService() {
                     GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
                     GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
                     GalleryInsert.InsertResult.UriFailed -> {
-                        Diagnostics.w(TAG, "粘贴图片: URI 构造失败")
-                        toast(TEXT_IMAGE_UNAVAILABLE)
+                        // 与 Rejected 同等待遇（AI2 A-190）：拆出本态是为了把「本地构造失败」
+                        // 与「宿主拒收」分开留痕，不是要取消兜底 —— fallbackToClipboard 会经
+                        // stageForInsert 重新落一份文件再取 URI，路径类失败本可成功。
+                        Diagnostics.w(TAG, "粘贴图片: URI 构造失败，退回剪贴板")
+                        fallbackToClipboard(item, bytes)
                     }
                     GalleryInsert.InsertResult.Rejected -> {
                         // 宿主声明支持却拒收（部分 WebView / 自绘输入框）也要给出口：只报

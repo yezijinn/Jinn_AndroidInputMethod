@@ -247,7 +247,11 @@ internal object ClipboardImageExport {
             manager.setPrimaryClip(clip)
             true
         }.getOrElse {
-            Diagnostics.w(TAG, "复制图片到剪贴板失败: ${it.javaClass.simpleName}")
+            // 第三条失败分支同样收尾（AI2 A-185，L-1287 的残余）：setPrimaryClip 会抛
+            // （Binder 事务超限 / 远端异常 / 剪贴板服务瞬断），不删就留一份明文图片在缓存里。
+            // 成功路径**不能**删：宿主读的是这个 file:// URI，删了图就裂了。
+            file.delete()
+            Diagnostics.w(TAG, "复制图片到剪贴板失败：写入剪贴板抛异常，已清理临时件: ${it.javaClass.simpleName}")
             false
         }
     }
