@@ -2557,17 +2557,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 另一入口是 [renderCandidateItems] 末尾的 `post`：内容没撑满视口（滚不动）时也得补足，
      * 否则剩余候选既滚不到、也不会触发本方法。
      */
-    private fun maybeAppendMoreCandidates() {
+    private fun maybeAppendMoreCandidates(force: Boolean = false) {
         // 容器被非候选形态接管过（[clearCandidateList] 会清掉 args、[resetCandidateRender] 会置空指纹）：
         // 此时绝不能再往容器尾部追加候选视图 —— 那会把候选插到功能面板 / 符号 / 密码条上。
         val args = candidateRenderArgs ?: return
         if (candidateRenderKey == null) return
         if (candidateRenderLimit >= args.items.size) return
+        // 链式续补（BUG.md L-1395）：追加后内容变长而 scrollX 不变，重入时「必须已在末尾」会把
+        // 后续追加全部挡掉 ⇒ 用户感觉「每次滑到底只多一批、后面接不上」（实测 五湖→四海 后断掉）。
+        // force = 由追加自身的重入链带入：跳过「已在末尾」，但保留**一屏前瞻**的停止条件。
         val maxScroll = viewCandidateList.width - candidateScroll.width +
             candidateScroll.paddingLeft + candidateScroll.paddingRight
+        if (force) {
+            // 已经缓冲了「一屏未读内容」就停：既保证用户一划就能看到新内容，又不把全部候选一次性铺满
+            if (maxScroll - candidateScroll.scrollX >= candidateScroll.width) return
+        }
         // 内容还没撑满视口（maxScroll ≤ 0）时不判「是否到末尾」，直接继续追加：这种情况滚不动，
         // 触发不了滚动回调，后面的候选会永久不可达（小字号 + 小字距 + 双行档时 16 列可能一屏放得下）。
-        if (maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
+        if (!force && maxScroll > 0 && candidateScroll.scrollX < maxScroll - dp(RENDER_EDGE_DP)) return
         val from = candidateRenderLimit
         val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
         // 展开态（3/4 排）不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认「逐条」与
@@ -2581,7 +2588,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshCandidateBar()
             candidateRowsScroll.post { candidateRowsScroll.scrollTo(0, keepY) }
             Diagnostics.i(TAG, "候选分页(展开态): 重建至 $to/${args.items.size} 条")
-            candidateScroll.post { maybeAppendMoreCandidates() }
+            candidateScroll.post { maybeAppendMoreCandidates(force = true) }
             return
         }
         appendCandidateViews(args, from, to)
@@ -2590,8 +2597,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val shownNew = if (args.items.size > to) args.items.subList(0, to) else args.items
         candidateRenderKey = shownNew.hashCode().toLong() * 31 + args.appearanceKey
         Diagnostics.i(TAG, "候选分页: 追加渲染至 $to/${args.items.size} 条")
-        // 追加后若仍撑不满视口 / 还没到底，继续补（撑满或到底后自然不再动作）
-        candidateScroll.post { maybeAppendMoreCandidates() }
+        // 链式续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据，改由「一屏前瞻」停止，
+        // 这样一次触底会把后续批次连续补上，用户不必反复滑到底。
+        candidateScroll.post { maybeAppendMoreCandidates(force = true) }
     }
 
     private fun refreshCandidateBar() {
@@ -2714,6 +2722,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 双拼：先转全拼再查询；显示仍保留双拼原文
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val result = PinyinEngine.query(queryInput)
+        // 候选集口径（BUG.md L-1395）：size + 末尾几条，用于判定「长词够不着」是**没生成**还是
+        // **渲染追加不续**。只在 KEY_TRACE（debug 构建）下打印，release 静默。
+        if (Diagnostics.KEY_TRACE) {
+            Diagnostics.v(
+                TAG,
+                "候选集: input=$queryInput size=${result.candidates.size} " +
+                    "tail=${result.candidates.takeLast(10)}",
+            )
+        }
         // 补全诊断：只在末尾存在不完整音节时记录。
         // 绝不在这里再调一次 queryWithCompletion，PinyinEngine.query() 内部
         // 已经跑过补全召回，重复调用等于每次按键双倍查询，纯粹为了打日志。
