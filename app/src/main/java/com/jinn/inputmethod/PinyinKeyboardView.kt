@@ -2965,10 +2965,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         val input = composing.toString()
-        // 拼音行固定按音节打标（内置常开，无开关）：双拼先展开成全拼，再按音节分隔
-        // （残码也不丢键）。只改显示，composing / 查询 / 上屏都用未打标的串。
-        val baseDisplay = if (shuangpinMode) Shuangpin.displayQuanpin(input, scheme) else input
-        val displayText = PinyinEngine.markSyllables(baseDisplay)
+        // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
+        // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
+        // 只改显示，composing / 查询 / 上屏都用未打标的串。
+        val displayText = when {
+            shuangpinMode && !prefs.showQuanpin -> input
+            shuangpinMode -> PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))
+            else -> PinyinEngine.markSyllables(input)
+        }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
         // 双行档的面板态也保持整栏 72dp —— 用户 2026-10-02 明确要求「2 行候选恒定增高，

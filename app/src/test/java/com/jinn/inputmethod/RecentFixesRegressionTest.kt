@@ -5607,11 +5607,18 @@ class RecentFixesRegressionTest {
     fun `拼音打标只改显示`() {
         val view = codeOf("PinyinKeyboardView.kt")
         assertTrue(
-            "拼音行必须常开打标（内置行为，无开关）",
-            "val displayText = PinyinEngine.markSyllables(baseDisplay)" in view,
+            "双拼关闭「双拼候选全音」时必须原样显示按键字母（不打标）",
+            "shuangpinMode && !prefs.showQuanpin -> input" in view,
         )
-        assertTrue("打标只能有一处调用（显示层）", view.split("markSyllables").size == 2)
-        assertFalse("打标不得再读开关", "pinyinSyllableMark" in view)
+        assertTrue(
+            "双拼开启总开关时必须显示打标后的全拼",
+            "PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))" in view,
+        )
+        assertTrue(
+            "全拼模式必须按音节打标",
+            "PinyinEngine.markSyllables(input)" in view,
+        )
+        assertFalse("打标不得再读独立开关", "pinyinSyllableMark" in view)
         assertFalse(
             "外观页与配置里不得残留打标开关",
             "switch_pinyin_mark" in codeOf("KeyAppearanceActivity.kt") ||
