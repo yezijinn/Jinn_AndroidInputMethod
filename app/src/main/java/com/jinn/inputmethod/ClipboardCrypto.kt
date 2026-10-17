@@ -40,13 +40,62 @@ object ClipboardCrypto {
     }
 
     /**
-     * 缓存 Keystore 里的密钥句柄。
+     * 缓存 Keystore 里的密钥句柄（**可失效**，见 [withKey]）。
      *
      * Keystore getKey 每次都要走 binder/TEE（5-20ms），200 条批量解密时
      * 这块是主要耗时。SecretKey 只是对托管密钥的不透明句柄（私钥不出安全硬件），
      * 缓存它不会削弱安全性。
+     *
+     * ⚠ **不能**用 `by lazy`（BUG.md L-1095）：句柄是可失效资源，Keystore 服务异常或
+     * 用户在系统设置里清除凭据后，`Cipher.init` 会恒抛，而 `by lazy` 算一次即固定
+     * ⇒ 本进程内采集/解密永久失效（写入一律 null、面板变空），只能靠重启恢复。
+     * 改为可清引用 + 按需重建，语义等价于「构造失败不缓存」。
      */
-    private val cachedKey: SecretKey by lazy { createOrLoadKey() }
+    @Volatile
+    private var cachedKey: SecretKey? = null
+
+    /** 取密钥句柄（首次或失效后重建）；重建失败不缓存，下次调用再试 */
+    private fun key(): SecretKey = cachedKey ?: synchronized(this) {
+        cachedKey ?: createOrLoadKey().also { cachedKey = it }
+    }
+
+    /** 丢弃缓存的句柄：下次 [key] 会重新 getKey（不存在才生成） */
+    private fun invalidateKey() {
+        synchronized(this) { cachedKey = null }
+    }
+
+    /**
+     * 是否为「密钥本身失效」类异常（值得重建一次再试）。
+     *
+     * 只认这几类：句柄被系统作废 / 密钥不存在 / KeyStore 服务故障。**不含**
+     * `AEADBadTagException`（密文损坏或换机）—— 那类重试必然再失败，而批量解密
+     * 200 条时每次多跑一次 Keystore（5-20ms）纯属白烧。
+     */
+    private fun isKeyFailure(e: Throwable): Boolean {
+        var t: Throwable? = e
+        while (t != null) {
+            if (t is java.security.UnrecoverableKeyException) return true
+            if (t is java.security.KeyStoreException) return true
+            if (t is android.security.keystore.KeyPermanentlyInvalidatedException) return true
+            if (t is android.security.KeyStoreException) return true
+            t = t.cause
+        }
+        return false
+    }
+
+    /**
+     * 带一次失效重建的加解密：密钥类异常时清句柄、重建后重试一次。
+     *
+     * 第二次仍失败则原样抛出，由各入口的 `runCatching` 记日志并返回 null（行为与修复前一致）。
+     */
+    private fun <T> withKey(block: (SecretKey) -> T): T = try {
+        block(key())
+    } catch (e: Throwable) {
+        if (!isKeyFailure(e)) throw e
+        Diagnostics.w(TAG, "Keystore 密钥疑似失效，重建后重试: ${e.javaClass.simpleName}")
+        invalidateKey()
+        block(key())
+    }
 
     private fun createOrLoadKey(): SecretKey {
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -68,13 +117,15 @@ object ClipboardCrypto {
     /** 加密明文，返回 `base64(iv):base64(ciphertext)`；失败返回 null（调用方记日志但不外抛） */
     fun encrypt(plaintext: String): String? = runCatching {
         if (plaintext.isEmpty()) return null
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
-        val iv = cipher.iv
-        val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
-        val dataB64 = Base64.encodeToString(encrypted, Base64.NO_WRAP)
-        "$ivB64:$dataB64"
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, k)
+            val iv = cipher.iv
+            val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+            val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+            val dataB64 = Base64.encodeToString(encrypted, Base64.NO_WRAP)
+            "$ivB64:$dataB64"
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "加密失败: ${it.message}")
         null
@@ -87,9 +138,11 @@ object ClipboardCrypto {
         val iv = Base64.decode(stored.substring(0, sep), Base64.NO_WRAP)
         val data = Base64.decode(stored.substring(sep + 1), Base64.NO_WRAP)
         if (iv.size < 12) return null // GCM 标准 IV 为 12 字节
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
-        String(cipher.doFinal(data), Charsets.UTF_8)
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
+            String(cipher.doFinal(data), Charsets.UTF_8)
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "解密失败: ${it.message}")
         null
@@ -106,16 +159,18 @@ object ClipboardCrypto {
      */
     fun encryptBytes(plain: ByteArray): ByteArray? = runCatching {
         if (plain.isEmpty()) return null
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
-        val iv = cipher.iv
-        val ct = cipher.doFinal(plain)
-        // iv 由 Keystore 给出，GCM 下恒为 12 字节；仍按实际长度拼壳（与 decryptBytes 用同一常量校验）
-        val out = ByteArray(1 + iv.size + ct.size)
-        out[0] = BYTES_FORMAT_VERSION
-        System.arraycopy(iv, 0, out, 1, iv.size)
-        System.arraycopy(ct, 0, out, 1 + iv.size, ct.size)
-        out
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, k)
+            val iv = cipher.iv
+            val ct = cipher.doFinal(plain)
+            // iv 由 Keystore 给出，GCM 下恒为 12 字节；仍按实际长度拼壳（与 decryptBytes 用同一常量校验）
+            val out = ByteArray(1 + iv.size + ct.size)
+            out[0] = BYTES_FORMAT_VERSION
+            System.arraycopy(iv, 0, out, 1, iv.size)
+            System.arraycopy(ct, 0, out, 1 + iv.size, ct.size)
+            out
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "字节加密失败: ${it.message}")
         null
@@ -131,9 +186,11 @@ object ClipboardCrypto {
         if (stored.size <= 1 + GCM_IV_BYTES) return null
         if (stored[0] != BYTES_FORMAT_VERSION) return null
         val iv = stored.copyOfRange(1, 1 + GCM_IV_BYTES)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
-        cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "字节解密失败: ${it.message}")
         null
