@@ -351,6 +351,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnExpandCandidates.rotation = 0f
     }
 
+    /**
+     * 收起展开态并把栏高落回档位高度（[applyCandidateRows] 用 rowsSetting 而不是展开排数）。
+     *
+     * 刷新流程里 [applyCandidateRows] 已按「展开 N 排」落过高度；只翻转 [candidatesExpanded]
+     * 不改栏高 ⇒ 候选选完后会留一块空白的高栏（用户 2026-10-18 报告）。
+     */
+    private fun collapseCandidatesAndRelayout(
+        rowsSetting: Int,
+        candidateSp: Float,
+        pinyinSp: Float,
+        gapDp: Float,
+    ) {
+        if (!candidatesExpanded) return
+        collapseCandidates()
+        applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)
+        updateExpandButton(rowsSetting)
+    }
+
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
     private var currentRows = CandidateRows.SINGLE
 
@@ -2926,7 +2944,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             // 无内容 ⇒ 收起展开态（输入会话结束 / 清空都走这里；作者 2026-10-17 指定）
-            collapseCandidates()
+            // 并重落栏高：否则展开时落下的 3~4 排高度会留成一块空栏（选完候选后必然走到这里）
+            collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap)
             showPinyin(null)
             // ⚠ 必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
             // 若不复位，「清空后再打同一串拼音」会命中旧指纹而跳过重建。
@@ -2996,6 +3015,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         lastCandidates = result.candidates
+        // 候选已选完（拼写行还留着或刚被删空）：展开网格没有内容，收起并落回档位高度
+        if (result.candidates.isEmpty()) {
+            collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap)
+        }
         // 候选集落定后要重判一次三角：本函数开头那次用的是**上一帧**的候选列表，
         // 新的一次输入首帧会读到空表 ⇒ 三角要等第二次按键才出现（实测）。
         updateExpandButton(rowsSetting)

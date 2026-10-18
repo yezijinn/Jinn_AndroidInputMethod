@@ -5695,6 +5695,17 @@ class RecentFixesRegressionTest {
             src.indexOf("lastCandidates = result.candidates") <
                 src.lastIndexOf("updateExpandButton(rowsSetting)"),
         )
+        // 候选选完（空输入 / 候选集为空）必须收起并重落栏高：只翻标志会留一块空白高栏
+        val relayoutCalls = Regex("collapseCandidatesAndRelayout\\(").findAll(src).count()
+        assertTrue("收起后必须重落栏高（定义 + 空输入 + 候选集为空）", relayoutCalls >= 3)
+        assertTrue(
+            "空输入与候选集为空两处都要走重落栏高",
+            src.contains("collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap)"),
+        )
+        assertTrue(
+            "重落栏高要按档位而不是展开排数",
+            "collapseCandidates()\n        applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)" in src,
+        )
     }
 
     /**

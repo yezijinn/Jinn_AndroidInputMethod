@@ -335,7 +335,7 @@ class CandidateRowsTest {
         assertTrue("输入串每帧更新", "lastCandidatesInput = inputNow" in src)
         assertTrue(
             "无内容（会话结束）要收起",
-            Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,300}collapseCandidates\(\)""")
+            Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,400}collapseCandidates(?:AndRelayout)?\(""")
                 .containsMatchIn(src),
         )
         assertTrue(
