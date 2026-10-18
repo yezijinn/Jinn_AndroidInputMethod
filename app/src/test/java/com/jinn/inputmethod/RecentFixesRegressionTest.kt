@@ -5750,10 +5750,22 @@ class RecentFixesRegressionTest {
                 + "if \\(!candidatesExpanded\\) return\\s*settleCandidateHeight\\(\\)")
                 .containsMatchIn(src),
         )
-        // 只补**栏高**一个量：不淡入淡出、不插值三角、不加「过渡期跳过」守卫
+        // 只补**栏高**一个量：不淡入淡出、不加「过渡期跳过」守卫
         assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)
-        assertFalse("不得再插值三角角度", "btnExpandCandidates.rotation = startRot" in src)
         assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
+        // 三角朝向必须与栏高同起同落（2026-10-19）：以前是 `rotation = 0f / 180f` 直接赋值，
+        // 栏高在柔和地长、箭头却一帧翻过去 —— 用户说的「按钮动画突兀」正是这个错位。
+        // 现在由 tweenExpandButton 用同一条时长与曲线补间，且刷新期间不得再写角度（会打断动画）。
+        assertTrue("三角朝向必须补间", "private fun tweenExpandButton(expanded: Boolean)" in src)
+        assertTrue(
+            "三角与栏高必须同一条时长与曲线",
+            "ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)" in src,
+        )
+        assertTrue(
+            "补间期间刷新不得抢写角度",
+            "if (candidateExpandRotationAnimator == null) {" in src,
+        )
+        assertTrue("展开收起必须驱动三角补间", "tweenExpandButton(expand)" in src)
         // 时长按实测取 60ms（依据见常量处注释：110ms 实测 janky 83%，60ms 为 3.27%）
         assertTrue("补间时长取实测值 60ms", "CANDIDATE_TWEEN_MS = 60L" in src)
         assertTrue(

@@ -259,6 +259,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 存在期间 [applyCandidateRows] 不再写高度 —— 栏高只有一个写入者。
      */
     private var candidateHeightAnimator: ValueAnimator? = null
+    /** 三角朝向补间；与栏高补间同起同落（见 [tweenExpandButton]） */
+    private var candidateExpandRotationAnimator: ValueAnimator? = null
+    /** 在途补间的目标栏高（px）；落定时直达它，别停在中间高度 */
+    private var candidateTweenTarget = 0
 
     /** 展开排数缓存：补间期间 [expandedRowsFor] 读到的是中途高度，必须复用起跳前算好的值 */
     private var expandedRowsCached = 0
@@ -310,6 +314,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 内容已定，现在只补栏高（收起走完后 finishCandidateTween 才换单行）。
         // 传**目标档位**：展开=展开排数，收起=设置档位（单行/双行）。
         startCandidateHeightTween(if (expand) expandedRowsCached else prefs.candidateRows)
+        // 三角与栏高同起同落：同一条时长与曲线，避免「栏在长、箭头一帧翻过去」的错位
+        tweenExpandButton(expand)
     }
 
     /**
@@ -371,8 +377,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 p.height = h
                 // 只触发重排，不把同一个 LayoutParams 引用反复挂回去（`layoutParams = p` 会再走一遍
                 // 父链的 onSetLayoutParams 与脏标记；本帧只需要重排）。
-                // ⚠ 逐帧改变栏高必然触发 IME 窗口 resize + 宿主 adjustResize 重排，这是本补间的固有
-                // 成本（实测 110ms 时 janky 83%，故时长锁定 60ms），不因本行写法而改变。
+                // ⚠ 每次改栏高都要走一遍 IME 窗口 resize + 宿主 adjustResize 重排（真机实测中位
+                // 24~26ms）。已试过「只落中点+终点两级」，实测没有变好（中位 31ms、99% 150ms），
+                // 说明这笔钱是每次 resize 的固定成本，不是次数问题 ⇒ 维持逐帧。
                 candidateBar.requestLayout()
                 if (Diagnostics.KEY_TRACE) {
                     Diagnostics.v(
@@ -393,6 +400,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         })
         candidateHeightAnimator = animator
+        candidateTweenTarget = to
         animator.start()
     }
 
@@ -405,7 +413,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun settleCandidateHeight() {
         val animator = candidateHeightAnimator ?: return
         candidateHeightAnimator = null
+        // cancel 前先记下终点：补间可能停在中间高度（两段式更明显），落定必须直达终态，
+        // 否则栏高会卡在 from 与 to 之间，直到下一次刷新才纠正
+        val target = candidateTweenTarget
         animator.cancel()
+        if (target > 0 && candidateBar.height != target) {
+            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
+                p.height = target
+                candidateBar.requestLayout()
+            }
+        }
         candidateRenderExpanded = candidatesExpanded
         refreshCandidateBar()
     }
@@ -456,9 +473,50 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1 && wouldGrow &&
             layer == LAYER_LETTER && !hasActiveOverlay
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
-        // 文字固定 ▲、方向靠 rotation（展开 180°）
-        btnExpandCandidates.text = "▲"
-        btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        // 文字固定 ▲、方向靠 rotation（展开 180°）。
+        if (btnExpandCandidates.text != "▲") btnExpandCandidates.text = "▲"
+        // ⚠ 旋转动画在途时不在这里写角度：refreshCandidateBar 在补间期间会被多次调用，
+        // 写一次就把动画打断，看起来就是「三角啪地翻过去」——这正是用户说的突兀。
+        if (candidateExpandRotationAnimator == null) {
+            btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        }
+    }
+
+    /**
+     * 三角朝向与栏高同步补间。
+     *
+     * 以前是 `rotation = 0f / 180f` 直接赋值：栏高在柔和地长，三角却是一帧翻转，
+     * 两个量的时间曲线不一致，观感就是「按钮突兀」。这里用同一时长 + 同一条 Decelerate 曲线，
+     * 让它与栏高同起同落（栏高那侧受窗口 resize 影响会稍慢，但两者的曲线形状一致，
+     * 不会再出现「高还在长、箭头已经停」的错位）。
+     */
+    private fun tweenExpandButton(expanded: Boolean) {
+        val target = if (expanded) 180f else 0f
+        candidateExpandRotationAnimator?.cancel()
+        candidateExpandRotationAnimator = null
+        if (btnExpandCandidates.visibility != android.view.View.VISIBLE) {
+            btnExpandCandidates.rotation = target
+            return
+        }
+        val from = btnExpandCandidates.rotation
+        if (from == target || !ValueAnimator.areAnimatorsEnabled()) {
+            btnExpandCandidates.rotation = target
+            return
+        }
+        val animator = ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)
+        animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+        animator.addUpdateListener { a ->
+            btnExpandCandidates.rotation = a.animatedValue as Float
+        }
+        animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                if (candidateExpandRotationAnimator !== animation) return
+                candidateExpandRotationAnimator = null
+                btnExpandCandidates.rotation = target
+            }
+        })
+        candidateExpandRotationAnimator = animator
+        animator.start()
     }
 
     /** 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里 */
@@ -5029,6 +5087,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val animator = candidateHeightAnimator
         candidateHeightAnimator = null
         animator?.cancel()
+        // 三角朝向补间同理：先摘引用再 cancel（同一条 onAnimationEnd 守卫约定）
+        val rot = candidateExpandRotationAnimator
+        candidateExpandRotationAnimator = null
+        rot?.cancel()
         super.onDetachedFromWindow()
     }
 
@@ -5057,9 +5119,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 旧版 220ms 被否决正是因为它观感是「键盘卡了一下」。
          */
         // 60ms 是实测值：110ms 时补间跨越太多 vsync，每帧都要触发 IME 窗口 resize
-        // （栏高变 ⇒ 窗口高变 ⇒ 宿主 insets 重算 + 重新合成），实测 janky 83% / 中位 38ms；
-        // 60ms 下 janky 3.27% / 中位 7ms，与打字基线（7.7% / 12ms）相当。
-        // 超时长不是"更柔和"，而是"更卡"——这是本值的唯一依据，改动前先重测。
+        // （栏高变 ⇒ 窗口高变 ⇒ 宿主 insets 重算 + 重新合成），实测 janky 83% / 中位 38ms。
+        // ⚠ 更正（真机按到按钮后复测）：60ms 的 janky 并不是 3%，而是 **68~73% / 中位 24~27ms**；
+        // 且「不做补间、一帧硬切」的基线同样是 janky 50% / 中位 24ms ⇒ 这笔开销属于换高度本身，
+        // 不属补间。也试过「只落中点+终点两级」，实测更差（中位 31ms、99% 150ms）⇒ 是每次 resize
+        // 的固定成本，不是次数问题。结论：这个量没有「更流畅」的调法，别再靠改时长/阶数去试。
+        // 超时长不是"更柔和"，而是"多换几次高度"——改动前先按真机 gfxinfo 重测。
         const val CANDIDATE_TWEEN_MS = 60L
 
         const val TAG = "PinyinKeyboard"
