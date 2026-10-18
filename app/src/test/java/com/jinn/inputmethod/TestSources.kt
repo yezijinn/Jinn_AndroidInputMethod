@@ -325,6 +325,21 @@ internal object TestSources {
         return text.substring(from, b)
     }
 
+    /**
+     * 取 Python 顶层函数 [name] 的函数体（从 `def name(` 那一行起，到下一个**顶格** `def ` 或文件末尾）。
+     *
+     * 为什么不用 `substringAfter("def name")`：锚点缺失时它返回整串，后面接 `.contains(X)` 会被
+     * 文件别处满足 ⇒ 判据恒绿（BUG.md L-1145 的形态，补扫发现两处）。这里锚点缺失当场抛错；
+     * 窗口按 Python 的顶格 `def ` 收尾，函数内嵌的 `def `（带缩进）不算边界。
+     */
+    fun pyFunction(text: String, name: String): String {
+        val head = Regex("(?m)^def " + Regex.escape(name) + "\\(").find(text)
+            ?: error("Python 源码里找不到顶层函数 def $name( —— 改名/重构后请同步本用例")
+        val bodyStart = head.range.first
+        val next = Regex("(?m)^def \\w+\\(").find(text, bodyStart + 1)
+        return text.substring(bodyStart, next?.range?.first ?: text.length)
+    }
+
     /** 取 [marker] 所在的**整行**（含行内其余内容，不含换行符）；找不到锚点即抛错。 */
     fun lineOf(text: String, marker: String): String {
         val i = text.indexOf(marker)

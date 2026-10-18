@@ -1501,14 +1501,32 @@ class RecentFixesRegressionTest {
             PASSWORD_DIGIT_ORDER,
         )
         val code = codeOf("PinyinKeyboardView.kt")
-        val labelPath = code.substringAfter("passwordPad -> TEXT_PASSWORD_EXIT")
-        assertTrue("退出口必须加粗", labelPath.contains("btnDigit.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)"))
-        assertTrue("退出口必须用提示红（与候选栏「返回」同一令牌）",
-            labelPath.contains("skinToken(skin.hintRed, R.color.kb_key_hint_red)"))
-        assertTrue("退出后必须还原成常规字重（否则「数字」会一直粗着）",
-            labelPath.contains("btnDigit.setTypeface(android.graphics.Typeface.DEFAULT)"))
-        assertTrue("换肤路径也必须保持退出口的红色（否则换肤会把它刷回普通色）",
-            code.substringAfter("private fun applySkinToTexts").contains("if (passwordPad) btnDigit.setTextColor"))
+        // 用 window 取两端锚点之间的正文（两端都断言存在）而不是 substringAfter：
+        // 后者锚点缺失时返回整串，接 .contains(...) 会被别处满足 ⇒ 判据恒绿（BUG.md L-1145）
+        // 退出口的样式落在 `if (passwordPad) { … } else { … }` 里；文件里有多处同名 if，
+        // 且 codeOf 已剥注释 ⇒ 只能用代码本身作锚点。
+        // 起点取「加粗」那句自身（indexOf 定位、断言非负），终点取紧邻的 applyPunctuationLabel。
+        // 不用 TestSources.window：它返回两锚点**之间**的正文、不含起始锚点，而这里要判的就是起始那句。
+        val boldAt = code.indexOf("btnDigit.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)")
+        check(boldAt >= 0) { "源码里找不到退出口的加粗语句 —— 改名/重构后请同步本用例" }
+        val endAt = code.indexOf("applyPunctuationLabel(", boldAt)
+        check(endAt > boldAt) { "找不到 applyPunctuationLabel 作结束锚点 —— 结构变了？" }
+        val labelPath = code.substring(boldAt, endAt)
+
+        assertTrue("退出口必须加粗", "btnDigit.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)" in labelPath)
+        assertTrue(
+            "退出口必须用提示红（与候选栏「返回」同一令牌）",
+            "skinToken(skin.hintRed, R.color.kb_key_hint_red)" in labelPath,
+        )
+        assertTrue(
+            "退出后必须还原成常规字重（否则「数字」会一直粗着）",
+            "btnDigit.setTypeface(android.graphics.Typeface.DEFAULT)" in labelPath,
+        )
+        val skinBody = TestSources.blockAfter(code, "private fun applySkinToTexts")
+        assertTrue(
+            "换肤路径也必须保持退出口的红色（否则换肤会把它刷回普通色）",
+            "if (passwordPad) btnDigit.setTextColor" in skinBody,
+        )
     }
 
     @Test

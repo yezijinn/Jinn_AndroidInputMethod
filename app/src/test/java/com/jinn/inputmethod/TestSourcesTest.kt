@@ -252,7 +252,9 @@ class TestSourcesTest {
      */
     @Test
     fun 固定字符窗必须改用锚点助手() {
-        val chain = Regex("""substringAfter\([^\n;]*\n?[^\n;]*?\.\s*(substringBefore|take)\(""")
+        // 第四种形态 `.contains(...)` 同样危险：锚点缺失时 substringAfter 返回整串，
+        // 断言会被文件别处满足（本轮补扫在 BuildToolGatesTest / RecentFixesRegressionTest 各找到一处）
+        val chain = Regex("""substringAfter\([^\n;]*\n?[^\n;]*?\.\s*(substringBefore|take|contains)\(""")
         val braceWindow = Regex("""substringBefore\("\\n    \}"""")
         val offenders = (testDir().listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
             .filterNot { it.name == "TestSources.kt" || it.name == "TestSourcesTest.kt" }

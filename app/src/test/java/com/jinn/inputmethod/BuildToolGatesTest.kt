@@ -45,14 +45,16 @@ class BuildToolGatesTest {
         for (k in listOf("def write_bytes_atomically", ".tmp.", "os.replace(", "os.path.getsize")) {
             assertTrue("asset_io.py 的原子写实现里缺少 $k（BUG.md L-107）", k in assetIo)
         }
+        // 用 pyFunction 取函数体而不是 substringAfter：后者锚点缺失时返回整串，
+        // 再接 .contains(...) 会被文件别处的调用满足 ⇒ 判据恒绿（BUG.md L-1145）
         assertTrue(
             "写文本资产必须**调用**原子写（不能只在注释里提它，也不能退回 open(path, \"wb\").write）",
-            assetIo.substringAfter("def write_asset_text").contains("write_bytes_atomically(path, "),
+            "write_bytes_atomically(path, " in TestSources.pyFunction(assetIo, "write_asset_text"),
         )
         val build = source("build_dicts.py")
         assertTrue(
             "write_bytes 必须**调用**原子写（不能只在注释里提它，也不能退回 open(path, \"wb\").write）",
-            build.substringAfter("def write_bytes(path, data):").contains("write_bytes_atomically(path, "),
+            "write_bytes_atomically(path, " in TestSources.pyFunction(build, "write_bytes"),
         )
     }
 
