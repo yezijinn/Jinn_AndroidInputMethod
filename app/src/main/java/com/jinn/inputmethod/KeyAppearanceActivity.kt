@@ -300,7 +300,7 @@ class KeyAppearanceActivity : Activity() {
         switchCapsOneShot.isChecked = prefs.capsOneShot
         switchCapsOneShot.setOnCheckedChangeListener { _, checked ->
             prefs.capsOneShot = checked
-            Diagnostics.i(TAG, "大写仅一次: ${if (checked) "开启" else "关闭"}")
+            Diagnostics.i(TAG, "大写键不锁定: ${if (checked) "开启" else "关闭"}")
             JinnIme.onKeyAppearanceChanged()
         }
 
@@ -309,7 +309,7 @@ class KeyAppearanceActivity : Activity() {
         switchLongPressUpper.isChecked = prefs.longPressLowerUppercase
         switchLongPressUpper.setOnCheckedChangeListener { _, checked ->
             prefs.longPressLowerUppercase = checked
-            Diagnostics.i(TAG, "长按小写转大写: ${if (checked) "开启" else "关闭"}")
+            Diagnostics.i(TAG, "小写长按变大: ${if (checked) "开启" else "关闭"}")
             JinnIme.onKeyAppearanceChanged()
         }
 
@@ -680,11 +680,11 @@ class KeyAppearanceActivity : Activity() {
      */
     const val TEXT_LETTER_UPPER_TITLE = "拼音键盘大写"
 
-    /** 「大写仅一次」开关标题：点一次大写键只打一个大写字母，上屏后自动回小写 */
-    const val TEXT_CAPS_ONESHOT_TITLE = "大写仅一次"
+    /** 「大写键不锁定」开关标题：点一次大写键只打一个大写字母，上屏后自动回小写 */
+    const val TEXT_CAPS_ONESHOT_TITLE = "大写键不锁定"
 
-    /** 「长按小写转大写」开关标题：小写英文键盘上长按字母输出大写 */
-    const val TEXT_LONGPRESS_UPPER_TITLE = "长按小写转大写"
+    /** 「小写长按变大」开关标题：小写英文键盘上长按字母输出大写 */
+    const val TEXT_LONGPRESS_UPPER_TITLE = "小写长按变大"
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"

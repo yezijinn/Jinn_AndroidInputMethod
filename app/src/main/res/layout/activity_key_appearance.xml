@@ -371,8 +371,8 @@
 
             <!-- 输入与显示（2026-10-09 由设置页迁来；2026-10-16 起改为两列网格，每行两个各占一半）：
                  第 1 行 拼音键盘大写 / 键盘内显韵母；第 2 行 双拼候选全音 / 候选滑动；
-                 第 3 行 候选词的行数 / 界面明暗切换；
-                 第 4 行 大写仅一次 / 长按小写转大写（2026-10-17，两个默认关闭的输入行为开关）。
+                 第 3 行 大写键不锁定 / 小写长按变大（2026-10-17，两个默认关闭的输入行为开关）；
+                 第 4 行 候选词的行数 / 界面明暗切换（2026-10-18 两个下拉随之下移一行）。
                  文案全部由代码下发（strings.xml 默认禁改）。 -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -419,6 +419,36 @@
 
                 <Switch
                     android:id="@+id/switch_candidate_paging"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- 第 3 行 大写键不锁定 / 小写长按变大（2026-10-17 加入、2026-10-18 上移一行）；
+                 第 4 行 候选词的行数 / 界面明暗切换。
+                 文案全部由代码下发（strings.xml 默认禁改）。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Switch
+                    android:id="@+id/switch_caps_oneshot"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+
+                <Switch
+                    android:id="@+id/switch_longpress_lower_uppercase"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
@@ -476,34 +506,6 @@
                         android:layout_height="wrap_content"
                         android:spinnerMode="dropdown" />
                 </LinearLayout>
-            </LinearLayout>
-
-            <!-- 第 5 行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:baselineAligned="false"
-                android:orientation="horizontal">
-
-                <Switch
-                    android:id="@+id/switch_caps_oneshot"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
-
-                <Switch
-                    android:id="@+id/switch_longpress_lower_uppercase"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
             </LinearLayout>
 
             <LinearLayout

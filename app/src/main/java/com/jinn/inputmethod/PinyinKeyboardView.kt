@@ -1,8 +1,5 @@
 package com.jinn.inputmethod
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -19,7 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -246,19 +242,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
     private var lastCandidatesInput: String? = null
 
-    /** 展开 / 收起的高度补间（同时在跑只会有最后一个，见 [cancelCandidateAnimation]） */
-    private var candidateHeightAnimator: ValueAnimator? = null
-
     /**
-     * 过渡进行中：此间 [updateExpandButton] 不重置三角方向（动画自己按帧转）。
+     * 切换候选栏展开态（BUG.md L-1393）。
      *
-     * 另一个作用：挡住分页追加的 `post`（[maybeAppendMoreCandidates]）——它在展开态走整栏重建，
-     * 而重建会 [refreshCandidateBar]，后者一见动画在跑就取消动画 ⇒ 补间被一刀切断。
-     */
-    private var candidateAnimating = false
-
-    /**
-     * 切换候选栏展开态（BUG.md L-1393），走 180ms 过渡（高度补间 + 候选区淡入淡出 + 三角旋转）。
+     * 与「历史」面板同款：一次刷新把栏高、内容、三角一起落到目标态 —— 不做补间、不淡入淡出、
+     * 三角直接翻面。栏高由 [applyCandidateRows] 在这一次刷新里落位，中途没有第二帧。
      *
      * 展开后一屏最多 [CandidateRows.MAX_EXPANDED_ROWS] 排；排数按实际候选量算，并被可用高度夹取
      * （屏幕不够时静默按实际排数显示）。展开态横向固定为**跟手按列滑动**，纵向让给换行。
@@ -266,132 +254,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun toggleCandidateExpanded() {
         val expand = !candidatesExpanded
         Diagnostics.i(TAG, "候选栏展开态：$expand")
-        animateCandidateToggle(expand)
-    }
-
-    /**
-     * 断开进行中的过渡。
-     *
-     * ⚠ 必须先摘引用再 `cancel()`：`cancel()` 会**同步**回调 `onAnimationEnd`，收尾判据
-     * （[animateCandidateToggle] 里的 `candidateHeightAnimator !== animator`）靠「引用已不在」才挡得住，
-     * 否则半截动画会被当成正常结束、直接跳到终态。
-     */
-    private fun cancelCandidateAnimation() {
-        val animator = candidateHeightAnimator
-        candidateHeightAnimator = null
-        candidateAnimating = false
-        animator?.cancel()
-    }
-
-    /**
-     * 展开 / 收起过渡：高度补间 + 候选区轻微淡入淡出 + 三角旋转，220ms（Material 标准缓动）。
-     *
-     * 内容由 [refreshCandidateBar] 一次性渲染到目标态，再从**当前高度**补间到目标高度 ——
-     * 反向点击（过渡途中再点）因此天然从「此刻的高度」往回走，不需要记方向。
-     * 系统「移除动画」时直接跳变。
-     *
-     * ⚠ 过渡期间 [maybeAppendMoreCandidates] 会跳过（见其守卫）：分页追加在展开态走整栏重建，
-     * 而重建会 [refreshCandidateBar]，后者一见动画在跑就取消它 —— 补间只跑一帧就定格，
-     * 长候选列表的展开看起来「完全没动画」。
-     */
-    private fun animateCandidateToggle(expand: Boolean) {
-        val startH = candidateBar.height
-        cancelCandidateAnimation()
-        if (startH <= 0) { // 未布局：直接切
-            candidatesExpanded = expand
-            refreshCandidateBar()
-            return
-        }
         candidatesExpanded = expand
-        candidateAnimating = true
-        // 目标高度：先在**目标态**下刷新一次拿到它，再决定这一帧要不要真的换成目标内容。
         refreshCandidateBar()
-        if (candidatesExpanded != expand) { // 刷新途中被收起（候选集变化 / 会话结束）
-            candidateAnimating = false
-            return
-        }
-        // 刷新只改了 LayoutParams、尚未走 layout 遍，`height` 还是起点值 ⇒ 目标高度读 LayoutParams
-        val targetH = (candidateBar.layoutParams as? LinearLayout.LayoutParams)
-            ?.height?.takeIf { it > 0 } ?: startH
-        if (expand) {
-            // 展开：内容已是网格，高度从 startH 补起。栏一变高，网格就一行行露出来，
-            // 内容与高度天然同步（网格按 top 对齐，长高即露出）。
-            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.height = startH
-                candidateBar.layoutParams = it
-            }
-        } else {
-            // 收起：**不**用刚刷出来的单行内容 —— 那会让栏在第 1 帧就「清空再合盖」
-            // （实测收起到 40% 时下方一整块空白）。回到展开态内容，让它随栏高一起被裁掉，
-            // 单行内容留到 [finishCandidateToggle] 再换。
-            candidatesExpanded = true
-            refreshCandidateBar()
-            if (candidatesExpanded != expand) { // 这一轮又被中途收起
-                candidateAnimating = false
-                return
-            }
-            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.height = startH
-                candidateBar.layoutParams = it
-            }
-            // 真正的收起标志留到收尾：中途任何 refresh 都按「仍是展开态」渲染，高度由动画给。
-            candidatesExpanded = false
-        }
-        // 淡入淡出：收起时内容是被栏高裁掉的那一块，随它一起淡出才不显得「凭空少一块」。
-        val startAlpha = if (expand) 0.72f else 1f
-        val endAlpha = if (expand) 1f else 0.35f
-        candidateScroll.alpha = startAlpha
-        // 三角：文字固定 ▲，用 rotation 表示方向
-        val startRot = if (expand) 0f else 180f
-        val endRot = if (expand) 180f else 0f
-        btnExpandCandidates.rotation = startRot
-        if (!ValueAnimator.areAnimatorsEnabled() || startH == targetH) {
-            finishCandidateToggle(expand, targetH)
-            return
-        }
-        // 220ms（180ms 在 60fps 下只有 11 帧，起步收尾各占两三帧 ⇒ 观感是「跳一下」）；
-        // cubic-bezier(0.4, 0, 0.2, 1) 是 Material 标准缓动。时长不开放给用户调 ⇒ 不进资源。
-        val animator = ValueAnimator.ofInt(startH, targetH).setDuration(220L)
-        animator.interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f)
-        animator.addUpdateListener { a ->
-            val f = a.animatedFraction
-            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.height = a.animatedValue as Int
-                candidateBar.layoutParams = it
-            }
-            candidateScroll.alpha = startAlpha + (endAlpha - startAlpha) * f
-            btnExpandCandidates.rotation = startRot + (endRot - startRot) * f
-        }
-        animator.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator) {
-                if (candidateHeightAnimator !== animator) return // 已被取消 / 替换
-                finishCandidateToggle(expand, targetH)
-            }
-        })
-        candidateHeightAnimator = animator
-        animator.start()
-    }
-
-    /**
-     * 过渡收尾：落回目标高度、换上单行内容（收起）、恢复不透明与三角终态。
-     *
-     * 收起过程中 [candidatesExpanded] 一直保持 true（内容随栏高被裁掉，不提前清空），
-     * 到这里栏已经收拢，才换单行 —— 全程内容与高度同步，不会出现「先清空再合盖」。
-     */
-    private fun finishCandidateToggle(expand: Boolean, targetH: Int) {
-        // 先摘引用再刷：refreshCandidateBar 见到非空会再取消一次（会重进本函数）
-        candidateHeightAnimator = null
-        candidateAnimating = false
-        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let {
-            it.height = targetH
-            candidateBar.layoutParams = it
-        }
-        candidateScroll.alpha = 1f
-        if (!expand) {
-            candidatesExpanded = false
-            refreshCandidateBar()
-        }
-        btnExpandCandidates.rotation = if (expand) 180f else 0f
     }
 
     /**
@@ -429,9 +293,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun updateExpandButton(rowsSetting: Int) {
         val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
-        // 文字固定 ▲、方向靠 rotation（展开 180°）；过渡进行中不重置 —— 那一帧的方向归动画自己管
+        // 文字固定 ▲、方向靠 rotation（展开 180°）
         btnExpandCandidates.text = "▲"
-        if (!candidateAnimating) btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
     }
 
     /** 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里 */
@@ -478,14 +342,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里。
      *
-     * 过渡途中收起也要先断动画（否则旧动画的收尾会把高度改回目标值），并把淡出残留复位。
+     * 只翻状态：栏高与内容由下一次 [refreshCandidateBar] 一次性落下，与展开同款、无过渡。
+     * 三角方向当场复位 —— 功能面板 / 符号层那几条早退分支走不到 [updateExpandButton]。
      */
     private fun collapseCandidates() {
-        cancelCandidateAnimation()
-        candidateScroll.alpha = 1f
-        btnExpandCandidates.rotation = 0f
         if (!candidatesExpanded) return
         candidatesExpanded = false
+        btnExpandCandidates.rotation = 0f
     }
 
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
@@ -2905,11 +2768,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun maybeAppendMoreCandidates(force: Boolean = false) {
         // 容器被非候选形态接管过（[clearCandidateList] 会清掉 args、[resetCandidateRender] 会置空指纹）：
         // 此时绝不能再往容器尾部追加候选视图 —— 那会把候选插到功能面板 / 符号 / 密码条上。
-        // 展开后分页追加的 post（[maybeAppendMoreCandidates]）在展开态走整栏重建 ⇒ 会 [refreshCandidateBar]，
-        // 而后者一见动画在跑就取消它 —— 补间因此只跑 1 帧就定格，长候选列表看起来「没动画」。
-        // 过渡期间直接跳过追加：展开态本来已把窗口放大到「够铺满可见网格」（见 [refreshCandidateBar]），
-        // 这一次追加纯属多余；收起态内容即将换行，也不需要。
-        if (candidateAnimating) return
         val args = candidateRenderArgs ?: return
         if (candidateRenderKey == null) return
         if (candidateRenderLimit >= args.items.size) return
@@ -2961,14 +2819,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshCandidateBar() {
-        // 过渡期间被别的路径重刷（候选集变化 / 切层 / 面板开合）：先断动画，否则 applyCandidateRows
-        // 落下的目标高度会被动画器的下一帧改回去（半截高度 + 已切内容）
-        if (candidateHeightAnimator != null) cancelCandidateAnimation()
-        // 无动画的常规刷新一律回到不透明：收起过渡会把 alpha 留在 0.35
-        if (!candidateAnimating) candidateScroll.alpha = 1f
-        // 三角方向同上：被中途取消的动画会把 rotation 冻在半路（如 90°），
-        // 而下面符号层 / 密码层分支会**早退**、走不到 [updateExpandButton] —— 这里先兜住。
-        if (!candidateAnimating) btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        // 无过渡：每次刷新都按当前状态把三角方向对齐即可
+        btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
         // `layer != LAYER_LETTER`，与 composing 长度无关。
@@ -3135,6 +2987,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         lastCandidates = result.candidates
+        // 候选集落定后要重判一次三角：本函数开头那次用的是**上一帧**的候选列表，
+        // 新的一次输入首帧会读到空表 ⇒ 三角要等第二次按键才出现（实测）。
+        updateExpandButton(rowsSetting)
         // 拼音行默认显示用户按下的键（input），不是查询串（queryInput）。
         // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
         // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
@@ -4879,9 +4734,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 待揭示的面板请求同理（BUG.md L-1320）：键盘视图被换掉后还去揭示，操作的是旧树，
         // 而且会把 contentArea 的高度改到没人看的视图上
         cancelPendingPanelReveal()
-        // 展开 / 收起的补间同理：视图都摘下来了还逐帧改旧树的栏高，纯属空跑；
-        // 撤掉也顺带让旧实例不再被动画器多持有一会儿。
-        cancelCandidateAnimation()
         super.onDetachedFromWindow()
     }
 

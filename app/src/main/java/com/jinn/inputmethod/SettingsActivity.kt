@@ -59,13 +59,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var checkComposing: CheckBox
     private lateinit var btnGrant: Button
     private lateinit var btnEnable: Button
-
-    /**
-     * 「启用本输入法 / 改默认输入法」两键的当前文案（null = 还没刷新过）。
-     *
-     * 只在状态真的变了时才改视图与写日志：`onResume` 每回来一次都调，重复改会白重绘。
-     */
-    private var imeStateApplied: Pair<String, String>? = null
     private lateinit var btnPick: Button
     private lateinit var btnSave: Button
     private lateinit var textTest: TextView
@@ -467,8 +460,6 @@ class SettingsActivity : ComponentActivity() {
             val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
             manager?.showInputMethodPicker()
         }
-        // 首次进页面就按系统实际状态渲染一次（新装用户两键都还该是「去启用 / 去切换」）
-        refreshImeState()
         btnSave.setOnClickListener { saveAndRestart() }
 
         // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
@@ -553,9 +544,6 @@ class SettingsActivity : ComponentActivity() {
 
         // 麦克风状态同理：从系统设置授权后返回，页面不能还显示「未授权」
         if (::textMicState.isInitialized) refreshMicState()
-        // 输入法启用 / 默认态：首次使用者的必经两步（去系统设置勾选 → 切默认）都在别的页面完成，
-        // 返回本页若毫无变化，用户无法确认自己有没有做对（2026-10-18 首次使用者重放）
-        if (::btnEnable.isInitialized) refreshImeState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
         // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
@@ -1036,37 +1024,6 @@ class SettingsActivity : ComponentActivity() {
                 )
             )
         }.onFailure { Diagnostics.w(TAG, "打开应用详情页失败: ${it.message}") }
-    }
-
-    /**
-     * 刷新「启用本输入法 / 改默认输入法」两个按钮的文案。
-     *
-     * 首次使用者的头两步都在**系统设置**里完成（勾选输入法 → 选默认），返回本页若毫无变化，
-     * 用户无法确认自己做对没有，只会重复点按钮或以为坏了。判据直接读系统值，不缓存偏好。
-     */
-    private fun refreshImeState() {
-        // 读系统值失败时按「未启用 / 未默认」渲染，但必须留痕 —— 静默吞成 false 会让界面显示
-        // 错误状态，用户照着提示重复操作也做不成（项目口径：runCatching 必须带 onFailure 留痕）
-        val enabled = runCatching { isImeEnabled(this) }.getOrElse {
-            Diagnostics.w(TAG, "读输入法启用状态失败，按未启用渲染: ${it.javaClass.simpleName}")
-            false
-        }
-        val isDefault = runCatching { isImeDefault(this) }.getOrElse {
-            Diagnostics.w(TAG, "读默认输入法失败，按未默认渲染: ${it.javaClass.simpleName}")
-            false
-        }
-        val enableText = imeEnableLabel(enabled)
-        val pickText = imePickLabel(isDefault)
-        val state = enableText to pickText
-        if (imeStateApplied == state) return
-        imeStateApplied = state
-        btnEnable.text = enableText
-        // 不置灰：该键只是「跳系统设置」，已启用后仍可能要进去停用别的输入法 / 改顺序
-        btnEnable.isEnabled = true
-        btnPick.text = pickText
-        // 已是默认时再弹选择器没有意义，置灰
-        btnPick.isEnabled = !isDefault
-        Diagnostics.i(TAG, "输入法状态: 已启用=$enabled 已设为默认=$isDefault")
     }
 
     private fun refreshMicState() {
@@ -1833,56 +1790,6 @@ class SettingsActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "SettingsActivity"
-
-        /**
-         * 本输入法是否已在系统里**启用**（设置 → 系统 → 语言与输入法 → 已启用的输入法）。
-         *
-         * 判据走 `Settings.Secure.ENABLED_INPUT_METHODS`（系统维护的权威列表），
-         * 不读本方偏好 —— 用户可能在系统设置里停用，本应用无从得知。
-         * 用 `InputMethodInfo` 解析而不是裸字符串比较：列表项形如 `包名/类名`，
-         * 直接 `contains(packageName)` 会被别的输入法的包名子串误命中。
-         */
-        internal fun isImeEnabled(context: android.content.Context): Boolean {
-            val list = android.provider.Settings.Secure.getString(
-                context.contentResolver,
-                android.provider.Settings.Secure.ENABLED_INPUT_METHODS,
-            ).orEmpty()
-            if (list.isEmpty()) return false
-            val mgr = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as? android.view.inputmethod.InputMethodManager ?: return false
-            return mgr.enabledInputMethodList.any { it.packageName == context.packageName }
-        }
-
-        /**
-         * 本输入法是否为**当前默认**输入法。
-         *
-         * 判据用 `DEFAULT_INPUT_METHOD`（形如 `包名/类名`）与 `InputMethodInfo` 的 id 比对，
-         * 同样不用子串匹配。
-         */
-        internal fun isImeDefault(context: android.content.Context): Boolean {
-            val cur = android.provider.Settings.Secure.getString(
-                context.contentResolver,
-                android.provider.Settings.Secure.DEFAULT_INPUT_METHOD,
-            ).orEmpty()
-            if (cur.isEmpty()) return false
-            val mgr = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as? android.view.inputmethod.InputMethodManager ?: return false
-            return mgr.enabledInputMethodList.any {
-                it.packageName == context.packageName && it.id == cur
-            }
-        }
-
-        /**
-         * 「启用本输入法」键的文案：未启用 = 去启用；已启用 = 已启用（键同时置灰）。
-         *
-         * 纯函数：文案与判据分开，便于单测钉住「两种状态各说各的」。
-         */
-        internal fun imeEnableLabel(enabled: Boolean): String =
-            if (enabled) "已启用 · 再进系统设置" else "启用本输入法"
-
-        /** 「改默认输入法」键的文案：已是默认 = 已默认；否则 = 去切换 */
-        internal fun imePickLabel(isDefault: Boolean): String =
-            if (isDefault) "已是默认输入法" else "改默认输入法"
 
         /**
          * 进程级「待提示结果」。

@@ -4717,7 +4717,7 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 「大写仅一次」与「长按小写转大写」（2026-10-17）：两个默认关闭的输入行为开关。
+     * 「大写键不锁定」与「小写长按变大」（2026-10-17）：两个默认关闭的输入行为开关。
      *
      * 前者：点一次大写键只锁一个大写字母，上屏即回落（英文 / 中文 caps / 搜索三条上屏分支都要复位）；
      * 开关关 = 历史行为（持续锁定到大写键再点一次）。后者：字母层 + 英文 + 非大写锁定时长按字母
@@ -4726,14 +4726,22 @@ class RecentFixesRegressionTest {
     @Test
     fun `大写一次性与长按转大写`() {
         val view = codeOf("PinyinKeyboardView.kt")
+        val page = codeOf("KeyAppearanceActivity.kt")
         val layout = TestSources.rawSource(
             "src/main/res/layout/activity_key_appearance.xml",
             "app/src/main/res/layout/activity_key_appearance.xml",
         )
         assertTrue("大写一次性状态字段丢失", "capsOneShotActive" in view)
         assertTrue("长按转大写没接进触摸处理", "longPressLowerUppercase" in view)
-        assertTrue("外观页缺「大写仅一次」开关", "switch_caps_oneshot" in layout)
-        assertTrue("外观页缺「长按小写转大写」开关", "switch_longpress_lower_uppercase" in layout)
+        assertTrue("外观页缺「大写键不锁定」开关", "switch_caps_oneshot" in layout)
+        assertTrue("外观页缺「小写长按变大」开关", "switch_longpress_lower_uppercase" in layout)
+        assertTrue("开关标题应写「大写键不锁定」", "\"大写键不锁定\"" in page)
+        assertTrue("开关标题应写「小写长按变大」", "\"小写长按变大\"" in page)
+        // 顺序：两个开关在「候选词的行数 / 界面明暗切换」两个下拉之前（2026-10-18 上移一行）
+        assertTrue(
+            "开关必须排在下拉控件之前",
+            layout.indexOf("switch_caps_oneshot") < layout.indexOf("spinner_candidate_rows"),
+        )
         assertTrue("大写一次性没有上屏后的复位入口", "releaseCapsOneShot()" in view)
         val prefs = codeOf("Prefs.kt")
         assertTrue(
@@ -5655,30 +5663,37 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 候选栏展开 / 收起的过渡（高度补间 + 淡入淡出 + 三角旋转）。
+     * 候选栏展开 / 收起与「历史」面板同款：一次到位，不做补间。
      *
-     * 原先是改完布尔直接重刷：栏高与三角一帧跳变，展开的候选像「凭空出现」。几件事必须同时在：
-     * 补间从**当前高度**起算（反向点击 / 中途打断才不会跳）、有淡入淡出遮住内容切换、三角由 rotation
-     * 转、系统「移除动画」时要能直接跳变。收尾收敛到一个入口，取消动画时不得再走它。
+     * 曾是 220ms 高度补间 + 淡入淡出 + 三角旋转，为它长出一串守卫（过渡期跳过分页追加、取消补间、
+     * detach 撤动画）。作者 2026-10-18 指定回退成硬切：状态翻完，由同一次刷新落栏高与内容。
      */
     @Test
-    fun `候选展开收起必须有过渡动画`() {
+    fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
-        assertTrue("高度补间从当前高度到目标高度", "ValueAnimator.ofInt(startH, targetH)" in src)
-        assertTrue("时长 220ms（180ms 只有 11 帧，观感是跳一下）", ".setDuration(220L)" in src)
-        assertTrue("Material 标准缓动", "PathInterpolator(0.4f" in src)
-        assertTrue("系统关闭动画时直接跳变", "areAnimatorsEnabled" in src)
-        assertTrue("候选区要淡入淡出", "candidateScroll.alpha" in src)
-        assertTrue("收尾收敛到一个入口", "finishCandidateToggle" in src)
-        // 分页追加在展开态走整栏重建 ⇒ 会 refreshCandidateBar，后者一见动画在跑就取消它，
-        // 补间只跑一帧就定格（长候选列表「完全没动画」）⇒ 过渡期间必须跳过追加。
-        assertTrue("过渡期间不得再做分页追加", "if (candidateAnimating) return" in src)
-        // 被中途取消的动画会把三角冻在半路，而符号层 / 密码层分支会早退、走不到 updateExpandButton
-        assertTrue("层切换早退前必须复位三角", "btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f" in src)
-        // cancel() 会同步回调 onAnimationEnd ⇒ 旧动画的收尾必须自我否掉，否则半截动画被当成正常结束
         assertTrue(
-            "旧动画的收尾必须自我否掉",
-            "if (candidateHeightAnimator !== animator) return" in src,
+            "状态翻完后由同一次刷新落栏高与内容",
+            "candidatesExpanded = expand\n        refreshCandidateBar()" in src,
+        )
+        assertTrue(
+            "收起只翻状态，高度与内容交给随后的刷新",
+            "private fun collapseCandidates() {\n" +
+                "        if (!candidatesExpanded) return\n" +
+                "        candidatesExpanded = false\n" in src,
+        )
+        assertFalse("不得再有高度补间", "ValueAnimator" in src)
+        assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
+        assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)
+        // 三角方向仍由刷新统一对齐：符号层 / 密码层分支会早退，走不到 updateExpandButton
+        assertTrue(
+            "层切换早退前必须复位三角",
+            "btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f" in src,
+        )
+        // 三角显隐读 lastCandidates：首帧那次调用还在候选集落定之前（读到空表）⇒ 晚一次按键才出现
+        assertTrue(
+            "候选集落定后必须重判三角",
+            src.indexOf("lastCandidates = result.candidates") <
+                src.lastIndexOf("updateExpandButton(rowsSetting)"),
         )
     }
 
@@ -5730,30 +5745,29 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 首次使用者重放（2026-10-18）：设置页必须如实显示「输入法已启用 / 已是默认」。
+     * 设置页两键用 layout 的静态文案（2026-10-18 回退）。
      *
-     * 首次使用的头两步都在系统设置里完成（勾选输入法 → 选默认），返回本页若毫无变化，
-     * 用户无法确认自己做对没有，只会重复点按钮或以为坏了。判据分三层：
-     * ① `onResume` 与 `onCreate` 都要刷新（从系统设置返回是主路径）；
-     * ② 判据读系统的 `enabledInputMethodList` / `DEFAULT_INPUT_METHOD`，不读本方偏好
-     *    （用户可能在系统侧停用，本应用无从得知）；
-     * ③ 文案按状态分档，且不得用裸子串匹配包名（会被别的输入法误命中）。
+     * 曾按系统状态改成「已启用 · 再进系统设置 / 已是默认输入法」并把切换键置灰；
+     * 作者要求改回静态文本：页面不读系统状态，也不改键的可用性。
      */
     @Test
-    fun `设置页必须显示输入法启用与默认状态`() {
+    fun `设置页两键必须用静态文案`() {
         val src = codeOf("SettingsActivity.kt")
-        assertTrue("onResume 必须刷新输入法状态", "if (::btnEnable.isInitialized) refreshImeState()" in src)
-        assertTrue("onCreate 首次进入也必须刷新一次", "refreshImeState()\n" in src)
-        assertTrue("必须有刷新入口", "private fun refreshImeState()" in src)
-        // 判据来源：系统的已启用列表 / 默认输入法，而非本方偏好
-        assertTrue("判据取系统的已启用列表", "enabledInputMethodList" in src)
-        assertTrue("判据取系统的默认输入法", "Settings.Secure.DEFAULT_INPUT_METHOD" in src)
-        assertTrue("启用判据按包名精确比对", "it.packageName == context.packageName" in src)
-        // 文案按状态分档：纯函数便于钉住两种状态各说各的
-        assertTrue("启用文案分档", "internal fun imeEnableLabel(enabled: Boolean)" in src)
-        assertTrue("默认文案分档", "internal fun imePickLabel(isDefault: Boolean)" in src)
-        // 已是默认时切换键置灰（点了也只会重弹同一个选择器）
-        assertTrue("已是默认时切换键置灰", "btnPick.isEnabled = !isDefault" in src)
+        assertFalse("不得再按系统状态改文案", "refreshImeState" in src)
+        assertFalse("不得再读已启用列表", "enabledInputMethodList" in src)
+        assertFalse("不得再读默认输入法", "Settings.Secure.DEFAULT_INPUT_METHOD" in src)
+        assertFalse("不得再把切换键置灰", "btnPick.isEnabled" in src)
+        // 上面的反向断言只保证「没退回动态文案」，还得保证两键**真的接上了入口** ——
+        // 只删掉监听器的话四条反向断言全绿，而两个键变成点了没反应的死键
+        // （首次使用者的必经两步：启用 → 设默认）。
+        assertTrue(
+            "「启用本输入法」必须跳系统输入法设置",
+            "btnEnable.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }" in src,
+        )
+        assertTrue("「改默认输入法」必须拉起切换器", "manager?.showInputMethodPicker()" in src)
+        // 文案来自布局静态字符串，代码里不得再下发（否则与 layout 取值各说各话）
+        assertFalse("启用键文案不得由代码下发", "btnEnable.text =" in src)
+        assertFalse("切换键文案不得由代码下发", "btnPick.text =" in src)
     }
 
     /**
