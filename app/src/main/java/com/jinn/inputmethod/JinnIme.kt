@@ -1283,7 +1283,9 @@ class JinnIme : InputMethodService() {
                 Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
                 // 同批剩下的几张也属于那个旧输入框：一并丢掉，免得它们等下一次 flush 落到新框里
                 val dropped = GalleryInsert.clearPending()
-                if (dropped > 0) Diagnostics.w(TAG, "图库快贴：同批剩余 $dropped 张一并丢弃")
+                // 这一张也从未提交给宿主：不留明文（下面 clearPending 只清队列里剩下的）
+            picked.file.delete()
+            if (dropped > 0) Diagnostics.w(TAG, "图库快贴：同批剩余 $dropped 张一并丢弃")
                 toast(TEXT_GALLERY_FIELD_CHANGED)
                 return
             }
@@ -1311,8 +1313,9 @@ class JinnIme : InputMethodService() {
                 }
                 GalleryInsert.InsertResult.Rejected -> {
                     Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
-                    // 宿主没收下：这一张从未交给它，留着只会变成明文残留
-                    picked.file.delete()
+                    // ⚠ 这里不删文件：`commitContent` 的返回值不可信（有「返回 true 却毫无效果」
+                    // 的宿主，也有异步读取 URI 的宿主），立即删会让对方读到裂图。
+                    // 交给 cache 的张数上限 / 超时淘汰（[GalleryInsert.trimCache]）回收。
                 }
                 // 本地 URI 构造失败：与宿主拒收分开，沿用「图片已失效」提示（BUG.md L-1074）
                 GalleryInsert.InsertResult.UriFailed -> {

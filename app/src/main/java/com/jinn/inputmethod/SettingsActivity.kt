@@ -1281,7 +1281,8 @@ class SettingsActivity : ComponentActivity() {
         val size = runCatching {
             contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
         }.getOrNull()
-        if (size == null || size > 0) return
+        // SAF 的 AFD 长度常是 UNKNOWN_LENGTH(-1)：未知长度一律不删（留空壳远优于删掉用户的旧备份）
+        if (size != 0L) return
         runCatching { contentResolver.delete(uri, null, null) }
             .onFailure { Diagnostics.w(TAG, "删除空壳目标失败: ${it.javaClass.simpleName}") }
     }

@@ -102,11 +102,12 @@
             android:exported="false"
             android:label="@string/favorite_title" />
 
-        <!-- 键盘外观页：圆角与间隙，从设置页「按钮圆角间隙」进入 -->
+        <!-- 用户词库页：选择台账的查看 / 合并 / 导出 / 导入（默认关闭，需手输大写 OK 开启） -->
         <activity
             android:name=".UserDictActivity"
             android:exported="false" />
 
+        <!-- 键盘外观页：圆角与间隙，从设置页「按钮圆角间隙」进入 -->
         <activity
             android:name=".KeyAppearanceActivity"
             android:exported="false"

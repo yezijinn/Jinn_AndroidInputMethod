@@ -291,7 +291,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 展开三角的显隐与朝向：仅单行档 + 有候选时可见 */
     private fun updateExpandButton(rowsSetting: Int) {
-        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1
+        // 与「展开态在这些形态下会被强制收起」同一判据：否则数字层会挂一个点了没反应的 ▲
+        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1 &&
+            layer == LAYER_LETTER && !hasActiveOverlay
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         // 文字固定 ▲、方向靠 rotation（展开 180°）
         btnExpandCandidates.text = "▲"

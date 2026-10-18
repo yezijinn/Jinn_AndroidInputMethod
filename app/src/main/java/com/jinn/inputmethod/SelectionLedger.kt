@@ -94,7 +94,8 @@ object SelectionLedger {
     /** 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常） */
     fun flush() {
         val file = target ?: return
-        runCatching { writer.submit { drainTo(file) }.get() }
+        // 带超时：队列里可能压着一次上万行的批量导入，主线程不该无限等
+        runCatching { writer.submit { drainTo(file) }.get(FLUSH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) }
             .onFailure { Diagnostics.w(TAG, "台账 flush 失败: ${it.javaClass.simpleName}") }
     }
 
@@ -106,9 +107,17 @@ object SelectionLedger {
     fun deleteFile(context: Context): Boolean {
         enabled = false
         flush()
-        // 摘掉绑定：删除之后任何排队的 drain 都会在代际守卫处放弃，不会把文件重建出来
-        target = null
-        return deleteQuietly(File(context.filesDir, FILE_NAME))
+        val file = File(context.filesDir, FILE_NAME)
+        val ok = deleteQuietly(file)
+        if (ok) {
+            // 摘掉绑定：删除之后任何排队的 drain 都会在代际守卫处放弃，不会把文件重建出来
+            target = null
+        } else {
+            // 删除失败：恢复原状（enabled 仍是 false，由调用方决定是否重新开）。
+            // 这里若也置 target = null，调用方写回 pref=true 之后记录会静默全丢（2026-10-19 审查）
+            target = file
+        }
+        return ok
     }
 
     /** 删除单文件（JVM 可测）：文件本来就不存在也算成功 */
@@ -192,6 +201,9 @@ object SelectionLedger {
         TSV("制表符表格", "tsv", "text/tab-separated-values"),
         TXT("纯词表", "txt", "text/plain"),
     }
+
+    /** flush 的等待上限（毫秒）：宁可丢最后几行，也不让主线程卡在批量写盘上 */
+    private const val FLUSH_TIMEOUT_MS = 2_000L
 
     /** 单次导入上限：防手滑选到巨型文件把内存与文件一起撑爆 */
     internal const val IMPORT_MAX_LINES = 50_000

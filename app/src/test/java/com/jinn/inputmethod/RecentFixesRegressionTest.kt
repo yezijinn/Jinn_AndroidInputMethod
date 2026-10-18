@@ -5682,6 +5682,40 @@ class RecentFixesRegressionTest {
     }
 
     @Test
+    fun `审查修复_生命周期与形态判据一致`() {
+        val page = codeOf("UserDictActivity.kt")
+        assertTrue(
+            "后台加载提交必须带存活判据（shutdownNow 后提交会抛异常并终止进程）",
+            "if (isFinishing || isDestroyed) return" in page &&
+                "runCatching { io.execute { loadOnIo() } }" in page,
+        )
+        assertTrue(
+            "关闭失败要重新绑定台账（否则偏好显示开启而记录全丢）",
+            "SelectionLedger.init(applicationContext, true)" in page,
+        )
+        assertTrue("导出格式要能跨重建恢复", "KEY_PENDING_FORMAT" in page && "onSaveInstanceState" in page)
+
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "三角显隐与「展开态在这些形态下会被收起」用同一判据（否则数字层挂着点不动的 ▲）",
+            "layer == LAYER_LETTER && !hasActiveOverlay" in view,
+        )
+
+        val settings = codeOf("SettingsActivity.kt")
+        assertTrue(
+            "空壳删除只在确认 0 字节时执行（SAF 的 AFD 长度常是 -1）",
+            "if (size != 0L) return" in settings,
+        )
+
+        val ledger = codeOf("SelectionLedger.kt")
+        assertTrue("flush 必须带超时（队列里可能压着上万行）", "FLUSH_TIMEOUT_MS" in ledger)
+        assertTrue(
+            "台账删除失败要保留绑定（调用方写回 pref 后仍能记录）",
+            "target = file" in ledger,
+        )
+    }
+
+    @Test
     fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue(

@@ -33,6 +33,9 @@ import java.util.concurrent.Executors
  * **默认关闭**：进入本页时若未开启，先弹说明框，必须手输大写 `OK` 才开启；
  * 关闭则先提示导出，再二次确认（同样输入 `OK`），确认后删除 `user_picks.txt`。
  */
+/** 本页日志标识（伴生对象是 private，日志用固定串） */
+private const val TAG_NAME = "UserDictActivity"
+
 class UserDictActivity : ComponentActivity() {
 
     /** 定时换色：到点在页面存活期间重建一次（与设置页其余页面同款） */
@@ -90,6 +93,12 @@ class UserDictActivity : ComponentActivity() {
 
     private val prefs by lazy { Prefs(this) }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // 选位置期间若发生重建（旋转 / 定时换肤），回调里的 format 不能丢，否则导出静默不发生
+        pendingFormat?.let { outState.putString(KEY_PENDING_FORMAT, it.name) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_user_dict)
@@ -124,6 +133,9 @@ class UserDictActivity : ComponentActivity() {
                 .onFailure { toast(TEXT_NO_PICKER) }
         }
         btnClose.setOnClickListener { confirmCloseStepOne() }
+
+        pendingFormat = savedInstanceState?.getString(KEY_PENDING_FORMAT)
+            ?.let { runCatching { SelectionLedger.ExportFormat.valueOf(it) }.getOrNull() }
 
         // 台账只在 PinyinEngine 初始化时绑定；用户可能先开设置页（从未唤起键盘）就导入 ——
         // 不在这里补一次，record/flush 会因 target==null 静默丢弃，而页面还回执「已追加」。
@@ -201,7 +213,11 @@ class UserDictActivity : ComponentActivity() {
                 // 先落开关再删文件：反过来的话，进程内任何一次重读偏好都会把记录重新打开
                 prefs.userDictEnabled = false
                 val ok = SelectionLedger.deleteFile(this)
-                if (!ok) prefs.userDictEnabled = true
+                if (!ok) {
+                    // 删除失败：重新绑定并打开记录，否则偏好显示「已开启」而记录全丢
+                    prefs.userDictEnabled = true
+                    SelectionLedger.init(applicationContext, true)
+                }
                 dialog.dismiss()
                 toast(if (ok) TEXT_CLOSED else TEXT_CLOSE_FAILED)
                 if (ok) finish()
@@ -273,20 +289,26 @@ class UserDictActivity : ComponentActivity() {
     // ── 词库视图（后台读盘 → 主线程渲染）────────────────────────
 
     private fun loadAsync() {
-        io.execute {
-            val picks = SelectionLedger.readAll(applicationContext)
-            val merged = SelectionLedger.aggregate(picks)
-            val list = merged.entries
-                .map { Row(it.key.first, it.key.second, it.value) }
-                .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
-            val file = File(filesDir, SelectionLedger.FILE_NAME)
-            val kb = if (file.isFile) (file.length() + 1023) / 1024 else 0L
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                rows = list
-                renderSummary(picks.size, merged.size, kb)
-                bindList()
-            }
+        // onDestroy 已 shutdownNow：此后（含后台线程回调里）再提交会抛 RejectedExecutionException，
+        // 而工作线程上的未捕获异常会直接终止进程 —— 这里必须自守
+        if (isFinishing || isDestroyed) return
+        val submitted = runCatching { io.execute { loadOnIo() } }.isSuccess
+        if (!submitted) Diagnostics.w(TAG_NAME, "台账加载提交失败（页面已销毁）")
+    }
+
+    private fun loadOnIo() {
+        val picks = SelectionLedger.readAll(applicationContext)
+        val merged = SelectionLedger.aggregate(picks)
+        val list = merged.entries
+            .map { Row(it.key.first, it.key.second, it.value) }
+            .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
+        val file = File(filesDir, SelectionLedger.FILE_NAME)
+        val kb = if (file.isFile) (file.length() + 1023) / 1024 else 0L
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            rows = list
+            renderSummary(picks.size, merged.size, kb)
+            bindList()
         }
     }
 
@@ -509,6 +531,7 @@ class UserDictActivity : ComponentActivity() {
 · 默认关闭；关闭即删文件"""
 
         const val IMPORT_MAX_BYTES = 8 * 1024 * 1024
+        const val KEY_PENDING_FORMAT = "pending_format"
     }
 }
 

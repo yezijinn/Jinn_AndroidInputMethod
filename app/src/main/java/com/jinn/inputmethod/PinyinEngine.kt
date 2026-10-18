@@ -2329,7 +2329,8 @@ object PinyinEngine {
             for (w in completionWords) syllableCounts.getOrPut(w) { syllables.size }
             result.addAll(asList)
             // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）。
-            // 与补全词同组登记：它们是「末尾残码还没敲完」的联想字，不该被排到精确单字之后。
+            // 与补全词同组登记：末尾残码还没敲完，不该把联想字判进「未登记」组而落到所有
+            // 音节数组之后。组内相对次序仍由 result 的拼装顺序决定（联想字在精确单字之后）。
             if (realLast != null) {
                 val tailChars = displayTake(charsFor(realLast), MAX_CHARS)
                 for (c in tailChars) syllableCounts.getOrPut(c) { syllables.size }
