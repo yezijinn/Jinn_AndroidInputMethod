@@ -460,7 +460,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val values = ContentValues().apply {
             put("content_type", CONTENT_TYPE_IMAGE)
             put("encrypted_content", placeholder)
-            put("created_at", System.currentTimeMillis())
+            // 与 upsert 同口径：时钟回拨时取「墙钟 / 库内最大+1」的较大者，否则新图会被当成最旧一条先裁掉
+            put("created_at", monotonicNow())
             put("source_package", sourcePackage)
             put("source_app_name", sourceAppName)
             put("image_bytes", imageBytes)

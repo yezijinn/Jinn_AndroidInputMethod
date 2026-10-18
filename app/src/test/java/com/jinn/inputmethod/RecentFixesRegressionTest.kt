@@ -5669,6 +5669,19 @@ class RecentFixesRegressionTest {
      * detach 撤动画）。作者 2026-10-18 指定回退成硬切：状态翻完，由同一次刷新落栏高与内容。
      */
     @Test
+    fun `审查修复_复用复位与入库时间与弃件`() {
+        val view = codeOf("PinyinKeyboardView.kt")
+        assertTrue("复用必须复位字重（功能面板标签是粗体）", "typeface = android.graphics.Typeface.DEFAULT" in view)
+        assertTrue("台账按简体归一", "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view)
+        val db = codeOf("ClipboardDb.kt")
+        assertTrue("图片入库也用单调时间", "put(\"created_at\", monotonicNow())" in db)
+        val gallery = codeOf("GalleryInsert.kt")
+        assertTrue("非图片拦截不看 declared", "if (sniffed == null && looksLikeNonImage(head))" in gallery)
+        val ime = codeOf("JinnIme.kt")
+        assertEquals("四条未提交分支都要删暂存件", 4, Regex("picked\\.file\\.delete\\(\\)").findAll(ime).count())
+    }
+
+    @Test
     fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue(

@@ -1291,6 +1291,7 @@ class JinnIme : InputMethodService() {
             // 否则图上不去而界面零反馈、诊断包只剩一行「未接受」（BUG.md L-1058）
             if (!GalleryInsert.acceptsMime(hostImageMimeTypes, picked.mime)) {
                 Diagnostics.w(TAG, "图库快贴：宿主未声明本图类型（${picked.mime}），不提交")
+                picked.file.delete()
                 toast(TEXT_IMAGE_REJECTED)
                 continue
             }
@@ -1303,15 +1304,20 @@ class JinnIme : InputMethodService() {
                 // 无连接说明输入会话已结束、宿主拒收多半意味着入口本不该出现：都不弹提示，免得变成噪音
                 GalleryInsert.InsertResult.NoConnection -> {
                     Diagnostics.w(TAG, "图库快贴：无输入连接，丢弃待插入图片")
+                    picked.file.delete()
                     // 队列里剩下的属于同一个已结束的会话：一并丢掉，别留到下次 flush 落到别的框
                     GalleryInsert.clearPending()
                     return
                 }
-                GalleryInsert.InsertResult.Rejected ->
+                GalleryInsert.InsertResult.Rejected -> {
                     Diagnostics.i(TAG, "图库快贴：宿主未接受本次提交")
+                    // 宿主没收下：这一张从未交给它，留着只会变成明文残留
+                    picked.file.delete()
+                }
                 // 本地 URI 构造失败：与宿主拒收分开，沿用「图片已失效」提示（BUG.md L-1074）
                 GalleryInsert.InsertResult.UriFailed -> {
                     Diagnostics.w(TAG, "图库快贴：图片 URI 构造失败")
+                    picked.file.delete()
                     toast(TEXT_GALLERY_GONE)
                 }
             }

@@ -71,11 +71,14 @@ class SelectionLedgerTest {
         val view = TestSources.codeOf(
             TestSources.rawSourceOfShortName("PinyinKeyboardView.kt"),
         )
-        assertTrue("候选选择必须记台账", "SelectionLedger.record(word, pinyin)" in view)
+        assertTrue(
+            "候选选择必须记台账（按简体归一）",
+            "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view,
+        )
         assertTrue(
             "追加候选要记被点的那一节与合并整词",
-            "SelectionLedger.record(pred, predPinyin)" in view &&
-                "SelectionLedger.record(fullWord, fullPinyin)" in view,
+            "SelectionLedger.record(PinyinEngine.toSimplified(pred), predPinyin)" in view &&
+                "SelectionLedger.record(PinyinEngine.toSimplified(fullWord), fullPinyin)" in view,
         )
         assertTrue("敏感输入框仍由 suppressLearning 挡住", "if (suppressLearning) return" in view)
     }

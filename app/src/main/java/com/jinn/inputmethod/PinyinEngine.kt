@@ -1830,6 +1830,7 @@ object PinyinEngine {
     fun truePinyinOf(word: String): String? {
         val direct = candidateTruePinyin[word]
             ?: candidatePinyin[word]
+            ?: candidatePinyin[toSimplified(word)]
             ?: wordToPinyin[toSimplified(word)]
         if (direct != null) return spacedSyllables(direct)
         if (word.length == 1) {
@@ -2327,11 +2328,16 @@ object PinyinEngine {
             // 组首」保住首位才是想要的排序（见 CandidateSyllablePriorityTest）。
             for (w in completionWords) syllableCounts.getOrPut(w) { syllables.size }
             result.addAll(asList)
-            // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）
+            // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）。
+            // 与补全词同组登记：它们是「末尾残码还没敲完」的联想字，不该被排到精确单字之后。
             if (realLast != null) {
-                result.addAll(displayTake(charsFor(realLast), MAX_CHARS))
+                val tailChars = displayTake(charsFor(realLast), MAX_CHARS)
+                for (c in tailChars) syllableCounts.getOrPut(c) { syllables.size }
+                result.addAll(tailChars)
             }
-            result.addAll(displayTake(matchCharsByPrefix(partial), MAX_CHARS))
+            val prefixChars = displayTake(matchCharsByPrefix(partial), MAX_CHARS)
+            for (c in prefixChars) syllableCounts.getOrPut(c) { syllables.size }
+            result.addAll(prefixChars)
         }
 
         // 单音节候选按「词频混合序」重排（[MIX_ORDER_ASSET]）：词与字不再固定「词先于字」，
@@ -2378,7 +2384,12 @@ object PinyinEngine {
         }
         val out = ArrayList<String>(items.size)
         groups.entries
-            .sortedWith(compareBy({ if (it.key == inputSyllables) 0 else 1 }, { -it.key }))
+            .sortedWith(
+                compareBy(
+                    { if (it.key == inputSyllables) 0 else 1 },
+                    { if (it.key == Int.MAX_VALUE) Int.MAX_VALUE else -it.key },
+                ),
+            )
             .forEach { e ->
                 out.addAll(UserFrequency.rank(e.value.toTypedArray()) { toSimplified(it) }.toList())
             }
@@ -2505,7 +2516,9 @@ object PinyinEngine {
                         // 不登记的话，追加候选进台账时没有读音（用户 2026-10-18 报告）。
                         val key = idx.keyAt(keyIndex)
                         if (key != null && key.startsWith(lastPinyin)) {
-                            noteCandidateKeys(out.toList().subList(before, out.size), key.substring(lastPinyin.length))
+                            // 必须先转显示形再登记：繁体模式下 pred 是繁体，登记简体同样查不到（BUG.md L-42 同型）
+                            val added = out.toList().subList(before, out.size).map { toDisplay(it) }
+                            noteCandidateKeys(added, key.substring(lastPinyin.length))
                         }
                     }
                 }
@@ -2522,8 +2535,9 @@ object PinyinEngine {
                 val before = out.size
                 addLongerSuffixes(phrasesFor(key), simpLast, out)
                 if (out.size > before) {
-                    // 运行时表同理：读音 = 键去掉已选词前缀
-                    noteCandidateKeys(out.toList().subList(before, out.size), key.substring(lastPinyin.length))
+                    // 运行时表同理：读音 = 键去掉已选词前缀；同样先转显示形
+                    val added = out.toList().subList(before, out.size).map { toDisplay(it) }
+                    noteCandidateKeys(added, key.substring(lastPinyin.length))
                 }
             }
             lo++

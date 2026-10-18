@@ -1283,8 +1283,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (suppressLearning) return
         val pinyin = PinyinEngine.truePinyinOf(word).orEmpty()
         lastCommittedPinyin = pinyin
-        // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）
-        SelectionLedger.record(word, pinyin)
+        // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）。
+        // 词按**简体**归一键（与 UserFrequency.rememberChoice 同口径）：繁体模式下同一词不会繁简两份计数
+        SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
         PinyinEngine.rememberChoice(word)
     }
 
@@ -2665,6 +2666,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         textSize = sizeSp
         gravity = android.view.Gravity.CENTER
         setTextColor(color)
+        // 复用池会收进功能面板的粗体标签（同一容器里的 TextView）：每次取用必须把字重与残留样式清干净，
+        // 否则前 6~8 个候选会变成粗体（2026-10-18 审查）
+        typeface = android.graphics.Typeface.DEFAULT
+        minimumHeight = 0
+        background = null
+        contentDescription = null
         // 只缩水平两端（RTL 下 start/end 自动镜像），垂直内边距保持 0
         setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
         // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含固定行高）：换成默认的 wrap_content
@@ -3302,17 +3309,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val fullWord = lastCommittedWord + pred
         val predPinyin = PinyinEngine.truePinyinOf(pred).orEmpty()
         // 两段读音必须都拿到才拼：缺一段时宁可按「未知」记空，也不写一条截断的错读音
-        val fullPinyin = when {
-            lastCommittedPinyin.isEmpty() && predPinyin.isEmpty() -> ""
-            lastCommittedPinyin.isEmpty() -> predPinyin
-            predPinyin.isEmpty() -> ""
-            else -> "$lastCommittedPinyin $predPinyin"
+        val fullPinyin = if (lastCommittedPinyin.isEmpty() || predPinyin.isEmpty()) {
+            // 缺任一段就按未知记空：只写后半截会让「词与音节数对不上」，导进词库直接被丢弃
+            ""
+        } else {
+            "$lastCommittedPinyin $predPinyin"
         }
         if (!suppressLearning) {
             // 选择台账记两行：被点的那一节（四海）+ 合并后的整词（五湖四海）。
             // 词频表仍只学整词（排序语义不变），台账是词库原料，两者分开。
-            SelectionLedger.record(pred, predPinyin)
-            SelectionLedger.record(fullWord, fullPinyin)
+            SelectionLedger.record(PinyinEngine.toSimplified(pred), predPinyin)
+            // 合并词与 pred 相同（没有前一个词）时不再记第二行，否则同一「词+读音」频次翻倍
+            if (fullWord.isNotEmpty() && fullWord != pred) {
+                SelectionLedger.record(PinyinEngine.toSimplified(fullWord), fullPinyin)
+            }
             PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
         }
         lastCommittedPinyin = ""

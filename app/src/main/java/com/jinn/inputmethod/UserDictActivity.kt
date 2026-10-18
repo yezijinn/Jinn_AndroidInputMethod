@@ -105,6 +105,9 @@ class UserDictActivity : ComponentActivity() {
                 .onFailure { toast(TEXT_NO_PICKER) }
         }
         btnClose.setOnClickListener { confirmCloseStepOne() }
+        // 台账只在 PinyinEngine 初始化时绑定；用户可能先开设置页（从未唤起键盘）就导入 ——
+        // 不在这里补一次，record/flush 会因 target==null 静默丢弃，而页面还回执「已追加」。
+        SelectionLedger.init(applicationContext, prefs.userDictEnabled)
 
         if (prefs.userDictEnabled) {
             load()
@@ -292,11 +295,18 @@ class UserDictActivity : ComponentActivity() {
         for (r in rows) merged[r.word to r.pinyin] = r.count
         val text = SelectionLedger.exportText(merged, format)
         val ok = runCatching {
-            contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(text.toByteArray(Charsets.UTF_8))
-                out.flush()
+            // provider 不认 "wt" 时退回默认 mode（与设置页导出同款）
+            val out = contentResolver.openOutputStream(uri, "wt")
+                ?: contentResolver.openOutputStream(uri)
+            out?.use {
+                it.write(text.toByteArray(Charsets.UTF_8))
+                it.flush()
             } != null
         }.getOrElse { false }
+        if (!ok) {
+            // CreateDocument 已建出目标文件：不删就留一个 0 字节空壳（与 L-1098 同型）
+            runCatching { contentResolver.delete(uri, null, null) }
+        }
         toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, rows.size) else TEXT_EXPORT_FAIL)
     }
 

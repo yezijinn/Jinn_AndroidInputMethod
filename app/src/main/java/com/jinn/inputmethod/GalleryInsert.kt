@@ -309,7 +309,7 @@ internal object GalleryInsert {
             }
             // 嗅探认不出、而字节明显是别的东西（PDF / ZIP / 可执行等）时拒收 —— 声明为
             // image/* 不足以放行，入口是 ImageOnly 选择器，这种「名实不符」只会来自不可信源
-            if (sniffed == null && declared != null && looksLikeNonImage(head)) {
+            if (sniffed == null && looksLikeNonImage(head)) {
                 temp.delete()
                 Diagnostics.w(TAG, "选图内容不是图片（声明=$declared），已拒收")
                 return CopyResult.ReadFailed
