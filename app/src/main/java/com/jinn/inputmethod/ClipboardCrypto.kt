@@ -78,6 +78,8 @@ object ClipboardCrypto {
             if (t is java.security.KeyStoreException) return true
             if (t is android.security.keystore.KeyPermanentlyInvalidatedException) return true
             if (t is android.security.KeyStoreException) return true
+            // 部分 OEM 在句柄被作废后只抛裸 InvalidKeyException（不带 Keystore cause）
+            if (t is java.security.InvalidKeyException) return true
             t = t.cause
         }
         return false

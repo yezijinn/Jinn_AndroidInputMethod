@@ -35,6 +35,7 @@ class PageStyleParityTest {
         "activity_tap_sound.xml",
         "activity_translation_settings.xml",
         "activity_translation_source.xml",
+        "activity_user_dict.xml",
     )
 
     @Test

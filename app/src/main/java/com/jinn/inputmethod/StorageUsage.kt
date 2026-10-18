@@ -140,6 +140,12 @@ internal object StorageUsage {
         )
 
         item("用户词频", "随打字自动累积，用于把常用词排在前面", scan(File(files, UserFrequency.FILE_NAME), claimed))
+        // 台账是应用里唯一无上限增长的文件：不认领就会落进「其他」，用户在这里看不到它
+        item(
+            "选择台账",
+            "26 键选过的候选（只追加）；在「生成用户词库」里可查看、导出，或关闭并删除",
+            scan(File(files, SelectionLedger.FILE_NAME), claimed),
+        )
         item("剪贴板历史", "在「剪贴板历史」页管理（容量上限见该页）", scan(File(data, "databases"), claimed))
         // 剪贴板图片（2026-10-10 起）：原图与缩略图都加密落在这里，体积可与数据库一个量级
         // （单张上限默认 20MB、总上限 200MB）—— 不单列的话它会混进「其他」，用户既看不到也管不了

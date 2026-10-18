@@ -91,7 +91,7 @@ class SelectionLedgerTest {
             ("五湖" to "wu4 hu") to 1,
         )
         val yaml = SelectionLedger.exportText(merged, SelectionLedger.ExportFormat.RIME_YAML)
-        assertTrue("Rime 头", yaml.startsWith("---\nname: jinn_user_dict"))
+        assertTrue("Rime 头", yaml.startsWith("---\nname: user_dict"))
         assertTrue("权重是次数", "五湖\twu hu\t2" in yaml)
 
         val tsv = SelectionLedger.exportText(merged, SelectionLedger.ExportFormat.TSV)
@@ -123,11 +123,11 @@ class SelectionLedgerTest {
     @Test
     fun `词库页_读合并导出导入都接在台账上`() {
         val page = TestSources.codeOf(TestSources.rawSourceOfShortName("UserDictActivity.kt"))
-        assertTrue("页面要读全量流水", "SelectionLedger.readAll(this)" in page)
+        assertTrue("页面要读全量流水", "SelectionLedger.readAll(applicationContext)" in page)
         assertTrue("导出走同一次合并", "SelectionLedger.exportText(merged, format)" in page)
         assertTrue(
             "导入先解析再追加",
-            "SelectionLedger.parseImport(text)" in page && "SelectionLedger.importPicks(picked)" in page,
+            "SelectionLedger.parseImport(read.text)" in page && "SelectionLedger.appendAll(picked)" in page,
         )
         val settings = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
         assertTrue("设置页要有入口", "R.id.btn_user_dict" in settings && "UserDictActivity::class.java" in settings)

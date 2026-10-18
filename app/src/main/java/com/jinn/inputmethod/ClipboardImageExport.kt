@@ -242,8 +242,9 @@ internal object ClipboardImageExport {
             Diagnostics.w(TAG, "复制图片到剪贴板失败：剪贴板服务不可用，已清理临时件")
             return false
         }
-        val clip = android.content.ClipData.newUri(context.contentResolver, CLIP_LABEL, uri)
         return runCatching {
+            // newUri 会走 resolver.getType：provider 异常时同样要落到下面的清理分支
+            val clip = android.content.ClipData.newUri(context.contentResolver, CLIP_LABEL, uri)
             manager.setPrimaryClip(clip)
             true
         }.getOrElse {

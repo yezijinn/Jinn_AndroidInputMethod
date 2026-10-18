@@ -2871,6 +2871,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val rowsSetting = prefs.candidateRows
+        // 档位 / 层 / 面板一变，三角可能直接消失（它只在单行档显示），展开态就没了收起入口：
+        // 在落栏高之前统一收起，避免留一块无法退出的高栏
+        if (candidatesExpanded &&
+            (rowsSetting != CandidateRows.SINGLE || layer != LAYER_LETTER || hasActiveOverlay)
+        ) {
+            collapseCandidates()
+        }
         val candidateSp = prefs.candidateTextSp
         // 拼音字号 / 行间隔本帧各只读一次；0 = 自动，沿用候选字号的派生口径（老用户观感不变）
         val rawPinyinSp = prefs.pinyinTextSp

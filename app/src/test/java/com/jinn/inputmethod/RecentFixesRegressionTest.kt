@@ -4738,10 +4738,10 @@ class RecentFixesRegressionTest {
         assertTrue("开关标题应写「大写键不锁定」", "\"大写键不锁定\"" in page)
         assertTrue("开关标题应写「小写长按变大」", "\"小写长按变大\"" in page)
         // 顺序：两个开关在「候选词的行数 / 界面明暗切换」两个下拉之前（2026-10-18 上移一行）
-        assertTrue(
-            "开关必须排在下拉控件之前",
-            layout.indexOf("switch_caps_oneshot") < layout.indexOf("spinner_candidate_rows"),
-        )
+        val capsAt = layout.indexOf("switch_caps_oneshot")
+        val rowsAt = layout.indexOf("spinner_candidate_rows")
+        assertTrue("两个控件都要在布局里（否则 indexOf=-1 会让顺序断言恒真）", capsAt >= 0 && rowsAt >= 0)
+        assertTrue("开关必须排在下拉控件之前", capsAt < rowsAt)
         assertTrue("大写一次性没有上屏后的复位入口", "releaseCapsOneShot()" in view)
         val prefs = codeOf("Prefs.kt")
         assertTrue(

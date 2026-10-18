@@ -51,8 +51,6 @@ object SelectionLedger {
         enabled = value
     }
 
-    fun isEnabled(): Boolean = enabled
-
     /**
      * 记一次选择。
      *
@@ -65,6 +63,32 @@ object SelectionLedger {
         val file = target ?: return
         queue.add(line)
         writer.execute { drainTo(file) }
+    }
+
+    /**
+     * 批量追加（导入专用）：一次 open、一次 write，别把上万行拆成上万个任务。
+     *
+     * 与 [record] 共用同一条后台线程，提交顺序即落盘顺序。
+     */
+    fun appendAll(picks: List<Pair<String, String>>) {
+        if (!enabled) return
+        val file = target ?: return
+        val lines = ArrayList<String>(picks.size)
+        for ((w, p) in picks) formatLine(w, p)?.let { lines.add(it) }
+        if (lines.isEmpty()) return
+        writer.execute {
+            if (target !== file) return@execute
+            runCatching {
+                FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { out ->
+                    for (line in lines) {
+                        out.write(line)
+                        out.newLine()
+                    }
+                }
+            }.onFailure { e ->
+                Diagnostics.w(TAG, "台账批量写入失败: ${e.javaClass.simpleName}")
+            }
+        }
     }
 
     /** 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常） */
@@ -82,6 +106,8 @@ object SelectionLedger {
     fun deleteFile(context: Context): Boolean {
         enabled = false
         flush()
+        // 摘掉绑定：删除之后任何排队的 drain 都会在代际守卫处放弃，不会把文件重建出来
+        target = null
         return deleteQuietly(File(context.filesDir, FILE_NAME))
     }
 
@@ -94,6 +120,11 @@ object SelectionLedger {
     }
 
     private fun drainTo(file: File) {
+        // 已被关闭删除（target 置空）或换绑：这一批不再写，否则「已删除」之后磁盘上又出现文件
+        if (target !== file) {
+            queue.clear()
+            return
+        }
         if (queue.isEmpty()) return
         runCatching {
             file.parentFile?.mkdirs()
@@ -191,10 +222,15 @@ object SelectionLedger {
         val sb = StringBuilder(rows.size * 24 + 128)
         when (format) {
             ExportFormat.RIME_YAML -> {
-                sb.append("---\nname: jinn_user_dict\nversion: \"1\"\nsort: by_weight\n")
+                // name 必须与落盘文件名（user_dict.dict.yaml）一致，否则 Rime 找不到
+                sb.append("---\nname: user_dict\nversion: \"1\"\nsort: by_weight\n")
                 sb.append("use_preset_vocabulary: false\n...\n")
-                for ((key, count) in rows) sb.append(key.first).append('\t').append(key.second.ifEmpty { "-" })
-                    .append('\t').append(count).append('\n')
+                for ((key, count) in rows) {
+                    // 没有读音的行写不出合法音节，librime 会整条丢弃：直接不写
+                    if (key.second.isEmpty()) continue
+                    sb.append(key.first).append('\t').append(key.second)
+                        .append('\t').append(count).append('\n')
+                }
             }
 
             ExportFormat.TSV -> {
@@ -222,7 +258,8 @@ object SelectionLedger {
      */
     internal fun parseImport(text: String): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
-        for (raw in text.lineSequence()) {
+        // Windows / 部分导出工具会带 UTF-8 BOM：不剥的话第一条恒为「\uFEFF词」
+        for (raw in text.removePrefix("\uFEFF").lineSequence()) {
             if (out.size >= IMPORT_MAX_LINES) break
             val line = raw.trim('\r', ' ', '\t')
             if (line.isEmpty() || line.startsWith("#")) continue
@@ -242,8 +279,4 @@ object SelectionLedger {
         return out
     }
 
-    /** 导入：把展开后的选择逐条追加进流水（只增，不覆盖、不去重） */
-    fun importPicks(picks: List<Pair<String, String>>) {
-        for ((w, p) in picks) record(w, p)
-    }
 }

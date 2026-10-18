@@ -1277,6 +1277,11 @@ class SettingsActivity : ComponentActivity() {
      * 收回授权，此时留个空壳也比崩掉强。
      */
     private fun deleteEmptyTarget(uri: Uri) {
+        // 只有确实是 0 字节才删：少数 provider 在重名时会返回**既有文档**的 uri，无条件删会毁掉旧备份
+        val size = runCatching {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+        }.getOrNull()
+        if (size == null || size > 0) return
         runCatching { contentResolver.delete(uri, null, null) }
             .onFailure { Diagnostics.w(TAG, "删除空壳目标失败: ${it.javaClass.simpleName}") }
     }
