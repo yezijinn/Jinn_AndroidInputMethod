@@ -1575,8 +1575,14 @@ class SettingsActivity : ComponentActivity() {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ) {
-        // 页面重建后按钮会重新可点，而上一轮的导入线程可能还在跑：进程级标记拦下这种重入
+        // 页面重建后按钮会重新可点，而上一轮的导入线程可能还在跑：进程级标记拦下这种重入。
+        // ⚠ 这里必须自己清明文临时包：确认框的 positive 点击后已自动 dismiss，
+        // setOnCancelListener（负责删包与注销）**不会**触发，而 cleanupStaleCache 又按
+        // in-flight 跳过该名字 ⇒ 否则这份已解密的明文备份会跨会话留在缓存目录里。
         if (ConfigBackupManager.importing) {
+            if (pendingImportZip === zip) pendingImportZip = null
+            zip.delete()
+            ConfigBackupManager.releaseUnlockedTemp(zip)
             textConfigHint.text = TEXT_IMPORTING
             alert(TEXT_IMPORT_CONFIG, TEXT_IMPORTING)
             return

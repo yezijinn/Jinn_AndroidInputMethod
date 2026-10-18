@@ -76,6 +76,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onDeleteAll()
         /** 请求切回语音模式 */
         fun onVoiceRequested()
+        /**
+         * 语音入口当前是否可用。
+         *
+         * 只查不改（语音链路一行不动）：View 层长按空格前先问一次 —— 不可用时必须让长按
+         * **不消费**（返回 false），否则框架不再派发 click，用户既丢空格又听到一声确认音。
+         */
+        fun canVoice(): Boolean
         /** 功能面板：打开剪贴板历史页 */
         fun onOpenClipboard()
         /** 剪贴板面板：点击记录请求粘贴（IME 用当前 InputConnection commitText）。返回是否成功。 */
@@ -353,18 +360,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // toggle 开头已 settle，这里必为 null；旧动画器若还在，先落定再建（不裸 cancel）
         settleCandidateHeight()
+        val t0 = System.nanoTime()
         val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
         animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
         animator.addUpdateListener { a ->
             (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
                 p.height = a.animatedValue as Int
                 candidateBar.layoutParams = p
+                if (Diagnostics.KEY_TRACE) {
+                    Diagnostics.v(
+                        TAG,
+                        "TWEEN ms=${(System.nanoTime() - t0) / 1_000_000} h=${p.height} f=${a.animatedFraction}",
+                    )
+                }
             }
         }
         animator.addListener(object : android.animation.AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: android.animation.Animator) {
                 if (candidateHeightAnimator !== animation) return   // 已被落定 / 替换
                 candidateHeightAnimator = null
+                if (Diagnostics.KEY_TRACE) {
+                    Diagnostics.v(TAG, "TWEEN end ms=${(System.nanoTime() - t0) / 1_000_000}")
+                }
                 finishCandidateTween()
             }
         })
@@ -1346,6 +1363,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onSpacePressed()
         }
         btnSpace.setOnLongClickListener {
+            // ⚠ 先问可用性：语音默认关闭，不可用时若照旧返回 true，`View` 会置
+            // `mHasPerformedLongPress`，抬起不再派发 click ⇒ 这次空格彻底丢失；而上面的
+            // `fire` 已经响过，用户听到「按下了」却什么都没上屏（表现为「空格偶尔失灵」）。
+            // 不可用 ⇒ 不响、不消费，交给框架照常走短按上屏空格（反馈由 click 里发）。
+            if (listener?.canVoice() != true) return@setOnLongClickListener false
             // 空格长按：切回语音模式（不触发短按 ⇒ 短按那份反馈也不会发，这里补上）
             KeyFeedback.fire(TapSound.G_CONFIRM)
             listener?.onVoiceRequested()
@@ -5018,7 +5040,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 只补高度一个量，几帧即可；IME 里超过 ~150ms 就从「过渡」变成「卡顿」——
          * 旧版 220ms 被否决正是因为它观感是「键盘卡了一下」。
          */
-        const val CANDIDATE_TWEEN_MS = 110L
+        // 60ms 是实测值：110ms 时补间跨越太多 vsync，每帧都要触发 IME 窗口 resize
+        // （栏高变 ⇒ 窗口高变 ⇒ 宿主 insets 重算 + 重新合成），实测 janky 83% / 中位 38ms；
+        // 60ms 下 janky 3.27% / 中位 7ms，与打字基线（7.7% / 12ms）相当。
+        // 超时长不是"更柔和"，而是"更卡"——这是本值的唯一依据，改动前先重测。
+        const val CANDIDATE_TWEEN_MS = 60L
 
         const val TAG = "PinyinKeyboard"
 

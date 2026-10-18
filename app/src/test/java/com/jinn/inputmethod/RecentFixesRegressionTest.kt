@@ -5754,7 +5754,8 @@ class RecentFixesRegressionTest {
         assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)
         assertFalse("不得再插值三角角度", "btnExpandCandidates.rotation = startRot" in src)
         assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
-        assertTrue("补间时长必须短于 150ms（超过就成了卡顿）", "CANDIDATE_TWEEN_MS = 110L" in src)
+        // 时长按实测取 60ms（依据见常量处注释：110ms 实测 janky 83%，60ms 为 3.27%）
+        assertTrue("补间时长取实测值 60ms", "CANDIDATE_TWEEN_MS = 60L" in src)
         assertTrue(
             "补间期间栏高只由动画器写（旧版「只跑 1 帧」的根因）",
             "candidateHeightAnimator == null && lp.height != barHeight" in src,

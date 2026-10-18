@@ -104,6 +104,12 @@ class TapSoundActivity : Activity() {
 
     /** 三张卡片：音效 / 震动 / 分组音色 */
     private fun renderAll() {
+        // ⚠ 必须先刷一次再渲染：试听的可用态读的是 [KeyFeedback] 的静态缓存，而唯一写它是
+        // `KeyFeedback.refresh(prefs)` —— 它由 `onStart` 或 `JinnIme.onKeyFeedbackChanged()`
+        // 触发，后者是 `ui.post`（排在当前消息之后）。不刷的话「进页时音效是关的 → 打开」这一
+        // 路径里，用户刚打开音效、页面却显示六个试听全灰 + 「系统静音」的错误说明，
+        // 且没有任何后续渲染会自愈（除非再拨一次开关或离开重进）。
+        KeyFeedback.refresh(prefs)
         list.removeAllViews()
 
         // 卡片 1：音效（总开关 + 静音仍播 + 强度）

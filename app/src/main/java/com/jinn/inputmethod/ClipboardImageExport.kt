@@ -79,7 +79,14 @@ internal object ClipboardImageExport {
         return runCatching {
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-            val out = resolver.openOutputStream(uri)
+            // ⚠ `openOutputStream` 自身也会抛（provider 异常 / 存储紧张 / 授权被回收）：
+            // 直接写在 runCatching 外的话，异常落到最外层 getOrElse，那里拿不到 uri
+            // ⇒ 刚插入的 IS_PENDING=1 行既不可见、也无人回收，长期占相册库。
+            val out = runCatching { resolver.openOutputStream(uri) }.getOrElse {
+                runCatching { resolver.delete(uri, null, null) }
+                Diagnostics.w(TAG, "保存到相册打开输出流失败，已回收相册行: ${it.javaClass.simpleName}")
+                return false
+            }
             if (out == null) {
                 runCatching { resolver.delete(uri, null, null) }
                 return false
@@ -143,7 +150,13 @@ internal object ClipboardImageExport {
             val doc = DocumentsContract.createDocument(
                 context.contentResolver, parent, mime, fileNameOf(item, mime),
             ) ?: return MoveResult.Failed
-            val out = context.contentResolver.openOutputStream(doc)
+            // 同上：`createDocument` 之后、`write` 之前抛异常时，最外层 getOrElse 拿不到 doc
+            // ⇒ 刚创建的 0 字节文档留在用户目录里（名字看起来完全正常，且不覆盖同名文件）。
+            val out = runCatching { context.contentResolver.openOutputStream(doc) }.getOrElse {
+                runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
+                Diagnostics.w(TAG, "目录树打开输出流失败，已删空文档: ${it.javaClass.simpleName}")
+                return MoveResult.Failed
+            }
             if (out == null) {
                 runCatching { DocumentsContract.deleteDocument(context.contentResolver, doc) }
                 return MoveResult.Failed

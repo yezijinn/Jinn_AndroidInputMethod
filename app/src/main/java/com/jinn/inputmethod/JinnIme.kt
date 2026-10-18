@@ -1575,6 +1575,8 @@ class JinnIme : InputMethodService() {
                 }
                 override fun onDeleteAll() = deleteAllText()
                 override fun onVoiceRequested() = switchToVoiceKeyboard()
+                // 只查不改（语音链路一行不动）：长按空格前先问，不可用就不消费长按
+                override fun canVoice(): Boolean = prefs.voiceInputEnabled
                 override fun onOpenClipboard() {
                     // ⚠ 与 onTranslate 的拦截是**对称**的（2026-10-03 修复 L-688）：onTranslate 拦的是
                     // 「面板开着时点翻译」（面板里任点一条历史就是 commitText 改宿主文本 ⇒ 已发出的请求
