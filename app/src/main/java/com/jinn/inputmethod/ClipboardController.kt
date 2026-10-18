@@ -256,9 +256,21 @@ class ClipboardController(context: Context) {
             appContext.contentResolver.openInputStream(uri)?.use { input ->
                 val head = ByteArray(SNIFF_HEAD_BYTES)
                 var n = 0
+                // 空读上限：`read(len>0)` 允许非阻塞流返回 0，不设闸的话一个持续返回 0 的
+                // provider 会永久占住本条长活线程（长活池是单线程 FIFO，图库列目录、
+                // 导出全部图片、图片落盘与 GC 会全部排队，只能重启恢复）。与同仓
+                // `readBounded` / `Diagnostics.readFully` 同口径。
+                var emptyReads = 0
                 while (n < head.size) {
                     val r = input.read(head, n, head.size - n)
                     if (r < 0) break
+                    if (r == 0) {
+                        if (++emptyReads >= MAX_EMPTY_READS) {
+                            Diagnostics.w(TAG, "读图片头部: 连续空读，判定失败")
+                            return@runCatching ImageRead.Failed
+                        }
+                        continue
+                    }
                     n += r
                 }
                 if (n <= 0) return@use ImageRead.Failed
@@ -345,6 +357,9 @@ class ClipboardController(context: Context) {
 
         /** 嗅探读取的头部字节数：16 够认出全部受支持魔数（ISO-BMFF 的 brand 在偏移 8） */
         internal const val SNIFF_HEAD_BYTES = 16
+
+        /** 头部读取允许的连续空读次数：超过即判定流不可用（与 `readBounded` 同口径） */
+        private const val MAX_EMPTY_READS = 64
     }
 }
 

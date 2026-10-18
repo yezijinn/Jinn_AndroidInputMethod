@@ -161,6 +161,10 @@ internal object ConfigBackupManager {
     /** 导出互斥（见 [export]）：进程级，跨 Activity 重建也有效 */
     private val exportInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** 导出是否在进行中（供导入侧镜像互斥：旋转重建后导出线程仍在跑，新页面的导入按钮是可点的） */
+    val exporting: Boolean
+        get() = exportInFlight.get()
+
     /** 导入互斥（见 [import]）：同为进程级，页面重建后的新实例也拦得住 */
     private val importInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -831,6 +835,13 @@ internal object ConfigBackupManager {
         // 进程级互斥：导入跑在设置页的裸线程上，页面重建后按钮会重新可点 —— 不拦的话
         // 两路流程会并发写 prefs / 词频 / 剪贴板（各有锁不会损坏，但报数会失真，
         // 来自不同包时还会各阶段各留一份）
+        // 导出侧同样要拦：导出在另一条线程逐键读 prefs，导入是逐键 `sp.edit{}` 写
+        // ⇒ 两路重叠会序列化出「部分新部分旧」的配置，且两侧回执都报成功。
+        if (exporting) {
+            Diagnostics.w(TAG, "导入: 已有导出在进行中，忽略本次")
+            reason.reason = "正在导出配置，请等导出结束后再导入"
+            return BackupResult(null, reason.reason)
+        }
         if (!beginImport()) {
             Diagnostics.w(TAG, "导入: 已有导入在进行中，忽略本次")
             reason.reason = "已有导入正在进行，请稍候再试"

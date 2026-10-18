@@ -92,14 +92,24 @@ internal object ClipboardImageExport {
                 Diagnostics.w(TAG, "保存到相册写入中断，已回收相册行: ${wrote.exceptionOrNull()?.javaClass?.simpleName}")
                 return false
             }
-            // 写完解除 pending：这条记录此时才对相册与其它应用可见
-            runCatching {
+            // 写完解除 pending：这条记录此时才对相册与其它应用可见。
+            // ⚠ 失败必须回收并如实返回：带着 IS_PENDING=1 的行对谁都不可见，回执却说「已保存」
+            // ⇒ 用户永远找不到这张图，也没有任何入口可修。与紧邻的写失败分支同口径。
+            val unpend = runCatching {
                 resolver.update(
                     uri,
                     ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
                     null, null,
                 )
-            }.onFailure { Diagnostics.w(TAG, "相册条目解除写入中标记失败（图已落盘）") }
+            }
+            if (unpend.isFailure) {
+                runCatching { resolver.delete(uri, null, null) }
+                Diagnostics.w(
+                    TAG,
+                    "相册条目解除写入中标记失败，已回收: ${unpend.exceptionOrNull()?.javaClass?.simpleName}",
+                )
+                return false
+            }
             true
         }.getOrElse {
             Diagnostics.w(TAG, "保存到相册失败: ${it.javaClass.simpleName}")

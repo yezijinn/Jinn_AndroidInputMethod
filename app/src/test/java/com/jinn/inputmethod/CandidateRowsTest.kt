@@ -362,6 +362,26 @@ class CandidateRowsTest {
             "candidateHeightAnimator == null && lp.height != barHeight" in src,
         )
         assertTrue("收起入口必须先落定高度", "settleCandidateHeight()" in src)
+        // 收起补间期间必须**仍按展开态渲染**：提前换成单行会重现「高栏里飘一行字」
+        assertTrue("补间收尾统一对齐渲染态", "finishCandidateTween()" in src)
+        // 「不得提前翻渲染态」只能钉**代码**（`codeSource` 会剥注释，注释文本不在 src 里）：
+        // 渲染态的赋值只允许出现在两处 —— toggle 里设 expand、finishCandidateTween/settle 里对齐意图态；
+        // 任何其它形态（如 collapseCandidates 里写死 false）都会让收起补间提前换成单行。
+        assertTrue(
+            "渲染态赋值只能是对齐意图态或 expand（声明行除外）",
+            Regex("(?<!private var )candidateRenderExpanded = (?!candidatesExpanded\\b|expand\\b)\\w+")
+                .findAll(src).count() == 0,
+        )
+        assertTrue(
+            "settle 与补间收尾都要对齐渲染态",
+            Regex("candidateRenderExpanded = candidatesExpanded").findAll(src).count() >= 2,
+        )
+        // 候选容器默认是 center_vertical；补间期间不钉成顶对齐，内容会以半速滑、首帧显示网格中部
+        assertTrue(
+            "补间期间候选容器必须顶对齐",
+            "val wantGravity = if (candidateHeightAnimator == null)" in src &&
+                "android.view.Gravity.TOP" in src,
+        )
         assertTrue(
             "三角只在单行档出现",
             Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
