@@ -36,10 +36,22 @@ object SelectionLedger {
         Thread(r, "jinn-selection-ledger").apply { isDaemon = true }
     }
 
-    /** 绑定应用私有目录（多次调用幂等；换 context 后重绑） */
-    fun init(context: Context) {
+    /** 是否记录（默认关；由用户在说明弹框里手输 OK 打开） */
+    @Volatile
+    private var enabled = false
+
+    /** 绑定应用私有目录并下发开关（多次调用幂等；换 context 后重绑） */
+    fun init(context: Context, enabled: Boolean) {
         target = File(context.filesDir, FILE_NAME)
+        this.enabled = enabled
     }
+
+    /** 运行时切换：关掉后不再写新行（已在队列里的仍会落盘，见 [deleteFile]） */
+    fun setEnabled(value: Boolean) {
+        enabled = value
+    }
+
+    fun isEnabled(): Boolean = enabled
 
     /**
      * 记一次选择。
@@ -48,6 +60,7 @@ object SelectionLedger {
      * @param pinyin 读音（音节空格分隔，可空：查不到读音时只记词）
      */
     fun record(word: String, pinyin: String) {
+        if (!enabled) return
         val line = formatLine(word, pinyin) ?: return
         val file = target ?: return
         queue.add(line)
@@ -59,6 +72,25 @@ object SelectionLedger {
         val file = target ?: return
         runCatching { writer.submit { drainTo(file) }.get() }
             .onFailure { Diagnostics.w(TAG, "台账 flush 失败: ${it.javaClass.simpleName}") }
+    }
+
+    /**
+     * 关闭功能：先停记录、把队列写空，再删文件。
+     *
+     * 顺序不能反 —— 先删文件再 flush，会把队列里刚写的几行重新建出来。
+     */
+    fun deleteFile(context: Context): Boolean {
+        enabled = false
+        flush()
+        return deleteQuietly(File(context.filesDir, FILE_NAME))
+    }
+
+    /** 删除单文件（JVM 可测）：文件本来就不存在也算成功 */
+    internal fun deleteQuietly(file: File): Boolean {
+        if (!file.exists()) return true
+        return runCatching { file.delete() }
+            .onFailure { Diagnostics.w(TAG, "台账删除失败: ${it.javaClass.simpleName}") }
+            .getOrDefault(false)
     }
 
     private fun drainTo(file: File) {

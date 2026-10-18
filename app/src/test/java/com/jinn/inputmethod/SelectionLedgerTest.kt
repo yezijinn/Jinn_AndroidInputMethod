@@ -128,5 +128,33 @@ class SelectionLedgerTest {
         )
         val settings = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
         assertTrue("设置页要有入口", "R.id.btn_user_dict" in settings && "UserDictActivity::class.java" in settings)
+        assertTrue("入口文案要跟随开关", "用户词库（未开启）" in settings)
+    }
+
+    @Test
+    fun `关闭确认只认大写OK`() {
+        assertTrue(isConfirmOkText("OK"))
+        assertTrue(isConfirmOkText("  OK  "))
+        assertTrue("小写不算", !isConfirmOkText("ok"))
+        assertTrue("大小写混合不算", !isConfirmOkText("Ok"))
+        assertTrue("多余字符不算", !isConfirmOkText("OK!"))
+    }
+
+    @Test
+    fun `关闭时删文件_不存在也算成功`() {
+        val f = java.io.File.createTempFile("picks", ".txt")
+        assertTrue("已有文件要删掉", SelectionLedger.deleteQuietly(f))
+        assertTrue("删完就不存在", !f.exists())
+        assertTrue("本来不存在也算成功", SelectionLedger.deleteQuietly(f))
+    }
+
+    @Test
+    fun `关闭后不得再记录_且不进系统备份`() {
+        val src = TestSources.codeOf(TestSources.rawSourceOfShortName("SelectionLedger.kt"))
+        assertTrue("record 首行必须挡住关闭态", "if (!enabled) return" in src)
+        val backup = TestSources.rawSource("src/main/res/xml/backup_rules.xml", "app/src/main/res/xml/backup_rules.xml")
+        val extract = TestSources.rawSource("src/main/res/xml/data_extraction_rules.xml", "app/src/main/res/xml/data_extraction_rules.xml")
+        assertTrue("备份规则要排除台账", "user_picks.txt" in backup)
+        assertEquals("云备份与设备迁移两段都要排除", 2, Regex("user_picks\\.txt").findAll(extract).count())
     }
 }

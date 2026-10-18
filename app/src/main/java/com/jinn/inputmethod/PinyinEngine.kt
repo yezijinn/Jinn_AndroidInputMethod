@@ -584,8 +584,8 @@ object PinyinEngine {
             // 用户词频：独立文件 IO（几 ms），放在索引之前；排序在查询期做，
             // 第一键之前一定已就绪，也不占首字延迟预算。
             UserFrequency.load(context, prefs.userLearning)
-            // 选择台账（只追加的词库原料）：与词频表分开，一个文件、只增不删
-            SelectionLedger.init(context)
+            // 选择台账（只追加的词库原料）：默认关，开关由用户在说明弹框里手输 OK 打开
+            SelectionLedger.init(context, prefs.userDictEnabled)
 
             // 单段加载：2026-09-27 起源改为「第 1 部分」短语库（xz 2.1MB / 29.9 万键），
             // 解压 + 解析约 0.5~0.7s，原「高频子集先行」的两段式与 hot 资产一并退场。

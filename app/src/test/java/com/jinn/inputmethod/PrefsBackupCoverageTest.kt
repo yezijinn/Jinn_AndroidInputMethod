@@ -26,6 +26,14 @@ class PrefsBackupCoverageTest {
      */
     private val retiredKeys = setOf("KEY_KEYBOARD_SKIN", "KEY_SHOW_RARE_CHARS_LEGACY")
 
+    /**
+     * 有意不进备份的键：状态本身属于「必须当场同意」的隐私开关。
+     *
+     * 恢复到新机后必须重新看说明并手输大写 OK，不能因为导入一份配置文件被静默打开
+     * （`user_picks.txt` 本身也已排除系统备份，见 backup_rules / data_extraction_rules）。
+     */
+    private val excludedFromBackup = setOf("KEY_USER_DICT_ENABLED")
+
     private val sourceFile: File = listOf(
         File("src/main/java/com/jinn/inputmethod/Prefs.kt"),
         File("app/src/main/java/com/jinn/inputmethod/Prefs.kt"),
@@ -89,12 +97,12 @@ class PrefsBackupCoverageTest {
         // 2026-10-17 起 102 → 103：新增「拼音打标」1 键（外观页开关，换机要带走）
         // 2026-10-17 起 103 → 101：移除「候选追加方式」「拼音打标」2 键（前者固定为追加一次，
         //                       后者改为内置常开，均无开关可存）
-        assertEquals("提取到的键常量应是 101 个（改键数请同步本断言）", 101, keyConstants.size)
+        assertEquals("提取到的键常量应是 102 个（改键数请同步本断言）", 102, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
 
-        val liveKeys = keyConstants.keys - retiredKeys
+        val liveKeys = keyConstants.keys - retiredKeys - excludedFromBackup
         val missingExport = liveKeys.filterNot { export.contains(it) }
         val missingImport = liveKeys.filterNot { import.contains(it) }
 
@@ -358,7 +366,7 @@ class PrefsBackupCoverageTest {
         val import = bodyOf("importFromBackup")
         val exportKeys = Regex("KEY_[A-Z0-9_]+").findAll(export).map { it.value }.toSet()
         val importKeys = Regex("KEY_[A-Z0-9_]+").findAll(import).map { it.value }.toSet()
-        val liveKeys = keyConstants.keys - retiredKeys
+        val liveKeys = keyConstants.keys - retiredKeys - excludedFromBackup
 
         assertEquals(
             "导出侧漏掉的键：${liveKeys - exportKeys}",

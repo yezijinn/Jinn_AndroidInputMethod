@@ -26,6 +26,11 @@
     <exclude
         domain="file"
         path="user_freq.txt.tmp" />
+    <!-- 选择台账（入 user_picks.txt）：26 键选过的词 + 读音，属长期留痕的隐私数据；
+         默认关闭，但仍必须排除备份/迁移，避免「用户没开也被云备份带走」 -->
+    <exclude
+        domain="file"
+        path="user_picks.txt" />
     <!-- 剪贴板图片目录（filesDir/clipboard/）：原图与缩略图都是密文，密钥（Keystore）本就不可备份，
          恢复后一条也解不开；而它是本模块最重的数据（几十 MB 级），进了备份只会挤爆 25MB 配额、
          连真正该备份的 dicts/ 都备不上（与 index/ 同款代价）。
