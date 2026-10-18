@@ -5720,6 +5720,24 @@ class RecentFixesRegressionTest {
     }
 
     @Test
+    fun `切分缓存必须随词库重载失效`() {
+        val src = codeOf("PinyinEngine.kt")
+        // 每键要切两次（显示 + 查询），故在 segment 上做单条 memo；键必须含世代号，
+        // 否则重载词库后拼音行仍按旧切分显示（候选靠 phrasesFor 自己失效，不会一起暴露）
+        assertTrue("segment 必须有 memo", "private class SegmentHit" in src && "segmentHit" in src)
+        assertTrue(
+            "memo 键必须含世代号",
+            Regex("if \\(it\\.gen == gen && it\\.input == input\\)").containsMatchIn(src),
+        )
+        assertTrue(
+            "世代号必须来自 invalidateMergedCache",
+            "val gen = dataGeneration" in src && "dataGeneration++" in src,
+        )
+        // markSyllables 只建一个 StringBuilder 并逐字符回校验，不再靠 replace 建第三个串
+        assertFalse("回校验不得再建中间串", "marked.replace(" in src)
+    }
+
+    @Test
     fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue(
@@ -5728,8 +5746,9 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "收起先落定高度、再翻状态（绝不把补间带进新形态）",
-            Regex("private fun collapseCandidates\\(\\) \\{\\s*if \\(!candidatesExpanded\\) return")
-                .containsMatchIn(src) && "settleCandidateHeight()" in src,
+            Regex("private fun collapseCandidates\\(animated: Boolean = false\\) \\{\\s*"
+                + "if \\(!candidatesExpanded\\) return\\s*settleCandidateHeight\\(\\)")
+                .containsMatchIn(src),
         )
         // 只补**栏高**一个量：不淡入淡出、不插值三角、不加「过渡期跳过」守卫
         assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)

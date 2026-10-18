@@ -102,12 +102,12 @@ internal object ClipboardImageExport {
                     null, null,
                 )
             }
-            if (unpend.isFailure) {
+            // ContentResolver.update 返回**受影响行数**：0 表示行已不在/未命中，此时 IS_PENDING
+            // 仍是 1，这条记录对相册与其它应用都不可见 —— 不能当成成功（与异常分支同口径）。
+            val rows = unpend.getOrNull() ?: 0
+            if (rows <= 0) {
                 runCatching { resolver.delete(uri, null, null) }
-                Diagnostics.w(
-                    TAG,
-                    "相册条目解除写入中标记失败，已回收: ${unpend.exceptionOrNull()?.javaClass?.simpleName}",
-                )
+                Diagnostics.w(TAG, "相册条目解除写入中标记未生效（rows=$rows），已回收")
                 return false
             }
             true

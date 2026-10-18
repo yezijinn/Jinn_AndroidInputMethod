@@ -2321,7 +2321,10 @@ class JinnIme : InputMethodService() {
         // 放在这里而不是每次按键查：Settings.System 是 Binder 调用，快速打字时每秒十几次 IPC 不划算；
         // 而用户改完开关回来必然经过弹键盘，缓存足够新鲜。
         KeyFeedback.refresh(prefs)
-        KeyFeedback.refreshSystemGates(this)
+        // 3 次跨进程读（Settings.System ×2 + AudioManager）移出首帧：放在弹键盘的关键路径上
+        // 会让首帧多 1~3ms，而用户对「弹键盘跟手」比对单键更敏感。首次触摸必然晚于一次 post，
+        // 所以「第一个键就用到新闸门」仍成立；会话内改静音另有 RINGER_MODE_CHANGED 广播兜底。
+        ui.post { KeyFeedback.refreshSystemGates(this@JinnIme) }
         // 剪贴板开关可能在输入法进程外被改（自定义页不走「保存并重启」）：弹键盘时按偏好同步一次
         syncClipboardController()
         // 防御拦截：关闭开关时键盘可能正处于显示状态（窗口可见时才回调本方法），
@@ -4042,11 +4045,20 @@ class JinnIme : InputMethodService() {
         // （2026-10-01 修复 L-241）
         // 走统一的 [guardHostCall]（2026-10-02 收口）：此前是这里内联一份 `runCatching`，
         // 形态与别处不同 ⇒ 守卫没法用同一判据扫全部路径
+        // ⚠ 不能用 `deleteSurroundingText(0, Int.MAX_VALUE)`：AOSP 的 BaseInputConnection 里
+        // `end = b + afterLength`，当光标不在开头（b > 0，宿主有 composing 区或忽略了
+        // setSelection）时 b + Int.MAX_VALUE 溢出成负数 ⇒ `end > length` 不成立、
+        // 不钳位、`numDeleteAfter < 0` ⇒ 整段**静默跳过**，一个字符都不删。
+        // 先取光标后的实际长度再按它删，语义明确且不依赖实现的上界行为。
+        val after = connection.getTextAfterCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
         val ok = guardHostCall("deleteAllText") {
             connection.setSelection(0, 0)
-            connection.deleteSurroundingText(0, Int.MAX_VALUE)
+            if (after > 0) connection.deleteSurroundingText(0, after)
+            else connection.deleteSurroundingText(0, 0)
         }
-        if (ok) Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾）")
+        if (ok) {
+            Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾，长度 $after）")
+        }
     }
 
     /**
@@ -4226,6 +4238,9 @@ class JinnIme : InputMethodService() {
 
     companion object {
         const val TAG = "JinnIme"
+
+        /** 清空文本时光标后取文本的上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
+        const val MAX_SCAN_CHARS = 20_000
 
         /** 「到末尾」读取光标之后文本的上限：长文档下避免一次跨进程大事务卡住主线程 */
         const val DOC_JUMP_MAX_CHARS = 100_000

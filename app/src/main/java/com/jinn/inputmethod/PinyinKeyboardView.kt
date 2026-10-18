@@ -262,6 +262,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
     private var lastCandidatesInput: String? = null
 
+    /** 本帧 `composing` 的快照：供 refreshCandidateBar 内多处复用，避免每键拷贝两次整串 */
+    private var composingSnapshot: String? = null
+
     /**
      * 切换候选栏展开态（BUG.md L-1393）。
      *
@@ -290,10 +293,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             0
         }
-        candidateRenderExpanded = expand
-        // 内容在这一次刷新里进入目标态（收起时不提前换单行，展开时直接是网格）
+        // ⚠ 收起时**不**在这里翻渲染态：补间期间内容必须仍是展开态（随栏高被裁），
+        // 否则 295 行这次刷新就把内容换成单行，110ms 内看到的是「高栏里飘一行字」
+        // （旧版「先清空再合盖」）。渲染态由补间收尾 [finishCandidateTween] 统一对齐。
+        // 展开时立刻置位：内容要同帧进网格。
+        if (expand) candidateRenderExpanded = true
+        // 内容在这一次刷新里进入目标态
         refreshCandidateBar()
-        // 内容已定，现在只补栏高
+        // 内容已定，现在只补栏高（收起走完后 finishCandidateTween 才换单行）
         startCandidateHeightTween()
     }
 
@@ -448,18 +455,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里。
      *
-     * 只翻意图态：栏高与内容由下一次 [refreshCandidateBar] 落下。
-     * 收起补间期间**仍按展开态渲染**（内容随栏高被裁），由 [finishCandidateTween] 收尾换单行。
-     * 三角方向当场复位 —— 功能面板 / 符号层那几条早退分支走不到 [updateExpandButton]。
+     * @param animated 是否走高度补间。**只有**点三角（[toggleCandidateExpanded]）传 true：
+     *   那一路径下渲染态保留到补间结束（内容随栏高被裁，不提前换单行，避免旧版
+     *   「高栏里飘一行字」）；补间收尾由 [finishCandidateTween] 统一对齐。
+     *   其余路径（选词 / ✕ / 换层 / 面板 / 空候选）没有补间，必须**当场**复位渲染态 ——
+     *   否则 [candidateRenderExpanded] 会永久停在 true，下次刷新仍按展开排数渲染，
+     *   表现为「候选栏一直是网格、三角要按两次」（2026-10-19 回归）。
      */
-    private fun collapseCandidates() {
+    private fun collapseCandidates(animated: Boolean = false) {
         if (!candidatesExpanded) return
         // 从确定态起跳：绝不把补间带进新形态
         settleCandidateHeight()
         candidatesExpanded = false
-        // ⚠ 这里**不**翻 [candidateRenderExpanded]：收起补间期间内容必须仍是展开态，
-        // 随栏高被裁；提前换成单行就会重现「高栏里飘一行字」（旧版「先清空再合盖」）。
-        // 渲染态由补间收尾 [finishCandidateTween] 统一对齐。
+        if (!animated) candidateRenderExpanded = false
         btnExpandCandidates.rotation = 0f
     }
 
@@ -3027,7 +3035,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 候选集变化且输入变了才收起（同输入下的词库合并、学习重排不得收起展开态）；
         // 「新一次查询 / 选词上屏 / 清空 / 会话结束」输入串都会变或清空，收起语义不变（作者 2026-10-17 指定）
         val token = lastCandidates.hashCode()
+        // 本帧输入串只拷一次：下面 3103 行的 `input` 与这里内容必然相同（两者之间
+        // 只有 Prefs 读与可选的 collapseCandidates，不写 composing），早先每键拷两次。
         val inputNow = composing.toString()
+        composingSnapshot = inputNow
         if (lastCandidatesToken != null &&
             lastCandidatesToken != token &&
             lastCandidatesInput != null &&
@@ -3095,7 +3106,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderPasswordDigits()
             return
         }
-        val input = composing.toString()
+        // 复用本帧已拷好的串（见 refreshCandidateBar 里的 composingSnapshot）
+        val input = composingSnapshot ?: composing.toString()
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
         // 只改显示，composing / 查询 / 上屏都用未打标的串。

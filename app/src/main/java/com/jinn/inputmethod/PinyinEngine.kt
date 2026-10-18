@@ -1099,19 +1099,19 @@ object PinyinEngine {
         // 词级优先：与 [toDisplay] 对称（「頭髮」折回「头发」，字级反查只会得「头髮」）
         tradSimpWords?.get(word)?.let { return it }
         val map = tradSimp ?: return word
-        var changed = false
-        val out = CharArray(word.length)
+        // 惰性分配：本函数在每次按键里被调几十~几百次（`UserFrequency.rank` 的 keyOf 就在
+        // `anyKnown` 早退**之前**），而绝大多数词根本没有繁体字 —— 早先无条件 new 一个
+        // CharArray 再整份丢掉。无变化时仍返回同一个 `word` 对象（保持既有契约）。
+        var out: CharArray? = null
         for (i in word.indices) {
             val c = word[i]
             val t = if (c.code < CHAR_TABLE_SIZE) map[c.code] else '\u0000'
             if (t != '\u0000' && t != c) {
-                out[i] = t
-                changed = true
-            } else {
-                out[i] = c
+                val buf = out ?: word.toCharArray().also { out = it }
+                buf[i] = t
             }
         }
-        return if (changed) String(out) else word
+        return out?.let { String(it) } ?: word
     }
 
     /**
@@ -2189,9 +2189,13 @@ object PinyinEngine {
         // 连续查询串起状态（分析回执的订正第 2 条）。
         val keyBuf = StringBuilder(raw.length)
         for (s in syllables) keyBuf.append(s)
-        val words = LinkedHashSet<String>()
+        // 按最坏规模预分配：8 音节 × 每音节 60 字 = 480。不预分配的话集合会在
+        // 12/24/48/96/192/384 处连续扩容 6 次，累计搬运近千个槽 —— 长输入（最容易卡的那类）
+        // 每键都要付一次。LinkedHashSet/LinkedHashMap 的迭代顺序是插入序，与容量无关。
+        val cap = syllables.size * MAX_CHARS
+        val words = LinkedHashSet<String>(cap)
         // 每个候选来自几个音节（用于最后「同音节数优先」分组）：长键先入，故先登记者即最长键
-        val syllableCounts = HashMap<String, Int>(64)
+        val syllableCounts = HashMap<String, Int>(cap * 4 / 3 + 1)
         for (k in syllables.size downTo 1) {
             val key = keyBuf.toString()     // 本轮前缀快照（Map / 二分查找要用真 String）
             keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
@@ -2207,7 +2211,7 @@ object PinyinEngine {
                 }
             }
         }
-        val chars = LinkedHashSet<String>()
+        val chars = LinkedHashSet<String>(cap)
         for (syl in syllables) {
             for (c in displayTake(charsFor(syl), MAX_CHARS)) {
                 syllableCounts[c] = 1
@@ -2216,8 +2220,8 @@ object PinyinEngine {
         }
 
         // 2b. 模糊音容错（默认关）：精确结果一个不动，变体一律排在其后
-        val fuzzyWords = LinkedHashSet<String>()
-        val fuzzyChars = LinkedHashSet<String>()
+        val fuzzyWords = LinkedHashSet<String>(cap)
+        val fuzzyChars = LinkedHashSet<String>(cap)
         if (fuzzyMask != FuzzyPinyin.NONE) {
             val isLegal = { s: String -> validSyllables.contains(s) }
             // 同一个缓冲区重建一次（上一循环结束时已被削空）；`take(k)` 仍留给 keyVariants ——
@@ -2392,7 +2396,8 @@ object PinyinEngine {
                 ),
             )
             .forEach { e ->
-                out.addAll(UserFrequency.rank(e.value.toTypedArray()) { toSimplified(it) }.toList())
+                // rank 已返回一份全新数组，asList 只是视图，不再整份拷贝一次
+                out.addAll(UserFrequency.rank(e.value.toTypedArray()) { toSimplified(it) }.asList())
             }
         return out
     }
@@ -2586,11 +2591,23 @@ object PinyinEngine {
         if (input.isEmpty()) return input
         val (syllables, partial) = segment(input)
         if (syllables.isEmpty()) return input
-        val marked = buildString {
-            append(syllables.joinToString("'"))
-            if (partial.isNotEmpty()) append("'").append(partial)
+        // 直接拼进一个 StringBuilder：早先是 joinToString 一个串 + buildString 又一个
+        // + replace("'","") 再一个整串，每键三次分配加一次全串比较。
+        val marked = StringBuilder(input.length + syllables.size + 1)
+        for (i in syllables.indices) {
+            if (i > 0) marked.append('\'')
+            marked.append(syllables[i])
         }
-        return if (marked.replace("'", "") == input) marked else input
+        if (partial.isNotEmpty()) marked.append('\'').append(partial)
+        // 回校验改成逐字符跳过分隔符：不建中间串，结果等价（校验失败仍原样返回 input）
+        var j = 0
+        for (k in 0 until marked.length) {
+            val c = marked[k]
+            if (c == '\'') continue
+            if (j >= input.length || input[j] != c) return input
+            j++
+        }
+        return if (j == input.length) marked.toString() else input
     }
 
     /**
@@ -2600,9 +2617,31 @@ object PinyinEngine {
      * （如 xuni → [xu, ni] 拼「虚拟」，而非贪心的 [xun, i]）。
      * 无词库命中时退回贪心最长匹配（原逻辑）。
      */
+    /**
+     * 切分结果的单条 memo。
+     *
+     * 每次按键里 `segment` 会被调**两次**：一次给显示（[markSyllables]）、一次给查询（[query]）。
+     * 切分不是常数操作（整串查词库 + 回溯枚举 + 贪心 substring 比对），重复一次纯属浪费。
+     * 用「世代号 + 输入串」双条件 memo：世代号由 [invalidateMergedCache] 推进，而它正是
+     * `validSyllables` / `phrasesByPinyin` 的唯一变更出口（含 [resetForTest]）⇒ 无需额外清理。
+     *
+     * ⚠ 返回的 List **必须只读**（memo 会把它共享给后续调用方）。
+     */
+    private class SegmentHit(
+        val gen: Int,
+        val input: String,
+        val value: Pair<List<String>, String>,
+    )
+
+    @Volatile
+    private var segmentHit: SegmentHit? = null
+
     private fun segment(input: String): Pair<List<String>, String> {
-        dictionarySegmentation(input)?.let { return Pair(it, "") }
-        return greedySegment(input)
+        val gen = dataGeneration
+        segmentHit?.let { if (it.gen == gen && it.input == input) return it.value }
+        val value = dictionarySegmentation(input)?.let { Pair(it, "") } ?: greedySegment(input)
+        segmentHit = SegmentHit(gen, input, value)   // 单条引用整体替换，不存在撕裂读
+        return value
     }
 
     /**
@@ -2787,13 +2826,18 @@ object PinyinEngine {
         // 档位过滤在**查询期**（与词路径的 filterRareChars 同源）：档 2 / 档 3 的字整份在内存里，
         // 开关一开即放行 —— 见 [loadCharsReader] 的注释（2026-09-27 修）。
         // 词库只收另一种写法时也必须出字：双拼输出 ue 型、词库键统一是 v 型，正落在这一支
-        if (direct == null) return filterRareChars(other ?: return emptyList()).toList()
-        if (other == null || other.isEmpty()) return filterRareChars(direct).toList()
+        // ⚠ 一律返回**只读视图**（`asList()`，零拷贝）：本函数在每次按键里被调十几次
+        // （每音节一次 + 整句每个单音节跨度一次），早先每次都把整份字表（可达 300+ 字）
+        // 复制进 ArrayList 再丢掉绝大多数。`charsBySyllable` 的数组只整体替换、从不原地改写，
+        // 所有调用方（displayTake / consumption / 整句）也都是只读 —— 需要改请自己 toMutableList()。
+        if (direct == null) return filterRareChars(other ?: return emptyList()).asList()
+        if (other == null || other.isEmpty()) return filterRareChars(direct).asList()
         val out = ArrayList<String>(direct.size + other.size)
         val seen = HashSet<String>(direct.size + other.size)
         for (c in direct) if (seen.add(c)) out.add(c)
         for (c in other) if (seen.add(c)) out.add(c)
-        return filterRareChars(out.toTypedArray()).toList()
+        // 合并路径的 out 本就是新分配的 ArrayList，asList 同样只是视图、不额外拷贝
+        return filterRareChars(out.toTypedArray()).asList()
     }
 
     // ── 候选拼音消费区间（Residual Pinyin Rematching）───────

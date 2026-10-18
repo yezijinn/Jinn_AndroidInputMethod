@@ -36,7 +36,9 @@ class GallerySettingsActivity : ComponentActivity() {
      * 图库目录：SAF 目录树授权。
      *
      * 用户只在这里跳一次系统选择器；持久化授权拿到后，键盘内的图库面板直接列这个目录。
-     * 拿授权失败也先把 URI 记下 —— 可用性由面板侧的一次真实读取判定，不可用即提示重绑。
+     * ⚠ 拿不到持久授权就**不**落这个绑定（旧授权不予撤销、偏好保持原值）：只靠本进程临时授权
+     * 的目录在进程重启后必然 SecurityException，而界面没有任何入口可修。只读降级（拿到读位、
+     * 没拿到写位）仍照旧落绑定并留痕 —— 那类目录只是「转移」不可用，读图正常。
      */
     private val dirLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -62,6 +64,14 @@ class GallerySettingsActivity : ComponentActivity() {
         }.isSuccess
         if (granted && !readWrite) {
             Diagnostics.w(TAG, "目录授权只拿到读位，转图库不可用 provider=${uri.authority}")
+        }
+        // 拿不到持久授权就**不能**落这个绑定：旧目录授权一旦被撤销、新目录又只靠本进程的
+        // 临时授权，进程重启后必然 SecurityException，图库面板变成「读不到」且无入口可修。
+        // 与导出目录（ClipboardHistoryActivity）同口径：失败即提示并保留原状。
+        if (!granted) {
+            Diagnostics.w(TAG, "目录: 未拿到持久授权，保留原绑定 provider=${uri.authority}")
+            render()
+            return@registerForActivityResult
         }
         if (previous.isNotEmpty() && previous != uri.toString()) releaseTreePermission(previous)
         prefs.galleryTreeUri = uri.toString()
