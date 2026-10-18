@@ -373,6 +373,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var currentRows = CandidateRows.SINGLE
 
     /**
+     * 本帧是否「双行档 + 未展开」。
+     *
+     * 拼音条的居中只属于这一种形态：展开态的行数可能是 2（候选只够两排 / 屏幕只放得下两排），
+     * 若按 `rows == DOUBLE` 判断，展开两排时拼音条会被居中到两排之间（用户 2026-10-18 报告）。
+     */
+    private var currentDoubleRow = false
+
+    /**
      * 本帧生效的候选字号（sp，用户参数 [Prefs.candidateTextSp]），由 [applyCandidateRows] 落位。
      *
      * 与 `currentRows` 同款：本帧的候选条目字号、拼音条字号与复用块最小高度都读它，
@@ -2379,6 +2387,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val perRow = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
         val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp)
         currentRows = rows
+        currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE
         currentCandidateSp = candidateSp
         currentPinyinSp = pinyinSp
         currentPinyinGapDp = gapDp
@@ -2409,7 +2418,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 拼音条位置：单行档贴顶；双行档垂直居中 —— 两排候选各贴上下边，中缝恰好等于拼音条高。
         (pinyinBar.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-            val gravity = if (rows == CandidateRows.DOUBLE) {
+            // 只有「双行档且未展开」才居中；展开态无论几排都置顶
+            val gravity = if (currentDoubleRow) {
                 android.view.Gravity.CENTER_VERTICAL
             } else {
                 android.view.Gravity.TOP
@@ -2499,7 +2509,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun syncCandidatePadding() {
         val left = dpExact(CandidateRows.SIDE_PAD_DP)
         // 单行档让出一条拼音条（含拼音行间隔，与栏高同源）；双行档的拼音条叠在中缝上，不让位
-        val top = if (pinyinBar.visibility == View.VISIBLE && currentRows != CandidateRows.DOUBLE) {
+        val top = if (pinyinBar.visibility == View.VISIBLE && !currentDoubleRow) {
             currentPinyinBarPx
         } else {
             0

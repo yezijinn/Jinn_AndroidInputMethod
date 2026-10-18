@@ -319,6 +319,24 @@ class CandidateRowsTest {
     }
 
     @Test
+    fun 展开态拼音条必须置顶() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue(
+            "拼音居中只属于「双行档未展开」",
+            "currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE" in src,
+        )
+        assertTrue("gravity 按形态判断而不是按行数", "val gravity = if (currentDoubleRow)" in src)
+        assertTrue(
+            "候选让位同理（展开两排也要给拼音条让出位置）",
+            "pinyinBar.visibility == View.VISIBLE && !currentDoubleRow" in src,
+        )
+        assertTrue(
+            "不得再按 rows == DOUBLE 判断（展开两排会撞上该常量）",
+            "currentRows != CandidateRows.DOUBLE" !in src,
+        )
+    }
+
+    @Test
     fun 展开态四处收起与只单行档显示() {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue("再点三角要能收起", "toggleCandidateExpanded()" in src)
