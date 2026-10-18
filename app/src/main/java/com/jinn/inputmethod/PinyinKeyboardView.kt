@@ -335,7 +335,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun startCandidateHeightTween(targetRows: Int) {
-        val lp = candidateBar.layoutParams as? LinearLayout.LayoutParams ?: return
+        // 仅作空守卫：`from` 读真实像素高、`to` 按目标档位现算，都不经过 layoutParams
+        if (candidateBar.layoutParams !is LinearLayout.LayoutParams) return
         val from = candidateBar.height
         // ⚠ `to` **不能**读 lp.height：收起时上一次刷新已把它写成展开档高度（内容仍按展开态
         // 渲染是刻意的），读它就会 from == to ⇒ 补间永不启动，收起变成一帧硬切。

@@ -691,11 +691,20 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
             // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
             // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
-            val stripImages = when (category) {
-                null -> !imageRowsInAll() && db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
-                CATEGORY_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
-                else -> false
-            }
+            // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
+            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）。
+            // ⚠ 这两次 `db.count` 必须自己兜住异常：它们在下面 `loaded` 的 runCatching **之外**，
+            // 抛出去会落到 `BackgroundIo.wrapped`（只记日志），`post{}` 不执行 ⇒ `loadingPage`
+            // 永远留在 true，此后翻页与续扫全被第一道闸门静默拦死，且面板停在上一分类的快照。
+            // 失败按「无图」处理即可 —— 它只影响空态文案，不影响列表正确性。
+            val stripImages = runCatching {
+                when (category) {
+                    null -> !imageRowsInAll() &&
+                        db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                    CATEGORY_FAVORITE -> db.count(null, true, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
+                    else -> false
+                }
+            }.getOrDefault(false)
             val loaded = runCatching {
                 // 分页加载：COUNT 不解密，解密只覆盖首屏要显示的那些条目。
                 // 首屏必须连续填页（不是只取一页）：解密失败的行对用户不可见，若它们

@@ -107,6 +107,9 @@ internal object ClipboardFileImporter {
     private fun runImport(context: Context, uri: Uri, db: ClipboardDb, prefs: ClipboardPrefs): Result {
         val limitBytes = prefs.effectiveMaxItemBytes().toInt()
         val maxItems = prefs.maxItems
+        // 体积上限必须一并传给裁剪：只传条数会按库里的默认值（100MB）裁，
+        // 把设了更大体积上限的用户的旧历史成批删掉（不可恢复）
+        val maxTotalBytes = prefs.maxTotalBytes
         // 全库哈希一次性取回（只查一列、不解密，备份导入同款做法）：导入期间本线程持有的
         // 集合是「判重 + 统计重复数」的唯一依据
         val known = db.allHashes().toMutableSet()
@@ -143,7 +146,9 @@ internal object ClipboardFileImporter {
                         // 限制在「TRIM_EVERY × 单条上限」以内
                         if (++sinceTrim >= TRIM_EVERY) {
                             sinceTrim = 0
-                            db.trimTo(maxItems)
+                            // 两个上限都要传用户值：只传条数的话体积会按库里的默认值（100MB）裁，
+                            // 把设了更大体积上限的用户的旧历史成批删掉（且不可恢复）
+                            db.trimTo(maxItems, maxTotalBytes)
                         }
                     }
                     ok
@@ -151,7 +156,7 @@ internal object ClipboardFileImporter {
             )
         }
         // 收尾必裁一次：批边界之后的尾巴也要落回上限内（L-1226）；这一步同时决定回执报多少（L-1227）
-        db.trimTo(maxItems)
+        db.trimTo(maxItems, maxTotalBytes)
         val present = db.allHashes()
         val retained = imported.count { it in present }
         Diagnostics.i(

@@ -385,8 +385,10 @@ class ClipboardImageTest {
         // 「是否有图」必须与列表同一次取数：放网格的异步回调里更新，空态会先读到上一轮的旧值
         assertTrue("历史页的图片有无与列表同源",
             "val stripImages = when (category)" in TestSources.codeSource("ClipboardHistoryActivity.kt"))
-        assertTrue("面板的图片有无与列表同源",
-            "val stripImages = when (category)" in TestSources.codeSource("ClipboardPanelView.kt"))
+        // 「是否有图」必须与列表同一次取数；且面板侧这两次 count 落在列表 runCatching 之外，
+        // 必须自己兜住异常 —— 否则 loadingPage 永久卡 true，翻页与续扫全被静默拦死
+        assertTrue("面板的图片有无与列表同源且自兜异常",
+            "val stripImages = runCatching {" in TestSources.codeSource("ClipboardPanelView.kt"))
         // ── 「图片显示在「全部」分组」偏好（2026-10-12）──
         // 默认关 ⇒ 「全部」列表里图片行以**序号占位**出现（点它不弹框 / 不粘贴），条带让位
         val prefsSrc = TestSources.codeSource("ClipboardPrefs.kt")
@@ -770,4 +772,28 @@ class ClipboardImageTest {
             }
         }
     }
+
+    /**
+     * 图片「单张上限」必须受「总量上限」压制：两项各调各的会凑出矛盾组合
+     * （单张 50MB + 总量 10MB）⇒ 一张 20MB 的图入库即被 trimImages 按字节预算删掉，
+     * 而面板 / 网格 / Toast 全无提示，用户只看到「复制图片没反应」。
+     * 与收藏体积（effectiveFavMb）同款：保存时钳制 + 页面回显实际生效值。
+     */
+    @Test
+    fun imageItemCapIsClampedByTotal() {
+        val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "单张必须有生效值（受总量钳制）",
+            "private fun effectiveImageItemMb(d: Draft): Int = minOf(d.imageMaxItemMb, d.imageMaxTotalMb)" in src,
+        )
+        assertTrue(
+            "保存必须写生效值而不是原值",
+            "imageMaxItemMb = effectiveImageItemMb(target)" in src,
+        )
+        assertTrue(
+            "页面必须回显实际生效值",
+            "val effItem = effectiveImageItemMb(draft)" in src,
+        )
+    }
+
 }

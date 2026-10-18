@@ -726,7 +726,14 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
-    fun trimTo(maxItems: Int, maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES) {
+    /**
+     * 落回上限内（条数 + 体积）。
+     *
+     * ⚠ `maxTotalBytes` **故意不给默认值**：曾只传条数，体积按 `DEFAULT_MAX_TOTAL_BYTES`
+     * （100MB）裁，而该值恰好等于出厂默认 ⇒ 只在用户改过体积上限时才暴露（设 500MB 的库被砍到
+     * 100MB，旧历史静默消失）。不给默认值，漏传即编译错误，比留一个"恰好对"的默认值可靠。
+     */
+    fun trimTo(maxItems: Int, maxTotalBytes: Long) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
         // 只有**图片行**被删才需要收孤儿：`trimImages` 交回的是「实删的图片行数」。

@@ -383,6 +383,15 @@ class ClipboardCustomizeActivity : Activity() {
             { draft = draft.copy(imageMaxItemMb = it) },
             { "$it MB" },
         ))
+        // 单张生效值（受总量压制）：不显示的话，用户设了矛盾组合后只会看到「图片存不进去」
+        val effItem = effectiveImageItemMb(draft)
+        val itemClamp = if (effItem < draft.imageMaxItemMb) TEXT_FAV_CLAMPED_SUFFIX else ""
+        card4.addView(
+            makeHint(
+                TEXT_IMAGE_MAX_ITEM + TEXT_EFFECTIVE_PREFIX + effItem +
+                    TEXT_EFFECTIVE_SUFFIX + itemClamp,
+            ),
+        )
         card4.addView(makeHint(TEXT_IMAGE_HINT))
         dim(card4, editable)
         PageStyle.addCard(list, card4)
@@ -570,7 +579,7 @@ class ClipboardCustomizeActivity : Activity() {
             imageEnabled = target.imageEnabled,
             imageMaxItems = target.imageMaxItems,
             imageMaxTotalMb = target.imageMaxTotalMb,
-            imageMaxItemMb = target.imageMaxItemMb,
+            imageMaxItemMb = effectiveImageItemMb(target),
             imageInAllGroup = target.imageInAllGroup,
             favoriteImageMoveOut = target.favoriteImageMoveOut,
         )
@@ -702,6 +711,15 @@ class ClipboardCustomizeActivity : Activity() {
     /** 收藏体积的生效值（受「历史总量 1/4」压制）：与页面上那行「实际生效」同一处取值 */
     private fun effectiveFavMb(d: Draft): Int =
         ClipboardPrefs.effectiveFavoriteMaxMb(d.favMaxMb, d.maxTotalMb)
+
+    /**
+     * 单张图片的生效值：受「图片总量上限」压制。
+     *
+     * 两项原本各调各的（单张 1~50MB、总量 10~1000MB），设「单张 50MB + 总量 10MB」这种组合后，
+     * 一张 20MB 的图入库即被 `trimImages` 按字节预算删掉（面板 / 网格 / Toast 全无提示，
+     * 用户只看到「复制图片没反应」）。收藏体积早有同款压制（[effectiveFavMb]），这里对齐。
+     */
+    private fun effectiveImageItemMb(d: Draft): Int = minOf(d.imageMaxItemMb, d.imageMaxTotalMb)
 
     /**
      * 按**已落盘**的偏好立即裁剪一次库。
