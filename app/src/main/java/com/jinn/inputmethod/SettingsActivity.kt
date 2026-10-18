@@ -383,7 +383,6 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, StorageUsageActivity::class.java))
             }
         }
-        findViewById<TextView>(R.id.text_storage_hint).text = TEXT_STORAGE_HINT
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -1860,7 +1859,6 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_STORAGE_ENTRY = "存储占用统计"
         /** 用户词库入口：动作名，状态由页面内的说明弹框交代 */
         const val TEXT_USER_DICT = "生成用户词库"
-        const val TEXT_STORAGE_HINT = "看看安装包、词库索引缓存、剪贴板与日志各占多少"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
