@@ -273,6 +273,37 @@ class TestSourcesTest {
     }
 
     /**
+     * 元守卫：不得写**恒真断言**。
+     *
+     * `x.isEmpty() || x.isNotEmpty()` 逻辑上穷尽所有可能，等于什么也没断言 —— 用例永远绿，
+     * 而它声称守护的东西从未被检查过。本轮在 `PinyinCompletionTest` 里找到三处
+     * （用例名都是「不崩溃」，「不崩溃」的判据本就该是**调用本身**：抛异常 JUnit 直接红）。
+     *
+     * 判据在剥注释后的代码上做；注释里举例说明这种写法不算违规。
+     */
+    @Test
+    fun 不得写恒真断言() {
+        val tautology = Regex(
+            """assert\w+\([^\n]*?\b(\w+(?:\.\w+)*)\.isEmpty\(\)\s*\|\|\s*\1\.isNotEmpty\(\)""" +
+                """|assert\w+\([^\n]*?\b(\w+(?:\.\w+)*)\.isNotEmpty\(\)\s*\|\|\s*\2\.isEmpty\(\)""",
+        )
+        val offenders = (testDir().listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
+            .filterNot { it.name == "TestSourcesTest.kt" }
+            .flatMap { f ->
+                val code = TestSources.codeOf(f.readText())
+                tautology.findAll(code).map { m ->
+                    "${f.name}:${code.substring(0, m.range.first).count { it == '\n' } + 1}"
+                }
+            }
+            .sorted()
+        assertTrue(
+            "这些位置写了恒真断言（`x.isEmpty() || x.isNotEmpty()` 永远为真，等于没断言）：$offenders" +
+                " —— 要守「不崩溃」就让调用本身去抛，要守行为就写具体判据",
+            offenders.isEmpty(),
+        )
+    }
+
+    /**
      * 元守卫（BUG.md L-1151）：用例名声明了**顺序或频率语义**时，判据必须落在「位置或范围」上。
      *
      * 起因（L-109）：`contains("名字")` 式判据在「调换顺序」「挪进死分支」两种语义回退下依然通过。

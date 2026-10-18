@@ -228,9 +228,11 @@ class PinyinCompletionTest {
 
     @Test
     fun 错误输入xyz不崩溃() {
+        // 「不崩溃」的判据就是调用本身：query 抛异常时 JUnit 直接红。
+        // 原先写成 isEmpty() || isNotEmpty() 是**恒真式**（逻辑上穷尽所有可能），等于什么也没断言。
         val result = PinyinEngine.query("xyz")
-        // 不崩溃；可能空候选
-        assertTrue(result.candidates.isEmpty() || result.candidates.isNotEmpty())
+        // 补一条真有内容的判据：xyz 不是合法音节，不该凭空造出常用单字
+        assertFalse("xyz 不该出「你」: ${result.candidates}", result.candidates.contains("你"))
     }
 
     @Test
@@ -252,9 +254,11 @@ class PinyinCompletionTest {
 
     @Test
     fun 单字符声母前缀m不崩溃() {
+        // 同「错误输入 xyz」：恒真式换成真判据。
+        // m 是**首音节就不完整**的前缀：query 只做前缀联想、不查词，候选可以为空。
+        // 要钉的是「不抛异常 + 候选受上限约束」，不是「一定有候选」。
         val result = PinyinEngine.query("m")
-        // m 是前缀，只做单字联想，不崩
-        assertTrue(result.candidates.isNotEmpty() || result.candidates.isEmpty())
+        assertTrue("候选数不应超过上限: ${result.candidates.size}", result.candidates.size <= 100)
     }
 
     // ── 5. 补全结果上限 ──────────────────────────────────
@@ -280,9 +284,9 @@ class PinyinCompletionTest {
 
     @Test
     fun 英文模式隔离由上层保证() {
-        // 引擎本身不感知英文模式；验证：纯字母输入走全拼查询不崩溃即可
-        // （英文隔离在 PinyinKeyboardView 层：englishMode 时不调 PinyinEngine.query）
+        // 引擎本身不感知英文模式（隔离在 PinyinKeyboardView 层：englishMode 时不调 query）。
+        // 原先是恒真式，等于没断言；这里钉住两条真实约束：不抛异常、候选受上限约束。
         val result = PinyinEngine.query("hello")
-        assertTrue(result.candidates.isEmpty() || result.candidates.isNotEmpty())
+        assertTrue("候选数不应超过上限: ${result.candidates.size}", result.candidates.size <= 100)
     }
 }
