@@ -5765,7 +5765,15 @@ class RecentFixesRegressionTest {
             "补间期间刷新不得抢写角度",
             "if (candidateExpandRotationAnimator == null) {" in src,
         )
-        assertTrue("展开收起必须驱动三角补间", "tweenExpandButton(expand)" in src)
+        // ⚠ 顺序是硬约束：refreshCandidateBar 开头会按意图态对齐角度（补间在途才跳过），
+        // 所以它若在补间之前跑，角度已被写到终值 ⇒ 旋转补间变成 target→target 空转。
+        assertTrue(
+            "三角必须先于同帧那次 refresh 起补间",
+            Regex("tweenExpandButton\\(expand\\)\\s*(?://[^\\n]*\\n\\s*)*refreshCandidateBar\\(\\)")
+                .containsMatchIn(src),
+        )
+        // 也不能再留一处「补间之后」的重复调用（重复起步=第二次被 cancel 重来，中途会抖）
+        assertEquals("三角补间只起步一次", 1, Regex("tweenExpandButton\\(expand\\)").findAll(src).count())
         // 时长按实测取 60ms（依据见常量处注释：110ms 实测 janky 83%，60ms 为 3.27%）
         assertTrue("补间时长取实测值 60ms", "CANDIDATE_TWEEN_MS = 60L" in src)
         assertTrue(

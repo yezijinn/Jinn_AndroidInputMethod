@@ -309,13 +309,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （旧版「先清空再合盖」）。渲染态由补间收尾 [finishCandidateTween] 统一对齐。
         // 展开时立刻置位：内容要同帧进网格。
         if (expand) candidateRenderExpanded = true
+        // ⚠ 三角必须先于 313 行那次 refresh 起补间：refreshCandidateBar 开头会按意图态对齐角度
+        // （补间在途时才跳过），它若在补间之前跑，角度已被写到终值，后面的旋转补间就是
+        // target→target 空转，观感仍是「箭头一帧翻过去」。
+        tweenExpandButton(expand)
         // 内容在这一次刷新里进入目标态
         refreshCandidateBar()
         // 内容已定，现在只补栏高（收起走完后 finishCandidateTween 才换单行）。
         // 传**目标档位**：展开=展开排数，收起=设置档位（单行/双行）。
         startCandidateHeightTween(if (expand) expandedRowsCached else prefs.candidateRows)
-        // 三角与栏高同起同落：同一条时长与曲线，避免「栏在长、箭头一帧翻过去」的错位
-        tweenExpandButton(expand)
     }
 
     /**
@@ -424,6 +426,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         }
         candidateRenderExpanded = candidatesExpanded
+        // 旋转补间必须与栏高同命运：非 toggle 的落定路径（选中候选 / 按 ✕ / 层切换 / 候选集变化）
+        // 只撤栏高补间的话，三角仍在朝旧的终值跑 —— 而意图态此刻可能已经反了。
+        // 这也是下一行「refreshCandidateBar 会按意图态对齐角度」的前提：先撤了才轮到它写终值。
+        candidateExpandRotationAnimator?.let {
+            candidateExpandRotationAnimator = null
+            it.cancel()
+        }
         refreshCandidateBar()
     }
 
@@ -3111,7 +3120,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun refreshCandidateBar() {
         // 三角方向每次刷新都按当前意图态对齐：符号层 / 密码层分支会早退，走不到 updateExpandButton
-        btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        // ⚠ 补间在途时**不许**写角度：这里在补间的同一帧里会被调用（`toggleCandidateExpanded`
+        // 先刷内容再起动画），无条件写就把旋转补间当场按到终值，观感仍是「箭头一帧翻过去」。
+        if (candidateExpandRotationAnimator == null) {
+            btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f
+        }
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
         // `layer != LAYER_LETTER`，与 composing 长度无关。
