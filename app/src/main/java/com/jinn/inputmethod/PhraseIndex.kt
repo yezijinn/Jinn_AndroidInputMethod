@@ -112,7 +112,7 @@ internal class PhraseIndex private constructor(
      */
     fun forEachRangeWithPrefix(
         prefix: String,
-        action: (keyByteLen: Int, wordsFrom: Int, wordsTo: Int) -> Boolean,
+        action: (keyIndex: Int, keyByteLen: Int, wordsFrom: Int, wordsTo: Int) -> Boolean,
     ) {
         if (prefix.isEmpty() || keyCount == 0) return
         val p = prefix.toByteArray(Charsets.UTF_8)
@@ -121,7 +121,7 @@ internal class PhraseIndex private constructor(
             val from = keysStart + keyOffsets[lo]
             val to = keysStart + keyOffsets[lo + 1]
             if (!startsWith(buf, from, to, p)) break
-            val cont = action(to - from, wordsStart + wordOffsets[lo], wordsStart + wordOffsets[lo + 1])
+            val cont = action(lo, to - from, wordsStart + wordOffsets[lo], wordsStart + wordOffsets[lo + 1])
             if (!cont) return
             lo++
         }

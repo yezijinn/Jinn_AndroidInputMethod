@@ -2496,9 +2496,18 @@ object PinyinEngine {
         // （实测 keysWithPrefix("ni") = 6185 键 / 2.18ms），这条路径将来若给单字候选开预测会直接踩到。
         for (idx in baseAndOptionalIndexes()) {
             if (out.size >= PREDICT_COLLECT_LIMIT) break
-            idx.forEachRangeWithPrefix(lastPinyin) { keyByteLen, wordsFrom, wordsTo ->
+            idx.forEachRangeWithPrefix(lastPinyin) { keyIndex, keyByteLen, wordsFrom, wordsTo ->
                 if (keyByteLen > pinyinBytes) {
+                    val before = out.size
                     idx.collectLongerSuffixes(wordsFrom, wordsTo, wordBytes, out)
+                    if (out.size > before) {
+                        // 后缀词的读音 = 本区间键去掉已选词的键前缀（hunandaxue − hunan = daxue）。
+                        // 不登记的话，追加候选进台账时没有读音（用户 2026-10-18 报告）。
+                        val key = idx.keyAt(keyIndex)
+                        if (key != null && key.startsWith(lastPinyin)) {
+                            noteCandidateKeys(out.toList().subList(before, out.size), key.substring(lastPinyin.length))
+                        }
+                    }
                 }
                 out.size < PREDICT_COLLECT_LIMIT    // false = 提前结束扫描
             }
@@ -2510,7 +2519,12 @@ object PinyinEngine {
             val key = sortedPhraseKeys[lo]
             if (!key.startsWith(lastPinyin)) break
             if (key.length > lastPinyin.length) {
+                val before = out.size
                 addLongerSuffixes(phrasesFor(key), simpLast, out)
+                if (out.size > before) {
+                    // 运行时表同理：读音 = 键去掉已选词前缀
+                    noteCandidateKeys(out.toList().subList(before, out.size), key.substring(lastPinyin.length))
+                }
             }
             lo++
         }

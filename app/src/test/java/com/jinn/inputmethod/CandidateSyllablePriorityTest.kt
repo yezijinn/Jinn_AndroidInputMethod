@@ -27,11 +27,14 @@ class CandidateSyllablePriorityTest {
             phrases = """
                 nihao	你好|你号|拟好
                 nihaoma	你好吗|你好美
+                nihaopengyou	你好朋友
             """.trimIndent(),
             syllables = """
                 ni
                 hao
                 ma
+                peng
+                you
             """.trimIndent(),
         )
     }
@@ -70,6 +73,15 @@ class CandidateSyllablePriorityTest {
             "单字不得越过补全出的整词：$got",
             got.indexOf("你") > got.indexOf("你好吗"),
         )
+    }
+
+    @Test
+    fun `预测词也要有读音`() {
+        PinyinEngine.query("nihao")
+        val preds = PinyinEngine.predict("你好")
+        assertTrue("预测应含 朋友：$preds", "朋友" in preds)
+        // 后缀词的读音来自「区间键 − 已选词键前缀」（nihaopengyou − nihao = pengyou）
+        assertEquals("peng you", PinyinEngine.truePinyinOf("朋友"))
     }
 
     @Test

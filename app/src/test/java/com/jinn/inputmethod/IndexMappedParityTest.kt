@@ -102,7 +102,7 @@ class IndexMappedParityTest {
                 val got = LinkedHashSet<String>()
                 val wb = lastWord.toByteArray(Charsets.UTF_8)
                 val plen = prefix.toByteArray(Charsets.UTF_8).size
-                mapped.forEachRangeWithPrefix(prefix) { keyLen, wf, wt ->
+                mapped.forEachRangeWithPrefix(prefix) { _, keyLen, wf, wt ->
                     if (keyLen > plen) mapped.collectLongerSuffixes(wf, wt, wb, got)
                     true
                 }
