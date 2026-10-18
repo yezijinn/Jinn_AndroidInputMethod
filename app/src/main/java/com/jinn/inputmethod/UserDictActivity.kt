@@ -120,15 +120,17 @@ class UserDictActivity : ComponentActivity() {
 
     /** 未开启时的说明框：讲清用途、边界、风险与防护，输入大写 OK 才开启 */
     private fun showEnableDialog() {
-        val (view, edit) = confirmView(TEXT_ENABLE_BODY)
+        val confirm = confirmView(TEXT_ENABLE_BODY)
+        val edit = confirm.edit
         val dialog = AlertDialog.Builder(this)
             .setTitle(TEXT_ENABLE_TITLE)
-            .setView(view)
+            .setView(confirm.root)
             .setNegativeButton(TEXT_CANCEL) { _, _ -> finish() }
             .setPositiveButton(TEXT_ENABLE_OK, null)
             .create()
         dialog.setCancelable(false)
         dialog.setOnShowListener {
+            fitConfirmText(confirm)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (!isConfirmOk(edit.text.toString())) {
                     toast(TEXT_NEED_OK)
@@ -159,14 +161,16 @@ class UserDictActivity : ComponentActivity() {
 
     /** 关闭第二步：说明删除不可恢复，输入大写 OK 才执行 */
     private fun confirmCloseStepTwo() {
-        val (view, edit) = confirmView(TEXT_CLOSE_STEP2)
+        val confirm = confirmView(TEXT_CLOSE_STEP2)
+        val edit = confirm.edit
         val dialog = AlertDialog.Builder(this)
             .setTitle(TEXT_CLOSE_TITLE)
-            .setView(view)
+            .setView(confirm.root)
             .setNegativeButton(TEXT_CANCEL, null)
             .setPositiveButton(TEXT_CLOSE_OK, null)
             .create()
         dialog.setOnShowListener {
+            fitConfirmText(confirm)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (!isConfirmOk(edit.text.toString())) {
                     toast(TEXT_NEED_OK)
@@ -187,7 +191,7 @@ class UserDictActivity : ComponentActivity() {
      *
      * 说明较长，必须能滚动；输入框固定在最下方，避免被键盘挡住后滚不到。
      */
-    private fun confirmView(body: String): Pair<LinearLayout, EditText> {
+    private fun confirmView(body: String): ConfirmView {
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
         val root = LinearLayout(this).apply {
@@ -196,21 +200,13 @@ class UserDictActivity : ComponentActivity() {
         }
         val text = TextView(this).apply {
             text = body
-            textSize = 13.5f
-            setLineSpacing(0f, 1.15f)
+            textSize = 13f
+            setLineSpacing(0f, 1.1f)
         }
-        // 高度按文字实测：短说明（关闭确认）不留大块空白，长说明（开启说明）封顶在屏高 42%
-        val maxTextPx = (resources.displayMetrics.heightPixels * 0.42f).toInt()
-        val maxW = (resources.displayMetrics.widthPixels * 0.84f).toInt()
-        text.measure(
-            View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.AT_MOST),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
-        val textHeight = minOf(text.measuredHeight + (8 * density).toInt(), maxTextPx)
-        root.addView(
-            ScrollView(this).apply { isFillViewport = true; addView(text) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, textHeight),
-        )
+        val maxTextPx = (resources.displayMetrics.heightPixels * 0.58f).toInt()
+        val scroll = ScrollView(this).apply { isFillViewport = true; addView(text) }
+        // 先按上限占位（不裁字），show 之后按真实宽度收缩到文字高度
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxTextPx))
         val edit = EditText(this).apply {
             hint = TEXT_OK_HINT
             inputType = InputType.TYPE_CLASS_TEXT or
@@ -219,8 +215,37 @@ class UserDictActivity : ComponentActivity() {
             setSingleLine(true)
         }
         root.addView(edit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return root to edit
+        return ConfirmView(root, edit, scroll, text, maxTextPx)
     }
+
+    /**
+     * 按 ScrollView 的真实宽度重测文字高度，能放下就收紧到文字高度。
+     *
+     * 在 `show` 之后调用：创建时还不知道对话框的实际宽度，按屏幕宽度估算会把高度算少（文字被裁）。
+     */
+    private fun fitConfirmText(v: ConfirmView) {
+        v.scroll.post {
+            val w = v.scroll.width
+            if (w <= 0) return@post
+            v.text.measure(
+                View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            val measured = v.text.measuredHeight + (4 * resources.displayMetrics.density).toInt()
+            val h = minOf(measured, v.maxHeight)
+            if (v.scroll.layoutParams.height != h) {
+                v.scroll.layoutParams = v.scroll.layoutParams.apply { height = h }
+            }
+        }
+    }
+
+    private class ConfirmView(
+        val root: LinearLayout,
+        val edit: EditText,
+        val scroll: ScrollView,
+        val text: TextView,
+        val maxHeight: Int,
+    )
 
     /** 必须逐字是大写 OK（允许首尾空格，不许小写） */
     private fun isConfirmOk(input: String): Boolean = isConfirmOkText(input)
@@ -347,37 +372,27 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_NEED_OK = "请输入大写 OK"
         const val TEXT_ENABLED = "已开启，之后的选词才会被记录"
         const val TEXT_CLOSE_TITLE = "关闭用户词库"
-        const val TEXT_CLOSE_STEP1 = "关闭会删除本机全部选择记录（user_picks.txt），且不可恢复。\n建议先导出一份词库再关闭。"
+        const val TEXT_CLOSE_STEP1 = "关闭将删除全部记录（user_picks.txt），不可恢复。建议先导出。"
         const val TEXT_EXPORT_FIRST = "先去导出"
         const val TEXT_CONTINUE_CLOSE = "继续关闭"
-        const val TEXT_CLOSE_STEP2 = "即将删除 files/user_picks.txt 并关闭记录，删除后无法恢复。\n\n输入大写 OK 确认。"
+        const val TEXT_CLOSE_STEP2 = "删除 files/user_picks.txt 并停止记录，不可恢复。\n输入大写 OK 确认。"
         const val TEXT_CLOSE_OK = "删除并关闭"
         const val TEXT_CLOSED = "已删除记录并关闭"
         const val TEXT_CLOSE_FAILED = "关闭失败，请重试"
 
-        const val TEXT_ENABLE_BODY = """这个功能会把你在 26 键上「真正选中的候选」逐条记下来，一行一次，作为你自己的定制词库原料。
+        const val TEXT_ENABLE_BODY = """记录范围
+· 仅 26 键候选上屏：点选、空格取首、追加词（含合并整词）
+· 一行一词＋读音，只追加
+· 不记：粘贴、语音、翻译、图库、符号、英文、密码框、NO_SUGGESTIONS
 
-【记录什么】
-· 只记：点候选、空格取首候选、点追加候选（含合并后的整词）
-· 不记：粘贴、语音、翻译、图库、符号层、英文直打
-· 不记：密码框、以及声明不建议学习的输入框
+用途
+· 词频统计；导出 Rime / TSV / 词表，可再导入
 
-【有什么用】
-· 统计你常用哪些词，在「用户词库」里合并、导出（Rime / TSV / 词表）与导入
-· 导出件可备份，或迁移到别的输入法
-
-【安全与隐私】
-· 只存本机应用私有目录 files/user_picks.txt，明文；不联网、不上传、不写外部存储
-· 已排除系统自动备份与设备迁移；其他应用在没有 root 的情况下无法读取
-· 注意：本机若已 root，或有人拿到取证镜像，这个文件可以被直接读取
-· 卸载应用、或关闭本功能，文件即被删除
-
-【防护措施】
-· 默认关闭，说明看懂了、手输大写 OK 才开启
-· 关闭前先提示导出，删除需二次确认并再次输入大写 OK
-· 记录范围只限 26 键候选，敏感输入框一律跳过
-
-输入大写 OK 后点「开启」。"""
+存储与防护
+· files/user_picks.txt，明文，应用私有目录
+· 不联网、不上传、不进系统备份与设备迁移
+· 其他应用受 UID 隔离，无 root 不可读；root 或取证镜像可读
+· 默认关闭；关闭即删文件"""
 
         const val IMPORT_MAX_BYTES = 8 * 1024 * 1024
     }
