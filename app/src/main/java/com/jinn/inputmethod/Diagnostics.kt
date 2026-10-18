@@ -614,15 +614,48 @@ private const val LOG_SEGMENTS_KEPT = 2
             // `类名: message` + 帧行，而 **message 自身可含换行** —— 那些行落在首个 `\n` 之后、
             // 首个 `\n\tat ` 之前，仍是用户可控内容，照样能伪造完整日志行。
             // 故按段处理：**message 段整体平坦化**（不截断），帧段原样保留（编译器生成、可读性需要）。
-            val framesAt = stack.indexOf("\n\tat ")
-            val head = if (framesAt >= 0) stack.substring(0, framesAt) else stack
-            val tail = if (framesAt >= 0) stack.substring(framesAt) else ""
-            sb.append(
-                head.replace('\n', '\u23CE').replace('\r', ' ').replace('\u0000', ' '),
-            ).append(tail).append('\n')
+            // 逐行判定而不是「只切首段」（BUG.md L-1385 的延续）：
+            // `printStackTrace` 的完整形态是 `类名: message` + 帧行 + `\tCaused by: 类名: message`
+            // + 帧行 + `\tSuppressed: …`。cause/suppressed 的 message 同样用户可控（Base URL、
+            // host、导入包设备名、JSON 片段），落在首个 `\n\tat ` 之后 ⇒ 只护首段仍可伪造完整日志行。
+            // 判据：只有**帧行**（`\tat …` / `\t... N more`）原样保留；其余一律摊平换行。
+            sb.append(flattenNonFrameLines(stack)).append('\n')
         }
         appendToFile(dir, sb.toString())
     }
+
+    /**
+     * 摊平堆栈里的**非帧行**：只有 `\tat …` / `\t... N more` 这类编译器生成的帧行原样保留。
+     *
+     * `Caused by:` / `Suppressed:` 段以 `\t` 开头，但它们是异常 message、用户可控，
+     * 带一个换行就能在日志文件里插入一条含时间戳与级别的假日志行（且随诊断包外传）。
+     * 摊平只改换行符，不截断 —— 截断会砍掉关键帧。
+     */
+    private fun flattenNonFrameLines(stack: String): String {
+        val flat = StringBuilder(stack.length + 16)
+        var start = 0
+        while (start <= stack.length) {
+            val nl = stack.indexOf('\n', start)
+            val end = if (nl < 0) stack.length else nl
+            val line = stack.substring(start, end)
+            flat.append(
+                if (isFrameLine(line)) line else flatten(line)
+            )
+            if (nl < 0) break
+            flat.append('\n')
+            start = nl + 1
+        }
+        return flat.toString()
+    }
+
+    private fun isFrameLine(line: String): Boolean {
+        if (!line.startsWith('\t')) return false
+        val body = line.drop(1)
+        return body.startsWith("at ") || body.startsWith("... ")
+    }
+
+    private fun flatten(s: String): String =
+        s.replace('\n', '\u23CE').replace('\r', ' ').replace('\u0000', ' ')
 
     private fun stackTraceOf(tr: Throwable): String {
         val sw = StringWriter()

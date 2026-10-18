@@ -184,7 +184,12 @@ class ClipboardController(context: Context) {
         // ClipDescription.hasMimeType("image/*") 在「图片 + 文本」混合条目上会给假阳性，
         // 按实际类型过滤更准（MIME 取不到时落到文本路径，由 looksLikeText 兜底判否）。
         val first = runCatching { clip.getItemAt(0) }.getOrNull() ?: return
-        if (handleImageClip(first)) return
+        // ⚠ 文本优先：URI 与 text 可同时非空（文件管理器复制文件、部分笔记/网盘复制文本
+        // 都给 content://）。早先是「有 URI 就当图片」，把这类条目的可用文本一起截走，
+        // 非图片还会以 image/png 兜底落一条永久脏图片行。
+        // 与 KDoc 的承诺一致：MIME 取不到/嗅探判否时回到文本路径。
+        val hasText = !first.text.isNullOrEmpty() || !first.htmlText.isNullOrEmpty()
+        if (!hasText && handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
         // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
         val text = when (val r = ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)) {
@@ -811,6 +816,8 @@ object ClipboardStore {
     ): Long? {
         if (bytes.isEmpty()) return null
         val hash = ClipboardDb.imageHash(bytes)
+        // 是否已存在同内容行：决定失败清理要不要删文件（见下面各失败分支的注释）
+        val existingRow = db.findIdByHash(hash) != null
         // 在途登记（BUG.md L-1249）：从写盘到插行之间文件不在库里，回收若只按「修改时间是否落在
         // 保护窗内」判断，20MB 级图片的加密写盘一旦超过窗口，另一条入库路径触发的 gc 就会把
         // 「已写好、还没插行」的密文当孤儿删掉（rename 失败整图丢失，或行指向已删文件、点开只有灰块）。
@@ -833,7 +840,9 @@ object ClipboardStore {
                 if (!written) Diagnostics.w(TAG, "缩略图写盘失败（原图不受影响）${hashTag(hash)}")
             }
             val placeholder = ClipboardCrypto.encrypt(hash) ?: run {
-                ClipboardImageFiles.deleteFor(context, hash)
+                // 同 upsertImage 失败分支：既有行不删文件（内容相同、文件已写好，
+                // 删掉会让已入库那张图彻底失效），只有新建行才回收。
+                if (!existingRow) ClipboardImageFiles.deleteFor(context, hash)
                 Diagnostics.w(TAG, "占位密文加密失败，未入库 ${hashTag(hash)}")
                 return null
             }
@@ -849,8 +858,12 @@ object ClipboardStore {
                 sourceAppName = appName,
             )
             if (id <= 0) {
-                Diagnostics.w(TAG, "图片入库失败：行未写入，已清理文件 ${hashTag(hash)}")
-                ClipboardImageFiles.deleteFor(context, hash)
+                if (existingRow) {
+                    Diagnostics.w(TAG, "图片入库失败：既有行未更新，保留原文件 ${hashTag(hash)}")
+                } else {
+                    Diagnostics.w(TAG, "图片入库失败：行未写入，已清理文件 ${hashTag(hash)}")
+                    ClipboardImageFiles.deleteFor(context, hash)
+                }
                 return null
             }
             // 入库成功后再收孤儿（同线程、行已在库；在途集合与保护窗一起兜住其它线程的写入）

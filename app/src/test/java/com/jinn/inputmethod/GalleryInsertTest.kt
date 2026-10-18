@@ -481,7 +481,12 @@ class GalleryInsertTest {
         assertTrue("固定档一次解完", "private fun decodeThumb(uri: Uri, sample: Int)" in panel)
         assertFalse("不许退回两段式探尺寸", "inJustDecodeBounds" in panel)
         assertTrue("采样率按每行张数两档", "COMPACT_COLUMNS" in panel && "THUMB_SAMPLE_COMPACT" in panel)
-        assertTrue("并发解 + 在途去重", "thumbPool.execute" in panel && "inFlight.add(key)" in panel)
+        // 提交走 poolOrNew()：池在视图重建 / detach 时被关掉并置 null，下次提交按需重建 ——
+        // 面板实例是缓存复用的，若关了不重建，再打开就是一屏空白格子（提交全被拒）
+        assertTrue(
+            "并发解 + 在途去重",
+            "poolOrNew().execute" in panel && "inFlight.add(key)" in panel,
+        )
         assertTrue("缓存基准 12MB（够装整页）", "THUMB_CACHE_BYTES = 12 * 1024 * 1024" in panel)
         // 低内存档折半（MEM-04b）：基准不变，生效值走档位入口
         assertTrue(
@@ -583,7 +588,8 @@ class GalleryInsertTest {
         // L-1035：视图重建要关池（只作废令牌不算完成）
         val stop = TestSources.blockAfter(panel, "fun stopBackgroundWork()")
         assertTrue("作废在途任务", "generation++" in stop)
-        assertTrue("并关掉线程池", "thumbPool.shutdownNow()" in stop)
+        assertTrue("并关掉线程池", "thumbPool?.shutdownNow()" in stop)
+        assertTrue("关池后置空（下次提交按需重建）", "thumbPool = null" in stop)
         // L-1043：到边界不空转、重排后复位滚动
         val cols = TestSources.blockAfter(panel, "private fun stepColumns(delta: Int)")
         assertTrue("张数到边界直接返回", "if (next == columns) return" in cols)

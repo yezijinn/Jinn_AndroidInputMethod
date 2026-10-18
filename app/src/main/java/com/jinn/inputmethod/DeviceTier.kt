@@ -24,11 +24,15 @@ import android.content.Context
 object DeviceTier {
 
     /**
-     * 参与降档的最小预算：≥256MB 的项才折算。
+     * 参与降档的最小预算。
      *
-     * 256MB 这个数取自任务书（低配机型上最容易触发 LMK 的正是这一类一次性大缓冲）。
+     * ⚠ 这个阈值必须与**实际消费点**对得上：全仓只有三处调用 —— 缩略图缓存 12MB ×2、
+     * 图库暂存 60MB。早先定在 256MB，三处全部低于阈值 ⇒ 折半**永不生效**，
+     * 而各消费点的 KDoc 都写着「低内存档按 DeviceTier 折半」，等于声明了没落地。
+     * 取 8MB：让 12/60MB 在低配机上真的折半（6MB / 30MB），同时不至于把
+     * 小于 8MB 的零星预算也砍一刀。
      */
-    const val SCALE_THRESHOLD_BYTES = 256L * 1024 * 1024
+    const val SCALE_THRESHOLD_BYTES = 8L * 1024 * 1024
 
     /** 低内存机型系数：0.5×（分子分母各留一份，避免浮点误差渗进字节数） */
     private const val LOW_RAM_NUM = 1L

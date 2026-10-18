@@ -144,7 +144,17 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * 剪贴板保存，反之也一样。这里要的是「首屏十几张一起解」，代价（多两个常驻线程、内存峰值
      * 高一点）是用户 2026-10-07 明确同意让掉的。
      */
-    private val thumbPool: java.util.concurrent.ExecutorService =
+    /**
+     * 缩略图解码池。
+     *
+     * ⚠ 必须**可重建**：[stopBackgroundWork] 与 [onDetachedFromWindow] 都会 `shutdownNow()` 关池
+     * （视图重建时旧池的 core 线程不超时回收，不关就是每次重建永久漏几条线程 —— L-1035）。
+     * 但面板实例是**缓存复用**的（键盘侧 `ensureGalleryPanel` 只建一次）：若收起键盘走了 detach
+     * 而实例仍在，下一轮所有 `thumbPool.execute` 都会被拒（catch 只记 W），界面就是一屏空白格子。
+     * 故关池后置 null，下次提交时按需重建 —— 既不放任线程泄漏，也不会让用户看到空白面板。
+     */
+    @Volatile
+    private var thumbPool: java.util.concurrent.ExecutorService? =
         java.util.concurrent.Executors.newFixedThreadPool(thumbThreadCount) { r ->
             // 解码是满核的活，且与输入法同进程：在线程体内降后台优先级（BUG.md L-1194）
             Thread({
@@ -152,6 +162,19 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                 r.run()
             }, "jinn-gallery-thumb").apply { isDaemon = true }
         }
+
+    /** 取解码池（关过就重建），见 [thumbPool] 的说明 */
+    private fun poolOrNew(): java.util.concurrent.ExecutorService {
+        thumbPool?.let { return it }
+        return synchronized(this) {
+            thumbPool ?: java.util.concurrent.Executors.newFixedThreadPool(thumbThreadCount) { r ->
+                Thread({
+                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                    r.run()
+                }, "jinn-gallery-thumb").apply { isDaemon = true }
+            }.also { thumbPool = it }
+        }
+    }
 
     /** 在途解码的 key：并发下防同一张重复提交（滚动事件会连着来好几次） */
     private val inFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -292,7 +315,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
-        thumbPool.shutdownNow()
+        thumbPool?.shutdownNow()
+        thumbPool = null
     }
 
     /** 键盘换肤：面板内所有静态配色重设（与 [ClipboardPanelView] 同一入口，由键盘侧统一调用） */
@@ -318,7 +342,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     fun stopBackgroundWork() {
         generation++
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
-        thumbPool.shutdownNow()
+        thumbPool?.shutdownNow()
+        thumbPool = null
         // 与剪贴板面板 / 搜索面板同款留一条：这条路径原先没有任何日志，
         // 重建是否真的走到这里、旧池是否关掉，事后从日志里看不出来
         Diagnostics.i(TAG, "图库面板: 视图重建，作废在途缩略图并关池")
@@ -603,7 +628,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             if (thumbCache.get(key) != null) continue
             if (!inFlight.add(key)) continue
             try {
-                thumbPool.execute {
+                poolOrNew().execute {
                     // 代际作废（收起面板 / 换目录 / 视图重建）不是解码失败，直接退出（BUG.md L-1049）：
                     // 这条路径与「真解不出来」此前共用一句 W 日志，收起一次面板就能刷出一串假故障，
                     // 把 L-1040 想要的可观测性搅浑

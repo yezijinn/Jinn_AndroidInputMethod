@@ -300,8 +300,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (expand) candidateRenderExpanded = true
         // 内容在这一次刷新里进入目标态
         refreshCandidateBar()
-        // 内容已定，现在只补栏高（收起走完后 finishCandidateTween 才换单行）
-        startCandidateHeightTween()
+        // 内容已定，现在只补栏高（收起走完后 finishCandidateTween 才换单行）。
+        // 传**目标档位**：展开=展开排数，收起=设置档位（单行/双行）。
+        startCandidateHeightTween(if (expand) expandedRowsCached else prefs.candidateRows)
     }
 
     /**
@@ -326,16 +327,32 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshCandidateBar()
     }
 
-    private fun startCandidateHeightTween() {
+    private fun startCandidateHeightTween(targetRows: Int) {
         val lp = candidateBar.layoutParams as? LinearLayout.LayoutParams ?: return
         val from = candidateBar.height
-        val to = lp.height
+        // ⚠ `to` **不能**读 lp.height：收起时上一次刷新已把它写成展开档高度（内容仍按展开态
+        // 渲染是刻意的），读它就会 from == to ⇒ 补间永不启动，收起变成一帧硬切。
+        // 目标高度一律按**目标档位**现算，与 applyCandidateRows 同源（CandidateRows.barHeightPx）。
+        val to = CandidateRows.barHeightPx(
+            targetRows,
+            resources.displayMetrics.density,
+            resources.configuration.fontScale,
+            currentCandidateSp,
+            currentPinyinSp,
+            currentPinyinGapDp,
+        )
         if (from <= 0 || to <= 0 || from == to) {
             finishCandidateTween()
             return
         }
-        if (!ValueAnimator.areAnimatorsEnabled()) return   // 动画缩放 0 / 无障碍：保持瞬时
-        candidateHeightAnimator?.cancel()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            // 动画缩放 0 / 无障碍「移除动画」：必须直达终态，不能就此返回
+            // （否则渲染态永远停在展开态，栏收不回来）
+            finishCandidateTween()
+            return
+        }
+        // toggle 开头已 settle，这里必为 null；旧动画器若还在，先落定再建（不裸 cancel）
+        settleCandidateHeight()
         val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
         animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
         animator.addUpdateListener { a ->
@@ -2539,14 +2556,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 candidateBar.layoutParams = lp
             }
         }
-        // 候选容器在补间期间必须**顶对齐**：默认是 center_vertical，而展开网格的列高
-        // （排数 × 行高）远大于补间起点的栏高 ⇒ 居中会把它推到负偏移，前几帧看到的是
-        // 网格中部、且内容只以半速上移（终点才与栏顶对齐）。钉成 TOP 后就是
-        // 「向上生长 + 底部逐排揭开」的正确观感；收尾由本函数自身恢复。
-        val wantGravity = if (candidateHeightAnimator == null) {
-            android.view.Gravity.CENTER_VERTICAL
-        } else {
+        // 候选容器在补间期间必须**顶对齐**。判据按「本帧是否按展开态渲染」而不是
+        // 「动画器是否存在」：toggle 是先刷新（此刻动画器还没建，按旧判据会落 CENTER）、
+        // 后建动画器，起始帧会居中 ⇒ 内容半速滑、首帧显示网格中部。
+        val wantGravity = if (candidateRenderExpanded) {
             android.view.Gravity.TOP
+        } else {
+            android.view.Gravity.CENTER_VERTICAL
         }
         if (viewCandidateList.gravity != wantGravity) {
             viewCandidateList.gravity = wantGravity

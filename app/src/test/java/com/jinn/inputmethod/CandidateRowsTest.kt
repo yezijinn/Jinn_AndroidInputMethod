@@ -377,10 +377,12 @@ class CandidateRowsTest {
             "if (expand) candidateRenderExpanded = true" in src,
         )
         assertTrue("补间收尾统一对齐渲染态", "finishCandidateTween()" in src)
-        // 候选容器默认是 center_vertical；补间期间不钉成顶对齐，内容会以半速滑、首帧显示网格中部
+        // 容器默认 center_vertical；展开态必须顶对齐，否则内容半速滑、首帧显示网格中部。
+        // 判据按「本帧是否按展开态渲染」而非「动画器是否存在」：toggle 是「先刷新、后建动画器」，
+        // 按后者判会让补间起始帧落回 CENTER。
         assertTrue(
-            "补间期间候选容器必须顶对齐",
-            "val wantGravity = if (candidateHeightAnimator == null)" in src &&
+            "展开态候选容器必须顶对齐（按渲染态判定）",
+            "val wantGravity = if (candidateRenderExpanded)" in src &&
                 "android.view.Gravity.TOP" in src,
         )
         assertTrue(

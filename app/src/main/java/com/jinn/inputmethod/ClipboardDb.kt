@@ -539,8 +539,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    /** 按内容哈希查已存在的记录 id（入库去重用） */
-    private fun findIdByHash(hash: String): Long? =
+    /**
+     * 按内容哈希查已存在的记录 id（入库去重用）。
+     *
+     * 对外可见：采集侧要区分「本次新建行」与「既有行」—— 失败清理只在新建时删文件，
+     * 既有行的文件删掉会让那条已入库的图彻底失效（有行无文件）。
+     */
+    internal fun findIdByHash(hash: String): Long? =
         readableDatabase.rawQuery(
             "SELECT id FROM $TABLE_ITEMS WHERE content_hash = ? LIMIT 1",
             arrayOf(hash)

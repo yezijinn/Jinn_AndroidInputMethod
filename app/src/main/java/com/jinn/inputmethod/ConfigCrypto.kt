@@ -237,9 +237,14 @@ internal object ConfigCrypto {
             Diagnostics.w("ConfigCrypto", "解密失败（密码错误或文件损坏）: ${t.javaClass.simpleName}")
             return false
         }
-        // 同上：直接改名覆盖，不先删目标
+        // 认证已通过、仅改名失败：此时 tmp 里是**完整解密明文**（备份含剪贴板明文）。
+        // 必须与上面认证失败路径同口径 —— 先截断再删，否则删除失败会在缓存目录留下
+        // 一份可被同进程任意组件读取的明文备份（只有下次设置页启动且删除成功才消失）。
         if (!tmp.renameTo(dest)) {
-            tmp.delete()
+            runCatching { tmp.outputStream().use { } }
+            if (tmp.exists() && !tmp.delete()) {
+                Diagnostics.w("ConfigCrypto", "改名失败后清残件未成功: ${tmp.name}")
+            }
             return false
         }
         true

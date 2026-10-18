@@ -215,9 +215,17 @@ class ClipboardImageTest {
     @Test
     fun 采集分支前置于文本取文() {
         val src = TestSources.codeSource("ClipboardController.kt")
-        val img = src.indexOf("if (handleImageClip(first)) return")
+        val img = src.indexOf("handleImageClip(first)")
         val txt = src.indexOf("ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)")
         assertTrue("两个分支都要在（图片分支 + 共用取文入口）", img in 0 until txt && txt > 0)
+        // URI 与 text 可同时非空（文件管理器复制文件、部分应用复制文本给 content://）：
+        // 有文本时必须先走文本，否则这类条目的可用文本被图片分支截走、非图片还会
+        // 以 image/png 兜底落一条永久脏图片行。
+        assertTrue(
+            "有文本的条目不得进图片分支（文本优先）",
+            "val hasText = !first.text.isNullOrEmpty() || !first.htmlText.isNullOrEmpty()" in src &&
+                "if (!hasText && handleImageClip(first)) return" in src,
+        )
         assertTrue("采集侧读流必须走字节版带预算入口", "ClipboardStore.readBytesWithBudget(" in src)
     }
 
