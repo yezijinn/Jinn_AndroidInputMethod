@@ -462,11 +462,11 @@ class SettingsActivity : ComponentActivity() {
         }
         btnSave.setOnClickListener { saveAndRestart() }
 
-        // 用户词库（台账查看 / 合并 / 导出 / 导入）：文案在代码里下发；默认关闭时标「未开启」
-        findViewById<Button>(R.id.btn_user_dict).setOnClickListener {
-            startActivity(Intent(this, UserDictActivity::class.java))
+        // 生成用户词库（台账查看 / 合并 / 导出 / 导入）：入口与「存储占用统计」同行
+        findViewById<Button>(R.id.btn_user_dict).apply {
+            text = TEXT_USER_DICT
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, UserDictActivity::class.java)) }
         }
-        updateUserDictEntry()
 
         // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
         switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
@@ -554,15 +554,6 @@ class SettingsActivity : ComponentActivity() {
         if (::textTranslateState.isInitialized) refreshTranslateState()
         // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
         refreshDictEntryEmphasis()
-        // 用户词库页里可能刚开启/关闭：入口文案跟着状态走
-        updateUserDictEntry()
-    }
-
-    /** 用户词库入口文案：开启与否一眼可见（默认关闭） */
-    private fun updateUserDictEntry() {
-        val enabled = Prefs(this).userDictEnabled
-        findViewById<Button>(R.id.btn_user_dict).text =
-            if (enabled) "用户词库（词表 / 导出 / 导入）" else "用户词库（未开启）"
     }
 
     /**
@@ -1866,7 +1857,9 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_SPACE_CURSOR = "空格左右按钮"
 
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
-        const val TEXT_STORAGE_ENTRY = "存储占用"
+        const val TEXT_STORAGE_ENTRY = "存储占用统计"
+        /** 用户词库入口：动作名，状态由页面内的说明弹框交代 */
+        const val TEXT_USER_DICT = "生成用户词库"
         const val TEXT_STORAGE_HINT = "看看安装包、词库索引缓存、剪贴板与日志各占多少"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）

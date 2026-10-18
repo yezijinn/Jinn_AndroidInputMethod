@@ -226,6 +226,42 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
+        <!-- 生成用户词库 / 存储占用统计（2026-10-18）：两个入口同行，紧跟「图库快贴 / 空格左右按钮」下一行；
+             存储占用的说明小字保留在同一张卡片内。按钮文案由代码下发。 -->
+        <LinearLayout
+            style="@style/SettingsCard"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_user_dict"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_storage_usage"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/CardHint"
+                android:id="@+id/text_storage_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
         <LinearLayout
             style="@style/SettingsCard">
@@ -318,15 +354,6 @@
                     android:text="@string/switch_predict_desc"/>
             </LinearLayout>
         </LinearLayout>
-
-        <!-- 用户词库（2026-10-18）：选择台账的查看 / 合并 / 导出 / 导入；文案由代码下发 -->
-        <Button
-            style="@style/SettingsButton"
-            android:id="@+id/btn_user_dict"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:minWidth="0dp" />
 
         <!-- 自动唤起键盘 / 只使用繁体字：两个开关并排（各带说明小字）。
              「只使用繁体字」2026-09-27 起由勾选框改为胶囊开关，与「自动唤起键盘」同行（文案在代码里下发） -->
@@ -693,24 +720,8 @@
                 android:ellipsize="middle"/>
         </LinearLayout>
 
-        <!-- 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少）。
-             按钮与提示文案由代码下发：strings.xml 默认不改动 -->
-        <LinearLayout
-            style="@style/SettingsCard">
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_storage_usage"
-                android:layout_width="match_parent"
-                android:minWidth="0dp" />
-
-            <TextView
-                style="@style/CardHint"
-                android:id="@+id/text_storage_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp" />
-        </LinearLayout>
+        <!-- 存储占用统计的入口已上移到「图库快贴 / 空格左右按钮」下一行（与「生成用户词库」同行），
+             说明小字随按钮一起搬过去，这里不再保留空卡片。 -->
 
         <!-- 使用说明纯文本（最底部） -->
         <TextView

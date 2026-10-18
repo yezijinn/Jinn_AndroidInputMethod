@@ -5,9 +5,11 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
+import android.text.TextUtils
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
+import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -265,11 +267,7 @@ class UserDictActivity : ComponentActivity() {
         val more = if (rows.size > MAX_ROWS) String.format(Locale.US, TEXT_MORE_SUFFIX, rows.size - MAX_ROWS) else ""
         textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks.size, merged.size, kb, more)
 
-        listEntries.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_list_item_1,
-            rows.take(MAX_ROWS).map { "${it.word}   ${it.pinyin}   ×${it.count}" },
-        )
+        listEntries.adapter = RowAdapter(rows.take(MAX_ROWS))
         val empty = rows.isEmpty()
         btnExportYaml.isEnabled = !empty
         btnExportTsv.isEnabled = !empty
@@ -338,6 +336,59 @@ class UserDictActivity : ComponentActivity() {
             }
             .show()
     }
+
+    /**
+     * 三列行：频次 / 汉字 / 拼音。
+     *
+     * 频次列固定宽（右对齐前先对齐起点），汉字与拼音按权重分栏；拼音为空时该列留空。
+     */
+    private inner class RowAdapter(private val items: List<Row>) : BaseAdapter() {
+        override fun getCount(): Int = items.size
+        override fun getItem(position: Int): Any = items[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val row = (convertView as? LinearLayout) ?: buildRow()
+            val item = items[position]
+            (row.getChildAt(0) as TextView).text = "×${item.count}"
+            (row.getChildAt(1) as TextView).text = item.word
+            (row.getChildAt(2) as TextView).text = item.pinyin
+            return row
+        }
+
+        private fun buildRow(): LinearLayout = LinearLayout(this@UserDictActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            addView(
+                TextView(this@UserDictActivity).apply {
+                    width = dp(64)
+                    textSize = 13f
+                    setTextColor(getColor(R.color.text_secondary))
+                },
+            )
+            addView(
+                TextView(this@UserDictActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
+                    textSize = 16f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(getColor(R.color.text_primary))
+                },
+            )
+            addView(
+                TextView(this@UserDictActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    textSize = 13f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(getColor(R.color.text_secondary))
+                },
+            )
+        }
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 

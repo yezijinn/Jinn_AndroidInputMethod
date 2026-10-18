@@ -128,7 +128,7 @@ class SelectionLedgerTest {
         )
         val settings = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
         assertTrue("设置页要有入口", "R.id.btn_user_dict" in settings && "UserDictActivity::class.java" in settings)
-        assertTrue("入口文案要跟随开关", "用户词库（未开启）" in settings)
+        assertTrue("入口文案", "生成用户词库" in settings)
     }
 
     @Test
