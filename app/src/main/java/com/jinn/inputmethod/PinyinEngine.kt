@@ -2161,6 +2161,8 @@ object PinyinEngine {
         val keyBuf = StringBuilder(raw.length)
         for (s in syllables) keyBuf.append(s)
         val words = LinkedHashSet<String>()
+        // 每个候选来自几个音节（用于最后「同音节数优先」分组）：长键先入，故先登记者即最长键
+        val syllableCounts = HashMap<String, Int>(64)
         for (k in syllables.size downTo 1) {
             val key = keyBuf.toString()     // 本轮前缀快照（Map / 二分查找要用真 String）
             keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
@@ -2170,6 +2172,7 @@ object PinyinEngine {
                     // （未学习时 rank 原样返回，零行为变化）。
                     val ranked = UserFrequency.rank(found) { toSimplified(it) }
                     val shown = displayTake(ranked.asList(), MAX_PHRASES)
+                    for (w in shown) syllableCounts.getOrPut(w) { k }
                     words.addAll(shown)
                     noteCandidateKeys(shown, k2)
                 }
@@ -2177,7 +2180,10 @@ object PinyinEngine {
         }
         val chars = LinkedHashSet<String>()
         for (syl in syllables) {
-            chars.addAll(displayTake(charsFor(syl), MAX_CHARS))
+            for (c in displayTake(charsFor(syl), MAX_CHARS)) {
+                syllableCounts[c] = 1
+                chars.add(c)
+            }
         }
 
         // 2b. 模糊音容错（默认关）：精确结果一个不动，变体一律排在其后
@@ -2197,6 +2203,7 @@ object PinyinEngine {
                             // 模糊分支同口径：先整表按用户权重重排，再截 12
                             val ranked = UserFrequency.rank(found) { toSimplified(it) }
                             val shown = displayTake(ranked.asList(), MAX_PHRASES)
+                            for (w in shown) syllableCounts.getOrPut(w) { k }
                             fuzzyWords.addAll(shown)
                             // 候选→拼音键登记的是「用户实际输入的键」而不是变体键：消费区间按输入算
                             noteCandidateKeys(shown, typedKey)
@@ -2210,7 +2217,10 @@ object PinyinEngine {
             // 变体单字跟在精确单字之后，且上限更小（见 MAX_FUZZY_CHARS）
             for (syl in syllables) {
                 for (variant in FuzzyPinyin.variantsOf(syl, fuzzyMask, isLegal)) {
-                    fuzzyChars.addAll(displayTake(charsFor(variant), MAX_FUZZY_CHARS))
+                    for (c in displayTake(charsFor(variant), MAX_FUZZY_CHARS)) {
+                        syllableCounts.getOrPut(c) { 1 }
+                        fuzzyChars.add(c)
+                    }
                 }
             }
         }
@@ -2238,6 +2248,7 @@ object PinyinEngine {
                 val shown = displayTake(listOf(sentence), 1)
                 if (shown.isEmpty()) continue
                 sentenceViews.add(shown[0])
+                syllableCounts.getOrPut(shown[0]) { syllables.size }
                 // 整句按键 = coveredKey（>8 音节时只覆盖前 8 个，残码保留）
                 noteCandidateKeys(listOf(shown[0]), coveredKey)
             }
@@ -2282,6 +2293,11 @@ object PinyinEngine {
             // （万里 → 萬里（正）→ **萬裏**（错），真库逐条复算 360 条），且显示词与登记键不一致
             // 会让 consumption / predict 的一级查表落空（BUG.md L-65）。
             result.addAll(completionWords)
+            // 补全词按「与输入同组」登记，**不是**按它真实的音节数：
+            // nim → 你们（2 音节）而输入只切出 1 个音节；nihaom → 你好吗（3 音节）而输入是 2。
+            // 末尾那截残码用户还没敲完，不该按音节数把它惩罚到后面去 —— 与输入同组、靠「插在
+            // 组首」保住首位才是想要的排序（见 CandidateSyllablePriorityTest）。
+            for (w in completionWords) syllableCounts.getOrPut(w) { syllables.size }
             result.addAll(asList)
             // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）
             if (realLast != null) {
@@ -2305,13 +2321,40 @@ object PinyinEngine {
             }
         }
 
-        // 用户词频学习：把「用户实际选过」的词稳定提到前面（未学习时零开销、零行为变化）。
+        // 用户词频学习：把「用户实际选过」的词稳定提到前面 —— 但**只在音节数相同的候选之间**：
+        // 跨音节数提升会把学过的单字（你）压到整词（你好）前面（用户 2026-10-18 报告）。
         // 繁体模式下候选是繁体、词频表按简体存储（[rememberChoice] 同口径），因此按简体形式打分、
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
         // （`tradSimp ?: return word`），不按开关选重载 —— 那种分支正是「改一处忘另一处」的温床。
-        val token = result.toTypedArray()
-        val ordered = UserFrequency.rank(token) { toSimplified(it) }.toList()
+        val ordered = rankWithinSyllableGroups(result, syllableCounts, syllables.size)
         return Result(ordered, syllables, partial)
+    }
+
+    /**
+     * 按「音节数 → 用户权重」两段稳定重排候选。
+     *
+     * 第一段：与输入音节数相同的候选整组在最前（[inputSyllables] 组），其余按音节数**从多到少**；
+     * 第二段：组内按 [UserFrequency.rank] 稳定重排（未学习即原序）。
+     * 未登记音节数的候选（理论上不该有）落到最后一组，保持原序。
+     */
+    private fun rankWithinSyllableGroups(
+        items: Collection<String>,
+        syllableCounts: Map<String, Int>,
+        inputSyllables: Int,
+    ): List<String> {
+        if (items.size < 2) return items.toList()
+        val groups = LinkedHashMap<Int, MutableList<String>>()
+        for (c in items) {
+            val n = syllableCounts[c] ?: Int.MAX_VALUE
+            groups.getOrPut(n) { ArrayList() }.add(c)
+        }
+        val out = ArrayList<String>(items.size)
+        groups.entries
+            .sortedWith(compareBy({ if (it.key == inputSyllables) 0 else 1 }, { -it.key }))
+            .forEach { e ->
+                out.addAll(UserFrequency.rank(e.value.toTypedArray()) { toSimplified(it) }.toList())
+            }
+        return out
     }
 
     /**
