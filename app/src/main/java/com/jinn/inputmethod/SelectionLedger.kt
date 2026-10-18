@@ -40,6 +40,15 @@ object SelectionLedger {
     @Volatile
     private var enabled = false
 
+    /**
+     * 代际号：关闭并删除时 +1。
+     *
+     * 早先靠「`target !== file`」判换绑，而 [init] 每次都新建同路径的 File —— 重新绑定会被
+     * 误判成换绑，直接把整队选择清掉。改用递增代际，只有真正删除才作废在途写入。
+     */
+    @Volatile
+    private var generation = 0
+
     /** 绑定应用私有目录并下发开关（多次调用幂等；换 context 后重绑） */
     fun init(context: Context, enabled: Boolean) {
         target = File(context.filesDir, FILE_NAME)
@@ -62,7 +71,8 @@ object SelectionLedger {
         val line = formatLine(word, pinyin) ?: return
         val file = target ?: return
         queue.add(line)
-        writer.execute { drainTo(file) }
+        val gen = generation
+        writer.execute { drainTo(file, gen) }
     }
 
     /**
@@ -73,11 +83,12 @@ object SelectionLedger {
     fun appendAll(picks: List<Pair<String, String>>) {
         if (!enabled) return
         val file = target ?: return
+        val gen = generation
         val lines = ArrayList<String>(picks.size)
         for ((w, p) in picks) formatLine(w, p)?.let { lines.add(it) }
         if (lines.isEmpty()) return
         writer.execute {
-            if (target !== file) return@execute
+            if (gen != generation) return@execute
             runCatching {
                 FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { out ->
                     for (line in lines) {
@@ -91,12 +102,22 @@ object SelectionLedger {
         }
     }
 
-    /** 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常） */
-    fun flush() {
-        val file = target ?: return
+    /**
+     * 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常）。
+     *
+     * @return 是否确实写空（超时 / 被打断都返回 false）
+     */
+    fun flush(): Boolean {
+        val file = target ?: return true
+        val gen = generation
         // 带超时：队列里可能压着一次上万行的批量导入，主线程不该无限等
-        runCatching { writer.submit { drainTo(file) }.get(FLUSH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) }
-            .onFailure { Diagnostics.w(TAG, "台账 flush 失败: ${it.javaClass.simpleName}") }
+        val done = runCatching {
+            writer.submit { drainTo(file, gen) }
+                .get(FLUSH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            queue.isEmpty()
+        }.getOrElse { false }
+        if (!done) Diagnostics.w(TAG, "台账 flush 未在 ${FLUSH_TIMEOUT_MS}ms 内写空")
+        return done
     }
 
     /**
@@ -106,15 +127,17 @@ object SelectionLedger {
      */
     fun deleteFile(context: Context): Boolean {
         enabled = false
-        flush()
         val file = File(context.filesDir, FILE_NAME)
+        if (!flush()) {
+            // 队列还没写空就删，正在进行的 drain 会把文件重建出来（回执却是「已删除」）
+            return false
+        }
+        // 先升代际再删：在途 / 排队的写入会自行放弃，不会把文件建回来
+        generation++
         val ok = deleteQuietly(file)
-        if (ok) {
-            // 摘掉绑定：删除之后任何排队的 drain 都会在代际守卫处放弃，不会把文件重建出来
-            target = null
-        } else {
-            // 删除失败：恢复原状（enabled 仍是 false，由调用方决定是否重新开）。
-            // 这里若也置 target = null，调用方写回 pref=true 之后记录会静默全丢（2026-10-19 审查）
+        if (!ok) {
+            // 删除失败：退回原代际并保留绑定，调用方写回 pref 之后记录仍能继续
+            generation--
             target = file
         }
         return ok
@@ -128,9 +151,9 @@ object SelectionLedger {
             .getOrDefault(false)
     }
 
-    private fun drainTo(file: File) {
-        // 已被关闭删除（target 置空）或换绑：这一批不再写，否则「已删除」之后磁盘上又出现文件
-        if (target !== file) {
+    private fun drainTo(file: File, gen: Int) {
+        // 已被关闭删除（代际已升）：这一批不再写，否则「已删除」之后磁盘上又出现文件
+        if (gen != generation) {
             queue.clear()
             return
         }

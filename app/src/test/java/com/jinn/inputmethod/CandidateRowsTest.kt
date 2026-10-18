@@ -323,7 +323,7 @@ class CandidateRowsTest {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue(
             "拼音居中只属于「双行档未展开」",
-            "currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE" in src,
+            "currentDoubleRow = !candidateRenderExpanded && rows == CandidateRows.DOUBLE" in src,
         )
         assertTrue("gravity 按形态判断而不是按行数", "val gravity = if (currentDoubleRow)" in src)
         assertTrue(
@@ -356,16 +356,25 @@ class CandidateRowsTest {
             Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,400}collapseCandidates(?:AndRelayout)?\(""")
                 .containsMatchIn(src),
         )
+        // 补间期间栏高只能由动画器写：这是旧版「展开只跑 1 帧」的根因，靠写入权解决
+        assertTrue(
+            "补间期间 applyCandidateRows 不得写栏高",
+            "candidateHeightAnimator == null && lp.height != barHeight" in src,
+        )
+        assertTrue("收起入口必须先落定高度", "settleCandidateHeight()" in src)
         assertTrue(
             "三角只在单行档出现",
             Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
         )
-        assertTrue("展开态横向强制跟手", "prefs.candidatePaging && !candidatesExpanded" in src)
+        assertTrue(
+            "展开态横向强制跟手（按已渲染形态，补间期间与内容一致）",
+            "prefs.candidatePaging && !candidateRenderExpanded" in src,
+        )
         // 展开态绝不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认逐条 / 两排一列，
         // 3/4 排的列会被拼成竖向错位的裸 TextView 块 —— 实测第 9 列「溢咦倚矣」整体下移。
         assertTrue(
             "展开态要整栏重建、不得增量追加",
-            Regex("""if \(candidatesExpanded\) \{\s*val keepY = candidateRowsScroll\.scrollY""").containsMatchIn(src),
+            Regex("""if \(candidateRenderExpanded\) \{\s*val keepY = candidateRowsScroll\.scrollY""").containsMatchIn(src),
         )
         assertTrue(
             "展开态一次性放大渲染窗口",

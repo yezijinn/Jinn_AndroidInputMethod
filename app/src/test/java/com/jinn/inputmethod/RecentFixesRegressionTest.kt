@@ -5645,11 +5645,15 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "双拼开启总开关时必须显示打标后的全拼",
-            "PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))" in view,
+            // 显示串改为对**已算好的查询串**打标（每键只做一次转换与一次分词）；
+            // 双拼下该串就是 toQuanpin 的结果，语义与 displayQuanpin 完全一致
+            "PinyinEngine.markSyllables(queryInput)" in view &&
+                "val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input" in view,
         )
         assertTrue(
             "全拼模式必须按音节打标",
-            "PinyinEngine.markSyllables(input)" in view,
+            // 全拼模式下 queryInput 就是 input，仍按音节打标（只是不再重复转换与分词）
+            "PinyinEngine.markSyllables(queryInput)" in view,
         )
         assertFalse("打标不得再读独立开关", "pinyinSyllableMark" in view)
         assertFalse(
@@ -5719,18 +5723,23 @@ class RecentFixesRegressionTest {
     fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue(
-            "状态翻完后由同一次刷新落栏高与内容",
-            "candidatesExpanded = expand\n        refreshCandidateBar()" in src,
+            "状态翻完后由同一次刷新落内容（栏高随后补间）",
+            "candidatesExpanded = expand" in src && "refreshCandidateBar()" in src,
         )
         assertTrue(
-            "收起只翻状态，高度与内容交给随后的刷新",
-            "private fun collapseCandidates() {\n" +
-                "        if (!candidatesExpanded) return\n" +
-                "        candidatesExpanded = false\n" in src,
+            "收起先落定高度、再翻状态（绝不把补间带进新形态）",
+            Regex("private fun collapseCandidates\\(\\) \\{\\s*if \\(!candidatesExpanded\\) return")
+                .containsMatchIn(src) && "settleCandidateHeight()" in src,
         )
-        assertFalse("不得再有高度补间", "ValueAnimator" in src)
-        assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
+        // 只补**栏高**一个量：不淡入淡出、不插值三角、不加「过渡期跳过」守卫
         assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)
+        assertFalse("不得再插值三角角度", "btnExpandCandidates.rotation = startRot" in src)
+        assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
+        assertTrue("补间时长必须短于 150ms（超过就成了卡顿）", "CANDIDATE_TWEEN_MS = 110L" in src)
+        assertTrue(
+            "补间期间栏高只由动画器写（旧版「只跑 1 帧」的根因）",
+            "candidateHeightAnimator == null && lp.height != barHeight" in src,
+        )
         // 三角方向仍由刷新统一对齐：符号层 / 密码层分支会早退，走不到 updateExpandButton
         assertTrue(
             "层切换早退前必须复位三角",

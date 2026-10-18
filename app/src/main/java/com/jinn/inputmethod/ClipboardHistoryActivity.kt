@@ -729,8 +729,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 if (multiSelect) {
                     if (checkedIds.isEmpty()) return@setOnClickListener
                     confirm("删除选中的 ${checkedIds.size} 条？") {
+                        // 后台线程不得直接迭代主线程在写的集合：并发修改会抛 CME，
+                        // 被 BackgroundIo 的兜底吞掉后整批删除静默不执行
+                        val idsSnapshot = checkedIds.toList()
                         BackgroundIo.run {
-                            db.deleteAnyByIds(checkedIds.toList())
+                            db.deleteAnyByIds(idsSnapshot)
                             // 「全部」分类的勾选集可能含图片行（多选框在占位行上仍可勾）：行删了、
                             // 文件同步收一次，不必等下次启动 GC；批量删除走 GC 是因为逐条
                             // deleteFor 要先查 hash 表

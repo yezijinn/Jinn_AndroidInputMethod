@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -236,6 +237,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private var candidatesExpanded = false
 
+    /**
+     * 本帧**实际渲染**的形态（与意图态 [candidatesExpanded] 分离）。
+     *
+     * 收起时意图态立刻为 false（真值，层切换 / 面板 / 早退分支不会读到假状态），
+     * 但渲染态保留到补间结束 —— 收起期间内容仍随栏高被裁，不会「先清空再合盖」。
+     * 旧版靠谎报 `candidatesExpanded` 实现这一点，正是那时一串 bug 的源头。
+     */
+    private var candidateRenderExpanded = false
+
+    /**
+     * 展开 / 收起的高度补间（只补**栏高**这一个量，见 [startCandidateHeightTween]）。
+     *
+     * 存在期间 [applyCandidateRows] 不再写高度 —— 栏高只有一个写入者。
+     */
+    private var candidateHeightAnimator: ValueAnimator? = null
+
+    /** 展开排数缓存：补间期间 [expandedRowsFor] 读到的是中途高度，必须复用起跳前算好的值 */
+    private var expandedRowsCached = 0
+
     /** 上一帧候选集指纹：与 [lastCandidatesInput] 合用，判「候选集变化且输入变了才收起」（BUG.md L-1393） */
     private var lastCandidatesToken: Int? = null
 
@@ -254,7 +274,75 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun toggleCandidateExpanded() {
         val expand = !candidatesExpanded
         Diagnostics.i(TAG, "候选栏展开态：$expand")
+        // 起跳前先落定：撤销在途补间，避免从半截高度开始
+        settleCandidateHeight()
         candidatesExpanded = expand
+        // 排数必须在改栏高**之前**算：补间中 [expandedRowsFor] 读到的是中途高度
+        expandedRowsCached = if (expand) {
+            expandedRowsFor(
+                lastCandidates.size,
+                prefs.candidateTextSp,
+                currentPinyinSp,
+                prefs.pinyinLineGapDp,
+            )
+        } else {
+            0
+        }
+        candidateRenderExpanded = expand
+        // 内容在这一次刷新里进入目标态（收起时不提前换单行，展开时直接是网格）
+        refreshCandidateBar()
+        // 内容已定，现在只补栏高
+        startCandidateHeightTween()
+    }
+
+    /**
+     * 只补**栏高**的短补间（[CANDIDATE_TWEEN_MS]）。
+     *
+     * 刻意只动这一个量：
+     *  - 不做 `candidateScroll.alpha` 淡入淡出 —— 整块候选区淡入的语义是「换了一批候选」，
+     *    且残留值会让每次刷新都得复位（旧版正是这样长出 `candidateAnimating` 的）；
+     *  - 不插值三角 rotation —— 同一个状态不造第二份表达；
+     *  - 不加「过渡期跳过」守卫 —— 补间期间 [applyCandidateRows] 根本不写高度，
+     *    所以按键 / 词库合并 / 展开态分页重建都不会把它砍断（旧版「只跑 1 帧」的根因消失）。
+     */
+    private fun startCandidateHeightTween() {
+        val lp = candidateBar.layoutParams as? LinearLayout.LayoutParams ?: return
+        val from = candidateBar.height
+        val to = lp.height
+        if (from <= 0 || to <= 0 || from == to) return
+        if (!ValueAnimator.areAnimatorsEnabled()) return   // 动画缩放 0 / 无障碍：保持瞬时
+        candidateHeightAnimator?.cancel()
+        val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
+        animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+        animator.addUpdateListener { a ->
+            (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
+                p.height = a.animatedValue as Int
+                candidateBar.layoutParams = p
+            }
+        }
+        animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                if (candidateHeightAnimator !== animation) return   // 已被落定 / 替换
+                candidateHeightAnimator = null
+                candidateRenderExpanded = candidatesExpanded
+                refreshCandidateBar()
+            }
+        })
+        candidateHeightAnimator = animator
+        animator.start()
+    }
+
+    /**
+     * 落定高度：撤掉在途补间、把栏高交回 [applyCandidateRows]。
+     *
+     * 任何外部形态变更（层切换 / 面板 / 密码模式 / 档位变化 / 候选清空）都先调它，
+     * 绝不把补间带进新形态。
+     */
+    private fun settleCandidateHeight() {
+        val animator = candidateHeightAnimator ?: return
+        candidateHeightAnimator = null
+        animator.cancel()
+        candidateRenderExpanded = candidatesExpanded
         refreshCandidateBar()
     }
 
@@ -349,7 +437,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun collapseCandidates() {
         if (!candidatesExpanded) return
+        // 从确定态起跳：绝不把补间带进新形态
+        settleCandidateHeight()
         candidatesExpanded = false
+        candidateRenderExpanded = false
         btnExpandCandidates.rotation = 0f
     }
 
@@ -2389,7 +2480,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val perRow = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
         val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp)
         currentRows = rows
-        currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE
+        // 拼音条居中与「展开态在这些形态下会被收起」同判据：用意图态，避免补间中途读到半截值
+        currentDoubleRow = !candidateRenderExpanded && rows == CandidateRows.DOUBLE
         currentCandidateSp = candidateSp
         currentPinyinSp = pinyinSp
         currentPinyinGapDp = gapDp
@@ -2413,7 +2505,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             gapDp,
         )
         (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
-            if (lp.height != barHeight) {
+            // 补间期间高度归动画器所有：这里再写一次会与它互写（抖动 / 半截定格）。
+            // 这是旧版「长候选展开只跑 1 帧」的根源，现在靠写入权解决，不需要任何跳过守卫。
+            if (candidateHeightAnimator == null && lp.height != barHeight) {
                 lp.height = barHeight
                 candidateBar.layoutParams = lp
             }
@@ -2617,7 +2711,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             buildCandidateView(text, sizeSp, spacingHalfPx, candidateColor, onClick, obtainCandidateView())
         // 展开态：按 N 排一列分组（列内自上而下 = 候选原序 ⇒ 第一列第一条仍是最高词频）。
         // 每列占满整栏高（行高 × 排数），排数由调用方按可用高度夹取后传进来。
-        if (candidatesExpanded) {
+        if (candidateRenderExpanded) {
             renderExpandedRows(shown, rows, rowHeightPx, sizeSp, spacingHalfPx, candidateColor, onClick)
             return
         }
@@ -2820,7 +2914,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 滚动度量：展开态是纵轴（内层 = 内容、外层 = 视口），未展开是横轴（容器宽 - 视口宽）
         val maxScroll: Int
         val pos: Int
-        if (candidatesExpanded) {
+        if (candidateRenderExpanded) {
             maxScroll = candidateScroll.height - candidateRowsScroll.height
             pos = candidateRowsScroll.scrollY
         } else {
@@ -2840,7 +2934,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「两排一列」，展开态按 3/4 排成列，`from` 又未必是排数的整数倍 —— 增量拼出来的列会
         // **整体竖向错位**（实测：第 9 列四个字被当成一列裸 TextView，落成竖直居中的错块）。
         // 故展开态整栏重建（只重排几十个 TextView，且不在逐键热路径上），并保住纵向滚动位。
-        if (candidatesExpanded) {
+        if (candidateRenderExpanded) {
             val keepY = candidateRowsScroll.scrollY
             candidateRenderLimit = to
             candidateRenderKey = null
@@ -2908,27 +3002,37 @@ class PinyinKeyboardView @JvmOverloads constructor(
             lastCandidatesInput != null &&
             lastCandidatesInput != inputNow
         ) {
-            Diagnostics.i(TAG, "候选集变化且输入已变，收起展开态: '$lastCandidatesInput' → '$inputNow'")
+            // ⚠ 这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
+            // 等于把用户敲的拼音（含密码框内）长期留在可分享的诊断包里；且每键一次主线程写盘
+            // （PinyinEngine 里同型的一处早已注明这一点）。只记长度，排障够用。
+            if (Diagnostics.KEY_TRACE) {
+                Diagnostics.v(
+                    TAG,
+                    "候选集变化且输入已变，收起展开态: " +
+                        "${lastCandidatesInput?.length} → ${inputNow.length}",
+                )
+            }
             collapseCandidates()
         }
         lastCandidatesToken = token
         lastCandidatesInput = inputNow
         // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器。
         // ⚠ 展开态**强制跟手滑动**：纵向要让给「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
-        candidatePaging = prefs.candidatePaging && !candidatesExpanded
+        // 形态一律按**已渲染**的形态下发：补间期间内容已是目标态，滚动层必须与它一致
+        candidatePaging = prefs.candidatePaging && !candidateRenderExpanded
         candidateScroll.paging = candidatePaging
-        candidateScroll.expanded = candidatesExpanded
-        candidateRowsScroll.expanded = candidatesExpanded
+        candidateScroll.expanded = candidateRenderExpanded
+        candidateRowsScroll.expanded = candidateRenderExpanded
         // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档
         // 且候选多到需要展开时才出现 —— 候选不满一行时给个死按钮是噪音。
-        val rows = if (candidatesExpanded) {
+        val rows = if (candidateRenderExpanded) {
             expandedRowsFor(lastCandidates.size, candidateSp, pinyinSp, pinyinGap)
         } else {
             rowsSetting
         }
         // 展开态一次性把窗口放大到「够铺满可见网格」的量（BUG.md L-1394）：否则首次只渲染 32 条，
         // 余下的全走追加路径 —— 而那正是列错位的来源（见 maybeAppendMoreCandidates）。
-        if (candidatesExpanded) {
+        if (candidateRenderExpanded) {
             val perCol = estimateColumnsPerRow().coerceAtLeast(1)
             val need = rows * perCol * 2 // 两屏的量：一次滚动/一次上滑都够用
             val target = minOf(lastCandidates.size, maxOf(CandidateRows.MAX_EXPANDED_ROWS * perCol, need))
@@ -2958,10 +3062,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
         // 只改显示，composing / 查询 / 上屏都用未打标的串。
+        // 查询串**先算一次**：双拼下显示的 displayQuanpin 与查询的 toQuanpin 是同一次转换的两份
+        // 实现，早先每键各跑一遍（多一次码表转换 + 一次全拼分词），长输入时是可见开销。
+        val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val displayText = when {
             shuangpinMode && !prefs.showQuanpin -> input
-            shuangpinMode -> PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))
-            else -> PinyinEngine.markSyllables(input)
+            // 双拼用已转好的全拼，全拼模式 queryInput 就是 input —— 都只做一次 markSyllables
+            else -> PinyinEngine.markSyllables(queryInput)
         }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
@@ -3010,8 +3117,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
 
-        // 双拼：先转全拼再查询；显示仍保留双拼原文
-        val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val result = PinyinEngine.query(queryInput)
         // 候选集口径（BUG.md L-1395）：size + 末尾几条，用于判定「长词够不着」是**没生成**还是
         // **渲染追加不续**。只在 KEY_TRACE（debug 构建）下打印，release 静默。
@@ -4812,6 +4917,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 待揭示的面板请求同理（BUG.md L-1320）：键盘视图被换掉后还去揭示，操作的是旧树，
         // 而且会把 contentArea 的高度改到没人看的视图上
         cancelPendingPanelReveal()
+        // 展开 / 收起的补间：视图都摘下来了还逐帧改旧树的栏高，纯属空跑；
+        // 撤掉也顺带让旧实例不再被动画器多持有一会儿。
+        candidateHeightAnimator?.cancel()
+        candidateHeightAnimator = null
         super.onDetachedFromWindow()
     }
 
@@ -4833,6 +4942,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private companion object {
+        /**
+         * 展开 / 收起的栏高补间时长。
+         *
+         * 只补高度一个量，几帧即可；IME 里超过 ~150ms 就从「过渡」变成「卡顿」——
+         * 旧版 220ms 被否决正是因为它观感是「键盘卡了一下」。
+         */
+        const val CANDIDATE_TWEEN_MS = 110L
+
         const val TAG = "PinyinKeyboard"
 
         /**

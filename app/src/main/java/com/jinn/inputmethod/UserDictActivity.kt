@@ -410,7 +410,15 @@ class UserDictActivity : ComponentActivity() {
             }
             // 多读一个字节即可判断是否还有剩余
             val truncated = read >= buf.size && input.read() != -1
-            CapText(String(buf, 0, read, Charsets.UTF_8), truncated)
+            // 截断时把字节退到最后一个完整行：否则半行 / 被砍断的多字节字符会被当成一条词条
+            val end = if (truncated) {
+                var i = read - 1
+                while (i >= 0 && buf[i] != '\n'.code.toByte()) i--
+                i + 1
+            } else {
+                read
+            }
+            CapText(String(buf, 0, end, Charsets.UTF_8), truncated)
         }
     }.getOrNull()
 

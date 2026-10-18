@@ -46,8 +46,50 @@ object CredentialCrypto {
      * 缓存 Keystore 里的密钥句柄（与 [ClipboardCrypto] 同一取舍）：`getKey` 每次要走 binder/TEE
      * （5~20ms），而凭据读取分布在「组装 Provider」「设置页摘要」等多处；句柄只是对托管密钥的
      * 不透明引用，缓存它不削弱安全性。
+     *
+     * ⚠ **不能**用 `by lazy`（与 `ClipboardCrypto` 的 BUG.md L-1095 同型）：句柄是可失效资源，
+     * 用户在系统设置里清除凭据 / Keystore 服务异常后 `Cipher.init` 恒抛，而 `by lazy` 算一次
+     * 即固定 ⇒ 本进程内凭据永久写不进，用户重填也存不住（且 `Prefs` 会先删掉盘上旧密文）。
+     * 改为可清引用 + 按需重建，语义等价于「构造失败不缓存」。
      */
-    private val cachedKey: SecretKey by lazy { createOrLoadKey() }
+    @Volatile
+    private var cachedKey: SecretKey? = null
+
+    /** 取密钥句柄（首次或失效后重建） */
+    private fun key(): SecretKey = cachedKey ?: synchronized(this) {
+        cachedKey ?: createOrLoadKey().also { cachedKey = it }
+    }
+
+    /** 丢弃缓存的句柄：下次 [key] 重新 getKey（不存在才生成） */
+    private fun invalidateKey() {
+        synchronized(this) { cachedKey = null }
+    }
+
+    /**
+     * 是否为「密钥本身失效」类异常（值得重建一次再试）；口径与 [ClipboardCrypto] 一致。
+     */
+    private fun isKeyFailure(e: Throwable): Boolean {
+        var t: Throwable? = e
+        while (t != null) {
+            if (t is java.security.UnrecoverableKeyException) return true
+            if (t is java.security.KeyStoreException) return true
+            if (t is android.security.keystore.KeyPermanentlyInvalidatedException) return true
+            if (t is android.security.KeyStoreException) return true
+            if (t is java.security.InvalidKeyException) return true
+            t = t.cause
+        }
+        return false
+    }
+
+    /** 带一次失效重建的加解密：密钥类异常时清句柄、重建后重试一次 */
+    private fun <T> withKey(block: (SecretKey) -> T): T = try {
+        block(key())
+    } catch (e: Throwable) {
+        if (!isKeyFailure(e)) throw e
+        Diagnostics.w(TAG, "凭据密钥疑似失效，重建后重试: ${e.javaClass.simpleName}")
+        invalidateKey()
+        block(key())
+    }
 
     private fun createOrLoadKey(): SecretKey {
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -72,12 +114,14 @@ object CredentialCrypto {
     /** 加密凭据；失败返回 null（调用方**不得**回退成明文落盘，见 `Prefs` 的写入路径） */
     fun encrypt(plaintext: String): String? = runCatching {
         if (plaintext.isEmpty()) return null
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, cachedKey)
-        val iv = cipher.iv
-        val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        VERSION_PREFIX + Base64.encodeToString(iv, Base64.NO_WRAP) + ":" +
-            Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, k)
+            val iv = cipher.iv
+            val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+            VERSION_PREFIX + Base64.encodeToString(iv, Base64.NO_WRAP) + ":" +
+                Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "凭据加密失败: ${it.javaClass.simpleName}")
         null
@@ -92,9 +136,11 @@ object CredentialCrypto {
         val iv = Base64.decode(body.substring(0, sep), Base64.NO_WRAP)
         val data = Base64.decode(body.substring(sep + 1), Base64.NO_WRAP)
         if (iv.size < 12) return null
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, cachedKey, GCMParameterSpec(GCM_TAG_BITS, iv))
-        String(cipher.doFinal(data), Charsets.UTF_8)
+        withKey { k ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
+            String(cipher.doFinal(data), Charsets.UTF_8)
+        }
     }.getOrElse {
         Diagnostics.e(TAG, "凭据解密失败: ${it.javaClass.simpleName}")
         null

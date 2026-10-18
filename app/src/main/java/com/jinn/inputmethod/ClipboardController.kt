@@ -22,6 +22,17 @@ import android.os.Looper
  *
  * 线程模型：ClipboardManager 回调在主线程，入库等 IO 操作切后台线程。
  */
+/**
+ * 存量重算的进程级占位。
+ *
+ * 放在类外（[ClipboardController] 可以是多实例：关开关后 `stop()`、再开时新建），
+ * 否则新建实例会让标记从 false 重新起跳，而上一趟 `reclassifyAll` 可能还在全库
+ * 解密 ⇒ 两趟并发、CPU/IO 翻倍。
+ */
+private object ReclassifyGuard {
+    val started = java.util.concurrent.atomic.AtomicBoolean(false)
+}
+
 class ClipboardController(context: Context) {
 
     private val appContext = context.applicationContext
@@ -35,13 +46,17 @@ class ClipboardController(context: Context) {
     private var listenerRegistered = false
 
     /**
-     * 存量重算「本进程已发起」的原子标记（BUG-05）。
+     * 存量重算「已发起」的原子标记（BUG-05）。
      *
      * 持久标记 `prefs.reclassified` 只在跑成功时置位，读它再起线程属 check-then-act：
-     * 并发入口会起两条全库解密线程。这个进程内标记先抢位，抢不到的直接返回；
-     * 跑失败或中途停用则放开，保留「下次启动/下次启用再试」的既有承诺。
+     * 并发入口会起两条全库解密线程。这个标记先抢位，抢不到的直接返回；
+     * 跑失败或中途停用则放开，保留「下次启动 / 下次启用再试」的既有承诺。
+     *
+     * ⚠ 必须是**进程级**（[companion] 里）：实例字段在「关开关 → `stop()` → 再开 →
+     * 新建实例」后从 false 重新起跳，而上一趟 `reclassifyAll` 可能还在全库解密
+     * ⇒ 两趟并发、CPU/IO 翻倍，正是 L-1088 要根除的现象。
      */
-    private val reclassifyStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val reclassifyStarted = ReclassifyGuard.started
     private val listener = ClipboardManager.OnPrimaryClipChangedListener {
         onClipboardChanged()
     }
