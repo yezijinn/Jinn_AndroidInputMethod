@@ -2505,6 +2505,8 @@ class JinnIme : InputMethodService() {
         // UserFrequency.flush() 内部先判 dirty，未脏时直接返回；脏时整份重写，
         // 文件上限 3000 行约 1~3ms，故不做异步）
         runCatching { PinyinEngine.flushUserFrequency() }
+        // 选择台账：把队列里最后几行追加完（每行一次 append，几十微秒级）
+        SelectionLedger.flush()
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，
         // 不 release 会持续泄漏 native 资源（每次重建泄漏一份）

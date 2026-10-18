@@ -462,6 +462,13 @@ class SettingsActivity : ComponentActivity() {
         }
         btnSave.setOnClickListener { saveAndRestart() }
 
+        // 用户词库（台账查看 / 合并 / 导出 / 导入）：文案在代码里下发
+        val btnUserDict = findViewById<Button>(R.id.btn_user_dict)
+        btnUserDict.text = "用户词库（词表 / 导出 / 导入）"
+        btnUserDict.setOnClickListener {
+            startActivity(Intent(this, UserDictActivity::class.java))
+        }
+
         // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
         switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
             prefs.autoShowKeyboard = checked

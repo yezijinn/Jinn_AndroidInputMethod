@@ -71,4 +71,13 @@ class CandidateSyllablePriorityTest {
             got.indexOf("你") > got.indexOf("你好吗"),
         )
     }
+
+    @Test
+    fun `读音_候选用真实键_单字用字表兜底`() {
+        PinyinEngine.query("nihao")
+        assertEquals("词候选取候选→键", "ni hao", PinyinEngine.truePinyinOf("你好"))
+        // 预测词常是长词后缀、不在候选映射里：单字必须能从字表反查出音节
+        assertEquals("单字走字表兜底", "ma", PinyinEngine.truePinyinOf("吗"))
+        assertEquals("查不到就空着", null, PinyinEngine.truePinyinOf("龘"))
+    }
 }

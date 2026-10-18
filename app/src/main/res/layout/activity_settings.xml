@@ -319,6 +319,15 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- 用户词库（2026-10-18）：选择台账的查看 / 合并 / 导出 / 导入；文案由代码下发 -->
+        <Button
+            style="@style/SettingsButton"
+            android:id="@+id/btn_user_dict"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:minWidth="0dp" />
+
         <!-- 自动唤起键盘 / 只使用繁体字：两个开关并排（各带说明小字）。
              「只使用繁体字」2026-09-27 起由勾选框改为胶囊开关，与「自动唤起键盘」同行（文案在代码里下发） -->
         <LinearLayout

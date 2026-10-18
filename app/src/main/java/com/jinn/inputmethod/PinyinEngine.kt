@@ -584,6 +584,8 @@ object PinyinEngine {
             // 用户词频：独立文件 IO（几 ms），放在索引之前；排序在查询期做，
             // 第一键之前一定已就绪，也不占首字延迟预算。
             UserFrequency.load(context, prefs.userLearning)
+            // 选择台账（只追加的词库原料）：与词频表分开，一个文件、只增不删
+            SelectionLedger.init(context)
 
             // 单段加载：2026-09-27 起源改为「第 1 部分」短语库（xz 2.1MB / 29.9 万键），
             // 解压 + 解析约 0.5~0.7s，原「高频子集先行」的两段式与 hot 资产一并退场。
@@ -1817,6 +1819,32 @@ object PinyinEngine {
 
     /** 输入法退出/切后台时把未落盘的学习结果刷出去 */
     fun flushUserFrequency() = UserFrequency.flush()
+
+    /**
+     * 候选的读音（音节空格分隔），供选择台账记录。
+     *
+     * 查法按可信度：真实键（模糊音下是词库里那条键）→ 用户实际敲的键 → 词库反向索引 → 单字表反向扫。
+     * 预测词大多是从长词里截出来的后缀（你好啊 → 啊），前两级都没有它，故必须留后两级兜底。
+     * 都查不到返回 null（宁可空着，也不给一条截断的错读音）。
+     */
+    fun truePinyinOf(word: String): String? {
+        val direct = candidateTruePinyin[word]
+            ?: candidatePinyin[word]
+            ?: wordToPinyin[toSimplified(word)]
+        if (direct != null) return spacedSyllables(direct)
+        if (word.length == 1) {
+            for ((syllable, chars) in charsBySyllable) {
+                if (word in chars) return syllable
+            }
+        }
+        return null
+    }
+
+    /** 把拼接键切成音节、用空格连接；切不开时原样返回 */
+    fun spacedSyllables(key: String): String {
+        val syllables = segment(key.lowercase()).first
+        return if (syllables.isEmpty()) key else syllables.joinToString(" ")
+    }
 
     /** 扩展词库（「补充短语词库」下载的分片包）是否已加载（供设置页显示状态） */
     fun isExtensionLoaded(): Boolean = extensionLoaded

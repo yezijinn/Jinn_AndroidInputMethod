@@ -579,6 +579,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上次上屏的词：退格回到预测态时用它重新查询预测 */
     private var lastCommittedWord: String = ""
 
+    /** 上次上屏词的读音（合并整词时拼读音用；台账与预测共用） */
+    private var lastCommittedPinyin: String = ""
+
     // ── 删除键三态：单击删一个 / 按住连续删 / 双击+长按清空输入框 ──
     /**
      * 透明度铺底诊断：延迟到布局完成再跑（否则尺寸全是 0）。提成字段是为了 detach 时能撤掉，
@@ -1140,6 +1143,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 与 btnShift / btnSymbol 的清理口径保持一致。
             lastPredictions = emptyList()
             lastCommittedWord = ""
+            lastCommittedPinyin = ""
             refreshKeyLabels()
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
@@ -1259,6 +1263,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun learnChoice(word: String) {
         if (suppressLearning) return
+        val pinyin = PinyinEngine.truePinyinOf(word).orEmpty()
+        lastCommittedPinyin = pinyin
+        // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）
+        SelectionLedger.record(word, pinyin)
         PinyinEngine.rememberChoice(word)
     }
 
@@ -2171,6 +2179,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onCommitSpace()
                 composing.clear()
                 lastCommittedWord = ""
+                lastCommittedPinyin = ""
                 lastPredictions = emptyList()
             }
             refreshCandidateBar()
@@ -3037,6 +3046,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 与切中英 / 切符号层同一条清理口径：残留预测会在退出后第一次选词时学错词频
         lastPredictions = emptyList()
         lastCommittedWord = ""
+        lastCommittedPinyin = ""
         refreshKeyLabels()
         refreshCandidateBar()
         Diagnostics.i(TAG, "密码模式: 进入（英文小写 + 候选栏数字条）")
@@ -3267,7 +3277,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 用户词频：学习完整词（librime 的 UserDictionary 也是按整条 entry 记），
         // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
         val fullWord = lastCommittedWord + pred
-        learnChoice(fullWord.ifEmpty { pred })
+        val predPinyin = PinyinEngine.truePinyinOf(pred).orEmpty()
+        // 两段读音必须都拿到才拼：缺一段时宁可按「未知」记空，也不写一条截断的错读音
+        val fullPinyin = when {
+            lastCommittedPinyin.isEmpty() && predPinyin.isEmpty() -> ""
+            lastCommittedPinyin.isEmpty() -> predPinyin
+            predPinyin.isEmpty() -> ""
+            else -> "$lastCommittedPinyin $predPinyin"
+        }
+        if (!suppressLearning) {
+            // 选择台账记两行：被点的那一节（四海）+ 合并后的整词（五湖四海）。
+            // 词频表仍只学整词（排序语义不变），台账是词库原料，两者分开。
+            SelectionLedger.record(pred, predPinyin)
+            SelectionLedger.record(fullWord, fullPinyin)
+            PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
+        }
+        lastCommittedPinyin = ""
         listener?.onCommitText(pred)
         lastPredictions = emptyList()
         refreshCandidateBar()
@@ -4571,6 +4596,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastCandidates = emptyList()
         lastPredictions = emptyList()
         lastCommittedWord = ""
+        lastCommittedPinyin = ""
         refreshCandidateBar()
     }
 
