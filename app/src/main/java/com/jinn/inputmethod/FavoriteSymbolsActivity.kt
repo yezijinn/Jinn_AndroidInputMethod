@@ -281,7 +281,10 @@ class FavoriteSymbolsActivity : Activity() {
         val item = FavoriteSymbols.clean(raw)
         val pages = currentPages()
         when {
-            item.isEmpty() || item.length > FavoriteSymbols.MAX_CHARS ->
+            // ⚠ 限长必须走 withinLimit（码点口径），不能写 item.length：那是 UTF-16 码元数，
+            // 一个 emoji 记 2 ⇒ 5 个 emoji（10 码元）被这里判超限拒收，而 append / parse 按码点
+            // 只算 5 ⇒ 页面与模型两套口径，用户粘一串 emoji 进去一半报「无效」。
+            item.isEmpty() || !FavoriteSymbols.withinLimit(item) ->
                 Toast.makeText(this, R.string.favorite_invalid, Toast.LENGTH_SHORT).show()
             pages.any { it.contains(item) } ->
                 Toast.makeText(this, R.string.favorite_exists, Toast.LENGTH_SHORT).show()

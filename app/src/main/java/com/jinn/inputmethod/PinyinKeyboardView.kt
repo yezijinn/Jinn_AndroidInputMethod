@@ -366,8 +366,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
         animator.addUpdateListener { a ->
             (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
-                p.height = a.animatedValue as Int
-                candidateBar.layoutParams = p
+                val h = a.animatedValue as Int
+                if (p.height == h) return@let
+                p.height = h
+                // 只触发重排，不把同一个 LayoutParams 引用反复挂回去（`layoutParams = p` 会再走一遍
+                // 父链的 onSetLayoutParams 与脏标记；本帧只需要重排）。
+                // ⚠ 逐帧改变栏高必然触发 IME 窗口 resize + 宿主 adjustResize 重排，这是本补间的固有
+                // 成本（实测 110ms 时 janky 83%，故时长锁定 60ms），不因本行写法而改变。
+                candidateBar.requestLayout()
                 if (Diagnostics.KEY_TRACE) {
                     Diagnostics.v(
                         TAG,
@@ -437,8 +443,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 展开三角的显隐与朝向：仅单行档 + 有候选时可见 */
     private fun updateExpandButton(rowsSetting: Int) {
-        // 与「展开态在这些形态下会被强制收起」同一判据：否则数字层会挂一个点了没反应的 ▲
-        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1 &&
+        // 与「展开态在这些形态下会被强制收起」同一判据：否则数字层会挂一个点了没反应的 ▲。
+        // ⚠ 还必须「展开后排布真的会变」：候选数不超过一屏列数（通常 2~6 条）时 visibleRows 仍只
+        // 算 1 排 ⇒ 栏高与排布分毫不动，只剩三角翻个身，用户会判定「展开功能坏了」。
+        // 已展开时无条件显示 —— 否则这一刻按钮消失，用户反而收不回去。
+        val wouldGrow = candidatesExpanded || expandedRowsFor(
+            lastCandidates.size,
+            prefs.candidateTextSp,
+            currentPinyinSp,
+            prefs.pinyinLineGapDp,
+        ) > 1
+        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1 && wouldGrow &&
             layer == LAYER_LETTER && !hasActiveOverlay
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         // 文字固定 ▲、方向靠 rotation（展开 180°）

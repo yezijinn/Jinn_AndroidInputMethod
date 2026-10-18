@@ -5954,4 +5954,46 @@ class RecentFixesRegressionTest {
         assertTrue("UriFailed 必须退回剪贴板兜底（拆因不等于取消兜底）", "fallbackToClipboard(item, bytes)" in branch)
     }
 
+
+    /**
+     * ▲ 展开键不能是「空操作按钮」。
+     *
+     * 候选数不超过一屏列数（通常 2~6 条）时 `visibleRows` 仍只算 1 排 ⇒ 点 ▲ 后栏高与排布分毫不动、
+     * 只有三角翻个身，用户判定「展开功能坏了」（这也是「突兀不协调」的一种表现）。
+     * 判据必须落在 [updateExpandButton] 的显隐里；已展开时无条件显示，否则按钮当场消失、收不回去。
+     */
+    @Test
+    fun expandButtonMustNotBeANoOp() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue(
+            "▲ 必须只在展开后排布真会变时出现",
+            "val wouldGrow = candidatesExpanded || expandedRowsFor(" in src,
+        )
+        assertTrue("判据必须接进显隐", "&& wouldGrow &&" in src)
+    }
+
+    /**
+     * 收藏符号的限长必须只有**码点**一个口径。
+     *
+     * Kotlin 的 `String.length` 是 UTF-16 码元数：一个 emoji 记 2 ⇒ 页面拒收 5 个 emoji（10 码元），
+     * 而 `FavoriteSymbols.append` / `parse` 按 `codePointCount` 只算 5 ⇒ 两套口径，粘一串 emoji 一半报无效。
+     */
+    @Test
+    fun favoriteSymbolLimitUsesCodePoints() {
+        val src = TestSources.codeSource("FavoriteSymbolsActivity.kt")
+        assertFalse(
+            "页面不得用 UTF-16 码元数限长",
+            "item.length > FavoriteSymbols.MAX_CHARS" in src,
+        )
+        assertTrue(
+            "限长必须走模型单一真源（码点口径）",
+            "!FavoriteSymbols.withinLimit(item)" in src,
+        )
+        assertTrue(
+            "模型侧 withinLimit 必须按码点算",
+            "fun withinLimit(item: String): Boolean = item.codePointCount(0, item.length) <= MAX_CHARS"
+                in TestSources.codeSource("FavoriteSymbols.kt"),
+        )
+    }
+
 }
