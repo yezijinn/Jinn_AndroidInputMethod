@@ -61,22 +61,39 @@
         </com.jinn.inputmethod.CandidateRowsScrollView>
 
         <!-- 拼音条（叠放层，最后添加 ⇒ 在候选之上）：位置由 gravity 决定（单行档贴顶 / 双行档垂直居中），
-             高度与位置由 applyCandidateRows 落位、显隐由 showPinyin 落位。 -->
-        <FrameLayout
+             高度与位置由 applyCandidateRows 落位、显隐由 showPinyin 落位。
+             行内按「数字排 / 拼音串 / ▲ / ✕」从左到右横排：用 LinearLayout 的权重分宽度，
+             数字排出现时拼音串自动让位 —— 若改成叠放，就得在代码里按栏宽反算让位宽度，多一处会分叉的算式。 -->
+        <LinearLayout
             android:id="@+id/pinyin_bar"
             android:layout_width="match_parent"
             android:layout_height="18dp"
             android:layout_gravity="top"
             android:clipChildren="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:paddingStart="8dp"
             android:paddingEnd="8dp">
 
-            <!-- 拼音串：整条全宽（不再限宽），右端留出清空按钮的位置；
-                 左内边距由父级拼音条提供，这里显式写 0 以满足 RTL 对称性检查 -->
+            <!-- 固定数字排 1..0：仅「候选行数 = 双行」档显示（[PinyinKeyboardView.setDigitRowVisible]），
+                 与 ✕/▲ 同高、同一行。键面（字形 / 字色 / 字号）由代码按本帧拼音字号 + 皮肤同源下发。
+                 宽度给权重而不给固定 dp：窄屏 / 大字体下与拼音串按比例分宽度，不会把拼音串挤没。
+                 子项在 init 里按 CANDIDATE_DIGIT_KEYS 建一次（10 个纯字形键，XML 逐条写会重十遍）。 -->
+            <LinearLayout
+                android:id="@+id/candidate_digit_row"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.3"
+                android:orientation="horizontal"
+                android:visibility="gone" />
+
+            <!-- 拼音串：右端留出清空按钮的位置；数字排出现时它自然收窄（ellipsize 截尾）；
+                 两端内边距由父级拼音条提供，paddingStart 显式写 0 以满足 RTL 对称性检查 -->
             <TextView
                 android:id="@+id/candidate_pinyin"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:ellipsize="end"
                 android:gravity="center_vertical"
                 android:maxLines="1"
@@ -85,16 +102,14 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
 
-            <!-- 展开候选栏（▲/▾）：位于 ✕ **左侧**，与它同高、紧挨但不重叠（✕ 占 end 40dp，
-                 本键再退 40dp）。仅在「候选行数 = 1 行」档、且候选多到需要展开时出现（BUG.md L-1393）。
+            <!-- 展开候选栏（▲/▾）：位于 ✕ **左侧**，与它同高、紧挨但不重叠（横排里 ✕ 之后）。
+                 仅在「候选行数 = 1 行」档、且候选多到需要展开时出现（BUG.md L-1393）。
                  展开 = 候选栏向上增高，一屏最多四排拼音条+候选；再点 = 收起（点 ✕ 或选中候选同样收起）。
                  图标用字符，不新增可见文案（文案属作者域、strings.xml 不动）。 -->
             <TextView
                 android:id="@+id/btn_expand_candidates"
                 android:layout_width="40dp"
                 android:layout_height="match_parent"
-                android:layout_gravity="end"
-                android:layout_marginEnd="40dp"
                 android:gravity="center"
                 android:text="▲"
                 android:textColor="@color/text_secondary"
@@ -109,14 +124,13 @@
                 android:id="@+id/btn_clear_candidates"
                 android:layout_width="40dp"
                 android:layout_height="match_parent"
-                android:layout_gravity="end"
                 android:contentDescription="@string/cd_clear_candidates"
                 android:gravity="center"
                 android:text="@string/key_clear_candidates"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp"
                 android:visibility="gone" />
-        </FrameLayout>
+        </LinearLayout>
 
     </FrameLayout>
 
