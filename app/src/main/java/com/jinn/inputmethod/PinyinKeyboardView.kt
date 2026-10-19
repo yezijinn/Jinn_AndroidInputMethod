@@ -210,10 +210,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidateList: LinearLayout
 
     /**
-     * 功能按钮行下方的固定数字行（`@id/function_digit_row`）：与按钮行各占候选栏一半高度。
+     * 功能按钮行下方的固定数字行（`@id/function_digit_row`）。
+     *
+     * ⚠ **不是**与按钮行各占一半：两行同处横向滚动容器的内容里，它给子项的高度是
+     * UNSPECIFIED，`layout_weight` 分到的是「两行内容高之和」而非栏高 ⇒ 单行档（默认 46dp）
+     * 下双双溢出、数字行被栏底裁成半截（2026-10-19 真机实测）。现在按钮行 match_parent
+     * 吃掉剩余高度、数字行按自身行框高，并由 [canFitFunctionDigitRow] 决定显隐。
      *
      * 只在功能面板形态显示（见 [setFunctionDigitRowVisible]）：候选 / 预测 / 动作排 / 符号 /
-     * 密码条 / 提示 / 空态都不要它。键在 init 里建一次，与 [viewCandidateList] 是兄弟节点
+     * 密码条 / 提示 / 空态都不要它。键面在 init 里建一次，与 [viewCandidateList] 是兄弟节点
      * （滚动容器只能有一个子 View，故两者共用 `@id/candidate_panel_stack` 这一层）。
      */
     private val functionDigitRow: LinearLayout
@@ -4326,16 +4331,54 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 数字行的显隐（唯一入口）：只有功能面板形态打开它。
      *
+     * ⚠ **显示前必须过「栏高够不够」这道闸**（2026-10-19 真机实测后加）。
+     * 数字行与按钮行共处 `CandidateScrollView` 的**内容**里，而横向滚动容器给子项的高度是
+     * UNSPECIFIED ⇒ `layout_weight` 分到的是「两行内容高之和」，不是栏高。单行档（默认 46dp）
+     * 下按钮行的最小高就等于整栏高（[reuseBlockMinPx]），再加一行数字 ⇒ 内容必然溢出：
+     * 实测数字行只剩约 12dp 露在栏底、13sp 字形被裁掉一半，按钮行也被压到文字放不下。
+     * 双行档（74dp）恰好容得下，所以问题只在默认档暴露。
+     * 栏高**不能**为面板态增高（用户 2026-10-02 明确要求键盘高度不随「有候选 ↔ 面板」变），
+     * 所以放不下就不放 —— 单行档用户没有这一行，好过半行错形态。
+     *
      * 字色在这里按皮肤 [KeyboardSkin.functionGlyph] 下发（与功能按钮主标同源）：
      * 换肤后候选栏会整帧刷新，跟着走即可，不必在换肤路径上再加一处遍历。
      */
     private fun setFunctionDigitRowVisible(visible: Boolean) {
+        if (visible && !canFitFunctionDigitRow()) {
+            // 放不下：收回 GONE。weight 不参与分配 ⇒ 按钮行独占整栏，与没有这一行时一致
+            functionDigitRow.visibility = View.GONE
+            return
+        }
         functionDigitRow.visibility = if (visible) View.VISIBLE else View.GONE
         if (!visible) return
         val color = skinToken(skin.functionGlyph, R.color.text_primary)
         for (i in 0 until functionDigitRow.childCount) {
             (functionDigitRow.getChildAt(i) as? TextView)?.setTextColor(color)
         }
+    }
+
+    /**
+     * 栏高是否容得下「功能按钮行 + 数字行」。
+     *
+     * 按钮行的最小高就是 [reuseBlockMinPx]（单行档整栏高，见 [buildFunctionButton] 的
+     * `minimumHeight`）；数字行按自身行框算（13sp × 行距 × fontScale）。
+     * 两者之和 ≤ 栏高才显示 —— 这是**几何判据**，与档位、字号、系统字体缩放都挂钩，
+     * 所以不写成「只准双行档」那种拍脑袋条件。
+     */
+    private fun canFitFunctionDigitRow(): Boolean {
+        val dm = resources.displayMetrics
+        val fontScale = resources.configuration.fontScale
+        // 栏高未布局时（首帧）退回按当前档位算的理论值：那一帧数字行本就还是 GONE，
+        // 布局完成后 refreshCandidateBar 会再判一次，不会把「放不下」定格住
+        val barHeight = candidateBar.height.takeIf { it > 0 }
+            ?: CandidateRows.barHeightPx(
+                currentRows, dm.density, fontScale,
+                currentCandidateSp, currentPinyinSp, currentPinyinGapDp,
+            )
+        if (barHeight <= 0) return false
+        // 数字行行框：字号 × 1.2（TextView 默认行距）+ 上下各 2dp 内边距
+        val digitRowPx = (FUNCTION_DIGIT_TEXT_SP * fontScale * 1.2f * dm.scaledDensity).toInt() + dp(4)
+        return reuseBlockMinPx() + digitRowPx <= barHeight
     }
 
     /**

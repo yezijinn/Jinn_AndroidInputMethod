@@ -6119,4 +6119,83 @@ class RecentFixesRegressionTest {
         )
     }
 
+
+    /**
+     * 功能面板数字行：显隐漏斗 + 几何闸。
+     *
+     * 漏斗（2026-10-19 子代理审查发现上一版零守卫，任何一次改动都可能静默破坏）：
+     *  - 唯一开点必须在 `renderFunctionPanel` 内（搜索态 / 动作排早退分支到不了那里）；
+     *  - `renderCandidateItems` 必须**置前**关 —— 该函数有指纹命中早退，放末尾会漏关，
+     *    留下一行盖住半栏候选的数字键；
+     *  - `clearCandidateList` 兜底关（符号 / 密码 / 提示 / 空态共用这个漏斗）。
+     *
+     * 几何闸：两行同处横向滚动容器内容里，它给子项高度是 UNSPECIFIED ⇒ `layout_weight`
+     * 分的是内容高之和而非栏高；单行档（默认 46dp）下按钮行最小高就等于整栏高，再加一行
+     * 数字必然溢出（实测数字行只剩约 12dp 露在栏底、13sp 字形被裁一半）。
+     * 故 XML 不得再用 weight 平分，且显示前必须过 canFitFunctionDigitRow。
+     */
+    @Test
+    fun functionDigitRowGuards() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+
+        // ① 唯一开点在 renderFunctionPanel 内
+        val panel = TestSources.blockAfter(src, "private fun renderFunctionPanel() {")
+        assertTrue(
+            "数字行只允许在功能面板常驻分支打开",
+            "setFunctionDigitRowVisible(true)" in panel,
+        )
+
+        // ② 候选渲染必须置前关（躲开指纹命中早退）
+        val head = TestSources.blockAfter(src, "private fun renderCandidateItems(")
+            .let { it.substring(0, minOf(600, it.length)) }
+        assertTrue(
+            "renderCandidateItems 必须在指纹早退之前关掉数字行",
+            "setFunctionDigitRowVisible(false)" in head,
+        )
+
+        // ③ 兜底漏斗
+        val clear = TestSources.blockAfter(src, "private fun clearCandidateList() {")
+        assertTrue(
+            "clearCandidateList 必须兜底关掉数字行",
+            "setFunctionDigitRowVisible(false)" in clear,
+        )
+
+        // ④ 几何闸：显示前必须判「栏高够不够」
+        assertTrue(
+            "显示前必须过 canFitFunctionDigitRow",
+            "if (visible && !canFitFunctionDigitRow())" in src,
+        )
+        assertTrue(
+            "判据必须是按钮行最小高 + 数字行行框 ≤ 栏高",
+            "reuseBlockMinPx() + digitRowPx <= barHeight" in src,
+        )
+
+        // ⑤ XML 不得再用 weight 平分（那是单行档溢出的根因）
+        val xml = listOf(
+            java.io.File("src/main/res/layout/keyboard_pinyin.xml"),
+            java.io.File("app/src/main/res/layout/keyboard_pinyin.xml"),
+        ).firstOrNull { it.isFile }?.readText() ?: error("找不到 keyboard_pinyin.xml")
+        val digitBlock = TestSources.window(
+            xml,
+            "@+id/function_digit_row",
+            "/>",
+        )
+        assertTrue(
+            "数字行不得用 weight 平分高度（UNSPECIFIED 下分到的是内容高，会双双溢出）",
+            "layout_weight" !in digitBlock,
+        )
+        assertTrue(
+            "数字行按自身行框高，栏高不足时整行不显示",
+            "android:layout_height=\"wrap_content\"" in digitBlock,
+        )
+        // 按钮行 weight=1 吃剩余高度：数字行 GONE 时 share == 自身内容高（= 改造前的整栏高），
+        // VISIBLE 时被压到「栏高 - 数字行」；两种情况下都不会溢出栏外
+        val listBlock = TestSources.window(xml, "@+id/candidate_list", "/>")
+        assertTrue(
+            "按钮行必须 0dp + weight=1 吃剩余高度",
+            "android:layout_height=\"0dp\"" in listBlock &&
+                "android:layout_weight=\"1\"" in listBlock,
+        )
+    }
+
 }

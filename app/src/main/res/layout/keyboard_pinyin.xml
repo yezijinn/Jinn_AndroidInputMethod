@@ -51,9 +51,14 @@
                 android:fillViewport="true"
                 android:scrollbars="none">
 
-                <!-- 候选区纵向两层：功能按钮行 / 固定数字行各占一半（0dp + weight=1）。
-                     数字行平时 GONE（候选 / 符号 / 密码 / 提示各形态都不要它），GONE 时权重
-                     不参与分配，按钮行照旧独占整栏 —— 候选形态的几何与改造前一致。
+                <!-- 候选区纵向两层：功能按钮行 + 固定数字行。
+                     按钮行 0dp+weight=1 吃剩余高度，数字行按自身行框（wrap_content）——
+                     两行**都不得**用 weight 平分：它们同处横向滚动容器的内容里，而它给子项的
+                     高度是 UNSPECIFIED，两个 weight=1 分到的是「两行内容高之和」而非栏高
+                     （单行档下双双溢出、数字行被栏底裁成半截，2026-10-19 实测）。
+                     现在数字行按内容高占一份，按钮行拿剩余；栏高够不够放两行由
+                     PinyinKeyboardView.canFitFunctionDigitRow 判定，放不下时数字行 GONE、
+                     按钮行独占整栏（与没有这一行时几何一致）。
                      包一层而不是给 ScrollView 加兄弟：滚动容器只允许一个子 View。 -->
                 <LinearLayout
                     android:id="@+id/candidate_panel_stack"
@@ -70,12 +75,12 @@
                         android:orientation="horizontal" />
 
                     <!-- 功能面板下方的固定数字行 1..0：子项由代码建一次
-                         （PinyinKeyboardView.buildFunctionDigitRow），只在此面板形态显示 -->
+                         （PinyinKeyboardView.buildFunctionDigitRow），只在此面板形态显示。
+                         高度按内容 ⇒ 栏高不足时整行不显示，不会被裁成半截 -->
                     <LinearLayout
                         android:id="@+id/function_digit_row"
                         android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:visibility="gone" />
