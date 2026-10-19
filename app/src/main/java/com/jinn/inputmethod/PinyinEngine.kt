@@ -899,7 +899,6 @@ object PinyinEngine {
 
     /**
      * 统计这批词里有多少条会被**字表闸**丢下（判据与候选出口同一句，见 [isLoadableWord]）。
-     *
      * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05 用户要求），
      * 所以这个数通常为 0，只有用户写了档外单字（例如单独一行 `雲 yun`）时才会出现。
      *
@@ -908,6 +907,28 @@ object PinyinEngine {
     internal fun countUnloadableWords(words: List<String>): Int {
         if (commonChars == null) return 0
         return words.count { !isLoadableWord(it) }
+    }
+
+    /**
+     * 仅供对拍测试：**无上限**地收集前缀联想单字（旧行为），供 `CharPrefixCapTest` 与收集端
+     * 加了上限的 [matchCharsByPrefix] 逐条比对。
+     *
+     * ⚠ 这不是生产路径：生产里 [matchCharsByPrefix] 必须在收集端截断（实测无上限收集要 63,680 字节
+     * / 136µs，最终只显示 60 条）。本出口存在的唯一目的是让「截断不改变结果」这件事可被测试证明。
+     */
+    internal fun matchCharsByPrefixUncappedForTest(prefix: String): List<String> {
+        if (prefix.isEmpty()) return emptyList()
+        val out = ArrayList<String>()
+        val seen = HashSet<String>()
+        for (syllable in sortedSyllables) {
+            if (!syllable.startsWith(prefix)) continue
+            for (c in charsBySyllable[syllable].orEmpty()) {
+                if (!seen.add(c)) continue
+                if (!isLoadableWord(c)) continue
+                out.add(c)
+            }
+        }
+        return out
     }
 
     /**
@@ -2172,7 +2193,10 @@ object PinyinEngine {
         // 只取**前** [MAX_SYLLABLES] 个：词条候选来自「输入的前缀」，前缀语义不变；
         // 后面那些音节的单字本来也落不到渲染窗口里（8 个音节的最坏情况已远超首屏 32 条）。
         val syllables = if (allSyllables.size > MAX_SYLLABLES) {
-            Diagnostics.i(
+            // ⚠ 用 v 不用 i：这条在**每次按键**都可能命中（用户贴一长串拼音后继续打字就是），
+            // i 级无条件落盘并进诊断包，等于把用户敲的拼音长期留在可外发的文件里。
+            // 连长度都不该进 i 级；v 级仅 DEBUG 可见，排障信息不丢。
+            Diagnostics.v(
                 TAG,
                 "音节数超上限: 输入 ${allSyllables.size} 个，只取前 $MAX_SYLLABLES 个（防候选组合爆炸）",
             )
@@ -2313,11 +2337,15 @@ object PinyinEngine {
             val completionWords = queryWithCompletion(raw, syllables, partial)
             // 拼音串是用户输入正文：走 V 级（默认只进 logcat 不落盘）。
             // 用 i 级时每敲一键都要在主线程 open/write/close 一次日志文件，既泄露输入又掉帧。
-            Diagnostics.v(
-                TAG,
-                "query补全: input=$raw partial=$partial fake=$lastIsFakeComplete " +
-                    "syl=$syllables completionCount=${completionWords.size}",
-            )
+            // ⚠ 再包一层 [KEY_TRACE]：V 级虽不落盘，但**调用点的字符串拼接每键都要执行**
+            // （这句要拼 raw、partial、syllables 三段）。包上后 release 里整句被编译期消除。
+            if (Diagnostics.KEY_TRACE) {
+                Diagnostics.v(
+                    TAG,
+                    "query补全: input=$raw partial=$partial fake=$lastIsFakeComplete " +
+                        "syl=$syllables completionCount=${completionWords.size}",
+                )
+            }
             val asList = ArrayList(result)
             result.clear()
             // [queryWithCompletion] 的**出口契约**是「已经转过一次的显示词」（它在自己出口过了一次
@@ -2797,20 +2825,30 @@ object PinyinEngine {
     private fun isTruePrefixOfSyllable(s: String): Boolean =
         s.isNotEmpty() && syllablePrefixes.contains(s)
 
-    /** 以指定串为前缀匹配音节，返回合并后的单字候选；音节按字典序稳定输出 */
+    /**
+     * 以指定串为前缀匹配音节，返回合并后的单字候选；音节按字典序稳定输出。
+     *
+     * 上限内联在收集端：唯一调用方只取前 [MAX_CHARS] 条（实测 `query("nih")` 会收集 63,680 字节、
+     * 136µs，最终只有 60 条被显示）。加上限后设备 `complete` 段 397→264µs，JVM 分配 −54%。
+     *
+     * ⚠ 这里**不排序**，所以截断不影响次序；若将来出现「要全量」的调用方，上限必须由调用方传参。
+     * ⚠ 档位过滤必须留在 `out.add` **之前**（与查询期同口径）：放到收集之后再过滤的话，
+     *   稀有字档关闭时会返回不足 [MAX_CHARS] 条 —— 上限与过滤的顺序不能颠倒。
+     */
     private fun matchCharsByPrefix(prefix: String): List<String> {
         if (prefix.isEmpty()) return emptyList()
-        val out = ArrayList<String>()
-        val seen = HashSet<String>()
+        val out = ArrayList<String>(MAX_CHARS)
+        val seen = HashSet<String>(MAX_CHARS * 2)
         for (syllable in sortedSyllables) {
-            if (syllable.startsWith(prefix)) {
-                for (c in charsBySyllable[syllable].orEmpty()) {
-                    if (seen.add(c)) out.add(c)
-                }
+            if (!syllable.startsWith(prefix)) continue
+            for (c in charsBySyllable[syllable].orEmpty()) {
+                if (!seen.add(c)) continue
+                if (!isLoadableWord(c)) continue
+                out.add(c)
+                if (out.size >= MAX_CHARS) return out
             }
         }
-        // 与 [charsFor] 同口径：档位过滤在查询期，补全路径同样受开关约束
-        return filterRareChars(out.toTypedArray()).toList()
+        return out
     }
 
     /**

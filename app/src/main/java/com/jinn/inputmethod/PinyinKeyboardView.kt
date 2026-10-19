@@ -2953,7 +2953,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         recycleCandidateViews()
         // 布局完成后兜一次「内容没撑满、但还有候选没渲染」的情况（见 [maybeAppendMoreCandidates]）：
         // 这时滚不动、触发不了滚动回调，必须主动补足，否则后面的候选永远不可达。
-        candidateScroll.post { maybeAppendMoreCandidates() }
+        // 加条件：已经把全部候选都渲染出来时没有「继续补」的必要 —— 省掉一次 Runnable 分配与
+        // 一次消息派发（µs 级，但零风险）。[maybeAppendMoreCandidates] 自己也会早退，这里是提前挡。
+        if (candidateRenderLimit < items.size) {
+            candidateScroll.post { maybeAppendMoreCandidates() }
+        }
         // 行高被固定成 EXACTLY 后，TextView 默认的 TOP 对齐会让文字贴在行顶（两排在栏内
         // 整体偏上），故显式居中；单行档宽高都是 wrap_content，加它不改变现状。
         val candidateColor = skinToken(colorToken, colorRes)
