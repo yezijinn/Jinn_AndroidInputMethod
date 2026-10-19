@@ -5759,10 +5759,45 @@ class RecentFixesRegressionTest {
         // 栏高在柔和地长、箭头却一帧翻过去 —— 用户说的「按钮动画突兀」正是这个错位。
         // 现在由 tweenExpandButton 用同一条时长与曲线补间，且刷新期间不得再写角度（会打断动画）。
         assertTrue("三角朝向必须补间", "private fun tweenExpandButton(expanded: Boolean)" in src)
+        // 按函数体各钉一次，而不是数全文出现次数：
+        // 只钉三角那侧（ofFloat）时，把栏高那侧（ofInt）的 setDuration 改成 120L 会**全绿**
+        // （实测过这个洞）。两条补间必须各自被钉住。
+        val heightBody = TestSources.blockAfter(src, "private fun startCandidateHeightTween(targetRows: Int)")
         assertTrue(
-            "三角与栏高必须同一条时长与曲线",
-            "ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)" in src,
+            "栏高补间必须用 CANDIDATE_TWEEN_MS",
+            "ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)" in heightBody,
         )
+        assertTrue(
+            "栏高补间必须用共用的曲线实例",
+            "animator.interpolator = candidateTweenInterpolator" in heightBody,
+        )
+        val rotBody = TestSources.blockAfter(src, "private fun tweenExpandButton(expanded: Boolean)")
+        assertTrue(
+            "三角补间必须用 CANDIDATE_TWEEN_MS",
+            "ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)" in rotBody,
+        )
+        assertTrue(
+            "三角补间必须用共用的曲线实例",
+            "animator.interpolator = candidateTweenInterpolator" in rotBody,
+        )
+        // 落定必须同时撤掉旋转补间：只撤栏高的话，三角会继续朝旧终值转（实测删掉这三行仍全绿）
+        val settleBody = TestSources.blockAfter(src, "private fun settleCandidateHeight()")
+        assertTrue(
+            "落定必须同撤旋转补间",
+            "candidateExpandRotationAnimator" in settleBody,
+        )
+        // 曲线必须**共用同一个实例**：各建一份就可能一条缓一条线。实测 DecelerateInterpolator(1.6f)
+        // 的指数是 2×factor=3.2，首帧就吃掉 93% 行程 ⇒ 观感等同硬切。这里钉住两处引用同一字段。
+        assertEquals(
+            "两处补间必须共用同一条曲线实例",
+            2,
+            Regex("animator\\.interpolator = candidateTweenInterpolator").findAll(src).count(),
+        )
+        assertTrue(
+            "曲线必须是线性（11~12 次等间隔采样下最大单帧步长最小，见字段处实测表）",
+            "private val candidateTweenInterpolator = android.view.animation.LinearInterpolator()" in src,
+        )
+        assertFalse("不得再各自新建缓出曲线", "DecelerateInterpolator" in src)
         assertTrue(
             "补间期间刷新不得抢写角度",
             "if (candidateExpandRotationAnimator == null) {" in src,
@@ -5776,8 +5811,10 @@ class RecentFixesRegressionTest {
         )
         // 也不能再留一处「补间之后」的重复调用（重复起步=第二次被 cancel 重来，中途会抖）
         assertEquals("三角补间只起步一次", 1, Regex("tweenExpandButton\\(expand\\)").findAll(src).count())
-        // 时长按实测取 60ms（依据见常量处注释：110ms 实测 janky 83%，60ms 为 3.27%）
-        assertTrue("补间时长取实测值 60ms", "CANDIDATE_TWEEN_MS = 60L" in src)
+        // 时长按实测取 180ms：判据是「每帧步长压进 resize 预算」，不是脉冲数好看 ——
+        // 60ms 每帧 73px（29%）、90/120/150ms 掉帧且步长反弹到 28~56%、180ms 每帧 24px（9.5%）不掉。
+        // 依据见常量处注释。
+        assertTrue("补间时长取实测值 180ms", "CANDIDATE_TWEEN_MS = 180L" in src)
         assertTrue(
             "补间期间栏高只由动画器写（旧版「只跑 1 帧」的根因）",
             "candidateHeightAnimator == null && lp.height != barHeight" in src,

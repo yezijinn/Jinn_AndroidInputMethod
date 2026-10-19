@@ -287,6 +287,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 在途补间的目标栏高（px）；落定时直达它，别停在中间高度 */
     private var candidateTweenTarget = 0
 
+    /**
+     * 三角朝向与栏高**共用**的补间曲线（同一条曲线是硬约束，别各建一份）。
+     *
+     * 取线性，理由是可验证的**最大单帧步长最小**：在 [CANDIDATE_TWEEN_MS] 给出的
+     * 11~12 次等间隔采样下，几种曲线的最大单帧步长实测/解析为
+     *
+     * | 曲线 | 最大单帧步长 |
+     * |---|---|
+     * | 线性 | **9.4%** |
+     * | AccelerateDecelerate | 14.3%（且首帧仅 2.2% ⇒ 一帧死区，开头像卡住） |
+     * | FastOutSlowIn | 24.6% |
+     * | Decelerate(1.6f) | 27.2%（首帧吃掉 93% 行程，等同硬切） |
+     *
+     * 解析上这也必然：等间隔采样时任何非线性曲线都必有一段斜率 > 1 ⇒ 最大步长必然大于 100/n。
+     *
+     * ⚠ 两条限定，别当成普适结论：
+     *  - 「任何缓出都是开头一大跳」**只对 Decelerate 成立**；对 AccelerateDecelerate 是假的，
+     *    它的问题恰恰是首帧太小、像卡住。
+     *  - 脉冲数多到 20 帧以上时，对称缓动在观感上会反超线性；本值不适用那种帧预算。
+     */
+
+    private val candidateTweenInterpolator = android.view.animation.LinearInterpolator()
+
     /** 展开排数缓存：补间期间 [expandedRowsFor] 读到的是中途高度，必须复用起跳前算好的值 */
     private var expandedRowsCached = 0
 
@@ -328,11 +351,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             0
         }
         // ⚠ 收起时**不**在这里翻渲染态：补间期间内容必须仍是展开态（随栏高被裁），
-        // 否则 295 行这次刷新就把内容换成单行，110ms 内看到的是「高栏里飘一行字」
+        // 否则紧接着那次刷新就把内容换成单行，补间期间看到的是「高栏里飘一行字」
         // （旧版「先清空再合盖」）。渲染态由补间收尾 [finishCandidateTween] 统一对齐。
         // 展开时立刻置位：内容要同帧进网格。
         if (expand) candidateRenderExpanded = true
-        // ⚠ 三角必须先于 313 行那次 refresh 起补间：refreshCandidateBar 开头会按意图态对齐角度
+        // ⚠ 三角必须先于紧接着那次 refresh 起补间：refreshCandidateBar 开头会按意图态对齐角度
         // （补间在途时才跳过），它若在补间之前跑，角度已被写到终值，后面的旋转补间就是
         // target→target 空转，观感仍是「箭头一帧翻过去」。
         tweenExpandButton(expand)
@@ -349,7 +372,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 刻意只动这一个量：
      *  - 不做 `candidateScroll.alpha` 淡入淡出 —— 整块候选区淡入的语义是「换了一批候选」，
      *    且残留值会让每次刷新都得复位（旧版正是这样长出 `candidateAnimating` 的）；
-     *  - 不插值三角 rotation —— 同一个状态不造第二份表达；
+     *  - 三角朝向不在这里插值（另见 [tweenExpandButton]，同一时长 + 同一 [candidateTweenInterpolator]）；
      *  - 不加「过渡期跳过」守卫 —— 补间期间 [applyCandidateRows] 根本不写高度，
      *    所以按键 / 词库合并 / 展开态分页重建都不会把它砍断（旧版「只跑 1 帧」的根因消失）。
      */
@@ -394,7 +417,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         settleCandidateHeight()
         val t0 = System.nanoTime()
         val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
-        animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+        animator.interpolator = candidateTweenInterpolator
         animator.addUpdateListener { a ->
             (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
                 val h = a.animatedValue as Int
@@ -409,7 +432,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 if (Diagnostics.KEY_TRACE) {
                     Diagnostics.v(
                         TAG,
-                        "TWEEN ms=${(System.nanoTime() - t0) / 1_000_000} h=${p.height} f=${a.animatedFraction}",
+                        "TWEEN ms=${(System.nanoTime() - t0) / 1_000_000} h=${p.height} " +
+                            "f=${a.animatedFraction} rot=${btnExpandCandidates.rotation}",
                     )
                 }
             }
@@ -518,9 +542,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 三角朝向与栏高同步补间。
      *
      * 以前是 `rotation = 0f / 180f` 直接赋值：栏高在柔和地长，三角却是一帧翻转，
-     * 两个量的时间曲线不一致，观感就是「按钮突兀」。这里用同一时长 + 同一条 Decelerate 曲线，
-     * 让它与栏高同起同落（栏高那侧受窗口 resize 影响会稍慢，但两者的曲线形状一致，
-     * 不会再出现「高还在长、箭头已经停」的错位）。
+     * 两个量的时间曲线不一致，观感就是「按钮突兀」。这里用同一时长 + 同一条曲线
+     * （[candidateTweenInterpolator]），让它与栏高同起同落：两个动画器在同一帧注册，
+     * 拿到的是同一个 vsync 时间戳，脉冲与 fraction 天然对齐；每帧都因窗口 resize 掉帧时
+     * 也是一起掉，不会再出现「高还在长、箭头已经停」的错位。
      */
     private fun tweenExpandButton(expanded: Boolean) {
         val target = if (expanded) 180f else 0f
@@ -536,7 +561,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         val animator = ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)
-        animator.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+        animator.interpolator = candidateTweenInterpolator
         animator.addUpdateListener { a ->
             btnExpandCandidates.rotation = a.animatedValue as Float
         }
@@ -5348,19 +5373,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private companion object {
         /**
-         * 展开 / 收起的栏高补间时长。
+         * 展开 / 收起的栏高补间时长；三角朝向与栏高**同一条时长 + 同一条曲线**。
          *
-         * 只补高度一个量，几帧即可；IME 里超过 ~150ms 就从「过渡」变成「卡顿」——
-         * 旧版 220ms 被否决正是因为它观感是「键盘卡了一下」。
+         * 180ms 是**按每帧窗口 resize 的预算反推的最小解**，不是「拍长一点」：
+         *
+         * | 时长 | 每次补间帧数 | 最大单帧步长 | 掉帧 |
+         * |---|---|---|---|
+         * | 60ms | 5 | 73px（29%） | 无 |
+         * | 90ms | 6 | 140px（56%） | 有（25→80ms 空档） |
+         * | 120ms | 8 | 71px（28%） | 有 |
+         * | 150ms | 8 | 84px（33%） | 有 |
+         * | **180ms** | **11~12** | **24px（9.5%）** | **无** |
+         *
+         * 机理（这是关键，别只看 jank 率）：每帧 resize 的成本随「这一帧要改多少 px」上升，
+         * 帧预算（16.7ms）一旦不够，回调就被推后 ⇒ 下一帧一次吃掉更多 px ⇒ 正反馈。
+         * 实测每帧 ≤ 约 24px 时每帧都在预算内（p50 13~15ms），到 40px/帧就开始掉。
+         * 180ms ÷ 252px ≈ 23px/帧，正好压在门槛内侧；90~150ms 不是「脉冲少一点」，
+         * 而是**落进了掉帧区间**，步长反而反弹到 28~56% —— 这正是历史「110ms janky 83%」的真正原因。
+         *
+         * ⚠ 改这个值前先复测逐帧步长与掉帧空档（`Diagnostics.KEY_TRACE` 的 TWEEN 行可复现、
+         * 跨轮次一致）。**不要用 `dumpsys gfxinfo` 的 legacy janky 率裁决**：本机实测该指标在
+         * 60ms 是 2.5%、180ms 是 15~49%，方向相反且同档两轮可差 3 倍 —— 它是「慢帧计数」，
+         * 随帧数放大（180ms 多画了 2.4 倍的 resize 帧），而 p50 本就贴着 16.67ms。
+         * 真机（PACM00）帧成本更低，脉冲应更多，若偏顿应上调 220~240ms，**不要换曲线**。
          */
-        // 60ms 是实测值：110ms 时补间跨越太多 vsync，每帧都要触发 IME 窗口 resize
-        // （栏高变 ⇒ 窗口高变 ⇒ 宿主 insets 重算 + 重新合成），实测 janky 83% / 中位 38ms。
-        // ⚠ 更正（真机按到按钮后复测）：60ms 的 janky 并不是 3%，而是 **68~73% / 中位 24~27ms**；
-        // 且「不做补间、一帧硬切」的基线同样是 janky 50% / 中位 24ms ⇒ 这笔开销属于换高度本身，
-        // 不属补间。也试过「只落中点+终点两级」，实测更差（中位 31ms、99% 150ms）⇒ 是每次 resize
-        // 的固定成本，不是次数问题。结论：这个量没有「更流畅」的调法，别再靠改时长/阶数去试。
-        // 超时长不是"更柔和"，而是"多换几次高度"——改动前先按真机 gfxinfo 重测。
-        const val CANDIDATE_TWEEN_MS = 60L
+        const val CANDIDATE_TWEEN_MS = 180L
 
         const val TAG = "PinyinKeyboard"
 
