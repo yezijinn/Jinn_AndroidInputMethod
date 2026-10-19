@@ -31,6 +31,15 @@ import android.os.Looper
  */
 private object ReclassifyGuard {
     val started = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 「此刻真在跑」标记（进程级）。
+     *
+     * 与 [started] 的分工：`started` 表示这趟迁移被发起过（抢位用），`running` 表示它还在
+     * 全库解密。**只有线程自己在 finally 里放 `running`**；`stop()` 不许放 `started`，
+     * 否则上一趟还在跑时重新启用就会再起一趟（两趟并发、CPU/IO 翻倍）。
+     */
+    val running = java.util.concurrent.atomic.AtomicBoolean(false)
 }
 
 class ClipboardController(context: Context) {
@@ -49,12 +58,15 @@ class ClipboardController(context: Context) {
      * 存量重算「已发起」的原子标记（BUG-05）。
      *
      * 持久标记 `prefs.reclassified` 只在跑成功时置位，读它再起线程属 check-then-act：
-     * 并发入口会起两条全库解密线程。这个标记先抢位，抢不到的直接返回；
-     * 跑失败或中途停用则放开，保留「下次启动 / 下次启用再试」的既有承诺。
+     * 并发入口会起两条全库解密线程。这个标记先抢位，抢不到的直接返回。
      *
      * ⚠ 必须是**进程级**（[companion] 里）：实例字段在「关开关 → `stop()` → 再开 →
      * 新建实例」后从 false 重新起跳，而上一趟 `reclassifyAll` 可能还在全库解密
      * ⇒ 两趟并发、CPU/IO 翻倍，正是 L-1088 要根除的现象。
+     *
+     * ⚠ 与 [reclassifyRunning] 的分工：`started` 只表示「这趟被发起过」，
+     * `running` 表示「此刻真在跑」。**只有线程自己在 finally 里放开 `running`**；
+     * `stop()` 不许碰 `started` —— 那会把「上一趟还在跑」的事实抹掉，重新启用时又起一趟。
      */
     private val reclassifyStarted = ReclassifyGuard.started
     private val listener = ClipboardManager.OnPrimaryClipChangedListener {
@@ -93,6 +105,9 @@ class ClipboardController(context: Context) {
         // 不原子：启动路径与配置广播同时进来就会起两条全库解密线程（同一趟迁移跑两遍，
         // 启动期 CPU 与 IO 双份）。进程内先用原子标记抢先，抢不到的直接返回。
         if (!reclassifyStarted.compareAndSet(false, true)) return
+        // 运行中标记：这一趟是否真的在跑，只有它该由线程自己放开（见下方 finally）。
+        // stop() 只放 started，不放 running —— 否则上一趟还在全库解密时重新启用就会再起一趟。
+        if (!ReclassifyGuard.running.compareAndSet(false, true)) return
         Thread {
             // 启动期任务必须显式降优先级（AGENTS.md 的约定：「不与词库加载抢 CPU」）：
             // 这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），跑在 onCreate 路径上、与词库加载同时发生，
@@ -101,13 +116,18 @@ class ClipboardController(context: Context) {
             val changed = runCatching { db.reclassifyAll() }
                 .onFailure { Diagnostics.w(TAG, "分组标签重算失败: ${it.message}") }
                 .getOrNull()
-            if (changed != null) {
-                prefs.reclassified = true
-                Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
-            } else {
-                // 失败（runCatching 返回 null）：放开进程内标记，让下一次 start() 还能重试。
-                // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
-                reclassifyStarted.set(false)
+            try {
+                if (changed != null) {
+                    prefs.reclassified = true
+                    Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
+                } else {
+                    // 失败（runCatching 返回 null）：放开进程内标记，让下一次 start() 还能重试。
+                    // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
+                    reclassifyStarted.set(false)
+                }
+            } finally {
+                // 运行中标记只在这里放：不论成功、失败还是抛异常，这一趟都算跑完了
+                ReclassifyGuard.running.set(false)
             }
         }.apply { name = "jinn-clipboard-reclassify"; isDaemon = true }.start()
     }
@@ -118,9 +138,9 @@ class ClipboardController(context: Context) {
         clipboard.removePrimaryClipChangedListener(listener)
         listenerRegistered = false
         retryHandler.removeCallbacksAndMessages(null)
-        // 迁移未完成就停用（用户关掉剪贴板功能）：放开进程内标记，重新启用时还能再试一次
-        // （BUG-05：停用不放开的话，重新启用后这趟迁移在本进程内永远不会再跑）
-        if (!prefs.reclassified) reclassifyStarted.set(false)
+        // ⚠ 这里**不能**放开 started：上一趟 reclassifyAll 可能还在全库解密，放掉它
+        // 再启用时 reclassifyIfNeeded 会重新抢位并起第二趟 ⇒ 两趟并发（正是该标记要根除的）。
+        // 重试承诺由线程自己的 finally 保留：失败时它放 started，下次 start() 自然能再试。
         Diagnostics.i(TAG, "stop: 剪贴板监听已注销")
     }
 

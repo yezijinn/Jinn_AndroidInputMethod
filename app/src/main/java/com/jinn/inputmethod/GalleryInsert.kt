@@ -282,9 +282,22 @@ internal object GalleryInsert {
                 temp.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
                     var total = 0L
+                    // 空读闸：`read()` 返回 0 与 -1 不是一回事。本地 FileInputStream 不会返回 0，
+                    // 但系统相册 / 云盘走的是 ContentProvider（可能非阻塞、可能代理），契约不成立 ——
+                    // 把 0 当 EOF 会把**读了一半的图**当成完整件交给宿主（半张图/灰块，界面无提示），
+                    // 同时 total 预算与「≤ MAX_BYTES」判定一起失真。同 ConfigCrypto.readFully 口径。
+                    var emptyReads = 0
                     while (true) {
                         val n = input.read(buf)
-                        if (n <= 0) break
+                        if (n < 0) break
+                        if (n == 0) {
+                            if (++emptyReads > MAX_EMPTY_READS) {
+                                temp.delete()
+                                return CopyResult.ReadFailed
+                            }
+                            continue
+                        }
+                        emptyReads = 0
                         total += n
                         if (total > MAX_BYTES) {
                             temp.delete()
@@ -482,4 +495,13 @@ internal object GalleryInsert {
         val entries = files.sortedByDescending { it.lastModified() }.map { it to it.length() }
         staleFilesForTrim(entries, keepFiles(), effectiveCacheBytes).forEach { it.delete() }
     }
+
+    /**
+     * 连续空读上限（与 `ConfigCrypto.readFully` 同值同口径）。
+     *
+     * `InputStream.read` 返回 0 在本地文件上不会出现，但 ContentProvider（系统相册 /
+     * 云盘 / 第三方 DocumentsProvider）可能是非阻塞或代理流，契约不保证 `len > 0` 时
+     * 不返回 0。把 0 当 EOF 会把读了一半的图当成完整件交给宿主；不处理则是空转死循环。
+     */
+    private const val MAX_EMPTY_READS = 64
 }
