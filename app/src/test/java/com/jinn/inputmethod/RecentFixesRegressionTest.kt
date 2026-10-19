@@ -6016,4 +6016,107 @@ class RecentFixesRegressionTest {
         )
     }
 
+
+    /**
+     * ⚠ `onStartInput` **不得**清 composing / 调 configure（2026-10-19 真机证伪后钉住）。
+     *
+     * 曾按「换框不复位 ⇒ 上一框内容进新框」的判断，在 onStartInput 里加 `configure()`。
+     * 真机复现（PACM00 / 短信 App 收件人→正文）证明那个判断是**误判**：
+     *   - 本方拼音串从不进宿主：全链路只有 `commitText`，没有 `setComposingText`
+     *     （`showPinyin` 只写自己的 TextView），宿主 EditText 里本来就没有拼音；
+     *   - 换框全程日志只有 `onFinishInputView` / `onWindowHidden`，**没有任何 commit**；
+     *   - 收件人框里出现的字是宿主自己的失焦补全，Home 后返回并不残留。
+     * 而这次「修复」直接造成回归：onStartInput 早于宿主结束组合态，此时清 IME 侧 composing
+     * 不经宿主，宿主把残余拼音当纯文本补进旧框（实测收件人里留下「ni」+ 后续字）。
+     * 结论：composing / 面板 / 密码键盘的复位只归 onStartInputView 的 configure
+     * （那时组合态已由框架正常收尾）；onStartInput 里只能放**不依赖宿主**的 IME 侧标记
+     * （隐私抑制、翻译作废、去重指纹）。
+     */
+    @Test
+    fun onStartInputMustNotTouchComposing() {
+        val body = TestSources.blockAfter(
+            TestSources.codeSource("JinnIme.kt"),
+            "override fun onStartInput(",
+        )
+        assertFalse(
+            "onStartInput 不得清 composing（会早于宿主结束组合态，造成拼音泄漏回归）",
+            "configure(" in body,
+        )
+        assertFalse(
+            "onStartInput 不得主动提交 composing",
+            "commitComposing" in body,
+        )
+        // 隐私抑制必须在这里就算：框架可能不重发 onStartInputView（密码框切换即实例）
+        assertTrue(
+            "隐私抑制仍要在 onStartInput 重算",
+            "suppressLearningForSession = InputFieldPrivacy.suppressLearning(" in body,
+        )
+    }
+
+    /**
+     * 键盘视图重建必须重放用户手选态（英文 / 大写 / 符号层）。
+     *
+     * 三者都是视图 private 字段且**不写 Prefs**（中英切换只翻 englishMode）。换视图即丢 ⇒
+     * 定时换肤到点（如 19:00）时若用户在英文态，键面会静默变回中文、后续按键出拼音候选。
+     */
+    @Test
+    fun recreateKeyboardViewMustReplayHandPickedViewState() {
+        val src = TestSources.codeSource("JinnIme.kt")
+        assertTrue(
+            "重建后必须重放手选态",
+            "pinyinKeyboard?.replayViewState(" in src,
+        )
+        assertTrue(
+            "必须先留旧视图引用再覆盖字段",
+            "val oldKeyboard = pinyinKeyboard" in src,
+        )
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue(
+            "重放入手点必须刷新候选栏",
+            "fun replayViewState(english: Boolean, caps: Boolean, layer: Int)" in view,
+        )
+        for (getter in listOf("fun capsModeForReplay()", "fun layerForReplay()")) {
+            assertTrue("必须暴露 $getter 供 IME 读旧态", getter in view)
+        }
+    }
+
+    /**
+     * 图片单张上限的钳制必须是**单点**且盘上/快照/草稿三者同源。
+     *
+     * 只把钳制值传给 applyDraft、而 snapshot 仍记未钳制的 draft，会在保存后旋转时让 isDirty()
+     * 误报「有未保存的改动」（盘上 10 vs 草稿 50），用户点保存等于原地踏步、点丢弃丢其它项。
+     */
+    @Test
+    fun imageItemClampMustBeSinglePointAndSelfConsistent() {
+        val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "必须先归一草稿再落盘",
+            "val effective = if (effItemMb == target.imageMaxItemMb) target" in src,
+        )
+        assertTrue(
+            "快照必须是钳制后的值",
+            "snapshot = effective" in src,
+        )
+        assertTrue(
+            "草稿也要跟着归一（onSaveInstanceState 存的是它）",
+            "draft = effective" in src,
+        )
+    }
+
+    /**
+     * 凭据解密失败必须缓存「解不开」的结论。
+     *
+     * 旧密文在换机 / Keystore 失效后永远解不开，而翻译设置页一次进页要读这批键十余次：
+     * 不缓存 ⇒ 每次都重跑一次 Keystore 解密、各刷一条 W 日志，把诊断包里真正有用的
+     * 翻译失败记录挤掉。写侧与删侧都会覆盖缓存，故缓存空串不会让用户重填后仍读到旧结论。
+     */
+    @Test
+    fun credentialDecryptFailureMustBeCached() {
+        val src = TestSources.codeSource("Prefs.kt")
+        assertTrue(
+            "解密失败必须写缓存（否则每次读取重跑解密并刷日志）",
+            "credentialCache[key] = \"\"" in src,
+        )
+    }
+
 }

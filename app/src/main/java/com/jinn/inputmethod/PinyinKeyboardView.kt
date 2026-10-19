@@ -1514,6 +1514,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前是否英文模式（供 IME 每次聚焦时同步，避免覆盖用户手动切换） */
     fun isEnglishMode(): Boolean = englishMode
 
+    /** 大写锁定态（重建重放用；字段 private，不能直接读） */
+    fun capsModeForReplay(): Boolean = capsMode
+
+    /** 当前层：字母 / 符号 / 数字（重建重放用） */
+    fun layerForReplay(): Int = layer
+
+    /**
+     * 重放「用户手选的视图态」（新建视图后调用）：英文态 / 大写锁定 / 符号层。
+     *
+     * 三者都是 private 字段、且**不写 Prefs**（中英切换只翻 `englishMode`，见本文件 1399）。
+     * 而 `recreateKeyboardView()`（换肤 / 符号分组顺序变更）与框架自己的
+     * `onCreateInputView()`（窗口 / 配置变更）都会换掉整个视图 ⇒ 新视图三者为初值。
+     * 不重放的后果：定时换肤到点（如 19:00）时键盘正显示且用户在英文态，键面会**静默变回中文**
+     * （后续按键出拼音候选）；大写锁定与符号层同样丢失，用户得重新切一遍。
+     * `configure` 明说 layer / capsMode 是用户显式手选的状态、不清 —— 重建路径必须与之一致。
+     */
+    fun replayViewState(english: Boolean, caps: Boolean, layer: Int) {
+        englishMode = english
+        capsMode = caps
+        this.layer = layer
+        refreshCandidateBar()
+        invalidate()
+    }
+
     /**
      * 设置「敏感输入框」标记：为 true 时不再把用户选过的候选写进用户词频。
      *

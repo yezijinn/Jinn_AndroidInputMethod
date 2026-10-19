@@ -1027,6 +1027,11 @@ class Prefs(private val appContext: Context) {
         val plain = CredentialCrypto.decrypt(raw)
         if (plain == null) {
             Diagnostics.w(TAG, "凭据解密失败（换机 / Keystore 失效），按未配置处理，需重新填写")
+            // 必须把「解不开」也缓存住：旧密文在换机 / 重置后永远解不开，而翻译设置页一次进页
+            // 要读这批键十余次 ⇒ 每条都重跑一次 Keystore 解密，还会各刷一条 W 级日志，把诊断包里
+            // 真正有用的翻译失败记录挤掉。写侧（writeCredential）与删侧都会覆盖缓存，故缓存空串
+            // 不会让用户重填后仍读到旧结论。
+            credentialCache[key] = ""
             return ""
         }
         // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——

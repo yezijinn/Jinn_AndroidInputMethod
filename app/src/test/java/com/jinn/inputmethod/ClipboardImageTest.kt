@@ -711,7 +711,7 @@ class ClipboardImageTest {
         val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
         assertTrue("图片参数要有卡片与开关", "TEXT_IMAGE_TITLE" in page && "TEXT_IMAGE_ENABLED" in page)
         assertTrue("图片参数要进草稿模型", "val imageMaxItemMb: Int," in page)
-        assertTrue("保存仍走原子入口", "imageMaxTotalMb = target.imageMaxTotalMb," in page)
+        assertTrue("保存仍走原子入口", "imageMaxTotalMb = effective.imageMaxTotalMb," in page)
         assertTrue("收紧判定要含图片预算（保存会真删）", "draft.imageMaxTotalMb < snapshot.imageMaxTotalMb" in page)
     }
 
@@ -788,7 +788,7 @@ class ClipboardImageTest {
         )
         assertTrue(
             "保存必须写生效值而不是原值",
-            "imageMaxItemMb = effectiveImageItemMb(target)" in src,
+            "imageMaxItemMb = effective.imageMaxItemMb," in src,
         )
         assertTrue(
             "页面必须回显实际生效值",

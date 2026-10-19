@@ -37,8 +37,8 @@ class ClipboardDraftPolicyTest {
         )
         assertTrue(
             "布局两项必须随保存落盘",
-            "layoutPrefs.galleryColumns = target.galleryColumns" in src &&
-                "layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp" in src,
+            "layoutPrefs.galleryColumns = effective.galleryColumns" in src &&
+                "layoutPrefs.galleryCellHeightDp = effective.galleryCellHeightDp" in src,
         )
         assertTrue(
             "布局两项必须进改动清单",

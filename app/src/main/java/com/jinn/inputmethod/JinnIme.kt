@@ -1533,6 +1533,10 @@ class JinnIme : InputMethodService() {
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         applyNavBarTransparency()
 
+        // 旧视图先留一份引用：下面的重放要读它的手选态（英文 / 大写 / 符号层），
+        // 而 `pinyinKeyboard` 字段在本函数尾部就被新视图覆盖，晚一步就读不到了
+        val oldKeyboard = pinyinKeyboard
+
         // 主题：键盘视图一律用「按 Prefs 决策后的 Context」创建，亮白 / 暗黑 / 定时模式下
         // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
         // 系统深浅色变化由系统重建 IME 自动生效。
@@ -1734,6 +1738,15 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
         pinyinKeyboard?.setHostImageCapable(hostImageCapableForSession)
+        // 用户手选的视图态（英文 / 大写 / 符号层）不写 Prefs，换视图即丢 ⇒ 从旧视图读出后重放。
+        // 定时换肤 / 符号分组顺序变更走 `recreateKeyboardView()`，框架自己的配置变更走本函数，
+        // 两条都会把英文态静默打回中文（键面突变、后续按键出拼音），必须在这里兜住。
+        pinyinKeyboard?.replayViewState(
+            english = oldKeyboard?.isEnglishMode()
+                ?: (prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN),
+            caps = oldKeyboard?.capsModeForReplay() ?: false,
+            layer = oldKeyboard?.layerForReplay() ?: pinyinKeyboard?.layerForReplay() ?: 0,
+        )
 
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
         val container = FrameLayout(this)
@@ -2313,6 +2326,19 @@ class JinnIme : InputMethodService() {
         lastSentKey = ""
         // 结果侧指纹同理（BUG.md L-1308）：B 框里恰好有同一段文本时不该被 A 框的记录拦下
         lastCommittedText = ""
+        // 隐私抑制要在这里就算出来：本回调比 [onStartInputView] 更早，而框架在「同会话内换框 /
+        // restartInput()」时**可能不重发** onStartInputView（同文件 3013 行的密码框切换即实例）。
+        // 晚一步算的后果是：在密码框里选候选会被写进 user_freq.txt。
+        // ⚠ 但**不能**在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
+        // 结束组合态，此时清 IME 侧 composing 而不经宿主，宿主会把残余拼音当纯文本补进旧框
+        // （真机实测：收件人框打「ni」后点正文框，收件人里留下「ni」+ 后续字）。
+        // composing / 面板 / 密码键盘的复位交给 onStartInputView 的 configure（那时组合态已由
+        // 框架正常收尾），路径上只补「不依赖宿主」的 IME 侧标记。
+        suppressLearningForSession = InputFieldPrivacy.suppressLearning(
+            info?.inputType,
+            info?.imeOptions ?: 0,
+        )
+        pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {

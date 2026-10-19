@@ -566,22 +566,29 @@ class ClipboardCustomizeActivity : Activity() {
     private fun doSave() {
         val target = draft
         val wasEnabled = snapshot.enabled
+        // 单点钳制：单张图片上限受总量压制（见 [effectiveImageItemMb]）。盘上值、快照、草稿
+        // 三者必须同源 —— 若只把钳制值传给 applyDraft 而 snapshot 仍记未钳制的 draft，
+        // 保存后一旦旋转/被回收，isDirty() 会把「盘上 10 vs 草稿 50」当成未保存改动弹给用户。
+        val effItemMb = effectiveImageItemMb(target)
+        val effective = if (effItemMb == target.imageMaxItemMb) target
+        else target.copy(imageMaxItemMb = effItemMb)
+        draft = effective
         // 单次 commit：任何一项失败都不该留下「半套参数」
         val ok = prefs.applyDraft(
-            enabled = target.enabled,
-            maxItems = target.maxItems,
-            maxTotalMb = target.maxTotalMb,
-            favMaxItems = target.favMaxItems,
-            favMaxMb = target.favMaxMb,
-            maxItemKb = target.maxItemKb,
-            panelPage = target.panelPage,
-            maxSearch = target.maxSearch,
-            imageEnabled = target.imageEnabled,
-            imageMaxItems = target.imageMaxItems,
-            imageMaxTotalMb = target.imageMaxTotalMb,
-            imageMaxItemMb = effectiveImageItemMb(target),
-            imageInAllGroup = target.imageInAllGroup,
-            favoriteImageMoveOut = target.favoriteImageMoveOut,
+            enabled = effective.enabled,
+            maxItems = effective.maxItems,
+            maxTotalMb = effective.maxTotalMb,
+            favMaxItems = effective.favMaxItems,
+            favMaxMb = effective.favMaxMb,
+            maxItemKb = effective.maxItemKb,
+            panelPage = effective.panelPage,
+            maxSearch = effective.maxSearch,
+            imageEnabled = effective.imageEnabled,
+            imageMaxItems = effective.imageMaxItems,
+            imageMaxTotalMb = effective.imageMaxTotalMb,
+            imageMaxItemMb = effective.imageMaxItemMb,
+            imageInAllGroup = effective.imageInAllGroup,
+            favoriteImageMoveOut = effective.favoriteImageMoveOut,
         )
         if (!ok) {
             // 盘上还是旧值：草稿原样留着让用户重试，绝不假报成功
@@ -591,15 +598,16 @@ class ClipboardCustomizeActivity : Activity() {
         }
         // 布局两项住在图库偏好（Prefs）里，与剪贴板参数的 commit 不是同一套键空间，单独写；
         // 放在这里而不是 applyDraft 里，是为了让布局改动也走同一次保存确认与回执
-        layoutPrefs.galleryColumns = target.galleryColumns
-        layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp
-        if (wasEnabled != target.enabled) {
+        layoutPrefs.galleryColumns = effective.galleryColumns
+        layoutPrefs.galleryCellHeightDp = effective.galleryCellHeightDp
+        if (wasEnabled != effective.enabled) {
             // 采集器跑在输入法进程里，不读本页状态：发轻量广播让它立刻启停（见 JinnIme.configReceiver）
             sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_CONFIG_UPDATED).setPackage(packageName))
         }
         // 落盘后的裁剪：上限调小时既有库不会自己收敛（与设置页 / 备份导入同款）
         trimNow()
-        snapshot = target
+        // 快照必须是**钳制后**的值：它与盘上同源，旋转/重建后 isDirty() 才不会误报
+        snapshot = effective
         unlocked = false
         renderAll()
         toast(TEXT_SAVED)
