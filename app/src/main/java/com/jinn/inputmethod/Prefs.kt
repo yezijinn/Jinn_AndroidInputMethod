@@ -630,6 +630,20 @@ class Prefs(private val appContext: Context) {
         }
 
     /**
+     * 功能面板下方固定数字行（1~0）的字号（sp，默认 30）。
+     *
+     * 只影响那一行数字：栏高与按钮行不动。定义域见 [KeyAppearance.MIN_FUNCTION_DIGIT_SP]~
+     * [KeyAppearance.MAX_FUNCTION_DIGIT_SP]（真值只在 [KeyAppearance]，这里不写死数字）。
+     * 字号过大时数字行会因放不下而整行不显示（[PinyinKeyboardView.canFitFunctionDigitRow] 判据），
+     * 属用户自选的极端档，不是错误。getter 也钳位：脏配置不能把字号带进布局。
+     */
+    var functionDigitSp: Float
+        get() = KeyAppearance.clampFunctionDigitSp(
+            floatOr(KEY_FUNCTION_DIGIT_SP, KeyAppearance.DEFAULT_FUNCTION_DIGIT_SP),
+        )
+        set(value) = sp.edit { putFloat(KEY_FUNCTION_DIGIT_SP, KeyAppearance.clampFunctionDigitSp(value)) }
+
+    /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
      *
      * 只影响「面」（背板 / 键面 / 候选栏），文字始终不透明。getter 也做一次钳位：
@@ -1549,6 +1563,8 @@ class Prefs(private val appContext: Context) {
         // 否则「自动」会被固化成当时的派生值，改候选字号后拼音不再跟随）
         if (sp.contains(KEY_PINYIN_TEXT_SP)) put(KEY_PINYIN_TEXT_SP, pinyinTextSp)
         if (sp.contains(KEY_PINYIN_LINE_GAP_DP)) put(KEY_PINYIN_LINE_GAP_DP, pinyinLineGapDp)
+        // 数字行字号同款：默认 30sp 不平凡，只在用户真的动过滑杆时才导出
+        if (sp.contains(KEY_FUNCTION_DIGIT_SP)) put(KEY_FUNCTION_DIGIT_SP, functionDigitSp)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1729,6 +1745,7 @@ class Prefs(private val appContext: Context) {
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_TEXT_SP -> asFloat(v)?.let { pinyinTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_LINE_GAP_DP -> asFloat(v)?.let { pinyinLineGapDp = it; ok() } ?: bad(key)
+                KEY_FUNCTION_DIGIT_SP -> asFloat(v)?.let { functionDigitSp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 // 敲击音效反馈 6 键：setter 里已有钳位（TapSound.clampVolume / parseMap /
@@ -2033,6 +2050,7 @@ class Prefs(private val appContext: Context) {
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_PINYIN_TEXT_SP = "pinyin_text_sp"
         private const val KEY_PINYIN_LINE_GAP_DP = "pinyin_line_gap_dp"
+        private const val KEY_FUNCTION_DIGIT_SP = "function_digit_sp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
 
         /**

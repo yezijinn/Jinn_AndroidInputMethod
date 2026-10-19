@@ -116,6 +116,51 @@ object KeyAppearance {
     fun keyHeightProgressToDp(progress: Int): Float =
         clampKeyHeightDp(MIN_KEY_HEIGHT_DP + progress.coerceIn(0, KEY_HEIGHT_PROGRESS_MAX) * KEY_HEIGHT_STEP_DP)
 
+    // ── 功能面板数字行字号（sp）──────────────────────────────────
+
+    /** 数字行字号下界：13sp 是 2026-10-19 放大前的原值，再小就不比功能按钮醒目 */
+    const val MIN_FUNCTION_DIGIT_SP = 13f
+
+    /**
+     * 数字行字号上界：40sp。
+     *
+     * 这一档**不是**「还能排下」的边界：数字行与按钮行同处候选栏，栏高固定（不随面板态增高，
+     * 用户 2026-10-02 明确要求），40sp 时 [PinyinKeyboardView.canFitFunctionDigitRow] 会判定
+     * 放不下而整行不显示。留着是为了让滑杆能拖到「看不到了」这一档，由用户自己拉回；
+     * 想真正显示更大的字，要给数字行腾高度，那不是改这里的数。
+     */
+    const val MAX_FUNCTION_DIGIT_SP = 40f
+
+    /** 数字行字号步进：1sp（字号差异可辨，格数也不至于多到点不准） */
+    const val FUNCTION_DIGIT_STEP_SP = 1f
+
+    /**
+     * 默认数字行字号：30sp。
+     *
+     * 2026-10-19 由硬编码的 13sp 提到 30sp（真机实测上限），本次改为可调后默认值仍取 30f：
+     * 没动过滑杆的用户观感不变。
+     */
+    const val DEFAULT_FUNCTION_DIGIT_SP = 30f
+
+    /** SeekBar 最大进度（数字行字号：见 [MIN_FUNCTION_DIGIT_SP]~[MAX_FUNCTION_DIGIT_SP]） */
+    val FUNCTION_DIGIT_PROGRESS_MAX: Int =
+        progressSteps(MIN_FUNCTION_DIGIT_SP, MAX_FUNCTION_DIGIT_SP, FUNCTION_DIGIT_STEP_SP)
+
+    /** 把任意输入钳到数字行字号定义域内，并对齐到 [FUNCTION_DIGIT_STEP_SP] 的整数倍 */
+    fun clampFunctionDigitSp(sp: Float): Float =
+        snap(sp, MIN_FUNCTION_DIGIT_SP, MAX_FUNCTION_DIGIT_SP, DEFAULT_FUNCTION_DIGIT_SP, FUNCTION_DIGIT_STEP_SP)
+
+    /** 数字行字号 sp → SeekBar 进度 */
+    fun functionDigitSpToProgress(sp: Float): Int =
+        ((clampFunctionDigitSp(sp) - MIN_FUNCTION_DIGIT_SP) / FUNCTION_DIGIT_STEP_SP).roundToInt()
+            .coerceIn(0, FUNCTION_DIGIT_PROGRESS_MAX)
+
+    /** SeekBar 进度 → 数字行字号 sp */
+    fun functionDigitProgressToSp(progress: Int): Float =
+        clampFunctionDigitSp(
+            MIN_FUNCTION_DIGIT_SP + progress.coerceIn(0, FUNCTION_DIGIT_PROGRESS_MAX) * FUNCTION_DIGIT_STEP_SP,
+        )
+
     // ── 候选栏字距（dp）────────────────────────────────────────
 
     /**
@@ -193,6 +238,17 @@ object KeyAppearance {
         val v = if (dp.isFinite()) dp else 0f
         return if (v == v.roundToInt().toFloat()) "${v.roundToInt()} dp"
         else String.format(Locale.US, "%.1f dp", v)
+    }
+
+    /**
+     * 字号文案（同 [formatDp] 的口径，单位换成 sp）：整数值直接写 "30 sp"。
+     *
+     * 数字行字号是整格 1sp，不会出现半格；保留小数分支只为与 [formatDp] 同形，避免日后改步进出岔。
+     */
+    fun formatSp(sp: Float): String {
+        val v = if (sp.isFinite()) sp else 0f
+        return if (v == v.roundToInt().toFloat()) "${v.roundToInt()} sp"
+        else String.format(Locale.US, "%.1f sp", v)
     }
 
     /** 进度格数 = 定义域跨度 / 步进（跨度不足一格时至少 1 格，避免 SeekBar 无意义） */

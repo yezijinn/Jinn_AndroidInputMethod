@@ -256,6 +256,32 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 数字字号：功能面板下方固定数字行（1~0）的字号。只动那一行，栏高与按钮行不跟随；
+        // 字号大到栏高放不下时数字行整行不显示（判据在 PinyinKeyboardView，属用户自选极端档）。
+        val labelFunctionDigit = findViewById<TextView>(R.id.label_function_digit_size)
+        val seekFunctionDigit = findViewById<SeekBar>(R.id.seek_function_digit_size)
+        val textFunctionDigit = findViewById<TextView>(R.id.text_function_digit_size)
+        labelFunctionDigit.text = TEXT_FUNCTION_DIGIT_TITLE
+        seekFunctionDigit.max = KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX
+        seekFunctionDigit.progress = KeyAppearance.functionDigitSpToProgress(prefs.functionDigitSp)
+        textFunctionDigit.text = KeyAppearance.formatSp(prefs.functionDigitSp)
+
+        seekFunctionDigit.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val sp = KeyAppearance.functionDigitProgressToSp(progress)
+                prefs.functionDigitSp = sp
+                textFunctionDigit.text = KeyAppearance.formatSp(sp)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                Diagnostics.i(TAG, "数字字号: ${KeyAppearance.formatSp(prefs.functionDigitSp)}")
+                // 与其余滑杆同一条即时生效路径：refreshAppearance 里重下数字行字号并重判显隐
+                JinnIme.onKeyAppearanceChanged()
+            }
+        })
+
         findViewById<TextView>(R.id.label_key_corner).text = TEXT_CORNER_TITLE
         findViewById<TextView>(R.id.label_key_gap).text = TEXT_GAP_TITLE
         findViewById<TextView>(R.id.label_key_transparency).text = TEXT_TRANSPARENCY_TITLE
@@ -668,6 +694,9 @@ class KeyAppearanceActivity : Activity() {
 
         /** 「拼音占高」项的标题文案（拼音行底部到候选行之间的空隙，计入候选栏总高） */
         const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音占高"
+
+        /** 「数字字号」项的标题文案（功能面板下方固定数字行 1~0 的字号） */
+        const val TEXT_FUNCTION_DIGIT_TITLE = "数字字号"
 
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"

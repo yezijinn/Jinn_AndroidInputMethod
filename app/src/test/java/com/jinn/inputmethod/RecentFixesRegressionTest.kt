@@ -1099,8 +1099,8 @@ class RecentFixesRegressionTest {
             assertFalse("第二行说明必须整条删除：$gone", gone in layout)
         }
         assertEquals(
-            "八个滑杆与标题的间距必须都是 0dp",
-            8,
+            "九个滑杆与标题的间距必须都是 0dp",
+            9,
             "android:layout_marginStart=\"0dp\"".toRegex().findAll(layout).count(),
         )
         assertFalse(
@@ -1120,6 +1120,8 @@ class RecentFixesRegressionTest {
             "const val TEXT_SPACING_TITLE = \"候选字距\"",
             "const val TEXT_TEXT_SIZE_TITLE = \"候选字号\"",
             "const val TEXT_TRANSPARENCY_TITLE = \"面板透明\"",
+            "const val TEXT_PINYIN_LINE_GAP_TITLE = \"拼音占高\"",
+            "const val TEXT_FUNCTION_DIGIT_TITLE = \"数字字号\"",
             "const val TEXT_LETTER_UPPER_TITLE = \"拼音键盘大写\"",
             "const val TEXT_KEY_HINT_TITLE = \"键盘内显韵母\"",
             "const val TEXT_QUANPIN_TITLE = \"双拼候选全音\"",
@@ -6205,6 +6207,68 @@ class RecentFixesRegressionTest {
             "android:layout_height=\"0dp\"" in listBlock &&
                 "android:layout_weight=\"1\"" in listBlock,
         )
+    }
+
+    /**
+     * 数字行字号必须是用户可调参数，真源只在 `KeyAppearance`。
+     *
+     * 原先 30sp 硬编码在 `PinyinKeyboardView`：用户要更大 / 更小只能等改版，而且行框高与建键
+     * 各读一处，改一处就会分叉。现在三段同源 —— 定义（KeyAppearance）→ 落盘与备份（Prefs）
+     * → 外观页滑杆（Activity）；视图侧只经一个读数点取 Prefs，不准再出现字面量。
+     */
+    @Test
+    fun functionDigitSpMustBeAdjustableFromAppearancePage() {
+        val appearance = TestSources.codeSource("KeyAppearance.kt")
+        for (needle in listOf(
+            "const val MIN_FUNCTION_DIGIT_SP",
+            "const val MAX_FUNCTION_DIGIT_SP",
+            "const val DEFAULT_FUNCTION_DIGIT_SP",
+            "val FUNCTION_DIGIT_PROGRESS_MAX",
+            "fun clampFunctionDigitSp(",
+            "fun functionDigitSpToProgress(",
+            "fun functionDigitProgressToSp(",
+        )) {
+            assertTrue("参数真源缺项：$needle", needle in appearance)
+        }
+
+        val prefs = TestSources.codeSource("Prefs.kt")
+        for (needle in listOf(
+            "var functionDigitSp: Float",
+            "KEY_FUNCTION_DIGIT_SP = \"function_digit_sp\"",
+            "put(KEY_FUNCTION_DIGIT_SP, functionDigitSp)",
+            "KEY_FUNCTION_DIGIT_SP -> asFloat(v)?.let { functionDigitSp = it; ok() } ?: bad(key)",
+        )) {
+            assertTrue("数字字号没落盘 / 没进快照 / 没进导入：$needle", needle in prefs)
+        }
+
+        // 视图侧：唯一读数点 + 三处同源 + 重建路径重下发
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertFalse("数字字号不得再写死常量", "FUNCTION_DIGIT_TEXT_SP" in view)
+        assertTrue(
+            "数字行字号必须只有一个读数点（直读 Prefs）",
+            "private val functionDigitTextSp: Float get() = prefs.functionDigitSp" in view,
+        )
+        assertTrue(
+            "建键必须用同一个读数点",
+            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, functionDigitTextSp)" in view,
+        )
+        assertTrue(
+            "行框高必须用同一个读数点（否则显隐判据与显示字号分叉）",
+            "(functionDigitTextSp * resources.configuration.fontScale * 1.2f" in view,
+        )
+        assertTrue("configure / refreshAppearance 必须重下发字号", "applyFunctionDigitTextSize()" in view)
+
+        // 外观页：滑杆接上才算「用户可调」
+        val page = TestSources.codeSource("KeyAppearanceActivity.kt")
+        for (needle in listOf(
+            "R.id.seek_function_digit_size",
+            "KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX",
+            "KeyAppearance.functionDigitSpToProgress(prefs.functionDigitSp)",
+            "prefs.functionDigitSp = sp",
+            "TEXT_FUNCTION_DIGIT_TITLE = \"数字字号\"",
+        )) {
+            assertTrue("外观页缺项：$needle", needle in page)
+        }
     }
 
 }

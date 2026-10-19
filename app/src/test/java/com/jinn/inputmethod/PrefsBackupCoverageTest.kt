@@ -97,7 +97,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-17 起 102 → 103：新增「拼音打标」1 键（外观页开关，换机要带走）
         // 2026-10-17 起 103 → 101：移除「候选追加方式」「拼音打标」2 键（前者固定为追加一次，
         //                       后者改为内置常开，均无开关可存）
-        assertEquals("提取到的键常量应是 102 个（改键数请同步本断言）", 102, keyConstants.size)
+        // 2026-10-19 起 102 → 103：新增「功能面板数字字号」1 键（外观页滑杆，换机要带走）
+        assertEquals("提取到的键常量应是 103 个（改键数请同步本断言）", 103, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -197,6 +198,7 @@ class PrefsBackupCoverageTest {
             // 拼音字号（0 = 自动）/ 拼音行间隔：外观页滑杆，两个浮点
             "KEY_PINYIN_TEXT_SP" to "asFloat(v)",
             "KEY_PINYIN_LINE_GAP_DP" to "asFloat(v)",
+            "KEY_FUNCTION_DIGIT_SP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
             "KEY_SKIN_LIGHT" to "asString(v)",
             "KEY_SKIN_DARK" to "asString(v)",
@@ -530,6 +532,7 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_TEXT_SP" to "candidate_text_sp",
             "KEY_PINYIN_TEXT_SP" to "pinyin_text_sp",
             "KEY_PINYIN_LINE_GAP_DP" to "pinyin_line_gap_dp",
+            "KEY_FUNCTION_DIGIT_SP" to "function_digit_sp",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "key_transparency_percent",
             // 皮肤与主题
             "KEY_KEYBOARD_SKIN" to "keyboard_skin",

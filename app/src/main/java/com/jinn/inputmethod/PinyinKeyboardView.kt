@@ -223,6 +223,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private val functionDigitRow: LinearLayout
 
+    /**
+     * 数字行字号（sp）：**唯一读数点**。
+     *
+     * 建键、字号下发与行框高/显隐判据（[functionDigitRowPx] / [canFitFunctionDigitRow]）全走这里 ——
+     * 两处各读一份会在「拖动滑杆后判据仍按旧字号」时让数字行显示成半截或被误判不显示。
+     * 钳位在 [Prefs.functionDigitSp] 里完成（定义域只在 [KeyAppearance]）。
+     */
+    private val functionDigitTextSp: Float get() = prefs.functionDigitSp
+
     /** 候选条目视图复用池：整棵重建前回收、重建时取用，省掉每次按键几十个 TextView 与闭包 */
     private val candidateViewPool = ArrayList<TextView>(64)
 
@@ -655,6 +664,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 已下发到拼音条与 ✕ 的字号（sp）：避免每次刷新重复 setTextSize（会多触发一次 requestLayout） */
     private var appliedPinyinTextSp = -1f
+
+    /** 已下发到功能面板数字行的字号（sp）：同上，避免每次刷新重复 setTextSize */
+    private var appliedFunctionDigitTextSp = -1f
 
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
@@ -1616,6 +1628,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applySkinToKeys()
         // 必须先于 refreshKeyLabels，后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
+        // 数字行字号随配置重下发（视图实例跨输入框复用，换肤 / 改字号后不会自己读新值）
+        applyFunctionDigitTextSize()
         refreshKeyLabels()
         refreshCandidateBar()
     }
@@ -1633,6 +1647,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applyKeyTransparency()
         applySkinToKeys()
         applyKeyAppearance()
+        // 数字行字号：外观页松手即时生效；数字行显隐由 refreshCandidateBar → canFitFunctionDigitRow 重判
+        applyFunctionDigitTextSize()
         // 键面字形也要跟（「26 键常显大写」开关在现场切换；圆角 / 间隙刷新后 shift 键背景也走这里重建）
         refreshKeyLabels()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
@@ -4298,7 +4314,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 建功能按钮行下方的固定数字行（1..0）—— **只在 init 建一次**，之后只切显隐。
      *
      * 为什么在代码里建：10 个键的属性完全同构（等宽权重 + 同一字号 / 字色），写进 XML 就是十份重复；
-     * 而字色还要跟皮肤走，集中在这里一处下发才不会两处分叉。字号取 [FUNCTION_DIGIT_TEXT_SP]。
+     * 而字色还要跟皮肤走，集中在这里一处下发才不会两处分叉。字号取 [functionDigitTextSp]
+     * （用户可在键盘外观页调整，默认 30sp）。
      *
      * 点击 = 直接上屏：面板态本就没有 composing（见 [refreshCandidateBar] 的空输入分支），
      * 搜索态不显示本行，故与 26 键数字层的「先确定拼音再上屏」无关；声音与数字层同组
@@ -4311,7 +4328,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val key = TextView(context).apply {
                 text = digit.toString()
                 gravity = android.view.Gravity.CENTER
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, FUNCTION_DIGIT_TEXT_SP)
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, functionDigitTextSp)
                 // 键面就是数字本身：读屏念它即完整语义
                 contentDescription = digit.toString()
                 isClickable = true
@@ -4328,6 +4345,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     marginEnd = dp(2)
                 },
             )
+        }
+        appliedFunctionDigitTextSp = functionDigitTextSp
+    }
+
+    /**
+     * 数字行字号按最新配置重下发（唯一入口）：键盘外观页松手 / 换肤 / 配置变更后，
+     * 已建好的 10 个 TextView 不会自己读新值 —— 不重下发就得等进程重启。
+     *
+     * 只在真的变了时才写：`setTextSize` 会触发一次 requestLayout。
+     */
+    private fun applyFunctionDigitTextSize() {
+        val sp = functionDigitTextSp
+        if (sp == appliedFunctionDigitTextSp) return
+        appliedFunctionDigitTextSp = sp
+        for (i in 0 until functionDigitRow.childCount) {
+            (functionDigitRow.getChildAt(i) as? TextView)
+                ?.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
         }
     }
 
@@ -4399,7 +4433,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 数字行自身行框高（px）：字号 × TextView 默认行距 + 上下各 2dp 内边距 */
     private fun functionDigitRowPx(): Int {
         val dm = resources.displayMetrics
-        return (FUNCTION_DIGIT_TEXT_SP * resources.configuration.fontScale * 1.2f * dm.scaledDensity)
+        return (functionDigitTextSp * resources.configuration.fontScale * 1.2f * dm.scaledDensity)
             .toInt() + dp(4)
     }
 
@@ -5427,17 +5461,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 密码模式数字条的字号（sp）：比候选正文大一档，密码框里点得更准 */
         const val PASSWORD_DIGIT_TEXT_SP = 18f
-
-        /**
-         * 功能面板下方固定数字行的字号（sp）。
-         *
-         * 2026-10-19 按用户要求「数字的字号太小了，尽量放大」从 13sp 调到 30sp。
-         * 30sp 是**真机实测的上限**（PACM00 / 双行档 74dp 栏高 / fontScale 1.0）：
-         * 30sp 能显示且按钮行仍完整可用，40sp 会被 [canFitFunctionDigitRow] 判为放不下
-         * ⇒ 整行不显示。想再大必须先给数字行腾高度（例如允许面板态键盘增高），
-         * 那不是字号问题，别在这里加数。
-         */
-        const val FUNCTION_DIGIT_TEXT_SP = 30f
 
         /**
          * 数字行可见时，按钮行至少还要剩这么多 dp（可点下限）。
