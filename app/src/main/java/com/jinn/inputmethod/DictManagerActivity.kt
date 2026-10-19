@@ -802,10 +802,13 @@ class DictManagerActivity : Activity() {
             var lastError = "未知错误"
             var ok = false
             // 空间预检（L-799）：下载前先确认磁盘可写、容量够得下，避免写到一半 ENOSPC
-            // 才收到英文 IOException。需要量 = 压缩包 ×2 + 8MB 余量（解压/校验/移动都要临时空间）。
+            // 才收到英文 IOException。需要量按**安装占用**（[OptionalDicts.installMiB]）估算，不是
+            // 压缩体积 —— 5.89MB 的包建出的索引有 26MiB，按压缩包估会连索引本身都不够，
+            // 结果是「下载成功 → 回执成功 → 后台建索引 ENOSPC → 词库永不生效」且用户看不到原因。
+            // 真实峰值还要叠加建索引期的两个整份临时件，故按安装占用 ×2 取（见 [requiredFreeBytes]）。
             val stat = runCatching { android.os.StatFs(dir.absolutePath) }.getOrNull()
             val freeBytes = stat?.availableBytes ?: Long.MAX_VALUE
-            val needBytes = (dict.sizeMb * 1024 * 1024 * 2).toLong() + 8L * 1024 * 1024
+            val needBytes = requiredFreeBytes(dict)
             if (freeBytes < needBytes) {
                 lastError = "存储空间不足：约需 ${needBytes / 1024 / 1024}MB，仅剩 ${freeBytes / 1024 / 1024}MB"
                 Diagnostics.w(TAG, "分类词库下载中止：$lastError file=${dict.fileName}")
@@ -982,7 +985,24 @@ class DictManagerActivity : Activity() {
         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             .apply { rightMargin = dp(right) }
 
-    private companion object {
+    // internal 而不是 private：[requiredFreeBytes] 要能被 JVM 单测直接调用（纯算术，
+    // 不碰 Android API），private companion 里的函数测试看不见
+    internal companion object {
+
+        /**
+         * 下载一个可选词库包所需的空闲空间（字节）。
+         *
+         * 按**安装占用**（[OptionalDicts.installMiB]）× 2 估算，另留 8MB 余量：
+         *  - 安装占用本身（主要是 `files/index/<包名>.idx`）必须放得下；
+         *  - 建索引期还要在同目录写两个整份临时件（键区 + 词区），峰值约为成品的一倍；
+         *  - 下载中的 `.xz` 与解压/校验的中间态再占一份。
+         *
+         * ⚠ 曾经按 `sizeMb`（压缩体积）× 2 估算，而压缩包 5.89MB 的包索引有 26MiB ——
+         * 预检值连索引本身都不够，于是下载与回执都成功、后台建索引却 ENOSPC，
+         * 词库永不生效且用户看不到原因（2026-10-19 修）。
+         */
+        fun requiredFreeBytes(dict: OptionalDict): Long =
+            dict.installMiB.toLong() * 2L * 1024 * 1024 + 8L * 1024 * 1024
 
         // 旧版遗留包区的文案在代码里下发：strings.xml 默认不改动，与生僻字页 / 模糊音页的 TEXT_* 同做法
         const val TEXT_LEGACY_DESC = "旧版本装过的词库包，现在的下载源已下线。"

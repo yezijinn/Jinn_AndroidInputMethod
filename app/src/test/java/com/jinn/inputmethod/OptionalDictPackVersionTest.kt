@@ -16,11 +16,12 @@ import java.io.RandomAccessFile
  */
 class OptionalDictPackVersionTest {
 
-    private fun pack(sizeMb: Double) = OptionalDict(
+    private fun pack(sizeMb: Double, installMiB: Int = 26) = OptionalDict(
         fileName = "part2.xz",
         name = "t",
         descLines = emptyList(),
         sizeMb = sizeMb,
+        installMiB = installMiB,
         startupSec = 1,
         urls = listOf("https://example.com/a.xz"),
         checksum = "0".repeat(64),
@@ -102,4 +103,56 @@ class OptionalDictPackVersionTest {
             }
         }
     }
+
+    /**
+     * 下载预检必须按**安装占用**估算，不能按压缩体积。
+     *
+     * 2026-10-19 修：原来按 `sizeMb × 2 + 8MB` 算，而 part2 压缩包 5.89MB 建出的索引有 26MiB
+     * —— 预检值（19.8MiB）连索引本身都不够，于是「下载成功 → 回执成功 → 后台建索引 ENOSPC
+     * → 词库永不生效」，且用户看不到原因。现在按 [OptionalDict.installMiB] × 2 + 8MB 取。
+     */
+    @Test
+    fun 下载预检按安装占用而非压缩体积() {
+        // part2：压缩 5.89MB，安装 26MiB ⇒ 需要 26×2+8 = 60MiB
+        val need = DictManagerActivity.requiredFreeBytes(pack(sizeMb = 5.89, installMiB = 26))
+        assertEquals(60L * 1024 * 1024, need)
+
+        // 关键不变式：需要量必须大于安装占用本身（否则连索引都放不下）
+        assertTrue(
+            "预检值必须大于安装占用，否则索引写不下",
+            need > 26L * 1024 * 1024,
+        )
+
+        // 小包同理（part4：安装 9MiB ⇒ 9×2+8 = 26MiB）
+        assertEquals(
+            26L * 1024 * 1024,
+            DictManagerActivity.requiredFreeBytes(pack(sizeMb = 2.14, installMiB = 9)),
+        )
+    }
+
+    /**
+     * 清单里三个包的 installMiB 必须与卡片文案「体积占用 +N MiB」对得上。
+     *
+     * 两者不同源就是给用户一个假的安装预期；也是本条预检的数据来源。
+     */
+    @Test
+    fun 安装占用与卡片文案同源() {
+        for (dict in OptionalDicts.ALL) {
+            // 用正则整段匹配取数字：按锚点截串的写法被元守卫禁（BUG.md L-1145），
+            // 且截串在文案微调时会静默取错值，正则要么整段命中要么明确报错
+            val claimed = dict.descLines
+                .asSequence()
+                .flatMap { it.lineSequence() }
+                .mapNotNull { line ->
+                    // 解构取分组（不用 groupValues[N]：元守卫把「按索引取子串」一并禁掉）
+                    val (mib) = Regex("""体积占用 \+(\d+) MiB""").find(line)?.destructured
+                        ?: return@mapNotNull null
+                    mib.toIntOrNull()
+                }
+                .firstOrNull()
+                ?: error("${dict.fileName} 卡片文案里找不到「体积占用 +N MiB」")
+            assertEquals("${dict.fileName} 的 installMiB 与文案不一致", claimed, dict.installMiB)
+        }
+    }
+
 }

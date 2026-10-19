@@ -33,6 +33,20 @@ data class OptionalDict(
      * 折中口径不会误判：512KB 容差覆盖两种算法的最大差（≈5% × 5.89MB ≈ 290KB）。
      */
     val sizeMb: Double,
+
+    /**
+     * 装好后**新增的磁盘占用**（MiB）—— 主要是 `files/index/<包名>.idx`。
+     *
+     * 为什么单列一个字段：下载前空间预检原来按 `sizeMb`（压缩体积）放大一份估算，
+     * 而压缩包 5.89MB 的包建出的索引有 26MiB —— 预检值（19.8MiB）连索引本身都不够，
+     * 于是「下载成功 → 回执成功 → 后台建索引 ENOSPC → 词库永不生效」，用户看不到原因。
+     * 真实峰值还要叠加建索引期的两个整份临时件，故预检按本字段 ×2 取（见
+     * [requiredFreeBytes]）。
+     *
+     * ⚠ 与卡片上那句「软件的体积占用 +N MiB」必须同源：改这里要同步改文案，
+     * 两者对不上就是给用户一个假的安装预期。
+     */
+    val installMiB: Int,
     /**
      * 首次构建索引的耗时（秒）—— **清单实测数据，不再显示在卡片上**（2026-10-03）。
      *
@@ -95,6 +109,7 @@ object OptionalDicts {
                 "在内置 40 万条基础上再加 90 万\n软件的体积占用 +26 MiB",
             ),
             sizeMb = 5.89,
+            installMiB = 26,
             startupSec = 20,         // 实测 19580ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 40 万条曾为 4022ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part2.txt.xz",
@@ -109,6 +124,7 @@ object OptionalDicts {
                 "再加 70 万条短语，总数约 200 万\n软件的体积占用 +24 MiB",
             ),
             sizeMb = 5.29,
+            installMiB = 24,
             startupSec = 17,         // 实测 16168ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 50 万条曾为 4859ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part3.txt.xz",
@@ -123,6 +139,7 @@ object OptionalDicts {
                 "再加 21 万条专业词，总数约 221 万\n软件的体积占用 +9 MiB",
             ),
             sizeMb = 2.14,
+            installMiB = 9,
             startupSec = 6,          // 实测 5372ms（PACM00，2026-10-10 换包后清 idx 重建；旧包 60 万条曾为 13978ms）
             urls = listOf(
                 "$GITEE/$TAG_PARTS/dict_part4.txt.xz",
