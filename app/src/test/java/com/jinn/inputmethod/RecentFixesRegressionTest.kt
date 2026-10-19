@@ -5786,6 +5786,21 @@ class RecentFixesRegressionTest {
             "落定必须同撤旋转补间",
             "candidateExpandRotationAnimator" in settleBody,
         )
+
+        // 反转续点（2026-10-20）：补间在途再点一次时，settle 会撤掉旋转补间并置 null，
+        // 此后 refreshCandidateBar 的「补间在途不写角度」守卫失效 ⇒ 它按**旧**意图态把角写回终点。
+        // 实测表现 rot 36.6° → 180° 一帧瞬移（观感「箭头先弹到终点再转回来」）。
+        // 硬约束：捕获在 settle **之前**，复位在 settle **之后**、tweenExpandButton 之前。
+        val toggleBody = TestSources.blockAfter(src, "private fun toggleCandidateExpanded()")
+        // 用「出现顺序」判定，不用跨行正则：中间夹注释/空行时正则极易失配（本轮踩过）
+        val iCapture = toggleBody.indexOf("val rotFrom = btnExpandCandidates.rotation")
+        val iSettle = toggleBody.indexOf("settleCandidateHeight()")
+        val iRestore = toggleBody.indexOf("btnExpandCandidates.rotation = rotFrom")
+        assertTrue("反转续点必须捕获三角中途角", iCapture >= 0)
+        assertTrue("toggle 开头必须落定", iSettle >= 0)
+        assertTrue("落定后必须把三角角度复位（否则瞬移到旧终点）", iRestore >= 0)
+        assertTrue("捕获必须在 settle 之前", iCapture < iSettle)
+        assertTrue("复位必须在 settle 之后", iRestore > iSettle)
         // 曲线必须**共用同一个实例**：各建一份就可能一条缓一条线。实测 DecelerateInterpolator(1.6f)
         // 的指数是 2×factor=3.2，首帧就吃掉 93% 行程 ⇒ 观感等同硬切。这里钉住两处引用同一字段。
         assertEquals(
