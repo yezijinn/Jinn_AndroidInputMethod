@@ -4430,12 +4430,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return (barHeight - functionDigitRowPx()).coerceAtLeast(0)
     }
 
-    /** 数字行自身行框高（px）：字号 × TextView 默认行距 + 上下各 2dp 内边距 */
-    private fun functionDigitRowPx(): Int {
-        val dm = resources.displayMetrics
-        return (functionDigitTextSp * resources.configuration.fontScale * 1.2f * dm.scaledDensity)
-            .toInt() + dp(4)
-    }
+    /**
+     * 数字行自身行框高（px）：字号 × TextView 默认行距 + 上下各 2dp 内边距。
+     *
+     * ⚠ `scaledDensity` 本身就等于 `density × fontScale`（sp→px 的唯一换算因子），
+     * **不能再乘一次 `configuration.fontScale`** —— 那会让行高随 fontScale² 变化，而真实
+     * 行高只随它一次变：大字体用户把滑杆拖高一点，数字行就「凭空消失」（判据算出的行高
+     * 比实际大一圈）；小字体则判据偏松，数字行被栏底裁掉一截。
+     * 口径与 [CandidateRows.rowHeightPx] 一致（fontScale 只出现一次）。
+     */
+    private fun functionDigitRowPx(): Int =
+        (functionDigitTextSp * 1.2f * resources.displayMetrics.scaledDensity).toInt() + dp(4)
 
     /**
      * 栏高是否容得下「功能按钮行 + 数字行」。

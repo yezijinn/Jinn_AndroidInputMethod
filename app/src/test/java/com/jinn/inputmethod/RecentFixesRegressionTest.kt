@@ -6252,9 +6252,16 @@ class RecentFixesRegressionTest {
             "建键必须用同一个读数点",
             "setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, functionDigitTextSp)" in view,
         )
+        // 行框高必须用同一个读数点（否则显隐判据与显示字号分叉）；且不得再乘
+        // configuration.fontScale —— scaledDensity 已含它，再乘一次会让行高随 fontScale²
+        // 变化：大字体用户拖高滑杆就「凭空消失」，小字体则数字行被栏底裁掉一截
         assertTrue(
-            "行框高必须用同一个读数点（否则显隐判据与显示字号分叉）",
-            "(functionDigitTextSp * resources.configuration.fontScale * 1.2f" in view,
+            "行框高必须用同一个读数点",
+            "(functionDigitTextSp * 1.2f * resources.displayMetrics.scaledDensity)" in view,
+        )
+        assertFalse(
+            "行框高不得再乘 configuration.fontScale（scaledDensity 已含它）",
+            "functionDigitTextSp * resources.configuration.fontScale" in view,
         )
         assertTrue("configure / refreshAppearance 必须重下发字号", "applyFunctionDigitTextSize()" in view)
 
