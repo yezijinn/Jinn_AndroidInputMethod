@@ -6119,45 +6119,4 @@ class RecentFixesRegressionTest {
         )
     }
 
-
-    /**
-     * 候选栏第二行的固定数字排：**只**在「候选行数 = 双行」档显示，且档位判据不得硬编码。
-     *
-     * 硬编码（`== 2`）的代价：档位常量增删时这里静默失效 —— 要么单行档也冒出数字排压掉拼音串，
-     * 要么双行档不再出现而用户以为功能没了。显隐必须在 `refreshCandidateBar` 里与 `rowsSetting`
-     * **同一次读值**落位：那是所有外观/档位即时生效路径（onKeyAppearanceChanged）与会话重建的共同入口。
-     */
-    @Test
-    fun candidateDigitRowOnlyInDoubleRowSetting() {
-        val src = TestSources.codeSource("PinyinKeyboardView.kt")
-        assertTrue(
-            "档位判据必须用 CandidateRows.DOUBLE，不得写死数字",
-            "setDigitRowVisible(rowsSetting == CandidateRows.DOUBLE)" in src,
-        )
-        assertTrue(
-            "显隐必须与 rowsSetting 同一次读值落位（覆盖档位即时生效）",
-            Regex("val rowsSetting = prefs.candidateRows[\\s\\S]{0,200}?setDigitRowVisible\\(rowsSetting ==")
-                .containsMatchIn(src),
-        )
-        // 数字键必须走既有上屏路径：另起一条会把「主线程 / 同进程回调」的约定丢掉
-        assertTrue(
-            "点击必须走 listener.onCommitText",
-            "listener?.onCommitText(digit.toString())" in src,
-        )
-        assertTrue(
-            "按键音与数字层同组",
-            "KeyFeedback.fire(TapSound.G_DIGIT)" in src,
-        )
-        // 键面由代码建：10 个同构键写进 XML 会与字号/皮肤两处下发分叉
-        assertTrue("数字排由代码按 CANDIDATE_DIGIT_KEYS 建", "CANDIDATE_DIGIT_KEYS = \"1234567890\"" in src)
-        // 布局里必须存在该容器，且默认隐藏（单行档不该闪一下）。
-        // XML 走 File 直读（codeSource 只认 Kotlin 源码，见 CandidateRowsTest 同款做法）
-        val xml = listOf(
-            java.io.File("src/main/res/layout/keyboard_pinyin.xml"),
-            java.io.File("app/src/main/res/layout/keyboard_pinyin.xml"),
-        ).firstOrNull { it.isFile }?.readText() ?: error("找不到 keyboard_pinyin.xml")
-        assertTrue("布局必须有 candidate_digit_row", "@+id/candidate_digit_row" in xml)
-        assertTrue("默认必须 gone", "android:visibility=\"gone\"" in xml)
-    }
-
 }

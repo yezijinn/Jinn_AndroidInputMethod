@@ -209,6 +209,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidatePinyin: TextView
     private val viewCandidateList: LinearLayout
 
+    /**
+     * 功能按钮行下方的固定数字行（`@id/function_digit_row`）：与按钮行各占候选栏一半高度。
+     *
+     * 只在功能面板形态显示（见 [setFunctionDigitRowVisible]）：候选 / 预测 / 动作排 / 符号 /
+     * 密码条 / 提示 / 空态都不要它。键在 init 里建一次，与 [viewCandidateList] 是兄弟节点
+     * （滚动容器只能有一个子 View，故两者共用 `@id/candidate_panel_stack` 这一层）。
+     */
+    private val functionDigitRow: LinearLayout
+
     /** 候选条目视图复用池：整棵重建前回收、重建时取用，省掉每次按键几十个 TextView 与闭包 */
     private val candidateViewPool = ArrayList<TextView>(64)
 
@@ -235,15 +244,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 展开态下再点即收起（BUG.md L-1393）。
      */
     private val btnExpandCandidates: TextView
-
-    /**
-     * 候选栏第二行（[pinyinBar] 所在行）左侧的固定数字排：仅「候选行数 = 双行」档显示。
-     *
-     * 键面在 init 里按 [CANDIDATE_DIGIT_KEYS] 建一次，点击 = 直接上屏该数字；宽度由布局权重与
-     * 拼音串分摊（见 `keyboard_pinyin.xml`），因此与拼音串 / ✕ 几何上不可能重叠，
-     * 高度恒等于拼音条 ⇒ 与 ▲/✕ 同高。
-     */
-    private val candidateDigitRow: LinearLayout
 
     /**
      * 候选栏是否处于展开态（会话内有效，**不落盘**）。
@@ -817,6 +817,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidateList.removeAllViews()
         // 池里的条目成形于另一种形态（候选 / 功能面板 / 符号分组 / 密码数字条），一并作废
         candidateViewPool.clear()
+        // 数字行只属于功能面板：其余形态（符号 / 密码 / 提示 / 空态）一律收起，面板自己随后再打开它
+        setFunctionDigitRowVisible(false)
     }
 
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
@@ -974,6 +976,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
+        functionDigitRow = root.findViewById(R.id.function_digit_row)
+        buildFunctionDigitRow()
         candidateScroll = root.findViewById(R.id.candidate_scroll)
         candidateRowsScroll = root.findViewById(R.id.candidate_rows_scroll)
         // 纵向层同样禁掉边缘拉伸回弹（与横向同款理由：滑到末尾那一刻正好触发追加渲染）
@@ -1017,8 +1021,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
             KeyFeedback.fire(TapSound.G_FUNC)
             toggleCandidateExpanded()
         }
-        candidateDigitRow = root.findViewById(R.id.candidate_digit_row)
-        buildDigitRow()
         viewLetters = root.findViewById(R.id.keyboard_letters)
         contentArea = root.findViewById(R.id.keyboard_content_area)
 
@@ -1921,10 +1923,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （2026-09-23 审查发现的遗漏：二者在布局里写死 text_secondary，深色皮肤下几乎看不见）
         viewCandidatePinyin.setTextColor(hint)
         btnClearCandidates.setTextColor(hint)
-        // 第二行固定数字排：与拼音串同处候选栏底色之上，字色必须同源（否则深色皮肤下读不出）
-        for (i in 0 until candidateDigitRow.childCount) {
-            (candidateDigitRow.getChildAt(i) as? TextView)?.setTextColor(hint)
-        }
         // 图标键：回车 / 删除（布局里是 ImageButton，字段声明为 View，故用 as?）；
         // 大写键单独处理 —— 锁定态底色会换成强调色，图标色需随之切换（见 [refreshShiftTint]）
         for (v in listOf(btnEnter, btnBackspace)) {
@@ -2745,11 +2743,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
         btnClearCandidates.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
         btnExpandCandidates.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
-        // 第二行数字排与拼音串同一行、同一字号：不同步就会在双行档里大小不一
-        for (i in 0 until candidateDigitRow.childCount) {
-            (candidateDigitRow.getChildAt(i) as? TextView)
-                ?.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
-        }
     }
 
     /** 与 XML 资源同口径的 dp → px（[dp] 是截断，资源走 `complexToDimensionPixelSize` 的四舍五入） */
@@ -2797,49 +2790,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 否则会出现「空候选栏上挂着一个 ▲」，用户点它得到一个什么都没有的展开态。
         // 真正的显隐判据仍由 [updateExpandButton] 每帧按「单行档 + 候选多到需要展开」重算。
         if (!visible) btnExpandCandidates.visibility = View.GONE
-    }
-
-    /**
-     * 第二行固定数字排的显隐（唯一入口）：仅「候选行数 = 双行」档显示。
-     *
-     * 判据是 [Prefs.candidateRows] 与 [CandidateRows.DOUBLE]（不写死 2：档位增删时这里自动跟随）；
-     * 它只在双行档才有第二行可放，单行档（及展开态）出现会压掉拼音串。
-     * 父级 [pinyinBar] 的显隐负责其余形态（符号层 / 密码条 / 功能面板都把它 GONE）。
-     */
-    private fun setDigitRowVisible(visible: Boolean) {
-        val target = if (visible) View.VISIBLE else View.GONE
-        if (candidateDigitRow.visibility != target) candidateDigitRow.visibility = target
-    }
-
-    /**
-     * 建第二行固定数字排（1..0）：一个键一行字，点击直接上屏。
-     *
-     * 只用代码建一次：10 个同构键写进 XML 是 10 份重复属性，而字号要跟随拼音字号、字色要跟随皮肤
-     * （[applyPinyinTextSize] / [applySkinToTexts]）—— 两处各写一份必然分叉。
-     *
-     * 上屏走 [PinyinKeyboardViewListener.onCommitText]，与逗号 / 句号同一条路径（主线程、同进程回调）。
-     */
-    private fun buildDigitRow() {
-        val hint = skinToken(skin.functionHint, R.color.text_secondary)
-        for (digit in CANDIDATE_DIGIT_KEYS) {
-            val key = TextView(context).apply {
-                text = digit.toString()
-                gravity = android.view.Gravity.CENTER
-                setTextColor(hint)
-                // 键面就是数字本身，读屏念它即可（无额外语义）
-                contentDescription = digit.toString()
-                isClickable = true
-                setOnClickListener {
-                    // 与数字层 / 密码数字条同组：点数字的听感全键盘一致
-                    KeyFeedback.fire(TapSound.G_DIGIT)
-                    listener?.onCommitText(digit.toString())
-                }
-            }
-            candidateDigitRow.addView(
-                key,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f),
-            )
-        }
     }
 
     /**
@@ -2906,6 +2856,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         colorRes: Int,
         onClick: (String) -> Unit,
     ) {
+        // 候选形态没有数字行（它只在功能面板出现）。放在最前：下面的指纹命中会早退，
+        // 放在早退之后就漏关 —— 会留下一条盖住半栏候选的数字键。
+        setFunctionDigitRowVisible(false)
         // 分页渲染：候选集变了就复位首屏条数；否则沿用当前窗口（用户已滑到底追加过的条数）。
         // 用**结构相等**比对：同一串拼音被重复查询时引擎会给出一份内容相同的新 list，
         // 按引用比对会把它当「新候选」复位 —— 用户滑到底刚展开的候选会被打回收起。
@@ -3228,8 +3181,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val rowsSetting = prefs.candidateRows
-        // 第二行数字排只跟档位走（与栏高同一次读值，避免同帧两档）
-        setDigitRowVisible(rowsSetting == CandidateRows.DOUBLE)
         // 档位 / 层 / 面板一变，三角可能直接消失（它只在单行档显示），展开态就没了收起入口：
         // 在落栏高之前统一收起，避免留一块无法退出的高栏
         if (candidatesExpanded &&
@@ -4208,6 +4159,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 viewCandidateList.getChildAt(i).setPadding(dp(4), dp(4), dp(4), dp(4))
             }
         }
+        // 数字行只属于本形态：搜索态与动作排都在上面早退了（走到这里的是常驻按钮面板）
+        setFunctionDigitRowVisible(true)
         if (Diagnostics.KEY_TRACE) Diagnostics.v(
             TAG,
             "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
@@ -4331,6 +4284,58 @@ class PinyinKeyboardView @JvmOverloads constructor(
             viewCandidateList.getChildAt(i).setPadding(dp(2), dp(4), dp(2), dp(4))
         }
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "动作面板(${viewCandidateList.childCount} 按钮)")
+    }
+
+    /**
+     * 建功能按钮行下方的固定数字行（1..0）—— **只在 init 建一次**，之后只切显隐。
+     *
+     * 为什么在代码里建：10 个键的属性完全同构（等宽权重 + 同一字号 / 字色），写进 XML 就是十份重复；
+     * 而字色还要跟皮肤、字号跟功能按钮主标（13sp）走，集中在这里一处下发才不会两处分叉。
+     *
+     * 点击 = 直接上屏：面板态本就没有 composing（见 [refreshCandidateBar] 的空输入分支），
+     * 搜索态不显示本行，故与 26 键数字层的「先确定拼音再上屏」无关；声音与数字层同组
+     * （[TapSound.G_DIGIT]），同一个数字在两条路上听感一致。
+     *
+     * 线程：主线程（init 与点击回调都在主线程）。
+     */
+    private fun buildFunctionDigitRow() {
+        for (digit in FUNCTION_DIGIT_KEYS) {
+            val key = TextView(context).apply {
+                text = digit.toString()
+                gravity = android.view.Gravity.CENTER
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, FUNCTION_DIGIT_TEXT_SP)
+                // 键面就是数字本身：读屏念它即完整语义
+                contentDescription = digit.toString()
+                isClickable = true
+                setOnClickListener {
+                    KeyFeedback.fire(TapSound.G_DIGIT)
+                    listener?.onCommitText(digit.toString())
+                }
+            }
+            functionDigitRow.addView(
+                key,
+                // 10 键等宽均分：与功能按钮同款的 2dp 间隙，两边对称故不破坏等宽
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    marginStart = dp(2)
+                    marginEnd = dp(2)
+                },
+            )
+        }
+    }
+
+    /**
+     * 数字行的显隐（唯一入口）：只有功能面板形态打开它。
+     *
+     * 字色在这里按皮肤 [KeyboardSkin.functionGlyph] 下发（与功能按钮主标同源）：
+     * 换肤后候选栏会整帧刷新，跟着走即可，不必在换肤路径上再加一处遍历。
+     */
+    private fun setFunctionDigitRowVisible(visible: Boolean) {
+        functionDigitRow.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+        val color = skinToken(skin.functionGlyph, R.color.text_primary)
+        for (i in 0 until functionDigitRow.childCount) {
+            (functionDigitRow.getChildAt(i) as? TextView)?.setTextColor(color)
+        }
     }
 
     /**
@@ -5335,11 +5340,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val PASSWORD_DIGIT_TEXT_SP = 18f
 
         /**
-         * 候选栏第二行（双行档专用）的固定数字排：按数字本身排列，1 在左、0 在右。
-         *
-         * 与密码条 [PASSWORD_DIGIT_ORDER] 刻意不同：这里用户是在连续挑数字，不是抢两端最常用的键。
+         * 功能面板下方固定数字行的字号（sp）：与功能按钮主标同值，两行视觉上同一档。
+         * 改这里必须同步 [buildFunctionButton] 里的主标 `textSize`。
          */
-        const val CANDIDATE_DIGIT_KEYS = "1234567890"
+        const val FUNCTION_DIGIT_TEXT_SP = 13f
+
+        /** 功能面板下方固定数字行的排列：自然序（用户是在连续挑数字，不抢两端常用键） */
+        const val FUNCTION_DIGIT_KEYS = "1234567890"
 
         /**
          * 底部逗号 / 句号键的字号（sp）＝同排功能键基础字号 13sp（`SettingsButton` 样式）+ 3（用户指定）。
