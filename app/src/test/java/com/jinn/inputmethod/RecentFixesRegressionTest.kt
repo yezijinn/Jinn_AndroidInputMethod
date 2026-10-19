@@ -6278,4 +6278,47 @@ class RecentFixesRegressionTest {
         }
     }
 
+
+    /**
+     * 「导出全部图片」的进程级互斥必须内置在 [startExport] 那一侧。
+     *
+     * 2026-10-19 修：原先 CAS 只放在 `exportAllImages`，而无记忆目录时那条路径会
+     * `EXPORTING.set(false)` 再弹系统选择器，用户选完目录由 launcher 回调**直接进
+     * startExport** —— 那条路径从来没置过位，整个导出期间标记都是 false ⇒ 旋转后新实例
+     * 再点一次就能并发起第二趟（同名文件被 SAF 改名成重复件、两个进度框、
+     * 先完成者把 exportDlg 置 null）。
+     *
+     * 同时钉两件事：① 置位点在 startExport 内；② 任务体那一层必须有 finally 还标记
+     * （BackgroundIo.wrapped 只记日志不上抛，中途抛异常会静默跳过 runOnUiThread 里那句
+     * set(false) ⇒ 停在 true，这个进程再也导不出图片）。
+     */
+    @Test
+    fun 图片导出互斥必须内置在startExport() {
+        val src = TestSources.codeSource("ClipboardHistoryActivity.kt")
+
+        // ① 置位点在 startExport 内
+        val body = TestSources.blockAfter(src, "private fun startExport(treeUri: Uri)")
+        assertTrue(
+            "startExport 开头必须 CAS 置位（无记忆目录的路径也走它）",
+            "if (!EXPORTING.compareAndSet(false, true))" in body.substringBefore("BackgroundIo.runLong"),
+        )
+
+        // ② 任务体那一层必须有 finally 还标记
+        assertTrue(
+            "任务体必须有 finally 还标记（异常路径也要还，否则永久锁死）",
+            "} finally {" in body,
+        )
+        assertTrue(
+            "finally 里必须还 EXPORTING",
+            "runOnUiThread { EXPORTING.set(false) }" in body,
+        )
+
+        // ③ 用户取消选目录必须还标记（否则本进程再也导不出）
+        val launcher = TestSources.blockAfter(src, "private val exportDirLauncher")
+        assertTrue(
+            "取消选目录必须还回标记",
+            "if (uri == null)" in launcher && "EXPORTING.set(false)" in launcher,
+        )
+    }
+
 }

@@ -92,7 +92,13 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private val exportDirLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        if (uri == null) return@registerForActivityResult
+        if (uri == null) {
+            // 用户取消选目录：把 exportAllImages 置的位还回去。
+            // 不还的话这个进程（乃至重启前）再也导不出图片 —— 标记停在 true，
+            // 而 startExport 的 CAS 永远抢不到。
+            EXPORTING.set(false)
+            return@registerForActivityResult
+        }
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val granted = runCatching { contentResolver.takePersistableUriPermission(uri, flags) }.isSuccess
         if (!granted) {
@@ -1365,7 +1371,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
      * 「导出中」**—— 否则用户再点一次会被答复「正在导出图片…」，而其实只是在等他选目录。
      */
     private fun exportAllImages() {
-        if (!EXPORTING.compareAndSet(false, true)) {
+        // 这一层只是「提前挡一下」：真正的互斥在 startExport 开头（见那里的说明）。
+        // 用 get 而不是 CAS —— 选目录阶段要把标记留着，等用户选完由 startExport 置位。
+        if (EXPORTING.get()) {
             // 已有导出在跑（可能是重建前的实例发起的，BUG.md L-1297）：给一句反馈，不静默忽略
             message(TEXT_IMAGE_EXPORTING)
             return
@@ -1373,7 +1381,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val remembered = Prefs(this).clipExportTreeUri
         val uri = if (remembered.isEmpty()) null else runCatching { Uri.parse(remembered) }.getOrNull()
         if (uri == null || uri.scheme.isNullOrEmpty()) {
-            EXPORTING.set(false)
+            // 置位后再弹选择器：用户选目录期间不算「导出中」，但旋转/重新进入不能让人
+            // 再点一次就起两趟。startExport 里的 CAS 会认这个已置位的标记。
+            EXPORTING.set(true)
             pickExportDir()
             return
         }
@@ -1396,6 +1406,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
      * 「图片都坏了」。第一张就写不进 ⇒ 中止、清掉记住的目录、请用户重选 —— 此时一个文件都没写进去。
      */
     private fun startExport(treeUri: Uri) {
+        // ⚠ 互斥必须放在**这里**，不能只放在 exportAllImages：无记忆目录时那条路径会
+        // `EXPORTING.set(false)` 再弹系统选择器（等待选目录不算「导出中」是对的），
+        // 而用户选完目录是由 launcher 回调直接进本函数的 —— 那条路径从来没置过位，
+        // 整个导出期间标记都是 false ⇒ 旋转后新实例再点一次就能并发起第二趟
+        // （同名文件被 SAF 改名成重复件、两个进度框、先完成者把 exportDlg 置 null）。
+        if (!EXPORTING.compareAndSet(false, true)) {
+            message(TEXT_IMAGE_EXPORTING)
+            return
+        }
         val dlg = AlertDialog.Builder(this)
             .setMessage(TEXT_IMAGE_EXPORTING)
             .setCancelable(false)
@@ -1403,6 +1422,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         exportDlg = dlg
         dlg.show()
         BackgroundIo.runLong {
+          try {
             var ok = 0
             var fail = 0
             var attempts = 0
@@ -1452,6 +1472,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     else -> showExportReceipt(ok, fail, path)
                 }
             }
+          } finally {
+            // 标记必须在**任务体这一层**还：BackgroundIo.wrapped 只记日志不上抛，
+            // 中途抛异常会静默跳过 runOnUiThread 里那句 set(false) ⇒ 停在 true，
+            // 这个进程（乃至重启前）再也导不出图片（startExport 的 CAS 永远抢不到）。
+            runOnUiThread { EXPORTING.set(false) }
+          }
         }
     }
 

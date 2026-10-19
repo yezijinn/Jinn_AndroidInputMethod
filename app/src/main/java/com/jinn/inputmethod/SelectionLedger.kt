@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import java.io.File
+import java.io.RandomAccessFile
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -48,6 +49,9 @@ object SelectionLedger {
      */
     @Volatile
     private var generation = 0
+
+    /** `\n` 的字节值：[truncateTrailingPartialLine] 按字节回找行尾用 */
+    private const val NL_BYTE = '\n'.code.toByte()
 
     /** 绑定应用私有目录并下发开关（多次调用幂等；换 context 后重绑） */
     fun init(context: Context, enabled: Boolean) {
@@ -160,6 +164,11 @@ object SelectionLedger {
         if (queue.isEmpty()) return
         runCatching {
             file.parentFile?.mkdirs()
+            // 先截掉上一次可能留下的残行（掉电 / 进程在 write 中途被杀）：行与行之间没有任何
+            // 帧标记，残行会与下一次追加的首行**拼成一条完整行**，而 parse 只丢弃「末尾没有 \n」
+            // 的那一段 —— 拼上之后它就有了 \n，会被当成真数据解析出脏词（2026-10-19 修）。
+            // 补一个 "\n" 是错的：那会把残行原样留成一条完整行。必须按字节截断。
+            truncateTrailingPartialLine(file)
             FileOutputStream(file, true).use { out ->
                 while (true) {
                     val line = queue.poll() ?: break
@@ -171,6 +180,37 @@ object SelectionLedger {
             // 写失败不能拖累输入：丢掉这一批并留痕（文件是「只增」的，重试会把顺序打乱）
             queue.clear()
             Diagnostics.w(TAG, "台账写入失败: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * 截掉文件末尾的残行（最后一个 `\n` 之后的内容）。
+     *
+     * 只在「确实有残行」时才动文件：正常路径下文件以 `\n` 结尾，这里是零写入的快检查，
+     * 不会给每次追加都加一次随机写。
+     */
+    internal fun truncateTrailingPartialLine(file: File) {
+        if (!file.isFile || file.length() == 0L) return
+        RandomAccessFile(file, "rw").use { raf ->
+            val len = raf.length()
+            // 从尾部往回找最后一个 \n（上限 64KB：残行再长也不该超过一行合理长度）
+            val window = minOf(len, 64L * 1024)
+            val buf = ByteArray(window.toInt())
+            raf.seek(len - window)
+            raf.readFully(buf)
+            var cut = -1
+            for (i in buf.indices.reversed()) {
+                if (buf[i] == NL_BYTE) {
+                    cut = i
+                    break
+                }
+            }
+            // 整个窗口都没有 \n ⇒ 这个文件本身就是一条残行（或首行就没写完整），整体清掉
+            val keep = if (cut < 0) len - window else len - window + cut + 1
+            if (keep < len) {
+                raf.setLength(keep)
+                Diagnostics.w(TAG, "台账截掉残行: ${len - keep} 字节（上次写入中断）")
+            }
         }
     }
 

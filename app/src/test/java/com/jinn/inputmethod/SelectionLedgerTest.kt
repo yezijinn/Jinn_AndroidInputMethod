@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -160,4 +161,76 @@ class SelectionLedgerTest {
         assertTrue("备份规则要排除台账", "user_picks.txt" in backup)
         assertEquals("云备份与设备迁移两段都要排除", 2, Regex("user_picks\\.txt").findAll(extract).count())
     }
+
+    /**
+     * 残行必须被截掉，而不是留给下一次追加去拼。
+     *
+     * 背景（2026-10-19）：写入是 FileOutputStream(append) + 逐行 write(line + "\n")，
+     * 行与行之间没有任何帧标记。若某次写入中断（掉电 / 进程在 syscall 中途被杀），文件末尾
+     * 会留下没有换行的半行；而 parse 只丢弃「末尾没有换行」的那一段 —— 一旦下一次追加把
+     * 半行补成了完整行，它就会被当成真数据解析出一个拼接脏词。
+     */
+    @Test
+    fun `残行_截断后不与后续追加拼接`() {
+        val f = File.createTempFile("ledger", ".txt")
+        try {
+            // 一条完整行 + 一条半行（模拟写入中断）
+            f.writeText("你好\tni hao\n你", Charsets.UTF_8)
+            SelectionLedger.truncateTrailingPartialLine(f)
+            // 半行必须消失，且不留多余字节
+            assertEquals("你好\tni hao\n", f.readText(Charsets.UTF_8))
+
+            // 之后再追加一行，不能与残行拼成脏词
+            f.appendText("好\tni hao\n", Charsets.UTF_8)
+            val parsed = SelectionLedger.parse(f.readText(Charsets.UTF_8))
+            assertEquals(2, parsed.size)
+            assertEquals("你好" to "ni hao", parsed[0])
+            assertEquals("好" to "ni hao", parsed[1])
+            // 关键不变式：绝不能出现「你」与「好」被残行拼成的脏词
+            assertTrue(parsed.none { it.first == "你好" && it.second == "hao" })
+        } finally {
+            f.delete()
+        }
+    }
+
+    /** 正常文件（以换行结尾）不该被改动：截断是零写入的快检查 */
+    @Test
+    fun `完整文件_截断不动`() {
+        val f = File.createTempFile("ledger", ".txt")
+        try {
+            val good = "甲\tjia\n乙\tyi\n"
+            f.writeText(good, Charsets.UTF_8)
+            SelectionLedger.truncateTrailingPartialLine(f)
+            assertEquals(good, f.readText(Charsets.UTF_8))
+        } finally {
+            f.delete()
+        }
+    }
+
+    /** 整个文件都没有换行（首行就没写完整）⇒ 整体清掉，不留半行 */
+    @Test
+    fun `无换行文件_整体清掉`() {
+        val f = File.createTempFile("ledger", ".txt")
+        try {
+            f.writeText("半行", Charsets.UTF_8)
+            SelectionLedger.truncateTrailingPartialLine(f)
+            assertEquals("", f.readText(Charsets.UTF_8))
+        } finally {
+            f.delete()
+        }
+    }
+
+    /** 空文件 / 不存在的文件不能抛（flush 在冷启动就会走到） */
+    @Test
+    fun `空文件与缺失文件_截断不抛`() {
+        val f = File.createTempFile("ledger", ".txt")
+        try {
+            assertEquals(0L, f.length())
+            SelectionLedger.truncateTrailingPartialLine(f)
+            SelectionLedger.truncateTrailingPartialLine(File(f.absolutePath + ".nope"))
+        } finally {
+            f.delete()
+        }
+    }
+
 }
