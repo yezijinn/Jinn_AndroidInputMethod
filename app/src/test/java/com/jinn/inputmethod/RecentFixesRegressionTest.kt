@@ -5787,6 +5787,17 @@ class RecentFixesRegressionTest {
             "candidateExpandRotationAnimator" in settleBody,
         )
 
+        // 补间收尾必须**复用**起跳前排数，不能在收尾那一刻重算：
+        // `expandedRowsFor` 读的是视图高度，而收尾时视图已到终值 ⇒ 矮屏 / 大字号下
+        // 「可用高度」可能刚好跨过一档，网格在补间最后一帧整排跳一次
+        // （实测 42sp + fontScale 1.3：3 排 → 4 排，单帧 +229px）。
+        // 判据必须是 `expandedRowsCached > 0`，不能用 `candidateHeightAnimator != null` ——
+        // `finishCandidateTween` 先把动画器置 null 再刷新，用后者会在收尾那刻漏掉。
+        assertTrue(
+            "补间收尾必须复用起跳前排数（判据用缓存而非动画器非空）",
+            "if (expandedRowsCached > 0) {" in src,
+        )
+
         // 反转续点（2026-10-20）：补间在途再点一次时，settle 会撤掉旋转补间并置 null，
         // 此后 refreshCandidateBar 的「补间在途不写角度」守卫失效 ⇒ 它按**旧**意图态把角写回终点。
         // 实测表现 rot 36.6° → 180° 一帧瞬移（观感「箭头先弹到终点再转回来」）。

@@ -3282,10 +3282,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateRowsScroll.expanded = candidateRenderExpanded
         // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档
         // 且候选多到需要展开时才出现 —— 候选不满一行时给个死按钮是噪音。
-        // ⚠ 补间期间复用起跳前算好的排数：[expandedRowsFor] 读的是**视图高度**，补间中拿到的是
-        // 中途值；矮屏 / 大字号下「可用高度」正是夹取瓶颈，会让网格中途改列数整排一次、终点再排一次。
+        // ⚠ 补间期间与**补间收尾**都复用起跳前算好的排数：[expandedRowsFor] 读的是**视图高度**，
+        // 而补间过程中视图高度在变（补间结束那一刻已到终值）。若在收尾时重算，矮屏 / 大字号下
+        // 「可用高度」这个夹取瓶颈可能刚好跨过一档 ⇒ 网格在补间最后一帧整排跳一次
+        // （实测 42sp + 系统字体 1.3：3 排 → 4 排，单帧 +229px，2026-10-20 修）。
+        // 判据用 `expandedRowsCached > 0` 而不是 `candidateHeightAnimator != null`：
+        // `finishCandidateTween` 先把动画器置 null 再刷新，用后者会在收尾那一刻漏掉。
         val rows = if (candidateRenderExpanded) {
-            if (candidateHeightAnimator != null && expandedRowsCached > 0) {
+            if (expandedRowsCached > 0) {
                 expandedRowsCached
             } else {
                 expandedRowsFor(lastCandidates.size, candidateSp, pinyinSp, pinyinGap)
