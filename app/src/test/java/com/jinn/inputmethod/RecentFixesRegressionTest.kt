@@ -6166,8 +6166,17 @@ class RecentFixesRegressionTest {
             "if (visible && !canFitFunctionDigitRow())" in src,
         )
         assertTrue(
-            "判据必须是按钮行最小高 + 数字行行框 ≤ 栏高",
-            "reuseBlockMinPx() + digitRowPx <= barHeight" in src,
+            "判据必须是「栏高减去数字行后，按钮行还剩得下可点高度」",
+            "barHeight - functionDigitRowPx() >= dp(FUNCTION_BUTTON_MIN_TOUCH_DP)" in src,
+        )
+        // 按钮行最小高必须能按形态收缩：不收缩的话数字行可见时它会把数字行整行挤出栏外
+        assertTrue(
+            "按钮行最小高必须随数字行显隐收缩",
+            "private fun functionButtonMinPx(digitRowVisible: Boolean = false): Int" in src,
+        )
+        assertTrue(
+            "切显隐时必须同步下发按钮行最小高",
+            "syncFunctionButtonMinHeight(visible)" in src,
         )
 
         // ⑤ XML 不得再用 weight 平分（那是单行档溢出的根因）

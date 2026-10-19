@@ -4199,8 +4199,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             setPadding(dp(8), dp(4), dp(8), dp(4))
             // key_bg 同款（10dp 圆角），但填充色带面 alpha，功能面板按钮占满候选栏
             background = xmlKeyBackground()
-            // 高度取「内容」与复用块最小高度的较大者（见 reuseBlockMinPx 的说明）
-            minimumHeight = reuseBlockMinPx()
+            // 高度取「内容」与复用块最小高度的较大者（见 reuseBlockMinPx 的说明）。
+            // ⚠ 数字行可见时这个最小高会**把数字行挤出栏外**（两行共处滚动容器内容，
+            // 父给子项的高度是 UNSPECIFIED）：那时按钮按「栏高 − 数字行」收，
+            // 由 [setFunctionDigitRowVisible] 在切显隐时统一下发，这里只给初值。
+            minimumHeight = functionButtonMinPx()
             isClickable = true
             isFocusable = true
             // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
@@ -4295,7 +4298,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 建功能按钮行下方的固定数字行（1..0）—— **只在 init 建一次**，之后只切显隐。
      *
      * 为什么在代码里建：10 个键的属性完全同构（等宽权重 + 同一字号 / 字色），写进 XML 就是十份重复；
-     * 而字色还要跟皮肤、字号跟功能按钮主标（13sp）走，集中在这里一处下发才不会两处分叉。
+     * 而字色还要跟皮肤走，集中在这里一处下发才不会两处分叉。字号取 [FUNCTION_DIGIT_TEXT_SP]。
      *
      * 点击 = 直接上屏：面板态本就没有 composing（见 [refreshCandidateBar] 的空输入分支），
      * 搜索态不显示本行，故与 26 键数字层的「先确定拼音再上屏」无关；声音与数字层同组
@@ -4347,9 +4350,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (visible && !canFitFunctionDigitRow()) {
             // 放不下：收回 GONE。weight 不参与分配 ⇒ 按钮行独占整栏，与没有这一行时一致
             functionDigitRow.visibility = View.GONE
+            syncFunctionButtonMinHeight(false)
             return
         }
         functionDigitRow.visibility = if (visible) View.VISIBLE else View.GONE
+        syncFunctionButtonMinHeight(visible)
         if (!visible) return
         val color = skinToken(skin.functionGlyph, R.color.text_primary)
         for (i in 0 until functionDigitRow.childCount) {
@@ -4358,12 +4363,55 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * 把「按钮行最小高」同步成当前形态该有的值，并让候选栏重排。
+     *
+     * 为什么必须做：按钮的 `minimumHeight` 初值是整栏高（[reuseBlockMinPx]），而两行共处
+     * 横向滚动容器的内容里、父给子项高度是 UNSPECIFIED ⇒ 数字行 VISIBLE 时这个最小高会
+     * 把它整行挤出栏外（用户看到「数字行不见了」）。数字行要占的那一份只能从按钮这里让。
+     *
+     * 遍历 [viewCandidateList] 的**直接子 View**：功能按钮与动作排 / 密码条 / 符号分组的
+     * 复用块都挂在这一层，而数字行可见只发生在功能面板态，此时容器里正是功能按钮。
+     */
+    private fun syncFunctionButtonMinHeight(digitRowVisible: Boolean) {
+        val min = functionButtonMinPx(digitRowVisible)
+        for (i in 0 until viewCandidateList.childCount) {
+            viewCandidateList.getChildAt(i).minimumHeight = min
+        }
+    }
+
+    /**
+     * 按钮行最小高：数字行不可见时占满整栏；可见时让出「栏高 − 数字行」那一份。
+     *
+     * 让不出（栏高 − 数字行 ≤ 0）时返回 0 —— 那种情况 [canFitFunctionDigitRow] 已经不会
+     * 显示数字行，这里只是防御性兜底。
+     */
+    private fun functionButtonMinPx(digitRowVisible: Boolean = false): Int {
+        if (!digitRowVisible) return reuseBlockMinPx()
+        val barHeight = candidateBar.height.takeIf { it > 0 }
+            ?: CandidateRows.barHeightPx(
+                currentRows, resources.displayMetrics.density,
+                resources.configuration.fontScale,
+                currentCandidateSp, currentPinyinSp, currentPinyinGapDp,
+            )
+        return (barHeight - functionDigitRowPx()).coerceAtLeast(0)
+    }
+
+    /** 数字行自身行框高（px）：字号 × TextView 默认行距 + 上下各 2dp 内边距 */
+    private fun functionDigitRowPx(): Int {
+        val dm = resources.displayMetrics
+        return (FUNCTION_DIGIT_TEXT_SP * resources.configuration.fontScale * 1.2f * dm.scaledDensity)
+            .toInt() + dp(4)
+    }
+
+    /**
      * 栏高是否容得下「功能按钮行 + 数字行」。
      *
-     * 按钮行的最小高就是 [reuseBlockMinPx]（单行档整栏高，见 [buildFunctionButton] 的
-     * `minimumHeight`）；数字行按自身行框算（13sp × 行距 × fontScale）。
-     * 两者之和 ≤ 栏高才显示 —— 这是**几何判据**，与档位、字号、系统字体缩放都挂钩，
-     * 所以不写成「只准双行档」那种拍脑袋条件。
+     * 按钮行的最小高会按形态收缩（见 [functionButtonMinPx]：数字行可见时让出
+     * 「栏高 − 数字行」），所以这里只要求**按钮行还剩得下一个可点的高度**：
+     * 小于 [FUNCTION_BUTTON_MIN_TOUCH_DP] 就不显示数字行 —— 那种栏高下两行都塞不下，
+     * 硬塞会把按钮压成一条无法点击的细条（单行档 46dp 正是这种）。
+     *
+     * 判据是几何量（栏高 / 字号 / 系统字体缩放都挂钩），不写成「只准某档位」的拍脑袋条件。
      */
     private fun canFitFunctionDigitRow(): Boolean {
         val dm = resources.displayMetrics
@@ -4376,9 +4424,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 currentCandidateSp, currentPinyinSp, currentPinyinGapDp,
             )
         if (barHeight <= 0) return false
-        // 数字行行框：字号 × 1.2（TextView 默认行距）+ 上下各 2dp 内边距
-        val digitRowPx = (FUNCTION_DIGIT_TEXT_SP * fontScale * 1.2f * dm.scaledDensity).toInt() + dp(4)
-        return reuseBlockMinPx() + digitRowPx <= barHeight
+        return barHeight - functionDigitRowPx() >= dp(FUNCTION_BUTTON_MIN_TOUCH_DP)
     }
 
     /**
@@ -5383,10 +5429,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val PASSWORD_DIGIT_TEXT_SP = 18f
 
         /**
-         * 功能面板下方固定数字行的字号（sp）：与功能按钮主标同值，两行视觉上同一档。
-         * 改这里必须同步 [buildFunctionButton] 里的主标 `textSize`。
+         * 功能面板下方固定数字行的字号（sp）。
+         *
+         * 2026-10-19 按用户要求「数字的字号太小了，尽量放大」从 13sp 调到 30sp。
+         * 30sp 是**真机实测的上限**（PACM00 / 双行档 74dp 栏高 / fontScale 1.0）：
+         * 30sp 能显示且按钮行仍完整可用，40sp 会被 [canFitFunctionDigitRow] 判为放不下
+         * ⇒ 整行不显示。想再大必须先给数字行腾高度（例如允许面板态键盘增高），
+         * 那不是字号问题，别在这里加数。
          */
-        const val FUNCTION_DIGIT_TEXT_SP = 13f
+        const val FUNCTION_DIGIT_TEXT_SP = 30f
+
+        /**
+         * 数字行可见时，按钮行至少还要剩这么多 dp（可点下限）。
+         *
+         * 小于这个值就不显示数字行：两行都塞不下时硬塞，会把功能按钮压成一条点不到的细条，
+         * 比「少一行数字」糟得多。单行档（46dp）正是被这条挡掉的。
+         */
+        const val FUNCTION_BUTTON_MIN_TOUCH_DP = 24
 
         /** 功能面板下方固定数字行的排列：自然序（用户是在连续挑数字，不抢两端常用键） */
         const val FUNCTION_DIGIT_KEYS = "1234567890"
