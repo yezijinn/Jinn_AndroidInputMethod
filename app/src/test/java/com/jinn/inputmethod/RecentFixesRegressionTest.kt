@@ -5758,120 +5758,44 @@ class RecentFixesRegressionTest {
     fun `候选展开收起必须一次到位`() {
         val src = codeOf("PinyinKeyboardView.kt")
         assertTrue(
-            "状态翻完后由同一次刷新落内容（栏高随后补间）",
+            "状态翻完后由同一次刷新落内容与栏高",
             "candidatesExpanded = expand" in src && "refreshCandidateBar()" in src,
         )
+        // 收起 = 幂等 + 当场翻意图态；没有第二处要复位的渲染态
         assertTrue(
-            "收起先落定高度、再翻状态（绝不把补间带进新形态）",
-            Regex("private fun collapseCandidates\\(animated: Boolean = false\\) \\{\\s*"
-                + "if \\(!candidatesExpanded\\) return\\s*settleCandidateHeight\\(\\)")
+            "收起必须幂等且当场翻意图态",
+            Regex("private fun collapseCandidates\\(\\) \\{\\s*"
+                + "if \\(!candidatesExpanded\\) return\\s*candidatesExpanded = false")
                 .containsMatchIn(src),
         )
-        // 只补**栏高**一个量：不淡入淡出、不加「过渡期跳过」守卫
+        // 0 帧硬约束（作者 2026-10-20）：整套补间机制不得回来
+        assertFalse("不得再有栏高补间", "ValueAnimator" in src)
+        assertFalse("不得再有补间时长常量", "CANDIDATE_TWEEN_MS" in src)
+        assertFalse("不得再用整体平移伪装栏高变化", "translationY" in src)
+        assertFalse("不得再有三角旋转补间", "tweenExpandButton" in src)
+        assertFalse("不得再有渲染态 / 意图态双轨", "candidateRenderExpanded" in src)
+        assertFalse("不得再等窗口就位", "OnPreDrawListener" in src)
         assertFalse("不得再给候选区做淡入淡出", "candidateScroll.alpha" in src)
         assertFalse("不得再有过渡期守卫", "candidateAnimating" in src)
-        // 三角朝向必须与栏高同起同落（2026-10-19）：以前是 `rotation = 0f / 180f` 直接赋值，
-        // 栏高在柔和地长、箭头却一帧翻过去 —— 用户说的「按钮动画突兀」正是这个错位。
-        // 现在由 tweenExpandButton 用同一条时长与曲线补间，且刷新期间不得再写角度（会打断动画）。
-        assertTrue("三角朝向必须补间", "private fun tweenExpandButton(expanded: Boolean)" in src)
-        // 按函数体各钉一次，而不是数全文出现次数：
-        // 只钉三角那侧（ofFloat）时，把栏高那侧（ofInt）的 setDuration 改成 120L 会**全绿**
-        // （实测过这个洞）。两条补间必须各自被钉住。
-        val heightBody = TestSources.blockAfter(src, "private fun startCandidateHeightTween(targetRows: Int)")
+        // 栏高只有一个写入者，且一次写终值
         assertTrue(
-            "栏高补间必须用 CANDIDATE_TWEEN_MS",
-            "ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)" in heightBody,
+            "栏高只在 applyCandidateRows 里写终值",
+            "if (lp.height != barHeight) {" in src && "lp.height = barHeight" in src,
         )
-        assertTrue(
-            "栏高补间必须用共用的曲线实例",
-            "animator.interpolator = candidateTweenInterpolator" in heightBody,
-        )
-        val rotBody = TestSources.blockAfter(src, "private fun tweenExpandButton(expanded: Boolean)")
-        assertTrue(
-            "三角补间必须用 CANDIDATE_TWEEN_MS",
-            "ValueAnimator.ofFloat(from, target).setDuration(CANDIDATE_TWEEN_MS)" in rotBody,
-        )
-        assertTrue(
-            "三角补间必须用共用的曲线实例",
-            "animator.interpolator = candidateTweenInterpolator" in rotBody,
-        )
-        // 落定必须同时撤掉旋转补间：只撤栏高的话，三角会继续朝旧终值转（实测删掉这三行仍全绿）
-        val settleBody = TestSources.blockAfter(src, "private fun settleCandidateHeight()")
-        assertTrue(
-            "落定必须同撤旋转补间",
-            "candidateExpandRotationAnimator" in settleBody,
-        )
-
-        // 补间收尾必须**复用**起跳前排数，不能在收尾那一刻重算：
-        // `expandedRowsFor` 读的是视图高度，而收尾时视图已到终值 ⇒ 矮屏 / 大字号下
-        // 「可用高度」可能刚好跨过一档，网格在补间最后一帧整排跳一次
-        // （实测 42sp + fontScale 1.3：3 排 → 4 排，单帧 +229px）。
-        // 判据必须是 `expandedRowsCached > 0`，不能用 `candidateHeightAnimator != null` ——
-        // `finishCandidateTween` 先把动画器置 null 再刷新，用后者会在收尾那刻漏掉。
-        assertTrue(
-            "补间收尾必须复用起跳前排数（判据用缓存而非动画器非空）",
-            "if (expandedRowsCached > 0) {" in src,
-        )
-
-        // 反转续点（2026-10-20）：补间在途再点一次时，settle 会撤掉旋转补间并置 null，
-        // 此后 refreshCandidateBar 的「补间在途不写角度」守卫失效 ⇒ 它按**旧**意图态把角写回终点。
-        // 实测表现 rot 36.6° → 180° 一帧瞬移（观感「箭头先弹到终点再转回来」）。
-        // 硬约束：捕获在 settle **之前**，复位在 settle **之后**、tweenExpandButton 之前。
-        val toggleBody = TestSources.blockAfter(src, "private fun toggleCandidateExpanded()")
-        // 用「出现顺序」判定，不用跨行正则：中间夹注释/空行时正则极易失配（本轮踩过）
-        val iCapture = toggleBody.indexOf("val rotFrom = btnExpandCandidates.rotation")
-        val iSettle = toggleBody.indexOf("settleCandidateHeight()")
-        val iRestore = toggleBody.indexOf("btnExpandCandidates.rotation = rotFrom")
-        assertTrue("反转续点必须捕获三角中途角", iCapture >= 0)
-        assertTrue("toggle 开头必须落定", iSettle >= 0)
-        assertTrue("落定后必须把三角角度复位（否则瞬移到旧终点）", iRestore >= 0)
-        assertTrue("捕获必须在 settle 之前", iCapture < iSettle)
-        assertTrue("复位必须在 settle 之后", iRestore > iSettle)
-        // 曲线必须**共用同一个实例**：各建一份就可能一条缓一条线。实测 DecelerateInterpolator(1.6f)
-        // 的指数是 2×factor=3.2，首帧就吃掉 93% 行程 ⇒ 观感等同硬切。这里钉住两处引用同一字段。
-        assertEquals(
-            "两处补间必须共用同一条曲线实例",
-            2,
-            Regex("animator\\.interpolator = candidateTweenInterpolator").findAll(src).count(),
-        )
-        assertTrue(
-            "曲线必须是线性（11~12 次等间隔采样下最大单帧步长最小，见字段处实测表）",
-            "private val candidateTweenInterpolator = android.view.animation.LinearInterpolator()" in src,
-        )
-        assertFalse("不得再各自新建缓出曲线", "DecelerateInterpolator" in src)
-        assertTrue(
-            "补间期间刷新不得抢写角度",
-            "if (candidateExpandRotationAnimator == null) {" in src,
-        )
-        // ⚠ 顺序是硬约束：refreshCandidateBar 开头会按意图态对齐角度（补间在途才跳过），
-        // 所以它若在补间之前跑，角度已被写到终值 ⇒ 旋转补间变成 target→target 空转。
-        assertTrue(
-            "三角必须先于同帧那次 refresh 起补间",
-            Regex("tweenExpandButton\\(expand\\)\\s*(?://[^\\n]*\\n\\s*)*refreshCandidateBar\\(\\)")
-                .containsMatchIn(src),
-        )
-        // 也不能再留一处「补间之后」的重复调用（重复起步=第二次被 cancel 重来，中途会抖）
-        assertEquals("三角补间只起步一次", 1, Regex("tweenExpandButton\\(expand\\)").findAll(src).count())
-        // 时长按实测取 180ms；⚠ 下面这行历史的「每帧 24px」是**请求值**口径（数 TWEEN 行），
-        // 落地帧只有 4 帧、末尾一跳 109px —— 真正修掉它的不是时长而是「补间期窗口总高恒定」，
-        // 见常量处注释。判据已改为「落地帧数与步长」，别再拿 TWEEN 行数当帧数。
-        assertTrue("补间时长取实测值 180ms", "CANDIDATE_TWEEN_MS = 180L" in src)
-        assertTrue(
-            "补间期间栏高只由动画器写（旧版「只跑 1 帧」的根因）",
-            "candidateHeightAnimator == null && lp.height != barHeight" in src,
-        )
-        // 三角方向仍由刷新统一对齐：符号层 / 密码层分支会早退，走不到 updateExpandButton
+        assertEquals("栏高写入点必须唯一", 1, Regex("lp\\.height = barHeight").findAll(src).count())
+        // 展开排数在一次展开会话内固定
+        assertTrue("展开排数必须复用缓存", "if (expandedRowsCached > 0) {" in src)
+        // 三角方向由刷新统一对齐，且只有一处写
         assertTrue(
             "层切换早退前必须复位三角",
             "btnExpandCandidates.rotation = if (candidatesExpanded) 180f else 0f" in src,
         )
-        // 三角显隐读 lastCandidates：首帧那次调用还在候选集落定之前（读到空表）⇒ 晚一次按键才出现
+        assertEquals("三角角度写入点必须唯一", 1, Regex("btnExpandCandidates\\.rotation\\s*=").findAll(src).count())
         assertTrue(
             "候选集落定后必须重判三角",
             src.indexOf("lastCandidates = result.candidates") <
                 src.lastIndexOf("updateExpandButton(rowsSetting)"),
         )
-        // 候选选完（空输入 / 候选集为空）必须收起并重落栏高：只翻标志会留一块空白高栏
         val relayoutCalls = Regex("collapseCandidatesAndRelayout\\(").findAll(src).count()
         assertTrue("收起后必须重落栏高（定义 + 空输入 + 候选集为空）", relayoutCalls >= 3)
         assertTrue(
@@ -5884,12 +5808,6 @@ class RecentFixesRegressionTest {
         )
     }
 
-    /**
-     * L-1060：选图入库必须**头部嗅探优先于声明**，并拒收名实不符的非图片字节。
-     *
-     * SAF 源常按扩展名报类型（改名文件同理），声明是图片类型与内容是什么之间原本没有
-     * 任何核对 ⇒ 任意二进制都能以「图片」名义被交给收到即发的宿主（Telegram 类），不可逆。
-     */
     @Test
     fun `选图必须按字节核对类型`() {
         val src = codeOf("GalleryInsert.kt")
@@ -6311,22 +6229,6 @@ class RecentFixesRegressionTest {
                 "addView(build(text), itemLp)" in single,
         )
 
-        // ⑤ 三角补间取消必须先摘引用再 cancel（源码形态守卫，非行为守卫）：
-        // cancel() 会同步派发 onAnimationEnd，字段若仍指向旧实例，身份守卫放行、
-        // 旧监听把 rotation 写回旧 target（闭包捕获旧调用的局部 val）⇒ 观感
-        // 「先弹到旧终点再整段转回来」。同文件 onDetachedFromWindow 已把这条
-        // 顺序写成硬约定，本处曾写反。当前不可达（settle 先摘 + wouldGrow 排除
-        // from == to），行为层测不出来，故只钉形态。
-        val rotBody = TestSources.blockAfter(src, "private fun tweenExpandButton(expanded: Boolean)")
-        val iNull = rotBody.indexOf("candidateExpandRotationAnimator = null")
-        val iCancel = rotBody.indexOf(".cancel()")
-        assertTrue("取不到旋转补间置空语句", iNull >= 0)
-        assertTrue("取不到旋转补间取消语句", iCancel >= 0)
-        assertTrue(
-            "三角补间取消必须先置 null 再 cancel（cancel 同步回调 onAnimationEnd）",
-            iNull < iCancel,
-        )
-
         // ⑥ 展开排数缓存只在展开方向重算：收起补间渲染的仍是展开态几何，
         // 此刻重算读到的是在途视图高度（expandedRowsFor 读 this.height，
         // settle 只改 lp.height）⇒ 大字号下可能少算一排、补间首帧网格重排。
@@ -6338,32 +6240,10 @@ class RecentFixesRegressionTest {
                 toggleBody.indexOf("if (expand) {"),
         )
 
-        // ⑦ 钉窗前必须把栏高写回起跳高：refreshCandidateBar 已把 lp 写成目标高，
-        // 若直接钉窗，窗口内会画出「目标栏高 + 起跳平移」的错配 —— 多出的高度被推出
-        // 根布局下沿，底部功能行整条被裁，直到动画器起表才纠正（每次展开必现）。
-        val tween = TestSources.blockAfter(src, "private fun startCandidateHeightTween(")
-        assertTrue(
-            "钉窗前必须把候选栏高写回起跳高",
-            "p.height = from" in tween,
-        )
-        // ⑧ restH 不得由根高反推：钉住期根高恒为 winH，反转（补间在途再点）时
-        // settleCandidateHeight 只改 lp 不触发布局 ⇒ 根高还是旧钉高 ⇒ 平移量偏大，
-        // 键盘整体上浮、底部露背板条，收尾再弹回。
-        assertTrue(
-            "restH 必须由子视图高之和得出（不得由根高反推）",
-            "rootView.childCount" in tween &&
-                "rootView.height - from" !in tween,
-        )
-        // ⑨ 会话边界要有统一收尾：补间「只建未 start」时没有 onAnimationEnd 会来，
-        // 钉住的高与平移会跨会话留在复用不 detach 的 inputView 上。
-        assertTrue(
-            "必须有会话边界的统一收尾入口",
-            "fun resetTransientGeometry()" in src,
-        )
-        assertTrue(
-            "onFinishInputView 必须调用 resetTransientGeometry",
-            codeOf("JinnIme.kt").contains("pinyinKeyboard?.resetTransientGeometry()"),
-        )
+        // 补间时代的三件套一律不许回来（0 帧硬约束，作者 2026-10-20）
+        assertFalse("不得再有会话边界补间收尾", "resetTransientGeometry" in src)
+        assertFalse("不得再在 JinnIme 里收补间", "resetTransientGeometry" in codeOf("JinnIme.kt"))
+
     }
 
     /**

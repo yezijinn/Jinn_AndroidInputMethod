@@ -323,7 +323,7 @@ class CandidateRowsTest {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue(
             "拼音居中只属于「双行档未展开」",
-            "currentDoubleRow = !candidateRenderExpanded && rows == CandidateRows.DOUBLE" in src,
+            "currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE" in src,
         )
         assertTrue("gravity 按形态判断而不是按行数", "val gravity = if (currentDoubleRow)" in src)
         assertTrue(
@@ -356,33 +356,23 @@ class CandidateRowsTest {
             Regex("""input\.isEmpty\(\) && lastPredictions\.isEmpty\(\)[\s\S]{0,400}collapseCandidates(?:AndRelayout)?\(""")
                 .containsMatchIn(src),
         )
-        // 补间期间栏高只能由动画器写：这是旧版「展开只跑 1 帧」的根因，靠写入权解决
+        // 栏高唯一写入者：applyCandidateRows 直接写终值（0 帧，作者 2026-10-20）
         assertTrue(
-            "补间期间 applyCandidateRows 不得写栏高",
-            "candidateHeightAnimator == null && lp.height != barHeight" in src,
+            "栏高只在 applyCandidateRows 里写终值",
+            "if (lp.height != barHeight) {" in src,
         )
-        assertTrue("收起入口必须先落定高度", "settleCandidateHeight()" in src)
-        // 收起补间期间必须**仍按展开态渲染**：提前换成单行会重现「高栏里飘一行字」
-        assertTrue("补间收尾统一对齐渲染态", "finishCandidateTween()" in src)
-        // 「非补间的收起必须当场复位渲染态」：只钉代码（`codeSource` 剥注释，注释不在 src 里）。
-        // toggle 走补间（渲染态留给 finishCandidateTween）；选词 / ✕ / 换层 / 面板 / 空候选
-        // 都经 collapseCandidates(animated=false)，必须立刻复位，否则展开态永久残留。
+        // 渲染态与意图态合一：收起只翻一个标志
         assertTrue(
-            "collapseCandidates 必须支持非补间的立即复位",
-            "private fun collapseCandidates(animated: Boolean = false)" in src &&
-                "if (!animated) candidateRenderExpanded = false" in src,
+            "收起无参、无补间",
+            "private fun collapseCandidates() {" in src,
         )
-        assertTrue(
-            "点三角收起时渲染态留给补间收尾（不得当场换单行）",
-            "if (expand) candidateRenderExpanded = true" in src,
-        )
-        assertTrue("补间收尾统一对齐渲染态", "finishCandidateTween()" in src)
-        // 容器默认 center_vertical；展开态必须顶对齐，否则内容半速滑、首帧显示网格中部。
+        assertFalse("不得再有渲染态双轨", "candidateRenderExpanded" in src)
+                // 容器默认 center_vertical；展开态必须顶对齐，否则内容半速滑、首帧显示网格中部。
         // 判据按「本帧是否按展开态渲染」而非「动画器是否存在」：toggle 是「先刷新、后建动画器」，
         // 按后者判会让补间起始帧落回 CENTER。
         assertTrue(
-            "展开态候选容器必须顶对齐（按渲染态判定）",
-            "val wantGravity = if (candidateRenderExpanded)" in src &&
+            "展开态候选容器必须顶对齐（按意图态判定）",
+            "val wantGravity = if (candidatesExpanded)" in src &&
                 "android.view.Gravity.TOP" in src,
         )
         assertTrue(
@@ -390,14 +380,14 @@ class CandidateRowsTest {
             Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
         )
         assertTrue(
-            "展开态横向强制跟手（按已渲染形态，补间期间与内容一致）",
-            "prefs.candidatePaging && !candidateRenderExpanded" in src,
+            "展开态横向强制跟手",
+            "prefs.candidatePaging && !candidatesExpanded" in src,
         )
         // 展开态绝不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认逐条 / 两排一列，
         // 3/4 排的列会被拼成竖向错位的裸 TextView 块 —— 实测第 9 列「溢咦倚矣」整体下移。
         assertTrue(
             "展开态要整栏重建、不得增量追加",
-            Regex("""if \(candidateRenderExpanded\) \{\s*val keepY = candidateRowsScroll\.scrollY""").containsMatchIn(src),
+            Regex("""if \(candidatesExpanded\) \{\s*val keepY = candidateRowsScroll\.scrollY""").containsMatchIn(src),
         )
         assertTrue(
             "展开态一次性放大渲染窗口",

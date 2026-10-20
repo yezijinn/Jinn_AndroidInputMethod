@@ -103,8 +103,10 @@ class CandidateScrollView @JvmOverloads constructor(
                     // 「末页不满」时会被 maxScroll 钳位、产生累计偏移，页边界越翻越歪；真实症状是
                     // 「翻到最后一页再翻回来会少一页」。页号制下每页起点恒为 `页号 × 页宽`，
                     // 且内容被追加后页数自然重算。
+                    // 瞬时到位（不用 smoothScrollTo 的 ~250ms 插值）：作者 2026-10-20
+                    // 要求整个 App 无过渡动画。onScrollChange 仍同步派发，末页追加不受影响。
                     val target = (currentPage() + dir).coerceIn(0, pageCount() - 1) * pageWidth()
-                    if (target != scrollX) smoothScrollTo(target, 0)
+                    if (target != scrollX) scrollTo(target, 0)
                 }
                 dragging = false
                 return true
