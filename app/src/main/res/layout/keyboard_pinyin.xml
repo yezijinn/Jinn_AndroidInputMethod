@@ -8,11 +8,362 @@
    - 第四行 = 符号、数字、逗号、空格（长按语音）、句号、中英切换、回车确定
   手势与输入逻辑全部放在 PinyinKeyboardView，本布局只做静态骨架。
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  两根轴（别再把候选栏塞回键区的竖向流里）：
+   - 键区 = keyboard_body：顶部让出「收起档候选栏」的高度（marginTop 由 applyCandidateRows
+     按当前字号逐帧落位，XML 的 46dp 只是默认档占位）。**它永不移动**。
+   - 候选栏 = candidate_bar：叠在键区之上、贴顶，高度随档位 / 展开态长高。
+  根的 wrap_content 取「两者较高者」—— 键区恒为「收起栏高 + 键区」，候选栏最长也只到键区腰部，
+  故 IME 窗口总高恒定 ⇒ 展开 / 收起不再有整段跳变（2026-10-21）。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@color/kb_bg"
-    android:orientation="vertical">
+    android:background="@color/kb_bg">
+
+    <!-- 键区（字母区 / 剪贴板面板容器 + 底部功能行）：永不移动，见上 -->
+    <LinearLayout
+        android:id="@+id/keyboard_body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="46dp"
+        android:orientation="vertical">
+
+        <!-- 26 键字母区 / 剪贴板面板共用容器：
+             - 字母模式：高度 wrap_content（字母区自身 3 行高度），键盘紧凑
+             - 剪贴板模式：代码中动态设置确定高度，撑满候选栏与底部栏之间空间 -->
+        <FrameLayout
+            android:id="@+id/keyboard_content_area"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <!-- 26 键字母区 -->
+            <LinearLayout
+                android:id="@+id/keyboard_letters"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+            <!-- 第一行：10 个字母 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:orientation="horizontal">
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_q"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_w"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_e"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_r"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_t"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_y"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_u"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_i"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_o"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_p"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <!-- 第二行：9 个字母 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:orientation="horizontal">
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_a"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_s"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_d"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_f"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_g"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_h"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_j"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_k"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_l"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <!-- 第三行：切换大写 + 7 个字母 + 删除键 -->
+            <!-- 两把功能键的图标走 fitCenter，绘制尺寸被「键框减 padding」框死：13dp 内缩在
+                 360dp 宽屏上只剩约 10dp（键宽 36dp ⇒ 36-26），图标显得很小。改 8dp 后可用区
+                 20dp×54dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/key_shift"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="0.875"
+                    android:background="@drawable/key_bg"
+                    android:contentDescription="@string/cd_shift"
+                    android:minWidth="0dp"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_shift" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_z"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_x"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_c"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_v"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_b"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_n"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_m"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1" />
+
+                <!-- 分号键：仅「ing 落在分号上」的方案（搜狗/微软/紫光）需要，
+                     其余方案与符号层/数字层一律 GONE（不占宽度，26 键布局零影响） -->
+                <com.jinn.inputmethod.PinyinKey
+                    android:id="@+id/key_semicolon"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/key_backspace"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="0.875"
+                    android:background="@drawable/key_bg"
+                    android:contentDescription="@string/cd_backspace"
+                    android:minWidth="0dp"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_backspace" />
+            </LinearLayout>
+        </LinearLayout>
+        </FrameLayout>
+
+        <!-- 第四行：符号 / 数字 / 逗号 / 空格(长按语音) / 句号 / 中英切换 / 回车确定 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <Button
+                android:id="@+id/key_symbol"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.3"
+                android:minWidth="0dp"
+                android:text="@string/key_symbol" />
+
+            <Button
+                android:id="@+id/key_digit"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1.3"
+                android:minWidth="0dp"
+                android:text="@string/key_digit" />
+
+            <Button
+                android:id="@+id/key_comma"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1.1"
+                android:minWidth="0dp"
+                android:text="@string/key_comma" />
+
+            <LinearLayout
+                android:id="@+id/key_space"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="2.4"
+                android:background="@drawable/key_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/key_space_hint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="1dp"
+                    android:text="@string/space_hint_placeholder"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="9sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/key_space"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/key_period"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1.1"
+                android:minWidth="0dp"
+                android:text="@string/key_period" />
+
+            <Button
+                android:id="@+id/key_lang"
+                style="@style/SettingsButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1.3"
+                android:minWidth="0dp"
+                android:text="@string/key_cn" />
+
+            <ImageButton
+                android:id="@+id/key_enter"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="3dp"
+                android:layout_weight="1.4"
+                android:background="@drawable/key_bg"
+                android:contentDescription="@string/cd_enter"
+                android:minWidth="0dp"
+                android:padding="13dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_enter" />
+        </LinearLayout>
+    </LinearLayout>
 
     <!-- 候选栏：拼音条（横条）+ 候选（横向滚动）+ 清空按钮（叠在整栏右侧）。
          几何见 CandidateRows：单行档 = 拼音条贴顶 + 一排候选（默认档共 46dp）；
@@ -24,10 +375,14 @@
          溢出条外、由 clipChildren=false 放行（裁的只是空白，不是笔画）。
          拼音条是叠放层：无拼音时 GONE，候选区（含功能面板）占满整栏 —— 避让由
          PinyinKeyboardView.showPinyin 落位，高度与位置由 applyCandidateRows 落位。 -->
+
+    <!-- 叠放层：贴顶、向下长。它盖住多少键区，窗口高度都不变（根取「两者较高者」）——
+         展开时栏底正好落在字母行缝上（整行覆盖，不拦腰截断某行键），见 CandidateRows.expandedBarHeightPx。 -->
     <FrameLayout
         android:id="@+id/candidate_bar"
         android:layout_width="match_parent"
         android:layout_height="46dp"
+        android:layout_gravity="top"
         android:background="@color/kb_candidate_bg">
 
         <!-- 候选滚动区。**必须排在拼音条之前**：FrameLayout 里后加的子项绘制与触摸都在上层，
@@ -118,7 +473,8 @@
 
             <!-- 展开候选栏（▲/▾）：位于 ✕ **左侧**，与它同高、紧挨但不重叠（✕ 占 end 40dp，
                  本键再退 40dp）。仅在「候选行数 = 1 行」档、且候选多到需要展开时出现（BUG.md L-1393）。
-                 展开 = 候选栏向上增高，一屏最多四排拼音条+候选；再点 = 收起（点 ✕ 或选中候选同样收起）。
+                 展开 = 候选栏**向下覆盖键区**（窗口总高不变、键区不动），一屏最多四排候选；
+                 再点 = 收起（点 ✕ 或选中候选同样收起）。
                  图标用字符，不新增可见文案（文案属作者域、strings.xml 不动）。 -->
             <TextView
                 android:id="@+id/btn_expand_candidates"
@@ -150,339 +506,4 @@
         </FrameLayout>
 
     </FrameLayout>
-
-    <!-- 26 键字母区 / 剪贴板面板共用容器：
-         - 字母模式：高度 wrap_content（字母区自身 3 行高度），键盘紧凑
-         - 剪贴板模式：代码中动态设置确定高度，撑满候选栏与底部栏之间空间 -->
-    <FrameLayout
-        android:id="@+id/keyboard_content_area"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-
-        <!-- 26 键字母区 -->
-        <LinearLayout
-            android:id="@+id/keyboard_letters"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp">
-
-        <!-- 第一行：10 个字母 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:orientation="horizontal">
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_q"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_w"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_e"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_r"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_t"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_y"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_u"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_i"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_o"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_p"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-        </LinearLayout>
-
-        <!-- 第二行：9 个字母 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:orientation="horizontal">
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_a"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_s"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_d"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_f"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_g"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_h"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_j"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_k"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_l"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-        </LinearLayout>
-
-        <!-- 第三行：切换大写 + 7 个字母 + 删除键 -->
-        <!-- 两把功能键的图标走 fitCenter，绘制尺寸被「键框减 padding」框死：13dp 内缩在
-             360dp 宽屏上只剩约 10dp（键宽 36dp ⇒ 36-26），图标显得很小。改 8dp 后可用区
-             20dp×54dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:orientation="horizontal">
-
-            <ImageButton
-                android:id="@+id/key_shift"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="0.875"
-                android:background="@drawable/key_bg"
-                android:contentDescription="@string/cd_shift"
-                android:minWidth="0dp"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_shift" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_z"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_x"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_c"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_v"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_b"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_n"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_m"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1" />
-
-            <!-- 分号键：仅「ing 落在分号上」的方案（搜狗/微软/紫光）需要，
-                 其余方案与符号层/数字层一律 GONE（不占宽度，26 键布局零影响） -->
-            <com.jinn.inputmethod.PinyinKey
-                android:id="@+id/key_semicolon"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:visibility="gone" />
-
-            <ImageButton
-                android:id="@+id/key_backspace"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="0.875"
-                android:background="@drawable/key_bg"
-                android:contentDescription="@string/cd_backspace"
-                android:minWidth="0dp"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_backspace" />
-        </LinearLayout>
-    </LinearLayout>
-    </FrameLayout>
-
-    <!-- 第四行：符号 / 数字 / 逗号 / 空格(长按语音) / 句号 / 中英切换 / 回车确定 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp">
-
-        <Button
-            android:id="@+id/key_symbol"
-            style="@style/SettingsButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1.3"
-            android:minWidth="0dp"
-            android:text="@string/key_symbol" />
-
-        <Button
-            android:id="@+id/key_digit"
-            style="@style/SettingsButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="1.3"
-            android:minWidth="0dp"
-            android:text="@string/key_digit" />
-
-        <Button
-            android:id="@+id/key_comma"
-            style="@style/SettingsButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="1.1"
-            android:minWidth="0dp"
-            android:text="@string/key_comma" />
-
-        <LinearLayout
-            android:id="@+id/key_space"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="2.4"
-            android:background="@drawable/key_bg"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/key_space_hint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="1dp"
-                android:text="@string/space_hint_placeholder"
-                android:textColor="@color/text_secondary"
-                android:textSize="9sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/key_space"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/key_period"
-            style="@style/SettingsButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="1.1"
-            android:minWidth="0dp"
-            android:text="@string/key_period" />
-
-        <Button
-            android:id="@+id/key_lang"
-            style="@style/SettingsButton"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="1.3"
-            android:minWidth="0dp"
-            android:text="@string/key_cn" />
-
-        <ImageButton
-            android:id="@+id/key_enter"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_marginStart="3dp"
-            android:layout_weight="1.4"
-            android:background="@drawable/key_bg"
-            android:contentDescription="@string/cd_enter"
-            android:minWidth="0dp"
-            android:padding="13dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_enter" />
-    </LinearLayout>
-</LinearLayout>
+</FrameLayout>

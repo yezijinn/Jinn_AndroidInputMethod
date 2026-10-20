@@ -5436,7 +5436,12 @@ class RecentFixesRegressionTest {
         assertTrue("不可读独立文案", "TEXT_UNREADABLE" in histNow)
         // L-1331 / L-1332：候选栏与方向面板的几何都从单一来源派生（不手写同式子）
         val pv2 = codeOf("PinyinKeyboardView.kt")
-        assertTrue("栏高走派生函数", "CandidateRows.barHeightPx(\n            rows," in pv2)
+        // 2026-10-21：栏高分「收起档（baseRows，键区让位用）」与「展开态（按整行键高取整）」两路，
+        // 仍然只能从派生函数取，不许手写加法
+        assertTrue(
+            "栏高走派生函数",
+            Regex("""CandidateRows\.barHeightPx\(\s*\n\s*baseRows,""").containsMatchIn(pv2),
+        )
         assertTrue("复用块走 px 派生", "CandidateRows.barHeightPx(\n            CandidateRows.SINGLE," in pv2)
         assertTrue("方向面板行高同源", "rowPx - dp(2) * 2" in pv2)
         // L-1321：图库收起也必须作废待揭示（否则 300ms 后面板自己亮出来 / 跨会话残留）

@@ -276,9 +276,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 展开排数缓存：一次展开会话内固定（逐键刷新不重算，避免可用高度夹取边界跨档导致网格整排跳） */
     private var expandedRowsCached = 0
 
-    /** 上一帧候选集指纹：与 [lastCandidatesInput] 合用，判「候选集变化且输入变了才收起」（BUG.md L-1393） */
-    private var lastCandidatesToken: Int? = null
-
     /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
     private var lastCandidatesInput: String? = null
 
@@ -305,16 +302,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         refreshCandidateBar()
     }
+    /**
+     * 单行字母键的高度（px）：与 [applyLetterRowHeight] 同源（同一算式，不读布局后的 view 高度 ——
+     * 首帧 / 刚改键高的那一帧 `viewLetters` 还是旧值，读它会让整行覆盖边界差一段）。
+     */
+    private fun letterRowPx(): Int =
+        (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+
     private fun expandedRowsFor(count: Int, candidateSp: Float, pinyinSp: Float, gapDp: Float): Int {
         val dm = resources.displayMetrics
         val fontScale = resources.configuration.fontScale
         val rowPx = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
         val pinyinPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp) +
             CandidateRows.pinyinGapPx(dm.density, gapDp)
-        // 可用高度：用本视图高度而不是栏高（栏高正是要算的量，会自指）；键盘视图未布局时
-        // 取不到 ⇒ 退化成「不按高度夹取」，仍被四排上限夹住。
-        val usable = (height.takeIf { it > 0 } ?: parent.let { (it as? android.view.View)?.height }
-            ?: 0) - pinyinPx
+        // 可用高度 = 收起档栏高 + 最多覆盖的整行键 − 拼音条：展开是**向下覆盖键区**（窗口高度恒定），
+        // 所以上限不再是「键盘视图有多高」，而是「允许盖掉几行键」。
+        // 不读 `height`：它此刻可能是 0（首帧）或上一帧的值，读过一次就会在跨档时算出不同排数。
+        val basePx = CandidateRows.barHeightPx(
+            CandidateRows.SINGLE, dm.density, fontScale, candidateSp, pinyinSp, gapDp,
+        )
+        val usable = basePx + CandidateRows.MAX_COVERED_KEY_ROWS * letterRowPx() - pinyinPx
         val byHeight = if (rowPx > 0 && usable > 0) (usable / rowPx).coerceAtLeast(1)
         else CandidateRows.MAX_EXPANDED_ROWS
         // 每列能放几条：展开态一屏显示的就是「排数 × 列数」个候选，这里按栏宽 ÷ 单条宽估算；
@@ -504,6 +511,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 半透明键盘：键盘底色所在的根布局（keyboard_pinyin.xml 的根，背景 @color/kb_bg） */
     private val keyboardRoot: View
+
+    /**
+     * 键区（字母区 / 面板容器 + 底部功能行）：**永不动的那一半**（2026-10-21）。
+     *
+     * 候选栏是它的兄弟、叠在它上面；[applyCandidateRows] 只改它的 `topMargin`（= 收起档栏高），
+     * 展开不改 ⇒ 键区顶边恒定、窗口总高恒定，展开 / 收起没有整段跳变。
+     */
+    private val keyboardBody: LinearLayout
 
     /** 半透明键盘：候选栏容器（背景 @color/kb_candidate_bg） */
     private val candidateBar: View
@@ -772,6 +787,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         addView(root)
         keyboardRoot = root
         candidateBar = root.findViewById(R.id.candidate_bar)
+        keyboardBody = root.findViewById(R.id.keyboard_body)
+        // 展开态栏向下盖住字母区：被盖住的键**不得**再收到点击（否则看不见的键被误触上屏）。
+        // 收起态返回 false ⇒ 事件照旧下落，行为与改造前逐帧一致。
+        // 必须在子项都没消费之后才轮到它（ViewGroup 的分发顺序），所以候选点击 / 滑动手势不受影响。
+        candidateBar.setOnTouchListener { _, _ -> candidatesExpanded }
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
@@ -2485,19 +2505,40 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
         // 算式走 CandidateRows 的派生函数（BUG.md L-1331）：这里原先手写了同一个加法，
         // 与 [CandidateRows.barHeightPx] 是两份实现，改系数时会分叉
-        val barHeight = CandidateRows.barHeightPx(
-            rows,
+        // 收起档栏高 = 键区顶边的让位（展开时键区**不动**，窗口总高因此恒定，见 keyboardBody）。
+        // 展开只在单行档出现，故收起档恒按 SINGLE 取 —— 别用 rows（展开态它是网格排数）。
+        val baseRows = if (candidatesExpanded) CandidateRows.SINGLE else rows
+        val baseBarHeight = CandidateRows.barHeightPx(
+            baseRows,
             dm.density,
             fontScale,
             candidateSp,
             pinyinSp,
             gapDp,
         )
-        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+        // 本帧栏高：收起 = baseBarHeight；展开 = 网格够用即可，且按**整行字母键**向上取整
+        // （栏底落在行缝上，不把某行键拦腰截断）
+        val barHeight = if (candidatesExpanded) {
+            CandidateRows.expandedBarHeightPx(
+                gridHeightPx = currentPinyinBarPx + perRow * CandidateRows.clampRows(rows),
+                baseBarHeightPx = baseBarHeight,
+                keyRowHeightPx = letterRowPx(),
+            )
+        } else {
+            baseBarHeight
+        }
+        (candidateBar.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
             // 栏高唯一写入者：真变化才写，且一次写终值（0 帧，作者 2026-10-20 指定）
             if (lp.height != barHeight) {
                 lp.height = barHeight
                 candidateBar.layoutParams = lp
+            }
+        }
+        // 键区让位：永远停在收起档栏高处（展开只是候选栏向下盖住它）—— 窗口高度不变的另一半
+        (keyboardBody.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.topMargin != baseBarHeight) {
+                lp.topMargin = baseBarHeight
+                keyboardBody.layoutParams = lp
             }
         }
         // 展开态候选容器顶对齐：判据就是本帧意图态（无补间，不存在「中途态」）
@@ -3004,31 +3045,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             CandidateText.pinyinSpOf(candidateSp)
         }
-        // 候选集变化且输入变了才收起（同输入下的词库合并、学习重排不得收起展开态）；
-        // 「新一次查询 / 选词上屏 / 清空 / 会话结束」输入串都会变或清空，收起语义不变（作者 2026-10-17 指定）
-        val token = lastCandidates.hashCode()
+        // 输入串变了才收起（同输入下的词库合并、学习重排不得收起展开态 —— 作者 2026-10-17 指定，
+        // 这条语义输入串已足以表达）。「新一次查询 / 选词上屏 / 清空 / 会话结束」输入串都会变或清空，
+        // 收起语义不变。
+        // ⚠ 判据**只看输入串**，不看候选指纹：本判据在查询之前执行，此刻 `lastCandidates` 还是
+        // 上一次查询的列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（2026-10-21 实测：展开态
+        // 按 n 不收、再按一次改变了输入的键才收）。判据收在 [CandidateRows.shouldCollapseExpanded]。
         // 本帧输入串只拷一次：下面 3103 行的 `input` 与这里内容必然相同（两者之间
         // 只有 Prefs 读与可选的 collapseCandidates，不写 composing），早先每键拷两次。
         val inputNow = composing.toString()
         composingSnapshot = inputNow
-        if (lastCandidatesToken != null &&
-            lastCandidatesToken != token &&
-            lastCandidatesInput != null &&
-            lastCandidatesInput != inputNow
-        ) {
+        if (CandidateRows.shouldCollapseExpanded(lastCandidatesInput, inputNow)) {
             // ⚠ 这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
             // 等于把用户敲的拼音（含密码框内）长期留在可分享的诊断包里；且每键一次主线程写盘
             // （PinyinEngine 里同型的一处早已注明这一点）。只记长度，排障够用。
             if (Diagnostics.KEY_TRACE) {
                 Diagnostics.v(
                     TAG,
-                    "候选集变化且输入已变，收起展开态: " +
-                        "${lastCandidatesInput?.length} → ${inputNow.length}",
+                    "输入已变，收起展开态: ${lastCandidatesInput?.length} → ${inputNow.length}",
                 )
             }
             collapseCandidates()
         }
-        lastCandidatesToken = token
         lastCandidatesInput = inputNow
         // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器。
         // ⚠ 展开态**强制跟手滑动**：纵向要让给「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。

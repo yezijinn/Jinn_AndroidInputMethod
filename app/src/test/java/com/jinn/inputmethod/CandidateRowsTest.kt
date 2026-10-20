@@ -100,6 +100,25 @@ class CandidateRowsTest {
         // 默认档具体 px（density 3）：拼音条 54 + 单排 84 = 138；双排 54 + 168 = 222
         assertEquals(138, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
         assertEquals(222, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
+
+        // 展开态栏高（2026-10-21）：向下覆盖键区，按**整行字母键**向上取整 ——
+        // 栏底落在行缝上，不会把某一行键拦腰截断。默认档：四排网格 = 54 + 84×4 = 390，
+        // 增量 252px 要盖到两行键（189×2 = 378）⇒ 栏高 138 + 378 = 516。
+        val base = CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp)
+        val keyRow = 189 // 54dp × 3.5（KeyAppearance.DEFAULT_KEY_HEIGHT_DP × density）
+        val grid4 = bar + perRow * CandidateRows.MAX_EXPANDED_ROWS
+        assertEquals(516, CandidateRows.expandedBarHeightPx(grid4, base, keyRow))
+        // 增量不足一行也取整到一行：栏底同样落在行缝上
+        assertEquals(base + keyRow, CandidateRows.expandedBarHeightPx(base + 1, base, keyRow))
+        // 网格不比收起档高 ⇒ 栏高不变（展开两排但候选少时不能凭空长高）
+        assertEquals(base, CandidateRows.expandedBarHeightPx(base, base, keyRow))
+        // 覆盖行数有上限：再多也不许把整片键区盖光
+        assertEquals(
+            base + keyRow * CandidateRows.MAX_COVERED_KEY_ROWS,
+            CandidateRows.expandedBarHeightPx(base + keyRow * 10, base, keyRow),
+        )
+        // 取不到键高（首帧 / 键高未下发）时退回网格高度，绝不返回比网格矮的值
+        assertEquals(grid4, CandidateRows.expandedBarHeightPx(grid4, base, 0))
     }
 
     @Test
@@ -232,7 +251,11 @@ class CandidateRowsTest {
      * surface —— 用户打字时看到「候选栏上方一条色带」。两处 `paddingTop` 都已删除（根布局的由项目早期
      * 引入、字母区的跟着一起收掉），加回来就会重现。
      *
-     * 只查这两处：底部功能行的 `paddingTop` / `paddingBottom` 是 56dp 行内的垂直留白，属正常设计。
+     * 根在 2026-10-21 由 LinearLayout 改为 FrameLayout（候选栏改成叠在键区之上），
+     * 背板仍在根上 ⇒ 根与键区容器（keyboard_body）都不许有内边距：根有则顶边露背板色，
+     * 键区有则字母区整体下移、把候选栏的下缘露出来。
+     *
+     * 只查这几处：底部功能行的 `paddingTop` / `paddingBottom` 是 56dp 行内的垂直留白，属正常设计。
      */
     @Test
     fun 键盘顶边与字母区不得有内边距() {
@@ -242,10 +265,15 @@ class CandidateRowsTest {
         ).firstOrNull { it.isFile } ?: error("找不到 keyboard_pinyin.xml")
         val text = xml.readText()
 
-        val rootTag = TestSources.window(text, "<LinearLayout", ">")
+        val rootTag = TestSources.window(text, "<FrameLayout", ">")
         assertFalse(
             "根布局不得有 android:paddingTop（候选栏底色要铺到键盘最顶，否则顶边露一条背板色）: $rootTag",
             rootTag.contains("paddingTop"),
+        )
+        val bodyTag = TestSources.window(text, """android:id="@+id/keyboard_body"""", ">")
+        assertFalse(
+            "键区容器不得有 android:paddingTop（字母区顶边要直接接候选栏底边）: $bodyTag",
+            bodyTag.contains("paddingTop"),
         )
 
         val lettersAt = text.indexOf("@+id/keyboard_letters")
@@ -348,8 +376,16 @@ class CandidateRowsTest {
             "按 ✕ 要收起",
             Regex("""btnClearCandidates\.setOnClickListener[\s\S]{0,900}collapseCandidates\(\)""").containsMatchIn(src),
         )
-        assertTrue("候选集变化且输入变了才收起（同输入下的词库合并不得收起）", "lastCandidatesToken != token" in src)
-        assertTrue("判据要收紧到输入串", "lastCandidatesInput != inputNow" in src)
+        // 收起判据：只看输入串（纯函数），不得再回到「候选集指纹 + 输入串」的错位口径
+        // （指纹在查询之前取，配的是上一次查询的列表 ⇒ 收起按奇偶漏判，2026-10-21 实测）
+        assertTrue(
+            "收起判据必须走纯函数 shouldCollapseExpanded",
+            "CandidateRows.shouldCollapseExpanded(" in src,
+        )
+        assertFalse(
+            "不得再有候选集指纹字段（会错位一帧导致收起按奇偶漏判）",
+            "lastCandidatesToken" in src,
+        )
         assertTrue("输入串每帧更新", "lastCandidatesInput = inputNow" in src)
         assertTrue(
             "无内容（会话结束）要收起",
@@ -392,6 +428,30 @@ class CandidateRowsTest {
         assertTrue(
             "展开态一次性放大渲染窗口",
             "candidateRenderLimit < target" in src,
+        )
+    }
+
+    @Test
+    fun 展开态是否收起只看输入串() {
+        // 首次（无上一次输入串）：不得误收
+        assertFalse(
+            "首次无上一次输入串时不得收起",
+            CandidateRows.shouldCollapseExpanded(null, "ji"),
+        )
+        // 同输入下的词库合并 / 学习重排：不得收起（作者 2026-10-17 指定语义）
+        assertFalse(
+            "输入没变时不得收起（词库合并 / 学习重排）",
+            CandidateRows.shouldCollapseExpanded("ji", "ji"),
+        )
+        // 输字：输入变了 ⇒ 收起
+        assertTrue(
+            "输入变了必须收起展开态",
+            CandidateRows.shouldCollapseExpanded("ji", "jin"),
+        )
+        // 选词上屏 / 清空：输入清空 ⇒ 收起
+        assertTrue(
+            "输入清空必须收起展开态",
+            CandidateRows.shouldCollapseExpanded("ji", ""),
         )
     }
 }

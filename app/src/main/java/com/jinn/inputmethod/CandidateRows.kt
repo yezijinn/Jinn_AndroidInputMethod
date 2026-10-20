@@ -123,6 +123,42 @@ internal object CandidateRows {
     const val MAX_EXPANDED_ROWS = 4
 
     /**
+     * 展开态最多向下覆盖的**整行字母键**数。
+     *
+     * 展开的做法是「候选栏在键区之上向下长」，窗口高度恒定（[expandedBarHeightPx]）；覆盖越多，
+     * 露在外面的键越少。两行是上限：再多就把第三行字母键也压掉，「展开态按字母键收起并继续输入」
+     * 就没了落点（作者 2026-10-21 指定）。
+     */
+    const val MAX_COVERED_KEY_ROWS = 2
+
+    /**
+     * 展开态候选栏高度（px）：网格所需高度按**整行字母键**向上取整到覆盖边界。
+     *
+     * 只覆盖「整行」是为了不把某一行键拦腰截断 —— 网格要 294px 而一行键 189px 时，
+     * 直接给 294px 会让第二行键的字形被栏底切掉一半；取整到 378px（两行）后栏底正好落在
+     * 行缝上，多出的部分只是栏底空白。
+     *
+     * 纯函数：键区几何由调用方按 `KeyAppearance` 的键高给出，本函数不读 Prefs、不碰 View。
+     *
+     * @param gridHeightPx 候选网格自身需要的高度（拼音条 + 排数 × 行高）
+     * @param baseBarHeightPx 收起档栏高（= 键区顶边的让位，展开时不变）
+     * @param keyRowHeightPx 单行字母键高（px）；≤0（未取到）时原样返回网格高度
+     * @return 栏高，恒 ≥ min(gridHeightPx, baseBarHeightPx + [MAX_COVERED_KEY_ROWS] × 键高)
+     */
+    fun expandedBarHeightPx(
+        gridHeightPx: Int,
+        baseBarHeightPx: Int,
+        keyRowHeightPx: Int,
+    ): Int {
+        if (gridHeightPx <= baseBarHeightPx) return baseBarHeightPx
+        if (keyRowHeightPx <= 0) return gridHeightPx
+        val need = gridHeightPx - baseBarHeightPx
+        val rows = ((need + keyRowHeightPx - 1) / keyRowHeightPx)
+            .coerceIn(0, MAX_COVERED_KEY_ROWS)
+        return baseBarHeightPx + rows * keyRowHeightPx
+    }
+
+    /**
      * 候选栏总高度（px）：拼音条（含拼音行间隔）+ 排数 × 单排 —— 高度的**唯一来源**。
      *
      * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
@@ -171,6 +207,23 @@ internal object CandidateRows {
      *
      * @return 每列一个长度固定为 [rows] 的列表，顺序从左到右；列内自上而下。
      */
+    /**
+     * 展开态是否该因**输入变化**收起（纯函数，便于单测）。
+     *
+     * 只看输入串：候选集变了但输入没变（词库合并 / 学习重排）不得收起 —— 这是作者
+     * 2026-10-17 指定的语义，输入串足以表达，不需要候选指纹。
+     *
+     * ⚠ 不看候选指纹：调用点（[refreshCandidateBar] 的收起判据）在查询**之前**执行，
+     * 那一刻 `lastCandidates` 还是上一次查询的列表，拿它配本次输入串会错位一帧 ⇒
+     * 收起按奇偶漏判（2026-10-21 实测：展开态按 n 不收、再按一次输入变化的键才收）。
+     *
+     * @param previousInput 上一次记录的输入串（首次为 null）
+     * @param inputNow 本帧输入串
+     * @return true = 输入已变，应收起展开态
+     */
+    fun shouldCollapseExpanded(previousInput: String?, inputNow: String): Boolean =
+        previousInput != null && previousInput != inputNow
+
     fun columnsOfN(candidates: List<String>, rows: Int): List<List<String?>> {
         val n = clampRows(rows)
         if (candidates.isEmpty()) return emptyList()
