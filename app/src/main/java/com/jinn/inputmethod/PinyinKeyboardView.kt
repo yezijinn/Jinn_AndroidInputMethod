@@ -850,7 +850,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * ⚠ **不要**在别处直接写 `viewCandidateList.removeAllViews()`：那正是 L-809 的成因 ——
      * 清了容器却留着「上次渲染」指纹，下一次内容恰好相同就会跳过重建，界面停在另一种形态上。
-     * 唯一的例外是 [renderCandidateItems] 自己：它在**设置完新指纹之后**才清容器。
+     *
+     * 本函数自己**不**直接 `removeAllViews()`，而是走 [recycleCandidateViews]：既清容器、
+     * 又把子项收进复用池（池不清空）。顺序不可倒：先复位指纹与分页状态，再回收。
      */
     private fun clearCandidateList() {
         resetCandidateRender()
@@ -860,9 +862,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateRenderArgs = null
         candidateRenderSource = emptyList()
         candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
-        viewCandidateList.removeAllViews()
-        // 池里的条目成形于另一种形态（候选 / 功能面板 / 符号分组 / 密码数字条），一并作废
-        candidateViewPool.clear()
+        // ⚠ 必须**回收**而不是丢弃（2026-10-20）：这里原先是 `removeAllViews()` + `candidateViewPool.clear()`，
+        // 于是每词首键（面板 → 候选）都要新建 32 个 TextView —— 实测 365~560µs/个，
+        // 整帧 build 6.7~15.1ms，占该轮 work 约 30%，是候选渲染路径上真正的尖峰。
+        // 改回收后：新建数 156~192 → 0~26，词首帧 build 15.1ms → 0.53ms，全轮 work 243.7→105.3ms。
+        // 跨形态复用是安全的（功能面板的粗体标签、列容器的布局参数都会在取用时被重设，见 [buildCandidateView]），
+        // 池也有 [CANDIDATE_VIEW_POOL_MAX] 封顶，不会无限增长。
+        recycleCandidateViews()
         // 数字行只属于功能面板：其余形态（符号 / 密码 / 提示 / 空态）一律收起，面板自己随后再打开它
         setFunctionDigitRowVisible(false)
     }

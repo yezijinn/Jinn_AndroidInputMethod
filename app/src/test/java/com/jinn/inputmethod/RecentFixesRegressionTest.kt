@@ -3641,15 +3641,30 @@ class RecentFixesRegressionTest {
             // 任何地方都不得直接清这个容器 —— 那正是 L-809 的成因。注释已由 codeOf 剥掉，不计入。
             assertEquals(
                 "L-809：viewCandidateList.removeAllViews() 只允许出现在 clearCandidateList 与 renderCandidateItems",
-                2,
+                1,
                 Regex("""viewCandidateList\.removeAllViews\(\)""").findAll(kb).count(),
             )
             assertTrue(
                 "L-809：clearCandidateList 必须复位指纹后再清容器",
                 blockAfter(kb, "private fun clearCandidateList()").let {
-                    it.indexOf("resetCandidateRender()") in 0 until it.indexOf("removeAllViews()")
+                    it.indexOf("resetCandidateRender()") in 0 until it.indexOf("recycleCandidateViews()")
                 },
             )
+            // 2026-10-20：清空必须**回收进池**而不是「丢弃 + 清池」。
+            // 原先 clearCandidateList 是 removeAllViews() + candidateViewPool.clear()，
+            // 于是每词首键（面板 → 候选）都要新建 32 个 TextView —— 实测 365~560µs/个，
+            // 整帧 build 6.7~15.1ms，占该轮 work 约 30%，是候选渲染路径上真正的尖峰。
+            run {
+                val body = blockAfter(kb, "private fun clearCandidateList()")
+                assertTrue(
+                    "清空候选容器必须走回收（否则每词首键要新建 32 个 TextView，整帧 build 可达 15ms）",
+                    "recycleCandidateViews()" in body,
+                )
+                assertFalse(
+                    "清空时不得清空复用池（池常驻是首帧不再新建的前提）",
+                    "candidateViewPool.clear()" in body,
+                )
+            }
         }
         // L-810：`peekBody` 不是内存上限（内部先 `source.request(Long.MAX_VALUE)` 读完整 body），
         // 读取必须自己向连接要「上限 + 1」字节，否则 KDoc 承诺的 OOM 防护根本不存在。
@@ -5993,7 +6008,15 @@ class RecentFixesRegressionTest {
         )
         // 切到别的形态（功能面板 / 符号 / 密码条）时池要作废，否则候选 TextView 会被复用到那些形态上
         val clear = blockAfter(src, "private fun clearCandidateList()")
-        assertTrue("切形态时要清空池", "candidateViewPool.clear()" in clear)
+        // ⚠ 2026-10-20 修正：这里原先断言「非候选形态时要 candidateViewPool.clear()」，因果是反的 ——
+        // 清池恰恰是**问题本身**：每词首键（面板 → 候选）因此要新建 32 个 TextView
+        // （实测 365~560µs/个，整帧 build 6.7~15.1ms，占该轮 work 约 30%）。
+        // 改为池常驻、只回收不清空：跨形态复用是安全的（粗体 / 布局参数 / 监听都会在取用时重设，
+        // 见 buildCandidateView），池也有 CANDIDATE_VIEW_POOL_MAX 封顶，不会无限增长。
+        assertFalse(
+            "清空候选容器不得清空复用池（清池会让每词首键新建 32 个 TextView）",
+            "candidateViewPool.clear()" in clear,
+        )
         // ⚠ 不得用 `layoutParams = null` 清残留：setLayoutParams 拒绝 null，会抛
         // NPE「Layout parameters cannot be null」，每次按键必崩（2026-10-18 真机实测）
         assertFalse(
