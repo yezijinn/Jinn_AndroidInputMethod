@@ -345,15 +345,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val expand = !candidatesExpanded
         Diagnostics.i(TAG, "候选栏展开态：$expand")
         candidatesExpanded = expand
-        // 排数必须在改栏高**之前**算：补间中 [expandedRowsFor] 读到的是中途高度。
-        // 两个方向都算：收起补间期间任何一次刷新（面板开关 / 按键）都会复用它 —— 置 0 会让那条
-        // 路径按「正在缩小的高度」重算，矮屏 / 大字号下中途改一次列数（2026-10-20 修）。
-        expandedRowsCached = expandedRowsFor(
-            lastCandidates.size,
-            prefs.candidateTextSp,
-            currentPinyinSp,
-            prefs.pinyinLineGapDp,
-        )
+        // 排数只在**展开**方向重算：收起补间渲染的仍是展开态几何，此刻重算读到的是
+        // 在途视图高度（[expandedRowsFor] 读 this.height，settle 只改 lp.height，
+        // 视图高要等下一次 layout）⇒ 42sp × 1.3 下可能少算一排，补间第一帧网格就重排一次。
+        // 收起方向沿用上一跳的值，正是 refreshCandidateBar 里 `expandedRowsCached > 0`
+        // 判据需要的语义（与「补间收尾不重算」是同一条理由的两半）。
+        if (expand) {
+            expandedRowsCached = expandedRowsFor(
+                lastCandidates.size,
+                prefs.candidateTextSp,
+                currentPinyinSp,
+                prefs.pinyinLineGapDp,
+            )
+        }
         // ⚠ 收起时**不**在这里翻渲染态：补间期间内容必须仍是展开态（随栏高被裁），
         // 否则紧接着那次刷新就把内容换成单行，补间期间看到的是「高栏里飘一行字」
         // （旧版「先清空再合盖」）。渲染态由补间收尾 [finishCandidateTween] 统一对齐。
@@ -554,8 +558,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun tweenExpandButton(expanded: Boolean) {
         val target = if (expanded) 180f else 0f
-        candidateExpandRotationAnimator?.cancel()
+        // 先摘引用再 cancel：cancel() 会同步派发 onAnimationEnd，字段若仍指向旧实例，
+        // onAnimationEnd 的身份守卫放行、旧监听把 rotation 写回**旧** target
+        // （闭包捕获的是旧调用的局部 val）⇒ 观感「先弹到旧终点再整段转回来」，
+        // 且 toggle 捕获的中途角被吞。与 onDetachedFromWindow 同一顺序约定。
+        val oldRot = candidateExpandRotationAnimator
         candidateExpandRotationAnimator = null
+        oldRot?.cancel()
         if (btnExpandCandidates.visibility != android.view.View.VISIBLE) {
             btnExpandCandidates.rotation = target
             return
@@ -622,14 +631,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 收起展开态：再点三角 / 选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里。
+     * 收起展开态：选中候选 / 按 ✕ / 候选集变化 / 会话结束都走这里。
      *
-     * @param animated 是否走高度补间。**只有**点三角（[toggleCandidateExpanded]）传 true：
-     *   那一路径下渲染态保留到补间结束（内容随栏高被裁，不提前换单行，避免旧版
-     *   「高栏里飘一行字」）；补间收尾由 [finishCandidateTween] 统一对齐。
-     *   其余路径（选词 / ✕ / 换层 / 面板 / 空候选）没有补间，必须**当场**复位渲染态 ——
+     * @param animated 是否保留渲染态到栏高补间收尾。**当前没有任何调用方传 true** ——
+     *   点三角走的是 [toggleCandidateExpanded] 自己那条路（只置位、另起补间），
+     *   不经过本函数。形参保留是为了在收起语义上留接口，删它要连测试正则一起改。
+     *   其余路径（选词 / ✕ / 换层 / 面板 / 空候选）没有栏高补间，必须**当场**复位渲染态 ——
      *   否则 [candidateRenderExpanded] 会永久停在 true，下次刷新仍按展开排数渲染，
      *   表现为「候选栏一直是网格、三角要按两次」（2026-10-19 回归）。
+     *
+     * ⚠ 三角回正**不走**这里直赋：这些路径与内容变更同帧，栏高已由
+     * [settleCandidateHeight] 直达终态，旋转若也一帧按到 0°，就是「栏塌了、箭头也
+     * 弹回去」的双重硬切。改交 [tweenExpandButton] 按同一条曲线转回去（只转三角、
+     * 不动栏高），两个量的终点一致、过程也一致。
      */
     private fun collapseCandidates(animated: Boolean = false) {
         if (!candidatesExpanded) return
@@ -637,7 +651,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         settleCandidateHeight()
         candidatesExpanded = false
         if (!animated) candidateRenderExpanded = false
-        btnExpandCandidates.rotation = 0f
+        tweenExpandButton(false)
     }
 
     /**

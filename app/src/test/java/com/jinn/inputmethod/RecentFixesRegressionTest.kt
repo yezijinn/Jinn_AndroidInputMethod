@@ -6310,6 +6310,33 @@ class RecentFixesRegressionTest {
                 "rowHeightPx" in single &&
                 "addView(build(text), itemLp)" in single,
         )
+
+        // ⑤ 三角补间取消必须先摘引用再 cancel（源码形态守卫，非行为守卫）：
+        // cancel() 会同步派发 onAnimationEnd，字段若仍指向旧实例，身份守卫放行、
+        // 旧监听把 rotation 写回旧 target（闭包捕获旧调用的局部 val）⇒ 观感
+        // 「先弹到旧终点再整段转回来」。同文件 onDetachedFromWindow 已把这条
+        // 顺序写成硬约定，本处曾写反。当前不可达（settle 先摘 + wouldGrow 排除
+        // from == to），行为层测不出来，故只钉形态。
+        val rotBody = TestSources.blockAfter(src, "private fun tweenExpandButton(expanded: Boolean)")
+        val iNull = rotBody.indexOf("candidateExpandRotationAnimator = null")
+        val iCancel = rotBody.indexOf(".cancel()")
+        assertTrue("取不到旋转补间置空语句", iNull >= 0)
+        assertTrue("取不到旋转补间取消语句", iCancel >= 0)
+        assertTrue(
+            "三角补间取消必须先置 null 再 cancel（cancel 同步回调 onAnimationEnd）",
+            iNull < iCancel,
+        )
+
+        // ⑥ 展开排数缓存只在展开方向重算：收起补间渲染的仍是展开态几何，
+        // 此刻重算读到的是在途视图高度（expandedRowsFor 读 this.height，
+        // settle 只改 lp.height）⇒ 大字号下可能少算一排、补间首帧网格重排。
+        val toggleBody = TestSources.blockAfter(src, "private fun toggleCandidateExpanded()")
+        assertTrue(
+            "展开排数缓存必须只在展开方向重算",
+            "if (expand) {" in toggleBody &&
+                toggleBody.indexOf("expandedRowsCached = expandedRowsFor(") >
+                toggleBody.indexOf("if (expand) {"),
+        )
     }
 
     /**
