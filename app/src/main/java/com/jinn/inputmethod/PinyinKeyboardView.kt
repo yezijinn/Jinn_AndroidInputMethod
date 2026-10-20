@@ -305,6 +305,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var candidateTweenTarget = 0
 
     /**
+     * 补间「等窗口就位」的就绪等待者。
+     *
+     * 存字段只为能摘：它是局部匿名对象，没有字段引用的话，落定 / detach 之外
+     * 没有任何入口可以 removeOnPreDrawListener，listener 会留在（可能已死的）
+     * ViewTreeObserver 上，持有 root 与 animator。
+     */
+    private var tweenWaiter: android.view.ViewTreeObserver.OnPreDrawListener? = null
+
+    /**
      * 三角朝向与栏高**共用**的补间曲线（同一条曲线是硬约束，别各建一份）。
      *
      * 取线性，理由是可验证的**最大单帧步长最小**：在 [CANDIDATE_TWEEN_MS] 给出的
@@ -415,6 +424,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 调用点必须已经让栏高落到终值 —— 三个调用点都满足，否则会出现「拆钉子那一刻跳一下」。
      */
     private fun resetTweenWindow() {
+        dropTweenWaiter()
         val rootView = candidateBar.parent as? View ?: return
         if (rootView.translationY != 0f) rootView.translationY = 0f
         (rootView.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
@@ -423,6 +433,38 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 rootView.layoutParams = lp
             }
         }
+    }
+
+    /**
+     * 摘掉补间的就绪等待者。
+     *
+     * waiter 是局部匿名对象，若不存字段，落定 / detach 之外没有入口能摘它 ——
+     * listener 会留在（可能已死的）ViewTreeObserver 上，持有 root 与 animator。
+     */
+    private fun dropTweenWaiter() {
+        val w = tweenWaiter ?: return
+        tweenWaiter = null
+        val vto = (candidateBar.parent as? View)?.viewTreeObserver
+        if (vto != null && vto.isAlive) vto.removeOnPreDrawListener(w)
+    }
+
+    /**
+     * 会话边界 / detach 的统一收尾：撤两个补间、撤等待者、撤钉窗与平移。
+     *
+     * 补间「只建未 start」时（钉窗就绪前收起键盘）没有任何 onAnimationEnd 会来，
+     * 钉住的高与平移会跨会话留在复用而不 detach 的 inputView 上。
+     */
+    fun resetTransientGeometry() {
+        // ⚠ 与 onDetachedFromWindow 同一条顺序约定：先摘引用再 cancel
+        // （cancel() 会同步回调 onAnimationEnd，靠「引用已不在」才挡得住）。
+        val h = candidateHeightAnimator
+        candidateHeightAnimator = null
+        h?.cancel()
+        val r = candidateExpandRotationAnimator
+        candidateExpandRotationAnimator = null
+        r?.cancel()
+        dropTweenWaiter()
+        resetTweenWindow()
     }
 
     /**
@@ -440,7 +482,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun startCandidateHeightTween(targetRows: Int) {
         // 仅作空守卫：`from` 读真实像素高、`to` 按目标档位现算，都不经过 layoutParams
-        if (candidateBar.layoutParams !is LinearLayout.LayoutParams) return
+        // ⚠ 早退也必须把延迟起表的三角放掉：令牌已被 [tweenExpandButton] 入口消费，
+        // 这里若静默返回，会留下一个从未 start 的旋转动画器，「非空就不写角度」的
+        // 守卫从此永久生效 ⇒ ▲ 角度冻死（当前 XML 根恒为 LinearLayout，属潜伏洞）。
+        if (candidateBar.layoutParams !is LinearLayout.LayoutParams) {
+            startDeferredRotation()
+            return
+        }
         val from = candidateBar.height
         // ⚠ `to` **不能**读 lp.height：收起时上一次刷新已把它写成展开档高度（内容仍按展开态
         // 渲染是刻意的），读它就会 from == to ⇒ 补间永不启动，收起变成一帧硬切。
@@ -472,18 +520,51 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 补间期间**窗口总高恒定**：一次把根高钉到 max(from,to)，视觉上的「栏顶边上移」改由
         // 整体 translationY 表达（纯绘制，不碰窗口）。理由见 [CANDIDATE_TWEEN_MS] 的实测：
         // 逐帧改栏高 = 逐帧 IME 窗口 resize，180ms 只能落 4 帧；钉住窗口后落 10~12 帧。
-        val rootView = candidateBar.parent as? View
-        val restH = if (rootView != null && rootView.height > from) rootView.height - from else 0
-        val winH = if (restH > 0) maxOf(from, to) + restH else 0
-        val pinWindow = winH > 0 && rootView != null
-        if (pinWindow) {
-            (rootView!!.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
-                if (lp.height != winH) {
-                    lp.height = winH
-                    rootView.layoutParams = lp
-                }
+        // 起手帧必须与收起态**像素等价**：上面那次 refreshCandidateBar 已把栏 lp 写成
+        // 目标高（applyCandidateRows 见 animator==null 就落位），若就这么钉窗，钉住的窗口内
+        // 会画出「目标栏高 + 起跳平移」的错配 —— 多出的高度被推出根布局下沿，
+        // 底部功能行整条被裁，直到动画器起表才纠正（实测整个延迟窗 ~100ms 都这样）。
+        // 先写回起跳高，这一态便与点击前一致。
+        (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
+            if (p.height != from) {
+                p.height = from
+                candidateBar.requestLayout()
             }
-            rootView.translationY = (winH - (from + restH)).toFloat()
+        }
+        val rootView = candidateBar.parent as? ViewGroup
+        // ⚠ restH **不能**由根高反推：钉住期根高恒为 winH，反转（补间在途再点）时
+        // settleCandidateHeight 只改 lp 不触发布局 ⇒ 根高还是旧的钉高 ⇒
+        // restH 会被算成 `rest + (to_旧 − h_中)`，平移量随之偏大，键盘整体上浮、
+        // 底部露背板条，收尾再弹回。改为「除候选栏以外子视图高之和」，
+        // 钉住前后同值（面板的固定高也一并计入）。
+        val restH = if (rootView != null) {
+            var acc = 0
+            for (i in 0 until rootView.childCount) {
+                val c = rootView.getChildAt(i)
+                if (c !== candidateBar) acc += c.height
+            }
+            acc
+        } else 0
+        // 只涨不缩：反转时 rootView.height 是旧钉高（> 目标），保住它 ⇒ 少一次窗口收缩。
+        val winH = if (rootView != null && restH > 0) {
+            maxOf(maxOf(from, to) + restH, rootView.height)
+        } else 0
+        val rootLp = rootView?.layoutParams as? LinearLayout.LayoutParams
+        val pinWindow = rootView != null && rootLp != null && winH > 0
+        if (pinWindow) {
+            if (rootLp!!.height != winH) {
+                rootLp.height = winH
+                rootView!!.layoutParams = rootLp
+            }
+            rootView!!.translationY = (winH - (from + restH)).toFloat()
+        }
+        if (Diagnostics.KEY_TRACE) {
+            Diagnostics.v(
+                TAG,
+                "PIN pin=$pinWindow from=$from to=$to rest=$restH win=$winH " +
+                    "ty=${rootView?.translationY} " +
+                    "barLp=${(candidateBar.layoutParams as? LinearLayout.LayoutParams)?.height}",
+            )
         }
         val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
         animator.interpolator = candidateTweenInterpolator
@@ -550,6 +631,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     return true
                 }
             }
+            tweenWaiter = waiter
             vto.addOnPreDrawListener(waiter)
         } else {
             startDeferredRotation()
@@ -5483,19 +5565,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         cancelPendingPanelReveal()
         // 展开 / 收起的补间：视图都摘下来了还逐帧改旧树的栏高，纯属空跑；
         // 撤掉也顺带让旧实例不再被动画器多持有一会儿。
-        // ⚠ 必须**先摘引用再 cancel**：`cancel()` 会同步回调 `onAnimationEnd`，靠
-        // 「引用已不在」才挡得住；反序会在 detach 过程中放行收尾，等于对一棵已摘下的
+        // ⚠ 里面是「先摘引用再 cancel」：cancel() 会同步回调 onAnimationEnd，
+        // 靠「引用已不在」才挡得住；反序会在 detach 过程中放行收尾，等于对一棵已摘下的
         // 视图再重建一次内容（还会 post 一个分页追加进 RunQueue）。
-        val animator = candidateHeightAnimator
-        candidateHeightAnimator = null
-        animator?.cancel()
-        // 补间把根高钉到了展开态的高度、并整体平移过：中途 detach 若不还原，
-        // 本实例被复用（跨会话复用 inputView）时会带着 200~300px 的空白条与位移回来。
-        resetTweenWindow()
-        // 三角朝向补间同理：先摘引用再 cancel（同一条 onAnimationEnd 守卫约定）
-        val rot = candidateExpandRotationAnimator
-        candidateExpandRotationAnimator = null
-        rot?.cancel()
+        // 补间还把根高钉到展开态、整体平移过：中途 detach 若不还原，本实例被复用
+        // （跨会话复用 inputView）时会带着 200~300px 的空白条与位移回来。
+        // 撤补间 + 撤等待者 + 撤钉窗平移，三件收在同一入口（会话边界复用同一个函数）。
+        resetTransientGeometry()
         super.onDetachedFromWindow()
     }
 

@@ -6337,6 +6337,33 @@ class RecentFixesRegressionTest {
                 toggleBody.indexOf("expandedRowsCached = expandedRowsFor(") >
                 toggleBody.indexOf("if (expand) {"),
         )
+
+        // ⑦ 钉窗前必须把栏高写回起跳高：refreshCandidateBar 已把 lp 写成目标高，
+        // 若直接钉窗，窗口内会画出「目标栏高 + 起跳平移」的错配 —— 多出的高度被推出
+        // 根布局下沿，底部功能行整条被裁，直到动画器起表才纠正（每次展开必现）。
+        val tween = TestSources.blockAfter(src, "private fun startCandidateHeightTween(")
+        assertTrue(
+            "钉窗前必须把候选栏高写回起跳高",
+            "p.height = from" in tween,
+        )
+        // ⑧ restH 不得由根高反推：钉住期根高恒为 winH，反转（补间在途再点）时
+        // settleCandidateHeight 只改 lp 不触发布局 ⇒ 根高还是旧钉高 ⇒ 平移量偏大，
+        // 键盘整体上浮、底部露背板条，收尾再弹回。
+        assertTrue(
+            "restH 必须由子视图高之和得出（不得由根高反推）",
+            "rootView.childCount" in tween &&
+                "rootView.height - from" !in tween,
+        )
+        // ⑨ 会话边界要有统一收尾：补间「只建未 start」时没有 onAnimationEnd 会来，
+        // 钉住的高与平移会跨会话留在复用不 detach 的 inputView 上。
+        assertTrue(
+            "必须有会话边界的统一收尾入口",
+            "fun resetTransientGeometry()" in src,
+        )
+        assertTrue(
+            "onFinishInputView 必须调用 resetTransientGeometry",
+            codeOf("JinnIme.kt").contains("pinyinKeyboard?.resetTransientGeometry()"),
+        )
     }
 
     /**

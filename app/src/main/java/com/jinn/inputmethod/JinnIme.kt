@@ -2503,8 +2503,13 @@ class JinnIme : InputMethodService() {
         cancelTranslate(notify = true)
         ui.removeCallbacks(backspaceRunnable)
         // 拼音视图那份连删循环不归本服务的 ui 管：窗口隐藏时若平台没派发 ACTION_CANCEL、
-        // 且 inputView 被跨会话复用（不 detach），它会继续发 DEL 并每约 150ms 响一声删除音
+        // 且 inputView 被跨会话复用（不 detach），它会继续发 DEL 并每 150ms 响一声删除音
         pinyinKeyboard?.stopBackspaceRepeat()
+        // 会话边界：候选栏展开/收起补间若「只建未 start」（等窗口就位前就收起键盘），
+        // 没有任何 onAnimationEnd 会来，钉住的根高与整体平移会跨会话留在复用不 detach 的
+        // inputView 上 ⇒ 下次弹键盘带着一条 200~300px 的空白条与位移回来。
+        // 补间的两个动画器、就绪等待者、钉窗与平移一并在这里收掉。
+        pinyinKeyboard?.resetTransientGeometry()
         // 语音面板的退格同理：按下态在它自己身上（另一个实例），收起时一并复位
         voiceBackspaceView?.isPressed = false
         themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
