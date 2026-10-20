@@ -6285,13 +6285,17 @@ class RecentFixesRegressionTest {
             "数字行按自身行框高，栏高不足时整行不显示",
             "android:layout_height=\"wrap_content\"" in digitBlock,
         )
-        // 按钮行 weight=1 吃剩余高度：数字行 GONE 时 share == 自身内容高（= 改造前的整栏高），
-        // VISIBLE 时被压到「栏高 - 数字行」；两种情况下都不会溢出栏外
+        // ⚠ candidate_list 必须 match_parent，**不能**用 weight（2026-10-20 真机 GEO 实测）：
+        // candidate_scroll 有 paddingTop（单行档为拼音条让位），fillViewport 会把
+        // candidate_panel_stack 拉到**未扣 padding** 的高度 ⇒ 候选区溢出栏外，且
+        // center_vertical 把候选 TextView 量成 0 高（padTop=63 / scrollH=161 /
+        // listH=161 / firstH=0 ⇒ 输入 ji 后候选整体下沉看不见）。
+        // match_parent 下 stack 高 = 视口 - paddingTop，候选区正好落在拼音条下方。
         val listBlock = TestSources.window(xml, "@+id/candidate_list", "/>")
         assertTrue(
-            "按钮行必须 0dp + weight=1 吃剩余高度",
-            "android:layout_height=\"0dp\"" in listBlock &&
-                "android:layout_weight=\"1\"" in listBlock,
+            "候选容器必须 match_parent（不得用 weight：candidate_scroll 有 paddingTop，weight 会让候选区溢出栏外）",
+            "android:layout_height=\"match_parent\"" in listBlock &&
+                "layout_weight" !in listBlock,
         )
     }
 
