@@ -284,6 +284,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var candidateHeightAnimator: ValueAnimator? = null
     /** 三角朝向补间；与栏高补间同起同落（见 [tweenExpandButton]） */
     private var candidateExpandRotationAnimator: ValueAnimator? = null
+
+    /**
+     * 一次性开关：true 时 [tweenExpandButton] **只建动画器、不 start**，起表交给
+     * [startCandidateHeightTween]（那里可能要把起表推迟到窗口 resize 完成之后）。
+     * 只在 [toggleCandidateExpanded] 内一进一出，别处读取一律为 false。
+     */
+    private var deferRotationStartOnce = false
+
+    /**
+     * 起动被 [deferRotationStartOnce] 推迟的三角补间；已被 cancel / 替换时什么都不做。
+     *
+     * 与栏高**同一时刻**起表，是「同起同落」在延迟起动分支上的落点。
+     */
+    private fun startDeferredRotation() {
+        val animator = candidateExpandRotationAnimator ?: return
+        if (!animator.isStarted) animator.start()
+    }
     /** 在途补间的目标栏高（px）；落定时直达它，别停在中间高度 */
     private var candidateTweenTarget = 0
 
@@ -366,6 +383,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // ⚠ 三角必须先于紧接着那次 refresh 起补间：refreshCandidateBar 开头会按意图态对齐角度
         // （补间在途时才跳过），它若在补间之前跑，角度已被写到终值，后面的旋转补间就是
         // target→target 空转，观感仍是「箭头一帧翻过去」。
+        // 「建动画器」与「起动」在这里被拆成两步：展开时栏高要等窗口 resize 完才起表，
+        // 三角必须**同时**起表（同起同落是本类反复强调的硬约束），否则箭头先转 75°、
+        // 栏高还没动，观感正是用户说的「不协调」。
+        deferRotationStartOnce = true
         tweenExpandButton(expand)
         // 内容在这一次刷新里进入目标态
         refreshCandidateBar()
@@ -382,8 +403,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun finishCandidateTween() {
         candidateHeightAnimator = null
+        resetTweenWindow()
         candidateRenderExpanded = candidatesExpanded
         refreshCandidateBar()
+    }
+
+    /**
+     * 撤掉补间期「钉住的窗口总高 + 整体平移」，把几何交回正常布局。
+     *
+     * 只在补间结束时调用（[finishCandidateTween] / [settleCandidateHeight] / detach）：
+     * 调用点必须已经让栏高落到终值 —— 三个调用点都满足，否则会出现「拆钉子那一刻跳一下」。
+     */
+    private fun resetTweenWindow() {
+        val rootView = candidateBar.parent as? View ?: return
+        if (rootView.translationY != 0f) rootView.translationY = 0f
+        (rootView.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+            if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                rootView.layoutParams = lp
+            }
+        }
     }
 
     /**
@@ -395,6 +434,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 三角朝向不在这里插值（另见 [tweenExpandButton]，同一时长 + 同一 [candidateTweenInterpolator]）；
      *  - 不加「过渡期跳过」守卫 —— 补间期间 [applyCandidateRows] 根本不写高度，
      *    所以按键 / 词库合并 / 展开态分页重建都不会把它砍断（旧版「只跑 1 帧」的根因消失）。
+     *
+     * ⚠ 补间期间**不让 IME 窗口逐帧改高**（见下方 pinWindow）：栏高仍逐帧变，但窗口总高被钉到
+     * `max(from,to)`，多出来的高度由 [resetTweenWindow] 的 translationY 反向吃掉。
      */
     private fun startCandidateHeightTween(targetRows: Int) {
         // 仅作空守卫：`from` 读真实像素高、`to` 按目标档位现算，都不经过 layoutParams
@@ -412,12 +454,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
             currentPinyinGapDp,
         )
         if (from <= 0 || to <= 0 || from == to) {
+            startDeferredRotation()
             finishCandidateTween()
             return
         }
         if (!ValueAnimator.areAnimatorsEnabled()) {
             // 动画缩放 0 / 无障碍「移除动画」：必须直达终态，不能就此返回
             // （否则渲染态永远停在展开态，栏收不回来）
+            startDeferredRotation()
             finishCandidateTween()
             return
         }
@@ -425,13 +469,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 将来若给本函数新增调用点，先落定再建仍是对的（Agent 3 已核实当前唯一调用点是 toggle）。
         settleCandidateHeight()
         val t0 = System.nanoTime()
+        // 补间期间**窗口总高恒定**：一次把根高钉到 max(from,to)，视觉上的「栏顶边上移」改由
+        // 整体 translationY 表达（纯绘制，不碰窗口）。理由见 [CANDIDATE_TWEEN_MS] 的实测：
+        // 逐帧改栏高 = 逐帧 IME 窗口 resize，180ms 只能落 4 帧；钉住窗口后落 10~12 帧。
+        val rootView = candidateBar.parent as? View
+        val restH = if (rootView != null && rootView.height > from) rootView.height - from else 0
+        val winH = if (restH > 0) maxOf(from, to) + restH else 0
+        val pinWindow = winH > 0 && rootView != null
+        if (pinWindow) {
+            (rootView!!.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                if (lp.height != winH) {
+                    lp.height = winH
+                    rootView.layoutParams = lp
+                }
+            }
+            rootView.translationY = (winH - (from + restH)).toFloat()
+        }
         val animator = ValueAnimator.ofInt(from, to).setDuration(CANDIDATE_TWEEN_MS)
         animator.interpolator = candidateTweenInterpolator
         animator.addUpdateListener { a ->
+            // 窗口还没长到钉住的高度时**一帧都不动**：否则「内容已平移、窗口还是旧高」会被画成
+            // 整个键盘下坠一截（窗口 resize 比本帧 layout 慢时）。落定由动画器自身超时兜底。
+            if (pinWindow && rootView!!.height < winH) return@addUpdateListener
             (candidateBar.layoutParams as? LinearLayout.LayoutParams)?.let { p ->
                 val h = a.animatedValue as Int
                 if (p.height == h) return@let
                 p.height = h
+                // 内容整体下移，令字母区与底栏始终贴住窗口下沿（栏顶边由 translationY 表达）
+                if (pinWindow) rootView!!.translationY = (winH - (h + restH)).toFloat()
                 // 只触发重排，不把同一个 LayoutParams 引用反复挂回去（`layoutParams = p` 会再走一遍
                 // 父链的 onSetLayoutParams 与脏标记；本帧只需要重排）。
                 // ⚠ 每次改栏高都要走一遍 IME 窗口 resize + 宿主 adjustResize 重排（真机实测中位
@@ -459,7 +524,37 @@ class PinyinKeyboardView @JvmOverloads constructor(
         })
         candidateHeightAnimator = animator
         candidateTweenTarget = to
-        animator.start()
+        // 窗口还没长到钉住的高度就先别起表：那段 resize（实测 30~50ms）会被动画器当成已消费，
+        // 首帧直接跳掉 100px 以上（实测 107px）。等窗口就位再起，全程只差这一次启动延迟。
+        if (pinWindow && rootView!!.height < winH) {
+            val vto = rootView.viewTreeObserver
+            val waiter = object : android.view.ViewTreeObserver.OnPreDrawListener {
+                private var frames = 0
+                private var readyFrames = 0
+                override fun onPreDraw(): Boolean {
+                    // 就位后再等一帧：窗口 resize 的 EGL 重建会拖过 layout 那一帧，
+                    // 只等 layout 的话首帧仍会一口气跳掉 80px 左右（实测）。
+                    val ready = rootView.height >= winH
+                    if (ready) readyFrames++
+                    // 已被落定 / 被下一次 toggle 顶掉时必须丢弃：对已 cancel 的实例 start()
+                    // 会让它复活成一条没人管的动画。
+                    val alive = candidateHeightAnimator === animator
+                    if (!alive || (ready && readyFrames > 1) || ++frames > 8) {
+                        if (vto.isAlive) vto.removeOnPreDrawListener(this)
+                        if (alive) {
+                            // 三角与栏高同一帧起表：这是「同起同落」在延迟分支上的落点
+                            startDeferredRotation()
+                            animator.start()
+                        }
+                    }
+                    return true
+                }
+            }
+            vto.addOnPreDrawListener(waiter)
+        } else {
+            startDeferredRotation()
+            animator.start()
+        }
     }
 
     /**
@@ -482,6 +577,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         }
         candidateRenderExpanded = candidatesExpanded
+        // 先撤掉补间期的钉高与平移，再交给下一次刷新落位
+        resetTweenWindow()
         // 旋转补间必须与栏高同命运：非 toggle 的落定路径（选中候选 / 按 ✕ / 层切换 / 候选集变化）
         // 只撤栏高补间的话，三角仍在朝旧的终值跑 —— 而意图态此刻可能已经反了。
         // 这也是下一行「refreshCandidateBar 会按意图态对齐角度」的前提：先撤了才轮到它写终值。
@@ -558,6 +655,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun tweenExpandButton(expanded: Boolean) {
         val target = if (expanded) 180f else 0f
+        // 一次性令牌：无论走哪条分支都在入口消费掉，绝不留到下一次调用（toggle 之外的
+        // 收起路径也会进本函数，残留会让三角永远不起表）
+        val deferStart = deferRotationStartOnce
+        deferRotationStartOnce = false
         // 先摘引用再 cancel：cancel() 会同步派发 onAnimationEnd，字段若仍指向旧实例，
         // onAnimationEnd 的身份守卫放行、旧监听把 rotation 写回**旧** target
         // （闭包捕获的是旧调用的局部 val）⇒ 观感「先弹到旧终点再整段转回来」，
@@ -587,6 +688,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         })
         candidateExpandRotationAnimator = animator
+        if (deferStart) return
         animator.start()
     }
 
@@ -5387,6 +5489,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val animator = candidateHeightAnimator
         candidateHeightAnimator = null
         animator?.cancel()
+        // 补间把根高钉到了展开态的高度、并整体平移过：中途 detach 若不还原，
+        // 本实例被复用（跨会话复用 inputView）时会带着 200~300px 的空白条与位移回来。
+        resetTweenWindow()
         // 三角朝向补间同理：先摘引用再 cancel（同一条 onAnimationEnd 守卫约定）
         val rot = candidateExpandRotationAnimator
         candidateExpandRotationAnimator = null
@@ -5415,27 +5520,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /**
          * 展开 / 收起的栏高补间时长；三角朝向与栏高**同一条时长 + 同一条曲线**。
          *
-         * 180ms 是**按每帧窗口 resize 的预算反推的最小解**，不是「拍长一点」：
+         * ⚠ 下表是**历史口径**，量的是每帧写入 `layoutParams.height` 的「请求值」，不是屏幕上的
+         * 实际绘制帧 —— 2026-10-20 实测证明两者差 2~3 倍：请求 11~12 次，真正落地的只有 **4 次**
+         * （LAY 探针：180ms 内只发生 4 次栏高 layout，步长 26/109/82/77px，末尾一次跳 109px）。
+         * 原因是逐帧改栏高 = 逐帧 IME 窗口 resize（跨进程 relayout + EGL 表面重建，单次 25~50ms），
+         * 帧被合并后补间只剩「跳几下」。
          *
-         * | 时长 | 每次补间帧数 | 最大单帧步长 | 掉帧 |
+         * 因此补间已改为**窗口总高恒定 + 窗口内翻译**（见 [startCandidateHeightTween]）：窗口只在
+         * 视觉等价的那一刻 resize 一次，其余全部是窗口内的栏高变化与 translationY。
+         * 实测同一设备同一尺寸：落地帧 4 → 10~12，步长 26~28px 均匀（展开首帧 53px，来自那次
+         * 一次性窗口增高），收起 11 帧无跳变。
+         *
+         * 历史表（请求值口径，仅用于说明「为什么不是 90/120/150」）：
+         *
+         * | 时长 | 请求帧数 | 请求最大步长 | 观感 |
          * |---|---|---|---|
-         * | 60ms | 5 | 73px（29%） | 无 |
-         * | 90ms | 6 | 140px（56%） | 有（25→80ms 空档） |
-         * | 120ms | 8 | 71px（28%） | 有 |
-         * | 150ms | 8 | 84px（33%） | 有 |
-         * | **180ms** | **11~12** | **24px（9.5%）** | **无** |
+         * | 60ms | 5 | 73px | 一次硬跳 |
+         * | 90~150ms | 6~8 | 71~140px | 掉帧空档，步长反弹 |
+         * | 180ms | 11~12 | 24px | 请求侧最匀 |
          *
-         * 机理（这是关键，别只看 jank 率）：每帧 resize 的成本随「这一帧要改多少 px」上升，
-         * 帧预算（16.7ms）一旦不够，回调就被推后 ⇒ 下一帧一次吃掉更多 px ⇒ 正反馈。
-         * 实测每帧 ≤ 约 24px 时每帧都在预算内（p50 13~15ms），到 40px/帧就开始掉。
-         * 180ms ÷ 252px ≈ 23px/帧，正好压在门槛内侧；90~150ms 不是「脉冲少一点」，
-         * 而是**落进了掉帧区间**，步长反而反弹到 28~56% —— 这正是历史「110ms janky 83%」的真正原因。
-         *
-         * ⚠ 改这个值前先复测逐帧步长与掉帧空档（`Diagnostics.KEY_TRACE` 的 TWEEN 行可复现、
-         * 跨轮次一致）。**不要用 `dumpsys gfxinfo` 的 legacy janky 率裁决**：本机实测该指标在
-         * 60ms 是 2.5%、180ms 是 15~49%，方向相反且同档两轮可差 3 倍 —— 它是「慢帧计数」，
-         * 随帧数放大（180ms 多画了 2.4 倍的 resize 帧），而 p50 本就贴着 16.67ms。
-         * 真机（PACM00）帧成本更低，脉冲应更多，若偏顿应上调 220~240ms，**不要换曲线**。
+         * ⚠ 改时长前先复测**落地**帧数与步长（`TWEEN` 行只给请求值，必须另配 layout 探针），
+         * 只看 `TWEEN` 行会得出「12 帧很匀」的错误结论（2026-10-20 即为此误判背锅一轮）。
+         * **不要用 `dumpsys gfxinfo` 的 legacy janky 率裁决**：它是「慢帧计数」，随帧数放大，方向不可靠。
          */
         const val CANDIDATE_TWEEN_MS = 180L
 

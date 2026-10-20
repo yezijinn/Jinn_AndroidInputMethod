@@ -5852,9 +5852,9 @@ class RecentFixesRegressionTest {
         )
         // 也不能再留一处「补间之后」的重复调用（重复起步=第二次被 cancel 重来，中途会抖）
         assertEquals("三角补间只起步一次", 1, Regex("tweenExpandButton\\(expand\\)").findAll(src).count())
-        // 时长按实测取 180ms：判据是「每帧步长压进 resize 预算」，不是脉冲数好看 ——
-        // 60ms 每帧 73px（29%）、90/120/150ms 掉帧且步长反弹到 28~56%、180ms 每帧 24px（9.5%）不掉。
-        // 依据见常量处注释。
+        // 时长按实测取 180ms；⚠ 下面这行历史的「每帧 24px」是**请求值**口径（数 TWEEN 行），
+        // 落地帧只有 4 帧、末尾一跳 109px —— 真正修掉它的不是时长而是「补间期窗口总高恒定」，
+        // 见常量处注释。判据已改为「落地帧数与步长」，别再拿 TWEEN 行数当帧数。
         assertTrue("补间时长取实测值 180ms", "CANDIDATE_TWEEN_MS = 180L" in src)
         assertTrue(
             "补间期间栏高只由动画器写（旧版「只跑 1 帧」的根因）",
