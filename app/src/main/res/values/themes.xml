@@ -20,5 +20,7 @@
              （覆盖定义见 values-v27/colors.xml） -->
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <!-- 页面转场 0 帧：父主题默认带 @style/Animation.Material.Activity 的滑入滑出 -->
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 </resources>

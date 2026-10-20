@@ -89,7 +89,8 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:divider="@null" />
+        android:divider="@null"
+        android:overScrollMode="never" />
 
     <!-- 图片分类的网格（与 ListView 互斥显隐；列数 / 行高读图库布局偏好，见 ClipboardImageGridView 的类注释） -->
     <GridView
@@ -101,7 +102,8 @@
         android:horizontalSpacing="2dp"
         android:verticalSpacing="2dp"
         android:stretchMode="columnWidth"
-        android:scrollbars="vertical" />
+        android:scrollbars="vertical"
+        android:overScrollMode="never" />
 
     <LinearLayout
         android:id="@+id/hist_pager"
@@ -114,6 +116,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:fillViewport="true"
+        android:overScrollMode="never"
         android:scrollbars="none">
 
         <LinearLayout

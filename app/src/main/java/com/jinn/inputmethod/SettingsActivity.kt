@@ -20,7 +20,6 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.Switch
@@ -119,7 +118,7 @@ class SettingsActivity : ComponentActivity() {
     /** 已解密待导入的临时 zip（跨对话框保存；导入结束或取消后删除） */
     private var pendingImportZip: java.io.File? = null
 
-    /** 处理期间的模态进度框（加密/解密/写入都可能耗时上秒，没有可见反馈用户会以为点了没反应） */
+    /** 处理期间的模态忙框（加密/解密/写入都可能耗时上秒，没有可见反馈用户会以为点了没反应） */
     private var busyDialog: AlertDialog? = null
 
     /**
@@ -1107,7 +1106,7 @@ class SettingsActivity : ComponentActivity() {
     override fun onDestroy() {
         // 检查更新的看门狗同理：它挂在按钮上，页面销毁后仍会跑一次并回头改按钮状态
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
-        // 进度框不能随页面销毁留下（WindowLeaked）；后台任务回来时另有 isFinishing 守卫兜底
+        // 忙框不能随页面销毁留下（WindowLeaked）；后台任务回来时另有 isFinishing 守卫兜底
         dismissBusy()
         // 三个配置流程对话框同理：它们是代码创建的，旋转重建时不会自动恢复
         exportDialog?.dismiss()
@@ -1712,19 +1711,19 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 处理期间的模态进度框。
+     * 处理期间的模态忙框。
      *
      * 为什么必须有：密钥派生按 OWASP 量级取 600k 次 PBKDF2，手机上要 1~2 秒；SAF 写入、
      * 词库解包也可能更久。这段空窗期里如果界面上什么都没有（原来只改一行 11sp 的灰色小字），
-     * 用户会以为点了没反应、甚至重复点击。模态框 + 不确定进度条把「正在进行」摆到台面上，
+     * 用户会以为点了没反应、甚至重复点击。模态忙框把「正在进行」摆到台面上，
      * 结束（成功或失败）时由 [dismissBusy] 统一关闭。
+     *
+     * 框内只留一行文字，不放系统不确定进度条：那条横向条的循环滑动是框架自带的无限动画，
+     * 与全 App 的 0 帧口径冲突（此处关不掉 —— 它由 ProgressBar 的 drawable 自己驱动）。
      */
     private fun showBusy(message: String) {
         if (isFinishing || isDestroyed) return
         dismissBusy()
-        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            isIndeterminate = true
-        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dpOf(20), dpOf(16), dpOf(20), dpOf(16))
@@ -1734,7 +1733,6 @@ class SettingsActivity : ComponentActivity() {
                     textSize = 14f
                 }
             )
-            addView(bar, lpOf(14))
         }
         busyDialog = AlertDialog.Builder(this)
             .setTitle(TEXT_BUSY_TITLE)

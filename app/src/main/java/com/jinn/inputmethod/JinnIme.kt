@@ -436,12 +436,25 @@ class JinnIme : InputMethodService() {
         // 半透明键盘：IME 窗口的默认格式是 OPAQUE(-1)/TRANSPARENT(-2)，合成器按「不透明窗口」
         // 处理，键面的 alpha 只会与窗口内部底色混合、透不出后面的应用（真机症状：改透明度毫无变化）。
         // 必须在窗口首次显示前把它改成 TRANSLUCENT(-3)，窗口才具备真正的 alpha 通道。
+        // 窗口动画一并在这里清零（0 = 无动画）：IME 窗口的 wanim 来自框架主题
+        // （@android:style/Animation.InputMethod = windowEnter/Exit 型资源，整窗自底部滑入），
+        // 而清单里的 <service android:theme> 是死路：Service 不是 themed context，框架从不把该
+        // 属性套上去；InputMethodService.onCreate 还会 setTheme(Resources.selectSystemTheme(...))
+        // 再定一次主题。故只能改窗口本身 —— InputMethodService 自己从不写这个字段，不会回填。
+        // ⚠ 本机 API 32 上 IME 弹收已改由 insets 动画驱动（InsetsSourceProvider$ControlAdapter），
+        // 这一行看不出收益；保留它是给 minSdk 26 覆盖的 API 26–29（那一段弹收仍走窗口动画）。
+        // ⚠ 26–29 未实测。
         runCatching {
             val w = window?.window
-            Diagnostics.i(TAG, "IME 窗口: 初始 fmt=${w?.attributes?.format}")
+            Diagnostics.i(TAG, "IME 窗口: 初始 fmt=${w?.attributes?.format} wanim=${w?.attributes?.windowAnimations}")
             w?.setFormat(PixelFormat.TRANSLUCENT)
-            Diagnostics.i(TAG, "IME 窗口: 已请求 TRANSLUCENT, fmt=${w?.attributes?.format}")
-        }.onFailure { Diagnostics.w(TAG, "IME 窗口格式设置失败: ${it.message}") }
+            w?.setWindowAnimations(0)
+            Diagnostics.i(
+                TAG,
+                "IME 窗口: 已请求 TRANSLUCENT + 0 帧, fmt=${w?.attributes?.format} " +
+                    "wanim=${w?.attributes?.windowAnimations}",
+            )
+        }.onFailure { Diagnostics.w(TAG, "IME 窗口格式/动画设置失败: ${it.message}") }
         prefs = Prefs(this)
         // 敲击反馈引擎（音效 + 震动）：进程级单例，attach 幂等 —— 系统重建 IME 会再次 onCreate，
         // 重复挂载必须无害（否则会多出一份 SoundPool，旧的永不释放）

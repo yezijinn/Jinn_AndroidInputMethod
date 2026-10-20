@@ -178,5 +178,7 @@
         <item name="android:colorBackground">@color/app_bg</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
+        <!-- 弹窗显隐也走 0 帧（父主题默认带缩放淡入） -->
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 </resources>
