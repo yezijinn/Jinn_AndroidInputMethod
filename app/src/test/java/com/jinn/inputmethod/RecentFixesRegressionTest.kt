@@ -6297,6 +6297,19 @@ class RecentFixesRegressionTest {
             "android:layout_height=\"match_parent\"" in listBlock &&
                 "layout_weight" !in listBlock,
         )
+
+        // ④ 单行档候选条目必须给本排行高（与双行档列内条目同源）。
+        // 只给 wrap_content 时 TextView 按字体行框长（20sp ≈ 1.33em = 93px @3.5），
+        // 比行高（28dp = 98px）矮一截，中文字形在行框内又因字体度量偏下
+        // ⇒ 候选整体观感下沉、底部贴栏底（真机 GEO：list 98 / first 93，
+        // 字形带相对行框下移约 33px，2026-10-20 实测）。
+        val single = TestSources.blockAfter(src, "if (rows != CandidateRows.DOUBLE) {")
+        assertTrue(
+            "单行档候选条目必须按 rowHeightPx 给高（不得 wrap_content）",
+            "LayoutParams(" in single &&
+                "rowHeightPx" in single &&
+                "addView(build(text), itemLp)" in single,
+        )
     }
 
     /**

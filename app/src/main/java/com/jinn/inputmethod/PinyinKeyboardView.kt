@@ -2976,8 +2976,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         if (rows != CandidateRows.DOUBLE) {
+            // 单行档条目高同样取本排行高（[applyCandidateRows] 已按同密度/字号算过），
+            // 与双行档的列内条目同源：只给 wrap_content 时 TextView 按自己的字体行框
+            // （20sp ≈ 1.33em = 93px @3.5）长，比行高（28dp = 98px）矮一截，
+            // 中文字形在行框内又因字体度量偏下 ⇒ 候选整体观感下沉、底部贴栏底
+            // （真机 GEO：list 98 / first 93，字形带相对行框下移，2026-10-20 实测）。
+            val itemLp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                rowHeightPx,
+            )
             for (text in shown) {
-                viewCandidateList.addView(build(text))
+                viewCandidateList.addView(build(text), itemLp)
             }
             return
         }
