@@ -47,7 +47,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 ) : LinearLayout(context, attrs) {
 
     init {
-        // ⚠ 键位方向必须锁 LTR（2026-10-03 修复 L-763）：manifest 声明了 supportsRtl=true，而 IME 输入视图默认跟随
+        // 注意：键位方向必须锁 LTR（2026-10-03 修复 L-763）：manifest 声明了 supportsRtl=true，而 IME 输入视图默认跟随
         // locale 翻转 ⇒ RTL 语系下整个键盘（含 QWERTY 字母区与候选栏的功能面板）左右镜像，
         // 而「收起恒为最右端」「退格在左、删除在右」这些都是写死在代码里的约定（LTR 语义），
         // 镜像后收起到最左、翻译键换到另一侧 ⇒ 肌肉记忆失效、误触。
@@ -217,7 +217,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 与三行字母在同一个 LinearLayout 里由同一段代码落高度（[applyLetterRowHeight]）。
      *
      * 显隐由 [syncNumberRow] 统一裁决（开关关 = 与重构前逐像素一致；数字层 / 密码模式下也让位）：
-     * ⚠ 关的时候它**仍在视图树里**（GONE），所以 [restoreLetterRows] 必须按开关恢复，
+     * 注意：关的时候它**仍在视图树里**（GONE），所以 [restoreLetterRows] 必须按开关恢复，
      * 不能无脑 VISIBLE —— 否则方向面板收起后这一行会凭空出现。
      */
     private var numberRow: LinearLayout? = null
@@ -225,7 +225,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 数字行的 10 个键（`1`~`0`）。
      *
-     * ⚠ **刻意不进 [keyViews]**：那是字母层 / 数字层 / 符号层的 26 键映射，会被 [refreshKeyLabels]
+     * 注意：**刻意不进 [keyViews]**：那是字母层 / 数字层 / 符号层的 26 键映射，会被 [refreshKeyLabels]
      * 按 `layer` 改标签、改字色、改 `centeredStyle`；数字行是固定内容，只吃外观类下发
      * （[applyKeyAppearance] / [applySkinToKeys] / [applyKeyTransparency]）。
      */
@@ -237,7 +237,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 候选区视口：两排共用一个横滑容器（天然同步）；✕ 可见时右内边距让出按钮宽度 */
     private val candidateScroll: CandidateScrollView
 
-    /** 候选区纵向滚动容器（展开态看第 5 行起；未展开不消费纵向手势，BUG.md L-1393） */
+    /** 候选区纵向滚动容器（展开态才消费纵向手势；正常几何下内容高 = 栏高 ⇒ 不产生滚动量） */
     private val candidateRowsScroll: CandidateRowsScrollView
 
     /**
@@ -254,7 +254,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 「✕」左侧的展开 / 收起三角，绑定见 init。
      *
      * 文字固定 `▲`，方向由 `rotation` 表达（展开 180°）；只在**单行档**且候选多到需要展开时出现，
-     * 展开态下再点即收起（BUG.md L-1393）。
+     * 展开态下再点即收起。
      */
     private val btnExpandCandidates: TextView
 
@@ -267,13 +267,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var candidatesExpanded = false
 
     /**
-     * 本帧**实际渲染**的形态（与意图态 [candidatesExpanded] 分离）。
+     * 展开排数缓存：一次展开会话内固定（逐键刷新不重算，避免可用高度夹取边界跨档导致网格整排跳）。
      *
-     * 收起时意图态立刻为 false（真值，层切换 / 面板 / 早退分支不会读到假状态），
-     * 但渲染态保留到补间结束 —— 收起期间内容仍随栏高被裁，不会「先清空再合盖」。
-     * 旧版靠谎报 `candidatesExpanded` 实现这一点，正是那时一串 bug 的源头。
+     * 注意：唯一的失效点：几何（字号 / 拼音字号 / 行间隔 / 键高）变了必须置 0 —— 见
+     * [refreshAppearance]。缓存与当前几何不一致时网格会比栏高还高，`expandedBarHeightPx`
+     * 按 [CandidateRows.MAX_COVERED_KEY_ROWS] 夹顶，末排被栏底裁掉。
      */
-    /** 展开排数缓存：一次展开会话内固定（逐键刷新不重算，避免可用高度夹取边界跨档导致网格整排跳） */
     private var expandedRowsCached = 0
 
     /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
@@ -283,7 +282,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var composingSnapshot: String? = null
 
     /**
-     * 切换候选栏展开态（BUG.md L-1393）。
+     * 切换候选栏展开态。
      *
      * 0 帧：栏高与内容在**同一次刷新**里落定（[applyCandidateRows] 是栏高唯一写入者），
      * 无补间、无钉窗、无平移、无三角旋转（作者 2026-10-20 指定）。
@@ -295,9 +294,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (expand) {
             expandedRowsCached = expandedRowsFor(
                 lastCandidates.size,
-                prefs.candidateTextSp,
+                // 用**上一帧落位**的三个几何量（currentCandidateSp / currentPinyinSp /
+                // currentPinyinGapDp），不再重读 Prefs：展开排数是拿上一帧的候选列表算的，
+                // 几何也必须来自同一帧，否则后台导入恰好落在两者之间就得到混合几何的排数，
+                // 整场展开会话都按它裁字（失效点只有 refreshAppearance）。
+                currentCandidateSp,
                 currentPinyinSp,
-                prefs.pinyinLineGapDp,
+                currentPinyinGapDp,
             )
         }
         refreshCandidateBar()
@@ -337,19 +340,33 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return (width / child).coerceAtLeast(1)
     }
 
-    /** 展开三角的显隐与朝向：仅单行档 + 有候选时可见 */
-    private fun updateExpandButton(rowsSetting: Int) {
+    /**
+     * 展开三角的显隐与朝向：仅单行档 + 有候选时可见。
+     *
+     * 几何全部取**调用方传入的本帧值**，本函数不碰 [prefs]：同帧有两次调用（栏高落位前 / 候选
+     * 落定后），各自再读一遍 Prefs 就会用「上一帧的拼音字号 + 本帧的候选字号」这种混合量算
+     * [expandedRowsFor]（见 [refreshCandidateBar] 里「同一个键一帧只读一次」的约定）。
+     */
+    private fun updateExpandButton(
+        rowsSetting: Int,
+        candidateSp: Float,
+        pinyinSp: Float,
+        gapDp: Float,
+    ) {
         // 与「展开态在这些形态下会被强制收起」同一判据：否则数字层会挂一个点了没反应的 ▲。
-        // ⚠ 还必须「展开后排布真的会变」：候选数不超过一屏列数（通常 2~6 条）时 visibleRows 仍只
+        // 注意：还必须「展开后排布真的会变」：候选数不超过一屏列数（通常 2~6 条）时 visibleRows 仍只
         // 算 1 排 ⇒ 栏高与排布分毫不动，只剩三角翻个身，用户会判定「展开功能坏了」。
-        // 已展开时无条件显示 —— 否则这一刻按钮消失，用户反而收不回去。
         val wouldGrow = candidatesExpanded || expandedRowsFor(
             lastCandidates.size,
-            prefs.candidateTextSp,
-            currentPinyinSp,
-            prefs.pinyinLineGapDp,
+            candidateSp,
+            pinyinSp,
+            gapDp,
         ) > 1
-        val show = rowsSetting == CandidateRows.SINGLE && lastCandidates.size > 1 && wouldGrow &&
+        // 已展开时无条件显示 —— 否则这一刻按钮消失，用户反而收不回去。`candidatesExpanded` 这一半
+        // 写在候选数判据**之前**（与 wouldGrow 同侧）：展开态下候选数若掉到 ≤1，只按候选数判会把
+        // 唯一出口摘掉，留下一块收不回去的高栏（现不可达，但那是词库侧一次改动就能变成可达的缺口）。
+        val show = rowsSetting == CandidateRows.SINGLE && wouldGrow &&
+            (candidatesExpanded || lastCandidates.size > 1) &&
             layer == LAYER_LETTER && !hasActiveOverlay
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         // 文字固定 ▲、方向一帧翻面（展开 180°）：本函数是 rotation 的唯一写入者
@@ -409,7 +426,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (!candidatesExpanded) return
         collapseCandidates()
         applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)
-        updateExpandButton(rowsSetting)
+        updateExpandButton(rowsSetting, candidateSp, pinyinSp, gapDp)
     }
 
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
@@ -560,15 +577,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 指纹用 `shown.hashCode()` —— `List.hashCode` 逐元素参与，几十个字符串的哈希远比建几十个 View 便宜，
      * 且**覆盖全部候选文本**（只取首项会在中间项变化时漏判）。分页追加后 `shown` 变长，指纹随之变化、照常重建。
      *
-     * ⚠ 外观变化（字号 / 字距 / 主题色）必须复位，否则换肤后候选不重建。
+     * 注意：外观变化（字号 / 字距 / 主题色）必须复位，否则换肤后候选不重建。
      *
-     * ⚠ 复位只有一个出口 [resetCandidateRender]：本容器（`viewCandidateList`）被**五条旁路**共用
+     * 注意：复位只有一个出口 [resetCandidateRender]：本容器（`viewCandidateList`）被**五条旁路**共用
      * （功能面板 / 密码数字条 / 符号分组 / 引擎加载提示 / 空态），它们各自 `removeAllViews()` 后重填。
      * 2026-10-03 修复 L-809：此前只有外观两处复位，于是「输入 ni → ✕ 清空候选 → 再输入 ni」
      * 时候选栏停在**功能面板**（点按钮会真的执行动作，候选无法点选上屏）——
      * 根因就是旁路不复位、而跳过判据又写在清空之前。凡是清这个容器，一律走 [clearCandidateList]。
      *
-     * ⚠ 哨兵用 `null` 而不是 0（2026-10-03 修复 L-818）：`renderKey` 是若干哈希的线性和，
+     * 注意：哨兵用 `null` 而不是 0（2026-10-03 修复 L-818）：`renderKey` 是若干哈希的线性和，
      * 任何**取值域内**的哨兵都有极小概率被它撞上 ⇒ 误判命中、整棵重建被跳过（候选栏空白）。
      * `null` 不在取值域内，碰撞不可能发生。
      */
@@ -583,6 +600,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 上次渲染的完整候选源：与本次不同即说明换了一批候选，窗口条数复位首屏 */
     private var candidateRenderSource: List<String> = emptyList()
+
+    /**
+     * 上次渲染用的形态（true = 展开的多排一列，false = 收起的单排）。
+     *
+     * 换形态等于换了一套**排布量纲**（列宽、每列条数全变），旧横滑位落在新排布上没有语义 —— 见
+     * [renderCandidateItems] 里的复位。与 [candidateRenderSource] 分开记：展开 / 收起时候选集不变。
+     */
+    private var lastRenderExpanded = false
 
     /** 上次渲染的入参：横滑到末尾追加渲染时据此重放（见 [CandidateRenderArgs]） */
     private var candidateRenderArgs: CandidateRenderArgs? = null
@@ -601,7 +626,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 清空候选容器并复位指纹（2026-10-03 修复 L-809 的唯一出口）。
      *
-     * ⚠ **不要**在别处直接写 `viewCandidateList.removeAllViews()`：那正是 L-809 的成因 ——
+     * 注意：**不要**在别处直接写 `viewCandidateList.removeAllViews()`：那正是 L-809 的成因 ——
      * 清了容器却留着「上次渲染」指纹，下一次内容恰好相同就会跳过重建，界面停在另一种形态上。
      *
      * 本函数自己**不**直接 `removeAllViews()`，而是走 [recycleCandidateViews]：既清容器、
@@ -615,7 +640,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidateRenderArgs = null
         candidateRenderSource = emptyList()
         candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
-        // ⚠ 必须**回收**而不是丢弃（2026-10-20）：这里原先是 `removeAllViews()` + `candidateViewPool.clear()`，
+        // 注意：必须**回收**而不是丢弃（2026-10-20）：这里原先是 `removeAllViews()` + `candidateViewPool.clear()`，
         // 于是每词首键（面板 → 候选）都要新建 32 个 TextView —— 实测 365~560µs/个，
         // 整帧 build 6.7~15.1ms，占该轮 work 约 30%，是候选渲染路径上真正的尖峰。
         // 改回收后：新建数 156~192 → 0~26，词首帧 build 15.1ms → 0.53ms，全轮 work 243.7→105.3ms。
@@ -825,7 +850,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             collapseCandidates()
             clearComposingState()
         }
-        // 展开 / 收起候选栏（文字固定 ▲、rotation 表方向）：仅在单行档、且候选多到需要展开时出现（BUG.md L-1393）
+        // 展开 / 收起候选栏（文字固定 ▲、rotation 表方向）：仅在单行档、且候选多到需要展开时出现
         btnExpandCandidates = root.findViewById(R.id.btn_expand_candidates)
         btnExpandCandidates.contentDescription = TEXT_EXPAND_DESC
         btnExpandCandidates.setOnClickListener {
@@ -938,7 +963,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 当前按键该归入哪个音效分组（见 [TapSound]）。
      *
-     * ⚠ 必须按**按下瞬间的角色**判定，不能按物理键位：26 个键在字母 / 数字 / 符号 / 密码
+     * 注意：必须按**按下瞬间的角色**判定，不能按物理键位：26 个键在字母 / 数字 / 符号 / 密码
      * 四态下是**同一批 View**，同一个键在数字层是「1」、在符号层是「，」。按物理键分组的话，
      * 打字与输入数字会响同一个音，分组就失去意义。
      *
@@ -1272,7 +1297,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             onSpacePressed()
         }
         btnSpace.setOnLongClickListener {
-            // ⚠ 先问可用性：语音默认关闭，不可用时若照旧返回 true，`View` 会置
+            // 注意：先问可用性：语音默认关闭，不可用时若照旧返回 true，`View` 会置
             // `mHasPerformedLongPress`，抬起不再派发 click ⇒ 这次空格彻底丢失；而上面的
             // `fire` 已经响过，用户听到「按下了」却什么都没上屏（表现为「空格偶尔失灵」）。
             // 不可用 ⇒ 不响、不消费，交给框架照常走短按上屏空格（反馈由 click 里发）。
@@ -1437,6 +1462,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun refreshAppearance() {
         // 外观变了（字号 / 字距 / 主题色）⇒ 候选必须重建，否则指纹命中会留下旧字距与旧颜色（L-796）
         resetCandidateRender()
+        // 展开排数缓存同样作废：行高与拼音条高都是**当前字号**的函数（[expandedRowsFor] 每帧按
+        // 现读的字号重算网格），而排数缓存在一次展开会话内固定。展开中把字号调大而不作废缓存 ⇒
+        // 排数仍是旧值、网格比栏高还高 ⇒ [CandidateRows.expandedBarHeightPx] 按
+        // [CandidateRows.MAX_COVERED_KEY_ROWS] 夹顶，**末排被栏底裁掉**（默认档余量仅 17px，
+        // 候选字号超过 31.4sp 即裁；真机 36sp 复现）。
+        expandedRowsCached = 0
         syncKeyboardSkin()
         applyKeyTransparency()
         applySkinToKeys()
@@ -2515,7 +2546,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 46dp；双行 = 拼音条 + 两排 = 74dp），
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
-        // ⚠ 别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
+        // 注意：别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
         // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
         // 算式走 CandidateRows 的派生函数（BUG.md L-1331）：这里原先手写了同一个加法，
         // 与 [CandidateRows.barHeightPx] 是两份实现，改系数时会分叉
@@ -2641,7 +2672,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 「✕ 清空候选」显隐（唯一入口）：按钮与拼音条同高、贴其右端，候选区不需要为它让位 */
     private fun setClearButtonVisible(visible: Boolean) {
         btnClearCandidates.visibility = if (visible) View.VISIBLE else View.GONE
-        // 三角与 ✕ 同生同灭（BUG.md L-1394）：没有候选可清时也就没有可展开的内容 ——
+        // 三角与 ✕ 同生同灭：没有候选可清时也就没有可展开的内容 ——
         // 否则会出现「空候选栏上挂着一个 ▲」，用户点它得到一个什么都没有的展开态。
         // 真正的显隐判据仍由 [updateExpandButton] 每帧按「单行档 + 候选多到需要展开」重算。
         if (!visible) btnExpandCandidates.visibility = View.GONE
@@ -2722,6 +2753,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 第一个候选被推到屏外，看起来像「候选没刷新」。
             candidateScroll.scrollTo(0, 0)
         }
+        // 展开 / 收起换了排布：收起的单排与展开的「N 排一列」列宽量纲完全不同，沿用旧 scrollX
+        // 既不是「接着看刚才那条」也不是「从头看」—— 首屏会落在候选列表中段，词频最高的几条
+        // （展开的主要动机）反而在屏外。与上面「换候选回最左」同一条原则，故一并回零。
+        // 注意：必须在下面的指纹早退**之前**：同内容刷新（连点三角、拖完字号松手）会走早退分支，
+        //   放在早退之后就永远轮不到。
+        // 只复位横轴：正常几何下纵轴内容高恒 ≤ 栏高（[applyCandidateRows] 按
+        // [CandidateRows.expandedBarHeightPx] 向上取整到栏高），`candidateRowsScroll` 的 maxScrollY
+        // 恒 0，复位它是死代码；失配窗口（缓存与字号不一致）里那点残余可滚量也不该替用户回顶。
+        if (candidatesExpanded != lastRenderExpanded) {
+            lastRenderExpanded = candidatesExpanded
+            candidateScroll.scrollTo(0, 0)
+        }
         val shown = if (items.size > candidateRenderLimit) items.subList(0, candidateRenderLimit) else items
 
         // 候选字距（水平，用户可在键盘外观页调）：本帧只读一次 Prefs（与 refreshCandidateBar 同约定）。
@@ -2732,11 +2775,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 指纹命中就跳过整棵重建（2026-10-03 修复 L-796）：退格连删时 items 往往不变，只是选中项在移，
         // 而重建要付几十个 TextView + 几十个闭包的代价。旧 View 仍在树上，其点击闭包捕获的文本与当前
         // items 一致（指纹已覆盖全部文本），所以跳过是安全的。
-        // ⚠ 用 Long 做线性和（L-818）：Int 线性和的取值域与「无缓存」哨兵重叠，改为 `Long? = null` 后
+        // 注意：用 Long 做线性和（L-818）：Int 线性和的取值域与「无缓存」哨兵重叠，改为 `Long? = null` 后
         // 碰撞不可能发生 —— 指纹相等就跳过重建，撞上就是候选栏空白。
         // 候选字号也算进指纹：字号变了而候选文本没变（外观页拖滑杆 / 导入配置）时同样要重建，
         // 否则命中旧指纹会留下旧字号（与 L-809 同族：指纹必须覆盖全部影响渲染的入参）
-        // ⚠ 系统字体缩放同样要进指纹（2026-10-04 修复 L-824）：双行档两排的**行高是写死的 px**
+        // 注意：系统字体缩放同样要进指纹（2026-10-04 修复 L-824）：双行档两排的**行高是写死的 px**
         // （下方 LayoutParams EXACTLY，由 applyCandidateRows 按 fontScale 派生），fontScale 变了而
         // items / 字号 / 字距都没变时命中旧指纹 ⇒ 子项保留旧行高、与已重算的栏高错配（放大即裁字）。
         val sizeSp = currentCandidateSp
@@ -2848,7 +2891,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         setPaddingRelative(spacingHalfPx, 0, spacingHalfPx, 0)
         // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含固定行高）：换成默认的 wrap_content
         // 布局参数，由新容器按需重新下发。
-        // ⚠ **不能**写成 `layoutParams = null`：`View.setLayoutParams` 拒绝 null，会抛
+        // 注意：**不能**写成 `layoutParams = null`：`View.setLayoutParams` 拒绝 null，会抛
         // `NullPointerException: Layout parameters cannot be null`，每次按键必崩（2026-10-18 真机实测）。
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2963,7 +3006,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 未展开时追加是**增量**的（[appendCandidateViews] 只往尾部接视图）：不动已有子项、不动 scrollX
      * ⇒ 候选栏平滑衔接，不出现回弹抖动。展开态则整栏重建（列数按排数重算，见下方说明）。
      *
-     * ⚠ 只由**正向**的用户滚动触发（横向 `scrollX > oldScrollX` / 纵向 `scrollY > oldScrollY`）：
+     * 注意：只由**正向**的用户滚动触发（横向 `scrollX > oldScrollX` / 纵向 `scrollY > oldScrollY`）：
      *   换一批候选时先 removeAllViews 再重填，旧内容若较短会把滚动位置夹回、发出一次**变小**的回调 ——
      *   若不加方向判据，这里会凭空把首屏铺到满。
      *
@@ -2996,7 +3039,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val filledBefore = maxScroll <= 0
         val from = candidateRenderLimit
         val to = minOf(args.items.size, from + RENDERED_CANDIDATES_STEP)
-        // 展开态（3/4 排）不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认「逐条」与
+        // 展开态（3/4 排）不能走增量追加：`appendCandidateViews` 只认「逐条」与
         // 「两排一列」，展开态按 3/4 排成列，`from` 又未必是排数的整数倍 —— 增量拼出来的列会
         // **整体竖向错位**（实测：第 9 列四个字被当成一列裸 TextView，落成竖直居中的错块）。
         // 故展开态整栏重建（只重排几十个 TextView，且不在逐键热路径上），并保住纵向滚动位。
@@ -3018,7 +3061,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val shownNew = if (args.items.size > to) args.items.subList(0, to) else args.items
         candidateRenderKey = shownNew.hashCode().toLong() * 31 + args.appearanceKey
         Diagnostics.i(TAG, "候选分页: 追加渲染至 $to/${args.items.size} 条")
-        // 续补（BUG.md L-1395）：force=true 跳过「已在末尾」判据，只在追加前没撑满时继续（补到撑满即止）。
+        // 续补：force=true 跳过「已在末尾」判据，只在追加前没撑满时继续（补到撑满即止）。
         if (to < args.items.size && filledBefore) {
             candidateScroll.post { maybeAppendMoreCandidates(force = true) }
         }
@@ -3028,7 +3071,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
         // `layer != LAYER_LETTER`，与 composing 长度无关。
-        // ⚠ 这条兜底**覆盖不到**英文 / 符号 / 数字层的 `onCommitText` 直出上屏（那条路不刷候选栏）
+        // 注意：这条兜底**覆盖不到**英文 / 符号 / 数字层的 `onCommitText` 直出上屏（那条路不刷候选栏）
         //   —— 它由 `JinnIme.onUpdateSelection` 里的 resetActionPanel 兜住。
         if (actionPanelExpanded &&
             (layer != LAYER_LETTER || passwordPad || composing.isNotEmpty() || lastPredictions.isNotEmpty())
@@ -3038,7 +3081,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 本帧用到的开关与外观参数共用一次 Prefs 实例（省掉多次实例化），并各自**只读一次**：
         // 要防的是**同一个键在一帧内被读两遍** —— 后台导入线程若恰在两次读取之间改键，
         // 会出现「高度按旧档、结构按新档」的一帧错配（列底被裁），要到下次刷新才自愈。
-        // ⚠ 别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
+        // 注意：别把这里读成「几个键是同一瞬间的快照」：Prefs 只是 SharedPreferences 的薄封装，
         // 不提供快照语义（BUG.md L-68 的 ②）。
         val rowsSetting = prefs.candidateRows
         // 档位 / 层 / 面板一变，三角可能直接消失（它只在单行档显示），展开态就没了收起入口：
@@ -3060,7 +3103,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 输入串变了才收起（同输入下的词库合并、学习重排不得收起展开态 —— 作者 2026-10-17 指定，
         // 这条语义输入串已足以表达）。「新一次查询 / 选词上屏 / 清空 / 会话结束」输入串都会变或清空，
         // 收起语义不变。
-        // ⚠ 判据**只看输入串**，不看候选指纹：本判据在查询之前执行，此刻 `lastCandidates` 还是
+        // 注意：判据**只看输入串**，不看候选指纹：本判据在查询之前执行，此刻 `lastCandidates` 还是
         // 上一次查询的列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（2026-10-21 实测：展开态
         // 按 n 不收、再按一次改变了输入的键才收）。判据收在 [CandidateRows.shouldCollapseExpanded]。
         // 本帧输入串只拷一次：下面 3103 行的 `input` 与这里内容必然相同（两者之间
@@ -3068,7 +3111,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val inputNow = composing.toString()
         composingSnapshot = inputNow
         if (CandidateRows.shouldCollapseExpanded(lastCandidatesInput, inputNow)) {
-            // ⚠ 这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
+            // 注意：这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
             // 等于把用户敲的拼音（含密码框内）长期留在可分享的诊断包里；且每键一次主线程写盘
             // （PinyinEngine 里同型的一处早已注明这一点）。只记长度，排障够用。
             if (Diagnostics.KEY_TRACE) {
@@ -3081,7 +3124,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         lastCandidatesInput = inputNow
         // 展开态：横向仍走列滑动（CandidateScrollView 自己不消费纵向），纵向交给父级
-        // 「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
+        // 「换行浏览」，横竖两个手势不能互相抢。
         candidateScroll.expanded = candidatesExpanded
         candidateRowsScroll.expanded = candidatesExpanded
         // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档
@@ -3097,7 +3140,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             rowsSetting
         }
-        // 展开态一次性把窗口放大到「够铺满可见网格」的量（BUG.md L-1394）：否则首次只渲染 32 条，
+        // 展开态一次性把窗口放大到「够铺满可见网格」的量：否则首次只渲染 32 条，
         // 余下的全走追加路径 —— 而那正是列错位的来源（见 maybeAppendMoreCandidates）。
         if (candidatesExpanded) {
             val perCol = estimateColumnsPerRow().coerceAtLeast(1)
@@ -3105,7 +3148,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val target = minOf(lastCandidates.size, maxOf(CandidateRows.MAX_EXPANDED_ROWS * perCol, need))
             if (candidateRenderLimit < target) candidateRenderLimit = target
         }
-        updateExpandButton(rowsSetting)
+        updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap)
         val perRow = applyCandidateRows(rows, candidateSp, pinyinSp, pinyinGap)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
@@ -3139,7 +3182,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             else -> PinyinEngine.markSyllables(queryInput)
         }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
-        // ⚠ 这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
+        // 注意：这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
         // 双行档的面板态也保持整栏 72dp —— 用户 2026-10-02 明确要求「2 行候选恒定增高，
         // 不要随内容动态变化」。（曾按单排收缩，导致键盘高度来回跳，已撤销。）
         if (input.isEmpty() && lastPredictions.isEmpty()) {
@@ -3148,7 +3191,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 并重落栏高：否则展开时落下的 3~4 排高度会留成一块空栏（选完候选后必然走到这里）
             collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap)
             showPinyin(null)
-            // ⚠ 必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
+            // 注意：必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
             // 若不复位，「清空后再打同一串拼音」会命中旧指纹而跳过重建。
             clearCandidateList()
             // 内容刚全部清空：上面那次选档读到的 lastCandidates 还是旧值，这里清空后再判一次
@@ -3186,7 +3229,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
 
         val result = PinyinEngine.query(queryInput)
-        // 候选集口径（BUG.md L-1395）：size + 末尾几条，用于判定「长词够不着」是**没生成**还是
+        // 候选集口径：size + 末尾几条，用于判定「长词够不着」是**没生成**还是
         // **渲染追加不续**。只在 KEY_TRACE（debug 构建）下打印，release 静默。
         if (Diagnostics.KEY_TRACE) {
             Diagnostics.v(
@@ -3220,7 +3263,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 候选集落定后要重判一次三角：本函数开头那次用的是**上一帧**的候选列表，
         // 新的一次输入首帧会读到空表 ⇒ 三角要等第二次按键才出现（实测）。
-        updateExpandButton(rowsSetting)
+        updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap)
         // 拼音行默认显示用户按下的键（input），不是查询串（queryInput）。
         // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
         // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
@@ -3869,7 +3912,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
         setClearButtonVisible(false)
         // 动作排（长按翻译键展开，2026-10-09）：本帧整条切换为动作排，其余分支全不参与。
-        // ⚠ renderActionPanel 的定义必须在 buildFunctionButton **之后** —— DocsReferenceTest 用
+        // 注意：renderActionPanel 的定义必须在 buildFunctionButton **之后** —— DocsReferenceTest 用
         //   「renderFunctionPanel → buildFunctionButton」之间的切片解析常驻按钮顺序并与
         //   「功能总览.md」对拍，把动作排定义插进那段切片会污染常驻清单。
         if (actionPanelExpanded) {
@@ -3975,13 +4018,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 onLongClick = {
                     when {
                         // 在途：吃掉长按，不给第二个入口。
-                        // ⚠ 在途按钮只被置 isClickable=false（L-764：不能用 isEnabled，读屏会失去状态），
+                        // 注意：在途按钮只被置 isClickable=false（L-764：不能用 isEnabled，读屏会失去状态），
                         //    而 setOnLongClickListener 会把 longClickable 置真 ⇒ 长按仍会触发，必须显式拦。
                         translateInFlight -> true
                         // 剪贴板面板打开：与 IME 侧 requestTranslate 的拦截口径一致（键还在，但点了会被拒）
                         clipboardActive -> true
                         listener?.supportsAiActions() != true -> {
-                            // ⚠ 必须返回 true：返回 false 时抬手会走 onClick ⇒ 用户「长按看看」
+                            // 注意：必须返回 true：返回 false 时抬手会走 onClick ⇒ 用户「长按看看」
                             //    直接发起一次真实（计费）的翻译，与「长按无效」的直觉完全相反。
                             Toast.makeText(context, TEXT_ONLY_OPENAI_ACTIONS, Toast.LENGTH_SHORT).show()
                             true
@@ -3993,7 +4036,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                         }
                     }
                 },
-                // ⚠ 面板上也记一笔（2026-10-03 修复 L-759）：同面板的「历史 / 方向 / 退出搜索」都有 i 级日志，
+                // 注意：面板上也记一笔（2026-10-03 修复 L-759）：同面板的「历史 / 方向 / 退出搜索」都有 i 级日志，
                 // 唯独翻译键没有 ⇒ 用户报「点了没反应」时，诊断包**证明不了他点过**。
                 onClick = {
                     Diagnostics.i("PinyinKeyboardView", "功能面板: 点翻译 inFlight=$translateInFlight")
@@ -4055,7 +4098,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             minimumHeight = reuseBlockMinPx()
             isClickable = true
             isFocusable = true
-            // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
+            // 注意：无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
             contentDescription = "$label $hint"
             // 功能面板按钮（历史 / 方向 / 全选 / 复制 / 粘贴 / 图库 / 翻译 / 收起）统一归「功能切换」组：
             // 这里是它们唯一的构建出口，挂一处即全覆盖
@@ -4102,10 +4145,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 槽位：各键 weight=1 平均分配；内边距统一收到 2dp 兜底窄屏溢出
      * （9 键均分 + 8dp 内边距在 320dp 屏上只剩 ≈15dp 内容区，放不下 13sp 两字）。
      *
-     * ⚠ 定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 用
+     * 注意：定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 用
      *   `substringAfter("private fun renderFunctionPanel()").substringBefore("private fun buildFunctionButton(")`
      *   解析常驻按钮顺序并与《功能总览.md》对拍，插进那段切片会把动作排的 label 算进常驻清单。
-     * ⚠ 本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：全仓只允许 2 处，
+     * 注意：本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：全仓只允许 2 处，
      *   清容器由 renderFunctionPanel 开头的 clearCandidateList() 负责）。
      */
     private fun renderActionPanel() {
@@ -4353,7 +4396,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val group = box as? ViewGroup ?: return
         val labelView = group.getChildAt(0) as? TextView ?: return
         labelView.text = if (on) LABEL_TRANSLATING else LABEL_TRANSLATE
-        // ⚠ 不用 isEnabled 表达「在途」（2026-10-03 修复 L-764）：`isEnabled=false` 会把控件从无障碍树里
+        // 注意：不用 isEnabled 表达「在途」（2026-10-03 修复 L-764）：`isEnabled=false` 会把控件从无障碍树里
         // 摘掉 ⇒ 读屏用户在 60~300s 的大模型请求期间**既听不到「翻译中」，也失去了这个唯一状态**。
         // 改为「不可点 + 半透明」，并把状态写进 contentDescription 与主动播报。
         group.isClickable = !on
@@ -4486,7 +4529,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 而 directionPanelVisible 已置 true，用户点方向键毫无反应。
         if (clipboardActive) hideClipboardPanel()
         // 图库面板同理，且它是最上层（init 里最后 addView）：不收就是「点了方向键没反应」。
-        // ⚠ 反向由 showGalleryPanel 里那一段负责，两处必须成对（L-1024）。
+        // 注意：反向由 showGalleryPanel 里那一段负责，两处必须成对（L-1024）。
         hideGalleryPanel()
         // 字母区隐藏，方向面板显示
         Diagnostics.i(TAG, "字母区: 隐藏三行（原因=方向面板显示）")
@@ -4523,7 +4566,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 三行就会永久失活：键面看着还在，但整块不再响应触摸，而底栏是另一个容器照常可用。
      * 所以这里改成"谁把子视图藏了，恢复时一律无条件恢复"。
      *
-     * ⚠ **唯一的例外是数字行**（2026-10-21）：它的显隐归 [syncNumberRow] 管（开关 / 方向面板 /
+     * 注意：**唯一的例外是数字行**（2026-10-21）：它的显隐归 [syncNumberRow] 管（开关 / 方向面板 /
      * 数字层 / 密码模式四项合判），这里只把**其它**行点亮、再交给它自己裁决。
      * 两个反例都在真机上出现过：无脑 VISIBLE 会让「方向面板收起」变成开关被偷偷打开；
      * 只按开关恢复则会让「数字层收面板」之后同屏两排数字。

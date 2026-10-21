@@ -5,14 +5,14 @@ import kotlin.math.roundToInt
 /**
  * 候选栏的「拼音条 + 候选行」几何，与「上偶下奇」排版规则。
  *
- * 布局（2026-09-25 定的分布；字号由用户参数 [CandidateText] 决定，默认档是拼音 14sp、汉字 20sp）：
+ * 布局（2026-09-25 定的分布；字号由用户参数 [CandidateText] 决定，默认档是拼音 19.6sp、候选 28sp）：
  * ```
- *   单行档：拼音条（默认 18dp）              ← 顶部一条
- *          候选 1 3 5 …（横向滚动，默认 28dp）
+ *   单行档：拼音条（默认 26dp）              ← 顶部一条
+ *          候选 1 3 5 …（横向滚动，默认 39dp）
  *
- *   双行档：上排 2 4 6 …（横向滚动，默认 28dp）
+ *   双行档：上排 2 4 6 …（横向滚动，默认 39dp）
  *          拼音条（**叠在两排之间的中缝上**）
- *          下排 1 3 5 …（横向滚动，默认 28dp）
+ *          下排 1 3 5 …（横向滚动，默认 39dp）
  * ```
  * 拼音条是**叠放层**：有拼音串时出现（单行档贴顶、双行档垂直居中），无拼音时（功能面板 /
  * 符号分组 / 预测 / 内联提示）隐藏、候选区占满整栏。双行档两排各贴上下边，中缝高度恰好
@@ -52,12 +52,12 @@ internal object CandidateRows {
     /** 「✕ 清空候选」按钮宽度（dp）：叠在**拼音条内右端**（不遮候选），拼音文字为它让出同样宽度 */
     const val CLEAR_BUTTON_WIDTH_DP = 40
 
-    /** 单排候选行高（dp，默认字体下）：字号 × [LINE_HEIGHT_RATIO]（默认档 20sp → 28dp） */
+    /** 单排候选行高（dp，默认字体下）：字号 × [LINE_HEIGHT_RATIO]（默认档 28sp → 39.2dp） */
     fun rowHeightDp(candidateSp: Float): Float =
         CandidateText.clampSp(candidateSp) * LINE_HEIGHT_RATIO
 
     /**
-     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 14sp → 18.2dp）。
+     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 19.6sp → 26dp）。
      *
      * @param pinyinSp 拼音字号（sp，用户参数经 [CandidateText.clampPinyinSp] 归一后的**有效值**）；
      *   传 0 / 负数时回落 [CandidateText.pinyinSpOf] 的默认派生值，避免首帧算成 0 高。
@@ -84,7 +84,7 @@ internal object CandidateRows {
         if (pinyinSp > 0f) CandidateText.clampPinyinSp(pinyinSp)
         else CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP)
 
-    /** 档位对应的候选栏高度（dp，默认字体下；默认档单行 46 / 双行 74） */
+    /** 档位对应的候选栏高度（dp，默认字体下；默认档单行 65 / 双行 104） */
     fun heightDp(
         rows: Int,
         candidateSp: Float,
@@ -185,7 +185,7 @@ internal object CandidateRows {
     fun clampRows(rows: Int): Int = rows.coerceIn(1, MAX_EXPANDED_ROWS)
 
     /**
-     * 展开态**可见**排数：按实际候选量算，再被上限与可用高度夹取（BUG.md L-1393）。
+     * 展开态**可见**排数：按实际候选量算，再被上限与可用高度夹取。
      *
      * @param count 本帧候选条数
      * @param perColumn 一列能放几条（= 该排能显示几列 ⇒ 由栏宽 ÷ 列宽得出；≤1 时按 1 处理）
@@ -199,14 +199,6 @@ internal object CandidateRows {
         return clampRows(minOf(needed, maxRowsByHeight))
     }
 
-    /**
-     * 把候选切成 N 排一列的若干列（展开态用；N = [rows]）。
-     *
-     * 与 [columnsOf] 同思路但支持任意排数：**列内自上而下 = 候选原序**，故「第一列第一条」就是
-     * 最高词频；列数不足时补 null 占位（渲染侧用等高占位补齐，否则该列会塌缩、位置错乱）。
-     *
-     * @return 每列一个长度固定为 [rows] 的列表，顺序从左到右；列内自上而下。
-     */
     /**
      * 展开态是否该因**输入变化**收起（纯函数，便于单测）。
      *
@@ -224,6 +216,14 @@ internal object CandidateRows {
     fun shouldCollapseExpanded(previousInput: String?, inputNow: String): Boolean =
         previousInput != null && previousInput != inputNow
 
+    /**
+     * 把候选切成 N 排一列的若干列（展开态用；N = [rows]）。
+     *
+     * 与 [columnsOf] 同思路但支持任意排数：**列内自上而下 = 候选原序**，故「第一列第一条」就是
+     * 最高词频；列数不足时补 null 占位（渲染侧用等高占位补齐，否则该列会塌缩、位置错乱）。
+     *
+     * @return 每列一个长度固定为 [rows] 的列表，顺序从左到右；列内自上而下。
+     */
     fun columnsOfN(candidates: List<String>, rows: Int): List<List<String?>> {
         val n = clampRows(rows)
         if (candidates.isEmpty()) return emptyList()

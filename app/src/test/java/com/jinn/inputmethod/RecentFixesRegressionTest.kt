@@ -5802,7 +5802,7 @@ class RecentFixesRegressionTest {
         assertTrue(
             "候选集落定后必须重判三角",
             src.indexOf("lastCandidates = result.candidates") <
-                src.lastIndexOf("updateExpandButton(rowsSetting)"),
+                src.lastIndexOf("updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap)"),
         )
         val relayoutCalls = Regex("collapseCandidatesAndRelayout\\(").findAll(src).count()
         assertTrue("收起后必须重落栏高（定义 + 空输入 + 候选集为空）", relayoutCalls >= 3)
@@ -5814,6 +5814,83 @@ class RecentFixesRegressionTest {
             "重落栏高要按档位而不是展开排数",
             "collapseCandidates()\n        applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)" in src,
         )
+    }
+
+    /**
+     * 切展开态必须复位候选横滑位（2026-10-21 真机复现）。
+     *
+     * 展开 / 收起只换排布、不换候选集，早先的复位判据只看 `items` ⇒ 不复位横滑位。而两套排布的
+     * 列宽量纲完全不同：收起态滑到第 13 条再展开，首屏落在列表中段，词频最高的几条反而在屏外
+     * （实测首屏 `即 激 忌 技`、`机 脊 急 饥` 屏外）—— 既不是「接着看」也不是「从头看」。
+     *
+     * 三条反向钉：① 复位必须在指纹早退**之前**（同内容刷新会走早退分支，放后面永远轮不到）；
+     * ② 展开不得把分页窗口打回收起档（`refreshCandidateBar` 已按两屏放大过，打回去会让末排重新
+     * 走上增量追加 ⇒ 列错位）；③ 纵轴不复位（内容高恒 ≤ 栏高，`maxScrollY` 恒 0）。
+     */
+    @Test
+    fun `切换展开态必须把候选横滑位回零`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "换形态必须单独触发横滑复位",
+            Regex("""if \(candidatesExpanded != lastRenderExpanded\) \{""").containsMatchIn(src),
+        )
+        val resetAt = src.indexOf("candidatesExpanded != lastRenderExpanded")
+        val skipAt = src.indexOf("if (renderKey == candidateRenderKey) return")
+        assertTrue("指纹早退点必须存在（写法变了请同步本用例）", skipAt > 0)
+        assertTrue("复位必须在指纹早退之前", resetAt in 1 until skipAt)
+        assertEquals(
+            "横滑复位点必须恰好两处（换候选 / 切展开态），纵轴不复位",
+            2,
+            Regex("""candidateScroll\.scrollTo\(0, 0\)""").findAll(src).count(),
+        )
+        assertEquals(
+            "展开态不得把分页窗口打回收起档（字段初值 / 清空 / 换候选 各一处）",
+            3,
+            Regex("candidateRenderLimit = INITIAL_RENDERED_CANDIDATES").findAll(src).count(),
+        )
+    }
+
+    /**
+     * 外观变更必须作废展开排数缓存（2026-10-21 真机复现）。
+     *
+     * 排数缓存在一次展开会话内固定，而网格（拼音条 + 排数 × 行高）每帧按**当前字号**重算。
+     * 展开中调大候选字号而缓存不作废 ⇒ 排数是旧值、网格比栏高还高 ⇒ `expandedBarHeightPx` 按
+     * `MAX_COVERED_KEY_ROWS` 夹顶、末排被栏底裁掉（默认档余量仅 17px，候选字号 >31.4sp 即裁）。
+     */
+    @Test
+    fun `外观变更必须作废展开排数缓存`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "fun refreshAppearance()")
+        assertTrue("外观变更必须作废展开排数缓存", "expandedRowsCached = 0" in body)
+        assertTrue(
+            "作废必须在重落栏高之前（否则这一帧仍按旧排数算栏高）",
+            body.indexOf("expandedRowsCached = 0") < body.indexOf("refreshCandidateBar()"),
+        )
+    }
+
+    /**
+     * 三角判据与展开排数都必须与栏高同帧同源。
+     *
+     * `updateExpandButton` 每帧被调两次（栏高落位前 / 候选落定后）。它原先在函数内自己读 Prefs，
+     * 而内部几何用的是 `currentPinyinSp`——**上一帧**由 `applyCandidateRows` 落位的值，于是
+     * `wouldGrow` 恒按「上一帧拼音字号 + 本帧候选字号」的混合几何算，三角会闪一帧。
+     * `toggleCandidateExpanded` 里算展开排数也是同一病：拿上一帧的候选列表配本帧重读的字号。
+     * 改为全部取本帧 / 上一帧的**同一批**落位量后，两处都不得再出现 `prefs`。
+     */
+    @Test
+    fun `三角与展开排数必须同帧同源`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val fn = blockAfter(src, "private fun updateExpandButton(")
+        assertFalse("三角判据不得自己读 Prefs", "prefs." in fn)
+        assertFalse("三角判据不得读上一帧的落位值", "currentPinyinSp" in fn)
+        assertEquals(
+            "两个调用点都要传本帧几何（另有一处透传见 collapseCandidatesAndRelayout）",
+            2,
+            Regex("""updateExpandButton\(rowsSetting, candidateSp, pinyinSp, pinyinGap\)""")
+                .findAll(src).count(),
+        )
+        // 展开排数缓存同理：候选条数取自上一帧列表，几何也必须取自上一帧的落位量
+        val toggle = blockAfter(src, "private fun toggleCandidateExpanded()")
+        assertFalse("展开排数不得重读 Prefs（否则与候选列表不同源）", "prefs." in toggle)
     }
 
     @Test
@@ -6004,6 +6081,10 @@ class RecentFixesRegressionTest {
             "val wouldGrow = candidatesExpanded || expandedRowsFor(" in src,
         )
         assertTrue("判据必须接进显隐", "&& wouldGrow &&" in src)
+        assertTrue(
+            "已展开时不得再受候选数判据约束（否则候选掉到 ≤1 时按钮当场消失、高栏收不回去）",
+            "(candidatesExpanded || lastCandidates.size > 1)" in src,
+        )
     }
 
     /**
@@ -6140,7 +6221,7 @@ class RecentFixesRegressionTest {
      *
      * 为什么钉「没有」而不是钉实现：候选栏里塞第二行（`function_digit_row`）是「大量位置 BUG」
      * 的根源 —— 两行同处横向滚动容器的内容里，父给子项高度是 UNSPECIFIED，weight 分到的是
-     * 「两行内容高之和」而非栏高；单行档（默认 46dp）下按钮行最小高就等于整栏高，再加一行
+     * 「两行内容高之和」而非栏高；单行档（默认 65dp）下按钮行最小高就等于整栏高，再加一行
      * 数字必然溢出（实测数字行只剩约 12dp 露在栏底、字形被裁一半）。为此曾需要
      * `functionButtonMinPx` / `syncFunctionButtonMinHeight` / `canFitFunctionDigitRow` 三件套
      * 互相让位，任何一处改动都会牵动候选栏几何。
@@ -6204,9 +6285,10 @@ class RecentFixesRegressionTest {
                 "addView(build(text), itemLp)" in single,
         )
 
-        // ⑥ 展开排数缓存只在展开方向重算：收起补间渲染的仍是展开态几何，
-        // 此刻重算读到的是在途视图高度（expandedRowsFor 读 this.height，
-        // settle 只改 lp.height）⇒ 大字号下可能少算一排、补间首帧网格重排。
+        // ⑥ 展开排数缓存只在展开方向重算：收起时意图态已为 false，此刻算出来的排数当场作废，
+        // 白付一次 expandedRowsFor（含一次栏宽估列）。重算只该发生在「真的要展开」的那一刻。
+        // ⚠ 缓存与当前几何不一致会让网格比栏高还高、末排被裁 —— 失效点在 refreshAppearance，
+        // 由 `外观变更必须作废展开排数缓存` 钉着。
         val toggleBody = TestSources.blockAfter(src, "private fun toggleCandidateExpanded()")
         assertTrue(
             "展开排数缓存必须只在展开方向重算",

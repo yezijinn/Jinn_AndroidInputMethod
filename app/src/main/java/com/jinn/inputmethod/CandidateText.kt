@@ -5,8 +5,8 @@ import kotlin.math.roundToInt
 /**
  * 候选文字字号（sp）：键盘外观页可调，**整个候选栏按它派生**。
  *
- * 语义：本值是**候选词**的字号（默认 20sp）；拼音条字号默认按 [PINYIN_RATIO] 派生
- * （默认档 20sp → 14sp，与历史观感一致）；栏高、行高、拼音条高度一律由 [CandidateRows]
+ * 语义：本值是**候选词**的字号（默认 28sp）；拼音条字号默认按 [PINYIN_RATIO] 派生
+ * （默认档 28sp → 19.6sp）；栏高、行高、拼音条高度一律由 [CandidateRows]
  * 按本值算 —— 字号与栏高同源，调大不裁字、调小栏高跟着收。
  *
  * 定义域 [MIN_SP]~[MAX_SP]sp、步进 [STEP_SP]sp、默认 [DEFAULT_SP]sp。下界是「再小就点不中」；
@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  * 即候选栏总高，键盘整体相应长高（键区高度不变）。数字一律不写死（BUG.md L-1291：
  * 定义域 2026-10-09 翻倍过，注释里的旧数字会变成后续估预算的错依据）。
  *
- * 与系统「字体大小」的关系：本值单位是 sp，系统放大时两者相乘（20sp × 1.5 = 30sp），
+ * 与系统「字体大小」的关系：本值单位是 sp，系统放大时两者相乘（28sp × 1.5 = 42sp），
  * 高度由 [CandidateRows] 的行高规则兜住，不会裁字。
  *
  * 纯 JVM 逻辑，不依赖任何 Android API，可直接单测（见 CandidateTextTest）。
@@ -35,10 +35,10 @@ object CandidateText {
     /** 字号步进（sp）：滑杆逐格 1sp */
     const val STEP_SP = 1f
 
-    /** 默认字号（sp）：20sp，与历史观感一致 */
+    /** 默认字号（sp）：28sp（2026-10-21 由 20sp 调档） */
     const val DEFAULT_SP = 28f
 
-    /** 拼音字号与候选字号的比例：20sp → 14sp（与「拼音 14sp、候选 20sp」的历史口径一致） */
+    /** 拼音字号与候选字号的比例：0.7（默认档 28sp → 19.6sp） */
     const val PINYIN_RATIO = 0.7f
 
     /** 拼音字号下界（sp）：拼音只是提示行，太小会看不清残码 */

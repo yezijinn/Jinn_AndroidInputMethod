@@ -183,6 +183,34 @@ class CandidateRowsTest {
     }
 
     /**
+     * 取 `keyboard_letters` 的**子树**文本（按 `<LinearLayout` / `</LinearLayout>` 配对）。
+     *
+     * 不用 `TestSources.window(text, "@+id/keyboard_letters", "</LinearLayout>")`：那会在**第一行**
+     * 结束处截断，行高断言只覆盖一行，漏改另外两行也照样绿（判据静默放宽，BUG.md L-1145 同型）。
+     */
+    private fun lettersSubtree(text: String): String {
+        val idAt = text.indexOf("@+id/keyboard_letters")
+        require(idAt > 0) { "布局里找不到 @+id/keyboard_letters" }
+        val openEnd = text.indexOf('>', idAt)
+        require(openEnd > idAt) { "keyboard_letters 标签未闭合" }
+        var depth = 1
+        var cursor = openEnd + 1
+        while (depth > 0) {
+            val nextOpen = text.indexOf("<LinearLayout", cursor)
+            val nextClose = text.indexOf("</LinearLayout>", cursor)
+            require(nextClose >= 0) { "keyboard_letters 的 </LinearLayout> 不配对" }
+            if (nextOpen in 0 until nextClose) {
+                depth++
+                cursor = nextOpen + "<LinearLayout".length
+            } else {
+                depth--
+                cursor = nextClose + "</LinearLayout>".length
+            }
+        }
+        return text.substring(openEnd, cursor)
+    }
+
+    /**
      * 布局尺寸与代码常量对拍（源码守卫）。
      *
      * 栏高 / 拼音条高 / ✕ 按钮宽度 / 拼音条内边距在 XML 与 Kotlin 里各写一份：只改一边会让
@@ -229,6 +257,18 @@ class CandidateRowsTest {
         val pinyinSp = "${CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP).roundToInt()}sp"
         assertEquals(pinyinSp, attr("candidate_pinyin", "textSize"))
         assertEquals(pinyinSp, attr("btn_clear_candidates", "textSize"))
+
+        // 字母行行高：三个行容器是 XML 里唯一写死「键高」的地方，必须等于 KeyAppearance 的默认键高。
+        // 真源在代码（applyLetterRowHeight 逐帧按 prefs.keyHeightDp 落位），XML 只是默认档占位 ——
+        // 但默认值从 54dp 改成 66dp 时这三行漏改过一次，占位就与真源分叉了。
+        // 判据落在 keyboard_letters **子树**内：数字行（代码里建）与底部功能行的行高不在这个子树里，
+        // 将来别处出现同值 66dp 也不会误红。
+        assertEquals(
+            "字母区三行容器行高必须等于 KeyAppearance.DEFAULT_KEY_HEIGHT_DP",
+            3,
+            Regex("""android:layout_height="${KeyAppearance.DEFAULT_KEY_HEIGHT_DP.roundToInt()}dp"""")
+                .findAll(lettersSubtree(text)).count(),
+        )
 
         // FrameLayout 里后加的子项绘制 / 触摸都在上层：拼音条（内含 ✕）必须排在候选滚动区**之后**，
         // 否则铺满整栏的候选区会把 ✕ 挡到点不动（2026-09-25 真机复现的 BUG，别为无障碍顺序再调回去）。
@@ -403,7 +443,7 @@ class CandidateRowsTest {
             "private fun collapseCandidates() {" in src,
         )
         assertFalse("不得再有渲染态双轨", "candidateRenderExpanded" in src)
-                // 容器默认 center_vertical；展开态必须顶对齐，否则内容半速滑、首帧显示网格中部。
+        // 容器默认 center_vertical；展开态必须顶对齐，否则内容半速滑、首帧显示网格中部。
         // 判据按「本帧是否按展开态渲染」而非「动画器是否存在」：toggle 是「先刷新、后建动画器」，
         // 按后者判会让补间起始帧落回 CENTER。
         assertTrue(
@@ -413,7 +453,7 @@ class CandidateRowsTest {
         )
         assertTrue(
             "三角只在单行档出现",
-            Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
+            Regex("""rowsSetting == CandidateRows\.SINGLE && wouldGrow &&""").containsMatchIn(src),
         )
         assertTrue(
             "展开态横向恒跟手（翻页模式已移除，展开态没有第二种浏览方式）",

@@ -77,15 +77,17 @@ class KeyAppearanceTest {
         assertEquals(6f, KeyAppearance.clampSpacingDp(5.6f), 0f)
     }
 
-    /** 默认值（圆角 5dp / 间隙 2dp / 字距 10dp）落在定义域内且恰在步进网格上 */
+    /** 默认值（圆角 5dp / 间隙 2dp / 字距 12dp / 键高 66dp）落在定义域内且恰在步进网格上 */
     @Test
     fun defaults_areInsideDomainAndOnStepGrid() {
         assertEquals(5f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
         assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
-        // 字距默认 10dp（2026-10-02 定）
+        // 字距默认 12dp（2026-10-02 定 10dp，2026-10-21 随默认键高一起调档）
         assertEquals(12f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
-        // 键高默认 54dp：必须与 keyboard_pinyin.xml 三行容器的 54dp 一致，否则「没动过滑杆」的用户
-        // 在首次 configure() 后键盘会莫名变高/变矮（这条把两者钉在一起）
+        // 键高默认 66dp：XML 三个行容器必须同值。XML 只是默认档占位（configure() 在视图入窗口
+        // 之前就按 prefs 落过行高，当前路径不会拿它测量），但占位与真源分叉后「两份值一致」这条
+        // 约定就失效了。XML 那一半由 `CandidateRowsTest.布局尺寸与代码常量逐项一致` 机械对拍，
+        // 这里只钉常量本身。
         assertEquals(66f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
         assertEquals(90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
         assertTrue(KeyAppearance.DEFAULT_KEY_HEIGHT_DP in KeyAppearance.MIN_KEY_HEIGHT_DP..KeyAppearance.MAX_KEY_HEIGHT_DP)

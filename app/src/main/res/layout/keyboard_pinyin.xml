@@ -11,7 +11,7 @@
 <!--
   两根轴（别再把候选栏塞回键区的竖向流里）：
    - 键区 = keyboard_body：顶部让出「收起档候选栏」的高度（marginTop 由 applyCandidateRows
-     按当前字号逐帧落位，XML 的 46dp 只是默认档占位）。**它永不移动**。
+     按当前字号逐帧落位，XML 的 65dp 只是默认档占位）。**它永不移动**。
    - 候选栏 = candidate_bar：叠在键区之上、贴顶，高度随档位 / 展开态长高。
   根的 wrap_content 取「两者较高者」—— 键区恒为「收起栏高 + 键区」，候选栏最长也只到键区腰部，
   故 IME 窗口总高恒定 ⇒ 展开 / 收起不再有整段跳变（2026-10-21）。
@@ -49,7 +49,7 @@
             <!-- 第一行：10 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="54dp"
+                android:layout_height="66dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -116,7 +116,7 @@
             <!-- 第二行：9 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="54dp"
+                android:layout_height="66dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -177,10 +177,10 @@
             <!-- 第三行：切换大写 + 7 个字母 + 删除键 -->
             <!-- 两把功能键的图标走 fitCenter，绘制尺寸被「键框减 padding」框死：13dp 内缩在
                  360dp 宽屏上只剩约 10dp（键宽 36dp ⇒ 36-26），图标显得很小。改 8dp 后可用区
-                 20dp×54dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
+                 20dp×66dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="54dp"
+                android:layout_height="66dp"
                 android:orientation="horizontal">
 
                 <ImageButton
