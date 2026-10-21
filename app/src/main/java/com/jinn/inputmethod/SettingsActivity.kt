@@ -230,7 +230,10 @@ class SettingsActivity : ComponentActivity() {
      * 最近的包兜底定位；用户取消则清理临时包，避免缓存目录堆积。
      */
     private val exportConfigLauncher = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip")
+        // 产物是 `JINNENC1` 加密壳，**不是** zip：写 "application/zip" 会让文件管理器按压缩包
+        // 处理（错误图标 / 错误打开方式 / 自动加 .zip 后缀）。诊断包那条保持 "application/zip"
+        // —— 那个确实是 zip（N8，与用户词库导出同源缺陷）
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         val src = pendingConfigZip ?: ConfigBackupManager.latestBundle(this)
         pendingConfigZip = null
@@ -511,9 +514,12 @@ class SettingsActivity : ComponentActivity() {
             btnConfigImport.isEnabled = false
             importConfigLauncher.launch(ConfigBackupManager.OPEN_MIME_TYPES)
         }
-        // 上次异常中断留下的明文中间件（导出 zip / 导入临时 zip）在这里补清：
-        // 进程被杀不会跑任何收尾代码，只能等下次进设置页
-        BackgroundIo.run { ConfigBackupManager.cleanupStaleCache(this@SettingsActivity) }
+        // 上次异常中断留下的明文中间件（导出 zip / 导入临时 zip / 用户词库页的暂存件）
+        // 在这里补清：进程被杀不会跑任何收尾代码，只能等下次进设置页（N9）
+        BackgroundIo.run {
+            ConfigBackupManager.cleanupStaleCache(this@SettingsActivity)
+            UserDictExport.cleanup(this@SettingsActivity)
+        }
         // 页面重建期间完成的后台任务（导出/解密/导入）会把结论留在这里，进入页面时补提示
         pendingNotice?.let { notice ->
             pendingNotice = null
@@ -960,7 +966,7 @@ class SettingsActivity : ComponentActivity() {
 
     private fun refreshTranslateState() {
         val provider = TranslationProviderId.of(prefs.translateProvider)
-        // ⚠ 用「不可用成因」而不是 `translationProvider() != null`（2026-10-03 修复 L-815）：
+        // 注意：用「不可用成因」而不是 `translationProvider() != null`（2026-10-03 修复 L-815）：
         // ① `null` 不再区分「没填凭据」与「端点不是 https」，摘要必须分因，否则 http 端点用户
         //    会去反复检查已经填好的 Key 与模型名；② 顺带**省掉一次 provider 组装**（那会解密凭据）。
         val reason = prefs.translateNotReadyReason()
@@ -1344,7 +1350,7 @@ class SettingsActivity : ComponentActivity() {
      * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是**按窗口**生效的，而本页只有
      * 「导出配置 / 导入配置」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
      * 整页加会把「设置页截图」一并废掉（真机排查与用户留证都要用），对密码框却没有任何额外收益。
-     * ⚠ 投屏（ADB / scrcpy）下对话框内容不可见是**预期行为**，不是缺陷。
+     * 注意：投屏（ADB / scrcpy）下对话框内容不可见是**预期行为**，不是缺陷。
      */
     private fun securePasswordDialog(dialog: AlertDialog): AlertDialog = dialog.apply {
         window?.setFlags(
@@ -1575,7 +1581,7 @@ class SettingsActivity : ComponentActivity() {
         includeDicts: Boolean,
     ) {
         // 页面重建后按钮会重新可点，而上一轮的导入线程可能还在跑：进程级标记拦下这种重入。
-        // ⚠ 这里必须自己清明文临时包：确认框的 positive 点击后已自动 dismiss，
+        // 注意：这里必须自己清明文临时包：确认框的 positive 点击后已自动 dismiss，
         // setOnCancelListener（负责删包与注销）**不会**触发，而 cleanupStaleCache 又按
         // in-flight 跳过该名字 ⇒ 否则这份已解密的明文备份会跨会话留在缓存目录里。
         if (ConfigBackupManager.importing) {

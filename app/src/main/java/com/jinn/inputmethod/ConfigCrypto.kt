@@ -93,13 +93,16 @@ internal object ConfigCrypto {
      *
      * 只认汉字：字母 / 数字 / 标点 / 空格 / emoji 一律拒绝 —— 需求即「只能用中文」，
      * 而且汉字做密码比英文键盘组合更容易记住、熵更高。
+     *
+     * 参数是 [CharSequence] 而不是 `String`：调用方（导出 / 导入密码框）直接把 `Editable` 递进来，
+     * 少一次不可擦除的 `String` 副本。
      */
-    fun validatePassword(password: String): PasswordCheck {
+    fun validatePassword(password: CharSequence): PasswordCheck {
         if (password.isEmpty()) return PasswordCheck.Invalid("请输入备份密码")
         var codePoints = 0
         var i = 0
         while (i < password.length) {
-            val cp = password.codePointAt(i)
+            val cp = Character.codePointAt(password, i)
             if (Character.UnicodeScript.of(cp) != Character.UnicodeScript.HAN) {
                 return PasswordCheck.Invalid("备份密码只能用中文汉字（不含字母、数字、标点或空格）")
             }
@@ -113,9 +116,15 @@ internal object ConfigCrypto {
             return PasswordCheck.Invalid("备份密码最多 $MAX_PASSWORD_CHARS 个汉字")
         }
         // 同一个字重复（啊啊啊啊啊啊）没有熵，直接拒绝
-        if (password.codePoints().distinct().count() == 1L) {
-            return PasswordCheck.Invalid("备份密码不能是同一个字重复")
+        var distinct = 0
+        val seen = HashSet<Int>()
+        var j = 0
+        while (j < password.length) {
+            val cp = Character.codePointAt(password, j)
+            if (seen.add(cp)) distinct++
+            j += Character.charCount(cp)
         }
+        if (distinct == 1) return PasswordCheck.Invalid("备份密码不能是同一个字重复")
         return PasswordCheck.Ok
     }
 

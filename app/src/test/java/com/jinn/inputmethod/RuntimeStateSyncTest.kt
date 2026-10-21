@@ -44,7 +44,7 @@ class RuntimeStateSyncTest {
         val text = codeOf("ConfigBackupManager.kt")
         assertTrue(
             "导入设置项后必须调用 UserFrequency.setEnabled(prefs.userLearning)：开关在 Prefs 与 " +
-                "UserFrequency 里各有一份，而包内没有词频节时 replaceFromBackup 不会被调用 ⇒ " +
+                "UserFrequency 里各有一份，而包内没有词频节时 writeFromBackup 不会被调用 ⇒ " +
                 "「设置页显示已关、候选仍在按上一次的学习结果重排」",
             text.contains("UserFrequency.setEnabled(prefs.userLearning)"),
         )

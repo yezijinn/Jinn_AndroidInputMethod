@@ -6,6 +6,7 @@ import java.io.RandomAccessFile
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import javax.crypto.SecretKey
 
 /**
  * 选择台账：只追加的「词 \t 读音」流水，一行 = 一次明确选择。
@@ -18,12 +19,19 @@ import java.util.concurrent.Executors
  * ② 只认以 `\n` 结尾的完整行：崩溃可能留下半行，解析时整行丢弃（[parse]）；
  * ③ 写入走专用后台线程：按键路径不碰磁盘。
  *
+ * **落盘是逐行加密的**（[LedgerCrypto]）：磁盘上每行是 `1:base64(iv||密文)`，明文只在内存里。
+ * 之所以不整文件加密：只增流水整表重写会违背「记录不影响性能」；行级 AEAD 仍是 O(1) 追加。
+ * 旧版明文文件在首次读写时就地迁移（[migrateIfNeeded]），数据一条不丢。
+ *
  * 记录范围由调用方收口（[PinyinKeyboardView.learnChoice] 与追加候选中转）：
  * 只有 26 键候选真正上屏才算；粘贴、语音、翻译、图库、符号都不经过那条链。
  */
 object SelectionLedger {
 
     const val FILE_NAME = "user_picks.txt"
+
+    /** 台账数据密钥（被 Keystore 包裹，独立别名；见 [LedgerCrypto.KEY_FILE]） */
+    const val KEY_FILE_NAME = LedgerCrypto.KEY_FILE
 
     private const val TAG = "SelectionLedger"
 
@@ -32,6 +40,15 @@ object SelectionLedger {
 
     /** 待写队列：只为把「拼行」这一步留在主线程（顺序即用户选择顺序），落盘仍在线程里 */
     private val queue = ConcurrentLinkedQueue<String>()
+
+    /**
+     * 上一轮落盘是否成功（N4）：[flush] 的返回值必须同时看「队列空了」与它。
+     *
+     * `writeLines` 的失败原先只在写线程里打一条 W，而 `flush()` 排在同一个 executor 后面，
+     * 只能知道「队列空了」⇒ 密钥不可用 / 磁盘满时界面照报「已追加 N 条」。
+     */
+    @Volatile
+    private var lastWriteOk = true
 
     private val writer = Executors.newSingleThreadExecutor { r ->
         Thread(r, "jinn-selection-ledger").apply { isDaemon = true }
@@ -52,6 +69,14 @@ object SelectionLedger {
 
     /** `\n` 的字节值：[truncateTrailingPartialLine] 按字节回找行尾用 */
     private const val NL_BYTE = '\n'.code.toByte()
+
+    /**
+     * 明文 → 加密的就地迁移锁。
+     *
+     * 读（页面加载，`io` 线程）与写（台账写线程）都会先走到迁移：没有这把锁时两条线程可能同时
+     * 读到明文、各写一份迁移结果，后改名的那份覆盖前一份 —— 迁移本身是幂等的，但中间态会丢写入。
+     */
+    private val migrateLock = Any()
 
     /** 绑定应用私有目录并下发开关（多次调用幂等；换 context 后重绑） */
     fun init(context: Context, enabled: Boolean) {
@@ -83,46 +108,64 @@ object SelectionLedger {
      * 批量追加（导入专用）：一次 open、一次 write，别把上万行拆成上万个任务。
      *
      * 与 [record] 共用同一条后台线程，提交顺序即落盘顺序。
+     *
+     * @return false = **没有排进写入**（功能已关闭 / 未绑定 / 没有有效行）。
+     *   调用方必须据此改回执 —— 早期写法静默返回，界面照报「已追加 N 条」（2026-10-21 修）。
+     *   排进队列 ≠ 写成功：真落盘结果由随后的 [flush] 回传（[lastWriteOk]）。
      */
-    fun appendAll(picks: List<Pair<String, String>>) {
-        if (!enabled) return
-        val file = target ?: return
+    fun appendAll(picks: List<Pair<String, String>>): Boolean {
+        if (!enabled) return false
+        val file = target ?: return false
         val gen = generation
         val lines = ArrayList<String>(picks.size)
         for ((w, p) in picks) formatLine(w, p)?.let { lines.add(it) }
-        if (lines.isEmpty()) return
-        writer.execute {
-            if (gen != generation) return@execute
-            runCatching {
-                FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { out ->
-                    for (line in lines) {
-                        out.write(line)
-                        out.newLine()
-                    }
+        if (lines.isEmpty()) return false
+        return runCatching {
+            writer.execute {
+                if (gen != generation) return@execute
+                if (!writeLines(file, lines)) {
+                    lastWriteOk = false
+                    Diagnostics.w(TAG, "台账批量写入失败（已丢弃这一批）")
                 }
-            }.onFailure { e ->
-                Diagnostics.w(TAG, "台账批量写入失败: ${e.javaClass.simpleName}")
             }
+            true
+        }.getOrElse {
+            Diagnostics.w(TAG, "台账批量写入提交失败: ${it.javaClass.simpleName}")
+            false
         }
     }
 
     /**
      * 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常）。
      *
-     * @return 是否确实写空（超时 / 被打断都返回 false）
+     * @return 队列已空**且**这一轮写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
+     *
+     * 判据必须含 [lastWriteOk]：只看「队列空了」的话，[writeLines] 返回 false（密钥不可用 /
+     * 磁盘满）照样算写空 ⇒ 导入路径会把「0 条入库」报成「已追加 N 条」（N4）。
      */
     fun flush(): Boolean {
         val file = target ?: return true
         val gen = generation
+        // 每次提交前复位：本次提交没有写失败才算成功
+        lastWriteOk = true
         // 带超时：队列里可能压着一次上万行的批量导入，主线程不该无限等
-        val done = runCatching {
+        val drained = runCatching {
             writer.submit { drainTo(file, gen) }
                 .get(FLUSH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             queue.isEmpty()
         }.getOrElse { false }
-        if (!done) Diagnostics.w(TAG, "台账 flush 未在 ${FLUSH_TIMEOUT_MS}ms 内写空")
-        return done
+        val ok = flushVerdict(drained, lastWriteOk)
+        if (!ok) Diagnostics.w(TAG, "台账 flush 未写成功（超时或写入失败）")
+        return ok
     }
+
+    /**
+     * [flush] 的判据（纯函数，便于单测）：队列排空**且**这一轮没有写失败。
+     *
+     * 只判「队列空了」正是 N4 的根因 —— 密钥不可用 / 磁盘满时 `writeLines` 返回 false，
+     * 队列照样是空的，界面于是报「已追加 N 条」而实际 0 条入库。
+     */
+    internal fun flushVerdict(queueEmpty: Boolean, writeOk: Boolean): Boolean = queueEmpty && writeOk
 
     /**
      * 关闭功能：先停记录、把队列写空，再删文件。
@@ -162,25 +205,173 @@ object SelectionLedger {
             return
         }
         if (queue.isEmpty()) return
-        runCatching {
-            file.parentFile?.mkdirs()
-            // 先截掉上一次可能留下的残行（掉电 / 进程在 write 中途被杀）：行与行之间没有任何
-            // 帧标记，残行会与下一次追加的首行**拼成一条完整行**，而 parse 只丢弃「末尾没有 \n」
-            // 的那一段 —— 拼上之后它就有了 \n，会被当成真数据解析出脏词（2026-10-19 修）。
-            // 补一个 "\n" 是错的：那会把残行原样留成一条完整行。必须按字节截断。
-            truncateTrailingPartialLine(file)
-            FileOutputStream(file, true).use { out ->
-                while (true) {
-                    val line = queue.poll() ?: break
-                    out.write((line + "\n").toByteArray(Charsets.UTF_8))
-                }
-                out.flush()
-            }
-        }.onFailure { e ->
-            // 写失败不能拖累输入：丢掉这一批并留痕（文件是「只增」的，重试会把顺序打乱）
-            queue.clear()
-            Diagnostics.w(TAG, "台账写入失败: ${e.javaClass.simpleName}")
+        // 先整队取出再写：写失败时丢的是这一批（文件是「只增」的，重试会把顺序打乱）
+        val batch = ArrayList<String>()
+        while (true) {
+            batch.add(queue.poll() ?: break)
         }
+        if (batch.isEmpty()) return
+        if (!writeLines(file, batch)) {
+            lastWriteOk = false
+            Diagnostics.w(TAG, "台账写入失败（已丢弃 ${batch.size} 行）")
+        }
+    }
+
+    /**
+     * 一次追加：迁移明文 → 截残行 → 逐行加密写盘。
+     *
+     * 三条都必须在这里做，缺一处就有一条数据损坏路径：
+     *  - 迁移：旧版明文文件不先迁移，加密记录会与明文行混在同一个文件里（读侧按记录解，明文行全丢）；
+     *  - 截残行：行与行之间没有帧标记，残行会与下一次追加的首行拼成一条完整行；
+     *  - 加密：写盘内容里不得出现词面（`su 0 cat` 级的要求）。
+     *
+     * @return false = 没写（密钥不可用 / IO 失败），调用方按失败处理，**绝不回退明文**
+     */
+    internal fun writeLines(file: File, lines: List<String>): Boolean {
+        val dir = file.parentFile ?: return false
+        val key = LedgerCrypto.dataKey(dir) ?: return false
+        return writeLinesEncrypted(file, lines, key)
+    }
+
+    /** [writeLines] 的实现体（密钥由调用方给，JVM 单测可直接注入） */
+    internal fun writeLinesEncrypted(file: File, lines: List<String>, key: SecretKey): Boolean = runCatching {
+        file.parentFile?.mkdirs()
+        // 迁移失败（磁盘满 / 无权限）时**必须放弃这次写入**：继续追加会把加密记录写进仍是明文
+        // 格式的文件里，读侧按一个口径解析，另一批就整片丢（N3 同源）
+        if (synchronized(migrateLock) { migrateIfNeeded(file, key) } == MigrateOutcome.FAILED) {
+            Diagnostics.w(TAG, "台账格式未就绪（迁移失败），本次不写入")
+            return false
+        }
+        // 残行口径不变：记录同样是「一行一条、以 \n 结尾」，缺 \n 的就是上次写中断的半条
+        truncateTrailingPartialLine(file)
+        val sb = StringBuilder(lines.size * 64 + 16)
+        for (line in lines) sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
+        FileOutputStream(file, true).use { out ->
+            out.write(sb.toString().toByteArray(Charsets.US_ASCII))
+            out.flush()
+        }
+        true
+    }.onFailure { e ->
+        Diagnostics.w(TAG, "台账写入失败: ${e.javaClass.simpleName}")
+    }.getOrDefault(false)
+
+    /** [migrateIfNeeded] 的结果：写侧据此决定「能不能接着追加」 */
+    internal enum class MigrateOutcome {
+        /** 已经是加密格式（只读了 12 字节文件头） */
+        UP_TO_DATE,
+
+        /** 本次确实改写了文件（明文迁移 / 补首行标识） */
+        REWRITTEN,
+
+        /** 该迁移却没能写成（磁盘满 / 无权限）：写侧必须放弃本次追加 */
+        FAILED,
+    }
+
+    /**
+     * 旧版明文台账就地迁移成加密台账（数据一条不丢，次序不变）；缺首行标识的密文台账只补首行。
+     *
+     * 幂等：已是加密格式时**只读文件头**（O(1)，不进热路径的整份读）。调用方须持有 [migrateLock]。
+     */
+    internal fun migrateIfNeeded(file: File, key: SecretKey): MigrateOutcome {
+        if (!needsMigration(file)) return MigrateOutcome.UP_TO_DATE
+        val text = if (file.isFile && file.length() > 0L) file.readText(Charsets.UTF_8) else ""
+        // ① 首行标识不见了（外部改写 / 部分恢复 / 手工替换），但内容是逐行密文 ⇒ **只重写首行**。
+        //    这条分支不修的话：下面的明文 parse 会把 "1:…" 当成「没有读音的词」，
+        //    再用「加密后的乱码」原子覆盖原件 —— 页面与导出件全变 base64 乱码（N3）。
+        if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
+            return if (reheader(file, text)) MigrateOutcome.REWRITTEN else MigrateOutcome.FAILED
+        }
+        // ② 首行在、只是不在偏移 0（前导空行 / BOM）：`looksEncrypted` 认「首个非空行」，
+        //    所以这里也归到补首行；不处理它会让 `needsMigration` 恒 true ⇒ 每次按键都整份读一次
+        val pairs = parse(text)
+        val sb = StringBuilder(pairs.size * 64 + 32)
+        sb.append(LedgerCrypto.HEADER).append('\n')
+        for ((w, p) in pairs) {
+            val line = formatLine(w, p) ?: continue
+            sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
+        }
+        return writeAtomicWithSync(file, sb.toString(), ".mig")
+            .also { ok ->
+                if (ok) Diagnostics.i(TAG, "台账已迁移为加密格式: ${pairs.size} 行")
+                else Diagnostics.w(TAG, "台账迁移失败（保留原文，下次重试）")
+            }
+            .let { if (it) MigrateOutcome.REWRITTEN else MigrateOutcome.FAILED }
+    }
+
+    /**
+     * 只重写首行标识：保留全部密文记录行，丢掉前置垃圾（BOM / 空行 / 半截注释）。
+     *
+     * @return 是否写成。没有任何记录行且原文也没有标识时返回 false（交给明文迁移判定）。
+     */
+    private fun reheader(file: File, text: String): Boolean {
+        val kept = StringBuilder(text.length)
+        for (line in text.lineSequence()) {
+            if (LedgerCrypto.isRecordLine(line)) kept.append(line.trim()).append('\n')
+        }
+        if (kept.isEmpty() && !LedgerCrypto.looksEncrypted(text)) return false
+        val body = LedgerCrypto.HEADER + "\n" + kept
+        val ok = writeAtomicWithSync(file, body, ".reheader")
+        if (ok) Diagnostics.i(TAG, "台账首行标识缺失，已补回（保留 ${kept.count { it == '\n' }} 条记录）")
+        return ok
+    }
+
+    /**
+     * 「先 fsync 再原子改名」写整份文件（迁移 / 补首行共用）。
+     *
+     * 少这一步就是掉电窗口：`rename` 只保证目录项落盘，数据块可能还在页缓存 —— 掉电后文件在、
+     * 内容是空/半截，而明文原件已被 unlink ⇒ **全部台账归零且不可回滚**（N6）。
+     */
+    private fun writeAtomicWithSync(file: File, body: String, suffix: String): Boolean {
+        val tmp = File(file.parentFile, file.name + suffix)
+        // 上一次中断留下的中间件先删：它的内容只会是一份过期的中间态
+        if (tmp.exists() && !tmp.delete()) {
+            Diagnostics.w(TAG, "台账中间件无法删除: ${tmp.name}")
+            return false
+        }
+        return runCatching {
+            FileOutputStream(tmp).use { out ->
+                out.write(body.toByteArray(Charsets.US_ASCII))
+                out.flush()
+                out.fd.sync()
+            }
+            // 原子替换目录项：中途被杀时旧文件仍在，下次启动重试（幂等）。
+            // 用 `Files.move(REPLACE_EXISTING)` 而不是 `File.renameTo` —— 后者在目标已存在时
+            // 于 Windows 上会**失败**（单测跑在 Windows，Android 上是 rename(2) 覆盖），
+            // 一旦失败就是「明文台账里混进加密记录」，读侧会把明文行整片丢掉。
+            java.nio.file.Files.move(
+                tmp.toPath(), file.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            )
+            true
+        }.onFailure {
+            tmp.delete()
+            Diagnostics.w(TAG, "台账写入中间件失败（$suffix）: ${it.javaClass.simpleName}")
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 是否需要迁移：只读文件头 [LedgerCrypto.HEADER].length 个字节，**不整份读**。
+     *
+     * 为什么必须 O(1)：每次落盘都会先问一次「要不要迁移」，整份读会把一次按键的选择放大成
+     * 「读几 MB」——那正是本功能要求「不影响性能」的反面。
+     */
+    internal fun needsMigration(file: File): Boolean {
+        if (!file.isFile || file.length() == 0L) return true
+        val head = ByteArray(LedgerCrypto.HEADER.length)
+        val read = runCatching {
+            file.inputStream().use { input ->
+                var got = 0
+                // 单次 read 不保证读满（流实现允许短读），循环到够长或 EOF
+                while (got < head.size) {
+                    val n = input.read(head, got, head.size - got)
+                    if (n <= 0) break
+                    got += n
+                }
+                got
+            }
+        }.getOrDefault(0)
+        if (read < head.size) return true
+        return String(head, Charsets.US_ASCII) != LedgerCrypto.HEADER
     }
 
     /**
@@ -274,13 +465,62 @@ object SelectionLedger {
     /** 单个词导入的次数上限：导出再导入时按次数补行，但别让一个词独占整个文件 */
     internal const val IMPORT_MAX_PER_WORD = 1_000
 
-    /** 读整份流水（文件不存在返回空表）；解析口径与 [parse] 一致 */
+    /**
+     * 读整份流水（文件不存在返回空表）；解析口径与 [parse] 一致。
+     *
+     * 密钥不可用时返回空表并留痕：**不能**把「解不开」当成「没有数据」写进统计，但也绝不
+     * 回退明文读（明文只是旧版遗留的一种形态，迁移那一刻起就不该再被读）。
+     */
     fun readAll(context: Context): List<Pair<String, String>> {
         val f = File(context.filesDir, FILE_NAME)
         if (!f.isFile) return emptyList()
-        return runCatching { parse(f.readText(Charsets.UTF_8)) }
-            .onFailure { Diagnostics.w(TAG, "台账读取失败: ${it.javaClass.simpleName}") }
-            .getOrDefault(emptyList())
+        val key = LedgerCrypto.dataKey(context.filesDir)
+        if (key == null) {
+            Diagnostics.w(TAG, "台账读取跳过：数据密钥不可用")
+            return emptyList()
+        }
+        return runCatching {
+            // 只读入口也要迁移：用户可能升级后再没选过词，此时没有任何写入会触发迁移
+            val text = synchronized(migrateLock) {
+                if (migrateIfNeeded(f, key) == MigrateOutcome.FAILED) {
+                    Diagnostics.w(TAG, "台账格式迁移失败，按现有内容尽力读取")
+                }
+                f.readText(Charsets.UTF_8)
+            }
+            // 判据是「首行是标识」**或**「内容形态就是逐行密文」：后者兜住首行标识被删的情况，
+            // 绝不给明文 parse 出口 —— 那把 "1:…" 读成 base64 乱码词，用户视角就是台账全毁（N3）
+            if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
+                parse(decodeRecords(text, key))
+            } else {
+                // 迁移失败（磁盘满 / 无权限）时仍按旧格式读，数据至少可见
+                Diagnostics.w(TAG, "台账仍是明文格式（迁移未完成），按明文读取")
+                parse(text)
+            }
+        }.onFailure {
+            Diagnostics.w(TAG, "台账读取失败: ${it.javaClass.simpleName}")
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * 逐行解密整份台账，拼回 [parse] 认的明文流水。
+     *
+     * 单行解不开（残行 / 被改 / 换过密钥）只丢那一行：一条脏记录不能把整份台账清空。
+     */
+    internal fun decodeRecords(text: String, key: SecretKey): String {
+        if (text.isEmpty()) return ""
+        val sb = StringBuilder(text.length)
+        var broken = 0
+        for (line in text.lineSequence()) {
+            if (line.isBlank() || line.startsWith(LedgerCrypto.HEADER)) continue
+            val plain = LedgerCrypto.decryptLine(line, key)
+            if (plain == null) {
+                broken++
+                continue
+            }
+            sb.append(plain).append('\n')
+        }
+        if (broken > 0) Diagnostics.w(TAG, "台账跳过 $broken 行无法解密的记录（残行或密钥不符）")
+        return sb.toString()
     }
 
     /**

@@ -332,23 +332,30 @@ internal object ConfigBackupManager {
         }
         // MEM-10：先看文件大小再决定读不读。这一读是整份进堆，而词频正常只有几十 KB（上限 3000 行）；
         // 文件异常膨胀时（旧版本残留 / 外部写入）没必要为一个注定超限的节先把内存吃满。
-        // 判据与下面的节上限**同源同单位**（都是字节），否则会出现「预检放过、字节闸拦下」两套口径。
+        // 磁盘上是**密文**（`#jinn-freq1` + 一行 base64），比明文大约 4/3 再加头部 ——
+        // 预检按这个膨胀比折算，真正权威的判据仍是下面「解密后明文字节数」那一道（同源同单位）。
         val freqFile = File(context.filesDir, USER_FREQ_FILE)
         val freqBytes = runCatching { freqFile.length() }.getOrDefault(0L)
-        if (freqBytes > EXPORT_SECTION_LIMIT_BYTES) {
-            reason.reason = "用户词频文件过大（${freqBytes / 1024 / 1024}MB），超出备份包单节上限，无法导出"
-            Diagnostics.w(TAG, "导出中止: 词频文件 $freqBytes 字节，未读入内存")
+        val freqBytesAsPlain = freqBytes * 3 / 4
+        if (freqBytesAsPlain > EXPORT_SECTION_LIMIT_BYTES) {
+            reason.reason = "用户词频文件过大（${freqBytesAsPlain / 1024 / 1024}MB），超出备份包单节上限，无法导出"
+            Diagnostics.w(TAG, "导出中止: 词频文件 $freqBytes 字节（折算明文 $freqBytesAsPlain），未读入内存")
             return null
         }
         // 读取失败同样中止（BUG-06 同链）：静默按「空节」导出会让用户以为备份完整，
-        // 换机后这部分数据全丢 —— 正是下面那段注释明令禁止的失败方式
-        val freqRead = runCatching { freqFile.takeIf { it.isFile }?.readText(Charsets.UTF_8) }
+        // 换机后这部分数据全丢 —— 正是下面那段注释明令禁止的失败方式。
+        // 词频在磁盘上是密文，包内必须是明文 ⇒ 走 `readTextForBackup`（密钥不可用 / 解不开均返回 null）
+        val freqRead = runCatching { UserFrequency.readTextForBackup(freqFile) }
         freqRead.exceptionOrNull()?.let {
             Diagnostics.e(TAG, "导出中止: 读取词频失败", it)
             reason.reason = "用户词频文件无法读取（${it.javaClass.simpleName}），未导出任何内容"
             return null
         }
-        val freqText = freqRead.getOrNull().orEmpty()
+        val freqText = freqRead.getOrNull() ?: run {
+            reason.reason = "用户词频无法解密（本机密钥不可用），未导出任何内容"
+            Diagnostics.w(TAG, "导出中止: 词频解密失败（密钥不可用 / 密文损坏）")
+            return null
+        }
         val clip = if (options.includeClipboard) collectClipboard(context) else null
         val dicts = if (options.includeDicts) dictFiles(context) else emptyList()
         // 词库与导入侧同一组上限：超了必然导不回来（导入端限 16 文件 / 64MB），宁可在这里说清
@@ -1067,7 +1074,7 @@ internal object ConfigBackupManager {
             // 导入改了它就必须同步一次，否则设置页显示与候选行为不一致，直到 IME 进程重建
             PinyinEngine.setFuzzyMask(prefs.fuzzyPinyinMask)
             // 用户词频开关同理（Prefs.userLearning + `UserFrequency.enabled`）：包内没有词频节时
-            // 上面那条 replaceFromBackup 不会被调用，只写 Prefs 会留下「设置页显示已关、
+            // 上面那条 writeFromBackup 不会被调用，只写 Prefs 会留下「设置页显示已关、
             // 候选仍在按上一次的学习结果重排」的不一致，直到 IME 进程重建
             UserFrequency.setEnabled(prefs.userLearning)
             // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
@@ -1078,7 +1085,8 @@ internal object ConfigBackupManager {
 
         val freqFile = File(context.filesDir, USER_FREQ_FILE)
         val freqBefore = runCatching {
-            freqFile.takeIf { it.isFile }?.readText(Charsets.UTF_8)?.let { UserFrequency.countEntries(it) }
+            // 磁盘上是密文：先解成明文再数行（密钥不可用时按 0 计，仅影响预览数字）
+            UserFrequency.readTextForBackup(freqFile)?.let { UserFrequency.countEntries(it) }
         }.getOrNull() ?: 0
         var freqAfter = freqBefore
         if (failedStage == null && freqText != null) {
@@ -1087,7 +1095,7 @@ internal object ConfigBackupManager {
                 // 防抖窗口内那几次学习会随替换被静默丢掉。
                 // flush 现在返回写盘结果（BUG.md L-1319）：失败时基准仍是旧文件，
                 // 再往下走就是「用旧基准覆盖并丢掉那几次学习」，所以与「本机词频读不出来」同口径
-                // ——中止词频段（跳过 replaceFromBackup），其余节照常导入
+                // ——中止词频段（跳过 writeFromBackup），其余节照常导入
                 if (mode != ImportMode.RESTORE && !UserFrequency.flush()) {
                     Diagnostics.w(TAG, "导入: 词频落盘失败，跳过词频导入（不做整份替换）")
                     if (failedStage == null) failedStage = "词频未落盘（已跳过词频导入）"
@@ -1096,12 +1104,14 @@ internal object ConfigBackupManager {
                 // BUG-01（唯一「不可逆数据销毁」级）：读取失败 ≠ 文件不存在。
                 // 「不存在」⇒ 本机没有可丢的词频，空串是正确的合并基准；
                 // 「读取抛异常」（I/O 错、被占、权限）⇒ 本机词频还在文件里，若按空串去 merge，
-                // 紧接着的 replaceFromBackup 会把它们整份换掉（目标文件被覆盖，退不回来）。
-                // 故这里必须区分两者：后者中止词频段（跳过 replaceFromBackup），其余节照常导入。
+                // 紧接着的 writeFromBackup 会把它们整份换掉（目标文件被覆盖，退不回来）。
+                // 故这里必须区分两者：后者中止词频段（跳过写入），其余节照常导入。
+                // 磁盘上是密文：`readTextForBackup` 把「读不出 / 解不开」统一返回 null，
+                // 与「文件不存在返回空串」严格分开 —— 这正是上面那条区分要的口径。
                 val localText = when {
                     mode == ImportMode.RESTORE -> ""   // 恢复 = 以备份为准，这是该模式的语义
                     !freqFile.isFile -> ""              // 文件不存在：没有可丢的内容
-                    else -> runCatching { freqFile.readText(Charsets.UTF_8) }.getOrElse {
+                    else -> runCatching { UserFrequency.readTextForBackup(freqFile) }.getOrElse {
                         Diagnostics.e(TAG, "导入: 读取本机词频失败，跳过词频导入（不做整份替换）", it)
                         if (failedStage == null) failedStage = "词频读取失败（已跳过词频导入）"
                         null
@@ -1111,9 +1121,9 @@ internal object ConfigBackupManager {
                     null   // 读取失败：与「写入失败」同口径，别拿空基准去覆盖本机词频
                 } else {
                     val merged = UserFrequency.mergeForBackup(localText, freqText, nowDay())
-                    // 走 replaceFromBackup：它在写盘锁内完成「落盘 + 换内存态」，
+                    // 走 writeFromBackup：它在写盘锁内完成「加密落盘 + 换内存态」，
                     // 避免运行期的防抖写盘把刚导入的词频用旧快照覆盖回去
-                    if (UserFrequency.replaceFromBackup(freqFile, merged.text, prefs.userLearning)) {
+                    if (UserFrequency.writeFromBackup(freqFile, merged.text, prefs.userLearning)) {
                         merged.mergedCount
                     } else {
                         null

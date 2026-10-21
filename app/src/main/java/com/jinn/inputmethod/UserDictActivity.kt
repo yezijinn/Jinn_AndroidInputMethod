@@ -9,6 +9,8 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -29,6 +31,10 @@ import java.util.concurrent.Executors
  * 台账本身只追加（见 [SelectionLedger]）；本页只做**派生视图**：读全量流水 → 按「词 + 读音」
  * 合并出频次 → 展示 / 导出。台账无上限增长，因此读盘、聚合、导入、SAF 读写**全部在后台线程**，
  * 主线程只渲染与弹框。
+ *
+ * **导出是加密包**（[UserDictExport]）：外层 AES-256-GCM 壳、内层普通 zip 且条目明文；
+ * 密码规则与「导出配置文件」同一套（[ConfigCrypto.validatePassword]，只能用汉字、≥4 位、不重复单字）。
+ * 导入时按文件头分流：加密包先要密码再解密，旧版明文导出件照旧直读。
  *
  * **默认关闭**：进入本页时若未开启，先弹说明框，必须手输大写 `OK` 才开启；
  * 关闭则先提示导出，再二次确认（同样输入 `OK`），确认后删除 `user_picks.txt`。
@@ -61,6 +67,8 @@ class UserDictActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // 选位置 / 输密码期间可能残留一份导入暂存件（明文），必须在这里兜住
+        clearStaged()
         io.shutdownNow()
         super.onDestroy()
     }
@@ -79,11 +87,36 @@ class UserDictActivity : ComponentActivity() {
 
     private var pendingFormat: SelectionLedger.ExportFormat? = null
 
-    private val createDoc = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+    /**
+     * 导出密码（选保存位置期间暂存）。
+     *
+     * **刻意不进 `onSaveInstanceState`**：Bundle 会被系统落盘，而密码不该有任何持久化副本。
+     * 代价是页面在选位置期间被重建时这次导出作废 —— 回调里发现密码为空就清空壳并提示重试。
+     */
+    private var pendingPassword: CharArray? = null
+
+    /** 导入暂存件（SAF → 缓存目录的一份拷贝；解密 / 解析完即删） */
+    private var stagedImport: File? = null
+
+    private val createDoc = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
         val format = pendingFormat
+        val password = pendingPassword
         pendingFormat = null
-        if (uri == null || format == null) return@registerForActivityResult
-        writeExport(uri, format)
+        pendingPassword = null
+        if (uri == null) {
+            password?.fill('\u0000')
+            return@registerForActivityResult
+        }
+        if (format == null || password == null) {
+            // 页面被重建：密码已丢（不落 Bundle）。删掉刚建出的空壳，并说明原因，别静默不发生
+            password?.fill('\u0000')
+            deleteEmptyTarget(uri)
+            toast(TEXT_EXPORT_RESTART)
+            return@registerForActivityResult
+        }
+        writeExport(uri, format, password)
     }
 
     private val openDoc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -129,8 +162,11 @@ class UserDictActivity : ComponentActivity() {
         btnExportTsv.setOnClickListener { startExport(SelectionLedger.ExportFormat.TSV) }
         btnExportTxt.setOnClickListener { startExport(SelectionLedger.ExportFormat.TXT) }
         btnImport.setOnClickListener {
-            runCatching { openDoc.launch(arrayOf("text/*", "application/octet-stream")) }
-                .onFailure { toast(TEXT_NO_PICKER) }
+            // 加密包是 `application/octet-stream`（多数文件管理器认不出 `.jinn`）：
+            // 三种类型都列上，别让用户找不到自己的导出件
+            runCatching {
+                openDoc.launch(arrayOf("text/*", "application/octet-stream", "application/zip"))
+            }.onFailure { toast(TEXT_NO_PICKER) }
         }
         btnClose.setOnClickListener { confirmCloseStepOne() }
 
@@ -141,6 +177,9 @@ class UserDictActivity : ComponentActivity() {
         // 不在这里补一次，record/flush 会因 target==null 静默丢弃，而页面还回执「已追加」。
         SelectionLedger.init(applicationContext, prefs.userDictEnabled)
 
+        // 上次导出 / 导入异常中断留下的暂存件（可能含明文 zip）按年龄回收
+        runCatching { io.execute { UserDictExport.cleanup(applicationContext) } }
+
         if (!prefs.userDictEnabled) showEnableDialog()
     }
 
@@ -150,11 +189,15 @@ class UserDictActivity : ComponentActivity() {
         if (prefs.userDictEnabled) loadAsync()
     }
 
+    private fun alive(): Boolean = !isFinishing && !isDestroyed
+
     // ── 开启 / 关闭 ─────────────────────────────────────────────
 
     /** 未开启时的说明框：讲清用途、边界、风险与防护，输入大写 OK 才开启 */
     private fun showEnableDialog() {
-        val confirm = confirmView(TEXT_ENABLE_BODY)
+        // 退一档的机器上必须如实追加一行（N13）：不能在任何机型上都声称「锁屏也读不到」
+        val body = TEXT_ENABLE_BODY + if (LedgerCrypto.isDegraded(filesDir)) TEXT_ENABLE_BODY_NOLOCK else ""
+        val confirm = confirmView(body)
         val edit = confirm.edit
         val dialog = AlertDialog.Builder(this)
             .setTitle(TEXT_ENABLE_TITLE)
@@ -298,6 +341,9 @@ class UserDictActivity : ComponentActivity() {
 
     private fun loadOnIo() {
         val picks = SelectionLedger.readAll(applicationContext)
+        // 密钥件缺失时 readAll 已把旧台账改名保留（N2）：这条提示只报一次
+        val orphaned = LedgerCrypto.consumeOrphanNotice()
+        val degraded = LedgerCrypto.isDegraded(filesDir)
         val merged = SelectionLedger.aggregate(picks)
         val list = merged.entries
             .map { Row(it.key.first, it.key.second, it.value) }
@@ -307,14 +353,16 @@ class UserDictActivity : ComponentActivity() {
         runOnUiThread {
             if (isFinishing || isDestroyed) return@runOnUiThread
             rows = list
-            renderSummary(picks.size, merged.size, kb)
+            renderSummary(picks.size, merged.size, kb, degraded)
             bindList()
+            if (orphaned) toast(TEXT_ORPHANED)
         }
     }
 
-    private fun renderSummary(picks: Int, distinct: Int, kb: Long) {
+    private fun renderSummary(picks: Int, distinct: Int, kb: Long, degraded: Boolean = false) {
         val more = if (rows.size > MAX_ROWS) String.format(Locale.US, TEXT_MORE_SUFFIX, rows.size - MAX_ROWS) else ""
-        textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks, distinct, kb, more)
+        val note = if (degraded) TEXT_SUMMARY_NOLOCK else ""
+        textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks, distinct, kb, more) + note
         val empty = rows.isEmpty()
         btnExportYaml.isEnabled = !empty
         btnExportTsv.isEnabled = !empty
@@ -325,49 +373,231 @@ class UserDictActivity : ComponentActivity() {
         listEntries.adapter = RowAdapter(rows.take(MAX_ROWS))
     }
 
+    // ── 导出（加密包）──────────────────────────────────────────
+
     private fun startExport(format: SelectionLedger.ExportFormat) {
         val snapshot = rows
         if (snapshot.isEmpty()) {
             toast(TEXT_NOTHING_TO_EXPORT)
             return
         }
-        pendingFormat = format
-        runCatching { createDoc.launch("user_dict.${format.ext}") }
-            .onFailure {
-                pendingFormat = null
-                toast(TEXT_NO_PICKER)
-            }
+        askExportPassword(format)
     }
 
-    private fun writeExport(uri: Uri, format: SelectionLedger.ExportFormat) {
-        val snapshot = rows
-        io.execute {
-            val merged = LinkedHashMap<Pair<String, String>, Int>()
-            for (r in snapshot) merged[r.word to r.pinyin] = r.count
-            val text = SelectionLedger.exportText(merged, format)
-            val ok = runCatching {
-                // provider 不认 "wt" 时退回默认 mode（与设置页导出同款）
-                val out = contentResolver.openOutputStream(uri, "wt")
-                    ?: contentResolver.openOutputStream(uri)
-                out?.use {
-                    it.write(text.toByteArray(Charsets.UTF_8))
-                    it.flush()
-                } != null
-            }.getOrElse { false }
-            if (!ok) {
-                // CreateDocument 已建出目标文件：不删就留一个 0 字节空壳（与 L-1098 同型）
-                runCatching { contentResolver.delete(uri, null, null) }
-            }
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, snapshot.size) else TEXT_EXPORT_FAIL)
+    /**
+     * 导出前的密码框：两次输入，规则直接复用 [ConfigCrypto.validatePassword]。
+     *
+     * 输入框刻意**不用**密码类型（与设置页同款）：备份密码只能用汉字，而 `textPassword`
+     * 一类在部分 ROM 上会唤起打不出拼音的系统安全键盘。
+     */
+    private fun askExportPassword(format: SelectionLedger.ExportFormat) {
+        val pwd1 = plainTextField(TEXT_PWD_HINT)
+        val pwd2 = plainTextField(TEXT_PWD_HINT_CONFIRM)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+            addView(
+                TextView(this@UserDictActivity).apply {
+                    text = TEXT_EXPORT_PWD_DESC
+                    textSize = 13f
+                },
+            )
+            addView(pwd1, lpOf(10))
+            addView(pwd2, lpOf(6))
+        }
+        val dialog = secureDialog(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_EXPORT_PWD_TITLE)
+                .setView(box)
+                .setNegativeButton(TEXT_CANCEL, null)
+                .setPositiveButton(TEXT_EXPORT_CONFIRM, null)
+                .create(),
+        )
+        dialog.show()
+        // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            // 校验与比对都直接吃 `Editable`（N7）：**不产生 String 副本** —— String 无法清零，
+            // 只能等 GC，而这里原先每点一次就多留两三份密码
+            when (val check = ConfigCrypto.validatePassword(pwd1.text)) {
+                is ConfigCrypto.PasswordCheck.Invalid -> {
+                    pwd1.error = check.reason
+                    toast(check.reason)
+                }
+
+                else -> if (!TextUtils.equals(pwd1.text, pwd2.text)) {
+                    pwd2.error = TEXT_PWD_MISMATCH
+                    toast(TEXT_PWD_MISMATCH)
+                } else {
+                    val chars = CharArray(pwd1.text.length) { pwd1.text[it] }
+                    // 输入框里的副本用完即清（对话框还在显示，但内容不再需要）
+                    pwd1.text.clear()
+                    pwd2.text.clear()
+                    dialog.dismiss()
+                    pendingFormat = format
+                    pendingPassword = chars
+                    runCatching { createDoc.launch(UserDictExport.suggestedName(format)) }
+                        .onFailure {
+                            pendingFormat = null
+                            pendingPassword?.fill('\u0000')
+                            pendingPassword = null
+                            toast(TEXT_NO_PICKER)
+                        }
+                }
             }
         }
     }
 
+    /** 后台造包 + 写 SAF；密码用完即清零 */
+    private fun writeExport(uri: Uri, format: SelectionLedger.ExportFormat, password: CharArray) {
+        val snapshot = rows
+        val submitted = runCatching { io.execute { writeExportOnIo(uri, format, snapshot, password) } }.isSuccess
+        if (!submitted) password.fill('\u0000')
+    }
+
+    private fun writeExportOnIo(
+        uri: Uri,
+        format: SelectionLedger.ExportFormat,
+        snapshot: List<Row>,
+        password: CharArray,
+    ) {
+        val ok = try {
+            buildAndWrite(uri, format, snapshot, password)
+        } catch (t: Throwable) {
+            Diagnostics.w(TAG_NAME, "导出异常: ${t.javaClass.simpleName}")
+            false
+        } finally {
+            password.fill('\u0000')
+        }
+        if (!ok) {
+            // CreateDocument 已建出目标文件：不删就留一个 0 字节空壳（与 L-1098 同型）。
+            // 只删**确实为空**的目标：少数 provider 在重名时会返回既有文档的 uri，
+            // 无条件删会把用户上一份备份一起删掉（设置页 `deleteEmptyTarget` 同一口径）。
+            deleteEmptyTarget(uri)
+        }
+        val count = snapshot.size
+        runOnUiThread {
+            if (!alive()) return@runOnUiThread
+            toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
+        }
+    }
+
+    /**
+     * 造加密包并写入目标位置。
+     *
+     * 明文 zip 只在缓存目录里存在极短一瞬（[UserDictExport] 的中间件），写完密文立即删除；
+     * 写到 SAF 的是**密文**，所以 provider 那一侧不会留下明文。
+     */
+    private fun buildAndWrite(
+        uri: Uri,
+        format: SelectionLedger.ExportFormat,
+        snapshot: List<Row>,
+        password: CharArray,
+    ): Boolean {
+        val merged = LinkedHashMap<Pair<String, String>, Int>()
+        for (r in snapshot) merged[r.word to r.pinyin] = r.count
+        val text = SelectionLedger.exportText(merged, format)
+        val dir = UserDictExport.cacheDir(this).apply { mkdirs() }
+        val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.US)
+            .format(java.time.LocalDateTime.now())
+        val plain = File(dir, "userdict-$stamp.zip")
+        val enc = File(dir, "userdict-$stamp$SUFFIX")
+        // 在途登记：页面的残留清理（cleanup）按年龄删文件，别把正在读写的这份删掉（N9）
+        UserDictExport.markInFlight(plain)
+        UserDictExport.markInFlight(enc)
+        try {
+            plain.writeBytes(UserDictExport.zipOf(UserDictExport.entryName(format), text))
+            if (!ConfigCrypto.encrypt(plain, enc, password)) {
+                Diagnostics.w(TAG_NAME, "导出失败（加密）")
+                return false
+            }
+            val out = openTruncatingOutput(uri) ?: return false
+            out.use { o ->
+                enc.inputStream().use { it.copyTo(o) }
+                o.flush()
+            }
+            return true
+        } finally {
+            plain.delete()
+            enc.delete()
+            UserDictExport.release(plain)
+            UserDictExport.release(enc)
+        }
+    }
+
+    /**
+     * 以「截断写」打开 SAF 输出流。
+     *
+     * 必须带 `"wt"`：默认的 `"w"` 在部分 provider 上不保证截断，覆盖一个更大的旧文件时会在尾部
+     * 留下残骸（读回来是「密码错误或文件已损坏」）。少数 provider 不认 `"wt"`（抛
+     * IllegalArgumentException 而不是返回 null），因此**两级都要各自兜住**再退回默认 mode。
+     */
+    private fun openTruncatingOutput(uri: Uri): java.io.OutputStream? =
+        runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+            ?: runCatching { contentResolver.openOutputStream(uri) }.getOrNull()
+
+    /**
+     * 删除一个「已创建但没写进任何内容」的 SAF 目标（[ActivityResultContracts.CreateDocument] 会先建空文件）。
+     *
+     * 只有确实是 0 字节才删：少数 provider 在重名时会返回**既有文档**的 uri，无条件删会毁掉旧备份。
+     * AFD 长度常是 `UNKNOWN_LENGTH(-1)`，未知长度一律不删（留个空壳远优于删掉用户的旧文件）。
+     */
+    private fun deleteEmptyTarget(uri: Uri) {
+        val size = runCatching {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+        }.getOrNull()
+        if (size != 0L) return
+        runCatching { contentResolver.delete(uri, null, null) }
+            .onFailure { Diagnostics.w(TAG_NAME, "删除空壳目标失败: ${it.javaClass.simpleName}") }
+    }
+
+    private fun plainTextField(hint: String): EditText = EditText(this).apply {
+        this.hint = hint
+        maxLines = 1
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        // 顺序有讲究：`maxLines` 一类属性会回头改写 inputType，而 `setRawInputType` 不走那套单行处理；
+        // imeOptions 会重写 TYPE_MASK_FLAGS 那一批位，必须放在 setRawInputType 之前。
+        // NO_SUGGESTIONS 是给键盘侧看的：本输入法据此不联想、不记词频（见 InputFieldPrivacy）。
+        imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+        setRawInputType(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+    }
+
+    /** 密码框窗口加 FLAG_SECURE：防截屏 / 录屏 / 最近任务缩略图（与设置页同款，按窗口生效） */
+    private fun secureDialog(dialog: AlertDialog): AlertDialog = dialog.apply {
+        window?.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE,
+        )
+    }
+
+    // ── 导入（自动识别加密包 / 旧版明文）────────────────────────
+
+    /**
+     * 导入第一步：把选中文件拷进缓存（限流），再按文件头分流。
+     *
+     * 为什么要先落盘：加密包必须整份交给 [ConfigCrypto.decrypt]（它是流式读文件的），
+     * 而 SAF 的流只能顺序读一次；同时这一步顺手挡住了误选的巨型文件。
+     */
     private fun previewImport(uri: Uri) {
         io.execute {
-            val read = readCapped(uri)
+            val staged = stageImport(uri)
+            if (staged == null) {
+                uiToast(TEXT_IMPORT_FAIL)
+                return@execute
+            }
+            if (UserDictExport.looksEncrypted(UserDictExport.readHead(staged))) {
+                // 加密包：先问密码（在 UI 线程），暂存件留到解密完再删
+                runOnUiThread {
+                    if (!alive()) {
+                        dropStaged(staged)
+                        return@runOnUiThread
+                    }
+                    askImportPassword(staged)
+                }
+                return@execute
+            }
+            val read = readCapped(staged)
+            dropStaged(staged)
             if (read == null) {
                 uiToast(TEXT_IMPORT_FAIL)
                 return@execute
@@ -377,35 +607,200 @@ class UserDictActivity : ComponentActivity() {
                 uiToast(TEXT_IMPORT_EMPTY)
                 return@execute
             }
-            val words = picked.map { it.first }.toSet().size
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                if (read.truncated) toast(TEXT_IMPORT_TRUNCATED)
-                AlertDialog.Builder(this)
-                    .setTitle(TEXT_IMPORT_CONFIRM_TITLE)
-                    .setMessage(String.format(Locale.US, TEXT_IMPORT_PREVIEW, picked.size, words))
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton(android.R.string.ok) { _, _ ->
-                        io.execute {
-                            SelectionLedger.appendAll(picked)
-                            SelectionLedger.flush()
-                            uiToast(String.format(Locale.US, TEXT_IMPORT_OK, picked.size))
-                            loadAsync()
-                        }
-                    }
-                    .show()
-            }
+            showImportPreview(picked, read.truncated)
         }
     }
 
-    /** 读入导入件（上限 8MB）；返回文本与「是否被截断」 */
-    private fun readCapped(uri: Uri): CapText? = runCatching {
-        contentResolver.openInputStream(uri)?.use { input ->
-            val buf = ByteArray(IMPORT_MAX_BYTES)
+    /** 加密包导入：先问密码，再解密 → 取词表条目 → 预览 */
+    private fun askImportPassword(staged: File) {
+        stagedImport = staged
+        val pwd = plainTextField(TEXT_PWD_HINT)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+            addView(
+                TextView(this@UserDictActivity).apply {
+                    text = TEXT_IMPORT_PWD_DESC
+                    textSize = 13f
+                },
+            )
+            addView(pwd, lpOf(10))
+        }
+        val dialog = secureDialog(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_IMPORT_PWD_TITLE)
+                .setView(box)
+                .setNegativeButton(TEXT_CANCEL) { _, _ -> clearStaged() }
+                .setPositiveButton(TEXT_IMPORT_CONFIRM, null)
+                .create(),
+        )
+        dialog.show()
+        dialog.setOnCancelListener { clearStaged() }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val check = ConfigCrypto.validatePassword(pwd.text)
+            if (check is ConfigCrypto.PasswordCheck.Invalid) {
+                pwd.error = check.reason
+                toast(check.reason)
+                return@setOnClickListener
+            }
+            // 只留一份可擦除的副本（N7）：密码从 EditText 逐字取出，输入框立即清空
+            val chars = CharArray(pwd.text.length) { pwd.text[it] }
+            pwd.text.clear()
+            dialog.dismiss()
+            decryptImport(staged, chars)
+        }
+    }
+
+    /**
+     * 解密加密包并导入。
+     *
+     * 密码以 [CharArray] 传入（N7）：调用方从 `EditText` 逐字取，不产生 `String` 副本 ——
+     * `String` 无法擦除，只会在堆里留到 GC，而这里已经有三份副本。
+     */
+    private fun decryptImport(staged: File, password: CharArray) {
+        io.execute {
+            val zip = File(staged.parentFile, staged.name + ".zip")
+            UserDictExport.markInFlight(zip)
+            val decrypted = try {
+                ConfigCrypto.decrypt(staged, zip, password)
+            } finally {
+                password.fill('\u0000')
+            }
+            clearStaged()
+            if (!decrypted) {
+                zip.delete()
+                UserDictExport.release(zip)
+                uiToast(TEXT_IMPORT_DECRYPT_FAIL)
+                return@execute
+            }
+            val entry = UserDictExport.readSingleEntry(zip)
+            zip.delete()
+            UserDictExport.release(zip)
+            if (entry == null) {
+                // 解开了但没有词表条目：多半是把「配置文件」备份包选进来了
+                Diagnostics.w(TAG_NAME, "导入: 加密包里没有词表条目")
+                uiToast(TEXT_IMPORT_NOT_PACKAGE)
+                return@execute
+            }
+            val picked = SelectionLedger.parseImport(entry.second)
+            if (picked.isEmpty()) {
+                uiToast(TEXT_IMPORT_EMPTY)
+                return@execute
+            }
+            showImportPreview(picked, false)
+        }
+    }
+
+    private fun showImportPreview(picked: List<Pair<String, String>>, truncated: Boolean) {
+        val words = picked.map { it.first }.toSet().size
+        runOnUiThread {
+            if (!alive()) return@runOnUiThread
+            if (truncated) toast(TEXT_IMPORT_TRUNCATED)
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_IMPORT_CONFIRM_TITLE)
+                .setMessage(String.format(Locale.US, TEXT_IMPORT_PREVIEW, picked.size, words))
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    io.execute {
+                        // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
+                        val queued = SelectionLedger.appendAll(picked)
+                        val flushed = SelectionLedger.flush()
+                        uiToast(
+                            when {
+                                !queued -> TEXT_IMPORT_NOT_ENABLED
+                                !flushed -> String.format(Locale.US, TEXT_IMPORT_PENDING, picked.size)
+                                else -> String.format(Locale.US, TEXT_IMPORT_OK, picked.size)
+                            },
+                        )
+                        loadAsync()
+                    }
+                }
+                .show()
+        }
+    }
+
+    /**
+     * 把 SAF 的选中文件拷进缓存（上限 [UserDictExport.MAX_PACKAGE_BYTES]）。
+     *
+     * @return 缓存文件；读不到 / 空文件 / 超限返回 null（调用方按「读取失败」提示）。
+     *   任何失败路径都会把半截暂存件删掉 —— 它可能是一份明文词表。
+     */
+    private fun stageImport(uri: Uri): File? {
+        val dir = UserDictExport.cacheDir(this).apply { mkdirs() }
+        val dest = File(dir, "userdict-import-" + System.nanoTime() + ".bin")
+        var ok = false
+        // 在途登记在写之前：cleanup 与本流程可能并发（N9）
+        UserDictExport.markInFlight(dest)
+        try {
+            val copied = contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().buffered().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    var emptyReads = 0
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        // read 允许返回 0（非阻塞流 / 故障 provider）：不处理就是空转死循环
+                        if (n == 0) {
+                            if (++emptyReads > MAX_EMPTY_READS) {
+                                Diagnostics.w(TAG_NAME, "导入: 读取无进展，已放弃")
+                                return null
+                            }
+                            continue
+                        }
+                        emptyReads = 0
+                        total += n
+                        if (total > UserDictExport.MAX_PACKAGE_BYTES) {
+                            Diagnostics.w(
+                                TAG_NAME,
+                                "导入: 所选文件超过 ${UserDictExport.MAX_PACKAGE_BYTES} 字节上限",
+                            )
+                            return null
+                        }
+                        out.write(buf, 0, n)
+                    }
+                    total
+                }
+            }
+            ok = copied != null && copied > 0L
+            if (copied == 0L) Diagnostics.w(TAG_NAME, "导入: 所选文件是空的")
+        } catch (t: Throwable) {
+            Diagnostics.w(TAG_NAME, "导入: 读取失败 ${t.javaClass.simpleName}")
+            ok = false
+        } finally {
+            if (!ok) {
+                dest.delete()
+                UserDictExport.release(dest)
+            }
+        }
+        return if (ok) dest else null
+    }
+
+    /**
+     * 读入导入件（上限 [IMPORT_MAX_BYTES]）；返回文本与「是否被截断」。
+     *
+     * 连续空读触顶 ⇒ 返回 null（N12）。原先这里 `break` 出循环，于是把**半份文件**当成
+     * 「已读完、未截断」交给 `parseImport` —— 与 `stageImport` 的 `return null` 同型缺陷，
+     * 两个读流必须一个口径：读不出就明确失败，别拿半份当全份。
+     */
+    private fun readCapped(file: File): CapText? = runCatching {
+        // 按实际长度开缓冲：小文件不再一开口就要 8MB（导入是手动操作，但没必要白占堆）
+        val cap = minOf(IMPORT_MAX_BYTES.toLong(), file.length().coerceAtLeast(1L)).toInt()
+        file.inputStream().use { input ->
+            val buf = ByteArray(cap)
             var read = 0
+            var emptyReads = 0
             while (read < buf.size) {
                 val n = input.read(buf, read, buf.size - read)
-                if (n <= 0) break
+                if (n < 0) break
+                if (n == 0) {
+                    if (++emptyReads > MAX_EMPTY_READS) {
+                        Diagnostics.w(TAG_NAME, "导入: 读取无进展，已放弃")
+                        return null
+                    }
+                    continue
+                }
+                emptyReads = 0
                 read += n
             }
             // 多读一个字节即可判断是否还有剩余
@@ -421,6 +816,19 @@ class UserDictActivity : ComponentActivity() {
             CapText(String(buf, 0, end, Charsets.UTF_8), truncated)
         }
     }.getOrNull()
+
+    /** 删掉导入暂存件（可能含明文，任何出口都必须清）并注销在途登记 */
+    private fun clearStaged() {
+        val f = stagedImport
+        stagedImport = null
+        if (f != null) dropStaged(f)
+    }
+
+    /** 删一份缓存中间件 + 注销在途登记（N9） */
+    private fun dropStaged(f: File) {
+        f.delete()
+        UserDictExport.release(f)
+    }
 
     private fun uiToast(msg: String) {
         runOnUiThread {
@@ -486,6 +894,11 @@ class UserDictActivity : ComponentActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
+    private fun lpOf(topDp: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+    ).apply { topMargin = dp(topDp) }
+
     private companion object {
         /** 列表只铺这么多行：全量在导出件里，页面不为几万行付渲染代价 */
         const val MAX_ROWS = 500
@@ -508,6 +921,8 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_IMPORT_TRUNCATED = "文件超过 8MB，只导入了前一部分"
         const val TEXT_IMPORT_PREVIEW = "将追加 %d 次选择（%d 个词）。\n只增不删，导入后不可撤销。"
         const val TEXT_IMPORT_OK = "已追加 %d 条"
+        const val TEXT_IMPORT_NOT_ENABLED = "用户词库未开启，未写入"
+        const val TEXT_IMPORT_PENDING = "已排入 %d 条，尚未全部写完，稍后可在列表确认"
 
         const val TEXT_ENABLE_TITLE = "开启用户词库"
         const val TEXT_ENABLE_OK = "开启"
@@ -530,15 +945,55 @@ class UserDictActivity : ComponentActivity() {
 · 不记：粘贴、语音、翻译、图库、符号、英文、密码框、NO_SUGGESTIONS
 
 用途
-· 词频统计；导出 Rime / TSV / 词表，可再导入
+· 词频统计；导出加密词库包，可再导入
 
 存储与防护
-· files/user_picks.txt，明文，应用私有目录
+· files/user_picks.txt 与 files/user_freq.txt，加密存储（密钥由系统密钥库托管）
 · 不联网、不上传、不进系统备份与设备迁移
-· 其他应用受 UID 隔离，无 root 不可读；root 或取证镜像可读
+· 其他应用受 UID 隔离，无 root 不可读；离线取证镜像读不到明文词条
+  （本机已 root、或有人以本应用身份调用系统密钥库时不在此列）
 · 默认关闭；关闭即删文件"""
 
+        /**
+         * 退一档机型（本机 Keymaster 不支持 `setUnlockedDeviceRequired`）追加的一行。
+         *
+         * 上面的 `TEXT_ENABLE_BODY` 不能写死「锁屏不可解密」—— 在 MuMu 这类机器上它不成立，
+         * 文案与事实不符比少说一句更糟（N13）。
+         */
+        const val TEXT_ENABLE_BODY_NOLOCK = """
+
+· 注意：本机密钥库不支持锁屏隔离，锁屏状态下的取证防护在此机型上不可用"""
+
+        /** 密钥件缺失、旧数据已改名保留时的提示（一次性） */
+        const val TEXT_ORPHANED = "密钥文件丢失：旧的用户词库记录已改名保留，本次从空表重新开始"
+
+        /** 摘要行末尾的退一档提示 */
+        const val TEXT_SUMMARY_NOLOCK = "\n本机密钥库不支持锁屏隔离（其余防护不变）"
+
+        // ── 导出 / 导入的密码与加密包文案（待定稿）──────────────────
+        const val TEXT_EXPORT_PWD_TITLE = "设置导出密码"
+        const val TEXT_EXPORT_PWD_DESC = "导出件是加密压缩包：整个包体加密，包内的词表是明文。" +
+            "密码只能用汉字，本机不保存，忘记后无法解开。"
+        const val TEXT_PWD_HINT = "导出密码（4~64 个不相同的汉字）"
+        const val TEXT_PWD_HINT_CONFIRM = "再输一次导出密码"
+        const val TEXT_PWD_MISMATCH = "两次输入的密码不一致"
+        const val TEXT_EXPORT_CONFIRM = "开始导出"
+        const val TEXT_EXPORT_RESTART = "页面已重建，请重新点导出"
+        const val TEXT_IMPORT_PWD_TITLE = "输入导出密码"
+        const val TEXT_IMPORT_PWD_DESC = "该文件是加密的词库包，请输入导出时设置的密码。\n密码错误 / 文件被改动 都无法解密"
+        const val TEXT_IMPORT_CONFIRM = "解密"
+        const val TEXT_IMPORT_DECRYPT_FAIL = "密码错误或文件已损坏，无法解密"
+        const val TEXT_IMPORT_NOT_PACKAGE = "这个加密包里没有词表（像是配置备份包）"
+
+        /** 单次导入读入上限（明文文本） */
         const val IMPORT_MAX_BYTES = 8 * 1024 * 1024
+
+        /** 读流允许的连续「空读」次数（`InputStream.read` 允许返回 0） */
+        const val MAX_EMPTY_READS = 64
+
+        /** 加密包后缀（与 [UserDictExport.FILE_SUFFIX] 一致） */
+        const val SUFFIX = UserDictExport.FILE_SUFFIX
+
         const val KEY_PENDING_FORMAT = "pending_format"
     }
 }

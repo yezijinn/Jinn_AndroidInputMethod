@@ -23,10 +23,14 @@
         <exclude
             domain="file"
             path="user_freq.txt" />
-        <!-- 选择台账：默认关闭，但同样不进云备份/设备迁移（看了说明并手输 OK 才开） -->
+        <!-- 选择台账：默认关闭，但同样不进云备份/设备迁移（看了说明并手输 OK 才开）；
+             2026-10-21 起逐行加密，密钥包裹件 user_picks.key 一并排除（换机后解不开） -->
         <exclude
             domain="file"
             path="user_picks.txt" />
+        <exclude
+            domain="file"
+            path="user_picks.key" />
         <!-- 剪贴板图片目录（filesDir/clipboard/）：密文 + 密钥不可备份（恢复后一条也解不开），
              且体积会挤爆 25MB 配额 —— 见 backup_rules.xml 同名条目的完整理由。
              ⚠ 云备份与设备迁移两个域都要排（本文件里各有一份清单）。 -->
@@ -80,10 +84,14 @@
         <exclude
             domain="file"
             path="user_freq.txt" />
-        <!-- 选择台账：默认关闭，但同样不进云备份/设备迁移（看了说明并手输 OK 才开） -->
+        <!-- 选择台账：默认关闭，但同样不进云备份/设备迁移（看了说明并手输 OK 才开）；
+             2026-10-21 起逐行加密，密钥包裹件 user_picks.key 一并排除（换机后解不开） -->
         <exclude
             domain="file"
             path="user_picks.txt" />
+        <exclude
+            domain="file"
+            path="user_picks.key" />
         <!-- 剪贴板图片目录：见 cloud-backup 同名条目的理由（换机迁移后密钥不同，图片一条也解不开） -->
         <exclude
             domain="file"

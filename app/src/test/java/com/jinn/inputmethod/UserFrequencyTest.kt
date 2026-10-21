@@ -7,17 +7,35 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.io.File
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * 用户词频学习的纯逻辑护栏：排序稳定（学过的提前、其余保持词库原序、不学就零变化）、
  * 衰减跟 `algo::formula_d` 一致、文件读写往返一致且能扛脏数据、关掉开关后不学也不改排序。
+ *
+ * 落盘自 2026-10-21 起是**整份加密**的，所以凡是要读文件内容的用例都先解密
+ * （[UserFrequency.decryptDoc]）；密钥由 [key] 注入 —— JVM 上没有 Android Keystore。
  */
 class UserFrequencyTest {
 
+    /** 固定 32 字节密钥：只复现格式，不含任何真实密钥 */
+    private val key = SecretKeySpec(ByteArray(32) { (it * 5 + 11).toByte() }, "AES")
+
+    /** 每个用例前注入密钥（生产路径走 [LedgerCrypto.dataKey]，这里是纯 JVM 替身） */
+    @Before
+    fun setUp() = UserFrequency.setKeyForTest(key)
+
     @After
-    fun tearDown() = UserFrequency.resetForTest()
+    fun tearDown() {
+        UserFrequency.setKeyForTest(null)
+        UserFrequency.resetForTest()
+    }
+
+    /** 读回磁盘上的明文正文（加密用例的唯一读法） */
+    private fun plainOf(f: File): String? = UserFrequency.decryptDoc(f.readText(), key)
 
     /** 当天 tick（与 UserFrequency 内部一致）：测试数据若用很旧的天计数，会被按天衰减过滤掉 */
     private fun today(): Int = (System.currentTimeMillis() / 86_400_000L).toInt()
@@ -46,7 +64,7 @@ class UserFrequencyTest {
 
         // ② 期间备份导入把词频整份替换（内存换代、文件也被覆盖）
         val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
-        assertTrue(UserFrequency.replaceFromBackup(f, merged, true))
+        assertTrue(UserFrequency.writeFromBackup(f, merged, true))
 
         // ③ 补载现在才走到「入内存」：整份作废，旧词不得复活
         assertFalse("换代后的补载必须作废", UserFrequency.applyReload(f, staleVersion, stale))
@@ -81,9 +99,11 @@ class UserFrequencyTest {
         UserFrequency.putForTest("旧词", 9.0, 20000)
         val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
 
-        assertTrue(UserFrequency.replaceFromBackup(f, merged, true))
+        assertTrue(UserFrequency.writeFromBackup(f, merged, true))
 
-        assertEquals(merged, f.readText())
+        // 磁盘上是密文：解出来必须逐字等于入参（额外钉一次「包内明文、落盘密文」）
+        assertEquals(merged, plainOf(f))
+        assertFalse("磁盘上不得出现词面", "新词" in f.readText())
         assertEquals(2.5, UserFrequency.weightForTest("新词")!!, 1e-6)
         assertNull(UserFrequency.weightForTest("旧词"))
         assertEquals(1, UserFrequency.sizeForTest())
@@ -98,7 +118,7 @@ class UserFrequencyTest {
         UserFrequency.setFileForTest(f)
         val merged = "# jinn user_freq v1\n新词\t2.500\t${today()}\n"
 
-        assertTrue(UserFrequency.replaceFromBackup(f, merged, false))
+        assertTrue(UserFrequency.writeFromBackup(f, merged, false))
 
         // 内存里有表（用户随后打开开关即可用），关闭状态排序不受影响
         assertEquals(2.5, UserFrequency.weightForTest("新词")!!, 1e-6)
@@ -137,7 +157,7 @@ class UserFrequencyTest {
         UserFrequency.putForTest("旧词", 9.0, 20000)
 
         assertFalse(
-            UserFrequency.replaceFromBackup(bad, "# jinn user_freq v1\n新词\t2.500\t20000\n", true)
+            UserFrequency.writeFromBackup(bad, "# jinn user_freq v1\n新词\t2.500\t20000\n", true)
         )
 
         // 失败必须保留原内存态：不能「导入没成功」却看起来像成功
@@ -425,5 +445,92 @@ class UserFrequencyTest {
         assertEquals("已规范化的键保留、折不回简体的键丢弃", setOf("头发"), normalized.keys)
         assertEquals("不传归一化器时两条都保留（老口径）", setOf("头髮", "头发"),
             UserFrequency.parse(text, nowDay = 100).keys)
+    }
+
+    // ── 落盘加密（N1：同一批词不能明文躺在另一个文件里）───────────────────
+
+    /** 半开：词频记的是同一批「选过的词」，还多了权重与时间 —— 磁盘上不得有词面 */
+    @Test
+    fun 词频落盘不得含明文词面() {
+        val f = File.createTempFile("jinn-freq-enc", ".txt").apply { deleteOnExit() }
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(f)
+        // 走真实的 learning 入口（`putForTest` 不置 dirty，flush 会直接返回）
+        UserFrequency.remember("五湖")
+        UserFrequency.remember("五湖")
+        assertTrue("写盘应成功", UserFrequency.flush())
+
+        val raw = f.readText()
+        assertTrue("首行必须是加密标识", raw.startsWith(UserFrequency.ENC_HEADER))
+        assertFalse("词面不得出现在磁盘上", "五湖" in raw)
+        assertFalse("权重不得出现在磁盘上", "2.000" in raw)
+        // 往返：解出来的正文与内存渲染逐字一致
+        assertEquals(UserFrequency.render(), UserFrequency.decryptDoc(raw, key))
+        assertEquals(2.0, UserFrequency.parse(plainOf(f)!!, today())["五湖"]!!.first, 1e-9)
+    }
+
+    /** 旧版明文（首行 `# jinn user_freq v1`）首次读取时一次性迁移成密文，内容一条不丢 */
+    @Test
+    fun 旧版明文词频一次性迁移成密文且一条不丢() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "jinn-freq-migrate").apply { mkdirs() }
+        val f = File(dir, "user_freq.txt")
+        f.writeText("# jinn user_freq v1\n旧词\t3.000\t${today()}\n另一个\t1.500\t${today()}\n")
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(f)
+
+        val plain = UserFrequency.readPlainOrMigrate(f)
+        assertNotNull("迁移后仍应能读出明文", plain)
+        assertEquals("两条都要在", setOf("旧词", "另一个"), UserFrequency.parse(plain!!, today()).keys)
+        assertTrue("迁移后磁盘上是密文", f.readText().startsWith(UserFrequency.ENC_HEADER))
+        assertFalse("迁移后不得再有词面", "旧词" in f.readText())
+        dir.deleteRecursively()
+    }
+
+    /** 首行标识被删的密文词频仍读得出来，且读时顺手补回标识（与台账 N3 同型） */
+    @Test
+    fun 首行标识被删的密文词频仍可读并补回标识() {
+        val f = File.createTempFile("jinn-freq-nohead", ".txt").apply { deleteOnExit() }
+        val body = "# jinn user_freq v1\n词\t2.000\t${today()}\n"
+        // 只留记录行，去掉 #jinn-freq1
+        f.writeText(UserFrequency.encryptDoc(body, key).lineSequence().filter { it.startsWith("1:") }.joinToString("\n") + "\n")
+        UserFrequency.loadForTest(true)
+        UserFrequency.setFileForTest(f)
+
+        val plain = UserFrequency.readPlainOrMigrate(f)
+        assertEquals("缺头也必须解得出原文", body, plain)
+        assertTrue("读时补回首行标识", f.readText().startsWith(UserFrequency.ENC_HEADER))
+    }
+
+    /** 密钥不可用 ⇒ 不写明文、不丢 dirty、如实回报失败 */
+    @Test
+    fun 密钥不可用时词频不写明文并保留dirty() {
+        UserFrequency.resetForTest()
+        UserFrequency.setKeyForTest(null)
+        val dir = File(System.getProperty("java.io.tmpdir"), "jinn-freq-nokey").apply { mkdirs() }
+        val f = File(dir, "user_freq.txt")
+        UserFrequency.setFileForTest(f)
+        UserFrequency.loadForTest(true)
+
+        UserFrequency.remember("五湖")
+        assertFalse("密钥不可用时 flush 必须报失败", UserFrequency.flush())
+        assertFalse("绝不能回退写明文", f.exists() && "五湖" in f.readText())
+        assertTrue("这次学习仍待落盘（下次有机会再写）", UserFrequency.isDirtyForTest())
+        dir.deleteRecursively()
+    }
+
+    /** 配置备份这一层：**包内是明文**（解压之后拿出来的是明文） */
+    @Test
+    fun 备份导出取到明文_导入落盘为密文() {
+        val f = File.createTempFile("jinn-freq-backup", ".txt").apply { deleteOnExit() }
+        val body = "# jinn user_freq v1\n词\t2.000\t${today()}\n"
+        f.writeText(UserFrequency.encryptDoc(body, key))
+        assertEquals("导出的包内条目必须是明文", body, UserFrequency.readTextForBackup(f))
+
+        // 导入侧：写回磁盘是密文
+        assertTrue(UserFrequency.writeFromBackup(f, body, true))
+        assertTrue(f.readText().startsWith(UserFrequency.ENC_HEADER))
+        assertEquals(body, UserFrequency.readTextForBackup(f))
+        // 文件不存在 ⇒ 空串（不是 null，「没有词频」与「读不出」必须分开）
+        assertEquals("", UserFrequency.readTextForBackup(File(f.parentFile, "nope.txt")))
     }
 }

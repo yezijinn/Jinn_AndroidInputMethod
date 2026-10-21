@@ -4,6 +4,7 @@ import android.content.Context
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import javax.crypto.SecretKey
 
 /**
  * 用户词频学习：记下用户实际选过的候选，下次把它们排到前面。
@@ -15,16 +16,33 @@ import java.util.concurrent.TimeUnit
  *    tick 是天计数（`now / 86400000`），也就是旧值按天衰减、半衰期约 139 天，选中一次加 1；
  *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
- * 存储：`filesDir/user_freq.txt`（`词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
+ * 存储：`filesDir/user_freq.txt`（明文形态是 `词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
  * 窗口内会把「最后一次」排成尾沿任务补写（只做前沿丢弃的话，进程被 LMK 直杀时
  * 最近几次学习会丢，而 `flush` 只在服务收尾时才跑）；原子落盘（临时文件 + 改名）；
  * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
+ *
+ * **落盘是整份加密的**（[LedgerCrypto] 的行级 AEAD，密钥与台账共用）：
+ * `#jinn-freq1` + 一行 `1:base64(iv||密文)`，密文里才是上面那份明文。为什么这里能整份加密、
+ * 台账不能：这里上限 3000 行、写盘本身就有 2 秒防抖，一次「解密 → 改 → 加密 → 原子替换」
+ * 只有 0.2ms 量级；台账只增不删、可能几万行，整表重写会把一次按键放大成几 MB 的读写。
+ * 旧版明文首行 `# jinn user_freq v1` 在首次读取时一次性迁移成密文。
+ *
+ * **包内条目仍是明文**：配置备份导出走 [readTextForBackup]，导入走 [writeFromBackup] ——
+ * 备份包里放的是解密后的明文（解压即得明文），加密只发生在**本机落盘**这一层。
+ *
+ * 密钥不可用时 **fail-closed**：不写明文、不把「解不开」当成「没有词频」；已学内容留在
+ * 内存里等下次落盘（[dirty] 不清），进程退出时 [flush] 如实返回 false。
  */
 internal object UserFrequency {
 
     private const val TAG = "UserFrequency"
     internal const val FILE_NAME = "user_freq.txt"
+
+    /** 旧版明文表头（也是加密后明文正文的首行；备份包里的形态没变） */
     private const val HEADER = "# jinn user_freq v1"
+
+    /** 加密文件的首行标识（迁移判据；与台账的 `#jinn-picks1` 各自成一份格式） */
+    internal const val ENC_HEADER = "#jinn-freq1"
     private const val MAX_ENTRIES = 3000
     private const val MIN_WEIGHT = 0.15
     private const val SAVE_DEBOUNCE_MS = 2000L
@@ -37,6 +55,15 @@ internal object UserFrequency {
 
     @Volatile
     private var dirty = false
+
+    /**
+     * 测试注入的密钥（JVM 上走不了 Android Keystore）。
+     *
+     * 生产路径一律 [LedgerCrypto.dataKey]（与台账同一把 DEK），注入只为让纯 JVM 单测覆盖
+     * 「整份加解密 + 迁移」的格式与口径。
+     */
+    @Volatile
+    private var keyForTest: SecretKey? = null
 
     @Volatile
     private var lastSaveAt = 0L
@@ -91,7 +118,13 @@ internal object UserFrequency {
         }
         runCatching {
             val now = today()
-            val parsed = parse(f.readText(), now, PinyinEngine::toSimplified)
+            val text = readPlainOrMigrate(f)
+            if (text == null) {
+                // 密钥不可用 / 密文损坏：不覆盖文件、不当成「没有词频」，本次按未学习处理
+                Diagnostics.w(TAG, "用户词频读取跳过（密钥不可用或密文损坏），不覆盖原文件")
+                return
+            }
+            val parsed = parse(text, now, PinyinEngine::toSimplified)
             entries.clear()
             for ((word, v) in parsed) entries[word] = Entry(v.first, v.second)
             Diagnostics.i(TAG, "用户词频: 已载入 ${parsed.size} 条（含按天衰减）")
@@ -137,7 +170,8 @@ internal object UserFrequency {
         runCatching {
             // 读盘**前**记下版本号：读与写之间可能正好跨过一次备份导入替换（见 [applyReload]）
             val versionBeforeRead = version
-            val parsed = parse(f.readText(), today(), PinyinEngine::toSimplified)
+            val text = readPlainOrMigrate(f) ?: return
+            val parsed = parse(text, today(), PinyinEngine::toSimplified)
             if (parsed.isEmpty()) return
             if (!applyReload(f, versionBeforeRead, parsed)) {
                 Diagnostics.i(TAG, "用户词频: 补载结果已作废（期间词频被替换），丢弃 ${parsed.size} 条")
@@ -171,7 +205,7 @@ internal object UserFrequency {
     /** 测试用：当前内存态版本号（[applyReload] 的换代校验依据） */
     internal fun versionForTest(): Long = version
 
-    /** 测试/复位用：清空内存态（不删文件） */
+    /** 测试/复位用：清空内存态（不删文件；注入的密钥由 `setKeyForTest(null)` 单独复位） */
     internal fun resetForTest() {
         entries.clear()
         dirty = false
@@ -179,6 +213,11 @@ internal object UserFrequency {
         file = null
         lastSaveAt = 0L
         savePending = false
+    }
+
+    /** 测试用：注入落盘密钥（JVM 上没有 Android Keystore；生产一律走 [LedgerCrypto.dataKey]） */
+    internal fun setKeyForTest(key: SecretKey?) {
+        keyForTest = key
     }
 
     /** 测试用：直接注入（绕过文件） */
@@ -224,7 +263,7 @@ internal object UserFrequency {
             return
         }
         val now = today()
-        // 内存态更新放进写盘锁：导入的 replaceFromBackup 会在同一把锁内做「clear + 重填 + 清脏」，
+        // 内存态更新放进写盘锁：导入的 writeFromBackup 会在同一把锁内做「clear + 重填 + 清脏」，
         // 不加锁就可能出现「刚学到的词被 clear 抹掉」或「内存里有、脏标记被清掉而永不落盘」
         synchronized(saveLock) {
             entries.compute(word) { _, old ->
@@ -304,7 +343,11 @@ internal object UserFrequency {
                 if (!enabled) return@synchronized
                 // 清 dirty 前核对版本（见 [version]）：渲染与清标记之间可能有并发学习进内存
                 val v = version
-                if (writeAtomically(f, render()) && version == v) dirty = false
+                val key = dataKey(f) ?: run {
+                    Diagnostics.w(TAG, "词频落盘跳过：密钥不可用（不写明文）")
+                    return@synchronized
+                }
+                if (writeEncryptedAtomically(f, render(), key) && version == v) dirty = false
             }
         }
     }
@@ -330,7 +373,14 @@ internal object UserFrequency {
         // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
         return synchronized(saveLock) {
             val v = version
-            val written = writeAtomically(f, render())
+            // 密钥不可用时如实返回 false（不写明文）：调用方（导出 / 导入）据此说明，而不是
+            // 把「没写成」当成「已落盘」
+            val key = dataKey(f)
+            if (key == null) {
+                Diagnostics.w(TAG, "词频落盘失败：密钥不可用")
+                return@synchronized false
+            }
+            val written = writeEncryptedAtomically(f, render(), key)
             if (written && version == v) dirty = false
             written
         }
@@ -487,23 +537,28 @@ internal object UserFrequency {
     }
 
     /**
-     * 备份导入专用：把合并后的文本**在同一把写盘锁内**落盘并同步内存态。
+     * 备份导入专用：把合并后的文本**在同一把写盘锁内**加密落盘并同步内存态。
      *
-     * 必须走这里，而不是「[writeAtomically] + [load]」两步：运行期的防抖落盘（[scheduleSave]）
-     * 与 [flush] 会在任意时刻把**内存里的旧快照**写回同一个文件，两步之间被插一脚，就等于
-     * 刚导入的词频被静默覆盖。[saveLock] 由本模块独占，导入与运行期写盘因此严格串行。
+     * 必须走这里，而不是「[writeEncryptedAtomically] + [load]」两步：运行期的防抖落盘
+     * （[scheduleSave]）与 [flush] 会在任意时刻把**内存里的旧快照**写回同一个文件，两步之间被插一脚，
+     * 就等于刚导入的词频被静默覆盖。[saveLock] 由本模块独占，导入与运行期写盘因此严格串行。
      *
      * @param enabled 与 `Prefs.userLearning` 一致；关着也照样填内存 —— `rank()` 自会挡掉，
      *   而用户随后打开开关时内存里已是导入后的表，不必等下次启动补载
-     * @return 是否写盘成功
+     * @return 是否写盘成功（密钥不可用 / IO 失败一律 false，原文件与内存态都保持不动）
      */
-    internal fun replaceFromBackup(target: File, mergedText: String, enabled: Boolean): Boolean {
+    internal fun writeFromBackup(target: File, mergedText: String, enabled: Boolean): Boolean {
         this.enabled = enabled
         // 同步内部文件引用：导入之后运行期的防抖写盘 / flush 要落到同一个文件上
         file = target
+        // 密钥解析放在锁外（会走一次 Keystore），与写盘的临界区分开
+        val key = dataKey(target) ?: run {
+            Diagnostics.w(TAG, "备份导入: 词面密钥不可用，词频未写入")
+            return false
+        }
         val written = synchronized(saveLock) {
             val v = version
-            if (!writeAtomically(target, mergedText)) {
+            if (!writeEncryptedAtomically(target, mergedText, key)) {
                 return@synchronized false
             }
             entries.clear()
@@ -529,12 +584,123 @@ internal object UserFrequency {
     /** 词频文件文本的行数统计（备份页预览用；坏行不计） */
     internal fun countEntries(text: String): Int = parse(text, today(), PinyinEngine::toSimplified).size
 
-    /** 原子写：临时文件 + 改名（与索引缓存同一套写法，避免半截文件被当成有效数据） */
+    // ── 落盘加密（整份 AEAD，密钥与台账共用）────────────────────────────────
+
+    /**
+     * 明文正文 → 加密文件文本：`#jinn-freq1` + 一行 `1:base64(iv||密文)`。
+     *
+     * 直接复用 [LedgerCrypto.encryptLine]：IV 随机、`require` 校验长度、解不开只返回 null 的口径
+     * 与台账完全一致，不再维护第二套 AEAD 代码。
+     */
+    internal fun encryptDoc(plain: String, key: SecretKey): String =
+        ENC_HEADER + "\n" + LedgerCrypto.encryptLine(plain, key) + "\n"
+
+    /**
+     * 加密文件文本 → 明文正文；解不开返回 null。
+     *
+     * 判据是「**找到第一条能解开的记录行**」而不是「首行必须是 [ENC_HEADER]」：首行标识一旦被删
+     * （外部改写 / 部分恢复），仍然读得出来 —— 与台账缺头台账同一种处置（N3）。
+     */
+    internal fun decryptDoc(text: String, key: SecretKey): String? {
+        if (text.isEmpty()) return null
+        for (line in text.lineSequence()) {
+            if (!line.startsWith(LedgerCrypto.RECORD_PREFIX)) continue
+            LedgerCrypto.decryptLine(line, key)?.let { return it }
+        }
+        return null
+    }
+
+    /** 加密后原子落盘（fsync 后改名：掉电窗口里不会留下半截文件） */
+    internal fun writeEncryptedAtomically(target: File, plain: String, key: SecretKey): Boolean =
+        writeAtomically(target, encryptDoc(plain, key))
+
+    /**
+     * 读盘并就地迁移（旧明文 / 缺首行标识两种形态各一条路径）。
+     *
+     * internal 便于单测直接对一份文件跑迁移（`load` 需要 Context，JVM 侧拿不到）。
+     *
+     * @return 明文正文；null = **现在读不了**（密钥不可用 / 密文被改坏）——
+     *   调用方必须按「不覆盖文件、不当成没有词频」处理，绝不能拿空表去覆盖。
+     */
+    internal fun readPlainOrMigrate(f: File): String? {
+        val raw = runCatching { f.readText() }.getOrNull() ?: return null
+        if (raw.isEmpty()) return ""
+        val key = dataKey(f)
+        val looksCipher = raw.startsWith(ENC_HEADER) || LedgerCrypto.looksLikeRecords(raw)
+        if (key == null) {
+            if (looksCipher) {
+                Diagnostics.w(TAG, "用户词频读取跳过：词面密钥不可用")
+                return null
+            }
+            // 旧版明文：密钥暂时不可用也能读，只是这次迁不了
+            return raw
+        }
+        val plain = decryptDoc(raw, key)
+        if (plain != null) {
+            if (!raw.startsWith(ENC_HEADER)) {
+                // 首行标识丢了（N3 同型）：补齐，别让下一次落盘把它写成「看起来像明文」的东西
+                if (writeEncryptedAtomically(f, plain, key)) {
+                    Diagnostics.i(TAG, "用户词频首行标识缺失，已补回")
+                }
+            }
+            return plain
+        }
+        if (looksCipher) {
+            // 密钥可用却解不开 ⇒ 密文被改坏 / 换了密钥。留一份原件再往下走，
+            // 免得 2 秒后的防抖落盘把它整份覆盖（与 N2 的 fail-closed 同口径）
+            quarantine(f)
+            return null
+        }
+        // 旧版明文首行 `# jinn user_freq v1`：一次性迁移成密文（保留原文内容不变）
+        if (writeEncryptedAtomically(f, raw, key)) {
+            Diagnostics.i(TAG, "用户词频已迁移为加密格式")
+        }
+        return raw
+    }
+
+    /** 把解不开的密文文件改名保留（`user_freq.txt.bad`），避免随后被空表覆盖 */
+    private fun quarantine(f: File) {
+        val base = File(f.parentFile, f.name + ".bad")
+        val dest = if (base.exists()) File(f.parentFile, f.name + ".bad-" + System.currentTimeMillis()) else base
+        val ok = runCatching { java.nio.file.Files.move(f.toPath(), dest.toPath()) }.isSuccess
+        if (ok) {
+            Diagnostics.e(TAG, "用户词频密文无法解密，已改名为 ${dest.name}（原样保留）")
+        } else {
+            Diagnostics.w(TAG, "用户词频密文无法解密（改名保留失败，本次不落盘）")
+        }
+    }
+
+    /**
+     * 配置备份**导出**专用：把词频文件读成**明文**（包内条目必须是明文）。
+     *
+     * @return 明文；文件不存在返回空串；**读不出 / 解不开返回 null** ——
+     *   调用方必须据此中止导出，静默按「空节」导出会让用户以为备份完整，换机后这部分全丢
+     *   （与既有的 BUG-06 修复同一口径）。
+     */
+    internal fun readTextForBackup(file: File): String? {
+        if (!file.isFile) return ""
+        val raw = runCatching { file.readText() }.getOrNull() ?: return null
+        if (raw.isEmpty()) return ""
+        if (!raw.startsWith(ENC_HEADER) && !LedgerCrypto.looksLikeRecords(raw)) return raw
+        val key = dataKey(file) ?: return null
+        return decryptDoc(raw, key)
+    }
+
+    /** 落盘 / 读盘用的数据密钥：测试注入优先，生产走与台账共用的 DEK */
+    private fun dataKey(target: File): SecretKey? =
+        keyForTest ?: run {
+            val dir = target.parentFile ?: return null
+            LedgerCrypto.dataKey(dir)
+        }
+
+    /** 原子写：临时文件 + fsync + 改名（与索引缓存同一套写法，避免半截文件被当成有效数据） */
     internal fun writeAtomically(target: File, text: String): Boolean = runCatching {
         val tmp = File(target.parentFile, target.name + ".tmp")
-        tmp.outputStream().use { out ->
+        java.io.FileOutputStream(tmp).use { out ->
             out.write(text.toByteArray(Charsets.UTF_8))
             out.flush()
+            // 只对数据块 fsync：改名只保证目录项落盘，掉电后「文件在、内容是空/半截」比没写更糟
+            out.fd.sync()
         }
         // 直接改名覆盖（Linux 的 rename 是原子的）：先删目标会制造一个「目标不存在」的窗口，
         // 恰好此时进程被杀，用户的词频文件就凭空消失了
