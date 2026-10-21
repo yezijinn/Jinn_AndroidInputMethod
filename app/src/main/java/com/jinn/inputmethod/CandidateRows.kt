@@ -159,6 +159,25 @@ internal object CandidateRows {
     }
 
     /**
+     * 展开态**可用高度允许的最大排数**（纯函数，不读 Prefs、不碰 View）。
+     *
+     * 可用高度 = 收起档栏高（拼音条 + 一行候选）+ [MAX_COVERED_KEY_ROWS] × 键高 − 拼音条
+     * = 一行候选 + 覆盖行数 × 键高，故 `floor(可用 ÷ 行高) = 1 + floor(覆盖行数 × 键高 ÷ 行高)`
+     * （整数除法即向下取整；拼音条与行间隔在加减里抵消，与字号 / 间隔 / density 无关）。
+     *
+     * 抽成纯函数是为了让「排数不得超出覆盖边界」这条不变式能被 JVM 单测直接遍历
+     * （[CandidateRowsTest] 的字号 × fontScale × density 性质测试）。只写在渲染侧的私有
+     * `expandedRowsFor` 里时，改坏 [`expandedBarHeightPx`] 或本式只能等真机回归才暴露。
+     *
+     * @param rowHeightPx 单排候选行高（px，含 fontScale，口径见 [rowHeightPx] 函数）
+     * @param keyRowHeightPx 单行字母键高（px）；与 [rowHeightPx] 任一 ≤0（几何未取到）时退回 [MAX_EXPANDED_ROWS]
+     */
+    fun maxRowsByCoveredKeys(rowHeightPx: Int, keyRowHeightPx: Int): Int {
+        if (rowHeightPx <= 0 || keyRowHeightPx <= 0) return MAX_EXPANDED_ROWS
+        return 1 + MAX_COVERED_KEY_ROWS * keyRowHeightPx / rowHeightPx
+    }
+
+    /**
      * 候选栏总高度（px）：拼音条（含拼音行间隔）+ 排数 × 单排 —— 高度的**唯一来源**。
      *
      * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的

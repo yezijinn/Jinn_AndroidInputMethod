@@ -294,13 +294,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (expand) {
             expandedRowsCached = expandedRowsFor(
                 lastCandidates.size,
-                // 用**上一帧落位**的三个几何量（currentCandidateSp / currentPinyinSp /
-                // currentPinyinGapDp），不再重读 Prefs：展开排数是拿上一帧的候选列表算的，
-                // 几何也必须来自同一帧，否则后台导入恰好落在两者之间就得到混合几何的排数，
-                // 整场展开会话都按它裁字（失效点只有 refreshAppearance）。
+                // 用**上一帧落位**的候选字号（currentCandidateSp），不再重读 Prefs：展开排数是拿
+                // 上一帧的候选列表算的，几何也必须来自同一帧，否则后台导入恰好落在两者之间就得到
+                // 混合几何的排数，整场展开会话都按它裁字（失效点只有 refreshAppearance）。
+                // 拼音字号 / 行间隔不参与（见 [expandedRowsFor] 的抵消说明）。
                 currentCandidateSp,
-                currentPinyinSp,
-                currentPinyinGapDp,
             )
         }
         refreshCandidateBar()
@@ -312,21 +310,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun letterRowPx(): Int =
         (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
 
-    private fun expandedRowsFor(count: Int, candidateSp: Float, pinyinSp: Float, gapDp: Float): Int {
+    /**
+     * 展开态排数：候选量、栏宽估列与「可用高度允许的排数」三者夹取。
+     *
+     * 只用**候选字号**（行高是唯一随字号变的项）：拼音条高度与拼音行间隔在「收起档栏高 −
+     * 拼音条」里逐字节抵消（同两个调用、同参数），所以排数与拼音字号无关 —— 别把拼音块
+     * 再塞回来，那会让「拼音字号变了排数跟着变」的假依赖重启。
+     */
+    private fun expandedRowsFor(count: Int, candidateSp: Float): Int {
         val dm = resources.displayMetrics
-        val fontScale = resources.configuration.fontScale
-        val rowPx = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
-        val pinyinPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp) +
-            CandidateRows.pinyinGapPx(dm.density, gapDp)
-        // 可用高度 = 收起档栏高 + 最多覆盖的整行键 − 拼音条：展开是**向下覆盖键区**（窗口高度恒定），
-        // 所以上限不再是「键盘视图有多高」，而是「允许盖掉几行键」。
-        // 不读 `height`：它此刻可能是 0（首帧）或上一帧的值，读过一次就会在跨档时算出不同排数。
-        val basePx = CandidateRows.barHeightPx(
-            CandidateRows.SINGLE, dm.density, fontScale, candidateSp, pinyinSp, gapDp,
-        )
-        val usable = basePx + CandidateRows.MAX_COVERED_KEY_ROWS * letterRowPx() - pinyinPx
-        val byHeight = if (rowPx > 0 && usable > 0) (usable / rowPx).coerceAtLeast(1)
-        else CandidateRows.MAX_EXPANDED_ROWS
+        val rowPx = CandidateRows.rowHeightPx(dm.density, resources.configuration.fontScale, candidateSp)
+        // 可用高度允许的排数（代数化简见 [CandidateRows.maxRowsByCoveredKeys]）。不读 `height`：
+        // 它此刻可能是 0（首帧）或上一帧的值，读过一次就会在跨档时算出不同排数。
+        val byHeight = CandidateRows.maxRowsByCoveredKeys(rowPx, letterRowPx())
         // 每列能放几条：展开态一屏显示的就是「排数 × 列数」个候选，这里按栏宽 ÷ 单条宽估算；
         // 取不到宽度时退化为 1（⇒ 排数 = 候选数，仍被上限夹住）。
         val perColumn = estimateColumnsPerRow()
@@ -346,6 +342,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 几何全部取**调用方传入的本帧值**，本函数不碰 [prefs]：同帧有两次调用（栏高落位前 / 候选
      * 落定后），各自再读一遍 Prefs 就会用「上一帧的拼音字号 + 本帧的候选字号」这种混合量算
      * [expandedRowsFor]（见 [refreshCandidateBar] 里「同一个键一帧只读一次」的约定）。
+     *
+     * @param pinyinSp 本帧拼音字号：**不参与**排数（拼音条在化简里抵消，见 [expandedRowsFor]）；
+     *   留在签名里是因为调用方按「本帧几何一次传齐」的口径下发，拆开会让下一个接入点又回去读 Prefs。
+     * @param gapDp 同上（拼音行间隔，同样抵消）。
      */
     private fun updateExpandButton(
         rowsSetting: Int,
@@ -359,8 +359,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val wouldGrow = candidatesExpanded || expandedRowsFor(
             lastCandidates.size,
             candidateSp,
-            pinyinSp,
-            gapDp,
         ) > 1
         // 已展开时无条件显示 —— 否则这一刻按钮消失，用户反而收不回去。`candidatesExpanded` 这一半
         // 写在候选数判据**之前**（与 wouldGrow 同侧）：展开态下候选数若掉到 ≤1，只按候选数判会把
@@ -3135,7 +3133,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (expandedRowsCached > 0) {
                 expandedRowsCached
             } else {
-                expandedRowsFor(lastCandidates.size, candidateSp, pinyinSp, pinyinGap)
+                expandedRowsFor(lastCandidates.size, candidateSp)
             }
         } else {
             rowsSetting

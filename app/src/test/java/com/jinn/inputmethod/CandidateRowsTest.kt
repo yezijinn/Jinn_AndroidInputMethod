@@ -367,6 +367,70 @@ class CandidateRowsTest {
         assertEquals(1, CandidateRows.visibleRows(0, perColumn = 3))
     }
 
+    /**
+     * 不变式（P2 的机械守卫，补 G1）：**展开态栏高恒 ≥ 候选网格**，任何字号 / 系统字体缩放 /
+     * 密度 / 键高 / 拼音行间隔组合下都不裁字。
+     *
+     * 依据：`maxRowsByCoveredKeys` = `1 + floor(覆盖行数 × 键高 ÷ 行高)` ⇒ 网格高 ≤ 收起档栏高 +
+     * 覆盖行数 × 键高，而 [CandidateRows.expandedBarHeightPx] 正好按整行键向上取整并夹在同一覆盖
+     * 行数上 ⇒ `栏高 ≥ 网格` 代数上恒成立。改坏任何一侧（除法取整方向、覆盖行数、向上取整）当场红。
+     *
+     * 第 12 轮 P2（展开中调大字号裁末排）就是这条不变式在真机被破坏：排数来自旧字号 ⇒ 网格超栏高。
+     */
+    @Test
+    fun 展开态栏高恒盖住网格_字号乘字体缩放乘密度乘键高() {
+        for (candidateSp in 14..42) {
+            for (fontScale in listOf(1f, 1.15f, 1.3f)) {
+                for (density in listOf(2.625f, 3.5f)) {
+                    for (keyHeightDp in listOf(40, 50, 66, 75, 90)) {
+                        for (gapDp in listOf(0f, 8f, 16f)) {
+                            val keyRow = (keyHeightDp * density).roundToInt()
+                            val r = CandidateRows.rowHeightPx(density, fontScale, candidateSp.toFloat())
+                            val p = CandidateRows.pinyinBarHeightPx(
+                                density,
+                                fontScale,
+                                CandidateText.pinyinSpOf(candidateSp.toFloat()),
+                            ) + CandidateRows.pinyinGapPx(density, gapDp)
+                            val base = p + r
+                            val rows = CandidateRows.maxRowsByCoveredKeys(r, keyRow)
+                                .coerceAtMost(CandidateRows.MAX_EXPANDED_ROWS)
+                            val grid = p + rows * r
+                            val bar = CandidateRows.expandedBarHeightPx(grid, base, keyRow)
+                            assertTrue(
+                                "裁字：sp=$candidateSp fs=$fontScale d=$density 键高=${keyHeightDp}dp 间隔=$gapDp " +
+                                    "rows=$rows grid=$grid bar=$bar",
+                                bar >= grid,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun 覆盖行数换算与旧算式等价() {
+        // 默认档：行高 28sp×1.4×3.5 = 137，键高 66dp×3.5 = 231 ⇒ 1 + 462/137 = 4
+        assertEquals(4, CandidateRows.maxRowsByCoveredKeys(137, 231))
+        // fontScale 1.3：行高 178 ⇒ 1 + 462/178 = 3（真机实测就是 3 排）
+        assertEquals(3, CandidateRows.maxRowsByCoveredKeys(178, 231))
+        // 几何未取到：退回上限（与旧实现的 else 分支同口径）
+        assertEquals(CandidateRows.MAX_EXPANDED_ROWS, CandidateRows.maxRowsByCoveredKeys(0, 231))
+        assertEquals(CandidateRows.MAX_EXPANDED_ROWS, CandidateRows.maxRowsByCoveredKeys(137, 0))
+        // 键高极矮时至少给 1 排（不得算出 0 排把候选吞掉）
+        assertEquals(1, CandidateRows.maxRowsByCoveredKeys(1000, 1))
+    }
+
+    @Test
+    fun 展开态排数必须走覆盖边界纯函数() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        assertTrue(
+            "展开排数必须走 CandidateRows.maxRowsByCoveredKeys（写回内联算式就没人守这条不变式了）",
+            "CandidateRows.maxRowsByCoveredKeys(rowPx, letterRowPx())" in src,
+        )
+        assertFalse("不得再自己算 usable 再整除（代数等价但脱离了单测）", "val usable =" in src)
+    }
+
     @Test
     fun 展开态按N排一列且列内自上而下保持词频顺序() {
         val items = listOf("a", "b", "c", "d", "e")

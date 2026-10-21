@@ -169,6 +169,23 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
+        // 拼音字号：与候选字号解耦（0 = 自动，沿用 `候选字号 × 0.7` 的派生口径）。
+        // 只有拼音行三件（拼音文字 / ✕ / ▲）跟它变；栏高与顶部避让由 CandidateRows 派生。
+        // ⚠ 本块必须排在候选字号块**之前**：候字号监听要在「自动」档跟刷本行读数（下方
+        // `textPinyinSize.text = …`）。反过来依赖就成环：拼音「自动」的读数由候选字号派生，
+        // 页面创建时算一次不够（实测 42sp 后仍停在 20 sp）。
+        val labelPinyinSize = findViewById<TextView>(R.id.label_pinyin_text_size)
+        val seekPinyinSize = findViewById<SeekBar>(R.id.seek_pinyin_text_size)
+        val textPinyinSize = findViewById<TextView>(R.id.text_pinyin_text_size)
+        labelPinyinSize.text = TEXT_PINYIN_TEXT_SIZE_TITLE
+        seekPinyinSize.max = CandidateText.PINYIN_PROGRESS_MAX
+        val autoPinyinSp = CandidateText.pinyinSpOf(prefs.candidateTextSp)
+        val rawPinyinSp = prefs.pinyinTextSp
+        seekPinyinSize.progress = CandidateText.pinyinSpToProgress(
+            if (rawPinyinSp > 0f) rawPinyinSp else autoPinyinSp,
+        )
+        textPinyinSize.text = CandidateText.formatPinyinSp(rawPinyinSp, autoPinyinSp)
+
         // 候选字号：候选词的字号（sp）。**整个候选栏按它派生**（行高 / 拼音条高度 / 栏高一起变），
         // 标题同样在代码里下发（strings.xml 默认禁改）
         val labelTextSize = findViewById<TextView>(R.id.label_candidate_text_size)
@@ -184,6 +201,15 @@ class KeyAppearanceActivity : Activity() {
                 val sp = CandidateText.progressToSp(progress)
                 prefs.candidateTextSp = sp
                 textTextSize.text = CandidateText.formatSp(sp)
+                // 拼音字号为「自动」（pinyinTextSp = 0）时，它的读数由候选字号派生 ⇒ 必须跟刷，
+                // 否则停在页面创建时算出的旧值（实测：候选 42sp、拼音已按 29.4sp 生效，读数仍 20 sp）。
+                // 走 formatPinyinSp 的自动分支：显式档不受影响（该函数对非 0 的 sp 只回显自身）。
+                // ⚠ 不改 `seekPinyinSize.progress`：那会触发它自己的监听，把「自动」写成显式值
+                // （`pinyinTextSp` 从 0 变成 29.4，此后不再跟候选字号联动）。
+                textPinyinSize.text = CandidateText.formatPinyinSp(
+                    prefs.pinyinTextSp,
+                    CandidateText.pinyinSpOf(sp),
+                )
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -195,20 +221,7 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
-        // 拼音字号：与候选字号解耦（0 = 自动，沿用 `候选字号 × 0.7` 的派生口径）。
-        // 只有拼音行三件（拼音文字 / ✕ / ▲）跟它变；栏高与顶部避让由 CandidateRows 派生。
-        val labelPinyinSize = findViewById<TextView>(R.id.label_pinyin_text_size)
-        val seekPinyinSize = findViewById<SeekBar>(R.id.seek_pinyin_text_size)
-        val textPinyinSize = findViewById<TextView>(R.id.text_pinyin_text_size)
-        labelPinyinSize.text = TEXT_PINYIN_TEXT_SIZE_TITLE
-        seekPinyinSize.max = CandidateText.PINYIN_PROGRESS_MAX
-        val autoPinyinSp = CandidateText.pinyinSpOf(prefs.candidateTextSp)
-        val rawPinyinSp = prefs.pinyinTextSp
-        seekPinyinSize.progress = CandidateText.pinyinSpToProgress(
-            if (rawPinyinSp > 0f) rawPinyinSp else autoPinyinSp,
-        )
-        textPinyinSize.text = CandidateText.formatPinyinSp(rawPinyinSp, autoPinyinSp)
-
+        // 拼音字号滑杆的声明与初值在候选字号块之前（见上）；此处只接监听。
         seekPinyinSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val sp = CandidateText.pinyinProgressToSp(progress)
