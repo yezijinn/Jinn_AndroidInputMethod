@@ -1751,6 +1751,9 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
         pinyinKeyboard?.setHostImageCapable(hostImageCapableForSession)
+        // 数字行按钮文本：配置备份导入不经过任何页面回调，而框架跨会话复用同一个键盘视图
+        // （「下次创建」不会到来）⇒ 在这条唯一必经的入口上补一次。10 次赋值，代价可忽略。
+        pinyinKeyboard?.applyNumberRowLabels()
         // 用户手选的视图态（英文 / 大写 / 符号层）不写 Prefs，换视图即丢 ⇒ 从旧视图读出后重放。
         // 定时换肤 / 符号分组顺序变更走 `recreateKeyboardView()`，框架自己的配置变更走本函数，
         // 两条都会把英文态静默打回中文（键面突变、后续按键出拼音），必须在这里兜住。
@@ -4545,6 +4548,23 @@ class JinnIme : InputMethodService() {
         fun onSymbolLayoutChanged() {
             val ime = instance?.get() ?: return
             ime.ui.post { ime.rebuildInputViewForSymbolLayout() }
+        }
+
+        /**
+         * 符号自定义页改完「数字行按钮文本」后调用（主线程）：只就地刷新那 10 个键的
+         * label，**不重建键盘视图**。
+         *
+         * 为什么不必像 [onSymbolLayoutChanged] 那样等「有未上屏输入」的守卫：标签不碰
+         * composing / 候选 / 拼音串，改它不会打断任何在途输入。
+         *
+         * 为什么必须有一个独立入口：框架跨会话复用同一个键盘视图（见
+         * [rebuildInputViewForSymbolLayout] 的注释），「下次弹出生效」在视图已建时不会到来
+         * —— 收藏页改完必须当场推一次。配置备份导入不经过任何页面回调，那条路由由
+         * [onStartInputView] 里的补调覆盖。
+         */
+        fun onNumberRowLabelsChanged() {
+            val ime = instance?.get() ?: return
+            ime.ui.post { ime.pinyinKeyboard?.applyNumberRowLabels() }
         }
 
         /**

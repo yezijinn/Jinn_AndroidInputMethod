@@ -645,6 +645,26 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_NUMBER_ROW_ENABLED, value) }
 
     /**
+     * 数字行 10 个按钮的文本（见 [NumberRowLabels]）。null = 从未自定义。
+     *
+     * 「显示即上屏」：键面显示什么，点它就上屏什么；空槽回落默认数字。
+     * 编辑入口在符号自定义页（[FavoriteSymbolsActivity]），数字行开关关时该分区不渲染。
+     *
+     * 写入即归一（与 [favoriteSymbols] 同款）：解析发生在键盘视图构造的**主线程**上，
+     * 非规范 JSON 会让每次建键盘都做一次解析，而值已落盘、重启输入法也无效。
+     * 超过上限直接不写（保留原值），调用方自己要把内容收敛后再来。
+     */
+    var numberRowLabels: String?
+        get() = strOr(KEY_NUMBER_ROW_LABELS, null)
+        set(value) = sp.edit {
+            when {
+                value == null -> putString(KEY_NUMBER_ROW_LABELS, null)
+                value.length <= MAX_NUMBER_ROW_LABELS_CHARS ->
+                    putString(KEY_NUMBER_ROW_LABELS, NumberRowLabels.serialize(NumberRowLabels.parse(value)))
+            }
+        }
+
+    /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
      *
      * 只影响「面」（背板 / 键面 / 候选栏），文字始终不透明。getter 也做一次钳位：
@@ -1566,6 +1586,9 @@ class Prefs(private val appContext: Context) {
         if (sp.contains(KEY_PINYIN_LINE_GAP_DP)) put(KEY_PINYIN_LINE_GAP_DP, pinyinLineGapDp)
         // 数字行开关（默认 false）：与「26 键常显大写」同款 —— 缺键回落与显式同值，不套守卫
         put(KEY_NUMBER_ROW_ENABLED, numberRowEnabled)
+        // 数字行文本：与收藏符号 / 拼音字号同款「只在改过时导出」—— 否则会把 10 个默认
+        // 字面量固化成用户值，将来调默认顺序对老用户永久失效
+        if (sp.contains(KEY_NUMBER_ROW_LABELS)) put(KEY_NUMBER_ROW_LABELS, numberRowLabels)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1740,6 +1763,16 @@ class Prefs(private val appContext: Context) {
                 KEY_KEY_HEIGHT_DP -> asFloat(v)?.let { keyHeightDp = it; ok() } ?: bad(key)
                 KEY_KEY_LETTER_UPPERCASE -> asBool(v)?.let { keyLetterUppercase = it; ok() } ?: bad(key)
                 KEY_NUMBER_ROW_ENABLED -> asBool(v)?.let { numberRowEnabled = it; ok() } ?: bad(key)
+                // 数字行文本：null（导出时未自定义）= 删键回落默认；脏 JSON 由 parse 归一，
+                // 归一后仍超上限才算坏键（长度闸比归一后，与 favoriteSymbols 同一条教训）
+                KEY_NUMBER_ROW_LABELS -> if (v.kind == ConfigBackup.BackupValue.KIND_NULL) {
+                    sp.edit { remove(KEY_NUMBER_ROW_LABELS) }
+                    ok()
+                } else asString(v)?.let { raw ->
+                    val normalized = NumberRowLabels.serialize(NumberRowLabels.parse(raw))
+                    if (normalized.length > MAX_NUMBER_ROW_LABELS_CHARS) bad(key)
+                    else { numberRowLabels = normalized; ok() }
+                } ?: bad(key)
                 KEY_CAPS_ONE_SHOT -> asBool(v)?.let { capsOneShot = it; ok() } ?: bad(key)
                 KEY_LONGPRESS_LOWER_UPPERCASE ->
                     asBool(v)?.let { longPressLowerUppercase = it; ok() } ?: bad(key)
@@ -2046,6 +2079,9 @@ class Prefs(private val appContext: Context) {
         private const val KEY_KEY_HEIGHT_DP = "key_height_dp"
         private const val KEY_KEY_LETTER_UPPERCASE = "key_letter_uppercase"
         private const val KEY_NUMBER_ROW_ENABLED = "number_row_enabled"
+
+        /** 数字行 10 个按钮的文本（JSON 数组恒 10 项，`""` = 默认；见 [NumberRowLabels]） */
+        private const val KEY_NUMBER_ROW_LABELS = "number_row_labels"
         private const val KEY_CAPS_ONE_SHOT = "caps_one_shot"
         private const val KEY_LONGPRESS_LOWER_UPPERCASE = "longpress_lower_uppercase"
         private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
@@ -2130,6 +2166,12 @@ class Prefs(private val appContext: Context) {
          * 收藏更多的用户自己的备份会导不回来（该键被整条拒收）。32K 下解析仍是毫秒级。
          */
         internal const val MAX_FAVORITE_SYMBOLS_CHARS = 32 * 1024
+
+        /**
+         * 数字行文本的落盘上限（字符）：10 槽 × 4 码点，加 JSON 转义膨胀也远小于此；
+         * 这道闸只为挡住手工改坏的巨型串（与 [MAX_FAVORITE_SYMBOLS_CHARS] 同一定位）。
+         */
+        internal const val MAX_NUMBER_ROW_LABELS_CHARS = 1024
         private const val KEY_THEME_LIGHT_AT = "theme_light_at"
         private const val KEY_THEME_DARK_AT = "theme_dark_at"
 

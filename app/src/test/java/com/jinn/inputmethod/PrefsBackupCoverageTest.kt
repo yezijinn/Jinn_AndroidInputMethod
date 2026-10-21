@@ -100,7 +100,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-19 起 102 → 103：新增「功能面板数字字号」1 键（外观页滑杆，换机要带走）
         // 2026-10-21 起 103 → 103：删「功能面板数字字号」1 键（该行整条移除）、
         //                       增「数字行开关」1 键（26 键区第四行，换机要带走）—— 净零
-        assertEquals("提取到的键常量应是 103 个（改键数请同步本断言）", 103, keyConstants.size)
+        // 2026-10-21 起 103 → 104：增「数字行按钮文本」1 键（符号自定义页改那 10 个格子）
+        assertEquals("提取到的键常量应是 104 个（改键数请同步本断言）", 104, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -221,6 +222,8 @@ class PrefsBackupCoverageTest {
             "KEY_KEY_LETTER_UPPERCASE" to "asBool(v)",
             // 数字行开关（26 键区第一行字母之上那排 1234567890，默认关）
             "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
+            // ⚠ KEY_NUMBER_ROW_LABELS 走归一分支，与 KEY_FAVORITE_SYMBOLS 同款单列在下面，
+            //   不进本表（本表的判据是 `-> asXxx(v)` 形态）
             // 大写仅一次 / 长按小写转大写：外观页两个开关
             "KEY_CAPS_ONE_SHOT" to "asBool(v)",
             "KEY_LONGPRESS_LOWER_UPPERCASE" to "asBool(v)",
@@ -248,16 +251,23 @@ class PrefsBackupCoverageTest {
             "KEY_FAVORITE_SYMBOLS 未做归一（会绕过长度上限，导致主线程解析超大 JSON）",
             import.contains("FavoriteSymbols.serialize(FavoriteSymbols.parse("),
         )
+        // 数字行按钮文本同款归一分支
+        assertTrue("KEY_NUMBER_ROW_LABELS 分支丢失", import.contains("KEY_NUMBER_ROW_LABELS ->"))
+        assertTrue(
+            "KEY_NUMBER_ROW_LABELS 未做归一（脏 JSON 会绕过长度上限）",
+            import.contains("NumberRowLabels.serialize(NumberRowLabels.parse("),
+        )
         // 键集合必须覆盖导入侧：新增键时漏补这张表、或把类型写错，此前不会有任何断言报出来
-        // （BUG.md L-1148）。例外只有三类 —— 退役键、单独钉住的收藏、凭据（凭据不进备份，
-        // 只在导入侧兼容旧包）。
+        // （BUG.md L-1148）。例外只有三类 —— 退役键、单独钉住的收藏与数字行文本、凭据
+        // （凭据不进备份，只在导入侧兼容旧包）。
         val importKeys = Regex("""(KEY_\w+)\s*->\s*as""").findAll(import).map { it.groupValues[1] }.toSet()
         val credentialKeys = setOf(
             "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
             "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
             "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY", "KEY_OPENAI_API_KEY",
         )
-        val allowed = pairs.keys + "KEY_FAVORITE_SYMBOLS" + retiredKeys + credentialKeys
+        val allowed = pairs.keys + "KEY_FAVORITE_SYMBOLS" + "KEY_NUMBER_ROW_LABELS" +
+            retiredKeys + credentialKeys
         assertEquals(
             "导入分支里有键没进配对表（新增键要在 pairs 里声明取值工具）",
             emptySet<String>(),
@@ -526,6 +536,7 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_PAGING" to "candidate_paging",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
             "KEY_NUMBER_ROW_ENABLED" to "number_row_enabled",
+            "KEY_NUMBER_ROW_LABELS" to "number_row_labels",
             "KEY_CAPS_ONE_SHOT" to "caps_one_shot",
             "KEY_LONGPRESS_LOWER_UPPERCASE" to "longpress_lower_uppercase",
             // 外观页的滑杆

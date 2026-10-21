@@ -941,7 +941,10 @@ class RecentFixesRegressionTest {
         assertTrue("页面入口不得再自写字符清洗", "raw.trim().replace" !in act)
         // 限长按码点数（BUG-37）：`String.length` 是码元数，一个 astral 字符算 2 ⇒ 5 个 emoji 被误拒。
         // 写入与解析必须同口径，否则解析会把刚收下的项再滤掉。
-        assertTrue("限长必须走码点判据", "fun withinLimit(item: String): Boolean" in fs)
+        assertTrue(
+            "限长必须走码点判据",
+            "fun withinLimit(item: String, max: Int = MAX_CHARS): Boolean" in fs,
+        )
         assertTrue("追加与解析都要用它", Regex("""withinLimit\(""").findAll(fs).count() >= 3)
         assertTrue("不得再按码元数判限长", "s.length <= MAX_CHARS" !in fs && "s.length > MAX_CHARS" !in fs)
         // 关键写同步落盘（BUG-34）：编辑页是收藏的唯一写入口，`apply()` 在进程被回收时会丢最后一步。
@@ -6011,6 +6014,7 @@ class RecentFixesRegressionTest {
      */
     @Test
     fun favoriteSymbolLimitUsesCodePoints() {
+        val fs = TestSources.codeSource("FavoriteSymbols.kt")
         val src = TestSources.codeSource("FavoriteSymbolsActivity.kt")
         assertFalse(
             "页面不得用 UTF-16 码元数限长",
@@ -6022,8 +6026,8 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "模型侧 withinLimit 必须按码点算",
-            "fun withinLimit(item: String): Boolean = item.codePointCount(0, item.length) <= MAX_CHARS"
-                in TestSources.codeSource("FavoriteSymbols.kt"),
+            "fun withinLimit(item: String, max: Int = MAX_CHARS): Boolean =" in fs &&
+                "item.codePointCount(0, item.length) <= max" in fs,
         )
     }
 
@@ -6238,7 +6242,9 @@ class RecentFixesRegressionTest {
         assertTrue("数字行必须用 PinyinKey 建键", "PinyinKey(context)" in build)
         assertFalse("数字行不得用 TextView 建键（那样要把圆角 / 皮肤 / 面 alpha 全抄一遍）", "TextView(" in build)
         assertTrue("数字行必须居中排版（数字 / 符号层口径）", "centeredStyle = true" in build)
-        assertTrue("数字行内容必须是 1234567890", "const val NUMBER_ROW_KEYS = \"1234567890\"" in view)
+        // 默认顺序的真源已移到 NumberRowLabels（模型层），对拍见
+        // `数字行与密码数字条同为电话键盘自然序`
+        assertTrue("数字行文本必须走 NumberRowLabels.effective", "NumberRowLabels.effective(" in build)
         // ② 位置：字母区第 0 个子视图（`qwertyuiop` 之上），且不进 26 键映射
         //    判据按「插入到哪」而不是插入语句的字面写法：`addView(0, …)` 换行、换参数变量都不该误红
         assertTrue(
@@ -6288,7 +6294,7 @@ class RecentFixesRegressionTest {
             "syncNumberRow()" in TestSources.blockAfter(view, "private fun refreshKeyLabels()"),
         )
         // ⑥ 点数字行必须上屏 + 数字音效
-        assertTrue("点数字行必须上屏", "listener?.onCommitText(digit.toString())" in build)
+        assertTrue("点数字行必须上屏", "listener?.onCommitText(text)" in build)
         assertTrue("点数字行必须发数字组音效", "KeyFeedback.fire(TapSound.G_DIGIT)" in build)
 
         // ⑦ 落盘 + 外观页入口（默认 false = 维持现状）
@@ -6332,16 +6338,14 @@ class RecentFixesRegressionTest {
      */
     @Test
     fun 数字行与密码数字条同为电话键盘自然序() {
-        val digits = Regex("const val NUMBER_ROW_KEYS = \"([^\"]+)\"")
-            .find(TestSources.codeSource("PinyinKeyboardView.kt"))
-            ?.groupValues?.get(1)
-            ?: error("PinyinKeyboardView 里找不到 NUMBER_ROW_KEYS")
-        assertEquals("固定数字行必须是电话键盘自然序", "1234567890", digits)
+        // 默认顺序真源在模型层（NumberRowLabels.DEFAULT_KEYS），运行时直接断言：
+        // 比「正则从源码里刮字面量」更强，也更抗重构（改实现写法不会误红）
+        assertEquals("固定数字行默认顺序必须是电话键盘自然序", "1234567890", NumberRowLabels.DEFAULT_KEYS.joinToString(""))
         assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"), PASSWORD_DIGIT_ORDER)
         // 判据必须同类型比较（上一版拿 List<Char> 比 List<String>，恒真）
         assertEquals(
             "两处数字排列必须同序（一个应用里两种数字顺序才是问题）",
-            digits.map { it.toString() },
+            NumberRowLabels.DEFAULT_KEYS,
             PASSWORD_DIGIT_ORDER,
         )
     }
@@ -6364,9 +6368,17 @@ class RecentFixesRegressionTest {
         assertBefore(
             build,
             "commitComposing()",
-            "listener?.onCommitText(digit.toString())",
+            "listener?.onCommitText(text)",
             "数字行点数字前必须先 commitComposing：commitText 会替换 composing 区，" +
-                "不先落定就会把拼音吞掉（真机实测：打 ni → 点 5 → 正文只剩「5」）",
+                "不先落定就会把拼音吞掉（真机实测：打 ni → 点一下 → 正文只剩刚上屏的那个字）",
+        )
+        // 上屏文本必须读**键面标签**（2026-10-21 文本自定义起）：读构造期的默认数字会让
+        // 「改文本」只改外观、不改上屏。位置判据：`val text = key.label` 必须在两个上屏点之前。
+        assertBefore(
+            build,
+            "val text = key.label",
+            "listener?.onCommitText(text)",
+            "上屏文本必须取键面标签（用户把按钮改成「甲」，点它就得上屏「甲」）",
         )
     }
 
@@ -6383,12 +6395,139 @@ class RecentFixesRegressionTest {
             TestSources.codeSource("PinyinKeyboardView.kt"),
             "private fun buildNumberRow()",
         )
-        assertTrue("数字行闭包必须判搜索态（否则搜索时数字进了宿主正文）", "isPanelSearch()" in build)
+        assertTrue("数字行闭包必须判搜索态（否则搜索时文本进了宿主正文）", "isPanelSearch()" in build)
         assertBefore(
             build,
-            "searchPanel?.appendSearch(digit.toString())",
-            "listener?.onCommitText(digit.toString())",
+            "searchPanel?.appendSearch(text)",
+            "listener?.onCommitText(text)",
             "搜索态分支必须在上屏之前（顺序反了就成了「先上屏再追加搜索词」）",
+        )
+    }
+
+    /**
+     * 数字行按钮文本：建行与就地刷新**都**必须走 [NumberRowLabels.effective]。
+     *
+     * 为什么两处都要钉：`buildNumberRow` 只覆盖「新建视图」，而框架跨会话复用同一个键盘视图
+     * （`JinnIme.rebuildInputViewForSymbolLayout` 的注释），收藏页改完走的是就地刷新 ——
+     * 只钉一处就会漏掉另一条路径，表现为「新建时是对的、改完不生效」。
+     *
+     * `effective` 是空槽回落默认的唯一落点：它恒返回 10 个非空串，
+     * 因此键面不会出现「按了没反应」的空槽键（BUG.md 第 15 批 L7 的形态）。
+     */
+    @Test
+    fun 数字行文本必须走NumberRowLabels归一() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val build = TestSources.blockAfter(view, "private fun buildNumberRow()")
+        val apply = TestSources.blockAfter(view, "fun applyNumberRowLabels()")
+        assertTrue("建行必须读 NumberRowLabels.effective", "NumberRowLabels.effective(" in build)
+        assertTrue(
+            "就地刷新必须读 NumberRowLabels.effective（否则改完不生效 / 空槽留空键）",
+            "NumberRowLabels.effective(" in apply,
+        )
+        assertTrue(
+            "就地刷新入口必须是公开方法（收藏页与 onStartInputView 都要调）",
+            "fun applyNumberRowLabels()" in view,
+        )
+        // 默认值不得再在视图侧留一份可变副本：真源只在模型层
+        assertFalse(
+            "视图侧不得再定义数字行默认排列（真源是 NumberRowLabels.DEFAULT_KEYS）",
+            Regex("""const val NUMBER_ROW_KEYS""").containsMatchIn(view),
+        )
+    }
+
+    /**
+     * 收藏页的数字行文本分区必须**只在开关开着时**渲染。
+     *
+     * 判据取「早退」而不是「GONE」：关着的人不该在本页看到一个与自己无关的分区，
+     * 而 GONE 只是看不见、仍在视图树里占一次 measure。
+     *
+     * 位置判据：分区必须在 `removeAllViews()` 之后、`pages.isEmpty()` 早退**之前** ——
+     * 排在空态分支后面，收藏被删光时这一节会跟着消失。
+     */
+    @Test
+    fun 收藏页数字行分区只在开关开时渲染() {
+        val page = TestSources.codeSource("FavoriteSymbolsActivity.kt")
+        val section = TestSources.blockAfter(page, "private fun renderNumberRowSection()")
+        assertTrue(
+            "分区渲染必须只认数字行开关（关着时整段不渲染）",
+            Regex("""if \(!prefs\.numberRowEnabled\) return""").containsMatchIn(section),
+        )
+        assertTrue("分区必须展示生效文本（空槽已回落默认）", "NumberRowLabels.effective(" in section)
+        assertTrue("分区每格点击进单槽编辑", "showLabelDialog(" in section)
+        val render = TestSources.blockAfter(page, "private fun renderPages()")
+        assertTrue(
+            "分区必须排在 removeAllViews 之后（否则被清掉）",
+            render.indexOf("renderNumberRowSection()") > render.indexOf("removeAllViews()"),
+        )
+        assertTrue(
+            "分区必须排在收藏空态早退之前（否则收藏删光时分区跟着消失）",
+            render.indexOf("renderNumberRowSection()") < render.indexOf("pages.isEmpty()"),
+        )
+    }
+
+    /**
+     * 单槽写入必须先清洗校验、再落盘、最后轻量推送。
+     *
+     * 三条顺序各对应一个已发生过的缺陷形态：
+     *  ① 不先清洗 ⇒ 零宽 / NBSP 进键面 = 看不见却占格子的空槽键（BUG-36 同源）；
+     *  ② 限长不走码点口径 ⇒ emoji 被 UTF-16 码元数误判超限（BUG-37 同源）；
+     *  ③ 不推 `onNumberRowLabelsChanged` ⇒ 视图跨会话复用，改完不生效。
+     */
+    @Test
+    fun 数字行单槽写入必须先清洗校验再落盘并推送() {
+        val page = TestSources.codeSource("FavoriteSymbolsActivity.kt")
+        val save = TestSources.blockAfter(page, "private fun saveLabel(")
+        assertTrue("写入前必须清洗（与收藏同一口径）", "FavoriteSymbols.clean(" in save)
+        assertTrue(
+            "限长必须走码点口径（emoji 不被误拒）",
+            "FavoriteSymbols.withinLimit(item, NumberRowLabels.MAX_CHARS)" in save,
+        )
+        assertTrue("超限必须提示而不是静默丢弃", "TEXT_LABEL_TOO_LONG" in save)
+        assertTrue("关键写必须同步落盘（BUG-34）", "prefs.flush()" in save)
+        assertBefore(
+            save,
+            "prefs.numberRowLabels =",
+            "JinnIme.onNumberRowLabelsChanged()",
+            "必须先落盘再推送（顺序反了会让推送读到旧值）",
+        )
+        assertTrue("写完必须重渲染本页", "renderPages()" in save)
+    }
+
+    /**
+     * 数字行文本必须进备份两侧，且与收藏同款「只在改过时导出」。
+     *
+     * 导出侧套 `sp.contains` 守卫：否则会把 10 个默认字面量固化成用户值，
+     * 将来调默认顺序对老用户永久失效（与外观七键 / 拼音字号同一条纪律）。
+     */
+    @Test
+    fun 数字行文本必须进备份两侧() {
+        val prefs = TestSources.codeSource("Prefs.kt")
+        assertTrue("导出必须带数字行文本", "put(KEY_NUMBER_ROW_LABELS, numberRowLabels)" in prefs)
+        assertTrue(
+            "导出必须套「改过才导出」守卫（否则默认值被固化成用户值）",
+            Regex("""if \(sp\.contains\(KEY_NUMBER_ROW_LABELS\)\)\s*put\(KEY_NUMBER_ROW_LABELS""")
+                .containsMatchIn(prefs),
+        )
+        assertTrue("导入必须认这一键", "KEY_NUMBER_ROW_LABELS ->" in prefs)
+        assertTrue(
+            "导入侧 null 必须删键回落默认（与收藏符号同构）",
+            Regex("""KEY_NUMBER_ROW_LABELS -> if \(v\.kind == ConfigBackup\.BackupValue\.KIND_NULL\)""")
+                .containsMatchIn(prefs),
+        )
+        assertTrue(
+            "键名必须是 private const val（PrefsBackupCoverageTest 的正则只认这一种）",
+            """private const val KEY_NUMBER_ROW_LABELS = "number_row_labels"""" in prefs,
+        )
+        // 长度闸必须比归一后（BUG-35：两侧口径不同源会让脏值从另一侧漏进来）。
+        // ⚠ 判据取「导入分支起点」之后的窗口，不用整份文件：`MAX_NUMBER_ROW_LABELS_CHARS`
+        //    在文件里的第一次出现是常量声明，拿整份文件对拍会让 indexOf 落到声明上而恒失败。
+        val imp = prefs.substring(prefs.indexOf("KEY_NUMBER_ROW_LABELS ->"))
+        assertTrue("导入侧找不到数字行文本分支", imp.isNotEmpty())
+        assertBefore(
+            imp,
+            "NumberRowLabels.serialize(NumberRowLabels.parse(raw))",
+            "MAX_NUMBER_ROW_LABELS_CHARS",
+            "导入侧长度闸必须卡在归一之后",
         )
     }
 

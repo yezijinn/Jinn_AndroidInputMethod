@@ -105,8 +105,12 @@ object FavoriteSymbols {
      * `String.length` 是 UTF-16 码元数：一个 astral 字符（emoji、星号外的小众符号）占 2 ——
      * 5 个 emoji 就被算成 10 而拒收，用户看到的是「明明只打了 5 个字符」。写入（[append]）与
      * 解析（[parse]）必须同口径，否则解析会把写入侧刚收下的项再滤掉。
+     *
+     * [max] 可覆盖：数字行按钮文本（[NumberRowLabels]）按自己的可读性政策取 4，
+     * 但计数口径仍是这一份（不另写一个 `codePointCount`，两处迟早分叉）。
      */
-    fun withinLimit(item: String): Boolean = item.codePointCount(0, item.length) <= MAX_CHARS
+    fun withinLimit(item: String, max: Int = MAX_CHARS): Boolean =
+        item.codePointCount(0, item.length) <= max
 
     /** 页结构 → 持久化串（空组序列化为 `[]`） */
     fun serialize(pages: List<List<String>>): String {

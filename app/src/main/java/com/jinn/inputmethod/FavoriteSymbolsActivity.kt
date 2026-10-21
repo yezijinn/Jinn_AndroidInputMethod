@@ -23,8 +23,12 @@ import android.widget.Toast
  * - 按页分节网格展示，每个符号右上角小 ✕ 移除（后续符号前移补位、删空的页自动收起）；
  * - 底部「＋ 添加符号」：仅输入框（自由键入/粘贴），末页满 26 自动开新页；
  * - 禁止重复：添加已存在的符号提示「已存在」；
- * - 改动即时落盘（[Prefs.favoriteSymbols]）；[onPause] 时仅在真正改过的情况下通知
- *   IME 重建键盘视图（进来看看就退出不触发整块重建）。
+ * - 顶部「数字行文本」分区（数字行开关开着才渲染）：10 个格子对应键盘那排按钮，
+ *   点开改文本、留空回默认数字；改完即时生效（只刷 10 个键的 label，不重建视图）；
+ * - 改动即时落盘（[Prefs.favoriteSymbols] / [Prefs.numberRowLabels]）；
+ *   [onPause] 时仅在真正改过收藏内容的情况下通知 IME 重建键盘视图
+ *   （进来看看就退出不触发整块重建）。⚠ 数字行文本不走这条：它不重建视图，
+ *   由 [saveLabel] 当场推 [JinnIme.onNumberRowLabelsChanged]。
  */
 class FavoriteSymbolsActivity : Activity() {
 
@@ -38,6 +42,15 @@ class FavoriteSymbolsActivity : Activity() {
 
     /** 添加对话框的输入框（重建时把已输入 / 已粘贴的内容带回去，BUG.md L-1136） */
     private var addInput: EditText? = null
+
+    /** 数字行单槽编辑对话框（同 [addDialog]：不登记就会随页面旋转泄漏） */
+    private var labelDialog: AlertDialog? = null
+
+    /** 数字行单槽编辑的输入框（重建时带回已输入内容，BUG.md L-1136 同款） */
+    private var labelInput: EditText? = null
+
+    /** 正在编辑的槽位下标（-1 = 无） */
+    private var labelDialogIndex = -1
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
@@ -68,6 +81,14 @@ class FavoriteSymbolsActivity : Activity() {
         // 按条目上限截断：更长的内容 [addItem] 本就拒收，而整份进实例状态会撑到系统侧事务上限
         // （BUG.md L-1169）
         outState.putString(STATE_ADD_TEXT, (addInput?.text?.toString() ?: "").take(FavoriteSymbols.MAX_CHARS))
+        // 数字行单槽编辑同一套：槽位 + 已输入文本（上限同 NumberRowLabels.MAX_CHARS）
+        if (labelDialogIndex >= 0) {
+            outState.putInt(STATE_LABEL_INDEX, labelDialogIndex)
+            outState.putString(
+                STATE_LABEL_TEXT,
+                (labelInput?.text?.toString() ?: "").take(NumberRowLabels.MAX_CHARS),
+            )
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +109,10 @@ class FavoriteSymbolsActivity : Activity() {
         renderPages()
         // 重建后把对话框连同已输入的内容一起恢复（BUG.md L-1136）
         savedInstanceState?.getString(STATE_ADD_TEXT)?.takeIf { it.isNotEmpty() }?.let { showAddDialog(it) }
+        val li = savedInstanceState?.getInt(STATE_LABEL_INDEX, -1) ?: -1
+        if (li >= 0) {
+            showLabelDialog(li, savedInstanceState?.getString(STATE_LABEL_TEXT) ?: "")
+        }
     }
 
     private companion object {
@@ -100,8 +125,36 @@ class FavoriteSymbolsActivity : Activity() {
         const val TEXT_DESC = "增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。"
         const val TEXT_ADD = "＋ 添加符号"
 
+        // ── 数字行按钮文本（2026-10-21 起并入本页）─────────────────────────
+        //
+        // ⚠ 这一组是**新增文案**，属作者域：值为建议稿，尚未经作者定稿。
+        // 定稿只改这几个常量，不涉及其它位置（没有测试钉死字面量）。
+        /** 分区标题 */
+        const val TEXT_NUMBER_ROW_SECTION = "数字行文本"
+
+        /** 分区说明 */
+        const val TEXT_NUMBER_ROW_HINT = "点格子改按钮文本，留空回默认数字"
+
+        /** 单槽编辑对话框标题 */
+        const val TEXT_LABEL_TITLE = "按钮文本"
+
+        /** 单槽编辑对话框输入框提示 */
+        const val TEXT_LABEL_HINT = "留空 = 默认数字"
+
+        /** 单槽编辑对话框中性键：把该槽恢复成默认数字 */
+        const val TEXT_LABEL_RESET = "恢复默认"
+
+        /** 超出 [NumberRowLabels.MAX_CHARS] 的提示 */
+        const val TEXT_LABEL_TOO_LONG = "最多 4 个字符"
+
         /** 跨重建保存的对话框输入（BUG.md L-1136） */
         private const val STATE_ADD_TEXT = "favorite_add_text"
+
+        /** 跨重建保存的数字行单槽编辑：槽位下标 */
+        private const val STATE_LABEL_INDEX = "number_row_label_index"
+
+        /** 跨重建保存的数字行单槽编辑：已输入文本 */
+        private const val STATE_LABEL_TEXT = "number_row_label_text"
 
         /** 日志标签：收藏落盘失败要留痕（BUG-34） */
         private const val TAG = "FavoriteSymbols"
@@ -119,6 +172,9 @@ class FavoriteSymbolsActivity : Activity() {
         // 写进已 detach 的旧列表，用户在当前页面上看不到任何变化
         addDialog?.dismiss()
         addDialog = null
+        // 数字行单槽编辑对话框同一理由
+        labelDialog?.dismiss()
+        labelDialog = null
         super.onDestroy()
     }
 
@@ -144,6 +200,9 @@ class FavoriteSymbolsActivity : Activity() {
     private fun renderPages() {
         val pages = currentPages()
         listContainer.removeAllViews()
+        // 数字行文本分区必须排在**空收藏早退之前**：收藏删光时这一页仍有内容，
+        // 排在空态分支后面就会出现「收藏空了 ⇒ 数字行分区也跟着消失」。
+        renderNumberRowSection()
         if (pages.isEmpty()) {
             listContainer.addView(TextView(this).apply {
                 text = getString(R.string.favorite_empty)
@@ -169,6 +228,127 @@ class FavoriteSymbolsActivity : Activity() {
             })
             PageStyle.addCard(listContainer, gridForPage(pi, page))
         }
+    }
+
+    /**
+     * 数字行按钮文本分区（2026-10-21 起并入本页）。
+     *
+     * 渲染判据**只有一条**：`Prefs.numberRowEnabled`。数字行开关关着时整段不 `addView`
+     * （不是 GONE）—— 关着的人在本页不该看到一个与自己无关的分区。
+     *
+     * 为什么 5 列两行而不是 10 列一行：键盘那排是 10 列（每键约 48dp），页面里
+     * 10×44dp 加默认外边距在窄屏会溢出；5 列是 `PageStyle` 卡片的既有口径，
+     * 读写顺序（1-5 / 6-0）与键盘一致。
+     *
+     * 为什么放在收藏分页**之前**：固定 10 个槽位与「收藏按页增长」是两套结构，
+     * 放在后面会让「收藏翻页」把数字行分区挤到看不见的地方。
+     */
+    private fun renderNumberRowSection() {
+        val prefs = Prefs(this)
+        if (!prefs.numberRowEnabled) return
+        val labels = NumberRowLabels.effective(prefs.numberRowLabels)
+
+        listContainer.addView(TextView(this).apply {
+            text = TEXT_NUMBER_ROW_SECTION
+            textSize = 12f
+            setTextColor(getColor(R.color.text_secondary))
+            setPadding(0, 0, 0, PageStyle.dp(context, 4))
+        })
+        listContainer.addView(TextView(this).apply {
+            text = TEXT_NUMBER_ROW_HINT
+            textSize = 12f
+            setTextColor(getColor(R.color.text_secondary))
+            setPadding(0, 0, 0, PageStyle.dp(context, 4))
+        })
+        val cell = PageStyle.dp(this, 44)
+        val grid = GridLayout(this).apply {
+            columnCount = 5
+            useDefaultMargins = true
+        }
+        labels.forEachIndexed { i, text ->
+            grid.addView(Button(this).apply {
+                this.text = text
+                textSize = 15f
+                isAllCaps = false
+                minWidth = 0
+                minimumWidth = 0
+                background = getDrawable(R.drawable.btn_aurora_secondary)
+                setTextColor(getColor(R.color.text_primary))
+                stateListAnimator = null
+                elevation = 0f
+                contentDescription = text
+                layoutParams = GridLayout.LayoutParams().apply { width = cell; height = cell }
+                setOnClickListener { showLabelDialog(i) }
+            })
+        }
+        PageStyle.addCard(listContainer, grid)
+    }
+
+    /**
+     * 单槽编辑对话框：预填该槽**当前生效值**（空槽显示的也是默认数字，用户才知道现在是什么）。
+     *
+     * 中性键 = 恢复默认：把该槽写成 `""`（= 回落默认数字）。这与「确定时输入为空」同一条路径，
+     * 给一个显式入口只是省得用户手动删干净再按确定。
+     *
+     * 本页无 `configChanges`，代码创造的对话框不会自动恢复（BUG.md L-1136）：
+     * 字段登记 + `onSaveInstanceState` 与既有的「添加符号」对话框同一套处理。
+     */
+    private fun showLabelDialog(index: Int, initial: String? = null) {
+        val prefs = Prefs(this)
+        val effective = NumberRowLabels.effective(prefs.numberRowLabels)
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            hint = TEXT_LABEL_HINT
+            setSingleLine(true)
+            setText(initial ?: effective.getOrElse(index) { "" })
+        }
+        val pad = PageStyle.dp(this, 16)
+        val box = FrameLayout(this).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_LABEL_TITLE)
+            .setView(box)
+            .setPositiveButton(android.R.string.ok) { _, _ -> saveLabel(index, input.text.toString()) }
+            .setNeutralButton(TEXT_LABEL_RESET) { _, _ -> saveLabel(index, "") }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        labelDialog = dialog
+        labelInput = input
+        labelDialogIndex = index
+        dialog.setOnDismissListener {
+            labelInput = null
+            labelDialogIndex = -1
+        }
+        dialog.show()
+    }
+
+    /**
+     * 写一个槽位并即时生效。
+     *
+     * 三件事的顺序不能换：
+     *  ① **清洗 + 校验在写盘之前**（与「添加符号」同口径：空 = 回落默认；超限 = 拒绝并提示，
+     *     不写脏值）。限长必须走码点口径（[FavoriteSymbols.withinLimit]），否则一串 emoji
+     *     会被 UTF-16 码元数误判超限。
+     *  ② `flush()` 同步落盘（BUG-34）：改完立刻切走、进程被系统回收时，最后一次改动会安静地丢。
+     *  ③ `JinnIme.onNumberRowLabelsChanged()` 轻量推送 —— 只改 10 个键的 label，
+     *     不重建视图，因此**不需要**「有未上屏输入就延后」那一层。
+     */
+    private fun saveLabel(index: Int, raw: String) {
+        val item = FavoriteSymbols.clean(raw)
+        if (item.isNotEmpty() && !FavoriteSymbols.withinLimit(item, NumberRowLabels.MAX_CHARS)) {
+            Toast.makeText(this, TEXT_LABEL_TOO_LONG, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val prefs = Prefs(this)
+        val labels = NumberRowLabels.parse(prefs.numberRowLabels).toMutableList()
+        labels[index] = item
+        prefs.numberRowLabels = NumberRowLabels.serialize(labels)
+        if (!prefs.flush()) Diagnostics.w(TAG, "数字行文本落盘失败（改动可能回退）")
+        JinnIme.onNumberRowLabelsChanged()
+        renderPages()
     }
 
     /** 一页的符号网格：每格 = 符号按钮 + 右上角 ✕ 移除角标 */

@@ -4161,10 +4161,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 候选栏内嵌数字行「字号 / 行框 / 栏高」互相牵连的成因）。
      *
      * 为什么在代码里建而不是写进 XML：十个键完全同构，写进 XML 就是十份重复；而标签与
-     * 无障碍名要跟着 [NUMBER_ROW_KEYS] 一处下发。开关关时它仍在视图树里、只是 GONE
+     * 无障碍名要跟着 [NumberRowLabels.effective] 一处下发（用户可在符号自定义页改文本，
+     * 空槽回落默认数字）。开关关时它仍在视图树里、只是 GONE
      * （不占高度、不参与绘制），见 [syncNumberRow] 与 [restoreLetterRows]。
      *
-     * 点击 = 上屏该数字（[TapSound.G_DIGIT]，同一个数字在数字层与这一行听感一致）：
+     * 点击 = 上屏该键的**当前文本**（[TapSound.G_DIGIT]，与数字层同组音效）：
      * 搜索态进搜索词、否则先落定拼音再上屏，与 26 键各条路径同口径（见 [buildNumberRow] 内注释）。
      * 本行不挂 `OnTouchListener`，按压视觉由 `PinyinKey.onTouchEvent` 自己驱动。
      *
@@ -4175,31 +4176,39 @@ class PinyinKeyboardView @JvmOverloads constructor(
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
         }
-        for (digit in NUMBER_ROW_KEYS) {
-            // 点击 = 即时上屏，与数字层（`onLetterPressed` 的 LAYER_DIGIT）和密码数字条
-            // （[commitPasswordDigit]）**同一条口径**，两件事都不能省：
-            //  - 搜索态：26 键此刻路由到搜索框，数字也必须进搜索词。不判就会把数字 `commit`
-            //    给宿主 —— 用户在翻剪贴板历史，正文却被插入数字。
-            //  - 有拼音串：`commitText` 会**替换**宿主的 composing 区。不先 [commitComposing]，
-            //    打「ni」再点 5，正文只剩「5」（2026-10-21 真机实测；守卫
-            //    `数字行点数字前必须先提交拼音` 按位置钉着）。
-            val commit = {
-                KeyFeedback.fire(TapSound.G_DIGIT)
-                if (isPanelSearch()) {
-                    searchPanel?.appendSearch(digit.toString())
-                } else {
-                    commitComposing()
-                    listener?.onCommitText(digit.toString())
-                }
-            }
+        // 键面文本 = [NumberRowLabels.effective]（空槽已在这里填回默认数字 ⇒ 无空槽键）。
+        // 默认顺序的真源在模型层（NumberRowLabels.DEFAULT_KEYS），不在这里留一份可变副本。
+        val labels = NumberRowLabels.effective(prefs.numberRowLabels)
+        for (i in 0 until NumberRowLabels.COUNT) {
+            // 先建键、后挂监听：commit 要读 key.label（上屏文本与键面同一来源），
+            // 在 apply 块里引用后声明的闭包编译不过。
             val key = PinyinKey(context).apply {
-                label = digit.toString()
+                label = labels[i]
                 // 数字 / 符号层的居中口径（A-175）：不套用字母层的小字顶置样式
                 centeredStyle = true
-                setOnClickListener { commit() }
-                // 读屏双击不经过 OnTouchListener，动作必须在这里补一遍（同字母键的做法）
-                onActivate = { commit() }
             }
+            // 点击 = 即时上屏，与数字层（`onLetterPressed` 的 LAYER_DIGIT）和密码数字条
+            // （[commitPasswordDigit]）**同一条口径**，三件事都不能省：
+            //  - 搜索态：26 键此刻路由到搜索框，文本也必须进搜索词。不判就会把它 `commit`
+            //    给宿主 —— 用户在翻剪贴板历史，正文却被插入字符。
+            //  - 有拼音串：`commitText` 会**替换**宿主的 composing 区。不先 [commitComposing]，
+            //    打「ni」再点一下，正文只剩刚上屏的那个字（2026-10-21 真机实测；守卫
+            //    `数字行点数字前必须先提交拼音` 按位置钉着）。
+            //  - 上屏文本读 **key.label**（而不是构造期的默认数字）：用户把按钮改成「甲」，
+            //    点它就得上屏「甲」。读构造期的值会让「改文本」只改外观、不改上屏。
+            val commit = {
+                KeyFeedback.fire(TapSound.G_DIGIT)
+                val text = key.label
+                if (isPanelSearch()) {
+                    searchPanel?.appendSearch(text)
+                } else {
+                    commitComposing()
+                    listener?.onCommitText(text)
+                }
+            }
+            key.setOnClickListener { commit() }
+            // 读屏双击不经过 OnTouchListener，动作必须在这里补一遍（同字母键的做法）
+            key.onActivate = { commit() }
             // 10 键等宽权重：与 qwertyuiop 那一行同为 10 列，列宽逐一对齐
             row.addView(key, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
             numberRowKeys += key
@@ -4212,6 +4221,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         numberRow = row
         syncNumberRow()
+    }
+
+    /**
+     * 就地刷新数字行 10 个键的文本（符号自定义页改完即调；配置备份导入后由
+     * [JinnIme.onStartInputView] 补调一次）。
+     *
+     * **不重建视图**：视图树不变，只改 label —— `PinyinKey.label` 的 setter 已自带
+     * `contentDescription` 与 `invalidate()`，读屏名与重绘都跟着走。
+     *
+     * 与 [applyKeyAppearance] 刻意**不同址**：那是外观参数（圆角 / 间隙 / 键高 / 皮肤 /
+     * 面透明度）的下发点，拖滑杆会走；文本与外观无关，塞进去只会多一条
+     * 「拖滑杆也重下标签」的假耦合，还把「谁负责标签」拆到四个方法里。
+     *
+     * 取值口恒为 [NumberRowLabels.effective]：空槽在那一层被填回默认数字，
+     * 所以这里落下去的值永不为空（不会出现「按了没反应」的空槽键）。
+     *
+     * 线程：主线程。
+     */
+    fun applyNumberRowLabels() {
+        if (numberRowKeys.isEmpty()) return
+        val labels = NumberRowLabels.effective(prefs.numberRowLabels)
+        for (i in numberRowKeys.indices) {
+            numberRowKeys[i].label = labels.getOrElse(i) { NumberRowLabels.DEFAULT_KEYS[i] }
+        }
     }
 
     /**
@@ -5225,17 +5258,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 密码模式数字条的字号（sp）：比候选正文大一档，密码框里点得更准 */
         const val PASSWORD_DIGIT_TEXT_SP = 18f
-
-        /**
-         * 固定数字行的排列：**电话键盘自然序** `1` 最左、`0` 最右。
-         *
-         * 与密码模式数字条 [PASSWORD_DIGIT_ORDER] **同序**，这不是巧合、也不是「合并了一套语义」：
-         * 两处各自成立（固定行在连续挑数字、不需要把两端键挪近拇指；密码条要让 1 与 0 靠近拇指），
-         * 而两处的最优解都是自然序 —— 同一个应用里出现两种数字排列才是问题。
-         * 顺序仍是契约：守卫 `数字行与密码数字条同为电话键盘自然序` 按字面对拍，
-         * 任何一侧要改都得同时改另一侧并显式改那条守卫。
-         */
-        const val NUMBER_ROW_KEYS = "1234567890"
 
         /**
          * 底部逗号 / 句号键的字号（sp）＝同排功能键基础字号 13sp（`SettingsButton` 样式）+ 3（用户指定）。
