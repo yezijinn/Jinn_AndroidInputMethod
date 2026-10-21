@@ -5802,7 +5802,10 @@ class RecentFixesRegressionTest {
         assertTrue(
             "候选集落定后必须重判三角",
             src.indexOf("lastCandidates = result.candidates") <
-                src.lastIndexOf("updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)"),
+                src.lastIndexOf(
+                    "updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx, " +
+                        "lastCandidates.size, lastCandidates.firstOrNull())",
+                ),
         )
         val relayoutCalls = Regex("collapseCandidatesAndRelayout\\(").findAll(src).count()
         assertTrue("收起后必须重落栏高（定义 + 空输入 + 候选集为空）", relayoutCalls >= 3)
@@ -5883,15 +5886,102 @@ class RecentFixesRegressionTest {
         assertFalse("三角判据不得自己读 Prefs", "prefs." in fn)
         assertFalse("三角判据不得读上一帧的落位值", "currentPinyinSp" in fn)
         assertEquals(
-            "两个调用点都要传本帧几何（另有一处透传见 collapseCandidatesAndRelayout）；" +
+            "收尾：任何调用点都不得再漏下发条目数（旧 5 参形态必须为 0 处）；" +
                 "字距是单条宽度的一部分，必须与候选字号同一个口径一起下发",
-            2,
+            0,
             Regex("""updateExpandButton\(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx\)""")
+                .findAll(src).count(),
+        )
+        assertEquals(
+            "三角判据必须有定义 + 三处调用（折叠重落 / 栏高落位前 / 候选集落定后）",
+            4,
+            Regex("""updateExpandButton\(""")
                 .findAll(src).count(),
         )
         // 展开排数缓存同理：候选条数取自上一帧列表，几何也必须取自上一帧的落位量
         val toggle = blockAfter(src, "private fun toggleCandidateExpanded()")
         assertFalse("展开排数不得重读 Prefs（否则与候选列表不同源）", "prefs." in toggle)
+    }
+
+    /**
+     * 预测态的三角不得按「上一次查询的候选条数」显示（2026-10-22 真机复现）。
+     *
+     * 选完候选进预测态时 `lastCandidates` 不清空（只有「无输入且无预测」那一支才清），而三角判据
+     * 原先直接读它 ⇒ 上一串 60 条候选、这帧只有 6 个预测词，一排放得下却照挂三角；
+     * 点开还按 60 条算成 4 排，把 6 个预测词铺成 4 行空网格、压掉一整行字母键。
+     *
+     * 钉法：判据函数里不得再出现 `lastCandidates`；条目数由调用方下发；预测态那一处必须按渲染源取。
+     */
+    @Test
+    fun `预测态三角不得按上一次候选数显示`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val fn = blockAfter(src, "private fun updateExpandButton(")
+        assertFalse("三角判据不得再读 lastCandidates（预测态那是上一次输入的残留）", "lastCandidates" in fn)
+        assertTrue("三角判据必须用调用方下发的条目数", "itemCount" in fn)
+        assertTrue(
+            "预测态那一处必须按本帧渲染源取条目数",
+            "val renderSource = renderedItems(inputNow.isEmpty())" in src,
+        )
+        // 单表达式判据就是渲染源本身：条数与取样字都从它派生（各取一次，不得各判一次）
+        assertTrue(
+            "渲染源按输入分支切换（无拼音串且预测非空 ⇒ 预测词）",
+            "if (inputEmpty && lastPredictions.isNotEmpty()) lastPredictions else lastCandidates" in src,
+        )
+        assertTrue("条数由渲染源派生", "val renderItemCount = renderSource.size" in src)
+        assertTrue("取样字由渲染源派生", "val renderSample = renderSource.firstOrNull()" in src)
+    }
+
+    /**
+     * 展开排数与预取量必须与三角同源取条数，取样字也必须同源（2026-10-22）。
+     *
+     * 预测态下 `lastCandidates` 不清空（上一次查询的残留，真机 40 条），本帧只渲染 6 个预测词。
+     * 只把三角判据收口到渲染源还不够 —— 收口前展开排数（`refreshCandidateBar` 缓存失效那一帧 /
+     * `toggleCandidateExpanded`）与预取量仍直接读 `lastCandidates.size`：点开按 40 条铺 4 排空网格；
+     * 取样字取自候选列表（两字词）又比预测词（多为单字）宽 ⇒ 6 个词一排放得下却挂 ▲（29sp 复现）。
+     * 三处条数与取样字必须消费同一个本帧值。
+     */
+    @Test
+    fun `展开排数与预取量必须与三角同源取条数`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val bar = blockAfter(src, "private fun refreshCandidateBar()")
+        val def = "val renderSource = renderedItems(inputNow.isEmpty())"
+        assertTrue("本帧渲染源必须在刷新入口只取一次", def in bar)
+        assertEquals(
+            "条数只该有「一个定义 + 三个消费点」（三角 / 展开排数 / 预取量）",
+            4,
+            Regex("""\brenderItemCount\b""").findAll(bar).count(),
+        )
+        assertEquals(
+            "取样字只该有「一个定义 + 两个消费点」（三角 / 展开排数）",
+            3,
+            Regex("""\brenderSample\b""").findAll(bar).count(),
+        )
+        assertTrue(
+            "定义必须早于三处消费",
+            bar.indexOf(def) < bar.indexOf("expandedRowsFor(renderItemCount") &&
+                bar.indexOf(def) < bar.indexOf("minOf(renderItemCount") &&
+                bar.indexOf(def) < bar.indexOf("renderSample,"),
+        )
+        assertTrue("展开排数按渲染源取条数", "expandedRowsFor(renderItemCount" in bar)
+        assertTrue("预取量按渲染源取条数", "minOf(renderItemCount" in bar)
+        assertTrue(
+            "三角判据与展开排数消费同一对值（条数 + 取样字）",
+            Regex("""renderItemCount,\s*renderSample,""").containsMatchIn(bar),
+        )
+        assertTrue(
+            "展开排数也必须把同一个取样字量到底",
+            "expandedRowsFor(renderItemCount, candidateSp, spacingHalfPx, renderSample)" in bar,
+        )
+        // 反向：残留口径不得在半修状态里留成第二份真相
+        assertFalse("展开排数不得再读残留候选数", "expandedRowsFor(lastCandidates.size" in src)
+        assertFalse("预取量不得再读残留候选数", "minOf(lastCandidates.size" in src)
+        assertFalse("取样字不得再恒取候选列表", "lastCandidates.firstOrNull()?.takeIf" in src)
+        val toggle = blockAfter(src, "private fun toggleCandidateExpanded()")
+        assertFalse("预测态下 lastCandidates 是残留：展开排数不得直接读它", "lastCandidates" in toggle)
+        assertTrue(
+            "点 ▲ 那一刻的排数也必须按渲染源取条数与取样字",
+            "renderedItems(" in toggle && "renderItems.firstOrNull()" in toggle,
+        )
     }
 
     @Test
@@ -6084,7 +6174,7 @@ class RecentFixesRegressionTest {
         assertTrue("判据必须接进显隐", "&& wouldGrow &&" in src)
         assertTrue(
             "已展开时不得再受候选数判据约束（否则候选掉到 ≤1 时按钮当场消失、高栏收不回去）",
-            "(candidatesExpanded || lastCandidates.size > 1)" in src,
+            "(candidatesExpanded || itemCount > 1)" in src,
         )
     }
 

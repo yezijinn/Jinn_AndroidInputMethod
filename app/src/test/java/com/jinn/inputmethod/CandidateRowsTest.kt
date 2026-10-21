@@ -504,8 +504,8 @@ class CandidateRowsTest {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
         // 排数换算只能走「本帧字号量字宽」的估计（L-1397）
         assertTrue(
-            "expandedRowsFor 必须调 columnsPerRowForFrame(candidateSp, spacingHalfPx)",
-            "columnsPerRowForFrame(candidateSp, spacingHalfPx)" in src,
+            "expandedRowsFor 必须调 columnsPerRowForFrame(candidateSp, spacingHalfPx, sample)",
+            "columnsPerRowForFrame(candidateSp, spacingHalfPx, sample)" in src,
         )
         assertFalse(
             "expandedRowsFor 不得再调 estimateColumnsPerRow（那读的是上一帧子视图宽度）",
@@ -513,7 +513,7 @@ class CandidateRowsTest {
         )
         assertTrue(
             "本帧估计必须按字号量字宽（measureText + scaledDensity 与 setTextSize(SP) 同换算）",
-            "candidateMeasurePaint.measureText(sample)" in src &&
+            "candidateMeasurePaint.measureText(text)" in src &&
                 "sizeSp * resources.displayMetrics.scaledDensity" in src,
         )
         // 分页预取仍走旧口径（单位是已布局的列宽，展开态是列容器）：调用点只留一个

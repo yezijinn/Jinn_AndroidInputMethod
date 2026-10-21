@@ -293,8 +293,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         Diagnostics.i(TAG, "候选栏展开态：$expand")
         candidatesExpanded = expand
         if (expand) {
+            // 渲染源只取一次：条数与取样字必须同源（预测态下取样候选列表会把列数算少）
+            val renderItems = renderedItems(composingSnapshot.isNullOrEmpty())
             expandedRowsCached = expandedRowsFor(
-                lastCandidates.size,
+                // 预测态下 `lastCandidates` 是上一次查询的残留（与三角判据同源收口，见 [renderedItems]）
+                renderItems.size,
                 // 用**上一帧落位**的候选字号（currentCandidateSp），不再重读 Prefs：展开排数是拿
                 // 上一帧的候选列表算的，几何也必须来自同一帧，否则后台导入恰好落在两者之间就得到
                 // 混合几何的排数，整场展开会话都按它裁字（失效点只有 refreshAppearance）。
@@ -303,6 +306,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 字距取**上一帧落位**的值（同 currentCandidateSp 的口径）：条目左右各内缩一半，
                 // 是单条宽度的一部分；本函数不重读 Prefs（见 RecentFixesRegressionTest 的同源钉）。
                 currentSpacingHalfPx,
+                renderItems.firstOrNull(),
             )
         }
         refreshCandidateBar()
@@ -322,8 +326,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 再塞回来，那会让「拼音字号变了排数跟着变」的假依赖重启。
      *
      * @param spacingHalfPx 本帧候选字距的一半（px）：条目的左右内缩，计入单条宽度
+     * @param sample 本帧渲染源的取样条目（[renderedItems] 的首条）：条数与宽度必须同源，
+     *   预测态下取样候选列表会拿到另一批几何（见 [renderedItems]）
      */
-    private fun expandedRowsFor(count: Int, candidateSp: Float, spacingHalfPx: Int): Int {
+    private fun expandedRowsFor(count: Int, candidateSp: Float, spacingHalfPx: Int, sample: String?): Int {
         val dm = resources.displayMetrics
         val rowPx = CandidateRows.rowHeightPx(dm.density, resources.configuration.fontScale, candidateSp)
         // 可用高度允许的排数（代数化简见 [CandidateRows.maxRowsByCoveredKeys]）。不读 `height`：
@@ -332,7 +338,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 每列能放几条：展开态一屏显示的就是「排数 × 列数」个候选，按栏宽 ÷ 单条宽估算；
         // 取不到宽度时退化为 1（⇒ 排数 = 候选数，仍被上限夹住）。
         // 单位**必须**取本帧几何（见 [columnsPerRowForFrame]），不能读已布局的子视图宽度。
-        val perColumn = columnsPerRowForFrame(candidateSp, spacingHalfPx)
+        val perColumn = columnsPerRowForFrame(candidateSp, spacingHalfPx, sample)
         return CandidateRows.visibleRows(count, perColumn, maxRowsByHeight = byHeight)
     }
 
@@ -345,7 +351,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 本帧「一屏横向能并排几条候选」：按**本帧字号**量首条候选的字宽，不读已布局的子视图。
+     * 本帧「一屏横向能并排几条候选」：按**本帧字号**量取样条目的字宽，不读已布局的子视图。
      *
      * 为什么不读 `viewCandidateList.getChildAt(0).width`（`BUG.md` L-1397）：`setTextSize` /
      * `setPadding` 要等下一次布局才改 `width`，而本函数与那次 `setTextSize` 同在一次刷新里
@@ -358,12 +364,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * ⚠ **只供排数与三角显隐**。分页预取仍走 [estimateColumnsPerRow]：那里的单位是「已布局的
      * 子项宽」，展开态是列容器（一排候选的最大宽）而不是单条候选，两个口径不能合并。
+     *
+     * @param sample 取样条目，必须来自**本帧渲染源**（[renderedItems] 的首条）：取候选列表量预测词
+     *   会把列数算少（预测词多为单字、候选首条多是两字词）⇒ 6 个词一排放得下却挂 ▲。
      */
-    private fun columnsPerRowForFrame(sizeSp: Float, spacingHalfPx: Int): Int {
+    private fun columnsPerRowForFrame(sizeSp: Float, spacingHalfPx: Int, sample: String?): Int {
         val barWidth = candidateBar.width.takeIf { it > 0 } ?: return 1
-        val sample = lastCandidates.firstOrNull()?.takeIf { it.isNotEmpty() } ?: return 1
+        val text = sample?.takeIf { it.isNotEmpty() } ?: return 1
         candidateMeasurePaint.textSize = sizeSp * resources.displayMetrics.scaledDensity
-        val itemPx = ceil(candidateMeasurePaint.measureText(sample)).toInt() + spacingHalfPx * 2
+        val itemPx = ceil(candidateMeasurePaint.measureText(text)).toInt() + spacingHalfPx * 2
         return CandidateRows.columnsPerRow(barWidth, itemPx)
     }
 
@@ -373,6 +382,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val child = viewCandidateList.getChildAt(0)?.width?.takeIf { it > 0 } ?: return 1
         return (width / child).coerceAtLeast(1)
     }
+
+    /**
+     * 本帧候选栏**渲染源**（条数与取样字的唯一来源）：无拼音串且预测非空 ⇒ 预测词（[lastPredictions]），
+     * 否则 [lastCandidates]。
+     *
+     * 三条判据（三角 / 展开排数 / 预取量）都必须用它，不能直接读 `lastCandidates`：进预测态时它
+     * **不清空**（只有「无输入且无预测」那一支才清）⇒ 读到的是**上一次查询**的条数与字宽。
+     * 条数要的是全量（渲染侧另有首屏 [INITIAL_RENDERED_CANDIDATES] 条截断；预测词 ≤ `MAX_PREDICTIONS`(6)
+     * 条不受影响）。
+     */
+    private fun renderedItems(inputEmpty: Boolean): List<String> =
+        if (inputEmpty && lastPredictions.isNotEmpty()) lastPredictions else lastCandidates
 
     /**
      * 展开三角的显隐与朝向：仅单行档 + 有候选时可见。
@@ -386,6 +407,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * @param gapDp 同上（拼音行间隔，同样抵消）。
      * @param spacingHalfPx 本帧候选字距的一半（px）：**参与**单条宽度（与渲染同源，见
      *   [columnsPerRowForFrame]），漏传就会拿旧字距判三角。
+     * @param itemCount 本帧候选栏**渲染源**的完整条数（[renderedItems] 的 size）：预测态是预测词条数，
+     *   不是 `lastCandidates` 的残留条数。
+     * @param sample 本帧渲染源的取样条目（[renderedItems] 的首条），与 [itemCount] 必须同源。
      */
     private fun updateExpandButton(
         rowsSetting: Int,
@@ -393,20 +417,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         pinyinSp: Float,
         gapDp: Float,
         spacingHalfPx: Int,
+        itemCount: Int,
+        sample: String?,
     ) {
         // 与「展开态在这些形态下会被强制收起」同一判据：否则数字层会挂一个点了没反应的 ▲。
         // 注意：还必须「展开后排布真的会变」：候选数不超过一屏列数（通常 2~6 条）时 visibleRows 仍只
         // 算 1 排 ⇒ 栏高与排布分毫不动，只剩三角翻个身，用户会判定「展开功能坏了」。
         val wouldGrow = candidatesExpanded || expandedRowsFor(
-            lastCandidates.size,
+            itemCount,
             candidateSp,
             spacingHalfPx,
+            sample,
         ) > 1
         // 已展开时无条件显示 —— 否则这一刻按钮消失，用户反而收不回去。`candidatesExpanded` 这一半
         // 写在候选数判据**之前**（与 wouldGrow 同侧）：展开态下候选数若掉到 ≤1，只按候选数判会把
         // 唯一出口摘掉，留下一块收不回去的高栏（现不可达，但那是词库侧一次改动就能变成可达的缺口）。
         val show = rowsSetting == CandidateRows.SINGLE && wouldGrow &&
-            (candidatesExpanded || lastCandidates.size > 1) &&
+            (candidatesExpanded || itemCount > 1) &&
             layer == LAYER_LETTER && !hasActiveOverlay
         btnExpandCandidates.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         // 拼音文字为可见按钮让位：✕ 恒占右端一格，▲ 出现时再退一格 —— 否则长拼音串的尾部与省略号
@@ -481,7 +508,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (!candidatesExpanded) return
         collapseCandidates()
         applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)
-        updateExpandButton(rowsSetting, candidateSp, pinyinSp, gapDp, spacingHalfPx)
+        // 两个调用点都排在「候选已落定」之后（空输入清表 / 候选集刚赋值）⇒ [lastCandidates]
+        // 就是本帧渲染源，不需要再走 [renderedItems]。
+        updateExpandButton(
+            rowsSetting, candidateSp, pinyinSp, gapDp, spacingHalfPx,
+            lastCandidates.size, lastCandidates.firstOrNull(),
+        )
     }
 
     /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
@@ -3180,6 +3212,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 只有 Prefs 读与可选的 collapseCandidates，不写 composing），早先每键拷两次。
         val inputNow = composing.toString()
         composingSnapshot = inputNow
+        // 本帧渲染源（候选 / 预测词）的条数与取样字：三角、展开排数、预取量三条路径必须同源。
+        // 预测态下 `lastCandidates` 是上一次查询的残留（真机实测 40 条，本帧只渲染 6 个预测词），
+        // 读它会把 2 排算成 4 排；拿它量字宽又会把 6 个单词的列数算少（挂出本该没有的 ▲）。
+        // ▲ 在预测态出场需 `6 > perCol` ⇒ 取样字宽 ≥199px：28sp 的两字词是 196px，差 3px 擦过；
+        // 29sp 起即落进本缺口（真机复现：挂 ▲、点开 2 排，修前按 40 条算 4 排）。
+        val renderSource = renderedItems(inputNow.isEmpty())
+        val renderItemCount = renderSource.size
+        val renderSample = renderSource.firstOrNull()
         if (CandidateRows.shouldCollapseExpanded(lastCandidatesInput, inputNow)) {
             // 注意：这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
             // 等于把用户敲的拼音（含密码框内）长期留在可分享的诊断包里；且每键一次主线程写盘
@@ -3205,7 +3245,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (expandedRowsCached > 0) {
                 expandedRowsCached
             } else {
-                expandedRowsFor(lastCandidates.size, candidateSp, spacingHalfPx)
+                expandedRowsFor(renderItemCount, candidateSp, spacingHalfPx, renderSample)
             }
         } else {
             rowsSetting
@@ -3215,10 +3255,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (candidatesExpanded) {
             val perCol = estimateColumnsPerRow().coerceAtLeast(1)
             val need = rows * perCol * 2 // 两屏的量：一次滚动/一次上滑都够用
-            val target = minOf(lastCandidates.size, maxOf(CandidateRows.MAX_EXPANDED_ROWS * perCol, need))
+            val target = minOf(renderItemCount, maxOf(CandidateRows.MAX_EXPANDED_ROWS * perCol, need))
             if (candidateRenderLimit < target) candidateRenderLimit = target
         }
-        updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
+        updateExpandButton(
+            rowsSetting,
+            candidateSp,
+            pinyinSp,
+            pinyinGap,
+            spacingHalfPx,
+            // 唯一可能在**预测态**执行的判据（无拼音串、只有预测词）⇒ 与展开排数、预取量同一个值
+            renderItemCount,
+            renderSample,
+        )
         val perRow = applyCandidateRows(rows, candidateSp, pinyinSp, pinyinGap)
         // 候选栏底色按「当前是否有内容」选档（有候选/预测/拼音串 → surface，空白 → plate）
         updateCandidateBarBackground()
@@ -3334,7 +3383,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 候选集落定后要重判一次三角：本函数开头那次用的是**上一帧**的候选列表，
         // 新的一次输入首帧会读到空表 ⇒ 三角要等第二次按键才出现（实测）。
-        updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
+        // 本条路径一定在「有拼音串」分支内 ⇒ 渲染源就是刚赋值的 [lastCandidates]。
+        updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx, lastCandidates.size, lastCandidates.firstOrNull())
         // 拼音行默认显示用户按下的键（input），不是查询串（queryInput）。
         // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
         // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
