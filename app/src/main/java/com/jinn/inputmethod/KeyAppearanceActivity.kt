@@ -39,6 +39,9 @@ class KeyAppearanceActivity : Activity() {
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
     private lateinit var switchCandidatePaging: Switch
+
+    /** 数字行开关（26 键区第一行字母之上那排 `1234567890`） */
+    private lateinit var switchNumberRow: Switch
     private lateinit var spinnerTheme: UserAwareSpinner
     private lateinit var btnThemeLightAt: Button
     private lateinit var btnThemeDarkAt: Button
@@ -256,32 +259,6 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
-        // 数字字号：功能面板下方固定数字行（1~0）的字号。只动那一行，栏高与按钮行不跟随；
-        // 字号大到栏高放不下时数字行整行不显示（判据在 PinyinKeyboardView，属用户自选极端档）。
-        val labelFunctionDigit = findViewById<TextView>(R.id.label_function_digit_size)
-        val seekFunctionDigit = findViewById<SeekBar>(R.id.seek_function_digit_size)
-        val textFunctionDigit = findViewById<TextView>(R.id.text_function_digit_size)
-        labelFunctionDigit.text = TEXT_FUNCTION_DIGIT_TITLE
-        seekFunctionDigit.max = KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX
-        seekFunctionDigit.progress = KeyAppearance.functionDigitSpToProgress(prefs.functionDigitSp)
-        textFunctionDigit.text = KeyAppearance.formatSp(prefs.functionDigitSp)
-
-        seekFunctionDigit.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val sp = KeyAppearance.functionDigitProgressToSp(progress)
-                prefs.functionDigitSp = sp
-                textFunctionDigit.text = KeyAppearance.formatSp(sp)
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                Diagnostics.i(TAG, "数字字号: ${KeyAppearance.formatSp(prefs.functionDigitSp)}")
-                // 与其余滑杆同一条即时生效路径：refreshAppearance 里重下数字行字号并重判显隐
-                JinnIme.onKeyAppearanceChanged()
-            }
-        })
-
         findViewById<TextView>(R.id.label_key_corner).text = TEXT_CORNER_TITLE
         findViewById<TextView>(R.id.label_key_gap).text = TEXT_GAP_TITLE
         findViewById<TextView>(R.id.label_key_transparency).text = TEXT_TRANSPARENCY_TITLE
@@ -404,6 +381,17 @@ class KeyAppearanceActivity : Activity() {
         switchCandidatePaging.setOnCheckedChangeListener { _, checked ->
             prefs.candidatePaging = !checked
             Diagnostics.i(TAG, "候选浏览方式: ${if (checked) "滑动" else "翻页"}")
+            JinnIme.onKeyAppearanceChanged()
+        }
+
+        // 数字行（26 键区第一行字母之上那排 1234567890）：默认关 = 与重构前一致。
+        // 开 / 关都走同一条即时生效路径：refreshAppearance → applyKeyAppearance → syncNumberRow
+        switchNumberRow = findViewById(R.id.switch_number_row)
+        switchNumberRow.text = TEXT_NUMBER_ROW_TITLE
+        switchNumberRow.isChecked = prefs.numberRowEnabled
+        switchNumberRow.setOnCheckedChangeListener { _, checked ->
+            prefs.numberRowEnabled = checked
+            Diagnostics.i(TAG, "数字行: ${if (checked) "开启" else "关闭"}")
             JinnIme.onKeyAppearanceChanged()
         }
     }
@@ -695,8 +683,15 @@ class KeyAppearanceActivity : Activity() {
         /** 「拼音占高」项的标题文案（拼音行底部到候选行之间的空隙，计入候选栏总高） */
         const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音占高"
 
-        /** 「数字字号」项的标题文案（功能面板下方固定数字行 1~0 的字号） */
-        const val TEXT_FUNCTION_DIGIT_TITLE = "数字字号"
+        /**
+         * 「数字行」开关的标题文案（26 键区第一行字母之上那排 `1234567890`）。
+         *
+         * ⚠ **待作者定稿**：可见中文文案属作者域，本项是本轮新增、作者尚未拍板，这里的
+         * 「数字行」是**按项目既有命名习惯给的候选值**（组内其它项都是 4~6 字的短语标题），
+         * 不是定稿。定稿后只改这一处常量即可，没有其它地方引用这个字面量；
+         * 也不用设置键名（`number_row_enabled`）之类冒充文案 —— 用户会在设置页直接看到它。
+         */
+        const val TEXT_NUMBER_ROW_TITLE = "数字行"
 
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"

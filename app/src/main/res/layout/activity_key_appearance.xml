@@ -332,43 +332,6 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- 功能面板数字行字号（1~0 那排）：只影响数字行，栏高与按钮行不动。
-                 标题与数值同样代码下发，XML 只放占位。 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/label_function_digit_size"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:minWidth="32dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
-
-                <SeekBar
-                    android:id="@+id/seek_function_digit_size"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="0dp"
-                    android:layout_weight="1"
-                    android:progressBackgroundTint="@color/card_stroke"
-                    android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
-
-                <TextView
-                    android:id="@+id/text_function_digit_size"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:minWidth="52dp"
-                    android:textColor="@color/accent"
-                    android:textSize="13sp" />
-            </LinearLayout>
-
             <!-- 透明：只淡「面」不淡文字；双拼提示等文字保持原色，版式同「圆角」行 -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -409,7 +372,8 @@
             <!-- 输入与显示（2026-10-09 由设置页迁来；2026-10-16 起改为两列网格，每行两个各占一半）：
                  第 1 行 拼音键盘大写 / 键盘内显韵母；第 2 行 双拼候选全音 / 候选滑动；
                  第 3 行 大写键不锁定 / 小写长按变大（2026-10-17，两个默认关闭的输入行为开关）；
-                 第 4 行 候选词的行数 / 界面明暗切换（2026-10-18 两个下拉随之下移一行）。
+                 第 4 行 候选词的行数 / 界面明暗切换（2026-10-18 两个下拉随之下移一行）；
+                 第 5 行 数字行（2026-10-21 新增，紧跟在定时换色的两个时刻之后）。
                  文案全部由代码下发（strings.xml 默认禁改）。 -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -569,6 +533,28 @@
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:minWidth="0dp" />
+            </LinearLayout>
+
+            <!-- 输入与显示最后一项：数字行（26 键区第一行字母之上的 1234567890，默认关）。
+                 单独一行、占满整行（单个 Switch + weight=1，没有并列的第二列）：
+                 这项文字比同组其它项长，挤进半列会被压窄；thumb 因此贴在屏右，
+                 与上面两列网格里「右列」开关的 thumb 对齐。
+                 标题同样由代码下发（strings.xml 默认禁改，见 KeyAppearanceActivity.TEXT_NUMBER_ROW_TITLE）。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Switch
+                    android:id="@+id/switch_number_row"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="40dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
             </LinearLayout>
             <!-- 皮肤：两段（亮色 / 暗色）各一个标题 + 一个竖向容器。
                  标题（带当前档位状态）与选项文案都在代码里给（选项名取自 KeyboardSkin.label），

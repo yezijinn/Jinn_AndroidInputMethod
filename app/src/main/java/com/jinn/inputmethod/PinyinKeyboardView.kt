@@ -209,27 +209,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val viewCandidateList: LinearLayout
 
     /**
-     * 功能按钮行下方的固定数字行（`@id/function_digit_row`）。
+     * `keyboard_letters` 第 0 位的固定数字行（`1`~`0` 十个键），见 [buildNumberRow]。
      *
-     * ⚠ **不是**与按钮行各占一半：两行同处横向滚动容器的内容里，它给子项的高度是
-     * UNSPECIFIED，`layout_weight` 分到的是「两行内容高之和」而非栏高 ⇒ 单行档（默认 46dp）
-     * 下双双溢出、数字行被栏底裁成半截（2026-10-19 真机实测）。现在按钮行 match_parent
-     * 吃掉剩余高度、数字行按自身行框高，并由 [canFitFunctionDigitRow] 决定显隐。
+     * 位置 = 第一行字母 `qwertyuiop` **之上**（2026-10-21 由「候选栏内嵌」重构过来）：
+     * 之所以放在字母区里而不是 `keyboard_body` 里，是为了让圆角 / 间隙 / 键高 / 皮肤 /
+     * 透明度 / 按压这一整条参数链**零成本继承**字母行 —— 它就是一个普通的行容器，
+     * 与三行字母在同一个 LinearLayout 里由同一段代码落高度（[applyLetterRowHeight]）。
      *
-     * 只在功能面板形态显示（见 [setFunctionDigitRowVisible]）：候选 / 预测 / 动作排 / 符号 /
-     * 密码条 / 提示 / 空态都不要它。键面在 init 里建一次，与 [viewCandidateList] 是兄弟节点
-     * （滚动容器只能有一个子 View，故两者共用 `@id/candidate_panel_stack` 这一层）。
+     * 显隐由 [syncNumberRow] 统一裁决（开关关 = 与重构前逐像素一致；数字层 / 密码模式下也让位）：
+     * ⚠ 关的时候它**仍在视图树里**（GONE），所以 [restoreLetterRows] 必须按开关恢复，
+     * 不能无脑 VISIBLE —— 否则方向面板收起后这一行会凭空出现。
      */
-    private val functionDigitRow: LinearLayout
+    private var numberRow: LinearLayout? = null
 
     /**
-     * 数字行字号（sp）：**唯一读数点**。
+     * 数字行的 10 个键（`1`~`0`）。
      *
-     * 建键、字号下发与行框高/显隐判据（[functionDigitRowPx] / [canFitFunctionDigitRow]）全走这里 ——
-     * 两处各读一份会在「拖动滑杆后判据仍按旧字号」时让数字行显示成半截或被误判不显示。
-     * 钳位在 [Prefs.functionDigitSp] 里完成（定义域只在 [KeyAppearance]）。
+     * ⚠ **刻意不进 [keyViews]**：那是字母层 / 数字层 / 符号层的 26 键映射，会被 [refreshKeyLabels]
+     * 按 `layer` 改标签、改字色、改 `centeredStyle`；数字行是固定内容，只吃外观类下发
+     * （[applyKeyAppearance] / [applySkinToKeys] / [applyKeyTransparency]）。
      */
-    private val functionDigitTextSp: Float get() = prefs.functionDigitSp
+    private val numberRowKeys = ArrayList<PinyinKey>(10)
 
     /** 候选条目视图复用池：整棵重建前回收、重建时取用，省掉每次按键几十个 TextView 与闭包 */
     private val candidateViewPool = ArrayList<TextView>(64)
@@ -448,9 +448,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 已下发到拼音条与 ✕ 的字号（sp）：避免每次刷新重复 setTextSize（会多触发一次 requestLayout） */
     private var appliedPinyinTextSp = -1f
 
-    /** 已下发到功能面板数字行的字号（sp）：同上，避免每次刷新重复 setTextSize */
-    private var appliedFunctionDigitTextSp = -1f
-
     private val viewLetters: LinearLayout
     private val contentArea: FrameLayout
 
@@ -631,8 +628,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 跨形态复用是安全的（功能面板的粗体标签、列容器的布局参数都会在取用时被重设，见 [buildCandidateView]），
         // 池也有 [CANDIDATE_VIEW_POOL_MAX] 封顶，不会无限增长。
         recycleCandidateViews()
-        // 数字行只属于功能面板：其余形态（符号 / 密码 / 提示 / 空态）一律收起，面板自己随后再打开它
-        setFunctionDigitRowVisible(false)
     }
 
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
@@ -709,7 +704,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 方向面板的识别标记：恢复字母区时按它清理残留面板（不依赖子视图下标） */
     private val DIRECTION_PANEL_TAG = "jinn_direction_panel"
 
-    /** 字母区行数（「键高」只作用于这三行：10 + 9 + 9 = 28 键） */
+    /**
+     * 字母区固定的三行字母（10 + 9 + 9 = 28 键）。
+     *
+     * 只用来做「行数够不够」的诊断下限：`applyLetterRowHeight` 对**所有**非面板行落同一高度，
+     * 数字行（开着时是第 0 行）与三行字母因此天然同高。
+     */
     private val LETTER_ROW_COUNT = 3
 
     private val backspaceRepeatRunnable = object : Runnable {
@@ -795,8 +795,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         viewCandidatePinyin = root.findViewById(R.id.candidate_pinyin)
         viewCandidateList = root.findViewById(R.id.candidate_list)
-        functionDigitRow = root.findViewById(R.id.function_digit_row)
-        buildFunctionDigitRow()
         candidateScroll = root.findViewById(R.id.candidate_scroll)
         candidateRowsScroll = root.findViewById(R.id.candidate_rows_scroll)
         // 纵向层同样禁掉边缘拉伸回弹（与横向同款理由：滑到末尾那一刻正好触发追加渲染）
@@ -842,6 +840,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         viewLetters = root.findViewById(R.id.keyboard_letters)
         contentArea = root.findViewById(R.id.keyboard_content_area)
+        // 固定数字行：字母区第 0 位（qwertyuiop 之上）。建一次，之后只切显隐 / 落高度。
+        buildNumberRow()
 
         btnSymbol = root.findViewById(R.id.key_symbol)
         btnDigit = root.findViewById(R.id.key_digit)
@@ -1430,8 +1430,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applySkinToKeys()
         // 必须先于 refreshKeyLabels，后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
-        // 数字行字号随配置重下发（视图实例跨输入框复用，换肤 / 改字号后不会自己读新值）
-        applyFunctionDigitTextSize()
         refreshKeyLabels()
         refreshCandidateBar()
     }
@@ -1449,8 +1447,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         applyKeyTransparency()
         applySkinToKeys()
         applyKeyAppearance()
-        // 数字行字号：外观页松手即时生效；数字行显隐由 refreshCandidateBar → canFitFunctionDigitRow 重判
-        applyFunctionDigitTextSize()
         // 键面字形也要跟（「26 键常显大写」开关在现场切换；圆角 / 间隙刷新后 shift 键背景也走这里重建）
         refreshKeyLabels()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
@@ -1518,11 +1514,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun applyKeyAppearance() {
         val p = prefs
         val density = resources.displayMetrics.density
+        // 数字行显隐按最新开关 / 层 / 密码态落位（设置页刚改过就要跟着变）：它与三行字母同在
+        // 字母区里，从「套外观」这条唯一漏斗下发，避免另开一条只被部分路径调用的口子。
+        syncNumberRow()
         keyCornerPx = p.keyCornerDp * density
         // 内缩 = 间隙的一半：相邻两键各缩一半，合起来正好是用户设置的间隙
         keyInsetPx = p.keyGapDp * density / 2f
         for (key in keyViews.values) key.setKeyAppearance(keyCornerPx, keyInsetPx)
         keySemicolon.setKeyAppearance(keyCornerPx, keyInsetPx)
+        // 数字行与字母键同一组圆角 / 内缩（同一行宽、同一列数，任何一处取值不同都会让整行错位）
+        for (key in numberRowKeys) key.setKeyAppearance(keyCornerPx, keyInsetPx)
         refreshShiftBackground()
         refreshBackspaceBackground()
         applyKeyInsets(btnShift)
@@ -1537,13 +1538,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 三行字母键的高度（键盘外观页的「键高」拖动条，定义域见 [KeyAppearance]）。
+     * 字母区的行高（键盘外观页的「键高」拖动条，定义域见 [KeyAppearance]）。
      *
-     * 改的是三个**行容器**的 LayoutParams，而不是逐个键：键自己都是 `match_parent`，行高定全行，
-     * 26 键区（10 + 9 + 9 = 28 键）自然同高。
+     * 改的是**行容器**的 LayoutParams，而不是逐个键：键自己都是 `match_parent`，行高定全行，
+     * 26 键区（10 + 9 + 9 = 28 键）自然同高。数字行（`1`~`0`）是同一个容器里的第 0 行，
+     * 一并按同一值落高 —— 用户要的就是「三行字母向上长成四行」的效果，键高必须同源。
      *
      * 两个必须守住的点：
-     *  - **跳过方向面板**：它是运行时 `addView` 进字母区的（带 [DIRECTION_PANEL_TAG]），出现时三行已经 GONE；
+     *  - **跳过方向面板**：它是运行时 `addView` 进字母区的（带 [DIRECTION_PANEL_TAG]），出现时各字母行已经 GONE；
      *    把它当字母行改高度，九宫格与字母区就会各占一个高度。
      *  - **面板高度不跟着变**：剪贴板 / 图库面板固定 162dp×2（列表内容 + 用户验证过的方案）；
      *    若跟随键高，最大档（[KeyAppearance.MAX_KEY_HEIGHT_DP]，数字从常量读、不写死 ——
@@ -1560,10 +1562,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 px,
             )).apply { height = px }
             rows++
-            if (rows >= LETTER_ROW_COUNT) return
         }
-        // 不足三行说明布局被改坏了：记一条 W，别静默（否则用户拖动滑杆「没反应」时无从查起）
-        Diagnostics.w(TAG, "键高: 只找到 $rows 行字母键（预期 $LETTER_ROW_COUNT）")
+        // 不足预期行数说明布局被改坏了：记一条 W，别静默（否则用户拖动滑杆「没反应」时无从查起）。
+        // 预期值随开关走：开着数字行就该是 4 行（字母三行 + 数字行），关着是 3 行。
+        val expected = LETTER_ROW_COUNT + if (prefs.numberRowEnabled) 1 else 0
+        if (rows < expected) {
+            Diagnostics.w(TAG, "键高: 只找到 $rows 行键区（预期 $expected）")
+        }
     }
 
     /**
@@ -1623,6 +1628,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         for (key in keyViews.values) key.setFaceAlpha(keyFaceAlpha)
         keySemicolon.setFaceAlpha(keyFaceAlpha)
+        // 数字行：与字母键同一档面透明度（文字不淡，只淡面）
+        for (key in numberRowKeys) key.setFaceAlpha(keyFaceAlpha)
         // 功能键面：shift/删除键走既有动态背景（alpha 已并进其构建缓存），其余六个重建一次
         refreshShiftBackground()
         refreshBackspaceBackground()
@@ -1698,6 +1705,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 因此这里读本视图的 context 取到的令牌必定与皮肤同档。
             for (k in ordered) k.applySkin(null)
             keySemicolon.applySkin(null)
+            // 数字行同走令牌路径（null = 回落到 R.color 的键面 / 字色）
+            for (k in numberRowKeys) k.applySkin(null)
         } else {
             val density = resources.displayMetrics.density
             val face = context.getColor(R.color.kb_key)
@@ -1718,6 +1727,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     skin, -1, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
                 )
             )
+            // 数字行按序取色相 `i = 0..9`（不是 26 起的续接）：彩虹色相是 `色相 + i × 360/26`，
+            // 26 步正好绕满一圈 ⇒ `i = 26..35` 与 `i = 0..9` **算出的是同一组颜色**，
+            // 这只是「换一种写法」而不是另一种观感。真正要保证的是：换肤时这 10 个键必须一起变，
+            // 漏掉就成半屏旧配色。
+            for ((i, k) in numberRowKeys.withIndex()) {
+                k.applySkin(
+                    KeyboardSkins.visualFor(
+                        skin, i, keyFaceAlpha, density, face, pressed, glyph, hintDefault, hintRed,
+                    )
+                )
+            }
         }
         applySkinToTexts()
     }
@@ -2697,9 +2717,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         colorRes: Int,
         onClick: (String) -> Unit,
     ) {
-        // 候选形态没有数字行（它只在功能面板出现）。放在最前：下面的指纹命中会早退，
-        // 放在早退之后就漏关 —— 会留下一条盖住半栏候选的数字键。
-        setFunctionDigitRowVisible(false)
+        // 候选形态与数字行无关（数字行常驻在 26 键区，显隐只认开关）。
         // 分页渲染：候选集变了就复位首屏条数；否则沿用当前窗口（用户已滑到底追加过的条数）。
         // 用**结构相等**比对：同一串拼音被重复查询时引擎会给出一份内容相同的新 list，
         // 按引用比对会把它当「新候选」复位 —— 用户滑到底刚展开的候选会被打回收起。
@@ -3528,6 +3546,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     private fun refreshKeyLabels() {
+        // 数字行显隐跟「层 / 密码态」走：这两个状态每变一次都会走到这里（切符号 / 切数字层 /
+        // 进 / 退密码模式），而且它自己也要按开关与方向面板重判 —— 收在这里就不必在每个切换点
+        // 各加一行（漏一处就是「切了数字层仍看到两排数字」）。
+        syncNumberRow()
         // 大写锁定激活时强制 26 键全大写英文（不依赖 englishMode），大写优先级最高。
         // 其次看外观页的「26 键常显大写」：只改字形、不改上屏（拼音串本来就是小写），
         // 但**英文模式除外** —— 那里字母就是正文，显示大写而按出来是小写会前后不一致。
@@ -4004,8 +4026,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 viewCandidateList.getChildAt(i).setPadding(dp(4), dp(4), dp(4), dp(4))
             }
         }
-        // 数字行只属于本形态：搜索态与动作排都在上面早退了（走到这里的是常驻按钮面板）
-        setFunctionDigitRowVisible(true)
         if (Diagnostics.KEY_TRACE) Diagnostics.v(
             TAG,
             "功能面板(${viewCandidateList.childCount} 按钮): 历史/方向/全选/复制/粘贴" +
@@ -4040,10 +4060,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // key_bg 同款（10dp 圆角），但填充色带面 alpha，功能面板按钮占满候选栏
             background = xmlKeyBackground()
             // 高度取「内容」与复用块最小高度的较大者（见 reuseBlockMinPx 的说明）。
-            // ⚠ 数字行可见时这个最小高会**把数字行挤出栏外**（两行共处滚动容器内容，
-            // 父给子项的高度是 UNSPECIFIED）：那时按钮按「栏高 − 数字行」收，
-            // 由 [setFunctionDigitRowVisible] 在切显隐时统一下发，这里只给初值。
-            minimumHeight = functionButtonMinPx()
+            // 2026-10-21 起候选栏回到单行几何：数字行搬去 26 键区，这里不再需要按形态收缩。
+            minimumHeight = reuseBlockMinPx()
             isClickable = true
             isFocusable = true
             // ⚠ 无障碍：可点击的 ViewGroup 必须自报名字，否则读屏只念得到一个空节点（L-764）
@@ -4135,159 +4153,91 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 建功能按钮行下方的固定数字行（1..0）—— **只在 init 建一次**，之后只切显隐。
+     * 建字母区第 0 位的固定数字行（`1`~`0`）—— **只在 init 建一次**，之后只切显隐 / 落高度。
      *
-     * 为什么在代码里建：10 个键的属性完全同构（等宽权重 + 同一字号 / 字色），写进 XML 就是十份重复；
-     * 而字色还要跟皮肤走，集中在这里一处下发才不会两处分叉。字号取 [functionDigitTextSp]
-     * （用户可在键盘外观页调整，默认 30sp）。
+     * 为什么用 [PinyinKey] 而不是 TextView：用户要的是「三行字母向上长成四行」—— 圆角、间隙、
+     * 键高、皮肤、面透明度、按压反馈必须与 qwertyuiop 那一行**逐项同源**。这些参数全部由
+     * `PinyinKey` 自绘，换成 TextView 就得把整套外观再抄一遍，两处迟早分叉（这正是重构前
+     * 候选栏内嵌数字行「字号 / 行框 / 栏高」互相牵连的成因）。
      *
-     * 点击 = 直接上屏：面板态本就没有 composing（见 [refreshCandidateBar] 的空输入分支），
-     * 搜索态不显示本行，故与 26 键数字层的「先确定拼音再上屏」无关；声音与数字层同组
-     * （[TapSound.G_DIGIT]），同一个数字在两条路上听感一致。
+     * 为什么在代码里建而不是写进 XML：十个键完全同构，写进 XML 就是十份重复；而标签与
+     * 无障碍名要跟着 [NUMBER_ROW_KEYS] 一处下发。开关关时它仍在视图树里、只是 GONE
+     * （不占高度、不参与绘制），见 [syncNumberRow] 与 [restoreLetterRows]。
+     *
+     * 点击 = 上屏该数字（[TapSound.G_DIGIT]，同一个数字在数字层与这一行听感一致）：
+     * 搜索态进搜索词、否则先落定拼音再上屏，与 26 键各条路径同口径（见 [buildNumberRow] 内注释）。
+     * 本行不挂 `OnTouchListener`，按压视觉由 `PinyinKey.onTouchEvent` 自己驱动。
      *
      * 线程：主线程（init 与点击回调都在主线程）。
      */
-    private fun buildFunctionDigitRow() {
-        for (digit in FUNCTION_DIGIT_KEYS) {
-            val key = TextView(context).apply {
-                text = digit.toString()
-                gravity = android.view.Gravity.CENTER
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, functionDigitTextSp)
-                // 键面就是数字本身：读屏念它即完整语义
-                contentDescription = digit.toString()
-                isClickable = true
-                setOnClickListener {
-                    KeyFeedback.fire(TapSound.G_DIGIT)
+    private fun buildNumberRow() {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        for (digit in NUMBER_ROW_KEYS) {
+            // 点击 = 即时上屏，与数字层（`onLetterPressed` 的 LAYER_DIGIT）和密码数字条
+            // （[commitPasswordDigit]）**同一条口径**，两件事都不能省：
+            //  - 搜索态：26 键此刻路由到搜索框，数字也必须进搜索词。不判就会把数字 `commit`
+            //    给宿主 —— 用户在翻剪贴板历史，正文却被插入数字。
+            //  - 有拼音串：`commitText` 会**替换**宿主的 composing 区。不先 [commitComposing]，
+            //    打「ni」再点 5，正文只剩「5」（2026-10-21 真机实测；守卫
+            //    `数字行点数字前必须先提交拼音` 按位置钉着）。
+            val commit = {
+                KeyFeedback.fire(TapSound.G_DIGIT)
+                if (isPanelSearch()) {
+                    searchPanel?.appendSearch(digit.toString())
+                } else {
+                    commitComposing()
                     listener?.onCommitText(digit.toString())
                 }
             }
-            functionDigitRow.addView(
-                key,
-                // 10 键等宽均分：与功能按钮同款的 2dp 间隙，两边对称故不破坏等宽
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                    marginStart = dp(2)
-                    marginEnd = dp(2)
-                },
-            )
+            val key = PinyinKey(context).apply {
+                label = digit.toString()
+                // 数字 / 符号层的居中口径（A-175）：不套用字母层的小字顶置样式
+                centeredStyle = true
+                setOnClickListener { commit() }
+                // 读屏双击不经过 OnTouchListener，动作必须在这里补一遍（同字母键的做法）
+                onActivate = { commit() }
+            }
+            // 10 键等宽权重：与 qwertyuiop 那一行同为 10 列，列宽逐一对齐
+            row.addView(key, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            numberRowKeys += key
         }
-        appliedFunctionDigitTextSp = functionDigitTextSp
+        // 先按当前键高落高度：init 不走 applyKeyAppearance（那是 configure / refreshAppearance 的路径），
+        // 不在这里给值就会以 0 高量出来，首帧看着像「没有这一行」
+        val px = (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+        viewLetters.addView(
+            row, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, px),
+        )
+        numberRow = row
+        syncNumberRow()
     }
 
     /**
-     * 数字行字号按最新配置重下发（唯一入口）：键盘外观页松手 / 换肤 / 配置变更后，
-     * 已建好的 10 个 TextView 不会自己读新值 —— 不重下发就得等进程重启。
+     * 数字行显隐（**唯一入口**）：唯一数据源 = [Prefs.numberRowEnabled]，另有两条**互斥**判据。
      *
-     * 只在真的变了时才写：`setTextSize` 会触发一次 requestLayout。
+     * 四条判据各自对应一处「不挡就同屏」的冲突面：
+     *  - 开关关 ⇒ GONE。且是 GONE 而不是 `removeView`：`removeView` 会让「谁把子视图藏了、
+     *    谁恢复」这条既有约定多出一个特例（见 [restoreLetterRows]），而 GONE 不参与测量与绘制，
+     *    几何上与「没有这一行」完全等价。
+     *  - 方向面板展开期间 ⇒ GONE：面板是把字母区各子视图 GONE 后 `addView` 进来的，此刻把这行
+     *    点亮就会与九宫格同屏。`refreshAppearance` 可能正好在面板展开时被调用（拖滑杆）。
+     *  - 数字层（[LAYER_DIGIT]）⇒ GONE：该层把 26 键整体切成数字，首行 `q..p` 正是 `1`~`0`，
+     *    固定在它上面再放一排同样的数字 = 屏幕上是两排一模一样的键（同一个数字有两个位置）。
+     *  - 密码模式（`passwordPad`）⇒ GONE：候选栏已换成 0~9 数字条（[renderPasswordDigits]，
+     *    它存在的理由就是「数字与 26 键同屏而不改键盘高度」），固定行再排一遍同样是两排重复。
+     *    这也回答了「用户主动开的行凭什么被收」：该模式下**另有一处等价的数字入口**，
+     *    重复的一份只会挤掉一行字母的高度，不增加任何能力。
+     *
+     * 调用点：[buildNumberRow]（建完立即落位）、[applyKeyAppearance]（外观页改完即生效）、
+     * [refreshKeyLabels]（层 / 密码态每一次变化都经过它）。
      */
-    private fun applyFunctionDigitTextSize() {
-        val sp = functionDigitTextSp
-        if (sp == appliedFunctionDigitTextSp) return
-        appliedFunctionDigitTextSp = sp
-        for (i in 0 until functionDigitRow.childCount) {
-            (functionDigitRow.getChildAt(i) as? TextView)
-                ?.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sp)
-        }
-    }
-
-    /**
-     * 数字行的显隐（唯一入口）：只有功能面板形态打开它。
-     *
-     * ⚠ **显示前必须过「栏高够不够」这道闸**（2026-10-19 真机实测后加）。
-     * 数字行与按钮行共处 `CandidateScrollView` 的**内容**里，而横向滚动容器给子项的高度是
-     * UNSPECIFIED ⇒ `layout_weight` 分到的是「两行内容高之和」，不是栏高。单行档（默认 46dp）
-     * 下按钮行的最小高就等于整栏高（[reuseBlockMinPx]），再加一行数字 ⇒ 内容必然溢出：
-     * 实测数字行只剩约 12dp 露在栏底、13sp 字形被裁掉一半，按钮行也被压到文字放不下。
-     * 双行档（74dp）恰好容得下，所以问题只在默认档暴露。
-     * 栏高**不能**为面板态增高（用户 2026-10-02 明确要求键盘高度不随「有候选 ↔ 面板」变），
-     * 所以放不下就不放 —— 单行档用户没有这一行，好过半行错形态。
-     *
-     * 字色在这里按皮肤 [KeyboardSkin.functionGlyph] 下发（与功能按钮主标同源）：
-     * 换肤后候选栏会整帧刷新，跟着走即可，不必在换肤路径上再加一处遍历。
-     */
-    private fun setFunctionDigitRowVisible(visible: Boolean) {
-        if (visible && !canFitFunctionDigitRow()) {
-            // 放不下：收回 GONE。weight 不参与分配 ⇒ 按钮行独占整栏，与没有这一行时一致
-            functionDigitRow.visibility = View.GONE
-            syncFunctionButtonMinHeight(false)
-            return
-        }
-        functionDigitRow.visibility = if (visible) View.VISIBLE else View.GONE
-        syncFunctionButtonMinHeight(visible)
-        if (!visible) return
-        val color = skinToken(skin.functionGlyph, R.color.text_primary)
-        for (i in 0 until functionDigitRow.childCount) {
-            (functionDigitRow.getChildAt(i) as? TextView)?.setTextColor(color)
-        }
-    }
-
-    /**
-     * 把「按钮行最小高」同步成当前形态该有的值，并让候选栏重排。
-     *
-     * 为什么必须做：按钮的 `minimumHeight` 初值是整栏高（[reuseBlockMinPx]），而两行共处
-     * 横向滚动容器的内容里、父给子项高度是 UNSPECIFIED ⇒ 数字行 VISIBLE 时这个最小高会
-     * 把它整行挤出栏外（用户看到「数字行不见了」）。数字行要占的那一份只能从按钮这里让。
-     *
-     * 遍历 [viewCandidateList] 的**直接子 View**：功能按钮与动作排 / 密码条 / 符号分组的
-     * 复用块都挂在这一层，而数字行可见只发生在功能面板态，此时容器里正是功能按钮。
-     */
-    private fun syncFunctionButtonMinHeight(digitRowVisible: Boolean) {
-        val min = functionButtonMinPx(digitRowVisible)
-        for (i in 0 until viewCandidateList.childCount) {
-            viewCandidateList.getChildAt(i).minimumHeight = min
-        }
-    }
-
-    /**
-     * 按钮行最小高：数字行不可见时占满整栏；可见时让出「栏高 − 数字行」那一份。
-     *
-     * 让不出（栏高 − 数字行 ≤ 0）时返回 0 —— 那种情况 [canFitFunctionDigitRow] 已经不会
-     * 显示数字行，这里只是防御性兜底。
-     */
-    private fun functionButtonMinPx(digitRowVisible: Boolean = false): Int {
-        if (!digitRowVisible) return reuseBlockMinPx()
-        val barHeight = candidateBar.height.takeIf { it > 0 }
-            ?: CandidateRows.barHeightPx(
-                currentRows, resources.displayMetrics.density,
-                resources.configuration.fontScale,
-                currentCandidateSp, currentPinyinSp, currentPinyinGapDp,
-            )
-        return (barHeight - functionDigitRowPx()).coerceAtLeast(0)
-    }
-
-    /**
-     * 数字行自身行框高（px）：字号 × TextView 默认行距 + 上下各 2dp 内边距。
-     *
-     * ⚠ `scaledDensity` 本身就等于 `density × fontScale`（sp→px 的唯一换算因子），
-     * **不能再乘一次 `configuration.fontScale`** —— 那会让行高随 fontScale² 变化，而真实
-     * 行高只随它一次变：大字体用户把滑杆拖高一点，数字行就「凭空消失」（判据算出的行高
-     * 比实际大一圈）；小字体则判据偏松，数字行被栏底裁掉一截。
-     * 口径与 [CandidateRows.rowHeightPx] 一致（fontScale 只出现一次）。
-     */
-    private fun functionDigitRowPx(): Int =
-        (functionDigitTextSp * 1.2f * resources.displayMetrics.scaledDensity).toInt() + dp(4)
-
-    /**
-     * 栏高是否容得下「功能按钮行 + 数字行」。
-     *
-     * 按钮行的最小高会按形态收缩（见 [functionButtonMinPx]：数字行可见时让出
-     * 「栏高 − 数字行」），所以这里只要求**按钮行还剩得下一个可点的高度**：
-     * 小于 [FUNCTION_BUTTON_MIN_TOUCH_DP] 就不显示数字行 —— 那种栏高下两行都塞不下，
-     * 硬塞会把按钮压成一条无法点击的细条（单行档 46dp 正是这种）。
-     *
-     * 判据是几何量（栏高 / 字号 / 系统字体缩放都挂钩），不写成「只准某档位」的拍脑袋条件。
-     */
-    private fun canFitFunctionDigitRow(): Boolean {
-        val dm = resources.displayMetrics
-        val fontScale = resources.configuration.fontScale
-        // 栏高未布局时（首帧）退回按当前档位算的理论值：那一帧数字行本就还是 GONE，
-        // 布局完成后 refreshCandidateBar 会再判一次，不会把「放不下」定格住
-        val barHeight = candidateBar.height.takeIf { it > 0 }
-            ?: CandidateRows.barHeightPx(
-                currentRows, dm.density, fontScale,
-                currentCandidateSp, currentPinyinSp, currentPinyinGapDp,
-            )
-        if (barHeight <= 0) return false
-        return barHeight - functionDigitRowPx() >= dp(FUNCTION_BUTTON_MIN_TOUCH_DP)
+    private fun syncNumberRow() {
+        val row = numberRow ?: return
+        val visible = prefs.numberRowEnabled && !directionPanelVisible &&
+            layer != LAYER_DIGIT && !passwordPad
+        row.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
     /**
@@ -4541,27 +4491,37 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 恢复字母三行（把 viewLetters 的子视图全部设回 VISIBLE）。
+     * 恢复字母区的行（把 viewLetters 的子视图设回 VISIBLE）。
      *
      * 单独抽出来是必须的：原先这段恢复只写在 [hideDirectionPanel] 里，且被
      * `if (!directionPanelVisible) return` 挡在前面，也就是说"字母三行的可见性"完全被那个 flag 托管。
      * 只要有任何路径把三行设成 GONE 而 flag 没置位（或 flag 被清掉却跳过恢复），
      * 三行就会永久失活：键面看着还在，但整块不再响应触摸，而底栏是另一个容器照常可用。
      * 所以这里改成"谁把子视图藏了，恢复时一律无条件恢复"。
+     *
+     * ⚠ **唯一的例外是数字行**（2026-10-21）：它的显隐归 [syncNumberRow] 管（开关 / 方向面板 /
+     * 数字层 / 密码模式四项合判），这里只把**其它**行点亮、再交给它自己裁决。
+     * 两个反例都在真机上出现过：无脑 VISIBLE 会让「方向面板收起」变成开关被偷偷打开；
+     * 只按开关恢复则会让「数字层收面板」之后同屏两排数字。
      */
     private fun restoreLetterRows() {
+        val row = numberRow
         for (i in 0 until viewLetters.childCount) {
-            viewLetters.getChildAt(i).visibility = View.VISIBLE
+            val child = viewLetters.getChildAt(i)
+            // 数字行跳过：它由 syncNumberRow 按下文四项判据裁决，不在「无条件恢复」之列
+            if (child === row) continue
+            child.visibility = View.VISIBLE
         }
+        syncNumberRow()
     }
 
     /**
      * 清掉残留在字母区里的方向面板。
      *
-     * 按 tag 识别而不是按下标：字母行在 XML 里其实正好 3 个，但"按下标 ≥3 一律删"
-     * 这种写法一旦布局加了第 4 个子视图就会误删真键，属于没必要背的风险。
-     * 面板是运行时 addView 进去的，一旦出现"面板还挂着但 directionPanel 引用已丢"，
-     * 它就永远留在那儿盖住键区（它排在字母行之后，会先吃到触摸）。
+     * 按 tag 识别而不是按下标：字母区现在的子视图是「数字行（可能 GONE）+ 三行字母」，
+     * 行数随开关变（3 或 4），任何「按下标 ≥N 一律删」的写法都会在开关切换后误删真键 ——
+     * 那是没必要背的风险。面板是运行时 addView 进去的，一旦出现「面板还挂着但 directionPanel
+     * 引用已丢」，它就永远留在那儿盖住键区（它排在字母行之后，会先吃到触摸）。
      */
     private fun dropStaleDirectionPanel() {
         for (i in viewLetters.childCount - 1 downTo 0) {
@@ -4585,8 +4545,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         directionPanel = null
         centerSelectionKey = null
         dropStaleDirectionPanel()
-        restoreLetterRows()
+        // 先落 flag 再恢复行：restoreLetterRows 末尾的 syncNumberRow 要读这个 flag，
+        // 顺序反了会让数字行停在 GONE（面板已收、数字行不回来）
         directionPanelVisible = false
+        restoreLetterRows()
         selectionActive = false
         // 通知 IME 清除拖选状态（JinnIme 的 anchor/focus 同步重置）
         listener?.onSelectionModeChanged(false)
@@ -5265,15 +5227,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val PASSWORD_DIGIT_TEXT_SP = 18f
 
         /**
-         * 数字行可见时，按钮行至少还要剩这么多 dp（可点下限）。
+         * 固定数字行的排列：**电话键盘自然序** `1` 最左、`0` 最右。
          *
-         * 小于这个值就不显示数字行：两行都塞不下时硬塞，会把功能按钮压成一条点不到的细条，
-         * 比「少一行数字」糟得多。单行档（46dp）正是被这条挡掉的。
+         * 与密码模式数字条 [PASSWORD_DIGIT_ORDER] **同序**，这不是巧合、也不是「合并了一套语义」：
+         * 两处各自成立（固定行在连续挑数字、不需要把两端键挪近拇指；密码条要让 1 与 0 靠近拇指），
+         * 而两处的最优解都是自然序 —— 同一个应用里出现两种数字排列才是问题。
+         * 顺序仍是契约：守卫 `数字行与密码数字条同为电话键盘自然序` 按字面对拍，
+         * 任何一侧要改都得同时改另一侧并显式改那条守卫。
          */
-        const val FUNCTION_BUTTON_MIN_TOUCH_DP = 24
-
-        /** 功能面板下方固定数字行的排列：自然序（用户是在连续挑数字，不抢两端常用键） */
-        const val FUNCTION_DIGIT_KEYS = "1234567890"
+        const val NUMBER_ROW_KEYS = "1234567890"
 
         /**
          * 底部逗号 / 句号键的字号（sp）＝同排功能键基础字号 13sp（`SettingsButton` 样式）+ 3（用户指定）。

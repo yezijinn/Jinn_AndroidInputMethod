@@ -406,19 +406,17 @@
                 android:fillViewport="true"
                 android:scrollbars="none">
 
-                <!-- 候选区纵向两层：功能按钮行 + 固定数字行。
-                     按钮行 match_parent 吃剩余高度，数字行按自身行框（wrap_content）——
-                     两行**都不得**用 weight 平分：它们同处横向滚动容器的内容里，而它给子项的
-                     高度是 UNSPECIFIED，两个 weight=1 分到的是「两行内容高之和」而非栏高
-                     （单行档下双双溢出、数字行被栏底裁成半截，2026-10-19 实测）。
-                     ⚠ candidate_list 也**不能**写 0dp+weight=1：candidate_scroll 有
+                <!-- 候选区内容层：包一层而不是给 ScrollView 加兄弟（滚动容器只允许一个子 View）。
+                     2026-10-21 起这一层只有候选 / 功能按钮行 —— 原先的第二行「功能面板固定数字行
+                     1~0」整条删除，挪去 26 键区做第四行（keyboard_letters 第 0 位，见
+                     PinyinKeyboardView.buildNumberRow）。候选栏回到单行几何，为那两行让位的
+                     reuseBlockMinPx / 最小高收缩一并消失。
+                     ⚠ candidate_list **不能**写 0dp+weight=1：candidate_scroll 有
                      paddingTop（单行档为拼音条让位），fillViewport 会把 stack 拉到**未扣
                      padding** 的高度 ⇒ 候选区溢出栏外，且 center_vertical 把候选 TextView
                      量成 0 高（真机 GEO：padTop=63 / scrollH=161 / listH=161 / firstH=0
                      ⇒ 输入 ji 后候选整体下沉看不见，2026-10-20 实测）。
-                     match_parent 下 stack 高 = 视口 - paddingTop，候选区正好落在拼音条下方；
-                     数字行 GONE 时不占位，按钮行独占整栏（与没有这一行时几何一致）。
-                     包一层而不是给 ScrollView 加兄弟：滚动容器只允许一个子 View。 -->
+                     match_parent 下 stack 高 = 视口 - paddingTop，候选区正好落在拼音条下方。 -->
                 <LinearLayout
                     android:id="@+id/candidate_panel_stack"
                     android:layout_width="match_parent"
@@ -431,17 +429,6 @@
                         android:layout_height="match_parent"
                         android:gravity="center_vertical"
                         android:orientation="horizontal" />
-
-                    <!-- 功能面板下方的固定数字行 1..0：子项由代码建一次
-                         （PinyinKeyboardView.buildFunctionDigitRow），只在此面板形态显示。
-                         高度按内容 ⇒ 栏高不足时整行不显示，不会被裁成半截 -->
-                    <LinearLayout
-                        android:id="@+id/function_digit_row"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:visibility="gone" />
                 </LinearLayout>
             </com.jinn.inputmethod.CandidateScrollView>
         </com.jinn.inputmethod.CandidateRowsScrollView>

@@ -532,12 +532,13 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_GAP_DP, KeyAppearance.clampGapDp(value)) }
 
     /**
-     * 26 键区三行字母键的**单行高度**（dp），见 [KeyAppearance] 的键高段。
+     * 26 键区字母键的**单行高度**（dp），见 [KeyAppearance] 的键高段。
      *
      * 定义域与默认值一律见 [KeyAppearance]（默认值刻意等于布局原始高度）；getter 也做一次钳位（与圆角 / 间隙 / 透明度同款）：
      * 越界值会直达 `layoutParams.height` —— 过小把三行压成一条线、过大把键盘顶出屏幕。
      *
-     * 只作用于字母三行（28 键）与「方向」九宫格（它顶替字母区，跟随同高）；
+     * 作用于字母区**每一行**：三行字母（28 键）、开着 [numberRowEnabled] 时的第一行数字，
+     * 以及「方向」九宫格（它顶替字母区，跟随同高）；
      * 底栏、候选栏与剪贴板 / 图库面板各有自己的高度规则，不随本项变化。
      */
     var keyHeightDp: Float
@@ -630,18 +631,18 @@ class Prefs(private val appContext: Context) {
         }
 
     /**
-     * 功能面板下方固定数字行（1~0）的字号（sp，默认 30）。
+     * 26 键区第一行字母 `qwertyuiop` 之上是否显示固定数字行 `1234567890`（默认**关** = 与重构前一致）。
      *
-     * 只影响那一行数字：栏高与按钮行不动。定义域见 [KeyAppearance.MIN_FUNCTION_DIGIT_SP]~
-     * [KeyAppearance.MAX_FUNCTION_DIGIT_SP]（真值只在 [KeyAppearance]，这里不写死数字）。
-     * 字号过大时数字行会因放不下而整行不显示（[PinyinKeyboardView.canFitFunctionDigitRow] 判据），
-     * 属用户自选的极端档，不是错误。getter 也钳位：脏配置不能把字号带进布局。
+     * 开着时它是字母区的第 0 行：**完全继承**字母键的圆角 / 间隙 / 键高 / 皮肤 / 面透明度
+     * （见 [PinyinKeyboardView.buildNumberRow]），点一下直接上屏对应数字。
+     * 与「数字层」（整块键盘切成数字，[PinyinKeyboardView] 的 LAYER_DIGIT）是两件事，两者并存。
+     *
+     * 默认取 false：用户原话是「关闭就是维持现状」⇒ 不把新行强加给已经习惯三行的人，
+     * 需要的人自己去外观页打开。
      */
-    var functionDigitSp: Float
-        get() = KeyAppearance.clampFunctionDigitSp(
-            floatOr(KEY_FUNCTION_DIGIT_SP, KeyAppearance.DEFAULT_FUNCTION_DIGIT_SP),
-        )
-        set(value) = sp.edit { putFloat(KEY_FUNCTION_DIGIT_SP, KeyAppearance.clampFunctionDigitSp(value)) }
+    var numberRowEnabled: Boolean
+        get() = boolOr(KEY_NUMBER_ROW_ENABLED, false)
+        set(value) = sp.edit { putBoolean(KEY_NUMBER_ROW_ENABLED, value) }
 
     /**
      * 键盘透明度（百分比；0 = 完全不透明，上界与两档 alpha 换算见 [KeyTransparency]）。
@@ -1563,8 +1564,8 @@ class Prefs(private val appContext: Context) {
         // 否则「自动」会被固化成当时的派生值，改候选字号后拼音不再跟随）
         if (sp.contains(KEY_PINYIN_TEXT_SP)) put(KEY_PINYIN_TEXT_SP, pinyinTextSp)
         if (sp.contains(KEY_PINYIN_LINE_GAP_DP)) put(KEY_PINYIN_LINE_GAP_DP, pinyinLineGapDp)
-        // 数字行字号同款：默认 30sp 不平凡，只在用户真的动过滑杆时才导出
-        if (sp.contains(KEY_FUNCTION_DIGIT_SP)) put(KEY_FUNCTION_DIGIT_SP, functionDigitSp)
+        // 数字行开关（默认 false）：与「26 键常显大写」同款 —— 缺键回落与显式同值，不套守卫
+        put(KEY_NUMBER_ROW_ENABLED, numberRowEnabled)
         put(KEY_KEY_TRANSPARENCY_PERCENT, keyTransparencyPercent)
         // 敲击音效反馈：音色选择与震动档位都是用户偏好，换机必须带走（见 KEY_TAP_* 注释）
         put(KEY_TAP_SOUND_ENABLED, tapSoundEnabled)
@@ -1738,6 +1739,7 @@ class Prefs(private val appContext: Context) {
                 KEY_KEY_GAP_DP -> asFloat(v)?.let { keyGapDp = it; ok() } ?: bad(key)
                 KEY_KEY_HEIGHT_DP -> asFloat(v)?.let { keyHeightDp = it; ok() } ?: bad(key)
                 KEY_KEY_LETTER_UPPERCASE -> asBool(v)?.let { keyLetterUppercase = it; ok() } ?: bad(key)
+                KEY_NUMBER_ROW_ENABLED -> asBool(v)?.let { numberRowEnabled = it; ok() } ?: bad(key)
                 KEY_CAPS_ONE_SHOT -> asBool(v)?.let { capsOneShot = it; ok() } ?: bad(key)
                 KEY_LONGPRESS_LOWER_UPPERCASE ->
                     asBool(v)?.let { longPressLowerUppercase = it; ok() } ?: bad(key)
@@ -1745,7 +1747,6 @@ class Prefs(private val appContext: Context) {
                 KEY_CANDIDATE_TEXT_SP -> asFloat(v)?.let { candidateTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_TEXT_SP -> asFloat(v)?.let { pinyinTextSp = it; ok() } ?: bad(key)
                 KEY_PINYIN_LINE_GAP_DP -> asFloat(v)?.let { pinyinLineGapDp = it; ok() } ?: bad(key)
-                KEY_FUNCTION_DIGIT_SP -> asFloat(v)?.let { functionDigitSp = it; ok() } ?: bad(key)
                 KEY_KEY_TRANSPARENCY_PERCENT ->
                     asInt(v)?.let { keyTransparencyPercent = it; ok() } ?: bad(key)
                 // 敲击音效反馈 6 键：setter 里已有钳位（TapSound.clampVolume / parseMap /
@@ -2044,13 +2045,13 @@ class Prefs(private val appContext: Context) {
         private const val KEY_KEY_GAP_DP = "key_gap_dp"
         private const val KEY_KEY_HEIGHT_DP = "key_height_dp"
         private const val KEY_KEY_LETTER_UPPERCASE = "key_letter_uppercase"
+        private const val KEY_NUMBER_ROW_ENABLED = "number_row_enabled"
         private const val KEY_CAPS_ONE_SHOT = "caps_one_shot"
         private const val KEY_LONGPRESS_LOWER_UPPERCASE = "longpress_lower_uppercase"
         private const val KEY_CANDIDATE_SPACING_DP = "candidate_spacing_dp"
         private const val KEY_CANDIDATE_TEXT_SP = "candidate_text_sp"
         private const val KEY_PINYIN_TEXT_SP = "pinyin_text_sp"
         private const val KEY_PINYIN_LINE_GAP_DP = "pinyin_line_gap_dp"
-        private const val KEY_FUNCTION_DIGIT_SP = "function_digit_sp"
         private const val KEY_KEY_TRANSPARENCY_PERCENT = "key_transparency_percent"
 
         /**

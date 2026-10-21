@@ -207,26 +207,4 @@ class KeyAppearanceTest {
         val totalDp = KeyAppearance.MAX_KEY_HEIGHT_DP * 3 + 46 + 18 + 56
         assertTrue("键高上界会把键盘顶满屏：$totalDp dp", totalDp <= 490f)
     }
-
-    /**
-     * 功能面板数字行字号（外观页「数字字号」滑杆）：定义域 13~40sp、步进 1sp、默认 30sp。
-     *
-     * 上界 40sp 不是「还能排下」的边界：栏高固定，判据会判定放不下并整行不显示（用户自选极端档）。
-     * 默认 30sp 必须原样保留 —— 没动过滑杆的用户观感不能变。
-     */
-    @Test
-    fun functionDigitSp_clampsToDomainAndRoundTrips() {
-        assertEquals(KeyAppearance.MIN_FUNCTION_DIGIT_SP, KeyAppearance.clampFunctionDigitSp(0f), 0f)
-        assertEquals(KeyAppearance.MAX_FUNCTION_DIGIT_SP, KeyAppearance.clampFunctionDigitSp(99f), 0f)
-        // 步进 1sp：21.6 落到 22
-        assertEquals(22f, KeyAppearance.clampFunctionDigitSp(21.6f), 0f)
-        assertEquals(30f, KeyAppearance.DEFAULT_FUNCTION_DIGIT_SP, 0f)
-        // (40 − 13) / 1 = 27 格
-        assertEquals(27, KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX)
-        assertEquals(17, KeyAppearance.functionDigitSpToProgress(30f))
-        for (p in 0..KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX) {
-            assertEquals("进度 $p 往返", p, KeyAppearance.functionDigitSpToProgress(KeyAppearance.functionDigitProgressToSp(p)))
-        }
-        assertEquals("30 sp", KeyAppearance.formatSp(30f))
-    }
 }

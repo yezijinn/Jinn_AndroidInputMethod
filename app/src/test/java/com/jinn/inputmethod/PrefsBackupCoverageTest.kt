@@ -98,6 +98,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-17 起 103 → 101：移除「候选追加方式」「拼音打标」2 键（前者固定为追加一次，
         //                       后者改为内置常开，均无开关可存）
         // 2026-10-19 起 102 → 103：新增「功能面板数字字号」1 键（外观页滑杆，换机要带走）
+        // 2026-10-21 起 103 → 103：删「功能面板数字字号」1 键（该行整条移除）、
+        //                       增「数字行开关」1 键（26 键区第四行，换机要带走）—— 净零
         assertEquals("提取到的键常量应是 103 个（改键数请同步本断言）", 103, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
@@ -198,7 +200,6 @@ class PrefsBackupCoverageTest {
             // 拼音字号（0 = 自动）/ 拼音行间隔：外观页滑杆，两个浮点
             "KEY_PINYIN_TEXT_SP" to "asFloat(v)",
             "KEY_PINYIN_LINE_GAP_DP" to "asFloat(v)",
-            "KEY_FUNCTION_DIGIT_SP" to "asFloat(v)",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "asInt(v)",
             "KEY_SKIN_LIGHT" to "asString(v)",
             "KEY_SKIN_DARK" to "asString(v)",
@@ -218,6 +219,8 @@ class PrefsBackupCoverageTest {
             // 一落地就报出来）；取值工具逐一核对过类型，与各自 setter 的语义一致。
             "KEY_KEY_HEIGHT_DP" to "asFloat(v)",
             "KEY_KEY_LETTER_UPPERCASE" to "asBool(v)",
+            // 数字行开关（26 键区第一行字母之上那排 1234567890，默认关）
+            "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
             // 大写仅一次 / 长按小写转大写：外观页两个开关
             "KEY_CAPS_ONE_SHOT" to "asBool(v)",
             "KEY_LONGPRESS_LOWER_UPPERCASE" to "asBool(v)",
@@ -522,6 +525,7 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_QUANPIN" to "show_quanpin",
             "KEY_CANDIDATE_PAGING" to "candidate_paging",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
+            "KEY_NUMBER_ROW_ENABLED" to "number_row_enabled",
             "KEY_CAPS_ONE_SHOT" to "caps_one_shot",
             "KEY_LONGPRESS_LOWER_UPPERCASE" to "longpress_lower_uppercase",
             // 外观页的滑杆
@@ -532,7 +536,6 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_TEXT_SP" to "candidate_text_sp",
             "KEY_PINYIN_TEXT_SP" to "pinyin_text_sp",
             "KEY_PINYIN_LINE_GAP_DP" to "pinyin_line_gap_dp",
-            "KEY_FUNCTION_DIGIT_SP" to "function_digit_sp",
             "KEY_KEY_TRANSPARENCY_PERCENT" to "key_transparency_percent",
             // 皮肤与主题
             "KEY_KEYBOARD_SKIN" to "keyboard_skin",

@@ -1099,8 +1099,8 @@ class RecentFixesRegressionTest {
             assertFalse("第二行说明必须整条删除：$gone", gone in layout)
         }
         assertEquals(
-            "九个滑杆与标题的间距必须都是 0dp",
-            9,
+            "八个滑杆与标题的间距必须都是 0dp（2026-10-21 删掉「数字字号」滑杆，九 → 八）",
+            8,
             "android:layout_marginStart=\"0dp\"".toRegex().findAll(layout).count(),
         )
         assertFalse(
@@ -1121,7 +1121,6 @@ class RecentFixesRegressionTest {
             "const val TEXT_TEXT_SIZE_TITLE = \"候选字号\"",
             "const val TEXT_TRANSPARENCY_TITLE = \"面板透明\"",
             "const val TEXT_PINYIN_LINE_GAP_TITLE = \"拼音占高\"",
-            "const val TEXT_FUNCTION_DIGIT_TITLE = \"数字字号\"",
             "const val TEXT_LETTER_UPPER_TITLE = \"拼音键盘大写\"",
             "const val TEXT_KEY_HINT_TITLE = \"键盘内显韵母\"",
             "const val TEXT_QUANPIN_TITLE = \"双拼候选全音\"",
@@ -4769,18 +4768,19 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 「键高」拖动条（2026-10-09）：三行字母键的高度由 [KeyAppearance] 定义域驱动，且只落在字母三行上。
+     * 「键高」拖动条（2026-10-09）：键区各行的高度由 [KeyAppearance] 定义域驱动。
      *
      * 三条判据对应的都是「改错了只在真机某一种形态下才显形」的情形：不套用 ⇒ 拖滑杆没反应；
      * 不跳过方向面板 ⇒ 九宫格被当成字母行改高；面板高度跟着键高走 ⇒ 最大档把小屏键盘顶出可视区
      * （面板固定 162dp×2 是有意为之，见 applyLetterRowHeight 的说明）。
+     * 2026-10-21 起数字行也是字母区的一行（`qwertyuiop` 之上），故**不得**再按「只改前三行」早退。
      */
     @Test
-    fun `键高必须只作用于字母三行`() {
+    fun `键高必须作用于字母区每一行`() {
         val text = codeOf("PinyinKeyboardView.kt")
-        assertTrue("三行字母键没有按 keyHeightDp 套用高度", text.contains("applyLetterRowHeight(p.keyHeightDp, density)"))
+        assertTrue("各行没有按 keyHeightDp 套用高度", text.contains("applyLetterRowHeight(p.keyHeightDp, density)"))
         assertTrue("行高扫描必须跳过方向面板", text.contains("if (row.tag == DIRECTION_PANEL_TAG) continue"))
-        assertTrue("键高只应改三行", text.contains("rows >= LETTER_ROW_COUNT"))
+        assertFalse("键高不得只改前三行（数字行必须同步变高）", text.contains("rows >= LETTER_ROW_COUNT"))
         // 九宫格总高要跟随键高（BUG.md L-1332：行高与字母行同源，不再各算一份 dp 口径）
         assertTrue(
             "九宫格总高要跟随键高",
@@ -6132,82 +6132,48 @@ class RecentFixesRegressionTest {
 
 
     /**
-     * 功能面板数字行：显隐漏斗 + 几何闸。
+     * 候选栏**不得再内嵌数字行**（2026-10-21 重构后的反向钉）。
      *
-     * 漏斗（2026-10-19 子代理审查发现上一版零守卫，任何一次改动都可能静默破坏）：
-     *  - 唯一开点必须在 `renderFunctionPanel` 内（搜索态 / 动作排早退分支到不了那里）；
-     *  - `renderCandidateItems` 必须**置前**关 —— 该函数有指纹命中早退，放末尾会漏关，
-     *    留下一行盖住半栏候选的数字键；
-     *  - `clearCandidateList` 兜底关（符号 / 密码 / 提示 / 空态共用这个漏斗）。
+     * 为什么钉「没有」而不是钉实现：候选栏里塞第二行（`function_digit_row`）是「大量位置 BUG」
+     * 的根源 —— 两行同处横向滚动容器的内容里，父给子项高度是 UNSPECIFIED，weight 分到的是
+     * 「两行内容高之和」而非栏高；单行档（默认 46dp）下按钮行最小高就等于整栏高，再加一行
+     * 数字必然溢出（实测数字行只剩约 12dp 露在栏底、字形被裁一半）。为此曾需要
+     * `functionButtonMinPx` / `syncFunctionButtonMinHeight` / `canFitFunctionDigitRow` 三件套
+     * 互相让位，任何一处改动都会牵动候选栏几何。
      *
-     * 几何闸：两行同处横向滚动容器内容里，它给子项高度是 UNSPECIFIED ⇒ `layout_weight`
-     * 分的是内容高之和而非栏高；单行档（默认 46dp）下按钮行最小高就等于整栏高，再加一行
-     * 数字必然溢出（实测数字行只剩约 12dp 露在栏底、13sp 字形被裁一半）。
-     * 故 XML 不得再用 weight 平分，且显示前必须过 canFitFunctionDigitRow。
+     * 重构把数字行搬去 26 键区（见 [固定数字行必须继承26键外观且开关默认关闭]），候选栏回到
+     * 单行结构 ⇒ 这一整套让位机制与它的判据都不许回来。
      */
     @Test
-    fun functionDigitRowGuards() {
+    fun 候选栏不得再内嵌数字行() {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
 
-        // ① 唯一开点在 renderFunctionPanel 内
-        val panel = TestSources.blockAfter(src, "private fun renderFunctionPanel() {")
+        // ① 视图侧：整套「让位 / 判据 / 显隐」符号必须清干净
+        for (gone in listOf(
+            "functionDigitRow",
+            "buildFunctionDigitRow",
+            "canFitFunctionDigitRow",
+            "functionButtonMinPx",
+            "syncFunctionButtonMinHeight",
+            "setFunctionDigitRowVisible",
+            "applyFunctionDigitTextSize",
+            "FUNCTION_DIGIT_KEYS",
+            "FUNCTION_BUTTON_MIN_TOUCH_DP",
+        )) {
+            assertFalse("候选栏内嵌数字行的残留符号：$gone", gone in src)
+        }
+        // ② 功能按钮的最小高直接取复用块高（不再按形态收缩）
         assertTrue(
-            "数字行只允许在功能面板常驻分支打开",
-            "setFunctionDigitRowVisible(true)" in panel,
+            "功能按钮最小高必须回到 reuseBlockMinPx()",
+            "minimumHeight = reuseBlockMinPx()" in src,
         )
 
-        // ② 候选渲染必须置前关（躲开指纹命中早退）
-        val head = TestSources.blockAfter(src, "private fun renderCandidateItems(")
-            .let { it.substring(0, minOf(600, it.length)) }
-        assertTrue(
-            "renderCandidateItems 必须在指纹早退之前关掉数字行",
-            "setFunctionDigitRowVisible(false)" in head,
-        )
-
-        // ③ 兜底漏斗
-        val clear = TestSources.blockAfter(src, "private fun clearCandidateList() {")
-        assertTrue(
-            "clearCandidateList 必须兜底关掉数字行",
-            "setFunctionDigitRowVisible(false)" in clear,
-        )
-
-        // ④ 几何闸：显示前必须判「栏高够不够」
-        assertTrue(
-            "显示前必须过 canFitFunctionDigitRow",
-            "if (visible && !canFitFunctionDigitRow())" in src,
-        )
-        assertTrue(
-            "判据必须是「栏高减去数字行后，按钮行还剩得下可点高度」",
-            "barHeight - functionDigitRowPx() >= dp(FUNCTION_BUTTON_MIN_TOUCH_DP)" in src,
-        )
-        // 按钮行最小高必须能按形态收缩：不收缩的话数字行可见时它会把数字行整行挤出栏外
-        assertTrue(
-            "按钮行最小高必须随数字行显隐收缩",
-            "private fun functionButtonMinPx(digitRowVisible: Boolean = false): Int" in src,
-        )
-        assertTrue(
-            "切显隐时必须同步下发按钮行最小高",
-            "syncFunctionButtonMinHeight(visible)" in src,
-        )
-
-        // ⑤ XML 不得再用 weight 平分（那是单行档溢出的根因）
+        // ③ XML 侧：那一行不许回来
         val xml = listOf(
             java.io.File("src/main/res/layout/keyboard_pinyin.xml"),
             java.io.File("app/src/main/res/layout/keyboard_pinyin.xml"),
         ).firstOrNull { it.isFile }?.readText() ?: error("找不到 keyboard_pinyin.xml")
-        val digitBlock = TestSources.window(
-            xml,
-            "@+id/function_digit_row",
-            "/>",
-        )
-        assertTrue(
-            "数字行不得用 weight 平分高度（UNSPECIFIED 下分到的是内容高，会双双溢出）",
-            "layout_weight" !in digitBlock,
-        )
-        assertTrue(
-            "数字行按自身行框高，栏高不足时整行不显示",
-            "android:layout_height=\"wrap_content\"" in digitBlock,
-        )
+        assertFalse("键盘布局里不得再有内嵌数字行", "function_digit_row" in xml)
         // ⚠ candidate_list 必须 match_parent，**不能**用 weight（2026-10-20 真机 GEO 实测）：
         // candidate_scroll 有 paddingTop（单行档为拼音条让位），fillViewport 会把
         // candidate_panel_stack 拉到**未扣 padding** 的高度 ⇒ 候选区溢出栏外，且
@@ -6252,74 +6218,179 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 数字行字号必须是用户可调参数，真源只在 `KeyAppearance`。
+     * 固定数字行必须是 26 键区的第四行，且**外观逐项继承**字母行。
      *
-     * 原先 30sp 硬编码在 `PinyinKeyboardView`：用户要更大 / 更小只能等改版，而且行框高与建键
-     * 各读一处，改一处就会分叉。现在三段同源 —— 定义（KeyAppearance）→ 落盘与备份（Prefs）
-     * → 外观页滑杆（Activity）；视图侧只经一个读数点取 Prefs，不准再出现字面量。
+     * 用户 2026-10-21 的重构要求：「相当于把三行字母按键向上方扩展成了四行字母按钮的效果，
+     * 圆角间隙键高完全继承」。每条判据各对应一种「只在真机上才显形」的退化：
+     *  - 用 TextView 建键 ⇒ 圆角 / 间隙 / 皮肤 / 面透明度全丢（那正是内嵌版的老路）；
+     *  - 没挂进字母区首位 / 没排在 `qwertyuiop` 之上 ⇒ 位置不对，且吃不到行高的统一落值；
+     *  - 三处外观下发漏一处 ⇒ 改圆角或换肤后它停在旧外观上；
+     *  - 落高度时提前退出 ⇒ 数字行不跟随键高（拖滑杆时它一动不动）；
+     *  - 关着开关不 GONE ⇒ 几何与重构前不一致（用户明确「关闭就是维持现状」）；
+     *  - 数字层 / 密码模式不隐藏 ⇒ 同屏两排一模一样的数字（各有专门的守卫钉点击语义）。
      */
     @Test
-    fun functionDigitSpMustBeAdjustableFromAppearancePage() {
-        val appearance = TestSources.codeSource("KeyAppearance.kt")
-        for (needle in listOf(
-            "const val MIN_FUNCTION_DIGIT_SP",
-            "const val MAX_FUNCTION_DIGIT_SP",
-            "const val DEFAULT_FUNCTION_DIGIT_SP",
-            "val FUNCTION_DIGIT_PROGRESS_MAX",
-            "fun clampFunctionDigitSp(",
-            "fun functionDigitSpToProgress(",
-            "fun functionDigitProgressToSp(",
-        )) {
-            assertTrue("参数真源缺项：$needle", needle in appearance)
-        }
-
-        val prefs = TestSources.codeSource("Prefs.kt")
-        for (needle in listOf(
-            "var functionDigitSp: Float",
-            "KEY_FUNCTION_DIGIT_SP = \"function_digit_sp\"",
-            "put(KEY_FUNCTION_DIGIT_SP, functionDigitSp)",
-            "KEY_FUNCTION_DIGIT_SP -> asFloat(v)?.let { functionDigitSp = it; ok() } ?: bad(key)",
-        )) {
-            assertTrue("数字字号没落盘 / 没进快照 / 没进导入：$needle", needle in prefs)
-        }
-
-        // 视图侧：唯一读数点 + 三处同源 + 重建路径重下发
+    fun 固定数字行必须继承26键外观且开关默认关闭() {
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
-        assertFalse("数字字号不得再写死常量", "FUNCTION_DIGIT_TEXT_SP" in view)
+        val build = TestSources.blockAfter(view, "private fun buildNumberRow()")
+
+        // ① 建键：必须是 PinyinKey 自绘（换成 TextView 等于把整套外观再抄一遍）
+        assertTrue("数字行必须用 PinyinKey 建键", "PinyinKey(context)" in build)
+        assertFalse("数字行不得用 TextView 建键（那样要把圆角 / 皮肤 / 面 alpha 全抄一遍）", "TextView(" in build)
+        assertTrue("数字行必须居中排版（数字 / 符号层口径）", "centeredStyle = true" in build)
+        assertTrue("数字行内容必须是 1234567890", "const val NUMBER_ROW_KEYS = \"1234567890\"" in view)
+        // ② 位置：字母区第 0 个子视图（`qwertyuiop` 之上），且不进 26 键映射
+        //    判据按「插入到哪」而不是插入语句的字面写法：`addView(0, …)` 换行、换参数变量都不该误红
         assertTrue(
-            "数字行字号必须只有一个读数点（直读 Prefs）",
-            "private val functionDigitTextSp: Float get() = prefs.functionDigitSp" in view,
-        )
-        assertTrue(
-            "建键必须用同一个读数点",
-            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, functionDigitTextSp)" in view,
-        )
-        // 行框高必须用同一个读数点（否则显隐判据与显示字号分叉）；且不得再乘
-        // configuration.fontScale —— scaledDensity 已含它，再乘一次会让行高随 fontScale²
-        // 变化：大字体用户拖高滑杆就「凭空消失」，小字体则数字行被栏底裁掉一截
-        assertTrue(
-            "行框高必须用同一个读数点",
-            "(functionDigitTextSp * 1.2f * resources.displayMetrics.scaledDensity)" in view,
+            "数字行必须作为字母区第 0 个子视图插入（否则排到字母行下面，也就吃不到行高）",
+            Regex("""viewLetters\.addView\(\s*\w+,\s*0,""").containsMatchIn(build),
         )
         assertFalse(
-            "行框高不得再乘 configuration.fontScale（scaledDensity 已含它）",
-            "functionDigitTextSp * resources.configuration.fontScale" in view,
+            "buildNumberRow 里不得出现 keyViews（那是 26 键映射，切层会改标签 / 字色 / 居中口径）",
+            "keyViews" in build,
         )
-        assertTrue("configure / refreshAppearance 必须重下发字号", "applyFunctionDigitTextSize()" in view)
+        // ③ 外观三处下发必须覆盖数字行 —— 钉「哪个函数覆盖了 numberRowKeys」，不钉循环写法
+        for ((fn, what) in listOf(
+            "private fun applyKeyAppearance()" to "圆角 / 间隙",
+            "private fun applySkinToKeys()" to "皮肤",
+            "private fun applyKeyTransparency()" to "面透明度",
+        )) {
+            assertTrue(
+                "$fn 必须把${what}下发给数字行（漏一处数字行就停在旧外观上）",
+                "numberRowKeys" in TestSources.blockAfter(view, fn),
+            )
+        }
+        // ④ 键高：遍历**所有**非面板行，过程中不得提前退出（钉语义，不钉某一种写法）
+        val rows = TestSources.blockAfter(view, "private fun applyLetterRowHeight(")
+        assertTrue("键高扫描必须跳过方向面板", "if (row.tag == DIRECTION_PANEL_TAG) continue" in rows)
+        assertTrue("循环里必须无条件给每一行计数（rows++）", "rows++" in rows)
+        assertFalse(
+            "键高循环里不得出现 return / break（提前退出 = 数字行永远拿不到高度）",
+            Regex("""(?m)^\s*(return|break)\b""").containsMatchIn(rows),
+        )
+        // ⑤ 显隐：关着 GONE、方向面板收起不得把它点亮；数字层 / 密码模式同样让位
+        val restore = TestSources.blockAfter(view, "private fun restoreLetterRows() {")
+        assertTrue(
+            "restoreLetterRows 不得无脑点亮数字行，必须把它交给 syncNumberRow 裁决",
+            "numberRow" in restore && "syncNumberRow()" in restore,
+        )
+        val sync = TestSources.blockAfter(view, "private fun syncNumberRow() {")
+        for ((needle, why) in listOf(
+            "prefs.numberRowEnabled" to "开关",
+            "!directionPanelVisible" to "方向面板展开态",
+            "LAYER_DIGIT" to "数字层（首行就是 1234567890，再排一遍 = 同屏两排）",
+            "passwordPad" to "密码模式（候选栏已是 0~9 数字条，同样重复）",
+        )) {
+            assertTrue("显隐判据必须排除$why：syncNumberRow 里找不到 `$needle`", needle in sync)
+        }
+        assertTrue(
+            "层 / 密码态一变就要重判显隐：refreshKeyLabels 必须调 syncNumberRow()",
+            "syncNumberRow()" in TestSources.blockAfter(view, "private fun refreshKeyLabels()"),
+        )
+        // ⑥ 点数字行必须上屏 + 数字音效
+        assertTrue("点数字行必须上屏", "listener?.onCommitText(digit.toString())" in build)
+        assertTrue("点数字行必须发数字组音效", "KeyFeedback.fire(TapSound.G_DIGIT)" in build)
 
-        // 外观页：滑杆接上才算「用户可调」
+        // ⑦ 落盘 + 外观页入口（默认 false = 维持现状）
+        val prefs = TestSources.codeSource("Prefs.kt")
+        for (needle in listOf(
+            "var numberRowEnabled: Boolean",
+            "boolOr(KEY_NUMBER_ROW_ENABLED, false)",
+            "KEY_NUMBER_ROW_ENABLED = \"number_row_enabled\"",
+            "put(KEY_NUMBER_ROW_ENABLED, numberRowEnabled)",
+            "KEY_NUMBER_ROW_ENABLED -> asBool(v)?.let { numberRowEnabled = it; ok() } ?: bad(key)",
+        )) {
+            assertTrue("数字行开关没落盘 / 没进快照 / 没进导入：$needle", needle in prefs)
+        }
         val page = TestSources.codeSource("KeyAppearanceActivity.kt")
         for (needle in listOf(
-            "R.id.seek_function_digit_size",
-            "KeyAppearance.FUNCTION_DIGIT_PROGRESS_MAX",
-            "KeyAppearance.functionDigitSpToProgress(prefs.functionDigitSp)",
-            "prefs.functionDigitSp = sp",
-            "TEXT_FUNCTION_DIGIT_TITLE = \"数字字号\"",
+            "R.id.switch_number_row",
+            "prefs.numberRowEnabled = checked",
+            "JinnIme.onKeyAppearanceChanged()",
         )) {
             assertTrue("外观页缺项：$needle", needle in page)
         }
+        val layout = TestSources.rawSource(
+            "src/main/res/layout/activity_key_appearance.xml",
+            "app/src/main/res/layout/activity_key_appearance.xml",
+        )
+        assertTrue("外观页布局里必须有数字行开关", "@+id/switch_number_row" in layout)
     }
 
+
+    /**
+     * 固定数字行与密码模式数字条**同为电话键盘自然序**（2026-10-21）。
+     *
+     * 这条守卫的来源是一次假前提：重构时曾写「两处排列相反、必须不同」，并用
+     * `digits.toList() != PASSWORD_DIGIT_ORDER` 去钉它 —— `List<Char>` 与 `List<String>`
+     * 永不相等，那条断言**恒真**（抓不到任何改动），前提本身也是假的。
+     *
+     * 事实：两处都是 `1` 最左、`0` 最右（电话键盘自然序）。密码条这么排是因为 1 与 0 最常点、
+     * 放两端靠近拇指；固定行在连续挑数字，自然序本身就是最优。**同序是对的**，
+     * 一个应用里出现两种数字排列才是问题。所以这里正向钉住「同序」：
+     * 任何一侧要改（含把密码条改成别的顺序）都必须同时改另一侧并显式改本用例。
+     */
+    @Test
+    fun 数字行与密码数字条同为电话键盘自然序() {
+        val digits = Regex("const val NUMBER_ROW_KEYS = \"([^\"]+)\"")
+            .find(TestSources.codeSource("PinyinKeyboardView.kt"))
+            ?.groupValues?.get(1)
+            ?: error("PinyinKeyboardView 里找不到 NUMBER_ROW_KEYS")
+        assertEquals("固定数字行必须是电话键盘自然序", "1234567890", digits)
+        assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"), PASSWORD_DIGIT_ORDER)
+        // 判据必须同类型比较（上一版拿 List<Char> 比 List<String>，恒真）
+        assertEquals(
+            "两处数字排列必须同序（一个应用里两种数字顺序才是问题）",
+            digits.map { it.toString() },
+            PASSWORD_DIGIT_ORDER,
+        )
+    }
+
+    /**
+     * 点固定数字行 = 「先落定拼音、再上屏」（2026-10-21 修 P0）。
+     *
+     * `commitText` 会**替换**宿主的 composing 区：打「ni」再点数字 5，若闭包不先
+     * [PinyinKeyboardView.commitComposing]，正文只剩一个「5」，用户敲的拼音被静默丢弃
+     * （2026-10-21 真机复现，与数字层「1你」是同一个不变式）。
+     *
+     * 判据必须是**位置**判据：只判「出现过 commitComposing」会被「挪到上屏之后」骗过。
+     */
+    @Test
+    fun 数字行点数字前必须先提交拼音() {
+        val build = TestSources.blockAfter(
+            TestSources.codeSource("PinyinKeyboardView.kt"),
+            "private fun buildNumberRow()",
+        )
+        assertBefore(
+            build,
+            "commitComposing()",
+            "listener?.onCommitText(digit.toString())",
+            "数字行点数字前必须先 commitComposing：commitText 会替换 composing 区，" +
+                "不先落定就会把拼音吞掉（真机实测：打 ni → 点 5 → 正文只剩「5」）",
+        )
+    }
+
+    /**
+     * 点固定数字行必须判搜索态（2026-10-21 修 P0）。
+     *
+     * 剪贴板搜索面板打开时 26 键仍在、全部路由到搜索框（`onLetterPressed` / `commitPasswordDigit`
+     * 都判 `isPanelSearch()`）。数字行不判，就会把数字 `commit` 给宿主 —— 用户在搜历史，
+     * 正文被插入数字。判据：闭包里必须有这一分支，且分支体是 `appendSearch`（不是上屏）。
+     */
+    @Test
+    fun 数字行点击必须判搜索态() {
+        val build = TestSources.blockAfter(
+            TestSources.codeSource("PinyinKeyboardView.kt"),
+            "private fun buildNumberRow()",
+        )
+        assertTrue("数字行闭包必须判搜索态（否则搜索时数字进了宿主正文）", "isPanelSearch()" in build)
+        assertBefore(
+            build,
+            "searchPanel?.appendSearch(digit.toString())",
+            "listener?.onCommitText(digit.toString())",
+            "搜索态分支必须在上屏之前（顺序反了就成了「先上屏再追加搜索词」）",
+        )
+    }
 
     /**
      * 「导出全部图片」的进程级互斥必须内置在 [startExport] 那一侧。
