@@ -201,15 +201,20 @@ class KeyAppearanceActivity : Activity() {
                 val sp = CandidateText.progressToSp(progress)
                 prefs.candidateTextSp = sp
                 textTextSize.text = CandidateText.formatSp(sp)
-                // 拼音字号为「自动」（pinyinTextSp = 0）时，它的读数由候选字号派生 ⇒ 必须跟刷，
-                // 否则停在页面创建时算出的旧值（实测：候选 42sp、拼音已按 29.4sp 生效，读数仍 20 sp）。
-                // 走 formatPinyinSp 的自动分支：显式档不受影响（该函数对非 0 的 sp 只回显自身）。
-                // ⚠ 不改 `seekPinyinSize.progress`：那会触发它自己的监听，把「自动」写成显式值
-                // （`pinyinTextSp` 从 0 变成 29.4，此后不再跟候选字号联动）。
+                // 拼音字号为「自动」（pinyinTextSp = 0）时，它的**读数与滑杆位置**都由候选字号派生
+                // ⇒ 两者必须一起跟刷，否则停在页面创建时算出的旧值（实测：候选 42sp、拼音已按 29.4sp
+                // 生效，读数 29 sp 而拇指仍停在 20 sp —— 同一行控件与数字自相矛盾）。
+                // 显式档不受影响：formatPinyinSp 对非 0 的 sp 只回显自身，滑杆位置也不动。
+                // 写 progress 会回调拼音监听（`setProgress()` 走 fromUser = false）⇒ 那边第一行
+                // `if (!fromUser) return` 挡住，本行绝不会把「自动」写成显式值。
                 textPinyinSize.text = CandidateText.formatPinyinSp(
                     prefs.pinyinTextSp,
                     CandidateText.pinyinSpOf(sp),
                 )
+                if (prefs.pinyinTextSp == CandidateText.PINYIN_DEFAULT_AUTO) {
+                    seekPinyinSize.progress =
+                        CandidateText.pinyinSpToProgress(CandidateText.pinyinSpOf(sp))
+                }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -224,6 +229,10 @@ class KeyAppearanceActivity : Activity() {
         // 拼音字号滑杆的声明与初值在候选字号块之前（见上）；此处只接监听。
         seekPinyinSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // 只认用户操作：候选字号在「自动」档会把本行位置跟刷过来（`setProgress()`），那条路径
+                // 走 fromUser = false；放行就等于把「自动」写成一个显式值（此后不再跟候选字号联动，
+                // `pinyin_text_sp` 被写脏）。触摸 / 键盘方向键 / 无障碍 ACTION_SET_PROGRESS 走 true。
+                if (!fromUser) return
                 val sp = CandidateText.pinyinProgressToSp(progress)
                 prefs.pinyinTextSp = sp
                 textPinyinSize.text = CandidateText.formatPinyinSp(

@@ -6762,4 +6762,40 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 拼音字号滑杆在「自动」档必须跟着候选字号走（2026-10-22）。
+     *
+     * 只修读数时，真机 28→42sp 后同屏出现「读数 29 sp、拇指停在 20 sp」——
+     * 同一行控件与数字自相矛盾。拇指同样刷成派生值。
+     * 两条反向陷阱必须同时钉住，否则「跟刷」反过来会把自动档写成显式值：
+     * ① 拼音监听的 `onProgressChanged` 第一句就判 `!fromUser`（`setProgress()` 走 false，
+     *    触摸 / 键盘方向键 / 无障碍 ACTION_SET_PROGRESS 走 true，见 AbsSeekBar）；
+     * ② 跟刷本身只在自动档执行（显式档拇指不得被候选字号拖走）。
+     */
+    @Test
+    fun `拼音滑杆自动档必须跟刷且程序化写不得回写`() {
+        val code = codeOf("KeyAppearanceActivity.kt")
+        val pinyin = blockAfter(code, "seekPinyinSize.setOnSeekBarChangeListener")
+        val candidate = blockAfter(code, "seekTextSize.setOnSeekBarChangeListener")
+
+        // ① 程序化写不得落盘：守卫必须出现在写 prefs 之前
+        assertBefore(
+            pinyin,
+            "if (!fromUser) return",
+            "prefs.pinyinTextSp = sp",
+            "拼音字号监听必须挡掉程序化写（否则自动档被写成显式值）",
+        )
+
+        // ② 自动档才跟刷拇指，且值必须走同一套派生口径
+        assertTrue(
+            "候选字号监听必须在自动档跟刷拼音滑杆位置",
+            "prefs.pinyinTextSp == CandidateText.PINYIN_DEFAULT_AUTO" in candidate &&
+                "seekPinyinSize.progress" in candidate,
+        )
+        assertTrue(
+            "跟刷值必须走同一套派生口径（pinyinSpOf → pinyinSpToProgress）",
+            "CandidateText.pinyinSpToProgress(CandidateText.pinyinSpOf(sp))" in candidate,
+        )
+    }
+
 }
