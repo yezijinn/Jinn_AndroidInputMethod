@@ -6456,7 +6456,7 @@ class RecentFixesRegressionTest {
         assertTrue("分区每格点击进单槽编辑", "showLabelDialog(" in section)
         // 一行 10 个等宽均分（用户 2026-10-21 指定）：与键盘那排的左右位置一一对应，
         // 改哪个不用在心里换算。钉「横排 + weight 均分」而不是列数字面量 ——
-        // 写 5 列两行会让页面位置与键盘位置错位，正是用户要求避免的。
+        // 写 5 列两行会让页面位置与键盘位置错位
         assertTrue(
             "数字行分区必须横排一行（与键盘那排的左右位置一致）",
             Regex("""LinearLayout\(this\)\.apply\s*\{\s*orientation = LinearLayout\.HORIZONTAL""")
