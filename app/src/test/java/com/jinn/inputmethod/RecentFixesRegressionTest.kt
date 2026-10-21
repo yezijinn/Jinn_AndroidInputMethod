@@ -6535,7 +6535,7 @@ class RecentFixesRegressionTest {
             """private const val KEY_NUMBER_ROW_LABELS = "number_row_labels"""" in prefs,
         )
         // 长度闸必须比归一后（BUG-35：两侧口径不同源会让脏值从另一侧漏进来）。
-        // ⚠ 判据取「导入分支起点」之后的窗口，不用整份文件：`MAX_NUMBER_ROW_LABELS_CHARS`
+        // 判据取「导入分支起点」之后的窗口，不用整份文件：`MAX_NUMBER_ROW_LABELS_CHARS`
         //    在文件里的第一次出现是常量声明，拿整份文件对拍会让 indexOf 落到声明上而恒失败。
         val imp = prefs.substring(prefs.indexOf("KEY_NUMBER_ROW_LABELS ->"))
         assertTrue("导入侧找不到数字行文本分支", imp.isNotEmpty())

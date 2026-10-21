@@ -222,7 +222,7 @@ class PrefsBackupCoverageTest {
             "KEY_KEY_LETTER_UPPERCASE" to "asBool(v)",
             // 数字行开关（26 键区第一行字母之上那排 1234567890，默认关）
             "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
-            // ⚠ KEY_NUMBER_ROW_LABELS 走归一分支，与 KEY_FAVORITE_SYMBOLS 同款单列在下面，
+            // KEY_NUMBER_ROW_LABELS 走归一分支，与 KEY_FAVORITE_SYMBOLS 同款单列在下面，
             //   不进本表（本表的判据是 `-> asXxx(v)` 形态）
             // 大写仅一次 / 长按小写转大写：外观页两个开关
             "KEY_CAPS_ONE_SHOT" to "asBool(v)",

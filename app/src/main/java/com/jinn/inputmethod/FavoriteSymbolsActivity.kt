@@ -27,7 +27,7 @@ import android.widget.Toast
  *   点开改文本、留空回默认数字；改完即时生效（只刷 10 个键的 label，不重建视图）；
  * - 改动即时落盘（[Prefs.favoriteSymbols] / [Prefs.numberRowLabels]）；
  *   [onPause] 时仅在真正改过收藏内容的情况下通知 IME 重建键盘视图
- *   （进来看看就退出不触发整块重建）。⚠ 数字行文本不走这条：它不重建视图，
+ *   （进来看看就退出不触发整块重建）。数字行文本不走这条：它不重建视图，
  *   由 [saveLabel] 当场推 [JinnIme.onNumberRowLabelsChanged]。
  */
 class FavoriteSymbolsActivity : Activity() {
@@ -127,8 +127,7 @@ class FavoriteSymbolsActivity : Activity() {
 
         // ── 数字行按钮文本（2026-10-21 起并入本页）─────────────────────────
         //
-        // ⚠ 这一组是**新增文案**，属作者域：值为建议稿，尚未经作者定稿。
-        // 定稿只改这几个常量，不涉及其它位置（没有测试钉死字面量）。
+        // 新增文案，尚未定稿；定稿只改这几个常量。
         /** 分区标题 */
         const val TEXT_NUMBER_ROW_SECTION = "数字行文本"
 
