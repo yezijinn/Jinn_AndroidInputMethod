@@ -5802,13 +5802,13 @@ class RecentFixesRegressionTest {
         assertTrue(
             "候选集落定后必须重判三角",
             src.indexOf("lastCandidates = result.candidates") <
-                src.lastIndexOf("updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap)"),
+                src.lastIndexOf("updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)"),
         )
         val relayoutCalls = Regex("collapseCandidatesAndRelayout\\(").findAll(src).count()
         assertTrue("收起后必须重落栏高（定义 + 空输入 + 候选集为空）", relayoutCalls >= 3)
         assertTrue(
             "空输入与候选集为空两处都要走重落栏高",
-            src.contains("collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap)"),
+            src.contains("collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)"),
         )
         assertTrue(
             "重落栏高要按档位而不是展开排数",
@@ -5883,9 +5883,10 @@ class RecentFixesRegressionTest {
         assertFalse("三角判据不得自己读 Prefs", "prefs." in fn)
         assertFalse("三角判据不得读上一帧的落位值", "currentPinyinSp" in fn)
         assertEquals(
-            "两个调用点都要传本帧几何（另有一处透传见 collapseCandidatesAndRelayout）",
+            "两个调用点都要传本帧几何（另有一处透传见 collapseCandidatesAndRelayout）；" +
+                "字距是单条宽度的一部分，必须与候选字号同一个口径一起下发",
             2,
-            Regex("""updateExpandButton\(rowsSetting, candidateSp, pinyinSp, pinyinGap\)""")
+            Regex("""updateExpandButton\(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx\)""")
                 .findAll(src).count(),
         )
         // 展开排数缓存同理：候选条数取自上一帧列表，几何也必须取自上一帧的落位量

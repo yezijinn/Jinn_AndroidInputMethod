@@ -183,6 +183,28 @@ class CandidateRowsTest {
     }
 
     /**
+     * `keyboard_pinyin.xml` 的原文（两条候选路径：单测工作目录是模块根或仓库根）。
+     *
+     * Android 侧跑不了 JVM 布局断言，涉及「XML 默认档 vs 代码常量」的对拍一律读原文核对
+     * （同 `PrefsBackupCoverageTest` 的做法）。
+     */
+    private fun layoutText(): String {
+        val xml = listOf(
+            File("src/main/res/layout/keyboard_pinyin.xml"),
+            File("app/src/main/res/layout/keyboard_pinyin.xml"),
+        ).firstOrNull { it.isFile } ?: error("找不到 keyboard_pinyin.xml")
+        return xml.readText()
+    }
+
+    /** 取某个 id 所在**起始标签**的属性值（自闭合标签按 `/>` 截窗，容器标签按下一个 `>`） */
+    private fun layoutAttr(id: String, name: String): String {
+        val text = layoutText()
+        val block = TestSources.window(text, """android:id="@+id/$id"""", "/>")
+        return Regex("""android:$name="([^"]+)"""").find(block)?.groupValues?.get(1)
+            ?: error("$id 上找不到 android:$name")
+    }
+
+    /**
      * 取 `keyboard_letters` 的**子树**文本（按 `<LinearLayout` / `</LinearLayout>` 配对）。
      *
      * 不用 `TestSources.window(text, "@+id/keyboard_letters", "</LinearLayout>")`：那会在**第一行**
@@ -219,17 +241,8 @@ class CandidateRowsTest {
      */
     @Test
     fun 布局尺寸与代码常量逐项一致() {
-        val xml = listOf(
-            File("src/main/res/layout/keyboard_pinyin.xml"),
-            File("app/src/main/res/layout/keyboard_pinyin.xml"),
-        ).firstOrNull { it.isFile } ?: error("找不到 keyboard_pinyin.xml")
-
-        val text = xml.readText()
-        fun attr(id: String, name: String): String {
-            val block = TestSources.window(text, """android:id="@+id/$id"""", "/>")
-            return Regex("""android:$name="([^"]+)"""").find(block)?.groupValues?.get(1)
-                ?: error("$id 上找不到 android:$name")
-        }
+        val text = layoutText()
+        val attr = ::layoutAttr
 
         // XML 里写的是**默认参数档**的几何：首帧（代码落位之前）与刷新后长得一样。
         // 尺寸真源在 CandidateRows（按用户字号派生），改了默认字号这里会一起红。
@@ -281,6 +294,56 @@ class CandidateRowsTest {
         assertTrue(
             "pinyin_bar 必须排在 candidate_scroll 之后（否则 ✕ 被候选区挡住点击）",
             pinyinBarAt > scrollAt,
+        )
+    }
+
+    /**
+     * 拼音文字必须为**可见**的 ▲ 让出宽度（源码 + XML 双向守卫）。
+     *
+     * 事实（真机 1440×3200 / density 3.5）：✕ 占右端 40dp（140px，文字到 1272），▲ 后加、紧挨在
+     * ✕ 左侧（盒 1132..1272）⇒ 只给 ✕ 预留时，长拼音串的尾部与省略号画进 ▲ 盒，被三角字形压住
+     * （文字暗像素实测 1239..1245，正落在盒内）。修法是「▲ 可见时文字再退一格」。
+     *
+     * 为什么钉在 [updateExpandButton] 一处：它是 ▲ 显隐的唯一判据。让位散成第二个写者时，
+     * 迟早出现「某个形态多让 40dp（拼音条莫名早省略）/ 少让 40dp（又压字）」而无人发现 —— 这里
+     * 三面一起钉：XML 的两格几何、默认档的预留值、以及代码里唯一的写入点与它的算式。
+     */
+    @Test
+    fun 拼音文字必须为可见的展开按钮让出宽度() {
+        // 两格几何：▲ 的宽 = 它自己那格；marginEnd 跳过的是 ✕ 那格（不是 ▲ 那格 —— 两者只是
+        // 当前恰好同值，各钉各自的语义才不会在「✕ 改宽」时错位）
+        assertEquals(
+            "${CandidateRows.EXPAND_BUTTON_WIDTH_DP}dp",
+            layoutAttr("btn_expand_candidates", "layout_width"),
+        )
+        assertEquals(
+            "${CandidateRows.CLEAR_BUTTON_WIDTH_DP}dp",
+            layoutAttr("btn_expand_candidates", "layout_marginEnd"),
+        )
+        // 默认档（▲ 隐藏）只给 ✕ 让位；代码在 ▲ 出现时补上第二格 ⇒ 首帧与刷新后同值，不抖
+        assertEquals(
+            "${CandidateRows.CLEAR_BUTTON_WIDTH_DP}dp",
+            layoutAttr("candidate_pinyin", "paddingEnd"),
+        )
+
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        // 写法钉：默认档 + 可选第二格（跨行改写也算，只要算式还是这条）
+        assertTrue(
+            "▲ 可见时拼音文字须退到「✕ + ▲」两格之后",
+            Regex(
+                """dpExact\(\s*CandidateRows\.CLEAR_BUTTON_WIDTH_DP \+\s*""" +
+                    """if \(show\) CandidateRows\.EXPAND_BUTTON_WIDTH_DP else 0,?\s*\)""",
+            ).containsMatchIn(src),
+        )
+        assertTrue(
+            "仅在 paddingEnd 真的变化时才 setPaddingRelative（否则每次按键都多一次 requestLayout）",
+            "if (viewCandidatePinyin.paddingEnd != pinyinEndPadPx)" in src,
+        )
+        // 唯一写者：本文件里 viewCandidatePinyin 的内边距只允许一处写入
+        assertEquals(
+            "拼音文字内边距只允许一个写者（updateExpandButton）",
+            1,
+            Regex("""viewCandidatePinyin\.setPaddingRelative""").findAll(src).count(),
         )
     }
 
@@ -419,6 +482,52 @@ class CandidateRowsTest {
         assertEquals(CandidateRows.MAX_EXPANDED_ROWS, CandidateRows.maxRowsByCoveredKeys(137, 0))
         // 键高极矮时至少给 1 排（不得算出 0 排把候选吞掉）
         assertEquals(1, CandidateRows.maxRowsByCoveredKeys(1000, 1))
+    }
+
+    @Test
+    fun 一屏列数按栏宽整除本帧单条宽() {
+        // 真机实测（1440×3200 / density 3.5 / 候选字距 12dp ⇒ 半字距 21px，`ou` 首条为单字）：
+        // 14sp ⇒ 字宽 49 + 42 = 91 ⇒ 1440/91 = 15；42sp ⇒ 147 + 42 = 189 ⇒ 1440/189 = 7
+        assertEquals(15, CandidateRows.columnsPerRow(1440, 91))
+        assertEquals(7, CandidateRows.columnsPerRow(1440, 189))
+        // 单条比栏宽还宽：仍算 1 列（不得算出 0 列把候选吞掉）
+        assertEquals(1, CandidateRows.columnsPerRow(1440, 2000))
+        assertEquals(1, CandidateRows.columnsPerRow(189, 189))
+        // 几何未取到（首帧 / 空候选）：按 1，与「排数 = 候选数、仍被上限夹住」的旧口径一致
+        assertEquals(1, CandidateRows.columnsPerRow(0, 91))
+        assertEquals(1, CandidateRows.columnsPerRow(1440, 0))
+        assertEquals(1, CandidateRows.columnsPerRow(-5, -9))
+    }
+
+    @Test
+    fun 展开三角判据必须取本帧字号而不是已布局子视图宽度() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        // 排数换算只能走「本帧字号量字宽」的估计（L-1397）
+        assertTrue(
+            "expandedRowsFor 必须调 columnsPerRowForFrame(candidateSp, spacingHalfPx)",
+            "columnsPerRowForFrame(candidateSp, spacingHalfPx)" in src,
+        )
+        assertFalse(
+            "expandedRowsFor 不得再调 estimateColumnsPerRow（那读的是上一帧子视图宽度）",
+            "val perColumn = estimateColumnsPerRow()" in src,
+        )
+        assertTrue(
+            "本帧估计必须按字号量字宽（measureText + scaledDensity 与 setTextSize(SP) 同换算）",
+            "candidateMeasurePaint.measureText(sample)" in src &&
+                "sizeSp * resources.displayMetrics.scaledDensity" in src,
+        )
+        // 分页预取仍走旧口径（单位是已布局的列宽，展开态是列容器）：调用点只留一个
+        assertEquals(
+            "estimateColumnsPerRow() 只应剩「定义 + 分页预取」两处",
+            2,
+            Regex("""estimateColumnsPerRow\(\)""").findAll(src).count(),
+        )
+        // 单条宽度的另一半（字距）本帧只读一次，渲染与判据共用
+        assertFalse(
+            "字距不得在渲染路径里再读一遍 Prefs（会与判据用到不同的值）",
+            "dpFloat(prefs.candidateSpacingDp / 2f)" in src,
+        )
+        assertTrue("字距统一由 candidateSpacingHalfPx 派生", "candidateSpacingHalfPx(prefs.candidateSpacingDp)" in src)
     }
 
     @Test

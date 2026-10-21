@@ -52,6 +52,16 @@ internal object CandidateRows {
     /** 「✕ 清空候选」按钮宽度（dp）：叠在**拼音条内右端**（不遮候选），拼音文字为它让出同样宽度 */
     const val CLEAR_BUTTON_WIDTH_DP = 40
 
+    /**
+     * 「▲ 展开候选」按钮宽度（dp）：与 ✕ 同宽、紧挨在它左侧（XML 的 `layout_width` 同值，
+     * `layout_marginEnd` 等于 [CLEAR_BUTTON_WIDTH_DP] —— 它跳过的是 ✕ 那一格）。
+     *
+     * 拼音文字必须为**可见**的 ▲ 也让出这一格，否则长拼音串的尾部与省略号会画进按钮盒、
+     * 被三角字形压住（真机：文字暗像素落在 x=1239..1245，而按钮盒是 1132..1272）。
+     * 让位的写入点与显隐判据同处一处（[updateExpandButton]），见那里的说明。
+     */
+    const val EXPAND_BUTTON_WIDTH_DP = 40
+
     /** 单排候选行高（dp，默认字体下）：字号 × [LINE_HEIGHT_RATIO]（默认档 28sp → 39.2dp） */
     fun rowHeightDp(candidateSp: Float): Float =
         CandidateText.clampSp(candidateSp) * LINE_HEIGHT_RATIO
@@ -202,6 +212,23 @@ internal object CandidateRows {
 
     /** 把排数夹到合法区间 [1, MAX_EXPANDED_ROWS]（纯函数，供各处复用同一口径） */
     fun clampRows(rows: Int): Int = rows.coerceIn(1, MAX_EXPANDED_ROWS)
+
+    /**
+     * 一屏横向能并排几条候选：`栏宽 ÷ 单条宽`（向下取整，至少 1）。
+     *
+     * 单条宽必须是**本帧字号**下的值（字宽 + 左右各半字距）。读已布局子视图的 `width` 会拿到
+     * 上一帧的字号（`BUG.md` L-1397）：`setTextSize` 要等下一次布局才改 `width`，而判据与它
+     * 同在一次刷新里 ⇒ 三角显隐按旧字号算，两个方向都会错。
+     *
+     * 抽成纯函数是为了让退化输入（栏宽未取到 / 单条宽为 0）有确定的返回值，并被单测直接钉住。
+     *
+     * @param barWidthPx 候选栏宽（px）；≤0（首帧未布局）按 1 处理
+     * @param itemWidthPx 单条候选宽（px，含左右字距）；≤0 按 1 处理
+     */
+    fun columnsPerRow(barWidthPx: Int, itemWidthPx: Int): Int {
+        if (barWidthPx <= 0 || itemWidthPx <= 0) return 1
+        return (barWidthPx / itemWidthPx).coerceAtLeast(1)
+    }
 
     /**
      * 展开态**可见**排数：按实际候选量算，再被上限与可用高度夹取。
