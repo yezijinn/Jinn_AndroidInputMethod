@@ -72,18 +72,18 @@ class CandidateRowsTest {
     @Test
     fun 高度与字号按档位() {
         val sp = CandidateText.DEFAULT_SP
-        // 单行 = 拼音条 + 一排候选（拼音与候选之间不留间隔，用户 2026-09-25 要求「间距缩小为 0」）
-        assertEquals(46, CandidateRows.heightDp(CandidateRows.SINGLE, sp))
-        assertEquals(74, CandidateRows.heightDp(CandidateRows.DOUBLE, sp))
-        // 默认档：候选 20sp、拼音 14sp（20 × 0.7，字号两档统一的历史口径）
-        assertEquals(20f, sp, 0f)
-        assertEquals(14f, CandidateText.pinyinSpOf(sp), 0f)
+        // 单行 = 拼音条 + 一排候选（拼音与候选之间不留间隔，间距为 0）
+        assertEquals(65, CandidateRows.heightDp(CandidateRows.SINGLE, sp))
+        assertEquals(104, CandidateRows.heightDp(CandidateRows.DOUBLE, sp))
+        // 默认档：候选 28sp、拼音 19.6sp（28 × 0.7）
+        assertEquals(28f, sp, 0f)
+        assertEquals(19.6f, CandidateText.pinyinSpOf(sp), 0.01f)
         // 拼音条比候选行矮：只给字形、不给行框余量（默认字体下两者 px 高度见 `默认字体下行高与拼音条就是紧凑档`）
         assertTrue(CandidateRows.pinyinBarHeightDp(CandidateText.pinyinSpOf(sp)) < CandidateRows.rowHeightDp(sp))
         // 候选行高就是字号的行框本身（1.4 系数），不留额外留白
-        assertEquals(28f, CandidateRows.rowHeightDp(sp), 0.01f)
+        assertEquals(39.2f, CandidateRows.rowHeightDp(sp), 0.01f)
         // 字号是栏高的自变量：调大跟着涨、调小跟着收（这是本参数的意义所在）
-        assertTrue(CandidateRows.heightDp(CandidateRows.SINGLE, 28f) > CandidateRows.heightDp(CandidateRows.SINGLE, sp))
+        assertTrue(CandidateRows.heightDp(CandidateRows.SINGLE, 42f) > CandidateRows.heightDp(CandidateRows.SINGLE, sp))
         assertTrue(CandidateRows.heightDp(CandidateRows.SINGLE, 14f) < CandidateRows.heightDp(CandidateRows.SINGLE, sp))
         // 复用块（功能面板 / 符号标签）的最小高度取单行档整栏高度，同样跟着字号走
         assertEquals(CandidateRows.heightDp(CandidateRows.SINGLE, sp), CandidateRows.singleBarHeightDp(sp))
@@ -97,17 +97,17 @@ class CandidateRowsTest {
         val bar = CandidateRows.pinyinBarHeightPx(d, fontScale = 1f, pinyinSp = CandidateText.pinyinSpOf(sp))
         assertEquals(bar + perRow, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
         assertEquals(bar + perRow * 2, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
-        // 默认档具体 px（density 3）：拼音条 54 + 单排 84 = 138；双排 54 + 168 = 222
-        assertEquals(138, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
-        assertEquals(222, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
+        // 默认档具体 px（density 3）：拼音条 78 + 单排 117 = 195；双排 78 + 234 = 312
+        assertEquals(195, CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp))
+        assertEquals(312, CandidateRows.barHeightPx(CandidateRows.DOUBLE, d, 1f, sp))
 
         // 展开态栏高（2026-10-21）：向下覆盖键区，按**整行字母键**向上取整 ——
-        // 栏底落在行缝上，不会把某一行键拦腰截断。默认档：四排网格 = 54 + 84×4 = 390，
-        // 增量 252px 要盖到两行键（189×2 = 378）⇒ 栏高 138 + 378 = 516。
+        // 栏底落在行缝上，不会把某一行键拦腰截断。默认档：四排网格 = 78 + 117×4 = 546，
+        // 增量 351px 要盖到两行键（231×2 = 462）⇒ 栏高 195 + 462 = 657。
         val base = CandidateRows.barHeightPx(CandidateRows.SINGLE, d, 1f, sp)
-        val keyRow = 189 // 54dp × 3.5（KeyAppearance.DEFAULT_KEY_HEIGHT_DP × density）
+        val keyRow = 231 // 66dp × 3.5（KeyAppearance.DEFAULT_KEY_HEIGHT_DP × density）
         val grid4 = bar + perRow * CandidateRows.MAX_EXPANDED_ROWS
-        assertEquals(516, CandidateRows.expandedBarHeightPx(grid4, base, keyRow))
+        assertEquals(657, CandidateRows.expandedBarHeightPx(grid4, base, keyRow))
         // 增量不足一行也取整到一行：栏底同样落在行缝上
         assertEquals(base + keyRow, CandidateRows.expandedBarHeightPx(base + 1, base, keyRow))
         // 网格不比收起档高 ⇒ 栏高不变（展开两排但候选少时不能凭空长高）
@@ -177,9 +177,9 @@ class CandidateRowsTest {
     fun 越界行数落回单行档() {
         // Prefs 已做归一，这里守的是兜底：任何非 2 的值都不得算成双行
         val sp = CandidateText.DEFAULT_SP
-        assertEquals(46, CandidateRows.heightDp(0, sp))
-        assertEquals(46, CandidateRows.heightDp(3, sp))
-        assertEquals(46, CandidateRows.heightDp(-1, sp))
+        assertEquals(65, CandidateRows.heightDp(0, sp))
+        assertEquals(65, CandidateRows.heightDp(3, sp))
+        assertEquals(65, CandidateRows.heightDp(-1, sp))
     }
 
     /**

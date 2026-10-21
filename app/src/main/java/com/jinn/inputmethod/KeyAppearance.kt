@@ -98,7 +98,7 @@ object KeyAppearance {
      * 与 `keyboard_pinyin.xml` 里三行的 54dp **刻意取同一个数**：默认值即「用户没动过滑杆时的原始观感」，
      * 两者一旦分叉，从没打开过外观页的用户会在首次 `configure()` 后看到键盘莫名变高或变矮。
      */
-    const val DEFAULT_KEY_HEIGHT_DP = 54f
+    const val DEFAULT_KEY_HEIGHT_DP = 66f
 
     /** SeekBar 最大进度（高度：见 [MIN_KEY_HEIGHT_DP]~[MAX_KEY_HEIGHT_DP]，步进 [KEY_HEIGHT_STEP_DP]） */
     val KEY_HEIGHT_PROGRESS_MAX: Int = progressSteps(MIN_KEY_HEIGHT_DP, MAX_KEY_HEIGHT_DP, KEY_HEIGHT_STEP_DP)
@@ -138,7 +138,7 @@ object KeyAppearance {
     const val SPACING_STEP_DP = 1f
 
     /** 默认字距：10dp（2026-10-02 定；此前的 0~20dp 定义域与 4dp 默认值已被取代） */
-    const val DEFAULT_SPACING_DP = 10f
+    const val DEFAULT_SPACING_DP = 12f
 
     /**
      * SeekBar 最大进度：[MIN_SPACING_DP]~[MAX_SPACING_DP]、每格 [SPACING_STEP_DP]。

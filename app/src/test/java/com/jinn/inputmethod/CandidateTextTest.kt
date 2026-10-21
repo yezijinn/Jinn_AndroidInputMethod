@@ -14,11 +14,11 @@ class CandidateTextTest {
 
     @Test
     fun 默认档与历史口径一致() {
-        assertEquals(20f, CandidateText.DEFAULT_SP, 0f)
+        assertEquals(28f, CandidateText.DEFAULT_SP, 0f)
         assertEquals(14f, CandidateText.MIN_SP, 1f)
         assertEquals(42f, CandidateText.MAX_SP, 0f)   // 2026-10-09：28 → 42（外观页定义域 ×2）
-        // 默认档拼音字号 = 20 × 0.7 = 14sp（改造前写死的 14sp，观感逐像素不变）
-        assertEquals(14f, CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP), 0.001f)
+        // 默认档拼音字号 = 28 × 0.7 = 19.6sp
+        assertEquals(19.6f, CandidateText.pinyinSpOf(CandidateText.DEFAULT_SP), 0.001f)
         // 滑杆格数 = 定义域跨度 / 步进（42 − 14 = 28 格；2026-10-09 定义域 ×2 前是 14 格）
         assertEquals(28, CandidateText.PROGRESS_MAX)
     }
@@ -30,12 +30,12 @@ class CandidateTextTest {
         // 上界随定义域扩到 42（40 现在是合法值，不再是上界）
         assertEquals(40f, CandidateText.clampSp(40f), 0f)
         assertEquals(42f, CandidateText.clampSp(999f), 0f)
-        // 步进对齐：19.4 → 19、19.6 → 20
-        assertEquals(19f, CandidateText.clampSp(19.4f), 0f)
-        assertEquals(20f, CandidateText.clampSp(19.6f), 0f)
+        // 步进对齐：27.4 → 27、27.6 → 28
+        assertEquals(27f, CandidateText.clampSp(27.4f), 0f)
+        assertEquals(28f, CandidateText.clampSp(27.6f), 0f)
         // NaN / Infinity 退回默认值：放行会让 NaN 一路传到 setTextSize 与布局高度
-        assertEquals(20f, CandidateText.clampSp(Float.NaN), 0f)
-        assertEquals(20f, CandidateText.clampSp(Float.POSITIVE_INFINITY), 0f)
+        assertEquals(28f, CandidateText.clampSp(Float.NaN), 0f)
+        assertEquals(28f, CandidateText.clampSp(Float.POSITIVE_INFINITY), 0f)
     }
 
     @Test

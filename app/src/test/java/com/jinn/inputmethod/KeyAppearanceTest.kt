@@ -83,10 +83,10 @@ class KeyAppearanceTest {
         assertEquals(5f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
         assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
         // 字距默认 10dp（2026-10-02 定）
-        assertEquals(10f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
+        assertEquals(12f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
         // 键高默认 54dp：必须与 keyboard_pinyin.xml 三行容器的 54dp 一致，否则「没动过滑杆」的用户
         // 在首次 configure() 后键盘会莫名变高/变矮（这条把两者钉在一起）
-        assertEquals(54f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
+        assertEquals(66f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
         assertEquals(90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
         assertTrue(KeyAppearance.DEFAULT_KEY_HEIGHT_DP in KeyAppearance.MIN_KEY_HEIGHT_DP..KeyAppearance.MAX_KEY_HEIGHT_DP)
         assertTrue(KeyAppearance.DEFAULT_CORNER_DP in KeyAppearance.MIN_CORNER_DP..KeyAppearance.MAX_CORNER_DP)

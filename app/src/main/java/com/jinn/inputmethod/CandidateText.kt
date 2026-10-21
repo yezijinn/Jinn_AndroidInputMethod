@@ -36,7 +36,7 @@ object CandidateText {
     const val STEP_SP = 1f
 
     /** 默认字号（sp）：20sp，与历史观感一致 */
-    const val DEFAULT_SP = 20f
+    const val DEFAULT_SP = 28f
 
     /** 拼音字号与候选字号的比例：20sp → 14sp（与「拼音 14sp、候选 20sp」的历史口径一致） */
     const val PINYIN_RATIO = 0.7f

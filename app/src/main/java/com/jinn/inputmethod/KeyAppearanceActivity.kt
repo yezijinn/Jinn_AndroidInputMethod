@@ -673,13 +673,13 @@ class KeyAppearanceActivity : Activity() {
         const val TEXT_PINYIN_LINE_GAP_TITLE = "拼音占高"
 
         /**
-         * 「数字行」开关的标题文案（26 键第一行字母之上那排 `1234567890`）。
+         * 「加一行数字键」开关的标题文案（26 键第一行字母之上那排 `1234567890`）。
          *
-         * 候选值，尚未定稿。「数字行」按项目既有命名习惯取（组内其它项都是 4~6 字短语标题）。
+         * 候选值，尚未定稿。按项目既有命名习惯取（组内其它项都是 4~6 字短语标题）。
          * 定稿后只改这一处常量，没有其它地方引用这个字面量；
          * 也不用设置键名（`number_row_enabled`）冒充文案 —— 设置页会直接显示它。
          */
-        const val TEXT_NUMBER_ROW_TITLE = "数字行"
+        const val TEXT_NUMBER_ROW_TITLE = "加一行数字键"
 
     /** 「键高」行的标题（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_KEY_HEIGHT_TITLE = "按钮键高"
