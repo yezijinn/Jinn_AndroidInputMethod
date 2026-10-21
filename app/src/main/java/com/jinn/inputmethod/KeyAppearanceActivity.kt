@@ -38,7 +38,6 @@ class KeyAppearanceActivity : Activity() {
     private lateinit var spinnerCandidateRows: UserAwareSpinner
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
-    private lateinit var switchCandidatePaging: Switch
 
     /** 数字行开关（26 键区第一行字母之上那排 `1234567890`） */
     private lateinit var switchNumberRow: Switch
@@ -374,16 +373,6 @@ class KeyAppearanceActivity : Activity() {
             JinnIme.onKeyAppearanceChanged()
         }
 
-        // 候选浏览方式：勾选 = 左右跟手滑动；不勾 = 左右整屏翻页
-        switchCandidatePaging = findViewById(R.id.switch_candidate_paging)
-        switchCandidatePaging.text = TEXT_CANDIDATE_PAGING_TITLE
-        switchCandidatePaging.isChecked = !prefs.candidatePaging
-        switchCandidatePaging.setOnCheckedChangeListener { _, checked ->
-            prefs.candidatePaging = !checked
-            Diagnostics.i(TAG, "候选浏览方式: ${if (checked) "滑动" else "翻页"}")
-            JinnIme.onKeyAppearanceChanged()
-        }
-
         // 数字行（26 键区第一行字母之上那排 1234567890）：默认关 = 与重构前一致。
         // 开 / 关都走同一条即时生效路径：refreshAppearance → applyKeyAppearance → syncNumberRow
         switchNumberRow = findViewById(R.id.switch_number_row)
@@ -713,9 +702,6 @@ class KeyAppearanceActivity : Activity() {
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
     const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
-
-    /** 候选浏览方式开关标题：勾选 = 左右跟手滑动，不勾 = 左右整屏翻页 */
-    const val TEXT_CANDIDATE_PAGING_TITLE = "候选不用翻页"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */

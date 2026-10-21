@@ -416,8 +416,8 @@ class CandidateRowsTest {
             Regex("""rowsSetting == CandidateRows\.SINGLE && lastCandidates\.size > 1""").containsMatchIn(src),
         )
         assertTrue(
-            "展开态横向强制跟手",
-            "prefs.candidatePaging && !candidatesExpanded" in src,
+            "展开态横向恒跟手（翻页模式已移除，展开态没有第二种浏览方式）",
+            "candidateScroll.expanded = candidatesExpanded" in src,
         )
         // 展开态绝不能走增量追加（BUG.md L-1394）：`appendCandidateViews` 只认逐条 / 两排一列，
         // 3/4 排的列会被拼成竖向错位的裸 TextView 块 —— 实测第 9 列「溢咦倚矣」整体下移。

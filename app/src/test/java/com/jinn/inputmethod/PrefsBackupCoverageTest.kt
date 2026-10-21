@@ -100,8 +100,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-19 起 102 → 103：新增「功能面板数字字号」1 键（外观页滑杆，换机要带走）
         // 2026-10-21 起 103 → 103：删「功能面板数字字号」1 键（该行整条移除）、
         //                       增「数字行开关」1 键（26 键区第四行，换机要带走）—— 净零
-        // 2026-10-21 起 103 → 104：增「数字行按钮文本」1 键（符号自定义页改那 10 个格子）
-        assertEquals("提取到的键常量应是 104 个（改键数请同步本断言）", 104, keyConstants.size)
+        // 2026-10-21 起 104 → 103：移除「候选浏览方式」1 键（翻页模式取消，恒跟手滑动）
+        assertEquals("提取到的键常量应是 103 个（改键数请同步本断言）", 103, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -145,7 +145,7 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_ROWS" to "asInt(v)",
             "KEY_SHOW_KEY_HINT" to "asBool(v)",
             "KEY_SHOW_QUANPIN" to "asBool(v)",
-            "KEY_CANDIDATE_PAGING" to "asBool(v)",
+            "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
             "KEY_RARE_TIER2" to "asBool(v)",
             "KEY_RARE_TIER3" to "asBool(v)",
@@ -533,7 +533,6 @@ class PrefsBackupCoverageTest {
             "KEY_CANDIDATE_ROWS" to "candidate_rows",
             "KEY_SHOW_KEY_HINT" to "show_key_hint",
             "KEY_SHOW_QUANPIN" to "show_quanpin",
-            "KEY_CANDIDATE_PAGING" to "candidate_paging",
             "KEY_KEY_LETTER_UPPERCASE" to "key_letter_uppercase",
             "KEY_NUMBER_ROW_ENABLED" to "number_row_enabled",
             "KEY_NUMBER_ROW_LABELS" to "number_row_labels",

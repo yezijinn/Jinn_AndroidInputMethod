@@ -588,12 +588,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var candidateRenderArgs: CandidateRenderArgs? = null
 
     /**
-     * 候选浏览方式（[Prefs.candidatePaging]）：true = 左右整屏翻页，false = 左右跟手滑动。
-     * 由 [refreshCandidateBar] 每帧下发到 [candidateScroll]（见 [CandidateScrollView]）。
-     */
-    private var candidatePaging = false
-
-    /**
      * 复位候选渲染指纹（2026-10-03 修复 L-809 / L-818）：下一次 [renderCandidateItems] 必须重建整棵树。
      *
      * 两条路径需要它：① 换肤 / 改字距（外观变了）；② 本容器被**非候选形态**占用过
@@ -3086,11 +3080,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             collapseCandidates()
         }
         lastCandidatesInput = inputNow
-        // 候选浏览方式（滑动 / 翻页）：本帧只读一次，并下发到滚动容器。
-        // ⚠ 展开态**强制跟手滑动**：纵向要让给「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
-        // 形态一律按**已渲染**的形态下发：补间期间内容已是目标态，滚动层必须与它一致
-        candidatePaging = prefs.candidatePaging && !candidatesExpanded
-        candidateScroll.paging = candidatePaging
+        // 展开态：横向仍走列滑动（CandidateScrollView 自己不消费纵向），纵向交给父级
+        // 「换行浏览」，横竖两个手势不能互相抢（BUG.md L-1393）。
         candidateScroll.expanded = candidatesExpanded
         candidateRowsScroll.expanded = candidatesExpanded
         // 展开态：排数按实际候选量算（上限四排，屏幕不够时静默按可用高度夹取）；三角只在单行档

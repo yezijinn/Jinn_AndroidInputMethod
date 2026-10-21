@@ -418,8 +418,11 @@
                     android:textColor="@color/text_primary"
                     android:textSize="14sp" />
 
+                <!-- 第二列：数字行（26 键区第一行字母之上那排 1234567890，默认关）。
+                     与「拼音显示为声韵」同占一行两列；标题由代码下发
+                     （strings.xml 默认禁改，见 KeyAppearanceActivity.TEXT_NUMBER_ROW_TITLE）。 -->
                 <Switch
-                    android:id="@+id/switch_candidate_paging"
+                    android:id="@+id/switch_number_row"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
@@ -535,27 +538,6 @@
                     android:minWidth="0dp" />
             </LinearLayout>
 
-            <!-- 输入与显示最后一项：数字行（26 键区第一行字母之上的 1234567890，默认关）。
-                 单独一行、占满整行（单个 Switch + weight=1，没有并列的第二列）：
-                 这项文字比同组其它项长，挤进半列会被压窄；thumb 因此贴在屏右，
-                 与上面两列网格里「右列」开关的 thumb 对齐。
-                 标题同样由代码下发（strings.xml 默认禁改，见 KeyAppearanceActivity.TEXT_NUMBER_ROW_TITLE）。 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:baselineAligned="false"
-                android:orientation="horizontal">
-
-                <Switch
-                    android:id="@+id/switch_number_row"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
-            </LinearLayout>
             <!-- 皮肤：两段（亮色 / 暗色）各一个标题 + 一个竖向容器。
                  标题（带当前档位状态）与选项文案都在代码里给（选项名取自 KeyboardSkin.label），
                  避免新增字符串资源；预览块由 PinyinKey 自绘，不引入任何图片资源。

@@ -288,16 +288,6 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHOW_QUANPIN, value) }
 
     /**
-     * 候选浏览方式：false = 左右跟手滑动（默认），true = 左右整屏翻页。
-     *
-     * 翻页模式下候选按整屏一页浏览、滑动停下来吸附到页边界（见 [PinyinKeyboardView]），
-     * 追加渲染落在新的一页 —— 避开「跟手滑动时往尾部插内容」的不跟手观感。
-     */
-    var candidatePaging: Boolean
-        get() = boolOr(KEY_CANDIDATE_PAGING, false)
-        set(value) = sp.edit { putBoolean(KEY_CANDIDATE_PAGING, value) }
-
-    /**
      * 上次「检查更新」成功的时刻（epoch ms，0 = 从未成功检查过）。
      *
      * 只由设置页在拿到有效结果（有更新 / 已最新）时写入：失败不写，下次打开设置页仍会静默重试；
@@ -1476,7 +1466,6 @@ class Prefs(private val appContext: Context) {
         put(KEY_CANDIDATE_ROWS, candidateRows)
         put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_SHOW_QUANPIN, showQuanpin)
-        put(KEY_CANDIDATE_PAGING, candidatePaging)
         put(KEY_USER_LEARNING, userLearning)
         put(KEY_RARE_TIER2, rareTier2)
         put(KEY_RARE_TIER3, rareTier3)
@@ -1672,7 +1661,6 @@ class Prefs(private val appContext: Context) {
                 KEY_CANDIDATE_ROWS -> asInt(v)?.let { candidateRows = it; ok() } ?: bad(key)
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
-                KEY_CANDIDATE_PAGING -> asBool(v)?.let { candidatePaging = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
                 KEY_RARE_TIER2 -> asBool(v)?.let { rareTier2 = it; ok() } ?: bad(key)
                 KEY_RARE_TIER3 -> asBool(v)?.let { rareTier3 = it; ok() } ?: bad(key)
@@ -1992,9 +1980,7 @@ class Prefs(private val appContext: Context) {
         /** 双拼候选栏拼音行显示方式（false = 按下的字母 / true = 声母韵母全拼，见 [Prefs.showQuanpin]） */
         private const val KEY_SHOW_QUANPIN = "show_quanpin"
 
-    /** 候选浏览方式：false = 跟手滑动 / true = 整屏翻页（见 [Prefs.candidatePaging]） */
-    private const val KEY_CANDIDATE_PAGING = "candidate_paging"
-    private const val KEY_USER_LEARNING = "user_learning"
+        private const val KEY_USER_LEARNING = "user_learning"
 
     /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
     private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"
