@@ -236,9 +236,11 @@ class FavoriteSymbolsActivity : Activity() {
      * 渲染判据**只有一条**：`Prefs.numberRowEnabled`。数字行开关关着时整段不 `addView`
      * （不是 GONE）—— 关着的人在本页不该看到一个与自己无关的分区。
      *
-     * 为什么 5 列两行而不是 10 列一行：键盘那排是 10 列（每键约 48dp），页面里
-     * 10×44dp 加默认外边距在窄屏会溢出；5 列是 `PageStyle` 卡片的既有口径，
-     * 读写顺序（1-5 / 6-0）与键盘一致。
+     * **一行 10 个、等宽均分**（用户 2026-10-21 指定）：与键盘那排的视觉完全一致 ——
+     * 第 n 个格子在页面里的左右位置就是它在键盘上的左右位置，改哪个不用在心里换算。
+     * 早先的 5 列两行为的是「44dp 格子加默认外边距不在窄屏溢出」，那个顾虑用
+     * `LinearLayout` + weight 均分即可解：格宽由屏宽除出来（1440dp 屏约 128dp），
+     * 高度仍取与收藏格同款的 44dp，触摸热区不缩水。
      *
      * 为什么放在收藏分页**之前**：固定 10 个槽位与「收藏按页增长」是两套结构，
      * 放在后面会让「收藏翻页」把数字行分区挤到看不见的地方。
@@ -261,27 +263,31 @@ class FavoriteSymbolsActivity : Activity() {
             setPadding(0, 0, 0, PageStyle.dp(context, 4))
         })
         val cell = PageStyle.dp(this, 44)
-        val grid = GridLayout(this).apply {
-            columnCount = 5
-            useDefaultMargins = true
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
         }
         labels.forEachIndexed { i, text ->
-            grid.addView(Button(this).apply {
+            row.addView(Button(this).apply {
                 this.text = text
-                textSize = 15f
+                // 13sp：格宽由屏宽除出来（1440dp 屏约 128dp），比收藏格窄一半，
+                // 15sp 在 4 字文本下会挤到换行
+                textSize = 13f
                 isAllCaps = false
                 minWidth = 0
                 minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
+                setPadding(0, 0, 0, 0)
                 background = getDrawable(R.drawable.btn_aurora_secondary)
                 setTextColor(getColor(R.color.text_primary))
                 stateListAnimator = null
                 elevation = 0f
                 contentDescription = text
-                layoutParams = GridLayout.LayoutParams().apply { width = cell; height = cell }
+                layoutParams = LinearLayout.LayoutParams(0, cell, 1f)
                 setOnClickListener { showLabelDialog(i) }
             })
         }
-        PageStyle.addCard(listContainer, grid)
+        PageStyle.addCard(listContainer, row)
     }
 
     /**
