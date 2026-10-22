@@ -4058,11 +4058,18 @@ class JinnIme : InputMethodService() {
     /**
      * 删除键三击（双击+长按）：清空输入框全部文本。
      *
-     * 实现：光标折叠到 0 后删「光标之后」的全部内容。不再用 Ctrl+A + 删除：
-     * 按 Android 的 `InputConnection.deleteSurroundingText` 规则，它只作用于选区前后、
-     * 无法影响选区内容，AOSP `BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
+     * 实现：先折叠光标与拖选，再**按光标两侧的实际长度**删光。两条硬口径：
+     *
+     * ① 长度必须在 `setSelection` **之后**量。旧写法在折叠前量 `getTextAfterCursor`：
+     *    光标在末尾（正常打字后的常态）时 `after=0` ⇒ `deleteSurroundingText(0, 0)`
+     *    一个字符都不删，可这个手势在界面上没有任何提示（BUG.md L-1435，真机 40 字一删不掉）。
+     * ② 只量一侧不够。AOSP `deleteSurroundingText(beforeLength, afterLength)` 只删
+     *    「选区（含组合区）两侧」，选区本体不在范围内，删完还会把 `b` 左移补偿；
+     *    所以先 `setSelection(0, 0)` 折叠选区，再按 `before + after` 两侧各删一次 ——
+     *    宿主若没理会那次 `setSelection`，量到的仍是「当前光标两侧」的真值，照样删得干净。
+     *
+     * 不再用 Ctrl+A + 删除：`BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
      * 旧写法在标准宿主上一个字符都删不掉，只在「宿主不接受 Ctrl+A」时误删光标前的半截文本。
-     * 新写法不依赖宿主对快捷键的支持：`afterLength` 会被实现钳到文本末尾。
      */
     /**
      * 包住**同步的宿主调用**（`InputConnection` 的写操作与 `sendDownUpKeyEvents`）。
@@ -4097,15 +4104,28 @@ class JinnIme : InputMethodService() {
         // `end = b + afterLength`，当光标不在开头（b > 0，宿主有 composing 区或忽略了
         // setSelection）时 b + Int.MAX_VALUE 溢出成负数 ⇒ `end > length` 不成立、
         // 不钳位、`numDeleteAfter < 0` ⇒ 整段**静默跳过**，一个字符都不删。
-        // 先取光标后的实际长度再按它删，语义明确且不依赖实现的上界行为。
-        val after = connection.getTextAfterCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
+        // 先取光标两侧的实际长度再按它删，语义明确且不依赖实现的上界行为。
+        //
+        // 逐轮删：单次取文本有 [MAX_SCAN_CHARS] 上限，超长文本（长文笔记 / 网页输入框）
+        // 一轮删不完，故量一次删一轮，直到两侧都取空；某一轮长度没变小说明宿主没配合删除，
+        // 立刻收手，不空转跨进程调用。
         val ok = guardHostCall("deleteAllText") {
+            // 先折叠光标与拖选（选区本体不在 deleteSurroundingText 的删除范围内）
             connection.setSelection(0, 0)
-            if (after > 0) connection.deleteSurroundingText(0, after)
-            else connection.deleteSurroundingText(0, 0)
+            var remaining = -1
+            var rounds = 0
+            while (rounds < DELETE_ALL_MAX_ROUNDS) {
+                val before = connection.getTextBeforeCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
+                val after = connection.getTextAfterCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
+                val total = before + after
+                if (total == 0 || total == remaining) break
+                remaining = total
+                connection.deleteSurroundingText(before, after)
+                rounds++
+            }
         }
         if (ok) {
-            Diagnostics.i(TAG, "deleteAllText: 已发送清空（光标归零 + 删至末尾，长度 $after）")
+            Diagnostics.i(TAG, "deleteAllText: 已发送清空（折叠光标后按两侧实际长度删光）")
         }
     }
 
@@ -4287,8 +4307,11 @@ class JinnIme : InputMethodService() {
     companion object {
         const val TAG = "JinnIme"
 
-        /** 清空文本时光标后取文本的上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
+        /** 清空文本时光标两侧各取的长度上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
         const val MAX_SCAN_CHARS = 20_000
+
+        /** [MAX_SCAN_CHARS] 之上的长文，清空时最多补几轮（4 × 2 × 20k = 16 万字符） */
+        const val DELETE_ALL_MAX_ROUNDS = 4
 
         /** 「到末尾」读取光标之后文本的上限：长文档下避免一次跨进程大事务卡住主线程 */
         const val DOC_JUMP_MAX_CHARS = 100_000

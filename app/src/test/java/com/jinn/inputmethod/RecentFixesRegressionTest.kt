@@ -6943,4 +6943,121 @@ class RecentFixesRegressionTest {
         assertBefore(body, "if (!flush())", "entries.clear()", "flush 必须在清内存之前")
     }
 
+    // ── 触摸 / 手势 / 时序（2026-10-23）────────────────────
+
+    /**
+     * L-1435：清空输入框必须**先折叠光标、再量两侧长度**。
+     *
+     * 旧写法在 `setSelection(0, 0)` **之前**取 `getTextAfterCursor`：光标在末尾（正常打字后的
+     * 常态）时 `after = 0` ⇒ `deleteSurroundingText(0, 0)` 一个字符都不删 ——「双击退格 + 长按」
+     * 在界面上没有任何失败提示，用户只会以为手势失灵。真机取证：40 字 → 29（少掉的 11 个全是
+     * 连删循环删的），光标移到文首做同一手势 40 → 0。
+     *
+     * 断言全在源码形态上（`InputConnection` 进不了 JVM 单测），三条缺一不可：
+     * ① 两侧都量（只量 after 就是旧缺陷）；② 量在折叠之后；③ 删除量传 `before + after`。
+     */
+    @Test
+    fun `清空输入框必须量光标两侧长度且在折叠之后取`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun deleteAllText()")
+        assertTrue(
+            "清空必须按光标**两侧**的实际长度删：只量 after 时，光标在末尾取到 0 ⇒ 一个字符都不删（L-1435）",
+            "getTextBeforeCursor(" in body && "getTextAfterCursor(" in body,
+        )
+        assertBefore(
+            body, "connection.setSelection(0, 0)", "getTextAfterCursor(",
+            "长度必须在折叠光标**之后**量（在之前量到的 after 是旧光标之后那截，光标在末尾时为 0）",
+        )
+        assertTrue(
+            "删除量必须同时带上两侧长度：AOSP 的 deleteSurroundingText 只删选区两侧、" +
+                "选区本体不在范围内，少一侧就会留下半截",
+            "connection.deleteSurroundingText(before, after)" in body,
+        )
+        assertFalse(
+            "不得退回「只删光标之后」的写法（L-1435 的原形）",
+            "deleteSurroundingText(0, after)" in body,
+        )
+    }
+
+    /**
+     * L-1436：26 个字母键的手势状态必须**一键一槽**。
+     *
+     * 共用单槽时，第二根手指按在**另一个键**上会覆盖基准点、并顺手撤掉对方待触发的长按：
+     * 长按 `a` + 另一指轻点 `s` ⇒ 得到 `sa`（单指对照是 `A`）；符号层的翻页阈值同样按别人的
+     * 基准点算，轻点会被判成滑动（L-1439）。三个单槽字段因此必须在源码里彻底消失 ——
+     * 留一个都等于把「另一指按下就清空我的标记」那条路径留在原处。
+     */
+    @Test
+    fun `字母键手势状态必须一键一槽`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        assertTrue(
+            "手势状态必须按键存（KeyGesture + keyGestures 槽表）",
+            "private class KeyGesture" in src && "keyGestures[c]" in src,
+        )
+        for (stale in listOf("keyTouchStartX", "keyTouchStartY", "keyTouchConsumed", "keyLongPressRunnable")) {
+            assertFalse("单槽手势字段 $stale 必须绝迹（L-1436 的原形）", stale in src)
+        }
+        val body = blockAfter(src, "private fun handleKeyTouch(")
+        assertTrue("取状态必须走本键的槽", "val g = gestureOf(c)" in body)
+        assertTrue(
+            "取消长按必须只作用于本键（撤全部键 = 另一根手指一按就毁掉别人的长按）",
+            "cancelLongPressUppercase(g)" in body,
+        )
+        assertTrue(
+            "翻页判定必须用本键的基准点（用别人的基准点算 dx ⇒ 轻点被判成滑动，L-1439）",
+            "val dx = event.rawX - g.startX" in body,
+        )
+    }
+
+    /**
+     * L-1437：层 / 符号页在手势中途被改过，抬手不得上字。
+     *
+     * 旧写法在 `ACTION_UP` 才按**当前** `layer` 解析 `symbolValueOf(c)`：按住字母键、另一指切到
+     * 「符号」，松手就把用户**从未按过**的符号上屏（短按路径没有任何挡板）。判据取「层 + 符号组 +
+     * 页」三元组：切层、换组、翻页三种改法都能挡住。
+     */
+    @Test
+    fun `按键抬手必须还在按下时那一层那一页`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun handleKeyTouch(")
+        assertTrue(
+            "DOWN 必须快照当前层 / 符号组 / 页",
+            "g.layerAtDown = layer" in body &&
+                "g.groupAtDown = symbolGroupIndex" in body &&
+                "g.pageAtDown = symbolPageInGroup" in body,
+        )
+        assertTrue(
+            "UP 必须比对层是否没变",
+            "val sameLayer = layer == g.layerAtDown" in body,
+        )
+        assertTrue(
+            "UP 必须比对符号组与页（同层翻页同样会让上屏内容变成用户没按过的那个）",
+            "symbolGroupIndex == g.groupAtDown && symbolPageInGroup == g.pageAtDown" in body,
+        )
+        assertTrue(
+            "上字条件必须同时含「没消费 + 同层 + 同页」",
+            "if (!g.consumed && sameLayer && sameSymbolPage && isInsideKey(" in body,
+        )
+    }
+
+    /**
+     * L-1438：按住退格滑出键面必须**停止**连删。
+     *
+     * 连删是 55ms 的自我重排循环，中止条件原先只有抬手：手指拖到键外（用户以为已取消）仍在
+     * 一路删，真机实测 15 字删到 1 字。判据用「出键面」而不是 `touchSlop`：退格键宽，按住时
+     * 手抖几 dp 不该中止，出键面才等于用户说的「停下」。
+     */
+    @Test
+    fun `退格按住滑出键面必须停止连删`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun handleBackspaceTouch(")
+        assertTrue("退格触摸必须有 ACTION_MOVE 分支", "MotionEvent.ACTION_MOVE ->" in body)
+        assertTrue(
+            "滑出键面即停（出界判定 + 停循环）",
+            "if (backspaceHeld && !isInsideKey(btnBackspace, event))" in body &&
+                "stopBackspaceRepeat()" in body,
+        )
+        assertBefore(
+            body, "MotionEvent.ACTION_MOVE ->", "MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->",
+            "MOVE 分支必须在 UP 之前（写在 UP 之后永远不会被执行）",
+        )
+    }
+
 }

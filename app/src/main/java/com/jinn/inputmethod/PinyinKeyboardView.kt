@@ -1026,10 +1026,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     val consumed = handleKeyTouch(c, event)
                     // 无障碍：仅在确认是「点击」而非滑动时补 performClick，
                     // 否则滑动翻页结束时也会发出点击事件，反而误导 TalkBack。
-                    // 必须同用 rawX：keyTouchStartX 记录的是 rawX，拿 event.x（键内坐标）
+                    // 必须同用 rawX：记录的按下点是 rawX，拿 event.x（键内坐标）
                     // 相减值约等于该键的屏幕左偏移，恒大于 touchSlop，除最左一列外永不触发
                     if (event.actionMasked == MotionEvent.ACTION_UP &&
-                        abs(event.rawX - keyTouchStartX) < touchSlop
+                        abs(event.rawX - gestureOf(c).startX) < touchSlop
                     ) {
                         view.performClick()
                     }
@@ -1039,15 +1039,36 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** 字母键手势状态 */
-    private var keyTouchStartX = 0f
+    /** 字母键手势状态：**每个键一份**（键 → 状态），见 [KeyGesture] 的说明 */
+    private val keyGestures = HashMap<Char, KeyGesture>()
 
-    /** 按下点的屏幕纵坐标（与 [keyTouchStartX] 同源）：长按转大写的移动取消判据 */
-    private var keyTouchStartY = 0f
-    private var keyTouchConsumed = false
+    /**
+     * 单个字母键的手势状态。
+     *
+     * 为什么按**键**分开存（BUG.md L-1436）：26 个键共用一份「按下点 + 已消费标记 + 待触发长按」
+     * 时，第二根手指按在**另一个键**上会把基准点覆盖成本键的、并顺手把对方待触发的长按撤掉 ——
+     * 长按 `a` 的同时另一指点一下 `s`，得到的是「a 的长按被静默取消 + s 上屏」，用户看到 `sa`
+     * 而不是 `A`。符号层的滑动阈值同理：按别人的基准点算 dx，轻点也会被当成翻页（L-1439）。
+     *
+     * 条目上限就是 26 个键，抬手只复位字段、不删条目，避免每按一次键分配一次对象。
+     */
+    private class KeyGesture {
+        var startX = 0f
+        var startY = 0f
 
-    /** 待触发的小写长按转大写；移动超阈值 / 抬手 / 取消 / 多指时移除并置 null */
-    private var keyLongPressRunnable: Runnable? = null
+        /** 本次按下已经做过事（长按上字 / 符号层翻页）：抬手时不许再上字 */
+        var consumed = false
+
+        /** 待触发的小写长按转大写；移动超阈值 / 抬手 / 取消 / 同键多指时移除并置 null */
+        var longPress: Runnable? = null
+
+        /** 按下瞬间的层 / 符号分组 / 页：抬手时只认同一层同一页（L-1437） */
+        var layerAtDown = LAYER_LETTER
+        var groupAtDown = 0
+        var pageAtDown = 0
+    }
+
+    private fun gestureOf(c: Char): KeyGesture = keyGestures[c] ?: KeyGesture().also { keyGestures[c] = it }
 
     /** 系统触摸斜率阈值：位移小于它才算「点击」而非滑动（用于无障碍 performClick 判定） */
     private val touchSlop: Float =
@@ -1082,37 +1103,49 @@ class PinyinKeyboardView @JvmOverloads constructor(
             layer == LAYER_LETTER && englishMode && !capsMode &&
             c in 'a'..'z'
 
-    /** 移除待触发的小写长按转大写（未触发时什么都不做） */
-    private fun cancelLongPressUppercase() {
-        keyLongPressRunnable?.let { removeCallbacks(it) }
-        keyLongPressRunnable = null
+    /** 移除待触发的小写长按转大写（未触发时什么都不做）；只作用于 [g] 这一个键 */
+    private fun cancelLongPressUppercase(g: KeyGesture) {
+        g.longPress?.let { removeCallbacks(it) }
+        g.longPress = null
+    }
+
+    /** 撤掉全部键的待触发长按（detach 收尾用：视图没了不能再往上屏塞字母） */
+    private fun cancelAllLongPresses() {
+        keyGestures.values.forEach { cancelLongPressUppercase(it) }
     }
 
     /**
      * 字母键触摸：正常点击上屏；符号层左右滑动切换符号页。
      * 左滑（dx<0）下一页、右滑（dx>0）上一页，滑动后本次按下不再触发点击。
+     *
+     * 状态取**本键自己那份** [KeyGesture]：两指同时按两个键时互不影响（BUG.md L-1436）。
      */
     private fun handleKeyTouch(c: Char, event: MotionEvent): Boolean {
+        val g = gestureOf(c)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // V 级埋点（不落盘）：排查"整块键失灵"时，用它区分
                 // 「触摸压根没送到键上（被上层吃掉）」与「送到了但抬起判定失败」
                 if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "键触摸 DOWN: $c")
-                keyTouchStartX = event.rawX
-                keyTouchStartY = event.rawY
-                keyTouchConsumed = false
-                // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况）
-                cancelLongPressUppercase()
+                g.startX = event.rawX
+                g.startY = event.rawY
+                g.consumed = false
+                // 层 / 符号组 / 页快照：抬手时只认同一层同一页，见 ACTION_UP（L-1437）
+                g.layerAtDown = layer
+                g.groupAtDown = symbolGroupIndex
+                g.pageAtDown = symbolPageInGroup
+                // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况），只清本键
+                cancelLongPressUppercase(g)
                 // 小写英文长按转大写：到系统长按时长仍没抬手才上一个大写字母。
                 // 只在 DOWN 起计时（符号层的滑动翻页在 MOVE 里按 24dp 判定，两条手势互不打扰）。
                 if (canLongPressUpper(c)) {
                     val runnable = Runnable {
-                        if (!keyTouchConsumed) {
-                            keyTouchConsumed = true
+                        if (!g.consumed) {
+                            g.consumed = true
                             listener?.onCommitText(c.uppercaseChar().toString())
                         }
                     }
-                    keyLongPressRunnable = runnable
+                    g.longPress = runnable
                     postDelayed(runnable, android.view.ViewConfiguration.getLongPressTimeout().toLong())
                 }
                 // 本监听器返回 true 会消费掉事件，PinyinKey.onTouchEvent 不再执行，
@@ -1130,19 +1163,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 // 长按转大写只在「手指基本不动」时成立：移动超阈值即取消，
                 // 免得用户其实是在划动 / 修正按错的键，却在上抬前被塞进一个大写字母
-                if (keyLongPressRunnable != null &&
-                    (abs(event.rawX - keyTouchStartX) > touchSlop ||
-                        abs(event.rawY - keyTouchStartY) > touchSlop)
+                if (g.longPress != null &&
+                    (abs(event.rawX - g.startX) > touchSlop ||
+                        abs(event.rawY - g.startY) > touchSlop)
                 ) {
-                    cancelLongPressUppercase()
+                    cancelLongPressUppercase(g)
                 }
-                // 符号层：水平滑动在「当前分组内」翻页（不切换分组）
-                if (layer == LAYER_SYMBOL && !keyTouchConsumed) {
+                // 符号层：水平滑动在「当前分组内」翻页（不切换分组）。
+                // 基准点取本键自己按下时的位置：另一根手指按着别的键（或按在别处滑动）
+                // 时，dx 不会被算成它的位移，轻点也不会被误判成翻页（BUG.md L-1439）。
+                if (layer == LAYER_SYMBOL && !g.consumed) {
                     val group = currentSymbolGroup()
                     if (group.pages.size > 1) {
-                        val dx = event.rawX - keyTouchStartX
+                        val dx = event.rawX - g.startX
                         if (Math.abs(dx) >= dpFloat(24f)) {
-                            keyTouchConsumed = true
+                            g.consumed = true
                             if (dx < 0) {
                                 symbolPageInGroup = (symbolPageInGroup + 1) % group.pages.size
                             } else {
@@ -1163,27 +1198,34 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 两者都不处理的话，POINTER_UP 分支既不复位按压态也不上字，键会一直高亮
             // 到下次被触摸，且该次输入被静默丢掉。
             MotionEvent.ACTION_POINTER_DOWN -> {
-                cancelLongPressUppercase()
+                // 只撤**本键**的长按：另一根手指按在别的键上时，这行不会碰到它的状态（L-1436）
+                cancelLongPressUppercase(g)
                 keyViews[c]?.setPressedVisual(true)
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 keyViews[c]?.setPressedVisual(false)
-                // 不复位 keyTouchConsumed：它是「本次手势已经做过事（在符号层翻了页）、
+                // 不复位 g.consumed：它是「本次手势已经做过事（在符号层翻了页）、
                 // 抬起时不许上字」的判据，而第二根手指抬起时手势还没结束，复位后剩下的
                 // 那根手指一抬就会把新页上的符号上屏（用户只想翻页）。该标记在
                 // ACTION_DOWN / ACTION_UP / ACTION_CANCEL 处复位，生命周期足够。
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                // 抬手即作废待触发的大写：长按成功的场合 keyTouchConsumed 已被置位，
+                // 抬手即作废待触发的大写：长按成功的场合 g.consumed 已被置位，
                 // 下面不会再上小写；没到时长就抬手则按普通点击走
-                cancelLongPressUppercase()
+                cancelLongPressUppercase(g)
                 keyViews[c]?.setPressedVisual(false)
+                // 层 / 符号页在手势中途被改过（另一根手指点了「符号」或翻了页）⇒ 这个键此刻
+                // 代表的内容已不是用户按下时看到的那个，上屏等于把他没按过的字符塞进去（L-1437）。
+                // 判据用「层 + 组 + 页」三元组：字母层切到数字层同样作废；符号层只翻页也作废。
+                val sameLayer = layer == g.layerAtDown
+                val sameSymbolPage = layer != LAYER_SYMBOL ||
+                    (symbolGroupIndex == g.groupAtDown && symbolPageInGroup == g.pageAtDown)
                 // 未滑动（或非符号层）且抬起点仍落在本键内才输入。
                 // 命中判定不可省：手指从 Q 滑到 W 抬起时，UP 依然回调到 Q 的监听器，
                 // 不做判定就会把 Q 上屏（用户看到的是自己按了 W）。
-                if (!keyTouchConsumed && isInsideKey(keyViews[c], event)) {
+                if (!g.consumed && sameLayer && sameSymbolPage && isInsideKey(keyViews[c], event)) {
                     // 符号层的反馈在这里补，条件跟「真的会上屏」对齐：没翻页、抬起点仍在键内，
                     // 且**该键在当前符号页确实有值** —— 分组页不满 26 个时余下是空槽（键面空白），
                     // `symbolValueOf` 对它们返回 null、`onLetterPressed` 直接 return，
@@ -1191,13 +1233,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     if (layer == LAYER_SYMBOL && symbolKeyHasContent(c)) KeyFeedback.fire(TapSound.G_SYMBOL)
                     onLetterPressed(c)
                 }
-                keyTouchConsumed = false
+                g.consumed = false
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                cancelLongPressUppercase()
+                cancelLongPressUppercase(g)
                 keyViews[c]?.setPressedVisual(false)
-                keyTouchConsumed = false
+                g.consumed = false
                 return true
             }
         }
@@ -2463,6 +2505,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 删除键触摸：
      *  - 按下即删一个字符；按住超过 [backspaceRepeatDelayMs] 进入连续删除，松开停止
+     *  - 按住期间滑出键面即停（[MotionEvent.ACTION_MOVE]，L-1438）
      *  - 「双击 + 长按」触发 [onTripleBackspace] 全部清空：
      *    连续两次短按（间隔 < [doubleTapWindowMs]）后，第三次按住超过 [longPressClearMs]。
      *    正常快速删除（点 3 下）第三次是短按即松，不会误触。
@@ -2491,6 +2534,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     backspaceTapCount = 0
                 }
                 btnBackspace.isPressed = true
+                return true
+            }
+
+            // 按住连删时滑出键面即停（BUG.md L-1438）：连续删除是 55ms 的自我重排循环，
+            // 唯一的中止条件原先只有抬手 —— 手指拖到键外（用户以为已经取消）仍然一路删到底，
+            // 真机实测 15 字被删到 1 字。用「出键面」而不是 touchSlop 作判据：退格键宽，
+            // 按住时手抖几 dp 不该中止；出键面才是用户表达的「我要停」。
+            // 停掉后不恢复：手指滑回来再抬也不当一次点击（stopBackspaceRepeat 已清双击计数）。
+            MotionEvent.ACTION_MOVE -> {
+                if (backspaceHeld && !isInsideKey(btnBackspace, event)) {
+                    stopBackspaceRepeat()
+                    Diagnostics.i(TAG, "退格连删: 手指滑出键面，停止删除")
+                }
                 return true
             }
 
@@ -5281,6 +5337,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     override fun onDetachedFromWindow() {
         stopBackspaceRepeat()
+        // 待触发的小写长按转大写也要撤：detach 不保证补发 ACTION_CANCEL，留着会**在视图没了
+        // 之后**照样回调 `onCommitText`（把一个大写字母塞进后来的输入框）。
+        // 状态按键分槽存放（L-1436），所以要逐个撤。
+        cancelAllLongPresses()
         // 撤掉那条 500ms 的铺底诊断：view 已附着时 `postDelayed` 的任务在 detach 后照样会跑，
         // 而那时整棵树尺寸已归零，扫出来的是「一条视图都没有」的假结论 —— 恰好把排查
         // 「透明度不生效」的人带偏；顺带让这棵旧树能尽早回收，不必为空跑的任务再挂 500ms。
