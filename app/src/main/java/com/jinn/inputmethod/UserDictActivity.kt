@@ -429,6 +429,9 @@ class UserDictActivity : ComponentActivity() {
             (if (unreadable) TEXT_SUMMARY_UNREADABLE else "")
         textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks, distinct, kb, more) + extra
         val empty = rows.isEmpty()
+        // 三个导出键与「删除」默认禁用（layout 里的 `android:enabled="false"`，BUG.md L-1413）：
+        // 首帧 rows 还是空表，可点的话 `startExport` 会报「还没有可导出的词」——那是假陈述。
+        // 这里是唯一的开启点，按真实加载结果放开
         btnExportYaml.isEnabled = !empty && !unreadable
         btnExportTsv.isEnabled = !empty && !unreadable
         btnExportTxt.isEnabled = !empty && !unreadable

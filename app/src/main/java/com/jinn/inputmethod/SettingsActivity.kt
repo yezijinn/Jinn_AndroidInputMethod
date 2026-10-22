@@ -1706,12 +1706,22 @@ class SettingsActivity : ComponentActivity() {
         Diagnostics.i(TAG, "restartImeProcess: 重启输入法进程")
         // `apply()` 是异步的：只靠延时 800ms 赌它写完，IO 压力大时会丢最后一批键
         // （进程被直接杀时不走 onPause/onStop，没有别的时机能替我们等）
-        // 失败要留痕：磁盘满时表现为「重启后设置回退」，没有日志就无从排查
-        if (!runCatching { Prefs(this).flush() }.getOrDefault(false)) {
-            Diagnostics.w(TAG, "restartImeProcess: 主设置落盘失败")
-        }
-        if (!runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)) {
-            Diagnostics.w(TAG, "restartImeProcess: 剪贴板设置落盘失败")
+        //
+        // 落盘失败不能只留日志（BUG.md L-1420）：界面此刻已经宣告「正在重启」，照旧杀进程
+        // 就是**确定性**地丢这批设置 —— 用户看到的是「保存了但没生效」。如实说明并放弃本次
+        // 重启（与导入 / 导出那些路径按 flush() 结果改回执的口径一致，L-1319）。
+        val prefsFlushed = runCatching { Prefs(this).flush() }.getOrDefault(false)
+        val clipboardFlushed = runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)
+        if (!prefsFlushed || !clipboardFlushed) {
+            Diagnostics.w(
+                TAG,
+                "restartImeProcess: 落盘失败，已取消重启 prefs=$prefsFlushed clipboard=$clipboardFlushed",
+            )
+            // 状态行先撤掉「正在重启」（saveAndRestart 在调本函数之前就写了那句），
+            // 否则界面同时存在「正在重启」与「已取消」两个相反的说法
+            textTest.setText(TEXT_RESTART_FLUSH_FAILED)
+            Toast.makeText(this, TEXT_RESTART_FLUSH_FAILED, Toast.LENGTH_LONG).show()
+            return
         }
         uiHandler.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 800L)
     }
@@ -1892,6 +1902,14 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_IMPORTING = "正在导入…"
         const val TEXT_MODE_RESTORE = "覆盖还原（设置与词频按备份写回，剪贴板并入本机历史）"
         const val TEXT_MODE_MERGE = "仅并入数据（只合并词频、剪贴板与词库，保留本机设置）"
+
+        /**
+         * 重启前的落盘失败（`restartImeProcess`，BUG.md L-1420）。
+         *
+         * 此刻界面上刚写过「正在重启」，再杀进程就是确定性丢设置，所以这条**同时**进状态行与
+         * Toast：只写日志的话用户只看到「没生效」，无从知道是磁盘问题。
+         */
+        const val TEXT_RESTART_FLUSH_FAILED = "写入失败，设置未保存，已取消重启"
 
         /**
          * 「检查更新」看门狗超时：两源串行的总预算（`UpdateChecker.TOTAL_BUDGET_MS` = 25s）+ 5s 余量。

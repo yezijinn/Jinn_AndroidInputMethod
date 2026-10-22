@@ -39,6 +39,7 @@
             android:id="@+id/btn_export_yaml"
             android:layout_width="0dp"
             android:layout_weight="1"
+            android:enabled="false"
             android:minWidth="0dp" />
 
         <Button
@@ -47,6 +48,7 @@
             android:layout_width="0dp"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
+            android:enabled="false"
             android:minWidth="0dp" />
     </LinearLayout>
 
@@ -61,6 +63,7 @@
             android:id="@+id/btn_export_txt"
             android:layout_width="0dp"
             android:layout_weight="1"
+            android:enabled="false"
             android:minWidth="0dp" />
 
         <Button
@@ -85,5 +88,6 @@
         android:id="@+id/btn_delete_dict"
         android:layout_width="match_parent"
         android:layout_marginTop="6dp"
+        android:enabled="false"
         android:minWidth="0dp" />
 </LinearLayout>

@@ -596,6 +596,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 切分类必须收起操作条：longPressItem 指向的条目可能不在新分类里（列表里再也看不到它），
         // 此时点「删除 / 收藏」作用的是看不见的条目，删除后用户不知道丢的是哪一条。
         hideActionBar()
+        // 确认条同理，而且更狠（BUG.md L-1418）：它那个「确定」删的是**全库**普通记录
+        // （`db.deleteAll`，与当前分类无关），留着它等于把「删全库」的键装在新分类下面 ——
+        // 用户切到「网址」再顺手确定，别的分类就一起没了。三条显示路径（`onPanelShown` /
+        // `showItemMenu` / 这里）必须口径一致，漏一条就是这个缺陷。
+        hideConfirmBar()
         currentCategory = category
         applyTabFaces()
         val imageMode = category == CATEGORY_IMAGE

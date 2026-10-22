@@ -283,6 +283,19 @@ class RecentFixesRegressionTest {
             restart, "ClipboardPrefs.of(this).flush()", "killProcess(",
             "剪贴板设置同样要先落盘再杀进程（否则重启后设置回退）",
         )
+        // L-1420：false 只写日志还不够 —— 界面此时已宣告「正在重启」，照旧杀进程就是**确定性**
+        // 地丢这批设置。两个 flush 的结果都必须收进变量、失败分支必须直接返回（不返回就落到 kill）
+        assertTrue(
+            "两个 flush 的结果都要收进变量（只在 if 里各调一次拿不到合并结论）",
+            "val prefsFlushed = runCatching { Prefs(this).flush() }.getOrDefault(false)" in restart &&
+                "val clipboardFlushed = runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)" in restart,
+        )
+        assertStatementLine(restart, "return", "落盘失败必须直接返回，否则会落到 killProcess")
+        assertTrue("失败分支要有用户可见的回执（状态行 + Toast 同一个常量）", "TEXT_RESTART_FLUSH_FAILED" in restart)
+        assertBefore(
+            restart, "if (!prefsFlushed || !clipboardFlushed)", "killProcess(",
+            "失败判据必须在杀进程之前",
+        )
     }
 
     @Test
@@ -6796,6 +6809,93 @@ class RecentFixesRegressionTest {
             "跟刷值必须走同一套派生口径（pinyinSpOf → pinyinSpToProgress）",
             "CandidateText.pinyinSpToProgress(CandidateText.pinyinSpOf(sp))" in candidate,
         )
+    }
+
+    /**
+     * L-1418：切分类必须同时收**操作条**与**确认条**。
+     *
+     * 操作条收不全只是「键作用在看不见的条目上」；确认条收不全更狠 —— 它的「确定」删的是
+     * **全库**普通记录（`db.deleteAll`，与当前分类无关），而用户已经把视线移到新分类 ⇒
+     * 切到「网址」再顺手确定，别的分类一起没了（2026-10-22 真机复现：4 条网址下仍挂着
+     * 「清空历史？（收藏保留）」）。三条显示路径（`onPanelShown` / `showItemMenu` /
+     * `selectCategory`）必须同口径，漏一条就是这个缺陷。
+     */
+    @Test
+    fun `剪贴板面板切分类必须同时收起操作条与确认条`() {
+        val src = codeOf("ClipboardPanelView.kt")
+        val body = blockAfter(src, "private fun selectCategory(category: String?)")
+        assertStatementLine(body, "hideActionBar()", "切分类必须收起长按操作条")
+        assertStatementLine(
+            body, "hideConfirmBar()",
+            "切分类必须收起「清空历史」确认条（它的确定删的是全库，不是当前分类）",
+        )
+        // 位置也要钉住：必须在 `currentCategory` 落位之前（此后列表 / 网格已按新分类重取）
+        assertBefore(
+            body, "hideConfirmBar()", "currentCategory = category",
+            "收起确认条必须发生在切换分类之前",
+        )
+        // 反向：另外两条显示路径也不许漏（同一危害，任何一条被删都会让缺陷换个入口重现）
+        assertTrue(
+            "onPanelShown 也必须收确认条",
+            "hideConfirmBar()" in blockAfter(src, "fun onPanelShown()"),
+        )
+        assertTrue(
+            "showItemMenu 也必须收确认条",
+            "hideConfirmBar()" in blockAfter(src, "private fun showItemMenu("),
+        )
+    }
+
+    /**
+     * L-1413：用户词库页的导出键与「删除」必须**默认禁用**。
+     *
+     * `rows` 由后台读盘填，首帧还是空表；键默认可点的话，冷开页立刻点导出会得到
+     * 「还没有可导出的词」——而磁盘上明明有几千条（假陈述）。删除更险：这一屏的条数在
+     * 加载完成前不可信。判据落在 layout 的 `android:enabled="false"`（真正的首帧状态），
+     * 加上「唯一的开启点在 `renderSummary`」。
+     */
+    @Test
+    fun `用户词库页导出键必须默认禁用`() {
+        val xml = TestSources.codeOf(
+            TestSources.rawSource(
+                "src/main/res/layout/activity_user_dict.xml",
+                "app/src/main/res/layout/activity_user_dict.xml",
+            )
+        )
+        for (id in listOf("btn_export_yaml", "btn_export_tsv", "btn_export_txt", "btn_delete_dict")) {
+            val tag = Regex("""(?s)<Button[^>]*@\+id/$id"[^>]*>""").find(xml)?.value
+            assertTrue("activity_user_dict.xml 里找不到 $id 的 Button", tag != null)
+            assertTrue(
+                "$id 必须写 android:enabled=\"false\"：首帧 rows 是空表，可点时导出会说" +
+                    "「还没有可导出的词」/ 删除按不可信的条数操作真数据",
+                tag!!.contains("android:enabled=\"false\""),
+            )
+        }
+        // 唯一的开启点是加载完成后的 renderSummary（在 onCreate 里另开一处会让「默认禁用」失效）
+        val act = codeOf("UserDictActivity.kt")
+        val summary = blockAfter(act, "private fun renderSummary(")
+        assertTrue(
+            "renderSummary 必须按加载结果放开三个导出键",
+            "btnExportYaml.isEnabled = !empty && !unreadable" in summary &&
+                "btnExportTsv.isEnabled = !empty && !unreadable" in summary &&
+                "btnExportTxt.isEnabled = !empty && !unreadable" in summary,
+        )
+        assertTrue("renderSummary 必须按加载结果放开删除", "btnClose.isEnabled = !unreadable" in summary)
+    }
+
+    /**
+     * L-1414：关闭学习前的那次 `flush()` 必须按返回值留痕。
+     *
+     * `setEnabled(false)` 先 flush 再 `entries.clear()`：写盘失败时这次学习既进不了文件、
+     * 内存表又被清空，重开也无从补写 —— 丢掉的是真数据，而它原先连一行日志都不留。
+     * 该路径没有 UI 通道（开关就在用户手边，弹框会挡住操作），所以判据是「返回值被使用」。
+     */
+    @Test
+    fun `关闭学习前必须按落盘结果留痕`() {
+        val body = blockAfter(codeOf("UserFrequency.kt"), "fun setEnabled(value: Boolean)")
+        assertTrue("关闭分支必须判 flush() 的返回值（丢弃即静默丢数据）", "if (!flush())" in body)
+        assertTrue("失败必须留 W 级别日志（这里没有 UI 通道）", "Diagnostics.w(" in body)
+        assertBefore(body, "if (!flush())", "enabled = value", "flush 必须在置 false 之前（否则被落盘入口拦掉）")
+        assertBefore(body, "if (!flush())", "entries.clear()", "flush 必须在清内存之前")
     }
 
 }

@@ -182,7 +182,10 @@ internal object UserFrequency {
             // 直接清内存会让它既进不了文件、重开也无从补写（内存表已空）。先 flush 再清，
             // 「关闭后既有记录留在文件里」这句话才包含刚刚学的那一次。
             // 注意顺序：必须在 enabled 置 false **之前**调，否则会被落盘入口的开关判据拦掉。
-            flush()
+            //
+            // 失败要留痕（BUG.md L-1414）：这里的 false 意味着「关闭前那次学习没写成」，
+            // 而紧接着的 entries.clear() 会让它再无补写机会 —— 静默就等于丢数据，不能只吞返回值
+            if (!flush()) Diagnostics.w(TAG, "关闭学习前落盘失败：最后一次学习未写入文件")
         }
         enabled = value
         Diagnostics.i(TAG, "用户词频学习: ${if (value) "开启" else "关闭"}")
