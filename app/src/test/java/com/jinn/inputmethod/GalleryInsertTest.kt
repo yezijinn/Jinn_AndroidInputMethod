@@ -578,11 +578,20 @@ class GalleryInsertTest {
         val capable = TestSources.blockAfter(view, "fun setHostImageCapable(capable: Boolean)")
         assertTrue("翻假时要判面板状态", "if (!capable && galleryActive)" in capable)
         assertTrue("并且真的收起面板", "hideGalleryPanel()" in capable)
-        // L-1038：搜索态早退分支的三个同类字段要一并清
-        val beforeEarlyOut = view.substringBefore("功能面板(搜索态): 退出").takeLast(500)
-        assertTrue("早退分支清 translateButtonBox", "translateButtonBox = null" in beforeEarlyOut)
-        assertTrue("早退分支清 directionButtonBox", "directionButtonBox = null" in beforeEarlyOut)
-        assertTrue("早退分支清 galleryButtonBox", "galleryButtonBox = null" in beforeEarlyOut)
+        // L-1038：搜索态早退分支的三个同类字段要一并清。
+        // 判据用「函数体 + 位置比较」，不用 `substringBefore(日志).takeLast(500)`：那个窗口拿**日志文案**
+        // 当右边界，日志一改就退化成「整个文件的末 500 字符」（锚点缺失时静默放宽，BUG.md L-1145 形态），
+        // 而三条 `= null` 只要碰巧落在文件尾部就仍然通过。函数体由花括号配对断言，位置比较由 indexOf 给出。
+        val panelBody = TestSources.blockAfter(view, "private fun renderFunctionPanel()")
+        val earlyOutAt = panelBody.indexOf("功能面板(搜索态): 退出")
+        assertTrue("renderFunctionPanel 里找不到搜索态早退的日志锚点", earlyOutAt > 0)
+        for (field in listOf("translateButtonBox", "directionButtonBox", "galleryButtonBox")) {
+            val clearAt = panelBody.indexOf("$field = null")
+            assertTrue(
+                "搜索态早退分支没清 $field（L-1038；清引用必须落在早退之前）",
+                clearAt in 0 until earlyOutAt,
+            )
+        }
 
         val panel = TestSources.codeSource("GalleryPanelView.kt")
         // L-1035：视图重建要关池（只作废令牌不算完成）

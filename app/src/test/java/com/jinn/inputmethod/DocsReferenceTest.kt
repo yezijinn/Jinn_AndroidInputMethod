@@ -235,6 +235,54 @@ class DocsReferenceTest {
     }
 
     /**
+     * 附录 A 的 A-1 表（「已出册编号 → 去向」）不得与本册自相矛盾（2026-10-23 补）。
+     *
+     * 为什么需要它：`fixed.md` 的页眉写 `blocks=0`，这是**真话但空话** —— 该册没有 L/X/B 块，
+     * 于是页眉计数、节标题计数、块唯一性全会绿，而它真正的内容是一张 14 行 / 78 个编号的冻结表。
+     * 整轮「声明与实体不同量纲」的复盘就掉在这里：声明量的是「块」，实体是「表行」。这条只补两个
+     * 与冻结无关、也不需要写死数字的判据：
+     *  - **形态**：A-1 的每个数据行必须是合法两列表格行（3 个 `|`）—— 批量改写最常见的坏法就是吞掉一列；
+     *  - **语义**：表里逐个列出的编号不得同时仍在册（索引行 / 详情块）——「已出册」与「还在册」是两份
+     *    互相矛盾的真相，谁对下一轮就该谁改。
+     *
+     * ⚠ **不覆盖**「整行被删」：那会把冻结值搬进代码（与 L-1415 的数字分叉同源），故不做行数断言；
+     * 该表自 L-871 起冻结，新增去向只写 `更新日志.md` 与附录 B。
+     */
+    @Test
+    fun 附录A去向表不得与在册条目矛盾() {
+        val parts = ledgerPartFiles()
+        val fixed = parts["fixed"] ?: error("fixed 分册缺失（见 BUG.md 的 0.6 详情文件地图）")
+        // 两端都行首锚定：`### A-1` 在页眉的「结构：」说明句里也出现过一次，裸子串会切错位置
+        val a1 = TestSources.window(fixed, "\n### A-1", "\n### A-2")
+        val rows = a1.lines().filter { it.startsWith("|") }.drop(2)      // 表头 + 分隔行
+        assertTrue("A-1 表没解析出数据行（结构变了？实见 ${rows.size} 行）", rows.size >= 10)
+        val badShape = rows.filter { it.count { c -> c == '|' } != 3 }
+        assertTrue(
+            "A-1 有 ${badShape.size} 行不是两列表格行（批量改写吞掉列了？）：${badShape.take(3)}",
+            badShape.isEmpty(),
+        )
+        val inBook = mutableSetOf<Int>()
+        for ((name, text) in parts) {
+            if (name == "fixed") continue          // 该册自己的表行就是取材面，不能算「在册」
+            Regex("""(?m)^#{3,4} L-0*(\d+) ·""").findAll(text).forEach { inBook += it.groupValues[1].toInt() }
+            Regex("""(?m)^\| L-0*(\d+) \|""").findAll(text).forEach { inBook += it.groupValues[1].toInt() }
+        }
+        val listed = mutableSetOf<Int>()
+        for (row in rows) {
+            val cell = row.trim().trim('|').split('|').first()
+            // `L-001…L-903 之间的 161 个编号` 是范围声明，不是逐个编号：端点在册不构成矛盾
+            if ("之间的" in cell) continue
+            Regex("""L-(\d+)""").findAll(cell).forEach { listed += it.groupValues[1].toInt() }
+        }
+        assertTrue("A-1 表没解析出编号（写法变了？）", listed.isNotEmpty())
+        val conflict = listed.filter { it in inBook }.sorted()
+        assertTrue(
+            "这些编号在 A-1 里写着「已出册」，却仍在册（索引行 / 详情块）：$conflict —— 表或册必有一处过时",
+            conflict.isEmpty(),
+        )
+    }
+
+    /**
      * 索引行的标题必须**逐字等于**块的标题（BUG.md L-1182）。
      *
      * 索引第 6 列是块标题的镜像，此前只有行数 / 分册 / 状态三类对拍，没有一条比标题 ——
@@ -630,16 +678,12 @@ class DocsReferenceTest {
                 .find(text)?.groupValues?.get(1)?.toInt()
             if (header != null && header != actual) bad.add("$name（页眉 $header / 实际 $actual）")
             if (titled != null && titled != actual) bad.add("$name（节标题 $titled / 实际 $actual）")
-            // 节标题把总数拆成「N 条在册 + M 条重建期素材块」时，两个分项各自对拍（BUG.md L-1184）：
-            // 只比总数时，删掉的材料块数量恰好等于在册块数量才报得出来 —— 那一次纯属巧合
-            val parts = Regex("""(?m)^## \d+\. 低风险（(\d+) 条：(\d+) 条在册 \+ (\d+) 条重建期素材块""")
-                .find(text)?.groupValues
-            if (parts != null) {
-                val inBooks = Regex("""(?m)^### L-\d+ ·""").findAll(text).count()
-                val fragments = Regex("""(?m)^#### L-\d+ ·""").findAll(text).count()
-                if (parts[2].toInt() != inBooks) bad.add("$name（节标题写在册 ${parts[2]} / 实际 $inBooks）")
-                if (parts[3].toInt() != fragments) bad.add("$name（节标题写素材 ${parts[3]} / 实际 $fragments）")
-            }
+            // 2026-10-23 删掉一条**永远不会进入**的分支：原判据认「`## N. 低风险（X 条：Y 条在册 + Z 条重建期素材块」，
+            // 而重建期素材块在 2026-10-12 已整批外移到 `.wwlia-handoff/memory/`，low.md 的标题同时改写成
+            // 「（213 条在册 · 骨架；重建期素材 135 块已于同日外移…）」⇒ 该正则在全部分册里 0 命中，
+            // 两条分项对拍随之中断且无人察觉（与上一轮 `blocks:` 冒号同型）。现在这条路已被上面两条覆盖：
+            // 素材块若回流，`actual`（含 `####`）会先与页眉 / 节标题的总数打架，实测加一块即红。
+            // 保留一条死分支比没有更糟 —— 它看起来像覆盖。
         }
         assertTrue("分册页眉块数与实际不一致：$bad", bad.isEmpty())
     }

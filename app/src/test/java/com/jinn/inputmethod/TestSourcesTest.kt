@@ -254,13 +254,17 @@ class TestSourcesTest {
     fun 固定字符窗必须改用锚点助手() {
         // 第四种形态 `.contains(...)` 同样危险：锚点缺失时 substringAfter 返回整串，
         // 断言会被文件别处满足（本轮补扫在 BuildToolGatesTest / RecentFixesRegressionTest 各找到一处）
-        val chain = Regex("""substringAfter\([^\n;]*\n?[^\n;]*?\.\s*(substringBefore|take|contains)\(""")
+        val chain = Regex("""substringAfter\([^\n;]*\n?[^\n;]*?\.\s*(substringBefore|takeLast|take|contains)\(""")
+        // 第五种形态（2026-10-23 补）：`substringBefore(右边界)` 本身不带断言 —— 右边界一消失就返回整串，
+        // 再 `.takeLast(N)` 只是「整份文件的末 N 字符」，判据静默换了个地方。GalleryInsertTest 那条
+        // 曾拿**日志文案**当右边界（日志本就不是契约），实测把三条 `= null` 挪到文件末尾仍能过。
+        val takeChain = Regex("""substringBefore\([^\n;]*?\.\s*(takeLast|take)\(""")
         val braceWindow = Regex("""substringBefore\("\\n    \}"""")
         val offenders = (testDir().listFiles { f -> f.name.endsWith(".kt") } ?: emptyArray())
             .filterNot { it.name == "TestSources.kt" || it.name == "TestSourcesTest.kt" }
             .flatMap { f ->
                 val code = TestSources.codeOf(f.readText())
-                (chain.findAll(code) + braceWindow.findAll(code)).map { m ->
+                (chain.findAll(code) + takeChain.findAll(code) + braceWindow.findAll(code)).map { m ->
                     "${f.name}:${code.substring(0, m.range.first).count { it == '\n' } + 1}"
                 }
             }

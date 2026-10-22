@@ -4286,7 +4286,9 @@ class RecentFixesRegressionTest {
         // L-1067：空凭据不进包、也不在导入端当删除执行
         val prefs = codeOf("Prefs.kt")
         val exportBody = TestSources.blockAfter(prefs, "fun exportForBackup(")
-        val importBody = prefs.substringAfter("fun importFromBackup(")
+        // 收在函数体里（花括号配对 + 锚点断言）：裸 `substringAfter` 在锚点缺失时返回整份文件，
+        // 后面那条「导入分支要挡空串」就会被任意别的函数满足（BUG.md L-1145 的同型静默放宽）
+        val importBody = TestSources.blockAfter(prefs, "fun importFromBackup(")
         for (key in listOf(
             "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
             "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
@@ -5494,10 +5496,13 @@ class RecentFixesRegressionTest {
         assertTrue("方向面板行高同源", "rowPx - dp(2) * 2" in pv2)
         // L-1321：图库收起也必须作废待揭示（否则 300ms 后面板自己亮出来 / 跨会话残留）
         val view = codeOf("PinyinKeyboardView.kt")
-        val galHide = view.substringAfter("fun hideGalleryPanel()")
+        // 两端锚点都断言（`window` 缺失即抛错）：裸 `substringAfter(...).substringBefore(...)` 分两句写时，
+        // 元守卫看不见这条链 —— 左锚点一消失，切片就变成「文件头 → 那句早退」，而 `cancelPendingPanelReveal()`
+        // 在全文另有 6 处（含它自己的定义），断言照样绿（BUG.md L-1145 的同型，见 L-1428）
         assertTrue(
             "图库收起要作废待揭示",
-            galHide.substringBefore("if (!galleryActive) return").contains("cancelPendingPanelReveal()"),
+            "cancelPendingPanelReveal()" in
+                TestSources.window(view, "fun hideGalleryPanel()", "if (!galleryActive) return"),
         )
         // L-1322：树授权要拿「读 + 写」两个位，且缺写授权时如实告知（用户要的动作是重绑目录）
         val histSrc = codeOf("ClipboardHistoryActivity.kt")
