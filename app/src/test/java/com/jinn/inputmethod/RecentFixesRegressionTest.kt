@@ -6791,11 +6791,15 @@ class RecentFixesRegressionTest {
     fun 图片导出互斥必须内置在startExport() {
         val src = TestSources.codeSource("ClipboardHistoryActivity.kt")
 
-        // ① 置位点在 startExport 内
+        // ① 置位点在 startExport 内，且必须**早于任务体**：用 assertBefore 断位置而不是
+        // `substringBefore("BackgroundIo.runLong")` —— 后者在锚点消失（改成 run / 换个调度器）
+        // 时返回整个函数体，判据退化成「函数里有这一句」，把置位点挪进 worker 也能绿（L-1433）
         val body = TestSources.blockAfter(src, "private fun startExport(treeUri: Uri)")
-        assertTrue(
-            "startExport 开头必须 CAS 置位（无记忆目录的路径也走它）",
-            "if (!EXPORTING.compareAndSet(false, true))" in body.substringBefore("BackgroundIo.runLong"),
+        assertBefore(
+            body,
+            "if (!EXPORTING.compareAndSet(false, true))",
+            "BackgroundIo.runLong",
+            "置位必须早于任务体（放进 worker 就挡不住并发起第二趟）",
         )
 
         // ② 任务体那一层必须有 finally 还标记

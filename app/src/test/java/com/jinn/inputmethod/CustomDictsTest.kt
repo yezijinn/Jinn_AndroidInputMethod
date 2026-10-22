@@ -696,10 +696,13 @@ class CustomDictsTest {
         // 一起等，用户保存后马上打字就是「没有候选」（BUG.md L-888 / L-893）。范围判据本身在
         // PinyinEngine（见 IndexCacheLifecycleTest），这里钉接线：启动路径要算范围，非空就真的触发
         val src = TestSources.codeSource("JinnIme.kt")
-        val at = src.indexOf("PinyinEngine.immediateLoadTargets(this)")
-        assertTrue("IME 启动路径要算立刻装载的范围", at > 0)
-        val site = src.substring(at).substringBefore("onFailure")
-        assertTrue("范围非空才触发", "if (targets.isNotEmpty())" in site)
+        // 两端锚定：缺任一端都当场抛错（L-1145 家族）—— 裸 substringAfter 在起点缺失时返回整份源码，
+        // substringBefore 在终点缺失时返回「直到下一个同名字串」
+        val site = TestSources.window(src, "PinyinEngine.immediateLoadTargets(this)", ".onFailure")
+        // 判据必须落到**分支内**：只断「两个片段都在窗口里」时，把装载调用挪到 if 之外
+        // （范围为空也照装，官方大包一起装）照样能绿 —— 变异实证见台账 L-1432
+        val gate = TestSources.blockAfter(site, "if (targets.isNotEmpty())")
+        assertTrue("范围非空才触发（装载调用必须在非空分支内）", "maybeLoadOptionalDict(" in gate)
         assertTrue("要真的触发装载", "maybeLoadOptionalDict(" in site)
         assertEquals(
             "自定义包不看索引是否就绪（几十条，重建也是毫秒级）",

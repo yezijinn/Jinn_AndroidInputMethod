@@ -14,7 +14,10 @@ import java.io.File
  * 用户正输密码时键盘变回普通键盘，且**回不去**。
  *
  * 判据 `hasActiveOverlay` 原先只含三种面板、漏了密码模式（2026-09-28 修）。本用例把它钉成契约：
- * 四类状态一个都不能少。断言在**剥掉注释后**做 —— 注释里提到名字不算实现（BUG.md L-116）。
+ * **全部五类状态**一个都不能少。断言在**剥掉注释后**做 —— 注释里提到名字不算实现（BUG.md L-116）。
+ *
+ * 2026-10-23（L-1434）：图库面板加入 getter 后本用例没跟上 —— 删掉 `galleryActive` 仍然全绿
+ * （变异实证，见台账）。清单是穷举契约，新增临时态必须同步到这里。
  */
 class ThemeDeferralOverlayTest {
 
@@ -24,7 +27,7 @@ class ThemeDeferralOverlayTest {
     private fun codeOnly(text: String): String = TestSources.codeOf(text)
 
     @Test
-    fun `换肤延后判据必须覆盖密码模式与三种面板`() {
+    fun `换肤延后判据必须覆盖密码模式与四类面板`() {
         // 取整条属性：锚点先断言存在，再按空行边界收口并校验长度（BUG-10）。
         // 原先只有 300 字符窗：合法重排布尔子句就能让某个状态滑到窗口外，而测试仍绿。
         val viewSrc = codeOnly(sourceOf("PinyinKeyboardView.kt"))
@@ -34,6 +37,7 @@ class ThemeDeferralOverlayTest {
         assertTrue("hasActiveOverlay 没取到整条属性（长度 ${getter.length}）", getter.length in 20..600)
         for ((state, why) in listOf(
             "clipboardActive" to "剪贴板面板",
+            "galleryActive" to "图库面板（宿主可收图时才有，但面板状态同样只活在旧视图上）",
             "isSearchPanelActive()" to "顶部搜索面板（MEM-05 起按需创建，判定函数先判存在）",
             "directionPanelVisible" to "方向面板",
             "passwordPad" to "密码模式（复原三元组只活在旧视图上，重建后回不去）",
