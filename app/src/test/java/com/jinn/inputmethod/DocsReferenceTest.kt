@@ -613,7 +613,19 @@ class DocsReferenceTest {
             // 批量脚本改写）一句都不报 —— 实测 medium 写 15 实为 12、low 写 191 实为 243
             // （2026-10-02 修复 L-460）。index 的「N 条在册」另有专门断言（它数的是索引行，
             // 不是 L 块），所以这里的节标题分支只认中风险 / 低风险两节。
-            val header = Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
+            // 页眉声明有两种写法：现行 `> part=xx blocks=N frags=M …`（等号）与旧稿 `blocks: N（`。
+            // 2026-10-23 前只认后者，而全部分册页眉早在统一改写成等号形态 ⇒ 这条守卫长期空转，
+            // medium 写 46 实为 4、index 写 224 实为 217 都没人报。现在两种都认。
+            val header = Regex("""(?m)^>\s*part=\w+\s+blocks=(\d+)""")
+                .find(text)?.groupValues?.get(1)?.toInt()
+                ?: Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
+            // 索引册声明的是「索引行数」而不是 L 块数（它自己没有块）
+            val headerRows = Regex("""(?m)^>\s*part=\w+\s+rows=(\d+)""")
+                .find(text)?.groupValues?.get(1)?.toInt()
+            if (headerRows != null) {
+                val idxRows = Regex("""(?m)^\| L-\d+ \|""").findAll(text).count()
+                if (headerRows != idxRows) bad.add("$name（页眉 rows $headerRows / 实际 $idxRows）")
+            }
             val titled = Regex("""(?m)^## \d+\. (?:中风险|低风险)（(\d+) 条""")
                 .find(text)?.groupValues?.get(1)?.toInt()
             if (header != null && header != actual) bad.add("$name（页眉 $header / 实际 $actual）")
