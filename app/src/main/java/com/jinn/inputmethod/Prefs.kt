@@ -585,7 +585,7 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.clampSpacingDp(value)) }
 
     /**
-     * 候选文字字号（sp，默认 20sp）：**整个候选栏按它派生** —— 行高、拼音条高度、栏高
+     * 候选文字字号（sp，默认 28sp）：**整个候选栏按它派生** —— 行高、拼音条高度、栏高
      * 都由 [CandidateRows] 按本值算（见 [CandidateText] 的定义域说明）。
      *
      * getter 也做一次钳位（与圆角 / 间隙 / 字距 / 透明度四个兄弟键同款）：手改 prefs、

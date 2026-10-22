@@ -806,7 +806,18 @@ class DictManagerActivity : Activity() {
             // 压缩体积 —— 5.89MB 的包建出的索引有 26MiB，按压缩包估会连索引本身都不够，
             // 结果是「下载成功 → 回执成功 → 后台建索引 ENOSPC → 词库永不生效」且用户看不到原因。
             // 真实峰值还要叠加建索引期的两个整份临时件，故按安装占用 ×2 取（见 [requiredFreeBytes]）。
-            val stat = runCatching { android.os.StatFs(dir.absolutePath) }.getOrNull()
+            // ⚠ 量的是 `filesDir`，不是 `dir`（BUG.md L-1424）：`files/dicts` 首次下载前并不存在
+            // （全仓只有 fetchToFile 里 `dir.mkdirs()`，而它在预检之后），`StatFs` 对不存在的路径抛
+            // `IllegalArgumentException`（设备实测：`Invalid path: …/files/dicts`）⇒ `getOrNull()` 得到
+            // null ⇒ `freeBytes` 变成 `Long.MAX_VALUE` ⇒ **预检整段静默跳过**，正好放过 L-799 要挡的场景。
+            // 两者同在应用数据分区，量 `filesDir` 与量 `dir` 数值相同，而 `filesDir` 必然存在
+            // （口径与 StorageUsage.freeBytes 一致）。
+            val stat = runCatching { android.os.StatFs(app.filesDir.absolutePath) }
+                .onFailure {
+                    // 「量不出来」与「空间无限」原先是同一个值：留一条 W，否则事后查不到预检没跑
+                    Diagnostics.w(TAG, "空间预检取不到剩余空间，本次跳过: ${it.javaClass.simpleName}")
+                }
+                .getOrNull()
             val freeBytes = stat?.availableBytes ?: Long.MAX_VALUE
             val needBytes = requiredFreeBytes(dict)
             if (freeBytes < needBytes) {

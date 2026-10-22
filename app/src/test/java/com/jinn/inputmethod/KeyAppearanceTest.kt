@@ -3,6 +3,7 @@ package com.jinn.inputmethod
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToInt
 
 /**
  * 键盘外观参数（圆角 / 间隙 / 键高）定义域测试，纯 JVM。
@@ -34,7 +35,7 @@ class KeyAppearanceTest {
     }
 
     /**
-     * 键高（「键高」滑动条）：定义域 40~80dp、步进 2dp。
+     * 键高（「键高」滑动条）：定义域 40~90dp、步进 2dp。
      *
      * 上下界是「还能用」的边界而不是美观边界：下界以下装不下韵母提示、上界以上 3 行会把键盘顶出小屏。
      */
@@ -203,10 +204,65 @@ class KeyAppearanceTest {
         assertTrue("320dp 屏的最窄键宽度应为正（钳位不许出现负宽）", 31f - insetDp * 2f > 0f)
     }
 
-    /** 键高上界 120dp 不能把键盘顶满屏：三行 + 候选栏 + 拼音条 + 底栏 ≤ 490dp */
+    /** 键高上界 90dp 不能把键盘顶满屏：三行 + 候选栏 + 拼音条 + 底栏 ≤ 490dp */
     @Test
     fun maxKeyHeight_leavesRoomForHost() {
         val totalDp = KeyAppearance.MAX_KEY_HEIGHT_DP * 3 + 46 + 18 + 56
         assertTrue("键高上界会把键盘顶满屏：$totalDp dp", totalDp <= 490f)
+    }
+
+    /**
+     * 默认值的说明文字必须跟着常量走（BUG.md L-1425，与 L-1291 同型）。
+     *
+     * 「54dp」是上一档的值：常量改成 66f / 28f 后注释没跟，代码照跑、测试照绿 —— 只有把说明文字
+     * 从常量拼出来对拍才拦得住。这类旧数字会变成后续估预算、判「注释与常量是否分叉」的错依据。
+     */
+    @Test
+    fun 默认值的说明必须与常量一致() {
+        val heightDp = KeyAppearance.DEFAULT_KEY_HEIGHT_DP.roundToInt()
+        val keyAppearance = TestSources.rawSourceOfShortName("KeyAppearance.kt")
+        assertTrue(
+            "键高 KDoc 必须写当前默认值 ${heightDp}dp",
+            "默认键高：${heightDp}dp" in keyAppearance,
+        )
+        assertTrue(
+            "键高 KDoc 里「与 XML 同值」那句必须写当前默认值 ${heightDp}dp",
+            "三行的 ${heightDp}dp" in keyAppearance,
+        )
+        val candidateSp = CandidateText.DEFAULT_SP.roundToInt()
+        // 窗口收在「候选字号的 KDoc 到属性声明之间」，免得别的段落里一句同样的措辞蒙混过关
+        val prefsDoc = TestSources.window(
+            TestSources.rawSourceOfShortName("Prefs.kt"),
+            "候选文字字号（sp，",
+            "var candidateTextSp: Float",
+        )
+        assertTrue("候选字号 KDoc 必须写当前默认值 ${candidateSp}sp", "默认 ${candidateSp}sp" in prefsDoc)
+    }
+
+    /**
+     * 六个外观参数（+ 拼音字号）的**读取侧**必须钳位。
+     *
+     * 写入侧有 setter 兜着，读取侧只靠 getter：历史配置 / 外部写入越界时，圆角与字号会直达绘制 ——
+     * 巨大字距把每个候选撑到屏幕外、字号过大把候选栏撑满整屏、过小连字都点不中。
+     * 这里不另建判据，只把「getter 调的是哪个钳位函数」与常量侧对拍。
+     */
+    @Test
+    fun 外观参数的读取侧必须钳位() {
+        val src = TestSources.codeSource("Prefs.kt")
+        val want = listOf(
+            "keyCornerDp" to "KeyAppearance.clampCornerDp",
+            "keyGapDp" to "KeyAppearance.clampGapDp",
+            "keyHeightDp" to "KeyAppearance.clampKeyHeightDp",
+            "candidateTextSp" to "CandidateText.clampSp",
+            "candidateSpacingDp" to "KeyAppearance.clampSpacingDp",
+            "pinyinTextSp" to "CandidateText.clampPinyinSp",
+            "keyTransparencyPercent" to "KeyTransparency.clampPercent",
+        )
+        for ((prop, clamp) in want) {
+            val getter = Regex("""(?s)var $prop\s*:\s*\w+\s*\n\s*get\(\) = ([\w.]+)\(""")
+                .find(src)?.groupValues?.get(1)
+                ?: error("找不到 $prop 的 getter（改名 / 换了写法 ⇒ 同步本用例）")
+            assertEquals("$prop 的读取侧必须钳位", clamp, getter)
+        }
     }
 }

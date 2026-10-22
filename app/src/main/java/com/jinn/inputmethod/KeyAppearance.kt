@@ -93,10 +93,11 @@ object KeyAppearance {
     const val KEY_HEIGHT_STEP_DP = 2f
 
     /**
-     * 默认键高：54dp。
+     * 默认键高：66dp。
      *
-     * 与 `keyboard_pinyin.xml` 里三行的 54dp **刻意取同一个数**：默认值即「用户没动过滑杆时的原始观感」，
+     * 与 `keyboard_pinyin.xml` 里三行的 66dp **刻意取同一个数**：默认值即「用户没动过滑杆时的原始观感」，
      * 两者一旦分叉，从没打开过外观页的用户会在首次 `configure()` 后看到键盘莫名变高或变矮。
+     * 这条不变式由 `CandidateRowsTest` 直接对拍 XML（数字改了这里也要改，别只改注释）。
      */
     const val DEFAULT_KEY_HEIGHT_DP = 66f
 

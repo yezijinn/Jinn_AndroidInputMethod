@@ -131,6 +131,31 @@ class OptionalDictPackVersionTest {
     }
 
     /**
+     * 空间预检必须量一个**必然存在**的路径（BUG.md L-1424）。
+     *
+     * `StatFs(不存在的路径)` 抛 `IllegalArgumentException`（设备实测：
+     * `Invalid path: …/files/dicts`），而预检写的是 `runCatching{}.getOrNull() ?: Long.MAX_VALUE`
+     * ⇒ 异常被吞成「空间无限」。`files/dicts` 首次下载前并不存在（全仓只有 `fetchToFile` 里
+     * `dir.mkdirs()`，它在预检之后）⇒ 预检整段静默跳过，L-799 要挡的「写一半 ENOSPC / 建索引 ENOSPC」
+     * 原样打开。改量 `filesDir`：同一数据分区、数值相同，且它必然存在（与 [StorageUsage.freeBytes] 同口径）。
+     */
+    @Test
+    fun 空间预检必须量必然存在的路径() {
+        val src = TestSources.codeSource("DictManagerActivity.kt")
+        assertTrue(
+            "预检必须量 app.filesDir（dir 首次下载前不存在，StatFs 会抛 IllegalArgumentException）",
+            "StatFs(app.filesDir.absolutePath)" in src,
+        )
+        assertFalse(
+            "预检不许再量 dir（不存在 ⇒ 异常 ⇒ 预检静默跳过）",
+            "StatFs(dir.absolutePath)" in src,
+        )
+        // 量不出来必须留痕：否则「预检没跑」与「空间充足」在日志里同形，事后无从归因
+        val block = TestSources.window(src, "val stat = runCatching", "val freeBytes")
+        assertTrue("预检取不到剩余空间时必须打 W 日志", "Diagnostics.w(" in block)
+    }
+
+    /**
      * 清单里三个包的 installMiB 必须与卡片文案「体积占用 +N MiB」对得上。
      *
      * 两者不同源就是给用户一个假的安装预期；也是本条预检的数据来源。

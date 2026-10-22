@@ -122,4 +122,19 @@ class NumberRowLabelsTest {
         assertEquals(10, NumberRowLabels.parse(s).size)
         assertEquals("甲", NumberRowLabels.parse(s)[0])
     }
+
+    /**
+     * 值里的 JSON 特殊字符必须原样往返（本轮补测，2026-10-23）。
+     *
+     * 持久化走 `JSONArray`：谁把它换成手拼字符串（`joinToString` 一类），`"` 与 `\` 就会写出非法 JSON，
+     * 解析侧按「结构不符 ⇒ 整份全空」处理 —— 症状是「改过的数字行键面全变回默认」，
+     * 而现有一组断言（10 项、幂等、空槽回落）全都照样绿。
+     */
+    @Test
+    fun `标注里的引号与反斜杠必须原样往返`() {
+        val labels = listOf("\\\"", "\\\\", "😀😀", "#", "1", "2", "3", "4", "5", "6")
+        val raw = NumberRowLabels.serialize(labels)
+        assertEquals("引号 / 反斜杠 / emoji 必须原样返回", labels, NumberRowLabels.parse(raw))
+        assertEquals("往返后再序列化必须逐字节相同", raw, NumberRowLabels.serialize(NumberRowLabels.parse(raw)))
+    }
 }
