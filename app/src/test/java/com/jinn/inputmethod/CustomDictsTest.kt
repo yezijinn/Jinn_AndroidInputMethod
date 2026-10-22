@@ -146,7 +146,10 @@ class CustomDictsTest {
         // 断言范围被悄悄放大到全文件（守卫强度骤降）
         val saveBody = TestSources.blockAfter(src, "private fun save(")
         assertTrue("save() 方法体锚点失效（源码结构变了）", saveBody.isNotEmpty() && saveBody.length < src.length)
-        val restore = saveBody.substringAfter("saving = false")
+        // 复位点到按钮恢复之间取窗口（两端锚点都断言）：裸 `substringAfter("saving = false")` 在
+        // 那句复位被删掉时返回**整个方法体**，而 `if (!refillSkipped)` 在方法体里恰好还有一处 ⇒
+        // 保存永远不复位也绿（2026-10-23 变异实证）
+        val restore = TestSources.window(saveBody, "saving = false", "closeButton.isEnabled = true")
         assertTrue(
             "保存结束后的恢复必须判 refillSkipped（否则会把整体替换的风险放回来）",
             "if (!refillSkipped)" in restore,

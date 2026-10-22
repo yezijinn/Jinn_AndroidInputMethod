@@ -361,8 +361,12 @@ class RecentFixesRegressionTest {
     fun `进符号层必须清掉未上屏的拼音`() {
         val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "btnSymbol.setOnClickListener")
         // 收紧到**符号层分支体内**、且要求调用**独占一行**（BUG.md L-109）：
-        // 原来只查「处理体里出现这个名字」—— 把调用挪进 `if (false)` 或别的分支时仍然绿
-        val branch = body.substringAfter("if (layer == LAYER_SYMBOL)")
+        // 原来只查「处理体里出现这个名字」—— 把调用挪进 `if (false)` 或别的分支时仍然绿。
+        // 分支体按花括号配对取（两端都要真锚点）：裸 `substringAfter("if (layer == LAYER_SYMBOL)")`
+        // 在条件被改成 `!=` / 整段搬走时返回整个处理体，而 `clearComposingState()` 在别处还有若干处
+        // ⇒ 进符号层不清也算绿（2026-10-23 变异实证）。锚点带 `{`，免得撞上上面那行
+        // `layer = if (layer == LAYER_SYMBOL) LAYER_LETTER else LAYER_SYMBOL`。
+        val branch = blockAfter(body, "if (layer == LAYER_SYMBOL) {")
         assertStatementLine(
             branch,
             "clearComposingState()",
