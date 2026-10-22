@@ -47,12 +47,18 @@ class PlainExportTest {
     }
 
     @Test
-    fun `确认词必须逐字匹配且不是大写OK`() {
-        assertEquals("我明白", "我明白")
-        assertFalse("我明白 != OK", "我明白" == "OK")
-        // trim 语义与代码一致
-        assertTrue("允许首尾空白", "  我明白\n".trim() == "我明白")
-        assertFalse("多一个字不算", "我明白了".trim() == "我明白")
-        assertFalse("少一个字不算", "我明白".dropLast(1) == "我明白")
+    fun `确认词三处共用同一个判据`() {
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        // 开启 / 关闭删除 / 导出明文：三处都调 isConfirmText，且只有这一个确认词定义
+        assertEquals(
+            "页内 isConfirmText 调用点应为 3 处（开启、关闭、明文导出）",
+            3,
+            Regex("""isConfirmText\(edit\.text\.toString\(\)\)""").findAll(page).count(),
+        )
+        assertEquals(
+            "确认词只允许一个定义",
+            1,
+            Regex("""const val CONFIRM_WORD""").findAll(page).count(),
+        )
     }
 }

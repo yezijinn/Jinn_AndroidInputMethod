@@ -136,12 +136,13 @@ class SelectionLedgerTest {
     }
 
     @Test
-    fun `关闭确认只认大写OK`() {
-        assertTrue(isConfirmOkText("OK"))
-        assertTrue(isConfirmOkText("  OK  "))
-        assertTrue("小写不算", !isConfirmOkText("ok"))
-        assertTrue("大小写混合不算", !isConfirmOkText("Ok"))
-        assertTrue("多余字符不算", !isConfirmOkText("OK!"))
+    fun `关闭确认只认我明白`() {
+        assertTrue(isConfirmText("我明白"))
+        assertTrue(isConfirmText("  我明白  "))
+        assertTrue("少一个字不算", !isConfirmText("我明白".dropLast(1)))
+        assertTrue("多一个字不算", !isConfirmText("我明白了"))
+        assertTrue("空串不算", !isConfirmText(""))
+        assertTrue("别的不算", !isConfirmText("OK"))
     }
 
     @Test

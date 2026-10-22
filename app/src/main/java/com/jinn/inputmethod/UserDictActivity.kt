@@ -215,7 +215,7 @@ class UserDictActivity : ComponentActivity() {
 
     // ── 开启 / 关闭 ─────────────────────────────────────────────
 
-    /** 未开启时的说明框：讲清用途、边界、风险与防护，输入大写 OK 才开启 */
+    /** 未开启时的说明框：讲清用途、边界、风险与防护，输入「我明白」才开启 */
     private fun showEnableDialog() {
         // 退一档的机器上必须如实追加一行（N13）：不能在任何机型上都声称「锁屏也读不到」
         val body = TEXT_ENABLE_BODY + if (LedgerCrypto.isDegraded(filesDir)) TEXT_ENABLE_BODY_NOLOCK else ""
@@ -231,8 +231,8 @@ class UserDictActivity : ComponentActivity() {
         dialog.setOnShowListener {
             fitConfirmText(confirm)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if (!isConfirmOk(edit.text.toString())) {
-                    toast(TEXT_NEED_OK)
+                if (!isConfirmText(edit.text.toString())) {
+                    toast(TEXT_NEED_CONFIRM)
                     return@setOnClickListener
                 }
                 prefs.userDictEnabled = true
@@ -258,7 +258,7 @@ class UserDictActivity : ComponentActivity() {
             .show()
     }
 
-    /** 关闭第二步：说明删除不可恢复，输入大写 OK 才执行 */
+    /** 关闭第二步：说明删除不可恢复，输入「我明白」才执行 */
     private fun confirmCloseStepTwo() {
         val confirm = confirmView(TEXT_CLOSE_STEP2)
         val edit = confirm.edit
@@ -271,8 +271,8 @@ class UserDictActivity : ComponentActivity() {
         dialog.setOnShowListener {
             fitConfirmText(confirm)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if (!isConfirmOk(edit.text.toString())) {
-                    toast(TEXT_NEED_OK)
+                if (!isConfirmText(edit.text.toString())) {
+                    toast(TEXT_NEED_CONFIRM)
                     return@setOnClickListener
                 }
                 // 先落开关再删文件：反过来的话，进程内任何一次重读偏好都会把记录重新打开
@@ -295,13 +295,9 @@ class UserDictActivity : ComponentActivity() {
      * 确认框的公共视图：可滚动的说明文字 + 确认词输入框。
      *
      * 说明较长，必须能滚动；输入框固定在最下方，避免被键盘挡住后滚不到。
-     *
-     * @param hint 输入框提示语（默认「输入大写 OK」；明文导出换成「输入『我明白』」）
+     * 三处危险操作（开启 / 关闭并删除 / 导出明文）共用这一个视图与同一个确认词。
      */
-    private fun confirmView(
-        body: String,
-        hint: String = TEXT_OK_HINT,
-    ): ConfirmView {
+    private fun confirmView(body: String): ConfirmView {
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
         val root = LinearLayout(this).apply {
@@ -318,7 +314,7 @@ class UserDictActivity : ComponentActivity() {
         // 先按上限占位（不裁字），show 之后按真实宽度收缩到文字高度
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxTextPx))
         val edit = EditText(this).apply {
-            this.hint = hint
+            hint = TEXT_CONFIRM_HINT
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
@@ -352,9 +348,6 @@ class UserDictActivity : ComponentActivity() {
         val text: TextView,
         val maxHeight: Int,
     )
-
-    /** 必须逐字是大写 OK（允许首尾空格，不许小写） */
-    private fun isConfirmOk(input: String): Boolean = isConfirmOkText(input)
 
     // ── 词库视图（后台读盘 → 主线程渲染）────────────────────────
 
@@ -459,12 +452,11 @@ class UserDictActivity : ComponentActivity() {
     /**
      * 明文导出的警告：必须逐字输入「我明白」三个字才放行。
      *
-     * 复用开启/关闭那套可滚动确认视图，但校验词换成 [CONFIRM_PLAIN] ——
-     * 原来的 [isConfirmOkText] 只认大写 OK，这里单独判。
-     * 密码不适用（没有密码），走 [writePlainExport]。
+     * 与开启 / 关闭共用 [confirmView] 与同一个确认词（[CONFIRM_WORD]），判据走同一个
+     * [isConfirmText] —— 三处危险操作一套口径，不分叉。没有密码可设，走 [writePlainExport]。
      */
     private fun askPlainExportConfirm(format: SelectionLedger.ExportFormat) {
-        val confirm = confirmView(TEXT_PLAIN_WARN_BODY, TEXT_PLAIN_CONFIRM_HINT)
+        val confirm = confirmView(TEXT_PLAIN_WARN_BODY)
         val edit = confirm.edit
         val dialog = AlertDialog.Builder(this)
             .setTitle(TEXT_PLAIN_WARN_TITLE)
@@ -475,8 +467,8 @@ class UserDictActivity : ComponentActivity() {
         dialog.show()
         dialog.setOnShowListener { fitConfirmText(confirm) }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            if (edit.text.toString().trim() != CONFIRM_PLAIN) {
-                toast(TEXT_PLAIN_NEED_CONFIRM)
+            if (!isConfirmText(edit.text.toString())) {
+                toast(TEXT_NEED_CONFIRM)
                 return@setOnClickListener
             }
             edit.text.clear()
@@ -1079,14 +1071,14 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_ENABLE_TITLE = "开启用户词库"
         const val TEXT_ENABLE_OK = "开启"
         const val TEXT_CANCEL = "取消"
-        const val TEXT_OK_HINT = "输入大写 OK"
-        const val TEXT_NEED_OK = "请输入大写 OK"
+        const val TEXT_CONFIRM_HINT = "输入「我明白」"
+        const val TEXT_NEED_CONFIRM = "请输入「我明白」"
         const val TEXT_ENABLED = "已开启，之后的选词才会被记录"
         const val TEXT_CLOSE_TITLE = "关闭用户词库"
         const val TEXT_CLOSE_STEP1 = "将删除全部记录（user_picks.txt），不可恢复。建议先导出。"
         const val TEXT_EXPORT_FIRST = "先去导出"
         const val TEXT_CONTINUE_CLOSE = "继续关闭"
-        const val TEXT_CLOSE_STEP2 = "删除 files/user_picks.txt 并停止记录，不可恢复。\n输入大写 OK 确认。"
+        const val TEXT_CLOSE_STEP2 = "删除 files/user_picks.txt 并停止记录，不可恢复。\n输入「我明白」确认。"
         const val TEXT_CLOSE_OK = "删除并关闭"
         const val TEXT_CLOSED = "已删除记录并关闭"
         const val TEXT_CLOSE_FAILED = "关闭失败（文件可能被占用），已恢复记录开关"
@@ -1159,10 +1151,6 @@ class UserDictActivity : ComponentActivity() {
 
 明文文件不加任何保护，能读取这个文件的人或应用，都能看到你的全部词条与读音。确认要导出，请输入「我明白」。"""
 
-        /** 明文导出的确认词：三个字，逐字比对 */
-        const val CONFIRM_PLAIN = "我明白"
-        const val TEXT_PLAIN_CONFIRM_HINT = "输入「我明白」"
-        const val TEXT_PLAIN_NEED_CONFIRM = "请输入「我明白」"
         const val TEXT_PLAIN_CONFIRM = "导出明文"
 
         const val KEY_PENDING_FORMAT = "pending_format"
@@ -1170,5 +1158,8 @@ class UserDictActivity : ComponentActivity() {
     }
 }
 
-/** 开启/关闭的确认口径：逐字大写 `OK`（允许首尾空格，小写不算） */
-internal fun isConfirmOkText(input: String): Boolean = input.trim() == "OK"
+/** 本页三处危险操作的确认口径：逐字「我明白」（允许首尾空白） */
+internal fun isConfirmText(input: String): Boolean = input.trim() == CONFIRM_WORD
+
+/** 确认词：开启用户词库、关闭并删除记录、导出明文词库共用同一个 */
+internal const val CONFIRM_WORD = "我明白"

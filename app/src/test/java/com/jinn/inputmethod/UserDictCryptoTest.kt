@@ -660,18 +660,29 @@ class UserDictCryptoTest {
     // ── 明文导出（外部可读）──────────────────────────────────
 
     @Test
-    fun `明文导出必须先确认我明白且确认词不是大写OK`() {
+    fun `明文导出必须先确认我明白`() {
         val page = TestSources.codeSource("UserDictActivity.kt")
         assertTrue("警告文案要说明这是隐私数据", "这份词库，记录你打过的汉字，涉及个人隐私，当心泄密" in page)
-        assertTrue("确认词是三个字", "const val CONFIRM_PLAIN = \"我明白\"" in page)
+        assertTrue("确认词只有一个定义", "internal const val CONFIRM_WORD = \"我明白\"" in page)
         assertTrue(
-            "明文分支必须逐字比对 CONFIRM_PLAIN，不能复用 isConfirmOkText（那个只认大写 OK）",
-            "edit.text.toString().trim() != CONFIRM_PLAIN" in page,
+            "明文分支必须走统一判据 isConfirmText",
+            "if (!isConfirmText(edit.text.toString()))" in page,
         )
-        // 明文确认框里不得出现 isConfirmOkText：两套确认词共用一套判据会漏掉明文分支
         val confirmFn = TestSources.blockAfter(page, "private fun askPlainExportConfirm(")
-        assertFalse("明文确认框不得复用大写 OK 判据", "isConfirmOkText" in confirmFn)
-        assertTrue("对不上时必须挡住并提示", "TEXT_PLAIN_NEED_CONFIRM" in confirmFn)
+        assertTrue("对不上时必须挡住并提示", "TEXT_NEED_CONFIRM" in confirmFn)
+        // 三处危险操作（开启 / 关闭删除 / 导出明文）共用同一个确认词与判据
+        val wordDefs = Regex("""const val (\w+) = "我明白"""").findAll(page).toList()
+        assertEquals(
+            "「我明白」只允许有一个定义，且必须叫 CONFIRM_WORD",
+            listOf("CONFIRM_WORD"),
+            wordDefs.map { it.groupValues[1] },
+        )
+        assertTrue("提示语也统一", "const val TEXT_CONFIRM_HINT = \"输入「我明白」\"" in page)
+        assertTrue("缺输入提示也统一", "const val TEXT_NEED_CONFIRM = \"请输入「我明白」\"" in page)
+        // 旧的「大写 OK」口径必须彻底消失（文案、判据、注释都不能留）
+        assertFalse("不得再提大写 OK", "大写 OK" in page)
+        assertFalse("不得再留 isConfirmOkText", "isConfirmOkText" in page)
+        assertFalse("不得再留 CONFIRM_PLAIN", "CONFIRM_PLAIN" in page)
     }
 
     @Test

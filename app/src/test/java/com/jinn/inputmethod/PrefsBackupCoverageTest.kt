@@ -29,7 +29,7 @@ class PrefsBackupCoverageTest {
     /**
      * 有意不进备份的键：状态本身属于「必须当场同意」的隐私开关。
      *
-     * 恢复到新机后必须重新看说明并手输大写 OK，不能因为导入一份配置文件被静默打开
+     * 恢复到新机后必须重新看说明并手输「我明白」，不能因为导入一份配置文件被静默打开
      * （`user_picks.txt` 本身也已排除系统备份，见 backup_rules / data_extraction_rules）。
      */
     private val excludedFromBackup = setOf("KEY_USER_DICT_ENABLED")
