@@ -662,11 +662,12 @@ class UserDictCryptoTest {
     @Test
     fun `对话框按钮与确认框尺寸必须与整页一致`() {
         val page = TestSources.codeSource("UserDictActivity.kt")
-        // 按钮：四个对话框（开启 / 关闭 / 明文警告 / 格式选择）都要走统一样式，不能用系统默认
+        // 按钮：八个对话框（开启 / 关闭两步 / 格式选择 / 明文警告 / 导出密码 / 导入密码 / 导入预览）
+        // 都要走统一样式，不能用系统默认
         assertTrue("要有统一的按钮刷法", "private fun styleDialogButtons(dialog: AlertDialog)" in page)
         assertEquals(
-            "每个对话框 show 之后都要刷一次（共 4 处）",
-            4,
+            "每个对话框 show 之后都要刷一次（共 8 处）",
+            8,
             Regex("""styleDialogButtons\((?:dialog|dlg)\)""").findAll(page).count(),
         )
         assertTrue(
@@ -674,6 +675,16 @@ class UserDictCryptoTest {
             "private fun settingsButton(label: String): Button" in page,
         )
         assertTrue("自定义按钮取页面同一个 drawable", "R.drawable.btn_aurora_secondary" in page)
+        // 两个自定义按钮都必须显式给 40dp：`addView(child)` 只沿用 child 的 lp，
+        // 而 Button 的 minHeight 会把没传 params 的那个顶回系统 48dp（实测 168px vs 140px）
+        assertTrue("间距与高度走同一个 lp", "private fun btnLp(topDp: Int): LinearLayout.LayoutParams" in page)
+        assertTrue("加密包按钮显式传 lp", "box.addView(btnEnc, btnLp(6))" in page)
+        assertTrue("明文按钮显式传 lp", "box.addView(btnPlain, btnLp(6))" in page)
+        assertFalse(
+            "settingsButton 不得再自带 layoutParams（会被 addView 覆盖成死代码）",
+            "layoutParams = LinearLayout.LayoutParams(" in
+                TestSources.blockAfter(page, "private fun settingsButton("),
+        )
         // 尺寸：文字区必须先量后建，不许再按屏高比例占位（那会把窗口撑到近满屏）
         assertFalse("不得按屏高比例占位", "heightPixels * 0.58" in page)
         assertTrue("文字区高度有上限常量", "const val TEXT_MAX_DP = " in page)
@@ -681,6 +692,24 @@ class UserDictCryptoTest {
             "高度按量出的文字高度给",
             "minOf(text.measuredHeight + (4 * density).toInt(), maxTextPx)" in page,
         )
+        // 宽度估算：对话框自身的左右占用必须按**每侧**扣，且只能估窄
+        // （估宽 ⇒ 行数偏少 ⇒ 视口偏矮 ⇒ 末行落到视口外，真机复现过）
+        assertTrue("对话框左右占用按每侧扣", "2 * DIALOG_SIDE_DP * density" in page)
+        assertTrue("每侧留量够大", "private const val DIALOG_SIDE_DP = 32" in page)
+        assertFalse("不得再把 24dp 当成两侧合计", "(24 * density)" in page)
+        val confirmFn = TestSources.blockAfter(page, "private fun confirmView(")
+        assertFalse("正文不许设 maxHeight（会切断滚动）", "maxHeight" in confirmFn)
+        // 明文导出：页面重建后 UI 缓存为空，必须以磁盘为准；磁盘也空则不留空壳、不谎报成功
+        val plainFn = TestSources.blockAfter(page, "private fun writePlainExportOnIo(")
+        assertTrue("空快照要回磁盘", "reloadRows()" in plainFn)
+        assertTrue("磁盘也空要报没词", "TEXT_NOTHING_TO_EXPORT" in plainFn)
+        // 对话框生命周期：八个创建点都要登记，onDestroy 才能统一 dismiss（否则必留 WindowLeaked）
+        assertEquals(
+            "八个对话框都要登记",
+            8,
+            Regex("""val (?:dialog|dlg) = tracked\(""").findAll(page).count(),
+        )
+        assertTrue("销毁时统一关闭对话框", "shownDialog?.dismiss()" in page)
         // 旧的那套「show 之后再收缩」已删除
         assertFalse("不得再留 show 后收缩", "fitConfirmText" in page)
     }

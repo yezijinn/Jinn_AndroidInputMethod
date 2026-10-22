@@ -67,6 +67,9 @@ class UserDictActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // 对话框还开着就销毁（旋转 / 换肤 / 改字号）：不 dismiss 必留 WindowLeaked
+        shownDialog?.dismiss()
+        shownDialog = null
         // 选位置 / 输密码期间可能残留一份导入暂存件（明文），必须在这里兜住
         clearStaged()
         io.shutdownNow()
@@ -84,6 +87,15 @@ class UserDictActivity : ComponentActivity() {
     /** 当前合并结果（词, 读音, 次数），导出直接用它 */
     @Volatile
     private var rows: List<Row> = emptyList()
+
+    /**
+     * 当前显示的对话框（同一时刻只可能有一个）。
+     *
+     * 8 个对话框都经 [tracked] 收口：`onDestroy` 时统一 dismiss —— 对话框开着做配置变更
+     * （旋转 / 定时换肤 / 改字号）时，`AlertDialog` 的窗口还挂在一个正在销毁的 Activity 上，
+     * `WindowManager` 每次都会记一条 `WindowLeaked`（确定性，不崩但属生命周期未收口）。
+     */
+    private var shownDialog: AlertDialog? = null
 
     private var pendingFormat: SelectionLedger.ExportFormat? = null
 
@@ -127,7 +139,7 @@ class UserDictActivity : ComponentActivity() {
             return@registerForActivityResult
         }
         if (plain) {
-            // 明文导出没有密码可丢，重建也不影响
+            // 明文分支没有密码可丢，重建后照样写完 —— 数据快照由 writePlainExportOnIo 从磁盘兜住
             writePlainExport(uri, format)
             return@registerForActivityResult
         }
@@ -221,12 +233,14 @@ class UserDictActivity : ComponentActivity() {
         val body = TEXT_ENABLE_BODY + if (LedgerCrypto.isDegraded(filesDir)) TEXT_ENABLE_BODY_NOLOCK else ""
         val confirm = confirmView(body)
         val edit = confirm.edit
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_ENABLE_TITLE)
-            .setView(confirm.root)
-            .setNegativeButton(TEXT_CANCEL) { _, _ -> finish() }
-            .setPositiveButton(TEXT_ENABLE_OK, null)
-            .create()
+        val dialog = tracked(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_ENABLE_TITLE)
+                .setView(confirm.root)
+                .setNegativeButton(TEXT_CANCEL) { _, _ -> finish() }
+                .setPositiveButton(TEXT_ENABLE_OK, null)
+                .create(),
+        )
         dialog.setCancelable(false)
         dialog.show()
         styleDialogButtons(dialog)
@@ -245,27 +259,32 @@ class UserDictActivity : ComponentActivity() {
 
     /** 关闭第一步：先提示导出（可以先去导出，或继续关闭） */
     private fun confirmCloseStepOne() {
-        AlertDialog.Builder(this)
-            .setTitle(TEXT_CLOSE_TITLE)
-            .setMessage(TEXT_CLOSE_STEP1)
-            .setPositiveButton(TEXT_EXPORT_FIRST) { _, _ ->
-                startExport(SelectionLedger.ExportFormat.RIME_YAML)
-            }
-            .setNeutralButton(TEXT_CONTINUE_CLOSE) { _, _ -> confirmCloseStepTwo() }
-            .setNegativeButton(TEXT_CANCEL, null)
-            .show()
+        val dialog = tracked(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_CLOSE_TITLE)
+                .setMessage(TEXT_CLOSE_STEP1)
+                .setPositiveButton(TEXT_EXPORT_FIRST) { _, _ ->
+                    startExport(SelectionLedger.ExportFormat.RIME_YAML)
+                }
+                .setNeutralButton(TEXT_CONTINUE_CLOSE) { _, _ -> confirmCloseStepTwo() }
+                .setNegativeButton(TEXT_CANCEL, null)
+                .show(),
+        )
+        styleDialogButtons(dialog)
     }
 
     /** 关闭第二步：说明删除不可恢复，输入「我明白」才执行 */
     private fun confirmCloseStepTwo() {
         val confirm = confirmView(TEXT_CLOSE_STEP2)
         val edit = confirm.edit
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_CLOSE_TITLE)
-            .setView(confirm.root)
-            .setNegativeButton(TEXT_CANCEL, null)
-            .setPositiveButton(TEXT_CLOSE_OK, null)
-            .create()
+        val dialog = tracked(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_CLOSE_TITLE)
+                .setView(confirm.root)
+                .setNegativeButton(TEXT_CANCEL, null)
+                .setPositiveButton(TEXT_CLOSE_OK, null)
+                .create(),
+        )
         dialog.show()
         styleDialogButtons(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -309,16 +328,30 @@ class UserDictActivity : ComponentActivity() {
             textSize = 13f
             setLineSpacing(0f, 1.1f)
         }
-        // 文字可用宽度 = 屏宽 − 两侧内边距 − 对话框自带的左右边距（约 24dp）
-        val textWidthPx = (resources.displayMetrics.widthPixels - pad * 2 - (24 * density).toInt())
-            .coerceAtLeast((200 * density).toInt())
+        // 文字宽度 = 屏宽 − root 内边距 − 对话框自身左右占用。
+        // 后者实测 26.6dp/侧（窗口内缩 10.5dp + 内容内边距 16dp），这里按 [DIALOG_SIDE_DP] 扣。
+        // 估算只能偏窄：偏窄 ⇒ 行数偏多 ⇒ 视口偏高（多几 px 空白，看不出来）；
+        // 偏宽 ⇒ 行数偏少 ⇒ 视口偏矮 ⇒ 末行落到视口外（真机复现过，短文案最明显）。
+        val textWidthPx = (
+            resources.displayMetrics.widthPixels - pad * 2 - (2 * DIALOG_SIDE_DP * density).toInt()
+            ).coerceAtLeast((200 * density).toInt())
         text.measure(
             View.MeasureSpec.makeMeasureSpec(textWidthPx, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         val maxTextPx = (TEXT_MAX_DP * density).toInt()
         val textHeight = minOf(text.measuredHeight + (4 * density).toInt(), maxTextPx)
-        val scroll = ScrollView(this).apply { isFillViewport = true; addView(text) }
+        // 触顶时开渐隐边：否则文字在视口下沿被行中间切断，看着像「正文就到这儿了」。
+        // 长度必须走 [dp]，别在这里写像素算式 —— 上面那条宽度算式已经改成 dp 了。
+        val capped = text.measuredHeight + (4 * density).toInt() > maxTextPx
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            if (capped) {
+                isVerticalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(24))
+            }
+            addView(text)
+        }
         root.addView(
             scroll,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, textHeight),
@@ -412,7 +445,7 @@ class UserDictActivity : ComponentActivity() {
         val pad = (20 * density).toInt()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, (4 * density).toInt(), pad, 0)
+            setPadding(pad, (4 * density).toInt(), pad, dp(6))
         }
         box.addView(
             TextView(this).apply {
@@ -424,15 +457,19 @@ class UserDictActivity : ComponentActivity() {
         )
         // 规格与页面里的四个导出按钮一致（SettingsButton：40dp 高、12dp 圆角描边、13sp）：
         // 早先直接用系统 Button，是个浅灰圆角块，跟整页风格脱节。
+        // 两个都要显式传 [btnLp]：`addView(child)` 只沿用 child 已有的 lp，而 Button 的
+        // `minHeight` 会把没传 params 的那个顶回系统 48dp —— 实测「加密包」48dp /「明文文件」40dp。
         val btnEnc = settingsButton(TEXT_FORMAT_ENCRYPTED)
         val btnPlain = settingsButton(TEXT_FORMAT_PLAIN)
-        box.addView(btnEnc, lpOf(6))
-        box.addView(btnPlain)
-        val dlg = AlertDialog.Builder(this)
-            .setTitle(TEXT_FORMAT_TITLE)
-            .setView(box)
-            .setNegativeButton(TEXT_CANCEL, null)
-            .create()
+        box.addView(btnEnc, btnLp(6))
+        box.addView(btnPlain, btnLp(6))
+        val dlg = tracked(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_FORMAT_TITLE)
+                .setView(box)
+                .setNegativeButton(TEXT_CANCEL, null)
+                .create(),
+        )
         btnEnc.setOnClickListener {
             dlg.dismiss()
             askExportPassword(format)
@@ -454,12 +491,14 @@ class UserDictActivity : ComponentActivity() {
     private fun askPlainExportConfirm(format: SelectionLedger.ExportFormat) {
         val confirm = confirmView(TEXT_PLAIN_WARN_BODY)
         val edit = confirm.edit
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(TEXT_PLAIN_WARN_TITLE)
-            .setView(confirm.root)
-            .setNegativeButton(TEXT_CANCEL, null)
-            .setPositiveButton(TEXT_PLAIN_CONFIRM, null)
-            .create()
+        val dialog = tracked(
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_PLAIN_WARN_TITLE)
+                .setView(confirm.root)
+                .setNegativeButton(TEXT_CANCEL, null)
+                .setPositiveButton(TEXT_PLAIN_CONFIRM, null)
+                .create(),
+        )
         dialog.show()
         styleDialogButtons(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -501,15 +540,18 @@ class UserDictActivity : ComponentActivity() {
             addView(pwd1, lpOf(10))
             addView(pwd2, lpOf(6))
         }
-        val dialog = secureDialog(
-            AlertDialog.Builder(this)
-                .setTitle(TEXT_EXPORT_PWD_TITLE)
-                .setView(box)
-                .setNegativeButton(TEXT_CANCEL, null)
-                .setPositiveButton(TEXT_EXPORT_CONFIRM, null)
-                .create(),
+        val dialog = tracked(
+            secureDialog(
+                AlertDialog.Builder(this)
+                    .setTitle(TEXT_EXPORT_PWD_TITLE)
+                    .setView(box)
+                    .setNegativeButton(TEXT_CANCEL, null)
+                    .setPositiveButton(TEXT_EXPORT_CONFIRM, null)
+                    .create(),
+            ),
         )
         dialog.show()
+        styleDialogButtons(dialog)
         // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             // 校验与比对都直接吃 `Editable`（N7）：**不产生 String 副本** —— String 无法清零，
@@ -568,9 +610,18 @@ class UserDictActivity : ComponentActivity() {
         format: SelectionLedger.ExportFormat,
         snapshot: List<Row>,
     ) {
+        // UI 缓存只是快照：页面被重建后（进程被杀 / 配置变更）新实例的 `rows` 恒为空，
+        // 而回调可能在 loadAsync 读回来之前就派发 —— 拿它当真相就会写出只有表头的空文件。
+        val src = if (snapshot.isEmpty()) reloadRows() else snapshot
+        if (src.isEmpty()) {
+            // 磁盘也没有词：不留只有表头的空壳，也不谎报「已导出 0 条」
+            deleteEmptyTarget(uri)
+            runOnUiThread { if (alive()) toast(TEXT_NOTHING_TO_EXPORT) }
+            return
+        }
         val ok = try {
             val merged = LinkedHashMap<Pair<String, String>, Int>()
-            for (r in snapshot) merged[r.word to r.pinyin] = r.count
+            for (r in src) merged[r.word to r.pinyin] = r.count
             val text = SelectionLedger.exportText(merged, format)
             val out = openTruncatingOutput(uri)
             if (out == null) {
@@ -587,12 +638,22 @@ class UserDictActivity : ComponentActivity() {
             false
         }
         if (!ok) deleteEmptyTarget(uri)
-        val count = snapshot.size
+        val count = src.size
         runOnUiThread {
             if (!alive()) return@runOnUiThread
             toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
         }
     }
+
+    /**
+     * 从磁盘按导出同一口径重算词表（**只能在 `io` 线程调用**）。
+     *
+     * 与 [loadOnIo] 的列表同源同排序：页面重建后 `rows` 还没加载回来时，导出不能拿空表当真相。
+     */
+    private fun reloadRows(): List<Row> =
+        SelectionLedger.aggregate(SelectionLedger.readAll(applicationContext))
+            .entries.map { Row(it.key.first, it.key.second, it.value) }
+            .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
 
     private fun writeExportOnIo(
         uri: Uri,
@@ -600,8 +661,16 @@ class UserDictActivity : ComponentActivity() {
         snapshot: List<Row>,
         password: CharArray,
     ) {
+        // 同 [writePlainExportOnIo]：加密包也不能拿重建后的空快照造出一个「合法但空」的包
+        val src = if (snapshot.isEmpty()) reloadRows() else snapshot
+        if (src.isEmpty()) {
+            password.fill('\u0000')
+            deleteEmptyTarget(uri)
+            runOnUiThread { if (alive()) toast(TEXT_NOTHING_TO_EXPORT) }
+            return
+        }
         val ok = try {
-            buildAndWrite(uri, format, snapshot, password)
+            buildAndWrite(uri, format, src, password)
         } catch (t: Throwable) {
             Diagnostics.w(TAG_NAME, "导出异常: ${t.javaClass.simpleName}")
             false
@@ -614,7 +683,7 @@ class UserDictActivity : ComponentActivity() {
             // 无条件删会把用户上一份备份一起删掉（设置页 `deleteEmptyTarget` 同一口径）。
             deleteEmptyTarget(uri)
         }
-        val count = snapshot.size
+        val count = src.size
         runOnUiThread {
             if (!alive()) return@runOnUiThread
             toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
@@ -766,15 +835,19 @@ class UserDictActivity : ComponentActivity() {
             )
             addView(pwd, lpOf(10))
         }
-        val dialog = secureDialog(
-            AlertDialog.Builder(this)
-                .setTitle(TEXT_IMPORT_PWD_TITLE)
-                .setView(box)
-                .setNegativeButton(TEXT_CANCEL) { _, _ -> clearStaged() }
-                .setPositiveButton(TEXT_IMPORT_CONFIRM, null)
-                .create(),
+        val dialog = tracked(
+            secureDialog(
+                AlertDialog.Builder(this)
+                    .setTitle(TEXT_IMPORT_PWD_TITLE)
+                    .setView(box)
+                    .setNegativeButton(TEXT_CANCEL) { _, _ -> clearStaged() }
+                    .setPositiveButton(TEXT_IMPORT_CONFIRM, null)
+                    .create(),
+            ),
         )
         dialog.show()
+        styleDialogButtons(dialog)
+        // 返回键 / 点外部取消：对话框的 dismiss 监听已被 [tracked] 占用，这条是独立的一个口径
         dialog.setOnCancelListener { clearStaged() }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val check = ConfigCrypto.validatePassword(pwd.text)
@@ -836,26 +909,29 @@ class UserDictActivity : ComponentActivity() {
         runOnUiThread {
             if (!alive()) return@runOnUiThread
             if (truncated) toast(TEXT_IMPORT_TRUNCATED)
-            AlertDialog.Builder(this)
-                .setTitle(TEXT_IMPORT_CONFIRM_TITLE)
-                .setMessage(String.format(Locale.US, TEXT_IMPORT_PREVIEW, picked.size, words))
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    io.execute {
-                        // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
-                        val queued = SelectionLedger.appendAll(picked)
-                        val flushed = SelectionLedger.flush()
-                        uiToast(
-                            when {
-                                !queued -> TEXT_IMPORT_NOT_ENABLED
-                                !flushed -> String.format(Locale.US, TEXT_IMPORT_PENDING, picked.size)
-                                else -> String.format(Locale.US, TEXT_IMPORT_OK, picked.size)
-                            },
-                        )
-                        loadAsync()
+            val dlg = tracked(
+                AlertDialog.Builder(this)
+                    .setTitle(TEXT_IMPORT_CONFIRM_TITLE)
+                    .setMessage(String.format(Locale.US, TEXT_IMPORT_PREVIEW, picked.size, words))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(android.R.string.ok) { _, _ ->
+                        io.execute {
+                            // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
+                            val queued = SelectionLedger.appendAll(picked)
+                            val flushed = SelectionLedger.flush()
+                            uiToast(
+                                when {
+                                    !queued -> TEXT_IMPORT_NOT_ENABLED
+                                    !flushed -> String.format(Locale.US, TEXT_IMPORT_PENDING, picked.size)
+                                    else -> String.format(Locale.US, TEXT_IMPORT_OK, picked.size)
+                                },
+                            )
+                            loadAsync()
+                        }
                     }
-                }
-                .show()
+                    .show(),
+            )
+            styleDialogButtons(dlg)
         }
     }
 
@@ -1037,13 +1113,12 @@ class UserDictActivity : ComponentActivity() {
      *
      * 对话框里的按钮拿不到 XML 的 style（`AlertDialog` 的自定义视图是代码搭的），
      * 而系统默认 Button 在这里是个浅灰圆角块，与整页的描边按钮明显两种风格。
+     *
+     * **高度 / 间距只由调用方的 [btnLp] 给**：这里再设一份 `layoutParams` 就是双机制 ——
+     * `addView(child, params)` 会整体覆盖它，看着生效其实一半是死代码（上一版就是这么错的）。
      */
     private fun settingsButton(label: String): Button = Button(this).apply {
         this.text = label
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            (40 * resources.displayMetrics.density).toInt(),
-        )
         background = androidx.core.content.ContextCompat.getDrawable(
             this@UserDictActivity,
             R.drawable.btn_aurora_secondary,
@@ -1065,6 +1140,10 @@ class UserDictActivity : ComponentActivity() {
      *
      * AlertDialog 的默认按钮是系统样式（大写、加粗、主题色），本页其余入口都是
      * `SettingsButton`（13sp、不大写、描边底）。两套并排放会显得对话框是外来物。
+     *
+     * **只管字号 / 字色 / 底图**：高度是系统按钮栏自己的触控尺度（实测 189px ≈ 54dp，
+     * 高于页面的 40dp），那是框架行为，不去压它 —— 真要压到 40dp 反而低于 48dp 的触控下限。
+     *
      * 必须在 `show()` 之后调（`getButton` 之前返回 null）。
      */
     private fun styleDialogButtons(dialog: AlertDialog) {
@@ -1081,11 +1160,33 @@ class UserDictActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 登记对话框，供 [onDestroy] 统一收尾。
+     *
+     * 每个 `AlertDialog` 都必须过这一道（8 处）：无引用的对话框在配置变更时会留下
+     * `WindowLeaked`。dismiss 之后自动清引用，别让字段一直攥着已关闭的窗口。
+     */
+    private fun tracked(dialog: AlertDialog): AlertDialog = dialog.apply {
+        shownDialog = this
+        setOnDismissListener { if (shownDialog === this) shownDialog = null }
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun lpOf(topDp: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT,
+    ).apply { topMargin = dp(topDp) }
+
+    /**
+     * 对话框里的整行按钮：高度与页面 `@style/SettingsButton` 一致（40dp），间距只靠 topMargin。
+     *
+     * 高度必须显式给：系统 `Button` 的 `minHeight` 是 48dp，`WRAP_CONTENT` 下会顶到 48dp
+     * （实测 168px vs 140px，同页两个按钮差一档）。宽度 MATCH_PARENT 由父容器决定，不受影响。
+     */
+    private fun btnLp(topDp: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        dp(40),
     ).apply { topMargin = dp(topDp) }
 
     companion object {
@@ -1118,6 +1219,13 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_CANCEL = "取消"
         /** 确认框文字区的最大高度（dp）：超出才滚动，避免长说明把窗口撑满屏 */
         private const val TEXT_MAX_DP = 260
+
+        /**
+         * 对话框自身左右占用（dp/侧）：实测 26.6（窗口内缩 10.5 + 内容内边距 16），取 32 留余量。
+         *
+         * 宽度估算只能偏窄：偏窄多几 px 空白，偏宽就把末行挤出视口（真机复现过）。
+         */
+        private const val DIALOG_SIDE_DP = 32
 
         const val TEXT_CONFIRM_HINT = "现在输入三个汉字：\"我明白\""
         const val TEXT_NEED_CONFIRM = "请输入「我明白」三个字"
