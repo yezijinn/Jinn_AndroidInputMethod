@@ -649,6 +649,70 @@ class RecentFixesRegressionTest {
     }
 
     @Test
+    fun `标点上屏前必须先提交拼音`() {
+        val text = codeOf("PinyinKeyboardView.kt")
+        for ((anchor, field) in listOf(
+            "btnComma.setOnClickListener" to "punctCommaCn",
+            "btnPeriod.setOnClickListener" to "punctPeriodCn",
+        )) {
+            val body = blockAfter(text, anchor)
+            // 只钉 else 分支：搜索态必须先 appendSearch，而 `commitComposing()` 在搜索态走
+            // `clearComposingState()` —— 无条件调用会把用户正在打的搜索词清掉（L-1443）。
+            // 锚点缺失（分支被改成无花括号 / 条件取反）时 blockAfter 当场抛错，不会静默放宽。
+            val commit = blockAfter(body, "} else {")
+            assertBefore(
+                commit,
+                "commitComposing()",
+                "onCommitText(text)",
+                "$field：标点是即时上屏，不先提交拼音就会插到拼音前面" +
+                    "（真机实测：打 bi → 按「。」→ 空格取首候选，正文「。比」，L-1443）",
+            )
+        }
+    }
+
+    @Test
+    fun `候选复位必须先 scrollTo 再 fling`() {
+        val body = blockAfter(codeOf("CandidateScrollView.kt"), "fun resetScrollX()")
+        // 顺序不能反：fling() 的起点取调用时的滚动位，先 fling 会把复位前的偏移记成终值。
+        assertBefore(
+            body,
+            "scrollTo(0, 0)",
+            "fling(0)",
+            "复位必须先落位再中止甩动：反序时速度为 0 仍可能派发一帧，弹回旧位（L-1440）",
+        )
+        // ⚠ 本钉只钉源码形态：OverScroller 的帧行为在 JVM 上测不到，真机判据是
+        // 「甩动后换一批候选，候选行首个暗像素回到 51」（旧形态恒 28，字形被左边缘裁切）。
+        assertFalse(
+            "换批 / 展开态切换必须走 resetScrollX()：裸 scrollTo 不中止甩动，下一帧就被覆盖（L-1440）",
+            codeOf("PinyinKeyboardView.kt").contains("candidateScroll.scrollTo(0, 0)"),
+        )
+    }
+
+    @Test
+    fun `窗口隐藏时必须提交未上屏拼音`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "override fun onWindowHidden()")
+        // 切走输入法 / 宿主被遮挡时 onFinishInputView 不一定派发，未上屏拼音只存在视图里 ⇒ 净丢失
+        // （真机实证：打 bi 后切成别的输入法，宿主框始终为空，进程并未重启；L-1445）。
+        // commitComposing 内部是 `currentInputConnection?.commitText` + runCatching：连接已断则静默
+        // 跳过，不会崩；composing 已清时空转，不会重复上屏。
+        assertStatementLine(
+            body,
+            "pinyinKeyboard?.commitComposing()",
+            "窗口隐藏是最后一个还能提交 composing 的时机，漏了就是净丢失（L-1445）",
+        )
+    }
+
+    @Test
+    fun `无发送方的配置广播不得再注册`() {
+        // 全仓从无发送方，注释却按「有广播」写了两处 KDoc ⇒ 读代码会顺着推出一条不可达路径
+        // （L-1447：本轮审计第一件事就是被它骗）。删除后不得再以任何形态复活。
+        assertFalse(
+            "整机配置广播没有发送方，注册它反而对外暴露一条可被第三方触发的 action（L-1447）",
+            TestSources.rawSourceOfShortName("JinnIme.kt").contains("ACTION_CONFIG_UPDATED"),
+        )
+    }
+
+    @Test
     fun `剪贴板导出必须防并发位移`() {
         val body = blockAfter(codeOf("ConfigBackupManager.kt"), "private fun collectClipboard(context: Context)")
         // 导出侧的分页游标是 SQL OFFSET：导出期间用户复制一条（插头 + 裁尾）会让后续页位移、
@@ -1306,7 +1370,7 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "换候选必须把横滑位置复位（否则新候选停在旧滚动位，第一候选被推到屏外）",
-            "candidateScroll.scrollTo(0, 0)" in src,
+            "candidateScroll.resetScrollX()" in src,
         )
         assertTrue(
             "内容没撑满视口时也要继续追加（否则剩余候选滚不到、永久不可达）",
@@ -5898,7 +5962,7 @@ class RecentFixesRegressionTest {
         assertEquals(
             "横滑复位点必须恰好两处（换候选 / 切展开态），纵轴不复位",
             2,
-            Regex("""candidateScroll\.scrollTo\(0, 0\)""").findAll(src).count(),
+            Regex("""candidateScroll\.resetScrollX\(\)""").findAll(src).count(),
         )
         assertEquals(
             "展开态不得把分页窗口打回收起档（字段初值 / 清空 / 换候选 各一处）",

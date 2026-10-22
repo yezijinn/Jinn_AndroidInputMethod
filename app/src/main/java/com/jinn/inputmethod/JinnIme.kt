@@ -577,12 +577,11 @@ class JinnIme : InputMethodService() {
         // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
         registerNetwork()
 
-        // 监听设置页「保存配置」广播：参数改动立即生效，无需重启输入法进程。
+        // 监听剪贴板配置广播：采集开关改动立即生效，无需重启输入法进程。
         // Android 13+ 动态注册必须显式声明导出标志：同进程应用内广播用 NOT_EXPORTED。
         // 只在 Android 13+ 注册：低版本没有 RECEIVER_NOT_EXPORTED 标志，
         // 动态注册默认导出且无权限保护，任意第三方 App 都能发这条 action 触发
-        // refreshConfig（强制重连 + 反复启停剪贴板监听）。本 action 在应用内
-        // 没有发送方（设置页走 killProcess 重启生效），低版本不注册不损失任何功能。
+        // 反复启停剪贴板监听。低版本不注册不损失任何功能。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             runCatching {
                 registerReceiver(configReceiver, configFilter, Context.RECEIVER_NOT_EXPORTED)
@@ -654,26 +653,23 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 配置更新广播：整机配置走 [refreshConfig]，剪贴板采集开关走轻量支路。
+     * 剪贴板配置广播：只同步采集开关。
      *
-     * 为什么剪贴板单开一条 action：`refreshConfig` 会 `asr?.connect(force = true)` 强断语音
-     * WebSocket、重套键盘方案 —— 「剪贴板自定义」页保存时只需要同步采集开关，不该付这份代价。
-     * 广播都以 `RECEIVER_NOT_EXPORTED` 注册，只有本应用能发。
+     * 本应用内**没有**「整机配置」广播：设置页改动一律走「保存并重启」重启进程生效，
+     * 全仓从无发送方。曾保留过一条整机配置 action 并在注释里当它存在，读代码时会顺着
+     * 推出一条**根本不可达**的路径（L-1447）。将来真需要跨进程配置通道，先有发送方，
+     * 再一并加注册与权限。
+     * 广播以 `RECEIVER_NOT_EXPORTED` 注册，只有本应用能发。
      */
     private val configReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == ACTION_CLIPBOARD_CONFIG_UPDATED) {
-                Diagnostics.i(TAG, "onReceive: 剪贴板配置更新广播（只同步采集开关）")
-                syncClipboardController()
-                return
-            }
-            Diagnostics.i(TAG, "onReceive: 收到配置更新广播")
-            refreshConfig()
+            if (intent.action != ACTION_CLIPBOARD_CONFIG_UPDATED) return
+            Diagnostics.i(TAG, "onReceive: 剪贴板配置更新广播（只同步采集开关）")
+            syncClipboardController()
         }
     }
 
     private val configFilter = IntentFilter().apply {
-        addAction(ACTION_CONFIG_UPDATED)
         addAction(ACTION_CLIPBOARD_CONFIG_UPDATED)
     }
 
@@ -1205,35 +1201,6 @@ class JinnIme : InputMethodService() {
         getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
 
-    /** 立即生效：强制按新地址重连 WebSocket + 重新同步键盘输入方案 */
-    fun refreshConfig() {
-        // 地址/端口变化：旧连接指向旧服务器，强制断开重连。
-        // ⚠ 懒连接（MEM-13）后这条路径会在「用户根本不用语音」时也把连接拉起来，而那时
-        // 键盘多半收着（用户在设置页）—— 若不补排空闲关闭，连接就再没人管，每 20 秒一次的
-        // 服务端 ping 照旧，等于回到改造前。判据与 onStartInputView 同口径。
-        Diagnostics.i(TAG, "refreshConfig: 强制重连 ${prefs.wsUrl}")
-        runCatching { asr?.connect(force = true) }.onFailure {
-            Diagnostics.e(TAG, "refreshConfig: 重连失败 ${it.javaClass.simpleName} ${it.message}", it)
-        }
-        if (keyboardMode != KeyboardMode.VOICE && mode == Mode.NONE && !awaitingResult) {
-            asr?.scheduleIdleClose()
-        }
-        // 双拼/中英文方案变化：立即重新套用，键盘无需重建
-        pinyinKeyboard?.configure(
-            scheme = prefs.effectiveShuangpinScheme,
-            english = prefs.keyboardEnglish,
-        )
-        // 剪贴板历史开关变化：按最新偏好启停监听
-        syncClipboardController()
-    }
-
-    /**
-     * 按偏好同步剪贴板监听：开则确保在跑，关则停掉（`stop` 幂等，重复调用安全）。
-     *
-     * 三处调用：`onCreate`（首次）/ [refreshConfig]（「保存并重启」类广播）/ `onStartInputView`
-     * （自定义页改开关**不走**广播，弹键盘是唯一稳定的核对点）。
-     * 早先这三处各写一份同样的 if/else，改一处漏两处的风险太高（2026-10-06 审查收口）。
-     */
     /**
      * 本会话宿主是否声明可接收图片（视图重建后重放用，判据见 [applyHostImageCapability]）。
      *
@@ -2551,9 +2518,20 @@ class JinnIme : InputMethodService() {
         Diagnostics.event("IME", "WindowShown", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
     }
 
-    /** IME 窗口隐藏回调：排查「面板打开后约 0.5 秒窗口被收起」的直接证据 */
+    /**
+     * IME 窗口隐藏回调。
+     *
+     * 排查用：暴露隐藏前后的面板 / 模式，曾用来定位「面板打开后约 0.5 秒窗口被收起」。
+     *
+     * ⚠ 这里也是**最后一个**还能提交 composing 的时机：切走输入法 / 宿主被遮挡时
+     * `onFinishInputView` 不一定派发，而未上屏的拼音只存在视图里 ⇒ 静默丢失
+     * （真机实证：打 `bi` 后切成别的输入法，宿主框始终为空；L-1445）。
+     * `commitComposing` 内部是 `currentInputConnection?.commitText` + `runCatching`：
+     * 连接已断则静默跳过，不会崩；composing 已清时空转，不会重复上屏。
+     */
     override fun onWindowHidden() {
         super.onWindowHidden()
+        pinyinKeyboard?.commitComposing()
         Diagnostics.i(TAG, "onWindowHidden: 窗口隐藏 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowHidden", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
     }
@@ -2601,7 +2579,7 @@ class JinnIme : InputMethodService() {
         voiceBackspaceView = null
         unregisterNetwork()
         // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
-        // 这里不置 null：后续 refreshConfig 仍可能重新 start（stop 幂等）。
+        // 这里不置 null：onStartInputView 仍可能重新 start（stop 幂等）。
         runCatching { clipboardController?.stop() }
         runCatching { unregisterReceiver(configReceiver) }
         screenOffReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -4634,9 +4612,6 @@ class JinnIme : InputMethodService() {
 
         /** 兜底等待：既不息屏也不收键盘时的最晚加载时间 */
         private const val OPTIONAL_FALLBACK_DELAY_MS = 180_000L
-
-        /** 设置页「保存配置」广播 action：收到后立即刷新连接与键盘配置 */
-        const val ACTION_CONFIG_UPDATED = "com.jinn.inputmethod.action.CONFIG_UPDATED"
 
         /** 「剪贴板自定义」页保存后的轻量广播：只让 IME 同步采集开关（见 `configReceiver`） */
         const val ACTION_CLIPBOARD_CONFIG_UPDATED = "com.jinn.inputmethod.action.CLIPBOARD_CONFIG_UPDATED"

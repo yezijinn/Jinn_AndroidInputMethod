@@ -26,4 +26,23 @@ class CandidateScrollView @JvmOverloads constructor(
      * 本容器是 HorizontalScrollView，纵向不消费事件（展开态父级负责）。
      */
     var expanded: Boolean = false
+
+    /**
+     * 回到最左，并**当场结束进行中的甩动**。
+     *
+     * `scrollTo(0, 0)` 只改本视图的滚动位、不碰内部 `OverScroller`：下一帧 `computeScroll()` 仍按
+     * 滚动器自己的位置再滚回去 ⇒ 复位被覆盖。真机表现是换一批候选后，旧偏移仍生效，候选行左边缘
+     * 出现被裁切的字形（实测首个暗像素 x=28，正常位恒 51）。
+     *
+     * ⚠ 顺序不可反：`fling()` 的起点取**调用时的滚动位**。先 `fling(0)` 会把复位前的偏移记成终值，
+     * 一旦框架在速度为 0 时仍派发一帧就会弹回旧位；先 `scrollTo` 则起点=终点=0，任何后续帧都只写 0，
+     * 不依赖「速度为 0 必然当帧结束」这条框架内部行为。
+     *
+     * `OverScroller.abortAnimation()` 在本视图上不可达，`smoothScrollTo` 又被同一个滚动器支配
+     * ⇒ `fling(0)` 是唯一公开手段（L-1440）。
+     */
+    fun resetScrollX() {
+        scrollTo(0, 0)
+        fling(0)
+    }
 }

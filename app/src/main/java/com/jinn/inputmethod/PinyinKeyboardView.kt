@@ -1485,15 +1485,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
             listener?.onEnter()
         }
         // 逗号/句号：默认英文模式上 ASCII，中文模式上全角；用户可在外观页自定义成任意单字符
+        // ⚠ 搜索态必须留在 if 分支里、**不得**先 `commitComposing()`：[commitComposing] 在搜索态
+        // 走 `clearComposingState()`，会连用户正在打的搜索词一起清掉（L-1443）。
+        // 口径对齐固定数字行（同一处分支写法），不是对齐数字层 —— 后者是**无条件**调用，
+        // 靠 `commitComposing()` 内部早退兜住，形态不同不可照抄。
         btnComma.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) prefs.punctCommaEn else prefs.punctCommaCn
-            if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
+            if (isPanelSearch()) {
+                searchPanel?.appendSearch(text)
+            } else {
+                // 标点是即时上屏：不先把拼音落定，标点就插到拼音前面
+                // （真机实测：打 bi → 按「。」→ 空格取首候选，正文「。比」，L-1443）
+                commitComposing()
+                listener?.onCommitText(text)
+            }
         }
         btnPeriod.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) prefs.punctPeriodEn else prefs.punctPeriodCn
-            if (isPanelSearch()) searchPanel?.appendSearch(text) else listener?.onCommitText(text)
+            if (isPanelSearch()) {
+                searchPanel?.appendSearch(text)
+            } else {
+                commitComposing()
+                listener?.onCommitText(text)
+            }
         }
     }
 
@@ -2905,7 +2921,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
             // 换了一批候选：横滑位置也回到最左。否则新候选会停在旧滚动位（前一批更长时尤其明显），
             // 第一个候选被推到屏外，看起来像「候选没刷新」。
-            candidateScroll.scrollTo(0, 0)
+            candidateScroll.resetScrollX()
         }
         // 展开 / 收起换了排布：收起的单排与展开的「N 排一列」列宽量纲完全不同，沿用旧 scrollX
         // 既不是「接着看刚才那条」也不是「从头看」—— 首屏会落在候选列表中段，词频最高的几条
@@ -2917,7 +2933,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 恒 0，复位它是死代码；失配窗口（缓存与字号不一致）里那点残余可滚量也不该替用户回顶。
         if (candidatesExpanded != lastRenderExpanded) {
             lastRenderExpanded = candidatesExpanded
-            candidateScroll.scrollTo(0, 0)
+            candidateScroll.resetScrollX()
         }
         val shown = if (items.size > candidateRenderLimit) items.subList(0, candidateRenderLimit) else items
 
