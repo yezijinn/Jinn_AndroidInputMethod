@@ -203,10 +203,13 @@ class TranslationSettingsActivity : Activity() {
             return
         }
         val appContext = applicationContext
-        BackgroundIo.run {
+        // 长活池（BUG.md L-1423）：`CredentialTrace.purge` 的第二段是**非收藏全表逐行 AES-GCM 解密**
+        // （见 `ClipboardDb.deleteByCleanedPlaintexts`）。历史上万条时是秒级活，投进短活池会把
+        // 面板首屏查询与剪贴板入库排到它后面 —— 每次进出本页都让用户等一次「面板白屏」。
+        BackgroundIo.runLong {
             val db = runCatching { ClipboardDb.get(appContext) }.getOrElse {
                 Diagnostics.w(TAG, "凭据不留痕: 库打不开，本轮未清理（${it.javaClass.simpleName}）")
-                return@run
+                return@runLong
             }
             val removed = CredentialTrace.purge(db, targets)
             if (removed > 0) {

@@ -298,13 +298,16 @@ class OpenAiSettingsActivity : Activity() {
     /** 从剪贴板历史删除与本机 API Key 相同的条目（后台线程；见 [purgeApiKeyFromClipboardHistory] 的说明） */
     private fun purgeApiKeyFromClipboardHistory() {
         val appContext = applicationContext
-        BackgroundIo.run {
+        // 长活池（BUG.md L-1423）：`CredentialTrace.purge` 的第二段是**非收藏全表逐行 AES-GCM 解密**
+        // （判据「剥不可见字符后相等」，见 `ClipboardDb.deleteByCleanedPlaintexts`）。历史上万条时是
+        // 秒级活，投进短活池会把面板首屏查询与剪贴板入库排到它后面 —— 用户看到「面板白屏 / 复制了没反应」。
+        BackgroundIo.runLong {
             val db = runCatching { ClipboardDb.get(appContext) }.getOrElse {
                 // 库打不开必须留痕（2026-10-02 修复 L-410）：此前静默 return —— 从网页控制台
                 // 复制的 Key 明文可能一直留在历史里（面板可见、随备份导出），而诊断包里
                 // 连「试过清理」都看不到
                 Diagnostics.w(TAG, "凭据不留痕: 库打不开，本轮未清理（${it.javaClass.simpleName}）")
-                return@run
+                return@runLong
             }
             // 与翻译设置页共用同一条链路（精确哈希 → 剥不可见字符后相等，一次遍历处理全部目标）：
             // 本页此前只有精确哈希，带 NBSP / ZWSP 的 Key 一条都删不掉（2026-10-01 修复 L-245）

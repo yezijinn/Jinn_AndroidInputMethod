@@ -92,23 +92,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             // v3：移除敏感内容功能。重建表去掉 is_sensitive / expire_at 列，
             // 既有记录全部迁移为长期保留（不再存在按内容性质的过期删除），
             // id 与收藏/隐私标记原样保留。
-            db.execSQL("ALTER TABLE $TABLE_ITEMS RENAME TO ${TABLE_ITEMS}_old")
-            db.execSQL(createTableSql())
-            db.execSQL(
-                "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite) " +
-                    // COALESCE 兜住旧表的 NULL：新表的 content_hash 是 NOT NULL，
-                    // 直接搬 NULL 会让 INSERT 失败、升级抛异常 —— 后果是整库打不开
-                    "SELECT id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, COALESCE(content_hash, ''), category, is_favorite " +
-                    "FROM ${TABLE_ITEMS}_old"
-            )
-            db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
-            // 修正自增序列：显式插入 id 后 sqlite_sequence 不自动更新，避免新插入 id 冲突
-            db.execSQL(
-                "UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM $TABLE_ITEMS) " +
-                    "WHERE name = '$TABLE_ITEMS'"
-            )
+            // 搬哪些列由 [preservedColumns] 按旧表实况算（BUG.md L-1421），不写死清单。
+            rebuildKeepingData(db)
             db.execSQL("CREATE INDEX idx_items_created ON $TABLE_ITEMS(created_at DESC)")
         }
         if (oldVersion < 4) {
@@ -121,22 +106,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 5) {
             // v5：移除隐私功能（2026-09-16）。重建表去掉 is_private 列，其余内容原样保留。
             // 隐私标记本身被丢弃，该功能已整体移除，不做兼容。
-            db.execSQL("ALTER TABLE $TABLE_ITEMS RENAME TO ${TABLE_ITEMS}_old")
-            db.execSQL(createTableSql())
-            db.execSQL(
-                "INSERT INTO $TABLE_ITEMS (id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, content_hash, category, is_favorite) " +
-                    // 同 v3 分支：COALESCE 兜住 NULL，NOT NULL 列搬 NULL 会失败
-                    "SELECT id, encrypted_content, content_type, created_at, " +
-                    "source_package, source_app_name, COALESCE(content_hash, ''), category, is_favorite " +
-                    "FROM ${TABLE_ITEMS}_old"
-            )
-            db.execSQL("DROP TABLE ${TABLE_ITEMS}_old")
-            // 修正自增序列（显式插入 id 后 sqlite_sequence 不自动更新）
-            db.execSQL(
-                "UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM $TABLE_ITEMS) " +
-                    "WHERE name = '$TABLE_ITEMS'"
-            )
+            // ⚠ 列清单**不能**写死（BUG.md L-1421）：这里曾是一份 v5 时代的 9 列 `INSERT … SELECT`，
+            // v8 加 `image_*` 后没同步 ⇒ 装回旧版 APK（`onDowngrade` 只回写版本号）再升回来时，
+            // 图片行的尺寸 / 体积 / MIME 被建表默认值覆盖（历史页显示「尺寸读不出 · 0 KB」，
+            // `image_bytes=0` 还让图片字节预算失真 —— 只按张数裁）。
+            rebuildKeepingData(db)
             // 重建只搬列、不重算：旧表的空哈希到这里仍为空，建唯一索引前同样要补齐，
             // 否则多行空值会让建索引失败 —— 升级抛异常就是整库打不开
             backfillBlankHashes(db)
@@ -183,6 +157,46 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 密文总长的表达式索引（v7 起；`onCreate` 与迁移分支共用同一句，避免两处写法漂移） */
     private fun bytesIndexSql(): String =
         "CREATE INDEX IF NOT EXISTS idx_items_bytes ON $TABLE_ITEMS(LENGTH(encrypted_content))"
+
+    /**
+     * 旧表实际有哪些列（重建分支据此决定搬哪些列，见 [preservedColumns]）。
+     *
+     * 只取 `name` 一列；顺序不用（SQL 的列序由 [preservedColumns] 决定），此处只当集合用。
+     */
+    private fun tableColumns(db: SQLiteDatabase, table: String): List<String> =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val idx = c.getColumnIndex("name")
+            val out = ArrayList<String>()
+            while (c.moveToNext()) out.add(c.getString(idx) ?: "")
+            out
+        }
+
+    /**
+     * 重建表并原样搬数据（v3 / v5 两个迁移分支共用，BUG.md L-1421）。
+     *
+     * 两处曾各写一份 9 列 `INSERT … SELECT`：v8 加图片列时只想着「新表有默认值」，没注意这条语句
+     * **不搬就是不搬** ⇒ 降级再升级会把 `image_*` 全刷成默认值。合并成一处之后，列清单只由
+     * [preservedColumns] 按旧表实况算，将来再加列也不会漏。
+     */
+    private fun rebuildKeepingData(db: SQLiteDatabase) {
+        val old = "${TABLE_ITEMS}_old"
+        db.execSQL("ALTER TABLE $TABLE_ITEMS RENAME TO $old")
+        db.execSQL(createTableSql())
+        val cols = preservedColumns(tableColumns(db, old))
+        // 交集为空只可能来自「这张表不是我们的」（库文件被替换 / 表名撞车）。此时抛出去，
+        // 让升级显式失败 —— 继续往下走会 DROP 掉旧表、把整库搬成 0 行。
+        check(cols.isNotEmpty()) { "重建 ${TABLE_ITEMS}_old 时列交集为空" }
+        // COALESCE 兜住旧表的 NULL：新表的 content_hash 是 NOT NULL，
+        // 直接搬 NULL 会让 INSERT 失败、升级抛异常 —— 后果是整库打不开
+        val selectList = cols.joinToString(", ") { if (it == "content_hash") "COALESCE(content_hash, '')" else it }
+        db.execSQL("INSERT INTO $TABLE_ITEMS (${cols.joinToString(", ")}) SELECT $selectList FROM $old")
+        db.execSQL("DROP TABLE $old")
+        // 修正自增序列：显式插入 id 后 sqlite_sequence 不自动更新，避免新插入 id 冲突
+        db.execSQL(
+            "UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM $TABLE_ITEMS) " +
+                "WHERE name = '$TABLE_ITEMS'"
+        )
+    }
 
     /** 内容类型索引（v8 起；同样 onCreate / 迁移共用一句） */
     private fun contentTypeIndexSql(): String =
@@ -1361,6 +1375,34 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          */
         private const val DB_VERSION = 8
         private const val TABLE_ITEMS = "clipboard_items"
+
+        /**
+         * 迁移重建表时**可以搬运**的列白名单（顺序 = [createTableSql] 的列序，也 = [selectCols] 的列序）。
+         *
+         * `id` 必在其中：显式插 id 之后要修 `sqlite_sequence`，否则新插入会撞 id。
+         * v4 时代已删的 `is_private` / `is_sensitive` / `expire_at` **不列**（不搬回来，见 v5 分支注释）。
+         */
+        private val REBUILD_COLUMNS = listOf(
+            "id", "encrypted_content", "content_type", "created_at", "source_package",
+            "source_app_name", "content_hash", "category", "is_favorite",
+            "image_bytes", "image_w", "image_h", "image_mime",
+        )
+
+        /**
+         * 重建表该搬哪些列：[REBUILD_COLUMNS] 与旧表实际列的**交集**，顺序取白名单。
+         *
+         * 两头都不能写死（BUG.md L-1421）：
+         *  - 写死 v5 时代的 9 列 ⇒ v8 加的 `image_*` 不被搬运，降级再升级后图片行的尺寸 / 体积 /
+         *    MIME 被建表默认值覆盖（面板显示「尺寸读不出 · 0 KB」，`image_bytes=0` 还让图片字节预算
+         *    退化成「只按张数裁」）；
+         *  - 写死当前 13 列 ⇒ 真 v4 库的旧表没有 `image_*`，`no such column` 让升级抛异常，整库打不开。
+         *
+         * 交集对两头都成立：旧表有的照搬，没有的交给建表 SQL 的 DEFAULT。
+         * ⚠ 拼进 SQL 的列名**只来自** [REBUILD_COLUMNS] 这个白名单（PRAGMA 的返回值只用于判「在不在」），
+         * 所以没有注入面，也不受 PRAGMA 返回顺序影响。
+         */
+        internal fun preservedColumns(existing: Collection<String>): List<String> =
+            REBUILD_COLUMNS.filter { it in existing }
 
         /** [verifiedReadable] 的上限：超过就整体清空（备忘只是加速，不是正确性依赖） */
         private const val VERIFIED_MEMO_MAX = 512

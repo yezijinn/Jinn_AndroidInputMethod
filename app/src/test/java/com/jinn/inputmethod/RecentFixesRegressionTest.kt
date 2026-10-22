@@ -1252,9 +1252,12 @@ class RecentFixesRegressionTest {
                 text.contains("content_hash = '\$LEGACY_HASH_PREFIX' || id"),
         )
         assertTrue(
-            "两个重建分支的搬运 SELECT 都要 COALESCE(content_hash, '')：新表该列是 NOT NULL，" +
+            // 两个重建分支的搬运 SELECT 已合并到 rebuildKeepingData 一处（BUG.md L-1421），
+            // 所以判据从「两处各有一句」变成「建 SELECT 的那一处必须 COALESCE」；
+            // 「合并后仍有分支写死清单」由 ClipboardDbMigrationTest 钉（搬回写死 ⇒ 那条红）。
+            "重建表搬 content_hash 时必须 COALESCE(content_hash, '')：新表该列是 NOT NULL，" +
                 "旧表若留 NULL 会让 INSERT 失败 —— 升级抛异常就是整库打不开",
-            Regex("COALESCE\\(content_hash, ''\\)").findAll(text).count() >= 2,
+            "COALESCE(content_hash, '')" in text,
         )
         val calls = Regex("backfillBlankHashes\\(db\\)").findAll(text).map { it.range.first }.toList()
         assertTrue("v4 与 v5 两个升级分支都要补（实际 ${calls.size} 处）", calls.size >= 2)
@@ -2295,6 +2298,35 @@ class RecentFixesRegressionTest {
             "摘要白名单不得再用 isLetterOrDigit（非 ASCII 也为真，L-243）",
             "it.isLetterOrDigit()" in client,
         )
+    }
+
+    /**
+     * 凭据清理必须投长活池（BUG.md L-1423）。
+     *
+     * `CredentialTrace.purge` 的第二段是**非收藏全表逐行 AES-GCM 解密**（判据「剥不可见字符后相等」，
+     * 见 `ClipboardDb.deleteByCleanedPlaintexts`）。历史上万条时是秒级活，投在短活池
+     * （`BackgroundIo.run`）上会把面板首屏查询与剪贴板入库排到它后面 —— 而这条路径每次进出
+     * 翻译设置页 / OpenAI 配置页都会跑一次，用户看到的是「面板白屏 / 复制了没反应」。
+     *
+     * 为什么钉源码形态：单线程队列里排一个大活，症状只在「库很大 + 此刻正在看面板」时出现，
+     * 单测与真机都能全绿（与图库整份拷贝那条同款）。
+     */
+    @Test
+    fun `凭据清理必须投长活池`() {
+        for (name in listOf("TranslationSettingsActivity.kt", "OpenAiSettingsActivity.kt")) {
+            val src = codeOf(name)
+            val body = blockAfter(src, "BackgroundIo.runLong {")
+            assertTrue(
+                "$name 的凭据清理必须进长活池 —— 秒级全表解密排在交互队列上会推后面板首屏与入库",
+                "CredentialTrace.purge(" in body,
+            )
+            // 入口只许有一处：多出来的那条迟早会漂回短活池（现状两页各一处）
+            assertEquals(
+                "$name 的凭据清理入口只应有一处",
+                1,
+                Regex("""CredentialTrace\.purge\(""").findAll(src).count(),
+            )
+        }
     }
 
     /**
