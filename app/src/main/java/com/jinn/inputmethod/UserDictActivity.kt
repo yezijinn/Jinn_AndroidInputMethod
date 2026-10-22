@@ -393,7 +393,10 @@ class UserDictActivity : ComponentActivity() {
     }
 
     private fun loadOnIo() {
-        val picks = SelectionLedger.readAll(applicationContext)
+        val read = SelectionLedger.readAll(applicationContext)
+        // 「解不开」不能显示成「没有」（L-1411）：分开取数据与状态，界面按状态改文案与按钮
+        val unreadable = read !is SelectionLedger.LedgerRead.Ok
+        val picks = (read as? SelectionLedger.LedgerRead.Ok)?.picks ?: emptyList()
         // 密钥件缺失时 readAll 已把旧台账改名保留（N2）：这条提示只报一次
         val orphaned = LedgerCrypto.consumeOrphanNotice()
         val degraded = LedgerCrypto.isDegraded(filesDir)
@@ -406,20 +409,32 @@ class UserDictActivity : ComponentActivity() {
         runOnUiThread {
             if (isFinishing || isDestroyed) return@runOnUiThread
             rows = list
-            renderSummary(picks.size, merged.size, kb, degraded)
+            renderSummary(picks.size, merged.size, kb, degraded, unreadable)
             bindList()
             if (orphaned) toast(TEXT_ORPHANED)
         }
     }
 
-    private fun renderSummary(picks: Int, distinct: Int, kb: Long, degraded: Boolean = false) {
+    private fun renderSummary(
+        picks: Int,
+        distinct: Int,
+        kb: Long,
+        degraded: Boolean = false,
+        unreadable: Boolean = false,
+    ) {
         val more = if (rows.size > MAX_ROWS) String.format(Locale.US, TEXT_MORE_SUFFIX, rows.size - MAX_ROWS) else ""
-        val note = if (degraded) TEXT_SUMMARY_NOLOCK else ""
-        textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks, distinct, kb, more) + note
+        // 两段追加先在本地拼好再一次性接上：`setText` 里连加会被 lint 记两条（SetTextI18n 一族），
+        // 把警告数噪声带进门禁没有收益
+        val extra = (if (degraded) TEXT_SUMMARY_NOLOCK else "") +
+            (if (unreadable) TEXT_SUMMARY_UNREADABLE else "")
+        textSummary.text = String.format(Locale.US, TEXT_SUMMARY, picks, distinct, kb, more) + extra
         val empty = rows.isEmpty()
-        btnExportYaml.isEnabled = !empty
-        btnExportTsv.isEnabled = !empty
-        btnExportTxt.isEnabled = !empty
+        btnExportYaml.isEnabled = !empty && !unreadable
+        btnExportTsv.isEnabled = !empty && !unreadable
+        btnExportTxt.isEnabled = !empty && !unreadable
+        // 删除不可回滚，而这一屏恰好是「条数不可信」的状态 —— 用户看到 0 条去点它，删掉的是真数据。
+        // 解不开时先禁用，恢复后再删（文案另有 TEXT_SUMMARY_UNREADABLE 说明原因）
+        btnClose.isEnabled = !unreadable
     }
 
     private fun bindList() {
@@ -620,10 +635,12 @@ class UserDictActivity : ComponentActivity() {
         // UI 缓存只是快照：页面被重建后（进程被杀 / 配置变更）新实例的 `rows` 恒为空，
         // 而回调可能在 loadAsync 读回来之前就派发 —— 拿它当真相就会写出只有表头的空文件。
         val src = if (snapshot.isEmpty()) reloadRows() else snapshot
-        if (src.isEmpty()) {
-            // 磁盘也没有词：不留只有表头的空壳，也不谎报「已导出 0 条」
+        if (src == null || src.isEmpty()) {
+            // 磁盘也没有词：不留只有表头的空壳，也不谎报「已导出 0 条」。
+            // 台账解不开（src == null）与「真的没有词」是两件事，提示必须分开（L-1411 同型）
             deleteEmptyTarget(uri)
-            runOnUiThread { if (alive()) toast(TEXT_NOTHING_TO_EXPORT) }
+            val msg = if (src == null) TEXT_LEDGER_UNREADABLE else TEXT_NOTHING_TO_EXPORT
+            runOnUiThread { if (alive()) toast(msg) }
             return
         }
         val ok = try {
@@ -657,17 +674,24 @@ class UserDictActivity : ComponentActivity() {
      *
      * 与 [loadOnIo] 的列表同源同排序：页面重建后 `rows` 还没加载回来时，导出不能拿空表当真相。
      *
+     * @return **null = 台账解不开**（不是「没有词」）—— 调用方必须说「解不开」，不能说「没有」；
+     *   空表才是「确实没有可导出的词」
+     *
      * **不抛**（2026-10-22）：两个写盘路径都在 `try` **之外**调它，一旦冒出异常（台账极大时的 OOM、
      * 文件系统异常），密码就没机会清零、刚建出的空壳也不会删 —— 明文 / 密钥的收尾整段被跳过。
-     * 读不出就当空表，与 [SelectionLedger.readAll] 自身的失败口径一致（它已经返回空表并留痕）。
+     * 抛出按 null（解不开）处理：宁可说「解不开」，也不能让用户以为「已导出 0 条」。
      */
-    private fun reloadRows(): List<Row> = runCatching {
-        SelectionLedger.aggregate(SelectionLedger.readAll(applicationContext))
-            .entries.map { Row(it.key.first, it.key.second, it.value) }
-            .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
+    private fun reloadRows(): List<Row>? = runCatching {
+        when (val read = SelectionLedger.readAll(applicationContext)) {
+            is SelectionLedger.LedgerRead.Ok -> SelectionLedger.aggregate(read.picks)
+                .entries.map { Row(it.key.first, it.key.second, it.value) }
+                .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
+
+            SelectionLedger.LedgerRead.Unavailable -> null
+        }
     }.getOrElse {
-        Diagnostics.w(TAG_NAME, "台账重读失败（按空表处理）: ${it.javaClass.simpleName}")
-        emptyList()
+        Diagnostics.w(TAG_NAME, "台账重读失败（按解不开处理）: ${it.javaClass.simpleName}")
+        null
     }
 
     private fun writeExportOnIo(
@@ -678,10 +702,12 @@ class UserDictActivity : ComponentActivity() {
     ) {
         // 同 [writePlainExportOnIo]：加密包也不能拿重建后的空快照造出一个「合法但空」的包
         val src = if (snapshot.isEmpty()) reloadRows() else snapshot
-        if (src.isEmpty()) {
+        if (src == null || src.isEmpty()) {
             password.fill('\u0000')
             deleteEmptyTarget(uri)
-            runOnUiThread { if (alive()) toast(TEXT_NOTHING_TO_EXPORT) }
+            // 解不开 ≠ 没有词：后者说「还没有可导出的词」，前者必须说清是解不开（L-1411 同型）
+            val msg = if (src == null) TEXT_LEDGER_UNREADABLE else TEXT_NOTHING_TO_EXPORT
+            runOnUiThread { if (alive()) toast(msg) }
             return
         }
         val ok = try {
@@ -1284,6 +1310,19 @@ class UserDictActivity : ComponentActivity() {
 
         /** 摘要行末尾的退一档提示 */
         const val TEXT_SUMMARY_NOLOCK = "\n本机密钥库不支持锁屏隔离（其余防护不变）"
+
+        /**
+         * 台账解不开时的追加行（L-1411）：上面的「0 次选择」不是真值，记录还在文件里。
+         *
+         * 为什么不改 [TEXT_SUMMARY] 本身：那是作者域已定稿的文案，这里只追加一条状态说明；
+         * 同时页面禁用导出与删除 —— 一屏「不可信的 0 条」加上一个不可回滚的删除键，就是
+         * 「顺手把真数据删掉」的现场。
+         */
+        const val TEXT_SUMMARY_UNREADABLE =
+            "\n台账暂时解不开（密钥库不可用），上面的条数不是真实值；记录仍在文件里，恢复后再看"
+
+        /** 导出/导入侧：台账解不开时不得说成「还没有可导出的词」（L-1411 同型） */
+        const val TEXT_LEDGER_UNREADABLE = "台账暂时解不开（密钥库不可用），没有导出任何内容"
 
         // ── 导出 / 导入的密码与加密包文案（待定稿）──────────────────
         const val TEXT_EXPORT_PWD_TITLE = "设置导出密码"

@@ -399,8 +399,50 @@ class UserFrequencyTest {
         UserFrequency.resetForTest()
     }
 
-    // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
+    // ── 读失败（盘上内容未知）：L-1409 ──────────────────────────────────────
 
+    /**
+     * L-1409：读失败（密钥不可用 / 密文损坏）之后，`remember` 的落盘**不得**用内存里的空表
+     * 覆盖盘上的历史；密钥恢复后要把盘上的词并回来（权重取大者）再整份写出。
+     *
+     * 现场：开机预加载早于用户解锁 ⇒ `setUnlockedDeviceRequired` 的密钥此时解不开 ⇒ 读跳过；
+     * 解锁后打第一个词，`saveNow` 拿内存里的「1 条」整份重写 ⇒ 27 条词频当场变 1 条，不可恢复。
+     *
+     * 走的是真实路径：`loadFromFile`（`load` 只是它加一层 Context）+ 真实 `flush`，密钥靠
+     * [UserFrequency.setKeyForTest] 注 null 模拟「解不开」（JVM 上没有 Keystore）。
+     */
+    @Test
+    fun 读失败后不得用空表覆盖词频() {
+        UserFrequency.resetForTest()
+        val f = File.createTempFile("jinn-freq-blocked", ".txt").apply { deleteOnExit() }
+        val body = "# jinn user_freq v1\n旧词\t4.000\t${today()}\n另一个\t2.000\t${today()}\n"
+        f.writeText(UserFrequency.encryptDoc(body, key))
+        val before = f.readText()
+
+        // ① 设备未解锁：密钥不可用 ⇒ 读取跳过，且必须记下「盘上内容未知」
+        UserFrequency.setKeyForTest(null)
+        UserFrequency.loadFromFile(f, true)
+        assertTrue("读失败必须置「盘上内容未知」", UserFrequency.isLoadBlockedForTest())
+        assertEquals("解不开不得当成没有词频", 0, UserFrequency.sizeForTest())
+
+        // ② 解锁后学了第一个词：落盘必须被拦住，「1 条」不许写出去
+        UserFrequency.remember("新词")
+        assertFalse("盘上内容未知时 flush 必须如实报失败", UserFrequency.flush())
+        assertEquals("原文件一个字节都不许变", before, f.readText())
+        assertTrue("这次学习仍待落盘（不许丢弃）", UserFrequency.isDirtyForTest())
+
+        // ③ 密钥恢复：补读 → 并入旧词（权重原样）→ 整份写出
+        UserFrequency.setKeyForTest(key)
+        assertTrue("密钥恢复后 flush 应成功", UserFrequency.flush())
+        val plain = UserFrequency.decryptDoc(f.readText(), key)!!
+        val parsed = UserFrequency.parse(plain, today())
+        assertEquals("旧词一条都不许丢", setOf("旧词", "另一个", "新词"), parsed.keys)
+        assertEquals("旧词权重必须原样保留", 4.0, parsed["旧词"]!!.first, 1e-3)
+        assertEquals("新词按学到的一次计", 1.0, parsed["新词"]!!.first, 1e-3)
+        assertFalse("补读成功后不再阻塞", UserFrequency.isLoadBlockedForTest())
+    }
+
+    // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
     private val WINDOW = 2_000L
 
     @Test

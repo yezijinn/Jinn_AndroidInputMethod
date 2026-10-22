@@ -113,6 +113,16 @@ object SelectionLedger {
     internal fun pendingLinesForTest(): Int = queue.size
 
     /**
+     * 测试用：清掉待写队列。
+     *
+     * 队列是进程级单例，而「写失败」用例故意留下未落盘的行 —— 不清就会串到下一个用例
+     * （实测：本类两条失败用例互相把对方的行数抬高，断言全错）。
+     */
+    internal fun clearQueueForTest() {
+        queue.clear()
+    }
+
+    /**
      * 记一次选择。
      *
      * @param word 真正上屏的词（单字 / 词组 / 追加候选 / 合并后的整词）
@@ -130,7 +140,8 @@ object SelectionLedger {
     /**
      * 批量追加（导入专用）：一次 open、一次 write，别把上万行拆成上万个任务。
      *
-     * 与 [record] 共用同一条后台线程，提交顺序即落盘顺序。
+     * 与 [record] 共用**同一条队列 + 同一个落盘入口**（[drainTo]）：提交顺序即落盘顺序，
+     * 写失败时批次仍留在队列里等下次重试。
      *
      * @return false = **没有排进写入**（功能已关闭 / 未绑定 / 没有有效行）。
      *   调用方必须据此改回执 —— 早期写法静默返回，界面照报「已追加 N 条」（2026-10-21 修）。
@@ -143,16 +154,18 @@ object SelectionLedger {
         val lines = ArrayList<String>(picks.size)
         for ((w, p) in picks) formatLine(w, p)?.let { lines.add(it) }
         if (lines.isEmpty()) return false
+        // ⚠ 必须入队（2026-10-22，L-1410）。早期写法在这里直接 `writeLines`：失败只置
+        // `lastWriteOk` 并写「已丢弃这一批」，而队列里什么也没有 ⇒ drainTo 无从重试，整批消失；
+        // 同一缺陷的另一面是 flush 那句复位 —— 复位一旦落在失败写之后，旗标被抹平、队列本来就是
+        // 空的 ⇒ 界面报「已追加 N 条」而台账一行没多（时序相关，不是必现）。
+        // 入队后与 record 同一条路径：失败留队、成功才出队，批量仍是一次 open + 一次 write。
         return runCatching {
-            writer.execute {
-                if (gen != generation) return@execute
-                if (!writeLines(file, lines)) {
-                    lastWriteOk = false
-                    Diagnostics.w(TAG, "台账批量写入失败（已丢弃这一批）")
-                }
-            }
+            queue.addAll(lines)
+            writer.execute { drainTo(file, gen) }
             true
         }.getOrElse {
+            // 提交失败（executor 已关）：行已在队列里，留给下一次 record / flush 带走 ——
+            // 回执此时必须说「没排进去」，绝不假装成功
             Diagnostics.w(TAG, "台账批量写入提交失败: ${it.javaClass.simpleName}")
             false
         }
@@ -169,7 +182,11 @@ object SelectionLedger {
     fun flush(): Boolean {
         val file = target ?: return true
         val gen = generation
-        // 每次提交前复位：本次提交没有写失败才算成功
+        // 提交前复位：本次提交没有写失败才算成功。
+        // ⚠ 这条复位只有在「**任何写失败都不丢行**」的前提下才成立 —— record / appendAll 都走
+        // [drainTo]，失败只置位、不出队，所以失败的那批会由下面的 drainTo 重写并**重新**置位。
+        // 早期 appendAll 不入队时，失败的行根本不在队列里，这条复位于是把一次真实的丢失
+        // 抹成了「成功」，界面谎报「已追加 N 条」（L-1410 的直接成因）。
         lastWriteOk = true
         // 带超时：队列里可能压着一次上万行的批量导入，主线程不该无限等
         val drained = runCatching {
@@ -532,18 +549,36 @@ object SelectionLedger {
     internal const val IMPORT_MAX_PER_WORD = 1_000
 
     /**
+     * [readAll] 的结果：**必须**把「确实没有记录」与「解不开 / 读不出」分开。
+     *
+     * 压成一个空表就是 L-1411：密钥库不可用时页面显示「共 0 次选择 · 0 个词条」，用户以为
+     * 台账空了，顺手点「关闭用户词库并删除记录」把真数据删掉 —— 「解不开」被显示成「没有」，
+     * 而本类的 KDoc 明确禁止这样统计。
+     */
+    sealed class LedgerRead {
+        /** 读成功（含「文件不存在」= 确实没有记录） */
+        class Ok(val picks: List<Pair<String, String>>) : LedgerRead()
+
+        /** 读不出：数据密钥不可用 / 读取或迁移抛出。盘上可能有数据，界面不得按 0 条统计 */
+        object Unavailable : LedgerRead()
+    }
+
+    /**
      * 读整份流水（文件不存在返回空表）；解析口径与 [parse] 一致。
      *
-     * 密钥不可用时返回空表并留痕：**不能**把「解不开」当成「没有数据」写进统计，但也绝不
-     * 回退明文读（明文只是旧版遗留的一种形态，迁移那一刻起就不该再被读）。
+     * 密钥不可用时返回 [LedgerRead.Unavailable] 并留痕：**不能**把「解不开」当成「没有数据」
+     * 写进统计，但也绝不回退明文读（明文只是旧版遗留的一种形态，迁移那一刻起就不该再被读）。
      */
-    fun readAll(context: Context): List<Pair<String, String>> {
-        val f = File(context.filesDir, FILE_NAME)
-        if (!f.isFile) return emptyList()
-        val key = LedgerCrypto.dataKey(context.filesDir)
+    fun readAll(context: Context): LedgerRead = readAllIn(context.filesDir)
+
+    /** [readAll] 的纯文件版本（JVM 可测：「密钥不可用不得当成 0 条」的真跑路径） */
+    internal fun readAllIn(dir: File): LedgerRead {
+        val f = File(dir, FILE_NAME)
+        if (!f.isFile) return LedgerRead.Ok(emptyList())
+        val key = LedgerCrypto.dataKey(dir)
         if (key == null) {
             Diagnostics.w(TAG, "台账读取跳过：数据密钥不可用")
-            return emptyList()
+            return LedgerRead.Unavailable
         }
         return runCatching {
             // 只读入口也要迁移：用户可能升级后再没选过词，此时没有任何写入会触发迁移
@@ -555,16 +590,17 @@ object SelectionLedger {
             }
             // 判据是「首行是标识」**或**「内容形态就是逐行密文」：后者兜住首行标识被删的情况，
             // 绝不给明文 parse 出口 —— 那把 "1:…" 读成 base64 乱码词，用户视角就是台账全毁（N3）
-            if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
+            val picks = if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
                 parse(decodeRecords(text, key))
             } else {
                 // 迁移失败（磁盘满 / 无权限）时仍按旧格式读，数据至少可见
                 Diagnostics.w(TAG, "台账仍是明文格式（迁移未完成），按明文读取")
                 parse(text)
             }
+            LedgerRead.Ok(picks)
         }.onFailure {
             Diagnostics.w(TAG, "台账读取失败: ${it.javaClass.simpleName}")
-        }.getOrDefault(emptyList())
+        }.getOrElse { LedgerRead.Unavailable }
     }
 
     /**

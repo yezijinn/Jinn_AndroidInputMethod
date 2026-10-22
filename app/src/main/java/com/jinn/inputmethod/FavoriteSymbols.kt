@@ -29,6 +29,8 @@ import org.json.JSONArray
  */
 object FavoriteSymbols {
 
+    private const val TAG = "FavoriteSymbols"
+
     /** 每页符号数（= 键盘 26 键位） */
     const val PER_PAGE = 26
 
@@ -52,7 +54,11 @@ object FavoriteSymbols {
         // 不对就把用户攒的整份收藏换成出厂预置，且全程无提示。
         val arr = try {
             JSONArray(raw)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // 回退预置是**有意的**（BUG.md L-1167 / 第 22 轮已复核），但静默到只剩「符号变回 D I Y」
+            // 就无从排查：数据可能来自旧版本、外部改写或导入（L-1417）。只加一条 W，行为不动 ——
+            // 不打原文（prefs 里可能就是用户的收藏内容）
+            Diagnostics.w(TAG, "收藏符号 JSON 无法解析，按出厂预置处理: ${e.javaClass.simpleName}")
             return listOf(DEFAULT_ITEMS)
         }
         // 一步完成「拉平 + 去空白 + 全局去重（保序）」；空页与超页在重新分页时自然消解。

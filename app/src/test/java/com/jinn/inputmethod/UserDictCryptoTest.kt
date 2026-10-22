@@ -281,7 +281,15 @@ class UserDictCryptoTest {
             TestSources.blockAfter(ledger, "private fun drainTo("),
         ))
         val appendAll = TestSources.blockAfter(ledger, "fun appendAll(")
-        assertTrue("批量导入必须经 writeLines", writeCall.containsMatchIn(appendAll))
+        // 批量导入必须**入队**、由唯一落盘入口 drainTo 写（L-1410）：
+        // 早期写法在这里直接 writeLines，失败只置 lastWriteOk ⇒ 队列里什么都没有、drainTo 无从重试，
+        // 而 flush 复位 lastWriteOk 后界面报「已追加 N 条」。入队则失败留队、可重试、回执如实。
+        assertTrue("批量导入必须入队（失败才留得住这一批）", "queue.addAll(lines)" in appendAll)
+        assertTrue("批量导入必须交给唯一的落盘入口 drainTo", "drainTo(file, gen)" in appendAll)
+        assertFalse(
+            "批量导入不得自己直接写盘（绕过队列 = 失败即丢批 + 回执谎报）",
+            writeCall.containsMatchIn(appendAll),
+        )
         assertEquals(
             "追加模式打开文件只允许一处（多于一处就有一条绕过截残行 / 加密的写路径）",
             1,
@@ -470,14 +478,81 @@ class UserDictCryptoTest {
         // 写线程必须把失败写进 lastWriteOk（否则上面那条判据永远拿到 true）
         val ledger = TestSources.codeSource("SelectionLedger.kt")
         assertTrue("drainTo 失败要置位", "lastWriteOk = false" in TestSources.blockAfter(ledger, "private fun drainTo("))
-        assertTrue(
-            "appendAll 失败也要置位",
-            "lastWriteOk = false" in TestSources.blockAfter(ledger, "fun appendAll("),
-        )
+        // appendAll 自 L-1410 起入队、把落盘交给 drainTo，因此失败置位只剩 drainTo 一处；
+        // 它的「不得丢批」由下面那条行为用例真跑（只钉源码形态会把「绕过队列自己写」的旧形态漏掉）
         assertTrue(
             "flush 提交前复位，才能反映本次结果",
             "lastWriteOk = true" in TestSources.blockAfter(ledger, "fun flush("),
         )
+    }
+
+    /**
+     * L-1410：批量导入写失败时**不得丢批**，而且随后的 `flush` 不得因为「复位旗标」就报成功。
+     *
+     * 原写法 `appendAll` 自己开一次 `writeLines`（不入队），失败只置 `lastWriteOk` 并写
+     * 「已丢弃这一批」—— 批次当场消失，`drainTo` 无物可重试，Toast 还承诺「稍后可在列表确认」。
+     * 与之同源的另一面是 `flush()` 开头无条件 `lastWriteOk = true`：复位若落在那次失败**之后**，
+     * 旗标被抹掉、队列本来就是空的 ⇒ 返回 true ⇒ 界面报「已追加 N 条」。
+     *
+     * 判据里**确定性**的那条是队列行数（原写法恒为 0，与线程时序无关）；`flush` 返回值那条
+     * 只有复位落在失败之后才暴露，所以两条都要留 —— 单留后者会因时序而偶绿。
+     * 变异实证：把 `appendAll` 还原成「直接 writeLines、不入队」，本用例当场红（队列 0 ≠ 2）。
+     */
+    @Test
+    fun `批量导入写失败不得丢批_回执不得谎报`() {
+        val f = ledgerFile()
+        SelectionLedger.setTargetForTest(f)
+        SelectionLedger.setKeyForTest(null)   // JVM 上没有 Keystore ⇒ 走真实写失败路径
+        try {
+            val picks = listOf("五湖" to "wu hu", "四海" to "si hai")
+            assertTrue("有有效行就要如实回报「已排入」", SelectionLedger.appendAll(picks))
+            assertFalse("密钥不可用 ⇒ flush 必须报失败", SelectionLedger.flush())
+            assertEquals("失败的那一批必须还在队列里（原写法这里恒为 0）", 2, SelectionLedger.pendingLinesForTest())
+            assertFalse("一行都不许落盘（绝不回退明文）", f.exists())
+            // 再 flush 一次仍是失败：不许把「这批没写」当成「这批不算了」
+            assertFalse(SelectionLedger.flush())
+            assertEquals("重试仍不丢行", 2, SelectionLedger.pendingLinesForTest())
+        } finally {
+            SelectionLedger.setTargetForTest(null)
+            SelectionLedger.setKeyForTest(null)
+            // 失败用例故意留下未落盘的行：队列是进程级单例，不清会串到下一个用例
+            SelectionLedger.clearQueueForTest()
+            LedgerCrypto.invalidate()
+        }
+    }
+
+    /**
+     * L-1411：台账解不开时必须报「解不开」，不能报成「没有记录」。
+     *
+     * 页面据 [SelectionLedger.LedgerRead] 分支渲染：解不开时禁用删除（不可回滚）与导出，
+     * 并在摘要行追加一句状态说明 —— 「解不开」显示成「共 0 次选择」会让用户顺手把真数据删掉。
+     */
+    @Test
+    fun `台账解不开时不得报成没有记录`() {
+        LedgerCrypto.invalidate()
+        val dir = tmp.newFolder()
+        // 数据在、密钥件不在 ⇒ dataKey fail-closed（并把数据改名 .orphan 保留）
+        File(dir, SelectionLedger.FILE_NAME).writeText(
+            LedgerCrypto.HEADER + "\n" + LedgerCrypto.encryptLine("五湖\twu hu", key) + "\n",
+            Charsets.US_ASCII,
+        )
+        val unreadable = SelectionLedger.readAllIn(dir)
+        assertTrue(
+            "有数据却解不开 ⇒ 必须是 Unavailable（不能是空表）",
+            unreadable is SelectionLedger.LedgerRead.Unavailable,
+        )
+        // 对照：文件不存在 = 确实没有记录，仍是 Ok(空表) —— 两者必须分得开，否则这条守卫等于恒真
+        val none = SelectionLedger.readAllIn(tmp.newFolder())
+        assertTrue("文件不存在 = 确实没有记录", none is SelectionLedger.LedgerRead.Ok && none.picks.isEmpty())
+
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        assertTrue("页面必须按状态分支（不能直接 aggregate）", "LedgerRead.Unavailable" in page)
+        val summary = TestSources.blockAfter(page, "private fun renderSummary(")
+        assertTrue("解不开时删除键必须禁用", "btnClose.isEnabled = !unreadable" in summary)
+        assertTrue("解不开时导出必须禁用", "!empty && !unreadable" in summary)
+        assertTrue("解不开时摘要行追加状态说明", "TEXT_SUMMARY_UNREADABLE" in page)
+        assertTrue("解不开时导出不得说成「还没有可导出的词」", "TEXT_LEDGER_UNREADABLE" in page)
+        LedgerCrypto.invalidate()
     }
 
     // ── 并发：迁移与追加同一临界区（2026-10-22）────────────────
@@ -546,6 +621,8 @@ class UserDictCryptoTest {
         } finally {
             SelectionLedger.setTargetForTest(null)
             SelectionLedger.setKeyForTest(null)
+            // 同样的收尾：这条用例也故意留下未落盘的行（见 L-1410 用例的清理）
+            SelectionLedger.clearQueueForTest()
             LedgerCrypto.invalidate()
         }
     }

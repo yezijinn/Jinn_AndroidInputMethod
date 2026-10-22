@@ -32,6 +32,10 @@ import javax.crypto.SecretKey
  *
  * 密钥不可用时 **fail-closed**：不写明文、不把「解不开」当成「没有词频」；已学内容留在
  * 内存里等下次落盘（[dirty] 不清），进程退出时 [flush] 如实返回 false。
+ *
+ * **读失败 = 盘上内容未知**（[loadBlocked]）：这时内存里的表只是一份空壳，任何落盘都先补读一次
+ * （[clearBlockedIfReadable]）—— 否则「开机预加载时设备还没解锁」这一次读失败，会在解锁后
+ * 第一个词落盘时把用户几年的词频整份覆盖掉（L-1409，真机 27 条 → 1 条）。
  */
 internal object UserFrequency {
 
@@ -55,6 +59,20 @@ internal object UserFrequency {
 
     @Volatile
     private var dirty = false
+
+    /**
+     * 「盘上内容未知」（L-1409）：[loadFromFile] / [readPlainOrMigrate] 读失败时置位。
+     *
+     * 读失败的现实成因是**设备还没解锁**（开机预加载早于用户解锁，`setUnlockedDeviceRequired`
+     * 的密钥此时解不开）—— 这是瞬态的，几秒后同一个密钥就可用了。而此前的写法只打一条 W 就
+     * `return`，内存表留在初始的空态；解锁后第一个词落盘，[render] 把「1 条」整份写回文件，
+     * 用户的历史词频**当场清零且不可恢复**（真机复现：27 条 → 1 条）。
+     *
+     * 置位期间的规则：`remember` 照常更新内存（本次使用仍能排序），但任何落盘都先补读
+     * （[clearBlockedIfReadable]）；补读仍失败就**不写**，让 [dirty] 留着等下一次机会。
+     */
+    @Volatile
+    private var loadBlocked = false
 
     /**
      * 测试注入的密钥（JVM 上走不了 Android Keystore）。
@@ -100,10 +118,23 @@ internal object UserFrequency {
      * @param enabled 用户设置里的开关；关掉时不加载也不学习
      */
     fun load(context: Context, enabled: Boolean) {
-        this.enabled = enabled
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        val f = File(context.filesDir, FILE_NAME)
+        loadFromFile(File(context.filesDir, FILE_NAME), enabled)
+    }
+
+    /**
+     * [load] 的文件部分（拆出来是为了让纯 JVM 单测能真跑一遍「读失败」路径 —— `load` 要 Context）。
+     *
+     * 读失败（密钥不可用 / 密文损坏）时置 [loadBlocked]：**盘上的内容未知**。⚠ 这里只置标志、
+     * **绝不清 [entries] 冒充「没有词频」**，也绝不在随后落盘时把空表写回文件。
+     */
+    internal fun loadFromFile(f: File, enabled: Boolean) {
+        this.enabled = enabled
+        // 存储文件绑定放在这里（而不是只在 [load] 里）：这两个入口任何一个被直接调用，
+        // `remember` / `flush` 都必须落到同一个文件上，否则「学了但写不出去」且不报错
         file = f
+        // 每次都是完整的一次读取尝试：先按「未受阻」开始，失败会在下面重新置位
+        loadBlocked = false
         if (!enabled) {
             // 关掉学习时也要把内存态清干净：否则运行期的 flush() / 防抖落盘会把上一份内存快照
             // 写回文件，把「刚导入的词频」覆盖掉（导入还原 userLearning=false 就是这条路径）。
@@ -120,7 +151,9 @@ internal object UserFrequency {
             val now = today()
             val text = readPlainOrMigrate(f)
             if (text == null) {
-                // 密钥不可用 / 密文损坏：不覆盖文件、不当成「没有词频」，本次按未学习处理
+                // 密钥不可用 / 密文损坏：不覆盖文件、不当成「没有词频」，本次按未学习处理。
+                // 必须置 loadBlocked —— 否则解锁后第一个词落盘就用「1 条」覆盖整份历史（L-1409）
+                loadBlocked = true
                 Diagnostics.w(TAG, "用户词频读取跳过（密钥不可用或密文损坏），不覆盖原文件")
                 return
             }
@@ -129,6 +162,8 @@ internal object UserFrequency {
             for ((word, v) in parsed) entries[word] = Entry(v.first, v.second)
             Diagnostics.i(TAG, "用户词频: 已载入 ${parsed.size} 条（含按天衰减）")
         }.onFailure {
+            // 读取过程抛出（IO 错误 / 解析异常）同样意味着「盘上内容未知」
+            loadBlocked = true
             Diagnostics.w(TAG, "用户词频读取失败（忽略，按未学习处理）: ${it.message}")
         }
     }
@@ -172,8 +207,16 @@ internal object UserFrequency {
             val versionBeforeRead = version
             val text = readPlainOrMigrate(f) ?: return
             val parsed = parse(text, today(), PinyinEngine::toSimplified)
-            if (parsed.isEmpty()) return
-            if (!applyReload(f, versionBeforeRead, parsed)) {
+            if (parsed.isEmpty()) {
+                // 读成功、只是表空 ⇒ 盘上内容已确知（原来的 `return` 连「解除阻塞」都跳过，
+                // L-1409 那条路于是永远写不回去）
+                loadBlocked = false
+                return
+            }
+            if (applyReload(f, versionBeforeRead, parsed)) {
+                // 读成功且内容已并入 ⇒ 盘上内容已知，解除 [loadBlocked]
+                loadBlocked = false
+            } else {
                 Diagnostics.i(TAG, "用户词频: 补载结果已作废（期间词频被替换），丢弃 ${parsed.size} 条")
             }
         }.onFailure {
@@ -205,11 +248,15 @@ internal object UserFrequency {
     /** 测试用：当前内存态版本号（[applyReload] 的换代校验依据） */
     internal fun versionForTest(): Long = version
 
+    /** 测试用：当前是否处于「盘上内容未知」状态（L-1409） */
+    internal fun isLoadBlockedForTest(): Boolean = loadBlocked
+
     /** 测试/复位用：清空内存态（不删文件；注入的密钥由 `setKeyForTest(null)` 单独复位） */
     internal fun resetForTest() {
         entries.clear()
         dirty = false
         enabled = true
+        loadBlocked = false
         file = null
         lastSaveAt = 0L
         savePending = false
@@ -341,6 +388,8 @@ internal object UserFrequency {
                 // 而关闭时内存表已被清空 ⇒ 它会把**空表**写成文件（只剩表头），历史学习成果全丢，
                 // 进程重启也回不来 —— 与「关闭后既有记录留在文件里」的口径直接冲突
                 if (!enabled) return@synchronized
+                // 读失败过（盘上内容未知）就不许拿内存里的空壳覆盖整份历史（L-1409）
+                if (!clearBlockedIfReadable(f)) return@synchronized
                 // 清 dirty 前核对版本（见 [version]）：渲染与清标记之间可能有并发学习进内存
                 val v = version
                 val key = dataKey(f) ?: run {
@@ -350,6 +399,52 @@ internal object UserFrequency {
                 if (writeEncryptedAtomically(f, render(), key) && version == v) dirty = false
             }
         }
+    }
+
+    /**
+     * [loadBlocked] 期间的「补读 + 并入」：任何落盘之前先试一次，读得出来才允许写（L-1409）。
+     *
+     * 为什么是补读而不是干脆不写：不写的代价是本次进程学到的词重启即丢（内存态没人收）；
+     * 而「拿空表覆盖」丢的是用户**全部历史**。补读成功就把盘上的词按「权重取大者」并进内存
+     * （内存里那几条是解不开期间学的，盘上是旧的完整表），然后照常整份落盘。
+     *
+     * 调用方须持 [saveLock]。
+     *
+     * @return true = 盘上内容已知（或文件已不存在），可以落盘；false = 仍读不出，本次不许写
+     */
+    private fun clearBlockedIfReadable(f: File): Boolean {
+        if (!loadBlocked) return true
+        // 文件已经不在了（读取时判定密文损坏并改名为 .bad / 被外部删掉）：没有可覆盖的内容，
+        // 把内存态写出去严格优于什么都不写
+        if (!f.isFile) {
+            loadBlocked = false
+            return true
+        }
+        val text = readPlainOrMigrate(f)
+        if (text == null) {
+            Diagnostics.w(TAG, "词频仍读不出，本次不落盘（避免用空表覆盖原文件）")
+            return false
+        }
+        val parsed = parse(text, today(), PinyinEngine::toSimplified)
+        mergeFromDisk(parsed)
+        loadBlocked = false
+        Diagnostics.i(TAG, "词频补读成功：并入 ${parsed.size} 条后落盘")
+        return true
+    }
+
+    /**
+     * 盘上的词并进内存：同词取**权重较大者**（与 [mergeForBackup] 同口径）。
+     *
+     * 不能直接 `putIfAbsent`：解不开期间学会的词在内存里只有一个 1.0，而盘上是它攒了几十次的
+     * 旧权重 —— 让内存值胜出等于把那个词的积累悄悄改小。
+     */
+    private fun mergeFromDisk(parsed: Map<String, Pair<Double, Int>>) {
+        for ((word, v) in parsed) {
+            entries.compute(word) { _, old ->
+                if (old == null || v.first > old.weight) Entry(v.first, v.second) else old
+            }
+        }
+        trimIfNeeded()
     }
 
     /**
@@ -373,6 +468,9 @@ internal object UserFrequency {
         // 恰是 flush 本要避免的事。判据与 [saveNow] 保持一致。
         return synchronized(saveLock) {
             val v = version
+            // 读失败过（盘上内容未知）：先补读，读不出来就不写 —— 否则退出时的这次 flush
+            // 正是 L-1409 的现场（用「1 条」覆盖整份历史），且它比防抖写更「权威」
+            if (!clearBlockedIfReadable(f)) return@synchronized false
             // 密钥不可用时如实返回 false（不写明文）：调用方（导出 / 导入）据此说明，而不是
             // 把「没写成」当成「已落盘」
             val key = dataKey(f)
@@ -570,6 +668,8 @@ internal object UserFrequency {
             // 重填期间若有并发学习进入内存（version 变了，见 [remember] 的锁），就保持 dirty，
             // 让后续落盘把这份内存态（含那次学习）写回文件；无条件清掉等于把它永久跳过
             dirty = version != v + 1
+            // 整份替换后盘上内容与内存一致 ⇒ 「盘上内容未知」不再成立（L-1409）
+            loadBlocked = false
             true
         }
         if (written && dirty) scheduleSave()
