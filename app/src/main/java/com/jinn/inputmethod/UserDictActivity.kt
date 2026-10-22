@@ -95,6 +95,14 @@ class UserDictActivity : ComponentActivity() {
      */
     private var pendingPassword: CharArray? = null
 
+    /**
+     * 本次导出是否走明文（无密码、无外壳）。
+     *
+     * 与 [pendingFormat] 一起进 `onSaveInstanceState`：选位置期间页面被重建时，明文分支
+     * 不依赖任何内存里的敏感值，靠这个标志就能接着写完（加密分支的密码必丢，见上）。
+     */
+    private var pendingPlain = false
+
     /** 导入暂存件（SAF → 缓存目录的一份拷贝；解密 / 解析完即删） */
     private var stagedImport: File? = null
 
@@ -103,15 +111,27 @@ class UserDictActivity : ComponentActivity() {
     ) { uri ->
         val format = pendingFormat
         val password = pendingPassword
+        val plain = pendingPlain
         pendingFormat = null
         pendingPassword = null
+        pendingPlain = false
         if (uri == null) {
             password?.fill('\u0000')
             return@registerForActivityResult
         }
-        if (format == null || password == null) {
+        if (format == null) {
             // 页面被重建：密码已丢（不落 Bundle）。删掉刚建出的空壳，并说明原因，别静默不发生
             password?.fill('\u0000')
+            deleteEmptyTarget(uri)
+            toast(TEXT_EXPORT_RESTART)
+            return@registerForActivityResult
+        }
+        if (plain) {
+            // 明文导出没有密码可丢，重建也不影响
+            writePlainExport(uri, format)
+            return@registerForActivityResult
+        }
+        if (password == null) {
             deleteEmptyTarget(uri)
             toast(TEXT_EXPORT_RESTART)
             return@registerForActivityResult
@@ -130,6 +150,7 @@ class UserDictActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         // 选位置期间若发生重建（旋转 / 定时换肤），回调里的 format 不能丢，否则导出静默不发生
         pendingFormat?.let { outState.putString(KEY_PENDING_FORMAT, it.name) }
+        outState.putBoolean(KEY_PENDING_PLAIN, pendingPlain)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -172,6 +193,7 @@ class UserDictActivity : ComponentActivity() {
 
         pendingFormat = savedInstanceState?.getString(KEY_PENDING_FORMAT)
             ?.let { runCatching { SelectionLedger.ExportFormat.valueOf(it) }.getOrNull() }
+        pendingPlain = savedInstanceState?.getBoolean(KEY_PENDING_PLAIN, false) ?: false
 
         // 台账只在 PinyinEngine 初始化时绑定；用户可能先开设置页（从未唤起键盘）就导入 ——
         // 不在这里补一次，record/flush 会因 target==null 静默丢弃，而页面还回执「已追加」。
@@ -270,11 +292,16 @@ class UserDictActivity : ComponentActivity() {
     }
 
     /**
-     * 确认框的公共视图：可滚动的说明文字 + 大写 OK 输入框。
+     * 确认框的公共视图：可滚动的说明文字 + 确认词输入框。
      *
      * 说明较长，必须能滚动；输入框固定在最下方，避免被键盘挡住后滚不到。
+     *
+     * @param hint 输入框提示语（默认「输入大写 OK」；明文导出换成「输入『我明白』」）
      */
-    private fun confirmView(body: String): ConfirmView {
+    private fun confirmView(
+        body: String,
+        hint: String = TEXT_OK_HINT,
+    ): ConfirmView {
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
         val root = LinearLayout(this).apply {
@@ -291,7 +318,7 @@ class UserDictActivity : ComponentActivity() {
         // 先按上限占位（不裁字），show 之后按真实宽度收缩到文字高度
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxTextPx))
         val edit = EditText(this).apply {
-            hint = TEXT_OK_HINT
+            this.hint = hint
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
@@ -373,7 +400,7 @@ class UserDictActivity : ComponentActivity() {
         listEntries.adapter = RowAdapter(rows.take(MAX_ROWS))
     }
 
-    // ── 导出（加密包）──────────────────────────────────────────
+    // ── 导出（加密包 / 明文文件）──────────────────────────────
 
     private fun startExport(format: SelectionLedger.ExportFormat) {
         val snapshot = rows
@@ -381,7 +408,88 @@ class UserDictActivity : ComponentActivity() {
             toast(TEXT_NOTHING_TO_EXPORT)
             return
         }
-        askExportPassword(format)
+        askExportFormat(format)
+    }
+
+    /**
+     * 导出格式二选一：加密包（既有）或明文文件（新增）。
+     *
+     * 明文导出的风险不靠按钮文案讲清 —— 那是下一层「输入我明白」警告框的事；
+     * 这一层只把两种形态的差别摆出来，让用户知道自己在选什么。
+     *
+     * 用两个自定义按钮而不是 `setItems`：本页其余对话框都是这套（[plainTextField] /
+     * [confirmView]），视觉一致；而且 `setItems` 的项在无障碍树上拿不到稳定文本，
+     * 自动化验证只能盲点。
+     */
+    private fun askExportFormat(format: SelectionLedger.ExportFormat) {
+        val density = resources.displayMetrics.density
+        val pad = (20 * density).toInt()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, (4 * density).toInt(), pad, 0)
+        }
+        box.addView(
+            TextView(this).apply {
+                text = TEXT_FORMAT_HINT
+                textSize = 13f
+                setLineSpacing(0f, 1.1f)
+            },
+            lpOf(10),
+        )
+        val btnEnc = Button(this).apply { text = TEXT_FORMAT_ENCRYPTED }
+        val btnPlain = Button(this).apply { text = TEXT_FORMAT_PLAIN }
+        box.addView(btnEnc, lpOf(6))
+        box.addView(btnPlain)
+        val dlg = AlertDialog.Builder(this)
+            .setTitle(TEXT_FORMAT_TITLE)
+            .setView(box)
+            .setNegativeButton(TEXT_CANCEL, null)
+            .create()
+        btnEnc.setOnClickListener {
+            dlg.dismiss()
+            askExportPassword(format)
+        }
+        btnPlain.setOnClickListener {
+            dlg.dismiss()
+            askPlainExportConfirm(format)
+        }
+        dlg.show()
+    }
+
+    /**
+     * 明文导出的警告：必须逐字输入「我明白」三个字才放行。
+     *
+     * 复用开启/关闭那套可滚动确认视图，但校验词换成 [CONFIRM_PLAIN] ——
+     * 原来的 [isConfirmOkText] 只认大写 OK，这里单独判。
+     * 密码不适用（没有密码），走 [writePlainExport]。
+     */
+    private fun askPlainExportConfirm(format: SelectionLedger.ExportFormat) {
+        val confirm = confirmView(TEXT_PLAIN_WARN_BODY, TEXT_PLAIN_CONFIRM_HINT)
+        val edit = confirm.edit
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_PLAIN_WARN_TITLE)
+            .setView(confirm.root)
+            .setNegativeButton(TEXT_CANCEL, null)
+            .setPositiveButton(TEXT_PLAIN_CONFIRM, null)
+            .create()
+        dialog.show()
+        dialog.setOnShowListener { fitConfirmText(confirm) }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (edit.text.toString().trim() != CONFIRM_PLAIN) {
+                toast(TEXT_PLAIN_NEED_CONFIRM)
+                return@setOnClickListener
+            }
+            edit.text.clear()
+            dialog.dismiss()
+            pendingFormat = format
+            pendingPlain = true
+            runCatching { createDoc.launch(UserDictExport.plainName(format)) }
+                .onFailure {
+                    pendingFormat = null
+                    pendingPlain = false
+                    toast(TEXT_NO_PICKER)
+                }
+        }
     }
 
     /**
@@ -452,6 +560,50 @@ class UserDictActivity : ComponentActivity() {
         val snapshot = rows
         val submitted = runCatching { io.execute { writeExportOnIo(uri, format, snapshot, password) } }.isSuccess
         if (!submitted) password.fill('\u0000')
+    }
+
+    /**
+     * 明文导出：直接把词表文本写进 SAF，**不过外壳、不加密、无密码**。
+     *
+     * 与加密包共用同一份 `SelectionLedger.exportText`（条目形态完全一致），
+     * 差别只在壳 —— 用户要的就是「外部可读」。
+     * 文件内容本身就是隐私数据，写失败时同样不留空壳（[deleteEmptyTarget]）。
+     */
+    private fun writePlainExport(uri: Uri, format: SelectionLedger.ExportFormat) {
+        val snapshot = rows
+        val submitted = runCatching { io.execute { writePlainExportOnIo(uri, format, snapshot) } }.isSuccess
+        if (!submitted) toast(TEXT_EXPORT_FAIL)
+    }
+
+    private fun writePlainExportOnIo(
+        uri: Uri,
+        format: SelectionLedger.ExportFormat,
+        snapshot: List<Row>,
+    ) {
+        val ok = try {
+            val merged = LinkedHashMap<Pair<String, String>, Int>()
+            for (r in snapshot) merged[r.word to r.pinyin] = r.count
+            val text = SelectionLedger.exportText(merged, format)
+            val out = openTruncatingOutput(uri)
+            if (out == null) {
+                false
+            } else {
+                out.use { o ->
+                    o.write(text.toByteArray(Charsets.UTF_8))
+                    o.flush()
+                }
+                true
+            }
+        } catch (t: Throwable) {
+            Diagnostics.w(TAG_NAME, "明文导出异常: ${t.javaClass.simpleName}")
+            false
+        }
+        if (!ok) deleteEmptyTarget(uri)
+        val count = snapshot.size
+        runOnUiThread {
+            if (!alive()) return@runOnUiThread
+            toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
+        }
     }
 
     private fun writeExportOnIo(
@@ -994,7 +1146,27 @@ class UserDictActivity : ComponentActivity() {
         /** 加密包后缀（与 [UserDictExport.FILE_SUFFIX] 一致） */
         const val SUFFIX = UserDictExport.FILE_SUFFIX
 
+        // ── 导出格式选择与明文导出警告 ───────────────────────────
+        const val TEXT_FORMAT_TITLE = "选择导出格式"
+        const val TEXT_FORMAT_ENCRYPTED = "加密包（需密码，外部不可读）"
+        const val TEXT_FORMAT_PLAIN = "明文文件（任何编辑器可读）"
+        const val TEXT_FORMAT_HINT =
+            "加密包整个文件加密，只能用本 App 输入密码后导入。\n" +
+                "明文文件就是纯文本，任何编辑器、任何应用都能直接打开。"
+
+        const val TEXT_PLAIN_WARN_TITLE = "导出明文词库"
+        const val TEXT_PLAIN_WARN_BODY = """这份词库，记录你打过的汉字，涉及个人隐私，当心泄密。
+
+明文文件不加任何保护，能读取这个文件的人或应用，都能看到你的全部词条与读音。确认要导出，请输入「我明白」。"""
+
+        /** 明文导出的确认词：三个字，逐字比对 */
+        const val CONFIRM_PLAIN = "我明白"
+        const val TEXT_PLAIN_CONFIRM_HINT = "输入「我明白」"
+        const val TEXT_PLAIN_NEED_CONFIRM = "请输入「我明白」"
+        const val TEXT_PLAIN_CONFIRM = "导出明文"
+
         const val KEY_PENDING_FORMAT = "pending_format"
+        const val KEY_PENDING_PLAIN = "pending_plain"
     }
 }
 

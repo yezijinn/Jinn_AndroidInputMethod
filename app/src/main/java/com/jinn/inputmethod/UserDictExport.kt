@@ -78,6 +78,14 @@ internal object UserDictExport {
     /** 建议的保存文件名：`user_dict.<ext>.jinn`（后缀即提示「要输入密码」） */
     fun suggestedName(format: SelectionLedger.ExportFormat): String = entryName(format) + FILE_SUFFIX
 
+    /**
+     * 明文导出的保存文件名：`user_dict.<ext>`（无外壳后缀）。
+     *
+     * 与 [suggestedName] 只差一个 `.jinn` —— 那个后缀是「要输入密码」的唯一提示，
+     * 明文导出不带它，用户从文件名就能看出是纯文本。
+     */
+    fun plainName(format: SelectionLedger.ExportFormat): String = entryName(format)
+
     /** 造单条目 zip（内存内完成；词表最大也就十几 MB） */
     fun zipOf(name: String, text: String): ByteArray {
         val out = ByteArrayOutputStream(text.length / 2 + 512)

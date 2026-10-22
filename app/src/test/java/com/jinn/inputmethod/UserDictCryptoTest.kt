@@ -657,6 +657,45 @@ class UserDictCryptoTest {
         )
     }
 
+    // ── 明文导出（外部可读）──────────────────────────────────
+
+    @Test
+    fun `明文导出必须先确认我明白且确认词不是大写OK`() {
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        assertTrue("警告文案要说明这是隐私数据", "这份词库，记录你打过的汉字，涉及个人隐私，当心泄密" in page)
+        assertTrue("确认词是三个字", "const val CONFIRM_PLAIN = \"我明白\"" in page)
+        assertTrue(
+            "明文分支必须逐字比对 CONFIRM_PLAIN，不能复用 isConfirmOkText（那个只认大写 OK）",
+            "edit.text.toString().trim() != CONFIRM_PLAIN" in page,
+        )
+        // 明文确认框里不得出现 isConfirmOkText：两套确认词共用一套判据会漏掉明文分支
+        val confirmFn = TestSources.blockAfter(page, "private fun askPlainExportConfirm(")
+        assertFalse("明文确认框不得复用大写 OK 判据", "isConfirmOkText" in confirmFn)
+        assertTrue("对不上时必须挡住并提示", "TEXT_PLAIN_NEED_CONFIRM" in confirmFn)
+    }
+
+    @Test
+    fun `明文导出不得加密且不得复用密码链路`() {
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        val plainFn = TestSources.blockAfter(page, "private fun writePlainExportOnIo(")
+        assertFalse("明文导出不过 ConfigCrypto.encrypt", "ConfigCrypto.encrypt" in plainFn)
+        assertFalse("明文导出不写密码相关字段", "pendingPassword" in plainFn)
+        assertTrue("明文直接写词表文本", "o.write(text.toByteArray(Charsets.UTF_8))" in plainFn)
+        // 明文文件名不得带 .jinn 外壳后缀（那是「要输入密码」的提示）
+        assertTrue(
+            "明文文件名无外壳后缀",
+            "fun plainName(format: SelectionLedger.ExportFormat): String = entryName(format)" in
+                TestSources.codeSource("UserDictExport.kt"),
+        )
+    }
+
+    @Test
+    fun `明文导出失败同样删空壳_不留半份隐私文件`() {
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        val plainFn = TestSources.blockAfter(page, "private fun writePlainExportOnIo(")
+        assertTrue("失败走空壳判定", "if (!ok) deleteEmptyTarget(uri)" in plainFn)
+    }
+
     /** 用标准 zip 读回单条目（不涉及任何密码 —— 这就是「包内明文」的判据） */
     private fun readZip(bytes: ByteArray): Pair<String, String> =
         ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
