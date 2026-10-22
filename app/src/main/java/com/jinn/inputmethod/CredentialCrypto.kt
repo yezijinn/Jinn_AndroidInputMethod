@@ -74,7 +74,9 @@ object CredentialCrypto {
             if (t is java.security.UnrecoverableKeyException) return true
             if (t is java.security.KeyStoreException) return true
             if (t is android.security.keystore.KeyPermanentlyInvalidatedException) return true
-            if (t is android.security.KeyStoreException) return true
+            // 同 [ClipboardCrypto.isKeyFailure]：API 33 才公开的类，低版本必须短路与，否则 `is` 现场
+            // 解析失败抛 NoClassDefFoundError（lint NewApi）
+            if (android.os.Build.VERSION.SDK_INT >= 33 && t is android.security.KeyStoreException) return true
             if (t is java.security.InvalidKeyException) return true
             t = t.cause
         }

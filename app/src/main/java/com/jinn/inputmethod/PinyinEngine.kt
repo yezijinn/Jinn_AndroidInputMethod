@@ -1,8 +1,8 @@
 package com.jinn.inputmethod
 
 import android.content.Context
-import android.util.Log
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -604,11 +604,9 @@ object PinyinEngine {
                         "⇒ 保持未加载，界面会提示「词库载入中」并等待补试",
                 )
             }
-            Log.i(
-                TAG,
-                "词库加载完成: 音节=${charsBySyllable.size} 基础键=${baseIndex?.size ?: 0} " +
-                    "运行时键=${phrasesByPinyin.size} 合法音节=${validSyllables.size}",
-            )
+            // ⚠ 原先这里还有一句 `Log.i`，与下面的 `Diagnostics.i` 记的是同一件事：
+            // `Diagnostics.i` 内部就是 logcat + 文件双写，于是 logcat 里每条加载都出现两遍
+            // （第二遍还少两个字段，排查时极易误读成「加载了两次」）。2026-10-22 删掉重复那条。
             // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
             // 评估内存优化前必须先有这个数，不能靠猜。
             Diagnostics.i(
@@ -1864,7 +1862,7 @@ object PinyinEngine {
 
     /** 把拼接键切成音节、用空格连接；切不开时原样返回 */
     fun spacedSyllables(key: String): String {
-        val syllables = segment(key.lowercase()).first
+        val syllables = segment(key.lowercase(Locale.ROOT)).first
         return if (syllables.isEmpty()) key else syllables.joinToString(" ")
     }
 
@@ -2181,7 +2179,7 @@ object PinyinEngine {
      */
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
-        val raw = input.lowercase()
+        val raw = input.lowercase(Locale.ROOT)
         if (raw.isEmpty()) return Result(emptyList(), emptyList(), "")
 
         // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
@@ -3180,8 +3178,8 @@ object Shuangpin {
 
     /** 把 [input] 按 [scheme] 转换成全拼音节串（纯 ASCII，小写） */
     fun toQuanpin(input: String, scheme: ShuangpinScheme): String {
-        val table = scheme.table ?: return input.lowercase()
-        val raw = input.lowercase()
+        val table = scheme.table ?: return input.lowercase(Locale.ROOT)
+        val raw = input.lowercase(Locale.ROOT)
         if (raw.isEmpty()) return ""
         val sb = StringBuilder(raw.length * 2)
         var i = 0
@@ -3223,8 +3221,8 @@ object Shuangpin {
      * 例（自然码）：`vsgo` → `zhongguo`；残码 `vsg` → `zhongg`（不是 `zhong`）。
      */
     fun displayQuanpin(input: String, scheme: ShuangpinScheme): String {
-        val table = scheme.table ?: return input.lowercase()
-        val raw = input.lowercase()
+        val table = scheme.table ?: return input.lowercase(Locale.ROOT)
+        val raw = input.lowercase(Locale.ROOT)
         if (raw.isEmpty()) return ""
         val sb = StringBuilder(raw.length * 2)
         var i = 0

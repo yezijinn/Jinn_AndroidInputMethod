@@ -77,7 +77,10 @@ object ClipboardCrypto {
             if (t is java.security.UnrecoverableKeyException) return true
             if (t is java.security.KeyStoreException) return true
             if (t is android.security.keystore.KeyPermanentlyInvalidatedException) return true
-            if (t is android.security.KeyStoreException) return true
+            // ⚠ `android.security.KeyStoreException` 是 API 33 才公开的类：minSdk 26 上直接 `is` 会让
+            // ART 现场解析不到的类抛 NoClassDefFoundError（就在 catch 分支里，等于把「密钥失效」
+            // 变成崩溃）。短路与 —— 低版本连这条字节码都不执行（lint NewApi 也认这个写法）
+            if (android.os.Build.VERSION.SDK_INT >= 33 && t is android.security.KeyStoreException) return true
             // 部分 OEM 在句柄被作废后只抛裸 InvalidKeyException（不带 Keystore cause）
             if (t is java.security.InvalidKeyException) return true
             t = t.cause

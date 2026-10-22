@@ -1296,9 +1296,12 @@ class JinnIme : InputMethodService() {
                 Diagnostics.w(TAG, "图库快贴：输入框已变更（发起=${picked.hostKey} 当前=$current），丢弃待插入图片")
                 // 同批剩下的几张也属于那个旧输入框：一并丢掉，免得它们等下一次 flush 落到新框里
                 val dropped = GalleryInsert.clearPending()
-                // 这一张也从未提交给宿主：不留明文（下面 clearPending 只清队列里剩下的）
-            picked.file.delete()
-            if (dropped > 0) Diagnostics.w(TAG, "图库快贴：同批剩余 $dropped 张一并丢弃")
+                // 这一张也从未提交给宿主：不留明文（上面 clearPending 只清队列里剩下的）
+                picked.file.delete()
+                if (dropped > 0) Diagnostics.w(TAG, "图库快贴：同批剩余 $dropped 张一并丢弃")
+                // ⚠ 这行与上一行是**并列**关系（不在 `if (dropped > 0)` 里）：字段变了就要告诉用户一句，
+                // 与「同批丢了几张」无关。原先缩进少一级，读起来像挂在上面那个单行 if 下面
+                // （lint 报 Suspicious indentation，2026-10-22 只调整缩进，逻辑一字未动）
                 toast(TEXT_GALLERY_FIELD_CHANGED)
                 return
             }
@@ -2561,7 +2564,8 @@ class JinnIme : InputMethodService() {
         // UserFrequency.flush() 内部先判 dirty，未脏时直接返回；脏时整份重写，
         // 文件上限 3000 行约 1~3ms，故不做异步）
         runCatching { PinyinEngine.flushUserFrequency() }
-        // 选择台账：把队列里最后几行追加完（每行一次 append，几十微秒级）
+        // 选择台账：把队列里最后几行追加完（正常单行 append 几十微秒；但 flush 自带
+        // FLUSH_TIMEOUT_MS = 2s 上限，密钥库不可用 / 队列压着一批导入时**最坏就在主线程等满 2s**）
         SelectionLedger.flush()
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，

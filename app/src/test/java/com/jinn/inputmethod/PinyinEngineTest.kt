@@ -471,4 +471,21 @@ class PinyinEngineTest {
         assertEquals("ni", PinyinEngine.markSyllables("ni"))
         assertEquals("", PinyinEngine.markSyllables(""))
     }
+
+    /**
+     * 输入小写化必须指定 [java.util.Locale.ROOT]（2026-10-22）。
+     *
+     * 无参 `lowercase()` 走设备默认 Locale：土耳其语环境下 `I` → `ı`（无点小写 i），
+     * 全拼 / 双拼查表整串落空 ⇒ 大写字母打出的拼音一个候选都不出，而这种现象在中文语境里
+     * 极难被当成「Locale 问题」想到（键盘本身产小写，只有外接键盘 / 粘贴 / 大写键才触发）。
+     */
+    @Test
+    fun `拼音入口不得用默认Locale小写化`() {
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        assertEquals(
+            "输入小写化必须写 lowercase(Locale.ROOT)：无参形态在土耳其语设备上把 I 变成 ı",
+            0,
+            Regex("""\.lowercase\(\)""").findAll(src).count(),
+        )
+    }
 }

@@ -133,12 +133,21 @@ class IndexCacheLifecycleTest {
         assertFalse(PinyinEngine.isDictionaryUsable(0, 500))
         assertFalse(PinyinEngine.isDictionaryUsable(400, 0))
         assertTrue(PinyinEngine.isDictionaryUsable(1, 1))
-        // 源码钉：加载收口必须过这条判据（切片定位，避免误伤「测试注入」那两处 loaded = true）
+        // 源码钉：加载收口必须过这条判据。
+        // ⚠ 2026-10-22：原写法拿 `substringBefore("Log.i(")` 当右边界，而那句重复的 `Log.i` 已删
+        // ⇒ 锚点消失后 `substringBefore` 返回整段剩余文本，判据静默放宽到文件末尾（L-1145 同型）。
+        // 改用 `window(...)`：两个锚点缺失都当场抛错（右锚点是加载完成后那条「可选词库」日志的文案，
+        // 它只在主加载路径末尾出现一次）。`loadFullIndex(context)` 在「索引补试」分支里也有一处，
+        // 起点取先出现的那处不影响判据 —— 补试分支不碰 `isDictionaryUsable`。
         val src = TestSources.codeSource("PinyinEngine.kt")
-        val after = src.substringAfter("val indexMs = loadFullIndex(context)")
+        val gate = TestSources.window(
+            src,
+            "val indexMs = loadFullIndex(context)",
+            "可选词库: 将在基础词库就绪后延迟加载",
+        )
         assertTrue(
             "加载收口必须过 isDictionaryUsable（否则零行资产会静默变成空词典）",
-            after.substringBefore("Log.i(").contains("isDictionaryUsable("),
+            "isDictionaryUsable(" in gate,
         )
     }
 

@@ -288,8 +288,13 @@ class UserDictCryptoTest {
             Regex("""FileOutputStream\(file, true\)""").findAll(ledger).count(),
         )
         assertTrue(
-            "那一处必须在唯一写入口里",
-            "FileOutputStream(file, true)" in TestSources.blockAfter(ledger, "internal fun writeLinesEncrypted("),
+            "那一处必须在唯一写入口的追加实现里（`appendEncrypted`，由 writeLinesEncrypted 在锁内调用）",
+            "FileOutputStream(file, true)" in TestSources.blockAfter(ledger, "private fun appendEncrypted("),
+        )
+        assertTrue(
+            "追加实现只能由锁内的 writeLinesEncrypted 调用",
+            "appendEncrypted(file, lines, key)" in
+                TestSources.blockAfter(ledger, "internal fun writeLinesEncrypted("),
         )
         assertTrue(
             "appendAll 要如实回报是否排入写入（Boolean，而不是 Unit）",
@@ -473,6 +478,76 @@ class UserDictCryptoTest {
             "flush 提交前复位，才能反映本次结果",
             "lastWriteOk = true" in TestSources.blockAfter(ledger, "fun flush("),
         )
+    }
+
+    // ── 并发：迁移与追加同一临界区（2026-10-22）────────────────
+
+    /**
+     * 读侧的迁移是「整份重写 + `Files.move`」：目录项一换，落在旧 inode 上的追加就随原件一起消失。
+     *
+     * 所以「迁移 → 截残行 → 追加」必须共用一个临界区。原先截残行与追加在锁外，只在
+     * 「写侧刚迁移完、读侧又判出需要迁移」这条交错里才不成立 —— 那种「靠隐含不变式兜着」的写法，
+     * 在读侧多出第二条整份重写路径（修复 / 压缩 / 外部改写）时会静默丢一整批选择。
+     */
+    @Test
+    fun `迁移与追加必须在同一临界区`() {
+        val ledger = TestSources.codeSource("SelectionLedger.kt")
+        // 函数签名到第一个 `{` 之间必须是 `synchronized(migrateLock)`：写入口的块体**就是**锁块，
+        // 这样下面的块体全在临界区内（而不是「块体里某一段另起一个 synchronized」）
+        val head = TestSources.window(ledger, "internal fun writeLinesEncrypted(", "{")
+        assertTrue(
+            "写入口的块必须就是 synchronized(migrateLock) 的块",
+            "synchronized(migrateLock)" in head,
+        )
+        val body = TestSources.blockAfter(ledger, "internal fun writeLinesEncrypted(")
+        assertTrue("迁移必须在锁内", "migrateIfNeeded(file, key)" in body)
+        assertTrue(
+            "截残行必须在锁内（锁外做等于给读侧的整份重写留了一个夹缝）",
+            "truncateTrailingPartialLine(file)" in body,
+        )
+        assertTrue("追加必须在锁内", "appendEncrypted(file, lines, key)" in body)
+        assertEquals(
+            "截残行只允许一处：锁外再留一份副本等于没修",
+            1,
+            Regex("""truncateTrailingPartialLine\(file\)""").findAll(ledger).count(),
+        )
+    }
+
+    /**
+     * 写失败的那一批必须留在队列里（2026-10-22）。
+     *
+     * 原写法「先整队 poll 出队再写」在失败时整批消失、只留一条 W，而同库的 [UserFrequency]
+     * 保留 `dirty` 重试 —— 同一把密钥、两条路径口径相反。失败的现实成因（密钥库抖动 /
+     * 30s 负缓存 / 磁盘满）都是瞬态的，把瞬态故障升级成永久丢数据，且用户侧零提示。
+     *
+     * JVM 上没有 Android Keystore ⇒ [LedgerCrypto.dataKey] 恒为 null，这条用例正好走「写失败」。
+     */
+    @Test
+    fun `写失败不得丢批_留在队列里等下次落盘`() {
+        val f = ledgerFile()
+        SelectionLedger.setTargetForTest(f)
+        SelectionLedger.setKeyForTest(null)
+        try {
+            SelectionLedger.record("五湖", "wu hu")
+            assertFalse("密钥不可用 ⇒ flush 必须如实报失败", SelectionLedger.flush())
+            assertEquals(
+                "失败的那批必须留在队列里（原写法这里已经是 0）",
+                1,
+                SelectionLedger.pendingLinesForTest(),
+            )
+            SelectionLedger.record("四海", "si hai")
+            assertFalse(SelectionLedger.flush())
+            assertEquals(
+                "再失败也不许丢，也不许覆盖前一批",
+                2,
+                SelectionLedger.pendingLinesForTest(),
+            )
+            assertFalse("一行都不许落盘（绝不回退明文）", f.exists())
+        } finally {
+            SelectionLedger.setTargetForTest(null)
+            SelectionLedger.setKeyForTest(null)
+            LedgerCrypto.invalidate()
+        }
     }
 
     // ── N5：密钥不可用后不得每键重走 Keystore ──────────────────

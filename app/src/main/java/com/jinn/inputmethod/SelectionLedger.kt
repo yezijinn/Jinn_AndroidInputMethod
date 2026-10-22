@@ -84,10 +84,33 @@ object SelectionLedger {
         this.enabled = enabled
     }
 
-    /** 运行时切换：关掉后不再写新行（已在队列里的仍会落盘，见 [deleteFile]） */
+    /** 运行时切换：关掉后不再写新行（已在队列里的仍会落盘；要连文件一起清走的是 [deleteFile]） */
     fun setEnabled(value: Boolean) {
         enabled = value
     }
+
+    /**
+     * 测试注入的数据密钥：`null` = 走真实路径（[LedgerCrypto.dataKey]）。
+     *
+     * JVM 单测没有 Android Keystore，而「写失败不丢批」这条必须真跑一遍写线程才看得出（[flush]）。
+     * 与 [UserFrequency.setKeyForTest] 同一口径，生产路径恒为 null。
+     */
+    @Volatile
+    private var keyForTest: SecretKey? = null
+
+    /** 测试用：注入数据密钥（null 复位成真实路径） */
+    internal fun setKeyForTest(key: SecretKey?) {
+        keyForTest = key
+    }
+
+    /** 测试用：绑定目标文件与开关（JVM 上没有 Context；null = 解绑） */
+    internal fun setTargetForTest(file: File?, enabled: Boolean = true) {
+        target = file
+        this.enabled = enabled
+    }
+
+    /** 测试用：当前待写的行数（「写失败不丢批」的判据：失败后必须还在这里） */
+    internal fun pendingLinesForTest(): Int = queue.size
 
     /**
      * 记一次选择。
@@ -168,15 +191,19 @@ object SelectionLedger {
     internal fun flushVerdict(queueEmpty: Boolean, writeOk: Boolean): Boolean = queueEmpty && writeOk
 
     /**
-     * 关闭功能：先停记录、把队列写空，再删文件。
+     * 关闭功能：先停记录、丢弃待写队列，再删文件。
      *
      * 顺序不能反 —— 先删文件再 flush，会把队列里刚写的几行重新建出来。
      */
     fun deleteFile(context: Context): Boolean {
         enabled = false
         val file = File(context.filesDir, FILE_NAME)
+        // 关闭即丢弃未落盘的队列：用户的意图就是「这份记录不要了」。不丢的话，写不进去的行会留在
+        // 队列里（N3 收口后失败不再丢批）⇒ flush 永远不成功 ⇒ 密钥库失效的机器上**删不掉台账**，
+        // 而恰恰是那种机器最需要删干净
+        queue.clear()
         if (!flush()) {
-            // 队列还没写空就删，正在进行的 drain 会把文件重建出来（回执却是「已删除」）
+            // 写线程还没停（超时 / 代际未同步）就删，正在进行的 drain 会把文件重建出来（回执却是「已删除」）
             return false
         }
         // 先升代际再删：在途 / 排队的写入会自行放弃，不会把文件建回来
@@ -205,16 +232,20 @@ object SelectionLedger {
             return
         }
         if (queue.isEmpty()) return
-        // 先整队取出再写：写失败时丢的是这一批（文件是「只增」的，重试会把顺序打乱）
-        val batch = ArrayList<String>()
-        while (true) {
-            batch.add(queue.poll() ?: break)
-        }
+        // 只取不删：写成功才把写过的那一段从队首移除。
+        // 原写法「先整队 poll 出队再写」在失败时**整批消失**，只留一条 W —— 而失败的现实成因
+        // （密钥库抖动 / `LedgerCrypto` 的 30s 负缓存 / 磁盘满）都是瞬态的，把瞬态故障升级成
+        // 永久丢数据，且与同库的 UserFrequency（写失败保留 dirty 重试）口径相反。
+        val batch = ArrayList<String>(queue.size)
+        for (line in queue) batch.add(line)
         if (batch.isEmpty()) return
         if (!writeLines(file, batch)) {
             lastWriteOk = false
-            Diagnostics.w(TAG, "台账写入失败（已丢弃 ${batch.size} 行）")
+            Diagnostics.w(TAG, "台账写入失败（${batch.size} 行留在队列里，下次落盘重试）")
+            return
         }
+        // 只移除确实写过的那一段：写线程是唯一的 poll 方，顺序即入队顺序
+        repeat(batch.size) { queue.poll() }
     }
 
     /**
@@ -229,31 +260,66 @@ object SelectionLedger {
      */
     internal fun writeLines(file: File, lines: List<String>): Boolean {
         val dir = file.parentFile ?: return false
-        val key = LedgerCrypto.dataKey(dir) ?: return false
+        val key = keyForTest ?: LedgerCrypto.dataKey(dir) ?: return false
         return writeLinesEncrypted(file, lines, key)
     }
 
-    /** [writeLines] 的实现体（密钥由调用方给，JVM 单测可直接注入） */
-    internal fun writeLinesEncrypted(file: File, lines: List<String>, key: SecretKey): Boolean = runCatching {
-        file.parentFile?.mkdirs()
-        // 迁移失败（磁盘满 / 无权限）时**必须放弃这次写入**：继续追加会把加密记录写进仍是明文
-        // 格式的文件里，读侧按一个口径解析，另一批就整片丢（N3 同源）
-        if (synchronized(migrateLock) { migrateIfNeeded(file, key) } == MigrateOutcome.FAILED) {
-            Diagnostics.w(TAG, "台账格式未就绪（迁移失败），本次不写入")
-            return false
+    /**
+     * [writeLines] 的实现体（密钥由调用方给，JVM 单测可直接注入）。
+     *
+     * **迁移 / 截残行 / 追加三件事共用一个临界区**（[migrateLock]）：读侧 [readAll] 的迁移是
+     * 「整份重写 + `Files.move`」，它一换掉目录项，落在旧 inode 上的追加就随原件一起消失。
+     * 截残行与追加原先在锁外（2026-10-22 收口）—— 那条交错要靠「`needsMigration` 一转过假值就不再
+     * 为真」这条**隐含不变式**才不成立，而读侧一旦多出第二条整份重写路径（修复 / 压缩 / 外部改写）
+     * 不变式即破，丢的是一整批选择。进锁后不再有这个前提，代价是读侧的迁移 / 整份读最多多等一次追加
+     * （单行写是几十微秒；只有批量导入会明显变长，而那条路径本来就不在按键热路径上）。
+     */
+    internal fun writeLinesEncrypted(file: File, lines: List<String>, key: SecretKey): Boolean =
+        synchronized(migrateLock) {
+            runCatching {
+                file.parentFile?.mkdirs()
+                // 迁移失败（磁盘满 / 无权限）时**必须放弃这次写入**：继续追加会把加密记录写进仍是明文
+                // 格式的文件里，读侧按一个口径解析，另一批就整片丢（N3 同源）
+                if (migrateIfNeeded(file, key) == MigrateOutcome.FAILED) {
+                    Diagnostics.w(TAG, "台账格式未就绪（迁移失败），本次不写入")
+                    return@synchronized false
+                }
+                // 残行口径不变：记录同样是「一行一条、以 \n 结尾」，缺 \n 的就是上次写中断的半条
+                truncateTrailingPartialLine(file)
+                appendEncrypted(file, lines, key)
+            }.onFailure { e ->
+                Diagnostics.w(TAG, "台账写入失败: ${e.javaClass.simpleName}")
+            }.getOrDefault(false)
         }
-        // 残行口径不变：记录同样是「一行一条、以 \n 结尾」，缺 \n 的就是上次写中断的半条
-        truncateTrailingPartialLine(file)
-        val sb = StringBuilder(lines.size * 64 + 16)
-        for (line in lines) sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
-        FileOutputStream(file, true).use { out ->
-            out.write(sb.toString().toByteArray(Charsets.US_ASCII))
-            out.flush()
+
+    /**
+     * 追加一批加密记录（调用方须持 [migrateLock]，且已完成迁移与截残行）。
+     *
+     * 失败时把文件长度**退回追加前**：失败可能在写了一半之后才发生（磁盘满），退回后重试同一个
+     * 批次才不会把已落地的行再写一遍 —— 台账的「次数」就是用户的选择次数，多记一次没有修正入口。
+     */
+    private fun appendEncrypted(file: File, lines: List<String>, key: SecretKey): Boolean {
+        val before = file.length()
+        return try {
+            val sb = StringBuilder(lines.size * 64 + 16)
+            for (line in lines) sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
+            FileOutputStream(file, true).use { out ->
+                out.write(sb.toString().toByteArray(Charsets.US_ASCII))
+                out.flush()
+            }
+            true
+        } catch (t: Throwable) {
+            rollbackTo(file, before)
+            Diagnostics.w(TAG, "台账追加失败（已退回 $before 字节，可安全重试）: ${t.javaClass.simpleName}")
+            false
         }
-        true
-    }.onFailure { e ->
-        Diagnostics.w(TAG, "台账写入失败: ${e.javaClass.simpleName}")
-    }.getOrDefault(false)
+    }
+
+    /** 把文件截回追加前的长度（[appendEncrypted] 的失败路径；失败只留痕，不再抛） */
+    private fun rollbackTo(file: File, length: Long) {
+        runCatching { RandomAccessFile(file, "rw").use { it.setLength(length) } }
+            .onFailure { Diagnostics.w(TAG, "台账回滚失败: ${it.javaClass.simpleName}") }
+    }
 
     /** [migrateIfNeeded] 的结果：写侧据此决定「能不能接着追加」 */
     internal enum class MigrateOutcome {

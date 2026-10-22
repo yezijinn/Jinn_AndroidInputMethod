@@ -70,6 +70,13 @@ class UserDictActivity : ComponentActivity() {
         // 对话框还开着就销毁（旋转 / 换肤 / 改字号）：不 dismiss 必留 WindowLeaked
         shownDialog?.dismiss()
         shownDialog = null
+        // 选位置期间暂存的导出密码（2026-10-22）：onDestroy 后这个 Activity 实例仍可能被
+        // ActivityResult 回调（或 GC 前的残留引用）够着，而 `pendingPassword` 是页面里
+        // 唯一的密码副本 —— 与其它出口一样零化，不指望 GC 清字符数组
+        pendingPassword?.fill('\u0000')
+        pendingPassword = null
+        pendingFormat = null
+        pendingPlain = false
         // 选位置 / 输密码期间可能残留一份导入暂存件（明文），必须在这里兜住
         clearStaged()
         io.shutdownNow()
@@ -649,11 +656,19 @@ class UserDictActivity : ComponentActivity() {
      * 从磁盘按导出同一口径重算词表（**只能在 `io` 线程调用**）。
      *
      * 与 [loadOnIo] 的列表同源同排序：页面重建后 `rows` 还没加载回来时，导出不能拿空表当真相。
+     *
+     * **不抛**（2026-10-22）：两个写盘路径都在 `try` **之外**调它，一旦冒出异常（台账极大时的 OOM、
+     * 文件系统异常），密码就没机会清零、刚建出的空壳也不会删 —— 明文 / 密钥的收尾整段被跳过。
+     * 读不出就当空表，与 [SelectionLedger.readAll] 自身的失败口径一致（它已经返回空表并留痕）。
      */
-    private fun reloadRows(): List<Row> =
+    private fun reloadRows(): List<Row> = runCatching {
         SelectionLedger.aggregate(SelectionLedger.readAll(applicationContext))
             .entries.map { Row(it.key.first, it.key.second, it.value) }
             .sortedWith(compareByDescending<Row> { it.count }.thenBy { it.word })
+    }.getOrElse {
+        Diagnostics.w(TAG_NAME, "台账重读失败（按空表处理）: ${it.javaClass.simpleName}")
+        emptyList()
+    }
 
     private fun writeExportOnIo(
         uri: Uri,
