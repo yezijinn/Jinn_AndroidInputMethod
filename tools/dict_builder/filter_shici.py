@@ -9,7 +9,7 @@ r"""诗词库重建（第一步）：从原始诗词库（32.9 万条）中筛�
   · 诗经：只保留家喻户晓的名句（内联清单）
   · 全部经繁→简转换（OpenCC TSCharacters）后与库精确匹配
 
-输入：`docs/new_weighted/shici.txt.bak`（原始 32.9 万条，**不是**瘦身后的产出物）
+输入：`docs/new_weighted/shici.src.txt`（原始 32.9 万条，**不是**瘦身后的产出物；旧名 `.bak`，勿删）
 选集：`docs/诗词选集/huajianji/data/`（chinese-poetry 组织，需先下载，见交接文档第九节）
 输出：`docs/诗词选集/_shici_hits.txt`（默认）或 `_shici_hits_loose.txt`（`--loose` 放宽口径）
       + 落盘由 `build_shici_lib.py` 负责（本脚本**不再**写 `new_weighted/shici.txt`）
@@ -25,7 +25,7 @@ from collections import OrderedDict, Counter
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SEL = os.path.join(ROOT, "docs", "诗词选集", "huajianji", "data")
-SHICI = os.path.join(ROOT, "docs", "new_weighted", "shici.txt.bak")
+SHICI = os.path.join(ROOT, "docs", "new_weighted", "shici.src.txt")
 TSCHARS = os.path.join(ROOT, "docs", "freq", "OpenCC-TSCharacters.txt")
 
 HAN = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\U00020000-\U0003ffff]{2,10}$")

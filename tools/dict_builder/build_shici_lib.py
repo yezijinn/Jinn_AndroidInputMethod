@@ -6,7 +6,7 @@ r"""诗词库重建（第二步）：从选集与教材构建最终诗词库并�
        古诗十九首 + 南唐二主词 + 三字经 + 诗经（教材篇目 + 名句清单）
 剔除 = 花间集 / 声律启蒙 / 诗经冷僻句（用户 2026-10-10 确认）
 
-拼音：库内条目复用库内拼音（源文件 `.bak` 超集）；库外条目用 **pypinyin**（今音，与库内口径一致）
+拼音：库内条目复用库内拼音（源文件 `.src.txt` 超集）；库外条目用 **pypinyin**（今音，与库内口径一致）
 依赖：`pip install pypinyin`（本机 0.55.0）；输入 `docs/诗词选集/_shijing_mingju.txt`
       （先跑 `filter_shici.py` 导出）
 产物：docs/shici_ime_dict.txt（`词 拼音`）、docs/new_weighted/shici.txt（`词<TAB>拼音<TAB>1500`）
@@ -21,7 +21,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SEL = os.path.join(ROOT, "docs", "诗词选集", "huajianji", "data")
-LIB_SRC = os.path.join(ROOT, "docs", "shici_ime_dict.txt.bak")   # 原始源文件（33.5 万，超集）
+LIB_SRC = os.path.join(ROOT, "docs", "shici_ime_dict.src.txt")   # 原始源文件（33.5 万，超集；旧名 .bak，勿删）
 TSCHARS = os.path.join(ROOT, "docs", "freq", "OpenCC-TSCharacters.txt")
 SYLL = os.path.join(ROOT, "docs", "dict_review", "音节表.txt")
 OUT_SRC = os.path.join(ROOT, "docs", "shici_ime_dict.txt")
