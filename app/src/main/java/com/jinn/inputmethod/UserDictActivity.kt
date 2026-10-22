@@ -228,21 +228,19 @@ class UserDictActivity : ComponentActivity() {
             .setPositiveButton(TEXT_ENABLE_OK, null)
             .create()
         dialog.setCancelable(false)
-        dialog.setOnShowListener {
-            fitConfirmText(confirm)
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if (!isConfirmText(edit.text.toString())) {
-                    toast(TEXT_NEED_CONFIRM)
-                    return@setOnClickListener
-                }
-                prefs.userDictEnabled = true
-                SelectionLedger.setEnabled(true)
-                dialog.dismiss()
-                toast(TEXT_ENABLED)
-                loadAsync()
-            }
-        }
         dialog.show()
+        styleDialogButtons(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (!isConfirmText(edit.text.toString())) {
+                toast(TEXT_NEED_CONFIRM)
+                return@setOnClickListener
+            }
+            prefs.userDictEnabled = true
+            SelectionLedger.setEnabled(true)
+            dialog.dismiss()
+            toast(TEXT_ENABLED)
+            loadAsync()
+        }
     }
 
     /** 关闭第一步：先提示导出（可以先去导出，或继续关闭） */
@@ -268,27 +266,25 @@ class UserDictActivity : ComponentActivity() {
             .setNegativeButton(TEXT_CANCEL, null)
             .setPositiveButton(TEXT_CLOSE_OK, null)
             .create()
-        dialog.setOnShowListener {
-            fitConfirmText(confirm)
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if (!isConfirmText(edit.text.toString())) {
-                    toast(TEXT_NEED_CONFIRM)
-                    return@setOnClickListener
-                }
-                // 先落开关再删文件：反过来的话，进程内任何一次重读偏好都会把记录重新打开
-                prefs.userDictEnabled = false
-                val ok = SelectionLedger.deleteFile(this)
-                if (!ok) {
-                    // 删除失败：重新绑定并打开记录，否则偏好显示「已开启」而记录全丢
-                    prefs.userDictEnabled = true
-                    SelectionLedger.init(applicationContext, true)
-                }
-                dialog.dismiss()
-                toast(if (ok) TEXT_CLOSED else TEXT_CLOSE_FAILED)
-                if (ok) finish()
-            }
-        }
         dialog.show()
+        styleDialogButtons(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            if (!isConfirmText(edit.text.toString())) {
+                toast(TEXT_NEED_CONFIRM)
+                return@setOnClickListener
+            }
+            // 先落开关再删文件：反过来的话，进程内任何一次重读偏好都会把记录重新打开
+            prefs.userDictEnabled = false
+            val ok = SelectionLedger.deleteFile(this)
+            if (!ok) {
+                // 删除失败：重新绑定并打开记录，否则偏好显示「已开启」而记录全丢
+                prefs.userDictEnabled = true
+                SelectionLedger.init(applicationContext, true)
+            }
+            dialog.dismiss()
+            toast(if (ok) TEXT_CLOSED else TEXT_CLOSE_FAILED)
+            if (ok) finish()
+        }
     }
 
     /**
@@ -296,6 +292,10 @@ class UserDictActivity : ComponentActivity() {
      *
      * 说明较长，必须能滚动；输入框固定在最下方，避免被键盘挡住后滚不到。
      * 三处危险操作（开启 / 关闭并删除 / 导出明文）共用这一个视图与同一个确认词。
+     *
+     * **高度先量后建**：ScrollView 一开始就按文字真实高度给（超出 [TEXT_MAX_DP] 才截到上限），
+     * 不按屏高比例占位。旧写法先占 0.58 屏高再靠 post 收缩，AlertDialog 的窗口按占位高度建完
+     * 就不回缩，中间留下一大片空白（真机：正文才 6 行，窗口有近 2000px 高）。
      */
     private fun confirmView(body: String): ConfirmView {
         val density = resources.displayMetrics.density
@@ -305,14 +305,24 @@ class UserDictActivity : ComponentActivity() {
             setPadding(pad, pad, pad, 0)
         }
         val text = TextView(this).apply {
-            text = body
+            this.text = body
             textSize = 13f
             setLineSpacing(0f, 1.1f)
         }
-        val maxTextPx = (resources.displayMetrics.heightPixels * 0.58f).toInt()
+        // 文字可用宽度 = 屏宽 − 两侧内边距 − 对话框自带的左右边距（约 24dp）
+        val textWidthPx = (resources.displayMetrics.widthPixels - pad * 2 - (24 * density).toInt())
+            .coerceAtLeast((200 * density).toInt())
+        text.measure(
+            View.MeasureSpec.makeMeasureSpec(textWidthPx, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val maxTextPx = (TEXT_MAX_DP * density).toInt()
+        val textHeight = minOf(text.measuredHeight + (4 * density).toInt(), maxTextPx)
         val scroll = ScrollView(this).apply { isFillViewport = true; addView(text) }
-        // 先按上限占位（不裁字），show 之后按真实宽度收缩到文字高度
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxTextPx))
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, textHeight),
+        )
         val edit = EditText(this).apply {
             hint = TEXT_CONFIRM_HINT
             inputType = InputType.TYPE_CLASS_TEXT or
@@ -320,33 +330,16 @@ class UserDictActivity : ComponentActivity() {
                 InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
             setSingleLine(true)
         }
-        root.addView(edit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return ConfirmView(root, edit, scroll, text, maxTextPx)
-    }
-
-    /** 按 ScrollView 的真实宽度重测文字高度，能放下就收紧到文字高度 */
-    private fun fitConfirmText(v: ConfirmView) {
-        v.scroll.post {
-            val w = v.scroll.width
-            if (w <= 0) return@post
-            v.text.measure(
-                View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-            )
-            val measured = v.text.measuredHeight + (4 * resources.displayMetrics.density).toInt()
-            val h = minOf(measured, v.maxHeight)
-            if (v.scroll.layoutParams.height != h) {
-                v.scroll.layoutParams = v.scroll.layoutParams.apply { height = h }
-            }
-        }
+        root.addView(
+            edit,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        return ConfirmView(root, edit)
     }
 
     private class ConfirmView(
         val root: LinearLayout,
         val edit: EditText,
-        val scroll: ScrollView,
-        val text: TextView,
-        val maxHeight: Int,
     )
 
     // ── 词库视图（后台读盘 → 主线程渲染）────────────────────────
@@ -429,8 +422,10 @@ class UserDictActivity : ComponentActivity() {
             },
             lpOf(10),
         )
-        val btnEnc = Button(this).apply { text = TEXT_FORMAT_ENCRYPTED }
-        val btnPlain = Button(this).apply { text = TEXT_FORMAT_PLAIN }
+        // 规格与页面里的四个导出按钮一致（SettingsButton：40dp 高、12dp 圆角描边、13sp）：
+        // 早先直接用系统 Button，是个浅灰圆角块，跟整页风格脱节。
+        val btnEnc = settingsButton(TEXT_FORMAT_ENCRYPTED)
+        val btnPlain = settingsButton(TEXT_FORMAT_PLAIN)
         box.addView(btnEnc, lpOf(6))
         box.addView(btnPlain)
         val dlg = AlertDialog.Builder(this)
@@ -447,6 +442,7 @@ class UserDictActivity : ComponentActivity() {
             askPlainExportConfirm(format)
         }
         dlg.show()
+        styleDialogButtons(dlg)
     }
 
     /**
@@ -465,7 +461,7 @@ class UserDictActivity : ComponentActivity() {
             .setPositiveButton(TEXT_PLAIN_CONFIRM, null)
             .create()
         dialog.show()
-        dialog.setOnShowListener { fitConfirmText(confirm) }
+        styleDialogButtons(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             if (!isConfirmText(edit.text.toString())) {
                 toast(TEXT_NEED_CONFIRM)
@@ -1036,6 +1032,55 @@ class UserDictActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 造一个与页面按钮同规格的 [Button]（代码侧复刻 `@style/SettingsButton`）。
+     *
+     * 对话框里的按钮拿不到 XML 的 style（`AlertDialog` 的自定义视图是代码搭的），
+     * 而系统默认 Button 在这里是个浅灰圆角块，与整页的描边按钮明显两种风格。
+     */
+    private fun settingsButton(label: String): Button = Button(this).apply {
+        this.text = label
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (40 * resources.displayMetrics.density).toInt(),
+        )
+        background = androidx.core.content.ContextCompat.getDrawable(
+            this@UserDictActivity,
+            R.drawable.btn_aurora_secondary,
+        )
+        setTextColor(androidx.core.content.ContextCompat.getColor(
+            this@UserDictActivity,
+            R.color.text_primary,
+        ))
+        textSize = 13f
+        gravity = android.view.Gravity.CENTER
+        minWidth = 0
+        minimumWidth = 0
+        setPadding(0, 0, 0, 0)
+        isAllCaps = false
+    }
+
+    /**
+     * 把对话框的按钮刷成与页面一致的规格。
+     *
+     * AlertDialog 的默认按钮是系统样式（大写、加粗、主题色），本页其余入口都是
+     * `SettingsButton`（13sp、不大写、描边底）。两套并排放会显得对话框是外来物。
+     * 必须在 `show()` 之后调（`getButton` 之前返回 null）。
+     */
+    private fun styleDialogButtons(dialog: AlertDialog) {
+        for (which in intArrayOf(
+            AlertDialog.BUTTON_POSITIVE,
+            AlertDialog.BUTTON_NEGATIVE,
+            AlertDialog.BUTTON_NEUTRAL,
+        )) {
+            val btn = dialog.getButton(which) ?: continue
+            btn.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_primary))
+            btn.textSize = 13f
+            btn.isAllCaps = false
+            btn.setBackgroundResource(R.drawable.btn_aurora_secondary)
+        }
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun lpOf(topDp: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
@@ -1043,7 +1088,7 @@ class UserDictActivity : ComponentActivity() {
         LinearLayout.LayoutParams.WRAP_CONTENT,
     ).apply { topMargin = dp(topDp) }
 
-    private companion object {
+    companion object {
         /** 列表只铺这么多行：全量在导出件里，页面不为几万行付渲染代价 */
         const val MAX_ROWS = 500
 
@@ -1071,8 +1116,11 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_ENABLE_TITLE = "开启用户词库"
         const val TEXT_ENABLE_OK = "开启"
         const val TEXT_CANCEL = "取消"
-        const val TEXT_CONFIRM_HINT = "输入「我明白」"
-        const val TEXT_NEED_CONFIRM = "请输入「我明白」"
+        /** 确认框文字区的最大高度（dp）：超出才滚动，避免长说明把窗口撑满屏 */
+        private const val TEXT_MAX_DP = 260
+
+        const val TEXT_CONFIRM_HINT = "现在输入三个汉字：\"我明白\""
+        const val TEXT_NEED_CONFIRM = "请输入「我明白」三个字"
         const val TEXT_ENABLED = "已开启，之后的选词才会被记录"
         const val TEXT_CLOSE_TITLE = "关闭用户词库"
         const val TEXT_CLOSE_STEP1 = "将删除全部记录（user_picks.txt），不可恢复。建议先导出。"

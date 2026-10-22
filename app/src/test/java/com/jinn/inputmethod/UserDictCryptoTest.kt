@@ -660,6 +660,32 @@ class UserDictCryptoTest {
     // ── 明文导出（外部可读）──────────────────────────────────
 
     @Test
+    fun `对话框按钮与确认框尺寸必须与整页一致`() {
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        // 按钮：四个对话框（开启 / 关闭 / 明文警告 / 格式选择）都要走统一样式，不能用系统默认
+        assertTrue("要有统一的按钮刷法", "private fun styleDialogButtons(dialog: AlertDialog)" in page)
+        assertEquals(
+            "每个对话框 show 之后都要刷一次（共 4 处）",
+            4,
+            Regex("""styleDialogButtons\((?:dialog|dlg)\)""").findAll(page).count(),
+        )
+        assertTrue(
+            "格式选择的自定义按钮也要用页面规格",
+            "private fun settingsButton(label: String): Button" in page,
+        )
+        assertTrue("自定义按钮取页面同一个 drawable", "R.drawable.btn_aurora_secondary" in page)
+        // 尺寸：文字区必须先量后建，不许再按屏高比例占位（那会把窗口撑到近满屏）
+        assertFalse("不得按屏高比例占位", "heightPixels * 0.58" in page)
+        assertTrue("文字区高度有上限常量", "const val TEXT_MAX_DP = " in page)
+        assertTrue(
+            "高度按量出的文字高度给",
+            "minOf(text.measuredHeight + (4 * density).toInt(), maxTextPx)" in page,
+        )
+        // 旧的那套「show 之后再收缩」已删除
+        assertFalse("不得再留 show 后收缩", "fitConfirmText" in page)
+    }
+
+    @Test
     fun `明文导出必须先确认我明白`() {
         val page = TestSources.codeSource("UserDictActivity.kt")
         assertTrue("警告文案要说明这是隐私数据", "这份词库，记录你打过的汉字，涉及个人隐私，当心泄密" in page)
@@ -677,8 +703,9 @@ class UserDictCryptoTest {
             listOf("CONFIRM_WORD"),
             wordDefs.map { it.groupValues[1] },
         )
-        assertTrue("提示语也统一", "const val TEXT_CONFIRM_HINT = \"输入「我明白」\"" in page)
-        assertTrue("缺输入提示也统一", "const val TEXT_NEED_CONFIRM = \"请输入「我明白」\"" in page)
+        assertTrue("提示语唯一定义", "const val TEXT_CONFIRM_HINT = " in page)
+        assertTrue("提示语用户指定原文", "现在输入三个汉字" in page)
+        assertTrue("缺输入提示也统一", "const val TEXT_NEED_CONFIRM = " in page)
         // 旧的「大写 OK」口径必须彻底消失（文案、判据、注释都不能留）
         assertFalse("不得再提大写 OK", "大写 OK" in page)
         assertFalse("不得再留 isConfirmOkText", "isConfirmOkText" in page)
