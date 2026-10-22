@@ -1271,7 +1271,7 @@ class RecentFixesRegressionTest {
         assertTrue("追加步长必须为正（当前 $step）", step!! >= 1)
         // 增量追加按「绝对序号」两两成列 ⇒ 起点必须恒偶，否则双行档两排会错开一列。
         // 现在靠 [appendCandidateViews] 入口把起点对齐到偶数，不再依赖两个常量恰好都是偶数
-        // （改参即静默劣化的面，AI2-BUG A-274）。
+        // （改参即静默劣化的面）。
         assertTrue(
             "增量追加必须自己把起点对齐到偶数",
             "var i = from - (from and 1)" in src,

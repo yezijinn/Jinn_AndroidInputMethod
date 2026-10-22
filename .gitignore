@@ -94,11 +94,21 @@ AI2-BUG.md
 # 交接包（一次性快照，只留本地）
 .wwlia-handoff/
 
+# 多代理评审的过程留痕（任务书 / 分阶段成果 / 终审），只留本地
+.agent-workflow/
 
-# PPT 工作区与临时脚本（2026-10-03）：不属于 App 源码，勿入库
+# 真机验证截图（可重拍，占几十 MB），只留本地
+review_shots/
+
+# 静态分析工具的缓存目录
+.fossil/
+
+# 本机一次性诊断探针（查词是否在词库资产里，跑完即弃）
+/tools/check_phrase.py
+
+
+# PPT 工作区（2026-10-03）：不属于 App 源码，勿入库
 .ppt-master/
-/diag_export.py
-/fix_line_filter.py
 
 # 音效原始素材（WAV 母版 / 参考音）：各站点的免费音效许可都禁止把素材本身再分发，
 # 入库只放 OGG（随 APK 走）与取用脚本 + 清单，见 tools/sound_preview/keyboard_sounds_manifest.md

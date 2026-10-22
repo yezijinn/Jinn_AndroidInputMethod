@@ -3058,7 +3058,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         // 双行档的配对要求起点恒偶。这里直接对齐，不再依赖两个常量「恰好都是偶数」：
-        // 初值或步长一旦被改成奇数，按奇数起点配对会让两排错开一列（AI2-BUG A-274）。
+        // 初值或步长一旦被改成奇数，按奇数起点配对会让两排错开一列。
         var i = from - (from and 1)
         val rowHeight = args.rowHeightPx
         while (i < to) {
