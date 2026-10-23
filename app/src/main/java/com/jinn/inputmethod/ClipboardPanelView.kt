@@ -316,8 +316,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER
                 holder.content.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             } else {
-                // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）
-                holder.content.text = ClipboardClassifier.pieceFor(currentCategory, item.content)
+                // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）；
+                // 再按码点截成预览（ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）——
+                // 「全部」组给的是原文，整份进 TextView 会让最优断行把内存顶爆
+                holder.content.text =
+                    ClipboardClassifier.previewOf(ClipboardClassifier.pieceFor(currentCategory, item.content))
             }
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))

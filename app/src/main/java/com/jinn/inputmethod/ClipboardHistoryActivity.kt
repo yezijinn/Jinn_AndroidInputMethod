@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -327,7 +328,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     holder.content.text = TEXT_IMAGE_ROW_PLACEHOLDER
                     holder.content.setTextColor(getColor(R.color.text_secondary))
                 } else {
-                    holder.content.text = item.content
+                    // 预览按码点截断（ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）：
+                    // 整份塞进来会让 TextView 对 256KB 的无断点单行走最优断行，PSS 直冲 GB 级
+                    holder.content.text = ClipboardClassifier.previewOf(item.content)
                     holder.content.setTextColor(getColor(R.color.text_primary))
                 }
                 holder.meta.text = buildString {
@@ -1514,7 +1517,19 @@ class ClipboardHistoryActivity : ComponentActivity() {
             .show()
     }
 
-    /** 单击历史：弹层展示完整内容，上方 复制 / 收藏 / 删除 / 关闭，两侧距屏幕边各 10% */
+    /**
+     * 内容对话框（单击/长按历史条目）：弹层展示**完整原文**，上方 复制 / 收藏 / 删除 / 关闭，两侧距屏幕边各 10%。
+     *
+     * ⚠ 完整展示 ⇒ 不能像列表正文列那样截断。也不能靠「一个 TextView 装全文 + 降断行策略」：
+     * 实测 250,000 字符的单行文本、`BREAK_STRATEGY_SIMPLE` 之下 PSS 仍 153MB → **1,868MB** 并被
+     * `lowmemorykiller` 杀掉（同日另一轮峰值 2,006MB）。真正管用的是**分段**
+     * （[ClipboardClassifier.SEGMENT_MAX_CHARS]）：每段 4000 字，布局代价回到普通文本量级。
+     *
+     * 该常量数值与 `LineBreaker.BREAK_STRATEGY_SIMPLE` 相同（0），但 `TextView.breakStrategy` 的注解按
+     * `LineBreaker` 判型 —— 用后者判型正确却要多吞 4 条 `InlinedApi` 警告（minSdk 26），故按本仓库既有做法
+     * 就地抑制这一条类型判定（`KeyAppearanceActivity` 的 `SetTextI18n` 同例）。
+     */
+    @SuppressLint("WrongConstant")
     private fun showContentDialog(item: ClipboardDb.Item) {
         val dlg = AlertDialog.Builder(this).create()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -1576,11 +1591,26 @@ class ClipboardHistoryActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(android.widget.ScrollView(this).apply {
             isFillViewport = true
-            addView(TextView(this@ClipboardHistoryActivity).apply {
-                text = item.content
-                textSize = 13f
-                setTextColor(getColor(R.color.text_primary))
+            addView(android.widget.LinearLayout(this@ClipboardHistoryActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                // 内边距挂**容器**而不是每段：分段之间加 8dp 上下边距会在每 4000 字处留下一道缝，
+                // 全文看起来被切成一块块；挂容器就等于原来的「整块文字四周留白」
                 setPadding(dp(8), dp(8), dp(8), dp(8))
+                val segments = ClipboardClassifier.segmentsOf(item.content)
+                for ((index, segment) in segments.withIndex()) {
+                    addView(TextView(this@ClipboardHistoryActivity).apply {
+                        // 非末段剥掉段尾那个换行：块与块之间本来就换行，留着它会多出一条空行
+                        text = ClipboardClassifier.segmentText(segment, index == segments.lastIndex)
+                        textSize = 13f
+                        setTextColor(getColor(R.color.text_primary))
+                        // 单段仍显式降策略：4000 字里若是一整串无断点的西文，HIGH_QUALITY 的
+                        // 最优断行没有收益只有代价。连字符不显式关：本应用界面语言用不上。
+                        breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
+                    }, android.widget.FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ))
+                }
             }, android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,

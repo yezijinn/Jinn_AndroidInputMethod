@@ -138,8 +138,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id
-            // 搜索是全库结果、没有分组上下文，因此**始终显示原文**（分组里才显示提取片段）
-            holder.content.text = item.content
+            // 搜索是全库结果、没有分组上下文，因此**始终显示原文**（分组里才显示提取片段）；
+            // 但原文要按码点截成预览：256KB 无断点单行会让最优断行吃掉 GB 级内存
+            // （ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）
+            holder.content.text = ClipboardClassifier.previewOf(item.content)
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
                 val labels = ClipboardClassifier.labelText(item.category)

@@ -205,4 +205,195 @@ class ClipboardClassifierExtractTest {
         assertTrue(!classifier.hasLabel("OTHER", ClipboardClassifier.CATEGORY_URL))
         assertTrue(!classifier.hasLabel(null, ClipboardClassifier.CATEGORY_URL))
     }
+
+    // ── 列表预览截断（2026-10-24，256KB 单行把进程撑爆）──────────
+
+    @Test
+    fun 预览未超限时原样返回() {
+        val short = "短文本"
+        assertTrue(
+            "未超限时必须是同一个引用（不做无谓拷贝）",
+            short === classifier.previewOf(short),
+        )
+        val exact = "a".repeat(ClipboardClassifier.PREVIEW_MAX_CODE_POINTS)
+        assertEquals("正好等于上限不截", exact, classifier.previewOf(exact))
+    }
+
+    /**
+     * 截断按**码点**：上限落在 emoji 中间时不许切出孤立高位代理。
+     *
+     * 真机事故（2026-10-24）：单条 256KB 的文本进列表正文列后，`TextView` 对无断点单行走
+     * `minikin::breakLineOptimal`（最优断行），历史页 PSS 70MB → 1,473MB、键盘面板
+     * 76MB → 1,298MB，随后被 `lowmemorykiller` 杀掉。改成预览截断后仍需保证不劈代理对，
+     * 否则末尾会显成方块（与 L-1426 同一条口径）。
+     */
+    @Test
+    fun 预览截断按码点不劈代理对() {
+        val text = "😀".repeat(ClipboardClassifier.PREVIEW_MAX_CODE_POINTS) + "尾"
+        val cut = classifier.previewOf(text)
+        assertEquals("按码点截到上限（UTF-16 长度翻倍）", 400, cut.length)
+        assertTrue("不许以孤立高位代理结尾", !cut.last().isHighSurrogate())
+        assertTrue("结尾必须是完整 emoji（低位代理）", cut.last().isLowSurrogate())
+        assertEquals("上限 +1 的那个字被截掉", text.dropLast(1), cut)
+    }
+
+    @Test
+    fun 预览对超长单行只留上限长度() {
+        val huge = "a".repeat(256 * 1024)
+        assertEquals(ClipboardClassifier.PREVIEW_MAX_CODE_POINTS, classifier.previewOf(huge).length)
+        assertEquals("空串原样返回", "", classifier.previewOf(""))
+    }
+
+    // ── 内容对话框的分段渲染（2026-10-24，只降断行策略救不了 250KB 单行）──────────
+
+    /**
+     * 分段必须**拼接回原文**（内容不丢、不改、不加字符）。
+     *
+     * 这是「对话框看全文」这条承诺的底线：分段只是渲染手段，用户复制到的东西必须与库里一致。
+     * 真机实测（2026-10-24）：250KB 单行即便 `BREAK_STRATEGY_SIMPLE` 也把 PSS 顶到 1,868MB
+     * 并被 LMK 杀掉 —— 单 TextView 装全文这条路已经堵死，只能分段。
+     */
+    @Test
+    fun 分段拼接与原文一字不差() {
+        val single = "a".repeat(250_000)
+        val multi = buildString {
+            repeat(2000) { append("第").append(it).append("行内容，带标点。\n") }
+        }
+        for (text in listOf(single, multi, "短", "")) {
+            val segs = classifier.segmentsOf(text)
+            assertEquals("拼接必须还原原文（len=${text.length}）", text, segs.joinToString(""))
+            assertTrue(
+                "每段不得超过上限：${segs.map { it.length }.maxOrNull()}",
+                segs.all { it.length <= ClipboardClassifier.SEGMENT_MAX_CHARS },
+            )
+        }
+        // 250KB 单行没有换行可断 ⇒ 硬切成 63 段（每段 4000）
+        assertEquals(63, classifier.segmentsOf(single).size)
+    }
+
+    /** 未超限的文本（绝大多数条目）必须仍是**一段且同一引用** —— 常见路径零变化、零拷贝 */
+    @Test
+    fun 短文本不分段也不拷贝() {
+        val exact = "a".repeat(ClipboardClassifier.SEGMENT_MAX_CHARS)
+        val segs = classifier.segmentsOf(exact)
+        assertEquals(1, segs.size)
+        assertTrue("正好等于上限时返回同一引用", exact === segs[0])
+        assertEquals("空串也给一段", 1, classifier.segmentsOf("").size)
+    }
+
+    /**
+     * 多行文本的分段断点必须落在换行符**之后**（不把一行劈成两行）。
+     *
+     * ⚠ 段尾那个 `\n` 是个陷阱：`StaticLayout` 会为它多铺一条空行，而下一段 TextView 自己
+     * 也另起一行 —— 直接用 `segment` 当显示文本，每 4000 字就多一条空行。显示文本必须过
+     * [ClipboardClassifier.segmentText]（见下一条用例）。
+     */
+    @Test
+    fun 分段断点落在换行之后() {
+        val line = "x".repeat(999) + "\n"      // 每行 1000 字符
+        val text = line.repeat(10)              // 10000 字符 ⇒ 至少 3 段
+        val segs = classifier.segmentsOf(text)
+        assertEquals("拼接仍须一字不差", text, segs.joinToString(""))
+        assertTrue("段数应大于 1", segs.size > 1)
+        for (seg in segs.dropLast(1)) {
+            assertEquals("非末段必须以换行收尾", '\n', seg.last())
+        }
+    }
+
+    /** 显示文本：非末段剥掉段尾**一个**换行（否则每 4000 字多一条空行），内容与末段不动 */
+    @Test
+    fun 分段显示不多出空行() {
+        val text = buildString {
+            repeat(2000) { append("第").append(it).append("行，带标点。\n") }
+            append('\n')                        // 结尾再补一条空行：末段必须原样保留
+        }
+        val segs = classifier.segmentsOf(text)
+        assertTrue("样本要真的被切开", segs.size > 1)
+        for (i in 0 until segs.lastIndex) {
+            val shown = classifier.segmentText(segs[i], isLast = false)
+            assertTrue("非末段显示文本不许以换行结尾", !shown.endsWith("\n"))
+            assertEquals("只剥一个换行，补回去必须与段原文一致", segs[i], shown + "\n")
+        }
+        val last = segs.last()
+        assertEquals("末段原样（结尾的空行属于内容）", last, classifier.segmentText(last, isLast = true))
+        // 真空行（`\n\n` 正好断在段边界上）只剥一个，另一个保留
+        val blanks = classifier.segmentsOf("x".repeat(3998) + "\n\n" + "y".repeat(1000))
+        val shown = classifier.segmentText(blanks.first(), isLast = false)
+        assertTrue("第一个换行被剥掉、第二个留下", shown.endsWith("\n") && !shown.endsWith("\n\n"))
+        // CRLF：段尾是 `\r\n`，剥完不许把裸 `\r` 留在末尾（真机同步进来的内容就是 CRLF）
+        val crlf = classifier.segmentsOf("x".repeat(3998) + "\r\n" + "y".repeat(1000))
+        val crlfShown = classifier.segmentText(crlf.first(), isLast = false)
+        assertTrue("CRLF 段尾要把 \\r 一并剥掉", !crlfShown.endsWith("\r") && !crlfShown.endsWith("\n"))
+    }
+
+    /**
+     * 源码守卫：三处列表正文列都必须走预览截断；内容对话框必须**保留全文**。
+     *
+     * 这条钉死的是「原文直接进 TextView」这个写法本身 —— 单测在 JVM 上量不到 Android 的
+     * 最优断行开销（`minikin` 在设备侧），只有源码守卫能在编译期把回退挡住。
+     *
+     * 判据用**去掉全部空白**的源码：面板正文列的赋值本身就是跨行的
+     * （`holder.content.text =` 换行后才接表达式），按行判会漏；压成一行后，压行 / 缩进 /
+     * 换一种换行位置都挡不住匹配。
+     */
+    @Test
+    fun 列表正文列必须走预览截断() {
+        fun squash(name: String) = TestSources.codeSource(name).replace(Regex("\\s+"), "")
+
+        val history = squash("ClipboardHistoryActivity.kt")
+        assertTrue(
+            "历史页正文列必须 previewOf",
+            history.contains("holder.content.text=ClipboardClassifier.previewOf(item.content)"),
+        )
+        assertTrue(
+            "历史页正文列不许再直接塞原文",
+            !history.contains("holder.content.text=item.content"),
+        )
+        // 内容对话框是唯一的「看全文」入口：截断它等于把用户内容藏起来，比 OOM 更糟
+        assertTrue(
+            "内容对话框必须按段渲染全文（segmentsOf(item.content)）",
+            history.contains("ClipboardClassifier.segmentsOf(item.content)"),
+        )
+        assertTrue(
+            "每段正文来自分段结果，不是原文整份",
+            history.contains("text=ClipboardClassifier.segmentText(segment,"),
+        )
+        assertTrue(
+            "段文本必须过 segmentText（直接塞 segment 会在每 4000 字处多一条空行）",
+            !history.contains("text=segment"),
+        )
+        assertTrue(
+            "内容对话框不许把全文塞进单个 TextView",
+            !history.contains("text=item.content"),
+        )
+        // 单段仍要降断行策略：4000 字里的一整串无断点西文，最优断行没有收益只有代价
+        assertTrue(
+            "对话片段必须显式降断行策略",
+            history.contains("breakStrategy=android.text.Layout.BREAK_STRATEGY_SIMPLE"),
+        )
+
+        val search = squash("SearchPanelView.kt")
+        assertTrue(
+            "搜索结果正文列必须 previewOf",
+            search.contains("holder.content.text=ClipboardClassifier.previewOf(item.content)"),
+        )
+        assertTrue(
+            "搜索结果正文列不许再直接塞原文",
+            !search.contains("holder.content.text=item.content"),
+        )
+
+        val panel = squash("ClipboardPanelView.kt")
+        assertTrue(
+            "键盘面板正文列必须 previewOf",
+            panel.contains(
+                "holder.content.text=ClipboardClassifier.previewOf(" +
+                    "ClipboardClassifier.pieceFor(currentCategory,item.content))",
+            ),
+        )
+        assertTrue(
+            "面板正文列不许绕过 previewOf 直接塞片段 / 原文",
+            !panel.contains("holder.content.text=ClipboardClassifier.pieceFor(currentCategory,item.content)") &&
+                !panel.contains("holder.content.text=item.content"),
+        )
+    }
 }

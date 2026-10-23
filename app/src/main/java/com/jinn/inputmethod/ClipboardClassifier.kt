@@ -104,6 +104,99 @@ object ClipboardClassifier {
     }
 
     /**
+     * 列表预览的码点上限（历史页 / 键盘面板 / 搜索结果三处正文列共用）。
+     *
+     * 这三处正文列都只是**预览**（宽度受限、行数受限），却原来把整份文本塞进去。单条接近
+     * 256KB 的文本是一行没有任何断点的巨串，`TextView` 在 Android Q+ 默认的
+     * `BREAK_STRATEGY_HIGH_QUALITY` 下走 `minikin::breakLineOptimal`（最优断行，近似 O(n²)）：
+     * 真机实测（2026-10-24，256,000 字节单行）历史页 PSS 70MB → **1,473MB**、
+     * 键盘「历史」面板 76MB → **1,298MB**，随后 `lowmemorykiller` 杀掉整个进程（输入法当场消失）。
+     * 取 200 码点：四行预览绰绰有余，布局代价与普通文本同量级。
+     */
+    const val PREVIEW_MAX_CODE_POINTS = 200
+
+    /**
+     * 截到 [PREVIEW_MAX_CODE_POINTS] 个**码点**的预览串；未超限时原样返回（同一引用，不做拷贝）。
+     *
+     * 码点口径来自 [FavoriteSymbols.takeCodePoints]（BUG.md L-1426）：`substring(0, 200)`
+     * 数的是 UTF-16 码元，会把 emoji 的代理对切一半、末尾留孤立高位代理。
+     *
+     * 上限刻意**不做参数**：调用方只该「按预览规则截」，能自定长度就又能传个 100000 回来。
+     *
+     * ⚠ 只用于**显示**。粘贴 / 收藏 / 删除一律拿 `item.content` 原文，绝不拿预览串。
+     */
+    fun previewOf(text: String): String {
+        // 快筛：`codePointCount ≤ length`，长度都没超就不必逐个码点扫一遍 —— 预览在滚动的
+        // 每一次条目绑定上都要算，长条目的 `codePointCount` 是 O(n) 的主线程开销。
+        if (text.length <= PREVIEW_MAX_CODE_POINTS) return text
+        return FavoriteSymbols.takeCodePoints(text, PREVIEW_MAX_CODE_POINTS)
+    }
+
+    /**
+     * 内容对话框的单段字符上限：全文按此**分段**渲染（一段一个 TextView）。
+     *
+     * 为什么不是「一个 TextView 装全文 + 降断行策略」：实测那条路走不通。250,000 字符的单行
+     * 文本进对话框（已设 `BREAK_STRATEGY_SIMPLE`）时 PSS 仍 153MB → **1,868MB** 随后被
+     * `lowmemorykiller` 杀掉（同日同一 APK 复现两次，另有一次峰值 2,006MB 未杀）；只降策略
+     * 不降 **n**，代价仍随「无断点巨串」的长度走。分段把每次布局的 n 压到常数：
+     * 4000 字符 ≈ 140 行的量级，与普通文本同阶。
+     *
+     * 取 4000：短于它的文本仍是**一段**（走原来的单 TextView 路径，视觉零变化），
+     * 250KB 全文切成 63 段。上限不由调用方传：能自定长度就又能传个 100000 回来把病复发
+     * （与 [previewOf] 同理），而且 `max <= 0` 会让切分循环原地打转。
+     * 段数由单条闸封顶：单条 ≤ 268,435B ⇒ 最多 **68 段**（`ClipboardStore.effectiveItemLimitBytes`）。
+     */
+    const val SEGMENT_MAX_CHARS = 4000
+
+    /**
+     * 把全文切成每段 ≤ [SEGMENT_MAX_CHARS] 字符的分段，**拼接起来与原文一字不差**（内容不丢、不改）。
+     *
+     * 断点策略：优先落在换行符之后（多行文本 → 段落边界对齐，不会把一行劈成两行）；
+     * 一整段都没有换行时（单行巨串）才硬切。这也是「单行 250KB」唯一可能的切法。
+     *
+     * 未超限时返回单元素列表且是**同一引用**（常见路径零拷贝）。
+     */
+    fun segmentsOf(text: String): List<String> {
+        if (text.isEmpty() || text.length <= SEGMENT_MAX_CHARS) return listOf(text)
+        val out = ArrayList<String>(text.length / SEGMENT_MAX_CHARS + 2)
+        var start = 0
+        while (start < text.length) {
+            var end = minOf(start + SEGMENT_MAX_CHARS, text.length)
+            if (end < text.length) {
+                // 只在**本窗口内**往回找换行：`lastIndexOf` 没有下界，单行巨串时每段都会一路扫回 0
+                // （63 段就是 800 万次比较的二次行为，全在主线程）
+                var i = end - 1
+                while (i >= start && text[i] != '\n') i--
+                // 找不到就硬切；`end = i + 1` 保证每轮至少前进 1
+                if (i >= start) end = i + 1
+            }
+            out.add(text.substring(start, end))
+            start = end
+        }
+        return out
+    }
+
+    /**
+     * 单段在内容对话框里的**显示**文本：非末段去掉结尾那一个换行。
+     *
+     * [segmentsOf] 保证多行文本的非末段以 `\n` 收尾，于是这一行换行被**算了两次** ——
+     * 一次是段尾那个 `\n`（`StaticLayout` 会在末尾多铺一条空行），一次是下一段 TextView 自己另起一行。
+     * 结果就是每 4000 字处多出一条空行。竖直堆叠本来就提供了这次断行，剥掉段尾那一个换行即可：
+     * 段落边界仍是一行，`\n\n` 里的第二个换行（真空行）保留不动。
+     *
+     * 只剥**一个**后缀、且只剥非末段：末段之后没有下一段，那个换行是内容本身的结尾，动它就是改内容。
+     *
+     * CRLF 也要一起剥：段尾是 `\r\n` 时只去掉 `\n` 会把一个裸 `\r` 留在段末（它会渲染成豆腐块）。
+     * 剪贴板里确实会出现 CRLF —— 真机实测从 PC 剪贴板同步进来的条目内容是 `\r\n`（6 字的 `DDDD\r\n`）。
+     */
+    fun segmentText(segment: String, isLast: Boolean): String {
+        if (isLast) return segment
+        if (segment.endsWith("\r\n")) return segment.dropLast(2)
+        if (segment.endsWith("\n")) return segment.dropLast(1)
+        return segment
+    }
+
+    /**
      * 分类标签的中文短名（列表 meta 行用）：`URL,NUMBER` → `网址·数字`；
      * OTHER / 空 / 脏值 → 空串（调用方据此不显示该段）。
      */
