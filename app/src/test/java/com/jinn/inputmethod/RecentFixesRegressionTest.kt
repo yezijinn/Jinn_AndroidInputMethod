@@ -7123,5 +7123,28 @@ class RecentFixesRegressionTest {
             "MOVE 分支必须在 UP 之前（写在 UP 之后永远不会被执行）",
         )
     }
+    /**
+     * L-1452：`runCatching` 的失败分支不得留空（`onFailure { }`）。
+     *
+     * 静默吞异常会把「失败」变成「数据消失 / 状态错」，而诊断包里查不到任何痕迹 ——
+     * 本轮实测两处（`JinnIme.onStartInputView` 的 `hideWindow()`、`SearchPanelView`
+     * 收起系统软键盘的 Binder 调用）都写成空 `onFailure`，症状分别是「键盘关不掉」
+     * 与「搜索框盖着系统软键盘」却无据可查。判据扫**全部**主源码，不点名具体文件：
+     * 点名写法只能护住已经改好的那两处，新加的空分支照样过关。
+     */
+    @Test
+    fun `runCatching 的失败分支不得留空`() {
+        val dir = listOf(
+            File("app/src/main/java/com/jinn/inputmethod"),
+            File("src/main/java/com/jinn/inputmethod"),
+        ).firstOrNull { it.isDirectory } ?: error("找不到主源码目录（测试工作目录变了？）")
+        val emptyHandler = Regex("""\.onFailure\s*\{\s*\}""")
+        val offenders = dir.listFiles { f -> f.name.endsWith(".kt") }
+            .orEmpty()
+            .sortedBy { it.name }
+            .filter { emptyHandler.containsMatchIn(TestSources.codeOf(it.readText())) }
+            .map { it.name }
+        assertTrue("这些文件用空 onFailure{} 静默吞异常，必须留一行 W 日志：$offenders", offenders.isEmpty())
+    }
 
 }

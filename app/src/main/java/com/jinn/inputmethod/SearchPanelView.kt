@@ -508,7 +508,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         runCatching {
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.hideSoftInputFromWindow(editSearch.windowToken, 0)
-        }.onFailure { }
+        }.onFailure {
+            // 窗口 token 失效（面板正被收起 / 宿主已换窗）会抛 Binder 异常；空 onFailure 会让
+            // 「搜索框盖着系统软键盘」查无实据（BUG.md L-1452）
+            Diagnostics.w(TAG, "收起系统软键盘失败: ${it.javaClass.simpleName}")
+        }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()

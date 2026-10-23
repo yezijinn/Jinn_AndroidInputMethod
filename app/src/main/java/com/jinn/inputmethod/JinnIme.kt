@@ -2346,7 +2346,9 @@ class JinnIme : InputMethodService() {
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
         if (!prefs.autoShowKeyboard) {
             Diagnostics.i(TAG, "自动唤起键盘：关闭，收起当前显示的 IME 窗口")
-            runCatching { hideWindow() }.onFailure { }
+            runCatching { hideWindow() }.onFailure {
+                Diagnostics.w(TAG, "自动唤起关闭时收起窗口失败: ${it.javaClass.simpleName}")
+            }
             return
         }
         Diagnostics.i(TAG, "onStartInputView: restarting=$restarting package=${info?.packageName} fieldId=${info?.fieldId}")
