@@ -229,6 +229,40 @@ class PanelRebuildWorkTest {
         assertTrue("每次显示操作条都要换令牌", "actionToken++" in show)
     }
 
+    /**
+     * 剪贴板面板的行必须复用 `convertView`（开面板成本的实际落点，见台账 L-1449）。
+     *
+     * 钉什么：面板首屏一次要塞 4~5 行，每行 5 个视图（根 + 行 + 序号 + 正文 + 时间）——
+     * 真机实测开面板瞬间视图树 194 → 251。这个数字**只因为 ListView 复用行**才被限住：
+     * 不复用时每次刷新（删一条、收藏、翻页）都会再新建一整屏 25 个视图，滚动同理，成本按帧累加。
+     * 不钉性能数字：本机 9 轮实测开面板 `measure+layout+record` 只有 0.02–0.92ms（尖峰来自取缓冲
+     * 等待），没有可断言的阈值 —— 反证与数据见台账 L-1449。
+     */
+    @Test
+    fun 剪贴板面板的行必须复用旧视图() {
+        val src = codeOnly(sourceOf("ClipboardPanelView.kt"))
+        val body = TestSources.blockAfter(
+            src,
+            "override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {",
+        )
+        assertTrue(
+            "getView 必须把旧视图的 Holder 取回来（否则每次绑定都新建 5 个视图/行）",
+            "val recycledHolder = convertView?.tag as? Holder" in body,
+        )
+        assertTrue(
+            "复用分支的判据必须同时看 convertView 与 Holder（删掉它 = 复用失效，视图数按帧线性上涨）",
+            "if (convertView != null && recycledHolder != null)" in body,
+        )
+        assertTrue(
+            "命中复用时必须直接用旧视图",
+            "convertView to recycledHolder" in body,
+        )
+        assertTrue(
+            "行身份仍要绑在 Holder 上（复用后点击按稳定 ID 定位条目）",
+            "holder.itemId = item.id" in body,
+        )
+    }
+
     private fun codeOnly(text: String): String = TestSources.codeOf(text)
 
     private fun sourceOf(name: String): String = TestSources.rawSourceOfShortName(name)
