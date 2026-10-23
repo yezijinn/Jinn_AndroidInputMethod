@@ -2072,6 +2072,9 @@ class JinnIme : InputMethodService() {
             lp.y = defaultY
             floatingApplied = false
             updateFloatingWindow(win, lp)
+            // 面板开着时窗口从「固定内容高」变回 wrap_content ⇒ 面板可用高重新变成「不受限」，
+            // 要收回首选高度，否则回到底部后仍是一块矮面板
+            pinyinKeyboard?.refitActivePanelHeight()
             return
         }
         if (defaultGravity == Int.MIN_VALUE && !floatingApplied) {
@@ -2091,14 +2094,19 @@ class JinnIme : InputMethodService() {
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
         // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）。
         // ⚠ 必须先把拉伸还原再量：量到的「自然高」是所有百分比的基准，带着拉伸量会一路滚雪球。
+        // ⚠ 面板开着时必须先把字母区摆回去再量（[suspendPanelForMeasure]）：面板会把 contentArea
+        //   撑成面板态高，此时量到的是 1533 而不是 945 —— 以它为基准换档，窗口直接涨 44% 且
+        //   关面板后不回收（N2）。测量是只读操作，摆回去的布局参数量完立刻还原。
         val naturalW = screenW
         pinyinKeyboard?.setFloatingStretch(null)
+        val panelSuspended = pinyinKeyboard?.suspendPanelForMeasure() == true
         val naturalH = measureNaturalHeight(container, naturalW)
         if (naturalH <= 0) {
             // 量不到自然高度 ⇒ 这一轮**不悬浮**，同时把判定也退回 false：
             // 否则 onComputeInsets 会按「整屏可视 + 可触区 = 一个空窗」上报，宿主内容区不再被顶起，
             // 底部全宽键盘直接压住正在输入的框（比不悬浮更糟）。
             Diagnostics.w(TAG, "悬浮键盘: 自然高度量不到（${naturalH}px），本次不悬浮")
+            if (panelSuspended) pinyinKeyboard?.resumePanelAfterMeasure()
             floatingActive = false
             return
         }
@@ -2124,6 +2132,8 @@ class JinnIme : InputMethodService() {
         floatingApplied = true
         // 百分比 → 行高倍率 → 窗口参数：与四角拖动共用同一条落地路径（见 [applyGeometryToWindow]）
         val geometry = applyGeometryToWindow(source, Gravity.TOP or Gravity.START)
+        // 面板（若开着）按**新窗口**的可用高摆回去：这里才轮到它，因为可用高要到容器定高之后才知道
+        if (panelSuspended) pinyinKeyboard?.resumePanelAfterMeasure()
         Diagnostics.i(
             TAG,
             "悬浮键盘: ${naturalW}x$naturalH → 窗口 ${floatingWinW}x${floatingWinH} @(${geometry.x},${geometry.y}) " +
@@ -2200,6 +2210,9 @@ class JinnIme : InputMethodService() {
         lp.x = effective.x
         lp.y = effective.y
         updateFloatingWindow(win, lp)
+        // 窗口高变了 ⇒ 面板（若开着）跟着重算高度：不重算不是被窗口裁，就是留一条空白带。
+        // 高度没变时它是零副作用的一次比较（拖动每帧都会走到这里）。
+        pinyinKeyboard?.refitActivePanelHeight()
         return effective
     }
 

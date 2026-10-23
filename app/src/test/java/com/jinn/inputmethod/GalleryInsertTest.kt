@@ -528,7 +528,7 @@ class GalleryInsertTest {
         assertTrue("脱离窗口时要留一条记录", "视图已脱离窗口" in attach)
 
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
-        val gallery = TestSources.window(view, "fun showGalleryPanel()", "val density")
+        val gallery = TestSources.window(view, "fun showGalleryPanel()", "val panelH")
         assertTrue("面板打开时清拼音缓冲", "clearComposingState()" in gallery)
 
         val panel = TestSources.codeSource("GalleryPanelView.kt")

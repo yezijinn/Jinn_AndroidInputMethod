@@ -342,6 +342,26 @@ object FloatingKeyboard {
         (chromePx + (factor.coerceIn(MIN_STRETCH, MAX_STRETCH) * blockPx)).toInt().coerceAtLeast(1)
 
     /**
+     * 面板高度（px）：窗口给得出多少就用多少，给不出更多就按首选值 —— **绝不反过来把窗口撑高**。
+     *
+     * 为什么要有这一层：面板高度原先是写死的 162dp×2（560dpi 下 1134px），那是**底部全宽态**的
+     * 尺寸；悬浮态的 IME 窗口只有 922px（去把手 830），同一个值会让面板被窗口裁掉 44.6%、
+     * 底排（符号 / 数字 / 空格 / 回车）整排移出窗外。真机实测：可视 628/1134。
+     *
+     * 反过来（面板开着时把窗口临时撑高）不在本轮取：那会改 IME 的可见 insets，宿主可能重排 /
+     * 平移，且要新增「记住进面板前的几何并在关面板时还原」这套状态机 —— 换档 / 拖动 / 旋转 /
+     * 回到底部四条路径都要各兜一次，风险远大于收益。窗口本来就小，让面板跟着窗口走才是自洽的。
+     *
+     * @param preferredPx 仅底部全宽态用的首选高度（容器 wrap_content，不受限）
+     * @param availablePx 窗口内容高扣掉候选栏让位与底排后的余量；`<= 0` 表示不受限
+     */
+    fun panelHeightPx(preferredPx: Int, availablePx: Int): Int {
+        if (preferredPx <= 0) return 0
+        if (availablePx <= 0) return preferredPx
+        return availablePx.coerceAtMost(preferredPx).coerceAtLeast(1)
+    }
+
+    /**
      * 长按把手的换档：取「比当前档大的第一档」，都不比它大就回到最小档。
      *
      * 不用 `indexOf + 1`：默认缩放是按宽度比例与高度上限算出来的（横屏 70 / 竖屏 92），

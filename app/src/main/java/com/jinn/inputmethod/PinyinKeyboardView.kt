@@ -5005,6 +5005,92 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前是否处于剪贴板面板模式（字母区被替换） */
     fun isClipboardActive(): Boolean = clipboardActive
 
+    /** 是否有面板正占着字母区（剪贴板 / 图库任一） */
+    fun isPanelActive(): Boolean = clipboardActive || galleryActive
+
+    /** 面板首选高度（px）= 162dp × 2。底排全宽态的历史值，别改（改了底部键盘整排跟着变高） */
+    private fun panelPreferredHeightPx(): Int =
+        (PANEL_PREFERRED_HEIGHT_DP * 2 * resources.displayMetrics.density).toInt()
+
+    /**
+     * 面板可用高度（px）；返回 0 = 不受限（底部全宽态）。
+     *
+     * 判据只有一条：**容器的高度参数是不是确定值**。悬浮态由 [JinnIme.applyGeometryToWindow]
+     * 把容器写成固定内容高（922−把手 92 = 830），其余形态恒为 WRAP_CONTENT。
+     * 不按「是否悬浮」这个布尔量判，是因为窗口真值只有 layoutParams 说得准 ——
+     * 旋转、拖动、换档之后布尔量与像素可能不同步，而这里要的正是像素。
+     *
+     * 扣掉的两块都必须扣：键区顶边的让位（候选栏收起档栏高，也是功能面板所在行）与底排 ——
+     * 只扣其中一块，另一样东西照样会被窗口裁掉。
+     */
+    private fun panelAvailableHeightPx(): Int {
+        val parentH = (parent as? View)?.let { it.layoutParams?.height ?: 0 } ?: 0
+        if (parentH <= 0) return 0
+        val bodyTop = (keyboardBody.layoutParams as? FrameLayout.LayoutParams)?.topMargin
+            ?: keyboardBody.top
+        val bottomH = bottomRowView()?.let { row ->
+            row.layoutParams?.height?.takeIf { it > 0 } ?: row.height
+        } ?: 0
+        return parentH - bodyTop - bottomH
+    }
+
+    /** 面板高度：窗口给得出多少就用多少，给不出更多就按首选值（**绝不**反过来把窗口撑高） */
+    private fun panelHeightPx(): Int =
+        FloatingKeyboard.panelHeightPx(panelPreferredHeightPx(), panelAvailableHeightPx())
+
+    /**
+     * 容器窗口高变过之后按新的可用高重设面板高度（幂等）。
+     *
+     * 悬浮态的窗口高会被换档、四角拖动、「回到底部」改写；不重算的话面板要么被新窗口裁掉一截，
+     * 要么在窗口变矮后把底排顶出窗外。高度没变时这里一个字节都不写（拖动时每帧都会调）。
+     */
+    fun refitActivePanelHeight() {
+        if (!isPanelActive()) return
+        val target = panelHeightPx()
+        if (contentArea.layoutParams?.height == target) return
+        contentArea.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            target,
+        )
+        Diagnostics.i(TAG, "面板高度重算: $target（可用 ${panelAvailableHeightPx()}）")
+    }
+
+    /** [suspendPanelForMeasure] 起的临时还原是否还没收尾 */
+    private var panelSuspendedForMeasure = false
+
+    /**
+     * 量自然高前把字母区摆回原位。
+     *
+     * 面板会把 contentArea 撑成面板态高度，此时量到的「自然高」是 1533 而不是 945；
+     * 换档若在面板打开时发生，落盘的百分比就以 1533 为基准 —— 窗口直接涨 44% 且关面板不回收。
+     *
+     * **只改布局参数与可见性**：`clipboardActive` / `galleryActive` 一个都不动。测量是只读操作，
+     * 用户看到的仍是面板。
+     *
+     * @return true = 确实临时还原过，量完必须调 [resumePanelAfterMeasure]
+     */
+    fun suspendPanelForMeasure(): Boolean {
+        if (!isPanelActive()) return false
+        panelSuspendedForMeasure = true
+        runCatching { restoreLettersLayout() }
+            .onFailure { Diagnostics.w(TAG, "测量前还原字母区失败: ${it.message}") }
+        return true
+    }
+
+    /** 量完自然高把面板摆回去（高度按**新的**窗口可用高重算） */
+    fun resumePanelAfterMeasure() {
+        if (!panelSuspendedForMeasure) return
+        panelSuspendedForMeasure = false
+        runCatching {
+            contentArea.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                panelHeightPx(),
+            )
+            viewLetters.visibility = View.GONE
+            (if (clipboardActive) clipboardPanel else galleryPanel)?.visibility = View.VISIBLE
+        }.onFailure { Diagnostics.w(TAG, "测量后恢复面板失败: ${it.message}") }
+    }
+
     /**
      * 显示剪贴板面板：候选栏与底部功能行固定不动，面板占用二者之间全部空间。
      *
@@ -5043,8 +5129,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 必须用 LinearLayout.LayoutParams，早期用 FrameLayout.LayoutParams
             // 导致 ClassCastException（键盘收起循环），本次是正确类型。
             // 固定确定高度：面板不受 IME 窗口初始测量影响（冷启动稳定）。
-            val density = resources.displayMetrics.density
-            val panelH = (162 * 2 * density).toInt()   // 162dp × 2 ≈ 850px
+            // 悬浮态窗口只有 922px（键盘 830）：写死 1134 会被窗口裁掉 506px（实测可视只剩
+            // 628）、底排整排移出窗外 ⇒ 高度按窗口实际可用高收（[panelHeightPx]）。
+            // 底部全宽态容器是 wrap_content ⇒ 可用高为 0 ⇒ 仍取首选值，与历史逐像素一致。
+            // ⚠ 高度到**揭示那一刻**才算（见 reveal 内）：取数可能等上 PANEL_REVEAL_TIMEOUT_MS，
+            //   其间换档 / 拖动 / 旋转改了窗口高，先算的高度就成了旧值（面板要么被裁一截，
+            //   要么在底下留一条空白带），且下一次几何变化之前不会自愈。
             // 面板 MATCH_PARENT 填满 contentArea 固定高度。
             // 到这里才建面板（MEM-05）：上面的互斥处理与高度计算都不需要面板存在
             val panel = ensureClipboardPanel()
@@ -5055,6 +5145,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 取数照常先跑起来（面板此刻还不可见）：首屏就绪或超时后再整块切过去
             panel.onPanelShown()
             val reveal = {
+                val panelH = panelHeightPx()
                 // 高度与可见性必须**同一帧**改（BUG.md L-1320）：先改高度会让键盘先长高
                 // 432px 而面板还是空的，那一瞬就是用户看到的「面板全屏化」
                 contentArea.layoutParams = LinearLayout.LayoutParams(
@@ -5302,8 +5393,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (directionPanelVisible) hideDirectionPanel()
             hideSearchPanel()
 
-            val density = resources.displayMetrics.density
-            val panelH = (162 * 2 * density).toInt()
+            // 高度按窗口实际可用高取（与 showClipboardPanel 同一算式，见 [panelHeightPx]）：
+            // 悬浮态写死 1134 会被窗口裁掉一半、底排整排消失。
+            // 与剪贴板面板同理，高度在揭示那一刻才算（取数期间窗口可能已改高）
             // 到这里才建面板（MEM-05）
             val panel = ensureGalleryPanel()
             panel.layoutParams = FrameLayout.LayoutParams(
@@ -5314,6 +5406,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 图库的格子是异步解码的，先把面板亮出来只会看到「有表头、没图」的空块（BUG.md L-1320）
             panel.onPanelShown()
             val reveal = {
+                val panelH = panelHeightPx()
                 contentArea.layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     panelH,
@@ -5590,6 +5683,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
         const val PANEL_COMPACT_SLOTS = 8
+
+        /**
+         * 面板首选高度（dp，两倍系数用在调用点）：剪贴板 / 图库面板在**底部全宽态**的固定高。
+         *
+         * 用户验证过的 850px 方案（560dpi 下 162dp × 2）；悬浮态窗口比它矮，实际落地高度由
+         * [FloatingKeyboard.panelHeightPx] 按窗口可用高收窄。
+         */
+        const val PANEL_PREFERRED_HEIGHT_DP = 162f
 
         /**
          * 底排文字与图标内边距的**缩放下限**（相对自然尺寸）。

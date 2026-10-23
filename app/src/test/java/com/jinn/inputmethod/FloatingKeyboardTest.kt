@@ -698,4 +698,93 @@ class FloatingKeyboardTest {
             "rowPx - dp(2) * 2" in TestSources.blockAfter(view, "private fun directionRowHeightPx("),
         )
     }
+
+    // ──────────── 面板高度按窗口可用高收（L-1470 / L-1471 / L-1472）────────────
+
+    /**
+     * 面板高度只许「按窗口收」，不许「把窗口撑高」。
+     *
+     * 真机实测的缺陷形态（2026-10-24）：悬浮窗口 1080×922（内容 830），面板写死 1134 ⇒
+     * 可视只剩 628（裁 44.6%），底排（符号 / 数字 / 空格 / 回车）整排移出窗外。
+     */
+    @Test
+    fun 面板高度按窗口可用高收窄() {
+        // 底部全宽态：容器 wrap_content ⇒ 可用高未知（传 0）⇒ 取首选值（与历史逐像素一致）
+        assertEquals(1134, FloatingKeyboard.panelHeightPx(1134, 0))
+        // 悬浮态 75% × 88%：830（窗口 922 − 把手 91）− 候选栏让位 202 − 底排 166 = 462
+        // （真机 `剪贴板面板: 显示 panelH=462`）
+        assertEquals(462, FloatingKeyboard.panelHeightPx(1134, 462))
+        // 窗口比面板还高（用户把悬浮窗拉大）：面板不跟着长 —— 绝不能反过来把窗口撑高
+        assertEquals(1134, FloatingKeyboard.panelHeightPx(1134, 2000))
+        // 脏值 / 退化：负余量当不受限、0 首选当没有面板
+        assertEquals(1134, FloatingKeyboard.panelHeightPx(1134, -50))
+        assertEquals(0, FloatingKeyboard.panelHeightPx(0, 430))
+        // 余量小到 1px 也要给 1，不能返回 0 高度（面板会整块消失）
+        assertEquals(1, FloatingKeyboard.panelHeightPx(1134, 1))
+    }
+
+    /**
+     * 两处面板入口都必须走 [FloatingKeyboard.panelHeightPx]，不许再有第二份写死的高度。
+     *
+     * 复制粘贴一处分算式就够让图库面板重新被裁（剪贴板面板与图库面板是两条独立入口）。
+     */
+    @Test
+    fun 两处面板入口共用同一个高度算式() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val clip = TestSources.blockAfter(view, "fun showClipboardPanel()")
+        val gallery = TestSources.blockAfter(view, "fun showGalleryPanel()")
+        assertTrue("剪贴板面板要按可用高取高度", "val panelH = panelHeightPx()" in clip)
+        assertTrue("图库面板要按可用高取高度", "val panelH = panelHeightPx()" in gallery)
+        assertFalse("不许再有写死的 162dp×2", "162 * 2 * density" in view)
+        // 可用高的来源必须扣掉「候选栏让位 + 底排」两块：只扣一块，另一样照样被窗口裁
+        val avail = TestSources.blockAfter(view, "private fun panelAvailableHeightPx(")
+        assertTrue("要扣候选栏让位", "topMargin" in avail)
+        assertTrue("要扣底排", "bottomRowView()" in avail)
+        assertTrue(
+            "判据必须是容器高度参数（悬浮态定高 / 底部态 wrap_content）",
+            "layoutParams?.height ?: 0" in avail,
+        )
+    }
+
+    /**
+     * 量自然高之前必须先把面板摆回字母区，量完再摆回去（L-1471）。
+     *
+     * 面板开着时长按换档：contentArea 被撑成面板态高，量到的「自然高」是 1533 而不是 945 ⇒
+     * 落盘 `237,1107,78,81`、窗口 1123×1327（+44%），关掉面板也不回收。
+     */
+    @Test
+    fun 量自然高前必须撤掉面板() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val apply = TestSources.blockAfter(ime, "private fun applyFloatingWindow()")
+        val suspendAt = apply.indexOf("suspendPanelForMeasure()")
+        val measureAt = apply.indexOf("measureNaturalHeight(container, naturalW)")
+        val resumeAt = apply.lastIndexOf("resumePanelAfterMeasure()")
+        assertTrue("换档量高前要先撤面板", suspendAt >= 0)
+        assertTrue("量高调用必须在撤面板之后", measureAt > suspendAt)
+        assertTrue("量完要摆回面板（且在新窗口落地之后）", resumeAt > measureAt)
+        // 早退分支（量不到自然高 ⇒ 不悬浮）也必须收尾，否则面板永久停在字母态
+        val early = apply.substring(measureAt, suspendAt + apply.substring(suspendAt).indexOf("return"))
+        assertTrue("量不到自然高时也要把面板摆回去", "resumePanelAfterMeasure()" in early)
+
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val suspend = TestSources.blockAfter(view, "fun suspendPanelForMeasure(")
+        assertTrue("只动布局，不动面板状态", "clipboardActive =" !in suspend && "galleryActive =" !in suspend)
+        val resume = TestSources.blockAfter(view, "fun resumePanelAfterMeasure(")
+        assertTrue("摆回去要按新的可用高", "panelHeightPx()" in resume)
+    }
+
+    /** 窗口高被改过之后（换档 / 四角拖动 / 回到底部）面板高度必须重算 */
+    @Test
+    fun 窗口高变化后面板高度重算() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val geometry = TestSources.blockAfter(ime, "private fun applyGeometryToWindow(")
+        assertTrue("落地新几何后要重算面板高", "refitActivePanelHeight()" in geometry)
+        val apply = TestSources.blockAfter(ime, "private fun applyFloatingWindow()")
+        val dock = apply.substringBefore("val metrics = resources.displayMetrics")
+        assertTrue("回到底部（wrap_content）后要收回首选高度", "refitActivePanelHeight()" in dock)
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val refit = TestSources.blockAfter(view, "fun refitActivePanelHeight(")
+        assertTrue("没面板时不做任何事", "if (!isPanelActive()) return" in refit)
+        assertTrue("高度没变就不写 layoutParams（拖动每帧都会调）", "== target" in refit)
+    }
 }
