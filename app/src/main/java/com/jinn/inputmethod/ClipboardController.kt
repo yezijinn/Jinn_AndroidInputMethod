@@ -186,9 +186,14 @@ class ClipboardController(context: Context) {
      * 整份内容分配出来，超限才被丢，`jinn-clipboard-io` 线程 OOM、进程被杀（BUG.md L-171）。
      * 现在 URI 型统一走 [ClipboardStore.readTextWithBudget]（边读边判、读满即放弃），
      * 且先看 MIME：非文本类型连流都不开。文本 / Intent 型是内存拷贝，维持 `coerceToText`。
-     * 正常与重试两条路径都走这里，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常）。
+     * 正常与重试两条路径都走这里，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常），
+     * **总开关同样在这里再查一次** —— 重试路径可以比入口晚 250ms 才跑，其间用户可能已关掉开关。
      */
     private fun extractAndSave(clip: android.content.ClipData) {
+        // 总开关在**这条唯一入库入口**上再查一次（BUG.md L-1468）：入口 `onClipboardChanged`
+        // 是采集的第一刻查的，而首次读不到时它安排了一次 250ms 重试 —— 用户在这段窗口里关掉开关，
+        // 重试仍会把系统剪贴板的内容落库一条。图片路径早就在入口自查（见下 imageCaptureEnabled）。
+        if (!ClipboardPrefs.of(appContext).enabled) return
         if (clip.itemCount == 0) return
         // Android 13+ 系统会为「密码框复制 / 安全来源」的剪贴板内容打敏感标记（BUG.md L-95）：
         // 这类内容不入库 —— 加密存储也不能例外，面板可列、搜索可命中、一键粘贴，等于把口令留在历史里。
@@ -557,7 +562,7 @@ object ClipboardStore {
      * 「未知」档允许试读，但结果要过 [looksLikeText]。
      */
     internal fun textualMime(type: String?): Boolean? {
-        val t = type?.trim()?.lowercase()?.substringBefore(';')?.trim() ?: return null
+        val t = type?.trim()?.lowercase(java.util.Locale.ROOT)?.substringBefore(';')?.trim() ?: return null
         if (t.isEmpty() || t == "*/*") return null
         if (t.startsWith("text/")) return true
         if (t in TEXTUAL_APP_MIMES || t.endsWith("+json") || t.endsWith("+xml")) return true

@@ -2550,7 +2550,10 @@ object PinyinEngine {
                         if (key != null && key.startsWith(lastPinyin)) {
                             // 必须先转显示形再登记：繁体模式下 pred 是繁体，登记简体同样查不到（BUG.md L-42 同型）
                             val added = out.toList().subList(before, out.size).map { toDisplay(it) }
-                            noteCandidateKeys(added, key.substring(lastPinyin.length))
+                            // `clearTrueKey = false`：这里登记的是索引里的**真实键**（延续词在词库中的读音），
+                            // 不是模糊分支的变体键；默认值会顺手抹掉模糊命中的真实键 ⇒ 下一级预测扫错键区
+                            // （BUG.md L-1467）。与补全出口同一口径。
+                            noteCandidateKeys(added, key.substring(lastPinyin.length), clearTrueKey = false)
                         }
                     }
                 }
@@ -2567,9 +2570,9 @@ object PinyinEngine {
                 val before = out.size
                 addLongerSuffixes(phrasesFor(key), simpLast, out)
                 if (out.size > before) {
-                    // 运行时表同理：读音 = 键去掉已选词前缀；同样先转显示形
+                    // 运行时表同理：读音 = 键去掉已选词前缀；同样先转显示形、同样不抹真实键（见上）
                     val added = out.toList().subList(before, out.size).map { toDisplay(it) }
-                    noteCandidateKeys(added, key.substring(lastPinyin.length))
+                    noteCandidateKeys(added, key.substring(lastPinyin.length), clearTrueKey = false)
                 }
             }
             lo++

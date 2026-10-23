@@ -129,6 +129,27 @@ class PinyinDisplayTest {
         assertEquals(";", d(";", ShuangpinScheme.SOGOU))
     }
 
+    /**
+     * 双拼「声韵」档单独按分号键时拼音行不得空白（BUG.md L-1461）。
+     *
+     * 查询串走 [Shuangpin.toQuanpin]（刻意丢弃非字母键）⇒ `;` 转成空串；候选栏若拿查询串
+     * 去 [PinyinEngine.markSyllables]，拼音行整段消失，用户按了键却什么都看不到。
+     * 显示串必须走 [Shuangpin.displayQuanpin]。
+     */
+    @Test
+    fun 声韵档分号键_查询串为空但显示串保留() {
+        for (s in ShuangpinScheme.SHUANGPIN_ONLY) {
+            assertEquals("${s.displayName} 的查询串必须丢弃分号", "", Shuangpin.toQuanpin(";", s))
+            assertEquals("${s.displayName} 的显示串必须保留分号", ";", Shuangpin.displayQuanpin(";", s))
+            // 打标后仍是同一个键：markSyllables 对切不出的串原样返回
+            assertEquals(
+                "${s.displayName} 的声韵档显示串不得被打标吃掉",
+                ";",
+                PinyinEngine.markSyllables(Shuangpin.displayQuanpin(";", s)),
+            )
+        }
+    }
+
     @Test
     fun 全拼方案与空串_原样返回() {
         assertEquals("vsgo", d("vsgo", ShuangpinScheme.QUANPIN))

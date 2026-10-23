@@ -3364,13 +3364,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
         // 只改显示，composing / 查询 / 上屏都用未打标的串。
-        // 查询串**先算一次**：双拼下显示的 displayQuanpin 与查询的 toQuanpin 是同一次转换的两份
-        // 实现，早先每键各跑一遍（多一次码表转换 + 一次全拼分词），长输入时是可见开销。
+        // 查询串先算一次：双拼下每键只跑一遍码表转换。
         val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input
         val displayText = when {
             shuangpinMode && !prefs.showQuanpin -> input
-            // 双拼用已转好的全拼，全拼模式 queryInput 就是 input —— 都只做一次 markSyllables
-            else -> PinyinEngine.markSyllables(queryInput)
+            // 双拼「声韵」档必须走 displayQuanpin 而不是查询串：后者（toQuanpin）刻意丢弃非字母键，
+            // 分号键（搜狗 / 微软 / 紫光的 ing 键位）一按就把显示串打成空白（BUG.md L-1461）。
+            // displayQuanpin 的职责就是「绝不丢键」，字母输入下与 toQuanpin 逐字节一致。
+            shuangpinMode -> PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))
+            else -> PinyinEngine.markSyllables(input)
         }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // 注意：这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
@@ -3457,10 +3459,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 新的一次输入首帧会读到空表 ⇒ 三角要等第二次按键才出现（实测）。
         // 本条路径一定在「有拼音串」分支内 ⇒ 渲染源就是刚赋值的 [lastCandidates]。
         updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx, lastCandidates.size, lastCandidates.firstOrNull())
-        // 拼音行默认显示用户按下的键（input），不是查询串（queryInput）。
-        // 双拼下两者不同：直接显示 queryInput 时，残码会被转换截断，用户按键后拼音行
-        // 毫无变化，看起来像"按键没反应/卡住了"（2026-09-18 用户报告）。
-        // 需要看声韵的用「拼音显示为声韵」档：走 [Shuangpin.displayQuanpin]，残码逐键展开不丢键。
+        // 拼音行显示什么：全拼档 / 双拼「声韵」档 —— 后者走 [Shuangpin.displayQuanpin]（逐键展开不丢键），
+        // 前者就是用户按下的键本身。两者都不显示查询串 queryInput：它是 toQuanpin 的结果，
+        // 残码会被转换截断（2026-09-18 用户报告「按键没反应」），且分号键被整键丢弃。
         showPinyin(displayText)
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 

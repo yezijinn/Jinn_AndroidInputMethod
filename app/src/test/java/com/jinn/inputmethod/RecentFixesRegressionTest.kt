@@ -4478,7 +4478,23 @@ class RecentFixesRegressionTest {
         val fav = TestSources.codeSource("FavoriteSymbolsActivity.kt")
         assertTrue(
             "对话框输入要按条目上限截断",
-            "take(FavoriteSymbols.MAX_CHARS)" in fav.substringAfter("outState.putString(STATE_ADD_TEXT", ""),
+            // 截断必须**按码点**：`take(8)` 数码元，8 个 emoji 转完只剩 4 个，还可能切出孤立代理项
+            // （BUG.md L-1426）。判据钉在码点口径的实现名上，改回 `take(` 当场红。
+            "FavoriteSymbols.takeCodePoints(" in
+                fav.substringAfter("outState.putString(STATE_ADD_TEXT", ""),
+        )
+        assertTrue(
+            "数字行单槽草稿同样按码点截断",
+            "FavoriteSymbols.takeCodePoints(" in fav.substringAfter("STATE_LABEL_TEXT,", ""),
+        )
+        assertFalse(
+            "草稿截断不得再用码元口径的 take(",
+            ".take(FavoriteSymbols.MAX_CHARS)" in fav || ".take(NumberRowLabels.MAX_CHARS)" in fav,
+        )
+        assertTrue(
+            "模型侧必须提供码点截断（与 withinLimit 同口径）",
+            "fun takeCodePoints(text: String, max: Int = MAX_CHARS): String" in
+                TestSources.codeSource("FavoriteSymbols.kt"),
         )
 
         val hist = TestSources.codeSource("ClipboardHistoryActivity.kt")
@@ -5790,15 +5806,20 @@ class RecentFixesRegressionTest {
         )
         assertTrue(
             "双拼开启总开关时必须显示打标后的全拼",
-            // 显示串改为对**已算好的查询串**打标（每键只做一次转换与一次分词）；
-            // 双拼下该串就是 toQuanpin 的结果，语义与 displayQuanpin 完全一致
-            "PinyinEngine.markSyllables(queryInput)" in view &&
+            // 声韵档的显示串走 displayQuanpin（绝不丢键），查询串仍走 toQuanpin（丢弃非字母键）。
+            // 两者是两份实现，早先为省一次转换共用查询串 ⇒ 分号键一按拼音行就空白（BUG.md L-1461）
+            "shuangpinMode -> PinyinEngine.markSyllables(Shuangpin.displayQuanpin(input, scheme))" in view &&
                 "val queryInput = if (shuangpinMode) Shuangpin.toQuanpin(input, scheme) else input" in view,
         )
         assertTrue(
             "全拼模式必须按音节打标",
-            // 全拼模式下 queryInput 就是 input，仍按音节打标（只是不再重复转换与分词）
-            "PinyinEngine.markSyllables(queryInput)" in view,
+            // 全拼模式下未打标的串就是 input，仍按音节打标（只是不再重复转换与分词）
+            "else -> PinyinEngine.markSyllables(input)" in view,
+        )
+        // 反向钉：显示串不许再拿查询串打标（分号 / 任何非字母键都会在转换里被丢弃）
+        assertFalse(
+            "显示串不得复用查询串（会吞掉分号键）",
+            "markSyllables(queryInput)" in view,
         )
         assertFalse("打标不得再读独立开关", "pinyinSyllableMark" in view)
         assertFalse(
@@ -6377,6 +6398,20 @@ class RecentFixesRegressionTest {
             "必须先留旧视图引用再覆盖字段",
             "val oldKeyboard = pinyinKeyboard" in src,
         )
+        // 重放必须**只在真有旧视图时**发生（BUG.md L-1465）：首次创建时重放会把
+        // `english` 落到「默认模式是不是 26 键英文」上，覆盖用户手选的 `prefs.keyboardEnglish`。
+        // 首次创建的初值由 `configure(...)` 给出，本来就按用户偏好。
+        val created = blockAfter(src, "override fun onCreateInputView()")
+        // 取 if 块内正文（两端锚点都断言存在）：早先这里用裸 substringAfter + substringBefore 取窗，
+        // 锚点一改就静默退化成整函数（TestSourcesTest.固定字符窗必须改用锚点助手 当场点名）
+        val replay = TestSources.window(created, "if (oldKeyboard != null) {", "\n        }")
+        assertTrue("重放受 oldKeyboard != null 保护", "replayViewState(" in replay)
+        // 三个入参全部直接读旧视图：出现 `?:` 就是在兜「没有旧视图」的分支，
+        // 首次创建即被默认模式 / 初值覆盖用户选择（L-1465 的成因）
+        assertTrue("英文态读旧视图", "english = oldKeyboard.isEnglishMode()" in replay)
+        assertTrue("大写态读旧视图", "caps = oldKeyboard.capsModeForReplay()" in replay)
+        assertTrue("符号层读旧视图", "layer = oldKeyboard.layerForReplay()" in replay)
+        assertFalse("重放入参不得再有 ?: 兜底", "?:" in replay)
         val view = TestSources.codeSource("PinyinKeyboardView.kt")
         assertTrue(
             "重放入手点必须刷新候选栏",
@@ -7274,5 +7309,69 @@ class RecentFixesRegressionTest {
             "底部行按钮必须 `maxLines = 1`：折行会让行高翻倍、字比行框还高",
             "maxLines = 1" in view,
         )
+    }
+
+    /**
+     * 预测出口登记候选键时不得抹掉模糊音的真实键（BUG.md L-1467）。
+     *
+     * [PinyinEngine.predict] 登记的是索引里的**真实键**（延续词在词库中的读音），
+     * 与模糊分支登记的「变体键」不是一回事；走默认值 `clearTrueKey = true` 会顺手清掉
+     * `candidateTruePinyin` 里刚记下的真实键 ⇒ 下一级预测按用户实际输入的变体键去扫键区，
+     * 延续词扫不到（模糊音打开后第二级预测凭空变少）。补全出口早就是 `clearTrueKey = false`。
+     */
+    @Test
+    fun `预测出口登记候选键不得抹真实键`() {
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        // 语义口径：凡「以 key.substring(...) 作读音」的 noteCandidateKeys 调用，一律不许走默认值
+        val hits = src.lines().filter { "noteCandidateKeys(" in it && "substring(" in it }
+        assertTrue("预料的两处预测出口都在（实际 ${hits.size} 处）", hits.size == 2)
+        for (line in hits) {
+            assertTrue(
+                "预测出口必须传 clearTrueKey = false：${line.trim()}",
+                "clearTrueKey = false" in line,
+            )
+        }
+        // 反向：补全出口（注释里写明理由的那一处）仍保持 false
+        assertTrue(
+            "补全出口继续保留 clearTrueKey = false",
+            "noteCandidateKeys(ws, key, clearTrueKey = false)" in src,
+        )
+    }
+
+    /**
+     * 剪贴板总开关必须在**入库入口**再查一次（BUG.md L-1468）。
+     *
+     * 入口 `onClipboardChanged` 在采集那一刻查过开关，但首次读不到剪贴板时会安排 250ms 后重试；
+     * 用户在这个窗口里关掉开关，重试仍会落库一条 —— 关掉采集之后还在记，是隐私面。
+     */
+    @Test
+    fun `剪贴板入库入口必须自查开关`() {
+        val body = blockAfter(codeOf("ClipboardController.kt"), "private fun extractAndSave(")
+        val statement = body.lines()
+            .drop(1)
+            .first { it.isNotBlank() && it.trim() != "{" }
+            .trim()
+        assertTrue(
+            "extractAndSave 首句必须是总开关闸（实际：$statement）",
+            statement == "if (!ClipboardPrefs.of(appContext).enabled) return",
+        )
+    }
+
+    /**
+     * 判据里的 `lowercase()` / `uppercase()` 必须锁 Locale（BUG.md L-1469 / A-298）。
+     *
+     * 无参 `lowercase()` 走默认 Locale：土耳其语 / 阿塞拜疆语下 `I` → `ı`，而两处判据词表
+     * （HTTP 错误码、响应体顶层键名）都含 `i` —— 用户把系统语言改成 tr/az 就会**静默失效**
+     * （限流被报成服务异常、请求护栏被整片绕过）。第 22 轮只覆盖了部分调用点。
+     */
+    @Test
+    fun `判据小写化必须锁 Locale`() {
+        for (name in listOf("ClipboardController.kt", "OpenAiTranslator.kt", "Translation.kt")) {
+            val src = TestSources.codeSource(name)
+            assertFalse("$name 仍有未锁 Locale 的 lowercase()", ".lowercase()" in src)
+        }
+        val openAi = TestSources.codeSource("OpenAiTranslator.kt")
+        val localeRoot = openAi.split("lowercase(Locale.ROOT)").size - 1
+        assertTrue("OpenAiTranslator 的三处判据都要锁 Locale（实际 $localeRoot 处）", localeRoot == 3)
     }
 }

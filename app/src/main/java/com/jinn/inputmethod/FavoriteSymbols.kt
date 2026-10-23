@@ -118,6 +118,17 @@ object FavoriteSymbols {
     fun withinLimit(item: String, max: Int = MAX_CHARS): Boolean =
         item.codePointCount(0, item.length) <= max
 
+    /**
+     * 按**码点**截断到 [max] 个（BUG.md L-1426）：`take(max)` 数的是 UTF-16 码元，
+     * 8 个 emoji（16 码元）会被切成 4 个，还可能停在代理对中间切出孤立代理项 ——
+     * 重新解析 / 写回时变成乱码。跨页面重建保存的**草稿**必须与 [withinLimit] 同口径。
+     */
+    fun takeCodePoints(text: String, max: Int = MAX_CHARS): String {
+        if (text.isEmpty()) return text
+        if (text.codePointCount(0, text.length) <= max) return text
+        return text.substring(0, text.offsetByCodePoints(0, max))
+    }
+
     /** 页结构 → 持久化串（空组序列化为 `[]`） */
     fun serialize(pages: List<List<String>>): String {
         val arr = JSONArray()

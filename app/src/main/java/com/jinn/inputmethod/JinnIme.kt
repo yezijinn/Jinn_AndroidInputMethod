@@ -1727,12 +1727,18 @@ class JinnIme : InputMethodService() {
         // 用户手选的视图态（英文 / 大写 / 符号层）不写 Prefs，换视图即丢 ⇒ 从旧视图读出后重放。
         // 定时换肤 / 符号分组顺序变更走 `recreateKeyboardView()`，框架自己的配置变更走本函数，
         // 两条都会把英文态静默打回中文（键面突变、后续按键出拼音），必须在这里兜住。
-        pinyinKeyboard?.replayViewState(
-            english = oldKeyboard?.isEnglishMode()
-                ?: (prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN),
-            caps = oldKeyboard?.capsModeForReplay() ?: false,
-            layer = oldKeyboard?.layerForReplay() ?: pinyinKeyboard?.layerForReplay() ?: 0,
-        )
+        //
+        // ⚠ 只在**真有旧视图**时重放（BUG.md L-1465）：首次创建时 `oldKeyboard == null`，
+        // 每次 fallback 落到「默认模式是不是 PINYIN_EN」上，等于用默认模式覆盖用户手选的
+        // `prefs.keyboardEnglish`（关掉 26 键英文默认后，用户上次切过的英文态被静默打回中文）。
+        // 首次创建的初值由上面的 `configure(...)` 给出，本来就按用户偏好。
+        if (oldKeyboard != null) {
+            pinyinKeyboard?.replayViewState(
+                english = oldKeyboard.isEnglishMode(),
+                caps = oldKeyboard.capsModeForReplay(),
+                layer = oldKeyboard.layerForReplay(),
+            )
+        }
 
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
         val container = FrameLayout(this)

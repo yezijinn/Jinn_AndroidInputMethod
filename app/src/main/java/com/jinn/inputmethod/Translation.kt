@@ -850,4 +850,4 @@ internal fun normalizeAzureRegion(raw: String): String =
     // `Ocp-Apim-Subscription-Region`，OkHttp 抛 `IllegalArgumentException`、被兜成 PARAM，
     // toast 却说「语言方向 / 模型名 / 路径 / 原文长度」—— 比它要修的 401 更难查。
     // `cleanCredential()` 仍先跑：它负责剥零宽族与两端空白，本行负责收口到合法字符集。
-    raw.cleanCredential().lowercase().filter { it in 'a'..'z' || it in '0'..'9' }
+    raw.cleanCredential().lowercase(java.util.Locale.ROOT).filter { it in 'a'..'z' || it in '0'..'9' }

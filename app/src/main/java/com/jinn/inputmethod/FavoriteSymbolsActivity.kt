@@ -79,14 +79,18 @@ class FavoriteSymbolsActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         // 按条目上限截断：更长的内容 [addItem] 本就拒收，而整份进实例状态会撑到系统侧事务上限
-        // （BUG.md L-1169）
-        outState.putString(STATE_ADD_TEXT, (addInput?.text?.toString() ?: "").take(FavoriteSymbols.MAX_CHARS))
+        // （BUG.md L-1169）。截断按**码点**（L-1426）：`take` 数码元，8 个 emoji 转完只剩 4 个，
+        // 还可能把代理对切开，恢复后是乱码。
+        outState.putString(STATE_ADD_TEXT, FavoriteSymbols.takeCodePoints(addInput?.text?.toString() ?: ""))
         // 数字行单槽编辑同一套：槽位 + 已输入文本（上限同 NumberRowLabels.MAX_CHARS）
         if (labelDialogIndex >= 0) {
             outState.putInt(STATE_LABEL_INDEX, labelDialogIndex)
             outState.putString(
                 STATE_LABEL_TEXT,
-                (labelInput?.text?.toString() ?: "").take(NumberRowLabels.MAX_CHARS),
+                FavoriteSymbols.takeCodePoints(
+                    labelInput?.text?.toString() ?: "",
+                    NumberRowLabels.MAX_CHARS,
+                ),
             )
         }
     }

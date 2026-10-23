@@ -84,7 +84,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
     private fun openAiErrorOf(code: String?): TranslationError {
         // trim 不能省（2026-10-02 修复 L-430）：网关回 `" 429 "` 这类带空白的错误码时，
         // `toIntOrNull()` 会失败并落进 else ⇒ 限流被报成「服务异常」
-        val c = code.orEmpty().trim().lowercase()
+        val c = code.orEmpty().trim().lowercase(Locale.ROOT)
         return when {
             c.isEmpty() -> TranslationError.SERVER
             "invalid_api_key" in c || "authentication" in c || "unauthorized" in c ||
@@ -499,7 +499,7 @@ internal fun applyTemplateEnsuringText(
 
         /** 归一化：容错写法统一成精确字面量；判据与展开**共用**（见 [hasTextVar]） */
         internal fun normalizeKnownVars(template: String): String =
-            KNOWN_VAR_PATTERN.replace(template) { "{{${it.groupValues[1].lowercase()}}}" }
+            KNOWN_VAR_PATTERN.replace(template) { "{{${it.groupValues[1].lowercase(Locale.ROOT)}}}" }
 
         /**
          * 模板里是否带 `{{text}}`（含容错写法）。
@@ -669,7 +669,7 @@ internal fun applyTemplateEnsuringText(
         val isDelete = value == null || value === JSONObject.NULL
         // 键名按**大小写不敏感**比较（2026-10-02 修复 L-431）：规则要防的是「用户照抄网关文档」，
         // 而文档里的 `Stream` / `Messages` 这类大写键真实存在 —— 精确比较会被整片绕过。
-        val k = key.lowercase()
+        val k = key.lowercase(Locale.ROOT)
         // 真值判据还要认 `1`（部分网关接受 1/0 写法）：`"1".toBoolean()` 是 false，
         // 漏掉它就会放行 `{"stream":1}` ⇒ 响应变 SSE ⇒ 解析必然失败
         val streaming = k in UNSUPPORTED_EXTRA_KEYS && !isDelete && isTruthy(value)
