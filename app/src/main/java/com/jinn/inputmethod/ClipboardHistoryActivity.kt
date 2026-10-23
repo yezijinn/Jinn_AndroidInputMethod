@@ -658,6 +658,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
         background = getDrawable(R.drawable.btn_aurora_secondary)
         setPadding(dp(3), dp(1), dp(3), dp(1))
         gravity = Gravity.CENTER
+        // 单行 + 省略：这两条底部行在放不下时靠外层 HorizontalScrollView 横滑，**不许**折行 ——
+        // 折行会让行高翻倍、按钮字比行框还高（font_scale 2.0 的「下一页」就是这样把
+        // 「下」的上半截顶出框外的，见 L-1458）
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
     }
 
     private fun buildFilterChips() {

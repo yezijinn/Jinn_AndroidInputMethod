@@ -105,11 +105,23 @@
         android:scrollbars="vertical"
         android:overScrollMode="never" />
 
-    <LinearLayout
-        android:id="@+id/hist_pager"
+    <!-- 翻页行：与下方操作行同款（外层横向滚动兜住大字号 / 窄屏）。
+         不放滚动容器时，超宽的那一行里末尾按钮会被 LinearLayout 量成「剩余宽度」
+         ⇒「下一页」在 font_scale 2.0 下被压成 150px 宽、折成两行、字比行框还高（L-1458）。
+         fillViewport：内容比视口窄时仍按 gravity 居中（默认档观感不变）。 -->
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal" />
+        android:fillViewport="true"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/hist_pager"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 
     <!-- 操作行按钮数会随版本增长：外层横向滚动兜住窄屏（fillViewport 让内容窄时仍按 gravity 居中） -->
     <HorizontalScrollView

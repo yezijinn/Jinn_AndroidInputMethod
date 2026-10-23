@@ -1671,20 +1671,22 @@ class RecentFixesRegressionTest {
         }
         val helper = blockAfter(code, "private fun applyPunctuationLabel")
         for (need in listOf("gravity = android.view.Gravity.CENTER", "Typeface.DEFAULT_BOLD",
-                            "includeFontPadding = false", "textSize = PUNCTUATION_TEXT_SP")) {
+                            "includeFontPadding = false",
+                            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, PUNCTUATION_TEXT_DP)")) {
             assertTrue("标点样式缺一项：$need", helper.contains(need))
         }
-        val size = Regex("""const val PUNCTUATION_TEXT_SP = ([0-9.]+)f""").find(code)?.groupValues?.get(1)?.toFloat()
-        assertTrue("PUNCTUATION_TEXT_SP 必须声明为数字", size != null)
-        // 「基础字号 + 3」的机械核对：基础来自底部功能键共用的 SettingsButton 样式（13sp）
-        val styles = listOf(
-            File("app/src/main/res/values/styles.xml"),
-            File("src/main/res/values/styles.xml"),
+        val size = Regex("""const val PUNCTUATION_TEXT_DP = ([0-9.]+)f""").find(code)?.groupValues?.get(1)?.toFloat()
+        assertTrue("PUNCTUATION_TEXT_DP 必须声明为数字", size != null)
+        // 「基础字号 + 3」的机械核对：基础取**键盘底行**同类键的字号（L-1457 起底行统一按 dp 派生，
+        // 不再借用页面样式 SettingsButton 的 13sp —— 那一档是给正文页面的，仍随 fontScale）
+        val keyboard = listOf(
+            File("app/src/main/res/layout/keyboard_pinyin.xml"),
+            File("src/main/res/layout/keyboard_pinyin.xml"),
         ).first { it.isFile }.readText()
-        val base = TestSources.window(styles, "<style name=\"SettingsButton\"", "</style>")
-        val baseSp = Regex("""android:textSize">(\d+)sp""").find(base)?.groupValues?.get(1)?.toFloat()
-        assertEquals("SettingsButton 的基础字号变了：标点字号必须跟着改（基础 + 3）",
-            3f, size!! - (baseSp ?: 0f), 0.01f)
+        val symbolTag = TestSources.window(keyboard, "@+id/key_symbol", "/>")
+        val baseDp = Regex("""android:textSize="([0-9.]+)dp"""").find(symbolTag)?.groupValues?.get(1)?.toFloat()
+        assertEquals("底行基础字号变了：标点字号必须跟着改（基础 + 3）",
+            3f, size!! - (baseDp ?: 0f), 0.01f)
     }
 
     @Test
@@ -7147,4 +7149,130 @@ class RecentFixesRegressionTest {
         assertTrue("这些文件用空 onFailure{} 静默吞异常，必须留一行 W 日志：$offenders", offenders.isEmpty())
     }
 
+    /** 取布局 XML 原文（Gradle 从 `app/` 跑、IDE 从仓库根跑，两种工作目录都认） */
+    private fun layoutFile(name: String): String {
+        val xml = listOf(
+            File("src/main/res/layout/$name"),
+            File("app/src/main/res/layout/$name"),
+        ).firstOrNull { it.isFile } ?: error("找不到 $name")
+        return xml.readText()
+    }
+
+    /** 取某 id 所在**开始标签**里的属性值（属性顺序无关，只在该标签内匹配） */
+    private fun layoutAttr(xml: String, id: String, name: String): String {
+        val at = xml.indexOf("@+id/$id")
+        assertTrue("布局里没有 @+id/$id", at >= 0)
+        val lt = xml.lastIndexOf('<', at)
+        val end = listOf(xml.indexOf("/>", at), xml.indexOf('>', at)).filter { it > 0 }.minOrNull() ?: xml.length
+        val tag = xml.substring(lt, end)
+        return Regex("""android:$name="([^"]*)"""").find(tag)?.groupValues?.get(1)
+            ?: error("@+id/$id 缺 android:$name")
+    }
+
+    /** [id] 的直接父容器标签名：取该元素**开始标签之前**最后出现的那个容器开始标签 */
+    private fun parentTagOf(xml: String, id: String): String? {
+        val at = xml.indexOf("@+id/$id")
+        assertTrue("布局里没有 @+id/$id", at >= 0)
+        // id 属于它自己那个开始标签 ⇒ 先退到标签的 '<'，再往前找父容器
+        val before = xml.substring(0, xml.lastIndexOf('<', at))
+        val candidates = listOf("<HorizontalScrollView", "<ScrollView", "<LinearLayout", "<FrameLayout")
+            .map { it to before.lastIndexOf(it) }
+            .filter { it.second >= 0 }
+        return candidates.maxByOrNull { it.second }?.first?.removePrefix("<")
+    }
+
+    /**
+     * L-1456：功能面板键标必须按 **dp** 派生，不随系统字体缩放。
+     *
+     * 事实（真机 1440×3200 / density 3.5 / font_scale 2.0）：13sp 的主标让每个按钮的内容宽
+     * 从 191px 涨到 252px，7 键总宽 ≈1764px > 1440。`candidate_list` 在 `CandidateScrollView`
+     * （HorizontalScrollView）里，`fillViewport` **只在内容比视口窄**时才补宽 ⇒ 一旦超宽就此
+     * 撒手，最右端的退出口「收起」整键落在 x≈1581..1833，完全不可见（截图实测「图库」截断于
+     * 1440，收起一个像素都不剩）。改成 dp 后：font 1.0 时 density == scaledDensity，换算结果
+     * 逐像素相同；2.0 时键标不动 ⇒ 总宽回落到 1127px，fillViewport 重新介入、7 键均分。
+     */
+    @Test
+    fun `功能面板键标按 dp 派生不随字体缩放`() {
+        val code = codeOf("PinyinKeyboardView.kt")
+        val body = blockAfter(code, "private fun buildFunctionButton(")
+        assertTrue(
+            "功能面板主标必须显式用 dp 单位（COMPLEX_UNIT_DIP）",
+            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, FUNCTION_LABEL_DP)" in body,
+        )
+        assertFalse(
+            "主标不许再写成 sp：`textSize = 13f` 会被 fontScale 放大到 26sp，撑破功能栏",
+            "textSize = 13f" in body,
+        )
+        assertTrue("字号常量要声明为 13（与底行键标同档）", "const val FUNCTION_LABEL_DP = 13f" in code)
+    }
+
+    /**
+     * L-1457：键盘底行（符号 / 数字 / 逗号 / 空格 / 句号 / 中英）的键标一律按 **dp** 派生。
+     *
+     * 事实（真机 font_scale 2.0）：底行是固定 56dp 高的 XML 键，13sp 被放大成 26sp 后两字标签
+     * 宽 182px > 键内容区 ⇒ Button 自动折两行（行框 2×107px > 168px 可画高），「号」「字」
+     * 「英文」的下半截被键底裁掉；而同排的 26 键字母是 px 自绘、根本不放大 —— 同一行两套口径。
+     * 标点（16dp）与中英两行（12dp）在代码里落，故两侧一起钉。
+     */
+    @Test
+    fun `键盘底行键标按 dp 派生不随字体缩放`() {
+        val xml = layoutFile("keyboard_pinyin.xml")
+        for ((id, size) in listOf(
+            "key_symbol" to "13dp",
+            "key_digit" to "13dp",
+            "key_space_hint" to "9dp",
+            "key_space_label" to "13dp",
+        )) {
+            assertEquals(
+                "@+id/$id 的键标字号必须是 $size（写成 sp 会被 fontScale 撑破 56dp 行高）",
+                size,
+                layoutAttr(xml, id, "textSize"),
+            )
+        }
+        val code = codeOf("PinyinKeyboardView.kt")
+        val punct = blockAfter(code, "private fun applyPunctuationLabel")
+        assertTrue(
+            "逗号 / 句号键标必须按 dp 派生",
+            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, PUNCTUATION_TEXT_DP)" in punct,
+        )
+        assertFalse("标点键标不许走 sp 单位", "PUNCTUATION_TEXT_SP" in punct)
+        assertTrue(
+            "中英切换键的两行键标必须按 dp 派生",
+            "setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, LANG_LABEL_DP)" in code,
+        )
+        assertFalse("中英键不许再写 sp（`btnLang.textSize = 12f`）", "btnLang.textSize = 12f" in code)
+        // 标点字号 = 底行基础字号 + 3：基础取 XML 里同类键的 13dp，两处必须同步改
+        val base = layoutAttr(xml, "key_symbol", "textSize").removeSuffix("dp").toFloat()
+        val punctSize = Regex("""const val PUNCTUATION_TEXT_DP = ([0-9.]+)f""")
+            .find(code)?.groupValues?.get(1)?.toFloat()
+        assertEquals("标点字号必须是底行基础字号 + 3", base + 3f, punctSize ?: 0f, 0.01f)
+    }
+
+    /**
+     * L-1458：剪贴板历史页底部两行（翻页 / 操作）必须能横滑，且键标单行。
+     *
+     * 事实（真机 font_scale 2.0）：翻页行是普通 LinearLayout，四个按钮合计 1448px 比屏宽多 8px，
+     * LinearLayout 把「末尾那个」按**剩余宽度**量 ⇒「下一页」只拿到 ~150px、折成两行、字比行框
+     * 还高。操作行本来就有 HorizontalScrollView（横滑可达，实测 1300→200 一划即可看到
+     * 「刷新 / 导入文件」），只是没有滚动条提示 —— 本轮把翻页行补成同款容器，两行都不许折行。
+     */
+    @Test
+    fun `历史页底部两行可横滑且键标不折行`() {
+        val xml = layoutFile("activity_clipboard_history.xml")
+        assertEquals(
+            "翻页行必须包在 HorizontalScrollView 里（否则 font 2.0 下「下一页」被压成两行）",
+            "HorizontalScrollView",
+            parentTagOf(xml, "hist_pager"),
+        )
+        assertEquals(
+            "操作行必须继续包在 HorizontalScrollView 里（窄屏 / 大字号靠横滑兜底）",
+            "HorizontalScrollView",
+            parentTagOf(xml, "hist_actions"),
+        )
+        val view = blockAfter(codeOf("ClipboardHistoryActivity.kt"), "private fun compactView()")
+        assertTrue(
+            "底部行按钮必须 `maxLines = 1`：折行会让行高翻倍、字比行框还高",
+            "maxLines = 1" in view,
+        )
+    }
 }

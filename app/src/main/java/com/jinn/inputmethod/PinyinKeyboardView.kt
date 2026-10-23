@@ -3859,7 +3859,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshSemicolonKey(showKeyHint)
         // 中英切换键：上下两行「中文 / 英文」，把当前语言那一行染成主题紫并加粗。
         // 必须用 SpannableString 做部分着色，拆成两个 TextView 会各自居中，看起来像两个按钮。
-        btnLang.textSize = 12f
+        // 字号按 dp 派生（L-1457）：两行各 12dp 才塞得进固定 56dp 的底行；用 sp 时 font 2.0
+        // 下两行共 2×24sp，行框比键还高，「英文」下半截被键底裁掉。
+        btnLang.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, LANG_LABEL_DP)
         btnLang.maxLines = 2
         btnLang.setLineSpacing(0f, 0.9f)
         btnLang.text = buildLangLabel()
@@ -3908,7 +3910,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 字形：拼音态全角（`，` / `。`）、英文态半角（`，` 变 `,`、`。` 变 `.`）——
      *    与点击上屏的字符同源（见 `bindFunctionKeys` 里两个键的 onClick），键面必须跟着变，
      *    否则英文态看到的是全角、打出来却是半角；
-     *  - 样式：居中（水平 + 垂直）+ 粗体 + 字号 = 同排功能键基础 13sp + 3 = [PUNCTUATION_TEXT_SP]。
+     *  - 样式：居中（水平 + 垂直）+ 粗体 + 字号 = 同排功能键基础 13dp + 3 = [PUNCTUATION_TEXT_DP]。
+     *    单位是 **dp**（不随 fontScale）：同排的「符号 / 数字」键标也在 XML 里写 13dp，26 键更是
+     *    px 自绘 —— 这一行只有一套口径，font_scale 放大时键标不动（L-1457）。
      *    垂直居中的关键是 `includeFontPadding = false`：默认的字体上下留白会让单个标点看起来偏下。
      */
     private fun applyPunctuationLabel(key: TextView, cn: String, en: String) {
@@ -3916,7 +3920,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         key.gravity = android.view.Gravity.CENTER
         key.typeface = android.graphics.Typeface.DEFAULT_BOLD
         key.includeFontPadding = false
-        key.textSize = PUNCTUATION_TEXT_SP
+        key.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, PUNCTUATION_TEXT_DP)
     }
 
     /**
@@ -4318,7 +4322,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         box.addView(TextView(context).apply {
             text = label
-            textSize = 13f
+            // 字号按 dp 派生（不随 fontScale）：见 FUNCTION_LABEL_DP 的说明 —— 主标是 13sp 时，
+            // font 2.0 下每个按钮的内容宽翻倍，7 键总宽超过屏宽后 HorizontalScrollView 的
+            // fillViewport 不再介入（它只在内容比视口窄时补宽），最右的「收起」被推出屏外
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, FUNCTION_LABEL_DP)
             setTextColor(
                 if (red) skinToken(skin.hintRed, R.color.kb_key_hint_red)
                 else skinToken(skin.functionGlyph, R.color.text_primary),
@@ -5492,12 +5499,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val PASSWORD_DIGIT_TEXT_SP = 18f
 
         /**
-         * 底部逗号 / 句号键的字号（sp）＝同排功能键基础字号 13sp（`SettingsButton` 样式）+ 3（用户指定）。
+         * 功能面板键标（历史 / 方向 / … 收起）的字号（dp，不随 fontScale）。
+         *
+         * 键盘面上所有键标一律**按 dp 派生**（= density，不含 fontScale）：26 键的字母 / 韵母 /
+         * 符号层字形是 px 自绘（见 [PinyinKey]），本就不随系统字体缩放；同一个键盘里若还有几处
+         * 走 sp，font_scale 2.0 时它们会变成 26sp —— 两字标签宽过键宽 ⇒ 折两行、第二行被 56dp
+         * 的固定行高裁掉（L-1457）；功能面板的键标总宽超屏后 `fillViewport` 不再介入 ⇒
+         * 「收起」被挤出屏外（L-1456）。用 dp：font_scale 1.0 时 dp 与 sp 的换算结果逐像素相同
+         * （density == scaledDensity），放大字体时键标保持不变 —— 键盘是固定几何面，放大的应是
+         * 候选栏文字，不是键。
+         */
+        const val FUNCTION_LABEL_DP = 13f
+
+        /** 「中文 / 英文」两行键标的字号（dp，不随 fontScale；两行各 12dp 才塞得进 56dp 行） */
+        const val LANG_LABEL_DP = 12f
+
+        /**
+         * 底部逗号 / 句号键的字号（dp）＝同排功能键基础字号 13dp（`keyboard_pinyin.xml` 的
+         * `key_symbol` / `key_digit`）+ 3（用户指定）。
          *
          * 标点是长句 / 密码里最常用的键，要比同排的「符号 / 数字 / 中英」更醒目。
-         * 改这里必须同步 `SettingsButton` 的基础字号与 [applyPunctuationLabel] 的 KDoc。
+         * 改这里必须同步 `keyboard_pinyin.xml` 里两个键的 `android:textSize`（13dp）与
+         * [applyPunctuationLabel] 的 KDoc。
          */
-        const val PUNCTUATION_TEXT_SP = 16f
+        const val PUNCTUATION_TEXT_DP = 16f
     }
 }
 
