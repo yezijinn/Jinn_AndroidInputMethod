@@ -36,6 +36,14 @@
     <exclude
         domain="file"
         path="user_picks.key" />
+    <!-- 密钥件残留（原子写的中间件：先写 .tmp 再改名，进程被杀时会留下） -->
+    <exclude
+        domain="file"
+        path="user_picks.key.tmp" />
+    <!-- 孤儿件目录：密钥件丢失时台账 / 词频被改名到这里（名字带毫秒后缀，逐名排除排不掉） -->
+    <exclude
+        domain="file"
+        path="ledger_orphan/" />
     <!-- 剪贴板图片目录（filesDir/clipboard/）：原图与缩略图都是密文，密钥（Keystore）本就不可备份，
          恢复后一条也解不开；而它是本模块最重的数据（几十 MB 级），进了备份只会挤爆 25MB 配额、
          连真正该备份的 dicts/ 都备不上（与 index/ 同款代价）。

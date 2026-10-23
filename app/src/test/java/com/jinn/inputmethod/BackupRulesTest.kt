@@ -76,4 +76,33 @@ class BackupRulesTest {
         assertTrue("cloud-backup 段缺 external 域日志排除", pattern.containsMatchIn(cloud))
         assertTrue("device-transfer 段缺 external 域日志排除", pattern.containsMatchIn(device))
     }
+
+    /**
+     * 台账 / 词频的**孤儿件**同样不得出机（2026-10-23 安全审计，L-1454）。
+     *
+     * 密钥件缺失时 `LedgerCrypto.orphanExistingData` 会把台账与词频改名保留，而这两份文件
+     * 书面承诺「不进系统备份 / 设备迁移」。排除项只能写字面路径，所以孤儿件必须落在固定目录
+     * （`ledger_orphan/`）里 —— 早先落在 `filesDir` 根下、名字还带毫秒后缀，一条也排不掉。
+     * 密钥包裹件的原子写中间件（`user_picks.key.tmp`）同属这份清单（它是半份包裹件）。
+     */
+    @Test
+    fun 台账孤儿件目录与密钥中间件必须排除在备份与迁移之外() {
+        val orphan = Regex("""domain="file"\s+path="ledger_orphan/"""")
+        val keyTmp = Regex("""domain="file"\s+path="user_picks\.key\.tmp"""")
+        assertTrue("backup_rules.xml 必须排除孤儿件目录", orphan.containsMatchIn(rules("backup_rules.xml")))
+        assertTrue("backup_rules.xml 必须排除密钥中间件", keyTmp.containsMatchIn(rules("backup_rules.xml")))
+        val transfer = rules("data_extraction_rules.xml")
+        val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
+        for ((name, seg) in listOf("cloud-backup" to cloud, "device-transfer" to device)) {
+            assertTrue("$name 段缺孤儿件目录排除", orphan.containsMatchIn(seg))
+            assertTrue("$name 段缺密钥中间件排除", keyTmp.containsMatchIn(seg))
+        }
+        // 反向：孤儿件目录名必须与源码常量一致，否则规则排的是另一条路径
+        val src = TestSources.codeOf(sourceOf("src/main/java/com/jinn/inputmethod/LedgerCrypto.kt"))
+        assertTrue(
+            "ORPHAN_DIR 常量必须与备份规则的目录名同值",
+            Regex("""ORPHAN_DIR\s*=\s*"ledger_orphan"""").containsMatchIn(src),
+        )
+    }
 }

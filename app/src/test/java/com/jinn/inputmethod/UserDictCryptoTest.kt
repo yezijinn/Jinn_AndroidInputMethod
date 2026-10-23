@@ -410,8 +410,8 @@ class UserDictCryptoTest {
         assertNull("密钥件缺失且台账非空 ⇒ 必须 fail-closed", LedgerCrypto.dataKey(dir))
         assertFalse("绝不能新建密钥件", File(dir, LedgerCrypto.KEY_FILE).exists())
         assertTrue(
-            "旧台账必须原样保留（改名 .orphan，内容还是密文）",
-            File(dir, SelectionLedger.FILE_NAME + ".orphan").isFile,
+            "旧台账必须原样保留（改名进 ledger_orphan/，内容还是密文）",
+            File(File(dir, LedgerCrypto.ORPHAN_DIR), SelectionLedger.FILE_NAME + ".orphan").isFile,
         )
         assertFalse("原路径不能再有台账（否则新密钥会往旧文件里追加）", ledger.exists())
         assertTrue("页面要能拿到一次性提示", LedgerCrypto.consumeOrphanNotice())
@@ -419,8 +419,32 @@ class UserDictCryptoTest {
         LedgerCrypto.invalidate()
     }
 
-    // ── N3：首行标识被删不得当明文迁移 ─────────────────────────
+    /**
+     * L-1455：孤儿件**改名失败**时同样不得新建 DEK。
+     *
+     * 失败注入用「用一个普通文件占住 `ledger_orphan` 目录名」：`mkdirs()` 必然失败，
+     * 目标父路径不是目录 ⇒ `Files.move` 抛错。早先这条路径返回 false（= 允许新建），
+     * 调用方随即生成新 DEK，并把新密钥的记录追加进那份解不开的旧文件 —— 一份文件两种密钥。
+     */
+    @Test
+    fun `孤儿件改名失败也必须fail_closed不重建DEK`() {
+        LedgerCrypto.invalidate()
+        val dir = tmp.newFolder()
+        val ledger = File(dir, SelectionLedger.FILE_NAME)
+        val body = LedgerCrypto.HEADER + "\n" + LedgerCrypto.encryptLine("五湖\twu hu", key) + "\n"
+        ledger.writeText(body, Charsets.US_ASCII)
+        // 目录名被普通文件占住 ⇒ 改名必然失败
+        File(dir, LedgerCrypto.ORPHAN_DIR).writeText("x")
 
+        assertNull("改名失败也必须 fail-closed", LedgerCrypto.dataKey(dir))
+        assertFalse("绝不能新建密钥件", File(dir, LedgerCrypto.KEY_FILE).exists())
+        assertEquals("旧台账必须原地保留（逐字节不变）", body, ledger.readText(Charsets.US_ASCII))
+        // 数据没搬走 ⇒ 没有「已保留待抢救」的提示可报（提示只跟着真正的改名走）
+        assertFalse("没搬走就不报提示", LedgerCrypto.consumeOrphanNotice())
+        LedgerCrypto.invalidate()
+    }
+
+    // ── N3：首行标识被删不得当明文迁移 ─────────────────────────
     @Test
     fun `首行标识被删_只重写首行且词条一条不丢`() {
         val f = ledgerFile()

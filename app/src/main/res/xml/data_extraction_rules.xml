@@ -31,6 +31,14 @@
         <exclude
             domain="file"
             path="user_picks.key" />
+        <!-- 密钥件残留（原子写的中间件）与孤儿件目录（密钥件丢失时台账 / 词频被改名到这里；
+             名字带毫秒后缀，逐名排除排不掉，必须按固定目录排） -->
+        <exclude
+            domain="file"
+            path="user_picks.key.tmp" />
+        <exclude
+            domain="file"
+            path="ledger_orphan/" />
         <!-- 剪贴板图片目录（filesDir/clipboard/）：密文 + 密钥不可备份（恢复后一条也解不开），
              且体积会挤爆 25MB 配额 —— 见 backup_rules.xml 同名条目的完整理由。
              ⚠ 云备份与设备迁移两个域都要排（本文件里各有一份清单）。 -->
@@ -92,6 +100,14 @@
         <exclude
             domain="file"
             path="user_picks.key" />
+        <!-- 密钥件残留（原子写的中间件）与孤儿件目录（密钥件丢失时台账 / 词频被改名到这里；
+             名字带毫秒后缀，逐名排除排不掉，必须按固定目录排） -->
+        <exclude
+            domain="file"
+            path="user_picks.key.tmp" />
+        <exclude
+            domain="file"
+            path="ledger_orphan/" />
         <!-- 剪贴板图片目录：见 cloud-backup 同名条目的理由（换机迁移后密钥不同，图片一条也解不开） -->
         <exclude
             domain="file"

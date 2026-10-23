@@ -82,6 +82,19 @@ internal object LedgerCrypto {
     const val KEY_FILE = "user_picks.key"
 
     /**
+     * 孤儿件的落地目录（`filesDir` 下）。
+     *
+     * 为什么不能就地把 `user_picks.txt` 改成 `user_picks.txt.orphan` 放在 `filesDir` 根下：
+     * 系统备份 / 设备迁移的排除项只能写**字面路径**（`full-backup-content` 与
+     * `data_extraction_rules` 都不支持通配），而孤儿名带毫秒后缀（`.orphan-<ts>`），
+     * 落在根目录时一个也排不掉 ⇒ 台账与词频（书面承诺「不进系统备份 / 设备迁移」）
+     * 会随 Auto Backup 上云。放进**固定目录**后一条 `<exclude path="ledger_orphan/"/>` 就管住全部。
+     *
+     * 目录里放的就是原始密文（没有 Keystore 也解不开），但承诺是「不出去」，不是「出去了也看不懂」。
+     */
+    const val ORPHAN_DIR = "ledger_orphan"
+
+    /**
      * 用本密钥加密的文件清单（[orphanExistingData] 的判据）。
      *
      * 增删按本密钥加密的文件时**必须**同步这张表：漏一个，就会在那张文件上重演「密钥件没了 ⇒
@@ -332,15 +345,21 @@ internal object LedgerCrypto {
     }
 
     /**
-     * N2：密钥件不见了、而用它加密的文件还在 ⇒ 把那些文件改名成 `.orphan` 原样保留，返回 true。
+     * N2：密钥件不见了、而用它加密的文件还在 ⇒ 把那些文件改名进 [ORPHAN_DIR] 原样保留，返回 true。
      *
      * 为什么不是「重建密钥继续用」：旧记录永久不可读，而新记录用新密钥写进同一个文件 ——
      * 一份文件两种密钥，用户看到的是「页面 0 条」，再选几次词就把旧数据越埋越深，**零提示**。
      * 改名之后，本进程这次写入明确失败（fail-closed），下一次调用就走「没有数据 ⇒ 允许新建」，
      * 功能自愈且旧数据留在原地可人工抢救。改名而非删除：`.orphan` 里就是原始密文。
+     *
+     * 返回值的语义是「**不许新建 DEK**」，所以**改名失败也返回 true**（L-1455）：早先只在
+     * `moved == true` 时返回 true，一旦改名失败（目录建不出来 / 只读 / 改名被拒）就返回 false ⇒
+     * 调用方往下走「没有数据 ⇒ 生成新 DEK」，随后把新密钥的记录**追加进那份解不开的旧文件**，
+     * 一份文件两种密钥 —— 正是本函数要防的那种数据损坏。改名不是前提，**数据还在**才是。
      */
     private fun orphanExistingData(dir: File): Boolean {
         var moved = false
+        var blocked = false
         for (name in PROTECTED_FILES) {
             val f = File(dir, name)
             if (!f.isFile || f.length() == 0L) continue
@@ -350,20 +369,28 @@ internal object LedgerCrypto {
                 moved = true
                 Diagnostics.e(
                     TAG,
-                    "密钥件 $KEY_FILE 缺失：${f.name} 已改名为 ${dest.name}（旧记录无法解密，原样保留待人工处理）",
+                    "密钥件 $KEY_FILE 缺失：${f.name} 已改名为 ${dest.parentFile?.name}/${dest.name}" +
+                        "（旧记录无法解密，原样保留待人工处理）",
                 )
             } else {
-                Diagnostics.w(TAG, "密钥件 $KEY_FILE 缺失且 ${f.name} 改名失败（本次不写任何数据）")
+                blocked = true
+                Diagnostics.w(
+                    TAG,
+                    "密钥件 $KEY_FILE 缺失且 ${f.name} 改名失败（保留原文件，本次及后续都不写任何数据）",
+                )
             }
         }
         if (moved) orphaned = true
-        return moved
+        return moved || blocked
     }
 
     private fun orphanTarget(dir: File, src: File): File {
-        val base = File(dir, src.name + ".orphan")
+        // 见 [ORPHAN_DIR]：必须落在固定目录里，备份规则才排得掉（根目录下的毫秒后缀名排不掉）
+        val box = File(dir, ORPHAN_DIR)
+        box.mkdirs()
+        val base = File(box, src.name + ".orphan")
         if (!base.exists()) return base
-        return File(dir, src.name + ".orphan-" + System.currentTimeMillis())
+        return File(box, src.name + ".orphan-" + System.currentTimeMillis())
     }
 
     /** 用 Keystore 密钥包裹 DEK：`[1B ver][12B iv][ct]` */
