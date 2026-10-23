@@ -385,6 +385,13 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, StorageUsageActivity::class.java))
             }
         }
+        // 悬浮键盘：总开关 + 逐 APP 绑定都在子页面里，这里只留一个入口（默认关闭）
+        findViewById<Button>(R.id.btn_floating_keyboard).apply {
+            text = TEXT_FLOATING_ENTRY
+            setOnClickListener {
+                startActivity(Intent(this@SettingsActivity, FloatingKeyboardActivity::class.java))
+            }
+        }
         spinnerLanguage.adapter = ArrayAdapter.createFromResource(
             this, R.array.language_entries, R.layout.item_spinner
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
@@ -1883,6 +1890,9 @@ class SettingsActivity : ComponentActivity() {
 
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
         const val TEXT_STORAGE_ENTRY = "存储占用统计"
+
+        /** 悬浮键盘入口（页面内文案在 FloatingKeyboardActivity 里下发；默认关闭） */
+        const val TEXT_FLOATING_ENTRY = "悬浮键盘"
         /** 用户词库入口：动作名，状态由页面内的说明弹框交代 */
         const val TEXT_USER_DICT = "生成用户词库"
 

@@ -1618,6 +1618,17 @@ class Prefs(private val appContext: Context) {
         // 图库两键同理：列数与格高都是「用户去过图库设置页才会显式写」的项
         if (sp.contains(KEY_GALLERY_COLUMNS)) put(KEY_GALLERY_COLUMNS, galleryColumns)
         if (sp.contains(KEY_GALLERY_CELL_HEIGHT_DP)) put(KEY_GALLERY_CELL_HEIGHT_DP, galleryCellHeightDp)
+        // 悬浮键盘：开关与绑定列表是用户偏好，换机必须带走（缺键回落 = 关 / 空集，与显式同值，不套守卫）；
+        // 两份几何只在用户真的拖过 / 换过档时才导出 —— 缺键时的默认值是按当时的屏幕算出来的，
+        // 无条件导出会把旧机的像素坐标带进新机。
+        put(KEY_FLOATING_ENABLED, floatingKeyboardEnabled)
+        put(KEY_FLOATING_APPS, floatingKeyboardApps)
+        if (sp.contains(KEY_FLOATING_GEOMETRY_PORTRAIT)) {
+            put(KEY_FLOATING_GEOMETRY_PORTRAIT, floatingGeometryPortrait)
+        }
+        if (sp.contains(KEY_FLOATING_GEOMETRY_LANDSCAPE)) {
+            put(KEY_FLOATING_GEOMETRY_LANDSCAPE, floatingGeometryLandscape)
+        }
         // 两个定时时刻的默认是 07:00 / 19:00，属不平凡默认：没设过就不带走
         if (sp.contains(KEY_THEME_LIGHT_AT)) put(KEY_THEME_LIGHT_AT, themeLightAtMinutes)
         if (sp.contains(KEY_THEME_DARK_AT)) put(KEY_THEME_DARK_AT, themeDarkAtMinutes)
@@ -1809,6 +1820,13 @@ class Prefs(private val appContext: Context) {
                 // 两个布局键都走 setter 归一，越界值落进合法区间
                 KEY_GALLERY_COLUMNS -> asInt(v)?.let { galleryColumns = it; ok() } ?: bad(key)
                 KEY_GALLERY_CELL_HEIGHT_DP -> asInt(v)?.let { galleryCellHeightDp = it; ok() } ?: bad(key)
+                // 悬浮键盘：键名 / 绑定包名 / 两份几何；脏串由各自的归一（parsePackages / parseGeometry）兜住
+                KEY_FLOATING_ENABLED -> asBool(v)?.let { floatingKeyboardEnabled = it; ok() } ?: bad(key)
+                KEY_FLOATING_APPS -> asString(v)?.let { floatingKeyboardApps = it; ok() } ?: bad(key)
+                KEY_FLOATING_GEOMETRY_PORTRAIT ->
+                    asString(v)?.let { floatingGeometryPortrait = it; ok() } ?: bad(key)
+                KEY_FLOATING_GEOMETRY_LANDSCAPE ->
+                    asString(v)?.let { floatingGeometryLandscape = it; ok() } ?: bad(key)
                 // 键存在但值为 null = 从未编辑过：必须移除本机取值才能还原「出厂预置」态
                 KEY_FAVORITE_SYMBOLS -> if (v.kind == ConfigBackup.BackupValue.KIND_NULL) {
                     sp.edit { remove(KEY_FAVORITE_SYMBOLS) }
@@ -1866,6 +1884,58 @@ class Prefs(private val appContext: Context) {
             Diagnostics.w(TAG, "写入侧长度闸($key): 超 $MAX_BACKUP_STRING_CHARS 字，已截断（原 $length）")
             take(MAX_BACKUP_STRING_CHARS)
         }
+
+    // ──────────── 悬浮键盘（2026-10-23）────────────
+
+    /**
+     * 悬浮键盘总开关（**默认关**）。
+     *
+     * 关掉时窗口 / 视图路径与历史完全一致：`JinnIme` 只在它为真且当前包在绑定列表里时才碰
+     * `setGravity` / `setLayout` / 视图缩放，其余情况一个分支都不进。
+     */
+    var floatingKeyboardEnabled: Boolean
+        get() = boolOr(KEY_FLOATING_ENABLED, false)
+        set(value) = sp.edit { putBoolean(KEY_FLOATING_ENABLED, value) }
+
+    /**
+     * 绑定到悬浮键盘的包名（逗号分隔；空集 = 没有 APP 走悬浮，见 [FloatingKeyboard.shouldFloat]）。
+     *
+     * 读写两侧都过 [FloatingKeyboard.serializePackages]：脏串（换行 / 空格 / 重复项）与导出的包
+     * 一律归到同一种形态，页面对比的「已绑定」与运行期判定不会分叉。
+     */
+    var floatingKeyboardApps: String
+        get() = FloatingKeyboard.serializePackages(
+            FloatingKeyboard.parsePackages(strOr(KEY_FLOATING_APPS, "")),
+        )
+        set(value) = sp.edit {
+            putString(
+                KEY_FLOATING_APPS,
+                FloatingKeyboard.serializePackages(FloatingKeyboard.parsePackages(value)),
+            )
+        }
+
+    fun floatingBoundPackages(): Set<String> =
+        FloatingKeyboard.parsePackages(strOr(KEY_FLOATING_APPS, ""))
+
+    /** 悬浮几何（竖屏 / 横屏**各一份**）：`x,y,scale`；解析失败一律回落默认（由 IME 侧算） */
+    var floatingGeometryPortrait: String
+        get() = strOr(KEY_FLOATING_GEOMETRY_PORTRAIT, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_FLOATING_GEOMETRY_PORTRAIT, value) }
+
+    var floatingGeometryLandscape: String
+        get() = strOr(KEY_FLOATING_GEOMETRY_LANDSCAPE, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_FLOATING_GEOMETRY_LANDSCAPE, value) }
+
+    /** 当前方向的几何键（读写同一处判据，别在调用点各写一遍 `orientation` 比较） */
+    private fun floatingGeometryKey(portrait: Boolean): String =
+        if (portrait) KEY_FLOATING_GEOMETRY_PORTRAIT else KEY_FLOATING_GEOMETRY_LANDSCAPE
+
+    internal fun floatingGeometryRaw(portrait: Boolean): String =
+        strOr(floatingGeometryKey(portrait), "").orEmpty()
+
+    internal fun setFloatingGeometryRaw(portrait: Boolean, value: String) {
+        sp.edit { putString(floatingGeometryKey(portrait), value) }
+    }
 
     private fun asString(v: ConfigBackup.BackupValue): String? =
         (v.value as? String)?.takeIf { it.length <= MAX_BACKUP_STRING_CHARS }
@@ -2126,6 +2196,13 @@ class Prefs(private val appContext: Context) {
         /** 图库面板缩略图布局（见 [galleryColumns]、[galleryCellHeightDp]） */
         private const val KEY_GALLERY_COLUMNS = "gallery_columns"
         private const val KEY_GALLERY_CELL_HEIGHT_DP = "gallery_cell_height_dp"
+
+        // 悬浮键盘（2026-10-23）：总开关 / 绑定包名 / 竖屏几何 / 横屏几何。
+        // 几何键**分成两个**是产品口径（横屏宽高比不同，不能沿用竖屏），不是历史包袱。
+        private const val KEY_FLOATING_ENABLED = "floating_keyboard_enabled"
+        private const val KEY_FLOATING_APPS = "floating_keyboard_apps"
+        private const val KEY_FLOATING_GEOMETRY_PORTRAIT = "floating_geometry_portrait"
+        private const val KEY_FLOATING_GEOMETRY_LANDSCAPE = "floating_geometry_landscape"
 
         /**
          * 缩略图每行张数：默认 5，可调 3..8（面板宽度固定 ⇒ 张数即宽度档）。

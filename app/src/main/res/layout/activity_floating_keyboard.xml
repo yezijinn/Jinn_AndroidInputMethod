@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 悬浮键盘页：总开关 + 逐 APP 绑定（白名单）+ 清空绑定；浮层几何本身由键盘上的把手存取。
+     文案在 FloatingKeyboardActivity 里下发（strings.xml 默认不改动，与生僻字页 / 模糊音页同做法），
+     故此处不写 android:text -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_floating_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_floating_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_floating_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <Switch
+        android:id="@+id/switch_floating_enabled"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:minHeight="44dp" />
+
+    <TextView
+        style="@style/CardHint"
+        android:id="@+id/text_floating_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/floating_app_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <Button
+        style="@style/SettingsButton"
+        android:id="@+id/btn_floating_clear"
+        android:layout_width="match_parent"
+        android:layout_marginTop="4dp" />
+</LinearLayout>

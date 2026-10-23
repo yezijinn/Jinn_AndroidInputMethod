@@ -21,6 +21,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -30,6 +31,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.lang.ref.WeakReference
@@ -150,6 +152,83 @@ class JinnIme : InputMethodService() {
     /** 当前键盘模式。默认拼音，语音默认禁用，不能以语音键盘起步 */
     private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
+
+    // ──────────── 悬浮键盘（2026-10-23）────────────
+    //
+    // 两种形态共用一个窗口：**普通**（底部全宽，历史行为）/ **悬浮**（浮层 + 把手 + 等比缩放）。
+    // 开关关闭或当前包不在绑定列表时，下面这些字段一个都不参与分支 —— 这是「默认关闭时行为与
+    // 历史完全一致」的落点。
+
+    /** 窗口根：悬浮时它装「把手 + 内容容器」；普通形态下与历史逐像素等价（把手 GONE 不占高） */
+    private var floatingWrapper: FrameLayout? = null
+
+    /** 拖动把手（仅悬浮时可见；独立一条，不与按键 / 长按 / 横滑候选栏抢手势） */
+    private var floatingHandle: View? = null
+
+    /** 本次输入会话是否悬浮（每次 onStartInputView 重算） */
+    private var floatingActive = false
+
+    /** 本次会话的宿主包名（「回到底部」按它记豁免） */
+    private var floatingPackage: String? = null
+
+    /**
+     * 「回到底部」豁免的包：**只在当前使用的应用里有效**，离开该应用即作废。
+     *
+     * 用户按一次「回到底部」=「这个 APP 现在别浮」，但配置里仍绑着它。若允许马上再浮，下一次
+     * 弹键盘又飘起来，那个按钮等于没按 —— 所以在同一个应用里一直不浮。
+     * 但**不能跨应用长期记住**（否则绑定明明还在、键盘再也不浮，用户只能重启输入法）：
+     * 换到别的应用时由 [resolveFloatingState] 清空；设置页改动（开关 / 绑定）也会调
+     * [clearFloatingDockOverrides] 清空。
+     */
+    private val floatingDocked = mutableSetOf<String>()
+
+    /**
+     * 窗口参数当前是否处于浮层形态。
+     *
+     * 关闭态据此决定「要不要还原」：**从没悬浮过就不碰窗口** —— 默认关闭的要求是与历史
+     * 逐像素一致，而每会话多做一次 `updateViewLayout` 就是一次多余的重排（本模块历史上
+     * 踩过面板反复 relayout 的坑）。
+     */
+    private var floatingApplied = false
+
+    /** 当前生效的悬浮几何（左上角 + 缩放百分比） */
+    private var floatingGeometry: FloatingKeyboard.Geometry? = null
+
+    /** 容器的自然尺寸与缩放后的窗口尺寸（拖动夹取要用） */
+    private var floatingNaturalW = 0
+    private var floatingNaturalH = 0
+    private var floatingWinW = 0
+    private var floatingWinH = 0
+
+    /** 拖动 / 长按的起点快照 */
+    private var floatingDragRawX = 0f
+    private var floatingDragRawY = 0f
+    private var floatingDragOrigin: FloatingKeyboard.Geometry? = null
+
+    /**
+     * 本次手势里最后一次**由拖动自己**写进去的几何。
+     *
+     * 与 [floatingGeometry] 不一致 ⇒ 中途有人改了几何（长按换档 / 配置变更 / 「回到底部」），
+     * 拖动基线必须跟着换，否则会拿换档前的坐标继续算位移（见 [onFloatingHandleTouch]）。
+     */
+    private var floatingDragApplied: FloatingKeyboard.Geometry? = null
+    private var floatingTouchSlop = 0
+    private var floatingDragMoved = false
+    private val floatingLongPress = Runnable { cycleFloatingScale() }
+
+    /** 普通形态的窗口参数快照（首次改窗口前抓取；恢复时只回写这五项） */
+    private var defaultGravity = Int.MIN_VALUE
+    private var defaultWidth = 0
+    private var defaultHeight = 0
+    private var defaultX = 0
+    private var defaultY = 0
+
+    /**
+     * 换档时把「中心不动」算出的几何交给 [applyFloatingWindow] 覆盖默认 / 存档位置。
+     *
+     * 只在 [cycleFloatingScale] 内部非空（换档 → 完整套用 → 立刻置空），不是跨会话状态。
+     */
+    private var floatingResizeOverride: FloatingKeyboard.Geometry? = null
 
     /** 剪贴板页点击记录时若连接无效，暂存待粘贴文本，编辑框聚焦后自动粘贴 */
     private var pendingPasteText: String? = null
@@ -1741,10 +1820,10 @@ class JinnIme : InputMethodService() {
         }
 
         // 双模式容器：默认语音键盘，键盘模式时切到拼音键盘
-        val container = FrameLayout(this)
-        keyboardContainer = container
-        voice?.let { v -> container.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
-        container.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val content = FrameLayout(this)
+        keyboardContainer = content
+        voice?.let { v -> content.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        content.addView(pinyin, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         pinyinView = pinyin
         // 键盘视图每次创建都重新套用默认模式（InputMethodService 可能复用实例，
         // 仅靠 onCreate 设置 keyboardMode 在复用场景下不生效）
@@ -1762,13 +1841,421 @@ class JinnIme : InputMethodService() {
         // 半透明键盘：语音面板同一套底色参数；此刻视图还没挂到窗口上，
         // 等挂上后再清祖先的不透明底色
         applyTransparencyToVoicePanel()
-        container.post { clearOpaqueAncestorBackgrounds(container) }
+        content.post { clearOpaqueAncestorBackgrounds(content) }
         // 平台反馈抑制属于「视图态」：凡新建视图就按 IME 侧当前策略重放一次。
         // 这里才是唯一可靠的落点 —— `recreateKeyboardView()` 与**框架自己**调 `onCreateInputView()`
         // 都经过此处，而键盘可见期间的换肤 / 改符号顺序同样会重建树；只在 onStartInputView 装一次的话，
         // 重建之后本会话剩余时间功能键又会回到「平台一声 + 引擎一声」。
+        // 悬浮键盘的窗口根（普通形态下与历史逐像素等价：把手 GONE 不占高）
+        val container = buildFloatingRoot(content)
         applyFeedbackSuppression()
         return container
+    }
+
+    /**
+     * 造「悬浮窗口根」：把手 + 内容容器。
+     *
+     * 为什么要多这一层：悬浮态要把整块键盘**等比缩小**（横屏尤其），而窗口只能给一个固定宽高；
+     * 只有让内容按自然尺寸测量、再用 `scaleX/scaleY` 压进小窗口，按键与候选栏的触摸命中
+     * （View 用逆矩阵换算）才与看到的一致。把手放在缩放层**外面** —— 否则 62% 档的把手只剩 15dp，
+     * 按不中。
+     *
+     * 普通形态：把手 GONE（FrameLayout 里 GONE 的子视图不参与测量），容器 MATCH_PARENT ×
+     * WRAP_CONTENT ⇒ 根高度 = 内容高度，与套壳前一致。
+     */
+    private fun buildFloatingRoot(container: FrameLayout): View {
+        val wrapper = FrameLayout(this)
+        floatingWrapper = wrapper
+        floatingTouchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        val handle = buildFloatingHandle()
+        floatingHandle = handle
+        wrapper.addView(
+            handle,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, floatingHandleHeightPx()),
+        )
+        wrapper.addView(
+            container,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        handle.visibility = View.GONE
+        // 视图重建（换肤 / 改外观 / 旋转后框架重建）后窗口形态要重放：此刻容器已就位，直接套一次
+        container.post { if (floatingActive) applyFloatingWindow() }
+        return wrapper
+    }
+
+    /** 把手高度（dp→px；触摸目标，不随 fontScale 变） */
+    private fun floatingHandleHeightPx(): Int =
+        (FLOATING_HANDLE_HEIGHT_DP * resources.displayMetrics.density).toInt()
+
+    /**
+     * 拖动把手：左侧整段可拖（中间一根短横条示意），右侧「回到底部」。
+     *
+     * 位置刻意独立成键盘最上方的一条 —— 与按键区、长按、候选栏横滑完全不重叠，
+     * 因此既有手势不需要任何「是否正在拖动」的新分支。
+     */
+    private fun buildFloatingHandle(): View {
+        val density = resources.displayMetrics.density
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            // 半透明背板：浮层可能压在任何游戏画面上，实心条太扎眼
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10f * density
+                setColor(keyboardColor(R.color.kb_bg))
+                alpha = 0xCC
+            }
+        }
+        val dragArea = FrameLayout(this).apply { contentDescription = TEXT_FLOATING_DRAG_DESC }
+        dragArea.addView(
+            View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 2f * density
+                    setColor(keyboardColor(R.color.text_secondary))
+                }
+            },
+            FrameLayout.LayoutParams((36 * density).toInt(), (4 * density).toInt(), Gravity.CENTER),
+        )
+        bar.addView(dragArea, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        val dock = TextView(this).apply {
+            text = FloatingKeyboard.TEXT_DOCK
+            contentDescription = FloatingKeyboard.TEXT_DOCK_DESC
+            textSize = 11f
+            setTextColor(keyboardColor(R.color.text_primary))
+            setPadding((10 * density).toInt(), 0, (12 * density).toInt(), 0)
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { dockToBottom() }
+        }
+        bar.addView(
+            dock,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+        // 触摸挂在 bar 与 dragArea 两处：dragArea 不消费事件时会落到 bar 上；
+        // 「回到底部」自己的 click 会先吃掉落在它身上的事件，所以拖动不会误按它。
+        val listener = View.OnTouchListener { view, event -> onFloatingHandleTouch(view, event) }
+        bar.setOnTouchListener(listener)
+        dragArea.setOnTouchListener(listener)
+        return bar
+    }
+
+    /** 键盘主题下的颜色（键盘视图用决策后的 Context 创建，取色必须与它同源） */
+    private fun keyboardColor(id: Int): Int =
+        runCatching { (keyboardThemeCtx ?: this).getColor(id) }.getOrDefault(Color.TRANSPARENT)
+
+    /**
+     * 判定本次会话是否悬浮：总开关 + 白名单 + 「回到底部」豁免。
+     *
+     * 包名取 `EditorInfo.packageName` —— 不需要任何权限，也不需要「最近任务」接口。
+     * 「回到底部」的豁免只覆盖**当前这个应用**：换到别的应用时清空，否则绑定还在、键盘却
+     * 再也不浮，用户只能重启输入法才恢复（页面文案写的是「临时退出悬浮」，得对得上）。
+     */
+    private fun resolveFloatingState(info: EditorInfo?) {
+        val pkg = info?.packageName
+        if (pkg != floatingPackage) floatingDocked.clear()
+        floatingPackage = pkg
+        val enabled = prefs.floatingKeyboardEnabled
+        val bound = if (enabled) prefs.floatingBoundPackages() else emptySet()
+        floatingActive = FloatingKeyboard.shouldFloat(enabled, bound, pkg) && pkg !in floatingDocked
+        if (enabled) {
+            Diagnostics.i(TAG, "悬浮键盘: pkg=$pkg 绑定=${bound.size} 悬浮=$floatingActive")
+        }
+    }
+
+    /**
+     * 按当前 [floatingActive] 套窗口形态（幂等，反复调用安全）。
+     *
+     * 关闭态只回写五项窗口参数并把容器还原到自然尺寸 —— 与历史形态**逐像素一致**（实测对照：
+     * 关掉开关后 IME 窗口仍是 `[0,2255]-[1440,3200]` = 945px）。
+     */
+    private fun applyFloatingWindow() {
+        if (floatingWrapper == null) return
+        val container = keyboardContainer ?: return
+        val dialog = window ?: return
+        val win = dialog.window ?: return
+        val lp = win.attributes
+        val handle = floatingHandle
+        if (!floatingActive) {
+            // 从未悬浮过 ⇒ 窗口参数一个字节都不动（「默认关闭 = 与历史逐像素一致」的落点）
+            if (!floatingApplied) return
+            ui.removeCallbacks(floatingLongPress)
+            handle?.visibility = View.GONE
+            container.scaleX = 1f
+            container.scaleY = 1f
+            container.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            floatingGeometry = null
+            floatingWinW = 0
+            floatingWinH = 0
+            lp.gravity = defaultGravity
+            lp.width = defaultWidth
+            lp.height = defaultHeight
+            lp.x = defaultX
+            lp.y = defaultY
+            floatingApplied = false
+            updateFloatingWindow(win, lp)
+            return
+        }
+        if (defaultGravity == Int.MIN_VALUE && !floatingApplied) {
+            // 首次改窗口前抓一份普通形态的参数：恢复时只回写这五项（颜色 / flags 由其它路径维护）。
+            // 只在「窗口当前确实是普通形态」时抓 —— 否则会把浮层参数当成原值，还原路径就废了。
+            defaultGravity = lp.gravity
+            defaultWidth = lp.width
+            defaultHeight = lp.height
+            defaultX = lp.x
+            defaultY = lp.y
+        }
+        val metrics = resources.displayMetrics
+        val screenW = metrics.widthPixels
+        val areaH = floatingAreaHeight()
+        val handleH = floatingHandleHeightPx()
+        val portrait = resources.configuration.orientation !=
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）
+        val naturalW = screenW
+        val naturalH = measureNaturalHeight(container, naturalW)
+        if (naturalH <= 0) {
+            // 量不到自然高度 ⇒ 这一轮**不悬浮**，同时把判定也退回 false：
+            // 否则 onComputeInsets 会按「整屏可视 + 可触区 = 一个空窗」上报，宿主内容区不再被顶起，
+            // 底部全宽键盘直接压住正在输入的框（比不悬浮更糟）。
+            Diagnostics.w(TAG, "悬浮键盘: 自然高度量不到（${naturalH}px），本次不悬浮")
+            floatingActive = false
+            return
+        }
+        floatingNaturalW = naturalW
+        floatingNaturalH = naturalH
+        val stored = FloatingKeyboard.parseGeometry(prefs.floatingGeometryRaw(portrait))
+        val override = floatingResizeOverride
+        val scalePercent = override?.scalePercent ?: stored?.scalePercent
+            ?: FloatingKeyboard.defaultScalePercent(naturalW, naturalH, screenW, areaH, portrait)
+        val scale = FloatingKeyboard.clampPercent(scalePercent) / 100f
+        val winW = (naturalW * scale).toInt()
+        val winH = handleH + (naturalH * scale).toInt()
+        floatingWinW = winW
+        floatingWinH = winH
+        // 顶部留出把手：可用高度与默认位置都按「把手之下才是键盘」算
+        val geometry = FloatingKeyboard.clamp(
+            override ?: stored ?: FloatingKeyboard.defaultGeometry(
+                scalePercent, naturalW, naturalH, screenW, areaH - handleH,
+            ),
+            screenW, areaH, winW, winH,
+        )
+        floatingGeometry = geometry
+        handle?.visibility = View.VISIBLE
+        container.scaleX = scale
+        container.scaleY = scale
+        container.pivotX = 0f
+        container.pivotY = 0f
+        container.layoutParams = FrameLayout.LayoutParams(naturalW, naturalH).apply { topMargin = handleH }
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.width = winW
+        lp.height = winH
+        lp.x = geometry.x
+        lp.y = geometry.y
+        floatingApplied = true
+        updateFloatingWindow(win, lp)
+        Diagnostics.i(
+            TAG,
+            "悬浮键盘: ${naturalW}x$naturalH → 窗口 ${winW}x$winH @(${geometry.x},${geometry.y}) " +
+                "缩放 ${FloatingKeyboard.clampPercent(scalePercent)}% 方向=${if (portrait) "竖" else "横"} " +
+                "可用区顶边=${floatingTopInsetPx()}px 屏=${screenW}x${metrics.heightPixels}",
+        )
+    }
+
+    /** 按宿主可用区量一次高度（`measure` 只量不布局，稍后父容器会正常再量一遍） */
+    private fun measureNaturalHeight(container: View, width: Int): Int {
+        val wSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
+        val hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        runCatching { container.measure(wSpec, hSpec) }
+            .onFailure { Diagnostics.w(TAG, "悬浮键盘: 测量失败 ${it.javaClass.simpleName}") }
+        return container.measuredHeight
+    }
+
+    /**
+     * 可用高度 = 屏幕高 − 可用区顶边（状态栏）。
+     *
+     * IME 窗口的 `x/y` 是相对**可用区**的（真机实测：`lp.y=300` 的窗口落在绝对 `y=384`，
+     * 差的正是 84px 状态栏）。夹取与默认位置都要按这块区域算，否则贴底时窗口会被截掉一截。
+     */
+    private fun floatingAreaHeight(): Int =
+        (resources.displayMetrics.heightPixels - floatingTopInsetPx()).coerceAtLeast(1)
+
+    /**
+     * 可用区顶边高度（px）。
+     *
+     * 两条读数取**较大者**：`rootWindowInsets`（IME 的 DecorView 自己 fit 了系统栏时可能为 0，
+     * 本机实测恒为 0）与系统 dimen `status_bar_height`（本机 84）。
+     *
+     * 口径是「宁可多减」：多减只会让贴底时留一条缝（不越界），少减会把最后一排键切到屏幕外。
+     * 全屏 / 沉浸模式下的代价就是这个 84px 的缝，已实测并在交付说明里登记（不改成 0 判据，
+     * 因为 IME 窗口的根视图拿不到「系统栏是否隐藏」的可靠读数）。
+     */
+    private fun floatingTopInsetPx(): Int {
+        val byInsets = runCatching {
+            val insets = window?.window?.decorView?.rootWindowInsets ?: return@runCatching 0
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                insets.getInsets(android.view.WindowInsets.Type.statusBars()).top
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetTop
+            }
+        }.getOrDefault(0)
+        // 系统没给公开的「状态栏高度」API，只能读这个 dimen；这里刻意压制两条 lint
+        //（读数用途单一，且已有 insets 路径优先）。
+        @Suppress("DiscouragedApi", "InternalInsetResource")
+        val byDimen = runCatching {
+            val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (id > 0) resources.getDimensionPixelSize(id) else 0
+        }.getOrDefault(0)
+        return maxOf(byInsets, byDimen)
+    }
+
+    /** 窗口参数落地（`setLayout` 只写 attributes；已挂上的窗口必须 updateViewLayout 才会重排） */
+    private fun updateFloatingWindow(win: android.view.Window, lp: android.view.WindowManager.LayoutParams) {
+        win.attributes = lp
+        runCatching {
+            (getSystemService(WINDOW_SERVICE) as android.view.WindowManager)
+                .updateViewLayout(win.decorView, lp)
+        }.onFailure { Diagnostics.w(TAG, "悬浮键盘: updateViewLayout 失败 ${it.javaClass.simpleName}") }
+    }
+
+    /**
+     * 长按把手的判定时长：**沿用平台阈值**（`ViewConfiguration.getLongPressTimeout()`，本机 500ms）。
+     *
+     * 原先写死 380ms 比系统更急：手指按住后稍作停顿再拖，定时器先于 `touchSlop` 触发 ⇒ 键盘变成
+     * 「长按换档」而不是「拖动」（真机合成手势实测两次命中这个坑）。用户对「按住多久算长按」的
+     * 预期来自系统，这里不另立标准。
+     */
+    private fun floatingLongPressMs(): Long = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+
+    /** 拖动把手 / 长按换档 */
+    private fun onFloatingHandleTouch(view: View, event: MotionEvent): Boolean {
+        val geometry = floatingGeometry ?: return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                floatingDragRawX = event.rawX
+                floatingDragRawY = event.rawY
+                floatingDragOrigin = geometry
+                floatingDragApplied = geometry
+                floatingDragMoved = false
+                ui.removeCallbacks(floatingLongPress)
+                ui.postDelayed(floatingLongPress, floatingLongPressMs())
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val origin = floatingDragOrigin ?: return false
+                // 手势中途几何被外部改写（长按换档、配置变更）⇒ 基线换成**此刻**的几何并重新起算。
+                // 不换的后果（真机两次复现，长按 92→62% 后手指稍动）：位移仍按换档前的 x/y 算，
+                // 窗口被甩回换档前的位置，抬手时还把旧档位写回存档 —— 屏幕上是 62%、存的是 92%。
+                val current = floatingGeometry
+                if (current != null && current != floatingDragApplied) {
+                    floatingDragOrigin = current
+                    floatingDragApplied = current
+                    floatingDragRawX = event.rawX
+                    floatingDragRawY = event.rawY
+                    return true
+                }
+                val dx = (event.rawX - floatingDragRawX).toInt()
+                val dy = (event.rawY - floatingDragRawY).toInt()
+                if (!floatingDragMoved &&
+                    (kotlin.math.abs(dx) > floatingTouchSlop || kotlin.math.abs(dy) > floatingTouchSlop)
+                ) {
+                    floatingDragMoved = true
+                    ui.removeCallbacks(floatingLongPress)
+                }
+                if (!floatingDragMoved) return true
+                moveFloatingWindow(
+                    FloatingKeyboard.dragTo(
+                        origin, dx, dy,
+                        resources.displayMetrics.widthPixels,
+                        floatingAreaHeight(),
+                        floatingWinW,
+                        floatingWinH,
+                    ),
+                )
+                floatingDragApplied = floatingGeometry
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                ui.removeCallbacks(floatingLongPress)
+                floatingDragOrigin = null
+                floatingDragApplied = null
+                // 无障碍：抬手补一次 click（该视图没有常驻点击语义，与 MicButton 同一口径）
+                view.performClick()
+                if (floatingDragMoved) persistFloatingGeometry()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                ui.removeCallbacks(floatingLongPress)
+                floatingDragOrigin = null
+                floatingDragApplied = null
+                return true
+            }
+        }
+        return false
+    }
+
+    /** 只挪窗口（不重量尺寸），拖动过程每帧走这里 */
+    private fun moveFloatingWindow(geometry: FloatingKeyboard.Geometry) {
+        val dialog = window ?: return
+        val win = dialog.window ?: return
+        val lp = win.attributes
+        if (lp.x == geometry.x && lp.y == geometry.y) return
+        floatingGeometry = geometry
+        lp.x = geometry.x
+        lp.y = geometry.y
+        updateFloatingWindow(win, lp)
+    }
+
+    /**
+     * 长按把手：在 [FloatingKeyboard.SCALE_STOPS] 之间换档。
+     *
+     * 换档**保持中心点不动**（否则按一下尺寸变小，键盘会往左上跑一截，看着像被甩出去），
+     * 随后按新尺寸重新夹取并落盘。
+     */
+    private fun cycleFloatingScale() {
+        val geometry = floatingGeometry ?: return
+        if (floatingNaturalW <= 0 || floatingNaturalH <= 0) return
+        val handleH = floatingHandleHeightPx()
+        val screenW = resources.displayMetrics.widthPixels
+        val areaH = floatingAreaHeight()
+        val next = FloatingKeyboard.nextScaleStop(geometry.scalePercent)
+        val scale = next / 100f
+        val winW = (floatingNaturalW * scale).toInt()
+        val winH = handleH + (floatingNaturalH * scale).toInt()
+        val centerX = geometry.x + floatingWinW / 2
+        val centerY = geometry.y + floatingWinH / 2
+        val moved = FloatingKeyboard.clamp(
+            FloatingKeyboard.Geometry(centerX - winW / 2, centerY - winH / 2, next),
+            screenW, areaH, winW, winH,
+        )
+        floatingWinW = winW
+        floatingWinH = winH
+        floatingGeometry = moved
+        // 尺寸变了要重排容器与窗口，走一次完整套用（随后用新几何覆盖一次位置）
+        floatingResizeOverride = moved
+        applyFloatingWindow()
+        floatingResizeOverride = null
+        persistFloatingGeometry()
+        toast("键盘大小 ${FloatingKeyboard.clampPercent(next)}%")
+    }
+
+    /** 落盘：竖屏 / 横屏各写各的键 */
+    private fun persistFloatingGeometry() {
+        val geometry = floatingGeometry ?: return
+        val portrait = resources.configuration.orientation !=
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        prefs.setFloatingGeometryRaw(portrait, FloatingKeyboard.serializeGeometry(geometry))
+        Diagnostics.i(TAG, "悬浮键盘: 几何已存（${if (portrait) "竖" else "横"}）${FloatingKeyboard.serializeGeometry(geometry)}")
+    }
+
+    /** 「回到底部」：本次进程内不再对该包悬浮，窗口立回底部全宽 */
+    private fun dockToBottom() {
+        val pkg = floatingPackage
+        if (pkg != null) floatingDocked.add(pkg)
+        Diagnostics.i(TAG, "悬浮键盘: 回到底部（pkg=$pkg）")
+        floatingActive = false
+        applyFloatingWindow()
     }
 
     /**
@@ -2331,6 +2818,13 @@ class JinnIme : InputMethodService() {
             info?.imeOptions ?: 0,
         )
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        // 悬浮键盘：形态判定放在这个**更早**的回调里。框架在「同会话内换框 / restartInput()」时
+        // 可能不重发 onStartInputView（上方 2764 行那条注释里的密码框切换即实例），只判一次的话
+        // 分屏 / 连续换框期间形态会停在上一个输入框的答案上。
+        // 只在**状态真的变了**时动窗口：同一个包内换框不必多一次 relayout（窗口参数本就有效）。
+        val wasFloating = floatingActive
+        resolveFloatingState(info)
+        if (wasFloating != floatingActive) applyFloatingWindow()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -2372,6 +2866,9 @@ class JinnIme : InputMethodService() {
         applyThemeIfNeeded()
         // 系统导航栏透明：框架在显示窗口时可能已用主题属性重写过窗口参数，这里每会话补一次
         applyNavBarTransparency()
+        // 悬浮键盘：按当前宿主与绑定列表判定形态，并套窗口参数（关闭 / 未绑定时这一步只做恢复）
+        resolveFloatingState(info)
+        applyFloatingWindow()
         // 上次因「未上屏输入」被延后的符号布局重建：新会话开始，补一次
         // （真机实证：框架跨会话复用同一视图，不补则一直显示旧符号）。
         // 此刻 composing 已由 onFinishInputView 提交清空；仍以防万一看一眼未上屏态。
@@ -2479,6 +2976,43 @@ class JinnIme : InputMethodService() {
         guardHostCall("flushPendingPaste") { connection.commitText(text, 1) }
     }
 
+    /**
+     * 悬浮态报给宿主的 insets。
+     *
+     * 不改会怎样（真机实证）：窗口虽然已经挪到左上角 900×700，宿主仍按「底部全宽键盘」处理 ——
+     * 设置页的内容区被缩到 `[0,84]-[1440,2500]`（即底部让出整整 700px），浮动键盘上面那片
+     * 空白既没被键盘盖住、也不还给你。所以：
+     *  - `contentTopInsets` / `visibleTopInsets` 报**整屏高** ⇒ 宿主认为「没有被遮挡」，不缩放不顶起；
+     *  - 可触区收到窗口自己的矩形 ⇒ 浮层以外的手势（拖动游戏视角、点按钮）照常落到宿主。
+     */
+    override fun onComputeInsets(outInsets: Insets?) {
+        super.onComputeInsets(outInsets)
+        if (!floatingActive) return
+        val insets = outInsets ?: return
+        val fullHeight = resources.displayMetrics.heightPixels
+        insets.contentTopInsets = fullHeight
+        insets.visibleTopInsets = fullHeight
+        if (floatingWinW > 0 && floatingWinH > 0) {
+            insets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+            // ⚠ 可触区是**窗口内局部坐标**：框架会自己加上窗口原点。实测填绝对坐标会被再加一遍，
+            // 可触区整体偏移到屏幕外，浮层上的按键一个都点不中（真机 `dumpsys` 实证）。
+            insets.touchableRegion.set(0, 0, floatingWinW, floatingWinH)
+        }
+    }
+
+    /**
+     * 旋转 / 改分辨率：旧坐标必须重新夹取，不能把键盘留在屏外。
+     *
+     * 本服务的 manifest 没有 `configChanges`，框架通常直接重建输入视图（`onCreateInputView` 里
+     * 已按新方向重放一次）；这里再兜一次是给「视图未重建」的机型 —— 两条路径都幂等。
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!floatingActive) return
+        Diagnostics.i(TAG, "悬浮键盘: 配置变更（orientation=${newConfig.orientation}），按新方向重新夹取")
+        applyFloatingWindow()
+    }
+
     override fun onFinishInputView(finishingInput: Boolean) {
         Diagnostics.i(TAG, "onFinishInputView: finishingInput=$finishingInput mode=$mode clipboardPanelOpen=$clipboardPanelOpen")
         Diagnostics.event("IME", "FinishInputView", "finish=$finishingInput clipboard=$clipboardPanelOpen")
@@ -2578,6 +3112,13 @@ class JinnIme : InputMethodService() {
         voiceView = null
         pinyinView = null
         keyboardContainer = null
+        // 悬浮键盘：窗口根与把手一并断开（它们强引用本服务，见上面同一条口径）
+        floatingWrapper = null
+        floatingHandle = null
+        floatingActive = false
+        floatingApplied = false
+        floatingGeometry = null
+        ui.removeCallbacks(floatingLongPress)
         keyboardThemeCtx = null
         micButton = null
         statusDot = null
@@ -4293,6 +4834,18 @@ class JinnIme : InputMethodService() {
     companion object {
         const val TAG = "JinnIme"
 
+        /** 悬浮键盘把手的可听名（键面文字在 [FloatingKeyboard.TEXT_DOCK]） */
+        const val TEXT_FLOATING_DRAG_DESC = "拖动把手移动悬浮键盘，长按切换大小"
+
+        /**
+         * 悬浮把手的触摸高度（dp）。
+         *
+         * 把手在**缩放层之外**，所以任何缩放档下都是这 26dp（竖屏实测 91px / 触摸区就是这 91px，
+         * 上下各只有 2~4px 的容错 —— 真机 10 次从容拖动全中，边缘 4px 外就落不到把手上）。
+         * 不再调大：把手每高一 dp 都直接从键盘可用高度里扣（62% 档下键盘本体只有 586px）。
+         */
+        const val FLOATING_HANDLE_HEIGHT_DP = 26
+
         /** 清空文本时光标两侧各取的长度上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
         const val MAX_SCAN_CHARS = 20_000
 
@@ -4550,6 +5103,16 @@ class JinnIme : InputMethodService() {
         fun notifyThemeChanged() {
             val ime = instance?.get() ?: return
             ime.ui.post { ime.applyThemeIfNeeded() }
+        }
+
+        /**
+         * 设置页改动悬浮键盘配置（开关 / 绑定列表 / 几何）后调用：清掉「回到底部」的进程内豁免。
+         *
+         * 不清的后果：用户按过「回到底部」再回设置页重新勾上同一个 APP，键盘仍然不浮 ——
+         * 界面上写着「已绑定」，行为却相反。
+         */
+        fun clearFloatingDockOverrides() {
+            instance?.get()?.floatingDocked?.clear()
         }
 
         /**

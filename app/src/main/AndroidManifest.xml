@@ -11,6 +11,16 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 不申请任何存储权限：日志写应用专属目录，诊断包经系统文件选择器（SAF）导出 -->
 
+    <!-- 悬浮键盘页要列出「有桌面入口的应用」供用户勾选。只声明这一条 launcher intent，
+         **不申请 QUERY_ALL_PACKAGES**：绑定对象必然是用户会去前台使用的 APP，
+         没有桌面入口的服务 / 插件既进不了前台，也就没有必要暴露包名。 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -149,6 +159,11 @@
         <!-- 剪贴板历史管理页：搜索 / 分类 / 多选 / 分类删除，从「剪贴板自定义」底部进入 -->
         <activity
             android:name=".ClipboardHistoryActivity"
+            android:exported="false" />
+
+        <!-- 悬浮键盘页：总开关 + 逐 APP 绑定（白名单），从设置页进入 -->
+        <activity
+            android:name=".FloatingKeyboardActivity"
             android:exported="false" />
 
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->

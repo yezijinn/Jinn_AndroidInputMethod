@@ -255,6 +255,18 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- 悬浮键盘：可拖动浮层 + 按 APP 绑定 + 竖横各一套几何（默认关闭；按钮文案由代码下发） -->
+        <LinearLayout
+            style="@style/SettingsCard">
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_floating_keyboard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp" />
+        </LinearLayout>
+
         <!-- 拼音输入方案 / 键盘主题配色：两个下拉并排；«定时»模式的两个切换时刻在同卡片下方 -->
         <LinearLayout
             style="@style/SettingsCard">

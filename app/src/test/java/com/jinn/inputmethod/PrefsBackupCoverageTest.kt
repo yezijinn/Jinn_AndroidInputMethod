@@ -101,7 +101,8 @@ class PrefsBackupCoverageTest {
         // 2026-10-21 起 103 → 103：删「功能面板数字字号」1 键（该行整条移除）、
         //                       增「数字行开关」1 键（26 键区第四行，换机要带走）—— 净零
         // 2026-10-21 起 104 → 103：移除「候选浏览方式」1 键（翻页模式取消，恒跟手滑动）
-        assertEquals("提取到的键常量应是 103 个（改键数请同步本断言）", 103, keyConstants.size)
+        // 2026-10-23 起 103 → 107：新增悬浮键盘 4 键（总开关 / 绑定包名 / 竖屏几何 / 横屏几何）
+        assertEquals("提取到的键常量应是 107 个（改键数请同步本断言）", 107, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -238,6 +239,11 @@ class PrefsBackupCoverageTest {
             "KEY_PUNCT_COMMA_EN" to "asString(v)",
             "KEY_PUNCT_PERIOD_CN" to "asString(v)",
             "KEY_PUNCT_PERIOD_EN" to "asString(v)",
+            // 悬浮键盘 4 键（2026-10-23）：总开关是布尔，绑定列表与两份几何是字符串
+            "KEY_FLOATING_ENABLED" to "asBool(v)",
+            "KEY_FLOATING_APPS" to "asString(v)",
+            "KEY_FLOATING_GEOMETRY_PORTRAIT" to "asString(v)",
+            "KEY_FLOATING_GEOMETRY_LANDSCAPE" to "asString(v)",
         )
         for ((key, tool) in pairs) {
             assertTrue(
