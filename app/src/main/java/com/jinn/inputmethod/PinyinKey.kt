@@ -431,8 +431,18 @@ import kotlin.math.min
                 return
             }
             // 大写字母：置顶贴上边，占上方约 50%
-            textPaint.textSize = (height * TEXT_RATIO + glyphSizeDeltaPx)
-                .coerceAtLeast(height * MIN_LETTER_RATIO)
+            // ⚠ **必须再按宽度收一次**：悬浮四角拉伸让键高与键宽彻底解耦（45% 宽 × 190% 高
+            // 时键宽只有 18.5dp、键高 99dp）。只按键高定字号会让相邻字母互相压字 —— 改造前
+            // 整块等比缩放不会这样，这是「真实重排」带来的新形态。基准取视图下发的
+            // 「最宽字母 + 最窄一排键宽」，与铺满分支同一口径，整页同号。
+            val refWidth = if (uniformMeasureWidth > 0f) uniformMeasureWidth else w
+            val refText = if (uniformMeasureText.isNotEmpty()) uniformMeasureText else label
+            textPaint.textSize = fitTextSize(
+                refText,
+                (height * TEXT_RATIO + glyphSizeDeltaPx).coerceAtLeast(height * MIN_LETTER_RATIO),
+                (refWidth - inset * 2f) * FULL_TEXT_FIT_RATIO,
+                h * MIN_LETTER_RATIO,
+            )
             textPaint.getFontMetrics(glyphFm)
             val letterBaseline = (h * LETTER_TOP_RATIO - glyphFm.ascent - glyphFm.descent) / 2f + h * LETTER_TOP_RATIO * 0.1f
             canvas.drawText(label, w / 2f, letterBaseline, textPaint)
@@ -444,7 +454,17 @@ import kotlin.math.min
             val redLines = cachedRedLines
             val total = normalLines.size + redLines.size
             if (total > 0) {
-                subPaint.textSize = height * SUB_RATIO
+                // 同上：提示也要按宽度收（4 个字母的「iong」在 18.5dp 的键上会横跨三格）。
+                // 量最长的**那一行**、整键同一字号：逐行各自缩会让上下两行大小不一。
+                var widest = ""
+                for (line in normalLines) if (line.length > widest.length) widest = line
+                for (line in redLines) if (line.length > widest.length) widest = line
+                subPaint.textSize = fitTextSize(
+                    widest.ifEmpty { refText },
+                    height * SUB_RATIO,
+                    (refWidth - inset * 2f) * FULL_TEXT_FIT_RATIO,
+                    h * MIN_LONG_TEXT_RATIO,
+                )
                 subPaint.textAlign = Paint.Align.CENTER
                 subPaint.getFontMetrics(subFm)
                 // 紧凑行距：略小于完整字高

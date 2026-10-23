@@ -191,8 +191,11 @@ class JinnIme : InputMethodService() {
      */
     private var floatingApplied = false
 
-    /** 当前生效的悬浮几何（左上角 + 缩放百分比） */
+    /** 当前生效的悬浮几何（左上角 + 宽 / 高百分比） */
     private var floatingGeometry: FloatingKeyboard.Geometry? = null
+
+    /** 把手右端的「回到底部」（拖动监听与把手共用，需要按身份分流抬手动作） */
+    private var floatingDockView: View? = null
 
     /** 容器的自然尺寸与缩放后的窗口尺寸（拖动夹取要用） */
     private var floatingNaturalW = 0
@@ -229,6 +232,20 @@ class JinnIme : InputMethodService() {
      * 只在 [cycleFloatingScale] 内部非空（换档 → 完整套用 → 立刻置空），不是跨会话状态。
      */
     private var floatingResizeOverride: FloatingKeyboard.Geometry? = null
+
+    // ── 四角拖拽缩放（2026-10-23）────────────────────────────
+
+    /** 四角把手（顺序同 [FloatingKeyboard.Corner]；非悬浮态一律 GONE） */
+    private var floatingCorners: List<View> = emptyList()
+
+    /**
+     * 内容高里**不随拉伸变**的部分与**可伸缩块**的自然高（px）。
+     *
+     * 拉伸只能压在可伸缩块上（字母行 + 底排）：候选栏高度由字号派生、与拉伸无关，
+     * 把它也乘进去的话「拉一点就不动了」（见 [FloatingKeyboard.stretchFactorFor]）。
+     */
+    private var floatingStretchChromePx = 0
+    private var floatingStretchBlockPx = 0
 
     /** 剪贴板页点击记录时若连接无效，暂存待粘贴文本，编辑框聚焦后自动粘贴 */
     private var pendingPasteText: String? = null
@@ -1853,18 +1870,17 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 造「悬浮窗口根」：把手 + 内容容器。
+     * 造「悬浮窗口根」：把手 + 内容容器 + 四角把手。
      *
-     * 为什么要多这一层：悬浮态要把整块键盘**等比缩小**（横屏尤其），而窗口只能给一个固定宽高；
-     * 只有让内容按自然尺寸测量、再用 `scaleX/scaleY` 压进小窗口，按键与候选栏的触摸命中
-     * （View 用逆矩阵换算）才与看到的一致。把手放在缩放层**外面** —— 否则 62% 档的把手只剩 15dp，
-     * 按不中。
+     * 为什么要多这一层：悬浮态要把键盘按窗口尺寸**真实重排**（宽度按新窗宽分键宽、
+     * 行高按拉伸倍率变），而不是各向异性缩放假冒拉伸 —— 后者会把字与键面一起拉变形。
+     * 把手放在重排层**外面** —— 否则 62% 档的把手只剩 15dp，按不中。
      *
-     * 普通形态：把手 GONE（FrameLayout 里 GONE 的子视图不参与测量），容器 MATCH_PARENT ×
+     * 普通形态：把手与四角全 GONE（FrameLayout 里 GONE 的子视图不参与测量），容器 MATCH_PARENT ×
      * WRAP_CONTENT ⇒ 根高度 = 内容高度，与套壳前一致。
      */
     private fun buildFloatingRoot(container: FrameLayout): View {
-        val wrapper = FrameLayout(this)
+        val wrapper = FloatingRootView(this)
         floatingWrapper = wrapper
         floatingTouchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         val handle = buildFloatingHandle()
@@ -1877,6 +1893,9 @@ class JinnIme : InputMethodService() {
             container,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
+        // 四角角标加在内容之后（FrameLayout 里后加的在最上层）。它们**不接触摸**：
+        // 缩放手势由 [FloatingRootView.onInterceptTouchEvent] 接管，见该类的说明。
+        floatingCorners = buildFloatingCorners(wrapper)
         handle.visibility = View.GONE
         // 视图重建（换肤 / 改外观 / 旋转后框架重建）后窗口形态要重放：此刻容器已就位，直接套一次
         container.post { if (floatingActive) applyFloatingWindow() }
@@ -1888,58 +1907,111 @@ class JinnIme : InputMethodService() {
         (FLOATING_HANDLE_HEIGHT_DP * resources.displayMetrics.density).toInt()
 
     /**
-     * 拖动把手：左侧整段可拖（中间一根短横条示意），右侧「回到底部」。
+     * 把手：中间一条**短小半透明横条** + 右端「回到底部」，**没有整条背板**。
+     *
+     * 用户 2026-10-23 的原话是「不要超级加粗的底色矩形」，所以整条 26dp 只留两根可见元素：
+     *  - 居中（相对**整个面板**，不是相对扣掉小字后的剩余宽）的 44×5dp 圆角短条；
+     *  - 右端 11sp 的「回到底部」小字。
+     *
+     * **热区没有跟着变细**：整条 26dp × 全宽仍挂着拖动监听（短条与「回到底部」只是叠在上面的
+     * 两条墨迹，都不接触摸），视觉变细了但可拖面积与改造前逐像素一致 —— 这也是「不加视觉体量
+     * 还要好拖」的解法。
      *
      * 位置刻意独立成键盘最上方的一条 —— 与按键区、长按、候选栏横滑完全不重叠，
      * 因此既有手势不需要任何「是否正在拖动」的新分支。
      */
     private fun buildFloatingHandle(): View {
+        val chrome = floatingChromeColor()
         val density = resources.displayMetrics.density
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            // 半透明背板：浮层可能压在任何游戏画面上，实心条太扎眼
-            background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 10f * density
-                setColor(keyboardColor(R.color.kb_bg))
-                alpha = 0xCC
-            }
-        }
-        val dragArea = FrameLayout(this).apply { contentDescription = TEXT_FLOATING_DRAG_DESC }
-        dragArea.addView(
+        val bar = FrameLayout(this).apply { contentDescription = TEXT_FLOATING_DRAG_DESC }
+        bar.addView(
             View(this).apply {
                 background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = 2f * density
-                    setColor(keyboardColor(R.color.text_secondary))
+                    cornerRadius = (FLOATING_PILL_HEIGHT_DP / 2f) * density
+                    setColor(chrome)
+                    // 透明度落在 drawable 上：View.alpha 会连背板一起淡，且取 0~1 的浮点
+                    alpha = FLOATING_PILL_ALPHA
                 }
             },
-            FrameLayout.LayoutParams((36 * density).toInt(), (4 * density).toInt(), Gravity.CENTER),
+            FrameLayout.LayoutParams(
+                (FLOATING_PILL_WIDTH_DP * density).toInt(),
+                (FLOATING_PILL_HEIGHT_DP * density).toInt(),
+                Gravity.CENTER,
+            ),
         )
-        bar.addView(dragArea, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val dock = TextView(this).apply {
             text = FloatingKeyboard.TEXT_DOCK
             contentDescription = FloatingKeyboard.TEXT_DOCK_DESC
             textSize = 11f
-            setTextColor(keyboardColor(R.color.text_primary))
+            setTextColor(chrome)
+            alpha = FLOATING_DOCK_ALPHA
             setPadding((10 * density).toInt(), 0, (12 * density).toInt(), 0)
             gravity = Gravity.CENTER_VERTICAL
             setOnClickListener { dockToBottom() }
         }
         bar.addView(
             dock,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ).apply {
+                // 让出右上角把手的位置：把手是 16dp 见方贴在窗角，会盖住小字的右端
+                marginEnd = (FLOATING_CORNER_SIZE_DP * density).toInt()
+            },
         )
-        // 触摸挂在 bar 与 dragArea 两处：dragArea 不消费事件时会落到 bar 上；
-        // 「回到底部」自己的 click 会先吃掉落在它身上的事件，所以拖动不会误按它。
+        // 触摸挂整条 bar：「回到底部」自己也挂同一个监听（它不再是纯 click），
+        // 因为从它身上开始拖时，click 会先吃掉手势 → 一次误拖直接把浮层收回底部。
         val listener = View.OnTouchListener { view, event -> onFloatingHandleTouch(view, event) }
         bar.setOnTouchListener(listener)
-        dragArea.setOnTouchListener(listener)
+        dock.setOnTouchListener(listener)
+        floatingDockView = dock
         return bar
     }
 
-    /** 键盘主题下的颜色（键盘视图用决策后的 Context 创建，取色必须与它同源） */
-    private fun keyboardColor(id: Int): Int =
-        runCatching { (keyboardThemeCtx ?: this).getColor(id) }.getOrDefault(Color.TRANSPARENT)
+    /**
+     * 四角角标：每个角一个 16dp 见方的**纯装饰**视图，里面只画一个 L 形细角标（2dp、半透明）。
+     *
+     * **不接触摸**：角本身就压在「符号 / 回车」这类键的外角上，谁先拿到 ACTION_DOWN，谁就吃掉
+     * 那 16dp 的点位（真机实测：角视图接触摸时，点「符号」左下角毫无反应）。所以触摸交给
+     * [FloatingRootView] 按「位移超过 touchSlop」判定，这里只负责画。
+     *
+     * 只在悬浮态 VISIBLE —— 非悬浮 GONE，一处都不多占。
+     */
+    private fun buildFloatingCorners(wrapper: FrameLayout): List<View> {
+        val size = (FLOATING_CORNER_SIZE_DP * resources.displayMetrics.density).toInt()
+        val color = floatingChromeColor()
+        return FloatingKeyboard.Corner.entries.map { corner ->
+            val view = FloatingCornerView(this)
+            view.bind(corner, color)
+            view.visibility = View.GONE
+            val gravity = when (corner) {
+                FloatingKeyboard.Corner.TOP_START -> Gravity.TOP or Gravity.START
+                FloatingKeyboard.Corner.TOP_END -> Gravity.TOP or Gravity.END
+                FloatingKeyboard.Corner.BOTTOM_START -> Gravity.BOTTOM or Gravity.START
+                FloatingKeyboard.Corner.BOTTOM_END -> Gravity.BOTTOM or Gravity.END
+            }
+            wrapper.addView(view, FrameLayout.LayoutParams(size, size, gravity))
+            view
+        }
+    }
+
+    /**
+     * 把手与四角共用的颜色：**皮肤覆盖色优先，回落主题的次要文字色**，且**不透明**。
+     *
+     * 不能写死灰度：14 套皮肤各有自己的浅 / 深底，硬编码的灰在某几套上就是「看不见」或
+     * 「一道脏印子」。取键盘视图同源的那套令牌（[skinColor] + `text_secondary`）。
+     *
+     * ⚠ 皮肤令牌自带 `0x99` 前缀（它在面板里本来就是一半透明的小字色），必须先换成不透明的
+     * RGB 再交出去：直接 `and 0x00FFFFFF` 会把 alpha 抹成 **0**（`0x001F4636` 全透明），
+     * 短条与小字一起消失；不抹的话 `View.setAlpha(0x66)` 又会在 0x99 上再乘一次，只剩 24%。
+     * 所以这里统一 `or 0xFF000000`，透明度只由调用点的 `FLOATING_*_ALPHA` 决定，一处说了算。
+     */
+    private fun floatingChromeColor(): Int {
+        val ctx = keyboardThemeCtx ?: this
+        val skin = ThemeManager.keyboardSkin(prefs, ThemeManager.paletteIsDark(ctx))
+        return (skinColor(ctx, skin.functionHint, R.color.text_secondary) and 0x00FFFFFF) or 0xFF000000.toInt()
+    }
 
     /**
      * 判定本次会话是否悬浮：总开关 + 白名单 + 「回到底部」豁免。
@@ -1978,6 +2050,12 @@ class JinnIme : InputMethodService() {
             if (!floatingApplied) return
             ui.removeCallbacks(floatingLongPress)
             handle?.visibility = View.GONE
+            floatingCorners.forEach { it.visibility = View.GONE }
+            // 拉伸倍率必须一起还原：它是直接改行高的，留着会让「回到底部」后的全宽键盘
+            // 保留悬浮时的键高（而且再也变不回来）
+            pinyinKeyboard?.setFloatingStretch(null)
+            floatingStretchChromePx = 0
+            floatingStretchBlockPx = 0
             container.scaleX = 1f
             container.scaleY = 1f
             container.layoutParams = FrameLayout.LayoutParams(
@@ -2011,8 +2089,10 @@ class JinnIme : InputMethodService() {
         val handleH = floatingHandleHeightPx()
         val portrait = resources.configuration.orientation !=
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）
+        // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）。
+        // ⚠ 必须先把拉伸还原再量：量到的「自然高」是所有百分比的基准，带着拉伸量会一路滚雪球。
         val naturalW = screenW
+        pinyinKeyboard?.setFloatingStretch(null)
         val naturalH = measureNaturalHeight(container, naturalW)
         if (naturalH <= 0) {
             // 量不到自然高度 ⇒ 这一轮**不悬浮**，同时把判定也退回 false：
@@ -2024,42 +2104,127 @@ class JinnIme : InputMethodService() {
         }
         floatingNaturalW = naturalW
         floatingNaturalH = naturalH
+        // 可伸缩块（字母行 + 底排）与固定块（候选栏 / 上边距）：四角拉伸只压前面的部分
+        val blockPx = pinyinKeyboard?.floatingStretchBlockPx() ?: 0
+        floatingStretchBlockPx = blockPx
+        floatingStretchChromePx = (naturalH - blockPx).coerceAtLeast(0)
         val stored = FloatingKeyboard.parseGeometry(prefs.floatingGeometryRaw(portrait))
         val override = floatingResizeOverride
-        val scalePercent = override?.scalePercent ?: stored?.scalePercent
-            ?: FloatingKeyboard.defaultScalePercent(naturalW, naturalH, screenW, areaH, portrait)
-        val scale = FloatingKeyboard.clampPercent(scalePercent) / 100f
-        val winW = (naturalW * scale).toInt()
-        val winH = handleH + (naturalH * scale).toInt()
-        floatingWinW = winW
-        floatingWinH = winH
-        // 顶部留出把手：可用高度与默认位置都按「把手之下才是键盘」算
-        val geometry = FloatingKeyboard.clamp(
-            override ?: stored ?: FloatingKeyboard.defaultGeometry(
-                scalePercent, naturalW, naturalH, screenW, areaH - handleH,
-            ),
-            screenW, areaH, winW, winH,
+        val source = override ?: stored ?: FloatingKeyboard.defaultGeometry(
+            FloatingKeyboard.defaultScalePercent(naturalW, naturalH, screenW, areaH, portrait),
+            naturalW, naturalH, screenW, areaH - handleH,
         )
-        floatingGeometry = geometry
-        handle?.visibility = View.VISIBLE
-        container.scaleX = scale
-        container.scaleY = scale
+        // 内容按窗口尺寸**真实重排**（不再 scaleX/scaleY）：缩放会把字与键面一起拉变形
+        container.scaleX = 1f
+        container.scaleY = 1f
         container.pivotX = 0f
         container.pivotY = 0f
-        container.layoutParams = FrameLayout.LayoutParams(naturalW, naturalH).apply { topMargin = handleH }
-        lp.gravity = Gravity.TOP or Gravity.START
-        lp.width = winW
-        lp.height = winH
-        lp.x = geometry.x
-        lp.y = geometry.y
+        handle?.visibility = View.VISIBLE
+        floatingCorners.forEach { it.visibility = View.VISIBLE }
         floatingApplied = true
-        updateFloatingWindow(win, lp)
+        // 百分比 → 行高倍率 → 窗口参数：与四角拖动共用同一条落地路径（见 [applyGeometryToWindow]）
+        val geometry = applyGeometryToWindow(source, Gravity.TOP or Gravity.START)
         Diagnostics.i(
             TAG,
-            "悬浮键盘: ${naturalW}x$naturalH → 窗口 ${winW}x$winH @(${geometry.x},${geometry.y}) " +
-                "缩放 ${FloatingKeyboard.clampPercent(scalePercent)}% 方向=${if (portrait) "竖" else "横"} " +
+            "悬浮键盘: ${naturalW}x$naturalH → 窗口 ${floatingWinW}x${floatingWinH} @(${geometry.x},${geometry.y}) " +
+                "宽 ${geometry.widthPercent}% 高 ${geometry.heightPercent}%（行高倍率 " +
+                "${pinyinKeyboard?.floatingStretchFactor() ?: 1f}）方向=${if (portrait) "竖" else "横"} " +
                 "可用区顶边=${floatingTopInsetPx()}px 屏=${screenW}x${metrics.heightPixels}",
         )
+    }
+
+    /**
+     * 把一份几何**落到窗口**：百分比 → 真实行高（可伸缩块倍率）→ 容器宽高 → 窗口参数 → 夹取。
+     *
+     * 为什么要抽出来：套用存档 / 换档 / 四角拖动三条路径的算式必须逐字一致。原先这段在
+     * [applyFloatingWindow] 与 [applyFloatingResize] 各写一遍，「±1% 内不改写高度百分比」这条
+     * 量化 hysteresis 就有了两个写入点 —— 那种重复迟早让两条路径给出不同的几何。
+     *
+     * 两个口径：
+     *  - **真实行高优先**：倍率被 [FloatingKeyboard.MIN_STRETCH] / [FloatingKeyboard.MAX_STRETCH]
+     *    夹住时，反算回百分比写进几何 —— 否则拖到底存的是够不到的百分比，下一次拖动的第一格是死区；
+     *  - **夹取用真实窗宽 / 窗高**（含把手），位置越界在这里一次收干净。
+     *
+     * @param gravity 非 null 时连窗口重力一起写（进入悬浮态要落 TOP|START；拖动 / 拉伸不必重复写）
+     * @param corner 四角拖动的那个角；与 [anchorRight] / [anchorBottom] 一起给出时才把对边钉住
+     * @return 实际落地的几何
+     */
+    private fun applyGeometryToWindow(
+        source: FloatingKeyboard.Geometry,
+        gravity: Int? = null,
+        corner: FloatingKeyboard.Corner? = null,
+        anchorRight: Int = 0,
+        anchorBottom: Int = 0,
+    ): FloatingKeyboard.Geometry {
+        val container = keyboardContainer ?: return source
+        val dialog = window ?: return source
+        val win = dialog.window ?: return source
+        val naturalH = floatingNaturalH
+        if (naturalH <= 0 || floatingNaturalW <= 0) return source
+        val handleH = floatingHandleHeightPx()
+        val contentH = stretchContentHeightPx(source.heightPercent, source.widthPercent, naturalH)
+        val winW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
+        val winH = handleH + contentH
+        val appliedPercent = FloatingKeyboard.heightPercentOf(contentH, naturalH)
+        // 只在真的改了尺寸时才改写百分比：1% 以内的量化误差不该把等比几何写成四段
+        val heightPercent = if (kotlin.math.abs(appliedPercent - source.heightPercent) > 1) {
+            appliedPercent
+        } else {
+            source.heightPercent
+        }
+        // 顶部留出把手：可用高度与位置都按「把手之下才是键盘」算
+        // 四角拖动：位置以**起点那一刻的对边**为准（见 [FloatingKeyboard.pinToEdges]）——
+        // 高度会过倍率夹取与逐行取整，按模型值补位置会让面板在上下限附近整块平移
+        val positioned = if (corner != null) {
+            FloatingKeyboard.pinToEdges(
+                source.copy(heightPercent = heightPercent),
+                corner, anchorRight, anchorBottom, winW, winH,
+            )
+        } else {
+            source.copy(heightPercent = heightPercent)
+        }
+        val effective = FloatingKeyboard.clamp(
+            positioned,
+            resources.displayMetrics.widthPixels,
+            floatingAreaHeight(),
+            winW, winH,
+        )
+        floatingWinW = winW
+        floatingWinH = winH
+        floatingGeometry = effective
+        container.layoutParams = FrameLayout.LayoutParams(winW, contentH).apply { topMargin = handleH }
+        val lp = win.attributes
+        if (gravity != null) lp.gravity = gravity
+        lp.width = winW
+        lp.height = winH
+        lp.x = effective.x
+        lp.y = effective.y
+        updateFloatingWindow(win, lp)
+        return effective
+    }
+
+    /**
+     * 高度百分比 → 真实内容高（px）。
+     *
+     * 两个口径：
+     *  - 有可伸缩块（正常态）⇒ 按百分比算出目标高，再反解倍率交给键盘视图改行高；
+     *    倍率被 [FloatingKeyboard.MIN_STRETCH] / [FloatingKeyboard.MAX_STRETCH] 夹住时，实际高随之变化；
+     *  - 量不到可伸缩块（方向面板在场上 / 视图未就绪）⇒ 不拉伸，按自然高。
+     */
+    private fun stretchContentHeightPx(heightPercent: Int, widthPercent: Int, naturalH: Int): Int {
+        val block = floatingStretchBlockPx
+        if (block <= 0) return naturalH
+        val target = FloatingKeyboard.contentHeightPx(naturalH, heightPercent)
+        val factor = FloatingKeyboard.stretchFactorFor(target, floatingStretchChromePx, block)
+        val view = pinyinKeyboard
+        if (view == null) {
+            return FloatingKeyboard.contentHeightFor(factor, floatingStretchChromePx, block)
+        }
+        // 底排标签按面板宽度缩字号：宽度变窄时「符号 / 数字」这类两字标签才不会被键框裁掉
+        view.setFloatingStretch(factor, FloatingKeyboard.clampWidthPercent(widthPercent) / 100f)
+        // 用**取整后的真值**算窗口：行高逐行取整，模型值与实际值会差几像素（45% 档差过 80px，
+        // 那 80px 会变成窗口底部一条空白带）
+        return floatingStretchChromePx + view.floatingStretchBlockCurrentPx()
     }
 
     /** 按宿主可用区量一次高度（`measure` 只量不布局，稍后父容器会正常再量一遍） */
@@ -2139,7 +2304,10 @@ class JinnIme : InputMethodService() {
                 floatingDragApplied = geometry
                 floatingDragMoved = false
                 ui.removeCallbacks(floatingLongPress)
-                ui.postDelayed(floatingLongPress, floatingLongPressMs())
+                // 长按换档只属于把手本体：「回到底部」是个按钮，长按它不该改尺寸
+                if (view !== floatingDockView) {
+                    ui.postDelayed(floatingLongPress, floatingLongPressMs())
+                }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -2180,9 +2348,16 @@ class JinnIme : InputMethodService() {
                 ui.removeCallbacks(floatingLongPress)
                 floatingDragOrigin = null
                 floatingDragApplied = null
-                // 无障碍：抬手补一次 click（该视图没有常驻点击语义，与 MicButton 同一口径）
-                view.performClick()
-                if (floatingDragMoved) persistFloatingGeometry()
+                val moved = floatingDragMoved
+                if (view === floatingDockView) {
+                    // 落在「回到底部」上的**位移**是拖把手，不是点它 —— 只有没动过才算点击。
+                    // 不看 movable 就会「想拖一下，浮层直接收回底部」。
+                    if (!moved) dockToBottom()
+                } else {
+                    // 无障碍：抬手补一次 click（该视图没有常驻点击语义，与 MicButton 同一口径）
+                    view.performClick()
+                    if (moved) persistFloatingGeometry()
+                }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -2208,10 +2383,225 @@ class JinnIme : InputMethodService() {
     }
 
     /**
+     * 悬浮窗口根：把手 + 内容 + 四角角标。
+     *
+     * **四角缩放为什么不挂在角视图上**：16dp 的角正好压着「符号 / 回车」这类键的外角，
+     * 角视图一旦吃掉 ACTION_DOWN，那 16dp 就成了按键的死区（真机实测：点「符号」的左下角
+     * 毫无反应，而它本来就是最容易按到的地方）。所以改成在**根容器**上按手势判定：
+     *
+     *  - 按下的点位落在四角 16dp 内 ⇒ 只「记住」这个角，事件照旧往下发给键 / 把手；
+     *  - 位移超过 `touchSlop` ⇒ 由根接管（`onInterceptTouchEvent` 返回 true，子视图收到
+     *    `ACTION_CANCEL`，按下态自动复位），此后每次移动都走 [applyFloatingResize]；
+     *  - 抬手时位移没过 slop ⇒ 全程没有接管过，就是一次普通点击（按键照常响应）。
+     *
+     * 三条口径：
+     *  - 只改百分比、不改像素：像素宽高由「自然尺寸 × 百分比」现算，换密度不会失真；
+     *  - 对角固定：拖左边角时右边缘不动、拖上边角时下边缘不动（见 [FloatingKeyboard.resizeTo]）；
+     *  - 每帧走 [applyFloatingResize]（不重量自然尺寸），抬手才落盘。
+     */
+    private inner class FloatingRootView(context: android.content.Context) : FrameLayout(context) {
+
+        /** 按下时命中的角（null = 这次手势不是从角上开始的） */
+        private var armedCorner: FloatingKeyboard.Corner? = null
+
+        /** 手势起点（相对本视图）与接管后的起点几何 */
+        private var resizing = false
+        private var origin: FloatingKeyboard.Geometry? = null
+        /** 起点那一帧的**实际**窗宽 / 内容高：后面的每帧都从它算增量，不能用随时在变的当前值 */
+        private var originWinW = 0
+        private var originContentH = 0
+        private var originWinH = 0
+        private var rawStartX = 0f
+        private var rawStartY = 0f
+
+        /** 上一帧真正试过的百分比（-1 = 本手势还没落过一帧）：用于「同值不重排」判定 */
+        private var lastRequestedW = -1
+        private var lastRequestedH = -1
+
+        /** 按下时的**屏幕**坐标：窗口外的位移只有 raw 值不被夹到窗口边界 */
+        private var rawDownX = 0f
+        private var rawDownY = 0f
+
+        /** 角区边长（px）：判定用，与角标的 16dp 同源 */
+        private val cornerPx: Float
+            get() = FLOATING_CORNER_SIZE_DP * resources.displayMetrics.density
+
+        private fun cornerAt(x: Float, y: Float): FloatingKeyboard.Corner? {
+            if (width <= 0 || height <= 0) return null
+            val w = width - cornerPx
+            val h = height - cornerPx
+            return when {
+                x <= cornerPx && y <= cornerPx -> FloatingKeyboard.Corner.TOP_START
+                x >= w && y <= cornerPx -> FloatingKeyboard.Corner.TOP_END
+                x <= cornerPx && y >= h -> FloatingKeyboard.Corner.BOTTOM_START
+                x >= w && y >= h -> FloatingKeyboard.Corner.BOTTOM_END
+                else -> null
+            }
+        }
+
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            if (!floatingActive) return false
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    armCorner(ev)
+                    return false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!resizing) {
+                        if (!exceedsSlop(ev) && !pinnedOutside(ev)) return false
+                        if (!beginResize()) return false
+                        return true
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 没接管过 ⇒ 这次只是一次点击，交给子视图收尾
+                    if (!resizing) armedCorner = null
+                    return resizing
+                }
+            }
+            return resizing
+        }
+
+        /**
+         * 落在四角、但底下**没有任何子视图接手**（面板底边那条透明带）时，DOWN 会落到根自己身上
+         * —— 真机实测：右下角最外侧约 16px 就是这么一段死区，从那里拖完全没反应。
+         * 这里把角上的 DOWN 也接住，之后与拦截路径走同一套「过 slop 才动手」。
+         */
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (!floatingActive) return false
+                    if (armCorner(ev) == null) return false
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!resizing) {
+                        if (!exceedsSlop(ev) && !pinnedOutside(ev)) return true
+                        if (!beginResize()) return false
+                    }
+                    applyResizeMove(ev)
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val wasResizing = resizing
+                    resetGesture()
+                    if (wasResizing) persistFloatingGeometry()
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    resetGesture()
+                    return true
+                }
+            }
+            return resizing
+        }
+
+        /** 记住按下点与命中的角 */
+        private fun armCorner(ev: MotionEvent): FloatingKeyboard.Corner? {
+            armedCorner = cornerAt(ev.x, ev.y)
+            rawDownX = ev.rawX
+            rawDownY = ev.rawY
+            resizing = false
+            origin = null
+            lastRequestedW = -1
+            lastRequestedH = -1
+            return armedCorner
+        }
+
+        private fun exceedsSlop(ev: MotionEvent): Boolean =
+            kotlin.math.abs(ev.rawX - rawDownX) > floatingTouchSlop ||
+                kotlin.math.abs(ev.rawY - rawDownY) > floatingTouchSlop
+
+        /**
+         * 手指移出窗口后，坐标会被夹在窗口边界上（实测 raw 也冻在「窗宽/窗高 − 1」），
+         * 位移再也长不大 —— 右 / 下角往外拉时这条会卡死在 slop 之内，面板永远放不大。
+         * 贴到窗口那条边就当作「要往外拉」：此刻开始缩放，窗口随即跟着长大，手指又回到窗内，
+         * 后面的位移就正常了。
+         */
+        private fun pinnedOutside(ev: MotionEvent): Boolean {
+            val corner = armedCorner ?: return false
+            val eps = 2f
+            val xEdge = if (corner.movesLeftEdge) ev.x <= eps else ev.x >= width - eps
+            val yEdge = if (corner.movesTopEdge) ev.y <= eps else ev.y >= height - eps
+            return xEdge || yEdge
+        }
+
+        /** 过阈值：抓一份起点快照，转入「改尺寸」状态（返回 null 表示这一帧没条件开始） */
+        private fun beginResize(): Boolean {
+            val corner = armedCorner ?: return false
+            val geometry = floatingGeometry ?: return false
+            if (floatingNaturalW <= 0 || floatingNaturalH <= 0) return false
+            resizing = true
+            armedCorner = corner
+            origin = geometry
+            originWinW = floatingWinW
+            originWinH = floatingWinH
+            originContentH = (floatingWinH - floatingHandleHeightPx()).coerceAtLeast(1)
+            // 位移从**按下点**算：手指移出窗口后坐标被夹在边界上，从「过阈值的那个点」算永远是 0，
+            // 面板就再也放不大了（实测右 / 下角往外拉完全没反应）
+            rawStartX = rawDownX
+            rawStartY = rawDownY
+            return true
+        }
+
+        private fun resetGesture() {
+            resizing = false
+            armedCorner = null
+            origin = null
+            lastRequestedW = -1
+            lastRequestedH = -1
+        }
+
+        private fun applyResizeMove(ev: MotionEvent) {
+            val start = origin ?: return
+            val corner = armedCorner ?: return
+            val next = FloatingKeyboard.resizeTo(
+                start, corner,
+                (ev.rawX - rawStartX).toInt(),
+                (ev.rawY - rawStartY).toInt(),
+                originWinW, originContentH,
+                floatingNaturalW, floatingNaturalH,
+            )
+            // 百分比没变就不重排：1% 一步的量化在两帧之间常常是同一个值，白排一次会掉帧。
+            // 比的是**本帧算出的值 vs 上一帧算出的值**，不能比 `floatingGeometry`：落地时会把
+            // 被夹住的高度百分比重写成生效值，拿它比会让「夹住之后手指不动」也每帧重排一次。
+            if (next.widthPercent == lastRequestedW && next.heightPercent == lastRequestedH) return
+            lastRequestedW = next.widthPercent
+            lastRequestedH = next.heightPercent
+            // 对边按**起点**位置钉住：内容高会过倍率夹取与逐行取整，用模型值补位置会在
+            // 上下限附近让整块面板平移（真机实测：顶边拖过下限后面板下沉 100px 而尺寸不变）
+            applyFloatingResize(next, corner, start.x + originWinW, start.y + originWinH)
+        }
+    }
+
+    /**
+     * 四角拉伸的一帧：重算尺寸并落窗口。
+     *
+     * 不重量自然尺寸（拖动期间它不会变，每帧重量一次手感直接掉档），只用
+     * [floatingNaturalW] / [floatingNaturalH] 与可伸缩块的缓存值；落地算式与套用存档
+     * 共用 [applyGeometryToWindow]（两条路径不许各写一份）。
+     *
+     * [anchorRight] / [anchorBottom] 是按下那一刻窗口的右 / 下边缘（绝对坐标）：高度与宽度
+     * 落地时要过夹取与取整，只有按它们反推才能保证对角真的不动。
+     */
+    private fun applyFloatingResize(
+        geometry: FloatingKeyboard.Geometry,
+        corner: FloatingKeyboard.Corner,
+        anchorRight: Int,
+        anchorBottom: Int,
+    ) {
+        applyGeometryToWindow(geometry, null, corner, anchorRight, anchorBottom)
+    }
+
+    /**
      * 长按把手：在 [FloatingKeyboard.SCALE_STOPS] 之间换档。
      *
      * 换档**保持中心点不动**（否则按一下尺寸变小，键盘会往左上跑一截，看着像被甩出去），
      * 随后按新尺寸重新夹取并落盘。
+     *
+     * 档位是**等比**的：拉成异形的面板按一次换档会回到等比（宽高都取 [FloatingKeyboard.Geometry.uniformPercent]
+     * 的下一档）—— 留着一条「一键恢复正常比例」的路，比让档位在半拉伸状态上继续漂移更好理解。
      */
     private fun cycleFloatingScale() {
         val geometry = floatingGeometry ?: return
@@ -2219,10 +2609,9 @@ class JinnIme : InputMethodService() {
         val handleH = floatingHandleHeightPx()
         val screenW = resources.displayMetrics.widthPixels
         val areaH = floatingAreaHeight()
-        val next = FloatingKeyboard.nextScaleStop(geometry.scalePercent)
-        val scale = next / 100f
-        val winW = (floatingNaturalW * scale).toInt()
-        val winH = handleH + (floatingNaturalH * scale).toInt()
+        val next = FloatingKeyboard.nextScaleStop(geometry.uniformPercent)
+        val winW = FloatingKeyboard.windowWidthPx(floatingNaturalW, next)
+        val winH = handleH + FloatingKeyboard.contentHeightPx(floatingNaturalH, next)
         val centerX = geometry.x + floatingWinW / 2
         val centerY = geometry.y + floatingWinH / 2
         val moved = FloatingKeyboard.clamp(
@@ -3115,9 +3504,13 @@ class JinnIme : InputMethodService() {
         // 悬浮键盘：窗口根与把手一并断开（它们强引用本服务，见上面同一条口径）
         floatingWrapper = null
         floatingHandle = null
+        floatingDockView = null
+        floatingCorners = emptyList()
         floatingActive = false
         floatingApplied = false
         floatingGeometry = null
+        floatingStretchChromePx = 0
+        floatingStretchBlockPx = 0
         ui.removeCallbacks(floatingLongPress)
         keyboardThemeCtx = null
         micButton = null
@@ -4840,11 +5233,31 @@ class JinnIme : InputMethodService() {
         /**
          * 悬浮把手的触摸高度（dp）。
          *
-         * 把手在**缩放层之外**，所以任何缩放档下都是这 26dp（竖屏实测 91px / 触摸区就是这 91px，
-         * 上下各只有 2~4px 的容错 —— 真机 10 次从容拖动全中，边缘 4px 外就落不到把手上）。
-         * 不再调大：把手每高一 dp 都直接从键盘可用高度里扣（62% 档下键盘本体只有 586px）。
+         * 把手在**重排层之外**，所以任何尺寸下都是这 26dp（竖屏实测 91px / 触摸区就是这 91px）。
+         * 不再调大：把手每高一 dp 都直接从键盘可用高度里扣。
+         * ⚠ 视觉已经缩成中间那条 5dp 短条（用户 2026-10-23 要求去掉整条背板），
+         * **热区不跟着缩** —— 整条 26dp × 全宽仍然可拖，这是「不加视觉体量又要好拖」的解法。
          */
         const val FLOATING_HANDLE_HEIGHT_DP = 26
+
+        /** 把手中间那条短条：宽度 / 粗细（dp）与不透明度（0~255，约 40%） */
+        const val FLOATING_PILL_WIDTH_DP = 44
+        const val FLOATING_PILL_HEIGHT_DP = 5
+        const val FLOATING_PILL_ALPHA = 0x66
+
+        /** 「回到底部」小字的不透明度（0~1，约 85%）：够清楚，又不抢键盘视线 */
+        const val FLOATING_DOCK_ALPHA = 0.85f
+
+        /**
+         * 四角把手的触摸区边长（dp）。
+         *
+         * 16dp 是「好按」与「不抢按键」的折中：再大就会把「符号 / 回车」的可用面吃出缺口，
+         * 再小则拇指按不中。图形只画 L 形细角标（2dp），视觉体量远小于触摸区。
+         */
+        const val FLOATING_CORNER_SIZE_DP = 16
+
+        /** 四角角标的不透明度（0~255，约 40%）：与短条同档，只做示意不做视觉主体 */
+        const val FLOATING_CORNER_ALPHA = 0x66
 
         /** 清空文本时光标两侧各取的长度上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
         const val MAX_SCAN_CHARS = 20_000
@@ -5294,4 +5707,57 @@ internal fun commitProbeVerdict(returned: String?, submit: String, probeLen: Int
     // 少给字符：无法比对 ⇒ 记「未测」，不误报
     returned.length < probeLen -> null
     else -> returned.endsWith(submit.takeLast(probeLen))
+}
+
+
+/**
+ * 悬浮面板四角的缩放手柄角标：**只画一个 L 形细角标**，不接触摸（手势由悬浮窗口根接管）。
+ *
+ * 为什么自绘而不给背景 drawable：四个角的 L 要各自朝向面板**内部**（左上角的两条边往右下伸），
+ * 一张固定 drawable 只能表达一种朝向；而四角若都画成同一朝向，用户会以为是装饰而不是手柄。
+ *
+ * 图形刻意做得极轻（2dp 描边、40% 不透明、臂长 10dp）：用户的抱怨是「视觉体量太大」，
+ * 手柄不能变成第二块色板。颜色由 [JinnIme] 按皮肤 / 明暗主题取同一个令牌传进来（已去 alpha），
+ * 透明度**只在这里**决定 —— `Paint.setColor` 会连 alpha 一起覆盖，别在别处再设一次。
+ */
+private class FloatingCornerView @JvmOverloads constructor(
+    context: android.content.Context,
+    attrs: android.util.AttributeSet? = null,
+) : View(context, attrs) {
+
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeCap = android.graphics.Paint.Cap.ROUND
+    }
+
+    /** 这个把手是哪一个角（决定 L 的朝向） */
+    private var corner: FloatingKeyboard.Corner = FloatingKeyboard.Corner.BOTTOM_END
+
+    /**
+     * 绑定朝向与颜色：构造后立刻调用，避免多套构造参数（lint 要求保留 `(Context, AttributeSet)`）。
+     *
+     * 颜色必须是**不带 alpha** 的 RGB：`setColor` 会把 alpha 一并写进去，之后统一按
+     * [JinnIme.FLOATING_CORNER_ALPHA] 落一次，透明度只有一个出处。
+     */
+    fun bind(corner: FloatingKeyboard.Corner, color: Int) {
+        this.corner = corner
+        paint.color = color
+        paint.alpha = JinnIme.FLOATING_CORNER_ALPHA
+        invalidate()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        super.onDraw(canvas)
+        val d = resources.displayMetrics.density
+        paint.strokeWidth = 2f * d
+        val inset = 4f * d
+        val arm = 10f * d
+        // 贴角那一端固定在内缩点，另一端朝面板内部伸
+        val x = if (corner.movesLeftEdge) inset else width - inset
+        val y = if (corner.movesTopEdge) inset else height - inset
+        val dx = if (corner.movesLeftEdge) arm else -arm
+        val dy = if (corner.movesTopEdge) arm else -arm
+        canvas.drawLine(x, y, x + dx, y, paint)
+        canvas.drawLine(x, y, x, y + dy, paint)
+    }
 }

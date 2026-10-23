@@ -316,7 +316,172 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 首帧 / 刚改键高的那一帧 `viewLetters` 还是旧值，读它会让整行覆盖边界差一段）。
      */
     private fun letterRowPx(): Int =
-        (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+        letterRowHeightOverridePx
+            ?: (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+
+    // ── 悬浮四角拉伸（2026-10-23）────────────────────────────
+    //
+    // 悬浮面板的四角拉伸是**真实改布局尺寸**（键区按新宽度重排、行高按倍率变），不是各向异性
+    // `scaleX/scaleY`：后者会把字与键面一起拉变形（用户要求「文字与按键不变形」）。
+    // 这里只提供两个数：可伸缩块的自然高与「按倍率改行高」，窗口侧算术全在 FloatingKeyboard。
+
+    /** 拉伸倍率（null = 用户设定的键高，与不受浮层影响时逐像素一致） */
+    private var floatingStretch: Float? = null
+
+    /** 字母行高的覆盖值（px；[floatingStretch] 派生，null = 用用户键高） */
+    private var letterRowHeightOverridePx: Int? = null
+
+    /** 底排（符号 / 数字 / 空格那一行）的自然高（px），首次拉伸时抓一次快照 */
+    private var bottomRowNaturalPx = 0
+
+    /**
+     * 参与悬浮拉伸的行数：字母三行（开着数字行就是四行）。
+     *
+     * **方向面板顶替字母区**：它在场上时字母行全 GONE，但它一样会被拉伸
+     * （[directionRowHeightPx] 读 [letterRowPx]，[applyDirectionRowHeights] 逐键落高），
+     * 所以必须按它的 3 行计数 —— 否则「拉高后开方向」会让窗口判定成「没有可伸缩块」，
+     * 高度突然回到自然档（一次明显的跳变）。
+     */
+    fun floatingLetterRowCount(): Int {
+        if (directionPanelVisible) return DIRECTION_PANEL_ROWS
+        var rows = 0
+        for (i in 0 until viewLetters.childCount) {
+            val row = viewLetters.getChildAt(i) ?: continue
+            if (row.tag == DIRECTION_PANEL_TAG) continue
+            // GONE 的行不占布局高度：算进来会让「可伸缩块」虚高一行，窗口就比内容多一条空白带
+            if (row.visibility != VISIBLE) continue
+            rows++
+        }
+        return rows
+    }
+
+    /**
+     * 可伸缩块的自然高（px）= 参与拉伸的行 × 用户键高 + 底排高。
+     *
+     * 候选栏与上边距**不参与**（它们由字号派生、与拉伸无关），窗口侧据此反解倍率，
+     * 否则拉伸幅度会被那半屏固定高吃掉。方向面板在场上时返回 0（那一态不做拉伸）。
+     */
+    fun floatingStretchBlockPx(): Int {
+        val rows = floatingLetterRowCount()
+        if (rows <= 0) return 0
+        val rowPx = (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+        return rows * rowPx + bottomRowNaturalHeightPx()
+    }
+
+    /**
+     * 拉伸态下可伸缩块的**实际**高（px）。
+     *
+     * 行高是逐行取整的，`自然块高 × 倍率` 与「取整后求和」会差几个像素；窗口侧必须用这个真值，
+     * 否则容器会比内容高一条空白带（实测 45% 档差 80px 以上）。
+     */
+    fun floatingStretchBlockCurrentPx(): Int {
+        val rows = floatingLetterRowCount()
+        if (rows <= 0) return 0
+        val rowPx = letterRowPx()
+        val bottom = bottomRowView()?.layoutParams?.height?.takeIf { it > 0 } ?: bottomRowNaturalHeightPx()
+        return rows * rowPx + bottom
+    }
+
+    /**
+     * 悬浮拉伸：把可伸缩块按 [factor] 缩放，底排的字号按 [widthFactor] 跟着面板宽度走。
+     *
+     * 只改行容器的 LayoutParams —— 键自己都是 `match_parent`，行高定全行；
+     * 字形大小由 [PinyinKey] 按键高绘制，跟着行高走，**不做任何拉伸变换**，所以不会变形。
+     *
+     * 底排是 XML 固定 dp 字号的按钮行（不是自绘），宽度变窄时「符号 / 数字」这类两字标签会
+     * 顶出键框 —— 按宽度比例缩字号就是旧版整块缩放时的同一观感（45% 档字也一样小），
+     * 且不引入 sp（与本行的 dp 口径一致，不受系统字体缩放影响）。
+     */
+    fun setFloatingStretch(factor: Float?, widthFactor: Float = 1f) {
+        val next = factor?.coerceIn(FloatingKeyboard.MIN_STRETCH, FloatingKeyboard.MAX_STRETCH)
+        // 底排字与图标内边距受**两条轴**共同约束：宽度决定「两字标签会不会横向顶出键框」，
+        // 高度决定「两行标签 / 回车箭头会不会被压成一条线」（100% × 60% 时行高只剩 33dp，
+        // 而图标的 13dp 内边距不变 ⇒ 箭头只剩 7dp，真机实测已经看不见）。
+        applyFloatingTextScale(minOf(widthFactor, next ?: 1f))
+        if (next == floatingStretch) return
+        floatingStretch = next
+        val density = resources.displayMetrics.density
+        letterRowHeightOverridePx = next?.let {
+            ((prefs.keyHeightDp * density).roundToInt() * it).roundToInt()
+        }
+        bottomRowView()?.let { row ->
+            val base = bottomRowNaturalHeightPx()
+            if (base > 0) {
+                row.layoutParams = (row.layoutParams ?: LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    base,
+                )).apply { height = next?.let { (base * it).roundToInt() } ?: base }
+            }
+        }
+        applyLetterRowHeight(prefs.keyHeightDp, density)
+        // 方向面板在场上时也要按同一行高重排：它是「顶替字母行」的一态，
+        // 只改字母行会让展开 / 收起时键盘高度跳一下（L-1290 同源）
+        if (directionPanelVisible) directionPanel?.let { applyDirectionRowHeights(it) }
+        requestLayout()
+    }
+
+    /** 底排各文本控件的原字号（px）；首次拉伸时抓一次快照 */
+    private val bottomRowTextBase = ArrayList<Pair<TextView, Float>>()
+
+    /** 底排各图标控件（回车）的原内边距（px）；同上 */
+    private val bottomRowIconPadding = ArrayList<Pair<View, IntArray>>()
+
+    /**
+     * 底排字号与图标内边距按面板尺寸缩放（见 [setFloatingStretch] 的说明）。
+     *
+     * 字号捕获的是 `textSize` 的**像素值**并与 `COMPLEX_UNIT_PX` 一起写回：用 `setTextSize(float)`
+     * 会被当成 sp，系统字体放大时又把这行顶出键框（L-1457 同一个坑）。
+     *
+     * 图标内边距也必须缩：回车键是 XML 里的 `padding=13dp` + `scaleType=fitCenter`，
+     * 面板宽度一变窄（实测 54% 已复现），左右内边距就吃掉整个键宽，箭头被压成 0 像素
+     * —— 改造前整块等比缩放时不会这样，这是「真实重排」带来的回归。
+     *
+     * [MIN_BOTTOM_ROW_FACTOR] 是「还读得清」的下限：不设的话 45% 宽时底排只有 5.85dp
+     * （2 字标签在手机上退化成一条灰线），而 45% 的键宽（约 41dp）容得下 9.4dp 的两字标签，
+     * 所以放大到 0.72 不会顶框。
+     */
+    private fun applyFloatingTextScale(widthFactor: Float) {
+        val row = bottomRowView() ?: return
+        if (bottomRowTextBase.isEmpty() && bottomRowIconPadding.isEmpty()) {
+            val stack = ArrayDeque<View>()
+            stack.addLast(row)
+            while (stack.isNotEmpty()) {
+                val v = stack.removeLast()
+                when {
+                    v is ViewGroup -> for (i in 0 until v.childCount) v.getChildAt(i)?.let { stack.addLast(it) }
+                    v is TextView -> bottomRowTextBase.add(v to v.textSize)
+                    v is android.widget.ImageView -> bottomRowIconPadding.add(
+                        v to intArrayOf(v.paddingLeft, v.paddingTop, v.paddingRight, v.paddingBottom),
+                    )
+                }
+            }
+        }
+        val factor = widthFactor.coerceIn(MIN_BOTTOM_ROW_FACTOR, 1f)
+        for ((view, base) in bottomRowTextBase) {
+            view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, base * factor)
+        }
+        for ((view, base) in bottomRowIconPadding) {
+            view.setPadding(
+                (base[0] * factor).toInt(),
+                (base[1] * factor).toInt(),
+                (base[2] * factor).toInt(),
+                (base[3] * factor).toInt(),
+            )
+        }
+    }
+
+    /** 当前是否处于拉伸态（调试日志用） */
+    fun floatingStretchFactor(): Float? = floatingStretch
+
+    private fun bottomRowView(): View? = keyboardBody.getChildAt(1)
+
+    private fun bottomRowNaturalHeightPx(): Int {
+        if (bottomRowNaturalPx <= 0) {
+            val row = bottomRowView() ?: return 0
+            bottomRowNaturalPx = row.layoutParams?.height?.takeIf { it > 0 } ?: row.measuredHeight
+        }
+        return bottomRowNaturalPx
+    }
 
     /**
      * 展开态排数：候选量、栏宽估列与「可用高度允许的排数」三者夹取。
@@ -825,6 +990,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 数字行（开着时是第 0 行）与三行字母因此天然同高。
      */
     private val LETTER_ROW_COUNT = 3
+
+    /**
+     * 方向面板的行数（见 `ensureDirectionPanel` 的三行九宫格）。
+     *
+     * 面板在场上时它顶替字母区参与悬浮拉伸，行容器自带上下各 2dp 内边距、键高按
+     * 「[letterRowPx] − 4dp」落（[directionRowHeightPx]）⇒ 一行的总高恰好等于 [letterRowPx]。
+     */
+    private val DIRECTION_PANEL_ROWS = 3
 
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
@@ -1658,7 +1831,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // （见 [directionRow]）⇒ 键高 = 行高 − 4dp。原先按「(总 dp − 12dp) / 3 截断 × density」算，
         // 与逐行四舍五入不同源：默认档就差约 6px，展开 / 收起方向面板时键盘高度仍会跳
         //（L-1290 修的是「行高锁死」，这条修的是「跟随出来的值不相等」）
-        val rowPx = (prefs.keyHeightDp * resources.displayMetrics.density).roundToInt()
+        // 读 [letterRowPx] 而不是 prefs：悬浮拉伸改了行高，面板必须跟着，否则拉伸状态下
+        // 开「方向」会看到键高突然回到未拉伸的尺寸
+        val rowPx = letterRowPx()
         return (rowPx - dp(2) * 2).coerceAtLeast(1)
     }
 
@@ -1730,7 +1905,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *    BUG.md L-1291）下三行会把小屏手机的键盘顶出可视区。
      */
     private fun applyLetterRowHeight(keyHeightDp: Float, density: Float) {
-        val px = (keyHeightDp * density).roundToInt()
+        val px = letterRowHeightOverridePx ?: (keyHeightDp * density).roundToInt()
         var rows = 0
         for (i in 0 until viewLetters.childCount) {
             val row = viewLetters.getChildAt(i) ?: continue
@@ -5415,6 +5590,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 功能面板按钮数达到此值即收窄内边距（8 = 基础 6 + 图库 + 翻译，见 renderFunctionPanel） */
         const val PANEL_COMPACT_SLOTS = 8
+
+        /**
+         * 底排文字与图标内边距的**缩放下限**（相对自然尺寸）。
+         *
+         * 45% 宽度时底排字号只有 5.85dp（2 字标签退化成灰线，实测已不可读）；0.72 让它停在
+         * 约 9.4dp —— 45% 的键宽（约 41dp）仍放得下两字标签，而箭头图标也留得下可见面积。
+         */
+        const val MIN_BOTTOM_ROW_FACTOR = 0.72f
 
         /**
          * 候选条目复用池的容量上限（条）：首屏 32 条 + 一次追加 32 条覆盖常见一轮按键，

@@ -79,7 +79,7 @@ class FloatingKeyboardTest {
 
     @Test
     fun 几何夹取必须落在可用区内() {
-        val g = FloatingKeyboard.Geometry(x = 5000, y = 5000, scalePercent = 70)
+        val g = FloatingKeyboard.Geometry(5000, 5000, 70)
         val clamped = FloatingKeyboard.clamp(g, screenW = 1440, areaH = 3116, winW = 1010, winH = 760)
         assertEquals("x 不得超过 屏宽 − 窗宽", 1440 - 1010, clamped.x)
         assertEquals("y 不得超过 可用高 − 窗高", 3116 - 760, clamped.y)
@@ -122,7 +122,7 @@ class FloatingKeyboardTest {
         assertEquals(
             "越界缩放要钳到定义域",
             (FloatingKeyboard.MIN_SCALE * 100).toInt(),
-            FloatingKeyboard.parseGeometry("1,1,1")!!.scalePercent,
+            FloatingKeyboard.parseGeometry("1,1,1")!!.widthPercent,
         )
     }
 
@@ -163,7 +163,7 @@ class FloatingKeyboardTest {
     @Test
     fun 默认位置水平居中贴底() {
         val g = FloatingKeyboard.defaultGeometry(
-            scalePercent = 92, naturalW = 1440, naturalH = 945, screenW = 1440, areaH = 3116 - 91,
+            widthPercent = 92, naturalW = 1440, naturalH = 945, screenW = 1440, areaH = 3116 - 91,
         )
         val w = (1440 * 92 / 100f).toInt()
         val h = (945 * 92 / 100f).toInt()
@@ -201,7 +201,7 @@ class FloatingKeyboardTest {
     fun 放大后旧坐标必须重夹() {
         // 62% 档贴底时的合法 y（窗高 676 = 91 把手 + 945×62%）；放大到 92%（窗高 960）后
         // 同一个 y 会让底边越出可用区 284px ⇒ 夹取必须把它推回来。
-        val at62 = FloatingKeyboard.Geometry(x = 0, y = 3116 - 676, scalePercent = 62)
+        val at62 = FloatingKeyboard.Geometry(0, 3116 - 676, 62)
         val grown = FloatingKeyboard.clamp(at62, screenW = 1440, areaH = 3116, winW = 1324, winH = 960)
         assertEquals("放大到 92% 后必须重夹到底（不重夹就有 284px 在屏外）", 3116 - 960, grown.y)
         assertEquals("x 没越界时不许被顺手挪动", 0, grown.x)
@@ -335,6 +335,367 @@ class FloatingKeyboardTest {
         assertTrue(
             "onStartInput 只在状态真的变了时动窗口（同包换框不该多一次 relayout）",
             "if (wasFloating != floatingActive) applyFloatingWindow()" in onStartInput,
+        )
+    }
+
+    // ──────────── 四角拉伸 / 新格式 / 把手外观（2026-10-23）────────────
+
+    @Test
+    fun 新格式解析并兼容旧三段() {
+        // 旧存档（3 段）= 等比：宽高同值，读出来必须与旧行为逐像素一致
+        val legacy = FloatingKeyboard.parseGeometry("116,2156,92")
+        assertEquals(FloatingKeyboard.Geometry(116, 2156, 92), legacy)
+        assertEquals(
+            "等比几何仍写旧的三段格式（旧版本读得懂，也是用户存档的原样）",
+            "116,2156,92",
+            FloatingKeyboard.serializeGeometry(legacy!!),
+        )
+        // 四角拉过之后（4 段）：宽高各自独立
+        val stretched = FloatingKeyboard.parseGeometry("116,2156,72,138")
+        assertEquals(72, stretched!!.widthPercent)
+        assertEquals(138, stretched.heightPercent)
+        assertEquals(
+            "四段几何要原样往返（否则下次弹出就回到等比）",
+            "116,2156,72,138",
+            FloatingKeyboard.serializeGeometry(stretched),
+        )
+        assertNull("五段不是合法格式", FloatingKeyboard.parseGeometry("1,2,3,4,5"))
+        assertNull("四段里非数字要丢弃", FloatingKeyboard.parseGeometry("1,2,3,x"))
+        assertEquals(
+            "高度越界钳到上限",
+            FloatingKeyboard.MAX_HEIGHT_PERCENT,
+            FloatingKeyboard.parseGeometry("1,1,100,999")!!.heightPercent,
+        )
+        assertEquals(
+            "宽度越界钳到下限（1% 的键盘点不中任何键）",
+            FloatingKeyboard.MIN_PERCENT,
+            FloatingKeyboard.parseGeometry("1,1,1,1")!!.widthPercent,
+        )
+        // 等比判据（长按换档按它取下一档）
+        assertEquals("宽高不同的几何取较小那边", 72, stretched.uniformPercent)
+        assertEquals("等比几何两边同值", 92, legacy.uniformPercent)
+    }
+
+    @Test
+    fun 四角拉伸宽高独立且对角固定() {
+        val origin = FloatingKeyboard.Geometry(200, 800, 92, 92)
+        val naturalW = 1440
+        val naturalH = 945
+        val oldW = FloatingKeyboard.windowWidthPx(naturalW, 92)
+        val oldH = FloatingKeyboard.contentHeightPx(naturalH, 92)
+        // 右下角：往右下拖 ⇒ 宽高一起长，左上角不动
+        val br = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.BOTTOM_END, 60, 40, oldW, oldH, naturalW, naturalH,
+        )
+        assertTrue("往右拖必须变宽", br.widthPercent > 92)
+        assertTrue("往下拖必须变高", br.heightPercent > 92)
+        assertEquals("拖右下角时左上角不动", 200, br.x)
+        assertEquals("拖右下角时左上角不动", 800, br.y)
+        // 左上角：往左上拖 ⇒ 右边缘 / 下边缘固定（x / y 反向补偿，否则整块往右下缩）
+        val tl = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.TOP_START, -60, -40, oldW, oldH, naturalW, naturalH,
+        )
+        assertTrue("往左上拖要变大", tl.widthPercent > 92 && tl.heightPercent > 92)
+        assertEquals(
+            "拖左上角时右边缘必须固定",
+            200 + oldW,
+            tl.x + FloatingKeyboard.windowWidthPx(naturalW, tl.widthPercent),
+        )
+        assertEquals(
+            "拖左上角时下边缘必须固定",
+            800 + oldH,
+            tl.y + FloatingKeyboard.contentHeightPx(naturalH, tl.heightPercent),
+        )
+        // 起点尺寸取**实际值**（不是百分比反算的模型值）：差几像素时下边缘不许跟着漂
+        val drifted = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.TOP_START, 0, -40, oldW, oldH - 7, naturalW, naturalH,
+        )
+        assertEquals(
+            "对角锚点必须按实际内容高算（否则每拖一次下边缘就漂几像素）",
+            800 + oldH - 7,
+            drifted.y + FloatingKeyboard.contentHeightPx(naturalH, drifted.heightPercent),
+        )
+        // 两条轴互不串味：只拖横边不动高度、只拖竖边不动宽度
+        val onlyWide = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.BOTTOM_END, 80, 0, oldW, oldH, naturalW, naturalH,
+        )
+        assertEquals("只拖横边不许改高度", 92, onlyWide.heightPercent)
+        val onlyTall = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.BOTTOM_END, 0, 40, oldW, oldH, naturalW, naturalH,
+        )
+        assertEquals("只拖竖边不许改宽度", 92, onlyTall.widthPercent)
+        // 零位移必须完全不动（否则抬手那一刻会自己跳一格）
+        val still = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.TOP_END, 0, 0, oldW, oldH, naturalW, naturalH,
+        )
+        assertEquals(origin, still)
+    }
+
+    @Test
+    fun 拖角时对边必须钉在实际生效的尺寸上() {
+        // 真机缺陷：顶边往下拖过高度下限后，面板尺寸不变却整体下沉 100px。
+        // 根因是位置按「百分比 × 自然高」的**模型值**补偿，而落地高要过倍率夹取与逐行取整。
+        val originRight = 200 + 1324
+        val originBottom = 800 + 960
+        val model = FloatingKeyboard.Geometry(400, 1200, 92, 62)
+        // 62% 的目标高被 MIN_STRETCH 夹住后，真正落地的是 648（不是模型算的 585）
+        val appliedWinH = 91 + 648
+        val pinned = FloatingKeyboard.pinToEdges(
+            model, FloatingKeyboard.Corner.TOP_START, originRight, originBottom, 1324, appliedWinH,
+        )
+        assertEquals("拖左上角时右边缘必须不动", originRight, pinned.x + 1324)
+        assertEquals("拖左上角时下边缘必须不动（模型高被夹住也不许整块平移）", originBottom, pinned.y + appliedWinH)
+        assertEquals("只有位置被纠正，百分比不许被动", 62, pinned.heightPercent)
+        // 拖右上的角：右边缘本来就在动，只能钉下边缘
+        val topEnd = FloatingKeyboard.pinToEdges(
+            model, FloatingKeyboard.Corner.TOP_END, originRight, originBottom, 1100, appliedWinH,
+        )
+        assertEquals("拖右上角不许把右边缘拉回起点", 400, topEnd.x)
+        assertEquals("拖右上角时下边缘同样必须不动", originBottom, topEnd.y + appliedWinH)
+        // 下两角不动上边缘：y 保持 resizeTo 的值
+        val bottomEnd = FloatingKeyboard.pinToEdges(
+            model, FloatingKeyboard.Corner.BOTTOM_END, originRight, originBottom, 1100, appliedWinH,
+        )
+        assertEquals("拖下角不许改窗顶", 1200, bottomEnd.y)
+    }
+
+    @Test
+    fun 四角拉伸的尺寸定义域不许越界() {
+        val naturalW = 1440
+        val naturalH = 945
+        val handleH = 91
+        val origin = FloatingKeyboard.Geometry(0, 0, 92, 92)
+        val oldW = FloatingKeyboard.windowWidthPx(naturalW, origin.widthPercent)
+        val oldH = FloatingKeyboard.contentHeightPx(naturalH, origin.heightPercent)
+        val huge = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.BOTTOM_END, 5000, 5000, oldW, oldH, naturalW, naturalH,
+        )
+        assertEquals(
+            "宽度最多铺满屏幕（自然宽 = 屏宽）",
+            FloatingKeyboard.MAX_WIDTH_PERCENT,
+            huge.widthPercent,
+        )
+        assertEquals("高度上限", FloatingKeyboard.MAX_HEIGHT_PERCENT, huge.heightPercent)
+        val tiny = FloatingKeyboard.resizeTo(
+            origin, FloatingKeyboard.Corner.TOP_START, 5000, 5000, oldW, oldH, naturalW, naturalH,
+        )
+        assertEquals("宽度下限", FloatingKeyboard.MIN_PERCENT, tiny.widthPercent)
+        assertEquals("高度下限", FloatingKeyboard.MIN_PERCENT, tiny.heightPercent)
+        // 拉到最大后再夹位置：窗口仍要完整落在可用区内
+        val winW = FloatingKeyboard.windowWidthPx(naturalW, huge.widthPercent)
+        val winH = handleH + FloatingKeyboard.contentHeightPx(naturalH, huge.heightPercent)
+        val clamped = FloatingKeyboard.clamp(huge, 1440, 3116, winW, winH)
+        assertTrue("夹取后不得越出可用区", clamped.x >= 0 && clamped.y >= 0)
+        assertTrue("宽度不得超出屏幕", clamped.x + winW <= 1440)
+        assertTrue("高度不得超出可用区", clamped.y + winH <= 3116)
+    }
+
+    @Test
+    fun 拉伸倍率只作用在可伸缩块上() {
+        // 内容 = 固定块（候选栏 / 上边距）+ 倍率 × 可伸缩块（字母行 + 底排）
+        val chrome = 255
+        val block = 690
+        val naturalH = chrome + block
+        val plain = FloatingKeyboard.stretchFactorFor(naturalH, chrome, block)
+        assertEquals("100% 必须正好是原样", 1f, plain, 1e-4f)
+        assertEquals(
+            "100% 的内容高要逐像素回到自然高",
+            naturalH,
+            FloatingKeyboard.contentHeightFor(plain, chrome, block),
+        )
+        val taller = FloatingKeyboard.stretchFactorFor((naturalH * 1.4f).toInt(), chrome, block)
+        assertTrue("要拉高时倍率必须大于 1", taller > 1f)
+        assertTrue("倍率不得越上限", taller <= FloatingKeyboard.MAX_STRETCH)
+        assertEquals(
+            "夹取后的高度与倍率必须互逆（否则拖动与窗口尺寸对不上）",
+            (chrome + taller * block).toInt(),
+            FloatingKeyboard.contentHeightFor(taller, chrome, block),
+        )
+        assertEquals("没有可伸缩块时倍率保持 1", 1f, FloatingKeyboard.stretchFactorFor(1200, 1200, 0), 1e-4f)
+        assertEquals(
+            "拉到超出上限时钳死（不留一像素的抖动）",
+            FloatingKeyboard.MAX_STRETCH,
+            FloatingKeyboard.stretchFactorFor(99_999, chrome, block),
+            1e-4f,
+        )
+        assertEquals(
+            "压到超出下限时钳死",
+            FloatingKeyboard.MIN_STRETCH,
+            FloatingKeyboard.stretchFactorFor(1, chrome, block),
+            1e-4f,
+        )
+    }
+
+    @Test
+    fun 把手不得再有整条背板且四角默认收起() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val handle = TestSources.blockAfter(ime, "private fun buildFloatingHandle(")
+        // 用户原话：「不要用这样的超级加粗的底色矩形」—— 整条实心背板与它的半透明数值都不许回来
+        assertFalse(
+            "把手不许再铺整条底色（那是用户点名要去掉的东西）",
+            "setColor(keyboardColor(R.color.kb_bg))" in handle,
+        )
+        assertFalse("把手背板不得复位成半透明实心条", "alpha = 0xCC" in handle)
+        assertTrue(
+            "中间要留一条短条（宽度 / 粗细各一个常量）",
+            "FLOATING_PILL_WIDTH_DP" in handle && "FLOATING_PILL_HEIGHT_DP" in handle,
+        )
+        assertTrue("短条要半透明", "FLOATING_PILL_ALPHA" in handle)
+        // 用户原话是「给中间位置一个短小的半透明拖动条」：短条必须相对**整条把手**居中，
+        // 不能在「扣掉右端小字后的剩余宽」里居中（那会把短条推到面板 40% 处）
+        assertTrue("把手根必须是 FrameLayout（短条按整条宽度居中）", "FrameLayout(this)" in handle)
+        assertTrue("短条必须用 Gravity.CENTER 放在整条中间", "Gravity.CENTER," in handle)
+        assertFalse("把手不得再拆出「左侧可拖区」把短条挤偏", "dragArea" in handle)
+        // 颜色必须跟主题 / 皮肤同源：写死灰度在某几套皮肤上就是「看不见」或「一道脏印子」
+        val chrome = TestSources.blockAfter(ime, "private fun floatingChromeColor(")
+        assertTrue("取色必须走皮肤令牌", "skinColor(" in chrome)
+        assertTrue("无皮肤覆盖时回落到主题的次要文字色", "R.color.text_secondary" in chrome)
+        assertTrue(
+            "取色必须换成不透明 RGB（抹掉 alpha 却不补 FF 会让短条与小字全透明消失）",
+            "and 0x00FFFFFF" in chrome && "0xFF000000" in chrome,
+        )
+        // 视觉变细，热区不许跟着变细
+        assertTrue(
+            "整条 26dp 仍是拖动热区（视觉变细不改可拖面积）",
+            "bar.setOnTouchListener" in handle,
+        )
+        // 「回到底部」也要接同一套监听：它在拖动路径上，只靠 click 会「一拖就误收回底部」
+        assertTrue("「回到底部」必须与把手共用拖动监听", "dock.setOnTouchListener(listener)" in handle)
+        val drag = TestSources.blockAfter(ime, "private fun onFloatingHandleTouch(")
+        assertTrue(
+            "落在「回到底部」上的位移要当拖动，只有没动过才算点击",
+            "view === floatingDockView" in drag && "if (!moved) dockToBottom()" in drag,
+        )
+        // 四角：角标只画不摸（摸了就成了按键死区），手势由根容器拦截
+        val root = TestSources.blockAfter(ime, "private fun buildFloatingRoot(")
+        assertTrue(
+            "四角的角标要在内容之后添加（否则会被键盘背板盖住）",
+            "floatingCorners = buildFloatingCorners(wrapper)" in root,
+        )
+        val corners = TestSources.blockAfter(ime, "private fun buildFloatingCorners(")
+        assertTrue("四角默认必须是 GONE", "visibility = View.GONE" in corners)
+        assertFalse(
+            "角标不许接触摸（那会把「符号 / 回车」的外角变成死区）",
+            "setOnTouchListener" in corners,
+        )
+        assertEquals(
+            "四角必须真的建出四个（少一个就是一个角拖不动）",
+            4,
+            listOf("TOP_START", "TOP_END", "BOTTOM_START", "BOTTOM_END")
+                .count { "FloatingKeyboard.Corner.$it" in corners },
+        )
+        val apply = TestSources.blockAfter(ime, "private fun applyFloatingWindow(")
+        assertTrue("非悬浮态四角要收起", "floatingCorners.forEach { it.visibility = View.GONE }" in apply)
+        assertTrue("悬浮态四角才出现", "floatingCorners.forEach { it.visibility = View.VISIBLE }" in apply)
+        assertTrue("离开悬浮必须撤销行高拉伸（否则全宽键盘顶着悬浮时的键高）", "setFloatingStretch(null)" in apply)
+        assertTrue(
+            "拉伸必须真的改布局尺寸，不许用 scaleX/scaleY 假冒（会把字拉变形）",
+            "container.scaleX = scaleX" !in apply && "applyFloatingResize(" in ime,
+        )
+    }
+
+    @Test
+    fun 四角手势必须让点位先给按键() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val root = TestSources.blockAfter(ime, "private inner class FloatingRootView")
+        // 真机实测：角视图直接吃 ACTION_DOWN 时，点「符号」左下角毫无反应。
+        // 判据：按下那一帧不拦截（返回 false），只有位移超过 touchSlop 才接管
+        val downBranch = TestSources.window(root, "MotionEvent.ACTION_DOWN -> {", "}")
+        assertTrue(
+            "按下必须放行给按键（DOWN 分支不得返回 true）",
+            "return false" in downBranch && "return true" !in downBranch,
+        )
+        assertTrue("位移阈值必须用平台 touchSlop", "floatingTouchSlop" in root)
+        val moveBranch = TestSources.window(
+            root,
+            "MotionEvent.ACTION_MOVE -> {",
+            "MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL",
+        )
+        assertTrue(
+            "位移没过 touchSlop 时必须放行（否则按一下就抢走事件，键又成死区）",
+            "return false" in moveBranch,
+        )
+        // 手指移出窗口后坐标被夹在窗口边界，位移长不大 ⇒ 右 / 下角往外拉会卡死在 slop 里
+        //（真机实测：面板只能缩不能放大）。判据：贴边也允许开始缩放
+        assertTrue(
+            "贴到窗口边界也要能开始缩放（否则右 / 下角永远放不大）",
+            "pinnedOutside(ev)" in moveBranch,
+        )
+        assertTrue(
+            "位移必须从按下点算（从过阈值的那个点算恒为 0）",
+            "rawStartX = rawDownX" in root && "rawStartY = rawDownY" in root,
+        )
+        // 接管后必须重排 + 抬手落盘，否则拖完就丢
+        assertTrue("每帧要重排窗口", "applyFloatingResize(" in root)
+        assertTrue("抬手要落盘", "persistFloatingGeometry()" in root)
+        // 对边必须钉在**起点**的实际边缘上：只按「起点 ± 模型尺寸差」补位置，拉过上下限后
+        // 整块面板会跟着手指平移（真机实测顶边拖过下限后下沉 100px、尺寸不变）
+        assertTrue(
+            "拖角必须把起点对边一路传到落窗",
+            "applyFloatingResize(next, corner, start.x + originWinW, start.y + originWinH)" in root,
+        )
+        assertTrue(
+            "落窗必须把角与对边交给 pinToEdges",
+            "applyGeometryToWindow(geometry, null, corner, anchorRight, anchorBottom)" in ime,
+        )
+        // 起点尺寸取实际窗宽 / 内容高（不是百分比反算）—— 取模型值会让下边缘逐次漂移
+        assertTrue(
+            "起点尺寸必须取实际值",
+            "originWinW" in root && "originContentH" in root,
+        )
+    }
+
+    @Test
+    fun 底排图标的内边距必须随宽度收() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        val scale = TestSources.blockAfter(view, "private fun applyFloatingTextScale(")
+        // 回车键是 XML 的 padding=13dp + fitCenter：宽度收窄后内边距吃掉整个键宽，
+        // 箭头被压成 0 像素（真机 54% 宽已复现）。判据：内边距也要有基线快照并按同一倍率缩
+        assertTrue("必须给图标记一份内边距基线", "paddingLeft" in scale && "paddingRight" in scale)
+        assertTrue("内边距要按同一个 factor 缩", "setPadding(" in scale)
+        // 下限必须是真的常量：写死一个随手的小数等于没有下限（改小了仍然没人发现）
+        assertTrue(
+            "倍率下限要是常量（45% 宽时底排 5.85dp 已不可读）",
+            "const val MIN_BOTTOM_ROW_FACTOR = 0.72f" in view && "MIN_BOTTOM_ROW_FACTOR" in scale,
+        )
+        // 高度那一条轴同样是缺陷入口：100% 宽 × 60% 高时行高只剩 33dp，13dp 的内边距不变
+        // ⇒ 回车箭头只剩 7dp（真机实测整键看起来是空的）。判据：缩放系数取宽度与行高倍率的较小者
+        val stretch = TestSources.blockAfter(view, "fun setFloatingStretch(")
+        assertTrue(
+            "底排缩放必须同时受宽度与行高倍率约束（只看宽度会让矮面板上的箭头消失）",
+            "applyFloatingTextScale(minOf(widthFactor, next ?: 1f))" in stretch,
+        )
+        // 方向面板与字母行同源：拉伸改了行高，面板必须跟着（否则展开 / 收起会跳）
+        val dir = TestSources.blockAfter(view, "private fun directionRowHeightPx(")
+        assertTrue("方向面板行高必须读 letterRowPx()（含拉伸覆盖值）", "letterRowPx()" in dir)
+        assertFalse("不许再直读 prefs 键高（会绕过覆盖值）", "prefs.keyHeightDp" in dir)
+    }
+
+    @Test
+    fun 方向面板也要算进可伸缩块() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        // 面板在场上时字母行全 GONE；若「可伸缩块」按字母行计数就会算成 0，
+        // 窗口在配置变更后按自然高重排 ⇒ 拉高过的面板开一次方向就跳回 100%
+        val rows = TestSources.blockAfter(view, "fun floatingLetterRowCount(")
+        assertTrue(
+            "面板在场上要按它的行数计可伸缩块",
+            "if (directionPanelVisible) return DIRECTION_PANEL_ROWS" in rows,
+        )
+        // 常量与九宫格实际行数必须对得上：写 4 行的常量会让窗口比内容多一条空白带
+        val build = TestSources.blockAfter(view, "private fun ensureDirectionPanel(")
+        assertEquals(
+            "DIRECTION_PANEL_ROWS 必须等于九宫格实际加进去的行数",
+            3,
+            Regex("panel\\.addView\\(directionRow\\(").findAll(build).count(),
+        )
+        assertTrue(
+            "常量本身要与九宫格同值",
+            "private val DIRECTION_PANEL_ROWS = 3" in view,
+        )
+        // 面板每行总高 = letterRowPx：键高按 rowH - 4dp 落、行容器自带上下各 2dp 内边距
+        assertTrue(
+            "面板行高的减法必须留在 directionRowHeightPx（否则总高对不上 letterRowPx）",
+            "rowPx - dp(2) * 2" in TestSources.blockAfter(view, "private fun directionRowHeightPx("),
         )
     }
 }
