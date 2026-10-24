@@ -2241,7 +2241,8 @@ object PinyinEngine {
             }
         }
 
-        // 2b. 模糊音容错（默认关）：精确结果一个不动，变体一律排在其后
+        // 2b. 模糊音容错（默认关）：精确结果一个不动；变体词排在精确词与整句之后，
+        //     单音节时再让到精确单字后面（理由见出口处的 [sinkFuzzyWords]）
         val fuzzyWords = LinkedHashSet<String>(cap)
         val fuzzyChars = LinkedHashSet<String>(cap)
         if (fuzzyMask != FuzzyPinyin.NONE) {
@@ -2284,7 +2285,13 @@ object PinyinEngine {
         // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序：短输入（1~3 音节）是
         // 「精确词 → 变体词 → 整句 → 精确单字 → 变体单字」；≥4 音节时整句提到最前
         // （「整句 → 精确词 → 变体词 → 单字 → 变体单字」），其余相对次序不变。
-        words.addAll(fuzzyWords)
+        // ⚠ **单音节是唯一例外**：变体词下沉到精确单字之后（BUG.md L-1487）。单音节下变体词只覆盖
+        // 这一个音节（`la`→嗯啊、`xiang`→西安 都是连写双音词挂在相邻音节键上），证据强度远不及
+        // 「覆盖整串的多音节词」（`zongguo`→中国 靠它），却会顶掉精确单字占住 @0：打 `la` 得「嗯啊」，
+        // 空格即误上屏。混音表内的键本来就是这个次序（[reorderByMix] 把未登记的变体挪到末尾），
+        // 这里只是让表外的键与它们同口径。词频学习仍在后面重排 ⇒ 学过的变体词照样能回到组首。
+        val sinkFuzzyWords = syllables.size == 1
+        if (!sinkFuzzyWords) words.addAll(fuzzyWords)
         // 整串键（逐音节拼接）：3b 整句用的键
         val coveredKey = buildString { for (s in syllables) append(s) }
         // 3b. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
@@ -2318,6 +2325,7 @@ object PinyinEngine {
             }
         }
         words.addAll(chars)
+        if (sinkFuzzyWords) words.addAll(fuzzyWords)
         words.addAll(fuzzyChars)
         val result = words
 

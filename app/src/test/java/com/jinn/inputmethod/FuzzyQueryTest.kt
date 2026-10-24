@@ -12,7 +12,8 @@ import org.junit.Test
  *
  * 两条最要紧的契约：
  *  1. 掩码 0（出厂默认）时不产生任何变体候选 —— 关着就必须与历史行为一致；
- *  2. 打开后变体**只补不抢**：精确词 → 变体词 → 精确单字 → 变体单字（顺序见 [PinyinEngine.query]）。
+ *  2. 打开后变体**只补不抢**：精确词 → 变体词 → 精确单字 → 变体单字（顺序见 [PinyinEngine.query]）；
+ *     **单音节例外**：变体词让到精确单字之后（`BUG.md` L-1487），多音节次序不动。
  */
 class FuzzyQueryTest {
 
@@ -84,6 +85,38 @@ class FuzzyQueryTest {
         assertTrue("精确词与变体词都应在候选里：$candidates", exactWord >= 0 && fuzzyWord >= 0)
         assertTrue("变体词必须排在精确词之后：$candidates", exactWord < fuzzyWord)
         assertTrue("变体词必须排在精确单字之前：$candidates", fuzzyWord < exactChar)
+    }
+
+    @Test
+    fun `单音节输入变体词不得抢精确单字的首位`() {
+        // 回归 L-1487：掩码打开后 `la` 曾给出「嗯啊」（变体键 na 下的连写双音词）@0，空格即误上屏。
+        // 单音节下变体词只覆盖这一个音节，不该顶掉精确单字；多音节次序由上一用例钉着不动。
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = """
+                la	啦,拉,辣
+                na	那,拿,哪
+            """.trimIndent(),
+            phrases = "na\t嗯啊",
+            syllables = """
+                la
+                na
+            """.trimIndent(),
+        )
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.N_L)
+        val got = PinyinEngine.query("la").candidates
+        assertEquals("首候选必须是精确单字：$got", "啦", got.first())
+        assertTrue("变体词仍要在候选里（只补不丢）：$got", got.contains("嗯啊"))
+        assertTrue("变体词必须排在全部精确单字之后：$got", got.indexOf("嗯啊") > got.indexOf("辣"))
+
+        // 下沉只治「未学却抢位」：学过之后词频照样把它提回组首，不封死变体词的可用性
+        UserFrequency.resetForTest()
+        repeat(2) { UserFrequency.remember("嗯啊") }
+        assertEquals(
+            "学过的变体词应回到首位：${PinyinEngine.query("la").candidates}",
+            "嗯啊",
+            PinyinEngine.query("la").candidates.first(),
+        )
     }
 
     @Test
