@@ -773,6 +773,53 @@ class DocsReferenceTest {
     }
 
     /**
+     * 功能面板的**常驻键序**必须钉死（第 41 轮定位「粘贴键点了没反应」时暴露的陷阱）。
+     *
+     * 面板按钮数不是常数：`图库` 只在宿主声明可接收图片时出现、`翻译` 只在总开关打开时出现，
+     * 于是同一块屏上「粘贴」的**像素位置**会随键数改变（实测 7 键 x≈928、6 键 x≈1077）。
+     * 回归脚本一旦按固定坐标连点，就会连点三次「复制」（日志 `复制: 无选中文字`，界面零反馈），
+     * 表现与「粘贴键坏了」完全一致 —— 上一轮就是这么误判的。
+     *
+     * 这里钉的是**能被机械核对的合同**：五个常驻键恒在最前且顺序不变 ⇒ 「粘贴」恒为第 5 键（索引 4），
+     * 按**序号**定位不受键数影响，按坐标定位则必须先读键数。任何想把条件键插到「粘贴」之前、
+     * 或给常驻键换序的改动，都必须先来这里改口径（否则自动化的定位依据已经悄悄失效）。
+     */
+    @Test
+    fun 功能面板常驻键序固定且粘贴恒为第5键() {
+        val panelSrc = TestSources.codeSource("PinyinKeyboardView.kt")
+        val body = TestSources.blockAfter(panelSrc, "private fun renderFunctionPanel()")
+        // 与「功能总览的事实必须与源码一致」同一套解析口径：`label = …` 的出现顺序即按钮顺序
+        val labels = Regex("""label = ([^\n]*)""").findAll(body).mapNotNull { m ->
+            val tail = m.groupValues[1]
+            when {
+                "LABEL_TRANSLATE" in tail -> "翻译"
+                // 条件文案（剪贴板键的 返回 / 历史）：静止态是 else 分支那一个
+                "else" in tail -> Regex("\"([^\"]+)\"").findAll(tail).lastOrNull()?.groupValues?.get(1)
+                else -> Regex("\"([^\"]+)\"").find(tail)?.groupValues?.get(1)
+            }
+        }.filterNot { it == "退出" }.toList()   // 「退出」属搜索态的早退分支，不是常驻键
+
+        assertEquals(
+            "功能面板的常驻键序变了（历史/方向/全选/复制/粘贴 必须恒在最前且顺序不变）：$labels",
+            listOf("历史", "方向", "全选", "复制", "粘贴"),
+            labels.take(5),
+        )
+        assertEquals(
+            "「粘贴」必须恒为第 5 键（索引 4）：按序号定位不受键数影响，条件键插到它前面就会打偏：$labels",
+            4,
+            labels.indexOf("粘贴"),
+        )
+        assertEquals("「收起」必须恒为最右端（用户 2026-09-30 指定）：$labels", "收起", labels.last())
+        assertTrue(
+            "面板按钮数只允许 6/7/8 三态（5 个常驻 + 图库? + 翻译? + 收起），实际 ${labels.size}：$labels",
+            labels.size in 6..8,
+        )
+        // 两个条件键的开关：自动化要算键数只能靠这两处，换判据等于换合同
+        assertTrue("「图库」键的存在条件必须是宿主声明（if (hostImageCapable)）", "if (hostImageCapable)" in body)
+        assertTrue("「翻译」键的存在条件必须是总开关（if (prefs.translateEnabled)）", "if (prefs.translateEnabled)" in body)
+    }
+
+    /**
      * 可选词库包的条数必须与源码一致（2026-10-12 复核：重切包后 README 与功能总览还写着旧值）。
      *
      * 真值来自 `OptionalDicts` 的展示名（`"2级词库 +90万条短语"`）：换包时改名，真值随之更新；
