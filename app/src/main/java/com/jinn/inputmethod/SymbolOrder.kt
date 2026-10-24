@@ -38,6 +38,15 @@ object SymbolOrder {
     /** 顺序 → 持久化串 */
     fun serialize(order: List<String>): String = normalize(order).joinToString(",")
 
+    /**
+     * 这份落盘串是否等价「未设置」（空串，或与当前默认顺序等价）。
+     *
+     * 「默认顺序」不是用户信息，不能当作显式值带走：导出侧据此跳过（L-1481），导入侧据此删键而不是
+     * 过 setter 物化。判据必须是**值**而不是「键在不在」—— 排序页「恢复默认顺序」写的就是空串，
+     * 过 setter 后落盘成整串默认，键在而值等于默认（旧版导入也会造出同一状态）。
+     */
+    fun isDefault(raw: String): Boolean = serialize(parse(raw)) == serialize(DEFAULT)
+
     /** 「收藏」插回的锚点分组（旧顺序串里它就在收藏前面） */
     private const val FAVORITE_ANCHOR = "半角"
 

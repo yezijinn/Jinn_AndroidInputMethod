@@ -1599,7 +1599,17 @@ class Prefs(private val appContext: Context) {
         if (sp.contains(KEY_SKIN_LIGHT)) put(KEY_SKIN_LIGHT, lightSkin)
         if (sp.contains(KEY_SKIN_DARK)) put(KEY_SKIN_DARK, darkSkin)
         if (sp.contains(KEY_THEME_MODE)) put(KEY_THEME_MODE, themeMode)
-        put(KEY_SYMBOL_ORDER, symbolGroupOrder)
+        // ⚠ 顺序串只在用户真的排过序时才导出（2026-10-24 修 L-1481）：缺键时 getter 回落空串，
+        // 而无条件导出会把「从没排过序」写成 `""`；导入侧必经 setter（写入即归一成完整序列串）
+        // ⇒ 空串被物化成 13 组默认顺序，同一包再导出内容已变（包不幂等），将来调默认顺序这批
+        // 用户也拿不到。禁用串不套这道守卫：它的 setter 对空串仍是空串，往返恒等。
+        // `contains` 只是快路径（没写过就不必比串）：真正的判据是 [SymbolOrder.isDefault] ——
+        // 只判 contains 会漏掉「恢复默认顺序」（写空串过 setter 后落盘成整串默认，键在值等于默认，
+        // 实测 L-1481 复核），那正是同一个缺陷的另一个入口。
+        if (sp.contains(KEY_SYMBOL_ORDER)) {
+            val order = symbolGroupOrder
+            if (!SymbolOrder.isDefault(order)) put(KEY_SYMBOL_ORDER, order)
+        }
         put(KEY_SYMBOL_DISABLED_GROUPS, symbolDisabledGroups)
         // 底栏标点输出四键：默认值不平凡（全角 / 半角标点），与外观七键同款 —— 只在用户真的改过
         // 时才导出，避免把「当时的缺省」固化成显式值（否则将来调默认对这批人永久失效）。
@@ -1806,7 +1816,18 @@ class Prefs(private val appContext: Context) {
                     } ?: bad(key)
                 }
                 KEY_THEME_MODE -> asInt(v)?.let { themeMode = it; ok() } ?: bad(key)
-                KEY_SYMBOL_ORDER -> asString(v)?.let { symbolGroupOrder = it; ok() } ?: bad(key)
+                // 「默认顺序」等价未设置（L-1481）：空串 = 从没排过序；旧包的整串默认 = 排序页
+                // 「恢复默认顺序」过 setter 物化的结果。两者都删键还原，别喂给 setter ——
+                // 它写入即归一成 13 组完整序列串，等于把当时的默认固化成用户值。
+                // 与 KEY_FAVORITE_SYMBOLS 的 null 分支同一口径。
+                KEY_SYMBOL_ORDER -> asString(v)?.let { raw ->
+                    if (SymbolOrder.isDefault(raw)) {
+                        sp.edit { remove(KEY_SYMBOL_ORDER) }
+                    } else {
+                        symbolGroupOrder = raw
+                    }
+                    ok()
+                } ?: bad(key)
                 KEY_SYMBOL_DISABLED_GROUPS -> asString(v)?.let { symbolDisabledGroups = it; ok() } ?: bad(key)
                 // 标点输出：脏值（多字符 / 空白 / 未知）由 PunctOutput 归一，不会带进运行期键面
                 KEY_PUNCT_COMMA_CN -> asString(v)?.let { punctCommaCn = it; ok() } ?: bad(key)

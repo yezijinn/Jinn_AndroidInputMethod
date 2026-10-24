@@ -89,6 +89,15 @@ class ClipboardImageTest {
         assertEquals(listOf(1L), ClipboardDb.imageOverflowIds(rows, maxItems = 0, maxBytes = 20))
         // 全是收藏 ⇒ 无可删（宁可超限也不删用户明确保留的内容）
         assertTrue(ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = true) }, 1, 1).isEmpty())
+        // 收藏占满额度、只有刚采集那张是非收藏 ⇒ 候选就是它自己（L-1482，有意设计）：
+        // 额度按全部图片行计、收藏永不因容量被删，与文本侧 `trimByCount` 在同一状态下
+        // 删掉刚入库那条同一语义。改成「收藏不占名额」会让额度随收藏数无上界增长。
+        val filled = listOf(
+            ClipboardRowSize(1, 10, favorite = true, image = true),
+            ClipboardRowSize(2, 10, favorite = true, image = true),
+            ClipboardRowSize(3, 10, favorite = false, image = true),
+        )
+        assertEquals(listOf(3L), ClipboardDb.imageOverflowIds(filled, maxItems = 2, maxBytes = 0))
     }
 
     @Test

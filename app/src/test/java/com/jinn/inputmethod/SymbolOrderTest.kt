@@ -18,6 +18,16 @@ class SymbolOrderTest {
     fun 空串走默认顺序() {
         assertEquals(default, SymbolOrder.parse(""))
         assertEquals(default, SymbolOrder.parse("   "))
+        // 「默认顺序」等价「未设置」（L-1481）：导出侧据此不带走、导入侧据此删键。
+        // 判据必须是值 —— 排序页「恢复默认顺序」写空串，过 setter 后落盘的正是整串默认。
+        assertTrue("空串必须算未设置", SymbolOrder.isDefault(""))
+        assertTrue("整串默认必须算未设置", SymbolOrder.isDefault(SymbolOrder.serialize(default)))
+        // 缺组 / 乱序补全后等于默认的串同样算未设置；真排过序的不算
+        assertTrue("补全后等于默认的串也必须算未设置", SymbolOrder.isDefault(default.first()))
+        assertTrue(
+            "排过序的串不能被当成未设置（导出会丢掉用户的顺序）",
+            !SymbolOrder.isDefault(SymbolOrder.serialize(listOf("半角", "全角") + default.drop(2))),
+        )
     }
 
     /**

@@ -361,13 +361,17 @@ class PrefsBackupCoverageTest {
 
     @Test
     fun `非平凡默认值的键导出前必须问「用户改过没有」`() {
-        // 这三个键的 getter 在缺键时回落的不是平凡默认（音量 50 / 六组统一用 kbd_10 / 中档）：
-        // 无条件导出会把「当时的默认」固化成显式值，将来调默认值这批人（恰恰是从没改过的那批）
-        // 永远拿不到。两个开关的默认是 false，导出与否等价，故不在其列。
+        // 下面这些键的 getter 在缺键时回落的不是平凡默认（音量 50 / 六组统一用 kbd_10 / 中档 /
+        // 皮肤 / 主题 / 符号分组顺序）：无条件导出会把「当时的默认」固化成显式值，将来调默认值
+        // 这批人（恰恰是从没改过的那批）永远拿不到。两个开关的默认是 false，导出与否等价，故不在其列。
         val export = bodyOf("exportForBackup")
         for (key in listOf(
             "KEY_TAP_SOUND_VOLUME", "KEY_TAP_SOUND_MAP", "KEY_TAP_VIBRATE_STRENGTH",
             "KEY_SKIN_LIGHT", "KEY_SKIN_DARK", "KEY_THEME_MODE",
+            // 2026-10-24（L-1481）：缺键时 getter 回落空串，而无条件导出会让导入侧把空串喂给
+            // setter ⇒ 归一成 13 组默认顺序，等于把当时的默认固化成用户值（包还不幂等）。
+            // 守卫内还要按**值**判 `SymbolOrder.isDefault`：点过「恢复默认顺序」的落盘值就是整串默认
+            "KEY_SYMBOL_ORDER",
         )) {
             // 判据是「守卫**罩住**这次写入」，不是「文本里出现过 if (…)」—— 后者在「空守卫体 +
             // 另起一行无条件写入」下仍然成立。换成 `sp.all` 快照写法（putIfSetXxx）同样算数。
@@ -378,6 +382,42 @@ class PrefsBackupCoverageTest {
                     Regex("""putIfSet\w+\($key""").containsMatchIn(export),
             )
         }
+        // 顺序串的守卫里必须再按**值**判一次：只判 `contains` 会把「恢复默认顺序」的落盘结果
+        // （整串默认，键在）当成用户值带走 —— 实测过的同一缺陷另一个入口（L-1481 复核）。
+        val start = export.indexOf("if (sp.contains(KEY_SYMBOL_ORDER))")
+        assertTrue("导出的顺序串守卫不见了", start > 0)
+        val guard = export.substring(start, (start + 200).coerceAtMost(export.length))
+        assertTrue(
+            "顺序串的导出守卫只判了 contains：点过「恢复默认顺序」的用户仍会把整串默认带走",
+            guard.contains("SymbolOrder.isDefault("),
+        )
+    }
+
+    /**
+     * 导入侧必须把「默认顺序」认成「未设置」而不是走 setter（2026-10-24，L-1481）。
+     *
+     * 缺键时导出侧写的是空串（旧包恒如此），而 `symbolGroupOrder` 的 setter 契约是「写入即归一为
+     * 完整序列串」⇒ 空串一过 setter 就被物化成 13 组默认顺序：同一包再导出内容已变（哈希核对
+     * 备份失效），将来调整默认顺序时这批用户也被钉在旧顺序上。整串默认（排序页「恢复默认顺序」
+     * 的落盘结果 / 旧版导入造出的状态）同理，判据是 `SymbolOrder.isDefault` 而不是判空白。
+     * 行为判据要 SharedPreferences，JVM 单测里不存在（同 [CredentialStorageTest] 的口径）
+     * ⇒ 按源码形态钉。
+     */
+    @Test
+    fun `导入空顺序串必须按未设置还原`() {
+        val import = bodyOf("importFromBackup")
+        val start = import.indexOf("KEY_SYMBOL_ORDER ->")
+        assertTrue("导入侧缺 KEY_SYMBOL_ORDER 分支", start > 0)
+        val branch = import.substring(start, (start + 400).coerceAtMost(import.length))
+        assertTrue(
+            "空顺序串未按「未设置」还原（`remove(KEY_SYMBOL_ORDER)` 不见了）—— setter 会把默认顺序物化",
+            branch.contains("remove(KEY_SYMBOL_ORDER)"),
+        )
+        assertTrue(
+            "判据必须是 `SymbolOrder.isDefault`：只判空白会漏掉旧包 / 「恢复默认顺序」的整串默认",
+            branch.contains("SymbolOrder.isDefault("),
+        )
+        assertTrue("非空顺序串的赋值丢了（用户排过的顺序会导入不到）", branch.contains("symbolGroupOrder = raw"))
     }
 
     @Test
