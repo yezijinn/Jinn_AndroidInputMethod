@@ -2329,10 +2329,12 @@ object PinyinEngine {
         val realLast = allSyllables.lastOrNull()
         val lastIsFakeComplete = realLast != null &&
             partial.isEmpty() && isTruePrefixOfSyllable(realLast)
+        // 补全词要在出口保住组首（见 keepCompletionHead）；未走补全时恒为空表，出口零开销
+        var completionWords: List<String> = emptyList()
         if (partial.isNotEmpty() || lastIsFakeComplete) {
             // 3a. 词库短语补全召回（如 ni m → ni+men → 你们）：
             //    补全词插入 result 头部（优先于第 2 步已加入的单字）
-            val completionWords = queryWithCompletion(raw, syllables, partial)
+            completionWords = queryWithCompletion(raw, syllables, partial)
             // 拼音串是用户输入正文：走 V 级（默认只进 logcat 不落盘）。
             // 用 i 级时每敲一键都要在主线程 open/write/close 一次日志文件，既泄露输入又掉帧。
             // ⚠ 再包一层 [KEY_TRACE]：V 级虽不落盘，但**调用点的字符串拼接每键都要执行**
@@ -2355,7 +2357,8 @@ object PinyinEngine {
             // 补全词按「与输入同组」登记，**不是**按它真实的音节数：
             // nim → 你们（2 音节）而输入只切出 1 个音节；nihaom → 你好吗（3 音节）而输入是 2。
             // 末尾那截残码用户还没敲完，不该按音节数把它惩罚到后面去 —— 与输入同组、靠「插在
-            // 组首」保住首位才是想要的排序（见 CandidateSyllablePriorityTest）。
+            // 组首」保住首位才是想要的排序（见 CandidateSyllablePriorityTest）。出口由
+            // [keepCompletionHead] 兑现：组内词频重排不得把学过的单字顶到补全词之前。
             for (w in completionWords) syllableCounts.getOrPut(w) { syllables.size }
             result.addAll(asList)
             // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）。
@@ -2391,8 +2394,36 @@ object PinyinEngine {
         // 繁体模式下候选是繁体、词频表按简体存储（[rememberChoice] 同口径），因此按简体形式打分、
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
         // （`tradSimp ?: return word`），不按开关选重载 —— 那种分支正是「改一处忘另一处」的温床。
-        val ordered = rankWithinSyllableGroups(result, syllableCounts, syllables.size)
+        val ordered = keepCompletionHead(
+            rankWithinSyllableGroups(result, syllableCounts, syllables.size),
+            completionWords,
+        )
         return Result(ordered, syllables, partial)
+    }
+
+    /**
+     * 补全词保住组首：词频重排只能在**补全词之后**的部分内部进行。
+     *
+     * 补全词是「末尾残码也敲完了」的候选，按输入音节数登记（见上），单音节输入时与单字
+     * 落在同一组 —— 而组内第二段要按用户权重整组重排，于是学过一次的单字会被顶到补全词前：
+     * `yiq` 变成「已 一起 …」（空格即误上屏「已」）、`zhongg` 变成「中 中盖 …」。
+     * 这与上面登记的契约（补全词「插在组首」保住首位）直接冲突，也与
+     * `CandidateSyllablePriorityTest` 的意图相反（旧判据只覆盖了多音节输入 ⟹ 漏掉这一类）。
+     *
+     * 补全词恒在「与输入同音节数」组，而该组在 [rankWithinSyllableGroups] 里恒排最前，
+     * 所以「提到最前」等价于「提回本组组首」，不会跨组搬运。相对次序取重排后的次序
+     * （学过的补全词仍靠前）。**整块**一起提到前面，不是只提第一条：它们本来就是连续插在
+     * `result` 头部的一段（见上面的补全路径），拆开只会让单字混进块里。
+     *
+     * 空补全（绝大多数按键）原样返回，不建任何容器。
+     */
+    private fun keepCompletionHead(ordered: List<String>, completionWords: List<String>): List<String> {
+        if (completionWords.isEmpty() || ordered.size < 2) return ordered
+        val head = HashSet<String>(completionWords)
+        val out = ArrayList<String>(ordered.size)
+        for (c in ordered) if (c in head) out.add(c)
+        for (c in ordered) if (c !in head) out.add(c)
+        return out
     }
 
     /**

@@ -76,6 +76,44 @@ class CandidateSyllablePriorityTest {
     }
 
     @Test
+    fun `单音节输入的补全词不得被学过的单字顶掉`() {
+        // 旧判据只覆盖「输入音节数 ≥ 2」：那时单字在更低音节数组，天然排在补全词之后。
+        // 单音节输入（yiq / zhongg 这类「一个完整音节 + 一截残码」）里单字与补全词同组，
+        // 组内词频重排会把学过一次的单字顶到组首 —— 空格即误上屏（用户 2026-10-18 同类报告）。
+        PinyinEngine.loadFromTexts(
+            chars = """
+                yi	一,已,以
+                qi	起,齐,器
+                zhong	中,种,重
+                guo	国,过,果
+            """.trimIndent(),
+            phrases = """
+                yiqi	一起|一齐
+                zhongguo	中国|种过
+            """.trimIndent(),
+            syllables = """
+                yi
+                qi
+                zhong
+                guo
+            """.trimIndent(),
+        )
+        repeat(1) { UserFrequency.remember("已") }
+        val q = PinyinEngine.query("yiq")
+        assertEquals("1 音节 + 残码：补全词必须是首候选（syl=${q.syllables} part=${q.partialSyllable}）：${q.candidates}", "一起", q.candidates.first())
+        assertTrue("学过的单字不得越过补全词：${q.candidates}", q.candidates.indexOf("已") > 0)
+
+        repeat(1) { UserFrequency.remember("中") }
+        val z = PinyinEngine.query("zhongg")
+        assertEquals("补全词必须是首候选：${z.candidates}", "中国", z.candidates.first())
+        assertTrue("学过的单字不得越过补全词：${z.candidates}", z.candidates.indexOf("中") > 0)
+        // 补全块是**整段**提到组首（不是只提第一条）：块内两条都要在学过的单字之前。
+        // 只把首条提前的实现会让「中」夹在 中国 与 种过 之间，空格取首候选虽然仍对，
+        // 但块被拆开、学过的单字混进块里 —— 与「补全词连续插在头部」的拼装事实不一致。
+        assertTrue("补全块必须整段在学过的单字之前：${z.candidates}", z.candidates.indexOf("种过") < z.candidates.indexOf("中"))
+    }
+
+    @Test
     fun `预测词也要有读音`() {
         PinyinEngine.query("nihao")
         val preds = PinyinEngine.predict("你好")
