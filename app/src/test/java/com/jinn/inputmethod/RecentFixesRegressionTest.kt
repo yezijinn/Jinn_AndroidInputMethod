@@ -7374,4 +7374,24 @@ class RecentFixesRegressionTest {
         val localeRoot = openAi.split("lowercase(Locale.ROOT)").size - 1
         assertTrue("OpenAiTranslator 的三处判据都要锁 Locale（实际 $localeRoot 处）", localeRoot == 3)
     }
+
+    /**
+     * 测试框不得把正文带进实例状态（BUG.md L-1488）。
+     *
+     * `EditText` 有 id 且光标在场时，框架会把**整份正文**写进实例状态的 `android:viewHierarchyState`。
+     * 设置页测试框里有 40 万字时，`activityStopped` 的 Binder 事务即超限：真机实测 parcel 1,047,632B、
+     * 其中 `edit_ime_test` 这一条占 1,040,172B，`TransactionTooLargeException` 在**主线程**抛出，
+     * 整个输入法进程被带走（`ActivityClient.activityStopped`）。
+     *
+     * 守卫口径：`isSaveEnabled` 在**全文件只许有一个赋值且值为 false**。
+     * 只钉「出现过 false」不够 —— 后面再补一行 `isSaveEnabled = true` 时字面量照样命中，
+     * 而真值已经翻回可保存（变异实测：老写法照过）。
+     */
+    @Test
+    fun `测试框不得把正文带进实例状态`() {
+        val src = TestSources.codeSource("ReceivingEditText.kt")
+        val assigns = Regex("""isSaveEnabled\s*=\s*(\w+)""").findAll(src)
+            .map { it.groupValues[1] }.toList()
+        assertTrue("测试框必须且只能关一次视图态保存（L-1488，实际 $assigns）", assigns == listOf("false"))
+    }
 }

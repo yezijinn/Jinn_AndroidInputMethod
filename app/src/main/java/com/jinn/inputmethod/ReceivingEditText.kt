@@ -36,6 +36,15 @@ import androidx.core.view.inputmethod.InputConnectionCompat
  */
 internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditText(context, attrs) {
 
+    init {
+        // 视图态不保存（L-1488）：`EditText` 有 id 且光标在场时，框架会把**整份正文**塞进实例状态的
+        // `android:viewHierarchyState`。测试框里粘 25 万字，`activityStopped` 的 Binder 事务就超限 ——
+        // 2026-10-24 08:06 的崩溃日志实证：parcel 775,952B，`android:views` 里这一条占 768,436B，
+        // 抛 `TransactionTooLargeException` 直接把进程带走。测试框的正文没有留存价值（重建后重打即可），
+        // 关掉保存比在 Bundle 侧兜底更直接，也一并挡住「贴图 ImageSpan 进 Bundle」。
+        isSaveEnabled = false
+    }
+
     /** 解码结果回主线程的送信人：与视图附着状态无关，见 [insertImage] */
     private val mainHandler = Handler(Looper.getMainLooper())
 
