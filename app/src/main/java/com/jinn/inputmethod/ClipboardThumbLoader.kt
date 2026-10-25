@@ -34,6 +34,20 @@ internal object ClipboardThumbLoader {
     /** 在途解码的 key：并发下防同一张重复提交（与图库池同款，BUG.md L-1390） */
     private val inFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /**
+     * 「这张已在解」时挂在这里的回调，与在解的那次同批投递（BUG.md L-1489 复测实证）。
+     *
+     * 丢掉重复请求的旧写法有个坑：后一个消费者永远拿不到图。典型触发是**同一屏在解码期间重排**
+     * （改列数 / 行高、面板重开、收藏切换都会 `generation++` 重建 cell）：旧 cell 的结果被世代判据
+     * 丢弃，新 cell 的请求又被去重挡下 —— 两边的回调都没了，那一格就一直停在空白
+     * （真机日志：`@260` 连提两次，1ms 内第二次被去重）。挂在同一个 key 上，一次解码喂所有等待者。
+     *
+     * 用写时复制列表：投递侧与登记侧都不需要外部同步，遍历中途有人登记也不会抛
+     * `ConcurrentModificationException`（那会从主线程的 `Handler.post` 冒出去，等于崩进程）。
+     */
+    private val waiters =
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<(String, Bitmap) -> Unit>>()
+
     /** 主线程投递用的 Handler：提到字段，不再每次解码完成都新建（与图库池同款） */
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -67,6 +81,23 @@ internal object ClipboardThumbLoader {
     fun cached(hash: String, targetPx: Int): Bitmap? = cache.get(keyOf(hash, targetPx))
 
     /**
+     * 系统报内存紧张时把解码位图让出去（BUG.md L-1489）。
+     *
+     * 原先这份缓存**没有第二个释放点**：`ClipboardImageGridView.stopWork()` 明确不清缓存
+     * （按实例清会误伤另一处正在用的屏，见 L-1262），LRU 只在装不下时按字节上限自己淘汰
+     * ⇒ 浏览过剪贴板图片后最多 12MB（低档机 6MB）解码位图长期驻留在常驻的 IME 进程里。
+     *
+     * 清缓存不改正确性：缓存是纯派生数据，下一次 [load] 必然 miss 并重新解密解码；
+     * **已在屏幕上的位图不会消失**（由 ImageView 持有，不随缓存清空而回收），所以不会出现空白格子。
+     * 负缓存 [failedAt] 与在途登记 [inFlight] 不动：两者都不含位图，清掉反而会让坏图立刻重排解码。
+     */
+    fun releaseMemory() {
+        val before = cache.size()
+        cache.evictAll()
+        if (before > 0) Diagnostics.i(TAG, "缩略图缓存让位: 释放 ${before / 1024}KB")
+    }
+
+    /**
      * 异步取一张缩略图（解密 + 采样解码）。
      *
      * [onReady] 在主线程回调，参数是 (hash, 位图)；调用方必须用它与自己视图当前绑定的
@@ -92,14 +123,31 @@ internal object ClipboardThumbLoader {
         }
         // 在途去重（BUG.md L-1390）：cell 复用 / 快速滚动会把同一张连着提交好几次，
         // 3 条线程可能对同一张各解一次（每张含一次 Keystore 解密 + 位图解码）
-        if (!inFlight.add(key)) return
+        if (!inFlight.add(key)) {
+            // 已在解：把这次的回调挂上去，与在解的那次**同批投递**。
+            // 直接 return 会让后来的消费者空手而归（见上面 waiters 的说明）。
+            // computeIfAbsent 而不是 getOrPut：后者的「先 get 再 put」不是原子操作，
+            // 两个线程同时登记会丢掉其中一个回调 —— 正是要修的那种空白格
+            waiters.computeIfAbsent(key) { java.util.concurrent.CopyOnWriteArrayList() }.add(onReady)
+            return
+        }
         runCatching {
             pool.execute {
-                val bmp = cache.get(key) ?: decode(context, hash, key, targetPx)
+                // 解码本身抛异常（Keystore 抛错 / OOM）也要走下面的收尾分支：让任务带着异常结束的话，
+                // 这个 key 会永久留在 inFlight 里（这张图之后再也排不进去），挂上的等待者也永远收不到图
+                val bmp = runCatching { cache.get(key) ?: decode(context, hash, key, targetPx) }
+                    .onFailure { Diagnostics.w(TAG, "缩略图解码异常: ${it.javaClass.simpleName}") }
+                    .getOrNull()
                 if (bmp != null) {
-                    uiHandler.post { inFlight.remove(key); onReady(hash, bmp) }
+                    uiHandler.post {
+                        inFlight.remove(key)
+                        onReady(hash, bmp)
+                        // 同一 key 的其它等待者：同一批投递，别让它们停在空白格上（见上面 waiters）
+                        waiters.remove(key)?.forEach { cb -> runCatching { cb(hash, bmp) } }
+                    }
                 } else {
                     inFlight.remove(key)
+                    waiters.remove(key)
                 }
             }
         }.onFailure {
@@ -107,6 +155,7 @@ internal object ClipboardThumbLoader {
             // 否则表现为「某一格一直是灰块」且诊断包里查不到任何线索（与 BackgroundIo.rejected 同口径，BUG.md L-1369）
             // ⚠ 同时清在途标记：否则该 key 永久留在集合里，之后再也排不进去（比重复解码更糟）
             inFlight.remove(key)
+            waiters.remove(key)
             Diagnostics.w(TAG, "缩略图任务提交被拒（池已关闭/饱和）: ${it.javaClass.simpleName}")
         }
     }

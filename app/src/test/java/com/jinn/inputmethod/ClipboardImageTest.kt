@@ -297,9 +297,13 @@ class ClipboardImageTest {
             "text = if (imageFavOnly) TEXT_IMAGE_FAV_ALL else TEXT_IMAGE_FAV_ONLY" in
                 TestSources.codeSource("ClipboardHistoryActivity.kt"),
         )
-        // BUG.md L-1229 / L-1248：裁剪删掉图片行后回收密文文件；判据只看**图片行**且跳出写锁异步跑
+        // BUG.md L-1229 / L-1248 / L-1464：裁剪删掉图片行后回收密文文件；判据只看**实删的图片行数**
+        // （trimImages 只淘汰非收藏图片，trimFavorites 只交回其中被实删的图片行），且跳出写锁异步跑
         val dbSrc = TestSources.codeSource("ClipboardDb.kt")
-        assertTrue("裁剪回收判据只看图片行", "if (imagesTrimmed > 0) scheduleImageGc()" in dbSrc)
+        assertTrue(
+            "裁剪回收判据只看实删的图片行（两条淘汰路径之和）",
+            "if (trimImages() + trimFavorites() > 0) scheduleImageGc()" in dbSrc,
+        )
         assertTrue("回收跳出写锁异步跑", "BackgroundIo.runLong {" in dbSrc)
         assertTrue(
             "裁剪后要收孤儿文件",
@@ -803,6 +807,102 @@ class ClipboardImageTest {
             "页面必须回显实际生效值",
             "val effItem = effectiveImageItemMb(draft)" in src,
         )
+    }
+
+    /**
+     * BUG.md L-1464：收藏软上限淘汰收藏**图片**时，`.enc`/`.thumb` 两份密文会变成孤儿。
+     *
+     * 真机复现（2026-10-26，HEAD `ea7b79c`，40 张收藏图片 / 收藏条数上限 5）：保存参数触发 `trimTo`
+     * ⇒ 实删 35 行、`clipboard/` 文件数一个不少（70 个孤儿文件），要等杀掉 IME 进程重启后的启动
+     * gc 才收走。修法：判据取「两条淘汰路径的**实删图片行数**之和」。
+     */
+    @Test
+    fun 收藏软上限淘汰收藏图片也要调度孤儿回收() {
+        val db = TestSources.codeSource("ClipboardDb.kt")
+        val trimTo = TestSources.blockAfter(db, "fun trimTo(maxItems: Int, maxTotalBytes: Long)")
+        assertEquals(
+            "判据必须是两条淘汰路径的实删图片行数之和",
+            1,
+            Regex("""if \(trimImages\(\) \+ trimFavorites\(\) > 0\) scheduleImageGc\(\)""")
+                .findAll(trimTo).count(),
+        )
+        // 全类只能有「定义 + 这一个调用点」：多出来的调用点必是绕过判据调度的（L-1248 的形态）
+        assertEquals("scheduleImageGc 只能有一个调用点", 2, Regex("""scheduleImageGc\(\)""").findAll(db).count())
+        val fav = TestSources.blockAfter(db, "private fun trimFavorites(): Int")
+        assertTrue("候选查询要取回内容类型", "content_type FROM \$TABLE_ITEMS WHERE is_favorite = 1" in fav)
+        assertTrue("图片行按 content_type 判定", "image = c.getString(2) == CONTENT_TYPE_IMAGE," in fav)
+        assertTrue("要交回图片行实删数", "return imagesDeleted" in fav)
+        assertFalse("不得把总实删数当孤儿判据", Regex("""\breturn deleted\b""").containsMatchIn(fav))
+    }
+
+    /**
+     * BUG.md L-1248：收藏淘汰大多是**文本**收藏，一个孤儿文件都不产生。
+     * 若把「这轮删没删收藏」当孤儿判据，收藏常年超限的库里每次入库都会跑一轮完整 gc。
+     *
+     * 真机实证（2026-10-26，修后同款造数）：30 条收藏文本行 / 上限 5 ⇒ 一次淘汰实删 25 条、
+     * 日志 `收藏软上限淘汰: 候选 25 条，实删 25 条（其中图片 0 条）`，同轮 logcat 无任何
+     * `GC: 清理孤儿图片文件`。
+     */
+    @Test
+    fun 收藏只淘汰文本时不得调度整轮gc() {
+        val db = TestSources.codeSource("ClipboardDb.kt")
+        assertFalse("不得把总实删数当孤儿判据", "if (deleted > 0) scheduleImageGc()" in db)
+        assertFalse("不得无条件调度", Regex("""\n\s*scheduleImageGc\(\)""").containsMatchIn(db))
+        val fav = TestSources.blockAfter(db, "private fun trimFavorites(): Int")
+        assertTrue("日志要把图片条数单独报出来", "（其中图片 \$imagesDeleted 条）" in fav)
+    }
+
+    /**
+     * BUG.md L-1489：常驻 IME 进程原先不响应系统内存回调，`ClipboardThumbLoader` 那份
+     * 12MB 解码位图缓存**没有第二个释放点**（`stopWork()` 明确不清缓存，见 L-1262）。
+     *
+     * 只在真紧张的三档让位；`UI_HIDDEN` / `BACKGROUND` / `MODERATE` 是打字往返的常态信号，
+     * 每次都清等于每次开面板重解一屏缩略图。
+     */
+    @Test
+    fun 内存紧张时要释放缩略图缓存() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val trim = TestSources.blockAfter(ime, "override fun onTrimMemory(level: Int)")
+        assertTrue(
+            "只在低 / 危急 / 完全三档让位",
+            "TRIM_MEMORY_RUNNING_LOW" in trim && "TRIM_MEMORY_RUNNING_CRITICAL" in trim &&
+                "TRIM_MEMORY_COMPLETE" in trim,
+        )
+        assertFalse(
+            "常态往返档不得清缓存",
+            "TRIM_MEMORY_UI_HIDDEN" in trim || "TRIM_MEMORY_BACKGROUND" in trim ||
+                "TRIM_MEMORY_MODERATE" in trim,
+        )
+        assertTrue("要转调释放入口", "ClipboardThumbLoader.releaseMemory()" in trim)
+        assertTrue(
+            "onLowMemory 同样让位",
+            "ClipboardThumbLoader.releaseMemory()" in
+                TestSources.blockAfter(ime, "override fun onLowMemory()"),
+        )
+        val loader = TestSources.codeSource("ClipboardThumbLoader.kt")
+        val rel = TestSources.blockAfter(loader, "fun releaseMemory()")
+        assertTrue("释放要清空位图缓存", "cache.evictAll()" in rel)
+        assertFalse("负缓存不含位图、不动", "failedAt" in rel)
+        assertFalse("在途登记不动", "inFlight" in rel)
+        // 清缓存后整屏都是「miss + 重新排队」，去重那一步必须把后来的回调挂上，不能空手返回
+        // （真机上清缓存 + 切一次分类，首格就长期空白，日志里同一 key 1ms 内连提两次）
+        assertFalse("不得静默丢弃重复请求", Regex("""if \(!inFlight\.add\(key\)\) return""").containsMatchIn(loader))
+        assertTrue("重复请求要挂到在解的那次上", "waiters.computeIfAbsent(key)" in loader)
+        assertTrue("解码完成要把等待者一起喂", "waiters.remove(key)?.forEach" in loader)
+        // 等待者容器必须是写时复制：遍历中途有人登记不能抛 ConcurrentModificationException
+        // （异常会从主线程的 Handler.post 冒出去，等于崩进程）
+        assertTrue("等待者容器用写时复制", "CopyOnWriteArrayList<(String, Bitmap) -> Unit>" in loader)
+        // 解码抛异常也必须走收尾分支：否则该 key 永久留在 inFlight 里（这张图再也排不进去）、
+        // 挂上的等待者永远收不到图
+        assertTrue(
+            "解码异常要兜住并落到收尾分支",
+            "runCatching { cache.get(key) ?: decode(context, hash, key, targetPx) }" in loader &&
+                "缩略图解码异常" in loader,
+        )
+        // BUG.md L-1262 仍然是约束：按实例的退出路径不许清这份共享缓存
+        for (f in listOf("ClipboardImageGridView.kt", "ClipboardPanelView.kt", "ClipboardHistoryActivity.kt")) {
+            assertFalse("$f 不得按实例清共享缓存", "releaseMemory()" in TestSources.codeSource(f))
+        }
     }
 
 }

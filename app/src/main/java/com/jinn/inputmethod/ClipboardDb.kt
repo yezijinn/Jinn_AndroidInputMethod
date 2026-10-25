@@ -750,12 +750,14 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun trimTo(maxItems: Int, maxTotalBytes: Long) {
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
-        // 只有**图片行**被删才需要收孤儿：`trimImages` 交回的是「实删的图片行数」。
-        // 别把 `trimFavorites` 也算进来 —— 它淘汰的多是文本收藏，而「收藏常年超限」是稳定态，
-        // 一旦入判据就变成每次入库（采集 / 粘贴 / 导入）都跑一轮完整 gc（BUG.md L-1248）。
-        val imagesTrimmed = trimImages()
-        trimFavorites()
-        if (imagesTrimmed > 0) scheduleImageGc()
+        // 判据是**本轮实删的图片行数**，两条淘汰路径都算：
+        //  - [trimImages] 只淘汰非收藏图片，交回实删数；
+        //  - [trimFavorites] 按收藏软上限淘汰最旧收藏，候选里可能含收藏**图片**行，它同样只交回
+        //    「实删的图片行数」（文本收藏不计）—— 只统计前者时那批 `.enc`/`.thumb` 就成了孤儿，
+        //    要等下一次进程启动的 gc 才收（BUG.md L-1464）。
+        // 仍然**只认图片行**：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「这轮删没删收藏」
+        // 当判据，会让每次入库（采集 / 粘贴 / 导入）都可能跑一轮完整 gc（BUG.md L-1248）。
+        if (trimImages() + trimFavorites() > 0) scheduleImageGc()
     }
 
     /**
@@ -812,27 +814,41 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 收藏软上限：条数 / 字节任一超限即淘汰**最旧**收藏（用户可调，见 [ClipboardPrefs]）。
      *
-     * ⚠ 删除必须走 [deleteAnyByIds]（含收藏），**不能**用普通裁剪入口 [deleteNonFavoriteByIds]：
+     * ⚠ 删除必须走含收藏的删除入口，**不能**用普通裁剪入口 [deleteNonFavoriteByIds]：
      * 后者的 SQL 固定带 `is_favorite = 0`，用它删收藏一行都删不掉，而日志却按候选集报
      * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06 审查实证，由守卫钉住）。
+     *
+     * @return **实删的图片行数**（不是总删除数）：图库密文按行回收，[trimTo] 用它决定是否调度
+     *         孤儿 GC（BUG.md L-1464）。文本收藏被淘汰不产生任何孤儿文件，不该算进这个数 ——
+     *         否则「收藏常年超限」的库里每次入库都会跑一轮完整 gc（BUG.md L-1248）。
      */
     private fun trimFavorites(): Int {
         val prefs = ClipboardPrefs.of(appContext)
         val favRows = ArrayList<ClipboardRowSize>()
         // 字节口径：图片行按真实体积（image_bytes）算，文本行按密文长度 —— 否则一张收藏图
         // 只占 ~百字节（占位密文），收藏字节上限对图片形同虚设。收藏行只有几条~千条量级，CASE 无性能顾虑。
+        // content_type 一并取回：删完之后就查不到「哪些候选是图片行」了（下面的实删记账要用）
         readableDatabase.rawQuery(
             "SELECT id, CASE WHEN content_type = ? THEN image_bytes " +
-                "ELSE LENGTH(encrypted_content) END FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
+                "ELSE LENGTH(encrypted_content) END, content_type FROM $TABLE_ITEMS WHERE is_favorite = 1 " +
                 "ORDER BY created_at ASC, id ASC",
             arrayOf(CONTENT_TYPE_IMAGE),
-        ).use { c -> while (c.moveToNext()) favRows.add(ClipboardRowSize(c.getLong(0), c.getLong(1), true)) }
+        ).use { c ->
+            while (c.moveToNext()) {
+                favRows.add(
+                    ClipboardRowSize(
+                        c.getLong(0), c.getLong(1), favorite = true,
+                        image = c.getString(2) == CONTENT_TYPE_IMAGE,
+                    )
+                )
+            }
+        }
         val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
         if (ids.isEmpty()) return 0
         // 按**实际删除行数**记账：候选集是快照，这几毫秒里用户可能已取消收藏或删除该行
-        val deleted = deleteAnyByIds(ids)
-        Diagnostics.i(TAG, "收藏软上限淘汰: 候选 ${ids.size} 条，实删 $deleted 条")
-        return deleted
+        val (deleted, imagesDeleted) = deleteAnyCountingImages(ids, favRows)
+        Diagnostics.i(TAG, "收藏软上限淘汰: 候选 ${ids.size} 条，实删 $deleted 条（其中图片 $imagesDeleted 条）")
+        return imagesDeleted
     }
 
     /** 按条数裁剪：只统计与删除**文本**行（图片有独立张数上限，见 [trimImages]） */
@@ -941,17 +957,36 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 管理页专用：删除任意行（含收藏），不受「收藏不参与裁剪」那条不变量限制 */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
-    fun deleteAnyByIds(ids: List<Long>): Int {
-        if (ids.isEmpty()) return 0
-        var n = 0
+    fun deleteAnyByIds(ids: List<Long>): Int = deleteAnyCountingImages(ids, emptyList()).first
+
+    /**
+     * 删除任意行（含收藏），并单独回报其中**图片行**的实删数 —— 返回 (总实删数, 图片实删数)。
+     *
+     * 图片行一删，`clipboard/<hex>.enc` 与 `.thumb` 两份密文立刻变成孤儿文件，是否调度回收
+     * 由调用方按「图片实删数」决定（BUG.md L-1464）、不能按总删除数决定（BUG.md L-1248）。
+     *
+     * 逐条记账而不是按候选集计数：候选集是快照，这几毫秒里用户可能已取消收藏或删掉该行；
+     * 多报只会白跑一轮 gc，那正是 L-1248 要避免的形态。图片行集合来自 [rows] 的 `image` 标记
+     * （[trimFavorites] 的候选查询已经取回 `content_type`，不必再查一次库）。
+     */
+    private fun deleteAnyCountingImages(ids: List<Long>, rows: List<ClipboardRowSize>): Pair<Int, Int> {
+        if (ids.isEmpty()) return 0 to 0
+        val imageIds = HashSet<Long>()
+        for (row in rows) if (row.image) imageIds.add(row.id)
+        var deleted = 0
+        var images = 0
         writableDatabase.beginTransaction()
         try {
-            for (id in ids) n += writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
+            for (id in ids) {
+                val n = writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
+                deleted += n
+                if (n > 0 && id in imageIds) images++
+            }
             writableDatabase.setTransactionSuccessful()
         } finally {
             writableDatabase.endTransaction()
         }
-        return n
+        return deleted to images
     }
 
     /** 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行 */
@@ -1489,7 +1524,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * @param rows 必须按最旧在前传入（查询侧即 `ORDER BY created_at ASC`）
          * @param maxItems 条数上限；`<= 0` 视为不限制
          * @param maxBytes 字节上限；`<= 0` 视为不限制
-         * @return 应删除的 id（**含收藏**；调用方必须走 `deleteAnyByIds` 之外的含收藏删除入口）
+         * @return 应删除的 id（**含收藏**；调用方必须走含收藏的删除入口 —— `trimFavorites` 用
+         *         [deleteAnyCountingImages] 边删边记账，管理页用 [deleteAnyByIds]）
          */
         fun favoriteOverflowIds(rows: List<ClipboardRowSize>, maxItems: Int, maxBytes: Long): List<Long> {
             if (rows.isEmpty()) return emptyList()

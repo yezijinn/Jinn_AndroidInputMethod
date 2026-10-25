@@ -117,15 +117,21 @@ class ClipboardLimitsTest {
      *
      * 原实现调 `deleteByIds`（SQL 条件固定带 `is_favorite = 0`）⇒ 目标全是收藏行、一行都删不掉，
      * 日志仍按候选集报「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报。
-     * 现改用 `deleteAnyByIds`，并把普通裁剪入口改名 `deleteNonFavoriteByIds`，让误用在调用点显形。
+     * 现走 `deleteAnyCountingImages`（与 `deleteAnyByIds` 同一条 `id = ?` 删除，额外回报图片行实删数，
+     * 见 BUG.md L-1464），并把普通裁剪入口改名 `deleteNonFavoriteByIds`，让误用在调用点显形。
      */
     @Test
     fun 收藏裁剪必须走含收藏的删除入口() {
         val src = TestSources.codeSource("ClipboardDb.kt")
         val body = TestSources.blockAfter(src, "private fun trimFavorites()")
-        assertTrue("trimFavorites 必须走含收藏的删除入口", "deleteAnyByIds(ids)" in body)
+        assertTrue("trimFavorites 必须走含收藏的删除入口", "deleteAnyCountingImages(ids" in body)
         assertFalse("trimFavorites 不得复用只删非收藏的入口", "deleteNonFavoriteByIds" in body)
         assertTrue("普通裁剪入口必须带 non-favorite 语义名", "private fun deleteNonFavoriteByIds(" in src)
+        // 含收藏的删除入口只能有这一份 SQL 实现：deleteAnyByIds 只是它的薄包装
+        assertTrue(
+            "deleteAnyByIds 要复用逐条记账的实现",
+            "fun deleteAnyByIds(ids: List<Long>): Int = deleteAnyCountingImages(ids, emptyList()).first" in src,
+        )
     }
 
     // ── 解密窗口内存预算护栏 ────────────────────────────────────────────────

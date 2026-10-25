@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.Manifest
 import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -3635,6 +3636,35 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.commitComposing()
         Diagnostics.i(TAG, "onWindowHidden: 窗口隐藏 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowHidden", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
+    }
+
+    /**
+     * 系统内存回调（BUG.md L-1489）：把剪贴板缩略图缓存那份解码位图让出去。
+     *
+     * IME 是常驻进程，这份缓存（12MB，低档机 6MB）原先没有任何第二个释放点。
+     * 只在**真紧张**的三档动手：`RUNNING_LOW` / `RUNNING_CRITICAL` / `COMPLETE`。
+     * ⚠ 刻意**不含** `UI_HIDDEN`(20) / `BACKGROUND`(40) / `MODERATE`(60)，理由不是「它们常来」：
+     * ① `BACKGROUND` / `MODERATE` / `COMPLETE` 只发给 `curProcState >= PROCESS_STATE_HOME`(14) 的
+     *    缓存 / LRU 档进程（另有 heavy-weight），而本服务活着时最差也只是 perceptible ——
+     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档**结构性不可达**
+     *    （`COMPLETE` 留下只为纵深防御：真到那一档时本服务已不在）；
+     * ② `UI_HIDDEN` 是**本应用自己的页面**（设置 / 历史页）离屏，与内存压力无关；按它清等于
+     *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level == ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+        ) {
+            ClipboardThumbLoader.releaseMemory()
+        }
+    }
+
+    /** 比我方进程更早的「已无回旋余地」信号：与 [onTrimMemory] 的 COMPLETE 档同款处理 */
+    override fun onLowMemory() {
+        super.onLowMemory()
+        ClipboardThumbLoader.releaseMemory()
     }
 
     override fun onDestroy() {
