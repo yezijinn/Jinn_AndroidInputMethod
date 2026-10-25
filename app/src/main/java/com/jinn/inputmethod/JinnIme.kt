@@ -213,13 +213,28 @@ class JinnIme : InputMethodService() {
     /**
      * 本次手势里最后一次**由拖动自己**写进去的几何。
      *
-     * 与 [floatingGeometry] 不一致 ⇒ 中途有人改了几何（长按换档 / 配置变更 / 「回到底部」），
-     * 拖动基线必须跟着换，否则会拿换档前的坐标继续算位移（见 [onFloatingHandleTouch]）。
+     * 与 [floatingGeometry] 不一致 ⇒ 中途有人改了几何（长按换档 / 配置变更 / 「回到底部」）。
+     * 这时不能只换基线：换档那一刻手指往往已经落到新窗口之外，框架把局部坐标夹到窗边、
+     * `raw` 也随之失真（[FloatingKeyboard.cornerBaselineStale]），拿它续算会把窗口甩到屏底。
+     * 所以整手作废：[floatingGestureStale]。
      */
     private var floatingDragApplied: FloatingKeyboard.Geometry? = null
+
+    /**
+     * 这一手已经作废（按住期间几何被外部改写）：后续 MOVE 一律不响应，抬手也不落盘。
+     * 用户重新按一次即可 —— 那时窗口、手指与坐标三者又是同一套基准。
+     */
+    private var floatingGestureStale = false
     private var floatingTouchSlop = 0
     private var floatingDragMoved = false
     private val floatingLongPress = Runnable { cycleFloatingScale() }
+
+    /** 这次手势里换档计时器是否还挂着（位移越过半个 touchSlop 就撤，见 [onFloatingHandleTouch]） */
+    private var floatingLongPressArmed = false
+
+    /** 把手按下点（屏幕坐标）：只服务「撤换档计时器」这一条判据，不参与位移计算 */
+    private var floatingHandleDownX = 0f
+    private var floatingHandleDownY = 0f
 
     /** 普通形态的窗口参数快照（首次改窗口前抓取；恢复时只回写这五项） */
     private var defaultGravity = Int.MIN_VALUE
@@ -2448,26 +2463,45 @@ class JinnIme : InputMethodService() {
                 floatingDragOrigin = geometry
                 floatingDragApplied = geometry
                 floatingDragMoved = false
+                floatingGestureStale = false
+                floatingHandleDownX = event.rawX
+                floatingHandleDownY = event.rawY
                 ui.removeCallbacks(floatingLongPress)
                 // 长按换档只属于把手本体：「回到底部」是个按钮，长按它不该改尺寸
-                if (view !== floatingDockView) {
+                floatingLongPressArmed = view !== floatingDockView
+                if (floatingLongPressArmed) {
                     ui.postDelayed(floatingLongPress, floatingLongPressMs())
                 }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val origin = floatingDragOrigin ?: return false
-                // 手势中途几何被外部改写（长按换档、配置变更）⇒ 基线换成**此刻**的几何并重新起算。
-                // 不换的后果（真机两次复现，长按 92→62% 后手指稍动）：位移仍按换档前的 x/y 算，
-                // 窗口被甩回换档前的位置，抬手时还把旧档位写回存档 —— 屏幕上是 62%、存的是 92%。
+                // 慢拖要先撤掉换档计时器：等位移越过 touchSlop 才撤就晚了半拍 ——
+                // 60px / 900ms 的慢拖在 500ms 时只走了 33px，计时器先响，面板在拖动途中换档。
+                // 把手横贯窗口顶边，左 / 右上角的手势也先落在它身上，那两个角的慢速拉伸同样走这条判据。
+                // 换档一旦真的发生，这一手整体作废（见下面的 floatingGestureStale）。
+                if (floatingLongPressArmed &&
+                    FloatingKeyboard.handleDragCancelsLongPress(
+                        event.rawX - floatingHandleDownX,
+                        event.rawY - floatingHandleDownY,
+                        floatingTouchSlop,
+                    )
+                ) {
+                    floatingLongPressArmed = false
+                    ui.removeCallbacks(floatingLongPress)
+                }
+                // 手势中途几何被外部改写（长按换档 / 配置变更 / 方向变更）⇒ 这一手**整体作废**。
+                // 不能只换基线：换档那一刻手指常常已经落到新窗口之外，框架把局部坐标夹到窗边，
+                // `raw` 也随之变成「窗边 + 窗口偏移」而不是手指位置 —— 拿它当初基线会把窗口
+                // 一路甩到屏底（真机实测 y 1617→2288），见 FloatingKeyboard.cornerBaselineStale。
                 val current = floatingGeometry
                 if (current != null && current != floatingDragApplied) {
-                    floatingDragOrigin = current
-                    floatingDragApplied = current
-                    floatingDragRawX = event.rawX
-                    floatingDragRawY = event.rawY
+                    floatingGestureStale = true
+                    floatingLongPressArmed = false
+                    ui.removeCallbacks(floatingLongPress)
                     return true
                 }
+                if (floatingGestureStale) return true
                 val dx = (event.rawX - floatingDragRawX).toInt()
                 val dy = (event.rawY - floatingDragRawY).toInt()
                 if (!floatingDragMoved &&
@@ -2491,24 +2525,30 @@ class JinnIme : InputMethodService() {
             }
             MotionEvent.ACTION_UP -> {
                 ui.removeCallbacks(floatingLongPress)
+                floatingLongPressArmed = false
                 floatingDragOrigin = null
                 floatingDragApplied = null
                 val moved = floatingDragMoved
+                val stale = floatingGestureStale
+                floatingGestureStale = false
                 if (view === floatingDockView) {
                     // 落在「回到底部」上的**位移**是拖把手，不是点它 —— 只有没动过才算点击。
                     // 不看 movable 就会「想拖一下，浮层直接收回底部」。
-                    if (!moved) dockToBottom()
+                    // 作废的那一手也不算点击：用户按的本意是拖 / 拉，不是退出悬浮。
+                    if (!moved && !stale) dockToBottom()
                 } else {
                     // 无障碍：抬手补一次 click（该视图没有常驻点击语义，与 MicButton 同一口径）
                     view.performClick()
-                    if (moved) persistFloatingGeometry()
+                    if (moved && !stale) persistFloatingGeometry()
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 ui.removeCallbacks(floatingLongPress)
+                floatingLongPressArmed = false
                 floatingDragOrigin = null
                 floatingDragApplied = null
+                floatingGestureStale = false
                 return true
             }
         }
@@ -2548,6 +2588,12 @@ class JinnIme : InputMethodService() {
 
         /** 按下时命中的角（null = 这次手势不是从角上开始的） */
         private var armedCorner: FloatingKeyboard.Corner? = null
+
+        /**
+         * 按下那一刻的几何：手指按住期间任何人把它改掉（长按换档 / 外部重置 / 方向变更），
+         * 这一手的角臂就作废（[FloatingKeyboard.cornerBaselineStale]）。
+         */
+        private var downGeometry: FloatingKeyboard.Geometry? = null
 
         /** 手势起点（相对本视图）与接管后的起点几何 */
         private var resizing = false
@@ -2593,6 +2639,12 @@ class JinnIme : InputMethodService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!resizing) {
+                        // 几何在手指底下被换档 / 外部重置改过 ⇒ 这一手的角臂作废：
+                        // 位移基准与起点几何已经分属两套坐标，续算会把「被夹在窗边」读成「往外拉」
+                        if (FloatingKeyboard.cornerBaselineStale(downGeometry, floatingGeometry, resizing)) {
+                            resetGesture()
+                            return false
+                        }
                         if (!exceedsSlop(ev) && !pinnedOutside(ev)) return false
                         if (!beginResize()) return false
                         return true
@@ -2622,6 +2674,10 @@ class JinnIme : InputMethodService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!resizing) {
+                        if (FloatingKeyboard.cornerBaselineStale(downGeometry, floatingGeometry, resizing)) {
+                            resetGesture()
+                            return false
+                        }
                         if (!exceedsSlop(ev) && !pinnedOutside(ev)) return true
                         if (!beginResize()) return false
                     }
@@ -2645,6 +2701,7 @@ class JinnIme : InputMethodService() {
         /** 记住按下点与命中的角 */
         private fun armCorner(ev: MotionEvent): FloatingKeyboard.Corner? {
             armedCorner = cornerAt(ev.x, ev.y)
+            downGeometry = floatingGeometry
             rawDownX = ev.rawX
             rawDownY = ev.rawY
             resizing = false
@@ -2693,6 +2750,7 @@ class JinnIme : InputMethodService() {
         private fun resetGesture() {
             resizing = false
             armedCorner = null
+            downGeometry = null
             origin = null
             lastRequestedW = -1
             lastRequestedH = -1

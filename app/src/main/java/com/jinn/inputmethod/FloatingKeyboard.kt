@@ -326,6 +326,48 @@ object FloatingKeyboard {
     )
 
     /**
+     * 把手上的「拖动 vs 长按换档」判定：位移超过**半个** touchSlop 就按拖动算。
+     *
+     * 为什么不用整个 touchSlop：换档计时器是 `getLongPressTimeout()`（500ms），拖动却要等位移
+     * 越过 touchSlop（8dp = 28px @560dpi）才开始记账。手指走得慢时这两件事撞在一起 —— 真机实测
+     * 60px / 900ms 的慢拖在 500ms 时只走了 33px，计时器先响 ⇔ 面板在拖动途中**突然换档**
+     * （75% → 78%，位置也跟着算歪）。
+     *
+     * 半个 touchSlop 是这两件事的分界：按住不动的手抖通常 < 10px（≈3dp），慢拖在 200ms 就过线。
+     * 只有**把手**用它；「回到底部」不挂计时器；四角拉伸自己也不挂，但**左 / 右上角落在把手热区内**，
+     * 按下先由把手记账 ⇒ 那两个角的慢速拉伸同样走这条判据（右下 / 左下角在键区，本来就没有计时器）。
+     * 它只管「换档还没发生」的那半手：一旦计时器真的响了、几何被换掉，这一手整体作废
+     * （见 [cornerBaselineStale]），不做续算。
+     *
+     * 真机边界（`input swipe`，位移总量 / 时长 → 是否换档）：34px/900ms 判拖动、30px/900ms 仍换档；
+     * 即「计时器响那一刻」还差 3~5px 才到半个 slop（注入手势首帧有滞后）。这个阈值以下的位移
+     * **不移动窗口**（拖动门槛仍是整个 touchSlop，与平台一致）—— 14~28px 因此是「什么都没有」的死区，
+     * 比修前的「随手一拖就换档」轻，且与「不到 touchSlop 不算拖动」的既有手感一致。
+     */
+    fun handleDragCancelsLongPress(dx: Float, dy: Float, touchSlopPx: Int): Boolean {
+        val limit = (touchSlopPx / 2).coerceAtLeast(1)
+        return maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) > limit
+    }
+
+    /**
+     * 四角手势的基线是否已经失效：按下那一刻的几何与此刻不同 ⇒ 这一手的角臂作废。
+     *
+     * 为什么要作废（真机实测 2026-10-26）：把手横贯窗口顶边，**左 / 右上角落在它的热区内**，
+     * 按住 500ms 会先走「长按换档」，窗口在手指底下换了尺寸和位置。这一刻起
+     *  - [resizeTo] 的起点（`beginResize` 抓的是**换档后**的几何）与位移基准（`rawDown` 是
+     *    换档**前**的记录）分属两套坐标；
+     *  - 手指已经落到新窗口顶边之外，框架把局部坐标夹到边界、`rawY` 随之变成「窗口顶边」
+     *    （见 `JinnIme.pinnedOutside` 的注释）。上两角是 `movesTopEdge`，于是「被夹在顶边」
+     *    被读成「向下拉」⇒ 每帧缩小一点、窗口顶边再下移、下一帧夹得更狠：正反馈直到
+     *    `MIN_STRETCH` 才停（实测 75/88 换档成 78 后一路拧成宽 81 / 高 69 并存盘）。
+     *
+     * 口径：**几何在手指底下被改写（换档 / 外部重置 / 方向变更）即放弃这一手**，让用户重新按一次。
+     * 不做「按新几何续算」——手指相对新窗口的实际位置已经拿不到了（坐标被夹过），续算只能猜。
+     */
+    fun cornerBaselineStale(downGeometry: Geometry?, current: Geometry?, resizing: Boolean): Boolean =
+        !resizing && downGeometry != null && current != null && current != downGeometry
+
+    /**
      * 目标内容高 → 可伸缩块（字母行 + 底排）的倍率。
      *
      * 内容里有一块**不随拉伸变**的固定高（候选栏与上边距）：直接把整块内容乘百分比，

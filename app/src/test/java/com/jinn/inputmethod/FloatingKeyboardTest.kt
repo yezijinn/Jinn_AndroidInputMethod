@@ -176,17 +176,24 @@ class FloatingKeyboardTest {
         // 真机两次复现（竖屏 92%→62%，长按换档后手指稍有位移）：位移仍按换档前的 x/y 算 ⇒
         // 窗口被甩回换档前的位置；抬手时又把旧档位写回存档（屏幕 62%、存档 92%），
         // 下次弹键盘回到 92% ——「长按把手切换大小」等于没生效。
+        //
+        // 2026-10-26 更正口径：**不能换成新基线**。换档那一刻手指常已落到新窗口之外，框架把
+        // 局部坐标夹到窗边，`raw` 也不再等于手指位置；拿它当初基线会把窗口甩到屏底（实测
+        // y 1617→2288）。正确做法是整手作废（不响应 MOVE、不落盘），用户重按一次即可。
         val move = TestSources.blockAfter(TestSources.codeSource("JinnIme.kt"), "MotionEvent.ACTION_MOVE ->")
         assertTrue(
-            "ACTION_MOVE 必须先认出「几何被外部改写」并重取基线：current != floatingDragApplied → floatingDragOrigin = current",
-            "current != floatingDragApplied" in move && "floatingDragOrigin = current" in move,
+            "ACTION_MOVE 必须先认出「几何被外部改写」：current != floatingDragApplied",
+            "current != floatingDragApplied" in move,
         )
+        assertTrue("认出之后整手作废，不许换基线续算", "floatingGestureStale = true" in move)
+        assertTrue("作废后不再响应 MOVE（也不落盘）", "if (floatingGestureStale) return true" in move)
         assertTrue(
             "每次拖动写完窗口都要同步基线，否则下一帧会把自己刚写的位置当成「外部改写」",
             "floatingDragApplied = floatingGeometry" in move,
         )
+        assertFalse("不许再把 raw 基准挪到换档之后的点上（那是失真坐标）", "floatingDragRawX = event.rawX" in move)
         // 弱点（与其余形态钉相同）：它只能挡「删掉这段」，挡不住「条件永远为假」。
-        // 行为判据在真机：长按换档后继续拖 → 位置不跳，存档档位与屏幕一致。
+        // 行为判据在真机：长按换档后继续拖 → 窗口不动、存档停在换档后的等比档位。
     }
 
     @Test
@@ -603,8 +610,8 @@ class FloatingKeyboardTest {
         assertTrue("「回到底部」必须与把手共用拖动监听", "dock.setOnTouchListener(listener)" in handle)
         val drag = TestSources.blockAfter(ime, "private fun onFloatingHandleTouch(")
         assertTrue(
-            "落在「回到底部」上的位移要当拖动，只有没动过才算点击",
-            "view === floatingDockView" in drag && "if (!moved) dockToBottom()" in drag,
+            "落在「回到底部」上的位移要当拖动，只有没动过才算点击（作废的那一手也不算点击）",
+            "view === floatingDockView" in drag && "if (!moved && !stale) dockToBottom()" in drag,
         )
         // 四角：角标只画不摸（摸了就成了按键死区），手势由根容器拦截
         val root = TestSources.blockAfter(ime, "private fun buildFloatingRoot(")
@@ -826,5 +833,72 @@ class FloatingKeyboardTest {
         val refit = TestSources.blockAfter(view, "fun refitActivePanelHeight(")
         assertTrue("没面板时不做任何事", "if (!isPanelActive()) return" in refit)
         assertTrue("高度没变就不写 layoutParams（拖动每帧都会调）", "== target" in refit)
+    }
+
+    /**
+     * 慢速拖动把手不能触发换档（真机复现：60px / 900ms 的慢拖在 500ms 时只走 33px，
+     * 换档计时器先响 ⇒ 面板在拖动途中从 75% 跳到 78%）。
+     *
+     * 判据两半：手抖（< 半个 touchSlop）仍算「按住不动」，慢拖（越过半个 touchSlop）算拖动。
+     * ⚠ 边界格必须落在**半个与整个 slop 之间**：只钉 10px / 33px 这类两头同号的值，阈值挪到
+     * 2/3 个 slop 时旧用例仍全绿（实测），等于没钉住「半个」这个量。
+     */
+    @Test
+    fun 慢速拖动把手要先撤掉换档计时器() {
+        val slop = 28 // 8dp @ 560dpi 的实测量级；半个 = 14
+        assertFalse("按住不动的手抖不该撤计时器", FloatingKeyboard.handleDragCancelsLongPress(0f, 10f, slop))
+        assertFalse("对角抖动按最大分量判", FloatingKeyboard.handleDragCancelsLongPress(9f, -9f, slop))
+        assertFalse("正好半个 slop 仍算没动", FloatingKeyboard.handleDragCancelsLongPress(14f, 0f, slop))
+        assertTrue("过半 slop 即算拖动（与整个 slop 的分界）", FloatingKeyboard.handleDragCancelsLongPress(15f, 0f, slop))
+        assertTrue("半个与整个 slop 之间算拖动", FloatingKeyboard.handleDragCancelsLongPress(0f, 20f, slop))
+        assertTrue("慢拖 500ms 已走 33px", FloatingKeyboard.handleDragCancelsLongPress(0f, 33f, slop))
+        assertTrue("横向反向同样算拖动", FloatingKeyboard.handleDragCancelsLongPress(-20f, 0f, slop))
+        assertFalse("slop 极小时不留 0 阈值（除不尽也不能判成拖动）", FloatingKeyboard.handleDragCancelsLongPress(0f, 1f, 1))
+        // 源码接线：MOVE 里必须先撤计时器，再走位移
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val move = TestSources.blockAfter(ime, "private fun onFloatingHandleTouch(")
+        val guard = move.indexOf("handleDragCancelsLongPress(")
+        val apply = move.indexOf("moveFloatingWindow(")
+        assertTrue("手势里要接上这条判据", guard > 0)
+        assertTrue("落位移的调用必须在同一个函数里（判据不能钉在别的函数上）", apply > 0)
+        assertTrue("撤计时器必须在落位移之前", guard < apply)
+        assertTrue("抬手 / 取消都要复位", Regex("floatingLongPressArmed = false").findAll(move).count() >= 3)
+    }
+
+    /**
+     * 换档把几何换掉之后，四角手势必须**整手作废**。
+     *
+     * 真机复现（2026-10-26，`75,88` 起手、左上角 −50/−35 / 1400ms）：把手横贯顶边 ⇒ 按住 500ms
+     * 先走换档（几何变 78/78、窗口缩小并下移），此后手指落在**新窗口之外**，框架把局部坐标夹到
+     * 窗边、`raw` 变成「窗边 + 窗口偏移」；上两角是 `movesTopEdge`，于是「被夹在顶边」被读成
+     * 「向下拉」⇒ 每帧缩小、窗口顶边再下移、下一帧夹得更狠，正反馈到 `MIN_STRETCH` 才停，
+     * 最后把宽 81 / 高 69 写进存档（同一手势在修法是只撤计时器那版仍成立）。
+     */
+    @Test
+    fun 换档之后四角手势必须整手作废() {
+        val down = FloatingKeyboard.Geometry(187, 1570, 75, 88)
+        assertFalse("手指没动、几何也没变 ⇒ 角臂保留", FloatingKeyboard.cornerBaselineStale(down, down, false))
+        assertTrue("换档改了尺寸与位置 ⇒ 作废", FloatingKeyboard.cornerBaselineStale(down, FloatingKeyboard.Geometry(166, 1617, 78), false))
+        assertTrue("只挪位置也算（外部重置 / 拖动）", FloatingKeyboard.cornerBaselineStale(down, down.copy(x = 188), false))
+        assertTrue("只改高也算（四角拉伸自己写的）", FloatingKeyboard.cornerBaselineStale(down, down.copy(heightPercent = 69), false))
+        assertFalse("已经接管的手势不归它管", FloatingKeyboard.cornerBaselineStale(down, down.copy(x = 1), true))
+        assertFalse("没有按下点", FloatingKeyboard.cornerBaselineStale(null, down, false))
+        assertFalse("几何读不到", FloatingKeyboard.cornerBaselineStale(down, null, false))
+        // 源码接线：两条 MOVE 路径都要在「过 slop / 贴边」之前判基线（否则照样能从角上接管）
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val intercept = TestSources.blockAfter(ime, "override fun onInterceptTouchEvent(")
+        val touch = TestSources.blockAfter(ime, "override fun onTouchEvent(")
+        assertTrue("拦截路径先判基线", intercept.indexOf("cornerBaselineStale(") in 0 until intercept.indexOf("exceedsSlop(ev)"))
+        assertTrue("根自己的触摸路径同理", touch.indexOf("cornerBaselineStale(") in 0 until touch.indexOf("exceedsSlop(ev)"))
+        assertTrue("按下点与几何一起记", "downGeometry = floatingGeometry" in ime)
+        assertTrue("作废要复位", "downGeometry = null" in ime)
+        // 拖动侧：几何被改写时整手作废，不许拿失真的 raw 续算
+        val move = TestSources.blockAfter(ime, "private fun onFloatingHandleTouch(")
+        assertTrue(
+            "不一致分支要标记作废",
+            Regex("""current != floatingDragApplied\) \{\s*floatingGestureStale = true""").containsMatchIn(move),
+        )
+        assertTrue("作废后不再吃 MOVE", "if (floatingGestureStale) return true" in move)
+        assertEquals("raw 基准只许在 DOWN 里记一次（MOVE 里换基线就是本条缺陷）", 1, Regex("""floatingDragRawX = event\.rawX""").findAll(move).count())
     }
 }
