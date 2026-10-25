@@ -351,6 +351,31 @@ class FloatingKeyboardTest {
             "判定为真时必须把 floatingApplied 复位（否则下一轮仍以为窗口是好的）",
             "floatingApplied = false" in TestSources.blockAfter(ime, "private fun applyFloatingWindow("),
         )
+        // 方向判定必须与窗口尺寸计算同源：混用 orientation 与 displayMetrics 会在
+        // 「系统认为横屏、物理尺寸仍是竖屏」的组合下，把横屏的 864,604 坐标配上
+        // 横屏的 2240 宽落到 1440 宽的竖屏上（真机实证：窗口右边缘 3104px）。
+        val portraitFn = TestSources.blockAfter(ime, "private fun floatingIsPortrait(")
+        assertTrue(
+            "方向判据必须按 displayMetrics 的宽高比算（不能看 configuration.orientation）",
+            "widthPixels <= m.heightPixels" in portraitFn,
+        )
+        assertTrue(
+            "configuration.orientation 不得再用来选竖/横存档（两处都必须走 floatingIsPortrait）",
+            // 只查**代码**（codeSource 已剥注释）：注释里提这个名字是在解释为什么不能用它
+            TestSources.codeSource("JinnIme.kt")
+                .split("resources.configuration.orientation").size == 1,
+        )
+        // 尺寸兜底：只夹位置不够，宽超屏时右边缘会溢出（用户看到「键盘一半在屏幕外」）
+        val geometryFn = TestSources.blockAfter(ime, "private fun applyGeometryToWindow(")
+        assertTrue("窗口宽必须按屏幕宽兜底", "widthPercentOf(screenW" in geometryFn)
+        assertTrue("窗口高必须按可用高兜底", "heightPercentOf(" in geometryFn)
+        assertTrue("兜底后必须重新算窗口宽高", "safeWPercent" in geometryFn)
+        // 存档几何属于另一套屏幕时必须整份回落默认，而不是夹一下：
+        // 夹位置救不了 2240 宽的横屏几何落到 1440 竖屏（右边缘 3104px）。
+        assertTrue(
+            "存档几何越界必须回落默认几何（夹位置不够，宽度仍越界）",
+            "takeIf" in ime && "回落默认" in ime,
+        )
     }
 
     // ──────────── 四角拉伸 / 新格式 / 把手外观（2026-10-23）────────────

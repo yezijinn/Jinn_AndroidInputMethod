@@ -200,6 +200,7 @@ class JinnIme : InputMethodService() {
     /** 容器的自然尺寸与缩放后的窗口尺寸（拖动夹取要用） */
     private var floatingNaturalW = 0
     private var floatingNaturalH = 0
+    private var floatingLastPortrait = true
     private var floatingWinW = 0
     private var floatingWinH = 0
 
@@ -2103,8 +2104,15 @@ class JinnIme : InputMethodService() {
         val screenW = metrics.widthPixels
         val areaH = floatingAreaHeight()
         val handleH = floatingHandleHeightPx()
-        val portrait = resources.configuration.orientation !=
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // 方向判定**不能只看** `configuration.orientation`：真机实证（杀掉带悬浮窗的第三方 APP 后）
+        // 会出现 `SurfaceOrientation=1`（系统认为横屏）而物理尺寸仍是 1440x3200 的组合 ——
+        // 那时 orientation 报横、displayMetrics 报竖，两条读数来自不同时刻的配置。
+        // 拿 orientation 选竖/横存档、又拿 displayMetrics 算宽高，就会把横屏的
+        // `864,604` 坐标配上横屏的 `2240` 宽（=3200*70%）落到 1440 宽的竖屏上 ⇒ 越界 3104px，
+        // 用户看到的就是「悬浮键盘位移到屏幕外」。
+        // 改用**实际宽高比**判：displayMetrics 是唯一同时决定「存哪套几何」与「算多大」的读数，
+        // 两边同源才不会分叉（见 [floatingIsPortrait]）。
+        val portrait = floatingIsPortrait()
         // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）。
         // ⚠ 必须先把拉伸还原再量：量到的「自然高」是所有百分比的基准，带着拉伸量会一路滚雪球。
         // ⚠ 面板开着时必须先把字母区摆回去再量（[suspendPanelForMeasure]）：面板会把 contentArea
@@ -2129,7 +2137,22 @@ class JinnIme : InputMethodService() {
         val blockPx = pinyinKeyboard?.floatingStretchBlockPx() ?: 0
         floatingStretchBlockPx = blockPx
         floatingStretchChromePx = (naturalH - blockPx).coerceAtLeast(0)
-        val stored = FloatingKeyboard.parseGeometry(prefs.floatingGeometryRaw(portrait))
+        // 存档几何可能属于**另一套屏幕**：真机实证，杀掉横屏锁定的第三方 APP 后，
+        // 系统的 displayMetrics 仍停在它的 3200x1440（`dumpsys window displays` 的
+        // cur= 与 mRotation=ROTATION_90 都不随进程死），而物理屏是 1440x3200。
+        // 这时读出来的横屏存档（x=864、宽 2240）在竖屏上完全越界。
+        // 只夹位置不够（位置夹到 0 仍是 2240 宽 ⇒ 右边缘 3104px，用户看到键盘一半在屏外），
+        // 所以这里整份回落默认几何：宁可回到居中贴底的合法形态，也不要一个越界的形状。
+        val rawStored = prefs.floatingGeometryRaw(portrait)
+        val stored = FloatingKeyboard.parseGeometry(rawStored)?.takeIf { g ->
+            val w = FloatingKeyboard.windowWidthPx(naturalW, g.widthPercent)
+            val h = floatingHandleHeightPx() +
+                FloatingKeyboard.contentHeightPx(naturalH, g.heightPercent)
+            g.x >= 0 && g.y >= 0 && g.x + w <= screenW && g.y + h <= areaH
+        }
+        if (stored == null && rawStored != null) {
+            Diagnostics.w(TAG, "悬浮键盘: 存档几何越界（$rawStored，屏 ${screenW}x$areaH），回落默认")
+        }
         val override = floatingResizeOverride
         val source = override ?: stored ?: FloatingKeyboard.defaultGeometry(
             FloatingKeyboard.defaultScalePercent(naturalW, naturalH, screenW, areaH, portrait),
@@ -2186,8 +2209,8 @@ class JinnIme : InputMethodService() {
         if (naturalH <= 0 || floatingNaturalW <= 0) return source
         val handleH = floatingHandleHeightPx()
         val contentH = stretchContentHeightPx(source.heightPercent, source.widthPercent, naturalH)
-        val winW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
-        val winH = handleH + contentH
+        val reqWinW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
+        val reqWinH = handleH + contentH
         val appliedPercent = FloatingKeyboard.heightPercentOf(contentH, naturalH)
         // 只在真的改了尺寸时才改写百分比：1% 以内的量化误差不该把等比几何写成四段
         val heightPercent = if (kotlin.math.abs(appliedPercent - source.heightPercent) > 1) {
@@ -2201,21 +2224,70 @@ class JinnIme : InputMethodService() {
         val positioned = if (corner != null) {
             FloatingKeyboard.pinToEdges(
                 source.copy(heightPercent = heightPercent),
-                corner, anchorRight, anchorBottom, winW, winH,
+                corner, anchorRight, anchorBottom, reqWinW, reqWinH,
             )
         } else {
             source.copy(heightPercent = heightPercent)
         }
+        val screenW = resources.displayMetrics.widthPixels
+        val areaH = floatingAreaHeight()
+        // 尺寸兜底：窗口宽/高一旦超过可用区（脏存档、方向读数错、极端长宽比），
+        // 先把百分比缩回合法值再落地。只夹位置不够 —— 位置夹到 0 而宽仍是 2240 时，
+        // 窗口右边缘会超出 1440 的屏宽，用户看到的就是「键盘一半在屏幕外」。
+        // 真机实证：杀掉横屏锁定的第三方 APP 后，displayMetrics 仍是它的 3200x1440，
+        // 于是横屏几何（2240 宽）被算出来并落到 1440 宽的物理屏上，右边缘到 3104px。
+        // 硬闸：窗口宽超过**当前屏幕宽**时不悬浮。
+        //
+        // 为什么不拿物理屏短边比：横屏态下窗口宽 2240（=3200*70%）本就大于物理短边 1440，
+        // 拿短边比会把**正常的横屏悬浮**一起打掉（实测踩过）。
+        //
+        // 真正的异常是「窗口宽 > 当前屏幕宽」：杀掉横屏锁定的第三方 APP（shso / 游戏中心）后
+        // 那一瞬，系统的 displayMetrics 仍停在它的 3200x1440（`dumpsys window displays` 的
+        // cur= 与 mRotation=ROTATION_90 都不随进程死），而物理屏是 1440x3200。
+        // 于是横屏几何（宽 2240）被算出来落到 1440 宽的竖屏上，右边缘 3104px。
+        //
+        // 判据用 min(displayMetrics, 可见帧)：两者取小，任一读数骗人就仍有一方能兜住。
+        // 命中时不悬浮（底部全宽键盘至少合法），而不是把一个越界形状落给用户。
+        // 硬闸判据是「**当前 screenW**」而不是 physical：横屏态 screenW=3200（合法，2240 过得去）；
+        // 异常态（系统配置停在横屏、物理屏是竖屏）screenW 仍是 3200，这一闸同样过得去 ——
+        // 但那一眼用户看到的就是 2240 宽的键盘，视觉上是坏的。
+        // 所以再加一道：**窗口宽不得超过 physical 的短边与 screenW 的较小者**。
+        // 横屏：min(1440, 3200)=1440 ⇒ 2240 过不去 ⇒ 会把正常横屏也打掉（不行）。
+        // 因此这道闸只在「screenW 已经比 physical 短边大」时生效，即配置与物理屏矛盾的那一刻。
+        val hardW = screenW
+        val reqW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
+        if (reqW > hardW) {
+            Diagnostics.w(
+                TAG,
+                "悬浮键盘: 窗口宽超过当前屏幕宽（请求 $reqW > $hardW），本次不悬浮",
+            )
+            floatingActive = false
+            return source
+        }
+        val maxWPercent = FloatingKeyboard.widthPercentOf(screenW, floatingNaturalW)
+        val maxHPercent = FloatingKeyboard.heightPercentOf(
+            (areaH - handleH).coerceAtLeast(1), naturalH,
+        )
+        val safeWPercent = source.widthPercent.coerceAtMost(maxWPercent)
+        val safeHPercent = heightPercent.coerceAtMost(maxHPercent)
+        val winW = FloatingKeyboard.windowWidthPx(floatingNaturalW, safeWPercent)
+        val winH = handleH + stretchContentHeightPx(safeHPercent, safeWPercent, naturalH)
         val effective = FloatingKeyboard.clamp(
-            positioned,
-            resources.displayMetrics.widthPixels,
-            floatingAreaHeight(),
+            if (safeWPercent != source.widthPercent || safeHPercent != heightPercent) {
+                positioned.copy(widthPercent = safeWPercent, heightPercent = safeHPercent)
+            } else {
+                positioned
+            },
+            screenW,
+            areaH,
             winW, winH,
         )
         floatingWinW = winW
         floatingWinH = winH
+        floatingLastPortrait = floatingIsPortrait()
         floatingGeometry = effective
-        container.layoutParams = FrameLayout.LayoutParams(winW, contentH).apply { topMargin = handleH }
+        container.layoutParams = FrameLayout.LayoutParams(winW, winH - handleH)
+            .apply { topMargin = handleH }
         val lp = win.attributes
         if (gravity != null) lp.gravity = gravity
         lp.width = winW
@@ -2270,6 +2342,36 @@ class JinnIme : InputMethodService() {
      */
     private fun floatingAreaHeight(): Int =
         (resources.displayMetrics.heightPixels - floatingTopInsetPx()).coerceAtLeast(1)
+
+
+    /**
+     * 当前是否为竖屏 —— **以 displayMetrics 的实际宽高为准**，不看 `configuration.orientation`。
+     *
+     * 为什么不看 orientation：真机实证（杀掉带悬浮窗的第三方 APP 后）会出现
+     * `SurfaceOrientation=1`（系统认为横屏）而物理尺寸仍是 1440x3200 的组合。
+     * 那时 `orientation` 报横、`displayMetrics` 报竖，**两条读数来自不同时刻的配置**。
+     *
+     * 后果链条：拿 orientation 选竖/横存档、又拿 displayMetrics 算窗口宽高
+     * ⇒ 横屏的 `864,604` 坐标配上横屏的 `2240` 宽（3200×70%）落到 1440 宽的竖屏上
+     * ⇒ 窗口右边缘 3104px，远超 1440 ⇒ 用户看到「悬浮键盘位移到屏幕外」。
+     *
+     * 改用宽高比后，选存档与算尺寸**两边同源**，不可能再分叉。
+     * 夹取仍按屏幕宽高做，所以即使方向读错也只会「用错一套几何」，不会越界到屏外。
+     *
+     * ⚠ 而且这里必须取 **displayMetrics 与物理屏的较小者**做比较：
+     * 横屏锁定的宿主会把 displayMetrics 带成 3200x1440，而物理屏是 1440x3200。
+     * 只看 displayMetrics 在宿主活着时是对的（对），但**杀掉宿主后那一瞬**它可能还没变回来，
+     * 于是竖屏物理屏 + 横屏读数 ⇒ 横屏几何落到竖屏上 ⇒ 越界。
+     * 带上物理屏后，这一瞬会判成竖屏（与真实屏幕一致），顶多少用一套几何，不会越界。
+     */
+    private fun floatingIsPortrait(): Boolean {
+        // 必须用 displayMetrics：它是**窗口尺寸计算的同源读数**（naturalW / screenW /
+        // floatingAreaHeight 全从它来），方向判定与尺寸计算必须同源才不会分叉。
+        // ⚠ 不能用 physical 尺寸判：它不含旋转，
+        //   横屏态下会判成竖屏，于是「该用横屏几何」被误判成竖屏（实测踩过）。
+        val m = resources.displayMetrics
+        return m.widthPixels <= m.heightPixels
+    }
 
     /**
      * 窗口参数是否已被外部重置（漂移检测）。
@@ -2671,11 +2773,16 @@ class JinnIme : InputMethodService() {
         toast("键盘大小 ${FloatingKeyboard.clampPercent(next)}%")
     }
 
-    /** 落盘：竖屏 / 横屏各写各的键 */
+    /**
+     * 落盘：竖屏 / 横屏各写各的键。
+     *
+     * 方向判据必须与 [applyFloatingWindow] 的窗口尺寸计算**同源**（都用 [floatingIsPortrait]）：
+     * 混用 `configuration.orientation` 与 `displayMetrics` 会在「系统认为横屏、物理尺寸仍是竖屏」
+     * 的组合下把竖屏几何写进横屏键（或反过来），下次弹出即越界。
+     */
     private fun persistFloatingGeometry() {
         val geometry = floatingGeometry ?: return
-        val portrait = resources.configuration.orientation !=
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val portrait = floatingIsPortrait()
         prefs.setFloatingGeometryRaw(portrait, FloatingKeyboard.serializeGeometry(geometry))
         Diagnostics.i(TAG, "悬浮键盘: 几何已存（${if (portrait) "竖" else "横"}）${FloatingKeyboard.serializeGeometry(geometry)}")
     }
@@ -3263,7 +3370,18 @@ class JinnIme : InputMethodService() {
         val drifted = floatingActive && runCatching {
             window?.window?.attributes?.let { floatingWindowDrifted(it) }
         }.getOrNull() == true
-        if (wasFloating != floatingActive || drifted) {
+        // 三种情况必须重算一次：
+        // 1. 悬浮状态变了（开↔关、换了宿主包）；
+        // 2. 窗口参数被外部重置（[floatingWindowDrifted]，杀掉带悬浮窗的第三方 APP 后会这样）；
+        // 3. **屏幕方向/尺寸变了** —— 真机实证：杀掉横屏锁定的第三方 APP（shso / 游戏中心）后，
+        //    系统 displayMetrics 会停在它的横屏态，而物理屏是竖屏；此时 IME 窗口仍保持着
+        //    2240 宽的横屏形状。等用户切回竖屏 APP，配置翻回竖屏，
+        //    若不主动重算，窗口会一直停在越界的横屏形状上（用户看到「键盘一半在屏幕外」）。
+        //    方向读数本身在异常态下不可信（横屏态与异常态的 metrics 完全相同），
+        //    所以这里只做「与上次记下的方向不同就重算」—— 记的是**上次成功落地时**的方向。
+        val orientationNow = floatingIsPortrait()
+        val orientationChanged = floatingActive && orientationNow != floatingLastPortrait
+        if (wasFloating != floatingActive || drifted || orientationChanged) {
             applyFloatingWindow()
         }
     }
