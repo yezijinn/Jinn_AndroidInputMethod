@@ -2045,10 +2045,23 @@ class JinnIme : InputMethodService() {
         val win = dialog.window ?: return
         val lp = win.attributes
         val handle = floatingHandle
+        // 窗口参数被外部重置：曾套过悬浮态，但当前窗口已不是悬浮态（宽高掉了 / gravity 回落）。
+        // 真机实证：第三方 APP 悬浮窗在场时把它杀掉，框架会把 IME 窗口重置成
+        // `{(187,1570)(fillxwrap) gr=TOP START}` —— x/y 还是上次的，宽高参数却丢了。
+        // 此时 `floatingApplied` 仍为 true，不做这一步，下一次弹键盘会直接沿用坏窗口：
+        // 键盘内容按自然宽高撑开，用户看到的就是「悬浮键盘位移 / 变形」。
+        // 判据必须带 `floatingApplied`：默认形态的 IME 窗口同样是 fillxwrap，
+        // 不带上它会把「从未悬浮」也判成漂移，破坏「默认关闭 = 与历史逐像素一致」。
+        if (floatingApplied && floatingActive && floatingWindowDrifted(lp)) {
+            Diagnostics.w(
+                TAG,
+                "悬浮键盘: 窗口参数被外部重置（${lp.width}x${lp.height} gr=${lp.gravity}），重新套用",
+            )
+            floatingApplied = false
+        }
         if (!floatingActive) {
             // 从未悬浮过 ⇒ 窗口参数一个字节都不动（「默认关闭 = 与历史逐像素一致」的落点）
             if (!floatingApplied) return
-            ui.removeCallbacks(floatingLongPress)
             handle?.visibility = View.GONE
             floatingCorners.forEach { it.visibility = View.GONE }
             // 拉伸倍率必须一起还原：它是直接改行高的，留着会让「回到底部」后的全宽键盘
@@ -2257,6 +2270,22 @@ class JinnIme : InputMethodService() {
      */
     private fun floatingAreaHeight(): Int =
         (resources.displayMetrics.heightPixels - floatingTopInsetPx()).coerceAtLeast(1)
+
+    /**
+     * 窗口参数是否已被外部重置（漂移检测）。
+     *
+     * 只判两项：**宽高掉回框架默认值**、**gravity 不再是 TOP|START**。
+     * 不判 x/y：它们「看起来对」也可能越界，而越界由 [applyGeometryToWindow] 的夹取负责；
+     * 且 x/y 恰是用户拖动的结果，判它会与「拖动后重新套用」混淆。
+     *
+     * 为什么要单独判而不是无条件重套：重套会重新量自然高、重新读存档，
+     * 在「同一个包内连续换框」的路径上是无谓开销，还可能把用户刚拖到的位置冲掉。
+     */
+    private fun floatingWindowDrifted(lp: android.view.WindowManager.LayoutParams): Boolean {
+        if (lp.width != floatingWinW || lp.height != floatingWinH) return true
+        val want = android.view.Gravity.TOP or android.view.Gravity.START
+        return (lp.gravity and want) != want
+    }
 
     /**
      * 可用区顶边高度（px）。
@@ -3226,7 +3255,17 @@ class JinnIme : InputMethodService() {
         // 只在**状态真的变了**时动窗口：同一个包内换框不必多一次 relayout（窗口参数本就有效）。
         val wasFloating = floatingActive
         resolveFloatingState(info)
-        if (wasFloating != floatingActive) applyFloatingWindow()
+        // 不只是「状态变了」才动窗口：窗口参数可能被外部重置（见 [floatingWindowDrifted]），
+        // 那种情况状态没变但窗口已不是悬浮态。同包内换框仍不动 —— 那条路径窗口本就有效，
+        // 多套一次是无谓 relayout，还可能把用户刚拖到的位置冲掉。
+        // ⚠ 这里比 [onStartInputView] 早，window/decorView 未必已就绪 ⇒ 取不到就跳过漂移判定，
+        // 交给紧随其后的 onStartInputView 无条件重套兜住。
+        val drifted = floatingActive && runCatching {
+            window?.window?.attributes?.let { floatingWindowDrifted(it) }
+        }.getOrNull() == true
+        if (wasFloating != floatingActive || drifted) {
+            applyFloatingWindow()
+        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {

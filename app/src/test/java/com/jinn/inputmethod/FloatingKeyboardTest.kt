@@ -333,8 +333,23 @@ class FloatingKeyboardTest {
         val onStartInput = TestSources.blockAfter(ime, "override fun onStartInput(")
         assertTrue("onStartInput 也必须判定悬浮态", "resolveFloatingState(info)" in onStartInput)
         assertTrue(
-            "onStartInput 只在状态真的变了时动窗口（同包换框不该多一次 relayout）",
-            "if (wasFloating != floatingActive) applyFloatingWindow()" in onStartInput,
+            "onStartInput 只在状态变化或窗口被外部重置时才动窗口（同包换框不该多一次 relayout）",
+            "wasFloating != floatingActive || drifted" in onStartInput,
+        )
+        // 漂移判据：第三方 APP 悬浮窗在场时杀掉它，框架会把 IME 窗口重置成
+        // `(x,y)(fillxwrap)` —— x/y 还是上次的、宽高参数丢了（真机实证：1080x922 → fillxwrap）。
+        // 不识别这一项的后果是键盘内容按自然宽高撑开，用户看到「悬浮键盘位移 / 变形」。
+        val drift = TestSources.blockAfter(ime, "private fun floatingWindowDrifted(")
+        assertTrue("漂移判据必须比宽高（fillxwrap 的宽高与悬浮态不同）", "lp.width != floatingWinW" in drift)
+        assertTrue("漂移判据必须比 gravity", "lp.gravity" in drift)
+        assertTrue(
+            "漂移判据必须真的参与判定（只在正文里提到不算，必须进 if 条件）",
+            "if (floatingApplied && floatingActive && floatingWindowDrifted(lp))" in
+                TestSources.blockAfter(ime, "private fun applyFloatingWindow("),
+        )
+        assertTrue(
+            "判定为真时必须把 floatingApplied 复位（否则下一轮仍以为窗口是好的）",
+            "floatingApplied = false" in TestSources.blockAfter(ime, "private fun applyFloatingWindow("),
         )
     }
 
