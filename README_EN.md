@@ -23,6 +23,7 @@ English ｜ [中文](README.md)
 - Light/dark switching: follow system / light / dark / scheduled; each of the two slots keeps its own chosen skin, and the keyboard skin follows the switch
 - Fuzzy pinyin (off by default): 11 optional accent equivalence groups (zh⇄z, n⇄l, en⇄eng, …); when a sound misses, its alternative readings are added as extra candidates (precise candidates stay untouched and in their original order)
 - Backspace: tap deletes one char, hold keeps deleting, double-tap-then-hold also clears committed text; the ✕ on the candidate bar clears the current input
+- Floating keyboard (off by default): tick hosts on the "Floating keyboard" page — only those get a draggable floating keyboard, every other app keeps the full-width bottom keyboard. Drag the top handle to move, long-press it to switch between 62% / 78% / 92% sizes, drag any corner to resize each axis independently, and "back to bottom" returns to full width; portrait and landscape keep separate positions and sizes, and the host view is no longer pushed up
 
 **Clipboard history** (embedded panel)
 - Copies are auto-saved, AES-256-GCM encrypted into a private local DB readable only by this IME
@@ -30,6 +31,10 @@ English ｜ [中文](README.md)
 - Images: copied images are encrypted and stored like text; browse them as a grid in the "Images" category (favorites first) and tap to insert via `commitContent` (hosts that refuse get the image on the system clipboard plus a paste attempt). Long-press offers Move to gallery folder / Favorite / Delete, with copy and save-to-album (Android 10+) in the preview. The "All" list keeps a numbered placeholder row for images by default; the Clipboard settings page can show them inline instead, and can move a favorited image's plaintext original into the bound gallery folder. Images are excluded from every backup — export them to the album via "Images → Export all images"
 - Top search panel: filters history as you type, tap to paste
 - History manager page (from Clipboard settings): search / category filter / multi-select delete / import a .txt file line by line (duplicates skipped)
+
+**Keyboard feedback** (Settings → "Tap sound feedback")
+- Keystroke sounds: 16 recorded keyboard samples; each of the six key groups (text input / digits / symbols and punctuation / delete and clear / confirm key / function keys) picks one sample as its timbre; independent volume 0~100% (default 50%); "play even when muted" has its own toggle inside the page; every group can be previewed
+- Vibration: off / weak / medium / strong (default medium); delete and clear use a double-pulse pattern (the only cue when muted)
 
 **Dictionaries and learning**
 - Optional packs in Settings ("Supplement phrase dictionaries"): 400K entries built in, plus three downloadable packs — level 2 900K (recommended), level 3 700K, level 4 210K (re-split 2026-10-10); loaded only when idle, IME restarts automatically after add/removal. First use of a pack builds an index cache (see the "Storage usage" page)
