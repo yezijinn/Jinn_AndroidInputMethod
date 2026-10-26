@@ -16,9 +16,12 @@ import android.widget.Switch
 import android.widget.TextView
 
 /**
- * 「按钮圆角间隙」设置页：26 键区（3 行 28 键）统一的按键圆角、按键间隙与整块键盘的透明度。
+ * 「键盘外观」页（设置页入口按钮的文案见 `SettingsActivity.TEXT_KEY_APPEARANCE_ENTRY`）：
+ * 26 键区（3 行 28 键）的外观参数总台 —— 圆角 / 间隙 / 键高 / 候选字距 / 候选字号 / 拼音字号 /
+ * 拼音占高 / 面板透明八个滑杆，输入与显示六个开关，外加候选词行数、界面明暗切换（含定时两个时刻）
+ * 与键盘皮肤；全部控件见 activity_key_appearance.xml（2026-10-09 由设置页迁入，此后逐轮增补）。
  *
- * 从设置页「按钮圆角间隙」按钮进入；拖动即落盘（[Prefs.keyCornerDp] / [Prefs.keyGapDp] /
+ * 入口：设置页那一行按钮；拖动即落盘（[Prefs.keyCornerDp] / [Prefs.keyGapDp] /
  * [Prefs.keyTransparencyPercent]），不广播、不重启进程：
  *  - 松手时调 [JinnIme.onKeyAppearanceChanged] → 键盘正显示就即时重套外观（只改外观，不动拼音串）；
  *  - 键盘未显示时不用管：[PinyinKeyboardView] 每次弹键盘（onStartInputView → configure）都会读最新配置。

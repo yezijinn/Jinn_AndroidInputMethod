@@ -350,7 +350,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     private fun buildUi() {
-        // ── 顶栏：全部/网址/数字/收藏 + 搜索 + 清空，均分（weight=1）──
+        // ── 顶栏：全部/网址/数字/图片/收藏 + 搜索 + 清空，均分（weight=1）；
+        //    图片分类下「布局」顶替「搜索」那个键位（该分类下搜索无意义，见 selectCategory）──
         // 面板内不放「返回」：退出走键盘功能面板的「历史」键 —— 面板打开时它变成红色「返回」
         // （见 PinyinKeyboardView.renderFunctionPanel 与 showClipboardPanel）
         val topRow = LinearLayout(context).apply { orientation = HORIZONTAL }

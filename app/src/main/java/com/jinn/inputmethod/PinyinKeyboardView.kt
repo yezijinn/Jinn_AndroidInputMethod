@@ -1765,7 +1765,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 给出的值，拿上一个输入框的语言覆盖它才是错的；层与大写仍按用户手选状态复原。
         if (passwordPad) exitPasswordPad(restoreLanguage = false)
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
-        // 所以在键盘外观页（设置页 →「按钮圆角间隙」）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
+        // 所以在「键盘外观」页（KeyAppearanceActivity，设置页入口按钮的文案见
+        // SettingsActivity.TEXT_KEY_APPEARANCE_ENTRY）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
         // 键盘正显示时不走这里，外观页松手会直接调 [refreshAppearance]（见 JinnIme.onKeyAppearanceChanged）。
         // 顺序固定：① 同步皮肤（换皮肤时复位各「面」缓存）→ ② 定面透明度（用皮肤色重建各面）
         // → ③ 逐键下发皮肤视觉（依赖 ② 算出的面 alpha）→ ④ 套圆角/间隙。

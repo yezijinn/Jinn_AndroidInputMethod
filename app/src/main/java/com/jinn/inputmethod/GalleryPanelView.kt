@@ -435,9 +435,12 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 面板顶部两行：第一行目录名，第二行翻页与操作按钮。
      *
-     * 原先标题和 7 个按钮挤在同一行：标题是弹性的，被压到 0 之后按钮还会溢出屏幕 ——
+     * 原先标题和 6 个按钮（5 个翻页 / 操作键 +「自动返回」）挤在同一行：标题是弹性的，
+     * 被压到 0 之后按钮还会溢出屏幕 ——
      * 系统字体放大到 1.3 倍时按钮合计就吃满面板宽度，末尾的「自返」被推出可视区（L-1028）。
      * 拆成两行后标题独占一行、按钮按内容宽排，互不挤占。
+     * （2026-10-26 校正：台账 B-179 记作「7 个按钮」，按 2026-10-07 `ae83706` 之前那版
+     * `buildTitleRow` 数只有 5 个 `smallButton` + `autoReturnButton` = 6。）
      */
     private fun buildTitleRow(): LinearLayout = LinearLayout(context).apply {
         orientation = VERTICAL
@@ -482,7 +485,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         TextView(context).apply {
             text = label
             gravity = Gravity.CENTER
-            // 11sp + 8dp 内边距：翻页那 7 个按钮要在一行里排下（系统字体放大时也要），
+            // 11sp + 8dp 内边距：翻页那 5 个按钮（← / → / 布局 / 刷新 / 其他）要在一行里排下，
+            // 系统字体放大时也要（退出口与「自动返回」都已移出本行，见 buildTitleRow 末尾）。
             // 比剪贴板面板那套紧一档（L-1028）
             textSize = 11f
             maxLines = 1

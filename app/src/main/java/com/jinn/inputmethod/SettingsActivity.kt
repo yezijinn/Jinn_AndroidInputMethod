@@ -371,7 +371,9 @@ class SettingsActivity : ComponentActivity() {
             }
         }
         // 空格左右按钮：入口按钮（与图库入口同行），点击进入「底栏标点输出」独立页
-        // （逗号/句号字符自定义 + 空格键左右滑动移动光标开关都收在那一页里）。
+        // （逗号 / 句号字符自定义收在那一页里）。
+        // ⚠ 不要再提「空格键左右滑动移动光标开关」：那个开关已于 2026-10-16 随功能整体移除
+        // （`PunctOutputPageTest.空格移光标开关已彻底移除` 反向钉着，标点页里已无 `switch_space_cursor`）。
         findViewById<Button>(R.id.btn_space_cursor).apply {
             text = TEXT_SPACE_CURSOR
             setOnClickListener {

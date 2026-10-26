@@ -810,7 +810,8 @@ class JinnIme : InputMethodService() {
     /**
      * 执行方向控制动作（通过当前 InputConnection）。
      *
-     * 拖选状态机（NORMAL_CURSOR ↔ TEXT_SELECTION_ACTIVE）：
+     * 拖选状态机（关闭 ↔ 激活，唯一状态量是 [selectionActive]；键盘侧靠
+     * [PinyinKeyboardView.setSelectionActive] 同步那半个状态）：
      *  - 点击中心 ●：未激活 → 固定当前光标为 Anchor 并激活；已激活 → 清除选区、
      *    退出拖选、光标停在 Focus 位置（不跳回 Anchor）
      *  - 激活时方向键/行首/行末：只移动 Focus，Anchor 固定不变，

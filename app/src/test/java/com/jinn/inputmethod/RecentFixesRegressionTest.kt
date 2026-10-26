@@ -1103,6 +1103,10 @@ class RecentFixesRegressionTest {
      * ② 外观量程的 KDoc 不再复述数字（改指常量，本仓有过注释与常量分叉的先例）；
      * ③ 滑杆上界必须可达（步进除不尽时取上整，显示侧进度取整）；
      * ④ 默认端点的注释不得再指向与常量不符的地址。
+     *
+     * ⚠ 2026-10-26 起量程 / 旧名的黑名单**扫全部主源码**（`src/main` 下 102 个 `.kt` + 54 个 `.xml`），
+     * 不再只扫 `Prefs.kt`：`PinyinKey` 的外观 KDoc 就带着旧「圆角 0~24dp」活了一整年（真值 48 / 16）。
+     * 用例名沿用历史叫法 —— 台账回执（`ledger/history.md`）按名引用，改名会造出一条新的悬空引用。
      */
     @Test
     fun `配置存储面的四处收口不得回退`() {
@@ -1123,6 +1127,26 @@ class RecentFixesRegressionTest {
         for (old in listOf("0~24dp", "0~8dp", "40~80dp")) {
             assertFalse("外观量程注释不得再复述旧数字：$old", old in prefsRaw)
         }
+        // 2026-10-26（第 52 轮）：上面那条只扫 Prefs.kt，而 PinyinKey 的外观 KDoc 一直写着
+        // 旧的「圆角 0~24dp / 间隙 0~8dp」（真值 48 / 16，2026-10-09 起）—— 单文件白名单就是漏项。
+        // 改为扫**全部**主源码（含资源 XML，注释也在内）：旧的量程、从不存在过的常量名、
+        // 已过期的按钮计数都不许回来。
+        val mainDir = listOf(File("src/main"), File("app/src/main")).firstOrNull { it.isDirectory }
+            ?: error("找不到主源码目录（当前工作目录=${File("").absolutePath}）")
+        val staleText = listOf(
+            "0~24dp", "0~8dp", "40~80dp", "TEXT_LONGPRESS_LOWER_TITLE", "翻页那 7 个按钮",
+            // 2026-10-26 第 52 轮补：同批纠正的另外三处旧口径 —— 两个从没实现过的拖选状态名，
+            // 以及图库标题行「7 个按钮」（真值 6 = 5 个小键 + 自动返回，`ae83706^` 可数）。
+            "NORMAL_CURSOR", "TEXT_SELECTION_ACTIVE", "原先标题和 7 个按钮",
+        )
+        val stale = ArrayList<String>()
+        mainDir.walkTopDown()
+            .filter { it.isFile && (it.extension == "kt" || it.extension == "xml") }
+            .forEach { f ->
+                val text = f.readText()
+                for (s in staleText) if (s in text) stale.add("${f.name}: $s")
+            }
+        assertTrue("主源码里不得再出现旧的量程 / 名字 / 计数：$stale", stale.isEmpty())
         val appearRaw = TestSources.rawSource(
             "src/main/java/com/jinn/inputmethod/KeyAppearance.kt",
             "app/src/main/java/com/jinn/inputmethod/KeyAppearance.kt",

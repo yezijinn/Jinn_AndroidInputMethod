@@ -121,7 +121,8 @@ import kotlin.math.min
         /**
          * 键面外观：圆角半径 + 四边内缩（像素）。
          *
-         * 数值来自设置页的 [KeyAppearance] 参数（圆角 0~24dp / 间隙 0~8dp），
+         * 数值来自 [KeyAppearance] 参数（定义域 圆角 0~48dp / 间隙 0~16dp，见
+         * `KeyAppearance.MAX_CORNER_DP` / `MAX_GAP_DP`，`KeyAppearanceTest` 钉着上界），
          * 由 [PinyinKeyboardView] 在初始化与每次弹键盘时统一套用（见
          * `applyKeyAppearance`）。这里刻意不持有默认常量：26 个字母键必须与
          * 同一行的大写键、删除键用同一组数值，任何一处自己写死就会错位。

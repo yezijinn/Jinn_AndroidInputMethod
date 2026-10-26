@@ -651,7 +651,7 @@ internal object TranslationClient {
      *
      * 别处不要再用 `body.length` 当「长度」打印：那是 UTF-16 字符数，与字节口径相差 2~3 倍
      * （中文响应），两个数并排出现在一行日志里会让人按字符数去解释截断标记，方向正好相反
-     *（2026-10-02 修复 L-467）。
+     *（2026-10-02 修复；口径现由 [bodyBytes] 与 [isBodyCapped] 共用一处，不再逐处换算）。
      */
     private fun bodyBytes(body: String?): Long =
         body?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L
