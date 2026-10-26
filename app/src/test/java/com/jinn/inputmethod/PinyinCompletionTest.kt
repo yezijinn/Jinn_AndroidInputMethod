@@ -289,4 +289,41 @@ class PinyinCompletionTest {
         val result = PinyinEngine.query("hello")
         assertTrue("候选数不应超过上限: ${result.candidates.size}", result.candidates.size <= 100)
     }
+
+    // ── 7. 补全路径的用户词频重排 ─────────────────────────
+
+    /**
+     * 补全路径也要「先按用户权重重排、再截 12」（BUG.md L-1486）。
+     *
+     * 修前 `words.take(MAX_PHRASES)` 先截断、`UserFrequency` 完全不参与 ⇒ 学过的长尾词
+     * （原序 13 名之后）在补全路径永远进不了候选，而敲完整键能进 —— 同一批词两条路给两个
+     * 集合，学习成果对补全无效。
+     *
+     * 判据用**同一个键 14 个词**：未学习时第 14 名被截掉；注入权重之后它必须出现，
+     * 且结果条数仍是 12（证明是「重排后截断」而不是「抬高上限」）。
+     */
+    @Test
+    fun 补全候选也要按用户词频重排() {
+        val tails = listOf("妈", "马", "麻", "玛", "码", "蚂", "骂", "嘛", "埋", "买", "卖", "迈", "麦", "脉")
+        val words = tails.map { "你$it" }
+        val chars = "ni\t你\nma\t妈,马,麻\n"
+        // 短语表是「一行一个键、词用 | 分隔」：14 个词挂在同一个键 nima 下
+        val phrases = "nima\t" + words.joinToString("|") + "\n"
+        val syllables = "a\nm\nni\nma\n"
+        UserFrequency.resetForTest()
+        try {
+            PinyinEngine.loadFromTexts(chars, phrases, syllables)
+            val before = PinyinEngine.queryWithCompletion("nim")
+            assertTrue("取不到补全候选（夹具失效）: $before", before.isNotEmpty())
+            assertTrue("前 12 名必须在: $before", before.containsAll(words.take(12)))
+            assertTrue("第 14 名不该挤进前 12: $before", !before.contains(words.last()))
+            // 学它一次（权重 > 0 即高于全部未学词）
+            UserFrequency.putForTest(words.last(), 1.0, 0)
+            val after = PinyinEngine.queryWithCompletion("nim")
+            assertTrue("学过的长尾词必须在补全候选里: $after", after.contains(words.last()))
+            assertEquals("重排只动次序、不动条数: $before → $after", before.size, after.size)
+        } finally {
+            UserFrequency.resetForTest()
+        }
+    }
 }

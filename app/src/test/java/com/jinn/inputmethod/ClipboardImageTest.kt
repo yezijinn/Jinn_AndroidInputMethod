@@ -724,7 +724,7 @@ class ClipboardImageTest {
         val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
         assertTrue("图片参数要有卡片与开关", "TEXT_IMAGE_TITLE" in page && "TEXT_IMAGE_ENABLED" in page)
         assertTrue("图片参数要进草稿模型", "val imageMaxItemMb: Int," in page)
-        assertTrue("保存仍走原子入口", "imageMaxTotalMb = effective.imageMaxTotalMb," in page)
+        assertTrue("保存仍走原子入口", "imageMaxTotalMb = target.imageMaxTotalMb," in page)
         assertTrue("收紧判定要含图片预算（保存会真删）", "draft.imageMaxTotalMb < snapshot.imageMaxTotalMb" in page)
     }
 
@@ -787,26 +787,49 @@ class ClipboardImageTest {
     }
 
     /**
-     * 图片「单张上限」必须受「总量上限」压制：两项各调各的会凑出矛盾组合
-     * （单张 50MB + 总量 10MB）⇒ 一张 20MB 的图入库即被 trimImages 按字节预算删掉，
-     * 而面板 / 网格 / Toast 全无提示，用户只看到「复制图片没反应」。
-     * 与收藏体积（effectiveFavMb）同款：保存时钳制 + 页面回显实际生效值。
+     * 图片「单张上限」必须受「总量上限」压制，且**压制只许算在读侧**（BUG.md L-1463）。
+     *
+     * 两项各调各的会凑出矛盾组合（单张 50MB + 总量 10MB）⇒ 一张 20MB 的图入库即被 trimImages
+     * 按字节预算删掉，而面板 / 网格 / Toast 全无提示，用户只看到「复制图片没反应」。
+     *
+     * 压制原先在**保存时**写回盘上 —— 那会把用户设的原值改成钳制值：之后把总量调大也再回不到 50，
+     * 备份包带出去的也是那个残值。收藏体积早就相反（存原值、读侧 `effectiveFavoriteMaxMb`，
+     * BUG.md L-982 / L-988 就是这么定的），本条与它对齐。
      */
     @Test
     fun imageItemCapIsClampedByTotal() {
         val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
         assertTrue(
             "单张必须有生效值（受总量钳制）",
-            "private fun effectiveImageItemMb(d: Draft): Int = minOf(d.imageMaxItemMb, d.imageMaxTotalMb)" in src,
+            "private fun effectiveImageItemMb(d: Draft): Int" in src &&
+                "ClipboardPrefs.effectiveImageMaxItemMbOf(d.imageMaxItemMb, d.imageMaxTotalMb)" in src,
         )
         assertTrue(
-            "保存必须写生效值而不是原值",
-            "imageMaxItemMb = effective.imageMaxItemMb," in src,
+            "保存必须写原值（写生效值 = 用户原值真丢）",
+            "imageMaxItemMb = target.imageMaxItemMb," in src,
         )
         assertTrue(
             "页面必须回显实际生效值",
             "val effItem = effectiveImageItemMb(draft)" in src,
         )
+        // 纯函数真跑：压制在、原值不被写坏、越界值按定义域收口
+        assertEquals(10, ClipboardPrefs.effectiveImageMaxItemMbOf(50, 10))
+        assertEquals(50, ClipboardPrefs.effectiveImageMaxItemMbOf(50, 500))
+        assertEquals(2, ClipboardPrefs.effectiveImageMaxItemMbOf(2, 200))
+        // 采集侧读入即止的字节上限必须走生效值，否则压制只剩回显、实际仍收 50MB 的图
+        val prefs = TestSources.codeSource("ClipboardPrefs.kt")
+        assertTrue(
+            "imageMaxItemBytes 必须按生效值算",
+            "val imageMaxItemBytes: Long get() = effectiveImageMaxItemMb * 1024L * 1024L" in prefs,
+        )
+        // 「跳过超上限」那条 W 日志同理要报生效值（2026-10-27 独立审计）：
+        // 报原值会把「图片总量设小了」说成「单张设小了」，与 L-1475 同型的归因错
+        val save = TestSources.blockAfter(
+            TestSources.codeSource("ClipboardController.kt"),
+            "private fun saveImageFromUri(",
+        )
+        assertTrue("跳过日志必须报生效上限", "生效上限 \${prefs.effectiveImageMaxItemMb}MB" in save)
+        assertFalse("跳过日志不得只报原值", "上限 \${prefs.imageMaxItemMb}MB" in save)
     }
 
     /**

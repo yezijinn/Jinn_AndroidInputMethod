@@ -6447,25 +6447,48 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 图片单张上限的钳制必须是**单点**且盘上/快照/草稿三者同源。
+     * 图片单张上限的钳制只许活在**读侧**（BUG.md L-1463）。
      *
-     * 只把钳制值传给 applyDraft、而 snapshot 仍记未钳制的 draft，会在保存后旋转时让 isDirty()
-     * 误报「有未保存的改动」（盘上 10 vs 草稿 50），用户点保存等于原地踏步、点丢弃丢其它项。
+     * 旧写法在保存时把 `min(单张, 图片总量)` 写回盘上：设「单张 50 + 总量 10」保存后盘上变 10，
+     * 之后把总量调回 500，用户的 50 再也回不来（备份包带出去的也是那个残值）。
+     * 与收藏体积（`effectiveFavoriteMaxMb`）相反的两套口径必须收成一套：写侧存原值、读侧算生效值。
+     *
+     * 判据三段：① 保存路径不得再把钳制值写回；② 落盘传的是原值、快照同源；
+     * ③ 生效值只在 `ClipboardPrefs` 一处算（采集侧走它见 `ClipboardImageTest.imageItemCapIsClampedByTotal`）。
      */
     @Test
-    fun imageItemClampMustBeSinglePointAndSelfConsistent() {
+    fun imageItemClampMustLiveOnReadSideOnly() {
         val src = TestSources.codeSource("ClipboardCustomizeActivity.kt")
-        assertTrue(
-            "必须先归一草稿再落盘",
-            "val effective = if (effItemMb == target.imageMaxItemMb) target" in src,
+        val save = blockAfter(src, "private fun doSave()")
+        assertFalse(
+            "保存路径不得再把钳制值写回盘上（L-1463 的成因）",
+            "copy(imageMaxItemMb" in save,
         )
+        assertTrue("落盘必须传用户原值", "imageMaxItemMb = target.imageMaxItemMb" in save)
+        assertTrue("快照与草稿都按原值同源", "snapshot = target" in save)
+        // 回显用的生效值仍然只算一处
         assertTrue(
-            "快照必须是钳制后的值",
-            "snapshot = effective" in src,
+            "回显取生效值必须走 ClipboardPrefs 那一个纯函数",
+            "ClipboardPrefs.effectiveImageMaxItemMbOf(d.imageMaxItemMb, d.imageMaxTotalMb)" in src,
         )
+        val prefs = TestSources.codeSource("ClipboardPrefs.kt")
         assertTrue(
-            "草稿也要跟着归一（onSaveInstanceState 存的是它）",
-            "draft = effective" in src,
+            "生效值只许在 ClipboardPrefs 算",
+            "fun effectiveImageMaxItemMbOf(raw: Int, totalMb: Int): Int" in prefs,
+        )
+        // 真跑一遍纯函数：压制在，且原值本身没被写坏（同一个 raw 换个总量就回来）
+        assertEquals(10, ClipboardPrefs.effectiveImageMaxItemMbOf(20, 10))
+        assertEquals(20, ClipboardPrefs.effectiveImageMaxItemMbOf(20, 200))
+        // 落盘入口（`applyDraft`）同样只许按**定义域**钳：谁把它改成按图片总量钳，
+        // 「写侧不存残值」这条就又破了，而 `doSave` 上那几条判据一条都不会红（2026-10-27 审计补）
+        val itemWriteLine = TestSources.lineOf(prefs, "KEY_IMAGE_MAX_ITEM_MB, imageMaxItemMb")
+        assertTrue(
+            "图片单张落盘要按定义域钳",
+            "coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB)" in itemWriteLine,
+        )
+        assertFalse(
+            "落盘不得再按图片总量钳（按总量钳 = 原值仍会丢）",
+            "imageMaxTotalMb" in itemWriteLine,
         )
     }
 
@@ -7453,5 +7476,80 @@ class RecentFixesRegressionTest {
         val assigns = Regex("""isSaveEnabled\s*=\s*(\w+)""").findAll(src)
             .map { it.groupValues[1] }.toList()
         assertTrue("测试框必须且只能关一次视图态保存（L-1488，实际 $assigns）", assigns == listOf("false"))
+    }
+
+    /**
+     * 空候选时丢掉整串拼音必须留下 **release 可见** 的痕迹（BUG.md L-1448）。
+     *
+     * 冷启动词库尚未就绪时收起键盘，`commitComposing` 走的正是这条分支：原先只有
+     * `if (Diagnostics.KEY_TRACE) Diagnostics.v(...)`，而 `KEY_TRACE = BuildConfig.DEBUG` ⇒
+     * 用户装上正式包后「打的字消失」与「日志里什么都没有」同时成立，两侧都无从追查。
+     *
+     * 判据同时钉住**隐私面**：只许记长度，不得把拼音原文写进日志（日志可外发）。
+     */
+    @Test
+    fun `提交时丢拼音串必须留痕且不记原文`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "fun commitComposing()")
+        assertTrue(
+            "空候选分支必须用 W 级：v 级在 release 里看不见（L-1448）",
+            "Diagnostics.w(TAG, \"commitComposing: 无候选，丢弃拼音串" in body,
+        )
+        assertTrue("日志必须带长度（长度是唯一可外发的形态）", "composing.length" in body)
+        assertFalse("不得把拼音原文写进日志（旧写法 `丢弃拼音 \$composing`）", "丢弃拼音 " in body)
+        assertFalse(
+            "该分支不得再挂在 KEY_TRACE 闸下",
+            "KEY_TRACE) Diagnostics.v(TAG, \"commitComposing" in body,
+        )
+    }
+
+    /**
+     * 销毁路径等台账落盘必须有上限（BUG.md L-1451）。
+     *
+     * `SelectionLedger.flush()` 内部 `Future.get(FLUSH_TIMEOUT_MS = 2s)`，而 `onDestroy` 跑在
+     * **主线程**：密钥库不可用或队列压着批量导入时，切走键盘 / 关输入法等于一次 ANR 级卡顿。
+     * 写盘本身在台账的 writer 线程上，销毁路径少等不会丢行 ⇒ 只该限时，不该无限等。
+     *
+     * 判据取「调用点 + 参数常量 + 常量值」三处：只钉调用点的话，把常量改成 2000 照样绿。
+     */
+    @Test
+    fun `销毁路径的台账落盘必须限时`() {
+        val ime = codeOf("JinnIme.kt")
+        val body = blockAfter(ime, "override fun onDestroy()")
+        assertTrue(
+            "onDestroy 必须用限时 flush（无参 = 主线程等满 2s）",
+            "SelectionLedger.flush(FLUSH_ON_DESTROY_MS)" in body,
+        )
+        assertFalse("不得再用无参 flush（L-1451 的成因）", "SelectionLedger.flush()" in body)
+        val ledger = codeOf("SelectionLedger.kt")
+        assertTrue(
+            "flush 必须接受超时参数（默认值仍是 FLUSH_TIMEOUT_MS）",
+            "fun flush(timeoutMs: Long = FLUSH_TIMEOUT_MS): Boolean" in ledger,
+        )
+        val ms = Regex("""FLUSH_ON_DESTROY_MS = (\d+)L""").find(ime)?.groupValues?.get(1)?.toInt()
+        assertTrue("找不到 FLUSH_ON_DESTROY_MS 的值", ms != null)
+        assertTrue("销毁路径的等待上限过大（$ms ms，应 ≤ 500）", (ms ?: Int.MAX_VALUE) <= 500)
+    }
+
+    /**
+     * 空白剪贴板内容被丢弃时必须留痕（BUG.md L-1477）。
+     *
+     * `if (text.isBlank()) return` 原先一行日志都不留：用户复制了东西却什么都没发生，事后翻诊断包
+     * 也查不到 —— 与「空 `onFailure {}` 等于吞异常」是同一条仓库底线。
+     *
+     * 判据是**位置**判据：日志必须在同一个分支里、且在 `return` 之前（只判「出现过这句话」，
+     * 把日志挪到分支外照样绿）。
+     */
+    @Test
+    fun `空白剪贴板丢弃必须留痕`() {
+        val src = codeOf("ClipboardController.kt")
+        val at = src.indexOf("if (text.isBlank())")
+        assertTrue("找不到剪贴板采集的空白分支（改名后要同步本用例）", at >= 0)
+        val branch = src.substring(at, (at + 400).coerceAtMost(src.length))
+        val logAt = branch.indexOf("剪贴板: 空白内容，跳过入库")
+        val returnAt = branch.indexOf("return")
+        assertTrue("空白分支必须先留痕（L-1477）", logAt >= 0)
+        assertTrue("留痕必须在 return 之前（实际 $logAt vs $returnAt）", returnAt > logAt)
+        assertTrue("必须是 W 级：V 级在正式包里不落盘，等于没留痕", "Diagnostics.w(TAG, \"剪贴板: 空白内容，跳过入库" in branch)
+        assertTrue("日志必须带长度（原文是用户内容，不得入日志）", "text.length" in branch)
     }
 }

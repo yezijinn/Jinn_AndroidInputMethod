@@ -1243,6 +1243,17 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     private fun gestureOf(c: Char): KeyGesture = keyGestures[c] ?: KeyGesture().also { keyGestures[c] = it }
 
+    /**
+     * 正处于按下态的字母键指针数：DOWN / POINTER_DOWN 加一，UP / POINTER_UP / CANCEL 减一。
+     *
+     * 只服务 [hasPressedKey]（BUG.md L-1442）：换肤走到 `recreateKeyboardView` 会把整棵树换掉，
+     * 手指按住的键收不到 UP —— 这次按键静默丢一个字符，按压高亮也随旧树消失。
+     * 视图被 detach / 窗口隐藏时清零（[stopBackspaceRepeat]，两处共用的清理点）：漏发的 CANCEL
+     * 不能让计数卡在非零，那会把换肤**无限延后**（方向相反的另一种坏法，且是单指就能踩到的）。
+     * 代价是：清理点被误触发时保护提前失效（只丢一次延后的机会），这个方向是可接受的。
+     */
+    private var pressedKeyPointers = 0
+
     /** 系统触摸斜率阈值：位移小于它才算「点击」而非滑动（用于无障碍 performClick 判定） */
     private val touchSlop: Float =
         android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
@@ -1303,6 +1314,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 g.startX = event.rawX
                 g.startY = event.rawY
                 g.consumed = false
+                // 按住态记账（L-1442）：换肤据此延后，别把手指按着的键换掉
+                pressedKeyPointers++
                 // 层 / 符号组 / 页快照：抬手时只认同一层同一页，见 ACTION_UP（L-1437）
                 g.layerAtDown = layer
                 g.groupAtDown = symbolGroupIndex
@@ -1374,10 +1387,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 只撤**本键**的长按：另一根手指按在别的键上时，这行不会碰到它的状态（L-1436）
                 cancelLongPressUppercase(g)
                 keyViews[c]?.setPressedVisual(true)
+                pressedKeyPointers++
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 keyViews[c]?.setPressedVisual(false)
+                pressedKeyPointers = (pressedKeyPointers - 1).coerceAtLeast(0)
                 // 不复位 g.consumed：它是「本次手势已经做过事（在符号层翻了页）、
                 // 抬起时不许上字」的判据，而第二根手指抬起时手势还没结束，复位后剩下的
                 // 那根手指一抬就会把新页上的符号上屏（用户只想翻页）。该标记在
@@ -1407,12 +1422,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     onLetterPressed(c)
                 }
                 g.consumed = false
+                pressedKeyPointers = (pressedKeyPointers - 1).coerceAtLeast(0)
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 cancelLongPressUppercase(g)
                 keyViews[c]?.setPressedVisual(false)
                 g.consumed = false
+                // 取消是一个手势整体作废：所有指针都不在了，计数直接归零
+                pressedKeyPointers = 0
                 return true
             }
         }
@@ -2495,6 +2513,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
             passwordPad
 
     /**
+     * 是否有字母键正被按住（[pressedKeyPointers]）。
+     *
+     * 与 [hasActiveOverlay] 同类但**不是**视图内的临时状态：它只活在手指与触摸目标之间，
+     * 重建后新树不知道有手指按着，旧树又收不到 UP ⇒ 这一次按键丢一个字符（BUG.md L-1442）。
+     * 换肤判据因此要把它算进去，延后到下次弹出。
+     */
+    val hasPressedKey: Boolean
+        get() = pressedKeyPointers > 0
+
+    /**
      * 视图即将被换掉：让两个面板中止仍在跑的后台任务。
      *
      * 面板的任务靠各自的 `refreshToken` 判停，而令牌只在面板打开/收起时递增 —— 重建键盘视图
@@ -2517,8 +2545,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (candidates.isNotEmpty()) {
                 listener?.onCommitText(candidates[0])
             } else if (!englishMode) {
-                // 无候选（如未加载词库），直接丢拼音串
-                if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "commitComposing: 无候选，丢弃拼音 ${composing}")
+                // 无候选（词库尚未就绪）：整串拼音就这么没了。原先只在 KEY_TRACE 下记一条 V 日志，
+                // release 包里连痕迹都没有 ⇒ 「打的字消失」与「排障看到什么都没发生」两面都查不到
+                // （BUG.md L-1448）。只记长度、不记原文：拼音串是用户输入，不该进可外发的日志。
+                Diagnostics.w(TAG, "commitComposing: 无候选，丢弃拼音串（长度 ${composing.length}）")
             }
             composing.clear()
         }
@@ -5659,6 +5689,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 按下态也要复位：清理点里的「键盘收起」不保证收到 ACTION_CANCEL（那条路径才会关掉它），
         // 不复位的话退格键会停在按下外观，直到用户再点它一次
         btnBackspace.isPressed = false
+        // 字母键的按住态同理（BUG.md L-1442 的第二面）：本函数是「视图被换掉 / 窗口隐藏而
+        // 平台没补发 ACTION_CANCEL」的**唯一共享清理点**，计数若留在这里，`hasPressedKey` 会
+        // 一直为真 ⇒ 定时换肤每一拍都判「用户按着键」静默延后，直到视图哪天被 detach。
+        // 这与本条要修的方向相反：那边怕延后不够，这边怕延后到永远。
+        pressedKeyPointers = 0
     }
 
     private companion object {

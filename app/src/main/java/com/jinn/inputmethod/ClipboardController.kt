@@ -225,7 +225,14 @@ class ClipboardController(context: Context) {
             }
             else -> return
         }
-        if (text.isBlank()) return
+        if (text.isBlank()) {
+            // 留痕（不改行为，BUG.md L-1477）：用户复制了东西却什么都没发生，事后只能靠这条
+            // 区分「内容本来就是空白 / 只有零宽字符」与「压根没收到剪贴板回调」。
+            // 用 W 而不是 V：V 在正式包里不落盘，等于「排障时依然查不到」——那正是本条要修的东西。
+            // 只记长度，不记原文。
+            Diagnostics.w(TAG, "剪贴板: 空白内容，跳过入库（长度 ${text.length}）")
+            return
+        }
         // upsert 在库层按 content_hash 去重，不会重复写入
         ClipboardStore.save(appContext, db, text, resolveSourcePackage())
     }
@@ -338,9 +345,12 @@ class ClipboardController(context: Context) {
                 TAG,
                 "跳过剪贴板条目：按字节嗅探不是图片（declared=${declared ?: "null"}）",
             )
+            // 上限必须报**生效值**（受图片总量压制，BUG.md L-1463 的配套）：报原值会把
+            // 「图片总量设小了」误读成「单张设小了」，与 L-1475 同型的归因错
             ImageRead.TooLarge -> Diagnostics.w(
                 TAG,
-                "跳过超单张上限的图片（读入即止，上限 ${prefs.imageMaxItemMb}MB）",
+                "跳过超单张上限的图片（读入即止，生效上限 ${prefs.effectiveImageMaxItemMb}MB" +
+                    " / 单张设 ${prefs.imageMaxItemMb}MB）",
             )
             // 与上面那条分开（BUG.md L-1289）：这条才是要排查的（授权失效 / 宿主没写好 / 空内容），
             // 原先两者都记成「类型不是图片」，排障时会去怀疑「用户复制的本来就不是图」

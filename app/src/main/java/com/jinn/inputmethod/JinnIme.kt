@@ -3286,12 +3286,17 @@ class JinnIme : InputMethodService() {
     private fun applyThemeIfNeeded() {
         val wantDark = ThemeManager.isDark(this, prefs)
         if (appliedThemeDark != null && appliedThemeDark != wantDark) {
-            // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板 / 搜索 / 方向面板、密码模式）时不动视图：
-            // 重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。延后到下次弹出 ，
-            // onStartInputView 会再判一次。密码模式的复原三元组只活在旧视图上 ⇒ 漏掉它就是
-            // 「打字期间键盘变回普通键盘且回不去」（BUG.md L-87）。
-            if (pinyinKeyboard?.let { it.hasPendingInput || it.hasActiveOverlay } == true) {
-                Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入或面板），延后到下次弹出换肤")
+            // 视图上有用户正在进行的状态（未上屏拼音/预测、剪贴板 / 搜索 / 方向面板、密码模式、
+            // 手指按住的键）时不动视图：重建会把它们静默丢弃/关闭（宿主输入框毫无变化）。
+            // 延后到下次弹出 ，onStartInputView 会再判一次。密码模式的复原三元组只活在旧视图上 ⇒
+            // 漏掉它就是「打字期间键盘变回普通键盘且回不去」（BUG.md L-87）。
+            // ⚠ 按住态（L-1442）不是视图内的状态：旧树收不到 UP、新树不知道有手指按着，
+            // 这一次按键连字符都丢（不只是高亮消失），故与上面几项同列。
+            if (pinyinKeyboard?.let {
+                    it.hasPendingInput || it.hasActiveOverlay || it.hasPressedKey
+                } == true
+            ) {
+                Diagnostics.i(TAG, "主题变更: 视图有未完成操作（输入 / 面板 / 按住键），延后到下次弹出换肤")
                 return
             }
             Diagnostics.i(TAG, "主题变更: 重建键盘（${if (wantDark) "暗色" else "亮色"}）")
@@ -3331,11 +3336,13 @@ class JinnIme : InputMethodService() {
         // 该路径真实可达：在编辑页「添加符号」对话框里打了一半拼音就按 Home / 锁屏，
         // Activity.onPause 会先于 IME 提交触发（真机日志实证 2026-09-22）。
         // 这里不看面板态：编辑页场景下面板不可能正被使用，而推迟会造成「改了符号不生效」。
-        if (keyboard.hasPendingInput) {
+        // 按住态（L-1442）要看：悬浮键盘可以盖在编辑页上，一手按住字母键、一手点符号排序，
+        // 重建就把那次按键连字符一起换掉 —— 与换肤同一个缺陷面，两处判据必须一致。
+        if (keyboard.hasPendingInput || keyboard.hasPressedKey) {
             // 记下待重建：框架跨会话复用同一个键盘视图，「下次创建」不会自然到来 ，
             // 靠 onStartInputView 的补重建兜底，否则用户会一直看到旧符号（真机已复现）。
             pendingSymbolLayoutRebuild = true
-            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入，延后到下次弹键盘重建")
+            Diagnostics.i(TAG, "符号分组顺序/收藏变更: 视图有未上屏输入或按住键，延后到下次弹键盘重建")
             return
         }
         Diagnostics.i(TAG, "符号分组顺序/收藏变更: 重建键盘视图")
@@ -3693,6 +3700,11 @@ class JinnIme : InputMethodService() {
     override fun onWindowHidden() {
         super.onWindowHidden()
         pinyinKeyboard?.commitComposing()
+        // 按住态的收尾（BUG.md L-1442 的第二面）：窗口隐藏不保证派发 ACTION_CANCEL，
+        // 而 `onFinishInputView` 也不一定来（本条 KDoc 上一段就是为了这件事）。
+        // 这是「隐藏但视图可能被复用」的最后一道：清掉退格连删与字母键按住计数，
+        // 否则换肤会一直被判定成「用户按着键」而静默延后。
+        pinyinKeyboard?.stopBackspaceRepeat()
         Diagnostics.i(TAG, "onWindowHidden: 窗口隐藏 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowHidden", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
     }
@@ -3733,8 +3745,12 @@ class JinnIme : InputMethodService() {
         // 文件上限 3000 行约 1~3ms，故不做异步）
         runCatching { PinyinEngine.flushUserFrequency() }
         // 选择台账：把队列里最后几行追加完（正常单行 append 几十微秒；但 flush 自带
-        // FLUSH_TIMEOUT_MS = 2s 上限，密钥库不可用 / 队列压着一批导入时**最坏就在主线程等满 2s**）
-        SelectionLedger.flush()
+        // FLUSH_TIMEOUT_MS = 2s 上限，密钥库不可用 / 队列压着一批导入时**最坏就在主线程等满 2s**）。
+        // ⚠ 销毁路径只等 FLUSH_ON_DESTROY_MS（BUG.md L-1451）：阻塞的是主线程，2s 等价一次 ANR 级卡顿；
+        // 而写盘本身在 SelectionLedger 的单线程 writer 上跑，超时返回不影响它写完之后出队
+        // （失败的行留队）。代价只在「进程紧接着被杀」时兑现：那几行随进程消失 ——
+        // 正常一次追加几十微秒，300ms 覆盖得住；批量导入（上万行）才会超。
+        SelectionLedger.flush(FLUSH_ON_DESTROY_MS)
         Diagnostics.i(TAG, "onDestroy: IME 服务销毁, mode=$mode")
         // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，
         // 不 release 会持续泄漏 native 资源（每次重建泄漏一份）
@@ -5526,6 +5542,17 @@ class JinnIme : InputMethodService() {
 
         /** 「到末尾」读取光标之后文本的上限：长文档下避免一次跨进程大事务卡住主线程 */
         const val DOC_JUMP_MAX_CHARS = 100_000
+
+        /**
+         * 销毁路径等待台账落盘的上限（BUG.md L-1451）。
+         *
+         * `SelectionLedger.flush` 默认等满 `FLUSH_TIMEOUT_MS`（2s），而 `onDestroy` 跑在主线程 ⇒
+         * 密钥库不可用时用户会看到一次 ANR 级卡顿。写盘本身在台账的 writer 线程上，
+         * 这里只决定「本进程还为它等多久」：超时返回不丢队（失败留队、进程未死则下次带走）。
+         * 300ms 覆盖「一次按键一次追加」（几十微秒）；队列里压着上万行批量导入才会超时，
+         * 而那条路径的调用方自己还有一次默认上限的 flush。
+         */
+        const val FLUSH_ON_DESTROY_MS = 300L
 
         /** 在线翻译（BYOK）的本机提示文案（文案在代码里下发，与文件内既有 Toast 写法一致） */
         const val TEXT_TRANSLATE_EMPTY = "光标前没有可处理的文字"

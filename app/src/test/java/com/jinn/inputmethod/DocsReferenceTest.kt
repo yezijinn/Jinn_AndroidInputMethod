@@ -667,6 +667,10 @@ class DocsReferenceTest {
             val header = Regex("""(?m)^>\s*part=\w+\s+blocks=(\d+)""")
                 .find(text)?.groupValues?.get(1)?.toInt()
                 ?: Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
+            // 两种写法**并存**时两份都要对：上面那条 `?:` 只认第一种，第二种写错了永远没人报
+            // （2026-10-27 实测：excluded 的 front-matter 写 472、history 写 256，而两册的 `>` 行
+            // 分别是 490 / 258 —— 同一份文件里两个互相矛盾的数，谁读到哪个算哪个）
+            val fmBlocks = Regex("""(?m)^blocks: (\d+)（""").find(text)?.groupValues?.get(1)?.toInt()
             // 索引册声明的是「索引行数」而不是 L 块数（它自己没有块）
             val headerRows = Regex("""(?m)^>\s*part=\w+\s+rows=(\d+)""")
                 .find(text)?.groupValues?.get(1)?.toInt()
@@ -677,6 +681,7 @@ class DocsReferenceTest {
             val titled = Regex("""(?m)^## \d+\. (?:中风险|低风险)（(\d+) 条""")
                 .find(text)?.groupValues?.get(1)?.toInt()
             if (header != null && header != actual) bad.add("$name（页眉 $header / 实际 $actual）")
+            if (fmBlocks != null && fmBlocks != actual) bad.add("$name（front-matter blocks $fmBlocks / 实际 $actual）")
             if (titled != null && titled != actual) bad.add("$name（节标题 $titled / 实际 $actual）")
             // 2026-10-23 删掉一条**永远不会进入**的分支：原判据认「`## N. 低风险（X 条：Y 条在册 + Z 条重建期素材块」，
             // 而重建期素材块在 2026-10-12 已整批外移到 `.wwlia-handoff/memory/`，low.md 的标题同时改写成

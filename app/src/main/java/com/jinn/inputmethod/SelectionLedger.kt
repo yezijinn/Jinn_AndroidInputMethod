@@ -179,12 +179,17 @@ object SelectionLedger {
     /**
      * 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常）。
      *
+     * @param timeoutMs 调用方**最多**等多久（默认 `FLUSH_TIMEOUT_MS`）。超时只缩短「这一等」，
+     *   不会丢队：写盘在 [writer] 线程上照旧跑完，失败的行留队等下一次 record / flush 带走。
+     *   ⚠ 边界：队列是进程级内存，**进程随后被杀**则那几行随进程消失（`onDestroy` 之后没有「下一次」）。
+     *   正常路径一次追加几十微秒，300ms 覆盖得住；只有队列里压着上万行批量导入才会超时。
+     *   销毁路径传 `JinnIme.FLUSH_ON_DESTROY_MS`（300ms）—— 那条路径阻塞的是主线程（BUG.md L-1451）。
      * @return 队列已空**且**这一轮写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
      *
      * 判据必须含 [lastWriteOk]：只看「队列空了」的话，[writeLines] 返回 false（密钥不可用 /
      * 磁盘满）照样算写空 ⇒ 导入路径会把「0 条入库」报成「已追加 N 条」（N4）。
      */
-    fun flush(): Boolean {
+    fun flush(timeoutMs: Long = FLUSH_TIMEOUT_MS): Boolean {
         val file = target ?: return true
         val gen = generation
         // 提交前复位：本次提交没有写失败才算成功。
@@ -196,7 +201,7 @@ object SelectionLedger {
         // 带超时：队列里可能压着一次上万行的批量导入，主线程不该无限等
         val drained = runCatching {
             writer.submit { drainTo(file, gen) }
-                .get(FLUSH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             queue.isEmpty()
         }.getOrElse { false }
         val ok = flushVerdict(drained, lastWriteOk)

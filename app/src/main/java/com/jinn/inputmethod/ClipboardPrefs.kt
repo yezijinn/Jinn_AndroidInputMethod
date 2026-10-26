@@ -195,8 +195,18 @@ class ClipboardPrefs(context: Context) {
     /** 图片体积上限（字节） */
     val imageMaxBytes: Long get() = imageMaxTotalMb * 1024L * 1024L
 
-    /** 单张图片上限（字节） */
-    val imageMaxItemBytes: Long get() = imageMaxItemMb * 1024L * 1024L
+    /**
+     * 单张图片上限的**生效值**（MB）：存储的原值与图片总量取小（BUG.md L-1463）。
+     *
+     * 与收藏体积同一条口径（[effectiveFavoriteMaxMb]）：写侧只存用户设的原值，压制在读侧算。
+     * 写成写侧钳制的话，「单张 50 + 总量 10」保存后盘上单张变 10，之后把总量调回 500
+     * 也再回不到 50 —— 用户的设定被自己的另一次调整永久吃掉（`ConfigBackup` 导出的也是那个残值）。
+     */
+    val effectiveImageMaxItemMb: Int
+        get() = effectiveImageMaxItemMbOf(imageMaxItemMb, imageMaxTotalMb)
+
+    /** 单张图片上限（字节）：按**生效值**算，采集链路据此读入即止 */
+    val imageMaxItemBytes: Long get() = effectiveImageMaxItemMb * 1024L * 1024L
 
     /** 历史管理页单页条数：[PAGE_SIZE_OPTIONS] 之一，默认 50 */
     var historyPageSize: Int
@@ -475,6 +485,14 @@ class ClipboardPrefs(context: Context) {
         /** 收藏体积的**生效值**（MB）：原值与「历史体积的 1/4」取小（纯函数，便于单测） */
         fun effectiveFavoriteMaxMb(raw: Int, totalMb: Int): Int =
             favoriteMaxMbStored(raw).coerceAtMost(favoriteBytesCapMb(totalMb))
+
+        /**
+         * 单张图片上限的**生效值**（MB）：原值与图片总量取小（纯函数，便于单测）。
+         *
+         * 与 [effectiveFavoriteMaxMb] 同型：动态上限只决定生效值，写侧一律存原值（BUG.md L-1463）。
+         */
+        fun effectiveImageMaxItemMbOf(raw: Int, totalMb: Int): Int =
+            raw.coerceIn(MIN_IMAGE_ITEM_MB, MAX_IMAGE_ITEM_MB).coerceAtMost(totalMb)
 
         private const val KEY_ENABLED = "enabled"
         private const val KEY_MAX_ITEMS = "max_items"

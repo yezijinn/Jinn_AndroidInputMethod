@@ -234,4 +234,36 @@ class SelectionLedgerTest {
         }
     }
 
+    /**
+     * `flush(timeoutMs)` 超时只影响「等多久」，**绝不影响数据**（BUG.md L-1451）。
+     *
+     * `onDestroy` 原先调无参 `flush()`，内部 `Future.get(2s)` 卡在**主线程**；改成限时之后，
+     * 必须证明「提前返回 ≠ 丢行」：写盘在台账的 writer 线程上照旧跑完，失败的行留队。
+     * 这条用例用 0ms 上限把「立即返回」逼出来，再等一次正常上限，断言行仍在盘上。
+     */
+    @Test
+    fun `限时flush超时不得丢行`() {
+        val dir = File.createTempFile("ledgerdir", "").let { it.delete(); it.mkdirs(); it }
+        val file = File(dir, SelectionLedger.FILE_NAME)
+        val key = javax.crypto.KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        SelectionLedger.clearQueueForTest()
+        SelectionLedger.setKeyForTest(key)
+        SelectionLedger.setTargetForTest(file, enabled = true)
+        try {
+            assertTrue("入队失败", SelectionLedger.appendAll(listOf("五湖" to "wu hu")))
+            // 0ms：这一等立刻返回（结果 true/false 取决于线程调度，不作断言）
+            SelectionLedger.flush(0)
+            // 再给足上限：行必须在盘上、队列必须清空
+            assertTrue("限时后重试必须成功", SelectionLedger.flush(2_000))
+            assertEquals("队列必须清空", 0, SelectionLedger.pendingLinesForTest())
+            val plain = SelectionLedger.decodeRecords(file.readText(Charsets.UTF_8), key)
+            assertEquals("超时返回不得丢掉那一行", listOf("五湖" to "wu hu"), SelectionLedger.parse(plain))
+        } finally {
+            SelectionLedger.clearQueueForTest()
+            SelectionLedger.setTargetForTest(null, enabled = false)
+            SelectionLedger.setKeyForTest(null)
+            file.delete()
+            dir.delete()
+        }
+    }
 }

@@ -566,29 +566,25 @@ class ClipboardCustomizeActivity : Activity() {
     private fun doSave() {
         val target = draft
         val wasEnabled = snapshot.enabled
-        // 单点钳制：单张图片上限受总量压制（见 [effectiveImageItemMb]）。盘上值、快照、草稿
-        // 三者必须同源 —— 若只把钳制值传给 applyDraft 而 snapshot 仍记未钳制的 draft，
-        // 保存后一旦旋转/被回收，isDirty() 会把「盘上 10 vs 草稿 50」当成未保存改动弹给用户。
-        val effItemMb = effectiveImageItemMb(target)
-        val effective = if (effItemMb == target.imageMaxItemMb) target
-        else target.copy(imageMaxItemMb = effItemMb)
-        draft = effective
-        // 单次 commit：任何一项失败都不该留下「半套参数」
+        // ⚠ 这里**不**再做「单张受总量压制」的写侧钳制（BUG.md L-1463）：那样存下去的是钳制值，
+        // 之后把图片总量调大也再回不到用户设的原值（备份包带出去的也是残值）。与收藏侧同一口径 ——
+        // 盘上只存原值，压制由读侧 `ClipboardPrefs.effectiveImageMaxItemMb` 算，
+        // 页面回显按生效值展示（见 renderImageCard）。
         val ok = prefs.applyDraft(
-            enabled = effective.enabled,
-            maxItems = effective.maxItems,
-            maxTotalMb = effective.maxTotalMb,
-            favMaxItems = effective.favMaxItems,
-            favMaxMb = effective.favMaxMb,
-            maxItemKb = effective.maxItemKb,
-            panelPage = effective.panelPage,
-            maxSearch = effective.maxSearch,
-            imageEnabled = effective.imageEnabled,
-            imageMaxItems = effective.imageMaxItems,
-            imageMaxTotalMb = effective.imageMaxTotalMb,
-            imageMaxItemMb = effective.imageMaxItemMb,
-            imageInAllGroup = effective.imageInAllGroup,
-            favoriteImageMoveOut = effective.favoriteImageMoveOut,
+            enabled = target.enabled,
+            maxItems = target.maxItems,
+            maxTotalMb = target.maxTotalMb,
+            favMaxItems = target.favMaxItems,
+            favMaxMb = target.favMaxMb,
+            maxItemKb = target.maxItemKb,
+            panelPage = target.panelPage,
+            maxSearch = target.maxSearch,
+            imageEnabled = target.imageEnabled,
+            imageMaxItems = target.imageMaxItems,
+            imageMaxTotalMb = target.imageMaxTotalMb,
+            imageMaxItemMb = target.imageMaxItemMb,
+            imageInAllGroup = target.imageInAllGroup,
+            favoriteImageMoveOut = target.favoriteImageMoveOut,
         )
         if (!ok) {
             // 盘上还是旧值：草稿原样留着让用户重试，绝不假报成功
@@ -598,16 +594,16 @@ class ClipboardCustomizeActivity : Activity() {
         }
         // 布局两项住在图库偏好（Prefs）里，与剪贴板参数的 commit 不是同一套键空间，单独写；
         // 放在这里而不是 applyDraft 里，是为了让布局改动也走同一次保存确认与回执
-        layoutPrefs.galleryColumns = effective.galleryColumns
-        layoutPrefs.galleryCellHeightDp = effective.galleryCellHeightDp
-        if (wasEnabled != effective.enabled) {
+        layoutPrefs.galleryColumns = target.galleryColumns
+        layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp
+        if (wasEnabled != target.enabled) {
             // 采集器跑在输入法进程里，不读本页状态：发轻量广播让它立刻启停（见 JinnIme.configReceiver）
             sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_CONFIG_UPDATED).setPackage(packageName))
         }
         // 落盘后的裁剪：上限调小时既有库不会自己收敛（与设置页 / 备份导入同款）
         trimNow()
-        // 快照必须是**钳制后**的值：它与盘上同源，旋转/重建后 isDirty() 才不会误报
-        snapshot = effective
+        // 快照与草稿都是**刚写下去的原值**：与盘上同源，旋转/重建后 isDirty() 才不会误报
+        snapshot = target
         unlocked = false
         renderAll()
         toast(TEXT_SAVED)
@@ -726,8 +722,12 @@ class ClipboardCustomizeActivity : Activity() {
      * 两项原本各调各的（单张 1~50MB、总量 10~1000MB），设「单张 50MB + 总量 10MB」这种组合后，
      * 一张 20MB 的图入库即被 `trimImages` 按字节预算删掉（面板 / 网格 / Toast 全无提示，
      * 用户只看到「复制图片没反应」）。收藏体积早有同款压制（[effectiveFavMb]），这里对齐。
+     *
+     * ⚠ 只给**回显**用（BUG.md L-1463）：生效值算在 `ClipboardPrefs.effectiveImageMaxItemMb` 一处，
+     * 保存时不再把它写回盘上 —— 写回就是「用户原值真丢」。
      */
-    private fun effectiveImageItemMb(d: Draft): Int = minOf(d.imageMaxItemMb, d.imageMaxTotalMb)
+    private fun effectiveImageItemMb(d: Draft): Int =
+        ClipboardPrefs.effectiveImageMaxItemMbOf(d.imageMaxItemMb, d.imageMaxTotalMb)
 
     /**
      * 按**已落盘**的偏好立即裁剪一次库。

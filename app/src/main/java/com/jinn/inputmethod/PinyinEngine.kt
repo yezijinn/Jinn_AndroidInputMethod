@@ -3120,7 +3120,11 @@ object PinyinEngine {
         for (syl in completions) {
             for (key in phraseKeysOf(base + syl)) {
                 phrasesFor(key)?.let { words ->
-                    for (w in words.take(MAX_PHRASES)) {
+                    // 与主查询同口径（BUG.md L-1486）：先按用户权重整表重排、再截 12。
+                    // 截断若在重排之前，学过的长尾词（原序 13 名之后）在这条路径永远进不了候选 ——
+                    // 同一批词敲全与敲残码给出两个不同集合，学习成果对补全无效。
+                    // `rank` 只动次序不动集合：未学习时原样返回，候选与历史逐字一致。
+                    for (w in UserFrequency.rank(words) { toSimplified(it) }.take(MAX_PHRASES)) {
                         result.add(w)
                         owner[w] = key
                     }
