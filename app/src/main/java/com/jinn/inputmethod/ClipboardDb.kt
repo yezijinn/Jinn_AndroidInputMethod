@@ -22,12 +22,16 @@ internal const val RECLASSIFY_PAGE = 50
  * 存储策略：
  *  - 正文以 AES-256-GCM 密文入库（[ClipboardCrypto]），绝不落明文；
  *  - 来源 APP、时间、分类、收藏标记等元数据明文存储；
- *  - 超出数量上限时删除最旧的非收藏记录（收藏永不删），
+ *  - 超出数量上限时删除最旧的非收藏记录（容量裁剪不删收藏），
  *    数据库 + 内存缓存同步清理；
  *  - 全部操作走单例 + 后台线程，避免主线程 IO 与并发写冲突。
  *
- * 删除来源仅限：用户主动删除 / 清理重复 / 容量限制裁剪。
- * 裁剪见 [TRIM_PRIORITY]：只动非收藏记录，收藏永不删。
+ * 删除来源：用户主动删除 / 迁移去重（v4 一次性 `mergeDuplicates`）/ 容量裁剪 /
+ * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）/
+ * 「有行无文件」死行清理（`ClipboardImageFiles.deleteMissingRows`）。
+ * 容量裁剪见 [TRIM_PRIORITY]：条数与体积**只动非收藏记录**；
+ * 收藏自身软上限是唯一例外 —— [trimFavorites] 按用户显式设置的
+ * [ClipboardPrefs.favoriteMaxItems] / `favoriteMaxBytes` 淘汰最旧收藏（2026-10-26 按实现订正）。
  * 不因内容性质（敏感与否）做任何判断或删除（v3 起已移除敏感字段）。
  *
  * 搜索：按需解密（查询所有条目 → 逐条解密过滤），不建明文全文索引，
@@ -727,7 +731,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪历史：先按条数裁到 [maxItems]，再按总体积裁到 [maxTotalBytes]，最后收一遍收藏软上限。
+     * 裁剪历史：条数（[trimByCount]）→ 体积（[trimByByteBudget]）→ 图片预算（[trimImages]，
+     * 张数 / 字节任一超限）→ 收藏软上限（[trimFavorites]）。
+     *
+     * 文本两条只统计与淘汰**文本**行；图片行由 [trimImages] 单独管（预算完全分离）。
      *
      * 裁剪优先级：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
@@ -741,7 +748,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
     /**
-     * 落回上限内（条数 + 体积）。
+     * 落回上限内（条数与体积；图片预算与收藏软上限在这一趟里一并收）。
      *
      * ⚠ `maxTotalBytes` **故意不给默认值**：曾只传条数，体积按 `DEFAULT_MAX_TOTAL_BYTES`
      * （100MB）裁，而该值恰好等于出厂默认 ⇒ 只在用户改过体积上限时才暴露（设 500MB 的库被砍到

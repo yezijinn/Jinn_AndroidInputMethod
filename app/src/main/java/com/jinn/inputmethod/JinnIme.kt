@@ -1571,7 +1571,7 @@ class JinnIme : InputMethodService() {
      * 剪贴板图片的启动 GC（一次性，低优先级线程）。
      *
      * 两件事：删「有行无文件」的死行（换机恢复 / 手动清理留下的壳）、删孤儿文件
-     * （删除路径有九条，集中 GC 兜底，见 [ClipboardImageFiles]）。
+     * （删行入口分散且还在增，集中 GC 兜底，见 [ClipboardImageFiles]）。
      * 与 [ClipboardController.reclassifyIfNeeded] 同款：独立线程 + 降优先级，不与词库加载抢 CPU。
      */
     private fun maybeRunClipboardImageGc() {
