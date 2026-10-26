@@ -7400,6 +7400,42 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * 「保存并重启」前必须把用户学习的两份缓冲刷下去（BUG.md L-1492）。
+     *
+     * 设置页的重启路径先 `flush()` 了 Prefs 与剪贴板参数，却漏了词频（2s 防抖）与选择台账
+     * （写线程队列）；`killProcess` 是 SIGKILL —— 不走 onDestroy，队列里那几次学习直接丢。
+     * 词库页的重启路径早就在刷（`DictManagerActivity.restartImeForDict`），两处口径必须一致。
+     */
+    @Test
+    fun `保存并重启前必须刷用户学习缓冲`() {
+        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun restartImeProcess(")
+        val killAt = body.indexOf("killProcess")
+        assertTrue("restartImeProcess 里找不到 killProcess（重启改道了？）", killAt > 0)
+        for (call in listOf("UserFrequency.flush()", "SelectionLedger.flush()")) {
+            val at = body.indexOf(call)
+            assertTrue("保存并重启前缺 $call（SIGKILL 不走 onDestroy，缓冲会安静丢）", at > 0)
+            assertTrue("$call 必须在 killProcess 之前（实际 $at vs $killAt）", at < killAt)
+        }
+    }
+
+    /**
+     * 导出回执的条数必须取自「件内条目数」（BUG.md L-1491）。
+     *
+     * 旧实现两处都写 `val count = src.size`：`RIME_YAML` 会跳过没有读音的行、`TXT` 按词去重，
+     * 件内条目于是少于表长 ⇒ 「已导出 N 条」比文件里的行数多。只钉「出现过 exportEntryCount」
+     * 不够 —— 留一行按表长算的分支照样能过，所以同时反向钉住旧写法。
+     */
+    @Test
+    fun `导出回执条数必须取自件内条目数`() {
+        val page = codeOf("UserDictActivity.kt")
+        for (fn in listOf("private fun writePlainExportOnIo(", "private fun writeExportOnIo(")) {
+            val body = blockAfter(page, fn)
+            assertTrue("$fn 必须用 SelectionLedger.exportEntryCount 报表内条数", "SelectionLedger.exportEntryCount(" in body)
+            assertFalse("$fn 仍按入参表长报条数（`val count = src.size`）", "val count = src.size" in body)
+        }
+    }
+
+    /**
      * 测试框不得把正文带进实例状态（BUG.md L-1488）。
      *
      * `EditText` 有 id 且光标在场时，框架会把**整份正文**写进实例状态的 `android:viewHierarchyState`。

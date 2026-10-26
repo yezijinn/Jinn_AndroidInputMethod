@@ -1721,6 +1721,17 @@ class SettingsActivity : ComponentActivity() {
         // 重启（与导入 / 导出那些路径按 flush() 结果改回执的口径一致，L-1319）。
         val prefsFlushed = runCatching { Prefs(this).flush() }.getOrDefault(false)
         val clipboardFlushed = runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)
+        // 用户学习的两份缓冲（词频 2s 防抖 / 台账写线程）只在内存里排着队，SIGKILL 不走 onDestroy
+        // ⇒ 不先刷就把「刚选过的候选」那几次学习安静丢掉。词库页的重启路径早就在刷
+        // （`DictManagerActivity.restartImeForDict` 的注释写着同一件事），本页漏了（L-1492）。
+        val freqFlushed = runCatching { UserFrequency.flush() }.getOrDefault(false)
+        val ledgerFlushed = runCatching { SelectionLedger.flush() }.getOrDefault(false)
+        if (!freqFlushed || !ledgerFlushed) {
+            // 与词库页同口径：刷不动只留日志、照常重启（重刷失败不该把「保存并重启」卡死）
+            Diagnostics.w(TAG, "restartImeProcess: 学习缓冲未刷完 freq=$freqFlushed ledger=$ledgerFlushed")
+        }
+        // ⚠ 上面两行在主线程**同步**等：`SelectionLedger.flush()` 最坏吃满 `FLUSH_TIMEOUT_MS`（2000ms），
+        // 点「保存并重启」后这段空窗可达 2s —— 低于 ANR 阈值 5s，且随后必然重启，别当新缺陷重报。
         if (!prefsFlushed || !clipboardFlushed) {
             Diagnostics.w(
                 TAG,

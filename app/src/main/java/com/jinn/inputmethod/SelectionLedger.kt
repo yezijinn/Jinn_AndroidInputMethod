@@ -672,6 +672,22 @@ object SelectionLedger {
     }
 
     /**
+     * 导出件里**实际写出的条目数**（回执口径，与 [exportText] 同源）。
+     *
+     * 不能拿入参 `merged.size` 报账：`RIME_YAML` 会跳过没有读音的行（写不出合法音节，librime
+     * 整条丢弃），`TXT` 按词去重（同词不同读音只出一行）—— 两种格式的件内条目数都可能**少于**表长，
+     * 回执于是比文件多报（L-1491）。三种格式各按自己的写出规则数。
+     */
+    internal fun exportEntryCount(
+        merged: Map<Pair<String, String>, Int>,
+        format: ExportFormat,
+    ): Int = when (format) {
+        ExportFormat.RIME_YAML -> merged.keys.count { it.second.isNotEmpty() }
+        ExportFormat.TSV -> merged.size
+        ExportFormat.TXT -> merged.keys.mapTo(HashSet()) { it.first }.size
+    }
+
+    /**
      * 解析导入件，返回「按次数展开」后的选择流。
      *
      * 三种格式按行自适应（不需要用户选格式）：`词\t拼音\t次数` / `词\t拼音` / 一行一词；

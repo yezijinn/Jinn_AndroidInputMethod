@@ -646,9 +646,12 @@ class UserDictActivity : ComponentActivity() {
             runOnUiThread { if (alive()) toast(msg) }
             return
         }
+        // 条目数按「件内实际写出了几行」报账（[SelectionLedger.exportEntryCount]）：
+        // 入参表长不等于件内条数 —— RIME_YAML 跳过无读音行、TXT 按词去重（L-1491）
+        val merged = LinkedHashMap<Pair<String, String>, Int>()
+        for (r in src) merged[r.word to r.pinyin] = r.count
+        val count = SelectionLedger.exportEntryCount(merged, format)
         val ok = try {
-            val merged = LinkedHashMap<Pair<String, String>, Int>()
-            for (r in src) merged[r.word to r.pinyin] = r.count
             val text = SelectionLedger.exportText(merged, format)
             val out = openTruncatingOutput(uri)
             if (out == null) {
@@ -665,7 +668,6 @@ class UserDictActivity : ComponentActivity() {
             false
         }
         if (!ok) deleteEmptyTarget(uri)
-        val count = src.size
         runOnUiThread {
             if (!alive()) return@runOnUiThread
             toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
@@ -713,8 +715,12 @@ class UserDictActivity : ComponentActivity() {
             runOnUiThread { if (alive()) toast(msg) }
             return
         }
+        // 与明文导出同口径：回执报件内条数，不报表长（L-1491）
+        val merged = LinkedHashMap<Pair<String, String>, Int>()
+        for (r in src) merged[r.word to r.pinyin] = r.count
+        val count = SelectionLedger.exportEntryCount(merged, format)
         val ok = try {
-            buildAndWrite(uri, format, src, password)
+            buildAndWrite(uri, format, merged, password)
         } catch (t: Throwable) {
             Diagnostics.w(TAG_NAME, "导出异常: ${t.javaClass.simpleName}")
             false
@@ -727,7 +733,6 @@ class UserDictActivity : ComponentActivity() {
             // 无条件删会把用户上一份备份一起删掉（设置页 `deleteEmptyTarget` 同一口径）。
             deleteEmptyTarget(uri)
         }
-        val count = src.size
         runOnUiThread {
             if (!alive()) return@runOnUiThread
             toast(if (ok) String.format(Locale.US, TEXT_EXPORT_OK, count) else TEXT_EXPORT_FAIL)
@@ -743,11 +748,9 @@ class UserDictActivity : ComponentActivity() {
     private fun buildAndWrite(
         uri: Uri,
         format: SelectionLedger.ExportFormat,
-        snapshot: List<Row>,
+        merged: Map<Pair<String, String>, Int>,
         password: CharArray,
     ): Boolean {
-        val merged = LinkedHashMap<Pair<String, String>, Int>()
-        for (r in snapshot) merged[r.word to r.pinyin] = r.count
         val text = SelectionLedger.exportText(merged, format)
         val dir = UserDictExport.cacheDir(this).apply { mkdirs() }
         val stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.US)
