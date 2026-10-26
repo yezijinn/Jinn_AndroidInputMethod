@@ -5675,7 +5675,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 停掉退格连删循环（含双击后的长按清空）。
+     * 停掉退格连删循环（含双击后的长按清空），**并复位全部触摸态**（退格按下态、字母键按住计数）。
+     * 名字只说了退格，是因为这是它最早的职责；改名会造出新的悬空引用（守卫锚点与本册历史原文都按名引用），
+     * 故按第 52 轮判例保留旧名，职责以本段为准（命名债的处置见附录 B 的 `B-259`）。
      *
      * detach 之外还要一个入口：[JinnIme.onFinishInputView] 收起键盘时只撤了自己那份退格
      * runnable，本视图这份不归它管。窗口隐藏时若平台没派发 ACTION_CANCEL、且 inputView

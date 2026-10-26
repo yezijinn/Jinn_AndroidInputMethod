@@ -129,4 +129,107 @@ class ClipboardSearchTest {
             ClipboardSearch.capState(retainReached = true, exhausted = true, dbTotal = 10, limit = 20_000),
         )
     }
+
+    // ── 命中点开窗的预览（BUG.md L-1478：搜到了却看不见）────────────────────
+
+    /** 长文本 + 命中点，构造「命中落在开头 200 码点之外」的样本 */
+    private fun longTextHitAt(offset: Int, hit: String = "关键词"): String =
+        "a".repeat(offset) + hit + "b".repeat(2000)
+
+    @Test
+    fun 命中在开头窗口外时窗口从命中点起() {
+        val content = longTextHitAt(5_000)
+        val preview = ClipboardSearch.previewFor(content, ClipboardSearch.queryForms("关键词"))
+        assertTrue("命中词必须在行内：当前预览「${preview.take(20)}…」", preview.startsWith("关键词"))
+        assertTrue(
+            "预览不得超过上限（一个码点一个字，长度即码点数）",
+            preview.length <= ClipboardClassifier.PREVIEW_MAX_CODE_POINTS,
+        )
+        // 行尾是紧随命中点的正文，不是「a 一段加省略」：窗口长度顶满上限
+        assertEquals(ClipboardClassifier.PREVIEW_MAX_CODE_POINTS, preview.length)
+        assertEquals("窗口必须从原文第 5000 个字符处开始", 5_000, content.indexOf(preview))
+    }
+
+    @Test
+    fun 命中在可见行之外时窗口从命中点起() {
+        // 未超限：整份都是预览，开窗无从谈起（同一引用，零拷贝）
+        val short = "短内容关键词"
+        assertTrue(
+            "未超限时 previewFor 与 previewOf 同路",
+            short === ClipboardSearch.previewFor(short, ClipboardSearch.queryForms("关键词")),
+        )
+        // ⚠ 判据不是「命中点在 200 码点内」：正文列只显示 1 行（键盘面板）或 4 行（历史页），
+        // 一屏几十个字的东西，命中落在第 3、第 50 个字符同样在窗外 ⇒ 也必须挪
+        for (offset in listOf(3, 50)) {
+            val content = longTextHitAt(offset)
+            val preview = ClipboardSearch.previewFor(content, ClipboardSearch.queryForms("关键词"))
+            assertTrue(
+                "命中点在第 $offset 个字符：行内装不下那么多字，命中词必须挪到行首（200 码点不是可见宽度）",
+                preview.startsWith("关键词"),
+            )
+            assertEquals("窗口必须从命中点起", offset, content.indexOf(preview))
+        }
+    }
+
+    @Test
+    fun 命中大小写不敏感且偏移对齐原文() {
+        val content = "x".repeat(3_000) + "HelloWorld" + "y".repeat(500)
+        val preview = ClipboardSearch.previewFor(content, ClipboardSearch.queryForms("helloworld"))
+        assertTrue(
+            "查询词小写也要在原文上定位（偏移必须落在原文，不能落在 lowercase 副本上）",
+            preview.startsWith("HelloWorld"),
+        )
+    }
+
+    @Test
+    fun 没有任何形态命中时退回开头窗口() {
+        val content = "b".repeat(3_000)
+        assertEquals(
+            "未命中（正常不会走到这里，防御用）时退回开头窗口",
+            ClipboardClassifier.previewOf(content),
+            ClipboardSearch.previewFor(content, ClipboardSearch.queryForms("关键词")),
+        )
+        assertEquals("形态集为空（无查询词）时退回开头窗口", ClipboardClassifier.previewOf(content),
+            ClipboardSearch.previewFor(content, emptyList()))
+    }
+
+    @Test
+    fun 命中被窗口边界切开时也要整段可见() {
+        // 命中词从第 195 码点起、长 10 ⇒ 开头窗口只装得下前 5 个字符，会显示成半截
+        val content = "a".repeat(195) + "关键词关键词" + "b".repeat(500)
+        val preview = ClipboardSearch.previewFor(content, ClipboardSearch.queryForms("关键词关键词"))
+        assertTrue("跨边界的那半截必须整段补出来：当前「${preview.take(10)}…」", preview.startsWith("关键词关键词"))
+        assertEquals("窗口仍从命中点起", 195, content.indexOf(preview))
+    }
+
+    @Test
+    fun 只靠折叠命中的条目仍退回开头窗口() {
+        // 库里存全角、查询是半角：matches 为真，但折叠形态在原文里 indexOf 不到
+        val content = "c".repeat(3_000) + "ＡＢＣ" + "d".repeat(100)
+        val forms = ClipboardSearch.queryForms("abc")
+        assertTrue("前置：这条确实算命中", ClipboardSearch.matches(content, forms))
+        assertEquals(
+            "折叠命中的偏移与原文对不上 ⇒ 保持原窗口（乱挪窗口比看不见更糟）",
+            ClipboardClassifier.previewOf(content),
+            ClipboardSearch.previewFor(content, forms),
+        )
+    }
+
+    @Test
+    fun 开窗起点落在代理对后半时退一格() {
+        val content = "a".repeat(3_000) + "😀" + "z".repeat(500)
+        val lowSurrogate = content.indexOf('\uDE00')
+        assertTrue("样本里必须有低代理项", lowSurrogate > 0)
+        val preview = ClipboardClassifier.previewFrom(content, lowSurrogate)
+        assertTrue("起点不许落在代理对中间（会切出孤立代理项）", !preview.first().isLowSurrogate())
+        assertTrue("退一格后从整个 emoji 起", preview.startsWith("😀"))
+        // 末尾同理：按码点收口，不劈出孤立高位代理
+        val tail = ClipboardClassifier.previewFrom("a".repeat(3_000) + "😀".repeat(300), 3_000)
+        assertTrue("末尾不得以孤立高位代理收尾", !tail.last().isHighSurrogate())
+        assertEquals(
+            "控制台口径：200 个 emoji = 200 码点 = 400 码元",
+            ClipboardClassifier.PREVIEW_MAX_CODE_POINTS * 2,
+            tail.length,
+        )
+    }
 }

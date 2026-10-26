@@ -79,6 +79,40 @@ internal object ClipboardSearch {
     }
 
     /**
+     * 搜索结果的正文列预览（BUG.md L-1478）。
+     *
+     * 命中判据走 [matches]，而正文列只放得下**几个字**：预览上限是
+     * [ClipboardClassifier.PREVIEW_MAX_CODE_POINTS] 个码点，行数还另有上限（键盘搜索面板 1 行、
+     * 历史管理页 4 行）⇒ 命中点落在真正看得见的那一小段之外时，用户看到的是一行不含关键词的
+     * 结果，会判成「搜错了 / 没搜到」。
+     *
+     * 所以只要能在**原文**上直接定位到命中点，窗口就从命中点开始
+     * （[ClipboardClassifier.previewFrom]）：命中词落在行首第一个字，一眼就能认出「这行为什么被
+     * 搜出来」。⚠ 判据不能用「命中点在 200 码点内」代替「已经看得见」：面板那行 15sp 只装得下
+     * 二三十个字、历史页 4 行 13sp 也不过百余字，这一档里命中词同样在窗外，而且是更常见的那半。
+     *
+     * 只取「原形能直接定位」的命中：`indexOf(ignoreCase)` 在**原文**上找，所以偏移天然对齐原文。
+     * 只在折叠（全半角 / 零宽）后才命中的条目退回开头窗口 —— 折叠形态与原文的偏移对不上，
+     * 硬算会把窗口挪到无关的位置（比看不见更糟）。这一类仍可能「看不见命中词」，属已知残留。
+     *
+     * 未超限时与 [ClipboardClassifier.previewOf] 完全同路（同一引用），短条目不受影响。
+     */
+    fun previewFor(content: String, forms: List<String>): String {
+        if (content.length <= ClipboardClassifier.PREVIEW_MAX_CODE_POINTS) {
+            return ClipboardClassifier.previewOf(content)
+        }
+        // 形态按「原形 → 剥不可见与分隔符 → 宽度折叠」的顺序排（见 queryForms），第一个命中就是最精确的
+        // 那一个，取到即开窗：逐个形态都扫一遍只为挑「最早」，长条目上就是每次绑定几遍全文，
+        // 而两种取法在行内看到的都是同一句「为什么被搜出来」。
+        for (form in forms) {
+            val at = content.indexOf(form, ignoreCase = true)
+            if (at >= 0) return ClipboardClassifier.previewFrom(content, at)
+        }
+        // 一个形态都定位不到（只在折叠后才算命中 / 无查询词）⇒ 退回开头窗口
+        return ClipboardClassifier.previewOf(content)
+    }
+
+    /**
      * 收尾状态。
      *
      * 保留量触顶优先：那时循环已经提前 `break`，后面扫到哪儿都不影响「结果被截断」这个事实。

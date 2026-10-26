@@ -54,6 +54,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private var multiSelect = false
     private var categoryFilter: String? = null // null=全部, "URL", "NUMBER", "FAVORITE", "IMAGE"
     private var keyword: String = ""
+    /**
+     * 上一次加载判出这批命中的那份查询词形态：列表正文列按它把窗口挪到命中点（BUG.md L-1478）。
+     *
+     * 与 [items] **同一次**赋值（同一个 `runOnUiThread` 块），所以两者永远同代；不在 `getView` 里
+     * 现算 —— 那是每个条目每次绑定都要跑一遍归一（小写 / 剥零宽 / NFKC），且用户继续打字时
+     * 会拿新词去裁旧结果。
+     */
+    private var activeForms: List<String> = emptyList()
     private var pageIndex = 0
 
     /** 当前是否处于图片分类（网格模式）：列表的多选与行渲染在此时全部让位 */
@@ -329,8 +337,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     holder.content.setTextColor(getColor(R.color.text_secondary))
                 } else {
                     // 预览按码点截断（ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）：
-                    // 整份塞进来会让 TextView 对 256KB 的无断点单行走最优断行，PSS 直冲 GB 级
-                    holder.content.text = ClipboardClassifier.previewOf(item.content)
+                    // 整份塞进来会让 TextView 对 256KB 的无断点单行走最优断行，PSS 直冲 GB 级。
+                    // 窗口从**命中点**起算（BUG.md L-1478）：正文列只放得下几个字，命中落在那之外时
+                    // 行内原本看不到那个词，用户会判成「没搜到」；形态集与 [items] 同代（见 [activeForms]），
+                    // 无关键词时为空集 ⇒ 仍是开头窗口
+                    holder.content.text = ClipboardSearch.previewFor(item.content, activeForms)
                     holder.content.setTextColor(getColor(R.color.text_primary))
                 }
                 holder.meta.text = buildString {
@@ -1022,6 +1033,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     if (keywordNow.isEmpty()) allItems
                     else allItems.filter { ClipboardSearch.matches(it.content, forms) }
                 )
+                // 正文列的开窗形态与这批结果同代落地（见 activeForms）：结果行按它把窗口挪到命中点
+                activeForms = forms
                 numberById.clear()
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
                 // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）。

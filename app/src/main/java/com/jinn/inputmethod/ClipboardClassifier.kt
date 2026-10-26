@@ -133,6 +133,33 @@ object ClipboardClassifier {
     }
 
     /**
+     * 从 [start] 起取 [PREVIEW_MAX_CODE_POINTS] 个码点的预览（BUG.md L-1478：搜索命中在
+     * 开头 200 码点之外时，行内看不到那个词，用户会判成「没搜到」）。
+     *
+     * 窗口**从命中点开始**，不在命中点前后各留一半：命中的词落在行的第一个字，一眼就能认出
+     * 「这行为什么被搜出来」；留前文只会把命中推到行中段的省略号里，还是看不见。
+     * 不额外加省略号 —— 尾部本来就没有省略标记（[previewOf] 同样是静默截断），
+     * 这里也不新造一套标记。
+     *
+     * [start] ≤ 0 或未超限时退回 [previewOf]（后者保证「短文本原样、同一引用」）；
+     * 起点落在代理对后半时退一格，末尾按码点收口 —— 两端都不许劈出孤立代理项（L-1426）。
+     *
+     * ⚠ 只用于**显示**。粘贴 / 收藏 / 删除一律拿 `item.content` 原文。
+     */
+    fun previewFrom(text: String, start: Int): String {
+        if (start <= 0 || text.length <= PREVIEW_MAX_CODE_POINTS) return previewOf(text)
+        var from = start.coerceAtMost(text.length)
+        if (from < text.length && text[from].isLowSurrogate()) from--
+        var end = from
+        var codePoints = 0
+        while (end < text.length && codePoints < PREVIEW_MAX_CODE_POINTS) {
+            end += Character.charCount(Character.codePointAt(text, end))
+            codePoints++
+        }
+        return text.substring(from, end)
+    }
+
+    /**
      * 内容对话框的单段字符上限：全文按此**分段**渲染（一段一个 TextView）。
      *
      * 为什么不是「一个 TextView 装全文 + 降断行策略」：实测那条路走不通。250,000 字符的单行

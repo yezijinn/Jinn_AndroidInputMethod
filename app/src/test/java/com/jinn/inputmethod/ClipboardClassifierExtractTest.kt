@@ -332,68 +332,103 @@ class ClipboardClassifierExtractTest {
      * 这条钉死的是「原文直接进 TextView」这个写法本身 —— 单测在 JVM 上量不到 Android 的
      * 最优断行开销（`minikin` 在设备侧），只有源码守卫能在编译期把回退挡住。
      *
-     * 判据用**去掉全部空白**的源码：面板正文列的赋值本身就是跨行的
-     * （`holder.content.text =` 换行后才接表达式），按行判会漏；压成一行后，压行 / 缩进 /
-     * 换一种换行位置都挡不住匹配。
+     * 判据取**正文列那条赋值语句**（跨行时把下一行接上，再压掉全部空白），不在整文件里找串：
+     * 三个视图里各有别的 `holder.content.text =`（图片行占位、内容对话框），整文件找串
+     * 只能证明「文件里出现过这个函数名」，钉不住「这条赋值用了什么」。
      */
     @Test
     fun 列表正文列必须走预览截断() {
-        fun squash(name: String) = TestSources.codeSource(name).replace(Regex("\\s+"), "")
+        fun compact(text: String) = text.replace(Regex("\\s+"), "")
 
-        val history = squash("ClipboardHistoryActivity.kt")
+        /** 取某视图里**列表正文列**那条赋值（含续行），并断言它只有一处 */
+        fun previewAssignment(name: String): String {
+            val lines = TestSources.codeSource(name).lines().map { it.trim() }
+            val hits = lines.withIndex().filter { (_, line) ->
+                line.startsWith("holder.content.text =") && !line.contains("TEXT_IMAGE_ROW_PLACEHOLDER")
+            }
+            assertEquals("$name 的列表正文列赋值必须唯一（多一处就无法判定预览规则）", 1, hits.size)
+            val (at, head) = hits.single()
+            // 跨行赋值：`= ` 收尾时把下一行接上（三处视图里都是这种写法）
+            val full = if (head.endsWith("=")) head + " " + lines[at + 1] else head
+            return compact(full)
+        }
+
+        val history = previewAssignment("ClipboardHistoryActivity.kt")
         assertTrue(
-            "历史页正文列必须 previewOf",
-            history.contains("holder.content.text=ClipboardClassifier.previewOf(item.content)"),
+            "历史页正文列必须按命中点开窗、且形态集与结果同代（BUG.md L-1478），当前：$history",
+            history.contains("ClipboardSearch.previewFor(item.content,activeForms)"),
+        )
+        val historySrc = compact(TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        assertTrue(
+            "历史页正文列不许在 getView 里现算查询形态（每行每次绑定都要归一一遍，且会拿新词裁旧结果）",
+            !historySrc.contains("previewFor(item.content,ClipboardSearch.queryForms("),
+        )
+        assertTrue(
+            "历史页结果落地时必须同步预览形态集（少了它 previewFor 恒收空集 ⇒ 永远退回开头窗口）",
+            historySrc.contains("activeForms=forms"),
         )
         assertTrue(
             "历史页正文列不许再直接塞原文",
-            !history.contains("holder.content.text=item.content"),
+            !historySrc.contains("holder.content.text=item.content"),
         )
         // 内容对话框是唯一的「看全文」入口：截断它等于把用户内容藏起来，比 OOM 更糟
         assertTrue(
             "内容对话框必须按段渲染全文（segmentsOf(item.content)）",
-            history.contains("ClipboardClassifier.segmentsOf(item.content)"),
+            historySrc.contains("ClipboardClassifier.segmentsOf(item.content)"),
         )
         assertTrue(
             "每段正文来自分段结果，不是原文整份",
-            history.contains("text=ClipboardClassifier.segmentText(segment,"),
+            historySrc.contains("text=ClipboardClassifier.segmentText(segment,"),
         )
         assertTrue(
             "段文本必须过 segmentText（直接塞 segment 会在每 4000 字处多一条空行）",
-            !history.contains("text=segment"),
+            !historySrc.contains("text=segment"),
         )
         assertTrue(
             "内容对话框不许把全文塞进单个 TextView",
-            !history.contains("text=item.content"),
+            !historySrc.contains("text=item.content"),
         )
         // 单段仍要降断行策略：4000 字里的一整串无断点西文，最优断行没有收益只有代价
         assertTrue(
             "对话片段必须显式降断行策略",
-            history.contains("breakStrategy=android.text.Layout.BREAK_STRATEGY_SIMPLE"),
+            historySrc.contains("breakStrategy=android.text.Layout.BREAK_STRATEGY_SIMPLE"),
         )
 
-        val search = squash("SearchPanelView.kt")
+        val search = previewAssignment("SearchPanelView.kt")
         assertTrue(
-            "搜索结果正文列必须 previewOf",
-            search.contains("holder.content.text=ClipboardClassifier.previewOf(item.content)"),
+            "搜索结果正文列必须按命中点开窗（BUG.md L-1478），当前：$search",
+            search.contains("ClipboardSearch.previewFor(item.content,activeForms)"),
         )
+        val searchSrc = compact(TestSources.codeSource("SearchPanelView.kt"))
         assertTrue(
             "搜索结果正文列不许再直接塞原文",
-            !search.contains("holder.content.text=item.content"),
+            !searchSrc.contains("holder.content.text=item.content"),
         )
 
-        val panel = squash("ClipboardPanelView.kt")
+        val panel = previewAssignment("ClipboardPanelView.kt")
         assertTrue(
-            "键盘面板正文列必须 previewOf",
+            "键盘面板正文列必须 previewOf（面板不搜索，没有命中点可对齐），当前：$panel",
             panel.contains(
-                "holder.content.text=ClipboardClassifier.previewOf(" +
+                "ClipboardClassifier.previewOf(" +
                     "ClipboardClassifier.pieceFor(currentCategory,item.content))",
             ),
         )
+        val panelSrc = compact(TestSources.codeSource("ClipboardPanelView.kt"))
         assertTrue(
             "面板正文列不许绕过 previewOf 直接塞片段 / 原文",
-            !panel.contains("holder.content.text=ClipboardClassifier.pieceFor(currentCategory,item.content)") &&
-                !panel.contains("holder.content.text=item.content"),
+            !panelSrc.contains("holder.content.text=ClipboardClassifier.pieceFor(currentCategory,item.content)") &&
+                !panelSrc.contains("holder.content.text=item.content"),
         )
+
+        // 状态接线：开窗用的是「判出这批命中的那份形态集」，必须与结果**同代**赋值。
+        // 少了它，getView 拿到的是空集 ⇒ 永远退回开头窗口，症状与本条缺陷一模一样（而源码守卫照绿）。
+        val searchCode = TestSources.codeSource("SearchPanelView.kt")
+        val publish = TestSources.blockAfter(searchCode, "fun publish(")
+        assertTrue(
+            "搜索结果落地时必须同步预览形态集（否则开窗恒为空 ⇒ 永远退回开头窗口）",
+            "activeForms = forms" in publish,
+        )
+        val emptyQuery = TestSources.blockAfter(searchCode, "if (q.isEmpty()) {")
+        assertTrue("查询词清空时要复位预览形态集", "activeForms = emptyList()" in emptyQuery)
     }
 }

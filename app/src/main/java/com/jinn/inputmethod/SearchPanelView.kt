@@ -70,6 +70,14 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
      */
     private var cap = ClipboardSearch.Cap.NONE
 
+    /**
+     * 本轮结果的查询词形态：正文列预览要按它把窗口挪到命中点（BUG.md L-1478）。
+     *
+     * 与 [currentItems] **同一次** post 里赋值（同一个 lambda），所以两者永远同代；
+     * 单独存一份而不是每次 `getView` 现算，是因为这里拿到的正是判出这批命中的那份形态。
+     */
+    private var activeForms: List<String> = emptyList()
+
     /** 快速点击去重：一次粘贴完成前忽略后续点击 */
     private var isPasting = false
 
@@ -140,8 +148,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.itemId = item.id
             // 搜索是全库结果、没有分组上下文，因此**始终显示原文**（分组里才显示提取片段）；
             // 但原文要按码点截成预览：256KB 无断点单行会让最优断行吃掉 GB 级内存
-            // （ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）
-            holder.content.text = ClipboardClassifier.previewOf(item.content)
+            // （ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）。窗口从**命中点**起算，
+            // 否则命中落在开头 200 码点之外时行内看不到那个词（BUG.md L-1478）
+            holder.content.text = ClipboardSearch.previewFor(item.content, activeForms)
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
                 val labels = ClipboardClassifier.labelText(item.category)
@@ -365,6 +374,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = emptyList()
+                    activeForms = emptyList()
                     cap = ClipboardSearch.Cap.NONE
                     adapter.notifyDataSetChanged()
                     updateEmpty()
@@ -390,6 +400,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = items
+                    activeForms = forms
                     this@SearchPanelView.cap = cap
                     adapter.notifyDataSetChanged()
                     updateEmpty()
