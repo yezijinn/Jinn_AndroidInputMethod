@@ -21,6 +21,12 @@ import kotlin.math.ln
  * 该例的正确切分在 top-3 里落在第三位。
  *
  * 整条路径都没有多字词（等于「每音节取首字」的串）时丢弃：那不是候选，只会挤占候选栏。
+ *
+ * **状态表的不变量（别照着「读旧值」去改）**：`multi` / `prevRank` 都是插入当时从**起点列**读的值，
+ * 看起来会被后续下移覆盖，实际不会 —— 所有边都指向更远的终点（`end > i`），处理 `i` 的那一轮
+ * 只写 `i` 之后的列，而 `i` 列在此之前已被更早的起点写满（各起点单调递增处理）。所以起点列
+ * 在「读它」时已是终值，回溯也不会拿到别人的 `rank`。`SentenceComposerTest` 用一份数据结构完全
+ * 不同的参考实现（不可变链节点 + 从链上重算 `multi`）逐例对拍钉着这条。
  */
 internal object SentenceComposer {
     /** 每个词的固定罚分：`ln(1e-6)`，对应 librime `grammar.h` 无 grammar 时的权重 */
@@ -94,26 +100,46 @@ internal object SentenceComposer {
             multi[idx][end] = multi[fromRank][from] || isMulti
         }
 
+        // 音节判定记忆化（0 = 未判 / 1 = 是 / 2 = 否）：`walk` 在每个起点 i 都要重判同一批
+        // `(pos, end)`，同一个跨度在更早的起点也会被再判一次 —— 64 字符最坏情况是 6n² 次
+        // `substring`（≈2.4 万次短命对象，实测占这一路一半以上耗时）。判定只与 `(pos, end)`
+        // 有关且 [isSyllable] 在一次 compose 内是纯函数，记忆化后全程只判 6n 次（≈380 次）。
+        // 平铺成一维（pos * (n+1) + end），避免 n 个 ByteArray 的对象头开销。
+        val sylKnown = ByteArray((n + 1) * (n + 1))
+        fun isSyllableAt(pos: Int, end: Int): Boolean {
+            val at = pos * (n + 1) + end
+            val known = sylKnown[at].toInt()
+            if (known != 0) return known == 1
+            val ok = isSyllable(input.substring(pos, end))
+            sylKnown[at] = if (ok) 1 else 2
+            return ok
+        }
+
+        // ends / seen 按位置复用：每个起点各建一个 ArrayList + BooleanArray 会每键多两次分配。
+        // `seen[end] == i` 即「本轮 walk 已访问」（i 单调递增，不必清零）。
+        val ends = IntArray(n + 1)
+        val seen = IntArray(n + 1) { -1 }
+
         for (i in 0 until n) {
             val states = count[i]
             if (states == 0) continue
-            // 枚举从 i 出发的可达终点：按音节切分链式展开，同一终点只保留一份
-            val ends = ArrayList<Int>(4)
-            val seen = BooleanArray(n + 1)
+            // 枚举从 i 出发的可达终点：按音节切分链式展开，同一终点只保留一份（顺序仍递增）
+            var endCount = 0
 
             fun walk(pos: Int) {
                 val stop = minOf(pos + MAX_SYLLABLE_LEN, n)
                 for (end in pos + 1..stop) {
-                    if (seen[end]) continue
-                    if (!isSyllable(input.substring(pos, end))) continue
-                    seen[end] = true
-                    ends.add(end)
+                    if (seen[end] == i) continue
+                    if (!isSyllableAt(pos, end)) continue
+                    seen[end] = i
+                    ends[endCount++] = end
                     walk(end)
                 }
             }
             walk(i)
 
-            for (end in ends) {
+            for (e in 0 until endCount) {
+                val end = ends[e]
                 val key = input.substring(i, end)
                 // 逐条候选就地展开：不为每条边建集合（每次按键会多出上千个短命对象）
                 val words = wordsOf(key)
@@ -130,7 +156,8 @@ internal object SentenceComposer {
                     }
                 }
                 // 整个跨度本身是一个音节时，单字也是这条边上的候选（不参与「多字词」判定）
-                if (isSyllable(key)) {
+                // 判据走记忆化：同一跨度在 walk 里刚判过（直接边），这里直接命中缓存
+                if (isSyllableAt(i, end)) {
                     val chars = charsOf(key)
                     val lim = minOf(chars.size, MAX_HOMOPHONES)
                     for (r in 0 until states) {
@@ -146,6 +173,12 @@ internal object SentenceComposer {
         }
 
         val out = LinkedHashSet<String>(k)
+        // 丢弃「整条没有多字词」的路径。**为什么这条过滤不会把好整句一起丢掉**：覆盖同样 S 个
+        // 音节的路径里，含多字词的那条至少少用一个词（词少一个就少罚 13.8），而名次分每词最多
+        // 让 1.79（`ln(6)`）⇒ 多字词路径的得分总比全单字路径好 13.8 - 1.79×(S-1)，S ≤ 8 时恒正。
+        // 调用方 `PinyinEngine.query` 固定按 `MAX_SYLLABLES` = 8 截断后再送进来，所以应用内
+        // 不会出现「top-k 全是单字路径、多字词整句被挡在 beam 外」；直接以 9 音节以上调用本函数时
+        // 这条余量才可能变负（当前无此调用方）。
         for (r in 0 until count[n]) {
             if (!multi[r][n]) continue
             val parts = ArrayList<String>(4)
