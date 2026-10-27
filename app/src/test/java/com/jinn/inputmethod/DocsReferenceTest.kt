@@ -921,8 +921,8 @@ class DocsReferenceTest {
             )
             // 反向：「单条上限」的每一处声明都必须是当前值 —— 只查「有没有写对」会漏掉改一半的
             // （2026-10-12 实测：把一处 256KB 改成 512KB，只查正向时守卫照样绿）。
-            // 只扫这一种声明位，不扫全篇 NKB：功能总览那句「单条上限（256KB / 4KB~1MB，受解密窗自动收缩）」
-            // 里的 4KB 是**可调范围**，属正当写法，全扫会误伤。
+            // 只扫这一种声明位，不扫全篇 NKB：功能总览那句「单条上限（256KB / 4KB~260KB）」里的
+            // 4KB / 260KB 是**可调范围**，属正当写法，全扫会误伤（范围另有一条正向钉，见下面 ④b）。
             val strayKb = Regex("""单条(?:上限)?[^\d]{0,6}(\d+)KB""").findAll(text)
                 .map { it.groupValues[1] }.filter { it != textKb.toString() }.toSet()
             assertTrue("$name 的「单条上限」写着 ${strayKb.sorted().joinToString("/")}KB（源码 ${textKb}KB）", strayKb.isEmpty())
@@ -933,6 +933,14 @@ class DocsReferenceTest {
         }
         val overview = readDoc("功能总览.md") ?: error("找不到 功能总览.md")
         assertTrue("功能总览缺「文本 ${textKb}KB」（源码 MAX_ITEM_BYTES）", "${textKb}KB" in overview)
+        // ④b 单条上限的**可调范围**同样跟着常量走：2026-10-27 上界 1024 → 260，正文那一句里的
+        // 量程若不跟着改，读者看到的仍是旧上限（上面那条反向钉只扫默认值那一个数，盯不到范围）。
+        val minItemKb = uniqueConst(prefsSrc, """MIN_ITEM_KB = (\d+)""", "MIN_ITEM_KB")
+        val capItemKb = uniqueConst(prefsSrc, """MAX_ITEM_KB_CAP = (\d+)""", "MAX_ITEM_KB_CAP")
+        assertTrue(
+            "功能总览的单条上限量程与源码不符（源码 ${minItemKb}KB~${capItemKb}KB）",
+            "${minItemKb}KB~${capItemKb}KB" in overview,
+        )
         assertTrue("功能总览缺图片单张默认「${imageMb}MB」（源码 DEFAULT_IMAGE_ITEM_MB）", "默认 ${imageMb}MB" in overview)
         val strayMb = Regex("""默认\s*(\d+)\s*MB""").findAll(overview).map { it.groupValues[1] }
             .filter { it != imageMb.toString() }.toSet()

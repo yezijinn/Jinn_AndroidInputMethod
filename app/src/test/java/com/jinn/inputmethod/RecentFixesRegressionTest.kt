@@ -1154,9 +1154,18 @@ class RecentFixesRegressionTest {
         assertFalse("键高上界注释不得再写 120dp", "上界：120dp" in appearRaw)
         assertFalse("键高进度注释不得再写 20 格", "20 格）" in appearRaw)
 
+        // 2026-10-27（第 60 轮）：算式搬进 `SliderGrid`（自定义页与单测共用一份），锚点跟着换；
+        // 原先把算式钉在页面源码里，页面与单测各写一份算术，改了其中一处另一处照样绿。
+        val grid = codeOf("SliderGrid.kt")
+        assertTrue("滑杆上界必须可达（取上整）", "(((max - min) + step - 1) / step)" in grid)
+        assertTrue("显示侧进度必须取整", "Math.round((value - min).toFloat() / step)" in grid)
         val page = codeOf("ClipboardCustomizeActivity.kt")
-        assertTrue("滑杆上界必须可达（取上整）", "(((max - min) + step - 1) / step)" in page)
-        assertTrue("显示侧进度必须取整", "Math.round((value - min).toFloat() / step)" in page)
+        assertTrue(
+            "滑杆算式必须走 SliderGrid（页面里不许再重写一份）",
+            "SliderGrid.progressMax(min, max, step)" in page &&
+                "SliderGrid.valueAt(progress, min, max, step)" in page &&
+                "SliderGrid.progressFor(value, min, max, step)" in page,
+        )
 
         assertFalse(
             "默认端点注释不得再指向与常量不符的地址",

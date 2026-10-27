@@ -337,7 +337,8 @@ class ClipboardCustomizeActivity : Activity() {
         })
         card3.addView(makeSlider(
             TEXT_MAX_ITEM,
-            draft.maxItemKb, 4, ClipboardPrefs.MAX_ITEM_KB_CAP, 32,
+            draft.maxItemKb, ClipboardPrefs.MIN_ITEM_KB, ClipboardPrefs.MAX_ITEM_KB_CAP,
+            ClipboardPrefs.ITEM_KB_STEP,
             { draft = draft.copy(maxItemKb = it) },
             { "$it KB" },
         ))
@@ -489,9 +490,10 @@ class ClipboardCustomizeActivity : Activity() {
     /**
      * 拖动条行：标签（左）+ 拖动条（中）+ 数值（右，与外观页同规格）。
      *
-     * 数值文本一律用**盘上原值**，不做步进对齐：默认值与步进相位不齐（500 / 200 / 256 都不在
-     * 格点上），对齐会把它们显示成 451 / 191 / 228 —— 用户以为值被改小了，保存后还会真写回。
+     * 数值文本一律用**盘上原值**，不做步进对齐：默认值与步进相位不齐（500 条 / 200 条 / 300 张
+     * 都不在格点上），对齐会把它们显示成 501 / 202 / 301 —— 用户以为值被改小了，保存后还会真写回。
      * 代价是导入的非步进值（如 565）与滑块位置差半格，拖动即从格点起算，取其轻（L-997 复核结论）。
+     * 单条上限不在此列：它的步进专挑能把默认值与上界都放在格点上的值（`ITEM_KB_STEP`）。
      */
     private fun makeSlider(
         label: String,
@@ -507,12 +509,12 @@ class ClipboardCustomizeActivity : Activity() {
             minWidth = dp(52)
         }
         val seek = SeekBar(this).apply {
-            // 上界必须可达：步进除不尽时（如 4~1024 / 每格 32、2~75 / 每格 2），整除会把最大进度
-            // 压到上界之下 —— 用户存着 1024 或 75 时滑杆选不出来，拖一下就静默变小。
-            // 取上整，最后一格落到上界之内由回调里的 coerceIn 收口。
-            this.max = (((max - min) + step - 1) / step).coerceAtLeast(1)
+            // 网格算术见 [SliderGrid]：上界取上整 ⇒ **上界恒可达**（末格不足一步时由回调里的
+            // coerceIn 收口）。上界本身要不要能生效是另一码事 —— 那由定义域的上界保证
+            // （`MAX_ITEM_KB_CAP` 已落在解密窗天花板之下，见 BUG.md L-1514）。
+            this.max = SliderGrid.progressMax(min, max, step)
             // 显示侧同样取整：存着上界时进度落在最后一格（否则会显示成一格之下，一拖就掉值）
-            progress = Math.round((value - min).toFloat() / step).coerceIn(0, this.max)
+            progress = SliderGrid.progressFor(value, min, max, step)
             contentDescription = label
             progressTintList = ColorStateList.valueOf(getColor(R.color.accent))
             thumbTintList = ColorStateList.valueOf(getColor(R.color.accent))
@@ -520,7 +522,7 @@ class ClipboardCustomizeActivity : Activity() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                     // 只改草稿（不写盘）：拖动中不重画，避免联动项抖动与页面跳动
-                    val v = (min + progress * step).coerceIn(min, max)
+                    val v = SliderGrid.valueAt(progress, min, max, step)
                     set(v)
                     valueText.text = format(v)
                 }

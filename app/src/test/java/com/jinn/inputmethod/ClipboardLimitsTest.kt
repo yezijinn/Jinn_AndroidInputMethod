@@ -243,6 +243,159 @@ class ClipboardLimitsTest {
         )
     }
 
+    // ── 滑杆上界与可生效域（BUG.md L-1514） ────────────────────────────────
+    //
+    // L-1514 的原描述把现象说成「上界够不到」，复核后不成立：`SliderGrid.progressMax` 取上整，
+    // 末格必落在上界之内、多出的一截由 `coerceIn` 收口 ⇒ **上界恒可达**（下面第三条用例钉这条性质）。
+    // 真正的缺陷是上界**超出可生效域**：旧上界 1024KB 拖到头只生效 262KB（解密窗天花板）。
+    // 于是修法是「上界压到天花板之下的网格点」，判据三条：全额生效 + 是网格上最大的可生效值 +
+    // 默认值也落在格点上且不在末格（第三条是量程缩小后新冒出来的：「默认值被顶进末格」会让滑块
+    // 一打开就贴在最右端，上界那点值域点不到 —— 与 L-1514 同形，只是幅度小）。
+
+    @Test
+    fun 单条上限的滑杆上界必须全额生效() {
+        val cap = ClipboardPrefs.MAX_ITEM_KB_CAP
+        val capBytes = cap * 1024L
+        assertEquals(
+            "滑杆上界 ${cap}KB 被解密窗天花板压小 ⇒ 用户拖到头也只生效一部分（L-1514）",
+            capBytes,
+            ClipboardStore.effectiveItemLimitBytes(capBytes),
+        )
+        assertTrue(
+            "默认值 ${ClipboardPrefs.DEFAULT_MAX_ITEM_KB}KB 必须落在定义域内",
+            ClipboardPrefs.DEFAULT_MAX_ITEM_KB in ClipboardPrefs.MIN_ITEM_KB..cap,
+        )
+    }
+
+    @Test
+    fun 单条上限的上界必须是网格上最大的可生效值() {
+        val min = ClipboardPrefs.MIN_ITEM_KB
+        val step = ClipboardPrefs.ITEM_KB_STEP
+        val cap = ClipboardPrefs.MAX_ITEM_KB_CAP
+        assertEquals(
+            "上界与下界不同相位 ⇒ 末格只剩一截残格、存着上界时滑块停在倒数第二格",
+            0,
+            (cap - min) % step,
+        )
+        // 再上一格就必须越过天花板：证明上界没有「白让出」可生效的额度（取 260 而非更小的值）
+        val next = (cap + step) * 1024L
+        assertTrue(
+            "上界再上一格（${cap + step}KB）仍全额生效 ⇒ 上界取得过小",
+            next > ClipboardStore.effectiveItemLimitBytes(next),
+        )
+        // 默认值同样要落在格点上，而且不许被四舍五入顶进末格（2026-10-27 真机实测到的失效形态）：
+        // 步进取 32 时 `progressFor(256) = round(252/32) = 8 = progressMax` ⇒ 页面一打开就是
+        // 「右值 256KB + 滑块已在最右端」，再往右点 / 拖不产生回调（进度没变），256~260 只剩
+        // 「先往左拖再往右拖」。所以步进必须整除默认值与上界两个跨度：gcd(252, 256) = 4。
+        val def = ClipboardPrefs.DEFAULT_MAX_ITEM_KB
+        assertEquals(
+            "默认值 ${def}KB 不在格点上（步进 $step）⇒ 滑块位置与右值对不上",
+            0,
+            (def - min) % step,
+        )
+        val last = SliderGrid.progressMax(min, cap, step)
+        assertTrue(
+            "默认值 ${def}KB 被顶进末格（末格取值 ${SliderGrid.valueAt(last, min, cap, step)}KB）" +
+                "⇒ 滑块一打开就贴在最右端，上界那点值域点不到",
+            SliderGrid.progressFor(def, min, cap, step) < last,
+        )
+        // 天花板自身的算法：48MB / 2.5 / 75 = 268,435.456B。试过两种除法次序（先除放大再除页宽 /
+        // 先整除页宽再除放大）都是 268435 —— 取整落点离整数边界 0.456 有余量，不存在差一。
+        assertEquals(
+            "解密窗反推的天花板变了（预算 / 放大系数 / 页宽硬上限）",
+            268_435L,
+            ClipboardStore.effectiveItemLimitBytes(Long.MAX_VALUE),
+        )
+    }
+
+    @Test
+    fun 拖动条的上界恒可达且末格不是死格() {
+        // 域清单**从页面源码解析**，不在这里另抄一份数字：抄一份的话，改了页面的 min / step，
+        // 这里仍对着旧值全绿（本轮修的正是「同一事实分居两处」这类脱钩）。
+        val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        val domains = sliderDomains(page)
+        assertEquals("自定义页的滑杆个数变了（本守卫要跟着改）：$domains", 12, domains.size)
+        for ((min, max, step) in domains) {
+            val last = SliderGrid.progressMax(min, max, step)
+            // ① 拖到末格必须正好取到上界（取上整 + `coerceIn` 收口，与 (max-min)%step 无关）
+            assertEquals(
+                "上界 $max 拖到末格没取到（min=$min step=$step）",
+                max,
+                SliderGrid.valueAt(last, min, max, step),
+            )
+            // ② 末格不是死格：倒数第二格必须严格小于上界
+            assertTrue(
+                "末格与倒数第二格同值（min=$min max=$max step=$step）",
+                last > 1 && SliderGrid.valueAt(last - 1, min, max, step) < max,
+            )
+            // ③ 存着上界时滑块最多偏一格 —— 偏出去的那一截就是「上界不在格点上」本身（L-983 / L-997
+            //    的既定取舍）。原先这里断言必须正好停在末格，等于把单条上限的取舍推广成所有域的通则：
+            //    面板单页 75（余 1 / 步 2）只是靠 `Math.round` 向上取整侥幸通过，换成余数更小的域就误红。
+            assertTrue(
+                "存着上界 $max 时滑块偏了两格以上（min=$min step=$step）",
+                last - SliderGrid.progressFor(max, min, max, step) <= 1,
+            )
+        }
+        // 步进除不尽的形态（含曾被误判成「够不到」的 262 / 1024）：不管余数多少，末格总是上界
+        for ((min, max, step) in listOf(Triple(4, 262, 32), Triple(4, 1024, 32), Triple(2, 75, 2), Triple(0, 5, 3))) {
+            assertEquals(
+                "上界 $max 必须可达（min=$min step=$step）",
+                max,
+                SliderGrid.valueAt(SliderGrid.progressMax(min, max, step), min, max, step),
+            )
+        }
+    }
+
+    /** 从页面源码里取出每个 `makeSlider(` 调用的 `(min, max, step)`（常量按名解析成值）。 */
+    private fun sliderDomains(page: String): List<Triple<Int, Int, Int>> =
+        Regex("""draft\.\w+,\s*([^,{}()]+?)\s*,\s*([^,{}()]+?)\s*,\s*([^,{}()]+?)\s*,\s*\{""")
+            .findAll(page)
+            .map {
+                Triple(
+                    sliderParam(it.groupValues[1]),
+                    sliderParam(it.groupValues[2]),
+                    sliderParam(it.groupValues[3]),
+                )
+            }
+            .toList()
+
+    private fun sliderParam(token: String): Int {
+        val t = token.trim()
+        t.toIntOrNull()?.let { return it }
+        return when (t.substringAfterLast('.')) {
+            "MIN_ITEM_KB" -> ClipboardPrefs.MIN_ITEM_KB
+            "ITEM_KB_STEP" -> ClipboardPrefs.ITEM_KB_STEP
+            "MAX_ITEM_KB_CAP" -> ClipboardPrefs.MAX_ITEM_KB_CAP
+            "MAX_ITEMS_CAP" -> ClipboardPrefs.MAX_ITEMS_CAP
+            "MAX_FAV_ITEMS_CAP" -> ClipboardPrefs.MAX_FAV_ITEMS_CAP
+            "MAX_SEARCH_CAP" -> ClipboardPrefs.MAX_SEARCH_CAP
+            "MIN_TOTAL_MB" -> ClipboardPrefs.MIN_TOTAL_MB
+            "MAX_TOTAL_MB" -> ClipboardPrefs.MAX_TOTAL_MB
+            "FAV_MAX_MB_HARD_CAP" -> ClipboardPrefs.FAV_MAX_MB_HARD_CAP
+            "MIN_IMAGE_TOTAL_MB" -> ClipboardPrefs.MIN_IMAGE_TOTAL_MB
+            "MAX_IMAGE_TOTAL_MB" -> ClipboardPrefs.MAX_IMAGE_TOTAL_MB
+            "MIN_IMAGE_ITEM_MB" -> ClipboardPrefs.MIN_IMAGE_ITEM_MB
+            "MAX_IMAGE_ITEM_MB" -> ClipboardPrefs.MAX_IMAGE_ITEM_MB
+            "MAX_IMAGE_ITEMS_CAP" -> ClipboardPrefs.MAX_IMAGE_ITEMS_CAP
+            "PANEL_PAGE_ITEMS_MAX" -> ClipboardStore.PANEL_PAGE_ITEMS_MAX
+            "GALLERY_COLUMNS_MIN" -> Prefs.GALLERY_COLUMNS_MIN
+            "GALLERY_COLUMNS_MAX" -> Prefs.GALLERY_COLUMNS_MAX
+            "GALLERY_CELL_HEIGHT_MIN" -> Prefs.GALLERY_CELL_HEIGHT_MIN
+            "GALLERY_CELL_HEIGHT_MAX" -> Prefs.GALLERY_CELL_HEIGHT_MAX
+            else -> error("滑杆参数出现未登记的表达：$t（换了常量名或写法，本守卫要跟着改）")
+        }
+    }
+
+    @Test
+    fun 自定义页的单条上限滑杆必须取定义域常量() {
+        val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "单条上限滑杆没引用定义域常量（写死数字就会与 MAX_ITEM_KB_CAP / 步进脱钩）",
+            "ClipboardPrefs.MIN_ITEM_KB, ClipboardPrefs.MAX_ITEM_KB_CAP" in page &&
+                "ClipboardPrefs.ITEM_KB_STEP" in page,
+        )
+    }
+
     @Test
     fun 导出分页窗口同样在预算内() {
         // 配置备份导出剪贴板节的页宽（BUG.md L-102）：原值 200 条 ≈ 131MB，是当时**唯一**
@@ -301,7 +454,7 @@ class ClipboardLimitsTest {
         // 若这 98 条都接近单条上限（256KB），峰值 = 98 × 256KB × 2.5 ≈ 61MB > 48MB 预算
         // （页一旦凑满 50 条就停，所以整页健康的数据永远碰不到这个上限）。
         // 现值按**实际明文**限预算（`FIRST_PAGE_MAX_PLAIN_BYTES`）⇒ 第二页就该被拒。
-        val big = "汉".repeat(256 * 1024 / 3)              // UTF-8 约 256KB，等于单条上限
+        val big = "汉".repeat(256 * 1024 / 3)              // UTF-8 约 256KB，等于默认单条上限
         fun pageOf(from: Int) = ClipboardDb.Page(
             // 一页 50 行里 1 行是坏行 ⇒ 只返回 49 条（正好凑不满 limit，于是继续取下一页）
             items = (0 until 49).map {

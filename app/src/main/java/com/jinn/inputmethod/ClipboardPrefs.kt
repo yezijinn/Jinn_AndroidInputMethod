@@ -218,10 +218,10 @@ class ClipboardPrefs(context: Context) {
             putInt(KEY_HISTORY_PAGE_SIZE, if (value in PAGE_SIZE_OPTIONS) value else DEFAULT_HISTORY_PAGE_SIZE)
         }
 
-    /** 单条上限（KB）：4 ~ [MAX_ITEM_KB_CAP]，默认 256；生效值再受解密窗天花板约束 */
+    /** 单条上限（KB）：[MIN_ITEM_KB] ~ [MAX_ITEM_KB_CAP]，默认 256；上界已在天花板之下，故全额生效 */
     var maxItemBytesKb: Int
-        get() = intOr(KEY_MAX_ITEM_KB, DEFAULT_MAX_ITEM_KB).coerceIn(4, MAX_ITEM_KB_CAP)
-        set(value) = sp.edit { putInt(KEY_MAX_ITEM_KB, value.coerceIn(4, MAX_ITEM_KB_CAP)) }
+        get() = intOr(KEY_MAX_ITEM_KB, DEFAULT_MAX_ITEM_KB).coerceIn(MIN_ITEM_KB, MAX_ITEM_KB_CAP)
+        set(value) = sp.edit { putInt(KEY_MAX_ITEM_KB, value.coerceIn(MIN_ITEM_KB, MAX_ITEM_KB_CAP)) }
 
     /**
      * 生效的单条上限（字节）：用户值再与解密窗反推的天花板取小
@@ -285,7 +285,7 @@ class ClipboardPrefs(context: Context) {
             editor.putInt(KEY_FAV_MAX_ITEMS, favMaxItems.coerceIn(1, MAX_FAV_ITEMS_CAP))
             // 收藏体积按静态上界存原值：动态上限只决定生效值，这里钳掉它 = 用户的设定真丢（L-982）
             editor.putInt(KEY_FAV_MAX_MB, favoriteMaxMbStored(favMaxMb))
-            editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(4, MAX_ITEM_KB_CAP))
+            editor.putInt(KEY_MAX_ITEM_KB, maxItemKb.coerceIn(MIN_ITEM_KB, MAX_ITEM_KB_CAP))
             editor.putInt(KEY_PANEL_PAGE, panelPage.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX))
             editor.putInt(KEY_MAX_SEARCH, maxSearch.coerceIn(2, MAX_SEARCH_CAP))
             editor.putBoolean(KEY_IMAGE_ENABLED, imageEnabled)
@@ -371,7 +371,7 @@ class ClipboardPrefs(context: Context) {
                     editor.putInt(KEY_MAX_SEARCH, it.coerceIn(2, MAX_SEARCH_CAP)); applied++
                 }
                 KEY_MAX_ITEM_KB -> (v.value as? Int)?.let {
-                    editor.putInt(KEY_MAX_ITEM_KB, it.coerceIn(4, MAX_ITEM_KB_CAP)); applied++
+                    editor.putInt(KEY_MAX_ITEM_KB, it.coerceIn(MIN_ITEM_KB, MAX_ITEM_KB_CAP)); applied++
                 }
                 KEY_HISTORY_PAGE_SIZE -> (v.value as? Int)?.let {
                     editor.putInt(
@@ -445,7 +445,31 @@ class ClipboardPrefs(context: Context) {
         const val MAX_ITEMS_CAP = 20000
         const val MAX_FAV_ITEMS_CAP = 1000
         const val MAX_SEARCH_CAP = 800
-        const val MAX_ITEM_KB_CAP = 1024
+
+        /**
+         * 单条上限（KB）的定义域：下界 / 步进 / 上界（自定义页滑杆直接引用这三个常量）。
+         *
+         * 上界 260 = 滑杆网格（4 + 4k）上**不超过解密窗天花板**的最后一个值：天花板
+         * 268,435B ≈ 262KB 是 `48MB / 2.5 / 75` 反推的硬上限，滑杆再往上就是「设了不生效」
+         * 的值（旧上界 1024KB 拖到头实际只到 262KB，BUG.md L-1514）。
+         *
+         * 取 260 而不是 262（天花板本身）：末格与上界重合 ⇒ 没有第二截残格、存着上界时滑块
+         * 正停在末格；代价只有 2KB（0.8%）上限，而 1024 那档本来就是空承诺。
+         *
+         * 步进取 4 而不是旧的 32（量程从 4~1024 缩到 4~260 之后必须一起缩）：步进要同时整除
+         * 「默认值跨度 256-4 = 252」与「上界跨度 260-4 = 256」，否则默认值落不到格点上 ——
+         * 而默认值一旦被四舍五入进**末格**，页面一打开就是「256KB + 滑块已在最右端」，
+         * 再往右点 / 拖都不产生回调（进度没变），256~260 只剩「先往左拖再往右拖」一条路，
+         * 与 L-1514 的「拖到头也到不了上界」同形。gcd(252, 256) = 4 ⇒ 步进只能是 1 / 2 / 4，
+         * 取最大的 4（65 格，4KB 一档）；旧的 8 / 16 / 32 全都会把默认值顶进末格。
+         *
+         * 改这三个数必须同时满足 `ClipboardLimitsTest` 的三条：上界全额生效 + 是网格上最大的
+         * 可生效值 + 默认值落在格点上且不在末格（否则又会出现「承诺了不生效的值」「白让出
+         * 可生效额度」或「上界够不到」）。
+         */
+        const val MIN_ITEM_KB = 4
+        const val ITEM_KB_STEP = 4
+        const val MAX_ITEM_KB_CAP = 260
 
         /** 历史体积上限的定义域（MB）；下界也是自定义页滑块的 min */
         const val MIN_TOTAL_MB = 10
