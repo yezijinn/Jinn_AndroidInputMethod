@@ -231,4 +231,26 @@ class FuzzyQueryTest {
         assertTrue("精确命中: ${PinyinEngine.query("zhaoyang").candidates}", PinyinEngine.query("zhaoyang").candidates.contains("朝阳"))
         assertEquals("历史残留没清掉时会得到 [区]", listOf("门"), PinyinEngine.predict("朝阳"))
     }
+
+    @Test
+    fun `变体词命中前缀时只消费实际输入的那段前缀`() {
+        // 模糊分支对每个前缀长度 k 都跑一次 `keyVariants(take(k))`，登记的是 `typedKey` = 输入的**前缀**
+        // （不是词库里的变体键）。词库刻意把一个两字词挂在单音节键下（只为构造证据）：输入 zangguo 时
+        // 只有前缀 zang 的变体能命中它 ⇒ 消费必须停在 zang（4 字符 / 1 音节），残码 guo 留着。
+        // 若 typedKey 被写成变体键（zhang）或整串键，这里会变成「无法对齐 ⇒ 消费全部」(7)。
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "zang\t脏\nzhang\t张",
+            phrases = "zhang\t张国",
+            syllables = "zang\nzhang\nguo",
+        )
+        PinyinEngine.setFuzzyMask(FuzzyPinyin.Z_ZH)
+        assertTrue(
+            "前缀变体没命中：${PinyinEngine.query("zangguo").candidates}",
+            PinyinEngine.query("zangguo").candidates.contains("张国"),
+        )
+        val c = PinyinEngine.consumption("zangguo", "张国")
+        assertEquals("应只吃掉前缀 zang", 4, c.quanpinChars)
+        assertEquals(1, c.syllables)
+    }
 }

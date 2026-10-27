@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * 模糊音纯逻辑测试（不依赖 Android 资源）。
@@ -132,5 +133,229 @@ class FuzzyPinyinTest {
             FuzzyPinyin.MAX_VARIANTS_PER_SYLLABLE,
             FuzzyPinyin.variantsOf("rang", FuzzyPinyin.MASK_ALL, isLegal).size,
         )
+    }
+
+    // ── 真实音节表（`assets/pinyin_syllables.txt.xz`，421 个）上的穷举守卫 ──────────────
+    //
+    // 上面几条用的是手挑的 50 个音节子集：跑得动，但覆盖不到表外音节
+    // （`lan` 恰好是变体数顶到上限的那个，它就不在子集里）。下面这批直接吃打包进 APK 的那份表，
+    // 把「规则对整张表都成立」钉死 —— 规则本身没有「只在部分音节上正确」的余地。
+
+    private val realSyllables: Set<String> by lazy { readSyllables() }
+
+    private val realIsLegal = { s: String -> realSyllables.contains(s) }
+
+    private fun readSyllables(): Set<String> {
+        val candidates = listOf(
+            "src/main/assets/pinyin_syllables.txt",
+            "app/src/main/assets/pinyin_syllables.txt",
+        )
+        for (path in candidates) {
+            val plain = File(path)
+            if (plain.isFile) {
+                return plain.readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            }
+            // 文本资产自 2026-09-26 起以 .xz 存进 APK（体积余量），测试按短名取、自动解压
+            val xz = File("$path.xz")
+            if (xz.isFile) {
+                val text = org.tukaani.xz.XZInputStream(xz.inputStream())
+                    .use { String(it.readBytes(), Charsets.UTF_8) }
+                return text.lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            }
+        }
+        throw AssertionError("未找到音节表，尝试过: $candidates")
+    }
+
+    /** 声母表（长声母在前）：音节剥掉它，剩下的就是韵母 */
+    private val INITIALS = listOf(
+        "zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l",
+        "g", "k", "h", "j", "q", "x", "r", "z", "c", "s", "y", "w",
+    )
+
+    private fun finalOf(syllable: String): String =
+        INITIALS.firstOrNull { syllable.startsWith(it) && syllable.length > it.length }
+            ?.let { syllable.substring(it.length) }
+            ?: syllable
+
+    /** [key] 由 [syllables] 里第几个音节的哪个合法变体得来（可能为空：不是「只换一个音节」得来的） */
+    private fun replacementsOf(key: String, syllables: List<String>, mask: Int): List<Pair<Int, String>> {
+        val out = ArrayList<Pair<Int, String>>()
+        for (i in syllables.indices) {
+            for (variant in FuzzyPinyin.variantsOf(syllables[i], mask, realIsLegal)) {
+                val built = buildString {
+                    for (j in syllables.indices) append(if (j == i) variant else syllables[j])
+                }
+                if (built == key) out.add(i to variant)
+            }
+        }
+        return out
+    }
+
+    @Test
+    fun `真实音节表_韵尾派生只动鼻音尾巴_liang 的 i 必须留着`() {
+        // 「前后鼻音」替换的是**韵母**的鼻音尾巴：`liang` = 声母 l + 韵母 iang，换掉的是 iang 的 -ng，
+        // 得 `lian`（l + ian），韵腹 i 必须保留。这条同时钉住「被替换的尾串不越过声母边界」
+        // 与「派生的韵母对只能是标准的前后鼻音对」——多出任何一对（例如 iang→an 这种丢了韵腹的）
+        // 都是把声母尾巴当成了韵尾。
+        val pairs = sortedSetOf<String>()
+        for (syllable in realSyllables) {
+            val fin = finalOf(syllable)
+            for (group in FuzzyPinyin.GROUPS) {
+                if (group.kind != FuzzyPinyin.Kind.FINAL) continue
+                for (variant in FuzzyPinyin.variantsOf(syllable, group.bit, realIsLegal)) {
+                    val tail = listOf(group.a, group.b)
+                        .sortedByDescending { it.length }
+                        .firstOrNull { syllable.endsWith(it) }
+                        ?: continue
+                    assertTrue(
+                        "「$syllable」的尾串「$tail」越过了声母边界（韵母 $fin）",
+                        tail.length <= fin.length,
+                    )
+                    pairs.add("$fin→${finalOf(variant)}")
+                }
+            }
+        }
+        assertEquals(
+            "派生的韵母对超出前后鼻音的五对（多出来的都是丢了韵腹的错误派生）",
+            sortedSetOf(
+                "an→ang", "ang→an", "en→eng", "eng→en", "in→ing", "ing→in",
+                "ian→iang", "iang→ian", "uan→uang", "uang→uan",
+            ),
+            pairs,
+        )
+
+        assertEquals(listOf("lian"), FuzzyPinyin.variantsOf("liang", FuzzyPinyin.AN_ANG, realIsLegal))
+        assertEquals(listOf("niang", "lian"), FuzzyPinyin.variantsOf("liang", FuzzyPinyin.MASK_ALL, realIsLegal))
+        assertEquals(listOf("liang"), FuzzyPinyin.variantsOf("lian", FuzzyPinyin.AN_ANG, realIsLegal))
+        // 丢了韵腹的形态（lang）绝不能出现
+        assertFalse(FuzzyPinyin.variantsOf("liang", FuzzyPinyin.MASK_ALL, realIsLegal).contains("lang"))
+        // 复韵尾同类：uang→uan / uan→uang
+        assertEquals(listOf("huan"), FuzzyPinyin.variantsOf("huang", FuzzyPinyin.AN_ANG, realIsLegal))
+        assertEquals(listOf("huang"), FuzzyPinyin.variantsOf("huan", FuzzyPinyin.AN_ANG, realIsLegal))
+    }
+
+    @Test
+    fun `真实音节表_单音节上限从不静默丢掉命中组`() {
+        // 逐组单独派生再合并 = 「不设上限时的全量结果」；它必须与全开掩码的结果逐项相同，
+        // 否则就是 MAX_VARIANTS_PER_SYLLABLE 把用户勾了的组吃掉了（静默失效，没有报错）。
+        val saturated = sortedSetOf<String>()
+        var max = 0
+        for (syllable in realSyllables) {
+            val all = LinkedHashSet<String>()
+            for (group in FuzzyPinyin.GROUPS) {
+                all.addAll(FuzzyPinyin.variantsOf(syllable, group.bit, realIsLegal))
+            }
+            val got = FuzzyPinyin.variantsOf(syllable, FuzzyPinyin.MASK_ALL, realIsLegal)
+            assertEquals("「$syllable」全量 ${all.size} 个，截断后只剩 ${got.size} 个", all.toList(), got)
+            assertFalse("变体不得等于原音节：$syllable", got.contains(syllable))
+            assertTrue("「$syllable」的变体不合法", got.all(realIsLegal))
+            max = maxOf(max, got.size)
+            if (got.size == FuzzyPinyin.MAX_VARIANTS_PER_SYLLABLE) saturated.add(syllable)
+        }
+        assertEquals("单音节变体数已越过上限", FuzzyPinyin.MAX_VARIANTS_PER_SYLLABLE, max)
+        assertEquals(
+            "顶到上限的音节变了 ⇒ 上限已到临界，再加一组就会静默丢变体",
+            setOf("lan", "lang", "ran", "rang"),
+            saturated,
+        )
+    }
+
+    @Test
+    fun `真实音节表_等长声母组互换必须对称`() {
+        // 长短相等时 `derive` 走 long = a 分支，只有「互换」一个方向 —— 必须是对合变换，
+        // 否则某一侧会派生不出来（r/l、r/y、n/l、f/h、k/g 全是等长组）
+        val equal = FuzzyPinyin.GROUPS.filter {
+            it.kind == FuzzyPinyin.Kind.INITIAL && it.a.length == it.b.length
+        }
+        assertTrue("等长声母组一个都没取到", equal.isNotEmpty())
+        var checked = 0
+        for (group in equal) {
+            for (syllable in realSyllables) {
+                val forward = FuzzyPinyin.variantsOf(syllable, group.bit, realIsLegal)
+                for (variant in forward) {
+                    assertEquals(
+                        "${group.a}⇄${group.b} 不是对称变换：$syllable→$variant 派不回去",
+                        listOf(syllable),
+                        FuzzyPinyin.variantsOf(variant, group.bit, realIsLegal),
+                    )
+                    checked++
+                }
+            }
+        }
+        assertTrue("等长声母组一对都没验证到", checked > 50)
+    }
+
+    @Test
+    fun `真实音节表_整串变体只换一个音节且换上去的合法`() {
+        val inputs = listOf(
+            listOf("lan", "lang"),
+            listOf("zang", "cang", "sang"),
+            listOf("zhuan", "chuang"),
+        )
+        for (syllables in inputs) {
+            assertTrue("用例前提：音节都得在表里 $syllables", syllables.all(realIsLegal))
+            val keys = FuzzyPinyin.keyVariants(syllables, FuzzyPinyin.MASK_ALL, realIsLegal)
+            assertTrue("$syllables 一个变体都没派生", keys.isNotEmpty())
+            for (key in keys) {
+                val hits = replacementsOf(key, syllables, FuzzyPinyin.MASK_ALL)
+                assertEquals("「$key」不是「只换一个音节」得来的：$hits", 1, hits.size)
+                assertTrue("「$key」换上去的音节不合法", realIsLegal(hits[0].second))
+            }
+            assertFalse("原键不得出现在变体里：$keys", keys.contains(syllables.joinToString("")))
+        }
+    }
+
+    @Test
+    fun `只开一组时不得借用其它组的派生`() {
+        assertEquals(listOf("zang"), FuzzyPinyin.variantsOf("zhang", FuzzyPinyin.Z_ZH, realIsLegal))
+        assertEquals(listOf("nang"), FuzzyPinyin.variantsOf("lang", FuzzyPinyin.N_L, realIsLegal))
+        assertEquals(listOf("lan"), FuzzyPinyin.variantsOf("lang", FuzzyPinyin.AN_ANG, realIsLegal))
+        assertEquals(listOf("zuan"), FuzzyPinyin.variantsOf("zhuan", FuzzyPinyin.Z_ZH, realIsLegal))
+        assertEquals(listOf("zhuang"), FuzzyPinyin.variantsOf("zhuan", FuzzyPinyin.AN_ANG, realIsLegal))
+        for (group in FuzzyPinyin.GROUPS) {
+            assertEquals("组位必须是单个二进制位：${group.bit}", 1, Integer.bitCount(group.bit))
+        }
+    }
+
+    @Test
+    fun `空音节与空列表不派生也不崩`() {
+        // 空串派生为空本来就是 derive 的自然结果（startsWith / endsWith 对空串恒 false），
+        // 不是 `variantsOf` 里那条 `isEmpty` 短路挡出来的 —— 把短路删掉照样恒空（第 61 轮变异实测）。
+        // 这里钉的是**对外契约**：调用方（残码 / 空音节）不必自己先过滤一轮。
+        assertTrue(FuzzyPinyin.variantsOf("", FuzzyPinyin.MASK_ALL, realIsLegal).isEmpty())
+        assertTrue(FuzzyPinyin.keyVariants(emptyList(), FuzzyPinyin.MASK_ALL, realIsLegal).isEmpty())
+        assertTrue(FuzzyPinyin.keyVariants(listOf(""), FuzzyPinyin.MASK_ALL, realIsLegal).isEmpty())
+        // 末尾未完成音节（残码）会让列表里出现空串：其余音节照常派生
+        assertEquals(listOf("zhang"), FuzzyPinyin.keyVariants(listOf("", "zang"), FuzzyPinyin.Z_ZH, realIsLegal))
+    }
+
+    @Test
+    fun `整串上限八条时名额只够覆盖靠前的音节`() {
+        // 已知取舍，不是缺陷：`keyVariants` 按「音节下标 → 变体顺序」产出，8 条名额被前几个音节吃光，
+        // 第 4 个音节（rang）一条都排不进来。要改成按变体轮转分配会动到候选次序 ⇒
+        // 必须有意识地连同本用例一起改，别让顺序悄悄变。
+        val syllables = listOf("lan", "lang", "ran", "rang")
+        assertTrue("用例前提：这 4 个音节都顶到单音节上限", syllables.all {
+            FuzzyPinyin.variantsOf(it, FuzzyPinyin.MASK_ALL, realIsLegal).size ==
+                FuzzyPinyin.MAX_VARIANTS_PER_SYLLABLE
+        })
+        val keys = FuzzyPinyin.keyVariants(syllables, FuzzyPinyin.MASK_ALL, realIsLegal)
+        assertEquals("12 个原始变体应被截到上限", FuzzyPinyin.MAX_KEY_VARIANTS, keys.size)
+        val covered = keys.flatMap { replacementsOf(it, syllables, FuzzyPinyin.MASK_ALL) }
+            .map { it.first }.toSet()
+        assertEquals("名额分配变了（末位音节居然被覆盖）：$keys", setOf(0, 1, 2), covered)
+    }
+
+    @Test
+    fun `真实音节表_派生出的非法音节一律丢弃`() {
+        // 表里没有 len / din / tin / yuang / zuang：这些方向必须整个消失
+        assertTrue(FuzzyPinyin.variantsOf("leng", FuzzyPinyin.EN_ENG, realIsLegal).isEmpty())
+        assertTrue(FuzzyPinyin.variantsOf("ding", FuzzyPinyin.IN_ING, realIsLegal).isEmpty())
+        assertTrue(FuzzyPinyin.variantsOf("ting", FuzzyPinyin.IN_ING, realIsLegal).isEmpty())
+        assertTrue(FuzzyPinyin.variantsOf("yuan", FuzzyPinyin.AN_ANG, realIsLegal).isEmpty())
+        assertEquals(listOf("zuan", "zhuang"), FuzzyPinyin.variantsOf("zhuan", FuzzyPinyin.MASK_ALL, realIsLegal))
+        // 正向必须保留：neng → nen、jin → jing 这些是这条规则存在的理由
+        assertEquals(listOf("nen"), FuzzyPinyin.variantsOf("neng", FuzzyPinyin.EN_ENG, realIsLegal))
+        assertEquals(listOf("jing"), FuzzyPinyin.variantsOf("jin", FuzzyPinyin.IN_ING, realIsLegal))
     }
 }
