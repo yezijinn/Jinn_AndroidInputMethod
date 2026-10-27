@@ -94,6 +94,23 @@ internal object TapSound {
         return String.format(Locale.US, "音效 %02d · %dms", index + 1, ms)
     }
 
+    /**
+     * 音色选择列表里「不播放」那一项的序号 = 末位（[SOUND_COUNT] 位），列表长度因此恒为
+     * [SOUND_COUNT] + 1。
+     *
+     * 单独成函数而不是在页面里写 `if (current == NONE) SOUND_COUNT else current`：这类
+     * 「哨兵 → 列表序号」的映射写错一个 `+1` 不会崩，只会让弹窗把「不播放」标到别的音上，
+     * 且它只在选音弹窗里出现一次、人工 review 最容易跳过。与 [pickerChoice] 互为逆。
+     *
+     * 判据写 `index < 0` 而不是 `index == NONE`：`-2` 这类坏值只判等号会原样漏成 `-1`，
+     * 那不是一个列表序号（`setSingleChoiceItems` 收到负值 ⇒ 一项都不标），而「负值 = 不播放」
+     * 本来就是 [parseMap] 的口径。合法域 `-1..15` 上两种写法结果相同。
+     */
+    fun pickerIndex(index: Int): Int = if (index < 0) SOUND_COUNT else clampIndex(index)
+
+    /** 音色选择列表的序号 → 映射值（[pickerIndex] 的逆：末位是 [NONE]，其余是音效索引） */
+    fun pickerChoice(which: Int): Int = if (which == SOUND_COUNT) NONE else clampIndex(which)
+
     // ── 默认映射（用户未改动时各组用哪个音）────────────────────────
     //
     // 六组统一用音效 10（`kbd_10.ogg`，138ms，onsets 2 = click + 触底双瞬态）。选它而不是
@@ -185,6 +202,22 @@ internal object TapSound {
     // ── 映射串解析（脏数据防护）──────────────────────────────────
 
     /**
+     * 音效索引归一：一律钳到 `[NONE]..[SOUND_COUNT]-1`。
+     *
+     * 这是**唯一**的索引钳位出口 —— 默认映射的四处回落（串为空 / 错位整体回落 / 缺字段留默认 /
+     * 单项上界外）与 [formatMap] 的落盘都过它。原先只有「单项上界外」那一支带 `coerceIn`，
+     * 而 [DEFAULT_MAP] 自己从不归一：一旦改小 [SOUND_COUNT] 却忘了同步默认映射，另外三条出口
+     * 照样把越界值原样漏出去，「将来改小 SOUND_COUNT 时的保险」并不成立（2026-10-28 复核）。
+     */
+    fun clampIndex(value: Int): Int = value.coerceIn(NONE, SOUND_COUNT - 1)
+
+    /** [DEFAULT_MAP] 的归一化副本（进程内只算一次；原件不动，保留「六组统一 9」的可读性） */
+    private val normalizedDefault: IntArray by lazy { IntArray(GROUP_COUNT) { clampIndex(DEFAULT_MAP[it]) } }
+
+    /** 每次给一份**可改**的默认映射副本：选音弹窗会就地改元素 */
+    private fun defaults(): IntArray = normalizedDefault.copyOf()
+
+    /**
      * 解析 `"7,3,0,14,13,2"` 形式的映射串。**不抛异常**，任何脏数据都收敛到合法值：
      *
      * - 串为空 → 整体回落 [DEFAULT_MAP]
@@ -201,24 +234,26 @@ internal object TapSound {
      * 覆写、原值不可恢复）；回落默认音至少是条明确规则，且该组没被改过时它的默认音本就是
      * 用户自己的选择。
      *
-     * 末尾的 `coerceIn` 不是多余的：将来改小 [SOUND_COUNT] 而忘了同步 [DEFAULT_MAP] 时，
-     * 越界值会从这里原样漏出去，而调用方对越界索引的处理并不一致（有的静音、有的显示空白）。
+     * 默认映射本身也过 [clampIndex]（[defaults]）：四条「留默认」的出口逐条归一，而不是只在
+     * 「单项上界外」那一支补一次 —— 否则改小 [SOUND_COUNT] 而忘了同步 [DEFAULT_MAP] 时，
+     * 另外三条出口照样把越界值漏给调用方（它们对越界索引的处理并不一致：有的静音、有的显示空白）。
      */
     fun parseMap(raw: String?): IntArray {
-        if (raw.isNullOrBlank()) return DEFAULT_MAP.copyOf()
+        if (raw.isNullOrBlank()) return defaults()
         // 尾随的空字段只是「多余字段」（按位读时落在末位之外，不会造成错位），先剔掉再判 —— 否则
         // "0,1,2,3,4,5," 这种尾巴会被当成错位风险，六个值一起回落默认。
         val parts = raw.split(',').dropLastWhile { it.isBlank() }
         // 项数超长且**前六项之内**出现空字段：空位右侧的字段无法判断是对齐在分组序号上还是顺延
         // 过来的（",7,3,0,14,13,2" 按位读会解出 9,7,3,0,14,13），本应用写不出这种串，来源只能是
         // 外部，与其猜不如整体回落。
-        if (parts.size > GROUP_COUNT && parts.take(GROUP_COUNT).any { it.isBlank() }) return DEFAULT_MAP.copyOf()
-        val out = DEFAULT_MAP.copyOf()
+        if (parts.size > GROUP_COUNT && parts.take(GROUP_COUNT).any { it.isBlank() }) return defaults()
+        // 起点就是归一后的默认映射 ⇒「缺字段 / 非数字 / 未走到」三种情形结构上已经是默认值
+        val out = defaults()
         for (i in 0 until minOf(parts.size, GROUP_COUNT)) {
             val v = parts[i].trim().toIntOrNull() ?: continue
             out[i] = when {
                 v in 0 until SOUND_COUNT -> v
-                v >= SOUND_COUNT -> DEFAULT_MAP[i].coerceIn(NONE, SOUND_COUNT - 1)
+                v >= SOUND_COUNT -> normalizedDefault[i]
                 else -> NONE
             }
         }
@@ -227,8 +262,7 @@ internal object TapSound {
 
     /** 映射数组 → 落盘串（越界值同样被钳位，保证写出去的永远合法） */
     fun formatMap(map: IntArray): String = (0 until GROUP_COUNT).joinToString(",") { i ->
-        val v = map.getOrElse(i) { DEFAULT_MAP[i] }
-        v.coerceIn(NONE, SOUND_COUNT - 1).toString()
+        clampIndex(map.getOrElse(i) { normalizedDefault[i] }).toString()
     }
 
     /**

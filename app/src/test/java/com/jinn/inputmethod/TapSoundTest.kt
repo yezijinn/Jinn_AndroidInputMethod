@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * [TapSound] 的纯 JVM 单测：重点是**脏数据防护**。
@@ -314,18 +315,299 @@ class TapSoundTest {
     // ── 试听音取值 ─────────────────────────────────────────────
 
     @Test
-    fun `试听音在本组为不播放时回退到可用音`() {
+    fun `试听音全不播放时为 NONE、本组有音时取本组`() {
         val allNone = IntArray(TapSound.GROUP_COUNT) { TapSound.NONE }
         assertEquals("六组全不播放时确实没有可试听的音", TapSound.NONE, TapSound.previewSound(allNone))
 
         val map = TapSound.DEFAULT_MAP.copyOf()
         assertEquals("本组有音就用本组", map[TapSound.G_TEXT], TapSound.previewSound(map))
+    }
 
-        map[TapSound.G_TEXT] = TapSound.NONE
-        assertEquals(
-            "本组不播放时回退到手上第一个可用的音",
-            map.first { it != TapSound.NONE },
-            TapSound.previewSound(map),
+    /**
+     * 回退的具体取音（上面那条钉不到它：两条断言都不进回退分支；而原先这里还有一条
+     * `map.first { it != NONE }` 当期望值的断言，与实现同源 —— 把 `firstOrNull` 换成
+     * `lastOrNull` 也照样绿，已删）。
+     *
+     * 真实判据是「序号最小的可听组」—— 组序号即打字常用度序（文字 → 数字 → 符号 → …），
+     * 所以「只设了符号与功能」时应当取符号，而不是功能。
+     */
+    @Test
+    fun `试听回退取序号最小的可听组`() {
+        val map = IntArray(TapSound.GROUP_COUNT) { TapSound.NONE }
+        map[TapSound.G_SYMBOL] = 5
+        map[TapSound.G_FUNC] = 2
+        assertEquals("符号与功能两组有音时取符号（序号更小）", 5, TapSound.previewSound(map))
+
+        map[TapSound.G_DIGIT] = 9
+        assertEquals("补上数字组后改取数字", 9, TapSound.previewSound(map))
+
+        map[TapSound.G_TEXT] = 3
+        assertEquals("文字组有音时一律用文字组", 3, TapSound.previewSound(map))
+
+        assertEquals("空数组不崩也不返回越界值", TapSound.NONE, TapSound.previewSound(IntArray(0)))
+    }
+
+    // ── 索引归一（唯一钳位出口）────────────────────────────────
+
+    /**
+     * 归一函数的定义域两端。
+     *
+     * 变异：把 `coerceIn` 去掉 / 改成只钳上界 ⇒ 本用例立刻红 —— 而「默认映射目前都是 9」
+     * 这件事让**任何**只看 `parseMap("")` 的断言都发现不了归一函数被掏空。
+     * 注意它只钉函数本身：四条回落出口**有没有调它**看不出来（9 合法、钳不钳都是 9），
+     * 那一半由 `RecentFixesRegressionTest.默认映射的回落出口必须过归一` 按源码形态钉住。
+     */
+    @Test
+    fun `索引归一钳到定义域两端`() {
+        assertEquals("负无穷侧钳到「不播放」", TapSound.NONE, TapSound.clampIndex(Int.MIN_VALUE))
+        assertEquals(TapSound.NONE, TapSound.clampIndex(-2))
+        assertEquals(TapSound.NONE, TapSound.clampIndex(TapSound.NONE))
+        assertEquals("合法值原样通过", 0, TapSound.clampIndex(0))
+        assertEquals(TapSound.SOUND_COUNT - 1, TapSound.clampIndex(TapSound.SOUND_COUNT - 1))
+        assertEquals("上界外钳到末位", TapSound.SOUND_COUNT - 1, TapSound.clampIndex(TapSound.SOUND_COUNT))
+        assertEquals(TapSound.SOUND_COUNT - 1, TapSound.clampIndex(Int.MAX_VALUE))
+    }
+
+    /**
+     * 任意脏串解析后都落在定义域内，且「读 → 写 → 再读」是固定点。
+     *
+     * 这条替代不了针对具体分支的用例，但它守的是**归纳性质**：[Prefs.tapSoundMap] 的
+     * getter 就是 `formatMap(parseMap(raw))`，任何一条出口漏出越界值，这里都会红。
+     *
+     * ⚠ 别指望它守住「默认映射有没有过归一」：`SOUND_COUNT = 16` 时 `DEFAULT_MAP` 的 9
+     * 本来就合法，四条出口即使全都不归一也仍是 `9` —— 实测把 `defaults()` 改回
+     * `DEFAULT_MAP.copyOf()`、`v >= SOUND_COUNT` 改回 `DEFAULT_MAP[i].coerceIn(...)`，
+     * 本条**照旧绿**（38 例全绿）。那条不变式由 `RecentFixesRegressionTest` 里的
+     * `默认映射的回落出口必须过归一` 按源码形态钉住，并用「临时把 SOUND_COUNT 改成 8」实跑过。
+     */
+    @Test
+    fun `任何脏串解析后都落在定义域内且往返稳定`() {
+        val corpus = listOf(
+            "", " ", ",", ",,", ",,,,,,",
+            "0,1,2,3,4,5",
+            "-1,-1,-1,-1,-1,-1",
+            "16,17,99,2147483647,0,-2147483648",
+            "99999999999999999999,x,,3,4,5,6,7",
+            "0,1,2,3,4,5,", " 7 , 3 , 0 , 14 , 13 , 2 , ",
+            ",7,3,0,14,13,2", "7,,0,14,13,2,9",
         )
+        // 三个字段的笛卡尔积（空 / 负数 / 边界 / 越界 / 非数字）
+        val atoms = listOf("", "-1", "-5", "0", "9", "15", "16", "99", "x", " ")
+        val generated = atoms.flatMap { a -> atoms.flatMap { b -> atoms.map { c -> "$a,$b,$c" } } }
+        for (raw in corpus + generated) {
+            val map = TapSound.parseMap(raw)
+            assertEquals("组数必须恒为 GROUP_COUNT：$raw", TapSound.GROUP_COUNT, map.size)
+            for ((i, v) in map.withIndex()) {
+                assertTrue(
+                    "越界值漏出定义域：\"$raw\" → 组 $i = $v（合法域 ${TapSound.NONE}..${TapSound.SOUND_COUNT - 1}）",
+                    v in TapSound.NONE until TapSound.SOUND_COUNT,
+                )
+            }
+            assertArrayEquals(
+                "读 → 写 → 再读必须是固定点：\"$raw\"",
+                map,
+                TapSound.parseMap(TapSound.formatMap(map)),
+            )
+        }
+    }
+
+    /**
+     * 越界组在「读 → 解析 → 写」链路上**固化为该组默认音**，且不牵连其余五组。
+     *
+     * 链路确实存在（`TapSoundActivity.showSoundPicker` 读整串 → 改一组 → 写整串；
+     * `Prefs.tapSoundMap` 读写两侧都过 parse/format），所以「用户盘上的越界值会被静默改写」
+     * 是真的 —— 判它不构成缺陷的依据只有两条：① 那个值本来就不可能播出（`soundIds.getOrElse`
+     * 取到 0 = 静音）；② 改法是明确规则（该组默认音），不是钳到末位那种「换成另一个用户没挑过的
+     * 音色」。这两条一旦被改坏，本用例会红。
+     */
+    @Test
+    fun `越界组在读写链路上固化为该组默认音且不牵连其余组`() {
+        val raw = "3,7,0,14,13,99"
+        val read = TapSound.parseMap(raw)
+        assertEquals("越界组回落该组默认音", TapSound.DEFAULT_MAP[5], read[5])
+        assertEquals("其余五组原样保留", listOf(3, 7, 0, 14, 13), read.take(5).toList())
+
+        val persisted = TapSound.formatMap(read)
+        assertArrayEquals("写出去的串再读回来必须不变（否则每次保存都会漂移）", read, TapSound.parseMap(persisted))
+
+        // 用户随后改第 1 组：整串重写，另外五组仍是刚才那五个值（越界组保持该组默认音）
+        val edited = TapSound.parseMap(persisted)
+        edited[0] = 5
+        assertArrayEquals(
+            intArrayOf(5, 7, 0, 14, 13, TapSound.DEFAULT_MAP[5]),
+            TapSound.parseMap(TapSound.formatMap(edited)),
+        )
+    }
+
+    // ── 选择列表与强度滑杆 ─────────────────────────────────────
+
+    /**
+     * 音色选择列表的序号 ↔ 映射值必须互为逆（`showSoundPicker` 的 `checked` 与返回的 `idx`）。
+     *
+     * 写错一个 `+1` 不会崩：弹窗会把「不播放」标到别的音上，或者在末位选中时把 `SOUND_COUNT`
+     * 当成音效索引写进映射（下游 `getOrElse` 兜底 ⇒ 静默无声）。列表长度是 `SOUND_COUNT + 1`。
+     */
+    @Test
+    fun `音色选择列表的序号与映射值互为逆`() {
+        // 全区间（含定义域两侧的坏值 -2 / 17 / 18）：序号恒落在 0..SOUND_COUNT，两个方向都还原
+        for (index in -2..TapSound.SOUND_COUNT + 2) {
+            val slot = TapSound.pickerIndex(index)
+            assertTrue("列表序号越出 0..${TapSound.SOUND_COUNT}：$index → $slot", slot in 0..TapSound.SOUND_COUNT)
+            assertEquals(
+                "映射值 → 序号 → 映射值必须还原成钳位值：$index",
+                TapSound.clampIndex(index),
+                TapSound.pickerChoice(slot),
+            )
+            assertEquals("序号 → 映射值 → 序号必须还原：$slot", slot, TapSound.pickerIndex(TapSound.pickerChoice(slot)))
+        }
+        assertEquals("「不播放」排在列表末位", TapSound.SOUND_COUNT, TapSound.pickerIndex(TapSound.NONE))
+        assertEquals("末位选回不播放", TapSound.NONE, TapSound.pickerChoice(TapSound.SOUND_COUNT))
+        assertEquals("越界映射值不产生越界序号", TapSound.SOUND_COUNT - 1, TapSound.pickerIndex(99))
+        assertEquals("越界序号钳在定义域内", TapSound.SOUND_COUNT - 1, TapSound.pickerChoice(99))
+    }
+
+    /**
+     * 强度滑杆的量程、进度与写盘值必须首尾闭合。
+     *
+     * 三处算式分散在页面里（`SeekBar.max = VOLUME_MAX - VOLUME_MIN`、
+     * `progress = clampVolume(v) - VOLUME_MIN`、`clampVolume(VOLUME_MIN + progress)`），
+     * 只要有一处少一个 `- VOLUME_MIN`，两端就会差一格或越界；而页面本身跑不了 JVM 单测，
+     * 所以闭合关系在这里钉住，**页面有没有按它算**由
+     * `RecentFixesRegressionTest.音效强度滑杆的三段算式必须首尾同源` 按源码形态钉住。
+     */
+    @Test
+    fun `音量滑杆的进度与音量互为逆`() {
+        val span = TapSound.VOLUME_MAX - TapSound.VOLUME_MIN
+        assertTrue("滑杆量程必须为正", span > 0)
+        assertEquals("左端可达最小值", TapSound.VOLUME_MIN, TapSound.clampVolume(TapSound.VOLUME_MIN))
+        assertEquals("右端可达最大值", TapSound.VOLUME_MAX, TapSound.clampVolume(TapSound.VOLUME_MIN + span))
+        for (v in TapSound.VOLUME_MIN - 20..TapSound.VOLUME_MAX + 20) {
+            val clamped = TapSound.clampVolume(v)
+            val progress = clamped - TapSound.VOLUME_MIN
+            assertTrue("progress 越出滑杆量程：v=$v → $progress / $span", progress in 0..span)
+            assertEquals("拖动条回到音量必须闭合：v=$v", clamped, TapSound.clampVolume(TapSound.VOLUME_MIN + progress))
+        }
+    }
+
+    // ── 资产与清单（数据一致性）────────────────────────────────
+
+    /**
+     * 音效资产必须齐备：`assetName(i)` 的下标与真实文件一一对上。
+     *
+     * 少一个文件不会崩、不会报错 —— 只是该组按下去静音，而设置页里它照样列在清单上
+     * （`soundLabel` 只读时长表）。多出来的文件则是死资产（随包发出去没人能选）。
+     */
+    @Test
+    fun `音效资产必须齐备且与音效个数一致`() {
+        val dir = repoFile("app/src/main/assets/${TapSound.ASSET_DIR}")
+        assertTrue("资产目录不存在：$dir", dir.isDirectory)
+        val actual = dir.listFiles { f -> f.isFile && f.name.endsWith(".ogg") }?.map { it.name }?.toSet() ?: emptySet()
+        val want = (0 until TapSound.SOUND_COUNT).map { TapSound.assetName(it) }.toSet()
+        assertEquals("资产与 SOUND_COUNT 对不上（缺的会静音，多的则是死资产）", want, actual)
+    }
+
+    /**
+     * 时长表必须与**资产实测**一致。
+     *
+     * 原用例只钉「条数 == SOUND_COUNT 且全为正」，具体数值靠人工复核 —— 而这张表有三份手抄
+     * （`SOUND_DURATION_MS` / `gen_manifest.py` 的 `DUR` / 清单表体），换资产时忘同步都不会红，
+     * 只会让设置页把「音效 08」标成别的时长。这里直接读 OGG 的 granule position 算真实时长
+     * （Vorbis 的采样率在首包的 identification header 里），把「只能人工复核」变成机械对拍。
+     */
+    @Test
+    fun `时长表必须与资产实测一致`() {
+        for (i in 0 until TapSound.SOUND_COUNT) {
+            val file = repoFile("app/src/main/assets/${TapSound.ASSET_DIR}/${TapSound.assetName(i)}")
+            val measured = oggDurationMs(file)
+            assertEquals(
+                "${file.name} 的实测时长与 SOUND_DURATION_MS[$i] 不一致（换资产后要重算并重跑 gen_manifest.py）",
+                TapSound.SOUND_DURATION_MS[i],
+                measured,
+            )
+        }
+    }
+
+    /** 清单（`tools/sound_preview/keyboard_sounds_manifest.md`）的时长列必须与时长表同源 */
+    @Test
+    fun `清单的时长列必须与时长表一致`() {
+        val md = repoFile("tools/sound_preview/keyboard_sounds_manifest.md").readText()
+        val rows = Regex("""(?m)^\| `(kbd_\d+\.ogg)` \|[^|]*\|[^|]*\| (\d+)ms \|""")
+            .findAll(md).associate { it.groupValues[1] to it.groupValues[2].toInt() }
+        assertEquals("清单行数必须与音效个数一致", TapSound.SOUND_COUNT, rows.size)
+        for (i in 0 until TapSound.SOUND_COUNT) {
+            assertEquals(
+                "${TapSound.assetName(i)} 的时长在清单与 SOUND_DURATION_MS 里不一致",
+                TapSound.SOUND_DURATION_MS[i],
+                rows[TapSound.assetName(i)],
+            )
+        }
+    }
+
+    /**
+     * 清单生成器的 `DUR` 也必须与时长表同源。
+     *
+     * `gen_manifest.py` 只拿 `DUR` 渲染表体再去和清单比，键集校验也不碰时长 —— 只要没人手动跑它，
+     * 「生成器里的手抄数漂了」这件事既不红也不响，清单与时长表都还是对的。这条把那第三份手抄
+     * 也纳入机械对拍（走 `TestSources.pyCode`，`#` 注释剥掉后再取）。
+     */
+    @Test
+    fun `清单生成器的时长表必须与时长表同源`() {
+        val py = TestSources.pyCode(repoFile("tools/sound_preview/gen_manifest.py").readText())
+        assertEquals("生成器里应当只有一处 DUR 表", 1, Regex("""DUR\s*=\s*\{""").findAll(py).count())
+        val block = TestSources.window(py, "DUR = {", "}")
+        val dur = Regex(""""kbd_(\d+)":\s*(\d+)""")
+            .findAll(block)
+            .associate { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
+        assertEquals("生成器的时长表条数必须与音效个数一致", TapSound.SOUND_COUNT, dur.size)
+        for (i in 0 until TapSound.SOUND_COUNT) {
+            assertEquals(
+                "${TapSound.assetName(i)} 的时长在 gen_manifest.py 与 SOUND_DURATION_MS 里不一致",
+                TapSound.SOUND_DURATION_MS[i],
+                dur[i + 1],
+            )
+        }
+    }
+
+    /** 从测试工作目录（模块目录或仓库根都行）向上找仓库内文件 */
+    private fun repoFile(rel: String): File {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            val f = File(dir, rel)
+            if (f.exists()) return f
+            dir = dir.parentFile
+        }
+        throw AssertionError("仓库里找不到 $rel（测试工作目录变了？）")
+    }
+
+    /** OGG Vorbis 时长（毫秒）：取最后一个 granule position ÷ 首包里的采样率 */
+    private fun oggDurationMs(file: File): Int {
+        val data = file.readBytes()
+        var off = 0
+        var lastGranule = 0L
+        var rate = 0
+        while (off + 27 <= data.size) {
+            val i = (off until data.size - 3).firstOrNull {
+                data[it] == 'O'.code.toByte() && data[it + 1] == 'g'.code.toByte() &&
+                    data[it + 2] == 'g'.code.toByte() && data[it + 3] == 'S'.code.toByte()
+            } ?: break
+            if (i + 27 > data.size) break
+            var granule = 0L
+            for (k in 0 until 8) granule = granule or ((data[i + 6 + k].toLong() and 0xFF) shl (8 * k))
+            val nseg = data[i + 26].toInt() and 0xFF
+            var body = i + 27 + nseg
+            var payload = 0
+            for (k in 0 until nseg) payload += data[i + 27 + k].toInt() and 0xFF
+            if (granule > 0) lastGranule = granule
+            if (rate == 0 && payload > 16 && body + 16 < data.size && data[body] == 1.toByte() &&
+                String(data, body + 1, 6, Charsets.US_ASCII) == "vorbis"
+            ) {
+                var r = 0
+                for (k in 0 until 4) r = r or ((data[body + 12 + k].toInt() and 0xFF) shl (8 * k))
+                rate = r
+            }
+            off = body + payload
+        }
+        assertTrue("${file.name} 不是可解析的 OGG Vorbis（采样率 $rate）", rate > 0)
+        return Math.round(lastGranule * 1000.0 / rate).toInt()
     }
 }

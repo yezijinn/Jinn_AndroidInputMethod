@@ -7561,4 +7561,143 @@ class RecentFixesRegressionTest {
         assertTrue("必须是 W 级：V 级在正式包里不落盘，等于没留痕", "Diagnostics.w(TAG, \"剪贴板: 空白内容，跳过入库" in branch)
         assertTrue("日志必须带长度（原文是用户内容，不得入日志）", "text.length" in branch)
     }
+
+    /**
+     * 音效页的三条渲染不变式（`BUG.md` 附录 B `B-262`，后两条由第三道复核补）。
+     *
+     * ① 渲染前必须把**两道**闸门都刷进缓存：试听的可用态读 `KeyFeedback.soundGatesOpen()`，
+     * 而它由三部分组成 —— 用户开关（`refresh(prefs)` 写）+ 系统触摸提示音 + 响铃模式
+     * （`refreshSystemGates` 写）。原先 `renderAll` 只刷前一半，系统闸门只在 `onStart` 刷一次，
+     * 页内每一次重画（拨开关、选完音色）都在用进页那一刻的快照。可达路径是「IME 未挂载 +
+     * 页内按音量键落静音 / 震动 + 页内再拨开关」：键盘挂着时响铃模式一变就有接收器当场刷，
+     * 只有没挂载时没人刷。
+     *
+     * ② 改了闸门就得重画（`L-1523`）：`soundOnSilent` 是闸门输入之一，那个开关原先只写盘不重画，
+     * 静音下拨它，六个「试听」与页尾说明行都停在旧态（反向拨还更糟：按钮可点而 `playPreview`
+     * 当场返回 ⇒ 点了没反应）。
+     * ③ 粗粒度置灰只能收紧不能放宽（`L-1522`）：`setEnabledDeep(groupCard, soundOn)` 曾直接赋值，
+     * 把 `makeGroupRow` 按「本组不播放 / 闸门不放行」设好的 `false` 又点亮成 `true`，按钮 40%
+     * 透明却可点（点下去静默无反应）。
+     *
+     * 判据都是**位置 / 形态**判据：页面跑不了 JVM 单测。两次 refresh 必须落在 `soundGatesOpen()`
+     * 之前（挪到读之后等于没刷）；写盘与重画必须同在一个回调块里；置灰那一行必须是相与。
+     */
+    @Test
+    fun `音效页渲染前必须刷新两道闸门`() {
+        val src = codeOf("TapSoundActivity.kt")
+        val body = blockAfter(src, "private fun renderAll()")
+        val readAt = body.indexOf("KeyFeedback.soundGatesOpen()")
+        assertTrue("renderAll 里找不到 soundGatesOpen()（页面结构变了？）", readAt >= 0)
+        for (call in listOf("KeyFeedback.refresh(prefs)", "KeyFeedback.refreshSystemGates(")) {
+            val at = body.indexOf(call)
+            assertTrue("renderAll 必须在读闸门之前刷「$call」（实际 $at vs $readAt）", at in 0 until readAt)
+        }
+        val onStart = blockAfter(src, "override fun onStart()")
+        assertFalse(
+            "系统闸门不许只靠 onStart 刷：页内重绘会读到过期缓存",
+            "KeyFeedback.refreshSystemGates(" in onStart,
+        )
+        // ② 改闸门必须重画：写盘与重画要落在同一个回调块里
+        assertTrue(
+            "改「静音时仍播放」必须重画（它是 soundGatesOpen 的输入之一，不重画就停在旧态）",
+            "renderAll()" in blockAfter(src, "makeSwitch(TEXT_SILENT_SWITCH"),
+        )
+        // ③ 粗粒度置灰只能收紧：直接赋值会把更细的判据重新点亮
+        assertTrue(
+            "粗粒度置灰只能收紧不能放宽（否则「不播放」组与闸门关闭时的试听按钮被重新点亮）",
+            "view.isEnabled = enabled && view.isEnabled" in blockAfter(src, "private fun setEnabledDeep"),
+        )
+    }
+
+    /**
+     * 音色选择弹窗的序号 ↔ 映射值必须走 `TapSound`（`BUG.md` 附录 B `B-262` 同批）。
+     *
+     * 这两处映射原先各写一份字面量（`if (current == NONE) SOUND_COUNT else current` 与
+     * `if (which == SOUND_COUNT) NONE else which`）：写错一个 `+1` 不会崩 —— 弹窗把「不播放」
+     * 标到别的音上，或在末位选中时把 `SOUND_COUNT` 当音效索引写进映射（下游 `getOrElse` 兜底
+     * ⇒ 静默无声）。收进 `TapSound.pickerIndex` / `pickerChoice` 之后由单测覆盖往返。
+     *
+     * 反向钉必须照**原表达式**写（`if (current == TapSound.NONE)`）：钉一个源码里从未出现过的
+     * 串（`if (current == TapSound.SOUND_COUNT)`）是恒真的，等于没钉。
+     */
+    @Test
+    fun `音色选择弹窗的序号映射必须走 TapSound`() {
+        val src = codeOf("TapSoundActivity.kt")
+        assertTrue("checked 必须走 TapSound.pickerIndex", "TapSound.pickerIndex(current)" in src)
+        assertTrue("选中的序号必须走 TapSound.pickerChoice", "TapSound.pickerChoice(which)" in src)
+        assertFalse("不许再自己把映射值翻成列表序号", "if (current == TapSound.NONE)" in src)
+        assertFalse("不许再自己把列表序号翻成映射值", "if (which == TapSound.SOUND_COUNT)" in src)
+    }
+
+    /**
+     * 默认映射的四条回落出口都必须过 `TapSound.clampIndex`（`BUG.md` 附录 B `B-262` 的修 1）。
+     *
+     * 为什么只能钉形态：`SOUND_COUNT = 16` 时 `DEFAULT_MAP` 的 9 本来就合法，
+     * `clampIndex(9) == 9`，行为断言分辨不出「出口走归一」与「出口直接用 DEFAULT_MAP」。
+     * 实测（2026-10-28）：把 `defaults()` 改回 `DEFAULT_MAP.copyOf()`、`v >= SOUND_COUNT` 改回
+     * `DEFAULT_MAP[i].coerceIn(...)`，`TapSoundTest` 38 例**全绿** —— 整条修复被撤销也没人知道。
+     * 而把 `SOUND_COUNT` 临时改成 8（不改默认映射）实跑旧代码：`parseMap("")` 得
+     * `9,9,9,9,9,9`、`parseMap("1,2")` 得 `1,2,9,9,9,9`，都越界；只有「单项上界外」那一支
+     * 得 7（`formatMap` 也钳）⇒ 读侧静音、写侧换成末位音。故此处按「不许再自算」的口径钉住。
+     *
+     * 前四条只钉「某个字面量没出现」，两条等价撤销仍全绿（2026-10-28 实跑）：把 `normalizedDefault`
+     * 里那次 `clampIndex` 摘掉、把 `defaults()` 换成 `DEFAULT_MAP.clone()` —— 管线还在、归一没了。
+     * 故补后两条钉住「归一这一步还在」与本表的拷贝来源。
+     */
+    @Test
+    fun `默认映射的回落出口必须过归一`() {
+        val src = codeOf("TapSound.kt")
+        assertFalse(
+            "回落不许用未归一的 DEFAULT_MAP.copyOf()（改小 SOUND_COUNT 时会漏出越界值）",
+            "DEFAULT_MAP.copyOf()" in src,
+        )
+        assertFalse(
+            "单项上界外也要读归一后的默认值，不许只在这一支补一次 coerceIn",
+            "DEFAULT_MAP[i].coerceIn" in src,
+        )
+        val parse = blockAfter(src, "fun parseMap")
+        assertEquals(
+            "parseMap 的三条回落出口（串为空 / 错位整体回落 / 缺字段起点）必须都走 defaults()",
+            3,
+            Regex("""defaults\(\)""").findAll(parse).count(),
+        )
+        assertTrue(
+            "formatMap 的缺省项也要过归一（读侧与落盘串同源）",
+            "clampIndex(map.getOrElse(i) { normalizedDefault[i] })" in blockAfter(src, "fun formatMap"),
+        )
+        // 前四条钉的是「某个字面量没出现」，换个写法就能达成同样的撤销 ⇒ 再钉两个环节
+        assertTrue(
+            "归一化的默认副本必须真的过 clampIndex（抽掉它等于整条修复作废，而 16 音效下行为用例看不出来）",
+            "clampIndex(" in blockAfter(src, "private val normalizedDefault"),
+        )
+        assertTrue(
+            "默认副本每次必须是归一表的拷贝（`DEFAULT_MAP.clone()` 这类绕开名字的写法同样算撤销）",
+            "normalizedDefault.copyOf()" in src,
+        )
+    }
+
+    /**
+     * 音效强度滑杆的三段算式必须首尾同源（`BUG.md` 附录 B `B-262` 顺带收口）。
+     *
+     * 闭合关系本身由 `TapSoundTest.音量滑杆的进度与音量互为逆` 钉在纯层；但**页面有没有按那个
+     * 闭合关系算**只能看源码 —— 页面跑不了 JVM 单测。三种写法都不会崩、只会算错：`max` 少一个
+     * `- VOLUME_MIN`（量程整体错一格）、`progress` 忘了减左端偏移（滑杆起点不是 0%）、写盘忘了
+     * 加回偏移（盘上恒比显示低一格）。
+     */
+    @Test
+    fun `音效强度滑杆的三段算式必须首尾同源`() {
+        val src = codeOf("TapSoundActivity.kt")
+        assertTrue(
+            "右端量程必须是 VOLUME_MAX - VOLUME_MIN",
+            "max = TapSound.VOLUME_MAX - TapSound.VOLUME_MIN" in src,
+        )
+        assertTrue(
+            "进度必须减掉左端偏移（否则滑杆整体偏一格）",
+            "progress = TapSound.clampVolume(prefs.tapSoundVolume) - TapSound.VOLUME_MIN" in src,
+        )
+        assertTrue(
+            "写盘必须把偏移加回来",
+            "TapSound.clampVolume(TapSound.VOLUME_MIN + progress)" in src,
+        )
+    }
 }

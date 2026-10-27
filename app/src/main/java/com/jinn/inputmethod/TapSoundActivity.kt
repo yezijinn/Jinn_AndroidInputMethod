@@ -72,11 +72,9 @@ class TapSoundActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
-        // 试听与真实按键走同一套闸门（[KeyFeedback.soundGatesOpen]）：进页先把用户意愿与系统闸门
-        // 读进引擎缓存，渲染时才能据它决定「试听」是否可用。本页不依赖 IME 是否在运行 ——
-        // refresh 只写缓存字段，没有池也能调。
-        KeyFeedback.refresh(prefs)
-        KeyFeedback.refreshSystemGates(this)
+        // 试听与真实按键走同一套闸门（[KeyFeedback.soundGatesOpen]）：重画前由 [renderAll] 统一
+        // 把用户意愿与系统闸门读进引擎缓存（本页不依赖 IME 是否在运行 —— refresh 只写缓存字段，
+        // 没有池也能调）。
         renderAll()
         // 先把全部音效排进加载队列再让用户挑：`SoundPool.load` 是异步的，而「进页后马上点试听」
         // 与建池几乎同帧 ⇒ 第一次试听可能无声（`play` 对未加载完的 id 返回 0）。
@@ -104,12 +102,22 @@ class TapSoundActivity : Activity() {
 
     /** 三张卡片：音效 / 震动 / 分组音色 */
     private fun renderAll() {
-        // ⚠ 必须先刷一次再渲染：试听的可用态读的是 [KeyFeedback] 的静态缓存，而唯一写它是
-        // `KeyFeedback.refresh(prefs)` —— 它由 `onStart` 或 `JinnIme.onKeyFeedbackChanged()`
-        // 触发，后者是 `ui.post`（排在当前消息之后）。不刷的话「进页时音效是关的 → 打开」这一
-        // 路径里，用户刚打开音效、页面却显示六个试听全灰 + 「系统静音」的错误说明，
-        // 且没有任何后续渲染会自愈（除非再拨一次开关或离开重进）。
+        // ⚠ 必须先刷再渲染，且**两道闸门都在这里刷**：试听的可用态读的是 [KeyFeedback] 的静态
+        // 缓存，写它的只有这两个入口 —— 用户意愿走 `refresh(prefs)`，系统闸门（触摸提示音 /
+        // 响铃模式）走 `refreshSystemGates`。两条都放进来之后，「先刷再渲染」由结构保证，
+        // 不再靠调用方记得：原先系统闸门只有 `onStart` 刷一次，页内每一次重画（拨开关、选完
+        // 音色）复用的都是进页那一刻的缓存。
+        //
+        // 这条不是纯理论：可选路径是「IME 未挂载 + 页内按音量键落到静音 / 震动 + 页内再拨一次
+        // 开关」。键盘挂着时响铃模式一变就有 JinnIme 的接收器当场刷这份缓存，只有用户单纯进本页
+        // 挑音色（没挂载）时没人刷；而页内改音量不触发 Activity 生命周期（onStop 不会来，onStart
+        // 也就不会再刷）⇒ 那一刻重画用的就是过期快照，「六个试听」的置灰与页尾说明行都是错的，
+        // 且没有后续渲染会自愈。
+        //
+        // 代价是每次重绘多两次 Settings.System 读 + 一次 ringerMode 取（都只在用户拨开关 /
+        // 选音色时发生，不在按键热路径上）。
         KeyFeedback.refresh(prefs)
+        KeyFeedback.refreshSystemGates(this)
         list.removeAllViews()
 
         // 卡片 1：音效（总开关 + 静音仍播 + 强度）
@@ -130,6 +138,9 @@ class TapSoundActivity : Activity() {
             makeSwitch(TEXT_SILENT_SWITCH, prefs.tapSoundOnSilent) {
                 prefs.tapSoundOnSilent = it
                 JinnIme.onKeyFeedbackChanged()
+                // 它改的是 [KeyFeedback.soundGatesOpen] 的输入之一：不重画的话，静音下拨这一下
+                // 六个「试听」与页尾说明行都停在旧态，且没有后续渲染会自愈
+                renderAll()
             },
         )
         soundSub.addView(makeVolumeRow())
@@ -296,9 +307,16 @@ class TapSoundActivity : Activity() {
         }
     }
 
-    /** 递归设置整棵子树的可用态：`ViewGroup.isEnabled` 不会往下传，只设根等于没设 */
+    /**
+     * 递归设置整棵子树的可用态：`ViewGroup.isEnabled` 不会往下传，只设根等于没设。
+     *
+     * 取「与当前值相与」而不是直接赋值：子视图可能已经按**更细**的判据置灰了（试听的
+     * 「不播放」组、系统闸门不放行），粗粒度的一刀切不该把它们重新点亮 —— 那样按钮 40%
+     * 透明却可点，点下去静默无反应（`playPreview` 直接 return）。每次重画都是
+     * `removeAllViews()` 之后新建的视图，所以不存在「上一轮的 false 挡住这一轮的 true」。
+     */
     private fun setEnabledDeep(view: View, enabled: Boolean) {
-        view.isEnabled = enabled
+        view.isEnabled = enabled && view.isEnabled
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) setEnabledDeep(view.getChildAt(i), enabled)
         }
@@ -378,13 +396,14 @@ class TapSoundActivity : Activity() {
         }
         val current = TapSound.parseMap(prefs.tapSoundMap).getOrElse(group) { TapSound.NONE }
         // 单选形态而不是纯列表：当前用的是哪一个直接标在列表上，不必回头看行内文字
-        val checked = if (current == TapSound.NONE) TapSound.SOUND_COUNT else current
+        // 哨兵 → 列表序号的映射收在 TapSound 里（`pickerIndex` / `pickerChoice` 互为逆，可单测）
+        val checked = TapSound.pickerIndex(current)
         // 连点两行时先收掉上一个窗口：否则两个弹窗叠着，只有后关的那个被释放
         pickerDialog?.dismiss()
         val dialog = AlertDialog.Builder(this)
             .setTitle(TapSound.GROUP_LABELS[group])
             .setSingleChoiceItems(items, checked) { d, which ->
-                val idx = if (which == TapSound.SOUND_COUNT) TapSound.NONE else which
+                val idx = TapSound.pickerChoice(which)
                 val map = TapSound.parseMap(prefs.tapSoundMap)
                 map[group] = idx
                 prefs.tapSoundMap = TapSound.formatMap(map)
