@@ -7,7 +7,7 @@ r"""
 ------------------
 手抄 7 套方案（自然码/小鹤/搜狗/微软/紫光/ABC/加加）的键位表必然出错且无法自证。
 rime 的 `speller/algebra` 是权威定义：本脚本按 librime 的代数语义把它逐条施加到项目的
-422 个合法音节上，算出每套方案的编码，再做三件事：
+421 个合法音节上，算出每套方案的编码，再做三件事：
 
   1. 冲突裁决：同一码对应多个音节时（如 `lo` = lo/luo、`lt` = lue/lve），
      按词库实际写法决定首选，裁决过程写进运行报告。
@@ -17,8 +17,14 @@ rime 的 `speller/algebra` 是权威定义：本脚本按 librime 的代数语�
 
 用法
 ----
-    python tools/dict_builder/gen_shuangpin_tables.py
+    先 python tools/dict_builder/build_dict_index.py   # 产出 out/rime_ice/pinyin_phrases.txt
+    再 python tools/dict_builder/gen_shuangpin_tables.py
     再跑 tools/dict_builder/verify_shuangpin_migration.py 对拍（换表不许改行为）
+
+前置条件：一码多音节的裁决按**词频**定胜负，词频取自 `out/rime_ice/pinyin_phrases.txt`
+（`out/` 不入库）。该文件由 `build_dict_index.py` 从 `docs/rime-ice/cn_dicts/` 重算，秒级可重建；
+没跑这一步会直接 `FileNotFoundError`，**不要**把它改成「空权重」跑下去 —— 全零时裁决退化成
+字母序，实测三个码位会翻转（紫光 `hm` / `ng`、ABC `hm`）。
 
 代数语义（对齐 librime，2026-09-17 逐条核对 C++ 实现）
 --------------------------------------------------------
@@ -63,7 +69,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from asset_io import read_asset_text  # noqa: E402
+from asset_io import read_asset_text, write_bytes_atomically  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RIME = os.path.join(ROOT, 'docs', 'rime-ice')
@@ -114,22 +120,22 @@ ZIRANMA_COMPAT = {
 KT_HEADER = '''package com.jinn.inputmethod
 
 /**
- * 双拼键位数据（**由脚本生成，勿手改**）。
+ * 双拼键位数据（由脚本生成，勿手改）。
  *
  * 生成器：`tools/dict_builder/gen_shuangpin_tables.py`
- * 权威来源：`docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`——
+ * 权威来源：`docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra`，
  * 脚本按 librime 的代数语义（xform 替换 / derive 追加 / erase / xlit）逐条施加到
  * `assets/pinyin_syllables.txt` 的 %d 个合法音节上，算出每套方案的码表。
  *
  * 因此本文件的键位与 rime-ice 完全一致（含 rime 的 derive 容错码）；唯一的人工裁决是
  * 「一码多音节」的取舍（如 `lo` = lo/luo），规则见生成器里的 COLLISION_PREFER 注释。
  *
- * 键面提示（字母键下方的韵母、zh/ch/sh 红字）**由本表在运行期反推**，不另存一份，
+ * 键面提示（字母键下方的韵母、zh/ch/sh 红字）由本表在运行期反推，不另存一份，
  * 以保证键面与引擎永不漂移。
  *
- * **每套方案惰性构建**（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
- * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的——若在该路径同步建表会拖慢首次弹出。
- * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUp`）。
+ * 每套方案惰性构建（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的，若在该路径同步建表会拖慢首次弹出。
+ * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUpAll`）。
  */
 
 internal class ShuangpinTable(
@@ -145,26 +151,57 @@ internal class ShuangpinTable(
     private val nasalExtras = setOf("m", "n", "ng", "hm", "hng")
 
     /**
-     * 韵母表规范顺序：仅用于**同一行内**的提示排序（长者仍在前）。
-     * 目的：让「哪两个韵母同屏」有确定且符合直觉的次序，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
+     * 韵母表的规范顺序：只用于同一行内给韵母排序（长者在前），
+     * 让同屏的两个韵母次序固定且符合直觉，例如微软 v 键显示 `ui ue` 而非 `ue ui`。
+     *
+     * **必须覆盖码表会产出的全部韵母**（含 üe 的 `ue` 写法）：漏项一律落到兜底值、
+     * 只剩字符序兜底，而 `ui` / `ue` 这类同长项就再也拿不到「符合直觉」的次序。
+     * 覆盖度由 `HintRuleTest` 逐个韵母核对（故不加 `private`）。
      */
-    private val finalOrder = listOf(
+    val finalOrder = listOf(
         "a", "o", "e", "ai", "ei", "ao", "ou", "an", "en", "ang", "eng", "ong",
         "i", "ia", "ie", "iao", "iu", "ian", "in", "iang", "ing", "iong",
-        "u", "ua", "uo", "uai", "ui", "uan", "un", "uang", "ueng",
+        "u", "ua", "uo", "uai", "ui", "ue", "uan", "un", "uang", "ueng",
         "v", "ve", "van", "vn",
     )
 
     /** 该声母键对应的声母；非声母键返回 null */
     fun initialOf(key: Char): String? = initials[key]
 
-    /** 声母反查键（红字提示用）：zh → v */
-    fun keyOfInitial(initial: String): Char? =
-        initials.entries.firstOrNull { it.value == initial }?.key
+    /**
+     * [codes] 的**打包索引**（MEM-20，惰性建一次，1024 项 ≈ 4KB/方案）：
+     * `toQuanpin` 与 `displayQuanpin` 每两键各查一次码表，原先每次 `raw.substring(i, i + 2)`
+     * 只为当 Map 键 —— 一次查询下来是十几个短命 String。
+     *
+     * 键位数据本身与生成端都不动：这是同一张 [codes] 的派生视图（值仍是同一个 String 引用），
+     * 因此 `ShuangpinTest` 的键位期望与 `SHUANGPIN_TABLES` 生成物一模一样。
+     */
+    private val packedCodes: Array<String?> by lazy {
+        val t = arrayOfNulls<String>(PACKED_SIZE)
+        for ((code, syllable) in codes) {
+            if (code.length == 2) {
+                val p = packedIndexOf(code[0], code[1])
+                if (p >= 0) t[p] = syllable
+            }
+        }
+        t
+    }
+
+    /**
+     * 两键整查（免建 String）。非字母对（如搜狗/微软的分号 `ing`）回落字符串查表 ——
+     * 那条路径只在真按到分号键时才走。
+     */
+    fun codeOf(a: Char, b: Char): String? {
+        val p = packedIndexOf(a, b)
+        return if (p >= 0) packedCodes[p] else codes["" + a + b]
+    }
 
     /** 韵母键 → 该键承载的韵母（由码表反推，因此永远与引擎一致） */
     private val finalsByKey: Map<Char, List<String>> = LinkedHashMap<Char, MutableList<String>>().apply {
         for ((code, syllable) in codes) {
+            // 只认两字符码：非两字符码（abbrev 一类）没有「第二键」可言，
+            // 与 packedCodes 同一口径，同时保证下面的 code[1] 不会越界。
+            if (code.length != 2) continue
             val ini = initials[code[0]] ?: continue
             val fin = syllable.removePrefix(ini)
             if (fin.isEmpty() || fin == syllable || fin in nasalExtras) continue
@@ -176,33 +213,65 @@ internal class ShuangpinTable(
     /**
      * 该键的韵母提示（字母键下方的小字）。
      *
-     * 规则（**用户明示，不得违反**）：
-     *  1. **绝不显示与该键字母相同的韵母**——e 键不显示 e、v 键不显示 v、a/i/u 同理，
+     * 规则（不得违反）：
+     *  1. 绝不显示与该键字母相同的韵母，e 键不显示 e、v 键不显示 v、a/i/u 同理，
      *     属纯冗余；
-     *  2. ü 的两种写法同时出现时（u 对应 jqxy 后、v 对应 l/n 后）**只留 v**，
+     *  2. ü 的两种写法同时出现时（u 对应 jqxy 后、v 对应 l/n 后）只留 v，
      *     否则同一键上会出现两个表示同一读音的项；
-     *  3. **总显示行数强制 ≤ 2**（含红色 zh/ch/sh 那一行）：
+     *  3. 总显示行数强制 ≤ 2（含红色 zh/ch/sh 那一行）：
      *     · 该键承担 zh/ch/sh 时韵母挤成一行（红色占第 2 行）；
      *     · 否则每个韵母各占一行（最多 2 个）。
+     *     每键过滤后本就不超过 2 项（见 [finalsOf]），此处 `take(2)` 只是兜底、从无截断。
      *
      * 例：自然码/小鹤/加加 v → `ui` + 红 `zh`；微软 v → 一行 `ui ue` + 红 `zh`；
      * 搜狗/微软 y → `uai` / `v` 两行。
      */
     fun finalHint(key: Char): String {
-        val raw = finalsByKey[key] ?: return ""
-        // 注意顺序：先去重 ü 的两种写法（此时 v 还在，才能判断），再剔除与键位相同的韵母。
-        // 反过来做会漏掉「v 键的 u」（自然码/小鹤/加加的 v 键原始集合是 {ui, u, v}：
-        // 先去自身会得到 {ui, u}，u 便再无参照可去）。
-        var list = if ("v" in raw && "u" in raw) raw.filter { it != "u" } else raw.toList()
-        list = list.filter { it != key.toString() }
-        list = list.distinct().sortedWith(
-        compareByDescending<String> { it.length }
-            .thenBy { finalOrder.indexOf(it).let { i -> if (i < 0) Int.MAX_VALUE else i } },
-    ).take(2)
+        val list = finalsOf(key).take(2)
         if (list.isEmpty()) return ""
         if (list.size == 1) return list[0]
         val hasRedInitial = (initials[key]?.length ?: 0) > 1
         return if (hasRedInitial) list.joinToString(" ") else list.joinToString("\\n")
+    }
+
+    /**
+     * 该键在规则 1 / 2 之后剩下的韵母，已按规范顺序排好（同一行内长者在前）。
+     *
+     * 与 [finalHint] 分开是为了让守卫能看见「被规则 3 截掉的部分」：`finalHint` 只取前 2 项，
+     * 而只要这里超过 2 项就意味着有韵母**永远显示不出来**（静默丢信息）。
+     * 用例 `任何方案任何键_过滤后不得静默截断` 钉着这条；改动规则时先看它。
+     */
+    internal fun finalsOf(key: Char): List<String> {
+        val raw = finalsByKey[key] ?: return emptyList()
+        // 注意顺序：先去重 ü 的两种写法（此时 v 还在，才能判断），再剔除与键位相同的韵母。
+        // 反过来做会漏掉「v 键的 u」（自然码/小鹤/加加的 v 键原始集合是 {ui, u, v}：
+        // 先去自身会得到 {ui, u}，u 便再无参照可去）。
+        val list = if ("v" in raw && "u" in raw) raw.filter { it != "u" } else raw
+        return list
+            .filter { it != key.toString() }
+            .distinct()
+            .sortedWith(
+                compareByDescending<String> { it.length }
+                    .thenBy { finalOrder.indexOf(it).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+                    // 表外韵母（finalOrder 漏项）之间的次序：按字符序兜底，
+                    // 不依赖码表的遍历序 —— 否则同一键上两个表外韵母的先后随表内容漂移。
+                    .thenBy { it },
+            )
+    }
+
+    /**
+     * 打包算式与容量：字母对压成 5+5 bit（`a`..`z` → 0..25），非字母对返回 -1。
+     *
+     * 表长取 32×32 而不是 26×26：`(x shl 5) or y` 直接就是下标，不必再做一次除法/取模。
+     */
+    private companion object {
+        const val PACKED_SIZE = 32 * 32
+
+        fun packedIndexOf(a: Char, b: Char): Int {
+            val x = a - 'a'
+            val y = b - 'a'
+            return if (x in 0..25 && y in 0..25) (x shl 5) or y else -1
+        }
     }
 }
 

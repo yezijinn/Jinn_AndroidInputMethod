@@ -213,6 +213,123 @@ class ShuangpinSchemesTest {
         }
     }
 
+    /**
+     * 码表键的形态：**两键**，第一键是字母、第二键是字母或分号。
+     *
+     * `finalsByKey` 按 `code[1]` 反推键面提示、`packedCodes` 按两键打包 —— 两者都默认「码一定两键」。
+     * 一字符码（abbrev 一类）会让反推直接越界（表在键盘首次弹出时构建 ⇒ 崩在弹键盘那一刻）。
+     */
+    @Test
+    fun 码表键_必须是两键且落在字母或分号() {
+        for (scheme in ShuangpinScheme.SHUANGPIN_ONLY) {
+            val table = scheme.table!!
+            for (code in table.codes.keys) {
+                assertEquals("${scheme.displayName} 的码「$code」不是两键", 2, code.length)
+                assertTrue(
+                    "${scheme.displayName} 的码「$code」含字母 / 分号之外的字符",
+                    code[0] in 'a'..'z' && (code[1] in 'a'..'z' || code[1] == ';'),
+                )
+            }
+        }
+    }
+
+    /** 方案表与枚举必须一一对应：多出来的表没人取、白预热（`Shuangpin.warmUpAll` 会全建） */
+    @Test
+    fun 方案表与枚举一一对应() {
+        assertEquals(
+            "SHUANGPIN_TABLES 与双拼方案数不一致",
+            ShuangpinScheme.SHUANGPIN_ONLY.size,
+            SHUANGPIN_TABLES.size,
+        )
+        for (scheme in ShuangpinScheme.SHUANGPIN_ONLY) {
+            assertTrue("${scheme.displayName} 取不到键位表", scheme.table != null)
+        }
+    }
+
+    /**
+     * 键位数据的**内容哈希**（`ShuangpinSchemes.kt` 是生成物，手改不会被编译或上面任何用例发现）。
+     *
+     * 这套表是「数据与生成端漂移」的典型地带：改一个音节照样编译、照样跑绿，
+     * 只有真机按键才发现行为变了。哈希钉住整份内容，改了就必须在此显式更新（＝承认这次数据变化）。
+     * **重新生成后按失败信息里的实际值更新**，别反过来为了让它绿去改数据。
+     */
+    @Test
+    fun 键位数据被手改会被发现() {
+        val expected = mapOf(
+            // 方案 to Triple(声母数, 声母哈希, 码表哈希)
+            ShuangpinScheme.ZIRANMA to Triple(23, "c3ad95e0c53ab9ac", "df221f370ed5b604"),
+            ShuangpinScheme.FLYPY to Triple(23, "c3ad95e0c53ab9ac", "6f5bc7228622b0d8"),
+            ShuangpinScheme.SOGOU to Triple(23, "c3ad95e0c53ab9ac", "0e0d6450aee65e5d"),
+            ShuangpinScheme.MSPY to Triple(23, "c3ad95e0c53ab9ac", "c5504c39adb77c44"),
+            ShuangpinScheme.ZIGUANG to Triple(23, "9e5d9aee81581c45", "b362e9ee626b53d7"),
+            ShuangpinScheme.ABC to Triple(23, "17f13a3fb7e930d9", "cdc55f7d4faa8ffc"),
+            ShuangpinScheme.JIAJIA to Triple(23, "0bb10ae2d9e57f7b", "384234f447d8df37"),
+        )
+        for ((scheme, want) in expected) {
+            val table = scheme.table!!
+            assertEquals("${scheme.displayName} 声母表条数", want.first, table.initials.size)
+            assertEquals(
+                "${scheme.displayName} 声母表内容变了（${table.initials.size} 条）",
+                want.second,
+                sha16(table.initials.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" }),
+            )
+            assertEquals(
+                "${scheme.displayName} 码表内容变了（${table.codes.size} 条）",
+                want.third,
+                sha16(table.codes.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" }),
+            )
+        }
+    }
+
+    /**
+     * 生成器模板与源码头部必须逐行一致（**必查 9**：此前没有任何守卫钉生成端）。
+     *
+     * 实测漂移：模板长期停在打包索引改造之前 —— 重跑 `gen_shuangpin_tables.py` 会删掉
+     * `packedCodes` / `codeOf` / `companion object`，`PinyinEngine` 的 `table.codeOf(...)` 直接编译不过。
+     * 文本部分（KDoc、音节数）同理会静默回退到旧稿。
+     *
+     * 只比头部（类与函数实现）：数据块由 schema 决定，内容由上面的哈希钉住。
+     */
+    @Test
+    fun 生成器模板与源码头部必须逐行一致() {
+        val py = TestSources.pyCode(
+            TestSources.rawSource(
+                "tools/dict_builder/gen_shuangpin_tables.py",
+                "../tools/dict_builder/gen_shuangpin_tables.py",
+            ),
+        )
+        val open = "KT_HEADER = '''"
+        val start = py.indexOf(open)
+        assertTrue("生成器里找不到 KT_HEADER 字面量（被改名或注释掉了？）", start >= 0)
+        val bodyStart = start + open.length
+        val bodyEnd = py.indexOf("'''", bodyStart)
+        assertTrue("KT_HEADER 字面量没有闭合", bodyEnd > bodyStart)
+        val template = py.substring(bodyStart, bodyEnd)
+            // Python 普通字符串字面量：源里写 `\\n`，实际值是 `\n` 两个字符
+            .replace("\\\\", "\\")
+            .replace("%%", "%")
+
+        val marker = "internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf("
+        val src = TestSources.rawSourceOfShortName("ShuangpinSchemes.kt").replace("\r\n", "\n")
+        val idx = src.indexOf(marker)
+        assertTrue("源码头部结构变了：找不到「$marker」", idx >= 0)
+        val head = src.substring(0, idx + marker.length) + "\n"
+
+        // 音节数是模板里唯一的占位（%d）：生成器按资产条数填，两边必须同步
+        val count = readSyllables().size
+        assertTrue("源码头部写的音节数不是 $count ——「的 $count 个合法音节」必须在", "的 $count 个合法音节" in head)
+        assertEquals(
+            "生成器模板与 ShuangpinSchemes.kt 头部不一致（只改了一边：重跑生成器会覆盖掉改动）",
+            head,
+            template.replace("%d", count.toString()),
+        )
+    }
+
+    private fun sha16(s: String): String {
+        val d = java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
+        return d.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
     private fun readSyllables(): List<String> {
         val candidates = listOf(
             "src/main/assets/pinyin_syllables.txt",
