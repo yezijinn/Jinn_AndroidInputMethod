@@ -879,24 +879,19 @@ class ClipboardImageTest {
      * BUG.md L-1489：常驻 IME 进程原先不响应系统内存回调，`ClipboardThumbLoader` 那份
      * 12MB 解码位图缓存**没有第二个释放点**（`stopWork()` 明确不清缓存，见 L-1262）。
      *
-     * 只在真紧张的三档让位；`UI_HIDDEN` / `BACKGROUND` / `MODERATE` 是打字往返的常态信号，
-     * 每次都清等于每次开面板重解一屏缩略图。
+     * 档位白名单（只认真紧张的 `RUNNING_LOW` / `RUNNING_CRITICAL` / `COMPLETE`）已收敛成
+     * `ClipboardThumbLoader.shouldReleaseForTrim` 一处可执行判据，两个入口共用 ——
+     * 那部分（含「IME 侧判中就要真的释放」）由 `PowerResidencyTest.缩略图缓存要有服务之外的让位入口`
+     * 与 `PowerResidencyTest.内存档位判据只认真紧张的三档` 钉。本用例只钉释放函数本身与去重投递。
      */
     @Test
     fun 内存紧张时要释放缩略图缓存() {
         val ime = TestSources.codeSource("JinnIme.kt")
-        val trim = TestSources.blockAfter(ime, "override fun onTrimMemory(level: Int)")
         assertTrue(
-            "只在低 / 危急 / 完全三档让位",
-            "TRIM_MEMORY_RUNNING_LOW" in trim && "TRIM_MEMORY_RUNNING_CRITICAL" in trim &&
-                "TRIM_MEMORY_COMPLETE" in trim,
+            "onTrimMemory 走共用判据",
+            "ClipboardThumbLoader.shouldReleaseForTrim(level)" in
+                TestSources.blockAfter(ime, "override fun onTrimMemory(level: Int)"),
         )
-        assertFalse(
-            "常态往返档不得清缓存",
-            "TRIM_MEMORY_UI_HIDDEN" in trim || "TRIM_MEMORY_BACKGROUND" in trim ||
-                "TRIM_MEMORY_MODERATE" in trim,
-        )
-        assertTrue("要转调释放入口", "ClipboardThumbLoader.releaseMemory()" in trim)
         assertTrue(
             "onLowMemory 同样让位",
             "ClipboardThumbLoader.releaseMemory()" in

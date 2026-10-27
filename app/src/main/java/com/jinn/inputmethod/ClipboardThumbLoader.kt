@@ -1,6 +1,8 @@
 package com.jinn.inputmethod
 
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.util.LruCache
 import java.util.concurrent.ExecutorService
@@ -58,6 +60,64 @@ internal object ClipboardThumbLoader {
     /** 缓存是否已按当前档位设过上限（避免每次 load 都重设、把已有图清掉） */
     private val cacheSized = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /**
+     * 进程级内存回调是否已注册（只注册一次，见 [ensureTrimCallbacks]）。
+     *
+     * 用原子位而不是布尔：`load()` 全在主线程，但这份缓存是共享单例，将来谁把它挪到后台线程
+     * 也不该多注册一份回调（多注册就是同一个档位清两次，且持有两份回调对象）。
+     */
+    private val trimCallbacksRegistered = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 内存紧张时该不该把解码位图让出去 —— **唯一判据**（`JinnIme` 与本文件的进程级回调共用）。
+     *
+     * 只在真紧张的三档动手：`RUNNING_LOW` / `RUNNING_CRITICAL` / `COMPLETE`。
+     * ⚠ 刻意**不含** `UI_HIDDEN`(20) / `BACKGROUND`(40) / `MODERATE`(60)，理由不是「它们常来」：
+     * ① `BACKGROUND` / `MODERATE` / `COMPLETE` 只发给 `curProcState >= PROCESS_STATE_HOME`(14) 的
+     *    缓存 / LRU 档进程（另有 heavy-weight），而 IME 服务活着时最差也只是 perceptible ——
+     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档**结构性不可达**
+     *    （`COMPLETE` 留下只为纵深防御：真到那一档时本进程已不在）；
+     * ② `UI_HIDDEN` 是**本应用自己的页面**（设置 / 历史页）离屏，与内存压力无关；按它清等于
+     *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
+     */
+    internal fun shouldReleaseForTrim(level: Int): Boolean {
+        return level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level == ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+    }
+
+    /**
+     * 把 [releaseMemory] 挂到 **Application** 上（一次性，幂等）。
+     *
+     * 为什么不能只靠 `JinnIme.onTrimMemory`（BUG.md L-1489 记录的已知边界）：那份缓存由
+     * 「键盘面板」与「历史页」共用，而让位入口原先只长在 IME 服务上 —— `am force-stop` 之后
+     * 只起历史页（`dumpsys activity services` 里 `JinnIme` 为 DEAD）时，12MB 全由活动页填充，
+     * 系统报内存紧张却没有任何人让位。挂在 Application 上就没有这个前提：进程还在就收得到。
+     *
+     * 回调对象不捕获任何 Context / View（只调本单例的方法），Application 持有它不会钉住页面。
+     * 注册失败只记一笔：`JinnIme` 那份入口仍在，功能不受影响。
+     */
+    private fun ensureTrimCallbacks(context: Context) {
+        if (!trimCallbacksRegistered.compareAndSet(false, true)) return
+        val callbacks = object : ComponentCallbacks2 {
+            override fun onTrimMemory(level: Int) {
+                if (shouldReleaseForTrim(level)) releaseMemory()
+            }
+
+            override fun onLowMemory() {
+                releaseMemory()
+            }
+
+            override fun onConfigurationChanged(newConfig: Configuration) = Unit
+        }
+        runCatching { context.applicationContext.registerComponentCallbacks(callbacks) }
+            .onFailure {
+                // 注册失败要放开标记：下一次 load() 还能再试一遍，而不是这一整个进程都没人让位
+                trimCallbacksRegistered.set(false)
+                Diagnostics.w(TAG, "内存回调注册失败: ${it.javaClass.simpleName}")
+            }
+    }
+
     private val pool: java.util.concurrent.ExecutorService =
         java.util.concurrent.Executors.newFixedThreadPool(THUMB_THREADS) { r ->
             // 解码是满核的活，且与输入法同进程：在线程体内降后台优先级（BUG.md L-1194，
@@ -87,6 +147,9 @@ internal object ClipboardThumbLoader {
      * （按实例清会误伤另一处正在用的屏，见 L-1262），LRU 只在装不下时按字节上限自己淘汰
      * ⇒ 浏览过剪贴板图片后最多 12MB（低档机 6MB）解码位图长期驻留在常驻的 IME 进程里。
      *
+     * 现在有**两个**入口，判据同一份（[shouldReleaseForTrim]）：① `JinnIme` 的两个内存回调；
+     * ② 本对象挂在 Application 上的进程级 ComponentCallbacks2（服务不在时也照样让位）。
+     *
      * 清缓存不改正确性：缓存是纯派生数据，下一次 [load] 必然 miss 并重新解密解码；
      * **已在屏幕上的位图不会消失**（由 ImageView 持有，不随缓存清空而回收），所以不会出现空白格子。
      * 负缓存 [failedAt] 与在途登记 [inFlight] 不动：两者都不含位图，清掉反而会让坏图立刻重排解码。
@@ -105,6 +168,10 @@ internal object ClipboardThumbLoader {
      * 缓存命中时**同步**回调（在同一线程栈上），调用方需容忍这一点。
      */
     fun load(context: Context, hash: String, targetPx: Int, onReady: (String, Bitmap) -> Unit) {
+        // 让位入口跟着「第一次真要显示缩略图」挂上（见 [ensureTrimCallbacks]）：本对象是 Object，
+        // 拿到 Context 的唯一自然时机就在这里；晚一步注册也不会漏掉这张图 —— 缓存刚放进来的
+        // 那一张，下一次内存回调照样清得掉。
+        ensureTrimCallbacks(context)
         // 低内存档把缓存折半（与图库池同款）：只做一次，避免每帧重设把已有缩略图清掉
         if (cacheSized.compareAndSet(false, true)) {
             val budget = thumbCacheBytes(context)

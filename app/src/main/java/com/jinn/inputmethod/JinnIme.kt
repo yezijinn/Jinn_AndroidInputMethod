@@ -2,7 +2,6 @@ package com.jinn.inputmethod
 
 import android.Manifest
 import android.content.BroadcastReceiver
-import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -72,6 +71,28 @@ class JinnIme : InputMethodService() {
 
     /** 键盘收起后的空闲检查（见 [maybeLoadOptionalDict]） */
     private val optionalIdleCheck = Runnable { maybeLoadOptionalDict("键盘收起后闲置") }
+
+    /**
+     * 兜底装载的到点闸门（见 [runOptionalFallback]）。
+     *
+     * 为什么不直接把 [maybeLoadOptionalDict] 塞进 `postDelayed`：这条定时器从**进程创建**起算，
+     * 到点时用户可能正开着键盘打字；而可选包首次装载实测 21~34s 的后台解析（1.14M 词条）。
+     * 另两条触发（息屏 / 键盘收起 20s）本身就是空闲信号，只有这条兜底没有 —— 它会在
+     * 「用户一直开着键盘连续输入」这条路径上，把重活直接砸进前台按键。
+     */
+    private val optionalFallbackCheck = Runnable { runOptionalFallback() }
+
+    /**
+     * 兜底装载已顺延的次数（上限见 [OPTIONAL_FALLBACK_MAX_DEFERRALS]）。
+     *
+     * **刻意不归零**，安全的前提是 [optionalFallbackCheck] 一次性：全类只在 `onCreate` 排一次，
+     * 其余重排都在 [runOptionalFallback] 的顺延分支里 ⇒ 每个服务实例最多触发 4 次，
+     * 饱和之后不会再有下一次，归零反而多一个「能不能被绕过」的面。
+     * ⚠ 若将来改成每会话重排（`onStartInputView` 再排一次），饱和的计数会让闸门**永久失效**、
+     * 静默回落到旧行为（到点就装）；那时必须在每轮首次排程处一并归零 ——
+     * `PowerResidencyTest` 不钉排程处数，钉的就是「多处排程必须有配对归零」这条配对关系。
+     */
+    private var optionalFallbackDeferrals = 0
 
     private lateinit var prefs: Prefs
 
@@ -621,7 +642,8 @@ class JinnIme : InputMethodService() {
             }
         }
         // 兜底：用户一直开着键盘打字，既不息屏也不收起，也要保证最终加载
-        ui.postDelayed({ maybeLoadOptionalDict("兜底超时") }, OPTIONAL_FALLBACK_DELAY_MS)
+        // （到点先看一眼前台，见 [runOptionalFallback] —— 正是「一直开着键盘」这条路径）
+        ui.postDelayed(optionalFallbackCheck, OPTIONAL_FALLBACK_DELAY_MS)
         // 双拼键位表预热：7 套表按需构建（实测单套首次使用约 1~1.7ms，7 套合计约 8ms）；而键盘视图是在
         // onCreateInputView（首次弹出）里创建的，若在那里同步建表会拖慢首次弹出。
         // 故这里用独立守护线程预热（不占用 BackgroundIo，那是剪贴板 DB 的单线程队列，
@@ -3705,6 +3727,11 @@ class JinnIme : InputMethodService() {
         // 这是「隐藏但视图可能被复用」的最后一道：清掉退格连删与字母键按住计数，
         // 否则换肤会一直被判定成「用户按着键」而静默延后。
         pinyinKeyboard?.stopBackspaceRepeat()
+        // 悬浮把手的长按换档同样要撤：窗口隐藏不保证补发 ACTION_CANCEL，留着会在**键盘已经没了
+        // 之后**照样回调 `cycleFloatingScale()` —— 在别的应用上弹一次「80%」，还会把已隐藏窗口的
+        // 几何改掉（下次弹出时尺寸莫名变了）。与上面退格同一条口径：隐藏即收工。
+        ui.removeCallbacks(floatingLongPress)
+        floatingLongPressArmed = false
         Diagnostics.i(TAG, "onWindowHidden: 窗口隐藏 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowHidden", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
     }
@@ -3721,15 +3748,17 @@ class JinnIme : InputMethodService() {
      *    （`COMPLETE` 留下只为纵深防御：真到那一档时本服务已不在）；
      * ② `UI_HIDDEN` 是**本应用自己的页面**（设置 / 历史页）离屏，与内存压力无关；按它清等于
      *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
+     *
+     * ⚠ 这里只是**其中一个**入口：`ClipboardThumbLoader` 自己在首次使用时也向 Application 注册了
+     * 一份 ComponentCallbacks2（同一套白名单）。原因是本服务并非总在 —— `am force-stop` 之后只
+     * 起历史页时 `JinnIme` 是 DEAD，那份 12MB 由活动页填充却没人让位（L-1489 记录的已知边界）。
      */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
-            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
-            level == ComponentCallbacks2.TRIM_MEMORY_COMPLETE
-        ) {
-            ClipboardThumbLoader.releaseMemory()
-        }
+        // 判据收敛在 [ClipboardThumbLoader.shouldReleaseForTrim]：同一套白名单还要给
+        // 「本服务不在、只有历史页活着」那条路径用（见该文件里的进程级 ComponentCallbacks2），
+        // 两处各写一份就会在下次改档位时只改一处、留下一半按旧口径释放
+        if (ClipboardThumbLoader.shouldReleaseForTrim(level)) ClipboardThumbLoader.releaseMemory()
     }
 
     /** 比我方进程更早的「已无回旋余地」信号：与 [onTrimMemory] 的 COMPLETE 档同款处理 */
@@ -3765,6 +3794,12 @@ class JinnIme : InputMethodService() {
         // `by lazy` 未初始化时 stop() 是空操作，安全。
         runCatching { themeTicker.stop() }
         cancelTranslate()
+        // 退格连删的**第三个**收尾点：本服务销毁时补一次。
+        // 另两处是 onFinishInputView / onWindowHidden，视图侧还有 onDetachedFromWindow 兜底；
+        // 但「服务销毁时视图一定会 detach」是框架细节（同一份代码在 API 26~34 上不保证），
+        // 55ms 自我续排的循环一旦活过销毁，就是「用户没碰键盘，字一直被杀」。
+        // `stopBackspaceRepeat` 幂等（无挂起任务时只是复位标志），多调一次零代价。
+        runCatching { pinyinKeyboard?.stopBackspaceRepeat() }
         ui.removeCallbacksAndMessages(null)
         // 视图引用断开（与下面 screenOffReceiver 同款口径）：视图持 listener 强引用本服务、
         // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30 审查发现）。
@@ -3813,6 +3848,32 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "onDestroy: 录音与连接已释放")
         }, "jinn-ime-release").apply { isDaemon = true }.start()
         super.onDestroy()
+    }
+
+    /**
+     * 兜底定时器到点：键盘仍在前台就再顺延一轮（见 [optionalFallbackCheck]）。
+     *
+     * 为什么不损功能（这是「省电 / 流畅」改动必须交代的一条）：
+     *  · 另外两条触发原样保留 —— 息屏立刻装、键盘收起 20s 后装，用户只要真的停手就立即加载；
+     *  · 顺延有上限 [OPTIONAL_FALLBACK_MAX_DEFERRALS]，键盘一直开着也会在限次后照常装载，
+     *    不存在「永远等不到」的路径（与 `AsrClient` 的空闲关闭同款：延后有限次就强制动手）；
+     *  · 顺延只发生在「窗口正显示」时 —— 但这不是「只有好处」，两个代价要认得：
+     *    ① 到限后若用户仍在打字，重活**照旧**落在前台（闸门只保证「给另两条空闲触发让路」，不保证避开）；
+     *    ② 有可选包可装的机器上，「只有可选包才有的词」最长推迟 3min → 12min 才查得到。
+     *    收益的准确说法：把兜底这次重活推后 ≤9 分钟，让步给「息屏 / 收起键盘 20s」这两条真空闲信号；
+     *    它们先命中的话，本次兜底到点时就已被引擎闸门判为「无事可做」（`loadOptionalAsync` 返回 false）。
+     *
+     * 判据取窗口的 `isShowing`（`SoftInputWindow` 是 Dialog）：服务侧 `isInputViewShown`
+     * 在隐藏后仍可能是 true（真机 `dumpsys input_method` 实测），按它判会把「已收起」看成「在用」。
+     */
+    private fun runOptionalFallback() {
+        if (window?.isShowing == true && optionalFallbackDeferrals < OPTIONAL_FALLBACK_MAX_DEFERRALS) {
+            optionalFallbackDeferrals++
+            Diagnostics.i(TAG, "可选词库: 兜底到点但键盘仍在前台，顺延第 ${optionalFallbackDeferrals} 次")
+            ui.postDelayed(optionalFallbackCheck, OPTIONAL_FALLBACK_DELAY_MS)
+            return
+        }
+        maybeLoadOptionalDict("兜底超时")
     }
 
     /**
@@ -5882,6 +5943,14 @@ class JinnIme : InputMethodService() {
 
         /** 兜底等待：既不息屏也不收键盘时的最晚加载时间 */
         private const val OPTIONAL_FALLBACK_DELAY_MS = 180_000L
+
+        /**
+         * 兜底定时器最多顺延几轮（每轮 [OPTIONAL_FALLBACK_DELAY_MS]）。
+         *
+         * 取 3 的理由：既让「连续输入十来分钟」这条路径真正避开重活，又能保证键盘一直开着时
+         * 最晚约 12 分钟后仍然装载 —— 上限只影响「什么时候装」，不影响「装不装」。
+         */
+        private const val OPTIONAL_FALLBACK_MAX_DEFERRALS = 3
 
         /** 「剪贴板自定义」页保存后的轻量广播：只让 IME 同步采集开关（见 `configReceiver`） */
         const val ACTION_CLIPBOARD_CONFIG_UPDATED = "com.jinn.inputmethod.action.CLIPBOARD_CONFIG_UPDATED"
