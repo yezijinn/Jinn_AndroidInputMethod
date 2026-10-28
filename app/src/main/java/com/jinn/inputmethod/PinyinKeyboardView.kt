@@ -3970,15 +3970,46 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 键面显示 ───────────────────────────────────────────
 
     /**
-     * 布局完成后按真实键宽再统一一次符号字号。
+     * 布局完成后按真实键宽再统一一次键面字号（符号层与字母层）。
      *
-     * 键宽要等布局才知道，而首次刷新可能发生在测量之前（基准宽度为 0，只能按各键自身宽度算）。
-     * 本方法只改文字属性、不动布局参数，因此不会再触发一轮布局（无循环）。
+     * 键宽要等布局才知道，而首次刷新发生在新视图 `configure()` 里 —— 那时还没测量，
+     * `keyViews['q'].width` 是 0，下发的 `PinyinKey.uniformMeasureWidth` 也就是 0
+     * ⇒ 字母退回「按**各键自宽**收字号」。而 `refreshKeyLabels` 只在切层 / 换肤 / 外向设置变动时被调，
+     * **打字过程中不调**（唯一例外：「大写只生效一次」开启时，点一次大写键后的首个字母会走
+     * `releaseCapsOneShot`，那次刷新顺带把本条自愈）：字母层一旦停在这次刷新上，
+     * 整场会话都是各键各号，直到切一次层。
+     * 符号层每次布局变化都重算；其余层只在「基准键宽与上次刷新时不同」时补一发，补完即停。
+     *
+     * 差多少：触顶判据 = 字母前进宽 > `FULL_TEXT_FIT_RATIO × (键宽 − 间隙)`，与**渲染出来的键高**
+     * 成正比（悬浮窗口还会按行高倍率压缩键高）。按 Roboto 前进宽（W = 0.887em）、density 3.5 /
+     * 间隙 2.5dp / 大写且显韵母（−3sp）换算，本机现值是悬浮 80% 宽 ⇒ 键宽 112px：
+     *  - 现档（52dp、行高倍率 0.91 ⇒ 渲染键高 ≈166px）：期望字号 ≈72px，W 前进宽 ≈64px
+     *    远小于上限 ≈83px ⇒ **不触发**（与真机截图一致；即便按未压缩的 182px 算也不触发）；
+     *  - 触顶要渲染键高 > ≈208px（设置页约 65dp；停靠全宽 1440 时键宽 141px、要 ≈74dp）；
+     *  - 到 90dp：W 只剩约 0.7 倍同屏字号，q 排另有 4 个宽字母（Q / O / U / P）也过线 ——
+     *    键越窄、行高被压得越少，过线的就越多，所以这一条到了 90dp 并不只是「W 一个人小」。
+     *
+     * **无循环的判据是下面这个标记，不是「本方法不动布局参数」**：`refreshKeyLabels` 里
+     * 确实有会 `requestLayout` 的调用（`refreshShiftBackground` 的 `setBackground`、
+     * `syncNumberRow` 的可见性），它们各自都有「值没变就跳过」的守卫，所以稳态一趟都不触发；
+     * 真触发时那一轮 `changed == false`（帧没变，`View.layout` 不会把 changed 传成 true）直接
+     * 返回；即便 changed 为 true，标记也已经等于基准宽 ⇒ 不再重算。收敛在两轮内。
+     * （`btnLang.text` 这类**固定宽高的 setText** 只 `invalidate`，不触发布局 —— 别拿它当
+     * requestLayout 的例子：`TextView.checkForRelayout` 只在 WRAP_CONTENT 或高度变化时才请求布局。）
      */
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
-        if (changed && layer == LAYER_SYMBOL) refreshKeyLabels()
+        if (!changed) return
+        // 基准键宽取 q（第 1 排 10 键，全键盘最窄的一排），见 refreshKeyLabels
+        val baseWidth = (keyViews['q']?.width ?: 0).toFloat()
+        if (layer == LAYER_SYMBOL || baseWidth != labelBaseWidth) refreshKeyLabels()
     }
+
+    /**
+     * 上次 [refreshKeyLabels] 时的基准键宽（像素）：0 = 那次刷新发生在测量之前，
+     * 各键只能按自身宽度算字号（见 [onLayout]）。
+     */
+    private var labelBaseWidth = 0f
 
     private fun refreshKeyLabels() {
         // 数字行显隐跟「层 / 密码态」走：这两个状态每变一次都会走到这里（切符号 / 切数字层 /
@@ -4109,6 +4140,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift.alpha = if (layer == LAYER_SYMBOL) 0.4f else 1f
         // 空格键顶部小字：同步当前输入类型
         updateSpaceHint()
+        // 记下本次刷新用的基准键宽（[onLayout] 据此判断要不要在布局后补一次：
+        // 测量之前它是 0，各键只能按自身宽度收字号 ⇒ q 排与 a 排字高不齐）
+        labelBaseWidth = (keyViews['q']?.width ?: 0).toFloat()
     }
 
     /**

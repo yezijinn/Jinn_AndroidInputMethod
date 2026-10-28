@@ -227,19 +227,15 @@ import kotlin.math.min
         private var cachedNormalLines: List<String> = emptyList()
         private var cachedRedLines: List<String> = emptyList()
 
-        /** 提示文本 → 非空行列表（已去首尾空白）；空串返回空列表，绘制端按「无提示」处理 */
-        private fun splitHintLines(text: String): List<String> =
-            if (text.isEmpty()) {
-                emptyList()
-            } else {
-                text.split('\n').filter { it.isNotBlank() }.map { it.trim() }
-            }
-
         /**
-         * 全拼模式大字样式：true 时字母铺满按键居中（约 60% 键高），
+         * 全拼模式大字样式：true 时字母铺满按键居中（字号约 70% 键高，见 `FULL_TEXT_RATIO`），
          * 不绘制双拼提示；false 保持双拼布局（字母顶置 42% + 下方韵母提示）。
          */
         var fullPinyinStyle: Boolean = false
+            set(value) {
+                field = value
+                invalidate()
+            }
 
     /**
      * 字母主字形的**字号微调**（px，可负），由 [PinyinKeyboardView.refreshKeyLabels] 按
@@ -457,9 +453,21 @@ import kotlin.math.min
             if (total > 0) {
                 // 同上：提示也要按宽度收（4 个字母的「iong」在 18.5dp 的键上会横跨三格）。
                 // 量最长的**那一行**、整键同一字号：逐行各自缩会让上下两行大小不一。
+                // 下标循环而非 `for (line in list)`：后者每次迭代都为 ArrayList 分配一个迭代器，
+                // 与本方法「绘制路径零分配」的约定相悖（26 键 × 每帧一轮）。
                 var widest = ""
-                for (line in normalLines) if (line.length > widest.length) widest = line
-                for (line in redLines) if (line.length > widest.length) widest = line
+                var k = 0
+                while (k < normalLines.size) {
+                    val line = normalLines[k]
+                    if (line.length > widest.length) widest = line
+                    k++
+                }
+                k = 0
+                while (k < redLines.size) {
+                    val line = redLines[k]
+                    if (line.length > widest.length) widest = line
+                    k++
+                }
                 subPaint.textSize = fitTextSize(
                     widest.ifEmpty { refText },
                     height * SUB_RATIO,
@@ -473,21 +481,22 @@ import kotlin.math.min
                 // 最后一行基线：让文字底部贴 SUB_BOTTOM_RATIO 位置（近按钮底边）
                 val lastBaseline = h * SUB_BOTTOM_RATIO - subFm.descent
                 var i = 0
-                for (line in normalLines) {
+                // 默认皮肤走历史路径（字色 + paint alpha 160）；皮肤色自带 alpha，用 255 避免二次淡化
+                val normalAlpha = if (v == null) 160 else 255
+                while (i < normalLines.size) {
                     subPaint.color = hintColor
-                    // 默认皮肤走历史路径（字色 + paint alpha 160）；皮肤色自带 alpha，用 255 避免二次淡化
-                    subPaint.alpha = if (v == null) 160 else 255
+                    subPaint.alpha = normalAlpha
                     canvas.drawText(
-                        line, w / 2f,
+                        normalLines[i], w / 2f,
                         lastBaseline - (total - 1 - i) * lineHeight, subPaint,
                     )
                     i++
                 }
-                for (line in redLines) {
+                while (i < total) {
                     subPaint.color = hintRedColor
                     subPaint.alpha = 255
                     canvas.drawText(
-                        line, w / 2f,
+                        redLines[i - normalLines.size], w / 2f,
                         lastBaseline - (total - 1 - i) * lineHeight, subPaint,
                     )
                     i++
@@ -614,3 +623,22 @@ import kotlin.math.min
             const val LINE_COMPACT_RATIO = 0.8f
         }
     }
+
+/**
+ * 键面提示文本 → 非空行列表（已去首尾空白）；空串返回空列表，绘制端按「无提示」处理。
+ *
+ * 提成顶层纯函数是为了能单测（`PinyinKeyTest`）：[PinyinKey] 是 `View` 子类，JVM 里实例化不了
+ * （构造时就 `context.getColor`）。行为与原先的成员函数逐字一致：
+ *  - 只按 `\n` 拆；`\r\n` 的行尾由 `trim()` 收掉；
+ *  - 全空白行丢弃，非空行去首尾空白（`Char.isWhitespace` 覆盖 NBSP / 全角空格）；
+ *  - **不截断行数**：行数上限由上游保证（`ShuangpinTable.finalHint` 强制 ≤2 行，
+ *    红色声母行只出现在「韵母最多一行」的键上 —— 自然码 `i` 键就是 0 行韵母 + 1 行红 `ch`），
+ *    本函数不做静默丢信息。
+ */
+internal fun splitHintLines(text: String): List<String> =
+    if (text.isEmpty()) {
+        emptyList()
+    } else {
+        text.split('\n').filter { it.isNotBlank() }.map { it.trim() }
+    }
+
