@@ -733,19 +733,6 @@ class JinnIme : InputMethodService() {
         // 监听网络恢复：WiFi↔热点切换导致 IP 变化时主动重连
         registerNetwork()
 
-        // 监听剪贴板配置广播：采集开关改动立即生效，无需重启输入法进程。
-        // Android 13+ 动态注册必须显式声明导出标志：同进程应用内广播用 NOT_EXPORTED。
-        // 只在 Android 13+ 注册：低版本没有 RECEIVER_NOT_EXPORTED 标志，
-        // 动态注册默认导出且无权限保护，任意第三方 App 都能发这条 action 触发
-        // 反复启停剪贴板监听。低版本不注册不损失任何功能。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            runCatching {
-                registerReceiver(configReceiver, configFilter, Context.RECEIVER_NOT_EXPORTED)
-            }.onFailure {
-                Diagnostics.e(TAG, "onCreate: 注册配置广播失败", it)
-            }
-        }
-
     }
 
     /** 通过当前 InputConnection 粘贴文本（无效连接不崩溃）。返回是否成功提交。 */
@@ -806,27 +793,6 @@ class JinnIme : InputMethodService() {
         // 同 L-716：剪贴板面板里点条目同样改宿主文本
         if (translateInFlight) cancelTranslate(notify = true)
         return pasteClipboardText(text)
-    }
-
-    /**
-     * 剪贴板配置广播：只同步采集开关。
-     *
-     * 本应用内**没有**「整机配置」广播：设置页改动一律走「保存并重启」重启进程生效，
-     * 全仓从无发送方。曾保留过一条整机配置 action 并在注释里当它存在，读代码时会顺着
-     * 推出一条**根本不可达**的路径（L-1447）。将来真需要跨进程配置通道，先有发送方，
-     * 再一并加注册与权限。
-     * 广播以 `RECEIVER_NOT_EXPORTED` 注册，只有本应用能发。
-     */
-    private val configReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != ACTION_CLIPBOARD_CONFIG_UPDATED) return
-            Diagnostics.i(TAG, "onReceive: 剪贴板配置更新广播（只同步采集开关）")
-            syncClipboardController()
-        }
-    }
-
-    private val configFilter = IntentFilter().apply {
-        addAction(ACTION_CLIPBOARD_CONFIG_UPDATED)
     }
 
     // ── 方向控制 + 文字拖选状态机 ──────────────────────────
@@ -3919,7 +3885,6 @@ class JinnIme : InputMethodService() {
         // 系统剪贴板监听挂在 ClipboardManager 上，不注销会随服务一起泄漏；
         // 这里不置 null：onStartInputView 仍可能重新 start（stop 幂等）。
         runCatching { clipboardController?.stop() }
-        runCatching { unregisterReceiver(configReceiver) }
         screenOffReceiver?.let { runCatching { unregisterReceiver(it) } }
         screenOffReceiver = null
         ringerModeReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -5952,6 +5917,23 @@ class JinnIme : InputMethodService() {
         }
 
         /**
+         * 剪贴板采集开关改动后调用（主线程）：立刻按新开关启停采集器。
+         *
+         * 为什么不再走广播（AI2 A-572）：旧实现是「自定义页 `sendBroadcast` + 本服务在 Android 13+
+         * 注册接收方」。低版本没有 `RECEIVER_NOT_EXPORTED` 标志（动态注册默认导出且无权限保护），
+         * 于是干脆不注册 —— 而发送方**无条件发送**，结果 Android 8~12 上这条通知整个落空：
+         * 用户把「剪贴板历史」关掉并保存后，采集器仍在跑、仍把复制内容入库，直到下次弹键盘
+         * （`onStartInputView` 的兜底同步）才真的停。关采集是用户明确的隐私要求，不该等偶然时机。
+         *
+         * 本应用单进程，直接通知即可（与 [onKeyFeedbackChanged] 同一套弱引用 + `ui.post` 写法）；
+         * 服务未创建时无事可做 —— 它启动时本来就会按当前偏好 `syncClipboardController()`。
+         */
+        fun onClipboardConfigChanged() {
+            val ime = instance?.get() ?: return
+            ime.ui.post { ime.syncClipboardController() }
+        }
+
+        /**
          * 设置页改动悬浮键盘配置（开关 / 绑定列表 / 几何）后调用：清掉「回到底部」的进程内豁免。
          *
          * 不清的后果：用户按过「回到底部」再回设置页重新勾上同一个 APP，键盘仍然不浮 ——
@@ -6037,9 +6019,6 @@ class JinnIme : InputMethodService() {
          * 最晚约 12 分钟后仍然装载 —— 上限只影响「什么时候装」，不影响「装不装」。
          */
         private const val OPTIONAL_FALLBACK_MAX_DEFERRALS = 3
-
-        /** 「剪贴板自定义」页保存后的轻量广播：只让 IME 同步采集开关（见 `configReceiver`） */
-        const val ACTION_CLIPBOARD_CONFIG_UPDATED = "com.jinn.inputmethod.action.CLIPBOARD_CONFIG_UPDATED"
 
         /**
          * 暂存粘贴文本的有效期：剪贴板面板点击粘贴但 IME 无连接时暂存，

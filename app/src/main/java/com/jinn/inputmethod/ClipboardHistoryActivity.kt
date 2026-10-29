@@ -824,11 +824,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     confirm("清空全部非收藏历史？") {
                         BackgroundIo.run {
                             db.deleteByCategory(null)
-                            // 清空会删掉图片行（非收藏）：文件同步收一次（否则要等下次启动 GC）
+                            // 清空会删掉图片行（非收藏）：文件同步收一次（否则要等下次启动 GC）；
                             // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
-                        ClipboardImageFiles.gc(
-                            this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
-                        )
+                            ClipboardImageFiles.gc(
+                                this@ClipboardHistoryActivity, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS,
+                            )
                             loadAsync()
                         }
                     }

@@ -1002,17 +1002,6 @@ class Prefs(private val appContext: Context) {
     // （2026-10-01 修复 L-298）。
 
     /**
-     * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
-     *
-     * 三种情况：
-     *  1. 空值 ⇒ 空串（未配置）；
-     *  2. **旧版明文** ⇒ 返回明文并把加密结果写回（迁移）；
-     *  3. 密文但解不开（换机 / Keystore 失效 / 系统重置）⇒ **返回空串 + W 日志**，等价「未配置」。
-     *
-     * 第 3 条是关键：**绝不能把密文原文当成 Key 用** —— 那会发一次莫名失败的请求，
-     * 而用户看到的是「凭据已配置却认证失败」，比「未配置」难查得多。
-     */
-    /**
      * 当前**只在内存、未落盘**的凭据键（空集合 = 全部已落盘）。
      *
      * 供两个设置页的显式保存如实报告（2026-10-02 修复 L-355）：加密不可用时（锁屏）值只进内存，
@@ -1020,8 +1009,28 @@ class Prefs(private val appContext: Context) {
      */
     internal fun unpersistedCredentialKeys(): Set<String> = unpersistedCredentials.toSet()
 
+    /**
+     * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
+     *
+     * 三种情况：
+     *  1. 空值 ⇒ 空串（未配置）；
+     *  2. **旧版明文** ⇒ 返回明文并把加密结果写回（迁移）；
+     *  3. 密文但解不开 ⇒ 返回空串 + W 日志，等价「未配置」。
+     *
+     * 第 3 条是关键：**绝不能把密文原文当成 Key 用** —— 那会发一次莫名失败的请求，
+     * 而用户看到的是「凭据已配置却认证失败」，比「未配置」难查得多。
+     *
+     * ⚠ 解不开还要再分两种（2026-10-30 修 A-672 / L-1462）：**永久**解不开（换机 / 密钥失效 /
+     * 密文损坏）才把空串写进缓存；**暂时**解不开（锁屏时 `setUnlockedDeviceRequired` 让密钥
+     * 不可用）**绝不缓存** —— 缓存就等于「一次锁屏 = 本进程内凭据永久未配置」，用户解锁后
+     * 打开凭据页看到整页空字段，以为凭据丢了（磁盘上的密文其实完好）。暂时失败只把下一次
+     * 尝试推迟 [CREDENTIAL_RETRY_MS]，既不让锁屏期间每次读都跑一遍 Keystore，也不会卡住解锁后的读取。
+     */
     private fun readCredential(key: String, retry: Int = 0): String {
         credentialCache[key]?.let { return it }
+        // 暂时解不开（锁屏）时的重试闸：闸内直接答「这次读不出」，不再跑 Keystore、也不再刷日志。
+        // 闸只有 1 秒：用户解锁后打开凭据页，第一次读就落在闸外（人手不可能比 1 秒更快）。
+        if (System.currentTimeMillis() < credentialRetryAt) return ""
         val raw = strOr(key, "").orEmpty()
         if (raw.isEmpty()) return ""
         if (!CredentialCrypto.looksEncrypted(raw)) {
@@ -1049,29 +1058,42 @@ class Prefs(private val appContext: Context) {
             sp.edit { putString(key, encrypted) }
             return raw
         }
-        val plain = CredentialCrypto.decrypt(raw)
-        if (plain == null) {
-            Diagnostics.w(TAG, "凭据解密失败（换机 / Keystore 失效），按未配置处理，需重新填写")
-            // 必须把「解不开」也缓存住：旧密文在换机 / 重置后永远解不开，而翻译设置页一次进页
-            // 要读这批键十余次 ⇒ 每条都重跑一次 Keystore 解密，还会各刷一条 W 级日志，把诊断包里
-            // 真正有用的翻译失败记录挤掉。写侧（writeCredential）与删侧都会覆盖缓存，故缓存空串
-            // 不会让用户重填后仍读到旧结论。
-            credentialCache[key] = ""
-            return ""
+        return when (val outcome = CredentialCrypto.decryptDetailed(raw)) {
+            is CredentialCrypto.DecryptOutcome.Ok -> {
+                val plain = outcome.plain
+                // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
+                // 无条件回填会把缓存**盖回旧值**，而「凭据不留痕」随后正是拿这个值去比对剪贴板的，
+                // 用户刚复制的新 Key 会因此留在剪贴板历史里（2026-10-01 修复 L-298）。
+                if (strOr(key, "").orEmpty() != raw) {
+                    Diagnostics.w(TAG, "凭据在解密期间被改写，本次不回填缓存（改读新值）")
+                    // 2026-10-02 修复 L-422：此前这里直接 `return plain` —— 闸门只挡住了"污染缓存"，
+                    // 没挡住"本次结论已过期"：窗口里发生的若是**删除**（用户清空字段并保存），
+                    // 紧接着的一次翻译会拿已撤销的凭据发请求。重读一次即收敛（命中新缓存或新磁盘值，
+                    // 删除场景得空串）；极端并发下最多重试一次，之后退回旧值并留 W，不做无限重读。
+                    return if (retry >= 1) plain else readCredential(key, retry + 1)
+                }
+                credentialCache[key] = plain
+                plain
+            }
+            CredentialCrypto.DecryptOutcome.Transient -> {
+                // 锁屏 / Keystore 未就绪：密钥暂时不可用，密文本身完好。
+                // **不写缓存**（写了就是「一次锁屏 = 本进程凭据作废」，见方法 KDoc），
+                // 只把下一次尝试推迟 1 秒 —— 锁屏期间每条 Key 最多每 1 秒碰一次 Keystore，
+                // 不会把诊断包刷满，解锁后第一次读就是真值。
+                credentialRetryAt = System.currentTimeMillis() + CREDENTIAL_RETRY_MS
+                Diagnostics.w(TAG, "凭据暂时解不开（锁屏 / Keystore 未就绪），本次按未配置处理，稍后重试")
+                ""
+            }
+            CredentialCrypto.DecryptOutcome.Permanent -> {
+                // 必须把「永久解不开」缓存住：旧密文在换机 / 重置后永远解不开，而翻译设置页一次进页
+                // 要读这批键十余次 ⇒ 每条都重跑一次 Keystore 解密，还会各刷一条 W 级日志，把诊断包里
+                // 真正有用的翻译失败记录挤掉。写侧（writeCredential）与删侧都会覆盖缓存，故缓存空串
+                // 不会让用户重填后仍读到旧结论。
+                Diagnostics.w(TAG, "凭据解密失败（换机 / Keystore 失效），按未配置处理，需重新填写")
+                credentialCache[key] = ""
+                ""
+            }
         }
-        // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
-        // 无条件回填会把缓存**盖回旧值**，而「凭据不留痕」随后正是拿这个值去比对剪贴板的，
-        // 用户刚复制的新 Key 会因此留在剪贴板历史里（2026-10-01 修复 L-298）。
-        if (strOr(key, "").orEmpty() != raw) {
-            Diagnostics.w(TAG, "凭据在解密期间被改写，本次不回填缓存（改读新值）")
-            // 2026-10-02 修复 L-422：此前这里直接 `return plain` —— 闸门只挡住了"污染缓存"，
-            // 没挡住"本次结论已过期"：窗口里发生的若是**删除**（用户清空字段并保存），
-            // 紧接着的一次翻译会拿已撤销的凭据发请求。重读一次即收敛（命中新缓存或新磁盘值，
-            // 删除场景得空串）；极端并发下最多重试一次，之后退回旧值并留 W，不做无限重读。
-            return if (retry >= 1) plain else readCredential(key, retry + 1)
-        }
-        credentialCache[key] = plain
-        return plain
     }
 
     /**
@@ -1992,6 +2014,19 @@ class Prefs(private val appContext: Context) {
          */
         private val unpersistedCredentials: MutableSet<String> =
             java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+        /**
+         * 暂时解不开（锁屏）时的重试时刻：此刻之前不再碰 Keystore、也不再刷日志（修 A-672 / L-1462）。
+         *
+         * 为什么需要闸：锁屏期间翻译设置页一次进页要读这批键十余次，若不设闸就是十几次 5~20ms 的
+         * Keystore 尝试 + 十几条 W 日志（正是旧版「直接缓存空串」想避免的那笔代价）。闸只推迟 1 秒，
+         * 用户解锁后再打开凭据页必然落在闸外 ⇒ 立刻读到真值。
+         */
+        @Volatile
+        private var credentialRetryAt = 0L
+
+        /** 暂时失败后的重试间隔（毫秒）：够挡住一次进页的十余次连读，又短到用户感知不到 */
+        private const val CREDENTIAL_RETRY_MS = 1_000L
 
         const val DEFAULT_HOST = "192.168.1.3"
         const val DEFAULT_PORT = 6016

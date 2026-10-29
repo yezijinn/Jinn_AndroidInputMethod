@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
@@ -11,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.widget.AdapterView
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -20,6 +22,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.util.Locale
@@ -41,6 +44,11 @@ import java.util.concurrent.Executors
  */
 /** 本页日志标识（伴生对象是 private，日志用固定串） */
 private const val TAG_NAME = "UserDictActivity"
+
+/** 三列行的列标识（AI2 A-554：列序靠命名 tag 承载，不靠 addView 的调用顺序） */
+private const val TAG_COL_COUNT = "user_dict_col_count"
+private const val TAG_COL_WORD = "user_dict_col_word"
+private const val TAG_COL_PINYIN = "user_dict_col_pinyin"
 
 class UserDictActivity : ComponentActivity() {
 
@@ -125,9 +133,9 @@ class UserDictActivity : ComponentActivity() {
     /** 导入暂存件（SAF → 缓存目录的一份拷贝；解密 / 解析完即删） */
     private var stagedImport: File? = null
 
-    private val createDoc = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("application/octet-stream"),
-    ) { uri ->
+    private val createDocContract = CreateDocumentTyped()
+
+    private val createDoc = registerForActivityResult(createDocContract) { uri ->
         val format = pendingFormat
         val password = pendingPassword
         val plain = pendingPlain
@@ -535,6 +543,9 @@ class UserDictActivity : ComponentActivity() {
             dialog.dismiss()
             pendingFormat = format
             pendingPlain = true
+            // 登记的类型必须跟着格式走（AI2 A-533）：写死 octet-stream 时用户导出的 .txt
+            // 在文件管理器里是「未知类型」，`.yaml` 也不会以文本打开
+            createDocContract.mimeType = format.mime
             runCatching { createDoc.launch(UserDictExport.plainName(format)) }
                 .onFailure {
                     pendingFormat = null
@@ -598,6 +609,8 @@ class UserDictActivity : ComponentActivity() {
                     dialog.dismiss()
                     pendingFormat = format
                     pendingPassword = chars
+                    // 加密壳不是任何标准类型（`.jinn` 多数文件管理器认不出）⇒ 通用二进制
+                    createDocContract.mimeType = CreateDocumentTyped.MIME_ENCRYPTED_SHELL
                     runCatching { createDoc.launch(UserDictExport.suggestedName(format)) }
                         .onFailure {
                             pendingFormat = null
@@ -1108,18 +1121,34 @@ class UserDictActivity : ComponentActivity() {
      * 三列行：频次 / 汉字 / 拼音。
      *
      * 频次列固定宽，汉字与拼音按权重分栏；拼音为空时该列留空。
+     *
+     * **列序由命名 tag 承载**（AI2 A-554）：早先 `getView` 用 `getChildAt(0/1/2)` 取列，而
+     * `buildRow` 只靠 `addView` 的调用顺序保证对应 —— 中间插一个 View 就会把频次显示成汉字，
+     * 不崩也不报错。改成 tag 后「哪一列是什么」写进了命名契约。
+     *
+     * 也**不覆写 `getItemId`**（AI2 A-555）：本页每次 `load()` 全量重建、最多几百行，没有稳定 id
+     * 的需求；而 `position.toLong()` 一旦配上 `setHasStableIds(true)` 就会让「导入后列表不刷新」
+     * （同一位置换了内容而 id 没变，ListView 认为这行没变）。
      */
     private inner class RowAdapter(private val items: List<Row>) : BaseAdapter() {
         override fun getCount(): Int = items.size
         override fun getItem(position: Int): Any = items[position]
-        override fun getItemId(position: Int): Long = position.toLong()
+
+        /**
+         * BaseAdapter 要求实现，而本页**没有**稳定 id：显式返回 [AdapterView.INVALID_ROW_ID]，
+         * 而不是 BaseAdapter 默认的「返回位置」（AI2 A-555）—— 位置不是稳定标识，
+         * 谁将来打开 `setHasStableIds(true)` 就会被它骗成「这行没变」，导入后列表不刷新。
+         */
+        override fun getItemId(position: Int): Long = AdapterView.INVALID_ROW_ID
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val row = (convertView as? LinearLayout) ?: buildRow()
             val item = items[position]
-            (row.getChildAt(0) as TextView).text = "×${item.count}"
-            (row.getChildAt(1) as TextView).text = item.word
-            (row.getChildAt(2) as TextView).text = item.pinyin
+            (row.findViewWithTag<TextView>(TAG_COL_COUNT) ?: error("行视图缺少频次列")).text =
+                "×${item.count}"
+            (row.findViewWithTag<TextView>(TAG_COL_WORD) ?: error("行视图缺少词列")).text = item.word
+            (row.findViewWithTag<TextView>(TAG_COL_PINYIN) ?: error("行视图缺少拼音列")).text =
+                item.pinyin
             return row
         }
 
@@ -1129,6 +1158,7 @@ class UserDictActivity : ComponentActivity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             addView(
                 TextView(this@UserDictActivity).apply {
+                    tag = TAG_COL_COUNT
                     width = dp(64)
                     textSize = 13f
                     setTextColor(getColor(R.color.text_secondary))
@@ -1136,6 +1166,7 @@ class UserDictActivity : ComponentActivity() {
             )
             addView(
                 TextView(this@UserDictActivity).apply {
+                    tag = TAG_COL_WORD
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
                     textSize = 16f
                     maxLines = 1
@@ -1145,6 +1176,7 @@ class UserDictActivity : ComponentActivity() {
             )
             addView(
                 TextView(this@UserDictActivity).apply {
+                    tag = TAG_COL_PINYIN
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     textSize = 13f
                     maxLines = 1
@@ -1376,6 +1408,36 @@ class UserDictActivity : ComponentActivity() {
 
 /** 本页三处危险操作的确认口径：逐字「我明白」（允许首尾空白） */
 internal fun isConfirmText(input: String): Boolean = input.trim() == CONFIRM_WORD
+
+/**
+ * 按导出格式换类型的 `ACTION_CREATE_DOCUMENT` 契约（AI2 A-533）。
+ *
+ * 为什么不用 `ActivityResultContracts.CreateDocument(mime)`：那个类型在
+ * `registerForActivityResult` 时**固定**，而本页一次注册要服务三种明文档（yaml / tsv / txt）
+ * 加一种加密壳。早先写死 `application/octet-stream`，`SelectionLedger.ExportFormat.mime`
+ * 声明了却从未被使用 —— 用户导出的 `.txt` / `.dict.yaml` 在文件管理器里成了「未知类型」。
+ *
+ * 入参仍是**建议文件名**（与官方契约同形），类型由 [mimeType] 在每次 launch 前设定。
+ */
+private class CreateDocumentTyped : ActivityResultContract<String, Uri?>() {
+
+    /** 本次登记的类型；未设定时按通用二进制（[MIME_ENCRYPTED_SHELL]） */
+    var mimeType: String = MIME_ENCRYPTED_SHELL
+
+    override fun createIntent(context: Context, input: String): Intent =
+        Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mimeType)
+            .putExtra(Intent.EXTRA_TITLE, input)
+
+    override fun parseResult(resultCode: Int, inputIntent: Intent?): Uri? =
+        if (resultCode == android.app.Activity.RESULT_OK) inputIntent?.data else null
+
+    companion object {
+        /** 加密壳 `.jinn`：内容自带 `JINNENC1` 头，没有公认扩展类型，按八位流登记 */
+        const val MIME_ENCRYPTED_SHELL = "application/octet-stream"
+    }
+}
 
 /** 确认词：开启用户词库、关闭并删除记录、导出明文词库共用同一个 */
 internal const val CONFIRM_WORD = "我明白"

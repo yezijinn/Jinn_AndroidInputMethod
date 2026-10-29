@@ -46,6 +46,33 @@ class PlainExportTest {
         }
     }
 
+    /**
+     * 保存对话框登记的类型必须跟着导出格式走（AI2 A-533）。
+     *
+     * `ExportFormat.mime` 早先声明了却零使用（导出写死 `application/octet-stream`）⇒ 用户导出的
+     * `.txt` / `.dict.yaml` 在文件管理器里是「未知类型」，点开也不走文本编辑器。
+     * 这里钉两条：① 三档格式各自带具体文本类型；② 页面用的是「按格式设类型」的契约，
+     * 明文导出传 `format.mime`、加密壳才传通用二进制。
+     */
+    @Test
+    fun `导出目标类型必须跟随格式`() {
+        for (f in SelectionLedger.ExportFormat.values()) {
+            assertTrue("$f 的类型不能是通用二进制（那等于没声明）", f.mime != "application/octet-stream")
+            assertTrue("$f 的类型必须是具体子类型", "/" in f.mime && !f.mime.endsWith("/*"))
+        }
+        assertEquals(
+            "三档文本格式的类型必须互不相同（否则区分不了）",
+            SelectionLedger.ExportFormat.values().size,
+            SelectionLedger.ExportFormat.values().map { it.mime }.toSet().size,
+        )
+        val page = TestSources.codeSource("UserDictActivity.kt")
+        assertTrue("明文导出的登记类型必须取 format.mime", "createDocContract.mimeType = format.mime" in page)
+        assertTrue(
+            "加密壳才用通用二进制",
+            "createDocContract.mimeType = CreateDocumentTyped.MIME_ENCRYPTED_SHELL" in page,
+        )
+    }
+
     @Test
     fun `确认词三处共用同一个判据`() {
         val page = TestSources.codeSource("UserDictActivity.kt")

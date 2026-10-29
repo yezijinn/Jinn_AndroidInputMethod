@@ -562,18 +562,22 @@ class CandidateRowsTest {
     @Test
     fun 展开态拼音条必须置顶() {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
-        assertTrue(
-            "拼音居中只属于「双行档未展开」",
-            "currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE" in src,
-        )
-        assertTrue("gravity 按形态判断而不是按行数", "val gravity = if (currentDoubleRow)" in src)
+        // 钉**不变量**而不是字面量（AI2 A-587）：先按不变量取出「双行档 + 未展开」这个形态标志的
+        // **变量名**，再用同一个名字查两处消费点 —— 允许改名、重排、提取局部变量。
+        val flag = Regex("""(\w+) = !candidatesExpanded && rows == CandidateRows\.DOUBLE""")
+            .find(src)?.groupValues?.get(1)
+            ?: error("找不到「双行档且未展开」形态标志的赋值（改名后请同步本用例的取值式）")
+        assertTrue("gravity 按形态判断而不是按行数", "val gravity = if ($flag)" in src)
         assertTrue(
             "候选让位同理（展开两排也要给拼音条让出位置）",
-            "pinyinBar.visibility == View.VISIBLE && !currentDoubleRow" in src,
+            Regex("""pinyinBar\.visibility == View\.VISIBLE && !$flag""").containsMatchIn(src),
         )
-        assertTrue(
-            "不得再按 rows == DOUBLE 判断（展开两排会撞上该常量）",
-            "currentRows != CandidateRows.DOUBLE" !in src,
+        // 反向：形态判据只许由这一个标志承载 —— 直接的 `rows == DOUBLE` 只准出现在赋值处。
+        // 多一处就意味着有人绕过标志按行数判形态（展开两排会撞上该常量）
+        assertEquals(
+            "形态判据只许由一个标志承载",
+            1,
+            Regex("""(?<![.\w])rows == CandidateRows\.DOUBLE""").findAll(src).count(),
         )
     }
 

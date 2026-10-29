@@ -5919,12 +5919,123 @@ class RecentFixesRegressionTest {
         val view = codeOf("PinyinKeyboardView.kt")
         assertTrue("复用必须复位字重（功能面板标签是粗体）", "typeface = android.graphics.Typeface.DEFAULT" in view)
         assertTrue("台账按简体归一", "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view)
+        // 合并词与 pred 相同时不得再记第二行（AI2 A-577）：没有前一个词时 fullWord == pred，
+        // 同一「词 + 读音」会被记两次、频次翻倍。删掉这个条件看起来像删了个冗余判断，必须有守卫挡着
+        assertTrue("合并词与 pred 相同时不重复记", "fullWord != pred" in view)
         val db = codeOf("ClipboardDb.kt")
         assertTrue("图片入库也用单调时间", "put(\"created_at\", monotonicNow())" in db)
         val gallery = codeOf("GalleryInsert.kt")
         assertTrue("非图片拦截不看 declared", "if (sniffed == null && looksLikeNonImage(head))" in gallery)
         val ime = codeOf("JinnIme.kt")
-        assertEquals("四条未提交分支都要删暂存件", 4, Regex("picked\\.file\\.delete\\(\\)").findAll(ime).count())
+
+        // 暂存件删除**逐个分支钉**，不数次数（AI2 A-578 / A-597）：旧断言数「picked.file.delete()
+        // 恰好 4 次」，增删一个分支就红；而真正的契约是「没交给宿主的分支必须删，交给宿主的不得删」。
+        val flush = TestSources.blockAfter(ime, "private fun flushPendingGalleryImage(")
+        val commitWhen = TestSources.blockAfter(
+            flush, "when (GalleryInsert.commit(this, picked.file, picked.mime))",
+        )
+        val branchNames = Regex("""GalleryInsert\.InsertResult\.(\w+) ->""")
+            .findAll(commitWhen).map { it.groupValues[1] }.toSet()
+        // 期望集合由**枚举**派生，不写死字面量：新增一个 InsertResult 就得在这里决定删不删
+        // （写死 5 个名字的话，加分支即红 —— 那又回到「增删分支即红」的老毛病）
+        assertEquals(
+            "每个 InsertResult 分支都要在这里归类（新增分支必须显式决定删不删暂存件）",
+            GalleryInsert.InsertResult.values().map { it.name }.toSet(),
+            branchNames,
+        )
+        fun commitBranch(name: String): String {
+            val at = commitWhen.indexOf("GalleryInsert.InsertResult.$name ->")
+            check(at >= 0) { "flushPendingGalleryImage 里找不到 $name 分支" }
+            val rest = commitWhen.substring(at)
+            val next = Regex("""GalleryInsert\.InsertResult\.\w+ ->""").find(rest, 1)?.range?.first
+            return if (next == null) rest else rest.substring(0, next)
+        }
+        // 已交给宿主的两个分支**不得**立即删：`commitContent` 返回值不可信，有宿主异步读 URI，
+        // 立即删会让对方读到裂图。FileMissing 是「文件已经不在了」，删也是空操作，同样不该有。
+        for (noDelete in listOf("Submitted", "Rejected", "FileMissing")) {
+            assertFalse("$noDelete 不该删暂存件（宿主仍在读 / 文件已不在）", ".delete()" in commitBranch(noDelete))
+        }
+        for (orphan in listOf("NoConnection", "UriFailed")) {
+            assertTrue("$orphan 从未交给宿主，必须删掉暂存件", ".delete()" in commitBranch(orphan))
+        }
+    }
+
+    /**
+     * 批量删除只删行，**调用方必须补一次图片文件回收**（AI2 A-559）。
+     *
+     * `deleteAll` / `deleteByCategory(null)` / `deleteByContentType` 的签名（返回 Int）不表达
+     * 「调用方还得收文件」这个契约，而漏了就是「列表已删、密文仍在盘上」的孤儿文件
+     * （与 A-558 同表现，且要等下次启动 gc 才收）。这里钉**配对**而不是「都调一次 gc」：
+     * tag 维度的删除（`deleteByCategory("URL")`）碰不到图片行 —— 图片行的分类恒为 OTHER，
+     * 那条前提由下面第二条断言单独钉住。
+     */
+    @Test
+    fun 批量删除图片行后必须补文件回收() {
+        val db = TestSources.codeSource("ClipboardDb.kt")
+        assertTrue(
+            "图片行的分类恒为 OTHER（tag 维度的批量删除因此碰不到图片行）",
+            "values.put(\"category\", ClipboardClassifier.CATEGORY_OTHER)" in db,
+        )
+        // 能删到图片行的三处调用点：其后 400 字符内必须有文件回收
+        val sites = listOf(
+            "ClipboardHistoryActivity.kt" to "db.deleteByContentType(",
+            "ClipboardHistoryActivity.kt" to "db.deleteByCategory(null)",
+            "ClipboardPanelView.kt" to "db.deleteAll()",
+        )
+        for ((file, call) in sites) {
+            val src = TestSources.codeSource(file)
+            val at = src.indexOf(call)
+            check(at >= 0) { "$file 里找不到 $call —— 改法后请同步本用例" }
+            val tail = src.substring(at, (at + 400).coerceAtMost(src.length))
+            assertTrue(
+                "$file 的 $call 之后必须紧跟 ClipboardImageFiles.gc（否则删了行、密文还留在盘上）",
+                "ClipboardImageFiles.gc(" in tail,
+            )
+        }
+    }
+
+    /**
+     * 剪贴板采集开关的跨组件同步（AI2 A-572）：**同进程直连**，不得再走广播。
+     *
+     * 旧实现「自定义页 sendBroadcast + IME 在 Android 13+ 注册接收方」在 Android 8~12 上
+     * 整条通知落空（低版本没有 `RECEIVER_NOT_EXPORTED`，索性不注册），而用户关掉采集后
+     * 采集器仍在入库，直到下次弹键盘才停。
+     */
+    @Test
+    fun 剪贴板采集开关改动必须当场同步到输入法() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        assertTrue("IME 必须暴露同进程通知入口", "fun onClipboardConfigChanged()" in ime)
+        assertTrue("通知必须落到采集器同步", "ime.ui.post { ime.syncClipboardController() }" in ime)
+        assertFalse("不再保留那条应用内广播 action", "ACTION_CLIPBOARD_CONFIG_UPDATED" in ime)
+        val page = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        val save = TestSources.blockAfter(page, "private fun doSave()")
+        assertTrue("保存后开关变化必须当场通知", "JinnIme.onClipboardConfigChanged()" in save)
+        assertFalse("保存路径不得再用广播（低版本收不到）", "sendBroadcast(" in save)
+    }
+
+    /**
+     * 长按空格的语音契约（AI2 A-640）：语音不可用时**必须返回 false**，让框架照常走短按上屏空格。
+     *
+     * 旧实现长按恒返回 true，`View` 会置 `mHasPerformedLongPress` ⇒ 抬起不再派发 click，
+     * 而 `KeyFeedback.fire(G_CONFIRM)` 已经响过 —— 用户听到「按下了」却什么都没上屏
+     * （表现就是「空格偶尔失灵」）。这条契约此前零测试覆盖。
+     */
+    @Test
+    fun 长按空格在语音不可用时不得吞掉空格() {
+        val view = TestSources.codeSource("PinyinKeyboardView.kt")
+        // 取到长按回调的**函数体**（花括号配对）再判，不靠「到某个字面量为止」的窗口
+        val space = TestSources.blockAfter(view, "btnSpace.setOnLongClickListener {")
+        assertTrue(
+            "长按必须先问 canVoice()，不可用立刻放行（不消费手势）",
+            "if (listener?.canVoice() != true) return@setOnLongClickListener false" in space,
+        )
+        // 反向：不可用分支之前不得先发反馈（否则用户听到「按下了」却什么都没上屏）
+        val guard = space.indexOf("canVoice()")
+        val firstFire = space.indexOf("KeyFeedback.fire(")
+        assertTrue("反馈只能发在可用分支里", guard in 0 until firstFire)
+        assertTrue("接口必须有 canVoice 契约", "fun canVoice(): Boolean" in view)
+        val ime = TestSources.codeSource("JinnIme.kt")
+        assertTrue("实现必须跟随语音开关", "override fun canVoice(): Boolean = prefs.voiceInputEnabled" in ime)
     }
 
     @Test
@@ -5940,6 +6051,14 @@ class RecentFixesRegressionTest {
             "SelectionLedger.init(applicationContext, true)" in page,
         )
         assertTrue("导出格式要能跨重建恢复", "KEY_PENDING_FORMAT" in page && "onSaveInstanceState" in page)
+        // 词库页三列的列序由**命名 tag** 承载，不靠 addView 顺序（AI2 A-554）：
+        // 裸 getChildAt(0/1/2) 时插一个 View 就会把频次显示成汉字，不崩也不报错
+        assertFalse("不得再按位置索引取列", "getChildAt(2) as TextView" in page)
+        for (tag in listOf("TAG_COL_COUNT", "TAG_COL_WORD", "TAG_COL_PINYIN")) {
+            assertTrue("列标识 $tag 必须在 addView 与读取处同时出现", Regex("$tag\\b").findAll(page).count() >= 2)
+        }
+        // 不覆写 getItemId（AI2 A-555）：返回 position 的实现在 setHasStableIds 后会「导入后列表不刷新」
+        assertFalse("不得再用 position 当稳定 id", "getItemId(position: Int): Long = position.toLong()" in page)
 
         val view = codeOf("PinyinKeyboardView.kt")
         assertTrue(
@@ -6030,10 +6149,20 @@ class RecentFixesRegressionTest {
             "空输入与候选集为空两处都要走重落栏高",
             src.contains("collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)"),
         )
+        // 重落栏高必须是「先收起、再按档位落栏高」（AI2 A-563）：旧断言钉「collapseCandidates() + 换行
+        // + 恰好 8 个空格 + applyCandidateRows(...)」，IDE 一重排 / 换个缩进就红而语义没变。
+        // 现在取**函数体**判：两件事都在里面，且栏高首参是 rowsSetting（不是展开排数）。
+        val relayoutBody = TestSources.blockAfter(src, "private fun collapseCandidatesAndRelayout(")
+        assertTrue("重落栏高必须先收起展开态", "collapseCandidates()" in relayoutBody)
         assertTrue(
-            "重落栏高要按档位而不是展开排数",
-            "collapseCandidates()\n        applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)" in src,
+            "重落栏高必须按档位落，不得按展开排数",
+            Regex("""applyCandidateRows\(\s*rowsSetting\s*,""").containsMatchIn(relayoutBody),
         )
+        assertFalse("重落栏高不得把展开排数当档位", "applyCandidateRows(rows," in relayoutBody)
+        // 本帧输入串只拷一次，且渲染侧**直接复用局部量**（AI2 A-619）：旧写法经字段 composingSnapshot
+        // 中转，「写入点与读取点之间不许写 composing」成了隐式契约 —— 中间插一句清空，拼音行就显示旧串
+        assertTrue("渲染必须复用本帧的 inputNow", "val input = inputNow" in src)
+        assertFalse("不得再用跨段字段传本帧输入串", "composingSnapshot" in src)
         // 「词库加载中」早退分支也要收起（AI2 A-562）：那条分支只换提示，展开态下栏高仍是 3~4 排
         // ⇒ 一块空高栏。取**该分支体内**（到第一个 return 为止）再判，避免把紧随其后的
         // 「候选集为空」分支里的同一行算进来（那会让这条守卫恒绿）。
@@ -6554,19 +6683,80 @@ class RecentFixesRegressionTest {
     }
 
     /**
-     * 凭据解密失败必须缓存「解不开」的结论。
+     * 凭据解密的两种失败**必须分开处置**（AI2 A-672 / A-686；台账 L-1462）。
      *
-     * 旧密文在换机 / Keystore 失效后永远解不开，而翻译设置页一次进页要读这批键十余次：
-     * 不缓存 ⇒ 每次都重跑一次 Keystore 解密、各刷一条 W 日志，把诊断包里真正有用的
-     * 翻译失败记录挤掉。写侧与删侧都会覆盖缓存，故缓存空串不会让用户重填后仍读到旧结论。
+     * 永久失败（换机 / 密钥失效 / 密文损坏）⇒ 缓存「解不开」：旧密文永远解不开，而翻译设置页
+     * 一次进页要读这批键十余次，不缓存就每条都重跑一次 Keystore 解密、各刷一条 W。
+     * 暂时失败（锁屏：`setUnlockedDeviceRequired` 让密钥在本轮不可用）⇒ **绝不能缓存** ——
+     * 缓存成空串等于「一次锁屏 = 本进程内凭据永久未配置」，用户解锁后打开凭据页看到整页空字段，
+     * 以为凭据丢了（磁盘上的密文其实完好）。
+     *
+     * ⚠ 旧版本这条用例只断言「`credentialCache[key] = ""` 在场」，等于把 A-672 的缺陷写成了规格
+     * （A-686）。现在钉的是**分类不变式**：两态的判据各自成立，且暂时失败分支里不得出现缓存写入。
      */
     @Test
-    fun credentialDecryptFailureMustBeCached() {
-        val src = TestSources.codeSource("Prefs.kt")
-        assertTrue(
-            "解密失败必须写缓存（否则每次读取重跑解密并刷日志）",
-            "credentialCache[key] = \"\"" in src,
+    fun credentialDecryptFailureMustBeClassified() {
+        // 纯判据真跑：锁屏（未认证）不得被判成永久，密钥作废 / 校验不过才是永久
+        assertFalse(
+            "锁屏（密钥本轮不可用）不是永久失败",
+            CredentialCrypto.isPermanentFailure(
+                "android.security.keystore.UserNotAuthenticatedException",
+                "This key can only be used when the device is unlocked",
+            ),
         )
+        assertFalse(
+            "KeyStore 的「未认证」形态也不是永久失败",
+            CredentialCrypto.isPermanentFailure("java.security.KeyStoreException", "Key user not authenticated"),
+        )
+        assertTrue(
+            "密钥被系统作废是永久失败",
+            CredentialCrypto.isPermanentFailure(
+                "android.security.keystore.KeyPermanentlyInvalidatedException", null,
+            ),
+        )
+        assertTrue(
+            "GCM 校验不过（密钥已换 / 密文损坏）是永久失败",
+            CredentialCrypto.isPermanentFailure("javax.crypto.AEADBadTagException", null),
+        )
+        // 真实异常实例走一遍分档（不是只对字符串字符串）：锁屏形态必须落到「暂时」
+        assertTrue(
+            "KeyStore 的未认证异常必须判为暂时",
+            CredentialCrypto.failureOutcome(java.security.KeyStoreException("Key user not authenticated")) ==
+                CredentialCrypto.DecryptOutcome.Transient,
+        )
+        assertTrue(
+            "被包装的永久成因要能穿透 cause 链",
+            CredentialCrypto.failureOutcome(
+                IllegalStateException(
+                    "keystore",
+                    java.security.UnrecoverableKeyException("key gone"),
+                ),
+            ) == CredentialCrypto.DecryptOutcome.Permanent,
+        )
+
+        val crypto = TestSources.codeSource("CredentialCrypto.kt")
+        assertTrue("解密结论必须分三态", "sealed interface DecryptOutcome" in crypto)
+        assertTrue("暂时失败必须单独成一态", "object Transient : DecryptOutcome" in crypto)
+        assertTrue("永久失败必须单独成一态", "object Permanent : DecryptOutcome" in crypto)
+
+        val src = TestSources.codeSource("Prefs.kt")
+        val read = TestSources.blockAfter(src, "private fun readCredential(")
+        fun branch(name: String): String {
+            val marker = "CredentialCrypto.DecryptOutcome.$name ->"
+            val at = read.indexOf(marker)
+            check(at >= 0) { "readCredential 里找不到 DecryptOutcome.$name 分支" }
+            val rest = read.substring(at)
+            // 从**本分支标记之后**开始找下一个分支，否则 `Permanent ->` 会在自己的限定名里再命中一次
+            val next = listOf("Ok", "Transient", "Permanent")
+                .map { rest.indexOf("DecryptOutcome.$it ->", marker.length) }
+                .filter { it > 0 }.minOrNull()
+            return if (next == null) rest else rest.substring(0, next)
+        }
+        // 永久失败：缓存空串（否则进页十余次读各跑一次 Keystore）
+        assertTrue("永久失败必须缓存成「未配置」", "credentialCache[key] = \"\"" in branch("Permanent"))
+        // 暂时失败：一个字节都不许写进缓存
+        assertFalse("锁屏（暂时）失败不得写缓存", "credentialCache" in branch("Transient"))
+        assertTrue("暂时失败要留痕（区分锁屏与换机）", "暂时解不开" in branch("Transient"))
     }
 
 

@@ -43,6 +43,14 @@ object SelectionLedger {
     @Volatile
     private var target: File? = null
 
+    /**
+     * 「未绑定就丢行」是否已经报过一次（AI2 A-545）。
+     *
+     * 只报第一次：`record` 在选词热路径上，未绑定的成因（init 没跑到）不会自愈，
+     * 每行一条 W 只会把诊断包里真正有用的记录挤掉。
+     */
+    private val unboundReported = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 待写队列：只为把「拼行」这一步留在主线程（顺序即用户选择顺序），落盘仍在线程里 */
     private val queue = ConcurrentLinkedQueue<String>()
 
@@ -140,7 +148,16 @@ object SelectionLedger {
     fun record(word: String, pinyin: String) {
         if (!enabled) return
         val line = formatLine(word, pinyin) ?: return
-        val file = target ?: return
+        val file = target
+        if (file == null) {
+            // 不能静默丢（AI2 A-545，本项目「绝不静默吞异常」）：未绑定只可能是 init 没跑到
+            // （引擎加载失败 / 引擎就绪前就选词），而界面照样显示「已开启」⇒ 用户「记了但词库是空的」
+            // 时日志里必须有一条。**限一次**：本方法在选词热路径上，每按一次刷一条 W 会把诊断包刷满。
+            if (unboundReported.compareAndSet(false, true)) {
+                Diagnostics.w(TAG, "台账未绑定（SelectionLedger.init 未执行），本次选择未记录")
+            }
+            return
+        }
         queue.add(line)
         val gen = generation.get()
         writer.execute { drainTo(file, gen) }

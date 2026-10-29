@@ -279,8 +279,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上一帧收起判据用的输入串：同输入下的候选变化（词库合并、学习重排）不得收起展开态 */
     private var lastCandidatesInput: String? = null
 
-    /** 本帧 `composing` 的快照：供 refreshCandidateBar 内多处复用，避免每键拷贝两次整串 */
-    private var composingSnapshot: String? = null
+    /**
+     * **上一帧**刷新时的 `composing` 快照。
+     *
+     * 只给 [toggleCandidateExpanded] 判一次「当前有没有输入」（预测态下的渲染源取法要用），
+     * 不承载「本帧输入串」——本帧串在 `refreshCandidateBar` 里是局部量 `inputNow`，
+     * 谁在它之后改了 composing 都不会影响渲染（AI2 A-619：旧写法让「写入点与读取点之间
+     * 不许写 composing」成了隐式契约，一旦有人在这中间插一句清空，拼音行就显示旧串）。
+     */
+    private var lastRefreshedInput: String? = null
 
     /**
      * 切换候选栏展开态。
@@ -294,7 +301,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         candidatesExpanded = expand
         if (expand) {
             // 渲染源只取一次：条数与取样字必须同源（预测态下取样候选列表会把列数算少）
-            val renderItems = renderedItems(composingSnapshot.isNullOrEmpty())
+            val renderItems = renderedItems(lastRefreshedInput.isNullOrEmpty())
             expandedRowsCached = expandedRowsFor(
                 // 预测态下 `lastCandidates` 是上一次查询的残留（与三角判据同源收口，见 [renderedItems]）
                 renderItems.size,
@@ -681,9 +688,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
     }
 
-    /** 本帧生效的候选档位，由 [applyCandidateRows] 落位、[showPinyin] 复用 */
-    private var currentRows = CandidateRows.SINGLE
-
     /**
      * 本帧是否「双行档 + 未展开」。
      *
@@ -695,8 +699,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 本帧生效的候选字号（sp，用户参数 [Prefs.candidateTextSp]），由 [applyCandidateRows] 落位。
      *
-     * 与 `currentRows` 同款：本帧的候选条目字号、拼音条字号与复用块最小高度都读它，
-     * 保证「栏高 / 行高 / 字号」同帧同源（中途被后台导入改值也不会一半新一半旧）。
+     * 与 [currentDoubleRow] 同款「上一帧落位量」：本帧的候选条目字号、拼音条字号与复用块最小高度
+     * 都读它，保证「栏高 / 行高 / 字号」同帧同源（中途被后台导入改值也不会一半新一半旧）。
      */
     private var currentCandidateSp = CandidateText.DEFAULT_SP
 
@@ -2970,7 +2974,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val fontScale = resources.configuration.fontScale
         val perRow = CandidateRows.rowHeightPx(dm.density, fontScale, candidateSp)
         val pinyinBarPx = CandidateRows.pinyinBarHeightPx(dm.density, fontScale, pinyinSp)
-        currentRows = rows
         // 拼音条居中与「展开态在这些形态下会被收起」同判据：用意图态，避免补间中途读到半截值
         currentDoubleRow = !candidatesExpanded && rows == CandidateRows.DOUBLE
         currentCandidateSp = candidateSp
@@ -3552,10 +3555,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 注意：判据**只看输入串**，不看候选指纹：本判据在查询之前执行，此刻 `lastCandidates` 还是
         // 上一次查询的列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（2026-10-21 实测：展开态
         // 按 n 不收、再按一次改变了输入的键才收）。判据收在 [CandidateRows.shouldCollapseExpanded]。
-        // 本帧输入串只拷一次：下面 3103 行的 `input` 与这里内容必然相同（两者之间
-        // 只有 Prefs 读与可选的 collapseCandidates，不写 composing），早先每键拷两次。
+        // 本帧输入串只拷一次：下面的 `input` 直接取这个局部量（早先靠「两者之间不写 composing」
+        // 的巧合来保证内容相同 —— 那是隐式契约，见 AI2 A-619），且早先每键要拷两次。
         val inputNow = composing.toString()
-        composingSnapshot = inputNow
+        lastRefreshedInput = inputNow
         // 本帧渲染源（候选 / 预测词）的条数与取样字：三角、展开排数、预取量三条路径必须同源。
         // 预测态下 `lastCandidates` 是上一次查询的残留（真机实测 40 条，本帧只渲染 6 个预测词），
         // 读它会把 2 排算成 4 排；拿它量字宽又会把 6 个单词的列数算少（挂出本该没有的 ▲）。
@@ -3631,8 +3634,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             renderPasswordDigits()
             return
         }
-        // 复用本帧已拷好的串（见 refreshCandidateBar 里的 composingSnapshot）
-        val input = composingSnapshot ?: composing.toString()
+        // 本帧已拷好的串（见上面的 `inputNow`）：**直接复用局部量**，不再经字段中转 ——
+        // 中转会让「这中间不许写 composing」变成隐式契约（AI2 A-619）
+        val input = inputNow
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
         // 只改显示，composing / 查询 / 上屏都用未打标的串。

@@ -755,5 +755,28 @@ class GalleryInsertTest {
         assertTrue("复制收尾要清「在飞」标记", "copyInFlight = false" in src)
     }
 
+    /**
+     * 落名失败也不许把 `.tmp` 交出去（AI2 A-590）。
+     *
+     * `FileProvider.getType` 按**后缀**查 `MimeTypeMap`，`.tmp` 一律 `application/octet-stream`
+     * ⇒ 靠 MIME 分流的宿主把图当普通文件处理（回执「已复制」却粘贴不出图）。
+     * 所以 temp→正式名这一步只能有两条出路：改名 / 复制成功，或者按失败报出来。
+     */
+    @Test
+    fun 落名失败不得交出临时文件() {
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        val finalize = TestSources.blockAfter(src, "private fun finalize(temp: File, named: File)")
+        assertTrue("先试改名", "if (temp.renameTo(named)) return named" in finalize)
+        assertTrue("改名失败要整份复制到正式名", "copyTo(output)" in finalize)
+        assertTrue("两条路都不成要报失败（返回 null）", "return null" in finalize)
+        // 反向：两条落盘路径都不得再把 temp 当结果交出去（那是 .tmp 泄漏到 MIME 的唯一入口）
+        val copy = TestSources.blockAfter(src, "fun copyToCache(context: Context, uri: Uri)")
+        val stage = TestSources.blockAfter(src, "fun stageForInsert(context: Context, bytes: ByteArray, mime: String)")
+        for ((name, body) in listOf("copyToCache" to copy, "stageForInsert" to stage)) {
+            assertFalse("$name 不得把临时件当结果", "else temp" in body)
+            assertTrue("$name 必须经 finalize 落名", "finalize(temp, named)" in body)
+        }
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 }

@@ -506,9 +506,13 @@ class ClipboardImageTest {
         assertTrue("未绑定要引导去绑定（历史页有弹框、去向是图库设置页）",
             "TEXT_IMAGE_FAV_NEED_BIND" in histSrc && "GallerySettingsActivity::class.java" in histSrc)
         // 「已移出」与「损坏」必须分开说：前者是正常状态，提示不能报「已损坏」
+        // 钉**判据**（密文不在 + 缩略图在），不钉函数签名（AI2 A-375）：签名一改（加参数 / 改返回类型）
+        // 旧断言就红，而这条契约一个字都没变。
         val movedOutSrc = TestSources.codeSource("ClipboardImageFiles.kt")
-        assertTrue("已移出的判据（密文不在、缩略图在）",
-            "fun isMovedOut(context: Context, hash: String): Boolean" in movedOutSrc)
+        assertTrue(
+            "已移出的判据必须是「原图密文不在、缩略图还在」",
+            "!encFile(context, hash).isFile && thumbFile(context, hash).isFile" in movedOutSrc,
+        )
         assertTrue("历史页对已移出的图片给准确提示",
             "TEXT_IMAGE_MOVED_OUT" in histSrc && "isMovedOut" in histSrc)
         // BUG.md L-1261：条带随布局重排（同一屏两个网格同源）
@@ -526,6 +530,16 @@ class ClipboardImageTest {
         // BUG.md L-1267：「只看收藏」筛选态要随实例状态一起存
         assertTrue("筛选态随实例保存", "outState.putBoolean(STATE_IMAGE_FAV, imageFavOnly)" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // AI2 A-657：stopWork 作废在飞任务时必须一并放开「正在取数」的闸。
+        // 在飞的取数回调判到代际过期就 return（那条纪律不能破），不复位的话这个实例在下次
+        // show() 之前一直停在 loading=true，滚动续取与 fillViewport 全被挡住 ——
+        // 「下次 show() 会复位」是隐式依赖，show() 一旦加早退就变成「后面的图够不着」
+        val grid = TestSources.codeSource("ClipboardImageGridView.kt")
+        val stopWork = TestSources.blockAfter(grid, "fun stopWork()")
+        assertTrue("stopWork 必须推进代际", "generation++" in stopWork)
+        assertTrue("stopWork 必须放开 loading 闸", "loading = false" in stopWork)
+        assertFalse("stopWork 仍不得清缩略图缓存（缓存是进程级共享的，见 L-1262）", "clearThumbCache" in stopWork ||
+            "ThumbLoader.clear(" in stopWork)
         // BUG.md L-1268：页面停止后到达的回调要丢弃
         // BUG.md L-1268：页面停止后到达的回调要丢弃
         // （判据取意图 —— 条件里必须仍含 `stopped` 与同一返回标签，允许并列世代令牌等新增条件）

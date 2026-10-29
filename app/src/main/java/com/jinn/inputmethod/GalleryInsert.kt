@@ -329,8 +329,10 @@ internal object GalleryInsert {
             }
             val mime = sniffed ?: declared ?: sniffImageMime(head)
             val named = File(dir, "pick_$stamp.${extOf(mime)}")
-            // 改名失败（少见）就沿用 .tmp：类型已定，扩展名只影响按后缀判类型的宿主
-            CopyResult.Ok(if (temp.renameTo(named)) named else temp, mime)
+            // 落名失败宁可报错也不交 .tmp 出去（AI2 A-590）：`FileProvider.getType` 按**后缀**判类型，
+            // `.tmp` 一律 `application/octet-stream`，靠 MIME 分流的宿主就把图当文件处理了。
+            val staged = finalize(temp, named) ?: return CopyResult.ReadFailed
+            CopyResult.Ok(staged, mime)
         } catch (t: Throwable) {
             temp.delete()
             Diagnostics.w(TAG, "选图复制失败: ${t.javaClass.simpleName}:${t.message}")
@@ -360,7 +362,7 @@ internal object GalleryInsert {
                 return null
             }
             val named = File(dir, "clip_$stamp.${extOf(mime)}")
-            val staged = if (temp.renameTo(named)) named else temp
+            val staged = finalize(temp, named) ?: return null
             trimCache(dir)
             staged
         } catch (t: Throwable) {
@@ -368,6 +370,31 @@ internal object GalleryInsert {
             Diagnostics.w(TAG, "剪贴板图片落 cache 失败: ${t.javaClass.simpleName}")
             null
         }
+    }
+
+    /**
+     * 把写完的临时件落成 [named]，返回最终文件；两种落名手段都失败时返回 null。
+     *
+     * **绝不把 `.tmp` 交出去**（AI2 A-590）：`FileProvider.getType` 按后缀查 `MimeTypeMap`，
+     * `.tmp` 不在表里 ⇒ 提交出去的条目类型变 `application/octet-stream`，靠 MIME 分流的宿主
+     * 就把图当普通文件处理（「已复制」却粘贴不出图）。内容已经在 temp 里，改名不行就整份复制到
+     * 正确名字，比丢弃省事；复制也不成才报失败。
+     */
+    private fun finalize(temp: File, named: File): File? {
+        if (temp.renameTo(named)) return named
+        val copied = runCatching {
+            temp.inputStream().use { input -> named.outputStream().use { output -> input.copyTo(output) } }
+            named.length() == temp.length()
+        }.getOrDefault(false)
+        if (copied) {
+            temp.delete()
+            Diagnostics.w(TAG, "改名失败，已复制到 ${named.name}")
+            return named
+        }
+        named.delete()
+        temp.delete()
+        Diagnostics.w(TAG, "图片落名失败（改名与复制都不成），按失败处理")
+        return null
     }
 
     /**

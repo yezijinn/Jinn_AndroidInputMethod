@@ -1140,16 +1140,43 @@ class DocsReferenceTest {
             .count { it.matches(Regex("""[a-z]+""")) }
 
         val readme = readDoc("README.md") ?: error("找不到 README.md")
-        assertTrue("README 缺常用字字表条数（资产实测 ${commafy(tiers[0])}）", "常用字 ${commafy(tiers[0])}" in readme)
-        assertTrue("README 缺档 2 字表条数（资产实测 ${commafy(tiers[1])}）", "${commafy(tiers[1])} 字" in readme)
-        assertTrue("README 缺档 3 字表条数（资产实测 ${commafy(tiers[2])}）", "${commafy(tiers[2])} 字" in readme)
-        assertTrue("README 缺单字表字数（资产实测 ${commafy(distinct)}）", "${commafy(distinct)} 字" in readme)
-        assertTrue("README 缺单字表读音数（资产实测 ${commafy(readings)}）", "${commafy(readings)} 条读音" in readme)
-        assertTrue("README 缺合法音节数（资产实测 $syllables）", "$syllables 个" in readme)
+
+        /**
+         * 取某个**锚定声明位**的全部取值。
+         *
+         * 为什么要全量集合而不是 `"$n 字" in doc`（AI2 A-270）：正向包含只要文档**某处**写着当前值
+         * 就算过，另一处残留旧值（例如历史说明段里的「837 字」改成 800）守卫不红 —— 「改一处漏一处」
+         * 是这类数字最常见的漂移形态。锚点取的是文档句式（不是源码字面格式），改述时按提示同步锚点即可。
+         */
+        fun decl(doc: String, pattern: String): Set<String> =
+            Regex(pattern).findAll(doc).map { it.groupValues[1] }.toSet()
+
+        fun assertDecl(where: String, doc: String, pattern: String, want: String) {
+            val got = decl(doc, pattern)
+            assertTrue("$where 缺声明位（锚点：$pattern）", got.isNotEmpty())
+            assertEquals("$where 的取值必须处处为 $want（出现别的值即 stale 重复）", setOf(want), got)
+        }
+
+        assertDecl("README 档 2 字表条数", readme, "二级（([\\d,]+) 字", commafy(tiers[1]))
+        assertDecl("README 档 3 字表条数", readme, "三级（([\\d,]+) 字", commafy(tiers[2]))
+        // 「三档字表（5,613 / 837 / 2,923 字）」这一处同时声明三个档，三格都要对
+        val tierRow = Regex("三档字表（([\\d,]+) / ([\\d,]+) / ([\\d,]+) 字").find(readme)
+            ?: error("README 缺「三档字表（A / B / C 字）」声明位")
+        assertEquals(
+            "README 三档字表三格必须依次为当前值",
+            listOf(commafy(tiers[0]), commafy(tiers[1]), commafy(tiers[2])),
+            tierRow.groupValues.drop(1),
+        )
+        val charTable = Regex("单字表（([\\d,]+) 字 / ([\\d,]+) 条读音").find(readme)
+            ?: error("README 缺「单字表（N 字 / M 条读音）」声明位")
+        assertEquals("README 单字表字数与读音数必须同源", listOf(commafy(distinct), commafy(readings)),
+            charTable.groupValues.drop(1))
+        assertDecl("README 合法音节数", readme, "合法音节全集（(\\d+) 个", syllables.toString())
+
         val overview = readDoc("功能总览.md") ?: error("找不到 功能总览.md")
         assertTrue("功能总览缺常用字字表条数（资产实测 ${commafy(tiers[0])}）", "常用字 ${commafy(tiers[0])}" in overview)
-        assertTrue("功能总览缺档 2 字表条数（资产实测 ${commafy(tiers[1])}）", "${commafy(tiers[1])} 字" in overview)
-        assertTrue("功能总览缺档 3 字表条数（资产实测 ${commafy(tiers[2])}）", "${commafy(tiers[2])} 字" in overview)
+        assertDecl("功能总览档 2 字表条数", overview, "档 2 放开 ([\\d,]+) 字", commafy(tiers[1]))
+        assertDecl("功能总览档 3 字表条数", overview, "档 3 放开 ([\\d,]+) 字", commafy(tiers[2]))
         // 反向 stray（A-270 余留的一半）：`常用字` 是**独有**声明位（不像 `N 字` 那样过泛、会误命中
         // 无关数字），故可安全全量扫描 —— 两文档里任何一处 `常用字 <数字>` 都必须是当前值，
         // 「改一处漏一处」即红

@@ -586,6 +586,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
     /**
      * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
+     *
+     * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
+     * （AI2 A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
+     * 而且要等下一次启动 gc 才收。
      * @return 删除的条数
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
@@ -996,7 +1000,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return deleted to images
     }
 
-    /** 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行 */
+    /**
+     * 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行。
+     *
+     * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
+     * （AI2 A-559，口径同 [deleteAll]）。
+     */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
     fun deleteByCategory(tag: String?): Int {
@@ -1010,8 +1019,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 注意与 [deleteByCategory] 的分工：`deleteByCategory(null)`（清空）删的是**全部非收藏行**
      * （文本 + 图片，用户预期「清空历史」就是清空）；本方法只删某一类的行。
-     * 两条路径删掉的图片文件：单条删除走 `deleteFor`（精准），批量走 `gc`（短保护窗）——
-     * 都不在本层做（DB 只管行、不碰文件）。
+     *
+     * ⚠ 两条路径删掉的图片文件**都不在本层收**（DB 只管行、不碰文件）：单条删除走
+     * `deleteFor`（精准），批量走 `gc`（短保护窗）—— 调用方必须紧跟一次
+     * `ClipboardImageFiles.gc`（AI2 A-559）。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized

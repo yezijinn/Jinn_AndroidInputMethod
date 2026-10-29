@@ -599,8 +599,10 @@ class ClipboardCustomizeActivity : Activity() {
         layoutPrefs.galleryColumns = target.galleryColumns
         layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp
         if (wasEnabled != target.enabled) {
-            // 采集器跑在输入法进程里，不读本页状态：发轻量广播让它立刻启停（见 JinnIme.configReceiver）
-            sendBroadcast(Intent(JinnIme.ACTION_CLIPBOARD_CONFIG_UPDATED).setPackage(packageName))
+            // 采集器跑在输入法进程里（同一进程）：直接通知它启停（AI2 A-572）。
+            // 早先走 `sendBroadcast`，而接收方只在 Android 13+ 注册 ⇒ 低版本这条通知落空，
+            // 用户关掉采集后仍在入库，直到下次弹键盘才停。
+            JinnIme.onClipboardConfigChanged()
         }
         // 落盘后的裁剪：上限调小时既有库不会自己收敛（与设置页 / 备份导入同款）
         trimNow()

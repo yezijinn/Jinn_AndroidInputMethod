@@ -161,6 +161,11 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      */
     fun stopWork() {
         generation++
+        // 同时把「正在取数」的闸放开（AI2 A-657）：在飞的取数回调判到代际过期就 return，**不复位**
+        // loading（那条纪律不能破：它会碰到新一代的计数）⇒ 不复位的话这个实例在下次 show() 之前
+        // 一直停在 true，loadMore / 滚动续取全被挡住。下次 show() 本会复位，但那是隐式依赖 ——
+        // show() 将来加一条「同分类不重载」的早退，页面就真的取不到后面的图了。
+        loading = false
         // 只作废在飞任务，**不清缓存**（BUG.md L-1262）：缓存是进程级共享的（键盘面板与历史页
         // 共用同一份），而本方法是按实例调的 —— 一处退出就把整份清掉，另一处正在用的一屏要全部重解。
         // 内存交由缓存的字节上限（LRU）自己淘汰，不需要在这里替别人做决定。

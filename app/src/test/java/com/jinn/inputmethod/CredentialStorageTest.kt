@@ -83,8 +83,10 @@ class CredentialStorageTest {
         val src = prefsSource()
         assertTrue("要识别旧版明文并迁移", "凭据迁移" in src)
         assertTrue("迁移判据用 looksEncrypted", "CredentialCrypto.looksEncrypted(raw)" in src)
-        // 关键：解不开的密文**不能当 Key 用**，否则用户会看到「已配置但认证失败」
-        assertTrue("解不开的密文按未配置处理", "CredentialCrypto.decrypt(raw)" in src)
+        // 关键：解不开的密文**不能当 Key 用**，否则用户会看到「已配置但认证失败」。
+        // 走 decryptDetailed 而不是一个 String?：失败还要分「锁屏暂时」与「换机永久」，
+        // 前者绝不能缓存成「未配置」（AI2 A-672 / L-1462）
+        assertTrue("解不开的密文按未配置处理", "CredentialCrypto.decryptDetailed(raw)" in src)
         assertTrue("要有明确的 W 日志", "按未配置处理" in src)
     }
 

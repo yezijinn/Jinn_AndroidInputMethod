@@ -129,24 +129,87 @@ object CredentialCrypto {
         null
     }
 
-    /** 解密 [encrypt] 的产物；失败（密文被篡改 / 换机 / Keystore 失效）返回 null */
-    fun decrypt(stored: String): String? = runCatching {
+    /**
+     * 解密结论：**必须**区分「暂时解不开」与「永远解不开」。
+     *
+     * 只回 `String?` 时两者长得一样，调用方只能按同一种处置 —— 而它们的正确处置相反：
+     * 永久失败等价「未配置」且可以缓存；暂时失败（锁屏时 Keystore 让密钥暂不可用）
+     * 一定要允许下次重试，否则「一次锁屏 = 本进程内凭据永久未配置」，
+     * 用户解锁后打开凭据页看到 9 个 Key 全空、以为凭据丢了（AI2 A-672 / 台账 L-1462）。
+     */
+    sealed interface DecryptOutcome {
+        class Ok(val plain: String) : DecryptOutcome
+
+        /** 暂时不可用（锁屏 / Keystore 抖动）：调用方**不得**把结论缓存成「未配置」 */
+        object Transient : DecryptOutcome
+
+        /** 永久不可用（换机 / 密钥失效 / 密文损坏）：等价「未配置」，可缓存 */
+        object Permanent : DecryptOutcome
+    }
+
+    /** 解密 [encrypt] 的产物，并给出失败的性质（见 [DecryptOutcome]） */
+    fun decryptDetailed(stored: String): DecryptOutcome = runCatching {
         // 版本前缀可省：兼容本次改动之前落盘的密文（无前缀）
         val body = stored.removePrefix(VERSION_PREFIX)
         val sep = body.indexOf(':')
-        if (sep != IV_B64_LENGTH) return null
+        // 形态不对 = 密文本身坏了，重试一万次也是同一个结论（与「锁屏」不是一回事）
+        if (sep != IV_B64_LENGTH) return@runCatching DecryptOutcome.Permanent
         val iv = Base64.decode(body.substring(0, sep), Base64.NO_WRAP)
         val data = Base64.decode(body.substring(sep + 1), Base64.NO_WRAP)
-        if (iv.size < 12) return null
-        withKey { k ->
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
-            String(cipher.doFinal(data), Charsets.UTF_8)
-        }
-    }.getOrElse {
-        Diagnostics.e(TAG, "凭据解密失败: ${it.javaClass.simpleName}")
-        null
+        if (iv.size < 12) return@runCatching DecryptOutcome.Permanent
+        DecryptOutcome.Ok(
+            withKey { k ->
+                val cipher = Cipher.getInstance(TRANSFORMATION)
+                cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
+                String(cipher.doFinal(data), Charsets.UTF_8)
+            },
+        )
+    }.getOrElse { e ->
+        Diagnostics.e(TAG, "凭据解密失败: ${e.javaClass.simpleName}")
+        failureOutcome(e)
     }
+
+    /**
+     * 异常链 → 失败态（[DecryptOutcome.Transient] / [DecryptOutcome.Permanent]）。
+     *
+     * 链上**任一**环是永久成因就判永久（外层多为 `ProviderException` / `KeyStoreException`
+     * 之类包装，真正的成因在 cause 里）。整条链都不是永久成因 ⇒ 暂时：宁可按「下次再试」处理，
+     * 也不能把「锁屏解不开」写成「未配置」。
+     */
+    internal fun failureOutcome(e: Throwable): DecryptOutcome {
+        var t: Throwable? = e
+        while (t != null) {
+            if (isPermanentFailure(t.javaClass.name, t.message)) return DecryptOutcome.Permanent
+            t = t.cause
+        }
+        return DecryptOutcome.Transient
+    }
+
+    /**
+     * 失败成因是否为**永久**（纯判据：只吃类名与 message，JVM 单测可直接跑）。
+     *
+     * 永久 = 密钥被系统失效（换机 / 重置 / 改锁屏）/ GCM 校验不过 / 分块或填充坏掉：
+     * 这几类重试一万次也是同一个结果。
+     *
+     * 其余一律按**暂时**处理 —— 这是刻意的方向：锁屏时 `setUnlockedDeviceRequired` 让密钥
+     * 不可用，各家 ROM 抛出的异常形态并不统一（`UserNotAuthenticatedException`、
+     * `KeyStoreException: Key user not authenticated`、甚至包了一层 `ProviderException`）。
+     * 判错成永久的代价是「用户以为凭据丢了」，判错成暂时的代价只是「下次再试一次」。
+     */
+    internal fun isPermanentFailure(typeName: String, message: String?): Boolean {
+        if (typeName.substringAfterLast('.') in PERMANENT_FAILURES) return true
+        val m = message.orEmpty().lowercase(java.util.Locale.ROOT)
+        return "permanently invalidated" in m || "invalidated" in m || "tag mismatch" in m
+    }
+
+    /** 密钥材料被作废 / 密文自身坏了（重试无意义）的异常类简名 */
+    private val PERMANENT_FAILURES = setOf(
+        "KeyPermanentlyInvalidatedException",
+        "AEADBadTagException",
+        "BadPaddingException",
+        "IllegalBlockSizeException",
+        "UnrecoverableKeyException",
+    )
 
     /**
      * 是否为「本模块的密文」——用于区分**旧版明文**（要迁移）与**解不开的密文**（换机，视作未配置）。

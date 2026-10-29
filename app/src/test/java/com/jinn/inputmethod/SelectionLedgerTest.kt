@@ -169,7 +169,13 @@ class SelectionLedgerTest {
         val backup = TestSources.rawSource("src/main/res/xml/backup_rules.xml", "app/src/main/res/xml/backup_rules.xml")
         val extract = TestSources.rawSource("src/main/res/xml/data_extraction_rules.xml", "app/src/main/res/xml/data_extraction_rules.xml")
         assertTrue("备份规则要排除台账", "user_picks.txt" in backup)
-        assertEquals("云备份与设备迁移两段都要排除", 2, Regex("user_picks\\.txt").findAll(extract).count())
+        assertEquals("云备份与迁移两段都要排除", 2, Regex("user_picks\\.txt").findAll(extract).count())
+        // AI2 A-545：未绑定（init 没跑到）不得**静默**丢行 —— 界面照样显示「已开启」，用户说
+        // 「记了但词库是空的」时日志里必须有一条；又因为 record 在选词热路径上，只许报一次
+        val record = TestSources.blockAfter(src, "fun record(word: String, pinyin: String)")
+        assertFalse("不得再直接 target ?: return（静默丢行）", "target ?: return" in record)
+        assertTrue("未绑定要留痕", "台账未绑定" in record)
+        assertTrue("留痕必须限一次（热路径）", "compareAndSet(false, true)" in record)
     }
 
     /**
