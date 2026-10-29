@@ -3467,7 +3467,8 @@ class JinnIme : InputMethodService() {
         // 结果侧指纹同理（BUG.md L-1308）：B 框里恰好有同一段文本时不该被 A 框的记录拦下
         lastCommittedText = ""
         // 隐私抑制要在这里就算出来：本回调比 [onStartInputView] 更早，而框架在「同会话内换框 /
-        // restartInput()」时**可能不重发** onStartInputView（同文件 3013 行的密码框切换即实例）。
+        // restartInput()」时**可能不重发** onStartInputView（`startTranslate` 的密码框判据处即实例，
+        // 见本文件「焦点从普通框切到密码框可能不重发该回调」那段说明）。
         // 晚一步算的后果是：在密码框里选候选会被写进 user_freq.txt。
         // ⚠ 但**不能**在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
         // 结束组合态，此时清 IME 侧 composing 而不经宿主，宿主会把残余拼音当纯文本补进旧框
@@ -3480,8 +3481,8 @@ class JinnIme : InputMethodService() {
         )
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         // 悬浮键盘：形态判定放在这个**更早**的回调里。框架在「同会话内换框 / restartInput()」时
-        // 可能不重发 onStartInputView（上方 2764 行那条注释里的密码框切换即实例），只判一次的话
-        // 分屏 / 连续换框期间形态会停在上一个输入框的答案上。
+        // 可能不重发 onStartInputView（上面 onStartInput 开头那条注释里的密码框切换即实例）；
+        // 只判一次的话，分屏 / 连续换框期间形态会停在上一个输入框的答案上。
         // 只在**状态真的变了**时动窗口：同一个包内换框不必多一次 relayout（窗口参数本就有效）。
         val wasFloating = floatingActive
         resolveFloatingState(info)

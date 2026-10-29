@@ -2430,6 +2430,39 @@ class RecentFixesRegressionTest {
                 Regex("""CredentialTrace\.purge\(""").findAll(src).count(),
             )
         }
+        // 备份导入也是一条「凭据落盘」路径（AI2 A-333）：它不经过两个设置页，那两处的清理不会被
+        // 触发 —— 历史里同值的明文条目会一直留到用户下次进凭据页（面板明文可见 + 随备份导出）。
+        val backup = codeOf("ConfigBackupManager.kt")
+        assertTrue(
+            "导入成功要调度一次凭据清理（AI2 A-333）",
+            "scheduleCredentialPurge(context" in backup,
+        )
+        // 触发面钉在**闸门那一行**上：只看 prefsApplied 会漏掉「仅并入数据 + 勾了剪贴板」——
+        // 那条路径 prefsApplied 恒为 0，而包里的剪贴板段照样能把与本机凭据同值的明文送进历史
+        // （正是最该清的那一条）。反向的「多跑全表解密」由 clipAdded 兜住（没插进任何行时不跑）。
+        val gateLine = backup.lineSequence().firstOrNull { "prefsApplied > 0" in it }
+        assertTrue("找不到 A-333 的调度闸门（修法被删了？）", gateLine != null)
+        assertTrue(
+            "闸门必须同时看「设置写进去」与「剪贴板插进行」（A-333 的触发面不止 prefs）: $gateLine",
+            "clipAdded > 0" in gateLine!!,
+        )
+        assertTrue(
+            "调度要带上「导入前的凭据值」（覆盖还原会替换掉它们）",
+            "scheduleCredentialPurge(context, before)" in backup,
+        )
+        // 覆盖还原会替换凭据：旧值必须一并当目标，否则历史里旧 Key 的明文再也不会有清理机会
+        assertTrue(
+            "清理目标要取「导入前后并集」（覆盖还原后旧凭据值不在当前值里了）",
+            Regex("""configuredValues\(""").findAll(backup).count() >= 2,
+        )
+        assertTrue(
+            "导入后的清理必须投长活池（秒级全表解密，L-1423 同口径）",
+            Regex("""BackgroundIo\.runLong\s*\{[\s\S]{0,600}?CredentialTrace\.purge\(""").containsMatchIn(backup),
+        )
+        assertTrue(
+            "导入后清理的目标要取本机凭据全集（与设置页同源）",
+            "CredentialTrace.configuredValues(" in backup,
+        )
     }
 
     /**
@@ -2454,7 +2487,13 @@ class RecentFixesRegressionTest {
             "for (f in credentialFields()) if (saveGuard.changed(f)) saveGuard.markWritten(f)" in settings,
         )
         assertTrue("载入必须记原值（L-247）", "saveGuard.remember(field, value)" in settings)
-        assertTrue("OpenAI Key 也要进不留痕目标（L-245）", "prefs.openAiApiKey," in settings)
+        // 目标键清单已收进 CredentialTrace.configuredValues（AI2 A-333 的导入路径也要用同一份）
+        val traceKeys = codeOf("CredentialTrace.kt")
+        assertTrue(
+            "OpenAI Key 也要进不留痕目标（L-245）",
+            "prefs.openAiApiKey," in traceKeys && "fun configuredValues(prefs: Prefs)" in traceKeys,
+        )
+        assertTrue("翻译设置页取同一份清单", "CredentialTrace.configuredValues(prefs)" in settings)
         assertTrue("不留痕走公共入口（L-244 / L-245）", "CredentialTrace.purge(db, targets)" in settings)
 
         val openAiPage = codeOf("OpenAiSettingsActivity.kt")
@@ -5994,6 +6033,15 @@ class RecentFixesRegressionTest {
         assertTrue(
             "重落栏高要按档位而不是展开排数",
             "collapseCandidates()\n        applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)" in src,
+        )
+        // 「词库加载中」早退分支也要收起（AI2 A-562）：那条分支只换提示，展开态下栏高仍是 3~4 排
+        // ⇒ 一块空高栏。取**该分支体内**（到第一个 return 为止）再判，避免把紧随其后的
+        // 「候选集为空」分支里的同一行算进来（那会让这条守卫恒绿）。
+        val loadingBranch = Regex("""isFullyLoaded\)\s*\{[\s\S]{0,600}?\n            return""")
+            .find(src)?.value.orEmpty()
+        assertTrue(
+            "「词库加载中」早退分支必须收起并重落栏高（AI2 A-562）",
+            "collapseCandidatesAndRelayout(rowsSetting" in loadingBranch,
         )
     }
 

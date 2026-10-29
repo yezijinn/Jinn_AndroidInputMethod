@@ -855,13 +855,67 @@ internal object ConfigBackupManager {
             return BackupResult(null, reason.reason)
         }
         try {
+            // 覆盖还原会替换全部设置：旧凭据值在导入后不在任何目标集合里，历史里它的明文就再也没
+            // 有清理机会（面板可见、随备份导出）⇒ 清理目标取「导入前后的并集」（AI2 A-333）
+            val before: List<String> = if (mode == ImportMode.RESTORE) {
+                runCatching { CredentialTrace.configuredValues(Prefs(context)) }
+                    .getOrDefault(emptyList<String>())
+            } else {
+                emptyList()
+            }
             val outcome = importLocked(context, zip, mode, includeClipboard, includeDicts, reason)
+            // 凭据经导入落盘后要补一次「凭据不留痕」（AI2 A-333）：两个设置页只在进页 / 保存时清，
+            // 导入不经过它们 ⇒ 历史里同值的明文条目会一直留到用户下次进凭据页。
+            // 触发面是「任何明文可能进库」而非只看 prefs：包内**剪贴板段**同样会把与本机凭据同值的
+            // 明文带进历史，而「仅并入数据」模式下 prefsApplied 恒为 0 —— 只看它就会漏掉最该清的
+            // 那一条（剪贴板里躺着的 Key 明文）。两道闸都没有时（只并词库 / 只动词频）才跳过，
+            // 不为它跑一次非收藏全表解密。
+            if (outcome != null && (outcome.prefsApplied > 0 || outcome.clipAdded > 0)) {
+                scheduleCredentialPurge(context, before)
+            }
             // 部分成功时真因在 outcome.failedStage：同步进 reason，令「value 非空也能从 reason 取因」契约对称（BUG.md L-1365）
             return BackupResult(outcome, reason.reason ?: outcome?.failedStage)
         } finally {
             endImport()
             // 这份明文 zip 的用途到此为止：注销它在册登记，残留清扫才能按时间窗回收它（BUG.md L-1086）
             releaseUnlockedTemp(zip)
+        }
+    }
+
+    /**
+     * 导入落盘后补一次「凭据不留痕」（AI2 A-333）。
+     *
+     * 用户可能早前从云控制台复制过同一个 Key（历史里已有明文条目），随后又通过备份包把它导入
+     * 本机 —— 这条落盘路径不经过翻译 / OpenAI 两个设置页，那两处的清理不会被触发，条目会一直
+     * 留到用户下次进凭据页才清（面板明文可见 + 随备份导出）。
+     *
+     * @param before 导入**之前**的本机凭据值。覆盖还原会替换掉它们，此后历史里旧值的明文就再也
+     * 落不进任何目标集合（用户不会再进以旧值配置的凭据页），故与导入后的当前值取并集。
+     *
+     * 投**长活池**：purge 的第二段是非收藏全表逐行 AES-GCM 解密，排在交互短活队列上会推后
+     * 面板首屏查询与剪贴板入库（与两个设置页同口径，BUG.md L-1423）。
+     *
+     * 没覆盖的**同类目标**：OpenAI 自定义请求头 / 请求体 JSON 里的密钥（两个设置页走
+     * [CredentialTrace.candidatesFrom] 才收）。这里不收是有意的 —— 那两个字段允许任意内容
+     * （`Accept: application/json` 这类普通值也 ≥8 字符），导入后自动拿它们清历史会误删普通条目；
+     * 该路径仍由 OpenAI 配置页（进页 / 保存）负责。
+     */
+    private fun scheduleCredentialPurge(context: Context, before: List<String>) {
+        val app = context.applicationContext
+        BackgroundIo.runLong {
+            val targets = (CredentialTrace.configuredValues(Prefs(app)) + before).distinct()
+            if (targets.none { it.isNotBlank() }) return@runLong
+            val db = runCatching { ClipboardDb.get(app) }.getOrElse {
+                // 库打不开必须留痕：静默回去的话，导入进来的 Key 会一直明文留在历史里（L-410 同族）
+                Diagnostics.w(TAG, "导入后凭据清理: 库打不开，本轮未清理（${it.javaClass.simpleName}）")
+                return@runLong
+            }
+            val removed = CredentialTrace.purge(db, targets)
+            if (removed > 0) {
+                Diagnostics.i(TAG, "导入后凭据清理: 从剪贴板历史删除 $removed 条")
+            } else {
+                Diagnostics.v(TAG, "导入后凭据清理: 本轮无需删除（${targets.size} 个目标）")
+            }
         }
     }
 

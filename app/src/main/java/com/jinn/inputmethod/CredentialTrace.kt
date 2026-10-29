@@ -44,6 +44,20 @@ internal object CredentialTrace {
     }
 
     /**
+     * 本机已配置的全部凭据（9 个键），供**不经过设置页**的落盘路径取目标（备份导入，见
+     * `ConfigBackupManager.scheduleCredentialPurge`）。
+     *
+     * 与翻译设置页、OpenAI 兼容配置页的不留痕目标同源：单列一处，避免两条路径各写一份键清单
+     * 后漏掉新服务方（OpenAI 页另加自定义请求头 / JSON 里的值，见 [candidatesFrom]）。
+     */
+    fun configuredValues(prefs: Prefs): List<String> = listOf(
+        prefs.aliyunAccessKeyId, prefs.aliyunAccessKeySecret,
+        prefs.azureApiKey, prefs.baiduAppId, prefs.baiduSecretKey,
+        prefs.baiduLlmAppId, prefs.baiduLlmApiKey, prefs.deeplApiKey,
+        prefs.openAiApiKey,
+    )
+
+    /**
      * 抹掉历史里与 [values] 等价的条目。有 DB 读 + 解密，**调用方放在后台线程**。
      *
      * @return 实际删除的条数（0 = 历史里没有等价条目，或这些目标在当前数据状态下已清理过）

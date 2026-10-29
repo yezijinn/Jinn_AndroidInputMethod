@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -132,7 +133,15 @@ class SelectionLedgerTest {
         )
         val settings = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
         assertTrue("设置页要有入口", "R.id.btn_user_dict" in settings && "UserDictActivity::class.java" in settings)
-        assertTrue("入口文案", "生成用户词库" in settings)
+        // 入口文案钉的是**行为契约**：它是静态动作名，不显示「未开启」状态（作者 2026-10-20 拍板）。
+        // 「`某串 in settings`」那种写法对行为零保护 —— 改文案时顺着改一句就恒绿（AI2 A-552 实证），
+        // 所以钉反向：入口不得再读开关去改文案 / 显示状态。
+        assertFalse(
+            "设置页入口不得读 userDictEnabled 显示状态（静态动作名是有意为之，AI2 A-552）",
+            "userDictEnabled" in settings || "updateUserDictEntry" in settings,
+        )
+        // 正向保留一处：文案常量还在，且入口文字确实取自它（不是硬编码第二份）
+        assertTrue("入口文字取自 TEXT_USER_DICT", "text = TEXT_USER_DICT" in settings)
     }
 
     @Test
@@ -161,6 +170,34 @@ class SelectionLedgerTest {
         val extract = TestSources.rawSource("src/main/res/xml/data_extraction_rules.xml", "app/src/main/res/xml/data_extraction_rules.xml")
         assertTrue("备份规则要排除台账", "user_picks.txt" in backup)
         assertEquals("云备份与设备迁移两段都要排除", 2, Regex("user_picks\\.txt").findAll(extract).count())
+    }
+
+    /**
+     * 代际号必须**原子**（AI2 A-601）。
+     *
+     * `@Volatile Int` 的 `++` / `--` 是读-改-写三步：只保证可见性，不保证原子性。删除失败的回滚
+     * （`-1`）若与另一趟递增交错，代际守卫会失效 —— 在途批次就会写进「用户明确要求删除」的文件
+     * （A-596 那条隐私后果）。**当前**所有调用点都在主线程（串行），所以这是加固而不是现存竞态
+     * （与 A-30 / A-634 那类「有窗口但无并发」的判定同口径，区别是这里只花一行原语）；
+     * 但它一旦被搬进后台线程就是静默失效，守卫把这条不变式钉在类型上。
+     */
+    @Test
+    fun `代际号必须原子`() {
+        val src = TestSources.codeOf(TestSources.rawSourceOfShortName("SelectionLedger.kt"))
+        assertTrue("代际必须是 AtomicInteger（并发下 ++ / -- 会丢递增）", "AtomicInteger(" in src)
+        assertFalse(
+            "代际不得再用非原子的 ++ / --",
+            Regex("""generation(\+\+|--)""").containsMatchIn(src) ||
+                Regex("""(\+\+|--)generation""").containsMatchIn(src),
+        )
+        // 非原子递增换个写法照样不是原子：`set(get() + 1)` 与 `++` 同为三步
+        assertFalse(
+            "代际不得用 set(get() + 1) 拼出非原子递增",
+            Regex("""generation\.set\(""").containsMatchIn(src),
+        )
+        assertTrue("代际必须走 incrementAndGet", "generation.incrementAndGet()" in src)
+        assertTrue("代际回滚必须走 decrementAndGet", "generation.decrementAndGet()" in src)
+        assertTrue("代际比对要读当前值", "gen != generation.get()" in src)
     }
 
     /**

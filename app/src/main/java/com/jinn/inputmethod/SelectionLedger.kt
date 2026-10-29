@@ -64,13 +64,17 @@ object SelectionLedger {
     private var enabled = false
 
     /**
-     * 代际号：关闭并删除时 +1。
+     * 代际号：关闭并删除时 +1（删除失败回滚 -1）。
      *
      * 早先靠「`target !== file`」判换绑，而 [init] 每次都新建同路径的 File —— 重新绑定会被
      * 误判成换绑，直接把整队选择清掉。改用递增代际，只有真正删除才作废在途写入。
+     *
+     * 用 [java.util.concurrent.atomic.AtomicInteger] 而不是 `@Volatile Int`（AI2 A-601）：
+     * `++` / `--` 是读-改-写三步，只保证可见性不保证原子性 —— 若将来有人在后台线程调
+     * [deleteFile]，两趟可能都读到 5 都写 6，或删除失败的回滚把另一趟的递增抵掉，代际守卫
+     * （[drainTo] / [appendAll] 的 `gen != generation`）随之失效。
      */
-    @Volatile
-    private var generation = 0
+    private val generation = java.util.concurrent.atomic.AtomicInteger(0)
 
     /** `\n` 的字节值：[truncateTrailingPartialLine] 按字节回找行尾用 */
     private const val NL_BYTE = '\n'.code.toByte()
@@ -138,7 +142,7 @@ object SelectionLedger {
         val line = formatLine(word, pinyin) ?: return
         val file = target ?: return
         queue.add(line)
-        val gen = generation
+        val gen = generation.get()
         writer.execute { drainTo(file, gen) }
     }
 
@@ -155,7 +159,7 @@ object SelectionLedger {
     fun appendAll(picks: List<Pair<String, String>>): Boolean {
         if (!enabled) return false
         val file = target ?: return false
-        val gen = generation
+        val gen = generation.get()
         val lines = ArrayList<String>(picks.size)
         for ((w, p) in picks) formatLine(w, p)?.let { lines.add(it) }
         if (lines.isEmpty()) return false
@@ -191,7 +195,7 @@ object SelectionLedger {
      */
     fun flush(timeoutMs: Long = FLUSH_TIMEOUT_MS): Boolean {
         val file = target ?: return true
-        val gen = generation
+        val gen = generation.get()
         // 提交前复位：本次提交没有写失败才算成功。
         // ⚠ 这条复位只有在「**任何写失败都不丢行**」的前提下才成立 —— record / appendAll 都走
         // [drainTo]，失败只置位、不出队，所以失败的那批会由下面的 drainTo 重写并**重新**置位。
@@ -234,11 +238,11 @@ object SelectionLedger {
             return false
         }
         // 先升代际再删：在途 / 排队的写入会自行放弃，不会把文件建回来
-        generation++
+        generation.incrementAndGet()
         val ok = deleteQuietly(file)
         if (!ok) {
             // 删除失败：退回原代际并保留绑定，调用方写回 pref 之后记录仍能继续
-            generation--
+            generation.decrementAndGet()
             target = file
         }
         return ok
@@ -254,7 +258,7 @@ object SelectionLedger {
 
     private fun drainTo(file: File, gen: Int) {
         // 已被关闭删除（代际已升）：这一批不再写，否则「已删除」之后磁盘上又出现文件
-        if (gen != generation) {
+        if (gen != generation.get()) {
             queue.clear()
             return
         }

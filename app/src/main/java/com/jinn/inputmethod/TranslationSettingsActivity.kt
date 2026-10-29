@@ -187,13 +187,8 @@ class TranslationSettingsActivity : Activity() {
         themeTicker.stop()
     }
 
-    /** 当前配置的全部凭据列表，仅用于历史清理比对 */
-    private fun configuredCredentials(): List<String> = listOf(
-        prefs.aliyunAccessKeyId, prefs.aliyunAccessKeySecret,
-        prefs.azureApiKey, prefs.baiduAppId, prefs.baiduSecretKey,
-        prefs.baiduLlmAppId, prefs.baiduLlmApiKey, prefs.deeplApiKey,
-        prefs.openAiApiKey,
-    )
+    /** 当前配置的全部凭据列表，仅用于历史清理比对（键清单收在 [CredentialTrace.configuredValues]） */
+    private fun configuredCredentials(): List<String> = CredentialTrace.configuredValues(prefs)
 
     /** 从剪贴板数据库中异步剔除匹配当前凭据的历史记录（保留已收藏项） */
     private fun purgeClipboardHistory(values: List<String>) {

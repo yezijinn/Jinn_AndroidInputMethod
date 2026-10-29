@@ -673,7 +673,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (!candidatesExpanded) return
         collapseCandidates()
         applyCandidateRows(rowsSetting, candidateSp, pinyinSp, gapDp)
-        // 两个调用点都排在「候选已落定」之后（空输入清表 / 候选集刚赋值）⇒ [lastCandidates]
+        // 调用点都排在「候选已落定」之后（空输入清表 / 候选集为空 / 词库加载中早退）⇒ [lastCandidates]
         // 就是本帧渲染源，不需要再走 [renderedItems]。
         updateExpandButton(
             rowsSetting, candidateSp, pinyinSp, gapDp, spacingHalfPx,
@@ -3722,6 +3722,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 否则用户会以为「这个字打不出来」。
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
+            collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
+            // 与上面「无内容」/ 下面「候选集为空」两处同口径（AI2 A-562）：展开态下只剩一行
+            // 「词库加载中」提示却仍占 3~4 排高度 ⇒ 收起并落回档位高度，否则是一块空高栏。
             showPinyin(displayText)
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
             return
