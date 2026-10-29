@@ -939,7 +939,8 @@ class RecentFixesRegressionTest {
         val importBlock = blockAfter(mgr, "if (failedStage == null && includeClipboard &&")
         assertTrue(
             "导入计数必须按本次插入的 id 复查",
-            "val insertedIds = ArrayList<Long>(planned.size)" in importBlock &&
+            "val restored = db.insertRestoredBatch(" in importBlock &&
+                "val insertedIds = restored.insertedIds" in importBlock &&
                 "val present = db.countPresent(insertedIds)" in importBlock,
         )
         assertTrue("导入不得再用前后总数差", "db.count() - before" !in importBlock)

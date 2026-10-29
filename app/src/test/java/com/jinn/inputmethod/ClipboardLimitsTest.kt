@@ -702,7 +702,8 @@ class ClipboardLimitsTest {
     /**
      * `BUG.md` L-199：命中哈希是重复复制最常见的路径，试解必须有界 ——
      * 本进程验证过的行不再整行解密；没验证过的仍会真解一次（L-173 的自愈机会不丢）。
-     * 读路径发现解不开要撤销备忘，备份恢复后要整批作废（恢复集可能来自别的密钥）。
+     * 读路径发现解不开要撤销备忘；备份恢复后要整批作废（备忘里那一批「可解」结论过期了 ——
+     * 恢复的行其实是本机重加密的，作废只是保守，不是正确性依赖）。
      */
     @Test
     fun 重复复制不得重复解密() {
@@ -721,7 +722,17 @@ class ClipboardLimitsTest {
             "forgetReadable(hash)\n            Diagnostics.w(TAG, \"解密失败，跳过 id=\$id\")" in src,
         )
         assertTrue("存量重算解不开也要撤销", "forgetReadable(hash)\n                        continue" in src)
-        assertTrue("备份恢复后市进程内的「已验证」结论整批作废", "if (id > 0) verifiedReadable.clear()" in src)
+        // 位置变了（L-1533）：从「每条插入后清一次」改成「整批末尾清一次」—— 备忘只是缓存，
+        // 晚清几毫秒不影响正确性（读路径解不开会自己撤销，见上一条断言）
+        val batch = TestSources.blockAfter(src, "fun insertRestoredBatch(")
+        assertTrue(
+            "备份恢复后市进程内的「已验证」结论必须整批作废",
+            "if (insertedIds.isNotEmpty()) verifiedReadable.clear()" in batch,
+        )
+        assertFalse(
+            "不得退回每条插入后清一次（一万行一万次无意义清空）",
+            "if (id > 0) verifiedReadable.clear()" in src,
+        )
     }
 
     /**

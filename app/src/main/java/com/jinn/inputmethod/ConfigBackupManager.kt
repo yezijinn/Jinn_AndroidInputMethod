@@ -1206,23 +1206,22 @@ internal object ConfigBackupManager {
                 // 「本机已有 / 批内重复」的跳过量与「插入失败」必须分账：下面的裁掉量只能减后者，
                 // 混成一笔会把去重数当插入失败算（少报跳过数），裁剪量还会算成负数被丢掉
                 val dedupeSkipped = incoming.size - planned.size
-                var insertFailed = 0
-                // 本次真正插进去的行 id：下面按 id 复查，而不是拿「前后总数之差」（BUG-13）
-                val insertedIds = ArrayList<Long>(planned.size)
-                for (e in planned) {
-                    // 分类按本机当前规则重算，不采用包里的取值：那是「导出设备当时的规则」
-                    // 算出来的，可能与本机不一致。落库时就算准，导入的这批行无需等下次启动重算，
-                    // 也就不必去清「已重算」标记（那次标记与 IME 侧的全库重算是跨线程竞争）
-                    val id = db.insertRestored(
-                        content = e.content,
-                        createdAt = e.createdAt,
-                        sourcePackage = e.sourcePackage,
-                        sourceAppName = e.sourceAppName,
-                        category = ClipboardClassifier.classify(e.content),
-                        favorite = e.favorite,
-                    )
-                    if (id <= 0) insertFailed++ else insertedIds.add(id)
-                }
+                // 批量写入（BUG.md L-1533）：整批只进出对象监视器与事务块若干次，不再一万行一万次
+                // fsync。分类按本机当前规则重算，不采用包里的取值：那是「导出设备当时的规则」
+                // 算出来的，可能与本机不一致。落库时就算准，导入的这批行无需等下次启动重算，
+                // 也就不必去清「已重算」标记（那次标记与 IME 侧的全库重算是跨线程竞争）
+                val restored = db.insertRestoredBatch(
+                    planned.map { e ->
+                        ClipboardDb.RestoreRow(
+                            content = e.content,
+                            createdAt = e.createdAt,
+                            sourcePackage = e.sourcePackage,
+                            sourceAppName = e.sourceAppName,
+                            category = ClipboardClassifier.classify(e.content),
+                            favorite = e.favorite,
+                        )
+                    },
+                )
                 db.trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）。
@@ -1230,11 +1229,22 @@ internal object ConfigBackupManager {
                 // 口径是**按本次插入的 id 复查**（BUG-13）：原先取 `db.count()` 的前后差，而采集常开 ——
                 // 导入期间用户的每次复制都会改动总数，差值会把并发条目算进本次导入，界面数字虚高。
                 // 按 id 复查只认自己插的行，与并发无关。
+                val insertedIds = restored.insertedIds
+                val insertFailed = restored.failed
+                // 结构不变式（批量入口的契约）：插进去的 + 失败的 = 规划要插的。
+                // 破了说明批量入口少交或多交记账，下面的分账会跟着错，故当场留痕
+                if (insertedIds.size + insertFailed != planned.size) {
+                    Diagnostics.w(
+                        TAG,
+                        "导入: 批量写入记账不符 inserted=${insertedIds.size} failed=$insertFailed planned=${planned.size}",
+                    )
+                }
                 val present = db.countPresent(insertedIds)
                 clipAdded = present
                 // 跳过数 = 去重 + 插入失败 + 刚插入又被裁掉，三项互斥，且**结构上**不超包内条数：
-                // `present + insertFailed + trimmedAway == planned.size`（旧的「差值可能为负」分支
-                // 因此不再需要 —— 那是前后总数差被并发与自身裁剪混在一起才出现的现象）。
+                // `present + insertFailed + trimmedAway == planned.size`（`insertedIds.size + failed
+                // == planned.size` 由批量入口保证；旧的「差值可能为负」分支因此不再需要 ——
+                // 那是前后总数差被并发与自身裁剪混在一起才出现的现象）。
                 val trimmedAway = insertedIds.size - present
                 clipSkipped = dedupeSkipped + insertFailed + trimmedAway
                 true

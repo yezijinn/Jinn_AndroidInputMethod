@@ -324,7 +324,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * （AES-GCM + base64，单条最大 256KB）不划算：验证过一次就不再验。
      * 只记「验证通过」这一个结论 —— 没验证过的行仍会真解一次，坏行的自愈机会不因备忘而消失
      * （BUG.md L-173）。写路径（自愈 / 插入）成功后登记，读路径解不开时撤销（见 [readItem]），
-     * 备份恢复整批作废（见 [insertRestored]）。
+     * 备份恢复整批作废（见 [insertRestoredBatch]）。
      *
      * 并发：写路径在对象监视器内，[readItem] 可能跑在多个读线程上 ⇒ 用并发集合。
      * 它只是缓存，竞态的最坏结果是多解一次密。
@@ -574,7 +574,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 用可写库：getReadableDatabase 在磁盘满等异常场景会退回只读句柄，删除会静默失败。
      */
     /**
-     * 写路径统一监视器（BUG-04）：本类此前只有 [upsert] 与 [insertRestored] 同步，其余写方法
+     * 写路径统一监视器（BUG-04）：本类此前只有 [upsert] 与批量恢复写入同步，其余写方法
      * 各自「读一遍再改」（按条数 / 体积裁剪、按明文匹配删、收藏上限淘汰）—— 并发于入库时
      * 会删掉刚插入的行、或在同一份预算上各算一次。所有改动行集的方法与入库共用同一把锁。
      *（[reclassifyAll] 不长持锁：它的每条 UPDATE 自身原子，且整趟是全库解密级的秒级任务，
@@ -1302,43 +1302,144 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 备份导入写入：保留原始时间戳与收藏标记。
+     * 一条待恢复的行（备份包里那一条：内容已解出、分类由调用方按**本机**规则算好）。
+     *
+     * 单独建类型而不是直接收 `ConfigBackup.ClipEntry`：本类的批量入口与「备份包格式」
+     * 解耦，格式演进不牵动写入层。
+     */
+    class RestoreRow(
+        val content: String,
+        val createdAt: Long,
+        val sourcePackage: String,
+        val sourceAppName: String,
+        val category: String,
+        val favorite: Boolean,
+    )
+
+    /**
+     * 批量恢复的结果。
+     *
+     * 不变式：`insertedIds.size + failed == 入参条数` —— 导入侧的
+     * `present + failed + trimmedAway == planned.size` 就靠它成立（BUG.md L-1533）。
+     */
+    class RestoreResult(val insertedIds: List<Long>, val failed: Int)
+
+    /**
+     * 备份导入写入（批量）：保留原始时间戳与收藏标记。
      *
      * 与 [upsert] 的区别是不做「置顶」也不覆盖同 hash 的既有行——去重由调用方
      * （[allHashes] + `ConfigBackup.planClipboardImport`）先行规划，这里只负责
      * 按原样落库，否则导入的上百条历史会被统一改写成「刚刚复制」。
      *
-     * @return 新行 id；内容为空或加密失败返回 -1
+     * ⚠ 三条性能约束（BUG.md L-1533，逐条都是这一轮改出来的）：
+     *  ① **一块一个事务**（[RESTORE_CHUNK_ROWS] 行）：原先逐条 `insert` 各自一个隐式事务，
+     *     一万行 = 一万次 fsync。刻意**不**包成一个大事务 —— 那会让一次磁盘满 / 库损坏
+     *     放大成「一条坏行毁掉一万行」；块级最坏只丢当前这一块（≤ [RESTORE_CHUNK_ROWS]）。
+     *  ② **加密在锁外**（纯 CPU + Keystore，不碰库）：`ClipboardCrypto.encrypt` 每次新建
+     *     `Cipher`、无共享可变状态，任意线程可并发调用；`@Synchronized` 只包住真正的写入，
+     *     用户此刻的复制 / 粘贴 / 裁剪不必排在加密后面（与 L-1423 同族）。
+     *  ③ **[verifiedReadable] 整批作废一次**（原来每条清一次，一万行 = 一万次无意义清空）：
+     *     它只是「该哈希可解」的备忘，读路径解不开时会自己撤销（见 [readItem]），
+     *     所以晚清几毫秒不影响正确性（BUG.md L-173 / L-199）。
+     *
+     * @return [RestoreResult]；内容为空 / 超单条上限 / 加密失败 / 写入失败都计入 `failed`
      */
-    @Synchronized
-    fun insertRestored(
-        content: String,
-        createdAt: Long,
-        sourcePackage: String,
-        sourceAppName: String,
-        category: String,
-        favorite: Boolean,
-    ): Long {
-        if (content.isBlank()) return -1
-        // 与采集路径一致的单条上限：备份里的超长单条会让面板每次打开都为它解密一遍，
-        // 而「新复制的同样内容不入库、导入的却入库」本身就是行为不一致
-        if (ClipboardStore.exceedsItemLimit(content, ClipboardPrefs.of(appContext).effectiveMaxItemBytes().toInt())) return -1
-        val encrypted = ClipboardCrypto.encrypt(content) ?: return -1
-        val values = ContentValues().apply {
-            put("encrypted_content", encrypted)
-            put("content_type", "text")
-            put("created_at", createdAt)
-            put("source_package", sourcePackage)
-            put("source_app_name", sourceAppName)
-            put("content_hash", stableHash(content))
-            put("category", category)
-            put("is_favorite", if (favorite) 1 else 0)
+    fun insertRestoredBatch(rows: List<RestoreRow>): RestoreResult {
+        if (rows.isEmpty()) return RestoreResult(emptyList(), 0)
+        // 单条上限只读一次配置：与采集路径同一口径（备份里的超长单条会让面板每次打开都为它解密一遍）
+        val limitBytes = ClipboardPrefs.of(appContext).effectiveMaxItemBytes().toInt()
+        val insertedIds = ArrayList<Long>(rows.size)
+        var failed = 0
+        for (chunk in rows.chunked(RESTORE_CHUNK_ROWS)) {
+            // ① 锁外：上限判定 + AES-GCM。本块新增的驻留量 ≈ 一块 × 单条上限 × 1.37（base64），
+            // 上限 500 × 256KB × 1.37 ≈ 175MB；但入参 rows 本来就把每一行的明文攥在手里，
+            // 真正的峰值由它决定，这里只多一份「一块」的密文，不会攒整包的密文
+            val prepared = ArrayList<ContentValues>(chunk.size)
+            for (row in chunk) {
+                if (rejectsRestore(row.content, limitBytes)) {
+                    failed++
+                    continue
+                }
+                val encrypted = ClipboardCrypto.encrypt(row.content)
+                if (encrypted == null) {
+                    failed++
+                    continue
+                }
+                prepared.add(
+                    ContentValues().apply {
+                        put("encrypted_content", encrypted)
+                        put("content_type", "text")
+                        put("created_at", row.createdAt)
+                        put("source_package", row.sourcePackage)
+                        put("source_app_name", row.sourceAppName)
+                        put("content_hash", stableHash(row.content))
+                        put("category", row.category)
+                        put("is_favorite", if (row.favorite) 1 else 0)
+                    },
+                )
+            }
+            if (prepared.isEmpty()) continue
+            // ② 锁内：一块一个事务；整块失败只算这一块，不牵连其他块
+            val ids = insertRestoredChunk(prepared)
+            if (ids == null) {
+                // 整块回滚：这一块的候选行全部计入失败
+                failed += prepared.size
+            } else {
+                // 块内单行失败（insert 返回 -1）同样要记账，否则 insertedIds.size + failed 会小于入参条数
+                failed += prepared.size - ids.size
+                insertedIds.addAll(ids)
+            }
         }
-        val id = writableDatabase.insert(TABLE_ITEMS, null, values)
-        // 恢复进来的密文可能来自别的设备 / 别的密钥（解不开是常态），而备忘里可能还留着
-        // 「恢复前这个哈希可解」的结论 ⇒ 整体作废，让下一次命中重新试解（BUG.md L-173 / L-199）
-        if (id > 0) verifiedReadable.clear()
-        return id
+        // ③ 备忘整批作废一次：恢复进来的行可能是别的设备 / 密钥的密文，让下一次命中重新试解
+        if (insertedIds.isNotEmpty()) verifiedReadable.clear()
+        return RestoreResult(insertedIds, failed)
+    }
+
+    /**
+     * 写一块（[prepared] 已加密好的行）。整块失败（开事务失败 / 磁盘满 / 库损坏 / 提交失败）
+     * 返回 null，由 [insertRestoredBatch] 按「这一块全失败」记账 —— 单条约束冲突不会走到这里：
+     * `insert` 自己捕获异常并返回 -1，块内其余行照常提交。
+     *
+     * 失败是**本块**的事：这里一条异常都不往外抛。原先逐条写时 `insert` 自己吞 `SQLException`，
+     * 所以导入从不会因为写库失败而整个中断；批量入口不能把这个性质弄丢（否则一次
+     * `beginTransaction` 失败 = 一万行一条都进不去，正是任务书禁止的「一条坏行毁掉一万行」）。
+     */
+    private fun insertRestoredChunk(prepared: List<ContentValues>): List<Long>? {
+        val ids = ArrayList<Long>(prepared.size)
+        var committed = false
+        // 日志挪到监视器之外再打：写日志文件（还有目录锁）不该占着 DB 锁
+        var writeError: String? = null
+        var commitError: String? = null
+        synchronized(this) {
+            var began = false
+            try {
+                // 开事务本身也可能抛（磁盘满 / 库打不开）：所以它在 try 里，且下面按 began 决定是否收尾
+                writableDatabase.beginTransaction()
+                began = true
+                for (values in prepared) {
+                    val id = writableDatabase.insert(TABLE_ITEMS, null, values)
+                    if (id > 0) ids.add(id)
+                }
+                writableDatabase.setTransactionSuccessful()
+                committed = true
+            } catch (e: Exception) {
+                writeError = e.javaClass.simpleName
+            } finally {
+                if (began) {
+                    try {
+                        writableDatabase.endTransaction()
+                    } catch (e: Exception) {
+                        // 提交阶段才失败（磁盘满）：按未提交计，宁可少报进库数也不虚报
+                        commitError = e.javaClass.simpleName
+                        committed = false
+                    }
+                }
+            }
+        }
+        writeError?.let { Diagnostics.w(TAG, "导入分块写入失败，本块 ${prepared.size} 条整块回滚: $it") }
+        // 回滚也失败时同样落到这里：不能静默吞（AGENTS.md 错误处理约定）
+        commitError?.let { Diagnostics.w(TAG, "导入分块提交失败: $it") }
+        return if (committed) ids else null
     }
 
     // ── 内部 ──────────────────────────────────────────────
@@ -1459,6 +1560,27 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
         /** [verifiedReadable] 的上限：超过就整体清空（备忘只是加速，不是正确性依赖） */
         private const val VERIFIED_MEMO_MAX = 512
+
+        /**
+         * 备份导入每块的行数（BUG.md L-1533）。
+         *
+         * 取 500 的三个约束：① 事务粒度 —— 一条坏块最多毁掉 500 行（导入上限
+         * `ConfigBackup.MAX_CLIP_IMPORT_ITEMS` = 10 000），而不是一万行；② 锁粒度 ——
+         * 每块之外释放对象监视器，用户的复制 / 粘贴最多等一块；③ 内存 —— 一块 × 单条上限
+         * （256KB）× 1.37（base64）= 约 175MB 是**这一块**的增量上界，且只有「一万条全顶到
+         * 256KB」那种包才挨得到；这种包光明文就已经 2.5GB，先撞的是上游而不是这里。
+         */
+        internal const val RESTORE_CHUNK_ROWS = 500
+
+        /**
+         * 一条恢复行是否不该入库（空 / 超单条上限）。
+         *
+         * 抽成纯函数是为了让「空行与上限边界」能单测（`ClipboardRestoreBatchTest`）；
+         * 上限口径与采集路径同一个 [ClipboardStore.exceedsItemLimit]。
+         */
+        internal fun rejectsRestore(content: String, maxItemBytes: Int): Boolean =
+            content.isBlank() || ClipboardStore.exceedsItemLimit(content, maxItemBytes)
+
         private const val TAG = "ClipboardDb"
 
         /**
