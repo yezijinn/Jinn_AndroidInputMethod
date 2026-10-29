@@ -893,13 +893,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 又把子项收进复用池（池不清空）。顺序不可倒：先复位指纹与分页状态，再回收。
      */
     private fun clearCandidateList() {
-        resetCandidateRender()
-        // 容器被**非候选形态**（功能面板 / 符号分组 / 密码数字条 / 内联提示 / 空态）接管：
-        // 分页状态一并复位，避免①已排队的追加回调把候选视图插到这些形态上（它们各自清容器后重填）；
-        // ②下次候选渲染沿用旧的窗口条数 / 滚动位（看起来像没刷新）。
-        candidateRenderArgs = null
-        candidateRenderSource = emptyList()
-        candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
+        resetCandidateForm()
         // 注意：必须**回收**而不是丢弃（2026-10-20）：这里原先是 `removeAllViews()` + `candidateViewPool.clear()`，
         // 于是每词首键（面板 → 候选）都要新建 32 个 TextView —— 实测 365~560µs/个，
         // 整帧 build 6.7~15.1ms，占该轮 work 约 30%，是候选渲染路径上真正的尖峰。
@@ -909,8 +903,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
         recycleCandidateViews()
     }
 
+    /**
+     * 复位「候选渲染」的指纹与分页状态，但**保留**容器里的子视图。
+     *
+     * 与 [clearCandidateList] 的分工：功能面板内容没变时（换输入框的常态，见 [candidatePanelReusable]）
+     * 只需复位指纹 / 分页 —— 把已建好的按钮丢掉重建白付 6.1~13.9ms（第 65 轮真机分段计时）。
+     * 指纹复位本身不能省：L-809 的形态就是「清了容器却留着指纹」。
+     */
+    private fun resetCandidateForm() {
+        resetCandidateRender()
+        candidateRenderArgs = null
+        candidateRenderSource = emptyList()
+        candidateRenderLimit = INITIAL_RENDERED_CANDIDATES
+    }
+
     /** 底部功能行背景的构建缓存：记下上次用过的面不透明度（NaN 保证首次一定构建） */
     private var functionBgAlpha = Float.NaN
+
+    /**
+     * [applySkinToKeys] 的构建缓存：（皮肤 id | 面不透明度）。
+     *
+     * null 保证首次一定下发；之后两者都不变就整段跳过 —— 逐键视觉是这两项与固定色板的纯函数，
+     * 跳过不改变任何像素。
+     */
+    private var skinKeysBuiltToken: String? = null
 
     /**
      * 大写键/删除键背景的构建缓存：记下上次用过的（圆角, 大写锁定, 面不透明度）组合。
@@ -1709,6 +1725,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前是否英文模式（供 IME 每次聚焦时同步，避免覆盖用户手动切换） */
     fun isEnglishMode(): Boolean = englishMode
 
+    /**
+     * 会话边界复位是否为**空操作**（[configure] 的另一半职责的判据）。
+     *
+     * [configure] 除了重套外观，还顺手复位会话内临时态：残留拼音与预测、方向面板、剪贴板面板、
+     * 图库面板、动作排、密码模式。首弹刚建好的视图这几项本来就空，跳过 configure 不改变任何状态；
+     * 只要有一项不是空，跳过就会把它带进下一个输入框 —— 剪贴板面板最严重
+     * （BUG.md L-110：新输入框里点一下就粘进上一个框的历史内容），图库面板同型（插进上一轮的图）。
+     * 所以「跳过 configure」必须与本题同时成立。
+     *
+     * ⚠ 本判据必须与 [configure] 的复位清单**逐项对应**：那边加一样、这边漏一样，就是
+     * BUG.md L-1531（图库面板与动作排曾同时漏在这里）。守卫
+     * `首弹不得把同一套外观再套一遍` 按 `configure` 里的 `if (X) hideY()` 做闭集对拍。
+     */
+    internal fun isSessionPristine(): Boolean =
+        composing.isEmpty() && lastPredictions.isEmpty() && !directionPanelVisible &&
+            !clipboardActive && !galleryActive && !actionPanelExpanded &&
+            !passwordPad && !isPanelSearch()
+
     /** 大写锁定态（重建重放用；字段 private，不能直接读） */
     fun capsModeForReplay(): Boolean = capsMode
 
@@ -1760,6 +1794,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
     /** 设置输入方案（全拼 / 七种双拼）与初始中英文状态 */
     fun configure(scheme: ShuangpinScheme, english: Boolean) {
+        // 分段计时（只在 debug 构建里真跑，见 PerfSpan）：本方法是「换输入框」这条路径上
+        // 唯一的整树重套点，逐段数字是「L-1518 该不该修」的判据来源
+        val perf = PerfSpan.start("configure")
         this.scheme = scheme
         englishMode = english
         // 方案切换时清掉残留的拼音与预测
@@ -1782,6 +1819,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 弹出（键盘变身）。语言**不**按记忆复原 —— 上面 `englishMode = english` 是 IME 按本输入框
         // 给出的值，拿上一个输入框的语言覆盖它才是错的；层与大写仍按用户手选状态复原。
         if (passwordPad) exitPasswordPad(restoreLanguage = false)
+        // 图库面板与动作排是同族的视图内临时态（第 65 轮评审补 · BUG.md L-1531）：图库面板把字母区
+        // 整个盖住、动作排顶掉候选栏那排功能按钮。此前这两样只靠 IME 侧的 `onFinishInputView` 收，
+        // 而该方法不保证派发（见 `JinnIme.onWindowHidden` 的 KDoc）⇒ 跨输入框残留时，新框里点一下
+        // 就把上一轮的图插进正文（图库）或把一次 AI 动作打到新框的正文上（动作排）。
+        // 两者都走各自的收起入口：`hideGalleryPanel` 负责恢复字母区布局与「图库」键文案，只翻标志
+        // 会把字母区留在面板的隐藏态。
+        if (galleryActive) hideGalleryPanel()
+        resetActionPanel()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在「键盘外观」页（KeyAppearanceActivity，设置页入口按钮的文案见
         // SettingsActivity.TEXT_KEY_APPEARANCE_ENTRY）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
@@ -1790,12 +1835,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // → ③ 逐键下发皮肤视觉（依赖 ② 算出的面 alpha）→ ④ 套圆角/间隙。
         // ④ 会重建 shift/删除键背景，放在 ② 之后可命中其 alpha 缓存，不重复构建。
         syncKeyboardSkin()
+        perf?.mark("皮肤")
         applyKeyTransparency()
+        perf?.mark("透明度")
         applySkinToKeys()
+        perf?.mark("键皮肤")
         // 必须先于 refreshKeyLabels，后者会重建 shift 键背景，用的是本次刷新的圆角值。
         applyKeyAppearance()
+        perf?.mark("外观")
         refreshKeyLabels()
+        perf?.mark("键面")
         refreshCandidateBar()
+        perf?.mark("候选")
+        perf?.dump("scheme=${scheme.shortName} english=$english")
     }
 
     /**
@@ -2069,6 +2121,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 与半透明键盘的既有实测观感逐像素一致。
      */
     private fun applySkinToKeys() {
+        // 皮肤与面不透明度都没变 ⇒ 每个键拿到的视觉与上次逐像素一致，整段跳过。
+        // 实测本段 1.2~2.6ms/次（第 65 轮真机分段计时），是换框 configure 的第二大项；
+        // 而 configure 每次聚焦都会调用，绝大多数时候这两项根本没变。
+        // 判据必须**同时**含 skin.id 与 keyFaceAlpha：只比其中一个时，「仅换肤」或「仅改透明度」
+        // 会早退，键面停在旧色（与 applyKeyTransparency 的联合早退同一条口径）。
+        val token = skin.id + "|" + keyFaceAlpha
+        if (token == skinKeysBuiltToken) return
+        skinKeysBuiltToken = token
         // 26 键按字母序取索引：彩虹皮肤按序取色相，而 keyViews 是 HashMap，遍历顺序不稳定
         val ordered = ('a'..'z').mapNotNull { keyViews[it] }
         if (skin.isToken) {
@@ -2658,7 +2718,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 中文模式：追加到拼音串并查候选
         composing.append(c)
+        // 按键热路径唯一的一处计时：只在 debug 构建里真跑（release 下 start 返回 null，
+        // 整段退化成一次空判断），用来给「按键后候选刷新」一个实测上界，见 PerfSpan
+        val perf = PerfSpan.start("按键候选")
         refreshCandidateBar()
+        perf?.dump("inputLen=${composing.length}")
         // 日志带上当前模式：排查时经常要先回答"这会儿到底是全拼还是双拼、哪一套"，
         // 光看 composing 判不出来（2026-09-18 连续三次在错误模式下做验证后才补上）。
         val modeTag = when {
@@ -3308,6 +3372,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
         }
         viewCandidateList.removeAllViews()
+        // 容器已空：功能面板的按钮不在了（见 [candidatePanelLive]）
+        candidatePanelLive = false
     }
 
     /** 取一个候选条目视图：池里有就复用并重设，没有才新建 */
@@ -3590,9 +3656,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 并重落栏高：否则展开时落下的 3~4 排高度会留成一块空栏（选完候选后必然走到这里）
             collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
             showPinyin(null)
-            // 注意：必须走 clearCandidateList（复位指纹，L-809）：下面紧接着就是功能面板形态，
+            // 注意：必须复位指纹（L-809）：下面紧接着就是功能面板形态，
             // 若不复位，「清空后再打同一串拼音」会命中旧指纹而跳过重建。
-            clearCandidateList()
+            // 面板内容 / 配色没变时（换输入框的常态）只复位状态、保留已建好的按钮；
+            // 变了才整清重建 —— clearCandidateList 仍是「清容器」的唯一出口。
+            if (candidatePanelReusable()) resetCandidateForm() else clearCandidateList()
             // 内容刚全部清空：上面那次选档读到的 lastCandidates 还是旧值，这里清空后再判一次
             updateCandidateBarBackground()
             // 无候选、无拼音串、无预测：候选栏展示功能面板按钮（✕ 在 renderFunctionPanel 里隐藏）
@@ -3628,7 +3696,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
 
+        val tQuery0 = if (Diagnostics.KEY_TRACE) System.nanoTime() else 0L
         val result = PinyinEngine.query(queryInput)
+        val tQuery1 = if (Diagnostics.KEY_TRACE) System.nanoTime() else 0L
         // 候选集口径：size + 末尾几条，用于判定「长词够不着」是**没生成**还是
         // **渲染追加不续**。只在 KEY_TRACE（debug 构建）下打印，release 静默。
         if (Diagnostics.KEY_TRACE) {
@@ -3685,6 +3755,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             colorRes = R.color.text_primary,
             onClick = { onCandidateSelected(it) },
         )
+        if (Diagnostics.KEY_TRACE) {
+            Diagnostics.v(
+                PerfSpan.TAG,
+                "按键候选分段 查询=${(tQuery1 - tQuery0) / 1000}us " +
+                    "渲染=${(System.nanoTime() - tQuery1) / 1000}us n=${result.candidates.size}",
+            )
+        }
     }
 
     /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
@@ -4330,6 +4407,53 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 功能面板（无候选时展示）──────────────────────────────
 
     /**
+     * 上次构建功能面板时的渲染签名（null = 还没建过）。
+     *
+     * 见 [renderFunctionPanel] 的复用早退：换输入框时这一排按钮几乎从不变化，重建一次
+     * 实测 6.1~13.9ms（第 65 轮真机分段计时），是「换框」耗时里最大的一笔。
+     */
+    private var candidatePanelBuiltSignature: String? = null
+
+    /**
+     * 容器里现在装的是不是 [renderFunctionPanel] 建的那排按钮。
+     *
+     * 不能拿「容器非空」当判据：候选词、符号分组标签、密码数字条、加载提示都会往同一个容器里塞子视图，
+     * 而这些形态一旦落进容器，面板按钮就不在了 —— 只数 childCount 会把它们误判成「按钮还在」，
+     * 于是面板不复建，候选栏停在上一形态（符号层切回字母层时最常撞上）。
+     * 置真只有一处（面板建完），置假收在 [recycleCandidateViews] —— 它是容器被清空的唯一出口。
+     */
+    private var candidatePanelLive = false
+
+    /**
+     * 功能面板的渲染签名：**只收真正影响这一排按钮的状态**。
+     *
+     * 形态（动作排 / 搜索态 / 剪贴板面板）、图库键与翻译键的有无、翻译中、皮肤与面不透明度
+     * （按钮底 `xmlKeyBackground()` 与字色都按它们生成）、复用块最小高。任何一项变化都必须重建，
+     * 所以这里宁可多收一项，也不要为了省几微秒漏掉一个（漏掉 = 界面停在旧配色 / 旧键集）。
+     */
+    private fun candidatePanelSignature(): String = buildString(64) {
+        append(if (actionPanelExpanded) 'A' else '-')
+        append(if (isPanelSearch()) 'S' else '-')
+        append(if (clipboardActive) 'C' else '-')
+        append(if (hostImageCapable) 'I' else '-')
+        append(if (galleryActive) 'G' else '-')
+        append(if (prefs.translateEnabled) 'T' else '-')
+        append(if (translateInFlight) 'F' else '-')
+        append('|').append(skin.id)
+        append('|').append(keyFaceAlpha)
+        append('|').append(reuseBlockMinPx())
+    }
+
+    /**
+     * 候选栏里那排功能按钮能不能原地留着（见 [renderFunctionPanel] 与 [resetCandidateForm]）。
+     *
+     * 两个条件缺一不可：容器里装的确实是上次建的按钮（[candidatePanelLive]，否则留下的是候选词 /
+     * 符号标签 = 空白或错位的候选栏）、签名与上次构建时一致。
+     */
+    private fun candidatePanelReusable(): Boolean =
+        candidatePanelLive && candidatePanelBuiltSignature == candidatePanelSignature()
+
+    /**
      * 无候选 / 无拼音串 / 无预测时，候选栏切换为功能面板（顺序固定，恒以「收起」结尾）：
      *  - 剪贴板：打开安全剪贴板历史页
      *  - 方向：打开方向控制面板（上下左右/空格/回车/行首/行末）
@@ -4347,7 +4471,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。
      */
     private fun renderFunctionPanel() {
+        // 26 键用户每次换输入框都会走到这里（无候选态）。内容与配色都没变时**直接复用**既有按钮：
+        // 重建这 7 个按钮实测 6.1~13.9ms（第 65 轮真机分段计时），占换框 configure 的 60% 以上。
+        // 复用只需补两处会被外部状态就地改掉的文案（方向 / 图库的「返回」红字），它们都是幂等的
+        // 纯文本 setter。签名见 [candidatePanelSignature]，任一项变化都照旧整清重建。
+        if (candidatePanelReusable()) {
+            setClearButtonVisible(false)
+            refreshDirectionButton()
+            refreshGalleryButton()
+            return
+        }
         clearCandidateList()
+        candidatePanelBuiltSignature = candidatePanelSignature()
+        candidatePanelLive = true
         // 「✕ 清空候选」只在有候选时出现：功能面板（含搜索态「退出搜索」）一律隐藏
         setClearButtonVisible(false)
         // 动作排（长按翻译键展开，2026-10-09）：本帧整条切换为动作排，其余分支全不参与。

@@ -3796,9 +3796,13 @@ class RecentFixesRegressionTest {
             )
             assertTrue(
                 "L-809：clearCandidateList 必须复位指纹后再清容器",
+                // 2026-10-29：复位指纹 / 分页被抽成 resetCandidateForm（功能面板复用时要单独用它，
+                // 见 renderFunctionPanel 的签名早退），所以判据顺着这一层走 —— 强度不变：
+                // 清容器之前必须先复位，且复位里必须真的含 resetCandidateRender()。
                 blockAfter(kb, "private fun clearCandidateList()").let {
-                    it.indexOf("resetCandidateRender()") in 0 until it.indexOf("recycleCandidateViews()")
-                },
+                    it.indexOf("resetCandidateForm()") in 0 until it.indexOf("recycleCandidateViews()")
+                } &&
+                    "resetCandidateRender()" in blockAfter(kb, "private fun resetCandidateForm()"),
             )
             // 2026-10-20：清空必须**回收进池**而不是「丢弃 + 清池」。
             // 原先 clearCandidateList 是 removeAllViews() + candidateViewPool.clear()，
@@ -7699,5 +7703,183 @@ class RecentFixesRegressionTest {
             "写盘必须把偏移加回来",
             "TapSound.clampVolume(TapSound.VOLUME_MIN + progress)" in src,
         )
+    }
+
+    /**
+     * 换输入框时功能面板必须**复用**既有按钮（第 65 轮实测的省时点）。
+     *
+     * 无候选态每次聚焦都会走到 `renderFunctionPanel`，而它原先无条件清容器 + 重建 7 个按钮：
+     * 真机分段计时 6.1~13.9ms/次，占换框 `configure` 的 60% 以上、占整段 `onStartInputView`
+     * 的 40% 以上（n=10，MuMu / API 32）。修复后同一屏 `configure` 9.84ms → 2.9~3.6ms。
+     *
+     * 守卫的意义：省时的前提是「签名同源」—— 任何一个影响按钮的输入漏进签名，界面就会停在
+     * 旧键集 / 旧配色（比慢更糟）。所以签名清单在这里逐个钉住。
+     */
+    @Test
+    fun `换输入框时功能面板未变必须复用既有按钮`() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val panel = blockAfter(src, "private fun renderFunctionPanel()")
+        assertTrue(
+            "面板内容未变时必须早退复用（否则每次换框白重建 7 个按钮）",
+            "if (candidatePanelReusable()) {" in panel,
+        )
+        assertTrue(
+            "复用早退必须在清容器之前",
+            panel.indexOf("candidatePanelReusable()") in 1 until panel.indexOf("clearCandidateList()"),
+        )
+        val sig = blockAfter(src, "private fun candidatePanelSignature()")
+        for ((needle, why) in listOf(
+            "actionPanelExpanded" to "动作排形态",
+            "isPanelSearch()" to "搜索态（只留「退出」）",
+            "clipboardActive" to "剪贴板面板（历史 ↔ 红色返回）",
+            "hostImageCapable" to "图库键的有无",
+            "galleryActive" to "图库键的返回文案",
+            "prefs.translateEnabled" to "翻译键的有无",
+            "translateInFlight" to "翻译中的键面",
+            "skin.id" to "皮肤（按钮底与字色）",
+            "keyFaceAlpha" to "面不透明度",
+            "reuseBlockMinPx()" to "复用块最小高",
+        )) {
+            assertTrue("功能面板签名必须含${why}（漏掉=界面停在旧键集/旧配色）：找不到 `$needle`", needle in sig)
+        }
+        val bar = blockAfter(src, "private fun refreshCandidateBar()")
+        assertTrue(
+            "空态分支必须按签名在「只复位状态」与「整清容器」之间二选一",
+            "if (candidatePanelReusable()) resetCandidateForm() else clearCandidateList()" in bar,
+        )
+        val reset = blockAfter(src, "private fun resetCandidateForm()")
+        assertTrue(
+            "复位状态仍要复位渲染指纹（L-809 的形态就是「清了容器却留着指纹」）",
+            "resetCandidateRender()" in reset,
+        )
+        assertFalse(
+            "复位状态**不得**动容器（动了就等于重建，省时失效）",
+            "recycleCandidateViews()" in reset,
+        )
+        // 「容器非空」不能当「按钮还在」的判据：候选词 / 符号分组标签 / 密码数字条 / 加载提示
+        // 都往同一个容器里塞子视图，被它们占用过之后凭 childCount 会误判成「按钮仍在」⇒
+        // 面板不复建、候选栏停在上一形态（符号层切回字母层必撞，第 65 轮评审实测路径）。
+        val reusable = TestSources.window(
+            src,
+            "private fun candidatePanelReusable(): Boolean =",
+            "private fun renderFunctionPanel()",
+        )
+        assertTrue(
+            "复用判据必须看「容器里装的是不是那排按钮」（candidatePanelLive）",
+            "candidatePanelLive" in reusable,
+        )
+        assertFalse(
+            "复用判据不得只看子视图个数（被其它形态占用过就误判）",
+            "viewCandidateList.childCount" in reusable,
+        )
+        assertTrue("面板建完必须置真", "candidatePanelLive = true" in panel)
+        assertTrue(
+            "容器被清空必须置假（recycleCandidateViews 是唯一出口）",
+            "candidatePanelLive = false" in blockAfter(src, "private fun recycleCandidateViews()"),
+        )
+    }
+
+    /**
+     * 键皮肤未变时必须整段跳过（第 65 轮实测 1.2~2.6ms/次）。
+     *
+     * `configure` 每次聚焦都会重套皮肤，而逐键视觉只是「皮肤 × 面不透明度」的纯函数 ——
+     * 两者都没变就不该再走 26 键 + 分号键 + 10 个数字键的 `visualFor`（每键都新建对象）。
+     * 判据必须**同时**含两项：只比其一时「仅换肤」或「仅改透明度」会早退，键面停在旧色。
+     */
+    @Test
+    fun `键皮肤与面透明度都没变时必须整段跳过`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun applySkinToKeys()")
+        assertTrue(
+            "判据必须同时含皮肤与面不透明度：找不到联合指纹",
+            "val token = skin.id + \"|\" + keyFaceAlpha" in body,
+        )
+        assertTrue(
+            "指纹相同必须早退（在第一个键下发之前）",
+            body.indexOf("if (token == skinKeysBuiltToken) return") in 1 until body.indexOf("val ordered"),
+        )
+        assertTrue(
+            "早退后要记下本次指纹，否则永远重算",
+            "skinKeysBuiltToken = token" in body,
+        )
+    }
+
+    /**
+     * 首弹不得把同一套外观再套一遍（第 65 轮实测：一次 `configure` 8~22ms）。
+     *
+     * 首弹的顺序是「建视图（内部已 configure 一遍）→ onStartInputView」，后者原先无条件再
+     * configure 一次 —— 同一棵刚建好的树、同一套参数，整树重套白付一遍。
+     * 只允许在**方案相同**时跳过：设置页改过双拼方案必须照旧重套（否则键面提示会停在旧方案）。
+     * 凭据一次有效：会话结束 / 窗口隐藏都要清，避免把一次真实的会话边界 configure 也吞掉。
+     */
+    @Test
+    fun `首弹不得把同一套外观再套一遍`() {
+        val ime = codeOf("JinnIme.kt")
+        val create = blockAfter(ime, "override fun onCreateInputView()")
+        assertTrue(
+            "建视图那次 configure 用的方案必须只读一次并记下来（与配置同源）",
+            "val createScheme = prefs.effectiveShuangpinScheme" in create,
+        )
+        assertTrue(
+            "建视图里的 configure 必须用那个同源的方案",
+            "scheme = createScheme," in create,
+        )
+        assertTrue(
+            "建视图末尾必须记下「已按此方案套过」的凭据",
+            "createConfiguredScheme = createScheme" in create,
+        )
+        val start = blockAfter(ime, "override fun onStartInputView(")
+        assertTrue(
+            "跳过判据必须比方案（不是无条件跳过）",
+            "if (createConfiguredScheme == currentScheme && pristine) {" in start,
+        )
+        assertTrue(
+            "跳过还必须要求视图会话态为空（否则把上一个框的方向 / 剪贴板面板带进来，与 L-110 同型）",
+            "pinyinKeyboard?.isSessionPristine() ?: false" in start,
+        )
+        assertTrue(
+            "方案不同必须照旧整树重套",
+            "pinyinKeyboard?.configure(" in start,
+        )
+        assertTrue(
+            "凭据一次有效：跳过分支要清掉它",
+            start.indexOf("createConfiguredScheme = null") in 1 until start.indexOf("} else {"),
+        )
+        for ((marker, why) in listOf(
+            "override fun onFinishInputView(" to "会话结束",
+            "override fun onWindowHidden()" to "窗口隐藏",
+        )) {
+            assertTrue(
+                "${why}必须清掉「建视图时已套过」的凭据（否则下一次真实会话边界会被吞掉）",
+                "createConfiguredScheme = null" in blockAfter(ime, marker),
+            )
+        }
+        // 会话态判据必须与 configure 的复位清单**逐项对应**（BUG.md L-1531：图库面板与动作排
+        // 曾同时漏在 isSessionPristine 里 —— 跳过 configure 就等于把它们带进下一个输入框）。
+        // 闭集判据：configure 里每一条 `if (X) hideY()` / `exitY()` 都要求 pristine 里有 `!X`，
+        // 这样以后往 configure 加一样复位而忘了 pristine，这条会直接点名那一项。
+        val kb = codeOf("PinyinKeyboardView.kt")
+        val cfg = blockAfter(kb, "fun configure(scheme: ShuangpinScheme, english: Boolean)")
+        val guarded = Regex("""if \(([A-Za-z]\w*)\) (?:hide|exit)\w*\(""")
+            .findAll(cfg).map { it.groupValues[1] }.toSet()
+        assertTrue("configure 的复位清单必须能解析出来（解析不到 = 本守卫空转）", guarded.size >= 3)
+        val pristine = TestSources.window(
+            kb,
+            "internal fun isSessionPristine()",
+            "fun capsModeForReplay",
+        )
+        for (g in guarded) {
+            assertTrue(
+                "configure 里 `if ($g)` 复位了会话态，isSessionPristine 必须同时含 `!$g`" +
+                    "（漏了就是 L-1531 同型：跳过 configure 把这项带进下一个输入框）",
+                "!$g" in pristine,
+            )
+        }
+        assertTrue("残留拼音也属会话态", "composing.isEmpty()" in pristine)
+        assertTrue("残留预测也属会话态", "lastPredictions.isEmpty()" in pristine)
+        assertTrue(
+            "动作排也属会话临时态（顶掉候选栏的功能按钮，一点就作用于新框的正文）",
+            "resetActionPanel()" in cfg,
+        )
+        assertTrue("动作排收起后 pristine 必须跟着判它", "!actionPanelExpanded" in pristine)
     }
 }

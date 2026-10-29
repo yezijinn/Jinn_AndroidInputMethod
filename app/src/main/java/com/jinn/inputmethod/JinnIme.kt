@@ -152,6 +152,18 @@ class JinnIme : InputMethodService() {
     private var pinyinKeyboard: PinyinKeyboardView? = null
 
     /**
+     * 本视图在 [onCreateInputView] 里那次 `configure` 用的输入方案（null = 本视图没套过）。
+     *
+     * 首弹的调用顺序是「建视图（内部已 configure 一遍）→ onStartInputView」，而后者原先无条件
+     * 再 configure 一次：同一棵刚建好的树、同一套参数，整树重套白付一遍（实测一次 8~22ms，
+     * 第 65 轮真机分段计时）。这里记下建视图那次用的方案，让紧随其后的会话开始**跳过重复**：
+     * 只认「方案相同」，设置页改过双拼方案就照旧重套。
+     * 会话结束（[onFinishInputView]）与窗口隐藏都会清掉它，避免「建视图时键盘不可见」
+     * 之类的时序下把一次真实的会话边界 configure 也吞掉。
+     */
+    private var createConfiguredScheme: ShuangpinScheme? = null
+
+    /**
      * 语音键盘树与拼音键盘树（MEM-06）。
      *
      * 语音那棵是**按需创建**的：`voiceView == null` 表示「语音关闭或默认拼音模式，从未需要过它」。
@@ -174,6 +186,15 @@ class JinnIme : InputMethodService() {
     /** 当前键盘模式。默认拼音，语音默认禁用，不能以语音键盘起步 */
     private var keyboardMode = KeyboardMode.PINYIN
     private var keyboardContainer: FrameLayout? = null
+
+    /**
+     * 弹键盘路径的两个时刻（纳秒，只在 debug 构建里写；release 恒为 0）。
+     *
+     * 用途只有一个：在 [onWindowShown] 里算出「建视图 → 窗口显示」与「焦点进入 → 窗口显示」
+     * 两条端到端耗时，与各分段（见 PerfSpan）对齐。release 包不写也不读，功能不依赖它们。
+     */
+    private var viewCreateAtNanos = 0L
+    private var startInputViewAtNanos = 0L
 
     // ──────────── 悬浮键盘（2026-10-23）────────────
     //
@@ -1644,6 +1665,8 @@ class JinnIme : InputMethodService() {
 
     override fun onCreateInputView(): View {
         Diagnostics.i(TAG, "onCreateInputView: 键盘视图创建")
+        val perf = PerfSpan.start("建视图")
+        if (Diagnostics.KEY_TRACE) viewCreateAtNanos = System.nanoTime()
 
         // 半透明键盘：窗口背景（主题 windowBackground）与框架容器的不透明底色会把 alpha
         // 全吃在窗口内部，这里先清窗口背景；祖先链（含框架容器/DecorView）上的背景
@@ -1660,6 +1683,7 @@ class JinnIme : InputMethodService() {
         // uiMode 在这里被覆盖、色板随之锁定；「跟随系统」时该方法是恒等返回，
         // 系统深浅色变化由系统重建 IME 自动生效。
         val themeCtx = ThemeManager.themedContext(this, prefs)
+        perf?.mark("主题Context")
         keyboardThemeCtx = themeCtx
         appliedThemeDark = ThemeManager.isDark(this, prefs)
 
@@ -1682,8 +1706,12 @@ class JinnIme : InputMethodService() {
             prefs.defaultKeyboardMode != DefaultKeyboardMode.PINYIN_CN &&
             prefs.defaultKeyboardMode != DefaultKeyboardMode.PINYIN_EN
         val voice = if (wantVoice) ensureVoiceView(themeCtx) else null
+        perf?.mark("语音树")
 
         // 拼音键盘（同样用决策后的 Context，见上）
+        // 本次建视图用的输入方案只读一次：configure 与「首弹免重复 configure」的判据必须同源，
+        // 否则设置页刚好改过方案时会被判成「已套过」而漏掉重套
+        val createScheme = prefs.effectiveShuangpinScheme
         val pinyin = PinyinKeyboardView(themeCtx).apply {
             listener = object : PinyinKeyboardView.Listener {
                 override fun onCommitText(text: String) = commit(text)
@@ -1831,7 +1859,7 @@ class JinnIme : InputMethodService() {
                     TranslationProviderId.of(prefs.translateProvider).supportsActions
             }
             configure(
-                scheme = prefs.effectiveShuangpinScheme,
+                scheme = createScheme,
                 // 26键英文模式：启动时强制英文；其余模式沿用键盘英文偏好
                 english = if (prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN) {
                     true
@@ -1840,6 +1868,8 @@ class JinnIme : InputMethodService() {
                 },
             )
         }
+        perf?.mark("拼音树")
+        createConfiguredScheme = createScheme
         // 覆盖字段之前先给旧视图收尾：它的缩略图线程池与在途查询要在这里停。
         // `recreateKeyboardView` 那条路径会调 `stopPanelBackgroundWork`，框架自己调本函数时
         // 不经过它 —— 漏掉与 L-1035 同型：每次重建漏三条常驻线程，在途任务还钉住旧视图树
@@ -1905,6 +1935,10 @@ class JinnIme : InputMethodService() {
         // 重建之后本会话剩余时间功能键又会回到「平台一声 + 引擎一声」。
         // 悬浮键盘的窗口根（普通形态下与历史逐像素等价：把手 GONE 不占高）
         val container = buildFloatingRoot(content)
+        perf?.mark("容器")
+        perf?.dump("场景=建视图")
+        // ⚠ 这一行必须留在函数**末尾**（守卫「平台反馈策略要绑在视图创建上」钉着这个位置）：
+        // 整棵树建完之后才装，运行期新建的键由 KeyFeedback 的树回调覆盖
         applyFeedbackSuppression()
         return container
     }
@@ -3477,6 +3511,8 @@ class JinnIme : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        val perf = PerfSpan.start("焦点进入")
+        if (Diagnostics.KEY_TRACE) startInputViewAtNanos = System.nanoTime()
         // 词库在 onCreate 预加载失败时这里补试（已就绪时开销为一次 volatile 读）
         retryPinyinLoadIfNeeded()
         // 敲击反馈：每次弹键盘重读一次「用户意愿」与「系统闸门」（静音 / 触摸提示音 / 触摸时振动）。
@@ -3494,6 +3530,7 @@ class JinnIme : InputMethodService() {
         // 不显示输入视图，不初始化输入，键盘在本输入会话内完全不可用。
         if (!prefs.autoShowKeyboard) {
             Diagnostics.i(TAG, "自动唤起键盘：关闭，收起当前显示的 IME 窗口")
+            perf?.dump("场景=焦点进入（自动唤起关闭）")
             runCatching { hideWindow() }.onFailure {
                 Diagnostics.w(TAG, "自动唤起关闭时收起窗口失败: ${it.javaClass.simpleName}")
             }
@@ -3512,11 +3549,13 @@ class JinnIme : InputMethodService() {
         cancelTranslate(notify = true)
         // 主题变更（设置页改了模式，或定时模式跨过切换点）：用新色板重建键盘
         applyThemeIfNeeded()
+        perf?.mark("前置与主题")
         // 系统导航栏透明：框架在显示窗口时可能已用主题属性重写过窗口参数，这里每会话补一次
         applyNavBarTransparency()
         // 悬浮键盘：按当前宿主与绑定列表判定形态，并套窗口参数（关闭 / 未绑定时这一步只做恢复）
         resolveFloatingState(info)
         applyFloatingWindow()
+        perf?.mark("悬浮")
         // 上次因「未上屏输入」被延后的符号布局重建：新会话开始，补一次
         // （真机实证：框架跨会话复用同一视图，不补则一直显示旧符号）。
         // 此刻 composing 已由 onFinishInputView 提交清空；仍以防万一看一眼未上屏态。
@@ -3555,15 +3594,37 @@ class JinnIme : InputMethodService() {
         // 同时记在 IME 侧：视图重建（换肤 / 符号布局变更）会换掉整个视图，标记是视图字段 ⇒ 重建后要重放（L-96）
         suppressLearningForSession = InputFieldPrivacy.suppressLearning(info?.inputType, info?.imeOptions ?: 0)
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        perf?.mark("会话态")
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
-        pinyinKeyboard?.configure(
-            scheme = prefs.effectiveShuangpinScheme,
-            english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
-        )
+        // ⚠ 例外（第 65 轮实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
+        // onCreateInputView 紧接着就是本回调），这里就不再重复 —— 一次 configure 实测 8~22ms，
+        // 占首弹端到端耗时的 5%~15%，而重复的那次不改变任何像素与状态。
+        // 判据两条，缺一不可：
+        //  ① 方案相同 —— 设置页改过双拼方案必须照旧重套（[createConfiguredScheme] 的说明）；
+        //  ② 视图的会话态本来就是空（[PinyinKeyboardView.isSessionPristine]）—— configure 还负责
+        //     收掉残留拼音 / 预测、方向面板、剪贴板面板、密码模式。视图可能在本会话内被重建
+        //     （换肤 / 符号顺序），重建之后用户又开了面板而 onFinishInputView 未必来，
+        //     这时跳过就等于把上一个框的面板带进下一个框（L-110 的同型）。
+        val currentScheme = prefs.effectiveShuangpinScheme
+        val pristine = pinyinKeyboard?.isSessionPristine() ?: false
+        if (createConfiguredScheme == currentScheme && pristine) {
+            createConfiguredScheme = null
+            perf?.mark("configure（建视图时已套）")
+        } else {
+            createConfiguredScheme = null
+            pinyinKeyboard?.configure(
+                scheme = currentScheme,
+                english = pinyinKeyboard?.isEnglishMode() ?: prefs.keyboardEnglish,
+            )
+            perf?.mark("configure")
+        }
+
         // 剪贴板面板粘贴时连接无效会暂存文本，编辑框重新聚焦时自动提交
         flushPendingPaste(info)
+        perf?.mark("收尾")
+        perf?.dump("场景=焦点进入 restarting=$restarting")
         // 不再在这里恢复剪贴板面板，恢复逻辑会触发 onPanelShown→refresh
         // （主线程 DB 查询数百毫秒）→ 诱发 IME 窗口反复 relayout（12:20 循环日志实证），
         // 反而让面板抖动/空白。INVISIBLE 方案下键盘视图实例不重建，面板状态天然保留。
@@ -3668,6 +3729,8 @@ class JinnIme : InputMethodService() {
         if (mode != Mode.NONE) stopRecording(commit = false)
         // 拼音键盘若有未上屏内容，提交首候选
         pinyinKeyboard?.commitComposing()
+        // 会话边界：「建视图时已 configure 过」的凭据只对**这一次**首弹有效（见 createConfiguredScheme）
+        createConfiguredScheme = null
         // 会话边界：搜索面板必须退出，跨输入框残留会让下一次输入被路由进搜索框
         pinyinKeyboard?.hideSearchPanel()
         // 剪贴板面板同理（BUG.md L-110）：键盘收起后再弹出，它会带着上一个输入框的历史条目
@@ -3706,6 +3769,25 @@ class JinnIme : InputMethodService() {
         super.onWindowShown()
         Diagnostics.i(TAG, "onWindowShown: 窗口显示 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowShown", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
+        if (Diagnostics.KEY_TRACE) traceWindowShownLatency()
+    }
+
+    /**
+     * 端到端耗时：`onCreateInputView` 起点 / `onStartInputView` 起点 → 本回调（窗口显示完成）。
+     *
+     * 只在 debug 构建里调用（见 [PerfSpan] 的零成本约定）。两者相减就是「用户点输入框到键盘
+     * 真的出现在屏幕上」的可复跑数字：分段日志（JinnPerf）说明时间花在哪，这一条说明还剩多少
+     * 花在框架的窗口事务与首帧绘制上（那部分本进程改不了，只能作为预算的参照）。
+     */
+    private fun traceWindowShownLatency() {
+        val now = System.nanoTime()
+        val sinceCreate = if (viewCreateAtNanos != 0L) PerfSpan.ms(now - viewCreateAtNanos) + "ms" else "无"
+        val sinceStart = if (startInputViewAtNanos != 0L) PerfSpan.ms(now - startInputViewAtNanos) + "ms" else "无"
+        // 用后清零：同一个视图的后续显示不能继续报「建视图→显示」这个越滚越大的数（那是陈旧值，
+        // 会被读成「这次弹出花了 90 秒」）。清零后复用视图的显示只报「焦点进入→显示」。
+        viewCreateAtNanos = 0L
+        startInputViewAtNanos = 0L
+        Diagnostics.v(PerfSpan.TAG, "窗口显示 建视图→显示=$sinceCreate 焦点进入→显示=$sinceStart")
     }
 
     /**
@@ -3722,6 +3804,9 @@ class JinnIme : InputMethodService() {
     override fun onWindowHidden() {
         super.onWindowHidden()
         pinyinKeyboard?.commitComposing()
+        // 窗口隐藏 = 会话结束：「建视图时已 configure 过」的凭据不再代表本视图的现状
+        // （与 onFinishInputView 同一处口径，两处都清是幂等的）
+        createConfiguredScheme = null
         // 按住态的收尾（BUG.md L-1442 的第二面）：窗口隐藏不保证派发 ACTION_CANCEL，
         // 而 `onFinishInputView` 也不一定来（本条 KDoc 上一段就是为了这件事）。
         // 这是「隐藏但视图可能被复用」的最后一道：清掉退格连删与字母键按住计数，
