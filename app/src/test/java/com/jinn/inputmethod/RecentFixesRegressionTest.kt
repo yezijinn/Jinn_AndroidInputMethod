@@ -8121,4 +8121,45 @@ class RecentFixesRegressionTest {
         )
         assertTrue("动作排收起后 pristine 必须跟着判它", "!actionPanelExpanded" in pristine)
     }
+
+    /**
+     * 搜索未结束时不得报「未找到匹配内容」。
+     *
+     * 分块搜索每块 [SEARCH_WINDOW_ITEMS] 行、首块回来就发布一次保首屏；命中落在更旧的行里时，
+     * 首块发布的是空集。若空态此时就说「未找到」，用户先看到一句否定结论、一两秒后结果又冒出来
+     * （作者报的现象）。要求：扫描中显示「搜索中」；只有扫描结束才允许落到「未找到」。
+     *
+     * 四处必须同时在位，缺任一处都会退化：
+     *  ① 文案常量；② updateEmpty 里排在「未找到」之前；
+     *  ③ 中途发布标 scanning=true；④ 收尾（含结果没变的 else 分支）退回 false。
+     */
+    @Test
+    fun 搜索未结束不得报未找到() {
+        val src = codeOf("SearchPanelView.kt")
+        assertTrue(
+            "必须有「搜索中」这一档文案",
+            Regex("""const val TEXT_EMPTY_SEARCHING = """).containsMatchIn(src),
+        )
+        val empty = blockAfter(src, "private fun updateEmpty()")
+        val idx = listOf(
+            "TEXT_EMPTY_IDLE", "TEXT_EMPTY_SEARCHING", "TEXT_EMPTY_NO_MATCH_SCAN", "TEXT_EMPTY_NO_MATCH",
+        ).map { empty.indexOf(it) }
+        assertTrue("空态四档文案必须都在 updateEmpty 里", idx.all { it >= 0 })
+        assertTrue("「搜索中」必须排在「未找到」之前，否则先报未找到", idx[1] < idx[3])
+        assertTrue(
+            "输入一变就要进「搜索中」（否则 debounce 期间还挂着上一轮的空态结论）",
+            "scanning = !s.isNullOrBlank()" in src,
+        )
+        assertTrue(
+            "中途发布必须标 scanning = true",
+            Regex("""publish\([^)]*(?:\)[^)]*)*?scanning = true""").containsMatchIn(src),
+        )
+        // 收尾状态机：结果变了走 publish(scanning = false)，没变走 else 分支单独退标记。
+        // 用**窗口取整段（含 else）**判，不能按 `scanning = false` 的计数判：文件里有六处
+        // （字段初值 / q 为空 / onShown / onHidden / stopBackgroundWork / 收尾），按计数判会
+        // 放过「删掉 else 分支」—— 第 68 轮的 finally 洞就是同一种假守卫。
+        val tail = TestSources.window(src, "if (publishedCount != matches.size", "Diagnostics.v(TAG, \"搜索完成")
+        assertTrue("结果没变时也必须退掉「搜索中」（else 分支）", "} else {" in tail)
+        assertTrue("else 分支里要把 scanning 置回 false", "scanning = false" in tail)
+    }
 }

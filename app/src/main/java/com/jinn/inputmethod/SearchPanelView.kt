@@ -71,6 +71,17 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private var cap = ClipboardSearch.Cap.NONE
 
     /**
+     * 分块扫描是否仍在进行（结果还没最终落地）。
+     *
+     * 为什么需要它：搜索是**逐块**扫的（每块 [SEARCH_WINDOW_ITEMS] 行），首块一回来就发布一次
+     * 保首屏。若命中恰好落在更旧的行里，首块发布的是空集 —— 此时若直接报「未找到匹配内容」，
+     * 用户会在结果到达前一两秒先看到一句否定结论，随后结果又冒出来，自相矛盾。
+     *
+     * 只在主线程写：所有写点都在 [post] 的 lambda 或主线程回调里。
+     */
+    private var scanning = false
+
+    /**
      * 本轮结果的查询词形态：正文列预览要按它把窗口挪到命中点（BUG.md L-1478）。
      *
      * 与 [currentItems] **同一次** post 里赋值（同一个 lambda），所以两者永远同代；
@@ -256,6 +267,14 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
+                    // 构造期 TextWatcher 可能先于视图装配完成触发，updateEmpty 会碰 listView/textEmpty
+                    if (!uiReady) return
+                    // 输入一变就进「搜索中」：debounce 还有 150ms，若等结果落地才改状态，
+                    // 用户会先看到上一轮的空态结论（「未找到匹配内容」）挂在那里 —— 正是被报的现象。
+                    // 清掉上一轮的截断状态：新查询还没得出任何结论，别让旧提示接着说话。
+                    cap = ClipboardSearch.Cap.NONE
+                    scanning = !s.isNullOrBlank()
+                    updateEmpty()
                     // debounce：取消未执行的上一次查询，合并连续输入只执行最终一次
                     searchHandler.removeCallbacksAndMessages(null)
                     searchHandler.postDelayed({ runSearch() }, DEBOUNCE_MS)
@@ -278,6 +297,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         searchHandler.removeCallbacksAndMessages(null)
         // 上次搜完后空态文案被改成了「未找到匹配内容」/ 截断提示，这里要退回提示语
         cap = ClipboardSearch.Cap.NONE
+        scanning = false
         textEmpty.text = TEXT_EMPTY_IDLE
         textEmpty.visibility = View.VISIBLE
         listView.visibility = View.GONE
@@ -300,6 +320,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         editSearch.setText("")
         searchHandler.removeCallbacksAndMessages(null)
         currentItems = emptyList()
+        scanning = false
         Diagnostics.i(TAG, "搜索面板: 隐藏")
     }
 
@@ -316,6 +337,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun stopBackgroundWork() {
         searchHandler.removeCallbacksAndMessages(null)
         refreshToken++
+        // 中止后不会再有人来退「搜索中」，这里直接复位（视图即将被换掉，但同实例仍可能被读到）
+        scanning = false
         Diagnostics.i(TAG, "搜索面板: 视图重建，中止后台搜索")
     }
 
@@ -376,6 +399,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     currentItems = emptyList()
                     activeForms = emptyList()
                     cap = ClipboardSearch.Cap.NONE
+                    scanning = false
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                 }
@@ -394,7 +418,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             var publishedCap = ClipboardSearch.Cap.NONE
 
             /** 发布一次结果快照（主线程）。截断状态一并带过去：要显示，别让用户以为「就这些」 */
-            fun publish(items: List<ClipboardDb.Item>, relayout: Boolean, cap: ClipboardSearch.Cap) {
+            fun publish(
+                items: List<ClipboardDb.Item>,
+                relayout: Boolean,
+                cap: ClipboardSearch.Cap,
+                scanning: Boolean,
+            ) {
                 publishedCount = items.size
                 publishedCap = cap
                 post {
@@ -402,6 +431,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     currentItems = items
                     activeForms = forms
                     this@SearchPanelView.cap = cap
+                    // 扫描中/已结束一并落地：空态据此决定说「搜索中」还是「未找到」
+                    this@SearchPanelView.scanning = scanning
                     adapter.notifyDataSetChanged()
                     updateEmpty()
                     // 首帧布局竞态兜底（与历史页一致）
@@ -459,7 +490,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 if (isFirstChunk || now - lastPublishAt >= PUBLISH_MIN_INTERVAL_MS) {
                     lastPublishAt = now
                     val midCap = if (retainReached) ClipboardSearch.Cap.RETAIN else ClipboardSearch.Cap.NONE
-                    publish(matches.toList(), relayout = isFirstChunk, cap = midCap)
+                    // 中途发布一律标「仍在扫」：空集时说的是「搜索中」而不是「未找到」
+                    publish(matches.toList(), relayout = isFirstChunk, cap = midCap, scanning = true)
                 }
             }
             // 收尾判一次真实状态：命中截断优先，其次是「库比止损上限大且没扫完」（L-1134）
@@ -468,7 +500,15 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             // 命中的结果（静默少给）。命中数与截断状态都没变时跳过，避免重复布局 —— 但两者任一变了
             // 都得发：截断状态决定提示行显不显示。
             if (publishedCount != matches.size || publishedCap != finalCap) {
-                publish(matches.toList(), relayout = false, cap = finalCap)
+                publish(matches.toList(), relayout = false, cap = finalCap, scanning = false)
+            } else {
+                // 结果与截断都没变 ⇒ 上面那次发布被跳过，但「搜索中」必须退掉：
+                // 否则空态会一直停在「搜索中，请稍等」，而扫描其实早已结束（比报错更误导）。
+                post {
+                    if (reqToken != refreshToken) return@post
+                    scanning = false
+                    updateEmpty()
+                }
             }
             // 关键词是用户输入正文：走 V 级（默认只进 logcat 不落盘），与「日志禁出正文」一致
             Diagnostics.v(TAG, "搜索完成: \"$q\" 命中=${matches.size} 截断=${finalCap.name}")
@@ -495,6 +535,9 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 // 而「库太大、更旧的行没扫」时连「没有」都不成立，单独一句话（BUG.md L-1134）。
                 textEmpty.text = when {
                     editSearch.text.isNullOrBlank() -> TEXT_EMPTY_IDLE
+                    // 扫描未结束时不能下「没有」的结论：命中可能落在还没扫到的旧行里，
+                    // 先说「未找到」再冒出来是自相矛盾（作者报的现象）
+                    scanning && cap == ClipboardSearch.Cap.NONE -> TEXT_EMPTY_SEARCHING
                     cap == ClipboardSearch.Cap.SCAN -> TEXT_EMPTY_NO_MATCH_SCAN
                     else -> TEXT_EMPTY_NO_MATCH
                 }
@@ -536,6 +579,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_EMPTY_IDLE = "输入关键词搜索剪贴板历史"
         /** 空态：有输入但没搜到 */
         const val TEXT_EMPTY_NO_MATCH = "未找到匹配内容\n换个关键词试试"
+        /** 空态：还在扫、暂时没命中 —— 不能提前下「未找到」的结论（作者指定文案） */
+        const val TEXT_EMPTY_SEARCHING = "搜索中,请稍等......"
         /** 空态：没搜到，但库比扫描止损大 —— 更旧的那批根本没查，不能说成「没有」 */
         const val TEXT_EMPTY_NO_MATCH_SCAN = "最近的内容里没找到\n库里内容较多，只扫描了最近的一部分"
         /** 截断提示：命中断在条数 / 驻留字节预算上（不写上限值：先触顶的可能是两者之一） */
