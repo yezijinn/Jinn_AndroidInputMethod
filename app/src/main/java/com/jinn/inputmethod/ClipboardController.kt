@@ -786,6 +786,9 @@ object ClipboardStore {
 
     /**
      * 保存流程。返回保存的条目 id，未保存返回 null。
+     *
+     * 单条入库口径：插入成功后按 [maxItems] 与体积上限裁一次（BUG.md L-1226）。
+     * 文件导入不走这里 —— 它按块提交、在块外裁（[saveChunk] / BUG.md L-1536）。
      * @param sourceAppName 来源应用名（显示用，为空则按包名推断）
      */
     fun save(
@@ -795,12 +798,6 @@ object ClipboardStore {
         sourcePackage: String,
         sourceAppName: String = "",
         maxItems: Int = readMaxItems(context),
-        // 批量导入（`ClipboardFileImporter`）逐条打 V 日志会淹掉诊断：由调用方合并成一条汇总。
-        // 失败分支的 W 不受它影响 —— 那才是要查的事
-        logPerItem: Boolean = true,
-        // 批量导入传 false（BUG.md L-1226）：逐条入库各裁一次 = 每行跑四条全表聚合；
-        // 调用方攒一批后自己裁并在末尾统一裁一次，上限不变
-        trimAfterInsert: Boolean = true,
     ): Long? {
         // 单条体积上限：超出即丢弃（不截断，半截内容比不记更糟）
         if (exceedsItemLimit(text, ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt())) {
@@ -812,19 +809,62 @@ object ClipboardStore {
         // 这是每次复制都走的路径，而判重命中（重复复制，最常见）用不到新分类 —— 库里那一行的值
         // 就是同一段内容的分类结果（纯函数）。隐私分类绝不自动判断的口径不变。
         val id = db.upsert(
-            text, "text", sourcePackage, appName, maxItems, trimAfterInsert = trimAfterInsert,
+            text, "text", sourcePackage, appName, maxItems,
         )
         // 日志必须写在入库之后：upsert 返回 -1 表示加密/写库失败（`ClipboardDb.upsert`），
         // 先记「已保存」会把失败伪装成成功，排查时结论正好相反
         if (id > 0) {
             // MEM-14d：成功分支降为 V —— 这是「每次复制一条」的事件（连打测试时几十条/分钟），
-            // 用 i 级会逐条落盘并随诊断包外传；失败分支保持 W（那才是要查的事）。
-            // logPerItem=false（批量导入）时逐条 V 也免掉：两万行会淹掉诊断，导入侧合并成一条汇总
-            if (logPerItem) Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length}")
+            // 用 i 级会逐条落盘并随诊断包外传；失败分支保持 W（那才是要查的事）
+            Diagnostics.v(TAG, "save: 已保存 #$id len=${text.length}")
         } else {
             Diagnostics.w(TAG, "save: 入库失败，内容未保存 len=${text.length}")
         }
         return id
+    }
+
+    /**
+     * 成批保存（文件导入专用，BUG.md L-1536）：一块行合成**一次提交**。
+     *
+     * 与 [save] 的分工：单条闸（[exceedsItemLimit]）逐条先判、判据同源；判定通过的行整块交给
+     * [ClipboardDb.upsertImportChunk]，加密 / 分类 / 判重 / 置顶 / 坏行自愈 / 幽灵 id 兜底
+     * 全部仍在库里那条路径上逐条发生。逐条 V 日志一并省掉（导入侧只留一条汇总 I），
+     * 失败分支的 W 仍然逐条打 —— 那才是要查的事。
+     *
+     * @return 与 [texts] **同序**的成功标记（超单条上限 / 写库失败为 false）
+     */
+    fun saveChunk(
+        context: Context,
+        db: ClipboardDb,
+        texts: List<String>,
+        sourcePackage: String,
+        sourceAppName: String = "",
+    ): BooleanArray {
+        val ok = BooleanArray(texts.size)
+        if (texts.isEmpty()) return ok
+        // 单条体积上限：超出即丢弃（不截断，半截内容比不记更糟）。判据与 [save] 同源
+        val limit = ClipboardPrefs.of(context).effectiveMaxItemBytes().toInt()
+        val appName = sourceAppName.ifBlank { guessAppName(context, sourcePackage) }
+        val indexes = ArrayList<Int>(texts.size)
+        val accepted = ArrayList<String>(texts.size)
+        for (i in texts.indices) {
+            if (exceedsItemLimit(texts[i], limit)) {
+                Diagnostics.w(TAG, "超单条上限，不入库: len=${texts[i].length}")
+                continue
+            }
+            indexes.add(i)
+            accepted.add(texts[i])
+        }
+        if (accepted.isEmpty()) return ok
+        val ids = db.upsertImportChunk(accepted, sourcePackage, appName)
+        for (j in accepted.indices) {
+            if (j < ids.size && ids[j] > 0) {
+                ok[indexes[j]] = true
+            } else {
+                Diagnostics.w(TAG, "saveChunk: 入库失败，内容未保存 len=${accepted[j].length}")
+            }
+        }
+        return ok
     }
 
     /**

@@ -5686,11 +5686,13 @@ class RecentFixesRegressionTest {
         assertTrue("构建可传临时目录", "tempDir: java.io.File? = null" in codeOf("PhraseIndex.kt"))
         assertTrue("调用方传私有目录", "tempDir = indexDir" in codeOf("PinyinEngine.kt"))
         assertTrue("启动清构建残留", "clearStaleBuildTemps" in codeOf("PinyinEngine.kt"))
-        // L-1226：批量导入的裁剪延后到批末（逐条裁 = 每行四条全表聚合），末尾必裁一次
+        // L-1226：批量导入的裁剪延后到块末（逐条裁 = 每行四条全表聚合），末尾必裁一次。
+        // L-1536 之后入库改成「一块一个事务」（`ClipboardStore.saveChunk`），裁剪仍在块**外**做
         val importer = codeOf("ClipboardFileImporter.kt")
-        assertTrue("导入延后裁剪", "trimAfterInsert = false" in importer)
         assertTrue("攒批裁剪有常量", "internal const val TRIM_EVERY" in importer)
-        assertTrue("入库侧按开关裁", "if (trimAfterInsert) trimTo(" in codeOf("ClipboardDb.kt"))
+        assertTrue("写入走块事务", "ClipboardStore.saveChunk(" in importer)
+        assertTrue("裁剪在块外", "db.trimTo(maxItems, maxTotalBytes)" in importer)
+        assertTrue("入库侧按上限是否给裁", "if (maxItems != null) trimTo(" in codeOf("ClipboardDb.kt"))
         // L-1227：回执要报「实际保留」而不是插入成功数
         assertTrue("回执报实际保留", "实际保留 " in codeOf("ClipboardHistoryActivity.kt"))
         // L-1280：嗅探与记录类型冲突要留痕（真 PNG 不再走回落分支）

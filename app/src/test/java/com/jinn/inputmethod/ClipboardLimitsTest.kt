@@ -659,8 +659,9 @@ class ClipboardLimitsTest {
             "values.put(\"encrypted_content\", reEncrypted)" in src,
         )
 
-        // 只在 upsert 的范围内比较次序（文件里另有一条导入路径也会加密，那条不做判重、不该被算进来）
-        val upsert = TestSources.blockAfter(src, "fun upsert(")
+        // 只在 upsert 的（唯一）实现体里比较次序：文件里另有一条导入路径也会加密，那条不做判重、不该被算进来。
+        // L-1536 之后单条与成批两个入口共用这一份实现（upsertRow），锚点随之落到它身上
+        val upsert = TestSources.blockAfter(src, "private fun upsertRow(")
         val hashAt = upsert.indexOf("stableHash(content)")
         val encAt = upsert.indexOf("ClipboardCrypto.encrypt(content)")
         assertTrue("upsert 里必须能定位到判重与加密两处", hashAt >= 0 && encAt >= 0)
@@ -680,7 +681,7 @@ class ClipboardLimitsTest {
     @Test
     fun 命中行消失不得返回幽灵id() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        val upsert = TestSources.blockAfter(src, "fun upsert(")
+        val upsert = TestSources.blockAfter(src, "private fun upsertRow(")
 
         assertTrue(
             "命中分支必须看 update 的返回行数",
@@ -708,7 +709,7 @@ class ClipboardLimitsTest {
     @Test
     fun 重复复制不得重复解密() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        val upsert = TestSources.blockAfter(src, "fun upsert(")
+        val upsert = TestSources.blockAfter(src, "private fun upsertRow(")
 
         assertTrue(
             "试解必须有界：已在备忘里的哈希不再试解",

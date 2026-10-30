@@ -31,13 +31,16 @@ class ClipboardFileImporterTest {
             input = ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)),
             limitBytes = limitBytes,
             knownHashes = known,
-            onAccepted = { text ->
-                if (accept(text)) {
-                    accepted.add(text)
-                    true
-                } else {
-                    false
+            writeChunk = { texts ->
+                // 假写库：只记账（真库的加密 / 判重 / 置顶在设备上验，见 01-agent-1.md）
+                val marks = BooleanArray(texts.size)
+                for (i in texts.indices) {
+                    if (accept(texts[i])) {
+                        accepted.add(texts[i])
+                        marks[i] = true
+                    }
                 }
+                marks
             },
             maxLines = maxLines,
             maxFileBytes = maxFileBytes,
@@ -169,12 +172,37 @@ class ClipboardFileImporterTest {
 
     @Test
     fun 入库失败计数且不永久占用去重() {
-        // 「甲」两次入库都失败：第二次仍要再试（不能因第一次失败就被当成重复跳过）
+        // 「甲」第一次入库失败：判定与写库现在**按块**发生（BUG.md L-1536），
+        // 同一块里紧跟的重复行在块末之前就已按「重复」跳过（它的成败要到块末才知道）；
+        // 但失败行在块末被移出已知集合 ⇒ 后面的块里同内容仍会再试。分账三项之和仍等于行数。
         val (r, got) = run("甲\n甲\n乙\n", accept = { it != "甲" })
         assertEquals(listOf("乙"), got)
-        assertEquals(2, r.failed)
+        assertEquals(1, r.failed)
         assertEquals(1, r.added)
+        assertEquals(1, r.duplicate)
+        assertEquals(r.lines, r.added + r.duplicate + r.tooLong + r.blank + r.failed)
+    }
+
+    @Test
+    fun 跨块时失败行不被永久判重() {
+        // 第 1 行失败，第 IMPORT_CHUNK_ROWS 行之后再来一条同内容：块末已把它移出已知集合 ⇒ 会再试
+        val lines = ArrayList<String>()
+        lines.add("甲")
+        repeat(ClipboardFileImporter.IMPORT_CHUNK_ROWS - 1) { lines.add("填充$it") }
+        lines.add("甲")
+        var firstTry = true
+        val (r, got) = run(lines.joinToString("\n")) { text ->
+            if (text == "甲" && firstTry) {
+                firstTry = false
+                false
+            } else {
+                true
+            }
+        }
+        assertEquals(1, r.failed)
+        assertEquals(ClipboardFileImporter.IMPORT_CHUNK_ROWS, r.added)
         assertEquals(0, r.duplicate)
+        assertTrue("第二块的「甲」要再试一次", got.count { it == "甲" } == 1)
     }
 
     @Test
@@ -194,7 +222,7 @@ class ClipboardFileImporterTest {
             input = input,
             limitBytes = 1 shl 16,
             knownHashes = mutableSetOf(),
-            onAccepted = { true },
+            writeChunk = { texts -> BooleanArray(texts.size) { true } },
             maxFileBytes = 64L * 1024,
         )
         assertEquals(ClipboardFileImporter.Abort.FILE_TOO_LARGE, r.abort)

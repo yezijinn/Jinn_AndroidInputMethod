@@ -17,7 +17,9 @@ import java.io.Reader
  * 边界与闸门（全部与既有路径同源，不新增「只有导入才有的」宽松口径）：
  *  - 单条上限与采集 / 粘贴同源（[ClipboardPrefs.effectiveMaxItemBytes]）：超限行**整行丢弃**，
  *    不截断入库 ——「半截比不记更糟」；
- *  - 入库走 [ClipboardStore.save]（全应用唯一入库入口）：加密 / 自动分类 / 条数裁剪 / 单条闸一次不落；
+ *  - 入库走 [ClipboardStore.saveChunk]（[ClipboardStore] 的唯一入库入口，一块一个事务）：
+ *    加密 / 自动分类 / 判重 / 置顶 / 单条闸一条不落，只是把**提交**从每行一次合成每
+ *    [IMPORT_CHUNK_ROWS] 行一次（BUG.md L-1536）；
  *  - 去重与备份导入同源（[ClipboardDb.stableHash] + [ClipboardDb.allHashes]）：命中即跳过，
  *    **不覆盖**既有条目的来源与时间 —— 导入是幂等的，同一文件可重复导入；
  *  - 文件级两道闸：总字节 ≤ [MAX_FILE_BYTES]、物理行数 ≤ [MAX_IMPORT_LINES]，超限**中止**，
@@ -48,10 +50,30 @@ internal object ClipboardFileImporter {
 
     /**
      * 每多少条插入裁一次（BUG.md L-1226）：裁剪要跑四条全表聚合，逐条裁在两万行导入时是分钟级；
-     * 攒批的代价是中间态最多多占 「本值 × 单条上限」的字节（上限 256KB × 100 ≈ 25MB），
-     * 末尾还有一次收尾裁剪兜住最终状态。
+     * 攒批的代价是中间态最多多占「本值 × 单条上限」的字节，末尾还有一次收尾裁剪兜住最终状态。
+     * 实际峰值由文件级闸封顶：整份文件 ≤ [MAX_FILE_BYTES] ⇒ 中间态 ≤ 8MB + 一行（≤ 260KB）。
      */
     internal const val TRIM_EVERY = 100
+
+    /**
+     * 一块多少条写进**一个事务**（BUG.md L-1536）。
+     *
+     * 取 [TRIM_EVERY] 同值只是让「一块 = 一次裁剪」可预测；**裁剪落在事务之外靠的是调用点顺序**
+     * （`ClipboardStore.saveChunk` 返回之后才 `trimTo`），与本值与块大小是否相等无关 ——
+     * 裁剪的计数在 `runImport` 里按**成功条数**累加，所以两者解绑也不会把裁剪塞进事务，
+     * 也不会多裁几次（总次数恒为 ⌊新增数 / TRIM_EVERY⌋）。
+     * 一万行 = 100 次提交，而不是 10 000 次。
+     *
+     * 为什么不取更大：本机（MuMu · x86_64）10 000 行实测 chunk=1 中位 42.5 s（2 样本）、
+     * chunk=100 中位 18.2 s（16.99 / 18.21 / 18.62）、chunk=500 中位 16.8 s（16.71 / 16.78 / 17.49）。
+     * 100→500 只省 1.4 s（7.8%），且**两个区间重叠**（100 的最小值 16.99 < 500 的最大值 17.49）；
+     * 而回滚窗口与单块持锁时间按块线性放大（100 条 ≈180 ms ⇒ 500 条 ≈0.9 s，这期间用户的复制
+     * 与面板查询都排在锁外）⇒ 取 100（最坏丢 100 行 = 导入上限的 0.5%）。
+     *
+     * 内存上界：待写明文 ≤ 文件级闸 [MAX_FILE_BYTES]（8MB）+ 一行（≤ [ClipboardPrefs.MAX_ITEM_KB_CAP]KB），
+     * **不是**「本值 × 单条上限」（100 × 256KB = 25MB 那种组合被 8MB 文件闸挡在外面，两个闸不会同时顶满）。
+     */
+    internal const val IMPORT_CHUNK_ROWS = TRIM_EVERY
 
     /** 中止原因（回执按此给用户一句话说明） */
     internal enum class Abort {
@@ -126,24 +148,22 @@ internal object ClipboardFileImporter {
                 input = it,
                 limitBytes = limitBytes,
                 knownHashes = known,
-                onAccepted = { text ->
-                    val ok = ClipboardStore.save(
+                writeChunk = { texts ->
+                    // 一块一个事务（BUG.md L-1536）：入库仍走 ClipboardStore 这个唯一入口，
+                    // 加密 / 分类 / 判重 / 置顶 / 坏行自愈 / 单条闸一条不落，只是把提交合并了
+                    val ok = ClipboardStore.saveChunk(
                         context = context,
                         db = db,
-                        text = text,
+                        texts = texts,
                         sourcePackage = context.packageName,
                         sourceAppName = SOURCE_APP_NAME,
-                        maxItems = maxItems,
-                        // 逐条 V 日志合并为下面一条汇总 I：两万行导入逐条落盘会淹掉诊断
-                        logPerItem = false,
-                        // 裁剪延后到批末（BUG.md L-1226）：逐条裁 = 每行四条全表聚合，
-                        // 两万行是分钟级，且全程持锁把用户的复制挤在门外
-                        trimAfterInsert = false,
-                    ) != null
-                    if (ok) {
-                        imported.add(ClipboardDb.stableHash(text))
-                        // 每 TRIM_EVERY 条裁一次：既省掉绝大多数全表聚合，又把中间态的增长
-                        // 限制在「TRIM_EVERY × 单条上限」以内
+                    )
+                    for (i in texts.indices) {
+                        if (!ok[i]) continue
+                        imported.add(ClipboardDb.stableHash(texts[i]))
+                        // 每 TRIM_EVERY 条裁一次（按**成功条数**计，与块边界无关）：既省掉绝大多数
+                        // 全表聚合，又把中间态的增长限制在上限 + 一块以内；裁剪发生在 saveChunk
+                        // 返回之后，所以它永远在事务之外（不是「块大小取同值」换来的）
                         if (++sinceTrim >= TRIM_EVERY) {
                             sinceTrim = 0
                             // 两个上限都要传用户值：只传条数的话体积会按库里的默认值（100MB）裁，
@@ -169,17 +189,28 @@ internal object ClipboardFileImporter {
     }
 
     /**
-     * 流式导入（纯 JVM，可单测）：逐行有界读取 → 去重 → [onAccepted] 入库。
+     * 流式导入（纯 JVM，可单测）：逐行有界读取 → 去重 → 攒块交给 [writeChunk] 入库。
      *
-     * [knownHashes] 会被**就地更新**（库内已有 + 本批已接受）；[onAccepted] 返回 false 时把该
-     * hash 从集合移除，让同文件后续重复行还能再试一次（入库失败的原因通常是加密 / 写库异常，
-     * 不是内容问题 —— 不该把它永久判为「已存在」）。
+     * [knownHashes] 会被**就地更新**（库内已有 + 本批已接受）；某个块里有行入库失败时，那些
+     * hash 在块末从集合移除，让同文件后续（下一块）的重复行还能再试一次（入库失败的原因通常是
+     * 加密 / 写库异常，不是内容问题 —— 不该把它永久判为「已存在」）。块内紧跟的重复行在块末
+     * 之前就已按重复跳过 —— 它的成败要到块末才知道，这条差异见 [IMPORT_CHUNK_ROWS] 与
+     * `更新日志.md`（2026-10-31）。
      */
     internal fun importStream(
         input: InputStream,
         limitBytes: Int,
         knownHashes: MutableSet<String>,
-        onAccepted: (String) -> Boolean,
+        /**
+         * 一行的入库动作改成「攒够 [IMPORT_CHUNK_ROWS] 行写一次」（BUG.md L-1536）：
+         * 入参是**同序**的行文本，返回**同序**的「是否入库成功」（长度不足按失败算）。
+         *
+         * 为什么不是「一行一个回调」：回调返回布尔值意味着**写库已经在回调里做完了**，
+         * 那样每条仍是一个隐式事务（一万行 = 一万次提交）。攒块之后每条的处理顺序、
+         * 判重依据（[knownHashes] 仍逐行即时更新）、中止条件的位置都**原封不动**，
+         * 变的只是提交粒度。
+         */
+        writeChunk: (List<String>) -> BooleanArray,
         maxLines: Int = MAX_IMPORT_LINES,
         maxFileBytes: Long = MAX_FILE_BYTES,
     ): StreamResult {
@@ -200,6 +231,41 @@ internal object ClipboardFileImporter {
         var totalChars = 0L
         var badChars = 0L
         var abort: Abort? = null
+        // 待写块（不足一块的部分在流末或中止时补写）
+        val pending = ArrayList<String>(IMPORT_CHUNK_ROWS)
+
+        /**
+         * 把攒下的行写掉并按结果记账。
+         *
+         * 失败的行**从 [knownHashes] 移除**：入库失败的原因通常是加密 / 写库异常，不是内容问题，
+         * 不该把它永久判为「已存在」（同文件后面的重复行还能再试一次）。这条规则现在按**块**生效 ——
+         * 同一块内、且同内容出现在失败行**之后**的重复行，会被当作重复跳过（那一行的成败要到块末才知道）。
+         * 块只有 [IMPORT_CHUNK_ROWS] 行，且触发条件要求「前一条真的写库失败」，实测路径里
+         * 只有 Keystore / 磁盘级故障；回执的三项之和（`added + duplicate + tooLong + blank + failed`）
+         * 仍恒等于 `lines`，不受影响。
+         */
+        fun flushPending() {
+            if (pending.isEmpty()) return
+            val rows = ArrayList(pending)
+            pending.clear()
+            val results = try {
+                writeChunk(rows)
+            } catch (t: Throwable) {
+                // 写库自己抛了：整批按失败计（与逐条版「onAccepted 抛异常」同口径），再把异常交给
+                // 外层的中止判定 —— 记账不能因为异常而少一行
+                failed += rows.size
+                rows.forEach { knownHashes.remove(ClipboardDb.stableHash(it)) }
+                throw t
+            }
+            for (i in rows.indices) {
+                if (i < results.size && results[i]) {
+                    added++
+                } else {
+                    failed++
+                    knownHashes.remove(ClipboardDb.stableHash(rows[i]))
+                }
+            }
+        }
 
         // 半途异常（断流 / 解码抛 / 写库抛）也要留下已累计的统计（BUG.md L-1325）：库里已经
         // 逐条提交了 added 条，回执若只报一句「导入失败」，用户会以为一条都没进、白导一轮
@@ -236,22 +302,27 @@ internal object ClipboardFileImporter {
                             break
                         }
                         val hash = ClipboardDb.stableHash(text)
+                        // 判重仍是**逐行即时**（库内已有 + 本批已接受）：攒批不能让块内重复漏判
                         if (!knownHashes.add(hash)) {
                             duplicate++
                             continue
                         }
-                        if (onAccepted(text)) {
-                            added++
-                        } else {
-                            failed++
-                            knownHashes.remove(hash)
-                        }
+                        pending.add(text)
+                        if (pending.size >= IMPORT_CHUNK_ROWS) flushPending()
                     }
                 }
             }
         } catch (t: Throwable) {
             abort = Abort.INTERRUPTED
             Diagnostics.w(TAG, "导入中途异常: ${t.javaClass.simpleName}")
+        }
+        // 收尾把不足一块的行写掉：中止（字节 / 行数 / 非文本）也是「已接受」的行 ——
+        // 逐条写的旧口径里它们同样是立刻入库的，不能因为攒批而丢掉
+        if (pending.isNotEmpty()) {
+            runCatching { flushPending() }.onFailure {
+                abort = Abort.INTERRUPTED
+                Diagnostics.w(TAG, "导入收尾写库异常: ${it.javaClass.simpleName}")
+            }
         }
         // 早退（无换行巨行越预算）在读行器里表现为 EOF：这里把中止原因认回来，
         // 否则会伪装成「正常读完」（用户看不到任何中止说明）

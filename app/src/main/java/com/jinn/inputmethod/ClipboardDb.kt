@@ -370,7 +370,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 不再重复解密（见 [verifiedReadable]，BUG.md L-199）；没验证过的行仍会真解一次。
      *
      * 加密放在**判重之后**：去重只需要明文哈希，重复内容不必白做一次 AES-GCM + base64（BUG.md L-182）。
-     * 不存在则插入，超上限裁剪最旧非收藏。
+     * 不存在则插入，超上限裁剪最旧非收藏：这是**单条入库**的口径，插入后必裁一次。
+     * 批量导入不走这里（它自己在块外裁，见 [upsertImportChunk] / BUG.md L-1226）。
      *
      * @return 条目 id（已存在的行或新插入的行）；内容为空 / 加密失败返回 -1。
      *   命中哈希但那一行已经不在了（外部改库、库文件被换）时**落到插入路径重建**，
@@ -387,9 +388,113 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // 重复复制（最常见路径）沿用库里那一行的值即可 —— 11 条正则 × 最多 8KB 的扫描不必每次做。
         category: String? = null,
         isFavorite: Boolean = false,
-        // 批量导入传 false（BUG.md L-1226）：逐条裁要跑四条全表聚合（文本字节 SUM、图片行、收藏行、
-        // 类型计数），两万行导入是分钟级；调用方攒一批自己裁（末尾必裁一次，上限照样成立）
-        trimAfterInsert: Boolean = true,
+    ): Long = upsertRow(
+        content, contentType, sourcePackage, sourceAppName,
+        maxItems = maxItems,
+        category = category,
+        isFavorite = isFavorite,
+    )
+
+    /**
+     * 文件导入专用成批入口（BUG.md L-1536）：一块行合成**一次提交**，逐条仍走 [upsertRow]。
+     *
+     * 为什么是「块事务 + 逐条语义」而不是备份导入那样的「纯插入批」：
+     * 文件导入走的是 `upsert`，五条语义一条都不能丢 —— ①`findIdByHash` 判重；②命中即更新元数据并
+     * **置顶**（`created_at = monotonicNow()`，L-1092 钳位）；③命中但密文解不开时**坏行自愈**（L-173）；
+     * ④命中却更新 0 行时**幽灵 id 兜底**改插入（L-200）；⑤未命中才加密 + 分类 + 插入。
+     * 这五条全是「逐条即时决策」，能省的只有提交开销 ⇒ 只把 `beginTransaction/endTransaction`
+     * 提到块这一层，每条的处理顺序、事务内的读（`MAX(created_at)` / `findIdByHash` /
+     * `decryptsById`）都仍在原处：同一连接在事务内**看得见自己未提交的写入**，
+     * 于是每行的 `created_at` 依旧是「该行处理时刻」的单调值（逐行 +1），不是批末统一取一次。
+     *
+     * 为什么整块放在监视器内（与 [upsert] 同一把锁）：若在锁外开事务再逐条进 [upsert]，
+     * 就出现「先拿连接、再拿监视器」的反向顺序 —— 另一线程此刻正持监视器等连接
+     * （非 WAL 库的连接池只有一个连接）⇒ 死锁。保持一致顺序（监视器 → 连接）即可。
+     * 代价是一块的处理时间占着锁：一块 [ClipboardFileImporter.IMPORT_CHUNK_ROWS] 条、约 180 ms。
+     * ⚠ 与第 68 轮的块级备份导入**不同**：那条路径把 `ClipboardCrypto.encrypt` 整块放在锁**外**
+     * （[insertRestoredBatch] ②的取舍），这里做不到 —— 每行要不要加密取决于判重 / 自愈的逐行结果。
+     * 实测这块持锁时间里约 3/4 是块内的 Keystore 加密（1.4 ms/条）与哈希（0.14 ms/条），不是 SQL；
+     * 再压锁占用得先把加密挪出锁：要求「先判重、再只对未命中行加密」，而判重结果是逐行的，
+     * 于是预加密会在重复导入（幂等重导是常态）上白做整份密文 —— 这一笔不在这里做。
+     *
+     * **不做整批一个事务**：环境级失败（磁盘满 / 库损坏 / 提交失败）会让整批回滚，
+     * 一条坏行毁掉一万行；块级最坏只丢当前这一块。块内某行写失败（加密失败 / 单条 SQL 失败）
+     * 不影响同块其余行 —— `insert` 自己吞 `SQLException` 返回 -1。
+     *
+     * 整块回滚时 [verifiedReadable] 会残留本块已登记、但**没有提交**的哈希。可达后果只有一种：
+     * 本块里刚被「坏行自愈」覆盖的行（备忘已登记）随整块一起回滚 ⇒ 那一行回到坏密文，而备忘仍说
+     * 「可读」⇒ 下次复制命中时会跳过试解，**少一次自愈机会**。不丢数据：它在本块之前本就不可解，
+     * 回滚只是让它保持原样；而备忘满 [VERIFIED_MEMO_MAX] 条即整体清空，进程重启同样失效，
+     * 之后一次复制就会重新试解。
+     * 另一条看似相关的路径**不成立**：备份恢复只要插进任何一行就整批 `verifiedReadable.clear()`
+     * （[insertRestoredBatch] ③），所以「坏行经恢复进来」不会被备忘挡住。
+     * 权衡后不做逐条 forget：触发要求开 / 提交阶段的环境级失败（磁盘满 / 库损坏），
+     * 而在故障态下为一整块每行跑一次 SHA-256，换的只是这一条极端组合。
+     * 留档：若将来真出现「导入失败后坏行不自愈」，先看这里。
+     *
+     * @return 与入参**同序**的 id；成功为该行 id，失败为 -1（整块回滚时全部 -1）
+     */
+    @Synchronized
+    fun upsertImportChunk(
+        texts: List<String>,
+        sourcePackage: String,
+        sourceAppName: String,
+    ): LongArray {
+        val out = LongArray(texts.size) { -1L }
+        if (texts.isEmpty()) return out
+        var began = false
+        try {
+            // 开事务本身也可能抛（磁盘满 / 库打不开）：所以它在 try 里，且下面按 began 决定收尾
+            writableDatabase.beginTransaction()
+            began = true
+            for (i in texts.indices) {
+                out[i] = upsertRow(
+                    content = texts[i],
+                    contentType = "text",
+                    sourcePackage = sourcePackage,
+                    sourceAppName = sourceAppName,
+                    // 裁剪由调用方在块提交之后做（不在事务内）：块内裁会让删除与写入共享回滚域
+                    maxItems = null,
+                    category = null,
+                    isFavorite = false,
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } catch (e: Exception) {
+            // 整块回滚：按「这一块全失败」记账，绝不虚报进库数
+            out.fill(-1L)
+            Diagnostics.w(TAG, "导入分块写入失败，本块 ${texts.size} 条整块回滚: ${e.javaClass.simpleName}")
+        } finally {
+            if (began) {
+                try {
+                    writableDatabase.endTransaction()
+                } catch (e: Exception) {
+                    // 提交阶段才失败（磁盘满）：同样按未提交计
+                    out.fill(-1L)
+                    Diagnostics.w(TAG, "导入分块提交失败: ${e.javaClass.simpleName}")
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * [upsert] 的实现体：**只管一条**、不管事务边界。
+     *
+     * 事务由调用方决定：单条走隐式事务（[upsert]），文件导入把一块合成一次提交
+     * （[upsertImportChunk]，BUG.md L-1536）。除事务边界外，两条路径的处理**逐字同源**。
+     *
+     * @param maxItems 非 null = 插入成功后按该条数上限裁一次（单条入库的既有行为）；
+     *   null = 本次不裁（成批入口由调用方在块外裁，BUG.md L-1226）。
+     */
+    private fun upsertRow(
+        content: String,
+        contentType: String,
+        sourcePackage: String,
+        sourceAppName: String,
+        maxItems: Int?,
+        category: String?,
+        isFavorite: Boolean,
     ): Long {
         if (content.isBlank()) return -1
         val hash = stableHash(content)
@@ -446,7 +551,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (id > 0) {
             // 刚写入的行当然可解：登记备忘，下一次同内容复制不必再试解（BUG.md L-199）
             rememberReadable(hash)
-            if (trimAfterInsert) trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
+            // maxItems 非 null 才裁（单条入库的既有行为）；成批入口传 null，由调用方在块外裁
+            if (maxItems != null) trimTo(maxItems, ClipboardPrefs.of(appContext).maxTotalBytes)
         }
         return id
     }
