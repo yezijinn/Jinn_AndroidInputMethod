@@ -5931,20 +5931,13 @@ class RecentFixesRegressionTest {
         assertTrue("非图片拦截不看 declared", "if (sniffed == null && looksLikeNonImage(head))" in gallery)
         val ime = codeOf("JinnIme.kt")
 
-        // 暂存件删除**逐个分支钉**，不数次数（AI2 A-578 / A-597）：旧断言数「picked.file.delete()
-        // 恰好 4 次」，增删一个分支就红；而真正的契约是「没交给宿主的分支必须删，交给宿主的不得删」。
+        // 暂存件删除按**契约**钉，不数次数也不逐个点名字（AI2 A-578 / A-597）：契约是
+        // 「已交给宿主 / 文件本就不在的分支不得删，其余分支必须删」。只有「不得删」那一小撮是名单
+        // （每个名字都有理由），其余全部由 `InsertResult` 枚举派生 ⇒ 新增分支照契约办就自动落在
+        // 「必须删」那一组，不必回来改本用例；漏删则当场红。
         val flush = TestSources.blockAfter(ime, "private fun flushPendingGalleryImage(")
         val commitWhen = TestSources.blockAfter(
             flush, "when (GalleryInsert.commit(this, picked.file, picked.mime))",
-        )
-        val branchNames = Regex("""GalleryInsert\.InsertResult\.(\w+) ->""")
-            .findAll(commitWhen).map { it.groupValues[1] }.toSet()
-        // 期望集合由**枚举**派生，不写死字面量：新增一个 InsertResult 就得在这里决定删不删
-        // （写死 5 个名字的话，加分支即红 —— 那又回到「增删分支即红」的老毛病）
-        assertEquals(
-            "每个 InsertResult 分支都要在这里归类（新增分支必须显式决定删不删暂存件）",
-            GalleryInsert.InsertResult.values().map { it.name }.toSet(),
-            branchNames,
         )
         fun commitBranch(name: String): String {
             val at = commitWhen.indexOf("GalleryInsert.InsertResult.$name ->")
@@ -5953,13 +5946,22 @@ class RecentFixesRegressionTest {
             val next = Regex("""GalleryInsert\.InsertResult\.\w+ ->""").find(rest, 1)?.range?.first
             return if (next == null) rest else rest.substring(0, next)
         }
-        // 已交给宿主的两个分支**不得**立即删：`commitContent` 返回值不可信，有宿主异步读 URI，
-        // 立即删会让对方读到裂图。FileMissing 是「文件已经不在了」，删也是空操作，同样不该有。
-        for (noDelete in listOf("Submitted", "Rejected", "FileMissing")) {
-            assertFalse("$noDelete 不该删暂存件（宿主仍在读 / 文件已不在）", ".delete()" in commitBranch(noDelete))
-        }
-        for (orphan in listOf("NoConnection", "UriFailed")) {
-            assertTrue("$orphan 从未交给宿主，必须删掉暂存件", ".delete()" in commitBranch(orphan))
+        val branchNames = GalleryInsert.InsertResult.values().map { it.name }.toSet()
+        assertEquals(
+            "每个 InsertResult 分支都要在这个 when 里接线（漏接的话下面取分支会当场报错）",
+            branchNames,
+            Regex("""GalleryInsert\.InsertResult\.(\w+) ->""").findAll(commitWhen).map { it.groupValues[1] }.toSet(),
+        )
+        // 豁免名单（往这里加名字必须给出理由）：Submitted / Rejected 已交给宿主，`commitContent`
+        // 返回值不可信、有宿主异步读 URI，立即删会让对方读到裂图；FileMissing 是文件已经不在了，删是空操作。
+        val deliveredToHost = setOf("Submitted", "Rejected", "FileMissing")
+        for (name in branchNames) {
+            val body = commitBranch(name)
+            if (name in deliveredToHost) {
+                assertFalse("$name 已交给宿主 / 文件已不在，不得删暂存件", "picked.file.delete()" in body)
+            } else {
+                assertTrue("$name 从未交给宿主，必须删掉暂存件", "picked.file.delete()" in body)
+            }
         }
     }
 

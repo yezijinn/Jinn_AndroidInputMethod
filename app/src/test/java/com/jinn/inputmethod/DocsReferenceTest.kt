@@ -1049,6 +1049,27 @@ class DocsReferenceTest {
                 "${activities - headless}",
             "**${activities - headless} 个页面**" in overview,
         )
+        // ⑨ 「每个 activity 显式归类」（`BUG.md` L-1535 / AI2 A-09）：不靠「没被认成无界面就当可见」。
+        //    可见页面的客观判据是它有布局；无界面页面必须由主题派生或进白名单（上面两道）。
+        //    新增的无界面页若用了别的透明主题，这里当场点名，而不是被静静算成第 N+1 个页面。
+        //    读的是剥注释后的代码（`TestSources.codeSource`）：注释掉的 `setContentView(` 不算有布局
+        //    （L-116 / L-133 的老坑：拿原文对拍会被注释满足）。
+        val noLayout = (declaredNames - headlessActivities(manifest, headlessWhitelist)).sorted().filter { name ->
+            "setContentView(" !in TestSources.codeSource("${name.trimStart('.')}.kt")
+        }
+        assertTrue(
+            "这些 activity 既没被认成无界面（主题派生 / 白名单）又没有布局，先归类再数页面：$noLayout",
+            noLayout.isEmpty(),
+        )
+        // 白名单是唯一还有人工口子的地方：它的语义就是「无布局」，所以反过来也验一次 ——
+        // 有布局的页面一旦进了白名单，会被算成无界面、页面数少报一页，而上面 ⑨ 段因为被豁免看不到。
+        val whitelistedWithLayout = headlessWhitelist.sorted().filter { name ->
+            "setContentView(" in TestSources.codeSource("${name.trimStart('.')}.kt")
+        }
+        assertTrue(
+            "白名单（无界面）里的 activity 其实有布局，页面数会少报：$whitelistedWithLayout",
+            whitelistedWithLayout.isEmpty(),
+        )
     }
 
     /**
