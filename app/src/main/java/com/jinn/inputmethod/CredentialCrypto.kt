@@ -43,9 +43,9 @@ object CredentialCrypto {
     }
 
     /**
-     * 缓存 Keystore 里的密钥句柄（与 [ClipboardCrypto] 同一取舍）：`getKey` 每次要走 binder/TEE
-     * （5~20ms），而凭据读取分布在「组装 Provider」「设置页摘要」等多处；句柄只是对托管密钥的
-     * 不透明引用，缓存它不削弱安全性。
+     * 缓存 Keystore 里的密钥句柄（与 [ClipboardCrypto] 同一取舍）：`getKey` 每次要走一次 binder
+     * （本机实测 0.27 ms，慢机型更高），而凭据读取分布在「组装 Provider」「设置页摘要」等多处；
+     * 句柄只是对托管密钥的不透明引用，缓存它不削弱安全性。
      *
      * ⚠ **不能**用 `by lazy`（与 `ClipboardCrypto` 的 BUG.md L-1095 同型）：句柄是可失效资源，
      * 用户在系统设置里清除凭据 / Keystore 服务异常后 `Cipher.init` 恒抛，而 `by lazy` 算一次

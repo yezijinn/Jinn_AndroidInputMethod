@@ -3046,7 +3046,7 @@ class RecentFixesRegressionTest {
 
         // L-530 / L-531（2026-10-03 第九轮修复）：凭据读取必须**下沉到按 id 分开的工厂**且 id 只求值一次。
         // 此前把关凭据的 10 个 getter 全作为 `providerOf` 的参数求值（Kotlin 参数调用前求值）⇒
-        // 冷缓存下一次翻译要在主线程做最多 8 次 TEE 解密（5~20ms/次 = 40~160ms 停顿），而只用其中一家；
+        // 冷缓存下一次翻译要在主线程做最多 8 次 TEE 解密（本机实测约 1.1 ms/次 = 约 9 ms 停顿），而只用其中一家；
         // 且 `translateProvider` 的 getter 在键未写入时会逐家探测、同帧还被求值两次。
         assertTrue(
             "L-530：Prefs 必须提供按 id 的 Provider 工厂（只读该家凭据）",

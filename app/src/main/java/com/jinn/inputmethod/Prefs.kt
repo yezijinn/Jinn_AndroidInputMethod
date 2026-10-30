@@ -1036,7 +1036,7 @@ class Prefs(private val appContext: Context) {
         if (!CredentialCrypto.looksEncrypted(raw)) {
             Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
             // ⚠ 顺序是「**先加密、再比对、最后落盘**」（2026-10-02 修复：上一轮把闸放在加密
-            // 之前，两次 `getString` 紧邻 ⇒ 必然相等 ⇒ 闸等于没挡）。加密是慢操作（5~20ms），
+            // 之前，两次 `getString` 紧邻 ⇒ 必然相等 ⇒ 闸等于没挡）。加密是慢操作（本机实测约 1.1 ms），
             // 期间别的 `Prefs` 实例写入新值时，这里会把旧明文重新加密写回磁盘 ——
             // 缓存与**磁盘**一起回退，正是 L-342 要根除的场景（连重启都恢复不回来）。
             // 这里不复用 [writeCredential]：那条路径没有「比对期望旧值」这一步，
@@ -1061,7 +1061,7 @@ class Prefs(private val appContext: Context) {
         return when (val outcome = CredentialCrypto.decryptDetailed(raw)) {
             is CredentialCrypto.DecryptOutcome.Ok -> {
                 val plain = outcome.plain
-                // 解密是慢操作（Keystore 5~20ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
+                // 解密是慢操作（Keystore 本机实测约 1.1 ms），期间别的 `Prefs` 实例可能已经写入了新值 ——
                 // 无条件回填会把缓存**盖回旧值**，而「凭据不留痕」随后正是拿这个值去比对剪贴板的，
                 // 用户刚复制的新 Key 会因此留在剪贴板历史里（2026-10-01 修复 L-298）。
                 if (strOr(key, "").orEmpty() != raw) {
@@ -1395,7 +1395,7 @@ class Prefs(private val appContext: Context) {
      * 按 [id] 组装 Provider —— **只读该家的凭据**（2026-10-03 修复 L-530 / L-531）。
      *
      * 此前把关凭据的 10 个 getter 全部作为 `providerOf` 的参数求值（Kotlin 的参数在调用前求值）
-     * ⇒ 冷缓存下一次翻译要在**主线程**做最多 8 次 TEE 解密（5~20ms/次 = **40~160ms 停顿**），
+     * ⇒ 冷缓存下一次翻译要在**主线程**做最多 8 次 TEE 解密（本机实测约 1.1 ms/次 = **约 9 ms 停顿**），
      * 而本次只用其中一家；且 `translateProvider` 的 getter 在键未写入时会**逐家探测凭据**
      * （首次使用者必然如此），同帧还会被求值两次。现在 id 只求值一次、凭据只读该家。
      *
@@ -1991,7 +1991,7 @@ class Prefs(private val appContext: Context) {
         /**
          * 凭据解密的**进程级**缓存：`存储键 → 明文`。
          *
-         * 为什么必须缓存：Keystore 解密要走 binder/TEE（5~20ms/次），而凭据读取分布在「组装 Provider」
+         * 为什么必须缓存：Keystore 解密要走 binder/TEE（本机实测约 1.1 ms/次），而凭据读取分布在「组装 Provider」
          * 「设置页摘要」「多配置判空」等多处、且可能在主线程 —— 每次都解密会明显卡顿。
          *
          * 为什么必须**进程级**（2026-10-01 修复 L-298）：`Prefs` 在本进程里被创建三十余次
@@ -2018,7 +2018,7 @@ class Prefs(private val appContext: Context) {
         /**
          * 暂时解不开（锁屏）时的重试时刻：此刻之前不再碰 Keystore、也不再刷日志（修 A-672 / L-1462）。
          *
-         * 为什么需要闸：锁屏期间翻译设置页一次进页要读这批键十余次，若不设闸就是十几次 5~20ms 的
+         * 为什么需要闸：锁屏期间翻译设置页一次进页要读这批键十余次，若不设闸就是十几次 1.1 ms 的
          * Keystore 尝试 + 十几条 W 日志（正是旧版「直接缓存空串」想避免的那笔代价）。闸只推迟 1 秒，
          * 用户解锁后再打开凭据页必然落在闸外 ⇒ 立刻读到真值。
          */

@@ -42,9 +42,22 @@ object ClipboardCrypto {
     /**
      * 缓存 Keystore 里的密钥句柄（**可失效**，见 [withKey]）。
      *
-     * Keystore getKey 每次都要走 binder/TEE（5-20ms），200 条批量解密时
-     * 这块是主要耗时。SecretKey 只是对托管密钥的不透明句柄（私钥不出安全硬件），
-     * 缓存它不会削弱安全性。
+     * `getKey` 只走一次 binder，**实测 0.21~0.33 ms**（慢机型更高，换机须重测），
+     * 而且它**不是**单次加解密的大头：单次 1.1~1.3 ms 里 `init` 占约六成（0.63~0.76 ms，
+     * 在 TEE 里建操作会话）、`doFinal` 0.51~0.62 ms，`getInstance` / base64 各只 0.004~0.006 ms；
+     * `getKey` 命中缓存后为 0。缓存它值得（省一次 binder），但**别把它当加速入口**：
+     * 第 68 轮正是照着旧版注释里的「5-20ms 是主要耗时」去找杠杆，扑空。
+     *
+     * SecretKey 只是对托管密钥的不透明句柄（私钥不出安全硬件），缓存它不会削弱安全性。
+     *
+     * ⚠ **一次 `init` 只准一次 `doFinal`**：第二次 `doFinal` 抛
+     * `IllegalStateException: IV has already been used`，且此时 `getIV()` 返回的仍是
+     * 上一次的 IV（不会重生成）⇒ 复用就是**确定性的 nonce reuse**；平台的拒绝来自
+     * keymaster 的 IV 唯一性检查（栈顶 `addAlgorithmSpecificParametersToBegin`），
+     * 某个 OEM 降级这条检查就会**静默**重放 nonce ⇒ 不能把这条兜底当设计前提。
+     * `doFinal` 之后**重新 `init`** 是合法的（实测连续 `init` 6/6 拿到不同 IV），
+     * 但那样只省一次 `Cipher.getInstance`（0.005 ms，占单次 0.4%），不值得动状态机。
+     * 结论：每条密文 = 一次 `init` + 一次 `doFinal`，想靠复用省掉 `init` 那六成走不通。
      *
      * ⚠ **不能**用 `by lazy`（BUG.md L-1095）：句柄是可失效资源，Keystore 服务异常或
      * 用户在系统设置里清除凭据后，`Cipher.init` 会恒抛，而 `by lazy` 算一次即固定
@@ -69,7 +82,7 @@ object ClipboardCrypto {
      *
      * 只认这几类：句柄被系统作废 / 密钥不存在 / KeyStore 服务故障。**不含**
      * `AEADBadTagException`（密文损坏或换机）—— 那类重试必然再失败，而批量解密
-     * 200 条时每次多跑一次 Keystore（5-20ms）纯属白烧。
+     * 200 条时每次多跑一次 Keystore（本机实测单次约 1.1 ms）纯属白烧。
      */
     private fun isKeyFailure(e: Throwable): Boolean {
         var t: Throwable? = e
@@ -168,8 +181,11 @@ object ClipboardCrypto {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, k)
             val iv = cipher.iv
+            // 写侧按实际长度拼壳，读侧却按 GCM_IV_BYTES 固定切分 ⇒ 长度不一致就是「写得进、读不出」
+            // （解密走 AEADBadTagException ⇒ 返回 null ⇒ 图片静默丢失）。Keystore 的 GCM 恒给 12 字节，
+            // 这里当场钉住：换 provider 时宁可加密失败并留日志，也不要写出解不开的壳
+            require(iv.size == GCM_IV_BYTES) { "GCM IV 必须是 $GCM_IV_BYTES 字节（当前 ${iv.size}）" }
             val ct = cipher.doFinal(plain)
-            // iv 由 Keystore 给出，GCM 下恒为 12 字节；仍按实际长度拼壳（与 decryptBytes 用同一常量校验）
             val out = ByteArray(1 + iv.size + ct.size)
             out[0] = BYTES_FORMAT_VERSION
             System.arraycopy(iv, 0, out, 1, iv.size)

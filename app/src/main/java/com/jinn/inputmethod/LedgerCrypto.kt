@@ -130,7 +130,7 @@ internal object LedgerCrypto {
      * 密钥不可用后的冷却窗口（N5）。
      *
      * 密钥永久失效（Keystore 被清 / ROM 不支持）时，原先**每次选词**都要读一遍包裹件、
-     * 走一次 `KeyStore.load` + `getKey`（binder 5~20ms）再失败一次 —— 正是「不耗电」要防的形态。
+     * 走一次 `KeyStore.load` + `getKey`（binder 本机实测 0.38 ms）再失败一次 —— 正是「不耗电」要防的形态。
      * 期内直接返回 null：既不去读文件，也不碰 Keystore。
      */
     internal const val FAIL_COOLDOWN_MS = 30_000L
@@ -138,7 +138,7 @@ internal object LedgerCrypto {
     /** 一行密文的形态：`1:` + 至少 20 个 base64 字符（IV 12 + tag 16 + 最短明文也远超这个量） */
     private val RECORD_SHAPE = Regex("^1:[A-Za-z0-9+/]{20,}$")
 
-    /** 解包后的 DEK 缓存：Keystore 只在首次取用时走一次（5~20ms），之后行级运算不碰它 */
+    /** 解包后的 DEK 缓存：Keystore 只在首次取用时走一次（本机实测 1.8~2.5 ms，含解包与 getKey），之后行级运算不碰它 */
     @Volatile
     private var cachedDek: SecretKey? = null
 

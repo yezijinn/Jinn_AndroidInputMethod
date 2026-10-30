@@ -75,7 +75,7 @@ class CredentialStorageTest {
         assertTrue("落盘的应是加密结果", "putString(key, encrypted)" in src)
         assertFalse("不得把清洗后的明文直接落盘", "putString(key, cleaned)" in src)
         assertTrue("加密失败要记 W（而不是静默）", "凭据加密失败，未落盘" in src)
-        assertTrue("读取要有进程内缓存（Keystore 解密 5~20ms/次）", "credentialCache" in src)
+        assertTrue("读取要有进程内缓存（Keystore 解密本机实测约 1.1 ms/次）", "credentialCache" in src)
     }
 
     @Test
