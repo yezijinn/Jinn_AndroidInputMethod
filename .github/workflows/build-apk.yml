@@ -6,6 +6,8 @@
 #   JINN_KEYSTORE_PASSWORD     密钥库口令（JinnPassword.md 的 -storepass）
 #   JINN_KEY_PASSWORD          密钥口令（JinnPassword.md 的 -keypass）
 #   GITEE_TOKEN                可选；配了才把发布同步到 Gitee Release
+# ⚠ 发布两步的**顺序不要调换**：Gitee 优先、GitHub 同步（项目约定）。
+#   判据见 BuildToolGatesTest.发布工作流必须先Gitee后GitHub。
 name: 构建 APK
 
 on:
@@ -111,6 +113,13 @@ jobs:
           set -euo pipefail
           tag="${INPUT_TAG:-$VCODE}"
           [[ "$tag" =~ ^[0-9]{8}$ ]] || { echo "tag 必须是纯日期 8 位数字: $tag"; exit 1; }
+          # 形状对不等于日期对：`20269999` 也是 8 位数字，但那天不存在。
+          # 只卡形状的话它能一路漏到 Release 与「检查更新」比对（本地入口有 is_plausible_tag，
+          # 见 tools/release_dual.py；两边必须成对，否则网页这条路就是缺口）
+          if ! date -d "$tag" +%Y%m%d >/dev/null 2>&1 || [ "$(date -d "$tag" +%Y%m%d)" != "$tag" ]; then
+            echo "tag 不是合法日期（那天不存在或与规范形式不符）: $tag"
+            exit 1
+          fi
           # tag 与包内 versionCode 必须一致（BUG.md L-1307）：版本号就是构建日期，而「检查更新」
           # 按 versionCode 比对、下载页按 tag 取包 —— 手滑填成别的日期会发布出对不上的包，
           # 同日覆盖的规则还会让它一直留着（用户无从判断拿到的是哪版）
@@ -137,7 +146,28 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "tag=$tag / $lines 行 / $chars 字"
 
-      - name: 发布到 GitHub Release
+      - name: 发布到 Gitee Release（优先）
+        if: ${{ inputs.publish }}
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ steps.notes.outputs.tag }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          SHA256: ${{ steps.apk.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "未配置 GITEE_TOKEN，退化为单端：需人工补 Gitee"
+            exit 0
+          fi
+          python3 .github/scripts/sync_gitee.py \
+            --repo yezijinn/Jinn_AndroidInputMethod \
+            --tag "$TAG" \
+            --apk "$APK_NAME" \
+            --sha256 "$SHA256" \
+            --notes-file "$NOTES_FILE" \
+            --target "$GITHUB_SHA"
+
+      - name: 同步到 GitHub Release
         if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -173,24 +203,3 @@ jobs:
           done
           [ "$remote" = "$SHA256" ] || { echo "GitHub 下载哈希不一致: $remote"; exit 1; }
           echo "已发布 $url"
-
-      - name: 同步到 Gitee Release
-        if: ${{ inputs.publish }}
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG: ${{ steps.notes.outputs.tag }}
-          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
-          SHA256: ${{ steps.apk.outputs.sha256 }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GITEE_TOKEN" ]; then
-            echo "未配置 GITEE_TOKEN，跳过 Gitee 同步"
-            exit 0
-          fi
-          python3 .github/scripts/sync_gitee.py \
-            --repo yezijinn/Jinn_AndroidInputMethod \
-            --tag "$TAG" \
-            --apk "$APK_NAME" \
-            --sha256 "$SHA256" \
-            --notes-file "$NOTES_FILE" \
-            --target "$GITHUB_SHA"

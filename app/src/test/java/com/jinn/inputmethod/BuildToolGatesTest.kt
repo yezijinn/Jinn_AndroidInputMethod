@@ -17,6 +17,15 @@ import java.io.File
  *
  * ⚠ 字面量钉一律走 [source]（= `TestSources.pyCode(rawSource(name))`，剥掉 `#` 注释）——
  * `BUG.md` L-128：Python 的 `#` 注释里同样写实现名，拿原文对拍时「把实现改成注释」能骗过全部四条钉。
+ *
+ * ⚠ **本类的发布守卫读的是仓库里的 `.yml` / `.py`，它们不是 Gradle 的输入**：只改这两类文件时
+ * `testDebugUnitTest` 判定 `UP-TO-DATE`，读到的是**上一轮**的 XML ⇒ 变异实证会「全绿」骗过自己
+ * （2026-10-30 实测：连跑三次全绿，实际一次没执行）。验证这两条必须
+ * `--rerun`（或 `--rerun-tasks`）并确认日志里没有 `testDebugUnitTest UP-TO-DATE`；
+ * 全量口径见 `AGENTS.md`「强制全量」。
+ * 不把 `.yml` / `.py` 接进 Gradle 输入快照是有意的：那要改 `app/build.gradle.kts`，而构建脚本一改就得
+ * 重新出包验证「APK 字节没变」，代价远大于收益 —— 全仓读外部文件的用例（`DocsReferenceTest` 读 `.md`、
+ * `IndexBuilderParityTest` 读 `tools` 下的 Python）本来就是同一处境，统一靠全量跑收口。
  */
 class BuildToolGatesTest {
 
@@ -152,6 +161,141 @@ class BuildToolGatesTest {
     }
 
     /**
+     * 双端发布顺序必须是 **Gitee 先、GitHub 后**（约定第 11 条 / unified-update-check 6.9）。
+     *
+     * 发版是跑在仓库外的手工动作（或网页 Actions），本地测试碰不到远端 ⇒ 顺序被调换**不会有任何
+     * 报错**，只会在下一次发版时把「GitHub 先发、Gitee 补不上」的老问题重演一遍。故按两个步骤在
+     * 工作流里的**步骤表先后**对拍。钉的是步骤名，改步骤名要同步本用例。
+     *
+     * ⚠ 判据必须取 **`- name:` 行首形态**，不能拿全文 `indexOf`（BUG.md L-116 同型，2026-10-30 变异实证）：
+     * 全文找串时「头部注释里出现了某步骤名」就能左右判断 —— 实测把两步真顺序换反、再在文件头注释里
+     * 写一句 `name: 发布到 Gitee Release…`，整条用例仍是绿的；反向也一样（注释里提一句 GitHub 步骤就
+     * 直接转红）。行首锚定后注释天然不参与，注释里怎么写都不影响。
+     *
+     * ⚠ **只看名字也不够**（2026-10-30 第二轮变异实证，两种写法都能骗过纯名字比较）：
+     *  ① 两步的 `run:` 体互换、名字一个不动 ⇒ 名字序仍是对的，实际先跑 GitHub；
+     *  ② 前面插一个空的 `name: 发布到 Gitee Release（占位）` + `if: false`，真 Gitee 步骤挪到 GitHub 之后，
+     *    名字序也仍是对的。
+     * 故判据改成「**哪一段 `run:` 体里真的在调 Gitee 脚本**」：取含 `sync_gitee.py` 的步骤与含
+     * `gh release upload` 的步骤比先后，再回校两者名字（占位步没有 `run` 体内容，换体后名字与内容错位）。
+     */
+    @Test
+    fun 发布工作流必须先Gitee后GitHub() {
+        val steps = workflowSteps(repoFile(".github/workflows/build-apk.yml").readText())
+        val names = steps.map { it.first }
+        val gitee = steps.indexOfFirst { it.second.contains("sync_gitee.py") }
+        val github = steps.indexOfFirst { it.second.contains("gh release upload") }
+        assertTrue("工作流里没有任何步骤调 Gitee 发布脚本（.github/scripts/sync_gitee.py）：$names", gitee >= 0)
+        assertTrue("工作流里没有任何步骤跑 `gh release upload`：$names", github >= 0)
+        assertTrue(
+            "发布顺序反了：真去调 sync_gitee.py 的步骤必须排在 gh release 之前" +
+                "（gitee=$gitee github=$github，步骤表：$names）",
+            gitee < github,
+        )
+        assertTrue(
+            "调 sync_gitee.py 的步骤必须就是那个 Gitee 步骤（顺序对了但内容错位 / 占位步）：$names",
+            names[gitee].startsWith("发布到 Gitee Release"),
+        )
+        assertTrue(
+            "跑 gh release 的步骤必须就是那个 GitHub 步骤（顺序对了但内容错位 / 占位步）：$names",
+            names[github].startsWith("同步到 GitHub Release"),
+        )
+        // 多出一处调用 = 真实现被挪到后面（前面那处是 `if: false` 的壳），顺序判据会被它骗过
+        assertTrue(
+            "工作流里只能有一处调 Gitee 发布脚本（多出来的一处说明真实现被挪到了后面）",
+            steps.count { it.second.contains("sync_gitee.py") } == 1,
+        )
+        assertTrue(
+            "工作流里只能有一处跑 `gh release upload`",
+            steps.count { it.second.contains("gh release upload") } == 1,
+        )
+        for (i in listOf(gitee, github)) {
+            assertTrue(
+                "发布步骤 ${names[i]} 被禁用了（`if:` 不是 inputs.publish）：被禁用的步骤不算「先发」",
+                "if: \${{ inputs.publish }}" in steps[i].second,
+            )
+        }
+        // 两个入口的闸门必须对齐：本地 tools/release_dual.py 有 is_plausible_tag（真实日期），
+        // 网页这条路也必须有 —— 否则 `20269999` 只能从 Actions 漏出去（2026-10-30 补齐前正是如此）
+        assertTrue(
+            "生成发布说明步骤缺少「tag 是真实日期」的闸（本地入口有 is_plausible_tag，见 BUG.md L-1307）",
+            steps.any { it.second.contains("不是合法日期") },
+        )
+    }
+
+    /**
+     * 本地发版脚本（`tools/release_dual.py`）的顺序与工作流一致：**Gitee → GitHub**。
+     *
+     * 判据取 `STEPS = (…)` 这一行（剥过 `#` 注释，注释里写顺序不算数 —— 变异实证：在 `#` 注释里写
+     * `STEPS = ("github", "gitee")` 不转红）；另钉「Gitee 侧复用 `.github/scripts/sync_gitee.py`」——
+     * 同一件事两套实现，迟早只改对一处（与 L-140 同型）。
+     *
+     * ⚠ 复用钉取 **`release_gitee` 函数体内**的引号字面量，不能按整篇找（L-116 同型，2026-10-30 变异实证）：
+     * 模块 docstring 里也写着 `sync_gitee.py`，而 [TestSources.pyCode] 只剥 `#`、三引号串原样保留 ⇒
+     * 把实现行改成别的文件名后，整篇找仍是绿的。
+     *
+     * ⚠ **常量对了不等于按它执行**（2026-10-30 第二轮变异实证，两种写法都能骗过「只钉常量和循环形态」）：
+     *  ① `main()` 里先 `STEPS = STEPS[::-1]` 再循环 ⇒ 常量行没动，实际反序；
+     *  ② `main()` 里两个分支的**函数调用互换**（`if step == "gitee": release_github(…)`）⇒ 常量、循环都在，实际先发 GitHub。
+     * 故补两条：`STEPS` **只允许赋值一次**（排掉任何就地重排），以及 `main()` 执行段里
+     * 「gitee 标记 → 紧跟着 release_gitee(」逐对核（含标记先后，排掉条件互换）。
+     */
+    @Test
+    fun 双端发布脚本必须先Gitee后GitHub() {
+        val src = TestSources.pyCode(repoFile("tools/release_dual.py").readText())
+        val steps = Regex("""(?m)^STEPS\s*=\s*\(([^)]*)\)""").find(src)
+            ?: error("tools/release_dual.py 里找不到 STEPS（改名了？请同步本用例）")
+        val order = Regex(""""([a-z]+)"""").findAll(steps.groupValues[1])
+            .map { it.groupValues[1] }.toList()
+        // 位置比较（元守卫要求顺序语义用例给位置或范围判据，见 BUG.md L-1151）
+        val giteeAt = steps.groupValues[1].indexOf("\"gitee\"")
+        val githubAt = steps.groupValues[1].indexOf("\"github\"")
+        assertTrue(
+            "Gitee 必须排第一（gitee=$giteeAt github=$githubAt）：约定第 11 条",
+            giteeAt >= 0 && githubAt >= 0 && giteeAt < githubAt,
+        )
+        assertTrue(
+            "发布顺序必须是 Gitee → GitHub（约定第 11 条），当前：$order",
+            order == listOf("gitee", "github"),
+        )
+        // 声明了却按另写的顺序执行 = 唯一真源失效（常量在、行为不在，L-116 同型）
+        val main = TestSources.pyFunction(src, "main")
+        assertTrue(
+            "main() 必须按 STEPS 逐项执行（别在循环里另写一遍顺序）",
+            "for step in STEPS" in main,
+        )
+        // 只允许一处赋值：任何就地重排（`STEPS = STEPS[::-1]` / `STEPS = tuple(reversed(STEPS))`）都转红
+        val assigns = Regex("""(?m)^\s*STEPS\s*=""").findAll(src).count()
+        assertTrue("STEPS 只允许赋值一次（就地重排等于换掉唯一真源），当前 $assigns 处", assigns == 1)
+        // 执行段逐对核：标记先后 + 标记后面紧跟的就是对应的那个函数
+        val exec = main.substring(main.lastIndexOf("for step in STEPS:"))
+        fun window(from: Int): String =
+            if (from < 0) "" else exec.substring(from, minOf(exec.length, from + 240))
+        val giteeMark = exec.indexOf("step == \"gitee\"")
+        val githubMark = exec.indexOf("step == \"github\"")
+        assertTrue(
+            "main() 的分支条件顺序反了（gitee=$giteeMark github=$githubMark）：执行时先跑的是 GitHub",
+            giteeMark >= 0 && githubMark >= 0 && giteeMark < githubMark,
+        )
+        assertTrue(
+            "`step == \"gitee\"` 的分支必须调 release_gitee(…)，当前分支体：${window(giteeMark).take(120)}",
+            "release_gitee(" in window(giteeMark),
+        )
+        assertTrue(
+            "`step == \"github\"` 的分支必须调 release_github(…)，当前分支体：${window(githubMark).take(120)}",
+            "release_github(" in window(githubMark),
+        )
+        assertTrue(
+            "Gitee 侧必须复用 .github/scripts/sync_gitee.py（不要另写一套发布实现）",
+            "\"sync_gitee.py\"" in TestSources.pyFunction(src, "release_gitee"),
+        )
+        // 覆盖式发版的两条语义要在本地入口也在位（工作流那两支靠 shell 实现，同一个约定两处各自实现）
+        val gh = TestSources.pyFunction(src, "release_github")
+        assertTrue("GitHub 侧必须覆盖上传（--clobber），否则同日重发会留两个同名附件", "--clobber" in gh)
+        assertTrue("GitHub 侧必须删掉其它 Release 的同名附件（只留最新一版）", "delete-asset" in gh)
+    }
+
+    /**
      * 工具链的**临时件名必须带进程号**（`BUG.md` L-135）。
      *
      * 固定名（`path + ".tmp"`）在两进程并发跑同一支脚本时会互相截断 / 抢走：本机（Windows）
@@ -176,6 +320,26 @@ class BuildToolGatesTest {
     private fun toolScripts(): List<File> =
         listOf(File("tools"), File("../tools")).first { it.isDirectory }
             .walkTopDown().filter { it.isFile && it.name.endsWith(".py") }.toList()
+
+    /** 仓库相对路径（测试工作目录可能是仓库根或 `app/`，与其他助手同口径）。 */
+    private fun repoFile(path: String): File =
+        listOf(File(path), File("../$path")).firstOrNull { it.isFile }
+            ?: error("找不到 $path（工作目录变了？）")
+
+    /**
+     * 把工作流拆成「步骤名 → 该步骤正文」。
+     *
+     * 正文从 `- name:` 行尾到下一个 `- name:`（或文件尾），所以 `run:` 体被收在所属步骤里 ——
+     * 顺序判据据此既能看名字也能看**这段代码到底在调谁**（占位步、体互换都骗不过）。
+     * `- uses:` 步骤没有名字，按空名保留位置（序号与文件里的步骤表一一对应）。
+     */
+    private fun workflowSteps(text: String): List<Pair<String, String>> {
+        val marks = Regex("""(?m)^[ \t]*-[ \t]+name:[ \t]*(\S.*)$""").findAll(text).toList()
+        return marks.mapIndexed { i, m ->
+            val end = if (i + 1 < marks.size) marks[i + 1].range.first else text.length
+            m.groupValues[1].trim() to text.substring(m.range.last + 1, end)
+        }
+    }
 
     /**
      * `tools/dict_builder/<name>` 的**代码文本**（已剥 `#` 注释 —— `BUG.md` L-128）。
