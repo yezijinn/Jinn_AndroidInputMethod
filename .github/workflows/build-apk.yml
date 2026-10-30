@@ -176,6 +176,20 @@ jobs:
           SHA256: ${{ steps.apk.outputs.sha256 }}
         run: |
           set -euo pipefail
+          # 同日覆盖发版必须把 tag 重指到本次提交：tag 若已存在，`gh release create`
+          # 的 --target 不生效（GitHub 侧「tag 已存在就沿用」），于是代码推了、tag 还停在
+          # 旧提交 —— 与本地入口 tools/release_dual.py 的 repoint_tag 同一动作，两入口必须对齐。
+          # 放在 Gitee 步骤之后：发布顺序仍是「Gitee 先发」，这里只是推 tag 不建 Release。
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          remote_tag=$(git ls-remote --tags origin "refs/tags/$TAG" | awk '/\^\{\}$/{print $1}' | head -1)
+          if [ -z "$remote_tag" ]; then
+            remote_tag=$(git ls-remote --tags origin "refs/tags/$TAG" | head -1 | cut -f1)
+          fi
+          if [ "$remote_tag" != "$GITHUB_SHA" ]; then
+            echo "tag $TAG 未与本次提交同指: $remote_tag vs $GITHUB_SHA"
+            exit 1
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
           else

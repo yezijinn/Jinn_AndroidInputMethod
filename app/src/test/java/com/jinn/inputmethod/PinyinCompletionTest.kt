@@ -7,7 +7,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * 不完整拼音解析 + 候选补全单元测试（文档 `docs/不完整拼音解析与候选补全-提示词.txt`）。
+ * 不完整拼音解析 + 候选补全单元测试（文档 `docs/归档/提示词与需求稿/不完整拼音解析与候选补全-提示词.txt`）。
  *
  * 覆盖：
  *  - 前缀判断 / 补全（m → ma/mei/men…）

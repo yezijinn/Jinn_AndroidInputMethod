@@ -13,9 +13,14 @@
 行为：
 1. 校验：tag 是纯日期 8 位且**等于 APK 的 versionCode**（BUG.md L-1307）、APK 存在且 <5MB、
    发布说明 ≤10 行且 ≤200 字、本地哈希自洽
-2. **Gitee**：调 `.github/scripts/sync_gitee.py`（与 Actions 同一份实现，不重写）
-3. **GitHub**：`gh release` 建 / 改 + 覆盖上传 + 删其它 Release 同名附件 + 回拉哈希校验
-4. 任一端失败即非 0 退出，绝不继续做下一端（Gitee 失败就不要动 GitHub）
+2. **本地 tag 重指**：`git tag -f <tag> HEAD`，并钉「tag 与 HEAD 同指」（同日覆盖发版靠它）
+3. **Gitee**：先推 tag（回拉核对 = HEAD），再调 `.github/scripts/sync_gitee.py`
+   （与 Actions 同一份实现，不重写）
+4. **GitHub**：先推 tag（回拉核对 = HEAD），再 `gh release` 建 / 改 + 覆盖上传 +
+   删其它 Release 同名附件 + 回拉哈希校验
+5. 任一端失败即非 0 退出，绝不继续做下一端（Gitee 失败就不要动 GitHub）
+
+⚠ 只推 tag 不动分支：发版的前置提交由人在发版前推好（本脚本不 `git push` 分支，避免顺手推走别人未审的提交）。
 
 ⚠ 步骤顺序由本文件的 [STEPS] 决定，`BuildToolGatesTest.双端发布脚本必须先Gitee后GitHub` 钉着。
 """
@@ -173,6 +178,57 @@ def run(cmd, *, env=None) -> None:
         raise fail(f"命令失败（退出码 {proc.returncode}）: {cmd[0]}")
 
 
+def git_output(*args: str) -> str:
+    """只读的 git 查询（`rev-parse` / `ls-remote`）：失败返回空串，由调用方判定。"""
+    proc = subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def head_commit() -> str:
+    head = git_output("rev-parse", "HEAD")
+    if not head:
+        raise fail("读不到 git HEAD（当前目录不是仓库，或 git 不在 PATH）")
+    return head
+
+
+def local_tag_commit(tag: str) -> str:
+    return git_output("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+
+
+def assert_tag_commit(where: str, got: str, want: str) -> None:
+    """守卫的唯一判据：**该处的 tag 必须与 HEAD 同指**（本地与双端用同一条）。"""
+    if got != want:
+        raise fail(f"{where} 的 tag 与 HEAD 不同指: {got or '(空)'} vs {want}")
+
+
+def repoint_tag(tag: str) -> str:
+    """把本地 tag 重指到 HEAD，并钉死「HEAD 与 tag 同指」。
+
+    同日覆盖发版会复用同一个 tag，只推代码不重指 tag ⇒ 双端 tag 停在旧提交
+    （2026-10-30 就是手工补的）。这里先重指本地，再让两端各自回拉核对。
+    """
+    head = head_commit()
+    if local_tag_commit(tag) != head:
+        run(["git", "tag", "-f", tag, "HEAD"])
+    assert_tag_commit("本地", local_tag_commit(tag), head)
+    log(f"本地 tag {tag} -> {head[:9]}（与 HEAD 同指）")
+    return head
+
+
+def push_tag(remote: str, tag: str, head: str) -> None:
+    """推 tag 到指定远端，再**回拉**核对该端 tag 与 HEAD 同指（不信任 push 的退出码）。"""
+    run(["git", "push", "--force", remote, f"refs/tags/{tag}:refs/tags/{tag}"])
+    lines = git_output("ls-remote", "--tags", remote, f"refs/tags/{tag}").splitlines()
+    # 附注 tag 会有两行（标签对象 + `^{}` 指向的提交）；优先取剥皮后的那一行
+    peeled = [l for l in lines if l.endswith(f"refs/tags/{tag}^{{}}")]
+    plain = [l for l in lines if l.endswith(f"refs/tags/{tag}")]
+    picked = (peeled or plain)
+    remote_sha = picked[0].split()[0] if picked else ""
+    assert_tag_commit(remote, remote_sha, head)
+    log(f"{remote} tag {tag} 校验通过: {remote_sha[:9]} = HEAD")
+
+
 def release_gitee(info: dict, target: str, repo: str) -> None:
     """Gitee 侧：复用 Actions 用的同一份脚本（建 / 改 Release、覆盖附件、回拉校验）。
 
@@ -268,21 +324,30 @@ def main() -> None:
     )
     log("顺序（唯一真源 STEPS）: " + " → ".join(STEPS))
     if args.dry_run:
+        log(f"  [local ] git tag -f {info['tag']} HEAD（先钉本地 tag 与 HEAD 同指）")
         for step in STEPS:
             if step == "gitee":
+                log(f"  [gitee ] git push --force gitee refs/tags/{info['tag']} + 回拉核对 tag = HEAD")
                 log("  [gitee ] .github/scripts/sync_gitee.py --tag … --apk … --sha256 …")
             else:
+                log(f"  [github] git push --force origin refs/tags/{info['tag']} + 回拉核对 tag = HEAD")
                 log("  [github] gh release create/edit + upload --clobber + 回拉哈希")
-        log("dry-run：未联网，未改动任何远端")
+        log("dry-run：未联网、未改远端、未改本地 tag")
         return
+    head = repoint_tag(info["tag"])
     for step in STEPS:
         if step == "gitee":
             log("1/2 Gitee（先发）")
+            push_tag("gitee", info["tag"], head)
             release_gitee(info, args.target, args.repo)
         elif step == "github":
             log("2/2 GitHub（后置同步）")
+            push_tag("origin", info["tag"], head)
             release_github(info, args.target, args.repo)
-    log(f"双端已一致: {info['tag']} / {info['sha256']}")
+    # 收尾再核一次本地：中途有人动过 tag 也不能算成功
+    if local_tag_commit(info["tag"]) != head:
+        raise fail(f"收尾核对失败：本地 tag {info['tag']} 已不指向 {head[:9]}")
+    log(f"双端已一致: {info['tag']} / {info['sha256']} / tag 与 HEAD 同指 {head[:9]}")
 
 
 if __name__ == "__main__":
