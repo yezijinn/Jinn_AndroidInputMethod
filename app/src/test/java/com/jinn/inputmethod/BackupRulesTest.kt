@@ -21,19 +21,6 @@ class BackupRulesTest {
         sourceOf("src/main/res/xml/$name", "app/src/main/res/xml/$name"),
     )
 
-    /**
-     * 与平台同口径地判「这段规则有没有排除 `domain/path`」。
-     *
-     * 平台侧（`FullBackup.BackupScheme` + `BackupAgent`）：规则先经
-     * `new File(domainDir, path).getCanonicalPath()` 变成**绝对路径**，遍历时按
-     * `excludePath.equals(filePath)` **精确相等**判定 —— 没有前缀、没有优先级。
-     * 于是这些写法彼此等价，判据必须同样认：
-     *  · 属性顺序（`domain` / `path` 谁先写）
-     *  · 等号两侧空格、单引号或双引号
-     *  · `path` 的 `.` / `./` / 结尾斜杠 / 整个 `path` 缺省（都指域根）
-     * 写死字面比对的话，`path="dicts"`（最常见的漏写斜杠）会让 `assertFalse` 那条照样绿 ——
-     * 而平台真的把 `dicts/` 整目录排除了，用户的真词库全丢。
-     */
     /** 与平台同口径归一：`./x`、`x/`、`x` 同指；`.` / 空串 / 缺省都是域根（归一成 ""） */
     private fun normPath(p: String): String {
         val s = p.trim().removePrefix("./").trimEnd('/')
@@ -51,6 +38,19 @@ class BackupRulesTest {
             normPath(attrs["path"] ?: "")
         }.toSet()
 
+    /**
+     * 与平台同口径地判「这段规则有没有排除 `domain/path`」。
+     *
+     * 平台侧（`FullBackup.BackupScheme` + `BackupAgent`）：规则先经
+     * `new File(domainDir, path).getCanonicalPath()` 变成**绝对路径**，遍历时按
+     * `excludePath.equals(filePath)` **精确相等**判定 —— 没有前缀、没有优先级。
+     * 于是这些写法彼此等价，判据必须同样认：
+     *  · 属性顺序（`domain` / `path` 谁先写）
+     *  · 等号两侧空格、单引号或双引号
+     *  · `path` 的 `.` / `./` / 结尾斜杠 / 整个 `path` 缺省（都指域根）
+     * 写死字面比对的话，`path="dicts"`（最常见的漏写斜杠）会让 `assertFalse` 那条照样绿 ——
+     * 而平台真的把 `dicts/` 整目录排除了，用户的真词库全丢。
+     */
     private fun hasExclude(xml: String, domain: String, path: String): Boolean =
         normPath(path) in pathsOf(xml, domain)
 
@@ -113,21 +113,38 @@ class BackupRulesTest {
         // （`dataExtractionRules` 存在即走新 scheme），这也是上一轮误判「不生效」的原因。
         // 用户后果：换机后词库全无，而备份界面照旧报成功。将来真要整域排除，先改本断言并说明理由。
         for ((seg, text) in segments) {
-            for (d in listOf("root", "file", "database", "sharedpref", "external")) {
+            for (d in listOf("file", "database", "sharedpref", "external")) {
                 assertFalse(
                     "$seg 出现了 $d 域的全域排除 —— 整域排除会让真词库/库/配置整体不上云",
                     hasExclude(text, d, ""),
                 )
             }
+            // `root` 域要**整段禁**（不是只禁域根，也不必再列进上面的五域表 —— 那条被本条严格包含）：
+            // `root` = `/data/data/<pkg>/`，而排除集在同一 destination 内**跨域共享**且按
+            // `excludePath.equals(filePath)` 精确相等判定（`BackupAgent.fullBackupFileTree`：
+            // 每个节点含起节点都先判排除），所以 `root`+`files/dicts/` 与 `file`+`dicts/`
+            // 归一成**同一条绝对路径**，命中即整棵子树不出。
+            // 实测（2026-11-01，bk34 / API 34，`bmgr backupnow`）：加这一行后
+            // `/data/data/<pkg>/files` 从 `FullBackup_native: measured` 列表**整条消失**
+            // （只剩 `user_de` 那条），备份随后被 transport 拒绝（-1002）。
+            // 只禁域根的断言对此**一条都不响** —— 本仓曾这样缩窄过一次，特此钉死。
+            // 逃生阀：确需 root 域（例如 dataDir 顶层第三方自建目录）时改本断言并说明理由。
+            assertFalse(
+                "$seg 出现了 root 域排除 —— root 是跨域口，子树写法同样清空真词库",
+                hasDomainExclude(text, "root"),
+            )
         }
         // 正向对照：上面的断言全靠 `pathsOf` 认得出规则。若它被「简化」成坏正则，
-        // 三条 assertFalse 会一起变绿 —— 整域保底就形同不存在。这里用合成样本钉住谓词本身。
+        // 十二条 assertFalse 会一起变绿 —— 整域保底就形同不存在。这里用合成样本钉住谓词本身。
         assertTrue(
             "判据要认得带空格与单引号的等价写法",
             hasExclude("""<exclude domain = 'root' path="."/>""", "root", ""),
         )
         assertTrue("缺 path 也算全域", hasExclude("""<exclude domain="file"/>""", "file", ""))
         assertTrue("结尾斜杠与缺省要视同", hasExclude("""<exclude domain="file" path="dicts"/>""", "file", "dicts/"))
+        // `./` 前缀：平台 `getCanonicalPath()` 会吃掉它。今天清单里没有这种写法，
+        // 若 `normPath` 的 `removePrefix("./")` 被删，上面三条都不会红 ⇒ 必须单独钉住
+        assertTrue("`./` 前缀也要认", hasExclude("""<exclude domain="file" path="./dicts/"/>""", "file", "dicts/"))
     }
 
     @Test
@@ -373,5 +390,46 @@ class BackupRulesTest {
                 Regex("""<include\b""").containsMatchIn(rules(name)),
             )
         }
+    }
+
+    /**
+     * manifest 必须同时声明两份规则 —— 本仓所有备份结论的前提。
+     *
+     * 平台 `FullBackup.BackupScheme.parseSchemeForBackupDestination`：
+     * `dataExtractionRules` 里**有对应段**即走新 scheme，`fullBackupContent` **一次都不解析**。
+     * 于是 API≥31 只有 `data_extraction_rules.xml` 生效，`backup_rules.xml` 是死文件
+     * （它仅在 Android ≤11 生效）。
+     *
+     * 这个前提若没被钉住：属性被删 / 改名而两份 XML 都在 ⇒ 生效文件静默换回 `backup_rules.xml`，
+     * 上面 29 条三段对比与「哪份生效」的结论全部失真。本仓已因「探针写进死文件」误判过一次。
+     *
+     * 同一处还要钉 `allowBackup`：它是**更上位**的开关，置 false 后 Auto Backup / 设备迁移整体关闭，
+     * 三份规则与上面全部断言都变成死配置而**照样全绿** —— 换机后词库、配置全丢且无任何提示。
+     * 「隐私加固」类改动的第一反应往往就是它，所以必须钉住。
+     */
+    @Test
+    fun manifest的备份开关与两份规则都必须声明() {
+        val manifest = TestSources.codeOf(
+            sourceOf("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml"),
+        )
+        // 锚在 `<application>` 元素内：这三个属性都挂在它上面，全文匹配会漏掉「值被改到别处」
+        val app = TestSources.window(manifest, "<application", ">")
+        val attrs = Regex("""\bandroid:([A-Za-z]+)\s*=\s*["']([^"']*)["']""")
+            .findAll(app).associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(
+            "allowBackup=false 会让上面全部规则变成死配置（换机后一切归零且无提示）",
+            "true",
+            attrs["allowBackup"],
+        )
+        assertEquals(
+            "缺 fullBackupContent（Android ≤11 的生效文件）",
+            "@xml/backup_rules",
+            attrs["fullBackupContent"],
+        )
+        assertEquals(
+            "缺 dataExtractionRules —— API≥31 只解析它，删了会让结论整体失真",
+            "@xml/data_extraction_rules",
+            attrs["dataExtractionRules"],
+        )
     }
 }

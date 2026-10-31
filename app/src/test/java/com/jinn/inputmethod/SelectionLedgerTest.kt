@@ -196,13 +196,11 @@ class SelectionLedgerTest {
     }
 
     @Test
-    fun `关闭后不得再记录_且不进系统备份`() {
+    fun `关闭后不得再记录`() {
         val src = TestSources.codeOf(TestSources.rawSourceOfShortName("SelectionLedger.kt"))
         assertTrue("record 首行必须挡住关闭态", "if (!enabled) return" in src)
-        val backup = TestSources.rawSource("src/main/res/xml/backup_rules.xml", "app/src/main/res/xml/backup_rules.xml")
-        val extract = TestSources.rawSource("src/main/res/xml/data_extraction_rules.xml", "app/src/main/res/xml/data_extraction_rules.xml")
-        assertTrue("备份规则要排除台账", "user_picks.txt" in backup)
-        assertEquals("云备份与迁移两段都要排除", 2, Regex("path=\"user_picks\\.txt\"").findAll(extract).count())
+        // 「台账不进备份」由 `BackupRulesTest` 逐条对拍三段规则承担（含剥注释），
+        // 这里不重复判：本类此前用 `rawSource` 读 XML，注释里的同名字面量就能满足断言 ⇒ 假绿
         // AI2 A-545：未绑定（init 没跑到）不得**静默**丢行 —— 界面照样显示「已开启」，用户说
         // 「记了但词库是空的」时日志里必须有一条；又因为 record 在选词热路径上，只许报一次
         val record = TestSources.blockAfter(src, "fun record(word: String, pinyin: String)")
