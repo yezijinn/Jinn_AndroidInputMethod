@@ -83,6 +83,19 @@
     <exclude
         domain="file"
         path="index/" />
+    <!-- 词库包的下载 / 恢复中间件（断网或崩溃时残留，单个最大 5.89 MB）：
+         越过 25MB 配额会让整包备份失败；排除项不支持通配，只能逐名排。
+         `dicts/` 本身仍不排除（用户下载的真数据，L-152）。 -->
+    <exclude domain="file" path="dicts/part2.xz.tmp" />
+    <exclude domain="file" path="dicts/part3.xz.tmp" />
+    <exclude domain="file" path="dicts/part4.xz.tmp" />
+    <exclude domain="file" path="dicts/custom_user.txt.xz.tmp" />
+    <exclude domain="file" path="dicts/custom_user.src.txt.tmp" />
+    <exclude domain="file" path="dicts/part2.xz.restore" />
+    <exclude domain="file" path="dicts/part3.xz.restore" />
+    <exclude domain="file" path="dicts/part4.xz.restore" />
+    <exclude domain="file" path="dicts/custom_user.txt.xz.restore" />
+    <exclude domain="file" path="dicts/custom_user.src.txt.restore" />
     <!-- 诊断日志目录（`getExternalFilesDir()/logs/`）落在 Auto Backup 的 **`external` 域**里，
          默认会被整包上传 —— 而手工导出诊断包是需要用户主动点按钮的（2026-10-02 修复）：
          · 隐私：日志里有崩溃快照，退回全量抓取时**含其它应用的 I/D/W/E 行**（L-193）、

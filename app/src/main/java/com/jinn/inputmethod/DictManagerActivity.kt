@@ -781,6 +781,7 @@ class DictManagerActivity : Activity() {
     private fun download(dict: OptionalDict) {
         if (downloading != null) return
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         downloading = dict.fileName
         setStatus(getString(R.string.dict_downloading, dict.name))
         refreshList()
@@ -898,6 +899,7 @@ class DictManagerActivity : Activity() {
             return
         }
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         val f = dictFile(dict.fileName)
         val ok = runCatching { f.delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "分类词库删除: ${dict.fileName} ok=$ok")

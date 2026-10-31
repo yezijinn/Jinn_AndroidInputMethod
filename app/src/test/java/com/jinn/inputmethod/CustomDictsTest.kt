@@ -324,8 +324,8 @@ class CustomDictsTest {
         // 源码对拍（BUG.md L-848）：定义 1 处 + 两个入口各 1 处调用
         val mgr = TestSources.codeSource("DictManagerActivity.kt")
         assertEquals(
-            "词库页两个入口都要判 ConfigBackupManager.importing（定义 1 + 调用 2）",
-            3,
+            "词库页四个入口都要判 ConfigBackupManager.importing（定义 1 + 调用 4）",
+            5,
             Regex("blockedByConfigImport\\(\\)").findAll(mgr).count(),
         )
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")

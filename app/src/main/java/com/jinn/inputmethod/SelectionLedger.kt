@@ -254,15 +254,33 @@ object SelectionLedger {
             // 写线程还没停（超时 / 代际未同步）就删，正在进行的 drain 会把文件重建出来（回执却是「已删除」）
             return false
         }
-        // 先升代际再删：在途 / 排队的写入会自行放弃，不会把文件建回来
+        // 先升代际再删：排队中的写入会放弃；已进入写入临界区的那一条由同一把锁排在删除之前
         generation.incrementAndGet()
-        val ok = deleteQuietly(file)
+        // 中间件（.mig / .reheader）只有「下一次写整表」才会清，而删除后不再有下一次 ⇒ 一并删。
+        // 锁连主件一起包：读侧 readAllIn 的迁移也会写盘（它取同一把锁）
+        val ok = synchronized(migrateLock) { deleteLedgerFiles(file) }
         if (!ok) {
             // 删除失败：退回原代际并保留绑定，调用方写回 pref 之后记录仍能继续
             generation.decrementAndGet()
             target = file
         }
         return ok
+    }
+
+    /**
+     * 删主件与其两个原子写中间件（JVM 可测）。
+     *
+     * `.mig` / `.reheader` 的常规清理时机是「下一次写整表」；功能关闭并删除后不会再有下一次，
+     * 所以删除时必须一并带走，否则盘上留一份可解的整表副本。
+     */
+    internal fun deleteLedgerFiles(file: File): Boolean {
+        val main = deleteQuietly(file)
+        file.parentFile?.let { dir ->
+            deleteQuietly(File(dir, file.name + ".mig"))
+            deleteQuietly(File(dir, file.name + ".reheader"))
+        }
+        // 只报主件：中间件是派生件，删不掉不该翻转「台账已删」的结论（否则界面报失败、开关被改回开启）
+        return main
     }
 
     /** 删除单文件（JVM 可测）：文件本来就不存在也算成功 */

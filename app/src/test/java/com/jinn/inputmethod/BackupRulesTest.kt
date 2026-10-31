@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,7 +41,7 @@ class BackupRulesTest {
             val xml = rules(name)
             assertFalse(
                 "$name 排除了 dicts/ —— 那是用户下载的真数据（可重下，但不是缓存）",
-                Regex("""domain="file"\s+path="dicts/"""").containsMatchIn(xml),
+                Regex("""domain="file"\s+path="dicts/"\s*/>""").containsMatchIn(xml),
             )
         }
         // 云端与设备迁移是两段：只改一段会让另一条路径继续把缓存送出去
@@ -49,6 +50,40 @@ class BackupRulesTest {
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         assertTrue("cloud-backup 段缺索引排除", "index/" in cloud)
         assertTrue("device-transfer 段缺索引排除", "index/" in device)
+    }
+
+    @Test
+    fun 词库包中间件必须排除在备份与迁移之外() {
+        // `dicts/` 整体不排除（用户下载的真数据），但半截包会越 25MB 配额；
+        // 排除项不支持通配 ⇒ 临时件名取自写侧同一处拼装函数，改名时本用例跟着红。
+        // `.restore` 后缀只在 `ConfigBackupManager` 内部可见，这里写字面量：它改名时三份 XML
+        // 与本用例会一起红（报「缺 …」），不是静默失守。
+        val restore = ".restore"
+        val names = buildList {
+            for (d in OptionalDicts.ALL) {
+                add("dicts/${OptionalDicts.tempNameOf(d.fileName)}")
+                add("dicts/${d.fileName}$restore")
+            }
+            // 自定义包临时件名没有公开拼装函数（写侧直接用 `PACK_NAME + TMP_SUFFIX`），
+            // 这里写字面量；改名时本用例与三份 XML 一起红，不会静默失守。
+            add("dicts/${CustomDicts.PACK_NAME}.tmp")
+            add("dicts/${CustomDicts.PACK_NAME}$restore")
+            add("dicts/${CustomDicts.sourceTempName()}")
+            add("dicts/${CustomDicts.SOURCE_NAME}$restore")
+        }
+        assertEquals("中间件名单应为 10 条（3 包 + 自定义包 + 源文本，各两种后缀）", 10, names.size)
+        val full = rules("backup_rules.xml")
+        for (n in names) {
+            assertTrue("backup_rules.xml 缺 $n", Regex("path=\"${Regex.escape(n)}\"").containsMatchIn(full))
+        }
+        val transfer = rules("data_extraction_rules.xml")
+        val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
+        for (n in names) {
+            val p = Regex("path=\"${Regex.escape(n)}\"")
+            assertTrue("cloud-backup 段缺 $n", p.containsMatchIn(cloud))
+            assertTrue("device-transfer 段缺 $n", p.containsMatchIn(device))
+        }
     }
 
     @Test

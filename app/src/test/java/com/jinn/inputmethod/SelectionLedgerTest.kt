@@ -163,6 +163,33 @@ class SelectionLedgerTest {
     }
 
     @Test
+    fun `删除台账要连原子写中间件一起删`() {
+        val dir = java.nio.file.Files.createTempDirectory("ledger78").toFile()
+        try {
+            val main = File(dir, SelectionLedger.FILE_NAME)
+            val mig = File(dir, SelectionLedger.FILE_NAME + ".mig")
+            val reheader = File(dir, SelectionLedger.FILE_NAME + ".reheader")
+            listOf(main, mig, reheader).forEach { it.writeText("x") }
+            assertTrue("三件都应删除成功", SelectionLedger.deleteLedgerFiles(main))
+            assertFalse("主件未删", main.exists())
+            assertFalse("中间件 .mig 未删", mig.exists())
+            assertFalse("中间件 .reheader 未删", reheader.exists())
+            assertTrue("主件本就不存在也算成功", SelectionLedger.deleteLedgerFiles(main))
+            // 中间件是派生件：删不掉不该翻转「台账已删」的结论，否则界面报失败并把开关改回开启，
+            // 用户再选一个词就把台账重建出来（.mig 用非空目录 ⇒ File.delete() 恒 false，跨平台确定）
+            val main2 = File(dir, SelectionLedger.FILE_NAME)
+            main2.writeText("x")
+            val blocked = File(dir, SelectionLedger.FILE_NAME + ".mig")
+            blocked.mkdirs()
+            File(blocked, "hold").writeText("x")
+            assertTrue("中间件删不掉也算主件删除成功", SelectionLedger.deleteLedgerFiles(main2))
+            assertFalse("主件应已删", main2.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `关闭后不得再记录_且不进系统备份`() {
         val src = TestSources.codeOf(TestSources.rawSourceOfShortName("SelectionLedger.kt"))
         assertTrue("record 首行必须挡住关闭态", "if (!enabled) return" in src)
