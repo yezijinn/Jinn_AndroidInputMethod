@@ -549,8 +549,16 @@ class ClipboardLimitsTest {
         assertTrue("必须先做 MIME 三态判定", "val textual = textualMime(type)" in src)
         assertTrue(
             "采集侧必须调共用取文入口（带原因的结果）",
-            "ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)" in src,
+            "ClipboardStore.itemTextResult(" in src,
         )
+        // 采集侧也必须带时间预算：URI 型条目（复制文件）要开跨进程流读 ≤256KB，而采集跑在**短**活池
+        // （与面板首屏 / 搜索解密 / 粘贴取文 / 入库同一条单线程队列），慢 provider 会把它们一起拖住。
+        // 上限比粘贴侧宽（宁可慢不可判丢），但必须有。
+        assertTrue(
+            "采集侧必须带时间预算（慢 provider 不得无限期占短活池）",
+            "COLLECT_READ_BUDGET_MS * 1_000_000L" in src,
+        )
+        assertTrue("超时必须留痕（否则表现为面板白屏而无从归因）", "ItemText.TimedOut -> {" in src)
         assertTrue("超限必须走 TooLarge 分支并留日志（读入即止后 save 的 W 到不了）",
             "ClipboardStore.ItemText.TooLarge -> {" in src)
         // 反向钉：无上限的整份读取一旦回来就红

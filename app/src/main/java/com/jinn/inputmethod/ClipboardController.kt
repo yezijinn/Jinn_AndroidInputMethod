@@ -219,10 +219,24 @@ class ClipboardController(context: Context) {
         if (!hasText && handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
         // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
-        val text = when (val r = ClipboardStore.itemTextResult(clip.getItemAt(0), appContext)) {
+        // 时间预算：URI 型条目（复制文件）要开跨进程流读 ≤256KB，而本方法跑在**短**活池
+        // （与面板首屏 / 搜索解密 / 粘贴取文 / 入库同一条单线程队列），慢 provider 会把它们一起拖住。
+        // 上限取 [COLLECT_READ_BUDGET_MS]（远宽于粘贴侧）：宁可偶尔仍慢，不可把本地大文件判丢。
+        val text = when (
+            val r = ClipboardStore.itemTextResult(
+                clip.getItemAt(0),
+                appContext,
+                deadlineNanos = System.nanoTime() + ClipboardStore.COLLECT_READ_BUDGET_MS * 1_000_000L,
+            )
+        ) {
             is ClipboardStore.ItemText.Ok -> r.text
             ClipboardStore.ItemText.TooLarge -> {
                 Diagnostics.w(TAG, "跳过超单条上限的剪贴板条目（读入即止，未整份读入）")
+                return
+            }
+            ClipboardStore.ItemText.TimedOut -> {
+                // 慢 provider 占住短活池：留痕，否则表现为「面板白屏」而无从归因
+                Diagnostics.w(TAG, "跳过读入超时的剪贴板条目（${ClipboardStore.COLLECT_READ_BUDGET_MS}ms 内未读完）")
                 return
             }
             else -> return
@@ -560,6 +574,18 @@ object ClipboardStore {
      * 取 200ms：真机本地 provider 读满 256KB 在几十毫秒量级，这个值只拦「明显不对劲」的情况（BUG.md L-177）。
      */
     internal const val PASTE_READ_BUDGET_MS = 200L
+
+    /**
+     * 采集路径的读入**时间**预算（毫秒）。
+     *
+     * 与粘贴的 200ms **口径不同，别照抄**：粘贴在主线程上等（`commitText` 要用当前 InputConnection），
+     * 慢一点就是 ANR，所以必须紧；采集在后台短活池（`jinn-clipboard-io`，与面板首屏 / 搜索解密 /
+     * 粘贴取文 / 入库共用同一条单线程队列），慢的代价是"排在我后面的任务一起等"，不是 ANR。
+     * 取 2000ms 量级：**宁可偶尔仍慢，不可把本地大文件判丢** —— 本文件刚把「复制文本文件」从图片
+     * 分支救回文本路径（L-1550），预算收紧等于把那条修复又收回去。
+     * 预算只在循环顶部检查，阻塞在单次 `read()` 上时打断不了（L-185 已记该局限）。
+     */
+    internal const val COLLECT_READ_BUDGET_MS = 2000L
 
     /** 新代码专用日志标签：本文件里已有两个对象各自的 TAG，这里不蹭它们的可见性 */
     private const val ITEM_TAG = "ClipboardItem"
