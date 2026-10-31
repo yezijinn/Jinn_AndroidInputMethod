@@ -22,27 +22,46 @@ class BackupRulesTest {
     )
 
     /**
-     * 在一段规则里找 `<exclude domain=… path=…/>`：**两个属性落在同一标签内、且不锁顺序**。
+     * 与平台同口径地判「这段规则有没有排除 `domain/path`」。
      *
-     * 为什么要这样写：Android 不约束 XML 属性顺序，写死 `domain="…"\s+path="…"` 有两个方向的坏处 ——
-     * 正向断言遇等价重排会假红；反向断言（`assertFalse`）重排后**不再匹配**，
-     * 于是「`dicts/` 真的被整体排除了」也照样绿，L-152 那条不变量无声失守。
-     * `[^>]*` 保证两个属性同属一个 `<exclude>`，跨标签不会误配。
+     * 平台侧（`FullBackup.BackupScheme` + `BackupAgent`）：规则先经
+     * `new File(domainDir, path).getCanonicalPath()` 变成**绝对路径**，遍历时按
+     * `excludePath.equals(filePath)` **精确相等**判定 —— 没有前缀、没有优先级。
+     * 于是这些写法彼此等价，判据必须同样认：
+     *  · 属性顺序（`domain` / `path` 谁先写）
+     *  · 等号两侧空格、单引号或双引号
+     *  · `path` 的 `.` / `./` / 结尾斜杠 / 整个 `path` 缺省（都指域根）
+     * 写死字面比对的话，`path="dicts"`（最常见的漏写斜杠）会让 `assertFalse` 那条照样绿 ——
+     * 而平台真的把 `dicts/` 整目录排除了，用户的真词库全丢。
      */
+    /** 与平台同口径归一：`./x`、`x/`、`x` 同指；`.` / 空串 / 缺省都是域根（归一成 ""） */
+    private fun normPath(p: String): String {
+        val s = p.trim().removePrefix("./").trimEnd('/')
+        return if (s.isEmpty() || s == ".") "" else s
+    }
+
+    private val TAG_ATTR = Regex("""\b(domain|path)\s*=\s*["']([^"']*)["']""")
+
+    /** 取这段规则里 `domain` 域的全部排除路径（已归一；缺 `path` 即域根） */
+    private fun pathsOf(xml: String, domain: String): Set<String> =
+        Regex("""<exclude\b([^>]*)>""").findAll(xml).mapNotNull { m ->
+            val attrs = TAG_ATTR.findAll(m.groupValues[1])
+                .associate { it.groupValues[1] to it.groupValues[2] }
+            if (attrs["domain"] != domain) return@mapNotNull null
+            normPath(attrs["path"] ?: "")
+        }.toSet()
+
     private fun hasExclude(xml: String, domain: String, path: String): Boolean =
-        Regex(
-            """<exclude(?=[^>]*\bdomain\s*=\s*["']$domain["'])(?=[^>]*\bpath\s*=\s*["']${Regex.escape(path)}["'])[^>]*>"""
-        ).containsMatchIn(xml)
+        normPath(path) in pathsOf(xml, domain)
 
     /**
      * 该段里有没有**任何** `<exclude domain=DOMAIN …>`（不看 path）。
      *
-     * 用于负向保底：`root` 域是 `file` / `database` / `sharedpref` 三域的共同父目录，
-     * 一行 `path="."` 就能把整包清空，而按名字逐条的正向断言一条都不响。
-     * 属性值两侧允许空格、引号允许单引号 —— XML 里都等价，判据若不认就会**静默放过**。
+     * 用于负向保底：`root` 域指向 `/data/data/<pkg>/`，`path="files/dicts/part2.xz"` 这类
+     * 逐文件写法与 `file` 域同指（排除集是扁平绝对路径集），按名字逐条的正向断言一条都不响。
      */
     private fun hasDomainExclude(xml: String, domain: String): Boolean =
-        Regex("""<exclude(?=[^>]*\bdomain\s*=\s*["']$domain["'])[^>]*>""").containsMatchIn(xml)
+        pathsOf(xml, domain).isNotEmpty()
 
     /**
      * 隐私数据的**逐条**排除必须在三份清单里都在（数据驱动，不靠手点三条）。
@@ -85,18 +104,30 @@ class BackupRulesTest {
                 )
             }
         }
-        // 可见性与 `root` 域：`root` = `/data/data/<pkg>/`，是 file / database / sharedpref
-        // 三域的共同父目录 —— 一行 `<exclude domain="root" path="."/>` 就能把整包清空，
-        // 而上面逐名的断言一条都不响（`root` 与 `.` 都不在名字表里），lint 也只校验
-        // include/exclude 的路径关系、对这种写法无可校验对象。
-        // 换机后用户会看到「备份成功、恢复后像新装」。将来真要用 root 域，先改本断言并说明理由。
-        // （本条为推演 + 加行后本断言变红的实跑；「旧判据全绿」是推演，未单独跑 lint。）
+        // 整域保底：任何域的**全域排除**都不许出现（`path` 为 `.` / `./` / 空 / 缺省都指域根）。
+        // 实测（2026-11-01，API 34 + `bmgr backupnow`）：往 `data_extraction_rules.xml` 的
+        // `<cloud-backup>` 段加一行 `<exclude domain="file" path="."/>` ⇒
+        // `/data/data/<pkg>/files` 从 `FullBackup_native: measured` 列表里**整条消失**，
+        // 备份随后被 transport 拒绝（-1002）⇒ `dicts/` 真词库一个都不上云。
+        // 加在 `backup_rules.xml` 里则**无效** —— 该文件在 API≥31 根本不被解析
+        // （`dataExtractionRules` 存在即走新 scheme），这也是上一轮误判「不生效」的原因。
+        // 用户后果：换机后词库全无，而备份界面照旧报成功。将来真要整域排除，先改本断言并说明理由。
         for ((seg, text) in segments) {
-            assertFalse(
-                "$seg 出现了 root 域排除 —— root 是三域共同父目录，一行 path=\".\" 就能清空整包",
-                hasDomainExclude(text, "root"),
-            )
+            for (d in listOf("root", "file", "database", "sharedpref", "external")) {
+                assertFalse(
+                    "$seg 出现了 $d 域的全域排除 —— 整域排除会让真词库/库/配置整体不上云",
+                    hasExclude(text, d, ""),
+                )
+            }
         }
+        // 正向对照：上面的断言全靠 `pathsOf` 认得出规则。若它被「简化」成坏正则，
+        // 三条 assertFalse 会一起变绿 —— 整域保底就形同不存在。这里用合成样本钉住谓词本身。
+        assertTrue(
+            "判据要认得带空格与单引号的等价写法",
+            hasExclude("""<exclude domain = 'root' path="."/>""", "root", ""),
+        )
+        assertTrue("缺 path 也算全域", hasExclude("""<exclude domain="file"/>""", "file", ""))
+        assertTrue("结尾斜杠与缺省要视同", hasExclude("""<exclude domain="file" path="dicts"/>""", "file", "dicts/"))
     }
 
     @Test
