@@ -97,7 +97,6 @@ class BackupRulesTest {
         val keep = buildList {
             for (d in OptionalDicts.ALL) add("dicts/${d.fileName}")
             add("dicts/${CustomDicts.PACK_NAME}")
-            add("dicts/${CustomDicts.SOURCE_NAME}")
         }
         val segments = mapOf(
             "backup_rules.xml" to rules("backup_rules.xml"),
@@ -107,17 +106,46 @@ class BackupRulesTest {
         for (n in keep) {
             for ((seg, text) in segments) {
                 assertFalse("$seg 把真词库 $n 排除了 —— 那是换机后唯一的词库来源", hasExclude(text, "file", n))
+                // `root` 域是 `file` 域的等价写法（`root` = `/data/data/<pkg>/`），能编译、能生效，
+                // 只查 `file` 的话这条越域口全绿 ⇒ 真包照样被排除（黑名单机制唯一的跨域缺口）
+                assertFalse("$seg 用 root 域把真词库 $n 排除了", hasExclude(text, "root", "files/$n"))
             }
         }
+        assertFalse(
+            "dicts/ 不得被 root 域整体排除",
+            hasExclude(rules("backup_rules.xml"), "root", "files/dicts/"),
+        )
+        // 明文源文本**不**并列进 keep：它不是词库来源（引擎只装 `.xz`，src 只服务编辑页回显），
+        // 且它该不该随备份出机属作者拍板项（L-1540）—— 钉成「不得排除」等于替作者做了决定。
+        // 这里只钉三条**任何决定都不能破**的：
+        //  ① 两条云备份规则必须同口径（`backup_rules.xml` 是 11- 的云备份，漏一条等于漏一档系统）；
+        //  ② 云侧与设备迁移侧不得同时排除 —— 那是「换机后编辑页必空」的丙方案，
+        //     须先做「从 xz 反推源文本」才成立（反推有损：注释 / 空行 / 列序等 7 类信息不在 pack 里）；
+        //  ③ 迁移侧排除集必须是云侧的子集 —— 只排除迁移侧是最容易犯的写错段，
+        //     结果是「明文照旧上云 + 换机又丢回显」两头都亏。
+        // 于是「只排除 cloud-backup、device-transfer 保留」的甲方案照样绿，不会被门禁挡住。
+        val src = "dicts/${CustomDicts.SOURCE_NAME}"
+        val inFull = hasExclude(rules("backup_rules.xml"), "file", src)
+        val inCloud = hasExclude(cloud, "file", src)
+        val inTransfer = hasExclude(device, "file", src)
+        assertEquals("源文本在两条云备份规则里必须同口径（L-1540）", inFull, inCloud)
+        assertFalse(
+            "云侧与设备迁移都排除了源文本 $src —— 换机后编辑页没有可回显的字（走丙须先做反推，见 L-1540）",
+            inCloud && inTransfer,
+        )
+        assertFalse(
+            "只排除设备迁移侧而不排除云侧 $src —— 明文仍上云、换机又丢回显，两头都亏（L-1540）",
+            inTransfer && !inCloud,
+        )
     }
 
     @Test
     fun 词库包中间件必须排除在备份与迁移之外() {
         // `dicts/` 整体不排除（用户下载的真数据），但半截包会越 25MB 配额；
         // 排除项不支持通配 ⇒ 临时件名取自写侧同一处拼装函数，改名时本用例跟着红。
-        // `.restore` 后缀只在 `ConfigBackupManager` 内部可见，这里写字面量：它改名时三份 XML
-        // 与本用例会一起红（报「缺 …」），不是静默失守。
-        val restore = ".restore"
+        // ⚠ 排除项不支持通配，后缀一旦与源码不同源就会静默失守：XML 与本用例都停在旧值而照样绿。
+        // 故这里直接用源码常量，不再写字面量副本（也就不需要再钉「RESTORE_SUFFIX 仍是 .restore」）。
+        val restore = ConfigBackupManager.RESTORE_SUFFIX
         val names = buildList {
             for (d in OptionalDicts.ALL) {
                 add("dicts/${OptionalDicts.tempNameOf(d.fileName)}")
@@ -147,7 +175,12 @@ class BackupRulesTest {
     fun 台账原子写中间件必须排除在备份与迁移之外() {
         // 写整表时先建 `user_picks.txt.<suffix>` 再 rename；崩溃落在两步之间会留下整表副本。
         // 排除项只能写字面路径（不支持通配），三处清单都要逐名排。
-        val names = listOf("user_picks.txt.mig", "user_picks.txt.reheader")
+        // 名字由 `SelectionLedger` 的常量拼出：源码只有一份定义，改后缀时本用例与三份 XML 一起红，
+        // 不需要再用正则去钉「源码里出现过这个字面量」（那种钉会被删侧的字面量满足）。
+        val names = listOf(
+            "${SelectionLedger.FILE_NAME}${SelectionLedger.MIG_SUFFIX}",
+            "${SelectionLedger.FILE_NAME}${SelectionLedger.REHEADER_SUFFIX}",
+        )
         val full = rules("backup_rules.xml")
         for (n in names) {
             assertTrue(
@@ -250,11 +283,19 @@ class BackupRulesTest {
         assertTrue("回收口必须挂在设置页启动路径上", "ConfigBackupManager.cleanupStaleCache" in act)
 
         // 明文中间件那一段同样要留痕：它删的是导出包的配置节明文，失败静默会一直躺在缓存里。
-        // 与 dicts 段同口径：只钉 `Diagnostics.w` 在不在的话，「把 W 挪进成功路径」或「删掉 f.delete()
-        // 只留 W」都仍绿，而两种改法都会让回收口名存实亡
+        // 判据钉**分支归属**而不是 token 存在：
+        //  · 只判「有 Diagnostics.w / 有 f.delete()」⇒ 「把 W 挪进成功分支」仍绿，失败与成功混成
+        //    同一种日志；按先后顺序判（W 在 delete 之后）同样挡不住这种形态。
+        //  · 先取成功块：它不含 W（否则失败与成功混成同一种日志）；
+        //  · 再取 else 块：它必须含 W。两处都用 `blockAfter`，锚缺失即抛错 ⇒ fail-closed。
+        //    ⚠ 不能拿「else 之前的整段」判「不含 W」：cache 段别处再加一条 W（很自然的改进）
+        //    就会假红 —— 判据必须圈在分支里，不是圈在分支之前。
         val plain = TestSources.window(mgr, "val dir = File(context.cacheDir, CACHE_DIR)", "val dictDir =")
-        assertTrue("明文中间件删除失败也要留痕", "Diagnostics.w" in plain)
-        assertTrue("明文回收口必须真的删", "f.delete()" in plain)
+        assertTrue("明文回收口必须是「删成功或已不在」", "f.delete() || !f.exists()" in plain)
+        val okBlock = TestSources.blockAfter(plain, "if (f.delete() || !f.exists())")
+        assertFalse("成功分支不许打失败留痕（失败与成功会混成一种日志）", "Diagnostics.w" in okBlock)
+        val failBlock = TestSources.blockAfter(plain.substringAfter(okBlock), "else")
+        assertTrue("失败分支必须留痕", "Diagnostics.w" in failBlock)
     }
 
     /**

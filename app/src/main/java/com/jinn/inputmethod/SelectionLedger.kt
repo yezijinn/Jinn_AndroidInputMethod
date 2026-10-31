@@ -38,6 +38,15 @@ object SelectionLedger {
     /** 台账数据密钥（被 Keystore 包裹，独立别名；见 [LedgerCrypto.KEY_FILE]） */
     const val KEY_FILE_NAME = LedgerCrypto.KEY_FILE
 
+    /**
+     * 原子写中间件的后缀：写侧与删除侧共用同一份常量。
+     *
+     * 此前两处各写字面量，改一处漏一处 ⇒ 新名残件不会被带走。
+     * 备份排除清单是 XML，不引用 Kotlin 常量；它的同源来自 `BackupRulesTest` 用同一常量拼名去 XML 里对拍。
+     */
+    internal const val MIG_SUFFIX = ".mig"
+    internal const val REHEADER_SUFFIX = ".reheader"
+
     private const val TAG = "SelectionLedger"
 
     @Volatile
@@ -276,8 +285,8 @@ object SelectionLedger {
     internal fun deleteLedgerFiles(file: File): Boolean {
         val main = deleteQuietly(file)
         file.parentFile?.let { dir ->
-            deleteQuietly(File(dir, file.name + ".mig"))
-            deleteQuietly(File(dir, file.name + ".reheader"))
+            deleteQuietly(File(dir, file.name + MIG_SUFFIX))
+            deleteQuietly(File(dir, file.name + REHEADER_SUFFIX))
         }
         // 只报主件：中间件是派生件，删不掉不该翻转「台账已删」的结论（否则界面报失败、开关被改回开启）
         return main
@@ -422,7 +431,7 @@ object SelectionLedger {
             val line = formatLine(w, p) ?: continue
             sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
         }
-        return writeAtomicWithSync(file, sb.toString(), ".mig")
+        return writeAtomicWithSync(file, sb.toString(), MIG_SUFFIX)
             .also { ok ->
                 if (ok) Diagnostics.i(TAG, "台账已迁移为加密格式: ${pairs.size} 行")
                 else Diagnostics.w(TAG, "台账迁移失败（保留原文，下次重试）")
@@ -442,7 +451,7 @@ object SelectionLedger {
         }
         if (kept.isEmpty() && !LedgerCrypto.looksEncrypted(text)) return false
         val body = LedgerCrypto.HEADER + "\n" + kept
-        val ok = writeAtomicWithSync(file, body, ".reheader")
+        val ok = writeAtomicWithSync(file, body, REHEADER_SUFFIX)
         if (ok) Diagnostics.i(TAG, "台账首行标识缺失，已补回（保留 ${kept.count { it == '\n' }} 条记录）")
         return ok
     }

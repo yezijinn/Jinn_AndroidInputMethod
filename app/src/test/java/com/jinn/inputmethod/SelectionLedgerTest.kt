@@ -167,8 +167,8 @@ class SelectionLedgerTest {
         val dir = java.nio.file.Files.createTempDirectory("ledger78").toFile()
         try {
             val main = File(dir, SelectionLedger.FILE_NAME)
-            val mig = File(dir, SelectionLedger.FILE_NAME + ".mig")
-            val reheader = File(dir, SelectionLedger.FILE_NAME + ".reheader")
+            val mig = File(dir, SelectionLedger.FILE_NAME + SelectionLedger.MIG_SUFFIX)
+            val reheader = File(dir, SelectionLedger.FILE_NAME + SelectionLedger.REHEADER_SUFFIX)
             listOf(main, mig, reheader).forEach { it.writeText("x") }
             assertTrue("三件都应删除成功", SelectionLedger.deleteLedgerFiles(main))
             assertFalse("主件未删", main.exists())
@@ -179,7 +179,7 @@ class SelectionLedgerTest {
             // 用户再选一个词就把台账重建出来（.mig 用非空目录 ⇒ File.delete() 恒 false，跨平台确定）
             val main2 = File(dir, SelectionLedger.FILE_NAME)
             main2.writeText("x")
-            val blocked = File(dir, SelectionLedger.FILE_NAME + ".mig")
+            val blocked = File(dir, SelectionLedger.FILE_NAME + SelectionLedger.MIG_SUFFIX)
             blocked.mkdirs()
             File(blocked, "hold").writeText("x")
             assertTrue("中间件删不掉也算主件删除成功", SelectionLedger.deleteLedgerFiles(main2))

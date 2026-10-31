@@ -46,8 +46,10 @@ internal object ConfigBackupManager {
     /** 解密到缓存目录的临时 zip 前缀（导入流程用完即删） */
     private const val DECRYPT_PREFIX = "jinn-import-"
 
-    /** 词库恢复的中间件后缀（`<文件名>.restore`，校验通过才改名成正式文件） */
-    private const val RESTORE_SUFFIX = ".restore"
+    /** 词库恢复的中间件后缀（`<文件名>.restore`，校验通过才改名成正式文件）。
+     *  写侧与回收侧共用同一份常量；备份排除清单是 XML，不引用它 ——
+     *  同源来自 `BackupRulesTest` 用同一常量拼名去 XML 里对拍。 */
+    internal const val RESTORE_SUFFIX = ".restore"
 
     /** 单个文本节读入内存的上限：超出即视为不可用，宁可拒绝也不硬撑（String 常驻是字节数的 2 倍） */
     internal const val MAX_TEXT_SECTION_BYTES = 16L * 1024 * 1024
@@ -240,7 +242,8 @@ internal object ConfigBackupManager {
             if (tempInFlight.contains(f.name)) return@forEach
             if (now - f.lastModified() < STALE_MIN_AGE_MS) return@forEach
             // 删除失败也要留痕：清理逻辑静默失败的话，残留会永远堆着而没人知道
-            if (f.delete()) {
+            // 与上面那段同口径：`|| !f.exists()` 收掉「导入线程刚把它删了」的误报
+            if (f.delete() || !f.exists()) {
                 Diagnostics.i(TAG, "清理词库恢复中间件: ${f.name}")
             } else {
                 Diagnostics.w(

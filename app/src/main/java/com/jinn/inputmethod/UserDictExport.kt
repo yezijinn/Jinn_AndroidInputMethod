@@ -179,7 +179,12 @@ internal object UserDictExport {
         for (f in dir.listFiles().orEmpty()) {
             if (!f.isFile || now - f.lastModified() < STALE_MIN_AGE_MS) continue
             if (f.name in inFlight) continue
-            if (f.delete()) Diagnostics.i(TAG, "清理残留中间文件: ${f.name}")
+            if (f.delete() || !f.exists()) {
+                Diagnostics.i(TAG, "清理残留中间文件: ${f.name}")
+            } else {
+                // 删的是**明文**词表中转件，失败必须留痕：静默的话它一直躺着且没人知道
+                Diagnostics.w(TAG, "残留中间文件删除失败: ${f.name} 目录可写=${dir.canWrite()}")
+            }
         }
     }
 }
