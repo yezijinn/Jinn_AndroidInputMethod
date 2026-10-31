@@ -581,6 +581,9 @@ class ClipboardLimitsTest {
         assertTrue("+json 后缀算文本", ClipboardStore.textualMime("application/vnd.api+json") == true)
         assertTrue("+xml 后缀算文本", ClipboardStore.textualMime("application/atom+xml") == true)
         assertTrue("带参数的 text/* 也算", ClipboardStore.textualMime("text/plain; charset=utf-8") == true)
+        // 分支顺序契约：`+xml` 先于 `image/` ⇒ SVG 走**文本**路径（存 XML 源，不解码像素）。
+        // 与粘贴侧同一结论（两边共用 `uriText`）；这条不定住，就会有人按「图片不该进文本」反向改回去。
+        assertTrue("image/svg+xml 算文本（与粘贴侧同结论）", ClipboardStore.textualMime("image/svg+xml") == true)
         // 明确二进制
         assertTrue("图片判为二进制", ClipboardStore.textualMime("image/png") == false)
         assertTrue("视频判为二进制", ClipboardStore.textualMime("video/mp4") == false)

@@ -240,6 +240,19 @@ class DocsReferenceTest {
         }
         assertTrue("这些条目没落在声明的分册里（改分册后要同步索引第 5 列）：$missing", missing.isEmpty())
         assertTrue("这些条目在多个分册都有块：$dup", dup.isEmpty())
+        // 反方向：每个块都要有索引行。只做「索引 → 块」的话，新增块却漏加索引行时
+        // 计数断言照样自洽（索引行数与 active_entries 都不变）⇒ 条目从索引里查不到，
+        // 只能靠全册 grep 才能发现（本仓实测出现过一次）。
+        val indexed = rows.map { it.first.toInt() }.toSet()
+        val orphan = mutableListOf<String>()
+        for ((name, text) in parts) {
+            if (name == "index" || name == "entry") continue
+            for (m in Regex("""(?m)^### L-0*(\d+) ·""").findAll(text)) {
+                val id = m.groupValues[1].toInt()
+                if (id !in indexed) orphan += "L-$id（在 $name）"
+            }
+        }
+        assertTrue("这些块在索引里没有对应行（新增分册块后要同步索引）：$orphan", orphan.isEmpty())
     }
 
     /**

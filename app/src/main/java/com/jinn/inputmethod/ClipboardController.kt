@@ -207,12 +207,14 @@ class ClipboardController(context: Context) {
         }
         // 图片条目走独立分支（文本链路一行不动）。判定用 item0 的 URI + getType：
         // ClipDescription.hasMimeType("image/*") 在「图片 + 文本」混合条目上会给假阳性，
-        // 按实际类型过滤更准（MIME 取不到时落到文本路径，由 looksLikeText 兜底判否）。
+        // 按实际类型过滤更准。只有 uri 的条目也归这个分支判：声明为文本的交回文本路径
+        // （L-1550），类型取不到或取到非文本则进图片分支按字节判，判否即止、不回退。
         val first = runCatching { clip.getItemAt(0) }.getOrNull() ?: return
         // ⚠ 文本优先：URI 与 text 可同时非空（文件管理器复制文件、部分笔记/网盘复制文本
         // 都给 content://）。早先是「有 URI 就当图片」，把这类条目的可用文本一起截走，
         // 非图片还会以 image/png 兜底落一条永久脏图片行。
-        // 与 KDoc 的承诺一致：MIME 取不到/嗅探判否时回到文本路径。
+        // 兜底口径见 [handleImageClip]：回文本路径只看**声明类型**，不看嗅探结果
+        // （嗅探在后台，"判否"时返回值早已回传，回调里没有回退的机会）。
         val hasText = !first.text.isNullOrEmpty() || !first.htmlText.isNullOrEmpty()
         if (!hasText && handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
@@ -240,19 +242,28 @@ class ClipboardController(context: Context) {
     /**
      * 图片剪贴板条目的采集分支；返回 true 表示本条已按图片处理（调用方不再走文本路径）。
      *
+     * **声明为文本的 URI 条目一律交回文本路径**（返回 false）：文件管理器「复制」一个
+     * `.txt` / `.md` / `.json` 给的是只有 `uri` 的 `ClipData`，本分支若一律吞掉，历史里
+     * 一条都不进，而同一份内容用功能面板「粘贴」却读得到 —— 两个入口结论相反，用户无从自查。
+     *
      * IME 作为前台输入法读 `content://` 图片流**依赖系统给粘贴方授予的临时读权限**：
      * 拿不到时 [saveImageFromUri] 按「流打不开」留 W 日志，不静默吞（实施计划 §3 的 Step 0 实测项）。
      * 读流 + 解码 + 压缩是秒级活，投进 `BackgroundIo.runLong` 长活池 —— 短活池（`run`）
      * 要留给面板首屏与粘贴，大图解码不能排在它们前面。
      *
-     * 类型判定**不在本回调里做**（BUG.md L-1288）：本方法跑在系统剪贴板的监听线程上，而嗅探要
-     * `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，每个图片条目都要
-     * 先来这么一次，复制瞬间因此可能卡顿甚至 ANR。现在把**声明类型**原样传下去，由长活池在读到
-     * 头部时就地判：同一次开流，监听线程零 IO。
+     * 类型判定**不在本方法里做**（BUG.md L-1288）：本方法跑在 `BackgroundIo.run` 的短线程池
+     * （`jinn-clipboard-io`，与面板首屏查询 / 搜索解密 / 粘贴取文**同一条单线程队列**），
+     * 而嗅探要 `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，
+     * 会挡住同队列的面板首屏与粘贴。现在把**声明类型**原样传下去，由长活池在读到头部时
+     * 就地判：同一次开流，短线程池零 IO。
      */
     private fun handleImageClip(item: android.content.ClipData.Item): Boolean {
         val uri = item.uri ?: return false
         val declared = runCatching { appContext.contentResolver.getType(uri) }.getOrNull()
+        // 声明为文本 ⇒ **交回文本路径**（`uriText` 自带字节预算 + 三态判定 + looksLikeText）。
+        // 必须排在「记录图片已关闭」之前：否则关掉图片记录时，连 `.txt` 这类 URI 文本条目
+        // 也会被本分支顺手吞掉（复制文件是文件管理器的标准菜单项，用户看不到任何提示）。
+        if (ClipboardStore.textualMime(declared) == true) return false
         if (declared == null || !declared.startsWith("image/")) {
             // 类型不可靠不直接判否（BUG.md L-1285）：有的应用写 `application/octet-stream`、
             // 有的干脆不给类型 —— 原先这两类图片被静默拒收，诊断包里查不到任何痕迹。

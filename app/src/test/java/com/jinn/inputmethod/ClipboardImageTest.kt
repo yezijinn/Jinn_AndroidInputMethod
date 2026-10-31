@@ -235,6 +235,17 @@ class ClipboardImageTest {
             "val hasText = !first.text.isNullOrEmpty() || !first.htmlText.isNullOrEmpty()" in src &&
                 "if (!hasText && handleImageClip(first)) return" in src,
         )
+        // 只有 uri 的条目（文件管理器「复制」一个 .txt / .md）：声明为文本必须**交回文本路径**，
+        // 否则历史里一条都不进，而同一份内容用功能面板「粘贴」却读得到 —— 两个入口结论相反。
+        // 判据是**顺序**：若这段落在「记录图片已关闭」之后，关掉图片记录时仍会吞掉文本条目。
+        val body = TestSources.blockAfter(src, "private fun handleImageClip(item: android.content.ClipData.Item)")
+        val textual = body.indexOf("ClipboardStore.textualMime(declared) == true")
+        val disabled = body.indexOf("imageCaptureEnabled")
+        assertTrue("声明为文本的 URI 条目要交回文本路径", textual >= 0)
+        assertTrue(
+            "文本判定必须前置于「记录图片已关闭」（否则关图时连文本条目也吞掉）",
+            textual in 0 until disabled,
+        )
         assertTrue("采集侧读流必须走字节版带预算入口", "ClipboardStore.readBytesWithBudget(" in src)
     }
 
