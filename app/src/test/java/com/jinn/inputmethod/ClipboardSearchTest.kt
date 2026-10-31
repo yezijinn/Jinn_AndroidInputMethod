@@ -86,6 +86,37 @@ class ClipboardSearchTest {
     }
 
     @Test
+    fun 折叠判据覆盖C类Z类与兼容字符() {
+        // 旧判据只认全角 ASCII / 3000 / A0 / AD / Cf，下列内容明明库里有却搜不到
+        assertTrue("Zs（EM SPACE）", ClipboardSearch.matches("a\u2003b", ClipboardSearch.queryForms("ab")))
+        assertTrue("Cc（BEL）", ClipboardSearch.matches("a\u0007b", ClipboardSearch.queryForms("ab")))
+        assertTrue("Zl（行分隔符）", ClipboardSearch.matches("a\u2028b", ClipboardSearch.queryForms("ab")))
+        assertTrue("NFKC 兼容字符 ①", ClipboardSearch.matches("①", ClipboardSearch.queryForms("1")))
+        assertTrue("NFKC 兼容字符 Ⅰ", ClipboardSearch.matches("Ⅰ", ClipboardSearch.queryForms("i")))
+        assertTrue("半角片假名", ClipboardSearch.matches("ｱｲｳ", ClipboardSearch.queryForms("アイウ")))
+    }
+
+    @Test
+    fun 空格不当折叠信号() {
+        // ASCII 空格是 Z 类（clean 会删），若当判据每次未命中都要白跑折叠
+        assertFalse(ClipboardSearch.matches("a b", ClipboardSearch.queryForms("ab")))
+        assertTrue(ClipboardSearch.matches("a b", ClipboardSearch.queryForms("a b")))
+    }
+
+    @Test
+    fun 判据为假时折叠与原串恒等() {
+        val samples = listOf("abc", "你好世界", "Hello,世界", "a-b_c", "１２３", "①", "a\u2003b")
+        for (s in samples) {
+            if (' ' in s || ClipboardSearch.foldWorthy(s)) continue
+            assertEquals(
+                "判据说不用折叠，折叠结果就必须与原串相同：${s.map { it.code }}",
+                s,
+                java.text.Normalizer.normalize(FavoriteSymbols.clean(s), java.text.Normalizer.Form.NFKC),
+            )
+        }
+    }
+
+    @Test
     fun 空形态集永不命中() {
         assertFalse(ClipboardSearch.matches("任意内容", emptyList()))
     }

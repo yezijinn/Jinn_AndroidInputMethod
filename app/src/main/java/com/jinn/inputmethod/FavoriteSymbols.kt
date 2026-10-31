@@ -80,8 +80,52 @@ object FavoriteSymbols {
         return flat.toList().chunked(PER_PAGE)
     }
 
-    /** 清洗用的字符类：C（控制 / 格式 / 零宽 —— 含 U+200B、U+FEFF、方向控制）× Z（各类 Unicode 分隔符） */
-    private val CLEAN_PATTERN = Regex("[\\p{C}\\p{Z}]")
+    /**
+     * 清洗用的字符类：C（控制 / 格式 / 代理 / 私用 / 未分配）× Z（各类 Unicode 分隔符）。
+     *
+     * 判定用**运行时** `Character.getType` 派生的 BMP 位图（≈8KB，首次用到建一次），
+     * 不再走 `[\p{C}\p{Z}]` 正则：该正则在中文行上约 24 ns/字符，是搜索折叠路径六成开销。
+     * 位图必须运行时派生 —— `Cn`（未分配）集合随 Unicode 版本漂移，硬编码会在换平台后判错。
+     */
+    private val CZ_BITMAP: LongArray by lazy {
+        val bits = LongArray(0x10000 ushr 6)
+        for (c in 0..0xFFFF) {
+            if (isCleanableType(Character.getType(c))) {
+                bits[c ushr 6] = bits[c ushr 6] or (1L shl (c and 63))
+            }
+        }
+        bits
+    }
+
+    private fun isCleanableType(type: Int): Boolean = when (type) {
+        Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.SURROGATE.toInt(),
+        Character.PRIVATE_USE.toInt(), Character.UNASSIGNED.toInt(),
+        Character.SPACE_SEPARATOR.toInt(), Character.LINE_SEPARATOR.toInt(),
+        Character.PARAGRAPH_SEPARATOR.toInt(),
+        -> true
+
+        else -> false
+    }
+
+    /** 单个 UTF-16 码元是否属于要清洗的类（孤立代理走位图；成对代理请用 [hasCleanable]） */
+    internal fun isCleanable(c: Char): Boolean =
+        (CZ_BITMAP[c.code ushr 6] and (1L shl (c.code and 63))) != 0L
+
+    /** 是否含任一要清洗的码点：成对代理按**码点**判类别（`Cs` 只认孤立代理） */
+    internal fun hasCleanable(text: String): Boolean {
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c.isHighSurrogate() && i + 1 < text.length && text[i + 1].isLowSurrogate()) {
+                if (isCleanableType(Character.getType(Character.toCodePoint(c, text[i + 1])))) return true
+                i += 2
+            } else {
+                if (isCleanable(c)) return true
+                i++
+            }
+        }
+        return false
+    }
 
     /**
      * 符号清洗（写入 / 追加 / 解析**同一口径**，BUG-36）。
@@ -93,8 +137,26 @@ object FavoriteSymbols {
      *
      * 因此按 Unicode 类别清：`\p{C}`（控制 / 格式 / 代理 / 私用 / 未分配）+ `\p{Z}`（分隔符，含上面
      * 两个空格），清完再 trim 一次（清出的空洞会让首尾露出普通空格）。
+     * 没有要清的字符时原样返回（只 trim），不建 StringBuilder —— 搜索每行都会调它一次。
      */
-    fun clean(text: String): String = text.replace(CLEAN_PATTERN, "").trim()
+    fun clean(text: String): String {
+        if (!hasCleanable(text)) return text.trim()
+        val sb = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c.isHighSurrogate() && i + 1 < text.length && text[i + 1].isLowSurrogate()) {
+                if (!isCleanableType(Character.getType(Character.toCodePoint(c, text[i + 1])))) {
+                    sb.append(c).append(text[i + 1])
+                }
+                i += 2
+            } else {
+                if (!isCleanable(c)) sb.append(c)
+                i++
+            }
+        }
+        return sb.toString().trim()
+    }
 
     /**
      * 序列化后是否超出写入上限 [Prefs.MAX_FAVORITE_SYMBOLS_CHARS]。

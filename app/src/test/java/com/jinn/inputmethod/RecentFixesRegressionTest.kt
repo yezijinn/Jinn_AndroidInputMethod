@@ -1012,7 +1012,15 @@ class RecentFixesRegressionTest {
     fun `收藏符号清洗必须共用同一口径`() {
         val fs = codeOf("FavoriteSymbols.kt")
         assertTrue("必须有清洗入口", "fun clean(text: String): String" in fs)
-        assertTrue("字符类必须含 C 与 Z 两类", "p{C}" in fs && "p{Z}" in fs)
+        // 字符类由运行时 Character.getType 派生（位图），不再写正则；C 与 Z 的八个类别必须齐全
+        val classes = listOf(
+            "Character.CONTROL", "Character.FORMAT", "Character.SURROGATE",
+            "Character.PRIVATE_USE", "Character.UNASSIGNED",
+            "Character.SPACE_SEPARATOR", "Character.LINE_SEPARATOR", "Character.PARAGRAPH_SEPARATOR",
+        )
+        assertTrue("字符类必须覆盖 C 与 Z 两类：缺 ${classes.filterNot { it in fs }}", classes.all { it in fs })
+        assertTrue("必须有单遍判定入口", "fun hasCleanable(text: String): Boolean" in fs)
+        assertTrue("成对代理必须按码点判（Cs 只认孤立代理）", "Character.toCodePoint" in fs)
         val append = blockAfter(fs, "fun append(pages: List<List<String>>, item: String)")
         assertTrue("追加必须走清洗", "val s = clean(item)" in append)
         assertTrue("追加不得退回 trim", "item.trim()" !in append)

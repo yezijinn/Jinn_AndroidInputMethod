@@ -228,4 +228,42 @@ class FavoriteSymbolsTest {
             FavoriteSymbols.parse("[[\"\u200BA\u3000\"]]"),
         )
     }
+
+    /**
+     * 清洗集与 `[\p{C}\p{Z}]` 正则逐字等价（搜索折叠判据依赖它，不能只靠几个样例）。
+     *
+     * 全 BMP 单字符 + 增补平面的代表码点 + 2000 条随机串（含成对 / 孤立代理）。
+     * `clean` 改成位图实现后，这条是唯一的「语义没漂」证据。
+     */
+    @Test
+    fun 清洗集与正则口径逐字等价() {
+        val oracle = Regex("[\\p{C}\\p{Z}]")
+        fun expect(s: String): String = oracle.replace(s, "").trim()
+
+        val codePoints = ArrayList<Int>(0x10000 + 8)
+        for (cp in 0..0xFFFF) codePoints.add(cp)
+        codePoints.addAll(listOf(0xE0001, 0xE0041, 0x110BD, 0x13430, 0x1BCA0, 0x1D173, 0x1F600))
+        for (cp in codePoints) {
+            val s = String(Character.toChars(cp))
+            assertEquals("U+${cp.toString(16)} 清洗", expect(s), FavoriteSymbols.clean(s))
+            assertEquals("U+${cp.toString(16)} 判定", oracle.containsMatchIn(s), FavoriteSymbols.hasCleanable(s))
+        }
+
+        val rnd = java.util.Random(76)
+        val pool = charArrayOf(
+            'a', 'Z', '0', ' ', '\u3000', '\u200B', '\uFEFF', '\u0007',
+            '\uD83D', '\uDE00', '\uD800', '\uDC00',
+        )
+        repeat(2000) {
+            val sb = StringBuilder()
+            repeat(rnd.nextInt(12)) { sb.append(pool[rnd.nextInt(pool.size)]) }
+            val s = sb.toString()
+            assertEquals("随机串清洗 ${s.map { it.code }}", expect(s), FavoriteSymbols.clean(s))
+            assertEquals(
+                "随机串判定 ${s.map { it.code }}",
+                oracle.containsMatchIn(s),
+                FavoriteSymbols.hasCleanable(s),
+            )
+        }
+    }
 }

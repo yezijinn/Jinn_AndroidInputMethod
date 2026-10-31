@@ -73,7 +73,7 @@ internal object ClipboardSearch {
         if (forms.isEmpty()) return false
         val lower = content.lowercase(Locale.ROOT)
         if (forms.any { lower.contains(it) }) return true
-        if (!needsFold(lower)) return false
+        if (!foldWorthy(lower)) return false
         val folded = fold(FavoriteSymbols.clean(lower))
         return folded != lower && forms.any { folded.contains(it) }
     }
@@ -131,14 +131,31 @@ internal object ClipboardSearch {
     }
 
     /**
-     * 内容里是否含「要折叠后才等价比对」的字符：全角 ASCII 段、表意空格、NBSP、软连字符，
-     * 以及格式类 `Cf`（零宽族与方向控制都在这一类里）。
+     * 内容里是否含「折叠后才会变」的字符。
      *
-     * 不含 ASCII 空格：它是 `Zs`，几乎每段多词文本都有，拿它当判据会让折叠在每次未命中时都白跑。
+     * 判据 = **除 ASCII 空格以外精确**：`clean` 会删的（C / Z 类，含未分配与增补平面）由
+     * [FavoriteSymbols.hasCleanable] 单遍判；NFKC 会变的（全角 ASCII / 兼容字符 / 各类分隔符）
+     * 由 [Normalizer.isNormalized] 整体判。都比旧判据宽 —— 旧判据只认 4 个字面量 + `Cf`，
+     * `①`、`Ⅰ`、半角假名、`Cs/Co/Cn`、非 3000/A0 的 Z 类都会漏（那些内容明明在库里却搜不到）。
+     *
+     * **ASCII 空格有意不触发**：它是 Z 类，`clean` 会删；若算进来，每段多词文本都会白跑折叠。
+     * 反向由 `空格不当折叠信号` 用例钉住。
+     *
+     * 顺序：ASCII 快路径（绝大多数行）→ `isNormalized`（中文行首个全角标点就命中）→ C/Z 单遍扫。
+     * 反过来先扫 C/Z 会让中文行从 0.17 涨到 3.0 ns/字符。
      */
-    private val FOLD_WORTHY = Regex("[\uFF01-\uFF5E\u3000\u00A0\u00AD]|\\p{Cf}")
-
-    private fun needsFold(text: String): Boolean = FOLD_WORTHY.containsMatchIn(text)
+    internal fun foldWorthy(text: String): Boolean {
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c.code >= 0x80) break
+            if (c != ' ' && FavoriteSymbols.isCleanable(c)) return true
+            i++
+        }
+        if (i == text.length) return false            // 纯 ASCII ⇒ NFKC 恒等
+        if (!Normalizer.isNormalized(text, Normalizer.Form.NFKC)) return true
+        return FavoriteSymbols.hasCleanable(text)
+    }
 
     /** NFKC：全角 ASCII 折成半角、表意空格折成普通空格（只用于比对，不写回任何用户内容） */
     private fun fold(text: String): String =
