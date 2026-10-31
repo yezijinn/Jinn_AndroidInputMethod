@@ -51,6 +51,28 @@ class BackupRulesTest {
         assertTrue("device-transfer 段缺索引排除", "index/" in device)
     }
 
+    @Test
+    fun 台账原子写中间件必须排除在备份与迁移之外() {
+        // 写整表时先建 `user_picks.txt.<suffix>` 再 rename；崩溃落在两步之间会留下整表副本。
+        // 排除项只能写字面路径（不支持通配），三处清单都要逐名排。
+        val names = listOf("user_picks.txt.mig", "user_picks.txt.reheader")
+        val full = rules("backup_rules.xml")
+        for (n in names) {
+            assertTrue(
+                "backup_rules.xml 缺台账中间件 $n",
+                Regex("path=\"${Regex.escape(n)}\"").containsMatchIn(full),
+            )
+        }
+        val transfer = rules("data_extraction_rules.xml")
+        val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
+        for (n in names) {
+            val p = Regex("path=\"${Regex.escape(n)}\"")
+            assertTrue("cloud-backup 段缺台账中间件 $n", p.containsMatchIn(cloud))
+            assertTrue("device-transfer 段缺台账中间件 $n", p.containsMatchIn(device))
+        }
+    }
+
     /**
      * 诊断日志目录也必须排除（2026-10-02 修复）。
      *

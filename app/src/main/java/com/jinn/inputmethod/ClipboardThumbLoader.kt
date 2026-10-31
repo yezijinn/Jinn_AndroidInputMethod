@@ -213,8 +213,12 @@ internal object ClipboardThumbLoader {
                         waiters.remove(key)?.forEach { cb -> runCatching { cb(hash, bmp) } }
                     }
                 } else {
-                    inFlight.remove(key)
-                    waiters.remove(key)
+                    // 登记在主线程，收尾也必须回主线程：跨线程清表会与 computeIfAbsent 交错，
+                    // 留下一条永不投递的回调（持有旧 cell）
+                    uiHandler.post {
+                        inFlight.remove(key)
+                        waiters.remove(key)
+                    }
                 }
             }
         }.onFailure {

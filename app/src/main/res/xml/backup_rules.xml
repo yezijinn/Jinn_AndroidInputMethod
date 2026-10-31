@@ -40,6 +40,14 @@
     <exclude
         domain="file"
         path="user_picks.key.tmp" />
+    <!-- 台账整表的两个原子写中间件：崩溃落在「写完整表 → rename」之间时会留下。
+         排除项不支持通配，必须逐名写；deleteFile 只删主文件，残留会跟着备份出机 -->
+    <exclude
+        domain="file"
+        path="user_picks.txt.mig" />
+    <exclude
+        domain="file"
+        path="user_picks.txt.reheader" />
     <!-- 孤儿件目录：密钥件丢失时台账 / 词频被改名到这里（名字带毫秒后缀，逐名排除排不掉） -->
     <exclude
         domain="file"

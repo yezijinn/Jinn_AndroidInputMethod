@@ -2660,6 +2660,10 @@ class JinnIme : InputMethodService() {
                     armCorner(ev)
                     return false
                 }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    abandonGesture()
+                    return false
+                }
                 MotionEvent.ACTION_MOVE -> {
                     if (!resizing) {
                         // 几何在手指底下被换档 / 外部重置改过 ⇒ 这一手的角臂作废：
@@ -2693,6 +2697,10 @@ class JinnIme : InputMethodService() {
                 MotionEvent.ACTION_DOWN -> {
                     if (!floatingActive) return false
                     if (armCorner(ev) == null) return false
+                    return true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    abandonGesture()
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -2777,6 +2785,21 @@ class JinnIme : InputMethodService() {
             origin = null
             lastRequestedW = -1
             lastRequestedH = -1
+        }
+
+        /**
+         * 第二指落下：整手作废。
+         *
+         * 四角拉伸的位移基准是「第一指的 raw 起点」，而 `rawX/rawY` 取的是 index 0：
+         * 第二指落下、第一指先抬之后，两者分属两根手指 —— 差值即一次跳变，抬手还会把
+         * 跳变后的几何写盘。作废后 [beginResize] 因 `armedCorner == null` 恒 false，
+         * 剩余 MOVE 只是被忽略。故意不处理 `ACTION_POINTER_UP`：作废时已无手可复位。
+         */
+        private fun abandonGesture(): Boolean {
+            val was = resizing
+            resetGesture()
+            if (was) persistFloatingGeometry()
+            return was
         }
 
         private fun applyResizeMove(ev: MotionEvent) {

@@ -901,4 +901,24 @@ class FloatingKeyboardTest {
         assertTrue("作废后不再吃 MOVE", "if (floatingGestureStale) return true" in move)
         assertEquals("raw 基准只许在 DOWN 里记一次（MOVE 里换基线就是本条缺陷）", 1, Regex("""floatingDragRawX = event\.rawX""").findAll(move).count())
     }
+
+    /**
+     * 四角拉伸遇到第二指：整手作废（第 77 轮审计）。
+     *
+     * 位移基准记的是第一指的 raw 起点，而 `rawX/rawY` 取 index 0；第一指先抬后两者分属
+     * 两根手指 ⇒ 差值即跳变，抬手还会把跳变后的几何写盘。作废后 `beginResize()` 因
+     * `armedCorner == null` 恒 false，剩余 MOVE 被忽略。
+     * 两个入口都要加：接管前 `onInterceptTouchEvent` 是唯一入口，接管后只剩 `onTouchEvent`。
+     */
+    @Test
+    fun 第二指落下必须作废四角拉伸() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val intercept = TestSources.blockAfter(ime, "override fun onInterceptTouchEvent(ev: MotionEvent): Boolean")
+        val touch = TestSources.blockAfter(ime, "override fun onTouchEvent(ev: MotionEvent): Boolean")
+        for ((name, body) in listOf("onInterceptTouchEvent" to intercept, "onTouchEvent" to touch)) {
+            val branch = TestSources.blockAfter(body, "MotionEvent.ACTION_POINTER_DOWN ->")
+            assertTrue("$name 的第二指分支必须作废整手", "abandonGesture()" in branch)
+        }
+        assertFalse("作废即可，不需要 POINTER_UP 分支", "ACTION_POINTER_UP" in ime)
+    }
 }

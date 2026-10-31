@@ -360,6 +360,12 @@ class ClipboardImageTest {
         assertTrue("解码完成要清在途标记", "inFlight.remove(key)" in thumb)
         assertTrue("提交被拒也要清在途标记", "inFlight.remove(key)\n" in thumb ||
             Regex("""onFailure[\s\S]{0,200}inFlight\.remove\(key\)""").containsMatchIn(thumb))
+        // 失败收尾也必须回主线程：登记在 UI 线程，跨线程清表会与 computeIfAbsent 交错，
+        // 留下一条永不投递的回调（第 77 轮审计）
+        assertTrue(
+            "失败分支必须回主线程收尾",
+            Regex("""else \{[\s\S]{0,200}uiHandler\.post \{""").containsMatchIn(thumb),
+        )
         // 解码线程要降后台优先级（与图库池同款），且低内存档把缓存折半
         assertTrue("解码线程降后台优先级", "THREAD_PRIORITY_BACKGROUND" in thumb)
         assertTrue("缓存按机型折半", "DeviceTier.budget(context, THUMB_CACHE_BYTES" in thumb)
