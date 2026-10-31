@@ -10,11 +10,12 @@ package com.jinn.inputmethod
  *
  * 因此本文件的键位与 rime-ice 完全一致（含 rime 的 derive 容错码）；唯一的人工裁决是
  * 「一码多音节」的取舍（如 `lo` = lo/luo），规则见生成器里的 COLLISION_PREFER 注释。
+ * 首道双拼没有 rime 官方方案，按公开键位规格直表编码（见生成器的 TABLE_SCHEMES）。
  *
  * 键面提示（字母键下方的韵母、zh/ch/sh 红字）由本表在运行期反推，不另存一份，
  * 以保证键面与引擎永不漂移。
  *
- * 每套方案惰性构建（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 每套方案惰性构建（`Lazy`）：8 套表一次全建约 3,400 条目，实测首访耗时可观，
  * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的，若在该路径同步建表会拖慢首次弹出。
  * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUpAll`）。
  */
@@ -158,6 +159,7 @@ internal class ShuangpinTable(
 
 /** 内置双拼方案表（生成数据见文件末尾） */
 internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
+
     /** 自然码双拼（rime-ice `double_pinyin.schema.yaml`）：418 个音节 / 434 个码 */
     "ZIRANMA" to lazy { ShuangpinTable(
         initials = mapOf(
@@ -831,6 +833,100 @@ internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
             "ze" to "ze", "zf" to "zan", "zg" to "zang", "zi" to "zi", "zo" to "zuo",
             "zp" to "zou", "zr" to "zen", "zs" to "zai", "zt" to "zeng", "zu" to "zu",
             "zv" to "zui", "zw" to "zei", "zy" to "zong", "zz" to "zun",
+        ),
+    ) },
+    /** 首道双拼（公开规格直表编码）：416 个音节 / 412 个码 */
+    "SHOUDAO" to lazy { ShuangpinTable(
+        initials = mapOf(
+            'b' to "b", 'c' to "c", 'd' to "d", 'e' to "sh", 'f' to "f", 'g' to "g",
+            'h' to "h", 'i' to "ch", 'j' to "j", 'k' to "k", 'l' to "l", 'm' to "m",
+            'n' to "n", 'p' to "p", 'q' to "q", 'r' to "r", 's' to "s", 't' to "t",
+            'v' to "zh", 'w' to "w", 'x' to "x", 'y' to "y", 'z' to "z",
+        ),
+        codes = mapOf(
+            "aa" to "a", "ai" to "ai", "an" to "an", "ao" to "ao", "ay" to "ang",
+            "ba" to "ba", "bc" to "bin", "bd" to "bao", "bf" to "beng", "bg" to "bing",
+            "bi" to "bi", "bj" to "ban", "bk" to "ben", "bl" to "bai", "bm" to "bei",
+            "bn" to "bian", "bo" to "bo", "bp" to "biao", "br" to "bie", "bu" to "bu",
+            "bx" to "biang", "by" to "bang", "ca" to "ca", "cd" to "cao", "ce" to "ce",
+            "cf" to "ceng", "ch" to "cong", "ci" to "ci", "cj" to "can", "ck" to "cen",
+            "cl" to "cai", "cm" to "cei", "co" to "cuo", "cs" to "cou", "ct" to "cuan",
+            "cu" to "cu", "cv" to "cui", "cy" to "cang", "cz" to "cun", "da" to "da",
+            "dd" to "dao", "de" to "de", "df" to "deng", "dg" to "ding", "dh" to "dong",
+            "di" to "di", "dj" to "dan", "dk" to "den", "dl" to "dai", "dm" to "dei",
+            "dn" to "dian", "do" to "duo", "dp" to "diao", "dq" to "diu", "dr" to "die",
+            "ds" to "dou", "dt" to "duan", "du" to "du", "dv" to "dui", "dy" to "dang",
+            "dz" to "dun", "ea" to "sha", "ed" to "shao", "ee" to "she", "ef" to "sheng",
+            "eg" to "shuai", "ei" to "shi", "ej" to "shan", "ek" to "shen", "el" to "shai",
+            "em" to "shei", "en" to "en", "eo" to "shuo", "er" to "er", "es" to "shou",
+            "et" to "shuan", "eu" to "shu", "ev" to "shui", "ew" to "shua", "ex" to "shuang",
+            "ey" to "shang", "ez" to "shun", "fa" to "fa", "ff" to "feng", "fj" to "fan",
+            "fk" to "fen", "fm" to "fei", "fo" to "fo", "fp" to "fiao", "fs" to "fou",
+            "fu" to "fu", "fy" to "fang", "ga" to "ga", "gd" to "gao", "ge" to "ge",
+            "gf" to "geng", "gg" to "guai", "gh" to "gong", "gj" to "gan", "gk" to "gen",
+            "gl" to "gai", "gm" to "gei", "go" to "guo", "gs" to "gou", "gt" to "guan",
+            "gu" to "gu", "gv" to "gui", "gw" to "gua", "gx" to "guang", "gy" to "gang",
+            "gz" to "gun", "ha" to "ha", "hd" to "hao", "he" to "he", "hf" to "heng",
+            "hg" to "huai", "hh" to "hong", "hj" to "han", "hk" to "hen", "hl" to "hai",
+            "hm" to "hei", "ho" to "huo", "hs" to "hou", "ht" to "huan", "hu" to "hu",
+            "hv" to "hui", "hw" to "hua", "hx" to "huang", "hy" to "hang", "hz" to "hun",
+            "ia" to "cha", "id" to "chao", "ie" to "che", "if" to "cheng", "ig" to "chuai",
+            "ih" to "chong", "ii" to "chi", "ij" to "chan", "ik" to "chen", "il" to "chai",
+            "io" to "chuo", "is" to "chou", "it" to "chuan", "iu" to "chu", "iv" to "chui",
+            "iw" to "chua", "ix" to "chuang", "iy" to "chang", "iz" to "chun", "jc" to "jin",
+            "jg" to "jing", "jh" to "jiong", "ji" to "ji", "jk" to "jia", "jl" to "jue",
+            "jn" to "jian", "jp" to "jiao", "jq" to "jiu", "jr" to "jie", "jt" to "juan",
+            "ju" to "ju", "jx" to "jiang", "jz" to "jun", "ka" to "ka", "kd" to "kao",
+            "ke" to "ke", "kf" to "keng", "kg" to "kuai", "kh" to "kong", "kj" to "kan",
+            "kk" to "ken", "kl" to "kai", "km" to "kei", "ko" to "kuo", "ks" to "kou",
+            "kt" to "kuan", "ku" to "ku", "kv" to "kui", "kw" to "kua", "kx" to "kuang",
+            "ky" to "kang", "kz" to "kun", "la" to "la", "lb" to "lve", "lc" to "lin",
+            "ld" to "lao", "le" to "le", "lf" to "leng", "lg" to "ling", "lh" to "long",
+            "li" to "li", "lj" to "lan", "lk" to "lia", "ll" to "lai", "lm" to "lei",
+            "ln" to "lian", "lo" to "luo", "lp" to "liao", "lq" to "liu", "lr" to "lie",
+            "ls" to "lou", "lt" to "luan", "lu" to "lu", "lv" to "lv", "lx" to "liang",
+            "ly" to "lang", "lz" to "lun", "ma" to "ma", "mc" to "min", "md" to "mao",
+            "me" to "me", "mf" to "meng", "mg" to "ming", "mi" to "mi", "mj" to "man",
+            "mk" to "men", "ml" to "mai", "mm" to "mei", "mn" to "mian", "mo" to "mo",
+            "mp" to "miao", "mq" to "miu", "mr" to "mie", "ms" to "mou", "mu" to "mu",
+            "my" to "mang", "na" to "na", "nb" to "nve", "nc" to "nin", "nd" to "nao",
+            "ne" to "ne", "nf" to "neng", "ng" to "ning", "nh" to "nong", "ni" to "ni",
+            "nj" to "nan", "nk" to "nen", "nl" to "nai", "nm" to "nei", "nn" to "nian",
+            "no" to "nuo", "np" to "niao", "nq" to "niu", "nr" to "nie", "ns" to "nou",
+            "nt" to "nuan", "nu" to "nu", "nv" to "nv", "nx" to "niang", "ny" to "nang",
+            "oo" to "o", "ou" to "ou", "pa" to "pa", "pc" to "pin", "pd" to "pao",
+            "pf" to "peng", "pg" to "ping", "pi" to "pi", "pj" to "pan", "pk" to "pen",
+            "pl" to "pai", "pm" to "pei", "pn" to "pian", "po" to "po", "pp" to "piao",
+            "pr" to "pie", "ps" to "pou", "pu" to "pu", "py" to "pang", "qc" to "qin",
+            "qg" to "qing", "qh" to "qiong", "qi" to "qi", "qk" to "qia", "ql" to "que",
+            "qn" to "qian", "qp" to "qiao", "qq" to "qiu", "qr" to "qie", "qt" to "quan",
+            "qu" to "qu", "qx" to "qiang", "qz" to "qun", "rd" to "rao", "re" to "re",
+            "rf" to "reng", "rh" to "rong", "ri" to "ri", "rj" to "ran", "rk" to "ren",
+            "ro" to "ruo", "rs" to "rou", "rt" to "ruan", "ru" to "ru", "rv" to "rui",
+            "rw" to "rua", "ry" to "rang", "rz" to "run", "sa" to "sa", "sd" to "sao",
+            "se" to "se", "sf" to "seng", "sh" to "song", "si" to "si", "sj" to "san",
+            "sk" to "sen", "sl" to "sai", "so" to "suo", "ss" to "sou", "st" to "suan",
+            "su" to "su", "sv" to "sui", "sy" to "sang", "sz" to "sun", "ta" to "ta",
+            "td" to "tao", "te" to "te", "tf" to "teng", "tg" to "ting", "th" to "tong",
+            "ti" to "ti", "tj" to "tan", "tl" to "tai", "tm" to "tei", "tn" to "tian",
+            "to" to "tuo", "tp" to "tiao", "tr" to "tie", "ts" to "tou", "tt" to "tuan",
+            "tu" to "tu", "tv" to "tui", "ty" to "tang", "tz" to "tun", "ue" to "e",
+            "uf" to "eng", "ui" to "ei", "va" to "zha", "vd" to "zhao", "ve" to "zhe",
+            "vf" to "zheng", "vg" to "zhuai", "vh" to "zhong", "vi" to "zhi", "vj" to "zhan",
+            "vk" to "zhen", "vl" to "zhai", "vm" to "zhei", "vo" to "zhuo", "vs" to "zhou",
+            "vt" to "zhuan", "vu" to "zhu", "vv" to "zhui", "vw" to "zhua", "vx" to "zhuang",
+            "vy" to "zhang", "vz" to "zhun", "wa" to "wa", "wf" to "weng", "wj" to "wan",
+            "wk" to "wen", "wl" to "wai", "wm" to "wei", "wo" to "wo", "wu" to "wu",
+            "wy" to "wang", "xc" to "xin", "xg" to "xing", "xh" to "xiong", "xi" to "xi",
+            "xk" to "xia", "xl" to "xue", "xn" to "xian", "xp" to "xiao", "xq" to "xiu",
+            "xr" to "xie", "xt" to "xuan", "xu" to "xu", "xx" to "xiang", "xz" to "xun",
+            "ya" to "ya", "yc" to "yin", "yd" to "yao", "ye" to "ye", "yg" to "ying",
+            "yh" to "yong", "yi" to "yi", "yj" to "yan", "yl" to "yue", "yo" to "yo",
+            "ys" to "you", "yt" to "yuan", "yu" to "yu", "yy" to "yang", "yz" to "yun",
+            "za" to "za", "zd" to "zao", "ze" to "ze", "zf" to "zeng", "zh" to "zong",
+            "zi" to "zi", "zj" to "zan", "zk" to "zen", "zl" to "zai", "zm" to "zei",
+            "zo" to "zuo", "zs" to "zou", "zt" to "zuan", "zu" to "zu", "zv" to "zui",
+            "zy" to "zang", "zz" to "zun",
         ),
     ) },
 )

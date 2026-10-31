@@ -89,7 +89,40 @@ SCHEMES = [
     ('ziguang', 'double_pinyin_ziguang', '紫光双拼'),
     ('abc', 'double_pinyin_abc', '智能ABC双拼'),
     ('jiajia', 'double_pinyin_jiajia', '拼音加加双拼'),
+    # 首道双拼上游**没有** rime 方案（2026 新方案，检索无果），schema 传 None 走下面的规格表分支
+    ('shoudao', None, '首道双拼'),
 ]
+
+# ── 表驱动方案：没有 rime schema 可依，直接按公开键位规格编码 ────────────────────
+# 首道双拼规格（4 源一致：少数派原文/键位图、青简文档、WindInput、MSIME），
+# 设计与出处见 `docs/设计-双拼/首道双拼接入-2026-10-31.md`。
+# 与 rime 分支的唯一差别是数据来源：本表即为真源，不再施加 algebra。
+TABLE_SCHEMES = {
+    'shoudao': {
+        'cn': '首道双拼',
+        'note': '公开规格直表编码',
+        # 声母 → 键；其余单字母声母自映射（b p m f d t n l g k h j q x r z c s y w）
+        'initials': {'zh': 'v', 'ch': 'i', 'sh': 'e'},
+        # 韵母 → 键（26 键全覆盖；üe 在 b、ue 在 l，jqxy 后的 ü 按项目写法仍作 u）
+        'finals': {
+            'a': 'a', 'o': 'o', 'e': 'e', 'ai': 'l', 'ei': 'm', 'ao': 'd', 'ou': 's',
+            'an': 'j', 'en': 'k', 'ang': 'y', 'eng': 'f', 'ong': 'h',
+            'i': 'i', 'ia': 'k', 'ie': 'r', 'iao': 'p', 'iu': 'q', 'ian': 'n', 'in': 'c',
+            'iang': 'x', 'ing': 'g', 'iong': 'h',
+            'u': 'u', 'ua': 'w', 'uo': 'o', 'uai': 'g', 'ui': 'v', 'ue': 'l', 'uan': 't',
+            'un': 'z', 'uang': 'x',
+            'v': 'v', 've': 'b',
+        },
+        # 零声母：**不可推导**（e/ei/eng 被 sh 占键，改 u 引导；ang 走 ay），必须显式列
+        'zero': {
+            'a': 'aa', 'o': 'oo', 'ai': 'ai', 'ao': 'ao', 'ou': 'ou', 'an': 'an',
+            'en': 'en', 'er': 'er', 'ang': 'ay', 'e': 'ue', 'ei': 'ui', 'eng': 'uf',
+        },
+        # 叹词/无词库音节：表里编不出也不需要（其余由 SKIP_SYLLABLES 兜）
+        'skip': {'hm', 'ng'},
+    },
+}
+
 
 PROBE_INITIALS = ['b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h', 'j', 'q', 'x',
                   'zh', 'ch', 'sh', 'r', 'z', 'c', 's', 'y', 'w']
@@ -103,6 +136,9 @@ COLLISION_PREFER = {
     #   二是词库 0 条的叹词让位给真实音节。
     'lo': 'luo',    # 让位给 luo（与旧实现一致：旧实现 'o' 在 l 后取 uo）→ 咯/啰 双拼打不出
                     # （全拼仍可输入；rime 因为保留多个拼写所以两个都能打，本项目不保留多拼写）
+    'dia': 'den',   # 首道专用：k 键 = [en, ia] ⇒ 两者同码 dk，嗲 让位（全拼仍可输入）
+    'lue': 'lai',   # 首道专用：l 键 = [ai, ue] ⇒ lue/lai 同码 ll，lüe 让位
+    'nue': 'nai',   # 首道专用：同一原因 ⇒ nue/nai 同码 nl，nüe 让位（lve/nve 另有码 lb/nb）
     'ng': None,     # ng 是叹词（词库 0 条），按对手保留（neng / nang / niang）
     'hm': None,     # 同上（词库 0 条），按对手保留（hun / hui）
     'lve': 'lue',   # üe 让位给 ue 写法（与旧实现一致）。注意：词库里的 lve/nve 词条**仍能命中**，
@@ -129,11 +165,12 @@ KT_HEADER = '''package com.jinn.inputmethod
  *
  * 因此本文件的键位与 rime-ice 完全一致（含 rime 的 derive 容错码）；唯一的人工裁决是
  * 「一码多音节」的取舍（如 `lo` = lo/luo），规则见生成器里的 COLLISION_PREFER 注释。
+ * 首道双拼没有 rime 官方方案，按公开键位规格直表编码（见生成器的 TABLE_SCHEMES）。
  *
  * 键面提示（字母键下方的韵母、zh/ch/sh 红字）由本表在运行期反推，不另存一份，
  * 以保证键面与引擎永不漂移。
  *
- * 每套方案惰性构建（`Lazy`）：7 套表一次全建约 3,000 条目，实测首访耗时可观，
+ * 每套方案惰性构建（`Lazy`）：8 套表一次全建约 3,400 条目，实测首访耗时可观，
  * 而键盘视图是在 `onCreateInputView`（键盘首次弹出）里创建的，若在该路径同步建表会拖慢首次弹出。
  * 因此改为「用到哪套建哪套」，并在 IME 服务创建时由后台线程预热（见 `Shuangpin.warmUpAll`）。
  */
@@ -371,6 +408,9 @@ def pick_canonical(sylls, counts):
         pref = COLLISION_PREFER.get(cand)
         if pref and pref in sylls:
             return pref
+    if counts is None:
+        # 表驱动方案没有词频可依（也刻意不读 —— 判据必须是显式规则，不能随语料漂移）
+        raise SystemExit(f'表驱动方案出现未裁决的同码 {sylls}：请在 COLLISION_PREFER 里显式指定')
 
     def weight(s):
         return sum(v for k, v in counts.items() if k.startswith(s))
@@ -378,46 +418,144 @@ def pick_canonical(sylls, counts):
     return sorted(sylls, key=lambda s: (-weight(s), s))[0]
 
 
+def build_table_scheme(spec, syllables):
+    """表驱动方案（上游无 rime schema）：按公开规格表编码。
+
+    返回 (initials, per_syllable, code_map, collisions, bad)，与 rime 分支同形，
+    下游的渲染 / 报告 / JSON 落盘共用一套代码。
+    """
+    skip = SKIP_SYLLABLES | spec.get('skip', set())
+    ini_key = {c: c for c in 'bpmfdtnlgkhjqxrzcsyw'}
+    ini_key.update(spec['initials'])
+    initials = {key: ini for ini, key in ini_key.items()}
+    pairs, bad = [], []
+    for syl in syllables:
+        if syl in skip:
+            continue
+        if syl in spec['zero']:                 # 零声母不可推导，表里是显式键对
+            pairs.append((spec['zero'][syl], syl))
+            continue
+        ini = next((c for c in ('zh', 'ch', 'sh') if syl.startswith(c)), None)
+        if ini is None and syl[:1] in ini_key:
+            ini = syl[0]
+        if ini is None:
+            bad.append(syl)
+            continue
+        fin = spec['finals'].get(syl[len(ini):])
+        if fin is None:
+            bad.append(syl)
+            continue
+        pairs.append((ini_key[ini] + fin, syl))
+
+    rev = {}
+    for code, syl in pairs:
+        rev.setdefault(code, []).append(syl)
+    code_map, collisions = {}, []
+    for code, sylls in sorted(rev.items()):
+        uniq = sorted(set(sylls))
+        chosen = pick_canonical(uniq, None)      # 无词频：未显式裁决的同码会直接报错
+        code_map[code] = chosen
+        if len(uniq) > 1:
+            collisions.append((code, uniq, chosen))
+    per_syllable = {syl: [code] for code, syl in pairs}
+    return initials, per_syllable, code_map, collisions, bad
+
+
+def render_block(key, cn, source, syllable_count, initials, code_map):
+    """生成一个方案的 Kotlin 数据块（两种数据来源共用同一份排版）。"""
+    lines = [f'    /** {cn}（{source}）：{syllable_count} 个音节 / {len(code_map)} 个码 */',
+             f'    "{key.upper()}" to lazy {{ ShuangpinTable(',
+             '        initials = mapOf(']
+    ini_items = [f"'{k}' to \"{v}\"" for k, v in sorted(initials.items())]
+    for i in range(0, len(ini_items), 6):
+        lines.append('            ' + ', '.join(ini_items[i:i + 6]) + ',')
+    lines.append('        ),')
+    lines.append('        codes = mapOf(')
+    code_items = [f'"{c}" to "{s}"' for c, s in sorted(code_map.items())]
+    for i in range(0, len(code_items), 5):
+        lines.append('            ' + ', '.join(code_items[i:i + 5]) + ',')
+    lines.append('        ),')
+    lines.append('    ) },')
+    return '\n'.join(lines)
+
+
+def splice_block(src, key, block, syllable_count):
+    """只把 [key] 的块写进现有 Kotlin，其余块逐字保留。
+
+    存在的理由：词频留档 `out/rime_ice/pinyin_phrases.txt` 不入库，换机后要先重建 46MB 语料
+    才能全量重生成；而新增一个**表驱动**方案不需要任何词频（同码全部显式裁决）。头部仍按
+    KT_HEADER 重写，保证「生成器模板与源码头部逐行一致」这条守卫仍然成立。
+    """
+    marker = 'internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf('
+    idx = src.index(marker)
+    body = src[idx + len(marker):]
+    if f'    "{key.upper()}" to lazy {{' in body:
+        raise SystemExit(f'{key} 的块已存在：--only 只用于新增；改动既有方案请全量重生成')
+    close = body.rstrip().rfind(')')
+    if close < 0:
+        raise SystemExit('源码尾部结构变了：找不到 mapOf( 的收尾括号')
+    head = KT_HEADER % syllable_count            # 模板已含到 mapOf( 为止（与守卫对拍口径一致）
+    return head + body[:close] + block + '\n' + body[close:]
+
+
 def main():
+    argv = sys.argv[1:]
+    only = None
+    if '--only' in argv:
+        at = argv.index('--only')
+        only = argv[at + 1] if at + 1 < len(argv) else None
+        if not only:
+            raise SystemExit('--only 需要一个方案 key（如 --only shoudao）')
+
     syllables = [l.strip() for l in read_asset_text(SYLL).split('\n') if l.strip()]
-    counts = dict_key_counts()
-    print(f'音节表 {len(syllables)} 个；词库唯一键 {len(counts)} 个')
+    counts = None if only else dict_key_counts()
+    print(f'音节表 {len(syllables)} 个；词库唯一键 {"未读（--only）" if counts is None else len(counts)} 个')
     os.makedirs(OUT_DIR, exist_ok=True)
 
     kt_blocks, report = [], []
     for key, schema, cn in SCHEMES:
-        path = os.path.join(RIME, schema + '.schema.yaml')
-        rules = parse_algebra(path)
-        alphabet = parse_alphabet(path)
+        if only and key != only:
+            continue
+        if schema is None:
+            spec = TABLE_SCHEMES[key]
+            initials, per_syllable, code_map, collisions, bad = build_table_scheme(spec, syllables)
+            source = spec.get('note', '规格表')
+        else:
+            if only:
+                raise SystemExit('--only 只支持表驱动方案：rime 方案的同码裁决需要词频留档')
+            path = os.path.join(RIME, schema + '.schema.yaml')
+            rules = parse_algebra(path)
+            alphabet = parse_alphabet(path)
+            source = f'rime-ice `{schema}.schema.yaml`'
 
-        initials = {}
-        for ini in PROBE_INITIALS:
-            codes = apply_rules(rules, ini + 'a')
-            if codes:
-                initials.setdefault(codes[0][0], ini)
+            initials = {}
+            for ini in PROBE_INITIALS:
+                codes = apply_rules(rules, ini + 'a')
+                if codes:
+                    initials.setdefault(codes[0][0], ini)
 
-        per_syllable, bad = {}, []
-        for syl in syllables:
-            if syl in SKIP_SYLLABLES:
-                continue
-            codes = [c for c in apply_rules(rules, syl)
-                     if len(c) == 2 and set(c) <= alphabet]
-            if not codes:
-                bad.append(syl)
-            else:
-                per_syllable[syl] = codes
+            per_syllable, bad = {}, []
+            for syl in syllables:
+                if syl in SKIP_SYLLABLES:
+                    continue
+                codes = [c for c in apply_rules(rules, syl)
+                         if len(c) == 2 and set(c) <= alphabet]
+                if not codes:
+                    bad.append(syl)
+                else:
+                    per_syllable[syl] = codes
 
-        rev = {}
-        for syl, codes in per_syllable.items():
-            for c in codes:
-                rev.setdefault(c, []).append(syl)
-        code_map, collisions = {}, []
-        for c, sylls in sorted(rev.items()):
-            uniq = sorted(set(sylls))
-            chosen = pick_canonical(uniq, counts)
-            code_map[c] = chosen
-            if len(uniq) > 1:
-                collisions.append((c, uniq, chosen))
+            rev = {}
+            for syl, codes in per_syllable.items():
+                for c in codes:
+                    rev.setdefault(c, []).append(syl)
+            code_map, collisions = {}, []
+            for c, sylls in sorted(rev.items()):
+                uniq = sorted(set(sylls))
+                chosen = pick_canonical(uniq, counts)
+                code_map[c] = chosen
+                if len(uniq) > 1:
+                    collisions.append((c, uniq, chosen))
 
         if key == 'ziranma':
             code_map.update(ZIRANMA_COMPAT)
@@ -431,31 +569,23 @@ def main():
         if bad:
             report.append('        未编码: ' + ' '.join(bad))
 
-        lines = [f'    /** {cn}（rime-ice `{schema}.schema.yaml`）：'
-                 f'{len(per_syllable)} 个音节 / {len(code_map)} 个码 */',
-                 f'    "{key.upper()}" to lazy {{ ShuangpinTable(',
-                 '        initials = mapOf(']
-        ini_items = [f"'{k}' to \"{v}\"" for k, v in sorted(initials.items())]
-        for i in range(0, len(ini_items), 6):
-            lines.append('            ' + ', '.join(ini_items[i:i + 6]) + ',')
-        lines.append('        ),')
-        lines.append('        codes = mapOf(')
-        code_items = [f'"{c}" to "{s}"' for c, s in sorted(code_map.items())]
-        for i in range(0, len(code_items), 5):
-            lines.append('            ' + ', '.join(code_items[i:i + 5]) + ',')
-        lines.append('        ),')
-        lines.append('    ) },')
-        kt_blocks.append('\n'.join(lines))
+        kt_blocks.append(render_block(key, cn, source, len(per_syllable), initials, code_map))
 
         io.open(os.path.join(OUT_DIR, key + '.json'), 'w', encoding='utf-8').write(
             json.dumps({'name': cn, 'schema': schema, 'initials': initials,
                         'codes': code_map}, ensure_ascii=False, indent=1))
 
     print('\n'.join(report))
-    body = KT_HEADER % len(syllables) + '\n'.join(kt_blocks) + '\n)\n'
-    # 原子落盘（BUG.md L-122）：OUT_KT 是**仓库内 Kotlin 源码**，半截源码照样能编译，只会静默缺尾
-    write_bytes_atomically(OUT_KT, body.encode('utf-8'))
-    print(f'\nKotlin 数据已写入 {OUT_KT}')
+    if only:
+        src = io.open(OUT_KT, encoding='utf-8').read()
+        out = splice_block(src, only, kt_blocks[0], len(syllables))
+        write_bytes_atomically(OUT_KT, out.encode('utf-8'))
+        print(f'\n仅重写 {only} 块（其余块逐字保留）：{OUT_KT}')
+    else:
+        body = KT_HEADER % len(syllables) + '\n'.join(kt_blocks) + '\n)\n'
+        # 原子落盘（BUG.md L-122）：OUT_KT 是**仓库内 Kotlin 源码**，半截源码照样能编译，只会静默缺尾
+        write_bytes_atomically(OUT_KT, body.encode('utf-8'))
+        print(f'\nKotlin 数据已写入 {OUT_KT}')
 
 
 if __name__ == '__main__':

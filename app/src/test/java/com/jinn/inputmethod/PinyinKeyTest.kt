@@ -102,7 +102,7 @@ class PinyinKeyTest {
                 checked++
             }
         }
-        assertTrue("没扫到 7 套方案 × 27 键（表为空？）: $checked", checked >= 7 * 27)
+        assertTrue("没扫到 8 套方案 × 27 键（表为空？）: $checked", checked >= 8 * 27)
     }
 
     // ── 接线不变式（形态钉）──────────────────────────────────

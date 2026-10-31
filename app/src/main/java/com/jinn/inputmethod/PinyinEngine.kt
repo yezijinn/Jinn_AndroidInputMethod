@@ -3174,6 +3174,7 @@ enum class ShuangpinScheme(
     ZIGUANG(5, "紫光双拼", "紫光", "ZIGUANG"),
     ABC(6, "智能 ABC 双拼", "ABC", "ABC"),
     JIAJIA(7, "拼音加加双拼", "加加", "JIAJIA"),
+    SHOUDAO(8, "首道双拼", "首道", "SHOUDAO"),
     ;
 
     /** 是否双拼方案（全拼无需转换） */
@@ -3183,7 +3184,7 @@ enum class ShuangpinScheme(
      * 该方案的键位数据；全拼方案为 null（[ShuangpinTable] 是 internal，故此处同样 internal）。
      *
      * 表是惰性构建的（`Lazy.value`）：首次访问某方案时才建它那一张，避免键盘弹出路径
-     * 一次性建 7 张（详见 ShuangpinSchemes.kt 文件头与 [Shuangpin.warmUpAll]）。
+     * 一次性建 8 张（详见 ShuangpinSchemes.kt 文件头与 [Shuangpin.warmUpAll]）。
      */
     internal val table: ShuangpinTable? get() = tableKey?.let { SHUANGPIN_TABLES[it]?.value }
 
@@ -3192,7 +3193,7 @@ enum class ShuangpinScheme(
         val SHUANGPIN_ONLY: List<ShuangpinScheme> = entries.filter { it.isShuangpin }
 
         /**
-         * 设置页「输入方案」下拉的全部可选项：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
+         * 设置页「输入方案」下拉的全部可选项：全拼 + 八套双拼（共 9 项，语音键盘不在此列）。
          *
          * 2026-09-20 起该下拉是全局输入方案（不再只选「哪套双拼」）：选全拼 = 关闭双拼，
          * 选某套双拼 = 记住并启用；按键面板不再提供「全拼 / 双拼」切换按钮。

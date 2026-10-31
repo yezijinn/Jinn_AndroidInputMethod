@@ -1,6 +1,6 @@
 # 精灵输入法
 
-A lightweight Android IME: QWERTY full pinyin / Shuangpin (7 schemes), clipboard history, optional
+A lightweight Android IME: QWERTY full pinyin / Shuangpin (8 schemes), clipboard history, optional
 dictionaries. Everything core runs on-device, no server needed; APK ~3.2MB with no bundled speech datas.
 
 English ｜ [中文](README.md)
@@ -13,7 +13,7 @@ English ｜ [中文](README.md)
 ## Features
 
 **Pinyin keyboard (QWERTY)**
-- Full pinyin / Shuangpin / English; 7 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia) with final/initial hints on keys (toggle in Settings; when off, keys show letters only); pick the scheme in Settings (applies globally)
+- Full pinyin / Shuangpin / English; 8 Shuangpin schemes (Ziranma, Xiaohe, Sogou, Microsoft, Ziguang, Zhineng ABC, Jiajia, Shoudao) with final/initial hints on keys (toggle in Settings; when off, keys show letters only); pick the scheme in Settings (applies globally)
 - Character set: 5,613 common characters by default (given name / place name characters such as 囧, 淼, 喆, 昇 type straight away); "More rare characters" in Settings opens a page with two tiers — level 2 (837 chars) and level 3 (2,923 chars); tier 3 requires tier 2, and toggles take effect instantly
 - "Traditional Chinese only" (Settings): candidates are replaced with their traditional forms on commit (爱 → 愛, 碍 → 礙), applied instantly; learning is still stored in simplified form, shared by both modes
 - Incomplete-pinyin completion (`ni m` / `nim` → 你们) and lexicon-constrained segmentation (`xuni` → `xu+ni`)

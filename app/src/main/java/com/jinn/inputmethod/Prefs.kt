@@ -123,7 +123,7 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHUANGPIN, value) }
 
     /**
-     * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加，不存 0）。
+     * 选定的双拼方案，取值见 [ShuangpinScheme]（1 自然码 … 7 加加、8 首道，不存 0）。
      *
      * 只在设置页「输入方案」下拉里改（选双拼项时写入；面板已无方案切换入口）。
      * 选全拼不清除本键：下次选回双拼时回到上次那套，不会丢用户的选择。

@@ -154,7 +154,7 @@ class HintRuleTest {
      *
      * 这是「序号」唯一能改变用户可见文本的地方：`finalOrder` 是手写常量，把某个韵母插到别处
      * （或漏项）时，覆盖度 / 不截断两条守卫都不会红，键面次序却已经变了。
-     * 当前全网只有这 4 种组合（19 格），出现第五种即红 —— 先定期望次序，再往表里加。
+     * 当前全网只有这 6 种组合（23 格），出现第七种即红 —— 先定期望次序，再往表里加。
      */
     @Test
     fun 同长韵母的同屏次序必须符合直觉() {
@@ -163,6 +163,9 @@ class HintRuleTest {
             setOf("iang", "uang") to listOf("iang", "uang"),
             setOf("ing", "uai") to listOf("ing", "uai"),
             setOf("ui", "ue") to listOf("ui", "ue"),
+            // 首道双拼：k = [en, ia]（en 让位对手是 ia 的同一键）、l = [ai, ue]
+            setOf("en", "ia") to listOf("en", "ia"),
+            setOf("ai", "ue") to listOf("ai", "ue"),
         )
         var cells = 0
         for (scheme in schemes) {
@@ -179,7 +182,7 @@ class HintRuleTest {
                 assertEquals("${scheme.displayName} 的 $c 键同长韵母次序", want, finals)
             }
         }
-        assertEquals("同长组合的格数变了（数据改动请一并复核 finalOrder）", 19, cells)
+        assertEquals("同长组合的格数变了（数据改动请一并复核 finalOrder）", 23, cells)
     }
 
     @Test

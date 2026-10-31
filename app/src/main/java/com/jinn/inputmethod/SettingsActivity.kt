@@ -421,7 +421,7 @@ class SettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 输入方案下拉（全局，2026-09-20 起）：全拼 + 七套双拼（共 8 项，语音键盘不在此列）。
+        // 输入方案下拉（全局，2026-09-20 起）：全拼 + 八套双拼（共 9 项，语音键盘不在此列）。
         // 选中即全局生效：选全拼 = 关闭双拼；选某套双拼 = 记住该方案并启用。
         // 按键面板不再提供「全拼 / 双拼」切换按钮，这里是唯一的输入方案入口。
         // 列表取自 [ShuangpinScheme.ALL]，与引擎共用同一份数据，不会脱节。

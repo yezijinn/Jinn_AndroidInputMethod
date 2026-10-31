@@ -1796,7 +1796,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         PinyinEngine.rememberChoice(word)
     }
 
-    /** 设置输入方案（全拼 / 七种双拼）与初始中英文状态 */
+    /** 设置输入方案（全拼 / 八种双拼）与初始中英文状态 */
     fun configure(scheme: ShuangpinScheme, english: Boolean) {
         // 分段计时（只在 debug 构建里真跑，见 PerfSpan）：本方法是「换输入框」这条路径上
         // 唯一的整树重套点，逐段数字是「L-1518 该不该修」的判据来源
@@ -4472,7 +4472,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）—— **恒为最右端**（用户 2026-09-30 定）
      *
      * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
-     * 「输入方案」下拉里改（全拼 + 7 套双拼，全局生效），面板不再承担方案切换。
+     * 「输入方案」下拉里改（全拼 + 8 套双拼，全局生效），面板不再承担方案切换。
      *
      * 复用候选栏的 [candidate_list] 区域，高度与候选栏一致（见 [CandidateRows.heightDp]），
      * 不改变键盘整体高度；按钮横向排列，小屏自动可横向滚动。

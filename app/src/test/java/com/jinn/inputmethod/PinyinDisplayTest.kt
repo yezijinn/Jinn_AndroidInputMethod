@@ -26,7 +26,7 @@ class PinyinDisplayTest {
     }
 
     @Test
-    fun 合法输入_七套方案全码表对拍() {
+    fun 合法输入_八套方案全码表对拍() {
         // 遍历各方案码表：每条「码 → 音节」在 display 与 toQuanpin 下必须一致
         for (s in ShuangpinScheme.SHUANGPIN_ONLY) {
             val table = s.table ?: continue
