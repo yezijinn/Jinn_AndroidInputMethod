@@ -5,6 +5,22 @@
   因此数据库被恢复也无密钥可解；但仍按最小权限原则排除，防止任何泄露面。
 -->
 <full-backup-content>
+    <!--
+      `file` 域（filesDir）是**黑名单**：Android 的默认语义是「没排除就全收」，
+      所以任何新增的持久化文件默认都会上云（仓库内已复发四次：prefs `.bak` /
+      `clipboard/` / `ledger_orphan/`+`user_picks*` / `dicts/` 中间件，每次都是发现了才补一条）。
+      实测（2026-11-01，AVD + `bmgr backupnow` 解包）：规则未覆盖的探针文件确实直接进包。
+
+      ⚠ 白名单化试过**两次**，都被 lint 的 `FullBackupContent` 检查否决（不要重试）：
+      ① 只加 `<include domain="file" path="dicts/"/>` ⇒ 其余三域 20+ 条 exclude 全报
+         `X is not in an included path`，`assembleRelease` 失败；
+      ② 再给其余三域各补 `<include domain="…" path="."/>`（`"."` 是 lint 的全路径特例）⇒
+         `file` 域自己的 9 条 exclude（`index/` `clipboard/` `ledger_orphan/` `user_freq*`
+         `user_picks*`）仍全部报错，因为它们不在 `dicts/` 之下。
+      根因：include **按域生效、只覆盖同域内落在其路径下的 exclude**，没有「本域全收 + 逐条排除」的写法
+      （`path="."` 只在**同域**生效，而 `file` 域的 include 已经是 `dicts/`，两者互斥）。
+      ⇒ 维持黑名单 + 逐条排除。新增持久化文件必须同步本清单。
+    -->
     <!-- 排除剪贴板历史数据库（含加密正文） -->
     <exclude
         domain="database"

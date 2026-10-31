@@ -220,8 +220,15 @@ internal object ConfigBackupManager {
             val stale = name.startsWith(DECRYPT_PREFIX) ||
                 (name.startsWith(ConfigBackup.FILE_PREFIX) &&
                     (name.endsWith(".plain") || name.endsWith(".zip.tmp") || name.endsWith(".tmp")))
-            if (stale && now - f.lastModified() >= STALE_MIN_AGE_MS && f.delete()) {
-                Diagnostics.i(TAG, "清理残留中间文件: $name")
+            if (stale && now - f.lastModified() >= STALE_MIN_AGE_MS) {
+                // 删的是**明文**中间件（导出包的配置节），失败必须留痕：
+                // 静默失败的话它会一直躺在缓存目录里，而没有任何日志指向这里。
+                // `|| !f.exists()` 收掉「在判定与删除之间被另一处删掉」的误报 —— 那种情况结果是对的
+                if (f.delete() || !f.exists()) {
+                    Diagnostics.i(TAG, "清理残留中间文件: $name")
+                } else {
+                    Diagnostics.w(TAG, "残留中间文件删除失败: $name 目录可写=${dir.canWrite()}")
+                }
             }
         }
         // 词库恢复的中间件（`*.xz.restore`）在 filesDir：正常路径会自己改名或删除，

@@ -22,6 +22,19 @@ class BackupRulesTest {
     )
 
     /**
+     * 在一段规则里找 `<exclude domain=… path=…/>`：**两个属性落在同一标签内、且不锁顺序**。
+     *
+     * 为什么要这样写：Android 不约束 XML 属性顺序，写死 `domain="…"\s+path="…"` 有两个方向的坏处 ——
+     * 正向断言遇等价重排会假红；反向断言（`assertFalse`）重排后**不再匹配**，
+     * 于是「`dicts/` 真的被整体排除了」也照样绿，L-152 那条不变量无声失守。
+     * `[^>]*` 保证两个属性同属一个 `<exclude>`，跨标签不会误配。
+     */
+    private fun hasExclude(xml: String, domain: String, path: String): Boolean =
+        Regex(
+            """<exclude(?=[^>]*\bdomain="$domain")(?=[^>]*\bpath="${Regex.escape(path)}\")[^>]*>"""
+        ).containsMatchIn(xml)
+
+    /**
      * 隐私数据的**逐条**排除必须在三份清单里都在（数据驱动，不靠手点三条）。
      *
      * 判据一律精确路径 + 三段分别判：清单里有 `jinn_clipboard.db-journal`、`user_freq.txt.tmp`、
@@ -58,11 +71,7 @@ class BackupRulesTest {
             for ((seg, text) in segments) {
                 assertTrue(
                     "$seg 缺 $domain:$path（隐私数据不得随备份 / 迁移出机）",
-                    // 只锚同一个 `<exclude>` 标签、不锁属性顺序：Android 不约束顺序，
-                // 写死「domain 紧邻 path 之前」会让一次合法重排假红 51 条
-                Regex(
-                    """<exclude(?=[^>]*\bdomain="$domain")(?=[^>]*\bpath="${Regex.escape(path)}\")[^>]*>"""
-                ).containsMatchIn(text),
+                    hasExclude(text, domain, path),
                 )
             }
         }
@@ -74,15 +83,32 @@ class BackupRulesTest {
             val xml = rules(name)
             assertFalse(
                 "$name 排除了 dicts/ —— 那是用户下载的真数据（可重下，但不是缓存）",
-                Regex("""domain="file"\s+path="dicts/"\s*/>""").containsMatchIn(xml),
+                hasExclude(xml, "file", "dicts/"),
             )
         }
         // 云端与设备迁移是两段：只改一段会让另一条路径继续把缓存送出去
         val transfer = rules("data_extraction_rules.xml")
         val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
-        assertTrue("cloud-backup 段缺索引排除", "index/" in cloud)
-        assertTrue("device-transfer 段缺索引排除", "index/" in device)
+        assertTrue("cloud-backup 段缺索引排除", hasExclude(cloud, "file", "index/"))
+        assertTrue("device-transfer 段缺索引排除", hasExclude(device, "file", "index/"))
+        // 逐名也要钉：只判 `dicts/` 整个目录的话，把**某一个真包**单独排除（比如嫌它太大）
+        // 全部断言仍绿，而换机恢复后那个包就永远没了、引擎退化成小词库且无提示
+        val keep = buildList {
+            for (d in OptionalDicts.ALL) add("dicts/${d.fileName}")
+            add("dicts/${CustomDicts.PACK_NAME}")
+            add("dicts/${CustomDicts.SOURCE_NAME}")
+        }
+        val segments = mapOf(
+            "backup_rules.xml" to rules("backup_rules.xml"),
+            "cloud-backup" to cloud,
+            "device-transfer" to device,
+        )
+        for (n in keep) {
+            for ((seg, text) in segments) {
+                assertFalse("$seg 把真词库 $n 排除了 —— 那是换机后唯一的词库来源", hasExclude(text, "file", n))
+            }
+        }
     }
 
     @Test
@@ -105,15 +131,15 @@ class BackupRulesTest {
         assertEquals("中间件名单应为 10 条（3 包 + 自定义包 + 源文本，各两种后缀）", 10, names.size)
         val full = rules("backup_rules.xml")
         for (n in names) {
-            assertTrue("backup_rules.xml 缺 $n", Regex("path=\"${Regex.escape(n)}\"").containsMatchIn(full))
+            assertTrue("backup_rules.xml 缺 $n", hasExclude(full, "file", n))
         }
         val transfer = rules("data_extraction_rules.xml")
         val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         for (n in names) {
-            val p = Regex("path=\"${Regex.escape(n)}\"")
-            assertTrue("cloud-backup 段缺 $n", p.containsMatchIn(cloud))
-            assertTrue("device-transfer 段缺 $n", p.containsMatchIn(device))
+
+            assertTrue("cloud-backup 段缺 $n", hasExclude(cloud, "file", n))
+            assertTrue("device-transfer 段缺 $n", hasExclude(device, "file", n))
         }
     }
 
@@ -126,16 +152,16 @@ class BackupRulesTest {
         for (n in names) {
             assertTrue(
                 "backup_rules.xml 缺台账中间件 $n",
-                Regex("path=\"${Regex.escape(n)}\"").containsMatchIn(full),
+                hasExclude(full, "file", n),
             )
         }
         val transfer = rules("data_extraction_rules.xml")
         val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         for (n in names) {
-            val p = Regex("path=\"${Regex.escape(n)}\"")
-            assertTrue("cloud-backup 段缺台账中间件 $n", p.containsMatchIn(cloud))
-            assertTrue("device-transfer 段缺台账中间件 $n", p.containsMatchIn(device))
+
+            assertTrue("cloud-backup 段缺台账中间件 $n", hasExclude(cloud, "file", n))
+            assertTrue("device-transfer 段缺台账中间件 $n", hasExclude(device, "file", n))
         }
     }
 
@@ -153,16 +179,15 @@ class BackupRulesTest {
      */
     @Test
     fun 诊断日志目录必须排除在备份与迁移之外() {
-        val pattern = Regex("""domain="external"\s+path="logs/"""")
         assertTrue(
             "backup_rules.xml 必须按 external 域排除 logs/（那是 Auto Backup 的默认上传域）",
-            pattern.containsMatchIn(rules("backup_rules.xml")),
+            hasExclude(rules("backup_rules.xml"), "external", "logs/")
         )
         val transfer = rules("data_extraction_rules.xml")
         val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
-        assertTrue("cloud-backup 段缺 external 域日志排除", pattern.containsMatchIn(cloud))
-        assertTrue("device-transfer 段缺 external 域日志排除", pattern.containsMatchIn(device))
+        assertTrue("cloud-backup 段缺 external 域日志排除", hasExclude(cloud, "external", "logs/"))
+        assertTrue("device-transfer 段缺 external 域日志排除", hasExclude(device, "external", "logs/"))
     }
 
     /**
@@ -175,16 +200,14 @@ class BackupRulesTest {
      */
     @Test
     fun 台账孤儿件目录与密钥中间件必须排除在备份与迁移之外() {
-        val orphan = Regex("""domain="file"\s+path="ledger_orphan/"""")
-        val keyTmp = Regex("""domain="file"\s+path="user_picks\.key\.tmp"""")
-        assertTrue("backup_rules.xml 必须排除孤儿件目录", orphan.containsMatchIn(rules("backup_rules.xml")))
-        assertTrue("backup_rules.xml 必须排除密钥中间件", keyTmp.containsMatchIn(rules("backup_rules.xml")))
+        assertTrue("backup_rules.xml 必须排除孤儿件目录", hasExclude(rules("backup_rules.xml"), "file", "ledger_orphan/"))
+        assertTrue("backup_rules.xml 必须排除密钥中间件", hasExclude(rules("backup_rules.xml"), "file", "user_picks.key.tmp"))
         val transfer = rules("data_extraction_rules.xml")
         val cloud = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
         val device = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
         for ((name, seg) in listOf("cloud-backup" to cloud, "device-transfer" to device)) {
-            assertTrue("$name 段缺孤儿件目录排除", orphan.containsMatchIn(seg))
-            assertTrue("$name 段缺密钥中间件排除", keyTmp.containsMatchIn(seg))
+            assertTrue("$name 段缺孤儿件目录排除", hasExclude(seg, "file", "ledger_orphan/"))
+            assertTrue("$name 段缺密钥中间件排除", hasExclude(seg, "file", "user_picks.key.tmp"))
         }
         // 反向：孤儿件目录名必须与源码常量一致，否则规则排的是另一条路径
         val src = TestSources.codeOf(sourceOf("src/main/java/com/jinn/inputmethod/LedgerCrypto.kt"))
@@ -225,5 +248,36 @@ class BackupRulesTest {
         assertTrue("删不掉要留痕（否则静默失败没人知道）", "Diagnostics.w" in dicts)
         val act = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
         assertTrue("回收口必须挂在设置页启动路径上", "ConfigBackupManager.cleanupStaleCache" in act)
+
+        // 明文中间件那一段同样要留痕：它删的是导出包的配置节明文，失败静默会一直躺在缓存里。
+        // 与 dicts 段同口径：只钉 `Diagnostics.w` 在不在的话，「把 W 挪进成功路径」或「删掉 f.delete()
+        // 只留 W」都仍绿，而两种改法都会让回收口名存实亡
+        val plain = TestSources.window(mgr, "val dir = File(context.cacheDir, CACHE_DIR)", "val dictDir =")
+        assertTrue("明文中间件删除失败也要留痕", "Diagnostics.w" in plain)
+        assertTrue("明文回收口必须真的删", "f.delete()" in plain)
+    }
+
+    /**
+     * `file` 域必须是**黑名单**（只写 `<exclude>`，不能出现 `<include>`）。
+     *
+     * 白名单化试过两次都被 lint 否决（判据来源：AGP 8.5.2 / `lint-checks 31.5.2` 的
+     * `FullBackupContent`，报错 `X is not in an included path`；升级后需重评）：
+     *  ① 加 `<include domain="file" path="dicts/"/>` ⇒ 其余三域 20+ 条 exclude 全被判冗余；
+     *  ② 再给其余三域各补 `<include domain="…" path="."/>`（`"."` 是 lint 的全路径特例）
+     *     ⇒ `file` 域自己的 9 条 exclude 仍全报错，因为它们不在 `dicts/` 之下。
+     * 根因：include 按域生效、只覆盖同域内落在其路径下的 exclude，没有「本域全收 + 逐条排除」的写法。
+     *
+     * 代价要记牢：黑名单的默认值是「上云」，新增持久化文件必须同步本清单。
+     * 实测佐证（2026-11-01，AVD + `bmgr backupnow` 解包，见 `docs/备份排除运行时验证-2026-11-01.md`）：
+     * 新建一个规则没覆盖的 `zzz_unknown_probe.txt`，它确实出现在备份包里。
+     */
+    @Test
+    fun 备份规则必须是黑名单不得出现include() {
+        for (name in listOf("backup_rules.xml", "data_extraction_rules.xml")) {
+            assertFalse(
+                "$name 出现了 <include>：它按域生效，会让其它域的 exclude 全被 lint 判冗余（实测构建失败）",
+                Regex("""<include\b""").containsMatchIn(rules(name)),
+            )
+        }
     }
 }

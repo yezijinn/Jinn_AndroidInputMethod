@@ -6,6 +6,8 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <!-- `file` 域是黑名单，新增的持久化文件默认会上云，落盘新文件必须同步本清单。
+             白名单化已两次被 lint 否决（见 `backup_rules.xml` 的注释），两端规则保持一致。 -->
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
@@ -97,6 +99,7 @@
         path="logs/" />
     </cloud-backup>
     <device-transfer>
+        <!-- 同 cloud-backup 段（两端必须一致） -->
         <exclude
             domain="database"
             path="jinn_clipboard.db" />
