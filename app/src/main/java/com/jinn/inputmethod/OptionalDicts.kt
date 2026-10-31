@@ -208,9 +208,14 @@ object OptionalDicts {
         // 而不是 `"$fileName$TEMP_SUFFIX"` —— 后者会拼成 `X.xz.xz.tmp`，永远排不掉在跑的下载
         val activeTmp = active?.let { tempNameOf(it) }
         // 自定义词库**源文本**的临时件（`custom_user.src.txt.tmp`）也一并收：它不匹配 `.xz.tmp`，
-        // 却同样是「写到一半进程被杀」就永久留下的垃圾（BUG.md L-857），页面看不见也删不掉
+        // 却同样是「写到一半进程被杀」就永久留下的垃圾（BUG.md L-857），页面看不见也删不掉。
+        // 自定义包临时件按写侧同一处拼装函数判：`custom_user.txt.xz.tmp` 今天只是**恰好**以 `.xz.tmp`
+        // 结尾，后缀一改就漏（3.3 命名一致的代价）。
         return fileNames
-            .filter { (it.endsWith(TEMP_SUFFIX) || CustomDicts.isSourceTempName(it)) && it != activeTmp }
+            .filter {
+                (it.endsWith(TEMP_SUFFIX) || CustomDicts.isSourceTempName(it) ||
+                    it == CustomDicts.packTempName()) && it != activeTmp
+            }
             .sorted()
     }
 

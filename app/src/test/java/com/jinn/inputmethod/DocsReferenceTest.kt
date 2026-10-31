@@ -98,6 +98,14 @@ class DocsReferenceTest {
             ?: error("AGENTS.md 的 front-matter `numbers:` 没写「N 类 / M 例」（措辞变了？）")
         assertEquals("AGENTS.md front-matter 的类数与正文 / 源码不一致", classes, fm.groupValues[1].toInt())
         assertEquals("AGENTS.md front-matter 的例数与正文 / 源码不一致", total, fm.groupValues[2].toInt())
+        // 同一行的 `TapSoundTest 共 N 例` 原先无人对拍，实测已漂（写 29、真值 39）。BUG.md L-1340 ②
+        // 取数一律行首锚定：正文里也可能引用同一句，全文件 find 会悄悄换个目标
+        val tap = readDoc("AGENTS.md")
+            ?.let { Regex("""(?m)^numbers: .*TapSoundTest 共 (\d+) 例""").find(it) }
+            ?: error("AGENTS.md 的 `numbers:` 没写「TapSoundTest 共 N 例」（措辞变了？）")
+        val tapFile = files.firstOrNull { it.name == "TapSoundTest.kt" } ?: error("TapSoundTest.kt 不见了")
+        val tapCount = Regex("""(?m)^\s*@Test\b""").findAll(TestSources.codeOf(tapFile.readText())).count()
+        assertEquals("AGENTS.md 写的 TapSoundTest 例数过期", tapCount, tap.groupValues[1].toInt())
     }
 
     /**

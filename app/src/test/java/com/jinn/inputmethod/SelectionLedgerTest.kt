@@ -187,6 +187,12 @@ class SelectionLedgerTest {
         } finally {
             dir.deleteRecursively()
         }
+        // 生产接线也要钉住：只测 deleteLedgerFiles 时，把 deleteFile 改回 deleteQuietly（或摘掉同锁）
+        // 全部用例仍会绿，而用户看到的是「关闭并删除后盘上还留一份可解整表」
+        val src = TestSources.codeOf(TestSources.rawSourceOfShortName("SelectionLedger.kt"))
+        val body = TestSources.blockAfter(src, "fun deleteFile(context: Context)")
+        assertTrue("删除必须走 deleteLedgerFiles", "deleteLedgerFiles(file)" in body)
+        assertTrue("删除临界区必须与写侧同锁", "synchronized(migrateLock)" in body)
     }
 
     @Test

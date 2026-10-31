@@ -64,9 +64,7 @@ class BackupRulesTest {
                 add("dicts/${OptionalDicts.tempNameOf(d.fileName)}")
                 add("dicts/${d.fileName}$restore")
             }
-            // 自定义包临时件名没有公开拼装函数（写侧直接用 `PACK_NAME + TMP_SUFFIX`），
-            // 这里写字面量；改名时本用例与三份 XML 一起红，不会静默失守。
-            add("dicts/${CustomDicts.PACK_NAME}.tmp")
+            add("dicts/${CustomDicts.packTempName()}")
             add("dicts/${CustomDicts.PACK_NAME}$restore")
             add("dicts/${CustomDicts.sourceTempName()}")
             add("dicts/${CustomDicts.SOURCE_NAME}$restore")

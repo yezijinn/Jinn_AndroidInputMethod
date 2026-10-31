@@ -467,7 +467,7 @@ internal object CustomDicts {
     fun writePack(dir: File, pack: PackLines): File? {
         dir.mkdirs()
         val dest = File(dir, PACK_NAME)
-        val tmp = File(dir, PACK_NAME + TMP_SUFFIX)
+        val tmp = File(dir, packTempName())
         return runCatching {
             FileOutputStream(tmp).use { out ->
                 // 压缩**直写**临时件（MEM-03）：原先先压进 ByteArrayOutputStream 再 `toByteArray()`，
@@ -597,6 +597,9 @@ internal object CustomDicts {
 
     /** 源文本临时件名：写入与残留判据共用一处（改名时只改这里，漏改一处的残件没人清） */
     fun sourceTempName(): String = SOURCE_NAME + TMP_SUFFIX
+
+    /** 自定义包临时件名：写入与备份排除共用一处（同 [sourceTempName]） */
+    fun packTempName(): String = PACK_NAME + TMP_SUFFIX
 
     /**
      * 源文本的写入临时件名（[writeSource] 用固定名）。
