@@ -108,10 +108,10 @@ class ShuangpinSchemesTest {
         assertEquals("e", q("ue", ShuangpinScheme.SHOUDAO))
         assertEquals("ei", q("ui", ShuangpinScheme.SHOUDAO))
         assertEquals("eng", q("uf", ShuangpinScheme.SHOUDAO))
-        // üe 与 ue 分居两键；两处同码按规格裁决（den 胜 dia、luo 胜 lo）
+        // üe 与 ue 分居两键；四处同码按规格裁决（dia 胜 den、luo 胜 lo、lai 胜 lue、nai 胜 nue）
         assertEquals("jue", q("jl", ShuangpinScheme.SHOUDAO))
         assertEquals("lve", q("lb", ShuangpinScheme.SHOUDAO))
-        assertEquals("den", q("dk", ShuangpinScheme.SHOUDAO))
+        assertEquals("dia", q("dk", ShuangpinScheme.SHOUDAO))
         assertEquals("luo", q("lo", ShuangpinScheme.SHOUDAO))
     }
 
@@ -119,8 +119,8 @@ class ShuangpinSchemesTest {
      * 首道双拼的规格表对拍：**独立誊一份公开规格**，逐音节比对生成物。
      *
      * 上面 12 个代表码挡不住「生成器把某个韵母誊错键」这类错误（错的那个键可能没被代表码覆盖）。
-     * 这里把 26 键韵母表 + 3 个翘舌声母 + 12 对零声母再写一遍，遍历 421 个合法音节：
-     * 生成端与规格表任何一处不一致都会红。规格出处见
+     * 这里把 26 键韵母表 + 3 个翘舌声母 + 12 对零声母再写一遍，逐个音节比对生成物；
+     * 缺码集合必须与「已裁决让位」逐字相等（漏音节、凭空多音节都红）。规格出处见
      * `docs/设计-双拼/首道双拼接入-2026-10-31.md` §1。
      */
     @Test
@@ -141,7 +141,11 @@ class ShuangpinSchemesTest {
             "e" to "ue", "ei" to "ui", "eng" to "uf",
         )
 
-        val covered = ShuangpinScheme.SHOUDAO.table!!.codes.values.toSet()
+        val table = ShuangpinScheme.SHOUDAO.table!!
+        val covered = table.codes.values.toSet()
+        // 缺码集合先整体钉死：生成器漏掉一个音节时若只判「已覆盖项」，本用例会静默跳过
+        val missing = readSyllables().filterNot { it in UNENCODABLE }.filterNot { it in covered }.toSet()
+        assertEquals("首道双拼缺码集合变了（多缺 / 少缺都要改这里）", setOf("den", "lo", "lue", "nue", "ng"), missing)
         for (syl in readSyllables()) {
             if (syl in UNENCODABLE || syl !in covered) continue
             val code = zero[syl] ?: run {
@@ -323,7 +327,7 @@ class ShuangpinSchemesTest {
             ShuangpinScheme.ZIGUANG to Triple(23, "9e5d9aee81581c45", "b362e9ee626b53d7"),
             ShuangpinScheme.ABC to Triple(23, "17f13a3fb7e930d9", "cdc55f7d4faa8ffc"),
             ShuangpinScheme.JIAJIA to Triple(23, "0bb10ae2d9e57f7b", "384234f447d8df37"),
-            ShuangpinScheme.SHOUDAO to Triple(23, "73308da334fab393", "44b2518da6daa757"),
+            ShuangpinScheme.SHOUDAO to Triple(23, "73308da334fab393", "13829a3556c7db16"),
         )
         for ((scheme, want) in expected) {
             val table = scheme.table!!
@@ -432,12 +436,12 @@ class ShuangpinSchemesTest {
         /**
          * 分方案的额外让位项（[HOMOPHONE_SACRIFICE] 之外）。
          *
-         * 首道双拼：`k` 键 = [en, ia] ⇒ `dia` 让给 `den`；`l` 键 = [ai, ue] ⇒ `lue` / `nue`
-         * 让给 `lai` / `nai`。这三个音节在其余 7 套里都编得出来，放进全局集合会连带放宽它们，
-         * 所以按方案收口（`lve` / `nve` 在首道另有码 `lb` / `nb`，不算让位）。
+         * 首道双拼：`k` 键 = [en, ia] ⇒ `den` 让给 `dia`（扽只在二级档、默认档打不出，嗲是常用字）；
+         * `l` 键 = [ai, ue] ⇒ `lue` / `nue` 让给 `lai` / `nai`。这三个音节在其余 7 套里都编得出来，
+         * 放进全局集合会连带放宽它们，所以按方案收口（`lve` / `nve` 在首道另有码 `lb` / `nb`）。
          */
         val SCHEME_SACRIFICE = mapOf(
-            ShuangpinScheme.SHOUDAO to setOf("dia", "lue", "nue"),
+            ShuangpinScheme.SHOUDAO to setOf("den", "lue", "nue"),
         )
     }
 }

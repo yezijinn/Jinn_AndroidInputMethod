@@ -1,7 +1,7 @@
 # 精灵输入法
 
 A lightweight Android IME: QWERTY full pinyin / Shuangpin (8 schemes), clipboard history, optional
-dictionaries. Everything core runs on-device, no server needed; APK ~3.2MB with no bundled speech datas.
+dictionaries. Everything core runs on-device, no server needed; APK ~3.3MB with no bundled speech datas.
 
 English ｜ [中文](README.md)
 

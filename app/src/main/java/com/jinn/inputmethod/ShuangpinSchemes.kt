@@ -159,7 +159,6 @@ internal class ShuangpinTable(
 
 /** 内置双拼方案表（生成数据见文件末尾） */
 internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
-
     /** 自然码双拼（rime-ice `double_pinyin.schema.yaml`）：418 个音节 / 434 个码 */
     "ZIRANMA" to lazy { ShuangpinTable(
         initials = mapOf(
@@ -853,7 +852,7 @@ internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf(
             "cl" to "cai", "cm" to "cei", "co" to "cuo", "cs" to "cou", "ct" to "cuan",
             "cu" to "cu", "cv" to "cui", "cy" to "cang", "cz" to "cun", "da" to "da",
             "dd" to "dao", "de" to "de", "df" to "deng", "dg" to "ding", "dh" to "dong",
-            "di" to "di", "dj" to "dan", "dk" to "den", "dl" to "dai", "dm" to "dei",
+            "di" to "di", "dj" to "dan", "dk" to "dia", "dl" to "dai", "dm" to "dei",
             "dn" to "dian", "do" to "duo", "dp" to "diao", "dq" to "diu", "dr" to "die",
             "ds" to "dou", "dt" to "duan", "du" to "du", "dv" to "dui", "dy" to "dang",
             "dz" to "dun", "ea" to "sha", "ed" to "shao", "ee" to "she", "ef" to "sheng",

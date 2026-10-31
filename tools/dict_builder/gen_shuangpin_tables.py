@@ -5,7 +5,7 @@ r"""
 
 为什么要有这个脚本
 ------------------
-手抄 7 套方案（自然码/小鹤/搜狗/微软/紫光/ABC/加加）的键位表必然出错且无法自证。
+手抄 8 套方案（自然码/小鹤/搜狗/微软/紫光/ABC/加加/首道）的键位表必然出错且无法自证。
 rime 的 `speller/algebra` 是权威定义：本脚本按 librime 的代数语义把它逐条施加到项目的
 421 个合法音节上，算出每套方案的编码，再做三件事：
 
@@ -127,7 +127,7 @@ TABLE_SCHEMES = {
 PROBE_INITIALS = ['b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h', 'j', 'q', 'x',
                   'zh', 'ch', 'sh', 'r', 'z', 'c', 's', 'y', 'w']
 
-# 一码多音节时的裁决（冲突在 7 套方案里形态一致，规则统一）：
+# 一码多音节时的裁决（冲突在 rime 七套里形态一致，规则统一；首道只用到后三条）：
 #   键 = 被淘汰写法，值 = 保留写法；值为 None 表示「按对手保留」。
 #   依据：词库实际写法计数 + 「不改动已上线行为」原则。
 COLLISION_PREFER = {
@@ -136,7 +136,8 @@ COLLISION_PREFER = {
     #   二是词库 0 条的叹词让位给真实音节。
     'lo': 'luo',    # 让位给 luo（与旧实现一致：旧实现 'o' 在 l 后取 uo）→ 咯/啰 双拼打不出
                     # （全拼仍可输入；rime 因为保留多个拼写所以两个都能打，本项目不保留多拼写）
-    'dia': 'den',   # 首道专用：k 键 = [en, ia] ⇒ 两者同码 dk，嗲 让位（全拼仍可输入）
+    'den': 'dia',   # 首道专用：k 键 = [en, ia] ⇒ 两者同码 dk。取嗲（常用字）：
+                    # 扽只在二级字档、默认档被闸掉（实测 dk 零候选），全拼 den 仍可输入
     'lue': 'lai',   # 首道专用：l 键 = [ai, ue] ⇒ lue/lai 同码 ll，lüe 让位
     'nue': 'nai',   # 首道专用：同一原因 ⇒ nue/nai 同码 nl，nüe 让位（lve/nve 另有码 lb/nb）
     'ng': None,     # ng 是叹词（词库 0 条），按对手保留（neng / nang / niang）
@@ -488,14 +489,22 @@ def splice_block(src, key, block, syllable_count):
     """
     marker = 'internal val SHUANGPIN_TABLES: Map<String, Lazy<ShuangpinTable>> = mapOf('
     idx = src.index(marker)
-    body = src[idx + len(marker):]
-    if f'    "{key.upper()}" to lazy {{' in body:
-        raise SystemExit(f'{key} 的块已存在：--only 只用于新增；改动既有方案请全量重生成')
-    close = body.rstrip().rfind(')')
-    if close < 0:
-        raise SystemExit('源码尾部结构变了：找不到 mapOf( 的收尾括号')
-    head = KT_HEADER % syllable_count            # 模板已含到 mapOf( 为止（与守卫对拍口径一致）
-    return head + body[:close] + block + '\n' + body[close:]
+    body = src[idx + len(marker):].lstrip('\n')
+    head = (KT_HEADER % syllable_count).rstrip('\n')   # 模板已含到 mapOf( 为止（与守卫对拍口径一致）
+    tag = f'    "{key.upper()}" to lazy {{'
+    if tag in body:
+        # 已有该块：整块替换（连同它上方那行 `/** … */` 注释），其余块一字不动
+        start = body.rfind('\n    /**', 0, body.index(tag))
+        end = body.find('\n    ) },', body.index(tag))
+        if start < 0 or end < 0:
+            raise SystemExit('找不到该方案的注释行或块尾，拒绝替换（源码结构变了？）')
+        body = body[:start + 1] + block + body[end + len('\n    ) },'):]
+    else:
+        close = body.rstrip().rfind(')')
+        if close < 0:
+            raise SystemExit('源码尾部结构变了：找不到 mapOf( 的收尾括号')
+        body = body[:close] + block + '\n' + body[close:]
+    return head + '\n' + body
 
 
 def main():
@@ -506,6 +515,8 @@ def main():
         only = argv[at + 1] if at + 1 < len(argv) else None
         if not only:
             raise SystemExit('--only 需要一个方案 key（如 --only shoudao）')
+        if only not in {k for k, _, _ in SCHEMES}:
+            raise SystemExit(f'未知方案 {only}；可选：{", ".join(k for k, _, _ in SCHEMES)}')
 
     syllables = [l.strip() for l in read_asset_text(SYLL).split('\n') if l.strip()]
     counts = None if only else dict_key_counts()
@@ -519,6 +530,8 @@ def main():
         if schema is None:
             spec = TABLE_SCHEMES[key]
             initials, per_syllable, code_map, collisions, bad = build_table_scheme(spec, syllables)
+            if bad:
+                raise SystemExit(f'{cn} 有音节编不出来：{bad}（先补规格表，或显式进 skip）')
             source = spec.get('note', '规格表')
         else:
             if only:

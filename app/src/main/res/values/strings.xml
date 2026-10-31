@@ -24,7 +24,7 @@
     <string name="app_name">精灵输入法</string>
     <string name="subtype_label">精灵输入法</string>
     <string name="settings_title">精灵输入法</string>
-    <string name="settings_subtitle">26 键全拼 + 7 套双拼方案</string>
+    <string name="settings_subtitle">26 键全拼 + 8 套双拼方案</string>
 
     <!-- 键盘状态条 -->
     <string name="status_online">已连接 %1$s:%2$d</string>
@@ -149,7 +149,7 @@
     <string name="settings_restarting">已保存，正在重启输入法进程…</string>
 
     <!-- 设置页 · 使用说明 -->
-    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（7 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n启用语音输入之后,长按空格键即可进入语音功能页面\n作者 https://github.com/yezijinn</string>
+    <string name="settings_usage">拼音键盘：26 键全拼 / 双拼（8 套方案），空格选词。\n长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n「删除键」双击再长按，清空整个输入框。\n拼音键盘按下的字母，按回车直接输出英文。\n启用语音输入之后,长按空格键即可进入语音功能页面\n作者 https://github.com/yezijinn</string>
 
     <!-- 设置页 · 下拉数组 -->
     <string-array name="language_entries">

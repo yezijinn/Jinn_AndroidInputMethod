@@ -31,7 +31,7 @@ release/dict_part{2,3,4}.txt.xz                分类词库下载包（90 / 70 /
 
 **在用**：`build_dicts.py`（主流程，生成上面全部资产）· `build_dict_index.py`（索引格式，`--fixture` 出测试 fixture）·
 `asset_io.py`（资产文本读写，`.txt.xz` 统一入口）·
-`gen_shuangpin_tables.py`（7 套双拼键位 → `ShuangpinSchemes.kt`，改键位只改这里）·
+`gen_shuangpin_tables.py`（8 套双拼键位 → `ShuangpinSchemes.kt`，改键位只改这里）·
 `verify_shuangpin_migration.py`（换表对拍 676 码）· `detect_ambiguous_keys.py` + `add_words.py`（连写歧义漏词检测 / 追加词条）
 
 **备用**：`merge_chars.py`（合并单字表 / 音节表）· `split_dict.py`（切 base / ext）·
