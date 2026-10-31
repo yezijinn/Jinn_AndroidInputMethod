@@ -5924,7 +5924,12 @@ class RecentFixesRegressionTest {
         assertTrue("台账按简体归一", "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view)
         // 合并词与 pred 相同时不得再记第二行（AI2 A-577）：没有前一个词时 fullWord == pred，
         // 同一「词 + 读音」会被记两次、频次翻倍。删掉这个条件看起来像删了个冗余判断，必须有守卫挡着
-        assertTrue("合并词与 pred 相同时不重复记", "fullWord != pred" in view)
+        // 判据取**该 if 块体**：只判 `fullWord != pred` 抓不到「条件还在、record 被移出块」（第 74 轮变异实证）
+        val dedup = TestSources.blockAfter(view, "if (fullWord.isNotEmpty() && fullWord != pred)")
+        assertTrue(
+            "合并词与 pred 相同时不重复记",
+            "SelectionLedger.record(PinyinEngine.toSimplified(fullWord), fullPinyin)" in dedup,
+        )
         val db = codeOf("ClipboardDb.kt")
         assertTrue("图片入库也用单调时间", "put(\"created_at\", monotonicNow())" in db)
         val gallery = codeOf("GalleryInsert.kt")
@@ -5981,21 +5986,28 @@ class RecentFixesRegressionTest {
             "图片行的分类恒为 OTHER（tag 维度的批量删除因此碰不到图片行）",
             "values.put(\"category\", ClipboardClassifier.CATEGORY_OTHER)" in db,
         )
-        // 能删到图片行的三处调用点：其后 400 字符内必须有文件回收
+        // 能删到图片行的三处调用点：其后 400 字符内必须有文件回收。
+        // ⚠ 字面量带上参数，只认「删得掉图片行」的那条：`deleteByContentType(TEXT)` 碰不到图片行，
+        //    只按函数名判会把不该要求 gc 的调用点也算进来（方向仍安全 —— 是误红不是漏判，但会让
+        //    后来人以为「所有 deleteByContentType 都要 gc」而照抄。
         val sites = listOf(
-            "ClipboardHistoryActivity.kt" to "db.deleteByContentType(",
+            "ClipboardHistoryActivity.kt" to "db.deleteByContentType(ClipboardDb.CONTENT_TYPE_IMAGE)",
             "ClipboardHistoryActivity.kt" to "db.deleteByCategory(null)",
             "ClipboardPanelView.kt" to "db.deleteAll()",
         )
         for ((file, call) in sites) {
             val src = TestSources.codeSource(file)
-            val at = src.indexOf(call)
-            check(at >= 0) { "$file 里找不到 $call —— 改法后请同步本用例" }
-            val tail = src.substring(at, (at + 400).coerceAtMost(src.length))
-            assertTrue(
-                "$file 的 $call 之后必须紧跟 ClipboardImageFiles.gc（否则删了行、密文还留在盘上）",
-                "ClipboardImageFiles.gc(" in tail,
-            )
+            // 逐个出现点判（旧写法只取 `indexOf` 的首个）：同一文件里再添一处同类调用时，
+            // 首处仍在、窗口照样绿，新添那处漏 gc 就没人管 —— 判据会静默漂到另一处（BUG.md L-1145 的窗口形态）
+            val hits = Regex(Regex.escape(call)).findAll(src).map { it.range.first }.toList()
+            check(hits.isNotEmpty()) { "$file 里找不到 $call —— 改法后请同步本用例" }
+            for (at in hits) {
+                val tail = src.substring(at, (at + 400).coerceAtMost(src.length))
+                assertTrue(
+                    "$file 的 $call（偏移 $at）之后必须紧跟 ClipboardImageFiles.gc（否则删了行、密文还留在盘上）",
+                    "ClipboardImageFiles.gc(" in tail,
+                )
+            }
         }
     }
 
@@ -6057,13 +6069,22 @@ class RecentFixesRegressionTest {
         )
         assertTrue("导出格式要能跨重建恢复", "KEY_PENDING_FORMAT" in page && "onSaveInstanceState" in page)
         // 词库页三列的列序由**命名 tag** 承载，不靠 addView 顺序（AI2 A-554）：
-        // 裸 getChildAt(0/1/2) 时插一个 View 就会把频次显示成汉字，不崩也不报错
-        assertFalse("不得再按位置索引取列", "getChildAt(2) as TextView" in page)
+        // 裸 getChildAt(0/1/2) 时插一个 View 就会把频次显示成汉字，不崩也不报错。
+        // 取**行适配器类体**判「一个位置索引都不许有」—— 只否 `getChildAt(2)` 那种字面量的写法，
+        // 把 0 或 1 换回来照样静默绿（第 67 轮那版守卫漏的就是这两个），改用别的取值写法也漏。
+        val rowAdapter = TestSources.blockAfter(page, "private inner class RowAdapter(")
+        assertFalse("不得再按位置索引取列", "getChildAt(" in rowAdapter)
         for (tag in listOf("TAG_COL_COUNT", "TAG_COL_WORD", "TAG_COL_PINYIN")) {
-            assertTrue("列标识 $tag 必须在 addView 与读取处同时出现", Regex("$tag\\b").findAll(page).count() >= 2)
+            assertTrue("列标识 $tag 必须在 addView 与读取处同时出现", Regex("$tag\\b").findAll(rowAdapter).count() >= 2)
         }
-        // 不覆写 getItemId（AI2 A-555）：返回 position 的实现在 setHasStableIds 后会「导入后列表不刷新」
-        assertFalse("不得再用 position 当稳定 id", "getItemId(position: Int): Long = position.toLong()" in page)
+        // 位置不是稳定 id（AI2 A-555）：一旦配上 `setHasStableIds(true)`，同一位置换了内容而 id 没变，
+        // ListView 认为这行没变 ⇒ 导入后列表不刷新。只否旧字面量不够（换个参数名 / 加花括号就静默绿），
+        // 所以正向钉 INVALID_ROW_ID，再禁 `position.toLong()` 这个具体实现。
+        assertTrue(
+            "getItemId 必须显式返回 INVALID_ROW_ID",
+            "override fun getItemId(position: Int): Long = AdapterView.INVALID_ROW_ID" in rowAdapter,
+        )
+        assertFalse("不得再拿位置当稳定 id", "position.toLong()" in rowAdapter)
 
         val view = codeOf("PinyinKeyboardView.kt")
         assertTrue(

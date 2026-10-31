@@ -563,7 +563,8 @@ class CandidateRowsTest {
     fun 展开态拼音条必须置顶() {
         val src = TestSources.codeSource("PinyinKeyboardView.kt")
         // 钉**不变量**而不是字面量（AI2 A-587）：先按不变量取出「双行档 + 未展开」这个形态标志的
-        // **变量名**，再用同一个名字查两处消费点 —— 允许改名、重排、提取局部变量。
+        // **变量名**，再用同一个名字查两处消费点 —— **只有这个变量名允许改名**；下面两处仍按字面前缀判
+        // （`val gravity = if ($flag)` / `pinyinBar.visibility == … && !$flag`），等价重写会红，改前先读判据。
         val flag = Regex("""(\w+) = !candidatesExpanded && rows == CandidateRows\.DOUBLE""")
             .find(src)?.groupValues?.get(1)
             ?: error("找不到「双行档且未展开」形态标志的赋值（改名后请同步本用例的取值式）")

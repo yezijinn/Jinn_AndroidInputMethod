@@ -287,6 +287,10 @@ internal object TestSources {
      * 都会当场报错，而不是悄悄放宽。
      *
      * 各测试文件原先各写一份私有实现（四份，行为略有出入），收敛到这里一份。
+     *
+     * ⚠ 花括号是**朴素计数**，不区分字符串与注释：输入里含不配对花括号（JSON 字面量、正则字符类）会被
+     * 截断。实测本仓这类字面量只在 `ConfigBackup` / `ClipboardClassifier` / `KeyboardLayouts` 三处，
+     * 均非本函数的锚点目标；给新文件写锚点前先确认这一点，且一律喂 [codeOf] / [codeSource] 产物。
      */
     fun blockAfter(text: String, marker: String): String {
         val i = text.indexOf(marker)
