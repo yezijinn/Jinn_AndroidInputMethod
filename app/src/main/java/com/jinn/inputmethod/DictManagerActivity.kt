@@ -875,19 +875,7 @@ class DictManagerActivity : Activity() {
         }.apply { isDaemon = true; name = "jinn-dict-download" }.start()
     }
 
-    /**
-     * 下载到临时文件、校验 SHA-256 后再改名，避免中途失败留下半个文件被引擎当作有效词库加载
-     * （引擎只认 `.xz` 结尾，`X.xz.tmp` 不会被扫到，但失败时仍会残留占空间，所以显式清理）。
-     * 返回写入字节数。
-     *
-     * 摘要校验是收下的唯一判据：词库内容会直接变成候选词上屏到任意输入框，
-     * 只要有一处环节能改字节（被替换的 Release 附件、被劫持的重定向、传输截断），
-     * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时绝不改名，
-     * 旧版本（若存在）保持不变，临时文件立即删除。
-     */
-
-    /**
-     * 删除已装词库。
+    /** 删除已装词库。
      *
      * 下载进行中一律拒绝：下载线程是「写 `.xz.tmp` → 改名成 `.xz`」，
      * 与删除并发时会出现「用户点了删除、删除成功后下载又把包改回来」，
@@ -1135,6 +1123,17 @@ class DictManagerActivity : Activity() {
 // 这些常量原先在 `private companion object` 里，顶层函数看不到，故一并搬出（同文件可见性不变）。
 private const val TAG = "DictManager"
 private const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+
+/**
+ * 下载到临时文件、校验 SHA-256 后再改名，避免中途失败留下半个文件被引擎当作有效词库加载
+ * （引擎只认 `.xz` 结尾，`X.xz.tmp` 不会被扫到，但失败时仍会残留占空间，所以显式清理）。
+ * 返回写入字节数。
+ *
+ * 摘要校验是收下的唯一判据：词库内容会直接变成候选词上屏到任意输入框，
+ * 只要有一处环节能改字节（被替换的 Release 附件、被劫持的重定向、传输截断），
+ * 就等于拿到了「往用户每一次输入里塞词」的能力。校验不通过时绝不改名，
+ * 旧版本（若存在）保持不变，临时文件立即删除。
+ */
 private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File, url: String, fileName: String, checksum: String): Long {
     dir.mkdirs()
     val tmp = File(dir, OptionalDicts.tempNameOf(fileName))

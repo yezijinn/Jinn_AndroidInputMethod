@@ -228,7 +228,7 @@ internal object ConfigBackupManager {
         // 只有进程被杀才残留，顺手收掉（该目录只有词库文件，不会误伤）
         val dictDir = File(context.filesDir, DICT_DIR)
         dictDir.listFiles()?.forEach { f ->
-            if (!f.isFile || !f.name.endsWith(".restore")) return@forEach
+            if (!f.isFile || !f.name.endsWith(RESTORE_SUFFIX)) return@forEach
             // 正在写的中间件不删：in-flight 集合是主保险，年龄只是「漏登记/跨进程残留」的兜底
             if (tempInFlight.contains(f.name)) return@forEach
             if (now - f.lastModified() < STALE_MIN_AGE_MS) return@forEach

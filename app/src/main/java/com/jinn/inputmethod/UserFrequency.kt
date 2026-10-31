@@ -761,11 +761,26 @@ internal object UserFrequency {
         return raw
     }
 
-    /** 把解不开的密文文件改名保留（`user_freq.txt.bad`），避免随后被空表覆盖 */
+    /**
+     * 把解不开的密文文件改名保留（`user_freq.txt.bad`），避免随后被空表覆盖。
+     *
+     * 落点刻意选 `ledger_orphan/`：坏件的第二个名字带毫秒后缀（`.bad-<currentTimeMillis>`），
+     * 备份排除项不支持通配 ⇒ 逐名排不掉，而该目录已被 `backup_rules.xml` 的
+     * `<exclude path="ledger_orphan/"/>` 一条覆盖（与台账孤儿件同目录、同一不变量）。
+     * 目录名偏窄，但改名它要动备份规则与诊断包的排除清单，不值得。
+     *
+     * 该目录**不自动清**（孤儿件是留给人工抢救的唯一副本），坏件同样如此：
+     * 它只解决「不出机」，回收仍靠用户手动或清数据。目录被同名普通文件占位时
+     * `mkdirs()` 会失败 ⇒ move 抛 ⇒ 按 fail-closed 处理（原文件不动，本次不落盘）。
+     */
     private fun quarantine(f: File) {
-        val base = File(f.parentFile, f.name + ".bad")
-        val dest = if (base.exists()) File(f.parentFile, f.name + ".bad-" + System.currentTimeMillis()) else base
-        val ok = runCatching { java.nio.file.Files.move(f.toPath(), dest.toPath()) }.isSuccess
+        val dir = File(f.parentFile, LedgerCrypto.ORPHAN_DIR)
+        val base = File(dir, f.name + ".bad")
+        val dest = if (base.exists()) File(dir, f.name + ".bad-" + System.currentTimeMillis()) else base
+        val ok = runCatching {
+            dir.mkdirs()
+            java.nio.file.Files.move(f.toPath(), dest.toPath())
+        }.isSuccess
         if (ok) {
             Diagnostics.e(TAG, "用户词频密文无法解密，已改名为 ${dest.name}（原样保留）")
         } else {

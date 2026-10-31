@@ -21,17 +21,50 @@ class BackupRulesTest {
         sourceOf("src/main/res/xml/$name", "app/src/main/res/xml/$name"),
     )
 
+    /**
+     * 隐私数据的**逐条**排除必须在三份清单里都在（数据驱动，不靠手点三条）。
+     *
+     * 判据一律精确路径 + 三段分别判：清单里有 `jinn_clipboard.db-journal`、`user_freq.txt.tmp`、
+     * `jinn_inputmethod.xml.bak` 这类同前缀兄弟名，子串判据在「误删主件那一行」时仍命中兄弟 ⇒ 静默失守
+     * （L-408 就回归过一次）；而 `data_extraction_rules.xml` 的 cloud / device-transfer 两段是
+     * 逐条重复的，只查一次会让「只删换机那段」也全绿。
+     */
     @Test
-    fun 可再生的索引缓存必须排除在备份与迁移之外() {
-        for (name in listOf("backup_rules.xml", "data_extraction_rules.xml")) {
-            val xml = rules(name)
-            assertTrue(
-                "$name 必须排除索引缓存（可再生的十几 MB，会挤爆 25MB 配额）",
-                Regex("""domain="file"\s+path="index/"""").containsMatchIn(xml),
-            )
-            assertTrue("$name 仍须排除剪贴板库（含加密正文）", "jinn_clipboard.db" in xml)
-            assertTrue("$name 仍须排除用户词频（明文记录选过的词）", "user_freq.txt" in xml)
-            assertTrue("$name 仍须排除配置（服务端地址 / 提示词正文）", "jinn_inputmethod.xml" in xml)
+    fun 隐私数据的排除必须在三份清单里逐条都在() {
+        val required = listOf(
+            "file" to "index/",
+            "file" to "clipboard/",
+            "file" to "ledger_orphan/",
+            "file" to "user_freq.txt",
+            "file" to "user_freq.txt.tmp",
+            "file" to "user_picks.txt",
+            "file" to "user_picks.key",
+            "file" to "user_picks.key.tmp",
+            "database" to "jinn_clipboard.db",
+            "database" to "jinn_clipboard.db-journal",
+            "database" to "jinn_clipboard.db-wal",
+            "database" to "jinn_clipboard.db-shm",
+            "sharedpref" to "jinn_inputmethod.xml",
+            "sharedpref" to "jinn_inputmethod.xml.bak",
+            "sharedpref" to "jinn_clipboard.xml",
+            "sharedpref" to "jinn_clipboard.xml.bak",
+            "external" to "logs/",
+        )
+        val segments = mutableMapOf("backup_rules.xml" to rules("backup_rules.xml"))
+        val transfer = rules("data_extraction_rules.xml")
+        segments["cloud-backup"] = TestSources.window(transfer, "<cloud-backup>", "</cloud-backup>")
+        segments["device-transfer"] = TestSources.window(transfer, "<device-transfer>", "</device-transfer>")
+        for ((domain, path) in required) {
+            for ((seg, text) in segments) {
+                assertTrue(
+                    "$seg 缺 $domain:$path（隐私数据不得随备份 / 迁移出机）",
+                    // 只锚同一个 `<exclude>` 标签、不锁属性顺序：Android 不约束顺序，
+                // 写死「domain 紧邻 path 之前」会让一次合法重排假红 51 条
+                Regex(
+                    """<exclude(?=[^>]*\bdomain="$domain")(?=[^>]*\bpath="${Regex.escape(path)}\")[^>]*>"""
+                ).containsMatchIn(text),
+                )
+            }
         }
     }
 
@@ -159,5 +192,38 @@ class BackupRulesTest {
             "ORPHAN_DIR 常量必须与备份规则的目录名同值",
             Regex("""ORPHAN_DIR\s*=\s*"ledger_orphan"""").containsMatchIn(src),
         )
+        // 词频坏件（`.bad-<毫秒>`）排不掉 ⇒ 必须落进同一目录，否则随备份出机且永不回收
+        val freq = TestSources.codeOf(sourceOf("src/main/java/com/jinn/inputmethod/UserFrequency.kt"))
+        val q = TestSources.blockAfter(freq, "private fun quarantine(f: File)")
+        assertTrue("词频坏件必须落在孤儿件目录", "LedgerCrypto.ORPHAN_DIR" in q)
+        assertTrue("坏件名要带毫秒后缀去重", "currentTimeMillis" in q)
+    }
+
+    /**
+     * 词库恢复中间件（`dicts/` 下以 `.restore` 结尾的残件）的**常规回收口**必须还在。
+     *
+     * 排除出备份只解决「不出机」，盘上的残件仍要有人清：唯一入口是
+     * `ConfigBackupManager.cleanupStaleCache` 尾部的 `dicts/` 那段，触发点是进设置页。
+     * 它此前零测试引用 —— 整段被删也能全绿，而残件会一直占着词库行且删不掉。
+     *
+     * 判据一律收窄到 `dicts/` 段：**整个函数体**里 `tempInFlight` / `STALE_MIN_AGE_MS` /
+     * `f.delete()` / `Diagnostics.w` 四处 token 在前半段（cacheDir 清理）也出现，
+     * 按函数体判的话「删掉 dicts 段的在途判或年龄窗」照样全绿。
+     */
+    @Test
+    fun 词库恢复中间件必须有常规回收口() {
+        val mgr = TestSources.codeOf(sourceOf("src/main/java/com/jinn/inputmethod/ConfigBackupManager.kt"))
+        val dicts = TestSources.window(
+            mgr,
+            "val dictDir = File(context.filesDir, DICT_DIR)",
+            "\n    }",
+        )
+        assertTrue("回收口要按后缀常量收", "endsWith(RESTORE_SUFFIX)" in dicts)
+        assertTrue("在途中间件不得被清", "tempInFlight" in dicts)
+        assertTrue("年龄窗是漏登记的兜底", "STALE_MIN_AGE_MS" in dicts)
+        assertTrue("回收口必须真的删", "f.delete()" in dicts)
+        assertTrue("删不掉要留痕（否则静默失败没人知道）", "Diagnostics.w" in dicts)
+        val act = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
+        assertTrue("回收口必须挂在设置页启动路径上", "ConfigBackupManager.cleanupStaleCache" in act)
     }
 }

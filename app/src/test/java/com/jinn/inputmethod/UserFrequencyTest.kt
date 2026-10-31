@@ -440,6 +440,27 @@ class UserFrequencyTest {
         assertEquals("旧词权重必须原样保留", 4.0, parsed["旧词"]!!.first, 1e-3)
         assertEquals("新词按学到的一次计", 1.0, parsed["新词"]!!.first, 1e-3)
         assertFalse("补读成功后不再阻塞", UserFrequency.isLoadBlockedForTest())
+
+        // ④ 密钥可用却解不开（换了密钥）：原件必须落进 `ledger_orphan/` ——
+        // 坏件第二个名字带毫秒后缀，备份排除项不支持通配 ⇒ 只有固定目录排得掉
+        // 目录名带 nanoTime：上次被杀残留会让 `base.exists()` 成立 ⇒ 落 `.bad-<毫秒>` ⇒ 本断言恒红
+        val dir = File(System.getProperty("java.io.tmpdir"), "jinn-freq-quarantine-${System.nanoTime()}")
+            .apply { mkdirs() }
+        try {
+            val g = File(dir, "user_freq.txt")
+            g.writeText(UserFrequency.encryptDoc(body, SecretKeySpec(ByteArray(32), "AES")))
+            UserFrequency.setKeyForTest(SecretKeySpec(ByteArray(32) { 1 }, "AES"))
+            UserFrequency.setFileForTest(g)
+            assertNull("解不开就该返回 null（不是当空表）", UserFrequency.readPlainOrMigrate(g))
+            val box = File(dir, LedgerCrypto.ORPHAN_DIR)
+            assertTrue(
+                "坏件必须落在孤儿件目录：${box.listFiles()?.map { it.name }}",
+                File(box, "user_freq.txt.bad").isFile,
+            )
+        } finally {
+            UserFrequency.setKeyForTest(key)
+            dir.deleteRecursively()
+        }
     }
 
     // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
