@@ -260,7 +260,10 @@ class ConfigBackupZipTest {
         assertEquals(1, r!!.first)
         assertEquals(0, r.second)
         assertTrue("文件要真的落地", File(dir, "fake.xz").isFile)
-        assertFalse("临时件必须清掉", dir.listFiles().orEmpty().any { it.name.endsWith(".restore") })
+        assertFalse(
+            "临时件必须清掉",
+            dir.listFiles().orEmpty().any { it.name.endsWith(ConfigBackupManager.RESTORE_SUFFIX) },
+        )
     }
 
     @Test
@@ -425,6 +428,47 @@ class ConfigBackupZipTest {
         assertEquals("两个都不许落地", 0, r!!.first)
         assertEquals("包被跳过、源文本随对跳过", 2, r.second)
         assertTrue("目录里不许留任何文件", dir.listFiles().orEmpty().isEmpty())
+
+        // 第三段：预测会落地≠真落地。目标名被**目录**占位时 `isFile` 为 false ⇒ 预测「会落地」，
+        // 而 renameTo 必失败 ⇒ 只剩源文本落地、包没落地，编辑页回显与词库错配（L-850 要挡的后果）
+        val dir2 = File(tmp, "dicts-pair-half").apply { mkdirs() }
+        File(dir2, CustomDicts.PACK_NAME).mkdirs()
+        val okPack = CustomDicts.encodePack(listOf(CustomDicts.Entry("张三", "zhang san")))
+        val src2 = bytes("张三 zhang san\n")
+        val r2 = ConfigBackupManager.restoreDicts(
+            dir2,
+            makeZip(
+                ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to okPack,
+                ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to src2,
+            ),
+            dictsDigestOf(CustomDicts.PACK_NAME to okPack, CustomDicts.SOURCE_NAME to src2),
+        )
+        assertNotNull(r2)
+        assertEquals("包落不下去时源文本也不许单独落地", 0, r2!!.first)
+        assertEquals("另一半要计入跳过（不是凭空消失）", 2, r2.second)
+        assertFalse(
+            "只落了源文本的半对状态必须被回滚",
+            File(dir2, CustomDicts.SOURCE_NAME).isFile,
+        )
+
+        // 反方向：源文本落不下去、包成功 —— **包必须留下**。
+        // 「只有包、没有源文本」是老备份形态（编辑页为空但词库可用），本函数本来就放行；
+        // 且包是唯一不可再生的数据（官方包能重下，自定义词库只能从备份里来）。
+        val dir3 = File(tmp, "dicts-pair-rev").apply { mkdirs() }
+        File(dir3, CustomDicts.SOURCE_NAME).mkdirs()
+        val src3 = bytes("张三 zhang san\n")
+        val r3 = ConfigBackupManager.restoreDicts(
+            dir3,
+            makeZip(
+                ConfigBackup.DICT_DIR + CustomDicts.PACK_NAME to okPack,
+                ConfigBackup.DICT_DIR + CustomDicts.SOURCE_NAME to src3,
+            ),
+            dictsDigestOf(CustomDicts.PACK_NAME to okPack, CustomDicts.SOURCE_NAME to src3),
+        )
+        assertNotNull(r3)
+        assertEquals("落地成功的包不许被回滚掉", 1, r3!!.first)
+        assertEquals(1, r3.second)
+        assertTrue("包要真的还在", File(dir3, CustomDicts.PACK_NAME).isFile)
     }
 
     @Test

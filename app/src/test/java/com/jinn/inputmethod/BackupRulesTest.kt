@@ -31,8 +31,18 @@ class BackupRulesTest {
      */
     private fun hasExclude(xml: String, domain: String, path: String): Boolean =
         Regex(
-            """<exclude(?=[^>]*\bdomain="$domain")(?=[^>]*\bpath="${Regex.escape(path)}\")[^>]*>"""
+            """<exclude(?=[^>]*\bdomain\s*=\s*["']$domain["'])(?=[^>]*\bpath\s*=\s*["']${Regex.escape(path)}["'])[^>]*>"""
         ).containsMatchIn(xml)
+
+    /**
+     * 该段里有没有**任何** `<exclude domain=DOMAIN …>`（不看 path）。
+     *
+     * 用于负向保底：`root` 域是 `file` / `database` / `sharedpref` 三域的共同父目录，
+     * 一行 `path="."` 就能把整包清空，而按名字逐条的正向断言一条都不响。
+     * 属性值两侧允许空格、引号允许单引号 —— XML 里都等价，判据若不认就会**静默放过**。
+     */
+    private fun hasDomainExclude(xml: String, domain: String): Boolean =
+        Regex("""<exclude(?=[^>]*\bdomain\s*=\s*["']$domain["'])[^>]*>""").containsMatchIn(xml)
 
     /**
      * 隐私数据的**逐条**排除必须在三份清单里都在（数据驱动，不靠手点三条）。
@@ -74,6 +84,18 @@ class BackupRulesTest {
                     hasExclude(text, domain, path),
                 )
             }
+        }
+        // 可见性与 `root` 域：`root` = `/data/data/<pkg>/`，是 file / database / sharedpref
+        // 三域的共同父目录 —— 一行 `<exclude domain="root" path="."/>` 就能把整包清空，
+        // 而上面逐名的断言一条都不响（`root` 与 `.` 都不在名字表里），lint 也只校验
+        // include/exclude 的路径关系、对这种写法无可校验对象。
+        // 换机后用户会看到「备份成功、恢复后像新装」。将来真要用 root 域，先改本断言并说明理由。
+        // （本条为推演 + 加行后本断言变红的实跑；「旧判据全绿」是推演，未单独跑 lint。）
+        for ((seg, text) in segments) {
+            assertFalse(
+                "$seg 出现了 root 域排除 —— root 是三域共同父目录，一行 path=\".\" 就能清空整包",
+                hasDomainExclude(text, "root"),
+            )
         }
     }
 

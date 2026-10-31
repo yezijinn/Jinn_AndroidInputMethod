@@ -1499,18 +1499,50 @@ internal object ConfigBackupManager {
         }
         var written = 0
         var skipped = skippedByName
+        var packLanded = false
+        var sourceLanded = false
         for ((tmp, dest) in pending) {
             when {
                 dest.isFile -> {
                     tmp.delete()
                     skipped++
                 }
-                tmp.renameTo(dest) -> written++
+                tmp.renameTo(dest) -> {
+                    written++
+                    // 记「本次真落地的那一半」。这里用循环内标记而不是事后 `File(...).isFile` 反推：
+                    // 反推会把「本机原有的那份」也算成这次落地的。两种写法在当前 `pairBroken` 闸下
+                    // 恰好等价，但循环内标记不依赖那道闸，改闸时不会悄悄失准
+                    if (CustomDicts.isPackName(dest.name)) packLanded = true
+                    if (CustomDicts.isSourceName(dest.name)) sourceLanded = true
+                }
                 else -> {
                     tmp.delete()
                     skipped++
                 }
             }
+        }
+        // 预测会落地 ≠ 真落地：改名可能因目标名被目录占位而失败（`isFile` 见目录即 false，
+        // 于是上面预测成「会落地」）。两份都在包里却只落了一半时必须处理，否则源文本换成
+        // 本次的新文本、包还是旧的，编辑页回显与生效词库错配，
+        // 用户下一次保存就用这份文本静默重建包（L-850 要挡的后果，只是多绕一步）。
+        //
+        // **只回滚源文本那半，包留着** —— 两个方向不对称是刻意的：
+        //  · 「只有包、没有源文本」是本函数自己放行的可用态（见上面 `packSeen -> false`：
+        //    老备份形态，编辑页为空但词库可用），删掉它等于把可用态退化成全无；
+        //  · 包是唯一不可再生的数据（官方包能重下，自定义词库只能从备份里来），
+        //    而缺源文本的代价只是编辑页空白（X-267 已裁定）。
+        if (packSeen && sourceSeen && sourceLanded && !packLanded) {
+            // 删不掉就如实说：计数也保持「它还在」的现实，不假装已回滚
+            val rolled = File(dir, CustomDicts.SOURCE_NAME).delete()
+            if (rolled) {
+                written--
+                skipped++
+            }
+            Diagnostics.w(
+                TAG,
+                if (rolled) "词库恢复: 源文本落地而包未落地，已回滚源文本（保留词库，编辑页将为空）"
+                else "词库恢复: 源文本落地而包未落地，回滚源文本失败",
+            )
         }
         return written to skipped
     }
