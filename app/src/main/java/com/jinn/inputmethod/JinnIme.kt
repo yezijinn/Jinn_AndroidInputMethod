@@ -2460,9 +2460,9 @@ class JinnIme : InputMethodService() {
      * 高度百分比 → 真实内容高（px）。
      *
      * 两个口径：
-     *  - 有可伸缩块（正常态）⇒ 按百分比算出目标高，再反解倍率交给键盘视图改行高；
+     *  - 有可伸缩块（正常态 / 方向面板在场上）⇒ 按百分比算出目标高，再反解倍率交给键盘视图改行高；
      *    倍率被 [FloatingKeyboard.MIN_STRETCH] / [FloatingKeyboard.MAX_STRETCH] 夹住时，实际高随之变化；
-     *  - 量不到可伸缩块（方向面板在场上 / 视图未就绪）⇒ 不拉伸，按自然高。
+     *  - 量不到可伸缩块（视图未就绪）⇒ 不拉伸，按自然高。
      */
     private fun stretchContentHeightPx(heightPercent: Int, widthPercent: Int, naturalH: Int): Int {
         val block = floatingStretchBlockPx
@@ -2674,7 +2674,9 @@ class JinnIme : InputMethodService() {
                     // 落在「回到底部」上的**位移**是拖把手，不是点它 —— 只有没动过才算点击。
                     // 不看 movable 就会「想拖一下，浮层直接收回底部」。
                     // 作废的那一手也不算点击：用户按的本意是拖 / 拉，不是退出悬浮。
+                    // 动过的手势与把手本体同一待遇：抬手落盘，否则收起再弹按存档弹回原位。
                     if (!moved && !stale) dockToBottom()
+                    else if (moved && !stale) persistFloatingGeometry()
                 } else {
                     // 无障碍：抬手补一次 click（该视图没有常驻点击语义，与 MicButton 同一口径）
                     view.performClick()
@@ -2983,8 +2985,6 @@ class JinnIme : InputMethodService() {
             FloatingKeyboard.Geometry(centerX - winW / 2, centerY - winH / 2, next),
             screenW, areaH, winW, winH,
         )
-        floatingWinW = winW
-        floatingWinH = winH
         floatingGeometry = moved
         // 尺寸变了要重排容器与窗口，走一次完整套用（随后用新几何覆盖一次位置）
         floatingResizeOverride = moved

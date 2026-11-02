@@ -386,7 +386,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 可伸缩块的自然高（px）= 参与拉伸的行 × 用户键高 + 底排高。
      *
      * 候选栏与上边距**不参与**（它们由字号派生、与拉伸无关），窗口侧据此反解倍率，
-     * 否则拉伸幅度会被那半屏固定高吃掉。方向面板在场上时返回 0（那一态不做拉伸）。
+     * 否则拉伸幅度会被那半屏固定高吃掉。方向面板在场上时按它的 3 行计 ——
+     * 面板同样被拉伸（[directionRowHeightPx] 读字母行高），不是不拉伸。
      */
     fun floatingStretchBlockPx(): Int {
         val rows = floatingLetterRowCount()

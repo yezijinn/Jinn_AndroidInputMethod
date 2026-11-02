@@ -921,4 +921,25 @@ class FloatingKeyboardTest {
         }
         assertFalse("作废即可，不需要 POINTER_UP 分支", "ACTION_POINTER_UP" in ime)
     }
+
+    /**
+     * 把手条右端「回到底部」起手的拖动也要落盘（第 89 轮审计）。
+     *
+     * 把手与 dock 共用同一个触摸监听，ACTION_MOVE 不看身份 ⇒ dock 上窗口确实挪了；
+     * 而 ACTION_UP 的 dock 分支原先只有「没动过 ⇒ dockToBottom()」，动过的手势既不点击、
+     * 也不落盘 ⇒ 收起再弹时 applyFloatingWindow 按存档重算，窗口弹回原处。
+     *
+     * 判据窗口化到 dock 分支：整函数里 else 分支本就有 persistFloatingGeometry()，
+     * 不窗口化会被那一条假绿。dock 还挂着 OnClickListener{dockToBottom}，
+     * 补 performClick() 会把「刚拖完」变成「收回底部」，一并钉死。
+     */
+    @Test
+    fun 回到底部起手的拖动也要落盘() {
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val drag = TestSources.blockAfter(ime, "private fun onFloatingHandleTouch(")
+        val dock = TestSources.window(drag, "if (view === floatingDockView) {", "} else {")
+        assertTrue("dock 分支要留点击语义", "dockToBottom()" in dock)
+        assertTrue("dock 上拖过也要落盘（否则收起再弹弹回原处）", "persistFloatingGeometry()" in dock)
+        assertFalse("dock 分支不许补 performClick（会立刻收回底部）", "performClick()" in dock)
+    }
 }
