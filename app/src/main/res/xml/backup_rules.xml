@@ -56,6 +56,16 @@
     <exclude
         domain="file"
         path="user_picks.key.tmp" />
+    <!-- 凭据的软件密钥（filesDir/credential_soft.key，2026-11-01）：无锁屏设备上凭据用它加密
+         （Keystore 建键恒失败）。凭据密文在 prefs 里、prefs 已排除，密钥件单独备份毫无用处；
+         而它一旦随包出炉就等于把「解开 prefs 的那把钥匙」也交出去 —— 无锁屏设备上尤其危险。
+         中间件 .tmp 同排（原子写残留） -->
+    <exclude
+        domain="file"
+        path="credential_soft.key" />
+    <exclude
+        domain="file"
+        path="credential_soft.key.tmp" />
     <!-- 台账整表的两个原子写中间件：崩溃落在「写完整表 → rename」之间时会留下。
          排除项不支持通配，必须逐名写；deleteFile 只删主文件，残留会跟着备份出机 -->
     <exclude

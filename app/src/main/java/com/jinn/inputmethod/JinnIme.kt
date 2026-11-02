@@ -137,8 +137,11 @@ class JinnIme : InputMethodService() {
      * 语音组件。仅在「语音输入」开关为开时才实例化（见 [ensureVoiceReady]）。
      * 开关关闭时两者恒为 null，语音功能完全沉寂，不占用任何语音相关内存，
      * 因此所有使用点都必须走空安全（`?.`）。
+     *
+     * 类型是接口 [SpeechClient]：后端按 `prefs.voiceBackend` 选（自建 CapsWriter / 讯飞在线），
+     * 录音、状态条、结果落字的调用点完全一致。
      */
-    private var asr: AsrClient? = null
+    private var asr: SpeechClient? = null
     private var recorder: MicRecorder? = null
 
     /** 剪贴板控制器：监听系统剪贴板 → 按策略加密保存历史（普通模式核心） */
@@ -343,10 +346,28 @@ class JinnIme : InputMethodService() {
      */
     private var voiceResultPackage: String? = null
 
-    /** 松手后等最终结果的兜底：超时即复位状态条，不让「识别中…」永驻 */
+    /**
+     * 松手后等最终结果的兜底：超时即复位状态条，不让「识别中…」永驻。
+     *
+     * 到点就是**这一段已经放弃**，只复位状态条不够 —— 客户端的采纳闸门（`acceptingTask`）还开着，
+     * 61 秒后才回的那条 final 仍会 `commitText` 上屏，而此刻用户早已把「识别中」读成「没成」，
+     * 多半已经在别的输入框里打字了。所以对**在线后端**连任务一起作废：
+     *  - `cancelTask()` 只关闸门、不发多余报文（`endTask` 早发过收尾包，三家流式实现都不会再发一帧）；
+     *  - 归属快照一并清掉，避免它滞留到下一段（跨应用校验的基准该由新一段自己建立）。
+     *
+     * 自建 CapsWriter **不作废**，只复位提示，理由见下面的注释：它的单次时长上限是 180 秒，
+     * 弱 NAS 上识别超过 60 秒属正常量级，作废等于白扔一段听写；闸门留着，晚到的正文照常落字，
+     * 归属快照也必须一起留着 —— 否则 `handleResult` 的跨应用校验失去基准（`origin` 为空时
+     * 判据直接放行），那才是真的把正文写进陌生应用。
+     */
     private val recognizeTimeout = Runnable {
         if (!awaitingResult) return@Runnable
         awaitingResult = false
+        // 判据用与 autoStopDelayMs 同一个 isOnline：一台后端只该有一套时长口径。
+        if (VoiceBackend.isOnline(prefs.voiceBackend)) {
+            voiceResultPackage = null
+            asr?.cancelTask()
+        }
         Diagnostics.w(TAG, "识别超时: ${RECOGNIZE_TIMEOUT_MS}ms 内未收到最终结果，复位状态条")
         setHint(getString(R.string.hint_not_connected))
     }
@@ -552,9 +573,15 @@ class JinnIme : InputMethodService() {
         startRecording(Mode.HOLD)
     }
 
-    /** 连续录音兜底，防止用户忘了关 */
+    /**
+     * 单次听写的兜底收尾（防止用户忘了关 / 超过服务端上限）。
+     *
+     * 只由 [startRecording] 按后端与手势模式排程：自建后端只有 TOGGLE 排（服务端可长跑），
+     * 讯飞后端 TOGGLE 与 HOLD 都排（服务端单次音频硬上限 60 秒）。故这里只判「还在录」，
+     * 不再区分 TOGGLE / HOLD —— 判 mode 会把 HOLD 到点的那次收尾静默吃掉。
+     */
     private val autoStopRunnable = Runnable {
-        if (mode == Mode.TOGGLE) stopRecording(commit = true)
+        if (mode != Mode.NONE) stopRecording(commit = true)
     }
 
     private val backspaceRunnable = object : Runnable {
@@ -1691,7 +1718,96 @@ class JinnIme : InputMethodService() {
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
                 override fun onDeleteAll() = deleteAllText()
-                override fun onVoiceRequested() = switchToVoiceKeyboard()
+                // ── 26 键空格长按 = 按住说话（2026-11-01）────────────────────────────
+                // 原先是 `onVoiceRequested() → switchToVoiceKeyboard()`：长按直接把键盘切成语音页。
+                // 现在不切页面，录音结果直接落回当前输入框；`switchToVoiceKeyboard` 只剩
+                // 「缺麦克风权限时退回授权页」这一条调用路径。
+                //
+                // 预热：空格按下到长按触发只有约 500ms，首次长按若到触发时才握手，
+                // 状态必然还在 CONNECTING ⇒ 用户只会看到「正在连接」。
+                override fun onVoicePrepare() {
+                    if (!prefs.voiceInputEnabled) return
+                    // 已在线 / 连接中时 connect() 也会早退，这层判断只为**不碰空闲关闭**：
+                    // connect() 会 cancelIdleClose，而连打空格并不是在用语音（MEM-13）
+                    val state = asr?.state
+                    if (state == LinkState.ONLINE || state == LinkState.CONNECTING) return
+                    runCatching { asr?.connect() }.onFailure {
+                        Diagnostics.e(TAG, "onVoicePrepare: 建连失败 ${it.javaClass.simpleName} ${it.message}", it)
+                    }
+                    // 这条连接是**投机**的：按下可能只是一次短按（打空格）。而 `connect()` 会撤销
+                    // 已排程的空闲关闭，不补回来就等于「只打空格的人」每弹一次键盘就把长连接拉活
+                    // 一整个会话（20s 一次 ping，正是 MEM-13 要消掉的那份唤醒）。这里立刻按常规窗口
+                    // 重排：真要用语音时 `beginTask` 会撤销它；90s 内没人用就归零。
+                    asr?.scheduleIdleClose()
+                }
+                // 返回 true 才是「真开始录音」；其余分支都要给可见提示，不许装作在录
+                override fun onVoiceHoldStart(): Boolean {
+                    if (!prefs.voiceInputEnabled) return false
+                    // 密码类输入框不录音（2026-11-01）：音频是**出设备**的，比译文更敏感 ——
+                    // 宿主报出密码变体、或声明「不要个性化学习」时照拒。判据与翻译同一支
+                    // [InputFieldPrivacy.blocksTranslation]，**不**复用 `suppressLearning`：
+                    // 后者服务本地词频学习、把 `NO_SUGGESTIONS` / `TYPE_NULL` 也算敏感，拿它拦语音
+                    // 会让浏览器搜索框这类整类宿主不能听写（翻译侧 2026-10-01 踩过同一个坑）。
+                    // 按**按下这一刻**的 EditorInfo 现跑：会话缓存只在 onStartInputView 刷新，宿主在
+                    // 键盘已显示时把焦点切到密码框未必重发该回调（口径同 `startTranslate`）。
+                    val field = currentInputEditorInfo
+                    if (InputFieldPrivacy.blocksTranslation(field?.inputType, field?.imeOptions ?: 0)) {
+                        Diagnostics.w(
+                            TAG,
+                            "onVoiceHoldStart: 输入框被拒绝（inputType=0x${Integer.toHexString(field?.inputType ?: 0)}" +
+                                " imeOptions=0x${Integer.toHexString(field?.imeOptions ?: 0)}）",
+                        )
+                        toast(TEXT_VOICE_PRIVATE_FIELD)
+                        return false
+                    }
+                    // 无权限 ⇒ 退回原行为（语音页面有授权按钮）。返回 false = 视图不进长按态；
+                    // 那次长按仍被消费（不顺手塞空格）—— 页面已经切过去，反馈足够明确。
+                    if (!hasMicPermission()) {
+                        Diagnostics.w(TAG, "onVoiceHoldStart: 缺少 RECORD_AUDIO 权限，退回语音页面授权")
+                        toast(TEXT_VOICE_NEED_PERMISSION)
+                        switchToVoiceKeyboard()
+                        return false
+                    }
+                    if (translateInFlight) {
+                        Diagnostics.w(TAG, "onVoiceHoldStart: 翻译在途，不进入长按录音")
+                        toast(TEXT_TRANSLATING_PLEASE_WAIT)
+                        return false
+                    }
+                    // 已有录音在跑（语音页连续录音的残留 / 上一段没收尾）：不叠第二段。
+                    // 这一条同时是下面「返回值以 mode 为准」的判据前提 —— 没有它，
+                    // 残留的 mode=HOLD 会让一次「其实没起录」的长按被误判成成功。
+                    if (mode != Mode.NONE) {
+                        Diagnostics.w(TAG, "onVoiceHoldStart: 已有录音在跑（mode=$mode），忽略本次长按")
+                        // 26 键下没有语音状态条，这一支若静默就是「按住没反应」
+                        toast(TEXT_VOICE_START_FAILED)
+                        return false
+                    }
+                    // 懒连接（MEM-13）：此刻仍未 ONLINE 就是「没准备好」，不是「在录音」
+                    if (asr?.state != LinkState.ONLINE) {
+                        Diagnostics.i(TAG, "onVoiceHoldStart: 语音服务未就绪(state=${asr?.state})，放弃本次长按")
+                        runCatching { asr?.connect() }.onFailure {
+                            Diagnostics.e(TAG, "onVoiceHoldStart: 建连失败 ${it.javaClass.simpleName} ${it.message}", it)
+                        }
+                        toast(TEXT_VOICE_CONNECTING)
+                        return false
+                    }
+                    startRecording(Mode.HOLD)
+                    // beginTask / recorder.start 失败时 `startRecording` 只写状态条（26 键下那份
+                    // 状态条不存在）⇒ 不出声就是「按住没反应」。这里补一次 toast，并如实返回 false
+                    if (mode != Mode.HOLD) {
+                        Diagnostics.w(TAG, "onVoiceHoldStart: startRecording 未进入 HOLD，本次长按作废")
+                        toast(TEXT_VOICE_START_FAILED)
+                        return false
+                    }
+                    return true
+                }
+                override fun onVoiceHoldUpdate(cancelArmed: Boolean) = setCancelArmed(cancelArmed)
+                override fun onVoiceHoldEnd(cancelled: Boolean) {
+                    // stopRecording 自己会把 mode 归 NONE 并按 commit 决定「送收尾包等结果」还是「丢弃」
+                    stopRecording(commit = !cancelled)
+                    // cancelArmed 是 IME 自己的字段，stopRecording 只复位了麦克风按钮的武装态
+                    setCancelArmed(false)
+                }
                 // 只查不改（语音链路一行不动）：长按空格前先问，不可用就不消费长按
                 override fun canVoice(): Boolean = prefs.voiceInputEnabled
                 override fun onOpenClipboard() {
@@ -3172,10 +3288,13 @@ class JinnIme : InputMethodService() {
             return
         }
         if (asr != null) return
-        asr = AsrClient(
+        // 后端选择（设置页「语音转为文字」→ 识别服务）：三者对外是同一个 [SpeechClient]。
+        // 分叉一律交给 [SpeechClients.create]，与「语音测试」共用同一处，新增后端只改工厂。
+        val backend = prefs.voiceBackend
+        asr = SpeechClients.create(
             prefs = prefs,
             onState = { state, detail -> ui.post { renderLink(state, detail) } },
-            onResult = { message -> ui.post { handleResult(message) } },
+            onMessage = { message -> ui.post { handleResult(message) } },
         )
         recorder = MicRecorder(
             onChunk = { chunk -> asr?.sendChunk(chunk) },
@@ -3187,7 +3306,10 @@ class JinnIme : InputMethodService() {
         // 提前连上等于给整台手机挂了一条每 20 秒响一次的长连接（服务端 websockets 默认 ping）。
         // 连接改由「进入语音键盘」与「语音面板可见时的弹键盘」触发（见 switchToVoiceKeyboard /
         // onStartInputView）；首次点麦克风的握手延迟由「切进面板即开始连」覆盖。
-        Diagnostics.i(TAG, "语音输入已启用：语音组件已装配（连接推迟到进入语音面板）")
+        Diagnostics.i(
+            TAG,
+            "语音输入已启用：语音组件已装配（backend=$backend，连接推迟到进入语音面板）",
+        )
     }
 
     private fun switchToVoiceKeyboard() {
@@ -3215,7 +3337,19 @@ class JinnIme : InputMethodService() {
             runCatching {
                 Toast.makeText(
                     this,
-                    getString(R.string.voice_offline_blocked, prefs.host, prefs.port),
+                    when (VoiceBackend.of(prefs.voiceBackend)) {
+                        VoiceBackend.XF -> TEXT_XF_OFFLINE
+                        VoiceBackend.OAI -> TEXT_OAI_OFFLINE
+                        // 同上：else 是自建那条，会把 NAS 的 host:port 报给用第四家的用户
+                        VoiceBackend.ALI -> TEXT_ALI_OFFLINE
+                        // 第五、六家同理：落到 else 会说「自建服务端未连接（host:port）」
+                        VoiceBackend.TENCENT -> TEXT_TENCENT_OFFLINE
+                        VoiceBackend.AZURE -> TEXT_AZURE_OFFLINE
+                        // 第七、八家同理：落到 else 会说「自建服务端未连接（host:port）」
+                        VoiceBackend.BAIDU -> TEXT_BAIDU_OFFLINE
+                        VoiceBackend.DEEPGRAM -> TEXT_DEEPGRAM_OFFLINE
+                        else -> getString(R.string.voice_offline_blocked, prefs.host, prefs.port)
+                    },
                     Toast.LENGTH_SHORT,
                 ).show()
             }.onFailure { Diagnostics.w(TAG, "提示语音离线失败: ${it.message}") }
@@ -3574,9 +3708,12 @@ class JinnIme : InputMethodService() {
         renderLink(asr?.state ?: LinkState.OFFLINE, null)
         micButton?.recording = false
         micButton?.cancelArmed = false
-        // 会话开始：上一次听写的等待态与归属快照不带进来（结果要么已到，要么已由超时/掉线复位）
+        // 会话开始：上一次听写的**等待态**与兜底超时归零（提示、按钮态属于上一次会话）。
+        // ⚠ 归属快照 [voiceResultPackage] 不能跟着清掉：松手后服务端还要 1~3 秒才回结果，
+        // 而「换应用 / 换输入框」正是本回调的入口 —— 快照一空，[handleResult] 的归属校验就
+        // 失去比对基准，上一段的识别正文会落进新输入框（跨应用落字，与暂存粘贴同一条隐私口径）。
+        // 它由 handleResult（结果到达）与 startRecording（新一段开始）负责复位，不会滞留。
         awaitingResult = false
-        voiceResultPackage = null
         ui.removeCallbacks(recognizeTimeout)
         setHint(getString(R.string.hint_idle))
         // 敏感输入框（密码框 / 声明 NO_SUGGESTIONS / imeOptions 声明不要个性化学习）
@@ -4130,10 +4267,19 @@ class JinnIme : InputMethodService() {
                 if (target == Mode.HOLD) R.string.hint_release_send else R.string.hint_tap_stop
             )
         )
-        if (target == Mode.TOGGLE) ui.postDelayed(autoStopRunnable, MAX_TOGGLE_MS)
+        if (target == Mode.TOGGLE) ui.postDelayed(autoStopRunnable, autoStopDelayMs())
+        // 在线后端（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure）HOLD 也要收尾：五家单次音频
+        // 硬上限都是 60 秒，按住不放同样会到点截断（自建后端 HOLD 不排：服务端按连接持有缓冲，可以一直按住说）
+        else if (VoiceBackend.isOnline(prefs.voiceBackend)) {
+            ui.postDelayed(autoStopRunnable, XF_MAX_TASK_MS)
+        }
     }
 
     private fun stopRecording(commit: Boolean) {
+        // 键面提示跟着录音一起收（2026-11-01）：录音可能被**外部**终止（录音器报错 / 音频焦点被抢 /
+        // 换输入框 / 键盘收起），那几条路径都不经过空格的手势回调，视图侧的长按态会一直挂着，
+        // 小字停在「松手转文字」。幂等：手势自己收尾时这里已经是复位后的状态。
+        pinyinKeyboard?.cancelVoiceHold()
         if (mode == Mode.NONE) return
         mode = Mode.NONE
         ui.removeCallbacks(autoStopRunnable)
@@ -4182,6 +4328,16 @@ class JinnIme : InputMethodService() {
         stopRecording(commit = false)
         setHint(message)
     }
+
+    /**
+     * 自动收尾时长（按当前后端）。TOGGLE 用它；在线后端下 HOLD 直接用 [XF_MAX_TASK_MS]。
+     *
+     * 在线后端单次音频硬上限 60 秒（讯飞服务端到点直接截断；OpenAI 兼容侧按「单次上传」语义，
+     * 58s 也留了余量），故 58s 收尾，留 2 秒给末帧 / 上传与最终结果。
+     * 自建 CapsWriter 服务端按连接持有缓冲、可以长跑，保持原值。
+     */
+    private fun autoStopDelayMs(): Long =
+        if (VoiceBackend.isOnline(prefs.voiceBackend)) XF_MAX_TASK_MS else MAX_TOGGLE_MS
 
     // ── 音频焦点 / 网络 / VAD ───────────────────────────────
 
@@ -5374,6 +5530,16 @@ class JinnIme : InputMethodService() {
         // **不会重复打扰**：`cancelTranslate` 只在 `wasInFlight` 为真时弹一次，第一次之后
         // `translateInFlight` 已是 false，连按退格也只弹一次。
         if (translateInFlight) cancelTranslate(notify = true)
+        // 录音中不许按键上屏（2026-11-01）：26 键长按空格 = 按住说话，录音期间键盘**不再切换**
+        // （原先长按会切到语音页，拼音键根本按不到），此刻按字母 / 空格会与语音的非终态回显
+        // 抢同一段文本 —— 识别结果整段覆盖时会把这些字悄悄吃掉。
+        // ⚠ 只拦 **HOLD**，不能写成 `mode != Mode.NONE`：语音键盘的逗号 / 句号 / 空格也走本函数，
+        // 而那一页在 TOGGLE（连续录音）时**照样在录**，那三个键的用途正是边说边补标点 ——
+        // 一并拦掉就是「按了没反应」（且 TOGGLE 时拼音树是 GONE，这条闸要挡的键根本按不到）。
+        if (mode == Mode.HOLD) {
+            Diagnostics.w(TAG, "commit: 录音中（mode=$mode），丢弃按键上屏 \"${text.take(20)}\"")
+            return
+        }
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "commit: \"${text.take(40)}\" (键盘模式=$keyboardMode)")
         // 打字/语音上屏走 commitText，不写系统剪贴板，不会触发剪贴板监听。
@@ -5593,7 +5759,19 @@ class JinnIme : InputMethodService() {
         when (state) {
             LinkState.ONLINE -> {
                 colorRes = R.color.dot_online
-                label = getString(R.string.status_online, prefs.host, prefs.port)
+                // 摘要按后端显示：caps 给真实地址（用户会拿它核对 NAS），在线后端只报名字
+                label = when (VoiceBackend.of(prefs.voiceBackend)) {
+                    VoiceBackend.XF -> TEXT_XF_ONLINE
+                    VoiceBackend.OAI -> TEXT_OAI_ONLINE
+                    // 第四家必须自己一支：落到下面的 else 会拿**自建服务端的** host:port 拼成
+                    // 「已连接 192.168.x.x:6016」，而此刻连的根本不是那台 NAS（2026-11-01 复核发现）
+                    VoiceBackend.ALI -> TEXT_ALI_ONLINE
+                    VoiceBackend.TENCENT -> TEXT_TENCENT_ONLINE
+                    VoiceBackend.AZURE -> TEXT_AZURE_ONLINE
+                    VoiceBackend.BAIDU -> TEXT_BAIDU_ONLINE
+                    VoiceBackend.DEEPGRAM -> TEXT_DEEPGRAM_ONLINE
+                    else -> getString(R.string.status_online, prefs.host, prefs.port)
+                }
             }
 
             LinkState.CONNECTING -> {
@@ -5880,6 +6058,39 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATING_PLEASE_WAIT = "正在翻译，请稍候再录音"
 
         /**
+         * 空格长按录音缺少麦克风权限（2026-11-01）。
+         *
+         * 这条路径会**退回**语音键盘页（那里有授权按钮）：只说「没权限」而不带路，
+         * 用户在 26 键上永远找不到授权入口。
+         */
+        const val TEXT_VOICE_NEED_PERMISSION = "缺少麦克风权限，已打开语音页面，请先授权"
+
+        /**
+         * 空格长按录音时语音服务尚未就绪（懒连接握手未完成）。
+         *
+         * 不写「未连接」：多数情况是 ACTION_DOWN 刚发起的握手还没完成，让用户再说一次即可；
+         * 写「未连接」会让人以为功能坏了（与 `startRecording` 里 CONNECTING 的区分同一口径）。
+         */
+        const val TEXT_VOICE_CONNECTING = "正在连接语音服务，请再说一次"
+
+        /**
+         * 空格长按录音没能启动（`beginTask` / `recorder.start` 失败）。
+         *
+         * 这两条失败 `startRecording` 只改语音页的状态条，而 26 键下那套视图根本不存在 ——
+         * 不补一句就是「按住没反应」，用户会以为空格键坏了。
+         */
+        const val TEXT_VOICE_START_FAILED = "录音没能启动，请再说一次"
+
+        /**
+         * 密码类输入框不允许「按住说话」（2026-11-01）。
+         *
+         * 判据是 [InputFieldPrivacy.blocksTranslation]（密码变体 / 宿主声明不要个性化学习）：
+         * 音频一旦开始录就会整段上传到服务端，比译文更敏感，所以按翻译同一道闸收口。
+         * 不写具体是哪一位命中的 —— 用户关心的是「这里不能录」，诊断包里另有标志位日志。
+         */
+        const val TEXT_VOICE_PRIVATE_FIELD = "密码框不录音（避免内容外发）"
+
+        /**
          * 提交后复核发现译文不在输入框里（2026-10-03 修复 L-567）。
          *
          * `commitText` 返回 true 只代表调用被接受；宿主的 InputFilter（数字框一类）会把正文整段丢掉
@@ -6056,8 +6267,33 @@ class JinnIme : InputMethodService() {
         /** 按住时上滑超过这个距离即进入取消状态 */
         const val CANCEL_SLIDE_DP = 64f
 
-        /** 连续录音的最长时长，3 分钟 */
+        /** 连续录音的最长时长，3 分钟（自建 CapsWriter 服务端可长跑） */
         const val MAX_TOGGLE_MS = 180_000L
+
+        /**
+         * 在线后端的单次听写上限：两家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
+         *
+         * **TOGGLE 与 HOLD 都要用**：26 键长按同样可能按住超过 60 秒，到点被服务端截断的表现
+         * 是「后半段说的话一个字都没有」——26 键下没有状态条，用户只会以为识别不准。
+         * 常量名沿用讯飞时期的 `XF_MAX_TASK_MS`（改名会动到既有守卫，收益为零）。
+         */
+        const val XF_MAX_TASK_MS = 58_000L
+
+        /** 在线后端的状态条 / 提示文案（后端没有「地址」可报） */
+        const val TEXT_XF_ONLINE = "讯飞在线"
+        const val TEXT_XF_OFFLINE = "讯飞语音服务未连接"
+        const val TEXT_OAI_ONLINE = "OpenAI 兼容"
+        const val TEXT_OAI_OFFLINE = "OpenAI 兼容语音服务未连接"
+        const val TEXT_ALI_ONLINE = "阿里百炼在线"
+        const val TEXT_ALI_OFFLINE = "阿里云百炼语音服务未连接"
+        const val TEXT_TENCENT_ONLINE = "腾讯云语音识别"
+        const val TEXT_TENCENT_OFFLINE = "腾讯云语音服务未连接"
+        const val TEXT_AZURE_ONLINE = "Azure 语音"
+        const val TEXT_AZURE_OFFLINE = "Azure 语音服务未连接"
+        const val TEXT_BAIDU_ONLINE = "百度语音识别"
+        const val TEXT_BAIDU_OFFLINE = "百度语音服务未连接"
+        const val TEXT_DEEPGRAM_ONLINE = "Deepgram 语音"
+        const val TEXT_DEEPGRAM_OFFLINE = "Deepgram 语音服务未连接"
 
         /**
          * 松手后等最终识别结果的兜底超时。

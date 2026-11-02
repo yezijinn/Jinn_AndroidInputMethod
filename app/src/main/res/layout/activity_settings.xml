@@ -9,9 +9,9 @@
     启用本输入法 / 改默认输入法 → 符号分组顺序 / 符号的自定义 →
     补充短语词库 / 键盘外观 → 增加模糊拼音 / 加更多生僻字 →
     敲击音效反馈 / 剪贴板自定义 → 图库快贴 / 空格左右按钮 →
-    生成用户词库 / 存储占用统计 → 悬浮键盘 → 拼音输入方案（单下拉）→
+    生成用户词库 / 存储占用统计 → 绑定悬浮键盘 / 语音转为文字（同一行）→ 拼音输入方案（单下拉）→
     用户词频学习 / 追加候选词语 → 自动唤起键盘 / 只使用繁体字 →
-    语音输入 → 授权麦克风 → NAS 语音 → 在线翻译 →
+    在线翻译 →
     导出配置文件 / 导入配置文件 → 导出诊断数据（单按钮）→ 使用说明纯文本
     ⚠ 候选词的行数 / 键盘内显韵母 / 双拼候选全音 / 界面明暗切换（含定时两个时刻）/ 主题与皮肤
     都已迁入「键盘外观」页（activity_key_appearance.xml），剪贴板容量在「剪贴板自定义」页 ——
@@ -258,15 +258,26 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 悬浮键盘：可拖动浮层 + 按 APP 绑定 + 竖横各一套几何（默认关闭；按钮文案由代码下发） -->
+        <!-- 悬浮键盘 / 语音转为文字：两个入口按钮同行，各占一半（用户第 2 条：
+             两个按钮放同一行、不要小字描述）。按钮文案由代码下发（TEXT_FLOATING_ENTRY / TEXT_VOICE_ENTRY），
+             strings.xml 默认不改动。 -->
         <LinearLayout
-            style="@style/SettingsCard">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <Button
                 style="@style/SettingsButton"
                 android:id="@+id/btn_floating_keyboard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_voice_settings"
+                android:layout_width="0dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
 
@@ -427,224 +438,10 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不占内存、长按空格无效）。
-             下面两张卡（授权麦克风 / NAS 语音）都随它显隐，故紧随其后。 -->
-        <LinearLayout
-            style="@style/SettingsCard">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_voice_input"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <Switch
-                    android:id="@+id/switch_voice_input"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:minHeight="40dp" />
-            </LinearLayout>
-
-            <TextView
-                style="@style/CardHint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/settings_voice_input_desc"/>
-        </LinearLayout>
-
-        <!-- 授权麦克风：状态 + 单个授权按钮（与下方 NAS 控件同组，随语音开关整体隐藏） -->
-        <LinearLayout
-            style="@style/SettingsCard"
-            android:id="@+id/card_mic_permission">
-
-            <TextView
-                android:id="@+id/text_mic_state"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"
-                android:text="@string/settings_grant_mic"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_grant"
-                android:layout_width="match_parent"
-                android:text="@string/settings_grant_mic" />
-        </LinearLayout>
-
-        <!-- NAS 语音：地址 + 端口 / 语言 + 默认键盘 / 提示词 / 识别选项 -->
-        <LinearLayout
-            style="@style/SettingsCard"
-            android:id="@+id/card_voice_server">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:baselineAligned="false"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="2"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsLabel"
-                        android:text="@string/settings_host" />
-
-                    <EditText
-                        style="@style/SettingsField"
-                        android:id="@+id/edit_host"
-                        android:layout_width="match_parent"
-                        android:hint="@string/settings_host"
-                        android:importantForAutofill="no"
-                        android:inputType="textUri"
-                        android:singleLine="true"/>
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsLabel"
-                        android:text="@string/settings_port" />
-
-                    <EditText
-                        style="@style/SettingsField"
-                        android:id="@+id/edit_port"
-                        android:layout_width="match_parent"
-                        android:hint="@string/settings_port"
-                        android:importantForAutofill="no"
-                        android:inputType="number"
-                        android:singleLine="true"/>
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:gravity="center_vertical"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsLabel"
-                        android:text="@string/settings_lock" />
-
-                    <CheckBox
-                        android:id="@+id/check_lock_server"
-                        android:layout_width="match_parent"
-                        android:layout_height="40dp"
-                        android:gravity="center"
-                        android:buttonTint="@color/accent"
-                        android:text="@string/settings_lock_short"
-                        android:textColor="@color/text_primary"
-                        android:textSize="12sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- 语言 + 默认键盘模式：同行，各占一半 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsLabel"
-                        android:text="@string/settings_language" />
-
-                    <com.jinn.inputmethod.UserAwareSpinner
-                        style="@style/SettingsField"
-                        android:id="@+id/spinner_language"
-                        android:layout_width="match_parent"
-                        android:spinnerMode="dropdown"/>
-                </LinearLayout>
-
-                <Space
-                    android:layout_width="8dp"
-                    android:layout_height="1dp" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsLabel"
-                        android:text="@string/settings_default_mode" />
-
-                    <com.jinn.inputmethod.UserAwareSpinner
-                        style="@style/SettingsField"
-                        android:id="@+id/spinner_default_mode"
-                        android:layout_width="match_parent"
-                        android:spinnerMode="dropdown"/>
-                </LinearLayout>
-            </LinearLayout>
-
-            <TextView
-                style="@style/SettingsLabel"
-                android:layout_marginTop="4dp"
-                android:text="@string/settings_prompt" />
-
-            <EditText
-                style="@style/SettingsFieldMultiline"
-                android:id="@+id/edit_prompt"
-                android:layout_width="match_parent"
-                android:hint="@string/settings_prompt"
-                android:importantForAutofill="no"
-                android:inputType="textMultiLine"
-                android:minHeight="64dp"/>
-
-            <!-- 识别选项：两个开关一行 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:orientation="horizontal">
-
-                <CheckBox
-                    android:id="@+id/check_strip"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_strip_punc"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp" />
-
-                <CheckBox
-                    android:id="@+id/check_composing"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_composing"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp" />
-            </LinearLayout>
-        </LinearLayout>
+        <!-- 语音入口已与「绑定悬浮键盘」合并到同一行的卡片里（见上方）。
+             四块语音配置（总开关 / 授权麦克风 / NAS 地址与识别选项）已于 2026-11-01 整体迁入
+             VoiceSettingsActivity（布局 activity_voice_settings.xml），本页不再保留任何语音控件 ——
+             别再照旧版清单把它们补回来。 -->
 
         <!-- 在线翻译（BYOK）：总开关 + 配置入口。开关决定键盘功能面板是否显示「翻译」键；
              文案全部代码下发（strings.xml 默认不改动），布局里不写 android:text -->
@@ -736,14 +533,15 @@
         <!-- 存储占用统计的入口已上移到「图库快贴 / 空格左右按钮」下一行（与「生成用户词库」同行），
              此处不再保留空卡片。 -->
 
-        <!-- 使用说明纯文本（最底部） -->
+        <!-- 使用说明纯文本（最底部）：六行文案由 SettingsActivity.TEXT_USAGE 下发，
+             布局里不写 android:text（values/strings.xml 默认禁改）。 -->
         <TextView
+            android:id="@+id/text_usage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:layout_marginBottom="6dp"
             android:gravity="center"
-            android:text="@string/settings_usage"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
     </LinearLayout>

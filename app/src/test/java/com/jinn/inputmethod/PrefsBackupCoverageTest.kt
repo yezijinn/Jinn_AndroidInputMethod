@@ -32,7 +32,14 @@ class PrefsBackupCoverageTest {
      * 恢复到新机后必须重新看说明并手输「我明白」，不能因为导入一份配置文件被静默打开
      * （`user_picks.txt` 本身也已排除系统备份，见 backup_rules / data_extraction_rules）。
      */
-    private val excludedFromBackup = setOf("KEY_USER_DICT_ENABLED")
+    private val excludedFromBackup = setOf(
+        "KEY_USER_DICT_ENABLED",
+        // 百度 access_token 与它的过期时刻是**派生缓存**（过期就重取，见 `Prefs.baiduToken`）：
+        // 带进备份没有意义（换机后可能因源 IP / 账户变更失效），还会把一个会过期的凭据副本
+        // 多传一份到新机器上。读写仍走 CredentialCrypto，只是不随配置走。
+        "KEY_BAIDU_TOKEN",
+        "KEY_BAIDU_TOKEN_EXPIRE_AT",
+    )
 
     private val sourceFile: File = listOf(
         File("src/main/java/com/jinn/inputmethod/Prefs.kt"),
@@ -102,7 +109,15 @@ class PrefsBackupCoverageTest {
         //                       增「数字行开关」1 键（26 键区第四行，换机要带走）—— 净零
         // 2026-10-21 起 104 → 103：移除「候选浏览方式」1 键（翻页模式取消，恒跟手滑动）
         // 2026-10-23 起 103 → 107：新增悬浮键盘 4 键（总开关 / 绑定包名 / 竖屏几何 / 横屏几何）
-        assertEquals("提取到的键常量应是 107 个（改键数请同步本断言）", 107, keyConstants.size)
+        // 2026-11-01 起 107 → 111：新增语音后端 1 键（caps / xf）+ 讯飞听写三件凭据
+        //                       （APPID / APIKey / APISecret，加密落盘；换机要带走，否则重填）
+        // 2026-11-01 起 111 → 114：新增 OpenAI 兼容转写 3 键（Base URL / 模型名 / API Key）
+        // 2026-11-01 起 114 → 117：新增阿里云百炼实时识别 3 键（WS 地址 / 模型名 / API Key）
+        // 2026-11-02 起 117 → 123：新增腾讯云一句话识别 3 键（SecretId / SecretKey / 引擎型号）
+        //                       + Azure 短音频识别 3 键（Base URL / 语言码 / 订阅密钥）
+        // 2026-11-02 起 123 → 131：新增百度短语音识别 5 键（AK / SK / dev_pid / token / token 过期时刻，
+        //                       后两个是派生缓存、刻意不进包）+ Deepgram 3 键（Key / 模型 / 语言）
+        assertEquals("提取到的键常量应是 131 个（改键数请同步本断言）", 131, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -153,6 +168,11 @@ class PrefsBackupCoverageTest {
             "KEY_USE_TRADITIONAL" to "asBool(v)",
             "KEY_FUZZY_PINYIN" to "asInt(v)",
             "KEY_VOICE_INPUT" to "asBool(v)",
+            // 语音识别后端（caps / xf / oai）是字符串，未知取值由 setter 归一回 caps
+            "KEY_VOICE_BACKEND" to "asString(v)",
+            // OpenAI 兼容转写：地址与模型名是普通字符串（setter 做 trim / 默认回落）
+            "KEY_OAI_BASE_URL" to "asString(v)",
+            "KEY_OAI_MODEL" to "asString(v)",
             "KEY_TRANSLATE_ENABLED" to "asBool(v)",
             "KEY_TRANSLATE_PROVIDER" to "asString(v)",
             "KEY_TRANSLATE_TARGET" to "asString(v)",
@@ -244,6 +264,17 @@ class PrefsBackupCoverageTest {
             "KEY_FLOATING_APPS" to "asString(v)",
             "KEY_FLOATING_GEOMETRY_PORTRAIT" to "asString(v)",
             "KEY_FLOATING_GEOMETRY_LANDSCAPE" to "asString(v)",
+            // 阿里云百炼 2 个普通键（2026-11-01）：WS 地址与模型名（Key 走凭据口径，单列在下面）
+            "KEY_ALI_WS_URL" to "asString(v)",
+            "KEY_ALI_MODEL" to "asString(v)",
+            // 腾讯云 1 个普通键（引擎型号）+ Azure 2 个普通键（Base URL / 语言码），2026-11-02
+            "KEY_TENCENT_ENGINE" to "asString(v)",
+            "KEY_AZURE_BASE_URL" to "asString(v)",
+            "KEY_AZURE_LANGUAGE" to "asString(v)",
+            // 百度 1 个普通键（dev_pid 是整数枚举）+ Deepgram 2 个普通键（模型 / 语言），2026-11-02
+            "KEY_BAIDU_DEV_PID" to "asInt(v)",
+            "KEY_DEEPGRAM_MODEL" to "asString(v)",
+            "KEY_DEEPGRAM_LANGUAGE" to "asString(v)",
         )
         for ((key, tool) in pairs) {
             assertTrue(
@@ -271,6 +302,20 @@ class PrefsBackupCoverageTest {
             "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
             "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
             "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY", "KEY_OPENAI_API_KEY",
+            // 讯飞听写三件凭据（同一套 CredentialCrypto）
+            "KEY_XF_APP_ID", "KEY_XF_API_KEY", "KEY_XF_API_SECRET",
+            // OpenAI 兼容转写的 API Key（同一套 CredentialCrypto）
+            "KEY_OAI_API_KEY",
+            // 阿里云百炼转写的 API Key（同一套 CredentialCrypto）
+            "KEY_ALI_API_KEY",
+            // 腾讯云一句话识别的两件凭据（同一套 CredentialCrypto）
+            "KEY_TENCENT_SECRET_ID", "KEY_TENCENT_SECRET_KEY",
+            // Azure 短音频识别的订阅密钥（同一套 CredentialCrypto）
+            "KEY_AZURE_ASR_API_KEY",
+            // 百度短语音识别的两件凭据（同一套 CredentialCrypto）
+            "KEY_BAIDU_ASR_API_KEY", "KEY_BAIDU_ASR_SECRET_KEY",
+            // Deepgram 的 API Key（同一套 CredentialCrypto）
+            "KEY_DEEPGRAM_API_KEY",
         )
         val allowed = pairs.keys + "KEY_FAVORITE_SYMBOLS" + "KEY_NUMBER_ROW_LABELS" +
             retiredKeys + credentialKeys

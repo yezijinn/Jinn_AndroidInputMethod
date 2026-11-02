@@ -1,15 +1,11 @@
 package com.jinn.inputmethod
 
-import android.Manifest
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
@@ -30,8 +26,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 
 /**
- * 设置页：配置飞牛 NAS 上的 Jinn 服务端地址、识别语言、提示词，
- * 引导授权麦克风、启用并切换到本输入法。同时作为应用入口从桌面启动。
+ * 设置页：各功能入口 + 启用 / 切换输入法 + 配置备份与诊断导出，同时作为应用入口从桌面启动。
+ *
+ * 语音（总开关 / 授权麦克风 / 服务端地址与识别选项）2026-11-01 起收在 [VoiceSettingsActivity]：
+ * 本页只留「语音转为文字」入口按钮（与「绑定悬浮键盘」同行，状态小字已删），\n * 别再把那几块卡片搬回来。
  */
 class SettingsActivity : ComponentActivity() {
 
@@ -46,28 +44,23 @@ class SettingsActivity : ComponentActivity() {
 
     private lateinit var prefs: Prefs
 
-    private lateinit var editHost: EditText
-    private lateinit var editPort: EditText
-    private lateinit var checkLockServer: CheckBox
-    private lateinit var spinnerLanguage: UserAwareSpinner
-    private lateinit var spinnerDefaultMode: UserAwareSpinner
     private lateinit var spinnerShuangpin: UserAwareSpinner
 
-    private lateinit var editPrompt: EditText
-    private lateinit var checkStrip: CheckBox
-    private lateinit var checkComposing: CheckBox
-    private lateinit var btnGrant: Button
     private lateinit var btnEnable: Button
     private lateinit var btnPick: Button
     private lateinit var btnSave: Button
     private lateinit var textTest: TextView
-    private lateinit var textMicState: TextView
 
-    // 功能开关（自动唤起键盘 / 词频学习 / 预测 / 语音 / 键面韵母提示 / 拼音声韵显示）
+    /** 「语音转为文字」入口按钮（与「绑定悬浮键盘」同行；文案在代码里下发） */
+    private lateinit var btnVoiceSettings: Button
+
+    /** 底部使用说明（六行纯文本，文案在 [TEXT_USAGE] 里下发） */
+    private lateinit var textUsage: TextView
+
+    // 功能开关（自动唤起键盘 / 词频学习 / 预测 / 键面韵母提示 / 拼音声韵显示）
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
-    private lateinit var switchVoiceInput: Switch
 
     /** 在线翻译（BYOK）：总开关 + 入口按钮 + 状态摘要（文案全部代码下发） */
     private lateinit var switchTranslate: Switch
@@ -94,9 +87,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnUpdateDownload: Button
     /** 更新检查状态：只区分「空闲 / 进行中」，结果由对话框呈现（见 [UpdateState]） */
     private var updateState: UpdateState = UpdateState.Idle
-    /** 语音相关区块（授权麦克风 / NAS 语音）：随总开关动态隐藏 */
-    private lateinit var cardMicPermission: View
-    private lateinit var cardVoiceServer: View
 
     // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
@@ -145,54 +135,11 @@ class SettingsActivity : ComponentActivity() {
 
     // 剪贴板
 
-    /** 主线程 Handler：保存配置后延迟片刻再杀进程重启输入法 */
-    private val uiHandler = Handler(Looper.getMainLooper())
-
-    /**
-     * 落盘闸门：只有**用户亲手操作过**下拉才允许写配置 —— 判据来自 [UserAwareSpinner.userInteracted]。
-     *
-     * 不能只用「初始化是否完成」做闸门：`setSelection` 之外，Activity 恢复实例状态
-     * （`onRestoreInstanceState`）也会触发 `onItemSelected`，而且是在 `onCreate` 返回之后，
-     * 只靠 ready 标志挡不住，会把用户配置静默改成上次的临时选择。
-     * 原先的探针只在 `setOnTouchListener` 里置位 ⇒ 键盘确认键与读屏选中的值**不落盘**
-     * （BUG.md L-821，真机取证）；[UserAwareSpinner] 把触摸 / 确认键 / 无障碍三条用户路径都覆盖，
-     * 而 `setSelection` 与实例状态恢复两条程序化路径都不经过它。
-     */
-
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
      * [onStop] 撤掉。原先本页自带一份 Handler + `appliedThemeDark` 字段，2026-10-02 收归共用实现（L-476）。
      */
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
-
-    /**
-     * 麦克风被永久拒绝（拒绝后系统不再弹窗）。
-     *
-     * 该状态下再 launch 会立刻回调失败、按钮永远没效果 —— 唯一出路是系统应用详情页，
-     * 所以按钮文案与动作都改走那里（见 [requestMic]）。
-     */
-    private var micDeniedForever = false
-
-    /**
-     * 本页是否已发起过权限请求。
-     *
-     * 「已发起但仍未授予」是比 `shouldShowRequestPermissionRationale` 更可靠的
-     * 「弹窗不会再出现」判据 —— Android 10 起第二次请求会被系统静默拒绝（连弹窗都没有），
-     * 而那个 API 此时仍返回 true，只看它会让按钮继续「点了没反应」。
-     */
-    private var micRequested = false
-
-    /** Activity Result API 替代已弃用的 requestPermissions */
-    private val micPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        // 授权成功后复位「已请求」：之后若被系统撤销，仍可重新走弹窗
-        if (granted) micRequested = false
-        // 拒绝且系统不再允许弹窗 → 记下来供按钮切换
-        micDeniedForever = !granted &&
-            !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
-        refreshMicState()
-    }
 
     /**
      * 诊断包导出：走系统文件选择器让用户自选保存位置（全程不申请存储权限）。
@@ -273,27 +220,16 @@ class SettingsActivity : ComponentActivity() {
         prefs = Prefs(this)
         Diagnostics.i(TAG, "onCreate: 设置页启动")
 
-        editHost = findViewById(R.id.edit_host)
-        editPort = findViewById(R.id.edit_port)
-        checkLockServer = findViewById(R.id.check_lock_server)
-        spinnerLanguage = findViewById(R.id.spinner_language)
-        spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
         spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
 
-        editPrompt = findViewById(R.id.edit_prompt)
-        checkStrip = findViewById(R.id.check_strip)
-        checkComposing = findViewById(R.id.check_composing)
-        btnGrant = findViewById(R.id.btn_grant)
         btnEnable = findViewById(R.id.btn_enable)
         btnPick = findViewById(R.id.btn_pick)
         btnSave = findViewById(R.id.btn_save)
         textTest = findViewById(R.id.text_test)
-        textMicState = findViewById(R.id.text_mic_state)
 
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
-        switchVoiceInput = findViewById(R.id.switch_voice_input)
         // 在线翻译（BYOK）：开关 + 入口 + 状态摘要，文案全部代码下发（strings.xml 默认不改动）
         switchTranslate = findViewById(R.id.switch_translate)
         switchTranslate.text = TEXT_TRANSLATE_SWITCH
@@ -315,8 +251,6 @@ class SettingsActivity : ComponentActivity() {
         bindCheckUpdate()
         // 打开设置页时的自动检查：距上次成功检查 ≥7 天才执行（失败静默，见 maybeAutoCheckUpdate）
         maybeAutoCheckUpdate()
-        cardMicPermission = findViewById(R.id.card_mic_permission)
-        cardVoiceServer = findViewById(R.id.card_voice_server)
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
@@ -394,32 +328,12 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, FloatingKeyboardActivity::class.java))
             }
         }
-        spinnerLanguage.adapter = ArrayAdapter.createFromResource(
-            this, R.array.language_entries, R.layout.item_spinner
-        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerDefaultMode.adapter = ArrayAdapter.createFromResource(
-            this, R.array.default_mode_entries, R.layout.item_spinner
-        ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
-        spinnerDefaultMode.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
-            ) {
-                // 初始化 setSelection（以及恢复实例状态）都会回调这里。若此时 prefs 里的值不在
-                // values 中（如配置损坏或新增了模式），indexOf 会退回第 0 项，
-                // 未加保护就会把用户的默认键盘静默改成第 0 项。
-                // 闸门见字段说明（BUG.md L-821）：触摸 / 确认键 / 读屏三条路径都算用户操作。
-                if (!spinnerDefaultMode.userInteracted) return
-                val values = resources.getStringArray(R.array.default_mode_values)
-                val mode = values.getOrNull(position)?.toIntOrNull()
-                    ?: DefaultKeyboardMode.VOICE
-                if (mode != prefs.defaultKeyboardMode) {
-                    prefs.defaultKeyboardMode = mode
-                    Diagnostics.i(TAG, "默认键盘模式: $mode")
-                }
-            }
-
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        }
+        // 语音转为文字：四块语音配置（总开关 / 授权麦克风 / 服务端 / 识别选项）已迁到独立页，
+        // 本页只留一个入口按钮（与「绑定悬浮键盘」同行，见 bindVoiceEntry）
+        bindVoiceEntry()
+        // 底部使用说明：六行纯文本，文案在代码里下发（values/strings.xml 默认禁改）
+        textUsage = findViewById(R.id.text_usage)
+        textUsage.text = TEXT_USAGE
 
         // 输入方案下拉（全局，2026-09-20 起）：全拼 + 八套双拼（共 9 项，语音键盘不在此列）。
         // 选中即全局生效：选全拼 = 关闭双拼；选某套双拼 = 记住该方案并启用。
@@ -449,22 +363,7 @@ class SettingsActivity : ComponentActivity() {
 
         loadPrefs()
         // 之后 Spinner 若回调（含恢复实例状态），只有「用户触摸过」才会写配置
-        refreshMicState()
 
-        // 识别选项即时保存：勾选即写入，下次识别立即生效
-        checkStrip.setOnCheckedChangeListener { _, checked ->
-            prefs.stripTrailingPunc = checked
-        }
-        checkComposing.setOnCheckedChangeListener { _, checked ->
-            prefs.useComposing = checked
-        }
-        // 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑
-        checkLockServer.setOnCheckedChangeListener { _, checked ->
-            prefs.lockServer = checked
-            applyServerLock()
-        }
-
-        btnGrant.setOnClickListener { requestMic() }
         btnEnable.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         btnPick.setOnClickListener {
             val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
@@ -561,8 +460,6 @@ class SettingsActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
 
-        // 麦克风状态同理：从系统设置授权后返回，页面不能还显示「未授权」
-        if (::textMicState.isInitialized) refreshMicState()
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
         // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
@@ -687,27 +584,13 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun loadPrefs() {
-        editHost.setText(prefs.host)
-        editPort.setText(prefs.port.toString())
-        editPrompt.setText(prefs.prompt)
-        checkStrip.isChecked = prefs.stripTrailingPunc
-        checkComposing.isChecked = prefs.useComposing
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
-        bindVoiceInputSwitch()
         bindTranslateCard()
 
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
 
-        checkLockServer.isChecked = prefs.lockServer
-        applyServerLock()
-        val values = resources.getStringArray(R.array.language_values)
-        spinnerLanguage.setSelection(values.indexOf(prefs.language).coerceAtLeast(0))
-        val modeValues = resources.getStringArray(R.array.default_mode_values)
-        spinnerDefaultMode.setSelection(
-            modeValues.indexOf(prefs.defaultKeyboardMode.toString()).coerceAtLeast(0)
-        )
         // 输入方案：按当前生效方案定位（全拼状态下选中「26 键全拼」，与全局语义一致）
         spinnerShuangpin.setSelection(
             ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
@@ -717,16 +600,22 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑，防误触乱改。
-     * 解锁（取消勾选）后可正常编辑。
-     */
-    /**
-     * 绑定「语音输入」总开关。
+     * 「语音转为文字」入口（2026-11-01）：按钮打开 [VoiceSettingsActivity]，与「绑定悬浮键盘」
+     * 并排在同一张卡里（用户第 2 条：两个按钮放同一行、不要小字描述）。
      *
-     * 关闭时语音相关区块（授权麦克风 + NAS 语音）一并隐藏，此时语音在 IME 侧
-     * 完全沉寂（不建实例、不连 WebSocket），这些配置项没有意义，显示出来只会误导。
-     * 开关变更后需重启输入法进程才生效（与设置页其他项一致，由「保存并重启」触发）。
+     * 本页不再有语音开关本身，也不再显示「已开启 · ws://…」那一行 —— 状态在子页里看，
+     * 免得同一件事在两个页面上各显示一次、各自不同步。
      */
+    private fun bindVoiceEntry() {
+        btnVoiceSettings = findViewById(R.id.btn_voice_settings)
+        btnVoiceSettings.text = TEXT_VOICE_ENTRY
+        btnVoiceSettings.setOnClickListener {
+            Diagnostics.i(TAG, "设置页: 打开语音设置")
+            runCatching { startActivity(Intent(this, VoiceSettingsActivity::class.java)) }
+                .onFailure { Diagnostics.w(TAG, "打开语音设置失败: ${it.message}") }
+        }
+    }
+
     /**
      * 更新检查状态：只区分「空闲 / 进行中」。
      *
@@ -944,21 +833,6 @@ class SettingsActivity : ComponentActivity() {
             .onFailure { Diagnostics.w(TAG, "打开更新页失败: ${it.message}") }
     }
 
-    private fun bindVoiceInputSwitch() {
-        val enabled = prefs.voiceInputEnabled
-        switchVoiceInput.isChecked = enabled
-        applyVoiceBlocksVisibility(enabled)
-        switchVoiceInput.setOnCheckedChangeListener { _, checked ->
-            applyVoiceBlocksVisibility(checked)
-        }
-    }
-
-    private fun applyVoiceBlocksVisibility(voiceEnabled: Boolean) {
-        val visibility = if (voiceEnabled) View.VISIBLE else View.GONE
-        cardMicPermission.visibility = visibility
-        cardVoiceServer.visibility = visibility
-    }
-
     /**
      * 翻译卡片：开关写 [Prefs.translateEnabled]（键盘功能面板据此决定是否显示「翻译」键，
      * 收起键盘再弹出即生效，不需要重启）；状态摘要只说「已配置 / 未配置」，
@@ -996,126 +870,22 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun applyServerLock() {
-        val locked = checkLockServer.isChecked
-        editHost.isEnabled = !locked
-        editPort.isEnabled = !locked
-        // 置灰效果：enabled=false 时系统自动降低文字/背景透明度，
-        // 再配合降低背景 alpha 让灰色更明显
-        editHost.alpha = if (locked) 0.5f else 1f
-        editPort.alpha = if (locked) 0.5f else 1f
-        Diagnostics.i(TAG, "服务器配置固定: $locked")
-    }
-
-    private fun readLanguage(): String {
-        // 用户没碰过就沿用 Prefs 的原值：导入的备份可能带本版不认识的取值（更高版本 / 手工构造），
-        // 此时 loadPrefs 里 indexOf 退回选中第 0 项，读回它等于把导入的语言静默改写。
-        // 与另外四个 Spinner 同一条闸门（判据见字段说明 / [UserAwareSpinner]，BUG.md L-821）。
-        if (!spinnerLanguage.userInteracted) return prefs.language
-        val values = resources.getStringArray(R.array.language_values)
-        val pos = spinnerLanguage.selectedItemPosition.coerceIn(0, values.lastIndex)
-        return values[pos]
-    }
-
-    // ── 麦克风授权 ──────────────────────────────────────────────
-
-    private fun requestMic() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            refreshMicState()
-            return
-        }
-        // 已请求过仍未授予（弹窗不会再出现）或已确认永久拒绝 → 只能去应用详情页手动开
-        if (micRequested || micDeniedForever) {
-            openAppPermissionSettings()
-            return
-        }
-        micRequested = true
-        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }
-
-    /** 跳系统应用详情页：永久拒绝后唯一能重新授权麦克风的地方 */
-    private fun openAppPermissionSettings() {
-        runCatching {
-            startActivity(
-                Intent(
-                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    android.net.Uri.fromParts("package", packageName, null),
-                )
-            )
-        }.onFailure { Diagnostics.w(TAG, "打开应用详情页失败: ${it.message}") }
-    }
-
-    private fun refreshMicState() {
-        val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        // 点过一次仍未授权时按钮改为「前往系统设置」：本页再申请不会弹窗，只能去应用详情页手动开
-        val text = getString(
-            when {
-                granted -> R.string.settings_mic_granted
-                micRequested || micDeniedForever -> R.string.settings_mic_open_settings
-                else -> R.string.settings_grant_mic
-            }
-        )
-        textMicState.text = text
-        btnGrant.text = text
-        btnGrant.isEnabled = !granted
-    }
-
     // ── 保存并重启输入法进程 ──────────────────────────────────────────
 
     /**
-     * 保存全部永久配置并重启输入法进程：写入 SharedPreferences 后杀掉本进程，
-     * 系统会自动重建 IME 服务按新配置初始化（连接、键盘方案、剪贴板、保活全部重载）。
-     * 比发广播刷新更彻底，等价于「设置保存 + 输入法进程重启」。
+     * 保存并重启输入法进程。
+     *
+     * 语音各项（总开关 / 地址 / 端口 / 语言 / 提示词 / 识别选项）2026-11-01 起在
+     * [VoiceSettingsActivity] 里显式落盘；本页其余开关与下拉都是**选中即写**，
+     * 所以这里只剩「写状态行 → 重启」两件事。
+     *
+     * 重启走 [ImeRestart]（flush → 800ms → killProcess），与语音页共用同一套语义与失败回退文案。
      */
     private fun saveAndRestart() {
-        val host = editHost.text.toString().trim()
-        val port = editPort.text.toString().trim().toIntOrNull()
-
-        // 语音关闭时 host/port 字段是隐藏的，校验没有意义且会阻塞保存
-        val voiceEnabled = switchVoiceInput.isChecked
-        if (voiceEnabled) {
-            if (host.isBlank()) {
-                Diagnostics.w(TAG, "saveAndRestart: host 为空")
-                editHost.error = getString(R.string.settings_invalid_host)
-                return
-            }
-            // 非法 host 会被拼成 HttpUrl 拒绝的地址，进而在主线程抛异常把 IME 打崩；
-            // 这里拦在保存入口，配合 Prefs 的兜底形成两道防线（语音链路不改动，不能在那里兜）。
-            if (!Prefs.isValidHost(host)) {
-                Diagnostics.w(TAG, "saveAndRestart: host 含非法字符，已拒绝保存")
-                editHost.error = getString(R.string.settings_invalid_host)
-                return
-            }
-            if (port == null || port !in 1..65535) {
-                Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
-                editPort.error = getString(R.string.settings_invalid_port)
-                return
-            }
-        }
-
-        prefs.voiceInputEnabled = voiceEnabled
-        prefs.host = host
-        // 语音关闭时上面的校验被跳过，port 可能为 null，退回默认端口
-        prefs.port = port ?: Prefs.DEFAULT_PORT
-        prefs.language = readLanguage()
-        prefs.prompt = editPrompt.text.toString()
-        prefs.stripTrailingPunc = checkStrip.isChecked
-        prefs.useComposing = checkComposing.isChecked
-
-
-        // 提示词是用户自己写的正文（可能含个人信息），只记长度不记内容
-        Diagnostics.i(TAG, "saveAndRestart: 配置已保存 host=$host port=$port lang=${prefs.language} promptLen=${prefs.prompt.length}")
         textTest.setText(R.string.settings_restarting)
-
-        // SharedPreferences apply 异步落盘：延迟片刻等落盘完成再杀进程，
-        // 系统随后自动重启 IME 服务加载新配置，本 Activity 随进程一并结束。
-        // 走 restartImeProcess() 而不是在这里再写一遍延时杀进程：那条路径会先 flush()
-        // 确认落盘，只赌 800ms 在 IO 抖动时会把最后一批设置丢掉（表现为重启后设置回退）。
-        restartImeProcess()
-    }
-
-    private fun toast(resId: Int) {
-        Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
+        Diagnostics.i(TAG, "saveAndRestart: 重启输入法进程")
+        // 落盘失败时不重启，状态行改成那句失败文案（否则界面同时存在「正在重启」与「已取消」）
+        ImeRestart.restart(this) { message -> textTest.text = message }
     }
 
     override fun onDestroy() {
@@ -1675,7 +1445,11 @@ class SettingsActivity : ComponentActivity() {
                 if (needRestart) {
                     // 选「稍后」时刷新本页：设置已落盘，页面上的开关/输入框要显示新值而不是旧值
                     builder.setNegativeButton("稍后") { _, _ -> recreate() }
-                        .setPositiveButton("重启输入法") { _, _ -> restartImeProcess() }
+                        // 与「保存并重启」同一条路径：落盘失败时不重启，把原因写进配置提示行
+                        .setPositiveButton("重启输入法") { _, _ ->
+                            textConfigHint.setText(R.string.settings_restarting)
+                            ImeRestart.restart(this) { message -> textConfigHint.text = message }
+                        }
                 } else {
                     builder.setPositiveButton("好", null)
                 }
@@ -1708,42 +1482,6 @@ class SettingsActivity : ComponentActivity() {
             "导入后同步即时设置: 档2=${p.rareTier2} 档3=${p.rareTier3} " +
                 "繁体=${p.useTraditional} 模糊音=${p.fuzzyPinyinMask} 学习=${p.userLearning}",
         )
-    }
-
-    /** 先把设置写实、再延迟杀进程：系统随后会自动重建 IME 服务 */
-    private fun restartImeProcess() {
-        Diagnostics.i(TAG, "restartImeProcess: 重启输入法进程")
-        // `apply()` 是异步的：只靠延时 800ms 赌它写完，IO 压力大时会丢最后一批键
-        // （进程被直接杀时不走 onPause/onStop，没有别的时机能替我们等）
-        //
-        // 落盘失败不能只留日志（BUG.md L-1420）：界面此刻已经宣告「正在重启」，照旧杀进程
-        // 就是**确定性**地丢这批设置 —— 用户看到的是「保存了但没生效」。如实说明并放弃本次
-        // 重启（与导入 / 导出那些路径按 flush() 结果改回执的口径一致，L-1319）。
-        val prefsFlushed = runCatching { Prefs(this).flush() }.getOrDefault(false)
-        val clipboardFlushed = runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)
-        // 用户学习的两份缓冲（词频 2s 防抖 / 台账写线程）只在内存里排着队，SIGKILL 不走 onDestroy
-        // ⇒ 不先刷就把「刚选过的候选」那几次学习安静丢掉。词库页的重启路径早就在刷
-        // （`DictManagerActivity.restartImeForDict` 的注释写着同一件事），本页漏了（L-1492）。
-        val freqFlushed = runCatching { UserFrequency.flush() }.getOrDefault(false)
-        val ledgerFlushed = runCatching { SelectionLedger.flush() }.getOrDefault(false)
-        if (!freqFlushed || !ledgerFlushed) {
-            // 与词库页同口径：刷不动只留日志、照常重启（重刷失败不该把「保存并重启」卡死）
-            Diagnostics.w(TAG, "restartImeProcess: 学习缓冲未刷完 freq=$freqFlushed ledger=$ledgerFlushed")
-        }
-        // ⚠ 上面两行在主线程**同步**等：`SelectionLedger.flush()` 最坏吃满 `FLUSH_TIMEOUT_MS`（2000ms），
-        // 点「保存并重启」后这段空窗可达 2s —— 低于 ANR 阈值 5s，且随后必然重启，别当新缺陷重报。
-        if (!prefsFlushed || !clipboardFlushed) {
-            Diagnostics.w(
-                TAG,
-                "restartImeProcess: 落盘失败，已取消重启 prefs=$prefsFlushed clipboard=$clipboardFlushed",
-            )
-            // 状态行先撤掉「正在重启」（saveAndRestart 在调本函数之前就写了那句），
-            // 否则界面同时存在「正在重启」与「已取消」两个相反的说法
-            textTest.setText(TEXT_RESTART_FLUSH_FAILED)
-            Toast.makeText(this, TEXT_RESTART_FLUSH_FAILED, Toast.LENGTH_LONG).show()
-            return
-        }
-        uiHandler.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 800L)
     }
 
     /**
@@ -1904,8 +1642,8 @@ class SettingsActivity : ComponentActivity() {
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
         const val TEXT_STORAGE_ENTRY = "存储占用统计"
 
-        /** 悬浮键盘入口（页面内文案在 FloatingKeyboardActivity 里下发；默认关闭） */
-        const val TEXT_FLOATING_ENTRY = "悬浮键盘"
+        /** 悬浮键盘入口（与「语音转为文字」同行；页面内文案在 FloatingKeyboardActivity 里下发） */
+        const val TEXT_FLOATING_ENTRY = "绑定悬浮键盘"
         /** 用户词库入口：动作名，状态由页面内的说明弹框交代 */
         const val TEXT_USER_DICT = "生成用户词库"
 
@@ -1927,12 +1665,24 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_MODE_MERGE = "仅并入数据（只合并词频、剪贴板与词库，保留本机设置）"
 
         /**
-         * 重启前的落盘失败（`restartImeProcess`，BUG.md L-1420）。
-         *
-         * 此刻界面上刚写过「正在重启」，再杀进程就是确定性丢设置，所以这条**同时**进状态行与
-         * Toast：只写日志的话用户只看到「没生效」，无从知道是磁盘问题。
+         * 「语音转为文字」入口按钮（2026-11-01：四块语音配置迁到 [VoiceSettingsActivity] 后，
+         * 本页只留这一个入口，与「绑定悬浮键盘」同排；状态小字已删）。
          */
-        const val TEXT_RESTART_FLUSH_FAILED = "写入失败，设置未保存，已取消重启"
+        const val TEXT_VOICE_ENTRY = "语音转为文字"
+
+        /**
+         * 最底部使用说明（六行，`\n` 分隔）。
+         *
+         * 2026-11-01：原第 5 行「启用语音输入之后,长按空格键即可进入语音功能页面」已过期
+         * （语音改成松手即转文字），按用户授权改成现在的说法。文案仍走代码常量，
+         * `values/strings.xml` 里那条 `settings_usage` 保持原样不动。
+         */
+        const val TEXT_USAGE = "拼音键盘：26 键全拼 / 双拼（8 套方案），空格选词。\n" +
+            "长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n" +
+            "「删除键」双击再长按，清空整个输入框。\n" +
+            "拼音键盘按下的字母，按回车直接输出英文。\n" +
+            "长按空格键：按住说话，上滑取消，松手转文字\n" +
+            "作者 https://github.com/yezijinn"
 
         /**
          * 「检查更新」看门狗超时：两源串行的总预算（`UpdateChecker.TOTAL_BUDGET_MS` = 25s）+ 5s 余量。

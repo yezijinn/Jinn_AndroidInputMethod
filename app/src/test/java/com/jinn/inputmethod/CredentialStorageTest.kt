@@ -74,7 +74,20 @@ class CredentialStorageTest {
         val src = prefsSource()
         assertTrue("落盘的应是加密结果", "putString(key, encrypted)" in src)
         assertFalse("不得把清洗后的明文直接落盘", "putString(key, cleaned)" in src)
-        assertTrue("加密失败要记 W（而不是静默）", "凭据加密失败，未落盘" in src)
+        assertTrue("加密失败要记 W（而不是静默）", "凭据加密失败（Keystore 与软件密钥均不可用），未落盘" in src)
+        // 两条加密支路都必须在：Keystore 优先（密钥不出安全硬件），失败再试软件密钥
+        // （无锁屏设备上 Keystore 恒失败，没有这一支凭据就只能留在内存、重启即丢）
+        assertTrue(
+            "Keystore 失败必须再试软件密钥",
+            "LocalCredentialCipher.encrypt(credentialKeyFile, cleaned)" in src,
+        )
+        // 兜底顺序是硬要求：`?:` 保证 Keystore 成功时**不会**再调软件密钥
+        // （写成 `LocalCipher(...) ?: keystore` 或两次都写，会让每把凭据多存一份软件密钥副本，
+        // 等于给所有设备都留一条低一档的旁路 —— 与「只在 Keystore 不可用时才降级」相反）
+        assertTrue(
+            "写侧必须是 `keystore ?: 软件密钥`（Keystore 成功就不得再走软件密钥）",
+            "val encrypted = keystore ?: LocalCredentialCipher.encrypt(credentialKeyFile, cleaned)" in src,
+        )
         assertTrue("读取要有进程内缓存（Keystore 解密本机实测约 1.1 ms/次）", "credentialCache" in src)
     }
 
@@ -90,8 +103,71 @@ class CredentialStorageTest {
         assertTrue("要有明确的 W 日志", "按未配置处理" in src)
     }
 
-    // ── 防截屏 / 剪贴板不留痕（源码对拍）──────────────────────
+    /**
+     * `v2:` 密文（软件密钥，见 [LocalCredentialCipher]）必须**先于**明文迁移分支处理。
+     *
+     * 这条顺序是硬不变量、且失败是静默的：`looksEncrypted("v2:…")` 是 false（它只认 `v1:` 与无前缀形态），
+     * 一旦落到迁移分支，密文会被当成用户手填的凭据**再加密一次** —— 解开后是个 `v2:…` 字符串，
+     * 拿它去请求服务端必然鉴权失败，而磁盘上的原始密文也被覆盖（L-1069 同型的永久损坏）。
+     * 原先没有任何用例钉住这个顺序：把 v2 分支挪到 `if (!looksEncrypted(raw))` 之后，全套测试照绿。
+     */
+    @Test
+    fun `v2 密文必须先于明文迁移分支处理`() {
+        val src = prefsSource()
+        // 窗口限定在 readCredential 内部：别的函数里也有 looksEncrypted 调用（写侧拒收密文）
+        val read = TestSources.window(src, "private fun readCredential", "private fun writeCredential")
+        val v2 = read.indexOf("LocalCredentialCipher.isLocal(raw)")
+        val migrate = read.indexOf("if (!CredentialCrypto.looksEncrypted(raw))")
+        assertTrue("readCredential 里找不到 v2 分流点", v2 >= 0)
+        assertTrue("readCredential 里找不到明文迁移分支", migrate >= 0)
+        assertTrue(
+            "v2 分流必须排在明文迁移之前（否则密文会被再加密一层，永久解不开）",
+            v2 < migrate,
+        )
+        // 位置对还不够：条件被短路（`false && isLocal(raw)`）等于悄悄关掉这条路，行为与挪走它完全相同
+        assertTrue(
+            "v2 分流点必须是真正的分支条件",
+            "if (LocalCredentialCipher.isLocal(raw)) {" in read,
+        )
+        // 解不开的 v2 密文必须直接按「未配置」返回，不许落到迁移分支或把原文当凭据
+        val v2Block = read.substring(v2, migrate)
+        assertTrue("v2 解密失败必须按未配置缓存", "credentialCache[key] = \"\"" in v2Block)
+        assertTrue("v2 解密失败必须返回空串（不能把密文原文当凭据）", "return \"\"" in v2Block)
+        // 明文迁移分支的加密也必须带软件密钥兜底（无锁屏设备上 Keystore 恒失败）
+        assertTrue(
+            "迁移分支没走软件密钥兜底：无锁屏设备上明文永远迁不成密文",
+            "LocalCredentialCipher.encrypt(credentialKeyFile, raw)" in read,
+        )
+    }
 
+    /**
+     * `v2:` 读失败必须先分「暂时」与「永久」（Stage 3 复核补）。
+     *
+     * 软件密钥件「在、这次读不出」（IO 抖动）与「缺失 / 损坏」在 `decrypt` 眼里一样是 null，
+     * 但处置相反：前者**不许缓存**（缓存 = 本进程内凭据全消失，用户重开页面看到整页空框），
+     * 后者才缓存「未配置」。这与 Keystore 的 `Transient` / `Permanent` 是同一条口径，
+     * 原先 v2 分支只有「一律 Permanent」一种 —— 没有用例钉住这个不对称。
+     */
+    @Test
+    fun `v2 读失败要先分暂时与永久再决定缓存`() {
+        val src = prefsSource()
+        val read = TestSources.window(src, "private fun readCredential", "private fun writeCredential")
+        val v2 = read.indexOf("LocalCredentialCipher.isLocal(raw)")
+        val migrate = read.indexOf("if (!CredentialCrypto.looksEncrypted(raw))")
+        val block = read.substring(v2, migrate)
+
+        val transient = block.indexOf("KeyState.UNREADABLE")
+        val retry = block.indexOf("credentialRetryAt")
+        val cacheEmpty = block.indexOf("credentialCache[key] = \"\"")
+        assertTrue("v2 分支没判 KeyState.UNREADABLE（一次 IO 抖动 = 凭据全消失）", transient >= 0)
+        assertTrue("暂时分支必须排在「缓存空串」之前", 0 <= transient && transient < cacheEmpty)
+        assertTrue("暂时分支必须推后重试而不是缓存", 0 <= retry && retry < cacheEmpty)
+        assertTrue("暂时分支必须原样返回空串（不许把密文当凭据）", "return \"\"" in block)
+        // 永久分支的缓存必须还在（解不开就别每读一次跑一遍解密并刷一条 W）
+        assertTrue("永久解不开仍要缓存空串", cacheEmpty >= 0)
+    }
+
+    // ── 防截屏 / 剪贴板不留痕（源码对拍）──────────────────────
     @Test
     fun `两个凭据页必须设置 FLAG_SECURE 防截屏与最近任务缩略图`() {
         for (f in listOf("TranslationSettingsActivity.kt", "OpenAiSettingsActivity.kt")) {

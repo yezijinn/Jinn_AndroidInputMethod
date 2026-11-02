@@ -38,7 +38,7 @@ import kotlin.math.roundToInt
  *  - 候选点选 / 空格取首候选 / 退格回删拼音
  *  - 中英文切换（大写状态影响英文字母大小写）
  *  - 符号层 / 数字层
- *  - 空格长按请求切回语音模式（通过 [OnVoiceRequested] 回调给 IME）
+ *  - 空格：短按取首候选 / 上屏空格；长按「按住说话」（录音，上滑取消，松手转文字）
  *
  * 输入法层调用 [commitComposing] 主动结束当前拼音串。
  */
@@ -74,8 +74,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onBackspace()
         /** 删除键三击：清空已上屏的全部文本 */
         fun onDeleteAll()
-        /** 请求切回语音模式 */
-        fun onVoiceRequested()
+        /**
+         * 长按空格请求**开始录音**（26 键按住说话，不切页面）。
+         *
+         * 返回值 = 「真的开始录音了」：只有 true 视图才进入长按态（之后的上滑 / 松手才有意义）。
+         * false 表示没连上 / 没权限 / 翻译在途 —— 那条路径由 IME 自己给提示，视图不进长按态。
+         */
+        fun onVoiceHoldStart(): Boolean = false
+
+        /** 长按录音中上滑跨过取消阈值（true = 已武装取消，松手丢弃本次结果） */
+        fun onVoiceHoldUpdate(cancelArmed: Boolean) = Unit
+
+        /** 长按录音结束；`cancelled = true` 时丢弃本次结果（含手势被系统收走） */
+        fun onVoiceHoldEnd(cancelled: Boolean) = Unit
+
+        /**
+         * 空格按下瞬间的预热：提前建连。
+         *
+         * 长按只有约 500ms 的准备时间，首次长按若此刻才开始握手，触发时必然还在 CONNECTING。
+         * 幂等（已在线 / 连接中都直接返回），不含任何状态机。
+         */
+        fun onVoicePrepare() = Unit
+
         /**
          * 语音入口当前是否可用。
          *
@@ -757,6 +777,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnSpace: View
     /** 空格键顶部的小字提示（当前输入类型：小写英文/大写英文/中文全拼/中文双拼） */
     private val btnSpaceHint: TextView
+
+    /**
+     * 空格长按录音态（2026-11-01）：true = 正在录音且长按手势仍在进行。
+     *
+     * 只在 [JinnIme.onVoiceHoldStart] 返回 true 后置真；置假的那一处（[endVoiceHold]）
+     * 负责把键面小字还原成输入类型。它**不是**录音状态的副本 —— 录音由 IME 的 `mode` 管，
+     * 这里只决定「这次 MOVE / UP 要不要转发成语音手势」。
+     */
+    private var voiceHoldActive = false
+
+    /** 长按起点（rawY）与是否已跨过取消阈值；rawY 用屏幕坐标，不受键盘自身位移影响 */
+    private var voiceHoldDownRawY = 0f
+    private var voiceHoldCancelArmed = false
+
     private val btnBackspace: View
     private val btnEnter: View
     private val btnShift: ImageButton
@@ -1644,15 +1678,58 @@ class PinyinKeyboardView @JvmOverloads constructor(
             KeyFeedback.fire(TapSound.G_CONFIRM)
             onSpacePressed()
         }
+        // 26 键空格长按 = 按住说话（2026-11-01，原为「切到语音键盘页」）。
+        // 触摸监听**只观察不消费**（恒返回 false）：长按识别仍归框架（下面的 setOnLongClickListener），
+        // 短按的 click 路径一个字都不动。这里只做三件事：记起点、转发上滑 / 松手、按下时预热建连。
+        btnSpace.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    voiceHoldDownRawY = event.rawY
+                    // 新手势一律从「未录音 / 未武装取消」起步：上一次若被系统收走手势而没走到 UP
+                    // （窗口失焦的 CANCEL 也不保证送达），残留的 armed 会让这一按的第一个 MOVE
+                    // 直接判成「已取消」——看起来就是「刚按住就说要取消」
+                    cancelVoiceHold()
+                    // 预热：长按触发时若还在握手只能提示「连接中」，提前 500ms 起连把它压掉
+                    listener?.onVoicePrepare()
+                }
+
+                MotionEvent.ACTION_MOVE -> if (voiceHoldActive) {
+                    val armed = voiceHoldDownRawY - event.rawY > voiceCancelSlidePx()
+                    if (armed != voiceHoldCancelArmed) {
+                        voiceHoldCancelArmed = armed
+                        updateSpaceHint()
+                        listener?.onVoiceHoldUpdate(armed)
+                    }
+                }
+
+                // 松手：在取消态则丢弃（cancelled = true），否则提交识别结果
+                MotionEvent.ACTION_UP ->
+                    if (voiceHoldActive) endVoiceHold(cancelled = voiceHoldCancelArmed)
+
+                // 手势被系统收走（来电 / 窗口失焦 / 输入法切走）：与主动取消同口径，
+                // 绝不把半段音频当结果提交 —— 用户没松手，不能替他决定「说完了」
+                MotionEvent.ACTION_CANCEL ->
+                    if (voiceHoldActive) endVoiceHold(cancelled = true)
+            }
+            false
+        }
         btnSpace.setOnLongClickListener {
             // 注意：先问可用性：语音默认关闭，不可用时若照旧返回 true，`View` 会置
             // `mHasPerformedLongPress`，抬起不再派发 click ⇒ 这次空格彻底丢失；而上面的
             // `fire` 已经响过，用户听到「按下了」却什么都没上屏（表现为「空格偶尔失灵」）。
             // 不可用 ⇒ 不响、不消费，交给框架照常走短按上屏空格（反馈由 click 里发）。
             if (listener?.canVoice() != true) return@setOnLongClickListener false
-            // 空格长按：切回语音模式（不触发短按 ⇒ 短按那份反馈也不会发，这里补上）
+            // 空格长按：按住说话（不触发短按 ⇒ 短按那份反馈也不会发，这里补上）
             KeyFeedback.fire(TapSound.G_CONFIRM)
-            listener?.onVoiceRequested()
+            // 只有真开始录音才进长按态（之后的上滑 / 松手才有意义）。
+            // `canVoice()` 为真却没起录（未连接 / 翻译在途 / 录音器启动失败 / 已有录音在跑）时
+            // **仍消费**这次长按：用户此刻要的是语音，顺手塞一个空格进输入框更糟；26 键下没有语音
+            // 状态条，所以每一条失败分支都由 IME 出声（toast），不许静默。
+            if (listener?.onVoiceHoldStart() == true) {
+                voiceHoldActive = true
+                voiceHoldCancelArmed = false
+                updateSpaceHint()
+            }
             true
         }
         btnBackspace.setOnTouchListener { view, event ->
@@ -1741,11 +1818,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * ⚠ 本判据必须与 [configure] 的复位清单**逐项对应**：那边加一样、这边漏一样，就是
      * BUG.md L-1531（图库面板与动作排曾同时漏在这里）。守卫
      * `首弹不得把同一套外观再套一遍` 按 `configure` 里的 `if (X) hideY()` 做闭集对拍。
+     * 空格长按录音态（[cancelVoiceHold]）不受那条闭集覆盖：它由 `this.` 直写字段，形态不是
+     * `if (X) hideY()` —— 漏判就等于「跳过 configure ⇒ 残留的长按态小字跨会话照旧显示」，
+     * 所以单独收进来。
      */
     internal fun isSessionPristine(): Boolean =
         composing.isEmpty() && lastPredictions.isEmpty() && !directionPanelVisible &&
             !clipboardActive && !galleryActive && !actionPanelExpanded &&
-            !passwordPad && !isPanelSearch()
+            !passwordPad && !isPanelSearch() && !voiceHoldActive && !voiceHoldCancelArmed
 
     /** 大写锁定态（重建重放用；字段 private，不能直接读） */
     fun capsModeForReplay(): Boolean = capsMode
@@ -1831,6 +1911,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 会把字母区留在面板的隐藏态。
         if (galleryActive) hideGalleryPanel()
         resetActionPanel()
+        // 空格长按录音态同属「视图内临时态」：视图实例跨输入框复用，若上一段录音被系统收走手势
+        // 而没走到 UP，新框会以「松手转文字」的小字弹出（`updateSpaceHint` 按它分支）
+        cancelVoiceHold()
         // 外观参数在这里一起重套：IME 每次输入框聚焦都会调用本方法（onStartInputView），
         // 所以在「键盘外观」页（KeyAppearanceActivity，设置页入口按钮的文案见
         // SettingsActivity.TEXT_KEY_APPEARANCE_ENTRY）改完圆角/间隙/透明度，收起键盘再弹出即生效，不必重启进程。
@@ -4307,9 +4390,53 @@ class PinyinKeyboardView @JvmOverloads constructor(
         else -> "中文全拼"
     }
 
-    /** 刷新空格键顶部小字（输入类型）。[btnSpaceHint] 是构造期赋值的非空 val，无需 isInitialized 守卫 */
+    /**
+     * 刷新空格键顶部小字。空闲态显示当前输入类型（[currentInputTypeLabel]），
+     * 长按录音期间显示 [TEXT_VOICE_HOLD_HINT] / [TEXT_VOICE_CANCEL_HINT]。
+     *
+     * 长按态也走这一个入口（而不是结束时手工 setText）：[refreshKeyLabels] 会在切层 / 换肤 /
+     * 大小写变化时整盘刷键面，若它无条件写回输入类型，录音中的提示就被悄悄擦掉。
+     * [btnSpaceHint] 是构造期赋值的非空 val，无需 isInitialized 守卫。
+     */
     private fun updateSpaceHint() {
-        btnSpaceHint.text = currentInputTypeLabel()
+        btnSpaceHint.text = when {
+            !voiceHoldActive -> currentInputTypeLabel()
+            voiceHoldCancelArmed -> TEXT_VOICE_CANCEL_HINT
+            else -> TEXT_VOICE_HOLD_HINT
+        }
+    }
+
+    /** 上滑取消阈值（px）：与语音键盘的麦克风手势共用同一个 dp 值，两个入口手感必须一致 */
+    private fun voiceCancelSlidePx(): Float =
+        JinnIme.CANCEL_SLIDE_DP * resources.displayMetrics.density
+
+    /**
+     * 只复位**键面**：把空格小字还原成输入类型，不动 IME 的录音状态。
+     *
+     * 两条路径调用它 —— [endVoiceHold]（手势自己收尾）与 `JinnIme.stopRecording`
+     * （录音被**外部**终止：录音器报错 / 音频焦点被抢 / 换输入框 / 键盘收起）。
+     * 后者原先没人通知这一侧：长按态会挂到下一次按空格，小字停在「松手转文字」，
+     * 而且 `configure()` 会整盘刷键面却刷回同一个长按分支 ⇒ 跨会话弹键盘照旧显示。
+     *
+     * 幂等、**不回调** [Listener]：外部终止时再回调一次 `onVoiceHoldEnd` 会二次收尾。
+     */
+    fun cancelVoiceHold() {
+        if (!voiceHoldActive && !voiceHoldCancelArmed) return
+        voiceHoldActive = false
+        voiceHoldCancelArmed = false
+        updateSpaceHint()
+    }
+
+    /**
+     * 结束空格长按录音：复位键面小字后通知 IME 收尾（提交或丢弃）。
+     *
+     * 复位**无条件**做 —— 丢弃路径同样要回到正常键面，否则「上滑取消」会一直挂在那儿，
+     * 用户以为键盘卡在录音态。幂等：重复调用（UP 之后又来 CANCEL）不会二次收尾。
+     */
+    private fun endVoiceHold(cancelled: Boolean) {
+        if (!voiceHoldActive) return
+        cancelVoiceHold()
+        listener?.onVoiceHoldEnd(cancelled)
     }
 
     /**
@@ -5928,6 +6055,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
          * 与「按下去会有输出」区分得开。字形仍是空的 —— 这一句只进 contentDescription。
          */
         const val TEXT_EMPTY_SLOT = "空槽"
+
+        /**
+         * 空格键长按录音的两句键面提示（9dp 小字，落在 `key_space_hint`）。
+         *
+         * 文案进代码常量而不是 `strings.xml`：该文件按约定零改动（文案在代码里下发）。
+         * 「松手转文字」说的是这一手势的结果；「上滑取消」只在已跨过阈值后出现 ——
+         * 两者必须能一眼区分，否则用户不知道自己此刻松手会不会有字。
+         */
+        const val TEXT_VOICE_HOLD_HINT = "松手转文字"
+        const val TEXT_VOICE_CANCEL_HINT = "上滑取消"
 
         /** 功能面板「翻译」键的两种文案（在途请求时切换并置灰防连点） */
         const val LABEL_TRANSLATE = "翻译"

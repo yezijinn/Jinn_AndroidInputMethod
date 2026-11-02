@@ -14,6 +14,53 @@ object DefaultKeyboardMode {
 }
 
 /**
+ * 语音识别后端（见 [Prefs.voiceBackend]）。
+ *
+ *  - [CAPS]：自建 CapsWriter（家用 NAS，`ws://host:port`，长连接常驻）；
+ *  - [XF]：讯飞在线听写（语音听写大模型 V2.0，一次会话一条连接）；
+ *  - [OAI]：OpenAI 兼容转写（`POST {base}/audio/transcriptions`，本地缓冲后整段上传）；
+ *  - [ALI]：阿里云百炼实时语音识别（`wss://…/api-ws/v1/inference`，双向流式，一次会话一条连接）；
+ *  - [TENCENT]：腾讯云一句话识别（`POST asr.tencentcloudapi.com`，TC3 签名，本地缓冲后整段上传）；
+ *  - [AZURE]：Azure AI Speech 短音频识别 REST（本地缓冲后整段上传）；
+ *  - [BAIDU]：百度智能云短语音识别标准版（先取 access_token，再 POST JSON）；
+ *  - [DEEPGRAM]：Deepgram Pre-recorded（单次 POST，裸 WAV + `Authorization: Token`）。
+ *
+ * 存的是字符串而不是布尔：将来再加后端时旧机器上的取值仍能解析（非法值一律回落 [CAPS]）。
+ */
+object VoiceBackend {
+    const val CAPS = "caps"
+    const val XF = "xf"
+    const val OAI = "oai"
+    const val ALI = "ali"
+    const val TENCENT = "tencent"
+    const val AZURE = "azure"
+    const val BAIDU = "baidu"
+    const val DEEPGRAM = "deepgram"
+
+    /** 出厂默认：自建服务端（在线后端要求用户自带凭据，不能默认开） */
+    const val DEFAULT = CAPS
+
+    /** 归一：除下列八个合法取值之外的一切（脏配置 / 手改 prefs / 更高版本）都落回 [CAPS] */
+    fun of(raw: String?): String = when (raw) {
+        XF -> XF
+        OAI -> OAI
+        ALI -> ALI
+        TENCENT -> TENCENT
+        AZURE -> AZURE
+        BAIDU -> BAIDU
+        DEEPGRAM -> DEEPGRAM
+        else -> CAPS
+    }
+
+    /**
+     * 是否**在线后端**（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram）。
+     * 单次音频都有 60 秒级上限，到点必须自动收尾（见 `JinnIme.autoStopDelayMs`）；
+     * 自建服务端按连接持有缓冲，可以长跑。
+     */
+    fun isOnline(raw: String?): Boolean = of(raw) != CAPS
+}
+
+/**
  * 备份里**单个字符串值**的长度上限（导入侧闸与写入侧闸**共用同一来源**，2026-10-02 修复 L-375）。
  *
  * 取 64 KB：它本是 `asString` 的既有阈值（对抗性防护 —— 外部包塞一个巨大字符串），此前
@@ -779,6 +826,326 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_VOICE_INPUT, value) }
 
     /**
+     * 语音识别后端（见 [VoiceBackend]），默认 [VoiceBackend.CAPS]。
+     *
+     * 读写两侧都过 [VoiceBackend.of]：手改 prefs / 更高版本写进未知取值时，
+     * IME 侧永远只看到八个合法值，不必在每个使用点再兜一次。
+     */
+    var voiceBackend: String
+        get() = VoiceBackend.of(strOr(KEY_VOICE_BACKEND, VoiceBackend.DEFAULT))
+        set(value) = sp.edit { putString(KEY_VOICE_BACKEND, VoiceBackend.of(value)) }
+
+    /**
+     * 讯飞开放平台 APPID（**加密落盘**，见 [readCredential]）。
+     *
+     * 三件凭据与翻译那批走同一套 [CredentialCrypto]：Keystore AES-256-GCM、旧明文首次读取
+     * 自动迁移、解不开等价「未配置」。它们只在打开讯飞在线后端时才被读取/写入。
+     */
+    var xfAppId: String
+        get() = readCredential(KEY_XF_APP_ID)
+        set(value) = writeCredential(KEY_XF_APP_ID, value)
+
+    /** 讯飞 APIKey（进鉴权 URL 的 `api_key=`；**加密落盘**，绝不进日志） */
+    var xfApiKey: String
+        get() = readCredential(KEY_XF_API_KEY)
+        set(value) = writeCredential(KEY_XF_API_KEY, value)
+
+    /** 讯飞 APISecret（本地 HMAC-SHA256 签名的密钥；**加密落盘**，绝不进日志） */
+    var xfApiSecret: String
+        get() = readCredential(KEY_XF_API_SECRET)
+        set(value) = writeCredential(KEY_XF_API_SECRET, value)
+
+    /**
+     * OpenAI 兼容转写的 Base URL（普通字符串，可含路径，例 `https://api.groq.com/openai/v1`）。
+     *
+     * 只存用户填的原值（去首尾空白）；合法性校验统一走 `OpenAiEndpoint.normalize`
+     * （https 放行、http 仅回环 / 私网），不在这里做——保存页要把拒绝原因原样显示给用户。
+     */
+    var oaiBaseUrl: String
+        get() = strOr(KEY_OAI_BASE_URL, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_OAI_BASE_URL, value.trim()) }
+
+    /** OpenAI 兼容转写的模型名（默认 `whisper-1`；清空即回落默认，避免必然 400 的空 model） */
+    var oaiModel: String
+        get() = strOr(KEY_OAI_MODEL, DEFAULT_OAI_MODEL).orEmpty().trim().ifEmpty { DEFAULT_OAI_MODEL }
+        set(value) = sp.edit { putString(KEY_OAI_MODEL, value.trim().ifEmpty { DEFAULT_OAI_MODEL }) }
+
+    /** OpenAI 兼容转写的 API Key（**加密落盘**，见 [readCredential]；只进 Authorization 头） */
+    var oaiApiKey: String
+        get() = readCredential(KEY_OAI_API_KEY)
+        set(value) = writeCredential(KEY_OAI_API_KEY, value)
+
+    /**
+     * 阿里云百炼实时语音识别的 WebSocket 地址（普通字符串）。
+     *
+     * 存完整 URL 而不是拆成固定端点：百炼有华北专属域名（`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/…`），
+     * 用户换 Workspace 只能改地址。合法性由 `AliEndpoint.normalize` 判定（wss 放行、ws 仅本机），
+     * 不在这里做 —— 保存页要把拒绝原因原样显示给用户。
+     */
+    var aliWsUrl: String
+        get() = strOr(KEY_ALI_WS_URL, "").orEmpty().trim().ifEmpty { DEFAULT_ALI_WS_URL }
+        set(value) = sp.edit { putString(KEY_ALI_WS_URL, value.trim()) }
+
+    /** 阿里云百炼的模型名（默认 `paraformer-realtime-v2`；清空即回落默认，避免必然失败的空 model） */
+    var aliModel: String
+        get() = strOr(KEY_ALI_MODEL, DEFAULT_ALI_MODEL).orEmpty().trim().ifEmpty { DEFAULT_ALI_MODEL }
+        set(value) = sp.edit { putString(KEY_ALI_MODEL, value.trim().ifEmpty { DEFAULT_ALI_MODEL }) }
+
+    /** 阿里云百炼的 API Key（**加密落盘**，见 [readCredential]；只进 Authorization: Bearer 头） */
+    var aliApiKey: String
+        get() = readCredential(KEY_ALI_API_KEY)
+        set(value) = writeCredential(KEY_ALI_API_KEY, value)
+
+    /** 腾讯云 SecretId（**加密落盘**，见 [readCredential]；只进 TC3 的 Credential 段） */
+    var tencentSecretId: String
+        get() = readCredential(KEY_TENCENT_SECRET_ID)
+        set(value) = writeCredential(KEY_TENCENT_SECRET_ID, value)
+
+    /** 腾讯云 SecretKey（**加密落盘**；只参与本地 HMAC 签名，绝不进请求体与日志） */
+    var tencentSecretKey: String
+        get() = readCredential(KEY_TENCENT_SECRET_KEY)
+        set(value) = writeCredential(KEY_TENCENT_SECRET_KEY, value)
+
+    /** 腾讯云引擎型号（默认 `16k_zh`；清空即回落默认，避免必然失败的空型号） */
+    var tencentEngine: String
+        get() = strOr(KEY_TENCENT_ENGINE, DEFAULT_TENCENT_ENGINE).orEmpty().trim()
+            .ifEmpty { DEFAULT_TENCENT_ENGINE }
+        set(value) = sp.edit { putString(KEY_TENCENT_ENGINE, value.trim().ifEmpty { DEFAULT_TENCENT_ENGINE }) }
+
+    /**
+     * Azure 语音资源的 Base URL（普通字符串，例 `https://<资源名>.cognitiveservices.azure.com`）。
+     *
+     * 只存用户填的原值（去首尾空白）；合法性统一走 [AzureAsrEndpoint.normalize]
+     * （https 放行、http 仅回环 / 私网），不在这里做 —— 保存页要把拒绝原因原样显示给用户。
+     */
+    var azureBaseUrl: String
+        get() = strOr(KEY_AZURE_BASE_URL, "").orEmpty()
+        set(value) = sp.edit { putString(KEY_AZURE_BASE_URL, value.trim()) }
+
+    /** Azure 识别语言码（默认 `zh-CN`；清空即回落默认，避免必然失败的空语言） */
+    var azureLanguage: String
+        get() = strOr(KEY_AZURE_LANGUAGE, DEFAULT_AZURE_LANGUAGE).orEmpty().trim()
+            .ifEmpty { DEFAULT_AZURE_LANGUAGE }
+        set(value) = sp.edit { putString(KEY_AZURE_LANGUAGE, value.trim().ifEmpty { DEFAULT_AZURE_LANGUAGE }) }
+
+    /** Azure 订阅密钥（**加密落盘**，见 [readCredential]；只进 Ocp-Apim-Subscription-Key 头） */
+    var azureSpeechKey: String
+        get() = readCredential(KEY_AZURE_ASR_API_KEY)
+        set(value) = writeCredential(KEY_AZURE_ASR_API_KEY, value)
+
+    /**
+     * 百度智能云短语音识别的 API Key（即 AK，**加密落盘**，见 [readCredential]）。
+     *
+     * 只进 token 请求的 `client_id=`；翻译功能用的是另一对键（`KEY_BAIDU_APP_ID` /
+     * `KEY_BAIDU_SECRET_KEY`），两家服务、两套配额，**不能复用**。
+     *
+     * ⚠ 名字带 `Speech` 是必需的：`baiduSecretKey` 已被翻译那把占用，同名属性在 Kotlin 里
+     * 直接编译不过，重名复用则会把翻译凭据当成语音凭据去换 token（必然 `invalid_client`）。
+     */
+    var baiduSpeechApiKey: String
+        get() = readCredential(KEY_BAIDU_ASR_API_KEY)
+        set(value) = writeBaiduSpeechCredential(KEY_BAIDU_ASR_API_KEY, value)
+
+    /** 百度智能云的 Secret Key（即 SK，**加密落盘**；只进 token 请求的 `client_secret=`） */
+    var baiduSpeechSecretKey: String
+        get() = readCredential(KEY_BAIDU_ASR_SECRET_KEY)
+        set(value) = writeBaiduSpeechCredential(KEY_BAIDU_ASR_SECRET_KEY, value)
+
+    /**
+     * 百度 `dev_pid`（默认 1537 = 普通话纯中文识别）。
+     *
+     * 存在 Int 里而不是字符串：这是服务端枚举值，保存页已挡住非数字输入；
+     * 脏配置读出来不是整数时 [intOr] 回落默认，不会带着 `"abc"` 去发一次必然 3300 的请求。
+     */
+    var baiduDevPid: Int
+        get() = intOr(KEY_BAIDU_DEV_PID, DEFAULT_BAIDU_DEV_PID)
+        set(value) = sp.edit { putInt(KEY_BAIDU_DEV_PID, value) }
+
+    /**
+     * 百度 access_token（**加密落盘**，与凭据同一套 [readCredential]）。
+     *
+     * 这是**派生缓存**：过期就重取，所以不进配置备份（[exportForBackup] 刻意不写它）——
+     * 换机后带过去的 token 也可能因源 IP / 账户变更失效，重取一次比带着废纸更省事。
+     */
+    internal var baiduToken: String
+        get() = readCredential(KEY_BAIDU_TOKEN)
+        set(value) = writeCredential(KEY_BAIDU_TOKEN, value)
+
+    /** 百度 token 的过期时刻（epoch 秒，0 = 未知 ⇒ 当已过期）；判据在 `BaiduTokenPolicy` */
+    internal var baiduTokenExpireAt: Long
+        get() = longOr(KEY_BAIDU_TOKEN_EXPIRE_AT, 0L)
+        set(value) = sp.edit { putLong(KEY_BAIDU_TOKEN_EXPIRE_AT, value) }
+
+    /**
+     * 百度语音 AK / SK 的写入：**值真变了就同时作废 token 缓存**。
+     *
+     * 为什么两件事必须连坐：`access_token` 是「某一对 AK/SK」的派生凭据、有效期 30 天，
+     * 而识别请求只按 token 认账号。换凭据后旧 token 照样有效，于是识别继续跑在**旧账号**的
+     * 配额上 —— 用户改完凭据看到照常成功，会以为新凭据生效了；反过来把 AK/SK 清空时，
+     * 「未配置」的账号也还在替它干活。服务端无从分辨，本机必须自己作废。
+     *
+     * 写入本身仍走 [writeCredential]（加密落盘）：这里只是把「比较 → 清 token」串在同一个入口，
+     * 保存页与配置包导入两条路径都不会漏。值没变时不清，避免每次保存都白取一次 token。
+     */
+    private fun writeBaiduSpeechCredential(key: String, value: String) {
+        val changed = readCredential(key) != value.cleanCredential()
+        writeCredential(key, value)
+        if (!changed) return
+        // 删键（不是留空串）：「派生缓存存在过」这件事本身也不该留在磁盘上
+        writeCredential(KEY_BAIDU_TOKEN, "")
+        sp.edit { putLong(KEY_BAIDU_TOKEN_EXPIRE_AT, 0L) }
+    }
+
+    /** Deepgram 的 API Key（**加密落盘**，见 [readCredential]；只进 `Authorization: Token` 头） */
+    var deepgramApiKey: String
+        get() = readCredential(KEY_DEEPGRAM_API_KEY)
+        set(value) = writeCredential(KEY_DEEPGRAM_API_KEY, value)
+
+    /** Deepgram 模型名（默认 `nova-3`；清空即回落默认，避免必然 400 的空 model） */
+    var deepgramModel: String
+        get() = strOr(KEY_DEEPGRAM_MODEL, DEFAULT_DEEPGRAM_MODEL).orEmpty().trim()
+            .ifEmpty { DEFAULT_DEEPGRAM_MODEL }
+        set(value) = sp.edit { putString(KEY_DEEPGRAM_MODEL, value.trim().ifEmpty { DEFAULT_DEEPGRAM_MODEL }) }
+
+    /** Deepgram 语言码（默认 `zh`；清空即回落默认，避免必然 400 的空 language） */
+    var deepgramLanguage: String
+        get() = strOr(KEY_DEEPGRAM_LANGUAGE, DEFAULT_DEEPGRAM_LANGUAGE).orEmpty().trim()
+            .ifEmpty { DEFAULT_DEEPGRAM_LANGUAGE }
+        set(value) = sp.edit {
+            putString(KEY_DEEPGRAM_LANGUAGE, value.trim().ifEmpty { DEFAULT_DEEPGRAM_LANGUAGE })
+        }
+
+    /**
+     * 三件讯飞凭据里有没有「磁盘上有密文、但本机解不开」的（软件密钥件丢失 / 密文损坏 / 换机）。
+     *
+     * 页面据此如实说明「需要重新填写」—— 少了它用户只会看到三个空框，与自己「明明填过」的记忆
+     * 冲突，最坏会以为凭据被偷（2026-11-01 Stage 3 复核：解不开时页面一个字都不说）。
+     *
+     * 只在**永久**解不开时为 true：`credentialRetryAt` 闸内（暂时解不开那 1 秒）不下结论，
+     * 否则会把「锁屏 / Keystore 抖动」误报成「凭据坏了」。
+     */
+    internal val hasUnreadableXfCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            return listOf(KEY_XF_APP_ID, KEY_XF_API_KEY, KEY_XF_API_SECRET).any { key ->
+                strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+            }
+        }
+
+    /**
+     * 同上，OpenAI 兼容的那一个 Key（与讯飞同一口径、同一句话）。
+     *
+     * 少了它，Keystore 失效的用户在「OpenAI 兼容」卡里只看到一个空 Key 框，会以为自己
+     * 从没填过 —— 而实际上磁盘上有密文、只是本机解不开。
+     *
+     * 判据与上一段刻意重复而不抽公共函数：`VoiceSettingsPageTest` 用花括号块锚定这段判据
+     * （`blockAfter("internal val hasUnreadableXfCredential")`），抽走判据就等于把守卫的锚点
+     * 变成一句没有判据的空壳（锚点漂移会让断言静默放宽）。
+     */
+    internal val hasUnreadableOaiCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            val key = KEY_OAI_API_KEY
+            return strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+        }
+
+    /**
+     * 同上，阿里云百炼的那一个 Key（口径与另两张凭据卡逐字一致）。
+     *
+     * 判据同样刻意重复而不抽公共函数：`VoiceSettingsPageTest` 用花括号块锚定这几段
+     * （`blockAfter("internal val hasUnreadable…")`），抽走判据只留空壳会让断言静默放宽。
+     */
+    internal val hasUnreadableAliCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            val key = KEY_ALI_API_KEY
+            return strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+        }
+
+    /**
+     * 同上，腾讯云那两件凭据（口径与另三张卡逐字一致）。
+     *
+     * 判据同样刻意重复而不抽公共函数：`VoiceSettingsPageTest` 用花括号块锚定这几段。
+     */
+    internal val hasUnreadableTencentCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            return listOf(KEY_TENCENT_SECRET_ID, KEY_TENCENT_SECRET_KEY).any { key ->
+                strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+            }
+        }
+
+    /** 同上，Azure 订阅密钥（口径与另一张卡逐字一致） */
+    internal val hasUnreadableAzureCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            val key = KEY_AZURE_ASR_API_KEY
+            return strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+        }
+
+    /**
+     * 同上，百度那两件凭据（AK / SK，口径与另几张卡逐字一致）。
+     *
+     * 判据同样刻意重复而不抽公共函数：`VoiceSettingsPageTest` 用花括号块锚定这几段。
+     */
+    internal val hasUnreadableBaiduCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            return listOf(KEY_BAIDU_ASR_API_KEY, KEY_BAIDU_ASR_SECRET_KEY).any { key ->
+                strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+            }
+        }
+
+    /** 同上，Deepgram 的那一个 Key（口径与另几张卡逐字一致） */
+    internal val hasUnreadableDeepgramCredential: Boolean
+        get() {
+            if (System.currentTimeMillis() < credentialRetryAt) return false
+            val key = KEY_DEEPGRAM_API_KEY
+            return strOr(key, "").orEmpty().isNotEmpty() && readCredential(key).isEmpty()
+        }
+
+    /**
+     * 当前语音后端是否**可用**（配好就能录音识别）。
+     *
+     *  - [VoiceBackend.CAPS]：host 合法即算配好（地址由 getter 兜底，非法值回落默认）；
+     *  - [VoiceBackend.XF]：三件凭据都非空；
+     *  - [VoiceBackend.OAI]：地址过策略（[OpenAiEndpoint.normalize]）+ Key + 模型名非空；
+     *  - [VoiceBackend.ALI]：地址过策略（[AliEndpoint.normalize]）+ Key + 模型名非空；
+     *  - [VoiceBackend.TENCENT]：SecretId 与 SecretKey 都非空（引擎有默认值，不需要守卫）；
+     *  - [VoiceBackend.AZURE]：地址过策略（[AzureAsrEndpoint.normalize]）+ 订阅密钥非空；
+     *  - [VoiceBackend.BAIDU]：AK 与 SK 都非空（dev_pid 有默认值，不需要守卫）；
+     *  - [VoiceBackend.DEEPGRAM]：API Key 非空（模型 / 语言有默认值）。
+     *
+     * 判据只回答「配置齐不齐」，不联网探测：真连通性由状态条与客户端回包反馈。
+     */
+    fun voiceConfigured(): Boolean = when (voiceBackend) {
+        VoiceBackend.XF -> xfAppId.cleanCredential().isNotEmpty() &&
+            xfApiKey.cleanCredential().isNotEmpty() &&
+            xfApiSecret.cleanCredential().isNotEmpty()
+
+        VoiceBackend.OAI -> OpenAiEndpoint.normalize(oaiBaseUrl).isSuccess &&
+            oaiApiKey.cleanCredential().isNotEmpty() &&
+            oaiModel.isNotEmpty()
+
+        VoiceBackend.ALI -> AliEndpoint.normalize(aliWsUrl).isSuccess &&
+            aliApiKey.cleanCredential().isNotEmpty() &&
+            aliModel.isNotEmpty()
+
+        VoiceBackend.TENCENT -> tencentSecretId.cleanCredential().isNotEmpty() &&
+            tencentSecretKey.cleanCredential().isNotEmpty()
+
+        VoiceBackend.AZURE -> AzureAsrEndpoint.normalize(azureBaseUrl).isSuccess &&
+            azureSpeechKey.cleanCredential().isNotEmpty()
+
+        VoiceBackend.BAIDU -> baiduSpeechApiKey.cleanCredential().isNotEmpty() &&
+            baiduSpeechSecretKey.cleanCredential().isNotEmpty()
+
+        VoiceBackend.DEEPGRAM -> deepgramApiKey.cleanCredential().isNotEmpty()
+
+        else -> isValidHost(host)
+    }
+
+    /**
      * 拼接后的 WebSocket 地址。
      *
      * [host] 与 [port] 的 getter 已保证取值合法（host 经 [normalizeHost] 规范化、port 钳到有效区间），
@@ -1002,6 +1369,15 @@ class Prefs(private val appContext: Context) {
     // （2026-10-01 修复 L-298）。
 
     /**
+     * 软件密钥件（见 [LocalCredentialCipher]）。
+     *
+     * 只在 Keystore 不可用（本机无锁屏，`keystore2` 报 `User ECDH key missing`）时才真正创建；
+     * Keystore 正常的设备上这个文件不存在，凭据仍是 `v1:` 密文。
+     */
+    private val credentialKeyFile: java.io.File
+        get() = java.io.File(appContext.filesDir, LocalCredentialCipher.FILE_NAME)
+
+    /**
      * 当前**只在内存、未落盘**的凭据键（空集合 = 全部已落盘）。
      *
      * 供两个设置页的显式保存如实报告（2026-10-02 修复 L-355）：加密不可用时（锁屏）值只进内存，
@@ -1010,7 +1386,10 @@ class Prefs(private val appContext: Context) {
     internal fun unpersistedCredentialKeys(): Set<String> = unpersistedCredentials.toSet()
 
     /**
-     * 读凭据：缓存 → Keystore 解密 → 明文旧值一次性迁移。
+     * 读凭据：缓存 → 软件密钥密文（`v2:`）→ Keystore 解密 → 明文旧值一次性迁移。
+     *
+     * `v2:` 必须**先**分流（见 [LocalCredentialCipher]）：它既不是 Keystore 密文形态、也不该落到
+     * 「明文迁移」分支，否则密文会被当成用户手填的凭据再加密一次（L-1069 同型的永久损坏）。
      *
      * 三种情况：
      *  1. 空值 ⇒ 空串（未配置）；
@@ -1033,6 +1412,34 @@ class Prefs(private val appContext: Context) {
         if (System.currentTimeMillis() < credentialRetryAt) return ""
         val raw = strOr(key, "").orEmpty()
         if (raw.isEmpty()) return ""
+        // 软件密钥密文（`v2:`，见 LocalCredentialCipher）：先分流，不能落到下面的「明文迁移」分支 ——
+        // 那会把密文当成用户手填的凭据再加密一次（二次加密后永久解不开，L-1069 同型）。
+        if (LocalCredentialCipher.isLocal(raw)) {
+            val plain = LocalCredentialCipher.decrypt(credentialKeyFile, raw)
+            if (plain == null) {
+                // 先分「暂时读不出」与「永久解不开」——与 Keystore 的 Transient/Permanent 同口径。
+                // 密钥件在、这次读失败（IO 抖动）时若也缓存空串，一次抖动就等于「本进程内凭据全消失」，
+                // 用户重开页面看到整页空框、以为凭据被偷（2026-11-01 Stage 3 复核）。
+                if (LocalCredentialCipher.keyState(credentialKeyFile) ==
+                    LocalCredentialCipher.KeyState.UNREADABLE
+                ) {
+                    credentialRetryAt = System.currentTimeMillis() + CREDENTIAL_RETRY_MS
+                    Diagnostics.w(TAG, "密钥件暂时读不出，本次按未配置处理，稍后重试")
+                    return ""
+                }
+                // 密钥件丢了 / 长度不对 / 密文被改：永久解不开，等价「未配置」并要求重填（可缓存）
+                Diagnostics.w(TAG, "凭据解密失败（软件密钥缺失或密文损坏），按未配置处理，需重新填写")
+                credentialCache[key] = ""
+                return ""
+            }
+            // 解密期间被改写（删除 / 换值）与 Ok 分支同口径：不把旧值回填缓存
+            if (strOr(key, "").orEmpty() != raw) {
+                Diagnostics.w(TAG, "凭据在解密期间被改写，改读新值")
+                return if (retry >= 1) plain else readCredential(key, retry + 1)
+            }
+            credentialCache[key] = plain
+            return plain
+        }
         if (!CredentialCrypto.looksEncrypted(raw)) {
             Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
             // ⚠ 顺序是「**先加密、再比对、最后落盘**」（2026-10-02 修复：上一轮把闸放在加密
@@ -1042,6 +1449,7 @@ class Prefs(private val appContext: Context) {
             // 这里不复用 [writeCredential]：那条路径没有「比对期望旧值」这一步，
             // 而本分支的判据必须在加密之后、提交之前，形态不同。
             val encrypted = CredentialCrypto.encrypt(raw)
+                ?: LocalCredentialCipher.encrypt(credentialKeyFile, raw)
             if (strOr(key, "").orEmpty() != raw) {
                 Diagnostics.w(TAG, "凭据在迁移期间被改写，改读新值")
                 return if (retry >= 1) raw else readCredential(key, retry + 1)
@@ -1099,11 +1507,14 @@ class Prefs(private val appContext: Context) {
     /**
      * 写凭据：清洗（剥不可见字符）→ 加密 → 落盘；**加密失败绝不回退成明文**（安全优先）。
      *
-     * 失败时（Keystore 不可用，如 API 28+ 锁屏 + `setUnlockedDeviceRequired`）只留在内存缓存里，
-     * 同时**删掉磁盘上仍可解密的旧密文**（fail-closed：宁可让该家回到「未配置」并如实告知，
-     * 也不要悄悄退回旧 Key），并把该键记入 [unpersistedCredentialKeys] 供显式保存如实报告
-     * （2026-10-02 修复 L-355：此前缓存命中让回读核对必然相等 ⇒ 报「已保存」，而重启后该家
-     * 回到「未配置」，用户与日志都看不出真因）。
+     * 加密主路是 Keystore（[CredentialCrypto]，`v1:` 密文）；Keystore 不可用时退到**软件密钥**
+     * （[LocalCredentialCipher]，`v2:` 密文，密钥件在 `filesDir`）—— 本机无锁屏的设备上 Keystore
+     * 建键恒失败，没有这条路凭据就只能留在内存、重启即丢（用户第 5 条要求）。
+     *
+     * 两支都失败时才只留在内存缓存里，同时**删掉磁盘上仍可解密的旧密文**（fail-closed：宁可让该家
+     * 回到「未配置」并如实告知，也不要悄悄退回旧 Key），并把该键记入 [unpersistedCredentialKeys]
+     * 供显式保存如实报告（2026-10-02 修复 L-355：此前缓存命中让回读核对必然相等 ⇒ 报「已保存」，
+     * 而重启后该家回到「未配置」，用户与日志都看不出真因）。
      */
     private fun writeCredential(key: String, value: String) {
         val cleaned = value.cleanCredential()
@@ -1116,17 +1527,25 @@ class Prefs(private val appContext: Context) {
         // 已经是密文就别再加密一次：二次加密的密文解不开（AUTH 失败）却仍被判成「已配置」，
         // 用户只会看到该家翻译莫名失败、日志里也认不出是数据被写坏了（L-1069）。
         // 正常写入的是用户手填的明文凭据，密文形态只可能来自外部导入 / 异常回写 ⇒ 直接拒收。
-        if (CredentialCrypto.looksEncrypted(cleaned)) {
+        // v2 前缀（软件密钥）同口径：漏了它就会被再加密一层，解开后是个 `v2:…` 字符串。
+        if (CredentialCrypto.looksEncrypted(cleaned) || LocalCredentialCipher.isLocal(cleaned)) {
             Diagnostics.w(TAG, "凭据写入被拒：入参已是密文形态（拒绝二次加密）")
             return
         }
-        val encrypted = CredentialCrypto.encrypt(cleaned)
+        // Keystore 不可用（本机无锁屏：keystore2 报 User ECDH key missing）⇒ 退到软件密钥。
+        // 两支都失败才维持「只留内存」：这是「没设锁屏密码也能用」的实现点（用户第 5 条要求）。
+        // 软件密钥的安全等级低一档（密钥与密文同在沙箱），只在 Keystore 真的用不了时才走。
+        val keystore = CredentialCrypto.encrypt(cleaned)
+        val encrypted = keystore ?: LocalCredentialCipher.encrypt(credentialKeyFile, cleaned)
         if (encrypted == null) {
-            Diagnostics.w(TAG, "凭据加密失败，未落盘（重启后需重新填写）")
+            Diagnostics.w(TAG, "凭据加密失败（Keystore 与软件密钥均不可用），未落盘（重启后需重新填写）")
             credentialCache[key] = cleaned
             unpersistedCredentials.add(key)
             sp.edit { remove(key) }
             return
+        }
+        if (keystore == null) {
+            Diagnostics.i(TAG, "Keystore 不可用，凭据改用软件密钥加密落盘（长度 ${cleaned.length}）")
         }
         credentialCache[key] = cleaned
         unpersistedCredentials.remove(key)
@@ -1494,6 +1913,8 @@ class Prefs(private val appContext: Context) {
         put(KEY_USE_TRADITIONAL, useTraditional)
         put(KEY_FUZZY_PINYIN, fuzzyPinyinMask)
         put(KEY_VOICE_INPUT, voiceInputEnabled)
+        // 后端选择是用户偏好（caps / xf），换机必须带走；默认 caps 与缺键回落同值，故不套守卫
+        put(KEY_VOICE_BACKEND, voiceBackend)
         put(KEY_TRANSLATE_ENABLED, translateEnabled)
         // ⚠ 这两个键只在**用户真的设置过**时才导出（2026-10-03 修复 L-537）：`translateProvider`
         // 的 getter 在键缺失时按「谁有凭据」逐家推导、`translateTarget` 会回落默认 ⇒ 无条件导出
@@ -1560,6 +1981,40 @@ class Prefs(private val appContext: Context) {
         putCredential(KEY_DEEPL_API_KEY)
         putCredential(KEY_BAIDU_LLM_APP_ID)
         putCredential(KEY_BAIDU_LLM_API_KEY)
+        // 讯飞听写三件凭据（加密落盘，与翻译凭据同一套读写助手）
+        putCredential(KEY_XF_APP_ID)
+        putCredential(KEY_XF_API_KEY)
+        putCredential(KEY_XF_API_SECRET)
+        // OpenAI 兼容转写：地址是用户填的普通键；模型名的默认值（whisper-1）属非平凡默认，
+        // 只在真改过时导出（否则将来换默认模型对这批人永久失效）；Key 与另两家同一套口径。
+        put(KEY_OAI_BASE_URL, oaiBaseUrl)
+        if (sp.contains(KEY_OAI_MODEL)) put(KEY_OAI_MODEL, oaiModel)
+        putCredential(KEY_OAI_API_KEY)
+        // 阿里云百炼转写：地址与模型名同款（默认值只在用户改过时导出，否则将来换默认对这批人永久失效），
+        // Key 与另两家同一套口径。
+        if (sp.contains(KEY_ALI_WS_URL)) put(KEY_ALI_WS_URL, aliWsUrl)
+        if (sp.contains(KEY_ALI_MODEL)) put(KEY_ALI_MODEL, aliModel)
+        putCredential(KEY_ALI_API_KEY)
+        // 腾讯云一句话识别：SecretId / SecretKey 走凭据口径（空值不写）；引擎型号与非平凡默认同款，
+        // 只在用户真改过时导出（否则将来换默认型号对这批人永久失效）。
+        putCredential(KEY_TENCENT_SECRET_ID)
+        putCredential(KEY_TENCENT_SECRET_KEY)
+        if (sp.contains(KEY_TENCENT_ENGINE)) put(KEY_TENCENT_ENGINE, tencentEngine)
+        // Azure 短音频识别：Base URL 是用户填的普通键；语言码默认 zh-CN 同款「改过才导出」；
+        // 订阅密钥与另几家同一套口径。
+        put(KEY_AZURE_BASE_URL, azureBaseUrl)
+        if (sp.contains(KEY_AZURE_LANGUAGE)) put(KEY_AZURE_LANGUAGE, azureLanguage)
+        putCredential(KEY_AZURE_ASR_API_KEY)
+        // 百度短语音识别：AK / SK 走凭据口径；dev_pid 是平凡默认（1537）之外的枚举值，
+        // 「改过才导出」—— 将来换默认档位时，没动过这项的用户才拿得到新默认。
+        // ⚠ token 与它的过期时刻是**派生缓存**，刻意不进包（见 `Prefs.baiduToken` 的说明）。
+        putCredential(KEY_BAIDU_ASR_API_KEY)
+        putCredential(KEY_BAIDU_ASR_SECRET_KEY)
+        if (sp.contains(KEY_BAIDU_DEV_PID)) put(KEY_BAIDU_DEV_PID, baiduDevPid)
+        // Deepgram：Key 走凭据口径；模型名与语言码同款「改过才导出」
+        putCredential(KEY_DEEPGRAM_API_KEY)
+        if (sp.contains(KEY_DEEPGRAM_MODEL)) put(KEY_DEEPGRAM_MODEL, deepgramModel)
+        if (sp.contains(KEY_DEEPGRAM_LANGUAGE)) put(KEY_DEEPGRAM_LANGUAGE, deepgramLanguage)
         put(KEY_OPENAI_NAME, openAiName)
         put(KEY_OPENAI_BASE_URL, openAiBaseUrl)
         putCredential(KEY_OPENAI_API_KEY)
@@ -1718,6 +2173,8 @@ class Prefs(private val appContext: Context) {
                 } ?: bad(key)
                 KEY_FUZZY_PINYIN -> asInt(v)?.let { fuzzyPinyinMask = it; ok() } ?: bad(key)
                 KEY_VOICE_INPUT -> asBool(v)?.let { voiceInputEnabled = it; ok() } ?: bad(key)
+                // 未知后端取值由 setter 的 VoiceBackend.of 归一回 caps
+                KEY_VOICE_BACKEND -> asString(v)?.let { voiceBackend = it; ok() } ?: bad(key)
                 KEY_TRANSLATE_ENABLED -> asBool(v)?.let { translateEnabled = it; ok() } ?: bad(key)
                 // 三个枚举型取值都走 setter 里的 of() 归一：脏备份（未知 id / 未知语言）不会带进运行期
                 KEY_TRANSLATE_PROVIDER -> asString(v)?.let { translateProvider = it; ok() } ?: bad(key)
@@ -1769,6 +2226,42 @@ class Prefs(private val appContext: Context) {
                 KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: bad(key)
                 KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: bad(key)
                 KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
+                // 讯飞听写三件凭据：空串同样按「类型不符」计、不写入（理由同上）
+                KEY_XF_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfAppId = it; ok() } ?: bad(key)
+                KEY_XF_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfApiKey = it; ok() } ?: bad(key)
+                KEY_XF_API_SECRET -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfApiSecret = it; ok() } ?: bad(key)
+                // OpenAI 兼容转写：地址 / 模型名是普通键（setter 做 trim 与默认回落），
+                // Key 走凭据口径 —— 空串不写入、按「类型不符」计（BUG.md L-1067）
+                KEY_OAI_BASE_URL -> asString(v)?.let { oaiBaseUrl = it; ok() } ?: bad(key)
+                KEY_OAI_MODEL -> asString(v)?.let { oaiModel = it; ok() } ?: bad(key)
+                KEY_OAI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { oaiApiKey = it; ok() } ?: bad(key)
+                // 阿里云百炼：地址 / 模型名是普通键（setter 做 trim 与默认回落），Key 走凭据口径
+                KEY_ALI_WS_URL -> asString(v)?.let { aliWsUrl = it; ok() } ?: bad(key)
+                KEY_ALI_MODEL -> asString(v)?.let { aliModel = it; ok() } ?: bad(key)
+                KEY_ALI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliApiKey = it; ok() } ?: bad(key)
+                // 腾讯云一句话识别：引擎型号是普通键（setter 做 trim 与默认回落），两件凭据走凭据口径
+                KEY_TENCENT_ENGINE -> asString(v)?.let { tencentEngine = it; ok() } ?: bad(key)
+                KEY_TENCENT_SECRET_ID ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { tencentSecretId = it; ok() } ?: bad(key)
+                KEY_TENCENT_SECRET_KEY ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { tencentSecretKey = it; ok() } ?: bad(key)
+                // Azure 短音频识别：地址与语言是普通键；订阅密钥走凭据口径
+                KEY_AZURE_BASE_URL -> asString(v)?.let { azureBaseUrl = it; ok() } ?: bad(key)
+                KEY_AZURE_LANGUAGE -> asString(v)?.let { azureLanguage = it; ok() } ?: bad(key)
+                KEY_AZURE_ASR_API_KEY ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { azureSpeechKey = it; ok() } ?: bad(key)
+                // 百度短语音识别：dev_pid 是整数（脏值按「类型不符」忽略，不写成 0 去发一次 3300）；
+                // 两件凭据走凭据口径，空串不写入（BUG.md L-1067）
+                KEY_BAIDU_DEV_PID -> asInt(v)?.let { baiduDevPid = it; ok() } ?: bad(key)
+                KEY_BAIDU_ASR_API_KEY ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSpeechApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_ASR_SECRET_KEY ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSpeechSecretKey = it; ok() } ?: bad(key)
+                // Deepgram：模型名与语言码是普通键（setter 做 trim 与默认回落），Key 走凭据口径
+                KEY_DEEPGRAM_MODEL -> asString(v)?.let { deepgramModel = it; ok() } ?: bad(key)
+                KEY_DEEPGRAM_LANGUAGE -> asString(v)?.let { deepgramLanguage = it; ok() } ?: bad(key)
+                KEY_DEEPGRAM_API_KEY ->
+                    asString(v)?.takeIf { it.isNotEmpty() }?.let { deepgramApiKey = it; ok() } ?: bad(key)
                 KEY_OPENAI_NAME -> asString(v)?.let { openAiName = it; ok() } ?: bad(key)
                 KEY_OPENAI_BASE_URL -> asString(v)?.let { openAiBaseUrl = it; ok() } ?: bad(key)
                 // 凭据键的空串一律按「类型不符」计、不写入（BUG.md L-1067）：写入侧把空串定义成删除，
@@ -2125,6 +2618,67 @@ class Prefs(private val appContext: Context) {
         /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
+
+        /** 语音后端（"caps" / "xf" / "oai" / "ali" / "tencent" / "azure" / "baidu" / "deepgram"，见 [VoiceBackend]） */
+        private const val KEY_VOICE_BACKEND = "voice_backend"
+
+        /** 讯飞听写三件凭据（加密落盘，见 [readCredential]） */
+        private const val KEY_XF_APP_ID = "xf_app_id"
+        private const val KEY_XF_API_KEY = "xf_api_key"
+        private const val KEY_XF_API_SECRET = "xf_api_secret"
+
+        /** OpenAI 兼容转写：地址 / 模型名是普通键，Key 加密落盘（与另两家同一套） */
+        private const val KEY_OAI_BASE_URL = "oai_base_url"
+        private const val KEY_OAI_MODEL = "oai_model"
+        private const val KEY_OAI_API_KEY = "oai_api_key"
+
+        /** OpenAI 兼容转写的默认模型（用户没填时必须有个能用的值，否则请求必然 400） */
+        const val DEFAULT_OAI_MODEL = "whisper-1"
+
+        /** 阿里云百炼实时语音识别：WS 地址 / 模型名（普通键）与 Key（加密落盘） */
+        private const val KEY_ALI_WS_URL = "ali_ws_url"
+        private const val KEY_ALI_MODEL = "ali_model"
+        private const val KEY_ALI_API_KEY = "ali_api_key"
+
+        /** 百炼的默认端点（旧域名，仍可用；专属 Workspace 域名由用户自己填）与默认模型 */
+        const val DEFAULT_ALI_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+        const val DEFAULT_ALI_MODEL = "paraformer-realtime-v2"
+
+        /** 腾讯云一句话识别：两件凭据（加密落盘）+ 引擎型号（普通键） */
+        private const val KEY_TENCENT_SECRET_ID = "tencent_secret_id"
+        private const val KEY_TENCENT_SECRET_KEY = "tencent_secret_key"
+        private const val KEY_TENCENT_ENGINE = "tencent_engine"
+
+        /** 一句话识别的默认引擎：中文 16k 通用模型（服务端按它选声学模型） */
+        const val DEFAULT_TENCENT_ENGINE = "16k_zh"
+
+        /** Azure 短音频识别：Base URL / 语言码（普通键）+ 订阅密钥（加密落盘，独立于翻译那把） */
+        private const val KEY_AZURE_BASE_URL = "azure_base_url"
+        private const val KEY_AZURE_LANGUAGE = "azure_language"
+        private const val KEY_AZURE_ASR_API_KEY = "azure_speech_api_key"
+        const val DEFAULT_AZURE_LANGUAGE = "zh-CN"
+
+        /**
+         * 百度智能云短语音识别：AK / SK（加密落盘，独立于翻译那把）+ dev_pid（整数）
+         * + access_token 与它的过期时刻（**派生缓存**，不进配置备份）。
+         */
+        private const val KEY_BAIDU_ASR_API_KEY = "baidu_speech_api_key"
+        private const val KEY_BAIDU_ASR_SECRET_KEY = "baidu_speech_secret_key"
+        private const val KEY_BAIDU_DEV_PID = "baidu_dev_pid"
+        private const val KEY_BAIDU_TOKEN = "baidu_access_token"
+        private const val KEY_BAIDU_TOKEN_EXPIRE_AT = "baidu_token_expire_at"
+
+        /** dev_pid 默认 1537 = 普通话（纯中文识别），与服务端枚举一致 */
+        const val DEFAULT_BAIDU_DEV_PID = 1537
+
+        /** Deepgram Pre-recorded：模型名 / 语言码（普通键）+ API Key（加密落盘） */
+        private const val KEY_DEEPGRAM_MODEL = "deepgram_model"
+        private const val KEY_DEEPGRAM_LANGUAGE = "deepgram_language"
+        private const val KEY_DEEPGRAM_API_KEY = "deepgram_api_key"
+
+        /** Deepgram 默认模型与语言（与 `DeepgramRequest` 的同名常量逐字一致，单测对拍） */
+        const val DEFAULT_DEEPGRAM_MODEL = "nova-3"
+        const val DEFAULT_DEEPGRAM_LANGUAGE = "zh"
 
         /** 在线翻译（BYOK，2026-09-30 起）：开关 + Provider / 目标语言 + 六家各自的一组凭据 */
         private const val KEY_TRANSLATE_ENABLED = "translate_enabled"

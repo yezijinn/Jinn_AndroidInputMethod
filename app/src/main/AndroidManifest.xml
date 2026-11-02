@@ -166,6 +166,12 @@
             android:name=".FloatingKeyboardActivity"
             android:exported="false" />
 
+        <!-- 语音转为文字页：设置页「语音转为文字」按钮进入
+             （语音总开关 / 授权麦克风 / NAS 地址与识别选项 / 在线服务商文档目录） -->
+        <activity
+            android:name=".VoiceSettingsActivity"
+            android:exported="false" />
+
         <!-- 设置页：既是输入法设置入口，也可从桌面启动 -->
         <activity
             android:name=".SettingsActivity"

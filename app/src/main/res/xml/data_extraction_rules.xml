@@ -38,6 +38,16 @@
         <exclude
             domain="file"
             path="user_picks.key.tmp" />
+        <!-- 凭据的软件密钥（filesDir/credential_soft.key，2026-11-01）：无锁屏设备上凭据用它加密
+             （Keystore 建键恒失败）。凭据密文在 prefs 里、prefs 已排除，密钥件单独备份毫无用处；
+             而它一旦随包出炉就等于把「解开 prefs 的那把钥匙」也交出去 —— 无锁屏设备上尤其危险。
+             中间件 .tmp 同排（原子写残留）。两端规则保持一致 -->
+        <exclude
+            domain="file"
+            path="credential_soft.key" />
+        <exclude
+            domain="file"
+            path="credential_soft.key.tmp" />
         <exclude
             domain="file"
             path="ledger_orphan/" />
@@ -128,6 +138,16 @@
         <exclude
             domain="file"
             path="user_picks.key.tmp" />
+        <!-- 凭据的软件密钥（filesDir/credential_soft.key，2026-11-01）：无锁屏设备上凭据用它加密
+             （Keystore 建键恒失败）。凭据密文在 prefs 里、prefs 已排除，密钥件单独备份毫无用处；
+             而它一旦随包出炉就等于把「解开 prefs 的那把钥匙」也交出去 —— 无锁屏设备上尤其危险。
+             中间件 .tmp 同排（原子写残留）。两端规则保持一致 -->
+        <exclude
+            domain="file"
+            path="credential_soft.key" />
+        <exclude
+            domain="file"
+            path="credential_soft.key.tmp" />
         <exclude
             domain="file"
             path="ledger_orphan/" />

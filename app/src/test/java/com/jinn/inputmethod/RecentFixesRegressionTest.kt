@@ -268,27 +268,28 @@ class RecentFixesRegressionTest {
     fun `保存并重启必须先落盘再杀进程`() {
         val body = blockAfter(codeOf("SettingsActivity.kt"), "fun saveAndRestart")
         assertTrue(
-            "saveAndRestart 必须调 restartImeProcess()：直接 postDelayed + killProcess " +
+            "saveAndRestart 必须走 ImeRestart（先 flush 再杀进程）：直接 postDelayed + killProcess " +
                 "会在 IO 抖动时丢掉最后一批 apply()（重启后设置回退）",
-            body.contains("restartImeProcess()"),
+            body.contains("ImeRestart.restart("),
         )
-        // 顺序也要钉住（BUG.md L-109）：重启函数内部必须先落盘再杀进程 ——
-        // 只查「调了 restartImeProcess()」挡不住「把 flush 挪到 kill 之后」这种回退
-        val restart = blockAfter(codeOf("SettingsActivity.kt"), "fun restartImeProcess")
+        // 顺序也要钉住（BUG.md L-109）：重启实现内部必须先落盘再杀进程 ——
+        // 只查「调了重启」挡不住「把 flush 挪到 kill 之后」这种回退。
+        // 2026-11-01 起实现在 `ImeRestart`（设置页与语音页共用），锚点跟着实现走。
+        val restart = blockAfter(codeOf("ImeRestart.kt"), "fun restart(")
         assertBefore(
-            restart, "Prefs(this).flush()", "killProcess(",
+            restart, "Prefs(activity).flush()", "killProcess(",
             "主设置必须先落盘：`apply()` 是异步的，只靠延时 800ms 赌它写完，IO 压力大时会丢最后一批键",
         )
         assertBefore(
-            restart, "ClipboardPrefs.of(this).flush()", "killProcess(",
+            restart, "ClipboardPrefs.of(activity).flush()", "killProcess(",
             "剪贴板设置同样要先落盘再杀进程（否则重启后设置回退）",
         )
         // L-1420：false 只写日志还不够 —— 界面此时已宣告「正在重启」，照旧杀进程就是**确定性**
         // 地丢这批设置。两个 flush 的结果都必须收进变量、失败分支必须直接返回（不返回就落到 kill）
         assertTrue(
             "两个 flush 的结果都要收进变量（只在 if 里各调一次拿不到合并结论）",
-            "val prefsFlushed = runCatching { Prefs(this).flush() }.getOrDefault(false)" in restart &&
-                "val clipboardFlushed = runCatching { ClipboardPrefs.of(this).flush() }.getOrDefault(false)" in restart,
+            "val prefsFlushed = runCatching { Prefs(activity).flush() }.getOrDefault(false)" in restart &&
+                "val clipboardFlushed = runCatching { ClipboardPrefs.of(activity).flush() }.getOrDefault(false)" in restart,
         )
         assertStatementLine(restart, "return", "落盘失败必须直接返回，否则会落到 killProcess")
         assertTrue("失败分支要有用户可见的回执（状态行 + Toast 同一个常量）", "TEXT_RESTART_FLUSH_FAILED" in restart)
@@ -481,11 +482,25 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `语言下拉未被用户操作时不得改写导入值`() {
-        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun readLanguage")
+        // 2026-11-01：语言下拉随语音四块迁到「语音转为文字」页，闸门跟着控件走
+        val code = codeOf("VoiceSettingsActivity.kt")
+        val body = blockAfter(code, "private fun readLanguage")
+        // 2026-11-01 补：判据不能只看探针 —— 旋转 / 进程回收后系统把用户选中的下标放回来，
+        // 探针仍是 false（程序化恢复不算用户操作）。只看探针会把「改过语言再旋转」的改动丢掉，
+        // 于是界面显示新值、保存写的还是旧值。多认一个「下标 != 载入时下标」不会放宽本闸门：
+        // 导入的未知取值载入下标就是 0（indexOf 退位），恢复后仍是 0，照样返回 Prefs 原值。
         assertTrue(
-            "readLanguage 必须先判下拉的「用户操作」探针：导入的备份可能带本版不认识的取值，" +
+            "readLanguage 必须先判下拉的「用户操作」探针 + 载入下标：导入的备份可能带本版不认识的取值，" +
                 "下拉退回显示第 0 项，读回它等于把导入值静默改写（其他四个下拉同款闸门，见 L-821）",
-            body.contains("if (!spinnerLanguage.userInteracted) return prefs.language"),
+            body.contains(
+                "if (!spinnerLanguage.userInteracted && pos == languageAtLoad) return prefs.language",
+            ),
+        )
+        assertTrue(
+            "「载入下标」必须来自 loadPrefs 的 indexOf（写死 0、或用随手取的下标当基线都会让闸门失效）",
+            blockAfter(code, "private fun loadPrefs").contains(
+                "languageAtLoad = values.indexOf(prefs.language).coerceAtLeast(0)",
+            ),
         )
     }
 
@@ -1445,7 +1460,8 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `麦克风永久拒绝必须给系统设置入口`() {
-        val text = codeOf("SettingsActivity.kt")
+        // 2026-11-01：授权麦克风随语音四块迁到「语音转为文字」页，判据跟着实现走
+        val text = codeOf("VoiceSettingsActivity.kt")
         assertTrue(
             "必须记录永久拒绝态（拒绝且系统不再弹窗）",
             text.contains("micDeniedForever"),
@@ -4138,7 +4154,9 @@ class RecentFixesRegressionTest {
             val i = ime
             val at = i.indexOf("private fun switchToVoiceKeyboard")
             assertTrue("L-641 守卫缺失：找不到 switchToVoiceKeyboard", at >= 0)
-            val block = i.substring(at, minOf(i.length, at + 1400))
+            // 窗口改成**函数体本身**（花括号配对），不用「之后 N 个字符」：
+            // 后端分支随功能增加会往后推（第五、六家各加一支），固定字数是会静默失效的判据。
+            val block = TestSources.blockAfter(i, "private fun switchToVoiceKeyboard")
             assertTrue(
                 "L-641 守卫缺失：切到语音键盘必须作废在途翻译（互斥要双向）",
                 "cancelTranslate(notify = true)" in block,
@@ -4215,8 +4233,12 @@ class RecentFixesRegressionTest {
         )
 
         val settings = codeOf("SettingsActivity.kt")
-        for (spinner in listOf("spinnerLanguage", "spinnerDefaultMode", "spinnerShuangpin")) {
-            assertTrue("$spinner 的闸门必须走用户操作探针", "$spinner.userInteracted" in settings)
+        assertTrue("spinnerShuangpin 的闸门必须走用户操作探针", "spinnerShuangpin.userInteracted" in settings)
+        // 2026-11-01：语言 / 默认键盘样式两个下拉随语音四块迁到「语音转为文字」页 ——
+        // 探针闸门必须跟着控件走，留在设置页等于那两个下拉永远不落盘（`userInteracted` 没人读）
+        val voicePage = codeOf("VoiceSettingsActivity.kt")
+        for (spinner in listOf("spinnerLanguage", "spinnerDefaultMode")) {
+            assertTrue("$spinner 的闸门必须走用户操作探针（随控件迁到语音页）", "$spinner.userInteracted" in voicePage)
         }
         // 2026-10-09：候选词行数与界面明暗两个下拉迁到「键盘外观」页 —— 探针闸门必须跟着控件走，
         // 留在设置页等于外观页那两个下拉永远不落盘（`userInteracted` 没人读）。
@@ -4226,15 +4248,24 @@ class RecentFixesRegressionTest {
         }
         assertFalse("不得残留只认触摸的字段（SpinnerTouched）", "SpinnerTouched" in settings)
         assertFalse("不得再给下拉挂 OnTouchListener 当闸门", "setOnTouchListener" in settings)
+        assertFalse(
+            "语音页同样不许退回 setOnTouchListener 当闸门",
+            "setOnTouchListener" in voicePage,
+        )
 
         fun layoutOf(name: String): String = listOf(
             File("src/main/res/layout/$name"),
             File("app/src/main/res/layout/$name"),
         ).firstOrNull { it.isFile }?.readText() ?: error("找不到 $name")
         assertEquals(
-            "设置页剩余 3 个下拉必须都是 UserAwareSpinner（退回普通 Spinner 时闸门静默失效：闸门永远为 false）",
-            3,
+            "设置页剩余 1 个下拉（输入方案）必须仍是 UserAwareSpinner（退回普通 Spinner 时闸门静默失效：闸门永远为 false）",
+            1,
             Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_settings.xml")).count(),
+        )
+        assertEquals(
+            "语音页迁入的 3 个下拉（语言 / 默认键盘样式 / 识别后端）同样必须是 UserAwareSpinner",
+            3,
+            Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_voice_settings.xml")).count(),
         )
         assertEquals(
             "外观页迁入的 2 个下拉（候选行数 / 界面明暗）同样必须是 UserAwareSpinner",
@@ -6044,6 +6075,9 @@ class RecentFixesRegressionTest {
      * 旧实现长按恒返回 true，`View` 会置 `mHasPerformedLongPress` ⇒ 抬起不再派发 click，
      * 而 `KeyFeedback.fire(G_CONFIRM)` 已经响过 —— 用户听到「按下了」却什么都没上屏
      * （表现就是「空格偶尔失灵」）。这条契约此前零测试覆盖。
+     *
+     * 2026-11-01 起长按的含义由「切语音键盘页」改为「按住说话」，上面四条骨架断言原样保留，
+     * 另加起录 / 上滑取消 / 松手提交 / 无权限回退 / 不再切键盘五组判据。
      */
     @Test
     fun 长按空格在语音不可用时不得吞掉空格() {
@@ -6061,6 +6095,135 @@ class RecentFixesRegressionTest {
         assertTrue("接口必须有 canVoice 契约", "fun canVoice(): Boolean" in view)
         val ime = TestSources.codeSource("JinnIme.kt")
         assertTrue("实现必须跟随语音开关", "override fun canVoice(): Boolean = prefs.voiceInputEnabled" in ime)
+
+        // ── 26 键长按 = 按住说话（2026-11-01）────────────────────────────────────
+        // 上面四条是骨架契约（先问 canVoice / 反馈只在可用分支 / 不消费），手势内容这次换成了录音，
+        // 于是下面钉新接线：长按起录、上滑取消、松手提交 / 丢弃、无权限回退、不再切键盘。
+        val click = TestSources.blockAfter(view, "btnSpace.setOnClickListener {")
+        assertTrue("短按照旧：仍是 onSpacePressed（一个字都不改）", "onSpacePressed()" in click)
+        assertTrue(
+            "长按必须请求开始录音（返回 true 才进长按态）",
+            "listener?.onVoiceHoldStart() == true" in space && "voiceHoldActive = true" in space,
+        )
+        assertFalse("长按空格不得再切到语音键盘页", "switchToVoiceKeyboard" in space)
+        assertFalse("接口里不再保留 onVoiceRequested 这条旧接线", "onVoiceRequested" in view)
+
+        val touch = TestSources.blockAfter(view, "btnSpace.setOnTouchListener {")
+        assertTrue("按下即预热建连（长按只有约 500ms 准备时间）", "onVoicePrepare()" in touch)
+        assertTrue(
+            "触摸监听只观察不消费（恒返回 false），否则短按的 click 被吞掉",
+            "            false\n        }" in touch,
+        )
+        assertTrue(
+            "上滑超过阈值即武装取消（判据必须用屏幕坐标 rawY：手指滑出键区后 event.y 会失真）",
+            "voiceHoldDownRawY - event.rawY > voiceCancelSlidePx()" in touch,
+        )
+        assertTrue("武装状态变化必须转发给 IME", "onVoiceHoldUpdate(armed)" in touch)
+        assertTrue(
+            "滑回阈值内必须解除取消态：armed 变化要双向转发，而不是只在跨过阈值时单向置真",
+            "if (armed != voiceHoldCancelArmed)" in touch,
+        )
+        assertTrue("按下即清掉上一手的残留态（防「刚按住就要取消」）", "cancelVoiceHold()" in touch)
+        assertTrue("松手在取消态则丢弃", "endVoiceHold(cancelled = voiceHoldCancelArmed)" in touch)
+        assertTrue("手势被系统取消同样按丢弃处理", "endVoiceHold(cancelled = true)" in touch)
+
+        // 键面复位只有一个出口 cancelVoiceHold()：手势自己收尾与「录音被外部终止」都走它
+        val cancelHold = TestSources.blockAfter(view, "fun cancelVoiceHold()")
+        assertTrue("复位必须刷回空格小字", "updateSpaceHint()" in cancelHold)
+        assertFalse("复位不回调 Listener（外部终止再回调一次会二次收尾）", "onVoiceHoldEnd" in cancelHold)
+        assertTrue("复位必须幂等（UP 之后又来 CANCEL 不许二次动作）", "if (!voiceHoldActive && !voiceHoldCancelArmed) return" in cancelHold)
+        val endHold = TestSources.blockAfter(view, "private fun endVoiceHold(")
+        assertTrue("结束时键面小字必须复位", "cancelVoiceHold()" in endHold)
+        assertFalse("复位只回填那一行小字，不许整盘刷键面（会连大小写 / 方案状态一起动）", "refreshKeyLabels()" in endHold)
+        assertTrue("提交与丢弃走同一个出口，靠 cancelled 区分", "onVoiceHoldEnd(cancelled)" in endHold)
+        assertTrue(
+            "会话边界（configure）也要收掉长按态，否则新输入框以「松手转文字」的小字弹出",
+            "cancelVoiceHold()" in TestSources.blockAfter(view, "fun configure("),
+        )
+        // configure 只是「会跑到」的复位点；`onStartInputView` 里还有一跳能整段跳过 configure
+        // （方案未变 + isSessionPristine）。长按态不判进 pristine 的话，那一步就把卡住的小字
+        // 带进新会话 —— 与 BUG.md L-1531（图库面板 / 动作排漏判）同型。
+        val pristine = TestSources.window(view, "internal fun isSessionPristine()", "fun capsModeForReplay")
+        assertTrue(
+            "空格长按态属会话临时态：isSessionPristine 必须判它，否则跳过 configure 就带进下一个框",
+            "!voiceHoldActive" in pristine && "!voiceHoldCancelArmed" in pristine,
+        )
+        // 两句提示必须真的落在 updateSpaceHint 的分支里 —— 只判「常量存在」是恒真判据：
+        // 把两个分支删掉、文案留在 companion 里，旧写法照样绿（变异实测）
+        val hint = TestSources.blockAfter(view, "private fun updateSpaceHint()")
+        assertTrue(
+            "录音中 / 已武装取消两种小字分别落在分支里",
+            "!voiceHoldActive -> currentInputTypeLabel()" in hint &&
+                "voiceHoldCancelArmed -> TEXT_VOICE_CANCEL_HINT" in hint &&
+                "else -> TEXT_VOICE_HOLD_HINT" in hint,
+        )
+
+        val startHold = TestSources.blockAfter(ime, "override fun onVoiceHoldStart(")
+        assertTrue(
+            "无 RECORD_AUDIO 时必须回退语音页面（那页有授权按钮），否则授权入口被堵死",
+            "hasMicPermission()" in startHold && "switchToVoiceKeyboard()" in startHold,
+        )
+        assertTrue("翻译在途不得开录", "translateInFlight" in startHold)
+        assertTrue(
+            "未在线时不得假装在录：要提示连接中",
+            "LinkState.ONLINE" in startHold && "TEXT_VOICE_CONNECTING" in startHold,
+        )
+        assertTrue(
+            "每条失败分支都必须 return false（一条都不许假装在录）",
+            Regex("return false").findAll(startHold).count() >= 5,
+        )
+        assertTrue("已有录音在跑时不得叠第二段（残留 mode=HOLD 会把「没起录」误判成成功）", "if (mode != Mode.NONE)" in startHold)
+        assertTrue(
+            "真开始录音走 HOLD 模式；起录失败必须以 mode 复核并出声（26 键下没有语音状态条可看）",
+            "startRecording(Mode.HOLD)" in startHold &&
+                "if (mode != Mode.HOLD)" in startHold &&
+                "toast(TEXT_VOICE_START_FAILED)" in startHold,
+        )
+        // 密码框不录音：音频出设备，判据按翻译那一支（blocksTranslation）现跑，不沿用会话缓存
+        assertTrue(
+            "密码类输入框不得开录：按当前 EditorInfo 现跑 blocksTranslation 并出声拒绝",
+            "val field = currentInputEditorInfo" in startHold &&
+                "InputFieldPrivacy.blocksTranslation(field?.inputType, field?.imeOptions ?: 0)" in startHold,
+        )
+        assertFalse(
+            "不得改用 suppressLearning：那把浏览器搜索框的 NO_SUGGESTIONS / TYPE_NULL 也算敏感，整类宿主不能听写",
+            "InputFieldPrivacy.suppressLearning(currentInputEditorInfo" in startHold ||
+                "InputFieldPrivacy.suppressLearning(field" in startHold,
+        )
+        assertTrue(
+            "拒绝时必须给文案（不能静默吃掉这次长按）",
+            "toast(TEXT_VOICE_PRIVATE_FIELD)" in startHold &&
+                "const val TEXT_VOICE_PRIVATE_FIELD" in ime,
+        )
+        // 预热是投机连接：按下即 connect() 会撤销空闲关闭，必须当场重排，否则「只打空格的人」
+        // 每弹一次键盘就把长连接拉活一整个会话（MEM-13）
+        assertTrue(
+            "按下预热后必须补排空闲关闭（MEM-13：长连接不许因为一次短按空格常驻）",
+            "scheduleIdleClose()" in TestSources.blockAfter(ime, "override fun onVoicePrepare("),
+        )
+
+        val imeEnd = TestSources.blockAfter(ime, "override fun onVoiceHoldEnd(")
+        assertTrue("松手提交 / 取消丢弃：commit = !cancelled", "stopRecording(commit = !cancelled)" in imeEnd)
+        assertTrue(
+            "上滑武装必须落到 IME 的取消态",
+            "override fun onVoiceHoldUpdate(cancelArmed: Boolean) = setCancelArmed(cancelArmed)" in ime,
+        )
+        val stopRec = TestSources.blockAfter(ime, "private fun stopRecording(")
+        assertTrue(
+            "录音被外部终止（录音错误 / 焦点被抢 / 换输入框 / 收键盘）时键面提示要一起收",
+            "pinyinKeyboard?.cancelVoiceHold()" in stopRec,
+        )
+        // 闸只拦 HOLD：语音键盘的逗号 / 句号 / 空格同走 commit()，而那一页在 TOGGLE 时仍在录，
+        // 它们的用途正是边说边补标点 —— 写成 `mode != Mode.NONE` 就是「按了没反应」
+        val commitBody = TestSources.blockAfter(ime, "private fun commit(")
+        assertTrue(
+            "录音中按键不得上屏（26 键键盘不再切走，普通键全都按得到）",
+            "if (mode == Mode.HOLD)" in commitBody,
+        )
+        assertFalse(
+            "不得用 mode != Mode.NONE：那会把语音键盘（TOGGLE 连续录音）的标点键一起堵死",
+            "if (mode != Mode.NONE)" in commitBody,
+        )
     }
 
     @Test
@@ -7716,9 +7879,10 @@ class RecentFixesRegressionTest {
      */
     @Test
     fun `保存并重启前必须刷用户学习缓冲`() {
-        val body = blockAfter(codeOf("SettingsActivity.kt"), "private fun restartImeProcess(")
+        // 2026-11-01：重启实现抽到 `ImeRestart`，两个页面共用；锚点跟着实现走
+        val body = blockAfter(codeOf("ImeRestart.kt"), "fun restart(")
         val killAt = body.indexOf("killProcess")
-        assertTrue("restartImeProcess 里找不到 killProcess（重启改道了？）", killAt > 0)
+        assertTrue("ImeRestart.restart 里找不到 killProcess（重启改道了？）", killAt > 0)
         for (call in listOf("UserFrequency.flush()", "SelectionLedger.flush()")) {
             val at = body.indexOf(call)
             assertTrue("保存并重启前缺 $call（SIGKILL 不走 onDestroy，缓冲会安静丢）", at > 0)

@@ -16,11 +16,8 @@ import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-/** 连接状态，用来驱动键盘顶部的状态条 */
-enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
-
 /**
- * Jinn 服务端的 WebSocket 客户端。
+ * Jinn 服务端的 WebSocket 客户端（[SpeechClient] 的自建后端实现）。
  *
  * - 一次听写：[beginTask] -> 若干次 [sendChunk] -> [endTask]
  * - 上滑取消走 [cancelTask]，同样发 is_final 收尾包：服务端 ws_recv.py 的
@@ -34,13 +31,13 @@ class AsrClient(
     private val prefs: Prefs,
     private val onState: (LinkState, String?) -> Unit,
     private val onResult: (RecognitionMessage) -> Unit,
-) {
+) : SpeechClient {
 
     @Volatile
     private var socket: WebSocket? = null
 
     @Volatile
-    var state: LinkState = LinkState.IDLE
+    override var state: LinkState = LinkState.IDLE
         private set
 
     /** 正在发送音频的任务 */
@@ -103,7 +100,7 @@ class AsrClient(
      * 20s 一次的 ping 在息屏后继续唤醒，正是空闲关闭要消掉的那份耗电（MEM-13）。
      * 自动重连不撤也不重排：原来的排程还在，到点照样关。
      */
-    fun connect(force: Boolean = false, userInitiated: Boolean = true) {
+    override fun connect(force: Boolean, userInitiated: Boolean) {
         userClosed = false
         if (userInitiated) cancelIdleClose()
         refreshSendSnapshot()
@@ -135,7 +132,7 @@ class AsrClient(
      *
      * @return 任务 ID；连接未就绪时返回 null，并顺手触发一次重连
      */
-    fun beginTask(): String? {
+    override fun beginTask(): String? {
         // 本次听写的字段快照：录音期间改配置不影响这一段（见 snapPrompt 注释）
         refreshSendSnapshot()
         cancelIdleClose()
@@ -144,12 +141,12 @@ class AsrClient(
         // 避免录音被发到旧服务器又收不到结果
         if (target != connectedUrl) {
             Log.i(TAG, "beginTask: 检测到地址变更 $connectedUrl → $target，强制重连")
-            connect(force = true)
+            connect(force = true, userInitiated = true)
             return null
         }
         if (socket == null || state != LinkState.ONLINE) {
             Log.w(TAG, "beginTask: 连接未就绪, state=$state")
-            connect()
+            connect(force = false, userInitiated = true)
             return null
         }
         val taskId = UUID.randomUUID().toString()
@@ -161,7 +158,7 @@ class AsrClient(
         return taskId
     }
 
-    fun sendChunk(pcmFloat32LittleEndian: ByteArray) {
+    override fun sendChunk(pcmFloat32LittleEndian: ByteArray) {
         val taskId = sendingTask ?: return
         val data = Base64.encodeToString(pcmFloat32LittleEndian, Base64.NO_WRAP)
         send(taskId, data, isFinal = false)
@@ -173,7 +170,7 @@ class AsrClient(
      * @return 收尾包是否真的送出。false（断线 / 无在途任务 / 队列满）时服务端不会给最终结果，
      *         调用方不应再挂等待态，否则状态条要等 60s 兜底才复位
      */
-    fun endTask(): Boolean {
+    override fun endTask(): Boolean {
         val taskId = sendingTask ?: return false
         sendingTask = null
         val ok = send(taskId, "", isFinal = true)
@@ -182,18 +179,33 @@ class AsrClient(
         return ok
     }
 
-    /** 取消：照样收尾以清空服务端缓冲，但结果不再采用。@return 同 [endTask] */
-    fun cancelTask(): Boolean {
-        val taskId = sendingTask ?: return false
+    /**
+     * 取消：照样收尾以清空服务端缓冲，但结果不再采用。
+     *
+     * 判据必须连 `acceptingTask` 一起看（与 [BufferedBatchAsrClient.cancelTask] 同一口径）：
+     * [endTask] 已经把 `sendingTask` 交出去、只剩等最终结果时，若这里拿 `sendingTask == null`
+     * 就退回 false，那道采纳闸门根本不会关 —— 松手之后再取消，晚到的 final 照常上屏。
+     *
+     * @return 收尾包是否真的送出；已经发过收尾包时返回 true（闸门已关，这次取消照样生效）
+     */
+    override fun cancelTask(): Boolean {
+        val taskId = sendingTask
+        if (taskId == null && acceptingTask == null) return false
         sendingTask = null
+        // 先关采纳闸门再发收尾包：回包与取消之间存在竞态，闸门是唯一可靠的判据
         acceptingTask = null
+        if (taskId == null) {
+            Diagnostics.i(TAG, "cancelTask: 收尾包已发过，只丢弃在途结果")
+            Log.i(TAG, "cancelTask: 收尾包已发过，只丢弃在途结果")
+            return true
+        }
         val ok = send(taskId, "", isFinal = true)
         Diagnostics.i(TAG, "cancelTask: $taskId ok=$ok")
         Log.i(TAG, "cancelTask: $taskId")
         return ok
     }
 
-    fun close() {
+    override fun close() {
         userClosed = true
         cancelIdleClose()
         reconnectHandler.removeCallbacks(reconnectRunnable)
@@ -216,7 +228,7 @@ class AsrClient(
      * 关闭窗口必须 ≥ 识别兜底超时（60s），且在途任务未清时不关（见 [onIdleCloseDue]）——
      * 这两条保证「松手后 1~3 秒才回的 final 结果」不会被关连接丢掉。
      */
-    fun scheduleIdleClose(delayMs: Long = IDLE_CLOSE_MS) {
+    override fun scheduleIdleClose(delayMs: Long) {
         idleCloseScheduled = true
         idleCloseDeferrals = 0
         reconnectHandler.removeCallbacks(idleCloseRunnable)
@@ -225,7 +237,7 @@ class AsrClient(
     }
 
     /** 撤销待触发的空闲关闭（正常使用路径一到就调；removeCallbacks 幂等且廉价） */
-    fun cancelIdleClose() {
+    override fun cancelIdleClose() {
         idleCloseScheduled = false
         reconnectHandler.removeCallbacks(idleCloseRunnable)
     }
@@ -245,7 +257,7 @@ class AsrClient(
             } else {
                 idleCloseDeferrals++
                 Diagnostics.i(TAG, "空闲关闭跳过：仍有在途任务，稍后再试（第 $idleCloseDeferrals 次）")
-                scheduleIdleClose()
+                scheduleIdleClose(IDLE_CLOSE_MS)
                 return
             }
         }
@@ -323,9 +335,10 @@ class AsrClient(
             .onFailure { Log.w(TAG, "closeSocket: ${it.message}") }
     }
 
+    /** 状态条文案的唯一出口：异常正文 / 握手英文原话都过一遍凭据刮除（见 [SpeechErrorText]） */
     private fun updateState(next: LinkState, detail: String?) {
         state = next
-        onState(next, detail)
+        onState(next, SpeechErrorText.scrub(detail))
     }
 
     private val listener = object : WebSocketListener() {
@@ -369,7 +382,7 @@ class AsrClient(
             socket = null
             sendingTask = null
             acceptingTask = null
-            updateState(LinkState.OFFLINE, describe(t))
+            updateState(LinkState.OFFLINE, describe(t, response?.code))
             scheduleReconnect()
         }
 
@@ -385,11 +398,22 @@ class AsrClient(
         }
     }
 
-    private fun describe(t: Throwable): String = when (t) {
-        is ConnectException -> "连不上服务端"
-        is SocketTimeoutException -> "连接超时"
-        is UnknownHostException -> "地址无法解析"
-        else -> t.message?.take(40) ?: "连接失败"
+    /**
+     * 失败原因：网络异常按类型给中文，其余带上握手状态码。
+     *
+     * 状态码在这里是唯一能定性的一句话：把 `ws://` 指到普通 HTTP 端口（最常见的一次配错）
+     * 时 OkHttp 只会抛 `Expected HTTP 101 response but was '404 Not Found'`，截 40 字后状态条上
+     * 只剩半句英文；反代加了鉴权则是 401 / 403。四家的判据与文案保持一致（见 [AliAsrClient.describe]）。
+     */
+    private fun describe(t: Throwable, code: Int?): String = when {
+        t is ConnectException -> "连不上服务端"
+        t is SocketTimeoutException -> "连接超时"
+        t is UnknownHostException -> "地址无法解析"
+        code == 401 || code == 403 -> "鉴权失败（HTTP $code）"
+        code != null -> "连接失败（HTTP $code）"
+        // 先刮再截：反过来（`scrub(t.message?.take(40))`）会把长正文里的鉴权头切成
+        // 「…: Bearer sk-pr」这种半截值 —— `AUTH_PREFIX` 要 ≥6 个字符才算,半截值不被识别，照原样上屏
+        else -> SpeechErrorText.scrub(t.message)?.take(40) ?: "连接失败"
     }
 
     private companion object {

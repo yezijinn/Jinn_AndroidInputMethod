@@ -1,0 +1,717 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  语音转为文字页：从设置页「语音转为文字」按钮进入。
+  原设置页的四块语音配置（总开关 / 授权麦克风 / NAS 地址与识别选项）整体搬到这里，行为不变：
+  总开关关掉时，授权麦克风卡与服务端卡整块隐藏；关闭状态下保存不校验 host / port。
+
+  保存入口在页面顶部（与设置页同款主按钮）：总开关 / 地址 / 端口 / 语言 / 提示词按它落盘；
+  三个勾选框与默认键盘样式是改动即写（原设置页语义），文案照实说（见 VoiceSettingsActivity.TEXT_DESC）。
+  新文案全部由 VoiceSettingsActivity 的 TEXT_* 常量下发（strings.xml 默认不改动），
+  故本文件的新控件一律不写 android:text；复用既有 @string/settings_* 是允许的。
+  「在线语音服务」列表由代码生成（VoiceProviders 目录 + container_providers），
+  行是**本卡内的纯行**（行间 1dp 分隔线），不要再逐行套一层卡。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PageRoot"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/PageTitle"
+            android:id="@+id/text_voice_title"
+            android:layout_height="wrap_content" />
+
+        <Button
+            style="@style/PageCloseButton"
+            android:id="@+id/btn_voice_close" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/PageDesc"
+        android:id="@+id/text_voice_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <!-- 保存并重启：置顶，写 Prefs 后重启输入法进程（与设置页同一套 ImeRestart）。
+         只有「要按保存才写」的项（总开关 / 地址 / 端口 / 语言 / 提示词）靠它落盘；
+         三个勾选框与默认键盘样式是改动即写，文案已如实说明（TEXT_DESC）。 -->
+    <Button
+        style="@style/SettingsButtonPrimary"
+        android:id="@+id/btn_voice_save" />
+
+    <TextView
+        style="@style/CardHint"
+        android:id="@+id/text_voice_save_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/SectionTitle"
+                android:id="@+id/label_voice_server"
+                android:layout_height="wrap_content" />
+
+            <!-- 识别后端：自建 CapsWriter / 讯飞在线。选中哪个，下面就只显示它那张配置卡
+                 （NAS 地址卡 vs 讯飞三件凭据卡，见 VoiceSettingsActivity.applyBackendVisibility）。
+                 该卡随总开关隐藏（关掉语音就没有可配的后端）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_voice_backend">
+
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/label_voice_backend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <com.jinn.inputmethod.UserAwareSpinner
+                    style="@style/SettingsField"
+                    android:id="@+id/spinner_voice_backend"
+                    android:layout_width="match_parent"
+                    android:spinnerMode="dropdown" />
+            </LinearLayout>
+
+            <!-- 语音输入总开关：默认关闭；关闭时语音完全沉寂（不建实例、长按空格无效），
+                 下面两张卡都随它显隐。开关变更需重启输入法进程才生效。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_voice_master">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/text_voice_master_title"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <Switch
+                        android:id="@+id/switch_voice_input"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp" />
+                </LinearLayout>
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_voice_input_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/settings_voice_input_desc" />
+            </LinearLayout>
+
+            <!-- 授权麦克风：状态 + 单个授权按钮（随总开关整体隐藏） -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_mic_permission">
+
+                <TextView
+                    android:id="@+id/text_mic_state"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="@string/settings_grant_mic"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_grant"
+                    android:layout_width="match_parent"
+                    android:text="@string/settings_grant_mic" />
+            </LinearLayout>
+
+            <!-- 服务端：地址 + 端口 + 固定 / 语言 + 默认键盘样式 / 提示词 / 识别选项 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_voice_server">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SettingsLabel"
+                            android:text="@string/settings_host" />
+
+                        <EditText
+                            style="@style/SettingsField"
+                            android:id="@+id/edit_host"
+                            android:layout_width="match_parent"
+                            android:hint="@string/settings_host"
+                            android:importantForAutofill="no"
+                            android:inputType="textUri"
+                            android:singleLine="true" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SettingsLabel"
+                            android:text="@string/settings_port" />
+
+                        <EditText
+                            style="@style/SettingsField"
+                            android:id="@+id/edit_port"
+                            android:layout_width="match_parent"
+                            android:hint="@string/settings_port"
+                            android:importantForAutofill="no"
+                            android:inputType="number"
+                            android:singleLine="true" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:gravity="center_vertical"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SettingsLabel"
+                            android:text="@string/settings_lock" />
+
+                        <CheckBox
+                            android:id="@+id/check_lock_server"
+                            android:layout_width="match_parent"
+                            android:layout_height="40dp"
+                            android:buttonTint="@color/accent"
+                            android:gravity="center"
+                            android:text="@string/settings_lock_short"
+                            android:textColor="@color/text_primary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 语言 + 默认键盘样式：同行，各占一半 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SettingsLabel"
+                            android:text="@string/settings_language" />
+
+                        <com.jinn.inputmethod.UserAwareSpinner
+                            style="@style/SettingsField"
+                            android:id="@+id/spinner_language"
+                            android:layout_width="match_parent"
+                            android:spinnerMode="dropdown" />
+                    </LinearLayout>
+
+                    <Space
+                        android:layout_width="8dp"
+                        android:layout_height="1dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SettingsLabel"
+                            android:text="@string/settings_default_mode" />
+
+                        <com.jinn.inputmethod.UserAwareSpinner
+                            style="@style/SettingsField"
+                            android:id="@+id/spinner_default_mode"
+                            android:layout_width="match_parent"
+                            android:spinnerMode="dropdown" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/settings_prompt" />
+
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_prompt"
+                    android:layout_width="match_parent"
+                    android:hint="@string/settings_prompt"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:minHeight="64dp" />
+
+                <!-- 识别选项：两个勾选框一行（勾选即落盘） -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:orientation="horizontal">
+
+                    <CheckBox
+                        android:id="@+id/check_strip"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_strip_punc"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp" />
+
+                    <CheckBox
+                        android:id="@+id/check_composing"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_composing"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 讯飞在线听写：三件凭据（与翻译凭据同一套 CredentialCrypto 加密落盘）。
+                 选中「自建服务端」时整卡 GONE，NAS 地址卡反之；本页另有 FLAG_SECURE 防截屏。
+                 文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_xf_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_xf_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_xf_app_id"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_xf_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_xf_api_secret"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏：APIKey 与 APISecret 平时是密码型（同屏防肩窥），
+                     贴完需要核对自己贴了什么时临时点亮（VoiceSettingsActivity.applyCredentialVisibility）。
+                     本项只是显示态，不属于配置，保存时不写盘。 -->
+                <CheckBox
+                    android:id="@+id/check_xf_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- OpenAI 兼容转写：Base URL / 模型名 / API Key（Key 与讯飞同一套加密落盘 + 掩码）。
+                  选中「OpenAI 兼容」时只显示这张卡，另外两张 GONE；本页已有 FLAG_SECURE。
+                  文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_oai_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_oai_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_oai_base"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_oai_model"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_oai_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切 Key 框（URL 与模型名不是秘密）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_oai_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 阿里云百炼实时识别（Paraformer / Qwen-ASR）：WS 地址 / 模型名 / API Key。
+                   端点让用户填完整 WS URL（专属 Workspace 域名各家不同），Key 走同一套加密落盘 + 掩码。
+                   选中「阿里云百炼」时只显示这张卡，另外三张 GONE；本页已有 FLAG_SECURE。
+                   文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_ali_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_ali_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ali_ws_url"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ali_model"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_ali_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切 Key 框（地址与模型名不是秘密）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_ali_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 腾讯云一句话识别（SentenceRecognition，TC3-HMAC-SHA256 签名）：两件凭据 + 引擎型号。
+                  选中「腾讯云」时只显示这张卡，另外五张 GONE；Key 走同一套加密落盘 + 掩码。
+                  文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_tencent_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_tencent_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_tencent_secret_id"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_tencent_secret_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_tencent_engine"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切 SecretKey（SecretId 与引擎型号不是秘密）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_tencent_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Azure AI Speech 短音频识别 REST：Base URL / 订阅密钥 / 语言码。
+                   选中「Azure」时只显示这张卡，另外五张 GONE；密钥走同一套加密落盘 + 掩码。
+                   文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_azure_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_azure_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_azure_base_url"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_azure_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_azure_language"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切订阅密钥（地址与语言码不是秘密）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_azure_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 百度智能云短语音识别标准版：API Key（AK）/ Secret Key（SK）/ dev_pid。
+                   选中「百度」时只显示这张卡，另外七张 GONE；两件凭据走同一套加密落盘 + 掩码。
+                   文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_baidu_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_baidu_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_baidu_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_baidu_secret_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_baidu_dev_pid"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切 Secret Key（AK 与 dev_pid 公开可见即可）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_baidu_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Deepgram Pre-recorded：API Key / 模型 / 语言码（单次 POST，裸 WAV）。
+                   选中「Deepgram」时只显示这张卡，另外七张 GONE；Key 走同一套加密落盘 + 掩码。
+                   文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不改）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_deepgram_credentials"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_deepgram_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_deepgram_api_key"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_deepgram_model"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <EditText
+                    style="@style/SettingsField"
+                    android:id="@+id/edit_deepgram_language"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:singleLine="true" />
+
+                <!-- 显示 / 隐藏只切 API Key（模型与语言码不是秘密）；只是显示态，不写盘 -->
+                <CheckBox
+                    android:id="@+id/check_deepgram_show"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:buttonTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 语音测试：一次自包含的 3 秒识别，**不依赖 IME 是否正在输入**（自己新建客户端与采集器）。
+                 识别正文直接落进 edit_voice_test，结论落 text_voice_test_result —— 用户能在同一个位置
+                 看出到底有没有效果。总开关关着也照跑（诊断手段），结论里会注明。
+                 文案全部由 VoiceSettingsActivity 的 TEXT_* 下发（strings.xml 不动）。 -->
+            <TextView
+                style="@style/SectionTitle"
+                android:id="@+id/label_voice_test"
+                android:layout_height="wrap_content" />
+
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_voice_test">
+
+                <EditText
+                    style="@style/SettingsFieldMultiline"
+                    android:id="@+id/edit_voice_test"
+                    android:layout_width="match_parent"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:minHeight="64dp" />
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_voice_test"
+                    android:layout_width="match_parent" />
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_voice_test_result"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/SectionTitle"
+                android:id="@+id/label_voice_providers"
+                android:layout_height="wrap_content" />
+
+            <!-- 在线语音服务：条目由代码按 VoiceProviders 生成（分组标题 + 每行「名称 · 特点」+「文档」按钮）。
+                 行是**本卡内的纯行**（行间 1dp 分隔线），别再逐行套一层卡（卡套卡会双层描边）。 -->
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_voice_providers">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_voice_providers_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <LinearLayout
+                    android:id="@+id/container_providers"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

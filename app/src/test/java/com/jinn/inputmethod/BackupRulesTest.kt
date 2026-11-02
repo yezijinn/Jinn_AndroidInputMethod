@@ -82,6 +82,11 @@ class BackupRulesTest {
             "file" to "user_picks.txt",
             "file" to "user_picks.key",
             "file" to "user_picks.key.tmp",
+            // 凭据的软件密钥件（2026-11-01）：无锁屏设备上凭据是 `v2:` 密文，密钥就躺在 filesDir 里 ——
+            // 密钥与密文一起出机等于把「解锁的钥匙」也交出去，而 prefs 早已被排除，只剩这把钥匙裸奔。
+            // 取源码常量而不是写字面量：改名必须同时改规则，否则这条当场红（规则会静默排空路径）。
+            "file" to LocalCredentialCipher.FILE_NAME,
+            "file" to LocalCredentialCipher.FILE_NAME + ".tmp",
             "database" to "jinn_clipboard.db",
             "database" to "jinn_clipboard.db-journal",
             "database" to "jinn_clipboard.db-wal",
