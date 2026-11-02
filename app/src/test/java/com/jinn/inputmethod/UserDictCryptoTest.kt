@@ -700,6 +700,22 @@ class UserDictCryptoTest {
             "validatePassword 收 CharSequence",
             Regex("""fun validatePassword\(password: CharSequence\)""").containsMatchIn(TestSources.codeSource("ConfigCrypto.kt")),
         )
+        // 设置页的配置备份是同一类密码框：判据不能只扫词库页（第 90 轮）
+        val settings = TestSources.codeSource("SettingsActivity.kt")
+        for (bad in listOf("pwd1.text.toString()", "pwd2.text.toString()", "pwd.text.toString()")) {
+            assertFalse("设置页不得把密码框内容转成 String：$bad", bad in settings)
+        }
+        assertTrue("设置页导出校验直接吃 Editable", "ConfigCrypto.validatePassword(pwd1.text)" in settings)
+        assertTrue("设置页导入校验直接吃 Editable", "ConfigCrypto.validatePassword(pwd.text)" in settings)
+        assertTrue("设置页两次输入用 TextUtils 比对", "TextUtils.equals(pwd1.text, pwd2.text)" in settings)
+        assertTrue(
+            "设置页导出签名收 CharArray",
+            Regex("""private fun doExportConfig\(includeClipboard: Boolean, includeDicts: Boolean, password: CharArray\)""").containsMatchIn(settings),
+        )
+        assertTrue(
+            "设置页导入签名收 CharArray",
+            Regex("""private fun unlockConfigBackup\(uri: Uri, password: CharArray\)""").containsMatchIn(settings),
+        )
     }
 
     // ── N8：配置包导出的 MIME ──────────────────────────────────

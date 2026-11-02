@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.text.TextUtils
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -959,9 +960,7 @@ class SettingsActivity : ComponentActivity() {
         exportDialog = dialog
         // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val p1 = pwd1.text.toString()
-            val p2 = pwd2.text.toString()
-            val check = ConfigCrypto.validatePassword(p1)
+            val check = ConfigCrypto.validatePassword(pwd1.text)
             when {
                 // 同时给「输入框红字」与「Toast」：EditText 的 error 气泡几秒就消失，
                 // 慢机 + 亮屏下很容易被当成「点了没反应」
@@ -969,25 +968,28 @@ class SettingsActivity : ComponentActivity() {
                     pwd1.error = check.reason
                     Toast.makeText(this, check.reason, Toast.LENGTH_LONG).show()
                 }
-                p1 != p2 -> {
+                !TextUtils.equals(pwd1.text, pwd2.text) -> {
                     pwd2.error = TEXT_PWD_MISMATCH
                     Toast.makeText(this, TEXT_PWD_MISMATCH, Toast.LENGTH_LONG).show()
                 }
                 else -> {
+                    // Editable 直接转 CharArray，不产生不可擦除的 String 副本；成功才清框，失败留着改
+                    val chars = CharArray(pwd1.text.length) { pwd1.text[it] }
+                    pwd1.text.clear()
+                    pwd2.text.clear()
                     dialog.dismiss()
-                    doExportConfig(cbClipboard.isChecked, cbDicts.isChecked, p1)
+                    doExportConfig(cbClipboard.isChecked, cbDicts.isChecked, chars)
                 }
             }
         }
     }
 
-    private fun doExportConfig(includeClipboard: Boolean, includeDicts: Boolean, password: String) {
+    private fun doExportConfig(includeClipboard: Boolean, includeDicts: Boolean, password: CharArray) {
         btnConfigExport.isEnabled = false
         textConfigHint.text = TEXT_EXPORTING
         showBusy(TEXT_BUSY_EXPORT)
         Diagnostics.i(TAG, "exportConfig: 开始打包并加密（剪贴板=$includeClipboard 词库=$includeDicts）")
         // 密码以 CharArray 传进加解密层，用完立刻清零；全程不写日志、不落盘
-        val chars = password.toCharArray()
         Thread {
             // 配置导出要打 zip + AES-GCM，降后台优先级（BUG.md L-1194）
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
@@ -996,12 +998,12 @@ class SettingsActivity : ComponentActivity() {
             val result = runCatching {
                 ConfigBackupManager.export(
                     this@SettingsActivity,
-                    ConfigBackupManager.ExportOptions(includeClipboard, includeDicts, chars),
+                    ConfigBackupManager.ExportOptions(includeClipboard, includeDicts, password),
                 )
             }.onFailure {
                 Diagnostics.w(TAG, "exportConfig: 打包异常 ${it.javaClass.simpleName}")
             }.getOrNull()
-            chars.fill('\u0000')
+            password.fill('\u0000')
             // 本次结果在后台线程取出（原因随返回值，不读 Manager 的共享字段）——避免快速连点串读（BUG.md L-1358）
             val outcome = result?.value
             val reason = result?.reason ?: TEXT_EXPORT_FAIL
@@ -1178,31 +1180,32 @@ class SettingsActivity : ComponentActivity() {
             textConfigHint.text = TEXT_IMPORT_CANCELED
         }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val value = pwd.text.toString()
-            val check = ConfigCrypto.validatePassword(value)
+            val check = ConfigCrypto.validatePassword(pwd.text)
             if (check is ConfigCrypto.PasswordCheck.Invalid) {
                 pwd.error = check.reason
                 Toast.makeText(this, check.reason, Toast.LENGTH_LONG).show()
             } else {
+                // Editable 直接转 CharArray，不产生不可擦除的 String 副本；成功才清框
+                val chars = CharArray(pwd.text.length) { pwd.text[it] }
+                pwd.text.clear()
                 dialog.dismiss()
-                unlockConfigBackup(uri, value)
+                unlockConfigBackup(uri, chars)
             }
         }
     }
 
     /** 解密（PBKDF2 很慢，必须在后台线程）→ 成功后弹清单确认框，失败给出可重试的弹框 */
-    private fun unlockConfigBackup(uri: Uri, password: String) {
+    private fun unlockConfigBackup(uri: Uri, password: CharArray) {
         btnConfigImport.isEnabled = false
         textConfigHint.text = TEXT_DECRYPTING
         showBusy(TEXT_BUSY_DECRYPT)
-        val chars = password.toCharArray()
         Thread {
             // 解包 + 解锁是重活，降后台优先级（BUG.md L-1194）
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            val result = runCatching { ConfigBackupManager.unlock(this@SettingsActivity, uri, chars) }
+            val result = runCatching { ConfigBackupManager.unlock(this@SettingsActivity, uri, password) }
                 .onFailure { Diagnostics.w(TAG, "importConfig: 解锁异常 ${it.javaClass.simpleName}") }
                 .getOrElse { ConfigBackupManager.UnlockResult.ReadFailed }
-            chars.fill('\u0000')
+            password.fill('\u0000')
             val zip = (result as? ConfigBackupManager.UnlockResult.Ok)?.zip
             val info = zip?.let { runCatching { ConfigBackupManager.inspect(it) }.getOrNull() }
             runOnUiThread {
