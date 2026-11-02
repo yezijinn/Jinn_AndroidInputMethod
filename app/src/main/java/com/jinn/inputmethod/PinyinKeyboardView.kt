@@ -3855,7 +3855,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
+
     // ── 密码模式（长按「数字」）─────────────────────────────
 
     /**
@@ -3962,7 +3962,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         commitComposing()
         listener?.onCommitText(digit)
     }
-
+    /** 符号层：候选栏渲染符号分组标签（横向可滚动），点击切换当前符号分组（不滑动切组） */
     private fun renderSymbolGroups() {
         showPinyin(null)
         clearCandidateList()

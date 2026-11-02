@@ -141,6 +141,12 @@ class UpdateCheckerTest {
                 )
             }
         }
+        // 同族第三次复发（L-130 / L-1359 / L-1555）：符号层分组标签的 KDoc 一度停在密码模式段首，
+        // renderSymbolGroups 上方反而没有说明。换位归位后把它纳入这份白名单，防止再被挤走。
+        val kb = TestSources.rawSourceOfShortName("PinyinKeyboardView.kt")
+        val head = kb.substringBefore("private fun renderSymbolGroups()").trimEnd()
+        assertTrue("renderSymbolGroups 上方没有紧邻的 KDoc", head.endsWith("*/"))
+        assertTrue("renderSymbolGroups 上方不是 KDoc 形态", head.lastIndexOf("/**") > 0)
     }
 
     /**
