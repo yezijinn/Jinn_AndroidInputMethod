@@ -69,7 +69,8 @@ internal object GalleryInsert {
      * 保留张数上限：由**生效的**总字节上限与单张上限反推（标准档 60MB ÷ 20MB = 3），再加受保护的最近两张。
      *
      * 不写死魔数（L-1007）：三者在单张上限下互斥，写死会让后来调参的人以为「放宽张数就能多留」。
-     * 折半后仍是 3（30MB ÷ 20MB = 1，再加 2），与 [MAX_PENDING] 的对齐关系不破。
+     * 折半后仍是 3（30MB ÷ 20MB = 1，再加 2）—— 注意这里只对齐了**张数**：折半档的字节预算（30MB）
+     * 装不下三张满额（3×20MB），所以队内文件必须由 [putPending] 额外保护，否则最旧那张会被字节判掉。
      */
     private fun keepFiles(effectiveBytes: Long = effectiveCacheBytes): Int =
         (effectiveBytes / MAX_BYTES).toInt() + PROTECTED_RECENT
@@ -107,9 +108,10 @@ internal object GalleryInsert {
     /**
      * 排队上限（`BUG.md` L-1041）。
      *
-     * 与缓存裁剪对齐：最新 [PROTECTED_RECENT] 张无条件保留，第 3 张也必定留着 ——
+     * 与缓存裁剪对齐：最新 [PROTECTED_RECENT] 张无条件保留，第 3 张在**标准档**也必定留着 ——
      * 2 × [MAX_BYTES] + [MAX_BYTES] 正好等于 [MAX_CACHE_BYTES]，不触发字节淘汰。
-     * 所以队列里最多这三张对应的文件都还在，不会被 [trimCache] 删掉（再多就说不准了）。
+     * ⚠ 折半档（低内存）下这个等式不成立：预算只有 30MB，三张满额会淘汰最旧那张 ⇒
+     * 靠 [putPending] 把队内文件计入保护位来保证「队列里最多这三张对应的文件都还在」。
      */
     private const val MAX_PENDING = 3
 
@@ -172,16 +174,19 @@ internal object GalleryInsert {
     /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（连带删掉它的明文暂存件） */
     fun putPending(file: File, mime: String, hostKey: String?) {
         val dropped = ArrayList<File>(1)
+        var queued = 0
         synchronized(pendingLock) {
             pending.addLast(Pending(Picked(file, mime, hostKey), System.currentTimeMillis()))
             while (pending.size > MAX_PENDING) {
                 pending.removeFirst().picked.file.let { dropped.add(it) }
             }
+            queued = pending.size
         }
         // 丢弃即删（AI2 A-193）：队列里的图还没提交给宿主，留着没人会用；
         // 只等下次选图的 trimCache 回收的话，用户此后不再选图就一直占着明文。
         dropped.forEach { runCatching { it.delete() } }
-        trimCache(file.parentFile)
+        // 队内文件一并保护：否则折半档的字节预算会把最旧那张判掉，宿主随后读到「图片已失效」
+        trimCache(file.parentFile, queued)
     }
 
     /**
@@ -516,11 +521,22 @@ internal object GalleryInsert {
         return out
     }
 
-    /** 目录内按「保护最近若干张 + 保留张数 + 总字节」清理（判据见 [staleFilesForTrim]） */
-    private fun trimCache(dir: File?) {
+    /**
+     * 目录内按「保护最近若干张 + 保留张数 + 总字节」清理（判据见 [staleFilesForTrim]）。
+     *
+     * [extraProtect] 用于把**队内待插入**的文件也纳入保护：清理按字节预算淘汰，而折半档的预算
+     * 与 [MAX_PENDING] 互斥 —— 三张都在队里时，最旧那张会被预算判掉，`commit` 随即报「图片已失效」
+     * （队内文件本该由队列自己管理，不该被字节清理顺手删掉）。
+     */
+    private fun trimCache(dir: File?, extraProtect: Int = 0) {
         val files = dir?.listFiles() ?: return
         val entries = files.sortedByDescending { it.lastModified() }.map { it to it.length() }
-        staleFilesForTrim(entries, keepFiles(), effectiveCacheBytes).forEach { it.delete() }
+        staleFilesForTrim(
+            entries,
+            keepFiles(),
+            effectiveCacheBytes,
+            protectRecent = PROTECTED_RECENT + extraProtect,
+        ).forEach { it.delete() }
     }
 
     /**

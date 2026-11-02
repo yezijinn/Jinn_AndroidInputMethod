@@ -150,6 +150,34 @@ class GalleryInsertTest {
     }
 
     /**
+     * 队内待插入的文件必须纳入保护（折半档的字节预算装不下三张满额）。
+     *
+     * 保留张数只对齐了**张数**（折半后仍是 3），但生效字节只有 30MB —— 三张各 20MB 时
+     * 最旧那张会被字节判掉，宿主随后报「图片已失效」。所以入队处要把队长作为额外保护位透传给清理。
+     */
+    @Test
+    fun 队内文件要纳入清理的保护位() {
+        val mb = 20L * 1024 * 1024
+        val entries = (1..3).map { entry("pick_$it", mb) } // 折半档：预算 30MB，三张 60MB
+        val without = GalleryInsert.staleFilesForTrim(entries, keepFiles = 3, maxBytes = 30L * 1024 * 1024)
+        assertEquals("折半档下仅靠张数保护不够", listOf("pick_3"), without.map { it.name })
+        // 保护位 = 默认 2 张 + 队内 3 张（PROTECTED_RECENT 是私有的，这里按语义取 5）
+        val with = GalleryInsert.staleFilesForTrim(
+            entries,
+            keepFiles = 3,
+            maxBytes = 30L * 1024 * 1024,
+            protectRecent = 5,
+        )
+        assertTrue("队内三张都保护住后不该再删", with.isEmpty())
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        assertTrue("入队要把队长透传给清理", "trimCache(file.parentFile, queued)" in src)
+        assertTrue(
+            "清理要把额外保护位加进 protectRecent",
+            "protectRecent = PROTECTED_RECENT + extraProtect" in src,
+        )
+    }
+
+    /**
      * 能力标记必须由 IME 重放（L-998）。
      *
      * 视图重建（换肤 / 反馈开关 / 符号布局变更）换掉整棵树，视图字段回落 `false`；
