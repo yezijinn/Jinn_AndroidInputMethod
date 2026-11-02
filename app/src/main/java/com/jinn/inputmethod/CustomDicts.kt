@@ -30,7 +30,7 @@ import org.tukaani.xz.XZOutputStream
  *
  * 「快捷补充」页（[CustomDictEditActivity]）编辑的是同目录下的**源文本** `custom_user.src.txt`
  * （扩展名不是 `.xz`，引擎不装载它）：导入与快捷补充保存后都写这一份，两个入口因此共享同一内容
- * （见 [writeSource] / [readSource]）。
+ * （见 [saveHuman] / [readSource]）。
  *
  * 职责边界：本层只做「校验 + 归一 + 打包 + 原子落盘」；装载复用 `PinyinEngine.loadExtensionDict`
  * 扫 `dicts/` 目录下全部 `.xz` 的既有路径，备份复用 `ConfigBackup` 的 dicts 节（导出按目录收，

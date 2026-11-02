@@ -22,7 +22,7 @@ import java.io.FileOutputStream
  * 快捷补充：直接编辑自定义词库的**源文本**，保存即等于走一遍导入。
  *
  * 与「导入 .txt」共享同一份内容：导入成功后把原文写进 `dicts/custom_user.src.txt`
- * （见 [CustomDicts.writeSource]），本页打开时回显；本页保存也写同一文件。所以两个入口
+ * （见 [CustomDicts.saveHuman]），本页打开时回显；本页保存也写同一文件。所以两个入口
  * 互为「同一份文本的两种打法」，用户先导入再进来补两行也不会互相覆盖。
  *
  * 保存结果用 `RESULT_OK`（带条数与跳过行数）回传给 [DictManagerActivity]，由它统一提示并

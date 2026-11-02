@@ -3851,10 +3851,10 @@ class RecentFixesRegressionTest {
                 "L-809 守卫缺失：refreshCandidateBar 的空态分支也必须复位指纹",
                 "clearCandidateList()" in blockAfter(kb, "private fun refreshCandidateBar()"),
             )
-            // 「唯一出口」守卫：除 clearCandidateList（复位）与 renderCandidateItems（自己管指纹）之外，
+            // 「唯一出口」守卫：除 recycleCandidateViews（字面清容器）之外，
             // 任何地方都不得直接清这个容器 —— 那正是 L-809 的成因。注释已由 codeOf 剥掉，不计入。
             assertEquals(
-                "L-809：viewCandidateList.removeAllViews() 只允许出现在 clearCandidateList 与 renderCandidateItems",
+                "L-809：viewCandidateList.removeAllViews() 只允许出现在 recycleCandidateViews（clearCandidateList / renderCandidateItems 经它清）",
                 1,
                 Regex("""viewCandidateList\.removeAllViews\(\)""").findAll(kb).count(),
             )
