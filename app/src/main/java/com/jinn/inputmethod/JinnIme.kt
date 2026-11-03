@@ -1529,14 +1529,19 @@ class JinnIme : InputMethodService() {
      * 所以提示照发，让用户知道还可以长按。
      */
     private fun fallbackToClipboard(item: ClipboardDb.Item, bytes: ByteArray) {
-        val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
-        ui.post {
-            if (ok) {
-                currentInputConnection?.let { connection ->
-                    runCatching { connection.performContextMenuAction(android.R.id.paste) }
+        // 写盘必须在后台：`copyToSystemClipboard` → `GalleryInsert.stageForInsert` 会把整张原图
+        // （≤20MB）落进 cache 并顺带裁剪目录。两条调用来源（宿主拒收 / URI 构造失败）都在 `ui.post`
+        // 里，同步做就是主线程 IO；搬进长活池后它也回到与选图/点图同一条串行线程，裁剪不再乱序。
+        BackgroundIo.runLong {
+            val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
+            ui.post {
+                if (ok) {
+                    currentInputConnection?.let { connection ->
+                        runCatching { connection.performContextMenuAction(android.R.id.paste) }
+                    }
                 }
+                toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED)
             }
-            toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED)
         }
     }
 

@@ -24,6 +24,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 
 /**
@@ -259,6 +260,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             // ✕ 与返回键走同一个确认入口（有未保存改动时不能直接丢）
             setOnClickListener { confirmExit() }
         }
+        registerBackHandling()
         findViewById<TextView>(R.id.label_voice_server).text = TEXT_SECTION_SERVER
         findViewById<TextView>(R.id.label_voice_backend).text = TEXT_BACKEND_LABEL
         findViewById<TextView>(R.id.label_voice_providers).text = TEXT_SECTION_PROVIDERS
@@ -1580,10 +1582,15 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 「继续编辑」只收对话框，不碰任何状态；「放弃并退出」把脏标记清掉再 `finish()`
      * （否则退出过程中若再触发一次确认，会问第二遍）。
      */
-    // 覆盖而非 OnBackPressedDispatcher：本页要拦的是「返回键 = 退出」，与 ✕ 同一入口
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun onBackPressed() {
-        confirmExit()
+    /**
+     * 返回键入口（与 ✕ 共用 [confirmExit]）。
+     *
+     * 不覆写 `onBackPressed`：`ComponentActivity` 的那个方法带 `@CallSuper`，覆写不调 super 就是
+     * lint `MissingSuperCall`（error 级，`lintDebug` 直接红）。`OnBackPressedDispatcher` 的回调时机
+     * 与覆写等价，且「继续编辑」分支不会被系统先行 `finish()`。
+     */
+    private fun registerBackHandling() {
+        onBackPressedDispatcher.addCallback(this) { confirmExit() }
     }
 
     private fun confirmExit() {

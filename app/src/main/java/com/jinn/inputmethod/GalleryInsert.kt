@@ -182,6 +182,9 @@ internal object GalleryInsert {
         return "$pkg#${i.fieldId}#${i.inputType}#${i.imeOptions}"
     }
 
+    /** 待插入张数（锁内取）：裁剪时要按它把队内文件计入保护位，见 [trimCache] 的 `extraProtect` */
+    private fun pendingSize(): Int = synchronized(pendingLock) { pending.size }
+
     /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（连带删掉它的明文暂存件） */
     fun putPending(file: File, mime: String, hostKey: String?) {
         val dropped = ArrayList<File>(1)
@@ -383,7 +386,10 @@ internal object GalleryInsert {
             }
             val named = File(dir, "clip_$stamp.${extOf(mime)}")
             val staged = finalize(temp, named) ?: return null
-            trimCache(dir)
+            // 裁剪必须看得见待插入队列：这条入档链与 `putPending` 不是同一个调用点
+            // （`fallbackToClipboard` / 剪贴板历史页都在这里落盘），只按「最近两张」保护时，
+            // 队列里第三张会被字节预算判掉，随后 `commit` 报「图片已失效」。
+            trimCache(dir, pendingSize())
             staged
         } catch (t: Throwable) {
             temp.delete()

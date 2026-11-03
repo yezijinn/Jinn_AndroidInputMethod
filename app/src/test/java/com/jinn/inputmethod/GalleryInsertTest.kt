@@ -205,6 +205,16 @@ class GalleryInsertTest {
             "清理要把额外保护位加进 protectRecent",
             "protectRecent = PROTECTED_RECENT + extraProtect" in src,
         )
+        // 第二条入档链（`stageForInsert`：面板点图 / 「复制到剪贴板」回退 / 历史页复制）不在
+        // `putPending` 里，它自己的裁剪同样要看见队列 —— 否则队列里第三张会被字节预算判掉。
+        assertTrue(
+            "贴图落盘时的清理也要把队长算进去",
+            "trimCache(dir, pendingSize())" in TestSources.blockAfter(src, "fun stageForInsert("),
+        )
+        assertTrue(
+            "队长必须在锁内取（队列写侧在 IO 线程）",
+            Regex("""private fun pendingSize\(\)[^\n]*synchronized\(pendingLock\)""").containsMatchIn(src),
+        )
     }
 
     /**

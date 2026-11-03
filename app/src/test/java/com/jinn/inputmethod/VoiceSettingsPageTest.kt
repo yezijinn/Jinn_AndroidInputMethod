@@ -555,10 +555,13 @@ class VoiceSettingsPageTest {
             "✕ 必须走 confirmExit",
             "confirmExit()" in TestSources.blockAfter(code, "R.id.btn_voice_close"),
         )
-        assertTrue(
-            "返回键必须走同一个 confirmExit",
-            "confirmExit()" in TestSources.blockAfter(code, "override fun onBackPressed"),
-        )
+        // 返回键不覆写 onBackPressed（`ComponentActivity.onBackPressed` 带 @CallSuper，
+        // 覆写不调 super 必报 lint MissingSuperCall），改 OnBackPressedDispatcher 回调；
+        // 出口必须仍是同一个 confirmExit，也不能绕过确认直接 finish
+        val back = TestSources.blockAfter(code, "onBackPressedDispatcher.addCallback(this)")
+        assertTrue("返回键必须走同一个 confirmExit", "confirmExit()" in back)
+        assertFalse("返回键不许绕过确认直接 finish", "finish()" in back)
+        assertFalse("onBackPressed 覆写必须删掉（否则 lint 仍红）", "override fun onBackPressed" in code)
         assertFalse("✕ 不许绕过确认直接 finish", "setOnClickListener { finish() }" in code)
     }
 
@@ -584,6 +587,18 @@ class VoiceSettingsPageTest {
                 "（APPID、AK、SecretId、URL、模型名、引擎、语言码、dev_pid 不是密码）",
             8, Regex("""android:inputType="textPassword"""").findAll(layout).count(),
         )
+        // 明文凭据不许随实例状态过 Binder：旋转 / 分屏 / 后台回收时 `TextView.onSaveInstanceState`
+        // 会把框里正文写进 `android:viewHierarchyState` 交给 system_server，`FLAG_SECURE` 挡不住这条。
+        // 同仓 `activity_openai_settings` / `activity_translation_settings` 的凭据框早就关掉了它。
+        val passwordBlocks = Regex("""<EditText[^>]*android:inputType="textPassword"[^>]*/>""")
+            .findAll(layout).toList()
+        assertEquals("密码框块数解析失败（布局改动要同步改这段判据）", 8, passwordBlocks.size)
+        for (block in passwordBlocks) {
+            assertTrue(
+                "密码框必须 android:saveEnabled=\"false\"：${block.value.take(90)}",
+                "android:saveEnabled=\"false\"" in block.value,
+            )
+        }
 
         // 四张卡互斥：按后端切；总开关关掉时全部藏
         val apply = TestSources.blockAfter(code, "private fun applyBackendVisibility")

@@ -337,6 +337,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <EditText
@@ -345,6 +346,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <!-- 显示 / 隐藏：APIKey 与 APISecret 平时是密码型（同屏防肩窥），
@@ -396,6 +398,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <!-- 显示 / 隐藏只切 Key 框（URL 与模型名不是秘密）；只是显示态，不写盘 -->
@@ -446,6 +449,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <!-- 显示 / 隐藏只切 Key 框（地址与模型名不是秘密）；只是显示态，不写盘 -->
@@ -487,6 +491,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <EditText
@@ -536,6 +541,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <EditText
@@ -585,6 +591,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <EditText
@@ -626,6 +633,7 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textPassword"
+                    android:saveEnabled="false"
                     android:singleLine="true" />
 
                 <EditText
@@ -674,7 +682,8 @@
                     android:layout_width="match_parent"
                     android:importantForAutofill="no"
                     android:inputType="textMultiLine"
-                    android:minHeight="64dp" />
+                    android:minHeight="64dp"
+                    android:saveEnabled="false" />
 
                 <Button
                     style="@style/SettingsButton"
