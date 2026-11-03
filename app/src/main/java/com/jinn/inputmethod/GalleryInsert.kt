@@ -59,11 +59,22 @@ internal object GalleryInsert {
     /**
      * 生效的 cache 总字节上限：基准 [MAX_CACHE_BYTES]，低内存档按 [DeviceTier] 折半（MEM-04b / 契约 C-3）。
      *
-     * 由 [copyToCache] 在有 Context 时落定；[trimCache] 只读它 —— 裁剪路径（putPending）手上没有
-     * Context，而档位在进程存活期间不变，落定一次就够。
+     * 由 [settleCacheBudget] 在有 Context 时落定；[trimCache] 只读它 —— 裁剪路径（putPending）手上
+     * 没有 Context，而档位在进程存活期间不变，落定一次就够。
      */
     @Volatile
     private var effectiveCacheBytes = MAX_CACHE_BYTES
+
+    /**
+     * 落定生效的缓存预算（低内存档折半），**每个入档入口都要调**。
+     *
+     * 入档路径有两条：[copyToCache]（选图页）与 [stageForInsert]（剪贴板图片的两个出库路径）。
+     * 只在选图那条落定时，从不用选图、只从剪贴板贴图的设备会一直按基准 60MB 裁剪 ——
+     * 档位折半与「保留张数随之变 3」对这条链路整体不生效（MEM-04b 的落点漏了一半）。
+     */
+    private fun settleCacheBudget(context: Context) {
+        effectiveCacheBytes = DeviceTier.budget(context, MAX_CACHE_BYTES)
+    }
 
     /**
      * 保留张数上限：由**生效的**总字节上限与单张上限反推（标准档 60MB ÷ 20MB = 3），再加受保护的最近两张。
@@ -276,7 +287,7 @@ internal object GalleryInsert {
      */
     fun copyToCache(context: Context, uri: Uri): CopyResult {
         // 落定生效的 cache 上限（MEM-04b）：低内存档折半，裁剪与保留张数都跟着它走
-        effectiveCacheBytes = DeviceTier.budget(context, MAX_CACHE_BYTES)
+        settleCacheBudget(context)
         val resolver = context.contentResolver
         val declared = resolver.getType(uri)?.takeIf { it.startsWith("image/") }
         val dir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
@@ -353,10 +364,14 @@ internal object GalleryInsert {
      * 库内解密，体积在入库时已受过单张上限约束，不再设闸。落点与保留策略沿用同一目录
      * （`share_file_paths.xml` 已暴露、`trimCache` 保护最近几张），命名用 `clip_` 前缀与选图不撞名。
      *
+     * 预算同样按档位落定（[settleCacheBudget]）：只从剪贴板贴图、从不用选图页的设备，
+     * 不能因此一直按基准预算裁剪。
+     *
      * 调用方必须在后台线程（写盘是 IO）。
      */
     fun stageForInsert(context: Context, bytes: ByteArray, mime: String): File? {
         if (bytes.isEmpty()) return null
+        settleCacheBudget(context)
         val dir = File(context.cacheDir, DIR_NAME).apply { mkdirs() }
         val stamp = System.currentTimeMillis()
         val temp = File(dir, "clip_$stamp.tmp")

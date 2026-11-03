@@ -241,8 +241,9 @@ internal object ClipboardFileImporter {
          * 不该把它永久判为「已存在」（同文件后面的重复行还能再试一次）。这条规则现在按**块**生效 ——
          * 同一块内、且同内容出现在失败行**之后**的重复行，会被当作重复跳过（那一行的成败要到块末才知道）。
          * 块只有 [IMPORT_CHUNK_ROWS] 行，且触发条件要求「前一条真的写库失败」，实测路径里
-         * 只有 Keystore / 磁盘级故障；回执的三项之和（`added + duplicate + tooLong + blank + failed`）
-         * 仍恒等于 `lines`，不受影响。
+         * 只有 Keystore / 磁盘级故障。分账（`added + duplicate + tooLong + blank + failed`）只在
+         * 每行都落进某个分项时等于 `lines`：`TOO_MANY_LINES` / `NOT_TEXT` 中止的那一行已计入
+         * `lines` 却不进任何分项（和少 1），回执另有中止原因，不靠这个和值。
          */
         fun flushPending() {
             if (pending.isEmpty()) return

@@ -133,6 +133,36 @@ class GalleryInsertTest {
     }
 
     /**
+     * 低内存档的折半必须在**两条入档路径**上都落定（MEM-04b / 契约 C-3）。
+     *
+     * 原先只有选图（`copyToCache`）落定 `effectiveCacheBytes`，`stageForInsert`（剪贴板图片的点图插入
+     * 与「复制到剪贴板」回退）直接开写并 `trimCache`。只用剪贴板贴图、从不点「图库」的设备因此一直
+     * 按基准 60MB 裁剪 —— 档位折半与「保留张数随之变 3」对这条链路整体不生效，而这正是低配机上
+     * 最该让位的那 30MB 明文图片副本。两条路径同目录、同裁剪，落定必须同源。
+     */
+    @Test
+    fun 两条入档路径都要落定档位预算() {
+        val src = TestSources.codeSource("GalleryInsert.kt")
+        for (entry in listOf("fun copyToCache(", "fun stageForInsert(")) {
+            assertTrue(
+                "$entry 要落定档位预算",
+                "settleCacheBudget(context)" in TestSources.blockAfter(src, entry),
+            )
+        }
+        val settle = TestSources.blockAfter(src, "private fun settleCacheBudget(")
+        assertTrue(
+            "落定必须走档位入口（基准值不折半）",
+            "DeviceTier.budget(context, MAX_CACHE_BYTES)" in settle,
+        )
+        // 落定只此一处：调用点各写一遍的话，改档位口径要改多处，漏一处就是两条链路算出两个预算
+        assertEquals(
+            "落定实现只许一处",
+            1,
+            Regex("""effectiveCacheBytes = DeviceTier\.budget\(""").findAll(src).count(),
+        )
+    }
+
+    /**
      * 保留张数必须由另两个常量推导（L-1007）。
      *
      * 写死 5 会掩盖「张数与字节在单张上限下互斥」这件事，后来调参的人容易以为放宽张数就能多留。
