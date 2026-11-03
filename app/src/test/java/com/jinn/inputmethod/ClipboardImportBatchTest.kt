@@ -11,7 +11,8 @@ import java.io.ByteArrayInputStream
  *
  * 钉三件事：
  *  1. 攒块边界：每 [ClipboardFileImporter.IMPORT_CHUNK_ROWS] 行写一次，不足一块的尾巴（含中止）照样写出；
- *  2. 回执分账：`added + duplicate + tooLong + blank + failed` 恒等于 `lines`，写库抛异常也不漏记；
+ *  2. 回执分账：正常结束或异常时各行都进分项；行数 / 非文本中止时，触发中止的行只进 `lines`；
+ *     写库抛异常也不漏记；
  *  3. 源码形态：成批入口一块一个事务、逐条走与单条入口**同一条**实现、裁剪在事务之外、
  *     导入侧不得退回逐条 `ClipboardStore.save`。
  *
@@ -79,6 +80,23 @@ class ClipboardImportBatchTest {
         assertEquals("行数包含触发中止的那一行", 51, r.lines)
         assertEquals(50, r.added)
         assertEquals(50, batches.sum())
+        assertEquals(
+            "行数中止的触发行不进分项",
+            r.lines - 1,
+            r.added + r.duplicate + r.tooLong + r.blank + r.failed,
+        )
+    }
+
+    @Test
+    fun 非文本中止的触发行不进分项() {
+        val (r, _) = import("正常行\n\u0000坏行")
+        assertEquals(ClipboardFileImporter.Abort.NOT_TEXT, r.abort)
+        assertEquals(2, r.lines)
+        assertEquals(
+            "非文本中止的触发行不进分项",
+            r.lines - 1,
+            r.added + r.duplicate + r.tooLong + r.blank + r.failed,
+        )
     }
 
     @Test
