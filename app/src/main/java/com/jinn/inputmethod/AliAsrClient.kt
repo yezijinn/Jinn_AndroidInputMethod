@@ -80,6 +80,10 @@ class AliAsrClient(
     @Volatile
     private var taskStartMs = 0L
 
+    /** 缓冲溢出告警只打一次（每次 [beginTask] 复位）：避免采集线程每 100ms 刷一条 W */
+    @Volatile
+    private var overflowLogged = false
+
     /**
      * 本次连接使用的模型名：在 [connect] 校验时缓存。
      *
@@ -155,7 +159,11 @@ class AliAsrClient(
     @Synchronized
     override fun connect(force: Boolean, userInitiated: Boolean) {
         if (userInitiated) cancelIdleClose()
-        if (!force && state == LinkState.ONLINE && socket != null) return
+        // 早退判据必须含 CONNECTING（与 [XfIatClient.connect] 同一条）：预连
+        // （[releaseAndPreconnect]）与「进入语音面板」（`JinnIme.onStartInputView`）都会在握手窗口里
+        // 再调一次 connect —— 只认 ONLINE 的话，这里会把**正在握手的 socket 关掉重建**，
+        // 白做一次 TLS + WS 握手（状态条还要再闪一次「连接中」）。
+        if (!force && (state == LinkState.ONLINE || state == LinkState.CONNECTING) && socket != null) return
 
         // 地址 / 凭据不齐会白等一次握手（甚至必然 401），在入口就落到状态条
         val normalized = AliEndpoint.normalize(prefs.aliWsUrl)
@@ -217,6 +225,7 @@ class AliAsrClient(
         framesSent = 0
         pumpRunning = false
         queue.clear()
+        overflowLogged = false
 
         if (!current.send(AliAsrProtocol.runTaskMessage(id, sessionModel))) {
             Diagnostics.w(TAG, "beginTask: run-task 发送失败，任务作废")
@@ -236,7 +245,11 @@ class AliAsrClient(
     override fun sendChunk(pcmFloat32LittleEndian: ByteArray) {
         if (taskId == null) return
         // 转换在采集线程上做（纯 CPU、无锁），入队是瞬时的，不会卡住麦克风
-        queue.append(XfIatProtocol.float32ToPcm16(pcmFloat32LittleEndian))
+        if (queue.append(XfIatProtocol.float32ToPcm16(pcmFloat32LittleEndian)) && !overflowLogged) {
+            // 每段任务只报一次（采集线程每 100ms 一包，逐包打会把诊断文件淹掉）
+            overflowLogged = true
+            Diagnostics.w(TAG, "待发缓冲到上限(${AliFrameQueue.MAX_QUEUE_BYTES} 字节≈60s)，后续音频丢弃")
+        }
     }
 
     override fun endTask(): Boolean = finishTask(acceptResult = true)
@@ -338,8 +351,10 @@ class AliAsrClient(
         closeSocket()
         clearTask()
         scheduleIdleClose(SpeechClient.DEFAULT_IDLE_CLOSE_MS)
-        // 已经在连就不重复握手（`socket = http.newWebSocket(...)` 会把上一条覆盖成孤儿）
-        if (socket != null || state == LinkState.CONNECTING) return
+        // 已经在连就不重复握手（`socket = http.newWebSocket(...)` 会把上一条覆盖成孤儿）；
+        // 已被主动关闭（页面销毁 / `close()`）同样不许再建：那条新连接的空闲窗口刚被 close() 撤掉，
+        // 建出来就是一条没有任何计时器持有它的连接
+        if (socket != null || state == LinkState.CONNECTING || state == LinkState.IDLE) return
         connect(force = false, userInitiated = false)
     }
 
@@ -450,6 +465,9 @@ class AliAsrClient(
             Diagnostics.w(TAG, "onFailure: ${t.javaClass.simpleName} response=${response?.code}")
             cancelPump()
             cancelTimeouts()
+            // 连接已经断了，空闲兜底无事可做：留着它只会在 90s 后把刚写好的失败原因
+            // 覆盖成「未连接」（与 [onFailed] 的服务端拒绝分支同一条）
+            cancelIdleClose()
             socket = null
             clearTask()
             updateState(LinkState.OFFLINE, describe(t, response?.code))
@@ -460,6 +478,7 @@ class AliAsrClient(
             Diagnostics.i(TAG, "onClosed: code=$code")
             cancelPump()
             cancelTimeouts()
+            cancelIdleClose()
             socket = null
             clearTask()
             updateState(LinkState.IDLE, null)
@@ -520,9 +539,14 @@ class AliAsrClient(
             event.errorCode?.take(32)?.takeIf { it.isNotEmpty() },
             event.errorMessage?.trim()?.take(60)?.takeIf { it.isNotEmpty() },
         ).joinToString(" ").ifEmpty { TEXT_RECOGNIZE_FAILED }
-        Diagnostics.w(TAG, "onMessage: 服务端拒绝 $detail")
+        // 先刮再落盘：`error_message` 可能整条来自网关回显（见 [SpeechErrorText]）；
+        // 状态条那条出口在 [updateState] 里刮（幂等，两道都留着）
+        Diagnostics.w(TAG, "onMessage: 服务端拒绝 ${SpeechErrorText.scrub(detail)}")
         cancelPump()
         cancelTimeouts()
+        // 连接马上要断，空闲兜底无需再留着：真让它到点，90s 后那次 updateState(IDLE)
+        // 会把刚写好的 error_code / error_message 覆盖成「未连接」（排障线索被自己抹掉）
+        cancelIdleClose()
         clearTask()
         updateState(LinkState.OFFLINE, detail)
         closeSocket()
@@ -763,19 +787,32 @@ internal class AliTextAccumulator {
  *
  * `internal` 是为了能在 JVM 单测里直接验「不丢字节 / 不乱序」。
  */
-internal class AliFrameQueue(private val frameBytes: Int) {
+internal class AliFrameQueue(
+    private val frameBytes: Int,
+    private val maxBytes: Int = MAX_QUEUE_BYTES,
+) {
 
     private var buffer = ByteArray(frameBytes * 8)
     private var length = 0
 
+    /**
+     * 入队；返回 true = **这一包被丢弃**（缓冲已到上限）。
+     *
+     * 泵在发送失败时会停拍（`pumpTick` 见到 `send` 返回 false 就 `return`，不重排）而
+     * `taskId` 仍非空 ⇒ [AliAsrClient.sendChunk] 继续入队、再没人取走。8 秒的 3200B 帧只是
+     * 25 KB，一分钟就是 1.9 MB，一路涨到 OOM 死的是整个输入法进程。口径与
+     * [BufferedBatchAsrClient] 的 `MAX_PCM_BYTES` 一致：丢尾巴保住进程。
+     */
     @Synchronized
-    fun append(data: ByteArray) {
-        if (data.isEmpty()) return
+    fun append(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        if (length + data.size > maxBytes) return true
         if (length + data.size > buffer.size) {
             buffer = buffer.copyOf(maxOf(buffer.size * 2, length + data.size))
         }
         System.arraycopy(data, 0, buffer, length, data.size)
         length += data.size
+        return false
     }
 
     @Synchronized
@@ -798,5 +835,10 @@ internal class AliFrameQueue(private val frameBytes: Int) {
     @Synchronized
     fun clear() {
         length = 0
+    }
+
+    internal companion object {
+        /** 待发缓冲上限：60 秒 × 16000 Hz × 2 字节（≈1.8 MB），与批量基类同一个口径 */
+        const val MAX_QUEUE_BYTES = 60 * 16_000 * 2
     }
 }

@@ -275,7 +275,10 @@ private const val LOG_SEGMENTS_KEPT = 2
         // 直接放在 query 上（同一条 query 里的 `q` 还是**用户正文**），阿里云用 `AccessKeyId` ——
         // 脱敏表不认这些形态时，任何一处打印 URL（或异常 message 内嵌 URL）都会把签名与正文带出去。
         // 约定不变：打印一律用 `host + encodedPath`（现有调用点已是这个口径），这里再加一道网。
-        Regex("(?i)[?&](sign|signature|sig|appid|app_id|accesskeyid|access_key_id|secret|secretkey|api_key|apikey|key|token|access_token|password|pwd)=[^&\\s]{4,}"),
+        // `client_id` / `client_secret`（2026-11-03 复审）：百度换 token 的两个参数带 `client_` 前缀，
+        // 而本规则要求参数名**紧跟在 `?`/`&` 之后且是裸名** —— 少这两项时 `&client_secret=…` 整条
+        // 不匹配（`secret` 前面隔着 `client_`），回显地址就会把 AK/SK 带进日志。
+        Regex("(?i)[?&](client_secret|client_id|sign|signature|sig|appid|app_id|accesskeyid|access_key_id|secret|secretkey|api_key|apikey|key|token|access_token|password|pwd)=[^&\\s]{4,}"),
         // 「Authorization: <token>」的**非 Bearer** 形态（部分网关用 `Authorization: <key>` 或
         // `X-Api-Key: <key>`，压根不带 Bearer 前缀）—— 原表只认 `Bearer\s+\S{12,}`（2026-10-03 修复 L-668）
         // 头名把项目自己在用的也列全（BUG.md L-1072）：AzureTranslator 发的是

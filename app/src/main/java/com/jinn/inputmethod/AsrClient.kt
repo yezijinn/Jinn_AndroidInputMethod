@@ -84,7 +84,13 @@ class AsrClient(
     @Volatile
     private var idleCloseScheduled = false
 
-    /** 空闲关闭因「在途任务未清」而后延的次数（上限见 [onIdleCloseDue]） */
+    /**
+     * 空闲关闭因「在途任务未清」而后延的次数（上限见 [onIdleCloseDue]）。
+     *
+     * ⚠ 只有 [scheduleIdleClose]（外部重新排程 = 有新的使用意图）才清零：[onIdleCloseDue] 的
+     * 后延必须走 [armIdleClose]。两处混用会让计数器被自己的后延清零 ⇒ 上限永远是 1、
+     * 「超过上限强制关闭」变成死代码，连接于是被无限后延（= 永生，正是这条兜底要消掉的）。
+     */
     private var idleCloseDeferrals = 0
 
     private val idleCloseRunnable = Runnable { onIdleCloseDue() }
@@ -114,15 +120,19 @@ class AsrClient(
 
         closeSocket()
         connectedUrl = target
-        // 先建连再置状态：避免 newWebSocket 同步触发 onFailure 时
-        // listener 因 socket 仍为 null 被吞，导致状态卡在 CONNECTING 且永不重连
+        // 顺序是「先置状态、再建连」（与 [XfIatClient] / [AliAsrClient] 一致）。
+        // `newWebSocket` 只是把请求**入队**，握手在 OkHttp 的调度线程上异步完成，回调不可能
+        // 同步返回；反过来（先建连再置状态）会留一个真实竞态：`onOpen` 在主线程被抢占的那几
+        // 毫秒里抢先置了 ONLINE，随后那行把它压回 CONNECTING —— 而本函数开头的早退判据恰好是
+        // 「CONNECTING 且 socket 非空」⇒ 之后再也回不到 ONLINE，长连接永久停在「连接中」，
+        // 语音一直提示「正在连接」直到进程重启。
+        updateState(LinkState.CONNECTING, null)
         val request = Request.Builder()
             .url(target)
             // 服务端 websockets.serve(subprotocols=["binary"])，与桌面端保持一致
             .addHeader("Sec-WebSocket-Protocol", "binary")
             .build()
         socket = http.newWebSocket(request, listener)
-        updateState(LinkState.CONNECTING, null)
         Diagnostics.i(TAG, "connect: $target (force=$force)")
         Log.i(TAG, "connect: $target")
     }
@@ -230,10 +240,21 @@ class AsrClient(
      */
     override fun scheduleIdleClose(delayMs: Long) {
         idleCloseScheduled = true
+        // 外部重新排程 = 「又有新的使用意图」：后延计数从零算（后延自身走 [armIdleClose]）
         idleCloseDeferrals = 0
+        armIdleClose(delayMs)
+        Diagnostics.i(TAG, "scheduleIdleClose: ${delayMs}ms 无活动则关闭连接")
+    }
+
+    /**
+     * 只排程、**不动后延计数**：[onIdleCloseDue] 的后延专用。
+     *
+     * 与 [scheduleIdleClose] 分开是必需的 —— 合在一起时后延会把自己的计数清零，
+     * [IDLE_CLOSE_MAX_DEFERRALS] 这道上限永远走不到（见 [idleCloseDeferrals] 的说明）。
+     */
+    private fun armIdleClose(delayMs: Long) {
         reconnectHandler.removeCallbacks(idleCloseRunnable)
         reconnectHandler.postDelayed(idleCloseRunnable, delayMs)
-        Diagnostics.i(TAG, "scheduleIdleClose: ${delayMs}ms 无活动则关闭连接")
     }
 
     /** 撤销待触发的空闲关闭（正常使用路径一到就调；removeCallbacks 幂等且廉价） */
@@ -257,9 +278,19 @@ class AsrClient(
             } else {
                 idleCloseDeferrals++
                 Diagnostics.i(TAG, "空闲关闭跳过：仍有在途任务，稍后再试（第 $idleCloseDeferrals 次）")
-                scheduleIdleClose(IDLE_CLOSE_MS)
+                // 后延**不许**走 scheduleIdleClose：那会把刚累加的计数清零，上限永远到不了
+                armIdleClose(IDLE_CLOSE_MS)
                 return
             }
+        }
+        // 连接已经不在（[onFailure] / [onClosed] 走过）：[close] 此时唯一还会发生的事，就是把它
+        // 刚写到状态条上的失败原因换成「未连接」—— 排障线索自己消失（与讯飞 / 阿里在服务端拒绝
+        // 分支上撤空闲关闭同一条口径）。要做的只剩两件：停自动重连、置 [userClosed]。
+        if (socket == null) {
+            userClosed = true
+            reconnectHandler.removeCallbacks(reconnectRunnable)
+            Diagnostics.i(TAG, "空闲关闭：连接已不在，只停自动重连（保留状态条上的失败原因）")
+            return
         }
         close()
         Diagnostics.i(TAG, "空闲关闭：连接已释放，待机不再有 ping 唤醒")
@@ -377,13 +408,30 @@ class AsrClient(
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (webSocket !== socket) return
-            Diagnostics.e(TAG, "onFailure: ${t.javaClass.simpleName} ${t.message} response=${response?.code}", t)
-            Log.w(TAG, "onFailure: ${t.javaClass.simpleName} ${t.message}")
+            // 网络异常照样进日志：`t.message` 先刮再拼 —— `unexpected url: …` / `Expected URL scheme …`
+            // 会把用户填的地址（乃至地址里的凭据）原样抄进 message，而日志会随诊断包外发
+            Diagnostics.e(
+                TAG,
+                "onFailure: ${t.javaClass.simpleName} ${SpeechErrorText.scrub(t.message)} " +
+                    "response=${response?.code}",
+                t,
+            )
+            Log.w(TAG, "onFailure: ${t.javaClass.simpleName} ${SpeechErrorText.scrub(t.message)}")
             socket = null
             sendingTask = null
             acceptingTask = null
             updateState(LinkState.OFFLINE, describe(t, response?.code))
-            scheduleReconnect()
+            // 重连**要分能不能成**（2026-11-03 复审）：401 / 403 / 404 是握手被明确拒绝（凭据错、
+            // 反代挡了、ws:// 指到了普通 HTTP 端口），退避到 30s 之后重试一万次也是同一个结果。
+            // 而每次重试都会把 state 推回 CONNECTING，`renderLink` 于是把刚写好的失败原因换成
+            // 「连接中」，再换回来 —— 语音面板开着（没有空闲关闭兜底）时每 30 秒一次，永不停止：
+            // 状态条在「连接失败（HTTP 404）」与「连接中」之间来回闪，无线电也跟着醒。
+            if (AsrReconnect.shouldRetry(response?.code)) {
+                scheduleReconnect()
+            } else {
+                Diagnostics.w(TAG, "onFailure: 握手被明确拒绝（HTTP ${response?.code}），不自动重连")
+                Log.w(TAG, "onFailure: 握手被明确拒绝，不自动重连")
+            }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -456,4 +504,26 @@ class AsrClient(
         const val RECONNECT_MAX_MS = 30_000L
         const val RECONNECT_MAX_EXP = 8
     }
+}
+
+/**
+ * 断线之后**该不该自动重连**（纯函数，JVM 单测直接跑）。
+ *
+ * 判据只剩「这次失败是临时的还是定性的」这一条：`code` 是 WebSocket 握手阶段拿到的 HTTP 状态码
+ * （连接被拒 / 超时 / DNS 失败时没有码 ⇒ null）。
+ *
+ * - **不重试**：400 / 401 / 403 / 404 一类 4xx 中的确定性拒绝 —— 凭据错、反代加了鉴权、
+ *   `ws://` 指到了普通 HTTP 端口。重试一万次也是同一个结果，而每次重试都会把 state 推回
+ *   `CONNECTING`（`JinnIme.renderLink` 于是把失败原因换成「连接中」再换回来），语音面板开着时
+ *   没有空闲关闭兜底 ⇒ 每 30 秒一次、永不停止的闪烁 + 无线电唤醒。
+ * - **重试**：无码（连不上 / 超时 / DNS）、408（请求超时）、429（限流）、5xx（服务端 / 网关
+ *   临时故障）。这几类过一会儿确实可能自己好。
+ *
+ * 不重试**不等于**放弃：`JinnIme` 进语音面板 / 长按空格预热 / 网络恢复回调都会再调
+ * [AsrClient.connect]，用户改完配置也是走杀进程重建，哪一条都比空转的定时器快。
+ */
+internal object AsrReconnect {
+
+    /** @param code 握手阶段的 HTTP 状态码；null = 没拿到响应 */
+    fun shouldRetry(code: Int?): Boolean = code == null || code == 408 || code == 429 || code >= 500
 }

@@ -149,6 +149,26 @@ class AliAsrClientTest {
         assertEquals(3200, AliAsrProtocol.SAMPLE_RATE * 2 / 10)
     }
 
+    /**
+     * 待发缓冲必须有上限（2026-11-03 复审）。
+     *
+     * 泵在 `send` 返回 false 时停拍且不重排，而 `taskId` 仍非空 ⇒ `sendChunk` 继续入队、
+     * 再没人取走（一分钟就是 1.9 MB，最终 OOM，死的是整个输入法进程）。
+     * 判据：超限那一包真的被丢；上限内的字节一个不少、不乱序。
+     */
+    @Test
+    fun `待发缓冲有上限且超限只丢尾巴`() {
+        val queue = AliFrameQueue(AliAsrProtocol.FRAME_BYTES, maxBytes = AliAsrProtocol.FRAME_BYTES * 2)
+        val keep = ByteArray(AliAsrProtocol.FRAME_BYTES * 2) { (it % 251).toByte() }
+        assertFalse("没到上限不许丢", queue.append(keep))
+        assertTrue("满了以后那一包必须被丢（否则缓冲无上限）", queue.append(ByteArray(1)))
+        val rest = queue.takeAll()
+        assertEquals("上限内的字节必须原样留着", keep.size, rest.size)
+        assertTrue("留下的必须是先到的那一段", rest.contentEquals(keep))
+        assertFalse("取空之后必须能继续收（上限是水位，不是关闸）", queue.append(ByteArray(8)))
+        assertEquals(8, queue.takeAll().size)
+    }
+
     // ── 地址策略 ─────────────────────────────────────────────────
 
     @Test

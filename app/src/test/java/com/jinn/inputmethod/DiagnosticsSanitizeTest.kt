@@ -160,6 +160,28 @@ class DiagnosticsSanitizeTest {
         )
     }
 
+    /**
+     * 百度换 token 的两个 query 参数（2026-11-03 复审发现）。
+     *
+     * [Diagnostics.API_KEY_RES] 的 query 规则要求**参数名紧跟在 `?` / `&` 之后**且是名单里的裸名
+     * （`secret=` / `accesskeyid=` 一类），而百度写的是 `&client_secret=…` / `&client_id=…` ——
+     * 前缀 `client_` 让整条规则匹配不上，AK / SK 原样落盘。
+     *
+     * 这条路径真实存在：`BaiduTokenResponse.errorText` 把回包正文前 60 字拼进失败原因，
+     * 网关 / 反向代理把请求地址整条回显时，这两个参数就跟着回包一起回来。
+     */
+    @Test
+    fun `百度换 token 的查询串凭据也脱敏`() {
+        val url = "unexpected url: https://aip.baidubce.com/oauth/2.0/token" +
+            "?grant_type=client_credentials&client_id=AKPLACEHOLDER01&client_secret=SKPLACEHOLDER01"
+        val safe = Diagnostics.redactSensitive(url)
+        assertFalse("AK 原文漏进日志：$safe", "AKPLACEHOLDER01" in safe)
+        assertFalse("SK 原文漏进日志：$safe", "SKPLACEHOLDER01" in safe)
+        // 反向：主机与普通参数要留着，排障还得看得懂
+        assertTrue("地址主机被一起刮掉了：$safe", "aip.baidubce.com" in safe)
+        assertTrue("普通参数被一起刮掉了：$safe", "grant_type=client_credentials" in safe)
+    }
+
     @Test
     fun `落盘时换行与控制字符被替换（防伪造日志行）`() {
         // 日志行以换行分界：用户可控串（Base URL / host / 包内设备名）带换行就能伪造完整假日志行

@@ -193,6 +193,264 @@ class SpeechClientLifecycleTest {
     }
 
     /**
+     * 建连必须在**握手期间**也早退（2026-11-03 复审发现）。
+     *
+     * [XfIatClient.connect] 的早退判据含 `CONNECTING`，[AliAsrClient] 那份只认 `ONLINE` ——
+     * 而预连（`releaseAndPreconnect`）与「进入语音面板」（`JinnIme.onStartInputView`）都会在
+     * 握手窗口里再调一次 `connect()`：阿里这条会把**正在握手的 socket 关掉重建**，白做一次
+     * TLS + WS 握手，状态条还要再闪一次「连接中」。阿里自己的 `releaseAndPreconnect` 里已经
+     * 用 `state == LinkState.CONNECTING` 防了同一件事（否则「上一条被覆盖成孤儿」），
+     * 说明这个判据在本类里本就是必需的，只是 `connect` 入口漏了一份。
+     */
+    @Test
+    fun `阿里在握手期间也要早退不重建`() {
+        val connect = TestSources.blockAfter(ali, "override fun connect")
+        assertTrue(
+            "阿里 connect 的早退判据漏了 CONNECTING（预连窗口里再调一次会把正在握手的连接拆掉重来）",
+            "(state == LinkState.ONLINE || state == LinkState.CONNECTING)" in connect,
+        )
+        // 反向：force=true 必须还能重建（改地址 / 改凭据 / 旧连接用过的路径都靠它）
+        assertTrue("force 不再重建连接（改地址后永远用旧连接）", "if (!force &&" in connect)
+    }
+
+    /**
+     * 收尾之后必须留一条**空闲关闭**兜底（2026-11-03 复审）。
+     *
+     * 讯飞一次会话一条连接，正常路径由 `releaseAndPreconnect` 拆除；但那条路径的前提是
+     * 「服务端回了 final / `ls=true`」。服务端静默不回（丢包、中间层断开、`ls` 丢失）时，
+     * 这条连接既没有 `readTimeout`（=0）也没有 ping，`sessionStarted` 还是 true ——
+     * **没有任何计时器再持有它**，只能等用户下一次按键强制重连才消失。
+     * `finishTask` 是「末帧已发出、等结果」的唯一入口，兜底挂在这里才覆盖全部收尾路径。
+     */
+    @Test
+    fun `讯飞收尾之后要挂空闲关闭兜底`() {
+        val finish = TestSources.blockAfter(xf, "private fun finishTask")
+        assertTrue(
+            "finishTask 没挂空闲关闭兜底（服务端不回末帧时连接永久挂着）",
+            "scheduleIdleClose()" in finish,
+        )
+        // 反向：兜底必须排在**末帧发送成功之后** —— 发送失败的分支已经 clearTask 并返回 false，
+        // 在那里排程只会给一条已被丢弃的连接留个定时器（判据锚在 lastFrame 上，不是随便哪个
+        // clearTask：那个函数在本方法里有三处，锚错就等于不判）
+        val lastFrame = finish.indexOf("lastFrame(")
+        assertTrue("finishTask 里找不到末帧发送点（锚点漂移）", lastFrame > 0)
+        assertTrue(
+            "空闲关闭兜底排在末帧发送之前（发送失败时也会被排上）",
+            finish.indexOf("scheduleIdleClose()") > lastFrame,
+        )
+    }
+
+    /**
+     * 空闲关闭的「后延」不许把自己的计数清零（2026-11-03 复审发现）。
+     *
+     * 两家的后延都是有上限的（超过就强制关闭，免得标记残留把连接留成永生）。但原实现的后延
+     * 调的是**对外那个** `scheduleIdleClose()`，而它第一件事就是 `idleCloseDeferrals = 0` ——
+     * 计数器永远停在 1，`>= MAX` 那道判据成了死代码，连接于是被每 90s 后延一次、无限续命。
+     * 判据只能钉结构：后延分支必须走不动计数的入口（`armIdleClose`），对外入口才清零。
+     */
+    @Test
+    fun `空闲关闭的后延不许把自己的计数清零`() {
+        for ((name, src) in listOf("自建" to asr, "讯飞" to xf)) {
+            val idle = TestSources.blockAfter(src, "private fun onIdleCloseDue")
+            assertTrue(
+                "$name：后延走的是对外入口（会把自己的计数清零，上限永远到不了）",
+                "armIdleClose(" in idle,
+            )
+            assertFalse(
+                "$name：后延分支里又调了 scheduleIdleClose（计数被清零，连接无限续命）",
+                "scheduleIdleClose(" in idle,
+            )
+            assertTrue(
+                "$name：没有「后延次数到上限」的判据",
+                "idleCloseDeferrals >= IDLE_CLOSE_MAX_DEFERRALS" in idle,
+            )
+            // 清零必须只发生在这一个地方：对外排程入口
+            val schedule = TestSources.blockAfter(src, "override fun scheduleIdleClose")
+            assertTrue("$name：对外排程入口没复位后延计数", "idleCloseDeferrals = 0" in schedule)
+            assertTrue("$name：对外排程入口没真正排程", "armIdleClose(" in schedule)
+            // 上限本身要有值（被删成 0 时「强制关闭」等于第一次就关，会把正常等结果的连接掐掉）
+            assertTrue("$name：后延上限常量丢了", "const val IDLE_CLOSE_MAX_DEFERRALS = 3" in src)
+        }
+    }
+
+    /**
+     * 主动关闭之后不许再预连（2026-11-03 复审）。
+     *
+     * `releaseAndPreconnect` 跑在 OkHttp 的 IO 线程，而 `close()`（页面销毁 / 语音测试收尾）
+     * 跑在主线程：两者交错时，IO 线程可能在 `close()` 之后又把连接建起来 —— 而那条连接的
+     * 空闲窗口刚被 `close()` 撤掉，于是它既没有计时器、也没有读超时与 ping，只能等服务端自己断。
+     */
+    @Test
+    fun `主动关闭之后不许再预连`() {
+        for ((name, src) in listOf("讯飞" to xf, "阿里" to ali)) {
+            val release = TestSources.blockAfter(src, "private fun releaseAndPreconnect")
+            assertTrue(
+                "$name：close() 之后仍会预连（新连接没有任何计时器持有）",
+                "state == LinkState.IDLE" in release,
+            )
+            assertTrue(
+                "$name：预连的空闲窗口丢了（没人用也一直挂着）",
+                "scheduleIdleClose(" in release,
+            )
+        }
+    }
+
+    /**
+     * 断连回调同样要撤掉空闲关闭兜底（2026-11-03 复审发现）。
+     *
+     * N7 只补了「服务端明确拒绝」那一条（`code != 0` / `task-failed`），**断连那两条没补**。
+     * 而它才是最常见的一条：收尾时 `finishTask` 挂上 90s 兜底，服务端不回末帧、中间层掐线、
+     * NAT 超时 —— [onFailure] 把真因（`连不上…` / `连接失败（HTTP 502）` / `连接超时`）写到状态条，
+     * 90 秒后那条兜底照样到点，`updateState(IDLE, null)` 把它换成「未连接」：
+     * 用户看着看着提示就没了，诊断包里也只剩前半段。
+     *
+     * 撤掉它不丢任何功能：连接已经断了，兜底本来要做的「拆除」已经无事可做 —— 留着它唯一还能
+     * 发生的事就是抹掉那句话。
+     */
+    @Test
+    fun `断连分支也要撤掉空闲关闭兜底`() {
+        for ((name, src) in listOf("讯飞" to xf, "阿里" to ali)) {
+            for (anchor in listOf("override fun onFailure", "override fun onClosed")) {
+                val block = TestSources.blockAfter(src, anchor)
+                assertTrue(
+                    "$name：$anchor 没撤空闲关闭兜底（90s 后它会把刚写好的失败原因换成「未连接」）",
+                    "cancelIdleClose()" in block,
+                )
+            }
+        }
+    }
+
+    /**
+     * 握手被**明确拒绝**时不许无限自动重连（2026-11-03 复审发现）。
+     *
+     * 自建后端原先对每一次 `onFailure` 都排退避重连（1s→30s）：把 `ws://` 指到普通 HTTP 端口
+     * （404）、反代加了鉴权（401）、凭据错（403）都是**确定性拒绝**，退避到 30s 之后重试一万次
+     * 也是同一个结果。而每次重试都会把 state 推回 `CONNECTING`，`JinnIme.renderLink` 于是把
+     * 刚写好的失败原因换成「连接中」再换回来 —— 语音面板开着时没有空闲关闭兜底，这条循环
+     * 每 30 秒一次、永不停止（状态条来回闪 + 无线电唤醒，正是 MEM-13 要消掉的那份）。
+     *
+     * 判据是**真跑**的纯函数（不是源码字面量对拍），另钉一次接线：`onFailure` 必须真的走它。
+     */
+    @Test
+    fun `握手被明确拒绝时不许无限重连`() {
+        for (code in listOf(400, 401, 403, 404)) {
+            assertFalse(
+                "HTTP $code 是确定性拒绝，重试一万次也是同一个结果",
+                AsrReconnect.shouldRetry(code),
+            )
+        }
+        for (code in listOf(null, 408, 429, 500, 502, 503)) {
+            assertTrue("HTTP $code 属临时故障，必须照旧重连", AsrReconnect.shouldRetry(code))
+        }
+        // 接线：不接这道判据的话，上面那组断言与实现无关（删掉整只 object 也不影响行为）
+        val failure = TestSources.blockAfter(asr, "override fun onFailure")
+        assertTrue(
+            "onFailure 没按状态码决定要不要重连（401 / 404 会每 30s 一次永远重试）",
+            "AsrReconnect.shouldRetry(response?.code)" in failure,
+        )
+        assertTrue(
+            "连接已断开这条路径不许丢掉重连能力（临时故障必须还能自愈）",
+            "scheduleReconnect()" in failure,
+        )
+    }
+
+    /**
+     * 自建后端的空闲关闭不许抹掉状态条上的失败原因（2026-11-03 复审）。
+     *
+     * 它与讯飞 / 阿里那两家的处置不同：这里的空闲关闭**兼管「停自动重连」**（网络故障走的是
+     * 重连分支，`close()` 的 `userClosed = true` 是唯一的停止点），所以不能整体撤掉。
+     * 能撤的只是「连接已经不在」那一种：`close()` 此时唯一还会做的事是把 `onFailure` 刚写好
+     * 的失败原因换成「未连接」（`updateState(IDLE, null)`），而拆连早就没对象了。
+     */
+    @Test
+    fun `自建后端空闲关闭不能抹掉失败原因`() {
+        val idle = TestSources.blockAfter(asr, "private fun onIdleCloseDue")
+        assertTrue(
+            "空闲关闭没分「连接已不在」这一支（onFailure 写好的失败原因会在 90s 后被换成「未连接」）",
+            "if (socket == null)" in idle,
+        )
+        assertTrue(
+            "「连接已不在」必须在 close() 之前判（close() 第一件事就是 updateState(IDLE)）",
+            idle.indexOf("if (socket == null)") in 0 until idle.indexOf("close()"),
+        )
+        assertTrue(
+            "连接已不在时仍要停自动重连（否则退避定时器继续空转）",
+            "reconnectHandler.removeCallbacks(reconnectRunnable)" in idle,
+        )
+    }
+
+    /**
+     * 批量后端的空闲关闭不许把失败结论改写成「未连接」（2026-11-03 复审）。
+     *
+     * 五家整段上传后端没有长连接可拆，这条兜底唯一的作用是「在线 → 空闲」的回落。
+     * 但它原先无条件 `updateState(IDLE, null)`：上传失败（`HTTP 401` / `invalid_client`）
+     * 把原因写到状态条之后，只要用户收起过键盘（`onFinishInputView` 排了 90s 窗口），
+     * 到点就把那句话换成「未连接」—— 与讯飞 / 阿里在服务端拒绝分支上的处置正好相反。
+     */
+    @Test
+    fun `批量后端的空闲关闭不许改写失败结论`() {
+        val idle = TestSources.blockAfter(batch, "private fun onIdleCloseDue")
+        assertTrue(
+            "批量基类的空闲关闭无条件回落 IDLE（上传失败的原因会在 90s 后变成「未连接」）",
+            "state != LinkState.ONLINE" in idle,
+        )
+        assertTrue(
+            "回落判据必须排在 updateState 之前（否则那句 IDLE 照样会执行）",
+            idle.indexOf("state != LinkState.ONLINE") in 0 until idle.indexOf("updateState(LinkState.IDLE"),
+        )
+        assertTrue(
+            "在线态仍要能回落（没人用时状态条不该一直显示「已连接」）",
+            "updateState(LinkState.IDLE" in idle,
+        )
+    }
+
+    /**
+     * 批量后端的结果投递必须**在主线程那一个 Runnable 里**再判一次归属（2026-11-03 复审）。
+     *
+     * 原实现先在后台线程 `acceptingTask = null`，再 `main.post` 投递：两者之间被取消或
+     * 「新一段听写」插进来时，排队的 Runnable 照样把**旧任务**的正文交上去 ——
+     * `JinnIme.handleResult` 只比包名、不看 taskId，于是新一段正在录时旧文本被 commit 进输入框，
+     * 新结果随后追加（上一段的话重复出现）。
+     */
+    @Test
+    fun `批量结果投递前要再判一次归属`() {
+        val upload = TestSources.blockAfter(batch, "private fun submitUpload")
+        val post = TestSources.blockAfter(upload, "main.post {")
+        assertTrue("投递块里没有再判归属", "acceptingTask != id" in post)
+        assertTrue(
+            "闸门必须在投递块内、归属判定之后才清",
+            post.indexOf("acceptingTask != id") in 0 until post.indexOf("acceptingTask = null"),
+        )
+        assertTrue("结果投递必须在同一个块里", "onResultCallback(" in post)
+    }
+
+    /**
+     * 建连不许把已经 ONLINE 的状态压回 CONNECTING（2026-11-03 复审）。
+     *
+     * 自建后端原先写的是「先建连、再置状态」：`onOpen` 若在主线程被抢占的那几毫秒里先跑到
+     * （局域网 / 本机 NAS 的握手是亚毫秒级），它置的 ONLINE 会被随后那行压回 CONNECTING ——
+     * 而 `connect()` 的早退判据含 CONNECTING 且 socket 非空 ⇒ 之后再也回不到 ONLINE，
+     * 长连接永久停在「连接中」。判据是顺序：置状态必须排在 `newWebSocket` **之前**
+     * （`newWebSocket` 只入队，回调不可能同步返回，所以这个顺序没有反向风险）。
+     */
+    @Test
+    fun `建连必须先置连接中再建连`() {
+        val connect = TestSources.blockAfter(asr, "override fun connect")
+        val setState = connect.indexOf("updateState(LinkState.CONNECTING, null)")
+        val create = connect.indexOf("http.newWebSocket(")
+        assertTrue("connect 里找不到置状态或建连（锚点漂移）", setState >= 0 && create > 0)
+        assertTrue(
+            "置状态排在建连之后（onOpen 先到时会把它压回 CONNECTING，永远回不到 ONLINE）",
+            setState < create,
+        )
+        // 另一条路必须仍由 listener 置 ONLINE —— 别把两处都改成条件式
+        assertTrue(
+            "onOpen 不再置 ONLINE",
+            "updateState(LinkState.ONLINE, null)" in TestSources.blockAfter(asr, "override fun onOpen"),
+        )
+    }
+
+    /**
      * 失败文案里的凭据必须刮掉 —— 这条是**真跑**的（纯函数），不是源码对拍。
      *
      * 八家的失败文案兜底都是「异常 message 截若干字」，而异常正文可能整条带上请求 URL：百度换
@@ -272,6 +530,42 @@ class SpeechClientLifecycleTest {
                 "SpeechErrorText.scrub(detail)" in sink,
             )
         }
+    }
+
+    /**
+     * 日志出口同样要刮凭据（2026-11-03 复审发现）。
+     *
+     * 状态条那条出口早有 `SpeechErrorText.scrub`（见上一条用例），但**落盘日志那条没有**：
+     * `Diagnostics.w(tag, "上传失败 reason=${reason}")` 之类直接拼服务端原文，而
+     * 「回包正文 / 异常 message 整条带请求 URL」正是 `SpeechErrorText` KDoc 写明的那条路径。
+     * 日志文件会打进诊断包外发，刮漏一处等于没刮 —— 两个出口必须同一口径。
+     */
+    @Test
+    fun `日志出口也要刮凭据`() {
+        // 批量基类：失败原因可能整条来自回包正文（网关把请求地址回显时连 client_secret 一起回来）
+        val upload = TestSources.blockAfter(batch, "private fun submitUpload")
+        assertTrue(
+            "批量基类的上传失败日志直接拼了未刮的 reason",
+            "上传失败 reason=\${SpeechErrorText.scrub(outcome.reason)}" in upload,
+        )
+        // 讯飞：code≠0 时把服务端 message 原样写进日志
+        val xfMessage = TestSources.blockAfter(xf, "private fun handleMessage")
+        assertTrue(
+            "讯飞把服务端 message 原文写进日志（应先刮再落盘）",
+            "SpeechErrorText.scrub(response.message)" in xfMessage,
+        )
+        // 阿里：task-failed 的 error_code / error_message 同理
+        val aliFailed = TestSources.blockAfter(ali, "private fun onFailed")
+        assertTrue(
+            "阿里把 task-failed 原文写进日志",
+            "SpeechErrorText.scrub(detail)" in aliFailed,
+        )
+        // 自建：onFailure 把异常 message 原样写进日志（SpeechErrorText 的 KDoc 举的就是这条）
+        val asrFailure = TestSources.blockAfter(asr, "override fun onFailure")
+        assertTrue(
+            "自建把异常 message 原文写进日志",
+            "SpeechErrorText.scrub(t.message)" in asrFailure,
+        )
     }
 
     /**

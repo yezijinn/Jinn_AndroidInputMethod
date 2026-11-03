@@ -212,7 +212,7 @@ abstract class BufferedBatchAsrClient(
         Diagnostics.i(tag, "close: 已释放（无长连接可断）")
     }
 
-    /** 本实现没有连接要保活；排程到点只把状态回落成 [LinkState.IDLE]（有在途任务则跳过） */
+    /** 本实现没有连接要保活；排程到点只把**在线态**回落成 [LinkState.IDLE]（有在途任务、非在线态都跳过） */
     override fun scheduleIdleClose(delayMs: Long) {
         main.removeCallbacks(idleRunnable)
         main.postDelayed(idleRunnable, delayMs)
@@ -225,6 +225,14 @@ abstract class BufferedBatchAsrClient(
     private fun onIdleCloseDue() {
         if (taskId != null || acceptingTask != null || call != null) {
             Diagnostics.i(tag, "空闲关闭跳过：仍有在途任务")
+            return
+        }
+        // 只把「在线但没人用」回落成 IDLE。**失败态不许回落**：`updateState(IDLE, null)` 会把
+        // 上传失败刚写到状态条上的原因（`HTTP 401 …` / `token 获取失败：invalid_client`）换成
+        // 「未连接」—— 用户看着看着提示就没了，诊断包里也只剩前半段（与另三家在服务端拒绝
+        // 分支上撤空闲关闭同一条口径：这条兜底只该拆「没人用的在线状态」，不该改写结论）。
+        if (state != LinkState.ONLINE) {
+            Diagnostics.i(tag, "空闲关闭：当前不是在线态（$state），保留状态条上的原因")
             return
         }
         updateState(LinkState.IDLE, null)
@@ -269,25 +277,38 @@ abstract class BufferedBatchAsrClient(
                 Diagnostics.i(tag, "上传完成但任务已作废 taskId=$id")
                 return@execute
             }
-            acceptingTask = null
             val duration = (System.currentTimeMillis() - taskStartMs) / 1000.0
-            when (outcome) {
-                is BatchOutcome.Ok -> {
-                    Diagnostics.i(
-                        tag,
-                        "上传成功 textLen=${outcome.text.length} wavBytes=${pcm16.size + WavWriter.HEADER_BYTES}",
-                    )
-                    main.post {
+            // ⚠ 关闸门与投递必须**同在主线程那一个 Runnable 里**完成，且关闸前再判一次归属。
+            // 原先在后台线程先 `acceptingTask = null` 再 `main.post`，两者之间被取消 / 新一段听写
+            // 插进来时（主线程正忙），排队的那个 Runnable 照样会把**旧任务**的正文交上去：
+            // `JinnIme.handleResult` 只比包名、不看 taskId，新一段正在录时旧文本会被 commit 进输入框，
+            // 新结果随后追加 ⇒ 用户看到上一段的话重复出现。
+            main.post {
+                if (acceptingTask != id) {
+                    Diagnostics.i(tag, "投递前任务已作废 taskId=$id")
+                    return@post
+                }
+                acceptingTask = null
+                when (outcome) {
+                    is BatchOutcome.Ok -> {
+                        Diagnostics.i(
+                            tag,
+                            "上传成功 textLen=${outcome.text.length} " +
+                                "wavBytes=${pcm16.size + WavWriter.HEADER_BYTES}",
+                        )
                         onResultCallback(
                             RecognitionMessage(id, isFinal = true, duration = duration, text = outcome.text),
                         )
+                        if (state != LinkState.IDLE) updateState(LinkState.ONLINE, null)
                     }
-                    main.post { if (state != LinkState.IDLE) updateState(LinkState.ONLINE, null) }
-                }
 
-                is BatchOutcome.Fail -> {
-                    Diagnostics.w(tag, "上传失败 reason=${outcome.reason}")
-                    main.post { updateState(LinkState.OFFLINE, outcome.reason) }
+                    is BatchOutcome.Fail -> {
+                        // 先刮再落盘：失败原因可能整条来自回包正文（网关 / 反代回显请求地址时连
+                        // `client_secret=` 一起回来）。状态条那条出口在 [updateState] 里刮，
+                        // 日志这条会随诊断包外发，两个出口必须同一口径。
+                        Diagnostics.w(tag, "上传失败 reason=${SpeechErrorText.scrub(outcome.reason)}")
+                        updateState(LinkState.OFFLINE, outcome.reason)
+                    }
                 }
             }
         }

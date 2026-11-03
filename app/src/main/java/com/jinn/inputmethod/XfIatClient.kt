@@ -86,12 +86,19 @@ class XfIatClient(
     /** 报文序号：首帧 0，之后每帧 +1（中间帧与末帧共用同一个计数） */
     private var seq = 0
 
+    /** 缓冲溢出告警只打一次（每次 [beginTask] 复位）：避免采集线程每 100ms 刷一条 W */
+    @Volatile
+    private var overflowLogged = false
+
     private val pumpRunnable = Runnable { pumpTick() }
 
     // ── 空闲关闭 ────────────────────────────────────────────
 
     private val idleHandler = Handler(Looper.getMainLooper())
     private val idleRunnable = Runnable { onIdleCloseDue() }
+
+    /** 空闲关闭因「在途标记未清」而后延的次数（上限见 [onIdleCloseDue]；只有 [scheduleIdleClose] 清零） */
+    private var idleCloseDeferrals = 0
 
     /**
      * 本次连接使用的 APPID：在 [connect] 解析凭据时缓存。
@@ -183,6 +190,7 @@ class XfIatClient(
         framesSent = 0
         seq = 0
         queue.clear()
+        overflowLogged = false
 
         // 首帧：status=0，音频可以留空（后续靠泵送），业务参数全在这一帧里
         val ok = current.send(XfIatProtocol.firstFrame(appId, ByteArray(0), seq = nextSeq()))
@@ -202,7 +210,11 @@ class XfIatClient(
     override fun sendChunk(pcmFloat32LittleEndian: ByteArray) {
         if (taskId == null) return
         // 转换在采集线程上做（纯 CPU、无锁），入队是瞬时的，不会卡住麦克风
-        queue.append(XfIatProtocol.float32ToPcm16(pcmFloat32LittleEndian))
+        if (queue.append(XfIatProtocol.float32ToPcm16(pcmFloat32LittleEndian)) && !overflowLogged) {
+            // 每段任务只报一次（采集线程每 100ms 一包，逐包打会把诊断文件淹掉）
+            overflowLogged = true
+            Diagnostics.w(TAG, "待发缓冲到上限($MAX_QUEUE_BYTES 字节≈60s)，后续音频丢弃")
+        }
     }
 
     override fun endTask(): Boolean = finishTask(acceptResult = true)
@@ -248,6 +260,11 @@ class XfIatClient(
             return false
         }
         Diagnostics.i(TAG, "finishTask: taskId=$id accept=$acceptResult")
+        // 收尾后挂一条空闲关闭兜底：正常路径由 [releaseAndPreconnect] 拆除并重排（那里会先撤这条，
+        // 等价）；服务端**静默不回**末帧时（丢包 / 中间层断开 / `ls` 丢失）这条兜底才是唯一的
+        // 拆除点 —— 否则 `sessionStarted` 仍是 true 的连接既没有读超时、也没有 ping，
+        // 又没有任何计时器持有它，只能等用户下一次按键强制重连才消失。
+        scheduleIdleClose()
         return true
     }
 
@@ -279,8 +296,9 @@ class XfIatClient(
         // 空闲窗口先挂上：下面的早退分支也不能让一条没人用的连接永久挂着
         scheduleIdleClose(SpeechClient.DEFAULT_IDLE_CLOSE_MS)
         // 已经在连（用户恰好此刻按了空格）就不重复握手：`socket = http.newWebSocket(...)`
-        // 会把上一条覆盖成孤儿
-        if (socket != null || state == LinkState.CONNECTING) return
+        // 会把上一条覆盖成孤儿。**已被主动关闭**（页面销毁 / `close()`）同样不许再建 ——
+        // 那条新连接的空闲窗口刚被 close() 撤掉，建出来就是一条没有任何计时器的连接。
+        if (socket != null || state == LinkState.CONNECTING || state == LinkState.IDLE) return
         connect(force = false, userInitiated = false)
         Diagnostics.i(
             TAG,
@@ -289,9 +307,21 @@ class XfIatClient(
     }
 
     override fun scheduleIdleClose(delayMs: Long) {
+        // 外部重新排程 = 「又有新的使用意图」：后延计数从零算（后延自身走 [armIdleClose]）
+        idleCloseDeferrals = 0
+        armIdleClose(delayMs)
+        Diagnostics.i(TAG, "scheduleIdleClose: ${delayMs}ms 无活动则断开")
+    }
+
+    /**
+     * 只排程、**不动后延计数**：[onIdleCloseDue] 的后延专用。
+     *
+     * 合进 [scheduleIdleClose] 的话，后延会把自己的计数清零 —— 上限 [IDLE_CLOSE_MAX_DEFERRALS]
+     * 永远走不到，服务端不回末帧时连接被无限后延（= 永生），这条兜底等于没做。
+     */
+    private fun armIdleClose(delayMs: Long) {
         idleHandler.removeCallbacks(idleRunnable)
         idleHandler.postDelayed(idleRunnable, delayMs)
-        Diagnostics.i(TAG, "scheduleIdleClose: ${delayMs}ms 无活动则断开")
     }
 
     override fun cancelIdleClose() {
@@ -301,9 +331,20 @@ class XfIatClient(
     private fun onIdleCloseDue() {
         if (taskId != null || acceptingTask != null) {
             // 在途任务：此刻断开就是把结果丢掉。讯飞一次会话一条连接，任务结束后本来就会断，
-            // 这里只需跳过（不再重排，避免无活动时反复唤醒 —— 与 AsrClient 的取舍一致）。
-            Diagnostics.i(TAG, "空闲关闭跳过：仍有在途任务")
-            return
+            // 但「本来」的前提是有人来断 —— 服务端静默不回末帧时，[finishTask] 挂上的这条兜底
+            // 就是唯一的拆除点。只跳过不重排等于什么都没做，故设上限：调用方的 60s 兜底被撤
+            // （会话切换 / 新一段录音清了等待态）时，采纳闸门会一直留着，到上限就强制关闭。
+            if (idleCloseDeferrals >= IDLE_CLOSE_MAX_DEFERRALS) {
+                Diagnostics.w(
+                    TAG,
+                    "空闲关闭：在途标记残留（task=$taskId accepting=$acceptingTask），强制关闭",
+                )
+            } else {
+                idleCloseDeferrals++
+                Diagnostics.i(TAG, "空闲关闭跳过：仍有在途任务，稍后再试（第 $idleCloseDeferrals 次）")
+                armIdleClose(SpeechClient.DEFAULT_IDLE_CLOSE_MS)
+                return
+            }
         }
         closeSocket()
         updateState(LinkState.IDLE, null)
@@ -375,6 +416,9 @@ class XfIatClient(
             Diagnostics.w(TAG, "onFailure: ${t.javaClass.simpleName} response=${response?.code}")
             Log.w(TAG, "onFailure: ${t.javaClass.simpleName}")
             cancelPump()
+            // 连接已经断了，空闲兜底无事可做：留着它只会在 90s 后把刚写好的失败原因
+            // 覆盖成「未连接」（与服务端拒绝分支同一条，见 [handleMessage]）
+            cancelIdleClose()
             socket = null
             clearTask()
             updateState(LinkState.OFFLINE, describe(t, response?.code))
@@ -384,6 +428,7 @@ class XfIatClient(
             if (webSocket !== socket) return
             Diagnostics.i(TAG, "onClosed: code=$code")
             cancelPump()
+            cancelIdleClose()
             socket = null
             clearTask()
             updateState(LinkState.IDLE, null)
@@ -403,17 +448,23 @@ class XfIatClient(
             return
         }
         if (response.code != 0) {
+            // 服务端 message 先刮再落盘（它可能整条来自网关回显，见 [SpeechErrorText]）：
+            // 日志会随诊断包外发，与状态条那条出口同一口径。
+            val safeMessage = SpeechErrorText.scrub(response.message).orEmpty()
             Diagnostics.w(
                 TAG,
-                "onMessage: 服务端拒绝 code=${response.code} message=${response.message.take(40)}",
+                "onMessage: 服务端拒绝 code=${response.code} message=${safeMessage.take(40)}",
             )
             Log.w(TAG, "onMessage: 服务端拒绝 code=${response.code}")
             cancelPump()
+            // 连接马上就要断，兜底无需再留着：真让它到点，90s 后那次 updateState(IDLE)
+            // 会把状态条上刚写好的服务端 code / message 覆盖成「未连接」（排障线索被自己抹掉）
+            cancelIdleClose()
             clearTask()
             // code 与 message 都要带上：message 为空时只报「识别失败」，用户与日志都无从下手；
             // 这两样正是「鉴权失败 / appid 错 / 超额」唯一的指路牌（code 是服务端给的定性依据）
             val detail = "code ${response.code} " +
-                response.message.take(40).ifBlank { TEXT_RECOGNIZE_FAILED }
+                safeMessage.take(40).ifBlank { TEXT_RECOGNIZE_FAILED }
             updateState(LinkState.OFFLINE, detail)
             closeSocket()
             return
@@ -498,18 +549,28 @@ class XfIatClient(
      * `internal` 是为了能在 JVM 单测里直接验「不丢字节 / 不乱序」（本类整体依赖 Handler 与
      * OkHttp，进不了单测；这一段是纯逻辑，是唯一能真跑起来的部分）。
      */
-    internal class PcmQueue {
+    internal class PcmQueue(private val maxBytes: Int = MAX_QUEUE_BYTES) {
         private var buffer = ByteArray(XfIatProtocol.FRAME_BYTES * 8)
         private var length = 0
 
+        /**
+         * 入队；返回 true = **这一包被丢弃**（缓冲已到上限）。
+         *
+         * 为什么必须有上限：泵在发送失败时会停拍（`pumpTick` 见到 `send` 返回 false 就
+         * `return`，不重排）而 `taskId` 仍是非空 ⇒ [sendChunk] 继续入队、再没人取走。
+         * 32 KB/s 一路涨到 OOM，而死的是整个输入法进程（与 [BufferedBatchAsrClient] 里
+         * `MAX_PCM_BYTES` 同一类风险、同一条口径：丢尾巴保住进程）。
+         */
         @Synchronized
-        fun append(data: ByteArray) {
-            if (data.isEmpty()) return
+        fun append(data: ByteArray): Boolean {
+            if (data.isEmpty()) return false
+            if (length + data.size > maxBytes) return true
             if (length + data.size > buffer.size) {
                 buffer = buffer.copyOf(maxOf(buffer.size * 2, length + data.size))
             }
             System.arraycopy(data, 0, buffer, length, data.size)
             length += data.size
+            return false
         }
 
         @Synchronized
@@ -543,6 +604,24 @@ class XfIatClient(
 
     private companion object {
         const val TAG = "XfIatClient"
+
+        /**
+         * 待发缓冲上限：60 秒 × 16000 Hz × 2 字节 = 1,920,000 字节（≈1.8 MB）。
+         *
+         * 与 [BufferedBatchAsrClient.MAX_PCM_BYTES] 同一个数：58 秒收尾正常走不到这里，
+         * 走到就说明泵已经停了（发送失败 / 收尾定时器丢失），此时宁可丢尾巴也不能让缓冲
+         * 一路涨到 OOM。
+         */
+        const val MAX_QUEUE_BYTES = 60 * 16_000 * 2
+
+        /**
+         * 空闲关闭最多因「在途标记未清」后延几次（每次一个 90s 窗口，3 次 ≈ 4.5 分钟）。
+         *
+         * 正常路径用不到：final 一到 [releaseAndPreconnect] 就拆连并重排；调用方的 60s 兜底
+         * 也会先清掉采纳闸门。超过上限仍不清 = 标记残留，强制关闭（丢一个已经等不到的结果，
+         * 比让一条没有计时器的连接永生强）。
+         */
+        const val IDLE_CLOSE_MAX_DEFERRALS = 3
 
         /** 40ms 一帧（官方节拍） */
         const val FRAME_MS = 40L

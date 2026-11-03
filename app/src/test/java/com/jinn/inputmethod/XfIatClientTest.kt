@@ -232,4 +232,31 @@ class XfIatClientTest {
         q.append(ByteArray(0))
         assertEquals("空 append 不能改变长度", 0, q.takeAll().size)
     }
+
+    /**
+     * 待发缓冲必须有上限（2026-11-03 复审）。
+     *
+     * 泵在 `send` 返回 false 时会停拍且不重排（见 [XfIatClient.pumpTick]），而 `taskId` 仍非空
+     * ⇒ `sendChunk` 继续入队、再没人取走：32 KB/s 一路涨到 OOM，死的是整个输入法进程。
+     * 判据两半都要：超限那一包**真的被丢**（返回 true），已收下的字节**一个不少、不乱序**
+     * （丢尾巴不能丢前半段）。
+     */
+    @Test
+    fun `待发缓冲有上限且超限只丢尾巴`() {
+        val cap = XfIatProtocol.FRAME_BYTES * 4
+        val q = XfIatClient.PcmQueue(maxBytes = cap)
+        val keep = ByteArray(cap - 1) { (it % 251).toByte() }
+        assertFalse("没到上限不许丢", q.append(keep))
+        // 上限是**字节水位**，不是整包粒度：还剩 1 字节时这一包照样进得来
+        assertFalse("还剩 1 字节空间时不该丢", q.append(ByteArray(1)))
+        assertTrue("满了以后那一包必须被丢（否则缓冲无上限）", q.append(ByteArray(1)))
+
+        val rest = q.takeAll()
+        assertEquals("上限内的字节必须原样留着（丢的是尾巴，不是前半段）", cap, rest.size)
+        assertArrayEquals("留下的必须是先到的那一段且逐字节相同", keep + ByteArray(1), rest)
+
+        // 取空之后又能收（上限是水位，不是一次性的关闸）
+        assertFalse("腾出空间后必须能继续入队", q.append(ByteArray(8)))
+        assertEquals(8, q.takeAll().size)
+    }
 }
