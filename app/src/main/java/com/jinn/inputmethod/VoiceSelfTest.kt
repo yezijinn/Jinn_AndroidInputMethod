@@ -189,7 +189,14 @@ class VoiceSelfTest(
         recorder = null
         val sent = client?.endTask() ?: false
         if (!sent) {
-            finish(Result("", VoiceTestVerdict.of(null, TEXT_END_FAILED, prefs.voiceInputEnabled)))
+            // 批量后端的 endTask 在「一字节音频都没收到」时也返回 false（连接正常）——
+            // 那条要说「没听到」，不是「收尾包未送出」（两者指向完全不同的排查方向）
+            val reason = if (client?.state == LinkState.ONLINE) {
+                VoiceTestVerdict.TEXT_NO_SPEECH
+            } else {
+                TEXT_END_FAILED
+            }
+            finish(Result("", VoiceTestVerdict.of(null, reason, prefs.voiceInputEnabled)))
             return
         }
         handler.postDelayed(timeoutRunnable, FINAL_TIMEOUT_MS)

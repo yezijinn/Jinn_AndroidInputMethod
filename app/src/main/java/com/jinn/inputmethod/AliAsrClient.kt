@@ -417,6 +417,9 @@ class AliAsrClient(
         Diagnostics.w(TAG, "等 task-started 超时")
         updateState(LinkState.OFFLINE, TEXT_START_TIMEOUT)
         cancelPump()
+        // 与失败分支同口径：留着已排程的空闲关闭，90s 后那次 updateState(IDLE) 会把刚写下的
+        // 超时原因换成「未连接」（同 onFailed / onFailure 的既有写法）
+        cancelIdleClose()
         clearTask()
         closeSocket()
     }
@@ -429,6 +432,7 @@ class AliAsrClient(
         acceptingTask = null
         updateState(LinkState.OFFLINE, TEXT_FINISH_TIMEOUT)
         cancelPump()
+        cancelIdleClose()
         closeSocket()
     }
 

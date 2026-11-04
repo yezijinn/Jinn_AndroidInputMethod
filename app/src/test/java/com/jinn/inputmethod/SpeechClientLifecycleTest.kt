@@ -318,6 +318,14 @@ class SpeechClientLifecycleTest {
                 )
             }
         }
+        // 阿里另两条失败出口（A-732）：两个超时分支同样先写 OFFLINE + 具体原因，
+        // 不撤空闲关闭的话，90s 到点那次 updateState(IDLE) 会把原因换成「未连接」
+        for (anchor in listOf("private fun onStartTimeout", "private fun onFinishTimeout")) {
+            assertTrue(
+                "阿里：$anchor 没撤空闲关闭兜底（超时原因会被「未连接」覆盖）",
+                "cancelIdleClose()" in TestSources.blockAfter(ali, anchor),
+            )
+        }
     }
 
     /**
@@ -530,6 +538,17 @@ class SpeechClientLifecycleTest {
                 "SpeechErrorText.scrub(detail)" in sink,
             )
         }
+        // 原因还要留得住（A-734）：`onStartInputView` 每次聚焦都用 detail=null 重绘，
+        // 客户端不保存 detail ⇒ 不缓一份，「鉴权失败（HTTP 401）」会被换成「未连接」
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val render = TestSources.blockAfter(ime, "private fun renderLink")
+        assertTrue("renderLink 必须缓存失败原因", "lastLinkDetail = detail" in render)
+        assertTrue("ONLINE / CONNECTING 时必须清空缓存", "lastLinkDetail = null" in render)
+        assertTrue("标签要读缓存后的值", "label = shownDetail ?:" in render)
+        assertTrue(
+            "聚焦重绘仍传 null（原因由 lastLinkDetail 兜住，别改成另存一份）",
+            "renderLink(asr?.state ?: LinkState.OFFLINE, null)" in ime,
+        )
     }
 
     /**

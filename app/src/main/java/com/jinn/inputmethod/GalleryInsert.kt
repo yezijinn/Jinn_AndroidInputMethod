@@ -185,6 +185,17 @@ internal object GalleryInsert {
     /** 待插入张数（锁内取）：裁剪时要按它把队内文件计入保护位，见 [trimCache] 的 `extraProtect` */
     private fun pendingSize(): Int = synchronized(pendingLock) { pending.size }
 
+    /**
+     * 待插入队列里那几个**文件名**（锁内取）。
+     *
+     * 张数保护是位置式的（「最近 N 位」），队内那张一旦被更晚的非入队落盘挤到后面就失效 ——
+     * 剪贴板历史页的「复制」、面板点图、兜底通道都会往同一目录写新文件却**不入队**。
+     * 按身份豁免才是「队内文件绝不被字节清理删掉」这条不变量的正确表达（A-721）。
+     */
+    private fun pendingNames(): Set<String> = synchronized(pendingLock) {
+        pending.mapTo(HashSet(pending.size)) { it.picked.file.name }
+    }
+
     /** 复制完成后调用：按点击顺序排队，超出 [MAX_PENDING] 丢最旧的（连带删掉它的明文暂存件） */
     fun putPending(file: File, mime: String, hostKey: String?) {
         val dropped = ArrayList<File>(1)
@@ -200,7 +211,7 @@ internal object GalleryInsert {
         // 只等下次选图的 trimCache 回收的话，用户此后不再选图就一直占着明文。
         dropped.forEach { runCatching { it.delete() } }
         // 队内文件一并保护：否则折半档的字节预算会把最旧那张判掉，宿主随后读到「图片已失效」
-        trimCache(file.parentFile, queued)
+        trimCache(file.parentFile, queued, pendingNames())
     }
 
     /**
@@ -389,7 +400,7 @@ internal object GalleryInsert {
             // 裁剪必须看得见待插入队列：这条入档链与 `putPending` 不是同一个调用点
             // （`fallbackToClipboard` / 剪贴板历史页都在这里落盘），只按「最近两张」保护时，
             // 队列里第三张会被字节预算判掉，随后 `commit` 报「图片已失效」。
-            trimCache(dir, pendingSize())
+            trimCache(dir, pendingSize(), pendingNames())
             staged
         } catch (t: Throwable) {
             temp.delete()
@@ -520,6 +531,8 @@ internal object GalleryInsert {
      *
      * 入参按**最近使用在前**排序。最新 [protectRecent] 张无条件保留 —— 宿主读取是异步的，
      * 刚提交与上一轮提交的都可能仍在被重读，删掉在界面上表现为「发出去的图裂了」（L-1003）；
+     * [mustKeep] 里的文件名按**身份**无条件保留（队内待插入队列，A-721）：位置保护只看「最近几位」，
+     * 而队列里的文件可能被更晚的非入队落盘挤到后面，那时只有身份能救它。
      * 其余按「保留 [keepFiles] 张 + 保留集总字节不超过 [maxBytes]」淘汰，超出即删最旧。
      */
     internal fun staleFilesForTrim(
@@ -527,11 +540,12 @@ internal object GalleryInsert {
         keepFiles: Int,
         maxBytes: Long,
         protectRecent: Int = PROTECTED_RECENT,
+        mustKeep: Set<String> = emptySet(),
     ): List<File> {
         val out = ArrayList<File>()
         var keptBytes = 0L
         entries.forEachIndexed { idx, (file, len) ->
-            if (idx < protectRecent) {
+            if (idx < protectRecent || file.name in mustKeep) {
                 keptBytes += len
                 return@forEachIndexed
             }
@@ -545,11 +559,13 @@ internal object GalleryInsert {
     /**
      * 目录内按「保护最近若干张 + 保留张数 + 总字节」清理（判据见 [staleFilesForTrim]）。
      *
-     * [extraProtect] 用于把**队内待插入**的文件也纳入保护：清理按字节预算淘汰，而折半档的预算
-     * 与 [MAX_PENDING] 互斥 —— 三张都在队里时，最旧那张会被预算判掉，`commit` 随即报「图片已失效」
-     * （队内文件本该由队列自己管理，不该被字节清理顺手删掉）。
+     * [extraProtect] / [mustKeep] 都是把**队内待插入**的文件纳入保护：清理按字节预算淘汰，而折半档
+     * 的预算与 [MAX_PENDING] 互斥 —— 三张都在队里时，最旧那张会被预算判掉，`commit` 随即报
+     * 「图片已失效」（队内文件本该由队列自己管理，不该被字节清理顺手删掉）。
+     * 张数是粗保护（最新 N 位），[mustKeep] 才是精确的那一条；两者并存是因为前者还承担
+     * 「最近提交过、宿主可能仍在异步读」的语义（L-1003）。
      */
-    private fun trimCache(dir: File?, extraProtect: Int = 0) {
+    private fun trimCache(dir: File?, extraProtect: Int = 0, mustKeep: Set<String> = emptySet()) {
         val files = dir?.listFiles() ?: return
         val entries = files.sortedByDescending { it.lastModified() }.map { it to it.length() }
         staleFilesForTrim(
@@ -557,6 +573,7 @@ internal object GalleryInsert {
             keepFiles(),
             effectiveCacheBytes,
             protectRecent = PROTECTED_RECENT + extraProtect,
+            mustKeep = mustKeep,
         ).forEach { it.delete() }
     }
 

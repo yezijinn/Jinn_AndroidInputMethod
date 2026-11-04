@@ -347,6 +347,18 @@ class JinnIme : InputMethodService() {
     private var voiceResultPackage: String? = null
 
     /**
+     * 状态条上一次写下的**失败原因**（A-734）。
+     *
+     * `SpeechClient` 只对外暴露 `state`，不保存 `detail`；而 `onStartInputView` 每次聚焦都用
+     * `renderLink(state, null)` 重绘（`:3713`）。没有这一份，401 / 超时 / 服务端 `code≠0`
+     * 的具体原因会被「未连接」换掉，且再也取不回来。`ONLINE` / `CONNECTING` 时清空。
+     */
+    private var lastLinkDetail: String? = null
+
+    /** 上一次画到状态灯上的颜色资源：同值不重设 `backgroundTintList`（A-738，省一次新建与重绘） */
+    private var lastStatusColor: Int = 0
+
+    /**
      * 松手后等最终结果的兜底：超时即复位状态条，不让「识别中…」永驻。
      *
      * 到点就是**这一段已经放弃**，只复位状态条不够 —— 客户端的采纳闸门（`acceptingTask`）还开着，
@@ -4298,11 +4310,21 @@ class JinnIme : InputMethodService() {
             // 收尾包没送出去（断线 / 队列满）时服务端不会给最终结果：直接提示未连接、不挂等待态。
             // 挂上就要等 60s 兜底超时才复位状态条，期间用户以为还在识别
             if (asr?.endTask() != true) {
-                Diagnostics.w(TAG, "stopRecording: 收尾包未送出，放弃等待结果")
+                // endTask 的 false 有两种事实：链路断了（该说「未连接」）与**一个字节都没录到**
+                // （批量后端在 `data.isEmpty()` 时返回 false，连接其实好好的）。后者是「按一下
+                // 马上松」，报「未连接」会让用户去查网络与口令 —— 判据只能看当前连接状态。
+                val disconnected = asr?.state != LinkState.ONLINE
+                Diagnostics.w(TAG, "stopRecording: 收尾包未送出（state=${asr?.state}），放弃等待结果")
                 awaitingResult = false
                 voiceResultPackage = null
                 ui.removeCallbacks(recognizeTimeout)
-                setHint(getString(R.string.hint_not_connected))
+                setHint(
+                    if (disconnected) {
+                        getString(R.string.hint_not_connected)
+                    } else {
+                        VoiceTestVerdict.TEXT_NO_SPEECH
+                    },
+                )
             } else {
                 Diagnostics.i(TAG, "stopRecording: 收尾发送（识别中）")
                 setHint(getString(R.string.hint_recognizing))
@@ -5759,6 +5781,13 @@ class JinnIme : InputMethodService() {
 
     private fun renderLink(state: LinkState, detail: String?) {
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
+        // 失败原因留住（A-734）：聚焦重绘传的是 detail=null，丢了就只剩「未连接」
+        if (state == LinkState.ONLINE || state == LinkState.CONNECTING) {
+            lastLinkDetail = null
+        } else if (detail != null) {
+            lastLinkDetail = detail
+        }
+        val shownDetail = detail ?: lastLinkDetail
         val colorRes: Int
         val label: String
         when (state) {
@@ -5786,7 +5815,7 @@ class JinnIme : InputMethodService() {
 
             else -> {
                 colorRes = R.color.dot_offline
-                label = detail ?: getString(R.string.status_offline)
+                label = shownDetail ?: getString(R.string.status_offline)
                 // 录音中突然掉线：服务端永远收不到收尾包，主动放弃本次听写
                 // 避免用户白白说话等不到结果，优于让 VAD 或松手自欺"识别中…"
                 if (mode != Mode.NONE) {
@@ -5802,8 +5831,13 @@ class JinnIme : InputMethodService() {
                 }
             }
         }
-        statusDot?.backgroundTintList = ColorStateList.valueOf((keyboardThemeCtx ?: this).getColor(colorRes))
-        statusLabel?.text = label
+        // 同值不重设（A-738）：聚焦 / 换框时本方法每次都跑，而 tint 每次 new 一个 ColorStateList、
+        // text 同值赋值也会走一遍 setText。视图重建后 statusDot 是新实例（tint 为 null）⇒ 会重设。
+        if (lastStatusColor != colorRes || statusDot?.backgroundTintList == null) {
+            statusDot?.backgroundTintList = ColorStateList.valueOf((keyboardThemeCtx ?: this).getColor(colorRes))
+            lastStatusColor = colorRes
+        }
+        if (statusLabel?.text != label) statusLabel?.text = label
     }
 
     private fun setStatusText(text: String) {

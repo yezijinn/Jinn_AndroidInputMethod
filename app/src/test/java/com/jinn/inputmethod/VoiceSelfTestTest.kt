@@ -144,5 +144,17 @@ class VoiceSelfTestTest {
         assertTrue("启动失败分支必须优先用 micError", "micError ?: TEXT_MIC_FAILED" in begin)
         // 兜底文案仍在（一个原因都没给时不能让结论空着）
         assertTrue("缺少兜底文案", "TEXT_MIC_FAILED" in src)
+        // 收尾失败也要按连接状态分流（A-736）：批量后端「零音频」时 endTask 也返回 false，
+        // 一律报「收尾包未送出」会把「你没说话」说成「发不出去」。
+        val stop = TestSources.blockAfter(src, "private fun stopAndAwaitFinal")
+        assertTrue("收尾失败必须先看连接状态", "client?.state == LinkState.ONLINE" in stop)
+        assertTrue("连接正常时要报「没听到语音」", "VoiceTestVerdict.TEXT_NO_SPEECH" in stop)
+        // IME 侧同一个判据（26 键按住说话这条路）
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val anchor = ime.indexOf("asr?.endTask() != true")
+        assertTrue("找不到 endTask 收尾失败的分支", anchor >= 0)
+        val tail = ime.substring(anchor, minOf(ime.length, anchor + 700))
+        assertTrue("IME 收尾失败也要按连接状态分流", "asr?.state != LinkState.ONLINE" in tail)
+        assertTrue("连接正常时 IME 提示「没听到语音」", "VoiceTestVerdict.TEXT_NO_SPEECH" in tail)
     }
 }

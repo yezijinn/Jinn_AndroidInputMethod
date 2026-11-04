@@ -165,6 +165,11 @@ class CredentialStorageTest {
         assertTrue("暂时分支必须原样返回空串（不许把密文当凭据）", "return \"\"" in block)
         // 永久分支的缓存必须还在（解不开就别每读一次跑一遍解密并刷一条 W）
         assertTrue("永久解不开仍要缓存空串", cacheEmpty >= 0)
+        // 失败分支也要回查「解密期间被改写」（A-730）：否则用户在另一线程刚保存的新值
+        // 会被下面那行 credentialCache[key] = "" 覆写成空串（v1 路径早就有这道闸）。
+        // 数**两处**（成功 + 失败）：只查存在性的话，成功路径那一处会让守卫永远绿。
+        val rechecks = Regex("""!=\s*raw""").findAll(block).count()
+        assertTrue("v2 分支要两处回查（成功 + 失败），实际 $rechecks 处", rechecks >= 2)
     }
 
     // ── 防截屏 / 剪贴板不留痕（源码对拍）──────────────────────

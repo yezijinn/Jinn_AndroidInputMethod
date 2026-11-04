@@ -1471,6 +1471,16 @@ class VoiceSettingsActivity : ComponentActivity() {
                 "deepgramModel=${prefs.deepgramModel} deepgramLang=${prefs.deepgramLanguage} " +
                 "deepgramKeyLen=${prefs.deepgramApiKey.length}",
         )
+        // 凭据只进了内存（Keystore 与软件密钥都不可用）时**不能重启**：killProcess 不走 onDestroy，
+        // 内存里那份随进程一起丢，而磁盘上旧密文已被删（Prefs.writeCredential 的 fail-closed 分支）
+        // ⇒ 重启后该家回到「未配置」。另两页（OpenAI / 翻译）早就用同一份记账把「保存成功」卡在这里。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isNotEmpty()) {
+            Diagnostics.w(TAG, "saveAndRestart: ${unpersisted.size} 个凭据未落盘，已取消重启")
+            textSaveHint.text = ImeRestart.TEXT_RESTART_FLUSH_FAILED
+            btnSave.isEnabled = true
+            return
+        }
         textSaveHint.text = TEXT_RESTARTING
         // 基线先记成「这批已保存」：重启窗口里若再动控件，按新基线算脏才对。
         // 落盘失败（回调里）退回这一批之前的基线 —— 没写进磁盘就不算保存过。

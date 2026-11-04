@@ -1025,15 +1025,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 allItems.clear()
                 allItems.addAll(out)
                 items.clear()
-                // 与面板搜索同口径：忽略大小写、全半角与零宽也互认 —— 判据只用 ClipboardSearch 一份
-                // （先前这里是 `contains(keywordNow, ignoreCase = true)`：大小写对上了，符号层打的全角
-                // 标点、粘来的零宽字符仍然搜不到，两处口径会越走越远，BUG.md L-1135）
-                val forms = ClipboardSearch.queryForms(keywordNow)
-                items.addAll(
-                    if (keywordNow.isEmpty()) allItems
-                    else allItems.filter { ClipboardSearch.matches(it.content, forms) }
-                )
+                // 后台扫描已经按同一谓词滤过（`searching && !matches(...) continue`，见上面的循环）：
+                // 这里再滤一遍是同谓词的重复计算（A-749）。口径仍只有 ClipboardSearch 一份。
+                items.addAll(allItems)
                 // 正文列的开窗形态与这批结果同代落地（见 activeForms）：结果行按它把窗口挪到命中点
+                val forms = ClipboardSearch.queryForms(keywordNow)
                 activeForms = forms
                 numberById.clear()
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，

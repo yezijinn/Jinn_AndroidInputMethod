@@ -199,22 +199,57 @@ class GalleryInsertTest {
             protectRecent = 5,
         )
         assertTrue("队内三张都保护住后不该再删", with.isEmpty())
+        // 张数保护是位置式的：队内那张被更晚的**非入队**落盘（历史页「复制」/ 面板点图 / 兜底通道）
+        // 挤到第 N 位之后就失效。身份豁免才是「队内文件绝不被字节清理删掉」的正确表达（A-721）：
+        // 这里构造 [新, 新, 队内] —— 队内那张已落到 idx=2，靠张数保护不到，只有 mustKeep 能救。
+        val shifted = (1..3).map { entry("clip_$it", mb) }
+        val byCountOnly = GalleryInsert.staleFilesForTrim(
+            shifted,
+            keepFiles = 3,
+            maxBytes = 30L * 1024 * 1024,
+            protectRecent = 2,
+        )
+        assertEquals("位置保护到不了第 3 张", listOf("clip_3"), byCountOnly.map { it.name })
+        val byIdentity = GalleryInsert.staleFilesForTrim(
+            shifted,
+            keepFiles = 3,
+            maxBytes = 30L * 1024 * 1024,
+            protectRecent = 2,
+            mustKeep = setOf("clip_3"),
+        )
+        assertTrue("队内文件按身份必须留下", byIdentity.isEmpty())
         val src = TestSources.codeSource("GalleryInsert.kt")
-        assertTrue("入队要把队长透传给清理", "trimCache(file.parentFile, queued)" in src)
+        assertTrue("入队要把队内文件名透传给清理", "trimCache(file.parentFile, queued, pendingNames())" in src)
         assertTrue(
             "清理要把额外保护位加进 protectRecent",
             "protectRecent = PROTECTED_RECENT + extraProtect" in src,
         )
+        assertTrue("清理要按身份豁免 mustKeep", "file.name in mustKeep" in src)
         // 第二条入档链（`stageForInsert`：面板点图 / 「复制到剪贴板」回退 / 历史页复制）不在
         // `putPending` 里，它自己的裁剪同样要看见队列 —— 否则队列里第三张会被字节预算判掉。
         assertTrue(
-            "贴图落盘时的清理也要把队长算进去",
-            "trimCache(dir, pendingSize())" in TestSources.blockAfter(src, "fun stageForInsert("),
+            "贴图落盘时的清理也要把队内文件算进去",
+            "trimCache(dir, pendingSize(), pendingNames())" in TestSources.blockAfter(src, "fun stageForInsert("),
         )
         assertTrue(
             "队长必须在锁内取（队列写侧在 IO 线程）",
             Regex("""private fun pendingSize\(\)[^\n]*synchronized\(pendingLock\)""").containsMatchIn(src),
         )
+        assertTrue(
+            "队内文件名同样要在锁内取",
+            Regex("""private fun pendingNames\(\): Set<String> = synchronized\(pendingLock\)""")
+                .containsMatchIn(src),
+        )
+        // 系统剪贴板持有的是 cache 文件 URI（A-746）：复制成功要刷新 mtime，让「最近两张」的
+        // 位置保护把这张重新算进去；成功分支也不能删文件（宿主稍后才读）
+        val export = TestSources.codeSource("ClipboardImageExport.kt")
+        val copy = TestSources.blockAfter(export, "fun copyToSystemClipboard")
+        assertTrue("复制成功后要刷新文件 mtime", "setLastModified(System.currentTimeMillis())" in copy)
+        // 删除只许出现在失败分支（与 L-1287 同口径）：成功分支删了，宿主读到的就是裂图
+        val entryAt = export.indexOf("fun copyToSystemClipboard")
+        val deleteAt = export.indexOf("file.delete()", entryAt)
+        val failLogAt = export.indexOf("复制图片到剪贴板失败", entryAt)
+        assertTrue("失败分支要删临时件", deleteAt > entryAt && deleteAt < failLogAt)
     }
 
     /**

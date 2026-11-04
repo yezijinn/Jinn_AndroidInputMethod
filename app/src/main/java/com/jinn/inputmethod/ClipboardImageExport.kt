@@ -269,6 +269,10 @@ internal object ClipboardImageExport {
             // newUri 会走 resolver.getType：provider 异常时同样要落到下面的清理分支
             val clip = android.content.ClipData.newUri(context.contentResolver, CLIP_LABEL, uri)
             manager.setPrimaryClip(clip)
+            // 复制成功 = 这个文件又被用了一次（A-746）：系统剪贴板里存的是它的 URI，宿主稍后
+            // 才去读。刷新 mtime 让「最近两张」的位置保护把它重新算进去，否则下一次入档的
+            // trimCache 会按创建时刻把它当最旧的删掉，长按粘贴就得到一张裂图。
+            runCatching { file.setLastModified(System.currentTimeMillis()) }
             true
         }.getOrElse {
             // 第三条失败分支同样收尾（AI2 A-185，L-1287 的残余）：setPrimaryClip 会抛

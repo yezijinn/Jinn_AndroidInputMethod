@@ -891,5 +891,14 @@ class VoiceSettingsPageTest {
                 """edit(?:Host|Port)\.error = getString\([^)]*\)\s*\n\s*btnSave\.isEnabled = true"""
             ).containsMatchIn(save),
         )
+        // 凭据只进内存时不许重启（A-726）：killProcess 不走 onDestroy，内存里那份随进程丢，
+        // 而磁盘旧密文已被 writeCredential 的 fail-closed 分支删掉 ⇒ 重启后变「未配置」。
+        val unpersisted = save.indexOf("unpersistedCredentialKeys()")
+        assertTrue("必须查凭据是否真的落盘", unpersisted >= 0)
+        assertTrue("查落盘必须早于 ImeRestart.restart", unpersisted < restart)
+        assertTrue(
+            "未落盘时必须把失败文案写回状态行（与落盘失败同一句）",
+            "ImeRestart.TEXT_RESTART_FLUSH_FAILED" in save,
+        )
     }
 }

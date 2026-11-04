@@ -1427,6 +1427,13 @@ class Prefs(private val appContext: Context) {
                     Diagnostics.w(TAG, "密钥件暂时读不出，本次按未配置处理，稍后重试")
                     return ""
                 }
+                // 解密期间被改写（删除 / 换值）：与成功分支同一道闸（2026-11-04）。
+                // 缺了它，用户在另一线程重填并保存的新值会被这一行覆写成空串 —— 本进程内一直
+                // 显示「未配置」直到重启（v1 路径 :1475-1482 早就有这条，v2 只补了一半）。
+                if (strOr(key, "").orEmpty() != raw) {
+                    Diagnostics.w(TAG, "凭据在解密期间被改写，改读新值（软件密钥分支）")
+                    return if (retry >= 1) "" else readCredential(key, retry + 1)
+                }
                 // 密钥件丢了 / 长度不对 / 密文被改：永久解不开，等价「未配置」并要求重填（可缓存）
                 Diagnostics.w(TAG, "凭据解密失败（软件密钥缺失或密文损坏），按未配置处理，需重新填写")
                 credentialCache[key] = ""
