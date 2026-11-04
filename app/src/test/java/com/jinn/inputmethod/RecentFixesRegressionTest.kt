@@ -297,6 +297,17 @@ class RecentFixesRegressionTest {
             restart, "if (!prefsFlushed || !clipboardFlushed)", "killProcess(",
             "失败判据必须在杀进程之前",
         )
+        // A-740：配置与台账之外，后台 IO 队列里还排着剪贴板落库 / 图片压缩；只 flush 前四份
+        // 就杀进程，最后一条复制可能整份丢失。等待必须离开主线程、也不能投进池内（会自锁）。
+        assertTrue(
+            "杀进程前必须排空 BackgroundIo（否则重启前的剪贴板落库随进程一起丢）",
+            "BackgroundIo.flush(BACKGROUND_FLUSH_MS)" in restart,
+        )
+        assertBefore(
+            restart, "BackgroundIo.flush(BACKGROUND_FLUSH_MS)", "killProcess(",
+            "排空必须在杀进程之前",
+        )
+        assertTrue("排空要另起线程（主线程会卡到超时、池内会自锁）", "Thread({" in restart)
     }
 
     @Test

@@ -250,6 +250,12 @@ class GalleryInsertTest {
         val deleteAt = export.indexOf("file.delete()", entryAt)
         val failLogAt = export.indexOf("复制图片到剪贴板失败", entryAt)
         assertTrue("失败分支要删临时件", deleteAt > entryAt && deleteAt < failLogAt)
+        // 兜底粘贴必须按「投递时的输入框」判（A-722）：写盘是秒级，期间用户可能已经切走，
+        // 回来后拿 currentInputConnection 直接 paste 就把图粘进了不相干的框
+        val ime = TestSources.codeSource("JinnIme.kt")
+        val fallback = TestSources.blockAfter(ime, "private fun fallbackToClipboard")
+        assertTrue("投递前要取输入框标识", "galleryFieldKeyOf(currentInputEditorInfo)" in fallback)
+        assertTrue("粘贴前要比对标识", "fieldKey == now" in fallback)
     }
 
     /**
@@ -285,8 +291,9 @@ class GalleryInsertTest {
         }
         assertFalse("hint 随输入状态变，不能进标识", "hintText" in body)
         val mine = TestSources.codeSource("JinnIme.kt")
+        // 5 处：发起点、落库、面板选图，加上兜底通道的「投递前取标识 + 粘贴前再取一次比对」（A-722）
         val uses = Regex("""galleryFieldKeyOf\(currentInputEditorInfo\)""").findAll(mine).count()
-        assertEquals("发起点、落库与面板选图都要用图库口径", 3, uses)
+        assertEquals("发起点、落库、面板选图与兜底通道都要用图库口径", 5, uses)
     }
 
     /**

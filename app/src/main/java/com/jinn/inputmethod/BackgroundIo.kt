@@ -75,6 +75,27 @@ object BackgroundIo {
     }
 
     /**
+     * 等两条队列把手上的活干完（[timeoutMs] 上限），返回是否都排空。
+     *
+     * 用途只有一处：`ImeRestart` 杀进程之前（A-740）—— `SharedPreferences.flush()` / 台账 flush
+     * 只保证「已受理的写入完成」，管不到还排在这两条池里的剪贴板落库与图片压缩。
+     *
+     * ⚠ 两条禁忌：**不得从池内调用**（自己等自己必然等到超时）；**不得在主线程调用**
+     * （长活池里可能正压一张 20MB 图，最多卡满 [timeoutMs]）。
+     */
+    fun flush(timeoutMs: Long = 2_000L): Boolean {
+        val latch = java.util.concurrent.CountDownLatch(2)
+        this.run { latch.countDown() }
+        this.runLong { latch.countDown() }
+        return try {
+            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
+    /**
      * 提交被拒时的统一出口（BUG.md L-1272）：池关闭后提交属正常路径，但不能无声无息 ——
      * 任务整份丢失、日志里查不到 ⇒ 表现为「这次操作像没发生过」（一次裁剪 / 一次刷新没跑），
      * 而 `loading` 一类只在回调里复位的标志还会永久卡在「进行中」，后续同类操作全被拦。

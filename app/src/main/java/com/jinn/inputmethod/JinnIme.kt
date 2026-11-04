@@ -1544,12 +1544,21 @@ class JinnIme : InputMethodService() {
         // 写盘必须在后台：`copyToSystemClipboard` → `GalleryInsert.stageForInsert` 会把整张原图
         // （≤20MB）落进 cache 并顺带裁剪目录。两条调用来源（宿主拒收 / URI 构造失败）都在 `ui.post`
         // 里，同步做就是主线程 IO；搬进长活池后它也回到与选图/点图同一条串行线程，裁剪不再乱序。
+        // 但「替宿主粘贴」用的是**投递时刻的输入框**（A-722）：写盘期间用户可能已经切走，
+        // 回来时 currentInputConnection 指向别的框，这一下就把图粘进不相干的地方（同类：L-1005）。
+        val fieldKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
         BackgroundIo.runLong {
             val ok = ClipboardImageExport.copyToSystemClipboard(this, item, bytes)
             ui.post {
                 if (ok) {
-                    currentInputConnection?.let { connection ->
-                        runCatching { connection.performContextMenuAction(android.R.id.paste) }
+                    val now = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+                    val sameField = fieldKey == null || fieldKey == now
+                    if (sameField) {
+                        currentInputConnection?.let { connection ->
+                            runCatching { connection.performContextMenuAction(android.R.id.paste) }
+                        }
+                    } else {
+                        Diagnostics.i(TAG, "fallbackToClipboard: 输入框已切换，只写剪贴板不代粘贴")
                     }
                 }
                 toast(if (ok) TEXT_IMAGE_COPIED else TEXT_IMAGE_COPY_FAILED)

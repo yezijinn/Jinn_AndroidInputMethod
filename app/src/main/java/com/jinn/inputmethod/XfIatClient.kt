@@ -370,7 +370,14 @@ class XfIatClient(
             while (sent < due && sent < MAX_CATCH_UP_FRAMES) {
                 val frame = queue.takeFrame() ?: break
                 if (!current.send(XfIatProtocol.audioFrame(sessionAppId, frame, seq = nextSeq()))) {
-                    Diagnostics.w(TAG, "pumpTick: 发送失败，停止本拍")
+                    // 停拍是刻意的（重排只会往坏连接继续灌音频），但**不能只停拍**（A-729）：
+                    // 任务还挂在 ONLINE，`sendChunk` 会继续攒到 1.92MB，松手时 `finishTask` 再把
+                    // 这一整段当**一帧**发出去（协议口径 40ms/帧）⇒ 后半句全丢、状态条只剩 code≠0。
+                    // 当场作废任务，用户立刻知道是「发送失败」，而不是几十秒后才收到一个莫名错误码。
+                    Diagnostics.w(TAG, "pumpTick: 发送失败，本段作废")
+                    updateState(LinkState.OFFLINE, TEXT_SEND_FAILED)
+                    clearTask()
+                    closeSocket()
                     return
                 }
                 sent++
@@ -636,6 +643,7 @@ class XfIatClient(
 
         /** 状态条文案（都不含任何凭据原文） */
         const val TEXT_NEED_CREDENTIALS = "讯飞凭据未配置"
+        const val TEXT_SEND_FAILED = "音频发送失败，请重试"
         const val TEXT_BAD_URL = "地址构造失败"
         const val TEXT_RECOGNIZE_FAILED = "识别失败"
 

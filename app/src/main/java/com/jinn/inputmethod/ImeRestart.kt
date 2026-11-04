@@ -30,6 +30,9 @@ internal object ImeRestart {
      */
     const val TEXT_RESTART_FLUSH_FAILED = "写入失败，设置未保存，已取消重启"
 
+    /** 等 `BackgroundIo` 两条队列排空的上限（A-740）；超时只留痕、照常重启 */
+    private const val BACKGROUND_FLUSH_MS = 2_000L
+
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
     /**
@@ -61,6 +64,15 @@ internal object ImeRestart {
             Toast.makeText(activity, TEXT_RESTART_FLUSH_FAILED, Toast.LENGTH_LONG).show()
             return
         }
-        handler.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, KILL_DELAY_MS)
+        // 后台 IO 队列也要排空（A-740）：剪贴板采集 / 图片解码都投在 `BackgroundIo` 的两条单线程池上，
+        // 上面那四个 flush 只管配置文件与学习台账。等待不能放主线程（长活池里可能是秒级大图任务），
+        // 也不能投进池里（自己等自己必然吃到超时）⇒ 单起一个线程，排空后再照常延迟杀进程。
+        Thread({
+            val drained = BackgroundIo.flush(BACKGROUND_FLUSH_MS)
+            if (!drained) {
+                Diagnostics.w(TAG, "restart: 后台队列未在 ${BACKGROUND_FLUSH_MS}ms 内排空，照常重启")
+            }
+            handler.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, KILL_DELAY_MS)
+        }, "jinn-ime-restart").apply { isDaemon = true }.start()
     }
 }

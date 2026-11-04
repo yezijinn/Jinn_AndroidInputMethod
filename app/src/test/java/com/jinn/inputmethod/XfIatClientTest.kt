@@ -98,6 +98,9 @@ class XfIatClientTest {
         val tick = TestSources.blockAfter(client, "private fun pumpTick")
         assertTrue("按「已到期的帧数」补发才算不丢音频", "framesSent" in tick)
         assertTrue("发送失败必须停拍并留痕（静默重试会把音频灌进已坏的连接）", "发送失败" in tick)
+        // A-729：停拍之后不能只停拍 —— 任务还挂在 ONLINE，余量会攒到收尾时被当成**一帧**灌出去
+        assertTrue("停拍后必须当场作废任务", "clearTask()" in tick)
+        assertTrue("作废要给出可读原因", "TEXT_SEND_FAILED" in tick)
     }
 
     @Test
