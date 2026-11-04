@@ -67,6 +67,11 @@ class CharPrefixCapTest {
             fullTake("n", CAP),
             chars,
         )
+        // 两处前缀扫描都要走二分下界：线性扫整张音节表仍是正确结果，但每次按键都白跑数百次
+        // startsWith（结果等价，性能退化），行为类守卫看不出来，只能钉源码形态
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("前缀联想必须从二分下界起步", "lowerBound(sortedSyllables, prefix)" in src)
+        assertTrue("音节补全同样从二分下界起步", "lowerBound(sortedValidSyllables, prefix)" in src)
     }
 
     /** 前提：本用例的全集必须**远超**上限，否则截断根本没被触发，上面两条形同虚设 */

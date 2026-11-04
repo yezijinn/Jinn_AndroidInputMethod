@@ -2879,14 +2879,20 @@ object PinyinEngine {
         if (prefix.isEmpty()) return emptyList()
         val out = ArrayList<String>(MAX_CHARS)
         val seen = HashSet<String>(MAX_CHARS * 2)
-        for (syllable in sortedSyllables) {
-            if (!syllable.startsWith(prefix)) continue
+        // 音节表在 finalizeLoad 里按自然序排好，同前缀的键必然连续：从二分下界起步，
+        // 命中区一结束就 break。此前每次按键都把整张音节表（数百条）扫一遍 startsWith ——
+        // 热路径上的纯浪费（与智能预测里 sortedPhraseKeys 的 lowerBound 同一套口径）。
+        var idx = lowerBound(sortedSyllables, prefix)
+        while (idx < sortedSyllables.size) {
+            val syllable = sortedSyllables[idx]
+            if (!syllable.startsWith(prefix)) break
             for (c in charsBySyllable[syllable].orEmpty()) {
                 if (!seen.add(c)) continue
                 if (!isLoadableWord(c)) continue
                 out.add(c)
                 if (out.size >= MAX_CHARS) return out
             }
+            idx++
         }
         return out
     }
@@ -3054,12 +3060,14 @@ object PinyinEngine {
         val cached = completionCache[prefix]
         if (cached != null) return cached
         val out = ArrayList<String>()
-        // 遍历有序合法音节全集（finalizeLoad 已排序），前缀匹配 + 字典序稳定
-        for (syllable in sortedValidSyllables) {
-            if (syllable.startsWith(prefix)) {
-                out.add(syllable)
-                if (out.size >= MAX_COMPLETION_RESULTS) break
-            }
+        // 有序合法音节全集：同前缀连续 ⇒ 二分下界起步，命中区结束即停（与 matchCharsByPrefix 同口径），
+        // 不再每次从头扫整张表。结果次序与上限都不变，completionCache 照旧兜住重复查询。
+        var idx = lowerBound(sortedValidSyllables, prefix)
+        while (idx < sortedValidSyllables.size && out.size < MAX_COMPLETION_RESULTS) {
+            val syllable = sortedValidSyllables[idx]
+            if (!syllable.startsWith(prefix)) break
+            out.add(syllable)
+            idx++
         }
         completionCache[prefix] = out
         // 缓存防无限增长：超限清空（前缀数量有限，正常不会触发，纯防御）
