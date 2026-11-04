@@ -1404,12 +1404,19 @@ class JinnIme : InputMethodService() {
     private fun flushPendingGalleryImage() {
         // 一次 flush 要把队列里排着的每一张都落下去（L-1041）：桥改成队列后，连点两张的第二下
         // 那次 `ui.post` 可能落在队已排空之后，只靠单次取用仍会漏掉一张
+        var expiredNotified = false
         while (true) {
             val picked = when (val take = GalleryInsert.takePending()) {
                 GalleryInsert.TakeResult.None -> return
                 GalleryInsert.TakeResult.Expired -> {
                     // 过期此前不留任何痕迹，诊断包里分不清「没选图」与「选了但过期」（L-1014）
                     Diagnostics.w(TAG, "图库快贴：待插入图片已过期，丢弃")
+                    // 界面同样要有一句：选完图停了 60s 再回来，什么都不提示会被当成「选图没生效」。
+                    // 复用既有「图片已失效」，一次 flush 只提示一次（连丢几张别刷屏）。
+                    if (!expiredNotified) {
+                        expiredNotified = true
+                        toast(TEXT_GALLERY_GONE)
+                    }
                     // 队首过期只代表这一张该丢：继续看下一张，别把后面那张也一起咽掉
                     continue
                 }

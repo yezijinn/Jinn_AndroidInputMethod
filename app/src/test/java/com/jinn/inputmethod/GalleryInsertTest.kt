@@ -306,6 +306,10 @@ class GalleryInsertTest {
         val body = TestSources.blockAfter(mine, "private fun flushPendingGalleryImage()")
         assertTrue("文件失效要提示", "toast(TEXT_GALLERY_GONE)" in body)
         assertTrue("输入框已切换要提示", "toast(TEXT_GALLERY_FIELD_CHANGED)" in body)
+        // 过期丢弃也要有一句（此前只有一条 W 日志，界面与「什么都没发生」一模一样）
+        val expired = TestSources.window(body, "TakeResult.Expired", "is GalleryInsert.TakeResult.Ready")
+        assertTrue("过期丢弃要提示（复用「图片已失效」）", "toast(TEXT_GALLERY_GONE)" in expired)
+        assertTrue("一次 flush 只提示一次，别连丢几张就刷屏", "expiredNotified" in expired)
         val rejectedTail = TestSources.window(body, "InsertResult.Rejected", "InsertResult.UriFailed")
         assertFalse("宿主拒收不弹提示", "toast" in rejectedTail)
         val gallery = TestSources.codeSource("GalleryInsert.kt")
