@@ -726,6 +726,18 @@ class RecentFixesRegressionTest {
             "pinyinKeyboard?.commitComposing()",
             "窗口隐藏是最后一个还能提交 composing 的时机，漏了就是净丢失（L-1445）",
         )
+        // 窗口隐藏也是暂存粘贴的必达会话边界：onFinishInputView 不保证派发，
+        // 只清在那儿会让 10s 内回来的正文被注入无关输入框（L-1445 同一条实证）
+        assertTrue(
+            "窗口隐藏必须清暂存粘贴",
+            "clearPendingPaste(\"onWindowHidden" in body,
+        )
+        val ime = codeOf("JinnIme.kt")
+        assertTrue("收起键盘也必须清暂存粘贴", "clearPendingPaste(\"onFinishInputView" in ime)
+        assertTrue(
+            "暂存粘贴时效要用单调时钟（墙钟回拨会让 10s 闸永不触发）",
+            "android.os.SystemClock.elapsedRealtime() - pendingPasteAt" in ime,
+        )
     }
 
     @Test

@@ -802,7 +802,8 @@ class JinnIme : InputMethodService() {
             // 此处未真正提交，返回 false（剪贴板面板不关闭，用户可等待或返回）。
             Diagnostics.w(TAG, "粘贴: 当前无有效 InputConnection，暂存并唤起键盘")
             pendingPasteText = text
-            pendingPasteAt = System.currentTimeMillis()
+            // 单调时钟：墙钟回拨会让 age 变负、10s 时效闸永不触发（与翻译冷却同口径）
+            pendingPasteAt = android.os.SystemClock.elapsedRealtime()
             // 锁定目标输入框：暂存只在「同一个输入框重新聚焦」时提交
             pendingPasteFieldKey = pendingPasteFieldKey(getCurrentInputEditorInfo())
             // 自动唤起键盘关闭时不主动 requestShowSelf（即使调用了也会被
@@ -3796,6 +3797,20 @@ class JinnIme : InputMethodService() {
      */
     private fun pendingPasteFieldKey(info: EditorInfo?): String? = fieldKeyOf(info?.packageName, info?.fieldId ?: 0)
 
+    /**
+     * 会话边界统一清暂存粘贴。
+     *
+     * [onFinishInputView] 不是必达回调（切到别的输入法 / 宿主被遮挡只派发 [onWindowHidden]，
+     * L-1445 真机实证）；漏清时 10s 内回到另一输入框、且 EditorInfo 身份取不到，
+     * `flushPendingPaste` 的身份闸会短路 ⇒ 剪贴板正文被注入无关字段。两处都调，幂等。
+     */
+    private fun clearPendingPaste(reason: String) {
+        if (pendingPasteText == null) return
+        Diagnostics.i(TAG, "$reason，丢弃暂存粘贴")
+        pendingPasteText = null
+        pendingPasteFieldKey = null
+    }
+
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
     private fun flushPendingPaste(info: EditorInfo? = null) {
         // 会话边界：拖选状态必须复位。anchor/focus 是上一个输入框的坐标，
@@ -3806,7 +3821,7 @@ class JinnIme : InputMethodService() {
         val text = pendingPasteText ?: return
         // 时效保护：暂存文本只在短时间窗口内有效，过期直接丢弃。
         // 否则用户换输入框、或隔很久才回到键盘，旧文本会被粘到完全无关的位置。
-        val age = System.currentTimeMillis() - pendingPasteAt
+        val age = android.os.SystemClock.elapsedRealtime() - pendingPasteAt
         val target = pendingPasteFieldKey
         val current = pendingPasteFieldKey(info)
         // 身份保护：换到另一个输入框（哪怕同 App 的另一个 fieldId）就不再提交。
@@ -3906,11 +3921,7 @@ class JinnIme : InputMethodService() {
         themeTicker.stop() // 键盘已收起：到点检查交给下次弹出
         // 会话边界：暂存的剪贴板文本属于上一个输入框，新输入框聚焦时不得自动提交
         // （配合 flushPendingPaste 的 fieldId 比对，双重拦截跨字段注入）
-        if (pendingPasteText != null) {
-            Diagnostics.i(TAG, "onFinishInputView: 输入会话结束，丢弃暂存粘贴")
-            pendingPasteText = null
-            pendingPasteFieldKey = null
-        }
+        clearPendingPaste("onFinishInputView: 输入会话结束")
         // 键盘收起 = 用户大概率停止输入了；再等一小段（避免只是切了个应用马上回来）后加载可选词库
         ui.removeCallbacks(optionalIdleCheck)
         ui.postDelayed(optionalIdleCheck, OPTIONAL_IDLE_DELAY_MS)
@@ -3961,6 +3972,8 @@ class JinnIme : InputMethodService() {
     override fun onWindowHidden() {
         super.onWindowHidden()
         pinyinKeyboard?.commitComposing()
+        // 与 onFinishInputView 同款会话边界：该回调才是「切走输入法 / 宿主被遮挡」时必达的那一个
+        clearPendingPaste("onWindowHidden: 窗口隐藏")
         // 窗口隐藏 = 会话结束：「建视图时已 configure 过」的凭据不再代表本视图的现状
         // （与 onFinishInputView 同一处口径，两处都清是幂等的）
         createConfiguredScheme = null
