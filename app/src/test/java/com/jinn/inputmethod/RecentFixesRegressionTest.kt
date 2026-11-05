@@ -3136,6 +3136,17 @@ class RecentFixesRegressionTest {
             "L-547：回到本页时必须补做重启（否则词库永不生效）",
             "if (pendingDictRestart) {" in dict && "restartImeForDict()" in dict,
         )
+        // 失败侧也必须有回执：页面只是切后台时 onPause 清 activePage，回调 return@post 之后
+        // 的失败文案/Toast 全被跳过；textStatus 挂在 root，refreshList 不重建 ⇒ 状态行一直谎报
+        // 「正在下载…」，用户既不知道失败也不知道原因。
+        assertTrue(
+            "下载失败且页面不在前台时必须暂存具体失败原因",
+            "pendingDictFailure = app.getString(R.string.dict_download_failed, lastError)" in dict,
+        )
+        assertTrue(
+            "失败回执必须在 onResume 写进状态行并清空",
+            "pendingDictFailure?.let" in dict && "pendingDictFailure = null" in dict && "setStatus(msg)" in dict,
+        )
         // L-548：下载链路必须有整体预算（否则「开始回包后极慢吐字节」可把线程拖到理论无限）
         assertTrue(
             "L-548：词库下载必须设 callTimeout",

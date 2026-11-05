@@ -138,6 +138,14 @@ class DictManagerActivity : Activity() {
                 setStatus(getString(R.string.dict_downloading, it.name))
             }
         }
+        // 下载失败时页面可能只是切到后台（onPause 清 activePage），不是关闭：回调里动不了 View，
+        // 而 textStatus 挂在 root、refreshList 只重建 listHost ⇒ 不补这一句，状态行会一直停在
+        // 「正在下载 X…」，用户既不知道失败也不知道原因。
+        pendingDictFailure?.let { msg ->
+            pendingDictFailure = null
+            setStatus(msg)
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        }
         refreshList()
     }
 
@@ -843,8 +851,8 @@ class DictManagerActivity : Activity() {
                 // 刷新「当前活着的页面」而不是发起下载的那个实例：下载期间用户可能旋转或
                 // 关闭重进本页，旧实例上的刷新会写进已 detach 的 View（原实现直接 return），
                 // 新页面就停在「按钮禁用、状态行不显示」的旧快照上，要等下次 resume 才自愈。
-                // 页面确实不在时（用户已关闭）：View 不能动，但词库已下完、用户本就希望生效，
-                // 仍要重启 IME 让引擎加载。
+                // 页面确实不在时（已关闭，或只是切到后台 —— onPause 会清 activePage）：View 不能动，
+                // 成功要走回页补重启，失败要把回执也留到回页（见 onResume 的 pendingDictFailure）。
                 val page = activePage?.get()
                 if (page == null || page.isFinishing || page.isDestroyed) {
                     // ⚠ 页面已关闭时**不重启进程**（2026-10-03 修复 L-547）：本进程同时承载键盘、
@@ -853,8 +861,15 @@ class DictManagerActivity : Activity() {
                     // 未提交输入与在途翻译全部丢失，且用户无从归因到「刚才在下载词库」。
                     // 词库已落盘；这里只置标记，等用户回到本页（前台、键盘收起）时再重启。
                     // 进程若在此期间自然结束，IME 重建时会直接加载 `dicts/` ⇒ 标记无需持久化。
-                    Diagnostics.i(TAG, "下载已完成但页面已关闭（ok=$ok），不重启（等用户回到本页）")
-                    if (ok) pendingDictRestart = true
+                    Diagnostics.i(TAG, "下载已结束但页面不在前台（ok=$ok），不动 View")
+                    if (ok) {
+                        pendingDictRestart = true
+                    } else {
+                        // 失败回执留给下次 onResume：这里既不能写已 detach 的 View，也不能只进日志
+                        // （同一次下载成功后置的标记是 pendingDictRestart，失败侧此前什么都没留）
+                        pendingDictFailure = app.getString(R.string.dict_download_failed, lastError)
+                        Diagnostics.w(TAG, "分类词库下载失败，页面不在前台，回执暂存: $lastError")
+                    }
                     return@post
                 }
                 val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
@@ -1050,6 +1065,16 @@ class DictManagerActivity : Activity() {
          */
         @Volatile
         private var pendingDictRestart = false
+
+        /**
+         * 下载**失败**且页面不在前台时的失败回执（含具体原因），由 `onResume` 写进状态行。
+         *
+         * 与 [pendingDictRestart] 互补：成功侧有「回页补重启」，失败侧此前什么都没留 ——
+         * `textStatus` 挂在 root 而非 `listHost`，`refreshList()` 重建不了它，用户回页仍看到
+         * 「正在下载 X…」。同样只在进程内存活，无需持久化。
+         */
+        @Volatile
+        private var pendingDictFailure: String? = null
 
         /**
          * 「已安排重启」窗口（2026-10-04 修复 L-801）：[restartImeForDict] 延迟 1.5s 才 SIGKILL，
