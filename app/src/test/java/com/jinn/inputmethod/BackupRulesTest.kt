@@ -371,6 +371,22 @@ class BackupRulesTest {
         assertFalse("成功分支不许打失败留痕（失败与成功会混成一种日志）", "Diagnostics.w" in okBlock)
         val failBlock = TestSources.blockAfter(plain.substringAfter(okBlock), "else")
         assertTrue("失败分支必须留痕", "Diagnostics.w" in failBlock)
+
+        // 导出侧三处新面（2026-11-05）：
+        // ① 摘要先算、内容后写，中途词库被并发改写会产出「自己导不回来」的包 —— 写 zip 时
+        //    复算实际字节摘要，收尾对拍，不一致就取消并写具体原因（不再只报通用「导出失败」）。
+        assertTrue("写 zip 要复算实际写入字节的摘要", "putFileHashed(zos" in mgr)
+        assertTrue("导出收尾要对拍两份摘要", "dictsDigest(writtenDigests) != dictsDigest(perFile)" in mgr)
+        assertTrue("摘要不符要取消并给原因", "词库在导出期间被修改" in mgr)
+        assertTrue("打包失败要写 reason（否则界面只剩通用文案）", "reason.reason = \"导出失败（打包）" in mgr)
+        assertTrue("加密失败要写 reason", "reason.reason = \"导出失败（加密）" in mgr)
+        // ② 明文 zip 含凭据值：删不掉必须当场留痕，不能只等下次进设置页按 60s 年龄清扫
+        assertTrue("删明文中间件要看返回值并留痕", "deleteTemp(plainZip)" in mgr)
+        assertTrue("临时件删除要有失败留痕", "临时件删除失败" in mgr)
+        // ③ SAF 正文读取补齐头部已有的空读闸；时间预算换单调时钟（墙钟回拨会拉成死循环）
+        assertTrue("正文读取要有空读闸", "bodyEmptyReads" in mgr)
+        assertTrue("解锁预算要用单调时钟", "System.nanoTime()" in mgr)
+        assertFalse("正文预算不许再用墙钟", "System.currentTimeMillis() - startedAt" in mgr)
     }
 
     /**
@@ -384,7 +400,7 @@ class BackupRulesTest {
      * 根因：include 按域生效、只覆盖同域内落在其路径下的 exclude，没有「本域全收 + 逐条排除」的写法。
      *
      * 代价要记牢：黑名单的默认值是「上云」，新增持久化文件必须同步本清单。
-     * 实测佐证（2026-11-01，AVD + `bmgr backupnow` 解包，见 `docs/备份排除运行时验证-2026-11-01.md`）：
+     * 实测佐证（2026-11-01，AVD + `bmgr backupnow` 解包，见 `docs/归档/2026-11/备份排除运行时验证.md`）：
      * 新建一个规则没覆盖的 `zzz_unknown_probe.txt`，它确实出现在备份包里。
      */
     @Test

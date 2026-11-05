@@ -415,8 +415,11 @@ internal object ConfigBackupManager {
         sections[ConfigBackup.SEC_PREFS] = sectionOfBytes(prefsData)
         if (freqText.isNotEmpty()) sections[ConfigBackup.SEC_USER_FREQ] = sectionOfBytes(freqData)
         clipData?.let { sections[ConfigBackup.SEC_CLIPBOARD] = sectionOfBytes(it) }
-        if (dicts.isNotEmpty()) {
-            val perFile = dicts.map { it.name to fileSha256(it) }
+        // 摘要先算、内容后写，两次打开同一路径。中途若词库被改写（用户在编辑页保存 / 导入 .txt），
+        // 包里会是**新内容 + 旧摘要**，换机导入时聚合摘要不符 ⇒ 整包被拒（含设置 / 词频 / 剪贴板）。
+        // 写 zip 时顺手复算实际写入字节的摘要（见 putFileHashed），打包完与这里对拍，不一致就取消导出。
+        val perFile = if (dicts.isNotEmpty()) dicts.map { it.name to fileSha256(it) } else emptyList()
+        if (perFile.isNotEmpty()) {
             sections[ConfigBackup.SEC_DICTS] = ConfigBackup.Section(
                 sha256 = dictsDigest(perFile),
                 bytes = dicts.sumOf { it.length() },
@@ -453,6 +456,7 @@ internal object ConfigBackupManager {
                 sections = sections,
             )
         ).toByteArray(Charsets.UTF_8)
+        val writtenDigests = ArrayList<Pair<String, String>>(dicts.size)
         try {
             ZipOutputStream(FileOutputStream(plainZip)).use { zos ->
                 // manifest 放**第一个**：摘要在打包前就算好了，与写入顺序无关；而读取端每次
@@ -462,26 +466,36 @@ internal object ConfigBackupManager {
                 putBytes(zos, ConfigBackup.ENTRY_PREFS, prefsData)
                 if (freqText.isNotEmpty()) putBytes(zos, ConfigBackup.ENTRY_USER_FREQ, freqData)
                 clipData?.let { putBytes(zos, ConfigBackup.ENTRY_CLIPBOARD, it) }
-                for (f in dicts) putFile(zos, ConfigBackup.DICT_DIR + f.name, f)
+                for (f in dicts) writtenDigests.add(f.name to putFileHashed(zos, ConfigBackup.DICT_DIR + f.name, f))
             }
         } catch (t: Throwable) {
-            plainZip.delete()
+            deleteTemp(plainZip)
+            reason.reason = "导出失败（打包）：${t.javaClass.simpleName}，请检查存储空间后重试"
             Diagnostics.w(TAG, "导出失败（打包）: ${t.message}")
+            return null
+        }
+        if (perFile.isNotEmpty() && dictsDigest(writtenDigests) != dictsDigest(perFile)) {
+            deleteTemp(plainZip)
+            reason.reason = "词库在导出期间被修改，已取消：请停止编辑词库后重试"
+            Diagnostics.w(TAG, "导出中止: 词库摘要与写入内容不一致（并发改写）")
             return null
         }
 
         // 立即加密并删掉明文中间件：明文 zip 一刻都不该在磁盘上多留
         val encrypted = ConfigCrypto.encrypt(plainZip, dest, options.password)
-        plainZip.delete()
+        // 明文 zip 里含 prefs / 词频 / 剪贴板正文与凭据值：删不掉必须当场留痕，
+        // 不能只等设置页下次启动时按 60s 年龄清扫（用户可能很久不再打开设置页）
+        deleteTemp(plainZip)
         if (!encrypted) {
-            dest.delete()
+            deleteTemp(dest)
+            reason.reason = "导出失败（加密）：请检查存储空间后重试"
             Diagnostics.w(TAG, "导出失败（加密）")
             return null
         }
 
         // 与导入端的 256MB 硬限对齐：自产的包必须自己导得回来（否则用户拿到的是「读不到文件」）
         if (dest.length() > MAX_PACKAGE_BYTES) {
-            dest.delete()
+            deleteTemp(dest)
             reason.reason = "备份包超过 ${MAX_PACKAGE_BYTES / 1024 / 1024}MB 上限（多为词库过大）：" +
                 "请取消勾选词库后重试"
             Diagnostics.w(TAG, "导出中止: 包体过大 ${dest.length()}")
@@ -667,7 +681,8 @@ internal object ConfigBackupManager {
             context.contentResolver.openInputStream(uri)?.use fileStream@ { input ->
                 // 计时从**第一个字节**开始：头几个字节与后面的正文共用同一个预算 ——
                 // 否则一个每次只给 1 字节、间隔很久的恶意 provider 能把握手拖到无限长
-                val startedAt = System.currentTimeMillis()
+                // 单调时钟：墙钟被回拨时 90s 预算会被拉成无限长
+                val startedAt = System.nanoTime()
                 val head = ByteArray(ConfigCrypto.MAGIC.length)
                 var read = 0
                 var emptyReads = 0
@@ -684,7 +699,7 @@ internal object ConfigBackupManager {
                     }
                     emptyReads = 0
                     read += n
-                    if (System.currentTimeMillis() - startedAt > UNLOCK_READ_BUDGET_MS) {
+                    if ((System.nanoTime() - startedAt) / 1_000_000 > UNLOCK_READ_BUDGET_MS) {
                         readTimedOut = true
                         Diagnostics.w(TAG, "解锁: 读取头部超时")
                         return@fileStream false
@@ -698,9 +713,20 @@ internal object ConfigBackupManager {
                 staged.outputStream().buffered(64 * 1024).use { out ->
                     out.write(head)
                     val buf = ByteArray(64 * 1024)
+                    // 与头部同口径的空读闸：provider 持续返回 0 时 `total` 不涨、体积闸永不触发，
+                    // 只剩 90s 墙钟兜底 —— 那是紧循环烧满一个核 90 秒（进度框还不可取消）。
+                    var bodyEmptyReads = 0
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
+                        if (n == 0) {
+                            if (++bodyEmptyReads > MAX_EMPTY_READS) {
+                                Diagnostics.w(TAG, "解锁: 读取正文无进展，已放弃")
+                                return@fileStream false
+                            }
+                            continue
+                        }
+                        bodyEmptyReads = 0
                         total += n
                         if (total > MAX_PACKAGE_BYTES) {
                             Diagnostics.w(TAG, "解锁: 所选文件超过 $MAX_PACKAGE_BYTES 字节上限")
@@ -708,7 +734,7 @@ internal object ConfigBackupManager {
                         }
                         // 恶意/故障 provider 可以返回极慢的流，而这次的进度框不可取消 ——
                         // 没有时间预算就等于把界面（与同进程的输入法）交给对方处置
-                        if (System.currentTimeMillis() - startedAt > UNLOCK_READ_BUDGET_MS) {
+                        if ((System.nanoTime() - startedAt) / 1_000_000 > UNLOCK_READ_BUDGET_MS) {
                             readTimedOut = true
                             Diagnostics.w(TAG, "解锁: 读取超时（超过 $UNLOCK_READ_BUDGET_MS ms）")
                             return@fileStream false
@@ -1575,6 +1601,9 @@ internal object ConfigBackupManager {
     internal fun dictsDigest(items: List<Pair<String, String>>): String =
         ConfigBackup.sha256(items.sortedBy { it.first }.joinToString("\n") { "${it.first}:${it.second}" })
 
+    private fun hexOf(bytes: ByteArray): String =
+        bytes.joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
+
     private fun fileSha256(f: File): String {
         val md = java.security.MessageDigest.getInstance("SHA-256")
         f.inputStream().use { input ->
@@ -1585,18 +1614,40 @@ internal object ConfigBackupManager {
                 md.update(buf, 0, n)
             }
         }
-        return md.digest().joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
+        return hexOf(md.digest())
+    }
+
+    /**
+     * 写 zip 的同时复算**实际写入字节**的摘要。
+     *
+     * 与 [fileSha256] 是两次独立打开同一路径：中间若词库被并发改写，manifest 里的旧摘要
+     * 就会与包里的新内容不符（换机导入时聚合摘要校验判整包拒收）。导出收尾对拍两份摘要，
+     * 不一致就取消，而不是产出一个「自己导不回来」的包。
+     */
+    private fun putFileHashed(zos: ZipOutputStream, name: String, file: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        zos.putNextEntry(ZipEntry(name))
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n)
+                zos.write(buf, 0, n)
+            }
+        }
+        zos.closeEntry()
+        return hexOf(md.digest())
+    }
+
+    /** 删临时件：失败要当场留痕（明文 zip 含凭据值，静默滞留比失败本身更糟）。 */
+    private fun deleteTemp(f: File) {
+        if (!f.delete() && f.exists()) Diagnostics.w(TAG, "临时件删除失败: ${f.name}")
     }
 
     private fun putBytes(zos: ZipOutputStream, name: String, bytes: ByteArray) {
         zos.putNextEntry(ZipEntry(name))
         zos.write(bytes)
-        zos.closeEntry()
-    }
-
-    private fun putFile(zos: ZipOutputStream, name: String, file: File) {
-        zos.putNextEntry(ZipEntry(name))
-        file.inputStream().use { it.copyTo(zos) }
         zos.closeEntry()
     }
 
