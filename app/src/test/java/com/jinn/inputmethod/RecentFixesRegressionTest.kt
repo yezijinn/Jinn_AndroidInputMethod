@@ -912,7 +912,14 @@ class RecentFixesRegressionTest {
 
         val query = blockAfter(engine, "fun query(input: String): Result {")
         assertTrue("前缀键必须增量拼装（削尾）", "keyBuf.setLength(keyBuf.length - syllables[k - 1].length)" in query)
-        assertTrue("不得再逐级 joinToString 重拼", "joinToString(\"\")" !in query)
+        // 判据圈在**前缀键循环段**：整句分支里那一次「逐词显示串拼成整句」是必经且只做一次，
+        // 与「每级 take(k).joinToString 重拼」的 O(n²) 回退不是一回事，不该被整函数级禁令误伤。
+        val prefixLoop = TestSources.window(
+            query,
+            "val keyBuf = StringBuilder(raw.length)",
+            "if (syllables.size >= 2 && partial.isEmpty())",
+        )
+        assertTrue("前缀键不得再逐级 joinToString 重拼", "joinToString(\"\")" !in prefixLoop)
         assertTrue("缓冲区必须是 query 的局部量", "val keyBuf = StringBuilder(raw.length)" in query)
         assertTrue("出口只留一种容器", "val result = words" in query)
 

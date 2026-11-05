@@ -54,6 +54,18 @@ class SentenceComposerTest {
             "hai" to listOf("海"), "wei" to listOf("为"), "jia" to listOf("家"),
         )
         assertEquals(listOf("五湖四海为佳", "五湖四海为家"), compose("wuhusihaiweijia", words, chars))
+        // 词序列出口与整句出口同源：前者给词边界（繁体整句逐词消歧需要），后者仍是拼接串，
+        // 两者逐句对得上，且 compose 的签名/结果不因抽共享求解而改变。
+        val input = "wuhusihaiweijia"
+        val withWords = SentenceComposer.composeWithWords(
+            input, ::isSyllable, { words[it] }, { chars[it] ?: emptyList() },
+        )
+        assertEquals(
+            "词序列拼起来必须等于 compose 的结果",
+            listOf("五湖四海为佳", "五湖四海为家"),
+            withWords.map { it.joinToString("") },
+        )
+        assertEquals("首句词边界必须是「五湖四海」+「为佳」", listOf("五湖四海", "为佳"), withWords.first())
     }
 
     // ── 2. 多字标记（含主代理怀疑点）────────────────────────────

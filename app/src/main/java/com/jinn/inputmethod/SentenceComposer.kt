@@ -58,7 +58,28 @@ internal object SentenceComposer {
         isSyllable: (String) -> Boolean,
         wordsOf: (String) -> List<String>?,
         charsOf: (String) -> List<String>,
-    ): List<String> {
+    ): List<String> = solve(input, isSyllable, wordsOf, charsOf).map { it.joinToString("") }
+
+    /**
+     * 与 [compose] 同源的**词序列**（每句 = 按起点→终点正序的词/单字列表）。
+     *
+     * 繁体整句出口必须逐词过词级消歧表：词表只认词条，把「头发」+「很」拼成「头发很」
+     * 再整体查表必然落空，退化成逐字映射得「頭發很」（正解「頭髮很」）；只有拿到词边界
+     * 才能复用词候选出口那份 `toDisplay`。`compose` 的签名与结果逐字节不变。
+     */
+    fun composeWithWords(
+        input: String,
+        isSyllable: (String) -> Boolean,
+        wordsOf: (String) -> List<String>?,
+        charsOf: (String) -> List<String>,
+    ): List<List<String>> = solve(input, isSyllable, wordsOf, charsOf)
+
+    private fun solve(
+        input: String,
+        isSyllable: (String) -> Boolean,
+        wordsOf: (String) -> List<String>?,
+        charsOf: (String) -> List<String>,
+    ): List<List<String>> {
         if (input.isEmpty() || input.length > MAX_INPUT_CHARS) return emptyList()
         val n = input.length
         val k = MAX_SENTENCES
@@ -172,7 +193,7 @@ internal object SentenceComposer {
             }
         }
 
-        val out = LinkedHashSet<String>(k)
+        val out = LinkedHashMap<String, List<String>>(k)
         // 丢弃「整条没有多字词」的路径。**为什么这条过滤不会把好整句一起丢掉**：覆盖同样 S 个
         // 音节的路径里，含多字词的那条至少少用一个词（词少一个就少罚 13.8），而名次分每词最多
         // 让 1.79（`ln(6)`）⇒ 多字词路径的得分总比全单字路径好 13.8 - 1.79×(S-1)，S ≤ 8 时恒正。
@@ -202,9 +223,11 @@ internal object SentenceComposer {
             }
             if (!ok || pos != 0) continue
             parts.reverse()
-            out.add(parts.joinToString(""))
+            val sentence = parts.joinToString("")
+            if (out.containsKey(sentence)) continue
+            out[sentence] = parts
             if (out.size >= k) break
         }
-        return out.toList()
+        return out.values.toList()
     }
 }

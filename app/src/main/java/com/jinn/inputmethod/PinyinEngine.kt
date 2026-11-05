@@ -2292,27 +2292,30 @@ object PinyinEngine {
         // 这里只是让表外的键与它们同口径。词频学习仍在后面重排 ⇒ 学过的变体词照样能回到组首。
         val sinkFuzzyWords = syllables.size == 1
         if (!sinkFuzzyWords) words.addAll(fuzzyWords)
-        // 整串键（逐音节拼接）：3b 整句用的键
-        val coveredKey = buildString { for (s in syllables) append(s) }
         // 3b. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
         // 每个可达位置枚举音节跨度取词，逐词罚分后取 top-k 路径。
         // 短输入落在词候选之后、单字之前：不抢短词，又不必滑过几百条单字才够得着；
         // ≥4 音节时整句才是主路径，提到精确词之前（长输入本来就没有 word 能覆盖全串）。
         if (syllables.size >= 2 && partial.isEmpty()) {
-            val sentences = SentenceComposer.compose(
+            // 整串键（逐音节拼接）：只有整句分支用得到，单音节 / 带残码时别白建一次 StringBuilder
+            val coveredKey = buildString { for (s in syllables) append(s) }
+            val sentences = SentenceComposer.composeWithWords(
                 coveredKey,
                 { validSyllables.contains(it) },
                 { key -> phrasesFor(key)?.asList() },
                 { key -> charsFor(key) },
             )
             val sentenceViews = ArrayList<String>(3)
-            for (sentence in sentences) {
-                val shown = displayTake(listOf(sentence), 1)
+            for (parts in sentences) {
+                // 逐词过简繁统一出口 [displayTake]：词级消歧表只认词条，把整句拼成一条长串
+                // 再整体查表必然落空，退化成逐字映射（「头发」+「很」→「頭發很」，正解「頭髮很」）。
+                // 关繁体时 displayTake 返回原子列表视图，joinToString 与原串逐字节相同。
+                val shown = displayTake(parts, parts.size).joinToString("")
                 if (shown.isEmpty()) continue
-                sentenceViews.add(shown[0])
-                syllableCounts.getOrPut(shown[0]) { syllables.size }
+                sentenceViews.add(shown)
+                syllableCounts.getOrPut(shown) { syllables.size }
                 // 整句按键 = coveredKey（>8 音节时只覆盖前 8 个，残码保留）
-                noteCandidateKeys(listOf(shown[0]), coveredKey)
+                noteCandidateKeys(listOf(shown), coveredKey)
             }
             if (syllables.size >= 4 && sentenceViews.isNotEmpty()) {
                 val ordered = LinkedHashSet<String>(sentenceViews.size + words.size)

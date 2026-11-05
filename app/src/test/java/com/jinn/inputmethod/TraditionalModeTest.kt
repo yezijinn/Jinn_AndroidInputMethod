@@ -185,6 +185,44 @@ class TraditionalModeTest {
 
         val c2 = PinyinEngine.query("facai").candidates
         assertTrue("未进词表的「发财」应逐字兜底得「發財」: $c2", c2.contains("發財"))
+
+        // 繁体**整句**同样要逐词消歧：整句由「头发」+「很」拼成，拼完再整体查表时词表
+        // （键都是词条）必然落空，逐字兜底会把「发」错配成「發」⇒「頭發很」，与上面词候选
+        // 出口给「頭髮」自相矛盾。整句出口改拿词序列逐词转换后拼接。
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts(
+            "tou\t头\nfa\t发\nhen\t很\n",
+            "toufa\t头发\n",
+            "tou\nfa\nhen\n",
+        )
+        PinyinEngine.setSimpTradText("头\t頭\n发\t發\n")
+        PinyinEngine.setSimpTradWordsText("头发\t頭髮\n")
+        PinyinEngine.setTraditional(true)
+        val whole = PinyinEngine.query("toufahen").candidates
+        assertTrue("整句应逐词命中词表得「頭髮很」: $whole", whole.contains("頭髮很"))
+        assertFalse("不得再出现逐字错配的「頭發很」: $whole", whole.contains("頭發很"))
+
+        // 关繁体时逐词拼接必须与原整句逐字节相同（零转换零拷贝）
+        PinyinEngine.setTraditional(false)
+        val simple = PinyinEngine.query("toufahen").candidates
+        assertTrue("关繁体时整句仍是简体原串: $simple", simple.contains("头发很"))
+
+        // 源码形态钉：整句出口必须走统一 displayTake（不得裸调 toDisplay）、必须用词序列
+        val src = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue(
+            "整句出口必须复用 displayTake 逐词转换",
+            "displayTake(parts, parts.size).joinToString(\"\")" in src,
+        )
+        assertTrue("必须取词序列而非扁平串", "SentenceComposer.composeWithWords(" in src)
+        assertTrue(
+            "coveredKey 必须只在整句分支内计算（单音节别白建一次 StringBuilder）",
+            "val coveredKey = buildString" in TestSources.window(
+                src,
+                "if (syllables.size >= 2 && partial.isEmpty())",
+                "if (syllables.size >= 4",
+            ),
+        )
     }
 
     /**
