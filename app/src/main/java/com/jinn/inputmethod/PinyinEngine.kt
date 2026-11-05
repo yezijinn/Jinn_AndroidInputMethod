@@ -2302,7 +2302,19 @@ object PinyinEngine {
             val sentences = SentenceComposer.composeWithWords(
                 coveredKey,
                 { validSyllables.contains(it) },
-                { key -> phrasesFor(key)?.asList() },
+                { key ->
+                    // 词库只收 v 型词键（shenglve），而全拼 / 双拼输入是 ue 型（shenglue）。
+                    // 裸查 phrasesFor 会让所有含 lve/nve 的多字词在整句词图上整条漏边，
+                    // 长句只剩单字路径又被「无多字词」判据丢弃 ⇒ 整句候选缺失。
+                    // 直查落空才回退对偶键（与 charsFor / phraseKeysOf 同口径）；直查有结果时
+                    // 与改动前逐字节一致，不合并两键以免打乱 -ln(rank+1) 的词频降序计分。
+                    phrasesFor(key)?.asList()
+                        ?: if (!key.contains('u') && !key.contains('v')) {
+                            null
+                        } else {
+                            ueVeVariant(key)?.let { phrasesFor(it)?.asList() }
+                        }
+                },
                 { key -> charsFor(key) },
             )
             val sentenceViews = ArrayList<String>(3)

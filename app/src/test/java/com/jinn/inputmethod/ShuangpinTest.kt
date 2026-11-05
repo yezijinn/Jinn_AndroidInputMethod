@@ -1,7 +1,9 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -175,6 +177,45 @@ class ShuangpinTest {
     fun l后üe写作ue_略() {
         // 词库 chars/syllables 表用 lue 表示 lüe
         assertEquals("lue", zr("lt"))
+        // ue 型全拼 + 词库只收 v 型词键：整句词图也要能召回该词。
+        // 短输入由精确词分支（phraseKeysOf 展开）救回；长句只能靠整句词图，
+        // 该处若只做 phrasesFor(key) 精确查表就会整条丢掉。
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts(
+            "lue\t略,掠\nsheng\t省,胜\nwo\t我\nle\t了\n",
+            "shenglve\t省略\nwo\t我\nle\t了\n",
+            "wo\nsheng\nlue\nle\nlve\n",
+        )
+        assertTrue("短输入由精确词分支救回", "省略" in PinyinEngine.query("shenglue").candidates)
+        assertTrue(
+            "长句整句候选须含「我省略了」（词库只收 shenglve）",
+            "我省略了" in PinyinEngine.query("woshengluele").candidates,
+        )
+        // 反证组：词库只收 ue 型键时整句同样要能召回，修法不能只认 v 型
+        PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
+        PinyinEngine.loadFromTexts(
+            "lue\t略,掠\nsheng\t省,胜\nwo\t我\nle\t了\n",
+            "shenglue\t省略\nwo\t我\nle\t了\n",
+            "wo\nsheng\nlue\nle\nlve\n",
+        )
+        assertTrue(
+            "词库只收 shenglue 时整句同样召回「我省略了」",
+            "我省略了" in PinyinEngine.query("woshengluele").candidates,
+        )
+        PinyinEngine.resetForTest()
+        // 形态钉：只在直查落空时回退对偶键。合并两键会打乱 -ln(rank+1) 的词频降序计分、
+        // 被 MAX_HOMOPHONES 截断，并在每个跨度多两次分配。
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        val wordsOf = TestSources.window(
+            engine,
+            "SentenceComposer.composeWithWords(",
+            "{ key -> charsFor(key) }",
+        )
+        assertTrue("整句 wordsOf 必须带回退", "ueVeVariant(key)?.let { phrasesFor(it)?.asList() }" in wordsOf)
+        assertTrue("不含 u/v 的键走快路径零分配", "!key.contains('u') && !key.contains('v')" in wordsOf)
+        assertFalse("不得合并两键打乱词频序", "distinct()" in wordsOf)
     }
 
     @Test
