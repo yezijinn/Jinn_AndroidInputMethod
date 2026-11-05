@@ -3603,7 +3603,14 @@ class JinnIme : InputMethodService() {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             runCatching { PinyinEngine.load(this) }
                 .onSuccess { Diagnostics.i(TAG, "词库补试加载成功（第 $attempt 次尝试）") }
-                .onFailure { Diagnostics.e(TAG, "词库补试加载失败（第 $attempt 次尝试）: ${it.message}", it) }
+                .onFailure {
+                    Diagnostics.e(TAG, "词库补试加载失败（第 $attempt 次尝试）: ${it.message}", it)
+                    // 耗尽后闸门用 >= 封死，本分支是最后一次补试的真实终态：逐次失败日志
+                    // 看不出「此后不自愈」，留一条 W 供真机 logcat 与诊断包判定。
+                    if (attempt >= MAX_PINYIN_LOAD_ATTEMPTS) {
+                        Diagnostics.w(TAG, "词库补试已耗尽（共 $MAX_PINYIN_LOAD_ATTEMPTS 次加载尝试），本进程不自愈，需重启输入法")
+                    }
+                }
         }, "jinn-pinyin-retry").apply { isDaemon = true }.start()
     }
 

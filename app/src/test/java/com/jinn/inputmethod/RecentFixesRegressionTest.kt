@@ -587,7 +587,7 @@ class RecentFixesRegressionTest {
         assertTrue(
             "补试闸门必须同时看 isLoaded 与 isFullyLoaded：只看 isLoaded 会漏索引段失败，" +
                 "只看 isFullyLoaded 会漏「字表零行但索引成功」（loaded=false && fullLoaded=true，" +
-                "query 恒空、提示也不显示、补试永不发起）",
+                "query 恒空；PinyinKeyboardView:3781 已显示「词库加载中…」，非空白；闸门修复后补试可发起）",
             "PinyinEngine.isLoaded && PinyinEngine.isFullyLoaded" in ime,
         )
         assertTrue(
@@ -597,6 +597,14 @@ class RecentFixesRegressionTest {
         assertTrue(
             "load 的重入判据与补试闸门同口径（loaded && fullLoaded）",
             "if (loaded && fullLoaded) return" in engine,
+        )
+        assertTrue(
+            "补试耗尽须留一条终态 W 日志（W 级落盘并进诊断包），按 attempt 判才一次性；放闸门 return 前会每次弹键盘都打",
+            "if (attempt >= MAX_PINYIN_LOAD_ATTEMPTS)" in ime && "词库补试已耗尽" in ime,
+        )
+        assertTrue(
+            "终态 W 必须落在 onFailure 块内（防退回闸门前的风暴/误报位置）",
+            "词库补试已耗尽" in TestSources.window(ime, ".onFailure {", "\"jinn-pinyin-retry\""),
         )
     }
 
