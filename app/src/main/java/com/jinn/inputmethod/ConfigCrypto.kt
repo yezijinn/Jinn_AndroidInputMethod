@@ -99,13 +99,19 @@ internal object ConfigCrypto {
      */
     fun validatePassword(password: CharSequence): PasswordCheck {
         if (password.isEmpty()) return PasswordCheck.Invalid("请输入备份密码")
+        // 一趟扫描同时完成「全汉字 / 字数 / 是否同一个字重复」三件事：
+        // 原实现先扫一遍查字表与计数、再扫一遍 HashSet 判重（O(2n) + 一次分配）。
+        // 「distinct == 1」等价于「每个码点都等于第一个」，用两个标量即可，O(1) 额外内存。
         var codePoints = 0
+        var firstCp = -1
+        var allSame = true
         var i = 0
         while (i < password.length) {
             val cp = Character.codePointAt(password, i)
             if (Character.UnicodeScript.of(cp) != Character.UnicodeScript.HAN) {
                 return PasswordCheck.Invalid("备份密码只能用中文汉字（不含字母、数字、标点或空格）")
             }
+            if (firstCp < 0) firstCp = cp else if (cp != firstCp) allSame = false
             codePoints++
             i += Character.charCount(cp)
         }
@@ -116,15 +122,7 @@ internal object ConfigCrypto {
             return PasswordCheck.Invalid("备份密码最多 $MAX_PASSWORD_CHARS 个汉字")
         }
         // 同一个字重复（啊啊啊啊啊啊）没有熵，直接拒绝
-        var distinct = 0
-        val seen = HashSet<Int>()
-        var j = 0
-        while (j < password.length) {
-            val cp = Character.codePointAt(password, j)
-            if (seen.add(cp)) distinct++
-            j += Character.charCount(cp)
-        }
-        if (distinct == 1) return PasswordCheck.Invalid("备份密码不能是同一个字重复")
+        if (allSame) return PasswordCheck.Invalid("备份密码不能是同一个字重复")
         return PasswordCheck.Ok
     }
 

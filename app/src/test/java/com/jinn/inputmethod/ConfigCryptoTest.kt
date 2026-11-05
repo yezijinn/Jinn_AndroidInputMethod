@@ -69,6 +69,15 @@ class ConfigCryptoTest {
     fun `同一个字重复不算密码`() {
         assertTrue(ConfigCrypto.validatePassword("啊啊啊啊") is ConfigCrypto.PasswordCheck.Invalid)
         assertEquals(ConfigCrypto.PasswordCheck.Ok, ConfigCrypto.validatePassword("啊啊啊啊乙"))
+        // 一趟扫描（查汉字 / 计数 / 判重一起做）：结果等价，但少一半遍历且不再分配 HashSet
+        val src = TestSources.codeSource("ConfigCrypto.kt")
+        val validate = TestSources.blockAfter(src, "fun validatePassword(password: CharSequence)")
+        assertEquals(
+            "密码校验只允许一趟扫描",
+            1,
+            Regex("""while \([a-z] < password.length\)""").findAll(validate).count(),
+        )
+        assertFalse("判重不许再分配 HashSet", "HashSet" in validate)
     }
 
     @Test
