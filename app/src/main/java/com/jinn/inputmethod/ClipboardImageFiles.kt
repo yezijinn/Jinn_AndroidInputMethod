@@ -65,8 +65,9 @@ internal object ClipboardImageFiles {
     /**
      * 原子写：先写 `<name>.tmp` 再改名。
      *
-     * 直接覆盖写会在写一半时被读到（渲染出半张图）。改名在同一文件系统内是原子的；
-     * 目标已存在（重复复制刷新同 hash）时先删再改名 —— rename 不保证覆盖语义。
+     * 直接覆盖写会在写一半时被读到（渲染出半张图）。同一文件系统内 rename 是 POSIX 原子替换，
+     * 目标已存在也覆盖（与 `PinyinEngine.writeIndexCacheAtomically`、词库重装同一条口径）。
+     * 先删目标会制造「目标不存在」的窗口：改名失败或进程在两步间被杀时，旧图与新 tmp 同时失去。
      */
     fun writeAtomic(file: File, bytes: ByteArray): Boolean {
         val parent = file.parentFile ?: return false
@@ -74,8 +75,6 @@ internal object ClipboardImageFiles {
         val tmp = File(parent, file.name + TMP_SUFFIX)
         return runCatching {
             tmp.outputStream().use { it.write(bytes) }
-            if (tmp.renameTo(file)) return true
-            file.delete()
             if (tmp.renameTo(file)) return true
             tmp.delete()
             false

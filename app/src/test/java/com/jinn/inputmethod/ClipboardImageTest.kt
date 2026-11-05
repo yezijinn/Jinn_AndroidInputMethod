@@ -191,6 +191,11 @@ class ClipboardImageTest {
             "图片采集走长活池（不占短活队列）",
             "BackgroundIo.runLong { saveImageFromUri(uri, declared) }" in src,
         )
+        // 原子写不得先删目标：同一文件系统内 rename 直接替换已存在的目录项，先删会制造
+        // 「目标不存在」的窗口，改名失败时旧图与新 tmp 同时失去（与索引缓存同一口径）。
+        val files = TestSources.codeSource("ClipboardImageFiles.kt")
+        assertTrue("图片原子写必须直接 renameTo 覆盖", "tmp.renameTo(file)" in files)
+        assertFalse("图片原子写不得先删目标", "file.delete()" in files)
     }
 
     @Test
