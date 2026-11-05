@@ -207,6 +207,12 @@ class ThemeColorParityTest {
                 "定时模式下它们不会到点换色",
             emptyList<String>(), missing,
         )
+        // start() 与 tick 调的是同一个 onSwitch：tick 的 L-674 已兜住并留痕、续排不受影响；
+        // start() 若裸调，异常冒到 onStart 会崩页面/IME，且 schedule() 在其后 ⇒ 续排链整段断。
+        val tickerStart = TestSources.blockAfter(TestSources.codeSource("ThemeManager.kt"), "fun start()")
+        assertTrue("start() 的 onSwitch 必须和 tick 一样兜住", "runCatching { onSwitch() }" in tickerStart)
+        assertTrue("兜住的异常要留 W 级痕", "定时换色失败" in tickerStart)
+        assertTrue("兜住后仍要续排下一次", "schedule()" in tickerStart)
     }
 
     /**

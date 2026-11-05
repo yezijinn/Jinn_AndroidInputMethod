@@ -255,7 +255,9 @@ object ThemeManager {
          * 漏了它就是「回到页面仍是旧配色，直到下一次切换」。
          */
         fun start() {
-            onSwitch()
+            // 与 tick 同口径（L-674）：onSwitch 抛异常会冒到 onStart 崩页面/IME，
+            // 且 schedule() 在其后 ⇒ 不兜住就整条续排链断到下次 onStart。
+            runCatching { onSwitch() }.onFailure { Diagnostics.w("ThemeManager", "定时换色失败: " + it.javaClass.simpleName) }
             schedule()
         }
 
