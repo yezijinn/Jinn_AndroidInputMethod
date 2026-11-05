@@ -2435,22 +2435,10 @@ class JinnIme : InputMethodService() {
         // 于是横屏几何（2240 宽）被算出来并落到 1440 宽的物理屏上，右边缘到 3104px。
         // 硬闸：窗口宽超过**当前屏幕宽**时不悬浮。
         //
-        // 为什么不拿物理屏短边比：横屏态下窗口宽 2240（=3200*70%）本就大于物理短边 1440，
-        // 拿短边比会把**正常的横屏悬浮**一起打掉（实测踩过）。
-        //
-        // 真正的异常是「窗口宽 > 当前屏幕宽」：杀掉横屏锁定的第三方 APP（shso / 游戏中心）后
-        // 那一瞬，系统的 displayMetrics 仍停在它的 3200x1440（`dumpsys window displays` 的
-        // cur= 与 mRotation=ROTATION_90 都不随进程死），而物理屏是 1440x3200。
-        // 于是横屏几何（宽 2240）被算出来落到 1440 宽的竖屏上，右边缘 3104px。
-        //
-        // 判据用 min(displayMetrics, 可见帧)：两者取小，任一读数骗人就仍有一方能兜住。
-        // 命中时不悬浮（底部全宽键盘至少合法），而不是把一个越界形状落给用户。
-        // 硬闸判据是「**当前 screenW**」而不是 physical：横屏态 screenW=3200（合法，2240 过得去）；
-        // 异常态（系统配置停在横屏、物理屏是竖屏）screenW 仍是 3200，这一闸同样过得去 ——
-        // 但那一眼用户看到的就是 2240 宽的键盘，视觉上是坏的。
-        // 所以再加一道：**窗口宽不得超过 physical 的短边与 screenW 的较小者**。
-        // 横屏：min(1440, 3200)=1440 ⇒ 2240 过不去 ⇒ 会把正常横屏也打掉（不行）。
-        // 因此这道闸只在「screenW 已经比 physical 短边大」时生效，即配置与物理屏矛盾的那一刻。
+        // 硬闸只看**当前 screenW**（displayMetrics 单源，见 [floatingIsPortrait]）；几何归一化
+        // 与 clamp 已按同源的 screenW / areaH 收过一遍，这里只是最后一道「请求宽 > 当前屏宽」兜底。
+        // ⚠ 早期版本曾用 min(displayMetrics, physical 短边) 作硬闸，会把正常的横屏悬浮
+        // （2240 > 1440）一起打掉，已移除；判据统一到 displayMetrics，别照旧注释复原那段逻辑。
         val hardW = screenW
         val reqW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
         if (reqW > hardW) {
