@@ -130,17 +130,17 @@ object FavoriteSymbols {
     /**
      * 符号清洗（写入 / 追加 / 解析**同一口径**，BUG-36）。
      *
-     * `String.trim()` 只去 ASCII ≤ 0x20 的空白：不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、
-     * BOM U+FEFF 都会原样留下 —— 这些字符在 26 键的键面上**看不见**，却占着一个格子：用户看到
-     * 「空槽键」，按下去没反应，而且删不掉（他找不到那个字符）。粘贴文本、导入备份、手工改 prefs
-     * 三条路都可能带进来。
+     * 不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、BOM U+FEFF 在 26 键的键面上
+     * **看不见**，却占着一个格子：用户看到「空槽键」，按下去没反应，而且删不掉（他找不到那个
+     * 字符）。粘贴文本、导入备份、手工改 prefs 三条路都可能带进来。
      *
      * 因此按 Unicode 类别清：`\p{C}`（控制 / 格式 / 代理 / 私用 / 未分配）+ `\p{Z}`（分隔符，含上面
-     * 两个空格），清完再 trim 一次（清出的空洞会让首尾露出普通空格）。
-     * 没有要清的字符时原样返回（只 trim），不建 StringBuilder —— 搜索每行都会调它一次。
+     * 两个空格）。Kotlin 无参扩展 trim 的目标集是 `Char.isWhitespace`（Cc∪Zs∪Zl∪Zp），已完全落在
+     * 清洗集内，清完不会残留可裁的首尾空白，故不再调用它（Java 的 String 版只裁 ≤0x20，语义不同）。
+     * 没有要清的字符时原样返回，不建 StringBuilder —— 搜索每行都会调它一次。
      */
     fun clean(text: String): String {
-        if (!hasCleanable(text)) return text.trim()
+        if (!hasCleanable(text)) return text
         val sb = StringBuilder(text.length)
         var i = 0
         while (i < text.length) {
@@ -155,7 +155,7 @@ object FavoriteSymbols {
                 i++
             }
         }
-        return sb.toString().trim()
+        return sb.toString()
     }
 
     /**

@@ -98,10 +98,11 @@ internal object ConfigBackup {
      *
      * 外部包的时间戳不能直接采信：缺字段（0 = 1970）会让条目一入库就成「最旧」，
      * 库满时刚导入就被 trimTo 裁掉；而未来时间（时钟回拨 / 手改包）会永久钉在列表顶部、
-     * 两种裁剪都不会淘汰它。钳到 [MIN_CLIP_TIMESTAMP_MS, now]。
+     * 两种裁剪都不会淘汰它。钳到 [MIN_CLIP_TIMESTAMP_MS, max(now, MIN_CLIP_TIMESTAMP_MS)]：
+     * 设备时钟早于 MIN 时区间倒置、coerceIn 会抛异常，整节剪贴板将被逐行静默丢弃。
      */
     fun clampClipTimestamp(raw: Long, now: Long = System.currentTimeMillis()): Long =
-        raw.coerceIn(MIN_CLIP_TIMESTAMP_MS, now)
+        raw.coerceIn(MIN_CLIP_TIMESTAMP_MS, now.coerceAtLeast(MIN_CLIP_TIMESTAMP_MS))
 
     /** `manifest.device` 的展示长度上限：它是外部输入，会原样进导入清单的对话框 */
     private const val MAX_DEVICE_CHARS = 64

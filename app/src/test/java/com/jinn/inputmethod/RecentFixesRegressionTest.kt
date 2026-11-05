@@ -1093,6 +1093,9 @@ class RecentFixesRegressionTest {
         val act = codeOf("FavoriteSymbolsActivity.kt")
         assertTrue("页面入口必须走清洗", "val item = FavoriteSymbols.clean(raw)" in act)
         assertTrue("页面入口不得再自写字符清洗", "raw.trim().replace" !in act)
+        // clean 内两处 trim 恒为 no-op（Kotlin trim 目标集 ⊆ C/Z 清洗集），留着只会误导；
+        // 用函数体窗口钉住，防死调用回填。
+        assertTrue("clean 不得回填 trim", ".trim()" !in blockAfter(fs, "fun clean(text: String): String"))
         // 限长按码点数（BUG-37）：`String.length` 是码元数，一个 astral 字符算 2 ⇒ 5 个 emoji 被误拒。
         // 写入与解析必须同口径，否则解析会把刚收下的项再滤掉。
         assertTrue(

@@ -424,6 +424,15 @@ class ConfigBackupTest {
         // 合法时间原样保留
         val legal = 1_700_000_000_000L
         assertEquals(legal, ConfigBackup.clampClipTimestamp(legal, now))
+        // 设备时钟早于 2000-01-01 时区间不能倒置：否则整节剪贴板逐行解析失败、被静默吞掉
+        assertEquals(
+            ConfigBackup.MIN_CLIP_TIMESTAMP_MS,
+            ConfigBackup.clampClipTimestamp(0L, ConfigBackup.MIN_CLIP_TIMESTAMP_MS - 1),
+        )
+        assertEquals(
+            ConfigBackup.MIN_CLIP_TIMESTAMP_MS,
+            ConfigBackup.clampClipTimestamp(Long.MAX_VALUE, ConfigBackup.MIN_CLIP_TIMESTAMP_MS - 1),
+        )
     }
 
     @Test
