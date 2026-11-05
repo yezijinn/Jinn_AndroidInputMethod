@@ -332,11 +332,24 @@ internal object UserFrequency {
 
     /** 超出上限时淘汰权重最低的条目（保持文件与内存都有界） */
     private fun trimIfNeeded() {
-        if (entries.size <= MAX_ENTRIES) return
-        entries.entries
-            .sortedBy { it.value.weight }
-            .take(entries.size - MAX_ENTRIES)
-            .forEach { entries.remove(it.key) }
+        val excess = entries.size - MAX_ENTRIES
+        if (excess <= 0) return
+        if (excess == 1) {
+            // 单条超额是常态（每学一个新词 +1）：线性取最小即可，省掉整表排序与临时集合。
+            // 用 Double.compare 与 sortedBy 同口径（NaN 最大、-0.0 < +0.0），并列时保留迭代序最先者。
+            var victimKey: String? = null
+            var victimWeight = 0.0
+            for (e in entries.entries) {
+                val w = e.value.weight
+                if (victimKey == null || java.lang.Double.compare(w, victimWeight) < 0) {
+                    victimKey = e.key
+                    victimWeight = w
+                }
+            }
+            victimKey?.let { entries.remove(it) }
+            return
+        }
+        entries.entries.sortedBy { it.value.weight }.take(excess).forEach { entries.remove(it.key) }
     }
 
     /**

@@ -188,6 +188,36 @@ class UserFrequencyTest {
         UserFrequency.resetForTest()
         for (w in listOf("甲", "乙", "丙")) UserFrequency.putForTest(w, 3.0, 20000)
         assertArrayEquals(arrayOf("甲", "乙", "丙"), UserFrequency.rank(arrayOf("甲", "乙", "丙")))
+
+        // 表满后学新词只淘汰最低权重项：单条超额走线性 min（O(n)、零临时集合），
+        // 多条超额仍走原稳定排序。只留唯一最低，不依赖 ConcurrentHashMap 迭代序。
+        val cap = 3000   // 与 UserFrequency.kt 的 MAX_ENTRIES 同源（private，测试硬编码）
+        UserFrequency.resetForTest()
+        repeat(cap - 1) { UserFrequency.putForTest("满$it", 5.0, 0) }
+        UserFrequency.putForTest("唯一最低", 0.5, 0)
+        UserFrequency.remember("新学词")
+        assertEquals(cap, UserFrequency.sizeForTest())
+        assertNull(UserFrequency.weightForTest("唯一最低"))
+        assertTrue((UserFrequency.weightForTest("新学词") ?: 0.0) > 0.9)
+
+        UserFrequency.resetForTest()
+        repeat(cap - 1) { UserFrequency.putForTest("满$it", 5.0, 0) }
+        UserFrequency.putForTest("较低甲", 0.5, 0)
+        UserFrequency.putForTest("较低乙", 0.6, 0)
+        UserFrequency.remember("新学词")
+        assertEquals(cap, UserFrequency.sizeForTest())
+        assertNull(UserFrequency.weightForTest("较低甲"))
+        assertNull(UserFrequency.weightForTest("较低乙"))
+
+        // 形态钉：单条超额必须走 Double.compare 线性 min，不得退回整表 sortedBy
+        val trim = TestSources.window(
+            TestSources.codeSource("UserFrequency.kt"),
+            "private fun trimIfNeeded()",
+            "private fun scheduleSave()",
+        )
+        assertTrue("单条超额走线性 min", "if (excess == 1)" in trim)
+        assertTrue("比较口径与 sortedBy 一致", "java.lang.Double.compare" in trim)
+        assertTrue("多条超额保留原稳定排序", "sortedBy { it.value.weight }" in trim)
     }
 
     // ── 衰减 ────────────────────────────────────────────────────────────────
