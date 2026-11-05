@@ -460,6 +460,11 @@ class SettingsActivity : ComponentActivity() {
     /** 从「键盘外观」页返回时两档皮肤可能已改：这里补一次刷新（本页其余状态不变，无需 recreate） */
     override fun onResume() {
         super.onResume()
+        // 后台期间到达的更新检查结果：此刻才呈现并记账，避免「什么都没看到却被静默七天」
+        pendingUpdateCheck?.let { (r, auto) ->
+            pendingUpdateCheck = null
+            if (auto) onAutoChecked(r) else onUpdateChecked(r)
+        }
 
         // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
         if (::textTranslateState.isInitialized) refreshTranslateState()
@@ -636,6 +641,19 @@ class SettingsActivity : ComponentActivity() {
     private var checkSeq = 0
 
     /**
+     * 更新检查结果在页面**退到后台但尚未销毁**时到达：挂起到 [onResume] 再呈现。
+     *
+     * L-1047 只堵了「已销毁」面；结果在 onStop 期间回来时 Activity 的 window 被隐藏，
+     * `showAskUpdateDialog` 弹的是用户看不见的框，而 `recordUpdateCheckTime` 已吃掉 7 天节流；
+     * 用户随即按返回键 finish，这一次提醒就永久丢了。
+     */
+    private var pendingUpdateCheck: Pair<UpdateChecker.Result, Boolean>? = null
+
+    /** 结果是否真能被用户看到：用生命周期状态而不是 `isFinishing/isDestroyed`（后两者在后台都为 false） */
+    private val foregroundForUpdates: Boolean
+        get() = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+
+    /**
      * 请求看门狗：网络侧超时 10s，留 5s 余量。
      *
      * 不能像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
@@ -735,6 +753,13 @@ class SettingsActivity : ComponentActivity() {
         // 记账放在守卫之后：弹窗是「发现新版本」唯一的提示出口，页面销毁时它不会出现，
         // 提前记账等于让用户什么都没看到却被静默七天（L-1047）
         recordUpdateCheckTime(result)
+        // 后台到达：记账已在 [recordUpdateCheckTime] 里跳过，这里也别弹看不见的框
+        if (!foregroundForUpdates) {
+            pendingUpdateCheck = result to false
+            setUpdateState(UpdateState.Idle)
+            Diagnostics.i(TAG, "检查更新结果在后台到达，挂起到回前台再呈现")
+            return
+        }
         // 结果本身由对话框呈现：这里只需解锁（早先先赋 UpToDate/Available/NetworkError、
         // 紧接着又被 Idle 覆盖，是没有任何消费方的死代码，已随本次修复移除）。
         setUpdateState(UpdateState.Idle)
@@ -750,6 +775,12 @@ class SettingsActivity : ComponentActivity() {
         }
         // 同上（L-1047）：只有这次结果真被呈现（弹窗或静默结论落日志）才记账，页面销毁时不记
         recordUpdateCheckTime(result)
+        if (!foregroundForUpdates) {
+            pendingUpdateCheck = result to true
+            setUpdateState(UpdateState.Idle)
+            Diagnostics.i(TAG, "自动检查更新结果在后台到达，挂起到回前台再呈现")
+            return
+        }
         setUpdateState(UpdateState.Idle)
         when (result) {
             is UpdateChecker.Result.Available -> showAskUpdateDialog(result)
@@ -771,6 +802,8 @@ class SettingsActivity : ComponentActivity() {
      */
     private fun recordUpdateCheckTime(result: UpdateChecker.Result) {
         if (result is UpdateChecker.Result.NetworkError) return
+        // 结果真被用户看到才记账：后台到达时只挂起，回前台由 onResume 回放（L-1047 残留窄竞态）
+        if (!foregroundForUpdates) return
         prefs.updateLastCheckAt = System.currentTimeMillis()
     }
 

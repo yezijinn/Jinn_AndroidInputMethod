@@ -274,6 +274,11 @@ class UpdateCheckerTest {
             val record = settings.indexOf("recordUpdateCheckTime(result)", at)
             assertTrue("销毁守卫之后必须紧跟记账：$mark", record - at in 1..400)
         }
+        // L-1047 只堵了「已销毁」面：结果在 onStop 期间到达时窗口被隐藏，弹框看不见却已吃掉
+        // 7 天节流。判据是生命周期状态，不是 isFinishing/isDestroyed。
+        assertTrue("后台到达的结果必须挂起", "pendingUpdateCheck = result to" in settings)
+        assertTrue("记账必须避开后台", "if (!foregroundForUpdates) return" in settings)
+        assertTrue("回前台必须回放挂起结果", "pendingUpdateCheck?.let" in settings)
     }
 
     /** 资源定位：与 `OptionalDictJunkTest` 同一口径（Gradle 的任务工作目录不止一种） */
