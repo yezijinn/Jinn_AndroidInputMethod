@@ -583,9 +583,20 @@ class RecentFixesRegressionTest {
             "等待加载中不得占用重试次数（上限 3 次，冷启动 6~10.7s 里用户会反复弹键盘）",
             engine.contains("isLoading"),
         )
+        val ime = codeOf("JinnIme.kt")
         assertTrue(
-            "IME 侧补试闸门必须用 isFullyLoaded + isLoading，用 isLoaded 等于把索引失败排除在补试之外",
-            codeOf("JinnIme.kt").contains("PinyinEngine.isFullyLoaded || PinyinEngine.isLoading"),
+            "补试闸门必须同时看 isLoaded 与 isFullyLoaded：只看 isLoaded 会漏索引段失败，" +
+                "只看 isFullyLoaded 会漏「字表零行但索引成功」（loaded=false && fullLoaded=true，" +
+                "query 恒空、提示也不显示、补试永不发起）",
+            "PinyinEngine.isLoaded && PinyinEngine.isFullyLoaded" in ime,
+        )
+        assertTrue(
+            "补试闸门仍保留 isLoading 守卫（加载中不占重试次数）",
+            "|| PinyinEngine.isLoading) return" in ime,
+        )
+        assertTrue(
+            "load 的重入判据与补试闸门同口径（loaded && fullLoaded）",
+            "if (loaded && fullLoaded) return" in engine,
         )
     }
 

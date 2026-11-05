@@ -3584,16 +3584,16 @@ class JinnIme : InputMethodService() {
      * onCreate 的预加载失败只留一条日志，而 `PinyinEngine.load` 带守卫 —— 不补试的话，
      * 本次进程内会一直是「没有任何候选」，用户只能靠系统重建输入法进程恢复。
      *
-     * 判据必须是 `isFullyLoaded`（全量就绪）而不是 `isLoaded`：后者在「只有单字表」时已为 true，
-     * 拿它当闸门会让「索引那一段失败」的进程永远得不到补试（只剩单字候选，
-     * 「词库补全中」提示也永不消失）。加载正在进行时不占用重试次数（`isLoading` 守卫），
-     * 冷启动那 0.5~0.7s 里用户可能反复弹键盘。
+     * 判据必须同时看 `isLoaded` 与 `isFullyLoaded`：只看前者会漏「索引段失败」（单字表已在位、
+     * 索引还没好），只看后者会漏「字表零行但索引成功」（`loaded=false && fullLoaded=true`，
+     * 此时 `query` 恒返回空候选、提示条件 `!isFullyLoaded` 也为假 ⇒ 永久空白且补试永不发起）。
+     * 加载正在进行时不占用重试次数（`isLoading` 守卫），冷启动那 0.5~0.7s 里用户可能反复弹键盘。
      *
      * `load` 幂等且加锁：已全量就绪时这里只做一次 volatile 读；补试走独立守护线程，
      * 绝不占用主线程（全量加载实测 6~10.7s，放主线程必定 ANR）。
      */
     private fun retryPinyinLoadIfNeeded() {
-        if (PinyinEngine.isFullyLoaded || PinyinEngine.isLoading) return
+        if ((PinyinEngine.isLoaded && PinyinEngine.isFullyLoaded) || PinyinEngine.isLoading) return
         if (pinyinLoadAttempts >= MAX_PINYIN_LOAD_ATTEMPTS) return
         val attempt = ++pinyinLoadAttempts
         Thread({
