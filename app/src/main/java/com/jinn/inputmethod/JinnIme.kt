@@ -5609,7 +5609,7 @@ class JinnIme : InputMethodService() {
         // 而那一页在 TOGGLE（连续录音）时**照样在录**，那三个键的用途正是边说边补标点 ——
         // 一并拦掉就是「按了没反应」（且 TOGGLE 时拼音树是 GONE，这条闸要挡的键根本按不到）。
         if (mode == Mode.HOLD) {
-            Diagnostics.w(TAG, "commit: 录音中（mode=$mode），丢弃按键上屏 \"${text.take(20)}\"")
+            Diagnostics.w(TAG, "commit: 录音中（mode=$mode），丢弃按键上屏 len=${text.length}")
             return
         }
         // 诊断：记录上屏内容（键盘/语音两种来源都走这里），方便核对输入链路

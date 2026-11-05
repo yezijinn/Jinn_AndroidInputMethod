@@ -1543,6 +1543,11 @@ class RecentFixesRegressionTest {
             "堆栈要脱敏但不截断（异常 message 可能含内容片段；堆栈上千字符，截断会砍关键帧）",
             body.contains("redactSensitive(stackTraceOf(it))"),
         )
+        // W 级会绕过 V 级闸直接落盘并随诊断包外传：录音中丢弃的键盘按键只记长度。
+        // 用精确串钉，避免误伤 :5616 合法的 V 级 text.take(40) 与语音侧 :4502。
+        val ime = codeOf("JinnIme.kt")
+        assertTrue("录音中丢弃按键只记长度不记正文", "丢弃按键上屏 len=" in ime)
+        assertFalse("不得把按键正文写进 W 级落盘日志", "text.take(20)" in ime)
     }
 
     // ── 键盘按键的无障碍激活入口 ──────────────────────────
