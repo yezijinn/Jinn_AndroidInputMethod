@@ -367,6 +367,13 @@ class ClipboardClassifierExtractTest {
             "历史页结果落地时必须同步预览形态集（少了它 previewFor 恒收空集 ⇒ 永远退回开头窗口）",
             historySrc.contains("activeForms=forms"),
         )
+        // 后台扫描已按 keywordNow 算好形态集，落地回调里再算一遍是同代重复归一，
+        // 且这一遍在主线程。删重后 activeForms 直接复用后台那份，口径靠同一个 val 保证。
+        assertEquals(
+            "历史页每次加载只构造一份查询形态集（同代重复归一是冗余）",
+            1,
+            Regex.fromLiteral("ClipboardSearch.queryForms(keywordNow)").findAll(historySrc).count(),
+        )
         assertTrue(
             "历史页正文列不许再直接塞原文",
             !historySrc.contains("holder.content.text=item.content"),

@@ -1029,7 +1029,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 这里再滤一遍是同谓词的重复计算（A-749）。口径仍只有 ClipboardSearch 一份。
                 items.addAll(allItems)
                 // 正文列的开窗形态与这批结果同代落地（见 activeForms）：结果行按它把窗口挪到命中点
-                val forms = ClipboardSearch.queryForms(keywordNow)
                 activeForms = forms
                 numberById.clear()
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
