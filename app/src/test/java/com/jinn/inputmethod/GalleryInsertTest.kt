@@ -271,6 +271,16 @@ class GalleryInsertTest {
         val replay = Regex("""setHostImageCapable\(hostImageCapableForSession\)""").findAll(src).count()
         assertEquals("重放点应为两处（onCreateInputView + recreateKeyboardView）", 2, replay)
         assertTrue("推送处要存 IME 侧字段", "hostImageCapableForSession = capable" in src)
+        // 同一声明数组只判一次：换框是主线程热路径，重复求值 canHostAccept 没有收益。
+        val cap = TestSources.blockAfter(src, "private fun applyHostImageCapability(")
+        assertEquals(
+            "同一声明只判一次",
+            1,
+            Regex.fromLiteral("GalleryInsert.canHostAccept(mimes)").findAll(cap).count(),
+        )
+        assertTrue("单一求值点", "val capable = GalleryInsert.canHostAccept(mimes)" in cap)
+        assertTrue("赋值语义不变", "hostImageMimeTypes = if (capable) mimes else null" in cap)
+        assertFalse("不得退回内联二次调用", "if (GalleryInsert.canHostAccept(mimes)) mimes" in cap)
     }
 
     /**

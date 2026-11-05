@@ -149,6 +149,12 @@ class ClipboardImageTest {
         assertEquals(4, ClipboardImageCodec.sampleSizeFor(4000, 3000, 512))
         assertEquals("非法尺寸给 1（不崩）", 1, ClipboardImageCodec.sampleSizeFor(0, 0, 512))
         assertEquals("非法目标给 1", 1, ClipboardImageCodec.sampleSizeFor(100, 100, 0))
+        // 采样路径只需原始宽高（sampleSizeFor 取长边，横竖对调无影响），不必解析 EXIF；
+        // bounds() 保留方向对调给写 DB 宽高用，rotate 仍独立解析 EXIF。
+        val codec = TestSources.codeSource("ClipboardImageCodec.kt")
+        assertEquals("两条采样路径须走 rawBounds", 2, Regex.fromLiteral("= rawBounds(bytes)").findAll(codec).count())
+        assertEquals("采样路径不得残留带 EXIF 的 bounds", 0, Regex.fromLiteral("= bounds(bytes)").findAll(codec).count())
+        assertEquals("rawBounds 不得自带 EXIF", 3, Regex.fromLiteral("exifOrientation").findAll(codec).count())
     }
 
     // ── 数据层形态（读路径与裁剪口径） ────────────────────────

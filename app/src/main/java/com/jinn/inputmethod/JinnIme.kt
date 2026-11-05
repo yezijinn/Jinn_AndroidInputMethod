@@ -1397,8 +1397,8 @@ class JinnIme : InputMethodService() {
         val mimes = info?.let { androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it) }
         // 声明列表本身要留到提交时刻：只压成一个布尔就丢了「宿主到底收哪几种」，
         // 图上不去时既说不清原因也给不出提示（BUG.md L-1058）
-        hostImageMimeTypes = if (GalleryInsert.canHostAccept(mimes)) mimes else null
         val capable = GalleryInsert.canHostAccept(mimes)
+        hostImageMimeTypes = if (capable) mimes else null
         hostImageCapableForSession = capable
         pinyinKeyboard?.setHostImageCapable(capable)
     }

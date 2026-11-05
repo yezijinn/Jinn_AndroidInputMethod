@@ -76,6 +76,20 @@ internal object ClipboardImageCodec {
     }
 
     /**
+     * 采样专用：只读原始宽高，不做 EXIF 方向对调。
+     *
+     * [sampleSizeFor] 只取长边，横竖对调不影响采样；[bounds] 的方向对调是写 DB 宽高用的
+     * （L-1230），两条采样路径不必为此多解析一次 EXIF。
+     */
+    private fun rawBounds(bytes: ByteArray): IntArray? {
+        if (bytes.isEmpty()) return null
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o) }
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        return intArrayOf(o.outWidth, o.outHeight)
+    }
+
+    /**
      * 按文件头嗅探 MIME；**认不出返回 null**（BUG.md L-1302 / L-1303，12 字节足够）。
      *
      * 与 [GalleryInsert.sniffImageMime] 的差别只有兜底这一处：那个认不出时回落 `image/png`
@@ -103,7 +117,7 @@ internal object ClipboardImageCodec {
      * 采集侧据此仍保存原图，只是网格里显示灰块（见实施计划 §5「Keystore 失效」同款降级）。
      */
     fun thumbJpeg(bytes: ByteArray): ByteArray? = runCatching {
-        val size = bounds(bytes) ?: return null
+        val size = rawBounds(bytes) ?: return null
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(size[0], size[1], THUMB_LONG_EDGE)
             inPreferredConfig = Bitmap.Config.RGB_565
@@ -131,7 +145,7 @@ internal object ClipboardImageCodec {
      * 交给 ImageView 的 scaleType（与图库面板同款，省一次全尺寸位图分配）。
      */
     fun decodeForTarget(bytes: ByteArray, targetPx: Int): Bitmap? = runCatching {
-        val size = bounds(bytes) ?: return null
+        val size = rawBounds(bytes) ?: return null
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(size[0], size[1], targetPx.coerceAtLeast(1))
         }
