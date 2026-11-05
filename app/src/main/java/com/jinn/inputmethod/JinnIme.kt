@@ -411,6 +411,15 @@ class JinnIme : InputMethodService() {
      * 都只为日志服务：看门狗触发时要说清「哪一家、什么动作、卡了多久、第几次」，而「翻译失败」
      * 这类一句话报告需要一个能把「发起 → 响应 → 提交/拒绝」串起来的 ID —— 此前诊断包里只能靠时间戳猜。
      */
+    /**
+     * 翻译的时间窗统一用单调时钟（毫秒）。
+     *
+     * 冷却 / 去重 / 看门狗判的都是「距某刻多久」：`System.currentTimeMillis()` 是墙钟，系统时间
+     * 回拨时差值为负 ⇒ 3s 冷却变成长期不可用，前跳则让 30s 去重与 3s 冷却瞬时失效（连点即连付）。
+     * 这些字段只在进程内存活，`elapsedRealtime()` 的 0 值哨兵与原来一致。
+     */
+    private fun monotonicMs(): Long = android.os.SystemClock.elapsedRealtime()
+
     private var translateStartedAtMs = 0L
     private var translateProviderName = ""
 
@@ -482,7 +491,7 @@ class JinnIme : InputMethodService() {
      * @param reason 进日志的原因短语，便于在诊断包里分辨是哪条路径。
      */
     private fun markTranslateFailed(reason: String) {
-        lastFailAtMs = System.currentTimeMillis()
+        lastFailAtMs = monotonicMs()
         Diagnostics.i(
             TAG,
             "[$translateTraceId] 翻译: 记一次失败（进入冷却 ${failCooldownMs}ms）: $reason" +
@@ -515,7 +524,7 @@ class JinnIme : InputMethodService() {
                 TAG,
                 "[$translateTraceId] 翻译: 看门狗超时，强制收尾（回调未到达）" +
                     " provider=$translateProviderName target=$translateTargetName " +
-                    "已等${System.currentTimeMillis() - translateStartedAtMs}ms",
+                    "已等${monotonicMs() - translateStartedAtMs}ms",
             )
             // 请求已出网 ⇒ 可能已计费：不记账的话，用户看门狗一过就能立刻再点一次（= 二次付费），
             // 而他等的是 5 分半钟、什么也没看到（2026-10-03 修复 L-657 / L-660：原先这里只收尾，
@@ -4762,8 +4771,11 @@ class JinnIme : InputMethodService() {
         // 拦不住，于是再发一次付费请求、正文里多出一段回译。这条只看「取到的片段是否逐字等于上次
         // 写进去的实发串」：是就只提示、不发。
         if (!replaceSelection && slice.text.isNotEmpty() &&
-            slice.text == lastCommittedText &&
-            System.currentTimeMillis() - lastCommittedAtMs < repeatGuardMs
+            // 记的是**实发串**（`appendText` 在原文行尾会补一个 "\n"），而默认档下次取到的是
+            // `lineHead` + `trim` 之后的本行 ⇒ 逐字比 "\nHello" 与 "Hello" 永远不等，L-1308
+            // 这条判据会空转。比 trim 后的可见译文，仍只在「取到的就是刚写进去那段」时命中。
+            slice.text == lastCommittedText.trim() &&
+            monotonicMs() - lastCommittedAtMs < repeatGuardMs
         ) {
             Diagnostics.i(TAG, "翻译: 光标前就是上次写入的结果，未再次发送（去重）")
             toast(TEXT_TRANSLATE_RESULT_REPEATED)
@@ -4771,9 +4783,9 @@ class JinnIme : InputMethodService() {
         }
         if (!replaceSelection && slice.text.isNotEmpty() &&
             repeatKey == lastSentKey &&
-            System.currentTimeMillis() - lastSentAtMs < repeatGuardMs
+            monotonicMs() - lastSentAtMs < repeatGuardMs
         ) {
-            val ago = (System.currentTimeMillis() - lastSentAtMs) / 1000
+            val ago = (monotonicMs() - lastSentAtMs) / 1000
             Diagnostics.i(
                 TAG,
                 "翻译: 同一请求（$repeatKey）${ago}s 前刚翻过，未再次发送（去重）",
@@ -4783,7 +4795,7 @@ class JinnIme : InputMethodService() {
         }
         // 失败冷却（2026-10-03 修复 L-627）：超时 / 断连 / 落地失败 / 用户取消这几种情形里，
         // **服务端可能已经处理并计费** —— 冷却期内点击只提示、不重发，避免连点即连付。
-        val sinceFail = System.currentTimeMillis() - lastFailAtMs
+        val sinceFail = monotonicMs() - lastFailAtMs
         if (lastFailAtMs > 0 && sinceFail < failCooldownMs) {
             Diagnostics.i(TAG, "翻译: 上次失败后 ${sinceFail}ms 内再次点击，冷却中未发送")
             toast(TEXT_TRANSLATE_FAIL_COOLDOWN)
@@ -4902,7 +4914,7 @@ class JinnIme : InputMethodService() {
         // 本次请求的上下文（2026-10-03 修复 L-615/L-617）：放在**挂表之后**，
         // 以免影响上面那条「置位 → 挂表之间不夹任何可能抛出的调用」的顺序约束（A5）。
         // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
-        translateStartedAtMs = System.currentTimeMillis()
+        translateStartedAtMs = monotonicMs()
         translateProviderName = provider.javaClass.simpleName
         translateActionName = action.id
         // 生效目标语言（不是枚举名）：**与真实请求同源** —— 实际发出去的是对调后的 mutualTarget，
@@ -4979,7 +4991,7 @@ class JinnIme : InputMethodService() {
                                     // 「改动原文」—— 他刚才明明是自己框的。
                                     if (!snapshot.replaceSelection) {
                                         lastSentKey = repeatKey
-                                        lastSentAtMs = System.currentTimeMillis()
+                                        lastSentAtMs = monotonicMs()
                                     }
                                 } else {
                                     // 已上传、没落地：同样可能计费，转入冷却（用户 3s 后可重试）
@@ -5129,6 +5141,14 @@ class JinnIme : InputMethodService() {
         if (InputFieldPrivacy.blocksTranslation(info.inputType, info.imeOptions)) {
             Diagnostics.w(TAG, "翻译: 提交前复查发现输入框已敏感，丢弃译文")
             toast(TEXT_TRANSLATE_PRIVATE_FIELD)
+            return false
+        }
+        // 与发请求前（:4606）同口径补一道：宿主在请求在途时把框切成数字 / 日期类，或该框带
+        // InputFilter，会把译文整段丢掉且不报错。此前只复查敏感框，替换模式又跳过了落地复核
+        // ⇒ 选区被清空、一个字没写入，界面与诊断包都显示「已提交替换」。
+        if (InputFieldPrivacy.rejectsTranslationText(info.inputType)) {
+            Diagnostics.w(TAG, "翻译: 提交前复查发现输入框已改为数字/日期类，丢弃译文")
+            toast(TEXT_TRANSLATE_NUMERIC_FIELD)
             return false
         }
         // ① 两条路分别把关：
@@ -5314,21 +5334,20 @@ class JinnIme : InputMethodService() {
             // （数字框的 `DigitsKeyListener` 最常见）会把正文整段丢掉而**不报错**，此时字段里一个字都没有，
             // 用户只看到「点了没反应」，而诊断包里还写着「已提交追加」（排障被引向相反结论）。
             // 复核一次尾部（最多 256 字符，一次 Binder 往返）；**读不到时不误报**（宁可不提示也不误报）。
-            // 替换模式不做复核：它的落点在选区里，尾部判据不适用。
+            // 替换模式同样复核：`commitText(submit, 1)` 之后光标就在插入串末尾，尾部判据一样适用；
+            // 原先「落点在选区里所以不适用」是误判，导致选区被清空却报「已提交替换」。
             var landed: Boolean? = null
-            if (!snapshot.replaceSelection) {
-                val probeLen = minOf(submit.length, PROBE_MAX_CHARS)
-                val returned = runCatching {
-                    connection.getTextBeforeCursor(probeLen, 0)?.toString()
-                }.getOrNull()
-                landed = commitProbeVerdict(returned, submit, probeLen)
-                if (landed == false) {
-                    Diagnostics.w(
-                        TAG,
-                        "[$translateTraceId] 翻译: 提交后未在输入框找到译文尾部（宿主可能丢弃了写入）",
-                    )
-                    toast(TEXT_TRANSLATE_COMMIT_UNVERIFIED)
-                }
+            val probeLen = minOf(submit.length, PROBE_MAX_CHARS)
+            val returned = runCatching {
+                connection.getTextBeforeCursor(probeLen, 0)?.toString()
+            }.getOrNull()
+            landed = commitProbeVerdict(returned, submit, probeLen)
+            if (landed == false) {
+                Diagnostics.w(
+                    TAG,
+                    "[$translateTraceId] 翻译: 提交后未在输入框找到译文尾部（宿主可能丢弃了写入）",
+                )
+                toast(TEXT_TRANSLATE_COMMIT_UNVERIFIED)
             }
             // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）。
             // ⚠ 措辞不能写「已追加译文」—— `commitText` 返回 true 只代表**调用被接受**：
@@ -5356,7 +5375,7 @@ class JinnIme : InputMethodService() {
                 // 选区模式不记账，理由与请求指纹那侧一致：用户明确重新框选的内容不该被历史拦下。
                 if (!snapshot.replaceSelection) {
                     lastCommittedText = submit
-                    lastCommittedAtMs = System.currentTimeMillis()
+                    lastCommittedAtMs = monotonicMs()
                 }
                 return true
             }

@@ -4080,13 +4080,24 @@ class RecentFixesRegressionTest {
                 calls >= 5,
             )
             // 唯一写点：lastFailAtMs 的赋值只能出现在 markTranslateFailed 里
-            val writerAt = ime.indexOf("lastFailAtMs = System.currentTimeMillis()")
+            val writerAt = ime.indexOf("lastFailAtMs = monotonicMs()")
             assertTrue("L-657 守卫缺失：找不到 lastFailAtMs 的写入", writerAt >= 0)
             assertTrue(
                 "L-657 违反：lastFailAtMs 必须只在 markTranslateFailed 里写（分散写点必漏一路）",
                 writerAt in (markDef + 1)..(markDef + 800),
             )
         }
+        // 时间窗一律单调时钟：墙钟回拨会让 3s 冷却长期卡死，前跳会让 30s 去重 / 3s 冷却瞬时失效
+        assertTrue(
+            "冷却 / 去重 / 看门狗都不得再用墙钟",
+            "System.currentTimeMillis() - lastFailAtMs" !in ime &&
+                "System.currentTimeMillis() - lastSentAtMs" !in ime &&
+                "System.currentTimeMillis() - lastCommittedAtMs" !in ime &&
+                "System.currentTimeMillis() - translateStartedAtMs" !in ime &&
+                Regex("""System\.currentTimeMillis\(\) - last(?:Fail|Sent|Committed)AtMs""")
+                    .findAll(ime).none(),
+        )
+        assertTrue("单调时钟 helper 要真被用上", Regex("""monotonicMs\(\)""").findAll(ime).count() >= 8)
         // 落地复核：宿主「少给字符」必须记为**未测**而不是「没写进去」（L-681）
         assertEquals(
             "读不到（null）必须记为未测、不得误报",
@@ -5922,7 +5933,25 @@ class RecentFixesRegressionTest {
         )
         // L-1308：请求侧指纹（比键）与结果侧指纹（比内容）是两条判据，缺一条就会白花一次请求
         assertTrue("结果侧去重判据", "slice.text == lastCommittedText" in ime)
+        // 实发串可能带前导换行（appendText 在行尾补 "\n"），而默认档下次取到的是
+        // lineHead + trim 之后的本行：逐字比全串恒不命中 ⇒ 判据要 trim 才生效
+        assertTrue("结果侧去重要比去空白后的可见译文", "slice.text == lastCommittedText.trim()" in ime)
         assertTrue("结果侧记账用实发串", "lastCommittedText = submit" in ime)
+        // 选区替换模式：提交前复查数字 / 日期类框，且落地复核不跳过（光标同样在插入串末尾）
+        val appendStart = ime.indexOf("val info = currentInputEditorInfo")
+        val commitAt = ime.indexOf("connection.commitText(submit, 1)", appendStart)
+        assertTrue("提交前复查块锚点失效", appendStart >= 0 && commitAt > appendStart)
+        assertTrue(
+            "替换模式提交前也要复查数字/日期类输入框",
+            "InputFieldPrivacy.rejectsTranslationText(info.inputType)" in
+                ime.substring(appendStart, commitAt),
+        )
+        val landedBlock = TestSources.window(ime, "var landed: Boolean? = null", "Diagnostics.i(")
+        assertTrue("落地复核块锚点失效", "commitProbeVerdict" in landedBlock)
+        assertFalse(
+            "落地复核不得再按 !replaceSelection 跳过（选区被清空却报已提交替换）",
+            "if (!snapshot.replaceSelection) {" in landedBlock,
+        )
         assertTrue("提示与请求侧分开", "TEXT_TRANSLATE_RESULT_REPEATED" in ime)
         assertTrue("跨输入框一并复位", "lastCommittedText = \"\"" in ime)
     }
