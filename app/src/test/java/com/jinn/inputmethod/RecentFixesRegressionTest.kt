@@ -5444,6 +5444,18 @@ class RecentFixesRegressionTest {
             "清理入口必须包住异常：`listFiles()` 自身会抛，冒到业务调用点就违背「不影响业务」（L-973）",
             "runCatching { cleanupOldLogs() }" in code,
         )
+        // 「执行了但没跑成」也要退回短退避：内层两个 runCatching 把 listFiles 的异常/null 收成
+        // Result，异常冒不到外层 onFailure，而时间闸已推进满 24h ⇒ 目录正跑飞时反而一天不清。
+        assertTrue(
+            "清理返回 false 时必须走 skipCleanupRound 短退避",
+            "if (!cleanupOldLogsLocked(dir)) {" in code &&
+                "skipCleanupRound(\"日志目录不可读" in code,
+        )
+        assertTrue(
+            "两道闸都要把 listFiles() 返回 null 变成失败信号（不能当空目录）",
+            Regex("""val files = dir\.listFiles\(\) \?: error\("listFiles null"\)""").findAll(code).count() >= 2,
+        )
+        assertTrue("清理结果要真的返回给调用方", "return ageOk && sizeOk" in code)
     }
 
     /**

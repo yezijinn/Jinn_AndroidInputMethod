@@ -1015,7 +1015,12 @@ private const val LOG_SEGMENTS_KEPT = 2
         try {
             // 先推进时间闸：下面的日志调用会重进 [maybeCleanupOldLogs]，不推进就会递归
             lastCleanupAt = System.currentTimeMillis()
-            cleanupOldLogsLocked(dir)
+            // 「执行了但没跑成」（listFiles 抛异常 / 返回 null）也必须退回短退避：
+            // 内层的 runCatching 会把这两种情形收成 Result，异常冒不到 [maybeCleanupOldLogs]
+            // 的 onFailure，而时间闸已推进满 24h —— 目录正跑飞时反而整整一天不再清。
+            if (!cleanupOldLogsLocked(dir)) {
+                skipCleanupRound("日志目录不可读，短退避后重试")
+            }
         } finally {
             dirLock.unlock()
         }
@@ -1029,12 +1034,19 @@ private const val LOG_SEGMENTS_KEPT = 2
         runCatching { Log.w(TAG, "日志清理跳过: $reason") }
     }
 
-    private fun cleanupOldLogsLocked(dir: File) {
+    /**
+     * @return 两道闸是否都真正跑到；`false` = 目录不可读（`listFiles()` 抛异常或返回 null），
+     *   调用方要做一次短退避 —— 否则时间闸已推进满 24h，异常却被这里吞掉、外层 onFailure 永远不触发。
+     */
+    private fun cleanupOldLogsLocked(dir: File): Boolean {
         val cutoff = System.currentTimeMillis() - KEEP_DAYS * 24 * 3600 * 1000L
         // 年龄闸整段兜异常：`listFiles()` 自身会抛（目录权限被撤 / 不可读），原先只兜住了
         // `delete()`（BUG.md L-973）。走裸 Log，异常类名足够定位，不带路径。
-        runCatching {
-            dir.listFiles()?.forEach { file ->
+        // ⚠ `listFiles()` 返回 null 不能当空目录：那是「目录短暂不可读」，必须让外层短退避重试，
+        //   否则两道闸都空转、时间闸却已推进满 24h（L-1315 想防的正是这个）。
+        val ageOk = runCatching {
+            val files = dir.listFiles() ?: error("listFiles null")
+            files.forEach { file ->
                 val name = file.name
                 // device-info.txt 是导出时临时写的，正常路径在 finally 里删掉；进程中途被杀会留下，
                 // 而它不匹配上面两个前缀 —— 不在这里兜底就是永久垃圾，还会混进之后每次导出包
@@ -1045,19 +1057,20 @@ private const val LOG_SEGMENTS_KEPT = 2
                     runCatching { file.delete() }
                 }
             }
+            true
         }.onFailure {
             runCatching { Log.w(TAG, "日志年龄清理失败: ${it.javaClass.simpleName}") }
-        }
+        }.getOrDefault(false)
         // 年龄闸之后再过一遍**体积**闸（BUG.md L-170）：崩溃循环能在一天内写出几百 MB，
         // 只按年龄删拦不住「当天写满」——那时导出会失败、同分区别的应用也跟着遭殃。
-        runCatching {
+        val sizeOk = runCatching {
             val nowName = "$LOG_FILE_PREFIX${today()}.log"
-            val entries = dir.listFiles()
-                ?.filter { it.isFile && (
+            val files = dir.listFiles() ?: error("listFiles null")
+            val entries = files
+                .filter { it.isFile && (
                     it.name.startsWith(LOG_FILE_PREFIX) || it.name.startsWith(LOGCAT_FILE_PREFIX) ||
                         it.name == DEVICE_INFO_FILE) }
-                ?.map { Triple(it.name, it.lastModified(), it.length()) }
-                .orEmpty()
+                .map { Triple(it.name, it.lastModified(), it.length()) }
             val victims = overBudgetVictims(entries, LOG_DIR_BUDGET_BYTES, nowName)
             if (victims.isNotEmpty()) {
                 var freed = 0L
@@ -1069,11 +1082,13 @@ private const val LOG_SEGMENTS_KEPT = 2
                 }
                 Diagnostics.i(TAG, cleanupResultMessage(victims.size, failed, freed))
             }
+            true
         }.onFailure {
             // 清理是尽力而为，不该让日志写入路径因它抛异常；但也**不能静默**
             // （仓库自定底线：空 onFailure 等于吞异常，见 BUG.md L-189）。只记异常类名。
             Diagnostics.w(TAG, "日志体积清理失败: ${it.javaClass.simpleName}")
-        }
+        }.getOrDefault(false)
+        return ageOk && sizeOk
     }
 
     /** 当前日志目录；尚未初始化（或未授权）时为 null */
