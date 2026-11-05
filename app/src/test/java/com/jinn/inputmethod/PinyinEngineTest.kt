@@ -394,6 +394,33 @@ class PinyinEngineTest {
             "双拼 lt 的「略」应进候选：${PinyinEngine.query(quanpin).candidates}",
             PinyinEngine.query(quanpin).candidates.contains("略"),
         )
+        // 混合 ue/ve 词键：真索引只收 v 型（lve/nve），而 j/q/x/y 后的 üe 只有 ue 一写。
+        // 全局 replace("ue","ve") 会把 jue/xue/yue 一并误换 ⇒ 这类词整条漏召回；
+        // 只有 l/n 后的 üe 才有两写，对偶键必须只换 lue/nue。
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "lve\t略,掠\nnve\t虐\n",
+            phrases = "lvejue\t略觉\nxuenve\t学虐\nyuelve\t月略\n",
+            syllables = "lve\nlue\nnve\nnue\njue\nxue\nyue\n",
+        )
+        assertTrue(
+            "luejue 应命中 lvejue：${PinyinEngine.query("luejue").candidates}",
+            PinyinEngine.query("luejue").candidates.contains("略觉"),
+        )
+        assertTrue(
+            "xuenue 应命中 xuenve：${PinyinEngine.query("xuenue").candidates}",
+            PinyinEngine.query("xuenue").candidates.contains("学虐"),
+        )
+        assertTrue(
+            "yuelue 应命中 yuelve：${PinyinEngine.query("yuelue").candidates}",
+            PinyinEngine.query("yuelue").candidates.contains("月略"),
+        )
+        assertEquals("含 ue 但无 l/n 对偶的音节不产出伪键", emptyList<String>(), PinyinEngine.charsFor("jue"))
+        // 形态钉：不得退回全局 ue→ve / ve→ue 替换
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("不得退回全局 ue→ve 替换", !("replace(\"ue\", \"ve\")" in engine))
+        assertTrue("不得退回全局 ve→ue 替换", !("replace(\"ve\", \"ue\")" in engine))
+        PinyinEngine.resetForTest()
     }
 
     @Test

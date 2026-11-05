@@ -2516,11 +2516,13 @@ object PinyinEngine {
      */
     private fun ueVeVariant(raw: String): String? {
         if (raw.contains("ue")) {
-            val alt = raw.replace("ue", "ve")
+            // 只有 l/n 后的 üe 有 ue/ve 两写：全局替换会把 jue/que/xue/yue 一并误换成
+            // 词库里不存在的 jve/qve/xve/yve，令含这些音节的混合词键整条漏召回。
+            val alt = raw.replace("lue", "lve").replace("nue", "nve")
             return if (alt != raw) alt else null
         }
         if (raw.contains("ve")) {
-            val alt = raw.replace("ve", "ue")
+            val alt = raw.replace("lve", "lue").replace("nve", "nue")
             return if (alt != raw) alt else null
         }
         return null
