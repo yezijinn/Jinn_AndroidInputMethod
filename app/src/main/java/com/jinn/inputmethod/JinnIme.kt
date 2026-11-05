@@ -3586,7 +3586,9 @@ class JinnIme : InputMethodService() {
      *
      * 判据必须同时看 `isLoaded` 与 `isFullyLoaded`：只看前者会漏「索引段失败」（单字表已在位、
      * 索引还没好），只看后者会漏「字表零行但索引成功」（`loaded=false && fullLoaded=true`，
-     * 此时 `query` 恒返回空候选、提示条件 `!isFullyLoaded` 也为假 ⇒ 永久空白且补试永不发起）。
+     * 此时 `query` 恒返回空候选；但 `PinyinKeyboardView:3781` 的 `!isLoaded` 分支更早命中，
+     * 已显示「词库加载中…」，并非空白；闸门修复后补试可发起至多 3 次，耗尽后状态位不复位
+     * ⇒ 残留只是文案口径（进行时提示）与缺终态提示）。
      * 加载正在进行时不占用重试次数（`isLoading` 守卫），冷启动那 0.5~0.7s 里用户可能反复弹键盘。
      *
      * `load` 幂等且加锁：已全量就绪时这里只做一次 volatile 读；补试走独立守护线程，
