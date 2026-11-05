@@ -490,6 +490,15 @@ class CustomDictsTest {
             "张三 zhang san\n",
             CustomDicts.readSource(File(dir, CustomDicts.SOURCE_NAME)),
         )
+        // 编辑页两条接线（A-762 / A-763）：回执不能在重建时丢，重试不能被自己的源文本挡住
+        val page = TestSources.codeSource("CustomDictEditActivity.kt")
+        assertTrue("保存成功但页面已重建时回执要暂存到进程级", "pendingSaveResult = resultIntent" in page)
+        assertTrue("新实例 onCreate 必须补发回执", "consumePendingSaveResult()?.let" in page)
+        assertTrue(
+            "WRITE_FAIL_PACK 后必须更新身份戳，否则「再点一次保存」会弹错误的覆盖确认",
+            "status == TEXT_WRITE_FAIL_PACK" in page &&
+                "loadedSourceStamp = CustomDicts.sourceStamp" in page,
+        )
     }
 
     @Test

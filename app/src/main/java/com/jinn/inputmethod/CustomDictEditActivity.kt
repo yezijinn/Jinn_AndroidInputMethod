@@ -151,6 +151,15 @@ class CustomDictEditActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 上一次保存成功、但落盘期间本页被重建：回执没能在旧实例里 setResult。
+        // 只在**重建**（savedInstanceState 非空）时补发；全新启动不消费，免得用户刚打开就被关掉。
+        if (savedInstanceState != null) {
+            consumePendingSaveResult()?.let {
+                setResult(RESULT_OK, it)
+                finish()
+                return
+            }
+        }
         // 键盘由 Manifest 的 `stateAlwaysVisible|adjustResize` 拉起（本页用途就是「直接开写」，
         // 不该再让用户点一次输入框）。这里**不再**调 window.setSoftInputMode：它会把 adjust 位
         // 清成 UNSPECIFIED、与 Manifest 声明打架（BUG.md L-855）；真机实测同样会弹键盘。
@@ -816,8 +825,21 @@ class CustomDictEditActivity : Activity() {
                 Diagnostics.w(TAG, "快捷补充保存失败: ${t.javaClass.simpleName}")
                 TEXT_WRITE_FAIL
             }
+            val resultIntent = if (ok) {
+                Intent()
+                    .putExtra(EXTRA_ENTRIES, entries)
+                    .putExtra(EXTRA_SKIPPED, skipped)
+                    .putExtra(EXTRA_FILTERED, filtered)
+                    .putExtra(EXTRA_DROPPED, dropped)
+            } else {
+                null
+            }
             runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (isFinishing || isDestroyed) {
+                    // 落盘已成功但页面已重建：旧实例的 setResult 收不到，交给新实例补发（见 companion）
+                    if (resultIntent != null) pendingSaveResult = resultIntent
+                    return@runOnUiThread
+                }
                 saving = false
                 // 跳过回填时保存保持停用（BUG.md L-871）：无条件恢复会把「补几条 = 整体替换」放回来
                 if (!refillSkipped) {
@@ -832,16 +854,15 @@ class CustomDictEditActivity : Activity() {
                         TAG,
                         "快捷补充保存: $entries 条 / 跳过 $skipped 行 / 打不出 $filtered 条 / 同键挤掉 $dropped 条",
                     )
-                    setResult(
-                        RESULT_OK,
-                        Intent()
-                            .putExtra(EXTRA_ENTRIES, entries)
-                            .putExtra(EXTRA_SKIPPED, skipped)
-                            .putExtra(EXTRA_FILTERED, filtered)
-                            .putExtra(EXTRA_DROPPED, dropped),
-                    )
+                    setResult(RESULT_OK, resultIntent)
                     finish()
                 } else {
+                    // 包没写成但源文本已被本次保存改写（WRITE_FAIL_PACK）：身份戳要跟着更新，
+                    // 否则提示里承诺的「再点一次保存」会被自己刚写的新源文本触发覆盖确认（A-763）。
+                    if (status == TEXT_WRITE_FAIL_PACK) {
+                        loadedSourceStamp = CustomDicts.sourceStamp(CustomDicts.sourceFile(this@CustomDictEditActivity))
+                        sourceStampTrusted = true
+                    }
                     setStatus(status)
                 }
             }
@@ -936,6 +957,16 @@ class CustomDictEditActivity : Activity() {
     )
 
     companion object {
+
+        /**
+         * 保存成功但本页在后台落盘期间被 `recreate()`（定时换色 / 旋转）时，旧实例已不能
+         * `setResult`：回执暂存到进程级，由新实例 [onCreate] 补发，词库页才会刷新并重启引擎
+         * （否则包已在盘上、引擎仍扫旧包，用户却只看到「草稿已恢复」而以为保存失败）。
+         */
+        @Volatile
+        private var pendingSaveResult: Intent? = null
+
+        internal fun consumePendingSaveResult(): Intent? = pendingSaveResult.also { pendingSaveResult = null }
 
         /** 词库页从结果里取「已保存条数 / 跳过行数 / 打不出的条数」，复用同一句结果文案 */
         const val EXTRA_ENTRIES = "custom_entries"
