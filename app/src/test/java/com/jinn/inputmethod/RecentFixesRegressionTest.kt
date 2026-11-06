@@ -4352,6 +4352,28 @@ class RecentFixesRegressionTest {
             Regex("""<com\.jinn\.inputmethod\.UserAwareSpinner""").findAll(layoutOf("activity_key_appearance.xml")).count(),
         )
 
+        // 外观页写盘控件都要关掉 View 态保存：回收重建时系统恢复旧状态会触发监听，
+        // 把旧值写回 prefs 覆盖导入后的新设置（与 PunctOutputActivity 同口径）。
+        val appearanceXml = TestSources.codeOf(layoutOf("activity_key_appearance.xml"))
+        val writeBackIds = listOf(
+            "seek_key_corner", "seek_key_gap", "seek_key_height", "seek_candidate_spacing",
+            "seek_candidate_text_size", "seek_pinyin_text_size", "seek_pinyin_line_gap", "seek_key_transparency",
+            "switch_letter_uppercase", "switch_key_hint", "switch_pinyin_quanpin",
+            "switch_longpress_lower_uppercase", "switch_caps_oneshot", "switch_number_row",
+            "spinner_candidate_rows", "spinner_theme",
+        )
+        val writeBackEls = Regex("""<(SeekBar|Switch|com\.jinn\.inputmethod\.UserAwareSpinner)\b[\s\S]*?/>""")
+            .findAll(appearanceXml).map { it.value }.toList()
+        for (id in writeBackIds) {
+            val el = writeBackEls.firstOrNull { "@+id/$id" in it }
+                ?: error("外观页找不到写盘控件 $id")
+            assertTrue(
+                "$id 须关掉 View 态保存（回收重建会把旧值写回 prefs）",
+                "android:saveEnabled=\"false\"" in el,
+            )
+        }
+        assertEquals("外观页写盘控件数变了，守卫名单要同步", writeBackIds.size, writeBackEls.size)
+
         val openAi = codeOf("OpenAiSettingsActivity.kt")
         assertTrue("OpenAI 页目标语言下拉必须走同一探针", "spinnerTarget.userInteracted" in openAi)
         assertFalse(

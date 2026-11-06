@@ -96,7 +96,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_key_corner"
@@ -133,7 +134,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_key_gap"
@@ -169,7 +171,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_key_height"
@@ -209,7 +212,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_candidate_spacing"
@@ -246,7 +250,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_candidate_text_size"
@@ -283,7 +288,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_pinyin_text_size"
@@ -320,7 +326,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_pinyin_line_gap"
@@ -357,7 +364,8 @@
                     android:layout_weight="1"
                     android:progressBackgroundTint="@color/card_stroke"
                     android:progressTint="@color/accent"
-                    android:thumbTint="@color/accent" />
+                    android:thumbTint="@color/accent"
+                    android:saveEnabled="false" />
 
                 <TextView
                     android:id="@+id/text_key_transparency"
@@ -391,7 +399,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
 
                 <Switch
                     android:id="@+id/switch_key_hint"
@@ -401,7 +410,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
             </LinearLayout>
 
             <LinearLayout
@@ -418,7 +428,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
 
                 <!-- 第二列：小写长按变大 —— 与「双拼候选全音」同占一行两列；2026-10-21 与数字行对调后
                      从「大写键不锁定」那一行挪上来，数字行换到下一行右列（`switch_number_row`）。
@@ -431,7 +442,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
             </LinearLayout>
 
             <!-- 第 3 行 大写键不锁定 / 加一行数字键（左侧那键 2026-10-17 加入、2026-10-18 上移一行，
@@ -452,7 +464,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
 
                 <!-- 第二列原为「小写长按变大」，与「数字行」对调后改为数字行：
                      26 键区第一行字母之上那排 1234567890，默认关。
@@ -465,7 +478,8 @@
                     android:layout_weight="1"
                     android:minHeight="40dp"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:saveEnabled="false" />
             </LinearLayout>
 
             <LinearLayout
@@ -492,7 +506,8 @@
                         android:id="@+id/spinner_candidate_rows"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:spinnerMode="dropdown" />
+                        android:spinnerMode="dropdown"
+                        android:saveEnabled="false" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -514,7 +529,8 @@
                         android:id="@+id/spinner_theme"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:spinnerMode="dropdown" />
+                        android:spinnerMode="dropdown"
+                        android:saveEnabled="false" />
                 </LinearLayout>
             </LinearLayout>
 
