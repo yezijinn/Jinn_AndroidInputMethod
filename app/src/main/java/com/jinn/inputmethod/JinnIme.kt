@@ -5628,13 +5628,6 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 删除键三击（双击+长按）：删除光标**前方**的全部文本，光标后方的文本保留。
-     *
-     * 只量 `getTextBeforeCursor`，用 `deleteSurroundingText(before, 0)` 删光标前这一截，
-     * 后一个参数恒为 0 ⇒ 光标后方一个字符都不删。不折叠光标到文首：那样光标前就空了，
-     * 反而什么都删不掉。逐轮删是因为单次取文本有上限，超长文本一轮取不完。
-     */
-    /**
      * 包住**同步的宿主调用**（`InputConnection` 的写操作与 `sendDownUpKeyEvents`）。
      *
      * 宿主进程被强停 / 崩溃后这些调用会抛 `DeadObjectException`（`sendDownUpKeyEvents` 尤其要注意：
@@ -5653,10 +5646,17 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "$what: 宿主调用失败 ${it.javaClass.simpleName}")
         }.isSuccess
 
+    /**
+     * 删除键三击（双击+长按）：删除光标**前方**的全部文本，光标后方的文本保留。
+     *
+     * 只量 `getTextBeforeCursor`，用 `deleteSurroundingText(before, 0)` 删光标前这一截，
+     * 后一个参数恒为 0 ⇒ 光标后方一个字符都不删。不折叠光标到文首：那样光标前就空了，
+     * 反而什么都删不掉。逐轮删是因为单次取文本有上限，超长文本一轮取不完。
+     */
     private fun deleteAllText() {
         // 同 L-716：删除会改宿主文本 ⇒ 在途译文必然作废，先取消再删（用户动作优先）
         if (translateInFlight) cancelTranslate(notify = true)
-        Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，删除光标前方文本")
+        Diagnostics.i(TAG, "deleteAllText: 收到双击+长按退格手势")
         val connection = currentInputConnection ?: return
         // 两个同步 Binder 调用都要兜底：宿主连接失效时裸调会从主线程带走 IME 进程
         // （2026-10-01 修复 L-241），走统一的 [guardHostCall]（2026-10-02 收口）。
@@ -5667,19 +5667,20 @@ class JinnIme : InputMethodService() {
         // 整段静默跳过。取实际长度再删，语义明确且不依赖实现的上界行为。
         //
         // 逐轮删：单次取文本有 [MAX_SCAN_CHARS] 上限，超长文本一轮删不完；删完最近的一截后
-        // 光标左移，下一轮继续删更前面的，直到光标前取空或达到 [DELETE_ALL_MAX_ROUNDS] 上限
-        // （宿主不配合删除时有界收手，不空转跨进程调用）。
+        // 光标左移，下一轮继续删更前面的，直到光标前取空或达到 [DELETE_ALL_MAX_ROUNDS] 上限。
+        // 认 deleteSurroundingText 的返回值：宿主拒绝 / 连接失效时立刻收手，不空转跨进程调用。
         val ok = guardHostCall("deleteAllText") {
             var rounds = 0
             while (rounds < DELETE_ALL_MAX_ROUNDS) {
                 val before = connection.getTextBeforeCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
                 if (before == 0) break
-                connection.deleteSurroundingText(before, 0)
+                if (!connection.deleteSurroundingText(before, 0)) break
                 rounds++
             }
         }
         if (ok) {
-            Diagnostics.i(TAG, "deleteAllText: 已发送删除（只清光标前方，光标后方不动）")
+            // 返回值只代表请求被宿主接受，不等于文本已删净；日志不做结果断言。
+            Diagnostics.i(TAG, "deleteAllText: 删除流程结束（只清光标前方；宿主返回值不代表已删净）")
         }
     }
 
@@ -5917,10 +5918,10 @@ class JinnIme : InputMethodService() {
         /** 四角角标的不透明度（0~255，约 40%）：与短条同档，只做示意不做视觉主体 */
         const val FLOATING_CORNER_ALPHA = 0x66
 
-        /** 清空文本时光标两侧各取的长度上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
+        /** 单次读取光标前方文本的长度上限：够覆盖超长输入，又不会让一次 Binder 取回过大内容 */
         const val MAX_SCAN_CHARS = 20_000
 
-        /** [MAX_SCAN_CHARS] 之上的长文，清空时最多补几轮（4 × 2 × 20k = 16 万字符） */
+        /** [MAX_SCAN_CHARS] 之上的长文，清空时最多补几轮（4 × 20k = 8 万字符） */
         const val DELETE_ALL_MAX_ROUNDS = 4
 
         /** 「到末尾」读取光标之后文本的上限：长文档下避免一次跨进程大事务卡住主线程 */

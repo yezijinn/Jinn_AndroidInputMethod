@@ -7702,6 +7702,22 @@ class RecentFixesRegressionTest {
             "不得折叠光标到文首 setSelection(0, 0)：那样光标前就空了，什么都删不掉",
             "connection.setSelection(0, 0)" in body,
         )
+        assertTrue(
+            "认 deleteSurroundingText 的返回值：宿主拒绝就收手，不空转跨进程调用",
+            "if (!connection.deleteSurroundingText(before, 0)) break" in body,
+        )
+        assertFalse(
+            "不得用「取到的前 20k 文本逐字比较」当收敛判据：相同字符长文 / 读取窗口不更新会误 break，删得更少",
+            "beforeText == last" in body,
+        )
+        assertFalse(
+            "不得退回选区修复 getSelectedText + commitText(\"\", 1)：会删光标后方选中文本、固化 composing",
+            "getSelectedText(0)" in body && "commitText(\"\", 1)" in body,
+        )
+        assertTrue(
+            "日志不得做「已删净」的结果断言：宿主返回值只代表请求被接受",
+            "不代表已删净" in body,
+        )
     }
 
     /**
