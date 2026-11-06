@@ -576,6 +576,9 @@ class ClipboardLimitsTest {
             "textual == null && !looksLikeText" in src)
         assertTrue("粘贴侧必须带时间预算", "ClipboardStore.PASTE_READ_BUDGET_MS * 1_000_000L" in ime)
         assertFalse("粘贴侧不得再裸调 coerceToText（那是主线程无预算读流）", "coerceToText(this)" in ime)
+        val raw = TestSources.rawSourceOfShortName("ClipboardController.kt")
+        assertFalse("TimedOut 不得再写成主线程专属", "只可能出现在主线程调用路径上" in raw)
+        assertTrue("TimedOut 的 KDoc 须并列两条读入预算", "[PASTE_READ_BUDGET_MS] / [COLLECT_READ_BUDGET_MS]" in raw)
     }
 
     @Test

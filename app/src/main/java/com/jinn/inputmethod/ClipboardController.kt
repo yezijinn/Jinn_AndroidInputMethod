@@ -468,7 +468,7 @@ object ClipboardStore {
         /** 超过单条上限（与入库 / 粘贴闸同源）—— 读入即止，**不会**整份读进来 */
         object TooLarge : ItemText
 
-        /** 时间预算耗尽（只可能出现在主线程调用路径上，见 [PASTE_READ_BUDGET_MS]） */
+        /** 时间预算耗尽（见 [PASTE_READ_BUDGET_MS] / [COLLECT_READ_BUDGET_MS]） */
         object TimedOut : ItemText
 
         /** 打不开流 / 读失败 / 预算非法 */
@@ -493,8 +493,8 @@ object ClipboardStore {
         var total = 0
         var empty = 0
         while (true) {
-            // 时间预算：字节预算管不住**慢** provider —— 主线程上（粘贴路径）读 256KB 也可能要几秒，
-            // 那种情况必须放弃（BUG.md L-177）。采集路径在后台线程，传 null 即可。
+            // 时间预算：字节预算管不住**慢** provider —— 读 256KB 也可能要几秒，
+            // 那种情况必须放弃（BUG.md L-177）；两条读入预算由调用方按路径传入。
             // 局限（BUG.md L-185）：这里只在**循环顶部**检查，打断不了阻塞的单次 read()。
             if (deadlineNanos != null && System.nanoTime() >= deadlineNanos) return ItemText.TimedOut
             val n = runCatching { input.read(chunk) }.getOrNull() ?: return ItemText.Failed
@@ -636,7 +636,7 @@ object ClipboardStore {
      *
      * 判据顺序与 AOSP `ClipData.Item.coerceToText` 对齐：`text` → `htmlText` → `uri` → 其它（Intent 等）。
      * 只有 **URI 档**会打开流，所以只有它需要预算；前三档是内存拷贝，`coerceToText` 也照用。
-     * [deadlineNanos] 只在**主线程**调用路径（粘贴）上传，见 [PASTE_READ_BUDGET_MS]。
+     * [deadlineNanos] 由调用方按各自的读入预算传入，见 [PASTE_READ_BUDGET_MS] 与 [COLLECT_READ_BUDGET_MS]。
      */
     internal fun itemTextResult(
         item: android.content.ClipData.Item,
