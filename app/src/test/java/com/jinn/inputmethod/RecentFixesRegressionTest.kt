@@ -7673,15 +7673,17 @@ class RecentFixesRegressionTest {
     // ── 触摸 / 手势 / 时序（2026-10-23）────────────────────
 
     /**
-     * L-1435：清空输入框必须**先折叠光标、再量两侧长度**。
+     * L-1435：一键删除只删光标**前方**的全部文本、保留后方，不折叠光标、不量两侧。
      *
-     * 旧写法在 `setSelection(0, 0)` **之前**取 `getTextAfterCursor`：光标在末尾（正常打字后的
-     * 常态）时 `after = 0` ⇒ `deleteSurroundingText(0, 0)` 一个字符都不删 ——「双击退格 + 长按」
-     * 在界面上没有任何失败提示，用户只会以为手势失灵。真机取证：40 字 → 29（少掉的 11 个全是
-     * 连删循环删的），光标移到文首做同一手势 40 → 0。
+     * 旧写法先 `setSelection(0, 0)` ⇒ 光标前方为空、什么都删不掉；且在折叠前取
+     * `getTextAfterCursor`，光标在末尾时 `after = 0`。现状只量 `getTextBeforeCursor` 的实际长度，
+     * 逐轮 `deleteSurroundingText(before, 0)`（后方恒删 0），认返回值收手，轮数上限
+     * `DELETE_ALL_MAX_ROUNDS` 也收手。ROOT 真机前方 40 字符 + 后方 DEF → DEF、logcat 三链齐全，
+     * 排除 380ms 连删先删净前方的假阳性。
      *
-     * 断言全在源码形态上（`InputConnection` 进不了 JVM 单测），三条缺一不可：
-     * ① 两侧都量（只量 after 就是旧缺陷）；② 量在折叠之后；③ 删除量传 `before + after`。
+     * 断言全在源码形态上（`InputConnection` 进不了 JVM 单测）：只量前方、删 `(before, 0)`、
+     * 不读 `getTextAfterCursor`、不 `setSelection(0, 0)`、认返回值 break、无 `beforeText == last`、
+     * 无 `commitText("", 1)` 选区修复、日志含「不代表已删净」。
      */
     @Test
     fun `一键删除只清光标前方且保留光标后方`() {
