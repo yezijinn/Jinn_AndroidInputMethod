@@ -243,6 +243,18 @@ class FloatingKeyboardTest {
             "FloatingKeyboardActivity 必须在渲染前清理失效绑定",
             "pruneStaleBindings(apps)" in TestSources.codeSource("FloatingKeyboardActivity.kt"),
         )
+        // 已绑定强制置顶、不参与排序（保持原顺序整体挪到前面）；未绑定的才按显示名排。
+        val apps = listOf("z.app" to "Zeta", "a.app" to "Alpha", "b.app" to "Beta", "m.app" to "Mid")
+        val ordered = FloatingKeyboard.orderBindingApps(apps, setOf("z.app", "m.app"), { it.first }, { it.second })
+        assertEquals(
+            "已绑定的按原顺序整体置顶，未绑定的按显示名排",
+            listOf("Zeta", "Mid", "Alpha", "Beta"),
+            ordered.map { it.second },
+        )
+        assertTrue(
+            "页面渲染前必须调用分组函数让已绑定置顶",
+            "FloatingKeyboard.orderBindingApps(" in TestSources.codeSource("FloatingKeyboardActivity.kt"),
+        )
     }
 
     // ──────────── 竖横各存一套 / 关闭态不改行为（源码形态）────────────

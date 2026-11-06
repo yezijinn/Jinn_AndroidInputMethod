@@ -741,6 +741,14 @@ class DocsReferenceTest {
             "功能总览里「双拼候选全音」的默认值与 Prefs.KEY_SHOW_QUANPIN 不符（实际应为$expected）：$line",
             expected in line,
         )
+        // 四项交互开关出厂即开：缺键回落必须都是 true，防默认值被改回关。
+        for (key in listOf(
+            "KEY_KEY_LETTER_UPPERCASE", "KEY_SHOW_KEY_HINT", "KEY_SHOW_QUANPIN", "KEY_USER_LEARNING",
+        )) {
+            val dv = Regex("""boolOr\($key,\s*(true|false)\)""").find(prefs)?.groupValues?.get(1)
+                ?: error("Prefs.kt 里找不到 $key 的默认值")
+            assertEquals("$key 必须默认开（四项交互开关出厂即开）", "true", dv)
+        }
 
         // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，文案在代码里下发
         //    而非 strings.xml；2026-10-09 该开关迁到「键盘外观」页 —— 锚点跟着控件走）

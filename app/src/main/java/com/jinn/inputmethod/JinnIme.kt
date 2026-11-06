@@ -5628,20 +5628,11 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 删除键三击（双击+长按）：清空输入框全部文本。
+     * 删除键三击（双击+长按）：删除光标**前方**的全部文本，光标后方的文本保留。
      *
-     * 实现：先折叠光标与拖选，再**按光标两侧的实际长度**删光。两条硬口径：
-     *
-     * ① 长度必须在 `setSelection` **之后**量。旧写法在折叠前量 `getTextAfterCursor`：
-     *    光标在末尾（正常打字后的常态）时 `after=0` ⇒ `deleteSurroundingText(0, 0)`
-     *    一个字符都不删，可这个手势在界面上没有任何提示（BUG.md L-1435，真机 40 字一删不掉）。
-     * ② 只量一侧不够。AOSP `deleteSurroundingText(beforeLength, afterLength)` 只删
-     *    「选区（含组合区）两侧」，选区本体不在范围内，删完还会把 `b` 左移补偿；
-     *    所以先 `setSelection(0, 0)` 折叠选区，再按 `before + after` 两侧各删一次 ——
-     *    宿主若没理会那次 `setSelection`，量到的仍是「当前光标两侧」的真值，照样删得干净。
-     *
-     * 不再用 Ctrl+A + 删除：`BaseInputConnection` 里全选后 `a=0` ⇒ 删除量为 0，
-     * 旧写法在标准宿主上一个字符都删不掉，只在「宿主不接受 Ctrl+A」时误删光标前的半截文本。
+     * 只量 `getTextBeforeCursor`，用 `deleteSurroundingText(before, 0)` 删光标前这一截，
+     * 后一个参数恒为 0 ⇒ 光标后方一个字符都不删。不折叠光标到文首：那样光标前就空了，
+     * 反而什么都删不掉。逐轮删是因为单次取文本有上限，超长文本一轮取不完。
      */
     /**
      * 包住**同步的宿主调用**（`InputConnection` 的写操作与 `sendDownUpKeyEvents`）。
@@ -5663,41 +5654,32 @@ class JinnIme : InputMethodService() {
         }.isSuccess
 
     private fun deleteAllText() {
-        // 同 L-716：清空会改宿主文本 ⇒ 在途译文必然作废，先取消再清（用户动作优先）
+        // 同 L-716：删除会改宿主文本 ⇒ 在途译文必然作废，先取消再删（用户动作优先）
         if (translateInFlight) cancelTranslate(notify = true)
-        Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，清空全部文本")
+        Diagnostics.i(TAG, "deleteAllText: 双击+长按退格，删除光标前方文本")
         val connection = currentInputConnection ?: return
-        // 不登记期望值：清空后光标归零，此时若还挂着拖选，让它退出才是对的（见 SelectionExpectations）
         // 两个同步 Binder 调用都要兜底：宿主连接失效时裸调会从主线程带走 IME 进程
-        // （2026-10-01 修复 L-241）
-        // 走统一的 [guardHostCall]（2026-10-02 收口）：此前是这里内联一份 `runCatching`，
-        // 形态与别处不同 ⇒ 守卫没法用同一判据扫全部路径
-        // ⚠ 不能用 `deleteSurroundingText(0, Int.MAX_VALUE)`：AOSP 的 BaseInputConnection 里
-        // `end = b + afterLength`，当光标不在开头（b > 0，宿主有 composing 区或忽略了
-        // setSelection）时 b + Int.MAX_VALUE 溢出成负数 ⇒ `end > length` 不成立、
-        // 不钳位、`numDeleteAfter < 0` ⇒ 整段**静默跳过**，一个字符都不删。
-        // 先取光标两侧的实际长度再按它删，语义明确且不依赖实现的上界行为。
+        // （2026-10-01 修复 L-241），走统一的 [guardHostCall]（2026-10-02 收口）。
+        // 只删「光标前方」：量出光标前的实际长度，deleteSurroundingText(before, 0) 把这一截删掉，
+        // 光标后方删 0 个字符 ⇒ 光标后方的文本一个都不碰。
+        // 不折叠光标到文首：那样「光标前方」就空了，等于没删；也不再读 getTextAfterCursor。
+        // ⚠ 不能图省事传 Int.MAX_VALUE：AOSP BaseInputConnection 会拿它算 end 并溢出，
+        // 整段静默跳过。取实际长度再删，语义明确且不依赖实现的上界行为。
         //
-        // 逐轮删：单次取文本有 [MAX_SCAN_CHARS] 上限，超长文本（长文笔记 / 网页输入框）
-        // 一轮删不完，故量一次删一轮，直到两侧都取空；某一轮长度没变小说明宿主没配合删除，
-        // 立刻收手，不空转跨进程调用。
+        // 逐轮删：单次取文本有 [MAX_SCAN_CHARS] 上限，超长文本一轮删不完；删完最近的一截后
+        // 光标左移，下一轮继续删更前面的，直到光标前取空或达到 [DELETE_ALL_MAX_ROUNDS] 上限
+        // （宿主不配合删除时有界收手，不空转跨进程调用）。
         val ok = guardHostCall("deleteAllText") {
-            // 先折叠光标与拖选（选区本体不在 deleteSurroundingText 的删除范围内）
-            connection.setSelection(0, 0)
-            var remaining = -1
             var rounds = 0
             while (rounds < DELETE_ALL_MAX_ROUNDS) {
                 val before = connection.getTextBeforeCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
-                val after = connection.getTextAfterCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
-                val total = before + after
-                if (total == 0 || total == remaining) break
-                remaining = total
-                connection.deleteSurroundingText(before, after)
+                if (before == 0) break
+                connection.deleteSurroundingText(before, 0)
                 rounds++
             }
         }
         if (ok) {
-            Diagnostics.i(TAG, "deleteAllText: 已发送清空（折叠光标后按两侧实际长度删光）")
+            Diagnostics.i(TAG, "deleteAllText: 已发送删除（只清光标前方，光标后方不动）")
         }
     }
 

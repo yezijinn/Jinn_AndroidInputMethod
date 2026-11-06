@@ -7684,24 +7684,23 @@ class RecentFixesRegressionTest {
      * ① 两侧都量（只量 after 就是旧缺陷）；② 量在折叠之后；③ 删除量传 `before + after`。
      */
     @Test
-    fun `清空输入框必须量光标两侧长度且在折叠之后取`() {
+    fun `一键删除只清光标前方且保留光标后方`() {
         val body = blockAfter(codeOf("JinnIme.kt"), "private fun deleteAllText()")
         assertTrue(
-            "清空必须按光标**两侧**的实际长度删：只量 after 时，光标在末尾取到 0 ⇒ 一个字符都不删（L-1435）",
-            "getTextBeforeCursor(" in body && "getTextAfterCursor(" in body,
-        )
-        assertBefore(
-            body, "connection.setSelection(0, 0)", "getTextAfterCursor(",
-            "长度必须在折叠光标**之后**量（在之前量到的 after 是旧光标之后那截，光标在末尾时为 0）",
+            "只量光标前方的实际长度（getTextBeforeCursor）",
+            "getTextBeforeCursor(" in body,
         )
         assertTrue(
-            "删除量必须同时带上两侧长度：AOSP 的 deleteSurroundingText 只删选区两侧、" +
-                "选区本体不在范围内，少一侧就会留下半截",
-            "connection.deleteSurroundingText(before, after)" in body,
+            "删除量只带前方长度、光标后方删 0 个：deleteSurroundingText(before, 0)",
+            "connection.deleteSurroundingText(before, 0)" in body,
         )
         assertFalse(
-            "不得退回「只删光标之后」的写法（L-1435 的原形）",
-            "deleteSurroundingText(0, after)" in body,
+            "一键删除不得再读光标后方文本（光标后方的文本要保留）",
+            "getTextAfterCursor(" in body,
+        )
+        assertFalse(
+            "不得折叠光标到文首 setSelection(0, 0)：那样光标前就空了，什么都删不掉",
+            "connection.setSelection(0, 0)" in body,
         )
     }
 

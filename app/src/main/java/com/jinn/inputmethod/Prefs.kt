@@ -280,9 +280,9 @@ class Prefs(private val appContext: Context) {
         get() = FuzzyPinyin.clampMask(intOr(KEY_FUZZY_PINYIN, FuzzyPinyin.NONE))
         set(value) = sp.edit { putInt(KEY_FUZZY_PINYIN, FuzzyPinyin.clampMask(value)) }
 
-    /** 用户词频学习：记录「实际选过」的候选并提到前面（默认关；本地存储，不上传） */
+    /** 用户词频学习：记录「实际选过」的候选并提到前面（默认开；本地存储，不上传） */
     var userLearning: Boolean
-        get() = boolOr(KEY_USER_LEARNING, false)
+        get() = boolOr(KEY_USER_LEARNING, true)
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
     /**
@@ -325,13 +325,13 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_SHOW_KEY_HINT, value) }
 
     /**
-     * 双拼候选栏拼音行的显示方式：false（默认）= 显示按下的英文字母；true = 按声母 / 韵母展开成全拼。
+     * 双拼候选栏拼音行的显示方式：true（默认）= 按声母 / 韵母展开成全拼；false = 显示按下的英文字母。
      *
      * 只影响候选栏显示，不改输入、查询与上屏；残码逐键展开、绝不丢键（见 [Shuangpin.displayQuanpin]）。
      * 与 [showKeyHint] 一样，键盘下次弹出即按新设置渲染。
      */
     var showQuanpin: Boolean
-        get() = boolOr(KEY_SHOW_QUANPIN, false)
+        get() = boolOr(KEY_SHOW_QUANPIN, true)
         set(value) = sp.edit { putBoolean(KEY_SHOW_QUANPIN, value) }
 
     /**
@@ -585,14 +585,14 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putFloat(KEY_KEY_HEIGHT_DP, KeyAppearance.clampKeyHeightDp(value)) }
 
     /**
-     * 拼音输入时 26 键是否**常显大写字母**（默认关 = 保持历史观感的小写）。
+     * 拼音输入时 26 键是否**常显大写字母**（默认开）。
      *
      * 只改键面字形，不改上屏内容：按 A 键上屏的仍是小写 a（拼音串本来就是小写），
      * 与「大写锁定」（capsMode，真上屏大写）是两件事。英文模式不套用本项 ——
      * 那里字母就是正文，显示大写而上屏小写会变成「看到的与打出来的不一致」。
      */
     var keyLetterUppercase: Boolean
-        get() = boolOr(KEY_KEY_LETTER_UPPERCASE, false)
+        get() = boolOr(KEY_KEY_LETTER_UPPERCASE, true)
         set(value) = sp.edit { putBoolean(KEY_KEY_LETTER_UPPERCASE, value) }
 
     /**

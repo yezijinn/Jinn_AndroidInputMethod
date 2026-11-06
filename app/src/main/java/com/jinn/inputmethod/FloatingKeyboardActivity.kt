@@ -107,7 +107,8 @@ class FloatingKeyboardActivity : Activity() {
                 },
             )
         }
-        for (app in apps) {
+        // 已绑定的应用强制置顶、不参与排序；其余的才按显示名排。
+        for (app in FloatingKeyboard.orderBindingApps(apps, bound, { it.packageName }, { it.label })) {
             addRow(app, app.packageName in bound)
         }
         renderHint()
@@ -182,7 +183,7 @@ class FloatingKeyboardActivity : Activity() {
         }
     }
 
-    /** 有桌面入口的应用（按显示名排序）；查询依赖 manifest 里的 `<queries>` intent 声明 */
+    /** 有桌面入口的应用（保持查询原顺序，排序交给 [renderRows] 分组处理）；依赖 manifest 的 `<queries>` 声明 */
     private fun launchableApps(): List<AppEntry> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val pm = packageManager
@@ -193,7 +194,6 @@ class FloatingKeyboardActivity : Activity() {
             .mapNotNull { it.activityInfo?.applicationInfo }
             .distinctBy { it.packageName }
             .map { AppEntry(it.packageName, runCatching { pm.getApplicationLabel(it).toString() }.getOrDefault(it.packageName)) }
-            .sortedBy { it.label.lowercase() }
     }
 
     private data class AppEntry(val packageName: String, val label: String)

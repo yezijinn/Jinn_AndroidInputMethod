@@ -172,6 +172,23 @@ object FloatingKeyboard {
         if (available.isEmpty()) emptySet() else bound - available
 
     /**
+     * 绑定列表的显示顺序：**已经勾选的应用强制置顶、不参与排序**；没勾选的才按显示名排序。
+     *
+     * 已勾选的保持 [apps] 里的原顺序整体挪到前面（它们是用户关心的少数几个，置顶后一眼可见，
+     * 不跟着字母顺序被打散）；其余应用按显示名（不区分大小写）排，方便在长列表里找。
+     * 这里只决定顺序，不改集合内容 —— 页面仍对每个应用照 `packageName in bound` 判勾选态。
+     */
+    fun <T> orderBindingApps(apps: List<T>, bound: Set<String>, packageOf: (T) -> String, labelOf: (T) -> String): List<T> {
+        val pinned = ArrayList<T>()
+        val rest = ArrayList<T>()
+        for (app in apps) {
+            if (packageOf(app) in bound) pinned.add(app) else rest.add(app)
+        }
+        rest.sortBy { labelOf(it).lowercase() }
+        return pinned + rest
+    }
+
+    /**
      * 解析几何串，两种段数都认：
      *  - **3 段** `x,y,scale`（旧版写的，用户已存过）⇒ 宽高同比；
      *  - **4 段** `x,y,widthPercent,heightPercent`（四角拉过之后写的）。
