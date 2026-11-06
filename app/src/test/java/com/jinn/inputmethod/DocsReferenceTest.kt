@@ -750,6 +750,22 @@ class DocsReferenceTest {
             assertEquals("$key 必须默认开（四项交互开关出厂即开）", "true", dv)
         }
 
+        // ①′ 三个外观默认值：读源码常量，要求文档写当前值（归①默认值类，不新增类别）
+        val heightSrc = TestSources.codeSource("KeyAppearance.kt")
+        val fontSrc = TestSources.codeSource("CandidateText.kt")
+        val heightDp = Regex("""DEFAULT_KEY_HEIGHT_DP\s*=\s*([\d.]+)f""").find(heightSrc)?.groupValues?.get(1)
+            ?: error("KeyAppearance.kt 里找不到 DEFAULT_KEY_HEIGHT_DP")
+        val fontSp = Regex("""DEFAULT_SP\s*=\s*([\d.]+)f""").find(fontSrc)?.groupValues?.get(1)
+            ?: error("CandidateText.kt 里找不到 DEFAULT_SP")
+        val spacingDp = Regex("""DEFAULT_SPACING_DP\s*=\s*([\d.]+)f""").find(heightSrc)?.groupValues?.get(1)
+            ?: error("KeyAppearance.kt 里找不到 DEFAULT_SPACING_DP")
+        val heightLine = doc.lineSequence().firstOrNull { "**键高**" in it } ?: error("功能总览里找不到键高那一行")
+        val fontLine = doc.lineSequence().firstOrNull { "**候选字号**" in it } ?: error("功能总览里找不到候选字号那一行")
+        val spacingLine = doc.lineSequence().firstOrNull { "**候选字距**" in it } ?: error("功能总览里找不到候选字距那一行")
+        assertTrue("功能总览键高默认值应为 ${heightDp}dp：$heightLine", "默认 ${heightDp}dp" in heightLine)
+        assertTrue("功能总览候选字号默认值应为 ${fontSp}sp：$fontLine", "默认 ${fontSp}sp" in fontLine)
+        assertTrue("功能总览候选字距默认值应为 ${spacingDp}dp：$spacingLine", "默认 ${spacingDp}dp" in spacingLine)
+
         // ② 控件名必须是屏幕上那个（2026-10-01 由「键盘内嵌韵母」改名「键盘内显韵母」，文案在代码里下发
         //    而非 strings.xml；2026-10-09 该开关迁到「键盘外观」页 —— 锚点跟着控件走）
         val appearance = TestSources.codeSource("KeyAppearanceActivity.kt")
