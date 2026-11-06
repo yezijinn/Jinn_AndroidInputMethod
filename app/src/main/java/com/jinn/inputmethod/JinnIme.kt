@@ -3900,6 +3900,10 @@ class JinnIme : InputMethodService() {
         super.onConfigurationChanged(newConfig)
         if (!floatingActive) return
         Diagnostics.i(TAG, "悬浮键盘: 配置变更（orientation=${newConfig.orientation}），按新方向重新夹取")
+        // 视图未重建的机型不会补发 ACTION_CANCEL、窗口也不隐藏（L-1442 同一口径）：
+        // 先撤掉待发的长按换档，否则旋转后它会照旧换档并把几何写进当前朝向的键。
+        ui.removeCallbacks(floatingLongPress)
+        floatingLongPressArmed = false
         applyFloatingWindow()
     }
 

@@ -76,6 +76,11 @@ class PowerResidencyTest {
         assertTrue("窗口隐藏要撤悬浮把手长按", "ui.removeCallbacks(floatingLongPress)" in hidden)
         assertTrue("撤计时器同时要复位长按待发标志", "floatingLongPressArmed = false" in hidden)
 
+        // 视图未重建的机型不会补发 ACTION_CANCEL、窗口也不隐藏：旋转同样是这条链的收尾出口。
+        val configChange = TestSources.blockAfter(ime, "override fun onConfigurationChanged(")
+        assertTrue("旋转要撤悬浮把手长按", "ui.removeCallbacks(floatingLongPress)" in configChange)
+        assertTrue("旋转要复位长按待发标志", "floatingLongPressArmed = false" in configChange)
+
         val destroy = TestSources.blockAfter(ime, "override fun onDestroy()")
         assertTrue("销毁要停视图侧连删", "pinyinKeyboard?.stopBackspaceRepeat()" in destroy)
         assertTrue("销毁要停定时换肤", "themeTicker.stop()" in destroy)
