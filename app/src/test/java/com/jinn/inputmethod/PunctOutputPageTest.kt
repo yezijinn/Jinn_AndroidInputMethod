@@ -67,6 +67,13 @@ class PunctOutputPageTest {
             "输入框要走光标感知归一（BUG.md L-1382）",
             Regex("""PunctOutput\.sanitizeFieldAt\(raw, caret, fallback\)""").containsMatchIn(code),
         )
+        // 页面留在返回栈里时，导入配置或回收重建都会让框内停在旧快照（L-48/L-74 同型第三页）：
+        // 关掉 View 态保存，避免恢复触发 watcher 把旧值写回；回前台再从 prefs 重读。
+        val assigns = Regex("""isSaveEnabled\s*=\s*(\w+)""").findAll(code)
+            .map { it.groupValues[1] }.toList()
+        assertTrue("四框须关且只关一次视图态保存（实际 $assigns）", assigns == listOf("false"))
+        val onStart = TestSources.blockAfter(code, "override fun onStart()")
+        assertTrue("回前台必须重读 prefs", "fieldRefreshers" in onStart)
     }
 
     @Test

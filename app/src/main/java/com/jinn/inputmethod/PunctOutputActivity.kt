@@ -25,6 +25,9 @@ class PunctOutputActivity : Activity() {
      */
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
 
+    /** 回前台重读四个标点值：页面留在返回栈里时导入配置会停在旧快照上（L-48/L-74 同型）。 */
+    private val fieldRefreshers = ArrayList<() -> Unit>()
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(ThemeManager.themedContext(newBase, Prefs(newBase)))
     }
@@ -64,6 +67,7 @@ class PunctOutputActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
+        for (refresh in fieldRefreshers) refresh()
     }
 
     override fun onStop() {
@@ -87,8 +91,19 @@ class PunctOutputActivity : Activity() {
     ) {
         findViewById<TextView>(labelId).text = labelText
         val edit = findViewById<EditText>(editId)
+        // 有 id 的输入框默认进系统 Bundle；回收重建时恢复文本会触发 watcher 把旧值写回 prefs。
+        edit.isSaveEnabled = false
         var updating = false
         edit.setText(getValue())
+        fieldRefreshers.add {
+            val v = getValue()
+            if (edit.text?.toString() != v) {
+                updating = true
+                edit.setText(v)
+                edit.setSelection(v.length)
+                updating = false
+            }
+        }
         edit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
