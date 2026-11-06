@@ -40,6 +40,9 @@ class SymbolOrderActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
+        // 页面留在返回栈里时导入配置会停在旧快照：↑↓ 闭包捕获的是上次重画的顺序，
+        // 不重读就会把导入前的整份顺序写回 prefs（与 L-48/L-74 两页同口径）。
+        renderRows()
     }
 
     override fun onStop() {

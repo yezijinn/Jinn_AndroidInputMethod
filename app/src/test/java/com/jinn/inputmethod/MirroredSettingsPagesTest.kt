@@ -31,6 +31,14 @@ class MirroredSettingsPagesTest {
                 bodyOf(src, "override fun onCreate(").contains("renderRows()"),
             )
         }
+        // 符号顺序页不是复刻页，但共用「回前台必须重读 prefs」这一条不变量：
+        // 它的 ↑↓ 闭包捕获 onCreate 的旧顺序，不重画就会把导入的新顺序整体写回。
+        // 不进上面的 listOf —— 该页 onCreate 里重置按钮回调也调了重画，套用 assertFalse 会误判。
+        val order = codeOf("SymbolOrderActivity.kt")
+        assertTrue(
+            "符号顺序页必须在 onStart 重画（回前台重读 prefs，↑↓ 才不回写旧顺序）",
+            bodyOf(order, "override fun onStart()").contains("renderRows()"),
+        )
     }
 
     @Test
