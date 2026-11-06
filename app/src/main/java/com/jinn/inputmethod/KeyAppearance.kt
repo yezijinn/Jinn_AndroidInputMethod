@@ -138,7 +138,7 @@ object KeyAppearance {
     /** 字距步进：1dp（间隔是观感量，半格在候选栏上看不出来） */
     const val SPACING_STEP_DP = 1f
 
-    /** 默认字距：10dp（2026-10-02 定；此前的 0~20dp 定义域与 4dp 默认值已被取代） */
+    /** 默认字距：12dp */
     const val DEFAULT_SPACING_DP = 12f
 
     /**
