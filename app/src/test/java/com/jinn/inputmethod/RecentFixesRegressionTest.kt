@@ -1904,6 +1904,12 @@ class RecentFixesRegressionTest {
             "存量重算线程必须显式降优先级（它在 JinnIme.onCreate 路径上、与词库加载同时跑）",
             "setThreadPriority" in body && "THREAD_PRIORITY_BACKGROUND" in body,
         )
+        val runningRelease = "ReclassifyGuard.running.set(false)"
+        val retryRelease = "if (changed == null) reclassifyStarted.set(false)"
+        assertTrue("运行中标记必须仍在 finally 放开", runningRelease in body)
+        assertTrue("失败必须归还 started（否则本进程永不重试）", retryRelease in body)
+        assertTrue("归还 started 必须排在放开 running 之后", body.indexOf(runningRelease) < body.indexOf(retryRelease))
+        assertTrue("try/else 旧窄窗形态不得复活", Regex("""else\s*\{\s*reclassifyStarted\.set\(false\)""").find(body) == null)
     }
 
     /**

@@ -106,7 +106,7 @@ class ClipboardController(context: Context) {
         // 启动期 CPU 与 IO 双份）。进程内先用原子标记抢先，抢不到的直接返回。
         if (!reclassifyStarted.compareAndSet(false, true)) return
         // 运行中标记：这一趟是否真的在跑，只有它该由线程自己放开（见下方 finally）。
-        // stop() 只放 started，不放 running —— 否则上一趟还在全库解密时重新启用就会再起一趟。
+        // stop() 两个标记都不碰：running 只由本线程在 finally 里放开，started 只在失败时归还。
         if (!ReclassifyGuard.running.compareAndSet(false, true)) return
         Thread {
             // 启动期任务必须显式降优先级（AGENTS.md 的约定：「不与词库加载抢 CPU」）：
@@ -120,14 +120,14 @@ class ClipboardController(context: Context) {
                 if (changed != null) {
                     prefs.reclassified = true
                     Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
-                } else {
-                    // 失败（runCatching 返回 null）：放开进程内标记，让下一次 start() 还能重试。
-                    // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
-                    reclassifyStarted.set(false)
                 }
             } finally {
                 // 运行中标记只在这里放：不论成功、失败还是抛异常，这一趟都算跑完了
                 ReclassifyGuard.running.set(false)
+                // 失败（runCatching 返回 null）才放开进程内标记，让下一次 start() 还能重试
+                // 先放 running 再放 started：反序会留窄窗，另一实例抢到 started 后跑不动又不归还
+                // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
+                if (changed == null) reclassifyStarted.set(false)
             }
         }.apply { name = "jinn-clipboard-reclassify"; isDaemon = true }.start()
     }
