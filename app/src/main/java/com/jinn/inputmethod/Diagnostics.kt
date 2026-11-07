@@ -1174,7 +1174,7 @@ private const val LOG_SEGMENTS_KEPT = 2
                 ByteArray(BUNDLE_INMEM_MAX_BYTES.toInt()).also { buf -> raf.readFully(buf) }
             }
         }.getOrNull() ?: return null
-        return mark + tail
+        return alignBundleTailToLineStart(tail, mark)
     }
 
     // ── 导出诊断包 ─────────────────────────────────────────
@@ -1284,4 +1284,21 @@ private const val LOG_SEGMENTS_KEPT = 2
             tmp?.delete()
         }
     }
+}
+
+/**
+ * 把按字节偏移切出的末段对齐到下一行起点，兑现导出包标记「末段自中间某行开始」。
+ * LF(0x0A) 不可能是 UTF-8 续字节(0x80..0xBF)，按字节找首个 LF 即安全；丢弃其前的半截行
+ * （可能含半个多字节字符），整段无 LF 时原样保留以免丢内容。单次分配拼接，峰值内存与原实现一致。
+ * 放在 object 外便于纯 JVM 单测直接调用，绕开诊断单例的 Android 依赖。
+ */
+internal fun alignBundleTailToLineStart(tail: ByteArray, mark: ByteArray): ByteArray {
+    var cut = 0
+    while (cut < tail.size && tail[cut] != 0x0A.toByte()) cut++
+    val bodyStart = if (cut < tail.size) cut + 1 else 0
+    val bodyLen = tail.size - bodyStart
+    val out = ByteArray(mark.size + bodyLen)
+    System.arraycopy(mark, 0, out, 0, mark.size)
+    System.arraycopy(tail, bodyStart, out, mark.size, bodyLen)
+    return out
 }

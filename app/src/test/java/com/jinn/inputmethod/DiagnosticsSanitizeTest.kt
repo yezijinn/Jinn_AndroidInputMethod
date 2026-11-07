@@ -392,6 +392,17 @@ class DiagnosticsSanitizeTest {
         assertTrue("预算为 100MB", "val LOG_DIR_BUDGET_BYTES = 100L * 1024 * 1024" in src)
         assertTrue("超大文件只打末段", "BUNDLE_INMEM_MAX_BYTES" in src && "readForBundle(f)" in src)
         assertFalse("不得把整份超大文件读进内存", "val bytes = runCatching { f.readBytes() }" in src)
+        // 打包截断落点是字节偏移，首行可能是半个多字节字符；对齐到下一个 LF 后的完整行起点。
+        val mark = "截断标记\n".toByteArray()
+        val half = byteArrayOf(0xE4.toByte(), 0xB8.toByte(), 0xAD.toByte(), 0x0A) // 半个 UTF-8 字符 + LF
+        val fullLine = "2026-11-07 I 完整日志行\n第二条".toByteArray()
+        val tail = half + fullLine
+        val expected = mark + fullLine
+        assertTrue("切在多字节字符中间时须对齐到完整行起点", expected.contentEquals(alignBundleTailToLineStart(tail, mark)))
+        val noLf = byteArrayOf(0xE4.toByte(), 0xB8.toByte(), 0xAD.toByte()) + "无换行的一整段".toByteArray()
+        assertTrue("整段无 LF 时原样保留、不丢内容", (mark + noLf).contentEquals(alignBundleTailToLineStart(noLf, mark)))
+        val leadLf = byteArrayOf(0x0A) + "A".toByteArray()
+        assertTrue("首字节即 LF 时跳过该空行", (mark + "A".toByteArray()).contentEquals(alignBundleTailToLineStart(leadLf, mark)))
     }
 
 }
