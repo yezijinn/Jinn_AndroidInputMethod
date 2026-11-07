@@ -2441,7 +2441,7 @@ class JinnIme : InputMethodService() {
         // ⚠ 早期版本曾用 min(displayMetrics, physical 短边) 作硬闸，会把正常的横屏悬浮
         // （2240 > 1440）一起打掉，已移除；判据统一到 displayMetrics，别照旧注释复原那段逻辑。
         val hardW = screenW
-        val reqW = FloatingKeyboard.windowWidthPx(floatingNaturalW, source.widthPercent)
+        val reqW = reqWinW
         if (reqW > hardW) {
             Diagnostics.w(
                 TAG,
