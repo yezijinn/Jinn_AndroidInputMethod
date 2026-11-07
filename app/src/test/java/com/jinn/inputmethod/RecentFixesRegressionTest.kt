@@ -5375,6 +5375,16 @@ class RecentFixesRegressionTest {
             "凭据页：flush 必须挂在「写过」上",
             "if (wrote && !prefs.flush())" in tr,
         )
+        val save = blockAfter(tr, "private fun saveCredentials(notify: Boolean): Boolean")
+        val guardedI = Regex(
+            """if\s*\(\s*unpersisted\.isEmpty\(\)\s*\)\s*\{[\s\S]*?Diagnostics\.i\s*\(""",
+        ).containsMatchIn(save)
+        assertTrue(
+            "翻译页成功日志必须受落盘结果约束、晚于快照且全程唯一",
+            guardedI &&
+                save.indexOf("Diagnostics.i(") > save.indexOf("unpersistedCredentialKeys()") &&
+                Regex("""Diagnostics\.i\s*\(""").findAll(save).count() == 1,
+        )
         val src = codeOf("TranslationSourceActivity.kt")
         assertTrue(
             "原文范围页：saveMaxBytes 必须报告是否写过",

@@ -464,15 +464,6 @@ class TranslationSettingsActivity : Activity() {
         if (saveIfChanged(editBaiduLlmKey) { prefs.baiduLlmApiKey = it }) wrote = true
         if (saveIfChanged(editDeeplKey) { prefs.deeplApiKey = it }) wrote = true
 
-        Diagnostics.i(
-            TAG,
-            "翻译凭据已保存（长度）: aliyunId=${prefs.aliyunAccessKeyId.length} " +
-                "aliyunSecret=${prefs.aliyunAccessKeySecret.length} " +
-                "azureKey=${prefs.azureApiKey.length} azureRegion=${prefs.azureRegion.length} " +
-                "baiduAppId=${prefs.baiduAppId.length} baiduSecret=${prefs.baiduSecretKey.length} " +
-                "baiduLlmAppId=${prefs.baiduLlmAppId.length} baiduLlmKey=${prefs.baiduLlmApiKey.length} " +
-                "deeplKey=${prefs.deeplApiKey.length}",
-        )
         refreshState()
         purgeClipboardHistory(configuredCredentials())
         // ⚠ 自动保存路径必须也消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-665）：
@@ -482,6 +473,17 @@ class TranslationSettingsActivity : Activity() {
         // 根本走不到告知分支：用户看到「已配置 / 已保存」，重启后该家回到未配置 ⇒ **Key 静默丢失**。
         // 不新增状态词，复用既有的 TEXT_SAVE_NOT_PERSISTED。
         val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isEmpty()) {
+            Diagnostics.i(
+                TAG,
+                "翻译凭据已保存（长度）: aliyunId=${prefs.aliyunAccessKeyId.length} " +
+                    "aliyunSecret=${prefs.aliyunAccessKeySecret.length} " +
+                    "azureKey=${prefs.azureApiKey.length} azureRegion=${prefs.azureRegion.length} " +
+                    "baiduAppId=${prefs.baiduAppId.length} baiduSecret=${prefs.baiduSecretKey.length} " +
+                    "baiduLlmAppId=${prefs.baiduLlmAppId.length} baiduLlmKey=${prefs.baiduLlmApiKey.length} " +
+                    "deeplKey=${prefs.deeplApiKey.length}",
+            )
+        }
         if (unpersisted.isNotEmpty()) {
             Diagnostics.w(TAG, "凭据未落盘（自动保存路径）: ${unpersisted.size} 项")
             // 只改常驻提示，不弹 toast —— 失焦/onPause 都是高频触发点（9 个输入框 + 离开页面），
