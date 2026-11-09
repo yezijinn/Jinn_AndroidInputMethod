@@ -5,8 +5,7 @@ import org.json.JSONArray
 /**
  * 「收藏」分组：用户自由 DIY 的符号集（默认第三位：全角/半角/收藏/…）。
  *
- * 持久化在 [Prefs.favoriteSymbols]，格式为 JSON 的二维数组（页的数组，页内是符号的数组）
- *，页内符号按序铺 26 键位（KeyboardLayouts.favoriteGroup）。
+ * 持久化在 [Prefs.favoriteSymbols]，格式为 JSON 的二维数组（页的数组，页内是符号的数组），页内符号按序铺 26 键位（KeyboardLayouts.favoriteGroup）。
  *
  * 结构规则（全部由本对象纯函数保证）：
  * - 每页最多 [PER_PAGE]（26）个；追加时末页满 26 自动开新页；
