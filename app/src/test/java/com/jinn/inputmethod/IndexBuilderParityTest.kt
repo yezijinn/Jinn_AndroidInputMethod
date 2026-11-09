@@ -176,6 +176,7 @@ class IndexBuilderParityTest {
         val optionalText = "nihao\t你好|拟好|尼豪\n"
 
         PinyinEngine.resetForTest()
+        UserFrequency.resetForTest()
         PinyinEngine.loadFromIndexBytes(
             PhraseIndex.build(baseText.lineSequence(), 1L), chars, syllables, null,
         )
@@ -186,6 +187,13 @@ class IndexBuilderParityTest {
         // 期望：基础在前、可选包中未出现过的追加（「你好」重复项不重复出现）
         assertTrue("应包含基础词与可选包追加词: $words", words.contains("你号") && words.contains("尼豪"))
         assertEquals("重复词不应出现两次", 1, words.count { it == "你好" })
+        // L-1159：只断言 contains / count 时，把合并改成「可选包前插」照样绿；补相对顺序钉。
+        // 旧断言已保证三个词在册，indexOf 不会取到 -1。
+        assertTrue(
+            "合并须为基础在前、可选包追加（把可选包前插即红）: $words",
+            words.indexOf("你号") < words.indexOf("尼豪") &&
+                words.indexOf("你好") < words.indexOf("尼豪"),
+        )
     }
 
     /**
