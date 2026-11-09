@@ -621,7 +621,6 @@ class OpenAiSettingsActivity : Activity() {
         // 直接读内存值：saveValues() 刚把编辑框写进 Prefs，请求用的就是这份内存值。
         // （2026-09-30 审查：此处原先的 flush() 是多余的 —— 它挡不住任何真实故障，却把
         //  「整份 prefs 重写 + fsync」放进主线程点击回调；真正的落盘在 onPause。）
-        fetchCall?.cancel()
         fetchGeneration++
         val generation = fetchGeneration
         // 自检与翻译同源（2026-10-03 修复 L-701）：把自定义请求头一并带上，否则指向需要额外
