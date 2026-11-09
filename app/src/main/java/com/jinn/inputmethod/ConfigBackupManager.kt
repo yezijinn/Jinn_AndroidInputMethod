@@ -519,10 +519,10 @@ internal object ConfigBackupManager {
     /**
      * 收集待导出的剪贴板条目。
      *
-     * 分页游标是 SQL OFFSET，而导出期间 IME 仍在监听剪贴板：用户复制一条内容会触发
-     * 「插入新行 + 裁剪最旧」，整表位移一让后续页的 OFFSET 不再对齐原快照 ⇒ 有行被静默跳过
-     * （既没导出、也不进 `dropped`）。面板侧对同一问题已做位移防护，这里是导出侧的收敛：
-     * 每趟比对总数，一变就整份重来（最多 [EXPORT_CLIP_ATTEMPTS] 趟），宁可多跑两趟也不能漏。
+     * 分页走键集游标 `recentPageAfter`（按 `created_at, id` 取页，位移免疫，见 BUG.md L-92）；
+     * 导出期间库仍可能被 IME 采集改写，`exportStamp()` 指纹比对是纵深防御：一变就整份重来
+     * （最多 [EXPORT_CLIP_ATTEMPTS] 趟），耗尽则由 `ClipPayload.unstable` 经 `clipUnstable` 如实上报，
+     * 界面据此在回执里补一句，不许静默当成「全部导出成功」。
      */
     private fun collectClipboard(context: Context): ClipPayload {
         val db = ClipboardDb.get(context)
