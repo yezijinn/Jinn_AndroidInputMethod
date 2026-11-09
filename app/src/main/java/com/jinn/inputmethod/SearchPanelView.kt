@@ -441,6 +441,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             }
 
             var retainedBytes = 0L
+            val maxResults = ClipboardPrefs.of(context).maxSearchResults
             var retainReached = false
             // 扫到「这一窗一行都没扫到」= 库里没有再旧的行了。收尾判「扫描止损」要靠它区分
             // 「被上界掐停」与「扫完了」（BUG.md L-1134）。
@@ -460,7 +461,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 )
                 for (item in page.items) {
                     if (ClipboardSearch.matches(item.content, forms)) {
-                        if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes, maxResults = ClipboardPrefs.of(context).maxSearchResults)) {
+                        if (ClipboardStore.searchRetainLimitReached(matches.size, retainedBytes, maxResults = maxResults)) {
                             retainReached = true
                             break
                         }
