@@ -701,8 +701,7 @@ object ClipboardStore {
      *
      * 单条解密后常驻两份数据：库内密文串（base64 ≈ 明文 4/3）+ 解出的明文串。
      * 实测（`TmpAmplificationProbeTest`，256KB 明文、ASCII/CJK/base64 样三种）：
-     * 密文串 349,564 B + 明文串 262,144 B ÷ 明文 262,144 B = 2.33 倍
-     *，与「4/3 + 1」吻合；明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，
+     * 密文串 349,564 B + 明文串 262,144 B ÷ 明文 262,144 B = 2.33 倍，与「4/3 + 1」吻合；明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，
      * 早先"按 UTF-16 翻倍"的假设不成立）。取 2.5 留约 7% 余量覆盖对象头与瞬时解码缓冲。
      */
     internal const val DECRYPT_ITEM_AMPLIFICATION = 2.5

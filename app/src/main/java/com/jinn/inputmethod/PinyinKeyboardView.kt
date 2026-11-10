@@ -2629,8 +2629,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 是否有未上屏的内容（拼音串或预测词）。
      *
      * IME 换主题（含定时到点）与符号布局变更都会整块重建键盘视图：若有未上屏内容，
-     * 重建等同于静默丢弃它们（宿主输入框毫无变化，用户却看到候选栏被清空）
-     *，所以重建前必须先问这里。
+     * 重建等同于静默丢弃它们（宿主输入框毫无变化，用户却看到候选栏被清空），所以重建前必须先问这里。
      */
     val hasPendingInput: Boolean
         get() = composing.isNotEmpty() || lastPredictions.isNotEmpty()
