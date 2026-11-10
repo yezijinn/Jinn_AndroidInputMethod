@@ -1284,31 +1284,70 @@ class JinnIme : InputMethodService() {
     /**
      * 粘贴（功能面板「粘贴」键）：有选区替换，无选区在光标处插入。
      *
+     * 内容**优先取剪贴板历史的最新一条**（需求：历史非空就必须粘出最新一条，
+     * 不许「点了粘贴没反应」；例外只有两种，且都必须有提示 —— 历史为空、最新一条是图片而
+     * 当前输入框收不了图）。系统剪贴板只在历史为空时兜底（关掉采集 / 历史刚被清空）。
+     *
+     * 查询与解密在后台线程，提交回到主线程，最终一律经 [pasteClipboardText] 收口
+     * （单条上限闸 + `runCatching` 包 `commitText`）。
+     */
+    private fun pasteClipboard() {
+        // 同 L-716：粘贴改宿主文本 ⇒ 在途译文必然作废（面板条目粘贴走 pasteClipboardTextInternal）
+        if (translateInFlight) cancelTranslate(notify = true)
+        val tid = Diagnostics.traceId("PASTE")
+        BackgroundIo.run {
+            // 最新在前；图片行与文本行在同一序列里，解密失败的行由 readItem 跳过。
+            // 一次最多扫 HISTORY_PASTE_SCAN 行：正常情况头一行就是可读的最新条。
+            val queried = runCatching {
+                val db = ClipboardDb.get(this)
+                db.count() to db.recentPageAfter(null, HISTORY_PASTE_SCAN).items.firstOrNull()
+            }
+            ui.post {
+                queried.onSuccess { (total, latest) ->
+                    when {
+                        latest != null -> {
+                            Diagnostics.i(
+                                TAG,
+                                "[$tid] 粘贴: 取历史最新一条 id=${latest.id} 图片=${latest.image != null}",
+                            )
+                            // 宿主收不了图时 pasteClipboardImage 会走系统剪贴板兜底并提示（有反馈，不算无反应）
+                            if (latest.image != null) pasteClipboardImage(latest)
+                            else pasteClipboardText(latest.content)
+                        }
+                        // 历史为空：系统剪贴板里可能还有别的应用刚复制的内容（采集关闭时只有这一条路）
+                        total <= 0 -> pasteSystemClipboard(tid)
+                        // 有行但一条都读不出（密钥失效 / 数据损坏）：如实说，别让用户以为键坏了
+                        else -> {
+                            Diagnostics.w(TAG, "[$tid] 粘贴: 历史有 $total 行但没有可读条目")
+                            toast(TEXT_PASTE_HISTORY_UNREADABLE)
+                        }
+                    }
+                }.onFailure { e ->
+                    // 查询失败不能静默（否则就是「点了没反应」）：说清原因，让用户能重试
+                    Diagnostics.e(TAG, "[$tid] 粘贴: 读取剪贴板历史失败", e)
+                    toast(TEXT_PASTE_HISTORY_FAILED)
+                }
+            }
+        }
+    }
+
+    /**
+     * 系统剪贴板兜底通道（历史为空时的唯一路径）。
+     *
      * 内容来自**系统剪贴板**（别的应用复制过来的整篇文档可能几 MB），必须与剪贴板面板
      * 走同一条实现：单条上限闸 + `runCatching` 包住 `commitText`。裸提交会撞 Binder
      * 事务上限抛 `TransactionTooLargeException`（本项目 2026-09-16 已在同类链路上实测过），
      * 未捕获时直接崩掉整个 IME 进程。
      */
-    /** 提示（粘贴失败的几种原因要让人看见；文案在代码里下发，与文件内既有 Toast 写法一致） */
-    private fun toast(msg: String) {
-        // 包一层：窗口切换瞬间弹 toast，个别 ROM 会抛 BadTokenException。取消 / 超时提示
-        // 挂到了 6 处生命周期回调与看门狗路径上（原先只有粘贴失败等少数几处），不包的话异常会
-        // 冒到主线程 —— 而其中一处正在 `finishTranslate()` 之前，会把按钮态与在途标志一起带歪
-        // （2026-10-03 修复 L-686；同文件另一处 Toast 早已这样包）。
-        runCatching { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() }
-            .onFailure { Diagnostics.w(TAG, "toast 失败: ${it.javaClass.simpleName}") }
-    }
-
-    private fun pasteClipboard() {
-        // 同 L-716：粘贴改宿主文本 ⇒ 在途译文必然作废（面板条目粘贴走 pasteClipboardTextInternal）
-        if (translateInFlight) cancelTranslate(notify = true)
+    private fun pasteSystemClipboard(tid: String) {
         val clip = clipboardManager.primaryClip
         // 0 条目守卫不能省：`ClipData(label, mimeTypes, emptyArray())` 是合法构造（部分应用与
         // 厂商定制会写出来），`getItemAt(0)` 会抛 IndexOutOfBoundsException，而这里不在任何
         // runCatching 内 —— 异常落在主线程点击回调上会崩掉整个 IME 进程。
         // 与 ClipboardController.extractAndSave 的守卫同一口径。
         if ((clip?.itemCount ?: 0) == 0) {
-            Diagnostics.w(TAG, "粘贴: 剪贴板无条目（itemCount=0）")
+            Diagnostics.w(TAG, "[$tid] 粘贴: 剪贴板无条目（itemCount=0）")
+            toast(TEXT_PASTE_HISTORY_EMPTY)
             return
         }
         // 与采集侧**共用**取文入口：URI 档带字节预算 + MIME 三态判定 + 失败日志（BUG.md L-177 / L-178）。
@@ -1325,31 +1364,42 @@ class JinnIme : InputMethodService() {
         val text = when (result) {
             is ClipboardStore.ItemText.Ok -> result.text
             ClipboardStore.ItemText.TooLarge -> {
-                Diagnostics.w(TAG, "粘贴: 单条超过 ${ClipboardPrefs.of(this).effectiveMaxItemBytes()} 字节上限，读入即止")
+                Diagnostics.w(TAG, "[$tid] 粘贴: 单条超过 ${ClipboardPrefs.of(this).effectiveMaxItemBytes()} 字节上限，读入即止")
                 toast("内容过大，未粘贴")
                 return
             }
             ClipboardStore.ItemText.NotTextual -> {
-                Diagnostics.w(TAG, "粘贴: 剪贴板不是文本内容（未读流或解码像二进制）")
+                Diagnostics.w(TAG, "[$tid] 粘贴: 剪贴板不是文本内容（未读流或解码像二进制）")
                 toast("剪贴板不是文本内容")
                 return
             }
             ClipboardStore.ItemText.TimedOut -> {
-                Diagnostics.w(TAG, "粘贴: 读取剪贴板超时（预算 ${ClipboardStore.PASTE_READ_BUDGET_MS}ms）")
+                Diagnostics.w(TAG, "[$tid] 粘贴: 读取剪贴板超时（预算 ${ClipboardStore.PASTE_READ_BUDGET_MS}ms）")
                 toast("读取剪贴板超时")
                 return
             }
             ClipboardStore.ItemText.Failed -> {
-                Diagnostics.w(TAG, "粘贴: 读不到剪贴板内容（打不开流或读失败）")
+                Diagnostics.w(TAG, "[$tid] 粘贴: 读不到剪贴板内容（打不开流或读失败）")
                 toast("读不到剪贴板内容")
                 return
             }
         }
         if (text.isEmpty()) {
-            Diagnostics.w(TAG, "粘贴: 剪贴板为空")
+            Diagnostics.w(TAG, "[$tid] 粘贴: 剪贴板为空")
+            toast(TEXT_PASTE_HISTORY_EMPTY)
             return
         }
         pasteClipboardText(text)
+    }
+
+    /** 提示（粘贴失败的几种原因要让人看见；文案在代码里下发，与文件内既有 Toast 写法一致） */
+    private fun toast(msg: String) {
+        // 包一层：窗口切换瞬间弹 toast，个别 ROM 会抛 BadTokenException。取消 / 超时提示
+        // 挂到了 6 处生命周期回调与看门狗路径上（原先只有粘贴失败等少数几处），不包的话异常会
+        // 冒到主线程 —— 而其中一处正在 `finishTranslate()` 之前，会把按钮态与在途标志一起带歪
+        // （2026-10-03 修复 L-686；同文件另一处 Toast 早已这样包）。
+        runCatching { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() }
+            .onFailure { Diagnostics.w(TAG, "toast 失败: ${it.javaClass.simpleName}") }
     }
 
     /**
@@ -5947,6 +5997,22 @@ class JinnIme : InputMethodService() {
 
         /** 写系统剪贴板失败（2026-10-02 修复 L-439：此前只记日志，用户按了没反应） */
         const val TEXT_COPY_FAILED = "复制失败，请重试"
+
+        /**
+         * 功能面板「粘贴」从历史取最新一条时向前扫描的行数。
+         *
+         * 正常情况头一行就命中；留出的余量只用于跳过解密失败的行，扫太多会让大库上多解密无谓的行。
+         */
+        const val HISTORY_PASTE_SCAN = 30
+
+        /** 粘贴键的例外提示：历史与系统剪贴板两处都没内容（2026-11-10 明确不许「点了没反应」） */
+        const val TEXT_PASTE_HISTORY_EMPTY = "剪贴板历史为空，没有可粘贴的内容"
+
+        /** 粘贴键的例外提示：库里有行但一条都解不出（密钥失效 / 数据损坏），与「空」区分 */
+        const val TEXT_PASTE_HISTORY_UNREADABLE = "剪贴板历史读不出内容（密钥失效或数据损坏）"
+
+        /** 粘贴键的例外提示：历史查询本身失败（磁盘 / 数据库异常），说清原因让用户可重试 */
+        const val TEXT_PASTE_HISTORY_FAILED = "读取剪贴板历史失败，请重试"
 
         /** 图库快贴：待插入图片已失效（被系统清 cache 或其后被清理）—— 落地阶段的失败要说话（L-1006） */
         const val TEXT_GALLERY_GONE = "图片已失效，未插入"

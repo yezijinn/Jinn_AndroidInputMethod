@@ -418,15 +418,42 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `系统剪贴板粘贴必须走统一实现`() {
-        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteSystemClipboard(")
         assertTrue(
-            "功能面板「粘贴」必须委托 pasteClipboardText(text)：系统剪贴板装着别的应用复制的整篇文档，" +
+            "粘贴的兜底通道必须委托 pasteClipboardText(text)：系统剪贴板装着别的应用复制的整篇文档，" +
                 "裸 commitText 会撞 Binder 事务上限抛 TransactionTooLargeException（未捕获 = IME 进程崩溃）",
             body.contains("pasteClipboardText(text)"),
         )
         assertFalse(
-            "pasteClipboard 里不得直接 commitText：上限闸与 runCatching 都在 pasteClipboardText 里",
+            "兜底通道里不得直接 commitText：上限闸与 runCatching 都在 pasteClipboardText 里",
             body.contains("commitText"),
+        )
+    }
+
+    @Test
+    fun `粘贴键必须优先取剪贴板历史最新一条`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        assertTrue(
+            "粘贴键必须先查历史（最新在前）：只要历史非空就必须粘出最新一条，不能只看系统剪贴板",
+            body.contains("recentPageAfter(null, HISTORY_PASTE_SCAN)"),
+        )
+        assertTrue(
+            "历史最新一条是图片时要走图片上屏（宿主收不了图由 pasteClipboardImage 兜底并提示）",
+            body.contains("pasteClipboardImage(latest)"),
+        )
+        assertTrue(
+            "历史为空时才回退系统剪贴板",
+            body.contains("pasteSystemClipboard(tid)"),
+        )
+        assertTrue(
+            "例外情况必须有提示（读不出 / 查询失败），否则就是「点了没反应」",
+            body.contains("TEXT_PASTE_HISTORY_UNREADABLE") &&
+                body.contains("TEXT_PASTE_HISTORY_FAILED"),
+        )
+        val fallback = blockAfter(codeOf("JinnIme.kt"), "private fun pasteSystemClipboard(")
+        assertTrue(
+            "历史与系统剪贴板都空时也要有提示",
+            fallback.contains("TEXT_PASTE_HISTORY_EMPTY"),
         )
     }
 
@@ -551,7 +578,7 @@ class RecentFixesRegressionTest {
 
     @Test
     fun `粘贴前必须判剪贴板条目数`() {
-        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteSystemClipboard(")
         assertTrue(
             "必须判 itemCount==0：`ClipData(label, mimeTypes, emptyArray())` 是合法构造，getItemAt(0) 会抛" +
                 " IndexOutOfBoundsException，而这里不在任何 runCatching 内 —— 主线程点击回调上未捕获即崩进程",

@@ -129,7 +129,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onDirectionAction(action: DirectionAction)
         /** 方向面板：拖选模式状态变化通知（IME 侧切换后同步 UI） */
         fun onSelectionModeChanged(active: Boolean)
-        /** 功能面板：粘贴剪贴板最新内容（剪贴板为空则无反应） */
+        /**
+         * 功能面板：粘贴剪贴板历史最新一条（历史非空就必须上屏；例外只有「历史为空」与
+         * 「最新条是图片而当前输入框收不了图」，两种都给提示，不允许点了没反应）
+         */
         fun onPasteClipboard()
         /** 功能面板：从相册选图并插入当前输入框（仅宿主声明可接收图片时出现该键，见 `JinnIme.applyHostImageCapability`） */
         fun onOpenGallery()
