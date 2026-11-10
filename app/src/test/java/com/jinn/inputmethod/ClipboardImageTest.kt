@@ -703,9 +703,19 @@ class ClipboardImageTest {
 
     @Test
     fun 搜索与配置备份都排除图片() {
+        val searchSrc = TestSources.codeSource("SearchPanelView.kt")
+        val pageCall = TestSources.window(
+            searchSrc,
+            "val page = db.recentPageAfter(",
+            "for (item in page.items)",
+        )
         assertTrue(
-            "搜索必须只看文本（图片 content 恒空串，进窗口只会白解密）",
-            "contentType = ClipboardDb.CONTENT_TYPE_TEXT" in TestSources.codeSource("SearchPanelView.kt"),
+            "搜索窗口必须按文本类型取页（结构钉，L-1241）",
+            "contentType = ClipboardDb.CONTENT_TYPE_TEXT" in pageCall,
+        )
+        assertTrue(
+            "判据串必须仍能在剥注释源码里找到（L-1241 自检）",
+            "contentType = ClipboardDb.CONTENT_TYPE_TEXT" in searchSrc,
         )
         assertTrue(
             "配置备份只导文本（图片不进备份）",
