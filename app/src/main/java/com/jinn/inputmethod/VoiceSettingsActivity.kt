@@ -912,6 +912,31 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     /**
+     * 重启窗口内冻结表单：进程马上被 `killProcess` 杀掉，窗口里的新编辑无处可靠落盘。
+     *
+     * 授权按钮与语音测试按钮各有自己的启用态（未授权 / 测试中），不进本函数；「重启输入法」
+     * 按钮由 [saveAndRestart] 自己管；✕ 不冻结，退出入口照常可用。恢复时重新压一次 [applyServerLock]，
+     * 免得把「固定服务端」锁住的 host / port 误放开。
+     */
+    private fun setFormEnabled(enabled: Boolean) {
+        val edits = credentialFields() + listOf(
+            editOaiBase, editOaiModel, editAliWsUrl, editAliModel,
+            editTencentEngine, editAzureBaseUrl, editAzureLanguage,
+            editBaiduDevPid, editDeepgramModel, editDeepgramLanguage,
+            editHost, editPort, editPrompt, editVoiceTest,
+        )
+        for (field in edits) field.isEnabled = enabled
+        for (spinner in listOf(spinnerVoiceBackend, spinnerLanguage, spinnerDefaultMode)) {
+            spinner.isEnabled = enabled
+        }
+        for (box in revealChecks().map { it.second }) box.isEnabled = enabled
+        for (box in listOf(switchVoiceInput, checkStrip, checkComposing, checkLockServer)) {
+            box.isEnabled = enabled
+        }
+        if (enabled) applyServerLock()
+    }
+
+    /**
      * 用户没碰过就沿用 [Prefs] 的原值：导入的备份可能带本版不认识的取值（更高版本 / 手工构造），
      * 此时 `loadPrefs` 里 indexOf 退回选中第 0 项，读回它等于把导入的语言静默改写
      * （闸门判据见 [UserAwareSpinner]，BUG.md L-821）。
@@ -1206,6 +1231,9 @@ class VoiceSettingsActivity : ComponentActivity() {
      *
      * 防连点：进来先看按钮是否已禁用，再立即禁用自己；三条不杀进程的出口（校验没过、
      * 凭据未落盘、`ImeRestart` 的 flush 失败回调）都要把按钮与 [restarting] 复位。
+     *
+     * 走到真正要杀进程的那一步就冻结表单：[ImeRestart] 的 `killProcess` 不走生命周期，
+     * 窗口内的新编辑没有 `onPause` 兜底，也不该靠 800ms 防抖去赌它写完。
      */
     private fun saveAndRestart() {
         if (!btnSave.isEnabled) return
@@ -1240,6 +1268,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
         textSaveHint.text = TEXT_RESTARTING
         restarting = true
+        setFormEnabled(false)
         // flush 确认落盘再杀进程（只赌延时在 IO 抖动时会丢最后一批设置）；落盘失败不重启
         ImeRestart.restart(this) { message ->
             // 进程没被杀：设置没落盘 ⇒ 基线退回、脏标记跟着回来，否则按 ✕ 直接退出会静默丢输入
@@ -1248,6 +1277,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             textSaveHint.text = message
             restarting = false
             btnSave.isEnabled = true
+            setFormEnabled(true)
         }
     }
 
@@ -1550,28 +1580,33 @@ class VoiceSettingsActivity : ComponentActivity() {
     /**
      * 离开页面即落盘，并显式等一次写入 —— 与 OpenAI 兼容页 / 翻译设置页同款两处坑：
      * EditText 失焦在返回时不一定派发回调；且必须写在 `onPause`（下一个页面的 onResume 早于它）。
+     *
+     * 「放弃并退出」只放弃**表单回写**：[persistInputs] 跳过，但 `prefs.flush()` 照做，
+     * 把此前自动保存已 `apply()` 的合法改动与「勾选即写」项确认写盘，并给 [flushFailed] 一个复位点。
      */
     override fun onPause() {
         super.onPause()
         // 撤掉排队的防抖任务：改动已在下面写完（否则过一会儿再跑一次空转）
         autosaveHandler.removeCallbacks(autosaveRunnable)
-        // 「放弃并退出」与配置导入在途：两条路径都不许回写（导入线程正在写同一份 Prefs）
-        if (discardOnExit || ConfigBackupManager.importing) return
+        // 配置导入在途：连一次空 commit 也不做，导入线程正在写同一份 Prefs
+        if (ConfigBackupManager.importing) return
         // 重启窗口不早退：ImeRestart 的 flush 已跑完，窗口里新改的字段靠这里补齐一次
-        persistInputs()
-        // 自动保存路径也要消费 `unpersistedCredentialKeys`（BUG.md L-741 / L-1050 口径）：
-        // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
-        // 不提示的话填完 Key 直接返回的用户全程零提示，重启后回到「未配置」。
-        val unpersisted = prefs.unpersistedCredentialKeys()
-        if (unpersisted.isNotEmpty()) {
-            Diagnostics.w(TAG, "onPause: ${unpersisted.size} 个凭据未落盘")
-            textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
-        } else {
-            // 落盘成功即撤回旧提示（优先级：凭据未落盘 > 字段非法 > 空闲）
-            updateSaveHint()
+        if (!discardOnExit) {
+            persistInputs()
+            // 自动保存路径也要消费 `unpersistedCredentialKeys`（BUG.md L-741 / L-1050 口径）：
+            // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
+            // 不提示的话填完 Key 直接返回的用户全程零提示，重启后回到「未配置」。
+            val unpersisted = prefs.unpersistedCredentialKeys()
+            if (unpersisted.isNotEmpty()) {
+                Diagnostics.w(TAG, "onPause: ${unpersisted.size} 个凭据未落盘")
+                textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            } else {
+                // 落盘成功即撤回旧提示（优先级：凭据未落盘 > 字段非法 > 空闲）
+                updateSaveHint()
+            }
         }
-        // `Prefs.flush` 是 `commit()`，无改动也照写整份 XML；失败必须有用户看得见的反馈，
-        // 且下次点 ✕ 要再问一次（dirty 在 persistInputs 里已清，靠独立标志记这笔账）
+        // `Prefs.flush` 是空 edit 的同步 `commit()`：不读表单、不调 setter，只写实此前 apply 的值。
+        // 放弃分支之外执行，同时给 flushFailed 一个页面内可达的复位点；失败必须有可见反馈
         if (prefs.flush()) {
             flushFailed = false
         } else {
@@ -1705,15 +1740,29 @@ class VoiceSettingsActivity : ComponentActivity() {
 
     /**
      * 关闭入口（✕ 与返回键**共用这一个**）：只做「只校验不写盘」的判断，
-     * 合法改动交给 [onPause] 落盘；有非法字段或上次 flush 失败才问一句。
+     * 合法改动交给 [onPause] 落盘；只有真有非法字段才问一句。
      *
-     * 「放弃并退出」置 [discardOnExit]，让 [onPause] 与排队任务都不回写 —— 改动真被放弃。
+     * 写入失败与配置导入在途各是独立状态：都留在页面并给 Toast，不发「已保存」提示、
+     * 不弹语义错配的确认框。「放弃并退出」置 [discardOnExit]，让 [onPause] 与排队任务
+     * 都不回写表单 —— 改动真被放弃。
      */
     private fun confirmExit() {
+        // 导入线程正在写同一份 Prefs：退出会让这批编辑无处落盘，留在页面等导入结束
+        if (ConfigBackupManager.importing) {
+            Toast.makeText(this, TEXT_SAVE_BLOCKED_IMPORTING, Toast.LENGTH_SHORT).show()
+            return
+        }
         // 撤掉排队的自动保存：下面的判断必须是「此刻表单」的最终结论
         autosaveHandler.removeCallbacks(autosaveRunnable)
+        // 上次写入失败：先给一次不读表单的同步确认。仍失败就留在页面（保留「再问一次」），
+        // 既不能发「设置已保存」，也不能弹「有字段不合法」框 —— 表单可能全是合法的
+        if (flushFailed && !prefs.flush()) {
+            Toast.makeText(this, TEXT_FLUSH_FAILED, Toast.LENGTH_LONG).show()
+            return
+        }
+        flushFailed = false
         // dryRun：一个键都不写，只把非法字段标红。写进去就撤不回，「放弃」会变成假放弃
-        if (!persistInputs(dryRun = true) || flushFailed) {
+        if (!persistInputs(dryRun = true)) {
             recomputeDirty()
             AlertDialog.Builder(this)
                 .setTitle(TEXT_DIRTY)

@@ -989,12 +989,23 @@ class VoiceSettingsPageTest {
         assertTrue("confirmExit 只校验不写盘", "persistInputs(dryRun = true)" in confirm)
         assertFalse("confirmExit 不许直接写盘（写进去就撤不回）", "persistInputs()" in confirm)
         assertTrue("放弃必须置 discardOnExit", "discardOnExit = true" in confirm)
-        assertTrue(
-            "onPause 必须在放弃 / 导入在途时早退",
-            "if (discardOnExit || ConfigBackupManager.importing) return" in pause,
-        )
+        assertTrue("导入在途必须整体早退", "if (ConfigBackupManager.importing) return" in pause)
+        assertTrue("放弃分支不许回写表单", "if (!discardOnExit)" in pause)
+        val guarded = TestSources.window(code, "if (!discardOnExit)", "if (prefs.flush())")
+        assertTrue("只有非放弃分支才回写表单", "persistInputs()" in guarded)
+        assertFalse("flush 必须在放弃分支之外", "prefs.flush()" in guarded)
+        assertTrue("flush 仍要执行（给 flushFailed 一个复位点）", "if (prefs.flush())" in pause)
         assertTrue("排队任务也要认放弃标志", "discardOnExit" in runnable && "discardOnExit" in schedule)
         assertTrue("flush 失败要记标志并给可见提示", "flushFailed = true" in pause && "TEXT_FLUSH_FAILED" in pause)
+        // 写入失败是独立状态：不再借「有字段不合法」框发问，也不许发「已保存」后直接退出
+        assertFalse("退出框不许再由 flushFailed 触发", "|| flushFailed" in confirm)
+        assertTrue("写入失败退出时要先重试落盘", "prefs.flush()" in confirm)
+        assertTrue("导入在途点 ✕ 必须留在页面", "ConfigBackupManager.importing" in confirm)
+        assertTrue("导入在途要有可见反馈", "TEXT_SAVE_BLOCKED_IMPORTING" in confirm)
+        assertTrue(
+            "导入在途早退必须排在「已保存」提示之前",
+            confirm.indexOf("ConfigBackupManager.importing") in 0 until confirm.indexOf("TEXT_RESTART_NEEDED"),
+        )
     }
 
     /**
@@ -1031,10 +1042,18 @@ class VoiceSettingsPageTest {
         val restart = TestSources.blockAfter(code, "private fun saveAndRestart")
         assertTrue("点重启也要拦导入在途", "ConfigBackupManager.importing" in restart)
         assertTrue("重启窗口要置位", "restarting = true" in restart)
+        // killProcess 不走 onPause：窗口内必须冻结输入，不能靠 800ms 防抖赌它写完
+        assertTrue("重启窗口要冻结表单", "setFormEnabled(false)" in restart)
         assertTrue(
-            "不杀进程的出口要复位重启窗口",
-            "restarting = false" in TestSources.blockAfter(code, "ImeRestart.restart(this)"),
+            "冻结必须早于重启调用（三个早退出口在冻结之前 return）",
+            restart.indexOf("setFormEnabled(false)") in 0 until restart.indexOf("ImeRestart.restart("),
         )
+        val form = TestSources.blockAfter(code, "private fun setFormEnabled")
+        assertTrue("冻结函数要覆盖凭据框", "credentialFields()" in form)
+        assertTrue("恢复要重新压住固定服务端", "applyServerLock()" in form)
+        val restartCallback = TestSources.blockAfter(code, "ImeRestart.restart(this)")
+        assertTrue("不杀进程的出口要复位重启窗口", "restarting = false" in restartCallback)
+        assertTrue("重启失败要恢复表单", "setFormEnabled(true)" in restartCallback)
         val clear = TestSources.blockAfter(code, "private fun clearFieldErrors")
         assertTrue("清红字函数必须真的清", ".error = null" in clear)
         val persist = TestSources.blockAfter(code, "private fun persistInputs")
