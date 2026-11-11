@@ -225,7 +225,7 @@ class VoiceSettingsPageTest {
             "总开关没有从 Prefs 回填（打开页面必须先显示真实状态）",
             "switchVoiceInput.isChecked = prefs.voiceInputEnabled" in code,
         )
-        val save = TestSources.blockAfter(code, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(code, "private fun persistInputs")
         assertTrue("保存时开关状态不是取自开关本身", "val voiceEnabled = switchVoiceInput.isChecked" in save)
         assertTrue("保存没有写回 voiceInputEnabled", "prefs.voiceInputEnabled = voiceEnabled" in save)
         // 关闭态保存必须跳过 host/port 校验（否则开关关着就永远存不了）：
@@ -293,7 +293,7 @@ class VoiceSettingsPageTest {
             "app/src/main/res/values/strings.xml",
         )
         // 新页文案一律在代码里下发（AGENTS.md「values/strings.xml 默认禁改」）
-        for (text in listOf("语音转为文字", "保存并重启输入法", "在线语音服务", "服务商")) {
+        for (text in listOf("语音转为文字", "改动即保存，重启输入法后生效", "在线语音服务", "服务商")) {
             assertFalse("strings.xml 出现了新页文案「$text」（应放在 VoiceSettingsActivity 的 TEXT_ 常量里）", text in strings)
         }
         val code = TestSources.codeSource("VoiceSettingsActivity.kt")
@@ -513,7 +513,10 @@ class VoiceSettingsPageTest {
             )
         }
 
-        assertTrue("TEXT_DIRTY 文案不对", "const val TEXT_DIRTY = \"有未保存的修改\"" in code)
+        assertTrue(
+            "TEXT_DIRTY 文案不对",
+            "const val TEXT_DIRTY = \"有字段不合法，尚未保存（见输入框提示）\"" in code,
+        )
         assertTrue(
             "状态行必须按脏状态切换（脏 → TEXT_DIRTY，干净 → 空闲提示）",
             "val text = if (dirty) TEXT_DIRTY else TEXT_SAVE_HINT_IDLE" in code,
@@ -523,8 +526,8 @@ class VoiceSettingsPageTest {
             "状态行文案没变就不许重写",
             "if (textSaveHint.text.toString() != text) textSaveHint.text = text" in code,
         )
-        val save = TestSources.blockAfter(code, "private fun saveAndRestart")
-        assertTrue("保存成功后必须清脏（否则状态行停在「有未保存的修改」）", "dirty = false" in save)
+        val save = TestSources.blockAfter(code, "private fun persistInputs")
+        assertTrue("保存成功后必须清脏（否则状态行停在「有字段不合法」）", "dirty = false" in save)
         // 落盘失败 = 没保存成功：基线退回、脏标记回来，而状态行要留给 ImeRestart 那句
         val failed = TestSources.blockAfter(code, "ImeRestart.restart(this)")
         val rollback = failed.indexOf("savedInputs = previous")
@@ -541,7 +544,11 @@ class VoiceSettingsPageTest {
         assertTrue("有未保存改动必须弹确认框", "AlertDialog.Builder(this)" in confirm)
         assertTrue("「继续编辑」按钮丢了", "setPositiveButton(TEXT_DIALOG_KEEP" in confirm)
         assertTrue("「放弃并退出」按钮丢了", "setNegativeButton(TEXT_DIALOG_DISCARD" in confirm)
-        assertTrue("没有脏状态必须直接退出", "if (!dirty)" in confirm)
+        assertTrue(
+            "退出判断必须只校验不写盘（否则「放弃」撤不回已写的值）",
+            "persistInputs(dryRun = true)" in confirm,
+        )
+        assertTrue("放弃并退出必须置 discardOnExit（onPause 才不会回写）", "discardOnExit = true" in confirm)
         assertTrue(
             "退出前必须静默重算脏标记（否则落盘失败后按 ✕ 会不提示就退出）",
             "recomputeDirty()" in confirm,
@@ -635,7 +642,7 @@ class VoiceSettingsPageTest {
             "BACKEND_VALUES.getOrElse(spinnerVoiceBackend.selectedItemPosition)" in read,
         )
         assertTrue("后端没从 Prefs 回填", "BACKEND_VALUES.indexOf(prefs.voiceBackend)" in code)
-        val save = TestSources.blockAfter(code, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(code, "private fun persistInputs")
         assertTrue("后端没写回 Prefs", "prefs.voiceBackend = backend" in save)
         // 选中即切显隐并重算脏状态（否则换了后端状态行还说没改）
         val listener = TestSources.blockAfter(code, "spinnerVoiceBackend.onItemSelectedListener")
@@ -657,7 +664,7 @@ class VoiceSettingsPageTest {
     @Test
     fun `讯飞三件凭据缺一不可且只在该后端下写盘`() {
         val code = TestSources.codeSource("VoiceSettingsActivity.kt")
-        val save = TestSources.blockAfter(code, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(code, "private fun persistInputs")
         // 三件逐个校验，缺哪个标在哪个框上（edit_*.error），不重启、不写盘
         for (field in listOf("editXfAppId", "editXfApiKey", "editXfApiSecret")) {
             assertTrue("$field 缺少必填校验（error 提示）", "$field.error = TEXT_XF_REQUIRED" in save)
@@ -741,7 +748,7 @@ class VoiceSettingsPageTest {
         assertTrue("回填必须折成掩码形态", "CredentialMask.of(value)" in setText)
 
         // 保存：掩码形态沿用磁盘原值 —— 直接把输入框文本写回会把掩码串存成凭据（硬性错误）
-        val save = TestSources.blockAfter(code, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(code, "private fun persistInputs")
         assertTrue("凭据有效取值没走 credentialText", "val appIdValue = credentialText(editXfAppId)" in save)
         for (bad in listOf(
             "prefs.xfAppId = editXfAppId.text.toString()",
@@ -887,9 +894,9 @@ class VoiceSettingsPageTest {
         )
         assertTrue(
             "校验失败也要恢复按钮（否则用户卡在禁用态）",
-            Regex(
-                """edit(?:Host|Port)\.error = getString\([^)]*\)\s*\n\s*btnSave\.isEnabled = true"""
-            ).containsMatchIn(save),
+            "btnSave.isEnabled = true" in TestSources.window(
+                code, "if (!persistInputs()) {", "val unpersisted",
+            ),
         )
         // 凭据只进内存时不许重启（A-726）：killProcess 不走 onDestroy，内存里那份随进程丢，
         // 而磁盘旧密文已被 writeCredential 的 fail-closed 分支删掉 ⇒ 重启后变「未配置」。
@@ -897,8 +904,144 @@ class VoiceSettingsPageTest {
         assertTrue("必须查凭据是否真的落盘", unpersisted >= 0)
         assertTrue("查落盘必须早于 ImeRestart.restart", unpersisted < restart)
         assertTrue(
-            "未落盘时必须把失败文案写回状态行（与落盘失败同一句）",
-            "ImeRestart.TEXT_RESTART_FLUSH_FAILED" in save,
+            "凭据未落盘时要给准确提示并退回旧基线（退出确认才问得到）",
+            "TEXT_SAVE_NOT_PERSISTED" in save && "savedInputs = previous" in save,
+        )
+        // 基线必须在写盘之前捕获：写在 persistInputs 之后，回滚等于没回滚
+        val before = TestSources.window(code, "private fun saveAndRestart", "ImeRestart.restart(this)")
+        assertTrue(
+            "落盘失败回滚的旧基线必须在 persistInputs 之前捕获",
+            before.indexOf("val previous = savedInputs") in 0 until before.indexOf("if (!persistInputs())"),
+        )
+    }
+
+    /**
+     * 改动即保存（2026-11-10，用户要求去掉「必须点保存」）。
+     *
+     * 与 OpenAI 兼容页（L-967）/ 翻译设置页（L-209）同款：输入停顿、离开页面两条自动路径
+     * 都要走唯一写盘点 [persistInputs]，按钮只负责重启进程。这条钉三件事：防抖窗口的值域、
+     * 两条自动路径都接了线、未落盘集合的口径一致（L-1050）。
+     */
+    @Test
+    fun `改动自动保存（输入停顿即落盘，不再要求点保存）`() {
+        val code = TestSources.codeSource("VoiceSettingsActivity.kt")
+
+        // 防抖窗口值域（BUG-09 同款）：太短等于没有防抖（每键写盘），太长用户会以为没保存
+        val ms = Regex("""AUTOSAVE_DEBOUNCE_MS\s*[:=]\s*(\d+)L?""")
+            .find(code)?.groupValues?.get(1)?.toLong()
+        assertTrue("AUTOSAVE_DEBOUNCE_MS 没解析出数值（写法变了？）", ms != null)
+        assertTrue("防抖窗口 $ms ms 太短（等于没有防抖，每次按键都写盘）", ms!! >= 200L)
+        assertTrue("防抖窗口 $ms ms 太长（用户会以为保存没生效）", ms <= 5_000L)
+
+        // 编辑框的 watcher 必须排队自动保存（只重算脏状态不排队 = 自动保存等于没做）
+        val watch = TestSources.blockAfter(code, "private fun markDirtyOnEdit")
+        assertTrue("afterTextChanged 里必须排队自动保存", "scheduleAutosave()" in watch)
+
+        // 三个「此前要按保存才写」的下拉 / 开关同样要排队
+        for (anchor in listOf(
+            "switchVoiceInput.setOnCheckedChangeListener",
+            "spinnerLanguage.onItemSelectedListener",
+            "spinnerVoiceBackend.onItemSelectedListener",
+        )) {
+            assertTrue(
+                "$anchor 改动后必须排队自动保存",
+                "scheduleAutosave()" in TestSources.blockAfter(code, anchor),
+            )
+        }
+
+        // 停顿后的回写必须走唯一写盘点，且值没变就空转（回填触发的排队不许写盘）
+        val runnable = TestSources.blockAfter(code, "private val autosaveRunnable")
+        assertTrue("自动保存必须走 persistInputs（唯一写盘点）", "persistInputs()" in runnable)
+        assertTrue("值没变必须空转（程序化回填的排队不许写盘）", "currentInputs() == savedInputs" in runnable)
+        // L-1050 口径：自动保存也要消费未落盘集合并给提示
+        assertTrue("自动保存也要消费未落盘集合", "unpersistedCredentialKeys()" in runnable)
+        assertTrue("未落盘要给提示", "textSaveHint.text = TEXT_SAVE_NOT_PERSISTED" in runnable)
+
+        // 离开页面即落盘：onPause 撤排队、写一次、flush，与另两页同口径
+        val pause = TestSources.blockAfter(code, "override fun onPause")
+        assertTrue("离开页面要撤掉排队的任务", "removeCallbacks(autosaveRunnable)" in pause)
+        assertTrue("离开页面要写一次盘", "persistInputs()" in pause)
+        assertTrue("离开页面要 flush（异步落盘不算保存）", "prefs.flush()" in pause)
+        assertTrue("onPause 也要消费未落盘集合", "unpersistedCredentialKeys()" in pause)
+
+        // 文案必须如实：空闲提示交代「改动即保存」，未落盘提示常量在
+        assertTrue(
+            "空闲文案必须交代改动即保存",
+            "const val TEXT_SAVE_HINT_IDLE = \"改动即保存，重启输入法后生效\"" in code,
+        )
+        assertTrue(
+            "未落盘提示常量没定义",
+            "TEXT_SAVE_NOT_PERSISTED = \"凭据未写入本机（设备可能已锁定，解锁后重试）\"" in code,
+        )
+    }
+
+    /**
+     * 「放弃并退出」必须真的放弃：弹框前不许写盘，onPause 与排队任务都要认标志。
+     * 落盘失败时还要给可见反馈、并让下次退出再问一次（否则进程回收后配置静默回退）。
+     */
+    @Test
+    fun `放弃退出与落盘失败不许回写`() {
+        val code = TestSources.codeSource("VoiceSettingsActivity.kt")
+        val confirm = TestSources.blockAfter(code, "private fun confirmExit")
+        val pause = TestSources.blockAfter(code, "override fun onPause")
+        val runnable = TestSources.blockAfter(code, "private val autosaveRunnable")
+        val schedule = TestSources.blockAfter(code, "private fun scheduleAutosave")
+        assertTrue("confirmExit 只校验不写盘", "persistInputs(dryRun = true)" in confirm)
+        assertFalse("confirmExit 不许直接写盘（写进去就撤不回）", "persistInputs()" in confirm)
+        assertTrue("放弃必须置 discardOnExit", "discardOnExit = true" in confirm)
+        assertTrue(
+            "onPause 必须在放弃 / 导入在途时早退",
+            "if (discardOnExit || ConfigBackupManager.importing) return" in pause,
+        )
+        assertTrue("排队任务也要认放弃标志", "discardOnExit" in runnable && "discardOnExit" in schedule)
+        assertTrue("flush 失败要记标志并给可见提示", "flushFailed = true" in pause && "TEXT_FLUSH_FAILED" in pause)
+    }
+
+    /**
+     * 凭据 fail-closed 时「未写入本机」不能被状态行覆盖成「已保存」；
+     * 解锁后回到页面要能撤回提示。三条落盘路径优先级：未落盘 > 字段非法 > 空闲。
+     */
+    @Test
+    fun `未落盘提示不许被覆盖且回前台可撤回`() {
+        val code = TestSources.codeSource("VoiceSettingsActivity.kt")
+        val runnable = TestSources.blockAfter(code, "private val autosaveRunnable")
+        assertTrue(
+            "提示与状态行必须互斥（if/else），且提示先写",
+            "} else {" in runnable &&
+                runnable.indexOf("textSaveHint.text = TEXT_SAVE_NOT_PERSISTED") < runnable.indexOf("updateSaveHint()"),
+        )
+        val pause = TestSources.blockAfter(code, "override fun onPause")
+        assertTrue("onPause 也要撤回落盘成功后的旧提示", "updateSaveHint()" in pause)
+        assertTrue(
+            "回前台要撤回已失效的未落盘提示",
+            "unpersistedCredentialKeys()" in TestSources.blockAfter(code, "override fun onResume"),
+        )
+        assertTrue("退出要提醒重启才生效", "TEXT_RESTART_NEEDED" in code)
+    }
+
+    /** 导入在途 / 重启窗口不回写；校验红字只在落盘成功后清掉。 */
+    @Test
+    fun `导入在途重启窗口与校验红字`() {
+        val code = TestSources.codeSource("VoiceSettingsActivity.kt")
+        val runnable = TestSources.blockAfter(code, "private val autosaveRunnable")
+        val schedule = TestSources.blockAfter(code, "private fun scheduleAutosave")
+        for (block in listOf(runnable, schedule)) {
+            assertTrue("自动路径缺重启 / 放弃 / 导入闸", "restarting || discardOnExit || ConfigBackupManager.importing" in block)
+        }
+        val restart = TestSources.blockAfter(code, "private fun saveAndRestart")
+        assertTrue("点重启也要拦导入在途", "ConfigBackupManager.importing" in restart)
+        assertTrue("重启窗口要置位", "restarting = true" in restart)
+        assertTrue(
+            "不杀进程的出口要复位重启窗口",
+            "restarting = false" in TestSources.blockAfter(code, "ImeRestart.restart(this)"),
+        )
+        val clear = TestSources.blockAfter(code, "private fun clearFieldErrors")
+        assertTrue("清红字函数必须真的清", ".error = null" in clear)
+        val persist = TestSources.blockAfter(code, "private fun persistInputs")
+        assertTrue("成功路径必须清红字", "clearFieldErrors()" in persist)
+        assertTrue(
+            "dryRun 早退必须排在清红字之前（退出确认不许动界面状态）",
+            persist.indexOf("if (dryRun) return true") in 0 until persist.indexOf("clearFieldErrors()"),
         )
     }
 }

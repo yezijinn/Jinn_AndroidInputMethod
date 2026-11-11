@@ -235,7 +235,7 @@ class DeepgramAsrClientTest {
         assertTrue("模型名没回填", "editDeepgramModel.setText(prefs.deepgramModel)" in load)
         assertTrue("语言码没回填", "editDeepgramLanguage.setText(prefs.deepgramLanguage)" in load)
 
-        val save = TestSources.blockAfter(page, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(page, "private fun persistInputs")
         assertTrue("Key 有效取值没走 credentialText", "val deepgramKeyValue = credentialText(editDeepgramApiKey)" in save)
         assertFalse(
             "保存直接写回了输入框文本（掩码会被写坏）",

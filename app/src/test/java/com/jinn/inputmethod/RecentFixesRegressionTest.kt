@@ -457,6 +457,32 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 查库在后台、上屏在主线程：回投时必须认「点击时的输入框」与「最后一次查询」。
+     * 否则切框会把上一条历史（可能是整篇敏感文本）粘进新框，连点会粘出两份。
+     * 闸只包「有内容可提交」这一支，三条兜底 / 提示分支照旧可达。
+     */
+    @Test
+    fun `粘贴回投必须校验输入框身份与查询代际`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "private fun pasteClipboard()")
+        assertTrue(
+            "发起时要采样目标输入框",
+            body.contains("val fieldKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)"),
+        )
+        assertTrue("发起时要递增查询代际", body.contains("val gen = ++pasteGeneration"))
+        assertTrue("回投要比对代际", body.contains("if (gen != pasteGeneration)"))
+        assertTrue("切框不能静默丢弃", body.contains("TEXT_PASTE_FIELD_CHANGED"))
+        // 身份 / 代际闸必须在「有内容可提交」分支内，不能放到 onSuccess 最外层吞掉兜底
+        val submitStart = body.indexOf("latest != null ->")
+        val fallbackStart = body.indexOf("total <= 0 ->")
+        assertTrue("提交分支与兜底分支都要在", submitStart >= 0 && fallbackStart > submitStart)
+        assertTrue("代际闸不得放到兜底分支之后", body.indexOf("if (gen != pasteGeneration)") < fallbackStart)
+        assertTrue(
+            "IME 销毁后要作废在途结果",
+            blockAfter(codeOf("JinnIme.kt"), "override fun onDestroy()").contains("pasteGeneration++"),
+        )
+    }
+
     @Test
     fun `分号键抬起必须判自身是否仍可见`() {
         val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun handleSemicolonTouch")

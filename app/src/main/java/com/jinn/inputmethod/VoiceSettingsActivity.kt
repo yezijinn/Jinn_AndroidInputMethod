@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -40,9 +42,11 @@ import androidx.activity.result.contract.ActivityResultContracts
  *  - 识别后端（caps / xf / oai / ali / tencent / azure / baidu / deepgram）决定显示哪一张配置卡
  *    （NAS 地址 / 讯飞凭据 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram），八张互斥；
  *  - 语言 / 默认键盘样式 / 后端三个下拉走 [UserAwareSpinner]，「用户没碰过就不覆盖」（`BUG.md` L-821）；
- *    默认键盘样式**用户选中即写盘**，语言与后端则要等保存；
+ *  - **改动即保存**（2026-11-10）：编辑框停顿 [AUTOSAVE_DEBOUNCE_MS] 后、离开页面（[onPause]）时
+ *    自动写盘，不再要求点保存；「保存并重启输入法」按钮只负责重启进程让设置生效；
  *  - 勾选框（去句尾标点 / 语音文字实时回显 / 固定服务端）保持「勾选即写」；
- *  - 保存 = 写 [Prefs] + 重启输入法进程（[ImeRestart]，与设置页同一套 flush → killProcess）。
+ *  - 语音设置写盘后要重启输入法进程才生效（[ImeRestart]，与设置页同一套 flush → killProcess），
+ *    按钮只承担这件事；
  *  - 「语音测试」是自包含诊断入口（[VoiceSelfTest]）：自己建客户端与采集器跑 3 秒识别，
  *    不碰 IME 的 asr / recorder，总开关关着也能跑（结论里注明）；识别正文直接落进页面输入框。
  *  - 已保存的凭据在未聚焦时只显示「前 3 位 + 掩码」，聚焦才揭示真值；
@@ -131,8 +135,17 @@ class VoiceSettingsActivity : ComponentActivity() {
     /** 正在跑的语音测试（`onDestroy` 必须取消它：否则漏线程与麦克风占用） */
     private var voiceSelfTest: VoiceSelfTest? = null
 
-    /** 有未保存的修改（只有「要按保存才写」的项算脏，判据见 [recomputeDirty]） */
+    /** 有未保存的修改（判据见 [recomputeDirty]；防抖窗口内也算「尚未落盘」） */
     private var dirty = false
+
+    /** 点了「放弃并退出」：所有自动落盘路径一律停手，直到页面销毁 */
+    private var discardOnExit = false
+
+    /** [onPause] 的 flush 失败：退出要再问一次，别让没落盘的改动静默消失 */
+    private var flushFailed = false
+
+    /** 已进入重启窗口：排队的任务不再写盘；[onPause] 仍补一次落盘，兜住窗口内的新改动 */
+    private var restarting = false
 
     /**
      * [loadPrefs] 时选中的语言下标。
@@ -386,6 +399,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 // 闸掉探针会让「只改语言再旋转」停在干净态：状态行说没改，✕ 直接退。
                 // 「不许改写导入值」的闸门留在 [readLanguage]（BUG.md L-821）。
                 refreshDirty()
+                scheduleAutosave()
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -403,6 +417,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             ) {
                 applyBackendVisibility()
                 refreshDirty()
+                scheduleAutosave()
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -566,8 +581,9 @@ class VoiceSettingsActivity : ComponentActivity() {
         applyVoiceBlocksVisibility(prefs.voiceInputEnabled)
         switchVoiceInput.setOnCheckedChangeListener { _, checked ->
             applyVoiceBlocksVisibility(checked)
-            // 总开关也要按保存才生效，算脏（改回原值即恢复干净，判据在 recomputeDirty）
+            // 改动即保存（状态行只是反馈），快照比对见 recomputeDirty
             refreshDirty()
+            scheduleAutosave()
         }
 
         // 识别选项即时保存：勾选即写入，下次识别立即生效
@@ -629,10 +645,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         themeTicker.stop()
     }
 
-    /** 从系统设置授权麦克风后返回：页面不能还显示「未授权」 */
+    /** 从系统设置授权麦克风后返回：页面不能还显示「未授权」；顺便撤回已失效的未落盘提示 */
     override fun onResume() {
         super.onResume()
         refreshMicState()
+        // 解锁后凭据加密恢复、且没有新的未落盘项：把「未写入本机」提示撤回到真实状态
+        if (prefs.unpersistedCredentialKeys().isEmpty()) updateSaveHint()
     }
 
     private fun loadPrefs() {
@@ -1175,24 +1193,95 @@ class VoiceSettingsActivity : ComponentActivity() {
     override fun onDestroy() {
         voiceSelfTest?.cancel()
         voiceSelfTest = null
+        // 页面销毁后任何排队任务都不该再碰 Prefs
+        autosaveHandler.removeCallbacks(autosaveRunnable)
         super.onDestroy()
     }
 
     // ── 保存并重启输入法进程 ──────────────────────────────────────────
 
     /**
-     * 保存语音配置并重启输入法进程（与原设置页「保存」语义一致：不点保存就不写）。
+     * 「重启输入法」按钮：改动本身在输入停顿 / 离开页面时已自动保存（[persistInputs]），
+     * 这里先把排队的自动保存顶掉、立即落盘一次，再重启 IME 进程让设置生效。
      *
-     * 校验顺序与原实现一致：先 host 非空、再 `Prefs.isValidHost`、最后端口 1..65535；
-     * 任何一项不过都只写 `error` 并返回，不重启。
-     *
-     * 防连点：进来先看按钮是否已禁用（`ImeRestart` 之后的 800ms 窗口里再点一次，
-     * 会先写「正在重启」再走一遍 flush，界面与实际状态可能分叉），再立即禁用自己；
-     * 只有两条路径会恢复按钮 —— 校验没过（这批根本没写）与落盘失败（进程没被杀，用户要能重试）。
+     * 防连点：进来先看按钮是否已禁用，再立即禁用自己；三条不杀进程的出口（校验没过、
+     * 凭据未落盘、`ImeRestart` 的 flush 失败回调）都要把按钮与 [restarting] 复位。
      */
     private fun saveAndRestart() {
         if (!btnSave.isEnabled) return
         btnSave.isEnabled = false
+        autosaveHandler.removeCallbacks(autosaveRunnable)
+        if (ConfigBackupManager.importing) {
+            textSaveHint.text = TEXT_SAVE_BLOCKED_IMPORTING
+            btnSave.isEnabled = true
+            return
+        }
+        // 基线必须在写盘**之前**捕获：落盘失败要退回到这一批之前的值，否则退出确认会被绕过
+        val previous = savedInputs
+        if (!persistInputs()) {
+            // 校验没过：这批没写，状态行按脏态提示（error 已标在对应输入框上）
+            refreshDirty()
+            restarting = false
+            btnSave.isEnabled = true
+            return
+        }
+        // 凭据只进了内存（Keystore 与软件密钥都不可用）时**不能重启**：killProcess 不走 onDestroy，
+        // 内存里那份随进程一起丢，而磁盘上旧密文已被删（Prefs.writeCredential 的 fail-closed 分支）
+        // ⇒ 重启后该家回到「未配置」。基线一并退回，让退出确认能问到这批改动。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isNotEmpty()) {
+            Diagnostics.w(TAG, "saveAndRestart: ${unpersisted.size} 个凭据未落盘，已取消重启")
+            savedInputs = previous
+            recomputeDirty()
+            textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+            restarting = false
+            btnSave.isEnabled = true
+            return
+        }
+        textSaveHint.text = TEXT_RESTARTING
+        restarting = true
+        // flush 确认落盘再杀进程（只赌延时在 IO 抖动时会丢最后一批设置）；落盘失败不重启
+        ImeRestart.restart(this) { message ->
+            // 进程没被杀：设置没落盘 ⇒ 基线退回、脏标记跟着回来，否则按 ✕ 直接退出会静默丢输入
+            savedInputs = previous
+            recomputeDirty()
+            textSaveHint.text = message
+            restarting = false
+            btnSave.isEnabled = true
+        }
+    }
+
+    /**
+     * 校验全过之后把旧红字清掉（25 处 `.error =` 赋值目标去重；只在需要时 set，避免气泡闪烁）。
+     *
+     * 独立函数而不是内联进 [persistInputs]：清 error 的覆盖面要能被守卫单独对拍。
+     */
+    private fun clearFieldErrors() {
+        for (field in listOf(
+            editHost, editPort,
+            editXfAppId, editXfApiKey, editXfApiSecret,
+            editOaiBase, editOaiModel, editOaiApiKey,
+            editAliWsUrl, editAliModel, editAliApiKey,
+            editTencentSecretId, editTencentSecretKey,
+            editAzureBaseUrl, editAzureApiKey,
+            editBaiduApiKey, editBaiduSecretKey, editBaiduDevPid,
+            editDeepgramApiKey, editDeepgramModel, editDeepgramLanguage,
+        )) {
+            if (field.error != null) field.error = null
+        }
+    }
+
+    /**
+     * 把当前表单写入 Prefs（改动即保存的**唯一写盘点**：输入停顿、离开页面、重启前共用）。
+     *
+     * 2026-11-10 起不再要求「必须点保存」：编辑框停顿 [AUTOSAVE_DEBOUNCE_MS] 后自动走到这里，
+     * 离开页面（[onPause]）也走这里。校验顺序与原实现一致：先 host 非空、再 `Prefs.isValidHost`、
+     * 最后端口 1..65535；任一字段不过就只把 error 标在对应输入框上并返回 false，**整表不写盘** ——
+     * 换后端却没填凭据这种半配置状态若写进去，运行中的输入法会拿着空凭据连新服务端。
+     *
+     * [dryRun] 为 true 时只校验、只标红，绝不写盘（退出确认用）；成功落盘才推进基线、清脏、清红字。
+     */
+    private fun persistInputs(dryRun: Boolean = false): Boolean {
         val host = editHost.text.toString().trim()
         val port = editPort.text.toString().trim().toIntOrNull()
 
@@ -1226,20 +1315,17 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (appIdValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 讯飞 APPID 为空")
                 editXfAppId.error = TEXT_XF_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (apiKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 讯飞 APIKey 为空")
                 editXfApiKey.error = TEXT_XF_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (apiSecretValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 讯飞 APISecret 为空")
                 editXfApiSecret.error = TEXT_XF_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.OAI) {
             // OpenAI 兼容：地址先过策略（含 https 强制），再要求模型名与 Key；
@@ -1248,27 +1334,23 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (oaiBase.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: OpenAI Base URL 为空")
                 editOaiBase.error = TEXT_OAI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             val addressError = OpenAiEndpoint.normalize(oaiBase).exceptionOrNull()?.message
             if (addressError != null) {
                 Diagnostics.w(TAG, "saveAndRestart: OpenAI 地址不合法 reason=$addressError")
                 editOaiBase.error = addressError
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (oaiModelValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: OpenAI 模型名为空")
                 editOaiModel.error = TEXT_OAI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (oaiKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: OpenAI API Key 为空")
                 editOaiApiKey.error = TEXT_OAI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.ALI) {
             // 阿里云百炼：地址先过 WS 策略（wss 强制，ws 只允许本机），再要求模型名与 Key；
@@ -1276,41 +1358,35 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (aliWsUrlValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼 WS 地址为空")
                 editAliWsUrl.error = TEXT_ALI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             val addressError = AliEndpoint.normalize(aliWsUrlValue).exceptionOrNull()?.message
             if (addressError != null) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼地址不合法 reason=$addressError")
                 editAliWsUrl.error = addressError
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (aliModelValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼模型名为空")
                 editAliModel.error = TEXT_ALI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (aliKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼 API Key 为空")
                 editAliApiKey.error = TEXT_ALI_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.TENCENT) {
             // 腾讯云：两件凭据缺一不可（SecretKey 才能做 TC3 签名；SecretId 也参与 Credential 段）
             if (tencentIdValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 腾讯云 SecretId 为空")
                 editTencentSecretId.error = TEXT_TENCENT_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (tencentKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 腾讯云 SecretKey 为空")
                 editTencentSecretKey.error = TEXT_TENCENT_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.AZURE) {
             // Azure：地址先过策略（https 强制，http 只允许本机 / 私网），再要求订阅密钥；
@@ -1318,21 +1394,18 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (azureBaseValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Azure Base URL 为空")
                 editAzureBaseUrl.error = TEXT_AZURE_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             val addressError = AzureAsrEndpoint.normalize(azureBaseValue).exceptionOrNull()?.message
             if (addressError != null) {
                 Diagnostics.w(TAG, "saveAndRestart: Azure 地址不合法 reason=$addressError")
                 editAzureBaseUrl.error = addressError
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (azureKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Azure 订阅密钥为空")
                 editAzureApiKey.error = TEXT_AZURE_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.BAIDU) {
             // 百度：两件凭据缺一不可（AK 取 token、SK 签 client_secret）；dev_pid 必须是数字 ——
@@ -1340,20 +1413,17 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (baiduKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 百度 API Key 为空")
                 editBaiduApiKey.error = TEXT_BAIDU_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (baiduSecretValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 百度 Secret Key 为空")
                 editBaiduSecretKey.error = TEXT_BAIDU_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (baiduDevPidValue.toIntOrNull() == null) {
                 Diagnostics.w(TAG, "saveAndRestart: 百度 dev_pid 不是数字")
                 editBaiduDevPid.error = TEXT_BAIDU_PID_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.DEEPGRAM) {
             // Deepgram：Key 必填；模型名与语言码不许留空（清空过就会被 setter 回落默认，
@@ -1361,43 +1431,43 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (deepgramKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Deepgram API Key 为空")
                 editDeepgramApiKey.error = TEXT_DEEPGRAM_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (deepgramModelValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Deepgram 模型名为空")
                 editDeepgramModel.error = TEXT_DEEPGRAM_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (deepgramLanguageValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Deepgram 语言码为空")
                 editDeepgramLanguage.error = TEXT_DEEPGRAM_REQUIRED
-                btnSave.isEnabled = true
-                return
+                return false
             }
         } else if (voiceEnabled) {
             if (host.isBlank()) {
                 Diagnostics.w(TAG, "saveAndRestart: host 为空")
                 editHost.error = getString(R.string.settings_invalid_host)
-                btnSave.isEnabled = true
-                return
+                return false
             }
             // 非法 host 会被拼成 HttpUrl 拒绝的地址，进而在主线程抛异常把 IME 打崩；
             // 这里拦在保存入口，配合 Prefs 的兜底形成两道防线（语音链路不改动，不能在那里兜）。
             if (!Prefs.isValidHost(host)) {
                 Diagnostics.w(TAG, "saveAndRestart: host 含非法字符，已拒绝保存")
                 editHost.error = getString(R.string.settings_invalid_host)
-                btnSave.isEnabled = true
-                return
+                return false
             }
             if (port == null || port !in 1..65535) {
                 Diagnostics.w(TAG, "saveAndRestart: 端口非法 port=$port")
                 editPort.error = getString(R.string.settings_invalid_port)
-                btnSave.isEnabled = true
-                return
+                return false
             }
         }
+
+        // 退出确认只想知道「有没有非法字段」，此时一个键都不许写：写进去就撤不回，
+        // 「放弃并退出」也会变成假放弃（apply 的值会随框架排队落盘）
+        if (dryRun) return true
+        // 旧红字只在校验全过时清：失败分支保留标红，用户照着补
+        clearFieldErrors()
 
         prefs.voiceInputEnabled = voiceEnabled
         prefs.voiceBackend = backend
@@ -1456,7 +1526,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 凭据同样只记长度（绝不出原文）
         Diagnostics.i(
             TAG,
-            "saveAndRestart: 语音配置已保存 backend=$backend host=$host port=$port " +
+            "persistInputs: 语音配置已保存 backend=$backend host=$host port=$port " +
                 "lang=${prefs.language} promptLen=${prefs.prompt.length} enabled=$voiceEnabled " +
                 "xfAppIdLen=${prefs.xfAppId.length} xfApiKeyLen=${prefs.xfApiKey.length} " +
                 "xfApiSecretLen=${prefs.xfApiSecret.length} " +
@@ -1471,38 +1541,84 @@ class VoiceSettingsActivity : ComponentActivity() {
                 "deepgramModel=${prefs.deepgramModel} deepgramLang=${prefs.deepgramLanguage} " +
                 "deepgramKeyLen=${prefs.deepgramApiKey.length}",
         )
-        // 凭据只进了内存（Keystore 与软件密钥都不可用）时**不能重启**：killProcess 不走 onDestroy，
-        // 内存里那份随进程一起丢，而磁盘上旧密文已被删（Prefs.writeCredential 的 fail-closed 分支）
-        // ⇒ 重启后该家回到「未配置」。另两页（OpenAI / 翻译）早就用同一份记账把「保存成功」卡在这里。
-        val unpersisted = prefs.unpersistedCredentialKeys()
-        if (unpersisted.isNotEmpty()) {
-            Diagnostics.w(TAG, "saveAndRestart: ${unpersisted.size} 个凭据未落盘，已取消重启")
-            textSaveHint.text = ImeRestart.TEXT_RESTART_FLUSH_FAILED
-            btnSave.isEnabled = true
-            return
-        }
-        textSaveHint.text = TEXT_RESTARTING
-        // 基线先记成「这批已保存」：重启窗口里若再动控件，按新基线算脏才对。
-        // 落盘失败（回调里）退回这一批之前的基线 —— 没写进磁盘就不算保存过。
-        val previous = savedInputs
+        // 基线先记成「这批已保存」：停顿窗口 / 重启窗口里若再动控件，按新基线算脏才对
         savedInputs = currentInputs()
         dirty = false
-        // flush 确认落盘再杀进程（只赌延时在 IO 抖动时会丢最后一批设置）；落盘失败不重启
-        ImeRestart.restart(this) { message ->
-            // 进程没被杀：设置没落盘 ⇒ 基线退回、脏标记跟着回来（否则状态行说失败、
-            // 按 ✕ 却直接退出，这批改动静默丢失）
-            savedInputs = previous
-            recomputeDirty()
-            textSaveHint.text = message
-            // 进程没被杀：按钮必须能再点（否则用户只剩退出重进）
-            btnSave.isEnabled = true
+        return true
+    }
+
+    /**
+     * 离开页面即落盘，并显式等一次写入 —— 与 OpenAI 兼容页 / 翻译设置页同款两处坑：
+     * EditText 失焦在返回时不一定派发回调；且必须写在 `onPause`（下一个页面的 onResume 早于它）。
+     */
+    override fun onPause() {
+        super.onPause()
+        // 撤掉排队的防抖任务：改动已在下面写完（否则过一会儿再跑一次空转）
+        autosaveHandler.removeCallbacks(autosaveRunnable)
+        // 「放弃并退出」与配置导入在途：两条路径都不许回写（导入线程正在写同一份 Prefs）
+        if (discardOnExit || ConfigBackupManager.importing) return
+        // 重启窗口不早退：ImeRestart 的 flush 已跑完，窗口里新改的字段靠这里补齐一次
+        persistInputs()
+        // 自动保存路径也要消费 `unpersistedCredentialKeys`（BUG.md L-741 / L-1050 口径）：
+        // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
+        // 不提示的话填完 Key 直接返回的用户全程零提示，重启后回到「未配置」。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isNotEmpty()) {
+            Diagnostics.w(TAG, "onPause: ${unpersisted.size} 个凭据未落盘")
+            textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+        } else {
+            // 落盘成功即撤回旧提示（优先级：凭据未落盘 > 字段非法 > 空闲）
+            updateSaveHint()
+        }
+        // `Prefs.flush` 是 `commit()`，无改动也照写整份 XML；失败必须有用户看得见的反馈，
+        // 且下次点 ✕ 要再问一次（dirty 在 persistInputs 里已清，靠独立标志记这笔账）
+        if (prefs.flush()) {
+            flushFailed = false
+        } else {
+            flushFailed = true
+            Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
+            Toast.makeText(this, TEXT_FLUSH_FAILED, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // ── 改动即保存（输入停顿自动落盘） ────────────────────────────────
+
+    /** 与 OpenAI 兼容页 / 翻译设置页同款（`BUG.md` L-967 / L-209）：连续输入只在停顿后写一次 */
+    private fun scheduleAutosave() {
+        if (restarting || discardOnExit || ConfigBackupManager.importing) return
+        autosaveHandler.removeCallbacks(autosaveRunnable)
+        autosaveHandler.postDelayed(autosaveRunnable, AUTOSAVE_DEBOUNCE_MS)
+    }
+
+    private val autosaveHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 输入停顿后的回写。
+     *
+     * 取值与基线相同就直接空转：程序化回填（[loadPrefs] 的 `setText` / 旋转重建的实例恢复 /
+     * 掩码折回）都会触发 watcher 并把任务排进队，靠快照比对挡住，不做无谓的写盘与 flush。
+     */
+    private val autosaveRunnable = Runnable {
+        if (restarting || discardOnExit || ConfigBackupManager.importing) return@Runnable
+        if (currentInputs() == savedInputs) return@Runnable
+        persistInputs()
+        // 自动保存路径同样要消费未落盘集合（BUG.md L-1050 口径）：`writeCredential` 在
+        // Keystore 不可用时 fail-closed（删掉盘上旧密文），不提示的话填完 Key 就不再动的
+        // 用户全程零信号，重启后回到「未配置」。三条落盘路径的口径必须一致。
+        val unpersisted = prefs.unpersistedCredentialKeys()
+        if (unpersisted.isNotEmpty()) {
+            Diagnostics.w(TAG, "输入停顿自动保存: ${unpersisted.size} 个凭据未落盘")
+            textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+        } else {
+            // 不在 if 之外无条件调：那会把刚写下的「未落盘」提示覆盖成「已保存」
+            updateSaveHint()
         }
     }
 
     // ── 脏状态与未保存退出 ──────────────────────────────────────────
 
     /**
-     * 给编辑框挂「改动即重算脏状态」的监听。
+     * 给编辑框挂「改动即重算脏状态并排队自动保存」的监听。
      *
      * **只用 `afterTextChanged`**：`beforeTextChanged` / `onTextChanged` 里不写任何东西 ——
      * 后两者在每次按键都会先跑，写逻辑会把「还没改完的中间态」当成一次改动。
@@ -1515,6 +1631,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             override fun afterTextChanged(s: Editable?) {
                 // 只是「重算」：回填 / 状态恢复同样会走到这里，靠快照比对才不会误判成脏
                 refreshDirty()
+                scheduleAutosave()
             }
         })
     }
@@ -1587,11 +1704,34 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 关闭入口（✕ 与返回键**共用这一个**）：有未保存改动先问一句，没有就直接退。
+     * 关闭入口（✕ 与返回键**共用这一个**）：只做「只校验不写盘」的判断，
+     * 合法改动交给 [onPause] 落盘；有非法字段或上次 flush 失败才问一句。
      *
-     * 「继续编辑」只收对话框，不碰任何状态；「放弃并退出」把脏标记清掉再 `finish()`
-     * （否则退出过程中若再触发一次确认，会问第二遍）。
+     * 「放弃并退出」置 [discardOnExit]，让 [onPause] 与排队任务都不回写 —— 改动真被放弃。
      */
+    private fun confirmExit() {
+        // 撤掉排队的自动保存：下面的判断必须是「此刻表单」的最终结论
+        autosaveHandler.removeCallbacks(autosaveRunnable)
+        // dryRun：一个键都不写，只把非法字段标红。写进去就撤不回，「放弃」会变成假放弃
+        if (!persistInputs(dryRun = true) || flushFailed) {
+            recomputeDirty()
+            AlertDialog.Builder(this)
+                .setTitle(TEXT_DIRTY)
+                .setPositiveButton(TEXT_DIALOG_KEEP) { dialog, _ -> dialog.dismiss() }
+                .setNegativeButton(TEXT_DIALOG_DISCARD) { _, _ ->
+                    discardOnExit = true
+                    dirty = false
+                    finish()
+                }
+                .show()
+            return
+        }
+        recomputeDirty()
+        // 有改动且校验通过：退出即保存，但语音组件要重启才生效 —— 给一句不阻断的提醒
+        if (dirty) Toast.makeText(this, TEXT_RESTART_NEEDED, Toast.LENGTH_SHORT).show()
+        finish()
+    }
+
     /**
      * 返回键入口（与 ✕ 共用 [confirmExit]）。
      *
@@ -1601,23 +1741,6 @@ class VoiceSettingsActivity : ComponentActivity() {
      */
     private fun registerBackHandling() {
         onBackPressedDispatcher.addCallback(this) { confirmExit() }
-    }
-
-    private fun confirmExit() {
-        // 静默重算（不改状态行）：标记可能落后于界面（例如落盘失败刚回退基线）
-        recomputeDirty()
-        if (!dirty) {
-            finish()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle(TEXT_DIRTY)
-            .setPositiveButton(TEXT_DIALOG_KEEP) { dialog, _ -> dialog.dismiss() }
-            .setNegativeButton(TEXT_DIALOG_DISCARD) { _, _ ->
-                dirty = false
-                finish()
-            }
-            .show()
     }
 
     private companion object {
@@ -1735,15 +1858,39 @@ class VoiceSettingsActivity : ComponentActivity() {
             TEXT_BACKEND_TENCENT, TEXT_BACKEND_AZURE, TEXT_BACKEND_BAIDU, TEXT_BACKEND_DEEPGRAM,
         )
 
-        /** 顶部主按钮与状态行（要按保存才落盘的正是这几项） */
-        const val TEXT_SAVE = "保存并重启输入法"
-        const val TEXT_SAVE_HINT_IDLE = "总开关、地址、语言、提示词改完点上方保存"
+        /**
+         * 顶部主按钮与状态行。
+         *
+         * 2026-11-10 起改动即保存（输入停顿 / 离开页面自动落盘），按钮不再承担「保存」，
+         * 只负责重启输入法进程让设置生效（语音组件在 IME 进程里，不重启改了也不生效）。
+         */
+        const val TEXT_SAVE = "重启输入法"
+        const val TEXT_SAVE_HINT_IDLE = "改动即保存，重启输入法后生效"
         const val TEXT_RESTARTING = "正在重启输入法…"
 
-        /** 脏状态与状态行文案（同时是未保存退出对话框的标题） */
-        const val TEXT_DIRTY = "有未保存的修改"
+        /** 凭据只写进了内存（Keystore 不可用的 fail-closed 分支）：如实说，别让用户以为保存成功 */
+        const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
+
+        /** 退出时确认过「已保存」：语音组件在 IME 进程里，不点重启不生效，提醒一次即可 */
+        const val TEXT_RESTART_NEEDED = "设置已保存，点「重启输入法」后生效"
+
+        /** onPause 的 commit() 失败：页面正离开，状态行看不见，只能给 Toast */
+        const val TEXT_FLUSH_FAILED = "设置写入失败，请重试或点「重启输入法」"
+
+        /** 配置导入在途：不回写、不重启，避免覆盖导入线程刚写进 Prefs 的值 */
+        const val TEXT_SAVE_BLOCKED_IMPORTING = "配置导入进行中，暂不可重启"
+
+        /**
+         * 脏状态与状态行文案（同时是未保存退出对话框的标题）。
+         *
+         * 自动保存之后「脏」只剩一种来源：校验没过的字段没写盘 —— 退出就丢，所以要问一句。
+         */
+        const val TEXT_DIRTY = "有字段不合法，尚未保存（见输入框提示）"
         const val TEXT_DIALOG_KEEP = "继续编辑"
         const val TEXT_DIALOG_DISCARD = "放弃并退出"
+
+        /** 输入停顿自动保存的防抖窗口（与 OpenAI 兼容页同款；守卫测试钉值域 200..5000） */
+        const val AUTOSAVE_DEBOUNCE_MS = 800L
 
         /** 折叠分组：方向标记与条数（例 `▾ 国内云服务（12）`，读屏读 `国内云服务，12 家，已展开`） */
         const val TEXT_GROUP_EXPANDED = "▾"

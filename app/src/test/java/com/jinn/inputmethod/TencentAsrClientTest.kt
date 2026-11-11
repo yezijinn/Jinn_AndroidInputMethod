@@ -267,7 +267,7 @@ class TencentAsrClientTest {
         assertTrue("SecretKey 回填没走掩码", "setCredentialText(editTencentSecretKey, prefs.tencentSecretKey)" in load)
         assertTrue("引擎型号没回填", "editTencentEngine.setText(prefs.tencentEngine)" in load)
 
-        val save = TestSources.blockAfter(page, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(page, "private fun persistInputs")
         assertTrue("SecretKey 有效取值没走 credentialText", "val tencentKeyValue = credentialText(editTencentSecretKey)" in save)
         assertFalse(
             "保存直接写回了输入框文本（掩码会被写坏）",

@@ -392,7 +392,7 @@ class OpenAiAsrClientTest {
         assertTrue("地址没回填", "editOaiBase.setText(prefs.oaiBaseUrl)" in load)
         assertTrue("模型名没回填", "editOaiModel.setText(prefs.oaiModel)" in load)
 
-        val save = TestSources.blockAfter(page, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(page, "private fun persistInputs")
         assertTrue("Key 有效取值没走 credentialText", "val oaiKeyValue = credentialText(editOaiApiKey)" in save)
         assertFalse(
             "保存直接写回了输入框文本（掩码会被写坏）",

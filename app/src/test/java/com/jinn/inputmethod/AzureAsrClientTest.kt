@@ -237,7 +237,7 @@ class AzureAsrClientTest {
         assertTrue("地址没回填", "editAzureBaseUrl.setText(prefs.azureBaseUrl)" in load)
         assertTrue("语言码没回填", "editAzureLanguage.setText(prefs.azureLanguage)" in load)
 
-        val save = TestSources.blockAfter(page, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(page, "private fun persistInputs")
         assertTrue("Key 有效取值没走 credentialText", "val azureKeyValue = credentialText(editAzureApiKey)" in save)
         assertFalse(
             "保存直接写回了输入框文本（掩码会被写坏）",

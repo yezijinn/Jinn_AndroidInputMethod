@@ -1295,6 +1295,9 @@ class JinnIme : InputMethodService() {
         // 同 L-716：粘贴改宿主文本 ⇒ 在途译文必然作废（面板条目粘贴走 pasteClipboardTextInternal）
         if (translateInFlight) cancelTranslate(notify = true)
         val tid = Diagnostics.traceId("PASTE")
+        // 发起时刻锁定目标输入框与查询代际：查库在后台，回投时 currentInputConnection 可能已指向别的框
+        val fieldKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+        val gen = ++pasteGeneration
         BackgroundIo.run {
             // 最新在前；图片行与文本行在同一序列里，解密失败的行由 readItem 跳过。
             // 一次最多扫 HISTORY_PASTE_SCAN 行：正常情况头一行就是可读的最新条。
@@ -1306,6 +1309,19 @@ class JinnIme : InputMethodService() {
                 queried.onSuccess { (total, latest) ->
                     when {
                         latest != null -> {
+                            // 闸只包「有内容可提交」这一支：三条兜底/提示分支不受影响
+                            if (gen != pasteGeneration) {
+                                Diagnostics.i(TAG, "[$tid] 粘贴: 已有更新的查询，丢弃本次结果")
+                                return@onSuccess
+                            }
+                            val now = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+                            // 与 fallbackToClipboard 同口径：两侧都能取到且不等才拦，
+                            // 避免把「同一个输入框重新聚焦」误判成切框
+                            if (fieldKey != null && now != null && fieldKey != now) {
+                                Diagnostics.w(TAG, "[$tid] 粘贴: 输入框已切换，丢弃本次结果")
+                                toast(TEXT_PASTE_FIELD_CHANGED)
+                                return@onSuccess
+                            }
                             Diagnostics.i(
                                 TAG,
                                 "[$tid] 粘贴: 取历史最新一条 id=${latest.id} 图片=${latest.image != null}",
@@ -1436,6 +1452,14 @@ class JinnIme : InputMethodService() {
     private var hostImageMimeTypes: Array<String>? = null
 
     /**
+     * 功能面板「粘贴」的查询代际：只认最后一次点击的后台结果。
+     *
+     * 连点时旧结果不能补投（会粘出两份），IME 销毁后回投的任务也必须作废；[onDestroy] 递增一次。
+     */
+    @Volatile
+    private var pasteGeneration = 0
+
+    /**
      * 图库快贴：按宿主声明决定键盘上「图库」入口的显隐。
      *
      * `EditorInfo.contentMimeTypes` 里声明了图片类型（以 `image/` 开头，或全通配）才显示入口 —— 真机实测这是
@@ -1551,6 +1575,8 @@ class JinnIme : InputMethodService() {
      */
     private fun pasteClipboardImage(item: ClipboardDb.Item): Boolean {
         if (item.image == null) return false
+        // 宿主能力只在主线程读一次：原先放在后台线程读，换框时的写入会与之撞上
+        val types = hostImageMimeTypes
         BackgroundIo.runLong {
             val bytes = ClipboardImageExport.readOriginal(this, item)
             if (bytes == null) {
@@ -1563,7 +1589,6 @@ class JinnIme : InputMethodService() {
             val mime = ClipboardImageExport.mimeOf(item, bytes)
             // 类型不符不该等到被拒：宿主只收 png 时这张 WebP 走同一条回退通道，
             // 比「提交被拒后图上不去且零反馈」体感一致（BUG.md L-1058）
-            val types = hostImageMimeTypes
             val capable =
                 GalleryInsert.canHostAccept(types) && GalleryInsert.acceptsMime(types, mime)
             if (!capable) {
@@ -4087,6 +4112,8 @@ class JinnIme : InputMethodService() {
 
     override fun onDestroy() {
         instance = null
+        // 粘贴查库是后台任务，销毁之后才 ui.post 的结果不能再用已置空的视图/连接
+        pasteGeneration++
         // 用户词频：把未落盘的最后几次学习刷出去（MEM-45 订正：这是**主线程同步写** ——
         // UserFrequency.flush() 内部先判 dirty，未脏时直接返回；脏时整份重写，
         // 文件上限 3000 行约 1~3ms，故不做异步）
@@ -6013,6 +6040,9 @@ class JinnIme : InputMethodService() {
 
         /** 粘贴键的例外提示：历史查询本身失败（磁盘 / 数据库异常），说清原因让用户可重试 */
         const val TEXT_PASTE_HISTORY_FAILED = "读取剪贴板历史失败，请重试"
+
+        /** 粘贴键的例外提示：查库期间切到了别的输入框，不能把上一条历史粘进错的框 */
+        const val TEXT_PASTE_FIELD_CHANGED = "输入框已切换，请重新粘贴"
 
         /** 图库快贴：待插入图片已失效（被系统清 cache 或其后被清理）—— 落地阶段的失败要说话（L-1006） */
         const val TEXT_GALLERY_GONE = "图片已失效，未插入"

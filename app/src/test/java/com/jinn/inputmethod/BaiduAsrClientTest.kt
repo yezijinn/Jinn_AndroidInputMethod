@@ -1,4 +1,4 @@
-﻿package com.jinn.inputmethod
+package com.jinn.inputmethod
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -437,7 +437,7 @@ class BaiduAsrClientTest {
         assertTrue("SK 回填没走掩码", "setCredentialText(editBaiduSecretKey, prefs.baiduSpeechSecretKey)" in load)
         assertTrue("dev_pid 没回填", "editBaiduDevPid.setText(prefs.baiduDevPid.toString())" in load)
 
-        val save = TestSources.blockAfter(page, "private fun saveAndRestart")
+        val save = TestSources.blockAfter(page, "private fun persistInputs")
         assertTrue("AK 有效取值没走 credentialText", "val baiduKeyValue = credentialText(editBaiduApiKey)" in save)
         assertTrue("SK 有效取值没走 credentialText", "val baiduSecretValue = credentialText(editBaiduSecretKey)" in save)
         assertFalse(

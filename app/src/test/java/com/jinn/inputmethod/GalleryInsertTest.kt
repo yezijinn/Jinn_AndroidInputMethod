@@ -301,9 +301,10 @@ class GalleryInsertTest {
         }
         assertFalse("hint 随输入状态变，不能进标识", "hintText" in body)
         val mine = TestSources.codeSource("JinnIme.kt")
-        // 5 处：发起点、落库、面板选图，加上兜底通道的「投递前取标识 + 粘贴前再取一次比对」（A-722）
+        // 7 处：发起点、落库、面板选图、兜底通道的「投递前取标识 + 粘贴前比对」（A-722），
+        // 再加功能面板「粘贴」后台查库回投时的「发起采样 + 回投比对」（2026-11-11，同一套口径）
         val uses = Regex("""galleryFieldKeyOf\(currentInputEditorInfo\)""").findAll(mine).count()
-        assertEquals("发起点、落库、面板选图与兜底通道都要用图库口径", 5, uses)
+        assertEquals("发起点、落库、面板选图与兜底通道都要用图库口径", 7, uses)
     }
 
     /**
