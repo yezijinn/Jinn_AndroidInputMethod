@@ -147,6 +147,9 @@ class VoiceSettingsActivity : ComponentActivity() {
     /** 已进入重启窗口：排队的任务不再写盘；[onPause] 仍补一次落盘，兜住窗口内的新改动 */
     private var restarting = false
 
+    /** 点 ✕ / 返回键退出且确有改动：等 [onPause] 确认落盘后再发「重启后生效」提醒 */
+    private var exitNeedsRestartHint = false
+
     /**
      * [loadPrefs] 时选中的语言下标。
      *
@@ -1583,13 +1586,19 @@ class VoiceSettingsActivity : ComponentActivity() {
      *
      * 「放弃并退出」只放弃**表单回写**：[persistInputs] 跳过，但 `prefs.flush()` 照做，
      * 把此前自动保存已 `apply()` 的合法改动与「勾选即写」项确认写盘，并给 [flushFailed] 一个复位点。
+     *
+     * 点 ✕ / 返回键的「重启后生效」提醒也等 `prefs.flush()` 成功之后才发：宣告前必须真正确认
+     * 本批已落盘、凭据没卡在内存里，否则零写入时那句「设置已保存」是虚假成功提示。
      */
     override fun onPause() {
         super.onPause()
         // 撤掉排队的防抖任务：改动已在下面写完（否则过一会儿再跑一次空转）
         autosaveHandler.removeCallbacks(autosaveRunnable)
-        // 配置导入在途：连一次空 commit 也不做，导入线程正在写同一份 Prefs
-        if (ConfigBackupManager.importing) return
+        // 配置导入在途：连一次空 commit 也不做，导入线程正在写同一份 Prefs；退出提醒意图一并作废
+        if (ConfigBackupManager.importing) {
+            exitNeedsRestartHint = false
+            return
+        }
         // 重启窗口不早退：ImeRestart 的 flush 已跑完，窗口里新改的字段靠这里补齐一次
         if (!discardOnExit) {
             persistInputs()
@@ -1600,6 +1609,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (unpersisted.isNotEmpty()) {
                 Diagnostics.w(TAG, "onPause: ${unpersisted.size} 个凭据未落盘")
                 textSaveHint.text = TEXT_SAVE_NOT_PERSISTED
+                // 凭据只进了内存：这次退出不许再发「设置已保存」
+                exitNeedsRestartHint = false
             } else {
                 // 落盘成功即撤回旧提示（优先级：凭据未落盘 > 字段非法 > 空闲）
                 updateSaveHint()
@@ -1609,8 +1620,14 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 放弃分支之外执行，同时给 flushFailed 一个页面内可达的复位点；失败必须有可见反馈
         if (prefs.flush()) {
             flushFailed = false
+            // 只有点 ✕ / 返回键退出、且本批已确认落盘、凭据也没卡在内存里，才发「已保存」提醒
+            if (exitNeedsRestartHint) {
+                Toast.makeText(this, TEXT_RESTART_NEEDED, Toast.LENGTH_SHORT).show()
+            }
+            exitNeedsRestartHint = false
         } else {
             flushFailed = true
+            exitNeedsRestartHint = false
             Diagnostics.w(TAG, "onPause: 配置落盘失败（改动可能回退）")
             Toast.makeText(this, TEXT_FLUSH_FAILED, Toast.LENGTH_LONG).show()
         }
@@ -1747,6 +1764,8 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 都不回写表单 —— 改动真被放弃。
      */
     private fun confirmExit() {
+        // 每次进入都先清掉上次的意图：下面每个早退分支都不该带着旧标志
+        exitNeedsRestartHint = false
         // 导入线程正在写同一份 Prefs：退出会让这批编辑无处落盘，留在页面等导入结束
         if (ConfigBackupManager.importing) {
             Toast.makeText(this, TEXT_SAVE_BLOCKED_IMPORTING, Toast.LENGTH_SHORT).show()
@@ -1776,8 +1795,9 @@ class VoiceSettingsActivity : ComponentActivity() {
             return
         }
         recomputeDirty()
-        // 有改动且校验通过：退出即保存，但语音组件要重启才生效 —— 给一句不阻断的提醒
-        if (dirty) Toast.makeText(this, TEXT_RESTART_NEEDED, Toast.LENGTH_SHORT).show()
+        // 有改动且校验通过：只记下提醒意图，不在这里发「设置已保存」—— 此刻 dryRun 一个键都没写，
+        // 真正落盘在 onPause；凭据 fail-closed 或 flush 失败时那句「已保存」会是虚假成功提示
+        if (dirty) exitNeedsRestartHint = true
         finish()
     }
 

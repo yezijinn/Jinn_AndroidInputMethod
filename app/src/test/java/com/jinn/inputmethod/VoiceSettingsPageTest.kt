@@ -989,7 +989,8 @@ class VoiceSettingsPageTest {
         assertTrue("confirmExit 只校验不写盘", "persistInputs(dryRun = true)" in confirm)
         assertFalse("confirmExit 不许直接写盘（写进去就撤不回）", "persistInputs()" in confirm)
         assertTrue("放弃必须置 discardOnExit", "discardOnExit = true" in confirm)
-        assertTrue("导入在途必须整体早退", "if (ConfigBackupManager.importing) return" in pause)
+        assertTrue("导入在途必须整体早退", "if (ConfigBackupManager.importing)" in pause)
+        assertTrue("导入在途要复位退出提醒意图", "exitNeedsRestartHint = false" in pause)
         assertTrue("放弃分支不许回写表单", "if (!discardOnExit)" in pause)
         val guarded = TestSources.window(code, "if (!discardOnExit)", "if (prefs.flush())")
         assertTrue("只有非放弃分支才回写表单", "persistInputs()" in guarded)
@@ -1004,8 +1005,13 @@ class VoiceSettingsPageTest {
         assertTrue("导入在途要有可见反馈", "TEXT_SAVE_BLOCKED_IMPORTING" in confirm)
         assertTrue(
             "导入在途早退必须排在「已保存」提示之前",
-            confirm.indexOf("ConfigBackupManager.importing") in 0 until confirm.indexOf("TEXT_RESTART_NEEDED"),
+            pause.indexOf("ConfigBackupManager.importing") in 0 until pause.indexOf("TEXT_RESTART_NEEDED"),
         )
+        assertTrue(
+            "「设置已保存」必须在 flush 成功分支发出（不许零写入就宣告成功）",
+            pause.indexOf("TEXT_RESTART_NEEDED") > pause.indexOf("if (prefs.flush())"),
+        )
+        assertTrue("凭据未落盘不许发已保存提示", "exitNeedsRestartHint = false" in pause)
     }
 
     /**
