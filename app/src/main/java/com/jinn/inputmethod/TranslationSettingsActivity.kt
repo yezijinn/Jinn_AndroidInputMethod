@@ -474,6 +474,8 @@ class TranslationSettingsActivity : Activity() {
         // 不新增状态词，复用既有的 TEXT_SAVE_NOT_PERSISTED。
         val unpersisted = prefs.unpersistedCredentialKeys()
         if (unpersisted.isEmpty()) {
+            // 进页面回填触发的防抖没有字段写盘，不记与事实不符的「已保存」
+            if (wrote) {
             Diagnostics.i(
                 TAG,
                 "翻译凭据已保存（长度）: aliyunId=${prefs.aliyunAccessKeyId.length} " +
@@ -483,6 +485,7 @@ class TranslationSettingsActivity : Activity() {
                     "baiduLlmAppId=${prefs.baiduLlmAppId.length} baiduLlmKey=${prefs.baiduLlmApiKey.length} " +
                     "deeplKey=${prefs.deeplApiKey.length}",
             )
+            }
         }
         if (unpersisted.isNotEmpty()) {
             Diagnostics.w(TAG, "凭据未落盘（自动保存路径）: ${unpersisted.size} 项")
