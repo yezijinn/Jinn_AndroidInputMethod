@@ -606,6 +606,11 @@ class ClipboardLimitsTest {
             ClipboardStore.exceedsUnbreakableRun("汉".repeat(100) + "a".repeat(40_000) + "字".repeat(100)))
         assertFalse("非正上限视为不限制",
             ClipboardStore.exceedsUnbreakableRun("a".repeat(40_000), limit = 0))
+        // 粘贴两处失败提示统一走 toast() helper：裸 Toast 缺 BadTokenException 兜底，形态也与文件内其余写法不一致
+        assertFalse("两处不得再裸调 Toast.makeText", "Toast.makeText(" in pasteBody)
+        assertTrue("提交失败分支复用 helper", "toast(\"粘贴失败\")" in pasteBody)
+        assertTrue("单条超限提示须仍在且复用 helper（删提示也算回退）",
+            Regex.fromLiteral("toast(\"内容过大，未粘贴\")").findAll(pasteBody).count() == 2)
     }
 
     @Test

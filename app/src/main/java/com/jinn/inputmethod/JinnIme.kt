@@ -792,7 +792,7 @@ class JinnIme : InputMethodService() {
                 TAG,
                 "粘贴: 单条超过 ${ClipboardPrefs.of(this).effectiveMaxItemBytes()} 字节上限，已跳过 len=${text.length}",
             )
-            android.widget.Toast.makeText(this, "内容过大，未粘贴", android.widget.Toast.LENGTH_SHORT).show()
+            toast("内容过大，未粘贴")
             return false
         }
         // L-1474：单条字节闸挡不住「无断点长串」——≤268,435B 的 256KB 单行过闸后
@@ -843,7 +843,7 @@ class JinnIme : InputMethodService() {
         // 失败提示统一由 IME 出：面板只拿到 true/false，分不清「连接为空 → 已暂存、重聚焦时
         // 自动提交」与「真提交失败」，在那里弹提示会与上面的「内容过大」叠成两条、也会冤枉暂存态
         if (!ok) {
-            android.widget.Toast.makeText(this, "粘贴失败", android.widget.Toast.LENGTH_SHORT).show()
+            toast("粘贴失败")
         }
         return ok
     }
