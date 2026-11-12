@@ -497,6 +497,18 @@ class ClipboardLimitsTest {
         assertEquals(3L, ClipboardStore.utf8ByteSize("汉"))
         assertEquals(1L, ClipboardStore.utf8ByteSize("a"))
         assertEquals(0L, ClipboardStore.utf8ByteSize(""))
+        // 全 ASCII 走长度快路径、非 ASCII 交回原编码口径：逐码元与原实现一致（含孤立代理的 REPLACE）
+        assertEquals(5L, ClipboardStore.utf8ByteSize("hello"))
+        assertEquals(300000L, ClipboardStore.utf8ByteSize("a".repeat(300000)))
+        assertEquals(3000L, ClipboardStore.utf8ByteSize("汉".repeat(1000)))
+        assertEquals(4L, ClipboardStore.utf8ByteSize("\uD83D\uDE00"))
+        val loneHigh = 0xD800.toChar().toString()
+        val loneLow = 0xDC00.toChar().toString()
+        assertEquals(1L, ClipboardStore.utf8ByteSize(loneHigh))
+        assertEquals(1L, ClipboardStore.utf8ByteSize(loneLow))
+        listOf("", "a", "hello", "é", "汉", "\uD83D\uDE00", loneHigh, loneLow, loneHigh + "a").forEach {
+            assertEquals(it.toByteArray(Charsets.UTF_8).size.toLong(), ClipboardStore.utf8ByteSize(it))
+        }
     }
 
     @Test

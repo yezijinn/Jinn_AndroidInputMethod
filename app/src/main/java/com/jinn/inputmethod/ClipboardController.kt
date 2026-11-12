@@ -805,7 +805,16 @@ object ClipboardStore {
      * 中文 1 字符在 UTF-8 下占 3 字节，拿长度当字节会把预算低估到 1/3，护栏形同虚设。
      * 这里与 [exceedsItemLimit] 保持一致。
      */
-    fun utf8ByteSize(text: String): Long = text.toByteArray(Charsets.UTF_8).size.toLong()
+    fun utf8ByteSize(text: String): Long {
+        // 全 ASCII 时 UTF-8 字节数恰等于码元数，直接返回即可，省掉整条 byte[] 分配；
+        // 只要出现一个非 ASCII 码元就交回原编码口径（含孤立代理的 REPLACE 行为），逐码元等价不变。
+        var i = 0
+        while (i < text.length) {
+            if (text[i].code >= 0x80) return text.toByteArray(Charsets.UTF_8).size.toLong()
+            i++
+        }
+        return text.length.toLong()
+    }
 
     /** 单次粘贴允许的「最长不可断片段」（UTF-8 字节）。L-1474：32KB 为保守余量，非实测起爆点下沿。 */
     const val PASTE_MAX_UNBREAKABLE_RUN_BYTES = 32 * 1024
