@@ -941,6 +941,22 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      */
     private fun trimFavorites(): Int {
         val prefs = ClipboardPrefs.of(appContext)
+        val maxItems = prefs.favoriteMaxItems
+        val maxBytes = prefs.favoriteMaxBytes
+        // 入库热路径：先聚合判超限，未超限直接短路，省收藏行回传与 ClipboardRowSize 分配。
+        // 判据与 favoriteOverflowIds 同源：COUNT 对齐行数，SUM(CASE) 对齐逐行字节和。
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN content_type = ? THEN image_bytes " +
+                "ELSE LENGTH(encrypted_content) END), 0) FROM $TABLE_ITEMS WHERE is_favorite = 1",
+            arrayOf(CONTENT_TYPE_IMAGE),
+        ).use { c ->
+            if (!c.moveToFirst()) return 0
+            val favCount = c.getLong(0)
+            val favBytes = c.getLong(1)
+            val itemCap = if (maxItems > 0) maxItems.toLong() else favCount
+            val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
+            if (favCount <= itemCap && favBytes <= byteCap) return 0
+        }
         val favRows = ArrayList<ClipboardRowSize>()
         // 字节口径：图片行按真实体积（image_bytes）算，文本行按密文长度 —— 否则一张收藏图
         // 只占 ~百字节（占位密文），收藏字节上限对图片形同虚设。收藏行只有几条~千条量级，CASE 无性能顾虑。
@@ -960,7 +976,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 )
             }
         }
-        val ids = favoriteOverflowIds(favRows, prefs.favoriteMaxItems, prefs.favoriteMaxBytes)
+        val ids = favoriteOverflowIds(favRows, maxItems, maxBytes)
         if (ids.isEmpty()) return 0
         // 按**实际删除行数**记账：候选集是快照，这几毫秒里用户可能已取消收藏或删除该行
         val (deleted, imagesDeleted) = deleteAnyCountingImages(ids, favRows)

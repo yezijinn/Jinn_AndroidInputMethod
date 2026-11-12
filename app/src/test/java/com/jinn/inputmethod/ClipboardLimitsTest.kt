@@ -126,6 +126,8 @@ class ClipboardLimitsTest {
         val body = TestSources.blockAfter(src, "private fun trimFavorites()")
         assertTrue("trimFavorites 必须走含收藏的删除入口", "deleteAnyCountingImages(ids" in body)
         assertFalse("trimFavorites 不得复用只删非收藏的入口", "deleteNonFavoriteByIds" in body)
+        assertTrue("trimFavorites 须保留 COUNT/SUM 聚合快筛（删掉后功能仍对，只有形态钉能发现）",
+            "COALESCE(SUM(" in body)
         assertTrue("普通裁剪入口必须带 non-favorite 语义名", "private fun deleteNonFavoriteByIds(" in src)
         // 含收藏的删除入口只能有这一份 SQL 实现：deleteAnyByIds 只是它的薄包装
         assertTrue(
