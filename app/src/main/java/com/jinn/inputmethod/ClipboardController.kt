@@ -807,6 +807,48 @@ object ClipboardStore {
      */
     fun utf8ByteSize(text: String): Long = text.toByteArray(Charsets.UTF_8).size.toLong()
 
+    /** 单次粘贴允许的「最长不可断片段」（UTF-8 字节）。L-1474：32KB 为保守余量，非实测起爆点下沿。 */
+    const val PASTE_MAX_UNBREAKABLE_RUN_BYTES = 32 * 1024
+
+    /**
+     * 该码点能否给宿主提供换行机会。只计入 medium.md:157 实测过的两类：空白、基本区 CJK 表意文字逐字可断。
+     * 补充平面（0x20000+）无实测、且区间含大量未分配码位，按拒收型「宁多拦」不计可断；
+     * ASCII 标点 / 全角 / emoji 同样不计 —— 把「宿主未必能断」的字符算可断会造成漏拦。
+     */
+    private fun isBreakOpportunity(cp: Int): Boolean {
+        if (Character.isWhitespace(cp)) return true
+        return cp in 0x3400..0x4DBF || cp in 0x4E00..0x9FFF || cp in 0xF900..0xFAFF
+    }
+
+    /**
+     * 文本里是否存在 > [limit] 字节的连续不可断片段（纯 JVM 纯函数，可单测直调）。
+     * 与 [exceedsItemLimit] 同源按 UTF-8 字节算：3×码元数是字节数上界，
+     * 故 3×length ≤ limit ⇒ 最长片段必 ≤ limit，O(1) 快筛；否则逐码点一趟 O(n) 早停，
+     * 遇可断点清零、累计 > limit 立即 true。零分配、不复制串。
+     */
+    fun exceedsUnbreakableRun(text: String, limit: Int = PASTE_MAX_UNBREAKABLE_RUN_BYTES): Boolean {
+        if (limit <= 0) return false
+        if (text.length.toLong() * 3L <= limit.toLong()) return false
+        var run = 0
+        var i = 0
+        while (i < text.length) {
+            val cp = Character.codePointAt(text, i)
+            if (isBreakOpportunity(cp)) {
+                run = 0
+            } else {
+                run += when {
+                    cp <= 0x7F -> 1
+                    cp <= 0x7FF -> 2
+                    cp <= 0xFFFF -> 3
+                    else -> 4
+                }
+                if (run > limit) return true
+            }
+            i += Character.charCount(cp)
+        }
+        return false
+    }
+
     /**
      * 搜索结果是否该停止累积（纯函数，便于单测）。
      *

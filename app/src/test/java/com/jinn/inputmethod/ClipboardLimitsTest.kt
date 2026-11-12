@@ -579,6 +579,33 @@ class ClipboardLimitsTest {
         val raw = TestSources.rawSourceOfShortName("ClipboardController.kt")
         assertFalse("TimedOut 不得再写成主线程专属", "只可能出现在主线程调用路径上" in raw)
         assertTrue("TimedOut 的 KDoc 须并列两条读入预算", "[PASTE_READ_BUDGET_MS] / [COLLECT_READ_BUDGET_MS]" in raw)
+        // ── L-1474：粘贴闸按「最长不可断片段」拒收，判据必须排在 commitText 之前 ──
+        // 用 blockAfter 把范围锁在 pasteClipboardText 函数体内（全文件 indexOf 会被别处同名串借走）
+        val pasteBody = TestSources.blockAfter(ime, "private fun pasteClipboardText(")
+        assertTrue("粘贴闸必须调无断点判据",
+            "ClipboardStore.exceedsUnbreakableRun(text)" in pasteBody)
+        val gateAt = pasteBody.indexOf("ClipboardStore.exceedsUnbreakableRun(text)")
+        val commitAt = pasteBody.indexOf("connection.commitText(text, 1)")
+        assertTrue("判据必须排在 commitText 之前（否则巨串已进宿主）",
+            gateAt >= 0 && commitAt >= 0 && gateAt < commitAt)
+        assertTrue("拒收分支必须复用 toast helper 与现成提示（不新增文案、带兜底）",
+            "toast(\"内容过大，未粘贴\")" in pasteBody)
+        assertTrue("纯函数必须定义在 ClipboardController.kt 的 ClipboardStore（不得挪进 JinnIme）",
+            "fun exceedsUnbreakableRun(" in src &&
+                "PASTE_MAX_UNBREAKABLE_RUN_BYTES" in src &&
+                "fun exceedsUnbreakableRun(" !in ime)
+        assertFalse("空串", ClipboardStore.exceedsUnbreakableRun(""))
+        assertFalse("短串走 O(1) 快筛", ClipboardStore.exceedsUnbreakableRun("a".repeat(1024)))
+        assertFalse("中文长文逐字可断（270KB 不误伤）",
+            ClipboardStore.exceedsUnbreakableRun("汉".repeat(90_000)))
+        assertFalse("英文段落词间空格可断（270KB 不误伤）",
+            ClipboardStore.exceedsUnbreakableRun("abcde ".repeat(45_000)))
+        assertFalse("恰好 32KB 不超", ClipboardStore.exceedsUnbreakableRun("a".repeat(32 * 1024)))
+        assertTrue("超 32KB 无断点必拦", ClipboardStore.exceedsUnbreakableRun("a".repeat(32 * 1024 + 1)))
+        assertTrue("中文里夹一段无断点长串也要拦",
+            ClipboardStore.exceedsUnbreakableRun("汉".repeat(100) + "a".repeat(40_000) + "字".repeat(100)))
+        assertFalse("非正上限视为不限制",
+            ClipboardStore.exceedsUnbreakableRun("a".repeat(40_000), limit = 0))
     }
 
     @Test

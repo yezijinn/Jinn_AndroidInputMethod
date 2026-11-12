@@ -795,6 +795,20 @@ class JinnIme : InputMethodService() {
             android.widget.Toast.makeText(this, "内容过大，未粘贴", android.widget.Toast.LENGTH_SHORT).show()
             return false
         }
+        // L-1474：单条字节闸挡不住「无断点长串」——≤268,435B 的 256KB 单行过闸后
+        // commitText 交给宿主，最优断行把宿主与 IME 一起拖到 LMK 被杀。判据按「最长
+        // 不可断片段」而非总字节：中文长文（逐字可断）/ 英文段落（词间空格）不受影响。
+        // 必须排在 val connection 之前：pendingPasteText 唯一赋值点在下方（连接为空分支），
+        // 过不了这道闸的串不会被暂存，flushPendingPaste 的裸 commitText 因此必已过闸。
+        // 复用 toast() helper 与既有提示字面量，不新增任何用户可见中文。
+        if (ClipboardStore.exceedsUnbreakableRun(text)) {
+            Diagnostics.w(
+                TAG,
+                "粘贴: 最长不可断片段超过 ${ClipboardStore.PASTE_MAX_UNBREAKABLE_RUN_BYTES} 字节，已跳过 len=${text.length}",
+            )
+            toast("内容过大，未粘贴")
+            return false
+        }
         val connection = currentInputConnection
         if (connection == null) {
             // 剪贴板面板在前台时 IME 可能无有效连接：暂存，并主动唤起键盘，
