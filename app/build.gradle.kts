@@ -9,6 +9,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 禁用 androidTest（instrumentation 测试）变体：项目无 androidTest 源目录与依赖，
+// 1962 例单元测试全在 src/test（纯 JVM），androidTest 为纯空壳。
+// 同时规避 kotlin-server(ILS 263.7084.0) 的 Gradle 同步在配置缓存下急切读取
+// generateDebugAndroidTestBuildConfig 任务输出 → InvalidUserCodeException → 依赖零解析。
+androidComponents {
+    beforeVariants { variantBuilder ->
+        variantBuilder.enableAndroidTest = false
+    }
+}
+
 // ── 签名配置 ─────────────────────────────────────────────
 // 一键打包脚本经环境变量 JINN_KEYSTORE_ROOT 注入统一密钥库目录（由环境变量指定）；
 // keystore.properties 仅作为手动构建的本地兼容回退，绝不入库。
