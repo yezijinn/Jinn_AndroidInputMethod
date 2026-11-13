@@ -6818,8 +6818,13 @@ class RecentFixesRegressionTest {
             "句柄不得再用 by lazy（算一次即固定，失效后无法重建）",
             "cachedKey: SecretKey by lazy" in src,
         )
-        assertTrue("必须有可重建的取句柄入口", "private fun key(): SecretKey" in src)
+        assertFalse("KeyStore 实例同样不得 lazy（服务故障后旧实例取不到密钥）", "keyStore by lazy" in src)
+        assertTrue("必须有可重建的取句柄入口", "private fun keyOrNull(" in src)
         assertTrue("必须有清句柄的入口", "private fun invalidateKey()" in src)
+        assertTrue(
+            "失效必须连 KeyStore 实例一起清（否则重试仍拿旧实例）",
+            "keyStore = null" in blockAfter(src, "private fun invalidateKey()"),
+        )
         assertTrue("必须识别密钥失效类异常", "private fun isKeyFailure" in src)
         assertFalse(
             "密文损坏（AEADBadTagException）不得触发重建重试",
@@ -6827,6 +6832,30 @@ class RecentFixesRegressionTest {
         )
         assertFalse("不得再有裸 cachedKey 参与加密 init", "cipher.init(Cipher.ENCRYPT_MODE, cachedKey)" in src)
         assertFalse("不得再有裸 cachedKey 参与解密 init", "cipher.init(Cipher.DECRYPT_MODE, cachedKey" in src)
+        // 解密路径禁止建钥：读时换钥会把已有密文变成永久不可解
+        assertTrue(
+            "解密必须禁止建钥",
+            "withKey(allowCreate = false)" in blockAfter(src, "fun decrypt(stored: String)"),
+        )
+        assertTrue(
+            "字节解密必须禁止建钥",
+            "withKey(allowCreate = false)" in blockAfter(src, "fun decryptBytes(stored: ByteArray)"),
+        )
+        assertTrue(
+            "加密仍可建钥",
+            "withKey(allowCreate = true)" in blockAfter(src, "fun encrypt(plaintext: String)"),
+        )
+        assertTrue(
+            "字节加密仍可建钥",
+            "withKey(allowCreate = true)" in blockAfter(src, "fun encryptBytes(plain: ByteArray)"),
+        )
+        // 「取键抛异常」≠「别名不存在」：抛的时候任何档都不许建钥（否则会覆盖别名）
+        val load = blockAfter(src, "private fun loadKey(")
+        val early = load.indexOf("if (!allowCreate) return null")
+        assertTrue("读路径早退必须排在建钥之前", early > 0 && early < load.indexOf("generateKey"))
+        val catchBlock = blockAfter(load, "catch (e")
+        assertTrue("取键抛异常必须 return null（抛 ≠ 别名不存在）", "return null" in catchBlock)
+        assertFalse("取键抛异常不得建钥", "generateKey" in catchBlock)
     }
 
     /**

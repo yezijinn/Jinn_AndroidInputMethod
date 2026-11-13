@@ -4,6 +4,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -35,9 +36,20 @@ object ClipboardCrypto {
     /** 字节壳（[encryptBytes]/[decryptBytes]）的格式版本，占首字节 */
     private const val BYTES_FORMAT_VERSION: Byte = 1
 
-    private val keyStore by lazy {
-        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-    }
+    /**
+     * KeyStore 实例（**可失效**，与 [cachedKey] 同锁同生命周期）。
+     *
+     * ⚠ 不能 `by lazy`：Keystore 服务端故障 / 重启后，旧实例取不到密钥。实例只在
+     * `synchronized(this)` 内写（`@Volatile` 只服务无锁快路径），清字段不影响已取出的局部句柄。
+     */
+    @Volatile
+    private var keyStore: KeyStore? = null
+
+    /** 解密失败计数（**仅归因**，不参与任何控制流；每 50 次落一条 E，避免坏库刷屏） */
+    private val decryptFails = AtomicInteger(0)
+
+    /** 本进程内「密钥疑似失效后重建」的次数（仅归因） */
+    private val keyRebuilds = AtomicInteger(0)
 
     /**
      * 缓存 Keystore 里的密钥句柄（**可失效**，见 [withKey]）。
@@ -67,14 +79,59 @@ object ClipboardCrypto {
     @Volatile
     private var cachedKey: SecretKey? = null
 
-    /** 取密钥句柄（首次或失效后重建）；重建失败不缓存，下次调用再试 */
-    private fun key(): SecretKey = cachedKey ?: synchronized(this) {
-        cachedKey ?: createOrLoadKey().also { cachedKey = it }
+    /**
+     * 取密钥句柄（首次或失效后重建）。
+     *
+     * @param allowCreate **只有加密（写新密文）才允许 true**。解密路径必须 false：
+     *   读的时候新建密钥会覆盖同别名，把库里已有密文变成**永久**不可解（本仓对台账的口径是
+     *   「密钥件缺失而数据还在 ⇒ 绝不新建」，剪贴板同理）。
+     */
+    private fun keyOrNull(allowCreate: Boolean): SecretKey? {
+        cachedKey?.let { return it }
+        return synchronized(this) { cachedKey ?: loadKey(allowCreate)?.also { cachedKey = it } }
     }
 
-    /** 丢弃缓存的句柄：下次 [key] 会重新 getKey（不存在才生成） */
+    /**
+     * 实际取键：[getKey] **正常返回 null** 才说明别名不存在；抛异常一律当作「暂时取不到」
+     * （记 W 后返回 null，**任何** `allowCreate` 下都不建钥）。
+     *
+     * 为什么必须区分：API ≤30 的 KeyStore 把服务端故障折成 `contains=false` ⇒ `getKey` 返 null
+     * （与「别名不存在」同形），此时若建钥就会覆盖别名、旧密文永久不可解；API ≥31 只有
+     * KEY_NOT_FOUND 才折 null、其余抛。这条区分是唯一能同时覆盖两档的写法。
+     */
+    private fun loadKey(allowCreate: Boolean): SecretKey? {
+        val ks = keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE)
+            .apply { load(null) }.also { keyStore = it }
+        val existing = try {
+            ks.getKey(KEY_ALIAS, null) as? SecretKey
+        } catch (e: Throwable) {
+            if (!isKeyFailure(e)) throw e
+            Diagnostics.w(TAG, "取密钥失败: ${e.javaClass.simpleName}")
+            return null
+        }
+        if (existing != null) return existing
+        if (!allowCreate) return null
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .setRandomizedEncryptionRequired(true)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    /** 丢弃密钥句柄**与** KeyStore 实例：下次 [keyOrNull] 从零重建（两者同锁，无拆半状态） */
     private fun invalidateKey() {
-        synchronized(this) { cachedKey = null }
+        synchronized(this) {
+            cachedKey = null
+            keyStore = null
+        }
     }
 
     /**
@@ -102,40 +159,25 @@ object ClipboardCrypto {
     }
 
     /**
-     * 带一次失效重建的加解密：密钥类异常时清句柄、重建后重试一次。
+     * 带一次失效重建的加解密：密钥类异常时清句柄与 KeyStore 实例、重建后重试一次。
      *
-     * 第二次仍失败则原样抛出，由各入口的 `runCatching` 记日志并返回 null（行为与修复前一致）。
+     * 第二次仍失败则原样抛出，由各入口的 `runCatching` 记日志并返回 null。
+     * [allowCreate] 语义见 [keyOrNull]：解密传 false（绝不建钥）。
      */
-    private fun <T> withKey(block: (SecretKey) -> T): T = try {
-        block(key())
+    private fun <T> withKey(allowCreate: Boolean, block: (SecretKey) -> T): T = try {
+        block(keyOrNull(allowCreate) ?: throw IllegalStateException("Keystore 密钥不可用"))
     } catch (e: Throwable) {
         if (!isKeyFailure(e)) throw e
         Diagnostics.w(TAG, "Keystore 密钥疑似失效，重建后重试: ${e.javaClass.simpleName}")
+        keyRebuilds.incrementAndGet()
         invalidateKey()
-        block(key())
-    }
-
-    private fun createOrLoadKey(): SecretKey {
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-        )
-        return generator.generateKey()
+        block(keyOrNull(allowCreate) ?: throw e)
     }
 
     /** 加密明文，返回 `base64(iv):base64(ciphertext)`；失败返回 null（调用方记日志但不外抛） */
     fun encrypt(plaintext: String): String? = runCatching {
         if (plaintext.isEmpty()) return null
-        withKey { k ->
+        withKey(allowCreate = true) { k ->
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, k)
             val iv = cipher.iv
@@ -156,13 +198,16 @@ object ClipboardCrypto {
         val iv = Base64.decode(stored.substring(0, sep), Base64.NO_WRAP)
         val data = Base64.decode(stored.substring(sep + 1), Base64.NO_WRAP)
         if (iv.size < 12) return null // GCM 标准 IV 为 12 字节
-        withKey { k ->
+        withKey(allowCreate = false) { k ->
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(data), Charsets.UTF_8)
         }
     }.getOrElse {
-        Diagnostics.e(TAG, "解密失败: ${it.message}")
+        val n = decryptFails.incrementAndGet()
+        if (n == 1 || n % 50 == 0) {
+            Diagnostics.e(TAG, "解密失败累计 $n 次（本进程密钥重建 ${keyRebuilds.get()} 次）: ${it.message}")
+        }
         null
     }
 
@@ -177,7 +222,7 @@ object ClipboardCrypto {
      */
     fun encryptBytes(plain: ByteArray): ByteArray? = runCatching {
         if (plain.isEmpty()) return null
-        withKey { k ->
+        withKey(allowCreate = true) { k ->
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, k)
             val iv = cipher.iv
@@ -207,13 +252,16 @@ object ClipboardCrypto {
         if (stored.size <= 1 + GCM_IV_BYTES) return null
         if (stored[0] != BYTES_FORMAT_VERSION) return null
         val iv = stored.copyOfRange(1, 1 + GCM_IV_BYTES)
-        withKey { k ->
+        withKey(allowCreate = false) { k ->
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(GCM_TAG_BITS, iv))
             cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
         }
     }.getOrElse {
-        Diagnostics.e(TAG, "字节解密失败: ${it.message}")
+        val n = decryptFails.incrementAndGet()
+        if (n == 1 || n % 50 == 0) {
+            Diagnostics.e(TAG, "字节解密失败累计 $n 次（本进程密钥重建 ${keyRebuilds.get()} 次）: ${it.message}")
+        }
         null
     }
 }
