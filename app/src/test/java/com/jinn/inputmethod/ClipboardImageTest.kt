@@ -90,8 +90,17 @@ class ClipboardImageTest {
             listOf(1L),
             ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = false) }, maxItems = 2, maxBytes = 0),
         )
-        // 字节超限（30 > 20）：删一条即落回
-        assertEquals(listOf(1L), ClipboardDb.imageOverflowIds(rows, maxItems = 0, maxBytes = 20))
+        // 字节额度只按非收藏算（非收藏 10+10=20 ≤ 20）⇒ 不删；收藏的 10 不再计入额度
+        assertTrue(ClipboardDb.imageOverflowIds(rows, maxItems = 0, maxBytes = 20).isEmpty())
+        // 收藏自身超预算：非收藏额度不受影响（不删）
+        val favHeavy = listOf(
+            ClipboardRowSize(1, 100, favorite = true, image = true),
+            ClipboardRowSize(2, 10, favorite = false, image = true),
+            ClipboardRowSize(3, 10, favorite = false, image = true),
+        )
+        assertTrue(ClipboardDb.imageOverflowIds(favHeavy, maxItems = 0, maxBytes = 50).isEmpty())
+        // 非收藏确实超预算（20 > 15）⇒ 只删最旧一条即落回，不得顺手删光
+        assertEquals(listOf(2L), ClipboardDb.imageOverflowIds(favHeavy, maxItems = 0, maxBytes = 15))
         // 全是收藏 ⇒ 无可删（宁可超限也不删用户明确保留的内容）
         assertTrue(ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = true) }, 1, 1).isEmpty())
         // 收藏占满额度、只有刚采集那张是非收藏 ⇒ **不删**（2026-11-14 复核）：

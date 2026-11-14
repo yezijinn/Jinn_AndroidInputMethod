@@ -63,6 +63,40 @@ object ClipboardCrypto {
     private const val REFUSAL_LOG_LIMIT = 3
 
     /**
+     * 各代际密钥句柄缓存。
+     *
+     * 为什么需要：解密要按代际回退（旧密文可能是上一代密钥写的），而每代一次 `getKey` 约
+     * 0.2~0.3ms。没有缓存时**每解一行**都要把 9 代全试一遍（正常库只有一代），开一次搜索
+     * 2000 行就白烧 4 秒以上，还会把采集入库一起顶住（同一个短活线程池）。
+     */
+    private val genKeys = java.util.concurrent.ConcurrentHashMap<Int, SecretKey>()
+
+    /**
+     * 已确认**不存在**的代际（值为确认时刻）。
+     *
+     * ⚠ 只有 `getKey` **正常返回 null**（明确答「不存在」）才允许写入；抛异常一律不写 ——
+     * 一次 Keystore 抖动若被记成「9 代全缺」，读路径会连 `getKey` 都不再发，整进程读不出历史。
+     * 带 60s 有效期：到期重新探测，避免任何陈旧判断被固化。
+     */
+    private val genMissingAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    /** 负缓存有效期：远大于一次面板加载，小于用户手动重试间隔 */
+    private const val GEN_MISSING_TTL_MS = 60_000L
+
+    /** 读路径自愈冷却：密钥真丢失时不让每一行都重建一次 KeyStore */
+    private const val READ_REPAIR_COOLDOWN_MS = 60_000L
+
+    @Volatile
+    private var lastReadRepairAt = 0L
+
+    private fun reserveReadRepair(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastReadRepairAt < READ_REPAIR_COOLDOWN_MS) return false
+        lastReadRepairAt = now
+        return true
+    }
+
+    /**
      * 密钥代际上限：第 1 代沿用历史别名，之后 `_g2`…`_g9`。
      *
      * 为什么需要多代：`generateKey()` 同名会先删旧钥，而 Keystore 密钥不可导出 ⇒ 一次「取不到」
@@ -135,12 +169,20 @@ object ClipboardCrypto {
             hasCiphertextRows = hasRows,
         )
         if (decision != KeyDecision.Create && decision != KeyDecision.CreateNewGeneration) return null
-        val gen = synchronized(this) { pickGeneration(decision == KeyDecision.CreateNewGeneration) }
         return synchronized(this) {
-            cachedKey ?: createKey(gen).also {
-                cachedKey = it
-                activeGen = gen
-                Diagnostics.w(TAG, "新建剪贴板密钥 gen=$gen（库内${if (hasRows) "仍有" else "无"}文本密文）")
+            cachedKey ?: run {
+                // ⚠ 选代与建钥必须同一个监视器：拆两段时两个线程会选中同一代，后建者同名先删后建
+                // ⇒ 覆盖前者刚写下的密文所用密钥（insertRestoredBatch 在 DB 锁外加密，可并发进入）。
+                // 前提：pickGeneration 只碰 KeyStore、不碰库（不引入 Crypto → DB 的反向锁序）。
+                val gen = pickGeneration(decision == KeyDecision.CreateNewGeneration)
+                    ?: return@synchronized null
+                createKey(gen).also {
+                    cachedKey = it
+                    activeGen = gen
+                    genKeys[gen] = it
+                    genMissingAt.remove(gen)
+                    Diagnostics.w(TAG, "新建剪贴板密钥 gen=$gen（库内${if (hasRows) "仍有" else "无"}文本密文）")
+                }
             }
         }
     }
@@ -156,11 +198,15 @@ object ClipboardCrypto {
     /** 密钥别名：第 1 代沿用历史名（老用户密文仍可解），2 代起加后缀 */
     private fun aliasFor(gen: Int): String = if (gen <= 1) KEY_ALIAS else "${KEY_ALIAS}_g$gen"
 
+    /** KeyStore 实例的**唯一**写入口（`@Volatile` 快路径 + 监视器内双重检查） */
+    private fun keyStoreInstance(): KeyStore = keyStore ?: synchronized(this) {
+        keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.also { keyStore = it }
+    }
+
     /** 按代际从高到低找第一把可用密钥；都取不到返回 null（[lastProbeFailed] 记是否因异常失败） */
     private fun highestStoredKey(): SecretKey? {
         lastProbeFailed = false
-        val ks = keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE)
-            .apply { load(null) }.also { keyStore = it }
+        val ks = keyStoreInstance()
         for (gen in MAX_KEY_GEN downTo 1) {
             val key = try {
                 ks.getKey(aliasFor(gen), null) as? SecretKey
@@ -172,42 +218,67 @@ object ClipboardCrypto {
             }
             if (key != null) {
                 activeGen = gen
+                genKeys[gen] = key
+                genMissingAt.remove(gen)
                 return key
             }
+            genMissingAt[gen] = System.currentTimeMillis()
         }
         return null
     }
 
-    /** 取指定代际的密钥（解密回退用；只读，不建钥） */
+    /**
+     * 取指定代际的密钥（解密回退用；只读，不建钥）。
+     *
+     * 密钥类异常**向上抛**（由调用方判定是否重建 KeyStore）；只有 `getKey` 正常返回 null
+     * 才写负缓存。命中即缓存句柄，避免每行重复 binder。
+     */
     private fun storedKeyFor(gen: Int): SecretKey? {
         if (gen == activeGen) cachedKey?.let { return it }
-        val ks = keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE)
-            .apply { load(null) }.also { keyStore = it }
-        return try {
-            ks.getKey(aliasFor(gen), null) as? SecretKey
-        } catch (e: Throwable) {
-            if (!isKeyFailure(e)) throw e
-            null
+        genKeys[gen]?.let { return it }
+        val missAt = genMissingAt[gen]
+        if (missAt != null) {
+            if (System.currentTimeMillis() - missAt < GEN_MISSING_TTL_MS) return null
+            genMissingAt.remove(gen)
         }
+        val key = keyStoreInstance().getKey(aliasFor(gen), null) as? SecretKey
+        if (key == null) {
+            genMissingAt[gen] = System.currentTimeMillis()
+            return null
+        }
+        genKeys[gen] = key
+        return key
     }
 
     /**
-     * 选一个**空闲**代际建钥。库内还有文本密文时绝不复用第 1 代（那可能是「假取不到」，
-     * 覆盖会让旧密文永久失钥）；全新库才用第 1 代。
+     * 选一个**空闲**代际建钥；返回 null = 本次不建（探测抖动或真耗尽）。
+     *
+     * 库内还有文本密文时绝不复用第 1 代（那可能是「假取不到」，覆盖会让旧密文永久失钥）；
+     * 全新库才用第 1 代。**绝不返回已占用的代际** —— `generateKey` 同名是先删后建。
      */
-    private fun pickGeneration(hasRows: Boolean): Int {
-        val ks = keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE)
-            .apply { load(null) }.also { keyStore = it }
+    private fun pickGeneration(hasRows: Boolean): Int? {
+        var probeFailed = false
+        val ks = keyStoreInstance()
         for (gen in (if (hasRows) 2 else 1)..MAX_KEY_GEN) {
             val occupied = try {
                 ks.containsAlias(aliasFor(gen))
             } catch (e: Throwable) {
                 if (!isKeyFailure(e)) throw e
+                probeFailed = true
                 true // 问不到就当占用，避免覆盖
             }
             if (!occupied) return gen
         }
-        return MAX_KEY_GEN // 代际耗尽（极端）：仍要能记录
+        if (probeFailed) {
+            // 瞬态：下次还能建，不当作耗尽
+            if (createRefusals.incrementAndGet() <= REFUSAL_LOG_LIMIT) {
+                Diagnostics.w(TAG, "别名探测失败，本次不新建（抛 ≠ 别名不存在）")
+            }
+        } else {
+            createRefusals.incrementAndGet()
+            Diagnostics.e(TAG, "密钥代际耗尽（gen1..$MAX_KEY_GEN 全被占用），拒绝建钥：旧密文不可覆盖")
+        }
+        return null
     }
 
     /** 生成并落一个新密钥（[gen] 由 [pickGeneration] 保证空闲） */
@@ -227,11 +298,18 @@ object ClipboardCrypto {
         return generator.generateKey()
     }
 
-    /** 丢弃密钥句柄**与** KeyStore 实例：下次 [keyOrNull] 从零重建（两者同锁，无拆半状态） */
+    /**
+     * 丢弃密钥句柄、KeyStore 实例**与**两张代际缓存：下次 [keyOrNull] 从零重建。
+     *
+     * ⚠ 缓存必须一起清：只清 `cachedKey` 而留着 `genKeys`，重建后 `storedKeyFor` 仍返回旧句柄，
+     * `Cipher.init` 继续抛 —— 重建"看起来跑了"，实际无效。
+     */
     private fun invalidateKey() {
         synchronized(this) {
             cachedKey = null
             keyStore = null
+            genKeys.clear()
+            genMissingAt.clear()
         }
     }
 
@@ -275,18 +353,43 @@ object ClipboardCrypto {
         block(keyOrNull(allowCreate) ?: throw e)
     }
 
-    /** 文本解密：当前代际优先，失败按代际向旧回退（旧密文可能是上一代密钥写的） */
-    private fun decryptRaw(iv: ByteArray, data: ByteArray): String {
+    /**
+     * 文本解密：当前代际优先，失败按代际向旧回退（旧密文可能是上一代密钥写的）。
+     *
+     * @param allowRepair 允许在「密钥类异常」时重建 KeyStore 并重试一次。读路径原先没有这条通道，
+     *   只能靠写路径（复制）顺带修好 —— 表现为「打开历史一直读不出、复制几条后自己好了」。
+     *   带 60s 冷却：密钥真丢失时不让每一行都重建一次实例。
+     */
+    private fun decryptRaw(iv: ByteArray, data: ByteArray, allowRepair: Boolean = true): String {
         var last: Throwable? = null
+        var keyFailure = false
         for (gen in MAX_KEY_GEN downTo 1) {
-            val key = storedKeyFor(gen) ?: continue
+            val key = try {
+                storedKeyFor(gen)
+            } catch (e: Throwable) {
+                if (!isKeyFailure(e)) throw e
+                keyFailure = true
+                continue
+            } ?: continue
             try {
                 val cipher = Cipher.getInstance(TRANSFORMATION)
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
                 return String(cipher.doFinal(data), Charsets.UTF_8)
             } catch (e: Throwable) {
+                if (isKeyFailure(e)) {
+                    // 单代句柄粘滞：不清这一代，它会一直失败到下次整体重建
+                    genKeys.remove(gen)
+                    keyFailure = true
+                }
                 last = e
             }
+        }
+        // 密文坏（坏 tag）不置位 keyFailure ⇒ 不重建
+        if (allowRepair && (keyFailure || last?.let { isKeyFailure(it) } == true) && reserveReadRepair()) {
+            Diagnostics.w(TAG, "读路径密钥疑似失效，重建 KeyStore 后重试一次")
+            keyRebuilds.incrementAndGet()
+            invalidateKey()
+            return decryptRaw(iv, data, allowRepair = false)
         }
         throw last ?: IllegalStateException("Keystore 密钥不可用")
     }
@@ -363,20 +466,40 @@ object ClipboardCrypto {
      * 用 `doFinal(input, offset, len)` 而不是先 `copyOfRange` 出明文副本：单张图片最大 20MB，
      * 少一次整份复制就少一份峰值内存（采集侧本就跑在内存敏感的解码链路上）。
      */
-    fun decryptBytes(stored: ByteArray): ByteArray? = runCatching {
+    fun decryptBytes(stored: ByteArray, allowRepair: Boolean = true): ByteArray? = runCatching {
         if (stored.size <= 1 + GCM_IV_BYTES) return null
         if (stored[0] != BYTES_FORMAT_VERSION) return null
         val iv = stored.copyOfRange(1, 1 + GCM_IV_BYTES)
         var last: Throwable? = null
+        var keyFailure = false
+        var plain: ByteArray? = null
         for (gen in MAX_KEY_GEN downTo 1) {
-            val key = storedKeyFor(gen) ?: continue
+            val key = try {
+                storedKeyFor(gen)
+            } catch (e: Throwable) {
+                if (!isKeyFailure(e)) throw e
+                keyFailure = true
+                continue
+            } ?: continue
             try {
                 val cipher = Cipher.getInstance(TRANSFORMATION)
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-                return@runCatching cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
+                plain = cipher.doFinal(stored, 1 + GCM_IV_BYTES, stored.size - 1 - GCM_IV_BYTES)
+                break
             } catch (e: Throwable) {
+                if (isKeyFailure(e)) {
+                    genKeys.remove(gen)
+                    keyFailure = true
+                }
                 last = e
             }
+        }
+        if (plain != null) return@runCatching plain
+        if (allowRepair && (keyFailure || last?.let { isKeyFailure(it) } == true) && reserveReadRepair()) {
+            Diagnostics.w(TAG, "读路径密钥疑似失效，重建 KeyStore 后重试一次（字节）")
+            keyRebuilds.incrementAndGet()
+            invalidateKey()
+            return@runCatching decryptBytes(stored, allowRepair = false)
         }
         throw last ?: IllegalStateException("Keystore 密钥不可用")
     }.getOrElse {

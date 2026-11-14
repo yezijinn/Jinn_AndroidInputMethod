@@ -6839,7 +6839,7 @@ class RecentFixesRegressionTest {
         assertFalse("不得再有裸 cachedKey 参与加密 init", "cipher.init(Cipher.ENCRYPT_MODE, cachedKey)" in src)
         assertFalse("不得再有裸 cachedKey 参与解密 init", "cipher.init(Cipher.DECRYPT_MODE, cachedKey" in src)
         // 解密路径禁止建钥：读时换钥会把已有密文变成永久不可解
-        for (anchor in listOf("fun decrypt(stored: String)", "fun decryptBytes(stored: ByteArray)")) {
+        for (anchor in listOf("fun decrypt(stored: String)", "fun decryptBytes(stored: ByteArray")) {
             val body = blockAfter(src, anchor)
             assertFalse("$anchor 不得建钥", "createKey(" in body)
             assertFalse("$anchor 不得取写路径的键（会触发建钥）", "keyOrNull(" in body)

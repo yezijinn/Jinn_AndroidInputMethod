@@ -151,4 +151,73 @@ class ClipboardKeyPolicyTest {
         assertTrue("解不开的行必须在诊断日志里可见", "result.failed" in body)
         assertTrue("迁移标记仍要置位（语义是跑完了，不是库健康）", "prefs.reclassified = true" in body)
     }
+
+    // ── 缓存 / 读路径自愈 / 代际占用 ──
+
+    @Test
+    fun `代际句柄必须缓存且失效时一起清`() {
+        assertTrue("必须有代际句柄缓存（否则每行重走 9 次 getKey）", "genKeys" in cryptoCode)
+        val inv = TestSources.blockAfter(cryptoCode, "private fun invalidateKey()")
+        assertTrue("失效必须清句柄缓存（否则重建后仍返回旧句柄）", "genKeys.clear()" in inv)
+        assertTrue("失效必须清缺失缓存", "genMissingAt.clear()" in inv)
+    }
+
+    @Test
+    fun `缺失缓存只能由正常返回 null 写入`() {
+        val body = TestSources.blockAfter(cryptoCode, "private fun storedKeyFor(")
+        assertFalse(
+            "取钥抛异常不得记成缺失：一次抖动会被固化成「整进程读不出」",
+            "catch (e" in body,
+        )
+        assertTrue("只有明确不存在才写负缓存", "genMissingAt[gen] = System.currentTimeMillis()" in body)
+        assertTrue("负缓存必须带有效期", "GEN_MISSING_TTL_MS" in cryptoCode)
+    }
+
+    @Test
+    fun `读路径遇密钥失效要自愈一次`() {
+        val body = TestSources.blockAfter(cryptoCode, "private fun decryptRaw(")
+        assertTrue("必须能触发重建（读路径原先只能靠写路径顺带修好）", "invalidateKey()" in body)
+        assertTrue("必须有冷却，否则密钥真丢失时每行重建一次", "reserveReadRepair()" in body)
+        assertTrue("重试必须只做一次", "allowRepair = false" in body)
+        assertTrue("回退循环必须留在函数体内", "MAX_KEY_GEN downTo 1" in body)
+        val bytes = TestSources.blockAfter(cryptoCode, "fun decryptBytes(")
+        assertTrue("字节解密同样要自愈", "invalidateKey()" in bytes)
+    }
+
+    @Test
+    fun `选代必须可空且不得覆盖已占用代际`() {
+        assertTrue(
+            "pickGeneration 必须可返回 null（覆盖同名 = 先删后建 = 旧密文永久失钥）",
+            "private fun pickGeneration(hasRows: Boolean): Int?" in cryptoCode,
+        )
+        val body = TestSources.blockAfter(cryptoCode, "private fun pickGeneration(")
+        assertFalse("不得用最高代兜底", "return MAX_KEY_GEN" in body)
+        assertTrue("探测抖动与真耗尽必须分开归因", "Diagnostics.w" in body && "Diagnostics.e" in body)
+    }
+
+    @Test
+    fun `KeyStore 实例只能有一个写入口`() {
+        assertTrue("必须有唯一写入口", "private fun keyStoreInstance()" in cryptoCode)
+        assertEquals(
+            "裸写只允许出现在 keyStoreInstance 内（外层 + 双重检查内层）",
+            2,
+            Regex("""keyStore \?:""").findAll(cryptoCode).count(),
+        )
+        assertTrue(
+            "该写入口必须在监视器内",
+            "private fun keyStoreInstance(): KeyStore = keyStore ?: synchronized(this) {" in cryptoCode,
+        )
+    }
+
+    @Test
+    fun `选代与建钥必须在同一监视器内`() {
+        val body = TestSources.blockAfter(cryptoCode, "private fun keyOrNull(")
+        val first = body.indexOf("synchronized(this)")
+        val second = body.indexOf("synchronized(this)", first + 1)
+        assertTrue("keyOrNull 至少两个同步块", second > first)
+        assertTrue(
+            "选代必须在第二个同步块内（与建钥同一临界区，否则并发会覆盖刚建的同代密钥）",
+            body.indexOf("pickGeneration(") > second,
+        )
+    }
 }

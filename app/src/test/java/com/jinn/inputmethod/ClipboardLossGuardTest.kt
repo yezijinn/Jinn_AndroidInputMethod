@@ -137,9 +137,19 @@ class ClipboardLossGuardTest {
     }
 
     @Test
-    fun `图片张数额度同样只按非收藏计`() {
+    fun `图片额度同样只按非收藏计`() {
         val body = TestSources.blockAfter(db, "fun imageOverflowIds(")
-        assertTrue("额度必须只数非收藏", "count { !it.favorite }" in body)
+        assertTrue("张数额度必须只数非收藏", "count { !it.favorite }" in body)
+        assertTrue(
+            "字节额度也必须只算非收藏：收藏自身超预算时否则会把全部非收藏一次删光",
+            "rows.filter { !it.favorite }.sumOf" in body,
+        )
+    }
+
+    @Test
+    fun `图片预算停手要留痕`() {
+        val body = TestSources.blockAfter(db, "private fun trimImages(")
+        assertTrue("只剩收藏仍超预算时必须留 W（否则既看不到现象也看不到原因）", "图片字节裁剪停手" in body)
     }
 
     @Test

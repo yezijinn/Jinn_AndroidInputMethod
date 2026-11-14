@@ -961,7 +961,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             }
         }
         val ids = imageOverflowIds(rows, prefs.imageMaxItems, prefs.imageMaxBytes)
-        if (ids.isEmpty()) return 0
+        if (ids.isEmpty()) {
+            // 收藏自身越过图片字节预算：可删条目已尽 ⇒ 库会长期停在预算之上。
+            // 与文本侧 trimByByteBudget 同口径留痕，否则「图片一直删不掉」既看不到现象也看不到原因。
+            val favBytes = rows.filter { it.favorite }.sumOf { it.bytes }
+            if (prefs.imageMaxBytes > 0 && favBytes > prefs.imageMaxBytes) {
+                Diagnostics.w(
+                    TAG,
+                    "图片字节裁剪停手: 可删条目已尽（收藏不计淘汰），收藏 ${favBytes / 1024 / 1024}MB " +
+                        "仍超预算 ${prefs.imageMaxBytes / 1024 / 1024}MB",
+                )
+            }
+            return 0
+        }
         val deleted = deleteNonFavoriteByIds(ids)
         // 报**实删**条数（候选集是快照，这几毫秒里用户可能已取消收藏）
         Diagnostics.i(TAG, "按图片预算裁剪: 删除 $deleted 条非收藏图片")
@@ -1827,8 +1839,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
             // 额度只按**非收藏**算（收藏不占名额）：否则收藏占满张数上限后，每次复制新图
             // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14 复核）。
+            // 字节同理：收藏字节计入总量时，收藏自身超预算会让 break 永不触发 ⇒ 一次删光全部非收藏。
             var kept = rows.count { !it.favorite }
-            var bytes = rows.sumOf { it.bytes }
+            var bytes = rows.filter { !it.favorite }.sumOf { it.bytes }
             if (kept <= itemCap && bytes <= byteCap) return emptyList()
             val out = ArrayList<Long>()
             for (row in rows) {
