@@ -1108,6 +1108,11 @@ internal object ConfigBackupManager {
 
         val prefs = Prefs(context)
         val clipPrefs = ClipboardPrefs.of(context)
+        // 本机**导入前**的上限。包里的上限可能更小（别人 100 条 / 本机 500 条），
+        // 若用导入后的值去裁，会让「恢复一份配置」顺手删掉本机几百条历史。
+        // 这里只按本机原上限收敛：新上限从下次入库起自然生效。
+        val localMaxItems = clipPrefs.maxItems
+        val localMaxBytes = clipPrefs.maxTotalBytes
 
         var prefsApplied = 0
         var prefsIgnored = 0
@@ -1167,10 +1172,11 @@ internal object ConfigBackupManager {
             // 上面那条 writeFromBackup 不会被调用，只写 Prefs 会留下「设置页显示已关、
             // 候选仍在按上一次的学习结果重排」的不一致，直到 IME 进程重建
             UserFrequency.setEnabled(prefs.userLearning)
-            // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）：
-            // 这里补一次，否则「导入成功」后历史仍超限，用户会以为上限没生效
-            runCatching { ClipboardDb.get(context).trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes) }
-                .onFailure { Diagnostics.w(TAG, "导入: 按新上限裁剪历史失败（上限已保存，下次入库仍会裁）: ${it.message}") }
+            // 上限被导入改小时，既有库不会自己收敛（只有下次复制入库才 trim）。
+            // ⚠ 必须用**导入前**的本机上限（localMaxItems/localMaxBytes）：用包里的值裁本机历史，
+            // 等于「恢复一份别人的配置」时删掉自己的记录（D-5）。导入的新上限从下次入库起生效。
+            runCatching { ClipboardDb.get(context).trimTo(localMaxItems, localMaxBytes) }
+                .onFailure { Diagnostics.w(TAG, "导入: 按本机原上限裁剪历史失败（下次入库仍会裁）: ${it.message}") }
         }
 
         val freqFile = File(context.filesDir, USER_FREQ_FILE)
@@ -1258,7 +1264,8 @@ internal object ConfigBackupManager {
                         )
                     },
                 )
-                db.trimTo(clipPrefs.maxItems, clipPrefs.maxTotalBytes)
+                // 同 1178 行：按**本机**原上限收敛，不用包里带来的值裁本机历史
+                db.trimTo(localMaxItems, localMaxBytes)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）。
                 //

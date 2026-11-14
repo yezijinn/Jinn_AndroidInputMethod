@@ -182,19 +182,29 @@ internal object ClipboardImageFiles {
     }
 
     /**
-     * 删除「有行无文件」的图片死行（启动 GC 顺带跑）：两个文件都不在的行永远打不开，
-     * 留着只会占序号与额度。返回删除行数。
+     * 「有行无文件」的图片死行：只**统计并记日志**，不删行（2026-11-14 收紧）。
+     *
+     * 原实现直接 `db.deleteAnyByIds(dead)`，判据只有 `File.isFile == false`：
+     *  - `isFile` 在 EACCES / IO 抖动 / 目录被清理工具改名时返回 false（而不是抛异常）；
+     *  - 该路径每次 `JinnIme.onCreate` 无条件跑，且 `deleteAnyByIds` **连收藏一起删**；
+     *  - 行一删，收藏标记、hash、时间一起没了，`gc` 随后还会把文件收走 ⇒ 不可逆。
+     * 同文件的 [gc] 有三道保护（目录清单可信性 / 保护窗 / 在途集合），这条一条都没有。
+     *
+     * 死行真实来源极窄（`saveImage` 是「加密 → 写文件 → 插行 → gc」，`deleteFor` 只在
+     * 行已删或从未写入时调用），代价只是少量序号，不值得用「启动时无条件删行」去换。
+     * @return 恒为 0（保留返回值形态，调用方无需改动）
      */
     fun deleteMissingRows(context: Context, db: ClipboardDb): Int = runCatching {
-        val dead = db.imageRows().filter { (_, hash) ->
-            !encFile(context, hash).isFile && !thumbFile(context, hash).isFile
-        }.map { it.first }
-        if (dead.isEmpty()) return 0
-        val n = db.deleteAnyByIds(dead)
-        Diagnostics.i(TAG, "清理无文件的图片行 $n 条")
-        n
+        val dead = db.imageRows().count { (_, hash) ->
+            hash.isNotEmpty() &&
+                !encFile(context, hash).isFile && !thumbFile(context, hash).isFile
+        }
+        if (dead > 0) {
+            Diagnostics.w(TAG, "发现 $dead 条无文件的图片行（只记录不删：误判会连收藏一起丢）")
+        }
+        0
     }.getOrElse {
-        Diagnostics.w(TAG, "清理无文件图片行失败: ${it.javaClass.simpleName}")
+        Diagnostics.w(TAG, "统计无文件图片行失败: ${it.javaClass.simpleName}")
         0
     }
 

@@ -54,6 +54,12 @@ object ClipboardCrypto {
     /** 「库内仍有密文却要新建密钥」的拒绝次数（仅归因；E 日志按 [REFUSAL_LOG_LIMIT] 节流） */
     private val createRefusals = AtomicInteger(0)
 
+    /**
+     * 加密失败次数（仅归因）。拒绝建钥后**每一次复制**都会走到这里 —— 不节流会把日志刷满，
+     * 而刷屏本身又会拖慢采集线程。
+     */
+    private val encryptFails = AtomicInteger(0)
+
     private const val REFUSAL_LOG_LIMIT = 3
 
     /**
@@ -229,7 +235,8 @@ object ClipboardCrypto {
             "$ivB64:$dataB64"
         }
     }.getOrElse {
-        Diagnostics.e(TAG, "加密失败: ${it.message}")
+        val n = encryptFails.incrementAndGet()
+        if (n == 1 || n % 50 == 0) Diagnostics.e(TAG, "加密失败累计 $n 次: ${it.message}")
         null
     }
 
@@ -280,7 +287,8 @@ object ClipboardCrypto {
             out
         }
     }.getOrElse {
-        Diagnostics.e(TAG, "字节加密失败: ${it.message}")
+        val n = encryptFails.incrementAndGet()
+        if (n == 1 || n % 50 == 0) Diagnostics.e(TAG, "字节加密失败累计 $n 次: ${it.message}")
         null
     }
 

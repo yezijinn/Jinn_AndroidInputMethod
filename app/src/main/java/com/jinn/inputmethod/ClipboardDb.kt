@@ -27,8 +27,12 @@ internal const val RECLASSIFY_PAGE = 50
  *  - 全部操作走单例 + 后台线程，避免主线程 IO 与并发写冲突。
  *
  * 删除来源：用户主动删除 / 迁移去重（v4 一次性 `mergeDuplicates`）/ 容量裁剪 /
- * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）/
- * 「有行无文件」死行清理（`ClipboardImageFiles.deleteMissingRows`）。
+ * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）。
+ * ⚠ 「有行无文件」的图片行**不再自动删**：`File.isFile` 在权限/IO 抖动时返回 false，
+ * 而那条路径连收藏一起删（2026-11-14 二轮审计，`ClipboardImageFiles.deleteMissingRows`）。
+ * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` **没有公开的 `onCorruption` 覆写点**（API 34
+ * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
+ * 它和「密钥失配」在界面上同形，排查时先看这里。
  * 容量裁剪见 [TRIM_PRIORITY]：条数与体积**只动非收藏记录**；
  * 收藏自身软上限是唯一例外 —— [trimFavorites] 按用户显式设置的
  * [ClipboardPrefs.favoriteMaxItems] / `favoriteMaxBytes` 淘汰最旧收藏（2026-10-26 按实现订正）。
@@ -691,12 +695,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
 
     /**
-     * 删除全部历史：默认收藏是受保护条目，只删除非收藏记录。
+     * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
      *
-     * @param includingFavorites 连收藏一起删。**只给「密钥已丢失、库内密文永久解不开」的出路用**：
-     *   那些行在界面上不可见也不可删（列表走 [recentPageAfter]，坏行被跳过），若仍守「收藏保留」，
-     *   「库内还有密文」就会永远成立 ⇒ 新密钥永远不被允许创建 ⇒ 之后的复制全部不入库。
-     *   普通清空入口**不得**传 true。
+     * **不提供「连收藏一起删」的档位**（2026-11-14 撤回）：历史「读不出」只是本次解密的结果，
+     * 不代表密钥永久丢失（CE 解锁窗口 / Keystore 抖动 / 竞态都能造成同一形态）。用它去开一把
+     * 「全库删除」的锁，会把用户仅剩的、仍有抢救可能的密文一次删光，且随后 `gc` 连图片文件
+     * 一起收 —— 不可逆。宁可留着一个读不出的库等后续版本处理。
      *
      * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
      * （AI2 A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
@@ -705,15 +709,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
-    fun deleteAll(includingFavorites: Boolean = false): Int {
-        val deleted = writableDatabase.delete(
-            TABLE_ITEMS,
-            if (includingFavorites) null else "is_favorite = 0",
-            null,
-        )
+    fun deleteAll(): Int {
+        val deleted = writableDatabase.delete(TABLE_ITEMS, "is_favorite = 0", null)
         // 清空此前零日志：库里几百行一夜消失时，事后无法判断是用户清空还是数据丢失（本次事故即如此）
-        val kept = if (includingFavorites) 0 else count(null, favoritesOnly = true)
-        Diagnostics.i(TAG, "清空历史: 删除 $deleted 行（收藏保留 $kept 行，含收藏=$includingFavorites）")
+        Diagnostics.i(TAG, "清空历史: 删除 $deleted 行（收藏保留 ${count(null, favoritesOnly = true)} 行）")
         return deleted
     }
 
@@ -1933,10 +1932,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         fun get(context: Context): ClipboardDb =
             instance ?: synchronized(this) {
                 instance ?: ClipboardDb(context).also { db ->
-                    // 剪贴板密钥的「库内还有密文」探针（纯 SQL 计数，不解密）。
+                    // 剪贴板密钥的「库内还有文本密文」探针（纯 SQL 计数，不解密）。
                     // 装在唯一的实例构造点上：备份导入 / 管理页 / 文件导入都不经 ClipboardController，
                     // 装在那里会留下探针缺失的路径（缺失按 fail-closed 处理，会让这些入口无法加密）。
-                    ClipboardKeyPresence.attach { db.count() > 0 }
+                    // 只数文本行：图片行的 encrypted_content 是占位密文、可显示性由文件决定，
+                    // 换钥对它零影响；若把它们也算进来，「只剩图片行」会让新密钥永远不被允许创建。
+                    ClipboardKeyPresence.attach { db.count(contentType = CONTENT_TYPE_TEXT) > 0 }
                     instance = db
                 }
             }

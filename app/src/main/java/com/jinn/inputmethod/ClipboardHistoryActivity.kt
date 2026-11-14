@@ -64,14 +64,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private var activeForms: List<String> = emptyList()
     private var pageIndex = 0
 
-    /**
-     * 当前列表是否处于「库里有行但一条都读不出」。
-     *
-     * 只用于清空入口的口径：这种状态下坏行在界面上不可见也不可删，若只清非收藏，
-     * 「库内仍有密文」永远成立 ⇒ 新密钥不被允许创建 ⇒ 之后的复制全部静默不入库。
-     */
-    private var unreadableHistory = false
-
     /** 当前是否处于图片分类（网格模式）：列表的多选与行渲染在此时全部让位 */
     private fun inImageMode(): Boolean = categoryFilter == FILTER_IMAGE
 
@@ -829,12 +821,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
             actionsRow.addView(compactView().apply {
                 text = "清空"
                 setOnClickListener {
-                    // 历史读不出时坏行不可见也不可删，只清非收藏会留下「库内仍有密文」⇒
-                    // 新密钥永远不被允许创建 ⇒ 之后的复制全部静默不入库。这条出路必须连收藏一起清。
-                    val clearAll = unreadableHistory
-                    confirm(if (clearAll) "清空全部历史（含收藏，不可恢复）？" else "清空全部非收藏历史？") {
+                    // 只清非收藏。「历史读不出」不作为连收藏一起删的理由：那只说明本次解密没成功
+                    // （竞态 / Keystore 抖动 / 真换钥都能造成同一形态），删光就再没有抢救可能。
+                    confirm("清空全部非收藏历史？") {
                         BackgroundIo.run {
-                            if (clearAll) db.deleteAll(includingFavorites = true) else db.deleteByCategory(null)
+                            db.deleteByCategory(null)
                             // 清空会删掉图片行（非收藏）：文件同步收一次（否则要等下次启动 GC）；
                             // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
                             ClipboardImageFiles.gc(
@@ -975,6 +966,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
             val out = ArrayList<ClipboardDb.Item>()
             // 每行在「全部已扫文本行」里的绝对序位：序号要按它算，不能按窗口下标（BUG.md L-1059）
             val outOrdinal = ArrayList<Int>()
+            // 总数必须在**扫描之前**取（与面板同口径）。放在扫描之后会有一条凭空成立的竞态：
+            // 空库扫得 0 条 → 期间采集入库一条 → count=1 ⇒ 「有行但一条都读不出」判据为真，
+            // 界面于是显示「历史内容无法读取」，而真实原因只是「这一瞬间还没有行」。
+            val total = db.count(catKey, favoritesOnly, contentType)
             var scanned = 0
             var cursor: ClipboardCursor? = null
             var retainedBytes = 0L
@@ -1019,7 +1014,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 }
                 if (capped) break
             }
-            val total = db.count(catKey, favoritesOnly, contentType)
             // 条带是否有图：跟着列表这次取数一起查（空态文案据此把「没有文本」与「什么都没有」分开；
             // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
             val stripImages = when (category) {
@@ -1086,7 +1080,6 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分。
                 // 空态则要分真因（BUG.md L-1328）：库里有行却一条都解不出时不能说「暂无记录」
                 val unreadable = items.isEmpty() && total > 0 && keywordNow.isEmpty()
-                unreadableHistory = unreadable
                 val hint = when {
                     imageMode && items.isEmpty() -> TEXT_IMAGE_EMPTY
                     cappedByCount && total > maxResults -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
@@ -1863,11 +1856,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /**
          * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为
-         * 历史被清空了，而真相是密钥失效 / 密文损坏。后半句与面板侧
-         * [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源：密钥丢失后不会静默重建（否则旧密文永久陪葬），
-         * 新复制要等清空历史后重新开始，两个入口不能一个说「仍会记录」、一个说「要清空」。
+         * 历史被清空了，而真相可能是密钥失效 / 密文损坏（也可能只是本次读取失败）。
+         * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，**只陈述事实、不承诺后续行为**：
+         * 该形态不足以断定「密钥永久丢失」，任何「新复制仍会记录」「清空后可重开」都是空中承诺。
          */
-        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；清空历史后可重新开始记录）"
+        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏）"
         const val TEXT_TRUNCATED_PREFIX = "只加载最多 "
         const val TEXT_TRUNCATED_SUFFIX = " 条（超出请用搜索缩小范围）"
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"

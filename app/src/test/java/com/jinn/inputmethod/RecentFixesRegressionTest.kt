@@ -1708,12 +1708,14 @@ class RecentFixesRegressionTest {
         val emptyBlock = blockAfter(src, "textEmpty = TextView(context)")
         assertTrue(
             "空态必须挂点击入口，且只在止损态才动作并沿游标续扫（见 scanStoppedEarly）",
-            Regex("""scanStoppedEarly ->[\s\S]{0,200}continueScan\(\)""").containsMatchIn(emptyBlock),
+            Regex(
+                """setOnClickListener \{\s*if \(!scanStoppedEarly\) return@setOnClickListener\s+(?:[^\n]*\n\s*)?continueScan\(\)""",
+            ).containsMatchIn(emptyBlock),
         )
-        assertTrue(
-            "有行但读不出时必须给出清空重开的出路（否则坏行不可删 ⇒ 新密钥永不被允许创建）",
-            Regex("""unreadableHistory ->[\s\S]{0,200}showClearConfirm\(includingFavorites = true\)""")
-                .containsMatchIn(emptyBlock),
+        assertFalse(
+            "「历史读不出」不得挂任何删除入口：它只说明本次解密没成功（竞态 / 抖动 / 换钥同形），" +
+                "拿它开「全库删除」会把仍有抢救可能的密文一次删光",
+            "unreadableHistory ->" in emptyBlock,
         )
         assertTrue(
             "止损态必须能从填页返回值推出（空结果 + 游标未到末尾）",
@@ -2036,7 +2038,7 @@ class RecentFixesRegressionTest {
         val body = blockAfter(codeOf("ClipboardPanelView.kt"), "private fun updateEmpty()")
         assertTrue(
             "updateEmpty 必须按 scanStoppedEarly 设 isClickable（否则读屏把它当哑按钮）",
-            "textEmpty.isClickable = scanStoppedEarly" in body,
+            "textEmpty.isClickable = !loadingPage && scanStoppedEarly" in body,
         )
     }
 
