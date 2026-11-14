@@ -884,6 +884,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      */
     fun stopBackgroundWork() {
         refreshToken++
+        // 作废在飞查询后不会再有人把 loadingPage 复位（唯一的复位点在 post 回调里，
+        // 而回调会被 refreshToken 拦下）⇒ 不在这里清，标志会永久为 true，此后翻页与续扫
+        // 全被第一道闸门静默拦死（2026-11-14 三轮审计）。
+        loadingPage = false
         // 网格的缩略图线程池与缓存也归这里收：视图被丢弃后「缩略图线程仍钉住旧视图树」
         // 是 L-1035 同型的泄漏，释放点必须与列表的作废点同处
         if (::imageGrid.isInitialized) imageGrid.stopWork()
@@ -1022,9 +1026,14 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         if (isPasting) return
         isPasting = true
-        // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）
-        val ok = listener?.onPaste(ClipboardClassifier.pieceFor(currentCategory, item.content)) ?: false
-        isPasting = false
+        // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）。
+        // ⚠ 必须 try/finally：宿主的提交链没有兜异常，一次上抛就会让 isPasting 永久为 true，
+        // 本会话内之后**所有**条目点击都静默无效（只有重开面板才复位）。
+        val ok = try {
+            listener?.onPaste(ClipboardClassifier.pieceFor(currentCategory, item.content)) ?: false
+        } finally {
+            isPasting = false
+        }
         if (ok) {
             listener?.onClose()
         } else {
@@ -1448,8 +1457,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          */
         const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏）"
 
-    /** 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏 */
-    const val TEXT_EMPTY_LOAD_FAILED = "读取剪贴板历史失败\n（可稍后重试）"
+    /**
+     * 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏。
+     *
+     * ⚠ 不写「可稍后重试」：库升级失败时 `onUpgrade` 整段在一个事务里，失败即 `user_version`
+     * 不前进 ⇒ 每次打开都重跑同一段必然失败的迁移 ⇒ 重试永远不会成功（2026-11-14 三轮审计）。
+     */
+    const val TEXT_EMPTY_LOAD_FAILED = "读取剪贴板历史失败\n（数据库无法打开）"
 
         /**
          * 空态：**扫到止损上限仍一条都没读出来，但后面还有没扫过的行**（BUG.md L-76）。

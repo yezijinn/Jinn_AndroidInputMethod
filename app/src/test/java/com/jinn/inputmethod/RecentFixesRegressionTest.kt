@@ -1485,9 +1485,9 @@ class RecentFixesRegressionTest {
             // 两个重建分支的搬运 SELECT 已合并到 rebuildKeepingData 一处（BUG.md L-1421），
             // 所以判据从「两处各有一句」变成「建 SELECT 的那一处必须 COALESCE」；
             // 「合并后仍有分支写死清单」由 ClipboardDbMigrationTest 钉（搬回写死 ⇒ 那条红）。
-            "重建表搬 content_hash 时必须 COALESCE(content_hash, '')：新表该列是 NOT NULL，" +
+            "重建表搬 content_hash 时必须 COALESCE(…, '')：新表该列是 NOT NULL，" +
                 "旧表若留 NULL 会让 INSERT 失败 —— 升级抛异常就是整库打不开",
-            "COALESCE(content_hash, '')" in text,
+            "\"content_hash\" to \"''\"" in text && "COALESCE(\$col, \$fallback)" in text,
         )
         val calls = Regex("backfillBlankHashes\\(db\\)").findAll(text).map { it.range.first }.toList()
         assertTrue("v4 与 v5 两个升级分支都要补（实际 ${calls.size} 处）", calls.size >= 2)
@@ -6839,14 +6839,11 @@ class RecentFixesRegressionTest {
         assertFalse("不得再有裸 cachedKey 参与加密 init", "cipher.init(Cipher.ENCRYPT_MODE, cachedKey)" in src)
         assertFalse("不得再有裸 cachedKey 参与解密 init", "cipher.init(Cipher.DECRYPT_MODE, cachedKey" in src)
         // 解密路径禁止建钥：读时换钥会把已有密文变成永久不可解
-        assertTrue(
-            "解密必须禁止建钥",
-            "withKey(allowCreate = false)" in blockAfter(src, "fun decrypt(stored: String)"),
-        )
-        assertTrue(
-            "字节解密必须禁止建钥",
-            "withKey(allowCreate = false)" in blockAfter(src, "fun decryptBytes(stored: ByteArray)"),
-        )
+        for (anchor in listOf("fun decrypt(stored: String)", "fun decryptBytes(stored: ByteArray)")) {
+            val body = blockAfter(src, anchor)
+            assertFalse("$anchor 不得建钥", "createKey(" in body)
+            assertFalse("$anchor 不得取写路径的键（会触发建钥）", "keyOrNull(" in body)
+        }
         assertTrue(
             "加密仍可建钥",
             "withKey(allowCreate = true)" in blockAfter(src, "fun encrypt(plaintext: String)"),
@@ -6858,10 +6855,10 @@ class RecentFixesRegressionTest {
         // 「取键抛异常」≠「别名不存在」：抛的时候不许建钥（否则会覆盖别名）
         val keyOrNullBody = blockAfter(src, "private fun keyOrNull(")
         assertTrue("建钥必须走统一判据（见 ClipboardKeyPolicy）", "keyDecision(" in keyOrNullBody)
-        val catchBlock = blockAfter(blockAfter(src, "private fun probeStoredKey("), "catch (e")
+        val catchBlock = blockAfter(blockAfter(src, "private fun highestStoredKey("), "catch (e")
         assertTrue(
-            "取键抛异常必须按「此刻取不到」处理（抛 ≠ 别名不存在）",
-            "KeyProbe(null, readFailed = true)" in catchBlock,
+            "取键抛异常必须记成「此刻取不到」（抛 ≠ 别名不存在）",
+            "lastProbeFailed = true" in catchBlock,
         )
         assertFalse("取键抛异常不得建钥", "generateKey" in catchBlock)
     }

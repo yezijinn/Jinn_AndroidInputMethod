@@ -83,21 +83,27 @@ class ClipboardImageTest {
             ClipboardRowSize(2, 10, favorite = true, image = true),
             ClipboardRowSize(3, 10, favorite = false, image = true),
         )
-        // 张数超限（3 > 2）：从最旧开始删，收藏跳过
-        assertEquals(listOf(1L), ClipboardDb.imageOverflowIds(rows, maxItems = 2, maxBytes = 0))
+        // 张数额度只按非收藏算（3 张里 1 张收藏、2 张非收藏，上限 2）⇒ 不删
+        assertTrue(ClipboardDb.imageOverflowIds(rows, maxItems = 2, maxBytes = 0).isEmpty())
+        // 非收藏 3 张、上限 2 ⇒ 从最旧开始删一条
+        assertEquals(
+            listOf(1L),
+            ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = false) }, maxItems = 2, maxBytes = 0),
+        )
         // 字节超限（30 > 20）：删一条即落回
         assertEquals(listOf(1L), ClipboardDb.imageOverflowIds(rows, maxItems = 0, maxBytes = 20))
         // 全是收藏 ⇒ 无可删（宁可超限也不删用户明确保留的内容）
         assertTrue(ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = true) }, 1, 1).isEmpty())
-        // 收藏占满额度、只有刚采集那张是非收藏 ⇒ 候选就是它自己（L-1482，有意设计）：
-        // 额度按全部图片行计、收藏永不因容量被删，与文本侧 `trimByCount` 在同一状态下
-        // 删掉刚入库那条同一语义。改成「收藏不占名额」会让额度随收藏数无上界增长。
+        // 收藏占满额度、只有刚采集那张是非收藏 ⇒ **不删**（2026-11-14 三轮审计）：
+        // 额度只按非收藏计，收藏是用户的显式保留、不占名额。原先按全部图片行计额度时，
+        // 这个状态会删掉刚入库的那张，且没有任何日志 —— 用户看到「复制了，图库里没有」。
+        // 上界仍然有界：非收藏 ≤ maxItems、收藏 ≤ favoriteMaxItems（硬顶 1000）。
         val filled = listOf(
             ClipboardRowSize(1, 10, favorite = true, image = true),
             ClipboardRowSize(2, 10, favorite = true, image = true),
             ClipboardRowSize(3, 10, favorite = false, image = true),
         )
-        assertEquals(listOf(3L), ClipboardDb.imageOverflowIds(filled, maxItems = 2, maxBytes = 0))
+        assertTrue(ClipboardDb.imageOverflowIds(filled, maxItems = 2, maxBytes = 0).isEmpty())
     }
 
     @Test
@@ -171,7 +177,10 @@ class ClipboardImageTest {
     @Test
     fun 文本裁剪只统计文本行且图片预算独立() {
         val src = TestSources.codeSource("ClipboardDb.kt")
-        assertTrue("条数裁剪按文本计数", "countByContentType(CONTENT_TYPE_TEXT)" in src)
+        assertTrue(
+            "条数裁剪按**非收藏**文本计数（额度只按非收藏算，收藏不占名额）",
+            "countByContentType(CONTENT_TYPE_TEXT, TRIM_PRIORITY.first())" in src,
+        )
         assertTrue("字节候选集跳过图片行", "if (row.image) continue" in src)
         assertTrue("图片预算独立成段", "private fun trimImages()" in src)
         assertTrue("收藏字节按行类型取真实体积", "CASE WHEN content_type = ?" in src)
@@ -324,7 +333,7 @@ class ClipboardImageTest {
         val dbSrc = TestSources.codeSource("ClipboardDb.kt")
         assertTrue(
             "裁剪回收判据只看实删的图片行（两条淘汰路径之和）",
-            "if (trimImages() + trimFavorites() > 0) scheduleImageGc()" in dbSrc,
+            "if (trimImages() + favImages > 0) scheduleImageGc()" in dbSrc,
         )
         assertTrue("回收跳出写锁异步跑", "BackgroundIo.runLong {" in dbSrc)
         assertTrue(
@@ -898,7 +907,7 @@ class ClipboardImageTest {
         assertEquals(
             "判据必须是两条淘汰路径的实删图片行数之和",
             1,
-            Regex("""if \(trimImages\(\) \+ trimFavorites\(\) > 0\) scheduleImageGc\(\)""")
+            Regex("""if \(trimImages\(\) \+ favImages > 0\) scheduleImageGc\(\)""")
                 .findAll(trimTo).count(),
         )
         // 全类只能有「定义 + 这一个调用点」：多出来的调用点必是绕过判据调度的（L-1248 的形态）

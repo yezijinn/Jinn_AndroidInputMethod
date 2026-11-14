@@ -17,6 +17,15 @@ import android.database.sqlite.SQLiteOpenHelper
 internal const val RECLASSIFY_PAGE = 50
 
 /**
+ * 条数裁剪的溢出量（纯函数，JVM 可直测）。
+ *
+ * 额度只按**非收藏**算：收藏是用户的显式保留，不占名额。若把收藏计入额度，收藏一旦达到上限，
+ * 每次复制都会把非收藏（含刚写入的那条）全部删光 —— 用户看到「复制了，历史里没有」。
+ */
+internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
+    if (maxItems <= 0) 0 else (nonFavoriteCount - maxItems).coerceAtLeast(0)
+
+/**
  * 剪贴板历史数据库。
  *
  * 存储策略：
@@ -194,9 +203,27 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // 交集为空只可能来自「这张表不是我们的」（库文件被替换 / 表名撞车）。此时抛出去，
         // 让升级显式失败 —— 继续往下走会 DROP 掉旧表、把整库搬成 0 行。
         check(cols.isNotEmpty()) { "重建 ${TABLE_ITEMS}_old 时列交集为空" }
-        // COALESCE 兜住旧表的 NULL：新表的 content_hash 是 NOT NULL，
-        // 直接搬 NULL 会让 INSERT 失败、升级抛异常 —— 后果是整库打不开
-        val selectList = cols.joinToString(", ") { if (it == "content_hash") "COALESCE(content_hash, '')" else it }
+        // COALESCE 兜住旧表的 NULL：目标表这些列都是 NOT NULL，直接搬 NULL 会让 INSERT 失败、
+        // 升级抛异常 —— 而 onUpgrade 整段在一个事务里，失败即每次启动重跑同一段必然失败的迁移，
+        // 库从此永久打不开（2026-11-14 三轮审计）。
+        // 各列兜底值与 createTableSql 的默认值一致；`id` 原样搬（PK，不可能为 NULL）。
+        val nullDefaults = mapOf(
+            "encrypted_content" to "''",
+            "created_at" to "0",
+            "content_type" to "'$CONTENT_TYPE_TEXT'",
+            "source_package" to "''",
+            "source_app_name" to "''",
+            "content_hash" to "''",
+            "category" to "'OTHER'",
+            "is_favorite" to "0",
+            "image_bytes" to "0",
+            "image_w" to "0",
+            "image_h" to "0",
+            "image_mime" to "''",
+        )
+        val selectList = cols.joinToString(", ") { col ->
+            nullDefaults[col]?.let { fallback -> "COALESCE($col, $fallback)" } ?: col
+        }
         db.execSQL("INSERT INTO $TABLE_ITEMS (${cols.joinToString(", ")}) SELECT $selectList FROM $old")
         db.execSQL("DROP TABLE $old")
         // 修正自增序列：显式插入 id 后 sqlite_sequence 不自动更新，避免新插入 id 冲突
@@ -874,6 +901,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 100MB，旧历史静默消失）。不给默认值，漏传即编译错误，比留一个"恰好对"的默认值可靠。
      */
     fun trimTo(maxItems: Int, maxTotalBytes: Long) {
+        // 收藏软上限排第一：它是唯一能从「受保护行」释放额度的通道。排在字节裁剪之后时，
+        // 用户刚调小总字节上限的那一次，收藏仍按旧的 25% 占用 ⇒ 字节裁剪会把非收藏
+        // （含刚写入的那条）删光（2026-11-14 三轮审计）。
+        val favImages = trimFavorites()
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
         // 判据是**本轮实删的图片行数**，两条淘汰路径都算：
@@ -883,7 +914,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         //    要等下一次进程启动的 gc 才收（BUG.md L-1464）。
         // 仍然**只认图片行**：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「这轮删没删收藏」
         // 当判据，会让每次入库（采集 / 粘贴 / 导入）都可能跑一轮完整 gc（BUG.md L-1248）。
-        if (trimImages() + trimFavorites() > 0) scheduleImageGc()
+        if (trimImages() + favImages > 0) scheduleImageGc()
     }
 
     /**
@@ -993,12 +1024,18 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return imagesDeleted
     }
 
-    /** 按条数裁剪：只统计与删除**文本**行（图片有独立张数上限，见 [trimImages]） */
+    /**
+     * 按条数裁剪：只统计与删除**非收藏的文本**行（图片有独立张数上限，见 [trimImages]）。
+     *
+     * 额度必须按非收藏计（2026-11-14 三轮审计）：原先统计含收藏、候选却只取非收藏 ⇒ 收藏占满
+     * 上限时 `overflow` ≥ 非收藏总数，一次复制就把全部非收藏文本行（含刚写入的那条）删光，
+     * 用户看到的是「复制了，历史里没有」，且**没有任何日志**。
+     */
     private fun trimByCount(maxItems: Int) {
         if (maxItems <= 0) return
-        val count = countByContentType(CONTENT_TYPE_TEXT)
-        if (count <= maxItems) return
-        val overflow = count - maxItems
+        val nonFavorite = countByContentType(CONTENT_TYPE_TEXT, TRIM_PRIORITY.first())
+        val overflow = trimOverflow(nonFavorite, maxItems)
+        if (overflow <= 0) return
 
         // 按优先级分轮取证：先删最旧的非收藏记录
         val ids = ArrayList<Long>(overflow)
@@ -1012,13 +1049,18 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             ).use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
         }
         if (ids.isEmpty()) return // 剩余全是收藏，不裁剪
-        deleteNonFavoriteByIds(ids)
+        val deleted = deleteNonFavoriteByIds(ids)
+        Diagnostics.i(
+            TAG,
+            "按条数裁剪: 候选 ${ids.size} 条，实删 $deleted 条（非收藏文本 $nonFavorite > 上限 $maxItems）",
+        )
     }
 
     /** 按类型计数（图片的条数/字节预算与文本分离，各自只统计自己那一类） */
-    private fun countByContentType(type: String): Int =
+    private fun countByContentType(type: String, predicate: String? = null): Int =
         readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE content_type = ?",
+            "SELECT COUNT(*) FROM $TABLE_ITEMS WHERE content_type = ?" +
+                (predicate?.let { " AND $it" } ?: ""),
             arrayOf(type),
         ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
 
@@ -1392,17 +1434,23 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             ).use { c -> while (c.moveToNext()) rows.add(Triple(c.getLong(0), c.getString(1), c.getString(2))) }
             if (rows.isEmpty()) return ReclassResult(changed, failed)
             lastId = rows.last().first
+            // 解密与分类在事务**外**先算好：本库非 WAL、只有一条连接，事务内逐条解密会让整趟
+            // 重算长时间独占连接，把采集入库与面板查询反复切碎（2026-11-14 三轮审计）。
+            val planned = ArrayList<Pair<Long, String>>(rows.size)
+            for ((id, encrypted, hash) in rows) {
+                val text = ClipboardCrypto.decrypt(encrypted)
+                if (text == null) {
+                    // 与 readItem 同口径：解不开就撤销备忘（BUG.md L-199）
+                    forgetReadable(hash)
+                    failed++
+                    continue
+                }
+                planned.add(id to ClipboardClassifier.classify(text))
+            }
+            if (planned.isEmpty()) continue
             writableDatabase.beginTransaction()
             try {
-                for ((id, encrypted, hash) in rows) {
-                    val text = ClipboardCrypto.decrypt(encrypted)
-                    if (text == null) {
-                        // 与 readItem 同口径：解不开就撤销备忘（BUG.md L-199）
-                        forgetReadable(hash)
-                        failed++
-                        continue
-                    }
-                    val label = ClipboardClassifier.classify(text)
+                for ((id, label) in planned) {
                     val values = ContentValues().apply { put("category", label) }
                     if (writableDatabase.update(
                             TABLE_ITEMS, values, "id = ? AND category <> ?",
@@ -1777,7 +1825,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             if (rows.isEmpty()) return emptyList()
             val itemCap = if (maxItems > 0) maxItems else rows.size
             val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
-            var kept = rows.size
+            // 额度只按**非收藏**算（收藏不占名额）：否则收藏占满张数上限后，每次复制新图
+            // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14 三轮审计）。
+            var kept = rows.count { !it.favorite }
             var bytes = rows.sumOf { it.bytes }
             if (kept <= itemCap && bytes <= byteCap) return emptyList()
             val out = ArrayList<Long>()

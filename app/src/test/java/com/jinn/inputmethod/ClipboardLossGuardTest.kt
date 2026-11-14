@@ -1,5 +1,6 @@
 package com.jinn.inputmethod
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -109,6 +110,79 @@ class ClipboardLossGuardTest {
                 "「清空后可重新开始」在已撤回清空能力后是假话",
                 "清空后可重新开始记录" in src,
             )
+            assertFalse("「可稍后重试」在迁移失败时是假话（同一段迁移必然再失败）", "可稍后重试" in src)
         }
+    }
+
+    // ── 第三轮（2026-11-14）：容量额度 / 裁剪顺序 / 生命周期 ──
+
+    @Test
+    fun `条数额度只按非收藏计`() {
+        // 收藏是用户的显式保留、不占名额。把收藏计入额度时，收藏一旦达到上限，
+        // 每次复制都会把非收藏（含刚写入那条）全部删光 —— 用户看到「复制了，历史里没有」。
+        assertEquals(0, trimOverflow(3, 3))
+        assertEquals(1, trimOverflow(4, 3))
+        assertEquals(0, trimOverflow(0, 3))
+        assertEquals(0, trimOverflow(5, 0))
+    }
+
+    @Test
+    fun `条数裁剪的计数必须限定非收藏`() {
+        val body = TestSources.blockAfter(db, "private fun trimByCount(")
+        assertTrue(
+            "计数必须与候选集同源（都只算非收藏）",
+            "countByContentType(CONTENT_TYPE_TEXT, TRIM_PRIORITY.first())" in body,
+        )
+        assertTrue("裁剪删行必须留痕（原先零日志，事故时无法归因）", "Diagnostics.i" in body)
+    }
+
+    @Test
+    fun `图片张数额度同样只按非收藏计`() {
+        val body = TestSources.blockAfter(db, "fun imageOverflowIds(")
+        assertTrue("额度必须只数非收藏", "count { !it.favorite }" in body)
+    }
+
+    @Test
+    fun `收藏软上限必须先于字节裁剪`() {
+        val body = TestSources.blockAfter(db, "fun trimTo(")
+        val fav = body.indexOf("trimFavorites()")
+        val bytes = body.indexOf("trimByByteBudget(")
+        assertTrue("trimTo 必须调收藏软上限", fav >= 0)
+        assertTrue(
+            "收藏必须先被压回预算占比，否则调小总上限那一次会把非收藏（含新行）删光",
+            fav < bytes,
+        )
+    }
+
+    @Test
+    fun `重建表必须逐列兜 NULL`() {
+        val body = TestSources.blockAfter(db, "private fun rebuildKeepingData(")
+        assertTrue("必须逐列 COALESCE", "COALESCE(\$col, \$fallback)" in body)
+        assertTrue("空密文列要有兜底值", "\"encrypted_content\" to \"''\"" in body)
+    }
+
+    @Test
+    fun `视图重建要复位载入态`() {
+        val body = TestSources.blockAfter(panel, "fun stopBackgroundWork(")
+        assertTrue(
+            "作废在飞查询后不会再有回调复位 loadingPage，必须在这里清",
+            "loadingPage = false" in body,
+        )
+    }
+
+    @Test
+    fun `条目点击的防重入必须 finally 复位`() {
+        val body = TestSources.blockAfter(panel, "private fun handleItemClick(")
+        assertTrue("必须用 finally 复位（宿主提交链没有兜异常）", "finally" in body)
+        assertTrue("复位语句必须在", "isPasting = false" in body)
+    }
+
+    @Test
+    fun `重算的解密必须在事务之外`() {
+        val body = TestSources.blockAfter(db, "fun reclassifyAll(")
+        val decrypt = body.indexOf("ClipboardCrypto.decrypt")
+        val begin = body.indexOf("beginTransaction")
+        assertTrue("必须先解密", decrypt >= 0)
+        assertTrue("解密必须在开事务之前（否则整趟独占唯一连接）", decrypt < begin)
     }
 }
