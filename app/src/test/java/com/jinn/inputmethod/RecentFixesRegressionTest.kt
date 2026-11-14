@@ -1705,11 +1705,15 @@ class RecentFixesRegressionTest {
         val src = codeOf("ClipboardPanelView.kt")
         // 形状钉改为「先判止损态、再续扫」这条语义：入口补敲击反馈后，中间多了一句反馈调用，
         // 判据不再绑死单行写法（中间允许零或一句其它语句），但「只在止损态才动作」必须留着。
+        val emptyBlock = blockAfter(src, "textEmpty = TextView(context)")
         assertTrue(
             "空态必须挂点击入口，且只在止损态才动作并沿游标续扫（见 scanStoppedEarly）",
-            Regex(
-                """setOnClickListener \{\s*if \(!scanStoppedEarly\) return@setOnClickListener\s+(?:[^\n]*\n\s*)?continueScan\(\)""",
-            ).containsMatchIn(src),
+            Regex("""scanStoppedEarly ->[\s\S]{0,200}continueScan\(\)""").containsMatchIn(emptyBlock),
+        )
+        assertTrue(
+            "有行但读不出时必须给出清空重开的出路（否则坏行不可删 ⇒ 新密钥永不被允许创建）",
+            Regex("""unreadableHistory ->[\s\S]{0,200}showClearConfirm\(includingFavorites = true\)""")
+                .containsMatchIn(emptyBlock),
         )
         assertTrue(
             "止损态必须能从填页返回值推出（空结果 + 游标未到末尾）",
@@ -1958,7 +1962,7 @@ class RecentFixesRegressionTest {
             "setThreadPriority" in body && "THREAD_PRIORITY_BACKGROUND" in body,
         )
         val runningRelease = "ReclassifyGuard.running.set(false)"
-        val retryRelease = "if (changed == null) reclassifyStarted.set(false)"
+        val retryRelease = "if (result == null) reclassifyStarted.set(false)"
         assertTrue("运行中标记必须仍在 finally 放开", runningRelease in body)
         assertTrue("失败必须归还 started（否则本进程永不重试）", retryRelease in body)
         assertTrue("归还 started 必须排在放开 running 之后", body.indexOf(runningRelease) < body.indexOf(retryRelease))
@@ -6849,12 +6853,14 @@ class RecentFixesRegressionTest {
             "字节加密仍可建钥",
             "withKey(allowCreate = true)" in blockAfter(src, "fun encryptBytes(plain: ByteArray)"),
         )
-        // 「取键抛异常」≠「别名不存在」：抛的时候任何档都不许建钥（否则会覆盖别名）
-        val load = blockAfter(src, "private fun loadKey(")
-        val early = load.indexOf("if (!allowCreate) return null")
-        assertTrue("读路径早退必须排在建钥之前", early > 0 && early < load.indexOf("generateKey"))
-        val catchBlock = blockAfter(load, "catch (e")
-        assertTrue("取键抛异常必须 return null（抛 ≠ 别名不存在）", "return null" in catchBlock)
+        // 「取键抛异常」≠「别名不存在」：抛的时候不许建钥（否则会覆盖别名）
+        val keyOrNullBody = blockAfter(src, "private fun keyOrNull(")
+        assertTrue("建钥必须走统一判据（见 ClipboardKeyPolicy）", "keyDecision(" in keyOrNullBody)
+        val catchBlock = blockAfter(blockAfter(src, "private fun probeStoredKey("), "catch (e")
+        assertTrue(
+            "取键抛异常必须按「此刻取不到」处理（抛 ≠ 别名不存在）",
+            "KeyProbe(null, readFailed = true)" in catchBlock,
+        )
         assertFalse("取键抛异常不得建钥", "generateKey" in catchBlock)
     }
 

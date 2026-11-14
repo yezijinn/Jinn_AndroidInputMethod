@@ -691,7 +691,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString())) > 0
 
     /**
-     * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
+     * 删除全部历史：默认收藏是受保护条目，只删除非收藏记录。
+     *
+     * @param includingFavorites 连收藏一起删。**只给「密钥已丢失、库内密文永久解不开」的出路用**：
+     *   那些行在界面上不可见也不可删（列表走 [recentPageAfter]，坏行被跳过），若仍守「收藏保留」，
+     *   「库内还有密文」就会永远成立 ⇒ 新密钥永远不被允许创建 ⇒ 之后的复制全部不入库。
+     *   普通清空入口**不得**传 true。
      *
      * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
      * （AI2 A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
@@ -700,12 +705,17 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
-    fun deleteAll(): Int =
-        writableDatabase.delete(
+    fun deleteAll(includingFavorites: Boolean = false): Int {
+        val deleted = writableDatabase.delete(
             TABLE_ITEMS,
-            "is_favorite = 0",
+            if (includingFavorites) null else "is_favorite = 0",
             null,
         )
+        // 清空此前零日志：库里几百行一夜消失时，事后无法判断是用户清空还是数据丢失（本次事故即如此）
+        val kept = if (includingFavorites) 0 else count(null, favoritesOnly = true)
+        Diagnostics.i(TAG, "清空历史: 删除 $deleted 行（收藏保留 $kept 行，含收藏=$includingFavorites）")
+        return deleted
+    }
 
     /**
      * 按**明文内容**删除历史条目（「凭据不留痕」，2026-09-30 加固防泄露）。
@@ -1292,6 +1302,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /** 一页查询结果：[items] 为解密成功的条目，[nextOffset] 为**已扫描过的原始行数**（进度，不是 SQL OFFSET） */
     data class Page(val items: List<Item>, val nextOffset: Int)
 
+    /** 分组标签重算的结果：[changed] 实际 UPDATE 的条数，[failed] 密文解不开的条数（只归因） */
+    data class ReclassResult(val changed: Int, val failed: Int)
+
     /** 记录总数（纯 SQL 计数，不解密；可按分类/收藏/内容类型过滤） */
     fun count(
         category: String? = null,
@@ -1362,10 +1375,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 页内写入包一个事务：几百条各自成事务等于几百次 fsync，会把这趟迁移拖成
      * 秒级以上的后台长任务。
      *
-     * @return 实际改动的条数
+     * @return 改动的条数与**解不开的条数**（后者只归因上报：密钥失配 / 单行损坏时，
+     *   一次「改动 0 条」看不出是「本来就不用改」还是「全库都解不开」）
      */
-    fun reclassifyAll(): Int {
+    fun reclassifyAll(): ReclassResult {
         var changed = 0
+        var failed = 0
         var lastId = 0L
         while (true) {
             val rows = ArrayList<Triple<Long, String, String>>(RECLASSIFY_PAGE)
@@ -1376,7 +1391,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                     "WHERE id > ? AND content_type = ? ORDER BY id LIMIT $RECLASSIFY_PAGE",
                 arrayOf(lastId.toString(), CONTENT_TYPE_TEXT),
             ).use { c -> while (c.moveToNext()) rows.add(Triple(c.getLong(0), c.getString(1), c.getString(2))) }
-            if (rows.isEmpty()) return changed
+            if (rows.isEmpty()) return ReclassResult(changed, failed)
             lastId = rows.last().first
             writableDatabase.beginTransaction()
             try {
@@ -1385,6 +1400,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                     if (text == null) {
                         // 与 readItem 同口径：解不开就撤销备忘（BUG.md L-199）
                         forgetReadable(hash)
+                        failed++
                         continue
                     }
                     val label = ClipboardClassifier.classify(text)
@@ -1916,7 +1932,13 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
         fun get(context: Context): ClipboardDb =
             instance ?: synchronized(this) {
-                instance ?: ClipboardDb(context).also { instance = it }
+                instance ?: ClipboardDb(context).also { db ->
+                    // 剪贴板密钥的「库内还有密文」探针（纯 SQL 计数，不解密）。
+                    // 装在唯一的实例构造点上：备份导入 / 管理页 / 文件导入都不经 ClipboardController，
+                    // 装在那里会留下探针缺失的路径（缺失按 fail-closed 处理，会让这些入口无法加密）。
+                    ClipboardKeyPresence.attach { db.count() > 0 }
+                    instance = db
+                }
             }
 
         /** 迁移期给空哈希补的占位前缀（见 backfillBlankHashes）：稳定哈希是 64 位 hex，不会碰撞 */

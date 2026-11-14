@@ -64,6 +64,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private var activeForms: List<String> = emptyList()
     private var pageIndex = 0
 
+    /**
+     * 当前列表是否处于「库里有行但一条都读不出」。
+     *
+     * 只用于清空入口的口径：这种状态下坏行在界面上不可见也不可删，若只清非收藏，
+     * 「库内仍有密文」永远成立 ⇒ 新密钥不被允许创建 ⇒ 之后的复制全部静默不入库。
+     */
+    private var unreadableHistory = false
+
     /** 当前是否处于图片分类（网格模式）：列表的多选与行渲染在此时全部让位 */
     private fun inImageMode(): Boolean = categoryFilter == FILTER_IMAGE
 
@@ -821,9 +829,12 @@ class ClipboardHistoryActivity : ComponentActivity() {
             actionsRow.addView(compactView().apply {
                 text = "清空"
                 setOnClickListener {
-                    confirm("清空全部非收藏历史？") {
+                    // 历史读不出时坏行不可见也不可删，只清非收藏会留下「库内仍有密文」⇒
+                    // 新密钥永远不被允许创建 ⇒ 之后的复制全部静默不入库。这条出路必须连收藏一起清。
+                    val clearAll = unreadableHistory
+                    confirm(if (clearAll) "清空全部历史（含收藏，不可恢复）？" else "清空全部非收藏历史？") {
                         BackgroundIo.run {
-                            db.deleteByCategory(null)
+                            if (clearAll) db.deleteAll(includingFavorites = true) else db.deleteByCategory(null)
                             // 清空会删掉图片行（非收藏）：文件同步收一次（否则要等下次启动 GC）；
                             // 批量删除走 GC（多条目逐个 deleteFor 要先查 hash 表），用短保护窗立即回收
                             ClipboardImageFiles.gc(
@@ -1075,6 +1086,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 否则「列表里就这些」与「库里还有很多没加载」在界面上无从区分。
                 // 空态则要分真因（BUG.md L-1328）：库里有行却一条都解不出时不能说「暂无记录」
                 val unreadable = items.isEmpty() && total > 0 && keywordNow.isEmpty()
+                unreadableHistory = unreadable
                 val hint = when {
                     imageMode && items.isEmpty() -> TEXT_IMAGE_EMPTY
                     cappedByCount && total > maxResults -> "$TEXT_TRUNCATED_PREFIX$maxResults$TEXT_TRUNCATED_SUFFIX"
@@ -1851,10 +1863,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /**
          * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为
-         * 历史被清空了，而真相是密钥失效 / 密文损坏（新复制的内容仍会正常记录）。
-         * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，同一场景两种入口说同样的话
+         * 历史被清空了，而真相是密钥失效 / 密文损坏。后半句与面板侧
+         * [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源：密钥丢失后不会静默重建（否则旧密文永久陪葬），
+         * 新复制要等清空历史后重新开始，两个入口不能一个说「仍会记录」、一个说「要清空」。
          */
-        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
+        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；清空历史后可重新开始记录）"
         const val TEXT_TRUNCATED_PREFIX = "只加载最多 "
         const val TEXT_TRUNCATED_SUFFIX = " 条（超出请用搜索缩小范围）"
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"

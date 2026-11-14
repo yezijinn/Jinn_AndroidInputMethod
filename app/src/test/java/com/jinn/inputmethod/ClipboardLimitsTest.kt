@@ -782,7 +782,10 @@ class ClipboardLimitsTest {
             "读路径解不开要撤销备忘（否则白丢一次自愈机会）",
             "forgetReadable(hash)\n            Diagnostics.w(TAG, \"解密失败，跳过 id=\$id\")" in src,
         )
-        assertTrue("存量重算解不开也要撤销", "forgetReadable(hash)\n                        continue" in src)
+        assertTrue(
+            "存量重算解不开也要撤销（解不开要计入 failed，供重算结果上报）",
+            Regex("""forgetReadable\(hash\)\s*\n\s*failed\+\+\s*\n\s*continue""").containsMatchIn(src),
+        )
         // 位置变了（L-1533）：从「每条插入后清一次」改成「整批末尾清一次」—— 备忘只是缓存，
         // 晚清几毫秒不影响正确性（读路径解不开会自己撤销，见上一条断言）
         val batch = TestSources.blockAfter(src, "fun insertRestoredBatch(")

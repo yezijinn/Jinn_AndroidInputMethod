@@ -113,13 +113,22 @@ class ClipboardController(context: Context) {
             // 这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），跑在 onCreate 路径上、与词库加载同时发生，
             // 不降级就会在用户等键盘弹出、准备打字的时刻抢 CPU（BUG.md L-103）。
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            val changed = runCatching { db.reclassifyAll() }
+            val result = runCatching { db.reclassifyAll() }
                 .onFailure { Diagnostics.w(TAG, "分组标签重算失败: ${it.message}") }
                 .getOrNull()
             try {
-                if (changed != null) {
+                if (result != null) {
                     prefs.reclassified = true
-                    Diagnostics.i(TAG, "分组标签重算完成: 改动 $changed 条")
+                    Diagnostics.i(TAG, "分组标签重算完成: 改动 ${result.changed} 条")
+                    // 标记仍然置位：它的语义是「这次迁移跑完了」，不是「库健康」——全库解不开的行
+                    // 再跑一遍也不会变好，不置位只会让每次冷启动白跑一次全库 Keystore 解密。
+                    // 但「改动 0 条」必须能区分「本来不用改」与「一条都解不开」，否则事故当天看不出真因。
+                    if (result.failed > 0) {
+                        Diagnostics.e(
+                            TAG,
+                            "分组标签重算: ${result.failed} 行文本密文解不开（疑似密钥失配或密文损坏）",
+                        )
+                    }
                 }
             } finally {
                 // 运行中标记只在这里放：不论成功、失败还是抛异常，这一趟都算跑完了
@@ -127,7 +136,7 @@ class ClipboardController(context: Context) {
                 // 失败（runCatching 返回 null）才放开进程内标记，让下一次 start() 还能重试
                 // 先放 running 再放 started：反序会留窄窗，另一实例抢到 started 后跑不动又不归还
                 // 不放的话这条进程就再没有第二次机会，而 prefs 标记也没置位 —— 两边都不动 = 永久放弃
-                if (changed == null) reclassifyStarted.set(false)
+                if (result == null) reclassifyStarted.set(false)
             }
         }.apply { name = "jinn-clipboard-reclassify"; isDaemon = true }.start()
     }

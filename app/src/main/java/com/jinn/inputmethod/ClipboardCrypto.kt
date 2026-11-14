@@ -51,6 +51,11 @@ object ClipboardCrypto {
     /** 本进程内「密钥疑似失效后重建」的次数（仅归因） */
     private val keyRebuilds = AtomicInteger(0)
 
+    /** 「库内仍有密文却要新建密钥」的拒绝次数（仅归因；E 日志按 [REFUSAL_LOG_LIMIT] 节流） */
+    private val createRefusals = AtomicInteger(0)
+
+    private const val REFUSAL_LOG_LIMIT = 3
+
     /**
      * 缓存 Keystore 里的密钥句柄（**可失效**，见 [withKey]）。
      *
@@ -85,32 +90,69 @@ object ClipboardCrypto {
      * @param allowCreate **只有加密（写新密文）才允许 true**。解密路径必须 false：
      *   读的时候新建密钥会覆盖同别名，把库里已有密文变成**永久**不可解（本仓对台账的口径是
      *   「密钥件缺失而数据还在 ⇒ 绝不新建」，剪贴板同理）。
+     *
+     * 写路径还有第二道闸（[keyDecision]）：**别名不存在但库内仍有密文时也拒绝建钥** ——
+     * 覆盖同别名会让全部旧密文永久失配，而新行照常可解，用户看到的是「历史全没了、新复制却正常」。
      */
     private fun keyOrNull(allowCreate: Boolean): SecretKey? {
         cachedKey?.let { return it }
-        return synchronized(this) { cachedKey ?: loadKey(allowCreate)?.also { cachedKey = it } }
+        var readFailed = false
+        val existing = synchronized(this) {
+            cachedKey ?: probeStoredKey().also { probe ->
+                readFailed = probe.readFailed
+                probe.key?.let { cachedKey = it }
+            }.key
+        }
+        if (existing != null) return existing
+        // ⚠ 探针在监视器**外**：行数探针要 DB 连接，而写路径的既有锁序是「DB 监视器 → Crypto 监视器」
+        // （见 ClipboardDb.upsertImportChunk 的锁序说明，非 WAL 库只有一个连接）⇒ 锁内探测会死锁。
+        val known = allowCreate && !readFailed && ClipboardKeyPresence.isKnown()
+        val hasRows = known && ClipboardKeyPresence.hasCiphertextRows()
+        when (
+            keyDecision(
+                keyFound = false,
+                keyReadFailed = readFailed,
+                allowCreate = allowCreate,
+                presenceKnown = known,
+                hasCiphertextRows = hasRows,
+            )
+        ) {
+            KeyDecision.UseExisting -> Unit
+            KeyDecision.Refuse -> {
+                // 只给「别名不存在而库内仍有密文」这一支留痕：这是唯一会毁库的形态（节流防刷屏）
+                if (known && hasRows && createRefusals.incrementAndGet() <= REFUSAL_LOG_LIMIT) {
+                    Diagnostics.e(TAG, "拒绝新建剪贴板密钥：别名不存在但库内仍有密文行（旧数据保留待处理）")
+                }
+                return null
+            }
+            KeyDecision.Create -> Unit
+        }
+        // 二次检查：探针判定与真正建钥之间，别的线程可能已经建好（复用而不是再覆盖一次）
+        return synchronized(this) {
+            cachedKey ?: createKey().also {
+                cachedKey = it
+                Diagnostics.w(TAG, "新建剪贴板密钥（别名不存在且库内无密文行）")
+            }
+        }
     }
 
-    /**
-     * 实际取键：[getKey] **正常返回 null** 才说明别名不存在；抛异常一律当作「暂时取不到」
-     * （记 W 后返回 null，**任何** `allowCreate` 下都不建钥）。
-     *
-     * 为什么必须区分：API ≤30 的 KeyStore 把服务端故障折成 `contains=false` ⇒ `getKey` 返 null
-     * （与「别名不存在」同形），此时若建钥就会覆盖别名、旧密文永久不可解；API ≥31 只有
-     * KEY_NOT_FOUND 才折 null、其余抛。这条区分是唯一能同时覆盖两档的写法。
-     */
-    private fun loadKey(allowCreate: Boolean): SecretKey? {
+    /** `getKey` 的结果：两者都为假 = 别名确实不存在；`readFailed` = 此刻取不到（抛 ≠ 不存在） */
+    private class KeyProbe(val key: SecretKey?, val readFailed: Boolean)
+
+    private fun probeStoredKey(): KeyProbe {
         val ks = keyStore ?: KeyStore.getInstance(ANDROID_KEYSTORE)
             .apply { load(null) }.also { keyStore = it }
-        val existing = try {
-            ks.getKey(KEY_ALIAS, null) as? SecretKey
+        return try {
+            KeyProbe(ks.getKey(KEY_ALIAS, null) as? SecretKey, readFailed = false)
         } catch (e: Throwable) {
             if (!isKeyFailure(e)) throw e
             Diagnostics.w(TAG, "取密钥失败: ${e.javaClass.simpleName}")
-            return null
+            KeyProbe(null, readFailed = true)
         }
-        if (existing != null) return existing
-        if (!allowCreate) return null
+    }
+
+    /** 生成并落一个新密钥（同别名覆盖）。**只允许在「库内无密文」时走到这里**，见 [keyDecision] */
+    private fun createKey(): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(

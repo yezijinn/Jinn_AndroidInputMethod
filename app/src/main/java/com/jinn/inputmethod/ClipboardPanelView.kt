@@ -161,6 +161,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 清空二次确认条（IME 内无窗口 token，用内联确认替代 AlertDialog） */
     private lateinit var confirmBar: LinearLayout
 
+    /** 确认条左侧文案（文案随「是否连收藏一起清」变化，故需保留引用） */
+    private lateinit var confirmText: TextView
+
+    /** 本次确认是否连收藏一起清：只有「历史读不出」这条出路会置 true */
+    private var clearIncludingFavorites = false
+
     private var currentCategory: String? = null
     private var currentItems: MutableList<ClipboardDb.Item> = mutableListOf()
 
@@ -502,12 +508,21 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 14f
             visibility = GONE
-            // 只有在「还有没扫完的行」时空态才可点（见 scanStoppedEarly / continueScan）——
-            // 其余两种空态点它什么也不会发生，文案里也不提「点这里」
+            // 两种空态才可点：还有没扫完的行（继续查找）/ 有行但一条都解不出（给清空重新开始的出路）。
+            // 后者必须可点：密钥丢失后若守「收藏保留」，库里的坏行在界面上不可见也不可删，
+            // 「库内仍有密文」会永远成立 ⇒ 再也建不了新密钥 ⇒ 之后的复制全部静默不入库。
             setOnClickListener {
-                if (!scanStoppedEarly) return@setOnClickListener
-                KeyFeedback.fire(TapSound.G_FUNC)
-                continueScan()
+                when {
+                    scanStoppedEarly -> {
+                        KeyFeedback.fire(TapSound.G_FUNC)
+                        continueScan()
+                    }
+                    unreadableHistory -> {
+                        KeyFeedback.fire(TapSound.G_ERASE)
+                        showClearConfirm(includingFavorites = true)
+                    }
+                    else -> Unit
+                }
             }
         }
         addView(textEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -536,8 +551,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             visibility = GONE
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        // 文案必须与 deleteAll 的实际口径一致：只删普通记录，收藏永不参与清空（数据层保护）
-        val confirmText = tabButton("清空历史？（收藏保留）", onClick = { }).apply {
+        // 文案必须与 deleteAll 的实际口径一致：默认只删普通记录，收藏永不参与清空（数据层保护）
+        confirmText = tabButton("清空历史？（收藏保留）", onClick = { }).apply {
             textSize = 12f
         }
         val confirmOk = tabButton("确定", TapSound.G_ERASE) {
@@ -547,8 +562,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             //    点已删的图只会得到「已损坏」提示）
             val imageMode = inImageMode()
             val tid = currentTraceId
+            val includeFavorites = clearIncludingFavorites
             BackgroundIo.run {
-                db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
+                // 历史读不出时的唯一出路要连收藏一起清：坏行不可见也不可删，留着它们
+                // 就等于永远不让新密钥创建，之后的复制会全部静默丢弃
+                if (includeFavorites) db.deleteAll(includingFavorites = true)
+                else db.deleteAll()  // 数据层保护：只删普通记录，收藏保留
                 // 批量删除走 GC（收藏的图片文件不能删，不能按全库 hash 一刀切），用短保护窗立即回收
                 ClipboardImageFiles.gc(context, db, ClipboardImageFiles.DELETE_GC_PROTECT_MS)
                 // 重载带上当前筛选（BUG.md L-1298）：show 的默认参数是 false，写死它会让
@@ -977,9 +996,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
         // 「可点」必须与文案同源更新（BUG.md L-85）：setOnClickListener 会把视图**永久**标成可点击，
-        // 于是「暂无历史 / 全坏读不出」两种空态下读屏仍播报「双击激活」而双击毫无反应。
-        // 只有「还有没扫完的行」才真的可点（continueScan）。
-        textEmpty.isClickable = scanStoppedEarly
+        // 于是「暂无历史」这种空态下读屏仍播报「双击激活」而双击毫无反应。
+        // 可点的有两种：还有没扫完的行（继续查找）、有行但一条都解不出（清空后重新开始记录）。
+        textEmpty.isClickable = scanStoppedEarly || unreadableHistory
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
         listView.invalidate()
@@ -1181,7 +1200,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     // ── 清空二次确认 ──────────────────────────────────────
 
-    private fun showClearConfirm() {
+    private fun showClearConfirm(includingFavorites: Boolean = false) {
+        clearIncludingFavorites = includingFavorites
+        confirmText.text =
+            if (includingFavorites) "清空全部历史（含收藏，不可恢复）？" else "清空历史？（收藏保留）"
         confirmBar.visibility = View.VISIBLE
         hideActionBar()
     }
@@ -1431,10 +1453,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         /**
          * 空态：库里有行但一条都读不出来。
          *
-         * 不说「暂无历史」是硬要求 —— 那是谎报；同时要点明「新的复制仍会正常记录」：
-         * 密钥失效后新条目会用新密钥加密，功能并未坏掉，用户在意的「以后还能不能用」要给答案。
+         * 不说「暂无历史」是硬要求 —— 那是谎报。后半句必须与真实行为一致：密钥已丢失时
+         * **不会**静默重建（那会让旧密文永久陪葬），新复制要等用户清空历史后重新开始，
+         * 因此这里只能承诺「点这里（清空）后可重新开始」，不能承诺「新的复制仍会正常记录」。
+         * 该空态可点（见 updateEmpty 的 isClickable），点开的是「清空全部历史（含收藏）」确认条。
          */
-        const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；新的复制仍会正常记录）"
+        const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏；点这里清空后可重新开始记录）"
 
     /** 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏 */
     const val TEXT_EMPTY_LOAD_FAILED = "读取剪贴板历史失败\n（可稍后重试；新的复制仍会正常记录）"
