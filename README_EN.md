@@ -7,7 +7,8 @@ English ｜ [中文](README.md)
 
 > **Voice dictation is optional and not out-of-the-box**: recognition runs on a server. You must
 > self-host [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline) (Docker) on a home
-> NAS; the app streams audio to it over WebSocket. Without that server the feature cannot be used.
+> NAS, or use a bring-your-own-key online service: Xunfei, OpenAI-compatible, Alibaba Bailian,
+> Tencent Cloud, Azure, Baidu, Deepgram. Without one the feature cannot be used.
 > The keyboard, clipboard and dictionaries are unrelated to voice and need no server.
 
 ## Features

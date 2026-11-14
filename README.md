@@ -6,8 +6,9 @@ APK 约 3.3MB，不含离线语音数据。
 [English](README_EN.md) ｜ 中文
 
 > **语音听写为可选、不开箱即用**：识别在服务端完成 —— 自建家用 NAS 上的
-> [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline)（Docker），或自带凭据的讯飞在线听写（星火听写 V2）。
-> 两者都没配就用不了。拼音键盘 / 剪贴板 / 词库与语音无关，无需服务端。
+> [CapsWriter Offline](https://github.com/HaujetZhao/CapsWriter-Offline)（Docker），
+> 或自带凭据的在线服务：讯飞 / OpenAI 兼容 / 阿里云百炼 / 腾讯云 / Azure / 百度 / Deepgram。
+> 没配就用不了。拼音键盘 / 剪贴板 / 词库与语音无关，无需服务端。
 
 ## 功能
 
