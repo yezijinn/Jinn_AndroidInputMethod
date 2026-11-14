@@ -94,7 +94,7 @@ class ClipboardImageTest {
         assertEquals(listOf(1L), ClipboardDb.imageOverflowIds(rows, maxItems = 0, maxBytes = 20))
         // 全是收藏 ⇒ 无可删（宁可超限也不删用户明确保留的内容）
         assertTrue(ClipboardDb.imageOverflowIds(rows.map { it.copy(favorite = true) }, 1, 1).isEmpty())
-        // 收藏占满额度、只有刚采集那张是非收藏 ⇒ **不删**（2026-11-14 三轮审计）：
+        // 收藏占满额度、只有刚采集那张是非收藏 ⇒ **不删**（2026-11-14 复核）：
         // 额度只按非收藏计，收藏是用户的显式保留、不占名额。原先按全部图片行计额度时，
         // 这个状态会删掉刚入库的那张，且没有任何日志 —— 用户看到「复制了，图库里没有」。
         // 上界仍然有界：非收藏 ≤ maxItems、收藏 ≤ favoriteMaxItems（硬顶 1000）。

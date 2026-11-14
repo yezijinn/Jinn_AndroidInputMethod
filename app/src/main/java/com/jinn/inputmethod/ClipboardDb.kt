@@ -205,7 +205,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         check(cols.isNotEmpty()) { "重建 ${TABLE_ITEMS}_old 时列交集为空" }
         // COALESCE 兜住旧表的 NULL：目标表这些列都是 NOT NULL，直接搬 NULL 会让 INSERT 失败、
         // 升级抛异常 —— 而 onUpgrade 整段在一个事务里，失败即每次启动重跑同一段必然失败的迁移，
-        // 库从此永久打不开（2026-11-14 三轮审计）。
+        // 库从此永久打不开（2026-11-14 复核）。
         // 各列兜底值与 createTableSql 的默认值一致；`id` 原样搬（PK，不可能为 NULL）。
         val nullDefaults = mapOf(
             "encrypted_content" to "''",
@@ -903,11 +903,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     fun trimTo(maxItems: Int, maxTotalBytes: Long) {
         // 收藏软上限排第一：它是唯一能从「受保护行」释放额度的通道。排在字节裁剪之后时，
         // 用户刚调小总字节上限的那一次，收藏仍按旧的 25% 占用 ⇒ 字节裁剪会把非收藏
-        // （含刚写入的那条）删光（2026-11-14 三轮审计）。
+        // （含刚写入的那条）删光（2026-11-14 复核）。
         val favImages = trimFavorites()
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
-        // 判据是**本轮实删的图片行数**，两条淘汰路径都算：
+        // 判据是**这一趟实删的图片行数**，两条淘汰路径都算：
         //  - [trimImages] 只淘汰非收藏图片，交回实删数；
         //  - [trimFavorites] 按收藏软上限淘汰最旧收藏，候选里可能含收藏**图片**行，它同样只交回
         //    「实删的图片行数」（文本收藏不计）—— 只统计前者时那批 `.enc`/`.thumb` 就成了孤儿，
@@ -1027,7 +1027,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 按条数裁剪：只统计与删除**非收藏的文本**行（图片有独立张数上限，见 [trimImages]）。
      *
-     * 额度必须按非收藏计（2026-11-14 三轮审计）：原先统计含收藏、候选却只取非收藏 ⇒ 收藏占满
+     * 额度必须按非收藏计（2026-11-14 复核）：原先统计含收藏、候选却只取非收藏 ⇒ 收藏占满
      * 上限时 `overflow` ≥ 非收藏总数，一次复制就把全部非收藏文本行（含刚写入的那条）删光，
      * 用户看到的是「复制了，历史里没有」，且**没有任何日志**。
      */
@@ -1435,7 +1435,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             if (rows.isEmpty()) return ReclassResult(changed, failed)
             lastId = rows.last().first
             // 解密与分类在事务**外**先算好：本库非 WAL、只有一条连接，事务内逐条解密会让整趟
-            // 重算长时间独占连接，把采集入库与面板查询反复切碎（2026-11-14 三轮审计）。
+            // 重算长时间独占连接，把采集入库与面板查询反复切碎（2026-11-14 复核）。
             val planned = ArrayList<Pair<Long, String>>(rows.size)
             for ((id, encrypted, hash) in rows) {
                 val text = ClipboardCrypto.decrypt(encrypted)
@@ -1826,7 +1826,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             val itemCap = if (maxItems > 0) maxItems else rows.size
             val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
             // 额度只按**非收藏**算（收藏不占名额）：否则收藏占满张数上限后，每次复制新图
-            // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14 三轮审计）。
+            // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14 复核）。
             var kept = rows.count { !it.favorite }
             var bytes = rows.sumOf { it.bytes }
             if (kept <= itemCap && bytes <= byteCap) return emptyList()

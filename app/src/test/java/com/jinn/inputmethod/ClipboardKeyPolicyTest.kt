@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 剪贴板建钥策略守卫（2026-11-14 三轮审计后为「代际别名」版）。
+ * 剪贴板建钥策略守卫（2026-11-14 复核后为「代际别名」版）。
  *
  * 真机事故：Keystore 别名被覆盖式重建后，库里全部旧密文永久 AEADBadTag、而之后的新写全部正常。
  * 根因是 `generateKey()` 对同名别名「先删后建」，而密钥不可导出 ⇒ 一次误判就毁掉全部旧数据。
@@ -53,7 +53,7 @@ class ClipboardKeyPolicyTest {
 
     @Test
     fun `库内仍有密文时必须换下一代别名`() {
-        // ← 本轮根因的单测形态：不是「拒绝写入」（那会形成永久死结），而是「换个别名建」
+        // ← 该缺陷的单测形态：不是「拒绝写入」（那会形成永久死结），而是「换个别名建」
         assertEquals(
             KeyDecision.CreateNewGeneration,
             keyDecision(keyFound = false, keyReadFailed = false, allowCreate = true, hasCiphertextRows = true),
