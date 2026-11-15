@@ -218,6 +218,17 @@ class ClipboardLossGuardTest {
     fun `空剪贴板必须二次重试且停用后不得再投递`() {
         val ctl = TestSources.codeOf(TestSources.rawSourceOfShortName("ClipboardController.kt"))
         assertTrue("必须有第二次重试（单次 250ms 常卡在权限放行窗口）", "RETRY_DELAY_2_MS" in ctl)
+        // 突变实证：把调用点延时改成 Long.MAX_VALUE / 4 后，只钉常量名的断言仍全绿
+        //（常量定义在文件里独立存在）⇒ 必须钉调用点与出现次数。
+        assertTrue(
+            "RETRY_DELAY_2_MS 必须落在 postDelayed 调用点",
+            "}, RETRY_DELAY_2_MS)" in ctl,
+        )
+        assertEquals(
+            "纯代码里该常量须恰好 2 次（1 定义 + 1 调用）",
+            2,
+            Regex("RETRY_DELAY_2_MS").findAll(ctl).count(),
+        )
         assertTrue("最终失败必须留 E（这条复制确实丢了）", "该次复制未记录" in ctl)
         assertTrue("每处重试 lambda 都要查监听标志", Regex("""listenerRegistered\) return@postDelayed""").findAll(ctl).count() >= 2)
         val stop = TestSources.blockAfter(ctl, "fun stop()")

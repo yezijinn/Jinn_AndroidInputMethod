@@ -174,6 +174,21 @@ class ClipboardKeyPolicyTest {
     }
 
     @Test
+    fun `权威探测的异常分支同样不得写负缓存`() {
+        // 突变实证：把 `genMissingAt[gen] = ...` 插进 highestStoredKey 的 catch 后，
+        // 原有的三条断言仍全绿 —— 一次 Keystore 抖动会被记成「该代缺失」，
+        // 60s 内读路径连 getKey 都不再发。这里补上唯一能拦住它的断言。
+        val body = TestSources.blockAfter(cryptoCode, "private fun highestStoredKey(")
+        val catchBody = TestSources.blockAfter(body, "catch (e")
+        assertFalse("取钥抛异常不得记成缺失", "genMissingAt" in catchBody)
+        assertEquals(
+            "负缓存写入点须恰好 1 处（仅正常返回 null 分支）",
+            1,
+            Regex("""genMissingAt\[gen\] = System\.currentTimeMillis\(\)""").findAll(body).count(),
+        )
+    }
+
+    @Test
     fun `读路径遇密钥失效要自愈一次`() {
         val body = TestSources.blockAfter(cryptoCode, "private fun decryptRaw(")
         assertTrue("必须能触发重建（读路径原先只能靠写路径顺带修好）", "invalidateKey()" in body)
