@@ -453,4 +453,31 @@ class BackupRulesTest {
             attrs["dataExtractionRules"],
         )
     }
+
+    @Test
+    fun 导入包格式不明时明文包必须留痕并注销() {
+        val act = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
+        val branch = TestSources.blockAfter(act, "info == null ->")
+        assertTrue("删明文失败要按文件是否仍在来留痕", "zip.exists()" in branch)
+        assertTrue(
+            "删完必须从 in-flight 名册注销，否则清扫会一直跳过这份明文",
+            "ConfigBackupManager.releaseUnlockedTemp(zip)" in branch,
+        )
+    }
+
+    @Test
+    fun 导入收尾必须留痕并注销明文包() {
+        val act = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
+        val tail = TestSources.window(
+            act,
+            "ConfigBackupManager.import(",
+            "if (pendingImportZip === zip)",
+        )
+        assertTrue("删明文失败要按文件是否仍在来留痕", "zip.exists()" in tail)
+        assertTrue(
+            "删完必须从 in-flight 名册注销（导入早退时没有 finally 兜底）",
+            "ConfigBackupManager.releaseUnlockedTemp(zip)" in tail,
+        )
+    }
+
 }

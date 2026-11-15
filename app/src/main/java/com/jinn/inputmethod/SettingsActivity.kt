@@ -1274,7 +1274,10 @@ class SettingsActivity : ComponentActivity() {
                     }
                     info == null -> {
                         // 已解密但清单不可识别（manifest 骨架不符）：密码是对的，引导重输只会让人怀疑自己
-                        zip.delete()
+                        if (!zip.delete() && zip.exists()) {
+                            Diagnostics.w(TAG, "importConfig: 明文包删除失败: ${zip.name}")
+                        }
+                        ConfigBackupManager.releaseUnlockedTemp(zip)
                         Diagnostics.w(TAG, "importConfig: 包格式无法识别")
                         textConfigHint.text = TEXT_FORMAT_UNKNOWN
                         alert(TEXT_IMPORT_CONFIG, TEXT_FORMAT_UNKNOWN)
@@ -1424,7 +1427,12 @@ class SettingsActivity : ComponentActivity() {
                 Diagnostics.w(TAG, "importConfig: 导入异常 ${it.javaClass.simpleName}")
             }.getOrNull()
             // 明文临时 zip 用完即删（成功失败都删）：它是本次导入唯一的明文副本
-            zip.delete()
+            if (!zip.delete() && zip.exists()) {
+                Diagnostics.w(TAG, "importConfig: 明文包删除失败: ${zip.name}")
+            }
+            // 删不掉时也必须从 in-flight 名册注销：名字在册会让 cleanupStaleCache 一直跳过它，
+            // 明文 prefs / 词频 / 剪贴板 / 凭据就此驻留且无任何日志。
+            ConfigBackupManager.releaseUnlockedTemp(zip)
             if (pendingImportZip === zip) pendingImportZip = null
             importInFlight = false
             // 本次结果在后台线程取出（原因随返回值，不读共享字段）——避免快速连点串读（BUG.md L-1358）
