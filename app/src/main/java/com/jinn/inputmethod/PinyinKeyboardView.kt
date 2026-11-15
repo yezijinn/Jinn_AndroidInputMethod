@@ -1384,7 +1384,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 只在 DOWN 起计时（符号层的滑动翻页在 MOVE 里按 24dp 判定，两条手势互不打扰）。
                 if (canLongPressUpper(c)) {
                     val runnable = Runnable {
-                        if (!g.consumed) {
+                        // 与 ACTION_UP 的 sameLayer 同源：计时未满时若另一根手指切了层，
+                        // 这个键位在当前层已经不是字母了，不能把按住时的大写字母塞进来。
+                        if (!g.consumed && longPressCommitAllowed(g.layerAtDown, layer)) {
                             g.consumed = true
                             listener?.onCommitText(c.uppercaseChar().toString())
                         }
@@ -6255,3 +6257,13 @@ internal fun isInsideKeyBounds(
         rawY >= top - pad &&
         rawY <= top + height + pad
 }
+
+/**
+ * 长按转大写是否允许落地（纯函数，便于单测）。
+ *
+ * 按下时记录 [layerAtDown]，到点再看当前层：中途另一根手指点了符号/数字层后，
+ * 同一个物理键位已经不再是字母，长按上屏会插进一个用户根本没按过的字符。
+ * 点击侧 ACTION_UP 早有同款判定，这里补齐长按这一条路径。
+ */
+internal fun longPressCommitAllowed(layerAtDown: Int, currentLayer: Int): Boolean =
+    layerAtDown == currentLayer

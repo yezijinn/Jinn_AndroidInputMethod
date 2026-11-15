@@ -7883,6 +7883,27 @@ class RecentFixesRegressionTest {
         )
     }
 
+    @Test
+    fun `长按转大写的层校验必须为真`() {
+        // LAYER_LETTER=0 / LAYER_DIGIT=2，常量在 private companion object 里，这里只比相等
+        assertTrue("同层允许落地", longPressCommitAllowed(0, 0))
+        assertFalse(
+            "计时未满时另一指切了层，长按不能把用户没按过的大写字母上屏",
+            longPressCommitAllowed(0, 2),
+        )
+    }
+
+    @Test
+    fun `长按落地判据必须实调层校验`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun handleKeyTouch(")
+        val runnable = blockAfter(body, "val runnable = Runnable")
+        assertTrue(
+            "纯函数存在但没接进生产路径等于没修：长按判据必须比对按下时那一层",
+            "if (!g.consumed && longPressCommitAllowed(g.layerAtDown, layer))" in runnable,
+        )
+        assertFalse("不得退回只判 consumed", "if (!g.consumed) {" in runnable)
+    }
+
     /**
      * L-1438：按住退格滑出键面必须**停止**连删。
      *
