@@ -52,6 +52,7 @@ class ClipboardController(context: Context) {
     /** 空剪贴板重试的延时载体：等待走主线程 Handler，不占用共享的 IO 单线程队列 */
     private val retryHandler = Handler(Looper.getMainLooper())
 
+    @Volatile
     private var listenerRegistered = false
 
     /**
@@ -143,10 +144,12 @@ class ClipboardController(context: Context) {
 
     /** 停用：注销监听（幂等）并丢弃待执行的重试，避免停用后仍落库 */
     fun stop() {
+        // 无条件先清队列：标志可能已为 false，但队列里仍压着上一条 retry。
+        // 放在 early-return 之后会让「关→开」窗口里的旧回调继续投递。
+        retryHandler.removeCallbacksAndMessages(null)
         if (!listenerRegistered) return
         clipboard.removePrimaryClipChangedListener(listener)
         listenerRegistered = false
-        retryHandler.removeCallbacksAndMessages(null)
         // ⚠ 这里**不能**放开 started：上一趟 reclassifyAll 可能还在全库解密，放掉它
         // 再启用时 reclassifyIfNeeded 会重新抢位并起第二趟 ⇒ 两趟并发（正是该标记要根除的）。
         // 重试承诺由线程自己的 finally 保留：失败时它放 started，下次 start() 自然能再试。
@@ -154,6 +157,8 @@ class ClipboardController(context: Context) {
     }
 
     private fun onClipboardChanged() {
+        // 已注销但回调已排进主线程队列时，仍会走到这里 ⇒ 先查标志，避免停用后落库。
+        if (!listenerRegistered) return
         // 功能关闭时不入库。此前只有 copySelection 那条路径检查了 enabled，
         // 监听路径无条件保存，用户关掉剪贴板功能后系统复制仍会被记录。
         if (!ClipboardPrefs.of(appContext).enabled) return
@@ -169,12 +174,24 @@ class ClipboardController(context: Context) {
             // 等待用主线程 Handler，不能在 BackgroundIo 里 sleep：那是单线程串行队列，
             // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
             retryHandler.postDelayed({
+                if (!listenerRegistered) return@postDelayed
                 val retryClip = clipboard.primaryClip
                 if (retryClip == null) {
-                    // 重试仍读不到：这是**静默失败**的常见形态（系统剪贴板访问限制：
-                    // 非前台 IME 读 primaryClip 会直接给 null 而不抛异常）。不留日志的话，
-                    // 排障时只能看到「复制了但历史里没有」（2026-10-10 实证）。
-                    Diagnostics.w(TAG, "剪贴板读不到（重试后仍为空）：系统访问限制或写入方未真正写入")
+                    // 第二次重试仍投在同一个 retryHandler（累计 750ms）：stop() 能一并清掉。
+                    // 单次 250ms 常卡在「IME 刚回前台、剪贴板服务还没放行」的窗口里，
+                    // 一次读不到就永久漏采，用户只能靠「多复制几条」碰运气。
+                    retryHandler.postDelayed({
+                        if (!listenerRegistered) return@postDelayed
+                        val last = clipboard.primaryClip
+                        if (last == null) {
+                            // 两次都读不到：这是**静默失败**的常见形态（系统剪贴板访问限制：
+                            // 非前台 IME 读 primaryClip 会直接给 null 而不抛异常）。
+                            // 记 E 而不是 W：这条复制确实丢了，事后要能查到。
+                            Diagnostics.e(TAG, "剪贴板读不到（两次重试仍为空）：该次复制未记录")
+                            return@postDelayed
+                        }
+                        BackgroundIo.run { extractAndSave(last) }
+                    }, RETRY_DELAY_2_MS)
                     return@postDelayed
                 }
                 BackgroundIo.run { extractAndSave(retryClip) }
@@ -428,6 +445,9 @@ class ClipboardController(context: Context) {
 
         /** 空剪贴板的重试延时：等系统把 primaryClip 写完 */
         const val RETRY_DELAY_MS = 250L
+
+        /** 第二次重试的追加延时（累计 750ms），两次都投在同一个 retryHandler 上 */
+        const val RETRY_DELAY_2_MS = 500L
 
         /** 嗅探读取的头部字节数：16 够认出全部受支持魔数（ISO-BMFF 的 brand 在偏移 8） */
         internal const val SNIFF_HEAD_BYTES = 16

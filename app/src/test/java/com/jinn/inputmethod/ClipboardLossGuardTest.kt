@@ -48,11 +48,17 @@ class ClipboardLossGuardTest {
     }
 
     @Test
-    fun `不可读空态不得可点`() {
+    fun `空态可点只允许继续查找与重试读取`() {
         val body = TestSources.blockAfter(panel, "private fun updateEmpty(")
         val line = body.lines().first { "isClickable" in it }
         assertTrue("载入中一律不可点：文案还没落定，用上一轮旧值接点击就是盲操作", "loadingPage" in line)
-        assertFalse("读不出态不得参与可点判定", "unreadableHistory" in line)
+        assertTrue("读不出态必须可点重试（不能把瞬时解密失败说成数据已坏且无出路）", "unreadableHistory" in line)
+        val click = TestSources.blockAfter(panel, "textEmpty = TextView(context)")
+        assertFalse(
+            "重试口绝不得挂删除动作",
+            "showClearConfirm(" in click || "deleteAll(" in click || "deleteByCategory(" in click,
+        )
+        assertTrue("重试口必须只触发重新取数", "refresh()" in click)
     }
 
     @Test
@@ -194,5 +200,35 @@ class ClipboardLossGuardTest {
         val begin = body.indexOf("beginTransaction")
         assertTrue("必须先解密", decrypt >= 0)
         assertTrue("解密必须在开事务之前（否则整趟独占唯一连接）", decrypt < begin)
+    }
+
+    // ── 粘贴落地 / 采集重试 ──
+
+    @Test
+    fun `暂存粘贴必须有界重投且三条落地路径共用同一票据`() {
+        val ime = TestSources.codeOf(TestSources.rawSourceOfShortName("JinnIme.kt"))
+        assertTrue("必须有有界重投（autoShowKeyboard 关闭时没有任何窗口事件能兜底）", "schedulePasteRetry()" in ime)
+        assertTrue("onWindowShown 必须追加一次落地机会", "flushPendingPaste(getCurrentInputEditorInfo())" in ime)
+        assertTrue("无参调用必须回退当前 EditorInfo（否则身份闸短路）", "info ?: getCurrentInputEditorInfo()" in ime)
+        assertTrue("重投不得捕获文本快照", "flushPendingPaste(getCurrentInputEditorInfo())" in ime)
+        assertTrue("直接提交成功必须消费同一份票据", "onlyIfText = text" in ime)
+    }
+
+    @Test
+    fun `空剪贴板必须二次重试且停用后不得再投递`() {
+        val ctl = TestSources.codeOf(TestSources.rawSourceOfShortName("ClipboardController.kt"))
+        assertTrue("必须有第二次重试（单次 250ms 常卡在权限放行窗口）", "RETRY_DELAY_2_MS" in ctl)
+        assertTrue("最终失败必须留 E（这条复制确实丢了）", "该次复制未记录" in ctl)
+        assertTrue("每处重试 lambda 都要查监听标志", Regex("""listenerRegistered\) return@postDelayed""").findAll(ctl).count() >= 2)
+        val stop = TestSources.blockAfter(ctl, "fun stop()")
+        assertTrue("清队列必须在 early-return 之前", stop.indexOf("removeCallbacksAndMessages") < stop.indexOf("if (!listenerRegistered) return"))
+    }
+
+    @Test
+    fun `不可读空态不得宣称数据已坏`() {
+        for (src in listOf(panel, hist)) {
+            assertFalse("「数据损坏」是谎报：行仍在库里、一行未删", "数据损坏" in src)
+        }
+        assertTrue("全批解不出必须留 E，事后才能与库真坏区分", "本批历史全部解不出" in panel)
     }
 }

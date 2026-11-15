@@ -505,13 +505,22 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             textSize = 14f
             visibility = GONE
-            // 只有「还有没扫完的行」才可点（继续查找）。
-            // ⚠ 不得给「历史读不出」挂任何删除入口：那只说明**本次解密**没成功（竞态 / Keystore
-            // 抖动 / 已换钥都能造成同一形态），拿它去开「全库删除」会把仍有抢救可能的密文一次删光。
+            // 两种可点：还有没扫完的行（继续查找）、这一批一条都没解出（重试读取）。
+            // ⚠ 「读不出」只说明本次解密没成功（竞态 / 密钥服务抖动 / 换钥同形），**不得**挂删除入口；
+            // 给一个只触发 refresh 的重试口，既不撒谎说「数据已损坏」，也不会动一行数据。
             setOnClickListener {
-                if (!scanStoppedEarly) return@setOnClickListener
-                KeyFeedback.fire(TapSound.G_FUNC)
-                continueScan()
+                when {
+                    scanStoppedEarly -> {
+                        KeyFeedback.fire(TapSound.G_FUNC)
+                        continueScan()
+                    }
+                    unreadableHistory -> {
+                        KeyFeedback.fire(TapSound.G_FUNC)
+                        Diagnostics.i(TAG, "空态: 用户重试读取历史")
+                        refresh()
+                    }
+                    else -> Unit
+                }
             }
         }
         addView(textEmpty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -777,6 +786,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                     hasMorePages = page.nextOffset < total
                     // 一条都读不出来但库里有行 ⇒ 空态要说真话（见 unreadableHistory）
                     unreadableHistory = currentItems.isEmpty() && total > 0
+                    if (unreadableHistory) {
+                        // 只说明「这一批一条都没解开」，行仍在库里、一行未删。记 E 让事后能区分
+                        // 「瞬时解密不可用」与「库真的坏了」，而不是靠界面上一句「数据损坏」去猜。
+                        Diagnostics.e(TAG, "本批历史全部解不出: total=$total，行仍在库里，未做任何删除")
+                    }
                     // 还有没扫过的行（扫到止损上限提前收工）⇒ 空态要给「继续查找」入口，否则晚到的
                     // 可读历史永远翻不到（BUG.md L-76）
                     scanStoppedEarly = currentItems.isEmpty() && nextPageOffset < total
@@ -991,9 +1005,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         textEmpty.visibility = if (empty) View.VISIBLE else View.GONE
         // 「可点」必须与文案同源更新（BUG.md L-85）：setOnClickListener 会把视图**永久**标成可点击，
         // 于是「暂无历史」这种空态下读屏仍播报「双击激活」而双击毫无反应。
-        // 只有「还有没扫完的行」可点（继续查找）；载入中一律不可点 —— 此时文案还没落定，
-        // 用上一轮的旧值接点击就是「按看不见的按钮做删除级动作」。
-        textEmpty.isClickable = !loadingPage && scanStoppedEarly
+        // 「继续查找」与「重试读取」可点；载入中一律不可点 —— 此时文案还没落定，
+        // 用上一轮的旧值接点击就是「按看不见的按钮做动作」。
+        textEmpty.isClickable = !loadingPage && (scanStoppedEarly || unreadableHistory)
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
         listView.invalidate()
@@ -1455,7 +1469,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          * 竞态 / Keystore 抖动 / 真的换了钥都能造成同一结果，代码无法在此断言「新复制一定入库」，
          * 也不能把用户引向「清空」这种不可逆动作（该入口已于 2026-11-14 撤回）。只说事实。
          */
-        const val TEXT_EMPTY_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏）"
+        const val TEXT_EMPTY_UNREADABLE = "本次读取失败\n（点这里重试）"
 
     /**
      * 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏。

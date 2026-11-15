@@ -820,6 +820,12 @@ class JinnIme : InputMethodService() {
             pendingPasteAt = android.os.SystemClock.elapsedRealtime()
             // 锁定目标输入框：暂存只在「同一个输入框重新聚焦」时提交
             pendingPasteFieldKey = pendingPasteFieldKey(getCurrentInputEditorInfo())
+            // 双端静默的修复：面板只拿到 false、IME 原先也没有任何反馈。
+            // 不承诺落地（10s TTL 与会话边界都可能丢弃），只说明当前状态。
+            toast("已暂存，正在等待输入框")
+            // 不能只等 onStartInputView：autoShowKeyboard=false 时连唤起都不发，
+            // 没有任何窗口/焦点事件会再派发 ⇒ 有界重投是唯一能落地的通道。
+            schedulePasteRetry()
             // 自动唤起键盘关闭时不主动 requestShowSelf（即使调用了也会被
             // onShowInputRequested 拒绝并再次触发隐藏逻辑，这里直接不发起）。
             if (!prefs.autoShowKeyboard) {
@@ -840,6 +846,9 @@ class JinnIme : InputMethodService() {
         }
         val ok = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
         Diagnostics.i(TAG, "粘贴: len=${text.length} success=$ok")
+        // 直接提交成功后必须消费同一份暂存票据，否则后续 onStartInputView 的 flush
+        // 会把同一条再提交一次（用户看到「一次点击粘出两份」）。
+        if (ok) clearPendingPaste("已直接提交", onlyIfText = text)
         // 失败提示统一由 IME 出：面板只拿到 true/false，分不清「连接为空 → 已暂存、重聚焦时
         // 自动提交」与「真提交失败」，在那里弹提示会与上面的「内容过大」叠成两条、也会冤枉暂存态
         if (!ok) {
@@ -1320,22 +1329,23 @@ class JinnIme : InputMethodService() {
                 db.count() to db.recentPageAfter(null, HISTORY_PASTE_SCAN).items.firstOrNull()
             }
             ui.post {
+                // 代际闸必须覆盖**全部**分支：原先只放在「有内容可提交」那一支里，
+                // 历史为空时连点两次会各走一次 pasteSystemClipboard ⇒ 粘出两份。
+                if (gen != pasteGeneration) {
+                    Diagnostics.i(TAG, "[$tid] 粘贴: 已有更新的查询，丢弃本次结果")
+                    return@post
+                }
                 queried.onSuccess { (total, latest) ->
+                    // 身份闸覆盖全部「可能提交内容」的分支（含历史为空走系统剪贴板兜底），
+                    // 但查询失败分支不需要它 —— 那条只弹提示，不涉及把内容写进哪个框。
+                    val now = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
+                    if (fieldKey != null && now != null && fieldKey != now) {
+                        Diagnostics.w(TAG, "[$tid] 粘贴: 输入框已切换，丢弃本次结果")
+                        toast(TEXT_PASTE_FIELD_CHANGED)
+                        return@onSuccess
+                    }
                     when {
                         latest != null -> {
-                            // 闸只包「有内容可提交」这一支：三条兜底/提示分支不受影响
-                            if (gen != pasteGeneration) {
-                                Diagnostics.i(TAG, "[$tid] 粘贴: 已有更新的查询，丢弃本次结果")
-                                return@onSuccess
-                            }
-                            val now = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
-                            // 与 fallbackToClipboard 同口径：两侧都能取到且不等才拦，
-                            // 避免把「同一个输入框重新聚焦」误判成切框
-                            if (fieldKey != null && now != null && fieldKey != now) {
-                                Diagnostics.w(TAG, "[$tid] 粘贴: 输入框已切换，丢弃本次结果")
-                                toast(TEXT_PASTE_FIELD_CHANGED)
-                                return@onSuccess
-                            }
                             Diagnostics.i(
                                 TAG,
                                 "[$tid] 粘贴: 取历史最新一条 id=${latest.id} 图片=${latest.image != null}",
@@ -3902,11 +3912,46 @@ class JinnIme : InputMethodService() {
      * L-1445 真机实证）；漏清时 10s 内回到另一输入框、且 EditorInfo 身份取不到，
      * `flushPendingPaste` 的身份闸会短路 ⇒ 剪贴板正文被注入无关字段。两处都调，幂等。
      */
-    private fun clearPendingPaste(reason: String) {
+    private fun clearPendingPaste(reason: String, onlyIfText: String? = null) {
         if (pendingPasteText == null) return
+        // 只清「本次直接提交成功」的那一份：功能面板「粘贴」的查库是异步回投，
+        // 期间用户可能又点了一条并新建暂存，无条件清会把后一次点击静默吃掉。
+        if (onlyIfText != null && pendingPasteText != onlyIfText) return
         Diagnostics.i(TAG, "$reason，丢弃暂存粘贴")
         pendingPasteText = null
         pendingPasteFieldKey = null
+        cancelPasteRetry()
+    }
+
+    /** 暂存粘贴的有界重投：连接为空时不能只等框架是否重发 onStartInputView */
+    private var pendingPasteRetry: Runnable? = null
+    private var pendingPasteAttempts = 0
+
+    private fun cancelPasteRetry() {
+        pendingPasteRetry?.let { ui.removeCallbacks(it) }
+        pendingPasteRetry = null
+    }
+
+    private fun schedulePasteRetry() {
+        cancelPasteRetry()
+        pendingPasteAttempts = 0
+        val task = object : Runnable {
+            override fun run() {
+                if (pendingPasteText == null) { cancelPasteRetry(); return }
+                // 不捕获文本快照：flushPendingPaste 自己「取走即置空」，三条落地路径共用同一份票据
+                flushPendingPaste(getCurrentInputEditorInfo())
+                if (pendingPasteText == null) { cancelPasteRetry(); return }
+                if (++pendingPasteAttempts >= 3) {
+                    Diagnostics.w(TAG, "暂存粘贴重投耗尽，本次未粘贴")
+                    toast("未找到可输入的输入框，请点一下输入框后重试")
+                    clearPendingPaste("重投耗尽")
+                } else {
+                    ui.postDelayed(this, 300L)
+                }
+            }
+        }
+        pendingPasteRetry = task
+        ui.postDelayed(task, 100L)
     }
 
     /** 提交暂存的剪贴板粘贴文本（编辑框重新可用时调用；无暂存则空操作） */
@@ -3921,7 +3966,9 @@ class JinnIme : InputMethodService() {
         // 否则用户换输入框、或隔很久才回到键盘，旧文本会被粘到完全无关的位置。
         val age = android.os.SystemClock.elapsedRealtime() - pendingPasteAt
         val target = pendingPasteFieldKey
-        val current = pendingPasteFieldKey(info)
+        // 无参调用（onWindowShown / 重投）必须回退到当前 EditorInfo：传 null 时
+        // fieldKeyOf 返回 null，身份闸两端为 null 会直接短路 ⇒ 暂存可能被注入无关输入框。
+        val current = pendingPasteFieldKey(info ?: getCurrentInputEditorInfo())
         // 身份保护：换到另一个输入框（哪怕同 App 的另一个 fieldId）就不再提交。
         // 10s 的时效窗口远比「切到微信再切回来」长，没有这层比对，剪贴板正文会被
         // 静默注入到用户当前正在输入的、完全无关的位置。
@@ -4039,6 +4086,9 @@ class JinnIme : InputMethodService() {
         super.onWindowShown()
         Diagnostics.i(TAG, "onWindowShown: 窗口显示 clipboardPanelOpen=$clipboardPanelOpen keyboardMode=$keyboardMode")
         Diagnostics.event("IME", "WindowShown", "clipboard=$clipboardPanelOpen mode=$keyboardMode")
+        // 面板在前台时 onStartInputView 不一定重发；窗口显示是第二个可靠的落地机会。
+        // 传当前 EditorInfo，避免身份闸因 null 短路。
+        flushPendingPaste(getCurrentInputEditorInfo())
         if (Diagnostics.KEY_TRACE) traceWindowShownLatency()
     }
 

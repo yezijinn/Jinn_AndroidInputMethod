@@ -1860,7 +1860,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
          * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，**只陈述事实、不承诺后续行为**：
          * 该形态不足以断定「密钥永久丢失」，任何「新复制仍会记录」「清空后可重开」都是空中承诺。
          */
-        const val TEXT_UNREADABLE = "历史内容无法读取\n（加密密钥失效或数据损坏）"
+        const val TEXT_UNREADABLE = "本次读取失败\n（关闭后重新打开可重试）"
         const val TEXT_TRUNCATED_PREFIX = "只加载最多 "
         const val TEXT_TRUNCATED_SUFFIX = " 条（超出请用搜索缩小范围）"
         const val TEXT_TRUNCATED_GENERIC = "只加载了部分记录（受容量预算限制），可用搜索缩小范围"

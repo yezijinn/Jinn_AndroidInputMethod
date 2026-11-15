@@ -1708,14 +1708,12 @@ class RecentFixesRegressionTest {
         val emptyBlock = blockAfter(src, "textEmpty = TextView(context)")
         assertTrue(
             "空态必须挂点击入口，且只在止损态才动作并沿游标续扫（见 scanStoppedEarly）",
-            Regex(
-                """setOnClickListener \{\s*if \(!scanStoppedEarly\) return@setOnClickListener\s+(?:[^\n]*\n\s*)?continueScan\(\)""",
-            ).containsMatchIn(emptyBlock),
+            Regex("""scanStoppedEarly ->[\s\S]{0,200}continueScan\(\)""").containsMatchIn(emptyBlock),
         )
         assertFalse(
-            "「历史读不出」不得挂任何删除入口：它只说明本次解密没成功（竞态 / 抖动 / 换钥同形），" +
-                "拿它开「全库删除」会把仍有抢救可能的密文一次删光",
-            "unreadableHistory ->" in emptyBlock,
+            "「读不出」不得挂任何删除入口：它只说明本次解密没成功（竞态 / 抖动 / 换钥同形），" +
+                "拿它开「全库删除」会把仍有抢救可能的密文一次删光；只允许触发重试读取",
+            "showClearConfirm(" in emptyBlock || "deleteAll(" in emptyBlock || "deleteByCategory(" in emptyBlock,
         )
         assertTrue(
             "止损态必须能从填页返回值推出（空结果 + 游标未到末尾）",
@@ -2037,8 +2035,8 @@ class RecentFixesRegressionTest {
     fun `空态可点性必须与文案同源`() {
         val body = blockAfter(codeOf("ClipboardPanelView.kt"), "private fun updateEmpty()")
         assertTrue(
-            "updateEmpty 必须按 scanStoppedEarly 设 isClickable（否则读屏把它当哑按钮）",
-            "textEmpty.isClickable = !loadingPage && scanStoppedEarly" in body,
+            "updateEmpty 必须按 scanStoppedEarly / unreadableHistory 设 isClickable（否则读屏把它当哑按钮）",
+            "textEmpty.isClickable = !loadingPage && (scanStoppedEarly || unreadableHistory)" in body,
         )
     }
 
