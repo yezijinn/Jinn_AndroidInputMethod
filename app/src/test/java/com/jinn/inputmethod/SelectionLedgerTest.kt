@@ -340,4 +340,16 @@ class SelectionLedgerTest {
             dir.delete()
         }
     }
+
+    @Test
+    fun 失败冷却遇时钟回拨必须立即重试() {
+        assertFalse("从未失败过不进冷却", LedgerCrypto.inCooldownAt(1_000L, 0L, 30_000L))
+        assertTrue("正常冷却窗口内", LedgerCrypto.inCooldownAt(20_000L, 5_000L, 30_000L))
+        assertFalse("冷却已过", LedgerCrypto.inCooldownAt(40_000L, 5_000L, 30_000L))
+        assertFalse(
+            "墙钟回拨 4 秒：负差值恒小于冷却时长，旧实现会把 30 秒拉成无限长，词频与台账一直不落盘",
+            LedgerCrypto.inCooldownAt(1_000L, 5_000L, 30_000L),
+        )
+    }
+
 }

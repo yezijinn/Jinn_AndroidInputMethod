@@ -259,6 +259,16 @@ class DiagnosticsSanitizeTest {
             assertEquals("滚出来的段落要接在当日文件后面", 32L, File(dir, "jinn-$day-4.log").length())
             assertTrue("最近一段保留", File(dir, "jinn-$day-3.log").exists())
             assertTrue("更旧的段删掉", !File(dir, "jinn-$day-1.log").exists() && !File(dir, "jinn-$day-2.log").exists())
+            // 低号被删后会空出来：再连滚三次，每次刚滚出的新段都必须还在。
+            // 旧实现取「首个空号」，会复用 -1 并在同一次滚动里把它当成最旧删掉。
+            for (n in 5..7) {
+                current.writeText("M$n".padEnd(32, 'x'))
+                assertEquals(current, Diagnostics.rollDailyLogIfNeeded(dir, day, 16L, 2))
+                assertTrue(
+                    "第 $n 段是刚滚出的最新日志，不能被当成最旧删掉",
+                    File(dir, "jinn-$day-$n.log").readText().contains("M$n"),
+                )
+            }
             // 别的日期与别的前缀都不参与；同日段按编号保大删小
             val names = listOf(
                 "jinn-$day-9.log", "jinn-$day-8.log", "jinn-$day.log",
@@ -272,6 +282,25 @@ class DiagnosticsSanitizeTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun 滚动段编号必须单调且不复用已删的低号() {
+        val day = "2026-10-06"
+        assertEquals("空目录从第 1 段开始", 1, Diagnostics.nextSegmentNumber(emptyList(), day))
+        assertEquals(
+            "低号被删掉后必须接着最大号往后排；回到 1 会让新段在同一次滚动里被判成最旧删掉",
+            4,
+            Diagnostics.nextSegmentNumber(listOf("jinn-$day-2.log", "jinn-$day-3.log"), day),
+        )
+        assertEquals(
+            "别的日期、当日文件、非段名都不参与编号计算",
+            1,
+            Diagnostics.nextSegmentNumber(
+                listOf("jinn-2026-10-05-9.log", "jinn-$day.log", "logcat-crash-1.log"),
+                day,
+            ),
+        )
     }
 
     /**

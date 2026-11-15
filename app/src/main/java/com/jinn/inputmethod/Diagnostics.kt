@@ -713,9 +713,10 @@ private const val LOG_SEGMENTS_KEPT = 2
     internal fun rollDailyLogIfNeeded(dir: File, day: String, maxBytes: Long, keep: Int): File {
         val current = File(dir, "$LOG_FILE_PREFIX$day.log")
         if (!current.isFile || current.length() <= maxBytes) return current
-        var n = 1
-        // 编号上限只为防呆：段名撞车才往后找，正常路径一次就命中
-        while (n < 1_000 && File(dir, segmentName(day, n)).exists()) n++
+        // 编号必须严格单调（取当前最大值 +1），不能取「首个空号」：
+        // segmentsToDelete 是按编号降序保留的，删掉低号后若复用它，刚滚出来的新段
+        // 会变成最小号，在同一次滚动里被当成「最旧」立即删掉 —— 排障要的恰恰是最近的事件。
+        val n = nextSegmentNumber(dir.listFiles()?.map { it.name }.orEmpty(), day)
         val rolled = File(dir, segmentName(day, n))
         if (!runCatching { current.renameTo(rolled) }.getOrDefault(false)) return current
         Log.i(TAG, "日志文件超单文件上限，已滚动: ${rolled.name}")
@@ -741,6 +742,21 @@ private const val LOG_SEGMENTS_KEPT = 2
             .sortedByDescending { it.second }
             .drop(keep)
             .map { it.first }
+    }
+
+    /**
+     * 下一个滚动段编号：当前**最大编号 + 1**（纯函数，便于单测）。
+     *
+     * 不能取「首个空号」：低号被 [segmentsToDelete] 删掉后会空出来，复用它等于把最新一段
+     * 标成最小号，同一轮就会被判成最旧删掉，且此后每次滚动都复现。
+     * 上限沿用原来的防呆值 1_000（16MB/段 ⇒ 16GB/日才够得到，实际不可达）。
+     */
+    internal fun nextSegmentNumber(names: List<String>, day: String): Int {
+        val re = Regex("^$LOG_FILE_PREFIX$day-(\\d+)\\.log$")
+        val max = names.mapNotNull {
+            re.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+        }.maxOrNull() ?: 0
+        return (max.toLong() + 1).coerceAtMost(1_000L).toInt()
     }
 
     /**

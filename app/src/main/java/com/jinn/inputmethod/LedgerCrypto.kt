@@ -220,9 +220,20 @@ internal object LedgerCrypto {
         f.inputStream().use { it.read() == WRAP_VERSION_NOLOCK.toInt() }
     }.getOrDefault(false)
 
-    private fun inCooldown(): Boolean {
-        val at = failedAt
-        return at != 0L && System.currentTimeMillis() - at < FAIL_COOLDOWN_MS
+    private fun inCooldown(): Boolean =
+        inCooldownAt(System.currentTimeMillis(), failedAt, FAIL_COOLDOWN_MS)
+
+    /**
+     * 失败冷却（纯函数，便于单测）。
+     *
+     * 墙钟被 NTP 校时或用户改时间回拨时，`now - failedAt` 为负、恒小于冷却时长，
+     * 会让 30 秒的冷却被拉长到「回拨量 + 30 秒」：期间密钥其实已可用，词频与台账
+     * 却一直 fail-closed 不落盘。负差值直接判「不在冷却」，让 dataKey 立刻重试一次。
+     */
+    internal fun inCooldownAt(nowMs: Long, failedAtMs: Long, cooldownMs: Long): Boolean {
+        if (failedAtMs == 0L) return false
+        val dt = nowMs - failedAtMs
+        return dt >= 0 && dt < cooldownMs
     }
 
     // ── 行级加解密（纯 JCE，JVM 可测）────────────────────────────
