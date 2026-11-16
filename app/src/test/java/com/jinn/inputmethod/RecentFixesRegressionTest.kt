@@ -8629,4 +8629,26 @@ class RecentFixesRegressionTest {
         assertTrue("结果没变时也必须退掉「搜索中」（else 分支）", "} else {" in tail)
         assertTrue("else 分支里要把 scanning 置回 false", "scanning = false" in tail)
     }
+
+    @Test
+    fun 代次判据必须识别切走又切回() {
+        assertTrue("代次未变允许落地", longPressEpochUnchanged(7L, 7L))
+        assertFalse("切走又切回：层值相等但代次 +2 仍作废", longPressEpochUnchanged(7L, 9L))
+    }
+
+    @Test
+    fun 层代次必须由setter集中递增且接进长按() {
+        val src = codeOf("PinyinKeyboardView.kt")
+        val setter = TestSources.window(
+            src,
+            "private var layer: Int = LAYER_LETTER",
+            "private var layerEpoch = 0L",
+        )
+        assertTrue("删掉 setter 递增即红", "if (field != value)" in setter && "layerEpoch++" in setter)
+        val body = blockAfter(src, "private fun handleKeyTouch(")
+        assertTrue("DOWN 必须快照代次", "g.epochAtDown = layerEpoch" in body)
+        val runnable = blockAfter(body, "val runnable = Runnable")
+        assertTrue("去掉 epoch 判据即红", "longPressEpochUnchanged(g.epochAtDown, layerEpoch)" in runnable)
+    }
+
 }

@@ -220,8 +220,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
     @Volatile
     private var suppressLearning = false
 
-    /** 符号层 / 数字层 / 字母层 */
-    private var layer = LAYER_LETTER
+    /**
+     * 符号层 / 数字层 / 字母层。
+     *
+     * 每次真正改值都递增 [layerEpoch]：只比「当前层」挡不住 500ms 内「切走又切回字母层」，
+     * 那时长按转大写会以为手势期间层没变过，插进一个用户没按过的字符。写入收敛到 setter，
+     * 所有切层入口（含以后新增的）都自动计入，不必逐个写点去撤计时器。
+     */
+    private var layer: Int = LAYER_LETTER
+        set(value) { if (field != value) { field = value; layerEpoch++ } }
+    private var layerEpoch = 0L
 
     /** 当前输入方案（全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加），来自设置 */
     private var scheme: ShuangpinScheme = ShuangpinScheme.QUANPIN
@@ -1297,6 +1305,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         var layerAtDown = LAYER_LETTER
         var groupAtDown = 0
         var pageAtDown = 0
+
+        /** 按下瞬间的层代次：层值可能切走又切回，代次不会 */
+        var epochAtDown = 0L
     }
 
     private fun gestureOf(c: Char): KeyGesture = keyGestures[c] ?: KeyGesture().also { keyGestures[c] = it }
@@ -1378,6 +1389,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 g.layerAtDown = layer
                 g.groupAtDown = symbolGroupIndex
                 g.pageAtDown = symbolPageInGroup
+                g.epochAtDown = layerEpoch
                 // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况），只清本键
                 cancelLongPressUppercase(g)
                 // 小写英文长按转大写：到系统长按时长仍没抬手才上一个大写字母。
@@ -1387,8 +1399,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
                         // 与 ACTION_UP 的 sameLayer 同源：计时未满时若另一根手指切了层，
                         // 这个键位在当前层已经不是字母了，不能把按住时的大写字母塞进来。
                         if (!g.consumed && longPressCommitAllowed(g.layerAtDown, layer)) {
-                            g.consumed = true
-                            listener?.onCommitText(c.uppercaseChar().toString())
+                            // 层值相等不代表中途没切过：切走又切回会让层值复原，代次却已 +2。
+                            if (longPressEpochUnchanged(g.epochAtDown, layerEpoch)) {
+                                g.consumed = true
+                                listener?.onCommitText(c.uppercaseChar().toString())
+                            }
                         }
                     }
                     g.longPress = runnable
@@ -6267,3 +6282,12 @@ internal fun isInsideKeyBounds(
  */
 internal fun longPressCommitAllowed(layerAtDown: Int, currentLayer: Int): Boolean =
     layerAtDown == currentLayer
+
+/**
+ * 长按计时期间层是否一次都没换过（纯函数，便于单测）。
+ *
+ * 层值会切走又切回，代次只增不减；只比层值挡不住这种往返，到点仍会插入大写字母。
+ * 命中后不置 consumed，抬手按既有点击路径补小写，不引入新的上屏分支。
+ */
+internal fun longPressEpochUnchanged(epochAtDown: Long, currentEpoch: Long): Boolean =
+    epochAtDown == currentEpoch
