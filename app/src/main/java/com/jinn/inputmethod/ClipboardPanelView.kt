@@ -311,6 +311,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id  // 身份绑定：每次渲染写稳定 ID，复用 View 时更新
+            val rowCategory = currentCategory
+            holder.renderedCategory = rowCategory
             holder.num.text = (categoryTotal - pos).toString()
             // 图片行是**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
             // 点它不粘贴（见 handleItemClick），正文写明去哪看这张图
@@ -321,9 +323,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             } else {
                 // 网址 / 数字组只显示提取出的干净片段（「全部 / 收藏」仍是原文）；
                 // 再按码点截成预览（ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）——
-                // 「全部」组给的是原文，整份进 TextView 会让最优断行把内存顶爆
+                // 「全部」组给的是原文，整份进 TextView 会让最优断行把内存顶爆。
+                // 预览与点击粘贴共用 rowCategory：屏幕上是哪一份，粘出去就是哪一份
                 holder.content.text =
-                    ClipboardClassifier.previewOf(ClipboardClassifier.pieceFor(currentCategory, item.content))
+                    ClipboardClassifier.previewOf(ClipboardClassifier.pieceFor(rowCategory, item.content))
             }
             holder.meta.text = buildString {
                 append(PanelTimes.entryStamp(item.createdAt))
@@ -343,6 +346,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private class Holder(val num: TextView, val content: TextView, val meta: TextView) {
         /** 当前绑定的稳定 Item ID（每次渲染更新） */
         var itemId: Long = -1L
+
+        /**
+         * 这一行**渲染时**的分类。切分类后查询还在后台，列表仍是旧行，此时点它必须按
+         * 渲染时那份内容粘，不能读到已经切走的新分类 —— 否则「看见整句、只粘出一个网址」。
+         */
+        var renderedCategory: String? = null
     }
 
     init {
@@ -395,7 +404,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listView.setOnItemClickListener { _, view, pos, _ ->
             itemAt(pos, view)?.let {
                 KeyFeedback.fire(TapSound.G_TEXT)
-                handleItemClick(it)
+                // 传 Holder 上渲染时的分类，不读面板级的 currentCategory：
+                // 切分类后查询还在后台时，列表是旧行而 currentCategory 已经是新值
+                handleItemClick(it, (view?.tag as? Holder)?.renderedCategory)
             }
         }
         listView.setOnItemLongClickListener { _, view, pos, _ ->
@@ -1031,7 +1042,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    private fun handleItemClick(item: ClipboardDb.Item) {
+    private fun handleItemClick(item: ClipboardDb.Item, category: String?) {
         // 「全部」分类里的图片行只是**序号占位**：这一列不给任何操作（打开大图 / 长按菜单都在
         // 「图片」分类的网格里做），只提示去哪操作
         if (item.image != null) {
@@ -1041,10 +1052,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (isPasting) return
         isPasting = true
         // 粘的与看到的是同一份（网址 / 数字组 = 提取出的干净片段，其余组 = 原文）。
+        // category 由点击处从 Holder 取来，与这一行渲染时用的分类同源。
         // ⚠ 必须 try/finally：宿主的提交链没有兜异常，一次上抛就会让 isPasting 永久为 true，
         // 本会话内之后**所有**条目点击都静默无效（只有重开面板才复位）。
         val ok = try {
-            listener?.onPaste(ClipboardClassifier.pieceFor(currentCategory, item.content)) ?: false
+            listener?.onPaste(ClipboardClassifier.pieceFor(category, item.content)) ?: false
         } finally {
             isPasting = false
         }

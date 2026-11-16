@@ -417,7 +417,7 @@ class ClipboardClassifierExtractTest {
             "键盘面板正文列必须 previewOf（面板不搜索，没有命中点可对齐），当前：$panel",
             panel.contains(
                 "ClipboardClassifier.previewOf(" +
-                    "ClipboardClassifier.pieceFor(currentCategory,item.content))",
+                    "ClipboardClassifier.pieceFor(rowCategory,item.content))",
             ),
         )
         val panelSrc = compact(TestSources.codeSource("ClipboardPanelView.kt"))
@@ -438,4 +438,47 @@ class ClipboardClassifierExtractTest {
         val emptyQuery = TestSources.blockAfter(searchCode, "if (q.isEmpty()) {")
         assertTrue("查询词清空时要复位预览形态集", "activeForms = emptyList()" in emptyQuery)
     }
+
+    @Test
+    fun 点击粘贴必须用渲染时分类快照() {
+        val src = TestSources.codeSource("ClipboardPanelView.kt")
+        assertTrue(
+            "Holder 固化渲染分类",
+            "renderedCategory" in TestSources.blockAfter(src, "private class Holder("),
+        )
+        assertTrue(
+            "签名接收分类参数",
+            Regex("""handleItemClick\(item: ClipboardDb\.Item,\s*category: String\?\)""")
+                .containsMatchIn(src),
+        )
+        val view = TestSources.blockAfter(src, "override fun getView(")
+        assertTrue("渲染写快照", "holder.renderedCategory = rowCategory" in view)
+        assertTrue("预览用同一快照", "pieceFor(rowCategory, item.content)" in view)
+        assertTrue(
+            "点击传 Holder 分类",
+            "(view?.tag as? Holder)?.renderedCategory" in
+                TestSources.blockAfter(src, "listView.setOnItemClickListener"),
+        )
+        val paste = TestSources.blockAfter(src, "private fun handleItemClick(")
+        assertTrue("粘贴按传入分类", "pieceFor(category, item.content)" in paste)
+        assertTrue("不得再读面板级 currentCategory", "pieceFor(currentCategory" !in paste)
+    }
+
+    @Test
+    fun Holder复用时分类快照必须每次刷新() {
+        val src = TestSources.codeSource("ClipboardPanelView.kt")
+        assertTrue(
+            "快照不得只落在新建分支",
+            "renderedCategory" !in
+                TestSources.window(src, "val (root, holder) = if", "val cardColor ="),
+        )
+        val view = TestSources.blockAfter(src, "override fun getView(")
+        val id = view.indexOf("holder.itemId = item.id")
+        val set = view.indexOf("holder.renderedCategory =")
+        assertTrue(
+            "复用 View 时快照必须每次刷新，且与 itemId 同处、先于预览",
+            id >= 0 && set > id && set < view.indexOf("holder.content.text"),
+        )
+    }
+
 }
