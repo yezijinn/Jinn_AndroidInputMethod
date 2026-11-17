@@ -1971,7 +1971,7 @@ class Prefs(private val appContext: Context) {
         // 导入侧对空串按「类型不符」计（见 importFromBackup 的凭据分支）。
         fun putCredential(key: String) {
             val value = readCredential(key)
-            if (value.isEmpty()) {
+            if (value.cleanCredential().isEmpty()) {
                 if (sp.contains(key)) {
                     Diagnostics.w(TAG, "导出跳过读不出的凭据($key)：写进包会在导入端删掉目标机的同名凭据")
                 }
@@ -2224,57 +2224,57 @@ class Prefs(private val appContext: Context) {
                     asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.OPENAI, it); ok() }
                         ?: bad(key)
                 // 其余凭据键同 OPENAI_API_KEY：空串不写入、按「类型不符」计（BUG.md L-1067）
-                KEY_AZURE_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { azureApiKey = it; ok() } ?: bad(key)
+                KEY_AZURE_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureApiKey = it; ok() } ?: bad(key)
                 KEY_AZURE_REGION -> asString(v)?.let { azureRegion = it; ok() } ?: bad(key)
-                KEY_BAIDU_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_SECRET_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSecretKey = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
-                KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_SECRET_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSecretKey = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
+                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
+                KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: bad(key)
+                KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
                 // 讯飞听写三件凭据：空串同样按「类型不符」计、不写入（理由同上）
-                KEY_XF_APP_ID -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfAppId = it; ok() } ?: bad(key)
-                KEY_XF_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfApiKey = it; ok() } ?: bad(key)
-                KEY_XF_API_SECRET -> asString(v)?.takeIf { it.isNotEmpty() }?.let { xfApiSecret = it; ok() } ?: bad(key)
+                KEY_XF_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfAppId = it; ok() } ?: bad(key)
+                KEY_XF_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiKey = it; ok() } ?: bad(key)
+                KEY_XF_API_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiSecret = it; ok() } ?: bad(key)
                 // OpenAI 兼容转写：地址 / 模型名是普通键（setter 做 trim 与默认回落），
                 // Key 走凭据口径 —— 空串不写入、按「类型不符」计（BUG.md L-1067）
                 KEY_OAI_BASE_URL -> asString(v)?.let { oaiBaseUrl = it; ok() } ?: bad(key)
                 KEY_OAI_MODEL -> asString(v)?.let { oaiModel = it; ok() } ?: bad(key)
-                KEY_OAI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { oaiApiKey = it; ok() } ?: bad(key)
+                KEY_OAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { oaiApiKey = it; ok() } ?: bad(key)
                 // 阿里云百炼：地址 / 模型名是普通键（setter 做 trim 与默认回落），Key 走凭据口径
                 KEY_ALI_WS_URL -> asString(v)?.let { aliWsUrl = it; ok() } ?: bad(key)
                 KEY_ALI_MODEL -> asString(v)?.let { aliModel = it; ok() } ?: bad(key)
-                KEY_ALI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { aliApiKey = it; ok() } ?: bad(key)
+                KEY_ALI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliApiKey = it; ok() } ?: bad(key)
                 // 腾讯云一句话识别：引擎型号是普通键（setter 做 trim 与默认回落），两件凭据走凭据口径
                 KEY_TENCENT_ENGINE -> asString(v)?.let { tencentEngine = it; ok() } ?: bad(key)
                 KEY_TENCENT_SECRET_ID ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { tencentSecretId = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretId = it; ok() } ?: bad(key)
                 KEY_TENCENT_SECRET_KEY ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { tencentSecretKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretKey = it; ok() } ?: bad(key)
                 // Azure 短音频识别：地址与语言是普通键；订阅密钥走凭据口径
                 KEY_AZURE_BASE_URL -> asString(v)?.let { azureBaseUrl = it; ok() } ?: bad(key)
                 KEY_AZURE_LANGUAGE -> asString(v)?.let { azureLanguage = it; ok() } ?: bad(key)
                 KEY_AZURE_ASR_API_KEY ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { azureSpeechKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureSpeechKey = it; ok() } ?: bad(key)
                 // 百度短语音识别：dev_pid 是整数（脏值按「类型不符」忽略，不写成 0 去发一次 3300）；
                 // 两件凭据走凭据口径，空串不写入（BUG.md L-1067）
                 KEY_BAIDU_DEV_PID -> asInt(v)?.let { baiduDevPid = it; ok() } ?: bad(key)
                 KEY_BAIDU_ASR_API_KEY ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSpeechApiKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechApiKey = it; ok() } ?: bad(key)
                 KEY_BAIDU_ASR_SECRET_KEY ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { baiduSpeechSecretKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechSecretKey = it; ok() } ?: bad(key)
                 // Deepgram：模型名与语言码是普通键（setter 做 trim 与默认回落），Key 走凭据口径
                 KEY_DEEPGRAM_MODEL -> asString(v)?.let { deepgramModel = it; ok() } ?: bad(key)
                 KEY_DEEPGRAM_LANGUAGE -> asString(v)?.let { deepgramLanguage = it; ok() } ?: bad(key)
                 KEY_DEEPGRAM_API_KEY ->
-                    asString(v)?.takeIf { it.isNotEmpty() }?.let { deepgramApiKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deepgramApiKey = it; ok() } ?: bad(key)
                 KEY_OPENAI_NAME -> asString(v)?.let { openAiName = it; ok() } ?: bad(key)
                 KEY_OPENAI_BASE_URL -> asString(v)?.let { openAiBaseUrl = it; ok() } ?: bad(key)
                 // 凭据键的空串一律按「类型不符」计、不写入（BUG.md L-1067）：写入侧把空串定义成删除，
                 // 照单执行会删掉本机的可用凭据，还把它算进「已设置」。导出侧同批已不再写空值，
                 // 这里再兜一道，老包 / 手改包也伤不到本机凭据。
-                KEY_OPENAI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }?.let { openAiApiKey = it; ok() } ?: bad(key)
+                KEY_OPENAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { openAiApiKey = it; ok() } ?: bad(key)
                 KEY_OPENAI_MODEL -> asString(v)?.let { openAiModel = it; ok() } ?: bad(key)
                 KEY_OPENAI_CHAT_PATH -> asString(v)?.let { openAiChatPath = it; ok() } ?: bad(key)
                 KEY_OPENAI_MODELS_PATH -> asString(v)?.let { openAiModelsPath = it; ok() } ?: bad(key)

@@ -352,7 +352,7 @@ class AliAsrClientTest {
         assertTrue("模型名没进导入白名单", "KEY_ALI_MODEL -> asString(v)" in import)
         assertTrue(
             "Key 空串必须按忽略处理（否则会删掉本机可用凭据）",
-            "KEY_ALI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }" in import,
+            "KEY_ALI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }" in import,
         )
         // 配置齐不齐也要认第四家（否则「语音测试」会拿自建那套判据）
         val configured = TestSources.blockAfter(prefs, "fun voiceConfigured()")

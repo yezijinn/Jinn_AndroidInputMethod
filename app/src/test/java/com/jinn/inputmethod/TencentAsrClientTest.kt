@@ -233,7 +233,7 @@ class TencentAsrClientTest {
         assertTrue("引擎型号没进导入白名单", "KEY_TENCENT_ENGINE -> asString(v)" in import)
         assertTrue(
             "SecretId 空串必须按忽略处理（否则会删掉本机可用凭据）",
-            "KEY_TENCENT_SECRET_ID ->" in import && "takeIf { it.isNotEmpty() }" in import,
+            "KEY_TENCENT_SECRET_ID ->" in import && "takeIf { it.cleanCredential().isNotEmpty() }" in import,
         )
         // 配置齐不齐也要认第五家（否则「语音测试」会拿自建那套判据）
         val configured = TestSources.blockAfter(prefs, "fun voiceConfigured()")

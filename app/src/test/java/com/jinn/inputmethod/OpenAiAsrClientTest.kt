@@ -378,7 +378,7 @@ class OpenAiAsrClientTest {
         val import = TestSources.blockAfter(prefs, "internal fun importFromBackup")
         assertTrue(
             "Key 空串必须按忽略处理（否则会删掉本机可用凭据）",
-            "KEY_OAI_API_KEY -> asString(v)?.takeIf { it.isNotEmpty() }" in import,
+            "KEY_OAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }" in import,
         )
         assertTrue("地址没进导入白名单", "KEY_OAI_BASE_URL -> asString(v)" in import)
         assertTrue("模型名没进导入白名单", "KEY_OAI_MODEL -> asString(v)" in import)

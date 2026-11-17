@@ -4648,7 +4648,7 @@ class RecentFixesRegressionTest {
             assertFalse("$key 不得再无条件导出", "put($key," in exportBody)
             assertTrue(
                 "$key 的导入分支要挡空串（空串在写入侧等于删除）",
-                "$key -> asString(v)?.takeIf { it.isNotEmpty() }" in importBody,
+                "$key -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }" in importBody,
             )
         }
     }
@@ -8656,6 +8656,35 @@ class RecentFixesRegressionTest {
         assertTrue("DOWN 必须快照代次", "g.epochAtDown = layerEpoch" in body)
         val runnable = blockAfter(body, "val runnable = Runnable")
         assertTrue("去掉 epoch 判据即红", "longPressEpochUnchanged(g.epochAtDown, layerEpoch)" in runnable)
+    }
+
+
+    @Test
+    fun 导入凭据空值闸与写入侧清洗同源() {
+        val prefs = codeOf("Prefs.kt")
+        val importBody = TestSources.blockAfter(prefs, "fun importFromBackup(")
+        for (key in listOf(
+            "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
+            "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
+            "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY", "KEY_OPENAI_API_KEY",
+        )) {
+            assertTrue(
+                "$key 的闸必须判清洗后",
+                "$key -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }" in importBody,
+            )
+        }
+        assertFalse(
+            "裸 isNotEmpty 闸回退",
+            "asString(v)?.takeIf { it.isNotEmpty() }" in importBody,
+        )
+        for (raw in listOf("\u200B", "\u00A0", "\u3000", " \t", "\uFEFF")) {
+            assertTrue("清洗后必须为空", raw.cleanCredential().isEmpty())
+        }
+        assertTrue(
+            "导出侧同口径",
+            "if (value.cleanCredential().isEmpty())" in
+                TestSources.blockAfter(prefs, "fun exportForBackup("),
+        )
     }
 
 }
