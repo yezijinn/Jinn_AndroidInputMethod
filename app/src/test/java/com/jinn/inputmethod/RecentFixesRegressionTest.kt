@@ -827,15 +827,15 @@ class RecentFixesRegressionTest {
         val body = blockAfter(codeOf("ConfigBackupManager.kt"), "private fun collectClipboard(context: Context)")
         // 导出侧的分页游标是 SQL OFFSET：导出期间用户复制一条（插头 + 裁尾）会让后续页位移、
         // 静默跳过若干行（既没导出也不进 dropped），所以必须比对并重来（面板侧已有同样防护）。
-        // 判据取「条数 + 最大 id + 密文总长」的指纹，而不是只看条数（BUG.md L-1085）：库到上限时
+        // 判据取「条数 + 最大 id」的指纹，而不是只看条数（BUG.md L-1085）：库到上限时
         // 插入与淘汰成对发生、总数不变，只看条数会把「变了」判成「没变」，重来永不触发。
         assertTrue(
             "导出必须按指纹比对并重来",
             body.contains("db.exportStamp() == before") && body.contains("EXPORT_CLIP_ATTEMPTS"),
         )
-        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0:0\"")
+        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0\"")
         assertTrue("指纹必须含最大 id（插入会抬它）", "MAX(id)" in stamp)
-        assertTrue("指纹必须含密文总长（删除 / 改写会动它）", "SUM(LENGTH(encrypted_content))" in stamp)
+        assertFalse("L-1119：指纹不得再聚合密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
     }
 
     @Test
@@ -4616,13 +4616,13 @@ class RecentFixesRegressionTest {
     @Test
     fun 导出判据与解锁产物与空凭据的三条修复不得回退() {
         val manager = codeOf("ConfigBackupManager.kt")
-        // L-1085：稳定性判据要用不会自相抵消的指纹（条数 + 最大 id + 密文总长）
+        // L-1085：稳定性判据要用不会自相抵消的指纹（条数 + 最大 id）
         val export = TestSources.blockAfter(manager, "fun collectClipboard(")
         assertTrue("导出必须用指纹判稳", "db.exportStamp()" in export)
         assertFalse("只看条数会在「插入 + 裁剪成对发生」时判成没变", "db.count() == before" in export)
-        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0:0\"")
+        val stamp = TestSources.window(codeOf("ClipboardDb.kt"), "fun exportStamp(): String =", "\"0:0\"")
         assertTrue("指纹要含最大 id", "MAX(id)" in stamp)
-        assertTrue("指纹要含密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
+        assertFalse("L-1119：指纹不得再聚合密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
 
         // L-1086：交付给清单框的那份要继续在册，只有中间件与失败路径才除名；注销点要落在收尾路径上
         val unlock = blockAfter(manager, "fun unlock(context: Context")
@@ -8685,6 +8685,18 @@ class RecentFixesRegressionTest {
             "if (value.cleanCredential().isEmpty())" in
                 TestSources.blockAfter(prefs, "fun exportForBackup("),
         )
+    }
+
+
+    @Test
+    fun 导出指纹只取条数与最大id且不再聚合密文总长() {
+        val db = codeOf("ClipboardDb.kt")
+        val stamp = TestSources.window(db, "fun exportStamp(): String =", "\"0:0\"")
+        assertTrue("插入会抬最大 id", "IFNULL(MAX(id), 0)" in stamp)
+        assertTrue("删除会改条数", "COUNT(*)" in stamp)
+        assertFalse("不得再全表聚合密文总长", "SUM(LENGTH(encrypted_content))" in stamp)
+        assertTrue("fallback 必须同步收敛为两段", "else \"0:0\"" in db)
+        assertFalse("旧三段 fallback 不得残留", "0:0:0" in db)
     }
 
 }

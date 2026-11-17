@@ -1398,18 +1398,19 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 导出用的库指纹：条数 / 最大 id / 密文总长，一次查询取三样。
+     * 导出用的库指纹：条数 / 最大 id，一次查询取两样（L-1119：不再聚合密文总长）。
      *
      * 只比对条数会在**到上限后的插入 + 淘汰**（`upsert` → `trimTo` 成对发生、总数不变，其 KDoc 自述）
      * 时判成「库没变」：那一趟导出的载荷既漏掉新复制的条目、也不会进丢弃计数，界面却按
-     * 「全部导出成功」上报（BUG.md L-1085）。三者任一变化都说明库在动 —— 插入抬最大 id、
-     * 删除或改写改总长，重复复制已有内容走 UPDATE 也会改总长。
+     * 「全部导出成功」上报（BUG.md L-1085）。两项任一变化都说明库在动 —— 插入抬最大 id、
+     * 删除改条数；就地改写（置顶 / 自愈重加密）不动条数/最大 id，此类载荷变化改前的密文总长
+     * 同样抓不到，属既有边界，不是本次收敛引入的缺口。
      */
     fun exportStamp(): String =
         readableDatabase.rawQuery(
-            "SELECT COUNT(*), IFNULL(MAX(id), 0), IFNULL(SUM(LENGTH(encrypted_content)), 0) FROM $TABLE_ITEMS",
+            "SELECT COUNT(*), IFNULL(MAX(id), 0) FROM $TABLE_ITEMS",
             null,
-        ).use { c -> if (c.moveToFirst()) "${c.getLong(0)}:${c.getLong(1)}:${c.getLong(2)}" else "0:0:0" }
+        ).use { c -> if (c.moveToFirst()) "${c.getLong(0)}:${c.getLong(1)}" else "0:0" }
 
     // ── 分组标签重算（存量迁移）───────────────────────────
 

@@ -520,7 +520,7 @@ internal object ConfigBackupManager {
      * 收集待导出的剪贴板条目。
      *
      * 分页走键集游标 `recentPageAfter`（按 `created_at, id` 取页，位移免疫，见 BUG.md L-92）；
-     * 导出期间库仍可能被 IME 采集改写，`exportStamp()` 指纹比对是纵深防御：一变就整份重来
+     * 导出期间库仍可能被 IME 采集改写，`exportStamp()` 指纹比对是纵深防御：指纹变化时整份重来
      * （最多 [EXPORT_CLIP_ATTEMPTS] 趟），耗尽则由 `ClipPayload.unstable` 经 `clipUnstable` 如实上报，
      * 界面据此在回执里补一句，不许静默当成「全部导出成功」。
      */
@@ -528,7 +528,7 @@ internal object ConfigBackupManager {
         val db = ClipboardDb.get(context)
         var last: ClipPayload? = null
         repeat(EXPORT_CLIP_ATTEMPTS) { attempt ->
-            // 指纹取「条数 : 最大 id : 密文总长」而不是只看条数（BUG.md L-1085）：库到上限后
+            // 指纹取「条数 : 最大 id」而不是只看条数（BUG.md L-1085）：库到上限后
             // 插入与淘汰成对发生、总数不变，只看条数会把「变了」判成「没变」，于是那一趟的载荷
             // 漏掉刚复制的条目、重试也永不触发，界面照报「全部导出成功」。
             val before = db.exportStamp()
