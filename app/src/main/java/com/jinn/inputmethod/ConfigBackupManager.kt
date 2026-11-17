@@ -597,14 +597,26 @@ internal object ConfigBackupManager {
     }
 
     /**
-     * 备份要收的词库文件：全部 `.xz` 包 + 「快捷补充」的源文本。
+     * 导出侧词库白名单：与导入侧 [restoreDictsLocked] 的 `allowed` 同口径（生产默认
+     * `checksumOf = { OptionalDicts.byFileName(it)?.checksum }`）。
+     *
+     * 白名单外的 `.xz` 连包都不进：旧版遗留或手工塞进来的包本来就会被导入侧跳过，
+     * 收进包只会让清单报「包含 N 个」却永远恢复不出来（BUG.md L-1090）。
+     */
+    internal fun isBackuppableDict(name: String): Boolean =
+        OptionalDicts.byFileName(name) != null ||
+            CustomDicts.isPackName(name) ||
+            CustomDicts.isSourceName(name)
+
+    /**
+     * 备份要收的词库文件：官方清单包 / 自定义包 / 「快捷补充」源文本（与导入侧同一白名单）。
      *
      * 源文本（`custom_user.src.txt`）不带的话，换机后编辑页是空的 —— 包还在但用户看不到
      * 自己写过什么，也无法在原内容上继续补词（见 [CustomDicts.SOURCE_NAME]）。
      */
     private fun dictFiles(context: Context): List<File> =
         File(context.filesDir, DICT_DIR).listFiles()
-            ?.filter { it.isFile && (it.name.endsWith(".xz") || CustomDicts.isSourceName(it.name)) }
+            ?.filter { it.isFile && isBackuppableDict(it.name) }
             ?.sortedBy { it.name }
             .orEmpty()
 

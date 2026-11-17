@@ -924,4 +924,21 @@ class ConfigBackupZipTest {
             ),
         )
     }
+
+    @Test
+    fun `导出词库白名单与导入同口径且未知xz不进包`() {
+        assertTrue(ConfigBackupManager.isBackuppableDict(OptionalDicts.LEVEL2.fileName))
+        assertTrue(ConfigBackupManager.isBackuppableDict(CustomDicts.PACK_NAME))
+        assertTrue(ConfigBackupManager.isBackuppableDict(CustomDicts.SOURCE_NAME))
+        assertFalse(
+            "旧版遗留/手工 .xz 不得进备份包",
+            ConfigBackupManager.isBackuppableDict("legacy_longdict.xz"),
+        )
+        val mgr = TestSources.codeSource("ConfigBackupManager.kt")
+        assertFalse(
+            "dictFiles 不得再用裸 .xz 后缀收集",
+            "endsWith(\".xz\") || CustomDicts.isSourceName" in mgr,
+        )
+    }
+
 }
