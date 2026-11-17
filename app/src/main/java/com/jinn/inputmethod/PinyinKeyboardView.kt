@@ -223,12 +223,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 符号层 / 数字层 / 字母层。
      *
-     * 每次真正改值都递增 [layerEpoch]：只比「当前层」挡不住 500ms 内「切走又切回字母层」，
-     * 那时长按转大写会以为手势期间层没变过，插进一个用户没按过的字符。写入收敛到 setter，
+     * 每次赋值都递增 [layerEpoch]：只比「当前层」挡不住 500ms 内「切走又切回字母层」，
+     * 密码盘进出的同值写同样会让手势误以为层没变过。写入收敛到 setter，
      * 所有切层入口（含以后新增的）都自动计入，不必逐个写点去撤计时器。
      */
     private var layer: Int = LAYER_LETTER
-        set(value) { if (field != value) { field = value; layerEpoch++ } }
+        set(value) { field = value; layerEpoch++ }
     private var layerEpoch = 0L
 
     /** 当前输入方案（全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加），来自设置 */

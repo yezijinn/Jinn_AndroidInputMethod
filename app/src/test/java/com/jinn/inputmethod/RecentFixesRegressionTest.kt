@@ -8644,7 +8644,14 @@ class RecentFixesRegressionTest {
             "private var layer: Int = LAYER_LETTER",
             "private var layerEpoch = 0L",
         )
-        assertTrue("删掉 setter 递增即红", "if (field != value)" in setter && "layerEpoch++" in setter)
+        assertTrue(
+            "setter 必须无条件递增，同值写也要计入",
+            "field = value; layerEpoch++" in setter && "if (field != value)" !in setter,
+        )
+        val enter = blockAfter(src, "private fun enterPasswordPad")
+        val exit = blockAfter(src, "private fun exitPasswordPad")
+        assertTrue("进密码盘必须写 layer", "layer = LAYER_LETTER" in enter)
+        assertTrue("出密码盘必须写 layer", "layer = saved.second" in exit)
         val body = blockAfter(src, "private fun handleKeyTouch(")
         assertTrue("DOWN 必须快照代次", "g.epochAtDown = layerEpoch" in body)
         val runnable = blockAfter(body, "val runnable = Runnable")
