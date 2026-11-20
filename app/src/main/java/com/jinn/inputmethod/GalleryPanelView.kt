@@ -16,6 +16,30 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.Locale
 
+/** 源图边长的保守上限：一次输入流解完、不探尺寸，按最坏情况估档位 */
+internal const val THUMB_SOURCE_EDGE_BOUND_PX = 4096
+
+/** 解码边与格子最短边的倍率：1 即可覆盖 CENTER_CROP，再翻倍会白吃一倍缓存 */
+internal const val THUMB_TARGET_HEADROOM = 1
+
+/** 采样档下限 8 ⇒ 解码边长 ≤ 512px（≈0.5MB/张，整页 ≤ 12MB 缓存的内存钳位） */
+internal const val THUMB_SAMPLE_MIN = 8
+
+/** 采样档上限 32 ⇒ 解码边长 ≥ 128px（格子再小也不白解） */
+internal const val THUMB_SAMPLE_MAX = 32
+
+/**
+ * 采样档由「格子最短边（px）」推（BUG.md L-1077）：列数与行高一起决定目标像素。
+ *
+ * 旧式只按列数两档，行高单独可调（40..120dp）却不参与 ⇒ 高格子放大发虚、矮格子白解一半。
+ */
+internal fun thumbSampleForEdge(edgePx: Int): Int {
+    val target = edgePx.coerceAtLeast(1) * THUMB_TARGET_HEADROOM
+    var sample = 1
+    while (sample * 2 <= THUMB_SOURCE_EDGE_BOUND_PX / target && sample < THUMB_SAMPLE_MAX) sample *= 2
+    return sample.coerceIn(THUMB_SAMPLE_MIN, THUMB_SAMPLE_MAX)
+}
+
 /**
  * 图库快贴面板：绑定目录（SAF 目录树）下的图片格子，点一下直接插入当前输入框。
  *
@@ -422,7 +446,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         fillPage()
         // 回到顶部：单元格尺寸已变，停在原滚动位置看起来像「跳到了别处」（L-1043，与 showList 同款处置）
         scroll.scrollTo(0, 0)
-        Diagnostics.i(TAG, "网格已重排: 每行 $columns 张，行高 ${cellHeightDp}dp")
+        Diagnostics.i(
+            TAG, "网格已重排: 每行 $columns 张，行高 ${cellHeightDp}dp，采样 1/${sampleFor(columns, cellHeightDp)}",
+        )
     }
 
     /**
@@ -642,7 +668,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                     }
                     // 档位在任务里现算（L-1027）：提交时算的那份可能已被「布局」改过，
                     // 用旧档解出来的图会写进刚清空的缓存、并在之后一直被命中
-                    val bmp = decodeThumb(uri, sampleFor(columns))
+                    val bmp = decodeThumb(uri, sampleFor(columns, cellHeightDp))
                     if (bmp != null) thumbCache.put(key, bmp)
                     inFlight.remove(key)
                     if (bmp == null) {
@@ -692,9 +718,24 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
     }.getOrNull()
 
-    /** 采样率只按「每行几张」两档切：格子小的时候多缩一半，省一半像素 */
-    private fun sampleFor(cols: Int): Int =
-        if (cols >= COMPACT_COLUMNS) THUMB_SAMPLE_COMPACT else THUMB_SAMPLE
+    /**
+     * 采样档按「格子最短边」推：列数与行高一起算（BUG.md L-1077）。
+     *
+     * 档位仍在解码任务里现算（L-1027），提交时算的那份可能已被「布局」改过。
+     * [cellWidthPx] 是近似值（未扣面板自身 8dp 内边距，高估 ≤5%，不影响档位）；
+     * 未布局时按屏幕宽兜底，最坏一页差一档，下次重排即纠正。
+     */
+    private fun sampleFor(cols: Int, heightDp: Int): Int =
+        thumbSampleForEdge(minOf(cellWidthPx(cols), cellHeightPx(heightDp)))
+
+    /** 格子净宽 px（面板宽 ÷ 列数，扣格子两侧内边距） */
+    private fun cellWidthPx(cols: Int): Int {
+        val panelW = if (width > 0) width else resources.displayMetrics.widthPixels
+        return panelW / cols.coerceAtLeast(1) - dp(CELL_PADDING_DP) * 2
+    }
+
+    /** 格子净高 px（行高扣两侧内边距） */
+    private fun cellHeightPx(heightDp: Int): Int = dp(heightDp) - dp(CELL_PADDING_DP) * 2
 
     /**
      * 列出绑定目录里的图片（按文件名排序）。
@@ -753,18 +794,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
          */
         const val HEIGHT_STEP_DP = 4
 
-        /**
-         * 缩略图固定采样率：**不探尺寸**直接解。
-         *
-         * 原来每张要开两次输入流（先量尺寸再解码），SAF 打开一次流就要几十毫秒 —— 那是首屏最贵的一步。
-         * 代价是小图会被缩得更狠（1000px 的截图会变成 62px，糊到只能看轮廓），
-         * 这是用户 2026-10-07「速度优先、其他都能舍弃」明确换来的。
-         */
-        const val THUMB_SAMPLE = 16
-
-        /** 每行张数到这档以上时换更大的采样率（格子更小，再省一半像素） */
-        const val COMPACT_COLUMNS = 7
-        const val THUMB_SAMPLE_COMPACT = 32
+        // 采样档由格子最短边推，见文件顶部 thumbSampleForEdge（BUG.md L-1077）
 
         /** 缩略图解码线程数：首屏十几张并发解，3 条足够且不至于把内存峰值顶太高 */
         const val THUMB_THREADS = 3

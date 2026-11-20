@@ -605,7 +605,11 @@ class GalleryInsertTest {
         assertTrue("用 RGB_565 解码", "inPreferredConfig = Bitmap.Config.RGB_565" in panel)
         assertTrue("固定档一次解完", "private fun decodeThumb(uri: Uri, sample: Int)" in panel)
         assertFalse("不许退回两段式探尺寸", "inJustDecodeBounds" in panel)
-        assertTrue("采样率按每行张数两档", "COMPACT_COLUMNS" in panel && "THUMB_SAMPLE_COMPACT" in panel)
+        assertTrue(
+            "采样档按格子最短边（列数 × 行高）",
+            "thumbSampleForEdge(minOf(cellWidthPx(cols), cellHeightPx(heightDp)))" in panel,
+        )
+        assertFalse("旧两档常量必须消失", "THUMB_SAMPLE_COMPACT" in panel)
         // 提交走 poolOrNew()：池在视图重建 / detach 时被关掉并置 null，下次提交按需重建 ——
         // 面板实例是缓存复用的，若关了不重建，再打开就是一屏空白格子（提交全被拒）
         assertTrue(
@@ -657,7 +661,7 @@ class GalleryInsertTest {
         assertTrue("面板打开时清拼音缓冲", "clearComposingState()" in gallery)
 
         val panel = TestSources.codeSource("GalleryPanelView.kt")
-        assertTrue("档位在任务内现算", "decodeThumb(uri, sampleFor(columns))" in panel)
+        assertTrue("档位在任务内现算（含行高）", "decodeThumb(uri, sampleFor(columns, cellHeightDp))" in panel)
         assertFalse("不许退回提交时算好的档位", "val sample = sampleFor(cols)" in panel)
     }
 
@@ -904,4 +908,14 @@ class GalleryInsertTest {
     }
 
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
+
+    @Test
+    fun 缩略图采样随行高变化() {
+        assertEquals("5 列 40dp 的格子", 32, thumbSampleForEdge(94))
+        assertEquals("5 列默认行高的格子", 16, thumbSampleForEdge(200))
+        assertEquals("极小格子封顶", 32, thumbSampleForEdge(40))
+        assertEquals("大格子由内存下限兜住", 8, thumbSampleForEdge(600))
+        assertTrue("行高越大采样越小（解码越大）", thumbSampleForEdge(200) < thumbSampleForEdge(94))
+    }
+
 }
