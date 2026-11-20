@@ -152,8 +152,9 @@ import kotlin.math.min
         var label: String = ""
             set(value) {
                 field = value
-                // 辅助服务朗读键面文字（字母层读字母、符号层读符号）；空标签不设，避免读出空白
-                contentDescription = value.ifEmpty { null }
+                // 朗读键面 = 字母 + 绘制同源双拼提示（L-1128）；空标签交给视图层空槽描述
+                contentDescription =
+                    if (value.isEmpty()) null else keyDescription(value, cachedNormalLines, cachedRedLines)
                 invalidate()
             }
 
@@ -203,6 +204,9 @@ import kotlin.math.min
             set(value) {
                 field = value
                 cachedNormalLines = splitHintLines(value)
+                if (label.isNotEmpty()) {
+                    contentDescription = keyDescription(label, cachedNormalLines, cachedRedLines)
+                }
                 invalidate()
             }
 
@@ -214,6 +218,9 @@ import kotlin.math.min
             set(value) {
                 field = value
                 cachedRedLines = splitHintLines(value)
+                if (label.isNotEmpty()) {
+                    contentDescription = keyDescription(label, cachedNormalLines, cachedRedLines)
+                }
                 invalidate()
             }
 
@@ -641,4 +648,22 @@ internal fun splitHintLines(text: String): List<String> =
     } else {
         text.split('\n').filter { it.isNotBlank() }.map { it.trim() }
     }
+
+
+/**
+ * 无障碍朗读：字母 + 绘制同源的提示行（L-1128）。
+ *
+ * 红字行恒为声母（sh / ch / zh 一类），读屏用户看不到颜色，用「声母」而非颜色词区分。
+ * 不调用 [splitHintLines]：提示行已由两个 setter 拆好，重复拆会改变既有调用点契约。
+ */
+internal fun keyDescription(
+    label: String,
+    normalLines: List<String>,
+    redLines: List<String>,
+): String? = if (label.isEmpty()) {
+    null
+} else {
+    (listOf(label) + normalLines + redLines.map { "声母 $it" }).joinToString(" ")
+}
+
 

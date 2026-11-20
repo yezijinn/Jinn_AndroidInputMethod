@@ -1625,8 +1625,9 @@ class RecentFixesRegressionTest {
                 .contains("addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)"),
         )
         assertTrue(
-            "label 变化必须同步 contentDescription：辅助服务靠它朗读键面文字（字母层读字母、符号层读符号）",
-            blockAfter(key, "var label: String = \"\"").contains("contentDescription = value"),
+            "label 变化必须同步 contentDescription：朗读键面须含绘制同源提示（L-1128）",
+            blockAfter(key, "var label: String = \"\"").contains("keyDescription(") &&
+                "contentDescription =\n                    if (value.isEmpty()) null else keyDescription(" in key,
         )
         val view = codeOf("PinyinKeyboardView.kt")
         // 判据取**整个 onActivate 块**而不是整行字符串：块内允许再挂别的东西

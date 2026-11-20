@@ -249,4 +249,13 @@ class PinyinKeyTest {
             Regex("splitHintLines\\(").findAll(src).count() - 1, // 减去顶层函数自身的声明
         )
     }
+
+    @Test
+    fun 无障碍朗读含字母与绘制同源的双拼韵母及声母() {
+        assertEquals("Q iu", keyDescription("Q", listOf("iu"), emptyList()))
+        assertEquals("U ia ua 声母 ch", keyDescription("U", listOf("ia ua"), listOf("ch")))
+        assertEquals("Y uai ing", keyDescription("Y", splitHintLines("uai\ning"), emptyList()))
+        assertEquals(null, keyDescription("", listOf("iu"), listOf("ch")))
+    }
+
 }
