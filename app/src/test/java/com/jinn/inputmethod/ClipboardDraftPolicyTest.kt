@@ -140,4 +140,52 @@ class ClipboardDraftPolicyTest {
         assertTrue("开关改动仍记草稿", "draft = draft.copy(enabled = v)" in s)
     }
 
+
+    @Test
+    fun 收紧告警必须按是否删收藏分流() {
+        val d = ClipboardCustomizeActivity.Draft(
+            enabled = true, maxItems = 10, maxTotalMb = 100, favMaxItems = 10, favMaxMb = 25,
+            maxItemKb = 256, panelPage = 50, maxSearch = 100, imageEnabled = true,
+            imageMaxItems = 100, imageMaxTotalMb = 500, imageMaxItemMb = 10,
+            galleryColumns = 4, galleryCellHeightDp = 90, imageInAllGroup = true,
+            favoriteImageMoveOut = false,
+        )
+        assertEquals(
+            TightenScope.NONE,
+            ClipboardCustomizeActivity.tightenScope(d, d),
+        )
+        assertEquals(
+            TightenScope.NON_FAVORITE_ONLY,
+            ClipboardCustomizeActivity.tightenScope(d.copy(maxItems = 9), d),
+        )
+        assertEquals(
+            TightenScope.NON_FAVORITE_ONLY,
+            ClipboardCustomizeActivity.tightenScope(d.copy(imageMaxItemMb = 9), d),
+        )
+        assertEquals(
+            TightenScope.INCLUDING_FAVORITE,
+            ClipboardCustomizeActivity.tightenScope(d.copy(favMaxItems = 9), d),
+        )
+        assertEquals(
+            "压低历史总量会缩收藏生效上限，必须报含收藏",
+            TightenScope.INCLUDING_FAVORITE,
+            ClipboardCustomizeActivity.tightenScope(d.copy(maxTotalMb = 10), d),
+        )
+        val s = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        val nonFav = TestSources.window(
+            s,
+            "const val TEXT_SAVE_WARN_DELETE_NON_FAV =",
+            "const val TEXT_SAVE_FAILED",
+        )
+        assertTrue(
+            "非收藏档文案必须独立且语义正确",
+            "含最旧的收藏" !in nonFav && "收藏不受影响" in nonFav,
+        )
+        assertTrue(
+            "确认框必须按三档分流",
+            "when (tightenScope(draft, snapshot))" in s &&
+                "TightenScope.NON_FAVORITE_ONLY ->" in s,
+        )
+    }
+
 }

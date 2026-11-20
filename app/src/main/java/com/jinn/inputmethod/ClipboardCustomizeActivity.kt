@@ -29,6 +29,8 @@ import android.widget.TextView
  * 草稿必须能在 Activity 重建后存活（旋转；`ThemeManager` 定时换肤到点会 `recreate()`），
  * 所以随 [onSaveInstanceState] 存取。
  */
+internal enum class TightenScope { NONE, NON_FAVORITE_ONLY, INCLUDING_FAVORITE }
+
 class ClipboardCustomizeActivity : Activity() {
 
     /**
@@ -558,8 +560,10 @@ class ClipboardCustomizeActivity : Activity() {
             } else {
                 lines.forEach { append('\n').append(it) }
             }
-            if (isTightened()) {
-                append('\n').append(TEXT_SAVE_WARN_DELETE)
+            when (tightenScope(draft, snapshot)) {
+                TightenScope.NON_FAVORITE_ONLY -> append('\n').append(TEXT_SAVE_WARN_DELETE_NON_FAV)
+                TightenScope.INCLUDING_FAVORITE -> append('\n').append(TEXT_SAVE_WARN_DELETE)
+                TightenScope.NONE -> Unit
             }
         }
         confirm(TEXT_SAVE, msg) { doSave() }
@@ -698,29 +702,6 @@ class ClipboardCustomizeActivity : Activity() {
     private fun onOff(v: Boolean): String = if (v) TEXT_ON else TEXT_OFF
 
     /**
-     * 是否收紧了上限：收紧会在保存后真删记录（不可恢复）⇒ 确认框必须写明。
-     *
-     * 收藏体积比的是**生效值**（BUG.md L-1221）：这一项自 2026-10-10 起「存原值、生效值另算」
-     * （见 [ClipboardPrefs.effectiveFavoriteMaxMb]，受「历史总量 1/4」压制）。原值 100 → 50 时
-     * 生效值可能同为 2 MB、一个字节都不会删，按原值比却照弹「会删除、不可恢复」—— 既误导用户，
-     * 也稀释这条确认框的警示力（真会删的时候反而不被当回事）。同理，只把**历史总量**调小时
-     * 生效值也会跟着缩，那条路径原先同样漏报。
-     */
-    private fun isTightened(): Boolean =
-        draft.maxItems < snapshot.maxItems ||
-            draft.maxTotalMb < snapshot.maxTotalMb ||
-            draft.favMaxItems < snapshot.favMaxItems ||
-            effectiveFavMb(draft) < effectiveFavMb(snapshot) ||
-            // 图片预算收紧同样会真删图片（不可恢复）⇒ 确认框必须一起写明
-            draft.imageMaxItems < snapshot.imageMaxItems ||
-            draft.imageMaxTotalMb < snapshot.imageMaxTotalMb ||
-            draft.imageMaxItemMb < snapshot.imageMaxItemMb
-
-    /** 收藏体积的生效值（受「历史总量 1/4」压制）：与页面上那行「实际生效」同一处取值 */
-    private fun effectiveFavMb(d: Draft): Int =
-        ClipboardPrefs.effectiveFavoriteMaxMb(d.favMaxMb, d.maxTotalMb)
-
-    /**
      * 单张图片的生效值：受「图片总量上限」压制。
      *
      * 两项原本各调各的（单张 1~50MB、总量 10~1000MB），设「单张 50MB + 总量 10MB」这种组合后，
@@ -771,6 +752,32 @@ class ClipboardCustomizeActivity : Activity() {
         internal fun hasUnsavedChanges(
             draft: Draft, snapshot: Draft, unlocked: Boolean,
         ): Boolean = unlocked && draft != snapshot
+
+        /** 收藏体积的生效值（受「历史总量 1/4」压制）：与页面上那行「实际生效」同一处取值 */
+        internal fun effectiveFavMb(d: Draft): Int =
+            ClipboardPrefs.effectiveFavoriteMaxMb(d.favMaxMb, d.maxTotalMb)
+
+        /**
+         * 收紧上限会删掉什么（L-1082）：两类语义必须分开警示。
+         *
+         * 条数 / 历史总量 / 图片三项的裁剪走 [ClipboardDb.deleteNonFavoriteByIds]（SQL 固定
+         * `is_favorite = 0`），删不到收藏；只有收藏条数与收藏体积（生效值）会动收藏。
+         * 合成一句会让用户以为收紧总量也要失去收藏，真会删收藏时警示反而被稀释。
+         */
+        internal fun tightenScope(draft: Draft, snapshot: Draft): TightenScope {
+            val favorite = draft.favMaxItems < snapshot.favMaxItems ||
+                effectiveFavMb(draft) < effectiveFavMb(snapshot)
+            val nonFavorite = draft.maxItems < snapshot.maxItems ||
+                draft.maxTotalMb < snapshot.maxTotalMb ||
+                draft.imageMaxItems < snapshot.imageMaxItems ||
+                draft.imageMaxTotalMb < snapshot.imageMaxTotalMb ||
+                draft.imageMaxItemMb < snapshot.imageMaxItemMb
+            return when {
+                favorite -> TightenScope.INCLUDING_FAVORITE
+                nonFavorite -> TightenScope.NON_FAVORITE_ONLY
+                else -> TightenScope.NONE
+            }
+        }
 
         const val TAG = "ClipboardCustomize"
 
@@ -849,6 +856,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_SAVE_SUMMARY = "将保存以下改动："
         const val TEXT_NO_CHANGE = "（没有改动）"
         const val TEXT_SAVE_WARN_DELETE = "⚠ 已收紧上限：保存后超出的记录会被删除（含最旧的收藏），不可恢复。"
+        const val TEXT_SAVE_WARN_DELETE_NON_FAV =
+            "⚠ 已收紧上限：保存后超出新上限的记录会被删除或跳过（收藏不受影响），不可恢复。"
         const val TEXT_SAVE_FAILED = "保存失败：设置未落盘，请重试"
         const val TEXT_TRIM_FAILED = "参数已保存，但历史裁剪未完成，稍后会自动重试"
         const val TEXT_SAVED = "已保存"
