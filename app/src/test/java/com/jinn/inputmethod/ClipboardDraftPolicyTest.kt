@@ -106,4 +106,38 @@ class ClipboardDraftPolicyTest {
                 .containsMatchIn(src),
         )
     }
+
+    @Test
+    fun 锁定态不脏只有解锁才脏() {
+        val d = ClipboardCustomizeActivity.Draft(
+            enabled = true, maxItems = 1, maxTotalMb = 10, favMaxItems = 1, favMaxMb = 1,
+            maxItemKb = 1, panelPage = 1, maxSearch = 1, imageEnabled = true, imageMaxItems = 1,
+            imageMaxTotalMb = 1, imageMaxItemMb = 1, galleryColumns = 3, galleryCellHeightDp = 90,
+            imageInAllGroup = true, favoriteImageMoveOut = false,
+        )
+        val o = d.copy(enabled = false)
+        val c = d.copy(maxItems = 2)
+        assertFalse(ClipboardCustomizeActivity.hasUnsavedChanges(o, d, false))
+        assertTrue(ClipboardCustomizeActivity.hasUnsavedChanges(o, d, true))
+        assertFalse(ClipboardCustomizeActivity.hasUnsavedChanges(c, d, false))
+        assertTrue(ClipboardCustomizeActivity.hasUnsavedChanges(c, d, true))
+        assertFalse(ClipboardCustomizeActivity.hasUnsavedChanges(d, d, true))
+        val s = TestSources.codeSource("ClipboardCustomizeActivity.kt")
+        assertTrue(
+            "isDirty 必须走统一判据",
+            "private fun isDirty(): Boolean = hasUnsavedChanges(draft, snapshot, unlocked)" in s,
+        )
+        assertTrue(
+            "按钮与返回仍须解锁后才脏",
+            "val dirty = isDirty()" in s &&
+                "saveButton.isEnabled = editable && dirty" in s &&
+                "if (!isDirty())" in s,
+        )
+        assertTrue(
+            "提示须覆盖回锁丢弃",
+            "参数已锁定：改动先记草稿，解锁后可保存；锁定态（含回锁）返回将丢弃所有未保存改动" in s,
+        )
+        assertTrue("开关改动仍记草稿", "draft = draft.copy(enabled = v)" in s)
+    }
+
 }

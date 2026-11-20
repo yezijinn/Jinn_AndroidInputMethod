@@ -24,7 +24,7 @@ import android.widget.TextView
  *  - 「重置」= 撤销本次编辑（回到进入页面时的 [snapshot]，不写盘、不触发裁剪）；
  *  - 保存 / 重置后**自动回锁**；
  *  - 保存走 [ClipboardPrefs.applyDraft]（单次 `commit`，避免半套参数）；
- *  - 有未保存改动时离开要二次确认（草稿是页面私有的，退出即丢）。
+ *  - 已解锁且有未保存改动时离开才要二次确认；锁定态（含回锁）返回直接丢弃草稿。
  *
  * 草稿必须能在 Activity 重建后存活（旋转；`ThemeManager` 定时换肤到点会 `recreate()`），
  * 所以随 [onSaveInstanceState] 存取。
@@ -37,7 +37,7 @@ class ClipboardCustomizeActivity : Activity() {
      * 布局两项原先直写 `Prefs`（即时生效），与页面「改完点保存」的手感不一致 —— 改完布局后
      * 草稿没有任何变化，保存 / 重置按钮仍是灰的，用户点了以为没反应。
      */
-    private data class Draft(
+    internal data class Draft(
         val enabled: Boolean,
         val maxItems: Int,
         val maxTotalMb: Int,
@@ -253,7 +253,7 @@ class ClipboardCustomizeActivity : Activity() {
         )
     }
 
-    private fun isDirty(): Boolean = draft != snapshot
+    private fun isDirty(): Boolean = hasUnsavedChanges(draft, snapshot, unlocked)
 
     // ── 渲染 ────────────────────────────────────────────────
 
@@ -767,7 +767,11 @@ class ClipboardCustomizeActivity : Activity() {
 
     private fun dp(v: Int): Int = PageStyle.dp(this, v)
 
-    private companion object {
+    internal companion object {
+        internal fun hasUnsavedChanges(
+            draft: Draft, snapshot: Draft, unlocked: Boolean,
+        ): Boolean = unlocked && draft != snapshot
+
         const val TAG = "ClipboardCustomize"
 
         const val STATE_ENABLED = "draft_enabled"
@@ -798,7 +802,8 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_SAVE = "保存"
         const val TEXT_RESET = "重置"
         const val TEXT_HINT_HISTORY_OFF = "剪贴板历史将关闭：点「保存」后停止采集，参数改动一并生效"
-        const val TEXT_HINT_LOCKED = "参数已锁定：打开上方「解锁参数」后可调节"
+        const val TEXT_HINT_LOCKED =
+            "参数已锁定：改动先记草稿，解锁后可保存；锁定态（含回锁）返回将丢弃所有未保存改动"
         const val TEXT_HINT_EDITING = "编辑中：点「保存」才生效，「重置」可撤销本次修改"
         const val TEXT_MAX_ITEMS = "历史数量上限"
         const val TEXT_MAX_TOTAL = "历史体积上限"
