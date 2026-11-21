@@ -1140,8 +1140,15 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             // 条件里再判一次收藏（2026-09-30 审查）：候选集是按快照算的，用户在这几毫秒里把某条
             // 标成收藏后，原写法仍会把它删掉 —— 而「收藏不参与裁剪」是本模块的不变量。少删一条无害
             // （下次入库会重新评估），删错一条则不可恢复。
-            for (id in ids) {
-                deleted += writableDatabase.delete(TABLE_ITEMS, "id = ? AND is_favorite = 0", arrayOf(id.toString()))
+            // 分批一次的 DELETE：变量上限 999，块取 400（与 countPresent 同值）。收藏闸仍在 SQL 里，
+            // 整批仍在同一事务内，任一块抛错整体回滚。
+            for (chunk in ids.chunked(400)) {
+                val marks = chunk.joinToString(",") { "?" }
+                deleted += writableDatabase.delete(
+                    TABLE_ITEMS,
+                    "id IN ($marks) AND is_favorite = 0",
+                    chunk.map { it.toString() }.toTypedArray(),
+                )
             }
             writableDatabase.setTransactionSuccessful()
         } finally {
@@ -1161,23 +1168,25 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 图片行一删，`clipboard/<hex>.enc` 与 `.thumb` 两份密文立刻变成孤儿文件，是否调度回收
      * 由调用方按「图片实删数」决定（BUG.md L-1464）、不能按总删除数决定（BUG.md L-1248）。
      *
-     * 逐条记账而不是按候选集计数：候选集是快照，这几毫秒里用户可能已取消收藏或删掉该行；
-     * 多报只会白跑一轮 gc，那正是 L-1248 要避免的形态。图片行集合来自 [rows] 的 `image` 标记
-     * （[trimFavorites] 的候选查询已经取回 `content_type`，不必再查一次库）。
+     * 计数取自 SQL 的实删行数而不是候选集：候选集是快照，这几毫秒里用户可能已取消收藏或删掉
+     * 该行；多报只会白跑一轮 gc，那正是 L-1248 要避免的形态。图片数由 `content_type` 的实删行
+     * 给出，`rows` 仅为维持 [deleteAnyByIds] 薄包装的签名形态保留。
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun deleteAnyCountingImages(ids: List<Long>, rows: List<ClipboardRowSize>): Pair<Int, Int> {
         if (ids.isEmpty()) return 0 to 0
-        val imageIds = HashSet<Long>()
-        for (row in rows) if (row.image) imageIds.add(row.id)
         var deleted = 0
         var images = 0
         writableDatabase.beginTransaction()
         try {
-            for (id in ids) {
-                val n = writableDatabase.delete(TABLE_ITEMS, "id = ?", arrayOf(id.toString()))
-                deleted += n
-                if (n > 0 && id in imageIds) images++
+            // 两条 DELETE 相加即总实删；`content_type` 是 NOT NULL 默认 'text'，`<> ?` 不会漏行。
+            for (chunk in ids.chunked(400)) {
+                val marks = chunk.joinToString(",") { "?" }
+                val args = chunk.map { it.toString() }.toTypedArray() + CONTENT_TYPE_IMAGE
+                images += writableDatabase.delete(TABLE_ITEMS, "id IN ($marks) AND content_type = ?", args)
+                deleted += writableDatabase.delete(TABLE_ITEMS, "id IN ($marks) AND content_type <> ?", args)
             }
+            deleted += images
             writableDatabase.setTransactionSuccessful()
         } finally {
             writableDatabase.endTransaction()

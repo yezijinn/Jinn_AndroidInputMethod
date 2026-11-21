@@ -817,4 +817,26 @@ class ClipboardLimitsTest {
         )
     }
 
+
+    @Test
+    fun 裁剪删除必须按ID分批且保留收藏闸() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val body = TestSources.blockAfter(src, "private fun deleteNonFavoriteByIds(")
+        assertTrue("按 id 分批", "id IN (\$marks) AND is_favorite = 0" in body)
+        assertTrue("分批大小与 countPresent 一致", "chunked(400)" in body)
+        assertTrue("仍在单事务内", "setTransactionSuccessful()" in body)
+        assertFalse("不得退回逐条删除", "for (id in ids)" in body)
+        assertFalse("不得退回单 id 条件", "\"id = ? AND is_favorite = 0\"" in body)
+    }
+
+    @Test
+    fun 含收藏删除必须批量且图片记账不靠逐条() {
+        val src = TestSources.codeSource("ClipboardDb.kt")
+        val body = TestSources.blockAfter(src, "private fun deleteAnyCountingImages(")
+        assertTrue("图片行按类型批量删", "id IN (\$marks) AND content_type = ?" in body)
+        assertTrue("非图片行按类型批量删", "id IN (\$marks) AND content_type <> ?" in body)
+        assertTrue("总实删 = 两条之和", "deleted += images" in body)
+        assertFalse("不得退回逐条删除", "for (id in ids)" in body)
+    }
+
 }
