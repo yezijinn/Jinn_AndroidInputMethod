@@ -18,6 +18,50 @@ class SettingsSavePolicyTest {
      * 原先只有 `onPause` 与显式保存两个回写点：用户粘贴完 Key、焦点还没移开就被回收
      * （内存压力、后台清理），这段配置根本不写盘，而页面提示写着「改动也会在离开页面时自动保存」。
      */
+    /**
+     * 导入在途离页必须无条件撤掉排队任务（BUG.md L-976）。
+     *
+     * 原先 `removeCallbacks` 写在 `else`（非导入）分支内：导入在途时离页，排队任务不撤，
+     * 导入结束后它按旧界面值落盘。两页同款。
+     */
+    @Test
+    fun 导入在途离页必须无条件撤任务() {
+        for (file in listOf("TranslationSettingsActivity.kt", "OpenAiSettingsActivity.kt")) {
+            val src = TestSources.codeSource(file)
+            val body = TestSources.blockAfter(src, "override fun onPause()")
+            val rm = body.indexOf("removeCallbacks")
+            val imp = body.indexOf("ConfigBackupManager.importing")
+            assertTrue("$file：找不到 removeCallbacks", rm >= 0)
+            assertTrue("$file：找不到导入判断", imp >= 0)
+            assertTrue("$file：撤任务必须在导入判断之前（导入在途时也要撤）", rm < imp)
+        }
+        // 失焦监听是第三个入口：守卫下沉到 saveCredentials，任何调用点都写不进去
+        val src = TestSources.codeSource("TranslationSettingsActivity.kt")
+        val save = TestSources.blockAfter(src, "private fun saveCredentials(notify: Boolean)")
+        assertTrue(
+            "自动保存必须在导入在途时早退",
+            "if (ConfigBackupManager.importing)" in save && "return false" in save,
+        )
+    }
+
+    /**
+     * 翻译页的程序化回填不得排空跑自动保存（BUG.md L-975 ①）。
+     *
+     * `loadValues` 的 `setText` 会触发 watcher，进页 / 回页各排一次 800ms 后的空跑：
+     * `refreshState` + 剪贴板全表解密扫描。`loading` 抑制与 OpenAI 页同款。
+     */
+    @Test
+    fun 翻译页回填必须抑制空跑自动保存() {
+        val src = TestSources.codeSource("TranslationSettingsActivity.kt")
+        val watcher = TestSources.blockAfter(src, "val autosave = object : TextWatcher")
+        assertTrue("回填期间不排自动保存", "if (!loading) scheduleCredentialAutosave()" in watcher)
+        val lv = TestSources.blockAfter(src, "private fun loadValues()")
+        val on = lv.indexOf("loading = true")
+        val off = lv.indexOf("loading = false")
+        assertTrue("回填前要置 loading", on >= 0)
+        assertTrue("回填后要复位 loading", off > on)
+    }
+
     @Test
     fun OpenAI配置页必须有输入停顿自动保存() {
         val src = TestSources.codeSource("OpenAiSettingsActivity.kt")

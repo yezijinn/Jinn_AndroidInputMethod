@@ -258,6 +258,8 @@ class OpenAiSettingsActivity : Activity() {
      */
     override fun onPause() {
         super.onPause()
+        // 无条件先撤排队任务（L-976 同族）：导入在途时若不撤，导入结束后按旧界面值回写
+        autosaveHandler.removeCallbacks(autosaveRunnable)
         // 导入进行中一律不回写（2026-10-02 修复 L-405）：本页的回写是**无条件**的全字段
         // （15 项直接 setText → saveValues），与导入线程写同一份 Prefs ⇒ 交错时界面旧值
         // 会把刚导入的 model / baseUrl / 提示词覆盖回去。导入结束会 `recreate()` 设置页，
@@ -266,8 +268,6 @@ class OpenAiSettingsActivity : Activity() {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过配置回写（避免覆盖导入结果）")
         } else {
             val wrote = saveValues()
-            // 改动已在上一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转，与翻译页同款）
-            autosaveHandler.removeCallbacks(autosaveRunnable)
             // ⚠ 自动保存路径也要消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-741）：
             // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
             // 而本页只有「保存」按钮那条路读这个集合 ⇒ 填完 Key 直接返回的用户看到的是

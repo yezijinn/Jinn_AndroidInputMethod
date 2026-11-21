@@ -155,6 +155,7 @@ class ExplicitSaveTest {
             """const val TEXT_SAVE = "保存"""",
             """const val TEXT_SAVED = "已保存到本机"""",
             """const val TEXT_SAVE_FAILED = "保存未完成，请重试"""",
+            """const val TEXT_SAVE_BLOCKED_IMPORTING = "配置导入进行中，暂不可保存"""",
         )) {
             assertTrue("翻译设置页缺文案：$line", line in translate)
             assertTrue("OpenAI 兼容页缺文案：$line", line in openAi)
@@ -235,11 +236,13 @@ class ExplicitSaveTest {
     fun `导入在途时显式保存也要拦住`() {
         // 导入在途时界面还是旧值，全字段写回会把刚导入的 model / baseUrl / 提示词覆盖掉。
         // onPause 早有守卫，显式保存这条路必须同款 —— 两处口径一致才算修好
-        val src = TestSources.codeSource("OpenAiSettingsActivity.kt")
-        val save = TestSources.blockAfter(src, "private fun saveAndNotify()")
-        assertTrue("saveAndNotify 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
-        assertTrue("导入在途必须早退", "ConfigBackupManager.importing" in save)
-        assertTrue("早退要给出提示文案", "TEXT_SAVE_BLOCKED_IMPORTING" in save)
+        for (file in listOf("OpenAiSettingsActivity.kt", "TranslationSettingsActivity.kt")) {
+            val src = TestSources.codeSource(file)
+            val save = TestSources.blockAfter(src, "private fun saveAndNotify()")
+            assertTrue("$file：saveAndNotify 锚点失效（源码结构变了）", save.isNotEmpty() && save.length < src.length)
+            assertTrue("$file：导入在途必须早退", "ConfigBackupManager.importing" in save)
+            assertTrue("$file：早退要给出提示文案", "TEXT_SAVE_BLOCKED_IMPORTING" in save)
+        }
     }
 
     /** 取某个 `edit_*` 所在的 `<EditText … />` 元素源码（找不到直接失败，提示同步守卫） */

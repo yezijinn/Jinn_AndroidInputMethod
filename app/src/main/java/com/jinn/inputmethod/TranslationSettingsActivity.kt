@@ -218,14 +218,14 @@ class TranslationSettingsActivity : Activity() {
     /** 退出前执行凭据落盘；避免在 onStop 保存导致上级页面读取旧值 */
     override fun onPause() {
         super.onPause()
+        // 无条件先撤排队任务（L-976）：导入在途时若不撤，导入结束后它会按旧界面值落盘
+        credentialAutosave.removeCallbacks(autosaveCredentials)
         // 配置导入进行中跳过回写，避免界面旧值覆盖导入数据
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过凭据回写（避免覆盖导入结果）")
         } else {
             // 同上：onPause 是自动保存路径，弹 toast 会与失焦那次重复（L-728）
             var wrote = saveCredentials(notify = false)
-            // 改动已经在这一行写完，撤掉排队的防抖任务（否则过一会儿再跑一次空转）
-            credentialAutosave.removeCallbacks(autosaveCredentials)
             // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03 修复 L-774）：L-758 把它加在了 if/else 之外，
             // 而 L-405 的守卫只判「`importing` 字符串在 onPause 块里出现过」、不判「所有回写都在分支内」
             // ⇒ 一旦可达就是「界面旧值覆盖刚导入的值」。姊妹页 OpenAiSettingsActivity 的同类回写已整段在守卫内。
@@ -336,7 +336,10 @@ class TranslationSettingsActivity : Activity() {
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
 
-            override fun afterTextChanged(s: Editable?) = scheduleCredentialAutosave()
+            override fun afterTextChanged(s: Editable?) {
+                // 程序化回填不算用户改动，不排空跑任务（与 OpenAI 页 loading 口径一致）
+                if (!loading) scheduleCredentialAutosave()
+            }
         }
         for (field in credentialFields()) {
             field.setOnFocusChangeListener(save)
@@ -368,6 +371,9 @@ class TranslationSettingsActivity : Activity() {
 
     private val saveGuard = CredentialSaveGuard()
 
+    /** 程序化回填期间抑制自动保存（与 OpenAI 页同款）：进页 / 回页的 setText 不算用户改动 */
+    private var loading = false
+
     /** 填充输入框并记录初始值，用于变更检测 */
     private fun loadField(field: android.widget.EditText, value: String) {
         field.setText(value)
@@ -385,6 +391,8 @@ class TranslationSettingsActivity : Activity() {
 
         // 仅在字段被真实修改后回写，避免解密失败时的空值覆盖已有密文
         saveGuard.reset()
+        // 回填不算用户改动：期间不排自动保存（L-975 ①；与 OpenAI 页 loading 口径一致）
+        loading = true
         loadField(editAliyunKeyId, prefs.aliyunAccessKeyId)
         loadField(editAliyunKeySecret, prefs.aliyunAccessKeySecret)
         loadField(editAzureKey, prefs.azureApiKey)
@@ -394,6 +402,7 @@ class TranslationSettingsActivity : Activity() {
         loadField(editBaiduLlmAppId, prefs.baiduLlmAppId)
         loadField(editBaiduLlmKey, prefs.baiduLlmApiKey)
         loadField(editDeeplKey, prefs.deeplApiKey)
+        loading = false
         applyProviderVisibility()
         refreshState()
     }
@@ -453,6 +462,12 @@ class TranslationSettingsActivity : Activity() {
 
     /** @return 是否真的写了字段（onPause 据此决定要不要同步落盘，见那里的说明） */
     private fun saveCredentials(notify: Boolean): Boolean {
+        // 导入在途一律不写（L-976）：失焦监听这条路原先没有守卫，界面旧值会盖掉刚导入的凭据。
+        // 守卫下沉到这里，自动保存 / 失焦 / onPause 三个入口共用一处，后续新增入口也不会漏。
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "自动保存: 导入进行中，已跳过（避免覆盖导入结果）")
+            return false
+        }
         var wrote = false
         if (saveIfChanged(editAliyunKeyId) { prefs.aliyunAccessKeyId = it }) wrote = true
         if (saveIfChanged(editAliyunKeySecret) { prefs.aliyunAccessKeySecret = it }) wrote = true
@@ -509,6 +524,12 @@ class TranslationSettingsActivity : Activity() {
 
     /** 执行同步落盘并回读校验，展示确认状态 */
     private fun saveAndNotify() {
+        // 导入在途时界面还是旧值，全字段写回会盖掉刚导入的配置（L-976 下半，与 OpenAI 页同款）
+        if (ConfigBackupManager.importing) {
+            Diagnostics.w(TAG, "保存: 导入进行中，已跳过（避免覆盖导入结果）")
+            textSaveHint.text = TEXT_SAVE_BLOCKED_IMPORTING
+            return
+        }
         val pickedProvider = TranslationProviderId.entries.getOrNull(spinnerProvider.selectedItemPosition)
         if (pickedProvider != null) prefs.translateProvider = pickedProvider.id
         val pickedTarget = TranslationLanguage.entries.getOrNull(spinnerTarget.selectedItemPosition)
@@ -668,6 +689,9 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_SAVE_MISMATCH = "未写入的字段："
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
+
+        /** 导入在途：此时保存会用界面旧值覆盖刚导入的配置（与 OpenAI 页同一句） */
+        const val TEXT_SAVE_BLOCKED_IMPORTING = "配置导入进行中，暂不可保存"
 
         /**
          * 写盘成功、但当前服务方的凭据不完整（2026-10-03 修复 L-515）。
