@@ -8837,4 +8837,41 @@ class RecentFixesRegressionTest {
         assertTrue("手改 / 预设回填要同步重算", "refreshPromptError()" in watcher)
     }
 
+    /**
+     * 导入的两个配置文件必须各自校验落盘（BUG.md L-1097）。
+     *
+     * 主 prefs 失败时若短路剪贴板那份的 `flush()`，剪贴板设置从未验过却被按「忽略」记账；
+     * 一旦「稍后重启」，进程回收掉 apply 队列就是静默回退。两份文件各验各的，计数不重叠。
+     */
+    @Test
+    fun 导入的两个配置文件必须各自校验落盘() {
+        val src = TestSources.codeSource("ConfigBackupManager.kt")
+        val body = TestSources.window(
+            src,
+            "var failedStage: String? = null",
+            "val inMemoryCredentials = prefs.unpersistedCredentialKeys()",
+        )
+        assertTrue("剪贴板 prefs 必须主动 flush", "clipPrefs.flush()" in body)
+        assertFalse("主 prefs 失败不得短路剪贴板校验", "failedStage == null && appliedClip" in body)
+        assertTrue("主失败只记主 prefs 的应用数", "prefsIgnored += r1.applied" in body)
+        assertTrue("剪贴板失败单独从 appliedClip 记账", "prefsIgnored += appliedClip" in body)
+    }
+
+    /**
+     * 隐藏方向面板的早退分支也必须退出拖选态（BUG.md L-1113）。
+     *
+     * 调用点的契约是「隐藏方向面板 = 清拖选」；只在激活分支回传，一旦兜底清理改动，
+     * 已隐藏时被调用就会留下 anchor / focus。
+     */
+    @Test
+    fun 隐藏方向面板的早退分支也必须退出拖选态() {
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        val body = TestSources.blockAfter(src, "fun hideDirectionPanel()")
+        assertEquals(
+            "激活分支与早退分支各回传一次",
+            2,
+            Regex("onSelectionModeChanged\\(false\\)").findAll(body).count(),
+        )
+    }
+
 }

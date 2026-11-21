@@ -1164,20 +1164,23 @@ internal object ConfigBackupManager {
             }
             // 写入走 apply()（没有失败信号），必须主动 flush 才知道是否真的落盘：
             // 磁盘满时静默丢一半而弹窗仍报「设置 26 项」，这种虚高必须变成如实的忽略数
-            if (prefsApplied > 0 && !prefs.flush()) {
+            if (r1.applied > 0 && !prefs.flush()) {
                 Diagnostics.w(TAG, "导入: 设置项落盘失败，计入忽略")
-                prefsIgnored += prefsApplied
-                prefsApplied = 0
+                prefsIgnored += r1.applied
+                prefsApplied -= r1.applied
                 failedStage = "设置项写盘失败"
             }
             // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30 审查）：
             // 只 flush 主 prefs 时，导入改了剪贴板开关/上限、用户又选「稍后重启」，进程在 apply 队列
             // 排空前被回收 ⇒ 剪贴板设置静默回退，而弹窗已经把剪贴板侧的项数算进「设置 N 项」了。
-            if (failedStage == null && appliedClip > 0 && !clipPrefs.flush()) {
+            // ⚠ 两个文件的校验**各自独立**（L-1097）：主 prefs 失败不能短路这一条，否则剪贴板侧
+            // 从未验过却按「忽略」记账；主失败时只把 r1.applied 计入忽略，appliedClip 留在这里再判，
+            // 两份计数不重叠。
+            if (appliedClip > 0 && !clipPrefs.flush()) {
                 Diagnostics.w(TAG, "导入: 剪贴板设置落盘失败，计入忽略")
                 prefsIgnored += appliedClip
                 prefsApplied -= appliedClip
-                failedStage = "剪贴板设置写盘失败"
+                if (failedStage == null) failedStage = "剪贴板设置写盘失败"
             }
             // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02 审查）：
             // Keystore 不可用（锁屏等）时 `writeCredential` 只更新进程内缓存并删掉磁盘旧密文，

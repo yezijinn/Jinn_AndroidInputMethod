@@ -155,6 +155,30 @@ class OptionalDictJunkTest {
         )
     }
 
+    /**
+     * 正在写的固定名临时件不受保护窗失效影响（BUG.md L-1094）。
+     *
+     * 保护窗只防正常时钟；时钟前跳 >10 分钟时，正在写的文件也会被判成老残留。
+     * 写侧知道自己是谁，调用点传入 `protectedNames` 后必须无条件留下。
+     */
+    @Test
+    fun `正在写的固定名临时件必须无条件豁免清理`() {
+        val now = 2_000_000_000_000L
+        val pack = CustomDicts.packTempName()
+        val source = CustomDicts.sourceTempName()
+        val names = listOf(pack, source, "dict_part2.txt.xz.tmp")
+        // 不传排除：mtime 远早于保护窗 ⇒ 三个都在可清列表里（防假绿）
+        assertEquals(
+            3,
+            OptionalDicts.cleanableTempNames(names, active = null, now = now) { 0L }.size,
+        )
+        // 传入「正在写」：两个固定名留下，只清下载残留
+        assertEquals(
+            listOf("dict_part2.txt.xz.tmp"),
+            OptionalDicts.cleanableTempNames(names, active = null, now = now, protectedNames = setOf(pack, source)) { 0L },
+        )
+    }
+
     @Test
     fun `残留件的清理与重启窗口接线不得回退（L-798、L-801）`() {
         val src = TestSources.codeOf(TestSources.rawSourceOfShortName("DictManagerActivity.kt"))
@@ -166,6 +190,11 @@ class OptionalDictJunkTest {
         assertTrue(
             "不得退回只按名字筛的 staleTempNames：会把正在写入的自定义词库临时件当残留删掉，随后的改名必失败（BUG.md L-827）",
             "OptionalDicts.staleTempNames(" !in block(src, "private fun refreshList"),
+        )
+        val refresh = block(src, "private fun refreshList")
+        assertTrue(
+            "正在写自定义词库时必须排除两个固定名临时件（BUG.md L-1094）：mtime 窗挡不住时钟前跳",
+            "CustomDicts.writing" in refresh && "protectedNames" in refresh,
         )
         assertTrue(
             "清理必须留一条日志（否则事后无法判断有没有清过）",

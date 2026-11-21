@@ -365,10 +365,18 @@ class DictManagerActivity : Activity() {
             val dir = dictDir()
             val byName = dir.listFiles()?.filter { it.isFile }
                 ?.associate { it.name to it.lastModified() } ?: emptyMap()
+            // 正在写自定义词库时，两个固定名临时件一并排除（L-1094）：mtime 窗只防正常时钟，
+            // 时钟前跳 >10 分钟时会把正在写的文件当残留删掉，随后的改名必失败。
+            val protectedNames = if (CustomDicts.writing) {
+                setOf(CustomDicts.packTempName(), CustomDicts.sourceTempName())
+            } else {
+                emptySet()
+            }
             val stale = OptionalDicts.cleanableTempNames(
                 byName.keys,
                 downloading,
                 System.currentTimeMillis(),
+                protectedNames,
             ) { byName[it] ?: 0L }
             if (stale.isNotEmpty()) {
                 var freed = 0L

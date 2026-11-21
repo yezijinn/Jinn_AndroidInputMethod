@@ -5369,6 +5369,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
             centerSelectionKey = null
             dropStaleDirectionPanel()
             restoreLetterRows()
+            // 早退也要回传（L-1113）：调用点的契约是「隐藏方向面板即退出拖选态」，
+            // 只管激活分支会让契约在「已经隐藏」时失效；`clearSelectionState` 可重复调用。
+            listener?.onSelectionModeChanged(false)
             return
         }
         directionPanel = null

@@ -245,13 +245,19 @@ object OptionalDicts {
      *
      * 纯函数（mtime 由调用侧传入，不碰文件系统），与 [staleTempNames] 同款便于单测；
      * 保护窗放宽只会推迟清理（下次进页面再清），不会漏清。
+     *
+     * [protectedNames] 给「正在写」的固定名临时件用（L-1094）：mtime 窗挡不住时钟前跳，
+     * 而写侧知道自己在写哪个名字。它先于 mtime 判据剔除，与 [staleTempNames] 的 `active`
+     * （下载中的那个）同一语义。
      */
     fun cleanableTempNames(
         fileNames: Collection<String>,
         active: String?,
         now: Long,
+        protectedNames: Set<String> = emptySet(),
         modifiedAtOf: (String) -> Long,
     ): List<String> = staleTempNames(fileNames, active)
+        .filter { it !in protectedNames }
         .filter { now - modifiedAtOf(it) > TMP_PROTECT_MS }
 
     /**
