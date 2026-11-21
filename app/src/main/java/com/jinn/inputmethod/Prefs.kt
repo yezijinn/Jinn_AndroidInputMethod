@@ -1893,7 +1893,10 @@ class Prefs(private val appContext: Context) {
      * `favorite_symbols` 用 null 标记「键不存在」= 从未编辑过（出厂预置 D I Y），
      * 与用户删光的 `"[]"` 是两种语义，导入时必须原样还原，故 null 也要导出。
      */
-    internal fun exportForBackup(): Map<String, ConfigBackup.BackupValue> {
+    internal fun exportForBackup(
+        /** 出参：本机配过但读不出来的凭据键，由调用方计入回执（BUG.md L-1117） */
+        skippedCredentials: MutableList<String>? = null,
+    ): Map<String, ConfigBackup.BackupValue> {
         val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
         fun put(key: String, value: Any?) {
             ConfigBackup.BackupValue.of(value)?.let { out[key] = it }
@@ -1973,6 +1976,7 @@ class Prefs(private val appContext: Context) {
             val value = readCredential(key)
             if (value.cleanCredential().isEmpty()) {
                 if (sp.contains(key)) {
+                    skippedCredentials?.add(key)
                     Diagnostics.w(TAG, "导出跳过读不出的凭据($key)：写进包会在导入端删掉目标机的同名凭据")
                 }
                 return

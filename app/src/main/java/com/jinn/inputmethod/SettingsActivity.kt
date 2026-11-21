@@ -1018,6 +1018,8 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun doExportConfig(includeClipboard: Boolean, includeDicts: Boolean, password: CharArray) {
+        // 每轮无条件重置：上一轮的「少了什么」绝不能串到这一次（L-1117）
+        pendingExportExtra = ""
         btnConfigExport.isEnabled = false
         textConfigHint.text = TEXT_EXPORTING
         showBusy(TEXT_BUSY_EXPORT)
@@ -1073,8 +1075,15 @@ class SettingsActivity : ComponentActivity() {
                         if (outcome.freqStale) {
                             append("（用户词频未能落盘，包内是盘上旧版本，缺最近几次学习记录）")
                         }
+                        // 与导入侧「未包含 N 项」同口径（BUG.md L-1117）：本机读不出来的凭据没进包，
+                        // 换机后只能重填，回执不提就等于让用户以为是自己没输过
+                        if (outcome.credentialSkipped > 0) {
+                            append("（${outcome.credentialSkipped} 项凭据未包含：本机读不出来，需在新机重填）")
+                        }
                     }
                     textConfigHint.text = "已生成加密备份包，请选择保存位置$extra"
+                    // 打包提示会被「配置已导出」覆盖，把「少了什么」带到终态（L-1117 / BUG-13）
+                    pendingExportExtra = extra
                     exportConfigLauncher.launch(outcome.file.name)
                 }
             }
@@ -1143,9 +1152,15 @@ class SettingsActivity : ComponentActivity() {
                 dismissBusy()
                 if (ok) {
                     Diagnostics.i(TAG, "exportConfig: 导出完成 ${safeUriLabel(uri)}")
-                    textConfigHint.text = "配置已导出：$displayName"
-                    alert(TEXT_EXPORT_CONFIG, "已导出：$displayName\n\n请妥善保管该文件与密码：忘记密码无法解密。")
+                    val extra = pendingExportExtra
+                    pendingExportExtra = ""
+                    textConfigHint.text = "配置已导出：$displayName$extra"
+                    alert(
+                        TEXT_EXPORT_CONFIG,
+                        "已导出：$displayName$extra\n\n请妥善保管该文件与密码：忘记密码无法解密。",
+                    )
                 } else {
+                    pendingExportExtra = ""
                     Diagnostics.w(TAG, "exportConfig: 写入失败")
                     textConfigHint.text = TEXT_EXPORT_FAIL
                     // 覆盖写会一开始就把目标截断：失败时用户的原文件可能已经空了，必须提示到
@@ -1634,6 +1649,10 @@ class SettingsActivity : ComponentActivity() {
          */
         @Volatile
         private var pendingNotice: String? = null
+
+        /** 本次导出「少了什么」：打包提示会被「配置已导出」覆盖，必须带到终态（L-1117） */
+        @Volatile
+        private var pendingExportExtra: String = ""
 
         // ── 配置备份文案（strings.xml 默认不改动，文案收敛在此处） ──
         const val TEXT_EXPORT_CONFIG = "导出配置文件"

@@ -281,6 +281,13 @@ internal object ConfigBackupManager {
          * 当成「全部导出成功」（BUG.md L-1319）。
          */
         val freqStale: Boolean = false,
+        /**
+         * 本机配过但读不出来、因此没进包的凭据项数（BUG.md L-1117）。
+         *
+         * 与 [clipDropped] 同性质：换机后这些 Key 会缺失，回执必须说清「是导出时就少了」，
+         * 而不是让用户以为新机或自己没输过。
+         */
+        val credentialSkipped: Int = 0,
     )
 
     /**
@@ -320,10 +327,11 @@ internal object ConfigBackupManager {
     private fun exportLocked(context: Context, options: ExportOptions, reason: ReasonBox): ExportOutcome? {
         val prefs = Prefs(context)
         val clipPrefs = ClipboardPrefs.of(context)
+        val skippedCredentials = ArrayList<String>()
 
         val prefsText = ConfigBackup.encodePrefs(
             linkedMapOf(
-                ConfigBackup.PREFS_MAIN to prefs.exportForBackup(),
+                ConfigBackup.PREFS_MAIN to prefs.exportForBackup(skippedCredentials),
                 ConfigBackup.PREFS_CLIPBOARD to clipPrefs.exportForBackup(),
             )
         )
@@ -511,7 +519,12 @@ internal object ConfigBackupManager {
                 "共 ${dest.length()} 字节（已加密）" +
                 if (clip?.unstable == true) "（剪贴板快照不稳定）" else "",
         )
-        return ExportOutcome(dest, clip?.dropped ?: 0, clip?.unstable == true, freqStale)
+        if (skippedCredentials.isNotEmpty()) {
+            Diagnostics.w(TAG, "导出: ${skippedCredentials.size} 项凭据读不出（本机解不开），未包含")
+        }
+        return ExportOutcome(
+            dest, clip?.dropped ?: 0, clip?.unstable == true, freqStale, skippedCredentials.size,
+        )
     }
 
     private class ClipPayload(val text: String, val dropped: Int, val unstable: Boolean = false)

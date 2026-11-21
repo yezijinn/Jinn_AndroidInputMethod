@@ -8739,4 +8739,36 @@ class RecentFixesRegressionTest {
         assertTrue("忽略仍在", "忽略 \${r.prefsIgnored} 项" in sa)
     }
 
+
+    @Test
+    fun 导出跳过读不出的凭据必须进回执() {
+        val prefs = TestSources.codeSource("Prefs.kt")
+        assertTrue(
+            "导出必须接收跳过清单",
+            "skippedCredentials: MutableList<String>? = null" in prefs,
+        )
+        var body = TestSources.blockAfter(prefs, "internal fun exportForBackup(")
+        assertTrue("跳过时必须记账", "skippedCredentials?.add(key)" in body)
+        assertTrue(
+            "凭据调用点必须仍为 21 处（新增凭据须走同一 helper）",
+            Regex("putCredential\\(").findAll(body).count() == 21,
+        )
+        val cfg = TestSources.codeSource("ConfigBackupManager.kt")
+        assertTrue("必须透传跳过清单", "prefs.exportForBackup(skippedCredentials)" in cfg)
+        assertTrue("结果必须带计数", "skippedCredentials.size," in cfg)
+        val sa = TestSources.codeSource("SettingsActivity.kt")
+        assertTrue("回执必须说明凭据缺失", "outcome.credentialSkipped > 0" in sa && "项凭据未包含" in sa)
+    }
+
+    @Test
+    fun 导出回执的少了什么必须活到终态() {
+        val sa = TestSources.codeSource("SettingsActivity.kt")
+        assertTrue("必须有独立字段承接", "private var pendingExportExtra: String" in sa)
+        assertTrue("入口必须重置", "pendingExportExtra = \"\"" in sa)
+        val copy = TestSources.blockAfter(sa, "private fun copyConfigZipTo")
+        assertTrue("终态必须取用该字段", "val extra = pendingExportExtra" in copy)
+        assertTrue("展示后必须清空", "pendingExportExtra = \"\"" in copy)
+        assertTrue("终态文案必须拼上 extra", "配置已导出：\$displayName\$extra" in copy)
+    }
+
 }
