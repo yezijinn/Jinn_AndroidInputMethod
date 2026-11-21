@@ -1091,6 +1091,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     // 条带有图而列表空 = 还没复制过文本，说「暂无记录」会与眼前的图片网格自相矛盾
                     // （搜索态另行判断：那是「没有匹配」，不是「没有文本」）
                     items.isEmpty() && stripHasImages && keywordNow.isEmpty() -> TEXT_EMPTY_TEXT_ONLY
+                    // 搜索无匹配 ≠ 库里没记录：有词且窗口空 → 报「未找到匹配」（面板同文案）。
+                    // 必须排在 imageMode / 截断 / unreadable 之后，否则那些态会被误报成「没搜到」。
+                    keywordNow.isNotEmpty() && items.isEmpty() -> TEXT_NO_MATCH
                     items.isEmpty() -> TEXT_EMPTY
                     else -> ""
                 }
@@ -1856,6 +1859,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
         /** 条带里有图片、但一段文本都没有时的列表空态（与「暂无记录」区分，见 stripHasImages） */
         const val TEXT_EMPTY_TEXT_ONLY = "暂无文本记录"
+
+        /** 搜索无匹配（与面板 TEXT_EMPTY_NO_MATCH 逐字同源；不改真·空库文案） */
+        const val TEXT_NO_MATCH = "未找到匹配内容\n换个关键词试试"
 
         /**
          * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为

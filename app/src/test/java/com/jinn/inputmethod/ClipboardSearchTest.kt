@@ -325,4 +325,41 @@ class ClipboardSearchTest {
         assertTrue("searching 仍按关键词非空", "keywordNow.isNotEmpty()" in searchLine)
         assertFalse("searching 不得改成 forms 非空（否则零宽显示全部历史)", "forms.isNotEmpty()" in searchLine)
     }
+
+    /**
+     * 历史页搜索无匹配要说「未找到匹配」，不能说「暂无记录」（与面板同一句）。
+     *
+     * 分支还必须在 imageMode / 截断 / 读不出 / 无文本有图之后：挪到最前面会让这些态
+     * 也被误报成「没搜到」；关键词必须在 loadAsync 入参处捕获，不能挪进回调读可变字段。
+     */
+    @Test
+    fun 历史页搜索无匹配要说未找到匹配() {
+        val h = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        val p = TestSources.codeSource("SearchPanelView.kt")
+        val lit = Regex("\"([^\"]*)\"")
+        val hLit = lit.find(TestSources.lineOf(h, "const val TEXT_NO_MATCH ="))!!.groupValues[1]
+        val pLit = lit.find(TestSources.lineOf(p, "const val TEXT_EMPTY_NO_MATCH ="))!!.groupValues[1]
+        assertEquals("未找到文案必须与面板逐字相同", pLit, hLit)
+        val hint = TestSources.blockAfter(h, "val hint = when {")
+        val nm = hint.indexOf("keywordNow.isNotEmpty() && items.isEmpty() -> TEXT_NO_MATCH")
+        assertTrue("缺搜索无匹配分支", nm >= 0)
+        for (earlier in listOf(
+            "imageMode && items.isEmpty() -> TEXT_IMAGE_EMPTY",
+            "cappedByCount && total > maxResults",
+            "capped -> TEXT_TRUNCATED_GENERIC",
+            "unreadable -> TEXT_UNREADABLE",
+            "TEXT_EMPTY_TEXT_ONLY",
+        )) {
+            val at = hint.indexOf(earlier)
+            assertTrue("前置分支缺失：$earlier", at >= 0)
+            assertTrue("无匹配分支必须排在「$earlier」之后", at < nm)
+        }
+        val empty = hint.indexOf("items.isEmpty() -> TEXT_EMPTY")
+        assertTrue("通用暂无记录分支缺失", empty >= 0)
+        assertTrue("无匹配必须先于通用暂无记录", nm < empty)
+        val load = TestSources.blockAfter(h, "private fun loadAsync(")
+        val cap = load.indexOf("val keywordNow = keyword")
+        val hintAt = load.indexOf("val hint = when {")
+        assertTrue("关键词必须在 loadAsync 入参处捕获", cap >= 0 && cap < hintAt)
+    }
 }
