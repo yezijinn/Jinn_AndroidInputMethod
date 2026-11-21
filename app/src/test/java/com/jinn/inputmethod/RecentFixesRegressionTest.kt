@@ -8907,4 +8907,16 @@ class RecentFixesRegressionTest {
         assertTrue("全选本页要刷新计数", "refreshSelectionButton()" in all)
     }
 
+    /** 历史页操作行要预留高度（本轮真机实锤：首次测量时子按钮还没加，行被量成 0×0）。 */
+    @Test
+    fun 历史页操作行必须预留高度() {
+        val f = listOf(
+            java.io.File("src/main/res/layout/activity_clipboard_history.xml"),
+            java.io.File("app/src/main/res/layout/activity_clipboard_history.xml"),
+        ).firstOrNull { it.isFile } ?: error("找不到历史页布局")
+        val text = f.readText()
+        val head = text.substringBefore("@+id/hist_actions").substringAfterLast("<HorizontalScrollView")
+        assertTrue("操作行外层要 minHeight，否则空行被列表 weight 挤出", "android:minHeight=\"48dp\"" in head)
+    }
+
 }

@@ -123,10 +123,13 @@
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <!-- 操作行按钮数会随版本增长：外层横向滚动兜住窄屏（fillViewport 让内容窄时仍按 gravity 居中） -->
+    <!-- 操作行按钮数会随版本增长：外层横向滚动兜住窄屏（fillViewport 让内容窄时仍按 gravity 居中）。
+         minHeight：首次测量时子按钮还没加进来（buildActionRow 在异步加载末尾），wrap_content 会量成 0，
+         被上方列表的 weight=1 挤出可视区；先占住一行高度，子按钮随后加入即可正常排布。 -->
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:minHeight="48dp"
         android:fillViewport="true"
         android:overScrollMode="never"
         android:scrollbars="none">
