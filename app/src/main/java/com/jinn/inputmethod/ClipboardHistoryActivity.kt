@@ -51,6 +51,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private val items = ArrayList<ClipboardDb.Item>()
     private val numberById = HashMap<Long, Int>()
     private val checkedIds = HashSet<Long>()
+    /** 「删除所选」按钮引用：buildActionRow 重建时重取，图片模式置空（L-990） */
+    private var selectionBtn: TextView? = null
     private var multiSelect = false
     private var categoryFilter: String? = null // null=全部, "URL", "NUMBER", "FAVORITE", "IMAGE"
     private var keyword: String = ""
@@ -327,6 +329,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 holder.check.isChecked = checkedIds.contains(item.id)
                 holder.check.setOnCheckedChangeListener { _, checked ->
                     if (checked) checkedIds.add(item.id) else checkedIds.remove(item.id)
+                    refreshSelectionButton()
                 }
                 holder.number.text = (numberById[item.id] ?: "").toString()
                 // 图片行走**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
@@ -363,6 +366,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     if (item.image != null) {
                         if (multiSelect) {
                             if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
+                            refreshSelectionButton()
                             notifyDataSetChanged()
                         } else {
                             message(TEXT_IMAGE_ROW_HINT)
@@ -371,6 +375,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     }
                     if (multiSelect) {
                         if (checkedIds.contains(item.id)) checkedIds.remove(item.id) else checkedIds.add(item.id)
+                        refreshSelectionButton()
                         notifyDataSetChanged()
                     } else {
                         showContentDialog(item)
@@ -703,8 +708,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
         }
     }
 
+    /** 勾选集变化后立即刷新按钮计数（L-990）：`notifyDataSetChanged` 只重绑列表行，碰不到操作行。 */
+    private fun refreshSelectionButton() {
+        selectionBtn?.text = selectionButtonLabel(multiSelect, checkedIds.size)
+    }
+
     private fun buildActionRow() {
         actionsRow.removeAllViews()
+        selectionBtn = null
         // 图片分类：操作行换成图片专用入口（多选 / 导入 / 删网址等文本功能不适用）
         if (inImageMode()) {
             // 「只看收藏」切换：收藏分类排除图片行后，这里是看「收藏过的图片」的入口（BUG.md L-1240）
@@ -748,8 +759,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
             layoutActionRow()
             return
         }
-        actionsRow.addView(compactView().apply {
-            text = if (multiSelect) "删除所选" else "多选"
+        val selectBtn = compactView().apply {
+            text = selectionButtonLabel(multiSelect, checkedIds.size)
             setOnClickListener {
                 if (multiSelect) {
                     if (checkedIds.isEmpty()) return@setOnClickListener
@@ -783,12 +794,15 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     adapter.notifyDataSetChanged()
                 }
             }
-        })
+        }
+        selectionBtn = selectBtn
+        actionsRow.addView(selectBtn)
         if (multiSelect) {
             actionsRow.addView(compactView().apply {
                 text = "全选本页"
                 setOnClickListener {
                     checkedIds.addAll(pageItems().map { it.id })
+                    refreshSelectionButton()
                     adapter.notifyDataSetChanged()
                 }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -2015,4 +2029,16 @@ class ClipboardHistoryActivity : ComponentActivity() {
         /** 网格缩略图的最小目标像素（窄屏 / 多列时的兜底，避免解码出 1px 图） */
         const val MIN_IMAGE_TARGET_PX = 64
     }
+}
+
+/**
+ * 多选操作按钮的文案（L-990）。
+ *
+ * `checkedIds` 跨页累积，条数只在删除确认弹窗里出现过；按钮带上总数后，翻页 / 取消都能看见。
+ * 未多选时仍是入口「多选」，未选中时保持原文案，不出现「（0）」。
+ */
+internal fun selectionButtonLabel(multiSelect: Boolean, count: Int): String = when {
+    !multiSelect -> "多选"
+    count <= 0 -> "删除所选"
+    else -> "删除所选（$count）"
 }

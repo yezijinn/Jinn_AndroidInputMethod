@@ -8874,4 +8874,37 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 多选「删除所选」按钮必须显示跨页累积的已选条数（BUG.md L-990）。
+     *
+     * 勾选集跨页累积，旧实现只在删除确认弹窗里提条数；按钮带上计数后，翻页 / 取消都能看见。
+     * 四个变更入口（复选框 / 普通行 / 图片占位行 / 全选本页）各自刷新，不能只靠列表重绑。
+     */
+    @Test
+    fun 多选按钮必须显示已选条数() {
+        assertEquals("未多选只显示入口", "多选", selectionButtonLabel(false, 3))
+        assertEquals("未选中保持原文案", "删除所选", selectionButtonLabel(true, 0))
+        assertEquals("选中 1 条带计数", "删除所选（1）", selectionButtonLabel(true, 1))
+        assertEquals("跨页累积按总数显示", "删除所选（5）", selectionButtonLabel(true, 5))
+        val src = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        assertTrue(
+            "按钮文案必须走纯函数",
+            "text = selectionButtonLabel(multiSelect, checkedIds.size)" in src,
+        )
+        assertTrue(
+            "刷新助手与按钮同源",
+            "selectionBtn?.text = selectionButtonLabel(multiSelect, checkedIds.size)" in src,
+        )
+        val check = TestSources.blockAfter(src, "holder.check.setOnCheckedChangeListener")
+        assertTrue("复选框变更要刷新计数", "refreshSelectionButton()" in check)
+        val row = TestSources.blockAfter(src, "row.setOnClickListener")
+        assertEquals(
+            "普通行与图片占位行都要刷新",
+            2,
+            Regex("refreshSelectionButton\\(\\)").findAll(row).count(),
+        )
+        val all = TestSources.blockAfter(src, "text = \"全选本页\"")
+        assertTrue("全选本页要刷新计数", "refreshSelectionButton()" in all)
+    }
+
 }
