@@ -310,40 +310,48 @@ object UpdateChecker {
                 // 读取也受**总预算**约束（BUG.md L-145）：socket 超时只约束「单次 read」，
                 // 一个滴水的服务器（每次都在超时前吐一行）能把总时长拉到远超 [TOTAL_BUDGET_MS]，
                 // 把调用方的看门狗甩掉 ⇒ 按钮解锁后用户可再点，晚到的回调又回来捣乱。
-                val body = conn.inputStream.bufferedReader().use { readCapped(it, MAX_BODY_CHARS, deadline) }
-                if (System.currentTimeMillis() >= deadline) {
-                    Diagnostics.w(TAG, "读取到总预算上限，已截断: ${url.substringBefore('?')}")
+                val read = conn.inputStream.bufferedReader().use {
+                    readCappedResult(it, MAX_BODY_CHARS, deadline)
                 }
-                body
+                // 截断即作废本源（L-1073）：残体可能缺了最新的那批标签，据此定论会给出
+                // 偏旧的「已最新」并七天不自愈；交给调用方回退下一源 / 如实报网络异常。
+                if (read.truncated) {
+                    Diagnostics.w(TAG, "响应体被截断（上限或总预算），本源作废: ${url.substringBefore('?')}")
+                    return null
+                }
+                read.body
             }
         } finally {
             conn.disconnect()
         }
     }
 
+    /** [readCappedResult] 的结果：响应体 + 是否因上限 / 总预算被截断。 */
+    internal data class CappedRead(val body: String, val truncated: Boolean)
+
     /**
-     * 带上限的读取（纯逻辑，便于单测）。
+     * 带上限的读取，并**显式报告截断**（纯逻辑，便于单测）。
      *
-     * 超出 [MAX_BODY_CHARS] 的字符直接丢弃、停止读取：更新检查只需要 tag 名，
-     * 而 tag 一定出现在页面前部，截断不影响判定。
-     *
-     * 注意截断按行判定（整行超限就整行不要）：真遇到「单行就超过 1MB」的响应会返回空串，
-     * 结果是走「两个源都拉不到」分支报网络异常（不会误报成「已最新」），可以接受。
+     * 超出 [maxChars] 的字符直接丢弃、停止读取，同时把 [CappedRead.truncated] 置真：
+     * 「截断」不是完整响应，调用方必须把它当失败（L-1073）—— 部分 JSON / HTML 仍能解析出
+     * 若干标签，但可能恰好缺了最新的那批，据此定论会得到偏旧的「已最新」并七天不自愈。
      *
      * [deadline] 是**总预算**（墙钟毫秒）：到点立刻停读（BUG.md L-145）。没有它时，
      * `readTimeout` 只约束单次 read，滴水响应用「每次都在超时前吐一点」就能把总时长无限拉长。
      * 本函数保持纯逻辑（不写日志），截断原因由调用方 [httpGet] 判定并记录。
      */
-    internal fun readCapped(
+    internal fun readCappedResult(
         reader: java.io.BufferedReader,
         maxChars: Int = MAX_BODY_CHARS,
         deadline: Long = Long.MAX_VALUE,
-    ): String {
+    ): CappedRead {
         val sb = StringBuilder(minOf(maxChars, 8192))
         var total = 0
         val buf = CharArray(8192)
         while (true) {
-            if (System.currentTimeMillis() > deadline) break
+            if (System.currentTimeMillis() > deadline) {
+                return CappedRead(sb.toString(), truncated = true)
+            }
             // 按块读，并把两个判据都放进循环：`readLine` 的单行长度没有上限，
             // 一个无换行的超长响应（压缩后的单行 HTML / 网关改写页）会整行进堆，
             // 1MB 上限与 25s 总预算都拦不住 —— 而本进程同时承载输入法服务，一次 OOM 连键盘一起带走。
@@ -351,10 +359,17 @@ object UpdateChecker {
             if (n < 0) break
             val take = minOf(n, maxChars - total)
             if (take > 0) { sb.append(buf, 0, take); total += take }
-            if (total >= maxChars) break
+            if (total >= maxChars) return CappedRead(sb.toString(), truncated = true)
         }
-        return sb.toString()
+        return CappedRead(sb.toString(), truncated = false)
     }
+
+    /** 只取响应体的旧入口（既有单测与调用方用）：截断信息由 [readCappedResult] 给。 */
+    internal fun readCapped(
+        reader: java.io.BufferedReader,
+        maxChars: Int = MAX_BODY_CHARS,
+        deadline: Long = Long.MAX_VALUE,
+    ): String = readCappedResult(reader, maxChars, deadline).body
 
     private const val TAG = "UpdateChecker"
 

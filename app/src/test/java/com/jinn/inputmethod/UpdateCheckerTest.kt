@@ -205,9 +205,38 @@ class UpdateCheckerTest {
             "taggerRe" in src && "body.replace(taggerRe" in src,
         )
         assertTrue("读取必须把 deadline 传进去（socket 超时管不住滴水响应）",
-            "readCapped(it, MAX_BODY_CHARS, deadline)" in src)
+            "readCappedResult(it, MAX_BODY_CHARS, deadline)" in src)
         assertTrue("挑最新必须走顺序无关的 pickLatest", "pickLatest(" in src)
         assertTrue("到翻页上限要留日志（不静默漏）", "可能还有更靠后的标签" in src)
+        // 截断必须作废本源（L-1073）：残体可能缺了最新标签，不能当完整响应进 pickLatest
+        val http = TestSources.blockAfter(src, "private fun httpGet(")
+        val cut = TestSources.blockAfter(http, "if (read.truncated)")
+        assertTrue("截断分支必须返回 null", "null" in cut)
+        assertFalse("截断分支不得把残体当完整响应", "read.body" in cut)
+    }
+
+    @Test
+    fun `读取撞上限必须报告截断`() {
+        val out = UpdateChecker.readCappedResult(reader("a".repeat(5_000)), maxChars = 100)
+        assertTrue("撞上限必须置截断", out.truncated)
+        assertEquals("截断体不超过上限", 100, out.body.length)
+    }
+
+    @Test
+    fun `读取撞总预算必须报告截断`() {
+        val out = UpdateChecker.readCappedResult(
+            reader("abc"),
+            maxChars = 100,
+            deadline = System.currentTimeMillis() - 1,
+        )
+        assertTrue("撞预算必须置截断", out.truncated)
+    }
+
+    @Test
+    fun `完整响应不得被误报截断`() {
+        val out = UpdateChecker.readCappedResult(reader("abc"), maxChars = 100, deadline = Long.MAX_VALUE)
+        assertFalse("完整响应不得置截断", out.truncated)
+        assertEquals("abc", out.body)
     }
 
     /**
@@ -280,6 +309,9 @@ class UpdateCheckerTest {
         assertTrue("记账必须避开后台", "if (!foregroundForUpdates) return" in settings)
         assertTrue("回前台必须回放挂起结果", "pendingUpdateCheck?.let" in settings)
     }
+
+    private fun reader(text: String): java.io.BufferedReader =
+        java.io.BufferedReader(java.io.StringReader(text))
 
     /** 资源定位：与 `OptionalDictJunkTest` 同一口径（Gradle 的任务工作目录不止一种） */
     private fun resFile(relative: String): File =
