@@ -14,6 +14,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧的「剪贴板自定义」进入。
@@ -726,10 +727,11 @@ class ClipboardCustomizeActivity : Activity() {
             runCatching { ClipboardDb.get(this).trimTo(p.maxItems, p.maxTotalBytes) }
                 .onFailure {
                     Diagnostics.w(TAG, "容量裁剪失败: ${it.message}")
-                    // 参数已落盘、库未收敛：不提示的话「已保存」就成了假象（L-993）；
-                    // 页面可能已被销毁，回调前先确认窗口还在
+                    // 参数已落盘、库未收敛：不提示的话「已保存」就成了假象（L-993）。
+                    // 最常见的路径是「保存后立刻返回」，页面这时已在收尾 —— 用 application 级
+                    // Toast，提示不再随窗口一起消失（BUG.md L-1081）。
                     runOnUiThread {
-                        if (!isFinishing && !isDestroyed) toast(TEXT_TRIM_FAILED)
+                        Toast.makeText(applicationContext, TEXT_TRIM_FAILED, Toast.LENGTH_LONG).show()
                     }
                 }
         }
@@ -859,7 +861,12 @@ class ClipboardCustomizeActivity : Activity() {
         const val TEXT_SAVE_WARN_DELETE_NON_FAV =
             "⚠ 已收紧上限：保存后超出新上限的记录会被删除或跳过（收藏不受影响），不可恢复。"
         const val TEXT_SAVE_FAILED = "保存失败：设置未落盘，请重试"
-        const val TEXT_TRIM_FAILED = "参数已保存，但历史裁剪未完成，稍后会自动重试"
+        /**
+         * 裁剪失败的如实文案（BUG.md L-1081）：没有任何定时 / 后台重试，
+         * `trimTo` 的入口只有「入库（文本 / 图片）、本页改参数后保存、备份导入 / 剪贴板恢复、文件导入攒批与收尾」，
+         * 所以只说这三个用户可感知的时机，不承诺「稍后自动」。
+         */
+        const val TEXT_TRIM_FAILED = "参数已保存，但历史裁剪未完成（下次复制入库、改参数保存或导入时会再试）"
         const val TEXT_SAVED = "已保存"
         const val TEXT_RESET_MSG = "撤销本次修改，回到进入本页时的值？（不会写盘）"
         const val TEXT_RESET_DONE = "已撤销本次修改"

@@ -242,4 +242,19 @@ class ClipboardLossGuardTest {
         }
         assertTrue("全批解不出必须留 E，事后才能与库真坏区分", "本批历史全部解不出" in panel)
     }
+
+    @Test
+    fun 裁剪失败文案不得承诺自动重试且提示不随页面消失() {
+        val customize = TestSources.codeOf(TestSources.rawSourceOfShortName("ClipboardCustomizeActivity.kt"))
+        val line = customize.lines().firstOrNull { "const val TEXT_TRIM_FAILED" in it }
+        assertTrue("常量行必须存在", line != null)
+        assertTrue("必须写明会再试的入口", "下次复制入库" in line!! || "改参数保存" in line)
+        assertFalse("不得承诺自动重试", Regex("自动重试|稍后会自动").containsMatchIn(line))
+        assertTrue("失败仍须留 W 诊断", "容量裁剪失败" in customize)
+        assertTrue(
+            "提示必须用 application 级 Toast，不能随窗口消失",
+            "Toast.makeText(applicationContext, TEXT_TRIM_FAILED" in customize,
+        )
+    }
+
 }
