@@ -27,6 +27,24 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
+ * 符号分组标签的读屏名（L-1276）：组名必报，选中组再报当前页。
+ *
+ * 为什么不是空串：可点击容器没有名字时，读屏焦点会落到里面的子文本上，而点击落在父容器，
+ * 用户听不出这是「第几组 / 是否已选中 / 第几页」。未选中组不拼「未选中」——读屏会播报
+ * `isSelected` 状态；页面信息只在有（选中组才渲染页码）时补上。
+ */
+internal fun symbolGroupDescription(
+    label: String,
+    selected: Boolean,
+    page: Int,
+    pages: Int,
+): String = when {
+    label.isEmpty() -> ""
+    selected && pages > 0 -> "$label，第 $page/$pages 页"
+    else -> label
+}
+
+/**
  * 拼音键盘视图：候选栏 + 26 键 + 底部功能行。
  *
  * 布局（对齐主流输入法）：
@@ -3996,6 +4014,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 background = xmlKeyBackground(0f)
                 setPadding(dpFloat(8f).toInt(), dpFloat(2f).toInt(), dpFloat(8f).toInt(), dpFloat(2f).toInt())
                 isClickable = true
+                // 可点击容器必须自报名字（L-764 / L-1276）：焦点与点击都落在这个容器上，
+                // 名字里带组名，选中组再带当前页；未选中态交给 isSelected 播报。
+                isSelected = sel
+                contentDescription = symbolGroupDescription(
+                    group.label,
+                    sel,
+                    symbolPageInGroup.coerceIn(0, group.pages.lastIndex) + 1,
+                    group.pages.size,
+                )
             }
             // 符号分组标签：切分组属「功能切换」组（与符号层入口同一个语义）
             item.setOnClickListener {
@@ -4011,6 +4038,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     else skinToken(skin.functionGlyph, R.color.text_primary)
                 )
                 gravity = android.view.Gravity.CENTER
+                // 子文本只是视觉：读屏由父容器的 contentDescription 统一播报，避免重复进焦点
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
             item.addView(label, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -4021,6 +4050,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     textSize = 9f // sp
                     setTextColor(skinToken(skin.functionHint, R.color.text_secondary))
                     gravity = android.view.Gravity.END or android.view.Gravity.BOTTOM
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
                 item.addView(pageText, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

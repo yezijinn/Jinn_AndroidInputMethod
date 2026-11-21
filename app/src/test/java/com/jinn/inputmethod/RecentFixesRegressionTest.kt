@@ -8771,4 +8771,30 @@ class RecentFixesRegressionTest {
         assertTrue("终态文案必须拼上 extra", "配置已导出：\$displayName\$extra" in copy)
     }
 
+    /**
+     * 符号分组标签必须自报名字与选中态（BUG.md L-1276）。
+     *
+     * 标签是「父容器可点、子文本只是视觉」的结构；父容器没有名字时读屏焦点落在子文本上，
+     * 用户听不出组名 / 是否选中 / 第几页。子文本设 NO 后由父容器统一播报，避免重复进焦点。
+     */
+    @Test
+    fun 符号分组标签必须自报名字与选中态() {
+        assertEquals("未选中只报组名", "标点", symbolGroupDescription("标点", false, 1, 2))
+        assertEquals("选中组补当前页", "标点，第 1/2 页", symbolGroupDescription("标点", true, 1, 2))
+        assertEquals("页数缺失时不拼页码", "符号", symbolGroupDescription("符号", true, 1, 0))
+        assertEquals("空标签不产生名字", "", symbolGroupDescription("", true, 1, 2))
+        val src = TestSources.codeSource("PinyinKeyboardView.kt")
+        val body = TestSources.blockAfter(src, "private fun renderSymbolGroups()")
+        assertTrue("分组容器必须同步选中态", "isSelected = sel" in body)
+        assertTrue(
+            "分组容器必须自报名字",
+            "contentDescription = symbolGroupDescription(" in body,
+        )
+        assertTrue(
+            "子文本不得单独进读屏焦点",
+            Regex("importantForAccessibility = View\\.IMPORTANT_FOR_ACCESSIBILITY_NO")
+                .findAll(body).count() == 2,
+        )
+    }
+
 }

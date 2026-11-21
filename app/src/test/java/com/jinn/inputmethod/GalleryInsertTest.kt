@@ -907,6 +907,22 @@ class GalleryInsertTest {
         }
     }
 
+    /**
+     * 空目录也要露出重绑入口（BUG.md L-1076）。
+     *
+     * 部分 DocumentsProvider 在目录被删 / 授权失效时返回**空 cursor** 而非 null，
+     * 面板落入「这个目录里没有图片」；此时若把重绑入口藏起来，用户没有任何出路。
+     */
+    @Test
+    fun 图库空态也必须露出重绑入口() {
+        val src = TestSources.codeSource("GalleryPanelView.kt")
+        val render = TestSources.blockAfter(src, "private fun render(state: State?)")
+        assertTrue(
+            "空态必须与绑定异常态一起露出重绑入口",
+            "|| state == State.Empty" in render.substringAfter("rebindRow.visibility ="),
+        )
+    }
+
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 
     @Test

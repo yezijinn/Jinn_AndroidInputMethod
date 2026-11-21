@@ -559,10 +559,16 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         // 状态行说「还没绑定」、标题却挂着上一次那个目录名，两处自相矛盾。
         // 「空目录」「读不到」两态保留原标题 —— 那里目录名是有用的信息。
         if (state == State.NeedsBinding) title.text = TEXT_TITLE_DEFAULT
-        // 绑定出问题的两种状态才露出入口行 —— 常驻视图只切可见性（L-1025：以前是 addView，
-        // 而 render 每次展开都会被调用，用户实测进 4 次就多出 4 个「去设置里绑定」）
+        // 绑定出问题、或目录读出来是空的，都露出入口行 —— 常驻视图只切可见性（L-1025：以前是 addView，
+        // 而 render 每次展开都会被调用，用户实测进 4 次就多出 4 个「去设置里绑定」）。
+        // 空态也要露出（L-1076）：部分 DocumentsProvider 在目录被删 / 授权失效时返回**空 cursor**
+        // 而不是 null，此前会被判成「这个目录里没有图片」，同时把唯一的恢复入口藏起来。
         rebindRow.visibility =
-            if (state == State.NeedsBinding || state == State.Unavailable) VISIBLE else GONE
+            if (state == State.NeedsBinding || state == State.Unavailable || state == State.Empty) {
+                VISIBLE
+            } else {
+                GONE
+            }
     }
 
     /**

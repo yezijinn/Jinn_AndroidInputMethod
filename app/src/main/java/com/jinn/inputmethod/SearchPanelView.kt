@@ -411,7 +411,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             // 扫描上限取真实行数：maxItems 只是配置项，而 trimTo 只裁非收藏，
             // 收藏多时实际行数会超过它，拿配置值当上限会漏搜尾部条目。
             // count 是纯 SQL 计数、不解密，成本可忽略；再叠一个硬保护防超大库拖慢。
-            val dbTotal = db.count()
+            // 必须只数**文本行**（L-1218）：循环只扫文本（recentPageAfter 带 contentType），
+            // 而全表 COUNT(*) 含图片行 —— 图片行会把总数撑到上限之上，文本恰好扫完时误报
+            // 「只扫描了最近一部分」。计数与扫描集必须同口径。
+            val dbTotal = db.count(contentType = ClipboardDb.CONTENT_TYPE_TEXT)
             val total = dbTotal.coerceAtMost(ClipboardSearch.SCAN_LIMIT)
             var lastPublishAt = 0L
             var publishedCount = -1

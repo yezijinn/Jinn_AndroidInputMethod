@@ -263,4 +263,22 @@ class ClipboardSearchTest {
             tail.length,
         )
     }
+
+    /**
+     * 扫描上限只按文本行计（BUG.md L-1218）。
+     *
+     * 循环只扫文本（`recentPageAfter` 带 `contentType`），而全表 `COUNT(*)` 含图片行：
+     * 图片行会把总数撑到上限之上，文本恰好扫完时收尾误报「只扫描了最近一部分」。
+     * 计数与扫描集必须同口径。
+     */
+    @Test
+    fun 扫描上限必须只数文本行() {
+        val src = TestSources.codeSource("SearchPanelView.kt")
+        val run = TestSources.blockAfter(src, "private fun runSearch()")
+        assertTrue(
+            "计数必须带 contentType = 文本",
+            "db.count(contentType = ClipboardDb.CONTENT_TYPE_TEXT)" in run,
+        )
+        assertFalse("不得再用全表计数", "db.count()" in run)
+    }
 }
