@@ -34,7 +34,8 @@ class SettingsSavePolicyTest {
         }
         assertTrue("字段装配时挂上 watcher", "addTextChangedListener(autosaveWatcher)" in src)
         val watcher = TestSources.blockAfter(src, "autosaveWatcher = object")
-        assertTrue("程序化回填不算改动（用 loading 抑制）", "if (!loading) scheduleAutosave()" in watcher)
+        assertTrue("程序化回填不算改动（用 loading 抑制）", "if (!loading) {" in watcher)
+        assertTrue("用户改动后要排队自动保存", "scheduleAutosave()" in watcher)
         val pause = TestSources.blockAfter(src, "override fun onPause()")
         assertTrue("离开页面要撤掉排队的任务", "removeCallbacks(autosaveRunnable)" in pause)
         val runnable = TestSources.window(src, "autosaveRunnable = Runnable", "private val autosaveWatcher")

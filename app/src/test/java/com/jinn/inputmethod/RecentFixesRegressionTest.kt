@@ -8797,4 +8797,44 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 凭据迁移失败不得删盘上明文（BUG.md L-1068）。
+     *
+     * 读路径触发迁移时，加密不可用只说明「这次加不了」，不代表明文该消失：删掉它，
+     * 进程一死就只剩重填。明文留在盘上，重启仍可读，下次成功写入自会覆盖成密文；
+     * 因此也不能记成「未落盘」（那会让导入 / 保存提示报假警）。
+     */
+    @Test
+    fun 凭据迁移失败不得删除盘上明文() {
+        val src = TestSources.codeSource("Prefs.kt")
+        val window = TestSources.window(src, "private fun readCredential", "private fun writeCredential")
+        val branch = TestSources.blockAfter(window, "if (encrypted == null)")
+        assertFalse("读路径不得删除磁盘明文", "remove(key)" in branch)
+        assertFalse("明文仍在盘上，不得记成未落盘", "unpersistedCredentials.add(key)" in branch)
+        assertTrue("明文必须留在缓存里继续可用", "credentialCache[key] = raw" in branch)
+        assertTrue("日志要如实说明明文暂留磁盘", "明文暂留磁盘" in branch)
+        assertFalse("重启不会丢，日志不得再写需重填", "需重填" in branch)
+    }
+
+    /**
+     * 提示词红字必须随编辑与预设重算（BUG.md L-839）。
+     *
+     * `{{text}}` 缺失提示原先只在载入时算一次：选完预设红字不消、手改掉变量红字不亮。
+     * 判据必须与运行期同源（`hasTextVar`），且不得顺手实时校验 JSON —— 逐字符输入的正常
+     * 中间态会被持续标红。
+     */
+    @Test
+    fun 提示词红字必须随编辑与预设重算() {
+        val src = TestSources.codeSource("OpenAiSettingsActivity.kt")
+        val helper = TestSources.blockAfter(src, "private fun refreshPromptError()")
+        assertTrue("判据要用运行期同源的 hasTextVar", "OpenAiTranslator.hasTextVar(" in helper)
+        assertTrue("红字文案复用既有常量", "TEXT_PROMPT_MISSING" in helper)
+        assertFalse("不得实时算 JSON（逐字符标红）", "TEXT_EXTRA_JSON_INVALID" in helper)
+        val load = TestSources.blockAfter(src, "private fun loadValues()")
+        assertTrue("载入要复用同一判据", "refreshPromptError()" in load)
+        assertFalse("载入不得再写死 promptMissing", "val promptMissing" in load)
+        val watcher = TestSources.blockAfter(src, "private val autosaveWatcher")
+        assertTrue("手改 / 预设回填要同步重算", "refreshPromptError()" in watcher)
+    }
+
 }

@@ -1462,10 +1462,11 @@ class Prefs(private val appContext: Context) {
                 return if (retry >= 1) raw else readCredential(key, retry + 1)
             }
             if (encrypted == null) {
-                Diagnostics.w(TAG, "凭据迁移: 加密不可用，只留在内存（重启后需重填）")
+                // 读路径不做不可逆动作（L-1068）：明文本来就在盘上，删掉它等于把「这次加密不了」
+                // 变成「这份凭据永久消失」（进程一死就只剩重填）。留在盘上，下次成功写入自会覆盖成密文；
+                // 也不记「未落盘」——重启后照样读得到，记了只会在导入 / 保存提示里报假警。
+                Diagnostics.w(TAG, "凭据迁移: 加密暂不可用，明文暂留磁盘（加密恢复后自动迁移）")
                 credentialCache[key] = raw
-                unpersistedCredentials.add(key)
-                sp.edit { remove(key) }
                 return raw
             }
             credentialCache[key] = raw

@@ -244,7 +244,11 @@ class OpenAiSettingsActivity : Activity() {
 
         override fun afterTextChanged(s: android.text.Editable?) {
             // `loadValues()` 的程序化回填不算用户改动（同 L-367 用 `loading` 的口径）
-            if (!loading) scheduleAutosave()
+            if (!loading) {
+                // 手改或预设回填后同步红字（L-839）；`refreshPromptError` 内部同值不重设
+                refreshPromptError()
+                scheduleAutosave()
+            }
         }
     }
 
@@ -410,18 +414,28 @@ class OpenAiSettingsActivity : Activity() {
         editHeaders.setText(prefs.openAiExtraHeaders)
         editExtraJson.setText(prefs.openAiExtraJson)
         applyTargetLanguage(prefs.openAiTargetLanguage)
-        // 提示词里没有 {{text}} 时请求不会带原文（运行时已兜底，但用户应当知道）：
-        // 用 EditText 的 error 显示，零布局改动（2026-10-01 修复 L-250）
-        // ⚠ 判据与运行期同源（2026-10-02 修复 L-338 / L-419）：此前是 `VAR_TEXT !in 原串`，
-        // 用户写 `{{ text }}` / `{{　text　}}` 这类容错写法时运行期已正常展开，这里却报
-        // 「提示词里没有 {{text}}」——把完全正确的配置标红。
-        val promptMissing = !OpenAiTranslator.hasTextVar(prefs.openAiSystemPrompt) &&
-            !OpenAiTranslator.hasTextVar(prefs.openAiUserPrompt)
-        editUser.error = if (promptMissing) TEXT_PROMPT_MISSING else null
+        refreshPromptError()
         // 自定义 JSON 写错时参数会被静默丢弃（2026-10-01 修复 L-257）：用 error 让用户看得见
         editExtraJson.error =
             if (OpenAiTranslator.isValidExtraJson(prefs.openAiExtraJson)) null else TEXT_EXTRA_JSON_INVALID
         loading = false
+    }
+
+    /**
+     * 重算「提示词里没有 {{text}}」这条红字（L-839）。
+     *
+     * 判据与运行期同源（L-338 / L-419）：`hasTextVar` 认 `{{ text }}` / `{{　text　}}` 这类容错写法。
+     * 载入、手改、预设回填都要经过它 —— 原先只在 [loadValues] 算一次，选完预设红字不消、改完提示词
+     * 红字不亮，用户看到的状态与实际提示词相反。
+     *
+     * 只算提示词，不碰 `editExtraJson.error`：JSON 是逐字符输入的，边打边标红会把正常的中间态
+     * 一直判错；那条红字仍只在载入与保存时给结论（既有口径）。
+     */
+    private fun refreshPromptError() {
+        val missing = !OpenAiTranslator.hasTextVar(editSystem.text.toString()) &&
+            !OpenAiTranslator.hasTextVar(editUser.text.toString())
+        val error = if (missing) TEXT_PROMPT_MISSING else null
+        if (editUser.error != error) editUser.error = error
     }
 
     /** 标准语言落到下拉；不在表内的（粤语 / 古文 / 繁體中文（台灣）…）放进「自定义语言」 */
