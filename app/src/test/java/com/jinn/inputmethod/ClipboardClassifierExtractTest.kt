@@ -435,8 +435,9 @@ class ClipboardClassifierExtractTest {
             "搜索结果落地时必须同步预览形态集（否则开窗恒为空 ⇒ 永远退回开头窗口）",
             "activeForms = forms" in publish,
         )
-        val emptyQuery = TestSources.blockAfter(searchCode, "if (q.isEmpty()) {")
-        assertTrue("查询词清空时要复位预览形态集", "activeForms = emptyList()" in emptyQuery)
+        // 空查询与纯零宽查询共用同一个早退块（L-1222）：两者都不会产出任何形态
+        val emptyQuery = TestSources.blockAfter(searchCode, "if (forms.isEmpty()) {")
+        assertTrue("空查询要复位预览形态集", "activeForms = emptyList()" in emptyQuery)
     }
 
     @Test

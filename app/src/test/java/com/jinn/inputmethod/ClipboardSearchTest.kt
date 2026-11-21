@@ -281,4 +281,48 @@ class ClipboardSearchTest {
         )
         assertFalse("不得再用全表计数", "db.count()" in run)
     }
+
+    /**
+     * 空形态查询必须在扫描循环前早退（BUG.md L-1222）。
+     *
+     * 纯零宽 / 不可见查询归一后 `forms` 为空，`matches` 恒 false；旧实现仍逐窗解密扫到上限，
+     * 还会把空态说成「只扫描了一部分」。早退必须把四态一起复位，否则界面停在旧截断提示。
+     */
+    @Test
+    fun 空形态查询必须在扫描循环前早退() {
+        val body = TestSources.blockAfter(
+            TestSources.codeSource("SearchPanelView.kt"),
+            "private fun runSearch()",
+        )
+        val guard = TestSources.blockAfter(body, "if (forms.isEmpty())")
+        val guardAt = body.indexOf("if (forms.isEmpty())")
+        val whileAt = body.indexOf("while (scannedTotal < total)")
+        assertTrue("早退标记缺失", guardAt >= 0 && whileAt > 0)
+        assertTrue("必须先早退再进循环", guardAt < whileAt)
+        assertTrue("早退必须 return@runLong", "return@runLong" in guard)
+        assertTrue("空态要复位截断状态", "cap = ClipboardSearch.Cap.NONE" in guard)
+        assertTrue("空态要退出扫描态", "scanning = false" in guard)
+        assertTrue("空态要清掉活动形态", "activeForms = emptyList()" in guard)
+        assertTrue("令牌守卫必须保留", "reqToken != refreshToken" in guard)
+    }
+
+    /**
+     * 历史页空形态查询也必须跳过扫描（BUG.md L-1222 同族）。
+     *
+     * 与键盘面板同一个判据：`forms` 为空时 `matches` 恒 false，扫满预算只会白占长活池。
+     * `searching` 仍按「关键词非空」——改成 `forms` 非空会让零宽查询退回「显示全部历史」。
+     */
+    @Test
+    fun 历史页空形态查询也必须跳过扫描() {
+        val load = TestSources.blockAfter(
+            TestSources.codeSource("ClipboardHistoryActivity.kt"),
+            "private fun loadAsync(",
+        )
+        val skipLine = TestSources.lineOf(load, "val skipScan =")
+        assertTrue("空形态判据必须来自 forms", "searching && forms.isEmpty()" in skipLine)
+        assertTrue("扫描循环必须被 skipScan 门控", "while (!skipScan)" in load)
+        val searchLine = TestSources.lineOf(load, "val searching =")
+        assertTrue("searching 仍按关键词非空", "keywordNow.isNotEmpty()" in searchLine)
+        assertFalse("searching 不得改成 forms 非空（否则零宽显示全部历史)", "forms.isNotEmpty()" in searchLine)
+    }
 }

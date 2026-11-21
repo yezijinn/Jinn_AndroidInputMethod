@@ -75,7 +75,8 @@ class ClipboardLossGuardTest {
     fun `历史页总数必须在扫描之前取`() {
         val body = TestSources.blockAfter(hist, "private fun loadAsync(")
         val count = body.indexOf("val total = db.count(")
-        val loop = body.indexOf("while (true)")
+        // 扫描循环由 skipScan 门控（L-1222 同族）；取总数仍必须在这段循环之前
+        val loop = body.indexOf("while (!skipScan)")
         assertTrue("loadAsync 必须取总数", count >= 0)
         assertTrue("取数必须在扫描之前：扫描后取会被「期间新入库一条」骗成「一条都读不出」", count < loop)
     }

@@ -393,7 +393,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         // 「复制了没反应 / 面板白屏」（BUG.md L-1389）。长活池同样是单线程 FIFO、后台优先级；
         // 本处已有 `reqToken` 作废机制保证后发起的结果不覆盖先前状态。
         BackgroundIo.runLong {
-            if (q.isEmpty()) {
+            // 查询词的所有等价写法（全半角、零宽都归一到同一组里比对，BUG.md L-1135）
+            val forms = ClipboardSearch.queryForms(q)
+            // 空查询与纯零宽/不可见查询归一后都一个形态不剩（L-1222）：`matches` 恒 false，
+            // 扫满上限也找不到，却会白占长活池、把空态说成「只扫描了一部分」。直接收尾。
+            if (forms.isEmpty()) {
                 post {
                     if (reqToken != refreshToken) return@post
                     currentItems = emptyList()
@@ -405,8 +409,6 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                 }
                 return@runLong
             }
-            // 查询词的所有等价写法（全半角、零宽都归一到同一组里比对，BUG.md L-1135）
-            val forms = ClipboardSearch.queryForms(q)
             val matches = ArrayList<ClipboardDb.Item>()
             // 扫描上限取真实行数：maxItems 只是配置项，而 trimTo 只裁非收藏，
             // 收藏多时实际行数会超过它，拿配置值当上限会漏搜尾部条目。

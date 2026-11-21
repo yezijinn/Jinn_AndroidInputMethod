@@ -963,6 +963,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
             // 判据只用 ClipboardSearch 一份（与面板同口径）；有搜索词时它决定哪些行占窗口
             val forms = ClipboardSearch.queryForms(keywordNow)
             val searching = keywordNow.isNotEmpty()
+            // 纯零宽 / 不可见查询归一后一个形态都不剩（L-1222 同族）：`matches` 恒 false，
+            // 扫满预算也找不到，却会把「只加载了部分记录」当成结论。跳过扫描，直接发布空结果。
+            val skipScan = searching && forms.isEmpty()
             val out = ArrayList<ClipboardDb.Item>()
             // 每行在「全部已扫文本行」里的绝对序位：序号要按它算，不能按窗口下标（BUG.md L-1059）
             val outOrdinal = ArrayList<Int>()
@@ -975,7 +978,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             var retainedBytes = 0L
             var capped = false
             var cappedByCount = false
-            while (true) {
+            while (!skipScan) {
                 // 已有更新的加载在跑：本轮整套作废，别再扫（历史页可能扫到库尾，白扫代价不小）
                 if (gen != loadGeneration.get()) return@runLong
                 // 图片分类启用「收藏优先」（与条带、面板网格同一口径）：收藏过的图排最前 ——
