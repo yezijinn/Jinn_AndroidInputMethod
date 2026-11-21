@@ -1473,6 +1473,7 @@ class SettingsActivity : ComponentActivity() {
                 if (includeDicts) parts.add("词库 +${r.dictsWritten} 个")
                 // 静默失败是最坏的一类问题：被忽略/跳过的数量必须让用户看见
                 if (r.prefsIgnored > 0) parts.add("忽略 ${r.prefsIgnored} 项")
+                if (r.prefsNotIncluded > 0) parts.add("未包含 ${r.prefsNotIncluded} 项（源设备未配置）")
                 if (includeClipboard && r.clipSkipped > 0) parts.add("剪贴板跳过 ${r.clipSkipped} 条")
                 if (includeDicts && r.dictsSkipped > 0) parts.add("词库跳过 ${r.dictsSkipped} 个")
                 // 部分完成必须如实说：前面的阶段已落盘且不回滚，重试是幂等的

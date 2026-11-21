@@ -1968,7 +1968,7 @@ class Prefs(private val appContext: Context) {
         // 而 getter 在「没配过」与「密文解不开（换机 / Keystore 失效）」两种情况下都返回空串 ——
         // 空串写进包后，导入侧 `writeCredential` 把空串定义成**删除**，于是「导入一份没配这把钥匙
         // 的备份」会删掉目标机同名的可用凭据，还计成「已设置」。两侧各堵一半：这里不写空值，
-        // 导入侧对空串按「类型不符」计（见 importFromBackup 的凭据分支）。
+        // 导入侧对空串按「未包含」计、与类型不符分开（见 importFromBackup 的 badOrAbsent，L-1118）。
         fun putCredential(key: String) {
             val value = readCredential(key)
             if (value.cleanCredential().isEmpty()) {
@@ -2130,8 +2130,13 @@ class Prefs(private val appContext: Context) {
         return out
     }
 
-    /** 导入报告：成功写入的键数 + 白名单外的键 + 类型不符的键 */
-    internal class ImportReport(val applied: Int, val unknown: List<String>, val mismatch: List<String>)
+    /** 导入报告：成功写入的键数 + 白名单外的键 + 类型/取值不符的键 + 包内为空（未包含）的凭据键 */
+    internal class ImportReport(
+        val applied: Int,
+        val unknown: List<String>,
+        val mismatch: List<String>,
+        val notIncluded: List<String>,
+    )
 
     /**
      * 备份导入（覆盖语义）：按白名单逐键写入，一律走本类 setter。
@@ -2144,9 +2149,16 @@ class Prefs(private val appContext: Context) {
         var applied = 0
         val unknown = ArrayList<String>()
         val mismatch = ArrayList<String>()
+        val notIncluded = ArrayList<String>()
 
         fun ok() { applied++ }
         fun bad(key: String) { mismatch.add(key) }
+
+        /** 凭据写不进去时按原因分流（L-1118）：类型/取值不符 ⇒ 忽略；空或纯不可见字符 ⇒ 未包含 */
+        fun badOrAbsent(key: String, v: ConfigBackup.BackupValue) {
+            val raw = asString(v)
+            if (raw != null && raw.cleanCredential().isEmpty()) notIncluded.add(key) else bad(key)
+        }
 
         for ((key, v) in values) {
             when (key) {
@@ -2223,58 +2235,58 @@ class Prefs(private val appContext: Context) {
                 KEY_TRANSLATE_MAX_BYTES_OPENAI ->
                     asInt(v)?.let { setTranslateMaxBytesOf(TranslationProviderId.OPENAI, it); ok() }
                         ?: bad(key)
-                // 其余凭据键同 OPENAI_API_KEY：空串不写入、按「类型不符」计（BUG.md L-1067）
-                KEY_AZURE_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureApiKey = it; ok() } ?: bad(key)
+                // 其余凭据键同 OPENAI_API_KEY：空串不写入、按「未包含」计（L-1118）
+                KEY_AZURE_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureApiKey = it; ok() } ?: badOrAbsent(key, v)
                 KEY_AZURE_REGION -> asString(v)?.let { azureRegion = it; ok() } ?: bad(key)
-                KEY_BAIDU_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_SECRET_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSecretKey = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeyId = it; ok() } ?: bad(key)
-                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeySecret = it; ok() } ?: bad(key)
-                KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: bad(key)
-                KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: bad(key)
-                // 讯飞听写三件凭据：空串同样按「类型不符」计、不写入（理由同上）
-                KEY_XF_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfAppId = it; ok() } ?: bad(key)
-                KEY_XF_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiKey = it; ok() } ?: bad(key)
-                KEY_XF_API_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiSecret = it; ok() } ?: bad(key)
+                KEY_BAIDU_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduAppId = it; ok() } ?: badOrAbsent(key, v)
+                KEY_BAIDU_SECRET_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSecretKey = it; ok() } ?: badOrAbsent(key, v)
+                KEY_ALIYUN_ACCESS_KEY_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeyId = it; ok() } ?: badOrAbsent(key, v)
+                KEY_ALIYUN_ACCESS_KEY_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliyunAccessKeySecret = it; ok() } ?: badOrAbsent(key, v)
+                KEY_DEEPL_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deeplApiKey = it; ok() } ?: badOrAbsent(key, v)
+                KEY_BAIDU_LLM_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmAppId = it; ok() } ?: badOrAbsent(key, v)
+                KEY_BAIDU_LLM_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduLlmApiKey = it; ok() } ?: badOrAbsent(key, v)
+                // 讯飞听写三件凭据：空串同样按「未包含」计、不写入（理由同上）
+                KEY_XF_APP_ID -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfAppId = it; ok() } ?: badOrAbsent(key, v)
+                KEY_XF_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiKey = it; ok() } ?: badOrAbsent(key, v)
+                KEY_XF_API_SECRET -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { xfApiSecret = it; ok() } ?: badOrAbsent(key, v)
                 // OpenAI 兼容转写：地址 / 模型名是普通键（setter 做 trim 与默认回落），
-                // Key 走凭据口径 —— 空串不写入、按「类型不符」计（BUG.md L-1067）
+                // Key 走凭据口径 —— 空串不写入、按「未包含」计（L-1118）
                 KEY_OAI_BASE_URL -> asString(v)?.let { oaiBaseUrl = it; ok() } ?: bad(key)
                 KEY_OAI_MODEL -> asString(v)?.let { oaiModel = it; ok() } ?: bad(key)
-                KEY_OAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { oaiApiKey = it; ok() } ?: bad(key)
+                KEY_OAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { oaiApiKey = it; ok() } ?: badOrAbsent(key, v)
                 // 阿里云百炼：地址 / 模型名是普通键（setter 做 trim 与默认回落），Key 走凭据口径
                 KEY_ALI_WS_URL -> asString(v)?.let { aliWsUrl = it; ok() } ?: bad(key)
                 KEY_ALI_MODEL -> asString(v)?.let { aliModel = it; ok() } ?: bad(key)
-                KEY_ALI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliApiKey = it; ok() } ?: bad(key)
+                KEY_ALI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { aliApiKey = it; ok() } ?: badOrAbsent(key, v)
                 // 腾讯云一句话识别：引擎型号是普通键（setter 做 trim 与默认回落），两件凭据走凭据口径
                 KEY_TENCENT_ENGINE -> asString(v)?.let { tencentEngine = it; ok() } ?: bad(key)
                 KEY_TENCENT_SECRET_ID ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretId = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretId = it; ok() } ?: badOrAbsent(key, v)
                 KEY_TENCENT_SECRET_KEY ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { tencentSecretKey = it; ok() } ?: badOrAbsent(key, v)
                 // Azure 短音频识别：地址与语言是普通键；订阅密钥走凭据口径
                 KEY_AZURE_BASE_URL -> asString(v)?.let { azureBaseUrl = it; ok() } ?: bad(key)
                 KEY_AZURE_LANGUAGE -> asString(v)?.let { azureLanguage = it; ok() } ?: bad(key)
                 KEY_AZURE_ASR_API_KEY ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureSpeechKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { azureSpeechKey = it; ok() } ?: badOrAbsent(key, v)
                 // 百度短语音识别：dev_pid 是整数（脏值按「类型不符」忽略，不写成 0 去发一次 3300）；
                 // 两件凭据走凭据口径，空串不写入（BUG.md L-1067）
                 KEY_BAIDU_DEV_PID -> asInt(v)?.let { baiduDevPid = it; ok() } ?: bad(key)
                 KEY_BAIDU_ASR_API_KEY ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechApiKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechApiKey = it; ok() } ?: badOrAbsent(key, v)
                 KEY_BAIDU_ASR_SECRET_KEY ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechSecretKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { baiduSpeechSecretKey = it; ok() } ?: badOrAbsent(key, v)
                 // Deepgram：模型名与语言码是普通键（setter 做 trim 与默认回落），Key 走凭据口径
                 KEY_DEEPGRAM_MODEL -> asString(v)?.let { deepgramModel = it; ok() } ?: bad(key)
                 KEY_DEEPGRAM_LANGUAGE -> asString(v)?.let { deepgramLanguage = it; ok() } ?: bad(key)
                 KEY_DEEPGRAM_API_KEY ->
-                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deepgramApiKey = it; ok() } ?: bad(key)
+                    asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { deepgramApiKey = it; ok() } ?: badOrAbsent(key, v)
                 KEY_OPENAI_NAME -> asString(v)?.let { openAiName = it; ok() } ?: bad(key)
                 KEY_OPENAI_BASE_URL -> asString(v)?.let { openAiBaseUrl = it; ok() } ?: bad(key)
-                // 凭据键的空串一律按「类型不符」计、不写入（BUG.md L-1067）：写入侧把空串定义成删除，
+                // 凭据键的空串一律按「未包含」计、不写入（L-1118）：写入侧把空串定义成删除，
                 // 照单执行会删掉本机的可用凭据，还把它算进「已设置」。导出侧同批已不再写空值，
                 // 这里再兜一道，老包 / 手改包也伤不到本机凭据。
-                KEY_OPENAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { openAiApiKey = it; ok() } ?: bad(key)
+                KEY_OPENAI_API_KEY -> asString(v)?.takeIf { it.cleanCredential().isNotEmpty() }?.let { openAiApiKey = it; ok() } ?: badOrAbsent(key, v)
                 KEY_OPENAI_MODEL -> asString(v)?.let { openAiModel = it; ok() } ?: bad(key)
                 KEY_OPENAI_CHAT_PATH -> asString(v)?.let { openAiChatPath = it; ok() } ?: bad(key)
                 KEY_OPENAI_MODELS_PATH -> asString(v)?.let { openAiModelsPath = it; ok() } ?: bad(key)
@@ -2402,7 +2414,7 @@ class Prefs(private val appContext: Context) {
                 else -> unknown.add(key)
             }
         }
-        return ImportReport(applied, unknown, mismatch)
+        return ImportReport(applied, unknown, mismatch, notIncluded)
     }
 
     /**

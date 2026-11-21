@@ -856,6 +856,7 @@ internal object ConfigBackupManager {
     class ImportOutcome(
         val prefsApplied: Int,
         val prefsIgnored: Int,
+        val prefsNotIncluded: Int,
         val freqBefore: Int,
         val freqAfter: Int,
         val clipAdded: Int,
@@ -1128,6 +1129,7 @@ internal object ConfigBackupManager {
 
         var prefsApplied = 0
         var prefsIgnored = 0
+        var prefsNotIncluded = 0
         var failedStage: String? = null
         if (mode == ImportMode.RESTORE) {
             // 类型不符的键在**解码阶段**就不进结果（如存档被外部改成 5000000000）：收集起来一并
@@ -1139,6 +1141,8 @@ internal object ConfigBackupManager {
             val r1 = prefs.importFromBackup(main)
             val appliedClip = clipPrefs.importFromBackup(clip)
             prefsApplied = r1.applied + appliedClip
+            // 老包对没配过的键写空串 ⇒ 未包含，不计忽略（L-1118）
+            prefsNotIncluded = r1.notIncluded.size
             // 未知键（更高版本写入）+ 类型不符（含解码阶段跳过的）+ 剪贴板侧未识别的键，统一计入忽略数
             prefsIgnored = r1.unknown.size + r1.mismatch.size + (clip.size - appliedClip) +
                 skippedPrefs.size
@@ -1312,13 +1316,15 @@ internal object ConfigBackupManager {
 
         Diagnostics.i(
             TAG,
-            "导入完成 mode=$mode 设置=$prefsApplied 忽略=$prefsIgnored 词频=$freqBefore→$freqAfter " +
+            "导入完成 mode=$mode 设置=$prefsApplied 忽略=$prefsIgnored 未包含=$prefsNotIncluded " +
+                "词频=$freqBefore→$freqAfter " +
                 "剪贴板=+$clipAdded(跳过 $clipSkipped) 词库=+$dictsWritten(跳过 $dictsSkipped) " +
                 "失败阶段=${failedStage ?: "无"}",
         )
         return ImportOutcome(
             prefsApplied = prefsApplied,
             prefsIgnored = prefsIgnored,
+            prefsNotIncluded = prefsNotIncluded,
             freqBefore = freqBefore,
             freqAfter = freqAfter,
             clipAdded = clipAdded,

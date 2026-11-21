@@ -8700,4 +8700,43 @@ class RecentFixesRegressionTest {
         assertFalse("旧三段 fallback 不得残留", "0:0:0" in db)
     }
 
+
+    @Test
+    fun 凭据空串计未包含不计忽略() {
+        val flat = blockAfter(codeOf("Prefs.kt"), "fun importFromBackup(")
+            .replace(Regex("\\s+"), " ")
+        val keys = listOf(
+            "KEY_AZURE_API_KEY", "KEY_BAIDU_APP_ID", "KEY_BAIDU_SECRET_KEY",
+            "KEY_ALIYUN_ACCESS_KEY_ID", "KEY_ALIYUN_ACCESS_KEY_SECRET", "KEY_DEEPL_API_KEY",
+            "KEY_BAIDU_LLM_APP_ID", "KEY_BAIDU_LLM_API_KEY",
+            "KEY_XF_APP_ID", "KEY_XF_API_KEY", "KEY_XF_API_SECRET",
+            "KEY_OAI_API_KEY", "KEY_ALI_API_KEY", "KEY_TENCENT_SECRET_ID",
+            "KEY_TENCENT_SECRET_KEY", "KEY_AZURE_ASR_API_KEY", "KEY_BAIDU_ASR_API_KEY",
+            "KEY_BAIDU_ASR_SECRET_KEY", "KEY_DEEPGRAM_API_KEY", "KEY_OPENAI_API_KEY",
+        )
+        for (k in keys) {
+            val i = flat.indexOf("$k ->")
+            assertTrue("找不到凭据分支 $k", i >= 0)
+            assertTrue(
+                "$k 尾未走 badOrAbsent",
+                "badOrAbsent(key, v)" in flat.substring(i, (i + 200).coerceAtMost(flat.length)),
+            )
+        }
+        assertTrue(
+            "凭据尾必须正好 20 处",
+            Regex("badOrAbsent\\(key, v\\)").findAll(flat).count() == 20,
+        )
+        assertTrue("helper 语义：空值进未包含", "notIncluded.add(key) else bad(key)" in flat)
+    }
+
+    @Test
+    fun 弹窗把未包含与忽略分开() {
+        val cfg = codeOf("ConfigBackupManager.kt")
+        val sa = codeOf("SettingsActivity.kt")
+        assertTrue("未包含数须外传", "prefsNotIncluded = r1.notIncluded.size" in cfg)
+        assertTrue("须传入结果", "prefsNotIncluded = prefsNotIncluded," in cfg)
+        assertTrue("弹窗必须显示未包含", "未包含 \${r.prefsNotIncluded} 项" in sa)
+        assertTrue("忽略仍在", "忽略 \${r.prefsIgnored} 项" in sa)
+    }
+
 }
