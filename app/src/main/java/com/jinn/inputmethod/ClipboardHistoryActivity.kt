@@ -503,14 +503,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
         buildPagerRow()
 
         searchEdit.setOnEditorActionListener { _, _, _ ->
-            keyword = searchEdit.text.toString().trim()
+            keyword = ClipboardSearch.clampQuery(searchEdit.text.toString())
             loadAsync()
             true
         }
         findViewById<Button>(R.id.btn_hist_search).apply {
             text = TEXT_SEARCH
             setOnClickListener {
-                keyword = searchEdit.text.toString().trim()
+                keyword = ClipboardSearch.clampQuery(searchEdit.text.toString())
                 loadAsync()
             }
         }

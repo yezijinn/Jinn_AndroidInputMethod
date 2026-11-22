@@ -362,4 +362,12 @@ class ClipboardSearchTest {
         val hintAt = load.indexOf("val hint = when {")
         assertTrue("关键词必须在 loadAsync 入参处捕获", cap >= 0 && cap < hintAt)
     }
+
+    /** 搜索词必须有上限：输入框没有长度限制，整条剪贴板内容贴进来不能让搜索按整段跑。 */
+    @Test
+    fun 搜索词必须截到上限() {
+        assertEquals("去首尾空白", "abc", ClipboardSearch.clampQuery("  abc  "))
+        assertEquals("短词不动", "测试", ClipboardSearch.clampQuery("测试"))
+        assertEquals("长词截到上限", ClipboardSearch.MAX_QUERY_CHARS, ClipboardSearch.clampQuery("a".repeat(10_000)).length)
+    }
 }

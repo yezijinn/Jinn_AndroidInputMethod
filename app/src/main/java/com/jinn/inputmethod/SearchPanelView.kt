@@ -386,7 +386,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
      * 首块结果即刻可见，大库下无需等全部解密完成；令牌失效即中止。
      */
     private fun runSearch() {
-        val q = editSearch.text?.toString()?.trim() ?: ""
+        val q = ClipboardSearch.clampQuery(editSearch.text?.toString() ?: "")
         val reqToken = ++refreshToken
         // 扫库可能扫到 `SCAN_LIMIT`（逐行解密，实测约 16ms/行）：放**长活池**，别占短活池 ——
         // 短活池还排着剪贴板采集入库、面板首屏、粘贴取正文，被长任务顶住时用户看到的是

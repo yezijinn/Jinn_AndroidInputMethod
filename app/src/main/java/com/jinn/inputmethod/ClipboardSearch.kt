@@ -26,6 +26,12 @@ internal object ClipboardSearch {
      */
     const val SCAN_LIMIT = 2_000
 
+    /** 搜索词上限：输入框无长度限制，整条 256KB 剪贴板内容会让归一化与逐行 contains 都按整段跑。 */
+    const val MAX_QUERY_CHARS = 256
+
+    /** 取搜索词：去首尾空白并截到上限。 */
+    fun clampQuery(raw: String): String = raw.trim().take(MAX_QUERY_CHARS)
+
     /** 一轮搜索收尾时的截断状态。 */
     enum class Cap {
         /** 没有截断：库里所有行都扫过，命中也没触顶。 */
