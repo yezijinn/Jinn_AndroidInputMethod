@@ -285,6 +285,11 @@ class Prefs(private val appContext: Context) {
         get() = boolOr(KEY_USER_LEARNING, true)
         set(value) = sp.edit { putBoolean(KEY_USER_LEARNING, value) }
 
+    /** 连续选词自造词组记忆：默认开，跟随用户词频的手感。 */
+    var userPhraseEnabled: Boolean
+        get() = boolOr(KEY_USER_PHRASE_ENABLED, true)
+        set(value) = sp.edit { putBoolean(KEY_USER_PHRASE_ENABLED, value) }
+
     /**
      * 选择台账（用户词库原料）：把 26 键上屏的候选按「词 + 读音」只追加记录。
      *
@@ -1919,6 +1924,7 @@ class Prefs(private val appContext: Context) {
         put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_SHOW_QUANPIN, showQuanpin)
         put(KEY_USER_LEARNING, userLearning)
+        put(KEY_USER_PHRASE_ENABLED, userPhraseEnabled)
         put(KEY_RARE_TIER2, rareTier2)
         put(KEY_RARE_TIER3, rareTier3)
         put(KEY_USE_TRADITIONAL, useTraditional)
@@ -2187,6 +2193,7 @@ class Prefs(private val appContext: Context) {
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
+                KEY_USER_PHRASE_ENABLED -> asBool(v)?.let { userPhraseEnabled = it; ok() } ?: bad(key)
                 KEY_RARE_TIER2 -> asBool(v)?.let { rareTier2 = it; ok() } ?: bad(key)
                 KEY_RARE_TIER3 -> asBool(v)?.let { rareTier3 = it; ok() } ?: bad(key)
                 KEY_USE_TRADITIONAL -> asBool(v)?.let { useTraditional = it; ok() } ?: bad(key)
@@ -2631,6 +2638,7 @@ class Prefs(private val appContext: Context) {
         private const val KEY_SHOW_QUANPIN = "show_quanpin"
 
         private const val KEY_USER_LEARNING = "user_learning"
+    private const val KEY_USER_PHRASE_ENABLED = "user_phrase_enabled"
 
     /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
     private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"

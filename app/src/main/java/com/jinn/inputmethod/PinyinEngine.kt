@@ -584,6 +584,8 @@ object PinyinEngine {
             // 用户词频：独立文件 IO（几 ms），放在索引之前；排序在查询期做，
             // 第一键之前一定已就绪，也不占首字延迟预算。
             UserFrequency.load(context, prefs.userLearning)
+            // 连续选词自造词组：独立小表，查询期只读内存；默认开
+            UserPhrases.load(context, prefs.userPhraseEnabled)
             // 选择台账（只追加的词库原料）：默认关，开关由用户在说明弹框里手输 OK 打开
             SelectionLedger.init(context, prefs.userDictEnabled)
 
@@ -2162,9 +2164,10 @@ object PinyinEngine {
      * @param input 全拼或双拼转换后的拼音串（小写字母，无空格）
      *
      * 候选按「音节数逐级递减」组织（对齐 AOSP PinyinIME prepare_candidates）：
-     *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后 1 字单字。
-     *  如输入 nihao（[ni,hao]）→ 2 字词「你好」+ 单字「你/尼/泥」「好/号/毫」；
-     *  输入 nihaoma（[ni,hao,ma]）→ 3 字「你好吗」+ 2 字「你好」+ 各音节单字。
+     *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后**首音节**单字。
+     *  单字只取首音节（用户 2026-11-22）：输入 nihao → 2 字词「你好」+ 首音节单字「你/尼/泥」，
+     *  不含第二音节单字「好/号/毫」。要打后半字时先选「你」→ 残码 hao 重匹配后才出 hao 单字。
+     *  输入 nihaoma → 3 字「你好吗」+ 2 字「你好」+ 首音节单字「你」。
      *
      * 不做「整串前缀联想」式的**单字**联想（那会产生 nihaoa/nihaoma 等超出拼音数量的单字）；
      * 候选的音节数恒等于输入：不出现比输入更长的词。
@@ -2233,8 +2236,29 @@ object PinyinEngine {
                 }
             }
         }
+        // 用户自造词组：按前缀键并入词集合；权重 0 会落在同组词典词之后、单字之前
+        run {
+            val b = StringBuilder()
+            for (s in syllables) b.append(s)
+            for (k in syllables.size downTo 1) {
+                val key = b.toString()
+                b.setLength(b.length - syllables[k - 1].length)
+                for (p in UserPhrases.forPinyin(key)) {
+                    val shown = displayTake(listOf(p), 1).firstOrNull() ?: continue
+                    if (words.add(shown)) {
+                        syllableCounts[shown] = k
+                        noteCandidateKeys(listOf(shown), key)
+                    }
+                }
+            }
+        }
         val chars = LinkedHashSet<String>(cap)
-        for (syl in syllables) {
+        // 多音节只出**首音节**单字（用户 2026-11-22）：输入 nihao 先给 2 字词「你好/拟好」，
+        // 再给首音节单字「你/泥/拟」；第二音节单字（好/号/豪）一个都不出。
+        // 用户要继续打后半字时，先选「你」→ 残码 hao 触发重匹配，那时才出 hao 单字
+        // （此前 nihao 与 ni 的候选整体丢弃）。逐音节全量装配会一次性甩出所有单字，
+        // 既淹没词候选，又让用户在没敲后半之前就被 hao 单字干扰。
+        syllables.firstOrNull()?.let { syl ->
             for (c in displayTake(charsFor(syl), MAX_CHARS)) {
                 syllableCounts[c] = 1
                 chars.add(c)
@@ -2271,7 +2295,8 @@ object PinyinEngine {
                 }
             }
             // 变体单字跟在精确单字之后，且上限更小（见 MAX_FUZZY_CHARS）
-            for (syl in syllables) {
+            // 同精确单字：只取首音节，避免后音节变体单字混入 nihao 候选
+            syllables.firstOrNull()?.let { syl ->
                 for (variant in FuzzyPinyin.variantsOf(syl, fuzzyMask, isLegal)) {
                     for (c in displayTake(charsFor(variant), MAX_FUZZY_CHARS)) {
                         syllableCounts.getOrPut(c) { 1 }

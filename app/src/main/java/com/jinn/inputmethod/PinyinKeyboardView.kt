@@ -1028,6 +1028,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上次上屏词的读音（合并整词时拼读音用；台账与预测共用） */
     private var lastCommittedPinyin: String = ""
 
+    /** 连续选词自造词组：链段 = 词面 + 本段消耗的输入拼音键。 */
+    private data class PhraseSegment(val word: String, val key: String)
+    private val phraseChain = ArrayDeque<PhraseSegment>()
+    private var phraseChainStartMs = 0L
+
     // ── 删除键三态：单击删一个 / 按住连续删 / 双击+长按清空输入框 ──
     /**
      * 透明度铺底诊断：延迟到布局完成再跑（否则尺寸全是 0）。提成字段是为了 detach 时能撤掉，
@@ -1925,6 +1930,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 方案切换时清掉残留的拼音与预测
         composing.clear()
         lastPredictions = emptyList()
+        clearPhraseChain()   // 换输入框：连选链不得跨框残留
         // 会话边界：方向面板是「视图内临时态」——视图实例跨输入框复用，不复位就会让新输入框
         // 以展开态弹出（字母区被面板接管，用户看到的是「键盘变身」而不是正常键区）。
         // **必须走 hideDirectionPanel()**：它负责恢复字母三行、清掉 stale 面板并把
@@ -3056,6 +3062,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         if (composing.isNotEmpty()) {
+            clearPhraseChain()   // 退格删拼音：用户改主意，连选链作废
             composing.deleteCharAt(composing.length - 1)
             refreshCandidateBar()
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删拼音: ${composing}")
@@ -4085,20 +4092,71 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "搜索候选: \"$candidate\" (拼音=${composing})")
             searchPanel?.appendSearch(candidate)
             consumePinyin(candidate)
+            clearPhraseChain()
             refreshCandidateBar()
             return
         }
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选上屏: \"$candidate\" (拼音=${composing})")
+        val phraseFull = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing.toString()
+        val phraseUse = PinyinEngine.consumption(phraseFull, candidate)
         learnChoice(candidate)          // 用户词频：这是**明确选择**，学习它
         listener?.onCommitText(candidate)
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
-        if (consumePinyin(candidate)) {
+        val fully = consumePinyin(candidate)
+        if (fully) {
             lastCommittedWord = candidate
             lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(candidate) else emptyList()
         } else {
             lastPredictions = emptyList()
         }
+        trackPhrase(candidate, phraseFull, phraseUse, fully)
         refreshCandidateBar()
+    }
+
+    private fun clearPhraseChain() {
+        phraseChain.clear()
+        phraseChainStartMs = 0L
+    }
+
+    /**
+     * 连选成链：同一组合会话内相邻两段（及以上）拼成自造词组。
+     * 段键取本段实际消耗的输入音节，不用 truePinyinOf（多音字会造错音）。
+     */
+    private fun trackPhrase(
+        word: String,
+        full: String,
+        use: PinyinEngine.Consumption,
+        fully: Boolean,
+    ) {
+        if (suppressLearning || englishMode || !prefs.userPhraseEnabled) {
+            clearPhraseChain()
+            return
+        }
+        val n = use.quanpinChars
+        // 段键取**当前串**从头消费的 n 个字符（选完首字后 composing 已缩短为残码，
+        // 旧版用相对原串的绝对偏移会越界误清链 ⇒ 妮皓永远学不到）。
+        if (n <= 0 || n > full.length) {
+            clearPhraseChain()
+            return
+        }
+        val now = System.currentTimeMillis()
+        // 超时 / 超长：丢弃旧链，以本段重新起链。
+        // ⚠ 清链会把 phraseChainStartMs 归零；必须紧接下面 `isEmpty → now` 重设，
+        //   否则 now-0>8000 恒真，之后每次都清链，链永远建不起来（终审发现的隐藏 bug）。
+        if (phraseChain.isNotEmpty() && (now - phraseChainStartMs > 8_000L || phraseChain.size >= 8)) {
+            clearPhraseChain()
+        }
+        if (phraseChain.isEmpty()) phraseChainStartMs = now
+        phraseChain.addLast(PhraseSegment(word, full.substring(0, n)))
+        if (fully) {
+            if (phraseChain.size >= 2) {
+                UserPhrases.offer(
+                    phraseChain.joinToString("") { it.word },
+                    phraseChain.joinToString("") { it.key },
+                )
+            }
+            clearPhraseChain()
+        }
     }
 
     /**
@@ -5861,6 +5919,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastPredictions = emptyList()
         lastCommittedWord = ""
         lastCommittedPinyin = ""
+        clearPhraseChain()
         refreshCandidateBar()
     }
 

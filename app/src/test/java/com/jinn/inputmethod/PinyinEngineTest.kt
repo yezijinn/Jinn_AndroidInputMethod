@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -137,8 +138,9 @@ class PinyinEngineTest {
         val result = PinyinEngine.query("nihao")
         val c = result.candidates
         assertTrue("应含 2 字词 你好: $c", c.contains("你好"))
-        assertTrue("应含 单字 你: $c", c.contains("你"))
-        assertTrue("应含 单字 好: $c", c.contains("好"))
+        assertTrue("应含 首音节单字 你: $c", c.contains("你"))
+        // 多音节只出首音节单字：第二音节单字「好」不得出现在 nihao 候选里（用户 2026-11-22）
+        assertFalse("不应含第二音节单字 好: $c", c.contains("好"))
         // 2 字词排在单字前。位置比较先各自取下标并断言非负：
         // 只写「indexOf(A) < indexOf(B)」在 A 缺失、B 存在时是 -1 < 0 ⇒ 恒真（假绿）。
         val niHaoAt = c.indexOf("你好")

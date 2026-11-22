@@ -81,8 +81,9 @@ class PinyinMixOrderTest {
         )
         // 即便对首个音节设了表，多音节查询也不重排（混合表只服务单音节）
         PinyinEngine.setMixOrderForTest("ni\ta|b")
+        // 多音节只出首音节单字：c/d 是 hao 字，不应出现（用户 2026-11-22）
         assertEquals(
-            listOf("你好", "a", "b", "c", "d"),
+            listOf("你好", "a", "b"),
             PinyinEngine.query("nihao").candidates,
         )
     }

@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -79,25 +80,20 @@ class PinyinConsumptionDisplayOrderTest {
     }
 
     @Test
-    fun 靠前音节的同名条目被展示上限挡住时消费应跟着展示序走() {
+    fun 多音节只展示首音节时消费仍按展示序() {
         val target = pool[0]
         val fillers = pool.drop(1).take(60)          // 60 个填充字
         assertTrue("字池太小，无法构造 60 条展示上限之外的条目", fillers.size == 60)
-        // fu 里 target 排在第 61 位（下标 60）—— 恰好落在展示窗口之外；gao 里它在第 1 位
+        // 新设计（2026-11-22）：fugao 只展示首音节 fu 的前 60 字，gao 字一个都不出。
+        // target 在 fu 里排第 61 位（下标 60）⇒ 落在展示窗口之外 ⇒ 候选里根本没有它。
         loadEngine(charsText(fu = fillers + target, gao = listOf(target, pool[70])))
 
-        // 展示侧：整条候选列表里 target 只会由 gao 贡献（排在 60 个填充字之后）
         val candidates = PinyinEngine.query("fugao").candidates
-        val pos = candidates.indexOf(target)
-        assertTrue("前提不成立：候选列表里没有 $target（$candidates）", pos >= 0)
-        assertTrue(
-            "前提不成立：$target 应排在 60 个填充字之后（实际 pos=$pos）",
-            pos >= 60,
-        )
-
-        // 消费侧：必须与展示序一致 —— 覆盖 fu + gao（fugao = 5 字符 2 音节）
+        assertFalse("target 被展示上限挡在首音节之外，不应出现在候选里：$candidates", target in candidates)
+        // 消费侧实现未变：按「各音节 take(60) 首个命中」定位。target 在 fu 第 61 位（窗口外）、
+        // gao 第 1 位 ⇒ 命中 gao ⇒ (5,2)。新设计下该字不展示、用户点不到，二者不一致不再构成缺陷。
         assertEquals(
-            "消费区间应与「展示序里首个含该字的音节」一致（否则点击后残码多留一个音节）",
+            "消费按字表各音节前 60 首个命中：fu 窗口外、gao 命中 ⇒ (5,2)",
             PinyinEngine.Consumption(quanpinChars = 5, syllables = 2),
             PinyinEngine.consumption("fugao", target),
         )

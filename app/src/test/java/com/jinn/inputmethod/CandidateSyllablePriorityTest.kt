@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -42,6 +43,25 @@ class CandidateSyllablePriorityTest {
     @After
     fun tearDown() {
         UserFrequency.resetForTest()
+    }
+
+    @Test
+    fun 多音节只出首音节单字且选首字后出后音节() {
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "ni\t你,尼,拟\nhao\t好,号,毫",
+            phrases = "nihao\t你好",
+            syllables = "ni\nhao",
+        )
+        val multi = PinyinEngine.query("nihao").candidates
+        assertEquals("词在最前", "你好", multi.first())
+        assertTrue("含首音节单字 你", "你" in multi)
+        assertFalse("不含第二音节单字 好", "好" in multi)
+        // 选「你」后残码 hao 重匹配：此刻才出 hao 单字，且无 nihao 词、无 ni 单字
+        val rest = PinyinEngine.query("hao").candidates
+        assertTrue("残码应含 hao 单字", "好" in rest)
+        assertFalse("残码不应再含 nihao 词", "你好" in rest)
+        assertFalse("残码不应再含 ni 单字", "你" in rest)
     }
 
     @Test

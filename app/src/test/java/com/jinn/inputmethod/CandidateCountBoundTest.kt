@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -59,15 +60,15 @@ class CandidateCountBoundTest {
         )
     }
 
-    /** 多音节输入时，词候选之外还会叠加各音节单字，总量更大 */
+    /** 多字词组之外只叠首音节单字，后音节单字不出现（用户 2026-11-22） */
     @Test
-    fun multiSyllableAccumulatesCandidates() {
-        val single = PinyinEngine.query("ni").candidates.size
-        val multi = PinyinEngine.query("nihao").candidates.size
-        assertTrue(
-            "多音节候选($multi)不应少于单音节($single)",
-            multi >= single,
-        )
+    fun multiSyllableShowsOnlyFirstSyllableChars() {
+        val got = PinyinEngine.query("nihao").candidates
+        val niChar = '\u4E00'                  // ni 块首字
+        val haoChar = ('\u4E00' + 60).toChar() // hao 块首字，码点不交
+        assertTrue("应含词 你好: $got", "你好" in got)
+        assertTrue("应含首音节单字: $got", got.contains(niChar.toString()))
+        assertFalse("不应含第二音节单字: $got", got.contains(haoChar.toString()))
     }
 
     /**
@@ -75,8 +76,10 @@ class CandidateCountBoundTest {
      *
      * 主查询原先不限音节数：候选按「音节 × 每音节上限」线性膨胀后还要全量排序，而渲染首屏只看
      * 前 `INITIAL_RENDERED_CANDIDATES` 条（其余横滑分页追加）—— 计算与内存纯白费，且跑在输入主线程上（按键发卡）。
-     * 这里用 20 个**互不相同**的音节：它们各挂满 60 字，若上限失效，20 音节的候选量会明显
-     * 多于 8 音节（480 ⇒ 1200），断言「两者同量」即钉住上限。
+     * 这里用 20 个**互不相同**的音节：它们各挂满 60 字。
+     * 2026-11-22 起单字只取首音节，候选量不再随音节数线性增长，「8 vs 20 同量」会退化成
+     * 恒真空断言，故改为**源码形态钉**：主查询必须 `allSyllables.take(MAX_SYLLABLES)` 且上限为 8，
+     * 并保留功能钉「超上限输入的候选不得多于首音节上限」（此路径无词库，只有首音节单字）。
      */
     @Test
     fun longInputIsBoundedBySyllableCap() {
@@ -96,15 +99,20 @@ class CandidateCountBoundTest {
 
         val eight = PinyinEngine.query(syllables.take(8).joinToString(""))   // 正好在上限
         val twenty = PinyinEngine.query(syllables.joinToString(""))          // 20 音节，超上限
+        // 功能钉：单字只取首音节，任何长度输入都只有首音节那一批单字（≤ MAX_CHARS=60）
         assertTrue(
-            "8 音节应给出数百条候选（实际 ${eight.candidates.size}）",
-            eight.candidates.size >= 8 * 40,
+            "8 音节候选应等于首音节单字数（实际 ${eight.candidates.size}）",
+            eight.candidates.size <= 60 && eight.candidates.size > 0,
         )
         assertEquals(
             "超上限输入必须与 8 音节前缀同量（实际 ${twenty.candidates.size} vs ${eight.candidates.size}）",
             eight.candidates.size,
             twenty.candidates.size,
         )
+        // 源码钉：音节上限守卫本身必须还在（否则上面同量断言 vacuous）
+        val engine = TestSources.codeSource("PinyinEngine.kt")
+        assertTrue("主查询必须按 MAX_SYLLABLES 截断", "allSyllables.take(MAX_SYLLABLES)" in engine)
+        assertTrue("MAX_SYLLABLES 必须为 8", "MAX_SYLLABLES = 8" in engine)
     }
 
     /** 候选里的词条应排在单字之前（用户实际点的是前面几条） */

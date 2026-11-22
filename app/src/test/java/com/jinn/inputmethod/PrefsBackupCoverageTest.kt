@@ -117,7 +117,8 @@ class PrefsBackupCoverageTest {
         //                       + Azure 短音频识别 3 键（Base URL / 语言码 / 订阅密钥）
         // 2026-11-02 起 123 → 131：新增百度短语音识别 5 键（AK / SK / dev_pid / token / token 过期时刻，
         //                       后两个是派生缓存、刻意不进包）+ Deepgram 3 键（Key / 模型 / 语言）
-        assertEquals("提取到的键常量应是 131 个（改键数请同步本断言）", 131, keyConstants.size)
+        // 2026-11-22 起 131 → 132：新增自造词组开关 1 键（换机保留开关）
+        assertEquals("提取到的键常量应是 132 个（改键数请同步本断言）", 132, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         val import = bodyOf("importFromBackup")
@@ -163,6 +164,7 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_QUANPIN" to "asBool(v)",
             "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
+            "KEY_USER_PHRASE_ENABLED" to "asBool(v)",
             "KEY_RARE_TIER2" to "asBool(v)",
             "KEY_RARE_TIER3" to "asBool(v)",
             "KEY_USE_TRADITIONAL" to "asBool(v)",
