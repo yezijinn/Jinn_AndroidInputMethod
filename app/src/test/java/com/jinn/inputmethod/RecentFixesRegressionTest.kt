@@ -8929,4 +8929,15 @@ class RecentFixesRegressionTest {
         assertTrue("finally 必须放闸", "favoriteWriteInFlight = false" in branch)
     }
 
+    /** 「到末尾」读满上限时必须留 W（L-1108）：界面没有可见反馈，诊断包要知道停在哪。 */
+    @Test
+    fun 到末尾截断必须留日志() {
+        val body = TestSources.blockAfter(
+            TestSources.codeSource("JinnIme.kt"),
+            "private fun absoluteDocTarget(",
+        )
+        assertTrue("读满上限要判", "after.length >= DOC_JUMP_MAX_CHARS" in body)
+        assertTrue("要留可检索的 W", "超过单次读取上限" in body)
+    }
+
 }

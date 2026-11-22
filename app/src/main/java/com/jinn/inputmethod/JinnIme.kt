@@ -1006,6 +1006,11 @@ class JinnIme : InputMethodService() {
                 Diagnostics.w(TAG, "到末尾: 读不到光标之后的文本")
                 null
             } else {
+                // 超长文档里「到末尾」只能读到上限（L-1108）：界面无法再给可见反馈，
+                // 至少留一条 W，用户报「复制不全」时能从诊断包里认出是这个上限
+                if (after.length >= DOC_JUMP_MAX_CHARS) {
+                    Diagnostics.w(TAG, "到末尾: 文档尾部超过单次读取上限 $DOC_JUMP_MAX_CHARS 字符，停在可确认的位置")
+                }
                 range.end + after.length
             }
         }
