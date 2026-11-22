@@ -54,6 +54,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /** 「删除所选」按钮引用：buildActionRow 重建时重取，图片模式置空（L-990） */
     private var selectionBtn: TextView? = null
     private var multiSelect = false
+    /** 收藏写库在途：菜单点完即关，连点两次会重复写库并整页重载（L-989） */
+    @Volatile
+    private var favoriteWriteInFlight = false
     private var categoryFilter: String? = null // null=全部, "URL", "NUMBER", "FAVORITE", "IMAGE"
     private var keyword: String = ""
     /**
@@ -398,9 +401,17 @@ class ClipboardHistoryActivity : ComponentActivity() {
                                         loadAsync()
                                     }
                                 }
-                                1 -> BackgroundIo.run {
-                                    db.setFavorite(item.id, !item.isFavorite)
-                                    loadAsync()
+                                1 -> if (!favoriteWriteInFlight) {
+                                    favoriteWriteInFlight = true
+                                    BackgroundIo.run {
+                                        try {
+                                            db.setFavorite(item.id, !item.isFavorite)
+                                            loadAsync()
+                                        } finally {
+                                            // 失败也要放闸，否则本进程内收藏入口永久失效
+                                            favoriteWriteInFlight = false
+                                        }
+                                    }
                                 }
                             }
                         }

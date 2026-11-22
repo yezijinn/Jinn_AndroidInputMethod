@@ -8919,4 +8919,14 @@ class RecentFixesRegressionTest {
         assertTrue("操作行外层要 minHeight，否则空行被列表 weight 挤出", "android:minHeight=\"48dp\"" in head)
     }
 
+    /** 收藏写库在途时必须拦住连点（L-989）：两次写库 + 两次整页重载只是白耗。 */
+    @Test
+    fun 收藏写库在途必须拦住连点() {
+        val src = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        val branch = TestSources.blockAfter(src, "1 -> if (!favoriteWriteInFlight)")
+        assertTrue("收藏分支必须先判在途标志", "if (!favoriteWriteInFlight)" in src)
+        assertTrue("写库与重载在闸内", "db.setFavorite(item.id, !item.isFavorite)" in branch)
+        assertTrue("finally 必须放闸", "favoriteWriteInFlight = false" in branch)
+    }
+
 }
