@@ -78,7 +78,12 @@ internal object UserPhrases {
         if (p.isEmpty() || k.isEmpty()) return
         if (p.length > MAX_PHRASE_CHARS || k.length > 32) return
         synchronized(this) {
-            if (loadBlocked) return
+            // 密钥临时不可用（如开机首次解锁前）会让 load 置 loadBlocked。
+            // 每次成词时补读一次：解锁后自愈，避免本会话连选全被静默丢弃。
+            if (loadBlocked) {
+                file?.let { loadFromFile(it, enabled) }
+                if (loadBlocked) return
+            }
             val id = p + "\t" + k
             val old = entries[id]
             entries[id] = Entry(p, k, (old?.weight ?: 0.0) + 1.0)

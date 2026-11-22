@@ -96,6 +96,28 @@ class UserPhrasesTest {
     }
 
     @Test
+    fun 密钥恢复后可自愈() {
+        val f = file()
+        val wrongKey = SecretKeySpec(ByteArray(32) { 9 }, "AES")
+        // 先用正确密钥落一条旧词
+        UserPhrases.setKeyForTest(key)
+        UserPhrases.loadFromFile(f, enabled = true)
+        UserPhrases.offer("旧词", "jiuci")
+        // 换错误密钥重新 load：解密失败 ⇒ loadBlocked，表空
+        UserPhrases.setKeyForTest(wrongKey)
+        UserPhrases.loadFromFile(f, enabled = true)
+        assertTrue("解密失败时表应为空", UserPhrases.forPinyin("jiuci").isEmpty())
+        UserPhrases.offer("新词", "xinci")
+        assertTrue("阻塞期间连选应被丢弃", UserPhrases.forPinyin("xinci").isEmpty())
+        // 换回正确密钥后再 offer：补读自愈，旧词恢复、新词入库
+        UserPhrases.setKeyForTest(key)
+        UserPhrases.offer("新词", "xinci")
+        assertEquals("旧词应从盘上补读回来", listOf("旧词"), UserPhrases.forPinyin("jiuci"))
+        assertEquals("新词应正常入库", listOf("新词"), UserPhrases.forPinyin("xinci"))
+        UserPhrases.setKeyForTest(null)
+    }
+
+    @Test
     fun 妮皓自造词组往返() {
         val f = file()
         UserPhrases.setKeyForTest(key)
