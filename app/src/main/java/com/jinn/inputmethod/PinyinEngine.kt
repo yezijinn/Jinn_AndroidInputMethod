@@ -2244,7 +2244,9 @@ object PinyinEngine {
                 val key = b.toString()
                 b.setLength(b.length - syllables[k - 1].length)
                 for (p in UserPhrases.forPinyin(key)) {
-                    val shown = displayTake(listOf(p), 1).firstOrNull() ?: continue
+                    // 自造词可能由繁体模式学得（存的是显示词），读出时归一到简体再交给 displayTake：
+                    // 存量繁体词与新数据同修，切回简体模式不会显示繁体；繁体模式再由 displayTake 转一次。
+                    val shown = displayTake(listOf(toSimplified(p)), 1).firstOrNull() ?: continue
                     if (words.add(shown)) {
                         syllableCounts[shown] = k
                         noteCandidateKeys(listOf(shown), key)

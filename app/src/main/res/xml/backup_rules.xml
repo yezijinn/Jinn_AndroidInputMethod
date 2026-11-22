@@ -42,6 +42,13 @@
     <exclude
         domain="file"
         path="user_freq.txt.tmp" />
+    <!-- 自造词组表（整份加密，密钥包裹件由 Keystore 托管）：按书面承诺不进备份 / 迁移 -->
+    <exclude
+        domain="file"
+        path="user_phrases.txt" />
+    <exclude
+        domain="file"
+        path="user_phrases.txt.tmp" />
     <!-- 选择台账（入 user_picks.txt）：26 键选过的词 + 读音，属长期留痕的隐私数据；
          默认关闭，但仍必须排除备份/迁移，避免「用户没开也被云备份带走」。
          2026-10-21 起台账逐行加密，密钥包裹件 user_picks.key 同理排除 —— 它由 Keystore 保护、

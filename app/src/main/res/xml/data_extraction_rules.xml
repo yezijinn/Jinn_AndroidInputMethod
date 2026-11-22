@@ -67,6 +67,13 @@
         <exclude
             domain="file"
             path="user_freq.txt.tmp" />
+        <!-- 自造词组表：不进云备份 / 设备迁移（整份加密，密钥由 Keystore 托管） -->
+        <exclude
+            domain="file"
+            path="user_phrases.txt" />
+        <exclude
+            domain="file"
+            path="user_phrases.txt.tmp" />
         <exclude
             domain="sharedpref"
             path="jinn_inputmethod.xml" />
@@ -165,6 +172,13 @@
         <exclude
             domain="file"
             path="user_freq.txt.tmp" />
+        <!-- 自造词组表：不进云备份 / 设备迁移（整份加密，密钥由 Keystore 托管） -->
+        <exclude
+            domain="file"
+            path="user_phrases.txt" />
+        <exclude
+            domain="file"
+            path="user_phrases.txt.tmp" />
         <exclude
             domain="sharedpref"
             path="jinn_inputmethod.xml" />

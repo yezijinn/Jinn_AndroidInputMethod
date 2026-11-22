@@ -419,6 +419,26 @@ class UserDictCryptoTest {
         LedgerCrypto.invalidate()
     }
 
+    @Test
+    fun `密钥件缺失时自造词组表也改名保留`() {
+        LedgerCrypto.invalidate()
+        val dir = tmp.newFolder()
+        val phrases = File(dir, UserPhrases.FILE_NAME)
+        phrases.writeText(
+            "#jinn-phrase1\n" + LedgerCrypto.encryptLine("妮皓\tnihao\t1.000", key) + "\n",
+            Charsets.US_ASCII,
+        )
+        // 只有自造词数据、词频与台账都空：本表也必须在保护清单内，否则会静默建新 DEK
+        assertNull("密钥件缺失且自造词表非空 ⇒ 必须 fail-closed", LedgerCrypto.dataKey(dir))
+        assertFalse("绝不能新建密钥件", File(dir, LedgerCrypto.KEY_FILE).exists())
+        assertTrue(
+            "自造词表必须改名进 ledger_orphan/",
+            File(File(dir, LedgerCrypto.ORPHAN_DIR), UserPhrases.FILE_NAME + ".orphan").isFile,
+        )
+        assertFalse("原路径不能再有自造词表", phrases.exists())
+        LedgerCrypto.invalidate()
+    }
+
     /**
      * L-1455：孤儿件**改名失败**时同样不得新建 DEK。
      *

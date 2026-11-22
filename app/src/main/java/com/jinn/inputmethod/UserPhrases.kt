@@ -68,6 +68,7 @@ internal object UserPhrases {
             .filter { it.key == key }
             .sortedByDescending { it.weight }
             .map { it.phrase }
+            .take(2)   // 同键最多注入 2 条，防大量自造词淹没首屏（方案明定）
     }
     /** 即时学一个自造词；同词同键权重 +1，超出上限淘汰最低权重。 */
     fun offer(phrase: String, key: String) {

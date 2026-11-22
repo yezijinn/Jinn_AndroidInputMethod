@@ -100,7 +100,9 @@ internal object LedgerCrypto {
      * 增删按本密钥加密的文件时**必须**同步这张表：漏一个，就会在那张文件上重演「密钥件没了 ⇒
      * 静默换新密钥 ⇒ 旧数据永久失读」。
      */
-    private val PROTECTED_FILES = listOf(SelectionLedger.FILE_NAME, UserFrequency.FILE_NAME)
+    private val PROTECTED_FILES = listOf(
+        SelectionLedger.FILE_NAME, UserFrequency.FILE_NAME, UserPhrases.FILE_NAME,
+    )
 
     /**
      * Keystore 别名：**必须**与 `ClipboardCrypto` / `CredentialCrypto` 的别名不同。

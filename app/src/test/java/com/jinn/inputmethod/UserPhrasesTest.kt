@@ -63,6 +63,23 @@ class UserPhrasesTest {
     }
 
     @Test
+    fun 同键最多注入两条权重最高的() {
+        val f = file()
+        UserPhrases.setKeyForTest(key)
+        UserPhrases.loadFromFile(f, enabled = true)
+        UserPhrases.offer("甲一", "jiayi")
+        UserPhrases.offer("乙一", "jiayi")
+        UserPhrases.offer("乙一", "jiayi")
+        UserPhrases.offer("丙一", "jiayi")
+        UserPhrases.offer("丙一", "jiayi")
+        UserPhrases.offer("丙一", "jiayi")
+        val got = UserPhrases.forPinyin("jiayi")
+        assertEquals("同键只返两条", 2, got.size)
+        assertEquals("权重最高两条按降序", listOf("丙一", "乙一"), got)
+        UserPhrases.setKeyForTest(null)
+    }
+
+    @Test
     fun 查询侧按前缀注入且成词即时入库() {
         val engine = TestSources.codeSource("PinyinEngine.kt")
         assertTrue("查询要查自造词表", "UserPhrases.forPinyin(key)" in engine)
@@ -71,6 +88,11 @@ class UserPhrasesTest {
         assertTrue("段键取当前串从头消费的输入音节", "full.substring(0, n)" in view)
         assertTrue("段键字段必须已删除（绝对偏移会越界误清链）", !("phraseConsumed" in view))
         assertTrue("默认开关要接 Prefs", "userPhraseEnabled" in view)
+        // 简繁归一落点：查询注入处先 toSimplified 再 displayTake（存量繁体词同修）
+        assertTrue(
+            "注入处必须先归一简体",
+            "displayTake(listOf(toSimplified(p)), 1)" in engine,
+        )
     }
 
     @Test

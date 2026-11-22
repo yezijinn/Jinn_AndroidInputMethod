@@ -79,6 +79,8 @@ class BackupRulesTest {
             "file" to "ledger_orphan/",
             "file" to "user_freq.txt",
             "file" to "user_freq.txt.tmp",
+            "file" to UserPhrases.FILE_NAME,
+            "file" to UserPhrases.FILE_NAME + ".tmp",
             "file" to "user_picks.txt",
             "file" to "user_picks.key",
             "file" to "user_picks.key.tmp",
