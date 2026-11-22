@@ -1158,7 +1158,10 @@ internal object ConfigBackupManager {
             prefsNotIncluded = r1.notIncluded.size
             // 未知键（更高版本写入）+ 类型不符（含解码阶段跳过的）+ 剪贴板侧未识别的键，统一计入忽略数
             prefsIgnored = r1.unknown.size + r1.mismatch.size + (clip.size - appliedClip) +
-                skippedPrefs.size
+                skippedPrefs.size + r1.filteredItems
+            if (r1.filteredItems > 0) {
+                Diagnostics.w(TAG, "导入: 收藏符号归一滤掉 ${r1.filteredItems} 项，计入忽略")
+            }
             if (skippedPrefs.isNotEmpty()) {
                 Diagnostics.w(TAG, "导入: 解码阶段跳过 ${skippedPrefs.size} 个类型不符的配置项")
             }

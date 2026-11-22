@@ -266,4 +266,24 @@ class FavoriteSymbolsTest {
             )
         }
     }
+
+    /** 原始条目数要数归一前的全部（含空串），才能算出被 parse 滤掉多少（L-1168）。 */
+    @Test
+    fun 原始条目数按未过滤计数() {
+        val raw = """[["A","","B"],["C"]]"""
+        assertEquals("空串也占原始条目", 4, FavoriteSymbols.countItems(raw))
+        val normalized = FavoriteSymbols.serialize(FavoriteSymbols.parse(raw))
+        assertEquals("归一后空串消失", 3, FavoriteSymbols.countItems(normalized))
+        // 导入收尾必须把这笔计入忽略数，否则「导入完成」会藏掉静默丢弃
+        assertTrue(
+            "导入忽略数要含被滤掉的符号",
+            "r1.filteredItems" in TestSources.codeSource("ConfigBackupManager.kt"),
+        )
+        val prefs = TestSources.codeSource("Prefs.kt")
+        assertTrue(
+            "导入分支要按归一前后条目数记账",
+            "FavoriteSymbols.countItems(raw)" in prefs &&
+                "FavoriteSymbols.countItems(normalized)" in prefs,
+        )
+    }
 }

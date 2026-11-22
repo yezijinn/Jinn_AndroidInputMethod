@@ -138,6 +138,18 @@ object FavoriteSymbols {
      * 清洗集内，清完不会残留可裁的首尾空白，故不再调用它（Java 的 String 版只裁 ≤0x20，语义不同）。
      * 没有要清的字符时原样返回，不建 StringBuilder —— 搜索每行都会调它一次。
      */
+    /** 原始持久化串里的条目数（含会被 [parse] 滤掉的空串 / 超长项）；读不出按 0。 */
+    fun countItems(raw: String?): Int = runCatching {
+        if (raw == null) return DEFAULT_ITEMS.size
+        val arr = JSONArray(raw)
+        var n = 0
+        for (p in 0 until arr.length()) {
+            val page = arr.optJSONArray(p) ?: continue
+            n += page.length()
+        }
+        n
+    }.getOrDefault(0)
+
     fun clean(text: String): String {
         if (!hasCleanable(text)) return text
         val sb = StringBuilder(text.length)

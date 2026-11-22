@@ -2141,6 +2141,8 @@ class Prefs(private val appContext: Context) {
         val unknown: List<String>,
         val mismatch: List<String>,
         val notIncluded: List<String>,
+        /** 归一后仍被滤掉的收藏符号数（L-1168）：不计入 ignored 的话用户看不到静默丢弃。 */
+        val filteredItems: Int = 0,
     )
 
     /**
@@ -2152,6 +2154,7 @@ class Prefs(private val appContext: Context) {
      */
     internal fun importFromBackup(values: Map<String, ConfigBackup.BackupValue>): ImportReport {
         var applied = 0
+        var filtered = 0
         val unknown = ArrayList<String>()
         val mismatch = ArrayList<String>()
         val notIncluded = ArrayList<String>()
@@ -2408,6 +2411,10 @@ class Prefs(private val appContext: Context) {
                             bad(key)
                         } else {
                             favoriteSymbols = normalized
+                            // 归一前后条目数差 = 被 parse 滤掉的空串 / 超长项（L-1168）；
+                            // 不记账的话「导入完成」会把静默丢弃的符号藏起来
+                            filtered += (FavoriteSymbols.countItems(raw) -
+                                FavoriteSymbols.countItems(normalized)).coerceAtLeast(0)
                             ok()
                         }
                     }
@@ -2419,7 +2426,7 @@ class Prefs(private val appContext: Context) {
                 else -> unknown.add(key)
             }
         }
-        return ImportReport(applied, unknown, mismatch, notIncluded)
+        return ImportReport(applied, unknown, mismatch, notIncluded, filtered)
     }
 
     /**
