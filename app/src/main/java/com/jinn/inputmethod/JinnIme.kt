@@ -3747,6 +3747,12 @@ class JinnIme : InputMethodService() {
             info?.imeOptions ?: 0,
         )
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
+        // 图库入口显隐同样是**逐输入框**的 IME 侧标记，理由与上面 suppressLearning 相同：
+        // 同会话内换框可能不重发 onStartInputView（本回调开头的注释即为此），
+        // 只靠那边重判会让入口停在上一个框的答案上 —— 声明可收图的框切走后入口还在，
+        // 或切到声明框时入口该出现却不出现（L-998 同型）。
+        // 只算能力、不碰视图（flushPendingGalleryImage 仍留在 onStartInputView）。
+        applyHostImageCapability(info)
         // 悬浮键盘：形态判定放在这个**更早**的回调里。框架在「同会话内换框 / restartInput()」时
         // 可能不重发 onStartInputView（上面 onStartInput 开头那条注释里的密码框切换即实例）；
         // 只判一次的话，分屏 / 连续换框期间形态会停在上一个输入框的答案上。

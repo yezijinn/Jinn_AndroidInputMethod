@@ -1975,6 +1975,26 @@ class RecentFixesRegressionTest {
     }
 
     /**
+     * 图库入口显隐必须在 onStartInput 重判。
+     *
+     * 框架在「同会话内换框 / restartInput()」时可能不重发 onStartInputView，本文件
+     * 已按这条前提把 `suppressLearning` 与悬浮形态放进 onStartInput。图库能力同样是
+     * 逐输入框的 IME 侧标记（读 EditorInfo 声明），漏判会让入口停在上一个框的答案上：
+     * 声明可收图的框切走后入口还在，或切到声明框时入口该出现却不出现（L-998 同型）。
+     * 只钉 onStartInput 切片，避免 applyHostImageCapability 在 onStartInputView 里
+     * 也被满足而变成假绿。
+     */
+    @Test
+    fun `图库入口显隐必须在 onStartInput 重判`() {
+        val body = blockAfter(codeOf("JinnIme.kt"), "override fun onStartInput(")
+        assertTrue(
+            "onStartInput 必须调 applyHostImageCapability(info)：同会话换框可能不重发 " +
+                "onStartInputView，图库入口会停在上一个框的答案上",
+            "applyHostImageCapability(info)" in body,
+        )
+    }
+
+    /**
      * 分页 / 去重排序必须带 tie-breaker（BUG.md L-97）。
      *
      * `created_at` 是毫秒时间戳，同毫秒的行构成**等值组**，而 SQLite 不承诺等值键之间的顺序
