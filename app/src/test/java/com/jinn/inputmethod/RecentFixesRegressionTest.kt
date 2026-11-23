@@ -607,6 +607,27 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 空格取首候选必须接入自造词链（功能总览：空格取首候选 = 明确选词）。
+     *
+     * 「敲入整串 → 点首音节单字留残码 → 空格取次段」是高频连选路径：首段点选经
+     * onCandidateSelected 入链（fully=false 保留），次段必须靠 onSpacePressed 的
+     * trackPhrase 收链并 offer。漏掉即「词表默认开却学不到词」。
+     * 必须切片到 onSpacePressed：全局 contains 会被 onCandidateSelected 里那处
+     * trackPhrase 假满足，删掉空格分支的调用也不会红。
+     */
+    @Test
+    fun `空格取首候选必须接入自造词链`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "private fun onSpacePressed()")
+        assertTrue(
+            "onSpacePressed 候选分支必须在 consumePinyin 前取 phraseFull/phraseUse，" +
+                "并在分支末 trackPhrase(first, phraseFull, phraseUse, fully)",
+            body.contains("phraseFull =") &&
+                body.contains("PinyinEngine.consumption(phraseFull, first)") &&
+                body.contains("trackPhrase(first, phraseFull, phraseUse, fully)"),
+        )
+    }
+
     @Test
     fun `换肤延后判据必须覆盖方向面板`() {
         val text = codeOf("PinyinKeyboardView.kt")

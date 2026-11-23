@@ -2894,15 +2894,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (lastCandidates.isNotEmpty()) {
                 val first = lastCandidates[0]
                 if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
+                // 自造词链与点选同源（BUG.md 功能总览：空格取首候选同样是明确选词）。
+                // 必须在 consumePinyin 之前取全串与消耗量 —— 它会改写 composing。
+                val phraseFull = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing.toString()
+                val phraseUse = PinyinEngine.consumption(phraseFull, first)
                 learnChoice(first)                      // 空格取首候选同样是明确选择
                 listener?.onCommitText(first)
-                if (consumePinyin(first)) {
+                val fully = consumePinyin(first)
+                if (fully) {
                     // 空格上屏同样触发智能预测（与点选候选一致）
                     lastCommittedWord = first
                     lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(first) else emptyList()
                 } else {
                     lastPredictions = emptyList()
                 }
+                trackPhrase(first, phraseFull, phraseUse, fully)
             } else {
                 listener?.onCommitSpace()
                 composing.clear()
