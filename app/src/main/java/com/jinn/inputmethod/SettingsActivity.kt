@@ -86,6 +86,8 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnCheckUpdate: Button
     /** 「打开下载页面」：与检查结果无关，直接跳 Gitee 发行版列表 */
     private lateinit var btnUpdateDownload: Button
+    /** 「填写反馈意见」：全宽单按钮，直达问卷（文案作者域，代码下发） */
+    private lateinit var btnFeedback: Button
     /** 更新检查状态：只区分「空闲 / 进行中」，结果由对话框呈现（见 [UpdateState]） */
     private var updateState: UpdateState = UpdateState.Idle
 
@@ -249,6 +251,7 @@ class SettingsActivity : ComponentActivity() {
         findViewById<TextView>(R.id.text_use_traditional_desc).text = "开启后候选全部显示繁体字"
         btnCheckUpdate = findViewById(R.id.btn_check_update)
         btnUpdateDownload = findViewById(R.id.btn_update_download)
+        bindFeedbackEntry()
         bindCheckUpdate()
         // 打开设置页时的自动检查：距上次成功检查 ≥7 天才执行（失败静默，见 maybeAutoCheckUpdate）
         maybeAutoCheckUpdate()
@@ -865,6 +868,21 @@ class SettingsActivity : ComponentActivity() {
     private fun openUrl(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             .onFailure { Diagnostics.w(TAG, "打开更新页失败: ${it.message}") }
+    }
+
+    /**
+     * 「填写反馈意见」：全宽单按钮，用系统默认浏览器打开问卷（`FEEDBACK_URL`）。
+     *
+     * 与 [bindCheckUpdate] 的「打开下载页面」同口径：一律走 [openUrl]，
+     * 没有可处理 `ACTION_VIEW` 的应用时只留 W 日志，不抛到主线程。
+     */
+    private fun bindFeedbackEntry() {
+        btnFeedback = findViewById(R.id.btn_feedback)
+        btnFeedback.text = TEXT_FEEDBACK
+        btnFeedback.setOnClickListener {
+            Diagnostics.i(TAG, "设置页: 打开反馈问卷")
+            openUrl(FEEDBACK_URL)
+        }
     }
 
     /**
@@ -1733,6 +1751,12 @@ class SettingsActivity : ComponentActivity() {
          * 本页只留这一个入口，与「绑定悬浮键盘」同排；状态小字已删）。
          */
         const val TEXT_VOICE_ENTRY = "语音转为文字"
+
+    /** 反馈入口按钮：全宽一行，点开系统浏览器直达问卷（作者域文案，逐字按要求） */
+    const val TEXT_FEEDBACK = "填写反馈意见 可直发给作者"
+
+    /** 反馈问卷地址（腾讯问卷） */
+    const val FEEDBACK_URL = "https://wj.qq.com/s2/28787005/t3ej/"
 
         /**
          * 最底部使用说明（六行，`\n` 分隔）。
