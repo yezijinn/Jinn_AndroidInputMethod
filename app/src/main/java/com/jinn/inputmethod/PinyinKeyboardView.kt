@@ -1867,7 +1867,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 所以单独收进来。
      */
     internal fun isSessionPristine(): Boolean =
-        composing.isEmpty() && lastPredictions.isEmpty() && !directionPanelVisible &&
+        composing.isEmpty() && lastPredictions.isEmpty() && phraseChain.isEmpty() && !directionPanelVisible &&
             !clipboardActive && !galleryActive && !actionPanelExpanded &&
             !passwordPad && !isPanelSearch() && !voiceHoldActive && !voiceHoldCancelArmed
 

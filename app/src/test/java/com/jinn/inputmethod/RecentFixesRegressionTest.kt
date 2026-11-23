@@ -8621,6 +8621,13 @@ class RecentFixesRegressionTest {
         }
         assertTrue("残留拼音也属会话态", "composing.isEmpty()" in pristine)
         assertTrue("残留预测也属会话态", "lastPredictions.isEmpty()" in pristine)
+        // configure 的 clearPhraseChain() 是无条件调用，上面闭集正则抓不到它，单独硬钉：
+        // 漏判就是「切输入框跳过 configure ⇒ 上一框的连选链残留到下一框」（L-1531 同型）。
+        assertTrue(
+            "连选链也属会话态：configure 无条件 clearPhraseChain，" +
+                "isSessionPristine 必须同时判 phraseChain.isEmpty()",
+            "phraseChain.isEmpty()" in pristine,
+        )
         assertTrue(
             "动作排也属会话临时态（顶掉候选栏的功能按钮，一点就作用于新框的正文）",
             "resetActionPanel()" in cfg,
