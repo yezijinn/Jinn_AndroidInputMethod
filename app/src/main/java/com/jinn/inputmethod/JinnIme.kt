@@ -1268,24 +1268,16 @@ class JinnIme : InputMethodService() {
     /** 复制选中文字到系统剪贴板（保持选区与拖选模式） */
     private fun copySelection() {
         val connection = currentInputConnection ?: return
-        // 与 moveCursor/extendSelection 同一套坐标：currentSelectionRange 已把
-        // 「绝对下标 vs 窗口文本」的错位挡在外面（端点不在窗口内时返回 null）。
-        // 旧实现只做 coerceIn 钳位，窗口化时会把绝对下标当窗口下标用，
-        // 复制到与选区无关的内容（静默错误）或截出半截选区。
-        val range = currentSelectionRange(connection) ?: return
-        if (range.end <= range.start) {
+        // 选区来源与翻译链路同源：currentSelectionRange 主路径 + getSelectedText 兜底。
+        // 只读 currentSelectionRange 时，WebView 类宿主（Via / 系统浏览器内核的搜索框）
+        // 对它恒返回 null ⇒ 有选区也复制不到，与「同一选区能翻译」形成不对称。
+        // 三态：null = 读不到/越界，"" = 无选中；两者一律早退。
+        // ⚠ 空串也必须早退：写空串进剪贴板会清空用户剪贴板，比不复制更糟。
+        val sel = readSelectedText(connection)
+        if (sel.isNullOrEmpty()) {
             Diagnostics.w(TAG, "复制: 无选中文字")
             return
         }
-        // 两个端点都已由 currentSelectionRange 校验过「在窗口内」，这里仍按可空处理，
-        // 防御两次读取之间窗口发生变化（null 即放弃本次操作）。
-        val from = TextSelection.toWindowOffset(range.start, range.startOffset, range.textLength)
-        val to = TextSelection.toWindowOffset(range.end, range.startOffset, range.textLength)
-        if (from == null || to == null || to <= from) {
-            Diagnostics.w(TAG, "复制: 选区不在当前文本窗口内，跳过")
-            return
-        }
-        val sel = range.text.substring(from, to)
         // 与粘贴链路同款的单条上限闸（2026-10-02 修复 L-406）：这是全仓**唯一**写系统剪贴板的
         // 地方，此前既无尺寸闸也无兜底 —— 选中整篇长文时 `setPrimaryClip` 会把整段塞进 Binder
         // 事务（宿主与监听器还要各读一遍），超限即抛异常、直接崩 IME 进程。

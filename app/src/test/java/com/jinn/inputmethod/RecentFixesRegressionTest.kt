@@ -2186,6 +2186,39 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 复制必须与翻译同源取选区：`currentSelectionRange` 只走 `getExtractedText`，
+     * 而 WebView 类宿主（Via / 系统浏览器内核的搜索框）对它恒返回 null ⇒ 有选区也复制不到。
+     * 同一选区能翻译、不能复制，是用户可感知的功能失败。
+     * 空串也必须早退：写空串进系统剪贴板会清空用户剪贴板，比不复制更糟。
+     */
+    @Test
+    fun `复制必须带 getSelectedText 兜底且空选区早退`() {
+        val src = codeOf("JinnIme.kt")
+        val body = blockAfter(src, "private fun copySelection()")
+        assertTrue(
+            "复制必须经 readSelectedText 取选区（range 主路径 + WebView 兜底）",
+            "readSelectedText(connection)" in body,
+        )
+        assertTrue(
+            "不得退回 currentSelectionRange 单一来源（WebView 宿主读不到）",
+            "currentSelectionRange(connection) ?: return" !in body,
+        )
+        assertTrue(
+            "copySelection 内不得再直读 getExtractedText（绕过兜底）",
+            "getExtractedText(" !in body,
+        )
+        assertTrue(
+            "空选区/读不到必须早退：写空串进剪贴板会清空用户剪贴板",
+            "sel.isNullOrEmpty()" in body,
+        )
+        val reader = blockAfter(src, "private fun readSelectedText(")
+        assertTrue(
+            "readSelectedText 必须保留 getSelectedText 兜底",
+            "getSelectedText(0)" in reader,
+        )
+    }
+
     @Test
     fun `翻译的选区判据必须带 getSelectedText 兜底`() {
         val src = codeOf("JinnIme.kt")
