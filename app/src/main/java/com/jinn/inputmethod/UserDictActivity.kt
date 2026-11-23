@@ -848,35 +848,41 @@ class UserDictActivity : ComponentActivity() {
      * 而 SAF 的流只能顺序读一次；同时这一步顺手挡住了误选的巨型文件。
      */
     private fun previewImport(uri: Uri) {
-        io.execute {
-            val staged = stageImport(uri)
-            if (staged == null) {
-                uiToast(TEXT_IMPORT_FAIL)
-                return@execute
-            }
-            if (UserDictExport.looksEncrypted(UserDictExport.readHead(staged))) {
-                // 加密包：先问密码（在 UI 线程），暂存件留到解密完再删
-                runOnUiThread {
-                    if (!alive()) {
-                        dropStaged(staged)
-                        return@runOnUiThread
-                    }
-                    askImportPassword(staged)
+        // 与同页其余四处同口径：池在 onDestroy 已关时提交会抛 RejectedExecutionException，
+        // 这里由 SAF 回调在主线程触发 ⇒ 不包就是未捕获异常终止进程（BUG.md L-1422）
+        runCatching {
+            io.execute {
+                val staged = stageImport(uri)
+                if (staged == null) {
+                    uiToast(TEXT_IMPORT_FAIL)
+                    return@execute
                 }
-                return@execute
+                if (UserDictExport.looksEncrypted(UserDictExport.readHead(staged))) {
+                    // 加密包：先问密码（在 UI 线程），暂存件留到解密完再删
+                    runOnUiThread {
+                        if (!alive()) {
+                            dropStaged(staged)
+                            return@runOnUiThread
+                        }
+                        askImportPassword(staged)
+                    }
+                    return@execute
+                }
+                val read = readCapped(staged)
+                dropStaged(staged)
+                if (read == null) {
+                    uiToast(TEXT_IMPORT_FAIL)
+                    return@execute
+                }
+                val picked = SelectionLedger.parseImport(read.text)
+                if (picked.isEmpty()) {
+                    uiToast(TEXT_IMPORT_EMPTY)
+                    return@execute
+                }
+                showImportPreview(picked, read.truncated)
             }
-            val read = readCapped(staged)
-            dropStaged(staged)
-            if (read == null) {
-                uiToast(TEXT_IMPORT_FAIL)
-                return@execute
-            }
-            val picked = SelectionLedger.parseImport(read.text)
-            if (picked.isEmpty()) {
-                uiToast(TEXT_IMPORT_EMPTY)
-                return@execute
-            }
-            showImportPreview(picked, read.truncated)
+        }.onFailure {
+            Diagnostics.w(TAG_NAME, "导入预览提交失败（页面已销毁）: ${it.javaClass.simpleName}")
         }
     }
 
@@ -931,36 +937,43 @@ class UserDictActivity : ComponentActivity() {
      * `String` 无法擦除，只会在堆里留到 GC，而这里已经有三份副本。
      */
     private fun decryptImport(staged: File, password: CharArray) {
-        io.execute {
-            val zip = File(staged.parentFile, staged.name + ".zip")
-            UserDictExport.markInFlight(zip)
-            val decrypted = try {
-                ConfigCrypto.decrypt(staged, zip, password)
-            } finally {
-                password.fill('\u0000')
-            }
-            clearStaged()
-            if (!decrypted) {
+        // 同 previewImport：主线程回调里提交，池已关时不得抛未捕获异常（BUG.md L-1422）
+        runCatching {
+            io.execute {
+                val zip = File(staged.parentFile, staged.name + ".zip")
+                UserDictExport.markInFlight(zip)
+                val decrypted = try {
+                    ConfigCrypto.decrypt(staged, zip, password)
+                } finally {
+                    password.fill('\u0000')
+                }
+                clearStaged()
+                if (!decrypted) {
+                    zip.delete()
+                    UserDictExport.release(zip)
+                    uiToast(TEXT_IMPORT_DECRYPT_FAIL)
+                    return@execute
+                }
+                val entry = UserDictExport.readSingleEntry(zip)
                 zip.delete()
                 UserDictExport.release(zip)
-                uiToast(TEXT_IMPORT_DECRYPT_FAIL)
-                return@execute
+                if (entry == null) {
+                    // 解开了但没有词表条目：多半是把「配置文件」备份包选进来了
+                    Diagnostics.w(TAG_NAME, "导入: 加密包里没有词表条目")
+                    uiToast(TEXT_IMPORT_NOT_PACKAGE)
+                    return@execute
+                }
+                val picked = SelectionLedger.parseImport(entry.second)
+                if (picked.isEmpty()) {
+                    uiToast(TEXT_IMPORT_EMPTY)
+                    return@execute
+                }
+                showImportPreview(picked, false)
             }
-            val entry = UserDictExport.readSingleEntry(zip)
-            zip.delete()
-            UserDictExport.release(zip)
-            if (entry == null) {
-                // 解开了但没有词表条目：多半是把「配置文件」备份包选进来了
-                Diagnostics.w(TAG_NAME, "导入: 加密包里没有词表条目")
-                uiToast(TEXT_IMPORT_NOT_PACKAGE)
-                return@execute
-            }
-            val picked = SelectionLedger.parseImport(entry.second)
-            if (picked.isEmpty()) {
-                uiToast(TEXT_IMPORT_EMPTY)
-                return@execute
-            }
-            showImportPreview(picked, false)
+        }.onFailure {
+            // 提交被拒时密码还没被任务体擦除，这里补一次，避免留在堆里等 GC
+            password.fill('\u0000')
+            Diagnostics.w(TAG_NAME, "解密导入提交失败（页面已销毁）: ${it.javaClass.simpleName}")
         }
     }
 
@@ -975,18 +988,23 @@ class UserDictActivity : ComponentActivity() {
                     .setMessage(String.format(Locale.US, TEXT_IMPORT_PREVIEW, picked.size, words))
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(android.R.string.ok) { _, _ ->
-                        io.execute {
-                            // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
-                            val queued = SelectionLedger.appendAll(picked)
-                            val flushed = SelectionLedger.flush()
-                            uiToast(
-                                when {
-                                    !queued -> TEXT_IMPORT_NOT_ENABLED
-                                    !flushed -> String.format(Locale.US, TEXT_IMPORT_PENDING, picked.size)
-                                    else -> String.format(Locale.US, TEXT_IMPORT_OK, picked.size)
-                                },
-                            )
-                            loadAsync()
+                        // 同上：对话框回调在主线程，池已关时不得抛未捕获异常（BUG.md L-1422）
+                        runCatching {
+                            io.execute {
+                                // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
+                                val queued = SelectionLedger.appendAll(picked)
+                                val flushed = SelectionLedger.flush()
+                                uiToast(
+                                    when {
+                                        !queued -> TEXT_IMPORT_NOT_ENABLED
+                                        !flushed -> String.format(Locale.US, TEXT_IMPORT_PENDING, picked.size)
+                                        else -> String.format(Locale.US, TEXT_IMPORT_OK, picked.size)
+                                    },
+                                )
+                                loadAsync()
+                            }
+                        }.onFailure {
+                            Diagnostics.w(TAG_NAME, "导入确认提交失败（页面已销毁）: ${it.javaClass.simpleName}")
                         }
                     }
                     .show(),

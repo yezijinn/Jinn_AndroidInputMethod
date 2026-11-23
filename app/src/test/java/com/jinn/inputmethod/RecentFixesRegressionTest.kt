@@ -8940,4 +8940,21 @@ class RecentFixesRegressionTest {
         assertTrue("要留可检索的 W", "超过单次读取上限" in body)
     }
 
+    /**
+     * 用户词库页的池提交必须全部包 `runCatching`（BUG.md L-1422）。
+     *
+     * 该页三处 SAF / 对话框回调在主线程触发，而 `io` 池在 `onDestroy` 就 `shutdownNow()`：
+     * 靠后的回调提交会抛 `RejectedExecutionException`，未捕获即终止进程。
+     * 同页其余四处早已包住，仅这三处裸奔 ⇒ 用「方法体顶层不得出现 io.execute」钉住。
+     *
+     * ⚠ 不能用「io.execute 出现次数」计数：包住之后它仍在（缩进更深），计数照样通过。
+     */
+    @Test
+    fun 用户词库页的池提交必须包住() {
+        val src = TestSources.codeSource("UserDictActivity.kt")
+        val bare = Regex("""(?m)^ {8}io\.execute \{""").findAll(src).count()
+        assertEquals("方法体顶层不得出现裸 io.execute（应缩进在 runCatching 内）", 0, bare)
+        assertTrue("池提交仍应存在（防止整段被删）", "io.execute {" in src)
+    }
+
 }
