@@ -7699,11 +7699,38 @@ class RecentFixesRegressionTest {
             "runOnUiThread { EXPORTING.set(false) }" in body,
         )
 
-        // ③ 用户取消选目录必须还标记（否则本进程再也导不出）
+        // ③ 选目录回调的每条离开路径都必须还标记（否则本进程再也导不出）。
+        // 取消分支只钉「有 set(false)」会漏掉 !granted / 成功分支：那两条同样从
+        // exportAllImages 的占位段进来，不还位 CAS 永远抢不到（首次导出必失败）。
         val launcher = TestSources.blockAfter(src, "private val exportDirLauncher")
+        assertEquals(
+            "选目录回调必须有三处还标记：取消 / 未取得写授权 / 交给 startExport 之前",
+            3,
+            launcher.split("EXPORTING.set(false)").size - 1,
+        )
+        val noGrant = TestSources.window(
+            launcher,
+            "if (!granted)",
+            "return@registerForActivityResult",
+        )
         assertTrue(
-            "取消选目录必须还回标记",
-            "if (uri == null)" in launcher && "EXPORTING.set(false)" in launcher,
+            "未取得写授权必须还回标记（同一占位段，否则永久卡死）",
+            "EXPORTING.set(false)" in noGrant,
+        )
+        val okTail = TestSources.window(
+            launcher,
+            "Prefs(this).clipExportTreeUri = uri.toString()",
+            "startExport(uri)",
+        )
+        assertTrue(
+            "成功分支必须在 startExport 之前还位：CAS 见 true 会直接放弃，一张都导不出去",
+            "EXPORTING.set(false)" in okTail,
+        )
+        // ④ 选择器本身启动失败（无文件选择器）也要还位
+        val picker = TestSources.blockAfter(src, "private fun pickExportDir()")
+        assertTrue(
+            "选择器启动失败必须还回标记",
+            "EXPORTING.set(false)" in picker,
         )
     }
 

@@ -119,9 +119,14 @@ class ClipboardHistoryActivity : ComponentActivity() {
             // 不记 uri 本身（目录路径会随诊断包外带，L-1036），只记提供方
             Diagnostics.w(TAG, "导出目录未取得写授权 provider=${uri.authority}")
             message(TEXT_IMAGE_EXPORT_DIR_READONLY)
+            // 还回 exportAllImages 置的位：否则本进程再也导不出（标记停在 true）
+            EXPORTING.set(false)
             return@registerForActivityResult
         }
         Prefs(this).clipExportTreeUri = uri.toString()
+        // 选目录期的占位到此为止，真正互斥交给 startExport 的 CAS 重新抢占。
+        // 不还的话 CAS 见 true 直接放弃，一张都导不出去；三步同在回调主线程同步执行，无重入窗口。
+        EXPORTING.set(false)
         startExport(uri)
     }
 
@@ -1433,8 +1438,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val remembered = Prefs(this).clipExportTreeUri
         val uri = if (remembered.isEmpty()) null else runCatching { Uri.parse(remembered) }.getOrNull()
         if (uri == null || uri.scheme.isNullOrEmpty()) {
-            // 置位后再弹选择器：用户选目录期间不算「导出中」，但旋转/重新进入不能让人
-            // 再点一次就起两趟。startExport 里的 CAS 会认这个已置位的标记。
+            // 置位后再弹选择器：选目录期间挡住第二次点击（旋转/重进不会起两趟）。
+            // 这是**选目录期占位**，不是导出互斥：回调拿到结果或失败时会先还位，
+            // 再由 startExport 的 CAS 重新抢占（置位后不还，CAS 永远抢不到）。
             EXPORTING.set(true)
             pickExportDir()
             return
@@ -1447,6 +1453,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
         runCatching { exportDirLauncher.launch(null) }.onFailure {
             Diagnostics.w(TAG, "导出目录选择器不可用: ${it.javaClass.simpleName}")
             message(TEXT_IMAGE_EXPORT_NO_PICKER)
+            // 从 exportAllImages 进来时标记已置位；不还则永久卡死（另两处调用时已是 false，幂等）
+            EXPORTING.set(false)
         }
     }
 
@@ -1458,10 +1466,10 @@ class ClipboardHistoryActivity : ComponentActivity() {
      * 「图片都坏了」。第一张就写不进 ⇒ 中止、清掉记住的目录、请用户重选 —— 此时一个文件都没写进去。
      */
     private fun startExport(treeUri: Uri) {
-        // ⚠ 互斥必须放在**这里**，不能只放在 exportAllImages：无记忆目录时那条路径会
-        // `EXPORTING.set(false)` 再弹系统选择器（等待选目录不算「导出中」是对的），
-        // 而用户选完目录是由 launcher 回调直接进本函数的 —— 那条路径从来没置过位，
-        // 整个导出期间标记都是 false ⇒ 旋转后新实例再点一次就能并发起第二趟
+        // ⚠ 互斥必须放在**这里**，不能只放在 exportAllImages：无记忆目录时那条路径只做
+        // 「选目录期占位」，回调拿到目录后先还位再进本函数，整个导出期间的真互斥由这里的 CAS 负责。
+        // 若只靠前置占位、不还位，CAS 永远抢不到；若只靠前置占位、这里不 CAS，
+        // 旋转后新实例再点一次就能并发起第二趟
         // （同名文件被 SAF 改名成重复件、两个进度框、先完成者把 exportDlg 置 null）。
         if (!EXPORTING.compareAndSet(false, true)) {
             message(TEXT_IMAGE_EXPORTING)
