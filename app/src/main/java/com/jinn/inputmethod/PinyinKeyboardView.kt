@@ -5927,6 +5927,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     fun showSearchPanel() {
         // 动作排与面板互斥（2026-10-09）：搜索面板改的是键盘高度与 26 键路由，候选栏不能停在动作排
         resetActionPanel()
+        // 与剪贴板面板互斥（BUG.md L-1419）：剪贴板面板占着字母区，且它自己打开搜索时会先收自己；
+        // 这里补同款纵向闸，第二个入口进来也不会「搜索框 + 历史列表」同屏、
+        // 让底栏按键路由到搜索框而画面还停在列表上。
+        if (clipboardActive) hideClipboardPanel()
         // 到这里才建面板（MEM-05）：搜索面板是三个里最轻的，但同样不必为从不用它的用户常驻
         val panel = ensureSearchPanel()
         if (panel.isActive()) return

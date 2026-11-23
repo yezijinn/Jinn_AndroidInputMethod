@@ -590,6 +590,23 @@ class RecentFixesRegressionTest {
         )
     }
 
+    /**
+     * 搜索面板必须收起剪贴板面板（BUG.md L-1419）。
+     *
+     * 两者都占字母区，且底栏按键在 `isPanelSearch()` 时路由进搜索框：同屏会变成
+     * 「看着历史列表、按键却打进搜索框」。剪贴板面板自己打开搜索时会先收自己（`onSearch`），
+     * 但那只保证「当前唯一入口」；这里钉的是面板自身的纵向闸，第二个入口进来也不会同屏。
+     */
+    @Test
+    fun `搜索面板必须收起剪贴板面板`() {
+        val body = blockAfter(codeOf("PinyinKeyboardView.kt"), "fun showSearchPanel()")
+        assertTrue(
+            "showSearchPanel 必须 `if (clipboardActive) hideClipboardPanel()`：" +
+                "搜索框与剪贴板列表同屏时，按键作用对象与画面不一致",
+            body.contains("if (clipboardActive) hideClipboardPanel()"),
+        )
+    }
+
     @Test
     fun `换肤延后判据必须覆盖方向面板`() {
         val text = codeOf("PinyinKeyboardView.kt")
