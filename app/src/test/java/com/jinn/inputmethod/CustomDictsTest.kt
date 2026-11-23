@@ -164,6 +164,11 @@ class CustomDictsTest {
         assertFalse("键是小写字母连写", CustomDicts.validateRawPack("ZhangSan\t张三\n"))
         assertFalse("键长须与 PhraseIndex.build 的 255B 闸同源", CustomDicts.validateRawPack("a".repeat(256) + "\t词\n"))
         assertTrue("恰好 255 字符合法", CustomDicts.validateRawPack("a".repeat(255) + "\t词\n"))
+        // 备份侧与本地写入侧同口径（BUG.md L-838）：词内 TAB 会破坏 raw 字段边界、
+        // 其余控制字符会进候选文本；本地 parseHuman 已挡，导入侧不得放宽。
+        assertFalse("词内 TAB 必须拒收", CustomDicts.validateRawPack("zhangsan\t张三\t李四\n"))
+        assertFalse("词内控制字符必须拒收", CustomDicts.validateRawPack("zhangsan\t张\u0000三\n"))
+        assertTrue("正常多词同键仍合法", CustomDicts.validateRawPack("zhangsan\t张三|李四\n"))
     }
 
     @Test
@@ -196,6 +201,12 @@ class CustomDictsTest {
         assertTrue("本应用产出的包必须被备份导入侧认下", CustomDicts.isValidPackFile(good))
         val bad = File(tmp, "bad.txt.xz").apply { writeBytes(ByteArray(64) { (it * 7).toByte() }) }
         assertFalse("解不开或不符 raw 形态的内容绝不能落盘（引擎会全量解压它）", CustomDicts.isValidPackFile(bad))
+        // 能解开但词内含控制字符：与本地写入侧同口径拒收（BUG.md L-838）。
+        // 走真实 xz 编码，覆盖 isValidPackFile 的完整入口（不是只测纯函数）。
+        val tabbed = File(tmp, "tabbed.txt.xz").apply {
+            writeBytes(CustomDicts.encodePack(listOf(CustomDicts.Entry("张三\t李四", "zhang san"))))
+        }
+        assertFalse("词内 TAB 会破坏 raw 字段边界，导入侧必须拒收", CustomDicts.isValidPackFile(tabbed))
     }
 
     @Test

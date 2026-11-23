@@ -409,7 +409,11 @@ internal object CustomDicts {
             prevKey = key
             val words = line.substring(tab + 1).split('|')
             if (words.isEmpty() || words.size > MAX_WORDS_PER_KEY) return false
-            if (words.any { it.isEmpty() || it.length > MAX_TEXT_CHARS }) return false
+            // 词内控制字符与本地写入侧同口径（BUG.md L-829 / L-838）：TAB 会破坏 raw 的
+            // 「键\t词|词」字段边界（再次解析时被当成分隔符），其余控制字符会进候选文本。
+            if (words.any { it.isEmpty() || it.length > MAX_TEXT_CHARS || it.any { c -> c.isISOControl() } }) {
+                return false
+            }
         }
         return keys > 0
     }
