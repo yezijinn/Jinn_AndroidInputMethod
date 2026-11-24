@@ -3348,6 +3348,28 @@ class RecentFixesRegressionTest {
             "失败回执必须在 onResume 写进状态行并清空",
             "pendingDictFailure?.let" in dict && "pendingDictFailure = null" in dict && "setStatus(msg)" in dict,
         )
+        // 自定义词库导入必须与下载同范式：完成时页面不在前台（已关闭 / 仅切后台）时，
+        // 同样不能动 View、也不能杀进程；成功置 pendingDictRestart、失败置 pendingDictFailure。
+        // 必须切到 onCustomImportResult 的函数体再断言 —— 整文件里 download() 有同名字面量，
+        // 不切段会被它假满足（同 L-1433 的教训）。
+        val importFn = blockAfter(dict, "private fun onCustomImportResult(")
+        val importUi = blockAfter(importFn, "runOnUiThread {")
+        assertTrue(
+            "导入离页：判据须用 activePage，成功补重启、失败补回执",
+            "activePage?.get()" in importUi &&
+                "page == null || page.isFinishing || page.isDestroyed" in importUi &&
+                "pendingDictRestart = true" in importUi &&
+                "pendingDictFailure = status" in importUi &&
+                importUi.indexOf("return@runOnUiThread") > importUi.indexOf("pendingDictRestart = true") &&
+                importUi.indexOf("return@runOnUiThread") > importUi.indexOf("pendingDictFailure = status"),
+        )
+        assertTrue(
+            "导入后台完成必须先复位 importingCustom（否则回页按钮永久置灰）",
+            // 先判存在再判顺序：只判 indexOf 时，整行被删会让 indexOf 返回 -1，
+            // 而 -1 < n 恒真 ⇒ 守卫反而静默变绿（本轮突验证实）。
+            "importingCustom = false" in importUi &&
+                importUi.indexOf("importingCustom = false") < importUi.indexOf("return@runOnUiThread"),
+        )
         // L-548：下载链路必须有整体预算（否则「开始回包后极慢吐字节」可把线程拖到理论无限）
         assertTrue(
             "L-548：词库下载必须设 callTimeout",

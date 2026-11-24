@@ -346,11 +346,25 @@ class DictManagerActivity : Activity() {
                 if (t is CustomDicts.TooLargeException) TEXT_CUSTOM_TOO_BIG else TEXT_CUSTOM_READ_FAIL
             }
             runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
+                // 先复位：任何分支都必须恢复按钮。留在早退之后的话，仅切后台完成时
+                // 回页仍是「正在导入」的禁用态，且不排重启、不杀进程 ⇒ 按钮永久置灰。
                 importingCustom = false
-                setStatus(status)
-                refreshList()
-                if (restart) restartImeForDict()
+                val page = activePage?.get()
+                if (page == null || page.isFinishing || page.isDestroyed) {
+                    // 与下载侧同范式（L-547）：页面不在前台时不动 View，也不自杀进程 ——
+                    // 本进程同时承载键盘、在途翻译与未提交 composing，用户可能正在别处用
+                    // 本输入法打字，此刻强杀会把这些一起带走。词库已落盘：成功置标记等
+                    // 回页补重启，失败把回执也留到回页（pendingDictFailure）。
+                    if (restart) pendingDictRestart = true else pendingDictFailure = status
+                    return@runOnUiThread
+                }
+                // 只把「刷界面」兜住（L-800/L-812）：refreshList 在主线程做文件 IO，
+                // 一次异常不该崩掉整个 IME；生效动作必须留在 try 外，否则会被刷新异常吃掉。
+                runCatching {
+                    page.setStatus(status)
+                    page.refreshList()
+                }.onFailure { Diagnostics.w(TAG, "自定义词库导入完成刷新界面失败: ${it.javaClass.simpleName}") }
+                if (restart) page.restartImeForDict()
             }
         }.apply { isDaemon = true; name = "jinn-dict-import" }.start()
     }
