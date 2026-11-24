@@ -175,4 +175,19 @@ class InputFieldPrivacyTest {
         assertFalse(InputFieldPrivacy.blocksTranslation(text(flags = EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE)))
         assertFalse(InputFieldPrivacy.blocksTranslation(null))
     }
+
+    /**
+     * 数字 / 日期框拒绝译文；电话框**不在拦截范围**（宿主 filter 可能放行，IME 无法预知）。
+     * 这条判据此前无测试，KDoc 还把 DATETIME 写成 0x03（真值 0x04，0x03 是 PHONE）。
+     */
+    @Test
+    fun 只有数字与日期类输入框拒绝译文() {
+        assertTrue(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_CLASS_NUMBER))
+        assertTrue(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_CLASS_DATETIME))
+        assertTrue(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_CLASS_NUMBER or EditorInfo.TYPE_NUMBER_FLAG_DECIMAL))
+        assertFalse(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_CLASS_PHONE))
+        assertFalse(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_CLASS_TEXT))
+        assertFalse(InputFieldPrivacy.rejectsTranslationText(EditorInfo.TYPE_NULL))
+        assertFalse(InputFieldPrivacy.rejectsTranslationText(null))
+    }
 }

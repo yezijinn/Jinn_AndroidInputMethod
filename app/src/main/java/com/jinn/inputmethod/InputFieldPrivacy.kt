@@ -81,9 +81,11 @@ object InputFieldPrivacy {
      * 「数字框的 `DigitsKeyListener` 是最常见的一种」（L-456 / L-567），但闸门在**提交之后**，
      * 于是变成「先付费、再校验、最后只得到一句『提交后未在输入框找到译文尾部』」。
      *
-     * 判据只看**类位**：[EditorInfo.TYPE_CLASS_NUMBER] = 0x02、[EditorInfo.TYPE_CLASS_DATETIME] = 0x03。
+     * 判据只看**类位**：[EditorInfo.TYPE_CLASS_NUMBER] = 0x02、[EditorInfo.TYPE_CLASS_DATETIME] = 0x04。
+     * 电话是独立类位 `TYPE_CLASS_PHONE` = 0x03，**不在其中**：电话框的宿主 filter 可能放行文本
+     * （带搜索的拨号盘），IME 无法从 inputType 预知，宁可让它落到提交后的落地复核。
      * 变位（`TYPE_NUMBER_VARIATION_PASSWORD` 等）已由 [isPasswordField] 先行拦掉 ⇒ 到这里的
-     * 「数字 / 日期」变体都是普通数值、日期、金额、电话。
+     * 「数字 / 日期」变体都是普通数值、日期、金额。
      * `TYPE_NULL`（0x00）与 `TYPE_CLASS_TEXT`（0x01）不在其中 ⇒ 浏览器与普通文本框不受影响。
      */
     fun rejectsTranslationText(inputType: Int?): Boolean {
