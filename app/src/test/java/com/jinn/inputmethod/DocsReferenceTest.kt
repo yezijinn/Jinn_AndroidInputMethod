@@ -161,6 +161,26 @@ class DocsReferenceTest {
     }
 
     /**
+     * 索引里标了「需拍板」的条目必须出现在 `0.3` 待办视图的对应分组。
+     *
+     * 反向（分组引用 ⊆ 在册）已有守卫；正向一直没人查 —— 2026-11-25 实测 L-1459 / L-1517
+     * 索引状态含「需拍板」却不在分组里，需要作者拍板的事项在待办视图上完全看不见。
+     */
+    @Test
+    fun 需拍板条目必须出现在待办视图() {
+        val entry = ledger()
+        val index = ledgerPartFiles()["index"] ?: error("索引分册缺失")
+        // 索引行：| L-1459 | 低 | 兼容 | 真实缺陷（未修 · 需拍板） | low | … |
+        val need = Regex("""(?m)^\| (L-\d+) \|[^\n]*需拍板""").findAll(index)
+            .map { it.groupValues[1] }.toSet()
+        val group = Regex("""(?m)^- \*\*需人拍板\*\*（(\d+) 条）：(.+)$""").find(entry)
+            ?: error("找不到 0.3 的需人拍板分组")
+        val listed = Regex("""L-\d+""").findAll(group.groupValues[2]).map { it.value }.toSet()
+        assertEquals("需人拍板分组标题条数与实列编号数不一致", group.groupValues[1].toInt(), listed.size)
+        assertEquals("索引标为需拍板但未列入待办视图", emptySet<String>(), need - listed)
+    }
+
+    /**
      * 行首锚定地找节标题（`(?m)^…`）—— 台账 L-137。
      *
      * 为什么不能 `substringAfter("## 4. 已排除")`：台账**正文也会引用节名**（例如条目解释「块被放到了哪一节」），
