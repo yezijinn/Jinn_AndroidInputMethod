@@ -5108,8 +5108,9 @@ class JinnIme : InputMethodService() {
         // **不会**回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
         // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
         runCatching {
-            // ���������ȡ����2026-10-03 �޸� L-494�����꽂�߽磨onFinishInput / onStartInput /
-            // ������� / ��ת�������ߵ� finishTranslate���������;����� cancel()
+            // 存下请求句柄（2026-10-03 修复 L-494）：四条入口收尾
+            // 看门狗超时/回调到达/发起失败/会话边界(cancelTranslate)
+            // 统一走 finishTranslate：撤看门狗、递增代际、cancel() 旧请求
             translateCall = TranslationClient.translate(
                 provider,
                 slice.text,
