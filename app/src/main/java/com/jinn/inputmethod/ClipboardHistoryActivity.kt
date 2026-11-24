@@ -1102,6 +1102,11 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val stripMode = favMode || (category == null && imageInAll)
                 favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
                 if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
+                else {
+                    // 同面板侧：离开条带分类要作废在途加载，否则陈旧 onDataChanged 会把
+                    // 刚隐掉的条带翻回 VISIBLE（onDataChanged 读回调时刻的 categoryFilter）。
+                    favImageGrid.stopWork()
+                }
                 // 页号先钳进有效范围，再刷新适配器（BUG.md L-1323）：条目变少（删除 / 裁剪 / 换筛选）
                 // 后若正好停在越界页，刷新那一刻 `pageItems()` 取到空页 ⇒ `AbsListView` 记住
                 // `getCount() == 0`，之后再改页号没人重新取数 ⇒ 整页空白而分页行显示 1/1

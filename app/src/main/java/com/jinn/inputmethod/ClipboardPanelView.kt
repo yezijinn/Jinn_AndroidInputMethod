@@ -657,6 +657,11 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (stripMode) {
             // 收藏分组取「收藏的图片」，全部分组取全部图片；文本列表走 refresh（各自取数、互不干扰）
             imageGrid.show(currentTraceId, favoritesOnly = favMode)
+        } else {
+            // 离开网格分类必须作废在途加载：onDataChanged 读的是**回调时刻**的 currentCategory，
+            // 切到「全部」（偏好关）时它命中 null 守卫，会把刚隐掉的条带又翻回 VISIBLE。
+            // stopWork 只升代际 + 放开 loading，不清共享缓存（L-1262）。
+            imageGrid.stopWork()
         }
         refresh(resetScroll = true, refreshFavStrip = false)
     }

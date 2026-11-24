@@ -426,6 +426,28 @@ class ClipboardImageTest {
         // BUG.md L-1260：写操作后重取条带（判据不再借用「是否重置页码」）
         assertTrue("条带写操作后重取", "if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)" in
             TestSources.codeSource("ClipboardHistoryActivity.kt"))
+        // 离开条带分类必须作废在途网格加载：onDataChanged 读的是**回调时刻**的分类字段，
+        // 切到「全部」（偏好关）时命中 null 守卫，会把刚隐掉的条带又翻回 VISIBLE。
+        // stopWork 只升代际 + 放开 loading，不清共享缓存（L-1262）。
+        val panelCode = TestSources.codeSource("ClipboardPanelView.kt")
+        val selectBody = TestSources.blockAfter(panelCode, "private fun selectCategory(category: String?)")
+        val panelStrip = TestSources.window(selectBody, "if (stripMode)", "refresh(resetScroll = true")
+        assertTrue(
+            "面板离开条带分类要作废在途网格加载",
+            "imageGrid.stopWork()" in panelStrip,
+        )
+        assertTrue("面板条带分支仍要正常 show", "imageGrid.show(" in panelStrip)
+        val histCode = TestSources.codeSource("ClipboardHistoryActivity.kt")
+        val histStrip = TestSources.window(
+            histCode,
+            "favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE",
+            "clampPageIndex()",
+        )
+        assertTrue(
+            "历史页离开条带分类要作废在途网格加载",
+            "favImageGrid.stopWork()" in histStrip,
+        )
+        assertTrue("历史页条带分支仍要正常 show", "favImageGrid.show(" in histStrip)
         // 「全部」分组的条带由偏好决定（设置项「图片显示在「全部」分组」，默认关）：
         // 关时图片行以序号占位留在列表里，条带不再露面（2026-10-12）
         assertTrue("历史页全部分组条带受偏好控制",
