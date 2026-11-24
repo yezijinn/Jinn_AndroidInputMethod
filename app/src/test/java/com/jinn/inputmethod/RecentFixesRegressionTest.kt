@@ -9104,4 +9104,31 @@ class RecentFixesRegressionTest {
         assertTrue("池提交仍应存在（防止整段被删）", "io.execute {" in src)
     }
 
+    /**
+     * 导入成功必须同步四个即时生效入口（2026-11-25）。
+     *
+     * 备份导入直接写 Prefs，绕过所有页面回调；符号分组的 `symbolGroups` 只在视图构造时读一次，
+     * 漏掉 `onSymbolLayoutChanged` 时点「稍后」仍是旧符号，直到进程重启。
+     * 锚点收口到「设置已落盘」与摘要拼装之间，避免调用被挪进失败分支仍判绿。
+     */
+    @Test
+    fun `导入成功分支必须同步四个即时生效入口`() {
+        val body = TestSources.blockAfter(
+            TestSources.codeSource("SettingsActivity.kt"),
+            "private fun doImportConfig",
+        )
+        // 顺序断言兼作分支判据：失败分支（r == null）在 syncImmediateSettings 之前 return，
+        // 任一入口被挪进失败分支都会打破「sync → 外观 → 主题 → 符号」的先后。
+        val markers = listOf(
+            "syncImmediateSettings()",
+            "JinnIme.onKeyAppearanceChanged()",
+            "JinnIme.notifyThemeChanged()",
+            "JinnIme.onSymbolLayoutChanged()",
+        )
+        val idx = markers.map { body.indexOf(it) }
+        markers.forEachIndexed { i, marker -> assertTrue("导入成功分支缺少即时生效入口 $marker", idx[i] >= 0) }
+        assertEquals("四个入口必须按 sync → 外观 → 主题 → 符号 的顺序出现", idx.sorted(), idx)
+        assertTrue("符号同步必须早于摘要拼装（防止被挪出成功分支）", idx[3] < body.indexOf("val parts = ArrayList<String>()"))
+    }
+
 }

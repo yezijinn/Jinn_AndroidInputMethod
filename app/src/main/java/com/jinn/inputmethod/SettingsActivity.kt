@@ -1499,6 +1499,9 @@ class SettingsActivity : ComponentActivity() {
                 // 要等下一次弹键盘才自愈。两个入口自身都做了「实例不在就当无事」与幂等处理
                 JinnIme.onKeyAppearanceChanged()
                 JinnIme.notifyThemeChanged()
+                JinnIme.onSymbolLayoutChanged()
+                // 符号分组顺序 / 收藏 / 禁用分组同样是导入直写的键，而键盘视图的 symbolGroups
+                // 只在构造时读一次；不补这一下，点「稍后」看到的还是旧符号。
                 val parts = ArrayList<String>()
                 if (mode == ConfigBackupManager.ImportMode.RESTORE) parts.add("设置 ${r.prefsApplied} 项")
                 parts.add("词频 ${r.freqBefore}→${r.freqAfter} 条")
