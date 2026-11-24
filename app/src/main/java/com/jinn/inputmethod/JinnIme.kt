@@ -54,7 +54,6 @@ class JinnIme : InputMethodService() {
 
     private val ui = Handler(Looper.getMainLooper())
 
-    /** 可选词库包是否已触发加载（三种空闲信号只生效一次） */
 
 
     /** 息屏接收器：锁屏即视为空闲，可安全做 21~34s 的后台重活 */
@@ -404,13 +403,6 @@ class JinnIme : InputMethodService() {
      */
     private var translateCall: okhttp3.Call? = null
 
-    /**
-     * 本次请求的**上下文**：起始时刻 / Provider 名 / 动作 / 目标语言 / 关联 ID
-     * （2026-10-03 修复 L-615 + L-617；动作维度 2026-10-09 补）。
-     *
-     * 都只为日志服务：看门狗触发时要说清「哪一家、什么动作、卡了多久、第几次」，而「翻译失败」
-     * 这类一句话报告需要一个能把「发起 → 响应 → 提交/拒绝」串起来的 ID —— 此前诊断包里只能靠时间戳猜。
-     */
     /**
      * 翻译的时间窗统一用单调时钟（毫秒）。
      *
@@ -915,9 +907,10 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 清空拖选状态（IME 侧 + 同步键盘侧），供「会话切换 / 面板关闭 / 面板重开」共用。
+     * 清空拖选状态（IME 侧 + 同步键盘侧）：复位 Anchor/Focus、清期望值、同步键盘侧图标。
      *
- * 三个入口共用一份实现：原先三处各自实现、容易漏改（见 onClipboardStateChanged 的注释）。
+     * 所有退出拖选的路径共用这里：拖选状态机内的无效/失败分支、剪贴板面板与拖选模式关闭回调、
+     * 宿主改动选区、会话边界。状态量分散在 IME 与键盘两侧，漏清任一侧会留下错位选区或错误图标。
      */
     private fun clearSelectionState() {
         selectionActive = false
@@ -927,7 +920,6 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.setSelectionActive(false)
     }
 
-    /** 请求宿主设置选区，并记下这次期望值（供 [onUpdateSelection] 辨认自身动作） */
     /**
      * 请求宿主移动光标 / 选区。
      *
@@ -1155,13 +1147,6 @@ class JinnIme : InputMethodService() {
         return SelectionRange(start, end, text.length, text, startOffset)
     }
 
-    /**
-     * [canAppendTranslation] 的结论。
-     *
-     * 不能只回 Boolean（2026-10-01 修复 L-284）：「有选区」与「宿主答不出有没有选区」是两种要给
-     * **不同提示**的拒绝 —— 前者用户取消选中就好，后者他做什么都没用。合并成一句「请先取消选中的
-     * 内容再翻译」，等于把后者的锅扣在前者头上。
-     */
     /**
      * 「选区已经读过」的标记（2026-10-01 修复 L-325）。
      *
@@ -3395,14 +3380,6 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 切到语音键盘。
-     *
-     * 进入语音前先判断识别服务是否在线，离线就直接拒绝并提示：
-     * 否则用户长按空格进了语音面板才发现连不上，白等一次 WebSocket 握手，
-     * 还会连带触发录音权限检查、录音器初始化等一整套语音链路负担。
-     * 语音是自用功能，宁可在这里提前拦掉，也不让用户进到一个用不了的面板。
-     */
-    /**
      * 按需装配语音组件。只有「语音输入」开关为开时才真正创建。
      *
      * 幂等：已创建则直接返回。开关关闭时本方法不做任何事，
@@ -3505,11 +3482,6 @@ class JinnIme : InputMethodService() {
         applyKeyboardMode()
     }
 
-    /**
-     * 输入会话结束（编辑器失焦/切换到别的输入框）：
-     * 停止候选计算、清理拼音缓冲、取消录音与延时任务，降到最低功耗。
-     * 不关闭 WebSocket（语音输入需要随时可用，且关闭会丢在途结果）。
-     */
     /**
      * 宿主改了光标/选区时（用户点了别处、宿主程序自己改了）让拖选状态失效。
      *
@@ -5268,12 +5240,6 @@ class JinnIme : InputMethodService() {
     )
 
     /**
-     * 提交译文：前导换行 + 译文（原文一个字不动）。
-     *
-     * 提交前四道闸：有选区不提交（`commitText` 在选区上是替换语义）、输入快照逐字校验、
-     * 追加位置必须确认移到位、译文超单条上限拒绝。
-     */
-    /**
      * 把译文提交到输入框。
      *
      * @return **译文是否真的写进去了**（2026-10-03 修复 L-656）。调用方据此决定要不要记去重：
@@ -5552,11 +5518,6 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    /**
-     * 去重指纹与落地复核判据都放在**文件顶层**（[translateRepeatKey] / [commitProbeVerdict]）：
-     * 它们是纯函数，守卫要能直接调用 —— 而 `JinnIme` 是 `InputMethodService`，JVM 单测里
-     * 构造不了（android.jar 的桩构造体直接抛）。
-     */
 
     /**
      * 把光标右移 [offset] 个单元（整行 / 整篇模式要把译文追加到原文区间末尾）。
@@ -5611,17 +5572,6 @@ class JinnIme : InputMethodService() {
         return if (s == null) '\uFFFD' else s.lastOrNull()
     }
 
-    /**
-     * 只读地取「光标前」的文本（**不复制、不写系统剪贴板**）。
-     *
-     * 主路径是 `getTextBeforeCursor`（IME 框架的只读查询，不改内容、不触发宿主回调）；
-     * 宿主不支持时（返回 null）兜底 `getExtractedText` + 窗口下标换算，
-     * 与 [currentSelectionRange] 同一套坐标口径。
-     *
-     * 返回 **null 表示读取失败**（宿主不支持 / 连接失效 / 事务过大），与「光标前确实没有内容」
-     * （空串，光标在文首）严格区分 —— 把前者报成后者会把「宿主读不到」说成「你没写字」
-     * （2026-10-01 修复 L-240）。
-     */
     /**
      * 光标前的文本，外加「它是不是从文首开始的」。
      *
@@ -6160,12 +6110,6 @@ class JinnIme : InputMethodService() {
         /** 原文范围超出读取窗口、末尾位置无法确认（L-213）：丢弃必须说清原因 */
         const val TEXT_TRANSLATE_RANGE_TOO_LONG = "范围过大，未确认原文末尾，未写入结果"
 
-        /**
-         * 宿主不提供选区信息（`getExtractedText` 不可用）：无法确认提交会不会覆盖选中内容。
-         *
-         * 独立文案是硬要求（2026-10-01 复审 L-230）：复用「输入已变化」会把「输入框不支持」
-         * 说成「用户自己的操作」，排障方向整个带偏。
-         */
 
         /** 请求发起时已有选区（2026-10-01 复审 L-236）：选中的正文会随原文上传，且提交必被拒 */
         const val TEXT_TRANSLATE_SELECTION_ACTIVE = "请先取消选中的内容再试"
@@ -6326,12 +6270,6 @@ class JinnIme : InputMethodService() {
         const val TEXT_VOICE_PRIVATE_FIELD = "密码框不录音（避免内容外发）"
 
         /**
-         * 提交后复核发现译文不在输入框里（2026-10-03 修复 L-567）。
-         *
-         * `commitText` 返回 true 只代表调用被接受；宿主的 InputFilter（数字框一类）会把正文整段丢掉
-         * 而不报错。此前只在日志里写「未验落地」，用户端完全静默 —— 本次真计费、译文却一个字没写进去。
-         */
-        /**
          * 落地复核判否时的提示（2026-10-03 修复 L-681 / L-692）。
          *
          * ⚠ 原先写的是「…请手动粘贴」，而判否的**真实语义是「尾部逐字对不上」** —— 除了
@@ -6346,12 +6284,6 @@ class JinnIme : InputMethodService() {
         /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
         const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起"
 
-        /**
-         * 看门狗预算（毫秒）：覆盖最慢一家的整体超时上限（300s）再留 30s 余量（L-217）。
-         *
-         * 不按 Provider 分别取值 —— 早复位晚复位都不影响正确性：真超时的话 OkHttp 会先按
-         * `callTimeout` 结束并走正常失败回调，看门狗只兜「回调根本没到达」那一种。
-         */
         /**
      * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03 修复 L-602）。
      *
