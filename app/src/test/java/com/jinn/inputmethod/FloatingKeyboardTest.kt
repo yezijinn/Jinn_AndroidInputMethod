@@ -243,6 +243,15 @@ class FloatingKeyboardTest {
             "FloatingKeyboardActivity 必须在渲染前清理失效绑定",
             "pruneStaleBindings(apps)" in TestSources.codeSource("FloatingKeyboardActivity.kt"),
         )
+        // 禁用（冻结）应用的整体组件会被不带标志的查询过滤掉，但包仍在、绑定仍是用户意图；
+        // 只按可见列表判差值会把绑定永久删掉，重新启用后也没有勾选框可恢复。
+        assertTrue(
+            "pruneStaleBindings 必须带 MATCH_DISABLED_COMPONENTS 再查一次，避免禁用应用丢绑定",
+            "MATCH_DISABLED_COMPONENTS" in TestSources.blockAfter(
+                TestSources.codeSource("FloatingKeyboardActivity.kt"),
+                "private fun pruneStaleBindings(",
+            ),
+        )
         // 已绑定强制置顶、不参与排序（保持原顺序整体挪到前面）；未绑定的才按显示名排。
         val apps = listOf("z.app" to "Zeta", "a.app" to "Alpha", "b.app" to "Beta", "m.app" to "Mid")
         val ordered = FloatingKeyboard.orderBindingApps(apps, setOf("z.app", "m.app"), { it.first }, { it.second })

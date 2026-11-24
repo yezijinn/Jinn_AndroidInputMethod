@@ -3,6 +3,7 @@ package com.jinn.inputmethod
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -123,7 +124,15 @@ class FloatingKeyboardActivity : Activity() {
      */
     private fun pruneStaleBindings(apps: List<AppEntry>) {
         val bound = prefs.floatingBoundPackages()
-        val stale = FloatingKeyboard.stalePackages(bound, apps.map { it.packageName }.toSet())
+        // 禁用（冻结）应用的整体组件会被不带标志的查询过滤掉，但包与用户绑定都还在。
+        // 再带 MATCH_DISABLED_COMPONENTS 查一次并进可用集合：只把「连桌面入口都不存在」的包判失效，
+        // 免得禁用一次就把绑定永久删掉、重新启用后也没有勾选框可恢复。
+        val available = apps.mapTo(mutableSetOf()) { it.packageName }
+        runCatching { packageManager.queryIntentActivities(launcherIntent(), PackageManager.MATCH_DISABLED_COMPONENTS) }
+            .onFailure { Diagnostics.w(TAG, "悬浮键盘: 查询含禁用应用失败 ${it.javaClass.simpleName}") }
+            .getOrDefault(emptyList())
+            .mapTo(available) { it.activityInfo.packageName }
+        val stale = FloatingKeyboard.stalePackages(bound, available)
         if (stale.isEmpty()) return
         prefs.floatingKeyboardApps = FloatingKeyboard.serializePackages(bound - stale)
         JinnIme.clearFloatingDockOverrides()
@@ -183,9 +192,12 @@ class FloatingKeyboardActivity : Activity() {
         }
     }
 
+    /** 桌面入口查询用的 intent（两处共用，避免标志与类别分叉） */
+    private fun launcherIntent(): Intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+
     /** 有桌面入口的应用（保持查询原顺序，排序交给 [renderRows] 分组处理）；依赖 manifest 的 `<queries>` 声明 */
     private fun launchableApps(): List<AppEntry> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val intent = launcherIntent()
         val pm = packageManager
         val resolved = runCatching { pm.queryIntentActivities(intent, 0) }
             .onFailure { Diagnostics.w(TAG, "悬浮键盘: 查询应用列表失败 ${it.javaClass.simpleName}") }
