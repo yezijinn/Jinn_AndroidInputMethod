@@ -1839,7 +1839,7 @@ class JinnIme : InputMethodService() {
                     // 连按退格也只弹一次提示：`cancelTranslate` 仅在 wasInFlight 为真时弹。
                     if (translateInFlight) cancelTranslate(notify = true)
                     if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删已上屏文本")
-                    sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                    guardHostCall("onBackspace(退格删除)") { sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) }
                 }
                 override fun onDeleteAll() = deleteAllText()
                 // ── 26 键空格长按 = 按住说话（2026-11-01）────────────────────────────

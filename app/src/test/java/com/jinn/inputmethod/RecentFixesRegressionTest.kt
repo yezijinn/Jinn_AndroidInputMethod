@@ -2923,14 +2923,16 @@ class RecentFixesRegressionTest {
             "private fun performEnter()",
             "private fun flushPendingPaste(",
             "private fun deleteAllText()",
+            // 拼音键盘的退格：组合串为空时直接发 DEL 键，同样是宿主写路径（2026-11-25）
+            "override fun onBackspace()",
         )) {
             val body = blockAfter(ime, signature)
             assertTrue("$signature 的宿主调用必须包在 guardHostCall 里", "guardHostCall(" in body)
         }
-        // 包裹面不得缩水：上面四处共 5 个调用点 + 助手定义 1 处 = 6；少一个说明有人把某处改回了
+        // 包裹面不得缩水：上面五处共 8 个调用点 + 助手定义 1 处 = 9；少一个说明有人把某处改回了
         // 裸调、或删掉了某处兜底（负向「行首裸调」正则在这里不可用 —— 包裹后调用仍在行首）。
         val calls = Regex("guardHostCall\\(").findAll(ime).count()
-        assertTrue("guardHostCall 的出现次数不得少于 6（助手 + 5 处调用），实际 $calls", calls >= 6)
+        assertTrue("guardHostCall 的出现次数不得少于 9（助手 + 8 处调用），实际 $calls", calls >= 9)
     }
 
     @Test
