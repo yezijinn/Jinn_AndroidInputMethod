@@ -4,7 +4,8 @@ package com.jinn.inputmethod
  * 阿里云百炼实时语音识别的地址策略（纯函数，JVM 单测直接跑）。
  *
  * 规则与 [OpenAiEndpoint] 同一条主线：**默认只允许 `wss://`**；`ws://` 仅当主机是回环或私网
- * （`127.0.0.1` / `localhost` / `::1` / `10.*` / `192.168.*` / `172.16-31.*` / `*.local`）时放行。
+ * （`127.*` / `localhost` / `::1` / `10.*` / `192.168.*` / `172.16-31.*` / `*.local`）时放行。
+ * 主机白名单直接复用 [OpenAiEndpoint.isLocalHost]，两处判据同源，不各自维护一份列表。
  *
  * 为什么让用户填**完整 URL** 而不是 host + 端口：百炼有华北专属域名
  * （`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`），
@@ -27,7 +28,7 @@ internal object AliEndpoint {
 
     const val TEXT_NO_HOST = "地址里缺少主机名"
 
-    /** 查询串 / 锚点：拼接与协议协商都不认，且凭据会随地址进日志 */
+    /** 查询串 / 锚点 / authority 里的用户名密码：凭据会随地址进日志 */
     const val TEXT_BAD_CHARS = "地址里不要带 ? # @（API Key 填下面那一栏）"
 
     /** 公网明文：这条要能直接显示给用户，说明为什么被拒、该怎么改 */

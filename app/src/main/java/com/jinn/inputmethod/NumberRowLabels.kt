@@ -13,8 +13,8 @@ import org.json.JSONArray
  * - [parse] 输出恒为 10 项，空串合法（= 默认）；非 JSON / 非数组 / 长度≠10 → **整份**回退全空；
  * - 单项清洗走 [FavoriteSymbols.clean]（零宽 / U+3000 / NBSP 一律清掉，防「空槽键」）；
  * - 单项限长走 [FavoriteSymbols.withinLimit] 的**码点**口径（emoji 不被误拒）。
- *   注意：与收藏的 8 不同，这里 [MAX_CHARS] = 4：数字行键宽只有字母键的一半（10 列 vs 9/10 列
- *   但同行更窄），4 个汉字已被宽度收束到约 10sp，再长就认不出（见 PinyinKey 的
+ *   与收藏的 8 不同，这里 [MAX_CHARS] = 4：数字行是键区里 10 列等宽的一行，每键比收藏页
+ *   网格的格子窄，4 个汉字已被宽度收束到约 10sp，再长就认不出（见 PinyinKey 的
  *   `fitTextSize`：它只兜「不溢出」，不兜可读性）。
  * - 默认值是**常量**（[DEFAULT_KEYS]），不与用户值共用一套存储：用户没改过时 prefs 里
  *   连键都不会有，将来调默认顺序即对所有未自定义的用户生效。
