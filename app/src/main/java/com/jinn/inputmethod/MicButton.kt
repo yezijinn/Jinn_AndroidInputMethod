@@ -12,8 +12,9 @@ import kotlin.math.min
 /**
  * 麦克风按钮：一个实心圆，录音时外面套一层随音量呼吸的光圈。
  *
- * 只负责画。手势判定（短按切换 / 长按说话 / 上滑取消）放在
- * [JinnIme] 里，避免视图和输入逻辑互相纠缠。
+ * 本类只持有状态与绘制：音量经 [updateLevel] 喂入，[recording] / [cancelArmed] 由 [JinnIme] 写入。
+ * 手势判定（短按切换 / 长按说话 / 上滑取消、触摸取消）与触摸监听都在 [JinnIme]；
+ * 无障碍点击也由那边在抬手时补一次 performClick，视图内不内置点击回调。
  */
 class MicButton @JvmOverloads constructor(
     context: Context,
@@ -31,7 +32,7 @@ class MicButton @JvmOverloads constructor(
     private val colorActiveCenter = context.getColor(R.color.mic_active_center)
     private val colorRing = context.getColor(R.color.mic_ring)
     /**
-     * 图标分两枚：空闲态底盘是*跟主题走的*（亮色近白 / 暗色深灰），录音态底盘是红色（两档都深）。
+     * 图标分两枚：空闲态底盘是跟主题走的（亮色近白 / 暗色深灰），录音态底盘是红色（两档都深）。
      * 只给一枚令牌就会在一档里与自己的底盘撞车 —— 亮色档白图标压近白底盘只有 1.2~1.4:1
      * （2026-10-02 修复 L-475）。
      */
@@ -66,7 +67,7 @@ class MicButton @JvmOverloads constructor(
             invalidate()
         }
 
-    /** 是否处于"松手即取消"状态，用于给出视觉警示 */
+    /** 是否处于「松手即取消」状态，用于给出视觉警示 */
     var cancelArmed: Boolean = false
         set(value) {
             if (field == value) return

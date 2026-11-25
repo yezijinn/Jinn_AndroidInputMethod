@@ -88,8 +88,8 @@ internal object AzureAsrEndpoint {
     fun normalize(base: String): Result<String> = OpenAiEndpoint.normalize(base)
 
     /**
-     * `{base}{PATH}?language=<lang>`：`base` 已在 [normalize] 里去掉尾部 `/`，
-     * 语言码必须**转义**（`zh-CN` 原样；带 `&` / 空格的值不转义就是拼出一个非法地址）。
+     * `{base}{PATH}?language=<lang>`：`base` 已在 [normalize] 里去掉尾部 `/`（这里再兜一次），
+     * 语言码必须**转义**（`zh-CN` 原样；带 `&` 会多出一个查询参数，带空格则是非法地址）。
      */
     fun url(normalizedBase: String, language: String): String {
         val lang = language.trim().ifEmpty { DEFAULT_LANGUAGE }
@@ -104,7 +104,7 @@ internal object AzureAsrEndpoint {
  *
  * `Content-Type` 里带 `codecs=audio/pcm`：Azure 认，但 OkHttp 的 `MediaType` 解析器不认
  * （`/` 不是 token 字符），故请求体自己报 `contentType() = null`，头由 [AzureAsrRequest] 原样下发
- * —— 不这么做会在建请求时抛 `IllegalArgumentException`（只在真机 / 真请求上冒出来）。
+ * —— 不这么做会在建请求时抛 `IllegalArgumentException`（运行时才暴露，编译期看不出来）。
  */
 internal object AzureAsrRequest {
 
