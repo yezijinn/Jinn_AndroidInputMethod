@@ -15,7 +15,7 @@ import org.json.JSONObject
  * ```
  * POST https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=<代码>
  * Ocp-Apim-Subscription-Key: <Key>
- * Ocp-Apim-Subscription-Region: <Region>        ← 多服务/区域资源要求，单区域资源可不填
+ * Ocp-Apim-Subscription-Region: <Region>        ← 区域资源必填，仅 global 全局资源可省
  * Content-Type: application/json; charset=UTF-8
  * [{"Text":"待译原文"}]
  * ```
@@ -41,7 +41,7 @@ internal class AzureTranslator(
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
             .header("Ocp-Apim-Subscription-Key", apiKey)
             .apply {
-                // Region 为空表示资源不需要（单区域全局资源）：此时带空 Header 反而会被拒
+                // 区域资源必带此头；global 全局资源带空头反被拒，故留空时不发送
                 if (region.isNotBlank()) header("Ocp-Apim-Subscription-Region", region)
             }
             .build()
@@ -76,10 +76,10 @@ internal class AzureTranslator(
         private val JSON_MEDIA_TYPE = "application/json; charset=UTF-8".toMediaType()
 
         /**
-         * HTTP 状态码 → 归一错误分类。
+         * HTTP 状态码 → 归一错误分类（HTTP 语义取自 Azure 翻译 v3 文档）。
          *
-         * 401 = 密钥无效；403 = Azure 的**额度用尽**（免费层月度额度耗尽走 403，
-         * 不是 401），所以 403 归 QUOTA；429 = 请求过于频繁，同样归 QUOTA。
+         * 401 = 密钥无效；403 = 请求未授权，免费层月度额度耗尽即走此码（不是 401），故归 QUOTA；
+         * 429 = 超出请求频率上限，同样归 QUOTA。
          *
          * 404 = 区域 / 终结点填错（区域写成多服务资源名或别的档位时 Azure 返回 404）：
          * 认证文案本就点着「密钥与 Azure 区域」，归 AUTH 才指向真正要改的字段 ——

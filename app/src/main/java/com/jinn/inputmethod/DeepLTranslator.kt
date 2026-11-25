@@ -17,7 +17,7 @@ import org.json.JSONObject
  * Authorization: DeepL-Auth-Key <key>
  * {"text":["…"],"target_lang":"EN"}
  * ```
- * 不传 `source_lang` = DeepL 自动检测源语言（与其它三家口径一致）。
+ * 不传 `source_lang` = DeepL 自动检测源语言（与其它五家口径一致）。
  *
  * **域名按 Key 自动选择**：DeepL 的 Free 订阅密钥固定以 `:fx` 结尾，Pro 密钥不带后缀
  * （官方约定）——用户只填一个 Key，不必再选「我买的是哪档」。

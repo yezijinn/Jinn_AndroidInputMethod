@@ -43,7 +43,7 @@ internal object ImeRestart {
      */
     fun restart(activity: Activity, onFlushFailed: (String) -> Unit) {
         Diagnostics.i(TAG, "restart: 重启输入法进程")
-        // ⚠ 下面两行在主线程**同步**等：`SelectionLedger.flush()` 最坏吃满 `FLUSH_TIMEOUT_MS`（2000ms），
+        // ⚠ 下面四行在主线程**同步**等：`SelectionLedger.flush()` 最坏吃满 `FLUSH_TIMEOUT_MS`（2000ms），
         // 点「保存并重启」后这段空窗可达 2s —— 低于 ANR 阈值 5s，且随后必然重启，别当新缺陷重报。
         val prefsFlushed = runCatching { Prefs(activity).flush() }.getOrDefault(false)
         val clipboardFlushed = runCatching { ClipboardPrefs.of(activity).flush() }.getOrDefault(false)
