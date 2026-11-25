@@ -110,7 +110,7 @@ class Prefs(private val appContext: Context) {
      * getter 做一次合法性兜底：存档里的非法值（旧版本写入、手动改 prefs）一律回落到默认地址。
      * 这是崩不崩的边界，[wsUrl] 会被直接送进 OkHttp，而 `HttpUrl` 对含空格或重复端口的
      * host 会抛 `IllegalArgumentException`，调用点又都在主线程（整个 IME 会崩）。
-     * 语音链路属禁改区，所以校验放在配置层，保证交出去的 URL 一定是合法形式。
+     * 校验放在配置层，保证交出去的 URL 一定是合法形式；语音链路本身不改。
      */
     var host: String
         get() = normalizeHost(strOr(KEY_HOST, DEFAULT_HOST).orEmpty()) ?: DEFAULT_HOST
@@ -163,7 +163,7 @@ class Prefs(private val appContext: Context) {
      * 是否启用双拼。
      *
      * 2026-09-20 起由设置页「输入方案」下拉写（选全拼 = false / 选某套双拼 = true；
-     * 按键面板的「全拼 / 双拼」按钮已按用户要求移除）。老版本即用此键，故无需迁移。
+     * 按键面板的「全拼 / 双拼」按钮已移除）。老版本即用此键，故无需迁移。
      */
     var useShuangpin: Boolean
         get() = boolOr(KEY_SHUANGPIN, false)
@@ -210,7 +210,7 @@ class Prefs(private val appContext: Context) {
      *  - [DefaultKeyboardMode.PINYIN_CN] 26 键全拼中文
      *  - [DefaultKeyboardMode.PINYIN_EN] 26 键英文
      *
-     * 默认 26 键全拼中文（用户诉求：初始布局为 26 键全拼）。
+     * 默认 26 键全拼中文（需求：初始布局为 26 键全拼）。
      */
     var defaultKeyboardMode: Int
         get() {
@@ -229,7 +229,7 @@ class Prefs(private val appContext: Context) {
      *
      * 2026-09-27 起「加更多生僻字」从开关改为设置页按钮 + 独立页面（[RareCharsActivity]）里的
      * 两个档位开关：档 2 / 档 3 都按查询期判据放行（`isLoadableChar`），**改完即时生效**，
-     * 不再需要重启输入法（旧 [KEY_SHOW_RARE_CHARS] 的「重启生效」语义随两档开关一起退场）。
+     * 不再需要重启输入法（旧 [KEY_SHOW_RARE_CHARS_LEGACY] 的「重启生效」语义随两档开关一起退场）。
      *
      * 旧键只作一次性迁移：新键没写过时回落到旧值，保证升级用户不丢设置。
      * ⚠ **回落口径 = 旧 true 即两档全开**（旧版语义是「放行表外字」，而旧版默认本就放行三级字）——
@@ -352,7 +352,7 @@ class Prefs(private val appContext: Context) {
     /**
      * 主题模式（见 [ThemeManager]）：0 跟随系统 / 1 亮白 / 2 暗黑 / 3 定时。
      *
-     * 默认跟随系统（用户 2026-09-21 指定）：系统深浅色即 App 主题；越界值同样退回该默认。
+     * 默认跟随系统（2026-09-21 定）：系统深浅色即 App 主题；越界值同样退回该默认。
      */
     var themeMode: Int
         get() = intOr(KEY_THEME_MODE, ThemeManager.MODE_SYSTEM)
@@ -628,7 +628,7 @@ class Prefs(private val appContext: Context) {
      * [KeyAppearance.DEFAULT_SPACING_DP]（不写死数字：BUG.md L-1291，定义域翻倍后旧数字会变成错依据）。
      */
     var candidateSpacingDp: Float
-        // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02 第二轮审查）：
+        // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02 复核）：
         // 手改 prefs、第三方写入或将来某条绕过 setter 的路径写进越界值时会**直达绘制** ——
         // 值越大候选项左右内缩越多，巨大值会把每个候选撑到屏幕外（跨行溢出型布局异常）。
         get() = KeyAppearance.clampSpacingDp(
@@ -679,7 +679,7 @@ class Prefs(private val appContext: Context) {
      * （见 [PinyinKeyboardView.buildNumberRow]），点一下直接上屏对应数字。
      * 与「数字层」（整块键盘切成数字，[PinyinKeyboardView] 的 LAYER_DIGIT）是两件事，两者并存。
      *
-     * 默认取 false：用户原话是「关闭就是维持现状」⇒ 不把新行强加给已经习惯三行的人，
+     * 默认取 false：需求是「关闭就是维持现状」⇒ 不把新行强加给已经习惯三行的人，
      * 需要的人自己去外观页打开。
      */
     var numberRowEnabled: Boolean
@@ -775,7 +775,7 @@ class Prefs(private val appContext: Context) {
      * 暗色阶段用 [skinDarkId]。皮肤只覆盖键盘自身的色值（键面 / 功能键 / 候选栏 / 背板）与质感参数，
      * 与「半透明 / 圆角 / 间隙」正交。
      *
-     * 缺省值取 [KeyboardSkins.INITIAL_LIGHT_ID]（雪原，用户 2026-09-24 指定）；
+     * 缺省值取 [KeyboardSkins.INITIAL_LIGHT_ID]（雪原，2026-09-24 定）；
      * 未知 / 脏值 / 跨档值由 `byId` 归一为本档令牌基线（原白），不改历史观感。
      */
     var skinLightId: String
@@ -788,7 +788,7 @@ class Prefs(private val appContext: Context) {
 
     /**
      * 暗色档的键盘皮肤 id。语义与读写规则同 [skinLightId]，缺省值为
-     * [KeyboardSkins.INITIAL_DARK_ID]（紫晶，用户 2026-09-24 指定）。
+     * [KeyboardSkins.INITIAL_DARK_ID]（紫晶，2026-09-24 定）。
      */
     var skinDarkId: String
         get() {
@@ -1024,10 +1024,10 @@ class Prefs(private val appContext: Context) {
      * 三件讯飞凭据里有没有「磁盘上有密文、但本机解不开」的（软件密钥件丢失 / 密文损坏 / 换机）。
      *
      * 页面据此如实说明「需要重新填写」—— 少了它用户只会看到三个空框，与自己「明明填过」的记忆
-     * 冲突，最坏会以为凭据被偷（2026-11-01 Stage 3 复核：解不开时页面一个字都不说）。
+     * 冲突，最坏会以为凭据被偷（2026-11-01 复核：解不开时页面一个字都不说）。
      *
-     * 只在**永久**解不开时为 true：`credentialRetryAt` 闸内（暂时解不开那 1 秒）不下结论，
-     * 否则会把「锁屏 / Keystore 抖动」误报成「凭据坏了」。
+     * 判据是「磁盘上有密文、本机读出来为空」。`credentialRetryAt` 闸内不下结论，
+     * 避免把「锁屏 / Keystore 抖动」这类暂时失败报成「凭据坏了」。
      */
     internal val hasUnreadableXfCredential: Boolean
         get() {
@@ -1174,7 +1174,7 @@ class Prefs(private val appContext: Context) {
      * 翻译服务提供方 id（见 [TranslationProviderId]）。
      *
      * 键**缺失**（用户从未动过服务方下拉）时按「已填的凭据」推导，而不是直接回落当前默认 ——
-     * 这是 2026-09-30 第二轮审查发现的升级回归：第一版默认是 Azure，而 `providerTouched` 闸门只在
+     * 这是 2026-09-30 复核发现的升级回归：第一版默认是 Azure，而 `providerTouched` 闸门只在
      * 用户动过下拉时才写键，于是「填了 Azure Key、从没碰过下拉」的老用户升级后会落到新默认（阿里云），
      * 凭据为空 ⇒ 翻译直接不可用、提示还指向「填写阿里云凭据」；更糟的是导出会把推导结果写进备份，
      * 换机后**永远回不去**（与 rareTier3「升级丢档 → 备份固化」同一失效模式）。
@@ -1279,7 +1279,7 @@ class Prefs(private val appContext: Context) {
         ENDPOINT,
     }
 
-    // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（用户 2026-09-30 定）──
+    // ── 「哪些算翻译原文」：范围模式 + 单次字节上限，**按 Provider 各一份**（2026-09-30 定）──
 
     /**
      * 「哪些内容算翻译原文」的模式（见 [TranslationScope]），每家 Provider 各一份。
@@ -1424,7 +1424,7 @@ class Prefs(private val appContext: Context) {
             if (plain == null) {
                 // 先分「暂时读不出」与「永久解不开」——与 Keystore 的 Transient/Permanent 同口径。
                 // 密钥件在、这次读失败（IO 抖动）时若也缓存空串，一次抖动就等于「本进程内凭据全消失」，
-                // 用户重开页面看到整页空框、以为凭据被偷（2026-11-01 Stage 3 复核）。
+                // 用户重开页面看到整页空框、以为凭据被偷（2026-11-01 复核）。
                 if (LocalCredentialCipher.keyState(credentialKeyFile) ==
                     LocalCredentialCipher.KeyState.UNREADABLE
                 ) {
@@ -1434,7 +1434,7 @@ class Prefs(private val appContext: Context) {
                 }
                 // 解密期间被改写（删除 / 换值）：与成功分支同一道闸（2026-11-04）。
                 // 缺了它，用户在另一线程重填并保存的新值会被这一行覆写成空串 —— 本进程内一直
-                // 显示「未配置」直到重启（v1 路径 :1475-1482 早就有这条，v2 只补了一半）。
+                // 显示「未配置」直到重启（v1 的 Keystore 分支早就有这条，v2 只补了一半）。
                 if (strOr(key, "").orEmpty() != raw) {
                     Diagnostics.w(TAG, "凭据在解密期间被改写，改读新值（软件密钥分支）")
                     return if (retry >= 1) "" else readCredential(key, retry + 1)
@@ -1454,7 +1454,7 @@ class Prefs(private val appContext: Context) {
         }
         if (!CredentialCrypto.looksEncrypted(raw)) {
             Diagnostics.i(TAG, "凭据迁移: 明文 → Keystore 密文")
-            // ⚠ 顺序是「**先加密、再比对、最后落盘**」（2026-10-02 修复：上一轮把闸放在加密
+            // ⚠ 顺序是「**先加密、再比对、最后落盘**」（2026-10-02 修复：先前把闸放在加密
             // 之前，两次 `getString` 紧邻 ⇒ 必然相等 ⇒ 闸等于没挡）。加密是慢操作（本机实测约 1.1 ms），
             // 期间别的 `Prefs` 实例写入新值时，这里会把旧明文重新加密写回磁盘 ——
             // 缓存与**磁盘**一起回退，正是 L-342 要根除的场景（连重启都恢复不回来）。
@@ -1522,7 +1522,7 @@ class Prefs(private val appContext: Context) {
      *
      * 加密主路是 Keystore（[CredentialCrypto]，`v1:` 密文）；Keystore 不可用时退到**软件密钥**
      * （[LocalCredentialCipher]，`v2:` 密文，密钥件在 `filesDir`）—— 本机无锁屏的设备上 Keystore
-     * 建键恒失败，没有这条路凭据就只能留在内存、重启即丢（用户第 5 条要求）。
+     * 建键恒失败，没有这条路凭据就只能留在内存、重启即丢（需求：无锁屏设备也能保存凭据）。
      *
      * 两支都失败时才只留在内存缓存里，同时**删掉磁盘上仍可解密的旧密文**（fail-closed：宁可让该家
      * 回到「未配置」并如实告知，也不要悄悄退回旧 Key），并把该键记入 [unpersistedCredentialKeys]
@@ -1546,7 +1546,7 @@ class Prefs(private val appContext: Context) {
             return
         }
         // Keystore 不可用（本机无锁屏：keystore2 报 User ECDH key missing）⇒ 退到软件密钥。
-        // 两支都失败才维持「只留内存」：这是「没设锁屏密码也能用」的实现点（用户第 5 条要求）。
+        // 两支都失败才维持「只留内存」：这是「没设锁屏密码也能用」的实现点（需求：无锁屏设备也能保存凭据）。
         // 软件密钥的安全等级低一档（密钥与密文同在沙箱），只在 Keystore 真的用不了时才走。
         val keystore = CredentialCrypto.encrypt(cleaned)
         val encrypted = keystore ?: LocalCredentialCipher.encrypt(credentialKeyFile, cleaned)
@@ -1629,7 +1629,7 @@ class Prefs(private val appContext: Context) {
     /**
      * OpenAI 兼容：配置名称（仅用于列表与摘要显示，如 `DeepSeek` / `本地 Ollama`）。
      *
-     * 多配置档（新增 / 复制 / 删除 / 导入导出）排在下一轮；本轮先把单档的每一项配置都打开。
+     * 多配置档（新增 / 复制 / 删除 / 导入导出）尚未实现；当前只支持单档的完整配置。
      */
     /**
      * 「留空即默认」字段的统一读法（2026-10-01 修复 L-251）。
@@ -1697,7 +1697,7 @@ class Prefs(private val appContext: Context) {
     var openAiModel: String
         get() = strOr(KEY_OPENAI_MODEL, "").orEmpty()
         // 与同页其它字符串字段同口径：走 cleanCredential 去掉复制粘贴带进来的 NBSP / ZWSP /
-        // 全角空格（2026-10-02 第二轮审查）。只 trim 时「是否已配置」的判据看着正常，
+        // 全角空格（2026-10-02 复核）。只 trim 时「是否已配置」的判据看着正常，
         // 请求真发出去必然 404 / 参数被拒 ⇒ 归 PARAM/AUTH，用户按提示核对 Key、路径、语言都查不出真因。
         set(value) = sp.edit { putString(KEY_OPENAI_MODEL, value.cleanCredential()) }
 
@@ -1892,8 +1892,9 @@ class Prefs(private val appContext: Context) {
     /**
      * 备份导出：返回全部**可迁移**的键值。
      *
-     * 覆盖 [Prefs] 的**全部**键（现在连 `update_last_check_at` 这类运行态时间戳也带上）：
-     * 用户要求「所有配置与设置参数都能导出 / 导入」，少一个键都算漏。照搬该时间戳的副作用
+     * 覆盖 [Prefs] 的**全部可迁移键**（隐私开关与派生缓存除外，见 `PrefsBackupCoverageTest`；
+     * 连 `update_last_check_at` 这类运行态时间戳也带上）。需求是「所有配置与设置参数都能导出 / 导入」，
+     * 少一个键都算漏。照搬该时间戳的副作用
      * 只是新机上首次自动检查更新可能晚一点（最长 7 天），不影响任何功能。
      *
      * `favorite_symbols` 用 null 标记「键不存在」= 从未编辑过（出厂预置 D I Y），
@@ -2023,7 +2024,7 @@ class Prefs(private val appContext: Context) {
         put(KEY_AZURE_BASE_URL, azureBaseUrl)
         if (sp.contains(KEY_AZURE_LANGUAGE)) put(KEY_AZURE_LANGUAGE, azureLanguage)
         putCredential(KEY_AZURE_ASR_API_KEY)
-        // 百度短语音识别：AK / SK 走凭据口径；dev_pid 是平凡默认（1537）之外的枚举值，
+        // 百度短语音识别：AK / SK 走凭据口径；dev_pid 默认 1537，属服务端枚举，
         // 「改过才导出」—— 将来换默认档位时，没动过这项的用户才拿得到新默认。
         // ⚠ token 与它的过期时刻是**派生缓存**，刻意不进包（见 `Prefs.baiduToken` 的说明）。
         putCredential(KEY_BAIDU_ASR_API_KEY)
@@ -2437,7 +2438,7 @@ class Prefs(private val appContext: Context) {
     }
 
     /**
-     * 字符串取值 + **长度闸**（2026-09-30 第二轮审查）。
+     * 字符串取值 + **长度闸**（2026-09-30 复核）。
      *
      * 导入包的单节上限是 16MB：被改坏的包能把 `openai_base_url` 写成十几 MB 字符串，此后每次
      * `translationProvider()` / `joinUrl`（都在主线程）都要复制它，且每次 `sp.edit{}` 都会重写整份
@@ -2577,7 +2578,7 @@ class Prefs(private val appContext: Context) {
          *     只靠字符黑名单挡不住全部非法值，实测 `..` 不含任何黑名单字符，
          *     却会让 `HttpUrl` 抛 `IllegalArgumentException`（那就是主线程崩溃）。
          *     用 `http` 而非 `ws` 起头：`Request.Builder.url()` 收到 `ws://` 时本身就是先改写成
-         *     `http://` 再解析的，而 `toHttpUrlOrNull()` 不接受 `ws:` 方案 ，
+         *     `http://` 再解析的，而 `toHttpUrlOrNull()` 不接受 `ws:` 方案，
          *     拿 `ws://` 去判会一律得到 null（把合法 host 全判成非法）。
          *     端口用 1 而非实际端口：合法 host 下端口取值不影响能否解析。
          */
@@ -2638,22 +2639,22 @@ class Prefs(private val appContext: Context) {
         private const val KEY_SHOW_QUANPIN = "show_quanpin"
 
         private const val KEY_USER_LEARNING = "user_learning"
-    private const val KEY_USER_PHRASE_ENABLED = "user_phrase_enabled"
+        private const val KEY_USER_PHRASE_ENABLED = "user_phrase_enabled"
 
-    /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
-    private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"
-    /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
-    private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
+        /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
+        private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"
+        /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
+        private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
 
-    /** 可选字档 2 / 档 3（设置页「加更多生僻字」页内两个开关，2026-09-27 起） */
-    private const val KEY_RARE_TIER2 = "rare_tier2"
-    private const val KEY_RARE_TIER3 = "rare_tier3"
+        /** 可选字档 2 / 档 3（设置页「加更多生僻字」页内两个开关，2026-09-27 起） */
+        private const val KEY_RARE_TIER2 = "rare_tier2"
+        private const val KEY_RARE_TIER3 = "rare_tier3"
 
-    /** 「只使用繁体字」（设置页，2026-09-27 起） */
-    private const val KEY_USE_TRADITIONAL = "use_traditional"
+        /** 「只使用繁体字」（设置页，2026-09-27 起） */
+        private const val KEY_USE_TRADITIONAL = "use_traditional"
 
-    /** 旧「显示生僻字」键（2026-09-27 退役为两档开关）：只作读取迁移与旧备份导入兼容，不再写入 */
-    private const val KEY_SHOW_RARE_CHARS_LEGACY = "show_rare_chars"
+        /** 旧「显示生僻字」键（2026-09-27 退役为两档开关）：只作读取迁移与旧备份导入兼容，不再写入 */
+        private const val KEY_SHOW_RARE_CHARS_LEGACY = "show_rare_chars"
         /** 模糊音容错掩码（见 [FuzzyPinyin]）；0 = 关闭，也是出厂默认 */
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
@@ -2798,7 +2799,7 @@ class Prefs(private val appContext: Context) {
         /**
          * 敲击音效反馈 6 键（2026-10-05）：音效开关 / 强度 / 静音仍播 / 分组映射 + 震动开关 / 档位。
          *
-         * 全部要进备份白名单：用户对这项功能的验收标准是「所有配置与设置参数都能导出 / 导入」，
+         * 全部要进备份白名单：验收标准是「所有配置与设置参数都能导出 / 导入」，
          * 音色选择与震动档位同样是用户偏好，换机必须带走。
          */
         private const val KEY_TAP_SOUND_ENABLED = "tap_sound_enabled"
