@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit
  * 与 [XfIatClient] 同款的生命周期取舍：一次会话一条连接，收尾即断，**随即预连下一条**
  * （下一次长按空格从 ACTION_DOWN 到真开始录音只有约 500ms，现等握手必然赶不上）；
  * 预连那条挂空闲窗口，没人再说话就归零。单次时长服务端不限，本应用仍按既有 58 秒收尾
- * （[Prefs.voiceBackend] 属在线后端，见 `JinnIme.autoStopDelayMs`）。
+ * （ali 属在线后端，判据 `VoiceBackend.isOnline`，见 `JinnIme.autoStopDelayMs`）。
  *
  * 线程模型：音频转换在采集线程（纯 CPU、无锁）→ 入队；泵与超时跑在主线程 Handler
  * （每拍只做一次 `WebSocket.send`，不阻塞）；回调（`onState` / `onResult`）在 OkHttp 的 IO 线程触发，
@@ -417,8 +417,8 @@ class AliAsrClient(
         Diagnostics.w(TAG, "等 task-started 超时")
         updateState(LinkState.OFFLINE, TEXT_START_TIMEOUT)
         cancelPump()
-        // 与失败分支同口径：留着已排程的空闲关闭，90s 后那次 updateState(IDLE) 会把刚写下的
-        // 超时原因换成「未连接」（同 onFailed / onFailure 的既有写法）
+        // 与失败分支同口径：空闲兜底无需再留着，真让它到点，90s 后那次 updateState(IDLE)
+        // 会把刚写下的超时原因覆盖成「未连接」（同 onFailed / onFailure 的写法）
         cancelIdleClose()
         clearTask()
         closeSocket()
@@ -571,7 +571,7 @@ class AliAsrClient(
         // 任务状态一起收：连接断开（`onFailure` / `onClosed`）也要把「还在等 task-finished」清掉，
         // 否则 `awaitingFinish` 会留在 true 而 socket 已是 null —— 判据与连接状态脱节。
         // ⚠ 只清这一项：`sessionStarted` 是**连接**状态，不是任务状态，绝不许搬到这里复位
-        // （在 clearTask 里把它复位 = 用过的连接又能跑第二个 run-task，正是本轮修掉的那个缺陷）。
+        // （在 clearTask 里把它复位 = 用过的连接又能跑第二个 run-task，旧任务与后续音频会互相撞毁）。
         awaitingFinish = false
     }
 
@@ -803,8 +803,8 @@ internal class AliFrameQueue(
      * 入队；返回 true = **这一包被丢弃**（缓冲已到上限）。
      *
      * 泵在发送失败时会停拍（`pumpTick` 见到 `send` 返回 false 就 `return`，不重排）而
-     * `taskId` 仍非空 ⇒ [AliAsrClient.sendChunk] 继续入队、再没人取走。8 秒的 3200B 帧只是
-     * 25 KB，一分钟就是 1.9 MB，一路涨到 OOM 死的是整个输入法进程。口径与
+     * `taskId` 仍非空 ⇒ [AliAsrClient.sendChunk] 继续入队、再没人取走。每秒 32 KB 看着不多，
+     * 一分钟就是 1.9 MB，一路涨到 OOM 死的是整个输入法进程。口径与
      * [BufferedBatchAsrClient] 的 `MAX_PCM_BYTES` 一致：丢尾巴保住进程。
      */
     @Synchronized

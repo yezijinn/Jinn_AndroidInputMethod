@@ -19,7 +19,7 @@ import android.widget.TextView
  *
  * 分块查询会把整个窗口逐条解密后才返回，故单次内存峰值 ≈ 窗口条数 × 单条上限 × 放大系数
  * （见 [ClipboardStore.decryptWindowPeakBytes]，放大是为了计入 base64 密文与 UTF-16 String）。
- * 50 条 ≈ 32.8MB（最坏情形，实测常驻约 29.8MB），原值 300 会到 ≈196MB。
+ * 50 条 ≈ 32.8MB（最坏情形，实测常驻约 29.8MB），早先的 300 条约 196MB。
  * 调整本值后必须让 `ClipboardLimitsTest` 的窗口预算护栏通过。
  */
 internal const val SEARCH_WINDOW_ITEMS = 50
@@ -30,15 +30,17 @@ internal const val SEARCH_WINDOW_ITEMS = 50
  * 进入搜索时：搜索面板显示在 IME 最顶部（整体高度增加），
  * 剪贴板面板退出、下方恢复正常 26 键；26 键与候选输入经
  * [appendSearch] 路由到搜索框，TextWatcher debounce 后在后台解密过滤剪贴板历史。
- * 布局（自上而下）：命中结果列表 → 搜索输入框 → 候选栏（键盘自身） → 26 键 → 空格底栏。
+ * 布局（自上而下）：命中结果列表 → 空态/截断提示行 → 搜索输入框 → 候选栏（键盘自身） → 26 键 → 空格底栏。
  *
  * 性能：
- *  - 输入只做 debounce 合并后的最终一次查询（[Debounce_MS]）；
+ *  - 输入只做 debounce 合并后的最终一次查询（[DEBOUNCE_MS]）；
  *  - 查库与加密字段解密均在 [BackgroundIo] 线程，主线程零阻塞；
  *  - 结果用 [ListView] 复用 item，支持独立滚动。
  *
- * [ClipboardPanelView] 是本类的平行实现（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
- * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
+ * 与 [ClipboardPanelView] 是平行实现：适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
+ * 各自写一份，没有共用的列表代码。改一侧的列表行为须同步另一侧，两个入口才不漂移；
+ * 真正共用的是数据层原语（[ClipboardDb.recentPageAfter] 与 [ClipboardStore] 的预算常量），
+ * 改这些会同时影响两边。
  *
  * 安全：不输出任何剪贴板正文日志。
  *       （隐私标记与「掩码 + 点击展开」那套展示逻辑已随 v5 迁移整体移除，
@@ -77,12 +79,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
      * 保首屏。若命中恰好落在更旧的行里，首块发布的是空集 —— 此时若直接报「未找到匹配内容」，
      * 用户会在结果到达前一两秒先看到一句否定结论，随后结果又冒出来，自相矛盾。
      *
-     * 只在主线程写：所有写点都在 [post] 的 lambda 或主线程回调里。
+     * 只在主线程写：所有写点都在 [View.post] 的 lambda 或主线程回调里。
      */
     private var scanning = false
 
     /**
-     * 本轮结果的查询词形态：正文列预览要按它把窗口挪到命中点（BUG.md L-1478）。
+     * 本次搜索的查询词形态：正文列预览要按它把窗口挪到命中点（BUG.md L-1478）。
      *
      * 与 [currentItems] **同一次** post 里赋值（同一个 lambda），所以两者永远同代；
      * 单独存一份而不是每次 `getView` 现算，是因为这里拿到的正是判出这批命中的那份形态。
@@ -270,8 +272,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                     // 构造期 TextWatcher 可能先于视图装配完成触发，updateEmpty 会碰 listView/textEmpty
                     if (!uiReady) return
                     // 输入一变就进「搜索中」：debounce 还有 150ms，若等结果落地才改状态，
-                    // 用户会先看到上一轮的空态结论（「未找到匹配内容」）挂在那里 —— 正是被报的现象。
-                    // 清掉上一轮的截断状态：新查询还没得出任何结论，别让旧提示接着说话。
+                    // 用户会先看到上一次查询的空态结论（「未找到匹配内容」）挂在那里 —— 正是被报的现象。
+                    // 清掉上一次查询的截断状态：新查询还没得出任何结论，别让旧提示接着说话。
                     cap = ClipboardSearch.Cap.NONE
                     scanning = !s.isNullOrBlank()
                     updateEmpty()
@@ -289,11 +291,12 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     /** 显示搜索面板：清空输入、对齐结果列表/空态可见性、聚焦输入框 */
     fun onShown() {
         isPasting = false
-        // 每次重新打开都清空「已展开」集合，避免上次的状态残留
+        // 打开面板即撤掉尚未执行的 debounce 查询，避免上次会话的输入回调在新会话里冒出来
         searchHandler.removeCallbacksAndMessages(null)
-        // Invalidate a search that may still be decrypting after the previous session closed.
+        // 作废上一次会话可能仍在解密的搜索
         refreshToken++
         editSearch.setText("")
+        // 再撤一次：设置输入框文本本身会触发 TextWatcher 排一次查询，这里一并清掉
         searchHandler.removeCallbacksAndMessages(null)
         // 上次搜完后空态文案被改成了「未找到匹配内容」/ 截断提示，这里要退回提示语
         cap = ClipboardSearch.Cap.NONE
@@ -314,10 +317,11 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun onHidden() {
         isPasting = false
         searchHandler.removeCallbacksAndMessages(null)
-        // Prevent an old worker from repopulating the list after the panel is hidden.
+        // 作废旧 worker：面板隐藏后不得再把结果回填进列表
         refreshToken++
         editSearch.clearFocus()
         editSearch.setText("")
+        // 设置文本会再次触发 TextWatcher 排查询，一并清掉
         searchHandler.removeCallbacksAndMessages(null)
         currentItems = emptyList()
         scanning = false
@@ -330,9 +334,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     /**
      * 视图即将被换掉（换肤 / 符号顺序变更重建键盘）时中止仍在跑的后台任务。
      *
-     * 分块搜索靠 [refreshToken] 判停，而令牌只在 [onShown] / [onHidden] 里递增 —— 重建键盘视图
-     * 这两个入口都不走：旧面板会把整库扫完（每块 50 行解密），并把结果 post 到已经脱离视图树的
-     * 列表上，同时占着单线程的 [BackgroundIo] 让剪贴板入库排在后面。见 `BUG.md` L-17。
+     * 分块搜索靠 [refreshToken] 判停：每次 [runSearch] 都会递增令牌，面板开关时 [onShown] /
+     * [onHidden] 也各递增一次。但重建键盘视图不走这两个生命周期入口，旧面板会把整库扫完
+     * （每块 [SEARCH_WINDOW_ITEMS] 行解密）、把结果 post 到已脱离视图树的列表上，
+     * 并一直占着 [BackgroundIo.runLong] 的长活线程。本函数补一次递增让在飞扫描尽早收工（BUG.md L-17）。
      */
     fun stopBackgroundWork() {
         searchHandler.removeCallbacksAndMessages(null)
@@ -353,7 +358,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     fun backspaceSearch() {
         val cur = editSearch.text ?: return
         if (cur.isNotEmpty()) {
-            // 按**码点**删（复用 L-120 的 [TextSelection.stepByCodePoint]）：符号层会把 emoji 追加进
+            // 按**码点**删（复用 [TextSelection.stepByCodePoint]）：符号层会把 emoji 追加进
             // 搜索框，按 UTF-16 码元删会留下孤立代理项 —— 搜索框渲染成豆腐块，此后每次退格只删一个码元，
             // 搜索词永远匹配不到任何条目也删不干净（BUG.md 第 15 批 M4）。
             cur.delete(TextSelection.stepByCodePoint(cur.toString(), cur.length, -1), cur.length)
@@ -388,10 +393,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
     private fun runSearch() {
         val q = ClipboardSearch.clampQuery(editSearch.text?.toString() ?: "")
         val reqToken = ++refreshToken
-        // 扫库可能扫到 `SCAN_LIMIT`（逐行解密，实测约 16ms/行）：放**长活池**，别占短活池 ——
-        // 短活池还排着剪贴板采集入库、面板首屏、粘贴取正文，被长任务顶住时用户看到的是
-        // 「复制了没反应 / 面板白屏」（BUG.md L-1389）。长活池同样是单线程 FIFO、后台优先级；
-        // 本处已有 `reqToken` 作废机制保证后发起的结果不覆盖先前状态。
+        // 全库扫描可能扫到 [ClipboardSearch.SCAN_LIMIT] 行（逐行解密，实测约 16ms/行）：放**长活池**，
+        // 别占交互短活池 —— 短活池还排着剪贴板采集入库、面板首屏、粘贴取正文，被长任务顶住时
+        // 用户看到的是「复制了没反应 / 面板白屏」（BUG.md L-1389）。[BackgroundIo.runLong] 同样是
+        // 单线程 FIFO、后台优先级；作废靠 [reqToken] 判停，旧任务不会覆盖新状态。
         BackgroundIo.runLong {
             // 查询词的所有等价写法（全半角、零宽都归一到同一组里比对，BUG.md L-1135）
             val forms = ClipboardSearch.queryForms(q)
@@ -471,8 +476,10 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
                             break
                         }
                         matches.add(item)
+                        // 条数与字节双闸任一触顶即停：条数取 [ClipboardPrefs.maxSearchResults]（默认 200），
+                        // 字节取 [ClipboardStore.SEARCH_RETAIN_BUDGET_BYTES]（24MB）。
                         // 按 UTF-8 字节计（不是字符数）：中文 1 字符 = 3 字节，
-                        // 用 length 会让 24MB 驻留预算在中文下被低估到 1/3，护栏失效。
+                        // 用 length 会让 24MB 预算在中文下被低估到 1/3，护栏失效。
                         retainedBytes += ClipboardStore.utf8ByteSize(item.content)
                     }
                 }
@@ -502,7 +509,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             }
             // 收尾判一次真实状态：命中截断优先，其次是「库比止损上限大且没扫完」（L-1134）
             val finalCap = ClipboardSearch.capState(retainReached, exhausted, dbTotal)
-            // 收尾补发：节流可能吞掉最后一块，这里保证"最终结果一定落地"，否则用户会看到少于实际
+            // 收尾补发：节流可能吞掉最后一块，这里保证「最终结果一定落地」，否则用户会看到少于实际
             // 命中的结果（静默少给）。命中数与截断状态都没变时跳过，避免重复布局 —— 但两者任一变了
             // 都得发：截断状态决定提示行显不显示。
             if (publishedCount != matches.size || publishedCap != finalCap) {
@@ -591,7 +598,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         const val TEXT_EMPTY_NO_MATCH_SCAN = "最近的内容里没找到\n库里内容较多，只扫描了最近的一部分"
         /** 截断提示：命中断在条数 / 驻留字节预算上（不写上限值：先触顶的可能是两者之一） */
         const val TEXT_CAP_RETAIN = "命中太多，已截断；缩小关键词可看全"
-        /** 截断提示：库比扫描止损大，更旧的内容这轮没查 */
+        /** 截断提示：库比扫描止损大，更旧的内容这次没查 */
         const val TEXT_CAP_SCAN = "库里内容较多，只扫描了最近一部分，缩小关键词可看全"
         const val DEBOUNCE_MS = 150L
         /** 结果发布的最小间隔：窗口细化后逐块发布会产生数百次布局，按此间隔合并 */

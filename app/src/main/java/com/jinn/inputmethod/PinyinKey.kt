@@ -19,14 +19,16 @@ import kotlin.math.min
      * 拼音键盘的单个字母键。
      *
      * 布局（对齐主流双拼键盘）：
-     *  - 大写字母置顶，贴上边摆放，占上方约 50% 高度
-     *  - 下方 50% 区域显示自然码双拼的韵母提示（如 Q 键下显示 iu、W 键下显示 ia ua）
+     *  - 字母置顶：字号按键高 50% 派生（[TEXT_RATIO]），落在上方约 42% 区域（[LETTER_TOP_RATIO]）
+     *  - 下方显示双拼韵母提示（如 Q 键 iu、W 键 ia ua），末行贴底（[SUB_BOTTOM_RATIO]）
      *
      * 只负责画一个圆角矩形 + 字母 + 韵母提示，点击/触摸判定交给
      * [PinyinKeyboardView] 统一分发（本类把 press 状态画出来）。
-     * 视觉风格对齐 [MicButton]：深色圆角键 + 按压缩放，不引入额外依赖。
+     * 自绘圆角矩形；[MicButton] 是圆形录音键，二者不共用绘制路径。
      * 圆角半径与四边内缩由设置页参数决定（见 [KeyAppearance] 与
      * [setKeyAppearance]），确保与本行的大写键/删除键完全一致。
+     * 每个视觉属性 setter 改值后都调用 invalidate() 重绘。
+     * 按压面色：默认皮肤取 [faceColorPressed]，皮肤态取 [KeyVisual.pressed]。
      */
     class PinyinKey @JvmOverloads constructor(
         context: Context,
@@ -162,7 +164,7 @@ import kotlin.math.min
          * 符号层样式：一律水平 + 垂直居中。
          *
          * 符号层不再沿用字母层「小字顶置 + 下方提示」的排版，符号是独立内容，
-         * 顶置会显得偏上、且短符号（如 "if"）与长关键字看起来不一致。
+         * 顶置会显得偏上、且短符号（如「if」）与长关键字看起来不一致。
          * 长文本仍按可用宽度收缩字号（见 onDraw）。
          */
         var centeredStyle: Boolean = false
@@ -172,11 +174,11 @@ import kotlin.math.min
             }
 
         /**
-         * 符号层「页内统一样号」的度量文本（本页最宽的那条显示标签，见 `widestSymbolLabel`）。
+         * 字号统一度量的基准文本：符号层取本页最宽标签（`widestSymbolLabel`），字母层取最宽字母。
          *
-         * 空串 = 按自己的标签算字号。旧行为下同一页里 2 字标签与 4 字标签会各算各的字号，
-         * 看起来「一大一小」；非空时本键字号一律按这段文本来算 ⇒ 整页同号，
-         * 且仍不会溢出按键（字号是按可用宽度算出来的）。
+         * 见 `PinyinKeyboardView.refreshKeyLabels`。空串 = 按自己的标签算字号。
+         * 旧行为下同一页里 2 字标签与 4 字标签会各算各的字号，看起来「一大一小」；
+         * 非空时本键字号一律按这段文本来算 ⇒ 整页同号，且仍不会溢出按键（按可用宽度算字号）。
          */
         var uniformMeasureText: String = ""
             set(value) {
@@ -185,10 +187,11 @@ import kotlin.math.min
             }
 
         /**
-         * 符号层「页内统一字号」的基准键宽（像素），见 `PinyinKeyboardView.refreshKeyLabels`。
+         * 字号统一度量的基准键宽（像素），字母层与符号层共用，见 `PinyinKeyboardView.refreshKeyLabels`。
          *
-         * 0 = 按本键宽度算（旧行为）。不传基准宽度时，同一页里 9 键排的键比 10 键排宽，
-         * 同一条标签会各自算出不同字号（真机实测墨高 25px vs 22px）。
+         * 0 = 按本键宽度算。不传基准宽度时，同一页里 9 键排比 10 键排宽，
+         * 同一条标签会各自算出不同字号（实测墨高 25px vs 22px）。
+         * 基准由视图在 [PinyinKeyboardView.onLayout] 拿到真实键宽后下发，据此补算字号。
          */
         var uniformMeasureWidth: Float = 0f
             set(value) {
@@ -197,8 +200,8 @@ import kotlin.math.min
             }
 
         /**
-         * 双拼韵母提示（键下方，普通色）。多行用 `\n` 分隔，每行垂直均分下半区
-         * （如 Y 键显示 uai/ing 两行）。
+         * 双拼韵母提示（键下方，普通色）。多行用 `\n` 分隔，紧凑排列、末行贴底。
+         * 行数由 [ShuangpinTable.finalHint] 保证（含红色行合计 ≤2 行，如 Y 键 ing / uai 两行）。
          */
         var subLabel: String = ""
             set(value) {
@@ -357,7 +360,7 @@ import kotlin.math.min
         /**
          * 按可用宽度收缩字号：文本超宽时等比缩小，下限为 [minSize]。
          *
-         * 用于编程关键字这类长文本，固定字号会让 "return""static" 左右溢出、看不全。
+         * 用于编程关键字这类长文本，固定字号会让「return」「static」左右溢出、看不全。
          *
          * [minSize] 由调用方按键高比例给出（见 [MIN_LONG_TEXT_RATIO]），不用固定像素值：
          * 固定值在低密度屏（mdpi 下 9px = 9dp）会大于按宽度算出的适配字号，反而把文字
@@ -434,7 +437,7 @@ import kotlin.math.min
                 canvas.drawText(label, w / 2f, (h - glyphFm.ascent - glyphFm.descent) / 2f, textPaint)
                 return
             }
-            // 大写字母：置顶贴上边，占上方约 50%
+            // 大写字母：置顶贴上边，落在上方约 42% 区域（LETTER_TOP_RATIO）
             // ⚠ **必须再按宽度收一次**：悬浮四角拉伸让键高与键宽彻底解耦（45% 宽 × 190% 高
             // 时键宽只有 18.5dp、键高 99dp）。只按键高定字号会让相邻字母互相压字 —— 改造前
             // 整块等比缩放不会这样，这是「真实重排」带来的新形态。基准取视图下发的
@@ -595,7 +598,6 @@ import kotlin.math.min
             /** 超过该字符数按长文本处理：收缩字号并垂直居中（编程关键字、多字符符号） */
             const val LONG_TEXT_THRESHOLD = 2
 
-            /** 长文本基准字号比例（比 TEXT_RATIO 小一号，因为长文本占的空间更多） */
         /**
          * 铺满字母的字形**最多占键宽的比例**（[fullPinyinStyle] 分支）。
          *
@@ -604,9 +606,9 @@ import kotlin.math.min
          */
         const val FULL_TEXT_FIT_RATIO = 0.8f
 
+            /** 长文本基准字号比例（比 [TEXT_RATIO] 小一号，长文本占的空间更多） */
             const val LONG_TEXT_RATIO = 0.30f
 
-            /** 长文本收缩下限，避免极长字符串缩到无法辨认 */
             /**
              * 长文本收缩下限（占键高比例），避免极长字符串缩到无法辨认。
              *
