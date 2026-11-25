@@ -61,11 +61,11 @@ class ClipboardController(context: Context) {
      * 持久标记 `prefs.reclassified` 只在跑成功时置位，读它再起线程属 check-then-act：
      * 并发入口会起两条全库解密线程。这个标记先抢位，抢不到的直接返回。
      *
-     * ⚠ 必须是**进程级**（[companion] 里）：实例字段在「关开关 → `stop()` → 再开 →
+     * ⚠ 必须是**进程级**（[ReclassifyGuard]）：实例字段在「关开关 → `stop()` → 再开 →
      * 新建实例」后从 false 重新起跳，而上一趟 `reclassifyAll` 可能还在全库解密
      * ⇒ 两趟并发、CPU/IO 翻倍，正是 L-1088 要根除的现象。
      *
-     * ⚠ 与 [reclassifyRunning] 的分工：`started` 只表示「这趟被发起过」，
+     * ⚠ 与 [ReclassifyGuard.running] 的分工：`started` 只表示「这趟被发起过」，
      * `running` 表示「此刻真在跑」。**只有线程自己在 finally 里放开 `running`**；
      * `stop()` 不许碰 `started` —— 那会把「上一趟还在跑」的事实抹掉，重新启用时又起一趟。
      */
@@ -172,7 +172,7 @@ class ClipboardController(context: Context) {
         val clip = clipboard.primaryClip
         if (clip == null) {
             // 等待用主线程 Handler，不能在 BackgroundIo 里 sleep：那是单线程串行队列，
-            // 一睡就把入库、搜索解密、粘贴取正文、词频落盘全部堵住（实测同队列同一线程）。
+            // 一睡就把入库、面板首屏、词频落盘全部堵住（同一条单线程队列）。
             retryHandler.postDelayed({
                 if (!listenerRegistered) return@postDelayed
                 val retryClip = clipboard.primaryClip
@@ -240,13 +240,13 @@ class ClipboardController(context: Context) {
         // 都给 content://）。早先是「有 URI 就当图片」，把这类条目的可用文本一起截走，
         // 非图片还会以 image/png 兜底落一条永久脏图片行。
         // 兜底口径见 [handleImageClip]：回文本路径只看**声明类型**，不看嗅探结果
-        // （嗅探在后台，"判否"时返回值早已回传，回调里没有回退的机会）。
+        // （嗅探在后台，判否时返回值早已回传，回调里没有回退的机会）。
         val hasText = !first.text.isNullOrEmpty() || !first.htmlText.isNullOrEmpty()
         if (!hasText && handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
         // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
         // 时间预算：URI 型条目（复制文件）要开跨进程流读 ≤256KB，而本方法跑在**短**活池
-        // （与面板首屏 / 搜索解密 / 粘贴取文 / 入库同一条单线程队列），慢 provider 会把它们一起拖住。
+        // （与面板首屏 / 粘贴查询 / 入库同一条单线程队列），慢 provider 会把它们一起拖住。
         // 上限取 [COLLECT_READ_BUDGET_MS]（远宽于粘贴侧）：宁可偶尔仍慢，不可把本地大文件判丢。
         val text = when (
             val r = ClipboardStore.itemTextResult(
@@ -292,7 +292,7 @@ class ClipboardController(context: Context) {
      * 要留给面板首屏与粘贴，大图解码不能排在它们前面。
      *
      * 类型判定**不在本方法里做**（BUG.md L-1288）：本方法跑在 `BackgroundIo.run` 的短线程池
-     * （`jinn-clipboard-io`，与面板首屏查询 / 搜索解密 / 粘贴取文**同一条单线程队列**），
+     * （`jinn-clipboard-io`，与面板首屏查询 / 粘贴查询 / 入库**同一条单线程队列**），
      * 而嗅探要 `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，
      * 会挡住同队列的面板首屏与粘贴。现在把**声明类型**原样传下去，由长活池在读到头部时
      * 就地判：同一次开流，短线程池零 IO。
@@ -608,8 +608,8 @@ object ClipboardStore {
      * 采集路径的读入**时间**预算（毫秒）。
      *
      * 与粘贴的 200ms **口径不同，别照抄**：粘贴在主线程上等（`commitText` 要用当前 InputConnection），
-     * 慢一点就是 ANR，所以必须紧；采集在后台短活池（`jinn-clipboard-io`，与面板首屏 / 搜索解密 /
-     * 粘贴取文 / 入库共用同一条单线程队列），慢的代价是"排在我后面的任务一起等"，不是 ANR。
+     * 慢一点就是 ANR，所以必须紧；采集在后台短活池（`jinn-clipboard-io`，与面板首屏 / 粘贴查询 /
+     * 入库共用同一条单线程队列），慢的代价是「排在我后面的任务一起等」，不是 ANR。
      * 取 2000ms 量级：**宁可偶尔仍慢，不可把本地大文件判丢** —— 本文件刚把「复制文本文件」从图片
      * 分支救回文本路径（L-1550），预算收紧等于把那条修复又收回去。
      * 预算只在循环顶部检查，阻塞在单次 `read()` 上时打断不了（L-185 已记该局限）。
@@ -729,9 +729,10 @@ object ClipboardStore {
      * 单条解密的内存放大系数（实测值 + 余量）。
      *
      * 单条解密后常驻两份数据：库内密文串（base64 ≈ 明文 4/3）+ 解出的明文串。
-     * 实测（`TmpAmplificationProbeTest`，256KB 明文、ASCII/CJK/base64 样三种）：
-     * 密文串 349,564 B + 明文串 262,144 B ÷ 明文 262,144 B = 2.33 倍，与「4/3 + 1」吻合；明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，
-     * 早先"按 UTF-16 翻倍"的假设不成立）。取 2.5 留约 7% 余量覆盖对象头与瞬时解码缓冲。
+     * 实测（一次性微基准，256KB 明文、ASCII/CJK/base64 三种样本）：密文串 349,564 B +
+     * 明文串 262,144 B，合计 ÷ 明文 262,144 B = 2.33 倍，与「4/3 + 1」吻合。
+     * 明文串按 UTF-8 字节计（JVM/ART 均为紧凑字符串，早先「按 UTF-16 翻倍」的假设不成立）；
+     * 取 2.5 留约 7% 余量覆盖对象头与瞬时解码缓冲。
      */
     internal const val DECRYPT_ITEM_AMPLIFICATION = 2.5
 
@@ -740,7 +741,7 @@ object ClipboardStore {
      *
      * 按当前参数：窗口 50 × 单条上限 256KB × 放大 2.5 ≈ 32.8MB（最坏情形：整窗口都顶到单条上限，
      * 实测常驻约 29.8MB）；常规内容远低于此。若日后放宽单条上限或调大窗口，
-     * `ClipboardLimitsTest` 的护栏会先失败（本预算约允许到 73 条窗口）。
+     * `ClipboardLimitsTest` 的护栏会先失败（预算 ÷ 单条上限 ÷ 2.5 ≈ 76 条窗口）。
      */
     const val DECRYPT_WINDOW_BUDGET_BYTES = 48L * 1024 * 1024
 
@@ -796,7 +797,7 @@ object ClipboardStore {
     /**
      * 文本的 UTF-8 字节数是否超过 [limit]（纯函数，便于单测）。
      *
-     * 先按字符数快筛：UTF-8 字节数恒 ≥ 字符数，字符数都超了就不必再编码 ，
+     * 先按字符数快筛：UTF-8 字节数恒 ≥ 字符数，字符数都超了就不必再编码，
      * 否则一个 20MB 的串先被复制成 27MB 字节数组，检查本身就成了内存风险。
      */
     fun exceedsItemLimit(text: String, limit: Int = MAX_ITEM_BYTES): Boolean {

@@ -22,13 +22,12 @@ import java.io.FileOutputStream
 /**
  * 分类词库页：列出可选词库，按需下载 / 删除。
  *
- * 视觉对齐本项目既有页面（与剪贴板历史页同一套配色）：
- *   背景 #0B1020 ｜ 顶栏 #141C33 ｜ 卡片 #1C1F26
- *   主文字 #ECEEF2 ｜ 次文字 #9CA3AF ｜ 强调 #4C8DFF ｜ 危险 #E5484D
+ * 视觉对齐本项目既有页面：配色一律走主题资源 `R.color.*`
+ * （`app_bg` / `card_bg` / `text_*` / `accent` / `danger`），随明暗主题切换。
  *
  * 下载落地到 `filesDir/dicts/<fileName>`（[PinyinEngine.OPT_DICT_DIR]），
  * 引擎启动时自动扫描加载。加载是延迟的，基础词库先就绪，可选包在后台补齐，
- * 所以页面标注的是「开机后首次输入候选就绪需等待约 N 秒」，而不是「启动耗时」。
+ * 所以卡片只说「息屏 / 收起键盘后才完成加载」，不标固定秒数。
  *
  * 说明文案按句拆成多行渲染（[OptionalDict.descLines]），一行就是一句话：
  * 交给系统自动折行会出现断句不良的折行，读起来别扭，所以主动分行。
@@ -169,7 +168,7 @@ class DictManagerActivity : Activity() {
         textStatus.visibility = View.VISIBLE
     }
 
-    /** 顶栏：左标题、右关闭（沿用本项目深蓝顶栏 #141C33） */
+    /** 顶栏：左标题、右关闭（底色走 `card_bg`，随主题变化） */
     private fun buildTopBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1030,7 +1029,7 @@ class DictManagerActivity : Activity() {
         /**
          * 下载一个可选词库包所需的空闲空间（字节）。
          *
-         * 按**安装占用**（[OptionalDicts.installMiB]）× 2 估算，另留 8MB 余量：
+         * 按**安装占用**（`OptionalDict.installMiB`）× 2 估算，另留 8MB 余量：
          *  - 安装占用本身（主要是 `files/index/<包名>.idx`）必须放得下；
          *  - 建索引期还要在同目录写两个整份临时件（键区 + 词区），峰值约为成品的一倍；
          *  - 下载中的 `.xz` 与解压/校验的中间态再占一份。
@@ -1225,7 +1224,7 @@ private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File, url: String, fi
  *
  * 下载 URL 是固定的 Release 附件，但 `followRedirects(true)` 会把请求交给目标主机
  * 继续指路：没有上限时，一个「一直有数据、永不结束」的响应足以写满用户存储。
- * 上限取现役最大包（6.36MB）的约 10 倍，正常包碰不到线。
+ * 上限 [MAX_DOWNLOAD_BYTES]（64MiB，现役最大包的 11 倍多），正常包碰不到线。
  */
 private fun copyCapped(input: java.io.InputStream, out: java.io.OutputStream) {
     val buf = ByteArray(DEFAULT_BUFFER_SIZE)

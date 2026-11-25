@@ -25,10 +25,10 @@ import java.io.FileOutputStream
  * （见 [CustomDicts.saveHuman]），本页打开时回显；本页保存也写同一文件。所以两个入口
  * 互为「同一份文本的两种打法」，用户先导入再进来补两行也不会互相覆盖。
  *
- * 保存结果用 `RESULT_OK`（带条数与跳过行数）回传给 [DictManagerActivity]，由它统一提示并
- * 重启输入法 —— 重启窗口的状态位在那边，本页自己 kill 会把「已保存」的提示一起吞掉。
+ * 保存结果用 `RESULT_OK`（四条计数：保存 / 跳过 / 打不出 / 同键挤掉）回传给 [DictManagerActivity]，
+ * 由它统一提示并重启输入法 —— 重启窗口的状态位在那边，本页自己 kill 会把「已保存」的提示吞掉。
  *
- * 版面与词库页同源（深蓝背景 + 顶栏右关闭），输入区走等宽字体并占满剩余高度：
+ * 版面与词库页同源（背景 app_bg + 顶栏右关闭），输入区走等宽字体并占满剩余高度：
  * 「一行一条」的文本在视觉上就是一列，眼睛好对齐。
  */
 class CustomDictEditActivity : Activity() {
@@ -247,8 +247,8 @@ class CustomDictEditActivity : Activity() {
         super.onSaveInstanceState(outState)
         val text = editor.text?.toString() ?: ""
         // 文件还在、编辑器里没有它（读盘在途 / 读失败待重试 / 大稿等首帧铺）：令牌与预期长度原样带下去，
-        // 下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。用户一动手就作废这条支路 ——
-        // 他现在的编辑比那份草稿更要紧
+        // 下一次重建接着读（BUG.md L-1185 / L-1190 / L-1192）。即使用户已动手输入也走这条支路 ——
+        // 没有比它更新的已落盘修订时，这份草稿仍是唯一副本，令牌必须随重建传下去（见下方 BUG-22）
         val pending = pendingDraftFile
         // BUG-22：判据里原先还有 `!dirty`，于是「读盘/铺稿在途时用户先敲了字」（dirty 置真、
         // 编辑器里还没有草稿）会掉进下面的分支 —— 大稿此时 `text` 是空的，`draftInBundle(0)` 为真，
@@ -302,7 +302,7 @@ class CustomDictEditActivity : Activity() {
     /**
      * 输入停顿 [DRAFT_WRITE_DEBOUNCE_MS] 后落一次盘（只对大稿；缩回上限以内则删掉旧件）。
      *
-     * 写文件走 [BackgroundIo]（全应用唯一的单线程 IO 队列），`toString` 快照留在主线程但只做一次拷贝。
+     * 写文件走 [BackgroundIo] 的长活池（单线程串行，与交互短活队列分开），`toString` 快照在主线程只做一次拷贝。
      * 临时名 + `renameTo`：新实例读到的永远是完整文件，不会撞上写了一半的版本（BUG.md L-1173）。
      */
     private fun scheduleDraftWrite(length: Int) {
@@ -605,7 +605,7 @@ class CustomDictEditActivity : Activity() {
      *
      * 「恢复不覆盖编辑框里已有输入」是既有口径（L-1191），但那不该以丢掉用户旧长文为代价：
      * 旧稿改名进 [DRAFT_FILE_ARCHIVE]（只留最新一份），下次打开本页且没有更新的草稿时会被铺回来。
-     * 改名失败（跨目录/被占）时退回旧的删除行为，不留下半截状态。
+     * 改名失败（目标被占 / 文件系统限制）时退回旧的删除行为，不留下半截状态。
      */
     private fun discardPendingDraft() {
         val file = pendingDraftFile
@@ -677,13 +677,13 @@ class CustomDictEditActivity : Activity() {
     /**
      * 回显源文本（与「导入 .txt」共享同一份）。
      *
-     * 读放后台：上限 8MB 的文本一次性读进内存并铺到 EditText，主线程做会掉帧。
+     * 读放后台：上限 8M 字符的文本一次性读进内存并铺到 EditText，主线程做会掉帧。
      * 读不出来时**提示**而不是静默留空 —— 否则用户会以为词库内容丢了。
      */
     private fun loadSource() {
         val app = applicationContext
         Thread {
-            // 整份源文本读盘是重活（上限 16M 字符），降后台优先级（BUG.md L-1194）
+            // 整份源文本读盘是重活（上限 8M 字符，与 readSource 同口径），降后台优先级（BUG.md L-1194）
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val file = CustomDicts.sourceFile(app)
             // 读前读后各取一次身份（BUG.md L-899）：只在读完后取一次的话，「读内容」与「取身份」
@@ -737,7 +737,7 @@ class CustomDictEditActivity : Activity() {
     }
 
     /**
-     * 保存 = 导入：校验归一 → 原子写包 → 原子写源文本 → 回传条数交给词库页重启生效。
+     * 保存 = 导入：校验归一 → 原子写源文本 → 原子写包 → 回传条数交给词库页重启生效。
      *
      * 无合法词条时**不落盘**（与导入同一口径）：清空词库请用卡片上的「删除」，
      * 免得一次误编辑把已有词库清掉。
@@ -875,7 +875,7 @@ class CustomDictEditActivity : Activity() {
     // ── 版面 ────────────────────────────────────────────────
 
     /**
-     * 顶栏：左标题、右「保存」+ 关闭（与词库页同款 #141C33 深蓝顶栏）。
+     * 顶栏：左标题、右「保存」+ 关闭（与词库页同款 card_bg 底色，夜间为 #141C33 深蓝）。
      *
      * 「保存」放顶栏而不是底部：本页打开即弹键盘，而 Android 10 真机上键盘是**覆盖**窗口
      * （`adjustResize` 未缩短布局），底部按钮会被键盘压住点不到 —— 2026-10-05 真机实证。
@@ -968,7 +968,7 @@ class CustomDictEditActivity : Activity() {
 
         internal fun consumePendingSaveResult(): Intent? = pendingSaveResult.also { pendingSaveResult = null }
 
-        /** 词库页从结果里取「已保存条数 / 跳过行数 / 打不出的条数」，复用同一句结果文案 */
+        /** 词库页从结果里取四条计数：保存 / 跳过 / 打不出 / 同键挤掉，复用同一句结果文案 */
         const val EXTRA_ENTRIES = "custom_entries"
         const val EXTRA_SKIPPED = "custom_skipped"
         const val EXTRA_FILTERED = "custom_filtered"
