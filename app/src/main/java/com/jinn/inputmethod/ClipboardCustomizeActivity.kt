@@ -19,10 +19,10 @@ import android.widget.Toast
 /**
  * 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧的「剪贴板自定义」进入。
  *
- * 交互模型（2026-10-06 用户拍板）：**默认锁定只读 → 解锁才可调 → 改动进草稿 → 点「保存」才落盘**。
+ * 交互模型：**默认锁定只读 → 解锁才可调 → 改动进草稿 → 点「保存」才落盘**。
  *  - 「解锁参数」开关：**会话级、不落盘**（每次进入都从锁定态开始，防误触最彻底）；
- *  - 总开关与 7 个容量参数**都走草稿**（[draft] 是渲染的唯一真源，`prefs` 只在建快照 / 保存时读）；
- *  - 「重置」= 撤销本次编辑（回到进入页面时的 [snapshot]，不写盘、不触发裁剪）；
+ *  - 总开关与全部参数**都走草稿**（[draft] 是渲染唯一真源，`prefs` 只在建快照 / 保存 / 裁剪时读）；
+ *  - 「重置」= 丢弃草稿回到 [snapshot]（进入页面时建、每次回前台按盘上值刷新；不写盘、不触发裁剪）；
  *  - 保存 / 重置后**自动回锁**；
  *  - 保存走 [ClipboardPrefs.applyDraft]（单次 `commit`，避免半套参数）；
  *  - 已解锁且有未保存改动时离开才要二次确认；锁定态（含回锁）返回直接丢弃草稿。
@@ -35,7 +35,7 @@ internal enum class TightenScope { NONE, NON_FAVORITE_ONLY, INCLUDING_FAVORITE }
 class ClipboardCustomizeActivity : Activity() {
 
     /**
-     * 页面参数草稿（渲染唯一真源）：从八项扩到十二项（图片四项），再纳入缩略图布局两项。
+     * 页面参数草稿（渲染唯一真源）：基础八项 + 图片四项 + 图片行为两项 + 布局两项，共十六项。
      *
      * 布局两项原先直写 `Prefs`（即时生效），与页面「改完点保存」的手感不一致 —— 改完布局后
      * 草稿没有任何变化，保存 / 重置按钮仍是灰的，用户点了以为没反应。
@@ -69,7 +69,7 @@ class ClipboardCustomizeActivity : Activity() {
     private lateinit var saveButton: Button
     private lateinit var resetButton: Button
 
-    /** 进入页面时的盘上快照：「重置」的回滚目标，也是「有无改动」的比较基准 */
+    /** 回滚基准：进入页面时建、每次回前台刷新（未编辑的键随盘上值走）；「重置」回滚到此，也是脏状态基准 */
     private lateinit var snapshot: Draft
 
     /** 当前编辑值 */
@@ -122,7 +122,7 @@ class ClipboardCustomizeActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
-        // 回前台时重读盘上值，**只同步「本页没动过」的键**（BUG.md L-1392）：
+        // 回前台时重读盘上值，**只同步「本页没动过」的键**（L-1106）：
         // 本页是「草稿 + 保存」模型，但 `galleryColumns` / `galleryCellHeightDp` 这两个布局键还有
         // 另外两个写方（历史页网格、键盘面板「布局」键）都是**即时落盘**。于是：用户先在别处改了
         // 布局 → 回到本页（Activity 未重建，草稿仍是旧值）→ 改别的项并保存 ⇒ 布局被静默写回旧值。
@@ -171,7 +171,7 @@ class ClipboardCustomizeActivity : Activity() {
     /**
      * 盘上取值 → 页面草稿。
      *
-     * 走 [ClipboardPrefs.snapshot] 一次性取（BUG-12）：逐键读八次时，若导入 / 批量保存正在跑，
+     * 走 [ClipboardPrefs.snapshot] 一次性取：逐键读多遍时，若导入 / 批量保存正在跑，
      * 页面会拿到「半新半旧」的组合（例如总量上限已是新值、收藏上限还是旧值），用户随手一保存
      * 就把旧值写回，抵消掉刚导入的配置。
      */
@@ -198,10 +198,11 @@ class ClipboardCustomizeActivity : Activity() {
     }
 
     /**
-     * 把盘上**新值**同步进草稿，但**只动「本页没编辑过」的键**（BUG.md L-1392）。
+     * 把盘上**新值**同步进草稿，但**只动「本页没编辑过」的键**（L-1106）。
      *
-     * 判据：草稿某键仍等于**旧快照**（进入页面时的盘上值）⇒ 用户没碰过它 ⇒ 跟随新盘上值；
-     * 不等 ⇒ 用户在本页改过 ⇒ **保留草稿**，绝不覆盖，否则会冲掉还没保存的编辑。
+     * 判据：草稿某键仍等于**旧快照**（进入页面时的盘上值）⇒ 按值判没动过 ⇒ 跟随新盘上值；
+     * 不等 ⇒ 在本页改过 ⇒ **保留草稿**，绝不覆盖，否则会冲掉还没保存的编辑。
+     * 按值比较不记编辑历史：改过又改回快照值按未编辑处理（本页可接受的近似）。
      *
      * 与 [confirmReset] 的区别：重置是「丢弃全部编辑、回到进入时的快照」，这里是「保留编辑」。
      *
@@ -270,7 +271,7 @@ class ClipboardCustomizeActivity : Activity() {
 
         val card1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         card1.addView(makeSwitch(TEXT_ENABLED, draft.enabled) { v ->
-            // 总开关也走草稿（用户拍板）：勾选只改草稿，点「保存」才写盘并由广播让 IME 启停
+            // 总开关也走草稿：勾选只改草稿，点「保存」才写盘并直接通知 IME 启停
             draft = draft.copy(enabled = v)
             renderAll()
         })
@@ -325,7 +326,7 @@ class ClipboardCustomizeActivity : Activity() {
             { draft = draft.copy(favMaxMb = it) },
             { "$it MB" },
         ))
-        // 生效值按**草稿**算（含页宽联动）：拖动历史体积时能立刻看到收藏上限被压到多少
+        // 生效值按**草稿**算（随历史体积联动）：拖动历史体积时能立刻看到收藏上限被压到多少
         val effectiveFav = ClipboardPrefs.effectiveFavoriteMaxMb(draft.favMaxMb, draft.maxTotalMb)
         val clampNote = if (effectiveFav < draft.favMaxMb) TEXT_FAV_CLAMPED_SUFFIX else ""
         card2.addView(makeHint(TEXT_FAV_EFFECTIVE_PREFIX + effectiveFav + TEXT_FAV_EFFECTIVE_SUFFIX + clampNote))
@@ -345,7 +346,7 @@ class ClipboardCustomizeActivity : Activity() {
             { draft = draft.copy(maxItemKb = it) },
             { "$it KB" },
         ))
-        // 生效值按**草稿**算（含页宽联动）：用盘上值会让草稿改动看不到反馈
+        // 生效值按**草稿**算（受解密窗约束）：用盘上值会让草稿改动看不到反馈
         val effectiveKb = ClipboardStore.effectiveItemLimitBytes(draft.maxItemKb * 1024L) / 1024
         card3.addView(makeHint("$TEXT_EFFECTIVE_PREFIX$effectiveKb$TEXT_EFFECTIVE_SUFFIX"))
         card3.addView(makeSlider(
@@ -576,7 +577,7 @@ class ClipboardCustomizeActivity : Activity() {
         // ⚠ 这里**不**再做「单张受总量压制」的写侧钳制（BUG.md L-1463）：那样存下去的是钳制值，
         // 之后把图片总量调大也再回不到用户设的原值（备份包带出去的也是残值）。与收藏侧同一口径 ——
         // 盘上只存原值，压制由读侧 `ClipboardPrefs.effectiveImageMaxItemMb` 算，
-        // 页面回显按生效值展示（见 renderImageCard）。
+        // 页面回显按生效值展示（见 renderAll 中图片卡的生效值提示）。
         val ok = prefs.applyDraft(
             enabled = target.enabled,
             maxItems = target.maxItems,
@@ -604,7 +605,7 @@ class ClipboardCustomizeActivity : Activity() {
         layoutPrefs.galleryColumns = target.galleryColumns
         layoutPrefs.galleryCellHeightDp = target.galleryCellHeightDp
         if (wasEnabled != target.enabled) {
-            // 采集器跑在输入法进程里（同一进程）：直接通知它启停（AI2 A-572）。
+            // 采集器跑在输入法进程里（同一进程）：直接通知它启停。
             // 早先走 `sendBroadcast`，而接收方只在 Android 13+ 注册 ⇒ 低版本这条通知落空，
             // 用户关掉采集后仍在入库，直到下次弹键盘才停。
             JinnIme.onClipboardConfigChanged()
@@ -762,8 +763,9 @@ class ClipboardCustomizeActivity : Activity() {
         /**
          * 收紧上限会删掉什么（L-1082）：两类语义必须分开警示。
          *
-         * 条数 / 历史总量 / 图片三项的裁剪走 [ClipboardDb.deleteNonFavoriteByIds]（SQL 固定
-         * `is_favorite = 0`），删不到收藏；只有收藏条数与收藏体积（生效值）会动收藏。
+         * 文本条数 / 文本总量 / 图片张数 / 图片总量的裁剪都只删非收藏行
+         * （[ClipboardDb.trimTo] 里的收藏由各自的软上限单独收）；单张图片上限收紧不删既有行，
+         * 只在后续入库时跳过超限图。只有收藏条数与收藏体积（生效值）会动到收藏。
          * 合成一句会让用户以为收紧总量也要失去收藏，真会删收藏时警示反而被稀释。
          */
         internal fun tightenScope(draft: Draft, snapshot: Draft): TightenScope {

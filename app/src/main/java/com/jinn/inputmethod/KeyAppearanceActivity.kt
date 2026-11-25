@@ -19,25 +19,25 @@ import android.widget.TextView
  * 「键盘外观」页（设置页入口按钮的文案见 `SettingsActivity.TEXT_KEY_APPEARANCE_ENTRY`）：
  * 26 键区（3 行 28 键）的外观参数总台 —— 圆角 / 间隙 / 键高 / 候选字距 / 候选字号 / 拼音字号 /
  * 拼音占高 / 面板透明八个滑杆，输入与显示六个开关，外加候选词行数、界面明暗切换（含定时两个时刻）
- * 与键盘皮肤；全部控件见 activity_key_appearance.xml（2026-10-09 由设置页迁入，此后逐轮增补）。
+ * 与键盘皮肤；全部控件见 activity_key_appearance.xml（2026-10-09 由设置页迁入）。
  *
  * 入口：设置页那一行按钮；拖动即落盘（[Prefs.keyCornerDp] / [Prefs.keyGapDp] /
  * [Prefs.keyTransparencyPercent]），不广播、不重启进程：
  *  - 松手时调 [JinnIme.onKeyAppearanceChanged] → 键盘正显示就即时重套外观（只改外观，不动拼音串）；
  *  - 键盘未显示时不用管：[PinyinKeyboardView] 每次弹键盘（onStartInputView → configure）都会读最新配置。
  *
- * 定义域与换算一律取自 [KeyAppearance] / [KeyTransparency]（与绘制逻辑共用一套边界），
- * 本页不写死任何数值。
+ * 定义域与换算一律取自 [KeyAppearance] / [KeyTransparency] / [CandidateText] / [CandidateRows]（与绘制逻辑共用一套边界），
+ * 参数定义域只在换算对象里定义一次。
  */
 class KeyAppearanceActivity : Activity() {
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
-     * [onStop] 撤掉。原先本页自带一份 Handler + `appliedDark` 字段，2026-10-02 收归共用实现（L-476）。
+     * [onStop] 撤掉。本页只持共用定时器，不再自管 Handler 与档位字段。
      */
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
 
-    // ── 2026-10-09 由设置页迁入的四组控件（外观相关集中在本页）──
+    // ── 2026-10-09 由设置页迁入的五个控件（候选行数 / 韵母提示 / 双拼全音 / 数字行 / 明暗主题）──
     private lateinit var spinnerCandidateRows: UserAwareSpinner
     private lateinit var switchKeyHint: Switch
     private lateinit var switchPinyinQuanpin: Switch
@@ -72,7 +72,7 @@ class KeyAppearanceActivity : Activity() {
         val prefs = Prefs(this)
 
         findViewById<Button>(R.id.btn_key_appearance_close).setOnClickListener { finish() }
-        // 页面大标题（需求 2026-10-16 定稿）：布局仍引用 @string/key_appearance_title，这里覆盖成新文案
+        // 页面大标题：布局引用 @string/key_appearance_title，运行时覆盖为 TEXT_PAGE_TITLE
         findViewById<TextView>(R.id.text_key_appearance_title).text = TEXT_PAGE_TITLE
 
         val seekCorner = findViewById<SeekBar>(R.id.seek_key_corner)
@@ -121,7 +121,7 @@ class KeyAppearanceActivity : Activity() {
         })
 
         // 键高：三行字母键（10 + 9 + 9 = 28 键）的单行高度。标题与数值同「字距」走代码下发
-        // （strings.xml 默认禁改）；定义域与换算一律取自 KeyAppearance，本页不写死数值。
+        // 定义域与换算一律取自 KeyAppearance，本页不写死数值。
         val labelKeyHeight = findViewById<TextView>(R.id.label_key_height)
         val seekKeyHeight = findViewById<SeekBar>(R.id.seek_key_height)
         val textKeyHeight = findViewById<TextView>(R.id.text_key_height)
@@ -145,7 +145,7 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
-        // 字距：候选栏里相邻候选词之间的水平间隔（标题在代码里下发 —— strings.xml 默认禁改，
+        // 字距：候选栏里相邻候选词之间的水平间隔（标题走代码下发，
         // 本页其余三行的标题仍在 strings.xml，属历史遗留）
         val labelSpacing = findViewById<TextView>(R.id.label_candidate_spacing)
         val seekSpacing = findViewById<SeekBar>(R.id.seek_candidate_spacing)
@@ -176,7 +176,7 @@ class KeyAppearanceActivity : Activity() {
         // 只有拼音行三件（拼音文字 / ✕ / ▲）跟它变；栏高与顶部避让由 CandidateRows 派生。
         // ⚠ 本块必须排在候选字号块**之前**：候字号监听要在「自动」档跟刷本行读数（下方
         // `textPinyinSize.text = …`）。反过来依赖就成环：拼音「自动」的读数由候选字号派生，
-        // 页面创建时算一次不够（实测 42sp 后仍停在 20 sp）。
+        // 页面创建时算一次不够，改动后会留下旧读数。
         val labelPinyinSize = findViewById<TextView>(R.id.label_pinyin_text_size)
         val seekPinyinSize = findViewById<SeekBar>(R.id.seek_pinyin_text_size)
         val textPinyinSize = findViewById<TextView>(R.id.text_pinyin_text_size)
@@ -190,7 +190,7 @@ class KeyAppearanceActivity : Activity() {
         textPinyinSize.text = CandidateText.formatPinyinSp(rawPinyinSp, autoPinyinSp)
 
         // 候选字号：候选词的字号（sp）。**整个候选栏按它派生**（行高 / 拼音条高度 / 栏高一起变），
-        // 标题同样在代码里下发（strings.xml 默认禁改）
+        // 标题同样在代码里下发。
         val labelTextSize = findViewById<TextView>(R.id.label_candidate_text_size)
         val seekTextSize = findViewById<SeekBar>(R.id.seek_candidate_text_size)
         val textTextSize = findViewById<TextView>(R.id.text_candidate_text_size)
@@ -205,8 +205,8 @@ class KeyAppearanceActivity : Activity() {
                 prefs.candidateTextSp = sp
                 textTextSize.text = CandidateText.formatSp(sp)
                 // 拼音字号为「自动」（pinyinTextSp = 0）时，它的**读数与滑杆位置**都由候选字号派生
-                // ⇒ 两者必须一起跟刷，否则停在页面创建时算出的旧值（实测：候选 42sp、拼音已按 29.4sp
-                // 生效，读数 29 sp 而拇指仍停在 20 sp —— 同一行控件与数字自相矛盾）。
+                // ⇒ 两者必须一起跟刷，否则停在页面创建时算出的旧值：候选字号改变后，
+                // 拼音读数与滑杆位置仍停在旧档，同一行数字与拇指位置自相矛盾）。
                 // 显式档不受影响：formatPinyinSp 对非 0 的 sp 只回显自身，滑杆位置也不动。
                 // 写 progress 会回调拼音监听（`setProgress()` 走 fromUser = false）⇒ 那边第一行
                 // `if (!fromUser) return` 挡住，本行绝不会把「自动」写成显式值。
@@ -310,7 +310,7 @@ class KeyAppearanceActivity : Activity() {
             }
         })
 
-        // 26 键常显大写：只改键面字形（拼音模式），不改上屏；文案同样代码下发（strings.xml 默认禁改）。
+        // 26 键常显大写：只改键面字形（拼音模式），不改上屏；文案同样走代码下发。
         // 开关在切换瞬间落盘并即时刷键盘 —— 与滑杆同一套即时生效口径（JinnIme.onKeyAppearanceChanged）。
         val switchLetterUpper = findViewById<Switch>(R.id.switch_letter_uppercase)
         switchLetterUpper.text = TEXT_LETTER_UPPER_TITLE
@@ -518,7 +518,7 @@ class KeyAppearanceActivity : Activity() {
 
     /**
      * 定时主题到点后重建本页：色板来自 `attachBaseContext`、段标题在 [initSkinSelector] 里写死，
-     * 没有这个钩子就会停在旧档（标题仍写「现为亮色」、黄框停在旧档），而键盘已经换肤。
+     * 没有这个钩子就会停在旧档（状态行与黄框都停在旧档），而键盘已经换肤。
      *
      * 接在 [onStart]（不是 `onCreate`）：从后台回来时也补一次对表 —— 在后台跨过切换点的那段时间
      * 定时器是撤着的（见 [ThemeManager.ScheduledThemeTicker.start]）。
@@ -540,14 +540,14 @@ class KeyAppearanceActivity : Activity() {
      * 键盘皮肤选择器：**按明暗档分两段**，每段 16 套、每行八个（两整行，紧凑版式不横向滚动）。
      *
      * 段内顺序固定（取 [KeyboardSkins.ofTone]，即 `ALL` 的定义顺序）：亮色段首 = 原白、暗色段首 = 原黑。
-     * 段标题的括号随当前档位变化（用户 2026-09-24 设计的提示）：生效的那一段写「现为亮色 / 现为暗色,
-     * 唤起键盘可直接预览」（点选即落盘并立刻生效），另一段写「未激活,不可预览」（要等档位切换才见效）。
-     * 这条说明取代了原先「黄框＝当前生效 / 蓝框＝另一档已选」的图例，但**框色仍保留**：
+     * 两段标题为「亮色」「暗色」；状态行随当前档位变化：
+     * 生效段写「已激活，唤起键盘可预览」（点选即生效），另一段写「未激活，不可预览」（要等档位切换才见效）。
+     * 框色仍保留：
      * 黄框 = 生效段里选中的那套，蓝框 = 另一段已选的那套。
      *
      * 预览键直接用 [PinyinKey] 自绘（同款圆角 / 渐变 / 描边 / 底边厚度），因此不引入任何图片资源；
      * 按钮内文字取 [KeyboardSkin.label]（一律两字，`fitTextSize` 会按宽度自适应字号）：
-     * 既不改 `strings.xml`（默认禁改），也不在 XML 里硬编码文本（避免 HardcodedText）。
+     * 不新增字符串资源，也不在 XML 里硬编码文本（避免 HardcodedText）。
      * 标题与选项文本为字面量，按项目既有做法就地抑制 lint 的 SetTextI18n。
      */
     @SuppressLint("SetTextI18n")
@@ -675,13 +675,13 @@ class KeyAppearanceActivity : Activity() {
         /**
          * 「字距」项的标题文案。
          *
-         * 写在代码里而不是 strings.xml：项目约定「strings.xml 默认禁改」（与各页 `TEXT_*` 同做法），
+         * 写在代码里而不是 strings.xml：与各页 `TEXT_*` 同做法，
          * 新项不再往资源里加标题。
          */
         const val TEXT_SPACING_TITLE = "候选字距"
 
         /**
-         * 页面大标题（2026-10-16 需求定稿）。
+         * 页面大标题。
          *
          * 布局仍引用 `@string/key_appearance_title`（保持资源被引用，不新增无用字符串），
          * 运行时由 [onCreate] 覆盖成本值。
@@ -700,9 +700,9 @@ class KeyAppearanceActivity : Activity() {
         /**
          * 「加一行数字键」开关的标题文案（26 键第一行字母之上那排 `1234567890`）。
          *
-         * 候选值，尚未定稿。按项目既有命名习惯取（组内其它项都是 4~6 字短语标题）。
-         * 定稿后只改这一处常量，没有其它地方引用这个字面量；
-         * 也不用设置键名（`number_row_enabled`）冒充文案 —— 设置页会直接显示它。
+         * 标题只此一处持有，按组内其它项的 4~6 字短语风格取名。
+         * 改动只改这一处常量；
+         * 不拿设置键名 `number_row_enabled` 当文案，否则设置页直接显示键名。
          */
         const val TEXT_NUMBER_ROW_TITLE = "加一行数字键"
 
@@ -729,7 +729,7 @@ class KeyAppearanceActivity : Activity() {
     const val TEXT_QUANPIN_TITLE = "双拼候选全音"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
-    /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */
+    /** 圆角 / 间隙 / 透明三项的标题（统一带「按钮 / 面板」前缀） */
     const val TEXT_CORNER_TITLE = "按钮圆角"
     const val TEXT_GAP_TITLE = "按钮间隙"
     const val TEXT_TRANSPARENCY_TITLE = "面板透明"

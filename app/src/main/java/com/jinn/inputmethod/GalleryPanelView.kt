@@ -52,7 +52,8 @@ internal fun thumbSampleForEdge(edgePx: Int): Int {
  *
  * 目录内容在 [BackgroundIo] 里读，缩略图按采样解码并用**按字节数限容**的 [LruCache] 缓存 ——
  * 输入法是常驻进程，缩略图不设上限会被系统杀掉（表现为键盘突然消失）。
- * 授权失效（用户撤销 / 换机恢复）表现为查询不到内容，面板转为重绑提示，并给两个出口：去设置重绑、系统选择器。
+ * 目录读不出来分三态：未绑定 / 授权失效（撤销或换机恢复，表现为查询不到内容）/ 空目录，
+ * 都露出重绑入口；另有「单选」走系统选择器，可看绑定目录之外的图片。
  *
  * 列目录不用 `DocumentFile`（那要引 androidx.documentfile 依赖）：直接走 `DocumentsContract` 的子文档查询，
  * framework API 在 minSdk 26 天然可用。
@@ -60,10 +61,10 @@ internal fun thumbSampleForEdge(edgePx: Int): Int {
 internal class GalleryPanelView(context: Context) : LinearLayout(context) {
 
     interface Listener {
-        /** 选中一张图：IME 侧复制进 cache 后走现有 `commitContent` 链路插入 */
+        /** 选中一张图：本面板只回调 URI，IME 侧经 [GalleryInsert] 落 cache 并 `commitContent` 上屏 */
         fun onPick(uri: Uri)
 
-        /** 目录读不出来（未绑定 / 授权失效）时用户要去设置里重绑 */
+        /** 未绑定 / 授权失效 / 空目录三态的重绑入口：去设置页绑定目录 */
         fun onRebindRequested()
 
         /** 回退到系统相册选择器（看绑定目录之外的位置） */
@@ -87,11 +88,10 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private val buttons = mutableListOf<TextView>()
 
     /**
-     * 未绑定 / 授权失效时的「去设置里绑定」行。**常驻视图，只切可见性**。
+     * 未绑定 / 授权失效 / 空目录三态共用的「去设置里绑定」行。**常驻视图，只切可见性**。
      *
-     * ⚠ 它曾经是在 [render] 里 `addView` 的（L-1025）：而 [render] 每次展开都会被调用，
-     * [grid] 有自己的 `removeAllViews`、这一行却挂在面板本身没人清，于是用户每进一次面板
-     * 就多一个按钮（实测进 4 次出现 4 个）。
+     * ⚠ 早先是在 [render] 里 `addView`（L-1025）：[render] 每次展开都会被调用，
+     * [grid] 有自己的 `removeAllViews`、这一行挂在面板上没人清，每进一次面板就多一个按钮。
      */
     private val rebindRow = LinearLayout(context).apply {
         orientation = HORIZONTAL
@@ -112,8 +112,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private val tuneRow = LinearLayout(context)
 
     /**
-     * 缩略图缓存：基准 [THUMB_CACHE_BYTES]（用户换来的「滚回去不重解」），**低内存档按 [DeviceTier] 折半**
-     * （MEM-04b / 契约 C-3）—— 12MB 的位图缓存正是低内存杀手最先挑的目标。
+     * 缩略图缓存：基准 [THUMB_CACHE_BYTES]，按字节数限容，翻页回看不重解；
+     * 键是图片 URI（布局变化时由 [rebuildGrid] 整缓存清空来对齐目标像素），
+     * **低内存档按 [DeviceTier] 折半**（MEM-04b / 契约 C-3）。
      */
     private val thumbCache = object : LruCache<String, Bitmap>(
         DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong()).toInt(),
@@ -127,8 +128,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 收起后延迟释放缓存的定时器（MEM-07）。
      *
-     * 刻意**不**「收起即清」：那份「收起再开还是热的」即时性是用户明确换来的，改成延迟释放
-     * 既保住它，又把常驻时间限在 [CACHE_RELEASE_DELAY_MS] 内。任务只持本视图的弱引用，
+     * 刻意**不**「收起即清」：保留「收起再开还是热的」即时性，
+     * 同时把常驻时间限在 [CACHE_RELEASE_DELAY_MS] 内。任务只持本视图的弱引用，
      * 且排程会被 [onPanelShown] 与 [stopBackgroundWork] 撤销。
      */
     private val cacheReleaseHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -158,24 +159,19 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /** 面板收起后到达的缩略图要丢掉（每次显隐递增，在途任务据此自然失效） */
     private var generation = 0
 
-    /** 解码线程数（MEM-07）：低内存档 1 条；标准档沿用用户同意的 [THUMB_THREADS] 条 */
+    /** 解码线程数（MEM-07）：低内存档 1 条，标准档 [THUMB_THREADS] 条 */
     private val thumbThreadCount = if (DeviceTier.isLowRam(context)) 1 else THUMB_THREADS
 
     /**
-     * 缩略图专用小线程池（[thumbThreadCount] 条）。
+     * 缩略图解码池（[thumbThreadCount] 条）：并发解一页（[PAGE_SIZE] 张），不借剪贴板那条 [BackgroundIo]。
      *
-     * 不借剪贴板那条 [BackgroundIo]：它是单线程串行，且是全应用共用 —— 图片解码插队会拖慢
-     * 剪贴板保存，反之也一样。这里要的是「首屏十几张一起解」，代价（多两个常驻线程、内存峰值
-     * 高一点）是用户 2026-10-07 明确同意让掉的。
-     */
-    /**
-     * 缩略图解码池。
+     * [BackgroundIo] 是单线程串行且全应用共用，图片解码插队会拖慢剪贴板保存；
+     * 代价是 3 条常驻线程与略高的内存峰值。
      *
      * ⚠ 必须**可重建**：[stopBackgroundWork] 与 [onDetachedFromWindow] 都会 `shutdownNow()` 关池
      * （视图重建时旧池的 core 线程不超时回收，不关就是每次重建永久漏几条线程 —— L-1035）。
-     * 但面板实例是**缓存复用**的（键盘侧 `ensureGalleryPanel` 只建一次）：若收起键盘走了 detach
-     * 而实例仍在，下一轮所有 `thumbPool.execute` 都会被拒（catch 只记 W），界面就是一屏空白格子。
-     * 故关池后置 null，下次提交时按需重建 —— 既不放任线程泄漏，也不会让用户看到空白面板。
+     * 面板实例缓存复用（键盘侧 `ensureGalleryPanel` 只建一次）：detach 后实例仍在，
+     * 关池后再提交会被拒、界面是一屏空白格子。故关池后置 null，由 [poolOrNew] 按需重建。
      */
     @Volatile
     private var thumbPool: java.util.concurrent.ExecutorService? =
@@ -200,7 +196,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 在途解码的 key：并发下防同一张重复提交（滚动事件会连着来好几次） */
+    /** 在途解码的 key：并发下去重，翻页 / 刷新会连着提交同一批 URI */
     private val inFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private var foundTotal = 0
@@ -226,7 +222,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
         addView(status, LayoutParams(MATCH, WRAP))
 
-        // 绑定异常时的入口行：常驻，只切可见性（见 rebindRow 的字段说明）
+        // 绑定异常 / 空目录时的入口行：常驻，只切可见性（见 rebindRow 的字段说明）
         addView(rebindRow, LayoutParams(MATCH, WRAP))
         rebindRow.visibility = GONE
 
@@ -248,7 +244,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
         addView(tuneRow, LayoutParams(MATCH, WRAP))
 
-        // 网格参数先读一次：columns / cellHeightDp 还是 0 的话，fill 会铺出零高度的行
+        // 网格参数先读一次：columns / cellHeightDp 还是 0 的话，[fillPage] 会铺出零高度的行
         readGridTuning()
 
         grid.orientation = VERTICAL
@@ -264,8 +260,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 首屏内容就绪（BUG.md L-1320）：键盘侧据此决定何时把面板切成可见。
      *
-     * 与剪贴板面板同款理由 —— 先切可见的话，用户看到的是一块「有表头、没图」的空面板
-     * （格子要等 SAF 列目录 + 解码）。判据取**第一张缩略图贴上格子**，那才是真的能看。
+     * 与剪贴板面板同理 —— 先切可见只会看到「有表头、没图」的空块（格子要等 SAF 列目录 + 解码）。
+     * 判据：正常列表取**第一张缩略图贴上格子**；空 / 未绑定 / 读不到三态在 [render] 时直接算就绪。
      */
     var onFirstContentReady: (() -> Unit)? = null
 
@@ -283,9 +279,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         firstContentReady = false
         // 又打开了：撤销待触发的缓存释放（MEM-07）
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
-        // 每次展开都按盘上现值刷一次网格参数：设置页的「图库快贴功能」页也能改这两项
+        // 每次展开都按盘上现值刷一次网格参数：设置页与剪贴板面板共用这组偏好，两处改动这里都能读到
         readGridTuning()
-        // 「布局」调节行是临时操作：每次进入都从收起态开始，不留在屏幕上（用户 2026-10-07 要求）
+        // 「布局」调节行是临时操作：每次进入都从收起态开始，不留在屏幕上
         tuneRow.visibility = GONE
         generation++
         val gen = generation
@@ -324,7 +320,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         cacheReleaseHandler.postDelayed(cacheReleaseTask, CACHE_RELEASE_DELAY_MS)
         // 收起面板的每条路径（键盘上那个红色「返回」、切到别的面板、收起键盘、换输入框）
-        // 都汇到这里，所以调节行在这里收一次就够（用户 2026-10-07：展开的布局设置必须自动回收）
+        // 都汇到这里，调节行在这里收一次就够
         tuneRow.visibility = GONE
         pageCount = 1
         pageIndex = 0
@@ -465,8 +461,6 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * 被压到 0 之后按钮还会溢出屏幕 ——
      * 系统字体放大到 1.3 倍时按钮合计就吃满面板宽度，末尾的「自返」被推出可视区（L-1028）。
      * 拆成两行后标题独占一行、按钮按内容宽排，互不挤占。
-     * （2026-10-26 校正：台账 B-179 记作「7 个按钮」，按 2026-10-07 `ae83706` 之前那版
-     * `buildTitleRow` 数只有 5 个 `smallButton` + `autoReturnButton` = 6。）
      */
     private fun buildTitleRow(): LinearLayout = LinearLayout(context).apply {
         orientation = VERTICAL
@@ -527,7 +521,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             buttons += this
         }
 
-    /** 一屏状态；[fill] 之外的四种都是「没有格子可点」 */
+    /** 传给 [render] 的状态；四种都表示「没有格子可点」，null 表示正常网格 */
     private enum class State { Loading, Empty, NeedsBinding, Unavailable }
 
     private fun render(state: State?) {
@@ -574,7 +568,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 收到目录列表：算总页数、回到第 1 页，再铺这一页。
      *
-     * 分页是用户 2026-10-07 指定的：点开只加载当前这一页（[PAGE_SIZE] 张），翻页才解下一页。
+     * 分页按页取：点开只加载当前这一页（[PAGE_SIZE] 张），翻页才解下一页。
      */
     private fun showList(list: List<Uri>) {
         items = list
@@ -687,7 +681,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
                     post { if (gen == generation) bindThumb(uri, bmp) }
                 }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
-                // 池关闭 / 饱和时任务被拒、整份丢失：必须留痕（与 BackgroundIo.rejected / ClipboardThumbLoader 同口径，BUG.md L-1372）
+                // 池关闭 / 饱和时任务被拒、整份丢失：必须留痕
+                // （与 BackgroundIo.rejected / ClipboardThumbLoader 同口径，BUG.md L-1372）
                 Diagnostics.w(TAG, "图库缩略图任务提交被拒（池已关闭/饱和）")
                 inFlight.remove(key)
             }
@@ -712,7 +707,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      *
      * 原来这里是两段式：先 `inJustDecodeBounds` 量尺寸、再按目标像素算采样率解码。那次多出来的
      * 开流在 SAF 上要几十毫秒，是首屏最贵的一步。现在按固定档一次解完，代价是小图会被缩得更狠
-     * （1000px 的截图变成 62px）—— 这是用户 2026-10-07「速度优先、其他都能舍弃」明确换来的。
+     * （1000px 的截图变成 62px）—— 以速度优先换来的取舍。
      *
      * `RGB_565`：缩略图不需要透明通道，内存与解码耗时都按半算。
      */
@@ -800,16 +795,16 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
          */
         const val HEIGHT_STEP_DP = 4
 
-        // 采样档由格子最短边推，见文件顶部 thumbSampleForEdge（BUG.md L-1077）
+        // 采样档由格子最短边推，见 [thumbSampleForEdge]（BUG.md L-1077）
 
-        /** 缩略图解码线程数：首屏十几张并发解，3 条足够且不至于把内存峰值顶太高 */
+        /** 缩略图解码线程数：一页 24 张并发解，3 条足够且不至于把内存峰值顶太高 */
         const val THUMB_THREADS = 3
 
         /** 单元格内边距（dp）：算目标像素时要把它扣掉 */
         const val CELL_PADDING_DP = 3
 
         /**
-         * 每页张数：点开面板只加载当前这一页（用户 2026-10-07 指定）。
+         * 每页张数：点开面板只加载当前这一页。
          *
          * 一页 24 张 ≈ 五行（默认一行 5 张），翻页才解下一页 —— 不再一次把整个目录的缩略图
          * 都排上队。注意它是**每页**张数，不是列表总数上限。
@@ -825,9 +820,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         const val MAX_LISTED = 2000
 
         /**
-         * 缩略图缓存上限：按「上限张数 × 250px × RGB_565」估的，12MB 让整页都留在内存里。
-         *
-         * 常驻进程 —— 宁可多占几 MB，也别让用户滚回去时重解（用户 2026-10-07 同意为速度让内存）。
+         * 缩略图缓存上限：按采样档下限 8 算解码边长 ≈512px、RGB_565 每像素 2 字节估，
+         * 12MB 容得下整页（24 张 × 0.5MB）。常驻进程，宁可多占几 MB 也不重解。
          */
         const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
 
