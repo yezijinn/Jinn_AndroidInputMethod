@@ -13,10 +13,10 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * 剪贴板历史加密：Android Keystore + AES-256-GCM。
  *
- * 密钥由 Keystore 生成并托管，私钥材料不离开安全硬件/系统，应用只拿得到
- * [Cipher] 句柄做加解密；禁止硬编码密钥或自研算法。
+ * 密钥由 Keystore 生成并托管，密钥材料不离开安全硬件/系统，应用只拿得到
+ * 不透明密钥句柄并通过 [Cipher] 做加解密；禁止硬编码密钥或自研算法。
  *
- * 存储格式：`base64(iv) : base64(ciphertext)`，IV 与密文一起入库；
+ * 存储格式：`base64(iv):base64(ciphertext)`，IV 与密文一起入库；
  * GCM 的 auth tag 已含在密文尾部（标准 128-bit），解密即校验完整性。
  *
  * 线程模型：Keystore 操作无主线程限制，但调用方按惯例在后台线程执行。
@@ -51,7 +51,7 @@ object ClipboardCrypto {
     /** 本进程内「密钥疑似失效后重建」的次数（仅归因） */
     private val keyRebuilds = AtomicInteger(0)
 
-    /** 「库内仍有密文却要新建密钥」的拒绝次数（仅归因；E 日志按 [REFUSAL_LOG_LIMIT] 节流） */
+    /** 「库内仍有密文却要新建密钥」的拒绝次数（仅归因；W 日志按 [REFUSAL_LOG_LIMIT] 节流） */
     private val createRefusals = AtomicInteger(0)
 
     /**
@@ -112,9 +112,9 @@ object ClipboardCrypto {
      * 而且它**不是**单次加解密的大头：单次 1.1~1.3 ms 里 `init` 占约六成（0.63~0.76 ms，
      * 在 TEE 里建操作会话）、`doFinal` 0.51~0.62 ms，`getInstance` / base64 各只 0.004~0.006 ms；
      * `getKey` 命中缓存后为 0。缓存它值得（省一次 binder），但**别把它当加速入口**：
-     * 第 68 轮正是照着旧版注释里的「5-20ms 是主要耗时」去找杠杆，扑空。
+     * 曾照着旧版注释里的「5-20ms 是主要耗时」去找优化点，扑空。
      *
-     * SecretKey 只是对托管密钥的不透明句柄（私钥不出安全硬件），缓存它不会削弱安全性。
+     * SecretKey 只是对托管密钥的不透明句柄（密钥材料不出安全硬件），缓存它不会削弱安全性。
      *
      * ⚠ **一次 `init` 只准一次 `doFinal`**：第二次 `doFinal` 抛
      * `IllegalStateException: IV has already been used`，且此时 `getIV()` 返回的仍是
@@ -412,7 +412,7 @@ object ClipboardCrypto {
         null
     }
 
-    /** 解密 [encrypt] 的产物；失败返回 null（密文被篡改/密钥轮换都会导致解密失败） */
+    /** 解密 [encrypt] 的产物；失败返回 null（密文被篡改 / 对应代际密钥真丢失都会导致失败） */
     fun decrypt(stored: String): String? = runCatching {
         val sep = stored.indexOf(':')
         if (sep <= 0) return null

@@ -33,8 +33,8 @@ object UpdateChecker {
     /**
      * 两源串行的总预算。
      *
-     * 单个请求的 [TIMEOUT_MS] 管不住整体：GitHub 不可达是常态，超时后还要回退 Gitee
-     * 再来一轮，最坏是「10s + 10s」× 2。调用方的看门狗必须覆盖本预算 + 余量，
+     * 单个请求的 [TIMEOUT_MS] 管不住整体：Gitee 翻页可能多次请求，失败后还要回退 GitHub
+     * 再来一轮，累计可远超单次超时。调用方的看门狗必须覆盖本预算 + 余量，
      * 否则超时一到就解锁按钮，防重入判据失效、用户能并发发起第二次检查并重复弹窗。
      */
     internal const val TOTAL_BUDGET_MS = 25_000L
@@ -96,19 +96,11 @@ object UpdateChecker {
     internal const val AUTO_CHECK_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
 
     /**
-     * 是否需要执行自动检查（纯函数，可直接 JVM 单测）。
-     *
-     * @param lastCheckAt 上次成功检查的时刻（epoch ms），从未成功检查为 0
-     * @param now 当前时刻（epoch ms）
-     *
-     * 两种脏数据都按「需要检查」处理，否则会把自动检查永久静默掉：
-     * 0/负数（老版本未写入）与未来时间（系统时钟回拨或被外部改写）。
-     */
-    /**
      * 自动检查的网络与电量门控（MEM-17）：只在「不计费网络」或「正在充电」时跑。
      *
      * 自动检查是后台行为，用户没在等它；手机用流量、靠电池时不该为一次版本检查付流量与唤醒。
-     * 判定取不到服务时一律**放行**（宁可多跑一次，也不要让功能静默失效）。
+     * CONNECTIVITY_SERVICE 取不到、或判定过程抛异常时**放行**（宁可多跑一次，也不要让功能静默失效）；
+     * 但确认无活跃网络、无 INTERNET 能力时拒绝（此时没有网络，跑也无用）。
      * **手动检查不经过这里** —— 用户明确点了按钮，就该立刻发请求。
      */
     internal fun autoCheckNetworkOk(context: Context): Boolean = runCatching {
@@ -121,6 +113,15 @@ object UpdateChecker {
         bm?.isCharging == true
     }.getOrDefault(true)
 
+    /**
+     * 是否需要执行自动检查（纯函数，可直接 JVM 单测）。
+     *
+     * @param lastCheckAt 上次成功检查的时刻（epoch ms），从未成功检查为 0
+     * @param now 当前时刻（epoch ms）
+     *
+     * 两种脏数据都按「需要检查」处理，否则会把自动检查永久静默掉：
+     * 0/负数（老版本未写入）与未来时间（系统时钟回拨或被外部改写）。
+     */
     internal fun shouldAutoCheck(lastCheckAt: Long, now: Long): Boolean {
         if (lastCheckAt <= 0L) return true
         if (lastCheckAt > now) return true
@@ -296,7 +297,7 @@ object UpdateChecker {
         return try {
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 // 打印口径与同文件其它几处一致：只到 `?` 之前（BUG.md L-1072 顺手收口）——
-                // 本方法拿到的 url 可能来自用户填的镜像地址，query 里带什么无法预期
+                // Gitee 请求带 `per_page` / `page` 等 query，截断日志只留端点、不记参数。
                 Diagnostics.w(TAG, "HTTP ${conn.responseCode}: ${url.substringBefore('?')}")
                 null
             } else if (!conn.url.protocol.equals("https", ignoreCase = true)) {

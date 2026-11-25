@@ -8,9 +8,9 @@ import org.json.JSONObject
  * 落盘形态是一个 zip 容器（读写见 [ConfigBackupManager]），内部条目：
  *  - `manifest.json`   包元信息（格式标识 / 格式版本 / 来源版本 / 时间 / 设备）+ 各节 sha256
  *  - `prefs.json`      两个 SharedPreferences 的键值，带类型标记（见 [BackupValue]）
- *  - `user_freq.txt`   用户词频，沿用运行期文件格式（人可读；合并语义在 [UserFrequency]）
+ *  - `user_freq.txt`   用户词频，取运行期文件的**明文形态**（磁盘上是密文；合并语义见 [UserFrequency]）
  *  - `clipboard.jsonl` （可选）剪贴板明文，每行一条 JSON
- *  - `dicts/<name>.xz` （可选）已下载的可选词库原文件
+ *  - `dicts/<文件名>`（可选）词库文件：可选包 / 自定义包 / 快捷补充源文本
  *
  * 为什么剪贴板要落成明文：密文由 Android Keystore 里的本机密钥保护，换机后**无法解密**
  * （见 [ClipboardCrypto]），密文导出等于导出一堆废数据；因此要么明文迁移、要么不带。
@@ -26,17 +26,19 @@ import org.json.JSONObject
  * `ZipInputStream` 不能跳转，放后面会让每次「扫 manifest」都把前面全部节解压丢弃一遍、
  * 一次导入要扫它两趟 —— 所以这是**生产者的规则**，不是读取端的校验项）。
  *  - `manifest.json`：`format`（固定 `jinn-config`）、`formatVersion`、`appVersionCode`、
- *    `createdAt`、`device`（≤64 字）、`sections{<节名>:{sha256, bytes}}`
+ *    `createdAt`、`device`（导入解析时截断到 64 字）、`sections{<节名>:{sha256, bytes}}`
  *  - `prefs.json`：两个 SharedPreferences 文件 → 键 → `{t: 类型标记, v: 值}`
- *  - `user_freq.txt`：与运行期词频文件同格式（`词\t权重\t天`）
+ *  - `user_freq.txt`：明文正文（`词\t权重\t天`；磁盘形式为密文，导出走 UserFrequency.readTextForBackup）
  *  - `clipboard.jsonl`（可选）：每行一条 JSON
- *  - `dicts/<文件名>.xz`（可选）：已下载词库原文件（导入只接受可选词库清单内的名字）
+ *  - `dicts/<文件名>`（可选）：词库文件，导入仅接受白名单内的名字（见 [ConfigBackupManager]）
  *
  * 节名 ↔ 条目名：`prefs`→`prefs.json`、`user_freq`→`user_freq.txt`、`clipboard`→`clipboard.jsonl`、
  * `dicts`→`dicts/` 前缀；dicts 的聚合摘要 = 按文件名排序的 `<名>:<sha256>` 换行拼接后再取 sha256。
  * 三个**文本节**的 sha256 都算在原始 UTF-8 字节上（不是某种规范化形式），hex 小写；
- * 词库文件的 sha256 算在**压缩文件的原始字节**上（`dicts/` 目录下的 `*.xz`）。
- * 版本规则：`formatVersion` 高于本版 → 拒绝导入（[checkVersion]）；低于本版 → 走迁移。
+ * 词库节每个文件的 sha256 算在**文件原始字节**上：官方包与自定义包是 `*.xz` 压缩字节，
+ * 源文本（`custom_user.src.txt`）则是明文文本字节。
+ * 版本规则：高于本版的 `formatVersion` 一律拒绝（[checkVersion] 只认 TOO_NEW 一档）；
+ * 低于或等于本版直接接受，兼容性由导入端各字段的归一兜住（当前无整包迁移链）。
  *
  * 本对象不引用 Android API（`org.json` 由 Android 平台与 JVM 测试依赖共同提供），
  * 因此编解码往返、版本校验、类型不符降级、哈希规划都直接跑 JVM 单测。
@@ -50,7 +52,7 @@ internal object ConfigBackup {
      * 包格式版本（不是 App 版本）。
      *
      * 兼容规则（[checkVersion]）：高于本值 = 包由更新版 App 生成，拒绝导入；
-     * 低于本值 = 走迁移（当前只有 v1，尚无迁移链）。
+     * 低于或等于本值 = 直接按本格式解析；当前只有 v1，尚无整包迁移链。
      */
     const val FORMAT_VERSION = 1
 
@@ -134,7 +136,10 @@ internal object ConfigBackup {
             const val KIND_FLOAT = 'f'
             const val KIND_BOOL = 'b'
 
-            /** 键存在但值为 null（如 favoriteSymbols 的「从未编辑」态） */
+            /**
+             * 键未设置：导出为 null（如 favoriteSymbols「从未编辑」）；
+             * 导入端对这些键删键回落默认（见 [Prefs.importFromBackup]）。
+             */
             const val KIND_NULL = 'n'
 
             /** 由运行期值推断类型标记；不支持的类型返回 null（调用方跳过该键） */
@@ -156,7 +161,7 @@ internal object ConfigBackup {
      * 一节内容的摘要（sha256 + 字节数），用于导入前校验完整性。
      *
      * `bytes` 只作登记与诊断（导入端只校验 sha256）。注意两类标准：三个文本节是 **UTF-8 明文字节**，
-     * 词库节的 `bytes` 是各 `.xz` **压缩字节**之和。
+     * 词库节的 `bytes` 是 `dicts/` 下各文件**原始字节**之和（含非压缩的源文本）。
      */
     class Section(val sha256: String, val bytes: Long)
 
@@ -428,7 +433,7 @@ internal object ConfigBackup {
                     sourcePackage = o.optString("sourcePackage"),
                     sourceAppName = o.optString("sourceAppName"),
                     // 归一到分类标签白名单：它会进剪贴板面板的 meta 文本（主线程布局），
-                    // 不归一的话一个包就能塞进任意长/任意内容的"分类"去卡界面。
+                    // 不归一的话一个包就能塞进任意长/任意内容的「分类」去卡界面。
                     // 多标签（2026-09-25）：合法的 `URL,NUMBER` 要保留两个标签，故走 normalizeLabels
                     category = ClipboardClassifier.normalizeLabels(o.optString("category")),
                     favorite = o.optBoolean("favorite", false),
