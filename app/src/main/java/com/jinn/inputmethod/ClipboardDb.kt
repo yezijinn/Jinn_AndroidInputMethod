@@ -38,13 +38,13 @@ internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
  * 删除来源：用户主动删除 / 迁移去重（v4 一次性 `mergeDuplicates`）/ 容量裁剪 /
  * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）。
  * ⚠ 「有行无文件」的图片行**不再自动删**：`File.isFile` 在权限/IO 抖动时返回 false，
- * 而那条路径连收藏一起删（2026-11-14 二轮审计，`ClipboardImageFiles.deleteMissingRows`）。
+ * 而那条路径连收藏一起删（2026-11-14 复核，`ClipboardImageFiles.deleteMissingRows`）。
  * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` **没有公开的 `onCorruption` 覆写点**（API 34
  * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
  * 它和「密钥失配」在界面上同形，排查时先看这里。
  * 容量裁剪见 [TRIM_PRIORITY]：条数与体积**只动非收藏记录**；
  * 收藏自身软上限是唯一例外 —— [trimFavorites] 按用户显式设置的
- * [ClipboardPrefs.favoriteMaxItems] / `favoriteMaxBytes` 淘汰最旧收藏（2026-10-26 按实现订正）。
+ * [ClipboardPrefs.favoriteMaxItems] / `favoriteMaxBytes` 淘汰最旧收藏（2026-10-26 确认）。
  * 不因内容性质（敏感与否）做任何判断或删除（v3 起已移除敏感字段）。
  *
  * 搜索：按需解密（查询所有条目 → 逐条解密过滤），不建明文全文索引，
@@ -442,7 +442,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 就出现「先拿连接、再拿监视器」的反向顺序 —— 另一线程此刻正持监视器等连接
      * （非 WAL 库的连接池只有一个连接）⇒ 死锁。保持一致顺序（监视器 → 连接）即可。
      * 代价是一块的处理时间占着锁：一块 [ClipboardFileImporter.IMPORT_CHUNK_ROWS] 条、约 180 ms。
-     * ⚠ 与第 68 轮的块级备份导入**不同**：那条路径把 `ClipboardCrypto.encrypt` 整块放在锁**外**
+     * ⚠ 与块级备份导入**不同**：那条路径把 `ClipboardCrypto.encrypt` 整块放在锁**外**
      * （[insertRestoredBatch] ②的取舍），这里做不到 —— 每行要不要加密取决于判重 / 自愈的逐行结果。
      * 实测这块持锁时间里约 3/4 是块内的 Keystore 加密（1.4 ms/条）与哈希（0.14 ms/条），不是 SQL；
      * 再压锁占用得先把加密挪出锁：要求「先判重、再只对未命中行加密」，而判重结果是逐行的，
@@ -730,7 +730,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 一起收 —— 不可逆。宁可留着一个读不出的库等后续版本处理。
      *
      * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
-     * （AI2 A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
+     * （A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
      * 而且要等下一次启动 gc 才收。
      * @return 删除的条数
      */
@@ -828,7 +828,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 为什么要单独问一次：上面两个删除接口都带 `is_favorite = 0`（收藏是用户明确要留的），
      * 于是「删了 0 条」有两种含义 —— 「历史里没有」与「有、但被收藏保护」。调用方原本分不出来，
      * 把第二种也当成「已清干净」并推进水位 ⇒ 该凭据在本进程内**永不重扫**，Key 明文长期留在
-     * 面板里（可列、可搜索、一键粘贴）并随配置备份明文外发，而日志只说「本轮无需删除」。
+     * 面板里（可列、可搜索、一键粘贴）并随配置备份明文外发，而日志只说「本次清理无需删除」。
      *
      * 只扫收藏行（用户手工标记的几条），一次遍历判定全部目标；判据与清洗遍同源
      * （`cleanCredential()` 后相等 —— 它是精确相等的超集）。
@@ -884,7 +884,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 裁剪优先级：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
      *
-     * 任一维度剩的全是收藏、删不到目标时即停止 ，
+     * 任一维度剩的全是收藏、删不到目标时即停止，
      * 宁可超出上限，也不删用户明确标记保留的内容。
      *
      * ⚠ 唯一的例外是 [trimFavorites]：收藏**自身**的软上限（用户显式设置，见
@@ -912,7 +912,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         //  - [trimFavorites] 按收藏软上限淘汰最旧收藏，候选里可能含收藏**图片**行，它同样只交回
         //    「实删的图片行数」（文本收藏不计）—— 只统计前者时那批 `.enc`/`.thumb` 就成了孤儿，
         //    要等下一次进程启动的 gc 才收（BUG.md L-1464）。
-        // 仍然**只认图片行**：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「这轮删没删收藏」
+        // 仍然**只认图片行**：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「本次删没删收藏」
         // 当判据，会让每次入库（采集 / 粘贴 / 导入）都可能跑一轮完整 gc（BUG.md L-1248）。
         if (trimImages() + favImages > 0) scheduleImageGc()
     }
@@ -1198,7 +1198,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行。
      *
      * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
-     * （AI2 A-559，口径同 [deleteAll]）。
+     * （A-559，口径同 [deleteAll]）。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
@@ -1216,7 +1216,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ 两条路径删掉的图片文件**都不在本层收**（DB 只管行、不碰文件）：单条删除走
      * `deleteFor`（精准），批量走 `gc`（短保护窗）—— 调用方必须紧跟一次
-     * `ClipboardImageFiles.gc`（AI2 A-559）。
+     * `ClipboardImageFiles.gc`（A-559）。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized

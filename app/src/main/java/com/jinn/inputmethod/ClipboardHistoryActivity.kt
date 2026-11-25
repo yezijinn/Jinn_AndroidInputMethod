@@ -212,8 +212,9 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private val favGridTraceId by lazy { Diagnostics.traceId("HISTFAV") }
 
     /**
-     * 上方条带当前是否有图片（只在条带分组由网格的 onDataChanged 更新，非条带分组在 loadAsync 里复位）。
-     * 文本列表为空时据此区分「库里什么都没有」与「有图片但一段文本都没有」——
+     * 上方条带当前是否有图片（每次 loadAsync 按当前分组一并取；不在网格的异步回调里更新 ——
+     * 那会让列表空态读到上一次加载的旧值）。文本列表为空时据此区分「库里什么都没有」
+     * 与「有图片但一段文本都没有」——
      * 后者说「暂无记录」会与眼前的图片网格自相矛盾。
      */
     private var stripHasImages = false
@@ -260,7 +261,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 收藏与「全部」两个分组都用它（收藏分组只看收藏图片，全部分组看全部图片）
                 if (categoryFilter == FILTER_FAVORITE || categoryFilter == null) {
                     // 「是否有图」由列表那次快照一并取（见 loadAsync）：放在这里异步更新会让
-                    // 列表空态读到上一轮的旧值（删空图片后仍说「暂无文本记录」）
+                    // 列表空态读到上一次加载的旧值（删空图片后仍说「暂无文本记录」）
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     // 高度按实际行数自适应（最多 [FAV_STRIP_ROWS] 行）：收藏图少时不再白占两行，
                     // 多时保持两行 + 「★ 只看收藏」全屏入口
@@ -957,7 +958,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
     private fun loadAsync(resetPage: Boolean = true) {
         // 页面已停止就不再启动新查询（BUG.md L-1268）：onStart 先复位该标记，正常流程不受影响
         if (stopped) return
-        // 本轮加载的代际：后面所有落地都要先验它（见 loadGeneration 的说明）
+        // 本次加载的代际：后面所有落地都要先验它（见 loadGeneration 的说明）
         val gen = loadGeneration.incrementAndGet()
         val category = categoryFilter
         // 图片分类与关键词互斥（D2「图片不进搜索」）：图片行的 content 恒为空串，任何关键词
@@ -1009,7 +1010,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             var capped = false
             var cappedByCount = false
             while (!skipScan) {
-                // 已有更新的加载在跑：本轮整套作废，别再扫（历史页可能扫到库尾，白扫代价不小）
+                // 已有更新的加载在跑：本次加载整套作废，别再扫（历史页可能扫到库尾，白扫代价不小）
                 if (gen != loadGeneration.get()) return@runLong
                 // 图片分类启用「收藏优先」（与条带、面板网格同一口径）：收藏过的图排最前 ——
                 // 收藏动作多半是「存下来、待会儿要回头找」的语义，埋在几十张之后等于没有
@@ -1048,7 +1049,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 if (capped) break
             }
             // 条带是否有图：跟着列表这次取数一起查（空态文案据此把「没有文本」与「什么都没有」分开；
-            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
+            // 放在网格的异步回调里更新，列表会先读到上一次加载的旧值）
             val stripImages = when (category) {
                 // 「全部」分组仅在偏好开启时才有条带（关闭时图片行以序号占位留在列表里）
                 null -> imageInAll && db.count(null, false, ClipboardDb.CONTENT_TYPE_IMAGE) > 0
@@ -1072,7 +1073,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
                 // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）。
                 // `scanned` 是 **1 基**（自增在跳过判定之前）⇒ 要 −(序位)+1 才等于原来的 `total − 下标`
-                // （最新行 = total）。漏掉 +1 会让整列序号少 1（BUG.md L-1379 / AI2 A-415）
+                // （最新行 = total）。漏掉 +1 会让整列序号少 1（BUG.md L-1379 / A-415）
                 for ((idx, item) in allItems.withIndex()) {
                     numberById[item.id] = total - (outOrdinal.getOrNull(idx) ?: (idx + 1)) + 1
                 }
@@ -1090,8 +1091,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 grid.visibility = if (imageMode) View.VISIBLE else View.GONE
                 // 搜索行在图片分类下收起：搜索范围只有文本，留着输入框只会给出「暂无图片」
                 searchRow.visibility = if (imageMode) View.GONE else View.VISIBLE
-                // 收藏与「全部」分组：列表上方都显示图片网格（收藏分组显示收藏的图，全部分组显示全部图）。
-                // 文本分类只列文本，图片不进列表 ⇒ 「全部」不给网格的话，图片在这一屏完全不可见。
+                // 收藏分组始终显示图片条带（收藏的图）；「全部」分组只在设置允许时显示条带
+                // （关闭时图片行以序号占位留在列表里）。文本分类只列文本。
                 // 每次 loadAsync 都重取（BUG.md L-1260）：本方法只在切换筛选 / 搜索 / 清空 / **写操作**
                 // （删除、收藏切换、转图库）/ 回前台时被调 —— 翻页是纯本地操作（只换 pageIndex），
                 // 不经过这里。所以无条件重取不会带来翻页开销，而写操作后必须重取，
@@ -1178,7 +1179,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // 动作分**两行**（2026-10-11 真机反馈）：一排放不下这些入口 —— 1080px 屏上第 4 个起被压成
+        // 动作分**两行**（2026-10-11 真机实测）：一排放不下这些入口 —— 1080px 屏上第 4 个起被压成
         // 一列一列的字，删除 / 关闭 直接挤出屏幕。按语义分组：上排「出库」（复制 / 保存 / 转移），
         // 下排「管理」（收藏 / 删除 / 关闭）；每排最多 3 个，窄屏也能一眼读完
         fun makeBtnRow(): LinearLayout = LinearLayout(this).apply {
@@ -1579,7 +1580,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
      *
      * ⚠ 完整展示 ⇒ 不能像列表正文列那样截断。也不能靠「一个 TextView 装全文 + 降断行策略」：
      * 实测 250,000 字符的单行文本、`BREAK_STRATEGY_SIMPLE` 之下 PSS 仍 153MB → **1,868MB** 并被
-     * `lowmemorykiller` 杀掉（同日另一轮峰值 2,006MB）。真正管用的是**分段**
+     * `lowmemorykiller` 杀掉（同日另一次实测峰值 2,006MB）。真正管用的是**分段**
      * （[ClipboardClassifier.SEGMENT_MAX_CHARS]）：每段 4000 字，布局代价回到普通文本量级。
      *
      * 该常量数值与 `LineBreaker.BREAK_STRATEGY_SIMPLE` 相同（0），但 `TextView.breakStrategy` 的注解按
@@ -1610,7 +1611,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             })
         }
         addBtn("复制") {
-            // 与 IME 侧 copySelection 同款待遇（AI2 A-186）：同一「写系统剪贴板」操作，
+            // 与 IME 侧 copySelection 同款待遇（A-186）：同一「写系统剪贴板」操作，
             // 那边有尺寸闸 + runCatching，这里原本裸调 —— 超长条目或剪贴板服务瞬断时
             // 会抛未捕获异常，而本页与 IME 同进程，崩溃一并带走输入法。
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -1921,7 +1922,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
          * 续扫是为了让「比上限更老的记录也能搜到」，但不能让共享的 `BackgroundIo` 单线程被占住
          * （剪贴板采集与图片复制同队列，见 L-1057）：每行还要走 `ClipboardSearch.matches` 的
          * 归一化比对，所以按**行数**设预算而非时间。触顶时走 [TEXT_TRUNCATED_GENERIC] ——
-         * 关键是让用户知道「列表不完整」，别把「这轮没扫完」当成「库里没有」。
+         * 关键是让用户知道「列表不完整」，别把「这次没扫完」当成「库里没有」。
          */
         const val SEARCH_SCAN_BUDGET = ClipboardSearch.SCAN_LIMIT
         const val TEXT_PAGE_SIZE_PREFIX = "每页 "
