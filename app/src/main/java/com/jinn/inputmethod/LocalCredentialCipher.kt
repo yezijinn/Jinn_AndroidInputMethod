@@ -15,7 +15,7 @@ import javax.crypto.spec.SecretKeySpec
  * 为什么必须有这条路（本机实测）：无锁屏的设备上 `keystore2` 报 `User ECDH key missing`，
  * [CredentialCrypto] 的建键 / 加密恒失败。旧口径是「加密失败绝不回退明文」⇒ 凭据只留在内存、
  * 保存后重启即丢，用户每次开机都要重填 APPID / APIKey / APISecret。
- * 「没给手机设密码」不是用户错误，不能因此让功能不可用（用户第 5 条要求）。
+ * 「没给手机设密码」不是用户错误，不能因此让功能不可用。
  *
  * 密文带独立前缀 [PREFIX]（`v2:`），与 Keystore 的 `v1:` 分开：
  * 解密侧据此分流，Keystore 恢复可用后仍能读回软件密钥写下的旧值。
@@ -126,7 +126,7 @@ object LocalCredentialCipher {
             if (sep <= 0) return@runCatching null
             val iv = unb64(body.substring(0, sep))
             val data = unb64(body.substring(sep + 1))
-            // GCM 的 tag 固定 16 字节：比它短说明密文本身坏了，不必再试
+            // GCM 的 tag 固定 16 字节：只剩 tag 或更短说明密文坏了，不必再试
             if (iv.size != IV_BYTES || data.size <= TAG_BITS / 8) return@runCatching null
             val key = load(keyFile) ?: return@runCatching null
             val cipher = Cipher.getInstance(TRANSFORMATION)

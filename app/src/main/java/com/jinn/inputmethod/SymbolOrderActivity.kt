@@ -14,9 +14,10 @@ import android.widget.Toast
 /**
  * 符号分组排序页：从设置页「符号分组顺序」按钮进入。
  *
- * 每行一个分组 + ↑↓ 调整，改动即时落盘（[Prefs.symbolGroupOrder]）；
- * [onPause] 时仅在真正调过顺序的情况下通知 IME 重建键盘视图，让新顺序立即生效 ，
- * 键盘视图在创建时读取一次顺序，不通知就只会等到下次键盘整体重建。
+ * 每行一个分组 + ↑↓ 调整，顺序与禁用态即时落盘
+ * （[Prefs.symbolGroupOrder] / [Prefs.symbolDisabledGroups]）；
+ * [onPause] 时仅在真正改动过的情况下通知 IME 重建键盘视图，让新配置立即生效。
+ * 键盘视图仅在创建时读取一次这些配置，不通知就只会等到下次键盘整体重建。
  *
  * 顺序规则（归一 / 移动 / 兜底）全部在 [SymbolOrder]，本页只负责展示与写盘。
  */
@@ -24,7 +25,7 @@ class SymbolOrderActivity : Activity() {
 
     private lateinit var orderList: LinearLayout
 
-    /** 本次进入是否调过顺序（决定离开时要不要通知 IME 重建键盘视图） */
+    /** 本次进入是否改过配置（顺序或禁用态；决定离开时要不要通知 IME 重建键盘视图） */
     private var dirty = false
 
     override fun attachBaseContext(newBase: Context) {
@@ -33,15 +34,15 @@ class SymbolOrderActivity : Activity() {
 
     /**
      * 定时换色的准点定时器（见 [ThemeManager.ScheduledThemeTicker]）：[onStart] 对一次表并排下一次，
-     * [onStop] 撤掉 —— 页面在后台跨过切换点，回来时也能补上。
+     * [onStop] 撤掉 —— 页面在后台跨过切换点，[onStart] 时也会补上。
      */
     private val themeTicker by lazy { ThemeManager.scheduledRebuildTicker(this) }
 
     override fun onStart() {
         super.onStart()
         themeTicker.start()
-        // 页面留在返回栈里时导入配置会停在旧快照：↑↓ 闭包捕获的是上次重画的顺序，
-        // 不重读就会把导入前的整份顺序写回 prefs（与 L-48/L-74 两页同口径）。
+        // 页面留在返回栈里时导入配置会停在旧快照：↑↓ 与 X 的闭包捕获的是上次重画时的配置，
+        // 不重读就会把导入前的顺序 / 禁用态写回 prefs（与 L-48/L-74 两页同口径）。
         renderRows()
     }
 
@@ -104,8 +105,9 @@ class SymbolOrderActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        // 只有真正调过才通知（进来看看就退出的场景不必重建键盘视图）。
-        // 标记不复位：重建可能被「有未上屏输入」守卫延后，下次 onPause 再通知一次（重建幂等）。
+        // 只有真正改过才通知（进来看看就退出的场景不必重建键盘视图）。
+        // 标记不复位：重建可能被「有未上屏输入 / 按住键」守卫延后到下次弹键盘，
+        // 下次 onPause 会再通知一次（重建幂等）。
         if (dirty) JinnIme.onSymbolLayoutChanged()
     }
 
