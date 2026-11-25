@@ -13,10 +13,14 @@ import java.util.Locale
  *  - Android 自己的 `Formatter.formatFileSize`（系统「存储」页、文件选择器的「可用空间」）
  *    就是 1000 进制；用户拿手机设置里的数字来对账时，页面必须给出同一个量级
  *    （实测同一块分区：十进制 90.8 GB ↔ 二进制 84.5 GiB，写成 84.5 GB 会被当成算错）；
- *  - `OptionalDicts.sizeMb` 也是十进制（5.89 = 5,890,000 字节），词库页因此与清单一致。
+ *  - `OptionalDicts.sizeMb` 按十进制 MB 填（5.89 对应实测 5,893,252 B，容差吸收两位小数），
+ *    词库页因此与清单一致。
  *
  * 口径：`>= 1GB → %.1f GB`；`>= 1MB → %.1f MB`；`>= 10KB → N KB`（**四舍五入**）；
  * `>= 1KB → %.1f KB`（10KB 以下保留一位小数，见 [text]）；否则 `N B`。
+ *
+ * 入参边界：0 走末档得到「0 B」；负数不钳制，原样输出成「-1 B」；
+ * 极大值（如 `Long.MAX_VALUE`）走 GB 档，按 Double 相除后保留一位小数，不会溢出。
  */
 internal object ByteSize {
 
