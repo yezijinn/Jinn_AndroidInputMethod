@@ -158,7 +158,7 @@ class JinnIme : InputMethodService() {
      *
      * 首弹的调用顺序是「建视图（内部已 configure 一遍）→ onStartInputView」，而后者原先无条件
      * 再 configure 一次：同一棵刚建好的树、同一套参数，整树重套白付一遍（实测一次 8~22ms，
-     * 第 65 轮真机分段计时）。这里记下建视图那次用的方案，让紧随其后的会话开始**跳过重复**：
+     * 真机分段计时）。这里记下建视图那次用的方案，让紧随其后的会话开始**跳过重复**：
      * 只认「方案相同」，设置页改过双拼方案就照旧重套。
      * 会话结束（[onFinishInputView]）与窗口隐藏都会清掉它，避免「建视图时键盘不可见」
      * 之类的时序下把一次真实的会话边界 configure 也吞掉。
@@ -349,7 +349,7 @@ class JinnIme : InputMethodService() {
      * 状态条上一次写下的**失败原因**（A-734）。
      *
      * `SpeechClient` 只对外暴露 `state`，不保存 `detail`；而 `onStartInputView` 每次聚焦都用
-     * `renderLink(state, null)` 重绘（`:3713`）。没有这一份，401 / 超时 / 服务端 `code≠0`
+     * `renderLink(state, null)` 重绘（[renderLink]）。没有这一份，401 / 超时 / 服务端 `code≠0`
      * 的具体原因会被「未连接」换掉，且再也取不回来。`ONLINE` / `CONNECTING` 时清空。
      */
     private var lastLinkDetail: String? = null
@@ -478,7 +478,7 @@ class JinnIme : InputMethodService() {
      * 记一次「这次请求可能已经计费」（[lastFailAtMs] 的**唯一**写点）。
      *
      * 收敛成一个函数的原因不是好看：分散写点会漏，而漏掉的后果是**静默二次计费**，
-     * 用户无从察觉（这也是 L-627 / L-657 两轮都栽在同一处的原因）。
+     * 用户无从察觉（L-627 / L-657 都栽在同一处）。
      *
      * @param reason 进日志的原因短语，便于在诊断包里分辨是哪条路径。
      */
@@ -590,7 +590,7 @@ class JinnIme : InputMethodService() {
      * 单次听写的兜底收尾（防止用户忘了关 / 超过服务端上限）。
      *
      * 只由 [startRecording] 按后端与手势模式排程：自建后端只有 TOGGLE 排（服务端可长跑），
-     * 讯飞后端 TOGGLE 与 HOLD 都排（服务端单次音频硬上限 60 秒）。故这里只判「还在录」，
+     * 在线后端 TOGGLE 与 HOLD 都排（各家单次音频硬上限 60 秒）。故这里只判「还在录」，
      * 不再区分 TOGGLE / HOLD —— 判 mode 会把 HOLD 到点的那次收尾静默吃掉。
      */
     private val autoStopRunnable = Runnable {
@@ -851,7 +851,7 @@ class JinnIme : InputMethodService() {
 
     /**
      * 内嵌剪贴板面板点击记录：直接用当前 InputConnection 粘贴。
-     * 与 [pasteClipboardText] 同逻辑；面板在 IME 内，连接必然有效。
+     * 与 [pasteClipboardText] 同逻辑（连接失效时同样会暂存，等重聚焦再补投）。
      */
     private fun pasteClipboardTextInternal(text: String): Boolean {
         // 同 L-716：剪贴板面板里点条目同样改宿主文本
@@ -1116,8 +1116,9 @@ class JinnIme : InputMethodService() {
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
         // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 审查）：这里是编辑键
         // （全选 / 复制 / 拖选）与「译文提交前的选区检查」的公共入口，异常未捕获会崩 IME 进程。
-        // null 是**三态里的一态**（2026-10-01 复审 L-230）：既可能是「确实没有选区」，也可能是
-        // 「宿主不支持 `getExtractedText` / 大文档下抛事务异常」。调用方必须区分对待 ——
+        // null 有**多种成因**（2026-10-01 复审 L-230）：宿主不支持 `getExtractedText`、
+        // 大文档下抛事务异常、选区下标未知（负值）或落在文本窗口之外。
+        // 「无选区」是 start == end，不是 null。调用方必须区分对待 ——
         // 编辑键（全选 / 复制）按「无选区」处理无碍，**译文提交**绝不能（fail-closed）。
         val extracted = runCatching {
             // 与读取路径同口径设 hintMaxChars（2026-10-01 审查 L-263）：空构造意味着不限长，
@@ -1263,7 +1264,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "复制: 无选中文字")
             return
         }
-        // 与粘贴链路同款的单条上限闸（2026-10-02 修复 L-406）：这是全仓**唯一**写系统剪贴板的
+        // 与粘贴链路同款的单条上限闸（2026-10-02 修复 L-406）：这是编辑键里**唯一**写系统剪贴板的
         // 地方，此前既无尺寸闸也无兜底 —— 选中整篇长文时 `setPrimaryClip` 会把整段塞进 Binder
         // 事务（宿主与监听器还要各读一遍），超限即抛异常、直接崩 IME 进程。
         if (ClipboardStore.exceedsItemLimit(sel, ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
@@ -1612,7 +1613,7 @@ class JinnIme : InputMethodService() {
                     GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
                     GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
                     GalleryInsert.InsertResult.UriFailed -> {
-                        // 与 Rejected 同等待遇（AI2 A-190）：拆出本态是为了把「本地构造失败」
+                        // 与 Rejected 同等待遇（A-190）：拆出本态是为了把「本地构造失败」
                         // 与「宿主拒收」分开留痕，不是要取消兜底 —— fallbackToClipboard 会经
                         // stageForInsert 重新落一份文件再取 URI，路径类失败本可成功。
                         Diagnostics.w(TAG, "粘贴图片: URI 构造失败，退回剪贴板")
@@ -1932,7 +1933,7 @@ class JinnIme : InputMethodService() {
                     // cancelArmed 是 IME 自己的字段，stopRecording 只复位了麦克风按钮的武装态
                     setCancelArmed(false)
                 }
-                // 只查不改（语音链路一行不动）：长按空格前先问，不可用就不消费长按
+                // 只读查询，不改语音链路：长按空格前先问，不可用就不消费长按
                 override fun canVoice(): Boolean = prefs.voiceInputEnabled
                 override fun onOpenClipboard() {
                     // ⚠ 与 onTranslate 的拦截是**对称**的（2026-10-03 修复 L-688）：onTranslate 拦的是
@@ -1980,7 +1981,7 @@ class JinnIme : InputMethodService() {
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
                     if (rejectedBySearchPanel("方向")) return
                     // ⚠ 改选区也会作废在途译文（2026-10-03 修复 L-733）：落地阶段有两道都会因「只挪光标」而判否 ——
-                    // `beforeNow != snapshot.before` 与「存在选区」。前两轮按「是否改文本」分类加闸时漏了这一类，
+                    // `beforeNow != snapshot.before` 与「存在选区」。按「是否改文本」分类加闸时漏了这一类，
                     // 与 L-716 / L-740 修掉的是同一类缺陷。`onCopy` 只读 + 写剪贴板，不需要闸。
                     if (translateInFlight) cancelTranslate(notify = true)
                     Diagnostics.i(TAG, "方向按键: $action")
@@ -2189,7 +2190,7 @@ class JinnIme : InputMethodService() {
     /**
      * 把手：中间一条**短小半透明横条** + 右端「回到底部」，**没有整条背板**。
      *
-     * 用户 2026-10-23 的原话是「不要超级加粗的底色矩形」，所以整条 26dp 只留两根可见元素：
+     * 2026-10-23 定为「不要整条加粗底色」，所以整条 26dp 只留两根可见元素：
      *  - 居中（相对**整个面板**，不是相对扣掉小字后的剩余宽）的 44×5dp 圆角短条；
      *  - 右端 11sp 的「回到底部」小字。
      *
@@ -2625,17 +2626,13 @@ class JinnIme : InputMethodService() {
      * 改用宽高比后，选存档与算尺寸**两边同源**，不可能再分叉。
      * 夹取仍按屏幕宽高做，所以即使方向读错也只会「用错一套几何」，不会越界到屏外。
      *
-     * ⚠ 而且这里必须取 **displayMetrics 与物理屏的较小者**做比较：
-     * 横屏锁定的宿主会把 displayMetrics 带成 3200x1440，而物理屏是 1440x3200。
-     * 只看 displayMetrics 在宿主活着时是对的（对），但**杀掉宿主后那一瞬**它可能还没变回来，
-     * 于是竖屏物理屏 + 横屏读数 ⇒ 横屏几何落到竖屏上 ⇒ 越界。
-     * 带上物理屏后，这一瞬会判成竖屏（与真实屏幕一致），顶多少用一套几何，不会越界。
+     * ⚠ 判据只看 displayMetrics，**不能**混入物理屏尺寸：物理尺寸不含旋转，
+     * 横屏态下会判成竖屏（真机实测踩过）。早先试过取两者较小者，已移除 ——
+     * 方向判据统一到 displayMetrics（与 [applyGeometryToWindow] 的结论一致）。
      */
     private fun floatingIsPortrait(): Boolean {
         // 必须用 displayMetrics：它是**窗口尺寸计算的同源读数**（naturalW / screenW /
         // floatingAreaHeight 全从它来），方向判定与尺寸计算必须同源才不会分叉。
-        // ⚠ 不能用 physical 尺寸判：它不含旋转，
-        //   横屏态下会判成竖屏，于是「该用横屏几何」被误判成竖屏（实测踩过）。
         val m = resources.displayMetrics
         return m.widthPixels <= m.heightPixels
     }
@@ -2663,7 +2660,7 @@ class JinnIme : InputMethodService() {
      * 本机实测恒为 0）与系统 dimen `status_bar_height`（本机 84）。
      *
      * 口径是「宁可多减」：多减只会让贴底时留一条缝（不越界），少减会把最后一排键切到屏幕外。
-     * 全屏 / 沉浸模式下的代价就是这个 84px 的缝，已实测并在交付说明里登记（不改成 0 判据，
+     * 全屏 / 沉浸模式下的代价就是这个 84px 的缝，已实测，属已知取舍（不改成 0 判据，
      * 因为 IME 窗口的根视图拿不到「系统栏是否隐藏」的可靠读数）。
      */
     private fun floatingTopInsetPx(): Int {
@@ -3156,7 +3153,7 @@ class JinnIme : InputMethodService() {
         // ⚠ 语音键盘与拼音键盘是**两套 View**（`keyboard.xml` / `keyboard_pinyin.xml`），
         // 同名 id 各自解析到自己的布局里，因此敲击反馈必须在两侧各自绑定，不能共用一次绑定。
         // ⚠ 麦克风键（mic_button）**不挂钩**：按下即开始录音，此刻播按键音会被 AudioRecord
-        // 一并录进去、影响识别率。录音相关代码一行不改（2026-10-05 用户要求）。
+        // 一并录进去、影响识别率。录音相关代码不动（2026-10-05）。
         voice.findViewById<View>(R.id.status_bar).setOnClickListener {
             KeyFeedback.fire(TapSound.G_FUNC)
             openSettings()
@@ -3654,7 +3651,7 @@ class JinnIme : InputMethodService() {
      *
      * 判据必须同时看 `isLoaded` 与 `isFullyLoaded`：只看前者会漏「索引段失败」（单字表已在位、
      * 索引还没好），只看后者会漏「字表零行但索引成功」（`loaded=false && fullLoaded=true`，
-     * 此时 `query` 恒返回空候选；但 `PinyinKeyboardView:3781` 的 `!isLoaded` 分支更早命中，
+     * 此时 `query` 恒返回空候选；但 `PinyinKeyboardView` 里 `!PinyinEngine.isLoaded` 的分支更早命中，
      * 已显示「词库加载中…」，并非空白；闸门修复后补试可发起至多 3 次，耗尽后状态位不复位
      * ⇒ 残留只是文案口径（进行时提示）与缺终态提示）。
      * 加载正在进行时不占用重试次数（`isLoading` 守卫），冷启动那 0.5~0.7s 里用户可能反复弹键盘。
@@ -3839,7 +3836,7 @@ class JinnIme : InputMethodService() {
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
-        // ⚠ 例外（第 65 轮实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
+        // ⚠ 例外（真机实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
         // onCreateInputView 紧接着就是本回调），这里就不再重复 —— 一次 configure 实测 8~22ms，
         // 占首弹端到端耗时的 5%~15%，而重复的那次不改变任何像素与状态。
         // 判据两条，缺一不可：
@@ -4032,7 +4029,7 @@ class JinnIme : InputMethodService() {
         // 剪贴板面板同理（BUG.md L-110）：键盘收起后再弹出，它会带着上一个输入框的历史条目
         // 一起回来，误点即把历史内容粘进新字段。上面那行是同族的既有处理，这条原先漏了。
         pinyinKeyboard?.hideClipboardPanel()
-        // 图库面板同理：它记着上一轮的目录与格子，跨会话留着重开会把图插进新输入框
+        // 图库面板同理：它记着上一次会话的目录与格子，跨会话留着重开会把图插进新输入框
         pinyinKeyboard?.hideGalleryPanel()
         // 会话边界：在途翻译作废（旧结果不得落到新输入框里）
         cancelTranslate(notify = true)
@@ -4514,9 +4511,9 @@ class JinnIme : InputMethodService() {
     /**
      * 自动收尾时长（按当前后端）。TOGGLE 用它；在线后端下 HOLD 直接用 [XF_MAX_TASK_MS]。
      *
-     * 在线后端单次音频硬上限 60 秒（讯飞服务端到点直接截断；OpenAI 兼容侧按「单次上传」语义，
-     * 58s 也留了余量），故 58s 收尾，留 2 秒给末帧 / 上传与最终结果。
-     * 自建 CapsWriter 服务端按连接持有缓冲、可以长跑，保持原值。
+     * 在线各家单次音频硬上限 60 秒（讯飞到点直接截断；OpenAI 兼容按「单次上传」语义），
+     * 故 58s 收尾，留 2 秒给末帧 / 上传与最终结果。
+     * 自建 CapsWriter 按连接持有缓冲、可以长跑，保持原值。
      */
     private fun autoStopDelayMs(): Long =
         if (VoiceBackend.isOnline(prefs.voiceBackend)) XF_MAX_TASK_MS else MAX_TOGGLE_MS
@@ -4955,7 +4952,7 @@ class JinnIme : InputMethodService() {
         // ②.b 与上一条是**两回事**：这条查的是「宿主能不能给出精确选区」。
         //    放行侧（canAppendTranslation）把「读不到精确选区」当成「明确无选区」而放行，
         //    但提交侧 `moveCursorByOffset` 依赖同一能力、此时**必然**失败
-        //    （WebView 类宿主对 getExtractedText 恒返回 null，那条注释自己写明了）⇒
+        //    （WebView 类宿主对 getExtractedText 恒返回 null，见 [canAppendTranslation]）⇒
         //    每次点击都是「真计费 + 等一轮（大模型几十秒） + 丢译文」。
         //    在发请求前用同一事实拦下，成本为零（2026-10-02 修复 L-482）。
         //    判据取**本帧已读的探针**（`selectionRange.range`，L-325/L-315 那次为此专门包的），
@@ -5268,7 +5265,7 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_PRIVATE_FIELD)
             return false
         }
-        // 与发请求前（:4606）同口径补一道：宿主在请求在途时把框切成数字 / 日期类，或该框带
+        // 与发请求前（[startTranslate]）同口径补一道：宿主在请求在途时把框切成数字 / 日期类，或该框带
         // InputFilter，会把译文整段丢掉且不报错。此前只复查敏感框，替换模式又跳过了落地复核
         // ⇒ 选区被清空、一个字没写入，界面与诊断包都显示「已提交替换」。
         if (InputFieldPrivacy.rejectsTranslationText(info.inputType)) {
@@ -5637,7 +5634,7 @@ class JinnIme : InputMethodService() {
             val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
             val extracted = connection.getExtractedText(request, 0) ?: return@runCatching null
             val text = extracted.text?.toString().orEmpty()
-            // 与 [currentSelectionRange]（:591）同一口径：负下标 = 宿主没给出选区，按「读不到」处理。
+            // 与 [currentSelectionRange] 同一口径：负下标 = 宿主没给出选区，按「读不到」处理。
             // 不能 `coerceAtLeast(0)` 成 0 —— 那会被读成「光标在文首」，用户看到的是
             // 「光标前没有可翻译的文字」，而真实原因是宿主不支持（2026-10-01 修复 L-240）。
             if (extracted.selectionEnd < 0) return@runCatching null
@@ -5731,8 +5728,8 @@ class JinnIme : InputMethodService() {
      * 组合串、暂存粘贴、在途翻译一起丢，用户只看到「键盘没了」。
      *
      * 项目里 `pasteClipboard` / `deleteAllText` / `appendTranslation` 早已各自兜底，本条
-     * （2026-10-02 修复 L-404）把**编辑与面板路径**上剩下的裸调用统一收口。⚠ **只覆盖这三类路径**：
-     * 语音链路的调用点按红线只记录不改（那几处的异常面另有记录）。
+     * （2026-10-02 修复 L-404）把**编辑与面板路径**上剩下的裸调用统一收口，拼音键盘退格也在其中。
+     * ⚠ 语音链路的调用点不在此列（其异常面另行记录）。
      *
      * 失败一律降级为「这次操作没生效」+ 一条 W（类名），不记正文、不再往上抛。
      */
@@ -5843,7 +5840,7 @@ class JinnIme : InputMethodService() {
     private fun performEnter() {
         val connection = currentInputConnection ?: return
         // ⚠ 回车的**三条分支都会改宿主文本**（原始拼音上屏 / performEditorAction / 发 ENTER 键），
-        // 所以闸门统一提到最前面一次（2026-10-03 修复 L-740）：上一轮只补了第一条分支，
+        // 所以闸门统一提到最前面一次（2026-10-03 修复 L-740）：先前只补了第一条分支，
         // 于是「无拼音串时按回车」仍会静默作废已付费译文，而提示仍说「输入已变化」。
         if (translateInFlight) cancelTranslate(notify = true)
 
@@ -5989,7 +5986,7 @@ class JinnIme : InputMethodService() {
          *
          * 把手在**重排层之外**，所以任何尺寸下都是这 26dp（竖屏实测 91px / 触摸区就是这 91px）。
          * 不再调大：把手每高一 dp 都直接从键盘可用高度里扣。
-         * ⚠ 视觉已经缩成中间那条 5dp 短条（用户 2026-10-23 要求去掉整条背板），
+         * ⚠ 视觉已经缩成中间那条 5dp 短条（2026-10-23 去掉整条背板），
          * **热区不跟着缩** —— 整条 26dp × 全宽仍然可拖，这是「不加视觉体量又要好拖」的解法。
          */
         const val FLOATING_HANDLE_HEIGHT_DP = 26
@@ -6285,13 +6282,13 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起"
 
         /**
-     * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03 修复 L-602）。
-     *
-     * 此前这里是硬编码 `330_000L`，与 `Prefs.TIMEOUT_MAX_SEC`（300s）靠「330 > 300」这个
-     * **隐式**关系成立 —— 把上限提到 400 而忘了改这里，看门狗就会抢在 `callTimeout` 之前
-     * 收尾并 `cancel()`：用户看到「翻译中」凭空消失、一句提示都没有，而编译与门禁全绿。
-     * 现在改成派生式（单一真相）：改上限，看门狗自动跟随。
-     */
+         * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03 修复 L-602）。
+         *
+         * 此前这里是硬编码 `330_000L`，与 `Prefs.TIMEOUT_MAX_SEC`（300s）靠「330 > 300」这个
+         * **隐式**关系成立 —— 把上限提到 400 而忘了改这里，看门狗就会抢在 `callTimeout` 之前
+         * 收尾并 `cancel()`：用户看到「翻译中」凭空消失、一句提示都没有，而编译与门禁全绿。
+         * 现在改成派生式（单一真相）：改上限，看门狗自动跟随。
+         */
     private const val TRANSLATE_WATCHDOG_MS = (Prefs.TIMEOUT_MAX_SEC + 30) * 1000L
 
     /**
@@ -6320,11 +6317,11 @@ class JinnIme : InputMethodService() {
         /**
          * 剪贴板采集开关改动后调用（主线程）：立刻按新开关启停采集器。
          *
-         * 为什么不再走广播（AI2 A-572）：旧实现是「自定义页 `sendBroadcast` + 本服务在 Android 13+
+         * 为什么不再走广播（A-572）：旧实现是「自定义页 `sendBroadcast` + 本服务在 Android 13+
          * 注册接收方」。低版本没有 `RECEIVER_NOT_EXPORTED` 标志（动态注册默认导出且无权限保护），
          * 于是干脆不注册 —— 而发送方**无条件发送**，结果 Android 8~12 上这条通知整个落空：
          * 用户把「剪贴板历史」关掉并保存后，采集器仍在跑、仍把复制内容入库，直到下次弹键盘
-         * （`onStartInputView` 的兜底同步）才真的停。关采集是用户明确的隐私要求，不该等偶然时机。
+         * （`onStartInputView` 的兜底同步）才真的停。关采集属于隐私承诺，不该等偶然时机。
          *
          * 本应用单进程，直接通知即可（与 [onKeyFeedbackChanged] 同一套弱引用 + `ui.post` 写法）；
          * 服务未创建时无事可做 —— 它启动时本来就会按当前偏好 `syncClipboardController()`。
@@ -6438,7 +6435,7 @@ class JinnIme : InputMethodService() {
         const val MAX_TOGGLE_MS = 180_000L
 
         /**
-         * 在线后端的单次听写上限：两家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
+         * 在线后端的单次听写上限：各家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
          *
          * **TOGGLE 与 HOLD 都要用**：26 键长按同样可能按住超过 60 秒，到点被服务端截断的表现
          * 是「后半段说的话一个字都没有」——26 键下没有状态条，用户只会以为识别不准。
@@ -6515,7 +6512,7 @@ internal fun translateRepeatKey(
     sent: String,
     // 动作维度（2026-10-09）：同一段原文的「翻译」与「润色」是两次合法请求 ——
     // 指纹不含动作时，第二次会被误判「刚刚翻译过」而静默丢弃。
-    // ⚠ 带默认值且放**末尾**：既有 6 处位置参数调用（RecentFixesRegressionTest）零改动。
+    // ⚠ 带默认值且放**末尾**：既有调用方不必逐个改。
     action: AiAction = AiAction.DEFAULT,
 ): String =
     "${action.id}|${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
@@ -6541,7 +6538,7 @@ internal fun effectiveTargetLabel(
  * 落地复核的判据：译文尾部**是否真的在输入框里**。三态（2026-10-03 修复 L-681）：
  *  - `null` = **未测**（读不到，或宿主少给了字符）⇒ 不提示、不误报；
  *  - `true` = 尾部对得上，落地确认；
- *  - `false` = 尾部对不上，宿主把写入丢了 ⇒ 提示「请手动粘贴」。
+ *  - `false` = 尾部对不上（被宿主过滤或改写）⇒ 提示「未能确认已写入」，不指示动作。
  *
  * ⚠ 为什么要把「少给字符」也算未测：`getTextBeforeCursor(n, 0)` 的契约是「**至多** n 个字符」，
  * 宿主可以合法少给（窗口上限、厂商实现差异）。原先直接 `endsWith(submit.takeLast(probeLen))`，
@@ -6562,7 +6559,7 @@ internal fun commitProbeVerdict(returned: String?, submit: String, probeLen: Int
  * 为什么自绘而不给背景 drawable：四个角的 L 要各自朝向面板**内部**（左上角的两条边往右下伸），
  * 一张固定 drawable 只能表达一种朝向；而四角若都画成同一朝向，用户会以为是装饰而不是手柄。
  *
- * 图形刻意做得极轻（2dp 描边、40% 不透明、臂长 10dp）：用户的抱怨是「视觉体量太大」，
+ * 图形刻意做得极轻（2dp 描边、40% 不透明、臂长 10dp）：视觉体量此前被指过大，
  * 手柄不能变成第二块色板。颜色由 [JinnIme] 按皮肤 / 明暗主题取同一个令牌传进来（已去 alpha），
  * 透明度**只在这里**决定 —— `Paint.setColor` 会连 alpha 一起覆盖，别在别处再设一次。
  */
