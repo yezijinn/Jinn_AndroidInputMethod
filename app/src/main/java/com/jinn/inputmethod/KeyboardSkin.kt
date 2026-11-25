@@ -22,7 +22,7 @@ enum class SkinTone {
  *
  * 约束（改动前先读）：
  *  - **零位图**：皮肤只用色值与渐变参数表达，绘制由 [PinyinKey] 自绘完成 ——
- *    release APK 距 5MiB 上限仅约 21KB 余量，任何贴图/字体都会直接爆表；
+ *    Release APK 约 3.1MiB / 上限 5MiB（口径见 `AGENTS.md`），新增贴图/字体仍会明显增压；
  *  - **两套令牌皮肤（[LEGACY_DARK] 原黑 / [LEGACY_LIGHT] 原白）是全空覆盖**：字段为 null 表示
  *    沿用 `R.color.*` 令牌，`KeyTransparency` 0% 时的历史观感必须逐像素保持（[isToken] 与
  *    `KeyboardSkinTest` 守卫这一点）。它们**固定吃自己那一档色板**（见 [tokenPaletteDark]），
@@ -41,7 +41,8 @@ data class KeyboardSkin(
     /**
      * 亮色系 / 暗色系归属（见 [SkinTone]）。
      *
-     * 决定两件事：① 该皮肤只能被选进对应档位的槽位（亮色槽 / 暗色槽，见 `Prefs.skinLightId`），
+     * 决定两件事：① 该皮肤只能被选进对应档位的槽位（亮色槽见 `Prefs.skinLightId`、
+     * 暗色槽见 `Prefs.skinDarkId`），
      * ② 令牌皮肤按哪一档色板解析 `R.color.*`（见 [tokenPaletteDark]）。
      */
     val tone: SkinTone,
@@ -68,7 +69,7 @@ data class KeyboardSkin(
      *
      * 功能键（空格 / 回车 / 大写 / 删除）、候选词、符号分组标签、候选项、候选栏按钮、方向键
      * 的「面」都由本皮肤接管；若文字仍用主题色，亮白主题下会出现「深底 + 深字」撞色
-     * （真机实测：磨砂 / 极光的深色功能键上文字不可读），因此必须一并覆盖。
+     * （磨砂 / 极光的深色功能键上文字不可读），因此必须一并覆盖。
      */
     val functionGlyph: Int? = null,
     /** 功能键次要文字（空格键顶部小字、页码、候选提示）；null = `R.color.text_secondary`，允许带 alpha */
@@ -1095,7 +1096,7 @@ object KeyboardSkins {
      *
      * 返回违规描述列表，空列表表示合法。判据：
      *  - id / label 非空，且非默认皮肤的**填充色**必须 alpha = 255（不透明度由滑杆统一控制；
-     *    描边色与厚度色允许自带 alpha —— 描边由 [visualFor] 按比例缩放，厚度色则必须**显式给出**
+     *    描边色允许自带 alpha（由 [visualFor] 按比例缩放）；厚度色则必须不透明且**显式给出**
      *    （有厚度宽度却没给 `bottomThicknessColor` 属配置错误：退化路径会取到描边色）；
      *  - 渐变角度在 [0, 360)，描边与厚度在 [0, 4]dp；
      *  - 彩虹起始色相在 [0, 360) 且步长 > 0；

@@ -55,12 +55,12 @@ internal object TranslationClient {
      * `TranslationText.MAX_READ_CHARS`（10 万）个**码位**，UTF-8 最坏 4 字节/码位 ⇒ 上界
      * 400 KB。原先 256 KB 与它脱钩：`peekBody` 截断后首字符仍是 `{`，过得了门户判别，
      * 随后 `JSONObject` 抛异常 ⇒ 一条**完全合法**的长请求（DeepL 默认上限就是 10 万）
-     * 被归成「翻译服务异常」，已付费却一个字都不写。
+     * 被归成「服务异常」，已付费却一个字都不写。
      */
     private const val MAX_BODY_BYTES = 420L * 1024
 
     /**
-     * 只走 TLS 1.2+，不跟随跨协议跳转：翻译地址是常量 HTTPS，任何降级都是异常。
+     * 只走 TLS 1.2+，不跟随跨协议跳转：端点统一要求 HTTPS，任何降级都是异常。
      * 不设 `Proxy.NO_PROXY`（用户可能处在本机代理环境，与局域网直连的语音链路不同）。
      *
      * 协议不锁定：曾疑某网关的 503 与 h2 有关，实测把协议固定成 HTTP/1.1 后**依然是 503**
@@ -71,7 +71,7 @@ internal object TranslationClient {
         OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS)
-            // ⚠ 写超时**必须显式设**（2026-10-03 修复 L-739）：上一轮只给两处**派生** client 补了它，
+            // ⚠ 写超时**必须显式设**（2026-10-03 修复 L-739）：此前只给两处**派生** client 补了它，
             // 基线一直没设 ⇒ 一直是 OkHttp 默认的 10 s。而 `callTimeoutSec` 默认 0 的那四家
             // （DeepL / Azure / 百度通用 / 阿里云）走的正是基线，其中 DeepL 出厂单次上限就有
             // 100_000 字节、Azure 50_000。OkHttp 默认 writeTimeout=10s 会**先于** callTimeout 25s 到点，
@@ -167,13 +167,6 @@ internal object TranslationClient {
     }
 
     /**
-     * 发起一次翻译（异步）。
-     *
-     * 只在这里做三件事：构造请求（失败即归 PARAM）、钉死 HTTPS、执行并归一错误；
-     * 响应解析交给 Provider（纯函数）。日志只记 Provider 类名、语言、字数与响应码，
-     * **凭据与正文一个字都不进日志**。
-     */
-    /**
      * 唯一的回调出口：把结果交给 [onDone]，并**吞掉回调自身的异常**（2026-10-03 修复 L-680）。
      *
      * 为什么要包这一层：OkHttp 在调用 `onResponse` **之前**就置了 `signalledCallback`，此后从
@@ -204,7 +197,7 @@ internal object TranslationClient {
      * （2026-10-03 修复 L-677）。
      *
      * 与「2xx + HTML 门户页」同族：真因都是「网络还没认证」，重试一百次也没用；原先它们落各家
-     * 码表的 `else -> SERVER`，提示「翻译服务异常，请稍后重试」⇒ 用户反复重试且每次都真计费。
+     * 码表的 `else -> SERVER`，提示「服务异常，请稍后重试」⇒ 用户反复重试且每次都真计费。
      */
     internal fun isProxyAuthCode(code: Int): Boolean = code == 407 || code == 511
 
@@ -220,6 +213,13 @@ internal object TranslationClient {
     /** 可发文本按 UTF-8 最坏情况（4 字节/码位）编码后的上界 + 4KB 余量 */
     internal fun requiredBodyBytesLimit(): Long = TranslationText.MAX_READ_CHARS * 4L + 4096L
 
+    /**
+     * 发起一次翻译（异步）。
+     *
+     * 只在这里做三件事：构造请求（构造失败按异常类型归 CREDENTIAL / PARAM）、钉死 HTTPS、
+     * 执行并归一错误；响应解析交给 Provider（纯函数）。日志只记 Provider 类名、语言、字数、
+     * 端点 host + path 与响应码，**凭据与正文一个字都不进日志**。
+     */
     fun translate(
         provider: TranslationProvider,
         text: String,
@@ -334,7 +334,7 @@ internal object TranslationClient {
                     // 3xx：重定向是**刻意关闭**的（L-306，防不可信网关把用户正文转投到
                     // `Location` 指定的任意主机），所以这里不会自动跟随 —— 但原先 3xx 与 5xx
                     // 同归 SERVER ⇒ 「网关尾斜杠归一 / http→https 升级 / 路径补全」这类
-                    // **用户可修**的问题被显示成「翻译服务异常」，用户只会反复重试（每次真计费）。
+                    // **用户可修**的问题被显示成「服务异常」，用户只会反复重试（每次真计费）。
                     // 单列一条指向真因（2026-10-03 修复 L-600）。
                     if (it.code in 300..399) {
                         // 只记 Location 的 **host**：全 URL 可能带 query（凭据形态），不能落盘
@@ -372,8 +372,8 @@ internal object TranslationClient {
                     }
                     // 失败时只记**结构化摘要**（长度 + 白名单错误码），绝不记响应体原文：
                     // 错误体是服务端可控文本，OpenAI 兼容网关的 401 常规形态就是回显提交的 Key
-                    // （`Incorrect API key provided: sk-…`），而日志会落盘并随「导出诊断包」外发，
-                    // Diagnostics 的脱敏只挡手机号/邮箱/纯数字，挡不住 sk- 形态的凭据。
+                    // （`Incorrect API key provided: sk-…`），而日志会落盘并随「导出诊断包」外发。
+                    // Diagnostics 虽已能脱敏 sk- 等形态，但纯 hex 凭据与变形回显仍会漏出，故源头不记。
                     if (it.code !in 200..299) {
                         // 401/403 补 UA 与 `Server:` 摘要（2026-10-03 修复 L-606）：翻译请求不带
                         // 自定义 UA（用的是 `okhttp/4.x`），Cloudflare / WAF 类网关按 UA 拦时回 403，
@@ -395,7 +395,7 @@ internal object TranslationClient {
                     // 从这里抛出的 Throwable 不会被回落到 onFailure，而是冒到 dispatcher 线程 ⇒
                     // 未捕获处理器接手 ⇒ **整个 IME 进程终止**（键盘消失、未上屏拼音与在途翻译一起丢）。
                     // 六家 Provider 的契约是「自己兜住非法 JSON」，但那是**约定**不是机械约束 ——
-                    // 这里再兜一层：第七家写漏时最多丢一次结果，不会杀进程。
+                    // 这里再兜一层：新增 Provider 写漏时最多丢一次结果，不会杀进程。
                     val outcome = runCatching { provider.parseResponse(it.code, body) }
                         .getOrElse {
                             // 「可能已被读取上限截断」要一起记：否则「合法长请求的译文超上限」
@@ -408,7 +408,7 @@ internal object TranslationClient {
                             TranslationOutcome.Fail(TranslationError.SERVER)
                         }
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
-                    // 只留一行 len 的话，用户看到「翻译服务异常」而日志里查不出为什么（2026-10-01 修复 L-243）
+                    // 只留一行 len 的话，用户看到「服务异常」而日志里查不出为什么（2026-10-01 修复 L-243）
                     if (it.code in 200..299 &&
                         // 不再限定 SERVER（2026-10-01 审查 L-274）：原条件把「2xx 承载额度 / 认证类
                         // 失败」挡在门外，而这段逻辑的目标恰恰是网关用 200 报限额与欠费 —— 用户报
@@ -676,8 +676,8 @@ internal object TranslationClient {
      *
      * 为什么不能记原文：错误体是**服务端可控文本** —— OpenAI 兼容网关的 401 常规形态就是回显
      * 提交的 Key（`Incorrect API key provided: sk-…`）、百度系会回显请求字段，而日志会落盘并随
-     * 「导出诊断包」外发；[Diagnostics] 的脱敏只挡手机号/邮箱/纯数字串，挡不住 `sk-` / hex 形态的
-     * 凭据（2026-09-30 审查发现）。
+     * 「导出诊断包」外发；[Diagnostics] 的脱敏覆盖 `sk-` / LTAI 等常见形态，但不覆盖 hex 串，
+     * 且源头脱敏更可靠（2026-09-30 审查发现）。
      *
      * 错误码本身也只收「短标识符形态」（字母数字与 `_.-`，≤[MAX_ERROR_CODE_CHARS]）：含空格、
      * 引号、换行的内容一律丢弃 —— 那些正是自由文本的特征，也正是回显 Key 时会出现的东西。

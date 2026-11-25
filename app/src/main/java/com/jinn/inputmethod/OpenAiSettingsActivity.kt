@@ -16,7 +16,7 @@ import android.widget.Toast
 import java.util.Locale
 
 /**
- * OpenAI 兼容的**完整配置页**：基础配置 / 翻译设置 / 模型参数 / 高级，四段纵排。
+ * OpenAI 兼容的服务方配置页：基础配置 / 翻译设置 / 模型参数 / 高级，四段纵排。
  *
  * 设计原则（接入文档）：固定的只有协议骨架，其余全部开放 ——
  *  · 可选参数「留空即不发送」：某些推理模型不接受 `temperature` / `top_p`；
@@ -203,7 +203,7 @@ class OpenAiSettingsActivity : Activity() {
     /**
      * 字段改动后延迟落盘（BUG.md L-967）。
      *
-     * 与翻译设置页的 `scheduleCredentialAutosave`（L-209）同款：下一次改动把前一次排队顶掉，
+     * 与翻译设置页的 `scheduleCredentialAutosave` 同款：下一次改动把前一次排队顶掉，
      * 连续输入只在停顿后写一次。`saveValues` 对未改动字段本就是空操作，Key 那条另有 `saveGuard`
      * 挡着（避免把解不开的密文洗成空串）。
      */
@@ -261,7 +261,7 @@ class OpenAiSettingsActivity : Activity() {
         // 无条件先撤排队任务（L-976 同族）：导入在途时若不撤，导入结束后按旧界面值回写
         autosaveHandler.removeCallbacks(autosaveRunnable)
         // 导入进行中一律不回写（2026-10-02 修复 L-405）：本页的回写是**无条件**的全字段
-        // （15 项直接 setText → saveValues），与导入线程写同一份 Prefs ⇒ 交错时界面旧值
+        // （loadValues 全字段回填 → saveValues），与导入线程写同一份 Prefs ⇒ 交错时界面旧值
         // 会把刚导入的 model / baseUrl / 提示词覆盖回去。导入结束会 `recreate()` 设置页，
         // 界面值本就要重置，跳过不丢用户输入。
         if (ConfigBackupManager.importing) {
@@ -299,7 +299,7 @@ class OpenAiSettingsActivity : Activity() {
         themeTicker.stop()
     }
 
-    /** 从剪贴板历史删除与本机 API Key 相同的条目（后台线程；见 [purgeApiKeyFromClipboardHistory] 的说明） */
+    /** 从剪贴板历史删除与本机 API Key 相同的条目（后台线程；见 [CredentialTrace.purge] 的说明） */
     private fun purgeApiKeyFromClipboardHistory() {
         val appContext = applicationContext
         // 长活池（BUG.md L-1423）：`CredentialTrace.purge` 的第二段是**非收藏全表逐行 AES-GCM 解密**
@@ -355,7 +355,7 @@ class OpenAiSettingsActivity : Activity() {
                 // 闸门（BUG.md L-822）：只有**用户亲手操作过**下拉才放行 —— 原先的判据
                 // 「`targetTouched` 或 `isUserDriven`」中，前者只认触摸、后者的三标志在 ColorOS
                 // 下拉弹窗路径上常为 false（L-820 实测）⇒ 读屏 / 外接键盘选的语言**清不掉残留的
-                // 自定义值**，而 `saveValues` 正是按「自定义框是否还有内容」判定生效值 ⇒ 选了不生效。
+                // 自定义值**，而 `saveValues` 按自定义框非空判定生效值 ⇒ 选了不生效。
                 // 现在由 [UserAwareSpinner] 覆盖触摸 / 确认键 / 无障碍三条路径（程序化路径不经过它）。
                 if (!spinnerTarget.userInteracted) return
                 // 选了标准语言就清掉自定义框（两者只应有一个生效）。`customEdited` 必须一并复位：
@@ -391,7 +391,7 @@ class OpenAiSettingsActivity : Activity() {
     }
 
     private fun loadValues() {
-        // 每次回到本页都重新载入配置：清掉上一轮的用户操作探针，免得它授权一次程序化回填（L-822）
+        // 每次回到本页都重新载入配置：清掉上次进入时的用户操作探针，免得它授权一次程序化回填（L-822）
         spinnerTarget.resetUserInteracted()
         saveGuard.reset()
         // 程序化回填整段抑制（2026-10-02 修复 L-367 的配套）：下面的 setText 会触发自定义框的
@@ -534,7 +534,7 @@ class OpenAiSettingsActivity : Activity() {
      * 数字字段的保存：留空 = 不发该参数（清错误）；非空但非法 ⇒ 标红并留痕
      * （2026-10-02 修复 L-370：此前非法值原样存下、请求里被静默丢弃，用户以为参数生效了）。
      *
-     * 非法值仍照写（"留空即不发"的语义与所见即所得不变），由 [OpenAiTranslator.numberOrNull]
+     * 非法值仍照写（「留空即不发」的语义与所见即所得不变），由 [OpenAiTranslator.numberOrNull]
      * 在组装请求体时兜住；这里只负责让用户**在设置页就看见**。
      */
     private fun applyNumberField(field: android.widget.EditText, write: (String) -> Unit) {
@@ -570,7 +570,7 @@ class OpenAiSettingsActivity : Activity() {
         val keyOk = !saveGuard.edited(editApiKey) ||
             prefs.openAiApiKey == editApiKey.text.toString().cleanCredential()
         // 加密不可用（锁屏）时 Key 只在内存、重启即失（2026-10-02 修复 L-355）：
-        // 回读核对命中同一个缓存 ⇒ 必然"相等"，必须由写侧记账才能如实报告
+        // 回读核对命中同一个缓存 ⇒ 必然「相等」，必须由写侧记账才能如实报告
         val unpersisted = prefs.unpersistedCredentialKeys()
         loadValues()
         // 校验也计入「保存成功」的口径（2026-10-03 修复 L-514）：`loadValues()` 刚按持久化值重算过
@@ -592,7 +592,7 @@ class OpenAiSettingsActivity : Activity() {
         val fieldsOk = listOf(editBaseUrl, editUser, editExtraJson, editTemperature, editTopP, editMaxTokens)
             .all { it.error == null }
         val ok = flushed && keyOk && unpersisted.isEmpty() && fieldsOk
-        // 三态 +1（2026-10-02 修复 L-420 的 OpenAI 页侧）：原来失败只有一句
+        // 保存提示细分（2026-10-02 修复 L-420 的 OpenAI 页侧）：原来失败只有一句
         // 「保存未完成」，分不清是写盘失败、Key 未落盘、还是核对不一致
         textSaveHint.text = when {
             !flushed -> TEXT_SAVE_DISK_FAILED
@@ -619,7 +619,7 @@ class OpenAiSettingsActivity : Activity() {
         // 连点保护（2026-10-03 修复 L-634）：原先没有任何请求中判据 —— 连点会 cancel 上一个
         // （**服务端已收到**）并重发，部分网关把它计入限流、返回 429 后本页还会把提示误导成
         // 「网络失败」；同时每次点击都跑一遍 `saveValues()`（整份 prefs 写 + 凭据加解密）。
-        // 这里直接早退并保持「请求中…」提示，用户看到的是明确状态而不是"点了没反应"。
+        // 这里直接早退并保持「请求中…」提示，用户看到的是明确状态而不是「点了没反应」。
         // ⚠ 必须配合回调里的 `fetchCall = null`：否则这个判据会在首次请求后**永久成立**。
         if (fetchCall != null) {
             setHint(TEXT_FETCHING)
@@ -648,7 +648,7 @@ class OpenAiSettingsActivity : Activity() {
         ) { models, code ->
             runOnUiThread {
                 // 页面可能在响应回来前就被关掉（整体超时上限可到 300s）：往已 finish 的 Activity
-                // 上 show() 会抛 WindowManager$BadTokenException 直接崩溃（与 SettingsActivity:810
+                // 上 show() 会抛 WindowManager$BadTokenException 直接崩溃（与 SettingsActivity 的更新检查回调
                 // 同款防线，早先发现）。
                 // 请求已回来 ⇒ 清句柄，让「连点保护」重新放开（2026-10-03 修复 L-634）。
                 // ⚠ 必须放在**两个早退之后**：早退时说明这次响应已过期或不适用，
@@ -691,7 +691,7 @@ class OpenAiSettingsActivity : Activity() {
     private companion object {
         const val TAG = "OpenAiSettings"
 
-        /** 输入停顿多久后落盘（BUG.md L-967，与翻译设置页同一档） */
+        /** 输入停顿 800ms 后落盘（与翻译设置页同一档） */
         const val AUTOSAVE_DEBOUNCE_MS = 800L
 
         /** 标准目标语言（下拉项）；表外的值走「自定义语言」输入框 */
@@ -709,7 +709,7 @@ class OpenAiSettingsActivity : Activity() {
         const val TEXT_SAVED = "已保存到本机"
         const val TEXT_SAVE_FAILED = "保存未完成，请重试"
 
-        /** 保存结果三态（2026-10-02 修复 L-420 的 OpenAI 页侧）：失败要能分清是哪一步 */
+        /** 保存结果提示（2026-10-02 修复 L-420 的 OpenAI 页侧）：失败要能分清是哪一步 */
         const val TEXT_SAVE_DISK_FAILED = "写入本机失败，请检查存储空间后重试"
         const val TEXT_SAVE_NOT_PERSISTED = "凭据未写入本机（设备可能已锁定，解锁后重试）"
         const val TEXT_SAVE_KEY_FAILED = "API Key 未写入本机，请重试"
@@ -787,7 +787,7 @@ const val TEXT_EXTRA_JSON_HINT =
     const val TEXT_NUMBER_INVALID = "不是合法数字，该参数不会被发送"
 
     // ⚠ 「端点必须 https」这句**不在本页定义**（2026-10-03 修复 L-816）：统一用
-    // [Translation.TEXT_ENDPOINT_NEEDS_HTTPS]，键盘 toast / 翻译设置页状态行 / 本页的
+    // [TEXT_ENDPOINT_NEEDS_HTTPS]，键盘 toast / 翻译设置页状态行 / 本页的
     // Base URL 红字与自检提示共用一份措辞 —— 此前三处各写一遍且措辞不同，改一处不会红。
     // 运行期对明文地址一律拒发（归 INSECURE），而保存、状态摘要、「已配置」三处此前全部放行
     // `http://` ⇒ 配置信任链断裂；平台层对用户自填域名没有兜底，本页是唯一的把关点（L-513）。
