@@ -132,7 +132,7 @@ internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditT
         Diagnostics.i(TAG, "已插入图片 ${bmp.width}x${bmp.height}")
     }
 
-    /** 采样解码到长边不超过约 [targetPx]（两段式，与图库面板同一套做法） */
+    /** 两段式采样解码：先量尺寸，再按长边取 2 的幂采样率，长边落在 [targetPx] 到 2×[targetPx] 之间 */
     private fun decodeSampledBitmap(uri: Uri, targetPx: Int): Bitmap? {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

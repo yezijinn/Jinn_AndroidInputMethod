@@ -19,7 +19,7 @@ import android.widget.TextView
  * **依赖关系：档 3 必须先开档 2** —— 三级字比二级更生僻，「只开三级」没有意义。
  * 档 2 关闭时档 3 的勾选框置灰并自动取消（[syncTier3Enabled]）。
  *
- * 勾选即落盘并**即时生效**（[PinyinEngine.setRareTiers] 只改查询期放行判据，
+ * 勾选即落盘并**即时生效**（[PinyinEngine.setRareTiers] 改查询期放行判据并作废旧合并缓存，
  * 不需要重启输入法 —— 这与旧「显示生僻字」开关的「重启生效」不同）。
  */
 class RareCharsActivity : Activity() {
@@ -47,7 +47,7 @@ class RareCharsActivity : Activity() {
         findViewById<TextView>(R.id.text_rare_title).text = TEXT_TITLE
         findViewById<TextView>(R.id.text_rare_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_rare_close).apply {
-            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写「X」/「关闭」，见 BUG.md L-477）
             text = PageChrome.CLOSE
             contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }

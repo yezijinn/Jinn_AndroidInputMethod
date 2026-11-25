@@ -6,7 +6,8 @@ package com.jinn.inputmethod
  * 持久化按 label 而不是下标：分组数据（[SYMBOL_GROUPS] + 「收藏」）会随版本增删，
  * 下标会把「第 3 个」指到另一个分组上，label 则天然跟随内容（只有改分组名才失效）。
  *
- * 归一规则（[normalize]）：去重 → 丢掉未知 label → 未提及的分组按默认次序追加到末尾，版本新增的分组因此总是落在「用户没动过的尾巴」上，不会打乱既有顺序。
+ * 归一规则（[normalize]）：改名映射 → 丢掉未知 label → 去重 → 未提及的分组按默认次序追加到末尾，
+ * 版本新增的分组因此总是落在「用户没动过的尾巴」上，不会打乱既有顺序。
  * 例外：「收藏」加入前的旧顺序串里没有它 → 插回「半角」之后（默认第三位），
  * 既保住用户已调的顺序，又不让收藏落到尾巴上。
  *
@@ -16,7 +17,7 @@ object SymbolOrder {
 
     private const val TAG = "SymbolOrder"
 
-    /** 内置分组的默认顺序（不含「收藏」， 收藏是动态组，见 [KeyboardLayouts.favoriteGroup]） */
+    /** 内置分组的默认顺序（不含「收藏」，收藏是动态组，见 [KeyboardLayouts.favoriteGroup]） */
     private val BUILTIN: List<String> = SYMBOL_GROUPS.map { it.label }
 
     /**
@@ -25,7 +26,7 @@ object SymbolOrder {
      */
     private val RENAMED: Map<String, String> = mapOf("编程" to "变量")
 
-    /** 默认顺序 = 全角 / 半角 / 收藏 / 变量 / 标点 / 特殊 / 序号 / 数学 / …（收藏固定第三） */
+    /** 默认顺序 = 全角 / 半角 / 收藏 / 变量 / 偏旁 / 标点 / 特殊 / 序号 / 数学 / …（收藏在第三位） */
     val DEFAULT: List<String> = BUILTIN.toMutableList().apply { add(2, FavoriteSymbols.LABEL) }
 
     /** 持久化串 → 归一后的顺序（空串 = 默认） */
@@ -56,7 +57,7 @@ object SymbolOrder {
         val result = (known + DEFAULT.filter { it !in known }).toMutableList()
         // 旧版本顺序串不含「收藏」：插到「半角」之后（默认第三位），不打乱用户已调的其余顺序。
         // 锚点自己也可能被改名（项目里已有「编程 → 变量」的先例）：那时 indexOf 给 -1，
-        // 直接 add 到末尾虽然不丢组，但收藏会跑到尾巴上 —— 用默认序列里它自己的下标兜底。
+        // 直接 add 到末尾虽然不丢组，但收藏会跑到尾巴上 —— 用收藏在默认序列里的下标兜底。
         if (FavoriteSymbols.LABEL !in known) {
             result.remove(FavoriteSymbols.LABEL)
             val anchor = result.indexOf(FAVORITE_ANCHOR)
@@ -87,7 +88,8 @@ object SymbolOrder {
      * 禁用集合的持久化串（label 逗号分隔；空串 = 全部启用）。
      *
      * 与顺序串分开存（各自一个键）：两者语义独立 —— 挪动位置不该把禁用态一起写一遍，
-     * 反之亦然。归一（[disabledParse] / [disabledSerialize]）保证脏值只留有效 label。
+     * 反之亦然。清洗（[disabledParse] / [disabledSerialize]）只去空白 / 空项 / 去重，
+     * 不校验 label 是否属于已知分组（未知项匹配不到组，无害）。
      */
     fun disabledParse(raw: String?): Set<String> =
         raw.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -116,7 +118,7 @@ object SymbolOrder {
      *
      * 图标没有文字，名字就是全部信息（BUG.md L-1138）：原先直接拿 `strings.xml` 里那两条字形
      * 「↑」/「↓」当无障碍名，读屏只念「上箭头」，听不出对哪一组做什么。分组名带引号，读屏读作
-     * 「上移『收藏』」，与动词本身分得开（那两条字形资源因此不再被引用，按 `strings.xml` 约定留着）。
+     * 上移「收藏」，与动词本身分得开（那两条字形资源因此不再被引用，按 `strings.xml` 约定留着）。
      */
     fun moveDescription(up: Boolean, label: String): String =
         (if (up) MOVE_UP else MOVE_DOWN) + "「" + label + "」"
@@ -130,7 +132,6 @@ object SymbolOrder {
      * 拿到的就是「可直接渲染」的列表，不必各自再判一遍禁用。
      * ⚠ 全部被禁用时回退为**不过滤**：符号面板不能没有任何可显示的分组（脏备份 / 手工构造的
      * 键值都可能落成全禁用）。
-     * internal：返回 internal 类型的 [SymbolGroup]。
      */
     internal fun groupsInOrder(
         raw: String,
