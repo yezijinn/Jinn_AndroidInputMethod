@@ -1,7 +1,7 @@
 package com.jinn.inputmethod
 
 /**
- * 词库二进制索引（只读，P1 Stage 1）。
+ * 词库二进制索引（只读）。
  *
  * 旧的形态是「xz 文本 + 百万级 HashMap」，每次启动都要解压、逐行解析、建哈希表
  * （真机实测基础包 6~10.7s、进程 PSS 305MB）。改索引后解析和建表都挪到构建期
@@ -235,7 +235,6 @@ internal class PhraseIndex private constructor(
         /** 源文本摘要（与构建脚本 `build_dict_index.py` 的 FNV-1a 64 同算法） */
         fun stampOfText(text: String): Long = fnv1a64(text.toByteArray(Charsets.UTF_8))
 
-        /** 源文件摘要：把 length 与 lastModified 拼起来做 FNV，用于「文件是否变过」的复用校验 */
         /**
      * 磁盘上的索引缓存是否**跟得上**某个源文件（判据与加载路径同一句，见 [stampOfFile]）。
      *
@@ -272,7 +271,7 @@ internal class PhraseIndex private constructor(
             val wordsLen = i32(buf, 14)
             if (keyCount <= 0 || keysLen <= 0 || wordsLen <= 0) return@runCatching null
             // 保守的长度下界：键区与词区必须落在文件里（挡住「只剩头部」这类明显截断）。
-            // 不在这里复算长度数组的偏移：那两个数组的宽度是自适应的（见 parse()），从头部推不出来；
+            // 不在这里复算长度数组的偏移：本函数只把头部读进 buf，未加载长度数组；
             // 更严的结构校验仍由装载路径的 parse() 把守 —— 本函数只回答「头部像不像跟上源文件的索引」。
             if (raf.length() < HEADER_SIZE.toLong() + keysLen + wordsLen) return@runCatching null
             stampOf(buf, 22)
@@ -568,7 +567,7 @@ internal class PhraseIndex private constructor(
         /**
          * 把长度数组展开成前缀和偏移数组（v2）；累加越界返回 null（调用方据此拒绝该文件）。
          *
-         * - @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
+         * @param width 每项字节数：1 = u8（键长），2 = u16（词表长）
          *
          * 累加必须用 Long 判溢出。每项最大 255/65535，条目数又只被 `need == capacity`
          * 松散约束（大索引可达千万级），Int 累加会静默回绕成负数，负值随后被当成合法偏移，

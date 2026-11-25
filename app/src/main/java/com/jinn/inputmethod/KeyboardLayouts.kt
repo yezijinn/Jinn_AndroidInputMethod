@@ -158,7 +158,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'a' to "𠃍",
         ),
     )),
-    // 标点
     SymbolGroup("标点", listOf(
         mapOf(
             'q' to "‘", 'w' to "’", 'e' to "「", 'r' to "」", 't' to "『",
@@ -186,7 +185,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "□", 'm' to "☆",
         ),
     )),
-    // 序号
     // 特殊：符号 / 天气 / emoji / 箭头 / 货币 / 数理几何，共 6 页
     SymbolGroup("特殊", listOf(
         mapOf(
@@ -306,7 +304,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "玖", 'm' to "拾",
         ),
     )),
-    // 数学
     SymbolGroup("数学", listOf(
         mapOf(
             'q' to "＋", 'w' to "－", 'e' to "×", 'r' to "÷", 't' to "＝",
@@ -342,7 +339,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "Ϟ", 'm' to "Ϡ",
         ),
     )),
-    // 单位
     SymbolGroup("单位", listOf(
         mapOf(
             'q' to "￥", 'w' to "＄", 'e' to "€", 'r' to "£", 't' to "￡",
@@ -369,7 +365,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "㎠", 'm' to "㎰",
         ),
     )),
-    // 平假名
     // 日本：平假名 + 片假名合并（原为两个分组，内容二合一，共 10 页）
     SymbolGroup("日本", listOf(
         // ── 平假名 ──
@@ -457,7 +452,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "ヹ", 'm' to "ヺ",
         ),
     )),
-    // 拉丁
     SymbolGroup("拉丁", listOf(
         mapOf(
             'q' to "á", 'w' to "à", 'e' to "ä", 'r' to "â", 't' to "é",
@@ -484,7 +478,6 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'n' to "ɑ", 'm' to "ɒ",
         ),
     )),
-    // 特殊
     // 注音：第 1 页声调（带调拼音字母 + 声调符号），其后为完整注音符号
     SymbolGroup("注音", listOf(
         mapOf(

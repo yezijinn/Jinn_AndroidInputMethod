@@ -16,13 +16,13 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 词面落盘加密的密钥与行级 AEAD（[SelectionLedger] 与 [UserFrequency] 共用）。
+ * 词面落盘加密的密钥与行级 AEAD（[SelectionLedger] / [UserFrequency] / [UserPhrases] 共用）。
  *
  * **为什么台账不能整文件加密**：台账只增不删、可能几万行，整文件壳（[ConfigCrypto] 那一套）每追加
  * 一次都要「解密全量 → 追加 → 重新加密全量」，等于把一次按键的选择放大成整表重写 —— 既慢又费电。
  * 所以改成**行级 AEAD**：一行记录自成一个可独立解密的单元，追加仍是 `O_APPEND` 的 O(1) 写。
- * 词频则相反（上限 3000 行、2 秒防抖）：整份「解密 → 改 → 加密 → 原子替换」只要 0.2ms 量级，
- * 两种形态各自最省，才没有硬统一成一种。
+ * 词频则相反（上限 3000 行、2 秒防抖）：整份「解密 → 改 → 加密 → 原子替换」只要 0.2ms 量级
+ * （量级估计，非实测），两种形态各自最省，才没有硬统一成一种。
  *
  * **两层密钥（信封）**：
  *  - 数据密钥 DEK = 32 字节随机数，只做行级 AES-256-GCM；它在内存里的 [SecretKeySpec] 不碰 Keystore，
@@ -165,7 +165,8 @@ internal object LedgerCrypto {
         private set
 
     /**
-     * 取数据密钥：`dir` 下的 [KEY_FILE] 存在则解包，不存在则生成并写回。
+     * 取数据密钥：`dir` 下的 [KEY_FILE] 存在则解包；不存在且没有待保护数据时才生成并写回。
+     * 有数据而密钥件没了走 fail-closed（见 [orphanExistingData]）。
      *
      * @return null = 密钥不可用（Keystore 被清 / 锁屏 / 硬件异常 / 包裹文件损坏 / 旧数据待人工处理）。
      *   **不要**在 null 时回退明文，也不要把「解不开」当成「没有数据」。
@@ -246,7 +247,7 @@ internal object LedgerCrypto {
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val iv = cipher.iv
         // 读出端按固定 12 字节切 IV：provider 若返回别的长度就是「写得进、读不出」的静默丢数据。
-        // 真出现就当场失败（写侧返回 false），别让它悄悄落盘
+        // 真出现就当场抛异常（require），绝不让错误 IV 悄悄落盘
         require(iv.size == IV_BYTES) { "GCM IV 必须是 $IV_BYTES 字节（当前 provider 返回 ${iv.size}）" }
         val ct = cipher.doFinal(line.toByteArray(Charsets.UTF_8))
         val buf = ByteArray(iv.size + ct.size)
@@ -282,7 +283,7 @@ internal object LedgerCrypto {
     /**
      * 文本**看起来**是一份加密台账（哪怕首行标识丢了）。
      *
-     * 判据与 [looksEncrypted] 正交：首行是记录形态，或 ≥90% 的非空非注释行都是记录形态。
+     * 判据与 [looksEncrypted] 各管一种形态：首个非空非注释行是记录形态，或 ≥90% 的非空非注释行都是记录形态。
      * 为什么必须有它 —— 首行标识一旦被删（外部改写 / 部分恢复 / 手工替换），
      * 只看首行的判定链会把密文当成**明文**迁移：
      *
