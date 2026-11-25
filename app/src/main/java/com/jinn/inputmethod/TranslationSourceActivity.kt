@@ -81,7 +81,7 @@ class TranslationSourceActivity : Activity() {
         super.onCreate(savedInstanceState)
         // 与两个凭据页同款防护：防截屏 / 录屏 / 投屏 / 最近任务缩略图。
         // ⚠ 投屏（ADB / scrcpy）下整页不可见是**预期行为**、不是缺陷：
-        // PopupWindow 会继承本窗口的 secure 标志，详见 TranslationSettingsActivity 的完整说明。
+        // 页面上的弹出层同样被遮蔽，详见 TranslationSettingsActivity 的说明。
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE,
@@ -113,7 +113,7 @@ class TranslationSourceActivity : Activity() {
             findViewById<RadioButton>(R.id.radio_scope_before_all) to TranslationScope.BEFORE_ALL,
             findViewById<RadioButton>(R.id.radio_scope_all) to TranslationScope.ALL,
         )
-        // 文案与写入共用同一张表（见字段声明处的说明）：枚举加档时这里少写一个会**编译期**就能看出来
+        // 文案与写入共用同一张表（见字段声明处的说明）：枚举加档时须在此补一行，否则新档本页无从选择
         for ((view, scope) in radios) view.text = scope.label
 
         loading = true
@@ -215,8 +215,8 @@ class TranslationSourceActivity : Activity() {
     /**
      * 把输入框里的值写回当前服务方。
      *
-     * 空串（用户清空输入框）按**出厂默认**处理而不是 0：0 会被 [Prefs.translateMaxBytesOf]
-     * 钳到 1，等于把这家改成「什么都翻不了」—— 而用户的动作语义是「清掉手填值」。
+     * 空串（用户清空输入框）按**出厂默认**处理：用户的动作语义是「清掉手填值」，
+     * 不是填 0；零 / 负数同样回落到该家默认值（见 [Prefs.translateMaxBytesOf]）。
      */
     private fun saveMaxBytes(): Boolean {
         val raw = editMaxBytes.text?.toString()?.trim().orEmpty()
@@ -228,8 +228,8 @@ class TranslationSourceActivity : Activity() {
         // 与 setter 的钳位同口径 ⇒ 跳过的写法与「照样写」在数据面等价
         val wrote = prefs.translateMaxBytesOf(currentId) != target
         if (wrote) prefs.setTranslateMaxBytesOf(currentId, target)
-        // 回填**真实生效值**（2026-10-01 审查 L-225）：钳位后的数才是下次翻译真正用的；
-        // 显示未生效的数会让用户以为「填 0 就是不限」（实际存 1）。
+        // 回填**真实生效值**（2026-10-01 审查 L-225）：钳位 / 回落后的数才是下次翻译真正用的；
+        // 显示未生效的数会让用户以为「填 0 不限」（实际回落到该家默认值）。
         val effective = prefs.translateMaxBytesOf(currentId).toString()
         if (editMaxBytes.text?.toString() != effective) editMaxBytes.setText(effective)
         return wrote

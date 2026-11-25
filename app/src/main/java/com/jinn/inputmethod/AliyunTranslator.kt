@@ -24,7 +24,7 @@ import javax.crypto.spec.SecretKeySpec
  * POST https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general
  * {"FormatType":"text","SourceLanguage":"auto","TargetLanguage":"en","SourceText":"…"}
  * ```
- * `SourceLanguage=auto` 即自动检测源语言（与其它三家口径一致）。
+ * `SourceLanguage=auto` 即自动检测源语言（与其它 Provider 口径一致）。
  *
  * 认证是阿里云 **ROA 风格签名**（官方「签名机制」逐字实现，顺序与换行都不能改）：
  * ```
@@ -95,14 +95,14 @@ internal class AliyunTranslator(
             .build()
     }
 
-    /** 解析响应：先判业务错误码（如 10004 缺 Scene、404 认证失败）再退判 HTTP 状态，避免把认证/参数错误误报成「翻译为空」 */
+    /** 解析响应：先判业务错误码（如 10004 缺 Scene、404 认证失败）再退判 HTTP 状态，避免把认证/参数错误误报成「服务返回结果为空」 */
     override fun parseResponse(code: Int, body: String?): TranslationOutcome {
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
             ?: return TranslationOutcome.Fail(httpErrorOf(code))
         // ⚠ 业务错误码必须先判，再看 HTTP 状态：
         //  · 认证失败时阿里云的 HTTP 状态是 **404**（`InvalidAccessKeyId.NotFound` / `SignatureDoesNotMatch`）；
         //  · 参数出错时是 **HTTP 200 + `{"Code":"10004"}`**（实测：缺 Scene）。
-        // 只看状态会把这两种情况分别显示成「服务异常」与「翻译结果为空」，用户都无从下手。
+        // 只看状态会把这两种情况分别显示成「服务异常」与「服务返回结果为空」，用户都无从下手。
         // 成功码是 "200"（大写 Code 与老写法 code 都认，数字 200 经 optString 也是 "200"）。
         // 判存在性要**排除 JSON null**（2026-09-30 审查）：`optString` 对 `"code":null` 返回
         // 字面量 `"null"`、对 `"code":0` 返回 `"0"` —— 两者都会被当成业务错误码（归 SERVER），
@@ -252,7 +252,7 @@ internal class AliyunTranslator(
             // ── 超时 ──
             code == "10001" -> TranslationError.TIMEOUT   // 请求超时
             // ── 参数类：改写内容或换语言方向就能过 ──
-            code == "10003" -> TranslationError.PARAM     // 原文解码失败（未按 URL 编码传参）
+            code == "10003" -> TranslationError.PARAM     // 原文解码失败（官方释义：未按 URL 编码；本实现走 JSON 体）
             code == "10004" -> TranslationError.PARAM     // 参数缺失（实测：缺 Scene，HTTP 200 承载）
             code == "10005" -> TranslationError.PARAM     // 语项（语言方向）不支持
             code == "10006" -> TranslationError.PARAM     // 语种识别失败

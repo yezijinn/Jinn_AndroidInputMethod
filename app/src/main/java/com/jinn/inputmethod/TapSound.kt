@@ -29,7 +29,7 @@ internal object TapSound {
     /** 符号 / 标点：符号层 26 键、逗号键、句号键 */
     const val G_SYMBOL = 2
 
-    /** 删除 / 清空：退格键 + 候选栏清空 ✕。声音与其余五组相同，辨识靠 [isDoublePulse] 的双段触感 */
+    /** 删除 / 清空：退格键 + 候选栏清空 ✕。默认与其余五组同音，辨识靠 [isDoublePulse] 的双段触感 */
     const val G_ERASE = 3
 
     /** 确认：空格键、回车键 */
@@ -55,7 +55,7 @@ internal object TapSound {
      * 来源与授权见 `tools/sound_preview/keyboard_sounds_manifest.md`：
      * Freesound 条目为 CC0，Mixkit 条目为免费商用音效。
      * ⚠ 增删资产后要同步的地方：本常量、[SOUND_DURATION_MS]，以及 `tools/sound_preview/gen_manifest.py`
-     * 里那四张表（编号与原始名、时长、起音数、来源与授权）—— 清单的表体由它渲染，表与资产对不上
+     * 里那四张表（编号与原始名+来源授权、时长、起音数、建议角色）—— 清单的表体由它渲染，表与资产对不上
      * 时生成器直接非零退出。编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
      */
     const val SOUND_COUNT = 16
@@ -180,7 +180,7 @@ internal object TapSound {
      * 两条约束在这里互相拉扯，改动前先看清：
      *
      * ① 停顿要**够大**才能听出是两下。20ms 配 10ms 脉冲已在人手指可辨的边缘（弱档因此
-     *    退化成「一次带凹陷的震动」），所以下限取 30ms —— 这一条是本次修掉的实际问题。
+     *    退化成「一次带凹陷的震动」），所以下限取 30ms。
      * ② 停顿**不能太大**。`Vibrator.vibrate(effect)` 是替换语义，后一次调用取消在途波形，
      *    而删除键不占用普通通道的时间戳（`Throttle` 对删除组只写 `lastErase`），下一按键
      *    可以在 +0ms 就触发 ⇒ 间隔越大，后半段落在越靠后的位置、被削掉的窗口就越大。
@@ -302,7 +302,7 @@ internal object TapSound {
             return true
         }
 
-        /** 释放时复位：重建后的第一次反馈不该被上一轮的残值挡掉 */
+        /** 释放时复位：重建后的第一次反馈不该被重建前的残值挡掉 */
         fun reset() {
             lastGeneric = -1L
             lastErase = -1L
