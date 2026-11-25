@@ -14,28 +14,29 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * 剪贴板面板的「图片」分类视图：网格平铺缩略图（点击上屏 / 长按出操作条）。
+ * 剪贴板图片网格视图：缩略图平铺（点击上屏 / 长按出操作条）。面板与历史页共用，
+ * 两处各自持有实例并注入各自的点击、长按实现。
  *
  * 独立成类而不是塞进 [ClipboardPanelView]：网格与列表的**取数、生命周期、内存模型**都不同
- * （列表逐页解密文本；网格走文件 + 缩略图缓存 + 3 线程池），混在一起会让两条分页逻辑互相干扰。
+ * （列表逐页解密文本；网格走文件 + 缩略图缓存），混在一起会让两条分页逻辑互相干扰。
  *
- * 布局与线程纪律照抄 `GalleryPanelView`（图库快贴）：
- *  - 列数 / 行高读 [Prefs.galleryColumns] / [Prefs.galleryCellHeightDp]（**同一对偏好**：
- *    图库面板里调一次「布局」，两个网格同步生效；本面板不另设调参入口）；
- *  - 缩略图按**字节数**限容的 [LruCache]（12MB）+ 3 线程池（输入法是常驻进程，
- *    不设上限会被系统杀掉 —— 表现为键盘突然消失）；
- *  - 缓存延后释放（[CACHE_RELEASE_DELAY_MS]）：面板收起后马上又打开时不必全部重解。
+ * 同样自绘网格的还有 [GalleryPanelView]，但两者只共享底层设施，UI 与分页各写一份：
+ *  - 共用 [Prefs.galleryColumns] / [Prefs.galleryCellHeightDp]（同一对偏好：图库面板里调一次
+ *    「布局」，两个网格同步生效）与 [ClipboardThumbLoader] 的进程级缩略图缓存；
+ *  - 差异：图库面板自己按 [GalleryPanelView.PAGE_SIZE] 翻本地目录、自建解码池并做延迟释放
+ *    （[GalleryPanelView.CACHE_RELEASE_DELAY_MS]）；本视图按数据库游标续页，解码交给
+ *    [ClipboardThumbLoader] 的线程池，缓存上限由 [ClipboardThumbLoader] 管理。
  *
- * 缩略图是**密文**：渲染前解密（同 Key，见 [ClipboardCrypto.decryptBytes]）。解密 + 解码
- * 都在线程池里做，主线程只 `setImageBitmap`；cell 用 `tag = hash` 判新旧，避免复用错位。
+ * 缩略图文件是**密文**，由 [ClipboardThumbLoader] 解密解码后回调，主线程只 `setImageBitmap`；
+ * cell 用 `tag = hash` 判新旧，避免复用错位。
  */
 internal class ClipboardImageGridView(context: Context) : LinearLayout(context) {
 
     interface Listener {
-        /** 点击一张图片（上屏由 IME 走 commitContent，面板不做宿主能力判断） */
+        /** 点击一张图片：只上抛意图，上屏方式由宿主决定（面板交给 IME 提交内容，历史页弹对话框） */
         fun onPaste(item: ClipboardDb.Item)
 
-        /** 长按一张图片（面板侧显示内联操作条） */
+        /** 长按一张图片：只上抛意图，操作菜单由宿主显示（面板内联操作条 / 历史页菜单） */
         fun onMenu(item: ClipboardDb.Item)
     }
 
@@ -154,14 +155,14 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     }
 
     /**
-     * 视图被丢弃（键盘重建）时作废在飞任务并释放缩略图内存。
+     * 视图被丢弃（键盘重建）时作废在飞任务。
      *
-     * 只在这一刻释放：面板收起再打开（同一视图树）时缓存留着，避免每次重解一整屏；
-     * 上限由 [THUMB_CACHE_BYTES] 兜住（LRU 自然淘汰），不需要额外的时间窗。
+     * 缓存是进程级共享的，不在这里释放：面板收起再打开（同一视图树）时留着，避免重解一整屏。
+     * 字节上限与系统内存回调的让位都由 [ClipboardThumbLoader] 负责。
      */
     fun stopWork() {
         generation++
-        // 同时把「正在取数」的闸放开（AI2 A-657）：在飞的取数回调判到代际过期就 return，**不复位**
+        // 同时把「正在取数」的闸放开：在飞的取数回调判到代际过期就 return，**不复位**
         // loading（那条纪律不能破：它会碰到新一代的计数）⇒ 不复位的话这个实例在下次 show() 之前
         // 一直停在 true，loadMore / 滚动续取全被挡住。下次 show() 本会复位，但那是隐式依赖 ——
         // show() 将来加一条「同分类不重载」的早退，页面就真的取不到后面的图了。

@@ -9,7 +9,7 @@ import java.io.PushbackReader
 import java.io.Reader
 
 /**
- * 外部文本文件导入剪贴板历史（2026-10-10 用户拍板）。
+ * 外部文本文件导入剪贴板历史。
  *
  * 口径：**按行拆分** —— 每个非空行一条，行首尾空白裁掉，空行跳过。
  * 用途：批量常用短语 / 账号 / 地址类 txt，导入后可在面板逐条粘贴。
@@ -17,7 +17,7 @@ import java.io.Reader
  * 边界与闸门（全部与既有路径同源，不新增「只有导入才有的」宽松口径）：
  *  - 单条上限与采集 / 粘贴同源（[ClipboardPrefs.effectiveMaxItemBytes]）：超限行**整行丢弃**，
  *    不截断入库 ——「半截比不记更糟」；
- *  - 入库走 [ClipboardStore.saveChunk]（[ClipboardStore] 的唯一入库入口，一块一个事务）：
+ *  - 入库走 [ClipboardStore.saveChunk]（成批入口，一块一个事务，与采集侧 [ClipboardStore.save] 并列）：
  *    加密 / 自动分类 / 判重 / 置顶 / 单条闸一条不落，只是把**提交**从每行一次合成每
  *    [IMPORT_CHUNK_ROWS] 行一次（BUG.md L-1536）；
  *  - 去重与备份导入同源（[ClipboardDb.stableHash] + [ClipboardDb.allHashes]）：命中即跳过，
@@ -149,7 +149,7 @@ internal object ClipboardFileImporter {
                 limitBytes = limitBytes,
                 knownHashes = known,
                 writeChunk = { texts ->
-                    // 一块一个事务（BUG.md L-1536）：入库仍走 ClipboardStore 这个唯一入口，
+                    // 一块一个事务（BUG.md L-1536）：入库仍走 ClipboardStore 的成批入口，
                     // 加密 / 分类 / 判重 / 置顶 / 坏行自愈 / 单条闸一条不落，只是把提交合并了
                     val ok = ClipboardStore.saveChunk(
                         context = context,
@@ -252,8 +252,7 @@ internal object ClipboardFileImporter {
             val results = try {
                 writeChunk(rows)
             } catch (t: Throwable) {
-                // 写库自己抛了：整批按失败计（与逐条版「onAccepted 抛异常」同口径），再把异常交给
-                // 外层的中止判定 —— 记账不能因为异常而少一行
+                // 写库自己抛了：整批按失败计，再把异常交给外层的中止判定 —— 记账不能因为异常而少一行
                 failed += rows.size
                 rows.forEach { knownHashes.remove(ClipboardDb.stableHash(it)) }
                 throw t
@@ -269,7 +268,7 @@ internal object ClipboardFileImporter {
         }
 
         // 半途异常（断流 / 解码抛 / 写库抛）也要留下已累计的统计（BUG.md L-1325）：库里已经
-        // 逐条提交了 added 条，回执若只报一句「导入失败」，用户会以为一条都没进、白导一轮
+        // 提交了 added 条，回执若只报一句「导入失败」，用户会以为一条都没进、白导一轮
         try {
             while (true) {
                 // 字节闸按底层已读字节计（含解码器预读）：只保证「文件级拦截」，不保证恰好卡在第 N 行
