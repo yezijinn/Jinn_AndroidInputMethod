@@ -54,7 +54,7 @@ import androidx.activity.result.contract.ActivityResultContracts
  *
  * 麦克风授权：永久拒绝后系统不再弹窗，按钮改为「前往系统设置」并跳应用详情页。
  * 本页有凭据明文输入 ⇒ 全程 `FLAG_SECURE`（防截屏 / 录屏 / 最近任务预览）。
- * 文案全部在本类的 `TEXT_*` 常量里（`values/strings.xml` 默认禁改）。
+ * 文案全部在本类的 `TEXT_*` 常量里（`values/strings.xml` 不承载界面文案）。
  */
 class VoiceSettingsActivity : ComponentActivity() {
 
@@ -281,7 +281,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         findViewById<TextView>(R.id.label_voice_backend).text = TEXT_BACKEND_LABEL
         findViewById<TextView>(R.id.label_voice_providers).text = TEXT_SECTION_PROVIDERS
         findViewById<TextView>(R.id.text_voice_providers_desc).text = TEXT_PROVIDERS_DESC
-        // 总开关卡片的标题是用户点名的句子（逐字，含 ASCII 双引号与逗号位置）
+        // 总开关卡片的标题逐字固定（含 ASCII 双引号与逗号位置）
         findViewById<TextView>(R.id.text_voice_master_title).text = TEXT_VOICE_MASTER_TITLE
         findViewById<TextView>(R.id.label_voice_test).text = TEXT_SECTION_TEST
 
@@ -426,10 +426,10 @@ class VoiceSettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 凭据输入框的标签用 hint 下发（values/strings.xml 默认禁改）
+        // 凭据输入框的标签用 hint 下发（values/strings.xml 不承载界面文案）
         textXfDesc.text = if (prefs.hasUnreadableXfCredential) {
             // 磁盘上明明有密文、本机却解不开（软件密钥丢失 / 密文损坏）：不说清的话
-            // 用户只看到三个空框，会以为凭据被偷了或从没存过（用户第 4 条的同一件事）
+            // 用户只看到三个空框，会以为凭据被偷了或从没存过
             TEXT_XF_DESC + TEXT_XF_UNREADABLE
         } else {
             TEXT_XF_DESC
@@ -664,12 +664,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         checkComposing.isChecked = prefs.useComposing
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
-        // 后端选择：取值已由 Prefs 归一到六个合法值，indexOf 不会退到 -1
+        // 后端选择：取值已由 Prefs 归一到八个合法值，indexOf 不会退到 -1
         spinnerVoiceBackend.setSelection(
             BACKEND_VALUES.indexOf(prefs.voiceBackend).coerceAtLeast(0),
         )
         // 三件凭据回填（走 readCredential：解不开等价「未配置」，不会把密文当明文显示）。
-        // 已配置的只露前 3 位 + 掩码：用户看到「已经填过」，而不是以为忘了填（用户第 4 条要求）
+        // 已配置的只露前 3 位 + 掩码：用户看到「已经填过」，而不是以为忘了填
         setCredentialText(editXfAppId, prefs.xfAppId)
         setCredentialText(editXfApiKey, prefs.xfApiKey)
         setCredentialText(editXfApiSecret, prefs.xfApiSecret)
@@ -754,10 +754,10 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 而这里要的只是「看得见 / 看不见」。
      *
      * 掩码形态（`b86••••••••`）**永远不加密码转换**：它本来就只露前 3 位，
-     * 再盖一层密码点就变成一整排点，用户看不出「已经填过」（用户第 4 条要求）。
+     * 再盖一层密码点就变成一整排点，用户看不出「已经填过」。
      *
      * **正在编辑的那个框同样不加**：用户点进去就是要核对 / 改字符，盖成点等于「聚焦揭示」没做
-     * （2026-11-01 Stage 3 真机复核发现；用户第 4 条 + 任务书 C 段「聚焦显示真值供编辑」）。
+     * （2026-11-01 真机复核发现；需求：聚焦时显示真值供编辑）。
      */
     private fun applyCredentialVisibility(show: Boolean) {
         for (field in listOf(
@@ -1194,7 +1194,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnVoiceTest.isEnabled = false
         textVoiceTestResult.text = TEXT_TEST_RUNNING
         Diagnostics.i(TAG, "startVoiceTest: 开始 backend=${prefs.voiceBackend}")
-        // 上一轮万一还在跑（极快连点）：先收掉，避免两路采集抢同一个麦克风
+        // 上一次测试万一还在跑（极快连点）：先收掉，避免两路采集抢同一个麦克风
         voiceSelfTest?.cancel()
         val test = VoiceSelfTest(prefs) { result -> onVoiceTestFinished(result) }
         voiceSelfTest = test
@@ -1979,11 +1979,11 @@ class VoiceSettingsActivity : ComponentActivity() {
         const val TEXT_SECTION_PROVIDERS = "在线语音服务（API 文档）"
 
         /**
-         * 总开关卡片的标题（用户点名的那一句）：
-         * 中文双引号包住「语音输入转文字」，逗号在引号外、句子末尾无句号。
+         * 总开关卡片的标题（逐字固定，不随文案整理改动）：
+         * ASCII 双引号包住「语音输入转文字」，逗号紧随引号之后、句子末尾无句号。
          *
-         * 逐字核对：引号是 ASCII 双引号、逗号是全角，**不要**顺手改成中文引号或补句号
-         * （文案由用户指定，且 `VoiceSettingsPageTest` 逐字对拍声明那一行）。
+         * 逐字核对：引号与逗号都是 ASCII（`,` 不是 `，`），**不要**顺手改成中文标点或补句号
+         * （`VoiceSettingsPageTest` 逐字对拍声明那一行）。
          */
         const val TEXT_VOICE_MASTER_TITLE = "启用\"语音输入转文字\",并连接对应服务器"
 

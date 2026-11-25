@@ -918,7 +918,7 @@ internal object ConfigBackupManager {
         }
         try {
             // 覆盖还原会替换全部设置：旧凭据值在导入后不在任何目标集合里，历史里它的明文就再也没
-            // 有清理机会（面板可见、随备份导出）⇒ 清理目标取「导入前后的并集」（AI2 A-333）
+            // 有清理机会（面板可见、随备份导出）⇒ 清理目标取「导入前后的并集」（A-333）
             val before: List<String> = if (mode == ImportMode.RESTORE) {
                 runCatching { CredentialTrace.configuredValues(Prefs(context)) }
                     .getOrDefault(emptyList<String>())
@@ -926,7 +926,7 @@ internal object ConfigBackupManager {
                 emptyList()
             }
             val outcome = importLocked(context, zip, mode, includeClipboard, includeDicts, reason)
-            // 凭据经导入落盘后要补一次「凭据不留痕」（AI2 A-333）：两个设置页只在进页 / 保存时清，
+            // 凭据经导入落盘后要补一次「凭据不留痕」（A-333）：两个设置页只在进页 / 保存时清，
             // 导入不经过它们 ⇒ 历史里同值的明文条目会一直留到用户下次进凭据页。
             // 触发面是「任何明文可能进库」而非只看 prefs：包内**剪贴板段**同样会把与本机凭据同值的
             // 明文带进历史，而「仅并入数据」模式下 prefsApplied 恒为 0 —— 只看它就会漏掉最该清的
@@ -945,7 +945,7 @@ internal object ConfigBackupManager {
     }
 
     /**
-     * 导入落盘后补一次「凭据不留痕」（AI2 A-333）。
+     * 导入落盘后补一次「凭据不留痕」（A-333）。
      *
      * 用户可能早前从云控制台复制过同一个 Key（历史里已有明文条目），随后又通过备份包把它导入
      * 本机 —— 这条落盘路径不经过翻译 / OpenAI 两个设置页，那两处的清理不会被触发，条目会一直
