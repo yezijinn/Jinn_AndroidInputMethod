@@ -3,7 +3,7 @@ package com.jinn.inputmethod
 import android.widget.EditText
 
 /**
- * 「只回写用户真的改过的字段」（2026-10-01 修复 L-247）。
+ * 「只回写用户真的改过的字段」（2026-10-01 建 L-247；2026-10-06 补双基线 L-970，精确判据见下）。
  *
  * 为什么必须有这道闸：**凭据在解密失败时读出来是空串**（Keystore 瞬时不可用、换机、改锁屏，
  * 见 `Prefs.readCredential`），而写入空串的语义是**删除该键** —— 于是「打开设置页 → 直接返回」
@@ -17,7 +17,10 @@ import android.widget.EditText
  * 字段值又回到载入时的样子 ⇒ 判成「没改过」、不写，盘上的密文**留在原地**，
  * 而界面显示该家未配置（用户以为已删除）。
  *
- * 用法：载入时 [remember]、回写前 `changed(field)`、写成功后 [markWritten]、重新载入前 [reset]。
+ * 接线见 [OpenAiSettingsActivity] 与 [TranslationSettingsActivity]：回填真值，靠两条基线挡误写。
+ * 掩码形态另由 `CredentialMask.looksMasked` 在保存路径挡回写，本守卫只管基线、不识别掩码。
+ *
+ * 用法：载入时 [remember]、回写前 `changed(field)`、确认落盘后 [markWritten]、重新载入前 [reset]。
  */
 internal class CredentialSaveGuard {
 
@@ -40,7 +43,10 @@ internal class CredentialSaveGuard {
     /** 该字段相对**载入时**是否变过（只问「用户动过没有」，与回写决策无关）。 */
     fun edited(key: Any, current: String?): Boolean = loaded[key] != current
 
-    /** 落盘成功后把写入基线推到当前值 —— 不推就会漏掉「中间态落盘、随后清空」这一类改动 */
+    /**
+     * 确认落盘后把写入基线推到当前值 —— 不推就会漏掉「中间态落盘、随后清空」这一类改动。
+     * 调用方按「全部字段都落盘」整批推：只要有一个字段未落盘就一个都不推，留待下次自动保存重写。
+     */
     fun markWritten(key: Any, current: String?) {
         written[key] = current
     }

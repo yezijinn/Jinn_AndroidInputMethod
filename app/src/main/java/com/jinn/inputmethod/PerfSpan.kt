@@ -9,6 +9,9 @@ package com.jinn.inputmethod
  * 「首次弹出有没有白付两遍 configure」「configure 占整段多少」都能用
  * `adb logcat -s JinnPerf` 复现。
  *
+ * 计时统一取 `System.nanoTime()`：单调时钟，不受墙上时钟校准 / 跳变影响。
+ * 只做差、不读绝对时刻，故分段耗时不会因对时而变负。
+ *
  * **零成本约定**（本项目的硬约束：日志不影响业务）：
  *  - 开关是 [Diagnostics.KEY_TRACE]（= `BuildConfig.DEBUG`）。release 包里 [start] 恒返回 null，
  *    调用点的 `?.mark` / `?.dump` 全部退化成一次空判断，字符串拼接与 logd 调用被编译器消除；
