@@ -22,7 +22,7 @@ import java.util.zip.ZipOutputStream
  * 因此采用与配置包完全一致的外壳 —— 代价是**必须用本 App 输入密码导入**，通用解压软件打不开。
  *
  * ## 中间件口径
- * 打包过程中会有一份明文 zip 落在缓存目录（`cache/userdict/`）：写完密文**立即删除**；
+ * 打包过程中会有一份明文 zip 落在缓存目录（`cache/JinnIme/userdict/`）：写完密文**立即删除**；
  * 进程被杀留下的残件由 [cleanup] 按时间窗回收（与 `ConfigBackupManager.cleanupStaleCache` 同款）。
  */
 internal object UserDictExport {
@@ -55,7 +55,7 @@ internal object UserDictExport {
     /**
      * 在途中间件名册（N9）：[cleanup] 不得删正在用的临时件。
      *
-     * 现在 cleanup 只在页面 `onCreate` 跑一次，看似删不到在途件 —— 但配置包侧（L-1086）已经踩过
+     * 现在 cleanup 只在页面创建时（`onCreate`）跑，看似删不到在途件 —— 但配置包侧（L-1086）已经踩过
      * 同型：谁把 cleanup 挪到 `onResume` / 后台定时，就会删掉用户正输着密码的那份暂存件。
      * 与 `ConfigBackupManager.tempInFlight` 同一套写法，删之前先看名册。
      */
@@ -182,7 +182,7 @@ internal object UserDictExport {
             if (f.delete() || !f.exists()) {
                 Diagnostics.i(TAG, "清理残留中间文件: ${f.name}")
             } else {
-                // 删的是**明文**词表中转件，失败必须留痕：静默的话它一直躺着且没人知道
+                // 删的包括**明文**词表中转件，失败必须留痕：静默的话它一直躺着且没人知道
                 Diagnostics.w(TAG, "残留中间文件删除失败: ${f.name} 目录可写=${dir.canWrite()}")
             }
         }

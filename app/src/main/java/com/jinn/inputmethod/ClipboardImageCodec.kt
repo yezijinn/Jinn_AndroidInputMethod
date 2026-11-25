@@ -92,6 +92,9 @@ internal object ClipboardImageCodec {
     /**
      * 按文件头嗅探 MIME；**认不出返回 null**（BUG.md L-1302 / L-1303，12 字节足够）。
      *
+     * 认得出的格式由 [GalleryInsert.sniffImageMime] 定：JPEG / PNG / GIF / WebP / HEIF / AVIF。
+     * 空字节、以及只命中兜底 `image/png` 却无完整 PNG 魔数的，都返回 null（判据见下文）。
+     *
      * 与 [GalleryInsert.sniffImageMime] 的差别只有兜底这一处：那个认不出时回落 `image/png`
      * （选图入口必须给出**具体**类型，`ClipDescription` 不接受通配），而凡是「要不要收下 /
      * 按什么类型交付这份字节」的判据都不能用兜底 —— 否则任意二进制（zip / pdf）都会被当成
@@ -140,6 +143,11 @@ internal object ClipboardImageCodec {
 
     /**
      * 网格渲染解码：把（已解密的）缩略图字节按目标像素采样成位图。
+     *
+     * `inSampleSize` 由 [sampleSizeFor] 取 2 的幂，保证解码长边落在 `targetPx` 到 `2×targetPx` 之间。
+     * 这里不设 `inPreferredConfig`，沿用系统默认 ARGB_8888（带 alpha、比采集侧的 `RGB_565` 更稳）。
+     * 尺寸读不出时 [rawBounds] 返回 null，直接给 null；`BitmapFactory.decodeByteArray` 解不出
+     * 像素（损坏 / 不支持的格式）也返回 null —— 交给调用方按解码失败显示灰块。
      *
      * [targetPx] 是单元格长边（像素），解码结果供 `centerCrop` 缩放 —— 这里不做二次缩放，
      * 交给 ImageView 的 scaleType（与图库面板同款，省一次全尺寸位图分配）。

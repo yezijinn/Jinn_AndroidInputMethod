@@ -16,7 +16,7 @@ import java.util.Locale
  *  - 上屏内容：[expand] 按**点击那一刻**展开（如 `2026年9月24日`）
  *
  * 纯函数、零资源：格式与展开都可 JVM 单测；静态符号的取值原样返回，
- * 因此 [KeyboardLayouts] 其余分组的取值不需要任何适配。
+ * 因此 [SYMBOL_GROUPS] 中其余分组的取值不需要任何适配。
  */
 object DynamicSymbols {
 
