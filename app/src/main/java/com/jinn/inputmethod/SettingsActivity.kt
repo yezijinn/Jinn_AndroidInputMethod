@@ -30,13 +30,14 @@ import java.io.File
  * 设置页：各功能入口 + 启用 / 切换输入法 + 配置备份与诊断导出，同时作为应用入口从桌面启动。
  *
  * 语音（总开关 / 授权麦克风 / 服务端地址与识别选项）2026-11-01 起收在 [VoiceSettingsActivity]：
- * 本页只留「语音转为文字」入口按钮（与「绑定悬浮键盘」同行，状态小字已删），\n * 别再把那几块卡片搬回来。
+ * 本页只留「语音转为文字」入口按钮（与「绑定悬浮键盘」同行，状态小字已删），
+ * 别再把那几块卡片搬回来。
  */
 class SettingsActivity : ComponentActivity() {
 
     /**
      * 主题应用点：必须在这里（早于 `onCreate` 与任何资源解析）。
-     * 若放到 `onCreate` 里再 `setTheme`，会先按系统配置解析一帧再换色，那就是"打开页面闪一下"的来源。
+     * 若放到 `onCreate` 里再 `setTheme`，会先按系统配置解析一帧再换色，那就是「打开页面闪一下」的来源。
      * 跟随系统时 [ThemeManager.themedContext] 原样返回 base，行为与改造前一致。
      */
     override fun attachBaseContext(newBase: android.content.Context) {
@@ -90,8 +91,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var btnFeedback: Button
     /** 更新检查状态：只区分「空闲 / 进行中」，结果由对话框呈现（见 [UpdateState]） */
     private var updateState: UpdateState = UpdateState.Idle
-
-    // Root 增强模式（剪贴板数据目录安全审计，与已移除的保活无关）
 
     // 诊断
     private lateinit var btnExportDiag: Button
@@ -276,14 +275,14 @@ class SettingsActivity : ComponentActivity() {
         // 需求：2 级词库没就位时，这个入口要比旁边那个更显眼 —— 词库直接决定能打出多少词，
         // 而原先它只是一行同款普通按钮，下没下载过看起来一模一样
         refreshDictEntryEmphasis()
-        // 按钮圆角间隙（键盘外观）：独立页面。入口文案随需求改为「键盘外观自选」（在代码里下发，
-        // strings.xml 默认不改动 —— 布局仍引用原 string，运行时被这里的文本覆盖）
+        // 按钮圆角间隙（键盘外观）：独立页面。入口文案为「键盘外观自选」—— 布局仍引用原
+        // string，运行时由这里的文本覆盖
         findViewById<Button>(R.id.btn_key_appearance).apply {
             text = TEXT_KEY_APPEARANCE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, KeyAppearanceActivity::class.java)) }
         }
         // 模糊音容错：独立全屏页（页面内每组一个勾选框，勾选即落盘并即时生效）。
-        // 入口文案固定，不显示「（N 组）」——用户要的是一句话说明入口，当前勾选进页面看
+        // 入口文案固定，不显示「（N 组）」—— 入口只给一句话说明，勾选状态进页面看
         btnFuzzyPinyin = findViewById(R.id.btn_fuzzy_pinyin)
         btnFuzzyPinyin.text = TEXT_FUZZY_ENTRY
         btnFuzzyPinyin.setOnClickListener { startActivity(Intent(this, FuzzyPinyinActivity::class.java)) }
@@ -335,7 +334,7 @@ class SettingsActivity : ComponentActivity() {
         // 语音转为文字：四块语音配置（总开关 / 授权麦克风 / 服务端 / 识别选项）已迁到独立页，
         // 本页只留一个入口按钮（与「绑定悬浮键盘」同行，见 bindVoiceEntry）
         bindVoiceEntry()
-        // 底部使用说明：六行纯文本，文案在代码里下发（values/strings.xml 默认禁改）
+        // 底部使用说明：文案见 [TEXT_USAGE]（values/strings.xml 不承载界面文案）
         textUsage = findViewById(R.id.text_usage)
         textUsage.text = TEXT_USAGE
 
@@ -604,13 +603,12 @@ class SettingsActivity : ComponentActivity() {
         spinnerShuangpin.setSelection(
             ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
         )
-        // 候选词行数：档位 1/2 对应下拉下标 0/1（Prefs 已归一，下标必然合法）
 
     }
 
     /**
      * 「语音转为文字」入口（2026-11-01）：按钮打开 [VoiceSettingsActivity]，与「绑定悬浮键盘」
-     * 并排在同一张卡里（用户第 2 条：两个按钮放同一行、不要小字描述）。
+     * 并排在同一张卡里：两个按钮同一行，不配小字描述。
      *
      * 本页不再有语音开关本身，也不再显示「已开启 · ws://…」那一行 —— 状态在子页里看，
      * 免得同一件事在两个页面上各显示一次、各自不同步。
@@ -657,7 +655,7 @@ class SettingsActivity : ComponentActivity() {
         get() = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
 
     /**
-     * 请求看门狗：网络侧超时 10s，留 5s 余量。
+     * 请求看门狗：两源串行的总预算 25s（单源 10s 超时）+ 5s 余量。
      *
      * 不能像早先那样 3s 就无条件熄灯复位：那会让按钮在请求仍在途时重新可用，
      * `updateState == Checking` 的防重入判据随之失效，用户可并发发起第二次检查并重复弹窗。
@@ -744,10 +742,10 @@ class SettingsActivity : ComponentActivity() {
         if (checking) btnCheckUpdate.postDelayed(updateWatchdogRunnable, UPDATE_WATCHDOG_MS)
     }
 
-    /** 手动检查：结果由三段式对话框呈现（措辞属 unified-update-check 统一，不得改写） */
+    /** 手动检查：结果由三段式对话框呈现（用统一更新检查的固定措辞，不得改写） */
     private fun onUpdateChecked(result: UpdateChecker.Result) {
         btnCheckUpdate.removeCallbacks(updateWatchdogRunnable)
-        // 检查是后台线程 + 10s 网络超时：结果回来时页面可能已关闭或已重建。
+        // 检查走后台线程 + 最长 25s（单源 10s 超时、两源串行）：结果回来时页面可能已关闭或已重建。
         // 拿已销毁的 Activity 去 show() 会抛 BadTokenException（主线程崩溃）。
         if (isFinishing || isDestroyed) {
             Diagnostics.i(TAG, "检查更新结果已到达，但页面已销毁，跳过弹窗")
@@ -810,7 +808,7 @@ class SettingsActivity : ComponentActivity() {
         prefs.updateLastCheckAt = System.currentTimeMillis()
     }
 
-    /** 三类结果统一三套文案，措辞由 unified-update-check 统一，不得改写。 */
+    /** 三类结果统一三套文案，用统一更新检查的固定措辞，不得改写。 */
     private fun showUpdateDialog(result: UpdateChecker.Result) {
         // 展示与比较必须同量纲（BUG.md L-131）：比较走 [UpdateChecker.comparableVersion]，
         // 文案若仍传 `normalizeTag` 的原始值，标签规范回退到 6 位时会出现
@@ -849,7 +847,7 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 自动检查发现新版本时的确认框：一个问句 + 「不要」/「去更新」。
      *
-     * 与手动检查的三段式对话框分开：后者措辞属 unified-update-check 统一（不得改写），
+     * 与手动检查的三段式对话框分开：后者用统一更新检查的固定措辞（不得改写），
      * 本对话框只服务「打开设置页自动检查」这条路径。
      */
     private fun showAskUpdateDialog(result: UpdateChecker.Result.Available) {
@@ -1036,7 +1034,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun doExportConfig(includeClipboard: Boolean, includeDicts: Boolean, password: CharArray) {
-        // 每轮无条件重置：上一轮的「少了什么」绝不能串到这一次（L-1117）
+        // 每次导出都无条件重置：上一次的「少了什么」绝不能串到这一次（L-1117）
         pendingExportExtra = ""
         btnConfigExport.isEnabled = false
         textConfigHint.text = TEXT_EXPORTING
@@ -1109,13 +1107,6 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 以「截断写」打开 SAF 输出流。
-     *
-     * 必须带 `"wt"`：默认的 `"w"` 在部分 provider（云盘/文档型）上不保证截断，覆盖一个更大的
-     * 旧文件时会在尾部留下残骸 —— 用户看到的是「密码错误或文件已损坏」这种完全误导的提示。
-     * 少数 provider 不认 `"wt"`，退回默认 mode（行为与从前一致，不会更差）。
-     */
-    /**
      * 删除一个「已创建但没写进任何内容」的 SAF 目标（[ActivityResultContracts.CreateDocument] 会先建空文件）。
      *
      * 导出在中途失败时，目标位置那份 0 字节文件外观与有效包一模一样，用户拿去用只会得到
@@ -1133,6 +1124,13 @@ class SettingsActivity : ComponentActivity() {
             .onFailure { Diagnostics.w(TAG, "删除空壳目标失败: ${it.javaClass.simpleName}") }
     }
 
+    /**
+     * 以「截断写」打开 SAF 输出流。
+     *
+     * 必须带 `"wt"`：默认的 `"w"` 在部分 provider（云盘/文档型）上不保证截断，覆盖一个更大的
+     * 旧文件时会在尾部留下残骸 —— 用户看到的是「密码错误或文件已损坏」这种完全误导的提示。
+     * 少数 provider 不认 `"wt"`，退回默认 mode（行为与从前一致，不会更差）。
+     */
     private fun openTruncatingOutput(uri: Uri): java.io.OutputStream? =
         runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
             ?: runCatching { contentResolver.openOutputStream(uri) }.getOrNull()
@@ -1431,7 +1429,7 @@ class SettingsActivity : ComponentActivity() {
         includeClipboard: Boolean,
         includeDicts: Boolean,
     ) {
-        // 页面重建后按钮会重新可点，而上一轮的导入线程可能还在跑：进程级标记拦下这种重入。
+        // 页面重建后按钮会重新可点，而上一次导入的线程可能还在跑：进程级标记拦下这种重入。
         // 注意：这里必须自己清明文临时包：确认框的 positive 点击后已自动 dismiss，
         // setOnCancelListener（负责删包与注销）**不会**触发，而 cleanupStaleCache 又按
         // in-flight 跳过该名字 ⇒ 否则这份已解密的明文备份会跨会话留在缓存目录里。
@@ -1755,7 +1753,7 @@ class SettingsActivity : ComponentActivity() {
          */
         const val TEXT_VOICE_ENTRY = "语音转为文字"
 
-    /** 反馈入口按钮：全宽一行，点开系统浏览器直达问卷（作者域文案，逐字按要求） */
+    /** 反馈入口按钮：全宽一行，点开系统浏览器直达问卷（作者域文案，逐字固定） */
     const val TEXT_FEEDBACK = "填写反馈意见 可直发给作者"
 
     /** 反馈问卷地址（腾讯问卷） */
@@ -1765,7 +1763,7 @@ class SettingsActivity : ComponentActivity() {
          * 最底部使用说明（六行，`\n` 分隔）。
          *
          * 2026-11-01：原第 5 行「启用语音输入之后,长按空格键即可进入语音功能页面」已过期
-         * （语音改成松手即转文字），按用户授权改成现在的说法。文案仍走代码常量，
+         * （语音改成松手即转文字），改写成现在的说法。文案仍走代码常量，
          * `values/strings.xml` 里那条 `settings_usage` 保持原样不动。
          */
         const val TEXT_USAGE = "拼音键盘：26 键全拼 / 双拼（8 套方案），空格选词。\n" +

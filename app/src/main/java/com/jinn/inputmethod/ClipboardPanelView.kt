@@ -18,12 +18,11 @@ import java.util.Locale
  * 用当前连接 commitText，成功后才关闭面板。
  *
  * 功能：
- *  - 分类栏：全部 / 网址 / 数字 / 收藏（收藏为独立标签，可与分类并存）
+ *  - 分类栏：全部 / 网址 / 数字 / 图片 / 收藏（收藏为独立标签，可与分类并存）
  *  - 隐私标记随 v5 迁移移除（2026-09-16），条目不再走掩码逻辑
- *  - 动态 UI 序号（最新=最大，删除/去重后重排，非数据库 ID）
+ *  - 动态 UI 序号（最新=最大，删除后重排，非数据库 ID；去重由入库时的哈希唯一索引承担）
  *  - 点击记录粘贴 + 成功关闭面板（失败不关闭，快速点击去重）
- *  - 清理重复（严格字符串比较，只保留最新）
- *  - 长按：收藏 / 删除
+ *  - 长按：文本条目收藏 / 删除；图片条目另有复制 / 保存 / 转图库（见 [ClipboardImageAction]）
  *  - 搜索按钮：回调 [Listener.onSearch]，由 PinyinKeyboardView 关闭本面板并
  *    显示顶部搜索面板（搜索面板独立于剪贴板面板，见 SearchPanelView）
  *  - 空分类显示空态，绝不触发返回
@@ -134,8 +133,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private var imageFavOnly = false
 
     /**
-     * 条带（收藏 / 全部两个分组）当前是否有图片（只由网格的 onDataChanged 更新，非条带分组在
-     * selectCategory 里复位）—— 文本列表为空时据此区分「库里什么都没有」与「有图片但一段文本都没有」。
+     * 条带（收藏 / 全部两个分组）当前是否有图片：与列表快照同一次取数里查好（见 [refresh]）——
+     * 文本列表为空时据此区分「库里什么都没有」与「有图片但一段文本都没有」。
      */
     private var stripHasImages = false
 
@@ -393,7 +392,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             adapter = this@ClipboardPanelView.adapter
         }
         // 身份取值：优先用被点中那一行渲染时写入的稳定 id，取不到才退回当前列表下标。
-        // 只按下标取，会在「列表已被刷新整体替换、这一帧还没重绘」的窗口里粘错条目 ，
+        // 只按下标取，会在「列表已被刷新整体替换、这一帧还没重绘」的窗口里粘错条目，
         // 用户看到的仍是旧行的文字，取到的却是新列表同下标的条目（类头的身份不变量即此）。
         fun itemAt(pos: Int, view: View?): ClipboardDb.Item? {
             val renderedId = (view?.tag as? Holder)?.itemId ?: -1L
@@ -497,7 +496,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 // 条带服务于「收藏」与「全部」两个分组（图片分组走全屏网格，不受这里影响）
                 if (currentCategory == CATEGORY_FAVORITE || currentCategory == null) {
                     // 「是否有图」由列表那次快照一并取（见 refresh）：放在这里异步更新会让
-                    // 列表空态读到上一轮的旧值（删空图片后仍说「暂无文本记录」）
+                    // 列表空态读到上一次加载的旧值（删空图片后仍说「暂无文本记录」）
                     visibility = if (empty && exhausted) View.GONE else View.VISIBLE
                     if (!empty) applyGridHeight(imageMode = false, imageCount = count)
                 }
@@ -611,7 +610,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 每次重新打开都清空「已展开」集合，避免上次的状态跨会话残留
         currentTraceId = Diagnostics.traceId("CLIP")
         Diagnostics.i(TAG, "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}")
-        // 规范：每次打开重置分类为「全部」，绝不残留上次状态
+        // 每次打开都重置分类为「全部」，不残留上次状态
         selectCategory(null)
         // 首屏取数期间先摆「正在载入」（BUG.md L-1320）：面板可能等不到数据就被揭示
         // （键盘侧的等待有上限），那时没有这句用户看到的是一整块空白
@@ -692,7 +691,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     // ── 分页加载 ─────────────────────────────────────────
 
-    /** 重新加载当前分类的列表（第一页）。查询与加解密在后台线程，主线程只提交快照。 */
     /**
      * 「全部」分类是否把图片行纳进文本列表（渲染为序号占位）。
      *
@@ -707,6 +705,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         return if (category == null && imageRowsInAll()) base.copy(contentType = null) else base
     }
 
+    /** 重新加载当前分类的列表（第一页）。查询与加解密在后台线程，主线程只提交快照。 */
     private fun refresh(resetScroll: Boolean = false, refreshFavStrip: Boolean = true) {
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
@@ -721,7 +720,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             imageGrid.show(tid, favoritesOnly = category == CATEGORY_FAVORITE)
         }
         val reqToken = ++refreshToken
-        // 复位上一轮的空态判据：这两个字段只在下面的 post 分支落地，若不在起点清掉，
+        // 复位上一次加载的空态判据：这两个字段只在下面的 post 分支落地，若不在起点清掉，
         // 首帧「正在载入」就会带着上一次会话的旧值（曾导致：不可读 → 收起键盘 → 再打开 →
         // 空态仍按旧值可点，一次误触把删除确认条摆到用户面前）。
         unreadableHistory = false
@@ -733,9 +732,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
             // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
             // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
-            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）
-            // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
-            // 放在网格的异步回调里更新，列表会先读到上一轮的旧值）。
+            // 放在网格的异步回调里更新，列表会先读到上一次加载的旧值）。
             // ⚠ 这两次 `db.count` 必须自己兜住异常：它们在下面 `loaded` 的 runCatching **之外**，
             // 抛出去会落到 `BackgroundIo.wrapped`（只记日志），`post{}` 不执行 ⇒ `loadingPage`
             // 永远留在 true，此后翻页与续扫全被第一道闸门静默拦死，且面板停在上一分类的快照。
@@ -1022,7 +1019,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 「可点」必须与文案同源更新（BUG.md L-85）：setOnClickListener 会把视图**永久**标成可点击，
         // 于是「暂无历史」这种空态下读屏仍播报「双击激活」而双击毫无反应。
         // 「继续查找」与「重试读取」可点；载入中一律不可点 —— 此时文案还没落定，
-        // 用上一轮的旧值接点击就是「按看不见的按钮做动作」。
+        // 用上一次加载的旧值接点击就是「按看不见的按钮做动作」。
         textEmpty.isClickable = !loadingPage && (scanStoppedEarly || unreadableHistory)
         listView.visibility = if (empty) View.GONE else View.VISIBLE
         listView.requestLayout()
