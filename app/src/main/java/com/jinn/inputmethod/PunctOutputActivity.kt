@@ -13,7 +13,7 @@ import android.widget.TextView
  * 「底栏标点输出」页：从设置页「空格左右按钮」按钮进入。
  *
  * 底栏「逗号 / 句号」两枚固定键各自可自定义上屏字符，中文态与英文态分开，各限一个字符 ——
- * 多输入的字符由 [PunctOutput.sanitizeField] 裁到最后一个码点并回写输入框，保证「屏幕上看到的」
+ * 多输入的字符由 [PunctOutput.sanitizeFieldAt] 按光标处码点归一并回写输入框，保证「屏幕上看到的」
  * 就是「会打出来的」。取值即时落盘（[Prefs] 的四个标点键），键盘每次弹出重读即生效：
  * 本页不广播、不重启进程。
  */
@@ -128,7 +128,7 @@ class PunctOutputActivity : Activity() {
     private companion object {
         const val TAG = "PunctOutput"
 
-        /** 页面标题与说明（strings.xml 默认禁改，文案在代码里下发） */
+        /** 页面标题与说明（文案在代码里下发，不走 strings.xml） */
         const val TEXT_TITLE = "空格左右两边的按钮输出自定义"
         const val TEXT_HINT = "仅限一个字符"
 

@@ -5,7 +5,7 @@ import kotlin.math.roundToInt
 /**
  * 「半透明键盘」的定义域与换算（纯 JVM 逻辑，见 KeyTransparencyTest）。
  *
- * 一个旋钮（[Prefs.keyTransparencyPercent]）控制整块键盘四层面板的透明度：
+ * 一个旋钮（[Prefs.keyTransparencyPercent]）控制键盘与内嵌面板各层「面」的透明度，分两档：
  *  - 背板（键盘底色 `kb_bg`、面板底 `app_bg`）：[plateAlpha]，面上没有文字，可以做得最透；
  *  - 内容面（键面、按钮，以及候选栏底）：[surfaceAlpha]，必须比背板实，
  *    最透时仍保留 [MIN_SURFACE_ALPHA] 的不透明度，否则文字会糊在应用内容上。
@@ -23,19 +23,18 @@ import kotlin.math.roundToInt
  * （例外：符号层禁用态的大写键用整键 alpha 置灰，那是与透明度无关的既有视觉，
  * 见 `PinyinKeyboardView` 符号层分支）。
  *
- * 注：只做「透出」，不做背景模糊（跨窗口模糊要求 API 31+ 且系统开关允许，
- * 本机 Android 10 不支持）， 这是与「毛玻璃」在观感上的差别。
+ * 注：只做「透出」，不做背景模糊（跨窗口模糊要求 API 31+ 且依赖系统开关），
+ * 这是与「毛玻璃」在观感上的差别。
  */
 object KeyTransparency {
 
     /** 下界：0% = 完全不透明 */
     const val MIN_PERCENT = 0
 
-    /** 上界：100%，背板全透，键面/候选栏在最透时仍保留 [MIN_SURFACE_ALPHA]（可读性下限） */
     /**
      * 百分比上界：100（物理上限 —— 100% = 背板全透、键面按 [MIN_SURFACE_ALPHA] 保底）。
      *
-     * 外观页其余滑杆 2026-10-09 按用户要求把定义域扩了两倍，本项**不扩**：
+     * 外观页其余滑杆 2026-10-09 统一把定义域扩了两倍，本项**不扩**：
      * 100% 已到「全透」的物理边界，再往上没有可表达的状态（会变成静默钳位，滑杆白拖一截）。
      */
     const val MAX_PERCENT = 100
@@ -55,7 +54,7 @@ object KeyTransparency {
     /** 把任意输入钳到定义域内（脏配置/外部写入一律收敛到合法值） */
     fun clampPercent(percent: Int): Int = percent.coerceIn(MIN_PERCENT, MAX_PERCENT)
 
-    /** 百分比 → SeekBar 进度（标准与 [KeyAppearance] 的换算一致：进度 = 值 − 下界） */
+    /** 百分比 → SeekBar 进度（本项步进 1%，进度 = 值 − [MIN_PERCENT]，滑杆上界见 [PROGRESS_MAX]） */
     fun percentToProgress(percent: Int): Int = clampPercent(percent) - MIN_PERCENT
 
     /** SeekBar 进度 → 百分比 */

@@ -25,10 +25,10 @@ object CandidateText {
     const val MIN_SP = 14f
 
     /**
-     * 字号上界（sp）：42sp（2026-10-09 由 28sp 扩两倍）。
+     * 字号上界（sp）：42sp（2026-10-09 由 28sp 扩档，定义域跨度翻倍：14~28 → 14~42）。
      *
      * 候选栏高度由本值派生（行高 = 字号 × 1.4），42sp ⇒ 双行档约 118dp + 拼音条，
-     * 与三行字母键上限（120dp×3）叠加仍在常见可视高度内；宿主输入区会被挤窄，属用户自选档。
+     * 与三行字母键上限（90dp×3）叠加仍在常见可视高度内；宿主输入区会被挤窄，属用户自选档。
      */
     const val MAX_SP = 42f
 
@@ -110,7 +110,7 @@ object CandidateText {
         clampPinyinSp(MIN_PINYIN_SP + progress.coerceIn(0, PINYIN_PROGRESS_MAX) * STEP_PINYIN_SP)
 
     /**
-     * 拼音字号文案：**自动档显示派生值**（[autoValue] 的整数 + " sp"），否则显示用户的具体值。
+     * 拼音字号文案：**自动档显示派生值**（[autoValue] 的整数 + 「 sp」），否则显示用户的具体值。
      *
      * @param sp 用户参数（0 = 自动）
      * @param autoValue 自动档实际生效的拼音字号（通常传 [pinyinSpOf] 的结果）
