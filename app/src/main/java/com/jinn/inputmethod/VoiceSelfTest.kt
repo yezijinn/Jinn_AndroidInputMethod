@@ -40,7 +40,10 @@ class VoiceSelfTest(
     private var client: SpeechClient? = null
     private var recorder: MicRecorder? = null
 
-    /** 只允许 finish 一次（超时与迟到结果会撞车） */
+    /**
+     * 只允许 finish 一次（超时与迟到结果会撞车）。
+     * finish 里先置位再 cleanup：close() 会同步把状态回调成 IDLE，靠这道闸挡住迟到回调改写结论。
+     */
     private var finished = false
 
     /** 已进入「录音中」：防止 `ONLINE` 重复回调（重连成功）把采集起第二次 */
@@ -135,7 +138,7 @@ class VoiceSelfTest(
                 LinkState.CONNECTING -> Unit
                 // 开录之后同样要立刻出结论：批量后端的「上传失败」正是在这一步回来的
                 // （Deepgram 401 / 腾讯 AuthFailure 都走 OFFLINE + detail）。挂到超时就只剩「等待识别结果超时」，
-                // 把服务端真正的原因吞掉 —— 而这正是用户要的「是不是真的有效果」。
+                // 把服务端真正的原因吞掉 —— 而这正是本测试要回答的「是不是真的有效果」。
                 LinkState.OFFLINE, LinkState.IDLE -> finish(
                     Result("", VoiceTestVerdict.of(null, VoiceTestVerdict.linkLost(detail), prefs.voiceInputEnabled)),
                 )
@@ -222,7 +225,7 @@ class VoiceSelfTest(
     private companion object {
         const val TAG = "VoiceSelfTest"
 
-        /** 采集时长（用户要求的 3 秒） */
+        /** 采集时长：3 秒 */
         const val CAPTURE_MS = 3_000L
 
         /** 末帧之后等最终结果的超时 */
@@ -265,6 +268,7 @@ internal object VoiceTestVerdict {
      * 这句原话正是「code≠0」那条路唯一的载体 —— 讯飞把 `code` / `message`（appid 错、鉴权失败）
      * 通过状态回调交出来，服务端 `message` 比我们自己编的文案更能指路；丢掉它只报「超时」，
      * 用户会去查网络与麦克风，而真正的问题在凭据。
+     * 原话由客户端在状态回调出口刮过凭据（见 [SpeechErrorText]），此处直接采用，不做二次刮除。
      */
     fun linkLost(detail: String?): String =
         detail?.trim()?.takeIf { it.isNotEmpty() } ?: TEXT_LINK_LOST

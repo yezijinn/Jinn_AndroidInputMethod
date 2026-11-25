@@ -32,7 +32,7 @@ import java.util.Locale
  */
 internal object ClipboardImageExport {
 
-    /** 转移到图库目录的结果：三种都要能让用户看懂「为什么没成功」 */
+    /** 转移到图库目录的结果：四种情形，三种失败各给出可理解的归因 */
     sealed interface MoveResult {
         object Ok : MoveResult
 
@@ -275,9 +275,9 @@ internal object ClipboardImageExport {
             runCatching { file.setLastModified(System.currentTimeMillis()) }
             true
         }.getOrElse {
-            // 第三条失败分支同样收尾（AI2 A-185，L-1287 的残余）：setPrimaryClip 会抛
+            // 第三条失败分支同样收尾（L-1287 的残余，另见 L-1392）：setPrimaryClip 会抛
             // （Binder 事务超限 / 远端异常 / 剪贴板服务瞬断），不删就留一份明文图片在缓存里。
-            // 成功路径**不能**删：宿主读的是这个 file:// URI，删了图就裂了。
+            // 成功路径**不能**删：宿主读的是这个 content:// URI（FileProvider 所授读权限），删了图就裂了。
             file.delete()
             Diagnostics.w(TAG, "复制图片到剪贴板失败：写入剪贴板抛异常，已清理临时件: ${it.javaClass.simpleName}")
             false
