@@ -9,33 +9,35 @@ import javax.crypto.SecretKey
 /**
  * 用户词频学习：记下用户实际选过的候选，下次把它们排到前面。
  *
- * 规则（对齐 librime `UserDictionary`，见 `docs/librime-master/src/rime/dict/user_dictionary.cc`）：
+ * 规则（对齐 librime `UserDictionary` 的衰减口径）：
  *  - 只在明确选择时记一次：点候选栏、空格取首候选、点补全项；
  *    收起键盘的自动提交、语音结果、剪贴板粘贴都不算；
  *  - 权重按 `algo::formula_d` 累加：`dee = commits + dee_old * exp((tick_old - tick_now) / 200)`，
- *    tick 是天计数（`now / 86400000`），也就是旧值按天衰减、半衰期约 139 天，选中一次加 1；
+ *    tick 是天计数（`now / 86400000`），旧值按天衰减、半衰期约 139 天，选中一次加 1；
  *  - [rank] 是稳定排序，权重相同就保持词库原顺序，没学过的候选完全不受影响。
  *
  * 存储：`filesDir/user_freq.txt`（明文形态是 `词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
  * 窗口内会把「最后一次」排成尾沿任务补写（只做前沿丢弃的话，进程被 LMK 直杀时
- * 最近几次学习会丢，而 `flush` 只在服务收尾时才跑）；原子落盘（临时文件 + 改名）；
- * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，权重低于 [MIN_WEIGHT] 丢弃，文件稳定在几十 KB。
+ * 最近几次学习会丢，而 [flush] 只在收尾与备份操作时才跑）；原子落盘（临时文件 + 改名）；
+ * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，解析时按天衰减后低于 [MIN_WEIGHT] 的
+ * 条目被跳过，文件稳定在几十 KB。
  *
  * **落盘是整份加密的**（[LedgerCrypto] 的行级 AEAD，密钥与台账共用）：
  * `#jinn-freq1` + 一行 `1:base64(iv||密文)`，密文里才是上面那份明文。为什么这里能整份加密、
  * 台账不能：这里上限 3000 行、写盘本身就有 2 秒防抖，一次「解密 → 改 → 加密 → 原子替换」
- * 只有 0.2ms 量级；台账只增不删、可能几万行，整表重写会把一次按键放大成几 MB 的读写。
+ * 只有 0.2ms 量级（量级估计，非实测）；台账只增不删、可能几万行，整表重写会把一次按键放大成几 MB 的读写。
  * 旧版明文首行 `# jinn user_freq v1` 在首次读取时一次性迁移成密文。
  *
- * **包内条目仍是明文**：配置备份导出走 [readTextForBackup]，导入走 [writeFromBackup] ——
- * 备份包里放的是解密后的明文（解压即得明文），加密只发生在**本机落盘**这一层。
+ * **配置备份包内是明文**：导出走 [readTextForBackup]，导入走 [writeFromBackup] ——
+ * 包里的词频节是解密后的明文（外层 `.jinn` 壳仍需密码解密），本机加密只管落盘这一层；
+ * 系统备份与设备迁移按规则排除词频文件及孤儿件目录，诊断包只收日志目录。
  *
  * 密钥不可用时 **fail-closed**：不写明文、不把「解不开」当成「没有词频」；已学内容留在
  * 内存里等下次落盘（[dirty] 不清），进程退出时 [flush] 如实返回 false。
  *
  * **读失败 = 盘上内容未知**（[loadBlocked]）：这时内存里的表只是一份空壳，任何落盘都先补读一次
  * （[clearBlockedIfReadable]）—— 否则「开机预加载时设备还没解锁」这一次读失败，会在解锁后
- * 第一个词落盘时把用户几年的词频整份覆盖掉（L-1409，真机 27 条 → 1 条）。
+ * 第一个词落盘时把用户几年的词频整份覆盖掉（L-1409，复现：27 条 → 1 条）。
  */
 internal object UserFrequency {
 
@@ -66,7 +68,7 @@ internal object UserFrequency {
      * 读失败的现实成因是**设备还没解锁**（开机预加载早于用户解锁，`setUnlockedDeviceRequired`
      * 的密钥此时解不开）—— 这是瞬态的，几秒后同一个密钥就可用了。而此前的写法只打一条 W 就
      * `return`，内存表留在初始的空态；解锁后第一个词落盘，[render] 把「1 条」整份写回文件，
-     * 用户的历史词频**当场清零且不可恢复**（真机复现：27 条 → 1 条）。
+     * 用户的历史词频**当场清零且不可恢复**（复现：27 条 → 1 条）。
      *
      * 置位期间的规则：`remember` 照常更新内存（本次使用仍能排序），但任何落盘都先补读
      * （[clearBlockedIfReadable]）；补读仍失败就**不写**，让 [dirty] 留着等下一次机会。
@@ -99,8 +101,8 @@ internal object UserFrequency {
     private val saveLock = Any()
 
     /**
-     * 存储文件（加载线程在 [load] 里赋值，主线程在 [remember]/[flush] 里读）。
-     * 必须 @Volatile：否则主线程可能一直看到 null，首批学习不落盘、退出时 flush 也直接返回，
+     * 存储文件（加载线程在 [loadFromFile] 里赋值，主线程在 [remember]/[flush] 里读）。
+     * 必须 @Volatile：否则主线程可能一直看到 null，首批学习不落盘、退出时 [flush] 也直接返回，
      * 结果就是白记，还不报错。
      */
     @Volatile
@@ -287,15 +289,15 @@ internal object UserFrequency {
         file = f
     }
 
-    /** 测试用：dirty 状态（验证写失败后保留、写成功后清除） */
     /**
      * 内存态版本号：每次 [remember] 自增。落盘成功后只有「版本没变」时才清 [dirty] ——
      * 渲染与清标记之间若有并发学习写进内存，无条件清 dirty 会把它标成「已落盘」，
-     * 此后 `flush` 直接因 `!dirty` 返回，那次学习就静默丢了。
+     * 此后 [flush] 直接因 `!dirty` 返回，那次学习就静默丢了。
      */
     @Volatile
     private var version = 0L
 
+    /** 测试用：dirty 状态（验证写失败后保留、写成功后清除） */
     internal fun isDirtyForTest(): Boolean = dirty
 
     internal fun sizeForTest(): Int = entries.size
@@ -464,7 +466,7 @@ internal object UserFrequency {
     }
 
     /**
-     * 退出/切后台时调用（主线程），保证最后一次学习不丢。
+     * 收尾/备份操作前调用（主线程），保证最后一次学习不丢。
      *
      * @return 盘上内容是否已经是最新的：**没有待写内容**（未装载 / 已关闭 / 不脏）也算 true ——
      *   那几种情形下文件本来就是当前真值；只有「确实要写而写失败」才 false。
@@ -613,8 +615,8 @@ internal object UserFrequency {
      *  - 两边都先按 [parse] 衰减到 `nowDay` 再合并，与运行期加载一致（否则导入的是
      *    「旧机器上的绝对权重」，换机后衰减基准不同，会出现导入即失真）；
      *  - 同一词取「权重较大者、天较新者」而不是相加：两台设备都学过的词不该因导入翻倍；
-     *  - 结果按权重降序、截断 [MAX_ENTRIES]，并过滤低于 [MIN_WEIGHT] 的词
-     *    （否则导入的弱词会在下次加载时被静默丢掉，等于「导入了却没生效」）。
+     *  - 结果按权重降序、截断 [MAX_ENTRIES] 条；两端文本在 [parse] 时已按 [MIN_WEIGHT]
+     *    滤掉衰减后过弱的词，故合并结果不再另行过滤；
      *
      * @param localText 本机当前文件文本（「仅并入」模式传原文；「覆盖还原」模式传空串）
      */
@@ -659,7 +661,7 @@ internal object UserFrequency {
      *
      * @param enabled 与 `Prefs.userLearning` 一致；关着也照样填内存 —— `rank()` 自会挡掉，
      *   而用户随后打开开关时内存里已是导入后的表，不必等下次启动补载
-     * @return 是否写盘成功（密钥不可用 / IO 失败一律 false，原文件与内存态都保持不动）
+     * @return 是否写盘成功；失败时原文件不动、词频表不换（开关与文件引用已同步到入参）
      */
     internal fun writeFromBackup(target: File, mergedText: String, enabled: Boolean): Boolean {
         this.enabled = enabled

@@ -133,7 +133,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
                     jsonCode(error, "code")?.takeIf { it.isNotBlank() } ?: jsonCode(error, "type")
                 else -> error.toString()
             }
-            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02 修复：上一轮引入的回归）：
+            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02 修复：直接 return 曾挤掉状态码结论）：
             // `openAiErrorOf` 认不出时返回 SERVER，直接 return 会**挤掉** `httpErrorOf` 的结论 ——
             // `404 + {"error":{"message":…}}` 会从 PARAM 退回 SERVER、
             // `429 + {"error":{"type":"requests"}}`（OpenAI 429 的真实形态，`code` 为 null）会
@@ -168,7 +168,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
     }
 
     companion object {
-        /** 默认配置名称（仅用于显示；多配置档在下一轮） */
+        /** 配置名缺省值（`Prefs.openAiName` 的读取与保存共用） */
         const val DEFAULT_PROFILE_NAME = "OpenAI 兼容"
 
         /** 默认 Base URL：留空时请求发往这里（见 [Prefs.openAiBaseUrl] 与配置页提示，三处必须同一个来源） */
@@ -189,7 +189,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         const val DEFAULT_SYSTEM_PROMPT =
             "你是专业翻译引擎.只输出译文,不解释/不分析/不加额外内容.保持原文语气/格式/专有名词,保证译文完整,无语法错误."
 
-        /** user 提示词模板（逐字取自接入文档，`{目标语言}` 变成可替换变量） */
+        /** user 提示词模板（目标语言位置用 `{{target_language}}` 占位） */
         const val DEFAULT_USER_PROMPT = "请将以下文本翻译成{{target_language}}，只返回译文：\n{{text}}"
 
         /** 专业方向预设：界面里「提示词模板」下拉可直接套用，不含 {{text}} 的模板由调用方兜底追加 */
@@ -302,7 +302,7 @@ internal fun applyTemplateEnsuringText(
         const val VAR_SOURCE = "{{source_language}}"
         const val VAR_DATE = "{{date}}"
 
-        /** 源语言变量的取值：四家都由服务端自动识别，本地不做检测 */
+        /** 源语言变量的取值：各服务方都由服务端自动识别，本地不做检测 */
         const val SOURCE_AUTO_LABEL = "自动检测"
 
         private val JSON_MEDIA_TYPE = "application/json; charset=UTF-8".toMediaType()
@@ -568,6 +568,8 @@ internal fun applyTemplateEnsuringText(
         /**
          * 数值参数的**定义域**（2026-10-03 修复 L-500）。
          *
+         *  · `temperature` ∈ [0, 2]，`top_p` ∈ [0, 1]；`max_tokens` 只设下界 1、不设上界。
+         *
          * 越界值此前原样发出 ⇒ 服务端 400 ⇒ 归 `PARAM` ⇒ 提示让用户去核「语言方向 / 模型名 /
          * 路径 / 原文长度」，而真因就是这个数字。备份导入路径绕过设置页校验，
          * 组装期是**唯一**能兜住三条路径的地方。
@@ -611,16 +613,11 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-         * 合并用户自定义 JSON：**同名键覆盖**标准参数，新键追加。
-         *
-         * 解析失败返回 `false`（UI 据此提示格式问题），但**不阻止翻译** —— JSON 写错不该把功能打死。
-         */
-        /**
      * 自定义 JSON 是否可解析（2026-10-01 修复 L-257）。
      *
-     * UI 用它给用户**看得见**的提示：此前这个校验的返回值在 `buildBody` 里被丢弃，而
-     * `EXTRA_JSON_INVALID` 常量的注释写着「UI 用它提示用户」却全仓无人引用 —— 用户把 JSON 写错时
-     * 参数被静默丢弃、翻译照常「成功」。
+     * UI 用它给用户**看得见**的提示：此前这个校验的返回值在 `buildBody` 里被丢弃，
+     * 用户把 JSON 写错时参数被静默丢弃、翻译照常「成功」。设置页保存前据此标红
+     * （见 `OpenAiSettingsActivity`）。
      */
     internal fun isValidExtraJson(extraJson: String): Boolean {
         val raw = extraJson.trim()
@@ -641,17 +638,6 @@ internal fun applyTemplateEnsuringText(
     private val NO_OVERWRITE_KEYS = listOf("messages")
 
     /**
-     * 该键在当前取值下会被拒绝的原因（null = 可用）。**设置页判据与运行期合并共用这一处**
-     * （2026-10-02：此前两处各写一套，`{"stream": null}` 在运行期被"忽略"、在设置页却判"不可用"）。
-     *
-     * 三条规则都按**值**判，不按"键在不在"：
-     *  · 破坏客户端：只有 `stream` 类键**为真**才算（`false` / `null` 等价于"不发这个键"，无害）；
-     *  · 必需键：`null`（删键语义）一律拒绝 —— `{"model": null}` 会让请求体非法、错误却被归成
-     *    `PARAM`、提示指向语言设置，与真因（自己删了 model）无关；
-     *  · 关键键：`messages` **不可覆盖** —— 用户抄网关文档的完整示例时，含原文的消息被整体换掉，
-     *    模型凭空编、界面仍显示「成功」（与 L-246 同类失效，入口不同）。
-     */
-    /**
      * 自定义 JSON 里的「真值」判据（2026-10-02 补完 L-431）：`true` / `"true"`（不分大小写）/
      * 任意**非零数值**（含 `1.0`、`2`）。
      *
@@ -665,6 +651,17 @@ internal fun applyTemplateEnsuringText(
         else -> value.toString().toBoolean() || value.toString() == "1"
     }
 
+    /**
+     * 该键在当前取值下会被拒绝的原因（null = 可用）。**设置页判据与运行期合并共用这一处**
+     * （2026-10-02：此前两处各写一套，`{"stream": null}` 在运行期被「忽略」、在设置页却判「不可用」）。
+     *
+     * 三条规则都按**值**判，不按「键在不在」：
+     *  · 破坏客户端：只有 `stream` 类键**为真**才算（`false` / `null` 等价于「不发这个键」，无害）；
+     *  · 必需键：`null`（删键语义）一律拒绝 —— `{"model": null}` 会让请求体非法、错误却被归成
+     *    `PARAM`、提示指向语言设置，与真因（自己删了 model）无关；
+     *  · 关键键：`messages` **不可覆盖** —— 用户抄网关文档的完整示例时，含原文的消息被整体换掉，
+     *    模型凭空编、界面仍显示「成功」（与 L-246 同类失效，入口不同）。
+     */
     internal fun extraKeyRejection(key: String, value: Any?): String? {
         val isDelete = value == null || value === JSONObject.NULL
         // 键名按**大小写不敏感**比较（2026-10-02 修复 L-431）：规则要防的是「用户照抄网关文档」，
@@ -684,10 +681,10 @@ internal fun applyTemplateEnsuringText(
     }
 
     /**
-     * 把用户填的自定义 JSON 合并进请求体 [body]。
+     * 把用户填的自定义 JSON 合并进请求体 [body]：同名键覆盖标准参数，新键追加。
      *
-     * 返回 `false` 仅当整串不是合法 JSON（直接拒绝）；单键命中协议级拒绝名单（如 header/url 类）
-     * 时**忽略该键但继续合并其余键**，不让一处写错把功能打死。
+     * 返回 `false` 仅当整串不是合法 JSON（直接拒绝）；单键命中拒绝名单
+     * （`stream` / 删必需键 / 覆盖 `messages`）时**忽略该键但继续合并其余键**，不让一处写错把功能打死。
      */
     internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
         val raw = extraJson.trim()

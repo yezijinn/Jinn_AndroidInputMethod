@@ -121,7 +121,7 @@ internal fun alreadyTargetMessage(language: TranslationLanguage): String =
 /**
  * 翻译服务提供方（[Prefs.translateProvider] 存 id 字符串）。
  *
- * 顺序即设置页下拉顺序；[DEFAULT] = 阿里云（2026-09-30 定）。
+ * 顺序即设置页下拉顺序；[TranslationProviderId.DEFAULT] = 阿里云（2026-09-30 定）。
  * 旧配置里的 `azure` / `baidu` 取值继续有效（id 不变），只有未知取值才回落到默认。
  */
 internal enum class TranslationProviderId(val id: String, val label: String) {
@@ -223,7 +223,7 @@ internal enum class TranslationError(val message: String) {
      * 重定向是**刻意关闭**的（`followRedirects(false)`，防不可信网关把用户正文转投到
      * `Location` 指定的任意主机，2026-10-01 修复 L-306）—— 关掉它是对的，缺的是**出路**：
      * 原先 3xx 与 5xx 同归 [SERVER]，于是「网关尾斜杠归一 / `http→https` 升级 / `/openai`
-     * 路径补全」这类**用户可修**的配置问题被显示成「翻译服务异常，请稍后重试」，
+     * 路径补全」这类**用户可修**的配置问题被显示成 [SERVER] 的「服务异常，请稍后重试」，
      * 用户只会反复重试（每次真计费）而永远不会去改 Base URL。
      */
     REDIRECT("服务端点返回了重定向，请检查 Base URL 的路径与结尾斜杠"),
@@ -241,7 +241,8 @@ internal sealed interface TranslationOutcome {
 /**
  * 「哪些内容算翻译原文」的取值范围（**每家 Provider 独立配置**）。
  *
- * 四种模式都只描述「取哪一段文本」，里面**没有句子切分** —— 切分单位只有一个：行（`\n`）。
+ * 四种模式都只描述「取哪一段文本」，里面**没有句子切分** —— 切分单位只有一个：行
+ * （换行判据见 [TranslationText.LINE_BREAKS]，含 `\n` / `\r` / Unicode 行终止符共 7 种）。
  * 所以没有换行的输入框（聊天框 / 搜索框）里，前三种模式会取到同一段（整篇即一行）。
  */
 internal enum class TranslationScope(val id: String, val label: String, val detail: String) {
@@ -634,7 +635,7 @@ internal fun jsonText(json: JSONObject?, key: String): String? = json?.opt(key) 
  * 取**可能是数字**的字符串字段（错误码、状态码）。
  *
  * 百度的 `error_code` 官方示例写成字符串，但反过来（数字）也出现过：只认 String 会让
- * `{"error_code":54003}` 落进成功分支，`trans_result` 缺失后报「翻译结果为空」——
+ * `{"error_code":54003}` 落进成功分支，`trans_result` 缺失后报「服务返回结果为空」——
  * 用户拿着真实错误码（配额用尽）去查「结果为空」（2026-10-01 审查 L-226）。
  * JSON null 走 [JSONObject.NULL] 哨兵，必须显式排除，否则会取到字面量 `"null"`。
  */
@@ -845,7 +846,7 @@ private fun isCredentialUnsafeChar(cp: Int): Boolean {
  */
 internal fun normalizeAzureRegion(raw: String): String =
     // 只保留 ASCII 小写字母与数字（区域名的官方形态：`eastasia` / `global` / `westus2`）。
-    // ⚠ 不要只 `replace(" ", "")`（2026-10-02 修复：上一轮就是这么写的，漏掉 U+3000 全角空格 ——
+    // ⚠ 不要只 `replace(" ", "")`（2026-10-02 修复：早先只做空格替换，漏掉 U+3000 全角空格 ——
     // 中文输入法空格键的默认输出）。`East\u3000Asia` 会带着一个**非法头值字符**进
     // `Ocp-Apim-Subscription-Region`，OkHttp 抛 `IllegalArgumentException`、被兜成 PARAM，
     // toast 却说「语言方向 / 模型名 / 路径 / 原文长度」—— 比它要修的 401 更难查。
