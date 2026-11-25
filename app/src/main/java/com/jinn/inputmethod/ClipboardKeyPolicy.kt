@@ -23,7 +23,7 @@ package com.jinn.inputmethod
 internal enum class KeyDecision {
     UseExisting,
 
-    /** 取不到 / 不允许写 / 探针未知：这一次什么都不做 */
+    /** 取键抛异常 / 不允许写新密文：这一次什么都不做；探针未知另按「有密文」走下一代 */
     Refuse,
 
     /** 全新库：沿用历史别名新建 */
