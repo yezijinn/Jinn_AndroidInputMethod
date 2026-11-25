@@ -12,8 +12,8 @@ import android.widget.Spinner
  * 于是**键盘（确认键）与读屏（ACTION_CLICK）选中后不落盘** —— 界面显示新值、配置却没变，
  * 退出重进还静默还原。三条用户路径里只有触摸会产生 MotionEvent：
  *
- *  - `spinnerMode="dropdown"` 的触摸由框架 `ForwardingListener` 直接 `mPopup.show()` 打开，
- *    **不经过** `performClick()`（AOSP `Spinner.onTouchEvent` 与构造器）⇒ 只能靠 [onTouchEvent] 埋点；
+ *  - `spinnerMode="dropdown"` 的触摸不保证走 `performClick`（长按由 `ForwardingListener` 开弹窗，
+ *    AOSP `Spinner` 构造器），只能靠 [onTouchEvent] 的 ACTION_DOWN 埋点；
  *  - 键盘确认键（ENTER / DPAD_CENTER / SPACE）与无障碍 `ACTION_CLICK` 都走
  *    `View.performClickInternal()` → `View.performClick()`（AOSP `View.onKeyUp` /
  *    `performAccessibilityActionInternal`）⇒ 在 [performClick] 埋点即可覆盖；

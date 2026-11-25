@@ -44,7 +44,7 @@ internal object WavWriter {
         val dataSize = pcm16.size
         val out = ByteBuffer.allocate(HEADER_BYTES + dataSize).order(ByteOrder.LITTLE_ENDIAN)
         out.put(ascii("RIFF"))
-        // RIFF 块长 = 文件总长 - 8（"RIFF" + 本字段之后的全部内容）
+        // RIFF 块长 = 文件总长 - 8（「RIFF」 + 本字段之后的全部内容）
         out.putInt(HEADER_BYTES - 8 + dataSize)
         out.put(ascii("WAVE"))
         out.put(ascii("fmt "))

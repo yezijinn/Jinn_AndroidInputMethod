@@ -15,8 +15,11 @@ import android.widget.ScrollView
  * 横向交给内层 [CandidateScrollView]（两者嵌套，按位移的主导方向决定谁消费，见
  * [onInterceptTouchEvent]）。
  *
+ * 拦截判据：仅展开态且纵向位移超过横向时才拦；ACTION_DOWN 与横向手势一律放行给内层，
+ * 候选点击监听因此照常收到事件，只有判定为纵向拖动后本层才接管。
  * 未展开时本层**不滚动也不拦截**：纵向手势直接放行（键盘整体不响应纵向拖动，行为与现状一致）。
- * 作者 2026-10-17 指定：纵向为**跟手连续滚动**（不是整行步进）。
+ * 作者 2026-10-17 指定纵向为**跟手连续滚动**（不是整行步进）；边缘回弹由
+ * [PinyinKeyboardView] 置 OVER_SCROLL_NEVER 关掉。
  */
 class CandidateRowsScrollView @JvmOverloads constructor(
     context: Context,
