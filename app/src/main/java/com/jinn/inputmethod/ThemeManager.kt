@@ -11,10 +11,10 @@ import java.util.Calendar
 /**
  * 进程级 [Prefs] 缓存（MEM-35）。
  *
- * [Prefs] 只持有 `applicationContext` 的 `SharedPreferences`（`Prefs.kt:31`），跨 Activity 复用安全，
+ * [Prefs] 只持有 `applicationContext` 的 `SharedPreferences`（见 `Prefs` 类头），跨 Activity 复用安全，
  * 且同一个 `SharedPreferences` 实例本来就会被框架按名缓存 —— 每次 `Prefs(context)` 新建的只是
- * 一层薄包装，代价在「每次调用都走一遍 getSharedPreferences 查找」。本文件有三个默认参数 /
- * 定时 ticker 点会反复构造它（键盘每次换肤、每个页面每次接入 ticker），收口到一处。
+ * 一层薄包装，代价在「每次调用都走一遍 getSharedPreferences 查找」。本文件有两处默认参数与
+ * 一处 ticker 反复构造它（键盘每次换肤、每个页面每次接入 ticker），收口到一处。
  *
  * 用成对读写的 volatile 引用发布：构造是幂等的，竞态下最坏只是多构造一个再被覆盖，不会读到半个对象。
  */
@@ -93,8 +93,9 @@ object ThemeManager {
     /**
      * 纯函数：距离下一次切换还有多少分钟（停在设置页时用它安排准点刷新）。
      *
-     * 返回 -1 表示「模式与时刻无关」（非定时 / 无效配置）；其余情况恒为 `1..1440`，恰好站在切换点上时给的是到另一个端点的距离（07:00 亮 / 19:00 暗时站在 07:00 得 720），
-     * 而不是 0，避免 0 值被当成「立即切换」而反复重建页面。
+     * 返回 -1 表示「模式与时刻无关」（非定时 / 无效配置）；其余恒为 `1..1440`。
+     * 恰好站在切换点上时给的是到另一个端点的距离（07:00 亮 / 19:00 暗时站在 07:00 得 720），
+     * 而不是 0 —— 避免 0 被当成「立即切换」而反复重建页面。
      */
     fun minutesUntilSwitch(mode: Int, lightAtMin: Int, darkAtMin: Int, nowMin: Int): Int {
         if (mode != MODE_SCHEDULED) return -1
@@ -133,7 +134,7 @@ object ThemeManager {
     fun isSystemDark(context: Context): Boolean = paletteIsDark(context)
 
     /**
-     * 按 Prefs 解析「此刻是否深色」：强制模式看配置时刻，跟随系统看系统。
+     * 按 Prefs 解析「此刻是否深色」：强制亮 / 暗直接定档，定时看时段，跟随系统看系统。
      *
      * 默认值走进程级缓存（MEM-35）：本函数的默认参数是「每次调用都新建 Prefs」的最后几处之一，
      * 而它被 `recreateIfPaletteStale`（定时换肤到点判一次）与 `themedContext` 反复走到。
@@ -226,9 +227,9 @@ object ThemeManager {
      * 语义：
      *  - 只在「定时」模式排：其余模式（含无效配置）[minutesUntilSwitch] 返回 -1，[schedule] 直接返回；
      *  - 排到**下一次切换** + [MARGIN_MS] 余量。两个时刻按**分钟粒度**算（[nowMinutes] 截到分钟），
- *    于是这个延时只会落在边界**之后**、不会提前 —— 这一点是必需的：提前触发时
- *    [onSwitch] 会判定「还没到点」，而它接着会把下一次排到**下一个切换点**（12 小时后），
- *    等于整次切换被漏掉；
+     *    于是这个延时只会落在边界**之后**、不会提前 —— 这一点是必需的：提前触发时
+     *    [onSwitch] 会判定「还没到点」，而它接着会把下一次排到**下一个切换点**（12 小时后），
+     *    等于整次切换被漏掉；
      *  - 到点后**无条件续排**下一次；**是否真需要动界面由 [onSwitch] 自己判**（页面比调色板、
      *    键盘调 `JinnIme.applyThemeIfNeeded` 且它自己会跳过没变的），所以「档位没变」不会反复重建界面；
      *  - 模式与两个时刻在**每次排程时现读** [Prefs]：用户刚改完定时时刻，下一次排的就是新值。

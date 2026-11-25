@@ -5,23 +5,23 @@ import kotlin.math.roundToInt
 /**
  * 候选栏的「拼音条 + 候选行」几何，与「上偶下奇」排版规则。
  *
- * 布局（2026-09-25 定的分布；字号由用户参数 [CandidateText] 决定，默认档是拼音 19.6sp、候选 28sp）：
+ * 布局（字号由用户参数 [CandidateText] 决定，默认档是拼音 19.6sp、候选 28sp）：
  * ```
- *   单行档：拼音条（默认 26dp）              ← 顶部一条
- *          候选 1 3 5 …（横向滚动，默认 39dp）
+ *   单行档：拼音条（默认约 25dp）             ← 顶部一条
+ *          候选 1 3 5 …（横向滚动，默认 39.2dp）
  *
- *   双行档：上排 2 4 6 …（横向滚动，默认 39dp）
+ *   双行档：上排 2 4 6 …（横向滚动，默认 39.2dp）
  *          拼音条（**叠在两排之间的中缝上**）
- *          下排 1 3 5 …（横向滚动，默认 39dp）
+ *          下排 1 3 5 …（横向滚动，默认 39.2dp）
  * ```
  * 拼音条是**叠放层**：有拼音串时出现（单行档贴顶、双行档垂直居中），无拼音时（功能面板 /
  * 符号分组 / 预测 / 内联提示）隐藏、候选区占满整栏。双行档两排各贴上下边，中缝高度恰好
  * 等于拼音条高度，因此拼音条不遮候选。
  *
- * 高度一律是**字号的函数**（2026-10-03 起字号可调）：候选行 = 字号 × [LINE_HEIGHT_RATIO]、
- * 拼音条 = 拼音字号 × [PINYIN_GLYPH_RATIO]（拼音字号可独立于候选字号设定），且都不小于「字号 × 系数」本身 —— 系统字体放大
- * （fontScale > 1）时按同一系数长高，宁可键盘高一点也不裁字；字体缩小时不跟着缩到系数以下
- * （那是栏高的紧凑底线）。拼音行间隔（[PINYIN_GAP_MIN_DP]~[PINYIN_GAP_MAX_DP]dp）计入栏高：
+ * 高度一律是**字号的函数**：候选行 = 字号 × [LINE_HEIGHT_RATIO]、拼音条 = 拼音字号 ×
+ * [PINYIN_GLYPH_RATIO]（拼音字号可独立于候选字号设定）。系统字体放大（fontScale > 1）时
+ * 按同一系数长高，宁可键盘高一点也不裁字；字体缩小时不缩到字号以下（栏高的紧凑底线）。
+ * 拼音行间隔（[PINYIN_GAP_MIN_DP]~[PINYIN_GAP_MAX_DP]dp）计入栏高：
  * `拼音条高 = 拼音字号 × 系数 + 行间隔`。所有高度都由 [barHeightPx] 派生，渲染侧不得各算各的。
  *
  * 纯函数（无 Android 依赖），渲染侧与 JVM 单测共用同一份规则。
@@ -37,7 +37,9 @@ internal object CandidateRows {
     /** 候选行高系数：字号的 1.4 倍（含行距与降部余量，整行框） */
     const val LINE_HEIGHT_RATIO = 1.4f
 
-    /** 拼音条系数：拼音字号的 1.3 倍（盖住字形下伸部 `g / q / p`，行框余量允许溢出条外） */
+    /**
+     * 拼音条系数：拼音字号的 1.3 倍（盖住字形下伸部，行框余量允许溢出条外）
+     */
     const val PINYIN_GLYPH_RATIO = 1.3f
 
     /** 拼音行间隔下界（dp）：0 = 拼音条与候选行之间不留空隙（历史观感） */
@@ -57,8 +59,7 @@ internal object CandidateRows {
      * `layout_marginEnd` 等于 [CLEAR_BUTTON_WIDTH_DP] —— 它跳过的是 ✕ 那一格）。
      *
      * 拼音文字必须为**可见**的 ▲ 也让出这一格，否则长拼音串的尾部与省略号会画进按钮盒、
-     * 被三角字形压住（真机：文字暗像素落在 x=1239..1245，而按钮盒是 1132..1272）。
-     * 让位的写入点与显隐判据同处一处（[updateExpandButton]），见那里的说明。
+     * 被三角字形压住。让位在渲染侧按按钮可见性同步计算。
      */
     const val EXPAND_BUTTON_WIDTH_DP = 40
 
@@ -67,14 +68,14 @@ internal object CandidateRows {
         CandidateText.clampSp(candidateSp) * LINE_HEIGHT_RATIO
 
     /**
-     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 19.6sp → 26dp）。
+     * 拼音条高度（dp，默认字体下）：**拼音字号** × [PINYIN_GLYPH_RATIO]（默认档 19.6sp → 约 25dp）。
      *
      * @param pinyinSp 拼音字号（sp，用户参数经 [CandidateText.clampPinyinSp] 归一后的**有效值**）；
      *   传 0 / 负数时回落 [CandidateText.pinyinSpOf] 的默认派生值，避免首帧算成 0 高。
      *
      * 比候选行口径更紧：只按字形给高，字体行框余量仍可溢出条外（裁的只是空白）。系数取 1.3 是为了
      * 盖住 `g / q / p` 的下伸部 —— 1.15 时下伸部被条底切掉；再按行框系数算则拼音行会「比自己的字
-     * 高出一圈」（用户 2026-09-25 明确要求拼音与候选的留白为 0）。
+     * 高出一圈」（拼音与候选的留白为 0）。
      */
     fun pinyinBarHeightDp(pinyinSp: Float): Float =
         effectivePinyinSp(pinyinSp) * PINYIN_GLYPH_RATIO
@@ -127,9 +128,7 @@ internal object CandidateRows {
     fun pinyinBarHeightPx(density: Float, fontScale: Float, pinyinSp: Float): Int =
         (pinyinBarHeightDp(pinyinSp) * density * maxOf(1f, fontScale)).toInt()
 
-    /**
-     * 展开态一屏最多显示的行数（作者 2026-10-17 指定上限为四行）
-     */
+    /** 展开态一屏最多显示的行数（上限四行） */
     const val MAX_EXPANDED_ROWS = 4
 
     /**
@@ -137,7 +136,7 @@ internal object CandidateRows {
      *
      * 展开的做法是「候选栏在键区之上向下长」，窗口高度恒定（[expandedBarHeightPx]）；覆盖越多，
      * 露在外面的键越少。两行是上限：再多就把第三行字母键也压掉，「展开态按字母键收起并继续输入」
-     * 就没了落点（作者 2026-10-21 指定）。
+     * 就没了落点。
      */
     const val MAX_COVERED_KEY_ROWS = 2
 
@@ -177,7 +176,7 @@ internal object CandidateRows {
      *
      * 抽成纯函数是为了让「排数不得超出覆盖边界」这条不变式能被 JVM 单测直接遍历
      * （[CandidateRowsTest] 的字号 × fontScale × density 性质测试）。只写在渲染侧的私有
-     * `expandedRowsFor` 里时，改坏 [`expandedBarHeightPx`] 或本式只能等真机回归才暴露。
+     * `expandedRowsFor` 里时，改坏 [expandedBarHeightPx] 或本式只能等真机回归才暴露。
      *
      * @param rowHeightPx 单排候选行高（px，含 fontScale，口径见 [rowHeightPx] 函数）
      * @param keyRowHeightPx 单行字母键高（px）；与 [rowHeightPx] 任一 ≤0（几何未取到）时退回 [MAX_EXPANDED_ROWS]
@@ -193,7 +192,7 @@ internal object CandidateRows {
      * 候选栏高度、拼音条避让与列行高必须由它派生：分开算会出现「栏高按旧档、行高按新档」的
      * 一帧错配（列底被裁或留缝）。
      *
-     * 排数扩展到 1..[MAX_EXPANDED_ROWS]（原只认 1 / 2）：展开态最多四排。
+     * 排数取 1..[MAX_EXPANDED_ROWS]：收起态 1 / 2 排，展开态最多四排。
      *
      * @param pinyinSp 有效拼音字号（缺省沿用 [CandidateText.pinyinSpOf] 的派生口径）
      * @param gapDp 拼音行间隔（缺省 0，保持历史观感）
@@ -217,8 +216,8 @@ internal object CandidateRows {
      * 一屏横向能并排几条候选：`栏宽 ÷ 单条宽`（向下取整，至少 1）。
      *
      * 单条宽必须是**本帧字号**下的值（字宽 + 左右各半字距）。读已布局子视图的 `width` 会拿到
-     * 上一帧的字号（`BUG.md` L-1397）：`setTextSize` 要等下一次布局才改 `width`，而判据与它
-     * 同在一次刷新里 ⇒ 三角显隐按旧字号算，两个方向都会错。
+     * 上一帧的字号：`setTextSize` 要等下一次布局才改 `width`，而判据与它同在一次刷新里 ⇒
+     * 三角显隐按旧字号算，两个方向都会错。
      *
      * 抽成纯函数是为了让退化输入（栏宽未取到 / 单条宽为 0）有确定的返回值，并被单测直接钉住。
      *
@@ -248,12 +247,12 @@ internal object CandidateRows {
     /**
      * 展开态是否该因**输入变化**收起（纯函数，便于单测）。
      *
-     * 只看输入串：候选集变了但输入没变（词库合并 / 学习重排）不得收起 —— 这是作者
-     * 2026-10-17 指定的语义，输入串足以表达，不需要候选指纹。
+     * 只看输入串：候选集变了但输入没变（词库合并 / 学习重排）不得收起 —— 输入串足以
+     * 表达，不需要候选指纹。
      *
-     * ⚠ 不看候选指纹：调用点（[refreshCandidateBar] 的收起判据）在查询**之前**执行，
-     * 那一刻 `lastCandidates` 还是上一次查询的列表，拿它配本次输入串会错位一帧 ⇒
-     * 收起按奇偶漏判（2026-10-21 实测：展开态按 n 不收、再按一次输入变化的键才收）。
+     * ⚠ 不看候选指纹：调用点在查询**之前**执行，那一刻 `lastCandidates` 还是上一次查询的
+     * 列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（展开态按 n 不收、再按一次输入
+     * 变化的键才收）。
      *
      * @param previousInput 上一次记录的输入串（首次为 null）
      * @param inputNow 本帧输入串

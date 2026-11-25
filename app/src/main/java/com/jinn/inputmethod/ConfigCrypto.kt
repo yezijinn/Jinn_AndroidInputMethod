@@ -16,7 +16,7 @@ import javax.crypto.spec.SecretKeySpec
  * 文件一旦落到网盘 / 聊天记录就等于泄露。所以**整包加密**，且必须能扛住离线暴力破解。
  *
  * 算法与参数（全部走平台自带的 JCE，不引第三方库）：
- *  - 密钥派生：PBKDF2-HMAC-SHA256，**600,000 次迭代**（OWASP 对 PBKDF2-SHA256 的建议量级），
+ *  - 密钥派生：PBKDF2-HMAC-SHA256，**`600_000` 次迭代**（OWASP 对 PBKDF2-SHA256 的建议量级），
  *    每包独立 16 字节随机 salt —— 同一密码在两次导出中产出不同密钥，彩虹表与「撞包」都无效；
  *  - 内容加密：AES-256-GCM，每包独立 12 字节随机 IV，**认证标签 128 位**。
  *    GCM 自带完整性校验，密文被改一个字节就解密失败，顺带成为「密码是否正确」的判据
@@ -26,10 +26,10 @@ import javax.crypto.spec.SecretKeySpec
  * 迭代数写在文件头：将来调高默认值时，旧包仍按旧参数解开（可平滑升级）。
  *
  * 密码规则（需求：只能用中文）：全部码点必须是 Unicode HAN 汉字、长度 4~64 个汉字、
- * 不能是同一个字重复。中文密码的可用字符空间远大于英文按键组合，配合 600k 次迭代，
+ * 不能是同一个字重复。中文密码的可用字符空间远大于英文按键组合，配合 `600_000` 次迭代，
  * 离线爆破成本极高。
  *
- * 线程模型：加密解密是纯计算 + 流式文件 IO，**必须在后台线程调用**（600k 次迭代在手机上
+ * 线程模型：加密解密是纯计算 + 流式文件 IO，**必须在后台线程调用**（600_000 次迭代在手机上
  * 约需 1~2 秒）。密码以 CharArray 传入，调用方用完后负责清零（String 无法可靠擦除）。
  */
 internal object ConfigCrypto {
@@ -54,8 +54,8 @@ internal object ConfigCrypto {
     /**
      * 密码长度定义域（按汉字个数计）。
      *
-     * 下限 4 是 2026-09-23 定的（6 个字嫌多）。4 个汉字的组合空间已远大于常见弱口令，
-     * 叠加 600k 次 PBKDF2 后离线爆破成本依然极高；界面会建议用 6 个字以上。
+     * 下限取 4：4 个汉字的组合空间已远大于常见弱口令，叠加 600_000 次 PBKDF2 后
+     * 离线爆破成本极高。
      */
     const val MIN_PASSWORD_CHARS = 4
     const val MAX_PASSWORD_CHARS = 64
@@ -72,7 +72,7 @@ internal object ConfigCrypto {
      * 迭代数下限。
      *
      * 文件头里的迭代数是**外部输入**：不设下限等于把密文强度交给文件自己声明 ——
-     * 一个 `iterations=1` 的包照样能解开，与「600k 迭代」的安全承诺不一致。10 万是默认值的
+     * 一个 `iterations=1` 的包照样能解开，与「`600_000` 次迭代」的安全承诺不一致。10 万是默认值的
      * 六分之一，给将来下调留了空间，同时排除掉「形同虚设」的强度。
      */
     private const val MIN_ITERATIONS = 100_000
@@ -100,8 +100,8 @@ internal object ConfigCrypto {
     fun validatePassword(password: CharSequence): PasswordCheck {
         if (password.isEmpty()) return PasswordCheck.Invalid("请输入备份密码")
         // 一趟扫描同时完成「全汉字 / 字数 / 是否同一个字重复」三件事：
-        // 原实现先扫一遍查字表与计数、再扫一遍 HashSet 判重（O(2n) + 一次分配）。
-        // 「distinct == 1」等价于「每个码点都等于第一个」，用两个标量即可，O(1) 额外内存。
+        // 判重只需比较每个码点与第一个是否相同，不额外分配集合：
+        // 两个标量即可，O(1) 额外内存。
         var codePoints = 0
         var firstCp = -1
         var allSame = true
