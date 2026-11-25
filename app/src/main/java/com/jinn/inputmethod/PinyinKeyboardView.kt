@@ -117,7 +117,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /**
          * 语音入口当前是否可用。
          *
-         * 只查不改（语音链路一行不动）：View 层长按空格前先问一次 —— 不可用时必须让长按
+         * 只读查询，不改语音链路：View 层长按空格前先问一次 —— 不可用时必须让长按
          * **不消费**（返回 false），否则框架不再派发 click，用户既丢空格又听到一声确认音。
          */
         fun canVoice(): Boolean
@@ -333,7 +333,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 只给 [toggleCandidateExpanded] 判一次「当前有没有输入」（预测态下的渲染源取法要用），
      * 不承载「本帧输入串」——本帧串在 `refreshCandidateBar` 里是局部量 `inputNow`，
-     * 谁在它之后改了 composing 都不会影响渲染（AI2 A-619：旧写法让「写入点与读取点之间
+     * 谁在它之后改了 composing 都不会影响渲染（A-619：旧写法让「写入点与读取点之间
      * 不许写 composing」成了隐式契约，一旦有人在这中间插一句清空，拼音行就显示旧串）。
      */
     private var lastRefreshedInput: String? = null
@@ -378,7 +378,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     // ── 悬浮四角拉伸（2026-10-23）────────────────────────────
     //
     // 悬浮面板的四角拉伸是**真实改布局尺寸**（键区按新宽度重排、行高按倍率变），不是各向异性
-    // `scaleX/scaleY`：后者会把字与键面一起拉变形（用户要求「文字与按键不变形」）。
+    // `scaleX/scaleY`：后者会把字与键面一起拉变形（需求：文字与按键不变形）。
     // 这里只提供两个数：可伸缩块的自然高与「按倍率改行高」，窗口侧算术全在 FloatingKeyboard。
 
     /** 拉伸倍率（null = 用户设定的键高，与不受浮层影响时逐像素一致） */
@@ -742,7 +742,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 本帧是否「双行档 + 未展开」。
      *
      * 拼音条的居中只属于这一种形态：展开态的行数可能是 2（候选只够两排 / 屏幕只放得下两排），
-     * 若按 `rows == DOUBLE` 判断，展开两排时拼音条会被居中到两排之间（用户 2026-10-18 报告）。
+     * 若按 `rows == DOUBLE` 判断，展开两排时拼音条会被居中到两排之间（2026-10-18 出现过）。
      */
     private var currentDoubleRow = false
 
@@ -975,7 +975,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 复位「候选渲染」的指纹与分页状态，但**保留**容器里的子视图。
      *
      * 与 [clearCandidateList] 的分工：功能面板内容没变时（换输入框的常态，见 [candidatePanelReusable]）
-     * 只需复位指纹 / 分页 —— 把已建好的按钮丢掉重建白付 6.1~13.9ms（第 65 轮真机分段计时）。
+     * 只需复位指纹 / 分页 —— 把已建好的按钮丢掉重建白付 6.1~13.9ms（真机分段计时）。
      * 指纹复位本身不能省：L-809 的形态就是「清了容器却留着指纹」。
      */
     private fun resetCandidateForm() {
@@ -1413,7 +1413,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 g.groupAtDown = symbolGroupIndex
                 g.pageAtDown = symbolPageInGroup
                 g.epochAtDown = layerEpoch
-                // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况），只清本键
+                // 上一次手势残留的计时器（上次没收到 UP / CANCEL 的极端情况），只清本键
                 cancelLongPressUppercase(g)
                 // 小写英文长按转大写：到系统长按时长仍没抬手才上一个大写字母。
                 // 只在 DOWN 起计时（符号层的滑动翻页在 MOVE 里按 24dp 判定，两条手势互不打扰）。
@@ -1856,7 +1856,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * [configure] 除了重套外观，还顺手复位会话内临时态：残留拼音与预测、方向面板、剪贴板面板、
      * 图库面板、动作排、密码模式。首弹刚建好的视图这几项本来就空，跳过 configure 不改变任何状态；
      * 只要有一项不是空，跳过就会把它带进下一个输入框 —— 剪贴板面板最严重
-     * （BUG.md L-110：新输入框里点一下就粘进上一个框的历史内容），图库面板同型（插进上一轮的图）。
+     * （BUG.md L-110：新输入框里点一下就粘进上一个框的历史内容），图库面板同型（插进上一次会话的图）。
      * 所以「跳过 configure」必须与本题同时成立。
      *
      * ⚠ 本判据必须与 [configure] 的复位清单**逐项对应**：那边加一样、这边漏一样，就是
@@ -1880,7 +1880,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 重放「用户手选的视图态」（新建视图后调用）：英文态 / 大写锁定 / 符号层。
      *
-     * 三者都是 private 字段、且**不写 Prefs**（中英切换只翻 `englishMode`，见本文件 1399）。
+     * 三者都是 private 字段、且**不写 Prefs**（中英切换只翻 `englishMode`，见 [btnLang] 的点击回调）。
      * 而 `recreateKeyboardView()`（换肤 / 符号分组顺序变更）与框架自己的
      * `onCreateInputView()`（窗口 / 配置变更）都会换掉整个视图 ⇒ 新视图三者为初值。
      * 不重放的后果：定时换肤到点（如 19:00）时键盘正显示且用户在英文态，键面会**静默变回中文**
@@ -1948,10 +1948,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 弹出（键盘变身）。语言**不**按记忆复原 —— 上面 `englishMode = english` 是 IME 按本输入框
         // 给出的值，拿上一个输入框的语言覆盖它才是错的；层与大写仍按用户手选状态复原。
         if (passwordPad) exitPasswordPad(restoreLanguage = false)
-        // 图库面板与动作排是同族的视图内临时态（第 65 轮评审补 · BUG.md L-1531）：图库面板把字母区
+        // 图库面板与动作排是同族的视图内临时态（BUG.md L-1531）：图库面板把字母区
         // 整个盖住、动作排顶掉候选栏那排功能按钮。此前这两样只靠 IME 侧的 `onFinishInputView` 收，
         // 而该方法不保证派发（见 `JinnIme.onWindowHidden` 的 KDoc）⇒ 跨输入框残留时，新框里点一下
-        // 就把上一轮的图插进正文（图库）或把一次 AI 动作打到新框的正文上（动作排）。
+        // 就把上一次会话的图插进正文（图库）或把一次 AI 动作打到新框的正文上（动作排）。
         // 两者都走各自的收起入口：`hideGalleryPanel` 负责恢复字母区布局与「图库」键文案，只翻标志
         // 会把字母区留在面板的隐藏态。
         if (galleryActive) hideGalleryPanel()
@@ -1985,7 +1985,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 键盘外观页松手后即时重套外观（透明度 / 圆角 / 间隙）。
      *
-     * 与 [configure] 的区别：只重套外观，不动拼音串与候选/预测 ，
+     * 与 [configure] 的区别：只重套外观，不动拼音串与候选 / 预测，
      * 改外观不该把用户正在打的字吞掉（configure 会清 composing 与预测）。
      */
     fun refreshAppearance() {
@@ -2098,12 +2098,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 改的是**行容器**的 LayoutParams，而不是逐个键：键自己都是 `match_parent`，行高定全行，
      * 26 键区（10 + 9 + 9 = 28 键）自然同高。数字行（`1`~`0`）是同一个容器里的第 0 行，
-     * 一并按同一值落高 —— 用户要的就是「三行字母向上长成四行」的效果，键高必须同源。
+     * 一并按同一值落高 —— 需求是「三行字母向上长成四行」，键高必须同源。
      *
      * 两个必须守住的点：
      *  - **跳过方向面板**：它是运行时 `addView` 进字母区的（带 [DIRECTION_PANEL_TAG]），出现时各字母行已经 GONE；
      *    把它当字母行改高度，九宫格与字母区就会各占一个高度。
-     *  - **面板高度不跟着变**：剪贴板 / 图库面板固定 162dp×2（列表内容 + 用户验证过的方案）；
+     *  - **面板高度不跟着变**：剪贴板 / 图库面板固定 162dp×2（实测验证过的方案）；
      *    若跟随键高，最大档（[KeyAppearance.MAX_KEY_HEIGHT_DP]，数字从常量读、不写死 ——
      *    BUG.md L-1291）下三行会把小屏手机的键盘顶出可视区。
      */
@@ -2161,7 +2161,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             KeyTransparency.withAlpha(skinToken(skin.plate, R.color.kb_bg), plateAlpha)
         )
         updateCandidateBarBackground()
-        // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha ，
+        // 兜底：本视图树（含剪贴板 / 搜索面板）里所有「纯色面」统一按档位套 alpha，
         // 面可能有多份（XML 根 / 各层容器 / 面板底 / 条目卡 / 搜索框），逐个引用容易漏；
         // 旧版只认「RGB == kb_bg」一种色，导致两个面板整块实心（与透明键盘形成割裂）。
         // 皮肤会改背板/键面的色值：皮肤色一并并入识别色集，否则这些面匹配不到、透明度对它们失效。
@@ -2195,7 +2195,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         searchPanel?.applySurfaceAlpha(keyFaceAlpha)
         galleryPanel?.applySurfaceAlpha(keyFaceAlpha)
 
-        // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描 ，
+        // 诊断（排查「透明度不生效」）：只在档位真正变化时打印一次并做树扫描，
         // 原实现每次弹键盘都打日志、并 postDelayed 扫一遍全树（500ms 后），纯属刷屏与白扫。
         val desc = KeyTransparency.formatPercent(percent)
         if (desc != lastTransparencyDesc) {
@@ -2254,7 +2254,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun applySkinToKeys() {
         // 皮肤与面不透明度都没变 ⇒ 每个键拿到的视觉与上次逐像素一致，整段跳过。
-        // 实测本段 1.2~2.6ms/次（第 65 轮真机分段计时），是换框 configure 的第二大项；
+        // 实测本段 1.2~2.6ms/次（真机分段计时），是换框 configure 的第二大项；
         // 而 configure 每次聚焦都会调用，绝大多数时候这两项根本没变。
         // 判据必须**同时**含 skin.id 与 keyFaceAlpha：只比其中一个时，「仅换肤」或「仅改透明度」
         // 会早退，键面停在旧色（与 applyKeyTransparency 的联合早退同一条口径）。
@@ -2389,7 +2389,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 为什么要按态选色：空白铺底（功能面板 / 符号层 / 搜索态）栏内只有按钮，栏若用自己的色，
      * 就会在按钮四周（含上下、间隙）留出一圈异色底；半透明下这圈还会因两档透出量不同而更显形
      * （原先空白态走 plate 档 = 80%、按钮走 surface 档 = 92%），在浅色页面上看起来像
-     * 「候选栏比按钮高出一截」（2026-10-02 用户反馈：只在设置主页这类浅底页面可见，
+     * 「候选栏比按钮高出一截」（2026-10-02 现象：只在设置主页这类浅底页面可见，
      * 深色页 / 会压掉它的 App 里看不见）。**同色 + 同档**后按钮与栏连成一块，那一圈消失；
      * 按钮本身仍靠自己的描边（`functionStroke`）分辨。
      *
@@ -2695,7 +2695,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * ~~**在途翻译也要算**~~：**已移除**（2026-10-03 修复 L-613）。原先把 `translateInFlight` 算进来，
      * 理由是「重建后视图字段恒为 false ⇒ 按钮渲染成**可点的「翻译」**、点击被在途闸门静默吞掉」——
      * 但那个理由**已被视图重放消解**：重放现在写在 `onCreateInputView()` 里（凡新建视图就重放，
-     * 见 A2/L-610），重建后按钮会正确显示「翻译中」。留着它的代价是**用户可见的副作用**：
+     * 见 L-610），重建后按钮会正确显示「翻译中」。留着它的代价是**用户可见的副作用**：
      * 请求最长 330s，期间改主题 / 定时换肤到点 / 符号布局变更都会被**延后到会话结束**
      * —— 用户以为改主题没生效，最长要等 5 分钟。同一件事被防了两遍，其中一遍有害。
      */
@@ -3118,10 +3118,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         currentPinyinBarPx = pinyinBarPx + CandidateRows.pinyinGapPx(dm.density, gapDp)
         applyPinyinTextSize(pinyinSp)
 
-        // 栏高**只按档位**算（单行 = 拼音条 + 一排 = 46dp；双行 = 拼音条 + 两排 = 74dp），
+        // 栏高**只按档位**算（单行 = 拼音条 + 一排；双行 = 拼音条 + 两排；默认档 65 / 104dp），
         // 与「当前有没有候选」无关 —— **双行档必须恒定增高**。
         // 注意：别改成「按本帧实际内容排数」：曾按功能面板态收缩到单排，结果是键盘高度随
-        // 「有候选 ↔ 功能面板」来回变；用户 2026-10-02 明确要求不要这种动态变化。
+        // 「有候选 ↔ 功能面板」来回变；2026-10-02 定为不要这种动态变化。
         // 算式走 CandidateRows 的派生函数（BUG.md L-1331）：这里原先手写了同一个加法，
         // 与 [CandidateRows.barHeightPx] 是两份实现，改系数时会分叉
         // 收起档栏高 = 键区顶边的让位（展开时键区**不动**，窗口总高因此恒定，见 keyboardBody）。
@@ -3690,7 +3690,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 上一次查询的列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（2026-10-21 实测：展开态
         // 按 n 不收、再按一次改变了输入的键才收）。判据收在 [CandidateRows.shouldCollapseExpanded]。
         // 本帧输入串只拷一次：下面的 `input` 直接取这个局部量（早先靠「两者之间不写 composing」
-        // 的巧合来保证内容相同 —— 那是隐式契约，见 AI2 A-619），且早先每键要拷两次。
+        // 的巧合来保证内容相同 —— 那是隐式契约，见 A-619），且早先每键要拷两次。
         val inputNow = composing.toString()
         lastRefreshedInput = inputNow
         // 本帧渲染源（候选 / 预测词）的条数与取样字：三角、展开排数、预取量三条路径必须同源。
@@ -3769,7 +3769,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         // 本帧已拷好的串（见上面的 `inputNow`）：**直接复用局部量**，不再经字段中转 ——
-        // 中转会让「这中间不许写 composing」变成隐式契约（AI2 A-619）
+        // 中转会让「这中间不许写 composing」变成隐式契约（A-619）
         val input = inputNow
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
@@ -3786,8 +3786,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 无候选、无拼音串、无预测 ⇒ 功能面板态。
         // 注意：这里**不再**重落栏高：栏高只由档位决定（见 [applyCandidateRows]），
-        // 双行档的面板态也保持整栏 72dp —— 用户 2026-10-02 明确要求「2 行候选恒定增高，
-        // 不要随内容动态变化」。（曾按单排收缩，导致键盘高度来回跳，已撤销。）
+        // 双行档的面板态也保持整栏高度（默认档 104dp）—— 2026-10-02 定为「2 行候选恒定增高，
+        // 不随内容变化」。（曾按单排收缩，导致键盘高度来回跳，已撤销。）
         if (input.isEmpty() && lastPredictions.isEmpty()) {
             lastCandidates = emptyList()
             // 无内容 ⇒ 收起展开态（输入会话结束 / 清空都走这里；作者 2026-10-17 指定）
@@ -3861,7 +3861,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
             collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
-            // 与上面「无内容」/ 下面「候选集为空」两处同口径（AI2 A-562）：展开态下只剩一行
+            // 与上面「无内容」/ 下面「候选集为空」两处同口径（A-562）：展开态下只剩一行
             // 「词库加载中」提示却仍占 3~4 排高度 ⇒ 收起并落回档位高度，否则是一块空高栏。
             showPinyin(displayText)
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
@@ -3878,7 +3878,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         updateExpandButton(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx, lastCandidates.size, lastCandidates.firstOrNull())
         // 拼音行显示什么：全拼档 / 双拼「声韵」档 —— 后者走 [Shuangpin.displayQuanpin]（逐键展开不丢键），
         // 前者就是用户按下的键本身。两者都不显示查询串 queryInput：它是 toQuanpin 的结果，
-        // 残码会被转换截断（2026-09-18 用户报告「按键没反应」），且分号键被整键丢弃。
+        // 残码会被转换截断（2026-09-18 曾出现「按键没反应」），且分号键被整键丢弃。
         showPinyin(displayText)
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "候选: ${if (shuangpinMode) "双拼[$input]→" else ""}$queryInput → ${result.candidates.take(3)}")
 
@@ -4345,7 +4345,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         //   不显示韵母 + A-Z ⇒ −10sp；不显示韵母 + a-z ⇒ −2sp。
         //   2026-10-09 再收 5sp：显韵母关闭时（26 键常态）A-Z 仍嫌撑满，按「当前显示字号 −5」下调。
         // 只调主字形（提示行字号不动、也不加粗 —— 用加粗补偿会让字面变脏）；符号层 / 数字层显式归零。
-        // 按 sp 语义换算（乘 scaledDensity）而不是按键高比例：用户说的是「字号减少 3」，随系统字体缩放才一致。
+        // 按 sp 语义换算（乘 scaledDensity）而不是按键高比例：需求是「字号减少 3」，随系统字体缩放才一致。
         val glyphDeltaPx = when {
             showUpper && showHint -> -3f
             showUpper -> -10f
@@ -4395,12 +4395,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 密码模式：这个键是退出口（点击回进入前的状态，见 exitPasswordPad）
             passwordPad -> TEXT_PASSWORD_EXIT
             // 数字层：与符号层同一条口径 —— 键面已全是数字，此键的作用是回字母页，
-            // 用同一枚红色粗体「返回」提示（用户 2026-09-29 指定；原先写的是「ABC」，
+            // 用同一枚红色粗体「返回」提示（2026-09-29 统一；原先写的是「ABC」，
             // 同一枚键在两个层里一个说「返回」一个说「ABC」，同一功能两种说法）。
             layer == LAYER_DIGIT -> backLabel()
             else -> context.getString(R.string.key_digit)
         }
-        // 退出口必须一眼可见（用户 2026-09-28）：加粗 + 提示红 —— 与候选栏的红色「返回」同一套令牌。
+        // 退出口必须一眼可见（2026-09-28）：加粗 + 提示红 —— 与候选栏的红色「返回」同一套令牌。
         // 退出后要**还原**成底部功能键的常规样式，否则「数字」两字会一直红着。
         if (passwordPad) {
             btnDigit.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
@@ -4427,7 +4427,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 底部逗号 / 句号键的标签与样式（用户 2026-09-28 指定）。
+     * 底部逗号 / 句号键的标签与样式（2026-09-28 定）。
      *
      *  - 字形：拼音态全角（`，` / `。`）、英文态半角（`，` 变 `,`、`。` 变 `.`）——
      *    与点击上屏的字符同源（见 `bindFunctionKeys` 里两个键的 onClick），键面必须跟着变，
@@ -4450,7 +4450,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 用在「键面已经被别的层占满、这一键的作用是回字母页」的两处：符号层（「符号」→「返回」）
      * 与数字层（「数字」→「返回」）。两处**共用同一枚标签**，避免同一功能漂出两种说法
-     * （数字层原先写「ABC」，与符号层的「返回」不一致 —— 用户 2026-09-29 指定统一）。
+     * （数字层原先写「ABC」，与符号层的「返回」不一致 —— 2026-09-29 统一）。
      *
      * 用 SpannableString 而不是 `setTextColor` / `setTypeface`：键面文本换回普通串时样式自动还原，
      * 省掉「退出这一层时必须记得复原字色 / 字重」的隐性契约（换肤也不受影响，span 优先于 base color）。
@@ -4472,8 +4472,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 中英切换键的富文本标签。
      *
-     * 上下两行「中文 / 英文」，把当前生效的那一行染成主题紫并加粗，另一行保持普通样式
-     * ，一眼就能看出当前处于哪种输入状态。
+     * 上下两行「中文 / 英文」，把当前生效的那一行染成主题紫并加粗，另一行保持普通样式，
+     * 一眼就能看出当前处于哪种输入状态。
      */
     private fun buildLangLabel(): CharSequence {
         val cn = "中文"
@@ -4658,7 +4658,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 上次构建功能面板时的渲染签名（null = 还没建过）。
      *
      * 见 [renderFunctionPanel] 的复用早退：换输入框时这一排按钮几乎从不变化，重建一次
-     * 实测 6.1~13.9ms（第 65 轮真机分段计时），是「换框」耗时里最大的一笔。
+     * 实测 6.1~13.9ms（真机分段计时），是「换框」耗时里最大的一笔。
      */
     private var candidatePanelBuiltSignature: String? = null
 
@@ -4709,8 +4709,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *  - 复制：复制选中文本到系统剪贴板
      *  - 粘贴：粘贴剪贴板最新内容
      *  - 翻译：把选中的文字（或按「原文范围」取出的那段文本）译成目标语言；选中时原地替换选区，
- *    没选中时追加在下一行（**仅总开关打开时出现**，固定位于「收起」左侧）
-     *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）—— **恒为最右端**（用户 2026-09-30 定）
+     *    没选中时追加在下一行（**仅总开关打开时出现**，固定位于「收起」左侧）
+     *  - 收起：隐藏输入法面板（重新点击输入框再唤醒）—— **恒为最右端**（2026-09-30 定）
      *
      * 「全拼 / 双拼」切换按钮已于 2026-09-20 移除：输入方案统一在设置页
      * 「输入方案」下拉里改（全拼 + 8 套双拼，全局生效），面板不再承担方案切换。
@@ -4720,7 +4720,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun renderFunctionPanel() {
         // 26 键用户每次换输入框都会走到这里（无候选态）。内容与配色都没变时**直接复用**既有按钮：
-        // 重建这 7 个按钮实测 6.1~13.9ms（第 65 轮真机分段计时），占换框 configure 的 60% 以上。
+        // 重建这一排按钮实测 6.1~13.9ms（真机分段计时），占换框 configure 的 60% 以上。
         // 复用只需补两处会被外部状态就地改掉的文案（方向 / 图库的「返回」红字），它们都是幂等的
         // 纯文本 setter。签名见 [candidatePanelSignature]，任一项变化都照旧整清重建。
         if (candidatePanelReusable()) {
@@ -4808,7 +4808,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         ))
         // 「图库」键（2026-10-07 图库快贴）：只在宿主声明可接收图片时出现 —— 实测 QQ/TIM/抖音/
         // 邮箱/笔记的输入框声明为空且拒收，露键只会白点；声明逐输入框变化，由 IME 每次会话推送。
-        // 面板打开时这一键变成红色粗体「返回」（与剪贴板键、方向键同一套口径，用户 2026-10-07 指定）：
+        // 面板打开时这一键变成红色粗体「返回」（与剪贴板键、方向键同一套口径，2026-10-07 定）：
         // 面板盖住字母区，退出口必须一眼可见，而且要落在用户刚点过的那一键上。
         if (hostImageCapable) {
             galleryButtonBox = buildFunctionButton(
@@ -4831,7 +4831,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 「翻译」键：只由总开关控制（2026-09-30 定），关掉后这个键不存在。
         // 位置固定在「收起」左侧 —— 顺序恒为 历史/方向/全选/复制/粘贴/[图库]/[翻译]/收起，**「收起」恒为最右端**
-        // （2026-09-30 追加要求，两个键的先后不可颠倒）。
+        // （2026-09-30 追加，两个键的先后不可颠倒）。
         // 本帧只读一次 translate_enabled（与 refreshCandidateBar 的「同键只读一遍」约定一致）。
         if (prefs.translateEnabled) {
             translateButtonBox = buildFunctionButton(
@@ -5015,7 +5015,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 建字母区第 0 位的固定数字行（`1`~`0`）—— **只在 init 建一次**，之后只切显隐 / 落高度。
      *
-     * 为什么用 [PinyinKey] 而不是 TextView：用户要的是「三行字母向上长成四行」—— 圆角、间隙、
+     * 为什么用 [PinyinKey] 而不是 TextView：需求是「三行字母向上长成四行」—— 圆角、间隙、
      * 键高、皮肤、面透明度、按压反馈必须与 qwertyuiop 那一行**逐项同源**。这些参数全部由
      * `PinyinKey` 自绘，换成 TextView 就得把整套外观再抄一遍，两处迟早分叉（这正是重构前
      * 候选栏内嵌数字行「字号 / 行框 / 栏高」互相牵连的成因）。
@@ -5325,7 +5325,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // key_bg 同款（10dp 圆角；原 key_bg_active 同值、已删除），填充色带面 alpha（激活态用强调色）
         key?.background = xmlKeyBackground(useAccent = active)
         // 激活态底色是各皮肤 accent（浅到钛金 #B8C4D6、深到雪原 #3A6EA5）：字色按该色亮度取深/浅，
-        // 与 shift 键一致；否则近白字压浅 accent 仅约 1.5:1，等于看不见（与 D4 同类）
+        // 与 shift 键一致；否则近白字压浅 accent 仅约 1.5:1，等于看不见
         key?.setTextColor(
             if (active) KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
             else skinToken(skin.functionGlyph, R.color.text_primary),
@@ -5460,7 +5460,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否有面板正占着字母区（剪贴板 / 图库任一） */
     fun isPanelActive(): Boolean = clipboardActive || galleryActive
 
-    /** 面板首选高度（px）= 162dp × 2。底排全宽态的历史值，别改（改了底部键盘整排跟着变高） */
+    /** 面板首选高度（px）= 162dp × 2 × density。底排全宽态的历史值，别改（改了底部键盘整排跟着变高） */
     private fun panelPreferredHeightPx(): Int =
         (PANEL_PREFERRED_HEIGHT_DP * 2 * resources.displayMetrics.density).toInt()
 
@@ -5546,12 +5546,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 显示剪贴板面板：候选栏与底部功能行固定不动，面板占用二者之间全部空间。
      *
-     * 布局机制（多轮真机验证结论；旧注释曾与实现完全相反，勿再照抄）：
-     * - 会修改 layoutParams：contentArea 被改成固定高度 162dp×2（约 850px），
+     * 布局机制（真机验证结论）：
+     * - 会修改 layoutParams：contentArea 被改成固定高度 162dp×2（按 density 换算成 px），
      *   面板 MATCH_PARENT 填满它。固定高度让面板不受 IME 窗口初始测量影响（冷启动稳定）。
      * - viewLetters 实际用 GONE 而非 INVISIBLE：contentArea 已是固定高度，
-     *   GONE 不会导致塌缩。（旧注释写的「INVISIBLE + 零 layoutParams 修改」
-     *   与实现相反，已更正。）
+     *   GONE 不会导致塌缩。
      * - layoutParams 类型必须匹配父容器：contentArea 的父是 LinearLayout
      *   （PinyinKeyboardView 根），面板的父 contentArea 是 FrameLayout。用错
      *   FrameLayout.LayoutParams 会 ClassCastException，曾导致键盘收起循环。
@@ -5576,10 +5575,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 不收就是「点了历史没反应」；键盘上「图库」键也会卡在红色「返回」态（L-1024）
             hideGalleryPanel()
 
-            // contentArea 高度 = 字母区 2 倍（用户验证过的 850px 方案）。
+            // contentArea 高度 = 字母区 2 倍（实测验证过的方案）。
             // 关键：contentArea 的父是 LinearLayout（PinyinKeyboardView 根），
-            // 必须用 LinearLayout.LayoutParams，早期用 FrameLayout.LayoutParams
-            // 导致 ClassCastException（键盘收起循环），本次是正确类型。
+            // 必须用 LinearLayout.LayoutParams；用 FrameLayout.LayoutParams
+            // 会 ClassCastException（键盘收起循环）。
             // 固定确定高度：面板不受 IME 窗口初始测量影响（冷启动稳定）。
             // 悬浮态窗口只有 922px（键盘 830）：写死 1134 会被窗口裁掉 506px（实测可视只剩
             // 628）、底排整排移出窗外 ⇒ 高度按窗口实际可用高收（[panelHeightPx]）。
@@ -5687,7 +5686,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             listener = object : GalleryPanelView.Listener {
                 override fun onPick(uri: android.net.Uri) {
                     this@PinyinKeyboardView.listener?.onGalleryImagePicked(uri)
-                    // 「自动返回」开着时点一张就回打字键盘（用户 2026-10-07 指定）：
+                    // 「自动返回」开着时点一张就回打字键盘（2026-10-07 定）：
                     // 插入是 IME 侧的独立流程，不依赖面板是否还在，所以这里立即收起即可
                     if (prefs.galleryAutoReturn) {
                         Diagnostics.i(TAG, "图库面板: 自动返回已开，收起面板")
@@ -5901,7 +5900,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 是否处于顶部搜索模式 */
     fun isSearchActive(): Boolean = isSearchPanelActive()
 
-/**
+    /**
      * 顶部搜索面板是否处于活跃态（MEM-05：面板按需创建，读之前先判存在）。
      *
      * 抽成函数而不是在 [hasActiveOverlay] 的 getter 里写 `?.isActive() == true`：那条 getter
@@ -6103,7 +6102,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 停掉退格连删循环（含双击后的长按清空），**并复位全部触摸态**（退格按下态、字母键按住计数）。
      * 名字只说了退格，是因为这是它最早的职责；改名会造出新的悬空引用（守卫锚点与本册历史原文都按名引用），
-     * 故按第 52 轮判例保留旧名，职责以本段为准（命名债的处置见附录 B 的 `B-259`）。
+     * 故按既有判例保留旧名，职责以本段为准（命名债的处置见附录 B 的 `B-259`）。
      *
      * detach 之外还要一个入口：[JinnIme.onFinishInputView] 收起键盘时只撤了自己那份退格
      * runnable，本视图这份不归它管。窗口隐藏时若平台没派发 ACTION_CANCEL、且 inputView
@@ -6151,7 +6150,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /**
          * 面板首选高度（dp，两倍系数用在调用点）：剪贴板 / 图库面板在**底部全宽态**的固定高。
          *
-         * 用户验证过的 850px 方案（560dpi 下 162dp × 2）；悬浮态窗口比它矮，实际落地高度由
+         * 实测验证过的方案（162dp×2，density 3.5 下 1134px）；悬浮态窗口比它矮，实际落地高度由
          * [FloatingKeyboard.panelHeightPx] 按窗口可用高收窄。
          */
         const val PANEL_PREFERRED_HEIGHT_DP = 162f
@@ -6200,7 +6199,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val TEXT_ONLY_OPENAI_ACTIONS = "AI 动作仅支持 OpenAI 兼容服务方"
 
         /**
-         * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里 ，
+         * 底部功能行的背景几何：与 XML 对齐，改 XML 时必须同步这里，
          * 空格/回车走 `key_bg.xml`（圆角 10dp）；
          * 其余五个走 `btn_aurora_secondary.xml`（12dp 圆角 + 1dp 描边）。
          * 半透明模式下这几个背景要在运行时重建（XML 颜色带不了动态 alpha）。
@@ -6237,7 +6236,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         const val SEMICOLON_KEY = ';'
 
         /**
-         * 展开 / 收起三角的读屏描述（strings.xml 默认禁改 ⇒ 代码下发）。
+         * 展开 / 收起三角的读屏描述（文案在代码里下发）。
          *
          * 不写具体朝向：展开 / 收起是同一键的两态，读屏念固定名字比念会变的 ▲/▾ 更稳定。
          */
@@ -6250,7 +6249,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /**
          * 密码模式下「数字」键改成这个标签（点击即退出，见 [exitPasswordPad]）。
          *
-         * 文案写在代码里：`strings.xml` 默认禁改（与词库页 / 生僻字页 / 模糊音页的 `TEXT_*` 同做法）。
+         * 文案写在代码里（与词库页 / 生僻字页 / 模糊音页的 `TEXT_*` 同做法）。
          */
         const val TEXT_PASSWORD_EXIT = "退出"
 
@@ -6275,7 +6274,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /**
          * 底部逗号 / 句号键的字号（dp）＝同排功能键基础字号 13dp（`keyboard_pinyin.xml` 的
-         * `key_symbol` / `key_digit`）+ 3（用户指定）。
+         * `key_symbol` / `key_digit`）+ 3（2026-09-28 定）。
          *
          * 标点是长句 / 密码里最常用的键，要比同排的「符号 / 数字 / 中英」更醒目。
          * 改这里必须同步 `keyboard_pinyin.xml` 里两个键的 `android:textSize`（13dp）与
@@ -6286,7 +6285,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 }
 
 /**
- * 密码模式数字条的排列（用户 2026-09-28 指定）：**1 放最左、0 放最右、中间 2~9**。
+ * 密码模式数字条的排列（2026-09-28 定）：**1 放最左、0 放最右、中间 2~9**。
  *
  * 不用 `0..9` 的自然序 —— 密码 / 验证码里 1 与 0 是最常点的两个键，放两端更靠近拇指。
  * 顺序是契约：`RecentFixesRegressionTest.密码模式数字条顺序与退出口醒目标记` 直接断言它的取值，
@@ -6302,10 +6301,10 @@ internal val PASSWORD_DIGIT_ORDER = listOf("1", "2", "3", "4", "5", "6", "7", "8
  * 用途：面板里的分类按钮用的是 `key_bg` drawable，带不了动态 alpha，键盘侧的「纯色面」
  * 识别也扫不到它；透明度 > 0 时由面板按当前档重建（见 `ClipboardPanelView.applySurfaceAlpha`）。
  * [cornerDp] 默认值与 `key_bg.xml` 的圆角对齐（改动 XML 时必须同步，与键盘侧的
- * `KEY_BG_CORNER_DP` 是一致）。
+ * `KEY_BG_CORNER_DP` 同值）。
  */
 /**
- * 皮肤覆盖色优先，未定义（null）时回落到 `R.color` 令牌色。键盘视图与面板共用一致，
+ * 皮肤覆盖色优先，未定义（null）时回落到 `R.color` 令牌色。键盘视图与面板共用同一套，
  * 使默认皮肤（全部覆盖为 null）与历史配色逐像素一致。
  */
 internal fun skinColor(context: android.content.Context, override: Int?, tokenRes: Int): Int =
