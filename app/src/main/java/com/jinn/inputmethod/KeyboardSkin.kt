@@ -22,7 +22,7 @@ enum class SkinTone {
  *
  * 约束（改动前先读）：
  *  - **零位图**：皮肤只用色值与渐变参数表达，绘制由 [PinyinKey] 自绘完成 ——
- *    Release APK 约 3.1MiB / 上限 5MiB（口径见 `AGENTS.md`），新增贴图/字体仍会明显增压；
+ *    Release APK 约 3.1MiB / 上限 5MiB，新增贴图/字体仍会明显增压；
  *  - **两套令牌皮肤（[LEGACY_DARK] 原黑 / [LEGACY_LIGHT] 原白）是全空覆盖**：字段为 null 表示
  *    沿用 `R.color.*` 令牌，`KeyTransparency` 0% 时的历史观感必须逐像素保持（[isToken] 与
  *    `KeyboardSkinTest` 守卫这一点）。它们**固定吃自己那一档色板**（见 [tokenPaletteDark]），

@@ -4,13 +4,14 @@ package com.jinn.inputmethod
  * 所有「设置页」共用的页面骨架文案（2026-10-02：样式风格配色要统一、完全一致、
  * 不各自独立，见 `BUG.md` L-477）。
  *
- * 为什么要有这一个文件：同一件事此前在 9 个页面各写一份，而**关闭按钮的键面文字三样都不一样** ——
- * `✕`（`strings.xml` 里那两条 string）/ `"X"`（5 个页面的 `TEXT_CLOSE` 常量）/ `"关闭"`（原文范围页）；
- * 无障碍名也一样参差（「关闭」/「关闭翻译原文范围设置」）。
+ * 为什么要有这一个文件：关闭按钮的键面文字此前各页自写，**三样都不一样** ——
+ * `✕`（`strings.xml` 的 `symbol_order_close`）/ `X`（各页 `TEXT_CLOSE` 常量）/ `关闭`（原文范围页）；
+ * 无障碍名也参差（「关闭」/「关闭翻译原文范围设置」）。现全仓只有本文件一处定义。
  *
- * 视觉规格（尺寸 / 颜色 / 字号）在 `values/styles.xml`（`PageTitle` / `PageDesc` /
- * `PageCloseButton` / `SettingsCard` / `SettingsField` / …）；这里只放**代码侧**必须共享的文案 ——
- * 按 `AGENTS.md` 的约定，界面文案在代码里下发，`values/strings.xml` 默认不改动。
+ * 分工：`values/styles.xml` 管 XML 侧视觉规格（尺寸 / 颜色 / 字号：`PageTitle` / `PageDesc` /
+ * `PageCloseButton` / `SettingsCard` / `SettingsField` / …）；`PageStyle` 管代码生成控件的样式
+ * （卡片 / dp / 间距）；本文件只管代码侧共享文案 —— 按工程约定，界面文案在代码里下发，
+ * `values/strings.xml` 默认不改动。
  *
  * 例外：键盘配色皮肤页（`activity_key_appearance.xml`）保持独立，
  * 它仍走 `strings.xml` 里那条同形字（`symbol_order_close` = `✕`），外观与本值一致。

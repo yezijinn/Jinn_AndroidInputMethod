@@ -3,12 +3,16 @@ package com.jinn.inputmethod
 /**
  * 键面提示的显示规则（纯函数，渲染与单测同一来源）。
  *
- * 「键面提示」= 双拼字母键下方的韵母 / 红色声母小字（见 [PinyinKey.subLabel]）。
+ * 「键面提示」= 双拼字母键下方的韵母 / 红色声母小字（见 [PinyinKey.subLabel] / [PinyinKey.subLabelRed]）。
  * 2026-09-25 把它做成可选开关（[Prefs.showKeyHint]）：
- *  - 开（默认）：保持历史观感 —— 字母小字顶置、下方一行提示；
+ *  - 开（默认）：保持历史观感 —— 字母小字顶置、下方韵母 / 声母提示；
  *  - 关：不画提示，字母按铺满居中绘制（与全拼键面一致），不留空出的提示区。
  *
  * 提示只出现在**中文双拼**的字母层：全拼没有提示，英文态与大写锁定一律不显示。
+ *
+ * 提示文本取 [ShuangpinTable.finalHint]（`\n` 分隔多行韵母），换行由 [PinyinKey] 的
+ * setter 拆成行；行数上限 ≤2 行也在 finalHint 处保证，绘制不截断。无障碍朗读 [keyDescription]
+ * 复用同一份拆分结果，与键面所见一致。
  */
 internal object KeyHint {
 

@@ -90,7 +90,7 @@ class SymbolOrderActivity : Activity() {
         /** 禁用态下行文字的降透明度（该分组已从符号面板移出） */
         const val DISABLED_ALPHA = 0.4f
 
-        // 页面文案在代码里下发（AGENTS.md：`values/strings.xml` 默认不改动）—— 与其余页面一致。
+        // 页面文案在代码里下发（`values/strings.xml` 不承载界面文案）—— 与其余页面一致。
         // 这两页（本页与收藏符号页）此前是唯一把说明 / 按钮文案也留在 strings.xml 的
         // （2026-10-02 统一，见 B-152）。
         // ⚠ 标题**不在**这里：`symbol_order_title` 同时是 `AndroidManifest` 里本 activity 的

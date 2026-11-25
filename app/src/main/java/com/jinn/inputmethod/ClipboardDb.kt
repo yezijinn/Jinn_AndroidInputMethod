@@ -1644,7 +1644,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             }
         }
         writeError?.let { Diagnostics.w(TAG, "导入分块写入失败，本块 ${prepared.size} 条整块回滚: $it") }
-        // 回滚也失败时同样落到这里：不能静默吞（AGENTS.md 错误处理约定）
+        // 回滚也失败时同样落到这里：不能静默吞（工程约定：错误不得静默吞）
         commitError?.let { Diagnostics.w(TAG, "导入分块提交失败: $it") }
         return if (committed) ids else null
     }

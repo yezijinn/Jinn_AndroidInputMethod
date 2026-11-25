@@ -110,7 +110,7 @@ class ClipboardController(context: Context) {
         // stop() 两个标记都不碰：running 只由本线程在 finally 里放开，started 只在失败时归还。
         if (!ReclassifyGuard.running.compareAndSet(false, true)) return
         Thread {
-            // 启动期任务必须显式降优先级（AGENTS.md 的约定：「不与词库加载抢 CPU」）：
+            // 启动期任务必须显式降优先级（工程约定：「不与词库加载抢 CPU」）：
             // 这趟迁移是秒级任务（全库解密 + 逐页 UPDATE），跑在 onCreate 路径上、与词库加载同时发生，
             // 不降级就会在用户等键盘弹出、准备打字的时刻抢 CPU（BUG.md L-103）。
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
