@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * 翻译凭据的加密落盘：Android Keystore + AES-256-GCM（与 [ClipboardCrypto] 同构，**独立密钥别名**）。
  *
- * 为什么独立别名：凭据与剪贴板的密钥轮换 / 失效必须互不影响 —— 清一次剪贴板密钥不能连带把翻译凭据弄丢。
+ * 为什么独立别名：密钥的轮换 / 失效按别名发生；凭据与剪贴板、台账各用一把，清一处不能连带弄丢别处。
  *
  * **防的是什么**（威胁模型，2026-09-30 加固）：
  *  · 明文 `SharedPreferences` 在「设备文件被取走 / 取证工具 / 工程模式 / 未 root 的文件浏览」下
@@ -135,7 +135,7 @@ object CredentialCrypto {
      * 只回 `String?` 时两者长得一样，调用方只能按同一种处置 —— 而它们的正确处置相反：
      * 永久失败等价「未配置」且可以缓存；暂时失败（锁屏时 Keystore 让密钥暂不可用）
      * 一定要允许下次重试，否则「一次锁屏 = 本进程内凭据永久未配置」，
-     * 用户解锁后打开凭据页看到 9 个 Key 全空、以为凭据丢了（AI2 A-672 / 台账 L-1462）。
+     * 用户解锁后打开凭据页看到 9 个 Key 全空、以为凭据丢了（台账 L-1462）。
      */
     sealed interface DecryptOutcome {
         class Ok(val plain: String) : DecryptOutcome

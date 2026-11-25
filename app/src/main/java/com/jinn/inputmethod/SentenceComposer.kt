@@ -137,7 +137,7 @@ internal object SentenceComposer {
         }
 
         // ends / seen 按位置复用：每个起点各建一个 ArrayList + BooleanArray 会每键多两次分配。
-        // `seen[end] == i` 即「本轮 walk 已访问」（i 单调递增，不必清零）。
+        // `seen[end] == i` 即「这次遍历已访问」（i 单调递增，不必清零）。
         val ends = IntArray(n + 1)
         val seen = IntArray(n + 1) { -1 }
 

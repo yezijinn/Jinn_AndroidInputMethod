@@ -16,7 +16,7 @@ import org.json.JSONArray
  *
  * 序列化容错：`null`（从未编辑过）→ 出厂预置 [DEFAULT_ITEMS]；**整份**读不出来（含非空数组里
  * 一页都不成数组）→ 回退预置；**单页**坏掉只丢该页，其余原样保留（BUG.md L-1167）；
- * `"[]"`（用户删光）→ 空组，删光是用户的明确意愿，不回退预置。
+ * 「[]」（用户删光）→ 空组，删光是用户的明确意愿，不回退预置。
  *
  * [parse] 的输出恒为规范结构（每页 ≤ [PER_PAGE]、非末页满页、无重复、无空页、无空白/超长项）：
  * 数据可能来自旧版本或被外部改写，不归一就会出现「编辑页看得到、键盘上看不到」
@@ -44,7 +44,7 @@ object FavoriteSymbols {
 
     /**
      * 持久化串 → 页结构（恒为规范结构，见类注释）；[raw] 为 null（从未编辑）或损坏 → 出厂预置；
-     * `"[]"` → 空组。
+     * 「[]」→ 空组。
      */
     fun parse(raw: String?): List<List<String>> {
         if (raw == null) return listOf(DEFAULT_ITEMS)
@@ -127,18 +127,11 @@ object FavoriteSymbols {
     }
 
     /**
-     * 符号清洗（写入 / 追加 / 解析**同一口径**，BUG-36）。
+     * 原始持久化串里的条目数（归一前，含会被 [parse] 滤掉的空串 / 超长项）。
      *
-     * 不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、BOM U+FEFF 在 26 键的键面上
-     * **看不见**，却占着一个格子：用户看到「空槽键」，按下去没反应，而且删不掉（他找不到那个
-     * 字符）。粘贴文本、导入备份、手工改 prefs 三条路都可能带进来。
-     *
-     * 因此按 Unicode 类别清：`\p{C}`（控制 / 格式 / 代理 / 私用 / 未分配）+ `\p{Z}`（分隔符，含上面
-     * 两个空格）。Kotlin 无参扩展 trim 的目标集是 `Char.isWhitespace`（Cc∪Zs∪Zl∪Zp），已完全落在
-     * 清洗集内，清完不会残留可裁的首尾空白，故不再调用它（Java 的 String 版只裁 ≤0x20，语义不同）。
-     * 没有要清的字符时原样返回，不建 StringBuilder —— 搜索每行都会调它一次。
+     * 导入侧用「归一前后条目数差」记被静默滤掉的符号数，计入忽略数（L-1168）。
+     * null 按出厂预置的条数计；JSON 读不出按 0。
      */
-    /** 原始持久化串里的条目数（含会被 [parse] 滤掉的空串 / 超长项）；读不出按 0。 */
     fun countItems(raw: String?): Int = runCatching {
         if (raw == null) return DEFAULT_ITEMS.size
         val arr = JSONArray(raw)
@@ -150,6 +143,18 @@ object FavoriteSymbols {
         n
     }.getOrDefault(0)
 
+    /**
+     * 符号清洗（写入 / 追加 / 解析**同一口径**，BUG-36）。
+     *
+     * 不换行空格 U+00A0、表意空格 U+3000、零宽空格 U+200B、BOM U+FEFF 在 26 键的键面上
+     * **看不见**，却占着一个格子：用户看到「空槽键」，按下去没反应，而且删不掉（他找不到那个
+     * 字符）。粘贴文本、导入备份、手工改 prefs 三条路都可能带进来。
+     *
+     * 因此按 Unicode 类别清：`\p{C}`（控制 / 格式 / 代理 / 私用 / 未分配）+ `\p{Z}`（分隔符，含上面
+     * 两个空格）。Kotlin 无参扩展 trim 的目标集是 `Char.isWhitespace`（Cc∪Zs∪Zl∪Zp），已完全落在
+     * 清洗集内，清完不会残留可裁的首尾空白，故不再调用它（Java 的 String 版只裁 ≤0x20，语义不同）。
+     * 没有要清的字符时原样返回，不建 StringBuilder —— 搜索每行都会调它一次。
+     */
     fun clean(text: String): String {
         if (!hasCleanable(text)) return text
         val sb = StringBuilder(text.length)
