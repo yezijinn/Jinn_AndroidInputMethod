@@ -258,7 +258,7 @@ class TranslationSettingsActivity : Activity() {
      *
      * ⚠ 必须含 [View.isAccessibilityFocused]（2026-10-03 修复 L-758）：读屏与外接键盘选下拉**不产生触摸事件**
      *   ⇒ 少了这一位，TalkBack 双击选中的服务方 / 目标语言会被判成「不是用户动的」而**不落盘**，
-     *   而界面早已切到对应区块，用户以为生效了。同一项目 `OpenAiSettingsActivity` 早就这么写。
+     *   而界面早已切到对应区块，用户以为生效了。姊妹页 `OpenAiSettingsActivity` 现走 [UserAwareSpinner]。
      */
     private fun isUserDriven(view: View): Boolean =
         view.isFocused || view.isPressed || view.isAccessibilityFocused
@@ -322,8 +322,8 @@ class TranslationSettingsActivity : Activity() {
     /** 焦点移出输入框时自动暂存 */
     private fun bindCredentialFields() {
         // 失焦是高频触发点（9 个输入框），弹 toast 会变成十几次，而 textSaveHint 的常驻提示
-        // 已经说清一切 ⇒ 自动路径一律 notify = false（2026-10-03 修复 L-728：上一轮只改了
-        // 显式保存那条，自动路径漏了，代码与自己写的注释相互矛盾）
+        // 已经说清一切 ⇒ 自动路径一律 notify = false（L-728：显式保存那条曾漏改，
+        // 与这里的注释自相矛盾）
         val save = View.OnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) saveCredentials(notify = false)
         }
@@ -444,8 +444,8 @@ class TranslationSettingsActivity : Activity() {
      *   （2026-10-03 修复 L-717）：它自己会按三态出文案（未落盘 / 回读不符 / 已保存），
      *   两处都弹会互相打脸 —— Toast 队列后者覆盖前者，用户最终只看到信息量最少的那句
      *   「保存未完成，请重试」，而本可执行的「解锁后重试」被吃掉。
-     *   ⚠ **没有默认参数**（2026-10-03 修复 L-814）：三个调用点（onPause / 失焦 / 显式保存）全都
-     *   传 `false`，留默认值等于凭空造一条「不传就是弹 toast」的路径 —— 那条路径不存在。
+     *   ⚠ **没有默认参数**（2026-10-03 修复 L-814）：四个调用点（onPause / 失焦 / 输入停顿 / 显式保存）
+     *   全都传 `false`，留默认值等于凭空造一条「不传就是弹 toast」的路径 —— 那条路径不存在。
      */
     /**
      * 回写一个字段（BUG.md L-970）。
@@ -555,8 +555,8 @@ class TranslationSettingsActivity : Activity() {
             // 凭据不完整也要说清（2026-10-03 修复 L-515）：写盘没失败，但同一屏上不能一边
             // 「已保存到本机」一边「未配置：还没填凭据」—— 用户会以为保存没生效而反复粘贴。
             // ⚠ 判据取**本页选中的那家**（2026-10-03 修复 L-546）：全局 getter 在键未写入时会逐家
-            // 推导，已配好 DeepL 的用户来编辑「阿里云」时会被判成"已配置"，收不到这条提示 ——
-            // 而这条提示描述的是"你刚编辑的那家"，就该用选中的那家判。
+            // 推导，已配好 DeepL 的用户来编辑「阿里云」时会被判成「已配置」，收不到这条提示 ——
+            // 而这条提示描述的是「你刚编辑的那家」，就该用选中的那家判。
             pickedProvider != null && prefs.translationProvider(pickedProvider) == null -> TEXT_SAVE_INCOMPLETE
             else -> TEXT_SAVED
         }

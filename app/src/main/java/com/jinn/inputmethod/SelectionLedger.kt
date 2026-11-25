@@ -28,6 +28,8 @@ import javax.crypto.SecretKey
  * 之所以不整文件加密：只增流水整表重写会违背「记录不影响性能」；行级 AEAD 仍是 O(1) 追加。
  * 旧版明文文件在首次读写时就地迁移（[migrateIfNeeded]），数据一条不丢。
  *
+ * 隐私边界：台账与密钥件不进系统备份 / 设备迁移 / `.jinn` 配置包 / 诊断包，卸载即随应用数据清除。
+ *
  * 记录范围由调用方收口（[PinyinKeyboardView.learnChoice] 与追加候选中转）：
  * 只有 26 键候选真正上屏才算；粘贴、语音、翻译、图库、符号都不经过那条链。
  */
@@ -53,7 +55,7 @@ object SelectionLedger {
     private var target: File? = null
 
     /**
-     * 「未绑定就丢行」是否已经报过一次（AI2 A-545）。
+     * 「未绑定就丢行」是否已经报过一次。
      *
      * 只报第一次：`record` 在选词热路径上，未绑定的成因（init 没跑到）不会自愈，
      * 每行一条 W 只会把诊断包里真正有用的记录挤掉。
@@ -64,7 +66,7 @@ object SelectionLedger {
     private val queue = ConcurrentLinkedQueue<String>()
 
     /**
-     * 上一轮落盘是否成功（N4）：[flush] 的返回值必须同时看「队列空了」与它。
+     * 本次落盘是否成功（N4）：[flush] 的返回值必须同时看「队列空了」与它。
      *
      * `writeLines` 的失败原先只在写线程里打一条 W，而 `flush()` 排在同一个 executor 后面，
      * 只能知道「队列空了」⇒ 密钥不可用 / 磁盘满时界面照报「已追加 N 条」。
@@ -76,7 +78,7 @@ object SelectionLedger {
         Thread(r, "jinn-selection-ledger").apply { isDaemon = true }
     }
 
-    /** 是否记录（默认关；由用户在说明弹框里手输 OK 打开） */
+    /** 是否记录（默认关；由用户在说明弹框里手输确认词「我明白」打开） */
     @Volatile
     private var enabled = false
 
@@ -86,7 +88,7 @@ object SelectionLedger {
      * 早先靠「`target !== file`」判换绑，而 [init] 每次都新建同路径的 File —— 重新绑定会被
      * 误判成换绑，直接把整队选择清掉。改用递增代际，只有真正删除才作废在途写入。
      *
-     * 用 [java.util.concurrent.atomic.AtomicInteger] 而不是 `@Volatile Int`（AI2 A-601）：
+     * 用 [java.util.concurrent.atomic.AtomicInteger] 而不是 `@Volatile Int`：
      * `++` / `--` 是读-改-写三步，只保证可见性不保证原子性 —— 若将来有人在后台线程调
      * [deleteFile]，两趟可能都读到 5 都写 6，或删除失败的回滚把另一趟的递增抵掉，代际守卫
      * （[drainTo] / [appendAll] 的 `gen != generation`）随之失效。
@@ -159,7 +161,7 @@ object SelectionLedger {
         val line = formatLine(word, pinyin) ?: return
         val file = target
         if (file == null) {
-            // 不能静默丢（AI2 A-545，本项目「绝不静默吞异常」）：未绑定只可能是 init 没跑到
+            // 不能静默丢（本项目「绝不静默吞异常」）：未绑定只可能是 init 没跑到
             // （引擎加载失败 / 引擎就绪前就选词），而界面照样显示「已开启」⇒ 用户「记了但词库是空的」
             // 时日志里必须有一条。**限一次**：本方法在选词热路径上，每按一次刷一条 W 会把诊断包刷满。
             if (unboundReported.compareAndSet(false, true)) {
@@ -214,7 +216,7 @@ object SelectionLedger {
      *   ⚠ 边界：队列是进程级内存，**进程随后被杀**则那几行随进程消失（`onDestroy` 之后没有「下一次」）。
      *   正常路径一次追加几十微秒，300ms 覆盖得住；只有队列里压着上万行批量导入才会超时。
      *   销毁路径传 `JinnIme.FLUSH_ON_DESTROY_MS`（300ms）—— 那条路径阻塞的是主线程（BUG.md L-1451）。
-     * @return 队列已空**且**这一轮写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
+     * @return 队列已空**且**本次写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
      *
      * 判据必须含 [lastWriteOk]：只看「队列空了」的话，[writeLines] 返回 false（密钥不可用 /
      * 磁盘满）照样算写空 ⇒ 导入路径会把「0 条入库」报成「已追加 N 条」（N4）。
@@ -240,7 +242,7 @@ object SelectionLedger {
     }
 
     /**
-     * [flush] 的判据（纯函数，便于单测）：队列排空**且**这一轮没有写失败。
+     * [flush] 的判据（纯函数，便于单测）：队列排空**且**本次没有写失败。
      *
      * 只判「队列空了」正是 N4 的根因 —— 密钥不可用 / 磁盘满时 `writeLines` 返回 false，
      * 队列照样是空的，界面于是报「已追加 N 条」而实际 0 条入库。
@@ -597,7 +599,7 @@ object SelectionLedger {
         TXT("纯词表", "txt", "text/plain"),
     }
 
-    /** flush 的等待上限（毫秒）：宁可丢最后几行，也不让主线程卡在批量写盘上 */
+    /** flush 的等待上限（毫秒）：超时只缩短本进程等待，队列留待下次，不让主线程久等 */
     private const val FLUSH_TIMEOUT_MS = 2_000L
 
     /** 单次导入上限：防手滑选到巨型文件把内存与文件一起撑爆 */
@@ -625,7 +627,7 @@ object SelectionLedger {
      * 读整份流水（文件不存在返回空表）；解析口径与 [parse] 一致。
      *
      * 密钥不可用时返回 [LedgerRead.Unavailable] 并留痕：**不能**把「解不开」当成「没有数据」
-     * 写进统计，但也绝不回退明文读（明文只是旧版遗留的一种形态，迁移那一刻起就不该再被读）。
+     * 写进统计；密钥就绪但迁移未完成（磁盘满 / 无权限）时文件仍是旧明文，按明文读以保数据可见。
      */
     fun readAll(context: Context): LedgerRead = readAllIn(context.filesDir)
 

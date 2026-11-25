@@ -64,7 +64,10 @@ internal object CustomDicts {
     /** 词条数上限：个人补充足够用，也保证索引构建是秒级 */
     const val MAX_ENTRIES = 50_000
 
-    /** 单键词数上限：`PhraseIndex.build` 对同键词表有 64KB 硬闸，超了整包拒收 */
+    /**
+     * 单键词数上限：`PhraseIndex.build` 对同键词表有 64KB 硬闸（词表按 `|` 拼接后计字节）；
+     * 超了索引构建抛错、整包回退并入。
+     */
     const val MAX_WORDS_PER_KEY = 100
 
     /** 单个词的长度上限（字符）：防超长行混进来 */
@@ -73,7 +76,8 @@ internal object CustomDicts {
     /**
      * 单个键的长度上限（字符）：与 `PhraseIndex.build` 的 `require(kb.size <= 255)` 同源 ——
      * 键全是 `[a-z]`（见 [KEY_SHAPE]）⇒ 字符数 == UTF-8 字节数，直接比字符即可。
-     * 超限的键会让索引构建抛错、整包转「回退并入」并被记账为加载失败（BUG.md L-828）。
+     * 超限的键会让索引构建抛错、整包回退为运行时并入（词仍可用，但无索引，也不计入「加载失败」），
+     * 因此写入侧提前拦下（BUG.md L-828）。
      */
     const val MAX_KEY_CHARS = 255
 
@@ -113,7 +117,7 @@ internal object CustomDicts {
 
     /**
      * 逐行解析的累积器：[parseHuman] 与 [scanAndWriteSource] 共用同一套判定 —— 两边各写一份规则就会漂
-     * （词库的解析口径被改过多次，重复实现是上一批缺陷的共同根因）。
+     * （词库的解析口径多次调整，重复实现是历史缺陷的共同根因）。
      *
      * 截断后 [feed] 直接返回：与旧实现的 `break` 同语义（后面的行不再计入跳过数）。
      */
@@ -167,7 +171,7 @@ internal object CustomDicts {
     /**
      * 行切分：TAB 优先（工具格式）；没有 TAB 时按「**词 + 空格 + 拼音**」解析。
      *
-     * 手机上打不出 TAB（2026-10-05 用户实测）：用户会写 `黄霄雲 huang xiao yun`（单空格），
+     * 手机上打不出 TAB：用户会写 `黄霄雲 huang xiao yun`（单空格），
      * 而旧口径要求「两个以上空格」才分列 ⇒ 同样的输入整行被跳过、只提示「没有可保存的合法词条」。
      * 现在从**行尾往前**剥离连续拼音段，剩下的一段才是词 —— 单空格、双空格、TAB 三种写法归一。
      *
@@ -209,21 +213,8 @@ internal object CustomDicts {
     }
 
     /**
-     * 把用户写的文本整理成**标准格式**（导入 / 保存成功后写回源文本）。
-     *
-     * 规则：能解析出词条的行统一成「词 空格 拼音」（拼音小写、`ü`→`v`、剥声调数字、音节单空格），
-     * 于是「几个空格 / 全角空格 / NBSP / TAB / 混合写法」在保存后都收敛成同一形态；注释、空行、
-     * 解析不出词条的行、以及带**第三列**的行都**原样保留** —— 写过的内容一行都不丢，下次打开还能看见并修正。
-     *
-     * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
-     * 与 [parseHuman] 不会各写一套规则）。
-     *
-     * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanAndWriteSource] 的逐行形态，
-     * 不为全文再留一份副本（BUG.md L-858 / L-862）。
-     */
-    /**
-     * 逐行格式化并交给 [emitLine] / [emitNewline]：行间分隔与「原文以换行结尾时补回末尾换行」
-     * 只写在这一处 —— 整份副本、扫描判闸、流式落盘三条路共用同一份规则。
+     * 逐行格式化并交给两个 emit 回调：行间分隔与「原文以换行结尾时补回末尾换行」
+     * 只写在这一处 —— [formatHuman] 的整份副本与 [scanAndWriteSource] 的逐行落盘共用同一份规则。
      */
     private inline fun forEachFormattedLine(
         text: String,
@@ -245,19 +236,25 @@ internal object CustomDicts {
         if (text.endsWith("\n") && !(lines > 1 && lastEmpty)) emitNewline()
     }
 
+    /**
+     * 把用户写的文本整理成**标准格式**（导入 / 保存成功后写回源文本）。
+     *
+     * 规则：能解析出词条的行统一成「词 空格 拼音」（拼音小写、`ü`→`v`、剥声调数字、音节单空格），
+     * 于是「几个空格 / 全角空格 / NBSP / TAB / 混合写法」在保存后都收敛成同一形态；注释、空行、
+     * 解析不出词条的行、以及带**第三列**的行都**原样保留** —— 写过的内容一行都不丢，下次打开还能看见并修正。
+     *
+     * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
+     * 与 [parseHuman] 不会各写一套规则）。
+     *
+     * 返回的是整份副本，适合小输入与单测；保存 / 导入路径走 [scanAndWriteSource] 的逐行形态，
+     * 不为全文再留一份副本（BUG.md L-858 / L-862）。
+     */
     fun formatHuman(text: String, syllables: Set<String>? = null): String {
         val sb = StringBuilder()
         forEachFormattedLine(text, syllables, { sb.append('\n') }) { sb.append(it) }
         return sb.toString()
     }
 
-    /**
-     * 保存路径的第一遍：逐行格式化 + 解析，只累计**格式化后**的总长与词条，不构造整份副本。
-     *
-     * 与 `parseHuman(formatHuman(text))` 的解析结果与长度判定逐项一致（单测对拍），内存峰值却从
-     * 「原文 + 整份格式化文本」降到「原文 + 单行」—— 入口保护放宽到 2× 上限后，那一份副本会让
-     * 16M 字符的输入峰值逼近 64MB（BUG.md L-858 / L-862）。
-     */
     /**
      * 保存路径的唯一一遍：逐行格式化，边统计（格式化后的字数 / 词条 / 截断）边写源文本临时件。
      *
@@ -266,7 +263,7 @@ internal object CustomDicts {
      * （1057 万字符的输入在一遍格式化上是百毫秒量级）。
      *
      * 写盘失败的兜底也在这里：删掉半截临时件，**另扫一遍**（不写盘）保证闸位判定照样完整，
-     * 返回 null 让调用侧按 WRITE_FAIL_SOURCE 上报（判闸先于写盘结果）。
+     * 返回的 [Pass1] 里 stagedSource 为 null；调用侧过闸后按 WRITE_FAIL_SOURCE 上报（判闸先于写盘结果）。
      */
     internal fun scanAndWriteSource(dir: File, text: String, syllables: Set<String>?): Pass1 {
         val collector = LineCollector(syllables)
@@ -367,7 +364,7 @@ internal object CustomDicts {
     /** 打包字节（xz） */
     fun encodePack(entries: List<Entry>): ByteArray = encodePackLines(toRawPackLines(entries).lines)
 
-    /** 打包字节（xz）—— 已有行形态；[saveHuman] 路径用它避免重复算同键分组 */
+    /** 打包字节（xz）—— 已有行形态时用，避免重复算同键分组（[encodePack] 走这里） */
     fun encodePackLines(lines: List<String>): ByteArray {
         val out = ByteArrayOutputStream()
         XZOutputStream(out, LZMA2Options()).use { xz ->
@@ -561,7 +558,7 @@ internal object CustomDicts {
      * 源文本原子落盘（`*.tmp` → rename，与 [writePack] 同一套）。
      *
      * [dir] 即包所在目录（`filesDir/dicts`）；抽成 File 参数让纯 JVM 单测能直接验
-     * 原子性与读写回环，不必依赖 Context（`writePack` 因要 Context 而测不到的那一层在这里补上）。
+     * 原子性与读写回环，不必依赖 Context。
      */
     fun writeSource(dir: File, text: String): File? {
         // 与 [readSource] / [readCapped] 同一口径（**字符**数）：写进去的必须能读回来。
@@ -595,6 +592,10 @@ internal object CustomDicts {
         }.getOrNull()
     }
 
+    /**
+     * 词库文件名身份判据：配置备份的白名单与恢复导入共用（[ConfigBackupManager.isBackuppableDict]），
+     * 导出收得到，导入才认得出。
+     */
     fun isPackName(fileName: String): Boolean = fileName == PACK_NAME
 
     fun isSourceName(fileName: String): Boolean = fileName == SOURCE_NAME
@@ -640,7 +641,7 @@ internal object CustomDicts {
      * 写盘互斥（**进程级**，BUG.md L-859）。
      *
      * 两处 UI 的防连点（编辑页 `saving` / 词库页 `importingCustom`）都是**实例级私有**的 ——
-     * 换页面 / 换实例就挡不住（导入 8MB 期间重进词库页再导入、保存中点关闭再回来点导入），
+     * 换页面 / 换实例就挡不住（导入 8M 字符期间重进词库页再导入、保存中点关闭再回来点导入），
      * 而两条路写的是**同一个固定临时名**（`custom_user.txt.xz.tmp` / `custom_user.src.txt.tmp`）：
      * 两个 `FileOutputStream` 指向同一 inode（默认截断模式），交错写会把包或源文本写坏 ——
      * 源文本是「唯一真相」，写坏等于用户写的词条丢失。
@@ -772,7 +773,7 @@ internal object CustomDicts {
         }
     }.getOrNull()?.takeIf { it.size > 100 }
 
-    /** 音节表资产的读取上限（字符）：421 行的表用不到千分之一，只为挡住「资产被整份替换」 */
+    /** 音节表资产的读取上限（字符）：421 行约 1.8 千字符，余量充足，只为挡住「资产被整份替换」 */
     private const val SYLLABLES_MAX_CHARS = 1 shl 20
 
     private const val TAG = "CustomDicts"
