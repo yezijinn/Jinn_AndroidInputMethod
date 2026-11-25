@@ -5,20 +5,22 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * 剪贴板统一的后台 IO 调度器，所有 IO 跑在单个后台线程，主线程不阻塞。
+ * 剪贴板统一的后台 IO 调度器：交互短活与秒级长活分在两条独立队列，主线程不阻塞。
  *
- * - 串行执行数据库查询 / AES-GCM 解密 / 剪贴板保存等任务，省去零散
- *   `Thread{}.start()` 的调度与内存开销，也避免多线程并发写库
+ * - 每条队列各自单线程 FIFO：短活串行执行查询 / AES-GCM 解密 / 剪贴板保存，
+ *   省去零散 `Thread{}.start()` 的调度与内存开销；长活另开一条线程（见 [longExec]）
+ * - 短活用默认优先级（交互要快），长活降后台优先级（不与前台输入抢 CPU）
  * - 主线程只负责提交任务，结果在回调里更新 UI 快照
- * - 任务抛出的异常一律记录：静默吞掉会让「剪贴板没保存」「搜索没结果」
+ * - 任务抛出的异常一律记录（[wrapped]）：静默吞掉会让「剪贴板没保存」「搜索没结果」
  *   这类问题在日志里完全不留痕迹，事后无从查起
  *
- * 单线程串行，某个任务卡住会拖住后面所有 IO。
+ * 两个池各自串行：一个任务卡住只拖住所在队列。长任务别投短活池（契约 C-1，见 [runLong]）。
  */
 object BackgroundIo {
 
     private const val TAG = "BackgroundIo"
 
+    /** 交互短活池：单线程 FIFO、默认优先级、守护线程；只投毫秒级活，长活走 [longExec]。 */
     private val exec: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "jinn-clipboard-io").apply { isDaemon = true }
     }
@@ -47,7 +49,7 @@ object BackgroundIo {
         }, "jinn-long-io").apply { isDaemon = true }
     }
 
-    /** 提交一个后台任务（交互短活，默认优先级）；调度器关闭/拒绝时不抛异常，但要留痕（[rejected]） */
+    /** 交互短活入口：投默认优先级的短活池，只收毫秒级任务（长活走 [runLong]）。调度器关闭/拒绝时不抛异常，但要留痕（[rejected]）。 */
     fun run(task: () -> Unit) {
         try {
             exec.execute(wrapped(task))
@@ -123,7 +125,10 @@ object BackgroundIo {
         ).apply { isDaemon = true }.start()
     }
 
-    /** 统一的异常兜底：任务抛出的异常一律记录（静默吞掉会让问题在日志里查无实据） */
+    /**
+     * 统一的异常兜底：只记一条 E 级日志，不外抛，也不落到未捕获处理器。
+     * 静默吞掉会让问题在日志里查无实据，故异常一律记录（[Diagnostics]）。
+     */
     private fun wrapped(task: () -> Unit): () -> Unit = {
         runCatching(task).onFailure {
             Diagnostics.e(TAG, "后台任务异常: ${it.javaClass.simpleName} ${it.message}", it)

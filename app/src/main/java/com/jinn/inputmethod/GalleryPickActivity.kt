@@ -8,14 +8,18 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 
 /**
- * 图库快贴的选图中转页（无界面，选完即退）。
+ * 图库快贴的选图中转页（全仓唯一无布局 Activity，单选，选完即退）。
  *
  * 存在的理由：系统 Photo Picker / SAF 只能由 Activity 启动，而输入法（Service）
- * 拿不到 Activity 结果回调。于是本页负责「选图 → 复制进私有 cache → 交给
- * [GalleryInsert] 桥」，IME 回到前台（`onStartInputView`）后再落 `commitContent`。
+ * 拿不到 Activity 结果回调。于是本页负责「单选一张 → 复制进私有 cache → 交给
+ * [GalleryInsert] 桥」（[GalleryInsert.EXTRA_HOST_KEY] 随 Intent 带入发起输入框标识），
+ * 选完即 `finish`；IME 在新起输入会话（`onStartInputView`）里取桥并 `commitContent`。
  *
- * 发起输入框的标识经 [GalleryInsert.EXTRA_HOST_KEY] 带入并随桥保存：选图期间前台可能被切换
- * （同一个应用换个会话也是另一个输入框），回来时由 IME 核对，避免把图插进别的输入框。
+ * 本页无布局、不绘制任何像素（清单里用 `Theme.Translucent.NoTitleBar`，白名单点名于
+ * `DocsReferenceTest`）；用户看到的系统选择器由 `PickVisualMedia` 拉起，本页只是结果中转。
+ *
+ * 发起输入框的标识随桥保存：选图期间前台可能被切换（同一个应用换个会话也是另一个输入框），
+ * 回来时由 IME 核对，避免把图插进别的输入框。
  *
  * 零存储权限：`PickVisualMedia` 在 Android 13+ 走系统相册选择器（Photo Picker），
  * 低版本自动退回 SAF，全程不需要任何存储权限，与项目「不申请存储权限」的约定一致。
@@ -49,7 +53,7 @@ class GalleryPickActivity : ComponentActivity() {
             val hostKey = intent?.getStringExtra(GalleryInsert.EXTRA_HOST_KEY)
             // 复制原图可能几十 MB，放后台；完成后关页回原应用，IME 在下一个输入会话里插入。
             // 走长活池（契约 C-1）：整份拷贝是秒级活，投进交互短活队列会把剪贴板保存与面板首屏
-            // 一起推后（用户此刻在选图页感知不到，但回到输入框立刻能感知）。
+            // 一起推后（用户此刻在系统选择器里感知不到，但回到输入框立刻能感知）。
             // 标记「复制在飞」：重建分支据此决定该不该收尾（BUG.md L-1381）。写在回调所在实例，
             // 读在重建后新实例的 onCreate，故用 @Volatile 置于伴生对象（进程级）。
             copyInFlight = true

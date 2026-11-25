@@ -1,10 +1,14 @@
 package com.jinn.inputmethod
 
-/** 连接状态，用来驱动键盘顶部的状态条 */
+/**
+ * 连接状态，用来驱动键盘顶部的状态条。
+ * IDLE 未建连 / CONNECTING 建连中 / ONLINE 可用 / OFFLINE 失败。
+ * 批量后端只校验配置即置 ONLINE，真连通性推迟到 endTask 才知。
+ */
 enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
 
 /**
- * 语音识别客户端的统一对外面。
+ * 语音识别客户端的统一对外接口。
  *
  * 一次听写固定是 [beginTask] → 若干 [sendChunk] → [endTask]（取消走 [cancelTask]）；
  * [RecognitionMessage.text] 恒为**整段累积文本**，调用方整体覆盖显示，不要自己再拼。
@@ -26,7 +30,8 @@ enum class LinkState { IDLE, CONNECTING, ONLINE, OFFLINE }
  * 选哪个由 [Prefs.voiceBackend] 决定（见 `SpeechClients.create`）；调用方只认本接口，
  * 各家的状态条 / 录音 / 结果落字链路共用一套。
  *
- * 回调在 OkHttp 的 IO 线程触发，接收方需自行切回主线程。
+ * 回调线程依实现而异：流式后端在 OkHttp 的 IO 线程触发，批量后端已 post 回主线程；
+ * 接收方 [JinnIme] 一律 ui.post 切主线程，其他接收方需自行归位。
  */
 interface SpeechClient {
 
@@ -44,10 +49,13 @@ interface SpeechClient {
     /** 送入一段麦克风音频：float32 小端 / 16kHz / 单声道（[MicRecorder] 的原始输出）。 */
     fun sendChunk(pcmFloat32LittleEndian: ByteArray)
 
-    /** 正常收尾。@return 收尾包是否真的送出（false = 拿不到最终结果，调用方不要挂等待态） */
+    /** 正常收尾。@return 收尾是否成功送出或提交（false = 拿不到最终结果，调用方不要挂等待态） */
     fun endTask(): Boolean
 
-    /** 取消：照样收尾以释放服务端资源，但结果丢弃。@return 同 [endTask] */
+    /**
+     * 取消当前听写：丢弃结果（按 taskId 比对，晚到回包一律不落字）。
+     * 流式后端照样发收尾包释放服务端资源；批量后端取消在飞请求。@return 同 [endTask]
+     */
     fun cancelTask(): Boolean
 
     /** 主动关闭连接（幂等）。 */
