@@ -21,12 +21,14 @@ import android.view.ViewGroup
  * 「谁持有、谁释放、谁刷新」全部重新回答一遍，而答案本来就是唯一的那一个。
  * 生命周期由 [JinnIme] 单点管理（`onCreate` 挂载 / `onDestroy` 释放）。
  *
- * 三条设计底线（2026-10-05 二次审查结论）：
+ * 三条设计底线：
  *  1. **不碰录音**：本类不读也不改任何录音状态；[JinnIme] 只把「非麦克风键」接进来。
  *  2. **系统优先**：用户意愿（[Prefs]）与系统闸门（静音 / 触摸提示音 / 触摸时振动）是 AND ——
  *     任一为关都不出声、不震动。系统闸门在 [refreshSystemGates] 缓存，按键路径**零 IPC**。
  *  3. **不申请音频焦点**：走 `USAGE_ASSISTANCE_SONIFICATION`，只占用系统音效音量，
  *     不打断正在播放的音乐、也不会影响录音的音频焦点。
+ *
+ * 线程契约：全部字段只由主线程读写（按键回调与 `ui.post`），无锁、无 volatile。
  */
 internal object KeyFeedback {
 
@@ -73,9 +75,9 @@ internal object KeyFeedback {
     /**
      * 响铃模式是否普通档（缓存值）。
      *
-     * 与上面两道闸门放在同一处缓存：[fire] 原本每次都读 `AudioManager.ringerMode`，而
-     * `getRingerMode()` 是到音频服务的跨进程调用 —— 连打时每次按键一次 IPC，与「按键路径零 IPC」
-     * 的承诺不符。用户改响铃模式必然先离开键盘界面，随 [refreshSystemGates] 一起刷新足够新鲜。
+     * 与上面两道闸门放在同一处缓存：`getRingerMode()` 是到音频服务的跨进程调用，若每次按键都读，
+     * 连打时便是一次按键一次 IPC，与「按键路径零 IPC」的承诺不符。
+     * 刷新由三处覆盖：挂载、每次弹键盘（经 `ui.post` 移出首帧）、响铃模式变化广播。
      */
     private var ringerNormal = true
 
@@ -169,8 +171,8 @@ internal object KeyFeedback {
     /**
      * 发声的三道闸门是否全开：用户开关 + 系统「触摸提示音」+ 响铃模式放行。
      *
-     * 设置页试听复用这一条 —— 试听与真实按键必须同一套判据。此前试听一条闸门都不过，
-     * 于是「关了音效仍能听见试听声」，用户据此会判断音效是开着的。
+     * 设置页试听复用这一条 —— 试听与真实按键必须同一套判据，
+     * 否则试听声会误导用户对开关状态的判断。
      */
     fun soundGatesOpen(): Boolean = soundEnabled && systemSoundAllowed && ringerAllows()
 
@@ -182,7 +184,8 @@ internal object KeyFeedback {
     private fun buildPool(): SoundPool =
         SoundPool.Builder()
             .setMaxStreams(MAX_STREAMS)
-            // 不用 STREAM_MUSIC：按键音属于「系统音效」，音量与静音策略都应与系统一致
+            // 不用 STREAM_MUSIC：按键音属于「系统音效」，音量与静音策略都应与系统一致。
+            // 无音频设备时不做专门探测：建池与 load 照常走，出不了声即静默降级，不阻断键盘。
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -197,6 +200,7 @@ internal object KeyFeedback {
      * 为什么用 `openFd`：`SoundPool` 需要未压缩的 asset 才能拿到偏移量，而 aapt 默认把
      * `.ogg` 列入不压缩名单（build.gradle.kts 另有一条显式 `noCompress += "ogg"` 兜底）。
      * 原生侧会 `dup()` 这个 fd，所以 `load` 之后立刻关闭 AssetFileDescriptor 是安全的。
+     * 加载是异步的：返回正数句柄只代表入队成功，样本此刻未必已解码完。
      */
     private fun loadSounds(context: Context): Int {
         val pool = soundPool ?: return 0

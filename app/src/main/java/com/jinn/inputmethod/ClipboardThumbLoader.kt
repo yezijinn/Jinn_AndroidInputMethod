@@ -26,10 +26,10 @@ internal object ClipboardThumbLoader {
 
     private const val THUMB_THREADS = 3
 
-    /** 解码失败的负结果存活时长（BUG.md L-1237）：坏图在这段时间内不再反复排队解码 */
+    /** 加载失败的负结果存活时长（BUG.md L-1237）：读不出/解不开的图在窗口内不再反复排队 */
     private const val FAIL_TTL_MS = 10_000L
 
-    /** 解码失败的负缓存（键 → 失败时刻）：快速滚动 / 视图复用会把同一张坏图反复请求 */
+    /** 加载失败的负缓存（键 → 失败时刻）：滚动复用会让读不出的图被反复请求；读取/解密/解码三路共用 */
     private val failedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private const val THUMB_CACHE_BYTES = 12 * 1024 * 1024
 
@@ -147,7 +147,7 @@ internal object ClipboardThumbLoader {
      * （按实例清会误伤另一处正在用的屏，见 L-1262），LRU 只在装不下时按字节上限自己淘汰
      * ⇒ 浏览过剪贴板图片后最多 12MB（低档机 6MB）解码位图长期驻留在常驻的 IME 进程里。
      *
-     * 现在有**两个**入口，判据同一份（[shouldReleaseForTrim]）：① `JinnIme` 的两个内存回调；
+     * 现在有**两类**入口，判据同一份（[shouldReleaseForTrim]）：① `JinnIme` 的两个内存回调；
      * ② 本对象挂在 Application 上的进程级 ComponentCallbacks2（服务不在时也照样让位）。
      *
      * 清缓存不改正确性：缓存是纯派生数据，下一次 [load] 必然 miss 并重新解密解码；
