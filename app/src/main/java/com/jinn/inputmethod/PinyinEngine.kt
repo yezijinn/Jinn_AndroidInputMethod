@@ -47,9 +47,9 @@ object PinyinEngine {
     private val EMPTY_WORDS = emptyArray<String>()
 
     /**
-     * 常用字表 asset 名（《通用规范汉字表》一级+二级，6500 字）。
+     * 常用字表 asset 名（《通用规范汉字表》一级+二级，资产收录 5,613 字）。
      *
-     * 4 个纯文本资产统一存 `.xz`：APK 内 deflate 后合计 63.8KB → xz 42.8KB（省约 21KB）。
+     * 字表与映射类资产统一存 `.xz`（其中四张表实测：deflate 63.8KB → xz 42.8KB，省约 21KB）。
      * 体积是硬约束（5MB 上限），这笔省下来的是余量。
      */
     private const val COMMON_CHARS_ASSET = "common_chars.txt.xz"
@@ -253,7 +253,7 @@ object PinyinEngine {
     val isFullyLoaded: Boolean get() = fullLoaded
 
     /**
-     * 是否正有一次加载在进行（两段式全程或索引补试）。
+     * 是否正有一次加载在进行（完整加载或索引补试）。
      *
      * 供 IME 侧的补试闸门使用：冷启动那 6~10.7s 里用户可能反复弹键盘，把「正在加载」
      * 也当成失败去补试会白耗重试次数（上限 3 次），真正失败时反而没有补试机会。
@@ -279,7 +279,7 @@ object PinyinEngine {
     /**
      * 以下容器必须是并发安全的。
      *
-     * 可选词库由后台线程延迟加载（[loadOptionalAsync]，基础包就绪 5 秒后开始），
+     * 可选词库由后台线程延迟加载（[loadOptionalAsync]，由 IME 按空闲信号触发），
      * 而此刻用户通常正在打字，主线程在 [query] 等路径上并发读取同一批容器。
      * 用普通 HashMap 时，并发写入触发的扩容可能让桶链表成环（读方死循环、IME 卡死），
      * 或抛 ConcurrentModificationException。
@@ -315,9 +315,9 @@ object PinyinEngine {
     /**
      * 合并结果小缓存：键 → 「运行时 ∪ 基础索引 ∪ 可选索引」去重后的词表（空数组表示确实没有）。
      *
-     * 超限清空（与 `completionCache` 同一套防膨胀写法）。
+     * 超限时只淘汰一小撮（见 [trimMergedCache]），不整表清空。
      *
-     * 必须是并发容器：读取方是主线程（查询/补全/预测），而失效点在 [finalizeLoad] ，
+     * 必须是并发容器：读取方是主线程（查询 / 补全 / 预测），而失效点在 [finalizeLoad]，
      * 词库加载线程（基础索引、可选包索引）都会走到那里 `clear()`。
      * 裸 HashMap 在「主线程 get 的同时后台 clear」下会出现丢更新、错值甚至桶链表成环卡死，
      * 与项目里 `charsBySyllable` 当初的坑完全同类（见其 KDoc）。
@@ -337,7 +337,7 @@ object PinyinEngine {
      *
      * 顺带推进 [dataGeneration]：查询线程可能正在用旧数据算某个键的结果，算完再回写就会把
      * 变更前的旧结果粘死在缓存里，失效点已经过去，之后没有任何东西会再清它
-     * （只有缓存超 4096 条整体清空或进程重启才能自愈）。[phrasesFor] 靠世代号识别并放弃回写。
+     * （超限只淘汰一小撮、不整表清空 ⇒ 这类旧值可能一直留到进程重启）。[phrasesFor] 靠世代号识别并放弃回写。
      */
     private fun invalidateMergedCache() {
         dataGeneration++
@@ -355,7 +355,7 @@ object PinyinEngine {
      * - 智能预测
      * 基础词库改为二进制索引后不再建全量反向索引（省约 50MB），改由查询路径顺手记录：
      * 候选本来就是从某个键查出来的，记下来即可，语义还更准（记录的是真正产出该候选的键）。
-     * 上限 4096 条，超出即清空（预测/消费只关心最近一次查询）。
+     * 上限 [RECENT_QUERY_KEYS_MAX]（256）条，超出即清空（预测 / 消费只关心最近一次查询）。
      * 语义边界：只对「最近查询里展示过的候选」有效，而真实交互中预测与消费计算
      * 永远发生在用户刚选中的那个候选上，因此与实际需求一致（旧全量索引只是能力过剩）。
      */
@@ -384,7 +384,7 @@ object PinyinEngine {
      * 必须整体替换引用的不可变快照，不能就地 `clear()` + 逐个 `add()`。
      *
      * 写方是加载线程（`load()` 与 `loadOptionalAsync()` 都会走 [finalizeLoad]），
-     * 而 `loaded = true` 在第一段加载后就已发布，用户此时正在打字，读方
+     * 而 `loaded = true` 在单字表 / 音节表就绪后就已发布，用户此时正在打字，读方
      * [isTruePrefixOfSyllable] 在打字热路径上（分词 / 伪完整音节判定 / 补全召回）
      * 读这个集合，且读路径不加锁。就地清空重建会让读方在窗口期内看到「已清空但还没
      * 填回」的中间态：判据返回 false → 分词改走贪心分支、补全召回整段跳过 →
@@ -394,13 +394,13 @@ object PinyinEngine {
     private var syllablePrefixes: Set<String> = emptySet()
 
     /**
-     * 默认档单字位图（《通用规范汉字表》一级+二级，6500 字；按 Char 码点直接索引，判定 O(1)）。
+     * 默认档单字位图（《通用规范汉字表》一级+二级，资产收录 5,613 字；按 Char 码点直接索引，判定 O(1)）。
      *
      * null 表示位图未就绪（assets 缺失 / 测试未注入）：此时不过滤、一律放行 —— 过滤只是
      * 「省内存 + 精简候选」的优化，不能因为读不到表就让用户打不出字。
      *
      * 用位图而不是 HashSet：词库加载要判定 123 万词条 / 450 万字符，
-     * 位图是纯数组下标访问，比哈希查找快得多；65536 位的 BooleanArray 约 64KB，
+     * 位图是纯数组下标访问，比哈希查找快得多；40960 项的 BooleanArray 约占 40KB，
      * 相比它省下的内存可以忽略。
      *
      * 必须 @Volatile：加载线程在 `load()` 里写它，主线程在 [phrasesFor] 里读它。
@@ -445,7 +445,7 @@ object PinyinEngine {
     /**
      * 简繁映射（简体码点 → 繁体字；[SIMP_TRAD_ASSET]，2,714 对）。
      *
-     * 用 CharArray 下标直查（65536 项，未映射为 `'\u0000'`）：转换在候选出口逐字符做，
+     * 用 CharArray 下标直查（40960 项，未映射为 `'\u0000'`）：转换在候选出口逐字符做，
      * 走 HashMap 会让每次查询多上万次装箱查找。
      */
     @Volatile
@@ -553,7 +553,7 @@ object PinyinEngine {
         }
     }
 
-    /** [load] 的实现（完整两段式，或只补第二段）。全程持本对象锁，幂等。 */
+    /** [load] 的实现（完整加载，或只补索引段）。全程持本对象锁，幂等。 */
     private fun doLoad(context: Context) {
         synchronized(this) {
             if (loaded && fullLoaded) return
@@ -570,7 +570,7 @@ object PinyinEngine {
             logMemory("词库加载前")
             val t0 = System.currentTimeMillis()
             val prefs = Prefs(context)
-            // 三张档位字表 + 简繁映射一次建档。档 2 / 档 3 默认关、按开关在查询期放行
+            // 三张档位字表 + 简繁映射 + 混合序一次建档。档 2 / 档 3 默认关、按开关在查询期放行
             // （[isLoadableChar] / [filterRareChars]），因此位图整份加载 —— 但「被过滤的词条
             // 从未进过 HashMap」这条仍然成立：过滤点没变，只是判据从「表外」换成了「档位未开」。
             loadCharTiers(context)
@@ -845,7 +845,7 @@ object PinyinEngine {
     /**
      * 打开文本资产（`.xz`），关闭 reader 会级联关掉解压流与 asset 流。
      *
-     * 4 个纯文本资产的统一入口：字典大小在压缩时按输入规模给（1MB），解压端按流头分配，
+     * 所有文本资产的统一入口：字典大小在压缩时按输入规模给（1MB），解压端按流头分配，
      * 不会因为小文件也吃大资产那档的 8MB。
      *
      * 顺带剥掉开头的 BOM：资产用带 BOM 的编辑器重生成时，首行会多出一个 `Cf` 类字符
@@ -860,7 +860,11 @@ object PinyinEngine {
         return reader
     }
 
-    /** 读取三张档位字表与简繁映射 asset（全部建档；放行与否由开关决定，见 [setRareTiers]） */
+    /**
+     * 读取三张档位字表、简繁映射（字级 / 词级 / 简化）与单音节混合序。
+     *
+     * 全部建档；放行与否由开关决定（见 [setRareTiers]）。
+     */
     private fun loadCharTiers(context: Context) {
         openAssetText(context, COMMON_CHARS_ASSET).use { setCommonCharsText(it.readText()) }
         openAssetText(context, TIER2_CHARS_ASSET).use { setTier2CharsText(it.readText()) }
@@ -899,7 +903,7 @@ object PinyinEngine {
 
     /**
      * 统计这批词里有多少条会被**字表闸**丢下（判据与候选出口同一句，见 [isLoadableWord]）。
-     * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05 用户要求），
+     * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05 定），
      * 所以这个数通常为 0，只有用户写了档外单字（例如单独一行 `雲 yun`）时才会出现。
      *
      * 位图未就绪（引擎尚未加载）时返回 0：此时谈不上过滤，不误报。
@@ -1001,7 +1005,7 @@ object PinyinEngine {
     }
 
     /**
-     * 简繁映射文本（`简体<TAB>繁体`，`#` 注释行）→ 65536 项 CharArray。
+     * 简繁映射文本（`简体<TAB>繁体`，`#` 注释行）→ 40960 项 CharArray。
      *
      * 与位图同一取舍：查表在候选出口的热路径上，数组下标比哈希便宜得多。
      *
@@ -1222,7 +1226,7 @@ object PinyinEngine {
     /**
      * 整词是否允许进候选。
      *
-     * **词组（两个字及以上）一律放行**：字表闸只管**单字**（2026-10-05 用户要求）——
+     * **词组（两个字及以上）一律放行**：字表闸只管**单字**（2026-10-05 定）——
      * 用户自己写的词条（如「黄霄雲」里的繁体「雲」）不该因为某个字不在档内就整条消失，
      * 否则自定义词库等于白写；能不能显示由系统字体决定，不由拼音库替用户拦。
      * 单字仍按 [isLoadableChar] 的档位规则放行（设置页档 2 / 档 3 开关继续只影响单字）。
@@ -1238,10 +1242,10 @@ object PinyinEngine {
     /**
      * 延迟加载可选词库包（分类词库页下载的那些）。
      *
-     * 与基础包分开加载：可选包可达 97 万词条、单独加载耗时十几秒。
+     * 与基础包分开加载：可选包可达 114 万词条、单独加载 21~34s。
      * 若在 `onCreate` 里与基础包一起加载，「开机后首次使用输入法」时
-     * 候选就绪时间会从 6 秒被拖到 25 秒。改为基础包就绪后调用本方法，
-     * 用户此时已能正常打字，可选包在后台悄悄补齐。
+     * 候选就绪时间会从数秒拖到半分钟以上。改为基础包就绪后调用本方法，
+     * 用户此时已能正常打字，可选包在后台补齐。
      *
      * @param delayMs 基础包就绪后再等多久开始加载，给首屏输入让路
      * @param onReady 全部可选包加载完成后的回调（不在主线程，调用方自行切线程）
@@ -1601,7 +1605,7 @@ object PinyinEngine {
      * 判定「源包已被删除」的索引缓存文件名（纯函数，便于单测）。
      *
      * 基础索引缓存 `base.<APK mtime>.idx` 必须排除在外：它的"源"是 APK 内的资产，不在词库包列表里，
-     * 一旦被这里当成失效缓存删掉，就会每次可选包加载都删一次基础缓存 ，
+     * 一旦被这里当成失效缓存删掉，就会每次可选包加载都删一次基础缓存，
      * 症状是"内存映射永远命中不了、每次冷启动都要重新解压 1.8s"，而且日志上只看到一行
      * 「清理失效索引缓存」，极难联想到根因（2026-09-17 真机日志实锤）。
      */
@@ -2112,12 +2116,12 @@ object PinyinEngine {
             candidatePinyin[w] = key
             // 真实键只在模糊音分支登记（见 candidateTruePinyin）。这里必须一并清掉残留：
             // 否则用户关掉模糊音、改用另一个精确拼法打到同一个词时，预测仍按上一次的变体键扫延续词
-            // （模糊分支在其后写入，顺序天然正确：先清、再登记本轮的变体键）
+            // （模糊分支在其后写入，顺序天然正确：先清、再登记本次查询的变体键）
             if (clearTrueKey) candidateTruePinyin.remove(w)
         }
     }
 
-        /**
+    /**
      * 测试注入用：按行文本加载短语表（与 [loadPhrasesReader] 逻辑完全一致）。
      *
      * @param merge true 走并入语义，用于验证扩展包/可选包与基础包合并时的
@@ -2165,7 +2169,7 @@ object PinyinEngine {
      *
      * 候选按「音节数逐级递减」组织（对齐 AOSP PinyinIME prepare_candidates）：
      *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后**首音节**单字。
-     *  单字只取首音节（用户 2026-11-22）：输入 nihao → 2 字词「你好」+ 首音节单字「你/尼/泥」，
+     *  单字只取首音节（2026-11-22 定）：输入 nihao → 2 字词「你好」+ 首音节单字「你/尼/泥」，
      *  不含第二音节单字「好/号/毫」。要打后半字时先选「你」→ 残码 hao 重匹配后才出 hao 单字。
      *  输入 nihaoma → 3 字「你好吗」+ 2 字「你好」+ 首音节单字「你」。
      *
@@ -2211,7 +2215,7 @@ object PinyinEngine {
         // 前缀键增量拼装（MEM-19）：从最长前缀起**逐级削掉尾部**得到下一级，不再每级
         // `take(k).joinToString("")`（那要新建一个 StringBuilder + 迭代器 + 中间串，累计 O(n²) 次 append）。
         // 缓冲区是**局部量**、不跨查询复用：`PinyinEngine` 是 object，类级可变容器会被 JVM 用例的
-        // 连续查询串起状态（分析回执的订正第 2 条）。
+        // 连续查询串起状态。
         val keyBuf = StringBuilder(raw.length)
         for (s in syllables) keyBuf.append(s)
         // 按最坏规模预分配：8 音节 × 每音节 60 字 = 480。不预分配的话集合会在
@@ -2255,7 +2259,7 @@ object PinyinEngine {
             }
         }
         val chars = LinkedHashSet<String>(cap)
-        // 多音节只出**首音节**单字（用户 2026-11-22）：输入 nihao 先给 2 字词「你好/拟好」，
+        // 多音节只出**首音节**单字（2026-11-22 定）：输入 nihao 先给 2 字词「你好/拟好」，
         // 再给首音节单字「你/泥/拟」；第二音节单字（好/号/豪）一个都不出。
         // 用户要继续打后半字时，先选「你」→ 残码 hao 触发重匹配，那时才出 hao 单字
         // （此前 nihao 与 ni 的候选整体丢弃）。逐音节全量装配会一次性甩出所有单字，
@@ -2319,7 +2323,7 @@ object PinyinEngine {
         // 这里只是让表外的键与它们同口径。词频学习仍在后面重排 ⇒ 学过的变体词照样能回到组首。
         val sinkFuzzyWords = syllables.size == 1
         if (!sinkFuzzyWords) words.addAll(fuzzyWords)
-        // 3b. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
+        // 2c. 词图整句候选（librime ScriptTranslator/Poet 的做法）：
         // 每个可达位置枚举音节跨度取词，逐词罚分后取 top-k 路径。
         // 短输入落在词候选之后、单字之前：不抢短词，又不必滑过几百条单字才够得着；
         // ≥4 音节时整句才是主路径，提到精确词之前（长输入本来就没有 word 能覆盖全串）。
@@ -2440,7 +2444,7 @@ object PinyinEngine {
         }
 
         // 用户词频学习：把「用户实际选过」的词稳定提到前面 —— 但**只在音节数相同的候选之间**：
-        // 跨音节数提升会把学过的单字（你）压到整词（你好）前面（用户 2026-10-18 报告）。
+        // 跨音节数提升会把学过的单字（你）压到整词（你好）前面（2026-10-18 出现过）。
         // 繁体模式下候选是繁体、词频表按简体存储（[rememberChoice] 同口径），因此按简体形式打分、
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
         // （`tradSimp ?: return word`），不按开关选重载 —— 那种分支正是「改一处忘另一处」的温床。
@@ -2584,7 +2588,7 @@ object PinyinEngine {
      * 收集阶段的候选上限（过滤前）。
      *
      * 生僻字过滤发生在收集之后（出口统一 `filterRareChars`）：若收集时就卡在
-     * [MAX_PREDICTIONS]，一旦前几个后缀全被过滤，剩余名额无法由后续候选补上 ，
+     * [MAX_PREDICTIONS]，一旦前几个后缀全被过滤，剩余名额无法由后续候选补上，
      * 预测会无故变少甚至为空。放宽到 2 倍给过滤留出回填空间；
      * 未启用过滤（显示生僻字）时只是多收集 ≤6 个后缀再被 take(MAX) 裁掉，开销可忽略。
      */
@@ -2628,7 +2632,7 @@ object PinyinEngine {
                     idx.collectLongerSuffixes(wordsFrom, wordsTo, wordBytes, out)
                     if (out.size > before) {
                         // 后缀词的读音 = 本区间键去掉已选词的键前缀（hunandaxue − hunan = daxue）。
-                        // 不登记的话，追加候选进台账时没有读音（用户 2026-10-18 报告）。
+                        // 不登记的话，追加候选进台账时没有读音（2026-10-18 出现过）。
                         val key = idx.keyAt(keyIndex)
                         if (key != null && key.startsWith(lastPinyin)) {
                             // 必须先转显示形再登记：繁体模式下 pred 是繁体，登记简体同样查不到（BUG.md L-42 同型）
@@ -2725,8 +2729,8 @@ object PinyinEngine {
     /**
      * 将拼音串切分为合法音节序列，最后一个音节可能不完整。
      *
-     * 先尝试「词库约束分词」：枚举所有合法切分路径，优先选择能拼出词库短语的切分
-     * （如 xuni → [xu, ni] 拼「虚拟」，而非贪心的 [xun, i]）。
+     * 先尝试「词库约束分词」：整串是词库键时，在合法切分里取音节数最少的一种
+     * （如 xuni → [xu, ni] 拼「虚拟」；贪心会先吃 xun，把 i 留成残码）。
      * 无词库命中时退回贪心最长匹配（原逻辑）。
      */
     /**
@@ -2760,17 +2764,13 @@ object PinyinEngine {
      * 词库约束分词：整串必须是词库键时，在合法切分里取音节数最少的那种；否则返回 null
      * （调用方退回贪心切分）。
      *
-     * 说清它实际在做什么：
-     *  - 打分里的 `key = path.joinToString("")`，而 path 是输入的一种划分，join 后恒等于输入本身，
-     *    所以 `hit` 对所有路径都一样，分数只差 `-path.size`；末尾 `phrasesFor(整串) != null` 的门禁
-     *    也是所有路径共有 ⇒ 实际只比音节数（先枚举者胜；DFS 按最长音节优先，多数情况下
-     *    第一条完整路径即最优）。
-     *  - 因此它不是「按词库短语数打分」的分词，也不要按那个思路去改：
-     *    实测把打分改成「Σ 各前缀命中数」会退化（每个音节边界都加分 → 切得越碎分越高），
+     * 判据只有音节数，不是「按词库短语数打分」：
+     *  - `path.joinToString("")` 恒等于输入本身 ⇒ `hit` 对所有路径相同，分数只差 `-path.size`；
+     *    `phrasesFor(整串) != null` 的门禁也是所有路径共有（DFS 按最长音节优先，
+     *    多数情况下第一条完整路径即最优）。
+     *  - 不要改成「Σ 各前缀命中数」：每个音节边界都加分 ⇒ 切得越碎分越高，
      *    真实词库下会切出 `tianqi → ti-a-n-qi`、`beijingdaxue → bei-ji-ng-da-xue` 这类坏结果。
      *    详见 `docs/设计-其他/从librime可吸收的设计.md` 第二节。
-     *  - 原 KDoc 举的例子 `xuni → [xu, ni]` 本身不成立：`xun-i` 里的 `i` 不是合法音节，
-     *    实测 `xuni` 只有一种合法切分（[xu, ni]）。
      *
      * @param input 必须全部由合法音节组成（否则部分无法切分，返回 null）
      */
@@ -3201,7 +3201,7 @@ object PinyinEngine {
 }
 
 /**
- * 双拼双拼方案。
+ * 双拼方案。
  *
  * 键位数据见 [SHUANGPIN_TABLES]（由 `tools/dict_builder/gen_shuangpin_tables.py` 从
  * `docs/rime-ice/double_pinyin*.schema.yaml` 的 `speller/algebra` 生成），本枚举只负责
@@ -3271,7 +3271,7 @@ enum class ShuangpinScheme(
  *  - 非法组合只丢这一键、继续转换后面的键（容错，不抛异常，也不会让查询串停在坏码处）；
  *  - 输出全部为 ASCII：撮口呼 ü 写作 u（jqxy 后）或 v（l/n 后），与词库键一致。
  *
- * 本类完全自包含（不依赖词库与 Android 资源），可脱离设备单测。
+ * 本对象完全自包含（不依赖词库与 Android 资源），可脱离设备单测。
  */
 object Shuangpin {
 
@@ -3312,7 +3312,7 @@ object Shuangpin {
     /**
      * 候选栏「声韵显示」用的全拼：与 [toQuanpin] 同一张表、同一套两键分组，但**绝不丢键**。
      *
-     * 候选栏要求「每按一键都看得到变化」（2026-09-18 的「按键没反应」报告就是显示串被吞掉），
+     * 候选栏要求「每按一键都看得到变化」（2026-09-18 的「按键没反应」现象就是显示串被吞掉），
      * 所以对残余按键逐个展开 —— 声母键给声母、其余原样保留（含分号键），保证追加按键时显示串一定变化。
      * 字母输入下与 [toQuanpin] 逐字节一致（两边都是「坏码只丢一键、游标继续」）；
      * 只有非字母键不同：[toQuanpin] 丢弃（查询里无意义），这里保留（用户要看到响应）。
