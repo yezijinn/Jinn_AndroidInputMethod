@@ -4,12 +4,16 @@ package com.jinn.inputmethod
  * OpenAI 兼容后端的地址策略（纯函数，JVM 单测直接跑）。
  *
  * 规则只有一条主线：**默认只允许 `https://`**；`http://` 仅当主机是回环或私网
- * （`127.0.0.1` / `localhost` / `::1` / `10.*` / `192.168.*` / `172.16-31.*` / `*.local`）时放行。
+ * （`127.*` / `localhost` / `::1` / `10.*` / `192.168.*` / `172.16-31.*` / `*.local`）时放行。
  *
  * 理由与自建 CapsWriter 的 `ws://<局域网>` 同一条：明文协议只在本机回环或自家局域网里才不会被
  * 中间人读到，而这条链路上传的是**整段录音**和（HTTP 头里的）API Key。公网明文一律拒绝，
- * 并且**拒绝原因要能直接显示给用户**（落到 `edit_oai_base.error` 或状态条），
+ * 并且**拒绝原因要能直接显示给用户**（保存到 `edit_oai_base.error`，运行时落到状态条），
  * 让用户知道该改成 `https://`，而不是「保存不了」。
+ *
+ * 共用口径：本对象只服务语音转写（[OpenAiAsrClient] 与 Azure 语音的 normalize 直接复用），
+ * [AliEndpoint] 复用 [isLocalHost]；翻译侧走 [OpenAiTranslator] 的 joinUrl + endpointReady，
+ * 只认 https，与本对象判据无关，别把两处的拒绝原因混为一谈。
  */
 internal object OpenAiEndpoint {
 
@@ -38,7 +42,10 @@ internal object OpenAiEndpoint {
      * 归一 base：去首尾空白、scheme 转小写、去掉尾部 `/`，路径部分原样保留
      * （用户可能填 `https://api.groq.com/openai/v1`）。
      *
-     * @return 归一后的 base（**不含** [PATH]）；失败时 `exceptionOrNull().message` 就是给用户看的那句话
+     * 返回归一后的地址（含路径，不含 [PATH]）：尾部斜杠已剥掉，[transcriptionsUrl] 直接拼
+     * [PATH] 就不会出现双斜杠。失败时 `exceptionOrNull().message` 就是给用户看的那句话
+     * （[TEXT_EMPTY] / [TEXT_BLANK] / [TEXT_NO_SCHEME] / [TEXT_BAD_CHARS] / [TEXT_NO_HOST] /
+     * [TEXT_PUBLIC_HTTP]）。
      */
     fun normalize(base: String): Result<String> {
         val raw = base.trim()
@@ -50,7 +57,7 @@ internal object OpenAiEndpoint {
         val rest = raw.substring(if (https) HTTPS_PREFIX.length else HTTP_PREFIX.length)
         // `?` / `#` 拼上固定路径后语义会变（`?x=1` + `/audio/transcriptions` 变成查询值的一部分），一律拒。
         if (rest.any { it == '?' || it == '#' }) return failed(TEXT_BAD_CHARS)
-        // `@` 只拒 **authority 里的**那个：它是 `user:pass@host` 的分隔符，会随 [endpoint] 一起进日志
+        // `@` 只拒 **authority 里的**那个：它是 `user:pass@host` 的分隔符，会随归一后的地址一起进日志
         // （凭据只许留在 Authorization 头里），而且各家解析器对 `evil.com\@127.0.0.1` 这种混杂写的
         // 取值不一致（地址策略会被绕开）。路径里的 `@` 不带凭据、也不参与 [hostOf] 取主机，
         // 而 Cloudflare / 部分网关的路径本身就含 `@cf/` —— 一并拒掉只会给出一句误导的提示
@@ -65,7 +72,7 @@ internal object OpenAiEndpoint {
         return Result.success((if (https) HTTPS_PREFIX else HTTP_PREFIX) + rest.trimEnd('/'))
     }
 
-    /** 归一后的 base + [PATH]；调用方应先用 [normalize] 校验过 */
+    /** 归一后的地址 + [PATH]；调用方应先用 [normalize] 校验过（直接拼，不补斜杠） */
     fun transcriptionsUrl(normalizedBase: String): String = normalizedBase + PATH
 
     /** 主机是否回环 / 私网 / mDNS（入参可带 `[]` 与端口，`[::1]:8080` 也算） */

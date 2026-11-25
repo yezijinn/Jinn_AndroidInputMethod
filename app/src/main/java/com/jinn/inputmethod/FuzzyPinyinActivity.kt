@@ -13,7 +13,7 @@ import android.widget.TextView
  *
  * 每组一行勾选框（清单见 [FuzzyPinyin.GROUPS]），**勾选即落盘并即时生效**
  * （[Prefs.fuzzyPinyinMask] + [PinyinEngine.setFuzzyMask]）——不设「保存」按钮，与符号排序页
- * 「改动即落盘」一致。规则、上限与顺序契约全在 [FuzzyPinyin] 与 [PinyinEngine.query]，本页只负责展示与写盘。
+ * 「即时落盘」一致。规则、上限与顺序契约全在 [FuzzyPinyin] 与 [PinyinEngine.query]，本页只负责展示与写盘。
  */
 class FuzzyPinyinActivity : Activity() {
 
@@ -38,7 +38,7 @@ class FuzzyPinyinActivity : Activity() {
         findViewById<TextView>(R.id.text_fuzzy_title).text = TEXT_TITLE
         findViewById<TextView>(R.id.text_fuzzy_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_fuzzy_close).apply {
-            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 `X` / `关闭`，见 BUG.md L-477）
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写「X」/「关闭」，见 BUG.md L-477）
             text = PageChrome.CLOSE
             contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
