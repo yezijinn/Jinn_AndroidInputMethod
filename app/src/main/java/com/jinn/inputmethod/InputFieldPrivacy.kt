@@ -10,7 +10,7 @@ import android.view.inputmethod.EditorInfo
  * 存成长期明文，还会让它在之后任何输入框里被优先推荐出来。
  *
  * 规则：
- *  - `TYPE_NULL`（值为 0，不是"未知"）→ 敏感：宿主明确表示这里没有文本输入语义
+ *  - `TYPE_NULL`（值为 0，不是「未知」）→ 敏感：宿主明确表示这里没有文本输入语义
  *  - 文本/数字类的密码变体（PASSWORD / VISIBLE_PASSWORD / WEB_PASSWORD / 数字密码）→ 敏感
  *  - 带 `TYPE_TEXT_FLAG_NO_SUGGESTIONS` → 敏感（宿主要求不要联想、不要学习）
  *  - `imeOptions` 带 `IME_FLAG_NO_PERSONALIZED_LEARNING` → 敏感（宿主声明「不要个性化学习」
@@ -29,7 +29,7 @@ object InputFieldPrivacy {
      * @param inputType [EditorInfo.inputType]；取不到 EditorInfo 时传 null。
      * @param imeOptions [EditorInfo.imeOptions]；取不到 EditorInfo 时传 0（0 表示没有声明）。
      *
-     * 不能用 0 表示"未知"，[EditorInfo.TYPE_NULL] 的值就是 0，
+     * 不能用 0 表示「未知」，[EditorInfo.TYPE_NULL] 的值就是 0，
      * 拿 0 当缺省会把空值误判成 TYPE_NULL，必须区分可空与真实取值。
      */
     fun suppressLearning(inputType: Int?, imeOptions: Int = 0): Boolean {
@@ -51,9 +51,11 @@ object InputFieldPrivacy {
      * 被误拦的代价只是「这个词没记住」；翻译是用户**主动点击**发起的动作，本身已经是明确同意
      * 把这段文本发出去，只应拦真正的口令框。
      *
-     * 宿主为「不要联想 / 不要个性化学习 / 本框无文本语义」声明的那几个标志在浏览器里是常规做法
+     * 宿主为「不要联想 / 本框无文本语义」声明的那几个标志在浏览器里是常规做法
      * （Chrome 内核的搜索框就带着，且 WebView 输入框常报 `TYPE_NULL`）—— 拿它们拦翻译会让整类
-     * 宿主不可用。2026-10-01 真机实测：Via 浏览器搜索框点翻译只有一行拒绝日志，用户侧完全没反应。
+     * 宿主不可用：Via 浏览器搜索框点翻译只有一行拒绝日志，用户侧完全没反应。
+     * 「不要个性化学习」则相反，是明确的隐私声明：银行 / 密码管理器类 App 拿不到 password
+     * 变体时靠它表达「这里别记」，此时照拦，与 [suppressLearning] 的这一支一致。
      */
     fun blocksTranslation(inputType: Int?, imeOptions: Int = 0): Boolean {
         // 宿主显式声明「不要个性化学习」时照拦 —— 密码管理器与银行类 App 拿不到 password 变体时
@@ -62,7 +64,7 @@ object InputFieldPrivacy {
         if (isPasswordField(inputType)) return true
         // 其余一律放行。真机实测（2026-10-01，Via 浏览器搜索框）：
         //   inputType=0x80001   = TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        //   imeOptions=0x8000002 = IME_ACTION_GO | IME_FLAG_NO_FULLSCREEN，没有 NO_PERSONALIZED_LEARNING
+        //   imeOptions=0x8000002 = IME_ACTION_GO | IME_FLAG_NAVIGATE_NEXT，没有 NO_PERSONALIZED_LEARNING
         //   fieldId=0xffffffff
         // 即浏览器只靠 `NO_SUGGESTIONS` 命中旧判据 —— 它只是「不要联想」，不该拦翻译。
         // `TYPE_NULL` 同样放行：那类框若真无文本语义，读取原文时会以「读不到光标前内容」告终。
