@@ -1609,7 +1609,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 失败是**本块**的事：这里一条异常都不往外抛。原先逐条写时 `insert` 自己吞 `SQLException`，
      * 所以导入从不会因为写库失败而整个中断；批量入口不能把这个性质弄丢（否则一次
-     * `beginTransaction` 失败 = 一万行一条都进不去，正是任务书禁止的「一条坏行毁掉一万行」）。
+     * `beginTransaction` 失败 = 一万行一条都进不去，正是约定禁止的「一条坏行毁掉一万行」）。
      */
     private fun insertRestoredChunk(prepared: List<ContentValues>): List<Long>? {
         val ids = ArrayList<Long>(prepared.size)

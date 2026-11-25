@@ -3,10 +3,11 @@ package com.jinn.inputmethod
 /**
  * 语音客户端工厂：**唯一**的后端分叉点。
  *
- * 为什么要有它：`JinnIme.ensureVoiceReady()` 与 [VoiceSelfTest] 原先各写一份
- * 「xf 用 XfIatClient / 否则 AsrClient」的 if/else。加第三个后端时两份要同时改，
- * 漏一处就是「键盘能用、语音测试不能用」这种只在真机上才发现的漂移。
- * 现在两边都只调 [create]，新增后端只需改这一个 when。
+ * `JinnIme.ensureVoiceReady()` 与 [VoiceSelfTest] 都只调 [create]，
+ * 分叉收敛在这一处 when：七个在线实现（讯飞 / OpenAI 兼容 / 阿里百炼 /
+ * 腾讯云 / Azure / 百度 / Deepgram）加一个自建兜底，共八个分支。
+ * 两处若各写一份 if/else，新增后端时漏改一处就会出现
+ * 「键盘能用、语音测试不能用」这类漂移。现在新增后端只需改这里。
  *
  * 回调线程语义由各实现自己保证，调用方不必区分后端。
  */
