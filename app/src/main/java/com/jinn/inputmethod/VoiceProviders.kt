@@ -20,10 +20,10 @@ internal data class VoiceApiProvider(
 )
 
 /**
- * 常见语音转文字在线服务的目录（2026-11-01 调研所得，逐条照抄 `.agent-workflow/voice-settings-page/00-research.md`）。
+ * 常见语音转文字在线服务的目录（2026-11-01 整理，按分类收录官方文档页）。
  *
- * 收录口径：**只收已核实可达的官方文档页**；`ALL` 的顺序 = 调研表顺序（按分类聚在一起，
- * 分类顺序取 [CATEGORIES]）。新增条目要走同一套测试（`VoiceSettingsPageTest`：全 https、id / URL 不重复、
+ * 收录口径：**只收已核实可达的官方文档页**；`ALL` 按分类聚在一起，
+ * 分类顺序取 [CATEGORIES]。新增条目要走同一套测试（`VoiceSettingsPageTest`：全 https、id / URL 不重复、
  * 分类必须被 [CATEGORIES] 覆盖、每类 ≥1 条）。
  */
 internal object VoiceProviders {

@@ -7,7 +7,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
- * OpenAI 兼容语音转写客户端（`POST {base}/audio/transcriptions`），[SpeechClient] 的第三个实现。
+ * OpenAI 兼容语音转写客户端（`POST {base}/audio/transcriptions`），[SpeechClient] 的实现之一。
  *
  * 覆盖 Groq / 硅基流动 / Together / Cloudflare AI Gateway / OpenAI 官方等**同一套**接口的服务商
  * （Cloudflare **Workers AI** 的 `/ai/run/@cf/…` 是另一套路径，不在本实现覆盖范围内）：
@@ -83,7 +83,7 @@ class OpenAiAsrClient(
         )
         val reply = exchange(request)
         val text = OpenAiResponse.parse(reply.code, reply.body).getOrElse { t ->
-            // 只取类型与 message：异常正文可能回显请求细节（凭据在头里，不进 message）
+            // 只取类型与 message：异常正文可能回显请求细节，故一律截断且不落原文
             return BatchOutcome.Fail(describe(t))
         }
         return BatchOutcome.Ok(text)
