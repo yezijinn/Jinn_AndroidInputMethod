@@ -4,7 +4,7 @@ package com.jinn.inputmethod
  * 可选词库清单，「分类词库」页展示与下载的依据。
  *
  * 新增一类词库只需三步：
- *  1. 在此加一条记录（fileName 必须与 Release 附件名一致）
+ *  1. 在此加一条记录（fileName 为落地文件名，以 .xz 结尾，可与 Release 附件名不同）
  *  2. 把文件传到 GitHub / Gitee 的 Release（两端必须是同一份字节）
  *  3. 填入该文件的 SHA-256（[checksum]），下载侧会逐字节校验后才收下
  *
@@ -13,7 +13,7 @@ package com.jinn.inputmethod
  * 才在后台补齐，不影响日常打字。
  */
 data class OptionalDict(
-    /** 落地文件名；必须与 Release 附件名、以及 urls 里的文件名一致 */
+    /** 落地文件名（以 .xz 结尾）；可与 Release 附件名、urls 里的文件名不同 */
     val fileName: String,
     /** 页面显示名 */
     val name: String,
@@ -27,10 +27,9 @@ data class OptionalDict(
     /**
      * 压缩后体积（MB，**十进制**口径：5.89 对应 5,890,000 字节）—— 卡片上不再显示（2026-10-03 删掉那一行）。
      *
-     * ⚠ 换包时必须与实测字节对得上（差 ≤512KB），它有两个消费方：
-     *  - 下载前空间预检（`DictManagerActivity`，按 MiB 再放大一份，偏保守无害）；
-     *  - 旧包检测 [isCurrentPack]（同名附件重切后判「已装文件是不是当前版本」）。
-     * 折中口径不会误判：512KB 容差覆盖两种算法的最大差（≈5% × 5.89MB ≈ 290KB）。
+     * ⚠ 换包时必须与实测字节对得上（容差 ±[PACK_SIZE_TOLERANCE_BYTES]）：它用于
+     * 旧包检测 [isCurrentPack]（同名附件重切后判「已装文件是不是当前版本」）。
+     * 下载前的空间预检已改按安装占用 [installMiB] 估算，不再用本字段。
      */
     val sizeMb: Double,
 
@@ -58,11 +57,10 @@ data class OptionalDict(
      * 构建完成后索引落盘，之后每次启动直接内存映射复用（实测约 0.05s）—— 所以**索引已就绪**
      * 的包随启动装载，不必再等空闲信号（BUG.md L-892）。
      *
-     * ⚠ 取**实测值向上取整**，不要凭条数外推 —— 2026-09-27 在 PACM00 上实测
-     * （清掉 `index/<包名>.idx` 后息屏触发重建，日志 `已构建词库包索引: …（…ms）`）：
-     * part2 **4022ms** / part3 **4859ms** / part4 **13978ms**；
-     * 此前按条数估的 3 / 4 / 5 秒把 part4 低报了近 3 倍（BUG.md L-46）。
-     * 换包（改分片规模）必须重新实测并同步这里。
+     * ⚠ 取**实测值向上取整**，不要凭条数外推 —— 换包（改分片规模）必须重新实测并同步这里。
+     * 2026-10-10 重切后实测（PACM00，清 `index/<包名>.idx` 后息屏触发重建，
+     * 日志 `已构建词库包索引: …（…ms）`）：part2 19580ms → 20 秒、part3 16168ms → 17 秒、
+     * part4 5372ms → 6 秒；重切前的旧包曾为 4022 / 4859 / 13978ms（BUG.md L-46）。
      */
     val startupSec: Int,
     /** 下载源，按顺序尝试（Gitee 国内快，GitHub 备用） */
@@ -71,7 +69,7 @@ data class OptionalDict(
      * 该包**压缩文件**（下载到的 `.xz` 原始字节）的 SHA-256（小写 64 位十六进制）。
      *
      * ⚠ 不是解压后的文本摘要：下载侧与备份导入侧两条校验路径算的都是 `.xz` 字节
-     * （`OptionalDicts.sha256Of` / `ConfigBackup` 的摘要白名单），写成「未压缩文件」
+     * （`OptionalDicts.sha256Of` / `ConfigBackupManager` 的摘要白名单），写成「未压缩文件」
      * 会让后续维护者填错值 —— 那时两条校验路径 100% 失败，用户只看到「文件校验失败」。
      *
      * 校验不通过即丢弃：词库内容会直接变成候选词上屏到任意输入框，没有完整性校验时，
@@ -263,7 +261,7 @@ object OptionalDicts {
     /**
      * 流式计算文件的 SHA-256（纯 IO 逻辑，便于 JVM 单测）。
      *
-     * 边读边更新摘要，不把整个文件读进内存（现役最大包 4.21MB，往后可能更大）。
+     * 边读边更新摘要，不把整个文件读进内存（现役最大包 5.89MB，往后可能更大）。
      * 失败返回 null，由调用方决定重试还是拒收。
      */
     fun sha256Of(file: java.io.File): String? = runCatching {

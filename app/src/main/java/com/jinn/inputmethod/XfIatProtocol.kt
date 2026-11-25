@@ -23,7 +23,7 @@ import kotlin.math.roundToInt
  * 协议出处：官方文档「四、接口鉴权」与官方 Demo 的首/中/末帧；`date` 必须 GMT 且与服务端
  * 偏差 ≤300 秒，故时间由调用方传入（[rfc1123Gmt] 只是默认取法）。
  *
- * 鉴权三段式（**逐字节照抄，不要自作聪明**）：
+ * 鉴权三段式（**逐字节照抄，勿自行改写**）：
  * ```
  * signature_origin     = "host: {host}\ndate: {date}\nGET {path} HTTP/1.1"
  * signature            = Base64(HMAC-SHA256(apiSecret 原始字节, signature_origin))
@@ -85,7 +85,7 @@ object XfIatProtocol {
     /**
      * 拼鉴权后的 WebSocket 地址。
      *
-     * @param appId 只用于首帧 `header.app_id`，**不参与 URL**（讯飞要求放在帧里）；
+     * @param appId 只进帧里的 `header.app_id`（每一帧都要带），**不参与 URL**（讯飞要求放在帧里）；
      *              参数留在这里是为了让调用方一处取齐三件凭据，不至于漏传。
      * @param date [rfc1123Gmt] 的产物；由调用方传入，便于用固定向量做单测。
      */
@@ -120,7 +120,7 @@ object XfIatProtocol {
      *
      * ⚠ `header.app_id` **每一帧都要带**（2026-11-01 真机实测）：只在首帧带时，
      * 第一条音频帧就被服务端拒掉 —— `code=10163 $.header.app_id field is required`。
-     * 用同一套参数在官方端点做过 A/B：音频帧带 app_id 全绿，不带必报 10163。
+     * 用同一套参数在官方端点做过 A/B：音频帧带 app_id 才通过，不带必报 10163。
      */
     fun audioFrame(appId: String, pcm: ByteArray, seq: Int): String = JSONObject().apply {
         put("header", JSONObject().put("app_id", appId).put("status", 1))
@@ -297,15 +297,15 @@ object XfIatProtocol {
  * `ls=true` 才是最后一片。对外 [text] 恒为**整段累积文本** —— 调用方（IME）整体覆盖显示，
  * 自己再拼一遍就会把 `rpl` 的修正拼成重复。
  *
- * **实测形态**（一次真实会话，且 `pgs` / `rg` / `rst` 都在 `text` 解码后的内层 JSON 里，
+ * **实测形态**（一次真实会话，且 `pgs` / `rg` / `sn` 都在 `text` 解码后的内层 JSON 里，
  * `payload.result.pgs` 恒为 null）：
  * ```
  * sn=1  pgs=apd            ws=[1 个词]          ← 首字
  * sn=2  pgs=rpl rg=[1,1]   ws=[本句至今全部词]
  * sn=3  pgs=rpl rg=[1,2]   ws=[本句至今全部词]
  * …                                                每次 rpl 都是「rg=[1, sn-1] + 本句全文」
- * sn=15 rst=rlt pgs=rpl rg=[1,14] ws=[1 个词 = 整句]  ← 整句被归档成一个条目
- * sn=16 rst=rlt pgs=apd ls=true   ws=[{"w":""}]      ← 末帧文本是空串，**不许**把整句清空
+ * sn=15 pgs=rpl rg=[1,14]  ws=[1 个词 = 整句]    ← 整句被改成一个条目
+ * sn=16 pgs=apd ls=true   ws=[{"w":""}]         ← 末帧文本是空串，**不许**把整句清空
  * ```
  * 所以 `rg` 必须按 **1 基闭区间**整体替换（`rg=[1,2]` 要清掉第 1、2 片），空文本一律不改动。
  *

@@ -31,9 +31,9 @@ sealed class BatchOutcome {
  * 缓冲式批量识别基类（[SpeechClient] 的通用实现）：**本地缓冲整段音频 → 松手一次性上传 → 回包落字**。
  *
  * 覆盖的服务商都是「不收流式音频、一次请求换整段文本」那一类：OpenAI 兼容 `/audio/transcriptions`、
- * 腾讯云一句话识别、Azure 短音频识别 REST。三家的差别只在「请求怎么组、回包怎么解析」，
- * 状态机 / 缓冲 / WAV / 线程 / 取消 / 超时完全一样 —— 所以收敛在这里一份，子类只实现
- * [prepare]（校验配置）与 [recognize]（发请求 + 解析）。
+ * 腾讯云一句话识别、Azure 短音频识别 REST、百度短语音、Deepgram。五家的差别只在「请求怎么组、
+ * 回包怎么解析」，状态机 / 缓冲 / WAV / 线程 / 取消 / 超时完全一样 —— 所以收敛在这里一份，
+ * 子类只实现 [prepare]（校验配置）与 [recognize]（发请求 + 解析）。
  *
  * 对外契约与 [SpeechClient] 其余实现完全一致：[connect] / [beginTask] / [sendChunk] / [endTask] /
  * [cancelTask] / [close]，IME 侧的状态条、录音与落字链路一行都不用改。
@@ -334,8 +334,9 @@ abstract class BufferedBatchAsrClient(
         is ConnectException -> "连不上语音服务"
         is SocketTimeoutException -> "上传超时"
         is UnknownHostException -> "地址无法解析"
-        // 异常正文可能带请求 URL / 头（见 [SpeechErrorText]）：先刮凭据再截断，截断在后才不会
-        // 把 `client_secret=` 这种键名留下、值被切在 60 字之后反而看不出来
+        // 异常正文可能带请求 URL / 头（见 [SpeechErrorText]）：先刮凭据再截断。
+        // 刮除用的鉴权值规则要求 ≥6 字符，先截断会把值切成半截、规则认不出而漏刮；
+        // 反过来先刮再截，半截值也已是 `***`，60 字截断只影响可读长度。
         else -> SpeechErrorText.scrub(t.message)?.take(60) ?: textFailed
     }
 
