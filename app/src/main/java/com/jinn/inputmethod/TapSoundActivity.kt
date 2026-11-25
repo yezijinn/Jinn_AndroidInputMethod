@@ -61,7 +61,7 @@ class TapSoundActivity : Activity() {
         findViewById<TextView>(R.id.text_tap_title).text = TEXT_TITLE
         findViewById<TextView>(R.id.text_tap_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_tap_close).apply {
-            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写 ✕ / X / 关闭）
+            // 关闭键：键面字形与可听名统一来自 PageChrome（原先各页自写「✕」/「X」/「关闭」）
             text = PageChrome.CLOSE
             contentDescription = PageChrome.CLOSE_DESC
             setOnClickListener { finish() }
@@ -313,7 +313,7 @@ class TapSoundActivity : Activity() {
      * 取「与当前值相与」而不是直接赋值：子视图可能已经按**更细**的判据置灰了（试听的
      * 「不播放」组、系统闸门不放行），粗粒度的一刀切不该把它们重新点亮 —— 那样按钮 40%
      * 透明却可点，点下去静默无反应（`playPreview` 直接 return）。每次重画都是
-     * `removeAllViews()` 之后新建的视图，所以不存在「上一轮的 false 挡住这一轮的 true」。
+     * `removeAllViews()` 之后新建的视图，故不存在旧视图的 false 挡住新状态的 true。
      */
     private fun setEnabledDeep(view: View, enabled: Boolean) {
         view.isEnabled = enabled && view.isEnabled
@@ -380,7 +380,6 @@ class TapSoundActivity : Activity() {
 
     private fun dp(value: Int): Int = PageStyle.dp(this, value)
 
-    /** 当前「文字输入」组用的音效（强度试听就用它：那是用户按得最多的那个音） */
     /**
      * 松手试听用哪个音：交给 [TapSound.previewSound] 决定 —— 「文字输入」组被设成「不播放」时
      * 它会回退到手上第一个可用的音，而不是静默返回（用户此刻的意图是「听一下现在多大声」，

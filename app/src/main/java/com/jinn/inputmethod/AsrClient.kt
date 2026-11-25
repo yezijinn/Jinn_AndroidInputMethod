@@ -17,15 +17,13 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Jinn 服务端的 WebSocket 客户端（[SpeechClient] 的自建后端实现）。
+ * CapsWriter 服务端（[SpeechClient] 的自建后端实现）的 WebSocket 客户端。
  *
  * - 一次听写：[beginTask] -> 若干次 [sendChunk] -> [endTask]
  * - 上滑取消走 [cancelTask]，同样发 is_final 收尾包：服务端 ws_recv.py 的
  *   音频缓冲按连接持有而非按任务，不收尾会让残留音频串到下一段听写
  * - 识别结果靠 taskId 比对，取消或过期的任务结果直接丢弃
- * - 回调在 OkHttp 的 IO 线程触发，接收方需自行切回主线程
- *
- * cancelTask 也要发收尾包，否则残留音频会污染下一次听写。
+ * - 回调在 OkHttp 的 IO 线程触发；[JinnIme] 侧已 ui.post 切主线程，其他接收方需自行切回
  */
 class AsrClient(
     private val prefs: Prefs,
@@ -56,10 +54,11 @@ class AsrClient(
      *
      * 原先每包现读 `prefs.prompt` / `prefs.language`（两次 SharedPreferences 内存读），
      * 而音频包每秒可达 10 条。更要紧的是**一致性**：用户在录音途中改配置，
-     * 若逐包现读，同一段听写会带着新旧两套 prompt 发出，服务端按最后一包的值处理整段 —— 结果错配却无迹可查。
+     * 若逐包现读，同一段听写会带着新旧两套 prompt 发出 —— 服务端按**每包自带的** `context`
+     * 逐段提交识别，同一段听写于是前后口径不同。
      *
-     * 刷新点放在 [connect] 与 [beginTask]（不是每包）：前者覆盖地址变更重连、`refreshConfig` 强重连与
-     * 配置导入三条改配置路径；后者兜住「已连接状态下改了 prompt」这一次听写。
+     * 刷新点放在 [connect] 与 [beginTask]（不是每包）：前者覆盖建连与重连（含地址变更），
+     * 后者兜住「已连接状态下改了 prompt」这一次听写。
      * 采集线程读、主线程写，故 `@Volatile`。
      */
     @Volatile
@@ -80,7 +79,7 @@ class AsrClient(
     private var userClosed = false
     private val reconnectRunnable = Runnable { tryReconnect() }
 
-    /** 空闲关闭是否已排程（仅用于日志与幂等判断，真正的仲裁是 runnable 自身） */
+    /** 空闲关闭是否已排程；幂等由 removeCallbacks 保证，本字段不参与仲裁 */
     @Volatile
     private var idleCloseScheduled = false
 
@@ -88,7 +87,7 @@ class AsrClient(
      * 空闲关闭因「在途任务未清」而后延的次数（上限见 [onIdleCloseDue]）。
      *
      * ⚠ 只有 [scheduleIdleClose]（外部重新排程 = 有新的使用意图）才清零：[onIdleCloseDue] 的
-     * 后延必须走 [armIdleClose]。两处混用会让计数器被自己的后延清零 ⇒ 上限永远是 1、
+     * 后延必须走 [armIdleClose]。两处混用会让计数器被自己的后延清零 ⇒ 计数每次归零、永远到不了上限、
      * 「超过上限强制关闭」变成死代码，连接于是被无限后延（= 永生，正是这条兜底要消掉的）。
      */
     private var idleCloseDeferrals = 0
@@ -421,7 +420,7 @@ class AsrClient(
             sendingTask = null
             acceptingTask = null
             updateState(LinkState.OFFLINE, describe(t, response?.code))
-            // 重连**要分能不能成**（2026-11-03 复审）：401 / 403 / 404 是握手被明确拒绝（凭据错、
+            // 重连**要分能不能成**：401 / 403 / 404 是握手被明确拒绝（凭据错、
             // 反代挡了、ws:// 指到了普通 HTTP 端口），退避到 30s 之后重试一万次也是同一个结果。
             // 而每次重试都会把 state 推回 CONNECTING，`renderLink` 于是把刚写好的失败原因换成
             // 「连接中」，再换回来 —— 语音面板开着（没有空闲关闭兜底）时每 30 秒一次，永不停止：
@@ -451,7 +450,7 @@ class AsrClient(
      *
      * 状态码在这里是唯一能定性的一句话：把 `ws://` 指到普通 HTTP 端口（最常见的一次配错）
      * 时 OkHttp 只会抛 `Expected HTTP 101 response but was '404 Not Found'`，截 40 字后状态条上
-     * 只剩半句英文；反代加了鉴权则是 401 / 403。四家的判据与文案保持一致（见 [AliAsrClient.describe]）。
+     * 只剩半句英文；反代加了鉴权则是 401 / 403。与另两家流式实现同一口径（见 [AliAsrClient.describe]）。
      */
     private fun describe(t: Throwable, code: Int?): String = when {
         t is ConnectException -> "连不上服务端"
@@ -460,7 +459,7 @@ class AsrClient(
         code == 401 || code == 403 -> "鉴权失败（HTTP $code）"
         code != null -> "连接失败（HTTP $code）"
         // 先刮再截：反过来（`scrub(t.message?.take(40))`）会把长正文里的鉴权头切成
-        // 「…: Bearer sk-pr」这种半截值 —— `AUTH_PREFIX` 要 ≥6 个字符才算,半截值不被识别，照原样上屏
+        // 「…: Bearer sk-pr」这种半截值 —— `AUTH_PREFIX` 要 ≥6 个字符才算，半截值不被识别，照原样上屏
         else -> SpeechErrorText.scrub(t.message)?.take(40) ?: "连接失败"
     }
 
