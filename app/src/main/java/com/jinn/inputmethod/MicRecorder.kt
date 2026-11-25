@@ -12,10 +12,15 @@ import kotlin.math.sqrt
 /**
  * 麦克风采集器。
  *
+ * 采集参数固定：16kHz / 单声道 / 16bit（PCM_16BIT），每包 [CHUNK_SAMPLES] 样本（[CHUNK_MS]ms）。
  * 服务端只认 16kHz / 单声道 / float32 小端裸样本（core/constants.py 的 AudioFormat），
- * 这里用兼容性最好的 PCM_16BIT 采集再手动转 float32，避免部分机型不支持 ENCODING_PCM_FLOAT。
+ * 这里用兼容性最好的 16bit 采集再手动转 float32，避免部分机型不支持 ENCODING_PCM_FLOAT。
+ * 麦克风权限由调用方在 [start] 前校验，本类不申请权限。
  *
- * 回调都发生在采集线程上，[onLevel] 和 [onError] 的接收方需要自己切回主线程。
+ * [onChunk]、[onLevel]、[onSilence] 都在采集线程回调，接收方需要自己切回主线程。
+ * [onError] 例外：start() 失败时同步在调用线程回调，运行中失败才在采集线程回调；
+ * 其 message 带具体原因（设备不支持 / 被占用或权限被拒 / 初始化失败 / 读取错误），
+ * 调用方应留住原文供诊断，不要用泛泛文案盖掉。
  */
 class MicRecorder(
     private val onChunk: (ByteArray) -> Unit,

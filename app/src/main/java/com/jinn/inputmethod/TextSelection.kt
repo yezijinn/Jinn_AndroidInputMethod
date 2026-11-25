@@ -14,7 +14,7 @@ package com.jinn.inputmethod
  */
 object TextSelection {
 
-    /** 选区数据（start/end 为已归一化区间，textLength 全文长度，text 全文用于行移动） */
+    /** 选区数据：start=Anchor、end=Focus（窗口内相对下标，未必 start≤end）；textLength=text.length；text 为窗口片段，供行移动 */
     data class Range(val start: Int, val end: Int, val textLength: Int, val text: String)
 
     /**
