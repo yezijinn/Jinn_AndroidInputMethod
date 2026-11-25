@@ -16,7 +16,7 @@ import kotlin.random.Random
  *     ?q=<原文>&from=auto&to=<代码>&appid=<AppID>&salt=<随机数>&sign=<MD5>
  * ```
  * 签名规则：`sign = MD5(appid + q + salt + secretKey)`，**小写十六进制、UTF-8**；
- * `q` 参与签名的是**未编码原文**（编码由 OkHttp 的 `addQueryParameter` 负责）——
+ * `q` 参与签名的是**未编码原文**（传输编码走自定义全量百分号编码，见 [buildRequest]）——
  * 拿编码后的串去签名是这类接入最常见的错。
  *
  * `from=auto` = 自动检测源语言（与 Azure 侧对齐，用户不需要填源语言）。
@@ -156,10 +156,10 @@ internal class BaiduTranslator(
 
         /** HTTP 状态码 → 归一错误分类（业务错误码走 [baiduErrorOf]） */
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
-            400, 413, 414 -> TranslationError.PARAM      // 413 请求体过大；414 URL 过长 —— 百度通用版是 **GET 家**（原文在 query 里，
-                  // 非 ASCII 一字节膨胀成 3 个字符），真正撞上的会是 414。原先只认 413
-                  // （对 GET 不可达）会把「原文过长」显示成「服务异常」，按提示重试永远失败
-                  // （2026-10-01 修复 L-308）
+            400, 413, 414 -> TranslationError.PARAM      // 413 请求体过大、414 URL 过长；本家走 GET
+                  // 原文在 query 里，非 ASCII 一字节膨胀成 3 字符，实际撞的是 414。
+                  // 原先只认 413（对 GET 不可达），把「原文过长」显示成「服务异常」，
+                  // 按提示重试永远失败（2026-10-01 修复 L-308）
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             429 -> TranslationError.QUOTA

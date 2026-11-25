@@ -12,15 +12,15 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 
 /**
- * 「存储占用」页：把 [StorageUsage] 的统计结果摊成卡片（2026-10-10 用户提出）。
+ * 「存储占用」页：把 [StorageUsage] 的统计结果摊成卡片。
  *
  * 只读，不改任何文件：给用户一个「存储由什么组成」的答案。分类与口径全部在 [StorageUsage]
  * 里（含「安装包单列」「其他兜底」的原因），这里只管排版 —— 每项一张卡：名称 + 体积 + 一句
- * 「它是什么 / 在哪管理」+ **逐文件明细**（文件名与体积，不折叠、不省略成「N 个文件」：
- * 2026-10-10 用户明确要求展开到每个文件），顶部一张总账（数据合计 / 设备剩余 / 最大一项）。
+ * 「它是什么 / 在哪管理」+ **逐文件明细**（文件名与体积，不折叠、不省略成「N 个文件」，
+ * 展开到每个文件），顶部一张总账（数据合计 / 设备剩余 / 最大一项）。
  *
  * 样式沿用本项目的代码侧规格（[PageStyle] / [PageChrome]），与词库页同一骨架：
- * 深色顶栏 + 关闭按钮 + 提示行 + 卡片列表。
+ * 顶栏底色走 `card_bg`，随明暗主题切换，另有关闭按钮 + 提示行 + 卡片列表。
  */
 class StorageUsageActivity : ComponentActivity() {
 
@@ -116,7 +116,7 @@ class StorageUsageActivity : ComponentActivity() {
             }
         })
 
-        // 成分（已按体积降序）；每项**逐文件摊开**（需求：不写成「N 个文件」，每个文件是什么、多大都要有）
+        // 成分（已按体积降序）；每项**逐文件摊开**（不写成「N 个文件」，每个文件是什么、多大都要有）
         for (item in report.items) {
             PageStyle.addCard(listHost, cardView().apply {
                 addView(row(item.label, ByteSize.text(item.bytes)))
@@ -151,7 +151,7 @@ class StorageUsageActivity : ComponentActivity() {
      * 明细行：文件名 + 体积，比类别行缩进一档、字号小一档。
      *
      * 长名（如 `base.1791633154000.idx`）**中间省略**而不是折行：一条文件一行，
-     * 折行会把「名字 ↔ 体积」的对应关系打断（用户要的就是一眼对账）。
+     * 折行会把「名字 ↔ 体积」的对应关系打断，便于一眼对账。
      */
     private fun fileRow(name: String, size: String): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -203,7 +203,7 @@ class StorageUsageActivity : ComponentActivity() {
         setPadding(dp(16), 0, dp(16), 0)
     }
 
-    /** 顶栏：左标题、右关闭（深蓝顶栏 #141C33，与其他设置子页一致） */
+    /** 顶栏：左标题、右关闭（底色走 card_bg，随明暗主题变化） */
     private fun buildTopBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

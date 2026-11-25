@@ -15,10 +15,18 @@ import android.widget.TextView
 /**
  * 悬浮键盘页：总开关 + 逐 APP 绑定（白名单）。
  *
+ * 本页只负责开关与绑定两项 Prefs 的读写；浮层几何（位置 / 尺寸 / 拖动 / 竖横各一套）
+ * 是纯逻辑 [FloatingKeyboard]，窗口套用与「回到底部」豁免在 [JinnIme]。
+ *
  * ## 为什么绑定用白名单
  * 悬浮键盘的诉求是**例外**（横屏游戏 / 视频时不想被底部面板挡住），不是默认形态。
  * 白名单（只勾选的 APP 悬浮）比黑名单安全：新装的 APP 一律沿用熟悉的底部全宽键盘，
  * 不会一开开关就把聊天、搜索框全变成浮层。绑定为空 ⇒ 谁都不悬浮。
+ *
+ * ## Prefs 存取
+ * 总开关 `floating_keyboard_enabled`（默认 false = 关，与文案「默认关闭」一致）；
+ * 绑定表 `floating_keyboard_apps`（包名逗号分隔，空串 = 无人悬浮）。
+ * 读写两侧都过 [FloatingKeyboard.serializePackages] / [FloatingKeyboard.parsePackages] 归一。
  *
  * ## 包可见性
  * 本页只列**有桌面入口的应用**（`ACTION_MAIN` + `CATEGORY_LAUNCHER`），manifest 用
@@ -26,10 +34,10 @@ import android.widget.TextView
  * 必然是用户会去用的前台 APP，没有桌面入口的应用（输入法自身之外的服务、插件）既进不去前台，
  * 也就没有必要暴露包名；权限面越小越好。
  *
- * ## 勾选即落盘
+ * ## 勾选即落盘、即时生效
  * 拨动开关 / 勾选应用立即写 prefs 并清掉 IME 侧的「回到底部」进程内豁免
  * （[JinnIme.clearFloatingDockOverrides]）：否则用户按过「回到底部」再回来重新勾上同一个 APP，
- * 界面写着「已绑定」而键盘仍然不浮。
+ * 界面写着「已绑定」而键盘仍然不浮。改动下次弹键盘即按新配置套用，不必重启输入法进程。
  */
 class FloatingKeyboardActivity : Activity() {
 
@@ -213,7 +221,7 @@ class FloatingKeyboardActivity : Activity() {
     private companion object {
         const val TAG = "FloatingKeyboard"
 
-        // 文案代码下发：strings.xml 默认禁改（与设置页 / 生僻字页同一做法）
+        // 页面文案来自下方 TEXT_* 常量，代码下发；strings.xml 默认不改动（与设置页 / 生僻字页同做法）
         const val TEXT_TITLE = "悬浮键盘"
         const val TEXT_DESC = "开启后，只有下面勾选的应用弹出键盘时使用可拖动的浮层：\n" +
             "按住顶部把手可移动，长按把手切换大小。\n" +
