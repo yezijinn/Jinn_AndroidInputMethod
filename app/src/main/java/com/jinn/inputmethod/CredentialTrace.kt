@@ -68,7 +68,7 @@ internal object CredentialTrace {
         // 取不到 maxItemId 时按「历史可能变了」处理（Long.MAX_VALUE ⇒ 全部重扫），保守优先。
         // ⚠ 但**不能把这个哨兵写回水位**（2026-10-02 修复 L-258）：写回后 `purged[v] = MAX_VALUE`，
         // 之后任一次成功的 `maxItemId()` 都小于它 ⇒ 该凭据在本进程内**永不重扫**（用户之后再复制
-        // 同一个 Key 也照样跳过），与「没有新条目才跳过」的语义正好相反。取失败 ⇒ 本轮不标记。
+        // 同一个 Key 也照样跳过），与「没有新条目才跳过」的语义正好相反。取失败 ⇒ 本次不标记。
         var maxIdUncertain = false
         val maxId = runCatching { db.maxItemId() }.getOrElse {
             maxIdUncertain = true
@@ -97,7 +97,7 @@ internal object CredentialTrace {
             missed.add(v)
         }
         // **失败只影响「标记」，不影响「清洗」**（2026-10-01 修复 L-289）：此前是 `if (failed) return`，
-        // 于是任一目标抛错就让本轮**谁都没清** —— 其中还包括「精确删成功了、但历史里另有带杂质变体」
+        // 于是任一目标抛错就让本次**谁都没清** —— 其中还包括「精确删成功了、但历史里另有带杂质变体」
         // （missed 里的其他目标）。清洗遍本身是幂等的，多做一轮没有副作用。
         val cleaned = if (missed.isEmpty()) {
             0
@@ -109,7 +109,7 @@ internal object CredentialTrace {
         // 收藏条目是**有意保留**的（删除 SQL 一律带 `is_favorite = 0`），但「0 条」的两种含义必须
         // 分开（2026-10-04 修复 L-592）：此前全按「已清干净」处理 ⇒ 水位照推、该凭据在本进程内
         // **永不重扫**，Key 明文长期留在面板里（可列、可搜索、一键粘贴）并随配置备份明文外发，
-        // 而日志只有 V 级「本轮无需删除」—— 事后排查会得出「已经清干净」的错误结论。
+        // 而日志只有 V 级「本次无需删除」—— 事后排查会得出「已经清干净」的错误结论。
         // 这里单独问一次「有多少条被收藏保住了」：① 记 W；② 这些目标**不推进水位**（下次仍重扫，
         // 用户取消收藏后就能被清掉）。
         var keptUncertain = false

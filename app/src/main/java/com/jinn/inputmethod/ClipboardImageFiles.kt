@@ -33,7 +33,7 @@ internal object ClipboardImageFiles {
     /**
      * 孤儿保护窗：文件的最后修改时间距今不足这个时长的，一律不删。
      *
-     * 10 分钟（与可选词库的 TEMP_PROTECT_MS 同量级）：WriteAtomic 的一次写盘是毫秒级，
+     * 10 分钟（与 `OptionalDicts.TMP_PROTECT_MS` 同量级）：writeAtomic 的一次写盘是毫秒级，
      * 窗口只需要覆盖「文件已落盘、行还没插入」这一小段并发窗口；取大值只是让孤儿多留一会儿，
      * 下次 GC 仍会收走，不损失正确性。
      */

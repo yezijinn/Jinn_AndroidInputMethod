@@ -185,7 +185,7 @@ object KeyAppearance {
         clampGapDp(MIN_GAP_DP + progress.coerceIn(0, GAP_PROGRESS_MAX) * GAP_STEP_DP)
 
     /**
-     * 键盘外观页数值文案：整数值不带小数（"6 dp"），半格值保留一位（"1.5 dp"）。
+     * 键盘外观页数值文案：整数值不带小数（「6 dp」），半格值保留一位（「1.5 dp」）。
      *
      * 固定 Locale.US：与项目其他数值展示一致，避免某些区域设置把小数点渲染成逗号。
      */
