@@ -3,20 +3,21 @@ package com.jinn.inputmethod
 import org.json.JSONObject
 
 /**
- * Jinn Offline 通信协议。
+ * 精灵输入法与 CapsWriter Offline 的通信协议。
  *
- * 字段名与服务端 core/protocol.py 一一对应，多一个少一个都会被
- * AudioMessage.from_dict 拒掉，所以这里手写 JSON 而不是靠反射序列化。
+ * 字段名必须与服务端 core/protocol.py 的 AudioMessage.from_dict 逐字一致：
+ * 五个必填名缺失会触发 KeyError，其余四个有默认值，额外键被忽略。
+ * 故手写 JSON，不用反射序列化。
  */
 object Protocol {
 
     /** 服务端 core/constants.py: AudioFormat.SAMPLE_RATE */
     const val SAMPLE_RATE = 16000
 
-    /** 麦克风分段长度，对齐 config_client.py 的 mic_seg_duration */
+    /** 麦克风分段长度（秒），对齐 config_client.py 的 mic_seg_duration */
     const val SEG_DURATION = 60.0
 
-    /** 麦克风分段重叠，对齐 config_client.py 的 mic_seg_overlap */
+    /** 麦克风分段重叠（秒），对齐 config_client.py 的 mic_seg_overlap */
     const val SEG_OVERLAP = 4.0
 }
 
@@ -70,7 +71,7 @@ data class RecognitionMessage(
             val json = JSONObject(raw)
             RecognitionMessage(
                 // `optString` 的默认值只在**键缺失**时生效：字段存在而值为 JSON null 时它会返回
-                // 字符串 "null"，而这段文本会被直接 commit 进输入框（服务端把 None 序列化成 null 是常态）。
+                // 字符串「null」，而这段文本会被直接 commit 进输入框（服务端把 None 序列化成 null 是常态）。
                 // 走翻译链那套 JSON null 安全的取值（Translation.kt 的 jsonText）。
                 taskId = jsonText(json, "task_id").orEmpty(),
                 isFinal = json.optBoolean("is_final", false),

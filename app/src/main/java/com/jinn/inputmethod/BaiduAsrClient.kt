@@ -10,7 +10,7 @@ import java.util.Base64
 /**
  * 百度智能云「短语音识别标准版」（先取 token、再 POST JSON），[SpeechClient] 的第七个实现。
  *
- * 传输模型与另三家整段上传同类（本地缓冲 → 松手一次性上传），缓冲 / 线程 / 取消 / 超时全在基类
+ * 传输模型与另四家整段上传同类（本地缓冲 → 松手一次性上传），缓冲 / 线程 / 取消 / 超时全在基类
  * [BufferedBatchAsrClient]；本类只负责 token 缓存、请求体与回包解析。
  *
  * **音频格式固定为 `pcm`**：上传**裸 PCM16**（16k / 单声道 / 小端，44 字节 WAV 头都不带），
@@ -244,7 +244,7 @@ internal object BaiduAsrRequest {
 
     const val CONTENT_TYPE_JSON = "application/json"
 
-    /** 音频形态：裸 PCM16（无 WAV 头），与 [LEN_FIELD] 的语义绑定 */
+    /** 音频形态：裸 PCM16（无 WAV 头），与 [FIELD_LEN] 的语义绑定 */
     const val FORMAT_PCM = "pcm"
 
     /** 采样率 / 声道：必须与 [MicRecorder] 的输出、[WavWriter] 的头一致（16k 单声道） */

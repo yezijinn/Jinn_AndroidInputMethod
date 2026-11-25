@@ -15,7 +15,7 @@ import android.widget.TextView
  * 与 XML 侧的 `card_aurora` 不是一套）。现在「列表项 = 一张卡片」只有这一处定义
  * （守卫 `PageStyleParityTest` 会盯）。
  *
- * 与之对应的 XML 侧规格：`SettingsCard`（`card_aurora` + 12dp 内边距 + 10dp 间距）、
+ * 与之对应的 XML 侧规格：`SettingsCard`（`card_aurora` + 6dp 内边距 + 2dp 间距）、
  * `SectionTitle`（13sp + `text_primary`）。改这里要同步改那里。
  */
 internal object PageStyle {
