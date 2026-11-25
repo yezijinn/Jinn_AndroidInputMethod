@@ -66,7 +66,7 @@ private const val LOG_FILE_MAX_BYTES = 16L * 1024 * 1024
 /** 同日滚动段的保留个数（当日文件 + 2 段 ≈ 48MB 封顶，再多的段由体积预算与年龄闸收走） */
 private const val LOG_SEGMENTS_KEPT = 2
 
-    /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按月反复补清（见 [maybeCleanupOldLogs]） */
+    /** 旧日志清理的最小间隔：进程常驻时靠它在落盘路径上按天反复补清（见 [maybeCleanupOldLogs]） */
     private const val CLEANUP_INTERVAL_MS = 24 * 3600 * 1000L
 
     /**
@@ -116,8 +116,8 @@ private const val LOG_SEGMENTS_KEPT = 2
      * if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "键触摸 DOWN $key")
      * ```
      *
-     * `const` 会被编译期内联；为 `false` 时整段（含字符串构造与 logd 调用）被编译器消除，零成本；
-     * 需要抓现场时改成 `true` 重新编译即可。**注意**：不要用 `VERBOSE_TO_FILE` 的逻辑去掐掉
+     * 本开关在 release 包（`BuildConfig.DEBUG=false`）由 R8 常量折叠内联并消除整段；需要抓现场时
+     * 用 debug 包即可。**注意**：不要用 `VERBOSE_TO_FILE` 的逻辑去掐掉
      * 整个 V 级 —— 那会把非热路径的 V 级现场（排障凭据）一起关掉，这里只关「按键级」噪音。
      */
     val KEY_TRACE = BuildConfig.DEBUG
@@ -298,7 +298,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     /**
      * 应用缓存目录：logcat 快照的「原始中转件」放这里。
      *
-     * 日志目录里的任何文件都会被 [exportBundle] 打进诊断包，而原始快照是**未过滤**的
+     * 日志目录里的任何文件都会被 [exportBundleLocked] 打进诊断包，而原始快照是**未过滤**的
      * （含本进程 V 级正文 —— 拼音串 / 候选 / 搜索词）。中转件放缓存目录，进程在
      * 「落盘 → 过滤」之间被杀时留下的也只是不外传、且系统会自行回收的缓存件。
      *
@@ -483,8 +483,8 @@ private const val LOG_SEGMENTS_KEPT = 2
      * 传给 `log()`，落盘行出现双时间戳、模块名被挤进正文。
      * 事件行随普通日志落盘，崩溃快照（[dumpLogcat]）也会带走 logcat 里的这部分。
      *
-     * 注：早先还有一个 500 条的环形缓冲 + [eventSnapshot]/[dumpEventRing]，但两者除彼此外
-     * 没有任何调用方（KDoc 声称的「崩溃时落盘事件序列」从未实现），已删除，事件回溯依赖
+     * 注：早先还有一个 500 条环形缓冲 + `eventSnapshot` / `dumpEventRing`，但两者除彼此外
+     * 没有任何调用方（声称的「崩溃时落盘事件序列」从未实现），已删除，事件回溯依赖
      * 日常日志文件与 logcat 快照即可。
      */
     fun event(module: String, event: String, params: String = "") {
@@ -607,20 +607,15 @@ private const val LOG_SEGMENTS_KEPT = 2
             .append(" [").append(Thread.currentThread().name).append("] ")
             // 落盘走护栏（脱敏 + 截断）；logcat 上面已用原文输出
             .append(sanitizeForFile(msg)).append('\n')
-        // 堆栈：脱敏 + **首行平坦化**（2026-10-02 修复）。首行是「异常类名 + message」，而 message
-        // 里可能嵌用户可控串（Base URL、host、导入包里的设备名、JSON 片段）—— 带一个换行就能伪造出
-        // 一条完整假日志行（含时间戳与级别），与正文那条护栏的动机**逐字相同**，此前只护了正文。
-        // 帧行（`at …`）由编译器生成、不含用户内容，保持原样才可读；整体仍不截断（截断会砍掉关键帧）。
+        // 堆栈：脱敏 + 摊平非帧行（见 [flattenNonFrameLines]）。异常 message 可嵌用户可控串
+        // （Base URL、host、导入包里的设备名、JSON 片段），带一个换行就能伪造含时间戳与级别的假日志行，
+        // 与正文护栏动机逐字相同。帧行（`at …`）由编译器生成，原样保留才可读；整体不截断（会砍关键帧）。
         tr?.let {
             val stack = redactSensitive(stackTraceOf(it))
-            // 只护「首行」不够（BUG.md L-1385）：`printStackTrace` 的完整形态是
-            // `类名: message` + 帧行，而 **message 自身可含换行** —— 那些行落在首个 `\n` 之后、
-            // 首个 `\n\tat ` 之前，仍是用户可控内容，照样能伪造完整日志行。
-            // 故按段处理：**message 段整体平坦化**（不截断），帧段原样保留（编译器生成、可读性需要）。
-            // 逐行判定而不是「只切首段」（BUG.md L-1385 的延续）：
-            // `printStackTrace` 的完整形态是 `类名: message` + 帧行 + `\tCaused by: 类名: message`
-            // + 帧行 + `\tSuppressed: …`。cause/suppressed 的 message 同样用户可控（Base URL、
-            // host、导入包设备名、JSON 片段），落在首个 `\n\tat ` 之后 ⇒ 只护首段仍可伪造完整日志行。
+            // 逐行判定而非「只切首段」（BUG.md L-1385）：`printStackTrace` 的完整形态是
+            // `类名: message` + 帧行 + `\tCaused by: 类名: message` + 帧行 + `\tSuppressed: …`。
+            // cause / suppressed 的 message 同样用户可控（Base URL、host、导入包设备名、JSON 片段），
+            // 落在首个 `\n\tat ` 之后 ⇒ 只护首段仍可伪造完整日志行。
             // 判据：只有**帧行**（`\tat …` / `\t... N more`）原样保留；其余一律摊平换行。
             sb.append(flattenNonFrameLines(stack)).append('\n')
         }
@@ -871,7 +866,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         // 只有「过滤后的内容成功写回」才算产出：其它任何路径（进程失败、空文件、过滤为空、
         // 读取/写入抛异常、进程被杀）都要把残留文件删掉，半截快照既不可用、又没经过滤
         // （里面可能仍有本进程 V 级正文），留着等 7 天再清、或被导出诊断包带走都不行。
-        // 统一收口在 finally：原实现的删除只覆盖"进程失败"一种路径，读取/过滤阶段抛异常时
+        // 统一收口在 finally：原实现的删除只覆盖「子进程失败」一种路径，读取 / 过滤阶段抛异常时
         // 会把未过滤的快照留在磁盘上（正是 filterOwnVerboseLines 要防住的东西）。
         var produced = false
         try {
@@ -1115,7 +1110,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      *
      * 用途：导出流程横跨「应用 → 系统文件选择器 → 应用」，进程被系统回收再恢复时
      * 调用方持有的文件引用会丢，用它按最后一次生成时间兜底定位。
-     * 同一次导出最多只存在一个包（[exportBundle] 生成前会清掉旧包）。
+     * 同一次导出最多只存在一个包（[exportBundleLocked] 生成前会清掉旧包）。
      */
     fun latestBundle(context: Context): File? =
         File(context.cacheDir, DIR_NAME)

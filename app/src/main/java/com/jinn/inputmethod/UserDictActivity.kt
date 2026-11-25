@@ -35,17 +35,17 @@ import java.util.concurrent.Executors
  * 合并出频次 → 展示 / 导出。台账无上限增长，因此读盘、聚合、导入、SAF 读写**全部在后台线程**，
  * 主线程只渲染与弹框。
  *
- * **导出是加密包**（[UserDictExport]）：外层 AES-256-GCM 壳、内层普通 zip 且条目明文；
+ * **导出两选一**：加密包（[UserDictExport]：外层 AES-256-GCM 壳、内层普通 zip 且条目明文）或明文文件；
  * 密码规则与「导出配置文件」同一套（[ConfigCrypto.validatePassword]，只能用汉字、≥4 位、不重复单字）。
- * 导入时按文件头分流：加密包先要密码再解密，旧版明文导出件照旧直读。
+ * 导入时按文件头分流：加密包先要密码再解密，明文导出件照旧直读。
  *
- * **默认关闭**：进入本页时若未开启，先弹说明框，必须手输大写 `OK` 才开启；
- * 关闭则先提示导出，再二次确认（同样输入 `OK`），确认后删除 `user_picks.txt`。
+ * **默认关闭**：进入本页时若未开启，先弹说明框，逐字输入「我明白」才开启；
+ * 关闭则先提示导出，再二次确认（同样输入「我明白」），确认后删除 `user_picks.txt`。
  */
 /** 本页日志标识（伴生对象是 private，日志用固定串） */
 private const val TAG_NAME = "UserDictActivity"
 
-/** 三列行的列标识（AI2 A-554：列序靠命名 tag 承载，不靠 addView 的调用顺序） */
+/** 三列行的列标识：列序靠命名 tag 承载，不靠 addView 的调用顺序 */
 private const val TAG_COL_COUNT = "user_dict_col_count"
 private const val TAG_COL_WORD = "user_dict_col_word"
 private const val TAG_COL_PINYIN = "user_dict_col_pinyin"
@@ -244,7 +244,7 @@ class UserDictActivity : ComponentActivity() {
 
     /** 未开启时的说明框：讲清用途、边界、风险与防护，输入「我明白」才开启 */
     private fun showEnableDialog() {
-        // 退一档的机器上必须如实追加一行（N13）：不能在任何机型上都声称「锁屏也读不到」
+        // 退一档的机器上必须如实追加一行：不能在任何机型上都声称「锁屏也读不到」
         val body = TEXT_ENABLE_BODY + if (LedgerCrypto.isDegraded(filesDir)) TEXT_ENABLE_BODY_NOLOCK else ""
         val confirm = confirmView(body)
         val edit = confirm.edit
@@ -405,7 +405,7 @@ class UserDictActivity : ComponentActivity() {
         // 「解不开」不能显示成「没有」（L-1411）：分开取数据与状态，界面按状态改文案与按钮
         val unreadable = read !is SelectionLedger.LedgerRead.Ok
         val picks = (read as? SelectionLedger.LedgerRead.Ok)?.picks ?: emptyList()
-        // 密钥件缺失时 readAll 已把旧台账改名保留（N2）：这条提示只报一次
+        // 密钥件缺失时 readAll 已把旧台账改名保留：这条提示只报一次
         val orphaned = LedgerCrypto.consumeOrphanNotice()
         val degraded = LedgerCrypto.isDegraded(filesDir)
         val merged = SelectionLedger.aggregate(picks)
@@ -488,7 +488,7 @@ class UserDictActivity : ComponentActivity() {
             },
             lpOf(10),
         )
-        // 规格与页面里的四个导出按钮一致（SettingsButton：40dp 高、12dp 圆角描边、13sp）：
+        // 规格与页面里的导出按钮一致（SettingsButton：40dp 高、12dp 圆角描边、13sp）：
         // 早先直接用系统 Button，是个浅灰圆角块，跟整页风格脱节。
         // 两个都要显式传 [btnLp]：`addView(child)` 只沿用 child 已有的 lp，而 Button 的
         // `minHeight` 会把没传 params 的那个顶回系统 48dp —— 实测「加密包」48dp /「明文文件」40dp。
@@ -543,7 +543,7 @@ class UserDictActivity : ComponentActivity() {
             dialog.dismiss()
             pendingFormat = format
             pendingPlain = true
-            // 登记的类型必须跟着格式走（AI2 A-533）：写死 octet-stream 时用户导出的 .txt
+            // 登记的类型必须跟着格式走：写死 octet-stream 时用户导出的 .txt
             // 在文件管理器里是「未知类型」，`.yaml` 也不会以文本打开
             createDocContract.mimeType = format.mime
             runCatching { createDoc.launch(UserDictExport.plainName(format)) }
@@ -590,7 +590,7 @@ class UserDictActivity : ComponentActivity() {
         styleDialogButtons(dialog)
         // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            // 校验与比对都直接吃 `Editable`（N7）：**不产生 String 副本** —— String 无法清零，
+            // 校验与比对都直接吃 `Editable`：**不产生 String 副本** —— String 无法清零，
             // 只能等 GC，而这里原先每点一次就多留两三份密码
             when (val check = ConfigCrypto.validatePassword(pwd1.text)) {
                 is ConfigCrypto.PasswordCheck.Invalid -> {
@@ -770,7 +770,7 @@ class UserDictActivity : ComponentActivity() {
             .format(java.time.LocalDateTime.now())
         val plain = File(dir, "userdict-$stamp.zip")
         val enc = File(dir, "userdict-$stamp$SUFFIX")
-        // 在途登记：页面的残留清理（cleanup）按年龄删文件，别把正在读写的这份删掉（N9）
+        // 在途登记：页面的残留清理（cleanup）按年龄删文件，别把正在读写的这份删掉
         UserDictExport.markInFlight(plain)
         UserDictExport.markInFlight(enc)
         try {
@@ -922,7 +922,7 @@ class UserDictActivity : ComponentActivity() {
                 toast(check.reason)
                 return@setOnClickListener
             }
-            // 只留一份可擦除的副本（N7）：密码从 EditText 逐字取出，输入框立即清空
+            // 只留一份可擦除的副本：密码从 EditText 逐字取出，输入框立即清空
             val chars = CharArray(pwd.text.length) { pwd.text[it] }
             pwd.text.clear()
             dialog.dismiss()
@@ -933,7 +933,7 @@ class UserDictActivity : ComponentActivity() {
     /**
      * 解密加密包并导入。
      *
-     * 密码以 [CharArray] 传入（N7）：调用方从 `EditText` 逐字取，不产生 `String` 副本 ——
+     * 密码以 [CharArray] 传入：调用方从 `EditText` 逐字取，不产生 `String` 副本 ——
      * `String` 无法擦除，只会在堆里留到 GC，而这里已经有三份副本。
      */
     private fun decryptImport(staged: File, password: CharArray) {
@@ -1023,7 +1023,7 @@ class UserDictActivity : ComponentActivity() {
         val dir = UserDictExport.cacheDir(this).apply { mkdirs() }
         val dest = File(dir, "userdict-import-" + System.nanoTime() + ".bin")
         var ok = false
-        // 在途登记在写之前：cleanup 与本流程可能并发（N9）
+        // 在途登记在写之前：cleanup 与本流程可能并发
         UserDictExport.markInFlight(dest)
         try {
             val copied = contentResolver.openInputStream(uri)?.use { input ->
@@ -1073,7 +1073,7 @@ class UserDictActivity : ComponentActivity() {
     /**
      * 读入导入件（上限 [IMPORT_MAX_BYTES]）；返回文本与「是否被截断」。
      *
-     * 连续空读触顶 ⇒ 返回 null（N12）。原先这里 `break` 出循环，于是把**半份文件**当成
+     * 连续空读触顶 ⇒ 返回 null。原先这里 `break` 出循环，于是把**半份文件**当成
      * 「已读完、未截断」交给 `parseImport` —— 与 `stageImport` 的 `return null` 同型缺陷，
      * 两个读流必须一个口径：读不出就明确失败，别拿半份当全份。
      */
@@ -1118,7 +1118,7 @@ class UserDictActivity : ComponentActivity() {
         if (f != null) dropStaged(f)
     }
 
-    /** 删一份缓存中间件 + 注销在途登记（N9） */
+    /** 删一份缓存中间件 + 注销在途登记 */
     private fun dropStaged(f: File) {
         f.delete()
         UserDictExport.release(f)
@@ -1140,11 +1140,11 @@ class UserDictActivity : ComponentActivity() {
      *
      * 频次列固定宽，汉字与拼音按权重分栏；拼音为空时该列留空。
      *
-     * **列序由命名 tag 承载**（AI2 A-554）：早先 `getView` 用 `getChildAt(0/1/2)` 取列，而
+     * **列序由命名 tag 承载**：早先 `getView` 用 `getChildAt(0/1/2)` 取列，而
      * `buildRow` 只靠 `addView` 的调用顺序保证对应 —— 中间插一个 View 就会把频次显示成汉字，
      * 不崩也不报错。改成 tag 后「哪一列是什么」写进了命名契约。
      *
-     * 也**不覆写 `getItemId`**（AI2 A-555）：本页每次 `load()` 全量重建、最多几百行，没有稳定 id
+     * 也**不覆写 `getItemId`**：本页每次 `load()` 全量重建、最多几百行，没有稳定 id
      * 的需求；而 `position.toLong()` 一旦配上 `setHasStableIds(true)` 就会让「导入后列表不刷新」
      * （同一位置换了内容而 id 没变，ListView 认为这行没变）。
      */
@@ -1154,7 +1154,7 @@ class UserDictActivity : ComponentActivity() {
 
         /**
          * BaseAdapter 要求实现，而本页**没有**稳定 id：显式返回 [AdapterView.INVALID_ROW_ID]，
-         * 而不是 BaseAdapter 默认的「返回位置」（AI2 A-555）—— 位置不是稳定标识，
+         * 而不是 BaseAdapter 默认的「返回位置」—— 位置不是稳定标识，
          * 谁将来打开 `setHasStableIds(true)` 就会被它骗成「这行没变」，导入后列表不刷新。
          */
         override fun getItemId(position: Int): Long = AdapterView.INVALID_ROW_ID
@@ -1355,7 +1355,7 @@ class UserDictActivity : ComponentActivity() {
          * 退一档机型（本机 Keymaster 不支持 `setUnlockedDeviceRequired`）追加的一行。
          *
          * 上面的 `TEXT_ENABLE_BODY` 不能写死「锁屏不可解密」—— 在 MuMu 这类机器上它不成立，
-         * 文案与事实不符比少说一句更糟（N13）。
+         * 文案与事实不符比少说一句更糟。
          */
         const val TEXT_ENABLE_BODY_NOLOCK = """
 
@@ -1380,7 +1380,7 @@ class UserDictActivity : ComponentActivity() {
         /** 导出/导入侧：台账解不开时不得说成「还没有可导出的词」（L-1411 同型） */
         const val TEXT_LEDGER_UNREADABLE = "台账暂时解不开（密钥库不可用），没有导出任何内容"
 
-        // ── 导出 / 导入的密码与加密包文案（待定稿）──────────────────
+        // ── 导出 / 导入的密码与加密包文案 ────────────────────────────
         const val TEXT_EXPORT_PWD_TITLE = "设置导出密码"
         const val TEXT_EXPORT_PWD_DESC = "导出件是加密压缩包：整个包体加密，包内的词表是明文。" +
             "密码只能用汉字，本机不保存，忘记后无法解开。"
@@ -1428,7 +1428,7 @@ class UserDictActivity : ComponentActivity() {
 internal fun isConfirmText(input: String): Boolean = input.trim() == CONFIRM_WORD
 
 /**
- * 按导出格式换类型的 `ACTION_CREATE_DOCUMENT` 契约（AI2 A-533）。
+ * 按导出格式换类型的 `ACTION_CREATE_DOCUMENT` 契约。
  *
  * 为什么不用 `ActivityResultContracts.CreateDocument(mime)`：那个类型在
  * `registerForActivityResult` 时**固定**，而本页一次注册要服务三种明文档（yaml / tsv / txt）
