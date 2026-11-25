@@ -52,7 +52,7 @@ internal object GalleryInsert {
      * 清理时无条件保留的最新张数。
      *
      * 取 2 而不是 1：`commitContent` 交给宿主的是文件 URI，宿主读取是异步的；用户连选多张时
-     * 「正在被读的」往往是最新那张与上一轮插入的那张（L-1003）。
+     * 「正在被读的」往往是最新那张与上一次插入的那张（L-1003）。
      */
     private const val PROTECTED_RECENT = 2
 
@@ -207,7 +207,7 @@ internal object GalleryInsert {
             }
             queued = pending.size
         }
-        // 丢弃即删（AI2 A-193）：队列里的图还没提交给宿主，留着没人会用；
+        // 丢弃即删：队列里的图还没提交给宿主，留着没人会用；
         // 只等下次选图的 trimCache 回收的话，用户此后不再选图就一直占着明文。
         dropped.forEach { runCatching { it.delete() } }
         // 队内文件一并保护：否则折半档的字节预算会把最旧那张判掉，宿主随后读到「图片已失效」
@@ -242,7 +242,7 @@ internal object GalleryInsert {
         return if (System.currentTimeMillis() - p.atMs <= TTL_MS) {
             TakeResult.Ready(p.picked)
         } else {
-            // 过期丢弃同样是「这张再也不用了」，明文件一并删（AI2 A-193，与 putPending / clearPending 同口径）
+            // 过期丢弃同样是「这张再也不用了」，明文件一并删（与 putPending / clearPending 同口径）
             runCatching { p.picked.file.delete() }
             TakeResult.Expired
         }
@@ -261,7 +261,7 @@ internal object GalleryInsert {
             while (pending.isNotEmpty()) dropped.add(pending.removeFirst().picked.file)
             size
         }
-        // 同 [putPending]：整队作废时明文件一并删掉，不留给下一次 trimCache（AI2 A-193）
+        // 同 [putPending]：整队作废时明文件一并删掉，不留给下一次 trimCache
         dropped.forEach { runCatching { it.delete() } }
         return n
     }
@@ -295,8 +295,9 @@ internal object GalleryInsert {
     /**
      * 把选中的图片复制进私有 cache。在后台线程调用（原图可能几十 MB）。
      *
-     * 类型优先取宿主声明的（`ContentResolver.getType`），取不到时按文件头嗅探；**不回退通配类型**
-     * —— `ClipDescription` 要求具体类型，通配属未定义用法（L-1009）。文件名带嗅探出的扩展名，
+     * 类型按文件头嗅探（`ClipboardImageCodec.sniffMimeOrNull`），认不出时才退回宿主声明
+     * （`ContentResolver.getType`），两者都没有时用 [sniffImageMime] 的具体兜底；**不回退通配类型**
+     * —— `ClipDescription` 要求具体类型，通配属未定义用法（L-1009 / L-1060）。文件名带最终类型的扩展名，
      * 供按后缀判类型的宿主使用。
      */
     fun copyToCache(context: Context, uri: Uri): CopyResult {
@@ -359,7 +360,7 @@ internal object GalleryInsert {
             }
             val mime = sniffed ?: declared ?: sniffImageMime(head)
             val named = File(dir, "pick_$stamp.${extOf(mime)}")
-            // 落名失败宁可报错也不交 .tmp 出去（AI2 A-590）：`FileProvider.getType` 按**后缀**判类型，
+            // 落名失败宁可报错也不交 .tmp 出去：`FileProvider.getType` 按**后缀**判类型，
             // `.tmp` 一律 `application/octet-stream`，靠 MIME 分流的宿主就把图当文件处理了。
             val staged = finalize(temp, named) ?: return CopyResult.ReadFailed
             CopyResult.Ok(staged, mime)
@@ -412,7 +413,7 @@ internal object GalleryInsert {
     /**
      * 把写完的临时件落成 [named]，返回最终文件；两种落名手段都失败时返回 null。
      *
-     * **绝不把 `.tmp` 交出去**（AI2 A-590）：`FileProvider.getType` 按后缀查 `MimeTypeMap`，
+     * **绝不把 `.tmp` 交出去**：`FileProvider.getType` 按后缀查 `MimeTypeMap`，
      * `.tmp` 不在表里 ⇒ 提交出去的条目类型变 `application/octet-stream`，靠 MIME 分流的宿主
      * 就把图当普通文件处理（「已复制」却粘贴不出图）。内容已经在 temp 里，改名不行就整份复制到
      * 正确名字，比丢弃省事；复制也不成才报失败。
@@ -530,7 +531,7 @@ internal object GalleryInsert {
      * 应清理的文件（纯函数，供守卫枚举场景）。
      *
      * 入参按**最近使用在前**排序。最新 [protectRecent] 张无条件保留 —— 宿主读取是异步的，
-     * 刚提交与上一轮提交的都可能仍在被重读，删掉在界面上表现为「发出去的图裂了」（L-1003）；
+     * 刚提交与上一次提交的都可能仍在被重读，删掉在界面上表现为「发出去的图裂了」（L-1003）；
      * [mustKeep] 里的文件名按**身份**无条件保留（队内待插入队列，A-721）：位置保护只看「最近几位」，
      * 而队列里的文件可能被更晚的非入队落盘挤到后面，那时只有身份能救它。
      * 其余按「保留 [keepFiles] 张 + 保留集总字节不超过 [maxBytes]」淘汰，超出即删最旧。

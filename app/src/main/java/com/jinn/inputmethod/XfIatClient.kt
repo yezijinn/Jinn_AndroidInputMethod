@@ -15,7 +15,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * 讯飞在线听写（语音听写大模型 V2.0）客户端，[SpeechClient] 的第二个实现。
+ * 讯飞在线听写（语音听写大模型 V2.0）客户端，[SpeechClient] 的在线实现之一。
  *
  * 与 [AsrClient] 的差别只在**连接的生命周期**：讯飞一次会话一条连接，服务端不接受跨任务的
  * 音频缓冲，所以收尾（拿到最终结果 / 出错）就断掉旧连接、**随即预连下一条**

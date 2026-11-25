@@ -25,9 +25,9 @@ class ClipboardPrefs(context: Context) {
 
 
     /**
-     * 联动参数的**一致快照**（BUG-12）。字段与「剪贴板自定义」页的草稿一一对应。
+     * 联动参数的**一致快照**（BUG-12）。对应「剪贴板自定义」页保存的参数；缩略图布局两项另存于 [Prefs]。
      *
-     * 2026-10-10 起从八键扩到十二键（图片四项）。
+     * 由最初的八项扩至当前的十四项：图片四项，加展示、收藏行为两项。
      */
     internal data class Snapshot(
         val enabled: Boolean,
@@ -129,7 +129,11 @@ class ClipboardPrefs(context: Context) {
         get() = intOr(KEY_PANEL_PAGE, DEFAULT_PANEL_PAGE).coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)
         set(value) = sp.edit { putInt(KEY_PANEL_PAGE, value.coerceIn(2, ClipboardStore.PANEL_PAGE_ITEMS_MAX)) }
 
-    /** 搜索结果条数上限：2 ~ [MAX_SEARCH_CAP]，默认 200 */
+    /**
+     * 搜索结果条数上限：2 ~ [MAX_SEARCH_CAP]，默认 200。
+     *
+     * 与字节预算双闸：本项只限条数，驻留字节另由 [ClipboardStore.SEARCH_RETAIN_BUDGET_BYTES] 封顶。
+     */
     var maxSearchResults: Int
         get() = intOr(KEY_MAX_SEARCH, DEFAULT_MAX_SEARCH).coerceIn(2, MAX_SEARCH_CAP)
         set(value) = sp.edit { putInt(KEY_MAX_SEARCH, value.coerceIn(2, MAX_SEARCH_CAP)) }
@@ -301,7 +305,7 @@ class ClipboardPrefs(context: Context) {
     // ── 备份导出 / 导入（见 ConfigBackup / ConfigBackupManager） ──
 
     /**
-     * 导出**进备份**的配置键：全部是用户偏好（历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 管理页分页）。
+     * 导出**进备份**的配置键：全部是用户偏好（历史容量 / 收藏上限 / 单条与分页 / 搜索上限 / 管理页分页 / 图片容量与展示行为）。
      *
      * 运行态标记（[reclassified]）与开关（[enabled]）一律不进，否则一份包能把
      * 「本机是否采集、是否已重算」的状态带偏。
@@ -322,7 +326,7 @@ class ClipboardPrefs(context: Context) {
         ConfigBackup.BackupValue.of(maxItemBytesKb)?.let { out[KEY_MAX_ITEM_KB] = it }
         ConfigBackup.BackupValue.of(historyPageSize)?.let { out[KEY_HISTORY_PAGE_SIZE] = it }
         // 图片四项：同为用户偏好（历史容量语义的一部分），换机应当带走。
-        // ⚠ 图片**文件**不进备份（见实施计划 §1 U4），带走这三项只影响「新机器上后续采集」的额度。
+        // ⚠ 图片**文件**不进备份（见实施计划 §1 U4），带走这四项只影响「新机器上后续采集」的额度。
         ConfigBackup.BackupValue.of(imageCaptureEnabled)?.let { out[KEY_IMAGE_ENABLED] = it }
         ConfigBackup.BackupValue.of(imageMaxItems)?.let { out[KEY_IMAGE_MAX_ITEMS] = it }
         ConfigBackup.BackupValue.of(imageMaxTotalMb)?.let { out[KEY_IMAGE_MAX_TOTAL_MB] = it }
@@ -337,7 +341,7 @@ class ClipboardPrefs(context: Context) {
      * 批量写入并返回成功应用的键数（越界值按**与 setter 相同**的钳位处理）。
      *
      * 三处口径（BUG-12）：
-     *  1. 落盘走**单次 `commit`** —— 原先逐个 setter 各做一次 `apply()`，八键不同批，中途进程被杀
+     *  1. 落盘走**单次 `commit`** —— 原先逐个 setter 各做一次 `apply()`，各键各成一批，中途进程被杀
      *     就留下半套参数（体积上限生效了、收藏上限没生效）；
      *  2. 与 [snapshot] / [applyDraft] 共用同一把锁，读侧不会再取到两次写入之间的混合；
      *  3. 收藏体积只按静态上界钳位（L-982）：存包里的原值，动态上限留给生效值去压；
@@ -414,7 +418,7 @@ class ClipboardPrefs(context: Context) {
     companion object {
 
         /**
-         * 八键联动参数的读写互斥（BUG-12）。
+         * 十四项联动参数的读写互斥（BUG-12）。
          *
          * 挂在**伴生对象**上而不是实例上：锁的有效性不该依赖「`of()` 是否给出同一个实例」这个实现细节，
          * 将来换成不缓存也照样成立。
