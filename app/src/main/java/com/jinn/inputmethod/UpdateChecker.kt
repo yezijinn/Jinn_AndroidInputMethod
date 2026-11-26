@@ -176,7 +176,7 @@ object UpdateChecker {
         // 轻量标签的 `tagger` 是 `null`，正则要求 `{`，不会误伤。
         val taggerRe = Regex(""""tagger"\s*:\s*\{[^{}]*\}""")
         val nameRe = Regex(""""name"\s*:\s*"([^"]+)"""")
-        // **翻页必须同时带 `per_page`**（BUG.md L-1052，接口实测 2026-10-07）：只传 `page` 时服务端
+        // **翻页必须同时带 `per_page`**（2026-10-07，L-1052）：只传 `page` 时服务端
         // 忽略它 —— 六次逐页请求的响应字节数完全相同（6022），于是并集是同一页的 N 份复制
         // （真机日志因此虚报「160 个」，实际仓库只有 28 个标签），`GITEE_TAGS_MAX_PAGES` 这道
         // 上限守卫空转；而 `fetchLatest` 先返回非空结果 ⇒ 这份可能被截断的答案会**压制** GitHub
@@ -223,7 +223,8 @@ object UpdateChecker {
     /**
      * 比较用的**归一键**（BUG.md L-123）：6 位 `yyMMdd` 补成 8 位（`+20000000`），8 位原样。
      *
-     * `normalizeTag` 的返回值会进 URL / 文案（必须保持原始写法），所以**只在这里**归一：
+     * 归一后的整数**只用于比较**；进 URL / 文案的是调用方保留的原始标签名（[releasesUrl] 要原始串），
+     * 所以**只在这里**归一：
      * 否则混用两种长度时按数值比会恒错（`260929` 恒小于 `20260929`）⇒ 跨源挑旧、与本地比判「已最新」。
      */
     internal fun comparableVersion(value: Int): Int =
@@ -232,12 +233,13 @@ object UpdateChecker {
     /**
      * 标签归一化：去 `v` 前缀 → 只认 **6 位或 8 位**纯数字且须像日期。
      *
-     * 返回值既进 URL / 文案（要保持原始写法），也进比较 —— 比较前必须先过 [comparableVersion]。
+     * 返回值只用于比较（进 URL / 文案的是调用方保留的原始标签名）；比较前必须先过 [comparableVersion]。
      * 逐条判据（7 位为什么拒收、为什么必须是 ASCII 数字、日期闸的宽严）写在本函数体内。
      */
     internal fun normalizeTag(raw: String): Int? {
-        // 大小写 `v` 前缀都认（BUG.md L-147）：仓库现行约定是小写，但 `V20260919` 这种写法
-        // 会被只去小写的实现**静默忽略**（等价于该 tag 不存在 ⇒ 退化为取次大值 ⇒ 可能误报
+        // 大小写 `v` 前缀都认（BUG.md L-147）：现行规范是纯数字日期（与 versionCode 同形态），
+        // `v` 前缀只属历史与并存写法；只去小写的实现会**静默忽略** `V20260919`
+        // （等价于该 tag 不存在 ⇒ 退化为取次大值 ⇒ 可能误报
         // 「已是最新」且不自愈）。只削**一个**前缀字符：`vV20260929` 仍然是拒收（长度 9）。
         val digits = if (raw.startsWith("v") || raw.startsWith("V")) raw.substring(1) else raw
         // 只认 6 位（yyMMdd）与 8 位（yyyyMMdd，= versionCode 格式）：7 位两者都不是（BUG.md L-83）。

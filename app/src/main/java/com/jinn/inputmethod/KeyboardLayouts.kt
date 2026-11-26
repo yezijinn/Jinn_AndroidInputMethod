@@ -25,7 +25,7 @@ internal val DIGIT_MAP = mapOf(
     'n' to "\"", 'm' to "%",
 )
 
-/** 符号分组：label 为候选栏标签；pages 为该组内的符号页（键盘滑动在此组内翻页），可自由添加页数不限 */
+/** 符号分组：label 为候选栏标签；pages 为该组内的符号页（键盘滑动在此组内翻页），可自由添加、页数不限 */
 internal class SymbolGroup(val label: String, val pages: List<Map<Char, String>>)
 
 /**
@@ -44,7 +44,7 @@ internal fun widestSymbolLabel(labels: Collection<String>): String =
 
 internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
     // 全角：只放全角符号（中文全角标点 + 全角 ASCII 变体 + 无全/半角之分的通用符号），
-    // 不得混入 ASCII、数字或字母（由 SymbolLayoutTest 守卫）；68 项按序铺满三页（26 + 26 + 16）
+    // 不得混入 ASCII、数字或字母（由 `SymbolLayoutTest` 守卫）；68 项按序铺满三页（26 + 26 + 16）
     SymbolGroup("全角", listOf(
         mapOf(
             'q' to "，", 'w' to "。", 'e' to "、", 'r' to "；", 't' to "：",
@@ -87,8 +87,8 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
         ),
     )),
     // 变量：输出「随当前时间变化」的内容（原「编程」组的关键字已整体移除：实测用不上）。
-    // 取值写成 DynamicSymbols.token(「短名」)：键面显示短名，上屏时按点击那一刻的时间展开。
-    // 新增一项只需在 DynamicSymbols.expand 里加同名分支，护栏见 DynamicSymbolsTest。
+    // 取值写成 `DynamicSymbols.token("短名")`：键面显示短名，上屏时按点击那一刻的时间展开。
+    // 新增一项只需在 `DynamicSymbols.expand` 里加同名分支，护栏见 `DynamicSymbolsTest`。
     SymbolGroup("变量", listOf(
         mapOf(
             'q' to DynamicSymbols.token("星期"), 'w' to DynamicSymbols.token("农历"),
@@ -104,7 +104,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
         ),
     )),
     // 偏旁：汉字笔画与部首（141 项，按序铺满 5 页 + 末页 11 键，顺序即用户给定清单）。
-    // 位置紧跟在「变量」之后，由 SymbolLayoutTest 的顺序守卫钉住。
+    // 位置紧跟在「变量」之后，由 `SymbolLayoutTest` 的顺序守卫钉住。
     SymbolGroup("偏旁", listOf(
         // 第 1 页
         mapOf(
@@ -200,7 +200,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'y' to "☎", 'u' to "✉", 'i' to "✈", 'o' to "⚓", 'p' to "⚑",
             'a' to "❤", 's' to "☻", 'd' to "☼", 'f' to "☽", 'g' to "♨",
             // 行星符号：本页其余条目都是天气/天文/符号类，早前这里误录成汉字「由」「白」
-            // （见 SymbolLayoutTest 的回归用例）；k/l 补上同行序列缺的木星与天王星符号。
+            // （见 `SymbolLayoutTest` 的回归用例）；k/l 补上同行序列缺的木星与天王星符号。
             'h' to "☿", 'j' to "♄", 'k' to "♃", 'l' to "♅",
             'z' to "☘", 'x' to "♁", 'c' to "☛", 'v' to "☚", 'b' to "➜",
             'n' to "⏏", 'm' to "※",
@@ -285,7 +285,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'z' to "⒂", 'x' to "⒃", 'c' to "⒄", 'v' to "⒅", 'b' to "⒆",
             'n' to "⒇", 'm' to "0.",
         ),
-        // 第 6 页：带括号小写字母 + 大数圈号 + 汉字数字
+        // 第 6 页：带括号小写字母（⒜~⒵）
         mapOf(
             'q' to "⒜", 'w' to "⒝", 'e' to "⒞", 'r' to "⒟", 't' to "⒠",
             'y' to "⒡", 'u' to "⒢", 'i' to "⒣", 'o' to "⒤", 'p' to "⒥",

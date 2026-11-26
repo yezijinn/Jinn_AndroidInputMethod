@@ -44,7 +44,7 @@ object ClipboardClassifier {
      * 两者都有时为 `URL,NUMBER`（顺序固定，便于比较与测试）。不输出明文日志。
      */
     fun classify(text: String): String {
-        // 分类只扫前缀。入库上限是 256KB（`ClipboardController.MAX_ITEM_BYTES`），
+        // 分类只扫前缀。入库上限是 256KB（`ClipboardStore.MAX_ITEM_BYTES`），
         // 11 条规则（5 条 URL + 6 条数字）逐条 `find()` 就是 11 遍扫描；而标签只需要回答
         // 「这份内容**开头**像不像网址/数字」—— 靠前的片段本来就是列表展示与粘贴用的那一段
         // （见 [pieceFor]），扫到几万字符之后才出现的片段没人会看到。
