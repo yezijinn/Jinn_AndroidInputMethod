@@ -79,7 +79,7 @@ internal object ConfigBackupManager {
      * 所以页宽就是一次解密窗口 —— 上界 `CLIP_PAGE × MAX_ITEM_BYTES(256KB) × 放大 2.5`。
      * 原值 **200** 条 ≈ **131MB**，是 48MB 预算（`ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES`）的 2.7 倍，
      * 且当时不在任何窗口守卫的覆盖里（搜索 / 面板分页 / 存量重算三条都有，导出这条漏了）。
-     * 取 **50**：与 `ClipboardDb.RECLASSIFY_PAGE` 同量级（≈32.8MB，留三成余量），代价是导出查询次数变多
+     * 取 **50**：与 `ClipboardDb.RECLASSIFY_PAGE` 同量级（≈31.25MB，留三成余量），代价是导出查询次数变多
      * （页数 ×4），而导出是用户手动触发、带进度反馈的一次性动作，慢几百毫秒换掉 OOM 值得。
      */
     internal const val CLIP_PAGE = 50

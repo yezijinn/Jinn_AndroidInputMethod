@@ -487,8 +487,6 @@ object PinyinEngine {
     @Volatile
     private var useTraditional: Boolean = false
 
-    /** 因生僻字被过滤掉的词条数（诊断用） */
-
     /** 扩展词库（「补充短语词库」下载的分片包）是否已加载。后台线程写、UI 线程经 [isExtensionLoaded] 读，需 volatile */
     @Volatile
     private var extensionLoaded = false
@@ -606,9 +604,8 @@ object PinyinEngine {
                         "⇒ 保持未加载，界面会提示「词库载入中」并等待补试",
                 )
             }
-            // 原先这里还有一句 `Log.i`，与下面的 `Diagnostics.i` 记的是同一件事：
-            // `Diagnostics.i` 内部就是 logcat + 文件双写，于是 logcat 里每条加载都出现两遍
-            // （第二遍还少两个字段，排查时极易误读成「加载了两次」）。2026-10-22 删掉重复那条。
+            // 诊断日志只走 Diagnostics.i（logcat + 文件双写），不再另打 Log.i：
+            // 否则 logcat 里每条加载出现两遍（第二遍少两个字段），排查时易误读成「加载了两次」。
             // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
             // 评估内存优化前必须先有这个数，不能靠猜。
             Diagnostics.i(

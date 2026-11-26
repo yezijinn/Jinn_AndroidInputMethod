@@ -739,9 +739,9 @@ object ClipboardStore {
     /**
      * 一次批量解密窗口的内存预算（字节）。
      *
-     * 按当前参数：窗口 50 × 单条上限 256KB × 放大 2.5 ≈ 32.8MB（最坏情形：整窗口都顶到单条上限，
+     * 按当前参数：窗口 50 × 单条上限 256KB × 放大 2.5 ≈ 31.25MB（最坏情形：整窗口都顶到单条上限，
      * 实测常驻约 29.8MB）；常规内容远低于此。若日后放宽单条上限或调大窗口，
-     * `ClipboardLimitsTest` 的护栏会先失败（预算 ÷ 单条上限 ÷ 2.5 ≈ 76 条窗口）。
+     * `ClipboardLimitsTest` 的护栏会先失败（预算 ÷ 单条上限 ÷ 2.5 ≈ 76.8 条窗口）。
      */
     const val DECRYPT_WINDOW_BUDGET_BYTES = 48L * 1024 * 1024
 
@@ -1061,7 +1061,7 @@ object ClipboardStore {
             // 入库成功后再收孤儿（同线程、行已在库；在途集合与保护窗一起兜住其它线程的写入）
             ClipboardImageFiles.gc(context, db)
             if (logPerItem) {
-                // 只记维度（尺寸 / 体积 / 哈希前 8 位），不记 URI、路径与内容
+                // 只记维度（尺寸 / 体积 / 哈希前 12 位），不记 URI、路径与内容
                 Diagnostics.i(TAG, "saveImage: 已保存 #$id ${width}x$height ${bytes.size / 1024}KB ${hashTag(hash)}")
             }
             return id

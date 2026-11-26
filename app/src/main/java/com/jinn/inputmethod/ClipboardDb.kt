@@ -9,7 +9,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * 存量标签重算（[ClipboardDb.reclassifyAll]）的分页大小。
  *
  * 一页的密文串会同时驻留内存（base64 ≈ 明文的 4/3，再加解出的明文串，实测合计 2.33 倍），
- * 峰值按 [ClipboardStore.decryptWindowPeakBytes] 估算：50 条 ≈ 32.8MB（最坏情形），
+ * 峰值按 [ClipboardStore.decryptWindowPeakBytes] 估算：50 条 ≈ 31.25MB（最坏情形），
  * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）内，由 `ClipboardLimitsTest` 守卫。
  * 原值 200 条 ≈ 131MB（越界）；同量级的问题后来在**配置备份导出**那条路径上又出现过一次
  * （`ConfigBackupManager.CLIP_PAGE` 原值同为 200，已一并压回预算内，见 BUG.md L-102）。
@@ -1967,7 +1967,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 if (page.nextOffset <= offset) break
                 // 字节预算（L-91）：先试算再决定收不收 —— 越界就整页拒收、游标留在它之前，
                 // 于是这一页会被后续分页 / 续扫重新取到（不裁剪、不丢条目）。
-                // 首屏非空由「第一页无条件收下」保证：单页最坏 50 × 256KB × 2.5 = 32.8MB < 48MB 预算。
+                // 首屏非空由「第一页无条件收下」保证：单页最坏 50 × 256KB × 2.5 = 31.25MB < 48MB 预算。
                 val pageBytes = page.items.sumOf { ClipboardStore.utf8ByteSize(it.content) }
                 if (out.isNotEmpty() && maxPlainBytes > 0 && plainBytes + pageBytes > maxPlainBytes) break
                 out.addAll(page.items)

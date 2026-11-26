@@ -35,8 +35,9 @@ import java.util.concurrent.Executors
  * 合并出频次 → 展示 / 导出。台账无上限增长，因此读盘、聚合、导入、SAF 读写全部在后台线程，
  * 主线程只渲染与弹框。
  *
- * **导出两选一**：加密包（[UserDictExport]：外层 AES-256-GCM 壳、内层普通 zip 且条目明文）或明文文件；
- * 密码规则与「导出配置文件」同一套（[ConfigCrypto.validatePassword]，只能用汉字、≥4 位、不重复单字）。
+ * **导出形态二选一**：三种格式（yaml / tsv / txt）各有加密包（[UserDictExport]：外层 AES-256-GCM 壳、
+ * 内层普通 zip 且条目明文）或明文文件两种形态；
+ * 密码规则与「导出配置文件」同一套（[ConfigCrypto.validatePassword]，只用汉字、4~64 个、不可同一字重复）。
  * 导入时按文件头分流：加密包先要密码再解密，明文导出件照旧直读。
  *
  * **默认关闭**：进入本页时若未开启，先弹说明框，逐字输入「我明白」才开启；
@@ -328,8 +329,8 @@ class UserDictActivity : ComponentActivity() {
      * 三处危险操作（开启 / 关闭并删除 / 导出明文）共用这一个视图与同一个确认词。
      *
      * **高度先量后建**：ScrollView 一开始就按文字真实高度给（超出 [TEXT_MAX_DP] 才截到上限），
-     * 不按屏高比例占位。旧写法先占 0.58 屏高再靠 post 收缩，AlertDialog 的窗口按占位高度建完
-     * 就不回缩，中间留下一大片空白（真机：正文才 6 行，窗口有近 2000px 高）。
+     * 不按屏高比例占位；若先按比例占位再靠 post 收缩，AlertDialog 窗口按占位高度建完
+     * 就不回缩，中间留下大片空白（正文仅数行时窗口可达近 2000px 高）。
      */
     private fun confirmView(body: String): ConfirmView {
         val density = resources.displayMetrics.density
@@ -357,7 +358,7 @@ class UserDictActivity : ComponentActivity() {
         val maxTextPx = (TEXT_MAX_DP * density).toInt()
         val textHeight = minOf(text.measuredHeight + (4 * density).toInt(), maxTextPx)
         // 触顶时开渐隐边：否则文字在视口下沿被行中间切断，看着像「正文就到这儿了」。
-        // 长度必须走 [dp]，别在这里写像素算式 —— 上面那条宽度算式已经改成 dp 了。
+        // 长度必须走 [dp]，别在这里写像素算式 —— 与上面的宽度算式保持同一口径。
         val capped = text.measuredHeight + (4 * density).toInt() > maxTextPx
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -464,7 +465,7 @@ class UserDictActivity : ComponentActivity() {
     }
 
     /**
-     * 导出格式二选一：加密包（既有）或明文文件（新增）。
+     * 导出形态二选一：加密包或明文文件。
      *
      * 明文导出的风险不靠按钮文案讲清 —— 那是下一层「输入我明白」警告框的事；
      * 这一层只把两种形态的差别摆出来，让用户知道自己在选什么。
@@ -591,7 +592,7 @@ class UserDictActivity : ComponentActivity() {
         // 自校验不过时必须让对话框留在原地（默认 positive 会先 dismiss 再回调，密码就白输了）
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             // 校验与比对都直接吃 `Editable`：**不产生 String 副本** —— String 无法清零，
-            // 只能等 GC，而这里原先每点一次就多留两三份密码
+            // 只能等 GC，每次误点都会在堆上多留下难以回收的密码副本
             when (val check = ConfigCrypto.validatePassword(pwd1.text)) {
                 is ConfigCrypto.PasswordCheck.Invalid -> {
                     pwd1.error = check.reason
@@ -933,8 +934,8 @@ class UserDictActivity : ComponentActivity() {
     /**
      * 解密加密包并导入。
      *
-     * 密码以 [CharArray] 传入：调用方从 `EditText` 逐字取，不产生 `String` 副本 ——
-     * `String` 无法擦除，只会在堆里留到 GC，而这里已经有三份副本。
+     * 密码以 [CharArray] 传入：调用方从 `EditText` 逐字取后立即清空输入框，只留这一份可擦除副本；
+     * 不走 `String`，避免密码以无法擦除的形态滞留在堆里直到 GC。
      */
     private fun decryptImport(staged: File, password: CharArray) {
         // 同 previewImport：主线程回调里提交，池已关时不得抛未捕获异常（BUG.md L-1422）
@@ -1073,9 +1074,9 @@ class UserDictActivity : ComponentActivity() {
     /**
      * 读入导入件（上限 [IMPORT_MAX_BYTES]）；返回文本与「是否被截断」。
      *
-     * 连续空读触顶 ⇒ 返回 null。原先这里 `break` 出循环，于是把**半份文件**当成
-     * 「已读完、未截断」交给 `parseImport` —— 与 `stageImport` 的 `return null` 同型缺陷，
-     * 两个读流必须一个口径：读不出就明确失败，别拿半份当全份。
+     * 连续空读触顶 ⇒ 返回 null：读流读不出就明确失败，不能拿**半份文件**当成
+     * 「已读完、未截断」交给 `parseImport` —— 与 `stageImport` 的 `return null` 同型口径，
+     * 两个读流必须一致。
      */
     private fun readCapped(file: File): CapText? = runCatching {
         // 按实际长度开缓冲：小文件不再一开口就要 8MB（导入是手动操作，但没必要白占堆）
@@ -1212,7 +1213,7 @@ class UserDictActivity : ComponentActivity() {
      * 而系统默认 Button 在这里是个浅灰圆角块，与整页的描边按钮明显两种风格。
      *
      * 高度 / 间距只由调用方的 [btnLp] 给：这里再设一份 `layoutParams` 就是双机制 ——
-     * `addView(child, params)` 会整体覆盖它，看着生效其实一半是死代码（上一版就是这么错的）。
+     * `addView(child, params)` 会整体覆盖它，留着便会变成永不生效的死代码。
      */
     private fun settingsButton(label: String): Button = Button(this).apply {
         this.text = label
@@ -1370,7 +1371,7 @@ class UserDictActivity : ComponentActivity() {
         /**
          * 台账解不开时的追加行（L-1411）：上面的「0 次选择」不是真值，记录还在文件里。
          *
-         * 为什么不改 [TEXT_SUMMARY] 本身：那是作者域已定稿的文案，这里只追加一条状态说明；
+         * 为什么不改 [TEXT_SUMMARY] 本身：那是作者域既有文案，这里只追加一条状态说明；
          * 同时页面禁用导出与删除 —— 一屏「不可信的 0 条」加上一个不可回滚的删除键，就是
          * 「顺手把真数据删掉」的现场。
          */

@@ -19,7 +19,7 @@ import android.widget.TextView
  *
  * 分块查询会把整个窗口逐条解密后才返回，故单次内存峰值 ≈ 窗口条数 × 单条上限 × 放大系数
  * （见 [ClipboardStore.decryptWindowPeakBytes]，放大是为了计入 base64 密文与 UTF-16 String）。
- * 50 条 ≈ 32.8MB（最坏情形，实测常驻约 29.8MB），早先的 300 条约 196MB。
+ * 50 条 ≈ 31.25MB（最坏情形，实测常驻约 29.8MB），早先的 300 条约 196MB。
  * 调整本值后必须让 `ClipboardLimitsTest` 的窗口预算护栏通过。
  */
 internal const val SEARCH_WINDOW_ITEMS = 50
