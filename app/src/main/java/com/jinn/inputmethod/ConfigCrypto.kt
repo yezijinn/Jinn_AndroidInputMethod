@@ -29,7 +29,7 @@ import javax.crypto.spec.SecretKeySpec
  * 不能是同一个字重复。中文密码的可用字符空间远大于英文按键组合，配合 `600_000` 次迭代，
  * 离线爆破成本极高。
  *
- * 线程模型：加密解密是纯计算 + 流式文件 IO，必须在后台线程调用（600_000 次迭代在手机上
+ * 线程模型：加密解密是纯计算 + 流式文件 IO，必须在后台线程调用（`600_000` 次迭代在手机上
  * 约需 1~2 秒）。密码以 CharArray 传入，调用方用完后负责清零（String 无法可靠擦除）。
  */
 internal object ConfigCrypto {
@@ -54,7 +54,7 @@ internal object ConfigCrypto {
     /**
      * 密码长度定义域（按汉字个数计）。
      *
-     * 下限取 4：4 个汉字的组合空间已远大于常见弱口令，叠加 600_000 次 PBKDF2 后
+     * 下限取 4：4 个汉字的组合空间已远大于常见弱口令，叠加 `600_000` 次 PBKDF2 后
      * 离线爆破成本极高。
      */
     const val MIN_PASSWORD_CHARS = 4
@@ -63,7 +63,7 @@ internal object ConfigCrypto {
     /**
      * 迭代数上限：解析外部文件时的护栏。
      *
-     * 取 200 万（约本机默认值的三倍多）：给将来调高强度留足空间，同时挡住「构造一个超大迭代数的包」
+     * 取 `2_000_000`（约本机默认值的三倍多）：给将来调高强度留足空间，同时挡住「构造一个超大迭代数的包」
      * 把解密拖成几十秒到几分钟的假死（界面只会显示「正在解密…」，用户会以为卡死）。
      */
     private const val MAX_ITERATIONS = 2_000_000
@@ -72,7 +72,7 @@ internal object ConfigCrypto {
      * 迭代数下限。
      *
      * 文件头里的迭代数是**外部输入**：不设下限等于把密文强度交给文件自己声明 ——
-     * 一个 `iterations=1` 的包照样能解开，与「`600_000` 次迭代」的安全承诺不一致。10 万是默认值的
+     * 一个 `iterations=1` 的包照样能解开，与「`600_000` 次迭代」的安全承诺不一致。`100_000` 是默认值的
      * 六分之一，给将来下调留了空间，同时排除掉「形同虚设」的强度。
      */
     private const val MIN_ITERATIONS = 100_000
@@ -194,8 +194,8 @@ internal object ConfigCrypto {
      *
      * 明文的处理口径（写实）：解密过程会把中间明文写进同目录的 `dest.name + ".tmp"`，
      * **认证通过才改名**到 [dest]；失败路径先**截断**该临时件再删除，删除失败留一条 W ——
-     * 极端情况下（进程被杀 / 删除失败）可能残留一个空文件，由
-     * `ConfigBackupManager.cleanupStaleCache` 按前缀兜底清掉（BUG.md L-172）。
+     * 极端情况下（进程被杀 / 删除失败）可能残留一个空文件：配置包由
+     * `ConfigBackupManager.cleanupStaleCache` 按前缀、词库由 `UserDictExport.cleanup` 按年龄兜底回收。
      */
     fun decrypt(src: File, dest: File, password: CharArray): Boolean = runCatching {
         val tmp = File(dest.parentFile, dest.name + ".tmp")
@@ -236,7 +236,7 @@ internal object ConfigCrypto {
             }
         } catch (t: Throwable) {
             // 先截断再删：即使删除失败（权限 / 占用），留在磁盘上的也只是空文件，
-            // 而不是一份未认证的明文（BUG.md L-172）
+            // 而不是一份未认证的明文。
             runCatching { tmp.outputStream().use { } }
             if (tmp.exists() && !tmp.delete()) {
                 Diagnostics.w("ConfigCrypto", "解密失败后清残件未成功: ${tmp.name}")

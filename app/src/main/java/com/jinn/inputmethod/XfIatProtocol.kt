@@ -71,12 +71,12 @@ object XfIatProtocol {
     private const val HMAC_ALGORITHM = "HmacSHA256"
 
     /**
-     * 生成 `EEE, dd MMM yyyy HH:mm:ss 'GMT'` 形式的日期串（Locale.US、GMT）。
+     * 生成 `EEE, dd MMM yyyy HH:mm:ss 'GMT'` 形式的日期串（`Locale.US`、GMT）。
      *
      * 必须是 GMT 而不是本机时区：服务端按 GMT 解析并与自己的时钟比，偏差 >300 秒直接 401。
      */
     fun rfc1123Gmt(nowMs: Long): String {
-        // SimpleDateFormat 非线程安全 ⇒ 每次新建（调用频率是「一次会话一次」）
+        // `SimpleDateFormat` 非线程安全 ⇒ 每次新建（调用频率是「一次会话一次」）
         val format = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
         format.timeZone = TimeZone.getTimeZone("GMT")
         return format.format(Date(nowMs))
@@ -104,11 +104,12 @@ object XfIatProtocol {
         val authorization = base64(authorizationOrigin.toByteArray(UTF8))
         // date 里的空格与逗号必须编码：OkHttp 会把空格编成 %20，但**签名用的是原文**，
         // 服务端解码回来比对，所以先自己编码，避免「签名对、URL 被改写」这类对不上的情形。
+        // query 固定三项且顺序固定：host → date → authorization。
         val encodedDate = java.net.URLEncoder.encode(date, "UTF-8").replace("+", "%20")
         return "wss://$host$path?host=$host&date=$encodedDate&authorization=$authorization"
     }
 
-    /** 首帧：`header.status=0`、`audio.status=0`、带 iat 业务参数 */
+    /** 首帧：`header.status=0`、`payload.audio.status=0`，另带 iat 业务参数 */
     fun firstFrame(appId: String, pcm: ByteArray, seq: Int = 0): String = JSONObject().apply {
         put("header", JSONObject().put("app_id", appId).put("status", 0))
         put("parameter", JSONObject().put("iat", iatParameter()))
@@ -116,18 +117,17 @@ object XfIatProtocol {
     }.toString()
 
     /**
-     * 中间帧：`header.status=1`、`audio.status=1`、seq 递增。
+     * 中间帧：`header.status=1`、`payload.audio.status=1`、seq 递增。
      *
-     * ⚠ `header.app_id` **每一帧都要带**（2026-11-01 真机实测）：只在首帧带时，
-     * 第一条音频帧就被服务端拒掉 —— `code=10163 $.header.app_id field is required`。
-     * 用同一套参数在官方端点做过 A/B：音频帧带 app_id 才通过，不带必报 10163。
+     * ⚠ `header.app_id` 每一帧都要带（2026-11-01）：只在首帧带时，第一条音频帧就被服务端
+     * 拒掉 —— `code=10163 $.header.app_id field is required`；官方端点 A/B 同样如此。
      */
     fun audioFrame(appId: String, pcm: ByteArray, seq: Int): String = JSONObject().apply {
         put("header", JSONObject().put("app_id", appId).put("status", 1))
         put("payload", JSONObject().put("audio", audioPayload(pcm, seq, status = 1)))
     }.toString()
 
-    /** 末帧：`header.status=2`、`audio.status=2`、`audio=""`（空串，不是省略）；`app_id` 同上 */
+    /** 末帧：`header.status=2`、`payload.audio.status=2`、`payload.audio.audio=""`（空串，不是省略）；`app_id` 同上 */
     fun lastFrame(appId: String, seq: Int): String = JSONObject().apply {
         put("header", JSONObject().put("app_id", appId).put("status", 2))
         put("payload", JSONObject().put("audio", audioPayload(ByteArray(0), seq, status = 2)))
@@ -213,7 +213,7 @@ object XfIatProtocol {
         )
     }.getOrNull()
 
-    /** `pgs` 在解码后的 `text` 里（`apd` 追加 / `rpl` 替换）；个别版本放在 result 上，两处都认 */
+    /** `pgs` 在解码后的 `text` 里（`apd` 追加 / `rpl` 替换）；个别版本放在 `result` 上，两处都认 */
     private fun pgsOf(result: JSONObject, textJson: JSONObject?): String? {
         val raw = (result.opt("pgs") as? String) ?: (textJson?.opt("pgs") as? String)
         return raw?.takeIf { it.isNotBlank() && it != "null" }
@@ -226,7 +226,7 @@ object XfIatProtocol {
     }
 
     /**
-     * `sn` 在解码后的 `text` 里（与 `pgs` / `rg` 同处），个别版本放 result 上，两处都认。
+     * `sn` 在解码后的 `text` 里（与 `pgs` / `rg` 同处），个别版本放 `result` 上，两处都认。
      *
      * 取不到时返回 0：累积器只把「回到 1」当断句，0 不会误触发切分。
      */
@@ -243,7 +243,7 @@ object XfIatProtocol {
         }.getOrNull()
     }
 
-    /** 拼 `ws[].cw[].w`：一个 ws 是多候选，只取第一个 cw 的 w（官方 Demo 同款） */
+    /** 拼 `ws[].cw[].w`：一个 `ws` 是多候选，只取第一个 `cw` 的 `w`（官方 Demo 同款） */
     private fun joinWords(textJson: JSONObject?): String {
         val ws = textJson?.optJSONArray("ws") ?: return ""
         val out = StringBuilder()
@@ -313,7 +313,7 @@ object XfIatProtocol {
  * 第二句的 `rg=[1,1]` 会把第一句整句替换掉 —— 故「`sn` 回到 1」时把当前句定稿进 [sentences]，
  * `rg` 只在当前句内定位。（wpgs 同一句内 `sn` 严格递增：修正旧片走的是**新 `sn`** + 指向旧的 `rg`。）
  *
- * ⚠ 当前请求参数（`domain=spark_asr_v2, eos=60000, dwa=wpgs`，**没有 `vgap`**）下服务端不会自己切句：
+ * 当前请求参数（`domain=spark_asr_v2, eos=60000, dwa=wpgs`，**没有 `vgap`**）下服务端不会自己切句：
  * 7.1 秒、含 1.5 秒停顿的两句话实测**只有一句**（`sn` 一路增到末尾，从不回到 1）。所以断句分支
  * 在现参数下不触发，属防御；一旦以后把 `vgap` 加进首帧，它就是唯一的正确性依据 ——
  * 两句的 `rg` 各从 1 起算这一点不会因为去掉它而变。
@@ -361,13 +361,13 @@ class XfTextAccumulator {
 
             else -> {
                 if (!result.ls) {
-                    // 没有 pgs 又未收尾：当普通增量处理（个别版本会这么回）
+                    // 没有 `pgs` 又未收尾：当普通增量处理（个别版本会这么回）
                     pieces.add(result.text)
                 } else if (result.text.startsWith(text)) {
-                    // 这一片包含前面全部内容 ⇒ 非 wpgs 形态的「整段最终文本」（先前为空也算）
+                    // 这一片包含前面全部内容 ⇒ 非 `wpgs` 形态的「整段最终文本」（先前为空也算）
                     finalText = result.text
                 } else {
-                    // wpgs 的最后一片：只补末尾，不能覆盖前文
+                    // `wpgs` 的最后一片：只补末尾，不能覆盖前文
                     pieces.add(result.text)
                 }
             }

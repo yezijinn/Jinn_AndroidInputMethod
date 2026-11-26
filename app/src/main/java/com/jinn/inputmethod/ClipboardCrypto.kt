@@ -51,7 +51,7 @@ object ClipboardCrypto {
     /** 本进程内「密钥疑似失效后重建」的次数（仅归因） */
     private val keyRebuilds = AtomicInteger(0)
 
-    /** 「库内仍有密文却要新建密钥」的拒绝次数（仅归因；W 日志按 [REFUSAL_LOG_LIMIT] 节流） */
+    /** 拒绝建钥的累计次数（仅归因不参与控制流）：取键 / 探测失败落 W（按 [REFUSAL_LOG_LIMIT] 节流），代际耗尽落 E */
     private val createRefusals = AtomicInteger(0)
 
     /**
