@@ -10,16 +10,16 @@ import org.json.JSONObject
  *  - 应用层语言口径 [TranslationLanguage]：UI 与配置只认它，Provider 各自映射到自家语言码，
  *    以后加 Google / DeepL 不会污染设置页；
  *  - 失败原因 [TranslationError]：归一分类，给用户看的是这里的一句话，
- *    **绝不透传服务端原始 JSON**；
+ *    绝不透传服务端原始 JSON；
  *  - 原文截取与译文追加 [TranslationText]：纯函数，运行期与 JVM 单测共用同一份规则。
  *
  * Provider 只做「造请求 / 解析响应」两件纯事（[TranslationProvider]）；网络执行、HTTPS 判据与
- * 超时由 [TranslationClient] 统一负责，**请求代际（旧结果作废）由调用方 JinnIme 负责** ——
+ * 超时由 [TranslationClient] 统一负责，请求代际（旧结果作废）由调用方 JinnIme 负责 ——
  * 两侧都能在纯 JVM 下单测，不需要真网络与设备。
  */
 
 /**
- * 目标语言（2026-09-30 定：至少中/英/日/韩，默认英文）。
+ * 目标语言（2026-09-30：至少中/英/日/韩，默认英文）。
  *
  * 语言码只在 Provider 自己的映射里出现，设置页与 [Prefs.translateTarget] 只认枚举 name：
  * `zh / zh-Hans` 这类差异、DeepL 的全大写代码都收敛在这一层，UI 与配置不受影响。
@@ -31,7 +31,7 @@ internal enum class TranslationLanguage(
     val aliyunCode: String,
     val deeplCode: String,
 ) {
-    // 末位 = DeepL 目标语言码。中文用正名 `ZH-HANS` 而不是别名 `ZH`（2026-10-02 修复 L-487）：
+    // 末位 = DeepL 目标语言码。中文用正名 `ZH-HANS` 而不是别名 `ZH`（2026-10-02，L-487）：
     // 官方文档已把 `ZH` 标为 deprecated（当前等同简体），一旦别名被移除 ⇒ `target_lang` 非法 ⇒
     // 400 ⇒ 归一成 PARAM（提示指向「语言方向」）—— 用户会以为是自己选错了语言。
     CHINESE("中文", "zh-Hans", "zh", "zh", "ZH-HANS"),
@@ -72,7 +72,7 @@ internal fun guessSourceScript(text: String): TranslationLanguage? {
 }
 
 /**
- * 目标语言决策：本地脚本判定 + 对称对调的结果，一次说清（2026-10-10 修复 L-1131）。
+ * 目标语言决策：本地脚本判定 + 对称对调的结果，一次说清（2026-10-10，L-1131）。
  *
  * 为什么不只返回一个语言：日 / 韩没有对称对调，旧口径下「目标=日语、原文其实也是日语」会保持目标不动
  * ⇒ **照发一次请求**，服务方原样返回原文 —— 用户等一轮、看到「翻译成功」而内容一字未变，并且真计费。
@@ -85,7 +85,7 @@ internal sealed interface TranslateTarget {
     /** 正常翻向 [language]（中⇄英 的对称对调已在这一层完成）。 */
     data class To(val language: TranslationLanguage) : TranslateTarget
 
-    /** 源文本已是 [language]、且该语言没有对称对调 ⇒ 调用方**不发请求**，只给一句提示。 */
+    /** 源文本已是 [language]、且该语言没有对称对调 ⇒ 调用方不发请求，只给一句提示。 */
     data class AlreadyTarget(val language: TranslationLanguage) : TranslateTarget
 }
 
@@ -107,7 +107,7 @@ internal fun decideTranslateTarget(text: String, target: TranslationLanguage): T
 }
 
 /**
- * 「已经是目标语言，未发送请求」的**唯一文案**（2026-10-10 修复 L-1131）。
+ * 「已经是目标语言，未发送请求」的**唯一文案**（2026-10-10，L-1131）。
  *
  * 成句走 [alreadyTargetMessage]，别在多处各拼一次 —— 占位符与实参的顺序只在这里声明一遍。
  */
@@ -121,7 +121,7 @@ internal fun alreadyTargetMessage(language: TranslationLanguage): String =
 /**
  * 翻译服务提供方（[Prefs.translateProvider] 存 id 字符串）。
  *
- * 顺序即设置页下拉顺序；[TranslationProviderId.DEFAULT] = 阿里云（2026-09-30 定）。
+ * 顺序即设置页下拉顺序；[TranslationProviderId.DEFAULT] = 阿里云（2026-09-30）。
  * 旧配置里的 `azure` / `baidu` 取值继续有效（id 不变），只有未知取值才回落到默认。
  */
 internal enum class TranslationProviderId(val id: String, val label: String) {
@@ -152,7 +152,7 @@ internal val TranslationProviderId.supportsActions: Boolean
     get() = this == TranslationProviderId.OPENAI
 
 /**
- * 「端点必须以 https:// 开头」的**唯一文案**（2026-10-03 修复 L-816）。
+ * 「端点必须以 https:// 开头」的**唯一文案**（2026-10-03，L-816）。
  *
  * 此前同一件事在三处各写一遍且措辞不同：`TranslationError.INSECURE.message`（键盘 toast）、
  * OpenAI 设置页的 `TEXT_NEED_HTTPS`（Base URL 红字 + 自检提示）、翻译设置页的 `TEXT_OPENAI_NEED_HTTPS`
@@ -171,7 +171,7 @@ internal const val TEXT_ENDPOINT_NEEDS_HTTPS = "端点必须以 https:// 开头�
  */
 internal enum class TranslationError(val message: String) {
     /** 当前选定的 Provider 还没填凭据 */
-    // 补全文路径（2026-10-03 修复 L-538）：键盘上点翻译时这是**唯一**的提示，而实际路径是
+    // 补全文路径（2026-10-03，L-538）：键盘上点翻译时这是**唯一**的提示，而实际路径是
     // 「系统设置 → 语言与输入法 → 本输入法 → 设置 → 翻译设置」四级 —— 只说「设置里」会让
     // 新用户在这一步卡死。设置页摘要早已写全落点，这里对齐。
     NOT_CONFIGURED("请先在「设置 → 翻译设置」里填写 API 凭据"),
@@ -179,7 +179,7 @@ internal enum class TranslationError(val message: String) {
     /**
      * 地址不是 HTTPS（自定义 Base URL 可填出 `http://`）：明文会把 Bearer 凭据暴露在链路上。
      *
-     * ⚠ 六家 provider 当前**到不了这里**（2026-10-03 复核 L-817）：OpenAI 兼容的端点判据已在
+     * ⚠ 六家 provider 当前**到不了这里**（2026-10-03，L-817）：OpenAI 兼容的端点判据已在
      * `providerOf` 收口（`OpenAiTranslator.endpointReady`），另五家端点是源码常量 https ⇒
      * `TranslationClient.translate` 的 `INSECURE` 分支只剩**纵深防御**价值。
      * 用户可见的这条路径改由 [TEXT_ENDPOINT_NEEDS_HTTPS] 承担（键盘 / 设置页按「不可用成因」分因，
@@ -190,8 +190,8 @@ internal enum class TranslationError(val message: String) {
     /**
      * 凭据含 Header 非法字符（从网页复制时混入 U+3000 / 控制符很常见）。
      *
-     * 与 [AUTH] 不同：**请求根本没发出去**；与 [PARAM] 不同：真因不在语言/模型/路径上。
-     * 与 `fetchModels` 的 `-3`（`TEXT_KEY_INVALID`）同源（2026-10-02 修复 L-429）。
+     * 与 [AUTH] 不同：请求根本没发出去；与 [PARAM] 不同：真因不在语言/模型/路径上。
+     * 与 `fetchModels` 的 `-3`（`TEXT_KEY_INVALID`）同源（2026-10-02，L-429）。
      */
     CREDENTIAL("凭据含不可见字符，未发送请求（请重新粘贴 Key）"),
     NETWORK("网络错误，请检查网络后重试"),
@@ -203,7 +203,7 @@ internal enum class TranslationError(val message: String) {
     /**
      * 输出被上限截断（OpenAI 兼容那家的 `finish_reason == "length"`）。
      *
-     * 与 [PARAM] 分开（2026-10-02 审查）：PARAM 的文案让用户去核对「语言方向 / 模型名 /
+     * 与 [PARAM] 分开（2026-10-02）：PARAM 的文案让用户去核对「语言方向 / 模型名 /
      * 路径 / 原文长度」，而真因是**输出上限**（Max Tokens 或网关自带上限）—— 按 PARAM 的提示
      * 逐项核对必然无果。
      */
@@ -212,13 +212,13 @@ internal enum class TranslationError(val message: String) {
     /**
      * 服务端「少给行」：译文行数 < 原文非空行数（按行对齐的 Provider，如百度系）。
      *
-     * 与 [PARAM] 分开（2026-10-02 审查）：PARAM 会让用户去核「语言方向 / 模型名 / 路径 /
+     * 与 [PARAM] 分开（2026-10-02）：PARAM 会让用户去核「语言方向 / 模型名 / 路径 /
      * 原文长度」，而真因是服务端少返回了行 —— 逐行对应会错位，宁可拒绝也不写进正文。
      */
     LINE_MISMATCH("服务端返回的行与原文不齐，为避免逐行错位未写入（可去掉空行后重试）"),
 
     /**
-     * 端点返回 3xx 重定向（2026-10-03 修复 L-600）。
+     * 端点返回 3xx 重定向（2026-10-03，L-600）。
      *
      * 重定向是**刻意关闭**的（`followRedirects(false)`，防不可信网关把用户正文转投到
      * `Location` 指定的任意主机，2026-10-01 修复 L-306）—— 关掉它是对的，缺的是**出路**：
@@ -284,7 +284,7 @@ internal enum class TranslationScope(val id: String, val label: String, val deta
  * 但绝不会撞上服务端的「字符串过长」错误。
  *
  * ⚠ 所有默认值都必须 ≤ [TranslationText.MAX_MAX_BYTES]（= 本机单次读取上限，2026-10-01 审查 L-223）：
- * 服务端允许更大也没用，**读不回来的文本发不出去**。DeepL 官方给到 131072 字节，本机读取窗口
+ * 服务端允许更大也没用，读不回来的文本发不出去。DeepL 官方给到 131072 字节，本机读取窗口
  * 只有 100000，故按窗口填（≈3.3 万汉字）—— 要真正用满官方额度，得先把读取上限提上去。
  */
 internal val TranslationProviderId.defaultMaxBytes: Int
@@ -294,7 +294,7 @@ internal val TranslationProviderId.defaultMaxBytes: Int
         TranslationProviderId.BAIDU -> 6_000
         // 官方 q 上限 6000 字符、建议 2000 字符以内 ⇒ 与通用版取同一档。原先填 32_768
         // （与 OpenAI 兼容同款）会让**默认配置**必然撞服务端上限，而超限码不在精确码表里 ⇒
-        // 一律「服务异常」，用户重试永远失败且每次都真计费（2026-10-01 修复 L-307）。
+        // 一律「服务异常」，用户重试永远失败且每次都真计费（2026-10-01，L-307）。
         TranslationProviderId.BAIDU_LLM -> 6_000
         TranslationProviderId.DEEPL -> 100_000
         TranslationProviderId.OPENAI -> 32_768
@@ -303,9 +303,9 @@ internal val TranslationProviderId.defaultMaxBytes: Int
 /**
  * 原文提取与译文追加（纯函数，运行期与 JVM 单测共用同一份规则）。
  *
- * 追加语义（2026-09-30 定）：原文一个字都不动，译文另起一行跟在后面；
+ * 追加语义（2026-09-30）：原文一个字都不动，译文另起一行跟在后面；
  * 翻译失败时**不写任何东西**（失败路径根本不经过这里）。
- * 截断规则（2026-09-30 定）：超出字节上限时**从前面开始取、舍弃后面的**。
+ * 截断规则（2026-09-30）：超出字节上限时从前面开始取、舍弃后面的。
  */
 internal object TranslationText {
 
@@ -340,7 +340,7 @@ internal object TranslationText {
          *
          * `after` 只读到读取上限（[MAX_READ_CHARS] / 字节上限）时就分不清「本行 / 本篇到此结束」
          * 与「窗口读满了」—— 此时 `appendOffset` 会落在行中 / 文中，照它移光标会把译文插进
-         * 用户句子的中间。调用方据此拒绝提交（2026-10-01 审查 L-213）。
+         * 用户句子的中间。调用方据此拒绝提交（2026-10-01，L-213）。
          */
         val appendOffsetExact: Boolean,
     )
@@ -372,12 +372,12 @@ internal object TranslationText {
                 appendOffset = 0
             }
             TranslationScope.LINE_FULL -> {
-                // `lineHead` 只在「按行」的两档需要（2026-10-02 修复 L-432）：BEFORE_ALL / ALL
+                // `lineHead` 只在「按行」的两档需要（2026-10-02，L-432）：BEFORE_ALL / ALL
                 // 此前也先算一遍，白付一次全窗口扫描 + 最多 10 万字符的 substring 拷贝，
                 // 而这条路径由点击直接跑在 IME 主线程上（键盘场景对主线程停顿敏感）
                 val head = lineHead(before)
                 // 本行到哪结束：与 [lineHead] 同源（[firstLineBreak] 认 `\n` / `\r` / Unicode 行终止符），
-                // 否则 CR-only / U+2028 文档里「本行」的两端会用两套判据（2026-10-03 修复 L-499）
+                // 否则 CR-only / U+2028 文档里「本行」的两端会用两套判据（2026-10-03，L-499）
                 val nl = firstLineBreak(after)
                 val tailLen = if (nl < 0) after.length else nl
                 raw = head + after.subSequence(0, tailLen)
@@ -396,7 +396,7 @@ internal object TranslationText {
                 exact = !afterTruncated
             }
         }
-        // 先 trim、再截断（2026-10-02 修复 L-433）：顺序反了时首尾空白先吃掉字节配额、
+        // 先 trim、再截断（2026-10-02，L-433）：顺序反了时首尾空白先吃掉字节配额、
         // 随后又被丢掉 —— 缩进代码块 / 网页复制的行首空格会让上传量凭空少一截
         // （方向安全，属「少翻」而非「多发」）。`trimEnd()` 兜住「截断刀口留在空白上」的情形。
         val trimmed = raw.trim()
@@ -411,7 +411,7 @@ internal object TranslationText {
      * 用户的明确选择，再按行切会把选中的内容丢掉一部分。截断方向与其他模式一致：从前面取、舍弃后面的。
      */
     fun extractSelection(text: CharSequence, maxBytes: Int): Slice {
-        // 与 [extract] 同款顺序（2026-10-02 修复 L-433）：先 trim 再截断，别让首尾空白吃配额
+        // 与 [extract] 同款顺序（2026-10-02，L-433）：先 trim 再截断，别让首尾空白吃配额
         val (cut, truncated) = takeHeadBytes(text.toString().trim(), maxBytes)
         return Slice(cut.trimEnd(), truncated, 0, true)
     }
@@ -419,8 +419,8 @@ internal object TranslationText {
     /**
      * 行分隔符：`\n`、`\r`，以及 Unicode 行终止符（U+2028 / U+2029 / U+0085 / U+000B / U+000C）。
      *
-     * ⚠ 只认 `\n` 是不够的（2026-10-03 修复 L-499）：CR-only 的文本（部分应用粘贴、网页编辑器、
-     * PDF 复制）与以 U+2028 分隔的文本里，「光标前本行」会**静默退化成整段上文** ——
+     * ⚠ 只认 `\n` 是不够的（2026-10-03，L-499）：CR-only 的文本（部分应用粘贴、网页编辑器、
+     * PDF 复制）与以 U+2028 分隔的文本里，「光标前本行」会静默退化成整段上文 ——
      * 而默认档对用户的承诺恰恰是「只上传本行、上传面最小」（设置页有明确文案）。
      * 退化成最多 `maxBytes` 字节的上文，等于把对外承诺打破，且用户毫无察觉。
      */
@@ -429,7 +429,7 @@ internal object TranslationText {
     /**
      * 单个字符是否是行分隔符（见 [LINE_BREAKS]）。
      *
-     * 供提交阶段的「落点是不是区间末尾」复用（2026-10-03 审查）：那一处此前只认 `'\n'`，
+     * 供提交阶段的「落点是不是区间末尾」复用（2026-10-03）：那一处此前只认 `'\n'`，
      * 而行分隔符在 L-499 已扩到 CR / U+2028 / U+0085… ⇒ CR-only 与 U+2028 文档里
      * 「光标所在整行 / 编辑框全部」两档会在**已付费之后**被判成「落点不对」而拒绝。
      * 同一个概念必须只有一处判据。
@@ -439,11 +439,11 @@ internal object TranslationText {
     /**
      * 按 [LINE_BREAKS] 切分文本（**保留空行**，与 `String.split` 的默认行为一致）。
      *
-     * 存在的理由只有一个：**「行」的定义此前有三份**。切分与落点认 [LINE_BREAKS] 的 7 种分隔符，
+     * 存在的理由只有一个：「行」的定义此前有三份。切分与落点认 [LINE_BREAKS] 的 7 种分隔符，
      * 而 [TranslationClient] 的行对齐对拍只 `split('\n')` ⇒ 服务端用 U+2028 分行时，
      * 原文数出 2 行、译文数出 1 行 ⇒ 判「服务端少给行」而拒绝写入（已付费却什么都没拿到），
      * 且 U+2028 作为 `Zl` 类字符还会原样进输入框（渲染层不可见）。
-     * 同一个概念必须只有一处判据（2026-10-03 修复 L-679）。
+     * 同一个概念必须只有一处判据（2026-10-03，L-679）。
      */
     internal fun splitLines(text: CharSequence): List<String> {
         val out = ArrayList<String>()
@@ -484,7 +484,7 @@ internal object TranslationText {
      * [text] 里是否含任何行分隔符（见 [LINE_BREAKS]）。
      *
      * 供「行首能否定位」的日志判据复用：此前那边只查 `\n`，**措辞与事实相反**
-     * （说「上传的是光标前末段」，实际是整段上文），排障时会被误导（2026-10-03 修复 L-499）。
+     * （说「上传的是光标前末段」，实际是整段上文），排障时会被误导（2026-10-03，L-499）。
      */
     internal fun hasLineBreak(text: CharSequence): Boolean = lastLineBreak(text) >= 0
 
@@ -492,7 +492,7 @@ internal object TranslationText {
      * 光标所在行的行首之后那一段（[before] 里最后一个**行分隔符**之后的部分；没有就是整段）。
      *
      * 判据取自 [lastLineBreak]（`\n` / `\r` / Unicode 行终止符）—— 只认 `\n` 会让默认档
-     * 在 CR-only / U+2028 文档里静默上传整段上文（2026-10-03 修复 L-499）。
+     * 在 CR-only / U+2028 文档里静默上传整段上文（2026-10-03，L-499）。
      */
     private fun lineHead(before: CharSequence): String {
         val nl = lastLineBreak(before)
@@ -529,11 +529,11 @@ internal object TranslationText {
     /**
      * 追加译文的提交文本：原文一个字都不动（它已经在输入框里），这里只补「前导换行 + 译文」。
      *
-     * [prev] 是**插入点前面那一个字符**（调用方按追加位置的上下文给）：它本来就是换行
+     * [prev] 是插入点前面那一个字符（调用方按追加位置的上下文给）：它本来就是换行
      * （用户自己敲了空行，或追加在整行 / 整篇末尾）时不再补前导换行，避免多出一个空行。
      */
     /**
-     * 剥掉模型 / 网关给译文加的**包装**（2026-10-02 修复 L-321）。
+     * 剥掉模型 / 网关给译文加的**包装**（2026-10-02，L-321）。
      *
      * 六家的出口原本只做 `trim()`：OpenAI 兼容那家最容易中 —— 模型即使被提示「只输出译文」，
      * 也常在首尾加上 ``` 代码块围栏，或「译文：」「以下是翻译：」这类前缀；这些内容会**原样插进
@@ -541,10 +541,10 @@ internal object TranslationText {
      *  ① 首行 ``` 与末行 ``` 成对的代码块围栏（带语言标注也算）；
      *  ② 「译文：」「翻译：」「以下是翻译：」「Translation:」等首前缀；
      *  ③ 整体被一对引号包住（直引号 / 弯引号 / 书名号式引号）。
-     * **剥离后为空则回退原值** —— 宁可留着围栏，也绝不把有效译文剥没。
+     * 剥离后为空则回退原值 —— 宁可留着围栏，也绝不把有效译文剥没。
      */
     /**
-     * 包装剥离用的两个正则：**提到 object 级只编译一次**（2026-10-03 修复 L-636）。
+     * 包装剥离用的两个正则：提到 object 级只编译一次（2026-10-03，L-636）。
      *
      * 此前它们写在 `stripWrapper` 函数体内，每次翻译（成功与 2xx 承载失败都算）都会重新
      * 编译两份 `Pattern` —— 与本仓「正则与常量都是单例」的口径不一致（Prompt 模板那边早已如此）。
@@ -576,7 +576,7 @@ internal object TranslationText {
         // 空 / 纯零宽译文只返回空串：绝不留下孤立换行或不可见字符（上游按 EMPTY 拦截，
         // 这里是纯函数兜底；零宽判据见 [hasVisibleContent]），2026-09-30 审查
         if (!body.hasVisibleContent()) return ""
-        // ⚠ 行判据必须与 [LINE_BREAKS] 同源（2026-10-03 修复 L-707）：这里原先只认 `'\n'`，
+        // ⚠ 行判据必须与 [LINE_BREAKS] 同源（2026-10-03，L-707）：这里原先只认 `'\n'`，
         // 是「什么算换行」的**第二份实现**。而 `prev` 的两个来源都会喂进别的分隔符 ——
         // 光标模式下取 `beforeNow.last()`，CR-only / U+2028 文档里光标在行首时它是 `'\r'` / `'\u2028'`；
         // 区间模式下取 `charBeforeCursor()`，光标刚被移到整行 / 整篇末尾，前一字符**必然**是行分隔符
@@ -613,7 +613,7 @@ internal interface TranslationProvider {
      * 响应是否**按输入行对齐**（每行一条译文；服务端对空行 / 被跳过的行可能**根本不返回元素**）。
      *
      * 百度系两家（通用版 / 大模型）为 `true`：`trans_result` 只给数组，靠**顺序**与输入行对应 ——
-     * 服务端「少给行」时其后所有行上移一位，译文与原文**逐行错位**（2026-10-02 修复 L-483）。
+     * 服务端「少给行」时其后所有行上移一位，译文与原文**逐行错位**（2026-10-02，L-483）。
      * 解析侧手里只有响应体、无法自证，所以由出口（[TranslationClient]）按本标志做一次对拍，
      * 宁可拒绝也不把错位译文写进用户正文。
      */
@@ -621,7 +621,7 @@ internal interface TranslationProvider {
 }
 
 /**
- * 从 JSON 对象取字符串字段：**显式 `null` 与类型不符都返回 null**。
+ * 从 JSON 对象取字符串字段：显式 `null` 与类型不符都返回 null。
  *
  * `optString(key)` 对「存在但为 JSON null」返回的是字面量 `"null"`（不是空串），
  * `isNullOrBlank()` 拦不住它 —— 字面量 `null` 会被当译文提交进用户输入框。
@@ -636,7 +636,7 @@ internal fun jsonText(json: JSONObject?, key: String): String? = json?.opt(key) 
  *
  * 百度的 `error_code` 官方示例写成字符串，但反过来（数字）也出现过：只认 String 会让
  * `{"error_code":54003}` 落进成功分支，`trans_result` 缺失后报「服务返回结果为空」——
- * 用户拿着真实错误码（配额用尽）去查「结果为空」（2026-10-01 审查 L-226）。
+ * 用户拿着真实错误码（配额用尽）去查「结果为空」（2026-10-01，L-226）。
  * JSON null 走 [JSONObject.NULL] 哨兵，必须显式排除，否则会取到字面量 `"null"`。
  */
 internal fun jsonCode(json: JSONObject?, key: String): String? {
@@ -648,25 +648,25 @@ internal fun jsonCode(json: JSONObject?, key: String): String? {
 /**
  * 是否含**可见内容**（非空白、且非零宽字符）。
  *
- * ⚠ 判据是 `Char.isWhitespace()`，它在 JVM 上是 `Character.isWhitespace(c) || Character.isSpaceChar(c)`：
+ * 判据是 `Char.isWhitespace()`，它在 JVM 上是 `Character.isWhitespace(c) || Character.isSpaceChar(c)`：
  * **ZWSP（U+200B）与 BOM（U+FEFF）返回 false**（`Cf` 类，Java 明列为非空白），而
  * **NBSP（U+00A0）返回 true**（它是 `Zs`，被 `isSpaceChar` 接住）—— 两种都判不出来，要靠
  * [ZERO_WIDTH] 兜。少一个码位就多一条「一个不可见字符也算有内容」的漏洞：用户从网页复制来的
- * 零宽字符会被当成有内容 ⇒ 发出一次真实（计费）请求，而模型面对一个不可见字符**可能编造整句译文**
- * 并把它追加进用户正文（2026-09-30 审查发现）。反向同理：服务端若只回零宽字符，也不能写回。
+ * 零宽字符会被当成有内容 ⇒ 发出一次真实（计费）请求，而模型面对一个不可见字符可能编造整句译文
+ * 并把它追加进用户正文（2026-09-30）。反向同理：服务端若只回零宽字符，也不能写回。
  *
  * ⚠ 但**判空不等于可写**：`U+202E`（RLO）这类双向文本控制符既非空白也不在 [ZERO_WIDTH] 里，
- * 「有可见内容」成立，写进输入框却会改变**用户自己那段文字**的显示顺序 —— 见 [sanitizedForOutput]。
+ * 「有可见内容」成立，写进输入框却会改变用户自己那段文字的显示顺序 —— 见 [sanitizedForOutput]。
  */
 internal fun CharSequence.hasVisibleContent(): Boolean {
     var i = 0
     while (i < length) {
-        // 按**码位**遍历（2026-10-02 修复 L-339）：TAG 字符是代理对，逐 `Char` 判时低代理
+        // 按**码位**遍历（2026-10-02，L-339）：TAG 字符是代理对，逐 `Char` 判时低代理
         // 既非空白、也不在任何表里 ⇒ 一串纯 TAG 文本会被判「有内容」，一段用户看不见的东西
         // 被写进输入框并随复制传染 —— 正是本条要关掉的那条路。
         val cp = Character.codePointAt(this, i)
-        // ⚠ 必须**同时**问 `isWhitespace` 与 `isSpaceChar`（2026-10-02 修复）：JDK 的
-        // `Character.isWhitespace(int)` **明确排除非断行空格**（U+00A0 / U+2007 / U+202F），
+        // ⚠ 必须**同时**问 `isWhitespace` 与 `isSpaceChar`（2026-10-02）：JDK 的
+        // `Character.isWhitespace(int)` 明确排除非断行空格（U+00A0 / U+2007 / U+202F），
         // 而本函数的语义（下面 KDoc 与全部调用点）是 Kotlin `Char.isWhitespace()` 那一套
         // （= `isWhitespace || isSpaceChar`）。少了这一半，一个 U+202F（窄 NBSP，从网页复制极常见）
         // 就足以让「纯不可见内容」过检 ⇒ 发出一次真实（计费）请求，而模型面对它可能编造整句译文
@@ -680,12 +680,12 @@ internal fun CharSequence.hasVisibleContent(): Boolean {
 }
 
 /**
- * **判空**用的「不可见全集」（2026-10-01 修复 L-324）。
+ * **判空**用的「不可见全集」（2026-10-01，L-324）。
  *
  * 在 [ZERO_WIDTH] 之外再补几个「本身没有内容、只在依附于基字符时才有意义」的面：
  * 软连字符、不可见运算符、变体选择符、TAG 字符（后者能编码出一串隐藏 ASCII）。
  * 少了它们，服务端只回一个 `U+FE0F` 或一串 TAG 字符也能过「有没有内容」这一关，
- * 于是一段**用户看不见的东西**被写进输入框，并随复制继续传染到邮件与网页表单。
+ * 于是一段用户看不见的东西被写进输入框，并随复制继续传染到邮件与网页表单。
  *
  * ⚠ 只用于**判空，不用于剥除**：变体选择符与 TAG 字符在 emoji 序列（❤️ / 旗帜）里是语义相关的，
  * 剥掉会破坏正文；但一串**只有它们**的「译文」没有任何意义，不能当成有效结果写回。
@@ -732,7 +732,7 @@ private const val BIDI_CONTROLS =
     "\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069"
 
 /**
- * 译文落地前的净化（2026-10-01 修复 L-314）。
+ * 译文落地前的净化（2026-10-01，L-314）。
  *
  * 服务端返回的文本是**不可信输入**：它既可能夹着双向文本控制符（改变用户文字的显示顺序），也可能
  * 夹着 C0/C1 控制符 —— `U+0000` 在部分宿主上等同字符串终止符、`U+0085` 是「看不见的换行」、
@@ -740,7 +740,7 @@ private const val BIDI_CONTROLS =
  * [hasVisibleContent] 判空：那个判据管的是「有没有内容」，管不了「内容里夹了什么」。
  *
  * 规则：保留 `\n` 与 `\t`（译文本就是多行的），其余 C0、`DEL`、C1 与双向控制符一律剥掉。
- * 只剥不可见字符，**不动任何可见字符**。
+ * 只剥不可见字符，不动任何可见字符。
  */
 internal fun CharSequence.sanitizedForOutput(): String {
     var dirty = false
@@ -764,7 +764,7 @@ private fun Char.isInvisibleControl(): Boolean = when {
     // U+2028 / U+2029（Zl / Zp，行分隔符）：行分隔符集合里有它们（[LINE_BREAKS]），而服务端
     // 用它们分行时会被 [TranslationClient] 的行对齐对拍按「少给行」拒绝 —— 既然本函数是
     // 「写入前不许把不可见字符带进用户输入框」的最后一道网，这两个也必须剥掉，否则会
-    // 静默进正文：它们在渲染层不可见，用户只会看到「译文粘在一起了」（2026-10-03 修复 L-679）
+    // 静默进正文：它们在渲染层不可见，用户只会看到「译文粘在一起了」（2026-10-03，L-679）
     this == '\u2028' || this == '\u2029' -> true
     this in BIDI_CONTROLS -> true         // 双向文本控制符
     this == '\u061C' -> true              // ALM：改显示序（与 BIDI 同族），此前漏在剥除表外（L-343）
@@ -772,17 +772,17 @@ private fun Char.isInvisibleControl(): Boolean = when {
 }
 
 /**
- * 凭据/端点取值的统一清洗：**剥掉不可见 / 非法头值字符再 trim**（2026-10-03 修复 L-702）。
+ * 凭据/端点取值的统一清洗：剥掉不可见 / 非法头值字符再 trim（2026-10-03，L-702）。
  *
  * 剥除判据从「枚举 6 个码位」改成**按 Unicode 类别**（`FORMAT` / `LINE_SEPARATOR` /
  * `PARAGRAPH_SEPARATOR` / `SPACE_SEPARATOR` / `CONTROL`）+ `DEL`：
  *  - 原先只剥 `ZERO_WIDTH` 六码位，而**真正会让 okhttp 4.12 抛 `IllegalArgumentException` 的
  *    `U+007F`（DEL）不在其中**（`trim()` 也不删它），带 DEL 的 Key 走到客户端才被归 CREDENTIAL；
- *  - 更常见的一类是**既不抛异常、也不被剥**的那些（U+202F / U+2007 / U+180E / U+00AD / U+2061）：
+ *  - 更常见的一类是既不抛异常、也不被剥的那些（U+202F / U+2007 / U+180E / U+00AD / U+2061）：
  *    它们直接进 `Authorization` 头 ⇒ 服务端 401 ⇒ 归 AUTH「请检查凭据」，用户拿肉眼看不出问题的
  *    Key 反复核对仍失败，整条链没有一处指向真因 —— 正是本函数 KDoc 想避免的结局。
  *
- * ⚠ 按**类别**而不是白名单枚举，是为了不再漏下一个：不可见字符是 Unicode 里的一个类，不是 6 个点。
+ * 按**类别**而不是白名单枚举，是为了不再漏下一个：不可见字符是 Unicode 里的一个类，不是 6 个点。
  * ⚠ 逐**码位**处理（`codePointAt` + `charCount`）：按 `Char` 迭代会把代理对拆成两个单元。
  */
 internal fun String.cleanCredential(): String {
@@ -802,10 +802,10 @@ internal fun String.cleanCredential(): String {
 }
 
 /**
- * **多行文本**（提示词 / 配置名 / 目标语言）的清洗：**只剥零宽族与 DEL，保留换行与制表**。
+ * **多行文本**（提示词 / 配置名 / 目标语言）的清洗：只剥零宽族与 DEL，保留换行与制表。
  *
- * ⚠ 与 [cleanCredential] 分开的原因（2026-10-03 修复 L-715）：严格版会剥掉全部 C0（含 `\n`），
- * 而提示词**本来就可以是多行** —— 设置页的输入框就是 `textMultiLine` + `maxLines=8`，
+ * 与 [cleanCredential] 分开的原因（2026-10-03，L-715）：严格版会剥掉全部 C0（含 `\n`），
+ * 而提示词本来就可以是多行 —— 设置页的输入框就是 `textMultiLine` + `maxLines=8`，
  * `OpenAiTranslator.DEFAULT_USER_PROMPT` 本身也带一个 `\n`。用严格版的后果是：
  * ① 用户写的多行提示词被静默压成一行（界面上仍显示多行，无任何提示）；
  * ② 「恢复默认提示词」存下去的是被剥版，而 [cleanCredential] 之外的 `putDefaulted` 判据
@@ -822,7 +822,7 @@ internal fun String.cleanPromptText(): String = filter { it !in ZERO_WIDTH && it
  * 该码位是否必须从凭据 / 端点取值里剥掉（理由见 [cleanCredential]）。 */
 private fun isCredentialUnsafeChar(cp: Int): Boolean {
     if (cp < 0x20 || cp == 0x7F) return true // C0 与 DEL：okhttp 头值校验直接拒（按码位比）
-    // ⚠ SPACE_SEPARATOR 里**必须放过 U+0020（普通空格）**：它在凭据内部是合法的（Base URL 的 path、
+    // ⚠ SPACE_SEPARATOR 里必须放过 U+0020（普通空格）：它在凭据内部是合法的（Base URL 的 path、
     // Azure 区域名都可能出现），整类剥掉会把 `https://host/v1/chat` 之类的取值拼坏 ——
     // 首尾空白由 `trim()` 负责，只有「看起来像空白但不是空白」的那些（NBSP / U+202F / U+2007）该剥。
     if (Character.getType(cp).toByte() == Character.SPACE_SEPARATOR) return cp != 0x20
@@ -837,7 +837,7 @@ private fun isCredentialUnsafeChar(cp: Int): Boolean {
 }
 
 /**
- * Azure 区域的归一：**小写、去空格与连字符**（2026-10-02 修复 L-347）。
+ * Azure 区域的归一：小写、去空格与连字符（2026-10-02，L-347）。
  *
  * `Ocp-Apim-Subscription-Region` 头要求 `eastasia` / `global` 这类标识符形态，而 Azure 门户上
  * 显示给用户的是 **`East Asia`**（带空格、首字母大写）。照抄进输入框 → 头值非法 → 服务端 401
@@ -846,7 +846,7 @@ private fun isCredentialUnsafeChar(cp: Int): Boolean {
  */
 internal fun normalizeAzureRegion(raw: String): String =
     // 只保留 ASCII 小写字母与数字（区域名的官方形态：`eastasia` / `global` / `westus2`）。
-    // ⚠ 不要只 `replace(" ", "")`（2026-10-02 修复：早先只做空格替换，漏掉 U+3000 全角空格 ——
+    // ⚠ 不要只 `replace(" ", "")`（2026-10-02：早先只做空格替换，漏掉 U+3000 全角空格 ——
     // 中文输入法空格键的默认输出）。`East\u3000Asia` 会带着一个**非法头值字符**进
     // `Ocp-Apim-Subscription-Region`，OkHttp 抛 `IllegalArgumentException`、被兜成 PARAM，
     // toast 却说「语言方向 / 模型名 / 路径 / 原文长度」—— 比它要修的 401 更难查。

@@ -36,7 +36,7 @@ private object ReclassifyGuard {
      * 「此刻真在跑」标记（进程级）。
      *
      * 与 [started] 的分工：`started` 表示这趟迁移被发起过（抢位用），`running` 表示它还在
-     * 全库解密。**只有线程自己在 finally 里放 `running`**；`stop()` 不许放 `started`，
+     * 全库解密。只有线程自己在 finally 里放 `running`；`stop()` 不许放 `started`，
      * 否则上一趟还在跑时重新启用就会再起一趟（两趟并发、CPU/IO 翻倍）。
      */
     val running = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -66,7 +66,7 @@ class ClipboardController(context: Context) {
      * ⇒ 两趟并发、CPU/IO 翻倍，正是 L-1088 要根除的现象。
      *
      * ⚠ 与 [ReclassifyGuard.running] 的分工：`started` 只表示「这趟被发起过」，
-     * `running` 表示「此刻真在跑」。**只有线程自己在 finally 里放开 `running`**；
+     * `running` 表示「此刻真在跑」。只有线程自己在 finally 里放开 `running`；
      * `stop()` 不许碰 `started` —— 那会把「上一趟还在跑」的事实抹掉，重新启用时又起一趟。
      */
     private val reclassifyStarted = ReclassifyGuard.started
@@ -90,7 +90,7 @@ class ClipboardController(context: Context) {
     }
 
     /**
-     * 存量分组标签重算（2026-09-25 起分组改为多标签语义；一次性）。
+     * 存量分组标签重算（2026-09-25：分组改为多标签语义，需一次性重算）。
      *
      * 只在未标记完成时跑；要全库解密才能重算（标签由内容决定，内容只存密文）。
      * 跑完置位；失败不置位，下次启动自动重试。
@@ -208,15 +208,15 @@ class ClipboardController(context: Context) {
      * 提取文本并入库（后台线程）。
      *
      * URI 型条目**不走** `coerceToText`：AOSP 对 URI 的实现是「打开流的 `while(read)` 追加进
-     * StringBuilder」，**没有任何长度上限**，而单条上限在写库那一步才判 ⇒ 复制一个大文件会先把
+     * StringBuilder」，没有任何长度上限，而单条上限在写库那一步才判 ⇒ 复制一个大文件会先把
      * 整份内容分配出来，超限才被丢，`jinn-clipboard-io` 线程 OOM、进程被杀（BUG.md L-171）。
      * 现在 URI 型统一走 [ClipboardStore.readTextWithBudget]（边读边判、读满即放弃），
      * 且先看 MIME：非文本类型连流都不开。文本 / Intent 型是内存拷贝，维持 `coerceToText`。
      * 正常与重试两条路径都走这里，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常），
-     * **总开关同样在这里再查一次** —— 重试路径可以比入口晚 250ms 才跑，其间用户可能已关掉开关。
+     * 总开关同样在这里再查一次 —— 重试路径可以比入口晚 250ms 才跑，其间用户可能已关掉开关。
      */
     private fun extractAndSave(clip: android.content.ClipData) {
-        // 总开关在**这条唯一入库入口**上再查一次（BUG.md L-1468）：入口 `onClipboardChanged`
+        // 总开关在这条唯一入库入口上再查一次（BUG.md L-1468）：入口 `onClipboardChanged`
         // 是采集的第一刻查的，而首次读不到时它安排了一次 250ms 重试 —— 用户在这段窗口里关掉开关，
         // 重试仍会把系统剪贴板的内容落库一条。图片路径早就在入口自查（见下 imageCaptureEnabled）。
         if (!ClipboardPrefs.of(appContext).enabled) return
@@ -236,7 +236,7 @@ class ClipboardController(context: Context) {
         // 按实际类型过滤更准。只有 uri 的条目也归这个分支判：声明为文本的交回文本路径
         // （L-1550），类型取不到或取到非文本则进图片分支按字节判，判否即止、不回退。
         val first = runCatching { clip.getItemAt(0) }.getOrNull() ?: return
-        // ⚠ 文本优先：URI 与 text 可同时非空（文件管理器复制文件、部分笔记/网盘复制文本
+        // 文本优先：URI 与 text 可同时非空（文件管理器复制文件、部分笔记/网盘复制文本
         // 都给 content://）。早先是「有 URI 就当图片」，把这类条目的可用文本一起截走，
         // 非图片还会以 image/png 兜底落一条永久脏图片行。
         // 兜底口径见 [handleImageClip]：回文本路径只看**声明类型**，不看嗅探结果
@@ -282,17 +282,17 @@ class ClipboardController(context: Context) {
     /**
      * 图片剪贴板条目的采集分支；返回 true 表示本条已按图片处理（调用方不再走文本路径）。
      *
-     * **声明为文本的 URI 条目一律交回文本路径**（返回 false）：文件管理器「复制」一个
+     * 声明为文本的 URI 条目一律交回文本路径（返回 false）：文件管理器「复制」一个
      * `.txt` / `.md` / `.json` 给的是只有 `uri` 的 `ClipData`，本分支若一律吞掉，历史里
      * 一条都不进，而同一份内容用功能面板「粘贴」却读得到 —— 两个入口结论相反，用户无从自查。
      *
-     * IME 作为前台输入法读 `content://` 图片流**依赖系统给粘贴方授予的临时读权限**：
+     * IME 作为前台输入法读 `content://` 图片流依赖系统给粘贴方授予的临时读权限：
      * 拿不到时 [saveImageFromUri] 按「流打不开」留 W 日志，不静默吞（实施计划 §3 的 Step 0 实测项）。
      * 读流 + 解码 + 压缩是秒级活，投进 `BackgroundIo.runLong` 长活池 —— 短活池（`run`）
      * 要留给面板首屏与粘贴，大图解码不能排在它们前面。
      *
      * 类型判定**不在本方法里做**（BUG.md L-1288）：本方法跑在 `BackgroundIo.run` 的短线程池
-     * （`jinn-clipboard-io`，与面板首屏查询 / 粘贴查询 / 入库**同一条单线程队列**），
+     * （`jinn-clipboard-io`，与面板首屏查询 / 粘贴查询 / 入库同一条单线程队列），
      * 而嗅探要 `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，
      * 会挡住同队列的面板首屏与粘贴。现在把**声明类型**原样传下去，由长活池在读到头部时
      * 就地判：同一次开流，短线程池零 IO。
@@ -471,10 +471,10 @@ object ClipboardStore {
     private const val TAG = "ClipboardStore"
 
     /**
-     * 带预算把流读成文本（纯函数，便于单测）—— **URI 型剪贴板条目的唯一读入口**（BUG.md L-171）。
+     * 带预算把流读成文本（纯函数，便于单测）—— URI 型剪贴板条目的唯一读入口（BUG.md L-171）。
      *
      * 为什么不直接 `ClipData.Item.coerceToText`：AOSP 对 URI 的实现是
-     * 「打开 provider 的流 → `while (read)` 追加进 StringBuilder」，**没有任何长度上限**；
+     * 「打开 provider 的流 → `while (read)` 追加进 StringBuilder」，没有任何长度上限；
      * 而单条上限（[MAX_ITEM_BYTES]）在写库那一步才判 ⇒「复制一个大文件」会先把整份内容分配出来，
      * 超限才被丢，后台线程直接 OOM、IME 进程被杀（用户看到的是键盘突然消失）。
      * 这里改成**边读边判**：读满预算即放弃，**不返回半截内容**（与超限不入库同一口径）。
@@ -485,7 +485,7 @@ object ClipboardStore {
     /**
      * 取一条剪贴板条目正文的**结果**：失败必须能分层（BUG.md L-183）。
      *
-     * 先前所有失败都返回 null ⇒ 调用方只能当成「剪贴板为空」：粘贴时**连一句提示都给不出**
+     * 先前所有失败都返回 null ⇒ 调用方只能当成「剪贴板为空」：粘贴时连一句提示都给不出
      * （原先的「内容过大，未粘贴」也因此丢失），采集侧的日志也少了「为什么没入库」。
      */
     internal sealed interface ItemText {
@@ -494,7 +494,7 @@ object ClipboardStore {
         /** MIME 明确是二进制，或未知 MIME 档解码结果像二进制（[looksLikeText] 判否） */
         object NotTextual : ItemText
 
-        /** 超过单条上限（与入库 / 粘贴闸同源）—— 读入即止，**不会**整份读进来 */
+        /** 超过单条上限（与入库 / 粘贴闸同源）—— 读入即止，不会整份读进来 */
         object TooLarge : ItemText
 
         /** 时间预算耗尽（见 [PASTE_READ_BUDGET_MS] / [COLLECT_READ_BUDGET_MS]） */
@@ -552,7 +552,7 @@ object ClipboardStore {
     internal sealed interface BytesResult {
         class Ok(val bytes: ByteArray) : BytesResult
 
-        /** 超过字节预算 —— 读入即止，**不返回半截内容**（与文本版同一口径） */
+        /** 超过字节预算 —— 读入即止，不返回半截内容（与文本版同一口径） */
         object TooLarge : BytesResult
 
         /** 打不开流 / 读失败 / 预算非法 / 空内容 */
@@ -610,7 +610,7 @@ object ClipboardStore {
      * 与粘贴的 200ms **口径不同，别照抄**：粘贴在主线程上等（`commitText` 要用当前 InputConnection），
      * 慢一点就是 ANR，所以必须紧；采集在后台短活池（`jinn-clipboard-io`，与面板首屏 / 粘贴查询 /
      * 入库共用同一条单线程队列），慢的代价是「排在我后面的任务一起等」，不是 ANR。
-     * 取 2000ms 量级：**宁可偶尔仍慢，不可把本地大文件判丢** —— 本文件刚把「复制文本文件」从图片
+     * 取 2000ms 量级：宁可偶尔仍慢，不可把本地大文件判丢 —— 本文件刚把「复制文本文件」从图片
      * 分支救回文本路径（L-1550），预算收紧等于把那条修复又收回去。
      * 预算只在循环顶部检查，阻塞在单次 `read()` 上时打断不了（L-185 已记该局限）。
      */
@@ -752,7 +752,7 @@ object ClipboardStore {
      * 保持默认 256KB」时窗口仍不越界。[effectiveItemLimitBytes] 用**本常量**（而非用户当前页宽）
      * 作分母反推单条上限：库里既有行是**写入当时**的页宽写进去的，分母若跟着当前页宽走，
      * 用户把页宽调大后旧行会一并进入更大窗口 ⇒ 峰值突破预算
-     * （2026-10-06 审查：页宽 50 写入的 393KB 行 + 页宽调到 100 ⇒ 100 × 393KB × 2.5 ≈ 100MB）。
+     * （2026-10-06，L-996）。页宽 50 写入的 393KB 行 + 页宽调到 100 ⇒ 100 × 393KB × 2.5 ≈ 100MB。
      */
     const val PANEL_PAGE_ITEMS_MAX = 75
 
@@ -988,7 +988,7 @@ object ClipboardStore {
      * 图片保存流程（采集侧唯一入口，与 [save] 并列）。
      *
      * 顺序：加密原图与缩略图 → 写文件（同 hash 覆盖写 = 自愈）→ 入库 → 收尾 GC。
-     * 任何一步失败都把已写的文件清掉并返回 null：宁可这张图没入库，也不留一条**指向缺失文件的行**
+     * 任何一步失败都把已写的文件清掉并返回 null：宁可这张图没入库，也不留一条指向缺失文件的行
      * （那样的行会长期占序号与额度、点开必然失败）。异常一律不外抛（长活池线程不能崩）。
      *
      * @param thumb 缩略图 JPEG 字节；生成失败传 null（仍保存原图，网格里显示灰块）
