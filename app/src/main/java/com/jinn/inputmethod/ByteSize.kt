@@ -27,7 +27,7 @@ internal object ByteSize {
     fun text(bytes: Long): String = when {
         bytes >= 1_000_000_000L -> String.format(Locale.US, "%.1f GB", bytes / 1e9)
         bytes >= 1_000_000L -> String.format(Locale.US, "%.1f MB", bytes / 1e6)
-        // 10KB 以下保留一位小数（BUG.md L-1235）：整数档会把 1499 B 显示成「1 KB」，
+        // 10KB 以下保留一位小数：整数档会把 1499 B 显示成「1 KB」，
         // 而存储占用页正是靠这些数字让用户判断「谁占得多」，小项之间比大小就在这个量级
         bytes >= 10_000L -> "${(bytes + 500) / 1000} KB"   // 四舍五入：截断会把 999 999 B 写成「999 KB」
         bytes >= 1_000L -> String.format(Locale.US, "%.1f KB", bytes / 1000.0)
