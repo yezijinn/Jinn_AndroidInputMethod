@@ -17,7 +17,7 @@ import java.io.File
  * 所以文件孤儿与否只看库里的哈希，不看是哪个入口删的行；新增删行入口理想情况下仍顺手收一次
  * （见 [gc] 的调用点），漏了也只是晚到下次启动。
  *
- * [GC_PROTECT_MS] 保护窗：采集写文件（`BackgroundIo.runLong`）与 GC（`run`）可能并发，
+ * [GC_PROTECT_MS] 保护窗：采集写文件（`BackgroundIo.runLong`）与 GC（[gc]）可能并发，
  * 刚落盘、行还没插进去的文件不能被当成孤儿删掉（与 `OptionalDicts.TMP_PROTECT_MS` 同思路）。
  * 写盘中的 `.tmp` 也在同一保护窗内，超窗后被 GC 收走 —— 不需要单独的残留清理器。
  */
