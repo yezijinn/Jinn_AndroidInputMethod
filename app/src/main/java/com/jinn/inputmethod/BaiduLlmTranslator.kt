@@ -34,7 +34,7 @@ internal class BaiduLlmTranslator(
     /**
      * 大模型的整体预算 60s（与 OpenAI 兼容同口径）：首字延迟不可控、服务端会排队，
      * 用默认的 20s 读超时 / 25s 整体预算会把长句打成假「翻译请求超时」
-     * （2026-09-30：同一批里只有 OpenAI 拿到了 60s）。
+     * （2026-09-30 同一批里只有 OpenAI 拿到了 60s）。
      */
     override val callTimeoutSec: Int = LLM_CALL_TIMEOUT_SEC
 

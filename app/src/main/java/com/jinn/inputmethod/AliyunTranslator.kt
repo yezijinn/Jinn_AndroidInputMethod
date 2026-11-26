@@ -125,7 +125,7 @@ internal class AliyunTranslator(
         // 其余写法（data.translateText / 平铺）留作容错，改版时不至于翻车。
         val data = json.optJSONObject("Data") ?: json.optJSONObject("data")
         // 取值统一走 jsonText：显式 JSON null / 类型不符都返回 null —— `optString` 会把
-        // JSON null 变成字面量 "null" 当译文提交进用户输入框（2026-09-30：六家统一口径）
+        // JSON null 变成字面量 "null" 当译文提交进用户输入框（2026-09-30 六家统一口径）
         val text = firstNonBlank(
             jsonText(data, "Translated"),
             jsonText(data, "translateText"),

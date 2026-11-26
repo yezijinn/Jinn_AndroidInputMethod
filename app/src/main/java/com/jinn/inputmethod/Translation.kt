@@ -19,7 +19,7 @@ import org.json.JSONObject
  */
 
 /**
- * 目标语言（2026-09-30：至少中/英/日/韩，默认英文）。
+ * 目标语言（2026-09-30 至少中/英/日/韩，默认英文）。
  *
  * 语言码只在 Provider 自己的映射里出现，设置页与 [Prefs.translateTarget] 只认枚举 name：
  * `zh / zh-Hans` 这类差异、DeepL 的全大写代码都收敛在这一层，UI 与配置不受影响。
@@ -841,7 +841,7 @@ private fun isCredentialUnsafeChar(cp: Int): Boolean {
  */
 internal fun normalizeAzureRegion(raw: String): String =
     // 只保留 ASCII 小写字母与数字（区域名的官方形态：`eastasia` / `global` / `westus2`）。
-    // ⚠ 不要只 `replace(" ", "")`（2026-10-02：早先只做空格替换，漏掉 U+3000 全角空格 ——
+    // ⚠ 不要只 `replace(" ", "")`（2026-10-02 早先只做空格替换，漏掉 U+3000 全角空格 ——
     // 中文输入法空格键的默认输出）。`East\u3000Asia` 会带着一个**非法头值字符**进
     // `Ocp-Apim-Subscription-Region`，OkHttp 抛 `IllegalArgumentException`、被兜成 PARAM，
     // toast 却说「语言方向 / 模型名 / 路径 / 原文长度」—— 比它要修的 401 更难查。

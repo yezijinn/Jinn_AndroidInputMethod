@@ -38,7 +38,7 @@ internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
  * 删除来源：用户主动删除 / 迁移去重（v4 一次性 `mergeDuplicates`）/ 容量裁剪 /
  * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）。
  * ⚠ 「有行无文件」的图片行**不再自动删**：`File.isFile` 在权限/IO 抖动时返回 false，
- * 而那条路径连收藏一起删（2026-11-14：`ClipboardImageFiles.deleteMissingRows`）。
+ * 而那条路径连收藏一起删（2026-11-14 `ClipboardImageFiles.deleteMissingRows`）。
  * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` 没有公开的 `onCorruption` 覆写点（API 34
  * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
  * 它和「密钥失配」在界面上同形，排查时先看这里。
@@ -981,7 +981,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ 删除必须走含收藏的删除入口，**不能**用普通裁剪入口 [deleteNonFavoriteByIds]：
      * 后者的 SQL 固定带 `is_favorite = 0`，用它删收藏一行都删不掉，而日志却按候选集报
-     * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06：由守卫钉住）。
+     * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06 由守卫钉住）。
      *
      * @return **实删的图片行数**（不是总删除数）：图库密文按行回收，[trimTo] 用它决定是否调度
      *         孤儿 GC（BUG.md L-1464）。文本收藏被淘汰不产生任何孤儿文件，不该算进这个数 ——

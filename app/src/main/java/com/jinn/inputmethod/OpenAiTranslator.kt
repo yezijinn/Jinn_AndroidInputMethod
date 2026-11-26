@@ -133,7 +133,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
                     jsonCode(error, "code")?.takeIf { it.isNotBlank() } ?: jsonCode(error, "type")
                 else -> error.toString()
             }
-            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02：直接 return 曾挤掉状态码结论）：
+            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02 直接 return 曾挤掉状态码结论）：
             // `openAiErrorOf` 认不出时返回 SERVER，直接 return 会**挤掉** `httpErrorOf` 的结论 ——
             // `404 + {"error":{"message":…}}` 会从 PARAM 退回 SERVER、
             // `429 + {"error":{"type":"requests"}}`（OpenAI 429 的真实形态，`code` 为 null）会
@@ -653,7 +653,7 @@ internal fun applyTemplateEnsuringText(
 
     /**
      * 该键在当前取值下会被拒绝的原因（null = 可用）。设置页判据与运行期合并共用这一处
-     * （2026-10-02：此前两处各写一套，`{"stream": null}` 在运行期被「忽略」、在设置页却判「不可用」）。
+     * （2026-10-02 此前两处各写一套，`{"stream": null}` 在运行期被「忽略」、在设置页却判「不可用」）。
      *
      * 三条规则都按**值**判，不按「键在不在」：
      *  · 破坏客户端：只有 `stream` 类键**为真**才算（`false` / `null` 等价于「不发这个键」，无害）；
@@ -763,7 +763,7 @@ internal fun applyTemplateEnsuringText(
             is String -> node
             // `optString` 对显式 JSON null 返回字面量 "null"、对对象/数组返回序列化文本，都会被当
             // 假译文提交；这里用 `opt(...) as? String` 与同文件 keyOf 过滤 JSONObject.NULL 的口径
-            // 对齐（2026-09-30：作者已知道该坑，只是 asText 漏了）。
+            // 对齐（2026-09-30 作者已知道该坑，只是 asText 漏了）。
             is JSONObject -> (node.opt("text") as? String).orEmpty()
                 .ifEmpty { (node.opt("content") as? String).orEmpty() }
                 .ifEmpty { null }
@@ -782,7 +782,7 @@ internal fun applyTemplateEnsuringText(
             return (0 until data.length()).mapNotNull { index ->
                 val item = data.optJSONObject(index) ?: return@mapNotNull null
                 // 走 jsonText：JSON null / 类型不符都返回 null —— `optString` 会给出字面量 "null"，
-                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30：同类漏网）
+                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30 同类漏网）
                 (jsonText(item, "id") ?: jsonText(item, "name"))?.takeIf { it.isNotBlank() }
             }
         }

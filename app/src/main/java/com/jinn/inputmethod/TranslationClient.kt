@@ -48,7 +48,7 @@ internal object TranslationClient {
     /**
      * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，本值足够宽松，
      * 同时挡住「Base URL 指到一个返回大文件/大 HTML 的站点时整段读进内存」的内存尖峰
-     * （2026-09-30：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
+     * （2026-09-30 `body.string()` 会让 10MB 响应变成 20MB 的 char[]，
      * 非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份）。
      *
      * ⚠ 必须 ≥ 可发文本上限的 4 倍 + 余量（2026-10-03，L-678）：可发上限是
@@ -486,7 +486,7 @@ internal object TranslationClient {
         extraHeaders: List<Pair<String, String>> = emptyList(),
         onDone: (List<String>?, Int) -> Unit,
     ): Call? {
-        // HTTPS 硬判据与 translate 同款（2026-09-30：这里曾漏掉）：Base URL 填成
+        // HTTPS 硬判据与 translate 同款（2026-09-30 这里曾漏掉）：Base URL 填成
         // `http://…` 时 Bearer Key 会**明文上网**，而平台给语音局域网放行了明文（base-config），
         // 不会拦这次请求 —— 判据必须在代码里。code = -2 专指「地址不是 HTTPS」，与 -1（网络失败）
         // 区分开，调用方才能给出「可修」的提示。
