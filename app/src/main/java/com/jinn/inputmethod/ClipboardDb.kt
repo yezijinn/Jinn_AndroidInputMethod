@@ -42,7 +42,7 @@ internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
  * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` 没有公开的 `onCorruption` 覆写点（API 34
  * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
  * 它和「密钥失配」在界面上同形，排查时先看这里。
- * 容量裁剪见 [TRIM_PRIORITY]：条数与体积**只动非收藏记录**；
+ * 容量裁剪见 [TRIM_PRIORITY]：条数与体积只动非收藏记录；
  * 收藏自身软上限是唯一例外 —— [trimFavorites] 按用户显式设置的
  * [ClipboardPrefs.favoriteMaxItems] / `favoriteMaxBytes` 淘汰最旧收藏（2026-10-26 确认）。
  * 不因内容性质（敏感与否）做任何判断或删除（v3 起已移除敏感字段）。
@@ -321,7 +321,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * `filesDir/clipboard/<hex>.enc` 里加密保存，文件名由 [hash] 派生（见 [ClipboardImageFiles]）。
      *
      * 图片行的 `encrypted_content` 只存**占位密文**（加密后的 `img:<hex>` 串），其唯一作用是
-     * 让行在「坏行自愈 / 可读性备忘」机制下与文本行同构 —— 读路径对图片行**不解密**。
+     * 让行在「坏行自愈 / 可读性备忘」机制下与文本行同构 —— 读路径对图片行不解密。
      */
     data class ImageMeta(
         val hash: String,
@@ -397,11 +397,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * **坏行自愈**：命中哈希但那一行的密文已经解不开（Keystore 密钥变更 / 单行损坏）时，
      * 用本次的新内容重加密覆盖该行 —— 否则它会永远不可见、又继续占条数与字节配额，
-     * 而重复复制本是唯一的恢复机会（BUG.md L-173）。试解本身**有界**：本进程验证过一次的行
+     * 而重复复制本是唯一的恢复机会（BUG.md L-173）。试解本身有界：本进程验证过一次的行
      * 不再重复解密（见 [verifiedReadable]，BUG.md L-199）；没验证过的行仍会真解一次。
      *
      * 加密放在**判重之后**：去重只需要明文哈希，重复内容不必白做一次 AES-GCM + base64（BUG.md L-182）。
-     * 不存在则插入，超上限裁剪最旧非收藏：这是**单条入库**的口径，插入后必裁一次。
+     * 不存在则插入，超上限裁剪最旧非收藏：这是单条入库的口径，插入后必裁一次。
      * 批量导入不走这里（它自己在块外裁，见 [upsertImportChunk] / BUG.md L-1226）。
      *
      * @return 条目 id（已存在的行或新插入的行）；内容为空 / 加密失败返回 -1。
@@ -432,7 +432,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 为什么是「块事务 + 逐条语义」而不是备份导入那样的「纯插入批」：
      * 文件导入走的是 `upsert`，五条语义一条都不能丢 —— ①`findIdByHash` 判重；②命中即更新元数据并
      * **置顶**（`created_at = monotonicNow()`，L-1092 钳位）；③命中但密文解不开时坏行自愈（L-173）；
-     * ④命中却更新 0 行时**幽灵 id 兜底**改插入（L-200）；⑤未命中才加密 + 分类 + 插入。
+     * ④命中却更新 0 行时幽灵 id 兜底改插入（L-200）；⑤未命中才加密 + 分类 + 插入。
      * 这五条全是「逐条即时决策」，能省的只有提交开销 ⇒ 只把 `beginTransaction/endTransaction`
      * 提到块这一层，每条的处理顺序、事务内的读（`MAX(created_at)` / `findIdByHash` /
      * `decryptsById`）都仍在原处：同一连接在事务内看得见自己未提交的写入，
@@ -454,10 +454,10 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 整块回滚时 [verifiedReadable] 会残留本块已登记、但**没有提交**的哈希。可达后果只有一种：
      * 本块里刚被「坏行自愈」覆盖的行（备忘已登记）随整块一起回滚 ⇒ 那一行回到坏密文，而备忘仍说
-     * 「可读」⇒ 下次复制命中时会跳过试解，**少一次自愈机会**。不丢数据：它在本块之前本就不可解，
+     * 「可读」⇒ 下次复制命中时会跳过试解，少一次自愈机会。不丢数据：它在本块之前本就不可解，
      * 回滚只是让它保持原样；而备忘满 [VERIFIED_MEMO_MAX] 条即整体清空，进程重启同样失效，
      * 之后一次复制就会重新试解。
-     * 另一条看似相关的路径**不成立**：备份恢复只要插进任何一行就整批 `verifiedReadable.clear()`
+     * 另一条看似相关的路径不成立：备份恢复只要插进任何一行就整批 `verifiedReadable.clear()`
      * （[insertRestoredBatch] ③），所以「坏行经恢复进来」不会被备忘挡住。
      * 权衡后不做逐条 forget：触发要求开 / 提交阶段的环境级失败（磁盘满 / 库损坏），
      * 而在故障态下为一整块每行跑一次 SHA-256，换的只是这一条极端组合。
@@ -596,7 +596,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *    真正的内容在 `filesDir/clipboard/<hex>.enc`（调用方写），本方法只维护列；
      *  - 不去试解既有行：图片行的可读性由文件决定、与 Keystore 状态无关，没有「坏行自愈」要判
      *    （文件层的自愈是调用方按同路径覆盖写）；
-     *  - 占位密文与元数据列在命中与插入两条路径上都**整组覆盖**：重复复制即刷新（幂等）。
+     *  - 占位密文与元数据列在命中与插入两条路径上都整组覆盖：重复复制即刷新（幂等）。
      *
      * @return 条目 id（既有行或新行）；入参非法 / 写库失败返回 -1
      */
@@ -680,7 +680,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 该行的密文现在还能解开吗（坏行自愈的前置判据，BUG.md L-173）。
      *
      * 解不开或行已不在都返回 false，两种原因由**调用方**区分：解不开 ⇒ 用新内容重加密覆盖（自愈）；
-     * 行已不在 ⇒ `update` 影响 0 行，落到插入路径重建，**不返回那一行的 id**（幽灵 id，BUG.md L-200）。
+     * 行已不在 ⇒ `update` 影响 0 行，落到插入路径重建，不返回那一行的 id（幽灵 id，BUG.md L-200）。
      */
     private fun decryptsById(id: Long): Boolean {
         val c = readableDatabase.rawQuery(
@@ -908,7 +908,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         //  - [trimFavorites] 按收藏软上限淘汰最旧收藏，候选里可能含收藏**图片**行，它同样只交回
         //    「实删的图片行数」（文本收藏不计）—— 只统计前者时那批 `.enc`/`.thumb` 就成了孤儿，
         //    要等下一次进程启动的 gc 才收（BUG.md L-1464）。
-        // 仍然**只认图片行**：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「本次删没删收藏」
+        // 仍然只认图片行：收藏淘汰多半删的是文本收藏、一个孤儿都不产生；按「本次删没删收藏」
         // 当判据，会让每次入库（采集 / 粘贴 / 导入）都可能跑一轮完整 gc（BUG.md L-1248）。
         if (trimImages() + favImages > 0) scheduleImageGc()
     }
@@ -1088,7 +1088,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         // ⚠ 这一句**故意不加** `WHERE content_type = 'text'`：加了它 SQLite 会改走 idx_items_ctype
         // 再逐行读内容页算长度，v7 那条覆盖索引就作废了（17.55ms 级）。图片行的 encrypted_content
         // 只是 ~百字节的占位密文，计进总量可忽略；真正的图片体积在 image_bytes 列、由 trimImages 管，
-        // 下面的候选集把图片行**跳过**（不参与文本淘汰）。
+        // 下面的候选集把图片行跳过（不参与文本淘汰）。
         val total = readableDatabase.rawQuery(
             "SELECT SUM(LENGTH(encrypted_content)) FROM $TABLE_ITEMS", null
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
@@ -1272,9 +1272,9 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 键集游标分页读取（新→旧），只解密本页 [limit] 条（BUG.md L-92）。
      *
      * **为什么不用 SQL OFFSET**：面板打开期间别的应用改一次剪贴板，库里就是「头部插一条 + 尾部裁一条」
-     * （[ClipboardStore] 到上限时 `insertItem` → `trimTo` 成对发生，总条数**刚好不变**）⇒ 行的物理位置
+     * （[ClipboardStore] 到上限时 `insertItem` → `trimTo` 成对发生，总条数刚好不变）⇒ 行的物理位置
      * 整体位移，OFFSET 会让下一页重复一行或跳过一行；数量比对（`count` 不变）也拦不住。
-     * 键集游标只认「上一页最后**扫描过**的那一行的键」，位置怎么移都不会错 —— [reclassifyAll] 早就是
+     * 键集游标只认「上一页最后扫描过的那一行的键」，位置怎么移都不会错 —— [reclassifyAll] 早就是
      * 这个口径（「游标是上一页最后一个 id 而不是 SQL OFFSET」）。
      *
      * [cursor]：`null` 表示从最新一条开始；否则是上一页 [KeyedPage.last]。
@@ -1536,12 +1536,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ 三条性能约束（BUG.md L-1533）：
      *  ① **一块一个事务**（[RESTORE_CHUNK_ROWS] 行）：原先逐条 `insert` 各自一个隐式事务，
-     *     一万行 = 一万次 fsync。刻意**不**包成一个大事务 —— 那会让一次磁盘满 / 库损坏
+     *     一万行 = 一万次 fsync。刻意不包成一个大事务 —— 那会让一次磁盘满 / 库损坏
      *     放大成「一条坏行毁掉一万行」；块级最坏只丢当前这一块（≤ [RESTORE_CHUNK_ROWS]）。
-     *  ② **加密在锁外**（纯 CPU + Keystore，不碰库）：`ClipboardCrypto.encrypt` 每次新建
+     *  ② 加密在锁外（纯 CPU + Keystore，不碰库）：`ClipboardCrypto.encrypt` 每次新建
      *     `Cipher`、无共享可变状态，任意线程可并发调用；`@Synchronized` 只包住真正的写入，
      *     用户此刻的复制 / 粘贴 / 裁剪不必排在加密后面（与 L-1423 同族）。
-     *  ③ **[verifiedReadable] 整批作废一次**（原来每条清一次，一万行 = 一万次无意义清空）：
+     *  ③ [verifiedReadable] 整批作废一次（原来每条清一次，一万行 = 一万次无意义清空）：
      *     它只是「该哈希可解」的备忘，读路径解不开时会自己撤销（见 [readItem]），
      *     所以晚清几毫秒不影响正确性（BUG.md L-173 / L-199）。
      *
@@ -1767,7 +1767,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /**
          * 备份导入每块的行数（BUG.md L-1533）。
          *
-         * 取 500 的三个约束：① 事务粒度 —— 一条坏块最多毁掉 500 行（导入上限
+         * 取 500 的三个约束：① 事务粒度 —— 一个坏块最多毁掉 500 行（导入上限
          * `ConfigBackup.MAX_CLIP_IMPORT_ITEMS` = 10 000），而不是一万行；② 锁粒度 ——
          * 每块之外释放对象监视器，用户的复制 / 粘贴最多等一块；③ 内存 —— 一块 × 单条上限
          * （256KB）× 1.37（base64）= 约 175MB 是**这一块**的增量上界，且只有「一万条全顶到
@@ -1788,7 +1788,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
 
         /**
          * 容量裁剪的优先级：越靠前越先被删除。
-         * 目前只有一档，非收藏的最旧记录；收藏永不参与裁剪。
+         * 目前只有一档，非收藏的最旧记录；收藏不参与本档（自身淘汰走 [trimFavorites] 软上限）。
          */
         private val TRIM_PRIORITY = listOf(
             "is_favorite = 0",   // 非收藏记录；收藏永不参与裁剪
@@ -1798,7 +1798,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 历史密文总量预算：超出即按最旧非收藏淘汰（100 MB）。
          *
          * 注意：按库内密文（base64）体积计（`LENGTH(encrypted_content)`），
-         * 不是明文字节，base64 膨胀约 4/3，故 100 MB 预算约对应 73 MB 明文。
+         * 不是明文字节，base64 膨胀约 4/3，故 100 MB 密文预算约对应 75 MB 明文（100 ÷ 4/3）。
          */
         const val DEFAULT_MAX_TOTAL_BYTES = 100L * 1024 * 1024
 
@@ -1832,8 +1832,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 图片预算的淘汰候选（纯函数）。
          *
          * 与 [favoriteOverflowIds] 的分工：这里收藏**不参与**淘汰（与文本总预算同一条不变量：
-         * 收藏永不因容量被删）；与 [overflowIdsForByteBudget] 的分工：条数 / 字节两个上限
-         * **同时**生效（文本侧只有字节上限，条数走 [ClipboardDb.trimByCount]）。
+         * 收藏不因总预算被删，软上限另走 [favoriteOverflowIds]）；与 [overflowIdsForByteBudget] 的分工：条数 / 字节两个上限
+         * 同时生效（文本侧只有字节上限，条数走 [ClipboardDb.trimByCount]）。
          *
          * @param rows 必须按最旧在前传入（查询侧即 `ORDER BY created_at ASC`）
          * @param maxItems 张数上限；`<= 0` 视为不限制
@@ -1910,7 +1910,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          *
          * 按**实际明文**限预算（不是条数）：正常条目几十~几百字节时，8 页 × 50 条也就几十 KB，
          * 离预算差三个数量级 ⇒ 填页能力一点不减；只有「满额大条目 + 坏行穿插」这种极端组合
-         * 才会提前收工。收工时游标停在**被拒那页之前**，剩下的行走正常分页 / 续扫照常取到。
+         * 才会提前收工。收工时游标停在被拒那页之前，剩下的行走正常分页 / 续扫照常取到。
          */
         val FIRST_PAGE_MAX_PLAIN_BYTES: Long = ClipboardStore.decryptWindowPlainBudgetBytes()
 
@@ -1935,8 +1935,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * @param startOffset 从哪一行开始扫（默认 0 = 首屏；>0 = 从既有游标**续扫**，
          *   用于「扫到上限仍没凑出条目、用户点空态继续找」的场景 —— 这时不重扫前面已看过的行）
          * @param maxPlainBytes 累计明文预算（见 [FIRST_PAGE_MAX_PLAIN_BYTES]）；`<= 0` 视为不限制
-         * @param fetch 取页函数，语义同 [recentPageAfter]（游标必须按**扫过的原始行**前进；
-         *   ⚠ 键集取页器请配合 [pageAccepted] 使用：本函数被字节预算拒收末页时**不会**推进 offset，
+         * @param fetch 取页函数，语义同 [recentPageAfter]（游标必须按扫过的原始行前进；
+         *   ⚠ 键集取页器请配合 [pageAccepted] 使用：本函数被字节预算拒收末页时不会推进 offset，
          *   取页器若已把游标推过那一页，就会把该页条目永久跳过，见 BUG.md L-117）
          */
         fun fillFirstPage(
@@ -1963,7 +1963,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 if (page.nextOffset <= offset) break
                 // 字节预算（L-91）：先试算再决定收不收 —— 越界就整页拒收、游标留在它之前，
                 // 于是这一页会被后续分页 / 续扫重新取到（不裁剪、不丢条目）。
-                // 首屏非空由「第一页无条件收下」保证：单页最坏 50 × 256KB × 2.5 = 31.25MB < 48MB 预算。
+                // 首屏非空由「第一页无条件收下」保证：页宽上限 75 条时单页最坏 75 × 256KB × 2.5 ≈ 46.9MB < 48MB 预算。
                 val pageBytes = page.items.sumOf { ClipboardStore.utf8ByteSize(it.content) }
                 if (out.isNotEmpty() && maxPlainBytes > 0 && plainBytes + pageBytes > maxPlainBytes) break
                 out.addAll(page.items)
@@ -2101,7 +2101,7 @@ data class ClipboardRowSize(
  * category 传给 SQL（`WHERE category = 'FAVORITE'` 恒不成立，列表永远是空的）。
  * 这个翻译必须显式做，是本项目最容易踩的坑之一。
  *
- * 文本分类（全部 / 网址 / 数字 / 收藏）一律带 `content_type = 'text'`：图片只在图片分类
+ * 文本分类（全部 / 网址 / 数字 / 收藏）默认带 `content_type = 'text'`：图片只在图片分类
  * 与网格区里出现，混进文本列表会让「点一条即上屏」的语义分叉。
  *
  * 该翻译原先在 5 处（Activity 的首页 / 下一页 / 搜索，Panel 的刷新 / 下一页）
@@ -2115,7 +2115,7 @@ data class ClipboardFilter(
      * 内容类型维度（`text` / `image`；null = 不限）。
      *
      * 与 [category] **正交**：图片恒 `category='OTHER'`（不进 URL/NUMBER 标签体系），
-     * 图片分类靠这一维过滤。文本分类一律传 `text`（见 [ClipboardFilter.of]）；
+     * 图片分类靠这一维过滤。文本分类默认传 `text`（见 [ClipboardFilter.of]，调用方可覆盖）；
      * 搜索路径同样传 `text`（见 SearchPanelView）。
      */
     val contentType: String? = null,
