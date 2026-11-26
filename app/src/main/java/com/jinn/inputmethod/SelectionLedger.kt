@@ -650,17 +650,34 @@ object SelectionLedger {
             }
             // 判据是「首行是标识」**或**「内容形态就是逐行密文」：后者兜住首行标识被删的情况，
             // 绝不给明文 parse 出口 —— 那把 "1:…" 读成 base64 乱码词，用户视角就是台账全毁（N3）
-            val picks = if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
-                parse(decodeRecords(text, key))
+            if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
+                encryptedReadVerdict(text, decodeRecords(text, key))
             } else {
                 // 迁移失败（磁盘满 / 无权限）时仍按旧格式读，数据至少可见
                 Diagnostics.w(TAG, "台账仍是明文格式（迁移未完成），按明文读取")
-                parse(text)
+                LedgerRead.Ok(parse(text))
             }
-            LedgerRead.Ok(picks)
         }.onFailure {
             Diagnostics.w(TAG, "台账读取失败: ${it.javaClass.simpleName}")
         }.getOrElse { LedgerRead.Unavailable }
+    }
+
+    /**
+     * 加密形态的读取结论：原文有记录行、解密结果却一条都不剩 ⇒ [LedgerRead.Unavailable]。
+     *
+     * 密钥件被换、数据来自他机时 `dataKey` 取得到却一把都对不上。此时报 `Ok(空)` 会让页面
+     * 显示「共 0 次选择」，用户顺手点删除就把真数据清掉（与 L-1411 同一后果）。
+     * 只有首行标识、确实没有记录的文件仍返回 `Ok(空)`。
+     */
+    internal fun encryptedReadVerdict(text: String, decoded: String): LedgerRead {
+        val picks = parse(decoded)
+        val hasLines = text.lineSequence()
+            .any { it.isNotBlank() && !it.startsWith(LedgerCrypto.HEADER) }
+        if (picks.isEmpty() && hasLines) {
+            Diagnostics.w(TAG, "台账所有记录都无法解密，按不可读处理")
+            return LedgerRead.Unavailable
+        }
+        return LedgerRead.Ok(picks)
     }
 
     /**

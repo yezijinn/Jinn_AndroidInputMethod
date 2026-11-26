@@ -156,7 +156,7 @@ class InputFieldPrivacyTest {
      *
      * 最后一条是真机上量出来的回归点（2026-10-01，Via 浏览器搜索框）：
      * `inputType=0x80001`（`TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS`）配
-     * `imeOptions=0x8000002`（`IME_ACTION_GO | IME_FLAG_NO_FULLSCREEN`）—— 只带「不要联想」，
+     * `imeOptions=0x8000002`（`IME_ACTION_GO | IME_FLAG_NAVIGATE_NEXT`）—— 只带「不要联想」，
      * 没有任何隐私声明位。旧实现把它当敏感框，浏览器里翻译点了没反应。
      */
     @Test

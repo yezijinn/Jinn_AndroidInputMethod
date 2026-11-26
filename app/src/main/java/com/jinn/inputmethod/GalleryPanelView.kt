@@ -337,6 +337,8 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         thumbPool?.shutdownNow()
         thumbPool = null
+        // 池已关，未启动的任务不会再执行到收尾的 remove；登记表随作废一起清空
+        inFlight.clear()
     }
 
     /** 键盘换肤：面板内所有静态配色重设（与 [ClipboardPanelView] 同一入口，由键盘侧统一调用） */
@@ -364,6 +366,9 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         cacheReleaseHandler.removeCallbacks(cacheReleaseTask)
         thumbPool?.shutdownNow()
         thumbPool = null
+        // `shutdownNow()` 丢弃未启动的任务，它们的键不会走到收尾的 remove；不清就会在
+        // 同一实例重新挂载后永久占位（`loadThumbs` 见键即跳过，格子空白到进程重启）
+        inFlight.clear()
         // 与剪贴板面板 / 搜索面板同款留一条：这条路径原先没有任何日志，
         // 重建是否真的走到这里、旧池是否关掉，事后从日志里看不出来
         Diagnostics.i(TAG, "图库面板: 视图重建，作废在途缩略图并关池")

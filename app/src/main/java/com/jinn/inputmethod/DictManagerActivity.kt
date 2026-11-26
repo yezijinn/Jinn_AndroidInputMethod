@@ -590,6 +590,7 @@ class DictManagerActivity : Activity() {
             return
         }
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         AlertDialog.Builder(this)
             .setTitle(TEXT_CUSTOM_TITLE)
             .setMessage(TEXT_CUSTOM_CONFIRM)
@@ -601,6 +602,9 @@ class DictManagerActivity : Activity() {
     private fun removeCustom() {
         // 确认框可能在窗口开始前就已打开（下载完成会立刻安排重启）⇒ 真正动手这一步也要判
         if (blockedByRestart()) return
+        // 确认框打开后配置恢复也可能开始：恢复线程用 `.restore` 临时件改名回
+        // `custom_user.txt.xz`，此时删掉只会让它随后被静默重建
+        if (blockedByConfigImport()) return
         // 「忙」与「删失败」分开显示（BUG.md L-865）：原先两者都落进同一句「删除失败」，
         // 用户会以为是权限或磁盘问题，其实只是另有写入在进行
         if (CustomDicts.writing) {
@@ -648,6 +652,7 @@ class DictManagerActivity : Activity() {
             return
         }
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         AlertDialog.Builder(this)
             .setTitle(legacyName(fileName))
             .setMessage(TEXT_LEGACY_CONFIRM)
@@ -665,6 +670,7 @@ class DictManagerActivity : Activity() {
     private fun removeLegacy(fileName: String) {
         // 确认框可能在窗口开始前就已打开（下载完成会立刻安排重启）⇒ 真正动手这一步也要判
         if (blockedByRestart()) return
+        if (blockedByConfigImport()) return
         val ok = runCatching { dictFile(fileName).delete() }.getOrDefault(false)
         Diagnostics.i(TAG, "遗留词库包删除: $fileName ok=$ok")
         setStatus(

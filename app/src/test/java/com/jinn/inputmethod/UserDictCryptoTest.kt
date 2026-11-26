@@ -995,6 +995,30 @@ class UserDictCryptoTest {
         return bytes.toByteArray()
     }
 
+    /**
+     * 密钥取得到、却一条都对不上（密钥件被换 / 数据来自他机）时必须报不可读。
+     *
+     * 落成空表就等于页面显示「共 0 次选择」，用户顺手删除即清掉真数据（L-1411 的另一条路径）。
+     */
+    @Test
+    fun `加密台账所有行都解不开时报不可读`() {
+        val cipherOnly = LedgerCrypto.HEADER + "\n" + "AAAA:BBBB\n"
+        assertTrue(
+            "有记录行却全解不开 ⇒ Unavailable",
+            SelectionLedger.encryptedReadVerdict(cipherOnly, "") is SelectionLedger.LedgerRead.Unavailable,
+        )
+        val headerOnly = LedgerCrypto.HEADER + "\n\n"
+        assertTrue(
+            "只有首行标识 = 确实没有记录",
+            SelectionLedger.encryptedReadVerdict(headerOnly, "") is SelectionLedger.LedgerRead.Ok,
+        )
+        val ok = SelectionLedger.encryptedReadVerdict(cipherOnly, "五湖\twu hu\n")
+        assertTrue(
+            "能解开就照常返回",
+            ok is SelectionLedger.LedgerRead.Ok && ok.picks.size == 1,
+        )
+    }
+
     private companion object {
         /** 与 `ConfigCryptoTest` 同口径：低于解密端下限（10 万）的包会被直接拒收 */
         const val FAST_ITERATIONS = 100_000

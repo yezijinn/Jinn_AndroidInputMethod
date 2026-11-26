@@ -2,7 +2,6 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -10,8 +9,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /**
  * 剪贴板图片网格视图：缩略图平铺（点击上屏 / 长按出操作条）。面板与历史页共用，
@@ -381,8 +378,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         scroll.visibility = if (empty) View.GONE else View.VISIBLE
         onDataChanged?.invoke(empty, items.size, exhausted)
     }
-
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
         const val TAG = "ClipboardImageGrid"

@@ -377,8 +377,13 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         // 粘贴是「把文字送进宿主」，与候选词上屏同一语义（文字输入组）。放在 isPasting 判据之后：
         // 连点第二下不动作，也就不该响
         KeyFeedback.fire(TapSound.G_TEXT)
-        val ok = listener?.onPaste(item.content) ?: false
-        isPasting = false
+        // ⚠ 必须 try/finally：宿主的提交链没有兜异常，一次上抛就会让 isPasting 永久为 true，
+        // 本会话内之后**所有**结果点击都静默无效（只有重开面板才复位）
+        val ok = try {
+            listener?.onPaste(item.content) ?: false
+        } finally {
+            isPasting = false
+        }
         if (ok) {
             listener?.onClose()
         } else {

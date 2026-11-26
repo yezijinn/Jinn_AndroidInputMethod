@@ -332,11 +332,13 @@ class CustomDictsTest {
 
     @Test
     fun `配置恢复进行中必须挡住词库写入口`() {
-        // 源码对拍（BUG.md L-848）：定义 1 处 + 两个入口各 1 处调用
+        // 源码对拍（BUG.md L-848）：定义 1 处 + 8 处调用。四个动作入口（导入 / 快捷补充 /
+        // 下载 / 删可选包）各一处；删自定义词库与删旧包各两处（入口一次，确认框回调里
+        // 动手前再一次 —— 确认框可能横跨配置恢复的开始）
         val mgr = TestSources.codeSource("DictManagerActivity.kt")
         assertEquals(
-            "词库页四个入口都要判 ConfigBackupManager.importing（定义 1 + 调用 4）",
-            5,
+            "词库页每个改 dicts/ 的动作都要判 ConfigBackupManager.importing（定义 1 + 调用 8）",
+            9,
             Regex("blockedByConfigImport\\(\\)").findAll(mgr).count(),
         )
         val edit = TestSources.codeSource("CustomDictEditActivity.kt")
