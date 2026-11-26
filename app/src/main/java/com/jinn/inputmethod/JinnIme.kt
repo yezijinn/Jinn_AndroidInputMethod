@@ -62,7 +62,7 @@ class JinnIme : InputMethodService() {
     /**
      * 响铃模式接收器：静音 / 仅震动切换时把键反馈的闸门缓存刷新一遍。
      *
-     * 为什么需要它：按键路径不查 IPC，响铃模式是缓存值；而用音量键调静音**不需要离开键盘界面**，
+     * 为什么需要它：按键路径不查 IPC，响铃模式是缓存值；而用音量键调静音不需要离开键盘界面，
      * 只在弹键盘时刷新的话，键盘显示期间切静音、按键音会照旧出声，直到下一次弹键盘才收口。
      * 去系统设置里改也发这条广播，两条路径一并覆盖。
      */
@@ -87,7 +87,7 @@ class JinnIme : InputMethodService() {
      * **刻意不归零**，安全的前提是 [optionalFallbackCheck] 一次性：全类只在 `onCreate` 排一次，
      * 其余重排都在 [runOptionalFallback] 的顺延分支里 ⇒ 每个服务实例最多触发 4 次，
      * 饱和之后不会再有下一次，归零反而多一个「能不能被绕过」的面。
-     * ⚠ 若将来改成每会话重排（`onStartInputView` 再排一次），饱和的计数会让闸门**永久失效**、
+     * ⚠ 若将来改成每会话重排（`onStartInputView` 再排一次），饱和的计数会让闸门永久失效、
      * 静默回落到旧行为（到点就装）；那时必须在每轮首次排程处一并归零 ——
      * `PowerResidencyTest` 不钉排程处数，钉的就是「多处排程必须有配对归零」这条配对关系。
      */
@@ -102,9 +102,9 @@ class JinnIme : InputMethodService() {
      * 只有决策结果变了才重建键盘，常规弹出路径零额外开销。
      *
      * ⚠ **不要**为了「统一」把它换成 `ThemeManager.paletteIsDark(this)`：页面能用那个是因为
-     * 页面的 Context 被 `attachBaseContext` 换过、`Resources` 里就是它**画出来**的那一档；
+     * 页面的 Context 被 `attachBaseContext` 换过、`Resources` 里就是它画出来的那一档；
      * 而 IME 是 Service，它的 Context 没有被换（键盘视图是拿 `themeCtx` 现造的）⇒ 在 IME 里读
-     * `paletteIsDark` 得到的是**系统**深浅，与「视图用的是哪一档」是两件事。
+     * `paletteIsDark` 得到的是系统深浅，与「视图用的是哪一档」是两件事。
      * （页面对应的字段确实被删了，那是因为页面场景下两者等价 —— 见
      * `ThemeManager.recreateIfPaletteStale` 的 KDoc，2026-10-02 L-476。）
      */
@@ -198,9 +198,9 @@ class JinnIme : InputMethodService() {
     private var viewCreateAtNanos = 0L
     private var startInputViewAtNanos = 0L
 
-    // ──────────── 悬浮键盘（2026-10-23）────────────
+    // ── 悬浮键盘（2026-10-23） ──
     //
-    // 两种形态共用一个窗口：**普通**（底部全宽，历史行为）/ **悬浮**（浮层 + 把手 + 等比缩放）。
+    // 两种形态共用一个窗口：**普通**（底部全宽，历史行为）/ 悬浮（浮层 + 把手 + 等比缩放）。
     // 开关关闭或当前包不在绑定列表时，下面这些字段一个都不参与分支 —— 这是「默认关闭时行为与
     // 历史完全一致」的落点。
 
@@ -217,11 +217,11 @@ class JinnIme : InputMethodService() {
     private var floatingPackage: String? = null
 
     /**
-     * 「回到底部」豁免的包：**只在当前使用的应用里有效**，离开该应用即作废。
+     * 「回到底部」豁免的包：只在当前使用的应用里有效，离开该应用即作废。
      *
      * 用户按一次「回到底部」=「这个 APP 现在别浮」，但配置里仍绑着它。若允许马上再浮，下一次
      * 弹键盘又飘起来，那个按钮等于没按 —— 所以在同一个应用里一直不浮。
-     * 但**不能跨应用长期记住**（否则绑定明明还在、键盘再也不浮，用户只能重启输入法）：
+     * 但不能跨应用长期记住（否则绑定明明还在、键盘再也不浮，用户只能重启输入法）：
      * 换到别的应用时由 [resolveFloatingState] 清空；设置页改动（开关 / 绑定）也会调
      * [clearFloatingDockOverrides] 清空。
      */
@@ -230,7 +230,7 @@ class JinnIme : InputMethodService() {
     /**
      * 窗口参数当前是否处于浮层形态。
      *
-     * 关闭态据此决定「要不要还原」：**从没悬浮过就不碰窗口** —— 默认关闭的要求是与历史
+     * 关闭态据此决定「要不要还原」：从没悬浮过就不碰窗口 —— 默认关闭的要求是与历史
      * 逐像素一致，而每会话多做一次 `updateViewLayout` 就是一次多余的重排（本模块历史上
      * 踩过面板反复 relayout 的坑）。
      */
@@ -294,13 +294,13 @@ class JinnIme : InputMethodService() {
      */
     private var floatingResizeOverride: FloatingKeyboard.Geometry? = null
 
-    // ── 四角拖拽缩放（2026-10-23）────────────────────────────
+    // ── 四角拖拽缩放（2026-10-23） ──
 
     /** 四角把手（顺序同 [FloatingKeyboard.Corner]；非悬浮态一律 GONE） */
     private var floatingCorners: List<View> = emptyList()
 
     /**
-     * 内容高里**不随拉伸变**的部分与**可伸缩块**的自然高（px）。
+     * 内容高里**不随拉伸变**的部分与可伸缩块的自然高（px）。
      *
      * 拉伸只能压在可伸缩块上（字母行 + 底排）：候选栏高度由字号派生、与拉伸无关，
      * 把它也乘进去的话「拉一点就不动了」（见 [FloatingKeyboard.stretchFactorFor]）。
@@ -362,11 +362,11 @@ class JinnIme : InputMethodService() {
      *
      * 到点就是**这一段已经放弃**，只复位状态条不够 —— 客户端的采纳闸门（`acceptingTask`）还开着，
      * 61 秒后才回的那条 final 仍会 `commitText` 上屏，而此刻用户早已把「识别中」读成「没成」，
-     * 多半已经在别的输入框里打字了。所以对**在线后端**连任务一起作废：
+     * 多半已经在别的输入框里打字了。所以对在线后端连任务一起作废：
      *  - `cancelTask()` 只关闸门、不发多余报文（`endTask` 早发过收尾包，三家流式实现都不会再发一帧）；
      *  - 归属快照一并清掉，避免它滞留到下一段（跨应用校验的基准该由新一段自己建立）。
      *
-     * 自建 CapsWriter **不作废**，只复位提示，理由见下面的注释：它的单次时长上限是 180 秒，
+     * 自建 CapsWriter 不作废，只复位提示，理由见下面的注释：它的单次时长上限是 180 秒，
      * 弱 NAS 上识别超过 60 秒属正常量级，作废等于白扔一段听写；闸门留着，晚到的正文照常落字，
      * 归属快照也必须一起留着 —— 否则 `handleResult` 的跨应用校验失去基准（`origin` 为空时
      * 判据直接放行），那才是真的把正文写进陌生应用。
@@ -386,7 +386,7 @@ class JinnIme : InputMethodService() {
     /** 剪贴板面板打开标记：仅供诊断日志（视图侧的真实状态在 PinyinKeyboardView 内，重建后不恢复） */
     private var clipboardPanelOpen = false
 
-    // ── 在线翻译（BYOK，2026-09-30 起）─────────────────────────
+    // ── 在线翻译（BYOK，2026-09-30 起） ──
 
     /** 翻译请求代际：新会话 / 新请求都递增，回调只认最新一代（旧结果直接丢弃） */
     private var translateGeneration = 0
@@ -395,9 +395,9 @@ class JinnIme : InputMethodService() {
     private var translateInFlight = false
 
     /**
-     * 在途翻译的**网络请求句柄**（2026-10-03 修复 L-494）。
+     * 在途翻译的**网络请求句柄**（2026-10-03，L-494）。
      *
-     * 此前「取消翻译」只复位状态与代际，请求仍在网上跑完（大模型可达 300s）并**照常计费**；
+     * 此前「取消翻译」只复位状态与代际，请求仍在网上跑完（大模型可达 300s）并照常计费；
      * 取消后 `translateInFlight` 也变回 false ⇒ 闸门重开，用户回来再点就有两个请求同时在途。
      * 代际闸门保留作二道网（已完成的回调仍会被代际判据丢弃），这里补的是「真的别发了」。
      */
@@ -430,16 +430,16 @@ class JinnIme : InputMethodService() {
     private var translateTraceId = ""
 
     /**
-     * 上一次**成功落地**的翻译请求指纹与时刻（2026-10-03 修复 L-628 / L-655 / L-656）。
+     * 上一次**成功落地**的翻译请求指纹与时刻（2026-10-03，L-628 / L-655 / L-656）。
      *
      * 译文追加后光标停在插入文本末尾，而默认档取「光标前本行」⇒ 用户不再输入就再点一次时，
-     * 取到的正是**刚刚写入的译文** —— 结果是二次付费 + **回译污染正文**（用户自己看不出发生了什么）。
+     * 取到的正是刚刚写入的译文 —— 结果是二次付费 + 回译污染正文（用户自己看不出发生了什么）。
      *
-     * ⚠ 记的是**指纹**（[translateRepeatKey]）而不是裸原文：服务方 / 目标语言 / 原文范围 /
-     * 是否选区都是**用户可改**的，换了其中任何一项都算另一次请求 —— 只比原文会把合法的
-     * 第二次付费请求误拦成「刚刚翻译过」（2026-10-03 修复 L-655）。
+     * ⚠ 记的是指纹（[translateRepeatKey]）而不是裸原文：服务方 / 目标语言 / 原文范围 /
+     * 是否选区都是用户可改的，换了其中任何一项都算另一次请求 —— 只比原文会把合法的
+     * 第二次付费请求误拦成「刚刚翻译过」（2026-10-03，L-655）。
      *
-     * ⚠ 只在**译文真正写进输入框之后**才记（2026-10-03 修复 L-656）：原先记账排在
+     * ⚠ 只在译文真正写进输入框之后才记（2026-10-03，L-656）：原先记账排在
      * `appendTranslation` 之前，而那一步有 9 条拒绝出口（宿主变敏感框 / 选区变化 / 输入已变化 /
      * 落点确认不了 / 提交被 InputFilter 丢弃…）⇒ 用户一个字都没拿到，30s 内重试却被自己的
      * 去重挡回去，提示与事实相反。
@@ -452,32 +452,32 @@ class JinnIme : InputMethodService() {
      *
      * 请求指纹（[lastSentKey]）把原文算进键里，而落地后光标停在译文末尾 —— 默认档再点一次取到的
      * 正是刚写入的译文，两次的键必然不同，拦不住，于是又发一次付费请求、正文多一段回译。
-     * 这条不看请求，只看「取到的片段是不是上次写进去的那串」。记的是**实发串**而不是模型返回的
+     * 这条不看请求，只看「取到的片段是不是上次写进去的那串」。记的是实发串而不是模型返回的
      * 原文：逐行模式会拼装、补标点，只有实发串与下次读到的内容逐字同形。
      *
      * ⚠ 与 [lastSentKey] / [lastSentAtMs] 一样，写点在 `ui.post` 的回调里、读点在按键回调里，
-     * **四个字段都只在主线程读写**（跨线程可见性不构成问题）—— 别在别处读写它们。
+     * 四个字段都只在主线程读写（跨线程可见性不构成问题）—— 别在别处读写它们。
      */
     private var lastCommittedText = ""
     private var lastCommittedAtMs = 0L
 
     /**
-     * 上一次**失败**的时刻（2026-10-03 修复 L-627 / L-657）。
+     * 上一次**失败**的时刻（2026-10-03，L-627 / L-657）。
      *
      * 失败后闸门立即重开，而超时 / 断连 / 落地失败 / 用户取消这几种情形里，
-     * **服务端可能已经处理并计费** —— 用户连点 N 次就是 N 次付费，界面只留下一串相同 toast。
+     * 服务端可能已经处理并计费 —— 用户连点 N 次就是 N 次付费，界面只留下一串相同 toast。
      * 冷却期内点击只提示、不发送。
      *
-     * ⚠ 四条路径必须**统一**走 [markTranslateFailed]（2026-10-03 修复 L-657）：原先只有
+     * ⚠ 四条路径必须统一走 [markTranslateFailed]（2026-10-03，L-657）：原先只有
      * 「回调返回 Fail」这一条记账，于是注释与文案承诺的四种情形里，用户主动取消 / 看门狗超时 /
-     * 提交阶段失败这三条**都不记账** —— 恰恰是最容易连点的三种。
+     * 提交阶段失败这三条都不记账 —— 恰恰是最容易连点的三种。
      */
     private var lastFailAtMs = 0L
 
     /**
      * 记一次「这次请求可能已经计费」（[lastFailAtMs] 的**唯一**写点）。
      *
-     * 收敛成一个函数的原因不是好看：分散写点会漏，而漏掉的后果是**静默二次计费**，
+     * 收敛成一个函数的原因不是好看：分散写点会漏，而漏掉的后果是静默二次计费，
      * 用户无从察觉（L-627 / L-657 都栽在同一处）。
      *
      * @param reason 进日志的原因短语，便于在诊断包里分辨是哪条路径。
@@ -503,14 +503,14 @@ class JinnIme : InputMethodService() {
      * 翻译看门狗（2026-10-01 审查 L-217）。
      *
      * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
-     * **不会**回落到 `onFailure`（只被平台记一条 INFO）。少了这道兜底，`translateInFlight`
+     * 不会回落到 `onFailure`（只被平台记一条 INFO）。少了这道兜底，`translateInFlight`
      * 会永久为真、按钮永远显示「翻译中」，唯一复位路径只剩会话边界。
      */
     private val translateWatchdog = Runnable {
         // 只在**确实还在途**时收尾：定时器可能是上一次请求留下的（正常路径都会撤，万一漏撤，
         // 这里也不能误伤后来者 —— 收尾会作废代际，2026-10-01 复审 L-229）
         if (translateInFlight) {
-            // 带上下文（2026-10-03 修复 L-617）：原先只有一句无信息量的话 —— 诊断包里无法回答
+            // 带上下文（2026-10-03，L-617）：原先只有一句无信息量的话 —— 诊断包里无法回答
             // 「是哪一家、卡了多久、同一会话第几次」。同一会话翻译多次时，日志里只会重复同一句。
             Diagnostics.w(
                 TAG,
@@ -538,7 +538,7 @@ class JinnIme : InputMethodService() {
     private fun finishTranslate() {
         ui.removeCallbacks(translateWatchdog)
         translateGeneration++
-        // 真取消网络请求（2026-10-03 修复 L-494）：取消后正是「闸门重开 + 旧请求仍在跑」的窗口，
+        // 真取消网络请求（2026-10-03，L-494）：取消后正是「闸门重开 + 旧请求仍在跑」的窗口，
         // 不 cancel 就等于用户回来再点会同时挂两个请求（旧那笔白付）。`cancel()` 对已结束的 Call
         // 是无害的（OkHttp 文档口径），所以这里不必区分状态。
         translateCall?.cancel()
@@ -606,7 +606,7 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    // ── 生命周期 ──────────────────────────────────────────────
+    // ── 生命周期 ──
 
     /**
      * 「分辨率」取值器：真实屏幕物理尺寸（宽×高像素），点击时才调。
@@ -636,9 +636,9 @@ class JinnIme : InputMethodService() {
         // 而清单里的 <service android:theme> 是死路：Service 不是 themed context，框架从不把该
         // 属性套上去；InputMethodService.onCreate 还会 setTheme(Resources.selectSystemTheme(...))
         // 再定一次主题。故只能改窗口本身 —— InputMethodService 自己从不写这个字段，不会回填。
-        // ⚠ 本机 API 32 上 IME 弹收已改由 insets 动画驱动（InsetsSourceProvider$ControlAdapter），
+        // 本机 API 32 上 IME 弹收已改由 insets 动画驱动（InsetsSourceProvider$ControlAdapter），
         // 这一行看不出收益；保留它是给 minSdk 26 覆盖的 API 26–29（那一段弹收仍走窗口动画）。
-        // ⚠ 26–29 未实测。
+        // 26–29 未实测。
         runCatching {
             val w = window?.window
             Diagnostics.i(TAG, "IME 窗口: 初始 fmt=${w?.attributes?.format} wanim=${w?.attributes?.windowAnimations}")
@@ -859,7 +859,7 @@ class JinnIme : InputMethodService() {
         return pasteClipboardText(text)
     }
 
-    // ── 方向控制 + 文字拖选状态机 ──────────────────────────
+    // ── 方向控制 + 文字拖选状态机 ──
 
     /** 拖选模式是否激活 */
     @Volatile
@@ -936,7 +936,7 @@ class JinnIme : InputMethodService() {
             .onFailure { Diagnostics.w(TAG, "选区/光标移动调用失败 ${it.javaClass.simpleName}") }
             .isSuccess
         // 期望值只在**调用真的落地**后才登记：失败那次若也登记，之后遇到同坐标的外部改动会被
-        // 当成自有动作（拖选不退出、Anchor 陈旧）（2026-10-01 修复 L-242）
+        // 当成自有动作（拖选不退出、Anchor 陈旧）（2026-10-01，L-242）
         if (ok) selectionExpectations.note(start, end)
         return ok
     }
@@ -1046,7 +1046,7 @@ class JinnIme : InputMethodService() {
         }
         if (newRel != cursor) {
             val newPos = newRel + range.startOffset
-            // 按返回值决定说什么：宿主没接受还报「光标移动」就是假日志（2026-10-01 修复 L-242）
+            // 按返回值决定说什么：宿主没接受还报「光标移动」就是假日志（2026-10-01，L-242）
             if (applySelection(connection, newPos, newPos)) {
                 Diagnostics.i(TAG, "光标移动: 窗口内 $cursor → $newRel（offset=${range.startOffset}）")
             } else {
@@ -1099,7 +1099,7 @@ class JinnIme : InputMethodService() {
         if (applySelection(connection, start, end)) {
             Diagnostics.i(TAG, "拖选扩展: Anchor=${selectionAnchor} Focus=$selectionFocus → 选区[$start,$end]")
         } else {
-            // 宿主没接受就别再维持拖选状态：Anchor 与实际选区已经脱钩（2026-10-01 修复 L-242）
+            // 宿主没接受就别再维持拖选状态：Anchor 与实际选区已经脱钩（2026-10-01，L-242）
             Diagnostics.w(TAG, "拖选扩展: 宿主未接受（选区[$start,$end]），退出拖选")
             clearSelectionState()
         }
@@ -1119,7 +1119,7 @@ class JinnIme : InputMethodService() {
         // null 有**多种成因**（2026-10-01 复审 L-230）：宿主不支持 `getExtractedText`、
         // 大文档下抛事务异常、选区下标未知（负值）或落在文本窗口之外。
         // 「无选区」是 start == end，不是 null。调用方必须区分对待 ——
-        // 编辑键（全选 / 复制）按「无选区」处理无碍，**译文提交**绝不能（fail-closed）。
+        // 编辑键（全选 / 复制）按「无选区」处理无碍，译文提交绝不能（fail-closed）。
         val extracted = runCatching {
             // 与读取路径同口径设 hintMaxChars（2026-10-01 审查 L-263）：空构造意味着不限长，
             // 长文档下每次选区探测都会让宿主回包整篇窗口、落在主线程；事务过大时抛异常被吞成
@@ -1149,7 +1149,7 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 「选区已经读过」的标记（2026-10-01 修复 L-325）。
+     * 「选区已经读过」的标记（2026-10-01，L-325）。
      *
      * 光用 `SelectionRange?` 表达不了「读过、结论是无法确定」—— 传 null 会被 `?:` 当成「没读过」而重读
      * 一次，而 `currentSelectionRange` 恒返回 null 的宿主（WebView 类）**每次**都是这个结果，
@@ -1162,14 +1162,14 @@ class JinnIme : InputMethodService() {
     /**
      * 「此刻能否安全追加译文」的判据。
      *
-     * 与 [currentSelectionRange] 的差别在**取不到精确选区时怎么取舍**：那个函数只有
+     * 与 [currentSelectionRange] 的差别在取不到精确选区时怎么取舍：那个函数只有
      * `getExtractedText` 一条路径，而 WebView 类宿主（Via / 系统浏览器内核的搜索框）对它恒返回
      * null —— 据此整体拒绝会让翻译在这些宿主上**完全不生效**，用户看到的只是「点了没反应」。
      *
      * 判据分两层：
-     * 1. `getExtractedText` 成功 ⇒ 以它的 start/end 为准（最准）；start != end 即有选区；
-     * 2. 取不到 ⇒ 用 `getSelectedText` 问「有没有选中内容」：非空 = 有选区（拒绝追加），
-     *    **明确为空 = 放行**，**抛异常 = 问不出来**（[AppendCheck.HOST_UNREADABLE]，不给结论）。
+     * - `getExtractedText` 成功 ⇒ 以它的 start/end 为准（最准）；start != end 即有选区；
+     * - 取不到 ⇒ 用 `getSelectedText` 问「有没有选中内容」：非空 = 有选区（拒绝追加），
+     *    明确为空 = 放行，抛异常 = 问不出来（[AppendCheck.HOST_UNREADABLE]，不给结论）。
      *
      * 放宽的代价由提交路径兜住：[appendTranslation] 仍逐字比对请求时刻的原文，用户在请求期间
      * 选择内容会改变 `getTextBeforeCursor` 的读数并失配，结果被丢弃而不是覆盖选中文本。
@@ -1180,7 +1180,7 @@ class JinnIme : InputMethodService() {
     ): AppendCheck {
         // [known] 由调用方传入时直接用 —— 同一次点击里 `readSelectedText` 刚读过同一份事实，
         // 再读一遍等于白付一次整窗口的 `getExtractedText`（最多 10 万字符，2026-10-01 修复 L-315）。
-        // ⚠ 判的必须是 `known` **本身**、不是 `known?.range`（2026-10-01 修复 L-325）：后者在
+        // ⚠ 判的必须是 `known` **本身**、不是 `known?.range`（2026-10-01，L-325）：后者在
         // 「读过、但结论是无法确定」时会退化成「没读过」又去读一次 —— 恰好是 WebView 类宿主。
         val range = if (known != null) known.range else currentSelectionRange(connection)
         if (range != null) {
@@ -1188,17 +1188,17 @@ class JinnIme : InputMethodService() {
         }
         val selected = runCatching { connection.getSelectedText(0)?.toString() }.getOrElse {
             // **抛异常 ≠ 没有选区**（2026-10-01 审查 L-262）：宿主没实现该 API、或文档过大导致
-            // 事务异常，都会走到这里。此前一律放行，于是"宿主有实时选区但两个 API 都不报"时，
+            // 事务异常，都会走到这里。此前一律放行，于是「宿主有实时选区但两个 API 都不报」时，
             // 提交前的原文比对会通过（选区全程没动），`commitText` 按替换语义删掉用户选中的文本。
-            // 现在按危险处理 —— 只有**明确返回空**才算「确实没有选中内容」。
+            // 现在按危险处理 —— 只有明确返回空才算「确实没有选中内容」。
             Diagnostics.w(TAG, "翻译: getSelectedText 抛异常，无法确认选区，拒绝追加")
             return AppendCheck.HOST_UNREADABLE
         }
         // ⚠ `null` **不能**当成「问不出来」（2026-10-03 纠正当日早先的一处过度保守）：
-        // `getSelectedText` 的**官方契约**是「返回选中文本；**没有选区时返回 null**」，而走到这里的
-        // 都是「拿不到精确选区」的宿主（WebView 类）—— 按本段的注释，**这类宿主每次翻译都会走到这里**。
-        // 若把 null 判成不可确认，它们上面的**默认档（appendOffset = 0）会被 100% 拒绝**：
-        // 那是把「可用」改成「不可用」。真正的危险面（有选区 + appendOffset > 0）在**发请求前**
+        // `getSelectedText` 的官方契约是「返回选中文本；没有选区时返回 null」，而走到这里的
+        // 都是「拿不到精确选区」的宿主（WebView 类）—— 按本段的注释，这类宿主每次翻译都会走到这里。
+        // 若把 null 判成不可确认，它们上面的默认档（appendOffset = 0）会被 100% 拒绝：
+        // 那是把「可用」改成「不可用」。真正的危险面（有选区 + appendOffset > 0）在发请求前
         // 已被 ②.b 的闸拒掉，这里只需按「无选区」放行 —— 提交前仍有逐字比对兜底。
         if (selected != null && selected.isNotEmpty()) {
             Diagnostics.w(TAG, "翻译: 宿主不提供精确选区，但 getSelectedText 报有选中内容，拒绝追加")
@@ -1215,8 +1215,8 @@ class JinnIme : InputMethodService() {
     /**
      * 读当前选中的文本。
      *
-     * 三态：**null** = 宿主读不到（调用方按「读不到」处理）；**空串** = 确实没有选中内容；
-     * **非空** = 选中的那一段。
+     * 三态：**null** = 宿主读不到（调用方按「读不到」处理）；空串 = 确实没有选中内容；
+     * 非空 = 选中的那一段。
      *
      * 精确选区可用时直接从窗口文本里切 —— `getSelectedText` 在部分宿主上只对 URI / 富文本有实现，
      * 拿它当唯一来源会对普通文本框漏判；两者都取不到才返回 null。
@@ -1264,7 +1264,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "复制: 无选中文字")
             return
         }
-        // 与粘贴链路同款的单条上限闸（2026-10-02 修复 L-406）：这是编辑键里**唯一**写系统剪贴板的
+        // 与粘贴链路同款的单条上限闸（2026-10-02，L-406）：这是编辑键里**唯一**写系统剪贴板的
         // 地方，此前既无尺寸闸也无兜底 —— 选中整篇长文时 `setPrimaryClip` 会把整段塞进 Binder
         // 事务（宿主与监听器还要各读一遍），超限即抛异常、直接崩 IME 进程。
         if (ClipboardStore.exceedsItemLimit(sel, ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
@@ -1276,13 +1276,13 @@ class JinnIme : InputMethodService() {
         runCatching { clipboardManager.setPrimaryClip(clip) }
             .onFailure {
                 Diagnostics.w(TAG, "复制失败: ${it.javaClass.simpleName}")
-                // 用户按了「复制」不能毫无反应（2026-10-02 修复 L-439）：与「超长」那条提示同款，
+                // 用户按了「复制」不能毫无反应（2026-10-02，L-439）：与「超长」那条提示同款，
                 // 与粘贴侧的分层提示口径一致
                 toast(TEXT_COPY_FAILED)
             }
         // 不再手动入库：setPrimaryClip 会触发 ClipboardController 的剪贴板监听，
         // 由它统一保存。此前这里也写一次库，导致同一条内容 upsert 两次，
-        // 且手动传入的 sourceAppName（"本输入法"）会被监听路径按包名推断的值覆盖。
+        // 且手动传入的 sourceAppName（「本输入法」）会被监听路径按包名推断的值覆盖。
         // 统一入口后，分类逻辑只存在于 ClipboardStore.save 一处。
         Diagnostics.i(TAG, "复制: 选中 ${sel.length} 字（保持选区与拖选模式）")
     }
@@ -1290,7 +1290,7 @@ class JinnIme : InputMethodService() {
     /**
      * 粘贴（功能面板「粘贴」键）：有选区替换，无选区在光标处插入。
      *
-     * 内容**优先取剪贴板历史的最新一条**（需求：历史非空就必须粘出最新一条，
+     * 内容优先取剪贴板历史的最新一条（需求：历史非空就必须粘出最新一条，
      * 不许「点了粘贴没反应」；例外只有两种，且都必须有提示 —— 历史为空、最新一条是图片而
      * 当前输入框收不了图）。系统剪贴板只在历史为空时兜底（关掉采集 / 历史刚被清空）。
      *
@@ -1374,7 +1374,7 @@ class JinnIme : InputMethodService() {
             return
         }
         // 与采集侧**共用**取文入口：URI 档带字节预算 + MIME 三态判定 + 失败日志（BUG.md L-177 / L-178）。
-        // 并且**必须带时间预算**：粘贴要在主线程上拿到正文（`commitText` 要用当前 InputConnection），
+        // 并且必须带时间预算：粘贴要在主线程上拿到正文（`commitText` 要用当前 InputConnection），
         // 字节预算管不住「慢 provider」——一次 IPC 读 256KB 也能拖出 ANR。
         val result = ClipboardStore.itemTextResult(
             clip!!.getItemAt(0),
@@ -1420,7 +1420,7 @@ class JinnIme : InputMethodService() {
         // 包一层：窗口切换瞬间弹 toast，个别 ROM 会抛 BadTokenException。取消 / 超时提示
         // 挂到了 6 处生命周期回调与看门狗路径上（原先只有粘贴失败等少数几处），不包的话异常会
         // 冒到主线程 —— 而其中一处正在 `finishTranslate()` 之前，会把按钮态与在途标志一起带歪
-        // （2026-10-03 修复 L-686；同文件另一处 Toast 早已这样包）。
+        // （2026-10-03，L-686；同文件另一处 Toast 早已这样包）。
         runCatching { android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show() }
             .onFailure { Diagnostics.w(TAG, "toast 失败: ${it.javaClass.simpleName}") }
     }
@@ -1455,7 +1455,7 @@ class JinnIme : InputMethodService() {
      */
     private var hostImageCapableForSession = false
 
-    /** 本次输入会话里宿主声明的**具体**图片类型（[GalleryInsert.acceptsMime] 用；未声明/不支持为 null） */
+    /** 本次输入会话里宿主声明的具体图片类型（[GalleryInsert.acceptsMime] 用；未声明/不支持为 null） */
     private var hostImageMimeTypes: Array<String>? = null
 
     /**
@@ -1472,7 +1472,7 @@ class JinnIme : InputMethodService() {
      * `EditorInfo.contentMimeTypes` 里声明了图片类型（以 `image/` 开头，或全通配）才显示入口 —— 真机实测这是
      * **必要**条件：QQ / TIM / 抖音评论 / QQ 邮箱 / Obsidian 声明为空且拒收，露入口只会白点；
      * 声明了也未必可用（DeepSeek、闲鱼会「假成功」），但那种情况用户没有损失、只是没反应。
-     * 声明**逐输入框变化**（微信进聊天页时先出现一个不声明的框），所以每次输入会话都要重判。
+     * 声明逐输入框变化（微信进聊天页时先出现一个不声明的框），所以每次输入会话都要重判。
      */
     private fun applyHostImageCapability(info: EditorInfo?) {
         val mimes = info?.let { androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(it) }
@@ -1632,7 +1632,7 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 图片上屏的兜底通道：写系统剪贴板，并**替宿主触发一次粘贴动作**。
+     * 图片上屏的兜底通道：写系统剪贴板，并替宿主触发一次粘贴动作。
      *
      * 宿主对「粘贴」的处理就是读系统剪贴板，刚写进去的图片能一步上屏 —— 对只认系统级粘贴的宿主
      * （豆包实测如此），这是唯一能真正把图片送进去的路径，`commitContent` 它们不认。
@@ -1643,7 +1643,7 @@ class JinnIme : InputMethodService() {
         // 写盘必须在后台：`copyToSystemClipboard` → `GalleryInsert.stageForInsert` 会把整张原图
         // （≤20MB）落进 cache 并顺带裁剪目录。两条调用来源（宿主拒收 / URI 构造失败）都在 `ui.post`
         // 里，同步做就是主线程 IO；搬进长活池后它也回到与选图/点图同一条串行线程，裁剪不再乱序。
-        // 但「替宿主粘贴」用的是**投递时刻的输入框**（A-722）：写盘期间用户可能已经切走，
+        // 但「替宿主粘贴」用的是投递时刻的输入框（A-722）：写盘期间用户可能已经切走，
         // 回来时 currentInputConnection 指向别的框，这一下就把图粘进不相干的地方（同类：L-1005）。
         val fieldKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
         BackgroundIo.runLong {
@@ -1810,7 +1810,7 @@ class JinnIme : InputMethodService() {
         // （40+ 个 View、5 个点击监听、退格长按 Runnable）。装配体见 ensureVoiceView。
         //
         // ⚠ 先把两张视图档案清空：本函数既服务首次创建、也服务 [recreateKeyboardView] 的重建
-        // （`setInputView(onCreateInputView())`）。若留着旧引用，ensureVoiceView 会把**已脱离容器**
+        // （`setInputView(onCreateInputView())`）。若留着旧引用，ensureVoiceView 会把已脱离容器
         // 的旧语音树交回来，而下面挂进新容器的是新树 —— 可见性操作打到旧树上，新树永远停留初值。
         // 语音子视图字段一并清：不创建语音树的会话里，它们不该继续钉着上一棵树（那是内存泄漏）。
         voiceView = null
@@ -1843,7 +1843,7 @@ class JinnIme : InputMethodService() {
                     guardHostCall("onBackspace(退格删除)") { sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) }
                 }
                 override fun onDeleteAll() = deleteAllText()
-                // ── 26 键空格长按 = 按住说话（2026-11-01）────────────────────────────
+                // ── 26 键空格长按 = 按住说话（2026-11-01） ──
                 // 原先是 `onVoiceRequested() → switchToVoiceKeyboard()`：长按直接把键盘切成语音页。
                 // 现在不切页面，录音结果直接落回当前输入框；`switchToVoiceKeyboard` 只剩
                 // 「缺麦克风权限时退回授权页」这一条调用路径。
@@ -1870,10 +1870,10 @@ class JinnIme : InputMethodService() {
                     if (!prefs.voiceInputEnabled) return false
                     // 密码类输入框不录音（2026-11-01）：音频是**出设备**的，比译文更敏感 ——
                     // 宿主报出密码变体、或声明「不要个性化学习」时照拒。判据与翻译同一支
-                    // [InputFieldPrivacy.blocksTranslation]，**不**复用 `suppressLearning`：
+                    // [InputFieldPrivacy.blocksTranslation]，不复用 `suppressLearning`：
                     // 后者服务本地词频学习、把 `NO_SUGGESTIONS` / `TYPE_NULL` 也算敏感，拿它拦语音
                     // 会让浏览器搜索框这类整类宿主不能听写（翻译侧 2026-10-01 踩过同一个坑）。
-                    // 按**按下这一刻**的 EditorInfo 现跑：会话缓存只在 onStartInputView 刷新，宿主在
+                    // 按按下这一刻的 EditorInfo 现跑：会话缓存只在 onStartInputView 刷新，宿主在
                     // 键盘已显示时把焦点切到密码框未必重发该回调（口径同 `startTranslate`）。
                     val field = currentInputEditorInfo
                     if (InputFieldPrivacy.blocksTranslation(field?.inputType, field?.imeOptions ?: 0)) {
@@ -1936,7 +1936,7 @@ class JinnIme : InputMethodService() {
                 // 只读查询，不改语音链路：长按空格前先问，不可用就不消费长按
                 override fun canVoice(): Boolean = prefs.voiceInputEnabled
                 override fun onOpenClipboard() {
-                    // ⚠ 与 onTranslate 的拦截是**对称**的（2026-10-03 修复 L-688）：onTranslate 拦的是
+                    // ⚠ 与 onTranslate 的拦截是**对称**的（2026-10-03，L-688）：onTranslate 拦的是
                     // 「面板开着时点翻译」（面板里任点一条历史就是 commitText 改宿主文本 ⇒ 已发出的请求
                     // 回来必然被判「输入已变化」丢弃）。反方向同样成立：翻译在途时打开面板、点任意一条，
                     // 粘贴就会改宿主文本 ⇒ 30~300s 后译文落地失败 + 提示「输入已变化」，
@@ -1980,7 +1980,7 @@ class JinnIme : InputMethodService() {
                 }
                 override fun onDirectionAction(action: PinyinKeyboardView.DirectionAction) {
                     if (rejectedBySearchPanel("方向")) return
-                    // ⚠ 改选区也会作废在途译文（2026-10-03 修复 L-733）：落地阶段有两道都会因「只挪光标」而判否 ——
+                    // ⚠ 改选区也会作废在途译文（2026-10-03，L-733）：落地阶段有两道都会因「只挪光标」而判否 ——
                     // `beforeNow != snapshot.before` 与「存在选区」。按「是否改文本」分类加闸时漏了这一类，
                     // 与 L-716 / L-740 修掉的是同一类缺陷。`onCopy` 只读 + 写剪贴板，不需要闸。
                     if (translateInFlight) cancelTranslate(notify = true)
@@ -2083,14 +2083,14 @@ class JinnIme : InputMethodService() {
         // （含缩略图缓存）。顺序不能反，先覆盖字段就拿不到旧引用了。
         pinyinKeyboard?.stopPanelBackgroundWork()
         pinyinKeyboard = pinyin
-        // 视图态重放：**凡新建视图就重放 IME 侧持有的状态** —— 绑在"视图创建"这件事上，
+        // 视图态重放：凡新建视图就重放 IME 侧持有的状态 —— 绑在「视图创建」这件事上，
         // 而不是绑在某个调用点（2026-10-03 审查 A2）。新视图的这两个字段一律是初值
         // （`suppressLearning=false` / `translateInFlight=false`），不重放就与 IME 侧真实状态
         // 分叉：密码框里选候选会被学进词频；在途翻译时按钮渲染成**可点的「翻译」**，
         // 点下去被 `startTranslate` 的在途闸门静默吞掉（用户视角 = 按钮没反应，日志里连
-        // 这次点击都没有）。⚠ 此前只在 `recreateKeyboardView` 里重放，而框架自己调
+        // 这次点击都没有）。此前只在 `recreateKeyboardView` 里重放，而框架自己调
         // `onCreateInputView()`（窗口 / 配置变更后重建输入视图）时不走那条路径 ⇒ 分叉仍会发生。
-        // 两处都重放是**幂等**的（这些 setter 只写字段 / 重绘）。
+        // 两处都重放是幂等的（这些 setter 只写字段 / 重绘）。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
         pinyinKeyboard?.setHostImageCapable(hostImageCapableForSession)
@@ -2155,7 +2155,7 @@ class JinnIme : InputMethodService() {
      *
      * 为什么要多这一层：悬浮态要把键盘按窗口尺寸**真实重排**（宽度按新窗宽分键宽、
      * 行高按拉伸倍率变），而不是各向异性缩放假冒拉伸 —— 后者会把字与键面一起拉变形。
-     * 把手放在重排层**外面** —— 否则 62% 档的把手只剩 15dp，按不中。
+     * 把手放在重排层外面 —— 否则 62% 档的把手只剩 15dp，按不中。
      *
      * 普通形态：把手与四角全 GONE（FrameLayout 里 GONE 的子视图不参与测量），容器 MATCH_PARENT ×
      * WRAP_CONTENT ⇒ 根高度 = 内容高度，与套壳前一致。
@@ -2188,13 +2188,13 @@ class JinnIme : InputMethodService() {
         (FLOATING_HANDLE_HEIGHT_DP * resources.displayMetrics.density).toInt()
 
     /**
-     * 把手：中间一条**短小半透明横条** + 右端「回到底部」，**没有整条背板**。
+     * 把手：中间一条**短小半透明横条** + 右端「回到底部」，没有整条背板。
      *
      * 2026-10-23 定为「不要整条加粗底色」，所以整条 26dp 只留两根可见元素：
-     *  - 居中（相对**整个面板**，不是相对扣掉小字后的剩余宽）的 44×5dp 圆角短条；
+     *  - 居中（相对整个面板，不是相对扣掉小字后的剩余宽）的 44×5dp 圆角短条；
      *  - 右端 11sp 的「回到底部」小字。
      *
-     * **热区没有跟着变细**：整条 26dp × 全宽仍挂着拖动监听（短条与「回到底部」只是叠在上面的
+     * 热区没有跟着变细：整条 26dp × 全宽仍挂着拖动监听（短条与「回到底部」只是叠在上面的
      * 两条墨迹，都不接触摸），视觉变细了但可拖面积与改造前逐像素一致 —— 这也是「不加视觉体量
      * 还要好拖」的解法。
      *
@@ -2253,7 +2253,7 @@ class JinnIme : InputMethodService() {
     /**
      * 四角角标：每个角一个 16dp 见方的**纯装饰**视图，里面只画一个 L 形细角标（2dp、半透明）。
      *
-     * **不接触摸**：角本身就压在「符号 / 回车」这类键的外角上，谁先拿到 ACTION_DOWN，谁就吃掉
+     * 不接触摸：角本身就压在「符号 / 回车」这类键的外角上，谁先拿到 ACTION_DOWN，谁就吃掉
      * 那 16dp 的点位（真机实测：角视图接触摸时，点「符号」左下角毫无反应）。所以触摸交给
      * [FloatingRootView] 按「位移超过 touchSlop」判定，这里只负责画。
      *
@@ -2278,13 +2278,13 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 把手与四角共用的颜色：**皮肤覆盖色优先，回落主题的次要文字色**，且**不透明**。
+     * 把手与四角共用的颜色：皮肤覆盖色优先，回落主题的次要文字色，且**不透明**。
      *
      * 不能写死灰度：14 套皮肤各有自己的浅 / 深底，硬编码的灰在某几套上就是「看不见」或
      * 「一道脏印子」。取键盘视图同源的那套令牌（[skinColor] + `text_secondary`）。
      *
      * ⚠ 皮肤令牌自带 `0x99` 前缀（它在面板里本来就是一半透明的小字色），必须先换成不透明的
-     * RGB 再交出去：直接 `and 0x00FFFFFF` 会把 alpha 抹成 **0**（`0x001F4636` 全透明），
+     * RGB 再交出去：直接 `and 0x00FFFFFF` 会把 alpha 抹成 0（`0x001F4636` 全透明），
      * 短条与小字一起消失；不抹的话 `View.setAlpha(0x66)` 又会在 0x99 上再乘一次，只剩 24%。
      * 所以这里统一 `or 0xFF000000`，透明度只由调用点的 `FLOATING_*_ALPHA` 决定，一处说了算。
      */
@@ -2390,7 +2390,7 @@ class JinnIme : InputMethodService() {
         // 拿 orientation 选竖/横存档、又拿 displayMetrics 算宽高，就会把横屏的
         // `864,604` 坐标配上横屏的 `2240` 宽（=3200*70%）落到 1440 宽的竖屏上 ⇒ 越界 3104px，
         // 用户看到的就是「悬浮键盘位移到屏幕外」。
-        // 改用**实际宽高比**判：displayMetrics 是唯一同时决定「存哪套几何」与「算多大」的读数，
+        // 改用实际宽高比判：displayMetrics 是唯一同时决定「存哪套几何」与「算多大」的读数，
         // 两边同源才不会分叉（见 [floatingIsPortrait]）。
         val portrait = floatingIsPortrait()
         // 自然尺寸：容器按屏幕宽量一次（键宽由宽度派生、高度由排数与键高派生）。
@@ -2467,9 +2467,9 @@ class JinnIme : InputMethodService() {
      * 量化 hysteresis 就有了两个写入点 —— 那种重复迟早让两条路径给出不同的几何。
      *
      * 两个口径：
-     *  - **真实行高优先**：倍率被 [FloatingKeyboard.MIN_STRETCH] / [FloatingKeyboard.MAX_STRETCH]
+     *  - 真实行高优先：倍率被 [FloatingKeyboard.MIN_STRETCH] / [FloatingKeyboard.MAX_STRETCH]
      *    夹住时，反算回百分比写进几何 —— 否则拖到底存的是够不到的百分比，下一次拖动的第一格是死区；
-     *  - **夹取用真实窗宽 / 窗高**（含把手），位置越界在这里一次收干净。
+     *  - 夹取用真实窗宽 / 窗高（含把手），位置越界在这里一次收干净。
      *
      * @param gravity 非 null 时连窗口重力一起写（进入悬浮态要落 TOP|START；拖动 / 拉伸不必重复写）
      * @param corner 四角拖动的那个角；与 [anchorRight] / [anchorBottom] 一起给出时才把对边钉住
@@ -2499,7 +2499,7 @@ class JinnIme : InputMethodService() {
             source.heightPercent
         }
         // 顶部留出把手：可用高度与位置都按「把手之下才是键盘」算
-        // 四角拖动：位置以**起点那一刻的对边**为准（见 [FloatingKeyboard.pinToEdges]）——
+        // 四角拖动：位置以起点那一刻的对边为准（见 [FloatingKeyboard.pinToEdges]）——
         // 高度会过倍率夹取与逐行取整，按模型值补位置会让面板在上下限附近整块平移
         val positioned = if (corner != null) {
             FloatingKeyboard.pinToEdges(
@@ -2518,7 +2518,7 @@ class JinnIme : InputMethodService() {
         // 于是横屏几何（2240 宽）被算出来并落到 1440 宽的物理屏上，右边缘到 3104px。
         // 硬闸：窗口宽超过**当前屏幕宽**时不悬浮。
         //
-        // 硬闸只看**当前 screenW**（displayMetrics 单源，见 [floatingIsPortrait]）；几何归一化
+        // 硬闸只看当前 screenW（displayMetrics 单源，见 [floatingIsPortrait]）；几何归一化
         // 与 clamp 已按同源的 screenW / areaH 收过一遍，这里只是最后一道「请求宽 > 当前屏宽」兜底。
         // ⚠ 早期版本曾用 min(displayMetrics, physical 短边) 作硬闸，会把正常的横屏悬浮
         // （2240 > 1440）一起打掉，已移除；判据统一到 displayMetrics，别照旧注释复原那段逻辑。
@@ -2613,11 +2613,11 @@ class JinnIme : InputMethodService() {
 
 
     /**
-     * 当前是否为竖屏 —— **以 displayMetrics 的实际宽高为准**，不看 `configuration.orientation`。
+     * 当前是否为竖屏 —— 以 displayMetrics 的实际宽高为准，不看 `configuration.orientation`。
      *
      * 为什么不看 orientation：真机实证（杀掉带悬浮窗的第三方 APP 后）会出现
      * `SurfaceOrientation=1`（系统认为横屏）而物理尺寸仍是 1440x3200 的组合。
-     * 那时 `orientation` 报横、`displayMetrics` 报竖，**两条读数来自不同时刻的配置**。
+     * 那时 `orientation` 报横、`displayMetrics` 报竖，两条读数来自不同时刻的配置。
      *
      * 后果链条：拿 orientation 选竖/横存档、又拿 displayMetrics 算窗口宽高
      * ⇒ 横屏的 `864,604` 坐标配上横屏的 `2240` 宽（3200×70%）落到 1440 宽的竖屏上
@@ -2626,12 +2626,12 @@ class JinnIme : InputMethodService() {
      * 改用宽高比后，选存档与算尺寸**两边同源**，不可能再分叉。
      * 夹取仍按屏幕宽高做，所以即使方向读错也只会「用错一套几何」，不会越界到屏外。
      *
-     * ⚠ 判据只看 displayMetrics，**不能**混入物理屏尺寸：物理尺寸不含旋转，
+     * ⚠ 判据只看 displayMetrics，不能混入物理屏尺寸：物理尺寸不含旋转，
      * 横屏态下会判成竖屏（真机实测踩过）。早先试过取两者较小者，已移除 ——
      * 方向判据统一到 displayMetrics（与 [applyGeometryToWindow] 的结论一致）。
      */
     private fun floatingIsPortrait(): Boolean {
-        // 必须用 displayMetrics：它是**窗口尺寸计算的同源读数**（naturalW / screenW /
+        // 必须用 displayMetrics：它是窗口尺寸计算的同源读数（naturalW / screenW /
         // floatingAreaHeight 全从它来），方向判定与尺寸计算必须同源才不会分叉。
         val m = resources.displayMetrics
         return m.widthPixels <= m.heightPixels
@@ -2640,7 +2640,7 @@ class JinnIme : InputMethodService() {
     /**
      * 窗口参数是否已被外部重置（漂移检测）。
      *
-     * 只判两项：**宽高掉回框架默认值**、**gravity 不再是 TOP|START**。
+     * 只判两项：宽高掉回框架默认值、**gravity 不再是 TOP|START**。
      * 不判 x/y：它们「看起来对」也可能越界，而越界由 [applyGeometryToWindow] 的夹取负责；
      * 且 x/y 恰是用户拖动的结果，判它会与「拖动后重新套用」混淆。
      *
@@ -2820,7 +2820,7 @@ class JinnIme : InputMethodService() {
     /**
      * 悬浮窗口根：把手 + 内容 + 四角角标。
      *
-     * **四角缩放为什么不挂在角视图上**：16dp 的角正好压着「符号 / 回车」这类键的外角，
+     * 四角缩放为什么不挂在角视图上：16dp 的角正好压着「符号 / 回车」这类键的外角，
      * 角视图一旦吃掉 ACTION_DOWN，那 16dp 就成了按键的死区（真机实测：点「符号」的左下角
      * 毫无反应，而它本来就是最容易按到的地方）。所以改成在**根容器**上按手势判定：
      *
@@ -2915,7 +2915,7 @@ class JinnIme : InputMethodService() {
         }
 
         /**
-         * 落在四角、但底下**没有任何子视图接手**（面板底边那条透明带）时，DOWN 会落到根自己身上
+         * 落在四角、但底下没有任何子视图接手（面板底边那条透明带）时，DOWN 会落到根自己身上
          * —— 真机实测：右下角最外侧约 16px 就是这么一段死区，从那里拖完全没反应。
          * 这里把角上的 DOWN 也接住，之后与拦截路径走同一套「过 slop 才动手」。
          */
@@ -3040,7 +3040,7 @@ class JinnIme : InputMethodService() {
                 floatingNaturalW, floatingNaturalH,
             )
             // 百分比没变就不重排：1% 一步的量化在两帧之间常常是同一个值，白排一次会掉帧。
-            // 比的是**本帧算出的值 vs 上一帧算出的值**，不能比 `floatingGeometry`：落地时会把
+            // 比的是本帧算出的值 vs 上一帧算出的值，不能比 `floatingGeometry`：落地时会把
             // 被夹住的高度百分比重写成生效值，拿它比会让「夹住之后手指不动」也每帧重排一次。
             if (next.widthPercent == lastRequestedW && next.heightPercent == lastRequestedH) return
             lastRequestedW = next.widthPercent
@@ -3076,7 +3076,7 @@ class JinnIme : InputMethodService() {
      * 换档**保持中心点不动**（否则按一下尺寸变小，键盘会往左上跑一截，看着像被甩出去），
      * 随后按新尺寸重新夹取并落盘。
      *
-     * 档位是**等比**的：拉成异形的面板按一次换档会回到等比（宽高都取 [FloatingKeyboard.Geometry.uniformPercent]
+     * 档位是等比的：拉成异形的面板按一次换档会回到等比（宽高都取 [FloatingKeyboard.Geometry.uniformPercent]
      * 的下一档）—— 留着一条「一键恢复正常比例」的路，比让档位在半拉伸状态上继续漂移更好理解。
      */
     private fun cycleFloatingScale() {
@@ -3132,7 +3132,7 @@ class JinnIme : InputMethodService() {
      * 类内不变量：`voiceView == null` ⟺ 语音视图未创建。三个消费方都必须按「可能为 null」处理：
      *  - [applyKeyboardMode]：voice 缺失时只让拼音树可见；
      *  - [applyTransparencyToVoicePanel]：缺失时直接返回 —— 这是原先漏掉的隐藏消费方，
-     *    它用 `getChildAt(0)` 当语音视图，视图缺失时会把**拼音树**按语音面板的参数重刷一遍
+     *    它用 `getChildAt(0)` 当语音视图，视图缺失时会把拼音树按语音面板的参数重刷一遍
      *    （`kb_bg` / `kb_divider` 命中即被改写，还白建 7 个 drawable）；
      *  - [switchToVoiceKeyboard]：进入语音前补建（此刻才真正需要这棵树）。
      */
@@ -3152,7 +3152,7 @@ class JinnIme : InputMethodService() {
         }
         // ⚠ 语音键盘与拼音键盘是**两套 View**（`keyboard.xml` / `keyboard_pinyin.xml`），
         // 同名 id 各自解析到自己的布局里，因此敲击反馈必须在两侧各自绑定，不能共用一次绑定。
-        // ⚠ 麦克风键（mic_button）**不挂钩**：按下即开始录音，此刻播按键音会被 AudioRecord
+        // ⚠ 麦克风键（mic_button）不挂钩：按下即开始录音，此刻播按键音会被 AudioRecord
         // 一并录进去、影响识别率。录音相关代码不动（2026-10-05）。
         voice.findViewById<View>(R.id.status_bar).setOnClickListener {
             KeyFeedback.fire(TapSound.G_FUNC)
@@ -3456,7 +3456,7 @@ class JinnIme : InputMethodService() {
             }.onFailure { Diagnostics.w(TAG, "提示语音离线失败: ${it.message}") }
             return
         }
-        // 切到语音键盘同样要作废在途翻译（2026-10-03 修复 L-641）：它不是会话边界，代际不会自增，
+        // 切到语音键盘同样要作废在途翻译（2026-10-03，L-641）：它不是会话边界，代际不会自增，
         // 于是译文回调会走完提交链、`commitText` 压在语音的预编辑区间上（屏上文本抖动/错序，
         // 用户正在说话却看到一段来历不明的中文），而两笔功能同时在计费。
         // 互斥必须是**双向**的：`startTranslate` 早已拦「录音中」，这里补上反方向。
@@ -3466,7 +3466,7 @@ class JinnIme : InputMethodService() {
         // 搜索态必须一并退出：面板在语音键盘下不可见却仍处激活态，
         // 切回拼音后 26 键输入会被「隐形路由」进搜索框（用户以为在打字）。
         pinyinKeyboard?.hideSearchPanel()
-        // 剪贴板面板同理（2026-10-02 修复）：上面那条理由对它**逐字成立** —— 它也挂在被 GONE 的
+        // 剪贴板面板同理（2026-10-02）：上面那条理由对它**逐字成立** —— 它也挂在被 GONE 的
         // 拼音视图上、`clipboardActive` 仍为 true。语音期间它既不可见、又把 `hasActiveOverlay`
         // 一直顶成真（定时换肤被无限延后），切回拼音后还会带着上一条历史原样弹出。
         // 与 `onFinishInputView` 的两行处置对齐（那两个面板一起收）。
@@ -3523,15 +3523,15 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacks(backspaceRunnable)
         ui.removeCallbacks(autoStopRunnable)
         ui.removeCallbacks(startHoldRunnable)
-        // 会话边界：在途翻译作废（2026-09-30 审查发现）。onFinishInput 早于下一个输入框的
+        // 会话边界：在途翻译作废（2026-09-30）。onFinishInput 早于下一个输入框的
         // onStartInputView，而译文回调走 `ui.post` —— 不在**这里**作废的话，结果可能在
-        // 「新框已开始、onStartInputView 尚未跑到」的窗口里，经回调闭包里的**旧 connection**
+        // 「新框已开始、onStartInputView 尚未跑到」的窗口里，经回调闭包里的旧 connection
         // 提交进用户已经离开的那个输入框。
-        // ⚠ notify 必须在这里就传 true（2026-10-03 修复 L-603 的回归）：本回调**先于**
-        // onStartInput / onStartInputView 执行，并且**在这里**就把 `translateInFlight` 复位了 ——
+        // ⚠ notify 必须在这里就传 true（2026-10-03，L-603 的回归）：本回调先于
+        // onStartInput / onStartInputView 执行，并且在这里就把 `translateInFlight` 复位了 ——
         // 若此处静默，后面两处 `notify = true` 取到的 `wasInFlight` 恒为 false ⇒
-        // 「翻译已取消」在**同 App 换输入框**（最高频的边界）这条路径上**永不弹**。
-        // 上一版正是把"去重"理解成"这里别弹、留给后面弹"，而后面已经没得弹了。
+        // 「翻译已取消」在同 App 换输入框（最高频的边界）这条路径上永不弹。
+        // 上一版正是把「去重」理解成「这里别弹、留给后面弹」，而后面已经没得弹了。
         // `wasInFlight` 快照仍保证整条链路上最多弹一次。
         cancelTranslate(notify = true)
     }
@@ -3596,8 +3596,8 @@ class JinnIme : InputMethodService() {
         // 换视图后重放敏感框抑制（BUG.md L-96）与「翻译中」状态：新视图这两个字段默认 false，
         // 不重放会在密码框里把候选学进词频、或在在途翻译时让按钮渲染成**可点的「翻译」**
         // 而 IME 侧闸门还关着（点击被静默吞掉）。
-        // ⚠ 2026-10-03 审查 A2 起，这两个重放已**统一放进 `onCreateInputView()` 末尾**
-        // （凡新建视图就重放，框架自己调它时也覆盖），这里保留一份是**幂等**的兜底：
+        // 2026-10-03 审查 A2 起，这两个重放已统一放进 `onCreateInputView()` 末尾
+        // （凡新建视图就重放，框架自己调它时也覆盖），这里保留一份是幂等的兜底：
         // setInputView 同步更新 pinyinKeyboard，重放仍落在新视图上。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
         pinyinKeyboard?.setTranslating(translateInFlight)
@@ -3682,15 +3682,15 @@ class JinnIme : InputMethodService() {
     /**
      * 会话边界（比 [onStartInputView] **更早**，且不依赖窗口是否显示）：宿主调 `restartInput()`
      * 或同会话内换框而框架跳过 `doFinishInput` 时，上一个输入框的在途翻译必须作废
-     * （2026-10-03 修复 L-496）—— 否则结果可能落回旧框、或经旧 connection 落到别处。
+     * （2026-10-03，L-496）—— 否则结果可能落回旧框、或经旧 connection 落到别处。
      */
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
         super.onStartInput(info, restarting)
         // notify：这一类边界用户最可能没预期（切框 / 旋转 / 分屏拖动），丢的又往往是
-        // 已经出网、正在计费的大模型请求（2026-10-03 修复 L-603）
+        // 已经出网、正在计费的大模型请求（2026-10-03，L-603）
         cancelTranslate(notify = true)
-        // 去重指纹**跨输入框无意义**：A 框翻过的 "hello"，在 B 框输入 "hello" 后点翻译会被
-        // 自己的去重挡回去，而提示让用户「改动原文」—— 在新框里改这句毫无意义（2026-10-03 修复 L-655）。
+        // 去重指纹**跨输入框无意义**：A 框翻过的 「hello」，在 B 框输入 「hello」 后点翻译会被
+        // 自己的去重挡回去，而提示让用户「改动原文」—— 在新框里改这句毫无意义（2026-10-03，L-655）。
         lastSentKey = ""
         // 结果侧指纹同理（BUG.md L-1308）：B 框里恰好有同一段文本时不该被 A 框的记录拦下
         lastCommittedText = ""
@@ -3698,7 +3698,7 @@ class JinnIme : InputMethodService() {
         // restartInput()」时**可能不重发** onStartInputView（`startTranslate` 的密码框判据处即实例，
         // 见本文件「焦点从普通框切到密码框可能不重发该回调」那段说明）。
         // 晚一步算的后果是：在密码框里选候选会被写进 user_freq.txt。
-        // ⚠ 但**不能**在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
+        // ⚠ 但不能在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
         // 结束组合态，此时清 IME 侧 composing 而不经宿主，宿主会把残余拼音当纯文本补进旧框
         // （真机实测：收件人框打「ni」后点正文框，收件人里留下「ni」+ 后续字）。
         // composing / 面板 / 密码键盘的复位交给 onStartInputView 的 configure（那时组合态已由
@@ -3717,7 +3717,7 @@ class JinnIme : InputMethodService() {
         // 悬浮键盘：形态判定放在这个**更早**的回调里。框架在「同会话内换框 / restartInput()」时
         // 可能不重发 onStartInputView（上面 onStartInput 开头那条注释里的密码框切换即实例）；
         // 只判一次的话，分屏 / 连续换框期间形态会停在上一个输入框的答案上。
-        // 只在**状态真的变了**时动窗口：同一个包内换框不必多一次 relayout（窗口参数本就有效）。
+        // 只在状态真的变了时动窗口：同一个包内换框不必多一次 relayout（窗口参数本就有效）。
         val wasFloating = floatingActive
         resolveFloatingState(info)
         // 不只是「状态变了」才动窗口：窗口参数可能被外部重置（见 [floatingWindowDrifted]），
@@ -3729,9 +3729,9 @@ class JinnIme : InputMethodService() {
             window?.window?.attributes?.let { floatingWindowDrifted(it) }
         }.getOrNull() == true
         // 三种情况必须重算一次：
-        // 1. 悬浮状态变了（开↔关、换了宿主包）；
-        // 2. 窗口参数被外部重置（[floatingWindowDrifted]，杀掉带悬浮窗的第三方 APP 后会这样）；
-        // 3. **屏幕方向/尺寸变了** —— 真机实证：杀掉横屏锁定的第三方 APP（shso / 游戏中心）后，
+        // - 悬浮状态变了（开↔关、换了宿主包）；
+        // - 窗口参数被外部重置（[floatingWindowDrifted]，杀掉带悬浮窗的第三方 APP 后会这样）；
+        // - 屏幕方向/尺寸变了 —— 真机实证：杀掉横屏锁定的第三方 APP（shso / 游戏中心）后，
         //    系统 displayMetrics 会停在它的横屏态，而物理屏是竖屏；此时 IME 窗口仍保持着
         //    2240 宽的横屏形状。等用户切回竖屏 APP，配置翻回竖屏，
         //    若不主动重算，窗口会一直停在越界的横屏形状上（用户看到「键盘一半在屏幕外」）。
@@ -3777,8 +3777,8 @@ class JinnIme : InputMethodService() {
         applyHostImageCapability(info)
         flushPendingGalleryImage()
         // 会话边界：上一个输入框的在途翻译作废（结果回来时代际不符，直接丢弃）。
-        // ⚠ 必须在 applyThemeIfNeeded **之前**（2026-10-01 修复 L-336）：换肤的延后判据里含视图侧
-        // `translateInFlight`，顺序反过来时，被翻译态挡下的换肤会在**同一个回调**里失去补做机会，
+        // ⚠ 必须在 applyThemeIfNeeded **之前**（2026-10-01，L-336）：换肤的延后判据里含视图侧
+        // `translateInFlight`，顺序反过来时，被翻译态挡下的换肤会在同一个回调里失去补做机会，
         // 键盘继续用旧皮、要再等一次弹出。
         // notify=true 但不会与 onStartInput 重复弹（第二次进来时 translateInFlight 已复位）
         cancelTranslate(notify = true)
@@ -3798,7 +3798,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "符号分组顺序/收藏变更: 补重建（上次延后）")
             recreateKeyboardView()
         }
-        // 平台自带的点击音 / 长按触觉是否抑制，随两个开关走。**必须排在可能重建的两处之后** ——
+        // 平台自带的点击音 / 长按触觉是否抑制，随两个开关走。必须排在可能重建的两处之后 ——
         // 重建会换掉整棵树，先装的那次会被一起换走（本方法上半段的 applyThemeIfNeeded 也会重建）。
         // 每次弹键盘重读一次开关，配置导入这类不经过设置页回调的改动也能在这里收口。
         applyFeedbackSuppression()
@@ -3808,7 +3808,7 @@ class JinnIme : InputMethodService() {
         // 用户回来了（开始输入）：取消待触发的可选词库加载。该任务解析耗时 21~34s，
         // 砸在打字期正是本机制要避免的「后台重活抢 CPU」，兜底 180s 仍能保证最终加载。
         ui.removeCallbacks(optionalIdleCheck)
-        // 语音连接生命周期（MEM-13）：**只在语音面板可见时保活**。
+        // 语音连接生命周期（MEM-13）：只在语音面板可见时保活。
         // 原先这里无条件 connect()，等于每弹一次键盘就给长连接续一次命：拼音用户从不进语音，
         // 却一直替它付每 20 秒一次的无线电唤醒。判据含录音中与等在途结果两态 ——
         // 它们与面板可见一样属于「正在用」。
@@ -3836,7 +3836,7 @@ class JinnIme : InputMethodService() {
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
-        // ⚠ 例外（真机实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
+        // 例外（真机实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
         // onCreateInputView 紧接着就是本回调），这里就不再重复 —— 一次 configure 实测 8~22ms，
         // 占首弹端到端耗时的 5%~15%，而重复的那次不改变任何像素与状态。
         // 判据两条，缺一不可：
@@ -4120,15 +4120,15 @@ class JinnIme : InputMethodService() {
      *
      * IME 是常驻进程，这份缓存（12MB，低档机 6MB）原先没有任何第二个释放点。
      * 只在**真紧张**的三档动手：`RUNNING_LOW` / `RUNNING_CRITICAL` / `COMPLETE`。
-     * ⚠ 刻意**不含** `UI_HIDDEN`(20) / `BACKGROUND`(40) / `MODERATE`(60)，理由不是「它们常来」：
+     * ⚠ 刻意不含 `UI_HIDDEN`(20) / `BACKGROUND`(40) / `MODERATE`(60)，理由不是「它们常来」：
      * ① `BACKGROUND` / `MODERATE` / `COMPLETE` 只发给 `curProcState >= PROCESS_STATE_HOME`(14) 的
      *    缓存 / LRU 档进程（另有 heavy-weight），而本服务活着时最差也只是 perceptible ——
-     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档**结构性不可达**
+     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档结构性不可达
      *    （`COMPLETE` 留下只为纵深防御：真到那一档时本服务已不在）；
-     * ② `UI_HIDDEN` 是**本应用自己的页面**（设置 / 历史页）离屏，与内存压力无关；按它清等于
+     * ② `UI_HIDDEN` 是本应用自己的页面（设置 / 历史页）离屏，与内存压力无关；按它清等于
      *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
      *
-     * ⚠ 这里只是**其中一个**入口：`ClipboardThumbLoader` 自己在首次使用时也向 Application 注册了
+     * ⚠ 这里只是其中一个入口：`ClipboardThumbLoader` 自己在首次使用时也向 Application 注册了
      * 一份 ComponentCallbacks2（同一套白名单）。原因是本服务并非总在 —— `am force-stop` 之后只
      * 起历史页时 `JinnIme` 是 DEAD，那份 12MB 由活动页填充却没人让位（L-1489 记录的已知边界）。
      */
@@ -4155,7 +4155,7 @@ class JinnIme : InputMethodService() {
         // 文件上限 3000 行约 1~3ms，故不做异步）
         runCatching { PinyinEngine.flushUserFrequency() }
         // 选择台账：把队列里最后几行追加完（正常单行 append 几十微秒；但 flush 自带
-        // FLUSH_TIMEOUT_MS = 2s 上限，密钥库不可用 / 队列压着一批导入时**最坏就在主线程等满 2s**）。
+        // FLUSH_TIMEOUT_MS = 2s 上限，密钥库不可用 / 队列压着一批导入时最坏就在主线程等满 2s）。
         // ⚠ 销毁路径只等 FLUSH_ON_DESTROY_MS（BUG.md L-1451）：阻塞的是主线程，2s 等价一次 ANR 级卡顿；
         // 而写盘本身在 SelectionLedger 的单线程 writer 上跑，超时返回不影响它写完之后出队
         // （失败的行留队）。代价只在「进程紧接着被杀」时兑现：那几行随进程消失 ——
@@ -4165,9 +4165,9 @@ class JinnIme : InputMethodService() {
         // 敲击反馈引擎：释放 SoundPool 与震动句柄。IME 可被反复销毁重建，
         // 不 release 会持续泄漏 native 资源（每次重建泄漏一份）
         KeyFeedback.release()
-        // ⚠ 先作废在途翻译、**再**清消息队列（2026-10-03 修复 L-633）：`removeCallbacksAndMessages(null)`
-        // 只能清**此刻已在队列里**的消息，而紧接着的 `cancel()` 会让 OkHttp 在 IO 线程回调
-        // `onFailure → onDone → ui.post{…}` —— 那条消息是在清队列**之后**才入队的，清不到。
+        // ⚠ 先作废在途翻译、**再**清消息队列（2026-10-03，L-633）：`removeCallbacksAndMessages(null)`
+        // 只能清此刻已在队列里的消息，而紧接着的 `cancel()` 会让 OkHttp 在 IO 线程回调
+        // `onFailure → onDone → ui.post{…}` —— 那条消息是在清队列之后才入队的，清不到。
         // 顺序对调能让代际先自增，把「销毁后被触碰」的窗口收到最小。
         // ⚠ 定时换肤的 ticker 自建 Handler（ThemeManager 内），`ui.removeCallbacksAndMessages(null)` 清不到它；
         // 它每 tick 自我续期 ⇒ 不撤的话，已销毁的服务会被主线程消息留到下个切换点（最长 24h），
@@ -4183,8 +4183,8 @@ class JinnIme : InputMethodService() {
         runCatching { pinyinKeyboard?.stopBackspaceRepeat() }
         ui.removeCallbacksAndMessages(null)
         // 视图引用断开（与下面 screenOffReceiver 同款口径）：视图持 listener 强引用本服务、
-        // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30 审查发现）。
-        // ⚠ 但**只清 `pinyinKeyboard` 是不够的**（2026-10-03 修复 L-631）：容器仍强引用拼音视图
+        // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30）。
+        // ⚠ 但**只清 `pinyinKeyboard` 是不够的**（2026-10-03，L-631）：容器仍强引用拼音视图
         // （`container.addView(pinyin, …)`），主题包装 Context 又包住本服务 —— 注释宣称的
         // 「视图引用断开」与实际不符。下面把这几个字段一并置空（顺序在 cancelTranslate 之后，
         // 因为它内部要调 `pinyinKeyboard.setTranslating`）。
@@ -4234,10 +4234,10 @@ class JinnIme : InputMethodService() {
      * 兜底定时器到点：键盘仍在前台就再顺延一轮（见 [optionalFallbackCheck]）。
      *
      * 为什么不损功能（这是「省电 / 流畅」改动必须交代的一条）：
-     *  · 另外两条触发原样保留 —— 息屏立刻装、键盘收起 20s 后装，用户只要真的停手就立即加载；
-     *  · 顺延有上限 [OPTIONAL_FALLBACK_MAX_DEFERRALS]，键盘一直开着也会在限次后照常装载，
+     *  - 另外两条触发原样保留 —— 息屏立刻装、键盘收起 20s 后装，用户只要真的停手就立即加载；
+     *  - 顺延有上限 [OPTIONAL_FALLBACK_MAX_DEFERRALS]，键盘一直开着也会在限次后照常装载，
      *    不存在「永远等不到」的路径（与 `AsrClient` 的空闲关闭同款：延后有限次就强制动手）；
-     *  · 顺延只发生在「窗口正显示」时 —— 但这不是「只有好处」，两个代价要认得：
+     *  - 顺延只发生在「窗口正显示」时 —— 但这不是「只有好处」，两个代价要认得：
      *    ① 到限后若用户仍在打字，重活**照旧**落在前台（闸门只保证「给另两条空闲触发让路」，不保证避开）；
      *    ② 有可选包可装的机器上，「只有可选包才有的词」最长推迟 3min → 12min 才查得到。
      *    收益的准确说法：把兜底这次重活推后 ≤9 分钟，让步给「息屏 / 收起键盘 20s」这两条真空闲信号；
@@ -4262,11 +4262,11 @@ class JinnIme : InputMethodService() {
      * 不用固定延迟：实测那 1.14M 词条的解析要 21~34s，而「基础包就绪后 5 秒」
      * 恰好是用户开始打字的时刻，后台重活与前台输入抢 CPU / 内存带宽，主观感受就是
      * 「刚开机很卡」。装载时机（先到先得）：
-     *  · 启动捷径：索引都已就绪（映射复用）或只差自定义词库时，基础包就绪后就装 —— 这两种
+     *  - 启动捷径：索引都已就绪（映射复用）或只差自定义词库时，基础包就绪后就装 —— 这两种
      *    都不必等空闲信号（见 `onCreate` 里的 `optionalShouldLoadNow`）；
-     *  · 息屏：用户锁屏，最可靠的空闲信号；
-     *  · 键盘收起后再闲置 [OPTIONAL_IDLE_DELAY_MS]：用户停止输入；
-     *  · 兜底 [OPTIONAL_FALLBACK_DELAY_MS]：一直没出现上面两种情况时也必须加载。
+     *  - 息屏：用户锁屏，最可靠的空闲信号；
+     *  - 键盘收起后再闲置 [OPTIONAL_IDLE_DELAY_MS]：用户停止输入；
+     *  - 兜底 [OPTIONAL_FALLBACK_DELAY_MS]：一直没出现上面两种情况时也必须加载。
      *
      * @param onlyPacks 只装这些包（启动捷径算出来的那一批，BUG.md L-893）；为空表示装全部
      *
@@ -4274,7 +4274,7 @@ class JinnIme : InputMethodService() {
      */
     private fun maybeLoadOptionalDict(reason: String, onlyPacks: Collection<String>? = null) {
         // 这里**不再**放一次性旗标：装了包但那次没读进来（损坏 / 解压失败）时，
-        // 旗标会让本进程**永远没有第二次触发**，而词库页写着「空闲时自动装载」——
+        // 旗标会让本进程永远没有第二次触发，而词库页写着「空闲时自动装载」——
         // 与用户看到的界面矛盾（BUG.md L-154 / L-167）。要不要真装载由引擎的闸门决定：
         // 它按包身份 + 失败次数（有界重试）判定，未变过的包在闸门处就返回 false、几乎不花时间。
         runCatching {
@@ -4291,7 +4291,7 @@ class JinnIme : InputMethodService() {
     /** 横屏时不要进全屏抽取模式，这个键盘很矮，没必要遮住宿主界面 */
     override fun onEvaluateFullscreenMode(): Boolean = false
 
-    // ── 麦克风手势 ────────────────────────────────────────────
+    // ── 麦克风手势 ──
 
     private fun onMicTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -4359,7 +4359,7 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    // ── 录音控制 ──────────────────────────────────────────────
+    // ── 录音控制 ──
 
     private fun startRecording(target: Mode) {
         // 语音输入关闭时 asr/recorder 为 null：入口直接置空，不做任何语音动作
@@ -4371,9 +4371,9 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "startRecording: 已在录音中 mode=$mode，忽略")
             return
         }
-        // 反向互斥（2026-10-03 审查 B-1）：翻译在途时开录音，语音的非终态回显
-        // （`setComposingText`）会改动光标前文本 ⇒ 翻译提交时的**逐字快照校验必然失配** ⇒
-        // 用户**已付费的译文被丢弃**，只留一句「输入已变化」—— 花钱却什么都没得到。
+        // 反向互斥（2026-10-03）：翻译在途时开录音，语音的非终态回显
+        // （`setComposingText`）会改动光标前文本 ⇒ 翻译提交时的逐字快照校验必然失配 ⇒
+        // 用户已付费的译文被丢弃，只留一句「输入已变化」—— 花钱却什么都没得到。
         if (translateInFlight) {
             Diagnostics.w(TAG, "startRecording: 翻译在途，忽略本次录音")
             toast(TEXT_TRANSLATING_PLEASE_WAIT)
@@ -4462,7 +4462,7 @@ class JinnIme : InputMethodService() {
             // 收尾包没送出去（断线 / 队列满）时服务端不会给最终结果：直接提示未连接、不挂等待态。
             // 挂上就要等 60s 兜底超时才复位状态条，期间用户以为还在识别
             if (asr?.endTask() != true) {
-                // endTask 的 false 有两种事实：链路断了（该说「未连接」）与**一个字节都没录到**
+                // endTask 的 false 有两种事实：链路断了（该说「未连接」）与一个字节都没录到
                 // （批量后端在 `data.isEmpty()` 时返回 false，连接其实好好的）。后者是「按一下
                 // 马上松」，报「未连接」会让用户去查网络与口令 —— 判据只能看当前连接状态。
                 val disconnected = asr?.state != LinkState.ONLINE
@@ -4518,7 +4518,7 @@ class JinnIme : InputMethodService() {
     private fun autoStopDelayMs(): Long =
         if (VoiceBackend.isOnline(prefs.voiceBackend)) XF_MAX_TASK_MS else MAX_TOGGLE_MS
 
-    // ── 音频焦点 / 网络 / VAD ───────────────────────────────
+    // ── 音频焦点 / 网络 / VAD ──
 
     /** 本地 VAD：连续录音模式静音过久自动收尾出结果，长按模式只提示 */
     private fun onSilenceDetected() {
@@ -4588,7 +4588,7 @@ class JinnIme : InputMethodService() {
         networkCallback = null
     }
 
-    // ── 识别结果 ──────────────────────────────────────────────
+    // ── 识别结果 ──
 
     private fun handleResult(message: RecognitionMessage) {
         // 归属校验：松手后服务端还要 1~3 秒才回结果，期间用户可能已切到别的应用。
@@ -4640,7 +4640,7 @@ class JinnIme : InputMethodService() {
     private fun stripTrailingPunc(text: String): String =
         text.trimEnd().trimEnd(*TRAILING_PUNC)
 
-    // ── 在线翻译（BYOK）────────────────────────────────────
+    // ── 在线翻译（BYOK） ──
 
     /**
      * 翻译键的唯一入口（2026-10-09）：单击 = [AiAction.DEFAULT]（翻译），
@@ -4674,11 +4674,11 @@ class JinnIme : InputMethodService() {
     private fun startTranslate(action: AiAction = AiAction.DEFAULT) {
         if (translateInFlight) return
         translateTraceId = Diagnostics.traceId("TR")
-        // ⚠ 闸门阶段也必须用它（2026-10-03 修复 L-769）：L-759 只把生成点提前了，20 个早退出口
+        // ⚠ 闸门阶段也必须用它（2026-10-03，L-769）：L-759 只把生成点提前了，20 个早退出口
         // 一条都没带上 ⇒ traceId 在闸门阶段是死变量，诊断包仍只能靠时间戳把面板那条日志与后续 W 级
         // 日志拼起来。面板那条已是 i 级（会落盘），所以此处补一条 i 级即可把「他点过」与本次尝试关联。
         Diagnostics.i(TAG, "[$translateTraceId] 翻译: 面板点击进入翻译流程 action=${action.id}")
-        // 与语音互斥（2026-10-03 审查 B-1）：录音中发翻译，译文的 `commitText` 会落在
+        // 与语音互斥（2026-10-03）：录音中发翻译，译文的 `commitText` 会落在
         // 语音的预编辑区间上，把正在识别的字顶掉（最终结果会整段重放、不丢字，但屏上文本会抖 /
         // 错序）。与「密码框 / 无连接 / 行内两档」同款：在发请求**之前**零成本拒绝。
         if (mode != Mode.NONE) {
@@ -4686,7 +4686,7 @@ class JinnIme : InputMethodService() {
             toast(TEXT_RECORDING_PLEASE_WAIT)
             return
         }
-        // 「录音已停、结果在途」同样要拦（2026-10-03 修复 L-394 的具体落点）：语音键盘下拼音视图是
+        // 「录音已停、结果在途」同样要拦（2026-10-03，L-394 的具体落点）：语音键盘下拼音视图是
         // GONE、功能面板点不到，所以**唯一**可达时序是「长按麦克风松手 → 立刻点键盘键切回拼音」。
         // 那一刻 `mode` 已被 `stopRecording(commit=false)` 置成 NONE，所以上面那道闸拦不住；
         // 而服务端 final 还有 1~3s，回来后照样 `setComposingText` / `commitText` 改宿主文本 ——
@@ -4696,16 +4696,16 @@ class JinnIme : InputMethodService() {
             toast(TEXT_RECORDING_PLEASE_WAIT)
             return
         }
-        // 总开关是「关掉即不可能发请求」的闸门（2026-09-30 审查发现）：功能面板只按它渲染按钮，
+        // 总开关是「关掉即不可能发请求」的闸门（2026-09-30）：功能面板只按它渲染按钮，
         // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
         if (!prefs.translateEnabled) {
             // 无声无痕是不可接受的（2026-10-03 审查 A3）：关掉总开关**不是**面板重绘入口，
-            // 面板若还带着旧的「翻译」键，它就是**亮的、可点的**，点下去却毫无反应 ——
+            // 面板若还带着旧的「翻译」键，它就是亮的、可点的，点下去却毫无反应 ——
             // 用户只会以为键盘坏了，而诊断包里连这次点击都查不到。补一条 W（零成本的一半；
-            // 另一半是"把总开关变更做成面板重绘入口"，属设计取舍）。
+            // 另一半是「把总开关变更做成面板重绘入口」，属设计取舍）。
             Diagnostics.w(TAG, "翻译: 总开关已关闭，忽略本次点击")
             // 同族闸门都有用户提示（录音中 → 「请稍候」；密码框 → 「密码框不翻译」），
-            // 只有这条原先只写日志（2026-10-03 修复 L-648）：面板上的键还是亮的、可点的，
+            // 只有这条原先只写日志（2026-10-03，L-648）：面板上的键还是亮的、可点的，
             // 点下去毫无反应，用户只能以为键盘坏了。
             toast(TEXT_TRANSLATE_DISABLED)
             return
@@ -4714,12 +4714,12 @@ class JinnIme : InputMethodService() {
         // 只在 onStartInputView 刷新，宿主在键盘已显示时把焦点从普通框切到密码框可能不重发该回调。
         //
         // 判据是 [InputFieldPrivacy.blocksTranslation]（密码类变体 + 宿主声明「不要个性化学习」），
-        // **不能**复用 `suppressLearning`（2026-10-01 真机实测修复）：后者服务本地词频学习，
+        // 不能复用 `suppressLearning`（2026-10-01 真机实测修复）：后者服务本地词频学习，
         // 把 `TYPE_NULL` / `NO_SUGGESTIONS` 也算敏感 —— 这两个标志在浏览器里是常规做法
         // （Chrome 内核的搜索框全带，WebView 输入框常报 TYPE_NULL），拿它们拦翻译会让整类宿主
         // 点了没反应。翻译是用户主动点击发起的，本身就是「同意把这段发出去」。
         //
-        // ⚠ `IME_FLAG_NO_PERSONALIZED_LEARNING` **要保持拦住**（2026-10-01 修复 L-330）：设置页对用户
+        // ⚠ `IME_FLAG_NO_PERSONALIZED_LEARNING` 要保持拦住（2026-10-01，L-330）：设置页对用户
         //    明写承诺过「声明『不要个性化学习』的输入框不会翻译」，删掉那行判据会让承诺静默失效。
         // EditorInfo 缺失时也不拦：读得到原文就说明这个框能翻译，真读不到后面自然会报「读不到」。
         val info = currentInputEditorInfo
@@ -4733,8 +4733,8 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_PRIVATE_FIELD)
             return
         }
-        // ⚠ 数字 / 日期类输入框在**发请求前**拦（2026-10-03 修复 L-720）：这类框只接受数字，
-        // 宿主的 `InputFilter`（`DigitsKeyListener` / `DateTimeKeyListener`）会把译文**整段丢弃**
+        // ⚠ 数字 / 日期类输入框在**发请求前**拦（2026-10-03，L-720）：这类框只接受数字，
+        // 宿主的 `InputFilter`（`DigitsKeyListener` / `DateTimeKeyListener`）会把译文整段丢弃
         // 且不报错 —— 代码自己在落地复核的注释里写明了这一点（L-456 / L-567），但闸门在提交之后，
         // 于是变成「先付费、再校验、最后只得到一句『提交后未在输入框找到译文尾部』」。
         // 纯数字译文能侥幸落地，但那也是一次无价值的计费请求。
@@ -4761,7 +4761,7 @@ class JinnIme : InputMethodService() {
             )
         }
         if (provider == null) {
-            // ⚠ `null` 有**两种成因**（2026-10-03 修复 L-815）：凭据没填 / 端点不是 https。
+            // ⚠ `null` 有**两种成因**（2026-10-03，L-815）：凭据没填 / 端点不是 https。
             // 判据收敛（`isReady`）之后 `providerOf` 不再区分它们，而两者的用户动作完全相反 ——
             // 合并提示会把 http 端点用户引去检查已经填好的 Key 与模型名（比收敛前更差）。
             val reason = prefs.translateNotReadyReason()
@@ -4784,12 +4784,12 @@ class JinnIme : InputMethodService() {
         // 选区与光标是**两条独立的路**（2026-10-01 放宽）：
         //
         // - 有选中内容 ⇒ 翻译选中的那一段，提交时用它替换选区。`commitText` 在宿主存在选区时
-        //   本就是**替换**语义 —— 与其拒绝，不如把它用对。这是最自然的用法（在浏览器里选一段
+        //   本就是替换语义 —— 与其拒绝，不如把它用对。这是最自然的用法（在浏览器里选一段
         //   外文再翻），此前被整体拒绝，用户只能看到「请先取消选中的内容再翻译」。
         // - 没有选中内容 ⇒ 走光标模式：原文按「翻译原文范围」取，译文追加在原文后面、一个字不动。
         //   这条路仍要求能确认「没有选区」，判据见 [canAppendTranslation]（WebView 类宿主取不到
         //   精确选区时靠 `getSelectedText` + 原文逐字比对兜底）。
-        // 读一次选区、喂给下面两个判据（2026-10-01 修复 L-315）：它们原先各自调一次
+        // 读一次选区、喂给下面两个判据（2026-10-01，L-315）：它们原先各自调一次
         // `currentSelectionRange`（= 一次整窗口的 `getExtractedText`，最多 10 万字符），
         // 而同一次点击里这就是同一份事实。
         val selectionRange = SelectionProbe(currentSelectionRange(connection))
@@ -4797,7 +4797,7 @@ class JinnIme : InputMethodService() {
         if (selected == null) {
             // 三态里的「读不到」：可能是宿主不支持，也可能是大文档下窗口换算失败。能不能继续由下面的
             // [canAppendTranslation] 定 —— 这里以前写「按光标模式继续」，紧接着又被它拒绝，两条日志
-            // 自相矛盾（2026-10-01 修复 L-284）。
+            // 自相矛盾（2026-10-01，L-284）。
             Diagnostics.w(TAG, "翻译: 读不到选中内容，改按「无选区」处理")
         }
         val replaceSelection = !selected.isNullOrEmpty()
@@ -4812,7 +4812,7 @@ class JinnIme : InputMethodService() {
                 }
                 AppendCheck.HOST_UNREADABLE -> {
                     // 宿主既不给精确选区、又答不出有没有选中内容 —— 与「你有选区」是两回事，
-                    // 提示必须分开，否则用户会去取消一个并不存在的选中（2026-10-01 修复 L-284）
+                    // 提示必须分开，否则用户会去取消一个并不存在的选中（2026-10-01，L-284）
                     Diagnostics.w(TAG, "翻译: 宿主不支持选区检测，无法确认能否安全追加，拒绝发起")
                     toast(TEXT_TRANSLATE_SELECTION_UNREADABLE)
                     return
@@ -4822,18 +4822,18 @@ class JinnIme : InputMethodService() {
         // 原文范围与字节上限都按**当前 Provider**取（每家独立配置；id 已在上面 provider 构造处取好）
         val scope = TranslationScope.of(prefs.translateScopeOf(id))
         val maxBytes = prefs.translateMaxBytesOf(id)
-        // 目标语言必须在**去重判据之前**取好：判据要把它算进请求指纹（2026-10-03 修复 L-655）。
+        // 目标语言必须在**去重判据之前**取好：判据要把它算进请求指纹（2026-10-03，L-655）。
         // 原来它是在构造快照前才解析的，于是指纹只能比裸原文 —— 用户换语言后点同一段会被误拦。
         val target = TranslationLanguage.of(prefs.translateTarget)
         // 只有「整行 / 整篇」两种范围需要光标后的文本：其余范围不读，省一次 Binder 往返；
         // 选区模式整段就是选中的内容，与光标位置无关，同样不读
         val needAfter = !replaceSelection &&
             (scope == TranslationScope.LINE_FULL || scope == TranslationScope.ALL)
-        // 读取窗口按范围**分档**取（2026-10-02 修复 L-427 的过度修正）：
-        //  · 需要确认区间末尾的两档（整行 / 整篇）：必须读满 [MAX_READ_CHARS]。否则 `afterTruncated`
+        // 读取窗口按范围**分档**取（2026-10-02，L-427 的过度修正）：
+        //  - 需要确认区间末尾的两档（整行 / 整篇）：必须读满 [MAX_READ_CHARS]。否则 `afterTruncated`
         //    恒真、`appendOffsetExact` 恒假 ⇒ 这两档变成「上限调小就永远翻译不了」，而提示还说成
         //    「范围过大」——用户在「原文范围」页学到的规则是「超限就截断」，这两档却直接失败；
-        //  · 「光标前本行」不需要确认末尾：它的内容随后就会被 `maxBytes` 截断，读满 10 万字符纯属
+        //  - 「光标前本行」不需要确认末尾：它的内容随后就会被 `maxBytes` 截断，读满 10 万字符纯属
         //    浪费 —— 在有 10 万字符文档的输入框里，每点一次翻译都要为主线程的 Binder 回包 +
         //    `toString` 拷贝付 ≈200 KB，而默认档（阿里云上限 5000 字节）根本用不到，是 20× 的无谓放大。
         // 一个字符至少占 1 字节 ⇒ 读 maxBytes 个字符一定覆盖得住字节上限内的原文；再与 Binder
@@ -4844,16 +4844,16 @@ class JinnIme : InputMethodService() {
             minOf(maxBytes.coerceAtLeast(TranslationText.MIN_MAX_BYTES), TranslationText.MAX_READ_CHARS)
         }
         // 读取时刻的**原始**文本（快照）与截取结果分开保存：截取会 trim + 按字节截断，
-        // 拿它当快照判据会让「原文本身带首尾空白 / 超限被截」这类**原样未变**的情形
+        // 拿它当快照判据会让「原文本身带首尾空白 / 超限被截」这类原样未变的情形
         // 被误判成「输入已变化」（2026-09-30 修过同类缺陷：用截取结果当判据）。
         // 读失败（null）与「光标前确实没有内容」（空串）必须分开：把前者说成后者会把
-        // 「宿主读不到」报成「你没写字」（2026-10-01 修复 L-240）
-        // ⚠ `before` 是**尾部对齐**的：`readTextBeforeCursor` 主路径 `getTextBeforeCursor(limit, 0)`
+        // 「宿主读不到」报成「你没写字」（2026-10-01，L-240）
+        // ⚠ `before` 是尾部对齐的：`readTextBeforeCursor` 主路径 `getTextBeforeCursor(limit, 0)`
         // 返回紧邻光标的那 limit 个字符 —— 取不满时拿到的是靠近光标的一段，不是文首那段。
-        // 「这一段是不是从文首开始」由读取路径**如实给出**，不再靠长度反推（2026-10-01 修复 L-286）
-        // 「从文首开始」这个事实**只有 BEFORE_ALL / ALL 两档会用来拒绝**（见下面 `beforeFromDocStart`
+        // 「这一段是不是从文首开始」由读取路径如实给出，不再靠长度反推（2026-10-01，L-286）
+        // 「从文首开始」这个事实只有 BEFORE_ALL / ALL 两档会用来拒绝（见下面 `beforeFromDocStart`
         // 的唯一消费者）⇒ 其余档位不必为它多付一次整窗口 `getExtractedText`
-        // （2026-10-03 修复 L-629）：短文本框（取不满 limit）本来就必然触发取证，
+        // （2026-10-03，L-629）：短文本框（取不满 limit）本来就必然触发取证，
         // 而默认档一次翻译会因此多 2 次同量级往返（发起 + 提交）。
         val needDocStartProbe = scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL
         val beforeRead = if (replaceSelection) {
@@ -4884,11 +4884,11 @@ class JinnIme : InputMethodService() {
         } else {
             TranslationText.extract(before, after, scope, maxBytes, afterTruncated)
         }
-        // 重复翻译去重（2026-10-03 修复 L-628 / L-655）：译文追加后光标停在插入文本末尾，默认档取
+        // 重复翻译去重（2026-10-03，L-628 / L-655）：译文追加后光标停在插入文本末尾，默认档取
         // 「光标前本行」⇒ 不再输入就再点一次时，取到的正是**刚刚写入的译文** —— 二次付费 +
         // 回译污染正文，而用户完全看不出发生了什么。窗口内只提示、不发送。
-        // 只对**非选区**生效：选区是用户明确重新框选的内容，不该被历史拦下。
-        // 判据是**请求指纹**（服务方 + 目标语言 + 原文范围 + 原文）而不是裸原文：换了其中任何
+        // 只对非选区生效：选区是用户明确重新框选的内容，不该被历史拦下。
+        // 判据是请求指纹（服务方 + 目标语言 + 原文范围 + 原文）而不是裸原文：换了其中任何
         // 一项都是另一次合法请求，只比原文会把用户的第二次付费请求误拦成「刚刚翻译过」。
         val repeatKey = translateRepeatKey(
             id, target, prefs.openAiTargetLanguage, scope, sent = slice.text, action = action,
@@ -4899,7 +4899,7 @@ class JinnIme : InputMethodService() {
         // 写进去的实发串」：是就只提示、不发。
         if (!replaceSelection && slice.text.isNotEmpty() &&
             // 记的是**实发串**（`appendText` 在原文行尾会补一个 "\n"），而默认档下次取到的是
-            // `lineHead` + `trim` 之后的本行 ⇒ 逐字比 "\nHello" 与 "Hello" 永远不等，L-1308
+            // `lineHead` + `trim` 之后的本行 ⇒ 逐字比 `\nHello` 与 `Hello` 永远不等，L-1308
             // 这条判据会空转。比 trim 后的可见译文，仍只在「取到的就是刚写进去那段」时命中。
             slice.text == lastCommittedText.trim() &&
             monotonicMs() - lastCommittedAtMs < repeatGuardMs
@@ -4920,8 +4920,8 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_REPEATED)
             return
         }
-        // 失败冷却（2026-10-03 修复 L-627）：超时 / 断连 / 落地失败 / 用户取消这几种情形里，
-        // **服务端可能已经处理并计费** —— 冷却期内点击只提示、不重发，避免连点即连付。
+        // 失败冷却（2026-10-03，L-627）：超时 / 断连 / 落地失败 / 用户取消这几种情形里，
+        // 服务端可能已经处理并计费 —— 冷却期内点击只提示、不重发，避免连点即连付。
         val sinceFail = monotonicMs() - lastFailAtMs
         if (lastFailAtMs > 0 && sinceFail < failCooldownMs) {
             Diagnostics.i(TAG, "翻译: 上次失败后 ${sinceFail}ms 内再次点击，冷却中未发送")
@@ -4929,7 +4929,7 @@ class JinnIme : InputMethodService() {
             return
         }
         // 选区模式**不能**在被截断时替换（2026-10-01 审查 L-261）：截断只作用于上传的那一份，
-        // 服务端返回的译文也只覆盖选中的前一段，拿它替换**整个选区**会把后半段原文删掉，
+        // 服务端返回的译文也只覆盖选中的前一段，拿它替换整个选区会把后半段原文删掉，
         // 而 `commitText` 不保证可撤销。这里在发请求前就拒绝 —— 既不花钱，也能把原因说清。
         if (replaceSelection && slice.truncated) {
             Diagnostics.w(
@@ -4951,14 +4951,14 @@ class JinnIme : InputMethodService() {
         }
         // ②.b 与上一条是**两回事**：这条查的是「宿主能不能给出精确选区」。
         //    放行侧（canAppendTranslation）把「读不到精确选区」当成「明确无选区」而放行，
-        //    但提交侧 `moveCursorByOffset` 依赖同一能力、此时**必然**失败
+        //    但提交侧 `moveCursorByOffset` 依赖同一能力、此时必然失败
         //    （WebView 类宿主对 getExtractedText 恒返回 null，见 [canAppendTranslation]）⇒
         //    每次点击都是「真计费 + 等一轮（大模型几十秒） + 丢译文」。
-        //    在发请求前用同一事实拦下，成本为零（2026-10-02 修复 L-482）。
-        //    判据取**本帧已读的探针**（`selectionRange.range`，L-325/L-315 那次为此专门包的），
+        //    在发请求前用同一事实拦下，成本为零（2026-10-02，L-482）。
+        //    判据取本帧已读的探针（`selectionRange.range`，L-325/L-315 那次为此专门包的），
         //    不再裸调一次 `currentSelectionRange` —— 那是主线程上的整窗口 Binder 往返
         //    （`getExtractedText` 上限 10 万字符），而这里要的正是「同一次点击里同一份事实」
-        //    （2026-10-02 审查）。
+        //    （2026-10-02）。
         if (!replaceSelection && slice.appendOffset > 0 && selectionRange.range == null) {
             Diagnostics.w(
                 TAG,
@@ -4970,10 +4970,10 @@ class JinnIme : InputMethodService() {
         // ③ 光标前这段取不到**开头**时，上传的不是用户以为的那一段 —— `readTextBeforeCursor` 主路径
         //    取的是紧邻光标的那一段（L-277）。判据用读取路径给出的事实（`beforeFromDocStart`），不再用
         //    「读满窗口」反推：兜底路径返回的是「窗口起点 → 光标」，长度天然小于窗口，窗口起点非零时
-        //    照样取不到开头（2026-10-01 修复 L-286）。
+        //    照样取不到开头（2026-10-01，L-286）。
         if (!replaceSelection && !beforeFromDocStart) {
             // 「从文首」与「整篇」两个范围档承诺的就是从头开始 ⇒ 内容口径已违背，拒绝发起。
-            // 此前只拦 BEFORE_ALL，`ALL` 会把「光标前末段 + 光标后一段」当成全篇（2026-10-01 修复 L-285）。
+            // 此前只拦 BEFORE_ALL，`ALL` 会把「光标前末段 + 光标后一段」当成全篇（2026-10-01，L-285）。
             val needsDocStart = scope == TranslationScope.BEFORE_ALL || scope == TranslationScope.ALL
             if (needsDocStart) {
                 Diagnostics.w(
@@ -4986,8 +4986,8 @@ class JinnIme : InputMethodService() {
             // 行内两个范围：窗口里只要出现过**行分隔符**（`\n` / `\r` / Unicode 行终止符），
             // 最后一个就是真实行首，仍可信；一个都没有时行首同样定位不到。位置仍正确、
             // 只是内容偏多，所以只记日志不拦（L-285）。
-            // ⚠ 判据与文案都必须与事实一致（2026-10-03 修复 L-499）：此前只查 `\n` ——
-            // CR-only / U+2028 文档里行首其实**定位得到**（TranslationText 已认这些分隔符），
+            // ⚠ 判据与文案都必须与事实一致（2026-10-03，L-499）：此前只查 `\n` ——
+            // CR-only / U+2028 文档里行首其实定位得到（TranslationText 已认这些分隔符），
             // 却报「窗口内无换行，上传的是光标前末段」，两处互相矛盾且误导排障。
             if ((scope == TranslationScope.LINE_BEFORE || scope == TranslationScope.LINE_FULL) &&
                 !TranslationText.hasLineBreak(before)
@@ -4999,15 +4999,15 @@ class JinnIme : InputMethodService() {
             }
         }
         // 用 hasVisibleContent 而不是 isBlank：零宽字符（ZWSP / BOM / NBSP）不算内容 —— 否则
-        // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30 审查）
+        // 「光标前只有一个从网页复制来的不可见字符」也会发出一次真实请求（2026-09-30）
         if (!slice.text.hasVisibleContent()) {
             // 同函数其余每个早退都有 W + toast，这一条此前只有 toast ⇒ 用户报「弹了『没有可翻译的文字』」
-            // 时诊断包里查不到这次点击（2026-10-01 修复 L-327）
+            // 时诊断包里查不到这次点击（2026-10-01，L-327）
             Diagnostics.w(TAG, "翻译: 光标前没有可见内容，未发起")
             toast(TEXT_TRANSLATE_EMPTY)
             return
         }
-        // ④ 原文已经是目标语言、且该语言没有对称对调（日 / 韩）⇒ **不发请求**（2026-10-10 修复 L-1131）：
+        // ④ 原文已经是目标语言、且该语言没有对称对调（日 / 韩）⇒ **不发请求**（2026-10-10，L-1131）：
         //    再发一次只会原样返回原文 —— 用户等一轮、看到「翻译成功」而内容一字未变，并且真计费。
         //    拦在置位之前还顺带免掉后面那一串状态收拾（按钮态、看门狗、指纹此刻都还没动）。
         //    判定不出源语言（纯数字 / URL / 混写）时照发，不误拦正常请求（判据见 decideTranslateTarget）。
@@ -5033,12 +5033,12 @@ class JinnIme : InputMethodService() {
         translateInFlight = true
         val generation = ++translateGeneration
         // 看门狗**紧跟置位**挂上（2026-10-03 审查 A5）：它此前排在置位之后的一串调用
-        // （setTranslating / 日志 / toast / TranslateSnapshot）**末尾**，那些调用任一抛出
-        // （视图被拆、Toast 异常…）都会留下 `translateInFlight = true` 却**没有看门狗**，
+        // （setTranslating / 日志 / toast / TranslateSnapshot）末尾，那些调用任一抛出
+        // （视图被拆、Toast 异常…）都会留下 `translateInFlight = true` 却没有看门狗，
         // 同一会话内按钮永久「翻译中」，只剩会话边界能复位。
         ui.removeCallbacks(translateWatchdog)
         ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
-        // 本次请求的上下文（2026-10-03 修复 L-615/L-617）：放在**挂表之后**，
+        // 本次请求的上下文（2026-10-03，L-615/L-617）：放在**挂表之后**，
         // 以免影响上面那条「置位 → 挂表之间不夹任何可能抛出的调用」的顺序约束（A5）。
         // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
         translateStartedAtMs = monotonicMs()
@@ -5056,7 +5056,7 @@ class JinnIme : InputMethodService() {
                 "范围=${scope.id} 共${slice.text.length}字" +
                 (if (slice.truncated) "（超 $maxBytes 字节已截断）" else ""),
         )
-        // 插入模式下的截断必须说出来（2026-10-02 修复 L-485）：同一件事（原文超单次上限）此前
+        // 插入模式下的截断必须说出来（2026-10-02，L-485）：同一件事（原文超单次上限）此前
         // 两条路径口径相反 —— 选区模式发请求前就拒绝并说明（替换会丢掉尾部原文，不可逆），
         // 插入模式只写日志。插入模式只翻了前半段、译文追加在区间末尾（原文一个字不动），
         // 拒绝反而更糟；但不告知的话用户会以为服务端漏译，往往重试 —— 每次都真计费。
@@ -5074,10 +5074,10 @@ class JinnIme : InputMethodService() {
         )
         // 看门狗已提前到置位之后立即挂上（见上，2026-10-03 审查 A5）；这里只留它存在的理由：
         // OkHttp 在调用 onResponse **之前**就置了 `signalledCallback`，回调内部抛出的异常
-        // **不会**回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
+        // 不会回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
         // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
         runCatching {
-            // 存下请求句柄（2026-10-03 修复 L-494）：四条入口收尾
+            // 存下请求句柄（2026-10-03，L-494）：四条入口收尾
             // 看门狗超时/回调到达/发起失败/会话边界(cancelTranslate)
             // 统一走 finishTranslate：撤看门狗、递增代际、cancel() 旧请求
             translateCall = TranslationClient.translate(
@@ -5091,7 +5091,7 @@ class JinnIme : InputMethodService() {
                     if (generation != translateGeneration) {
                         // ⚠ 代际不匹配时**绝不能**清句柄（2026-10-03 发现的竞态）：
                         // 旧请求的回调可能在新请求已在途时才到达（旧 Call 被 cancel 后 OkHttp 仍会
-                        // 回调 onFailure），无条件清空会把**新请求**的句柄抹掉 ⇒ 之后再取消就落空、
+                        // 回调 onFailure），无条件清空会把新请求的句柄抹掉 ⇒ 之后再取消就落空、
                         // 新请求照样跑完并计费 —— 正是 L-494 要修的现象。旧句柄在 finishTranslate
                         // 里已经清过，这里什么都不用做。
                         Diagnostics.w(TAG, "翻译: 丢弃过期结果 gen=$generation 当前=$translateGeneration")
@@ -5099,7 +5099,7 @@ class JinnIme : InputMethodService() {
                     }
                     // 代际匹配 ⇒ 这个回调就属于当前请求 ⇒ 句柄作废（避免后续取消落在已完成的请求上）
                     translateCall = null
-                    // ⚠ 业务分支必须整体兜住（2026-10-03 修复 L-686）：`appendTranslation` 里有
+                    // ⚠ 业务分支必须整体兜住（2026-10-03，L-686）：`appendTranslation` 里有
                     // 十余道闸与两次提交，任何一处抛出都会让下面的 `finishTranslate()` **不执行** ——
                     // 而它是按钮态与 `translateInFlight` 的唯一复位路径（要等 330s 看门狗才复位）。
                     // 收尾放进 `finally`：业务失败也要复位，顺序仍在业务之后（提前作废会让分支过期）。
@@ -5108,11 +5108,11 @@ class JinnIme : InputMethodService() {
                             is TranslationOutcome.Ok -> {
                                 val landed = appendTranslation(connection, snapshot, outcome.text)
                                 if (landed) {
-                                    // 只在**译文真正写进输入框之后**才记去重（2026-10-03 修复 L-656）：
+                                    // 只在译文真正写进输入框之后才记去重（2026-10-03，L-656）：
                                     // 记账排在提交之前时，那 9 条拒绝出口（宿主变敏感框 / 选区变化 /
                                     // 输入已变化 / 落点确认不了 / InputFilter 丢弃…）都会让用户
                                     // 「一个字没拿到、30s 内重试却被自己挡回去」。
-                                    // ⚠ 选区模式**不记账**（2026-10-03 修复 L-689）：选区是用户明确
+                                    // ⚠ 选区模式**不记账**（2026-10-03，L-689）：选区是用户明确
                                     // 重新框选的内容，不该被去重历史拦下（拦截侧 `!replaceSelection`
                                     // 早就这么主张了，记录侧漏了）。否则「框选翻过 → 光标移到别处 →
                                     // 默认档恰好取到同一段」会被 30s 守卫拦回，而提示让用户
@@ -5128,9 +5128,9 @@ class JinnIme : InputMethodService() {
                             }
                             is TranslationOutcome.Fail -> {
                                 Diagnostics.w(TAG, "翻译失败: ${outcome.error}")
-                                // ⚠ 只有**可能已出网**的失败才进冷却（2026-10-03 修复 L-690）：
+                                // ⚠ 只有**可能已出网**的失败才进冷却（2026-10-03，L-690）：
                                 // `INSECURE`（Base URL 非 https）与 `CREDENTIAL`（Key 含非法 header
-                                // 字符）在 `TranslationClient` 里是**同步早退**——一个字节都没出网，
+                                // 字符）在 `TranslationClient` 里是同步早退——一个字节都没出网，
                                 // 它们的 KDoc 与文案都写明「未发送请求」。把它们算进冷却，会让用户
                                 // 改完配置立刻重试被无谓拦 3 秒，而冷却文案还写着「可能已送往服务方」。
                                 // 排除只按这两类（`PARAM` 兼具两侧语义：Azure 的 413 是真出网后才回的）。
@@ -5150,8 +5150,8 @@ class JinnIme : InputMethodService() {
                     }
                 }
                 // `ui.post` 只在**主 Looper 已退出**（进程正在收尾）时才返回 false（BUG.md L-1311）：
-                // 视图 detach **不会**让主队列停止派发，原先那句「消息进了不会再 drain 的队列」是错的
-                // 模型 —— 后人照它省掉真正的兜底就会留洞。而看门狗用的是**同一条队列**的 postDelayed，
+                // 视图 detach 不会让主队列停止派发，原先那句「消息进了不会再 drain 的队列」是错的
+                // 模型 —— 后人照它省掉真正的兜底就会留洞。而看门狗用的是同一条队列的 postDelayed，
                 // 两者同生共死：真到那一步，本进程里已没有任何代码还能跑，也就不存在「就地收尾」可做。
                 // 原先这里在 OkHttp 线程上直接调 markTranslateFailed / finishTranslate（动键盘状态与
                 // 视图），万一真执行就是跨线程改状态。只留一行日志作痕迹，复位交给主线程侧的正常路径。
@@ -5161,7 +5161,7 @@ class JinnIme : InputMethodService() {
             }
         }.onFailure {
             // 请求装配/入队本身抛异常（client 初始化失败、URL 非法……）绝不能把 in-flight 留在
-            // true：按钮会永久置灰、再没有复位路径（2026-09-30 审查发现）。
+            // true：按钮会永久置灰、再没有复位路径（2026-09-30）。
             Diagnostics.w(TAG, "翻译: 请求发起失败 ${it.javaClass.simpleName}")
             markTranslateFailed("请求发起失败：${it.javaClass.simpleName}")
             finishTranslate()
@@ -5175,7 +5175,7 @@ class JinnIme : InputMethodService() {
      * 同时**真取消**网络请求（[finishTranslate] 里 `call.cancel()`，2026-10-03 修复 L-494），
      * 回调按代际丢弃 —— 旧请求的译文绝不会落到用户已经切换后的新输入内容上。
      *
-     * @param notify 是否在**确实有在途请求**时提示「已取消」（2026-10-03 修复 L-603）。
+     * @param notify 是否在确实有在途请求时提示「已取消」（2026-10-03，L-603）。
      *   默认 `false`：进程销毁、以及「同一会话里连续两级回调」（`onStartInput` →
      *   `onStartInputView`）不该重复弹窗 —— 第二次进来时 [translateInFlight] 已复位，
      *   自然不会二次提示。[wasInFlight] 就是为此取的快照。
@@ -5183,12 +5183,12 @@ class JinnIme : InputMethodService() {
     private fun cancelTranslate(notify: Boolean = false) {
         val wasInFlight = translateInFlight
         finishTranslate()
-        // 只在**用户可感知的会话边界**提示：60~300s 的大模型请求最容易被旋转 / 分屏 /
+        // 只在用户可感知的会话边界提示：60~300s 的大模型请求最容易被旋转 / 分屏 /
         // 折叠展开 / 切框丢掉，而原先「翻译中」只是悄悄变回「翻译」——用户以为键盘坏了，
         // 很可能再点一次（**又计费**）。提交阶段的每条拒绝路径都有 toast，取消不该是例外。
         if (notify && wasInFlight) toast(TEXT_TRANSLATE_CANCELLED)
-        // 用户能看到「已取消」时，日志里必须也查得到（2026-10-03 修复 L-618）——
-        // 这是与"日志有、用户看不到"相反的另一半：用户报「翻译被取消了，我什么都没做」时，
+        // 用户能看到「已取消」时，日志里必须也查得到（2026-10-03，L-618）——
+        // 这是与「日志有、用户看不到」相反的另一半：用户报「翻译被取消了，我什么都没做」时，
         // 包里原先只有 FinishInputView/StartInputView 这类会话事件，无法确认是哪个边界、哪一次请求。
         if (wasInFlight) {
             Diagnostics.i(
@@ -5199,7 +5199,7 @@ class JinnIme : InputMethodService() {
             )
             // 走到这里说明请求**已经出网**（60~300s 的大模型请求最容易被旋转 / 分屏 / 切框丢掉），
             // 服务端可能已计费；不记账的话用户切回来立刻再点就是二次付费，而提示说的是
-            // 「已取消」—— 两件事都成立，闸门必须一起补上（2026-10-03 修复 L-657）。
+            // 「已取消」—— 两件事都成立，闸门必须一起补上（2026-10-03，L-657）。
             markTranslateFailed("会话边界取消在途请求")
         }
         // 会话边界一并收起动作排（2026-10-09）：本函数已被 onFinishInput / onStartInput /
@@ -5211,7 +5211,7 @@ class JinnIme : InputMethodService() {
     /**
      * 一次翻译请求的输入快照：提交译文前用它校验「原始文本一个字符都没变」。
      *
-     * 保存的是**读取时刻的原始读数**（未 trim、未按字节截断）与当时的读取长度、追加偏移：
+     * 保存的是读取时刻的原始读数（未 trim、未按字节截断）与当时的读取长度、追加偏移：
      * 截取结果只用于上传，校验必须逐字比对原始文本 —— 2026-09-30 修过「拿截取结果当判据」
      * 造成的误判（原文本身带首尾空白时永远提示「输入已变化」）。
      */
@@ -5229,7 +5229,7 @@ class JinnIme : InputMethodService() {
          * 选区模式：[before] 是用户选中的那一段，提交时用它替换选区（而非追加到光标处）。
          *
          * ⚠ 快照里**没有** `appendOffsetExact`（2026-10-02 清理 L-435）：那道「末尾不可确认」
-         * 的闸在**发请求之前**（`startTranslate` 的 ②），`false` 的情形根本走不到构造这里。
+         * 的闸在发请求之前（`startTranslate` 的 ②），`false` 的情形根本走不到构造这里。
          * 留一个恒为 true 的字段只会让后来者以为提交阶段另有守卫、从而漏掉真正要判的东西
          * （`Slice.appendOffsetExact` 本身仍是活的，供发请求前的拒绝使用）。
          */
@@ -5239,7 +5239,7 @@ class JinnIme : InputMethodService() {
     /**
      * 把译文提交到输入框。
      *
-     * @return **译文是否真的写进去了**（2026-10-03 修复 L-656）。调用方据此决定要不要记去重：
+     * @return 译文是否真的写进去了（2026-10-03，L-656）。调用方据此决定要不要记去重：
      *   返回 false 的每一条都已经**上传过原文**（服务端可能已计费），必须转入失败冷却；
      *   记成「已翻过」会让用户在 30s 内重试却被自己的去重挡回去，而译文一个字都没拿到。
      */
@@ -5248,12 +5248,12 @@ class JinnIme : InputMethodService() {
         snapshot: TranslateSnapshot,
         translated: String,
     ): Boolean {
-        // ⓪ 提交前复查敏感框（2026-10-02 修复 L-337）：判据只在点翻译那一刻查过一次，而译文
+        // ⓪ 提交前复查敏感框（2026-10-02，L-337）：判据只在点翻译那一刻查过一次，而译文
         //    到达可能在几十秒后 —— 同一会话里宿主仍可能把输入框切成密码（WebView 动态改
         //    `type=password` 一类的做法很常见），此刻提交等于把译文落进敏感框。
         val info = currentInputEditorInfo
         if (info == null) {
-            // 「读不到输入框属性」与「这是密码框」是两件事（2026-10-02 修复 L-438）：
+            // 「读不到输入框属性」与「这是密码框」是两件事（2026-10-02，L-438）：
             // 前者是宿主/框架没给属性（换框或重试即可），后者换框也没用 —— 提示要分开，
             // 别把前者的锅扣在敏感框上（同文件别处已按这个口径分文案）
             Diagnostics.w(TAG, "翻译: 提交前读不到 EditorInfo，丢弃译文")
@@ -5278,7 +5278,7 @@ class JinnIme : InputMethodService() {
         //    选区模式 —— 校验选中的那一段没变，然后**替换**它（`commitText` 在宿主存在选区时本就是
         //    替换语义，这里正是要用它）。用户选中的内容变了说明他改过输入，丢弃。
         //
-        //    光标模式 —— 仍要求能确认「没有选区」：那里 `commitText` 是**插入**，用户请求期间长按
+        //    光标模式 —— 仍要求能确认「没有选区」：那里 `commitText` 是插入，用户请求期间长按
         //    选中了什么，译文就会把选中的内容顶掉。判据与发起前同源（[canAppendTranslation]）：
         //    WebView 类宿主拿不到精确选区，改由 `getSelectedText` 判定；判不出时放行，此时下面的
         //    原文逐字比对是最后一道网。
@@ -5295,7 +5295,7 @@ class JinnIme : InputMethodService() {
                 return false
             }
         } else {
-            // 两种拒绝要给不同提示（2026-10-01 修复 L-284）：「刚出现了选区」用户取消选中即可；
+            // 两种拒绝要给不同提示（2026-10-01，L-284）：「刚出现了选区」用户取消选中即可；
             // 「宿主答不出有没有选区」与他做了什么无关 —— 此前一律说「输入已变化」，把它算到用户头上。
             when (canAppendTranslation(connection)) {
                 AppendCheck.OK -> Unit
@@ -5311,7 +5311,7 @@ class JinnIme : InputMethodService() {
                 }
             }
         }
-        // ② 输入快照校验（光标模式）：与请求时刻的**原始文本逐字相等**（用户续打 / 挪光标 / 宿主
+        // ② 输入快照校验（光标模式）：与请求时刻的原始文本逐字相等（用户续打 / 挪光标 / 宿主
         //    改动都会失配）。选区模式不走这里 —— 它的原文是选中的那一段，比对已在 ① 用
         //    `getSelectedText` 做过，再读「光标前」比的是另一段文本。
         //
@@ -5321,16 +5321,16 @@ class JinnIme : InputMethodService() {
         // （原先为那 1 个字符单独开一次 Binder 往返，2026-10-01 修复 L-315）。
         var beforeNow: String? = null
         if (!snapshot.replaceSelection) {
-            // ⚠ `probeDocStart = false`（2026-10-03 修复 L-687）：提交侧只用到 `.text` 做逐字比对，
+            // ⚠ `probeDocStart = false`（2026-10-03，L-687）：提交侧只用到 `.text` 做逐字比对，
             // `BeforeText.fromDocStart` 算出来直接丢掉 —— 而它的代价是一次 `getExtractedText(limit)`
             // 的整窗口 Binder 往返（limit 上界 10 万字符 ≈ 200 KB）。L-629 只在**发起处**按档关掉了
             // 这次取证，提交处漏了 ⇒ 每次成功落地都白付一次 200 KB 往返，且结果 100% 被丢弃。
             beforeNow = readTextBeforeCursor(connection, snapshot.limit, probeDocStart = false)?.text
             if (beforeNow == null) {
-                // 「读不到」与「变了」是两回事：前者是宿主问题，别把原因指向用户（2026-10-01 修复 L-240）
+                // 「读不到」与「变了」是两回事：前者是宿主问题，别把原因指向用户（2026-10-01，L-240）
                 Diagnostics.w(TAG, "翻译: 提交时读不到光标前文本，丢弃结果")
                 // 这里是**提交阶段**：请求早已发出、原文早已上传，而原本文案写着「未发起翻译」
-                // ⇒ 用户会以为什么都没外发（2026-10-01 修复 L-327）
+                // ⇒ 用户会以为什么都没外发（2026-10-01，L-327）
                 toast(TEXT_TRANSLATE_DISCARDED_UNREADABLE)
                 return false
             }
@@ -5344,7 +5344,7 @@ class JinnIme : InputMethodService() {
         if (snapshot.needAfter) {
             val afterNow = readTextAfterCursor(connection, snapshot.limit)
             if (afterNow == null) {
-                // 同上：读不到不是「用户改了输入」（2026-10-01 修复 L-242）
+                // 同上：读不到不是「用户改了输入」（2026-10-01，L-242）
                 Diagnostics.w(TAG, "翻译: 提交时读不到光标后文本，丢弃结果")
                 toast(TEXT_TRANSLATE_DISCARDED_UNREADABLE)
                 return false
@@ -5359,24 +5359,24 @@ class JinnIme : InputMethodService() {
         //    前置判据，L-278 / L-277）—— 它们与快照内容无关，放在这里只会让用户白等一轮并付费。
         // ④ 译文的可见性与长度**先判**（2026-10-01 审查 L-221 / L-222）：这两道闸原先排在移动
         //    光标之后，拒绝时光标已被移走而正文一个字没加 —— 用户接着打字就打在原文区间末尾。
-        // 净化在判空**之前**：`U+202E` 这类双向控制符既非空白也不在零宽表里，「有可见内容」成立，
-        // 可它写进输入框会改变**用户自己那段文字**的显示顺序（2026-10-01 修复 L-314）。
+        // 净化在判空之前：`U+202E` 这类双向控制符既非空白也不在零宽表里，「有可见内容」成立，
+        // 可它写进输入框会改变用户自己那段文字的显示顺序（2026-10-01，L-314）。
         val body = translated.sanitizedForOutput().trim()
         if (!body.hasVisibleContent()) {
             Diagnostics.w(TAG, "翻译: 译文没有可见内容，不提交")
             // 空的是**译文**，而 `TEXT_TRANSLATE_EMPTY` 讲的是「光标前没有可翻译的文字」——
-            // 此刻原文早已上传、且它确实有文字。同一真因在别处已有正确文案（2026-10-01 修复 L-327）。
+            // 此刻原文早已上传、且它确实有文字。同一真因在别处已有正确文案（2026-10-01，L-327）。
             toast(TranslationError.EMPTY.message)
             return false
         }
         // 服务端把原文当译文回显（网关回显请求字段 / 提示词被改坏 / 模型照抄输入）时，写回去等于把
         // 用户的话复制一遍。**不拒绝** —— 原文本身已经是目标语言时「译文与原文相同」是完全正常的
         // 结果（单词、专有名词、数字尤其常见），按失败处理会误伤。只记一条可辨认的便于事后归因
-        // （2026-10-01 修复 L-319）。
+        // （2026-10-01，L-319）。
         if (body == snapshot.sent.trim() && snapshot.sent.isNotBlank()) {
             Diagnostics.w(TAG, "翻译: 译文与所发原文逐字相同（可能是服务端回显，或原文本身已是目标语言）")
         }
-        // 预留一个前导换行的余量。译文是**服务端返回的内容**（不可信输入），必须有与粘贴链路同款
+        // 预留一个前导换行的余量。译文是服务端返回的内容（不可信输入），必须有与粘贴链路同款
         // 的单条上限闸 + runCatching：裸提交超长文本会撞 Binder 事务上限抛
         // TransactionTooLargeException，未捕获时直接崩掉整个 IME 进程（2026-09-16 实测过）。
         if (ClipboardStore.exceedsItemLimit(body + "\n", ClipboardPrefs.of(this).effectiveMaxItemBytes().toInt())) {
@@ -5390,23 +5390,23 @@ class JinnIme : InputMethodService() {
             Diagnostics.w(TAG, "翻译: 追加位置未能确认，放弃提交（避免插进原文中间）")
             // 这是**宿主问题**（不支持 getExtractedText，或忽略了光标移动），而 `TEXT_TRANSLATE_STALE`
             // 讲的是「输入已变化」—— 把宿主问题算到用户头上，而前一步的逐字比对刚证明输入没变
-            // （2026-10-01 修复 L-327）。
+            // （2026-10-01，L-327）。
             toast(TEXT_TRANSLATE_APPEND_UNKNOWN)
             return false
         }
         // ⑤.b 移到「请求时的区间末尾」≠ 落点正确：宿主可能**少给** `getTextAfterCursor`
         //     （返回长度 < 请求长度、但文中仍有内容），此时 `appendOffset` 只到句子 / 文档中间，
-        //     移过去也就在中间 ⇒ commitText 把译文插进**原文中间**（数据破坏，且不保证可撤销）。
+        //     移过去也就在中间 ⇒ commitText 把译文插进原文中间（数据破坏，且不保证可撤销）。
         //     确认方式：落点之后要么没有内容，要么就是换行；读不到同样放弃（保守方向与
         //     「移不到位一律放弃」一致 —— 这类宿主已被发请求前的 ②.b 拦过一道）。
-        //     （2026-10-02 修复 L-480）
+        //     （2026-10-02，L-480）
         if (snapshot.appendOffset > 0) {
-            // ⚠ 三态必须分开（2026-10-03 审查）：
-            //  · `null`  = 宿主读不到 ⇒ **不能**当「已到末尾」——那会让译文插进**原文中间**，
+            // ⚠ 三态必须分开（2026-10-03）：
+            //  - `null`  = 宿主读不到 ⇒ **不能**当「已到末尾」——那会让译文插进原文中间，
             //              而 commitText 不保证可撤销（这是防「插进中间」的唯一一道网）；
-            //  · `""`    = 确实是区间末尾 ⇒ 接受；
-            //  · 有内容  = 再看是不是**行分隔符**：判据必须与 `TranslationText` 同源，
-            //              只认 '\n' 会让 CR-only / U+2028 文档里的「整行 / 整篇」在**已付费之后**
+            //  - `""`    = 确实是区间末尾 ⇒ 接受；
+            //  - 有内容  = 再看是不是行分隔符：判据必须与 `TranslationText` 同源，
+            //              只认 '\n' 会让 CR-only / U+2028 文档里的「整行 / 整篇」在已付费之后
             //              被判成「落点不对」而拒绝（L-499 扩了行分隔符，这一处当时没跟上）。
             val tail = runCatching { connection.getTextAfterCursor(1, 0) }.getOrNull()
             val atRangeEnd = tail != null && (tail.isEmpty() || TranslationText.isLineBreak(tail[0]))
@@ -5434,9 +5434,9 @@ class JinnIme : InputMethodService() {
         val submit = if (snapshot.replaceSelection) {
             body
         } else {
-            // 契约是「**插入点**前一个字符」，而 `beforeNow` 取自**原光标**：`appendOffset > 0`
+            // 契约是「**插入点**前一个字符」，而 `beforeNow` 取自原光标：`appendOffset > 0`
             // （整行 / 整篇）时上面刚把光标移到原文区间末尾，两者的末字符往往不是同一个 ——
-            // 照旧复用会出现「译文黏在原文行尾」或「多一个空行」（2026-10-01 修复 L-323）。
+            // 照旧复用会出现「译文黏在原文行尾」或「多一个空行」（2026-10-01，L-323）。
             // 因此只在光标没动过时才复用；其余情形仍读一次（L-315 的省读覆盖默认档与「光标前全部」）。
             val prev = if (snapshot.appendOffset == 0 && !beforeNow.isNullOrEmpty()) {
                 beforeNow.last()
@@ -5445,17 +5445,17 @@ class JinnIme : InputMethodService() {
             }
             TranslationText.appendText(prev, body)
         }
-        // 提交**先做、日志后写**（2026-10-01 修复 L-320）：原先「已追加译文」写在 `commitText`
+        // 提交**先做、日志后写**（2026-10-01，L-320）：原先「已追加译文」写在 `commitText`
         // 之前，提交失败时诊断包里会先出现一句成功、再出现一句失败，拿它排障会得到相反的结论。
         // 失败也不再静默 —— 用户端至少要说一句，否则「点了没反应」只有他自己知道。
-        // `commitText` **返回 false 不抛异常**（宿主连接已失效时的常见表现），只看异常会把「一个字都没
-        // 写进去」记成成功（2026-10-01 修复 L-326）—— 仓库别处（编辑键那条）早就是这么写的。
+        // `commitText` 返回 false 不抛异常（宿主连接已失效时的常见表现），只看异常会把「一个字都没
+        // 写进去」记成成功（2026-10-01，L-326）—— 仓库别处（编辑键那条）早就是这么写的。
         val outcome = runCatching { connection.commitText(submit, 1) }
         if (outcome.getOrDefault(false)) {
-            // 落地复核（2026-10-03 修复 L-567）：返回 true 只代表**调用被接受** —— 宿主的 InputFilter
-            // （数字框的 `DigitsKeyListener` 最常见）会把正文整段丢掉而**不报错**，此时字段里一个字都没有，
+            // 落地复核（2026-10-03，L-567）：返回 true 只代表**调用被接受** —— 宿主的 InputFilter
+            // （数字框的 `DigitsKeyListener` 最常见）会把正文整段丢掉而不报错，此时字段里一个字都没有，
             // 用户只看到「点了没反应」，而诊断包里还写着「已提交追加」（排障被引向相反结论）。
-            // 复核一次尾部（最多 256 字符，一次 Binder 往返）；**读不到时不误报**（宁可不提示也不误报）。
+            // 复核一次尾部（最多 256 字符，一次 Binder 往返）；读不到时不误报（宁可不提示也不误报）。
             // 替换模式同样复核：`commitText(submit, 1)` 之后光标就在插入串末尾，尾部判据一样适用；
             // 原先「落点在选区里所以不适用」是误判，导致选区被清空却报「已提交替换」。
             var landed: Boolean? = null
@@ -5474,11 +5474,11 @@ class JinnIme : InputMethodService() {
             // 译文属于用户内容：日志只记字数不记正文（与语音链路同口径）。
             // ⚠ 措辞不能写「已追加译文」—— `commitText` 返回 true 只代表**调用被接受**：
             // 宿主的 InputFilter（数字框的 `DigitsKeyListener` 是最常见的一种）会把正文整段
-            // 丢掉而**不报错**，此时字段里一个字都没有（2026-10-02 修复 L-456）。
+            // 丢掉而不报错，此时字段里一个字都没有（2026-10-02，L-456）。
             // 写成「已写入」会让排障时把「没写进去」读成成功 —— 正好是这里唯一要避免的事。
-            // ⚠ 补字段（2026-10-03 修复 L-616）：用户报「译文插进句子中间 / 少一个空行 / 多发一个
-            // 换行」时，原先日志里没有可判定的数字。同时**统一长度口径** —— 原先成功行记
-            // `translated.length`（净化**前**）、失败行记 `submit.length`（实发串），两条并排会得出
+            // ⚠ 补字段（2026-10-03，L-616）：用户报「译文插进句子中间 / 少一个空行 / 多发一个
+            // 换行」时，原先日志里没有可判定的数字。同时统一长度口径 —— 原先成功行记
+            // `translated.length`（净化前）、失败行记 `submit.length`（实发串），两条并排会得出
             // 相反结论（L-346 复核仍未修）；现在一律用实发串长度。
             Diagnostics.i(
                 TAG,
@@ -5490,7 +5490,7 @@ class JinnIme : InputMethodService() {
             )
             // 提交被接受即算落地；`landed == false`（复核判否）也**不算**落地 ——
             // 那说明宿主的 InputFilter 把正文整段丢了，用户字段里一个字都没有，
-            // 记成「已翻过」会让 30s 内的重试被去重挡回去（2026-10-03 修复 L-656）。
+            // 记成「已翻过」会让 30s 内的重试被去重挡回去（2026-10-03，L-656）。
             if (landed != false) {
                 // 结果侧记账（BUG.md L-1308）：记**实发串**（逐行模式会拼装、补标点，模型返回的原文
                 // 与它是两回事）与时刻，供下一次点击判「取到的是否就是刚写进去的这一串」。
@@ -5504,7 +5504,7 @@ class JinnIme : InputMethodService() {
             return false
         } else {
             // 失败时也带上长度：提交长度闸（256 KiB）与本机 Binder 事务上限不是同一把尺子，
-            // 少了这个数字两者无法互相解释（2026-10-01 修复 L-326）
+            // 少了这个数字两者无法互相解释（2026-10-01，L-326）
             Diagnostics.w(
                 TAG,
                 "翻译: 提交未成功（${outcome.exceptionOrNull()?.javaClass?.simpleName ?: "返回 false"}）" +
@@ -5530,7 +5530,7 @@ class JinnIme : InputMethodService() {
         if (range.start != range.end) return false
         val to = range.end + offset
         // 下界校验：反向移动（回滚光标，见 ⑤.b）可能算出负下标 —— 负下标传给 setSelection
-        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02 审查）。
+        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02）。
         if (to < 0) {
             Diagnostics.w(TAG, "翻译: 目标下标为负（$to），放弃移动")
             return false
@@ -5552,15 +5552,15 @@ class JinnIme : InputMethodService() {
     /**
      * 取「插入点前面那一个字符」，供 `TranslationText.appendText` 决定要不要补前导换行。
      *
-     * 三态语义（2026-10-02 修复 L-481）：
+     * 三态语义（2026-10-02，L-481）：
      *  - **空串** = 光标确实在文首 ⇒ 返回 null（不补换行）✓
-     *  - **抛异常 / 宿主返回 null** = *读不到*，与「文首」不是一回事 ⇒ 返回 `'\n'`（按「需要补换行」处理）。
-     *    原先两者都塌缩成 null，于是读失败时译文直接**黏在原文行末**；而本函数的 KDoc 却写着
+     *  - 抛异常 / 宿主返回 null = *读不到*，与「文首」不是一回事 ⇒ 返回 `'\n'`（按「需要补换行」处理）。
+     *    原先两者都塌缩成 null，于是读失败时译文直接黏在原文行末；而本函数的 KDoc 却写着
      *    「按需补处理」—— 文档与实现相反，属同一类静默失效。
      */
     private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? {
         val s = runCatching { connection.getTextBeforeCursor(1, 0) }.getOrNull()
-        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02 修复 L-481，同日纠正）：
+        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02，L-481，同日纠正）：
         //  - 空串（真文首）⇒ null ⇒ 不补前导换行；
         //  - 读不到（抛异常 / 宿主返回 null）⇒ 替换字符占位 ⇒ 让 `appendText` 走「补前导换行」。
         // ⚠ 上一版把读不到映射成 '\n'，而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个
@@ -5572,21 +5572,21 @@ class JinnIme : InputMethodService() {
     /**
      * 光标前的文本，外加「它是不是从文首开始的」。
      *
-     * 后者**不能**由长度反推（2026-10-01 修复 L-286）：兜底路径返回的是「窗口起点 → 光标」，
+     * 后者**不能**由长度反推（2026-10-01，L-286）：兜底路径返回的是「窗口起点 → 光标」，
      * 长度天然小于窗口长度，窗口起点非零时它照样不是从文首开始的。
      */
     private class BeforeText(val text: String, val fromDocStart: Boolean)
 
     /**
-     * 取证：光标前的窗口是不是**从文档起点**开始的（2026-10-03 修复 L-565）。
+     * 取证：光标前的窗口是不是**从文档起点**开始的（2026-10-03，L-565）。
      *
-     * `getTextBeforeCursor` 返回长度小于请求长度**有两种**可能：确实到文首，或宿主自己少给
+     * `getTextBeforeCursor` 返回长度小于请求长度有两种可能：确实到文首，或宿主自己少给
      * （框架允许宿主按窗口 / 缓存上限截断）。前者可直接采信，后者会把「上传的是什么」与
      * 「要不要拦（`TEXT_TRANSLATE_BEFORE_TOO_LONG`）」一起判错 —— 用户以为整篇被翻译，
      * 实际拿到的是残缺译文，且每轮重试都真计费。
      *
-     * 所以只在**取不满**时才付这一次 `getExtractedText`（守约宿主的回包受 `hintMaxChars` 限制）；
-     * 取证不可用（宿主不支持）时按**不可确认**处理 ⇒ 返回 `false`，让上层对「从文首 / 整篇」两档
+     * 所以只在取不满时才付这一次 `getExtractedText`（守约宿主的回包受 `hintMaxChars` 限制）；
+     * 取证不可用（宿主不支持）时按不可确认处理 ⇒ 返回 `false`，让上层对「从文首 / 整篇」两档
      * 拒绝 —— 与 after 侧「读不到一律放弃」的保守方向一致。
      */
     private fun beforeStartsAtDocStart(
@@ -5604,23 +5604,23 @@ class JinnIme : InputMethodService() {
         /**
          * 取不满 `limit` 时是否**再取一次证**（判断是否从文首开始）。
          *
-         * 取证本身是必要的（L-565：框架允许宿主少给），但**只有 BEFORE_ALL / ALL 两档会用它拒绝**
-         * （2026-10-03 修复 L-629）⇒ 其余档位传 false 省一次整窗口 Binder 往返。
+         * 取证本身是必要的（L-565：框架允许宿主少给），但只有 BEFORE_ALL / ALL 两档会用它拒绝
+         * （2026-10-03，L-629）⇒ 其余档位传 false 省一次整窗口 Binder 往返。
          * 默认 true = 保持既有行为，调用方不必逐个改。
          */
         probeDocStart: Boolean = true,
     ): BeforeText? {
-        // 整段包 runCatching（2026-09-30 审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
+        // 整段包 runCatching（2026-09-30）：两个 API 都是**同步 Binder 调用**，宿主可能抛
         // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
         // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
         // 读不到就返回 null，让上层按「读不到」处理 —— 与「写」侧 commitText 同口径。
         return runCatching {
             // `getTextBeforeCursor` 返回「紧邻光标的至多 limit 个字符」：**取满**了 ⇒ 上面还有（明确不是文首）。
-            // ⚠ 但「取不满」**不能**直接当成「到文首」（2026-10-03 修复 L-565）：框架允许宿主按自身窗口 /
-            // 缓存上限**少给**（长度既不为 0 也不等于请求量，而文中仍有上文）。而这个 fromDocStart 在同一次
-            // 点击里同时决定**上传什么**与**要不要拦** —— 判错会让 BEFORE_ALL / ALL 的专用拒绝闸
+            // ⚠ 但「取不满」不能直接当成「到文首」（2026-10-03，L-565）：框架允许宿主按自身窗口 /
+            // 缓存上限少给（长度既不为 0 也不等于请求量，而文中仍有上文）。而这个 fromDocStart 在同一次
+            // 点击里同时决定上传什么与要不要拦 —— 判错会让 BEFORE_ALL / ALL 的专用拒绝闸
             // （TEXT_TRANSLATE_BEFORE_TOO_LONG）静默失效：用户以为整篇被翻译，拿去用的是残缺译文。
-            // 所以取不满时**再取一次证**（见 beforeStartsAtDocStart），只在证据支持时才认「从文首开始」。
+            // 所以取不满时再取一次证（见 beforeStartsAtDocStart），只在证据支持时才认「从文首开始」。
             connection.getTextBeforeCursor(limit, 0)?.let {
                 val s = it.toString()
                 if (s.length >= limit) return@runCatching BeforeText(s, false)
@@ -5636,7 +5636,7 @@ class JinnIme : InputMethodService() {
             val text = extracted.text?.toString().orEmpty()
             // 与 [currentSelectionRange] 同一口径：负下标 = 宿主没给出选区，按「读不到」处理。
             // 不能 `coerceAtLeast(0)` 成 0 —— 那会被读成「光标在文首」，用户看到的是
-            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持（2026-10-01 修复 L-240）。
+            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持（2026-10-01，L-240）。
             if (extracted.selectionEnd < 0) return@runCatching null
             val startOffset = extracted.startOffset.coerceAtLeast(0)
             val endRel = TextSelection.toWindowOffset(
@@ -5660,7 +5660,7 @@ class JinnIme : InputMethodService() {
      *
      * 返回 **null 表示读取失败**，与「光标后确实没有内容」（空串，光标在文末）严格区分：调用方
      * （整行 / 整篇模式）拿到 null 必须拒绝发起 —— 把失败当空串会让这两种范围静默退化成
-     * 「只翻光标前」，且「末尾不可确认」那道闸不会触发（2026-10-01 修复 L-237 与 L-242）。
+     * 「只翻光标前」，且「末尾不可确认」那道闸不会触发（2026-10-01，L-237 与 L-242）。
      */
     private fun readTextAfterCursor(
         connection: android.view.inputmethod.InputConnection,
@@ -5684,10 +5684,10 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    // ── 编辑键 ────────────────────────────────────────────────
+    // ── 编辑键 ──
 
     private fun commit(text: String) {
-        // ⚠ 任何改宿主文本的动作都要先作废在途翻译（2026-10-03 修复 L-716）。
+        // ⚠ 任何改宿主文本的动作都要先作废在途翻译（2026-10-03，L-716）。
         // 落地阶段有一道逐字比对（`beforeNow != snapshot.before`），所以**只要文本变了**，
         // 已付费的译文就必然被判「输入已变化」丢弃 —— 而提示把责任指向用户。
         // L-688 只补了剪贴板面板那一个方向，等于闸门只装半扇：打字、点候选、空格取首候选、
@@ -5695,14 +5695,14 @@ class JinnIme : InputMethodService() {
         //
         // 用 `cancelTranslate(notify = true)` 而不是拒绝：这些是用户的明确动作，先做完再告诉他
         // 「翻译被取消了」比按下去没反应要好（与 `onOpenClipboard` 同款口径）。
-        // **不会重复打扰**：`cancelTranslate` 只在 `wasInFlight` 为真时弹一次，第一次之后
+        // 不会重复打扰：`cancelTranslate` 只在 `wasInFlight` 为真时弹一次，第一次之后
         // `translateInFlight` 已是 false，连按退格也只弹一次。
         if (translateInFlight) cancelTranslate(notify = true)
         // 录音中不许按键上屏（2026-11-01）：26 键长按空格 = 按住说话，录音期间键盘**不再切换**
         // （原先长按会切到语音页，拼音键根本按不到），此刻按字母 / 空格会与语音的非终态回显
         // 抢同一段文本 —— 识别结果整段覆盖时会把这些字悄悄吃掉。
-        // ⚠ 只拦 **HOLD**，不能写成 `mode != Mode.NONE`：语音键盘的逗号 / 句号 / 空格也走本函数，
-        // 而那一页在 TOGGLE（连续录音）时**照样在录**，那三个键的用途正是边说边补标点 ——
+        // ⚠ 只拦 HOLD，不能写成 `mode != Mode.NONE`：语音键盘的逗号 / 句号 / 空格也走本函数，
+        // 而那一页在 TOGGLE（连续录音）时照样在录，那三个键的用途正是边说边补标点 ——
         // 一并拦掉就是「按了没反应」（且 TOGGLE 时拼音树是 GONE，这条闸要挡的键根本按不到）。
         if (mode == Mode.HOLD) {
             Diagnostics.w(TAG, "commit: 录音中（mode=$mode），丢弃按键上屏 len=${text.length}")
@@ -5714,7 +5714,7 @@ class JinnIme : InputMethodService() {
         // 这里【不能】调用 onOwnCommit()，否则标记会残留到下一次真实复制，
         // 导致用户复制的内容被误判为「自身操作」而跳过保存。
         // 兜底：宿主连接失效时裸调 commitText 会从主线程带走 IME 进程。**必须留痕** ——
-        // 打字路径失败时用户只会看到「字没上去」，日志里得留下原因（2026-10-01 修复 L-241）
+        // 打字路径失败时用户只会看到「字没上去」，日志里得留下原因（2026-10-01，L-241）
         runCatching { currentInputConnection?.commitText(text, 1) }
             .onFailure { Diagnostics.w(TAG, "commit: 上屏失败 ${it.javaClass.simpleName}") }
     }
@@ -5723,13 +5723,13 @@ class JinnIme : InputMethodService() {
      * 包住**同步的宿主调用**（`InputConnection` 的写操作与 `sendDownUpKeyEvents`）。
      *
      * 宿主进程被强停 / 崩溃后这些调用会抛 `DeadObjectException`（`sendDownUpKeyEvents` 尤其要注意：
-     * AOSP 内部就是**裸调** `sendKeyEvent`，异常会直接冒到我们这里）。从主线程的点击回调上抛，
-     * 就会被 `Diagnostics.installCrashHandler` 接手 ⇒ **整个 IME 进程终止**：键盘消失，未上屏的
+     * AOSP 内部就是裸调 `sendKeyEvent`，异常会直接冒到我们这里）。从主线程的点击回调上抛，
+     * 就会被 `Diagnostics.installCrashHandler` 接手 ⇒ 整个 IME 进程终止：键盘消失，未上屏的
      * 组合串、暂存粘贴、在途翻译一起丢，用户只看到「键盘没了」。
      *
      * 项目里 `pasteClipboard` / `deleteAllText` / `appendTranslation` 早已各自兜底，本条
-     * （2026-10-02 修复 L-404）把**编辑与面板路径**上剩下的裸调用统一收口，拼音键盘退格也在其中。
-     * ⚠ 语音链路的调用点不在此列（其异常面另行记录）。
+     * （2026-10-02，L-404）把编辑与面板路径上剩下的裸调用统一收口，拼音键盘退格也在其中。
+     * 语音链路的调用点不在此列（其异常面另行记录）。
      *
      * 失败一律降级为「这次操作没生效」+ 一条 W（类名），不记正文、不再往上抛。
      */
@@ -5751,7 +5751,7 @@ class JinnIme : InputMethodService() {
         Diagnostics.i(TAG, "deleteAllText: 收到双击+长按退格手势")
         val connection = currentInputConnection ?: return
         // 两个同步 Binder 调用都要兜底：宿主连接失效时裸调会从主线程带走 IME 进程
-        // （2026-10-01 修复 L-241），走统一的 [guardHostCall]（2026-10-02 收口）。
+        // （2026-10-01，L-241），走统一的 [guardHostCall]（2026-10-02 收口）。
         // 只删「光标前方」：量出光标前的实际长度，deleteSurroundingText(before, 0) 把这一截删掉，
         // 光标后方删 0 个字符 ⇒ 光标后方的文本一个都不碰。
         // 不折叠光标到文首：那样「光标前方」就空了，等于没删；也不再读 getTextAfterCursor。
@@ -5839,8 +5839,8 @@ class JinnIme : InputMethodService() {
      */
     private fun performEnter() {
         val connection = currentInputConnection ?: return
-        // ⚠ 回车的**三条分支都会改宿主文本**（原始拼音上屏 / performEditorAction / 发 ENTER 键），
-        // 所以闸门统一提到最前面一次（2026-10-03 修复 L-740）：先前只补了第一条分支，
+        // ⚠ 回车的三条分支都会改宿主文本（原始拼音上屏 / performEditorAction / 发 ENTER 键），
+        // 所以闸门统一提到最前面一次（2026-10-03，L-740）：先前只补了第一条分支，
         // 于是「无拼音串时按回车」仍会静默作废已付费译文，而提示仍说「输入已变化」。
         if (translateInFlight) cancelTranslate(notify = true)
 
@@ -5864,7 +5864,7 @@ class JinnIme : InputMethodService() {
         // （`SearchView` 与大量「搜索 / 提交」按钮的标准写法），而它的 `OnEditorActionListener`
         // 只认这个 id —— 只发标准动作码会让搜索 / 提交不触发；更糟的是下面 `hasAction` 为真，
         // 于是也不会退回发回车键，用户按回车「完全没反应」且日志里没有痕迹
-        // （2026-10-02 修复 L-455）。`IME_FLAG_NO_ENTER_ACTION` 仍然优先：宿主声明了就别动作。
+        // （2026-10-02，L-455）。`IME_FLAG_NO_ENTER_ACTION` 仍然优先：宿主声明了就别动作。
         val customActionId = editorInfo?.actionId ?: 0
 
         val hasAction = !actionDisabled &&
@@ -5901,7 +5901,7 @@ class JinnIme : InputMethodService() {
             .onFailure { Log.e(TAG, "openSettings: ${it.message}") }
     }
 
-    // ── 状态渲染 ──────────────────────────────────────────────
+    // ── 状态渲染 ──
 
     private fun renderLink(state: LinkState, detail: String?) {
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
@@ -5922,7 +5922,7 @@ class JinnIme : InputMethodService() {
                     VoiceBackend.XF -> TEXT_XF_ONLINE
                     VoiceBackend.OAI -> TEXT_OAI_ONLINE
                     // 第四家必须自己一支：落到下面的 else 会拿**自建服务端的** host:port 拼成
-                    // 「已连接 192.168.x.x:6016」，而此刻连的根本不是那台 NAS（2026-11-01 复核发现）
+                    // 「已连接 192.168.x.x:6016」，而此刻连的根本不是那台 NAS（2026-11-01）
                     VoiceBackend.ALI -> TEXT_ALI_ONLINE
                     VoiceBackend.TENCENT -> TEXT_TENCENT_ONLINE
                     VoiceBackend.AZURE -> TEXT_AZURE_ONLINE
@@ -5941,7 +5941,7 @@ class JinnIme : InputMethodService() {
                 colorRes = R.color.dot_offline
                 label = shownDetail ?: getString(R.string.status_offline)
                 // 录音中突然掉线：服务端永远收不到收尾包，主动放弃本次听写
-                // 避免用户白白说话等不到结果，优于让 VAD 或松手自欺"识别中…"
+                // 避免用户白白说话等不到结果，优于让 VAD 或松手自欺「识别中…」
                 if (mode != Mode.NONE) {
                     stopRecording(commit = false)
                     setHint(getString(R.string.hint_not_connected))
@@ -5986,8 +5986,8 @@ class JinnIme : InputMethodService() {
          *
          * 把手在**重排层之外**，所以任何尺寸下都是这 26dp（竖屏实测 91px / 触摸区就是这 91px）。
          * 不再调大：把手每高一 dp 都直接从键盘可用高度里扣。
-         * ⚠ 视觉已经缩成中间那条 5dp 短条（2026-10-23 去掉整条背板），
-         * **热区不跟着缩** —— 整条 26dp × 全宽仍然可拖，这是「不加视觉体量又要好拖」的解法。
+         * 视觉已经缩成中间那条 5dp 短条（2026-10-23 去掉整条背板），
+         * 热区不跟着缩 —— 整条 26dp × 全宽仍然可拖，这是「不加视觉体量又要好拖」的解法。
          */
         const val FLOATING_HANDLE_HEIGHT_DP = 26
 
@@ -6034,10 +6034,10 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_EMPTY = "光标前没有可处理的文字"
         const val TEXT_TRANSLATE_PRIVATE_FIELD = "密码框不处理（避免口令外发）"
 
-        /** 选区超单条上限时的复制提示（2026-10-02 修复 L-406：与粘贴链路同一道闸） */
+        /** 选区超单条上限时的复制提示（2026-10-02，L-406：与粘贴链路同一道闸） */
         const val TEXT_COPY_TOO_LONG = "内容过大，未复制"
 
-        /** 写系统剪贴板失败（2026-10-02 修复 L-439：此前只记日志，用户按了没反应） */
+        /** 写系统剪贴板失败（2026-10-02，L-439：此前只记日志，用户按了没反应） */
         const val TEXT_COPY_FAILED = "复制失败，请重试"
 
         /**
@@ -6113,7 +6113,7 @@ class JinnIme : InputMethodService() {
 
         /**
          * 宿主既不提供精确选区、又答不出「有没有选中内容」（`getSelectedText` 抛异常）——
-         * WebView 类宿主上常见。与上面那条是**两种不同的拒绝**，不能共用文案（2026-10-01 修复 L-284）：
+         * WebView 类宿主上常见。与上面那条是**两种不同的拒绝**，不能共用文案（2026-10-01，L-284）：
          * 用户并没有选中什么，让他「先取消选中的内容」是无解的。提交阶段也用这一条 —— 它只说
          * 「无法确认能否安全写入」，不暗示「没发起过请求」。
          */
@@ -6124,14 +6124,14 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_COMMIT_FAILED = "结果未能写入输入框（当前输入框可能已失效）"
 
         /**
-         * 提交阶段读不到文本、只能丢弃结果（2026-10-01 修复 L-327）。
+         * 提交阶段读不到文本、只能丢弃结果（2026-10-01，L-327）。
          *
          * 不能复用发起前那两条 —— 它们写着「**未发起**翻译」，而此刻请求早已发出、原文早已上传，
          * 会让用户误以为什么都没外发（L-264 为选区模式立下的同一判据）。
          */
         const val TEXT_TRANSLATE_DISCARDED_UNREADABLE = "当前输入框读不到内容，结果未写入"
 
-        /** 剪贴板面板打开时不许翻译（2026-10-02 修复）：随后的粘贴必然让这次请求作废 */
+        /** 剪贴板面板打开时不许翻译（2026-10-02）：随后的粘贴必然让这次请求作废 */
         const val TEXT_TRANSLATE_CLIPBOARD_OPEN = "剪贴板面板打开时不能处理，请先按「返回」"
 
         /** 追加位置无法确认（宿主不支持 getExtractedText，或忽略了光标移动）：宿主问题，别说成「输入已变化」（L-327） */
@@ -6144,7 +6144,7 @@ class JinnIme : InputMethodService() {
          * 选区模式专用：提交阶段读不到或读不回选中的内容（2026-10-01 审查 L-264）。
          *
          * 不能复用光标模式的两条 —— `TEXT_TRANSLATE_STALE` 说的是「未**追加**译文」（选区模式是替换），
-         * `TEXT_TRANSLATE_BEFORE_UNREADABLE` 更写着「**未发起翻译**」，而此刻请求早已发出、原文早已上传，
+         * `TEXT_TRANSLATE_BEFORE_UNREADABLE` 更写着「未发起翻译」，而此刻请求早已发出、原文早已上传，
          * 会让用户误以为什么都没外发。
          */
         const val TEXT_TRANSLATE_SELECTION_STALE = "选中内容已变化或读不到，未替换"
@@ -6158,24 +6158,24 @@ class JinnIme : InputMethodService() {
             "选中内容超出单次上限，未处理（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
         /**
-         * 在途翻译被会话边界取消（2026-10-03 修复 L-603）。
+         * 在途翻译被会话边界取消（2026-10-03，L-603）。
          *
-         * 与各条「未写入」文案并列：那些说的是**结果**没落进正文，这条说的是**请求**被取消
+         * 与各条「未写入」文案并列：那些说的是**结果**没落进正文，这条说的是请求被取消
          * —— 用户需要知道「刚才那次点击已经作废、要重来得再点一次（会重新计费）」。
          */
         const val TEXT_TRANSLATE_CANCELLED = "本次处理已取消（输入框已切换或键盘已收起）"
 
         /**
-         * 数字 / 日期类输入框拒绝翻译（2026-10-03 修复 L-720）。
+         * 数字 / 日期类输入框拒绝翻译（2026-10-03，L-720）。
          *
          * 这类框的宿主通常装着会**整段丢弃**内容的 `InputFilter`（`DigitsKeyListener` /
          * `DateTimeKeyListener`），而 `commitText` 不报错 —— 用户看到的是「提交后未在输入框找到
-         * 译文尾部」，完全看不出「这个框根本不接受译文」。所以在**发请求前**就说清。
+         * 译文尾部」，完全看不出「这个框根本不接受译文」。所以在发请求前就说清。
          */
         const val TEXT_TRANSLATE_NUMERIC_FIELD = "数字/日期输入框不接受处理结果，未发起"
 
         /**
-         * 看门狗超时的提示（2026-10-03 修复 L-660）。
+         * 看门狗超时的提示（2026-10-03，L-660）。
          *
          * 此前 330s 后按钮**静默**从「翻译中」变回「翻译」，全程一句话没有 —— 用户等了近六分钟，
          * 看到的是「按钮自己好了、什么也没发生」，既不知道成没成，也随时可以再点（= 再计费）。
@@ -6184,7 +6184,7 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_TIMEOUT = "处理等待超时，已自动取消（该请求可能已送往服务方）"
 
         /**
-         * 总开关关闭时的点击提示（2026-10-03 修复 L-648）。
+         * 总开关关闭时的点击提示（2026-10-03，L-648）。
          *
          * 面板上的键还是亮的、可点的（关开关不是面板重绘入口），只写日志用户只会以为键盘坏了 ——
          * 同族闸门（录音中 / 密码框）都有提示，这条不该例外。
@@ -6192,7 +6192,7 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_DISABLED = "此功能已关闭（设置 → 翻译设置）"
 
         /**
-         * 同一段文本刚翻过（2026-10-03 修复 L-628）。
+         * 同一段文本刚翻过（2026-10-03，L-628）。
          *
          * 译文追加后光标停在插入文本末尾，默认档取「光标前本行」⇒ 用户不再输入就再点一次时，
          * 取到的正是**刚写入的译文**：既会二次付费，又会把译文再翻一遍写进正文（回译污染）。
@@ -6210,15 +6210,15 @@ class JinnIme : InputMethodService() {
             "光标前就是上次写入的结果，未重复发送（如需再处理可先改动原文）"
 
         /**
-         * 上次失败后的冷却提示（2026-10-03 修复 L-627）。
+         * 上次失败后的冷却提示（2026-10-03，L-627）。
          *
-         * 超时 / 断连 / 落地失败 / 用户取消这几种情形里，**服务端可能已经处理并计费** ——
+         * 超时 / 断连 / 落地失败 / 用户取消这几种情形里，服务端可能已经处理并计费 ——
          * 连点即连付，而用户看不到任何账目。冷却期内只提示、不发送。
          */
         const val TEXT_TRANSLATE_FAIL_COOLDOWN = "上次操作刚失败，稍候再试（该请求可能已送往服务方）"
 
         /**
-         * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02 修复 L-485）。
+         * 插入模式专用：原文超单次上限、已按上限截断（2026-10-02，L-485）。
          *
          * 与选区模式两套口径是**故意的**：选区模式的替换会丢掉尾部原文（不可逆）⇒ 宁可拒绝；
          * 插入模式只翻了前半段、译文追加在区间末尾（原文一个字不动）⇒ 拒绝反而更糟。
@@ -6227,10 +6227,10 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_TRUNCATED =
             "原文超出单次上限，已按上限截断（仅处理前半段；可在 翻译设置 → 翻译原文范围 里调大字节上限）"
 
-        /** 语译互斥：录音中不发起翻译（2026-10-03 审查 B-1） */
+        /** 语译互斥：录音中不发起翻译（2026-10-03） */
         const val TEXT_RECORDING_PLEASE_WAIT = "正在录音，请先结束录音再翻译"
 
-        /** 语译互斥：翻译在途不开录音（2026-10-03 审查 B-1） */
+        /** 语译互斥：翻译在途不开录音（2026-10-03） */
         const val TEXT_TRANSLATING_PLEASE_WAIT = "正在翻译，请稍候再录音"
 
         /**
@@ -6267,25 +6267,25 @@ class JinnIme : InputMethodService() {
         const val TEXT_VOICE_PRIVATE_FIELD = "密码框不录音（避免内容外发）"
 
         /**
-         * 落地复核判否时的提示（2026-10-03 修复 L-681 / L-692）。
+         * 落地复核判否时的提示（2026-10-03，L-681 / L-692）。
          *
-         * ⚠ 原先写的是「…请手动粘贴」，而判否的**真实语义是「尾部逐字对不上」** —— 除了
+         * 原先写的是「…请手动粘贴」，而判否的真实语义是「尾部逐字对不上」 —— 除了
          * 「宿主把写入整段丢掉」（数字框的 `DigitsKeyListener`），还可能是宿主**改写**了内容
-         * （`InputFilter.AllCaps` 转大写、全半角归一、输入法自身的规范化）。后者译文**已经在框里**，
+         * （`InputFilter.AllCaps` 转大写、全半角归一、输入法自身的规范化）。后者译文已经在框里，
          * 用户照提示手动再贴一次 ⇒ 正文两份译文 —— 提示反过来造成损害。
          * 所以只说「未能确认」，不指示任何动作；真被过滤掉时用户自己能看出来（框里没字）。
          */
         const val TEXT_TRANSLATE_COMMIT_UNVERIFIED =
             "未能确认结果已写入（部分输入框会过滤或改写内容），请查看输入框"
 
-        /** 光标前内容读不到（2026-10-01 修复 L-240）：与「光标前没有文字」区分，不发起 */
+        /** 光标前内容读不到（2026-10-01，L-240）：与「光标前没有文字」区分，不发起 */
         const val TEXT_TRANSLATE_BEFORE_UNREADABLE = "当前输入框读不到光标前内容，未发起"
 
         /**
-         * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03 修复 L-602）。
+         * 翻译看门狗的兜底时长：**派生**自网络层的最大预算（2026-10-03，L-602）。
          *
          * 此前这里是硬编码 `330_000L`，与 `Prefs.TIMEOUT_MAX_SEC`（300s）靠「330 > 300」这个
-         * **隐式**关系成立 —— 把上限提到 400 而忘了改这里，看门狗就会抢在 `callTimeout` 之前
+         * 隐式关系成立 —— 把上限提到 400 而忘了改这里，看门狗就会抢在 `callTimeout` 之前
          * 收尾并 `cancel()`：用户看到「翻译中」凭空消失、一句提示都没有，而编译与门禁全绿。
          * 现在改成派生式（单一真相）：改上限，看门狗自动跟随。
          */
@@ -6425,7 +6425,7 @@ class JinnIme : InputMethodService() {
          */
         const val PENDING_PASTE_TTL_MS = 10_000L
 
-        /** 超过这个时长判定为"按住说话" */
+        /** 超过这个时长判定为「按住说话」 */
         const val HOLD_THRESHOLD_MS = 260L
 
         /** 按住时上滑超过这个距离即进入取消状态 */
@@ -6491,17 +6491,17 @@ internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =
 /**
  * 去重指纹：把「服务方 + **生效**目标语言 + 原文范围 + 原文」拼成一个可比较的串。
  *
- * 为什么必须带那三个维度（2026-10-03 修复 L-655）：它们都是**用户可改**的设置，
- * 改了之后点同一段文本是**另一次合法请求**。只比裸原文时，用户换语言 / 换服务方 / 把范围
+ * 为什么必须带那三个维度（2026-10-03，L-655）：它们都是用户可改的设置，
+ * 改了之后点同一段文本是另一次合法请求。只比裸原文时，用户换语言 / 换服务方 / 把范围
  * 从「光标前本行」改成「编辑框全部」再点同一段，会被自己的去重挡回去，提示
  * 「刚刚翻译过，未重复发送」—— 而他从未翻译过这段的日文版。
  *
- * ⚠ 目标语言这一维必须用**生效值**而不是枚举名（2026-10-04 修复 L-787）：OpenAI 兼容路径
+ * ⚠ 目标语言这一维必须用生效值而不是枚举名（2026-10-04，L-787）：OpenAI 兼容路径
  * 真正生效的是自由文本 `Prefs.openAiTargetLanguage`，在它上面改语言时枚举不变 ⇒ 指纹逐字
  * 相同，用户「翻得不对、改语言再试」的第二次付费请求仍被误拦成「刚刚翻译过」。
  *
- * 放独立纯函数而不是内联拼串：守卫能**真跑**（内联拼串只能源码对拍，而 L-685 记录的
- * 正是「钉字符串存在性」这类改错也不会红的假守卫）。放在**文件顶层**是因为 `JinnIme`
+ * 放独立纯函数而不是内联拼串：守卫能真跑（内联拼串只能源码对拍，而 L-685 记录的
+ * 正是「钉字符串存在性」这类改错也不会红的假守卫）。放在文件顶层是因为 `JinnIme`
  * 是 `InputMethodService`，JVM 单测构造不了它。
  */
 internal fun translateRepeatKey(
@@ -6512,7 +6512,7 @@ internal fun translateRepeatKey(
     sent: String,
     // 动作维度（2026-10-09）：同一段原文的「翻译」与「润色」是两次合法请求 ——
     // 指纹不含动作时，第二次会被误判「刚刚翻译过」而静默丢弃。
-    // ⚠ 带默认值且放**末尾**：既有调用方不必逐个改。
+    // 带默认值且放**末尾**：既有调用方不必逐个改。
     action: AiAction = AiAction.DEFAULT,
 ): String =
     "${action.id}|${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
@@ -6535,14 +6535,14 @@ internal fun effectiveTargetLabel(
 }
 
 /**
- * 落地复核的判据：译文尾部**是否真的在输入框里**。三态（2026-10-03 修复 L-681）：
+ * 落地复核的判据：译文尾部是否真的在输入框里。三态（2026-10-03，L-681）：
  *  - `null` = **未测**（读不到，或宿主少给了字符）⇒ 不提示、不误报；
  *  - `true` = 尾部对得上，落地确认；
  *  - `false` = 尾部对不上（被宿主过滤或改写）⇒ 提示「未能确认已写入」，不指示动作。
  *
- * ⚠ 为什么要把「少给字符」也算未测：`getTextBeforeCursor(n, 0)` 的契约是「**至多** n 个字符」，
+ * 为什么要把「少给字符」也算未测：`getTextBeforeCursor(n, 0)` 的契约是「至多 n 个字符」，
  * 宿主可以合法少给（窗口上限、厂商实现差异）。原先直接 `endsWith(submit.takeLast(probeLen))`，
- * 少给时长度不等、判据必为 false ⇒ 一条**已经写进输入框**的译文被报成「可能未写入」，
+ * 少给时长度不等、判据必为 false ⇒ 一条已经写进输入框的译文被报成「可能未写入」，
  * 用户照提示手动再贴一次，正文里就变成两份译文 —— 提示反过来造成损害。
  */
 internal fun commitProbeVerdict(returned: String?, submit: String, probeLen: Int): Boolean? = when {
@@ -6554,14 +6554,14 @@ internal fun commitProbeVerdict(returned: String?, submit: String, probeLen: Int
 
 
 /**
- * 悬浮面板四角的缩放手柄角标：**只画一个 L 形细角标**，不接触摸（手势由悬浮窗口根接管）。
+ * 悬浮面板四角的缩放手柄角标：只画一个 L 形细角标，不接触摸（手势由悬浮窗口根接管）。
  *
  * 为什么自绘而不给背景 drawable：四个角的 L 要各自朝向面板**内部**（左上角的两条边往右下伸），
  * 一张固定 drawable 只能表达一种朝向；而四角若都画成同一朝向，用户会以为是装饰而不是手柄。
  *
  * 图形刻意做得极轻（2dp 描边、40% 不透明、臂长 10dp）：视觉体量此前被指过大，
  * 手柄不能变成第二块色板。颜色由 [JinnIme] 按皮肤 / 明暗主题取同一个令牌传进来（已去 alpha），
- * 透明度**只在这里**决定 —— `Paint.setColor` 会连 alpha 一起覆盖，别在别处再设一次。
+ * 透明度只在这里决定 —— `Paint.setColor` 会连 alpha 一起覆盖，别在别处再设一次。
  */
 private class FloatingCornerView @JvmOverloads constructor(
     context: android.content.Context,

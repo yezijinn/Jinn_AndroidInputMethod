@@ -116,7 +116,7 @@ object PinyinEngine {
      * 全量基础词库的二进制索引 asset（`tools/dict_builder/build_dict_index.py` 构建期产出）。
      *
      * 2026-09-27 起源改为 `docs/所有词库/短语/词库_第1部分.txt`（40 万条 / 29.9 万键，xz 2.1MB）：
-     * 体积较旧的 4.4MB 索引减半，单段加载约 0.5~0.7s，因此**不再需要高频子集**（原 `hot_phrases.txt.xz`
+     * 体积较旧的 4.4MB 索引减半，单段加载约 0.5~0.7s，因此不再需要高频子集（原 `hot_phrases.txt.xz`
      * 与两段式加载一并退场）。
      */
     private const val INDEX_ASSET_XZ = "pinyin_index.bin.xz"
@@ -167,7 +167,7 @@ object PinyinEngine {
      * 真机实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 300ms（janky 12%）。
      * 让出 CPU 后总耗时只多几十毫秒（都在后台），但前台打字不再被挤。
      *
-     * ⚠ 这只是**兜底路径**（[loadIndexOfHeap]：流式写缓存与映射都失败时）；正常路径见
+     * 这只是**兜底路径**（[loadIndexOfHeap]：流式写缓存与映射都失败时）；正常路径见
      * [streamIndexCacheToDisk] —— 那边解压分片直接进文件流，堆上不留整份。
      * 初始容量按**实测payload**留一档余量（`pinyin_index.bin.xz` 解压后 6.94MB，
      * 见 `tools/dict_builder` 的产物统计）：原先写死 16MB 是旧 4.4MB 索引时代的残留
@@ -210,7 +210,7 @@ object PinyinEngine {
     private val optionalAttempted = HashMap<String, Long>()
 
     /**
-     * 上次尝试里**找到文件但没读进来**的包：包名 → 该身份下的失败次数（BUG.md L-155 / L-167）。
+     * 上次尝试里找到文件但没读进来的包：包名 → 该身份下的失败次数（BUG.md L-155 / L-167）。
      *
      * 失败不能只记「试过」：那样闸门会永久早退，而词库页写着「空闲时自动装载」——等于骗用户。
      * 记次数就能**有界重试**：同一个字节的包最多试 [MAX_OPTIONAL_RETRIES] 次，
@@ -223,13 +223,13 @@ object PinyinEngine {
 
     /**
      * 这个包这次要不要尝试装载（纯函数，便于单测）：
-     * 身份变了要试；身份没变但**上次失败且还没试满**也要试；成功过且没变则不必再试。
+     * 身份变了要试；身份没变但上次失败且还没试满也要试；成功过且没变则不必再试。
      */
     internal fun packShouldRetry(attemptedStamp: Long?, currentStamp: Long, failedTimes: Int?): Boolean =
         packNeedsAttempt(attemptedStamp, currentStamp) ||
             (failedTimes != null && failedTimes < MAX_OPTIONAL_RETRIES)
 
-    /** 上次尝试里**找到文件但没读进来**的包名（原先只有 logcat 知道，见 BUG.md L-155） */
+    /** 上次尝试里找到文件但没读进来的包名（原先只有 logcat 知道，见 BUG.md L-155） */
     @Volatile
     private var optionalFailedPacks: Set<String> = emptySet()
 
@@ -362,7 +362,7 @@ object PinyinEngine {
     private val candidatePinyin = ConcurrentHashMap<String, String>(4_096)
 
     /**
-     * 「候选词 → 词库里的真实拼音键」，**只在模糊音命中时**才有值。
+     * 「候选词 → 词库里的真实拼音键」，只在模糊音命中时才有值。
      *
      * [candidatePinyin] 登记的必须是「用户实际输入的键」（[consumption] 按它算消费区间），
      * 但预测要按该词在词库里的真实键扫延续词：输入 `zangguo` 选到「张国」，它的延续词在
@@ -606,7 +606,7 @@ object PinyinEngine {
                         "⇒ 保持未加载，界面会提示「词库载入中」并等待补试",
                 )
             }
-            // ⚠ 原先这里还有一句 `Log.i`，与下面的 `Diagnostics.i` 记的是同一件事：
+            // 原先这里还有一句 `Log.i`，与下面的 `Diagnostics.i` 记的是同一件事：
             // `Diagnostics.i` 内部就是 logcat + 文件双写，于是 logcat 里每条加载都出现两遍
             // （第二遍还少两个字段，排查时极易误读成「加载了两次」）。2026-10-22 删掉重复那条。
             // 反向索引规模一并记录：它是内存占用的大头（百万级 HashMap，Node + 表数组），
@@ -752,7 +752,7 @@ object PinyinEngine {
      * 测试注入：设置「可选包索引」列表（模拟 Stage 2 的可选包索引，验证逐段合并语义）。
      *
      * 与生产路径同款收尾（`loadOptionalAsync` 设置完索引后也调 [finalizeLoad]）：不重建有序键表的话，
-     * **只在可选包里出现**的键查不到（基础包与可选包同键时反而看不出来，测试会假绿）。
+     * 只在可选包里出现的键查不到（基础包与可选包同键时反而看不出来，测试会假绿）。
      */
     internal fun setOptionalIndexesForTest(indexes: List<PhraseIndex>) {
         optionalIndexes = indexes
@@ -840,7 +840,7 @@ object PinyinEngine {
         syllablePrefixes = built
     }
 
-    // ── 生僻字过滤 ───────────────────────────────────────────
+    // ── 生僻字过滤 ──
 
     /**
      * 打开文本资产（`.xz`），关闭 reader 会级联关掉解压流与 asset 流。
@@ -885,7 +885,7 @@ object PinyinEngine {
      * 即时生效、无需重载词库：位图早已就位，这里只改放行判据。档 3 依赖档 2 ——
      * 设置页已强制，这里再兜一次，避免「只开档 3」这种非法组合从导入 / 测试注入进来。
      *
-     * **必须连带失效 [mergedCache]**：它缓存的是 [filterRareChars] **之后**的词表，而过滤结果依赖
+     * **必须连带失效 [mergedCache]**：它缓存的是 [filterRareChars] 之后的词表，而过滤结果依赖
      * 这两个开关。不清的话「关档时查过的拼音键」会一直返回旧词表（内容为空的键被钉死成
      * [EMPTY_WORDS]），用户看到的是「开了档位、词还是打不出来」—— 而单字走 [charsFor] 不经缓存、
      * 当场就能出来，症状很像「开关只对单字生效」（2026-09-27 复现，见 `RareCharsFilterTest`）。
@@ -903,7 +903,7 @@ object PinyinEngine {
 
     /**
      * 统计这批词里有多少条会被**字表闸**丢下（判据与候选出口同一句，见 [isLoadableWord]）。
-     * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05 定），
+     * 只可能命中**单字**词条：词组（两个字及以上）已一律放行（2026-10-05），
      * 所以这个数通常为 0，只有用户写了档外单字（例如单独一行 `雲 yun`）时才会出现。
      *
      * 位图未就绪（引擎尚未加载）时返回 0：此时谈不上过滤，不误报。
@@ -1009,7 +1009,7 @@ object PinyinEngine {
      *
      * 与位图同一取舍：查表在候选出口的热路径上，数组下标比哈希便宜得多。
      *
-     * **替换**语义：字级反查表整份重建，随后**重放**已收到的 [setSimplifyText] 源文本 ——
+     * **替换**语义：字级反查表整份重建，随后重放已收到的 [setSimplifyText] 源文本 ——
      * 于是本方法与 [setSimplifyText] 的调用顺序与结果无关（见后者的 KDoc）。
      */
     internal fun setSimpTradText(text: String) {
@@ -1142,7 +1142,7 @@ object PinyinEngine {
     /**
      * 候选出口的简繁转换（「只使用繁体字」开启时生效）。
      *
-     * 逐字符映射，未命中或开关关闭时**原样返回同一个对象**（零分配、零分支开销之外的代价）。
+     * 逐字符映射，未命中或开关关闭时原样返回同一个对象（零分配、零分支开销之外的代价）。
      * 转换只改显示与上屏文本；拼音键、消费区间、用户词频都按调用方的时机各自处理。
      */
     private fun toDisplay(word: String): String {
@@ -1206,7 +1206,7 @@ object PinyinEngine {
      * 按档位」矛盾，BUG.md L-67）。**单字表零丢字**依据（2026-09-27 脚本实测）：9,373 字全部落在
      * 三档并集内、非 BMP 0 个。
      *
-     * ⚠ **词库正文里另有扩展 A 字**（实测 part1-4 共 31 个：档内 11 / 档外 20），其中 20 个字牵涉
+     * ⚠ 词库正文里另有扩展 A 字（实测 part1-4 共 31 个：档内 11 / 档外 20），其中 20 个字牵涉
      * 37 条词条（「㞎㞎」「㓥房」「㸆大虾」一类）。阈值下调后这些词条随档位判据被过滤 ——
      * 与 1,854 条基本区档外词条同口径，属附带收敛；**不是**「词库不含扩展 A 字」（那是错的，
      * 见 BUG.md L-70；`build_dicts.py` 生成时会打印这类字的条数告警）。
@@ -1226,7 +1226,7 @@ object PinyinEngine {
     /**
      * 整词是否允许进候选。
      *
-     * **词组（两个字及以上）一律放行**：字表闸只管**单字**（2026-10-05 定）——
+     * 词组（两个字及以上）一律放行：字表闸只管**单字**（2026-10-05）——
      * 用户自己写的词条（如「黄霄雲」里的繁体「雲」）不该因为某个字不在档内就整条消失，
      * 否则自定义词库等于白写；能不能显示由系统字体决定，不由拼音库替用户拦。
      * 单字仍按 [isLoadableChar] 的档位规则放行（设置页档 2 / 档 3 开关继续只影响单字）。
@@ -1277,7 +1277,7 @@ object PinyinEngine {
         synchronized(optionalLock) {
             if (optionalLoading) return false
             // 两道判据（见 packShouldRetry）：包的**身份变过**（新装 / 重下 / 换包）要试；
-            // 身份没变但**上次失败且没试满**也要试 —— 否则词库页那句「空闲时自动装载」就是空话。
+            // 身份没变但上次失败且没试满也要试 —— 否则词库页那句「空闲时自动装载」就是空话。
             val pending = installed.any {
                 packShouldRetry(optionalAttempted[it.name], packStamp(it), optionalFailed[it.name])
             }
@@ -1604,9 +1604,9 @@ object PinyinEngine {
     /**
      * 判定「源包已被删除」的索引缓存文件名（纯函数，便于单测）。
      *
-     * 基础索引缓存 `base.<APK mtime>.idx` 必须排除在外：它的"源"是 APK 内的资产，不在词库包列表里，
+     * 基础索引缓存 `base.<APK mtime>.idx` 必须排除在外：它的「源」是 APK 内的资产，不在词库包列表里，
      * 一旦被这里当成失效缓存删掉，就会每次可选包加载都删一次基础缓存，
-     * 症状是"内存映射永远命中不了、每次冷启动都要重新解压 1.8s"，而且日志上只看到一行
+     * 症状是「内存映射永远命中不了、每次冷启动都要重新解压 1.8s」，而且日志上只看到一行
      * 「清理失效索引缓存」，极难联想到根因（2026-09-17 真机日志实锤）。
      */
     internal fun staleOptionalCacheNames(
@@ -1623,7 +1623,7 @@ object PinyinEngine {
                 val pack = name.removeSuffix(INDEX_SUFFIX + TMP_SUFFIX)
                 if (pack !in alivePacks) return@filter true
                 // 源包仍在：写临时件的与跑清理的是**同一条加载线程**（另有 optionalLoading 防重入），
-                // 所以这里能遇到的只可能是**跨启动的陈旧残件**（上次构建索引时被杀留下的）——
+                // 所以这里能遇到的只可能是跨启动的陈旧残件（上次构建索引时被杀留下的）——
                 // 用 mtime 保护窗区分（BUG.md L-869）：窗口内可能是本线程正在写的那个，窗口外一律回收，
                 // 否则它要等该源包被删才清。
                 now - modifiedAtOf(name) > INDEX_TMP_PROTECT_MS
@@ -1645,7 +1645,7 @@ object PinyinEngine {
      * 基础索引缓存的有效性键（纯函数，便于单测；`BUG.md` L-153）。
      *
      * 优先用 APK 文件 mtime（App 一更新必变）；取不到时退 lastUpdateTime；
-     * **两个时间都取不到时必须退到 versionCode**，不能退回常量 `"0"`：
+     * 两个时间都取不到时必须退到 versionCode，不能退回常量 `「0」`：
      * 常量键会让所有版本共用同一个 `base.0.idx`（升级后仍复用旧索引，
      * 而日志只写「复用磁盘缓存」，用户只能清应用数据才恢复）。
      */
@@ -1889,7 +1889,7 @@ object PinyinEngine {
                     val chars = line.substring(tab + 1).split(',')
                     // 只做长度过滤：非单字符 token 一律丢掉，否则表里混进的词条会进单字表、
                     // 被当成单字候选上屏（实测 pinyin_chars.txt 里唯一的非单字符就是 junding 行的「均订」）。
-                    // **档位过滤不在这里做**：档 2 / 档 3 的字要整份载入内存，放行与否交给查询期
+                    // 档位过滤不在这里做：档 2 / 档 3 的字要整份载入内存，放行与否交给查询期
                     // （[charsFor] / [matchCharsByPrefix] → [filterRareChars]）—— 在这里过滤的话，
                     // 用户事后打开开关时字根本不在内存里，二级 / 三级字的单字候选永远打不出
                     // （2026-09-27 修；词语候选一直走查询期过滤，正常，反而掩盖了这条）。
@@ -2071,7 +2071,7 @@ object PinyinEngine {
         }
     }
 
-    /** 查询期生僻字过滤（索引与运行时词一视同仁；**只管单字**，词组一律放行，见 [isLoadableWord]） */
+    /** 查询期生僻字过滤（索引与运行时词一视同仁；只管单字，词组一律放行，见 [isLoadableWord]） */
     private fun filterRareChars(raw: Array<String>): Array<String> {
         // 位图未就绪时整体不过滤，与 isLoadableWord 的判据保持一致
         if (commonChars == null) return raw
@@ -2153,7 +2153,7 @@ object PinyinEngine {
     fun isValidSyllable(s: String): Boolean =
         loaded && validSyllables.contains(s)
 
-    // ── 查询 ──────────────────────────────────────────────
+    // ── 查询 ──
 
     data class Result(
         val candidates: List<String>,
@@ -2169,7 +2169,7 @@ object PinyinEngine {
      *
      * 候选按「音节数逐级递减」组织（对齐 AOSP PinyinIME prepare_candidates）：
      *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后**首音节**单字。
-     *  单字只取首音节（2026-11-22 定）：输入 nihao → 2 字词「你好」+ 首音节单字「你/尼/泥」，
+     *  单字只取首音节（2026-11-22）：输入 nihao → 2 字词「你好」+ 首音节单字「你/尼/泥」，
      *  不含第二音节单字「好/号/毫」。要打后半字时先选「你」→ 残码 hao 重匹配后才出 hao 单字。
      *  输入 nihaoma → 3 字「你好吗」+ 2 字「你好」+ 首音节单字「你」。
      *
@@ -2177,7 +2177,7 @@ object PinyinEngine {
      * 候选的音节数恒等于输入：不出现比输入更长的词。
      *
      * 模糊音容错（默认关，见 [FuzzyPinyin]）：打开后额外派生变体键，顺序契约是
-     * **精确词 → 变体词 → 精确单字 → 变体单字** —— 变体只作补充，永不挤占精确结果，
+     * 精确词 → 变体词 → 精确单字 → 变体单字 —— 变体只作补充，永不挤占精确结果，
      * 所以关掉开关时结果与历史逐候选一致。
      *
      * 词条入池前先做用户词频重排、再截 [MAX_PHRASES]（见下两处 `phrasesFor`）：
@@ -2189,7 +2189,7 @@ object PinyinEngine {
         val raw = input.lowercase(Locale.ROOT)
         if (raw.isEmpty()) return Result(emptyList(), emptyList(), "")
 
-        // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
+        // - 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
         val (allSyllables, partial) = segment(raw)
         // 音节数上限（BUG.md L-1282）：主查询原先**不限**，粘一串拼音进来时候选会按
         // 「音节 × 每音节上限」累积到几千条再全量排序，而渲染首屏只看前 [INITIAL_RENDERED_CANDIDATES] 条
@@ -2210,7 +2210,7 @@ object PinyinEngine {
             allSyllables
         }
 
-        // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
+        // - 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
         //    词语与单字分成两个集合：模糊音的词要插在两者之间（见 2b）
         // 前缀键增量拼装（MEM-19）：从最长前缀起**逐级削掉尾部**得到下一级，不再每级
         // `take(k).joinToString("")`（那要新建一个 StringBuilder + 迭代器 + 中间串，累计 O(n²) 次 append）。
@@ -2259,7 +2259,7 @@ object PinyinEngine {
             }
         }
         val chars = LinkedHashSet<String>(cap)
-        // 多音节只出**首音节**单字（2026-11-22 定）：输入 nihao 先给 2 字词「你好/拟好」，
+        // 多音节只出**首音节**单字（2026-11-22）：输入 nihao 先给 2 字词「你好/拟好」，
         // 再给首音节单字「你/泥/拟」；第二音节单字（好/号/豪）一个都不出。
         // 用户要继续打后半字时，先选「你」→ 残码 hao 触发重匹配，那时才出 hao 单字
         // （此前 nihao 与 ni 的候选整体丢弃）。逐音节全量装配会一次性甩出所有单字，
@@ -2316,7 +2316,7 @@ object PinyinEngine {
         // LinkedHashSet 把四份 addAll 进去（每键一个短命集合）。加入次序：短输入（1~3 音节）是
         // 「精确词 → 变体词 → 整句 → 精确单字 → 变体单字」；≥4 音节时整句提到最前
         // （「整句 → 精确词 → 变体词 → 单字 → 变体单字」），其余相对次序不变。
-        // ⚠ **单音节是唯一例外**：变体词下沉到精确单字之后（BUG.md L-1487）。单音节下变体词只覆盖
+        // ⚠ 单音节是唯一例外：变体词下沉到精确单字之后（BUG.md L-1487）。单音节下变体词只覆盖
         // 这一个音节（`la`→嗯啊、`xiang`→西安 都是连写双音词挂在相邻音节键上），证据强度远不及
         // 「覆盖整串的多音节词」（`zongguo`→中国 靠它），却会顶掉精确单字占住 @0：打 `la` 得「嗯啊」，
         // 空格即误上屏。混音表内的键本来就是这个次序（[reorderByMix] 把未登记的变体挪到末尾），
@@ -2375,7 +2375,7 @@ object PinyinEngine {
         words.addAll(fuzzyChars)
         val result = words
 
-        // 3. 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
+        // - 未完成音节的前缀联想（如 nih → 你 + h 前缀字）
         //    partial 非空；或末尾音节是「伪完整音节」（如 nim 的 m，本身合法但也是
         //    更长音节前缀，用户意图是 ni+m… 补全）时也触发补全。
         //    ⚠ 「末尾」一律取**截断前**的真实末尾：用户刚敲的是最后那个音节，
@@ -2391,7 +2391,7 @@ object PinyinEngine {
             completionWords = queryWithCompletion(raw, syllables, partial)
             // 拼音串是用户输入正文：走 V 级（默认只进 logcat 不落盘）。
             // 用 i 级时每敲一键都要在主线程 open/write/close 一次日志文件，既泄露输入又掉帧。
-            // ⚠ 再包一层 [KEY_TRACE]：V 级虽不落盘，但**调用点的字符串拼接每键都要执行**
+            // ⚠ 再包一层 [KEY_TRACE]：V 级虽不落盘，但调用点的字符串拼接每键都要执行
             // （这句要拼 raw、partial、syllables 三段）。包上后 release 里整句被编译期消除。
             if (Diagnostics.KEY_TRACE) {
                 Diagnostics.v(
@@ -2443,7 +2443,7 @@ object PinyinEngine {
             }
         }
 
-        // 用户词频学习：把「用户实际选过」的词稳定提到前面 —— 但**只在音节数相同的候选之间**：
+        // 用户词频学习：把「用户实际选过」的词稳定提到前面 —— 但只在音节数相同的候选之间：
         // 跨音节数提升会把学过的单字（你）压到整词（你好）前面（2026-10-18 出现过）。
         // 繁体模式下候选是繁体、词频表按简体存储（[rememberChoice] 同口径），因此按简体形式打分、
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
@@ -2514,13 +2514,13 @@ object PinyinEngine {
     }
 
     /**
-     * 按单音节混合序重排 [items]：**已登记**（表内）的按名次稳定排序，**未登记**的挪到末尾。
+     * 按单音节混合序重排 [items]：**已登记**（表内）的按名次稳定排序，未登记的挪到末尾。
      *
      * 比对用简体形：候选在「只使用繁体字」下是繁体，而混合表按简体建（与 consumption / predict 同口径）。
      *
-     * 未登记项是「混合表没收录、又没有可比词频权重」的候选：**可选词库补入的词**（分类词库下载包按
+     * 未登记项是「混合表没收录、又没有可比词频权重」的候选：可选词库补入的词（分类词库下载包按
      * 单独资产装载，不进内置混合表）、模糊音变体、ue-ve 合并字等。它们统一挪到末尾并保持原有相对
-     * 次序 —— 既不参与混合、也不丢候选。⚠ 早先的**全有或全无**（任一候选不在表内就整体不排）会让
+     * 次序 —— 既不参与混合、也不丢候选。早先的**全有或全无**（任一候选不在表内就整体不排）会让
      * 「装了分类词库」的用户在最常见的键上完全不混合（实测 xian/jian/jie/zhuan… 全被跳过）。
      *
      * 一个都没命中（表口径整块对不上）时返回 `null`，让调用方保持原序，避免口径错位时乱排。
@@ -2580,7 +2580,7 @@ object PinyinEngine {
         return lo
     }
 
-    // ── 智能预测 ──────────────────────────────────────────
+    // ── 智能预测 ──
 
     private const val MAX_PREDICTIONS = 6
 
@@ -2668,7 +2668,7 @@ object PinyinEngine {
         // 与运行时路径（addLongerSuffixes → phrasesFor 内的 filterRareChars）以及 query 的
         // 不一致，档位关着时预测候选仍可能带出档外词并可上屏。
         // 收集上限用 PREDICT_COLLECT_LIMIT（2 倍）正是为此：前几个候选被过滤后仍有后续候选
-        // 可回填，不会"无故变少/变空"；位图未就绪时原样返回，零开销。
+        // 可回填，不会「无故变少/变空」；位图未就绪时原样返回，零开销。
         // 最后再过 displayTake：「只使用繁体字」开启时预测一样给繁体。
         return displayTake(filterRareChars(out.toTypedArray()).toList(), MAX_PREDICTIONS)
     }
@@ -2776,7 +2776,7 @@ object PinyinEngine {
      */
     private fun dictionarySegmentation(input: String): List<String>? {
         if (input.isEmpty()) return null
-        // 整串只查一次词库（MEM-41）：**路径是 input 的一种划分，各路径 join 出来的 key 恒等于 input**，
+        // 整串只查一次词库（MEM-41）：路径是 input 的一种划分，各路径 join 出来的 key 恒等于 input，
         // 所以原实现「每条路径各查一次 + 末尾再查一次」查的是同一个键。整串没命中就直接返回 null ——
         // 此时所有路径的命中数都是 0、best 必为 null、末尾的 takeIf 也必拒，与逐条枚举后再返回 null 等价，
         // 省掉整棵 DFS 枚举树（实测 `jintiantianqi` 有 18 种切分）。
@@ -2835,7 +2835,7 @@ object PinyinEngine {
     /**
      * 枚举合法音节切分（含 [MAX_SEGMENT_PATHS] 上限）。
      *
-     * 抽成 internal 是为了能和应用"未剪枝的参考实现"逐例对拍，剪枝只允许砍掉
+     * 抽成 internal 是为了能和应用「未剪枝的参考实现」逐例对拍，剪枝只允许砍掉
      * 到不了终点的分支，结果必须与不剪枝时完全一致，这一点用对拍比人工推演可靠。
      */
     internal fun enumerateSegmentPaths(input: String, out: MutableList<List<String>> = ArrayList()): List<List<String>> {
@@ -2968,7 +2968,7 @@ object PinyinEngine {
         return filterRareChars(out.toTypedArray()).asList()
     }
 
-    // ── 候选拼音消费区间（Residual Pinyin Rematching）───────
+    // ── 候选拼音消费区间（Residual Pinyin Rematching） ──
 
     /**
      * 候选词在全拼输入串上消费的拼音区间（Pinyin Span）。
@@ -3007,7 +3007,7 @@ object PinyinEngine {
             return k
         }
 
-        // 1) 词语候选：候选→键（查询时记录）优先 —— 该表登记的是**显示词**（繁体模式下即繁体），
+        // - 词语候选：候选→键（查询时记录）优先 —— 该表登记的是**显示词**（繁体模式下即繁体），
         //    因此先用候选原文查，落空再折回简体查词库反向索引（与 [predict] 的两级顺序一致）。
         //    只按折返键查会让**基础索引词**（无 wordToPinyin 兜底）两条路径全落空 → 退化成
         //    兜底「消费全部」，残码被一起清掉。
@@ -3026,7 +3026,7 @@ object PinyinEngine {
             }
         }
 
-        // 2) 单字候选：定位**展示序**里首个含该字的音节，消费到该音节结束（BUG.md L-12）
+        // - 单字候选：定位**展示序**里首个含该字的音节，消费到该音节结束（BUG.md L-12）
         //
         //    ⚠ 口径必须与展示侧一致：展示是「每音节取前 [MAX_CHARS] 条」（候选组装处的
         //    `displayTake(charsFor(syl), MAX_CHARS)`）。这里若按**全量**字表 `contains` 查找，会把
@@ -3062,11 +3062,11 @@ object PinyinEngine {
             if (partial.isNotEmpty()) return Consumption(input.length, syllables.size)
         }
 
-        // 3) 兜底：无法确定区间时消费全部（维持旧的清空行为）
+        // - 兜底：无法确定区间时消费全部（维持旧的清空行为）
         return Consumption(input.length, syllables.size)
     }
 
-    // ── 不完整拼音补全（Pinyin Completion）──────────────────
+    // ── 不完整拼音补全（Pinyin Completion） ──
 
 
     /** 补全结果数量上限（防候选爆炸，文档建议 32） */
@@ -3123,7 +3123,7 @@ object PinyinEngine {
      * 不完整拼音补全召回：把 [input] 切分为「完整音节 + 末尾不完整前缀」，
      * 将末尾前缀补全为完整音节后拼接，查词库短语。
      *
-     * 例：input="nim" → 切分 [ni] + 前缀"m" → 补全 men/ma/mei…
+     * 例：input=「nim」 → 切分 [ni] + 前缀「m」 → 补全 men/ma/mei…
      *    → 拼接 nimen/nima/nimei… → 查词库召回「你们/你妈/你没」
      *
      * 只返回词库中真实存在的短语；拼音补全只是内部召回机制，候选栏显示中文词。

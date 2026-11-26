@@ -39,7 +39,7 @@ internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
  * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）。
  * ⚠ 「有行无文件」的图片行**不再自动删**：`File.isFile` 在权限/IO 抖动时返回 false，
  * 而那条路径连收藏一起删（2026-11-14 复核，`ClipboardImageFiles.deleteMissingRows`）。
- * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` **没有公开的 `onCorruption` 覆写点**（API 34
+ * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` 没有公开的 `onCorruption` 覆写点（API 34
  * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
  * 它和「密钥失配」在界面上同形，排查时先看这里。
  * 容量裁剪见 [TRIM_PRIORITY]：条数与体积**只动非收藏记录**；
@@ -88,7 +88,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * ⇒ 库永远打不开，剪贴板面板 / 搜索 / 自动记录全部失效，而调用点大多有兜底（BackgroundIo 包装 +
      * 面板 runCatching）⇒ **不崩、只留日志**，比崩溃更难排查。
      *
-     * 这里按「向前兼容」处理：只把 `user_version` 降回本版本认识的值，**不动数据、不动表结构** ——
+     * 这里按「向前兼容」处理：只把 `user_version` 降回本版本认识的值，不动数据、不动表结构 ——
      * 前提是库层遵循「加列不删列」的演进口径（本文件历次迁移都是重建表后补齐列，没有删过用户数据列；
      * 多余的列对旧的列名显式查询无害）。代价要说清：① 更早的构建若依赖已不存在的列（如 v4 时代的
      * `is_private`），仍可能在查询时报「no such column」——那不是本函数能解决的；② 本次降级会留下
@@ -205,7 +205,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         check(cols.isNotEmpty()) { "重建 ${TABLE_ITEMS}_old 时列交集为空" }
         // COALESCE 兜住旧表的 NULL：目标表这些列都是 NOT NULL，直接搬 NULL 会让 INSERT 失败、
         // 升级抛异常 —— 而 onUpgrade 整段在一个事务里，失败即每次启动重跑同一段必然失败的迁移，
-        // 库从此永久打不开（2026-11-14 复核）。
+        // 库从此永久打不开（2026-11-14）。
         // 各列兜底值与 createTableSql 的默认值一致；`id` 原样搬（PK，不可能为 NULL）。
         val nullDefaults = mapOf(
             "encrypted_content" to "''",
@@ -346,7 +346,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val image: ImageMeta? = null,
     )
 
-    // ── 写入 ──────────────────────────────────────────────
+    // ── 写入 ──
 
     /**
      * 本进程内已确认「该哈希对应的行密文可解」的备忘（BUG.md L-199）。
@@ -405,7 +405,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 批量导入不走这里（它自己在块外裁，见 [upsertImportChunk] / BUG.md L-1226）。
      *
      * @return 条目 id（已存在的行或新插入的行）；内容为空 / 加密失败返回 -1。
-     *   命中哈希但那一行已经不在了（外部改库、库文件被换）时**落到插入路径重建**，
+     *   命中哈希但那一行已经不在了（外部改库、库文件被换）时落到插入路径重建，
      *   绝不把不存在的 id 当成功返回（BUG.md L-200）。
      */
     @Synchronized
@@ -435,7 +435,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * ④命中却更新 0 行时**幽灵 id 兜底**改插入（L-200）；⑤未命中才加密 + 分类 + 插入。
      * 这五条全是「逐条即时决策」，能省的只有提交开销 ⇒ 只把 `beginTransaction/endTransaction`
      * 提到块这一层，每条的处理顺序、事务内的读（`MAX(created_at)` / `findIdByHash` /
-     * `decryptsById`）都仍在原处：同一连接在事务内**看得见自己未提交的写入**，
+     * `decryptsById`）都仍在原处：同一连接在事务内看得见自己未提交的写入，
      * 于是每行的 `created_at` 依旧是「该行处理时刻」的单调值（逐行 +1），不是批末统一取一次。
      *
      * 为什么整块放在监视器内（与 [upsert] 同一把锁）：若在锁外开事务再逐条进 [upsert]，
@@ -448,7 +448,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 再压锁占用得先把加密挪出锁：要求「先判重、再只对未命中行加密」，而判重结果是逐行的，
      * 于是预加密会在重复导入（幂等重导是常态）上白做整份密文 —— 这一笔不在这里做。
      *
-     * **不做整批一个事务**：环境级失败（磁盘满 / 库损坏 / 提交失败）会让整批回滚，
+     * 不做整批一个事务：环境级失败（磁盘满 / 库损坏 / 提交失败）会让整批回滚，
      * 一条坏行毁掉一万行；块级最坏只丢当前这一块。块内某行写失败（加密失败 / 单条 SQL 失败）
      * 不影响同块其余行 —— `insert` 自己吞 `SQLException` 返回 -1。
      *
@@ -724,12 +724,12 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 删除全部历史：收藏是受保护条目，清空只删除非收藏记录。
      *
-     * **不提供「连收藏一起删」的档位**（2026-11-14 撤回）：历史「读不出」只是本次解密的结果，
+     * 不提供「连收藏一起删」的档位（2026-11-14 撤回）：历史「读不出」只是本次解密的结果，
      * 不代表密钥永久丢失（CE 解锁窗口 / Keystore 抖动 / 竞态都能造成同一形态）。用它去开一把
      * 「全库删除」的锁，会把用户仅剩的、仍有抢救可能的密文一次删光，且随后 `gc` 连图片文件
      * 一起收 —— 不可逆。宁可留着一个读不出的库等后续版本处理。
      *
-     * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
+     * ⚠ 调用方必须紧跟一次图片文件回收（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
      * （A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
      * 而且要等下一次启动 gc 才收。
      * @return 删除的条数
@@ -747,7 +747,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 按**明文内容**删除历史条目（「凭据不留痕」，2026-09-30 加固防泄露）。
      *
      * 背景：用户从密码管理器 / 云控制台复制 API Key 的那一刻，本应用的剪贴板监听已经把那条内容
-     * 采集入库 —— 库里虽是密文，但**剪贴板面板里明文可见**，还会随配置备份整体导出。
+     * 采集入库 —— 库里虽是密文，但剪贴板面板里明文可见，还会随配置备份整体导出。
      * 凭据设置页在保存后会调用本方法把它从历史里抹掉。
      *
      * 口径：哈希命中即删（与入库去重同一个 [stableHash]）；**收藏条目不删**（用户明确标记要留的）；
@@ -823,7 +823,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 目标明文 → **仍因收藏被保留**的等价条目数（2026-10-04 修复 L-592）。
+     * 目标明文 → **仍因收藏被保留**的等价条目数（2026-10-04，L-592）。
      *
      * 为什么要单独问一次：上面两个删除接口都带 `is_favorite = 0`（收藏是用户明确要留的），
      * 于是「删了 0 条」有两种含义 —— 「历史里没有」与「有、但被收藏保护」。调用方原本分不出来，
@@ -861,7 +861,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 当前历史里最大的条目 id（0 = 空表）。
      *
      * 「凭据不留痕」用它判断「上次清理之后历史里是否又出现了新条目」：有新条目就重扫，
-     * 没有就跳过 —— 既收敛，又不会漏掉用户**再次复制**的同一个 Key（2026-10-01 修复 L-254）。
+     * 没有就跳过 —— 既收敛，又不会漏掉用户**再次复制**的同一个 Key（2026-10-01，L-254）。
      */
     fun maxItemId(): Long =
         readableDatabase.rawQuery("SELECT MAX(id) FROM $TABLE_ITEMS", null).use { c ->
@@ -898,16 +898,16 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ `maxTotalBytes` **故意不给默认值**：曾只传条数，体积按 `DEFAULT_MAX_TOTAL_BYTES`
      * （100MB）裁，而该值恰好等于出厂默认 ⇒ 只在用户改过体积上限时才暴露（设 500MB 的库被砍到
-     * 100MB，旧历史静默消失）。不给默认值，漏传即编译错误，比留一个"恰好对"的默认值可靠。
+     * 100MB，旧历史静默消失）。不给默认值，漏传即编译错误，比留一个「恰好对」的默认值可靠。
      */
     fun trimTo(maxItems: Int, maxTotalBytes: Long) {
         // 收藏软上限排第一：它是唯一能从「受保护行」释放额度的通道。排在字节裁剪之后时，
         // 用户刚调小总字节上限的那一次，收藏仍按旧的 25% 占用 ⇒ 字节裁剪会把非收藏
-        // （含刚写入的那条）删光（2026-11-14 复核）。
+        // （含刚写入的那条）删光（2026-11-14）。
         val favImages = trimFavorites()
         trimByCount(maxItems)
         trimByByteBudget(maxTotalBytes)
-        // 判据是**这一趟实删的图片行数**，两条淘汰路径都算：
+        // 判据是这一趟实删的图片行数，两条淘汰路径都算：
         //  - [trimImages] 只淘汰非收藏图片，交回实删数；
         //  - [trimFavorites] 按收藏软上限淘汰最旧收藏，候选里可能含收藏**图片**行，它同样只交回
         //    「实删的图片行数」（文本收藏不计）—— 只统计前者时那批 `.enc`/`.thumb` 就成了孤儿，
@@ -939,7 +939,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 图片预算裁剪：张数 / 字节任一超限即淘汰**最旧的非收藏图片**（用户可调，见 [ClipboardPrefs]）。
+     * 图片预算裁剪：张数 / 字节任一超限即淘汰最旧的非收藏图片（用户可调，见 [ClipboardPrefs]）。
      *
      * 与文本预算**完全分离**（实施计划 §2.4）：文本的条数/字节只统计与裁剪文本行
      * （见 [trimByCount] / [trimByByteBudget]），图片同理只统计自己 —— 否则「复制几张图」
@@ -1039,7 +1039,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 按条数裁剪：只统计与删除**非收藏的文本**行（图片有独立张数上限，见 [trimImages]）。
      *
-     * 额度必须按非收藏计（2026-11-14 复核）：原先统计含收藏、候选却只取非收藏 ⇒ 收藏占满
+     * 额度必须按非收藏计（2026-11-14）：原先统计含收藏、候选却只取非收藏 ⇒ 收藏占满
      * 上限时 `overflow` ≥ 非收藏总数，一次复制就把全部非收藏文本行（含刚写入的那条）删光，
      * 用户看到的是「复制了，历史里没有」，且**没有任何日志**。
      */
@@ -1114,8 +1114,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
         val ids = overflowIdsForByteBudget(rows, maxTotalBytes)
         if (ids.isEmpty()) {
-            // 可删的只剩收藏（收藏计入总量但不参与淘汰）⇒ 库会**长期停在预算之上**。
-            // 这种情况原先一条日志都没有：出问题时既看不到现象也看不到原因（2026-09-30 审查发现）
+            // 可删的只剩收藏（收藏计入总量但不参与淘汰）⇒ 库会长期停在预算之上。
+            // 这种情况原先一条日志都没有：出问题时既看不到现象也看不到原因（2026-09-30）
             Diagnostics.w(
                 TAG,
                 "按体积裁剪停手: 可删条目已尽（收藏不计淘汰），当前 ${total / 1024 / 1024}MB " +
@@ -1137,7 +1137,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         var deleted = 0
         writableDatabase.beginTransaction()
         try {
-            // 条件里再判一次收藏（2026-09-30 审查）：候选集是按快照算的，用户在这几毫秒里把某条
+            // 条件里再判一次收藏（2026-09-30）：候选集是按快照算的，用户在这几毫秒里把某条
             // 标成收藏后，原写法仍会把它删掉 —— 而「收藏不参与裁剪」是本模块的不变量。少删一条无害
             // （下次入库会重新评估），删错一条则不可恢复。
             // 分批一次的 DELETE：变量上限 999，块取 400（与 countPresent 同值）。收藏闸仍在 SQL 里，
@@ -1197,7 +1197,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行。
      *
-     * ⚠ **调用方必须紧跟一次图片文件回收**（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
+     * ⚠ 调用方必须紧跟一次图片文件回收（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
      * （A-559，口径同 [deleteAll]）。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
@@ -1229,7 +1229,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         )
     }
 
-    // ── 查询 ──────────────────────────────────────────────
+    // ── 查询 ──
 
     /**
      * SELECT 列清单（分页查询与历史接口共用）。
@@ -1351,7 +1351,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 键集分页结果。
      *
-     * [scanned] 是**扫描过的原始行数**（与 [Page.nextOffset] 同口径），不是 [items] 的条数：
+     * [scanned] 是扫描过的原始行数（与 [Page.nextOffset] 同口径），不是 [items] 的条数：
      * [readItem] 遇到解密失败的行会跳过，两者混用会错位（旧实现就栽在这上面，BUG.md L-92）。
      * [last] 是本次最后一个扫描行的键，交给下一页当 [recentPageAfter] 的游标；一页都没扫到时为 `null`。
      */
@@ -1361,7 +1361,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         val last: ClipboardCursor?,
     )
 
-    /** 一页查询结果：[items] 为解密成功的条目，[nextOffset] 为**已扫描过的原始行数**（进度，不是 SQL OFFSET） */
+    /** 一页查询结果：[items] 为解密成功的条目，[nextOffset] 为已扫描过的原始行数（进度，不是 SQL OFFSET） */
     data class Page(val items: List<Item>, val nextOffset: Int)
 
     /** 分组标签重算的结果：[changed] 实际 UPDATE 的条数，[failed] 密文解不开的条数（只归因） */
@@ -1409,7 +1409,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 导出用的库指纹：条数 / 最大 id，一次查询取两样（L-1119：不再聚合密文总长）。
      *
-     * 只比对条数会在**到上限后的插入 + 淘汰**（`upsert` → `trimTo` 成对发生、总数不变，其 KDoc 自述）
+     * 只比对条数会在到上限后的插入 + 淘汰（`upsert` → `trimTo` 成对发生、总数不变，其 KDoc 自述）
      * 时判成「库没变」：那一趟导出的载荷既漏掉新复制的条目、也不会进丢弃计数，界面却按
      * 「全部导出成功」上报（BUG.md L-1085）。两项任一变化都说明库在动 —— 插入抬最大 id、
      * 删除改条数；就地改写（置顶 / 自愈重加密）不动条数/最大 id，此类载荷变化改前的密文总长
@@ -1421,7 +1421,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             null,
         ).use { c -> if (c.moveToFirst()) "${c.getLong(0)}:${c.getLong(1)}" else "0:0" }
 
-    // ── 分组标签重算（存量迁移）───────────────────────────
+    // ── 分组标签重算（存量迁移）──
 
     /**
      * 按当前规则重算全部分组标签（2026-09-25 多标签语义变更的存量迁移；幂等）。
@@ -1457,7 +1457,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             if (rows.isEmpty()) return ReclassResult(changed, failed)
             lastId = rows.last().first
             // 解密与分类在事务**外**先算好：本库非 WAL、只有一条连接，事务内逐条解密会让整趟
-            // 重算长时间独占连接，把采集入库与面板查询反复切碎（2026-11-14 复核）。
+            // 重算长时间独占连接，把采集入库与面板查询反复切碎（2026-11-14）。
             val planned = ArrayList<Pair<Long, String>>(rows.size)
             for ((id, encrypted, hash) in rows) {
                 val text = ClipboardCrypto.decrypt(encrypted)
@@ -1489,7 +1489,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    // ── 备份导入 ──────────────────────────────────────────
+    // ── 备份导入 ──
 
     /**
      * 全部内容哈希（备份导入去重用）。
@@ -1649,7 +1649,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         return if (committed) ids else null
     }
 
-    // ── 内部 ──────────────────────────────────────────────
+    // ── 内部 ──
 
     private fun readItem(c: android.database.Cursor): Item? {
         val id = c.getLong(0)
@@ -1965,7 +1965,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
                 val page = fetch(offset, limit)
                 // 游标没前进（坏页/异常返回）：立刻退出，否则会无限取同一页
                 if (page.nextOffset <= offset) break
-                // 字节预算（L-91）：**先试算再决定收不收** —— 越界就整页拒收、游标留在它之前，
+                // 字节预算（L-91）：先试算再决定收不收 —— 越界就整页拒收、游标留在它之前，
                 // 于是这一页会被后续分页 / 续扫重新取到（不裁剪、不丢条目）。
                 // 首屏非空由「第一页无条件收下」保证：单页最坏 50 × 256KB × 2.5 = 32.8MB < 48MB 预算。
                 val pageBytes = page.items.sumOf { ClipboardStore.utf8ByteSize(it.content) }
@@ -1981,7 +1981,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         /**
          * 填页收尾时判断「最后取回的那一页到底有没有被接受」（BUG.md L-117）。
          *
-         * [fillFirstPage] 的字节预算判据是**先试算再决定收不收**：接受 ⇒ 游标推进到
+         * [fillFirstPage] 的字节预算判据是先试算再决定收不收：接受 ⇒ 游标推进到
          * `lastFetchOffset + lastFetchedScanned`；拒收 ⇒ 游标**留在** `lastFetchOffset`。
          * 于是「返回值是否等于 `lastFetchOffset + lastFetchedScanned`」就是接受与否的充要判据。
          *

@@ -23,7 +23,7 @@ import java.util.zip.ZipOutputStream
  * 为什么整包加密：包里有剪贴板明文（身份证、手机号、地址、银行卡、账号口令都会出现），
  * 落到网盘或聊天记录就等于泄露；连 manifest 里的设备信息也不该明文暴露。
  *
- * 三个入口（导出 / 解锁 / 导入）都做 DB、解密与文件 IO，**必须在后台线程调用**；
+ * 三个入口（导出 / 解锁 / 导入）都做 DB、解密与文件 IO，必须在后台线程调用；
  * PBKDF2 按 OWASP 量级取 600k 迭代，手机上一次约 1~2 秒，正是要放到后台的原因。
  */
 internal object ConfigBackupManager {
@@ -254,7 +254,7 @@ internal object ConfigBackupManager {
         }
     }
 
-    // ── 导出 ────────────────────────────────────────────────
+    // ── 导出 ──
 
     class ExportOptions(
         val includeClipboard: Boolean,
@@ -299,7 +299,7 @@ internal object ConfigBackupManager {
      */
     fun export(context: Context, options: ExportOptions): BackupResult<ExportOutcome> {
         val reason = ReasonBox()
-        // 导入进行中不导出（2026-10-02 修复 L-452）：两条流写/读同一份 Prefs 与各节，交错时产出的
+        // 导入进行中不导出（2026-10-02，L-452）：两条流写/读同一份 Prefs 与各节，交错时产出的
         // 包是导入的**中间态**（部分节已更新、部分未更新），而用户以为拿到了一份完整备份 ——
         // 换机恢复时才发现缺项。两把锁此前各自为政（`exportInFlight` / `importInFlight`），
         // 而导入跑在裸线程上、页面重建后导出按钮会重新可点，所以这条路径是可达的。
@@ -391,7 +391,7 @@ internal object ConfigBackupManager {
             return null
         }
 
-        // 字节闸：词频 / prefs / 剪贴板都必须在备份包单节上限之内，超限一律**中止导出并说清原因**。
+        // 字节闸：词频 / prefs / 剪贴板都必须在备份包单节上限之内，超限一律中止导出并说清原因。
         // 绝不静默省略 —— 省略等于「用户以为备份完整，换机后这部分数据全丢」，是这类功能最坏的失败方式
         // （导入侧对超限节的处理也是拒绝整包，所以超限包连自己都导不回来）。留一成余量是因为
         // jsonl 的字段名与字符串转义还会让落盘体积再涨一点。
@@ -550,7 +550,7 @@ internal object ConfigBackupManager {
             last = payload
             Diagnostics.w(TAG, "剪贴板导出: 库在导出期间发生变化，重试（第 ${attempt + 1} 趟）")
         }
-        // 重试耗尽：库里一直在变，这一趟的快照**可能与最后一刻不一致**（会话期间被复制/删除过）。
+        // 重试耗尽：库里一直在变，这一趟的快照可能与最后一刻不一致（会话期间被复制/删除过）。
         // 不再只留一条 W 就让界面报「全部导出成功」（BUG-13）—— 由 [ClipPayload.unstable] 一路上报，
         // 导出回执里如实写一句。
         Diagnostics.w(TAG, "剪贴板导出: 库仍在变化，采用最后一趟的结果（标记为快照不稳定）")
@@ -633,7 +633,7 @@ internal object ConfigBackupManager {
             ?.sortedBy { it.name }
             .orEmpty()
 
-    // ── 解锁（解密到缓存 zip） ───────────────────────────────
+    // ── 解锁（解密到缓存 zip） ──
 
     /**
      * 解锁结果。
@@ -789,7 +789,7 @@ internal object ConfigBackupManager {
         return UnlockResult.Ok(dest)
     }
 
-    // ── 检查（导入前预览） ───────────────────────────────────
+    // ── 检查（导入前预览） ──
 
     class BackupInfo(
         val manifest: ConfigBackup.Manifest,
@@ -861,7 +861,7 @@ internal object ConfigBackupManager {
         return BackupInfo(manifest, prefsKeys, freqCount, clipCount, dictNames, oversized)
     }
 
-    // ── 导入 ────────────────────────────────────────────────
+    // ── 导入 ──
 
     /** 覆盖还原 = 用备份覆盖全部设置；仅并入数据 = 只合并词频/剪贴板（词库按勾选照常恢复），不动本机设置 */
     enum class ImportMode { RESTORE, MERGE_DATA }
@@ -1146,7 +1146,7 @@ internal object ConfigBackupManager {
         var failedStage: String? = null
         if (mode == ImportMode.RESTORE) {
             // 类型不符的键在**解码阶段**就不进结果（如存档被外部改成 5000000000）：收集起来一并
-            // 计入忽略数 —— 否则用户看到「导入成功」却少了一项，而忽略数还是 0（2026-10-01 审查 L-235）
+            // 计入忽略数 —— 否则用户看到「导入成功」却少了一项，而忽略数还是 0（2026-10-01，L-235）
             val skippedPrefs = ArrayList<String>()
             val decoded = ConfigBackup.decodePrefs(prefsText.orEmpty(), skippedPrefs)
             val main = decoded[ConfigBackup.PREFS_MAIN].orEmpty()
@@ -1173,7 +1173,7 @@ internal object ConfigBackupManager {
                 prefsApplied -= r1.applied
                 failedStage = "设置项写盘失败"
             }
-            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30 审查）：
+            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30）：
             // 只 flush 主 prefs 时，导入改了剪贴板开关/上限、用户又选「稍后重启」，进程在 apply 队列
             // 排空前被回收 ⇒ 剪贴板设置静默回退，而弹窗已经把剪贴板侧的项数算进「设置 N 项」了。
             // ⚠ 两个文件的校验**各自独立**（L-1097）：主 prefs 失败不能短路这一条，否则剪贴板侧
@@ -1185,7 +1185,7 @@ internal object ConfigBackupManager {
                 prefsApplied -= appliedClip
                 if (failedStage == null) failedStage = "剪贴板设置写盘失败"
             }
-            // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02 审查）：
+            // 凭据「只进了内存、没落盘」时同样不能算已应用（2026-10-02）：
             // Keystore 不可用（锁屏等）时 `writeCredential` 只更新进程内缓存并删掉磁盘旧密文，
             // 而导入收尾还会提示「重启输入法后生效」—— 一重启，导入的 Key 全部消失，
             // 用户看到的是「导入成功但翻译又回到未配置」。
@@ -1304,7 +1304,7 @@ internal object ConfigBackupManager {
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）。
                 //
-                // 口径是**按本次插入的 id 复查**（BUG-13）：原先取 `db.count()` 的前后差，而采集常开 ——
+                // 口径是按本次插入的 id 复查（BUG-13）：原先取 `db.count()` 的前后差，而采集常开 ——
                 // 导入期间用户的每次复制都会改动总数，差值会把并发条目算进本次导入，界面数字虚高。
                 // 按 id 复查只认自己插的行，与并发无关。
                 val insertedIds = restored.insertedIds
@@ -1364,8 +1364,8 @@ internal object ConfigBackupManager {
      * @return 写入数 to 跳过数（跳过的**七种**情形：文件名不在清单内、内容与官方校验值不符、
      *   自定义词库结构校验不过（见 [CustomDicts.isValidPackFile]）、
      *   目标文件已存在（不覆盖用户现有词库，即使内容与包里的不同）、改名落盘失败（磁盘/权限问题）、
-     *   **自定义词库与其源文本须成对、其一不落地 ⇒ 整对跳过**（见下方 pairBroken）、
-     *   **两份都在包里却只落了源文本 ⇒ 回滚源文本**（保留词库，编辑页将为空））；
+     *   自定义词库与其源文本须成对、其一不落地 ⇒ 整对跳过（见下方 pairBroken）、
+     *   两份都在包里却只落了源文本 ⇒ 回滚源文本（保留词库，编辑页将为空））；
      *   失败返回 null
      */
     internal fun restoreDicts(
@@ -1432,7 +1432,7 @@ internal object ConfigBackupManager {
                             Diagnostics.w(TAG, "词库恢复: 落盘条目数超过 $MAX_DICT_FILES 上限")
                             return@zipStream false
                         }
-                        // 白名单（可选词库清单）之外的条目：**参与摘要校验但不落盘**。
+                        // 白名单（可选词库清单）之外的条目：参与摘要校验但不落盘。
                         // 否则任意 .xz 都能被塞进 dicts/，而引擎启动会无条件加载并全量解压它
                         // —— xz 压缩比轻松 >100:1，几百 KB 的包就能让输入法启动 OOM 或写满磁盘。
                         // 例外：用户自定义词库（换机恢复必须带回来，否则词条静默丢失）——
@@ -1598,10 +1598,10 @@ internal object ConfigBackupManager {
         // 本次的新文本、包还是旧的，编辑页回显与生效词库错配，
         // 用户下一次保存就用这份文本静默重建包（L-850 要挡的后果，只是多绕一步）。
         //
-        // **只回滚源文本那半，包留着** —— 两个方向不对称是刻意的：
-        //  · 「只有包、没有源文本」是本函数自己放行的可用态（见上面 `packSeen -> false`：
+        // 只回滚源文本那半，包留着 —— 两个方向不对称是刻意的：
+        // - 「只有包、没有源文本」是本函数自己放行的可用态（见上面 `packSeen -> false`：
         //    老备份形态，编辑页为空但词库可用），删掉它等于把可用态退化成全无；
-        //  · 包是唯一不可再生的数据（官方包能重下，自定义词库只能从备份里来），
+        // - 包是唯一不可再生的数据（官方包能重下，自定义词库只能从备份里来），
         //    而缺源文本的代价只是编辑页空白（X-267 已裁定）。
         if (packSeen && sourceSeen && sourceLanded && !packLanded) {
             // 删不掉就如实说：计数也保持「它还在」的现实，不假装已回滚
@@ -1619,7 +1619,7 @@ internal object ConfigBackupManager {
         return written to skipped
     }
 
-    // ── zip / 文件工具 ───────────────────────────────────────
+    // ── zip / 文件工具 ──
 
     /** 校验某一节的文本与 manifest 里记的 sha256 是否一致（不一致即内容被换过或包被裁剪） */
     internal fun verify(manifest: ConfigBackup.Manifest, section: String, text: String): Boolean =
@@ -1820,7 +1820,7 @@ internal object ConfigBackupManager {
      * 分散调用等于把同一个包反复解压（此前检查 5 遍 + 导入 6 遍）。
      *
      * 严格性与分开调用一致：读不出来的节记 [SectionRead.TooLarge]；遍历中途出错或预算耗尽时，
-     * **没走到的节一律记 [SectionRead.Failed]**，调用方据此整包拒收，而不是把「没走到」当成「没有这一节」。
+     * 没走到的节一律记 [SectionRead.Failed]，调用方据此整包拒收，而不是把「没走到」当成「没有这一节」。
      */
     internal fun readSections(
         zip: File,
