@@ -33,7 +33,7 @@ enum class SkinTone {
  *    [KeyTransparency] 统一注入（[visualFor] 负责把 alpha 合成进最终色）；
  *  - 配色皮肤自带色值，不随亮色 / 暗色主题切换（与键盘外观页的固定极光同思路）；
  *  - 色值一律 8 位 ARGB：**填充色**要求 alpha = 255（不透明度交给透明度滑杆统一控制），
- *    描边色**允许自带 alpha**（半透明高光是有意设计，滑杆按比例缩放它，见 [KeyTransparency.scaleAlpha]）。
+ *    描边色允许自带 alpha（半透明高光是有意设计，滑杆按比例缩放它，见 [KeyTransparency.scaleAlpha]）。
  */
 data class KeyboardSkin(
     val id: String,
@@ -52,7 +52,7 @@ data class KeyboardSkin(
     val keyFill2: Int? = null,
     /** 渐变角度（度，0 = 左→右，90 = 上→下） */
     val gradientAngle: Float = 90f,
-    /** 按压态填充；null = 由首色加深推导（第一期末启用渐变时等价于压暗） */
+    /** 按压态填充；null = 由首色加深推导（纯色键面下等价于压暗） */
     val keyPressed: Int? = null,
     /** 键面描边宽度（dp，0 = 无描边） */
     val strokeWidthDp: Float = 0f,
@@ -1049,7 +1049,7 @@ object KeyboardSkins {
      *
      * @param faceAlpha 当前面不透明度（来自 [KeyTransparency.surfaceAlpha]）：作用于「面」（填充 /
      *                  底边厚度）与**描边** —— 两者的色值都可能自带 alpha（描边是半透明高光、
-     *                  厚度色在未覆盖时退化到描边色），因此按原 alpha **比例缩放**
+     *                  厚度色在未覆盖时退化到描边色），因此按原 alpha 比例缩放
      *                  （[KeyTransparency.scaleAlpha]）而非替换，否则默认档会把它们抹成实色；
      *                  字色与提示色原样保留 —— 与半透明键盘的既有做法一致
      * @param density   屏幕密度（dp → px）
@@ -1096,7 +1096,7 @@ object KeyboardSkins {
      *
      * 返回违规描述列表，空列表表示合法。判据：
      *  - id / label 非空，且非默认皮肤的**填充色**必须 alpha = 255（不透明度由滑杆统一控制；
-     *    描边色允许自带 alpha（由 [visualFor] 按比例缩放）；厚度色则必须不透明且**显式给出**
+     *    描边色允许自带 alpha（由 [visualFor] 按比例缩放）；厚度色则必须不透明且显式给出
      *    （有厚度宽度却没给 `bottomThicknessColor` 属配置错误：退化路径会取到描边色）；
      *  - 渐变角度在 [0, 360)，描边与厚度在 [0, 4]dp；
      *  - 彩虹起始色相在 [0, 360) 且步长 > 0；
