@@ -1145,7 +1145,7 @@ class UserDictActivity : ComponentActivity() {
      * `buildRow` 只靠 `addView` 的调用顺序保证对应 —— 中间插一个 View 就会把频次显示成汉字，
      * 不崩也不报错。改成 tag 后「哪一列是什么」写进了命名契约。
      *
-     * 也**不覆写 `getItemId`**：本页每次 `load()` 全量重建、最多几百行，没有稳定 id
+     * 也**不覆写 `getItemId`**：本页每次 `loadAsync()` 全量重建、最多几百行，没有稳定 id
      * 的需求；而 `position.toLong()` 一旦配上 `setHasStableIds(true)` 就会让「导入后列表不刷新」
      * （同一位置换了内容而 id 没变，ListView 认为这行没变）。
      */

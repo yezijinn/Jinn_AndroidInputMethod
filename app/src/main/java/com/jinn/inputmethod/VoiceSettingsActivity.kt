@@ -1389,7 +1389,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 return false
             }
         } else if (voiceEnabled && backend == VoiceBackend.ALI) {
-            // 阿里云百炼：地址先过 WS 策略（wss 强制，ws 只允许本机），再要求模型名与 Key；
+            // 阿里云百炼：地址先过 WS 策略（wss 强制，ws 仅本机 / 局域网），再要求模型名与 Key；
             // 拒绝原因原样落到 edit_ali_ws_url.error —— 用户要看到「为什么不能用」与「该怎么改」。
             if (aliWsUrlValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼 WS 地址为空")
@@ -1917,7 +1917,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         const val TEXT_XF_UNREADABLE =
             "\n⚠ 已保存的凭据在本机解不开（加密密钥丢失或损坏），需要重新填写。"
 
-        /** 显示 / 隐藏两个密码框（对齐粘贴进来的长串凭据用；APPID 本来就明文） */
+        /** 显示 / 隐藏时揭示全部凭据框真值（APPID 等也掩码回显，勾选一并揭示） */
         const val TEXT_XF_SHOW = "显示 APIKey / APISecret"
 
         /** 后端下拉的取值与显示文案（一一对应，靠下标对应） */

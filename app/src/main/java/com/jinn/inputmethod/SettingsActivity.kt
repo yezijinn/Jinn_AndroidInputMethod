@@ -309,7 +309,7 @@ class SettingsActivity : ComponentActivity() {
         }
         // 空格左右按钮：入口按钮（与图库入口同行），点击进入「底栏标点输出」独立页
         // （逗号 / 句号字符自定义收在那一页里）。
-        // ⚠ 不要再提「空格键左右滑动移动光标开关」：那个开关已于 2026-10-16 随功能整体移除
+        // ⚠ 不要再提「空格键左右滑动移动光标开关」：那个开关已随功能整体移除（2026-10-16）
         // （`PunctOutputPageTest.空格移光标开关已彻底移除` 反向钉着，标点页里已无 `switch_space_cursor`）。
         findViewById<Button>(R.id.btn_space_cursor).apply {
             text = TEXT_SPACE_CURSOR
@@ -459,7 +459,7 @@ class SettingsActivity : ComponentActivity() {
         themeTicker.stop()
     }
 
-    /** 从「键盘外观」页返回时两档皮肤可能已改：这里补一次刷新（本页其余状态不变，无需 recreate） */
+    /** 回到本页时回放三类状态：后台到达的更新检查结果、翻译摘要、词库入口提醒态 */
     override fun onResume() {
         super.onResume()
         // 后台期间到达的更新检查结果：此刻才呈现并记账，避免「什么都没看到却被静默七天」
@@ -1193,7 +1193,7 @@ class SettingsActivity : ComponentActivity() {
      * 给**含密码输入框**的对话框加防截屏 / 录屏 / 投屏 / 最近任务缩略图标志（2026-10-04，L-588）。
      *
      * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是按窗口生效的，而本页只有
-     * 「导出配置 / 导入配置」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
+     * 「导出配置文件 / 导入配置文件」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
      * 整页加会把「设置页截图」一并废掉（真机排查与用户留证都要用），对密码框却没有任何额外收益。
      * 注意：投屏（ADB / scrcpy）下对话框内容不可见是预期行为，不是缺陷。
      */
