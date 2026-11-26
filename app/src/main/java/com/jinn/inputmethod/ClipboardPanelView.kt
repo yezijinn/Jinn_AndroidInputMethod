@@ -175,7 +175,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private var unreadableHistory = false
 
     /**
-     * 一条都没读出来、但**后面还有没扫过的行**：空态要给「继续查找」入口（BUG.md L-76）。
+     * 一条都没读出来、但后面还有没扫过的行：空态要给「继续查找」入口（BUG.md L-76）。
      *
      * 判据来自 [ClipboardDb.fillFirstPage] 的返回值：`items.isEmpty() && nextOffset < total`
      * 只可能出现在「扫到上限提前收工」（扫完末尾时 nextOffset == total）；整表扫完且全坏时是 false。
@@ -237,13 +237,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 用户是否正在**拖动 / 惯性滑动**列表（`SCROLL_STATE_TOUCH_SCROLL` / `FLING` / `SETTLING`）。
      *
      * 长按操作条只在「用户真的滚了列表」时才允许收起（BUG.md L-127）：`onScroll` 在**每一次布局**
-     * 都会回调 —— 面板打开、数据到达、乃至**操作条自己出现**导致列表变矮都会触发一次；
+     * 都会回调 —— 面板打开、数据到达、乃至操作条自己出现导致列表变矮都会触发一次；
      * 原判据「回调即收起」于是让操作条刚显示就被自己收掉（真机实测：15:06:53.007 显示操作条，
      * 20ms 后 15:06:53.027 的布局回调又把它收起 ⇒ 长按后什么都看不到）。
      */
     private var listScrolling = false
 
-    // ── 适配器（稳定 ID 绑定）──────────────────────────────
+    // ── 适配器（稳定 ID 绑定） ──
     // 必须声明在 init 块之前！Kotlin 属性按声明顺序初始化，
     // init{ buildUi() } 里 listView.adapter 若声明在后面会取到 null。
     private val adapter = object : BaseAdapter() {
@@ -591,7 +591,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * 首屏内容就绪（BUG.md L-1320）：由键盘侧在打开面板时挂上，据此决定**何时把面板切成可见**。
+     * 首屏内容就绪（BUG.md L-1320）：由键盘侧在打开面板时挂上，据此决定何时把面板切成可见。
      *
      * 面板区是字母区的两倍高，先切可见的话用户会先看到一整块空面板（列表与空态都还没画），
      * 要等一次后台取数才有内容 —— 那一瞬就是「面板全屏化」。本回调在首屏提交后（成功或
@@ -617,7 +617,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         if (currentItems.isEmpty()) updateEmpty()
     }
 
-    // ── 分类 ──────────────────────────────────────────────
+    // ── 分类 ──
 
     private fun selectCategory(category: String?) {
         // 切分类必须收起操作条：longPressItem 指向的条目可能不在新分类里（列表里再也看不到它），
@@ -689,7 +689,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /** 当前是否处于图片分类（网格模式）：文本列表的分页与空态在此时全部让位 */
     private fun inImageMode(): Boolean = currentCategory == CATEGORY_IMAGE
 
-    // ── 分页加载 ─────────────────────────────────────────
+    // ── 分页加载 ──
 
     /**
      * 「全部」分类是否把图片行纳进文本列表（渲染为序号占位）。
@@ -730,7 +730,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             // 分页加载：COUNT 不解密，解密只覆盖第一页（ClipboardPrefs.of(context).panelPageItems）
             val filter = filterFor(category)
             // 查询异常（数据库损坏、磁盘满等）绝不能把 loadingPage 永远留在 true：
-            // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默"没有更多了"）。
+            // 那会让 loadNextPage() 的第一道闸门永久拦住后续分页（静默「没有更多了」）。
             // 条带是否有图：与列表同一次取数里查（空态文案据此把「没有文本」与「什么都没有」分开；
             // 放在网格的异步回调里更新，列表会先读到上一次加载的旧值）。
             // ⚠ 这两次 `db.count` 必须自己兜住异常：它们在下面 `loaded` 的 runCatching **之外**，
@@ -818,7 +818,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                         listView.post { if (token == scrollToken) listView.setSelection(0) }
                     }
                 }.onFailure {
-                    // 查询 / 解密整体失败：**视图状态也必须归位**（BUG.md L-144）——
+                    // 查询 / 解密整体失败：视图状态必须归位（BUG.md L-144）——
                     // 只打日志的话，列表还留着**上一个分类**的条目，而顶栏分类已经切走：
                     // 用户点一条粘贴出来的是另一个分类的正文（与「粘的与看到的是同一份」相反）；
                     // 首次加载即失败时还会是「空白面板、连空态文案都没有」。
@@ -913,7 +913,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         refreshToken++
         // 作废在飞查询后不会再有人把 loadingPage 复位（唯一的复位点在 post 回调里，
         // 而回调会被 refreshToken 拦下）⇒ 不在这里清，标志会永久为 true，此后翻页与续扫
-        // 全被第一道闸门静默拦死（2026-11-14 复核）。
+        // 全被第一道闸门静默拦死（2026-11-14）。
         loadingPage = false
         // 网格的缩略图线程池与缓存也归这里收：视图被丢弃后「缩略图线程仍钉住旧视图树」
         // 是 L-1035 同型的泄漏，释放点必须与列表的作废点同处
@@ -1026,7 +1026,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listView.invalidate()
     }
 
-    // ── 点击粘贴 / 长按菜单 ────────────────────────────────
+    // ── 点击粘贴 / 长按菜单 ──
 
     /**
      * 面板侧提示：一律走宿主的 toast（那层包了 runCatching，见 [Listener.onHint]）。
@@ -1226,7 +1226,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    // ── 清空二次确认 ──────────────────────────────────────
+    // ── 清空二次确认 ──
 
     private fun showClearConfirm() {
         confirmBar.visibility = View.VISIBLE
@@ -1237,7 +1237,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         confirmBar.visibility = View.GONE
     }
 
-    // ── UI 辅助 ───────────────────────────────────────────
+    // ── UI 辅助 ──
 
     /**
      * 半透明键盘：按当前档重建分类栏按钮的键面背景。
@@ -1479,7 +1479,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          * 空态：库里有行但一条都读不出来。
          *
          * 不说「暂无历史」是硬要求 —— 那是谎报。
-         * ⚠ **不得附加任何后续行为承诺**：这一形态只说明「本次解密一条都没成功」，
+         * ⚠ 不得附加任何后续行为承诺：这一形态只说明「本次解密一条都没成功」，
          * 竞态 / Keystore 抖动 / 真的换了钥都能造成同一结果，代码无法在此断言「新复制一定入库」，
          * 也不能把用户引向「清空」这种不可逆动作（该入口已于 2026-11-14 撤回）。只说事实。
          */
@@ -1489,12 +1489,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 读取整体失败（查询 / 解密抛异常）：与「暂无历史」「读不出」都不同 —— 前者是没数据，后者是数据坏。
      *
      * ⚠ 不写「可稍后重试」：库升级失败时 `onUpgrade` 整段在一个事务里，失败即 `user_version`
-     * 不前进 ⇒ 每次打开都重跑同一段必然失败的迁移 ⇒ 重试永远不会成功（2026-11-14 复核）。
+     * 不前进 ⇒ 每次打开都重跑同一段必然失败的迁移 ⇒ 重试永远不会成功（2026-11-14）。
      */
     const val TEXT_EMPTY_LOAD_FAILED = "读取剪贴板历史失败\n（数据库无法打开）"
 
         /**
-         * 空态：**扫到止损上限仍一条都没读出来，但后面还有没扫过的行**（BUG.md L-76）。
+         * 空态：扫到止损上限仍一条都没读出来，但后面还有没扫过的行（BUG.md L-76）。
          *
          * 与 [TEXT_EMPTY_UNREADABLE] 的区别是「还有得找」：文案明说可点，点一下沿游标再扫一批
          * （[continueScan]）。首屏止损让「最新 400 行连续坏」时不再白解密全表，代价是更早那批

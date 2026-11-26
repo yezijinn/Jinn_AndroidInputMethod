@@ -59,7 +59,7 @@ class TranslationSettingsActivity : Activity() {
 
     // 避免 setSelection 初始化误触发写配置
     /**
-     * 程序性回填下拉时为 true：此时 `onItemSelected` 只切界面、**不落盘**（2026-10-04 修复 L-820）。
+     * 程序性回填下拉时为 true：此时 `onItemSelected` 只切界面、**不落盘**（2026-10-04，L-820）。
      *
      * 取代原先的 `providerTouched`：那套判据靠 `isFocused || isPressed || isAccessibilityFocused`
      * 猜「是否用户操作」，而下拉弹窗在 ColorOS 上这三项常常都是 false ⇒ 换了服务方凭据区块不跟随，
@@ -198,7 +198,7 @@ class TranslationSettingsActivity : Activity() {
             return
         }
         val appContext = applicationContext
-        // 长活池（BUG.md L-1423）：`CredentialTrace.purge` 的第二段是**非收藏全表逐行 AES-GCM 解密**
+        // 长活池（BUG.md L-1423）：`CredentialTrace.purge` 的第二段是非收藏全表逐行 AES-GCM 解密
         // （见 `ClipboardDb.deleteByCleanedPlaintexts`）。历史上万条时是秒级活，投进短活池会把
         // 面板首屏查询与剪贴板入库排到它后面 —— 每次进出本页都让用户等一次「面板白屏」。
         BackgroundIo.runLong {
@@ -226,7 +226,7 @@ class TranslationSettingsActivity : Activity() {
         } else {
             // 同上：onPause 是自动保存路径，弹 toast 会与失焦那次重复（L-728）
             var wrote = saveCredentials(notify = false)
-            // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03 修复 L-774）：L-758 把它加在了 if/else 之外，
+            // ⚠ 下拉回写也必须在本守卫**之内**（2026-10-03，L-774）：L-758 把它加在了 if/else 之外，
             // 而 L-405 的守卫只判「`importing` 字符串在 onPause 块里出现过」、不判「所有回写都在分支内」
             // ⇒ 一旦可达就是「界面旧值覆盖刚导入的值」。姊妹页 OpenAiSettingsActivity 的同类回写已整段在守卫内。
             //
@@ -256,7 +256,7 @@ class TranslationSettingsActivity : Activity() {
     /**
      * 这次改动**是不是用户做的**。
      *
-     * ⚠ 必须含 [View.isAccessibilityFocused]（2026-10-03 修复 L-758）：读屏与外接键盘选下拉**不产生触摸事件**
+     * ⚠ 必须含 [View.isAccessibilityFocused]（2026-10-03，L-758）：读屏与外接键盘选下拉**不产生触摸事件**
      *   ⇒ 少了这一位，TalkBack 双击选中的服务方 / 目标语言会被判成「不是用户动的」而**不落盘**，
      *   而界面早已切到对应区块，用户以为生效了。姊妹页 `OpenAiSettingsActivity` 现走 [UserAwareSpinner]。
      */
@@ -276,7 +276,7 @@ class TranslationSettingsActivity : Activity() {
         spinnerProvider.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val pickedNow = TranslationProviderId.entries.getOrNull(position) ?: return
-                // ① 界面跟随选择：不看 isFocused / isPressed（2026-10-04 修复 L-820）。
+                // ① 界面跟随选择：不看 isFocused / isPressed（2026-10-04，L-820）。
                 //    旧闸门里那三个判据（isUserDriven = isFocused || isPressed || isAccessibilityFocused）
                 //    在下拉弹窗路径上常常都是 false ⇒ 改了服务方凭据区块不跟随，重开页面才刷新。
                 if (renderedProvider != pickedNow) {
@@ -440,11 +440,11 @@ class TranslationSettingsActivity : Activity() {
     /**
      * 保存修改过的凭据，日志仅输出长度。
      *
-     * @param notify 是否由本函数弹「未写入本机」的 toast。**显式保存那条路要传 `false`**
-     *   （2026-10-03 修复 L-717）：它自己会按三态出文案（未落盘 / 回读不符 / 已保存），
+     * @param notify 是否由本函数弹「未写入本机」的 toast。显式保存那条路要传 `false`
+     *   （2026-10-03，L-717）：它自己会按三态出文案（未落盘 / 回读不符 / 已保存），
      *   两处都弹会互相打脸 —— Toast 队列后者覆盖前者，用户最终只看到信息量最少的那句
      *   「保存未完成，请重试」，而本可执行的「解锁后重试」被吃掉。
-     *   ⚠ **没有默认参数**（2026-10-03 修复 L-814）：四个调用点（onPause / 失焦 / 输入停顿 / 显式保存）
+     *   ⚠ **没有默认参数**（2026-10-03，L-814）：四个调用点（onPause / 失焦 / 输入停顿 / 显式保存）
      *   全都传 `false`，留默认值等于凭空造一条「不传就是弹 toast」的路径 —— 那条路径不存在。
      */
     /**
@@ -481,10 +481,10 @@ class TranslationSettingsActivity : Activity() {
 
         refreshState()
         purgeClipboardHistory(configuredCredentials())
-        // ⚠ 自动保存路径必须也消费 `unpersistedCredentialKeys`（2026-10-03 修复 L-665）：
+        // ⚠ 自动保存路径必须也消费 `unpersistedCredentialKeys`（2026-10-03，L-665）：
         // `writeCredential` 在 Keystore 不可用时把键记进该集合并**删掉磁盘旧密文**（fail-closed，
         // 有意设计），而它的 KDoc 写明「供**显式保存**如实报告」—— 显式保存是 `saveAndNotify` 那条路。
-        // 本页的落盘时机是**失焦 / 输入停顿 / onPause 自动保存**（L-209 已修），也就是说绝大多数改动
+        // 本页的落盘时机是失焦 / 输入停顿 / onPause 自动保存（L-209 已修），也就是说绝大多数改动
         // 根本走不到告知分支：用户看到「已配置 / 已保存」，重启后该家回到未配置 ⇒ **Key 静默丢失**。
         // 不新增状态词，复用既有的 TEXT_SAVE_NOT_PERSISTED。
         val unpersisted = prefs.unpersistedCredentialKeys()
@@ -552,9 +552,9 @@ class TranslationSettingsActivity : Activity() {
             !flushed -> TEXT_SAVE_DISK_FAILED
             unpersisted.isNotEmpty() -> TEXT_SAVE_NOT_PERSISTED
             failed.isNotEmpty() -> TEXT_SAVE_MISMATCH + failed.joinToString("、")
-            // 凭据不完整也要说清（2026-10-03 修复 L-515）：写盘没失败，但同一屏上不能一边
+            // 凭据不完整也要说清（2026-10-03，L-515）：写盘没失败，但同一屏上不能一边
             // 「已保存到本机」一边「未配置：还没填凭据」—— 用户会以为保存没生效而反复粘贴。
-            // ⚠ 判据取**本页选中的那家**（2026-10-03 修复 L-546）：全局 getter 在键未写入时会逐家
+            // ⚠ 判据取**本页选中的那家**（2026-10-03，L-546）：全局 getter 在键未写入时会逐家
             // 推导，已配好 DeepL 的用户来编辑「阿里云」时会被判成「已配置」，收不到这条提示 ——
             // 而这条提示描述的是「你刚编辑的那家」，就该用选中的那家判。
             pickedProvider != null && prefs.translationProvider(pickedProvider) == null -> TEXT_SAVE_INCOMPLETE
@@ -613,7 +613,7 @@ class TranslationSettingsActivity : Activity() {
         )
         textDeeplState.text = stateText(prefs.deeplApiKey.cleanCredential().isNotEmpty())
 
-        // ⚠ 判据收敛到 `OpenAiTranslator.isReady`（2026-10-03 修复 L-811）：原先这里只判
+        // ⚠ 判据收敛到 `OpenAiTranslator.isReady`（2026-10-03，L-811）：原先这里只判
         // 「端点能解析」而**不判 https**，`providerOf` 也一样 ⇒ Base URL 填 `http://` 时本页显示
         // 「已配置 · 模型名」，点翻译却必被 INSECURE 拒掉（界面说配好了、一用就报错）。
         val openAiReady = OpenAiTranslator.isReady(
@@ -621,7 +621,7 @@ class TranslationSettingsActivity : Activity() {
         )
         textOpenAiState.text = when {
             openAiReady -> "${prefs.openAiName} · ${prefs.openAiModel}"
-            // ⚠ 端点不是 https 时说清原因（2026-10-03 修复 L-811）：判据与运行期同源后，
+            // ⚠ 端点不是 https 时说清原因（2026-10-03，L-811）：判据与运行期同源后，
             // `http://` 端点在本页已判「未配置」，若仍只写「点上面的按钮填…」会把用户引去
             // 反复检查已经填好的 Key / 模型名，真因（端点协议）一个字都不提。
             prefs.openAiApiKey.cleanCredential().isNotEmpty() &&
@@ -694,7 +694,7 @@ class TranslationSettingsActivity : Activity() {
         const val TEXT_SAVE_BLOCKED_IMPORTING = "配置导入进行中，暂不可保存"
 
         /**
-         * 写盘成功、但当前服务方的凭据不完整（2026-10-03 修复 L-515）。
+         * 写盘成功、但当前服务方的凭据不完整（2026-10-03，L-515）。
          *
          * 不算失败（配置确实存下来了），但必须说清 —— 否则同一屏上「已保存到本机」与状态文字的
          * 「未配置：还没填凭据」并存，用户会以为保存没生效而反复粘贴。

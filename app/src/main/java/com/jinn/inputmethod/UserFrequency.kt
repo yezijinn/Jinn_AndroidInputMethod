@@ -22,20 +22,20 @@ import javax.crypto.SecretKey
  * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，解析时按天衰减后低于 [MIN_WEIGHT] 的
  * 条目被跳过，文件稳定在几十 KB。
  *
- * **落盘是整份加密的**（[LedgerCrypto] 的行级 AEAD，密钥与台账共用）：
+ * 落盘是整份加密的（[LedgerCrypto] 的行级 AEAD，密钥与台账共用）：
  * `#jinn-freq1` + 一行 `1:base64(iv||密文)`，密文里才是上面那份明文。为什么这里能整份加密、
  * 台账不能：这里上限 3000 行、写盘本身就有 2 秒防抖，一次「解密 → 改 → 加密 → 原子替换」
  * 只有 0.2ms 量级（量级估计，非实测）；台账只增不删、可能几万行，整表重写会把一次按键放大成几 MB 的读写。
  * 旧版明文首行 `# jinn user_freq v1` 在首次读取时一次性迁移成密文。
  *
- * **配置备份包内是明文**：导出走 [readTextForBackup]，导入走 [writeFromBackup] ——
+ * 配置备份包内是明文：导出走 [readTextForBackup]，导入走 [writeFromBackup] ——
  * 包里的词频节是解密后的明文（外层 `.jinn` 壳仍需密码解密），本机加密只管落盘这一层；
  * 系统备份与设备迁移按规则排除词频文件及孤儿件目录，诊断包只收日志目录。
  *
  * 密钥不可用时 **fail-closed**：不写明文、不把「解不开」当成「没有词频」；已学内容留在
  * 内存里等下次落盘（[dirty] 不清），进程退出时 [flush] 如实返回 false。
  *
- * **读失败 = 盘上内容未知**（[loadBlocked]）：这时内存里的表只是一份空壳，任何落盘都先补读一次
+ * 读失败 = 盘上内容未知（[loadBlocked]）：这时内存里的表只是一份空壳，任何落盘都先补读一次
  * （[clearBlockedIfReadable]）—— 否则「开机预加载时设备还没解锁」这一次读失败，会在解锁后
  * 第一个词落盘时把用户几年的词频整份覆盖掉（L-1409，复现：27 条 → 1 条）。
  */
@@ -68,7 +68,7 @@ internal object UserFrequency {
      * 读失败的现实成因是**设备还没解锁**（开机预加载早于用户解锁，`setUnlockedDeviceRequired`
      * 的密钥此时解不开）—— 这是瞬态的，几秒后同一个密钥就可用了。而此前的写法只打一条 W 就
      * `return`，内存表留在初始的空态；解锁后第一个词落盘，[render] 把「1 条」整份写回文件，
-     * 用户的历史词频**当场清零且不可恢复**（复现：27 条 → 1 条）。
+     * 用户的历史词频当场清零且不可恢复（复现：27 条 → 1 条）。
      *
      * 置位期间的规则：`remember` 照常更新内存（本次使用仍能排序），但任何落盘都先补读
      * （[clearBlockedIfReadable]）；补读仍失败就**不写**，让 [dirty] 留着等下一次机会。
@@ -113,7 +113,7 @@ internal object UserFrequency {
     /** 当天 tick（天计数），与 librime 的 tick 语义一致 */
     private fun today(): Int = (System.currentTimeMillis() / 86_400_000L).toInt()
 
-    // ── 生命周期 ────────────────────────────────────────────────────────────
+    // ── 生命周期 ──
 
     /**
      * 启动加载（必须在后台线程、且显式降优先级）：读文件 + 按天衰减。
@@ -128,7 +128,7 @@ internal object UserFrequency {
      * [load] 的文件部分（拆出来是为了让纯 JVM 单测能真跑一遍「读失败」路径 —— `load` 要 Context）。
      *
      * 读失败（密钥不可用 / 密文损坏）时置 [loadBlocked]：**盘上的内容未知**。⚠ 这里只置标志、
-     * **绝不清 [entries] 冒充「没有词频」**，也绝不在随后落盘时把空表写回文件。
+     * 绝不清 [entries] 冒充「没有词频」，也绝不在随后落盘时把空表写回文件。
      */
     internal fun loadFromFile(f: File, enabled: Boolean) {
         this.enabled = enabled
@@ -302,7 +302,7 @@ internal object UserFrequency {
 
     internal fun sizeForTest(): Int = entries.size
 
-    // ── 学习 ────────────────────────────────────────────────────────────────
+    // ── 学习 ──
 
     /**
      * 记一次「用户选择了 [word]」。主线程调用，只做一次哈希更新 + 防抖落盘，绝不阻塞输入。
@@ -502,7 +502,7 @@ internal object UserFrequency {
         }
     }
 
-    // ── 排序 ────────────────────────────────────────────────────────────────
+    // ── 排序 ──
 
     /**
      * 按用户权重稳定重排候选：权重降序，未学过的按原顺序排在后面。
@@ -535,7 +535,7 @@ internal object UserFrequency {
         return Array(words.size) { words[order[it]] }
     }
 
-    // ── 序列化（纯函数，便于单测）──────────────────────────────────────────
+    // ── 序列化（纯函数，便于单测） ──
 
     /**
      * 把内存态渲染成文件文本（纯函数）。权重降序，便于人肉排查。
@@ -653,7 +653,7 @@ internal object UserFrequency {
     }
 
     /**
-     * 备份导入专用：把合并后的文本**在同一把写盘锁内**加密落盘并同步内存态。
+     * 备份导入专用：把合并后的文本在同一把写盘锁内加密落盘并同步内存态。
      *
      * 必须走这里，而不是「[writeEncryptedAtomically] + [load]」两步：运行期的防抖落盘
      * （[scheduleSave]）与 [flush] 会在任意时刻把**内存里的旧快照**写回同一个文件，两步之间被插一脚，
@@ -702,7 +702,7 @@ internal object UserFrequency {
     /** 词频文件文本的行数统计（备份页预览用；坏行不计） */
     internal fun countEntries(text: String): Int = parse(text, today(), PinyinEngine::toSimplified).size
 
-    // ── 落盘加密（整份 AEAD，密钥与台账共用）────────────────────────────────
+    // ── 落盘加密（整份 AEAD，密钥与台账共用） ──
 
     /**
      * 明文正文 → 加密文件文本：`#jinn-freq1` + 一行 `1:base64(iv||密文)`。
@@ -716,7 +716,7 @@ internal object UserFrequency {
     /**
      * 加密文件文本 → 明文正文；解不开返回 null。
      *
-     * 判据是「**找到第一条能解开的记录行**」而不是「首行必须是 [ENC_HEADER]」：首行标识一旦被删
+     * 判据是「找到第一条能解开的记录行」而不是「首行必须是 [ENC_HEADER]」：首行标识一旦被删
      * （外部改写 / 部分恢复），仍然读得出来 —— 与台账缺头台账同一种处置（N3）。
      */
     internal fun decryptDoc(text: String, key: SecretKey): String? {
@@ -806,7 +806,7 @@ internal object UserFrequency {
     /**
      * 配置备份**导出**专用：把词频文件读成**明文**（包内条目必须是明文）。
      *
-     * @return 明文；文件不存在返回空串；**读不出 / 解不开返回 null** ——
+     * @return 明文；文件不存在返回空串；读不出 / 解不开返回 null ——
      *   调用方必须据此中止导出，静默按「空节」导出会让用户以为备份完整，换机后这部分全丢
      *   （与既有的 BUG-06 修复同一口径）。
      */
