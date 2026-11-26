@@ -32,7 +32,7 @@ object Diagnostics {
     private const val KEEP_DAYS = 7L
 
 /**
- * 日志目录的**体积**预算（BUG.md L-170）：**100MB**。
+ * 日志目录的体积预算（BUG.md L-170）：**100MB**。
  *
  * 年龄闸（[KEEP_DAYS]）保证「不超 7 天」，不保证「不超多少 MB」：崩溃循环下每次崩溃都会新增一份
  * 3000 行快照（文件名带毫秒），一天就能写出几百 MB。这里补一条总量闸：超预算时按**最旧先删**
@@ -105,7 +105,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     private const val VERBOSE_TO_FILE = false
 
     /**
-     * 按键 / 候选这类**高频热路径** V 级日志的编译期开关（跨批接口 C-2）。
+     * 按键 / 候选这类**高频热路径** V 级日志的调用点开关（跨批接口 C-2）。
      *
      * 为什么必须由**调用点**使用：Kotlin 的字符串模板在实参处就已求值 ——
      * `Diagnostics.v(TAG, "键触摸 DOWN $key")` 即使内部不落盘，字符串与拼接也已经建好，
@@ -502,7 +502,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     private val traceSeq = IntArray(1)
 
     /**
-     * 生成一次操作的 Trace ID，例如 `CLIP-8F31`。
+     * 生成一次操作的 Trace ID，例如 `CLIP-0001-8F31`（模块-序号-随机数）。
      * 一次用户操作（打开剪贴板/开始听写/切换键盘）生成一个 ID，
      * 后续所有相关日志携带同一 ID，从日志里搜 ID 即可还原完整调用链。
      * @param module 模块前缀，如 CLIP / IME / ASR / PINYIN
@@ -596,7 +596,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         }
         // V 级默认不落盘：音频包这类日志每秒可达 10 条，落盘会把诊断文件淹成噪音流
         // （成本本身很低 —— 常驻句柄 + 页缓存，见 [streamFor]）；逐键级别的 V 级更是连字符串
-        // 构造都在调用点用 [KEY_TRACE] 编译期消除了，不欠这两笔。
+        // 构造都在调用点用 [KEY_TRACE] 挡住（release 下由 R8 消除整段），不欠这两笔。
         if (level == 'V' && !VERBOSE_TO_FILE) return
         val dir = logDir ?: return
         maybeCleanupOldLogs()
@@ -607,7 +607,7 @@ private const val LOG_SEGMENTS_KEPT = 2
             .append(" [").append(Thread.currentThread().name).append("] ")
             // 落盘走护栏（脱敏 + 截断）；logcat 上面已用原文输出
             .append(sanitizeForFile(msg)).append('\n')
-        // 堆栈：脱敏 + 摊平非帧行（见 [flattenNonFrameLines]）。异常 message 可嵌用户可控串
+        // 堆栈：脱敏 + 非帧行逐行处理（见 [flattenNonFrameLines]）。异常 message 可嵌用户可控串
         // （Base URL、host、导入包里的设备名、JSON 片段），带一个换行就能伪造含时间戳与级别的假日志行，
         // 与正文护栏动机逐字相同。帧行（`at …`）由编译器生成，原样保留才可读；整体不截断（会砍关键帧）。
         tr?.let {
@@ -616,18 +616,23 @@ private const val LOG_SEGMENTS_KEPT = 2
             // `类名: message` + 帧行 + `\tCaused by: 类名: message` + 帧行 + `\tSuppressed: …`。
             // cause / suppressed 的 message 同样用户可控（Base URL、host、导入包设备名、JSON 片段），
             // 落在首个 `\n\tat ` 之后 ⇒ 只护首段仍可伪造完整日志行。
-            // 判据：只有**帧行**（`\tat …` / `\t... N more`）原样保留；其余一律摊平换行。
+            // 判据：只有**帧行**（`\tat …` / `\t... N more`）原样保留；其余行替换 `\r` / `\0`。
+            // ⚠ 换行已在拆行时消耗，片段内没有可替换目标 ⇒ message 自带的换行仍独立成行，
+            // 伪造并未堵住（台账 L-1385 待复核）。
             sb.append(flattenNonFrameLines(stack)).append('\n')
         }
         appendToFile(dir, sb.toString())
     }
 
     /**
-     * 摊平堆栈里的**非帧行**：只有 `\tat …` / `\t... N more` 这类编译器生成的帧行原样保留。
+     * 处理堆栈里的非帧行：只有 `\tat …` / `\t... N more` 这类编译器生成的帧行原样保留。
      *
      * `Caused by:` / `Suppressed:` 段以 `\t` 开头，但它们是异常 message、用户可控，
      * 带一个换行就能在日志文件里插入一条含时间戳与级别的假日志行（且随诊断包外传）。
-     * 摊平只改换行符，不截断 —— 截断会砍掉关键帧。
+     *
+     * ⚠ 现行实现先按 `\n` 拆行、再对每行替换 `\r` / `\0`：片段内已无换行可改，
+     * message 自带的换行仍原样落在独立行 —— 上述伪造并未被堵住（台账 L-1385 待复核）。
+     * 整体不截断：截断会砍掉关键帧。
      */
     private fun flattenNonFrameLines(stack: String): String {
         val flat = StringBuilder(stack.length + 16)

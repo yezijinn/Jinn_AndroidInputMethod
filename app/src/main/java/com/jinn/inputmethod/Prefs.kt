@@ -61,7 +61,7 @@ object VoiceBackend {
 }
 
 /**
- * 备份里**单个字符串值**的长度上限（导入侧闸与写入侧闸**共用同一来源**，2026-10-02 修复 L-375）。
+ * 备份里**单个字符串值**的长度上限（导入侧闸与写入侧闸共用同一来源，2026-10-02 修复 L-375）。
  *
  * 取 64 KB：它本是 `asString` 的既有阈值（对抗性防护 —— 外部包塞一个巨大字符串），此前
  * **只用在导入侧**，于是出现「自产的包不一定导得回来」：导出不设限 ⇒ 该键被自己的导入端拒收，
@@ -1627,11 +1627,6 @@ class Prefs(private val appContext: Context) {
         set(value) = writeCredential(KEY_BAIDU_LLM_API_KEY, value)
 
     /**
-     * OpenAI 兼容：配置名称（仅用于列表与摘要显示，如 `DeepSeek` / `本地 Ollama`）。
-     *
-     * 多配置档（新增 / 复制 / 删除 / 导入导出）尚未实现；当前只支持单档的完整配置。
-     */
-    /**
      * 「留空即默认」字段的统一读法（2026-10-01，L-251）。
      *
      * 设置页会把 getter 的**默认值**灌进输入框，用户打开一次页面再返回就会回写一次，所以存量里
@@ -1670,6 +1665,11 @@ class Prefs(private val appContext: Context) {
         if (v.isEmpty() || v == fallback) remove(key) else putString(key, v)
     }
 
+    /**
+     * OpenAI 兼容：配置名称（仅用于列表与摘要显示，如 `DeepSeek` / `本地 Ollama`）。
+     *
+     * 多配置档（新增 / 复制 / 删除 / 导入导出）尚未实现；当前只支持单档的完整配置。
+     */
     var openAiName: String
         get() = defaulted(strOr(KEY_OPENAI_NAME, "").orEmpty(), OpenAiTranslator.DEFAULT_PROFILE_NAME)
         set(value) = putDefaulted(KEY_OPENAI_NAME, value, OpenAiTranslator.DEFAULT_PROFILE_NAME, multiline = true)
@@ -1827,7 +1827,7 @@ class Prefs(private val appContext: Context) {
      * 按 [id] 组装 Provider —— **只读该家的凭据**（2026-10-03 修复 L-530 / L-531）。
      *
      * 此前把关凭据的 10 个 getter 全部作为 `providerOf` 的参数求值（Kotlin 的参数在调用前求值）
-     * ⇒ 冷缓存下一次翻译要在**主线程**做最多 8 次 TEE 解密（本机实测约 1.1 ms/次 = **约 9 ms 停顿**），
+     * ⇒ 冷缓存下一次翻译要在**主线程**做最多 8 次 TEE 解密（本机实测约 1.1 ms/次 = 约 9 ms 停顿），
      * 而本次只用其中一家；且 `translateProvider` 的 getter 在键未写入时会**逐家探测凭据**
      * （首次使用者必然如此），同帧还会被求值两次。现在 id 只求值一次、凭据只读该家。
      *
@@ -2659,7 +2659,10 @@ class Prefs(private val appContext: Context) {
         private const val KEY_FUZZY_PINYIN = "fuzzy_pinyin"
         private const val KEY_VOICE_INPUT = "voice_input"
 
-        /** 语音后端（"caps" / "xf" / "oai" / "ali" / "tencent" / "azure" / "baidu" / "deepgram"，见 [VoiceBackend]） */
+        /**
+         * 语音后端取值：`caps` / `xf` / `oai` / `ali` / `tencent` / `azure` / `baidu` / `deepgram`。
+         * 见 [VoiceBackend]。
+         */
         private const val KEY_VOICE_BACKEND = "voice_backend"
 
         /** 讯飞听写三件凭据（加密落盘，见 [readCredential]） */
