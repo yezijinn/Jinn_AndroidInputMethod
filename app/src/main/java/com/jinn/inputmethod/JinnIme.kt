@@ -500,7 +500,7 @@ class JinnIme : InputMethodService() {
     private val failCooldownMs = 3_000L
 
     /**
-     * 翻译看门狗（2026-10-01 审查 L-217）。
+     * 翻译看门狗（2026-10-01，L-217）。
      *
      * OkHttp 在调用 `onResponse` **之前**就把 `signalledCallback` 置位 ⇒ 回调内部抛出的异常
      * 不会回落到 `onFailure`（只被平台记一条 INFO）。少了这道兜底，`translateInFlight`
@@ -1121,7 +1121,7 @@ class JinnIme : InputMethodService() {
         // 「无选区」是 start == end，不是 null。调用方必须区分对待 ——
         // 编辑键（全选 / 复制）按「无选区」处理无碍，译文提交绝不能（fail-closed）。
         val extracted = runCatching {
-            // 与读取路径同口径设 hintMaxChars（2026-10-01 审查 L-263）：空构造意味着不限长，
+            // 与读取路径同口径设 hintMaxChars（2026-10-01，L-263）：空构造意味着不限长，
             // 长文档下每次选区探测都会让宿主回包整篇窗口、落在主线程；事务过大时抛异常被吞成
             // null，又会落进「按无选区放行」那条路。这里只要位置，给个明确上限即可。
             connection.getExtractedText(
@@ -1187,7 +1187,7 @@ class JinnIme : InputMethodService() {
             return if (range.start == range.end) AppendCheck.OK else AppendCheck.SELECTION_PRESENT
         }
         val selected = runCatching { connection.getSelectedText(0)?.toString() }.getOrElse {
-            // **抛异常 ≠ 没有选区**（2026-10-01 审查 L-262）：宿主没实现该 API、或文档过大导致
+            // **抛异常 ≠ 没有选区**（2026-10-01，L-262）：宿主没实现该 API、或文档过大导致
             // 事务异常，都会走到这里。此前一律放行，于是「宿主有实时选区但两个 API 都不报」时，
             // 提交前的原文比对会通过（选区全程没动），`commitText` 按替换语义删掉用户选中的文本。
             // 现在按危险处理 —— 只有明确返回空才算「确实没有选中内容」。
@@ -2084,7 +2084,7 @@ class JinnIme : InputMethodService() {
         pinyinKeyboard?.stopPanelBackgroundWork()
         pinyinKeyboard = pinyin
         // 视图态重放：凡新建视图就重放 IME 侧持有的状态 —— 绑在「视图创建」这件事上，
-        // 而不是绑在某个调用点（2026-10-03 审查 A2）。新视图的这两个字段一律是初值
+        // 而不是绑在某个调用点（2026-10-03）。新视图的这两个字段一律是初值
         // （`suppressLearning=false` / `translateInFlight=false`），不重放就与 IME 侧真实状态
         // 分叉：密码框里选候选会被学进词频；在途翻译时按钮渲染成**可点的「翻译」**，
         // 点下去被 `startTranslate` 的在途闸门静默吞掉（用户视角 = 按钮没反应，日志里连
@@ -3441,12 +3441,12 @@ class JinnIme : InputMethodService() {
                     when (VoiceBackend.of(prefs.voiceBackend)) {
                         VoiceBackend.XF -> TEXT_XF_OFFLINE
                         VoiceBackend.OAI -> TEXT_OAI_OFFLINE
-                        // 同上：else 是自建那条，会把 NAS 的 host:port 报给用第四家的用户
+                        // else 是自建那条，会把 NAS 的 host:port 报给用阿里百炼的用户
                         VoiceBackend.ALI -> TEXT_ALI_OFFLINE
-                        // 第五、六家同理：落到 else 会说「自建服务端未连接（host:port）」
+                        // 腾讯云 / Azure 各自一支同理：落到 else 会说「自建服务端未连接（host:port）」
                         VoiceBackend.TENCENT -> TEXT_TENCENT_OFFLINE
                         VoiceBackend.AZURE -> TEXT_AZURE_OFFLINE
-                        // 第七、八家同理：落到 else 会说「自建服务端未连接（host:port）」
+                        // 百度 / Deepgram 同理：落到 else 会说「自建服务端未连接（host:port）」
                         VoiceBackend.BAIDU -> TEXT_BAIDU_OFFLINE
                         VoiceBackend.DEEPGRAM -> TEXT_DEEPGRAM_OFFLINE
                         else -> getString(R.string.voice_offline_blocked, prefs.host, prefs.port)
@@ -3596,7 +3596,7 @@ class JinnIme : InputMethodService() {
         // 换视图后重放敏感框抑制（BUG.md L-96）与「翻译中」状态：新视图这两个字段默认 false，
         // 不重放会在密码框里把候选学进词频、或在在途翻译时让按钮渲染成**可点的「翻译」**
         // 而 IME 侧闸门还关着（点击被静默吞掉）。
-        // 2026-10-03 审查 A2 起，这两个重放已统一放进 `onCreateInputView()` 末尾
+        // 2026-10-03 起，这两个重放已统一放进 `onCreateInputView()` 末尾
         // （凡新建视图就重放，框架自己调它时也覆盖），这里保留一份是幂等的兜底：
         // setInputView 同步更新 pinyinKeyboard，重放仍落在新视图上。
         pinyinKeyboard?.setSuppressLearning(suppressLearningForSession)
@@ -4699,7 +4699,7 @@ class JinnIme : InputMethodService() {
         // 总开关是「关掉即不可能发请求」的闸门（2026-09-30）：功能面板只按它渲染按钮，
         // 而关开关**不是**面板重绘入口 —— 面板还带着旧的第 7 键时，点下去照样会发起真实请求。
         if (!prefs.translateEnabled) {
-            // 无声无痕是不可接受的（2026-10-03 审查 A3）：关掉总开关**不是**面板重绘入口，
+            // 无声无痕是不可接受的（2026-10-03）：关掉总开关**不是**面板重绘入口，
             // 面板若还带着旧的「翻译」键，它就是亮的、可点的，点下去却毫无反应 ——
             // 用户只会以为键盘坏了，而诊断包里连这次点击都查不到。补一条 W（零成本的一半；
             // 另一半是「把总开关变更做成面板重绘入口」，属设计取舍）。
@@ -4928,7 +4928,7 @@ class JinnIme : InputMethodService() {
             toast(TEXT_TRANSLATE_FAIL_COOLDOWN)
             return
         }
-        // 选区模式**不能**在被截断时替换（2026-10-01 审查 L-261）：截断只作用于上传的那一份，
+        // 选区模式**不能**在被截断时替换（2026-10-01，L-261）：截断只作用于上传的那一份，
         // 服务端返回的译文也只覆盖选中的前一段，拿它替换整个选区会把后半段原文删掉，
         // 而 `commitText` 不保证可撤销。这里在发请求前就拒绝 —— 既不花钱，也能把原因说清。
         if (replaceSelection && slice.truncated) {
@@ -5032,14 +5032,14 @@ class JinnIme : InputMethodService() {
         }
         translateInFlight = true
         val generation = ++translateGeneration
-        // 看门狗**紧跟置位**挂上（2026-10-03 审查 A5）：它此前排在置位之后的一串调用
+        // 看门狗**紧跟置位**挂上（2026-10-03）：它此前排在置位之后的一串调用
         // （setTranslating / 日志 / toast / TranslateSnapshot）末尾，那些调用任一抛出
         // （视图被拆、Toast 异常…）都会留下 `translateInFlight = true` 却没有看门狗，
         // 同一会话内按钮永久「翻译中」，只剩会话边界能复位。
         ui.removeCallbacks(translateWatchdog)
         ui.postDelayed(translateWatchdog, TRANSLATE_WATCHDOG_MS)
         // 本次请求的上下文（2026-10-03，L-615/L-617）：放在**挂表之后**，
-        // 以免影响上面那条「置位 → 挂表之间不夹任何可能抛出的调用」的顺序约束（A5）。
+        // 以免影响上面那条「置位 → 挂表之间不夹任何可能抛出的调用」的顺序约束。
         // 赋值本身不会抛，且看门狗最早 330s 后才可能触发。
         translateStartedAtMs = monotonicMs()
         translateProviderName = provider.javaClass.simpleName
@@ -5072,10 +5072,10 @@ class JinnIme : InputMethodService() {
             slice.appendOffset,
             replaceSelection,
         )
-        // 看门狗已提前到置位之后立即挂上（见上，2026-10-03 审查 A5）；这里只留它存在的理由：
+        // 看门狗已提前到置位之后立即挂上（见上，2026-10-03）；这里只留它存在的理由：
         // OkHttp 在调用 onResponse **之前**就置了 `signalledCallback`，回调内部抛出的异常
         // 不会回落到 onFailure ⇒ 少了这道兜底，`translateInFlight` 会永久为真、按钮永远
-        // 「翻译中」（2026-10-01 审查 L-217）。预算 = 超时上限 + 余量。
+        // 「翻译中」（2026-10-01，L-217）。预算 = 超时上限 + 余量。
         runCatching {
             // 存下请求句柄（2026-10-03，L-494）：四条入口收尾
             // 看门狗超时/回调到达/发起失败/会话边界(cancelTranslate)
@@ -5357,7 +5357,7 @@ class JinnIme : InputMethodService() {
         }
         // ③ 「追加位置不确定」与「before 被截断」这两条已提到发请求之前（见 startTranslate 内的
         //    前置判据，L-278 / L-277）—— 它们与快照内容无关，放在这里只会让用户白等一轮并付费。
-        // ④ 译文的可见性与长度**先判**（2026-10-01 审查 L-221 / L-222）：这两道闸原先排在移动
+        // ④ 译文的可见性与长度**先判**（2026-10-01，L-221 / L-222）：这两道闸原先排在移动
         //    光标之后，拒绝时光标已被移走而正文一个字没加 —— 用户接着打字就打在原文区间末尾。
         // 净化在判空之前：`U+202E` 这类双向控制符既非空白也不在零宽表里，「有可见内容」成立，
         // 可它写进输入框会改变用户自己那段文字的显示顺序（2026-10-01，L-314）。
@@ -5921,7 +5921,7 @@ class JinnIme : InputMethodService() {
                 label = when (VoiceBackend.of(prefs.voiceBackend)) {
                     VoiceBackend.XF -> TEXT_XF_ONLINE
                     VoiceBackend.OAI -> TEXT_OAI_ONLINE
-                    // 第四家必须自己一支：落到下面的 else 会拿**自建服务端的** host:port 拼成
+                    // 阿里百炼必须自己一支：落到下面的 else 会拿**自建服务端的** host:port 拼成
                     // 「已连接 192.168.x.x:6016」，而此刻连的根本不是那台 NAS（2026-11-01）
                     VoiceBackend.ALI -> TEXT_ALI_ONLINE
                     VoiceBackend.TENCENT -> TEXT_TENCENT_ONLINE
@@ -6141,7 +6141,7 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_AFTER_UNREADABLE = "当前输入框读不到光标后内容，未发起"
 
         /**
-         * 选区模式专用：提交阶段读不到或读不回选中的内容（2026-10-01 审查 L-264）。
+         * 选区模式专用：提交阶段读不到或读不回选中的内容（2026-10-01，L-264）。
          *
          * 不能复用光标模式的两条 —— `TEXT_TRANSLATE_STALE` 说的是「未**追加**译文」（选区模式是替换），
          * `TEXT_TRANSLATE_BEFORE_UNREADABLE` 更写着「未发起翻译」，而此刻请求早已发出、原文早已上传，
@@ -6149,11 +6149,11 @@ class JinnIme : InputMethodService() {
          */
         const val TEXT_TRANSLATE_SELECTION_STALE = "选中内容已变化或读不到，未替换"
 
-        /** 「光标前全部」在读取窗口被截断时取不到文首（2026-10-01 审查 L-277） */
+        /** 「光标前全部」在读取窗口被截断时取不到文首（2026-10-01，L-277） */
         const val TEXT_TRANSLATE_BEFORE_TOO_LONG =
             "光标前内容超出读取上限，取不到文首的全部（可改用「光标前本行」）"
 
-        /** 选区模式专用：选中内容超上限时替换会丢掉尾部原文，宁可拒绝（2026-10-01 审查 L-261） */
+        /** 选区模式专用：选中内容超上限时替换会丢掉尾部原文，宁可拒绝（2026-10-01，L-261） */
         const val TEXT_TRANSLATE_SELECTION_TOO_LONG =
             "选中内容超出单次上限，未处理（缩短选择，或在 翻译设置 → 翻译原文范围 里调大字节上限）"
 

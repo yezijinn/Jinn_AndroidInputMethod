@@ -87,7 +87,7 @@ internal class AzureTranslator(
          * 同仓阿里云的 HTTP 表也是 404 → AUTH）。
          */
         internal fun errorOf(code: Int): TranslationError = when (code) {
-            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01 审查 L-273）
+            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01，L-273）
             401, 404 -> TranslationError.AUTH
             403, 429 -> TranslationError.QUOTA
             408 -> TranslationError.TIMEOUT

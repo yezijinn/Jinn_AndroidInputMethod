@@ -2186,7 +2186,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         keySemicolon.setFaceAlpha(keyFaceAlpha)
         // 数字行：与字母键同一档面透明度（文字不淡，只淡面）
         for (key in numberRowKeys) key.setFaceAlpha(keyFaceAlpha)
-        // 功能键面：shift/删除键走既有动态背景（alpha 已并进其构建缓存），其余六个重建一次
+        // 功能键面：shift/删除键走既有动态背景（alpha 已并进其构建缓存），其余七个重建一次
         refreshShiftBackground()
         refreshBackspaceBackground()
         rebuildFunctionKeyBackgrounds()
@@ -2692,7 +2692,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 不在密码模式，且**回不去**（用户正输密码时键盘变回普通键盘，状态无从恢复）。
      * 定时换肤（`MODE_SCHEDULED` 的 `themeTick`）走的正是这条判据 ⇒ 漏掉它就会在打字期间静默退出。
      *
-     * ~~**在途翻译也要算**~~：**已移除**（2026-10-03，L-613）。原先把 `translateInFlight` 算进来，
+     * 不再把在途翻译算进来（2026-10-03，L-613）。原先把 `translateInFlight` 算进来，
      * 理由是「重建后视图字段恒为 false ⇒ 按钮渲染成**可点的「翻译」**、点击被在途闸门静默吞掉」——
      * 但那个理由已被视图重放消解：重放现在写在 `onCreateInputView()` 里（凡新建视图就重放，
      * 见 L-610），重建后按钮会正确显示「翻译中」。留着它的代价是用户可见的副作用：
@@ -2714,7 +2714,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         get() = pressedKeyPointers > 0
 
     /**
-     * 视图即将被换掉：让两个面板中止仍在跑的后台任务。
+     * 视图即将被换掉：让三个面板中止仍在跑的后台任务。
      *
      * 面板的任务靠各自的 `refreshToken` 判停，而令牌只在面板打开/收起时递增 —— 重建键盘视图
      * 不走这两个入口，不作废就会让旧面板把任务跑完、把结果 post 到已脱离视图树的列表上
@@ -3319,7 +3319,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         colorRes: Int,
         onClick: (String) -> Unit,
     ) {
-        // 候选形态与数字行无关（数字行常驻在 26 键区，显隐只认开关）。
+        // 候选形态与数字行无关（数字行属 26 键区，显隐见 [syncNumberRow]，不参与候选排布）。
         // 分页渲染：候选集变了就复位首屏条数；否则沿用当前窗口（用户已滑到底追加过的条数）。
         // 用**结构相等**比对：同一串拼音被重复查询时引擎会给出一份内容相同的新 list，
         // 按引用比对会把它当「新候选」复位 —— 用户滑到底刚展开的候选会被打回收起。
@@ -5108,7 +5108,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 数字行显隐（**唯一入口**）：唯一数据源 = [Prefs.numberRowEnabled]，另有两条**互斥**判据。
+     * 数字行显隐（**唯一入口**）：唯一数据源 = [Prefs.numberRowEnabled]，另有三条**互斥**判据。
      *
      * 四条判据各自对应一处「不挡就同屏」的冲突面：
      *  - 开关关 ⇒ GONE。且是 GONE 而不是 `removeView`：`removeView` 会让「谁把子视图藏了、

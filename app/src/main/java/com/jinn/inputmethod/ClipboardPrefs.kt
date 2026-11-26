@@ -312,11 +312,10 @@ class ClipboardPrefs(context: Context) {
      */
     internal fun exportForBackup(): Map<String, ConfigBackup.BackupValue> {
         val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
-        // ⚠ `enabled` **不进备份**（2026-10-03 修复 L-751；2026-10-06 复核仍成立）：
-        // 它自 2026-10-06 起已是「剪贴板自定义」页里的用户开关（不再是强制 true 的产品不变量），
-        // 但导出侧照样不写回 —— 「覆盖还原」一份带 `enabled=false` 的包会静默停止剪贴板采集，
-        // 导入摘要与完成提示都不提它，且该状态会在包与本机之间自我传播。
-        // 与 [KEY_RECLASSIFIED] 同类：跨机迁移时开关该不该跟着走尚未定论，先不随包走。
+        // ⚠ `enabled` **不进备份**（2026-10-03，L-751）：它自 2026-10-06 起已是
+        // 「剪贴板自定义」页里的用户开关（不再是强制 true 的产品不变量），但导出侧照样不写回 ——
+        // 「覆盖还原」一份带 `enabled=false` 的包会静默停止剪贴板采集，导入摘要与完成提示都不提它，
+        // 且该状态会在包与本机之间自我传播。与 [KEY_RECLASSIFIED] 同类：不随包走。
         ConfigBackup.BackupValue.of(maxItems)?.let { out[KEY_MAX_ITEMS] = it }
         ConfigBackup.BackupValue.of(maxTotalBytesMb)?.let { out[KEY_MAX_TOTAL_MB] = it }
         ConfigBackup.BackupValue.of(favoriteMaxItems)?.let { out[KEY_FAV_MAX_ITEMS] = it }
@@ -326,7 +325,7 @@ class ClipboardPrefs(context: Context) {
         ConfigBackup.BackupValue.of(maxItemBytesKb)?.let { out[KEY_MAX_ITEM_KB] = it }
         ConfigBackup.BackupValue.of(historyPageSize)?.let { out[KEY_HISTORY_PAGE_SIZE] = it }
         // 图片四项：同为用户偏好（历史容量语义的一部分），换机应当带走。
-        // ⚠ 图片**文件**不进备份（见实施计划 §1 U4），带走这四项只影响「新机器上后续采集」的额度。
+        // ⚠ 图片**文件**不进备份，带走这四项只影响「新机器上后续采集」的额度。
         ConfigBackup.BackupValue.of(imageCaptureEnabled)?.let { out[KEY_IMAGE_ENABLED] = it }
         ConfigBackup.BackupValue.of(imageMaxItems)?.let { out[KEY_IMAGE_MAX_ITEMS] = it }
         ConfigBackup.BackupValue.of(imageMaxTotalMb)?.let { out[KEY_IMAGE_MAX_TOTAL_MB] = it }
@@ -429,7 +428,7 @@ class ClipboardPrefs(context: Context) {
         const val DEFAULT_MAX_TOTAL_MB = 100
 
         /**
-         * 图片三项的默认值（2026-10-10 实施计划 §4.2）。
+         * 图片三项的默认值。
          *
          * 300 张 / 200MB / 单张 20MB：单张对齐 `GalleryInsert.MAX_BYTES`（两条链路的「一张图
          * 多大能处理」必须同答案）；总量与张数按「常态 100 张内、极端不失控」取值 ——
@@ -532,7 +531,7 @@ class ClipboardPrefs(context: Context) {
         private const val KEY_MAX_ITEM_KB = "max_item_kb"
         private const val KEY_HISTORY_PAGE_SIZE = "history_page_size"
 
-        /** 图片四项（2026-10-10 实施计划 §4.2） */
+        /** 图片四项 */
         private const val KEY_IMAGE_ENABLED = "image_capture_enabled"
         private const val KEY_IMAGE_MAX_ITEMS = "image_max_items"
         private const val KEY_IMAGE_MAX_TOTAL_MB = "image_max_total_mb"

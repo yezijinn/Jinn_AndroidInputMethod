@@ -130,7 +130,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      *
      * 刻意**不**「收起即清」：保留「收起再开还是热的」即时性，
      * 同时把常驻时间限在 [CACHE_RELEASE_DELAY_MS] 内。任务只持本视图的弱引用，
-     * 且排程会被 [onPanelShown] 与 [stopBackgroundWork] 撤销。
+     * 且排程会被 [onPanelShown] / [onPanelHidden] / [onDetachedFromWindow] / [stopBackgroundWork] 撤销。
      */
     private val cacheReleaseHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -510,7 +510,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         TextView(context).apply {
             text = label
             gravity = Gravity.CENTER
-            // 11sp + 8dp 内边距：翻页那 5 个按钮（← / → / 布局 / 刷新 / 其他）要在一行里排下，
+            // 11sp + 8dp 内边距：翻页那 5 个按钮（← / → / 布局 / 刷新 / 单选）要在一行里排下，
             // 系统字体放大时也要（退出口与「自动返回」都已移出本行，见 buildTitleRow 末尾）。
             // 比剪贴板面板那套紧一档（L-1028）
             textSize = 11f

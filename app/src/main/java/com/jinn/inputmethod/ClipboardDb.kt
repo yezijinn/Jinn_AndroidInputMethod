@@ -38,7 +38,7 @@ internal fun trimOverflow(nonFavoriteCount: Int, maxItems: Int): Int =
  * 删除来源：用户主动删除 / 迁移去重（v4 一次性 `mergeDuplicates`）/ 容量裁剪 /
  * 凭据清理（[CredentialTrace] → `deleteByPlaintext` / `deleteByCleanedPlaintexts`）。
  * ⚠ 「有行无文件」的图片行**不再自动删**：`File.isFile` 在权限/IO 抖动时返回 false，
- * 而那条路径连收藏一起删（2026-11-14 复核，`ClipboardImageFiles.deleteMissingRows`）。
+ * 而那条路径连收藏一起删（2026-11-14：`ClipboardImageFiles.deleteMissingRows`）。
  * ⚠ 库损坏时平台会删库重建，`SQLiteOpenHelper` 没有公开的 `onCorruption` 覆写点（API 34
  * 的 SDK 里该方法不可见），本类接管不了；唯一线索是 [onCreate] 打的那条「库新建」日志 ——
  * 它和「密钥失配」在界面上同形，排查时先看这里。
@@ -877,29 +877,25 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * 裁剪历史：条数（[trimByCount]）→ 体积（[trimByByteBudget]）→ 图片预算（[trimImages]，
-     * 张数 / 字节任一超限）→ 收藏软上限（[trimFavorites]）。
+     * 裁剪历史：收藏软上限（[trimFavorites]）→ 条数（[trimByCount]）→
+     * 体积（[trimByByteBudget]）→ 图片预算（[trimImages]，张数 / 字节任一超限）。
      *
+     * 收藏软上限排第一：它是唯一能从「受保护行」释放额度的通道。
      * 文本两条只统计与淘汰**文本**行；图片行由 [trimImages] 单独管（预算完全分离）。
-     *
      * 裁剪优先级：只取非收藏的最旧记录（见 [TRIM_PRIORITY]）。
-     *
-     * 任一维度剩的全是收藏、删不到目标时即停止，
-     * 宁可超出上限，也不删用户明确标记保留的内容。
+     * 任一维度剩的全是收藏、删不到目标时即停止 —— 宁可超出上限，
+     * 也不删用户明确标记保留的内容。
      *
      * ⚠ 唯一的例外是 [trimFavorites]：收藏**自身**的软上限（用户显式设置，见
      * [ClipboardPrefs.favoriteMaxItems]）超限时会淘汰最旧收藏 —— 那不是总预算的溢出，
      * 而是用户对「收藏能留多少」的直接约定，两条不变量不冲突。
-     */
-    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
-    @Synchronized
-    /**
-     * 落回上限内（条数与体积；图片预算与收藏软上限在这一趟里一并收）。
      *
      * ⚠ `maxTotalBytes` **故意不给默认值**：曾只传条数，体积按 `DEFAULT_MAX_TOTAL_BYTES`
      * （100MB）裁，而该值恰好等于出厂默认 ⇒ 只在用户改过体积上限时才暴露（设 500MB 的库被砍到
      * 100MB，旧历史静默消失）。不给默认值，漏传即编译错误，比留一个「恰好对」的默认值可靠。
      */
+    // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
+    @Synchronized
     fun trimTo(maxItems: Int, maxTotalBytes: Long) {
         // 收藏软上限排第一：它是唯一能从「受保护行」释放额度的通道。排在字节裁剪之后时，
         // 用户刚调小总字节上限的那一次，收藏仍按旧的 25% 占用 ⇒ 字节裁剪会把非收藏
@@ -985,7 +981,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ 删除必须走含收藏的删除入口，**不能**用普通裁剪入口 [deleteNonFavoriteByIds]：
      * 后者的 SQL 固定带 `is_favorite = 0`，用它删收藏一行都删不掉，而日志却按候选集报
-     * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06 审查实证，由守卫钉住）。
+     * 「删除最旧收藏 N 条」⇒ 功能静默失效 + 日志谎报（2026-10-06：由守卫钉住）。
      *
      * @return **实删的图片行数**（不是总删除数）：图库密文按行回收，[trimTo] 用它决定是否调度
      *         孤儿 GC（BUG.md L-1464）。文本收藏被淘汰不产生任何孤儿文件，不该算进这个数 ——

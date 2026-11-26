@@ -125,7 +125,7 @@ internal class AliyunTranslator(
         // 其余写法（data.translateText / 平铺）留作容错，改版时不至于翻车。
         val data = json.optJSONObject("Data") ?: json.optJSONObject("data")
         // 取值统一走 jsonText：显式 JSON null / 类型不符都返回 null —— `optString` 会把
-        // JSON null 变成字面量 "null" 当译文提交进用户输入框（2026-09-30 审查发现，六家统一口径）
+        // JSON null 变成字面量 "null" 当译文提交进用户输入框（2026-09-30：六家统一口径）
         val text = firstNonBlank(
             jsonText(data, "Translated"),
             jsonText(data, "translateText"),
@@ -227,7 +227,7 @@ internal class AliyunTranslator(
         )
 
         internal fun httpErrorOf(code: Int): TranslationError = when (code) {
-            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01 审查 L-273）
+            400, 413 -> TranslationError.PARAM      // 413 = 请求体过大（2026-10-01，L-273）
             401, 403 -> TranslationError.AUTH
             // 实测：阿里云网关把「AK 不存在 / 签名不匹配」报成 404（带 Code 字段）；
             // 走到这里说明响应体没给出错误码，仍按认证失败处理（该接口路径是常量，不会是「路径不存在」）

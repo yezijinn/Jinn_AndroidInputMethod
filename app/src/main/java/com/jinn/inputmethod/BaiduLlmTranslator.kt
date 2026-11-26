@@ -56,7 +56,7 @@ internal class BaiduLlmTranslator(
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
         // 与通用平台同款：业务错误码在响应体里（HTTP 200 是常规通道），且**非 2xx 也先取** ——
         // 网关用 403/5xx 承载 54003/54004 时若先看状态，会被归成 AUTH/SERVER（2026-09-30）
-        // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01 审查 L-226）
+        // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01，L-226）
         val errorCode = jsonCode(json, "error_code")
         // `"0"` 是百度的**成功**码（2026-10-01 复审 L-233）：不豁免时 `"error_code":0` 会把一次
         // 正常翻译判成服务端错误
@@ -66,7 +66,7 @@ internal class BaiduLlmTranslator(
         if (json == null || code !in 200..299) {
             return TranslationOutcome.Fail(BaiduTranslator.httpErrorOf(code))
         }
-        // 与通用平台同款：数组按行对齐，多行原文要合并（2026-10-01 审查 L-268）
+        // 与通用平台同款：数组按行对齐，多行原文要合并（2026-10-01，L-268）
         val text = BaiduTranslator.transResultText(json)
         return if (text.isNullOrBlank()) {
             TranslationOutcome.Fail(TranslationError.EMPTY)

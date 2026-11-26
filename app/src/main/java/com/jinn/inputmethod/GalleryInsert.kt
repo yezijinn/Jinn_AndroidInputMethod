@@ -103,7 +103,7 @@ internal object GalleryInsert {
      *
      * `Submitted` 只代表提交调用返回 true —— 「宿主是否真的收下」仍以宿主表现为准（见类注释），
      * 调用方不可把它当成成功承诺；`FileMissing` / `NoConnection` 是本地可判定的失败，
-     * 调用方据此给用户可见反馈（L-1006）。
+     * 其中 `FileMissing` 弹提示、`NoConnection` 只留日志并丢弃（L-1006）。
      */
     internal enum class InsertResult { Submitted, Rejected, NoConnection, FileMissing, UriFailed }
 

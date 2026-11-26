@@ -318,7 +318,7 @@ internal object ConfigBackup {
                     BackupValue.KIND_STRING -> v as? String
                     // Int 越界 / 带小数（存档被外部改成 5000000000、1.5）一律按「类型不符」处理：
                     // `toInt()` 会静默绕回成另一个数（5000000000 → 705032704），用户导入后看到
-                    // 的是自己没设过的值，之后还会被当合法配置执行（2026-10-01 审查 L-226）
+                    // 的是自己没设过的值，之后还会被当合法配置执行（2026-10-01，L-226）
                     BackupValue.KIND_INT -> (v as? Number)?.let {
                         val d = it.toDouble()
                         if (d == Math.floor(d) && d >= -2147483648.0 && d <= 2147483647.0) {
@@ -352,7 +352,7 @@ internal object ConfigBackup {
                     else -> null
                 }
                 val restored = BackupValue(kind, value)
-                // 不支持的键**不静默丢弃**（2026-10-01 审查 L-235）：收集起来交给调用方计数 ——
+                // 不支持的键**不静默丢弃**（2026-10-01，L-235）：收集起来交给调用方计数 ——
                 // 静默丢键与静默绕回（旧行为）一样都会让用户看到「导入成功」却少了一项
                 if (restored.isSupported) values[key] = restored else skipped?.add("$fileName.$key")
             }

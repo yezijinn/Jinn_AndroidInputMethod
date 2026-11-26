@@ -1213,7 +1213,7 @@ class Prefs(private val appContext: Context) {
 
         TranslationProviderId.DEEPL -> deeplApiKey.cleanCredential().isNotEmpty()
 
-        // OpenAI 兼容多一道端点校验（2026-10-01 审查 L-228）：`providerOf` 还要求 joinUrl 能解析出
+        // OpenAI 兼容多一道端点校验（2026-10-01，L-228）：`providerOf` 还要求 joinUrl 能解析出
         // URL，少了这一条会出现「摘要说已配置、点翻译说未配置」的自相矛盾。
         // ⚠ 还要求**必须是 https**（2026-10-03，L-513）：只判「能解析」时 `http://` 会一路放行到
         // 「已配置：…」摘要，直到第一次点翻译才被 `INSECURE` 拒掉 —— 配置信任链在这里断裂，
@@ -1636,7 +1636,7 @@ class Prefs(private val appContext: Context) {
      * 此前这里对「等于默认值」的存量**返回空串**（想用「值为空」表达「没配过」）。出发点可以理解，
      * 但八个字段里 `openAiBaseUrl` 的下游 [OpenAiTranslator.joinUrl] 拿到空串是**直接失败**而不是
      * 回落默认 —— 于是「打开一次 OpenAI 设置页再返回」就让 OpenAI 兼容翻译整体不可用，而且重填
-     * 同一个 URL 也无效（2026-10-01 审查 L-293）。同款症状还让提示词框显示为空、并误报缺
+     * 同一个 URL 也无效（2026-10-01，L-293）。同款症状还让提示词框显示为空、并误报缺
      * `{{text}}`（L-294）。「未配置」这个概念由写入侧的**删键**表达，不能由读值表达。
      */
     private fun defaulted(stored: String, fallback: String): String = stored.ifBlank { fallback }

@@ -225,7 +225,7 @@ object CredentialCrypto {
         // 无前缀的存量密文：`base64段:base64段`，首段 16 或 24 字符、密文段 ≥ 24 字符
         // （GCM tag 16 字节的 base64 长度）。判据取**宽**不取窄（fail-closed）——
         // 判成密文最多让用户重填一次；判成明文则会把密文当 Key 发出去、并覆盖写回原始密文
-        // （2026-10-01 审查 L-219）。
+        // （2026-10-01，L-219）。
         val sep = raw.indexOf(':')
         if (sep != IV_B64_LENGTH && sep != IV_B64_LENGTH_ALT) return false
         if (raw.length <= sep + 24) return false

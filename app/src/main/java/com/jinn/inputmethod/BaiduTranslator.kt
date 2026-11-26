@@ -60,7 +60,7 @@ internal class BaiduTranslator(
         // 业务错误码优先，且**非 2xx 也先取**：百度把频率/额度类错误码（54003/54004/54005）也放在
         // 响应体里，网关用 403/5xx 承载它时若先看状态，就会被归成 AUTH/SERVER、提示「检查凭据」，
         // 而真实原因是限流/欠费（2026-09-30）。
-        // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01 审查 L-226）
+        // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01，L-226）
         val errorCode = jsonCode(json, "error_code")
         // `"0"` 是百度的**成功**码：数字兼容之后 `"error_code":0` 也会被取到，不豁免就会把一次
         // 正常翻译判成服务端错误（2026-10-01 复审 L-233）
@@ -81,7 +81,7 @@ internal class BaiduTranslator(
          * 取 `trans_result` 里的译文。
          *
          * 百度的这个字段是按输入行对齐的数组 —— 多行原文返回多个元素，只读 `[0]` 会丢掉
-         * 第 2..N 行的译文，而界面仍报成功（2026-10-01 审查 L-268）。这里按顺序用 `\n` 连起来；
+         * 第 2..N 行的译文，而界面仍报成功（2026-10-01，L-268）。这里按顺序用 `\n` 连起来；
          * 服务端不拆行时数组长度恒为 1，行为与原来一致。
          *
          * 取值仍走 [jsonText]：JSON null / 类型不符都返回 null，不会变成字面量 "null" 当译文。
@@ -185,7 +185,7 @@ internal class BaiduTranslator(
             "58000" -> TranslationError.AUTH             // 客户端 IP 非法
             "58001" -> TranslationError.PARAM            // 译文语言方向不支持
             "58002" -> TranslationError.SERVER           // 服务当前已关闭
-            // 90107 = 认证未通过或未生效（2026-10-01 审查 L-275）：账号实名 / 认证没走完时百度回
+            // 90107 = 认证未通过或未生效（2026-10-01，L-275）：账号实名 / 认证没走完时百度回
             // 这个码，落进 else 会让用户看到「服务异常，请稍后重试」—— 重试与换 Key 都无效。
             "90107" -> TranslationError.AUTH
             else -> TranslationError.SERVER

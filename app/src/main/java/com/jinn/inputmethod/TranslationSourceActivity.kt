@@ -163,7 +163,7 @@ class TranslationSourceActivity : Activity() {
      * 每次回前台都重载（覆盖「备份导入改写过配置」的场景）。
      *
      * 下拉位置只在**用户没动过**时按 prefs 复位：动过就保持他的选择，否则刚选完切个页面
-     * 回来就被弹回当前服务方（2026-10-01 审查 L-215）。
+     * 回来就被弹回当前服务方（2026-10-01，L-215）。
      */
     override fun onStart() {
         super.onStart()
@@ -228,7 +228,7 @@ class TranslationSourceActivity : Activity() {
         // 与 setter 的钳位同口径 ⇒ 跳过的写法与「照样写」在数据面等价
         val wrote = prefs.translateMaxBytesOf(currentId) != target
         if (wrote) prefs.setTranslateMaxBytesOf(currentId, target)
-        // 回填**真实生效值**（2026-10-01 审查 L-225）：钳位 / 回落后的数才是下次翻译真正用的；
+        // 回填**真实生效值**（2026-10-01，L-225）：钳位 / 回落后的数才是下次翻译真正用的；
         // 显示未生效的数会让用户以为「填 0 不限」（实际回落到该家默认值）。
         val effective = prefs.translateMaxBytesOf(currentId).toString()
         if (editMaxBytes.text?.toString() != effective) editMaxBytes.setText(effective)

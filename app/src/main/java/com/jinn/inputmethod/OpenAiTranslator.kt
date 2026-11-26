@@ -76,7 +76,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
     }
 
     /**
-     * OpenAI 兼容的 `error.code` / `error.type` → 归一分类（2026-10-01 审查 L-270）。
+     * OpenAI 兼容的 `error.code` / `error.type` → 归一分类（2026-10-01，L-270）。
      *
      * 词表取 OpenAI 官方与常见网关（OpenRouter / 自建中转）的取值；认不出的仍归 SERVER ——
      * 宁可提示「服务异常」，也不要把它猜成「检查凭据」。
@@ -120,7 +120,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         // 会把正常响应判成服务端错误；口径与本文件其它取值的 `JSONObject.NULL` 过滤一致
         val error = json?.opt("error")
         if (error != null && error !== org.json.JSONObject.NULL) {
-            // 按 `error.code` / `error.type` 分类（2026-10-01 审查 L-270）：不少网关与中转用 200
+            // 按 `error.code` / `error.type` 分类（2026-10-01，L-270）：不少网关与中转用 200
             // 承载 `insufficient_quota` / `invalid_api_key` / `context_length_exceeded` 与限流，
             // 一律报「服务异常」会让用户无从下手 —— 换 Key、充值、缩短原文被压成同一句提示。
             // ⚠ 用 jsonCode 而不是 jsonText（2026-10-01，L-287）：`{"error":{"code":429}}`
@@ -334,7 +334,7 @@ internal fun applyTemplateEnsuringText(
             // 用户把端点整段粘进 Base URL 时剥掉尾部：按**路径**比较，不看 query ——
             // base 带 query 时（Azure OpenAI 的端点整段粘贴必带 `?api-version=…`）字符串后缀
             // 匹配必然失败，会拼成 `…/chat/completions/chat/completions` → 404 被归成 PARAM，
-            // 把用户引向「检查语言设置」（2026-10-01 审查 L-218）。
+            // 把用户引向「检查语言设置」（2026-10-01，L-218）。
             val basePath = parsed.encodedPath
             val stripped = if (basePath.endsWith(tailPath)) basePath.dropLast(tailPath.length) else basePath
             val withPath = parsed.newBuilder()
@@ -782,7 +782,7 @@ internal fun applyTemplateEnsuringText(
             return (0 until data.length()).mapNotNull { index ->
                 val item = data.optJSONObject(index) ?: return@mapNotNull null
                 // 走 jsonText：JSON null / 类型不符都返回 null —— `optString` 会给出字面量 "null"，
-                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30 审查，同类漏网）
+                // 于是下拉里多出一项 `null`，用户选中就写进 model（2026-09-30：同类漏网）
                 (jsonText(item, "id") ?: jsonText(item, "name"))?.takeIf { it.isNotBlank() }
             }
         }

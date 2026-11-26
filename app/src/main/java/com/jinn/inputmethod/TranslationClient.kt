@@ -245,7 +245,7 @@ internal object TranslationClient {
             return null
         }
         // HTTPS 硬判据（与 UpdateChecker 同款）：地址被改成明文一律拒发。
-        // ⚠ 这是一条**纵深防御**，六家 provider 当前都到不了这里（2026-10-03 复核 L-817）：
+        // ⚠ 这是一条**纵深防御**，六家 provider 当前都到不了这里（2026-10-03，L-817）：
         // OpenAI 兼容的端点判据已在 `providerOf` 收口（`OpenAiTranslator.endpointReady`），
         // 另五家端点是源码常量 https ⇒ `request.url.isHttps` 恒真。留着是为了「将来新增 provider
         // 时不必记得再加一道判据」，仍覆盖它的只有单测里的假 Provider。
@@ -410,7 +410,7 @@ internal object TranslationClient {
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
                     // 只留一行 len 的话，用户看到「服务异常」而日志里查不出为什么（2026-10-01，L-243）
                     if (it.code in 200..299 &&
-                        // 不再限定 SERVER（2026-10-01 审查 L-274）：原条件把「2xx 承载额度 / 认证类
+                        // 不再限定 SERVER（2026-10-01，L-274）：原条件把「2xx 承载额度 / 认证类
                         // 失败」挡在门外，而这段逻辑的目标恰恰是网关用 200 报限额与欠费 —— 用户报
                         // 「额度不足」时诊断包里只剩 `翻译响应: HTTP 200 len=…`，分不清限流与欠费。
                         outcome is TranslationOutcome.Fail
@@ -495,7 +495,7 @@ internal object TranslationClient {
         }
         val builder = Request.Builder().url(url).get()
         // Key 里混入 NBSP / 零宽字符时 `header()` 会抛 IllegalArgumentException（同步、在调用方
-        // 线程，会直接冒到设置页）—— 与 translate 侧同款兜底，归「凭据不可用」（2026-10-01 审查 L-228）
+        // 线程，会直接冒到设置页）—— 与 translate 侧同款兜底，归「凭据不可用」（2026-10-01，L-228）
         val headerOk = runCatching {
             if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
             // ⚠ 自检请求必须与翻译请求**同源**（2026-10-03，L-701）：这里原先只发 Bearer，
@@ -713,7 +713,7 @@ internal object TranslationClient {
     }
 
     /**
-     * 凭据形态的负判据（2026-10-01 审查 L-214）。
+     * 凭据形态的负判据（2026-10-01，L-214）。
      *
      * 白名单字符集 `[A-Za-z0-9_.-]` 恰好覆盖 API Key 的典型形态 —— `sk-proj-Ab12Cd34Ef56Gh78Ij90Kl.`
      * 逐字通过它；网关把提交的 Key 回显在 `code` / `error_code` 字段时（不是 `message`），

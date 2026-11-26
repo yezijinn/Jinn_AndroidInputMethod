@@ -81,7 +81,7 @@ internal object CredentialTrace {
         val missed = ArrayList<String>()
         for (v in targets) {
             val exact = runCatching { db.deleteByPlaintext(v) }.getOrElse {
-                // **抛错不是「未命中」**（2026-10-01 审查 L-269）：磁盘满 / 库损坏 / 只读时这一轮
+                // **抛错不是「未命中」**（2026-10-01，L-269）：磁盘满 / 库损坏 / 只读时这一轮
                 // 对该目标根本没有结论，不能标成已清 —— 否则只要没有新条目就永不重试，
                 // 凭据明文会一直留在剪贴板历史里（面板可见、随备份导出）。与下面那一遍的 `-1` 对齐。
                 Diagnostics.w("CredentialTrace", "凭据清理: 精确删除失败 ${it.javaClass.simpleName}")

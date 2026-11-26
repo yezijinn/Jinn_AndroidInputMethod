@@ -136,9 +136,8 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         // 被追加进**新**列表（重复卡片、游标与分页错位）。切分类 / 开合面板 / 改布局 / 切筛选
         // 都会走到这里，连点「±」时最容易撞上。
         generation++
-        // 先清空、再读布局参数（BUG.md L-1254）：applyTuning 会按**当时**的 items 整片重建 cell
-        // 并触发缩略图绑定；排在清空之前的话，这一屏是按旧数据重建的，解码结果必然被判过期丢弃
-        //（每次重载白解一屏缩略图，改列数时最明显）。
+        // 先清空 items、再重算布局参数：applyTuning 只读偏好与可用宽，不碰 items 与 cell；
+        // 格子重建在取数回调里按新参数做（appendCells(0)）。
         items = ArrayList()
         applyTuning()
         // 每次都重新取数（面板每次打开都刷列表，网格同款）：用户可能刚复制了图
