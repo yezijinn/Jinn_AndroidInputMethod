@@ -17,12 +17,12 @@ import android.widget.TextView
  * 独立成类而不是塞进 [ClipboardPanelView]：网格与列表的取数、生命周期、内存模型都不同
  * （列表逐页解密文本；网格走文件 + 缩略图缓存），混在一起会让两条分页逻辑互相干扰。
  *
- * 同样自绘网格的还有 [GalleryPanelView]，但两者只共享底层设施，UI 与分页各写一份：
+ * 同样自绘网格的还有 [GalleryPanelView]，但两者只有偏好共用，UI、分页、缓存各写一份：
  *  - 共用 [Prefs.galleryColumns] / [Prefs.galleryCellHeightDp]（同一对偏好：图库面板里调一次
- *    「布局」，两个网格同步生效）与 [ClipboardThumbLoader] 的进程级缩略图缓存；
- *  - 差异：图库面板自己按 [GalleryPanelView.PAGE_SIZE] 翻本地目录、自建解码池并做延迟释放
- *    （[GalleryPanelView.CACHE_RELEASE_DELAY_MS]）；本视图按数据库游标续页，解码交给
- *    [ClipboardThumbLoader] 的线程池，缓存上限由 [ClipboardThumbLoader] 管理。
+ *    「布局」，两个网格同步生效）；
+ *  - 差异：图库面板自己按 [GalleryPanelView.PAGE_SIZE] 翻本地目录、自建解码池与缩略图缓存
+ *    并做延迟释放（[GalleryPanelView.CACHE_RELEASE_DELAY_MS]）；本视图按数据库游标续页，
+ *    解码与缩略图缓存交给 [ClipboardThumbLoader]，缓存上限由它管理。
  *
  * 缩略图文件是**密文**，由 [ClipboardThumbLoader] 解密解码后回调，主线程只 `setImageBitmap`；
  * cell 用 `tag = hash` 判新旧，避免复用错位。

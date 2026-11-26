@@ -22,19 +22,19 @@ import org.json.JSONObject
  * `MAGIC(8) | version(1) | iterations(4) | salt(16) | iv(12)` + AES-256-GCM 密文；
  * `iterations` 有 10 万~200 万护栏（强度不由文件自己声明）。
  *
- * 内层 zip：生产者固定把 **manifest 写为第一个条目**（读取端按名查找、不依赖顺序；但
+ * 内层 zip：生产者固定把 manifest 写为第一个条目（读取端按名查找、不依赖顺序；但
  * `ZipInputStream` 不能跳转，放后面会让每次「扫 manifest」都把前面全部节解压丢弃一遍、
  * 一次导入要扫它两趟 —— 所以这是**生产者的规则**，不是读取端的校验项）。
  *  - `manifest.json`：`format`（固定 `jinn-config`）、`formatVersion`、`appVersionCode`、
  *    `createdAt`、`device`（导入解析时截断到 64 字）、`sections{<节名>:{sha256, bytes}}`
  *  - `prefs.json`：两个 SharedPreferences 文件 → 键 → `{t: 类型标记, v: 值}`
- *  - `user_freq.txt`：明文正文（`词\t权重\t天`；磁盘形式为密文，导出走 UserFrequency.readTextForBackup）
+ *  - `user_freq.txt`：明文正文（`词\t权重\t天`；磁盘形式为密文，导出走 [UserFrequency.readTextForBackup]）
  *  - `clipboard.jsonl`（可选）：每行一条 JSON
  *  - `dicts/<文件名>`（可选）：词库文件，导入仅接受白名单内的名字（见 [ConfigBackupManager]）
  *
  * 节名 ↔ 条目名：`prefs`→`prefs.json`、`user_freq`→`user_freq.txt`、`clipboard`→`clipboard.jsonl`、
  * `dicts`→`dicts/` 前缀；dicts 的聚合摘要 = 按文件名排序的 `<名>:<sha256>` 换行拼接后再取 sha256。
- * 三个**文本节**的 sha256 都算在原始 UTF-8 字节上（不是某种规范化形式），hex 小写；
+ * 三个文本节的 sha256 都算在原始 UTF-8 字节上（不是某种规范化形式），hex 小写；
  * 词库节每个文件的 sha256 算在**文件原始字节**上：官方包与自定义包是 `*.xz` 压缩字节，
  * 源文本（`custom_user.src.txt`）则是明文文本字节。
  * 版本规则：高于本版的 `formatVersion` 一律拒绝（[checkVersion] 只认 TOO_NEW 一档）；
@@ -160,7 +160,7 @@ internal object ConfigBackup {
     /**
      * 一节内容的摘要（sha256 + 字节数），用于导入前校验完整性。
      *
-     * `bytes` 只作登记与诊断（导入端只校验 sha256）。注意两类标准：三个文本节是 **UTF-8 明文字节**，
+     * `bytes` 只作登记与诊断（导入端只校验 sha256）。注意两类标准：三个文本节是 UTF-8 明文字节，
      * 词库节的 `bytes` 是 `dicts/` 下各文件**原始字节**之和（含非压缩的源文本）。
      */
     class Section(val sha256: String, val bytes: Long)
@@ -362,7 +362,7 @@ internal object ConfigBackup {
     }.getOrElse { e ->
         // 结构非法（不是对象 / 空文本 / 数组 / 截断 JSON）**必须留痕**（2026-10-02）：此前直接
         // 回空表，而调用方把空表当「合法空配置」⇒ 用户看到「导入完成：设置 0 项」，与本文档
-        // 「调用方按**缺失**处理」的承诺相反，排障时也没有任何线索。
+        // 「调用方按缺失处理」的承诺相反，排障时也没有任何线索。
         Diagnostics.w("ConfigBackup", "decodePrefs: 结构非法，按空表处理（${e.javaClass.simpleName}）")
         emptyMap()
     }
