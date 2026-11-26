@@ -707,7 +707,7 @@ class ClipboardCustomizeActivity : Activity() {
      * 单张图片的生效值：受「图片总量上限」压制。
      *
      * 两项原本各调各的（单张 1~50MB、总量 10~1000MB），设「单张 50MB + 总量 10MB」这种组合后，
-     * 一张 20MB 的图入库即被 `trimImages` 按字节预算删掉（面板 / 网格 / Toast 全无提示，
+     * 生效单张上限被压到 10MB，一张 20MB 的图读入即止跳过、根本不入库（面板 / 网格 / Toast 全无提示，
      * 用户只看到「复制图片没反应」）。收藏体积早有同款压制（[effectiveFavMb]），这里对齐。
      *
      * ⚠ 只给**回显**用（BUG.md L-1463）：生效值算在 `ClipboardPrefs.effectiveImageMaxItemMb` 一处，
