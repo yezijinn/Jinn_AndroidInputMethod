@@ -249,7 +249,7 @@ internal class PhraseIndex private constructor(
      *
      * 供「索引是否跟上源文件」这类**只要 stamp** 的调用方使用：完整 [ofMapped] 会解析整份索引
      * （`expandLengths` 两次 ⇒ 各一个 `IntArray(键数 + 1)`，几十万键 ≈ 数 MB 临时垃圾），
-     * 而词库页每次刷新都要为每个已安装包查一次 —— 在设置页**主线程**上做完整解析是白花的开销
+     * 而词库页每次刷新都要为每个已安装包查一次 —— 在设置页主线程上做完整解析是白花的开销
      * （BUG.md L-167）。头部的合法性判据与 [parse] 一致（magic / version），另加长度自洽检查。
      */
     internal fun mappedSourceStamp(file: java.io.File): Long? = runCatching {

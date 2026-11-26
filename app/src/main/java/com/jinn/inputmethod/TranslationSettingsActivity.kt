@@ -85,7 +85,7 @@ class TranslationSettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 凭据防截屏/录屏/镜像（注：投屏环境下本页面及弹出层均会被系统黑屏遮蔽）
+        // 凭据页防截屏 / 录屏 / 投屏 / 最近任务缩略图；投屏环境下本页面及弹出层均被系统黑屏遮蔽
         window.setFlags(
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE,

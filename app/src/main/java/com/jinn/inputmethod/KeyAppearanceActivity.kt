@@ -174,7 +174,7 @@ class KeyAppearanceActivity : Activity() {
 
         // 拼音字号：与候选字号解耦（0 = 自动，沿用 `候选字号 × 0.7` 的派生口径）。
         // 只有拼音行三件（拼音文字 / ✕ / ▲）跟它变；栏高与顶部避让由 CandidateRows 派生。
-        // ⚠ 本块必须排在候选字号块**之前**：候字号监听要在「自动」档跟刷本行读数（下方
+        // ⚠ 本块必须排在候选字号块之前：候选字号监听要在「自动」档跟刷本行读数（下方
         // `textPinyinSize.text = …`）。反过来依赖就成环：拼音「自动」的读数由候选字号派生，
         // 页面创建时算一次不够，改动后会留下旧读数。
         val labelPinyinSize = findViewById<TextView>(R.id.label_pinyin_text_size)
