@@ -16,7 +16,7 @@ import javax.crypto.spec.GCMParameterSpec
  * 密钥由 Keystore 生成并托管，密钥材料不离开安全硬件/系统，应用只拿得到
  * 不透明密钥句柄并通过 [Cipher] 做加解密；禁止硬编码密钥或自研算法。
  *
- * 存储格式：`base64(iv):base64(ciphertext)`，IV 与密文一起入库；
+ * 文本密文 `base64(iv):base64(ciphertext)`，图片二进制壳 `[1B 版本][12B iv][ct]`；IV 与密文一起入库；
  * GCM 的 auth tag 已含在密文尾部（标准 128-bit），解密即校验完整性。
  *
  * 线程模型：Keystore 操作无主线程限制，但调用方按惯例在后台线程执行。
@@ -45,7 +45,7 @@ object ClipboardCrypto {
     @Volatile
     private var keyStore: KeyStore? = null
 
-    /** 解密失败计数（**仅归因**，不参与任何控制流；每 50 次落一条 E，避免坏库刷屏） */
+    /** 解密失败计数（**仅归因**，不参与任何控制流；首次与每 50 次各落一条 E，避免坏库刷屏） */
     private val decryptFails = AtomicInteger(0)
 
     /** 本进程内「密钥疑似失效后重建」的次数（仅归因） */
@@ -412,7 +412,11 @@ object ClipboardCrypto {
         null
     }
 
-    /** 解密 [encrypt] 的产物；失败返回 null（密文被篡改 / 对应代际密钥真丢失都会导致失败） */
+    /**
+     * 解密 [encrypt] 的产物；失败返回 null（密文被篡改 / 对应代际密钥真丢失都会导致失败）。
+     *
+     * IV 长度这里用字面量 12 校验，字节路径走 [GCM_IV_BYTES] —— 同值未共用，改一处要两处一起看。
+     */
     fun decrypt(stored: String): String? = runCatching {
         val sep = stored.indexOf(':')
         if (sep <= 0) return null

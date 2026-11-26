@@ -14,9 +14,9 @@ import java.util.Locale
  */
 internal object TapSound {
 
-    // ── 按键分组（2026-10-05，6 组）──
+    // ── 按键分组（2026-10-05 6 组） ──
     //
-    // ⚠ 分组维度是「按下瞬间解析出的**角色**」，不是物理键位：26 个键在字母 / 数字 / 符号 /
+    // 分组维度是「按下瞬间解析出的**角色**」，不是物理键位：26 个键在字母 / 数字 / 符号 /
     // 密码四态下是同一批 View，同一个键在数字层是「1」、在符号层是「，」。
     // 若按物理键分组，打字与输入数字会响同一个音，分组就失去意义。
 
@@ -44,7 +44,7 @@ internal object TapSound {
     /** 设置页逐行显示的分组名（顺序即 [G_TEXT]…[G_FUNC]） */
     val GROUP_LABELS = arrayOf("文字输入", "数字", "符号标点", "删除清空", "确认键", "功能切换")
 
-    // ── 音效清单（真实录音，放 app/src/main/assets/sounds/keyboard/）──
+    // ── 音效清单（真实录音，放 app/src/main/assets/sounds/keyboard/） ──
 
     /** asset 目录（相对 assets 根） */
     const val ASSET_DIR = "sounds/keyboard"
@@ -54,9 +54,10 @@ internal object TapSound {
      *
      * 来源与授权见 `tools/sound_preview/keyboard_sounds_manifest.md`：
      * Freesound 条目为 CC0，Mixkit 条目为免费商用音效。
-     * ⚠ 增删资产后要同步的地方：本常量、[SOUND_DURATION_MS]，以及 `tools/sound_preview/gen_manifest.py`
-     * 里那四张表（编号与原始名+来源授权、时长、起音数、建议角色）—— 清单的表体由它渲染，表与资产对不上
-     * 时生成器直接非零退出。编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
+     * ⚠ 增删资产后要同步：本常量、[SOUND_DURATION_MS]，以及
+     * `tools/sound_preview/gen_manifest.py` 里的 `SRC`（编号 ← 原始名 + 来源授权）、`DUR`（时长）、
+     * `ON`（起音数）、`ROLE`（建议角色）四张表 —— 清单表体由它们渲染，表与资产对不上时
+     * 生成器非零退出。编号必须连续（[assetName] 靠序号拼文件名），少一个就要整体重编号。
      */
     const val SOUND_COUNT = 16
 
@@ -75,7 +76,7 @@ internal object TapSound {
      *
      * ⚠ 这是**描述性元数据**：真值在 `tools/sound_preview/keyboard_sounds_manifest.md` 与资产本身，
      * 替换资产时必须回来重算。条数由 `TapSoundTest` 钉住（少一条/多一条会红），
-     * 但**内容**对不上只能人工复核 —— 别把它当成音效的事实来源。
+     * 但内容对不上只能人工复核 —— 别把它当成音效的事实来源。
      */
     val SOUND_DURATION_MS = intArrayOf(
         60, 66, 67, 73, 79, 109, 114, 122, 135, 138, 152, 159, 171, 183, 205, 210,
@@ -111,7 +112,7 @@ internal object TapSound {
     /** 音色选择列表的序号 → 映射值（[pickerIndex] 的逆：末位是 [NONE]，其余是音效索引） */
     fun pickerChoice(which: Int): Int = if (which == SOUND_COUNT) NONE else clampIndex(which)
 
-    // ── 默认映射（用户未改动时各组用哪个音）──
+    // ── 默认映射（用户未改动时各组用哪个音） ──
     //
     // 六组统一用音效 10（`kbd_10.ogg`，138ms，onsets 2 = click + 触底双瞬态）。选它而不是
     // 「每组配一个贴合角色的音」：一条声音对全部按键，敲起来更一致，也不会出现某一组偏尖、
@@ -138,7 +139,7 @@ internal object TapSound {
      */
     fun volumeLabel(percent: Int): String = String.format(Locale.US, "%d%%", clampVolume(percent))
 
-    // ── 震动档位（4 档，2026-10-05）──
+    // ── 震动档位（2026-10-05 4 档） ──
 
     const val VIB_OFF = 0
     const val VIB_WEAK = 1
@@ -179,9 +180,9 @@ internal object TapSound {
      *
      * 两条约束在这里互相拉扯，改动前先看清：
      *
-     * ① 停顿要**够大**才能听出是两下。20ms 配 10ms 脉冲已在人手指可辨的边缘（弱档因此
-     *    退化成「一次带凹陷的震动」），所以下限取 30ms。
-     * ② 停顿**不能太大**。`Vibrator.vibrate(effect)` 是替换语义，后一次调用取消在途波形，
+     * ① 停顿要够大才能听出是两下。20ms 配 10ms 脉冲太短，弱档会糊成一次带凹陷的震动；
+     *    下限取 30ms 是留出可辨余量的经验值，不是实测的固定阈值。
+     * ② 停顿不能太大。`Vibrator.vibrate(effect)` 是替换语义，后一次调用取消在途波形，
      *    而删除键不占用普通通道的时间戳（`Throttle` 对删除组只写 `lastErase`），下一按键
      *    可以在 +0ms 就触发 ⇒ 间隔越大，后半段落在越靠后的位置、被削掉的窗口就越大。
      *
@@ -199,7 +200,7 @@ internal object TapSound {
     /** 停顿上限：再大后半段就容易被下一键截断（替换语义，见上） */
     private const val ERASE_PULSE_GAP_MAX = 40L
 
-    // ── 映射串解析（脏数据防护）──
+    // ── 映射串解析（脏数据防护） ──
 
     /**
      * 音效索引归一：一律钳到 `[NONE]..[SOUND_COUNT]-1`。
@@ -266,7 +267,7 @@ internal object TapSound {
     }
 
     /**
-     * 试听该用哪个音：优先 [G_TEXT] 当前的音，该组是「不播放」时改用手上第一个可用的。
+     * 试听该用哪个音：优先 [G_TEXT] 当前的音，该组是「不播放」时取序号最小的可听组。
      *
      * 为什么回退：强度滑杆松手时试听的就是「文字输入」组的音。若这一组被设成「不播放」，
      * 试听会完全没有声音，而用户此刻的意图是「听一下现在多大声」—— 把无声当成
@@ -280,7 +281,8 @@ internal object TapSound {
     /**
      * 反馈节流：普通键共用一份时间戳，删除 / 清空单独一份。
      *
-     * 为什么删除组要单独记：它的间隔阈值比普通键大一个量级，两份共用一个时间戳时，
+     * 为什么删除组要单独记：它的间隔阈值（删除 150ms / 普通 30ms，见 [KeyFeedback]）是普通键的
+     * 5 倍，两份共用一个时间戳时，
      * 它的基准会变成「上一次**任意**分组」的触发时刻 —— 「打字后马上按退格」这一下会被
      * 上一个普通键挡掉，而删除是唯一有专属波形的一档（双段触感），也是最不该被吞的一档。
      *
