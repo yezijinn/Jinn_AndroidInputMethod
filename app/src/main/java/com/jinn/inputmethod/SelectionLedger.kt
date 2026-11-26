@@ -24,7 +24,7 @@ import javax.crypto.SecretKey
  * ② 只认以 `\n` 结尾的完整行：崩溃可能留下半行，解析时整行丢弃（[parse]）；
  * ③ 写入走专用后台线程：按键路径不碰磁盘。
  *
- * **落盘是逐行加密的**（[LedgerCrypto]）：磁盘上每行是 `1:base64(iv||密文)`，明文只在内存里。
+ * 落盘是逐行加密的（[LedgerCrypto]）：磁盘上每行是 `1:base64(iv||密文)`，明文只在内存里。
  * 之所以不整文件加密：只增流水整表重写会违背「记录不影响性能」；行级 AEAD 仍是 O(1) 追加。
  * 旧版明文文件在首次读写时就地迁移（[migrateIfNeeded]），数据一条不丢。
  *
@@ -177,7 +177,7 @@ object SelectionLedger {
     /**
      * 批量追加（导入专用）：一次 open、一次 write，别把上万行拆成上万个任务。
      *
-     * 与 [record] 共用**同一条队列 + 同一个落盘入口**（[drainTo]）：提交顺序即落盘顺序，
+     * 与 [record] 共用同一条队列 + 同一个落盘入口（[drainTo]）：提交顺序即落盘顺序，
      * 写失败时批次仍留在队列里等下次重试。
      *
      * @return false = **没有排进写入**（功能已关闭 / 未绑定 / 没有有效行）。
@@ -225,7 +225,7 @@ object SelectionLedger {
         val file = target ?: return true
         val gen = generation.get()
         // 提交前复位：本次提交没有写失败才算成功。
-        // ⚠ 这条复位只有在「**任何写失败都不丢行**」的前提下才成立 —— record / appendAll 都走
+        // ⚠ 这条复位只有在「任何写失败都不丢行」的前提下才成立 —— record / appendAll 都走
         // [drainTo]，失败只置位、不出队，所以失败的那批会由下面的 drainTo 重写并**重新**置位。
         // 早期 appendAll 不入队时，失败的行根本不在队列里，这条复位于是把一次真实的丢失
         // 抹成了「成功」，界面谎报「已追加 N 条」（L-1410 的直接成因）。
@@ -344,7 +344,7 @@ object SelectionLedger {
     /**
      * [writeLines] 的实现体（密钥由调用方给，JVM 单测可直接注入）。
      *
-     * **迁移 / 截残行 / 追加三件事共用一个临界区**（[migrateLock]）：读侧 [readAll] 的迁移是
+     * 迁移 / 截残行 / 追加三件事共用一个临界区（[migrateLock]）：读侧 [readAll] 的迁移是
      * 「整份重写 + `Files.move`」，它一换掉目录项，落在旧 inode 上的追加就随原件一起消失。
      * 截残行与追加原先在锁外（2026-10-22 收口）—— 那条交错要靠「`needsMigration` 一转过假值就不再
      * 为真」这条**隐含不变式**才不成立，而读侧一旦多出第二条整份重写路径（修复 / 压缩 / 外部改写）
@@ -355,7 +355,7 @@ object SelectionLedger {
         synchronized(migrateLock) {
             runCatching {
                 file.parentFile?.mkdirs()
-                // 迁移失败（磁盘满 / 无权限）时**必须放弃这次写入**：继续追加会把加密记录写进仍是明文
+                // 迁移失败（磁盘满 / 无权限）时必须放弃这次写入：继续追加会把加密记录写进仍是明文
                 // 格式的文件里，读侧按一个口径解析，另一批就整片丢（N3 同源）
                 if (migrateIfNeeded(file, key) == MigrateOutcome.FAILED) {
                     Diagnostics.w(TAG, "台账格式未就绪（迁移失败），本次不写入")
@@ -462,7 +462,7 @@ object SelectionLedger {
      * 「先 fsync 再原子改名」写整份文件（迁移 / 补首行共用）。
      *
      * 少这一步就是掉电窗口：`rename` 只保证目录项落盘，数据块可能还在页缓存 —— 掉电后文件在、
-     * 内容是空/半截，而明文原件已被 unlink ⇒ **全部台账归零且不可回滚**（N6）。
+     * 内容是空/半截，而明文原件已被 unlink ⇒ 全部台账归零且不可回滚（N6）。
      */
     private fun writeAtomicWithSync(file: File, body: String, suffix: String): Boolean {
         val tmp = File(file.parentFile, file.name + suffix)
@@ -557,7 +557,7 @@ object SelectionLedger {
     }
 
     /**
-     * 解析流水：**只认以 `\n` 结尾的完整行**（末尾残缺行丢弃），空行与 `#` 注释跳过。
+     * 解析流水：只认以 `\n` 结尾的完整行（末尾残缺行丢弃），空行与 `#` 注释跳过。
      *
      * 第二列缺失时读音记空串（导入的词可能只有词没有读音）。
      */
@@ -590,7 +590,7 @@ object SelectionLedger {
         return out
     }
 
-    // ── 词库查看 / 导出 / 导入（手动操作，不参与输入热路径）────────────────────
+    // ── 词库查看 / 导出 / 导入（手动操作，不参与输入热路径） ──
 
     /** 导出格式：三档通用格式，覆盖「导入别的输入法」「表格查看」「纯词表备份」 */
     enum class ExportFormat(val label: String, val ext: String, val mime: String) {
@@ -744,7 +744,7 @@ object SelectionLedger {
     }
 
     /**
-     * 导出件里**实际写出的条目数**（回执口径，与 [exportText] 同源）。
+     * 导出件里实际写出的条目数（回执口径，与 [exportText] 同源）。
      *
      * 不能拿入参 `merged.size` 报账：`RIME_YAML` 会跳过没有读音的行（写不出合法音节，librime
      * 整条丢弃），`TXT` 按词去重（同词不同读音只出一行）—— 两种格式的件内条目数都可能**少于**表长，

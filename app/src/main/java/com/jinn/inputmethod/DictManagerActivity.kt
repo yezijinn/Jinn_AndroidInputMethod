@@ -81,7 +81,7 @@ class DictManagerActivity : Activity() {
 
         // 提示：四句各占一行，避免被系统折行（2026-10-03 补足到四句：
         // 下载取舍 / 下载后重启 / 加载时机 / 以后不用等）。
-        // ⚠ 这四句对三个包通用，只在顶部说一次 —— 卡片里重复三遍反而啰嗦。
+        // 这四句对三个包通用，只在顶部说一次 —— 卡片里重复三遍反而啰嗦。
         listOf(
             R.string.dict_manager_hint_line1,
             R.string.dict_manager_hint_line2,
@@ -122,7 +122,7 @@ class DictManagerActivity : Activity() {
     override fun onResume() {
         super.onResume()
         activePage = WeakReference(this)
-        // 上次下载完成时页面已关闭、因而没有重启（2026-10-03 修复 L-547）：现在用户回到了本页
+        // 上次下载完成时页面已关闭、因而没有重启（2026-10-03，L-547）：现在用户回到了本页
         // （前台、键盘已收起）⇒ 此刻重启是安全的，把已下载的词库真正加载进来。
         if (pendingDictRestart) {
             pendingDictRestart = false
@@ -202,7 +202,7 @@ class DictManagerActivity : Activity() {
         return bar
     }
 
-    // ── 列表 ────────────────────────────────────────────────
+    // ── 列表 ──
 
     private val RC_CUSTOM_DICT = 0x6901
     private val RC_CUSTOM_EDIT = 0x6902
@@ -295,7 +295,7 @@ class DictManagerActivity : Activity() {
      * 自定义词库导入：人写的 `.txt` → [CustomDicts] 校验归一 → 原子写 `dicts/custom_user.txt.xz`，
      * 同时把原文留一份到 `dicts/custom_user.src.txt`（「快捷补充」页回显用）。
      *
-     * 流在主线程取（URI 授权绑本进程，取到流即持有），**解析与打包放后台**：8MB 文本的逐行
+     * 流在主线程取（URI 授权绑本进程，取到流即持有），解析与打包放后台：8MB 文本的逐行
      * 校验加 xz 压缩放主线程会掉帧。所有失败都落到状态行，不抛给系统。
      */
     private fun onCustomImportResult(resultCode: Int, data: Intent?) {
@@ -424,7 +424,7 @@ class DictManagerActivity : Activity() {
     private fun actionsEnabled() = downloading == null && !restartPending && !importingCustom
 
     /**
-     * 重启窗口内拒绝会改 `dicts/` 的操作（2026-10-04 修复 L-801）；已拒绝时给提示并返回 true。
+     * 重启窗口内拒绝会改 `dicts/` 的操作（2026-10-04，L-801）；已拒绝时给提示并返回 true。
      */
     private fun blockedByRestart(): Boolean {
         if (!restartPending) return false
@@ -717,7 +717,7 @@ class DictManagerActivity : Activity() {
         }
 
         // 安装状态与操作按钮**同一行**（2026-10-03）：状态占满剩余宽度、按钮靠右。
-        // ⚠ 别再拆成「状态一行、按钮另起一行」—— 每张卡片多出一行竖直空白，三张连起来很松散。
+        // 别再拆成「状态一行、按钮另起一行」—— 每张卡片多出一行竖直空白，三张连起来很松散。
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -816,7 +816,7 @@ class DictManagerActivity : Activity() {
             cornerRadius = dp(radiusDp).toFloat()
         }
 
-    // ── 下载 / 删除 ─────────────────────────────────────────
+    // ── 下载 / 删除 ──
 
     private fun download(dict: OptionalDict) {
         if (downloading != null) return
@@ -827,7 +827,7 @@ class DictManagerActivity : Activity() {
         refreshList()
 
         Thread {
-            // ⚠ 必须降后台优先级（2026-10-03 修复 L-797）：本仓所有后台重活线程都显式降优先级，
+            // ⚠ 必须降后台优先级（2026-10-03，L-797）：本仓所有后台重活线程都显式降优先级，
             // 而 `RecentFixesRegressionTest` 里就有「存量重算线程必须降优先级」这条守卫 —— 约定存在，只是漏了本链路。
             // 本线程做「网络读 + 持续磁盘写」最长可活 600s（callTimeout），默认优先级会与前台输入争 CPU/IO。
             // 放在 for 之前，不影响 downloading 的复位时机。
@@ -850,7 +850,7 @@ class DictManagerActivity : Activity() {
             // ⚠ 量的是 `filesDir`，不是 `dir`（BUG.md L-1424）：`files/dicts` 首次下载前并不存在
             // （全仓只有 fetchToFile 里 `dir.mkdirs()`，而它在预检之后），`StatFs` 对不存在的路径抛
             // `IllegalArgumentException`（设备实测：`Invalid path: …/files/dicts`）⇒ `getOrNull()` 得到
-            // null ⇒ `freeBytes` 变成 `Long.MAX_VALUE` ⇒ **预检整段静默跳过**，正好放过 L-799 要挡的场景。
+            // null ⇒ `freeBytes` 变成 `Long.MAX_VALUE` ⇒ 预检整段静默跳过，正好放过 L-799 要挡的场景。
             // 两者同在应用数据分区，量 `filesDir` 与量 `dir` 数值相同，而 `filesDir` 必然存在
             // （口径与 StorageUsage.freeBytes 一致）。
             val stat = runCatching { android.os.StatFs(app.filesDir.absolutePath) }
@@ -887,7 +887,7 @@ class DictManagerActivity : Activity() {
                 // 成功要走回页补重启，失败要把回执也留到回页（见 onResume 的 pendingDictFailure）。
                 val page = activePage?.get()
                 if (page == null || page.isFinishing || page.isDestroyed) {
-                    // ⚠ 页面已关闭时**不重启进程**（2026-10-03 修复 L-547）：本进程同时承载键盘、
+                    // ⚠ 页面已关闭时**不重启进程**（2026-10-03，L-547）：本进程同时承载键盘、
                     // 在途翻译请求、composing 未提交文本、剪贴板面板与候选状态 —— 在用户已离开本页
                     // （很可能正在别的应用用本输入法打字）时强杀，会把这些**一起带走**：键盘当场消失、
                     // 未提交输入与在途翻译全部丢失，且用户无从归因到「刚才在下载词库」。
@@ -906,9 +906,9 @@ class DictManagerActivity : Activity() {
                 }
                 val msg = if (ok) page.getString(R.string.dict_download_done, dict.name)
                 else page.getString(R.string.dict_download_failed, lastError)
-                // ⚠ 只把「刷界面」兜住（2026-10-03 修复 L-800 + L-812）：`page.refreshList()` 在**主线程**
+                // ⚠ 只把「刷界面」兜住（2026-10-03，L-800 + L-812）：`page.refreshList()` 在**主线程**
                 // 做文件 IO（listFiles / file.length() / 打开索引读头），一次异常不该让整个 IME 进程崩掉；
-                // 但**生效动作必须在这段 try 之外** —— 原先 `restartImeForDict()` 排在同一 try 内，
+                // 但生效动作必须在这段 try 之外 —— 原先 `restartImeForDict()` 排在同一 try 内，
                 // 一次刷新异常就会把「重启让词库生效」静默吃掉，用户看到「说下好了但没生效」。
                 runCatching {
                     page.setStatus(msg)
@@ -994,7 +994,7 @@ class DictManagerActivity : Activity() {
         }, 1500L)
     }
 
-    // ── 工具 ────────────────────────────────────────────────
+    // ── 工具 ──
 
     private fun dictDir() = File(filesDir, PinyinEngine.OPT_DICT_DIR)
 
@@ -1083,7 +1083,7 @@ class DictManagerActivity : Activity() {
         /** 列表渲染异常时的兜底提示（BUG.md L-831：刷新失败不崩进程，重进本页即恢复） */
         const val TEXT_REFRESH_FAIL = "刷新词库列表失败，重进本页可恢复"
 
-        /** 回到本页补做重启时的提示（2026-10-03 修复 L-547） */
+        /** 回到本页补做重启时的提示（2026-10-03，L-547） */
         const val TEXT_RESUME_RESTART = "词库已下载完成，输入法将重启以加载"
 
         /** 旧版包的状态行与按钮（2026-10-10 换包检测，判据 [OptionalDicts.isCurrentPack]） */
@@ -1091,7 +1091,7 @@ class DictManagerActivity : Activity() {
         const val TEXT_ACTION_UPDATE = "更新"
 
         /**
-         * 下载完成时页面已关闭、因而**没有**重启进程（2026-10-03 修复 L-547）。
+         * 下载完成时页面已关闭、因而**没有**重启进程（2026-10-03，L-547）。
          *
          * 只需在进程内存活：进程若自然结束，IME 重建时会直接加载 `dicts/` ⇒ 标记无需持久化。
          */
@@ -1109,7 +1109,7 @@ class DictManagerActivity : Activity() {
         private var pendingDictFailure: String? = null
 
         /**
-         * 「已安排重启」窗口（2026-10-04 修复 L-801）：[restartImeForDict] 延迟 1.5s 才 SIGKILL，
+         * 「已安排重启」窗口（2026-10-04，L-801）：[restartImeForDict] 延迟 1.5s 才 SIGKILL，
          * 而这段时间里 `activeDownload` 已是 null、按钮又是「可点」态 ⇒ 用户能再发起一次下载或删除，
          * 写到一半被随后的 kill 打断（还会叠加 L-798 的残留），而他刚看到 Toast「输入法将重启以加载」。
          * 置位后所有会改 `dicts/` 的入口一律拒绝，直到进程真的结束（本进程内的窗口，无需持久化）。
@@ -1148,7 +1148,7 @@ class DictManagerActivity : Activity() {
             okhttp3.OkHttpClient.Builder()
                 .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-                // 整体预算（2026-10-03 修复 L-548）：只有 connect/read 两层时，服务端「开始回包后极慢地
+                // 整体预算（2026-10-03，L-548）：只有 connect/read 两层时，服务端「开始回包后极慢地
                 // 吐字节」（每 179s 一个字节）能让下载线程挂到理论无限，而 `activeDownload` 只在成功/失败
                 // 时清 ⇒ 按钮永久禁用、用户既不能取消也没有提示。600s 覆盖 64MB 上限在慢速网络下的合理耗时。
                 .callTimeout(600, java.util.concurrent.TimeUnit.SECONDS)
@@ -1175,7 +1175,7 @@ class DictManagerActivity : Activity() {
 }
 
 
-// ── 词库下载的文件级实现（MEM-11）────────────────────────────
+// ── 词库下载的文件级实现（MEM-11） ──
 // 搬出类体的原因：下载线程不能碰任何实例成员，否则匿名线程会把 Activity 一起持久化；
 // 这些常量原先在 `private companion object` 里，顶层函数看不到，故一并搬出（同文件可见性不变）。
 private const val TAG = "DictManager"

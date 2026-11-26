@@ -32,7 +32,7 @@ import java.util.concurrent.Executors
  * 用户词库页：选择台账的查看、手动合并、导出与导入。
  *
  * 台账本身只追加（见 [SelectionLedger]）；本页只做**派生视图**：读全量流水 → 按「词 + 读音」
- * 合并出频次 → 展示 / 导出。台账无上限增长，因此读盘、聚合、导入、SAF 读写**全部在后台线程**，
+ * 合并出频次 → 展示 / 导出。台账无上限增长，因此读盘、聚合、导入、SAF 读写全部在后台线程，
  * 主线程只渲染与弹框。
  *
  * **导出两选一**：加密包（[UserDictExport]：外层 AES-256-GCM 壳、内层普通 zip 且条目明文）或明文文件；
@@ -240,7 +240,7 @@ class UserDictActivity : ComponentActivity() {
 
     private fun alive(): Boolean = !isFinishing && !isDestroyed
 
-    // ── 开启 / 关闭 ─────────────────────────────────────────────
+    // ── 开启 / 关闭 ──
 
     /** 未开启时的说明框：讲清用途、边界、风险与防护，输入「我明白」才开启 */
     private fun showEnableDialog() {
@@ -390,7 +390,7 @@ class UserDictActivity : ComponentActivity() {
         val edit: EditText,
     )
 
-    // ── 词库视图（后台读盘 → 主线程渲染）────────────────────────
+    // ── 词库视图（后台读盘 → 主线程渲染） ──
 
     private fun loadAsync() {
         // onDestroy 已 shutdownNow：此后（含后台线程回调里）再提交会抛 RejectedExecutionException，
@@ -452,7 +452,7 @@ class UserDictActivity : ComponentActivity() {
         listEntries.adapter = RowAdapter(rows.take(MAX_ROWS))
     }
 
-    // ── 导出（加密包 / 明文文件）──────────────────────────────
+    // ── 导出（加密包 / 明文文件） ──
 
     private fun startExport(format: SelectionLedger.ExportFormat) {
         val snapshot = rows
@@ -631,7 +631,7 @@ class UserDictActivity : ComponentActivity() {
     }
 
     /**
-     * 明文导出：直接把词表文本写进 SAF，**不过外壳、不加密、无密码**。
+     * 明文导出：直接把词表文本写进 SAF，不过外壳、不加密、无密码。
      *
      * 与加密包共用同一份 `SelectionLedger.exportText`（条目形态完全一致），
      * 差别只在壳 —— 用户要的就是「外部可读」。
@@ -695,7 +695,7 @@ class UserDictActivity : ComponentActivity() {
      * @return **null = 台账解不开**（不是「没有词」）—— 调用方必须说「解不开」，不能说「没有」；
      *   空表才是「确实没有可导出的词」
      *
-     * **不抛**（2026-10-22）：两个写盘路径都在 `try` **之外**调它，一旦冒出异常（台账极大时的 OOM、
+     * **不抛**（2026-10-22）：两个写盘路径都在 `try` 之外调它，一旦冒出异常（台账极大时的 OOM、
      * 文件系统异常），密码就没机会清零、刚建出的空壳也不会删 —— 明文 / 密钥的收尾整段被跳过。
      * 抛出按 null（解不开）处理：宁可说「解不开」，也不能让用户以为「已导出 0 条」。
      */
@@ -798,7 +798,7 @@ class UserDictActivity : ComponentActivity() {
      *
      * 必须带 `"wt"`：默认的 `"w"` 在部分 provider 上不保证截断，覆盖一个更大的旧文件时会在尾部
      * 留下残骸（读回来是「密码错误或文件已损坏」）。少数 provider 不认 `"wt"`（抛
-     * IllegalArgumentException 而不是返回 null），因此**两级都要各自兜住**再退回默认 mode。
+     * IllegalArgumentException 而不是返回 null），因此两级都要各自兜住再退回默认 mode。
      */
     private fun openTruncatingOutput(uri: Uri): java.io.OutputStream? =
         runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
@@ -839,7 +839,7 @@ class UserDictActivity : ComponentActivity() {
         )
     }
 
-    // ── 导入（自动识别加密包 / 旧版明文）────────────────────────
+    // ── 导入（自动识别加密包 / 旧版明文） ──
 
     /**
      * 导入第一步：把选中文件拷进缓存（限流），再按文件头分流。
@@ -1211,7 +1211,7 @@ class UserDictActivity : ComponentActivity() {
      * 对话框里的按钮拿不到 XML 的 style（`AlertDialog` 的自定义视图是代码搭的），
      * 而系统默认 Button 在这里是个浅灰圆角块，与整页的描边按钮明显两种风格。
      *
-     * **高度 / 间距只由调用方的 [btnLp] 给**：这里再设一份 `layoutParams` 就是双机制 ——
+     * 高度 / 间距只由调用方的 [btnLp] 给：这里再设一份 `layoutParams` 就是双机制 ——
      * `addView(child, params)` 会整体覆盖它，看着生效其实一半是死代码（上一版就是这么错的）。
      */
     private fun settingsButton(label: String): Button = Button(this).apply {
@@ -1238,7 +1238,7 @@ class UserDictActivity : ComponentActivity() {
      * AlertDialog 的默认按钮是系统样式（大写、加粗、主题色），本页其余入口都是
      * `SettingsButton`（13sp、不大写、描边底）。两套并排放会显得对话框是外来物。
      *
-     * **只管字号 / 字色 / 底图**：高度是系统按钮栏自己的触控尺度（实测 189px ≈ 54dp，
+     * 只管字号 / 字色 / 底图：高度是系统按钮栏自己的触控尺度（实测 189px ≈ 54dp，
      * 高于页面的 40dp），那是框架行为，不去压它 —— 真要压到 40dp 反而低于 48dp 的触控下限。
      *
      * 必须在 `show()` 之后调（`getButton` 之前返回 null）。
@@ -1380,7 +1380,7 @@ class UserDictActivity : ComponentActivity() {
         /** 导出/导入侧：台账解不开时不得说成「还没有可导出的词」（L-1411 同型） */
         const val TEXT_LEDGER_UNREADABLE = "台账暂时解不开（密钥库不可用），没有导出任何内容"
 
-        // ── 导出 / 导入的密码与加密包文案 ────────────────────────────
+        // ── 导出 / 导入的密码与加密包文案 ──
         const val TEXT_EXPORT_PWD_TITLE = "设置导出密码"
         const val TEXT_EXPORT_PWD_DESC = "导出件是加密压缩包：整个包体加密，包内的词表是明文。" +
             "密码只能用汉字，本机不保存，忘记后无法解开。"
@@ -1404,7 +1404,7 @@ class UserDictActivity : ComponentActivity() {
         /** 加密包后缀（与 [UserDictExport.FILE_SUFFIX] 一致） */
         const val SUFFIX = UserDictExport.FILE_SUFFIX
 
-        // ── 导出格式选择与明文导出警告 ───────────────────────────
+        // ── 导出格式选择与明文导出警告 ──
         const val TEXT_FORMAT_TITLE = "选择导出格式"
         const val TEXT_FORMAT_ENCRYPTED = "加密包（需密码，外部不可读）"
         const val TEXT_FORMAT_PLAIN = "明文文件（任何编辑器可读）"
