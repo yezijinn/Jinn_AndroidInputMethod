@@ -440,7 +440,7 @@ class JinnIme : InputMethodService() {
      * 第二次付费请求误拦成「刚刚翻译过」（2026-10-03，L-655）。
      *
      * ⚠ 只在译文真正写进输入框之后才记（2026-10-03，L-656）：原先记账排在
-     * `appendTranslation` 之前，而那一步有 9 条拒绝出口（宿主变敏感框 / 选区变化 / 输入已变化 /
+     * `appendTranslation` 之前，而那一步有十余条拒绝出口（宿主变敏感框 / 选区变化 / 输入已变化 /
      * 落点确认不了 / 提交被 InputFilter 丢弃…）⇒ 用户一个字都没拿到，30s 内重试却被自己的
      * 去重挡回去，提示与事实相反。
      */
@@ -3389,7 +3389,7 @@ class JinnIme : InputMethodService() {
             return
         }
         if (asr != null) return
-        // 后端选择（设置页「语音转为文字」→ 识别服务）：三者对外是同一个 [SpeechClient]。
+        // 后端选择（设置页「语音转为文字」→ 识别服务）：各后端对外都是同一个 [SpeechClient]。
         // 分叉一律交给 [SpeechClients.create]，与「语音测试」共用同一处，新增后端只改工厂。
         val backend = prefs.voiceBackend
         asr = SpeechClients.create(
@@ -4437,8 +4437,9 @@ class JinnIme : InputMethodService() {
             )
         )
         if (target == Mode.TOGGLE) ui.postDelayed(autoStopRunnable, autoStopDelayMs())
-        // 在线后端（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure）HOLD 也要收尾：五家单次音频
-        // 硬上限都是 60 秒，按住不放同样会到点截断（自建后端 HOLD 不排：服务端按连接持有缓冲，可以一直按住说）
+        // 在线后端（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram）HOLD 也要收尾：
+        // 一律按 [XF_MAX_TASK_MS]（58s）截断，各家单次音频的时长 / 体积上限不同，取最保守一档兜底；
+        // 按住不放同样会到点收尾（自建后端 HOLD 不排：服务端按连接持有缓冲，可以一直按住说）
         else if (VoiceBackend.isOnline(prefs.voiceBackend)) {
             ui.postDelayed(autoStopRunnable, XF_MAX_TASK_MS)
         }
@@ -5109,7 +5110,7 @@ class JinnIme : InputMethodService() {
                                 val landed = appendTranslation(connection, snapshot, outcome.text)
                                 if (landed) {
                                     // 只在译文真正写进输入框之后才记去重（2026-10-03，L-656）：
-                                    // 记账排在提交之前时，那 9 条拒绝出口（宿主变敏感框 / 选区变化 /
+                                    // 记账排在提交之前时，那十余条拒绝出口（宿主变敏感框 / 选区变化 /
                                     // 输入已变化 / 落点确认不了 / InputFilter 丢弃…）都会让用户
                                     // 「一个字没拿到、30s 内重试却被自己挡回去」。
                                     // ⚠ 选区模式**不记账**（2026-10-03，L-689）：选区是用户明确

@@ -4974,8 +4974,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 注意：定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 用
      *   `substringAfter("private fun renderFunctionPanel()").substringBefore("private fun buildFunctionButton(")`
      *   解析常驻按钮顺序并与《功能总览.md》对拍，插进那段切片会把动作排的 label 算进常驻清单。
-     * 注意：本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：字面调用全仓只允许 1 处（在 recycleCandidateViews 内），
-     *   清容器由 renderFunctionPanel 开头的 clearCandidateList() 负责）。
+     * 注意：本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：字面调用
+     *   全仓只允许 1 处，在 recycleCandidateViews 内；清容器由 renderFunctionPanel 开头的
+     *   clearCandidateList() 负责）。
      */
     private fun renderActionPanel() {
         // 清掉上帧的按钮引用（与搜索态早退同款）：置 null 后 setTranslating 不会去改已脱离视图树的 View

@@ -1256,7 +1256,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
         if (category != null) {
             // 多标签（2026-09-25）：category 存的是「含哪些片段」（如 `URL,NUMBER`），
             // 命中条件是**含**该标签而非等值。标签集固定且互不包含（URL / NUMBER / OTHER），
-            // 所以 `LIKE '%URL%'` 不会误命中别的标签；旧库的单值（"URL"）同样被覆盖，无需迁移。
+            // 所以 `LIKE '%URL%'` 不会误命中别的标签；旧库的单值（`URL`）同样被覆盖，无需迁移。
             where.append(" AND category LIKE ?")
             args.add("%$category%")
         }
@@ -1534,7 +1534,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * （[allHashes] + `ConfigBackup.planClipboardImport`）先行规划，这里只负责
      * 按原样落库，否则导入的上百条历史会被统一改写成「刚刚复制」。
      *
-     * ⚠ 三条性能约束（BUG.md L-1533，逐条都是这一轮改出来的）：
+     * ⚠ 三条性能约束（BUG.md L-1533）：
      *  ① **一块一个事务**（[RESTORE_CHUNK_ROWS] 行）：原先逐条 `insert` 各自一个隐式事务，
      *     一万行 = 一万次 fsync。刻意**不**包成一个大事务 —— 那会让一次磁盘满 / 库损坏
      *     放大成「一条坏行毁掉一万行」；块级最坏只丢当前这一块（≤ [RESTORE_CHUNK_ROWS]）。
