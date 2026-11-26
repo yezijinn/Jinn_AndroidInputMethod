@@ -1299,7 +1299,7 @@ internal object ConfigBackupManager {
                         )
                     },
                 )
-                // 同 1178 行：按**本机**原上限收敛，不用包里带来的值裁本机历史
+                // 按**本机**原上限收敛（用上文的 localMaxItems / localMaxBytes），不用包里带来的值裁本机历史
                 db.trimTo(localMaxItems, localMaxBytes)
                 // 报「实际进库多少」而不是「插入成功多少」：导入条目带的是旧设备时间戳，
                 // 本机库满时它们恰好最旧，会刚插入就被 trimTo 裁掉（此时报 +N 是虚高的）。

@@ -314,7 +314,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             val rowCategory = currentCategory
             holder.renderedCategory = rowCategory
             holder.num.text = (categoryTotal - pos).toString()
-            // 图片行是**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
+            // 图片行是**序号占位**（仅当「图片允许显示在「全部」分组」关闭时才会出现在列表里）：
             // 点它不粘贴（见 handleItemClick），正文写明去哪看这张图
             val img = item.image
             if (img != null) {
@@ -695,7 +695,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     /**
      * 「全部」分类是否把图片行纳进文本列表（渲染为序号占位）。
      *
-     * 见设置项「图片显示在「全部」分组」：关闭（默认）时「全部」不再是「网格 + 纯文本列表」，
+     * 见设置项「图片允许显示在「全部」分组」：关闭（默认）时「全部」不再是「网格 + 纯文本列表」，
      * 而是把图片行以占位形式留在列表里 —— 图片的浏览入口是「图片」分类网格。
      */
     private fun imageRowsInAll(): Boolean = !ClipboardPrefs.of(context).imageInAllGroup
@@ -1442,7 +1442,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         const val STRIP_ROWS = 2
 
         /**
-         * 「全部」列表里图片行的占位正文（见设置项「图片显示在「全部」分组」）。
+         * 「全部」列表里图片行的占位正文（见设置项「图片允许显示在「全部」分组」）。
          *
          * 图片行只在偏好**关闭**（默认）时进列表：序号照常占位、正文换成这句，点它不粘贴。
          * 文案与历史页的同名常量保持一致（两处都钉在守卫里）。

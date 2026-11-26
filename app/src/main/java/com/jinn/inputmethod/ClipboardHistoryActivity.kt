@@ -341,7 +341,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                     refreshSelectionButton()
                 }
                 holder.number.text = (numberById[item.id] ?: "").toString()
-                // 图片行走**序号占位**（仅当「图片显示在「全部」分组」关闭时才会出现在列表里）：
+                // 图片行走**序号占位**（仅当「图片允许显示在「全部」分组」关闭时才会出现在列表里）：
                 // 图片的浏览入口是「图片」分组（网格），混在文本流里点它只能贴文本，语义不通
                 val img = item.image
                 if (img != null) {
@@ -974,7 +974,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         val favoritesOnly = category == FILTER_FAVORITE || (category == FILTER_IMAGE && imageFavOnly)
         val catKey = if (category == FILTER_FAVORITE || category == FILTER_IMAGE) null else category
         // 内容类型维度：图片分类只看图片；「全部」分组按偏好决定列表是否纳进图片行
-        // （渲染成序号占位，见「图片显示在「全部」分组」设置项）；其余分类一律只看文本
+        // （渲染成序号占位，见「图片允许显示在「全部」分组」设置项）；其余分类一律只看文本
         val clipPrefs = ClipboardPrefs.of(this)
         val imageInAll = category == null && clipPrefs.imageInAllGroup
         val contentType = when {
@@ -1099,7 +1099,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 否则条带上还留着已删 / 已取消收藏的图，点开只会得到「已删除」
                 val favMode = category == FILTER_FAVORITE
                 // 「全部」分组的条带只在偏好开启时显示（关闭 = 图片只在「图片」分组浏览，
-                // 「全部」列表里以序号占位行代替，见设置项「图片显示在「全部」分组」）
+                // 「全部」列表里以序号占位行代替，见设置项「图片允许显示在「全部」分组」）
                 val stripMode = favMode || (category == null && imageInAll)
                 favImageGrid.visibility = if (stripMode) View.VISIBLE else View.GONE
                 if (stripMode) favImageGrid.show(favGridTraceId, favoritesOnly = favMode)
@@ -1577,7 +1577,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
     }
 
     /**
-     * 内容对话框（单击/长按历史条目）：弹层展示**完整原文**，上方 复制 / 收藏 / 删除 / 关闭，两侧距屏幕边各 10%。
+     * 内容对话框（单击/长按历史条目）：弹层展示**完整原文**，上方 复制 / 收藏 / 删除 / 关闭，宽高各占屏幕 96%。
      *
      * ⚠ 完整展示 ⇒ 不能像列表正文列那样截断。也不能靠「一个 TextView 装全文 + 降断行策略」：
      * 实测 250,000 字符的单行文本、`BREAK_STRATEGY_SIMPLE` 之下 PSS 仍 153MB → **1,868MB** 并被
@@ -1962,7 +1962,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         const val TEXT_IMAGE_EMPTY = "暂无图片"
 
         /**
-         * 「全部」列表里图片行的占位正文（见设置项「图片显示在「全部」分组」）。
+         * 「全部」列表里图片行的占位正文（见设置项「图片允许显示在「全部」分组」）。
          *
          * 图片行只在偏好**关闭**（默认）时进列表：序号照常占位、正文换成这句，点它不弹对话框。
          */
