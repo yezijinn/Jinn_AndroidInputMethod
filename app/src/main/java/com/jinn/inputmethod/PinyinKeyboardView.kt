@@ -2327,7 +2327,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         btnSpaceHint.setTextColor(hint)
         // 候选栏里的拼音回显与「✕ 清空候选」：候选栏底已随皮肤变深 / 变浅，这两处必须同源
-        // （2026-09-23 审查发现的遗漏：二者在布局里写死 text_secondary，深色皮肤下几乎看不见）
+        // （2026-09-23 发现的遗漏：二者在布局里写死 text_secondary，深色皮肤下几乎看不见）
         viewCandidatePinyin.setTextColor(hint)
         btnClearCandidates.setTextColor(hint)
         // 图标键：回车 / 删除（布局里是 ImageButton，字段声明为 View，故用 as?）；
@@ -2356,7 +2356,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 大写键图标色：普通态用皮肤主文字色；大写锁定态底是皮肤的强调色（各皮肤从深蓝到浅银都有），
      * 图标改用由强调色亮度推出的对比色 —— 否则浅色 accent 上的近白图标几乎看不见
-     * （2026-09-23 审查实测：钛金约 1.5:1、极光约 2.3:1）。
+     * （2026-09-23：钛金约 1.5:1、极光约 2.3:1）。
      */
     private fun refreshShiftTint() {
         val tint = if (capsMode) {
@@ -2569,7 +2569,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 皮肤只覆盖面色与文字，涟漪若继续读令牌，「亮白主题 + 深色皮肤」会给深键面压 10% 黑
      * （几乎看不见按压反馈）、「暗黑主题 + 浅色皮肤」则在浅键面上泛白，与皮肤观感割裂
-     * （2026-09-23 审查确认的唯一可见不搭配）。
+     * （2026-09-23：唯一可见的不搭配）。
      */
     private fun rippleColor(fillColor: Int, fallbackRes: Int): Int =
         if (skin.isToken) context.getColor(fallbackRes) else KeyboardSkins.rippleOn(fillColor)
@@ -4756,7 +4756,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     hideSearchPanel()
                 },
             ))
-            // 早退前清掉上帧的按钮引用（2026-10-01 审查 L-228）：`removeAllViews` 只是把视图从
+            // 早退前清掉上帧的按钮引用（2026-10-01，L-228）：`removeAllViews` 只是把视图从
             // 容器摘下来，字段还指着旧按钮 —— `setTranslating` 之后会去改一个已脱离视图树的 View
             translateButtonBox = null
             directionButtonBox = null
@@ -5237,7 +5237,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 方向面板内 9 个键按当前皮肤与透明度重刷「面 + 字色」。
      *
      * 面板视图懒加载且复用（[ensureDirectionPanel] 只在首次构建），键面与字色都在构建期取当时的
-     * 皮肤色 —— 不重刷的话，换肤色或拖透明度后再次打开仍是上一套配色（2026-09-23 审查发现：
+     * 皮肤色 —— 不重刷的话，换肤色或拖透明度后再次打开仍是上一套配色（2026-09-23：
      * 中心键 ◉ 的激活态底色与字色也会一起过期）。
      */
     private fun applySkinToDirectionPanel(panel: ViewGroup) {

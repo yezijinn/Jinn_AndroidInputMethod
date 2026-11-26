@@ -904,7 +904,7 @@ class SettingsActivity : ComponentActivity() {
         //    会去反复检查已经填好的 Key 与模型名；② 顺带省掉一次 provider 组装（那会解密凭据）。
         val reason = prefs.translateNotReadyReason()
         // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，12 项预设 + 自定义），
-        // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
+        // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30：用户改了
         // 本页的下拉、摘要却报另一套语言，指向与实际行为不符）
         val targetLabel = if (provider == TranslationProviderId.OPENAI) {
             prefs.openAiTargetLanguage

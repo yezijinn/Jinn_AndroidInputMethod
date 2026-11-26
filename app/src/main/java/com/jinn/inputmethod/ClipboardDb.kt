@@ -1844,7 +1844,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             val itemCap = if (maxItems > 0) maxItems else rows.size
             val byteCap = if (maxBytes > 0) maxBytes else Long.MAX_VALUE
             // 额度只按**非收藏**算（收藏不占名额）：否则收藏占满张数上限后，每次复制新图
-            // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14 复核）。
+            // 都会被自己秒删（与文本侧 trimByCount 同一缺陷，2026-11-14）。
             // 字节同理：收藏字节计入总量时，收藏自身超预算会让 break 永不触发 ⇒ 一次删光全部非收藏。
             var kept = rows.count { !it.favorite }
             var bytes = rows.filter { !it.favorite }.sumOf { it.bytes }

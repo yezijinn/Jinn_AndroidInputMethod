@@ -108,7 +108,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 半透明键盘：本面板「键面」按钮的当前档位（1f = 不透明，与键盘键面一致）。
      *
      * 必须声明在 [init] 之前：`buildUi()` → `tabButton()` 会在构造期读它建面，
-     * 声明晚了会读到 JVM 默认 `0f`，把按钮的面设成全透明（2026-09-23 审查发现的存量缺陷，
+     * 声明晚了会读到 JVM 默认 `0f`，把按钮的面设成全透明（2026-09-23 发现的存量缺陷，
      * 表现为长按操作条 / 清空确认条的按钮没有键面）。
      */
     private var surfaceAlpha = 1f
@@ -1295,7 +1295,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      */
     private fun applyTabFaces() {
         // 遍历全部 tabButton（顶栏 + 长按操作条 + 清空确认条）：先前只覆盖顶栏，导致操作条 /
-        // 确认条的按钮永远没有键面（2026-09-23 审查发现的存量缺陷，真机截图确认）
+        // 确认条的按钮永远没有键面（2026-09-23 发现的存量缺陷，真机截图确认）
         for (b in tabButtons) {
             val selected = isSelectedCategoryButton(b)
             val base = if (selected) {

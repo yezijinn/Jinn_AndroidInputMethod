@@ -283,7 +283,7 @@ internal enum class TranslationScope(val id: String, val label: String, val deta
  * 所以「字节数 ≤ 官方字符上限」是保守成立的 —— 中文文本会提前截断（可自行调大），
  * 但绝不会撞上服务端的「字符串过长」错误。
  *
- * ⚠ 所有默认值都必须 ≤ [TranslationText.MAX_MAX_BYTES]（= 本机单次读取上限，2026-10-01 审查 L-223）：
+ * ⚠ 所有默认值都必须 ≤ [TranslationText.MAX_MAX_BYTES]（= 本机单次读取上限，2026-10-01，L-223）：
  * 服务端允许更大也没用，读不回来的文本发不出去。DeepL 官方给到 131072 字节，本机读取窗口
  * 只有 100000，故按窗口填（≈3.3 万汉字）—— 要真正用满官方额度，得先把读取上限提上去。
  */
@@ -313,7 +313,7 @@ internal object TranslationText {
      * 单次读取上限（字符）：防止超大文档整篇走 Binder 回包（宿主侧
      * `TransactionTooLargeException` 的触发源，见 `JinnIme.readTextBeforeCursor`）。
      *
-     * 它同时是「字节上限」可填范围的上界（[MAX_MAX_BYTES] 直接引用它，2026-10-01 审查 L-223）：
+     * 它同时是「字节上限」可填范围的上界（[MAX_MAX_BYTES] 直接引用它，2026-10-01，L-223）：
      * 二者曾经脱节（窗口 50000 / 可填 1000000），用户填到窗口之外时实际生效的仍是窗口值，
      * 日志却按填的值报「已截断」—— 阈值失真。绑在一起后读取窗口恒等于填写的字节上限。
      *

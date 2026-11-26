@@ -1114,7 +1114,7 @@ class JinnIme : InputMethodService() {
      * 行移动 / 行首行末会算出无关位置，甚至把光标挪到「窗口长度」那个绝对下标上。
      */
     private fun currentSelectionRange(connection: android.view.inputmethod.InputConnection): SelectionRange? {
-        // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30 审查）：这里是编辑键
+        // 同步 Binder 调用可能抛（与 readTextBeforeCursor 同源，2026-09-30）：这里是编辑键
         // （全选 / 复制 / 拖选）与「译文提交前的选区检查」的公共入口，异常未捕获会崩 IME 进程。
         // null 有**多种成因**（2026-10-01 复审 L-230）：宿主不支持 `getExtractedText`、
         // 大文档下抛事务异常、选区下标未知（负值）或落在文本窗口之外。

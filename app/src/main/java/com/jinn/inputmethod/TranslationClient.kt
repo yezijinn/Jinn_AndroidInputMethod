@@ -37,7 +37,7 @@ internal object TranslationClient {
     /**
      * 结构化错误摘要里错误码的最大长度。
      *
-     * 2026-10-01 审查 L-214 从 40 收到 24：40 恰好装得下一把完整的 API Key（`sk-…` 常见
+     * 2026-10-01，L-214：从 40 收到 2440 恰好装得下一把完整的 API Key（`sk-…` 常见
      * 30~50 字符），与下面 [looksLikeCredential] 的负判据一起收紧。
      */
     private const val MAX_ERROR_CODE_CHARS = 24
@@ -48,7 +48,7 @@ internal object TranslationClient {
     /**
      * 响应体读取上限（字节）：正常译文响应只有几百字、错误体也就几 KB，本值足够宽松，
      * 同时挡住「Base URL 指到一个返回大文件/大 HTML 的站点时整段读进内存」的内存尖峰
-     * （2026-09-30 审查：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
+     * （2026-09-30：`body.string()` 会让 10MB 响应变成 20MB 的 char[]，
      * 非 JSON 时 org.json 还会把输入串拼进异常消息再复制一份）。
      *
      * ⚠ 必须 ≥ 可发文本上限的 4 倍 + 余量（2026-10-03，L-678）：可发上限是
@@ -427,7 +427,7 @@ internal object TranslationClient {
                         // 解析侧手里只有响应体、无法自证；出口手上有**实际送出的原文**（`text` 参数本身就是
                         // 送出的内容，含截断后的形态）⇒ 在这里对拍。
                         // 只在**少**的时候拒绝：多出行可能只是译文自带换行，拒绝反而误伤。
-                        // ⚠ 空行**不参与**对拍（2026-10-02 审查的回归修正）：服务端对空行
+                        // ⚠ 空行**不参与**对拍（2026-10-02 的回归修正）：服务端对空行
                         // 根本不返回元素（百度系 `trans_result` 只给有内容的行），把空行算进 expected
                         // 会让「原文含空行」的整篇 / 整行翻译**必然被拒** —— 而段落之间有空行是常态，
                         // 等于百度家在默认场景下 100% 失败。两边都按**非空行**计数，口径一致。
@@ -484,7 +484,7 @@ internal object TranslationClient {
         extraHeaders: List<Pair<String, String>> = emptyList(),
         onDone: (List<String>?, Int) -> Unit,
     ): Call? {
-        // HTTPS 硬判据与 translate 同款（2026-09-30 审查发现：这里曾漏掉）：Base URL 填成
+        // HTTPS 硬判据与 translate 同款（2026-09-30：这里曾漏掉）：Base URL 填成
         // `http://…` 时 Bearer Key 会**明文上网**，而平台给语音局域网放行了明文（base-config），
         // 不会拦这次请求 —— 判据必须在代码里。code = -2 专指「地址不是 HTTPS」，与 -1（网络失败）
         // 区分开，调用方才能给出「可修」的提示。

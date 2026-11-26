@@ -959,7 +959,7 @@ object KeyboardSkins {
      *
      * 皮肤只覆盖面色与文字，涟漪若仍读主题令牌：「亮白主题 + 深色皮肤」会给深键面压 10% 黑
      * （几乎看不见按压反馈）、「暗黑主题 + 浅色皮肤」则在浅键面上泛白 —— 与皮肤观感割裂
-     * （2026-09-23 审查确认的唯一可见不搭配）。这里按 [baseColor] 的明暗取相反侧。
+     * （2026-09-23：唯一可见的不搭配）。这里按 [baseColor] 的明暗取相反侧。
      */
     internal fun rippleOn(baseColor: Int): Int =
         if (perceivedBrightness(baseColor) > BRIGHT_THRESHOLD) withAlpha(0xFF000000.toInt(), 0.10f)

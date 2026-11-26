@@ -628,7 +628,7 @@ class Prefs(private val appContext: Context) {
      * [KeyAppearance.DEFAULT_SPACING_DP]（不写死数字：BUG.md L-1291，定义域翻倍后旧数字会变成错依据）。
      */
     var candidateSpacingDp: Float
-        // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02 复核）：
+        // getter 也要钳位（与圆角 / 间隙 / 透明度三个兄弟键同款，2026-10-02）：
         // 手改 prefs、第三方写入或将来某条绕过 setter 的路径写进越界值时会**直达绘制** ——
         // 值越大候选项左右内缩越多，巨大值会把每个候选撑到屏幕外（跨行溢出型布局异常）。
         get() = KeyAppearance.clampSpacingDp(
@@ -1024,7 +1024,7 @@ class Prefs(private val appContext: Context) {
      * 三件讯飞凭据里有没有「磁盘上有密文、但本机解不开」的（软件密钥件丢失 / 密文损坏 / 换机）。
      *
      * 页面据此如实说明「需要重新填写」—— 少了它用户只会看到三个空框，与自己「明明填过」的记忆
-     * 冲突，最坏会以为凭据被偷（2026-11-01 复核：解不开时页面一个字都不说）。
+     * 冲突，最坏会以为凭据被偷（2026-11-01：解不开时页面一个字都不说）。
      *
      * 判据是「磁盘上有密文、本机读出来为空」。`credentialRetryAt` 闸内不下结论，
      * 避免把「锁屏 / Keystore 抖动」这类暂时失败报成「凭据坏了」。
@@ -1174,7 +1174,7 @@ class Prefs(private val appContext: Context) {
      * 翻译服务提供方 id（见 [TranslationProviderId]）。
      *
      * 键**缺失**（用户从未动过服务方下拉）时按「已填的凭据」推导，而不是直接回落当前默认 ——
-     * 这是 2026-09-30 复核发现的升级回归：第一版默认是 Azure，而 `providerTouched` 闸门只在
+     * 这是 2026-09-30 起的升级回归：第一版默认是 Azure，而 `providerTouched` 闸门只在
      * 用户动过下拉时才写键，于是「填了 Azure Key、从没碰过下拉」的老用户升级后会落到新默认（阿里云），
      * 凭据为空 ⇒ 翻译直接不可用、提示还指向「填写阿里云凭据」；更糟的是导出会把推导结果写进备份，
      * 换机后**永远回不去**（与 rareTier3「升级丢档 → 备份固化」同一失效模式）。

@@ -603,7 +603,7 @@ internal fun applyTemplateEnsuringText(
             }
             // 只在**精确可表示**的整数范围内收窄成 Long：`toLong()` 对 1e30 这类超范围值会
             // 饱和成 Long.MAX_VALUE，把用户填的数悄悄改掉（JSON 本身支持 1e30 这种写法，
-            // 2026-10-01 审查 L-226）
+            // 2026-10-01，L-226）
             val value: Any = if (clamped == Math.floor(clamped) && Math.abs(clamped) < 9.0e15) {
                 clamped.toLong()
             } else {
@@ -763,7 +763,7 @@ internal fun applyTemplateEnsuringText(
             is String -> node
             // `optString` 对显式 JSON null 返回字面量 "null"、对对象/数组返回序列化文本，都会被当
             // 假译文提交；这里用 `opt(...) as? String` 与同文件 keyOf 过滤 JSONObject.NULL 的口径
-            // 对齐（2026-09-30 审查发现：作者已知道该坑，只是 asText 漏了）。
+            // 对齐（2026-09-30：作者已知道该坑，只是 asText 漏了）。
             is JSONObject -> (node.opt("text") as? String).orEmpty()
                 .ifEmpty { (node.opt("content") as? String).orEmpty() }
                 .ifEmpty { null }
