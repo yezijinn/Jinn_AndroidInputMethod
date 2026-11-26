@@ -32,7 +32,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 /**
  * 「语音转为文字」页：设置页里的语音四块（总开关 / 授权麦克风 / 后端与识别选项 / 服务商目录）整体搬到这里。
  *
- * 为什么单独一页：语音是**作者自用的可选链路**（自建 CapsWriter 服务端，或自带凭据的讯飞在线 /
+ * 为什么单独一页：语音是作者自用的可选链路（自建 CapsWriter 服务端，或自带凭据的讯飞在线 /
  * OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram），长期占着设置页首页的四块卡片，
  * 对不用语音的人全是噪声。设置页只留一个入口按钮（2026-11-01 起与「悬浮键盘」同行，状态小字已删）。
  *
@@ -625,7 +625,7 @@ class VoiceSettingsActivity : ComponentActivity() {
 
     /**
      * 重建（旋转 / 进程回收）后系统把各控件取值放回来：编辑框正文、总开关都在 `super` 里同步恢复，
-     * **下拉的选中位置不是** —— `AbsSpinner.onRestoreInstanceState` 只记 `mSyncPosition` 并
+     * 下拉的选中位置不是 —— `AbsSpinner.onRestoreInstanceState` 只记 `mSyncPosition` 并
      * `requestLayout()`，位置与回调都在之后第一次 layout 落地（那条路走
      * [spinnerLanguage] 的选中回调，那里也重算一次）。
      *
@@ -753,10 +753,10 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 长串凭据在部分机型上被重新过滤一次（粘贴进去的值与显示值不再一致），
      * 而这里要的只是「看得见 / 看不见」。
      *
-     * 掩码形态（`b86••••••••`）**永远不加密码转换**：它本来就只露前 3 位，
+     * 掩码形态（`b86••••••••`）永远不加密码转换：它本来就只露前 3 位，
      * 再盖一层密码点就变成一整排点，用户看不出「已经填过」。
      *
-     * **正在编辑的那个框同样不加**：用户点进去就是要核对 / 改字符，盖成点等于「聚焦揭示」没做
+     * 正在编辑的那个框同样不加：用户点进去就是要核对 / 改字符，盖成点等于「聚焦揭示」没做
      * （2026-11-01 真机复核发现；需求：聚焦时显示真值供编辑）。
      */
     private fun applyCredentialVisibility(show: Boolean) {
@@ -776,7 +776,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    // ── 凭据回显：前 3 位 + 掩码（2026-11-01） ──────────────────────
+    // ── 凭据回显：前 3 位 + 掩码（2026-11-01） ──
 
     /** 凭据框清单（回填 / 揭示 / 掩码三条路径共用一份清单：讯飞三件 + OpenAI Key + 阿里 Key + 腾讯两件 + Azure Key + 百度两件 + Deepgram Key） */
     private fun credentialFields(): List<EditText> = listOf(
@@ -887,7 +887,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     /**
      * 保存时该框的有效取值。
      *
-     * **掩码形态 ⇒ 沿用磁盘原值**：这是硬性错误防线 —— 把 `b86••••••••` 当成用户输入写回，
+     * 掩码形态 ⇒ 沿用磁盘原值：这是硬性错误防线 —— 把 `b86••••••••` 当成用户输入写回，
      * 凭据会永久损坏（再解密得到的是掩码串本身）。判据取两道：集合成员 + 文本含掩码字符
      * （后者兜住「实例状态恢复把掩码串放回输入框、集合却是新实例」这一种）。
      *
@@ -944,7 +944,7 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 此时 `loadPrefs` 里 indexOf 退回选中第 0 项，读回它等于把导入的语言静默改写
      * （闸门判据见 [UserAwareSpinner]，BUG.md L-821）。
      *
-     * 「没碰过」的判据是**下标仍等于载入时那个**，不是只看 `userInteracted`：旋转 / 进程回收后
+     * 「没碰过」的判据是下标仍等于载入时那个，不是只看 `userInteracted`：旋转 / 进程回收后
      * 系统把用户选中的下标放回来，探针仍是 false（程序化恢复不算用户操作），只看探针会把
      * 「改过语言再旋转」的那次改动连同脏标记一起丢掉 —— 界面显示新值、保存写的还是旧值。
      */
@@ -955,7 +955,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         return values[pos]
     }
 
-    // ── 麦克风授权 ──────────────────────────────────────────────
+    // ── 麦克风授权 ──
 
     private fun requestMic() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -998,7 +998,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnGrant.isEnabled = !granted
     }
 
-    // ── 在线语音服务（API 文档目录） ────────────────────────────
+    // ── 在线语音服务（API 文档目录） ──
 
     /**
      * 按 [VoiceProviders.CATEGORIES] 的顺序分组渲染：每个分类一个**可折叠分组**（标题行 + 行容器），
@@ -1117,7 +1117,7 @@ class VoiceSettingsActivity : ComponentActivity() {
      *
      * 行是**卡内纯行**，不套 [PageStyle.addCard]：整段列表本来就挂在 `card_voice_providers` 这张卡里，
      * 逐行套卡就是卡套卡（双层描边 + 无意义的内缩），行与行之间用 [rowDivider] 分隔即可。
-     * **本函数自己挂到 [parent]（该分类的行容器）上**，调用方不要再 `addView`
+     * 本函数自己挂到 [parent]（该分类的行容器）上，调用方不要再 `addView`
      * （同一个 View 挂两次会抛 `child already has a parent`）。
      */
     private fun addProviderRow(parent: LinearLayout, provider: VoiceApiProvider) {
@@ -1125,7 +1125,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             // 行高由「文档」按钮撑到 40dp 触摸基线；行自己不再加纵向内边距 ——
-            // **点击区域是按钮本身**，行内边距点在按钮外不触发任何事，靠它凑 40dp 是假达标
+            // 点击区域是按钮本身，行内边距点在按钮外不触发任何事，靠它凑 40dp 是假达标
         }
         val label = TextView(this).apply {
             // 名称与特点同一行：一屏能多看几条；长名（CapsWriter Offline（本机协议））折到第二行后省略
@@ -1174,7 +1174,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         if (!ok) Toast.makeText(this, TEXT_DOC_FAILED, Toast.LENGTH_SHORT).show()
     }
 
-    // ── 语音测试（自包含，不改动 IME 的语音状态） ────────────────────
+    // ── 语音测试（自包含，不改动 IME 的语音状态） ──
 
     /**
      * 点「语音测试」：一次 3 秒的真实识别 —— 结论写进结论行，识别正文写进多行输入框。
@@ -1226,7 +1226,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    // ── 保存并重启输入法进程 ──────────────────────────────────────────
+    // ── 保存并重启输入法进程 ──
 
     /**
      * 「重启输入法」按钮：改动本身在输入停顿 / 离开页面时已自动保存（[persistInputs]），
@@ -1603,7 +1603,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         if (!discardOnExit) {
             persistInputs()
             // 自动保存路径也要消费 `unpersistedCredentialKeys`（BUG.md L-741 / L-1050 口径）：
-            // `writeCredential` 在 Keystore 不可用时会**删掉磁盘上的旧密文**（fail-closed，有意设计），
+            // `writeCredential` 在 Keystore 不可用时会删掉磁盘上的旧密文（fail-closed，有意设计），
             // 不提示的话填完 Key 直接返回的用户全程零提示，重启后回到「未配置」。
             val unpersisted = prefs.unpersistedCredentialKeys()
             if (unpersisted.isNotEmpty()) {
@@ -1633,7 +1633,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    // ── 改动即保存（输入停顿自动落盘） ────────────────────────────────
+    // ── 改动即保存（输入停顿自动落盘） ──
 
     /** 与 OpenAI 兼容页 / 翻译设置页同款（`BUG.md` L-967 / L-209）：连续输入只在停顿后写一次 */
     private fun scheduleAutosave() {
@@ -1667,7 +1667,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    // ── 脏状态与未保存退出 ──────────────────────────────────────────
+    // ── 脏状态与未保存退出 ──
 
     /**
      * 给编辑框挂「改动即重算脏状态并排队自动保存」的监听。

@@ -96,7 +96,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      *
      * V 级主要记录音频包收发这类每秒可达 10 条的高频噪音，全量落盘对输入法毫无收益。
      * 落盘走**常驻文件句柄**（见 [streamFor]：一条日志 ≈ 一次 `write()` 进页缓存，不 fsync），
-     * 成本可忽略；关掉它的理由是**让文件只留可排障的事件**：高频噪音既淹诊断包，
+     * 成本可忽略；关掉它的理由是让文件只留可排障的事件：高频噪音既淹诊断包，
      * 也让「一天几百行」的现状退化成一秒十几行。
      *
      * V 级仍会输出到 logcat（`adb logcat -s PinyinKeyboard MicRecorder` 等随时可看），
@@ -153,7 +153,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     private const val PHONE_SECOND = "[3-9３-９٣-٩]"
 
     /**
-     * 号码里的分隔符：半角空格与连字符之外，再收**全角空格 / 全角连字符 / 短破折号**。
+     * 号码里的分隔符：半角空格与连字符之外，再收全角空格 / 全角连字符 / 短破折号。
      *
      * 本 App 是中文输入法，用户打得出全角数字，也打得出全角分隔
      * （`１３８　１２３４　５６７８`）—— 只认半角等于漏掉这一整类（BUG.md L-968）。
@@ -253,7 +253,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     )
 
     /**
-     * 常见 API Key / 令牌形态（2026-09-30 审查）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
+     * 常见 API Key / 令牌形态（2026-09-30）：`sk-…`（OpenAI 系）、`…:fx`（DeepL Free）、
      * `Bearer <token>`。
      *
      * 这是**兜底**：凭据本身严禁进日志（各调用点自律 + 失败响应体只记结构化摘要）。但只要有人
@@ -271,16 +271,16 @@ private const val LOG_SEGMENTS_KEPT = 2
         // （2026-10-02 修复 L-312 未覆盖的第三种形态）。AccessKey**Secret** 是高熵随机串，
         // 与哈希同形，仍按上面的原口径不覆盖 —— 靠调用点自律 + 失败体只记结构化摘要挡住。
         Regex("(?<![A-Za-z0-9_])LTAI[A-Za-z0-9]{8,}"),
-        // URL query 里的签名 / 凭据参数形态（2026-10-03 修复 L-497）：百度系把 `appid` / `sign`
+        // URL query 里的签名 / 凭据参数形态（2026-10-03，L-497）：百度系把 `appid` / `sign`
         // 直接放在 query 上（同一条 query 里的 `q` 还是**用户正文**），阿里云用 `AccessKeyId` ——
         // 脱敏表不认这些形态时，任何一处打印 URL（或异常 message 内嵌 URL）都会把签名与正文带出去。
         // 约定不变：打印一律用 `host + encodedPath`（现有调用点已是这个口径），这里再加一道网。
         // `client_id` / `client_secret`（2026-11-03 复审）：百度换 token 的两个参数带 `client_` 前缀，
-        // 而本规则要求参数名**紧跟在 `?`/`&` 之后且是裸名** —— 少这两项时 `&client_secret=…` 整条
+        // 而本规则要求参数名紧跟在 `?`/`&` 之后且是裸名 —— 少这两项时 `&client_secret=…` 整条
         // 不匹配（`secret` 前面隔着 `client_`），回显地址就会把 AK/SK 带进日志。
         Regex("(?i)[?&](client_secret|client_id|sign|signature|sig|appid|app_id|accesskeyid|access_key_id|secret|secretkey|api_key|apikey|key|token|access_token|password|pwd)=[^&\\s]{4,}"),
         // 「Authorization: <token>」的**非 Bearer** 形态（部分网关用 `Authorization: <key>` 或
-        // `X-Api-Key: <key>`，压根不带 Bearer 前缀）—— 原表只认 `Bearer\s+\S{12,}`（2026-10-03 修复 L-668）
+        // `X-Api-Key: <key>`，压根不带 Bearer 前缀）—— 原表只认 `Bearer\s+\S{12,}`（2026-10-03，L-668）
         // 头名把项目自己在用的也列全（BUG.md L-1072）：AzureTranslator 发的是
         // `Ocp-Apim-Subscription-Key`，原先不在表内 —— 兜底表的存在前提就是「将来有人打印整行」，
         // 自家在用的头名缺一个就是一处确定性的漏网（`api-key` 兜住各家自定名）
@@ -389,7 +389,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         return prefix + '.' + (ms % 1000 + 1000).toString().substring(1)
     }
 
-    // ── 初始化 ──────────────────────────────────────────────
+    // ── 初始化 ──
 
     /** 由各组件入口调用，幂等。必须在首次写日志前调用。 */
     fun init(context: Context) {
@@ -416,7 +416,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      *
      * 存储未挂载时（首次解锁前 / 存储异常）`getExternalFilesDir` 返回 null，而本对象是
      * 进程级单例、IME 进程又长期存活：只在 [init] 里解析一次、失败即放弃的写法，会让这个
-     * 进程此后**一条文件日志都不写**（导出诊断包恒为空），恰恰发生在最需要日志的场景。
+     * 进程此后一条文件日志都不写（导出诊断包恒为空），恰恰发生在最需要日志的场景。
      */
     private fun retryLogDirIfNeeded(context: Context) {
         if (logDir != null) return
@@ -470,7 +470,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         }
     }
 
-    // ── 时序事件（回溯用）─────────────────────────────────
+    // ── 时序事件（回溯用） ──
 
     private val eventSeq = IntArray(1)
 
@@ -497,7 +497,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         log('I', "EVENT", "[EV#$n] $module:$event$suffix", null)
     }
 
-    // ── Trace ID（一次操作的完整调用链）──────────────────────
+    // ── Trace ID（一次操作的完整调用链） ──
 
     private val traceSeq = IntArray(1)
 
@@ -516,7 +516,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         return "$module-${(n % 0xFFFF).toString(16).uppercase().padStart(4, '0')}-$rand"
     }
 
-    // ── 写日志 ──────────────────────────────────────────────
+    // ── 写日志 ──
 
     fun v(tag: String, msg: String) = log('V', tag, msg, null)
     fun d(tag: String, msg: String) = log('D', tag, msg, null)
@@ -532,11 +532,11 @@ private const val LOG_SEGMENTS_KEPT = 2
     internal fun redactSensitive(body: String): String {
         // 域名在第 2 组（本地部分放宽成 `[^@\s]+`，见 EMAIL_RE，BUG.md L-1313）
         var s = EMAIL_RE.replace(body) { m -> MASK + "@" + m.groupValues[2] }
-        // 凭据形态**先跑**（2026-10-02 修复 L-440）：数字规则会把 `LTAI0123456789012345`
+        // 凭据形态**先跑**（2026-10-02，L-440）：数字规则会把 `LTAI0123456789012345`
         // 遮成 `LTAI0123****45`，插进去的 `****` 截断了字母数字串 ⇒ `LTAI` 规则再也匹配不上，
         // 本该整段替换的值反而露出前 4 位与末 2 位（fail-open 的方向）
         for (re in API_KEY_RES) s = re.replace(s, MASK)
-        // 长数字串**先于**手机号 / 分组规则（2026-10-10 修复 L-971）：边界改成逐字形之后，手机号规则
+        // 长数字串**先于**手机号 / 分组规则（2026-10-10，L-971）：边界改成逐字形之后，手机号规则
         // 会在 `１２３４５６１３８１２３４５６７８` 这类混排串里只认后 11 位，插进去的 `****` 把整段
         // 切开 ⇒ 长数字规则再也拼不回完整的一段（前 6 位裸奔）。先整段遮掉再落到真正的 11 位号码上。
         // 代价一处：`008613812345678`（0086 + 11 位 = 15 位）现按长数字串遮（留 `0086` 与末 2 位），
@@ -553,10 +553,10 @@ private const val LOG_SEGMENTS_KEPT = 2
     }
 
     /**
-     * 落盘正文护栏：脱敏 + **剔除换行/控制字符** + 超长截断（纯函数，便于单测）。
+     * 落盘正文护栏：脱敏 + 剔除换行/控制字符 + 超长截断（纯函数，便于单测）。
      * 只作用于文件，logcat 用原文。
      *
-     * 为什么剔控制字符（2026-09-30 审查）：日志行以换行分界，而日志里会出现用户可控串
+     * 为什么剔控制字符（2026-09-30）：日志行以换行分界，而日志里会出现用户可控串
      * （Base URL、host、导入包里的设备名…）—— 带一个换行就能伪造出完整的假日志行（含时间戳与
      * 级别），排障时会被彻底带偏。
      */
@@ -800,7 +800,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         return kept.joinToString("\n")
     }
 
-    // ── logcat 快照 / 清理 ─────────────────────────────────
+    // ── logcat 快照 / 清理 ──
 
     /**
      * 抓取当前 logcat 到日志目录，返回生成的文件；失败返回 null。
@@ -1124,7 +1124,7 @@ private const val LOG_SEGMENTS_KEPT = 2
     fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
 
     /**
-     * 日志目录的读写互斥锁：**快照、导出包与旧日志清理**共用这一把（BUG.md L-174）。
+     * 日志目录的读写互斥锁：快照、导出包与旧日志清理共用这一把（BUG.md L-174）。
      *
      * 三者碰的是同一批文件：快照是**就地写**的（删除 → 写入 → 过滤回写，非原子），导出正在逐个读，
      * 而清理正在删。只把前两者串起来时，清理能在导出中途删掉文件（少打几个文件，最坏是把刚写好的
@@ -1188,7 +1188,7 @@ private const val LOG_SEGMENTS_KEPT = 2
         return alignBundleTailToLineStart(tail, mark)
     }
 
-    // ── 导出诊断包 ─────────────────────────────────────────
+    // ── 导出诊断包 ──
 
     /**
      * 把日志目录打包成 zip，写到应用缓存目录（零权限）。调用方（设置页）随后经系统文件选择器
@@ -1269,7 +1269,7 @@ private const val LOG_SEGMENTS_KEPT = 2
                         written++
                     }
                 }
-                // 一个条目都没写进去时**不要交出空包**（2026-10-02 修复 L-449）：此前只看 `renameTo`
+                // 一个条目都没写进去时**不要交出空包**（2026-10-02，L-449）：此前只看 `renameTo`
                 // 成功就记「导出成功」并经 SAF 交给用户 —— 用户把空包发给维护者，双方都要多一轮往返
                 // 才知道里面什么都没有（日志里的 `files.size` 还是目录条目数，看着更像成功了）。
                 if (written == 0) {
