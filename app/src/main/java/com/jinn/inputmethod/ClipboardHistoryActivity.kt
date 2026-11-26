@@ -443,7 +443,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 val prefs = Prefs(this@ClipboardHistoryActivity)
                 val cellHeight = (prefs.galleryCellHeightDp * resources.displayMetrics.density).toInt()
                 // cell = FrameLayout（缩略图 + 收藏角标）：网格里看不出哪张收藏过，只能靠长按菜单
-                // 的文案反推 —— 2026-10-10 补角标；child[0]=图、child[1]=★
+                // 的文案反推（2026-10-10 补角标）；child[0]=图、child[1]=★
                 val cell = (convertView as? android.widget.FrameLayout)
                     ?: android.widget.FrameLayout(this@ClipboardHistoryActivity).apply {
                         addView(ImageView(this@ClipboardHistoryActivity).apply {
@@ -751,7 +751,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 text = TEXT_IMAGE_EXPORT_ALL
                 setOnClickListener { exportAllImages() }
             })
-            // 「删图片」删的是**全部**图片（不走筛选）：只看收藏时先收起，免得被当成本次筛选的批量删除
+            // 「删图片」删的是**全部非收藏**图片（不走筛选）：只看收藏时先收起，免得被当成本次筛选的批量删除
             if (!imageFavOnly) {
                 actionsRow.addView(compactView().apply {
                     text = TEXT_IMAGE_DELETE_ALL
@@ -1156,7 +1156,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
             minimumHeight = dp(96)
-            // 竖长图（1080×2280 等）按比例会撑满整个对话框、把动作行挤出屏幕（真机实测 2026-10-10）：
+            // 竖长图（1080×2280 等）按比例会撑满整个对话框、把动作行挤出屏幕（2026-10-10 真机实测）：
             // 限高 360dp，图仍按 FIT_CENTER 缩放，按钮始终可见
             maxHeight = dp(360)
             contentDescription = TEXT_IMAGE_CELL
@@ -1371,7 +1371,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
 
     /** 收藏时未绑定图库目录的引导框（本次收藏已按加密方式完成） */
     private fun showFavBindDialog() {
-        // 本框只由**长活池**的回调经 `runOnUiThread` 触发（解密 + 写盘可达数秒）：期间旋转或返回，
+        // 本框只由长活池的回调经 `runOnUiThread` 触发（解密 + 写盘可达数秒）：期间旋转或返回，
         // 回调落到已销毁的实例上，对失效窗口 show() 会抛未捕获 BadTokenException 把**整个进程**
         // 带走（输入法与设置页同进程，输入法一并倒）。与 `message()` 同款守卫（BUG.md L-1386）。
         if (isFinishing || isDestroyed) return
@@ -1428,7 +1428,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
     }
 
     /**
-     * 一键把库内全部图片导出到**用户选定的目录**：逐张解密 → 写 SAF 文档，收尾用阻断式回执
+     * 一键把库内全部图片导出到用户选定的目录：逐张解密 → 写 SAF 文档，收尾用阻断式回执
      * 说明落点。这是图片**不进任何备份**（配置备份 / 云备份）之后的迁移出口。
      *
      * 没选过目录（或记住的那条已解析不出）就先弹系统选择器：选择器是异步的，等待期间**不算
@@ -1580,7 +1580,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
      * 内容对话框（单击/长按历史条目）：弹层展示**完整原文**，上方 复制 / 收藏 / 删除 / 关闭，宽高各占屏幕 96%。
      *
      * ⚠ 完整展示 ⇒ 不能像列表正文列那样截断。也不能靠「一个 TextView 装全文 + 降断行策略」：
-     * 实测 250,000 字符的单行文本、`BREAK_STRATEGY_SIMPLE` 之下 PSS 仍 153MB → **1,868MB** 并被
+     * 实测 250,000 字符的单行文本、`BREAK_STRATEGY_SIMPLE` 之下 PSS 仍 153MB → 1,868MB 并被
      * `lowmemorykiller` 杀掉（同日另一次实测峰值 2,006MB）。真正管用的是**分段**
      * （[ClipboardClassifier.SEGMENT_MAX_CHARS]）：每段 4000 字，布局代价回到普通文本量级。
      *
@@ -1711,7 +1711,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             textSize = 13f
             setTextColor(getColor(R.color.text_primary))
         })
-        // 完整示例：等宽字体 + 边框，视觉上就是一“份”文件内容（含一个空行，示范空行会被跳过）
+        // 完整示例：等宽字体 + 边框，视觉上就是一「份」文件内容（含一个空行，示范空行会被跳过）
         root.addView(TextView(this).apply {
             text = TEXT_IMPORT_SAMPLE
             textSize = 13f

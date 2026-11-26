@@ -68,7 +68,7 @@ internal object ConfigBackupManager {
      * 刻意比 [MAX_TEXT_SECTION_BYTES]（读入上限）低一档：序列化成 jsonl 后还要加上字段名与转义，
      * 若两边取同一个数，接近上限的包会在导入端被判「节不可用」而**整包拒绝** —— 用户刚导出的
      * 备份自己导不回来。注意转义最坏可达 2 倍（换行/引号密集的文本），所以预算不是硬保证：
-     * 序列化结果一旦越过单节上限，导出会**中止并说明原因**（经 [BackupResult.reason] 返回），不会静默丢数据。
+     * 序列化结果一旦越过单节上限，导出会中止并说明原因（经 [BackupResult.reason] 返回），不会静默丢数据。
      */
     internal const val CLIP_EXPORT_BYTE_BUDGET = 12L * 1024 * 1024
 
@@ -77,9 +77,9 @@ internal object ConfigBackupManager {
      *
      * 这不是纯粹的性能参数：`ClipboardDb.recentPageAfter` 会**解密整页每一行**并返回带正文的列表，
      * 所以页宽就是一次解密窗口 —— 上界 `CLIP_PAGE × MAX_ITEM_BYTES(256KB) × 放大 2.5`。
-     * 原值 **200** 条 ≈ **131MB**，是 48MB 预算（`ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES`）的 2.7 倍，
+     * 原值 200 条 ≈ 131MB，是 48MB 预算（`ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES`）的 2.7 倍，
      * 且当时不在任何窗口守卫的覆盖里（搜索 / 面板分页 / 存量重算三条都有，导出这条漏了）。
-     * 取 **50**：与 `ClipboardDb.RECLASSIFY_PAGE` 同量级（≈31.25MB，留三成余量），代价是导出查询次数变多
+     * 取 50：与 `ClipboardDb.RECLASSIFY_PAGE` 同量级（≈31.25MB，留三成余量），代价是导出查询次数变多
      * （页数 ×4），而导出是用户手动触发、带进度反馈的一次性动作，慢几百毫秒换掉 OOM 值得。
      */
     internal const val CLIP_PAGE = 50
@@ -1173,7 +1173,7 @@ internal object ConfigBackupManager {
                 prefsApplied -= r1.applied
                 failedStage = "设置项写盘失败"
             }
-            // 剪贴板设置是**另一个** SharedPreferences 文件，必须同样校验落盘（2026-09-30）：
+            // 剪贴板设置是另一个 SharedPreferences 文件，必须同样校验落盘（2026-09-30）：
             // 只 flush 主 prefs 时，导入改了剪贴板开关/上限、用户又选「稍后重启」，进程在 apply 队列
             // 排空前被回收 ⇒ 剪贴板设置静默回退，而弹窗已经把剪贴板侧的项数算进「设置 N 项」了。
             // ⚠ 两个文件的校验**各自独立**（L-1097）：主 prefs 失败不能短路这一条，否则剪贴板侧
