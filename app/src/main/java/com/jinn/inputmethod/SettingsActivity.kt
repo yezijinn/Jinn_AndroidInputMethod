@@ -334,7 +334,7 @@ class SettingsActivity : ComponentActivity() {
         // 语音转为文字：四块语音配置（总开关 / 授权麦克风 / 服务端 / 识别选项）已迁到独立页，
         // 本页只留一个入口按钮（与「绑定悬浮键盘」同行，见 bindVoiceEntry）
         bindVoiceEntry()
-        // 底部使用说明：文案见 [TEXT_USAGE]（values/strings.xml 不承载界面文案）
+        // 底部使用说明：文案见 [TEXT_USAGE]（写在代码里）
         textUsage = findViewById(R.id.text_usage)
         textUsage.text = TEXT_USAGE
 

@@ -54,7 +54,7 @@ import androidx.activity.result.contract.ActivityResultContracts
  *
  * 麦克风授权：永久拒绝后系统不再弹窗，按钮改为「前往系统设置」并跳应用详情页。
  * 本页有凭据明文输入 ⇒ 全程 `FLAG_SECURE`（防截屏 / 录屏 / 最近任务预览）。
- * 文案全部在本类的 `TEXT_*` 常量里（`values/strings.xml` 不承载界面文案）。
+ * 界面文案主要在本类的 `TEXT_*` 常量里；麦克风授权态与地址 / 端口校验等少数串走 `values/strings.xml`。
  */
 class VoiceSettingsActivity : ComponentActivity() {
 
@@ -426,7 +426,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
 
-        // 凭据输入框的标签用 hint 下发（values/strings.xml 不承载界面文案）
+        // 凭据输入框的标签用 hint 下发；标签文案在 TEXT_* 常量里，不走 values/strings.xml
         textXfDesc.text = if (prefs.hasUnreadableXfCredential) {
             // 磁盘上明明有密文、本机却解不开（软件密钥丢失 / 密文损坏）：不说清的话
             // 用户只看到三个空框，会以为凭据被偷了或从没存过
@@ -437,8 +437,10 @@ class VoiceSettingsActivity : ComponentActivity() {
         editXfAppId.hint = TEXT_XF_APP_ID
         editXfApiKey.hint = TEXT_XF_API_KEY
         editXfApiSecret.hint = TEXT_XF_API_SECRET
-        // 显示 / 隐藏只切两个密码框（APPID 不是秘密，本来就明文）；属于显示态，不进脏状态。
-        // 勾选 = 主动要看真值（三个框全部揭示）；取消 = 未聚焦的框回到「前 3 位 + 掩码」。
+        // 显示 / 隐藏切全部 11 个凭据框的真值；APPID 同样掩码回显、勾选时一并揭示。
+        // 八个密码型框（各 APIKey / APISecret / SecretKey）装密码转换；APPID / SecretId 不是密码型，
+        // 仍走掩码回显。属于显示态，不进脏状态。
+        // 勾选 = 主动要看真值（所有框揭示）；取消 = 未聚焦且未改动的框回到「前 3 位 + 掩码」。
         checkXfShow.text = TEXT_XF_SHOW
         checkXfShow.setOnCheckedChangeListener { _, show ->
             if (show) revealCredentials() else maskCredentials()
@@ -474,7 +476,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             if (show) revealCredentials() else maskCredentials()
             applyCredentialVisibility(revealAll())
         }
-        // 腾讯云卡同理（SecretKey 是密码型；SecretId / 引擎型号不是秘密，本来就明文）。
+        // 腾讯云卡同理（SecretKey 是密码型；SecretId 也掩码回显但非密码型；引擎型号本来就明文）。
         // 解不开的凭据与另三张卡同一句话：不说清的话用户只看到空框，会以为从没填过。
         textTencentDesc.text = if (prefs.hasUnreadableTencentCredential) {
             TEXT_TENCENT_DESC + TEXT_XF_UNREADABLE
@@ -747,7 +749,8 @@ class VoiceSettingsActivity : ComponentActivity() {
         BACKEND_VALUES.getOrElse(spinnerVoiceBackend.selectedItemPosition) { prefs.voiceBackend }
 
     /**
-     * 显示 / 隐藏 APIKey / APISecret / 各家订阅密钥（APPID、URL、模型名不是秘密，本来就明文）。
+     * 给密码型凭据框（各 APIKey / APISecret / SecretKey）加 / 去密码转换。
+     * APPID / SecretId 走掩码回显但不是密码型，URL / 模型名本来就明文，均不在此列。
      *
      * 用 `transformationMethod` 而不是改 `inputType`：后者会就地重建按键监听与滤镜，
      * 长串凭据在部分机型上被重新过滤一次（粘贴进去的值与显示值不再一致），

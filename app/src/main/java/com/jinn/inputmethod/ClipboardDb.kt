@@ -1935,7 +1935,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 游标已扫过这些行，裁掉就再也没人能看到它们。调用方按「一屏多几条」处理即可。
          *
          * @param total 纯 SQL 计数的原始行数（[count]；坏行也计入）
-         * @param limit 每页取的行数（面板为 PANEL_PAGE_ITEMS）
+         * @param limit 每页取的行数（面板为 `ClipboardPrefs.panelPageItems`）
          * @param startOffset 从哪一行开始扫（默认 0 = 首屏；>0 = 从既有游标**续扫**，
          *   用于「扫到上限仍没凑出条目、用户点空态继续找」的场景 —— 这时不重扫前面已看过的行）
          * @param maxPlainBytes 累计明文预算（见 [FIRST_PAGE_MAX_PLAIN_BYTES]）；`<= 0` 视为不限制
@@ -2144,8 +2144,10 @@ data class ClipboardFilter(
          * @param raw null=全部；URL/NUMBER/OTHER=分类；FAVORITE/IMAGE=伪分类
          */
         fun of(raw: String?): ClipboardFilter = when (raw) {
-            // 「收藏」与「全部」等文本分类只列文本：图片由网格区（ClipboardImageGridView）承载，
-            // 不再以「占位行」混进文本列表（2026-10-11 布局口径）
+            // 数据库层默认只列文本：图片由网格区（ClipboardImageGridView）承载。
+            // 但调用方并非总照此口径 —— 面板与历史页在 `imageInAllGroup` 关闭（默认）时
+            // 把 contentType 覆盖为 null，图片行仍以序号占位进入「全部」列表
+            // （见 `ClipboardPanelView.imageRowsInAll`，2026-10-11 布局口径）
             PSEUDO_FAVORITE -> ClipboardFilter(
                 null, favoritesOnly = true, contentType = ClipboardDb.CONTENT_TYPE_TEXT,
             )
