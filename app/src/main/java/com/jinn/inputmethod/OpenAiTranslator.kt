@@ -37,7 +37,7 @@ internal data class OpenAiConfig(
     val timeoutSec: Int = OpenAiTranslator.DEFAULT_TIMEOUT_SEC,
 ) {
     /**
-     * 打码的 `toString`（2026-09-30 审查）：data class 的默认实现会把 **apiKey 明文**带出去 ——
+     * 打码的 `toString`（2026-09-30）：data class 的默认实现会把 **apiKey 明文**带出去 ——
      * 一行 `Diagnostics.i(TAG, "cfg=$config")`、一条把 config 塞进异常的写法、或一次失败的
      * `assertEquals(config, …)`（JUnit 会打印两边 toString）就足以把 Key 写进可外传的日志。
      */
@@ -82,7 +82,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
      * 宁可提示「服务异常」，也不要把它猜成「检查凭据」。
      */
     private fun openAiErrorOf(code: String?): TranslationError {
-        // trim 不能省（2026-10-02 修复 L-430）：网关回 `" 429 "` 这类带空白的错误码时，
+        // trim 不能省（2026-10-02，L-430）：网关回 `" 429 "` 这类带空白的错误码时，
         // `toIntOrNull()` 会失败并落进 else ⇒ 限流被报成「服务异常」
         val c = code.orEmpty().trim().lowercase(Locale.ROOT)
         return when {
@@ -94,7 +94,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
             "context_length" in c || "too_long" in c || "max_tokens" in c ||
                 "invalid_request" in c || "bad_request" in c -> TranslationError.PARAM
             // 纯数字错误码（2026-10-02 修复 L-299 / L-430）：`jsonCode` 已能把
-            // `{"error":{"code":429}}` 取成 "429"，但此前这里只认关键词 ⇒ 又落回 SERVER，
+            // `{"error":{"code":429}}` 取成「429」，但此前这里只认关键词 ⇒ 又落回 SERVER，
             // L-287 的修复等于白做。数字分支还要处理两件事：
             //  · `429.0` 这类浮点形态（`toIntOrNull()` 失败）⇒ 用 `toDoubleOrNull` 兜；
             //  · `0` 与 `2xx` 是**非错误语义**（不少网关用 0 表示成功）⇒ 返回 SERVER，
@@ -113,23 +113,23 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
 
     override fun parseResponse(code: Int, body: String?): TranslationOutcome {
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
-        // 业务错误码优先，且**非 2xx 也先读**（2026-10-02 修复 L-358）：与百度 / 阿里云同一口径 ——
+        // 业务错误码优先，且**非 2xx 也先读**（2026-10-02，L-358）：与百度 / 阿里云同一口径 ——
         // 网关用 4xx/5xx 承载 `insufficient_quota` / `invalid_api_key` 时，先看 HTTP 状态会把
         // 「欠费」「Key 无效」压成「服务异常」/「认证失败」，用户查不出真因。
-        // 过滤 JSON null（2026-10-01 修复 L-257）：`has` 对显式 `"error": null` 也返回 true，
+        // 过滤 JSON null（2026-10-01，L-257）：`has` 对显式 `"error": null` 也返回 true，
         // 会把正常响应判成服务端错误；口径与本文件其它取值的 `JSONObject.NULL` 过滤一致
         val error = json?.opt("error")
         if (error != null && error !== org.json.JSONObject.NULL) {
             // 按 `error.code` / `error.type` 分类（2026-10-01 审查 L-270）：不少网关与中转用 200
             // 承载 `insufficient_quota` / `invalid_api_key` / `context_length_exceeded` 与限流，
             // 一律报「服务异常」会让用户无从下手 —— 换 Key、充值、缩短原文被压成同一句提示。
-            // ⚠ 用 jsonCode 而不是 jsonText（2026-10-01 修复 L-287）：`{"error":{"code":429}}`
+            // ⚠ 用 jsonCode 而不是 jsonText（2026-10-01，L-287）：`{"error":{"code":429}}`
             // 这类**数字**错误码（不少网关如此）经 `as? String` 会被丢成 null ⇒ 一律归 SERVER，
             // 于是欠费 / 限流 / 超上下文又被压成「服务异常，请稍后重试」。`jsonCode` 就是为
             // 「可能是数字的错误码」准备的（见它在 Translation.kt 的 KDoc）。
             val errorCode = when (error) {
                 is org.json.JSONObject ->
-                    // 空串要跳过，否则会盖掉可用的 `type`：`jsonCode` 对 "" 返回 ""（只过滤 NULL）
+                    // 空串要跳过，否则会盖掉可用的 `type`：`jsonCode` 对「」返回「」（只过滤 NULL）
                     jsonCode(error, "code")?.takeIf { it.isNotBlank() } ?: jsonCode(error, "type")
                 else -> error.toString()
             }
@@ -145,7 +145,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
             )
         }
         if (json == null || code !in 200..299) return TranslationOutcome.Fail(httpErrorOf(code))
-        // 输出被上限截断时**不能算成功**（2026-10-02 修复 L-484）：
+        // 输出被上限截断时**不能算成功**（2026-10-02，L-484）：
         // `finish_reason == "length"` 表示模型输出被 `max_tokens`（或网关自带上限）砍断 ——
         // 拿它上屏等于把**半句话**写进用户正文，且毫无提示（用户只会以为模型翻得烂）。
         // 归 PARAM 而不是 SERVER：这是「调用方参数（输出上限）太小」，不是服务端故障。
@@ -156,7 +156,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         if (finishReason.equals("length", ignoreCase = true)) {
             Diagnostics.w("OpenAiTranslator", "翻译: 模型输出被上限截断（finish_reason=length），不当作成功")
             // 用专有的 TRUNCATED 而不是 PARAM：后者让用户去核对「语言方向 / 模型名 / 路径 /
-            // 原文长度」，而真因是**输出上限** —— 按 PARAM 的提示核对必然无果（2026-10-02 审查）
+            // 原文长度」，而真因是**输出上限** —— 按 PARAM 的提示核对必然无果（2026-10-02）
             return TranslationOutcome.Fail(TranslationError.TRUNCATED)
         }
         val text = extractByPath(json, config.responsePath)
@@ -271,7 +271,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         const val VAR_TEXT = "{{text}}"
 
 /**
- * 应用模板并**保证原文一定在其中**（2026-10-01 修复 L-246）。
+ * 应用模板并保证原文一定在其中（2026-10-01，L-246）。
  *
  * 用户可以把提示词改写成自然语言（例如「把上面的内容翻译成中文」），此时模板里不再有
  * [VAR_TEXT] —— 请求里也就**没有任何原文**，模型只能凭空编，而界面与日志都显示「成功」。
@@ -284,9 +284,9 @@ internal fun applyTemplateEnsuringText(
     target: String,
 ): String {
     val filled = applyTemplate(template, text, target)
-    // 只在**两个模板都没有占位符**时兜底：system 提示词本来就不该带 {{text}}（正文由 user 带），
+    // 只在两个模板都没有占位符时兜底：system 提示词本来就不该带 {{text}}（正文由 user 带），
     // 只看单个模板会在 system 里重复塞一遍原文。
-    // ⚠ 判据用 [OpenAiTranslator.hasTextVar]（归一化后）而不是原串字面量（2026-10-02 修复 L-338）：
+    // ⚠ 判据用 [OpenAiTranslator.hasTextVar]（归一化后）而不是原串字面量（2026-10-02，L-338）：
     // 展开走归一化、判据走原串时，容错写法（`{{ text }}` / `{{TEXT}}`）会被误判成「没有占位符」
     // ⇒ 原文进请求两次，用户看到重复译文。
     if (!hasTextVar(template) && !hasTextVar(otherTemplate)) {
@@ -307,7 +307,7 @@ internal fun applyTemplateEnsuringText(
 
         private val JSON_MEDIA_TYPE = "application/json; charset=UTF-8".toMediaType()
 
-        // ── 请求组装（纯函数） ─────────────────────────────────
+        // ── 请求组装（纯函数） ──
 
         /**
          * Base URL + Path → 完整端点。
@@ -345,7 +345,7 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-         * 「端点可用」的**唯一判据**：能解析出 URL **且是 https**（2026-10-03 修复 L-811）。
+         * 「端点可用」的**唯一判据**：能解析出 URL **且是 https**（2026-10-03，L-811）。
          *
          * 只判「能解析」时 `http://` 会一路放行到界面说「已配置」，直到第一次点翻译才被 `INSECURE`
          * 拒掉 —— 而平台层对用户自填的域名没有兜底（见 `network_security_config` 的说明）。
@@ -354,14 +354,14 @@ internal fun applyTemplateEnsuringText(
             joinUrl(baseUrl, chatPath)?.isHttps == true
 
         /**
-         * 「OpenAI 兼容是否**已配置**」的**唯一判据**（2026-10-03 修复 L-811）。
+         * 「OpenAI 兼容是否**已配置**」的**唯一判据**（2026-10-03，L-811）。
          *
          * 此前这份事实散在**四处**：`Prefs.hasCredentialFor` / `OpenAiSettingsActivity` 的保存校验 /
          * 翻译设置页的状态行都要求端点是 https，而 `TranslationClient.providerOf` 只判「端点能解析」
          * ⇒ 用户把 Base URL 填成 `http://` 时，翻译设置页与设置页都显示「已配置 · 模型名」，
          * 真正点翻译却被 `INSECURE` 拒掉：界面说配好了、一用就报错，且每次点击前都以为要花钱。
          *
-         * 四处全调它 —— **同一份事实只允许有一份判据**（本仓已因判据分叉翻车多次，见 L-557）。
+         * 四处全调它 —— 同一份事实只允许有一份判据（本仓已因判据分叉翻车多次，见 L-557）。
          */
         internal fun isReady(apiKey: String, model: String, baseUrl: String, chatPath: String): Boolean =
             apiKey.cleanCredential().isNotEmpty() &&
@@ -391,7 +391,7 @@ internal fun applyTemplateEnsuringText(
                 // 名字必须是合法 HTTP token（RFC 7230）：中文名 / 含空格的名字会让
                 // `Request.Builder.header` 抛 IllegalArgumentException，被 TranslationClient
                 // 兜成 PARAM → 提示「请检查语言设置」，与真实原因（自定义 Headers 写错）
-                // 完全无关（2026-09-30 审查发现）。
+                // 完全无关（2026-09-30）。
                 // **值同样要校验**（探针实测）：OkHttp 对值只允许 `\t` 与 U+0020..U+007E，
                 // 中文值、或从网页复制来的 NBSP / ZWSP（`trim()` 不删它们！）都会抛同一个异常、
                 // 得到同一个误导提示。
@@ -421,7 +421,7 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-         * 由客户端（或 OkHttp 的 `BridgeInterceptor`）掌管的协议级头名（小写）：**一律不接纳用户的自定义头**。
+         * 由客户端（或 OkHttp 的 `BridgeInterceptor`）掌管的协议级头名（小写）：一律不接纳用户的自定义头。
          *
          * 判据是「这个头由传输层决定语义」：`accept-encoding` 关掉透明解压、`content-length` 与
          * `transfer-encoding` 决定 body 形态、`connection` 决定连接复用、`host` 决定寻址与凭据去向、
@@ -444,7 +444,7 @@ internal fun applyTemplateEnsuringText(
          * ——`messages` 不可被自定义 JSON 覆盖（原文必须由提示词模板携带，见 L-428），
          * 所以自定义变量只会字面进请求。
          *
-         * **单趟扫描**（2026-10-01 修复 L-332）：链式 `replace` 会让被代入的**值**再被后续 replace 扫描，
+         * **单趟扫描**（2026-10-01，L-332）：链式 `replace` 会让被代入的**值**再被后续 replace 扫描，
          * 而 `target` 是用户自由文本 —— 把它写成 `{{text}}` 就会让原文出现两次、目标语言消失。
          * 单趟扫描里值只是被 append，不会再被当成模板。
          */
@@ -478,17 +478,17 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-         * 已知变量的书写容错：`{{ text }}` / `{{TEXT}}` 这类写法也认（2026-10-01 修复 L-334）。
+         * 已知变量的书写容错：`{{ text }}` / `{{TEXT}}` 这类写法也认（2026-10-01，L-334）。
          *
          * 只归一这四个名字，其余 `{{…}}` **原样保留**（不替换：2026-10-02 修复 L-428 —— `messages`
          * 不可被覆盖，原文只能由**提示词模板**携带，自定义变量没有用武之地）。
          * 此前链式 `replace` 只认精确字面量，用户写 `{{ text }}` 时提示词里会原样留着它、
          * 兜底再把原文追加到末尾，而三处反馈都没说清是空格导致的。
          */
-        // ⚠ 空白类必须带 `\p{Zs}`（2026-10-02 修复 L-419）：Java 的 `\s` 是 `[ \t\n\x0B\f\r]`，
+        // ⚠ 空白类必须带 `\p{Zs}`（2026-10-02，L-419）：Java 的 `\s` 是 `[ \t\n\x0B\f\r]`，
         // **不含 U+3000 全角空格** —— 而中文输入法下空格键的默认输出正是它，`cleanCredential`
         // 的剥除表也不含它 ⇒ `{{　text　}}` 归一化失败、占位符原样泄进请求。
-        // ⚠ 花括号**本身**同样要容错（2026-10-02 修复）：`｛｝`（U+FF5B / U+FF5D 全角）是中文
+        // ⚠ 花括号**本身**同样要容错（2026-10-02）：`｛｝`（U+FF5B / U+FF5D 全角）是中文
         // 输入法下打花括号的常见形态，而本 App 自己就是中文 IME —— 只补内侧空白不补括号本身，
         // 等于把同一个漏洞从「半开」改成「开一半」：`｛｛text｝｝` 依旧归一化失败、占位符原样
         // 进请求，兜底再把原文追加一遍。允许半角/全角混用（`{｛text}}` 也认）。
@@ -497,14 +497,14 @@ internal fun applyTemplateEnsuringText(
             RegexOption.IGNORE_CASE,
         )
 
-        /** 归一化：容错写法统一成精确字面量；判据与展开**共用**（见 [hasTextVar]） */
+        /** 归一化：容错写法统一成精确字面量；判据与展开共用（见 [hasTextVar]） */
         internal fun normalizeKnownVars(template: String): String =
             KNOWN_VAR_PATTERN.replace(template) { "{{${it.groupValues[1].lowercase(Locale.ROOT)}}}" }
 
         /**
          * 模板里是否带 `{{text}}`（含容错写法）。
          *
-         * 判据必须与展开同源（2026-10-02 修复 L-338）：`applyTemplate` 展开的是**归一化后**的串，
+         * 判据必须与展开同源（2026-10-02，L-338）：`applyTemplate` 展开的是**归一化后**的串，
          * 而兜底判据原来看的是原串 —— 用户写 `{{ text }}` 或 `{{TEXT}}` 时展开生效、判据却看不见
          * ⇒ 原文被追加第二遍（模型可能译两份、token 翻倍），同时日志与设置页报「模板缺少 {{text}}」。
          * 展开、兜底、设置页三处现在共用这一个判据。
@@ -557,7 +557,7 @@ internal fun applyTemplateEnsuringText(
             putNumber(body, "temperature", config.temperature)
             putNumber(body, "top_p", config.topP)
             putNumber(body, "max_tokens", config.maxTokens)
-            // 返回值此前被丢弃（2026-10-02 修复 L-424）：解析失败时静默跳过合并，排障
+            // 返回值此前被丢弃（2026-10-02，L-424）：解析失败时静默跳过合并，排障
             // （尤其配置来自**备份导入**、绕过设置页校验时）看不到「写了但没生效」
             if (!mergeExtraJson(body, config.extraJson)) {
                 Diagnostics.w("OpenAiTranslator", "自定义 JSON 解析失败，本次未合并（设置页保存时会提示）")
@@ -566,7 +566,7 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-         * 数值参数的**定义域**（2026-10-03 修复 L-500）。
+         * 数值参数的**定义域**（2026-10-03，L-500）。
          *
          *  · `temperature` ∈ [0, 2]，`top_p` ∈ [0, 1]；`max_tokens` 只设下界 1、不设上界。
          *
@@ -613,7 +613,7 @@ internal fun applyTemplateEnsuringText(
         }
 
         /**
-     * 自定义 JSON 是否可解析（2026-10-01 修复 L-257）。
+     * 自定义 JSON 是否可解析（2026-10-01，L-257）。
      *
      * UI 用它给用户**看得见**的提示：此前这个校验的返回值在 `buildBody` 里被丢弃，
      * 用户把 JSON 写错时参数被静默丢弃、翻译照常「成功」。设置页保存前据此标红
@@ -628,13 +628,13 @@ internal fun applyTemplateEnsuringText(
         return obj.keys().asSequence().none { extraKeyRejection(it, obj.opt(it)) != null }
     }
 
-    /** 会破坏本客户端的键（2026-10-01 修复 L-333）：响应按非流式解析，开了 SSE 就解析不了 */
+    /** 会破坏本客户端的键（2026-10-01，L-333）：响应按非流式解析，开了 SSE 就解析不了 */
     private val UNSUPPORTED_EXTRA_KEYS = listOf("stream", "stream_options")
 
-    /** 删掉会让请求体非法的必需键（2026-10-02 修复 L-421） */
+    /** 删掉会让请求体非法的必需键（2026-10-02，L-421） */
     private val REQUIRED_EXTRA_KEYS = listOf("model", "messages")
 
-    /** 覆盖即失效的键（2026-10-02 修复 L-259）：本客户端组装的原文就在 `messages` 里 */
+    /** 覆盖即失效的键（2026-10-02，L-259）：本客户端组装的原文就在 `messages` 里 */
     private val NO_OVERWRITE_KEYS = listOf("messages")
 
     /**
@@ -652,7 +652,7 @@ internal fun applyTemplateEnsuringText(
     }
 
     /**
-     * 该键在当前取值下会被拒绝的原因（null = 可用）。**设置页判据与运行期合并共用这一处**
+     * 该键在当前取值下会被拒绝的原因（null = 可用）。设置页判据与运行期合并共用这一处
      * （2026-10-02：此前两处各写一套，`{"stream": null}` 在运行期被「忽略」、在设置页却判「不可用」）。
      *
      * 三条规则都按**值**判，不按「键在不在」：
@@ -664,7 +664,7 @@ internal fun applyTemplateEnsuringText(
      */
     internal fun extraKeyRejection(key: String, value: Any?): String? {
         val isDelete = value == null || value === JSONObject.NULL
-        // 键名按**大小写不敏感**比较（2026-10-02 修复 L-431）：规则要防的是「用户照抄网关文档」，
+        // 键名按**大小写不敏感**比较（2026-10-02，L-431）：规则要防的是「用户照抄网关文档」，
         // 而文档里的 `Stream` / `Messages` 这类大写键真实存在 —— 精确比较会被整片绕过。
         val k = key.lowercase(Locale.ROOT)
         // 真值判据还要认 `1`（部分网关接受 1/0 写法）：`"1".toBoolean()` 是 false，
@@ -684,7 +684,7 @@ internal fun applyTemplateEnsuringText(
      * 把用户填的自定义 JSON 合并进请求体 [body]：同名键覆盖标准参数，新键追加。
      *
      * 返回 `false` 仅当整串不是合法 JSON（直接拒绝）；单键命中拒绝名单
-     * （`stream` / 删必需键 / 覆盖 `messages`）时**忽略该键但继续合并其余键**，不让一处写错把功能打死。
+     * （`stream` / 删必需键 / 覆盖 `messages`）时忽略该键但继续合并其余键，不让一处写错把功能打死。
      */
     internal fun mergeExtraJson(body: JSONObject, extraJson: String): Boolean {
         val raw = extraJson.trim()
@@ -694,12 +694,12 @@ internal fun applyTemplateEnsuringText(
             val value = extra.opt(key)
             val rejection = extraKeyRejection(key, value)
             if (rejection != null) {
-                // 拒绝该键但**不中断**：其余键照常合并（JSON 写错不该把功能打死，与解析失败的既有口径一致）
+                // 拒绝该键但不中断：其余键照常合并（JSON 写错不该把功能打死，与解析失败的既有口径一致）
                 Diagnostics.w("OpenAiTranslator", "自定义 JSON 的 $key 已忽略（$rejection）")
                 continue
             }
             if (value == null || value === JSONObject.NULL) {
-                // 写成 JSON `null` = **删掉这个标准参数**（2026-10-01 修复 L-331）。标准参数里有已经
+                // 写成 JSON `null` = 删掉这个标准参数（2026-10-01，L-331）。标准参数里有已经
                 // 过时的键名 —— `max_tokens` 就是：新一代推理模型只认 `max_completion_tokens`，且
                 // 不兼容旧名。而「留空即不发」只对空字段生效，用户必须能只替换掉其中一个键。
                 // 注意 `body.put(key, null)` 是另一回事：那会写进 JSONObject.NULL 并序列化成 `null` 发出去。
@@ -711,7 +711,7 @@ internal fun applyTemplateEnsuringText(
         return true
     }
 
-        // ── 响应解析（纯函数） ─────────────────────────────────
+        // ── 响应解析（纯函数） ──
 
         /**
          * 按路径取译文，支持 `a.b[0].c`、`choices[].message.content`（`[]` = 首元素）、
@@ -798,7 +798,7 @@ internal fun applyTemplateEnsuringText(
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             // 402 = 余额不足：相当多 OpenAI 兼容网关用它表达欠费（与 Azure 把 403 归额度同源）。
-            // 落到 else 会显示「服务异常」，用户无从得知是账户问题（2026-09-30 审查发现）。
+            // 落到 else 会显示「服务异常」，用户无从得知是账户问题（2026-09-30）。
             402 -> TranslationError.QUOTA
             429 -> TranslationError.QUOTA
             in 500..599 -> TranslationError.SERVER
