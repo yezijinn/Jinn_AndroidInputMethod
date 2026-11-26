@@ -232,7 +232,7 @@ class ClipboardController(context: Context) {
             return
         }
         // 图片条目走独立分支（文本链路一行不动）。判定用 item0 的 URI + getType：
-        // ClipDescription.hasMimeType("image/*") 在「图片 + 文本」混合条目上会给假阳性，
+        // `ClipDescription.hasMimeType("image/*")` 在「图片 + 文本」混合条目上会给假阳性，
         // 按实际类型过滤更准。只有 uri 的条目也归这个分支判：声明为文本的交回文本路径
         // （L-1550），类型取不到或取到非文本则进图片分支按字节判，判否即止、不回退。
         val first = runCatching { clip.getItemAt(0) }.getOrNull() ?: return
@@ -245,7 +245,7 @@ class ClipboardController(context: Context) {
         if (!hasText && handleImageClip(first)) return
         // 采集与粘贴共用同一个取文入口（BUG.md L-177 / L-178），失败**按原因**分流（L-183）：
         // 超限要留一条 W（原先这条会落到入库闸，现在读入即止，那一步到不了）；其余三种内部已记日志。
-        // 时间预算：URI 型条目（复制文件）要开跨进程流读 ≤256KB，而本方法跑在**短**活池
+        // 时间预算：URI 型条目（复制文件）要开跨进程流读 ≤256KB，而本方法跑在短活池
         // （与面板首屏 / 粘贴查询 / 入库同一条单线程队列），慢 provider 会把它们一起拖住。
         // 上限取 [COLLECT_READ_BUDGET_MS]（远宽于粘贴侧）：宁可偶尔仍慢，不可把本地大文件判丢。
         val text = when (
@@ -294,7 +294,7 @@ class ClipboardController(context: Context) {
      * 类型判定**不在本方法里做**（BUG.md L-1288）：本方法跑在 `BackgroundIo.run` 的短线程池
      * （`jinn-clipboard-io`，与面板首屏查询 / 粘贴查询 / 入库同一条单线程队列），
      * 而嗅探要 `openInputStream`（跨进程读流，耗时不可控）—— 判否这一步原先同步开流，
-     * 会挡住同队列的面板首屏与粘贴。现在把**声明类型**原样传下去，由长活池在读到头部时
+     * 会挡住同队列的面板首屏与粘贴。现在把声明类型原样传下去，由长活池在读到头部时
      * 就地判：同一次开流，短线程池零 IO。
      */
     private fun handleImageClip(item: android.content.ClipData.Item): Boolean {
@@ -477,7 +477,7 @@ object ClipboardStore {
      * 「打开 provider 的流 → `while (read)` 追加进 StringBuilder」，没有任何长度上限；
      * 而单条上限（[MAX_ITEM_BYTES]）在写库那一步才判 ⇒「复制一个大文件」会先把整份内容分配出来，
      * 超限才被丢，后台线程直接 OOM、IME 进程被杀（用户看到的是键盘突然消失）。
-     * 这里改成**边读边判**：读满预算即放弃，**不返回半截内容**（与超限不入库同一口径）。
+     * 这里改成**边读边判**：读满预算即放弃，不返回半截内容（与超限不入库同一口径）。
      *
      * 连续空读按 [MAX_EMPTY_READS] 为限：`InputStream.read` 允许返回 0（非阻塞流），
      * 不设上限会把后台线程钉死在一次读取里。
@@ -522,7 +522,7 @@ object ClipboardStore {
         var total = 0
         var empty = 0
         while (true) {
-            // 时间预算：字节预算管不住**慢** provider —— 读 256KB 也可能要几秒，
+            // 时间预算：字节预算管不住慢 provider —— 读 256KB 也可能要几秒，
             // 那种情况必须放弃（BUG.md L-177）；两条读入预算由调用方按路径传入。
             // 局限（BUG.md L-185）：这里只在**循环顶部**检查，打断不了阻塞的单次 read()。
             if (deadlineNanos != null && System.nanoTime() >= deadlineNanos) return ItemText.TimedOut
@@ -749,10 +749,11 @@ object ClipboardStore {
      * 面板单页条数的**硬上限**（也是页宽定义域的上界）。
      *
      * 取 75 的依据：`75 × 256KB × 2.5 ≈ 46.9MB ≤ 48MB 预算` —— 即「页宽取最大 + 单条上限
-     * 保持默认 256KB」时窗口仍不越界。[effectiveItemLimitBytes] 用**本常量**（而非用户当前页宽）
+     * 保持默认 256KB」时窗口仍不越界。[effectiveItemLimitBytes] 用本常量（而非用户当前页宽）
      * 作分母反推单条上限：库里既有行是**写入当时**的页宽写进去的，分母若跟着当前页宽走，
      * 用户把页宽调大后旧行会一并进入更大窗口 ⇒ 峰值突破预算
-     * （2026-10-06，L-996）。页宽 50 写入的 393KB 行 + 页宽调到 100 ⇒ 100 × 393KB × 2.5 ≈ 100MB。
+     * （2026-10-06，L-996）。页宽 50 写入的 393KB 行，页宽调到上限 75 ⇒ 75 × 393KB × 2.5 ≈ 72MiB，
+     * 同样过界。页宽现钳在 2..75、写侧也封顶 262KB，新行不会触发，历史行留观。
      */
     const val PANEL_PAGE_ITEMS_MAX = 75
 

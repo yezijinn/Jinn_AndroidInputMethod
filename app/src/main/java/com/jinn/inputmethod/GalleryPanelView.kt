@@ -50,7 +50,7 @@ internal fun thumbSampleForEdge(edgePx: Int): Int {
  * 配色与手感同样照 [ClipboardPanelView]：底色取皮肤 plate、按钮用键面几何（`buildKeyFaceBackground`）
  * 与 functionGlyph / functionFill、点击发 G_FUNC 反馈；皮肤或透明度一变由 [applyPanelColors] 统一重设。
  *
- * 目录内容在 [BackgroundIo] 里读，缩略图按采样解码并用**按字节数限容**的 [LruCache] 缓存 ——
+ * 目录内容在 [BackgroundIo] 里读，缩略图按采样解码并用按字节数限容的 [LruCache] 缓存 ——
  * 输入法是常驻进程，缩略图不设上限会被系统杀掉（表现为键盘突然消失）。
  * 目录读不出来分三态：未绑定 / 授权失效（撤销或换机恢复，表现为查询不到内容）/ 空目录，
  * 都露出重绑入口；另有「单选」走系统选择器，可看绑定目录之外的图片。
@@ -114,7 +114,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 缩略图缓存：基准 [THUMB_CACHE_BYTES]，按字节数限容，翻页回看不重解；
      * 键是图片 URI（布局变化时由 [rebuildGrid] 整缓存清空来对齐目标像素），
-     * **低内存档按 [DeviceTier] 折半**（MEM-04b / 契约 C-3）。
+     * 低内存档按 [DeviceTier] 折半（MEM-04b / 契约 C-3）。
      */
     private val thumbCache = object : LruCache<String, Bitmap>(
         DeviceTier.budget(context, THUMB_CACHE_BYTES.toLong()).toInt(),
@@ -128,7 +128,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     /**
      * 收起后延迟释放缓存的定时器（MEM-07）。
      *
-     * 刻意**不**「收起即清」：保留「收起再开还是热的」即时性，
+     * 刻意不「收起即清」：保留「收起再开还是热的」即时性，
      * 同时把常驻时间限在 [CACHE_RELEASE_DELAY_MS] 内。任务只持本视图的弱引用，
      * 且排程会被 [onPanelShown] / [onPanelHidden] / [onDetachedFromWindow] / [stopBackgroundWork] 撤销。
      */
@@ -168,7 +168,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * [BackgroundIo] 是单线程串行且全应用共用，图片解码插队会拖慢剪贴板保存；
      * 代价是 3 条常驻线程与略高的内存峰值。
      *
-     * ⚠ 必须**可重建**：[stopBackgroundWork] 与 [onDetachedFromWindow] 都会 `shutdownNow()` 关池
+     * ⚠ 必须可重建：[stopBackgroundWork] 与 [onDetachedFromWindow] 都会 `shutdownNow()` 关池
      * （视图重建时旧池的 core 线程不超时回收，不关就是每次重建永久漏几条线程 —— L-1035）。
      * 面板实例缓存复用（键盘侧 `ensureGalleryPanel` 只建一次）：detach 后实例仍在，
      * 关池后再提交会被拒、界面是一屏空白格子。故关池后置 null，由 [poolOrNew] 按需重建。
@@ -222,7 +222,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         }
         addView(status, LayoutParams(MATCH, WRAP))
 
-        // 绑定异常 / 空目录时的入口行：常驻，只切可见性（见 rebindRow 的字段说明）
+        // 绑定异常 / 空目录时的入口行：常驻，只切可见性（见 `rebindRow` 的字段说明）
         addView(rebindRow, LayoutParams(MATCH, WRAP))
         rebindRow.visibility = GONE
 
@@ -308,7 +308,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * 面板收起：丢掉在途缩略图（递增 [generation] 即可）；缩略图缓存**先留着**，
+     * 面板收起：丢掉在途缩略图（递增 [generation] 即可）；缩略图缓存先留着，
      * 但排一次延迟释放（MEM-07）：[CACHE_RELEASE_DELAY_MS] 后仍然收起才清。
      */
     fun onPanelHidden() {
@@ -328,7 +328,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * 视图脱离窗口（键盘重建 / 服务销毁）时的**自保**（MEM-07 第 4 条）：
+     * 视图脱离窗口（键盘重建 / 服务销毁）时的自保（MEM-07 第 4 条）：
      * 延迟释放任务与解码线程池都在这里再收一次，不依赖调用点纪律。
      * [stopBackgroundWork] 做的是同样两件事 —— 两条路径都走到时操作幂等。
      */
@@ -445,7 +445,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         // 目标像素随单元格变 ⇒ 旧缩略图尺寸不匹配了，整个丢掉重解（只在用户主动调布局时发生）
         thumbCache.evictAll()
         fillPage()
-        // 回到顶部：单元格尺寸已变，停在原滚动位置看起来像「跳到了别处」（L-1043，与 showList 同款处置）
+        // 回到顶部：单元格尺寸已变，停在原滚动位置看起来像「跳到了别处」（L-1043，与 [showList] 同款处置）
         scroll.scrollTo(0, 0)
         Diagnostics.i(
             TAG, "网格已重排: 每行 $columns 张，行高 ${cellHeightDp}dp，采样 1/${sampleFor(columns, cellHeightDp)}",
@@ -511,7 +511,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
             text = label
             gravity = Gravity.CENTER
             // 11sp + 8dp 内边距：翻页那 5 个按钮（← / → / 布局 / 刷新 / 单选）要在一行里排下，
-            // 系统字体放大时也要（退出口与「自动返回」都已移出本行，见 buildTitleRow 末尾）。
+            // 系统字体放大时也要（退出口与「自动返回」都已移出本行，见 [buildTitleRow] 末尾）。
             // 比剪贴板面板那套紧一档（L-1028）
             textSize = 11f
             maxLines = 1
@@ -532,7 +532,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private fun render(state: State?) {
         grid.removeAllViews()
         // 清掉上一份列表：本函数只渲染「状态 / 空」画面，网格里不该再留旧目录的条目 ——
-        // 否则载入中（刷新 / 换目录）时调「布局 → +/-」会经 rebuildGrid → fillPage 用旧 items
+        // 否则载入中（刷新 / 换目录）时调「布局 → +/-」会经 [rebuildGrid] → [fillPage] 用旧 items
         // 重铺上一目录的缩略图，与状态行「正在读取目录…」自相矛盾（BUG.md L-1075）。
         items = emptyList()
         // 没有列表可翻：页码回到 1/1
@@ -708,7 +708,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * 按 [sample] 档采样解码，**只开一次输入流**（不探尺寸）。
+     * 按 [sample] 档采样解码，只开一次输入流（不探尺寸）。
      *
      * 原来这里是两段式：先 `inJustDecodeBounds` 量尺寸、再按目标像素算采样率解码。那次多出来的
      * 开流在 SAF 上要几十毫秒，是首屏最贵的一步。现在按固定档一次解完，代价是小图会被缩得更狠
@@ -776,7 +776,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
         // 与列表回填同一条代际守卫（BUG.md L-1042）：收起面板或换目录后，旧查询的标题回填
         // 仍会执行 —— 屏幕上就成了「状态行说还没绑定、标题写着上一个目录名」
         post { if (gen == generation) title.text = dirName.ifEmpty { TEXT_TITLE_DEFAULT } }
-        // 分页之后这里不再按「每页张数」截断，只受安全阀约束（见 MAX_LISTED）
+        // 分页之后这里不再按「每页张数」截断，只受安全阀约束（见 [MAX_LISTED]）
         return found.sortedBy { it.first }.take(MAX_LISTED).map { it.second }
     }
 
